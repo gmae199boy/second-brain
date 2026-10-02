@@ -1,0 +1,4 @@
+[core]
+project_name = "brain"
+output_folder = "{project-root}/_bmad-output"
+active_initiative = "personal-brain"

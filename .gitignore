@@ -1,0 +1,85 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Build output
+dist/
+build/
+out/
+lib-cov/
+*.tsbuildinfo
+.turbo/
+.next/
+.nuxt/
+.cache/
+.parcel-cache/
+.vite/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Test and coverage
+coverage/
+.nyc_output/
+junit.xml
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Package manager
+.npm/
+.pnpm-store/
+*.tgz
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+
+# Local databases and data
+*.sqlite
+*.sqlite3
+*.db
+data/
+pgdata/
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# BMad personal overrides (also ignored by _bmad/custom/.gitignore)
+_bmad/custom/*.user.toml
+
+# Tool caches
+.codegraph/
+graphify-out/
