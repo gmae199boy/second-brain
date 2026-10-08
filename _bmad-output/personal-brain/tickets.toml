@@ -1,0 +1,42 @@
+# Personal Brain V1 slice 1 — 에픽 순서(표 순서 = 만드는 순서)
+
+[[epic]]
+id = 1
+slug = "epic-foundation-and-install"
+title = "기반과 설치"
+covers = ["CAP-10", "CAP-11"]
+
+[[epic]]
+id = 2
+slug = "epic-capture"
+title = "세션 수집과 비밀 가리기"
+covers = ["CAP-1", "CAP-2"]
+after = [{ epic = 1, needs = "Store port와 스키마(Table Contract), CLI 뼈대, 설치기의 Harness 연결 단계" }]
+
+[[epic]]
+id = 3
+slug = "epic-log-and-context"
+title = "작업 로그와 시작 맥락"
+covers = ["CAP-3", "CAP-8", "CAP-9"]
+after = [{ epic = 2, needs = "수집된 메시지(로그-대화 연결과 규칙 인용 대조), sessions.ensure, spool, drain" }]
+
+[[epic]]
+id = 4
+slug = "epic-recall-and-mirror"
+title = "조회와 미러"
+covers = ["CAP-4", "CAP-5", "CAP-6", "CAP-7", "CAP-13"]
+after = [{ epic = 2, needs = "메시지와 도구 메모" }, { epic = 3, needs = "작업 로그(대분류 검색)" }]
+
+[[epic]]
+id = 5
+slug = "epic-operations"
+title = "운영: 내보내기·복구, 업그레이드, 제거"
+covers = ["CAP-12", "CAP-11"]
+after = [{ epic = 4, needs = "모든 테이블이 있어야 내보내기가 전체를 덮음" }]
+
+[[epic]]
+id = 6
+slug = "epic-embedding-index"
+title = "임베딩 선택 색인"
+covers = ["CAP-6"]
+after = [{ epic = 4, needs = "조각과 검색 결과 계약, SM-3 기본 구성 측정 결과" }]

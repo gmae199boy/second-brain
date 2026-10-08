@@ -1,0 +1,102 @@
+# epic 1 기반과 설치 — 표 순서 = 만드는 순서. id는 영구.
+
+[[entry]]
+id = 1
+type = "story"
+title = "Tracer: workspace 뼈대와 doctor 한 줄"
+description = "pnpm workspace의 6개 패키지(비공개, Stack 버전 고정)와 vitest·테스트 전용 DB 도구를 세우고, Store의 연결 확인을 postgres adapter로 구현해 `brain admin doctor --json`이 DATABASE_URL의 연결과 pgvector 확장을 보고하게 한다(설정 읽기·응답 형식은 임시, 4에서 교체)."
+verify = "사람이 띄운 Docker PG에서 doctor가 ok를, 멈추면 DB_UNAVAILABLE을 내고, second_brain import만으로 연결이 일어나지 않으며 core의 런타임 의존성이 0임을 테스트가 확인한다."
+covers = ["E1-1", "E1-6"]
+after = []
+hitl = true
+risk = "medium"
+references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md#ad-1--패키지-경계로-의존-방향을-강제한다-adopted"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "Core port와 도메인 타입"
+description = "Store·Parser·Embedder·Reranker·Clock·IdGen port와 Table Contract의 도메인 타입, adapter가 붙일 port별 계약 테스트 틀, Runtime의 Clock과 UUIDv7 IdGen을 만든다."
+verify = "계약 테스트 틀이 메모리 가짜 Store로 통과하고, IdGen이 UUIDv7을 낸다."
+covers = ["E1-2"]
+after = [1]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 3
+type = "story"
+title = "첫 마이그레이션과 원문 불변 trigger"
+description = "Table Contract의 모든 테이블·UNIQUE 멱등 키·schema_version, messages·tool_notes의 UPDATE/DELETE 거부 trigger와 redact 전용 우회 경로, redactions 테이블, setup만 부르는 마이그레이션 실행 함수를 만든다."
+verify = "테스트 DB에서 messages 수정·삭제가 거부되고 redact 경로만 통과하며, UNIQUE 중복 삽입이 실패하고, 마이그레이션 재실행이 멱등이다."
+covers = ["E1-3"]
+after = [1]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 4
+type = "story"
+title = "설정 코덱, CLI 응답 형식, 스키마 확인"
+description = "config.toml(schema_version)·.env 단일 코덱, `brain <ns> <verb>` 디스패처, `--json` 봉투와 경고 코드 집합, hook 경로 exit 0 래퍼, 런타임 스키마 버전 확인(다르면 쓰기 거부)을 만들고 tracer의 임시 설정 읽기·응답 형식을 교체한다."
+verify = "모르는 설정 키가 경고되고, 봉투 형태가 스냅샷과 같으며, 스키마 버전이 다른 DB에서 쓰기 명령이 SCHEMA_MISMATCH로 쓰지 않고, hook 경로 명령이 실패해도 exit 0이다."
+covers = ["E1-4"]
+after = [2, 3]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 5
+type = "story"
+title = "설치 진입점: 내려받기와 빌드"
+description = "`npx github:gmae199boy/second-brain`이 의존성 없는 빌드된 단일 진입 파일을 실행해 저장소를 ~/.second_brain/app에 clone(있으면 갱신)하고, pnpm@12.10.1이 없으면 설치를 묻고, pnpm install·build 후 빌드된 설치기에 넘긴다. 루트 package.json에는 의존성과 prepare가 없다."
+verify = "깨끗한 사용자 계정에서 명령 하나로 ~/.second_brain/app이 빌드되고 설치기가 시작된다."
+covers = ["E1-5"]
+after = [1]
+hitl = true
+risk = "high"
+unknown = "npx의 git 설치가 루트 package.json의 bin만으로 진입 파일을 실행하는지 실측 필요."
+
+[[entry]]
+id = 6
+type = "story"
+title = "설치기 흐름: 의존성, DB, 설정, 마이그레이션"
+description = "빌드된 설치기가 의존성 확인과 설치 동의(Docker는 Homebrew로), DB 선택(기존 URL 연결 또는 동의 후 pgvector/pgvector:pg18 named volume·restart unless-stopped 생성과 준비 대기), config·.env 기록, 마이그레이션, index_configs 기본 행 기록(멱등), doctor를 진행한다."
+verify = "Docker만 있는 사용자 계정에서 설치기 한 번으로 DB가 만들어지고 doctor가 ok를 내며, 기존 URL을 고르면 컨테이너를 만들지 않는다."
+covers = ["E1-5"]
+after = [3, 4, 5]
+hitl = true
+risk = "high"
+
+[[entry]]
+id = 7
+type = "story"
+title = "shim, connector 등록부, 재설정"
+description = "node 절대 경로를 담은 ~/.second_brain/bin/brain shim, connector 등록부 계약과 `brain setup connect <harness>`(Brain 표식으로 멱등), 미러 경로·임베딩 질문(epic 6 전까지 '아직 지원 안 함'), 현재 값을 기본값으로 보이는 `brain setup run` 재실행을 만든다. 실제 connector는 epic 2."
+verify = "가짜 connector로 setup connect를 두 번 돌려도 등록이 한 번이고, setup run을 두 번 돌려 설정·shim이 같으며, shim으로 doctor가 돈다."
+covers = ["E1-5"]
+after = [6]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 8
+type = "story"
+title = "doctor 틀 완성"
+description = "이후 에픽이 항목을 더할 수 있는 점검 등록 구조와 스키마 버전·shim·node 경로·설정 유효성 항목을 더한다."
+verify = "shim을 지우거나 node 경로를 틀리게 하거나 스키마 버전을 바꾸면 doctor가 해당 항목을 실패로 보인다."
+covers = ["E1-6"]
+after = [4, 7]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 9
+type = "story"
+title = "Refactor sweep"
+description = "에픽 동안 미룬 정리만 한다. 범위는 시작할 때 빌드 기록과 미룬 리뷰 지적에서 정한다."
+verify = "전체 테스트와 패키지 의존 경계 검사가 통과하고, 에픽 Done when 1~5를 다시 돌려 모두 통과한다."
+covers = ["E1-1", "E1-2", "E1-3", "E1-4", "E1-5", "E1-6"]
+after = [1, 2, 3, 4, 5, 6, 7, 8]
+hitl = false
+risk = "low"

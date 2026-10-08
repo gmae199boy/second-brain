@@ -83,3 +83,6 @@ _bmad/custom/*.user.toml
 # Tool caches
 .codegraph/
 graphify-out/
+
+# BMad rendered skill snapshots (regenerated on each run)
+_bmad/render/
