@@ -1,0 +1,24 @@
+{
+  "name": "@second-brain/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "brain": "dist/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "commander": "15.0.0",
+    "second_brain": "workspace:*"
+  },
+  "devDependencies": {
+    "@second-brain/test-db": "workspace:*",
+    "@types/node": "24.19.1",
+    "typescript": "7.0.2"
+  }
+}
