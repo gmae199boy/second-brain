@@ -3,7 +3,7 @@ title: 'Tracer: workspace 뼈대와 doctor 한 줄'
 type: 'feature'
 ticket: '1'
 created: '2026-10-08'
-status: 'built'
+status: done
 route: 'full'
 route_source: 'auto'
 review: 'quick'

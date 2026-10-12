@@ -5,6 +5,7 @@ parent: personal-brain
 covers: [CAP-10, CAP-11]
 after: []
 assignee: ""
+status: in-progress
 risk: high
 ---
 
