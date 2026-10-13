@@ -1,13 +1,9 @@
 import type { HealthStore, StoreHealth } from '@second-brain/core';
 import { Kysely, PostgresDialect, sql } from 'kysely';
-import pg from 'pg';
+import { createPool, describe, type ConnectionOptions } from './connect.js';
 
-export interface PostgresStoreOptions {
-  /** Postgres connection URL. Read by the caller, never by this module. */
-  databaseUrl: string;
-  /** Budget for both connecting and each probe query before giving up. */
-  connectTimeoutMs?: number;
-}
+/** Options of the store factory; the connection half is shared (AD-3). */
+export type PostgresStoreOptions = ConnectionOptions;
 
 /** Shape of the version row the health probe reads. */
 interface VersionRow {
@@ -30,17 +26,7 @@ interface VectorRow {
  * stub methods in the meantime (AD-10).
  */
 export function postgresStore(options: PostgresStoreOptions): HealthStore {
-  const { databaseUrl, connectTimeoutMs = 5000 } = options;
-
-  const pool = new pg.Pool({
-    connectionString: databaseUrl,
-    connectionTimeoutMillis: connectTimeoutMs,
-    // A listener that accepts but never answers must not outlast the budget.
-    query_timeout: connectTimeoutMs,
-    max: 1,
-  });
-  // An idle client that dies must not take the process down with it.
-  pool.on('error', () => {});
+  const pool = createPool(options);
 
   const db = new Kysely<Record<string, never>>({
     dialect: new PostgresDialect({ pool }),
@@ -92,27 +78,4 @@ export function postgresStore(options: PostgresStoreOptions): HealthStore {
       await db.destroy();
     },
   };
-}
-
-/**
- * Describe a failure in one non-empty line. Node's multi-address connect fails
- * with an `AggregateError` whose own message is empty, so fall back through the
- * inner errors, then the code, then the name.
- */
-function describe(error: unknown): string {
-  if (!(error instanceof Error)) {
-    return String(error);
-  }
-  const code: unknown = (error as { code?: unknown }).code;
-  const candidates = [
-    error.message,
-    ...(error instanceof AggregateError ? error.errors.map(innerMessage) : []),
-    typeof code === 'string' ? code : '',
-    error.name,
-  ];
-  return candidates.find((candidate) => candidate !== '') ?? 'unknown error';
-}
-
-function innerMessage(inner: unknown): string {
-  return inner instanceof Error ? inner.message : String(inner);
 }
