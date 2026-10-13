@@ -23,7 +23,7 @@ pnpm workspace와 패키지 경계, Core의 port, Postgres 스키마(Table Contr
 
 - E1-1 (CAP-10): pnpm workspace — core(런타임 의존성 0), postgres, claude-code, modelstudio, second_brain(재export만), apps/cli. adapter는 core에만 의존. import 시 부작용 없음. (spine AD-1·2·3)
 - E1-2 (CAP-10): Core port(Store, Parser, Embedder, Reranker, Clock, IdGen)와 도메인 타입, port별 계약 테스트 틀. Runtime이 Clock과 UUIDv7 IdGen을 구현. (AD-1·8)
-- E1-3 (CAP-11): 첫 마이그레이션 — Table Contract의 모든 테이블과 UNIQUE 멱등 키, schema_version, messages·tool_notes 불변 trigger와 redact 전용 우회 경로, redactions. 마이그레이션은 setup만 실행. (AD-10·11·20, Table Contract)
+- E1-3 (CAP-11): 첫 마이그레이션 — Table Contract의 모든 테이블과 UNIQUE 멱등 키, schema_version, messages·tool_notes 불변 trigger와 redact 전용 우회 경로, redactions. embeddings는 제외(임베딩을 켤 때 설정 차원으로 생성, AD-15). 마이그레이션은 setup만 실행. (AD-10·11·20, Table Contract)
 - E1-4 (CAP-10, CAP-11): 설정 코덱(config.toml schema_version + .env), `brain <ns> <verb>` 디스패처, `--json` 봉투와 경고 코드, hook 경로 exit 0, 런타임 스키마 버전 확인. (AD-5·18·20, Conventions)
 - E1-5 (CAP-11): 설치 — `npx github:gmae199boy/second-brain` 진입, 내려받기·빌드, 의존성 설치 동의, DB 연결 또는 Docker 생성, 설정·키 기록, 마이그레이션, index_configs 기본 행, shim, connector 등록부와 `setup connect`, `setup run` 재실행 멱등. (AD-2·19)
 - E1-6 (CAP-11): `brain admin doctor` 틀과 기본 항목 — DB 연결, pgvector, 스키마 버전, shim·node 경로, 설정 유효성, `DB_UNAVAILABLE`. 이후 에픽이 항목을 더한다. (AD-19·20, FR-25)
