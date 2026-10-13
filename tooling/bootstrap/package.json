@@ -1,0 +1,16 @@
+{
+  "name": "@second-brain/bootstrap",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && mv bin/bootstrap.js bin/second-brain.js && chmod +x bin/second-brain.js"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "7.0.2"
+  }
+}

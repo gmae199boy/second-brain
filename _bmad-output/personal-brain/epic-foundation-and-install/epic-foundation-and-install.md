@@ -50,6 +50,6 @@ AD-1·2·3·5·10·11(trigger)·18·19·20(schema_version), Table Contract, Conv
 ## Notes
 
 - Decision: tracer는 story 1(패키지 뼈대 → postgres adapter → CLI doctor). 2·3·5는 병렬 가능. 가장 불확실한 것은 5(설치 진입점)(2026-10-08).
-- Decision: 설치 진입점은 의존성 없는 빌드된 단일 파일이 저장소를 ~/.second_brain/app에 받아 빌드한 뒤 설치기에 넘긴다. 루트 package.json에 의존성·prepare 없음. pnpm은 pnpm@12.10.1로 고정해 설치를 묻는다(corepack에 기대지 않음). epic 5의 setup upgrade도 같은 경로(2026-10-08).
+- Decision: 설치 진입점은 의존성 없는 빌드된 단일 파일이 저장소를 ~/.second_brain/app에 받아 빌드한 뒤 설치기에 넘긴다. 루트 package.json에 의존성·prepare 없음. pnpm은 고정하지 않는다: 루트 `engines.pnpm`은 `">=12"`뿐이고, 진입 파일이 major 12 미만이면 `npm install -g pnpm@latest`를 묻는다(corepack에 기대지 않음). epic 5의 setup upgrade도 같은 경로(2026-10-08, pnpm 고정은 2026-10-13에 풀었다 — `packageManager` 고정이 남으면 최신 pnpm도 고정 버전으로 전환하려다 ENOEXEC로 죽는다).
 - Decision: spool은 epic 2. 이 에픽의 스키마 불일치는 쓰기 거부 + SCHEMA_MISMATCH까지(2026-10-08).
 - Decision: 임베딩 질문은 epic 6 전까지 '아직 지원 안 함'으로 답한다(2026-10-08).

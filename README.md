@@ -3,6 +3,30 @@
 A personal brain for one Mac: Postgres holds the originals, the `brain` CLI is a
 thin shell over the `second_brain` SDK. This repository is not published to npm.
 
+## Install
+
+On a Mac with nothing but [Node](https://nodejs.org) 24 or newer and git:
+
+```sh
+npx github:gmae199boy/second-brain
+```
+
+That runs one committed, dependency-free file. It checks node and git, clones
+this repository into `~/.second_brain/app` (fast-forwarding it on a later run),
+offers to install the latest pnpm if yours is older than 12, builds the clone,
+and starts the installer. It never resets or discards anything you changed
+under `~/.second_brain/app`: if the folder is not a clean clone of this
+repository, it says so and stops.
+
+Two environment variables move it off the defaults:
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `SECOND_BRAIN_HOME` | `~/.second_brain` | Where the configuration and the clone go |
+| `SECOND_BRAIN_REPO` | `https://github.com/gmae199boy/second-brain.git` | Which repository to clone, for a fork or a test |
+
+The installer itself is still being built: today it only prints what it found.
+
 ## Layout
 
 ```text
@@ -12,6 +36,7 @@ packages/claude-code/   Claude Code connector (placeholder)
 packages/modelstudio/   embeddings and reranking (placeholder)
 packages/second_brain/  the one writing surface: re-exports only
 apps/cli/               the brain command
+tooling/bootstrap/      the install entry point: src/ plus its committed build
 tooling/test-db/        dev-only throwaway test databases
 ```
 
@@ -21,8 +46,15 @@ tooling/test-db/        dev-only throwaway test databases
 pnpm install && pnpm build
 ```
 
-`pnpm` is pinned to 12.10.1 through `packageManager`. If your pnpm does not
-switch automatically, run the commands through `npx pnpm@12.10.1 ...`.
+`pnpm` is not pinned: the root manifest asks for `>=12` and nothing more, so
+whatever current pnpm you have is the one that runs. A pinned `packageManager`
+only moved the failure earlier — a newer pnpm would refuse to downgrade itself
+and die before any work started.
+
+`tooling/bootstrap/bin/second-brain.js` is a build output that is committed,
+because npm installs this repository from git without building it. Change
+`tooling/bootstrap/src/bootstrap.ts`, run `pnpm build`, and commit both; a test
+fails if the two disagree.
 
 ## Test database
 

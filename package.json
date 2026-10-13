@@ -1,10 +1,17 @@
 {
   "name": "second-brain-workspace",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@12.10.1",
+  "bin": {
+    "second-brain": "tooling/bootstrap/bin/second-brain.js"
+  },
+  "files": [
+    "tooling/bootstrap/bin/second-brain.js"
+  ],
   "engines": {
-    "node": ">=24"
+    "node": ">=24",
+    "pnpm": ">=12"
   },
   "scripts": {
     "build": "pnpm -r build",

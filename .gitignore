@@ -9,6 +9,10 @@ node_modules/
 !.yarn/versions
 
 # Build output
+# The install entry point is built into `bin/` and committed, but tsc's own
+# output name is not the committed one: an interrupted `tsc && mv` build would
+# otherwise leave an untracked file that makes the clone look locally changed.
+tooling/bootstrap/bin/bootstrap.js
 dist/
 build/
 out/

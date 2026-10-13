@@ -348,7 +348,7 @@ erDiagram
 | --- | --- |
 | Node.js | `>=24` LTS (24.21.0. 2026-10-28부터 26이 Active LTS) |
 | TypeScript | 7.0.x (7.0.2) |
-| pnpm (workspace) | 12.10.1 |
+| pnpm (workspace) | `>=12` (고정하지 않는다. 설치 시 최신을 받는다. 2026-10-13 현재 12.11.2) |
 | PostgreSQL | 18 |
 | pgvector (확장) | 0.8.7 |
 | Docker 이미지 (설치기 기본값) | `pgvector/pgvector:pg18` |

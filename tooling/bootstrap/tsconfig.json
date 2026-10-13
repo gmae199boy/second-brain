@@ -1,0 +1,16 @@
+{
+  // The one artefact of this package is committed, so emit exactly one file:
+  // no declarations and no source maps, which would have to be committed too
+  // and would say nothing to anyone. `bin/` is not in `.gitignore` (`dist/`
+  // is), which is the whole reason the output lives there.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "rootDir": "src",
+    "outDir": "bin",
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["src"]
+}
