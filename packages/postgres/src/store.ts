@@ -1,4 +1,4 @@
-import type { Store, StoreHealth } from '@second-brain/core';
+import type { HealthStore, StoreHealth } from '@second-brain/core';
 import { Kysely, PostgresDialect, sql } from 'kysely';
 import pg from 'pg';
 
@@ -20,10 +20,16 @@ interface VectorRow {
 }
 
 /**
- * Build a Postgres-backed `Store`. The pool and the Kysely instance are created
- * here, inside the factory, so importing this module connects to nothing (AD-3).
+ * Build a Postgres-backed `HealthStore`. The pool and the Kysely instance are
+ * created here, inside the factory, so importing this module connects to
+ * nothing (AD-3).
+ *
+ * It implements the health capability alone: the session tables arrive with the
+ * first migration, and the day this adapter implements `SessionStore` too the
+ * return type widens to `Store` and the session contract runs against it. No
+ * stub methods in the meantime (AD-10).
  */
-export function postgresStore(options: PostgresStoreOptions): Store {
+export function postgresStore(options: PostgresStoreOptions): HealthStore {
   const { databaseUrl, connectTimeoutMs = 5000 } = options;
 
   const pool = new pg.Pool({

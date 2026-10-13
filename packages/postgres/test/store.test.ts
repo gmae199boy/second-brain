@@ -1,6 +1,7 @@
 import { createServer } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '@second-brain/test-db';
+import { storeContract } from '@second-brain/core/testing';
 import { postgresStore } from '../src/store.js';
 
 /** A TCP port nothing listens on, so connecting is refused immediately. */
@@ -21,6 +22,7 @@ async function closedPort(): Promise<number> {
   return port;
 }
 
+// Only the blocks in here need a database, so only they set one up.
 describe('postgresStore against a real database', () => {
   let database: TestDatabase;
 
@@ -46,6 +48,18 @@ describe('postgresStore against a real database', () => {
       await store.close();
     }
   });
+
+  /**
+   * The first adapter to plug into the frame: the cases come from Core as data,
+   * and this runner feeds them a real database (AD-10, Conventions on testing).
+   */
+  describe('and the health contract', () => {
+    for (const testCase of storeContract()) {
+      it(testCase.name, async () => {
+        await testCase.run(async () => postgresStore({ databaseUrl: database.url }));
+      });
+    }
+  });
 });
 
 describe('postgresStore against a closed port', () => {
@@ -69,4 +83,19 @@ describe('postgresStore against a closed port', () => {
       await store.close();
     }
   });
+});
+
+// The same contract cases, against an unreachable store: no database needed,
+// because the point is that the verdict is still a value (Conventions).
+describe('postgresStore satisfies the health contract against a closed port', () => {
+  for (const testCase of storeContract()) {
+    it(testCase.name, async () => {
+      const port = await closedPort();
+      await testCase.run(async () =>
+        postgresStore({
+          databaseUrl: `postgres://postgres:postgres@127.0.0.1:${port}/postgres`,
+        }),
+      );
+    });
+  }
 });

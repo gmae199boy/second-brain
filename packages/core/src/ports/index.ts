@@ -1,0 +1,21 @@
+// The ports every adapter implements, each with its own contract cases in
+// `@second-brain/core/testing`.
+export type {
+  EnsureSessionInput,
+  EnsureSessionResult,
+  HealthStore,
+  IngestCounts,
+  IngestResult,
+  ReadSessionResult,
+  SessionContents,
+  SessionStore,
+  Store,
+  StoreHealth,
+  StoreVectorHealth,
+  StoreWarningCode,
+} from './store.js';
+export type { ParseResult, Parser } from './parser.js';
+export type { EmbedResult, Embedder } from './embedder.js';
+export type { RerankResult, RerankedDocument, Reranker } from './reranker.js';
+export type { Clock } from './clock.js';
+export type { IdGen } from './id-gen.js';

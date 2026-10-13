@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "commander": "15.0.0",
-    "second_brain": "workspace:*"
+    "second_brain": "workspace:*",
+    "uuid": "14.0.2"
   },
   "devDependencies": {
     "@second-brain/test-db": "workspace:*",

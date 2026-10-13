@@ -1,8 +1,12 @@
 import { runDoctor, type DoctorReport } from './admin/doctor.js';
-import type { Store } from './ports/store.js';
+import type { HealthStore } from './ports/store.js';
 
 export interface BrainDependencies {
-  store: Store;
+  /**
+   * Only the health capability: the SDK surface of story 1 probes and closes,
+   * so an adapter that has nothing else yet already fits (AD-10).
+   */
+  store: HealthStore;
 }
 
 export interface BrainAdmin {

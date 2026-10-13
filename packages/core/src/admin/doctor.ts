@@ -1,4 +1,4 @@
-import type { Store } from '../ports/store.js';
+import type { HealthStore } from '../ports/store.js';
 
 export type DoctorCheckStatus = 'ok' | 'fail' | 'skip';
 
@@ -20,7 +20,7 @@ export interface DoctorReport {
  * Report on the store without throwing. A degraded store yields failing checks,
  * not an exception: the caller decides the exit code.
  */
-export async function runDoctor(store: Store): Promise<DoctorReport> {
+export async function runDoctor(store: HealthStore): Promise<DoctorReport> {
   const health = await store.checkHealth();
 
   if (!health.ok) {

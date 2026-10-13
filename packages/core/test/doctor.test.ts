@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createBrain } from '../src/brain.js';
 import { runDoctor } from '../src/admin/doctor.js';
-import type { Store, StoreHealth } from '../src/ports/store.js';
+import type { HealthStore, StoreHealth } from '../src/ports/store.js';
 
-function fakeStore(health: StoreHealth): Store & { closed: () => number } {
+function fakeStore(health: StoreHealth): HealthStore & { closed: () => number } {
   let closes = 0;
   return {
     checkHealth: async () => health,
