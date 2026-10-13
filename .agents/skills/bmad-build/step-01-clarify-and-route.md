@@ -17,7 +17,7 @@ Before listing artifacts, resolve existing workflow state in this order. Skip th
 1. Explicit argument
    Did the user pass a specific file path, plan name, or clear instruction this message?
    - It names a ticket from the tree when it gives a ref such as `1.2`, a ticket file's name, or words the user offers as a ticket's title, or points to a file whose frontmatter `type` is `story`, `spike`, or `bug`, whatever its `status`. Resolve a named ticket's plan, entry, and prerequisites with `uv run {project-root}/_bmad/method/scripts/tickets.py --project-root {project-root} find <ref>`; for a ticket file, pass its folder before its file name. Non-zero exit → show its error and HALT. Otherwise follow **Ticket resolution** (below).
-   - If it points to a file that matches the plan template (has `status` frontmatter with a recognized value: draft, ready-for-dev, in-progress, in-review, built, done, or blocked) → set `plan_file`, then **EARLY EXIT** to the appropriate step: `draft` → `{{ rendered("step-02-plan.md") }}`, {% if workflow.route == "oneshot" %}`ready-for-dev`/`in-progress` → `{{ rendered("step-oneshot.md") }}`{% elif workflow.route == "full" %}`ready-for-dev`/`in-progress` → `{{ rendered("step-03-implement.md") }}`, `in-review`/`built` → `{{ rendered("step-04-review.md") }}`{% else %}`ready-for-dev`/`in-progress` → `{{ rendered("step-03-implement.md") }}` (or `{{ rendered("step-oneshot.md") }}` when `route` is `oneshot`), `in-review`/`built` → `{{ rendered("step-04-review.md") }}`{% endif %}. For `done`, ingest as context and proceed to INSTRUCTIONS — do not resume. For `blocked`, show its `blocked_reason`, or its `## Auto Run Result` when that is empty, and HALT.
+   - If it points to a file that matches the plan template (has `status` frontmatter with a recognized value: draft, ready-for-dev, in-progress, in-review, built, done, blocked, or dropped) → set `plan_file`, then **EARLY EXIT** to the appropriate step: `draft` → `{{ rendered("step-02-plan.md") }}`, {% if workflow.route == "oneshot" %}`ready-for-dev`/`in-progress` → `{{ rendered("step-oneshot.md") }}`{% elif workflow.route == "full" %}`ready-for-dev`/`in-progress` → `{{ rendered("step-03-implement.md") }}`, `in-review`/`built` → `{{ rendered("step-04-review.md") }}`{% else %}`ready-for-dev`/`in-progress` → `{{ rendered("step-03-implement.md") }}` (or `{{ rendered("step-oneshot.md") }}` when `route` is `oneshot`), `in-review`/`built` → `{{ rendered("step-04-review.md") }}`{% endif %}. For `done`, ingest as context and proceed to INSTRUCTIONS — do not resume. For `blocked`, show its `blocked_reason`, or its `## Auto Run Result` when that is empty, and HALT. For `dropped`, say the ticket was dropped and HALT.
    - Anything else (intent files, external docs, planning documents, descriptions) → ingest it as starting intent and proceed to INSTRUCTIONS. Do not attempt to infer a workflow state from it.
 
 2. Recent conversation
@@ -27,12 +27,12 @@ Before listing artifacts, resolve existing workflow state in this order. Skip th
 3. The ticket tree
    With no argument and no intent from the conversation, run `uv run {project-root}/_bmad/method/scripts/tickets.py --project-root {project-root} next`.
    - Non-zero exit (no active initiative, a store refusal, a malformed tree) → say in one line that the ticket tree is unavailable and why, then go to 4.
-   - A row in any group whose `status` is `draft`, `ready-for-dev`, `in-progress`, or `in-review` has a started plan when the file at `find <ref>`'s `plan` exists. When any row has one, or `{{ config.output_folder }}/{active_initiative}/` holds a `plan-*.md` with one of those statuses, go to 4.
+   - A row in any group whose `status` is `draft`, `ready-for-dev`, `in-progress`, or `in-review` has a started plan when the file at `find <ref>`'s `plan` exists. When any row has one, or `{{ initiative_folder }}/` holds a `plan-*.md` with one of those statuses, go to 4.
    - No `ready_to_start` row → say in one line that nothing in the tree is ready, naming what is ready to refine, in progress, or blocked, then go to 4.
    - Otherwise run `find <ref>` with the first `ready_to_start` row's `ref`, tell the user in one line which entry you are building, and follow **Ticket resolution**.
 
 4. Otherwise — scan artifacts and ask
-   - Active plans (`draft`, `ready-for-dev`, `in-progress`, `in-review`) among `{{ config.output_folder }}/{active_initiative}/plan-*.md`, or started plans in the tree from branch 3? → List them all and HALT. Give the user a choice:
+   - Active plans (`draft`, `ready-for-dev`, `in-progress`, `in-review`) among `{{ initiative_folder }}/plan-*.md`, or started plans in the tree from branch 3? → List them all and HALT. Give the user a choice:
      - Resume one of the listed plans
      - **Next entry** — when branch 3 found a `ready_to_start` row with no `status`, the first one: run `find <ref>` with its `ref` and follow **Ticket resolution**
      - **New** — start new work
@@ -56,8 +56,12 @@ This runs on the output of `tickets.py find` for one ticket. Find's `description
 1. Load context.
    - **A ticket from the tree** — when **Ticket resolution** set `plan_file`: the entry, its epic file and what that file's References name, and the story file when there is one are already the intent. For continuity, read the plans beside `plan_file` whose `ticket` is one of find's `after` ids that is a plain number (an entry of the same epic; a ref such as `1.5` is another epic's). Extract each one's **Code Map**, **Design Notes**, **Plan Change Log**, and task list as continuity context for step-02 planning.
    - **Anything else:**
-     - No `{active_initiative}`: unless the user already said in this session, ask once whether this work belongs to an initiative (hand off to the `bmad` skill to set one, then read `{active_initiative}` again) or is loose.
-     - List `{{ config.output_folder }}/{active_initiative}/`, then `{{ config.output_folder }}/`.
+     {% if initiative_folder == config.output_folder %}
+     - No initiative is active: unless the user already said in this session, ask once whether this work belongs to an initiative (hand off to the `bmad` skill to set one, then run this skill again) or is loose.
+     - List `{{ config.output_folder }}/`.
+     {% else %}
+     - List `{{ initiative_folder }}/`, then `{{ config.output_folder }}/`.
+     {% endif %}
      - If you find an unformatted plan or intent file, ingest its contents to form your understanding of the intent.
      - Planning documents sit in folders by type, main file named after the folder. Typical ones:
        - **PRD** (`prd-*/prd-*.md`) — product requirements and success criteria
@@ -74,7 +78,7 @@ This runs on the output of `tickets.py find` for one ticket. Find's `description
    - HALT and give the user a choice:
      - **Split** — pick first goal, defer the rest.
      - **Keep all goals** — accept the risks.
-   - If the user chooses **Split**: For each deferred goal, append one new entry to `{{ config.output_folder }}/{active_initiative}/deferred-work.md` using this format. Do not modify existing entries or look for duplicates. Narrow scope to the first-mentioned goal. Continue routing.
+   - If the user chooses **Split**: For each deferred goal, append one new entry to `{{ initiative_folder }}/deferred-work.md` using this format. Do not modify existing entries or look for duplicates. Narrow scope to the first-mentioned goal. Continue routing.
      ```markdown
      - source_plan: none
        summary: <one sentence naming the deferred goal>
@@ -83,7 +87,7 @@ This runs on the output of `tickets.py find` for one ticket. Find's `description
    - If the user chooses **Keep all goals**: Proceed as-is.
 5. Set the plan file.
 
-   Derive a valid kebab-case slug from the current intent. If the intent references a tracking identifier (story number, issue number, ticket ID), lead the slug with it (e.g. `3-2-digest-delivery`, `gh-47-fix-auth`). If `{{ config.output_folder }}/{active_initiative}/plan-{slug}.md` already exists: if its status is `draft`, treat it as the same work and resume it (set `plan_file` to that path, **EARLY EXIT** → `{{ rendered("step-02-plan.md") }}`); otherwise append `-2`, `-3`, etc. Set `plan_file` = `{{ config.output_folder }}/{active_initiative}/plan-{slug}.md`.
+   Derive a valid kebab-case slug from the current intent. If the intent references a tracking identifier (story number, issue number, ticket ID), lead the slug with it (e.g. `3-2-digest-delivery`, `gh-47-fix-auth`). If `{{ initiative_folder }}/plan-{slug}.md` already exists: if its status is `draft`, treat it as the same work and resume it (set `plan_file` to that path, **EARLY EXIT** → `{{ rendered("step-02-plan.md") }}`); otherwise append `-2`, `-3`, etc. Set `plan_file` = `{{ initiative_folder }}/plan-{slug}.md`.
 
 ## NEXT
 

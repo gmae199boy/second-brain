@@ -10,19 +10,19 @@ Read this when the question is about `bmad-code-review`, `bmad-walkthrough`, `bm
 | `bmad-retrospective` | Agents, across tickets | A whole epic folder | Nothing; proposes action items |
 
 **`bmad-code-review`** — agent review of any diff, with verified and triaged findings. With no argument it offers the tickets in review and diffs from the chosen plan's `baseline_revision`.
-- Pick when: the code did not come from `bmad-build`; a PR or branch needs review; a build ran with review skipped or on the quick setting; after material fixes. Handing `bmad-build` its `built` plan also runs another review; a plan the user marked `done` is only context for new work. After an unattended run that sets `followup_review_recommended`, dispatch `bmad-build-auto` on the same ticket again; it goes straight to a fresh review pass.
-- Not when: `bmad-build` just ran its full review on the same change. It is the same four lenses again. A run can take half an hour or more, and more than two rounds on one change usually points to a problem outside the change, such as weak planning or a messy codebase.
+- Pick when: the code did not come from `bmad-build`; a PR or branch needs review; after material fixes. For another pass on a `bmad-build` run, hand `bmad-build` its `built` plan; once the user has marked the plan `done`, hand it to `bmad-code-review`. After an unattended run that sets `followup_review_recommended`, dispatch `bmad-build-auto` on the same ticket again; it goes straight to a fresh review pass.
+- Not when: `bmad-build` just ran a thorough review on the same change. It is the same four lenses again. A run can take half an hour or more, and more than two rounds on one change usually points to a problem outside the change, such as weak planning or a messy codebase. A finished epic → `bmad-retrospective`, which runs the review lenses over the epic's diff.
 - Writes: a dated block in the plan's `## Code Review` section when it reviews a plan; otherwise findings stay in the chat. It never changes the ticket's `status`.
 
 **`bmad-walkthrough`** — the human reviews a change block by block, at their own pace, with the agent as guide.
 - Pick when: a person needs to understand and accept a change, after a build or for someone else's PR. It orders attention: intent first, then the broad strokes, then details.
 - Not when: the user wants an automated bug hunt → `bmad-code-review`.
-- Writes: `{output_folder}/{active_initiative}/walkthrough-<slug>/` holding `walkthrough-<slug>.md` and `walkthrough-<slug>-log.md`.
+- Writes: `{output_folder}/{active_initiative}/walkthrough-<slug>/` holding `walkthrough-<slug>.md` and `walkthrough-<slug>-log.md`. With no initiative active, the folder goes in `{output_folder}/`.
 
 **`bmad-qa-generate-e2e-tests`** — generates API and end-to-end tests for features that already exist.
-- Pick when: the project has a UI or API with little end-to-end coverage. It covers the happy path plus one or two error cases and runs the tests until they pass.
+- Pick when: the project has a UI or API with little end-to-end coverage. It covers the main path and the errors a user can see, follows the project's existing test setup, and never loosens a test to make it pass: a test that finds a bug is reported and kept as a known failure. Name a ticket and it takes its scenarios from there.
 - Not when: the user wants unit tests for work in flight (`bmad-build` writes and runs tests for the edge cases its plan lists; ask for more in the build request), a review, or a test strategy (the Test Architect module covers that).
-- Writes: tests under `{project-root}/tests`, summary at `{output_folder}/{active_initiative}/test-summary-<slug>/test-summary-<slug>.md`. With no initiative active, this and the walkthrough folder go in `{output_folder}/`.
+- Writes: tests where the project keeps its end-to-end tests, and nothing else. The report is in chat.
 
 **`bmad-retrospective`** — judges a finished epic folder in the ticket tree as a whole against the epic's Done when and the initiative's requirements.
 - Gives: sourced findings no single session could see (architecture drift, duplication, spec versus built), owned action items, and a verdict: accepted, accepted with open items, or rejected.

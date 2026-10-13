@@ -8,12 +8,12 @@
 
 ## HALT
 
-To HALT with a final status and optional blocking condition:
+To HALT with a final status and optional blocking condition. The halts `blocked plan supplied` and `dropped plan supplied` write nothing, so the plan keeps its first reason or its `dropped` status: go straight to 3.
 
-1. **A ticket from the tree** (`{ticket_args}` is set) with final status `blocked`: run `uv run {project-root}/_bmad/method/scripts/tickets.py --project-root {project-root} mark {ticket_args} blocked --blocked <blocking condition>`, with each argument quoted for the shell, which writes `status`, `blocked_at`, and `blocked_reason` to `{plan_file}` and creates it when there is none. Then append missing result details under `## Auto Run Result` in `{plan_file}`. If `mark` fails, follow 2 instead. The halt `blocked plan supplied` writes nothing, so the plan keeps its first reason; go to 3.
+1. **A ticket from the tree** (`{ticket_args}` is set) with final status `blocked`: run `uv run {project-root}/_bmad/method/scripts/tickets.py --project-root {project-root} mark {ticket_args} blocked --blocked <blocking condition>`, with each argument quoted for the shell, which writes `status`, `blocked_at`, and `blocked_reason` to `{plan_file}` and creates it when there is none. Then append missing result details under `## Auto Run Result` in `{plan_file}`. If `mark` fails, follow 2 instead.
 2. **Otherwise:**
    - If `{plan_file}` is known and exists, update `status` in frontmatter and append missing result details under `## Auto Run Result`.
-   - If `{plan_file}` is unknown or missing, create `{{ config.output_folder }}/{active_initiative}/bmad-build-auto-result-<slug-or-timestamp>.md` with:
+   - If `{plan_file}` is unknown or missing, create `{{ initiative_folder }}/bmad-build-auto-result-<slug-or-timestamp>.md` with:
      ```markdown
      ---
      status: <final status>
@@ -46,7 +46,7 @@ A full plan is "Ready for Development" when:
 
 - **Actionable**: Every task has a file path and specific action.
 - **Logical**: Tasks ordered by dependency.
-- **Testable**: All ACs use Given/When/Then.
+- **Testable**: All ACs use Given/When/Then, and each is a check the implementer can prove it met without pointing at code.
 - **Surface-anchored**: ACs observe the outermost surface the intent references — never a more internal proxy for it.
 - **Complete**: No placeholders or TBDs.
 - **Sufficient**: No known requirement, acceptance, dependency, or implementation gaps remain unresolved.
@@ -54,9 +54,6 @@ A full plan is "Ready for Development" when:
 
 ## Conventions
 
-- Every operational cross-file reference in this workflow is an absolute snapshot path. Open it directly; do not resolve it relative to a skill directory.
-- `{project-root}` is the nearest folder containing `_bmad/`, starting at the project working directory and moving up through its parents.
-- `{active_initiative}` is the value printed by `uv run {project-root}/_bmad/scripts/resolve_config.py --project-root {project-root} --key core.active_initiative`, read once before step 1. When it is unset, drop `/{active_initiative}` from every path.
 - Whenever this workflow captures or records a version-control revision, obtain the full canonical identifier directly from version control and preserve it verbatim.
 
 ## On Activation

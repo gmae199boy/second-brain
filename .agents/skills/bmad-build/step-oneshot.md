@@ -21,7 +21,7 @@ You reach this step from step 2, or from step 1 when resuming a plan whose `rout
 
 If intent gaps remain, present each as a numbered question with its options and what each option means, HALT for the human's answers, and fold the answers into the Intent.
 
-Capture `baseline_revision` (current HEAD, or `NO_VCS` if version control is unavailable) into `{plan_file}` frontmatter before making any changes. If the frontmatter already contains `baseline_revision` (resumed run), preserve the existing value.
+Capture `baseline_revision` (current HEAD, or `NO_VCS` if version control is unavailable) into `{plan_file}` frontmatter before making any changes. If `baseline_revision` already holds a value (resumed run), preserve it.
 
 Build the change from `{plan_file}`. The Intent section is what you implement. As you work, add notes to `## Implementation Notes`: decisions you made, files you changed, surprises.
 
@@ -83,7 +83,7 @@ For each group:
 
 - **patch** — This change caused or exposed the problem. The smallest fix is simple, adds no new public API, and does not guard code paths you did not show are reachable. Fix it now.
 - **HALT** — Same as patch, but the smallest fix is not that simple. Stop and ask the user before continuing.
-- **defer** — Everything else: old bugs not caused by this change, ideas for later, groups where every member is `maybe-false` and would be `medium` or `high` if true (record that severity marked unverified, and what would prove it; if it would only be `low`, reject it), or fixes that would edit CLAUDE.md, AGENTS.md, rules, or specs. Add one entry to `{{ config.output_folder }}/{active_initiative}/deferred-work.md`:
+- **defer** — Everything else: old bugs not caused by this change, ideas for later, groups where every member is `maybe-false` and would be `medium` or `high` if true (record that severity marked unverified, and what would prove it; if it would only be `low`, reject it), or fixes that would edit CLAUDE.md, AGENTS.md, rules, or specs. Add one entry to `{{ initiative_folder }}/deferred-work.md`:
 
   ```markdown
   - source_plan: `{plan_file}`
