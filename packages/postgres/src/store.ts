@@ -1,9 +1,18 @@
-import type { HealthStore, StoreHealth } from '@second-brain/core';
+import type {
+  HealthStore,
+  ReadSchemaVersionResult,
+  SchemaStore,
+  StoreHealth,
+} from '@second-brain/core';
 import { Kysely, PostgresDialect, sql } from 'kysely';
-import { createPool, describe, type ConnectionOptions } from './connect.js';
+import { createPool, describe, type CreatePoolOptions } from './connect.js';
 
-/** Options of the store factory; the connection half is shared (AD-3). */
-export type PostgresStoreOptions = ConnectionOptions;
+/**
+ * Options of the store factory; the connection half is shared (AD-3). The
+ * per-query budget is part of it, because the caller — not this adapter — knows
+ * whether its queries answer at once or legitimately run long.
+ */
+export type PostgresStoreOptions = CreatePoolOptions;
 
 /** Shape of the version row the health probe reads. */
 interface VersionRow {
@@ -15,17 +24,29 @@ interface VectorRow {
   available: string | null;
 }
 
+interface SchemaVersionRow {
+  version: number;
+  applied_at: Date;
+}
+
+/**
+ * `undefined_table`. An empty database has no `schema_version`, because the
+ * table arrives with the first migration, and that is a version of `null`
+ * rather than an unreachable database.
+ */
+const UNDEFINED_TABLE = '42P01';
+
 /**
  * Build a Postgres-backed `HealthStore`. The pool and the Kysely instance are
  * created here, inside the factory, so importing this module connects to
  * nothing (AD-3).
  *
- * It implements the health capability alone: the session tables arrive with the
- * first migration, and the day this adapter implements `SessionStore` too the
- * return type widens to `Store` and the session contract runs against it. No
- * stub methods in the meantime (AD-10).
+ * It implements the health and schema-version capabilities: the session tables
+ * arrive with the first migration, and the day this adapter implements
+ * `SessionStore` too the return type widens to `Store` and the session contract
+ * runs against it. No stub methods in the meantime (AD-10).
  */
-export function postgresStore(options: PostgresStoreOptions): HealthStore {
+export function postgresStore(options: PostgresStoreOptions): HealthStore & SchemaStore {
   const pool = createPool(options);
 
   const db = new Kysely<Record<string, never>>({
@@ -74,8 +95,43 @@ export function postgresStore(options: PostgresStoreOptions): HealthStore {
       }
     },
 
+    async readSchemaVersion(): Promise<ReadSchemaVersionResult> {
+      try {
+        const stored = await sql<SchemaVersionRow>`
+          select version, applied_at from schema_version
+        `.execute(db);
+
+        const row = stored.rows[0];
+        if (row === undefined) {
+          // The table is there but empty: a migration that created it and died
+          // before recording a version. Still "no version yet".
+          return { ok: true, version: null };
+        }
+        return {
+          ok: true,
+          version: { version: row.version, appliedAt: row.applied_at },
+        };
+      } catch (error) {
+        if (sqlState(error) === UNDEFINED_TABLE) {
+          return { ok: true, version: null };
+        }
+        return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) };
+      }
+    },
+
     async close(): Promise<void> {
       await db.destroy();
     },
   };
+}
+
+/**
+ * The five-character SQLSTATE `pg` puts on a server-side error, or `undefined`
+ * when the failure never reached the server. Kysely wraps nothing here, so the
+ * code sits on the error itself.
+ */
+function sqlState(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const code: unknown = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
 }

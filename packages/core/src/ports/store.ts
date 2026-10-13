@@ -6,6 +6,7 @@ import type {
   SessionStartSource,
 } from '../domain/session.js';
 import type { SessionKey, SessionToken } from '../domain/session-token.js';
+import type { SchemaVersion } from '../domain/schema-version.js';
 import type { ToolNote } from '../domain/tool-note.js';
 
 /**
@@ -129,3 +130,27 @@ export interface SessionStore {
  * the whole `Store` contract (AD-10).
  */
 export type Store = HealthStore & SessionStore;
+
+/**
+ * Result of reading the single `schema_version` row. `version: null` means the
+ * database answered but holds no version yet — an empty database, since the row
+ * and its table arrive with the first migration. Unreachable is a value too, so
+ * the write guard never has to catch (Conventions).
+ */
+export type ReadSchemaVersionResult =
+  | { ok: true; version: SchemaVersion | null }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
+/**
+ * The schema-version capability of the persistence port. A capability of its
+ * own, not part of `Store`, because two unrelated callers need exactly this and
+ * nothing more: the write guard before every `writes` command (AD-20) and the
+ * schema check of `admin doctor`. Folding it into `HealthStore` would change
+ * the shape of the health probe every adapter already passes (AD-10).
+ */
+export interface SchemaStore {
+  /** Read the stored version. Never throws: an unreachable store is `ok: false`. */
+  readSchemaVersion(): Promise<ReadSchemaVersionResult>;
+  /** Release every resource the store holds. */
+  close(): Promise<void>;
+}

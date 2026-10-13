@@ -15,6 +15,7 @@
   "dependencies": {
     "commander": "15.0.0",
     "second_brain": "workspace:*",
+    "smol-toml": "1.9.0",
     "uuid": "14.0.2"
   },
   "devDependencies": {

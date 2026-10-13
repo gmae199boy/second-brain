@@ -31,16 +31,23 @@ export {
   type SubjectFactory,
 } from './contract.js';
 export {
+  assertReadSchemaVersion,
   assertStoreHealth,
   clockContract,
   embedderContract,
   idGenContract,
   parserContract,
   rerankerContract,
+  schemaStoreContract,
   sessionStoreContract,
   storeContract,
   type ParserSubject,
 } from './contracts/index.js';
+export {
+  memorySchemaStore,
+  type MemorySchemaStore,
+  type MemorySchemaStoreOptions,
+} from './fakes/schema-store.js';
 export {
   memoryStore,
   type MemoryStore,

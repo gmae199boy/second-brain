@@ -165,7 +165,7 @@ sequenceDiagram
 - **Rule:**
   - 원본(SOT)은 Postgres다. Markdown 미러, 조각, 색인은 원본에서 다시 만들 수 있는 파생물이고, spool은 대기열이다.
   - Store port의 모든 구현은 하나의 공통 계약 테스트를 통과한다.
-  - Core와 런타임 경로는 `DATABASE_URL` 하나로만 접근하고, Postgres를 띄우거나 설치하지 않는다. DB 생성은 설치기에만 있다(AD-19).
+  - Core와 런타임 경로는 `SECOND_BRAIN_DATABASE_URL`(이름은 `[database] url_env`로 바꿀 수 있다) 하나로만 접근하고, Postgres를 띄우거나 설치하지 않는다. DB 생성은 설치기에만 있다(AD-19).
 
 ### AD-11 — 원문 불변, 그리고 유일한 예외인 가리기
 
@@ -334,7 +334,7 @@ erDiagram
 | ID | UUIDv7, Postgres `uuid`, JSON에서는 문자열. 프로세스 경계를 넘는 세션 토큰은 `harness:harness_session_id` |
 | 시각 | DB `timestamptz`. JSON은 오프셋을 포함한 ISO-8601. 사람용 출력만 설정 시간대로 표시 |
 | 텍스트 | 저장 본문은 Harness가 준 그대로(마스킹 제외). 비교·대조는 NFC 정규화 후. 위치는 코드 포인트 `[start, end)` |
-| CLI `--json` 응답 | `{ ok, now, data, warnings[], error? }`. `error`는 `{ code, message }`. 저하된 결과는 반드시 `warnings[]`에 코드로 넣는다: `SPOOLED`, `DB_UNAVAILABLE`, `SCHEMA_MISMATCH`, `RERANK_FAILED`, `INDEX_CONFIG_MISMATCH`, `UNINDEXED`, `RESULT_TRUNCATED`, `RULE_UNVERIFIED`, `CURSOR_RESET` |
+| CLI `--json` 응답 | `{ ok, now, data, warnings[], error? }`. `error`는 `{ code, message }`. 저하된 결과는 반드시 `warnings[]`에 코드로 넣는다: `SPOOLED`, `DB_UNAVAILABLE`, `SCHEMA_MISMATCH`, `RERANK_FAILED`, `INDEX_CONFIG_MISMATCH`, `UNINDEXED`, `RESULT_TRUNCATED`, `RULE_UNVERIFIED`, `CURSOR_RESET`, `CONFIG_UNKNOWN_KEY` |
 | hook 응답 | connector adapter 소유(AD-4). 10,000자 이하. hook 경로는 항상 exit 0으로 끝낸다(Stop의 exit 2는 턴을 이어 가게 하므로 금지) |
 | 오류 | Core는 예상된 실패를 코드가 있는 값으로 돌려주고, 예외는 버그에만 쓴다. 실패는 `failures`에, DB가 없으면 spool에 남긴다. stderr만으로 끝내지 않는다 |
 | 내보내기 (NFR-9) | 한 스냅샷 트랜잭션 안에서 테이블당 JSON Lines 하나 + `manifest.json`(스키마 버전, 테이블별 건수, 시각). 복구는 의존 순서대로 insert하고, 파생 테이블은 다시 만든다 |
@@ -381,7 +381,7 @@ flowchart TB
   subgraph mac["내 Mac (한 대)"]
     harness["Harness<br/>(Claude Code)"] -- "hook → shim" --> brain["brain CLI (단명)"]
     agent["에이전트"] -- "brain log / recall" --> brain
-    brain -- "DATABASE_URL" --> pg[("Postgres 18 + pgvector<br/>Docker, named volume")]
+    brain -- "SECOND_BRAIN_DATABASE_URL" --> pg[("Postgres 18 + pgvector<br/>Docker, named volume")]
     brain --> spool["~/.second_brain/spool"]
     brain --> mirror["~/.second_brain/mirror<br/>(경로 설정 가능)"]
     brain --> exp["내보내기 위치<br/>(설정)"]

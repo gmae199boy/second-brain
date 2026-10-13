@@ -14,6 +14,8 @@ export interface TestDatabaseOptions {
 export interface TestDatabase {
   /** Connection URL of the freshly created, vector-enabled database. */
   url: string;
+  /** Run one statement against this database, for arranging state a test needs. */
+  query(text: string): Promise<void>;
   /** Drop the database again. Safe to call once. */
   drop(): Promise<void>;
 }
@@ -71,6 +73,15 @@ export async function createTestDatabase(options: TestDatabaseOptions = {}): Pro
   let dropped = false;
   return {
     url,
+    async query(text) {
+      const client = new pg.Client({ connectionString: url });
+      await client.connect();
+      try {
+        await client.query(text);
+      } finally {
+        await client.end();
+      }
+    },
     async drop() {
       if (dropped) return;
       await withAdminClient(adminUrl, async (admin) => {

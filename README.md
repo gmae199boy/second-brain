@@ -40,8 +40,26 @@ The container keeps no volume, so stopping it discards the data.
 
 ## Check the install
 
+Configuration lives outside the repository, in `~/.second_brain` (or the folder
+`SECOND_BRAIN_HOME` names). `config.toml` holds variable names only; the values
+live in `.env` at mode 0600. Until the installer exists, write the two files by
+hand:
+
 ```sh
-DATABASE_URL=postgres://postgres:postgres@localhost:54329/postgres pnpm brain admin doctor --json
+mkdir -p ~/.second_brain
+cat > ~/.second_brain/config.toml <<'TOML'
+schema_version = 1
+timezone = "Asia/Seoul"
+
+[database]
+url_env = "SECOND_BRAIN_DATABASE_URL"
+TOML
+cat > ~/.second_brain/.env <<'ENV'
+SECOND_BRAIN_DATABASE_URL="postgres://postgres:postgres@localhost:54329/postgres"
+ENV
+chmod 600 ~/.second_brain/.env
+
+pnpm brain admin doctor --json
 ```
 
 Exit 0 means every check passed, 1 means a check failed (a stopped database

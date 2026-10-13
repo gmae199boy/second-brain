@@ -1,12 +1,5 @@
-import { createBrain, postgresStore, type DoctorCheck } from 'second_brain';
-import { readConfig } from '../config.js';
-import { errorEnvelope, okEnvelope } from '../envelope.js';
-
-/**
- * Codes that also belong in `warnings[]` when a check carries them. Story 4
- * owns the full set from the Conventions table.
- */
-const WARNING_CODES = new Set(['DB_UNAVAILABLE']);
+import { isWarningCode, type DoctorCheck, type WarningCode } from 'second_brain';
+import type { CommandSpec } from '../dispatch.js';
 
 /**
  * Core keeps the vector capability under a neutral name; only this output layer
@@ -14,55 +7,43 @@ const WARNING_CODES = new Set(['DB_UNAVAILABLE']);
  */
 const CHECK_IDS: Record<string, string> = { vector: 'pgvector' };
 
-export interface AdminDoctorOptions {
-  json: boolean;
+export interface AdminDoctorData {
+  checks: DoctorCheck[];
 }
 
-/** Assemble, run, print, close, and hand back the exit code. */
-export async function adminDoctor(options: AdminDoctorOptions): Promise<number> {
-  const config = readConfig();
-  if (!config.ok) {
-    const envelope = errorEnvelope(config.code, config.message);
-    if (options.json) {
-      process.stdout.write(`${JSON.stringify(envelope)}\n`);
-    } else {
-      process.stderr.write(`${config.code}: ${config.message}\n`);
-    }
-    return 2;
-  }
+/**
+ * `brain admin doctor`. A read, so no write guard applies. It translates the
+ * report and nothing more (AD-5); which checks exist is Core's business, and
+ * story 8 adds the rest of them there.
+ */
+export const adminDoctor: CommandSpec<AdminDoctorData> = {
+  ns: 'admin',
+  verb: 'doctor',
+  nsDescription: 'administrative commands',
+  description: 'check that the brain is reachable and healthy',
 
-  const store = postgresStore({
-    databaseUrl: config.databaseUrl,
-    // Leave room for process startup inside the five seconds doctor is allowed.
-    connectTimeoutMs: 4000,
-  });
-  const brain = createBrain({ store });
-  try {
-    const report = await brain.admin.doctor();
+  async run(context) {
+    const report = await context.brain.admin.doctor();
     const checks = report.checks.map((check) => ({
       ...check,
       id: CHECK_IDS[check.id] ?? check.id,
     }));
-    const warnings = checks.flatMap((check) =>
-      check.code !== undefined && WARNING_CODES.has(check.code) ? [check.code] : [],
+
+    // A failing check that carries one of the shared codes is also a warning:
+    // the command ran, and the result is degraded (Conventions, NFR-2).
+    const warnings = checks.flatMap((check): WarningCode[] =>
+      check.code !== undefined && isWarningCode(check.code) ? [check.code] : [],
     );
 
-    if (options.json) {
-      process.stdout.write(`${JSON.stringify(okEnvelope({ checks }, warnings))}\n`);
-    } else {
-      for (const check of checks) {
-        process.stdout.write(`${formatCheck(check)}\n`);
-      }
-      for (const warning of warnings) {
-        process.stdout.write(`warning: ${warning}\n`);
-      }
-    }
-
-    return checks.some((check) => check.status === 'fail') ? 1 : 0;
-  } finally {
-    await brain.close();
-  }
-}
+    return {
+      ok: true,
+      data: { checks },
+      warnings,
+      text: checks.map(formatCheck),
+      failed: checks.some((check) => check.status === 'fail'),
+    };
+  },
+};
 
 function formatCheck(check: DoctorCheck): string {
   const parts = [`${check.id}: ${check.status}`];

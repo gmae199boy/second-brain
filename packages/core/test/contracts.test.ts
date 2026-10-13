@@ -8,7 +8,7 @@ import type { Clock } from '../src/ports/clock.js';
 import type { IdGen } from '../src/ports/id-gen.js';
 import type { Embedder } from '../src/ports/embedder.js';
 import type { Reranker } from '../src/ports/reranker.js';
-import type { SessionStore } from '../src/ports/store.js';
+import type { SchemaStore, SessionStore } from '../src/ports/store.js';
 import {
   clockContract,
   embedderContract,
@@ -17,6 +17,7 @@ import {
   memoryEmbedder,
   memoryParser,
   memoryReranker,
+  memorySchemaStore,
   memoryStore,
   memoryTranscript,
   parserContract,
@@ -24,6 +25,7 @@ import {
   sampleEnsureSessionInput,
   sampleIngestBatch,
   sampleSessionToken,
+  schemaStoreContract,
   sequenceIdGen,
   sessionStoreContract,
   steppingClock,
@@ -77,6 +79,27 @@ describe('the session contract against the memory store', () => {
       await testCase.run(async () => memoryStore());
     });
   }
+});
+
+describe('the schema contract against the memory schema store', () => {
+  for (const testCase of schemaStoreContract()) {
+    it(testCase.name, async () => {
+      await testCase.run(async () => memorySchemaStore());
+    });
+  }
+
+  it('accepts a database that holds no version row yet', async () => {
+    const make = async () => memorySchemaStore({ version: null });
+    expect(await failedCases(schemaStoreContract(), make)).toEqual([]);
+  });
+
+  it('accepts an unreachable store as a value', async () => {
+    const make = async () =>
+      memorySchemaStore({
+        result: { ok: false, code: 'DB_UNAVAILABLE', message: 'connect ECONNREFUSED' },
+      });
+    expect(await failedCases(schemaStoreContract(), make)).toEqual([]);
+  });
 });
 
 describe('the parser contract against the memory parser', () => {
@@ -222,6 +245,48 @@ describe('the contracts catch a wrong store', () => {
 
     expect(await failedCases(sessionStoreContract(), make)).toContain(
       'ingest warns with CURSOR_RESET when the parser read from the start',
+    );
+  });
+});
+
+describe('the contracts catch a wrong schema store', () => {
+  it('catches a store that throws when the version row is missing', async () => {
+    const make = async (): Promise<SchemaStore> => {
+      const inner = memorySchemaStore({ version: null });
+      return {
+        ...inner,
+        async readSchemaVersion() {
+          const result = await inner.readSchemaVersion();
+          // An empty database is a value, not an exception (Conventions).
+          if (result.ok && result.version === null) throw new Error('no schema_version row');
+          return result;
+        },
+      };
+    };
+
+    expect(await failedCases(schemaStoreContract(), make)).toContain(
+      'readSchemaVersion answers with a well formed value instead of throwing',
+    );
+  });
+
+  it('catches a store that reports a version without saying when it was applied', async () => {
+    const make = async (): Promise<SchemaStore> => {
+      const inner = memorySchemaStore();
+      return {
+        ...inner,
+        async readSchemaVersion() {
+          const result = await inner.readSchemaVersion();
+          if (!result.ok || result.version === null) return result;
+          return {
+            ok: true,
+            version: { version: result.version.version, appliedAt: new Date(Number.NaN) },
+          };
+        },
+      };
+    };
+
+    expect(await failedCases(schemaStoreContract(), make)).toContain(
+      'readSchemaVersion answers with a well formed value instead of throwing',
     );
   });
 });
