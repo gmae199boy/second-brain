@@ -381,6 +381,42 @@ describe('runMigrations against a closed port', () => {
   });
 });
 
+describe('runMigrations against a database that refuses a statement', () => {
+  it('says MIGRATION_FAILED and names the file, not DB_UNAVAILABLE', async () => {
+    const url = await emptyDatabase();
+    // A table the first migration also creates: the server is right there and
+    // answering, and the failure is the schema's, not the connection's.
+    await withClient(url, async (client) => {
+      await client.query('create table workspaces (id uuid primary key)');
+    });
+
+    const result = await runMigrations({ databaseUrl: url });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('MIGRATION_FAILED');
+    expect(result.message).toContain('workspaces');
+    if (result.code !== 'MIGRATION_FAILED') return;
+    expect(result.file).toBe('0001_initial.sql');
+  });
+
+  it('records no version, so a later run still sees an unmigrated database', async () => {
+    const url = await emptyDatabase();
+    await withClient(url, async (client) => {
+      await client.query('create table messages (id uuid primary key)');
+    });
+
+    await runMigrations({ databaseUrl: url });
+
+    const stored = await withClient(url, async (client) =>
+      client.query<{ relation: string | null }>(
+        `select to_regclass('public.schema_version')::text as relation`,
+      ),
+    );
+    expect(stored.rows[0]?.relation).toBeNull();
+  });
+});
+
 describe('the immutability triggers (AD-11)', () => {
   let url: string;
 

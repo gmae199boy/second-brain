@@ -3,9 +3,11 @@ import type { CommandSpec } from '../dispatch.js';
 
 /**
  * Core keeps the vector capability under a neutral name; only this output layer
- * and the adapter know it is pgvector here.
+ * and the adapter know it is pgvector here. Exported because the installer ends
+ * in the same report and must name its checks the same way — two spellings of
+ * `pgvector` would be two things as far as anyone reading them is concerned.
  */
-const CHECK_IDS: Record<string, string> = { vector: 'pgvector' };
+export const CHECK_IDS: Record<string, string> = { vector: 'pgvector' };
 
 export interface AdminDoctorData {
   checks: DoctorCheck[];
@@ -45,7 +47,8 @@ export const adminDoctor: CommandSpec<AdminDoctorData> = {
   },
 };
 
-function formatCheck(check: DoctorCheck): string {
+/** One check as a line. Shared with the installer, for the same reason. */
+export function formatCheck(check: DoctorCheck): string {
   const parts = [`${check.id}: ${check.status}`];
   if (check.code !== undefined) parts.push(`[${check.code}]`);
   if (check.detail !== undefined && check.detail !== '') parts.push(check.detail);

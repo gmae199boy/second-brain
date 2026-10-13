@@ -16,6 +16,13 @@ export interface TestDatabase {
   url: string;
   /** Run one statement against this database, for arranging state a test needs. */
   query(text: string): Promise<void>;
+  /**
+   * Run one query and hand back its rows, for a test that has to look at what
+   * something else wrote. It exists so a test of a package that does not depend
+   * on `pg` — `apps/cli`, for one — does not have to take the dependency on to
+   * read a table back.
+   */
+  rows<T extends pg.QueryResultRow = Record<string, unknown>>(text: string): Promise<T[]>;
   /** Drop the database again. Safe to call once. */
   drop(): Promise<void>;
 }
@@ -78,6 +85,17 @@ export async function createTestDatabase(options: TestDatabaseOptions = {}): Pro
       await client.connect();
       try {
         await client.query(text);
+      } finally {
+        await client.end();
+      }
+    },
+    async rows<T extends pg.QueryResultRow = Record<string, unknown>>(
+      text: string,
+    ): Promise<T[]> {
+      const client = new pg.Client({ connectionString: url });
+      await client.connect();
+      try {
+        return (await client.query<T>(text)).rows;
       } finally {
         await client.end();
       }

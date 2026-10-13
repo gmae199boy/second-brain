@@ -25,7 +25,32 @@ Two environment variables move it off the defaults:
 | `SECOND_BRAIN_HOME` | `~/.second_brain` | Where the configuration and the clone go |
 | `SECOND_BRAIN_REPO` | `https://github.com/gmae199boy/second-brain.git` | Which repository to clone, for a fork or a test |
 
-The installer itself is still being built: today it only prints what it found.
+The installer then asks which Postgres this brain should use:
+
+- **Make one locally with Docker.** It creates the container `second-brain-db`
+  from `pgvector/pgvector:pg18`, on `127.0.0.1:54320`, keeping its data in the
+  named volume `second-brain-pgdata` and restarting unless you stop it. The
+  password is generated at install time and written only to `.env`. If Docker is
+  not installed it offers to install Docker Desktop with
+  `brew install --cask docker` and opens it so you can finish its permission
+  dialogs.
+- **Connect to a Postgres you already have.** It asks for the URL and checks it
+  answers before writing anything.
+
+Either way it then writes the configuration, applies the migrations, installs
+the `vector` extension, seeds the default chunk index config, and finishes by
+running the same checks as `brain admin doctor`. Exit 0 means every check
+passed. Running it again changes nothing: it starts the container it already
+made rather than making another, offers the recorded URL as the default (with
+the password masked), and leaves the single index config row alone.
+
+Where there is no terminal to ask in — a script, or CI — say what to do with
+flags instead:
+
+```sh
+node apps/cli/dist/install.js --database-url postgres://… --yes
+node apps/cli/dist/install.js --docker --yes
+```
 
 ## Layout
 
@@ -74,22 +99,15 @@ The container keeps no volume, so stopping it discards the data.
 
 Configuration lives outside the repository, in `~/.second_brain` (or the folder
 `SECOND_BRAIN_HOME` names). `config.toml` holds variable names only; the values
-live in `.env` at mode 0600. Until the installer exists, write the two files by
-hand:
+live in `.env` at mode 0600. The installer writes both — there is nothing to
+write by hand. To check a working tree against the test database without
+touching the real folder, point the installer somewhere else:
 
 ```sh
-mkdir -p ~/.second_brain
-cat > ~/.second_brain/config.toml <<'TOML'
-schema_version = 1
-timezone = "Asia/Seoul"
-
-[database]
-url_env = "SECOND_BRAIN_DATABASE_URL"
-TOML
-cat > ~/.second_brain/.env <<'ENV'
-SECOND_BRAIN_DATABASE_URL="postgres://postgres:postgres@localhost:54329/postgres"
-ENV
-chmod 600 ~/.second_brain/.env
+docker compose -f compose.test.yaml up -d --wait
+export SECOND_BRAIN_HOME=$(mktemp -d)
+node apps/cli/dist/install.js \
+  --database-url postgres://postgres:postgres@localhost:54329/postgres --yes
 
 pnpm brain admin doctor --json
 ```

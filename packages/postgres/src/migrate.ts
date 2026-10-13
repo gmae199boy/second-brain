@@ -17,6 +17,13 @@ export type RunMigrationsOptions = ConnectionOptions;
 /**
  * Result of a migration run. An unreachable database is a value, not an
  * exception (Conventions), so an installer can report it rather than crash.
+ *
+ * The two failures are told apart because they mean different things to the
+ * person reading them: `DB_UNAVAILABLE` says the database was not there, and
+ * nothing was attempted; `MIGRATION_FAILED` says it was there, answered, and
+ * refused a statement — which is a schema problem, not a connection one, and
+ * naming it `DB_UNAVAILABLE` sends the reader to restart a database that is
+ * already running.
  */
 export type MigrationResult =
   | {
@@ -32,6 +39,13 @@ export type MigrationResult =
       ok: false;
       code: 'DB_UNAVAILABLE';
       message: string;
+    }
+  | {
+      ok: false;
+      code: 'MIGRATION_FAILED';
+      message: string;
+      /** The file whose statements the server refused. */
+      file: string;
     };
 
 /** Migrations go forward only, one numbered SQL file at a time (Conventions). */
@@ -66,6 +80,10 @@ interface MigrationFile {
  * together with the version bump — so a file either took effect and was
  * recorded, or neither. Reading the folder and connecting both happen inside
  * this call (AD-3).
+ *
+ * Connecting is its own step with its own code: everything from the first
+ * statement on is the schema's business, so it comes back as
+ * `MIGRATION_FAILED`, named after the file the server refused.
  */
 export async function runMigrations(options: RunMigrationsOptions): Promise<MigrationResult> {
   const files = await readMigrationFiles();
@@ -74,13 +92,24 @@ export async function runMigrations(options: RunMigrationsOptions): Promise<Migr
   // behind another installer, or spend a while in one long statement.
   const pool = createPool({ ...options, queryTimeoutMs: 0 });
   try {
-    const client = await pool.connect();
+    let client: PoolClient;
+    try {
+      client = await pool.connect();
+    } catch (error) {
+      // Nothing was attempted, so this is the connection's failure alone.
+      return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) };
+    }
+
+    // Which file was in hand when it went wrong. Set before any statement of
+    // that file runs, so the failure can name it.
+    let attempting: string | undefined;
     try {
       let from: number | null = null;
       let current = 0;
       const applied: string[] = [];
 
       for (const file of files) {
+        attempting = file.name;
         const statements = await readFile(file.path, 'utf8');
         const outcome = await inTransaction(client, async () => {
           await client.query('select pg_advisory_xact_lock($1)', [MIGRATION_LOCK_KEY]);
@@ -110,12 +139,17 @@ export async function runMigrations(options: RunMigrationsOptions): Promise<Migr
       }
 
       return { ok: true, from: from ?? current, to: current, applied };
+    } catch (error) {
+      // The database answered and refused something, as a value (Conventions).
+      return {
+        ok: false,
+        code: 'MIGRATION_FAILED',
+        message: describe(error),
+        file: attempting ?? '',
+      };
     } finally {
       client.release();
     }
-  } catch (error) {
-    // Connecting and querying both end here, as a value (Conventions).
-    return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) };
   } finally {
     // Shutting the pool down is best effort; the verdict is already decided.
     await pool.end().catch(() => {});
