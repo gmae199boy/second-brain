@@ -7,6 +7,7 @@ import {
   CONFIG_SCHEMA_VERSION,
   DEFAULT_DATABASE_URL_ENV,
   DEFAULT_TIMEZONE,
+  defaultMirrorPath,
   readConfig,
   writeConfig,
 } from '../src/config/codec.js';
@@ -66,8 +67,36 @@ describe('readConfig with a complete folder', () => {
         timezone: 'Europe/Berlin',
         databaseUrlEnv: 'MY_BRAIN_URL',
         databaseUrl: URL,
+        mirrorPath: defaultMirrorPath(home),
       },
     });
+  });
+
+  it('reads the mirror path the file names', async () => {
+    const home = await given({
+      config: `${VALID_CONFIG}[mirror]\npath = "/tmp/elsewhere/brain-mirror"\n`,
+      env: `${DEFAULT_DATABASE_URL_ENV}="${URL}"\n`,
+    });
+
+    const result = await readConfig(home, {});
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.mirrorPath).toBe('/tmp/elsewhere/brain-mirror');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('defaults the mirror to a folder under the configuration folder', async () => {
+    const home = await given({
+      config: VALID_CONFIG,
+      env: `${DEFAULT_DATABASE_URL_ENV}="${URL}"\n`,
+    });
+
+    const result = await readConfig(home, {});
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.mirrorPath).toBe(join(home, 'mirror'));
   });
 
   it('defaults the timezone and the url variable name', async () => {
@@ -246,6 +275,11 @@ describe('readConfig and a folder it cannot use', () => {
       'a url_env that is not a variable name',
       `${VALID_CONFIG}[database]\nurl_env = "not a name"\n`,
     ],
+    // A relative mirror path would be a different folder for every working
+    // directory a command happens to be started from.
+    ['a relative mirror path', `${VALID_CONFIG}[mirror]\npath = "notes/mirror"\n`],
+    ['a mirror path of the wrong type', `${VALID_CONFIG}[mirror]\npath = 7\n`],
+    ['an empty mirror path', `${VALID_CONFIG}[mirror]\npath = ""\n`],
   ])('reports CONFIG_INVALID for %s', async (_name, config) => {
     const home = await given({ config, env: `${DEFAULT_DATABASE_URL_ENV}="${URL}"\n` });
 
@@ -277,6 +311,7 @@ describe('writeConfig', () => {
       timezone: 'Europe/Berlin',
       databaseUrlEnv: 'MY_BRAIN_URL',
       databaseUrl: URL,
+      mirrorPath: '/tmp/elsewhere/brain-mirror',
     });
     const result = await readConfig(home, {});
 
@@ -288,6 +323,7 @@ describe('writeConfig', () => {
         timezone: 'Europe/Berlin',
         databaseUrlEnv: 'MY_BRAIN_URL',
         databaseUrl: URL,
+        mirrorPath: '/tmp/elsewhere/brain-mirror',
       },
     });
 
@@ -375,5 +411,23 @@ describe('writeConfig', () => {
     await expect(
       writeConfig(home, { timezone: 'Nowhere/Nope', databaseUrl: URL }),
     ).rejects.toThrow(/time zone/);
+  });
+
+  it('refuses a relative mirror path, which it would refuse to read back', async () => {
+    const home = await tempHome();
+
+    await expect(
+      writeConfig(home, { mirrorPath: 'notes/mirror', databaseUrl: URL }),
+    ).rejects.toThrow(/absolute path/);
+    expect(existsSync(configFilePath(home))).toBe(false);
+  });
+
+  it('writes the default mirror path when it is given none', async () => {
+    const home = await tempHome();
+
+    await writeConfig(home, { databaseUrl: URL });
+
+    const document = await readFile(configFilePath(home), 'utf8');
+    expect(document).toContain(`path = "${join(home, 'mirror')}"`);
   });
 });

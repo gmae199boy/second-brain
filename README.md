@@ -37,12 +37,20 @@ The installer then asks which Postgres this brain should use:
 - **Connect to a Postgres you already have.** It asks for the URL and checks it
   answers before writing anything.
 
+Then it asks where the mirror folder should go (anything absolute; the default
+is `~/.second_brain/mirror`) and whether to turn embeddings on — which is still
+"not supported yet", so saying yes only says so and writes nothing. Nothing
+creates the mirror folder yet either.
+
 Either way it then writes the configuration, applies the migrations, installs
-the `vector` extension, seeds the default chunk index config, and finishes by
-running the same checks as `brain admin doctor`. Exit 0 means every check
-passed. Running it again changes nothing: it starts the container it already
-made rather than making another, offers the recorded URL as the default (with
-the password masked), and leaves the single index config row alone.
+the `vector` extension, seeds the default chunk index config, writes the shim
+(below), offers to connect the harnesses it found, and finishes by running the
+same checks as `brain admin doctor`. Exit 0 means every check passed. Running
+it again changes nothing: it starts the container it already made rather than
+making another, offers the recorded URL as the default (with the password
+masked), offers the recorded mirror path as the default, leaves the single
+index config row alone, and leaves the shim and the harness entries alone when
+they already say the right thing.
 
 Where there is no terminal to ask in — a script, or CI — say what to do with
 flags instead:
@@ -51,6 +59,67 @@ flags instead:
 node apps/cli/dist/install.js --database-url postgres://… --yes
 node apps/cli/dist/install.js --docker --yes
 ```
+
+Without a terminal nothing is asked, so the mirror path keeps whatever is
+recorded (or the default) and no harness is connected unless `--connect` names
+it.
+
+| Flag | What it does |
+| --- | --- |
+| `--database-url <url>` | Use this Postgres instead of asking |
+| `--docker` | Make the local container instead of asking |
+| `--mirror-path <path>` | Absolute path for the mirror folder |
+| `--connect <harness>` | Connect this harness; repeat it for more than one |
+| `--yes` | Agree in advance to what the chosen path has to do |
+
+## Re-configure, and connect a harness
+
+The installer is also a command, so there is nothing to re-run from a clone:
+
+```sh
+brain setup run [--database-url <url> | --docker] [--mirror-path <path>] \
+                [--connect <harness>]… [--yes]
+brain setup connect <harness>
+```
+
+`brain setup run` is the same flow in the same order, idempotent, showing what
+is recorded as the default. It is one of two commands that need neither the
+configuration nor the database to exist — it is what writes the configuration —
+and with `--json` it hands back every line of the flow in `data.lines`.
+
+`--json` runs non-interactively, exactly as a run with no terminal does: it
+asks nothing, so it needs `--yes` together with `--database-url <url>` or
+`--docker`, and it exits 2 saying so if it has neither.
+
+`brain setup connect <harness>` registers this brain with one harness, for a
+harness installed after the install. The entry it writes carries a Brain mark,
+and that mark is the only thing "already connected" is ever decided by, so
+running it twice registers once (`changed: false` the second time) and nothing
+you put in that file yourself is ever touched. It reports `SHIM_MISSING` if the
+shim is not there, and exits 2 naming the harnesses this build knows if the
+name is not one of them. This build knows none yet: the Claude Code connector
+is a later epic, so `brain setup run` says there is no harness to connect and
+carries on.
+
+## The shim
+
+The installer writes `~/.second_brain/bin/brain`, mode 0755, and that is the
+`brain` a harness hook calls. A hook starts with none of your shell
+environment, so the shim carries everything it needs as literals: the `node`
+that ran the installer, the built entry point beside it, and the configuration
+folder of that install. It never calls `npx`.
+
+```sh
+#!/bin/sh
+# Written by second-brain. `brain setup run` rewrites it.
+SECOND_BRAIN_HOME=${SECOND_BRAIN_HOME:-'/Users/me/.second_brain'}; export SECOND_BRAIN_HOME
+exec '/opt/homebrew/bin/node' '/Users/me/.second_brain/app/apps/cli/dist/bin.js' "$@"
+```
+
+A `SECOND_BRAIN_HOME` already in the environment wins, so a second
+installation's shim does not fight the first one. Change node — a new `nvm`
+version, a Homebrew upgrade — and run `brain setup run` again to point the shim
+at it.
 
 ## Layout
 
@@ -98,10 +167,11 @@ The container keeps no volume, so stopping it discards the data.
 ## Check the install
 
 Configuration lives outside the repository, in `~/.second_brain` (or the folder
-`SECOND_BRAIN_HOME` names). `config.toml` holds variable names only; the values
-live in `.env` at mode 0600. The installer writes both — there is nothing to
-write by hand. To check a working tree against the test database without
-touching the real folder, point the installer somewhere else:
+`SECOND_BRAIN_HOME` names). `config.toml` holds variable names only — plus the
+time zone and the mirror path, which are not keys; the key values live in
+`.env` at mode 0600. The installer writes both — there is nothing to write by
+hand. To check a working tree against the test database without touching the
+real folder, point the installer somewhere else:
 
 ```sh
 docker compose -f compose.test.yaml up -d --wait
@@ -110,6 +180,9 @@ node apps/cli/dist/install.js \
   --database-url postgres://postgres:postgres@localhost:54329/postgres --yes
 
 pnpm brain admin doctor --json
+
+# the shim of that install, which carries the folder it belongs to
+env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" admin doctor
 ```
 
 Exit 0 means every check passed, 1 means a check failed (a stopped database

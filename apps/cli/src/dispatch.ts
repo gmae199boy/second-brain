@@ -49,16 +49,32 @@ export interface CommandOption {
   description: string;
 }
 
-/** What a command gets. No file, no environment, no connection of its own. */
-export interface CommandContext {
-  /** The SDK surface. The only thing a command is allowed to call (AD-5). */
-  brain: Brain;
-  /** The configuration, already read, checked and resolved (AD-18). */
-  config: BrainConfig;
+/** What every command gets, whether or not it has a brain to talk to. */
+export interface CommandContextBase {
   /** The one clock. A command that needs a time asks this (AD-13). */
   clock: Clock;
   /** The parsed flags of this invocation, including `json`. */
   options: Record<string, unknown>;
+  /** The positional arguments, in the order `arguments` declared them. */
+  args: readonly string[];
+}
+
+/** What a command gets. No file, no environment, no connection of its own. */
+export interface CommandContext extends CommandContextBase {
+  /** The SDK surface. The only thing a command is allowed to call (AD-5). */
+  brain: Brain;
+  /** The configuration, already read, checked and resolved (AD-18). */
+  config: BrainConfig;
+}
+
+/**
+ * What a standalone command gets instead: the environment, because there is no
+ * configuration to have read it for them. It is the whole point of being
+ * standalone — `setup run` is what writes the configuration, and `setup connect`
+ * writes a harness file and never touches the database.
+ */
+export interface StandaloneCommandContext extends CommandContextBase {
+  env: NodeJS.ProcessEnv;
 }
 
 /** The command ran. */
@@ -85,8 +101,8 @@ export interface CommandFailure {
 
 export type CommandOutcome<T> = CommandSuccess<T> | CommandFailure;
 
-/** A command, as the registry holds it. */
-export interface CommandSpec<T = unknown> {
+/** What every command declares, standalone or not. */
+export interface CommandSpecBase {
   /** The namespace, as in `brain <ns> <verb>` (AD-5). */
   ns: string;
   verb: string;
@@ -95,17 +111,28 @@ export interface CommandSpec<T = unknown> {
   nsDescription?: string;
   options?: readonly CommandOption[];
   /**
-   * This command writes to the database, so the dispatcher compares the stored
-   * schema version with `SCHEMA_VERSION` first and refuses on a mismatch
-   * (AD-20). Read commands leave this unset and are never blocked.
+   * Positional arguments, in commander's own syntax: `['<harness>']` for a
+   * required one, `['[harness]']` for an optional one. They arrive in
+   * `context.args` in this order, and a missing required one is a `USAGE`.
    */
-  writes?: boolean;
+  arguments?: readonly string[];
   /**
    * This command runs on a harness hook path, so it must never fail the
    * harness: whatever happens, the exit code is 0 and the failure is one line
    * on stderr (AD-6, Conventions).
    */
   hook?: boolean;
+}
+
+/** A command that talks to the brain, which is nearly all of them. */
+export interface DatabaseCommandSpec<T = unknown> extends CommandSpecBase {
+  standalone?: false;
+  /**
+   * This command writes to the database, so the dispatcher compares the stored
+   * schema version with `SCHEMA_VERSION` first and refuses on a mismatch
+   * (AD-20). Read commands leave this unset and are never blocked.
+   */
+  writes?: boolean;
   /**
    * How long one query of this command may take. Defaults to the connect
    * budget, which is right for a command that answers at once. A command whose
@@ -115,6 +142,21 @@ export interface CommandSpec<T = unknown> {
   queryTimeoutMs?: number;
   run(context: CommandContext): Promise<CommandOutcome<T>>;
 }
+
+/**
+ * A command that runs before, or without, a configuration and a database. The
+ * dispatcher reads neither for it: `setup run` is the command that writes the
+ * configuration in the first place, so reading it first would make every fresh
+ * install end in `CONFIG_MISSING`. Everything else — the envelope, the exit
+ * code, the hook rule, `--json` — is the same.
+ */
+export interface StandaloneCommandSpec<T = unknown> extends CommandSpecBase {
+  standalone: true;
+  run(context: StandaloneCommandContext): Promise<CommandOutcome<T>>;
+}
+
+/** A command, as the registry holds it. */
+export type CommandSpec<T = unknown> = DatabaseCommandSpec<T> | StandaloneCommandSpec<T>;
 
 export interface DispatchRuntime {
   clock: Clock;
@@ -136,6 +178,7 @@ interface Outcome {
 interface Selection {
   spec: CommandSpec;
   options: Record<string, unknown>;
+  args: readonly string[];
 }
 
 /**
@@ -214,7 +257,13 @@ async function execute(
     return failed(clock, 'USAGE', selected.message, 2, [], []);
   }
 
-  const { spec, options } = selected.selection;
+  const { spec, options, args } = selected.selection;
+
+  // Before the configuration, because this command may be the one that writes
+  // it, and before the store, because it has no database to reach.
+  if (spec.standalone === true) {
+    return finish(clock, await spec.run({ env, clock, options, args }), [], []);
+  }
 
   const config = await readConfig(configHome(env), env);
   if (!config.ok) {
@@ -246,31 +295,38 @@ async function execute(
       }
     }
 
-    const outcome = await spec.run({ brain, config: config.config, clock, options });
-    if (!outcome.ok) {
-      return failed(
-        clock,
-        outcome.code,
-        outcome.message,
-        outcome.exit ?? 1,
-        warningCodes,
-        warningLines,
-      );
-    }
-
-    const commandWarnings = outcome.warnings ?? [];
-    return {
-      envelope: okEnvelope(clock, outcome.data, [...warningCodes, ...commandWarnings]),
-      text: outcome.text ?? [],
-      warningLines: [
-        ...warningLines,
-        ...commandWarnings.map((code) => `warning: ${code}`),
-      ],
-      exit: outcome.failed === true ? 1 : 0,
-    };
+    const outcome = await spec.run({ brain, config: config.config, clock, options, args });
+    return finish(clock, outcome, warningCodes, warningLines);
   } finally {
     await brain.close();
   }
+}
+
+/** One command's outcome as an `Outcome`, the same way for every command. */
+function finish(
+  clock: Clock,
+  outcome: CommandOutcome<unknown>,
+  warningCodes: readonly WarningCode[],
+  warningLines: readonly string[],
+): Outcome {
+  if (!outcome.ok) {
+    return failed(
+      clock,
+      outcome.code,
+      outcome.message,
+      outcome.exit ?? 1,
+      warningCodes,
+      warningLines,
+    );
+  }
+
+  const commandWarnings = outcome.warnings ?? [];
+  return {
+    envelope: okEnvelope(clock, outcome.data, [...warningCodes, ...commandWarnings]),
+    text: outcome.text ?? [],
+    warningLines: [...warningLines, ...commandWarnings.map((code) => `warning: ${code}`)],
+    exit: outcome.failed === true ? 1 : 0,
+  };
 }
 
 function failed(
@@ -344,8 +400,15 @@ function buildProgram(
     for (const option of spec.options ?? []) {
       command.option(option.flags, option.description);
     }
-    command.action(() => {
-      onSelect({ spec, options: command.opts() });
+    const positional = spec.arguments ?? [];
+    for (const argument of positional) command.argument(argument);
+    // Commander hands the declared arguments in first, then the options, then
+    // the command itself; an optional one that was not given arrives undefined.
+    command.action((...given: unknown[]) => {
+      const args = given
+        .slice(0, positional.length)
+        .filter((value): value is string => typeof value === 'string');
+      onSelect({ spec, options: command.opts(), args });
     });
   }
 

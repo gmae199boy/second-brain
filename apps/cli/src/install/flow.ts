@@ -1,11 +1,14 @@
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import type {
+  Connector,
   DoctorReport,
   EnsureDefaultIndexConfigResult,
   EnsureVectorResult,
   MigrationResult,
 } from 'second_brain';
 import { CHECK_IDS, formatCheck } from '../commands/admin-doctor.js';
-import type { WriteConfigInput } from '../config/codec.js';
+import { defaultMirrorPath, type WriteConfigInput } from '../config/codec.js';
 import { configFilePath, configHome, envFilePath } from '../config/paths.js';
 import {
   CONTAINER_HOST,
@@ -33,12 +36,11 @@ import {
  * The installer's one flow, as a function of its dependencies. Every question,
  * every external command and every database write is injected, so the whole I/O
  * matrix can be driven from a test with no Docker, no terminal and no database
- * — and so story 7 can hand the same flow to `brain setup run`.
+ * — and so `brain setup run` runs this very flow rather than a second one.
  *
- * The order is AD-19's, minus the steps that are story 7's: environment, Docker,
- * the database, the configuration, the migrations, the vector extension, the
- * default index config, doctor. Mirror path, embedding and harness wiring are
- * deliberately not asked about here.
+ * The order is AD-19's, whole: environment, Docker, the database, the mirror
+ * path, embeddings, the configuration, the migrations, the vector extension,
+ * the default index config, the shim, the harnesses, doctor.
  */
 
 /** 0 it worked, 1 it ran and something failed, 2 it could not run at all. */
@@ -65,6 +67,12 @@ export interface InstallPrompts {
   ): Promise<T>;
   /** Free text. Comes back empty when the user only pressed Enter. */
   text(question: string, placeholder: string): Promise<string>;
+  /** Any number of the choices. `initial` is what starts out checked. */
+  multiselect<T extends string>(
+    question: string,
+    choices: readonly Choice<T>[],
+    initial: readonly T[],
+  ): Promise<readonly T[]>;
   /** Wait for the user to say they are ready. */
   pause(message: string): Promise<void>;
 }
@@ -79,6 +87,8 @@ export interface RecordedConfig {
   databaseUrl: string;
   timezone: string;
   databaseUrlEnv: string;
+  /** Absolute. A re-run offers it as the default and must never reset it. */
+  mirrorPath: string;
 }
 
 /** The configuration codec, as the flow uses it (AD-18: only the codec writes). */
@@ -99,6 +109,12 @@ export interface InstallDatabase {
   doctor(databaseUrl: string): Promise<DoctorReport>;
 }
 
+/** Writing the shim, injected so the flow test touches no filesystem. */
+export interface InstallShim {
+  /** Write `<home>/bin/brain`, or leave it alone when it already says this. */
+  write(home: string): Promise<{ path: string; changed: boolean }>;
+}
+
 export interface InstallDeps {
   run: CommandRunner;
   prompts: InstallPrompts;
@@ -114,6 +130,9 @@ export interface InstallDeps {
   nextId(): string;
   config: InstallConfigIo;
   database: InstallDatabase;
+  shim: InstallShim;
+  /** Every harness this build can connect to. Empty until epic 2. */
+  connectors: readonly Connector[];
   /** Budget for the container's first start. The tests shorten it. */
   readyTimeoutMs?: number;
 }
@@ -124,6 +143,10 @@ export interface InstallFlags {
   databaseUrl?: string;
   /** Make the local container. */
   docker: boolean;
+  /** Where the mirror goes. `~` is expanded; a relative path is refused. */
+  mirrorPath?: string;
+  /** Harnesses to connect, by name. The only consent there is without a TTY. */
+  connect: readonly string[];
   /** Consent, given in advance, to everything the chosen path has to do. */
   yes: boolean;
   help: boolean;
@@ -134,6 +157,13 @@ const URL_ATTEMPTS = 3;
 
 /** How many times the user is asked to start the Docker daemon. */
 const DAEMON_ATTEMPTS = 3;
+
+/** How many times a mirror path that cannot be used is asked for again. */
+const MIRROR_ATTEMPTS = 3;
+
+/** Both database flags at once, refused the same way on both ways in. */
+const TWO_DATABASES =
+  '--database-url and --docker ask for two different databases; pass one of them.';
 
 /** Where the database came from, or why the flow stopped before it knew. */
 type Chosen = { ok: true; databaseUrl: string } | { ok: false; exit: 1 | 2 };
@@ -159,7 +189,39 @@ export async function runInstallFlow(
     return 0;
   }
 
+  return runInstall(flags, env, deps);
+}
+
+/**
+ * The flow itself, from flags that are already parsed. `brain setup run` comes
+ * in here with flags commander built, so the installer and the command run the
+ * same steps in the same order rather than two readings of the same intent.
+ */
+export async function runInstall(
+  flags: InstallFlags,
+  env: NodeJS.ProcessEnv,
+  deps: InstallDeps,
+): Promise<InstallExitCode> {
   const home = configHome(env);
+
+  // Checked here and not only in `parseFlags`, because commander is the other
+  // way in: `brain setup run --docker --database-url …` would otherwise take
+  // the URL and quietly ignore the container the user also asked for.
+  if (flags.databaseUrl !== undefined && flags.docker) {
+    deps.log(`USAGE: ${TWO_DATABASES}`);
+    return 2;
+  }
+
+  // Named before anything is asked or written: a harness nobody registered is
+  // a typo, and finding that out after the database is set up would leave the
+  // user to guess whether the install took.
+  const unknown = flags.connect.filter(
+    (name) => !deps.connectors.some((connector) => connector.harness === name),
+  );
+  if (unknown.length > 0) {
+    deps.log(`USAGE: no connector for ${unknown.join(', ')}. ${knownHarnesses(deps)}`);
+    return 2;
+  }
 
   // A question needs an answer and a place to be read. Without both, the flags
   // are the only consent there is, and saying which ones are missing is the
@@ -189,7 +251,13 @@ export async function runInstallFlow(
   }
   deps.log('the database answered');
 
-  await deps.config.write(home, settings(databaseUrl, recorded));
+  const mirror = await chooseMirrorPath(flags, home, recorded, deps);
+  if (!mirror.ok) return mirror.exit;
+  deps.log(`the mirror goes in ${mirror.path}`);
+
+  await askAboutEmbeddings(deps);
+
+  await deps.config.write(home, settings(databaseUrl, recorded, mirror.path));
   deps.log(`wrote ${configFilePath(home)} and ${envFilePath(home)} (mode 0600)`);
 
   const migrated = await deps.database.migrate(databaseUrl);
@@ -228,6 +296,13 @@ export async function runInstallFlow(
       : 'the default chunk index config was already there',
   );
 
+  // The shim before the harnesses, because connecting one means registering
+  // this exact path with it.
+  const shim = await deps.shim.write(home);
+  deps.log(shim.changed ? `wrote ${shim.path} (mode 0755)` : `${shim.path} is already current`);
+
+  const connected = await connectHarnesses(flags, shim.path, deps);
+
   // Doctor has the last word, and its verdict is the exit code: an install that
   // finished every step and still cannot report a healthy brain did not work.
   const report = await deps.database.doctor(databaseUrl);
@@ -236,23 +311,162 @@ export async function runInstallFlow(
     id: CHECK_IDS[check.id] ?? check.id,
   }));
   for (const check of checks) deps.log(formatCheck(check));
-  return checks.some((check) => check.status === 'fail') ? 1 : 0;
+  return checks.some((check) => check.status === 'fail') || !connected ? 1 : 0;
 }
 
 /**
  * One URL plus everything the folder already decided, which is what the codec
  * has to be handed every time: it renders both files whole, so anything left
- * out is written back as its default.
+ * out is written back as its default. The mirror path is the newest trap of
+ * that kind: a re-run that passed only the URL would silently move the mirror
+ * back under the configuration folder.
  */
 function settings(
   databaseUrl: string,
   recorded: RecordedConfig | undefined,
+  mirrorPath?: string,
 ): WriteConfigInput {
   return {
     databaseUrl,
     timezone: recorded?.timezone,
     databaseUrlEnv: recorded?.databaseUrlEnv,
+    mirrorPath: mirrorPath ?? recorded?.mirrorPath,
   };
+}
+
+/** Where this install's mirror goes. Nothing here creates the folder (epic 4). */
+async function chooseMirrorPath(
+  flags: InstallFlags,
+  home: string,
+  recorded: RecordedConfig | undefined,
+  deps: InstallDeps,
+): Promise<{ ok: true; path: string } | { ok: false; exit: 2 }> {
+  const fallback = recorded?.mirrorPath ?? defaultMirrorPath(home);
+
+  if (flags.mirrorPath !== undefined) {
+    const given = expandHome(flags.mirrorPath);
+    if (isAbsolute(given)) return { ok: true, path: given };
+    deps.log(`CONFIG_INVALID: --mirror-path ${flags.mirrorPath} is not an absolute path.`);
+    // A terminal can be asked again; a script cannot, and taking the default
+    // instead would put the mirror somewhere the flag plainly did not ask for.
+    if (!deps.isTTY) return { ok: false, exit: 2 };
+  } else if (!deps.isTTY) {
+    return { ok: true, path: fallback };
+  }
+
+  for (let attempt = 1; attempt <= MIRROR_ATTEMPTS; attempt += 1) {
+    const typed = (await deps.prompts.text('Where should the mirror go?', fallback)).trim();
+    const chosen = typed === '' ? fallback : expandHome(typed);
+    if (isAbsolute(chosen)) return { ok: true, path: chosen };
+    deps.log(`CONFIG_INVALID: ${chosen} is not an absolute path.`);
+  }
+  deps.log(`No usable mirror path in ${String(MIRROR_ATTEMPTS)} attempts, so nothing was written.`);
+  return { ok: false, exit: 2 };
+}
+
+/**
+ * The embedding question of AD-19, asked and then answered for the user: epic 6
+ * owns embeddings, and until it lands saying yes can only mean "not yet". It
+ * writes nothing either way — there is no configuration key to write, and
+ * inventing one now would be a key epic 6 has to migrate away from.
+ */
+async function askAboutEmbeddings(deps: InstallDeps): Promise<void> {
+  if (!deps.isTTY) {
+    deps.log('embeddings are off (not supported yet)');
+    return;
+  }
+  const wanted = await deps.prompts.confirm('Turn embeddings on?', false);
+  deps.log(
+    wanted
+      ? 'Embeddings are not supported yet, so they stay off. Nothing was written.'
+      : 'embeddings are off',
+  );
+}
+
+/**
+ * Register the shim with the harnesses the user chose. Only `connect` writes a
+ * harness's own file (AD-19), so everything here is a question and a log line.
+ * Comes back false when a connector refused, which the exit code picks up.
+ */
+async function connectHarnesses(
+  flags: InstallFlags,
+  shimPath: string,
+  deps: InstallDeps,
+): Promise<boolean> {
+  if (deps.connectors.length === 0) {
+    deps.log('no harness to connect yet (epic 2)');
+    return true;
+  }
+
+  const chosen = await chooseHarnesses(flags, deps);
+  if (chosen.length === 0) {
+    deps.log('no harness was connected');
+    return true;
+  }
+
+  let allConnected = true;
+  for (const connector of chosen) {
+    const result = await connector.connect({ shimPath });
+    if (!result.ok) {
+      deps.log(`${result.code}: ${result.message}`);
+      allConnected = false;
+      continue;
+    }
+    deps.log(
+      result.changed
+        ? `connected ${connector.label} in ${result.target}`
+        : `${connector.label} was already connected in ${result.target}`,
+    );
+  }
+  return allConnected;
+}
+
+/** Which harnesses to connect: the ones checked, or the ones the flags named. */
+async function chooseHarnesses(
+  flags: InstallFlags,
+  deps: InstallDeps,
+): Promise<readonly Connector[]> {
+  // Without a terminal the flags are the only consent there is, and a harness
+  // nobody asked about must not have its configuration written (AD-19).
+  if (!deps.isTTY) {
+    return deps.connectors.filter((connector) => flags.connect.includes(connector.harness));
+  }
+
+  const named = deps.connectors.filter((connector) => flags.connect.includes(connector.harness));
+  if (named.length > 0) return named;
+
+  const detected: Connector[] = [];
+  for (const connector of deps.connectors) {
+    if (await connector.detect()) detected.push(connector);
+  }
+  if (detected.length === 0) {
+    deps.log('no harness this build knows is installed here');
+    return [];
+  }
+
+  // Everything detected starts out checked: connecting is what the user came
+  // for, and unchecking is the cheaper correction of the two.
+  const answer = await deps.prompts.multiselect(
+    'Which harnesses should this brain connect to?',
+    detected.map((connector) => ({ value: connector.harness, label: connector.label })),
+    detected.map((connector) => connector.harness),
+  );
+  return detected.filter((connector) => answer.includes(connector.harness));
+}
+
+/**
+ * A leading `~` as the user's home directory. A path typed into a question
+ * never passes a shell, so nobody expands it but us.
+ */
+export function expandHome(path: string): string {
+  if (path === '~') return homedir();
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
+  return path;
+}
+
+function knownHarnesses(deps: InstallDeps): string {
+  if (deps.connectors.length === 0) return 'This build registers no connector yet (epic 2).';
+  return `Known harnesses: ${deps.connectors.map((connector) => connector.harness).join(', ')}.`;
 }
 
 /** Which database this install uses: the flags', the user's, or a new one. */
@@ -517,7 +731,8 @@ export type ParsedFlags =
  * refused rather than ignored.
  */
 export function parseFlags(argv: readonly string[]): ParsedFlags {
-  const flags: InstallFlags = { docker: false, yes: false, help: false };
+  const connect: string[] = [];
+  const flags: InstallFlags = { docker: false, connect, yes: false, help: false };
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -528,6 +743,26 @@ export function parseFlags(argv: readonly string[]): ParsedFlags {
           return { ok: false, message: '--database-url needs a URL after it.' };
         }
         flags.databaseUrl = value;
+        index += 1;
+        continue;
+      }
+      case '--mirror-path': {
+        const value = argv[index + 1];
+        if (value === undefined || value.startsWith('-')) {
+          return { ok: false, message: '--mirror-path needs a path after it.' };
+        }
+        flags.mirrorPath = value;
+        index += 1;
+        continue;
+      }
+      case '--connect': {
+        const value = argv[index + 1];
+        if (value === undefined || value.startsWith('-')) {
+          return { ok: false, message: '--connect needs a harness name after it.' };
+        }
+        // Repeatable: one `--connect` per harness, so no separator has to be
+        // invented and a name with a comma in it stays one name.
+        if (!connect.includes(value)) connect.push(value);
         index += 1;
         continue;
       }
@@ -548,19 +783,19 @@ export function parseFlags(argv: readonly string[]): ParsedFlags {
   }
 
   if (flags.databaseUrl !== undefined && flags.docker) {
-    return {
-      ok: false,
-      message: '--database-url and --docker ask for two different databases; pass one of them.',
-    };
+    return { ok: false, message: TWO_DATABASES };
   }
   return { ok: true, flags };
 }
 
 export function usage(): readonly string[] {
   return [
-    'Usage: second-brain [--database-url <url> | --docker] [--yes]',
+    'Usage: second-brain [--database-url <url> | --docker] [--mirror-path <path>]',
+    '                    [--connect <harness>]… [--yes]',
     '  --database-url <url>  use this Postgres instead of asking',
     '  --docker              make a local Postgres container instead of asking',
+    '  --mirror-path <path>  absolute path for the mirror folder',
+    '  --connect <harness>   connect this harness; repeat for more than one',
     '  --yes                 agree in advance to what the chosen path has to do',
   ];
 }

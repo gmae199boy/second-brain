@@ -17,6 +17,8 @@ export type {
   StoreWarningCode,
 } from './store.js';
 export type { ParseResult, Parser } from './parser.js';
+export { BRAIN_MARKER } from './connector.js';
+export type { ConnectInput, ConnectResult, Connector } from './connector.js';
 export type { EmbedResult, Embedder } from './embedder.js';
 export type { RerankResult, RerankedDocument, Reranker } from './reranker.js';
 export type { Clock } from './clock.js';

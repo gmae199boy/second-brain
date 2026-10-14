@@ -4,6 +4,7 @@ import {
   parseSessionToken,
   SESSION_TOKEN_SEPARATOR,
 } from '../src/domain/session-token.js';
+import { BRAIN_MARKER, type ConnectResult, type Connector } from '../src/ports/connector.js';
 import type { Clock } from '../src/ports/clock.js';
 import type { IdGen } from '../src/ports/id-gen.js';
 import type { Embedder } from '../src/ports/embedder.js';
@@ -11,9 +12,11 @@ import type { Reranker } from '../src/ports/reranker.js';
 import type { SchemaStore, SessionStore } from '../src/ports/store.js';
 import {
   clockContract,
+  connectorContract,
   embedderContract,
   fixedClock,
   idGenContract,
+  memoryConnector,
   memoryEmbedder,
   memoryParser,
   memoryReranker,
@@ -32,6 +35,7 @@ import {
   storeContract,
   unknownSessionToken,
   unreadableTranscript,
+  type ConnectorSubject,
   type ContractCase,
   type ParserSubject,
   type SubjectFactory,
@@ -114,6 +118,112 @@ describe('the parser contract against the memory parser', () => {
       await testCase.run(make);
     });
   }
+});
+
+const SHIM = '/memory/.second_brain/bin/brain';
+
+/** A fresh in-memory harness, with a Brain-shaped view of its target. */
+function connectorSubject(connector = memoryConnector()): ConnectorSubject {
+  return {
+    connector,
+    shimPath: SHIM,
+    entries: async () => connector.entries(),
+    marked: async () => connector.marked(),
+    addForeignEntry: async (entry: string) => {
+      connector.addForeignEntry(entry);
+    },
+  };
+}
+
+describe('the connector contract against the memory connector', () => {
+  for (const testCase of connectorContract()) {
+    it(testCase.name, async () => {
+      await testCase.run(async () => connectorSubject());
+    });
+  }
+
+  it('leaves entries nobody from Brain wrote exactly where they were', async () => {
+    const connector = memoryConnector();
+    connector.addForeignEntry('the user put this here');
+
+    await connector.connect({ shimPath: SHIM });
+    await connector.connect({ shimPath: SHIM });
+
+    expect(connector.entries()).toEqual([
+      'the user put this here',
+      `${BRAIN_MARKER} hook -> ${SHIM}`,
+    ]);
+    expect(connector.marked()).toHaveLength(1);
+  });
+
+  it('replaces its own entry rather than adding a second one for a new shim', async () => {
+    const connector = memoryConnector();
+    await connector.connect({ shimPath: '/memory/old/bin/brain' });
+
+    const again = await connector.connect({ shimPath: SHIM });
+
+    expect(again).toEqual({ ok: true, target: '/memory/demo/settings.json', changed: true });
+    expect(connector.marked()).toEqual([`${BRAIN_MARKER} hook -> ${SHIM}`]);
+  });
+
+  it('reports a refusal as a value, writing nothing', async () => {
+    const connector = memoryConnector({
+      failure: { code: 'HARNESS_UNREADABLE', message: 'settings.json is not JSON' },
+    });
+
+    const result = await connector.connect({ shimPath: SHIM });
+
+    expect(result).toEqual({
+      ok: false,
+      code: 'HARNESS_UNREADABLE',
+      message: 'settings.json is not JSON',
+    });
+    expect(connector.entries()).toEqual([]);
+  });
+});
+
+describe('the contracts catch a wrong connector', () => {
+  it('catches a connector that registers again every time', async () => {
+    const make = async (): Promise<ConnectorSubject> => {
+      const inner = memoryConnector();
+      const entries: string[] = [];
+      const connector: Connector = {
+        harness: inner.harness,
+        label: inner.label,
+        parser: inner.parser,
+        detect: () => inner.detect(),
+        async connect(input): Promise<ConnectResult> {
+          // Never looks for the marker: a second connect registers twice.
+          entries.push(`${BRAIN_MARKER} hook -> ${input.shimPath}`);
+          return { ok: true, target: '/memory/demo/settings.json', changed: true };
+        },
+      };
+      return {
+        connector,
+        shimPath: SHIM,
+        entries: async () => entries,
+        marked: async () => entries.filter((entry) => entry.includes(BRAIN_MARKER)),
+        addForeignEntry: async (entry: string) => {
+          entries.push(entry);
+        },
+      };
+    };
+
+    expect(await failedCases(connectorContract(), make)).toContain(
+      'connecting twice changes nothing the second time',
+    );
+  });
+
+  it('catches a connector whose harness is not the one its parser names', async () => {
+    const make = async (): Promise<ConnectorSubject> => {
+      const inner = memoryConnector({ harness: 'demo' });
+      return connectorSubject({ ...inner, harness: 'something-else' });
+    };
+
+    expect(await failedCases(connectorContract(), make)).toContain(
+      'the connector names its harness and its parser',
+    );
+  });
 });
 
 describe('the embedder contract against the memory embedder', () => {

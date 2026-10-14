@@ -1,4 +1,5 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
 import { parseEnv } from 'node:util';
 import type { WarningCode } from 'second_brain';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
@@ -27,7 +28,24 @@ export const DEFAULT_DATABASE_URL_ENV = 'SECOND_BRAIN_DATABASE_URL';
  * adds it here and nowhere else; anything not on this list is reported, never
  * dropped in silence (AD-18).
  */
-export const KNOWN_KEYS = ['schema_version', 'timezone', 'database.url_env'] as const;
+export const KNOWN_KEYS = [
+  'schema_version',
+  'timezone',
+  'database.url_env',
+  'mirror.path',
+] as const;
+
+/** Folder name of the default mirror, under the configuration folder. */
+export const DEFAULT_MIRROR_FOLDER = 'mirror';
+
+/**
+ * Where the mirror goes when the file does not say. Relative to the
+ * configuration folder, so a second install never writes into the first one's
+ * mirror. Nothing here creates the folder: that is epic 4's.
+ */
+export function defaultMirrorPath(home: string): string {
+  return join(home, DEFAULT_MIRROR_FOLDER);
+}
 
 /** The configuration a command runs with. Flat, resolved, and already checked. */
 export interface BrainConfig {
@@ -39,6 +57,8 @@ export interface BrainConfig {
   databaseUrlEnv: string;
   /** The Postgres URL itself, from `.env` or, failing that, the process. */
   databaseUrl: string;
+  /** Absolute path of the mirror folder. Nothing here creates it (epic 4). */
+  mirrorPath: string;
 }
 
 /** A problem that does not stop the command: it travels in `warnings[]`. */
@@ -152,6 +172,25 @@ export async function readConfig(
     };
   }
 
+  const mirrorPath = fields.get('mirror.path') ?? defaultMirrorPath(home);
+  if (typeof mirrorPath !== 'string' || mirrorPath === '') {
+    return {
+      ok: false,
+      code: 'CONFIG_INVALID',
+      message: `${configPath}: mirror.path must be a non-empty string, got ${kindOf(mirrorPath)}`,
+    };
+  }
+  // Absolute only. A relative path would mean a different folder for every
+  // working directory a command happens to be started from, so the mirror a
+  // hook writes and the mirror the user greps would not be the same one.
+  if (!isAbsolute(mirrorPath)) {
+    return {
+      ok: false,
+      code: 'CONFIG_INVALID',
+      message: `${configPath}: mirror.path "${mirrorPath}" must be an absolute path`,
+    };
+  }
+
   const envPath = envFilePath(home);
   const dotenv = await readTextFile(envPath);
   if (dotenv.state === 'unreadable') {
@@ -182,7 +221,7 @@ export async function readConfig(
 
   return {
     ok: true,
-    config: { schemaVersion, timezone, databaseUrlEnv, databaseUrl },
+    config: { schemaVersion, timezone, databaseUrlEnv, databaseUrl, mirrorPath },
     warnings,
   };
 }
@@ -193,6 +232,8 @@ export interface WriteConfigInput {
   databaseUrlEnv?: string;
   /** Written to `.env` under the resolved name, never into the TOML (AD-18). */
   databaseUrl?: string;
+  /** Absolute. Left out means `defaultMirrorPath(home)`, as reading does. */
+  mirrorPath?: string;
 }
 
 /**
@@ -204,13 +245,17 @@ export interface WriteConfigInput {
 export async function writeConfig(home: string, input: WriteConfigInput): Promise<void> {
   const timezone = input.timezone ?? DEFAULT_TIMEZONE;
   const databaseUrlEnv = input.databaseUrlEnv ?? DEFAULT_DATABASE_URL_ENV;
-  // The same two checks `readConfig` makes, made here as well: a folder this
-  // codec wrote must be one it can read back.
+  const mirrorPath = input.mirrorPath ?? defaultMirrorPath(home);
+  // The same checks `readConfig` makes, made here as well: a folder this codec
+  // wrote must be one it can read back.
   if (!ENV_NAME.test(databaseUrlEnv)) {
     throw new Error(`${databaseUrlEnv} is not an environment variable name`);
   }
   if (!isTimeZone(timezone)) {
     throw new Error(`${timezone} is not a time zone this machine knows`);
+  }
+  if (!isAbsolute(mirrorPath)) {
+    throw new Error(`${mirrorPath} is not an absolute path`);
   }
 
   await mkdir(home, { recursive: true, mode: 0o700 });
@@ -230,6 +275,7 @@ export async function writeConfig(home: string, input: WriteConfigInput): Promis
     schema_version: CONFIG_SCHEMA_VERSION,
     timezone,
     database: { url_env: databaseUrlEnv },
+    mirror: { path: mirrorPath },
   });
   const lines = Object.entries(values).flatMap(([name, value]) =>
     value === undefined ? [] : [`${name}=${quote(name, value)}`],
@@ -237,7 +283,7 @@ export async function writeConfig(home: string, input: WriteConfigInput): Promis
 
   await writeFile(
     configFilePath(home),
-    `# Personal Brain configuration. Variable names only — the values live in .env.\n${document}\n`,
+    `# Personal Brain configuration. No keys here — key values live in .env.\n${document}\n`,
     'utf8',
   );
   // The mode is set at creation, so the secret is never briefly world-readable.

@@ -1,11 +1,15 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type {
+  Connector,
   DoctorCheck,
   DoctorReport,
   EnsureDefaultIndexConfigResult,
   EnsureVectorResult,
   MigrationResult,
 } from 'second_brain';
+import { memoryConnector, type MemoryConnector } from 'second_brain/testing';
 import type { WriteConfigInput } from '../src/config/codec.js';
 import { HOME_ENV } from '../src/config/paths.js';
 import {
@@ -18,6 +22,7 @@ import {
 import {
   maskUrl,
   parseFlags,
+  runInstall,
   runInstallFlow,
   type Choice,
   type InstallDatabase,
@@ -25,6 +30,7 @@ import {
   type InstallPrompts,
   type RecordedConfig,
 } from '../src/install/flow.js';
+import { shimPath } from '../src/install/shim.js';
 
 /**
  * The whole installer flow against fakes: no Docker, no terminal, no database.
@@ -50,8 +56,34 @@ function kept(
   databaseUrl: string,
   timezone = 'Asia/Seoul',
   databaseUrlEnv = 'SECOND_BRAIN_DATABASE_URL',
+  mirrorPath = MIRROR,
 ): WriteConfigInput {
-  return { databaseUrl, timezone, databaseUrlEnv };
+  return { databaseUrl, timezone, databaseUrlEnv, mirrorPath };
+}
+
+/** The mirror path a run with nothing recorded and no flag settles on. */
+const MIRROR = join(HOME, 'mirror');
+
+/** The final configuration write of a run that recorded nothing before. */
+function fresh(databaseUrl: string, mirrorPath = MIRROR): WriteConfigInput {
+  return { databaseUrl, mirrorPath };
+}
+
+/**
+ * What a run answers to the two questions every path now ends with: Enter for
+ * the mirror path, which takes the default, and no to embeddings. They are
+ * appended to whatever a test queues, so a test that cares about neither says
+ * nothing about them; the per-kind queues keep the order right either way.
+ */
+const TAIL: Answers = { text: [''], confirm: [false] };
+
+function answersWith(own: Answers, tail: Answers): Answers {
+  return {
+    confirm: [...(own.confirm ?? []), ...(tail.confirm ?? [])],
+    select: [...(own.select ?? []), ...(tail.select ?? [])],
+    text: [...(own.text ?? []), ...(tail.text ?? [])],
+    multiselect: [...(own.multiselect ?? []), ...(tail.multiselect ?? [])],
+  };
 }
 
 /** What the fake `docker`/`brew` world looks like for one run. */
@@ -153,12 +185,16 @@ interface Answers {
   confirm?: readonly boolean[];
   select?: readonly string[];
   text?: readonly string[];
+  /** One answer per `multiselect`: the values that stayed checked. */
+  multiselect?: readonly (readonly string[])[];
 }
 
 interface Prompts extends InstallPrompts {
   asked: string[];
   /** The placeholder each `text` question offered, so masking is checkable. */
   placeholders: string[];
+  /** What each `multiselect` started out with checked. */
+  checked: readonly string[][];
 }
 
 /**
@@ -169,12 +205,15 @@ function fakePrompts(answers: Answers, onPause: () => void = (): void => {}): Pr
   const confirms = [...(answers.confirm ?? [])];
   const selects = [...(answers.select ?? [])];
   const texts = [...(answers.text ?? [])];
+  const multiselects = [...(answers.multiselect ?? [])];
   const asked: string[] = [];
   const placeholders: string[] = [];
+  const checked: string[][] = [];
 
   return {
     asked,
     placeholders,
+    checked,
     async confirm(question: string): Promise<boolean> {
       asked.push(question);
       const answer = confirms.shift();
@@ -197,6 +236,17 @@ function fakePrompts(answers: Answers, onPause: () => void = (): void => {}): Pr
       const answer = texts.shift();
       if (answer === undefined) throw new Error(`no answer queued for: ${question}`);
       return answer;
+    },
+    async multiselect<T extends string>(
+      question: string,
+      _choices: readonly Choice<T>[],
+      initial: readonly T[],
+    ): Promise<readonly T[]> {
+      asked.push(question);
+      checked.push([...initial]);
+      const answer = multiselects.shift();
+      if (answer === undefined) throw new Error(`no answer queued for: ${question}`);
+      return answer as readonly T[];
     },
     async pause(message: string): Promise<void> {
       asked.push(message);
@@ -278,6 +328,8 @@ interface Harness {
   database: Database;
   written: WriteConfigInput[];
   lines: string[];
+  /** Every home the shim was written for, in order. */
+  shimmed: string[];
   /** Every line joined, for "the password is nowhere in the output". */
   output(): string;
 }
@@ -285,6 +337,8 @@ interface Harness {
 interface HarnessOptions {
   world?: World;
   answers?: Answers;
+  /** Replaces the two answers every path ends with, for a test about them. */
+  tail?: Answers;
   db?: DbWorld;
   isTTY?: boolean;
   /** The URL already in `<home>/.env`. */
@@ -292,13 +346,19 @@ interface HarnessOptions {
   /** The rest of what the folder already says, which a re-run must keep. */
   recordedTimezone?: string;
   recordedUrlEnv?: string;
+  recordedMirrorPath?: string;
+  /** The registry. Empty, like the real one, unless a test fills it. */
+  connectors?: readonly Connector[];
+  /** The shim was already there and says exactly this. */
+  shimCurrent?: boolean;
 }
 
 function harness(options: HarnessOptions = {}): Harness {
   const runner = fakeRunner(options.world ?? {});
-  const prompts = fakePrompts(options.answers ?? {}, () => {
+  const prompts = fakePrompts(answersWith(options.answers ?? {}, options.tail ?? TAIL), () => {
     runner.paused();
   });
+  const shimmed: string[] = [];
   const database = fakeDatabase(options.db);
   const written: WriteConfigInput[] = [];
   const lines: string[] = [];
@@ -335,9 +395,17 @@ function harness(options: HarnessOptions = {}): Harness {
               databaseUrl: options.recorded,
               timezone: options.recordedTimezone ?? 'Asia/Seoul',
               databaseUrlEnv: options.recordedUrlEnv ?? 'SECOND_BRAIN_DATABASE_URL',
+              mirrorPath: options.recordedMirrorPath ?? MIRROR,
             },
     },
     database,
+    shim: {
+      write: async (home: string): Promise<{ path: string; changed: boolean }> => {
+        shimmed.push(home);
+        return { path: shimPath(home), changed: options.shimCurrent !== true };
+      },
+    },
+    connectors: options.connectors ?? [],
     readyTimeoutMs: 5000,
   };
 
@@ -348,6 +416,7 @@ function harness(options: HarnessOptions = {}): Harness {
     database,
     written,
     lines,
+    shimmed,
     output: () => lines.join('\n'),
   };
 }
@@ -370,7 +439,7 @@ describe('the installer flow, with Docker and no container yet', () => {
     // Twice: the moment the container existed, and again with the folder.
     expect(kit.written).toEqual([
       { databaseUrl: CONTAINER_URL },
-      { databaseUrl: CONTAINER_URL },
+      fresh(CONTAINER_URL),
     ]);
     expect(kit.database.migrated).toEqual([CONTAINER_URL]);
     expect(kit.database.vectorUrls).toEqual([CONTAINER_URL]);
@@ -383,7 +452,7 @@ describe('the installer flow, with Docker and no container yet', () => {
 
     await runInstallFlow([], ENV, kit.deps);
 
-    const question = kit.prompts.asked.at(-1) ?? '';
+    const question = kit.prompts.asked.find((asked) => asked.includes('Create the')) ?? '';
     expect(question).toContain(CONTAINER_IMAGE);
     expect(question).toContain(CONTAINER_VOLUME);
     expect(question).toContain('127.0.0.1:54320');
@@ -421,7 +490,7 @@ describe('the installer flow, with Docker and no container yet', () => {
 
     expect(exit).toBe(0);
     expect(kit.runner.calls.some((call) => call.startsWith('docker run'))).toBe(false);
-    expect(kit.written).toEqual([{ databaseUrl: EXISTING_URL }]);
+    expect(kit.written).toEqual([fresh(EXISTING_URL)]);
   });
 
   it('exits 1 after the refusal when no URL is given either', async () => {
@@ -444,7 +513,7 @@ describe('the installer flow against a Postgres that already exists', () => {
 
     expect(exit).toBe(0);
     expect(kit.runner.calls).toEqual([]);
-    expect(kit.written).toEqual([{ databaseUrl: EXISTING_URL }]);
+    expect(kit.written).toEqual([fresh(EXISTING_URL)]);
   });
 
   it('offers the recorded URL with its password masked, and takes an empty answer', async () => {
@@ -484,8 +553,9 @@ describe('the installer flow against a Postgres that already exists', () => {
     const exit = await runInstallFlow(['--database-url', EXISTING_URL], ENV, kit.deps);
 
     expect(exit).toBe(0);
-    expect(kit.prompts.asked).toEqual([]);
-    expect(kit.written).toEqual([{ databaseUrl: EXISTING_URL }]);
+    // The two questions every path ends with, and nothing about the database.
+    expect(kit.prompts.asked).toEqual(['Where should the mirror go?', 'Turn embeddings on?']);
+    expect(kit.written).toEqual([fresh(EXISTING_URL)]);
   });
 
   it('exits 1 without writing when the URL on the flag does not answer', async () => {
@@ -520,7 +590,7 @@ describe('the installer flow when Docker is missing', () => {
     expect(kit.runner.calls).toContain('brew install --cask docker');
     expect(kit.runner.calls).toContain('open -a Docker');
     expect(kit.prompts.asked.some((question) => question.includes('press Enter'))).toBe(true);
-    expect(kit.written.at(-1)).toEqual({ databaseUrl: CONTAINER_URL });
+    expect(kit.written.at(-1)).toEqual(fresh(CONTAINER_URL));
   });
 
   it('installs nothing and asks for a URL instead when the install is refused', async () => {
@@ -533,8 +603,8 @@ describe('the installer flow when Docker is missing', () => {
 
     expect(exit).toBe(0);
     expect(kit.runner.calls).not.toContain('brew install --cask docker');
-    expect(kit.prompts.asked.at(-1)).toBe('Postgres URL');
-    expect(kit.written).toEqual([{ databaseUrl: EXISTING_URL }]);
+    expect(kit.prompts.asked).toContain('Postgres URL');
+    expect(kit.written).toEqual([fresh(EXISTING_URL)]);
   });
 
   it('names the flag instead of asking, when there is no terminal to ask in', async () => {
@@ -640,7 +710,7 @@ describe('the installer flow run a second time', () => {
     expect(exit).toBe(0);
     expect(kit.output()).toContain('is not known here');
     expect(kit.runner.calls.some((call) => call.startsWith('docker run'))).toBe(false);
-    expect(kit.written).toEqual([{ databaseUrl: EXISTING_URL }]);
+    expect(kit.written).toEqual([fresh(EXISTING_URL)]);
   });
 });
 
@@ -702,7 +772,9 @@ describe('the installer flow over a volume that outlived its container', () => {
 
     await runInstallFlow([], ENV, kit.deps);
 
-    expect(kit.prompts.asked.at(-1)).toContain('over the data already in the volume');
+    expect(kit.prompts.asked.some((question) => question.includes('over the data already in the volume'))).toBe(
+      true,
+    );
   });
 
   it('refuses to invent a password when nothing is recorded, and keeps the volume', async () => {
@@ -834,7 +906,7 @@ describe('the installer flow with no terminal', () => {
     expect(exit).toBe(0);
     expect(kit.prompts.asked).toEqual([]);
     expect(kit.runner.calls.some((call) => call.startsWith('docker run'))).toBe(true);
-    expect(kit.written.at(-1)).toEqual({ databaseUrl: CONTAINER_URL });
+    expect(kit.written.at(-1)).toEqual(fresh(CONTAINER_URL));
   });
 
   it('refuses to guess the password of a container it did not create', async () => {
@@ -848,14 +920,364 @@ describe('the installer flow with no terminal', () => {
   });
 });
 
+describe('the installer flow and the mirror path', () => {
+  it('offers the default and records it when the answer is just Enter', async () => {
+    const kit = harness({ answers: { select: ['existing'], text: [EXISTING_URL] } });
+
+    const exit = await runInstallFlow([], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    // The URL question's placeholder, then the mirror question's.
+    expect(kit.prompts.placeholders[1]).toBe(MIRROR);
+    expect(kit.written).toEqual([fresh(EXISTING_URL)]);
+    expect(kit.output()).toContain(`the mirror goes in ${MIRROR}`);
+  });
+
+  it('records the absolute path the answer named', async () => {
+    const kit = harness({
+      answers: { select: ['existing'], text: [EXISTING_URL] },
+      tail: { text: ['/tmp/notes/brain'], confirm: [false] },
+    });
+
+    const exit = await runInstallFlow([], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    expect(kit.written).toEqual([fresh(EXISTING_URL, '/tmp/notes/brain')]);
+  });
+
+  it('expands a leading ~, which no shell expanded for a typed answer', async () => {
+    const kit = harness({
+      answers: { select: ['existing'], text: [EXISTING_URL] },
+      tail: { text: ['~/notes/brain'], confirm: [false] },
+    });
+
+    const exit = await runInstallFlow([], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    expect(kit.written).toEqual([fresh(EXISTING_URL, join(homedir(), 'notes/brain'))]);
+  });
+
+  it('expands a leading ~ on the flag too, and never asks', async () => {
+    const kit = harness({ tail: { confirm: [false] } });
+
+    const exit = await runInstallFlow(
+      ['--database-url', EXISTING_URL, '--mirror-path', '~/notes/brain'],
+      ENV,
+      kit.deps,
+    );
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.asked).toEqual(['Turn embeddings on?']);
+    expect(kit.written).toEqual([fresh(EXISTING_URL, join(homedir(), 'notes/brain'))]);
+  });
+
+  it('asks again after a relative answer, and takes the next one', async () => {
+    const kit = harness({
+      answers: { select: ['existing'], text: [EXISTING_URL] },
+      tail: { text: ['notes/brain', '/tmp/notes/brain'], confirm: [false] },
+    });
+
+    const exit = await runInstallFlow([], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    expect(kit.output()).toContain('CONFIG_INVALID');
+    expect(kit.written).toEqual([fresh(EXISTING_URL, '/tmp/notes/brain')]);
+  });
+
+  it('exits 2 without writing for a relative flag and no terminal to ask in', async () => {
+    const kit = harness({ isTTY: false });
+
+    const exit = await runInstallFlow(
+      ['--database-url', EXISTING_URL, '--mirror-path', 'notes/brain', '--yes'],
+      ENV,
+      kit.deps,
+    );
+
+    expect(exit).toBe(2);
+    expect(kit.output()).toContain('CONFIG_INVALID: --mirror-path notes/brain');
+    expect(kit.written).toEqual([]);
+    expect(kit.database.migrated).toEqual([]);
+  });
+
+  it('offers the recorded path as the default, and keeps it on Enter', async () => {
+    const kit = harness({
+      recorded: EXISTING_URL,
+      recordedMirrorPath: '/tmp/notes/brain',
+      answers: { select: ['existing'], text: [''] },
+    });
+
+    const exit = await runInstallFlow([], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.placeholders[1]).toBe('/tmp/notes/brain');
+    expect(kit.written).toEqual([
+      kept(EXISTING_URL, 'Asia/Seoul', 'SECOND_BRAIN_DATABASE_URL', '/tmp/notes/brain'),
+    ]);
+  });
+
+  it('keeps the recorded path without asking when there is no terminal', async () => {
+    const kit = harness({
+      isTTY: false,
+      recorded: EXISTING_URL,
+      recordedMirrorPath: '/tmp/notes/brain',
+    });
+
+    const exit = await runInstallFlow(['--database-url', EXISTING_URL, '--yes'], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.asked).toEqual([]);
+    expect(kit.written).toEqual([
+      kept(EXISTING_URL, 'Asia/Seoul', 'SECOND_BRAIN_DATABASE_URL', '/tmp/notes/brain'),
+    ]);
+  });
+
+  it('keeps the recorded path on the early Docker write as well', async () => {
+    const kit = harness({
+      world: { container: 'absent' },
+      recorded: CONTAINER_URL,
+      recordedMirrorPath: '/tmp/notes/brain',
+      answers: { select: ['docker'], confirm: [true] },
+    });
+
+    const exit = await runInstallFlow([], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    // The early write happens before the question, so it carries the recorded
+    // path: writing the default there would move the mirror for a run that
+    // then times out waiting for the container.
+    expect(kit.written[0]).toEqual(
+      kept(CONTAINER_URL, 'Asia/Seoul', 'SECOND_BRAIN_DATABASE_URL', '/tmp/notes/brain'),
+    );
+  });
+});
+
+describe('the installer flow and embeddings', () => {
+  it('says they are not supported yet when the answer is yes, and writes nothing about them', async () => {
+    const kit = harness({
+      answers: { select: ['existing'], text: [EXISTING_URL] },
+      tail: { text: [''], confirm: [true] },
+    });
+
+    const exit = await runInstallFlow([], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.asked).toContain('Turn embeddings on?');
+    expect(kit.output()).toContain('not supported yet');
+    // The same write as a run that said no: there is no key for this yet.
+    expect(kit.written).toEqual([fresh(EXISTING_URL)]);
+  });
+
+  it('asks nothing and says one line when there is no terminal', async () => {
+    const kit = harness({ isTTY: false });
+
+    const exit = await runInstallFlow(['--database-url', EXISTING_URL, '--yes'], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.asked).toEqual([]);
+    expect(kit.output()).toContain('embeddings are off');
+  });
+});
+
+describe('the installer flow, the shim and the harnesses', () => {
+  it('writes the shim for this home and says so', async () => {
+    const kit = harness({ answers: { select: ['existing'], text: [EXISTING_URL] } });
+
+    const exit = await runInstallFlow([], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    expect(kit.shimmed).toEqual([HOME]);
+    expect(kit.output()).toContain(`wrote ${shimPath(HOME)} (mode 0755)`);
+  });
+
+  it('says the shim is current rather than claiming it wrote one', async () => {
+    const kit = harness({
+      shimCurrent: true,
+      answers: { select: ['existing'], text: [EXISTING_URL] },
+    });
+
+    await runInstallFlow([], ENV, kit.deps);
+
+    expect(kit.output()).toContain('is already current');
+    expect(kit.output()).not.toContain('(mode 0755)');
+  });
+
+  it('says there is no harness to connect when the registry is empty', async () => {
+    const kit = harness({ answers: { select: ['existing'], text: [EXISTING_URL] } });
+
+    const exit = await runInstallFlow([], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    expect(kit.output()).toContain('no harness to connect yet (epic 2)');
+    expect(kit.prompts.checked).toEqual([]);
+  });
+
+  it('offers every detected harness checked, and connects the ones left checked', async () => {
+    const demo = memoryConnector({ harness: 'demo', label: 'Demo' });
+    const other = memoryConnector({ harness: 'other', label: 'Other' });
+    const kit = harness({
+      connectors: [demo, other],
+      answers: { select: ['existing'], text: [EXISTING_URL] },
+      tail: { text: [''], confirm: [false], multiselect: [['demo']] },
+    });
+
+    const exit = await runInstallFlow([], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.checked).toEqual([['demo', 'other']]);
+    expect(demo.marked()).toHaveLength(1);
+    expect(demo.entries()[0]).toContain(shimPath(HOME));
+    expect(other.entries()).toEqual([]);
+    expect(kit.output()).toContain('connected Demo in');
+  });
+
+  it('never offers a harness that is not installed here', async () => {
+    const absent = memoryConnector({ harness: 'absent', detected: false });
+    const kit = harness({
+      connectors: [absent],
+      answers: { select: ['existing'], text: [EXISTING_URL] },
+    });
+
+    const exit = await runInstallFlow([], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.checked).toEqual([]);
+    expect(kit.output()).toContain('no harness this build knows is installed here');
+    expect(absent.entries()).toEqual([]);
+  });
+
+  it('says it is already connected the second time, writing nothing', async () => {
+    const demo = memoryConnector({ harness: 'demo', label: 'Demo' });
+    const run = async (): Promise<string> => {
+      const kit = harness({
+        connectors: [demo],
+        answers: { select: ['existing'], text: [EXISTING_URL] },
+        tail: { text: [''], confirm: [false], multiselect: [['demo']] },
+      });
+      expect(await runInstallFlow([], ENV, kit.deps)).toBe(0);
+      return kit.output();
+    };
+
+    await run();
+    const second = await run();
+
+    expect(second).toContain('Demo was already connected in');
+    expect(demo.marked()).toHaveLength(1);
+  });
+
+  it('connects only what --connect named when there is no terminal', async () => {
+    const demo = memoryConnector({ harness: 'demo' });
+    const other = memoryConnector({ harness: 'other' });
+    const kit = harness({ isTTY: false, connectors: [demo, other] });
+
+    const exit = await runInstallFlow(
+      ['--database-url', EXISTING_URL, '--connect', 'demo', '--yes'],
+      ENV,
+      kit.deps,
+    );
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.asked).toEqual([]);
+    expect(demo.marked()).toHaveLength(1);
+    // A harness nobody asked about must not have its configuration written.
+    expect(other.entries()).toEqual([]);
+  });
+
+  it('writes no harness configuration at all without a terminal and without the flag', async () => {
+    const demo = memoryConnector({ harness: 'demo' });
+    const kit = harness({ isTTY: false, connectors: [demo] });
+
+    const exit = await runInstallFlow(['--database-url', EXISTING_URL, '--yes'], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    expect(demo.entries()).toEqual([]);
+    expect(kit.output()).toContain('no harness was connected');
+  });
+
+  it('takes --connect over the question in a terminal too', async () => {
+    const demo = memoryConnector({ harness: 'demo' });
+    const other = memoryConnector({ harness: 'other' });
+    const kit = harness({
+      connectors: [demo, other],
+      answers: { select: ['existing'], text: [EXISTING_URL] },
+    });
+
+    const exit = await runInstallFlow(['--connect', 'other'], ENV, kit.deps);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.checked).toEqual([]);
+    expect(other.marked()).toHaveLength(1);
+    expect(demo.entries()).toEqual([]);
+  });
+
+  it('exits 2 before touching anything for a harness nobody registered', async () => {
+    const kit = harness({ isTTY: false, connectors: [memoryConnector({ harness: 'demo' })] });
+
+    const exit = await runInstallFlow(
+      ['--database-url', EXISTING_URL, '--connect', 'nope', '--yes'],
+      ENV,
+      kit.deps,
+    );
+
+    expect(exit).toBe(2);
+    expect(kit.output()).toContain('USAGE: no connector for nope');
+    expect(kit.output()).toContain('Known harnesses: demo.');
+    expect(kit.written).toEqual([]);
+    expect(kit.shimmed).toEqual([]);
+    expect(kit.database.doctored).toEqual([]);
+  });
+
+  it('exits 1 when a connector refuses, having finished everything else', async () => {
+    const broken: MemoryConnector = memoryConnector({
+      harness: 'demo',
+      failure: { code: 'HARNESS_UNREADABLE', message: 'settings.json is not JSON' },
+    });
+    const kit = harness({ isTTY: false, connectors: [broken] });
+
+    const exit = await runInstallFlow(
+      ['--database-url', EXISTING_URL, '--connect', 'demo', '--yes'],
+      ENV,
+      kit.deps,
+    );
+
+    expect(exit).toBe(1);
+    expect(kit.output()).toContain('HARNESS_UNREADABLE: settings.json is not JSON');
+    // The database half of the install still happened and still counts.
+    expect(kit.database.migrated).toEqual([EXISTING_URL]);
+    expect(kit.output()).toContain('pgvector: ok');
+  });
+});
+
 describe('the installer flags', () => {
   it.each([
-    { argv: [], expected: { docker: false, yes: false, help: false } },
-    { argv: ['--docker', '--yes'], expected: { docker: true, yes: true, help: false } },
-    { argv: ['-y'], expected: { docker: false, yes: true, help: false } },
+    { argv: [], expected: { docker: false, connect: [], yes: false, help: false } },
+    {
+      argv: ['--docker', '--yes'],
+      expected: { docker: true, connect: [], yes: true, help: false },
+    },
+    { argv: ['-y'], expected: { docker: false, connect: [], yes: true, help: false } },
     {
       argv: ['--database-url', 'postgres://x/y'],
-      expected: { databaseUrl: 'postgres://x/y', docker: false, yes: false, help: false },
+      expected: {
+        databaseUrl: 'postgres://x/y',
+        docker: false,
+        connect: [],
+        yes: false,
+        help: false,
+      },
+    },
+    {
+      argv: ['--mirror-path', '/tmp/notes', '--connect', 'demo', '--connect', 'other'],
+      expected: {
+        docker: false,
+        mirrorPath: '/tmp/notes',
+        connect: ['demo', 'other'],
+        yes: false,
+        help: false,
+      },
+    },
+    {
+      argv: ['--connect', 'demo', '--connect', 'demo'],
+      expected: { docker: false, connect: ['demo'], yes: false, help: false },
     },
   ])('reads $argv', ({ argv, expected }) => {
     const parsed = parseFlags(argv);
@@ -869,6 +1291,8 @@ describe('the installer flags', () => {
     { argv: ['--database-url'], contains: 'needs a URL' },
     { argv: ['--database-url', '--yes'], contains: 'needs a URL' },
     { argv: ['--database-url', 'postgres://x/y', '--docker'], contains: 'one of them' },
+    { argv: ['--mirror-path'], contains: 'needs a path' },
+    { argv: ['--connect'], contains: 'needs a harness name' },
   ])('refuses $argv', ({ argv, contains }) => {
     const parsed = parseFlags(argv);
     expect(parsed.ok).toBe(false);
@@ -884,6 +1308,25 @@ describe('the installer flags', () => {
     expect(exit).toBe(2);
     expect(kit.output()).toContain('Usage: second-brain');
     expect(kit.written).toEqual([]);
+  });
+
+  it('refuses both database flags from commander too, not only from argv', async () => {
+    // `brain setup run` builds the flags itself, so the contradiction has to be
+    // caught in the flow as well: taking the URL and ignoring the container the
+    // user also asked for is the one answer that must not happen.
+    const kit = harness({ isTTY: false });
+
+    const exit = await runInstall(
+      { databaseUrl: EXISTING_URL, docker: true, connect: [], yes: true, help: false },
+      ENV,
+      kit.deps,
+    );
+
+    expect(exit).toBe(2);
+    expect(kit.output()).toContain('pass one of them');
+    expect(kit.written).toEqual([]);
+    expect(kit.runner.calls).toEqual([]);
+    expect(kit.database.doctored).toEqual([]);
   });
 
   it('prints the usage and exits 0 for --help', async () => {

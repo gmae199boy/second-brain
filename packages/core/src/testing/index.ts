@@ -34,6 +34,7 @@ export {
   assertReadSchemaVersion,
   assertStoreHealth,
   clockContract,
+  connectorContract,
   embedderContract,
   idGenContract,
   parserContract,
@@ -41,6 +42,7 @@ export {
   schemaStoreContract,
   sessionStoreContract,
   storeContract,
+  type ConnectorSubject,
   type ParserSubject,
 } from './contracts/index.js';
 export {
@@ -60,6 +62,11 @@ export {
   unreadableTranscript,
   type MemoryParserOptions,
 } from './fakes/parser.js';
+export {
+  memoryConnector,
+  type MemoryConnector,
+  type MemoryConnectorOptions,
+} from './fakes/connector.js';
 export { memoryEmbedder, type MemoryEmbedderOptions } from './fakes/embedder.js';
 export { memoryReranker, type MemoryRerankerOptions } from './fakes/reranker.js';
 export { fixedClock, steppingClock } from './fakes/clock.js';

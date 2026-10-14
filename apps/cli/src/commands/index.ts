@@ -1,5 +1,8 @@
+import { connectors } from '../connectors/index.js';
 import type { CommandSpec } from '../dispatch.js';
 import { adminDoctor } from './admin-doctor.js';
+import { setupConnectCommand } from './setup-connect.js';
+import { setupRun } from './setup-run.js';
 
 /**
  * The command registry. The order here is the order `--help` lists them in.
@@ -10,4 +13,8 @@ import { adminDoctor } from './admin-doctor.js';
  * export const logAppend: CommandSpec = { ns: 'log', verb: 'append', writes: true, … };
  * ```
  */
-export const commands: readonly CommandSpec[] = [adminDoctor];
+export const commands: readonly CommandSpec[] = [
+  adminDoctor,
+  setupRun,
+  setupConnectCommand(connectors),
+];

@@ -59,6 +59,37 @@ const registry = [
   },
   {
     ns: 'fake',
+    verb: 'read-arg',
+    description: 'a read command with a positional argument',
+    arguments: ['<name>', '[extra]'],
+    run: async (context) => ({ ok: true, data: { args: context.args } }),
+  },
+  {
+    ns: 'fake',
+    verb: 'standalone',
+    description: 'a command that runs before there is any configuration',
+    standalone: true,
+    arguments: ['<name>'],
+    run: async (context) => ({
+      ok: true,
+      data: {
+        args: context.args,
+        home: context.env.SECOND_BRAIN_HOME ?? null,
+        // No brain and no config: it was given neither, by design.
+        keys: Object.keys(context).sort(),
+      },
+      text: ['standalone ok'],
+    }),
+  },
+  {
+    ns: 'fake',
+    verb: 'standalone-fails',
+    description: 'a standalone command that could not run',
+    standalone: true,
+    run: async () => ({ ok: false, code: 'SHIM_MISSING', message: 'no shim', exit: 1 }),
+  },
+  {
+    ns: 'fake',
     verb: 'hook-throw',
     description: 'a hook command that throws',
     hook: true,
@@ -376,6 +407,98 @@ describe('the dispatcher on a hook path', () => {
     } finally {
       await empty.drop();
     }
+  });
+});
+
+describe('the dispatcher and a standalone command', () => {
+  it('runs it with no configuration at all, and hands it the environment', async () => {
+    // A folder that does not exist: any other command would end in
+    // CONFIG_MISSING here, which is exactly why `setup run` is standalone.
+    const run = await runDispatch(['fake', 'standalone', 'thing', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data).toEqual({
+      args: ['thing'],
+      home: '/nonexistent/home',
+      keys: ['args', 'clock', 'env', 'options'],
+    });
+  });
+
+  it('prints its text and its exit code the same way as any other command', async () => {
+    const run = await runDispatch(['fake', 'standalone', 'thing'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect(run.code).toBe(0);
+    expect(run.stdout).toBe('standalone ok\n');
+  });
+
+  it('reports its own failure code and exit 1', async () => {
+    const run = await runDispatch(['fake', 'standalone-fails', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect(run.code).toBe(1);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('SHIM_MISSING');
+  });
+
+  it('answers USAGE when a required argument is missing', async () => {
+    const run = await runDispatch(['fake', 'standalone', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect(run.code).toBe(2);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.error?.code).toBe('USAGE');
+    expect(envelope.error?.message).toContain("missing required argument 'name'");
+  });
+});
+
+describe('the dispatcher and positional arguments', () => {
+  it('hands a database command its arguments in the order they were declared', async () => {
+    const empty = await createTestDatabase();
+    try {
+      const home = await homeFor(empty.url);
+
+      const run = await runDispatch(['fake', 'read-arg', 'one', 'two', '--json'], {
+        [HOME_ENV]: home,
+      });
+
+      expect(run.code).toBe(0);
+      expect((JSON.parse(run.stdout) as Envelope).data).toEqual({ args: ['one', 'two'] });
+    } finally {
+      await empty.drop();
+    }
+  });
+
+  it('leaves an optional argument out rather than passing undefined', async () => {
+    const empty = await createTestDatabase();
+    try {
+      const home = await homeFor(empty.url);
+
+      const run = await runDispatch(['fake', 'read-arg', 'one', '--json'], { [HOME_ENV]: home });
+
+      expect(run.code).toBe(0);
+      expect((JSON.parse(run.stdout) as Envelope).data).toEqual({ args: ['one'] });
+    } finally {
+      await empty.drop();
+    }
+  });
+
+  it('answers USAGE for one argument too many', async () => {
+    const run = await runDispatch(['fake', 'read-arg', 'one', 'two', 'three', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect(run.code).toBe(2);
+    expect((JSON.parse(run.stdout) as Envelope).error?.code).toBe('USAGE');
   });
 });
 
