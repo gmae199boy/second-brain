@@ -2,7 +2,7 @@
 type: epic
 title: "조회와 미러"
 parent: personal-brain
-covers: [CAP-4, CAP-5, CAP-6, CAP-7, CAP-13]
+covers: [CAP-4, CAP-5, CAP-6, CAP-7, CAP-13, CAP-14]
 after: ["epic-capture", "epic-log-and-context"]
 assignee: ""
 risk: medium
@@ -12,7 +12,7 @@ risk: medium
 
 ## Description
 
-조각 생성(drain), 키워드 검색(`pg_trgm`), `brain recall time/logs/chunks/tools/expand`, `brain sessions list/read`, 결과 계약(출처·근접 정렬·8,000자), 세션별 Markdown 미러와 `admin mirror-rebuild`, 조각 색인을 다시 만드는 `admin reindex`(키워드 구성), `log`·`recall` 직전 증분 수집을 만든다.
+조각 생성(drain), 키워드 검색(FTS5 trigram, 질의는 Core 함수 하나가 구절로 감쌈), 문서 조각·파일 이름·경로·EXIF 촬영 일시 검색(`recall docs`, `files show`·`files url`), 종류별 결과 계약, `brain recall time/logs/chunks/tools/expand`, `brain sessions list/read`, 결과 계약(출처·근접 정렬·8,000자), 세션별 Markdown 미러와 `admin mirror-rebuild`, 조각 색인을 다시 만드는 `admin reindex`(키워드 구성), `log`·`recall` 직전 증분 수집을 만든다.
 
 ## Outcome
 
@@ -30,10 +30,11 @@ risk: medium
 4. 한 번의 결과가 8,000자를 넘으면 잘리고 `RESULT_TRUNCATED`가 붙는다.
 5. 미러를 지우고 `admin mirror-rebuild`로 다시 만들면 같은 내용이고, 미러를 고쳐도 DB는 변하지 않으며, 가린 세션의 미러에는 가린 값이 없다.
 6. `admin reindex`로 조각을 비우고 다시 만들어도 원문·로그·출처가 변하지 않고, 미색인 세션은 `UNINDEXED`로 표시된다. 조회 지연(SM-7)을 실측해 기록하고, doctor가 색인 설정과 실패 색인을 보인다.
+7. 문서 본문의 단어, 폴더 이름, 촬영 일시로 문서·사진이 찾히고, 결과에 원본 URL이 붙으며, 미색인 파일은 표시된다. 공백 든 질의와 `a-b`·`AND`·`"` 같은 질의가 오류나 조용한 0건 없이 처리된다.
 
 ## Boundaries
 
-AD-13·15·16, Table Contract(chunks, index_configs). 임베딩은 epic-embedding-index.
+AD-13·15·16·23·24, Table Contract(chunks, index_configs, document_chunks, file_names, file_metadata). 경고 코드 `FILE_SOURCE_UNREACHABLE`. 미러 쓰기는 DB 잠금 밖에서 하고 일감으로 직렬화한다. 임베딩은 epic-embedding-index.
 
 ## References
 

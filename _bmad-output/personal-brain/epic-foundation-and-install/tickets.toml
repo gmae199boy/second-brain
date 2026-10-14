@@ -10,7 +10,7 @@ covers = ["E1-1", "E1-6"]
 after = []
 hitl = true
 risk = "medium"
-references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md#ad-1--패키지-경계로-의존-방향을-강제한다-adopted"]
+references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-1"]
 
 [[entry]]
 id = 2
@@ -80,13 +80,61 @@ hitl = false
 risk = "medium"
 
 [[entry]]
+id = 10
+type = "story"
+title = "SQLite store 기반: 드라이버, 쓰기 통로, 시각 코덱"
+description = "`packages/sqlite`에 `node:sqlite`용 얇은 Kysely 드라이버, 이미 있는 파일만 `mode=rw`로 여는 연결 함수 하나(pragma `busy_timeout`·`foreign_keys`·`recursive_triggers`, 같은 트랜잭션 안에서만 유효한 redact 표시 SQL 함수 등록과 `try/finally` 관리), `BEGIN IMMEDIATE`로 여는 쓰기 유일 통로 `withWrite`, HealthStore·SchemaStore 구현(원본 열림·WAL·FTS5 trigram·`foreign_keys` 탐침, 스키마 버전), 마이그레이션 실행기를 만든다. Core에는 24글자 시각 정규형 코덱(Store 경계에서 다른 형식 거부)을 두고, `StoreHealth`의 벡터 칸을 원본 칸으로 바꾸는 포트 변경과 `packages/postgres`의 health·계약 사례를 함께 맞춘다. 루트 `engines.node`는 `>=24.16.0`이다."
+verify = "SQLite가 core/testing의 HealthStore·SchemaStore 계약 사례를 통과하고 postgres 계약 테스트도 그대로 통과하며, 쓰기 트랜잭션의 첫 문장이 `begin immediate`이고, 없는 경로는 `DB_UNAVAILABLE`이며 파일이 생기지 않고, 시각 코덱이 오프셋 형식을 거부하고, 두 프로세스 동시 쓰기의 `busy_timeout` 대기 시간을 실측해 기록한다(spool 전환은 epic 2)."
+covers = ["E1-1", "E1-2", "E1-3"]
+after = [2]
+hitl = false
+risk = "high"
+unknown = "동기 API만 있는 `node:sqlite`에서 `busy_timeout` 대기가 hook 지연(NFR-7)에 주는 영향."
+references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-7", "_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-10", "_bmad-output/personal-brain/architecture-brain-v1-slice-1/reviews/review-currency-2026-10-14.md"]
+
+[[entry]]
+id = 11
+type = "story"
+title = "SQLite 첫 마이그레이션: 대화·로그 테이블과 불변 trigger"
+description = "Table Contract의 대화·로그 쪽 테이블(projects, worktrees, workspaces, sessions, messages, tool_notes, log_entries, log_entry_edits, chunks, index_configs, redactions, context_injections, failures, transcript_files, schema_version)과 UNIQUE 멱등 키, messages·tool_notes의 UPDATE·DELETE 거부 trigger(10의 redact 표시 함수를 부름), FTS5 trigram 테이블(chunks, log_entries, tool_notes), WAL 설정, 기본 index_configs `chunk` 행을 만든다. embeddings는 만들지 않는다."
+verify = "UPDATE·DELETE·`INSERT OR REPLACE`가 거부되고 redact 표시가 있을 때만 통과하며 롤백 뒤 표시가 남지 않고, 마이그레이션 재실행이 `applied=[]`이며, FTS5 질의가 한국어 부분 일치로 동작한다."
+covers = ["E1-3"]
+after = [3, 10]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-11", "_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, Table Contract"]
+
+[[entry]]
+id = 12
+type = "story"
+title = "파일·첨부·추출·일감 스키마"
+description = "두 번째 마이그레이션으로 work_items, files, file_locations, message_attachments, document_extractions, document_chunks, file_names, file_metadata 테이블과 멱등 키, files 가리기 우회(`files.redact`가 쓰는 같은 표시), FTS5 trigram 테이블(document_chunks, file_names), 기본 index_configs `document_chunk` 행을 만든다. 동작(대기열 청구, 파일 저장, 추출)은 epic 2·4가 만든다."
+verify = "각 테이블의 멱등 키가 중복 삽입을 거부하고, `file_locations.ownership`과 `files` 내용 행이 Table Contract의 변경 규칙대로 막히며, document_chunks·file_names FTS 질의가 동작하고, 마이그레이션 재실행이 멱등이다."
+covers = ["E1-3"]
+after = [11]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-21", "_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-23", "_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-24"]
+
+[[entry]]
+id = 13
+type = "story"
+title = "런타임·설치기를 로컬 원본으로 전환"
+description = "설정 코덱에 `[store] path`(기본 `<home>/brain.db`)와 `[files] path`(기본 `<home>/files/`)를 넣고 `[database] url_env`를 빼며, 디스패처·doctor·설치기가 sqlite store를 쓰게 한다. 설치기는 DB 선택·Docker 단계와 `--database-url`·`--docker` 플래그를 빼고 DB 파일 위치를 묻고, DB 파일(0600, `-wal`·`-shm` 포함)과 `files/` 루트(0700)를 만든 뒤 마이그레이션과 index_configs를 실행한다. `install/docker.ts`와 `packages/postgres`는 연결만 끊고, README를 고친다."
+verify = "Docker도 Postgres도 없는 사용자 계정에서 `brain setup run --yes`가 exit 0이고 `brain.db`(0600)와 `files/`(0700)가 생기며, 두 번 돌려도 config·shim·행 수가 같고, shim으로 doctor가 ok를 낸다."
+covers = ["E1-4", "E1-5"]
+after = [7, 12]
+hitl = false
+risk = "medium"
+
+[[entry]]
 id = 8
 type = "story"
 title = "doctor 틀 완성"
-description = "이후 에픽이 항목을 더할 수 있는 점검 등록 구조와 스키마 버전·shim·node 경로·설정 유효성 항목을 더한다."
-verify = "shim을 지우거나 node 경로를 틀리게 하거나 스키마 버전을 바꾸면 doctor가 해당 항목을 실패로 보인다."
+description = "이후 에픽이 항목을 더할 수 있는 점검 등록 구조와 `store`(이미 있는 파일로 열림·WAL·FTS5·`foreign_keys`를 직접 찔러 봄)·스키마 버전·shim·node 경로와 하한·설정 유효성 항목을 더한다. pgvector 항목은 빼서 epic 6·7로 넘긴다."
+verify = "DB 파일을 지우거나 읽기 전용으로 만들거나, shim을 지우거나, node 경로를 틀리게 하거나, 스키마 버전을 바꾸면 doctor가 해당 항목을 실패로 보인다."
 covers = ["E1-6"]
-after = [4, 7]
+after = [13]
 hitl = false
 risk = "low"
 
@@ -97,6 +145,6 @@ title = "Refactor sweep"
 description = "에픽 동안 미룬 정리만 한다. 범위는 시작할 때 빌드 기록과 미룬 리뷰 지적에서 정한다."
 verify = "전체 테스트와 패키지 의존 경계 검사가 통과하고, 에픽 Done when 1~5를 다시 돌려 모두 통과한다."
 covers = ["E1-1", "E1-2", "E1-3", "E1-4", "E1-5", "E1-6"]
-after = [1, 2, 3, 4, 5, 6, 7, 8]
+after = [1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 8]
 hitl = false
 risk = "low"

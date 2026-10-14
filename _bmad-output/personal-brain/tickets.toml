@@ -1,17 +1,17 @@
-# Personal Brain V1 slice 1 — 에픽 순서(표 순서 = 만드는 순서)
+# Personal Brain V1 slice 1 — 에픽 순서(표 순서 = 만드는 순서). V1 = 1~5, 그 뒤 7·8, 임베딩 6은 맨 뒤.
 
 [[epic]]
 id = 1
 slug = "epic-foundation-and-install"
 title = "기반과 설치"
-covers = ["CAP-10", "CAP-11"]
+covers = ["CAP-10", "CAP-11", "CAP-14"]
 
 [[epic]]
 id = 2
 slug = "epic-capture"
 title = "세션 수집과 비밀 가리기"
-covers = ["CAP-1", "CAP-2"]
-after = [{ epic = 1, needs = "Store port와 스키마(Table Contract), CLI 뼈대, 설치기의 Harness 연결 단계" }]
+covers = ["CAP-1", "CAP-2", "CAP-14"]
+after = [{ epic = 1, needs = "SQLite store와 원본 스키마(Table Contract, 파일·첨부·추출·work_items 포함), [files] path 루트, withWrite, CLI 뼈대, 설치기의 Harness 연결 단계" }]
 
 [[epic]]
 id = 3
@@ -24,7 +24,7 @@ after = [{ epic = 2, needs = "수집된 메시지(로그-대화 연결과 규칙
 id = 4
 slug = "epic-recall-and-mirror"
 title = "조회와 미러"
-covers = ["CAP-4", "CAP-5", "CAP-6", "CAP-7", "CAP-13"]
+covers = ["CAP-4", "CAP-5", "CAP-6", "CAP-7", "CAP-13", "CAP-14"]
 after = [{ epic = 2, needs = "메시지와 도구 메모" }, { epic = 3, needs = "작업 로그(대분류 검색)" }]
 
 [[epic]]
@@ -33,6 +33,20 @@ slug = "epic-operations"
 title = "운영: 내보내기·복구, 업그레이드, 제거"
 covers = ["CAP-12", "CAP-11"]
 after = [{ epic = 4, needs = "모든 테이블이 있어야 내보내기가 전체를 덮음" }]
+
+[[epic]]
+id = 7
+slug = "epic-replicas"
+title = "복제 대상과 원본 이전"
+covers = ["CAP-11", "CAP-12"]
+after = [{ epic = 5, needs = "내보내기 형식과 운영 명령(복제·이전의 검증 기준)" }]
+
+[[epic]]
+id = 8
+slug = "epic-drive"
+title = "Google Drive 연동"
+covers = ["CAP-14", "CAP-12"]
+after = [{ epic = 2, needs = "FileStore port와 로컬 구현, 첨부 원본 저장, 추출 일감" }, { epic = 4, needs = "문서 검색 경로" }, { epic = 5, needs = "스냅샷 형식과 launchd 주기 실행" }]
 
 [[epic]]
 id = 6

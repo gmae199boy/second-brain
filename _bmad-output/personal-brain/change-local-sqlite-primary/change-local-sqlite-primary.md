@@ -294,3 +294,4 @@ trigger: '사용자 결정(2026-10-14), story 1.7 완료 직후 대화'
 ### 7.6 Handoff
 
 순서는 §5와 같다. architecture → PRD·spec → `bmad-ticket` → `/bmad-build 1.10`. 이 추가안을 승인하면 §5의 1~3단계에 함께 반영한다.
+- 2026-10-14: 티켓 반영(bmad-ticket). 검증을 거쳐 §4.1의 story 10·11은 10(SQLite 기반)·11(대화·로그 마이그레이션)·12(파일·첨부·추출·일감 스키마)·13(런타임·설치기 전환)으로 나눴다. 8은 13 뒤, 9는 마지막이다. epic 7 `epic-replicas`와 epic 8 `epic-drive`를 만들었고, 에픽 순서는 1→2→3→4→5→7→8→6이다. launchd는 epic 5(사용자).

@@ -12,7 +12,7 @@ risk: low
 
 ## Description
 
-Model Studio 임베딩·재순위 adapter, 설치기의 임베딩 켜기, 차원 고정 테이블과 HNSW, `admin reindex`의 임베딩 확장, `INDEX_CONFIG_MISMATCH`·`RERANK_FAILED` 경고를 만든다. SM-3이 기본 구성으로 미달일 때 착수한다.
+Model Studio 임베딩·재순위 adapter, 설치기의 임베딩 켜기, sqlite-vec 차원 고정 테이블(확장은 임베딩 경로 연결에서만 `allowExtension`), `admin reindex`의 임베딩 확장, `INDEX_CONFIG_MISMATCH`·`RERANK_FAILED` 경고를 만든다. SM-3이 기본 구성으로 미달일 때 착수한다.
 
 ## Outcome
 
@@ -39,3 +39,7 @@ AD-15, Table Contract(embeddings, index_configs). 기본 구성에서는 외부 
 - spec — _bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md, Capabilities CAP-6
 - architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md
 - prd — _bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md
+
+## Notes
+
+- Decision(2026-10-14): 임베딩은 지금 하지 않는다. 에픽 순서의 맨 뒤로 옮겼다(사용자). 벡터 저장은 pgvector가 아니라 sqlite-vec.
