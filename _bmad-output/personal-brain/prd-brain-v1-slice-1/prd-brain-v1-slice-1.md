@@ -2,7 +2,7 @@
 title: "PRD: Personal Brain V1 slice 1"
 status: final
 created: 2026-10-02
-updated: 2026-10-08
+updated: 2026-10-14
 ---
 
 # PRD: Personal Brain V1 slice 1 — 수집하고, 적어 두고, 찾는다
@@ -90,7 +90,7 @@ Brain은 Claude Code 세션의 모든 메시지를 본문 그대로 저장한다
 - 저장된 본문은 Harness가 보여 준 텍스트와 글자 단위로 같다. 요약·번역·절단이 없다. 예외는 비밀 가리기(FR-26) 하나다.
 - 수집에 LLM 호출이 없다.
 
-**Out of Scope:** 도구의 출력 내용, Harness 원본 파일 보관.
+**Out of Scope:** 도구의 출력 내용, Harness 원본 transcript 파일 보관. 대화에 붙인 첨부는 FR-27이 맡는다.
 
 #### FR-2: 도구 메모
 Brain은 세션의 도구 호출마다 도구 메모 한 줄을 저장한다. Realizes UJ-3.
@@ -338,6 +338,28 @@ Core의 모든 기능은 SDK 호출로 쓸 수 있다.
 
 **Out of Scope:** Harness가 따로 보관하는 원본 transcript 파일.
 
+#### FR-27: 첨부 원본 보관
+대화에 내가 붙인 파일(문서, PDF, 이미지)을 Brain이 원본째 보관하고, 그 메시지와 연결한다(2026-10-14 추가).
+
+**Consequences (testable):**
+- 첨부가 있는 메시지에서 그 파일의 원본을 다시 열 수 있다. 원본 위치(로컬 경로 또는 연동된 저장소의 링크)를 받을 수 있다.
+- 같은 내용의 파일은 한 번만 보관된다.
+- 원본이 어디에 있든(로컬, 연동된 Drive) 기록 쪽에서는 같은 방식으로 가리킨다. 원본 위치가 바뀌어도 기록은 다시 쓰지 않는다.
+- 내 기존 파일(원래 로컬이나 Drive에 있던 것)은 Brain이 옮기거나 지우지 않는다.
+
+**Out of Scope:** Drive 연동, 기존 Drive 문서 색인, 연동 해제·새 기계 이전(이후 조각).
+
+#### FR-28: 문서 내용으로 찾기
+첨부 문서의 내용과 파일의 경로·이름으로 문서를 찾는다(2026-10-14 추가).
+
+**Consequences (testable):**
+- 텍스트가 있는 문서(txt, md, 텍스트가 있는 PDF, docx)는 본문의 단어로 찾힌다. 결과에는 문서, 위치(쪽 등), 원본을 가리키는 링크가 붙는다.
+- 폴더 이름과 파일 이름으로도 찾힌다. 사진은 경로와 촬영 일시로 찾힌다.
+- 내용을 읽지 못한 문서(지원하지 않는 형식, 추출 실패)는 조용히 빠지지 않고 표시된다.
+- 임베딩 없이 키워드 검색과 질의 바꾸기로 충족한다.
+
+**Out of Scope:** OCR(스캔 PDF), HWP, Google Docs 원문, 좌표의 장소 이름 변환.
+
 ## 5. Cross-Cutting Requirements
 
 - **NFR-1 원문 불변.** 메시지 본문은 저장 후 수정되지 않는다. 어떤 기능도 원문을 고쳐 쓰거나 지우지 않는다. 유일한 예외는 비밀 가리기(FR-26)다.
@@ -372,11 +394,12 @@ Core의 모든 기능은 SDK 호출로 쓸 수 있다.
 | LLM 세션 요약 | §8-1. 작업 로그가 없는 세션이 많으면 다시 본다 |
 | BMad memlog 연계, BMad 문서 색인 | §8-2 |
 | 추출·통합 엔진 | 실사용 채점에서 모자라면 Hindsight를 뒤에 붙인다 |
-| Harness 원본 파일·도구 출력 보관 | 결정 완료. 하지 않는다 |
+| Harness 원본 transcript 파일·도구 출력 보관 | 결정 완료. 하지 않는다. 대화 첨부는 보관한다(FR-27, 2026-10-14) |
 | 에이전트 실행 기록(Execution), 외부 자료 연결(Resource, Artifact) | 이후 조각. 저장 구조가 막지 않게 한다(addendum §2) |
 | 데몬, 데스크톱·모바일 앱 | 항상 켜져 있어야 하는 일이 생길 때 |
 | 스케줄러, Telegram, Google Calendar | 이후 조각 |
-| Graphify, Google Drive, Jira, Confluence | 이후 조각 |
+| Graphify, Jira, Confluence | 이후 조각 |
+| Google Drive 연동(첨부 원본 이전, 기존 문서 색인, 변경 동기화, 연동 해제, DB 스냅샷 보관) | 다음 조각(epic 8). Drive API로 하고 Mac에 동기화하지 않는다. 결정은 `../change-local-sqlite-primary/` §7 |
 | 팀 공유(원문 포함), 다중 사용자 | 이후 조각. 개인 사용을 먼저 검증한 뒤 단계적으로 도입한다. 진짜 개인적인 것 외에는 원문까지 공유하는 방향이다. 팀 저장소와 도입 순서는 그때 정한다. slice 1은 프로젝트를 git remote로 식별하고 세션에 사용자 칸을 두어 대비한다 |
 | Task, Goal, OpenLoop, Schedule | 이후 조각 |
 

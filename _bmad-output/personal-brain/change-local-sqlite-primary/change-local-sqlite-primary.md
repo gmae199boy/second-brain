@@ -229,3 +229,68 @@ trigger: '사용자 결정(2026-10-14), story 1.7 완료 직후 대화'
 
 - 2026-10-14: 사용자가 승인했다("진행해"). 범위는 Major이고 조건은 없다.
 - 넘길 순서: Architect(spine) → PM(PRD·spec) → `bmad-ticket`(epic 1 스토리 10·11 추가, 8·9 수정, 이후 에픽 문구, epic 7 envelope) → Dev(`/bmad-build 1.10`).
+
+## 7. 추가안 A (2026-10-14, 사용자 승인 "이대로 진행하자") — 파일 원본, 문서 텍스트, Drive 연동, 주기 실행
+
+### 7.1 Issue
+
+- 대화를 저장하는데 대화에 붙인 파일을 저장하지 않으면 "그때 준 그 문서 찾아줘"에 답할 수 없다.
+- Drive는 5TB이고 로컬은 512GB라서 Drive를 Mac에 동기화할 수 없다. Brain이 Drive API로 직접 다뤄야 한다.
+- 임베딩은 이번 범위에 없다(사용자 재확인). 문서 검색도 키워드와 질의 바꾸기로만 한다.
+
+### 7.2 사용자 결정 (2026-10-14)
+
+1. 대화에 붙인 파일은 원본을 저장한다. 텍스트형 문서는 내용 텍스트를 DB에 넣어 본문으로 검색되게 한다.
+2. 파일은 두 종류다.
+   - **Brain이 맡은 파일**(대화 첨부)은 Brain이 저장하고, 옮기고, 지운다.
+   - **외부 파일**(원래 Drive나 로컬에 있던 내 문서)은 색인만 하고 절대 옮기거나 지우지 않는다.
+3. 원본(SoT)은 두 가지다.
+   - **기록의 원본**은 로컬 SQLite이고, 연동해도 바뀌지 않는다.
+   - **Brain이 맡은 파일의 원본**은 연동 전에는 로컬 `files/`이고, Drive를 연동하면 Drive로 옮겨 간다. 옮기는 순서는 업로드 → 해시 검증 → 로컬 삭제다.
+4. DB는 로컬과 Drive를 같은 것으로 다룬다.
+   - 파일 저장소 인터페이스 하나에 로컬 구현과 Drive 구현을 둔다.
+   - 파일마다 내용 해시, `home`, 위치 목록을 둔다. 위치는 로컬이면 루트 기준 상대 경로, Drive면 파일 ID다.
+   - URL은 위치로부터 그때그때 만든다. 에이전트는 원본이 필요하면 그 URL을 사용자에게 준다.
+   - 일시(처음 본 시각, 원본 수정, 업로드, 검증, 로컬 삭제)를 둔다.
+5. 경로·폴더 이름과 파일 이름을 검색 색인에 넣는다. 사진은 임베딩 없이 경로와 EXIF(촬영 일시, 기기, 좌표)로 찾는다.
+6. 외부 소스 동기화는 감시 폴더 목록, 파일별 마지막 버전, Drive changes 토큰으로 관리한다. 외부 원본이 삭제되면 추출 텍스트는 남기고 "원본 삭제됨"으로 표시한다.
+7. **연동 해제**(사용자 선택 b): Drive에 둔 채 연결만 끊는다. 검색은 DB의 텍스트로 계속 되고, 원본은 다시 연동할 때까지 "접근 불가"로 표시한다. Drive 사본은 지우지 않는다.
+8. **새 PC로 옮기기**:
+   - DB는 실행 중인 파일이 아니라 내보낸 스냅샷을 Drive에 올리고, 새 PC에서 복구한다.
+   - 실제 동작은 CLI 명령이 하고, 나중에 `/brain:db-migration` 스킬이 감싼다.
+   - Postgres 이전도 같은 방식이다. CLI `brain setup move-store`가 동작하고, 나중에 `/brain:migration` 스킬이 감싼다.
+9. **주기 실행**: 데몬 없이 launchd가 단명 CLI(`brain admin drain`, 이후 `brain sources sync`)를 주기적으로 실행한다.
+   - 데몬은 Telegram 양방향, 원격 기계 수집, 승인 대기 흐름을 시작할 때 별도 아키텍처 결정으로 다룬다.
+
+### 7.3 V1 범위에 넣는 것
+
+| 항목 | 에픽 |
+| --- | --- |
+| 파일 저장소 인터페이스(로컬 구현만), 파일·위치·추출 테이블, 상대 참조, `[files] path` 설정 | epic 1 (story 10 스키마, story 11 설정) |
+| 대화 첨부 원본 저장, 메시지와의 연결 | epic 2 |
+| 텍스트 추출(txt, md, 텍스트가 있는 PDF, docx), 조각 나누기, FTS 색인, 추출 상태와 `extractor_version`, 미색인 경고 | epic 2(추출 일감) + epic 4(검색 결과에 문서 조각 포함) |
+| 경로·파일 이름 색인, 사진 EXIF | epic 4 |
+| launchd 주기 drain(LaunchAgent, Brain 표식, uninstall에서 제거) | epic 5 |
+| 내보내기 스냅샷 형식이 파일 메타데이터를 포함 (파일 본체는 선택) | epic 5 |
+
+### 7.4 V1 다음으로 미루는 것 (새 envelope 에픽)
+
+- **epic 8 Drive 연동**: OAuth, Drive 파일 저장소 구현, 첨부 원본 업로드·검증·로컬 삭제, 기존 Drive 문서 색인(목록 → export·임시 다운로드 → 추출 → 삭제), changes 동기화(`brain sources sync`, launchd), 연동 해제(b), DB 스냅샷 Drive 업로드와 새 PC 복구, 로컬 캐시 상한.
+- **epic 7 복제 대상**(기존)에 `brain setup move-store --to postgres`를 넣는다(원본 이전: 쓰기 정지 → 복사 → 건수·해시 검증 → 전환 → 옛 파일은 읽기 전용 백업). 이를 위해 AD-10의 "복제 대상은 원본이 될 수 없다"를 "원본 이전은 검증을 거치는 명시적 명령 하나로만 한다"로 고친다.
+- **plugin·skill**: `/brain:migration`, `/brain:db-migration`. 기존 Deferred 행에 붙인다.
+- OCR, HWP, Google Docs 외 형식, 좌표의 장소 이름 변환.
+
+### 7.5 문서 영향
+
+- **PRD**
+  - FR 신설: 첨부 원본 저장, 문서 텍스트 추출·검색, 경로·EXIF 검색.
+  - §6.2 "harness 원본 파일은 보관하지 않는다"를 고친다. transcript 파일은 여전히 보관하지 않지만 사용자가 붙인 첨부는 보관한다.
+  - Constraints에 "기록의 원본은 로컬 SQLite, 파일 원본은 로컬 또는 연동된 Drive"를 넣는다.
+- **architecture**
+  - 새 AD: 파일 저장소 port와 두 종류의 파일, `home`·위치·검증 순서; 문서 추출(파생물, `extractor_version`, 추출 일감); 주기 실행은 launchd(데몬 조건은 Deferred).
+  - AD-10 원본 이전 문구, AD-15 색인 대상에 문서 조각·경로를 추가, Table Contract에 파일·위치·추출 조각·소스 상태 테이블, Deferred 갱신.
+- **에픽**: epic 1 story 10·11 범위, epic 2·4·5 Description과 Done when, epic 8 envelope 신설, initiative 순서표.
+
+### 7.6 Handoff
+
+순서는 §5와 같다. architecture → PRD·spec → `bmad-ticket` → `/bmad-build 1.10`. 이 추가안을 승인하면 §5의 1~3단계에 함께 반영한다.

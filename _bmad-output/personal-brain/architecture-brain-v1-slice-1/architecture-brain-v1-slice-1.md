@@ -8,7 +8,7 @@ scope: 'slice 1 — 세션 수집, 작업 로그, 조회, 시작 맥락, 설치�
 status: final
 created: '2026-10-08'
 updated: '2026-10-14'
-binds: [FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, FR-12, FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22, FR-23, FR-24, FR-25, FR-26, NFR-1, NFR-2, NFR-3, NFR-4, NFR-5, NFR-6, NFR-7, NFR-8, NFR-9]
+binds: [FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, FR-12, FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22, FR-23, FR-24, FR-25, FR-26, FR-27, FR-28, NFR-1, NFR-2, NFR-3, NFR-4, NFR-5, NFR-6, NFR-7, NFR-8, NFR-9]
 sources:
   - ../prd-brain-v1-slice-1/prd-brain-v1-slice-1.md
   - ../prd-brain-v1-slice-1/addendum.md
@@ -96,10 +96,11 @@ flowchart LR
 | `context` | `show` | 시작 맥락 출력 (17) |
 | `sessions` | `ingest`, `list`, `read`, `assign-workspace`, `failures`, `retry` | 수집, 목록(로그 없는 세션 포함), 넓히기(메시지·도구 메모), 워크스페이스 넣기, 실패 조회·다시 수집 (1~6, 9, 15) |
 | `log` | `append`, `list`, `edit`, `set-state`, `set-scope` | 적기, 조회(종류·꼬리표·기간), 고치기, 끄기·켜기, 규칙 적용 범위 (7, 8, 19~22) |
-| `recall` | `time`, `logs`, `chunks`, `tools`, `expand` | 시간 조회, 대분류, 소분류, 도구 메모 검색, 앞뒤 조각 (12~16) |
+| `recall` | `time`, `logs`, `chunks`, `docs`, `tools`, `expand` | 시간 조회, 대분류, 소분류, 문서 조각·이름 검색, 도구 메모 검색, 앞뒤 조각 (12~16, 28) |
+| `files` | `show`, `url`, `redact`, `reindex` | 파일 정보·위치, 원본 URL, 첨부 가리기, 재추출 (27, 28, 26) |
 | `messages` | `redact` | 비밀 가리기 (AD-11) |
 | `admin` | `drain`, `doctor`, `export`, `import`, `reindex`, `mirror-rebuild` | 밀린 일, 점검, 내보내기·복구, 재색인, 미러 재생성 (5, 11, 25, NFR-9) |
-| `setup` | `run`, `connect`, `upgrade`, `uninstall` | 설치·재설정, Harness 연결, 업그레이드, 제거 (AD-19, AD-20) |
+| `setup` | `run`, `connect`, `upgrade`, `uninstall`, `move-store` | 설치·재설정, Harness 연결, 업그레이드, 제거 (AD-19, AD-20) |
 
 ### AD-6 — 수명 주기 매핑
 
@@ -154,7 +155,7 @@ sequenceDiagram
 - **Binds:** FR-5, FR-7, FR-17, NFR-2, NFR-3
 - **Prevents:** DB에 쓸 수 없는 동안 작업 로그 유실(transcript로 복구할 수 없는 유일한 쓰기), spool 파일의 섞임·유실
 - **Rule:**
-  - DB에 쓰지 못한 작업 로그 원문, 실패 기록, 수집 밀림 표시, 주입 시도 기록은 spool에 쓴다.
+  - DB에 쓰지 못한 작업 로그 원문, 실패 기록, 수집 밀림 표시, 주입 시도 기록, 첨부 연결 메타데이터(바이트 제외)는 spool에 쓴다.
   - spool은 `~/.second_brain/spool/`의 **프로세스별 새 파일**(JSON Lines, 줄마다 `schema_version`)이다. 파일을 공유해 append하지 않는다. 쓰는 동안은 `*.jsonl.open` 이름이고, 다 쓴 뒤 `*.jsonl`로 rename해야 drain이 집는다.
   - drain은 파일을 `*.claiming`으로 rename한 뒤 재주입하고, 성공하면 지운다.
   - 레코드의 `occurred_at`과 ID는 처음 만든 프로세스가 정하고, 재주입 때 바꾸지 않는다.
@@ -170,7 +171,7 @@ sequenceDiagram
 - **Prevents:** 원본이 둘이 되어 갈라지는 것, 서버·Docker 없이는 쓸 수 없는 것, 저장 위치가 코드에 새는 것
 - **Rule:**
   - 원본(SOT)은 `[store] path`(기본 `~/.second_brain/brain.db`)의 SQLite 파일 하나다. Markdown 미러, 조각, 색인은 원본에서 다시 만들 수 있는 파생물이고, spool은 대기열이다.
-  - **복제 대상**(Postgres, Drive의 기계별 append-only 파일)은 원본을 커서로 따라온다(epic 7, slice 1 범위 밖). 쓰기는 원본에 들어간 순간 확정되고, 복제 실패는 원본 쓰기를 막지 않는다. 읽기·검색은 원본에서만 한다. 복제 대상은 원본이 될 수 없다.
+  - **복제 대상**(Postgres, Drive의 기계별 append-only 파일)은 원본을 커서로 따라온다(epic 7, slice 1 범위 밖). 쓰기는 원본에 들어간 순간 확정되고, 복제 실패는 원본 쓰기를 막지 않는다. 읽기·검색은 원본에서만 한다. 복제 대상이 원본으로 바뀌는 것은 검증을 거치는 명시적 명령 하나(`brain setup move-store`: 쓰기 정지 → 복사 → 건수·해시 검증 → 전환 → 옛 파일은 읽기 전용 백업, epic 7)로만 한다.
   - 원본은 DB 파일과 그 옆의 `-wal`·`-shm` 파일을 함께 가리킨다(복사·제거·권한은 셋을 함께, 권한 0600). 동기화 폴더(Drive 등)에 두지 않는다. 동기화 중 파일이 깨질 수 있다.
   - 런타임은 원본을 **이미 있는 파일로만** 연다(`mode=rw`, 없는 파일을 만들지 않음). 경로 오타가 두 번째 원본을 만들지 못하게 하기 위해서다. 없으면 `DB_UNAVAILABLE`이다.
   - "읽기·검색은 원본에서만"은 Brain 자신의 경로를 말한다. 사람이나 에이전트가 미러를 grep하는 것은 Brain 밖이다(AD-16).
@@ -226,14 +227,14 @@ sequenceDiagram
 - **Prevents:** 기본 구성에서 소분류 검색이 빈 결과를 성공으로 돌려주는 것, 색인 설정이 섞인 검색, 결과 형태가 단위마다 달라지는 것
 - **Rule:**
   - **조각은 항상 만든다.** 조각 규칙(목표 1,200자, 메시지 경계, 인접 겹침 1메시지, 2,400자 넘는 메시지는 분할, 머리말 없음)은 `index_configs`에 기록된 값을 따른다.
-  - 기본 검색은 키워드다. `chunks.body`, `log_entries.text`, `tool_notes.target`에 FTS5 `trigram` 색인을 둔다(부분 일치, 대소문자 무시). FTS 행은 원본 행을 쓰는 같은 트랜잭션에서 adapter가 함께 쓴다. 질의는 Core의 함수 하나가 만든다: `"`를 이스케이프하고 전체를 하나의 구절로 감싸므로 FTS 연산자는 글자 그대로다. 구절 안 연속 글자가 3자 미만이면 `LIKE` 순차 검색이다(개인 규모에서 허용). 계약 테스트에 공백 든 질의, `a-b`, `AND`, `"`를 넣는다.
+  - 기본 검색은 키워드다. `chunks.body`, `log_entries.text`, `tool_notes.target`에 FTS5 `trigram` 색인을 둔다(부분 일치, 대소문자 무시). 문서 조각(`document_chunks.body`)과 파일 경로·이름(`files`의 경로 텍스트)도 같은 키워드 색인 대상이다(AD-24). FTS 행은 원본 행을 쓰는 같은 트랜잭션에서 adapter가 함께 쓴다. 질의는 Core의 함수 하나가 만든다: `"`를 이스케이프하고 전체를 하나의 구절로 감싸므로 FTS 연산자는 글자 그대로다. 구절 안 연속 글자가 3자 미만이면 `LIKE` 순차 검색이다(개인 규모에서 허용). 계약 테스트에 공백 든 질의, `a-b`, `AND`, `"`를 넣는다.
   - 한국어·영어 교차는 에이전트가 질의를 바꿔 다시 찾는 것으로 충족한다. 그 방법은 시작 맥락 안내에 넣는다.
   - 임베딩·재순위는 port 뒤의 선택 색인이고 **slice 1 기본값은 꺼짐**이다. 켜는 경우:
     - 차원은 설정 시점에 고정한다(sqlite-vec 차원 고정 테이블, 예: 1024). 확장은 임베딩이 켜진 경로의 연결에서만 `allowExtension: true`로 연다(연결을 만든 뒤에는 켤 수 없다).
     - 사용 중인 색인 설정은 DB에 기록하고, 설정 파일과 다르면 경고 `INDEX_CONFIG_MISMATCH`를 낸다.
     - 모델·차원 변경은 `admin.reindex`가 새 테이블을 만든 뒤 교체한다. 교체 전까지는 옛 테이블로 검색한다.
     - 재순위가 실패하면 벡터 순위를 그대로 돌려주고 경고 `RERANK_FAILED`를 낸다.
-  - **결과 계약**: 결과마다 출처(`session` 토큰, `harness`, 날짜, 꼬리표, `seq_from`·`seq_to`, `chunk_id` 또는 `log_entry_id`)를 붙인다. 이 출처가 곧 `recall.expand`·`sessions.read`의 입력이다.
+  - **결과 계약**: 결과는 종류(`conversation | log | document`)로 갈라지는 출처를 붙인다. 대화·로그는 `session` 토큰, `harness`, 날짜, 꼬리표, `seq_from`·`seq_to`, `chunk_id` 또는 `log_entry_id`이고, 이것이 `recall.expand`·`sessions.read`의 입력이다. 문서는 `file_id`, 표시 이름, 조각 위치(쪽 등), 그때 만든 URL, 첨부라면 그 세션·`seq`이고, `files.show`의 입력이다. 문서는 첨부된 세션의 근접 단계를 물려받는다.
   - 정렬은 근접 단계(같은 워크트리 → 프로젝트 → 워크스페이스 → 전체) 다음 관련도 순이다.
   - 한 번의 결과는 기본 5건, 총 8,000자 이하다. Brain이 자르고 경고 `RESULT_TRUNCATED`를 낸다.
 
@@ -310,6 +311,39 @@ sequenceDiagram
   - 모든 값(ID, `seq`, 시각, `recorded_at` 포함)은 원본이 정하고, 복제 adapter는 그대로 복사한다. 복제 쪽에서 `DEFAULT now()`, 자동 번호, 대소문자를 무시하는 정렬 규칙을 쓰지 않는다.
   - 복제 adapter는 Core의 ID·시각 코덱으로 읽고 써서, 원본과 같은 값으로 되읽히는지를 계약 테스트로 확인한다.
 
+### AD-23 — 파일: 내용과 위치를 나누고, 소유는 위치에 붙인다
+
+- **Binds:** FR-27, FR-28, NFR-1, NFR-9
+- **Prevents:** 사용자의 기존 파일을 Brain이 옮기거나 지우는 것, 원본 위치가 바뀔 때 기록을 다시 써야 하는 것, 검증 전에 마지막 사본을 지우는 것, 고아 파일이 쌓이는 것
+- **Rule:**
+  - 파일은 내용(`files`, `content_hash`는 `sha256:<소문자 hex>`)과 위치(`file_locations`)로 나눈다. 위치는 저장소 종류, locator, **소유(`brain | external`)**다. 같은 내용이 Brain 사본과 사용자 원본으로 동시에 있는 것이 정상이다(내용 행 하나, 위치 둘). 소유는 내용이 아니라 위치의 속성이다.
+  - Brain 위치의 locator는 내용의 순수 함수다(`<h0-2>/<h2-4>/<hex><확장자>`, 임시 파일 → rename). 그래서 넣기는 멱등이다. 절대 경로와 URL은 저장하지 않고 위치로부터 그때 만든다.
+  - `FileStore` port(넣기, 가져오기, 확인, 위치→URL, 지우기)는 **`brain` 소유이면서 설정된 루트 안의 위치에만** 쓰고 지운다. 그 밖의 위치에 대한 쓰기·지우기는 port가 거부하고, 계약 테스트가 고정한다. slice 1은 로컬 구현만 낸다. 루트는 `[files] path`(기본 `~/.second_brain/files/`, 동기화 폴더 금지, 권한 0700/0600)다.
+  - `files.home`은 `brain` 위치 하나를 가리킨다. 원본 이전은 넣기 → 저장소 해시(`remote_checksum`) 또는 되읽기로 검증 → **같은 쓰기 트랜잭션에서 검증 시각 기록과 `home` 전환** → 옛 위치 삭제는 별도 일감이다. 이전은 양방향(로컬 ↔ Drive)이고, 검증 없이 지우는 경로는 없다.
+  - 첨부는 파일을 먼저 저장소에 넣고(트랜잭션 밖) 그 뒤 행을 쓴다(AD-7). 루트 안에 있으나 위치 행이 없고 유예(기본 24시간)가 지난 블롭은 drain의 고아 정리 일감이 지우고, doctor가 건수·바이트를 보인다. 첨부 바이트는 spool에 넣지 않는다(spool 한 줄은 64KB 이하, 첨부는 메타데이터 한 줄만).
+  - `message_attachments`의 키는 `(message_id, ordinal)`이다. parser는 첨부의 자리와 출처만 내고, 내용(`file_id`)과 상태(`stored | missing_at_ingest`)는 수집이 한 번 채운다.
+  - **가리기**: 원문 불변의 두 번째 예외는 `files.redact`다. 한 트랜잭션에서 `redacted_at`, 그 내용의 추출 세대·조각·FTS 삭제, `redactions` 기록, 모든 `brain` 위치에 블롭 삭제 일감을 남긴다. 가리기는 내용 단위다. 가린 파일은 다시 추출하지 않는다. 첨부 텍스트의 저장 전 마스킹은 추출 시점에 Core의 같은 패턴 목록으로 한다(바이트는 그대로). `messages.redact`는 가리지 않은 첨부가 남아 있으면 경고 `ATTACHMENT_NOT_REDACTED`를 낸다.
+
+### AD-24 — 문서 텍스트는 세대가 있는 파생물이다
+
+- **Binds:** FR-28, NFR-2, NFR-4, NFR-9
+- **Prevents:** 추출 실패가 조용히 빠지는 것, 두 세대의 조각이 함께 검색되는 것, 복구 한 번에 문서 검색이 사라지는 것, 수집이 추출을 기다리는 것
+- **Rule:**
+  - 추출은 drain의 일감(AD-21)이다. 형식은 확장자가 아니라 내용으로 판정한다.
+  - 추출 한 번은 `document_extractions` 한 행(파일, `extractor_version`, 상태 `ok | failed | unsupported | too_large | redacted`)이고, 조각(`document_chunks`)은 그 행에 속한다(조각마다 쪽 등 위치). `files.current_extraction_id`가 검색에 쓰이는 단 하나의 세대다. 재추출은 새 세대를 만든 뒤 같은 트랜잭션에서 포인터를 바꾸고 옛 세대와 FTS 행을 지운다. 실패하면 포인터는 그대로다. 조각과 FTS 쓰기는 배치(예: 200조각)로 나눠 AD-7의 2초를 지킨다.
+  - `extractor_version`은 사용한 라이브러리 버전을 담은 Core 상수다(예: `doc/1+pdfjs-6.4.299+mammoth-1.13.0`). 라이브러리만 올리고 상수를 그대로 두는 변경은 하지 않는다.
+  - 원본이 DB 밖에 있으므로 추출 세대와 조각은 내보내기·복구에 **포함한다**(다시 만드는 파생물이 아니다). 원본에 접근할 수 없는 파일(복구 직후, 연동 해제)은 `source_unreachable`로 표시하고 기존 조각은 계속 검색된다. 결과에 경고 `FILE_SOURCE_UNREACHABLE`를 붙이고 재추출 일감은 만들지 않는다.
+  - 이름·경로는 내용과 별도로 색인한다: 위치의 경로와 첨부의 표시 이름을 모은 `file_names`(파생)가 색인 대상이다. 이미지는 `file_metadata`에 EXIF를 남긴다. 촬영 일시는 시간대가 없으므로 `captured_at_local`(원문), `captured_at`(시간대를 알 때만 AD-13 정규형), `captured_at_source`를 둔다. EXIF는 신뢰할 수 없는 입력이다.
+
+### AD-25 — 주기 실행은 launchd가 단명 CLI를 부른다
+
+- **Binds:** NFR-2, NFR-3
+- **Prevents:** 주기 작업 때문에 상주 프로세스를 들이는 것, 일감이 다음 세션 시작까지 밀리는 것, 주기 실행이 멈췄는데 아무도 모르는 것
+- **Rule:**
+  - 설치기가 고정 Label(`<reverse-dns>.second-brain.drain`)의 LaunchAgent 하나를 등록한다. 같은 Label이면 다시 등록하지 않는다(Brain 표식과 같은 멱등). shim을 통해 기본 5분마다 `brain admin drain`(epic 8 이후 `brain sources sync`도)을 부르고, 한 번의 실행은 시간 예산(기본 60초) 안에서 끝낸다. `setup uninstall`이 지운다.
+  - drain은 마지막 주기 실행 시각을 남기고, doctor는 그것이 간격의 3배보다 오래되면 경고한다.
+  - 데몬은 두지 않는다. 데몬은 Telegram 양방향, 원격 기계 수집, 승인 대기처럼 연결이나 상태를 계속 들고 있어야 하는 기능을 시작할 때 따로 결정한다(Deferred).
+
 ## Table Contract
 
 Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작성자, 변경 가능성만 고정한다. 나머지 컬럼은 코드가 정한다.
@@ -331,6 +365,13 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `context_injections` | `id` | `context.show`가 spool에 쓰고 drain이 넣음 | 불변 |
 | `failures` | `(harness, harness_session_id, stage, fingerprint)`. `session_id`는 비어 있을 수 있음 | 모든 경로(실패 기록 함수 하나) | `resolved_at`만 drain이 채움 |
 | `transcript_files` | `(harness, path)` | drain(폴더 스캔) | 크기·fingerprint·커서 단조 |
+| `files` | `content_hash` | 첨부 수집(epic 2), 소스 동기화(epic 8) | 내용 불변. `home`, `current_extraction_id`, `redacted_at`(`files.redact`)만 바뀜 |
+| `file_locations` | `(file_id, store_kind, locator)` | 파일 저장·이전 함수, 소스 동기화 | `ownership` 불변. 검증 시각·삭제 시각만 채움 |
+| `message_attachments` | `(message_id, ordinal)` | `sessions.ingest` | 자리·출처 불변. `file_id`·상태는 수집이 한 번 채움 |
+| `document_extractions` | `id`. 파일당 같은 `extractor_version`의 진행 중 세대는 하나 | drain(추출) | 상태만 진행. 내보내기에 포함 |
+| `document_chunks` | `(extraction_id, ordinal)` | drain(추출) | 세대 교체·가리기로만 지움. 내보내기에 포함 |
+| `file_names` | `(file_id, name_source, text)` | drain | 파생, 다시 만들 수 있음 |
+| `file_metadata` | `(file_id, key)` | drain(추출) | 파생 |
 | `work_items` | 미완료 행의 `(kind, target_kind, target_id)` | 일감을 만드는 경로(수집·가리기·로그), drain | 청구·시도·완료 컬럼만 drain이 바꿈. 완료 행은 정리할 수 있음 |
 | `schema_version` | 단일 행 | `setup run`, `setup upgrade` | 마이그레이션만 |
 
@@ -364,10 +405,10 @@ erDiagram
 | ID | UUIDv7, DB에서는 TEXT(정규 소문자 문자열), JSON에서는 문자열. 프로세스 경계를 넘는 세션 토큰은 `harness:harness_session_id` |
 | 시각 | DB·spool·내보내기·복제 payload는 저장 정규형 `YYYY-MM-DDTHH:MM:SS.sssZ`(AD-13). 오프셋을 포함한 ISO-8601은 CLI `--json` 응답에만 쓴다. 사람용 출력만 설정 시간대로 표시 |
 | 텍스트 | 저장 본문은 Harness가 준 그대로(마스킹 제외). 비교·대조는 NFC 정규화 후. 위치는 코드 포인트 `[start, end)` |
-| CLI `--json` 응답 | `{ ok, now, data, warnings[], error? }`. `error`는 `{ code, message }`. 저하된 결과는 반드시 `warnings[]`에 코드로 넣는다: `SPOOLED`, `DB_UNAVAILABLE`, `SCHEMA_MISMATCH`, `RERANK_FAILED`, `INDEX_CONFIG_MISMATCH`, `UNINDEXED`, `RESULT_TRUNCATED`, `RULE_UNVERIFIED`, `CURSOR_RESET`, `CONFIG_UNKNOWN_KEY` |
+| CLI `--json` 응답 | `{ ok, now, data, warnings[], error? }`. `error`는 `{ code, message }`. 저하된 결과는 반드시 `warnings[]`에 코드로 넣는다: `SPOOLED`, `DB_UNAVAILABLE`, `SCHEMA_MISMATCH`, `RERANK_FAILED`, `INDEX_CONFIG_MISMATCH`, `UNINDEXED`, `RESULT_TRUNCATED`, `RULE_UNVERIFIED`, `CURSOR_RESET`, `CONFIG_UNKNOWN_KEY`, `ATTACHMENT_NOT_REDACTED`, `FILE_SOURCE_UNREACHABLE` |
 | hook 응답 | connector adapter 소유(AD-4). 10,000자 이하. hook 경로는 항상 exit 0으로 끝낸다(Stop의 exit 2는 턴을 이어 가게 하므로 금지) |
 | 오류 | Core는 예상된 실패를 코드가 있는 값으로 돌려주고, 예외는 버그에만 쓴다. 실패는 `failures`에, DB에 쓸 수 없으면 spool에 남긴다. stderr만으로 끝내지 않는다 |
-| 내보내기 (NFR-9) | 한 스냅샷 트랜잭션 안에서 테이블당 JSON Lines 하나 + `manifest.json`(스키마 버전, 테이블별 건수, 시각). 복구는 의존 순서대로 insert하고, 파생 테이블은 다시 만든다 |
+| 내보내기 (NFR-9) | 한 스냅샷 트랜잭션 안에서 테이블당 JSON Lines 하나 + `manifest.json`(스키마 버전, 테이블별 건수, 시각). 복구는 의존 순서대로 insert하고, 원본이 같은 DB 안에 있는 파생물(`chunks`, FTS, `embeddings`, `file_names`, 미러)만 다시 만든다. 문서 추출 세대·조각은 내보내고 복구한다. `manifest.json`에 파일 본체 포함 범위(`none | brain_owned`)를 적는다 |
 | 마이그레이션 | SQL 파일, 순번 접두사, 앞으로만. trigger·확장·인덱스도 SQL로. trigger와 `redactions`·마스킹은 첫 마이그레이션에 함께 들어간다 |
 | 테스트 | port마다 계약 테스트 묶음 하나, 모든 adapter가 통과. 저장소는 실제 DB(SQLite는 임시 파일, Postgres는 테스트 전용 데이터베이스)로 통합 테스트하고 mock하지 않는다. parser는 회사 내용을 지운 실제 transcript fixture로 테스트한다 |
 | 공개 저장소 위생 | 저장소에는 회사 이름·내용·실제 대화를 넣지 않는다. 예시와 fixture는 중립 이름을 쓴다 |
@@ -383,6 +424,7 @@ erDiagram
 | Kysely | 0.29.6 + 저장소 안의 얇은 `node:sqlite` 드라이버(외부 dialect 미사용, 트랜잭션은 AD-7의 `withWrite`) |
 | PostgreSQL + pgvector (복제 대상, epic 7) | 18 / 0.8.7, `pg` 8.23.1, Docker 이미지 `pgvector/pgvector:pg18` |
 | commander (CLI) | 15.0.0 |
+| 문서 추출 | `pdfjs-dist` 6.4.299, `mammoth` 1.13.0, `file-type` 22.1.1, `exif-reader` 2.0.3 (2026-10-14 npm 확인. 버전은 `extractor_version`에 들어간다, AD-24) |
 | @clack/prompts (설치기) | 1.8.1 |
 | smol-toml (설정) | 1.9.1 |
 | uuid (v7) | 14.0.3 |
@@ -445,12 +487,15 @@ flowchart TB
 | 항목 | 미루는 이유 / 다시 볼 때 |
 | --- | --- |
 | MCP 도구 | Claude Code가 MCP에 세션 ID를 넘기지 않음. AD-5의 1:1 이름 규칙으로 나중에 얇게 붙인다 |
-| 데몬·파일 watcher | 세션 없이 돌아야 할 일(스케줄러, 알림), 원격 기계 push, 또는 실측 지연이 목표를 못 맞출 때. CLI가 소켓이 있으면 위임하는 식으로 바뀐다 |
+| 데몬·파일 watcher (주기 실행은 AD-25의 launchd) | 세션 없이 돌아야 할 일(스케줄러, 알림), 원격 기계 push, 또는 실측 지연이 목표를 못 맞출 때. CLI가 소켓이 있으면 위임하는 식으로 바뀐다 |
 | Codex 등 다른 Harness | 다음 조각. AD-4의 계약(parser 필수, hook 선택)만으로 추가한다 |
 | `node:sqlite`의 호환성 깨짐(RC) | Node 업그레이드에서 API가 깨지면. 대안은 better-sqlite3, node-sqlite3-wasm. 드라이버는 adapter 안의 얇은 층 하나다(AD-7) |
 | sqlite-vec 유지보수 정지 | epic 6 착수 때 다시 본다. 대안은 FTS만 유지하거나 다른 벡터 확장 |
 | 꼬리표의 권위 출처, `failures.fingerprint` 정의 | epic 2 인셉션에서 정한다(2026-10-14 리뷰 H-2·H-8) |
 | 기계 교체·원본 이전 | 지금은 `admin.export`→`import`(빈 DB에만). 복제 대상의 승격은 epic 7에서 정한다 |
+| Drive 연동 (epic 8) | OAuth, Drive `FileStore` 구현, 첨부 원본 이전, 기존 Drive 문서 색인(목록 → export·임시 다운로드 → 추출 → 삭제, Mac에 동기화하지 않음), changes 동기화, 연동 해제(Drive에 둔 채 연결만 끊음), DB 스냅샷의 Drive 보관과 새 기계 복구, 로컬 캐시 상한. 외부 소스 테이블은 그때 더한다 |
+| `/brain:migration`, `/brain:db-migration` 스킬 | CLI 명령(`setup move-store`, 스냅샷 업로드·복구)이 생긴 뒤 감싼다 |
+| OCR, HWP, Google Docs 외 형식, 좌표의 장소 이름 변환 | 실사용에서 놓치는 문서가 쌓일 때 |
 | 복제 대상 (Postgres, Drive 파일)과 대상별 지연 표시 | epic 7(epic 5 다음). AD-10의 원본·복제 규칙 안에서 `[[replicas]]`, 커서 따라잡기, doctor 지연을 정한다. 남겨 둔 `packages/postgres`와 설치기의 Docker 흐름을 다시 쓴다 |
 | 팀 공유 (원문 포함) | 개인 사용을 먼저 검증한 뒤. 팀 저장소 선택(공유 드라이브 동기화 폴더 / 공유 DB 복제 대상 / 회사 git)과 단계적 도입은 그때 정한다. AD-12의 remote 정체성·사용자 칸과 AD-11의 마스킹이 그 준비다 |
 | Claude Code plugin·skill, BMad memlog 연계, 기록 보강 수단 | SM-4(로그가 실제로 적히는가) 결과를 본 뒤. 어떤 수단도 AD-17을 넘지 않는다 |
