@@ -1,30 +1,10 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
-import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import {
-  cancel,
-  confirm,
-  isCancel,
-  multiselect,
-  select,
-  text,
-  type Option,
-} from '@clack/prompts';
-import {
-  ensureDefaultIndexConfig,
-  ensureVectorExtension,
-  postgresStore,
-  runDoctor,
-  runMigrations,
-  type DoctorReport,
-} from 'second_brain';
+import { cancel, confirm, isCancel, multiselect, text, type Option } from '@clack/prompts';
 import { readConfig, writeConfig } from './config/codec.js';
 import { configHome } from './config/paths.js';
 import { connectors } from './connectors/index.js';
-import type { CommandRequest, CommandResult } from './install/docker.js';
-import { randomPassword } from './install/docker.js';
 import {
   runInstall,
   runInstallFlow,
@@ -36,20 +16,20 @@ import {
   type RecordedConfig,
 } from './install/flow.js';
 import { writeShim } from './install/shim.js';
-import { uuidV7IdGen } from './runtime/id-gen.js';
+import { doctorAt, prepareFilesRoot, prepareStore } from './install/store.js';
 
 /**
  * The installer, as its own entry point. It is deliberately not a command of
- * the dispatcher: the dispatcher reads the configuration and connects to the
- * database before any command runs, and at install time neither exists yet, so
- * every command ends in `CONFIG_MISSING`. `brain setup run` is the same flow as
+ * the dispatcher: the dispatcher reads the configuration and opens the database
+ * before any command runs, and at install time neither exists yet, so every
+ * command ends in `CONFIG_MISSING`. `brain setup run` is the same flow as
  * a standalone command (`commands/setup-run.ts`), which is why the work lives
  * in the functions below and not at the top of this file.
  *
  * `tooling/bootstrap` starts this file, with the node that is running it, once
  * the clone under `<home>/app` has been built. This file is the real world —
- * the terminal, the clock, `docker`, the database — and `install/flow.ts` is
- * the flow that uses it, so the whole flow is testable without any of it.
+ * the terminal and the filesystem — and `install/flow.ts` is the flow that uses
+ * it, so the whole flow is testable without any of it.
  */
 
 /** The package whose version is shown. Beside `src/` and beside `dist/` both. */
@@ -122,9 +102,7 @@ export class Cancelled extends Error {
 
 /** The real world, in one place, so the tests can replace all of it. */
 export function systemInstallDeps(): InstallDeps {
-  const idGen = uuidV7IdGen();
   return {
-    run: runCommand,
     prompts: clackPrompts(),
     // Both ends have to be a terminal: a question needs an answer and a place
     // to be read. Anything else counts as not interactive at all.
@@ -132,52 +110,25 @@ export function systemInstallDeps(): InstallDeps {
     log: (line: string): void => {
       process.stdout.write(`${line}\n`);
     },
-    sleep: async (ms: number): Promise<void> => {
-      await delay(ms);
-    },
-    now: () => Date.now(),
-    password: randomPassword,
-    nextId: () => idGen.next(),
     config: {
       write: writeConfig,
       read: async (home: string): Promise<RecordedConfig | undefined> => {
-        // An empty environment on purpose: a stale variable in some shell must
-        // not pass for the URL this folder has on record.
-        const read = await readConfig(home, {});
+        const read = await readConfig(home);
         if (!read.ok) return undefined;
-        // The time zone and the variable name come back too, because the codec
-        // renders the whole folder from what it is given: a re-run that passed
-        // only the URL would reset them to their defaults.
-        const { databaseUrl, timezone, databaseUrlEnv, mirrorPath } = read.config;
-        return { databaseUrl, timezone, databaseUrlEnv, mirrorPath };
+        // All four come back, because the codec renders the whole folder from
+        // what it is given: a re-run that passed only the database path would
+        // reset the rest to their defaults.
+        const { timezone, storePath, filesPath, mirrorPath } = read.config;
+        return { timezone, storePath, filesPath, mirrorPath };
       },
     },
-    database: {
-      migrate: (databaseUrl: string) => runMigrations({ databaseUrl }),
-      ensureVector: (databaseUrl: string) => ensureVectorExtension({ databaseUrl }),
-      ensureIndexConfig: (databaseUrl: string, id: string) =>
-        ensureDefaultIndexConfig({ databaseUrl, id }),
-      doctor: doctorAt,
-    },
+    store: { prepare: (path: string) => prepareStore(path), doctor: doctorAt },
+    files: { prepare: prepareFilesRoot },
     // The node running this process, and the entry point beside the shim
     // module: whatever node started the installer is the node the hooks get.
     shim: { write: (home: string) => writeShim(home) },
     connectors,
   };
-}
-
-/**
- * Doctor against a URL the installer chose, not one the configuration names:
- * the installer runs outside the dispatcher, so it builds its own store rather
- * than reading back a folder it may not have written yet.
- */
-async function doctorAt(databaseUrl: string): Promise<DoctorReport> {
-  const store = postgresStore({ databaseUrl });
-  try {
-    return await runDoctor(store);
-  } finally {
-    await store.close();
-  }
 }
 
 /**
@@ -190,18 +141,6 @@ function clackPrompts(): InstallPrompts {
     async confirm(question: string, initial: boolean): Promise<boolean> {
       return answered<boolean>(await confirm({ message: question, initialValue: initial }));
     },
-    async select<T extends string>(
-      question: string,
-      choices: readonly Choice<T>[],
-      initial: T,
-    ): Promise<T> {
-      // `Option` is a conditional type over the value, which stays unresolved
-      // while the value is a type parameter; the shape is the one it asks for.
-      const options = choices.map((choice) => ({ ...choice })) as Option<T>[];
-      return answered<T>(
-        await select<T>({ message: question, options, initialValue: initial }),
-      );
-    },
     async text(question: string, placeholder: string): Promise<string> {
       return answered<string>(
         await text({ message: question, placeholder, defaultValue: '' }),
@@ -212,6 +151,8 @@ function clackPrompts(): InstallPrompts {
       choices: readonly Choice<T>[],
       initial: readonly T[],
     ): Promise<readonly T[]> {
+      // `Option` is a conditional type over the value, which stays unresolved
+      // while the value is a type parameter; the shape is the one it asks for.
       const options = choices.map((choice) => ({ ...choice })) as Option<T>[];
       return answered<T[]>(
         await multiselect<T>({
@@ -223,9 +164,6 @@ function clackPrompts(): InstallPrompts {
         }),
       );
     },
-    async pause(message: string): Promise<void> {
-      answered<string>(await text({ message, placeholder: 'Enter', defaultValue: '' }));
-    },
   };
 }
 
@@ -236,29 +174,6 @@ function answered<T>(value: T | symbol): T {
     throw new Cancelled();
   }
   return value as T;
-}
-
-function runCommand(request: CommandRequest): Promise<CommandResult> {
-  const captured = request.capture === true;
-  // Only the answer is read; stderr still goes to the terminal, so a command
-  // that fails says why instead of turning into a bare refusal — unless the
-  // request is a probe whose failure is a normal answer, and whose complaint
-  // on the way past would read as a broken install.
-  const errors = request.quiet === true ? 'ignore' : 'inherit';
-  return new Promise((resolve) => {
-    const child = spawn(request.command, [...request.args], {
-      stdio: captured ? ['ignore', 'pipe', errors] : 'inherit',
-    });
-
-    let stdout = '';
-    child.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    // A command that is not installed is not an exception here, it is an
-    // answer: 127, the shell's own code for it.
-    child.once('error', () => resolve({ code: 127, stdout }));
-    child.once('close', (code) => resolve({ code: code ?? 1, stdout }));
-  });
 }
 
 function version(): string {

@@ -1,7 +1,8 @@
 # second-brain
 
-A personal brain for one Mac: Postgres holds the originals, the `brain` CLI is a
-thin shell over the `second_brain` SDK. This repository is not published to npm.
+A personal brain for one Mac: a local SQLite file holds the originals, the
+`brain` CLI is a thin shell over the `second_brain` SDK. This repository is not
+published to npm.
 
 ## Install
 
@@ -25,59 +26,54 @@ Two environment variables move it off the defaults:
 | `SECOND_BRAIN_HOME` | `~/.second_brain` | Where the configuration and the clone go |
 | `SECOND_BRAIN_REPO` | `https://github.com/gmae199boy/second-brain.git` | Which repository to clone, for a fork or a test |
 
-The installer then asks which Postgres this brain should use:
+There is no database server to install and no Docker to start: the originals
+live in one SQLite file. The installer asks two questions and nothing more:
 
-- **Make one locally with Docker.** It creates the container `second-brain-db`
-  from `pgvector/pgvector:pg18`, on `127.0.0.1:54320`, keeping its data in the
-  named volume `second-brain-pgdata` and restarting unless you stop it. The
-  password is generated at install time and written only to `.env`. If Docker is
-  not installed it offers to install Docker Desktop with
-  `brew install --cask docker` and opens it so you can finish its permission
-  dialogs.
-- **Connect to a Postgres you already have.** It asks for the URL and checks it
-  answers before writing anything.
+- **Where the database file should go.** Anything absolute; the default is
+  `~/.second_brain/brain.db`. It creates the file at mode 0600 before the
+  migrations run, so neither it nor its write-ahead log is ever readable by
+  anyone else, and it creates a parent folder it had to make at 0700.
+- **Where the mirror folder should go.** Anything absolute; the default is
+  `~/.second_brain/mirror`. Nothing creates that folder yet.
 
-Then it asks where the mirror folder should go (anything absolute; the default
-is `~/.second_brain/mirror`) and whether to turn embeddings on — which is still
-"not supported yet", so saying yes only says so and writes nothing. Nothing
-creates the mirror folder yet either.
+It then asks whether to turn embeddings on — which is still "not supported
+yet", so saying yes only says so and writes nothing.
 
-Either way it then writes the configuration, applies the migrations, installs
-the `vector` extension, seeds the default chunk index config, writes the shim
-(below), offers to connect the harnesses it found, and finishes by running the
-same checks as `brain admin doctor`. Exit 0 means every check passed. Running
-it again changes nothing: it starts the container it already made rather than
-making another, offers the recorded URL as the default (with the password
-masked), offers the recorded mirror path as the default, leaves the single
-index config row alone, and leaves the shim and the harness entries alone when
-they already say the right thing.
+After the questions it writes the configuration, creates and migrates the
+database file, creates the file store's root at mode 0700
+(`~/.second_brain/files` by default), writes the shim (below), offers to connect
+the harnesses it found, and finishes by running the same checks as
+`brain admin doctor`. Exit 0 means every check passed. Running it again changes
+nothing: it offers the recorded paths as the defaults, applies no migration the
+file already has, leaves the index config rows the migrations wrote alone, and
+leaves the shim and the harness entries alone when they already say the right
+thing. Point it at another database file and it makes a new one — the old file
+stays exactly where it is, and the install says so in one line.
 
-Where there is no terminal to ask in — a script, or CI — say what to do with
-flags instead:
+Where there is no terminal to ask in — a script, or CI — `--yes` is the consent,
+and the flags say the rest:
 
 ```sh
-node apps/cli/dist/install.js --database-url postgres://… --yes
-node apps/cli/dist/install.js --docker --yes
+node apps/cli/dist/install.js --yes
+node apps/cli/dist/install.js --store-path /Volumes/notes/brain.db --yes
 ```
 
-Without a terminal nothing is asked, so the mirror path keeps whatever is
-recorded (or the default) and no harness is connected unless `--connect` names
-it.
+Without a terminal nothing is asked, so each path keeps whatever is recorded (or
+the default) and no harness is connected unless `--connect` names it.
 
 | Flag | What it does |
 | --- | --- |
-| `--database-url <url>` | Use this Postgres instead of asking |
-| `--docker` | Make the local container instead of asking |
+| `--store-path <path>` | Absolute path for the database file |
 | `--mirror-path <path>` | Absolute path for the mirror folder |
 | `--connect <harness>` | Connect this harness; repeat it for more than one |
-| `--yes` | Agree in advance to what the chosen path has to do |
+| `--yes` | Agree in advance to what the install has to do |
 
 ## Re-configure, and connect a harness
 
 The installer is also a command, so there is nothing to re-run from a clone:
 
 ```sh
-brain setup run [--database-url <url> | --docker] [--mirror-path <path>] \
+brain setup run [--store-path <path>] [--mirror-path <path>] \
                 [--connect <harness>]… [--yes]
 brain setup connect <harness>
 ```
@@ -88,8 +84,7 @@ configuration nor the database to exist — it is what writes the configuration 
 and with `--json` it hands back every line of the flow in `data.lines`.
 
 `--json` runs non-interactively, exactly as a run with no terminal does: it
-asks nothing, so it needs `--yes` together with `--database-url <url>` or
-`--docker`, and it exits 2 saying so if it has neither.
+asks nothing, so it needs `--yes`, and it exits 2 saying so if it has none.
 
 `brain setup connect <harness>` registers this brain with one harness, for a
 harness installed after the install. The entry it writes carries a Brain mark,
@@ -125,7 +120,8 @@ at it.
 
 ```text
 packages/core/          domain types, use cases, ports -- no runtime dependencies
-packages/postgres/      the Store port on Postgres + pgvector
+packages/sqlite/        the Store port on the local SQLite source -- the originals
+packages/postgres/      the Store port on Postgres + pgvector -- a replica, epic 7
 packages/claude-code/   Claude Code connector (placeholder)
 packages/modelstudio/   embeddings and reranking (placeholder)
 packages/second_brain/  the one writing surface: re-exports only
@@ -152,8 +148,10 @@ fails if the two disagree.
 
 ## Test database
 
-The Postgres tests use a real database and are never mocked or skipped. Start
-the test-only container, then point `BRAIN_TEST_DATABASE_URL` at it:
+`packages/postgres` is the replication target of epic 7, and its tests use a
+real database rather than a mock. Nothing else needs one: the CLI and
+`packages/sqlite` run against files in a temporary folder. Start the test-only
+container, then point `BRAIN_TEST_DATABASE_URL` at it:
 
 ```sh
 docker compose -f compose.test.yaml up -d --wait
@@ -167,17 +165,16 @@ The container keeps no volume, so stopping it discards the data.
 ## Check the install
 
 Configuration lives outside the repository, in `~/.second_brain` (or the folder
-`SECOND_BRAIN_HOME` names). `config.toml` holds variable names only — plus the
-time zone and the mirror path, which are not keys; the key values live in
-`.env` at mode 0600. The installer writes both — there is nothing to write by
-hand. To check a working tree against the test database without touching the
-real folder, point the installer somewhere else:
+`SECOND_BRAIN_HOME` names). `config.toml` holds the time zone and three absolute
+paths — the database file, the file store's root and the mirror — and no key
+values; a key value would live in `.env` at mode 0600, and this version has
+none. The installer writes both — there is nothing to write by hand. To check a
+working tree without touching the real folder, point the installer somewhere
+else:
 
 ```sh
-docker compose -f compose.test.yaml up -d --wait
 export SECOND_BRAIN_HOME=$(mktemp -d)
-node apps/cli/dist/install.js \
-  --database-url postgres://postgres:postgres@localhost:54329/postgres --yes
+node apps/cli/dist/install.js --yes
 
 pnpm brain admin doctor --json
 
@@ -185,5 +182,7 @@ pnpm brain admin doctor --json
 env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" admin doctor
 ```
 
-Exit 0 means every check passed, 1 means a check failed (a stopped database
-reports `DB_UNAVAILABLE`), and 2 means the command could not run at all.
+Exit 0 means every check passed, 1 means a check failed (a database file that
+has been removed reports `DB_UNAVAILABLE`), and 2 means the command could not
+run at all. A runtime command opens the file and never creates it, so a missing
+`brain.db` is reported rather than quietly replaced with an empty one.

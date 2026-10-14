@@ -1,14 +1,6 @@
 import { isWarningCode, type DoctorCheck, type WarningCode } from 'second_brain';
 import type { CommandSpec } from '../dispatch.js';
 
-/**
- * Core keeps the vector capability under a neutral name; only this output layer
- * and the adapter know it is pgvector here. Exported because the installer ends
- * in the same report and must name its checks the same way — two spellings of
- * `pgvector` would be two things as far as anyone reading them is concerned.
- */
-export const CHECK_IDS: Record<string, string> = { vector: 'pgvector' };
-
 export interface AdminDoctorData {
   checks: DoctorCheck[];
 }
@@ -26,10 +18,9 @@ export const adminDoctor: CommandSpec<AdminDoctorData> = {
 
   async run(context) {
     const report = await context.brain.admin.doctor();
-    const checks = report.checks.map((check) => ({
-      ...check,
-      id: CHECK_IDS[check.id] ?? check.id,
-    }));
+    // The adapter's own names, passed through: a second spelling here would be
+    // a second thing as far as anyone reading a report is concerned.
+    const checks = report.checks;
 
     // A failing check that carries one of the shared codes is also a warning:
     // the command ran, and the result is degraded (Conventions, NFR-2).

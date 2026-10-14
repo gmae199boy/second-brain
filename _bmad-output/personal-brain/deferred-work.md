@@ -28,3 +28,12 @@
 - source_plan: `_bmad-output/personal-brain/epic-foundation-and-install/story-untitled-12-plan.md`
   summary: 문서 조각 세대가 어떤 `index_configs` 행(`document_chunk`)으로 만들어졌는지 가리키는 칸(`document_extractions.index_config_id`가 자연스러움)을 epic 4가 문서 조각을 만들 때 `alter table add column`으로 더한다.
   evidence: 0002의 `document_chunks`·`document_extractions`에는 `index_config_id`가 없어 기본 `document_chunk` 행을 가리키는 것이 없고, params를 바꾼 두 세대를 구별할 수 없다(`chunks`는 `index_config_id`를 키에 넣는다). story 1.12 리뷰 발견. 지금은 읽는 코드가 없어 칸 추가를 미뤘다.
+- source_plan: `_bmad-output/personal-brain/epic-foundation-and-install/story-untitled-13-plan.md`
+  summary: `setup run`이 읽을 수 없는 값이 하나 있는 config를 만나면 묻지 않는 값(timezone, `files.path`, `mirror.path`)까지 기본값으로 되돌린다.
+  evidence: `install.ts`의 config.read가 `readConfig` 실패를 모두 `undefined`로 바꾼다. 리뷰어가 상대 `store.path` + 사용자 지정 files/mirror로 재현했다. `files.path`는 질문도 플래그도 없어 되돌릴 수 없다. epic 2가 블롭을 쓰기 전에 부분 읽기 결과가 필요하다.
+- source_plan: `_bmad-output/personal-brain/epic-foundation-and-install/story-untitled-13-plan.md`
+  summary: 디스패처의 hook→`BUSY_TIMEOUT_MS.turn` / 그 밖→`.command` 분기를 검사하는 테스트가 없다.
+  evidence: `apps/cli/test`에 BUSY_TIMEOUT 단정이 없어, 두 값을 바꿔도 테스트가 통과한다. store 팩토리 주입 seam이 필요하다(story 9 refactor sweep 후보).
+- source_plan: `_bmad-output/personal-brain/epic-foundation-and-install/story-untitled-13-plan.md`
+  summary: 설치기가 `CONFIG_UNKNOWN_KEY` 경고를 보이지 않고, config를 다시 쓰면서 모르는 키를 조용히 지운다.
+  evidence: `setup run --yes`를 `[database] url_env`가 있는 config 위에서 돌리면 경고 없이 키가 사라진다(리뷰어 재현). AD-18은 모르는 설정이 조용히 사라지는 것을 막으라고 한다.

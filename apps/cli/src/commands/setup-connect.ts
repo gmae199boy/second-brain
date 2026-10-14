@@ -10,8 +10,8 @@ import { shimPath } from '../install/shim.js';
  * harness installed after the install does not mean re-running the installer.
  *
  * Standalone: writing a harness's own configuration needs neither the
- * configuration folder's contents nor the database, and a brain whose Postgres
- * is down must still be able to wire up an editor.
+ * configuration folder's contents nor the database, and a brain whose database
+ * file is missing must still be able to wire up an editor.
  */
 
 export interface SetupConnectData {

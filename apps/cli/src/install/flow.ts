@@ -1,46 +1,25 @@
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import type {
-  Connector,
-  DoctorReport,
-  EnsureDefaultIndexConfigResult,
-  EnsureVectorResult,
-  MigrationResult,
-} from 'second_brain';
-import { CHECK_IDS, formatCheck } from '../commands/admin-doctor.js';
-import { defaultMirrorPath, type WriteConfigInput } from '../config/codec.js';
-import { configFilePath, configHome, envFilePath } from '../config/paths.js';
+import type { Connector, DoctorReport, SqliteMigrationResult } from 'second_brain';
+import { formatCheck } from '../commands/admin-doctor.js';
 import {
-  CONTAINER_HOST,
-  CONTAINER_IMAGE,
-  CONTAINER_NAME,
-  CONTAINER_PORT,
-  CONTAINER_VOLUME,
-  READY_TIMEOUT_MS,
-  brewPresent,
-  containerLogsCommand,
-  containerState,
-  containerUrl,
-  createContainer,
-  dockerPresent,
-  dockerRunning,
-  installDockerDesktop,
-  openDockerDesktop,
-  startContainer,
-  volumeExists,
-  waitForReady,
-  type CommandRunner,
-} from './docker.js';
+  defaultFilesPath,
+  defaultMirrorPath,
+  defaultStorePath,
+  type WriteConfigInput,
+} from '../config/codec.js';
+import { configFilePath, configHome, envFilePath } from '../config/paths.js';
 
 /**
- * The installer's one flow, as a function of its dependencies. Every question,
- * every external command and every database write is injected, so the whole I/O
- * matrix can be driven from a test with no Docker, no terminal and no database
- * — and so `brain setup run` runs this very flow rather than a second one.
+ * The installer's one flow, as a function of its dependencies. Every question
+ * and every write is injected, so the whole I/O matrix can be driven from a test
+ * with no terminal and no filesystem — and so `brain setup run` runs this very
+ * flow rather than a second one.
  *
- * The order is AD-19's, whole: environment, Docker, the database, the mirror
- * path, embeddings, the configuration, the migrations, the vector extension,
- * the default index config, the shim, the harnesses, doctor.
+ * The order is AD-19's, whole: the harnesses named, consent, what the folder
+ * already says, the database file's place, the mirror path, embeddings, the
+ * configuration, the database file and its migrations, the file store's root,
+ * the shim, the harnesses, doctor.
  */
 
 /** 0 it worked, 1 it ran and something failed, 2 it could not run at all. */
@@ -60,11 +39,6 @@ export interface Choice<T extends string> {
  */
 export interface InstallPrompts {
   confirm(question: string, initial: boolean): Promise<boolean>;
-  select<T extends string>(
-    question: string,
-    choices: readonly Choice<T>[],
-    initial: T,
-  ): Promise<T>;
   /** Free text. Comes back empty when the user only pressed Enter. */
   text(question: string, placeholder: string): Promise<string>;
   /** Any number of the choices. `initial` is what starts out checked. */
@@ -73,20 +47,20 @@ export interface InstallPrompts {
     choices: readonly Choice<T>[],
     initial: readonly T[],
   ): Promise<readonly T[]>;
-  /** Wait for the user to say they are ready. */
-  pause(message: string): Promise<void>;
 }
 
 /**
  * What a configuration folder already says. Everything in it has to be read
  * back and written out again: `writeConfig` renders the whole file from its
- * input, so passing only the URL would quietly reset a time zone or a variable
- * name the user chose, and move the key to a second name in `.env`.
+ * input, so passing only the database path would quietly reset a time zone, a
+ * file store or a mirror the user chose.
  */
 export interface RecordedConfig {
-  databaseUrl: string;
   timezone: string;
-  databaseUrlEnv: string;
+  /** Absolute. A re-run offers it as the default and must never reset it. */
+  storePath: string;
+  /** Absolute. Nothing asks for it, so a re-run can only keep it. */
+  filesPath: string;
   /** Absolute. A re-run offers it as the default and must never reset it. */
   mirrorPath: string;
 }
@@ -98,15 +72,21 @@ export interface InstallConfigIo {
   read(home: string): Promise<RecordedConfig | undefined>;
 }
 
-/** The four database steps. Injected so the flow test needs no Postgres. */
-export interface InstallDatabase {
-  migrate(databaseUrl: string): Promise<MigrationResult>;
-  ensureVector(databaseUrl: string): Promise<EnsureVectorResult>;
-  ensureIndexConfig(
-    databaseUrl: string,
-    id: string,
-  ): Promise<EnsureDefaultIndexConfigResult>;
-  doctor(databaseUrl: string): Promise<DoctorReport>;
+/** The source database: made at the right mode, migrated, then reported on. */
+export interface InstallStore {
+  /** Create the file at 0600 if it is not there, then migrate it (AD-20). */
+  prepare(path: string): Promise<SqliteMigrationResult>;
+  /** The same checks `brain admin doctor` runs, against this file. */
+  doctor(path: string): Promise<DoctorReport>;
+}
+
+/** The file store's root. Blob writes themselves are epic 2's. */
+export interface InstallFiles {
+  /** Make the root at 0700, or say why it could not. Never throws. */
+  prepare(path: string): Promise<
+    | { ok: true; path: string; created: boolean }
+    | { ok: false; code: 'FILES_UNAVAILABLE'; message: string }
+  >;
 }
 
 /** Writing the shim, injected so the flow test touches no filesystem. */
@@ -116,57 +96,33 @@ export interface InstallShim {
 }
 
 export interface InstallDeps {
-  run: CommandRunner;
   prompts: InstallPrompts;
   /** Both ends are a terminal. Anything else means no question may be asked. */
   isTTY: boolean;
   log(line: string): void;
-  sleep(ms: number): Promise<void>;
-  /** Milliseconds since the epoch. */
-  now(): number;
-  /** A fresh container password. Never printed (AD-18). */
-  password(): string;
-  /** A UUIDv7 for the index config row (AD-8). */
-  nextId(): string;
   config: InstallConfigIo;
-  database: InstallDatabase;
+  store: InstallStore;
+  files: InstallFiles;
   shim: InstallShim;
   /** Every harness this build can connect to. Empty until epic 2. */
   connectors: readonly Connector[];
-  /** Budget for the container's first start. The tests shorten it. */
-  readyTimeoutMs?: number;
 }
 
 /** The flags a non-interactive run needs, since it cannot be asked anything. */
 export interface InstallFlags {
-  /** Use this Postgres. Mutually exclusive with `docker`. */
-  databaseUrl?: string;
-  /** Make the local container. */
-  docker: boolean;
+  /** Where the database file goes. `~` is expanded; a relative path is refused. */
+  storePath?: string;
   /** Where the mirror goes. `~` is expanded; a relative path is refused. */
   mirrorPath?: string;
   /** Harnesses to connect, by name. The only consent there is without a TTY. */
   connect: readonly string[];
-  /** Consent, given in advance, to everything the chosen path has to do. */
+  /** Consent, given in advance, to everything the install has to do. */
   yes: boolean;
   help: boolean;
 }
 
-/** How many times a URL that cannot be reached is asked for again. */
-const URL_ATTEMPTS = 3;
-
-/** How many times the user is asked to start the Docker daemon. */
-const DAEMON_ATTEMPTS = 3;
-
-/** How many times a mirror path that cannot be used is asked for again. */
-const MIRROR_ATTEMPTS = 3;
-
-/** Both database flags at once, refused the same way on both ways in. */
-const TWO_DATABASES =
-  '--database-url and --docker ask for two different databases; pass one of them.';
-
-/** Where the database came from, or why the flow stopped before it knew. */
-type Chosen = { ok: true; databaseUrl: string } | { ok: false; exit: 1 | 2 };
+/** How many times a path that cannot be used is asked for again. */
+const PATH_ATTEMPTS = 3;
 
 /**
  * Run the installer. `argv` is the user's arguments, without the node and
@@ -204,14 +160,6 @@ export async function runInstall(
 ): Promise<InstallExitCode> {
   const home = configHome(env);
 
-  // Checked here and not only in `parseFlags`, because commander is the other
-  // way in: `brain setup run --docker --database-url …` would otherwise take
-  // the URL and quietly ignore the container the user also asked for.
-  if (flags.databaseUrl !== undefined && flags.docker) {
-    deps.log(`USAGE: ${TWO_DATABASES}`);
-    return 2;
-  }
-
   // Named before anything is asked or written: a harness nobody registered is
   // a typo, and finding that out after the database is set up would leave the
   // user to guess whether the install took.
@@ -223,33 +171,26 @@ export async function runInstall(
     return 2;
   }
 
-  // A question needs an answer and a place to be read. Without both, the flags
-  // are the only consent there is, and saying which ones are missing is the
-  // only useful thing left to do (I/O matrix).
-  if (!deps.isTTY && !(flags.yes && (flags.databaseUrl !== undefined || flags.docker))) {
+  // A question needs an answer and a place to be read. Without both, `--yes` is
+  // the only consent there is, and saying so is the only useful thing left to
+  // do (I/O matrix).
+  if (!deps.isTTY && !flags.yes) {
     for (const line of nonInteractiveGuidance()) deps.log(line);
     return 2;
   }
 
-  // Read before anything is asked: the recorded URL is what a re-run offers as
-  // its default, and what tells a re-run the password of its own container.
-  // The rest of it is what a re-run must not overwrite with defaults.
+  // Read before anything is asked: what the folder already says is what a
+  // re-run offers as its defaults, and what it must not overwrite with them.
   const recorded = await deps.config.read(home);
 
-  const chosen = await chooseDatabase(flags, home, recorded, deps);
-  if (!chosen.ok) return chosen.exit;
-  const { databaseUrl } = chosen;
-
-  // The one gate every path goes through, whichever way the URL was arrived at.
-  // A configuration folder written against a URL that does not work is worse
-  // than no folder at all: the next command would read it and blame itself.
-  const reached = await reachable(databaseUrl, deps);
-  if (!reached.ok) {
-    deps.log(`DB_UNAVAILABLE: ${reached.message}`);
-    deps.log('Nothing was written.');
-    return 1;
+  const store = await chooseStorePath(flags, home, recorded, deps);
+  if (!store.ok) return store.exit;
+  deps.log(`the database file is ${store.path}`);
+  // Nothing is moved and nothing is removed (Boundaries): a re-run pointed
+  // somewhere else makes a second database, and saying so is all that is owed.
+  if (recorded !== undefined && recorded.storePath !== store.path) {
+    deps.log(`${recorded.storePath} is left where it is; nothing was moved or removed.`);
   }
-  deps.log('the database answered');
 
   const mirror = await chooseMirrorPath(flags, home, recorded, deps);
   if (!mirror.ok) return mirror.exit;
@@ -257,13 +198,20 @@ export async function runInstall(
 
   await askAboutEmbeddings(deps);
 
-  await deps.config.write(home, settings(databaseUrl, recorded, mirror.path));
+  // Nothing asks for the file store's root, so a re-run can only keep what is
+  // recorded; a first run takes the default beside the configuration folder.
+  const filesPath = recorded?.filesPath ?? defaultFilesPath(home);
+
+  await deps.config.write(home, settings(recorded, store.path, filesPath, mirror.path));
   deps.log(`wrote ${configFilePath(home)} and ${envFilePath(home)} (mode 0600)`);
 
-  const migrated = await deps.database.migrate(databaseUrl);
+  const migrated = await deps.store.prepare(store.path);
   if (!migrated.ok) {
     deps.log(`${migrated.code}: ${migrated.message}`);
-    if (migrated.code === 'MIGRATION_FAILED') {
+    // Only when there is a file to name: a target that is not a database at all
+    // is refused before the first migration is in hand, and "the migration the
+    // database refused is ." says less than nothing.
+    if (migrated.code === 'MIGRATION_FAILED' && migrated.file !== '') {
       deps.log(`The migration the database refused is ${migrated.file}.`);
     }
     return 1;
@@ -274,26 +222,15 @@ export async function runInstall(
       : `applied ${migrated.applied.join(', ')}, schema version ${String(migrated.to)}`,
   );
 
-  const vector = await deps.database.ensureVector(databaseUrl);
-  if (!vector.ok) {
-    deps.log(`${vector.code}: ${vector.message}`);
+  const filesRoot = await deps.files.prepare(filesPath);
+  if (!filesRoot.ok) {
+    deps.log(`${filesRoot.code}: ${filesRoot.message}`);
     return 1;
   }
   deps.log(
-    vector.installed === null
-      ? `the vector extension is not installed: ${vector.reason}`
-      : `the vector extension is installed (${vector.installed})`,
-  );
-
-  const indexConfig = await deps.database.ensureIndexConfig(databaseUrl, deps.nextId());
-  if (!indexConfig.ok) {
-    deps.log(`${indexConfig.code}: ${indexConfig.message}`);
-    return 1;
-  }
-  deps.log(
-    indexConfig.created
-      ? 'created the default chunk index config'
-      : 'the default chunk index config was already there',
+    filesRoot.created
+      ? `created ${filesRoot.path} (mode 0700)`
+      : `${filesRoot.path} is already there (mode 0700)`,
   );
 
   // The shim before the harnesses, because connecting one means registering
@@ -305,33 +242,55 @@ export async function runInstall(
 
   // Doctor has the last word, and its verdict is the exit code: an install that
   // finished every step and still cannot report a healthy brain did not work.
-  const report = await deps.database.doctor(databaseUrl);
-  const checks = report.checks.map((check) => ({
-    ...check,
-    id: CHECK_IDS[check.id] ?? check.id,
-  }));
-  for (const check of checks) deps.log(formatCheck(check));
-  return checks.some((check) => check.status === 'fail') || !connected ? 1 : 0;
+  const report = await deps.store.doctor(store.path);
+  for (const check of report.checks) deps.log(formatCheck(check));
+  return report.checks.some((check) => check.status === 'fail') || !connected ? 1 : 0;
 }
 
 /**
- * One URL plus everything the folder already decided, which is what the codec
- * has to be handed every time: it renders both files whole, so anything left
- * out is written back as its default. The mirror path is the newest trap of
- * that kind: a re-run that passed only the URL would silently move the mirror
- * back under the configuration folder.
+ * Everything the folder decided, which is what the codec has to be handed every
+ * time: it renders both files whole, so anything left out is written back as
+ * its default. That is the trap stories 6 and 7 will meet — a re-run that
+ * passed only the database path would silently move the file store and the
+ * mirror back under the configuration folder.
  */
 function settings(
-  databaseUrl: string,
   recorded: RecordedConfig | undefined,
-  mirrorPath?: string,
+  storePath: string,
+  filesPath: string,
+  mirrorPath: string,
 ): WriteConfigInput {
   return {
-    databaseUrl,
     timezone: recorded?.timezone,
-    databaseUrlEnv: recorded?.databaseUrlEnv,
-    mirrorPath: mirrorPath ?? recorded?.mirrorPath,
+    storePath,
+    filesPath,
+    mirrorPath,
   };
+}
+
+/** Chosen path, or the exit code of a run that could not settle on one. */
+type ChosenPath = { ok: true; path: string } | { ok: false; exit: 2 };
+
+/**
+ * Where this install's database file goes. Nothing here creates it: the file is
+ * made at mode 0600 further down the flow, by `store.prepare` (AD-20).
+ */
+async function chooseStorePath(
+  flags: InstallFlags,
+  home: string,
+  recorded: RecordedConfig | undefined,
+  deps: InstallDeps,
+): Promise<ChosenPath> {
+  return choosePath(
+    {
+      flag: flags.storePath,
+      flagName: '--store-path',
+      question: 'Where should the database file go?',
+      fallback: recorded?.storePath ?? defaultStorePath(home),
+      what: 'database file',
+    },
+    deps,
+  );
 }
 
 /** Where this install's mirror goes. Nothing here creates the folder (epic 4). */
@@ -340,27 +299,58 @@ async function chooseMirrorPath(
   home: string,
   recorded: RecordedConfig | undefined,
   deps: InstallDeps,
-): Promise<{ ok: true; path: string } | { ok: false; exit: 2 }> {
-  const fallback = recorded?.mirrorPath ?? defaultMirrorPath(home);
+): Promise<ChosenPath> {
+  return choosePath(
+    {
+      flag: flags.mirrorPath,
+      flagName: '--mirror-path',
+      question: 'Where should the mirror go?',
+      fallback: recorded?.mirrorPath ?? defaultMirrorPath(home),
+      what: 'mirror',
+    },
+    deps,
+  );
+}
 
-  if (flags.mirrorPath !== undefined) {
-    const given = expandHome(flags.mirrorPath);
+/** One path question: the flag, or the recorded value, or the default. */
+interface PathQuestion {
+  /** The flag's value, if it was given. Not yet expanded or checked. */
+  flag: string | undefined;
+  /** How the flag is spelled, for the message that refuses it. */
+  flagName: string;
+  question: string;
+  /** What Enter takes: the recorded value, or this install's default. */
+  fallback: string;
+  /** What this path is, for the line that gives up on it. */
+  what: string;
+}
+
+/**
+ * Where one of this install's paths goes. Nothing here creates anything: the
+ * store and the file store are made further down the flow, and the mirror is
+ * epic 4's.
+ */
+async function choosePath(question: PathQuestion, deps: InstallDeps): Promise<ChosenPath> {
+  if (question.flag !== undefined) {
+    const given = expandHome(question.flag);
     if (isAbsolute(given)) return { ok: true, path: given };
-    deps.log(`CONFIG_INVALID: --mirror-path ${flags.mirrorPath} is not an absolute path.`);
+    deps.log(`CONFIG_INVALID: ${question.flagName} ${question.flag} is not an absolute path.`);
     // A terminal can be asked again; a script cannot, and taking the default
-    // instead would put the mirror somewhere the flag plainly did not ask for.
+    // instead would put the path somewhere the flag plainly did not ask for.
     if (!deps.isTTY) return { ok: false, exit: 2 };
   } else if (!deps.isTTY) {
-    return { ok: true, path: fallback };
+    return { ok: true, path: question.fallback };
   }
 
-  for (let attempt = 1; attempt <= MIRROR_ATTEMPTS; attempt += 1) {
-    const typed = (await deps.prompts.text('Where should the mirror go?', fallback)).trim();
-    const chosen = typed === '' ? fallback : expandHome(typed);
+  for (let attempt = 1; attempt <= PATH_ATTEMPTS; attempt += 1) {
+    const typed = (await deps.prompts.text(question.question, question.fallback)).trim();
+    const chosen = typed === '' ? question.fallback : expandHome(typed);
     if (isAbsolute(chosen)) return { ok: true, path: chosen };
     deps.log(`CONFIG_INVALID: ${chosen} is not an absolute path.`);
   }
-  deps.log(`No usable mirror path in ${String(MIRROR_ATTEMPTS)} attempts, so nothing was written.`);
+  deps.log(
+    `No usable ${question.what} path in ${String(PATH_ATTEMPTS)} attempts, so nothing was written.`,
+  );
   return { ok: false, exit: 2 };
 }
 
@@ -469,258 +459,6 @@ function knownHarnesses(deps: InstallDeps): string {
   return `Known harnesses: ${deps.connectors.map((connector) => connector.harness).join(', ')}.`;
 }
 
-/** Which database this install uses: the flags', the user's, or a new one. */
-async function chooseDatabase(
-  flags: InstallFlags,
-  home: string,
-  recorded: RecordedConfig | undefined,
-  deps: InstallDeps,
-): Promise<Chosen> {
-  // Nothing to ask and nothing to check here: the one gate above does the
-  // checking, for this path and every other.
-  if (flags.databaseUrl !== undefined) {
-    return { ok: true, databaseUrl: flags.databaseUrl };
-  }
-
-  if (flags.docker) return dockerDatabase(flags, home, recorded, deps);
-
-  const answer = await deps.prompts.select(
-    'Which Postgres should this brain use?',
-    [
-      {
-        value: 'docker',
-        label: 'Make one locally with Docker',
-        hint: `${CONTAINER_IMAGE} as ${CONTAINER_NAME}`,
-      },
-      { value: 'existing', label: 'Connect to a Postgres I already have' },
-    ] as const,
-    recorded === undefined ? 'docker' : 'existing',
-  );
-  return answer === 'docker'
-    ? dockerDatabase(flags, home, recorded, deps)
-    : askForUrl(recorded?.databaseUrl, deps);
-}
-
-/**
- * Ask for a URL until one answers, or until the attempts run out. The recorded
- * URL is offered as the default with its password masked, and an empty answer
- * takes it: the password is never shown, and never has to be retyped.
- */
-async function askForUrl(recorded: string | undefined, deps: InstallDeps): Promise<Chosen> {
-  for (let attempt = 1; attempt <= URL_ATTEMPTS; attempt += 1) {
-    const typed = (
-      await deps.prompts.text(
-        'Postgres URL',
-        recorded === undefined ? 'postgres://user:password@host:5432/brain' : maskUrl(recorded),
-      )
-    ).trim();
-    const databaseUrl = typed === '' ? recorded : typed;
-    if (databaseUrl === undefined || databaseUrl === '') {
-      deps.log('A URL is needed to go on.');
-      continue;
-    }
-
-    const reached = await reachable(databaseUrl, deps);
-    if (reached.ok) return { ok: true, databaseUrl };
-    deps.log(`DB_UNAVAILABLE: ${reached.message}`);
-    deps.log('Nothing was written.');
-  }
-  deps.log(`No URL answered in ${String(URL_ATTEMPTS)} attempts, so nothing was changed.`);
-  return { ok: false, exit: 1 };
-}
-
-/**
- * The local container. Nothing here removes or replaces anything: a container
- * that is there is started and used, and a volume that is there keeps the
- * cluster — and therefore the password — it already has. That last one is why
- * the volume is looked at before a password is invented: the image reads
- * `POSTGRES_PASSWORD` only when it initialises a cluster, so a freshly
- * generated one over an old volume would be written to `.env` and then refused
- * by the very database it names.
- */
-async function dockerDatabase(
-  flags: InstallFlags,
-  home: string,
-  recorded: RecordedConfig | undefined,
-  deps: InstallDeps,
-): Promise<Chosen> {
-  const docker = await ensureDocker(flags, deps);
-  if (!docker.ok) {
-    // A no to installing Docker is not the end of the install: the other way to
-    // a database is right there, so offer it now rather than making the user
-    // start again (I/O matrix). Anything else that went wrong is still the end.
-    if (docker.refused && deps.isTTY) return askForUrl(recorded?.databaseUrl, deps);
-    return { ok: false, exit: 1 };
-  }
-
-  const state = await containerState(deps.run);
-  // A container that exists has its cluster; only an absent one leaves the
-  // question of whether the volume outlived it.
-  const hadCluster = state !== 'absent' || (await volumeExists(deps.run));
-  let password: string | undefined;
-
-  if (state === 'running') {
-    deps.log(`the container ${CONTAINER_NAME} is already running`);
-  } else if (state === 'stopped') {
-    deps.log(`starting the container ${CONTAINER_NAME}, which is already there`);
-    const started = await startContainer(deps.run);
-    if (started.code !== 0) {
-      deps.log(`docker start ${CONTAINER_NAME} failed with exit code ${String(started.code)}.`);
-      return { ok: false, exit: 1 };
-    }
-  } else {
-    if (!flags.yes) {
-      const agreed = await deps.prompts.confirm(
-        hadCluster
-          ? `Create the container ${CONTAINER_NAME} from ${CONTAINER_IMAGE}, on ${CONTAINER_HOST}:${String(CONTAINER_PORT)}, over the data already in the volume ${CONTAINER_VOLUME}?`
-          : `Create the container ${CONTAINER_NAME} from ${CONTAINER_IMAGE}, on ${CONTAINER_HOST}:${String(CONTAINER_PORT)}, keeping its data in the volume ${CONTAINER_VOLUME}?`,
-        true,
-      );
-      if (!agreed) {
-        deps.log('Nothing was created.');
-        // Same as a no to installing Docker: the other way is offered here.
-        if (deps.isTTY) return askForUrl(recorded?.databaseUrl, deps);
-        return { ok: false, exit: 1 };
-      }
-    }
-
-    // A password for a cluster that is about to be initialised. Over an
-    // existing volume the image ignores it and the old one stands, which is
-    // exactly why it is not the URL's password below.
-    password = deps.password();
-    deps.log(`creating the container ${CONTAINER_NAME}`);
-    const created = await createContainer(deps.run, password);
-    if (created.code !== 0) {
-      deps.log(`docker run failed with exit code ${String(created.code)}.`);
-      return { ok: false, exit: 1 };
-    }
-
-    if (!hadCluster) {
-      // Write it down now, before anything else can fail. This password exists
-      // nowhere but in this variable and inside the cluster that was just
-      // initialised with it: if the readiness wait times out, or the database
-      // does not answer the gate below, losing it would leave a container
-      // nobody — this installer included — can ever log into again.
-      await deps.config.write(home, settings(containerUrl(password), recorded));
-      deps.log(`recorded the container URL in ${envFilePath(home)} (mode 0600)`);
-    }
-  }
-
-  const ready = await awaitContainer(deps);
-  if (!ready.ok) return ready;
-
-  // A cluster this run initialised is the only one whose password is known here.
-  if (!hadCluster && password !== undefined) {
-    return { ok: true, databaseUrl: containerUrl(password) };
-  }
-  if (recorded !== undefined) return { ok: true, databaseUrl: recorded.databaseUrl };
-
-  // The data predates this run — another install's, or this folder was wiped.
-  // The password is inside the cluster and is not ours to read, and the way to
-  // a new one goes through removing data, which is not on the table.
-  deps.log(
-    `${CONTAINER_NAME} already holds a database, and no URL is recorded in ${envFilePath(home)}, so its password is not known here.`,
-  );
-  if (!deps.isTTY) {
-    deps.log(
-      `Pass the URL with --database-url <url>, or remove ${CONTAINER_NAME} and the volume ${CONTAINER_VOLUME} yourself first.`,
-    );
-    return { ok: false, exit: 1 };
-  }
-  return askForUrl(undefined, deps);
-}
-
-/** Wait for the container, or say where to look and leave it standing. */
-async function awaitContainer(deps: InstallDeps): Promise<{ ok: true } | { ok: false; exit: 1 }> {
-  const timeoutMs = deps.readyTimeoutMs ?? READY_TIMEOUT_MS;
-  deps.log(`waiting for ${CONTAINER_NAME} to accept connections`);
-  const ready = await waitForReady(
-    { run: deps.run, now: deps.now, sleep: deps.sleep },
-    timeoutMs,
-  );
-  if (ready.ready) return { ok: true };
-
-  deps.log(
-    `${CONTAINER_NAME} did not accept connections within ${String(Math.round(timeoutMs / 1000))}s.`,
-  );
-  deps.log(`See why with: ${containerLogsCommand()}`);
-  deps.log('The container was left as it is.');
-  return { ok: false, exit: 1 };
-}
-
-/**
- * A `docker` that is installed and whose daemon answers. A no to installing it
- * comes back as `refused`, which the caller turns into the existing-URL
- * question; everything else is a plain failure.
- */
-async function ensureDocker(
-  flags: InstallFlags,
-  deps: InstallDeps,
-): Promise<{ ok: true } | { ok: false; refused: boolean }> {
-  if (!(await dockerPresent(deps.run))) {
-    if (!flags.yes) {
-      const agreed = await deps.prompts.confirm(
-        'Docker is not installed. Install Docker Desktop with brew install --cask docker?',
-        true,
-      );
-      if (!agreed) {
-        deps.log('Nothing was installed.');
-        if (!deps.isTTY) {
-          deps.log('Pass the URL of a Postgres you already have with --database-url <url>.');
-        }
-        return { ok: false, refused: true };
-      }
-    }
-
-    if (!(await brewPresent(deps.run))) {
-      deps.log('Homebrew is not installed, so Docker Desktop cannot be installed from here.');
-      deps.log('Install it from https://brew.sh, or install Docker Desktop yourself, then run this again.');
-      return { ok: false, refused: false };
-    }
-
-    deps.log('installing Docker Desktop with brew install --cask docker');
-    const installed = await installDockerDesktop(deps.run);
-    if (installed.code !== 0) {
-      deps.log(`brew install --cask docker failed with exit code ${String(installed.code)}.`);
-      return { ok: false, refused: false };
-    }
-
-    // Installing it is not starting it: the first run puts up permission
-    // dialogs that only the person at the keyboard can answer.
-    deps.log('opening Docker Desktop, which will ask you for permission on its first run');
-    await openDockerDesktop(deps.run);
-  }
-
-  if (await dockerRunning(deps.run)) return { ok: true };
-
-  if (!deps.isTTY) {
-    deps.log('Docker is installed but its daemon is not answering. Start Docker and run this again.');
-    return { ok: false, refused: false };
-  }
-
-  for (let attempt = 1; attempt <= DAEMON_ATTEMPTS; attempt += 1) {
-    deps.log('Docker is installed but its daemon is not answering yet.');
-    await deps.prompts.pause('Open Docker, finish anything it asks for, then press Enter');
-    if (await dockerRunning(deps.run)) return { ok: true };
-  }
-  deps.log('Docker never answered, so nothing was changed. Start it and run this again.');
-  return { ok: false, refused: false };
-}
-
-/**
- * Whether a URL leads to a database that answers, read off doctor's own `db`
- * check so that "reachable" means exactly what doctor will say it means.
- */
-async function reachable(
-  databaseUrl: string,
-  deps: InstallDeps,
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  const report = await deps.database.doctor(databaseUrl);
-  const check = report.checks.find((candidate) => candidate.id === 'db');
-  if (check?.status === 'ok') return { ok: true };
-  return { ok: false, message: check?.detail ?? 'the database did not answer' };
-}
-
 export type ParsedFlags =
   | { ok: true; flags: InstallFlags }
   | { ok: false; message: string };
@@ -732,17 +470,17 @@ export type ParsedFlags =
  */
 export function parseFlags(argv: readonly string[]): ParsedFlags {
   const connect: string[] = [];
-  const flags: InstallFlags = { docker: false, connect, yes: false, help: false };
+  const flags: InstallFlags = { connect, yes: false, help: false };
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     switch (argument) {
-      case '--database-url': {
+      case '--store-path': {
         const value = argv[index + 1];
         if (value === undefined || value.startsWith('-')) {
-          return { ok: false, message: '--database-url needs a URL after it.' };
+          return { ok: false, message: '--store-path needs a path after it.' };
         }
-        flags.databaseUrl = value;
+        flags.storePath = value;
         index += 1;
         continue;
       }
@@ -766,9 +504,6 @@ export function parseFlags(argv: readonly string[]): ParsedFlags {
         index += 1;
         continue;
       }
-      case '--docker':
-        flags.docker = true;
-        continue;
       case '--yes':
       case '-y':
         flags.yes = true;
@@ -782,43 +517,24 @@ export function parseFlags(argv: readonly string[]): ParsedFlags {
     }
   }
 
-  if (flags.databaseUrl !== undefined && flags.docker) {
-    return { ok: false, message: TWO_DATABASES };
-  }
   return { ok: true, flags };
 }
 
 export function usage(): readonly string[] {
   return [
-    'Usage: second-brain [--database-url <url> | --docker] [--mirror-path <path>]',
+    'Usage: second-brain [--store-path <path>] [--mirror-path <path>]',
     '                    [--connect <harness>]… [--yes]',
-    '  --database-url <url>  use this Postgres instead of asking',
-    '  --docker              make a local Postgres container instead of asking',
+    '  --store-path <path>   absolute path for the database file',
     '  --mirror-path <path>  absolute path for the mirror folder',
     '  --connect <harness>   connect this harness; repeat for more than one',
-    '  --yes                 agree in advance to what the chosen path has to do',
+    '  --yes                 agree in advance to what the install has to do',
   ];
 }
 
 function nonInteractiveGuidance(): readonly string[] {
   return [
-    'This is not a terminal, so nothing can be asked. Say what to do with flags:',
-    '  --database-url <url> --yes   use a Postgres that already exists',
-    `  --docker --yes               make the container ${CONTAINER_NAME} locally`,
+    'This is not a terminal, so nothing can be asked. Agree in advance with --yes:',
+    '  --yes                       install with what is recorded, or the defaults',
+    '  --store-path <path> --yes   put the database file somewhere else',
   ];
-}
-
-/**
- * A URL with its password replaced, for the one place a URL is shown: the
- * default of the question that asks for it. A URL that cannot be parsed is not
- * shown at all, since the whole point is that nothing leaks.
- */
-export function maskUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    if (parsed.password !== '') parsed.password = '***';
-    return parsed.toString();
-  } catch {
-    return '(the recorded URL)';
-  }
 }

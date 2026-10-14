@@ -36,9 +36,6 @@ importers:
         specifier: 14.0.2
         version: 14.0.2
     devDependencies:
-      '@second-brain/test-db':
-        specifier: workspace:*
-        version: link:../../tooling/test-db
       '@types/node':
         specifier: 24.19.1
         version: 24.19.1

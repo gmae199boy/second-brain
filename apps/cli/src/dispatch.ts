@@ -1,9 +1,10 @@
 import { Command, CommanderError } from 'commander';
 import {
-  SCHEMA_VERSION,
+  BUSY_TIMEOUT_MS,
+  SQLITE_SCHEMA_VERSION,
   checkSchema,
   createBrain,
-  postgresStore,
+  sqliteStore,
   type Brain,
   type Clock,
   type WarningCode,
@@ -23,18 +24,6 @@ import { errorEnvelope, okEnvelope, type Envelope } from './envelope.js';
 
 /** The flag that switches the agent-readable output on, on every command. */
 const JSON_FLAG = '--json';
-
-/**
- * Connect budget. Doctor is allowed five seconds end to end, so leave room for
- * process startup inside it.
- */
-const CONNECT_TIMEOUT_MS = 4000;
-
-/**
- * Per-query budget when a command does not set its own. It matches the connect
- * budget, which suits a command that answers in a moment.
- */
-const DEFAULT_QUERY_TIMEOUT_MS = CONNECT_TIMEOUT_MS;
 
 /**
  * 0 success, 1 ran but failed or degraded, 2 could not run at all (usage or
@@ -129,17 +118,10 @@ export interface DatabaseCommandSpec<T = unknown> extends CommandSpecBase {
   standalone?: false;
   /**
    * This command writes to the database, so the dispatcher compares the stored
-   * schema version with `SCHEMA_VERSION` first and refuses on a mismatch
+   * schema version with `SQLITE_SCHEMA_VERSION` first and refuses on a mismatch
    * (AD-20). Read commands leave this unset and are never blocked.
    */
   writes?: boolean;
-  /**
-   * How long one query of this command may take. Defaults to the connect
-   * budget, which is right for a command that answers at once. A command whose
-   * queries legitimately run long — an export, a reindex, a large ingest —
-   * sets its own budget, or `0` for no limit.
-   */
-  queryTimeoutMs?: number;
   run(context: CommandContext): Promise<CommandOutcome<T>>;
 }
 
@@ -265,24 +247,27 @@ async function execute(
     return finish(clock, await spec.run({ env, clock, options, args }), [], []);
   }
 
-  const config = await readConfig(configHome(env), env);
+  const config = await readConfig(configHome(env));
   if (!config.ok) {
     return failed(clock, config.code, config.message, 2, [], []);
   }
   const warningCodes = config.warnings.map((warning) => warning.code);
   const warningLines = config.warnings.map((warning) => `warning: ${warning.message}`);
 
-  const store = postgresStore({
-    databaseUrl: config.config.databaseUrl,
-    connectTimeoutMs: CONNECT_TIMEOUT_MS,
-    queryTimeoutMs: spec.queryTimeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS,
+  // The file is opened, never created: a runtime command that made an empty
+  // database would report a healthy brain to somebody who has not installed one
+  // (AD-20). A hook on the critical path of a turn gets the shorter lock budget,
+  // because the person is waiting on it (AD-7).
+  const store = sqliteStore({
+    path: config.config.storePath,
+    busyTimeoutMs: spec.hook === true ? BUSY_TIMEOUT_MS.turn : BUSY_TIMEOUT_MS.command,
   });
   const brain = createBrain({ store });
   try {
     if (spec.writes === true) {
       // The write guard of AD-20, in the one place that cannot be skipped by
       // forgetting it. Epic 2 turns this refusal into a spool.
-      const schema = await checkSchema(store, SCHEMA_VERSION);
+      const schema = await checkSchema(store, SQLITE_SCHEMA_VERSION);
       if (!schema.ok) {
         return failed(
           clock,

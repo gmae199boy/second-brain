@@ -1,23 +1,24 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { createTestDatabase, type TestDatabase } from '@second-brain/test-db';
-import { writeConfig } from '../src/config/codec.js';
-import { HOME_ENV, configFilePath, envFilePath } from '../src/config/paths.js';
+import { SQLITE_SCHEMA_VERSION } from 'second_brain';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { configFilePath, envFilePath, HOME_ENV } from '../src/config/paths.js';
+import { shimPath } from '../src/install/shim.js';
 
 /**
- * The installer end to end, against a real database, through the built entry
+ * The installer end to end, against a real SQLite file, through the built entry
  * point — the same file `tooling/bootstrap` starts. Piped stdio makes the child
  * non-interactive, which is why it runs on flags and never asks anything.
  *
- * The test database deliberately starts without the vector extension: the
- * installer is what has to install it (AD-15), and doctor going green is how
- * that is checked.
+ * The child's `PATH` is narrowed to the node folder plus `/usr/bin:/bin`, and
+ * every database variable is stripped from its environment: the point of this
+ * story is that an install needs no Docker and no Postgres, and a machine that
+ * happens to have either must not be what makes these pass.
  */
 
 const installerPath = fileURLToPath(new URL('../dist/install.js', import.meta.url));
@@ -38,8 +39,14 @@ async function emptyHome(): Promise<string> {
 }
 
 function runInstaller(args: readonly string[], home: string): Promise<Run> {
-  const childEnv: NodeJS.ProcessEnv = { ...process.env, [HOME_ENV]: home };
-  delete childEnv.SECOND_BRAIN_DATABASE_URL;
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    [HOME_ENV]: home,
+    // No Docker on the way, and nothing that could stand in for a Postgres.
+    PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
+  };
+  delete childEnv['SECOND_BRAIN_DATABASE_URL'];
+  delete childEnv['BRAIN_TEST_DATABASE_URL'];
 
   const child = spawn(process.execPath, [installerPath, ...args], {
     cwd: repoRoot,
@@ -62,149 +69,194 @@ function runInstaller(args: readonly string[], home: string): Promise<Run> {
   });
 }
 
-async function closedPort(): Promise<number> {
-  const server = createServer();
-  const port = await new Promise<number>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      if (address === null || typeof address === 'string') {
-        reject(new Error('could not determine the listening port'));
-        return;
-      }
-      resolve(address.port);
-    });
-  });
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  return port;
+/** The permission bits of one path, as the three octal digits people read. */
+async function mode(path: string): Promise<string> {
+  return ((await stat(path)).mode & 0o777).toString(8);
+}
+
+/** Every user table and how many rows it holds, read without writing. */
+function rowCounts(path: string): Record<string, number> {
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    const tables = database
+      .prepare(
+        `select name from sqlite_master
+          where type = 'table' and name not like 'sqlite_%'
+          order by name`,
+      )
+      .all() as { name: string }[];
+    const counts: Record<string, number> = {};
+    for (const { name } of tables) {
+      const row = database.prepare(`select count(*) as rows from "${name}"`).get() as {
+        rows: number;
+      };
+      counts[name] = row.rows;
+    }
+    return counts;
+  } finally {
+    database.close();
+  }
 }
 
 afterEach(async () => {
   await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
 
-describe('the installer against a real database', () => {
-  let database: TestDatabase;
-
-  beforeAll(async () => {
+describe('the installer with no Docker and no Postgres', () => {
+  beforeAll(() => {
     if (!existsSync(installerPath)) {
       throw new Error(`${installerPath} does not exist. Run \`pnpm build\` before these tests.`);
     }
-    // No vector extension: installing it is the installer's job.
-    database = await createTestDatabase({ installVector: false });
   });
 
-  afterAll(async () => {
-    await database?.drop();
-  });
-
-  it('writes the configuration, migrates, installs vector, seeds the index config', async () => {
+  it('writes the configuration, makes the database at 0600 and the files root at 0700', async () => {
     const home = await emptyHome();
 
-    const run = await runInstaller(['--database-url', database.url, '--yes'], home);
+    const run = await runInstaller(['--yes'], home);
 
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
     expect(run.stdout).toContain('db: ok');
-    expect(run.stdout).toContain('pgvector: ok');
+    expect(run.stdout).toContain('wal: ok');
+    expect(run.stdout).toContain('fts5-trigram: ok');
+    expect(run.stdout).toContain('foreign-keys: ok');
 
     const config = await readFile(configFilePath(home), 'utf8');
     expect(config).toContain('schema_version = 1');
-    expect(config).toContain('url_env = "SECOND_BRAIN_DATABASE_URL"');
-    // The URL is a key: it belongs in `.env` and nowhere else (AD-18).
-    expect(config).not.toContain(database.url);
+    expect(config).toContain(`path = "${join(home, 'brain.db')}"`);
+    expect(config).toContain(`path = "${join(home, 'files')}"`);
+    expect(config).toContain(`path = "${join(home, 'mirror')}"`);
+    // No Postgres key anywhere: the source is a file this folder names.
+    expect(config).not.toContain('url_env');
 
-    const dotenv = await readFile(envFilePath(home), 'utf8');
-    expect(dotenv).toContain(`SECOND_BRAIN_DATABASE_URL="${database.url}"`);
-    const mode = (await stat(envFilePath(home))).mode & 0o777;
-    expect(mode.toString(8)).toBe('600');
+    expect(await mode(join(home, 'brain.db'))).toBe('600');
+    expect(await mode(join(home, 'files'))).toBe('700');
+    expect(await mode(envFilePath(home))).toBe('600');
+    expect(await mode(shimPath(home))).toBe('755');
+    // The mirror folder itself is epic 4's to create.
+    expect(existsSync(join(home, 'mirror'))).toBe(false);
 
-    expect(await database.rows('select version from schema_version')).toEqual([{ version: 1 }]);
+    const counts = rowCounts(join(home, 'brain.db'));
+    expect(counts['schema_version']).toBe(1);
+    // Both default index configs come from the migrations, not an install step.
+    expect(counts['index_configs']).toBe(2);
+  });
 
-    const vector = await database.rows<{ extversion: string }>(
-      `select extversion from pg_extension where extname = 'vector'`,
-    );
-    expect(vector[0]?.extversion).toMatch(/^\d+\./);
+  it('records the schema version this build ships', async () => {
+    const home = await emptyHome();
 
-    expect(
-      await database.rows('select kind, model, dimensions, chunk_params from index_configs'),
-    ).toEqual([
-      {
-        kind: 'chunk',
-        model: null,
-        dimensions: null,
-        chunk_params: {
-          targetChars: 1200,
-          overlapMessages: 1,
-          splitMessagesOverChars: 2400,
-        },
-      },
-    ]);
+    const run = await runInstaller(['--yes'], home);
+
+    expect(run.code).toBe(0);
+    expect(run.stdout).toContain(`schema version ${String(SQLITE_SCHEMA_VERSION)}`);
+    const database = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
+    try {
+      expect(database.prepare('select version from schema_version').get()).toEqual({
+        version: SQLITE_SCHEMA_VERSION,
+      });
+    } finally {
+      database.close();
+    }
   });
 
   it('is idempotent: a second run changes nothing and still exits 0', async () => {
     const home = await emptyHome();
-    const first = await runInstaller(['--database-url', database.url, '--yes'], home);
+    const first = await runInstaller(['--yes'], home);
     expect(first.code).toBe(0);
     const configBefore = await readFile(configFilePath(home), 'utf8');
-    const envBefore = await readFile(envFilePath(home), 'utf8');
+    const shimBefore = await readFile(shimPath(home), 'utf8');
+    const countsBefore = rowCounts(join(home, 'brain.db'));
 
-    const again = await runInstaller(['--database-url', database.url, '--yes'], home);
+    const again = await runInstaller(['--yes'], home);
 
+    expect(again.stderr).toBe('');
     expect(again.code).toBe(0);
-    expect(again.stdout).toContain('the schema is already at version 1');
-    expect(again.stdout).toContain('already there');
+    expect(again.stdout).toContain(
+      `the schema is already at version ${String(SQLITE_SCHEMA_VERSION)}`,
+    );
+    expect(again.stdout).toContain('is already there');
     expect(await readFile(configFilePath(home), 'utf8')).toBe(configBefore);
-    expect(await readFile(envFilePath(home), 'utf8')).toBe(envBefore);
-
-    expect(await database.rows('select id from index_configs')).toHaveLength(1);
+    expect(await readFile(shimPath(home), 'utf8')).toBe(shimBefore);
+    expect(rowCounts(join(home, 'brain.db'))).toEqual(countsBefore);
+    expect(await mode(join(home, 'brain.db'))).toBe('600');
+    expect(await mode(join(home, 'files'))).toBe('700');
   });
 
-  it('keeps a time zone and a url_env the folder already chose', async () => {
+  it('puts the database where --store-path says, creating its parent at 0700', async () => {
     const home = await emptyHome();
-    // A folder somebody configured by hand, or an earlier story's install.
-    await writeConfig(home, {
-      timezone: 'Europe/Berlin',
-      databaseUrlEnv: 'MY_BRAIN_URL',
-      databaseUrl: database.url,
-    });
+    const path = join(home, 'elsewhere', 'deeper', 'brain.db');
 
-    const run = await runInstaller(['--database-url', database.url, '--yes'], home);
+    const run = await runInstaller(['--store-path', path, '--yes'], home);
 
     expect(run.code).toBe(0);
-    const config = await readFile(configFilePath(home), 'utf8');
-    expect(config).toContain('timezone = "Europe/Berlin"');
-    expect(config).toContain('url_env = "MY_BRAIN_URL"');
-    // The key stays under the one name the folder names; a second name would
-    // leave `readConfig` reading one and the installer writing the other.
-    const dotenv = await readFile(envFilePath(home), 'utf8');
-    expect(dotenv).toContain(`MY_BRAIN_URL="${database.url}"`);
-    expect(dotenv).not.toContain('SECOND_BRAIN_DATABASE_URL');
+    expect(await readFile(configFilePath(home), 'utf8')).toContain(`path = "${path}"`);
+    expect(await mode(dirname(path))).toBe('700');
+    expect(await mode(path)).toBe('600');
+    expect(existsSync(join(home, 'brain.db'))).toBe(false);
   });
 
-  it('refuses to write anything when the URL it was given does not answer', async () => {
+  it('keeps the recorded path on a re-run, and leaves the old file alone when it changes', async () => {
     const home = await emptyHome();
-    const port = await closedPort();
+    const first = join(home, 'one', 'brain.db');
+    expect((await runInstaller(['--store-path', first, '--yes'], home)).code).toBe(0);
 
-    const run = await runInstaller(
-      ['--database-url', `postgres://postgres:postgres@127.0.0.1:${String(port)}/postgres`, '--yes'],
-      home,
-    );
+    // A re-run that says nothing about it: the recorded path has to survive.
+    const kept = await runInstaller(['--yes'], home);
+    expect(kept.code).toBe(0);
+    expect(await readFile(configFilePath(home), 'utf8')).toContain(`path = "${first}"`);
 
-    expect(run.code).toBe(1);
-    expect(run.stdout).toContain('DB_UNAVAILABLE');
-    expect(existsSync(configFilePath(home))).toBe(false);
-    expect(existsSync(envFilePath(home))).toBe(false);
+    const second = join(home, 'two', 'brain.db');
+    const moved = await runInstaller(['--store-path', second, '--yes'], home);
+
+    expect(moved.code).toBe(0);
+    expect(moved.stdout).toContain(`${first} is left where it is`);
+    expect(existsSync(first)).toBe(true);
+    expect(existsSync(second)).toBe(true);
   });
 
-  it('names the flags it needs and exits 2 with no terminal and no flags', async () => {
+  it('names the consent it needs and exits 2 with no terminal and no --yes', async () => {
     const home = await emptyHome();
 
     const run = await runInstaller([], home);
 
     expect(run.code).toBe(2);
-    expect(run.stdout).toContain('--docker --yes');
+    expect(run.stdout).toContain('--yes');
     expect(existsSync(configFilePath(home))).toBe(false);
+    expect(existsSync(join(home, 'brain.db'))).toBe(false);
+    expect(existsSync(join(home, 'files'))).toBe(false);
+  });
+
+  it('exits 2 for a relative --store-path, writing nothing', async () => {
+    const home = await emptyHome();
+
+    const run = await runInstaller(['--store-path', 'brain.db', '--yes'], home);
+
+    expect(run.code).toBe(2);
+    expect(run.stdout).toContain('CONFIG_INVALID: --store-path brain.db');
+    expect(existsSync(configFilePath(home))).toBe(false);
+  });
+
+  it.each(['--database-url', '--docker'])('refuses the old flag %s', async (flag) => {
+    const home = await emptyHome();
+
+    const run = await runInstaller([flag, 'postgres://x/y', '--yes'], home);
+
+    expect(run.code).toBe(2);
+    expect(run.stdout).toContain(`unknown argument ${flag}`);
+    expect(run.stdout).toContain('Usage: second-brain');
+    expect(existsSync(configFilePath(home))).toBe(false);
+  });
+
+  it('reports one coded line and skips the shim when the path cannot hold a database', async () => {
+    const home = await emptyHome();
+    const path = join(home, 'brain.db');
+    await mkdir(path);
+
+    const run = await runInstaller(['--yes'], home);
+
+    expect(run.code).toBe(1);
+    expect(run.stdout).toMatch(/\n(DB_UNAVAILABLE|MIGRATION_FAILED): .+\n/);
+    expect(existsSync(shimPath(home))).toBe(false);
   });
 
   it('says where it will write, before it writes anything', async () => {

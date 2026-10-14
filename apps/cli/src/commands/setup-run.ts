@@ -24,11 +24,10 @@ export const setupRun: CommandSpec<SetupRunData> = {
   description: 'run the installer again, keeping what is already there',
   standalone: true,
   options: [
-    { flags: '--database-url <url>', description: 'use this Postgres instead of asking' },
-    { flags: '--docker', description: 'make a local Postgres container instead of asking' },
+    { flags: '--store-path <path>', description: 'absolute path for the database file' },
     { flags: '--mirror-path <path>', description: 'absolute path for the mirror folder' },
     { flags: '--connect <harness...>', description: 'connect these harnesses, by name' },
-    { flags: '-y, --yes', description: 'agree in advance to what the chosen path has to do' },
+    { flags: '-y, --yes', description: 'agree in advance to what the install has to do' },
   ],
 
   async run(context: StandaloneCommandContext) {
@@ -36,7 +35,7 @@ export const setupRun: CommandSpec<SetupRunData> = {
     const lines: string[] = [];
 
     // In text mode the lines go out as they happen: this flow asks questions
-    // and waits on Docker, and output the dispatcher printed at the end would
+    // and then migrates, and output the dispatcher printed at the end would
     // arrive after the questions it belongs to. Under `--json` they are the
     // envelope's data instead and nothing is printed early.
     const log = (line: string): void => {
@@ -45,9 +44,9 @@ export const setupRun: CommandSpec<SetupRunData> = {
     };
 
     // Imported here, not at the top: the installer's own graph is the terminal
-    // prompt library and a module that checks whether node was pointed at it,
-    // and every other command — a hook on a harness turn above all — would
-    // otherwise load all of it to not use it (AD-3, AD-6).
+    // prompt library, the migration runner and a module that checks whether
+    // node was pointed at it, and every other command — a hook on a harness
+    // turn above all — would otherwise load all of it to not use it (AD-3, AD-6).
     const { runInstallerWithFlags, systemInstallDeps } = await import('../install.js');
 
     const deps = systemInstallDeps();
@@ -85,8 +84,8 @@ const CODED_LINE = /^([A-Z][A-Z0-9_]*): (.+)$/;
  * so the last line that starts a sentence is the one worth carrying.
  *
  * A reason the flow already named, such as `CONFIG_INVALID: …` for a relative
- * mirror path, keeps its own code: calling that a `USAGE` would tell the caller
- * the command was invoked wrongly when the value was the problem.
+ * store or mirror path, keeps its own code: calling that a `USAGE` would tell
+ * the caller the command was invoked wrongly when the value was the problem.
  */
 function reason(lines: readonly string[]): { code: string; message: string } {
   const said = [...lines].reverse().find((line) => line !== '' && !line.startsWith(' '));
@@ -102,8 +101,7 @@ function reason(lines: readonly string[]): { code: string; message: string } {
 function toFlags(options: Record<string, unknown>): InstallFlags {
   const connect = options['connect'];
   return {
-    databaseUrl: typeof options['databaseUrl'] === 'string' ? options['databaseUrl'] : undefined,
-    docker: options['docker'] === true,
+    storePath: typeof options['storePath'] === 'string' ? options['storePath'] : undefined,
     mirrorPath: typeof options['mirrorPath'] === 'string' ? options['mirrorPath'] : undefined,
     connect: Array.isArray(connect)
       ? connect.filter((name): name is string => typeof name === 'string')

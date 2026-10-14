@@ -1,18 +1,17 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { createTestDatabase, type TestDatabase } from '@second-brain/test-db';
-import { runMigrations } from 'second_brain';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { runSqliteMigrations } from 'second_brain';
 import { writeConfig } from '../src/config/codec.js';
 import { HOME_ENV } from '../src/config/paths.js';
 
 /**
- * The dispatcher, against a real database and a registry that exists only
+ * The dispatcher, against a real SQLite file and a registry that exists only
  * here: fake `writes` and `hook` commands, so the rows of the I/O matrix are
  * checked on the rules themselves rather than on whichever command happens to
  * be implemented. The registry has to be built in the child process, which is
@@ -167,29 +166,43 @@ function runDispatch(args: string[], env: Record<string, string | undefined>): P
 
 const homes: string[] = [];
 
-/** A configuration folder pointing at `databaseUrl`. */
-async function homeFor(databaseUrl: string): Promise<string> {
+async function scratch(): Promise<string> {
   const home = await mkdtemp(join(tmpdir(), 'brain-dispatch-'));
   homes.push(home);
-  await writeConfig(home, { databaseUrl });
   return home;
 }
 
-async function closedPort(): Promise<number> {
-  const server = createServer();
-  const port = await new Promise<number>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      if (address === null || typeof address === 'string') {
-        reject(new Error('could not determine the listening port'));
-        return;
-      }
-      resolve(address.port);
-    });
-  });
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  return port;
+/** A configuration folder naming `storePath`. */
+async function homeFor(storePath: string): Promise<string> {
+  const home = await scratch();
+  await writeConfig(home, { storePath });
+  return home;
+}
+
+/** A database file at the version this build ships. */
+async function migratedDatabase(): Promise<string> {
+  const path = join(await scratch(), 'brain.db');
+  const migrated = await runSqliteMigrations({ path });
+  expect(migrated.ok).toBe(true);
+  return path;
+}
+
+/**
+ * A file that is a database and holds no `schema_version` at all, which is what
+ * an un-migrated brain looks like. Made with a plain path, the way only the
+ * migration runner is otherwise allowed to (AD-20).
+ */
+async function emptyDatabase(): Promise<string> {
+  const path = join(await scratch(), 'brain.db');
+  const database = new DatabaseSync(path);
+  database.exec('pragma journal_mode = WAL');
+  database.close();
+  return path;
+}
+
+/** A path with no file at it, which is `DB_UNAVAILABLE` every time. */
+async function missingDatabase(): Promise<string> {
+  return join(await scratch(), 'brain.db');
 }
 
 afterEach(async () => {
@@ -197,29 +210,15 @@ afterEach(async () => {
 });
 
 describe('the dispatcher', () => {
-  /** Migrated, so the stored version is the one the code expects. */
-  let current: TestDatabase;
-  /** Not migrated, so it holds no version row at all. */
-  let empty: TestDatabase;
-
-  beforeAll(async () => {
+  beforeAll(() => {
     if (!existsSync(dispatchModule)) {
       throw new Error(`${dispatchModule} does not exist. Run \`pnpm build\` before these tests.`);
     }
-    current = await createTestDatabase();
-    const migration = await runMigrations({ databaseUrl: current.url });
-    expect(migration.ok).toBe(true);
-    empty = await createTestDatabase();
-  });
-
-  afterAll(async () => {
-    await current?.drop();
-    await empty?.drop();
   });
 
   it('runs a read command without looking at the schema version', async () => {
-    // `empty` has no `schema_version` row; a read must not care.
-    const home = await homeFor(empty.url);
+    // An empty file has no `schema_version` table; a read must not care.
+    const home = await homeFor(await emptyDatabase());
 
     const run = await runDispatch(['fake', 'read', '--json'], { [HOME_ENV]: home });
 
@@ -232,7 +231,7 @@ describe('the dispatcher', () => {
   });
 
   it('prints the text lines instead of the envelope without --json', async () => {
-    const home = await homeFor(empty.url);
+    const home = await homeFor(await emptyDatabase());
 
     const run = await runDispatch(['fake', 'read'], { [HOME_ENV]: home });
 
@@ -241,7 +240,7 @@ describe('the dispatcher', () => {
   });
 
   it('runs a write command when the schema version matches', async () => {
-    const home = await homeFor(current.url);
+    const home = await homeFor(await migratedDatabase());
 
     const run = await runDispatch(['fake', 'write', '--json'], { [HOME_ENV]: home });
 
@@ -254,7 +253,7 @@ describe('the dispatcher', () => {
   });
 
   it('refuses a write and never calls run when the version does not match', async () => {
-    const home = await homeFor(empty.url);
+    const home = await homeFor(await emptyDatabase());
 
     const run = await runDispatch(['fake', 'write', '--json'], { [HOME_ENV]: home });
 
@@ -268,29 +267,25 @@ describe('the dispatcher', () => {
   });
 
   it('refuses a write and never calls run when the database is at another version', async () => {
-    const ahead = await createTestDatabase();
-    try {
-      const migration = await runMigrations({ databaseUrl: ahead.url });
-      expect(migration.ok).toBe(true);
-      await ahead.query('update schema_version set version = version + 1');
-      const home = await homeFor(ahead.url);
+    const path = await migratedDatabase();
+    const ahead = new DatabaseSync(path);
+    ahead.exec('update schema_version set version = version + 1');
+    ahead.close();
+    const home = await homeFor(path);
 
-      const run = await runDispatch(['fake', 'write', '--json'], { [HOME_ENV]: home });
+    const run = await runDispatch(['fake', 'write', '--json'], { [HOME_ENV]: home });
 
-      expect(run.code).toBe(1);
-      expect(run.stdout).not.toContain('RAN');
-      const envelope = JSON.parse(run.stdout) as Envelope;
-      expect(envelope.ok).toBe(false);
-      expect(envelope.error?.code).toBe('SCHEMA_MISMATCH');
-      expect(envelope.warnings).toEqual(['SCHEMA_MISMATCH']);
-    } finally {
-      await ahead.drop();
-    }
+    expect(run.code).toBe(1);
+    expect(run.stdout).not.toContain('RAN');
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('SCHEMA_MISMATCH');
+    expect(envelope.warnings).toEqual(['SCHEMA_MISMATCH']);
   });
 
-  it('refuses a write with DB_UNAVAILABLE, inside five seconds, when the database is down', async () => {
-    const port = await closedPort();
-    const home = await homeFor(`postgres://postgres:postgres@127.0.0.1:${port}/postgres`);
+  it('refuses a write with DB_UNAVAILABLE, and makes no file, when there is none', async () => {
+    const path = await missingDatabase();
+    const home = await homeFor(path);
 
     const startedAt = Date.now();
     const run = await runDispatch(['fake', 'write', '--json'], { [HOME_ENV]: home });
@@ -302,29 +297,37 @@ describe('the dispatcher', () => {
     const envelope = JSON.parse(run.stdout) as Envelope;
     expect(envelope.error?.code).toBe('DB_UNAVAILABLE');
     expect(envelope.warnings).toEqual(['DB_UNAVAILABLE']);
+    // A runtime command opens the file and never creates it (AD-20).
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it('runs a read against a missing file, and still creates nothing', async () => {
+    const path = await missingDatabase();
+    const home = await homeFor(path);
+
+    const run = await runDispatch(['fake', 'read', '--json'], { [HOME_ENV]: home });
+
+    // The read itself never touches the store, so it still succeeds: the file
+    // only has to be there for a command that asks the database something.
+    expect(run.code).toBe(0);
+    expect(existsSync(path)).toBe(false);
   });
 });
 
 describe('the dispatcher on a hook path', () => {
   it('exits 0 with one line on stderr when the command throws', async () => {
-    const empty = await createTestDatabase();
-    try {
-      const home = await homeFor(empty.url);
+    const home = await homeFor(await emptyDatabase());
 
-      const run = await runDispatch(['fake', 'hook-throw', '--json'], { [HOME_ENV]: home });
+    const run = await runDispatch(['fake', 'hook-throw', '--json'], { [HOME_ENV]: home });
 
-      expect(run.code).toBe(0);
-      expect(run.stdout).toBe('');
-      expect(run.stderr.trimEnd().split('\n')).toHaveLength(1);
-      expect(run.stderr).toContain('the hook blew up');
-    } finally {
-      await empty.drop();
-    }
+    expect(run.code).toBe(0);
+    expect(run.stdout).toBe('');
+    expect(run.stderr.trimEnd().split('\n')).toHaveLength(1);
+    expect(run.stderr).toContain('the hook blew up');
   });
 
   it('exits 0 with one line on stderr when there is no configuration', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'brain-dispatch-'));
-    homes.push(home);
+    const home = await scratch();
 
     const run = await runDispatch(['fake', 'hook-throw', '--json'], { [HOME_ENV]: home });
 
@@ -335,8 +338,7 @@ describe('the dispatcher on a hook path', () => {
   });
 
   it('exits 0 with one line on stderr when the arguments are wrong', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'brain-dispatch-'));
-    homes.push(home);
+    const home = await scratch();
 
     const run = await runDispatch(['fake', 'hook-throw', '--nonsense'], { [HOME_ENV]: home });
 
@@ -347,66 +349,46 @@ describe('the dispatcher on a hook path', () => {
   });
 
   it('exits 0 with one line on stderr when the schema version blocks the write', async () => {
-    const empty = await createTestDatabase();
-    try {
-      const home = await homeFor(empty.url);
+    const home = await homeFor(await emptyDatabase());
 
-      const run = await runDispatch(['fake', 'hook-write', '--json'], { [HOME_ENV]: home });
+    const run = await runDispatch(['fake', 'hook-write', '--json'], { [HOME_ENV]: home });
 
-      expect(run.code).toBe(0);
-      expect(run.stdout).toBe('');
-      expect(run.stderr).toContain('SCHEMA_MISMATCH');
-    } finally {
-      await empty.drop();
-    }
+    expect(run.code).toBe(0);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toContain('SCHEMA_MISMATCH');
   });
 
   it('still reports a degraded result, and exits 0 rather than swallowing it', async () => {
-    const empty = await createTestDatabase();
-    try {
-      const home = await homeFor(empty.url);
+    const home = await homeFor(await emptyDatabase());
 
-      const run = await runDispatch(['fake', 'hook-degraded', '--json'], { [HOME_ENV]: home });
+    const run = await runDispatch(['fake', 'hook-degraded', '--json'], { [HOME_ENV]: home });
 
-      expect(run.code).toBe(0);
-      expect(run.stderr).toBe('');
-      const envelope = JSON.parse(run.stdout) as Envelope;
-      expect(envelope.ok).toBe(true);
-      expect(envelope.data).toEqual({ partial: true });
-      expect(envelope.warnings).toEqual(['RESULT_TRUNCATED']);
-    } finally {
-      await empty.drop();
-    }
+    expect(run.code).toBe(0);
+    expect(run.stderr).toBe('');
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data).toEqual({ partial: true });
+    expect(envelope.warnings).toEqual(['RESULT_TRUNCATED']);
   });
 
   it('prints a degraded result as text and warnings too', async () => {
-    const empty = await createTestDatabase();
-    try {
-      const home = await homeFor(empty.url);
+    const home = await homeFor(await emptyDatabase());
 
-      const run = await runDispatch(['fake', 'hook-degraded'], { [HOME_ENV]: home });
+    const run = await runDispatch(['fake', 'hook-degraded'], { [HOME_ENV]: home });
 
-      expect(run.code).toBe(0);
-      expect(run.stdout).toBe('degraded but useful\n');
-      expect(run.stderr).toContain('RESULT_TRUNCATED');
-    } finally {
-      await empty.drop();
-    }
+    expect(run.code).toBe(0);
+    expect(run.stdout).toBe('degraded but useful\n');
+    expect(run.stderr).toContain('RESULT_TRUNCATED');
   });
 
   it('still prints its result when it succeeds', async () => {
-    const empty = await createTestDatabase();
-    try {
-      const home = await homeFor(empty.url);
+    const home = await homeFor(await emptyDatabase());
 
-      const run = await runDispatch(['fake', 'hook-read', '--json'], { [HOME_ENV]: home });
+    const run = await runDispatch(['fake', 'hook-read', '--json'], { [HOME_ENV]: home });
 
-      expect(run.code).toBe(0);
-      expect(run.stderr).toBe('');
-      expect((JSON.parse(run.stdout) as Envelope).data).toEqual({ read: true });
-    } finally {
-      await empty.drop();
-    }
+    expect(run.code).toBe(0);
+    expect(run.stderr).toBe('');
+    expect((JSON.parse(run.stdout) as Envelope).data).toEqual({ read: true });
   });
 });
 
@@ -463,33 +445,23 @@ describe('the dispatcher and a standalone command', () => {
 
 describe('the dispatcher and positional arguments', () => {
   it('hands a database command its arguments in the order they were declared', async () => {
-    const empty = await createTestDatabase();
-    try {
-      const home = await homeFor(empty.url);
+    const home = await homeFor(await emptyDatabase());
 
-      const run = await runDispatch(['fake', 'read-arg', 'one', 'two', '--json'], {
-        [HOME_ENV]: home,
-      });
+    const run = await runDispatch(['fake', 'read-arg', 'one', 'two', '--json'], {
+      [HOME_ENV]: home,
+    });
 
-      expect(run.code).toBe(0);
-      expect((JSON.parse(run.stdout) as Envelope).data).toEqual({ args: ['one', 'two'] });
-    } finally {
-      await empty.drop();
-    }
+    expect(run.code).toBe(0);
+    expect((JSON.parse(run.stdout) as Envelope).data).toEqual({ args: ['one', 'two'] });
   });
 
   it('leaves an optional argument out rather than passing undefined', async () => {
-    const empty = await createTestDatabase();
-    try {
-      const home = await homeFor(empty.url);
+    const home = await homeFor(await emptyDatabase());
 
-      const run = await runDispatch(['fake', 'read-arg', 'one', '--json'], { [HOME_ENV]: home });
+    const run = await runDispatch(['fake', 'read-arg', 'one', '--json'], { [HOME_ENV]: home });
 
-      expect(run.code).toBe(0);
-      expect((JSON.parse(run.stdout) as Envelope).data).toEqual({ args: ['one'] });
-    } finally {
-      await empty.drop();
-    }
+    expect(run.code).toBe(0);
+    expect((JSON.parse(run.stdout) as Envelope).data).toEqual({ args: ['one'] });
   });
 
   it('answers USAGE for one argument too many', async () => {
@@ -562,8 +534,7 @@ describe('the dispatcher and a command it does not know', () => {
 
 describe('the dispatcher and an unusable configuration', () => {
   it('exits 2 with CONFIG_MISSING and never connects', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'brain-dispatch-'));
-    homes.push(home);
+    const home = await scratch();
 
     const run = await runDispatch(['fake', 'write', '--json'], { [HOME_ENV]: home });
 
@@ -574,13 +545,29 @@ describe('the dispatcher and an unusable configuration', () => {
   });
 
   it('exits 2 with CONFIG_INVALID for a broken file', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'brain-dispatch-'));
-    homes.push(home);
+    const home = await scratch();
     await writeFile(join(home, 'config.toml'), 'schema_version = =\n', 'utf8');
 
     const run = await runDispatch(['fake', 'read', '--json'], { [HOME_ENV]: home });
 
     expect(run.code).toBe(2);
     expect((JSON.parse(run.stdout) as Envelope).error?.code).toBe('CONFIG_INVALID');
+  });
+
+  it('exits 2 with CONFIG_INVALID for a relative store path, running no command', async () => {
+    const home = await scratch();
+    await writeFile(
+      join(home, 'config.toml'),
+      'schema_version = 1\n[store]\npath = "brain.db"\n',
+      'utf8',
+    );
+
+    const run = await runDispatch(['fake', 'write', '--json'], { [HOME_ENV]: home });
+
+    expect(run.code).toBe(2);
+    expect(run.stdout).not.toContain('RAN');
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.error?.code).toBe('CONFIG_INVALID');
+    expect(envelope.error?.message).toContain('store.path');
   });
 });

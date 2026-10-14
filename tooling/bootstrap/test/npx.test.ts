@@ -81,16 +81,16 @@ describe('npx github:gmae199boy/second-brain', () => {
 
       expect(first.stderr).not.toContain('npm error');
       // `spawnSync` gives the child pipes, not a terminal, so the installer
-      // cannot ask anything and ends in the exit code that says so (2), with
-      // the flags a non-interactive install would need. That code travelling
-      // all the way back out is the handover this test is about.
+      // cannot ask anything and ends in the exit code that says so (2), naming
+      // the consent a non-interactive install needs. That code travelling all
+      // the way back out is the handover this test is about.
       expect(first.status).toBe(2);
       expect(first.stdout).toContain(`cloning file://${bare}`);
       // The clone built itself: the CLI that story 1.4 left is there.
       expect(existsSync(join(home, 'app', 'apps', 'cli', 'dist', 'bin.js'))).toBe(true);
       expect(first.stdout).toContain('second-brain 0.0.0');
       expect(first.stdout).toContain(`Configuration folder: ${home}`);
-      expect(first.stdout).toContain('--docker --yes');
+      expect(first.stdout).toContain('--yes');
     },
     SLOW,
   );

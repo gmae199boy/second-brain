@@ -5,9 +5,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   CONFIG_SCHEMA_VERSION,
-  DEFAULT_DATABASE_URL_ENV,
   DEFAULT_TIMEZONE,
+  defaultFilesPath,
   defaultMirrorPath,
+  defaultStorePath,
   readConfig,
   writeConfig,
 } from '../src/config/codec.js';
@@ -30,7 +31,6 @@ async function given(files: { config?: string; env?: string }): Promise<string> 
 }
 
 const VALID_CONFIG = `schema_version = ${String(CONFIG_SCHEMA_VERSION)}\n`;
-const URL = 'postgres://postgres:postgres@127.0.0.1:5432/brain';
 
 afterEach(async () => {
   await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
@@ -51,13 +51,12 @@ describe('configHome', () => {
 });
 
 describe('readConfig with a complete folder', () => {
-  it('resolves the database url from .env through the configured name', async () => {
+  it('reads the three paths and the time zone the file names', async () => {
     const home = await given({
-      config: `${VALID_CONFIG}timezone = "Europe/Berlin"\n\n[database]\nurl_env = "MY_BRAIN_URL"\n`,
-      env: `MY_BRAIN_URL="${URL}"\n`,
+      config: `${VALID_CONFIG}timezone = "Europe/Berlin"\n\n[store]\npath = "/tmp/elsewhere/brain.db"\n\n[files]\npath = "/tmp/elsewhere/files"\n\n[mirror]\npath = "/tmp/elsewhere/brain-mirror"\n`,
     });
 
-    const result = await readConfig(home, {});
+    const result = await readConfig(home);
 
     expect(result).toEqual({
       ok: true,
@@ -65,88 +64,57 @@ describe('readConfig with a complete folder', () => {
       config: {
         schemaVersion: CONFIG_SCHEMA_VERSION,
         timezone: 'Europe/Berlin',
-        databaseUrlEnv: 'MY_BRAIN_URL',
-        databaseUrl: URL,
-        mirrorPath: defaultMirrorPath(home),
+        storePath: '/tmp/elsewhere/brain.db',
+        filesPath: '/tmp/elsewhere/files',
+        mirrorPath: '/tmp/elsewhere/brain-mirror',
       },
     });
   });
 
-  it('reads the mirror path the file names', async () => {
-    const home = await given({
-      config: `${VALID_CONFIG}[mirror]\npath = "/tmp/elsewhere/brain-mirror"\n`,
-      env: `${DEFAULT_DATABASE_URL_ENV}="${URL}"\n`,
-    });
+  it('defaults all three paths under the configuration folder', async () => {
+    const home = await given({ config: VALID_CONFIG });
 
-    const result = await readConfig(home, {});
+    const result = await readConfig(home);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.config.mirrorPath).toBe('/tmp/elsewhere/brain-mirror');
-    expect(result.warnings).toEqual([]);
-  });
-
-  it('defaults the mirror to a folder under the configuration folder', async () => {
-    const home = await given({
-      config: VALID_CONFIG,
-      env: `${DEFAULT_DATABASE_URL_ENV}="${URL}"\n`,
-    });
-
-    const result = await readConfig(home, {});
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    expect(result.config.storePath).toBe(join(home, 'brain.db'));
+    expect(result.config.filesPath).toBe(join(home, 'files'));
     expect(result.config.mirrorPath).toBe(join(home, 'mirror'));
+    expect([
+      defaultStorePath(home),
+      defaultFilesPath(home),
+      defaultMirrorPath(home),
+    ]).toEqual([join(home, 'brain.db'), join(home, 'files'), join(home, 'mirror')]);
   });
 
-  it('defaults the timezone and the url variable name', async () => {
-    const home = await given({
-      config: VALID_CONFIG,
-      env: `${DEFAULT_DATABASE_URL_ENV}="${URL}"\n`,
-    });
+  it('defaults the timezone', async () => {
+    const home = await given({ config: VALID_CONFIG });
 
-    const result = await readConfig(home, {});
+    const result = await readConfig(home);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.config.timezone).toBe(DEFAULT_TIMEZONE);
-    expect(result.config.databaseUrlEnv).toBe(DEFAULT_DATABASE_URL_ENV);
   });
 
-  it('takes the url from the process environment when .env has none', async () => {
-    const home = await given({ config: VALID_CONFIG });
+  it('reads a folder whose .env cannot be parsed at all, because it reads none', async () => {
+    // Every key this version knows is a path or a time zone, so there is
+    // nothing in `.env` to resolve — and a broken one must not block a command
+    // over a file nothing needs yet.
+    const home = await given({ config: VALID_CONFIG, env: 'this is not = = an env file\n' });
 
-    const result = await readConfig(home, { [DEFAULT_DATABASE_URL_ENV]: URL });
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.config.databaseUrl).toBe(URL);
-  });
-
-  it('lets .env win over a stale variable in the process environment', async () => {
-    const home = await given({
-      config: VALID_CONFIG,
-      env: `${DEFAULT_DATABASE_URL_ENV}="${URL}"\n`,
-    });
-
-    const result = await readConfig(home, {
-      [DEFAULT_DATABASE_URL_ENV]: 'postgres://somewhere/else',
-    });
+    const result = await readConfig(home);
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.config.databaseUrl).toBe(URL);
   });
 });
 
 describe('readConfig and a key it does not know', () => {
   it('runs anyway and warns with CONFIG_UNKNOWN_KEY, naming the key', async () => {
-    const home = await given({
-      config: `${VALID_CONFIG}colour = "x"\n`,
-      env: `${DEFAULT_DATABASE_URL_ENV}="${URL}"\n`,
-    });
+    const home = await given({ config: `${VALID_CONFIG}colour = "x"\n` });
 
-    const result = await readConfig(home, {});
+    const result = await readConfig(home);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -155,28 +123,37 @@ describe('readConfig and a key it does not know', () => {
     expect(result.warnings[0]?.message).toContain('colour');
   });
 
-  it('names the whole path of a key inside a table', async () => {
+  it('warns about the url_env an earlier layout wrote, rather than dropping it', async () => {
     const home = await given({
-      config: `${VALID_CONFIG}[database]\nurl_env = "${DEFAULT_DATABASE_URL_ENV}"\nport = 5432\n`,
-      env: `${DEFAULT_DATABASE_URL_ENV}="${URL}"\n`,
+      config: `${VALID_CONFIG}[database]\nurl_env = "SECOND_BRAIN_DATABASE_URL"\n`,
     });
 
-    const result = await readConfig(home, {});
+    const result = await readConfig(home);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.warnings.map((warning) => warning.message.includes('database.port'))).toEqual([
+    expect(result.warnings.map((warning) => warning.code)).toEqual(['CONFIG_UNKNOWN_KEY']);
+    expect(result.warnings[0]?.message).toContain('database.url_env');
+  });
+
+  it('names the whole path of a key inside a table', async () => {
+    const home = await given({
+      config: `${VALID_CONFIG}[store]\npath = "/tmp/brain.db"\nport = 5432\n`,
+    });
+
+    const result = await readConfig(home);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.warnings.map((warning) => warning.message.includes('store.port'))).toEqual([
       true,
     ]);
   });
 
-  it('says nothing about a known table left empty', async () => {
-    const home = await given({
-      config: `${VALID_CONFIG}[database]\n`,
-      env: `${DEFAULT_DATABASE_URL_ENV}="${URL}"\n`,
-    });
+  it.each(['store', 'files', 'mirror'])('says nothing about an empty [%s]', async (table) => {
+    const home = await given({ config: `${VALID_CONFIG}[${table}]\n` });
 
-    const result = await readConfig(home, {});
+    const result = await readConfig(home);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -184,12 +161,9 @@ describe('readConfig and a key it does not know', () => {
   });
 
   it('reports an unknown table that holds nothing, rather than ignoring it', async () => {
-    const home = await given({
-      config: `${VALID_CONFIG}[colour]\n`,
-      env: `${DEFAULT_DATABASE_URL_ENV}="${URL}"\n`,
-    });
+    const home = await given({ config: `${VALID_CONFIG}[colour]\n` });
 
-    const result = await readConfig(home, {});
+    const result = await readConfig(home);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -197,12 +171,9 @@ describe('readConfig and a key it does not know', () => {
   });
 
   it('warns once per unknown key, in a stable order', async () => {
-    const home = await given({
-      config: `${VALID_CONFIG}zebra = 1\nalpha = 2\n`,
-      env: `${DEFAULT_DATABASE_URL_ENV}="${URL}"\n`,
-    });
+    const home = await given({ config: `${VALID_CONFIG}zebra = 1\nalpha = 2\n` });
 
-    const result = await readConfig(home, {});
+    const result = await readConfig(home);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -216,52 +187,12 @@ describe('readConfig and a folder it cannot use', () => {
   it('reports CONFIG_MISSING when there is no config.toml', async () => {
     const home = await tempHome();
 
-    const result = await readConfig(home, { [DEFAULT_DATABASE_URL_ENV]: URL });
+    const result = await readConfig(home);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe('CONFIG_MISSING');
     expect(result.message).toContain('config.toml');
-  });
-
-  it('reports CONFIG_MISSING when the named variable is set nowhere', async () => {
-    const home = await given({ config: VALID_CONFIG });
-
-    const result = await readConfig(home, {});
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe('CONFIG_MISSING');
-    expect(result.message).toContain(DEFAULT_DATABASE_URL_ENV);
-  });
-
-  it('reports CONFIG_MISSING for a url_env that names a prototype member', async () => {
-    // "constructor" is on `Object.prototype`, so a plain lookup would hand back
-    // a function and the command would die on a type error instead of saying
-    // what is wrong.
-    const home = await given({
-      config: `${VALID_CONFIG}[database]\nurl_env = "constructor"\n`,
-    });
-
-    const result = await readConfig(home, {});
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe('CONFIG_MISSING');
-    expect(result.message).toContain('constructor');
-  });
-
-  it('reports CONFIG_MISSING when the variable is set to whitespace', async () => {
-    const home = await given({
-      config: VALID_CONFIG,
-      env: `${DEFAULT_DATABASE_URL_ENV}="   "\n`,
-    });
-
-    const result = await readConfig(home, {});
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe('CONFIG_MISSING');
   });
 
   it.each([
@@ -271,19 +202,22 @@ describe('readConfig and a folder it cannot use', () => {
     ['an unsupported schema_version', 'schema_version = 99\n'],
     ['a timezone of the wrong type', `${VALID_CONFIG}timezone = 9\n`],
     ['a timezone no machine knows', `${VALID_CONFIG}timezone = "Nowhere/Nope"\n`],
-    [
-      'a url_env that is not a variable name',
-      `${VALID_CONFIG}[database]\nurl_env = "not a name"\n`,
-    ],
-    // A relative mirror path would be a different folder for every working
-    // directory a command happens to be started from.
+    // A relative path would be a different place for every working directory a
+    // command happens to be started from, so a hook and the user would not be
+    // looking at the same database.
+    ['a relative store path', `${VALID_CONFIG}[store]\npath = "brain.db"\n`],
+    ['a store path of the wrong type', `${VALID_CONFIG}[store]\npath = 7\n`],
+    ['an empty store path', `${VALID_CONFIG}[store]\npath = ""\n`],
+    ['a relative files path', `${VALID_CONFIG}[files]\npath = "files"\n`],
+    ['a files path of the wrong type', `${VALID_CONFIG}[files]\npath = 7\n`],
+    ['an empty files path', `${VALID_CONFIG}[files]\npath = ""\n`],
     ['a relative mirror path', `${VALID_CONFIG}[mirror]\npath = "notes/mirror"\n`],
     ['a mirror path of the wrong type', `${VALID_CONFIG}[mirror]\npath = 7\n`],
     ['an empty mirror path', `${VALID_CONFIG}[mirror]\npath = ""\n`],
   ])('reports CONFIG_INVALID for %s', async (_name, config) => {
-    const home = await given({ config, env: `${DEFAULT_DATABASE_URL_ENV}="${URL}"\n` });
+    const home = await given({ config });
 
-    const result = await readConfig(home, {});
+    const result = await readConfig(home);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -291,11 +225,22 @@ describe('readConfig and a folder it cannot use', () => {
     expect(result.message.split('\n')).toHaveLength(1);
   });
 
+  it('names the key in the message for a relative path', async () => {
+    const home = await given({ config: `${VALID_CONFIG}[store]\npath = "brain.db"\n` });
+
+    const result = await readConfig(home);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.message).toContain('store.path');
+    expect(result.message).toContain('absolute path');
+  });
+
   it('reports CONFIG_INVALID when config.toml is a directory, not a file', async () => {
     const home = await tempHome();
     await mkdir(configFilePath(home));
 
-    const result = await readConfig(home, {});
+    const result = await readConfig(home);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -309,11 +254,11 @@ describe('writeConfig', () => {
 
     await writeConfig(home, {
       timezone: 'Europe/Berlin',
-      databaseUrlEnv: 'MY_BRAIN_URL',
-      databaseUrl: URL,
+      storePath: '/tmp/elsewhere/brain.db',
+      filesPath: '/tmp/elsewhere/files',
       mirrorPath: '/tmp/elsewhere/brain-mirror',
     });
-    const result = await readConfig(home, {});
+    const result = await readConfig(home);
 
     expect(result).toEqual({
       ok: true,
@@ -321,8 +266,8 @@ describe('writeConfig', () => {
       config: {
         schemaVersion: CONFIG_SCHEMA_VERSION,
         timezone: 'Europe/Berlin',
-        databaseUrlEnv: 'MY_BRAIN_URL',
-        databaseUrl: URL,
+        storePath: '/tmp/elsewhere/brain.db',
+        filesPath: '/tmp/elsewhere/files',
         mirrorPath: '/tmp/elsewhere/brain-mirror',
       },
     });
@@ -335,20 +280,21 @@ describe('writeConfig', () => {
     const parent = await tempHome();
     const home = join(parent, 'nested', 'second_brain');
 
-    await writeConfig(home, { databaseUrl: URL });
+    await writeConfig(home, {});
 
-    const result = await readConfig(home, {});
+    const result = await readConfig(home);
     expect(result.ok).toBe(true);
   });
 
-  it('writes no key value into config.toml (AD-18)', async () => {
+  it('writes the defaults when it is given none', async () => {
     const home = await tempHome();
 
-    await writeConfig(home, { databaseUrl: URL });
+    await writeConfig(home, {});
 
     const document = await readFile(configFilePath(home), 'utf8');
-    expect(document).not.toContain(URL);
-    expect(document).toContain(DEFAULT_DATABASE_URL_ENV);
+    expect(document).toContain(`path = "${join(home, 'brain.db')}"`);
+    expect(document).toContain(`path = "${join(home, 'files')}"`);
+    expect(document).toContain(`path = "${join(home, 'mirror')}"`);
   });
 
   it('tightens the mode of a .env that already existed too loosely', async () => {
@@ -356,7 +302,7 @@ describe('writeConfig', () => {
     await writeFile(envFilePath(home), 'OTHER="x"\n', 'utf8');
     await chmod(envFilePath(home), 0o644);
 
-    await writeConfig(home, { databaseUrl: URL });
+    await writeConfig(home, {});
 
     const mode = (await stat(envFilePath(home))).mode & 0o777;
     expect(mode.toString(8)).toBe('600');
@@ -364,70 +310,38 @@ describe('writeConfig', () => {
 
   it('keeps variables another story already put in .env', async () => {
     const home = await tempHome();
-    await writeConfig(home, { databaseUrl: URL });
+    await writeConfig(home, {});
     await writeFile(envFilePath(home), `${await readFile(envFilePath(home), 'utf8')}OTHER="kept"\n`);
 
-    await writeConfig(home, { databaseUrl: 'postgres://postgres@127.0.0.1:5432/other' });
+    await writeConfig(home, { timezone: 'Europe/Berlin' });
 
     const text = await readFile(envFilePath(home), 'utf8');
     expect(text).toContain('OTHER="kept"');
-    expect(text).toContain('other');
   });
 
-  it('round-trips a url whose password needs quoting', async () => {
-    const home = await tempHome();
-    const awkward = 'postgres://postgres:p%40ss%20w#rd@127.0.0.1:5432/brain';
-
-    await writeConfig(home, { databaseUrl: awkward });
-    const result = await readConfig(home, {});
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.config.databaseUrl).toBe(awkward);
-  });
-
-  it('refuses a value .env cannot represent instead of recording another one', async () => {
+  it('writes no path into .env (AD-18 cuts the other way too)', async () => {
     const home = await tempHome();
 
-    await expect(writeConfig(home, { databaseUrl: `both '" quotes` })).rejects.toThrow(/quote/);
+    await writeConfig(home, { storePath: '/tmp/elsewhere/brain.db' });
 
-    // Nothing was written, so the folder is absent rather than half made: a
-    // config.toml with no .env reads back as CONFIG_MISSING.
-    expect(existsSync(configFilePath(home))).toBe(false);
-    expect(existsSync(envFilePath(home))).toBe(false);
-  });
-
-  it('refuses a url_env that is not a variable name', async () => {
-    const home = await tempHome();
-
-    await expect(
-      writeConfig(home, { databaseUrlEnv: 'not a name', databaseUrl: URL }),
-    ).rejects.toThrow(/environment variable name/);
+    const text = await readFile(envFilePath(home), 'utf8');
+    expect(text).not.toContain('/tmp/elsewhere/brain.db');
   });
 
   it('refuses a timezone it would then refuse to read back', async () => {
     const home = await tempHome();
 
-    await expect(
-      writeConfig(home, { timezone: 'Nowhere/Nope', databaseUrl: URL }),
-    ).rejects.toThrow(/time zone/);
+    await expect(writeConfig(home, { timezone: 'Nowhere/Nope' })).rejects.toThrow(/time zone/);
   });
 
-  it('refuses a relative mirror path, which it would refuse to read back', async () => {
+  it.each([
+    ['storePath', { storePath: 'brain.db' }],
+    ['filesPath', { filesPath: 'files' }],
+    ['mirrorPath', { mirrorPath: 'notes/mirror' }],
+  ])('refuses a relative %s, which it would refuse to read back', async (_name, input) => {
     const home = await tempHome();
 
-    await expect(
-      writeConfig(home, { mirrorPath: 'notes/mirror', databaseUrl: URL }),
-    ).rejects.toThrow(/absolute path/);
+    await expect(writeConfig(home, input)).rejects.toThrow(/absolute path/);
     expect(existsSync(configFilePath(home))).toBe(false);
-  });
-
-  it('writes the default mirror path when it is given none', async () => {
-    const home = await tempHome();
-
-    await writeConfig(home, { databaseUrl: URL });
-
-    const document = await readFile(configFilePath(home), 'utf8');
-    expect(document).toContain(`path = "${join(home, 'mirror')}"`);
   });
 });
