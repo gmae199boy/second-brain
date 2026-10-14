@@ -11,6 +11,8 @@ import {
 } from 'second_brain';
 import { readConfig, type BrainConfig } from './config/codec.js';
 import { configHome } from './config/paths.js';
+import { runtimeChecks } from './doctor/checks.js';
+import { failedConfigStore } from './doctor/store.js';
 import { errorEnvelope, okEnvelope, type Envelope } from './envelope.js';
 
 /**
@@ -52,8 +54,15 @@ export interface CommandContextBase {
 export interface CommandContext extends CommandContextBase {
   /** The SDK surface. The only thing a command is allowed to call (AD-5). */
   brain: Brain;
-  /** The configuration, already read, checked and resolved (AD-18). */
-  config: BrainConfig;
+  /**
+   * The configuration, already read, checked and resolved (AD-18).
+   *
+   * `undefined` only for a `diagnostic` command that ran without one: every
+   * other command is refused with `CONFIG_MISSING` or `CONFIG_INVALID` before
+   * it is reached, so a command that needs a value here can say so by failing
+   * on the `undefined` rather than by checking anything else.
+   */
+  config: BrainConfig | undefined;
 }
 
 /**
@@ -122,6 +131,15 @@ export interface DatabaseCommandSpec<T = unknown> extends CommandSpecBase {
    * (AD-20). Read commands leave this unset and are never blocked.
    */
   writes?: boolean;
+  /**
+   * This command's job is to report on a brain that may be broken, so it runs
+   * even when the configuration could not be read: the dispatcher hands it a
+   * store that answers `DB_UNAVAILABLE` and a `config` of `undefined` instead
+   * of refusing with exit 2 (Decision 2026-10-14). `brain admin doctor` is the
+   * one command that sets it — a command that would write, or that needs a
+   * path out of the configuration, has nothing useful to do without one.
+   */
+  diagnostic?: boolean;
   run(context: CommandContext): Promise<CommandOutcome<T>>;
 }
 
@@ -247,22 +265,39 @@ async function execute(
     return finish(clock, await spec.run({ env, clock, options, args }), [], []);
   }
 
-  const config = await readConfig(configHome(env));
-  if (!config.ok) {
+  const home = configHome(env);
+  const config = await readConfig(home);
+  if (!config.ok && spec.diagnostic !== true) {
     return failed(clock, config.code, config.message, 2, [], []);
   }
-  const warningCodes = config.warnings.map((warning) => warning.code);
-  const warningLines = config.warnings.map((warning) => `warning: ${warning.message}`);
+
+  const warningCodes = config.ok ? config.warnings.map((warning) => warning.code) : [];
+  const warningLines = config.ok
+    ? config.warnings.map((warning) => `warning: ${warning.message}`)
+    : [];
 
   // The file is opened, never created: a runtime command that made an empty
   // database would report a healthy brain to somebody who has not installed one
   // (AD-20). A hook on the critical path of a turn gets the shorter lock budget,
   // because the person is waiting on it (AD-7).
-  const store = sqliteStore({
-    path: config.config.storePath,
-    busyTimeoutMs: spec.hook === true ? BUSY_TIMEOUT_MS.turn : BUSY_TIMEOUT_MS.command,
+  //
+  // Without a configuration there is no path to open, so a `diagnostic` command
+  // gets a store that says exactly that: the report then carries the machine
+  // checks as well, which is the point of running at all (Decision 2026-10-14).
+  const store = config.ok
+    ? sqliteStore({
+        path: config.config.storePath,
+        busyTimeoutMs: spec.hook === true ? BUSY_TIMEOUT_MS.turn : BUSY_TIMEOUT_MS.command,
+      })
+    // No `config.message` in here: the `config` check carries it, and the same
+    // sentence printed twice in one report reads as two problems.
+    : failedConfigStore('the configuration could not be read, so the database location is unknown');
+  const brain = createBrain({
+    store,
+    schemaVersion: SQLITE_SCHEMA_VERSION,
+    // One list, for the dispatcher and the installer both: see `doctor/checks`.
+    checks: runtimeChecks({ home, config }),
   });
-  const brain = createBrain({ store });
   try {
     if (spec.writes === true) {
       // The write guard of AD-20, in the one place that cannot be skipped by
@@ -280,7 +315,13 @@ async function execute(
       }
     }
 
-    const outcome = await spec.run({ brain, config: config.config, clock, options, args });
+    const outcome = await spec.run({
+      brain,
+      config: config.ok ? config.config : undefined,
+      clock,
+      options,
+      args,
+    });
     return finish(clock, outcome, warningCodes, warningLines);
   } finally {
     await brain.close();

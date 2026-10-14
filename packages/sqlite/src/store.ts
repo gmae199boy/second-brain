@@ -8,7 +8,7 @@ import {
   type StoreProbe,
 } from '@second-brain/core';
 import { sql } from 'kysely';
-import { describe, openSqlite, type SqliteConnection } from './connect.js';
+import { describe, isBusy, openSqlite, type SqliteConnection } from './connect.js';
 
 export interface SqliteStoreOptions {
   /** Path of the database file. It is never created from here (AD-20). */
@@ -94,6 +94,7 @@ export function sqliteStore(options: SqliteStoreOptions): HealthStore & SchemaSt
           source: {
             location: path,
             probes: [
+              await writableProbe(opened.connection, busyTimeoutMs),
               await walProbe(opened.connection),
               await trigramProbe(opened.connection),
               await foreignKeyProbe(opened.connection),
@@ -153,6 +154,74 @@ export function sqliteStore(options: SqliteStoreOptions): HealthStore & SchemaSt
       await open?.close();
     },
   };
+}
+
+/**
+ * Whether this process could actually write, which opening the file does not
+ * say. Measured on Node 24.16.0: a database file at mode 0444 opens under
+ * `?mode=rw` without complaint, answers `pragma journal_mode`, answers a
+ * `select`, and even takes `begin immediate` — the refusal
+ * (`SQLITE_READONLY`) arrives at the first statement that touches a page. A
+ * read-only *folder* fails earlier, at `journal_mode`, which is why the `wal`
+ * probe catches that case and not this one.
+ *
+ * So the probe writes, and takes the write back: `begin immediate` for the
+ * write lock, a `create table` to make SQLite touch a page, `rollback` to leave
+ * nothing behind. A read stays a read — there is no `brain_probe_writable`
+ * table afterwards, whichever way the probe went.
+ *
+ * It waits for nobody: `busy_timeout` goes to 0 for the probe and back to the
+ * caller's budget afterwards. A question about permissions must not sit on the
+ * command's whole lock budget because a hook happens to be writing, and a
+ * database somebody else is writing to is not one to report as unwritable — so
+ * a busy answer is an `ok` that says the question was not settled.
+ *
+ * Note for whoever reads a failure here: SQLite leaves `-wal` and `-shm` beside
+ * the database at the database file's own mode, so a file that was once 0444
+ * can keep failing this probe after its own mode is fixed, until the sidecars
+ * are fixed too.
+ */
+async function writableProbe(
+  connection: SqliteConnection,
+  busyTimeoutMs: number,
+): Promise<StoreProbe> {
+  return probe('writable', async () => {
+    // The driver handle, not Kysely: transaction control belongs to one
+    // connection, and this is the one every query here goes through anyway.
+    const { database } = connection;
+    try {
+      database.exec('pragma busy_timeout = 0');
+      database.exec('begin immediate');
+      database.exec('create table main.brain_probe_writable(x)');
+      return { ok: true, detail: 'the file took a write and gave it back' };
+    } catch (error) {
+      if (isBusy(error)) {
+        // Only a brain in use holds this lock, and holding it says nothing
+        // about whether this process may write. Reporting `fail` here would
+        // make a busy brain look like a broken one.
+        return {
+          ok: true,
+          detail: 'another process holds the write lock, so writability was not tested',
+        };
+      }
+      return { ok: false, detail: describe(error) };
+    } finally {
+      // Undoes the table whether or not it was made; with no transaction open
+      // there is nothing to undo and SQLite says so, which is not a failure.
+      try {
+        database.exec('rollback');
+      } catch {
+        // No transaction to roll back: `begin immediate` is what failed.
+      }
+      try {
+        database.exec(`pragma busy_timeout = ${String(busyTimeoutMs)}`);
+      } catch {
+        // The budget of AD-7 could not be put back. Every later statement on
+        // this connection would say so for itself, and the probe's own answer
+        // is already decided.
+      }
+    }
+  });
 }
 
 /**

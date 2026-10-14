@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -123,6 +123,24 @@ const registry = [
       text: ['degraded but useful'],
       failed: true,
     }),
+  },
+  {
+    ns: 'fake',
+    verb: 'diagnostic',
+    description: 'a command that runs without a configuration, as doctor does',
+    diagnostic: true,
+    run: async (context) => {
+      const report = await context.brain.admin.doctor();
+      return {
+        ok: true,
+        data: {
+          // Undefined is the whole point: this command ran without one.
+          config: context.config ?? null,
+          checks: report.checks.map((check) => check.id + ':' + check.status),
+        },
+        failed: report.checks.some((check) => check.status === 'fail'),
+      };
+    },
   },
 ];
 `;
@@ -569,5 +587,36 @@ describe('the dispatcher and an unusable configuration', () => {
     const envelope = JSON.parse(run.stdout) as Envelope;
     expect(envelope.error?.code).toBe('CONFIG_INVALID');
     expect(envelope.error?.message).toContain('store.path');
+  });
+
+  it('runs a diagnostic command anyway, with no config and an unavailable store', async () => {
+    const home = await scratch();
+
+    const run = await runDispatch(['fake', 'diagnostic', '--json'], { [HOME_ENV]: home });
+
+    // Exit 1, not 2: the command ran, and the result is a bad one. That is the
+    // whole difference `diagnostic` makes (Decision 2026-10-14).
+    expect(run.code).toBe(1);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.error).toBeUndefined();
+
+    const data = envelope.data as { config: unknown; checks: string[] };
+    expect(data.config).toBeNull();
+    // `db` says the configuration is why, and the machine checks ran too.
+    expect(data.checks[0]).toBe('db:fail');
+    expect(data.checks).toContain('config:fail');
+    expect(data.checks).toContain('node-version:ok');
+    // Turning a check's code into a warning is the command's own doing, and
+    // this fake does not: there is nothing the dispatcher adds here.
+    expect(envelope.warnings).toEqual([]);
+  });
+
+  it('creates nothing in the folder it could not read a configuration from', async () => {
+    const home = await scratch();
+
+    await runDispatch(['fake', 'diagnostic', '--json'], { [HOME_ENV]: home });
+
+    expect(await readdir(home)).toEqual([]);
   });
 });

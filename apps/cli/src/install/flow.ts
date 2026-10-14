@@ -76,8 +76,13 @@ export interface InstallConfigIo {
 export interface InstallStore {
   /** Create the file at 0600 if it is not there, then migrate it (AD-20). */
   prepare(path: string): Promise<SqliteMigrationResult>;
-  /** The same checks `brain admin doctor` runs, against this file. */
-  doctor(path: string): Promise<DoctorReport>;
+  /**
+   * The same checks `brain admin doctor` runs: the store ones against this
+   * file, the machine ones against the home being installed. Both, because an
+   * install whose shim or node is wrong is an install that works until the
+   * first harness turn.
+   */
+  doctor(home: string, path: string): Promise<DoctorReport>;
 }
 
 /** The file store's root. Blob writes themselves are epic 2's. */
@@ -242,7 +247,7 @@ export async function runInstall(
 
   // Doctor has the last word, and its verdict is the exit code: an install that
   // finished every step and still cannot report a healthy brain did not work.
-  const report = await deps.store.doctor(store.path);
+  const report = await deps.store.doctor(home, store.path);
   for (const check of report.checks) deps.log(formatCheck(check));
   return report.checks.some((check) => check.status === 'fail') || !connected ? 1 : 0;
 }

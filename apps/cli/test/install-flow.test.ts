@@ -139,15 +139,19 @@ interface Store extends InstallStore {
   /** Every path prepared, in order. */
   prepared: string[];
   doctored: string[];
+  /** Every home doctor was pointed at, in order. */
+  doctoredHomes: string[];
 }
 
 function fakeStore(world: StoreWorld = {}): Store {
   const prepared: string[] = [];
   const doctored: string[] = [];
+  const doctoredHomes: string[] = [];
 
   return {
     prepared,
     doctored,
+    doctoredHomes,
     async prepare(path) {
       prepared.push(path);
       return (
@@ -159,16 +163,23 @@ function fakeStore(world: StoreWorld = {}): Store {
         }
       );
     },
-    async doctor(path): Promise<DoctorReport> {
+    async doctor(home, path): Promise<DoctorReport> {
+      doctoredHomes.push(home);
       doctored.push(path);
       return {
         checks: [
           { id: 'db', status: 'ok', detail: '3.50.4' },
+          { id: 'writable', status: 'ok', detail: 'the file took a write and gave it back' },
           world.walFails === true
             ? { id: 'wal', status: 'fail', detail: 'journal_mode is delete, not wal' }
             : { id: 'wal', status: 'ok', detail: 'wal' },
           { id: 'fts5-trigram', status: 'ok', detail: 'fts5 with the trigram tokenizer' },
           { id: 'foreign-keys', status: 'ok', detail: 'enforced on this connection' },
+          { id: 'schema-version', status: 'ok', detail: '2' },
+          { id: 'config', status: 'ok', detail: join(home, 'config.toml') },
+          { id: 'shim', status: 'ok', detail: shimPath(home) },
+          { id: 'node-path', status: 'ok', detail: 'node 24.16.0 at /usr/bin/node' },
+          { id: 'node-version', status: 'ok', detail: 'node 24.16.0' },
         ],
       };
     },
@@ -308,10 +319,23 @@ describe('the installer flow on an empty folder', () => {
     expect(kit.files.prepared).toEqual([FILES]);
     expect(kit.shimmed).toEqual([HOME]);
     expect(kit.store.doctored).toEqual([STORE]);
-    expect(kit.output()).toContain('db: ok');
-    expect(kit.output()).toContain('wal: ok');
-    expect(kit.output()).toContain('fts5-trigram: ok');
-    expect(kit.output()).toContain('foreign-keys: ok');
+    // The machine checks are about the home, not the database file, so doctor
+    // has to be told both (story 8).
+    expect(kit.store.doctoredHomes).toEqual([HOME]);
+    for (const id of [
+      'db',
+      'writable',
+      'wal',
+      'fts5-trigram',
+      'foreign-keys',
+      'schema-version',
+      'config',
+      'shim',
+      'node-path',
+      'node-version',
+    ]) {
+      expect(kit.output()).toContain(`${id}: ok`);
+    }
   });
 
   it('runs the steps in AD-19 order: config, store, files, shim, doctor', async () => {
@@ -332,9 +356,9 @@ describe('the installer flow on an empty folder', () => {
           order.push('store');
           return store.prepare(path);
         },
-        doctor: async (path) => {
+        doctor: async (home, path) => {
           order.push('doctor');
-          return store.doctor(path);
+          return store.doctor(home, path);
         },
       },
       files: {

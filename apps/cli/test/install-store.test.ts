@@ -1,10 +1,32 @@
+import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 import { SQLITE_SCHEMA_VERSION } from 'second_brain';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { writeConfig } from '../src/config/codec.js';
+import { runtimeChecks } from '../src/doctor/checks.js';
 import { doctorAt, prepareFilesRoot, prepareStore } from '../src/install/store.js';
+import { writeShim } from '../src/install/shim.js';
+
+/** The built entry point, which is the one a shim the installer wrote names. */
+const distBin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
+
+/** Every check `doctorAt` reports on a finished install, in order. */
+const ALL_CHECKS = [
+  'db',
+  'writable',
+  'wal',
+  'fts5-trigram',
+  'foreign-keys',
+  'schema-version',
+  'config',
+  'shim',
+  'node-path',
+  'node-version',
+];
 
 /**
  * The installer's filesystem half, against the real filesystem: the modes the
@@ -30,6 +52,12 @@ afterEach(async () => {
   await Promise.all(
     directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
   );
+});
+
+beforeAll(() => {
+  if (!existsSync(distBin)) {
+    throw new Error(`${distBin} does not exist. Run \`pnpm build\` before these tests.`);
+  }
 });
 
 describe('prepareStore', () => {
@@ -182,31 +210,55 @@ describe('prepareFilesRoot', () => {
 });
 
 describe('doctorAt', () => {
-  it('reports every check as ok against a file the installer just prepared', async () => {
-    const path = join(await scratch(), 'brain.db');
+  it('reports every check as ok against a home the installer just finished', async () => {
+    const home = await scratch();
+    const path = join(home, 'brain.db');
     await prepareStore(path);
+    await writeConfig(home, {});
+    // The built entry point, because these tests import `src/`, where
+    // `cliEntryPath()` would name a file that is not there.
+    await writeShim(home, { bin: distBin });
 
-    const report = await doctorAt(path);
+    const report = await doctorAt(home, path);
 
-    expect(report.checks.map((check) => check.id)).toEqual([
-      'db',
-      'wal',
-      'fts5-trigram',
-      'foreign-keys',
-    ]);
-    expect(report.checks.every((check) => check.status === 'ok')).toBe(true);
+    expect(report.checks.map((check) => check.id)).toEqual(ALL_CHECKS);
+    const failed = report.checks.filter((check) => check.status !== 'ok');
+    expect(failed, JSON.stringify(failed)).toEqual([]);
   });
 
   it('reports db as DB_UNAVAILABLE, and creates nothing, when the file is not there', async () => {
     const directory = await scratch();
     const path = join(directory, 'brain.db');
 
-    const report = await doctorAt(path);
+    const report = await doctorAt(directory, path);
 
-    expect(report.checks).toHaveLength(1);
+    // Nothing was probed and no schema version is known, so `db` is the whole
+    // store half of the report; the machine checks still ran.
     expect(report.checks[0]).toMatchObject({ id: 'db', status: 'fail', code: 'DB_UNAVAILABLE' });
-    // Not the database, not its log, not its shared memory: a probe that made
-    // what it was looking for would report a brain nobody installed.
+    expect(report.checks.map((check) => check.id)).toEqual([
+      'db',
+      'config',
+      'shim',
+      'node-path',
+      'node-version',
+    ]);
+    // Not the database, not its log, not its shared memory, and not a
+    // configuration folder either: a probe that made what it was looking for
+    // would report a brain nobody installed.
     expect(await readdir(directory)).toEqual([]);
+  });
+
+  it('takes its machine checks from the registry, not from a second list', async () => {
+    // One list, two callers (story 8): the installer's last step and
+    // `brain admin doctor` have to agree on what was checked, or an install
+    // that ends green is no promise about the command that follows it. The
+    // dispatcher's end of this is asserted the same way in `admin-doctor`.
+    const registered = runtimeChecks({ home: '/nowhere' }).map((source) => source.id);
+    expect(registered).toEqual(['config', 'shim', 'node-path', 'node-version']);
+
+    const home = await scratch();
+    const report = await doctorAt(home, join(home, 'brain.db'));
+
+    expect(report.checks.slice(-registered.length).map((check) => check.id)).toEqual(registered);
   });
 });

@@ -356,6 +356,7 @@ describe('the migration this package ships', () => {
       expect(health.ok).toBe(true);
       if (!health.ok) return;
       expect(health.source.probes.map((probe) => [probe.id, probe.ok])).toEqual([
+        ['writable', true],
         ['wal', true],
         ['fts5-trigram', true],
         ['foreign-keys', true],

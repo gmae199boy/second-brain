@@ -7,7 +7,14 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { BRAIN_MARKER } from 'second_brain';
 import { HOME_ENV } from '../src/config/paths.js';
-import { SHIM_SIGNATURE, cliEntryPath, renderShim, shimPath, writeShim } from '../src/install/shim.js';
+import {
+  SHIM_SIGNATURE,
+  cliEntryPath,
+  parseShim,
+  renderShim,
+  shimPath,
+  writeShim,
+} from '../src/install/shim.js';
 
 /**
  * The shim is the one file a harness hook ever calls, started with none of the
@@ -111,6 +118,100 @@ describe('renderShim', () => {
   });
 });
 
+describe('parseShim', () => {
+  /** The paths worth round-tripping: the ordinary one and the awkward ones. */
+  const inputs = [
+    {
+      name: 'ordinary absolute paths',
+      input: {
+        node: '/opt/homebrew/bin/node',
+        bin: '/home/me/.second_brain/app/apps/cli/dist/bin.js',
+        home: '/home/me/.second_brain',
+      },
+    },
+    {
+      name: 'paths with spaces in them',
+      input: {
+        node: '/Volumes/My Disk/node',
+        bin: '/a b/bin.js',
+        home: '/Users/me/Application Support/brain',
+      },
+    },
+    {
+      name: 'paths with single quotes in them, which sh splices',
+      input: { node: "/opt/no de/b'in/node", bin: "/a'b/bin.js", home: "/h o/m'e" },
+    },
+    {
+      name: 'a path that is nothing but quotes',
+      input: { node: "/'''", bin: "/''", home: "/'" },
+    },
+    {
+      name: 'paths with a dollar sign, which sh must not expand',
+      input: { node: '/opt/$PATH/node', bin: '/a/${HOME}/bin.js', home: '/h/$1' },
+    },
+  ];
+
+  for (const { name, input } of inputs) {
+    it(`reads back ${name}`, () => {
+      expect(parseShim(renderShim(input))).toEqual(input);
+    });
+  }
+
+  it('reads back the shim that was really written, from the file', async () => {
+    const home = await tempHome();
+    const { path } = await writeShim(home, { bin: distBin });
+
+    expect(parseShim(await readFile(path, 'utf8'))).toEqual({
+      node: process.execPath,
+      bin: distBin,
+      home,
+    });
+  });
+
+  it('answers undefined for a file that is not a shim at all', () => {
+    expect(parseShim('something else\n')).toBeUndefined();
+    expect(parseShim('')).toBeUndefined();
+  });
+
+  it('answers undefined when the exec line is there but the home line is not', () => {
+    expect(parseShim(`#!/bin/sh\nexec '/n' '/b' "$@"\n`)).toBeUndefined();
+  });
+
+  it('answers undefined when a quoted word never closes', () => {
+    const text = renderShim({ node: '/n', bin: '/b', home: '/h' }).replace(
+      `exec '/n' '/b' "$@"`,
+      `exec '/n' '/b "$@"`,
+    );
+
+    expect(parseShim(text)).toBeUndefined();
+  });
+
+  it('answers undefined when the exec line names only one path', () => {
+    const text = renderShim({ node: '/n', bin: '/b', home: '/h' }).replace(
+      `exec '/n' '/b' "$@"`,
+      `exec '/n' "$@"`,
+    );
+
+    expect(parseShim(text)).toBeUndefined();
+  });
+
+  it.each([
+    // A shim that does not pass the arguments on would run every hook as a
+    // bare `brain` with no command at all.
+    ['nothing after the entry point', `exec '/n' '/b'`],
+    ['the arguments unquoted', `exec '/n' '/b' $@`],
+    ['something else after them', `exec '/n' '/b' "$@" >/dev/null`],
+    ['no space before them', `exec '/n' '/b'"$@"`],
+  ])('answers undefined for an exec line with %s', (_name, line) => {
+    const text = renderShim({ node: '/n', bin: '/b', home: '/h' }).replace(
+      `exec '/n' '/b' "$@"`,
+      line,
+    );
+
+    expect(parseShim(text)).toBeUndefined();
+  });
+});
+
 describe('writeShim', () => {
   it('writes an executable shim naming this node and this entry point', async () => {
     const home = await tempHome();
@@ -203,18 +304,31 @@ describe('the shim, run as a hook would run it', () => {
     }
   });
 
+  /**
+   * The detail of the `config` check, which is where doctor says which folder
+   * it looked in. `admin doctor` is `diagnostic`, so a folder with no
+   * configuration in it is a failing check and an exit 1 rather than an error
+   * envelope — which still proves the shim reached the CLI and pointed it
+   * somewhere, and now says where.
+   */
+  function configDetail(stdout: string): string {
+    const envelope = JSON.parse(stdout) as {
+      data?: { checks?: { id: string; detail?: string }[] };
+    };
+    const check = envelope.data?.checks?.find((candidate) => candidate.id === 'config');
+    expect(check).toBeDefined();
+    return check?.detail ?? '';
+  }
+
   it('reaches the CLI and reports the folder it carries, with no variable set', async () => {
     const home = await tempHome();
     const { path } = await writeShim(home, { bin: distBin });
 
-    // No configuration in the folder, so the command gets as far as reading it
-    // and says so: proof the shim found the CLI and pointed it at this home.
     const run = await runShim(path, ['admin', 'doctor', '--json']);
 
-    expect(run.code).toBe(2);
-    const envelope = JSON.parse(run.stdout) as { error?: { code: string; message: string } };
-    expect(envelope.error?.code).toBe('CONFIG_MISSING');
-    expect(envelope.error?.message).toContain(home);
+    // Ran, and reported a brain that is not installed: exit 1, not 2.
+    expect(run.code).toBe(1);
+    expect(configDetail(run.stdout)).toContain(home);
   });
 
   it('lets a folder named in the environment win over the one it carries', async () => {
@@ -224,9 +338,9 @@ describe('the shim, run as a hook would run it', () => {
 
     const run = await runShim(path, ['admin', 'doctor', '--json'], { [HOME_ENV]: other });
 
-    const envelope = JSON.parse(run.stdout) as { error?: { message: string } };
-    expect(envelope.error?.message).toContain(other);
-    expect(envelope.error?.message).not.toContain(home);
+    const detail = configDetail(run.stdout);
+    expect(detail).toContain(other);
+    expect(detail).not.toContain(home);
   });
 
   it('survives a configuration folder with a space in its name', async () => {
@@ -236,8 +350,7 @@ describe('the shim, run as a hook would run it', () => {
 
     const run = await runShim(path, ['admin', 'doctor', '--json']);
 
-    expect(run.code).toBe(2);
-    const envelope = JSON.parse(run.stdout) as { error?: { message: string } };
-    expect(envelope.error?.message).toContain(home);
+    expect(run.code).toBe(1);
+    expect(configDetail(run.stdout)).toContain(home);
   });
 });

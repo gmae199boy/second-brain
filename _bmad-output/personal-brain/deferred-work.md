@@ -37,3 +37,6 @@
 - source_plan: `_bmad-output/personal-brain/epic-foundation-and-install/story-untitled-13-plan.md`
   summary: 설치기가 `CONFIG_UNKNOWN_KEY` 경고를 보이지 않고, config를 다시 쓰면서 모르는 키를 조용히 지운다.
   evidence: `setup run --yes`를 `[database] url_env`가 있는 config 위에서 돌리면 경고 없이 키가 사라진다(리뷰어 재현). AD-18은 모르는 설정이 조용히 사라지는 것을 막으라고 한다.
+- source_plan: `_bmad-output/personal-brain/epic-foundation-and-install/story-doctor-plan.md`
+  summary: Core `checkSchema`의 불일치 메시지가 아직 없는 명령 `brain setup upgrade`(epic 5)를 안내한다.
+  evidence: story 3부터 있던 문구다. 이번 변경으로 doctor의 `schema-version` 항목이 이 문구를 사용자에게 보여 준다. 등록된 명령은 admin doctor·setup run·setup connect뿐이다. epic 5가 upgrade를 만들 때까지는 `brain setup run`으로 안내하거나, 그때 함께 맞춘다.

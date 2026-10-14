@@ -71,6 +71,77 @@ export function renderShim(input: ShimInput): string {
   ].join('\n');
 }
 
+/** What a shim on disk says. The three facts `renderShim` wrote into it. */
+export type ParsedShim = ShimInput;
+
+/** The `SECOND_BRAIN_HOME=${SECOND_BRAIN_HOME:-` that the folder follows. */
+const HOME_PREFIX = `${HOME_ENV}=\${${HOME_ENV}:-`;
+
+/** The `exec ` that the node and the entry point follow. */
+const EXEC_PREFIX = 'exec ';
+
+/**
+ * Read a shim back: the node it names, the entry point it names, and the
+ * configuration folder it carries. `undefined` when the text is not a shim this
+ * code wrote — a file somebody replaced, or one an older version wrote in
+ * another shape — because a doctor check that guessed at half a shim would
+ * report on a path nothing will ever run.
+ *
+ * It is the inverse of `renderShim`'s quoting, and the round-trip is the test:
+ * a path with a space or a quote in it has to come back the same string, since
+ * those are exactly the paths where a regular expression over the line would
+ * read the wrong thing and say nothing about it.
+ */
+export function parseShim(text: string): ParsedShim | undefined {
+  const lines = text.split('\n');
+  const homeLine = lines.find((line) => line.startsWith(HOME_PREFIX));
+  const execLine = lines.find((line) => line.startsWith(EXEC_PREFIX));
+  if (homeLine === undefined || execLine === undefined) return undefined;
+
+  const home = unquote(homeLine, HOME_PREFIX.length);
+  const node = unquote(execLine, EXEC_PREFIX.length);
+  if (home === undefined || node === undefined) return undefined;
+  // One space between the two words, as `renderShim` writes them.
+  if (execLine[node.end] !== ' ') return undefined;
+  const bin = unquote(execLine, node.end + 1);
+  if (bin === undefined) return undefined;
+  // `renderShim` always ends the line by passing the arguments on. A line that
+  // does not is not one of ours, and a shim that drops `"$@"` would run every
+  // hook as a bare `brain` with no command at all.
+  if (execLine.slice(bin.end) !== ` "$@"`) return undefined;
+
+  return { node: node.value, bin: bin.value, home: home.value };
+}
+
+/**
+ * One single-quoted `sh` word, from `start`, and the index just after it.
+ * `undefined` when there is no quoted word there, or when it never closes.
+ *
+ * Inside single quotes `sh` takes every character literally, so the only thing
+ * to undo is the splice `quote` uses for an embedded quote: `'\''` closes the
+ * word, escapes one quote, and opens it again.
+ */
+function unquote(line: string, start: number): { value: string; end: number } | undefined {
+  if (line[start] !== "'") return undefined;
+
+  let value = '';
+  let index = start + 1;
+  for (;;) {
+    const character = line[index];
+    if (character === undefined) return undefined;
+    if (character === "'") {
+      if (line.startsWith(`'\\''`, index)) {
+        value += "'";
+        index += 4;
+        continue;
+      }
+      return { value, end: index + 1 };
+    }
+    value += character;
+    index += 1;
+  }
+}
+
 export interface WrittenShim {
   path: string;
   /** False when the shim already said exactly this. */

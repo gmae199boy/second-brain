@@ -398,13 +398,22 @@ describe('brain setup run against the local SQLite source', () => {
       data?: { checks?: { id: string; status: string }[] };
     };
     expect(envelope.ok).toBe(true);
+    // Every check this build has, through the shim of that install: the store
+    // probes, the schema version, and the machine facts (story 8).
     expect(envelope.data?.checks?.map((check) => check.id)).toEqual([
       'db',
+      'writable',
       'wal',
       'fts5-trigram',
       'foreign-keys',
+      'schema-version',
+      'config',
+      'shim',
+      'node-path',
+      'node-version',
     ]);
-    expect(envelope.data?.checks?.every((check) => check.status === 'ok')).toBe(true);
+    const failed = (envelope.data?.checks ?? []).filter((check) => check.status !== 'ok');
+    expect(failed, JSON.stringify(failed)).toEqual([]);
   });
 
   it('reports db as DB_UNAVAILABLE, and makes no file, once the database is gone', async () => {
@@ -418,12 +427,21 @@ describe('brain setup run against the local SQLite source', () => {
     const envelope = JSON.parse(run.stdout) as Envelope & {
       data?: { checks?: { id: string; status: string; code?: string }[] };
     };
-    expect(envelope.data?.checks).toHaveLength(1);
+    // The store's half of the report is `db` alone — nothing was probed, so
+    // there is nothing else it can say — and the machine checks still ran.
+    expect(envelope.data?.checks?.map((check) => check.id)).toEqual([
+      'db',
+      'config',
+      'shim',
+      'node-path',
+      'node-version',
+    ]);
     expect(envelope.data?.checks?.[0]).toMatchObject({
       id: 'db',
       status: 'fail',
       code: 'DB_UNAVAILABLE',
     });
+    expect(envelope.data?.checks?.filter((check) => check.status === 'fail')).toHaveLength(1);
     expect(existsSync(join(home, 'brain.db'))).toBe(false);
   });
 });

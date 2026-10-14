@@ -11,5 +11,12 @@ export {
 } from './instant.js';
 export { BUSY_TIMEOUT_MS, type BusyTimeoutPath } from './busy-timeout.js';
 export { checkSchema, type SchemaCheck } from './schema.js';
-export { runDoctor, type DoctorCheck, type DoctorCheckStatus, type DoctorReport } from './admin/doctor.js';
+export {
+  runDoctor,
+  type DoctorCheck,
+  type DoctorCheckSource,
+  type DoctorCheckStatus,
+  type DoctorOptions,
+  type DoctorReport,
+} from './admin/doctor.js';
 export { createBrain, type Brain, type BrainAdmin, type BrainDependencies } from './brain.js';

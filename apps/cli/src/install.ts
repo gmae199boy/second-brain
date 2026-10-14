@@ -122,7 +122,10 @@ export function systemInstallDeps(): InstallDeps {
         return { timezone, storePath, filesPath, mirrorPath };
       },
     },
-    store: { prepare: (path: string) => prepareStore(path), doctor: doctorAt },
+    store: {
+      prepare: (path: string) => prepareStore(path),
+      doctor: (home: string, path: string) => doctorAt(home, path),
+    },
     files: { prepare: prepareFilesRoot },
     // The node running this process, and the entry point beside the shim
     // module: whatever node started the installer is the node the hooks get.

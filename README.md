@@ -182,7 +182,38 @@ pnpm brain admin doctor --json
 env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" admin doctor
 ```
 
-Exit 0 means every check passed, 1 means a check failed (a database file that
-has been removed reports `DB_UNAVAILABLE`), and 2 means the command could not
-run at all. A runtime command opens the file and never creates it, so a missing
-`brain.db` is reported rather than quietly replaced with an empty one.
+`admin doctor` reports one line per check, and these are the checks:
+
+| Check | What it says |
+|-------|--------------|
+| `db` | the source answered at all, and which SQLite version it is |
+| `writable` | this process could really write: a transaction is opened, a table created and the whole thing rolled back, so nothing is left behind. Opening a database file succeeds even at mode 0444, which is why it is asked separately. It waits for nobody — a brain another process is writing to answers `ok` and says the question was not settled |
+| `wal` | the file is in write-ahead mode, which is what lets a reader and the writer share it |
+| `fts5-trigram` | this Node's SQLite was built with FTS5 and the `trigram` tokenizer, proved by indexing a row and searching it |
+| `foreign-keys` | they are enforced on this connection |
+| `schema-version` | the stored version is the one this build was made for; a mismatch is `SCHEMA_MISMATCH`, and `brain setup run` is what migrates |
+| `config` | `config.toml` is there and understandable, and where it is |
+| `shim` | `<home>/bin/brain` is there, executable, written by brain, and names an entry point that exists |
+| `node-path` | the node that shim names runs and is at least the version in `engines.node`. `skip` when there is no shim to read it from |
+| `node-version` | the node running the command is at least that version too |
+
+Exit 0 means every check passed, 1 means a check failed, and 2 means the command
+could not run at all. Nothing is ever repaired: doctor reports, and `setup run`
+is what fixes things.
+
+If `writable` fails, fix `brain.db-wal` and `brain.db-shm` along with
+`brain.db`: SQLite gives the sidecars the database file's own permissions, so a
+database that was once read-only keeps failing this check after its own mode is
+put right, until theirs is too.
+
+A runtime command opens the database file and never creates it, so a missing
+`brain.db` is reported as `DB_UNAVAILABLE` rather than quietly replaced with an
+empty one — and when the database cannot be reached there is nothing to say
+about its probes or its schema version, so those lines are absent rather than
+guessed at.
+
+`admin doctor` is the one command that runs without a configuration, because it
+is the command to run when the install is already broken: a missing or
+unreadable `config.toml` is a failing `config` check and an exit 1, with `db`
+failing for want of a path and the shim and node checks reported as usual. Every
+other command exits 2 on the same folder.

@@ -1,12 +1,14 @@
 import { chmod, mkdir, open } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
+  SQLITE_SCHEMA_VERSION,
   runDoctor,
   runSqliteMigrations,
   sqliteStore,
   type DoctorReport,
   type SqliteMigrationResult,
 } from 'second_brain';
+import { runtimeChecks } from '../doctor/checks.js';
 
 /**
  * The installer's side of the local source: the database file, the blob root,
@@ -102,11 +104,19 @@ export async function prepareFilesRoot(path: string): Promise<FilesRootResult> {
  * Doctor against a file the installer chose, not one the configuration names:
  * the installer runs outside the dispatcher, so it builds its own store rather
  * than reading back a folder it may not have written yet.
+ *
+ * The runtime checks are the dispatcher's own list, over the home being
+ * installed — so the last line of an install is the same report
+ * `brain admin doctor` gives, and a check added to that list is a check the
+ * installer runs too.
  */
-export async function doctorAt(path: string): Promise<DoctorReport> {
+export async function doctorAt(home: string, path: string): Promise<DoctorReport> {
   const store = sqliteStore({ path });
   try {
-    return await runDoctor(store);
+    return await runDoctor(store, {
+      schemaVersion: SQLITE_SCHEMA_VERSION,
+      checks: runtimeChecks({ home }),
+    });
   } finally {
     await store.close();
   }

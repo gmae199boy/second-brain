@@ -7,14 +7,21 @@ export interface AdminDoctorData {
 
 /**
  * `brain admin doctor`. A read, so no write guard applies. It translates the
- * report and nothing more (AD-5); which checks exist is Core's business, and
- * story 8 adds the rest of them there.
+ * report and nothing more (AD-5): which checks exist is Core's business, and
+ * which machine facts are checked is `doctor/checks.ts`'s — the dispatcher
+ * hands that list to `createBrain`, so nothing about it is decided here.
+ *
+ * `diagnostic`, because this is the command a person runs when the install is
+ * already broken: a missing or unreadable `config.toml` is a failing `config`
+ * check and an exit 1, not the exit 2 every other command gets (Decision
+ * 2026-10-14).
  */
 export const adminDoctor: CommandSpec<AdminDoctorData> = {
   ns: 'admin',
   verb: 'doctor',
   nsDescription: 'administrative commands',
   description: 'check that the brain is reachable and healthy',
+  diagnostic: true,
 
   async run(context) {
     const report = await context.brain.admin.doctor();
