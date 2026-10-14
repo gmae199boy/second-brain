@@ -15,17 +15,26 @@ import { withWrite } from '../src/write.js';
 
 /**
  * The Table Contract minus `embeddings`, which arrives the day embedding is
- * switched on (AD-15), and the same list the Postgres migration's test holds: a
- * migration that adds or drops a table on one side and not the other is the
- * drift AD-22 is about, and this is where it shows.
+ * switched on (AD-15). This is the source of truth's own list: a table that
+ * arrives here without being written down is the drift AD-22 is about, and this
+ * is where it shows. The Postgres replica is behind by the file tables of
+ * AD-23 and AD-24 until epic 7 catches it up, so its own test's list is the
+ * shorter one on purpose.
  */
 const EXPECTED_TABLES = [
   'chunks',
   'context_injections',
+  'document_chunks',
+  'document_extractions',
   'failures',
+  'file_locations',
+  'file_metadata',
+  'file_names',
+  'files',
   'index_configs',
   'log_entries',
   'log_entry_edits',
+  'message_attachments',
   'messages',
   'projects',
   'redactions',
@@ -33,6 +42,7 @@ const EXPECTED_TABLES = [
   'sessions',
   'tool_notes',
   'transcript_files',
+  'work_items',
   'workspaces',
   'worktrees',
 ];
@@ -99,7 +109,12 @@ async function scratch(): Promise<string> {
 async function migratedPath(): Promise<string> {
   const path = join(await scratch(), 'brain.db');
   const applied = await runSqliteMigrations({ path });
-  expect(applied).toEqual({ ok: true, from: 0, to: 1, applied: ['0001_initial.sql'] });
+  expect(applied).toEqual({
+    ok: true,
+    from: 0,
+    to: 2,
+    applied: ['0001_initial.sql', '0002_files_and_work.sql'],
+  });
   return path;
 }
 
@@ -307,8 +322,16 @@ describe('the migration this package ships', () => {
       .map((row) => String(row.name));
     expect(loose).toEqual([]);
 
+    // The conversation chunking row, which is the one 0001 writes. The document
+    // chunking row beside it belongs to 0002 and is checked in
+    // `schema-files.test.ts`, so each migration's seed has one owner.
     expect(
-      connection.database.prepare('select id, kind, model, dimensions, chunk_params from index_configs').all(),
+      connection.database
+        .prepare(
+          `select id, kind, model, dimensions, chunk_params from index_configs
+            where kind = 'chunk'`,
+        )
+        .all(),
     ).toEqual([
       {
         id: DEFAULT_INDEX_CONFIG,
@@ -320,7 +343,7 @@ describe('the migration this package ships', () => {
     ]);
   });
 
-  it('answers the store with version 1 and every capability probe ok', async () => {
+  it('answers the store with the version this package ships and every capability probe ok', async () => {
     const path = await migratedPath();
     const store = sqliteStore({ path });
     try {
@@ -348,7 +371,7 @@ describe('the migration this package ships', () => {
     const before = tableNames(connection);
     const configs = count(connection, 'index_configs');
 
-    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 1, to: 1, applied: [] });
+    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 2, to: 2, applied: [] });
 
     expect(tableNames(connection)).toEqual(before);
     expect(count(connection, 'index_configs')).toBe(configs);

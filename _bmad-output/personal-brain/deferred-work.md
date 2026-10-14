@@ -16,3 +16,15 @@
 - source_plan: `_bmad-output/personal-brain/epic-foundation-and-install/story-sqlite-trigger-plan.md`
   summary: Postgres 복제 대상의 `brain_reject_mutation`이 `tool_notes` UPDATE를 모두 거부하므로, 원본(SQLite)에서 가린 `tool_notes.target`을 복제할 수 있게 Postgres trigger·가리기 함수를 맞춘다(epic 7).
   evidence: `packages/postgres/migrations/0001_initial.sql`의 trigger는 `tg_table_name = 'messages'`일 때만 우회를 허용한다. AD-11은 `messages.redact`가 tool_notes.target도 함께 가린다고 정한다. story 1.11 리뷰에서 발견.
+- source_plan: `_bmad-output/personal-brain/epic-foundation-and-install/story-untitled-12-plan.md`
+  summary: `files.redact`가 남길 `redactions` 기록 자리를 만든다(`message_id` nullable + `file_id`, 파일 가리기는 `start`/`end` 없음) — `files.redact`를 만드는 epic 2가 다음 마이그레이션으로.
+  evidence: AD-23은 파일 가리기가 `redactions`에 기록을 남긴다고 하지만 0001(SQLite·Postgres 모두)의 `redactions.message_id`는 not null이고 `start`/`end`가 필수다. story 1.12 티켓 범위에 없어 사용자 결정(2026-10-14)으로 미뤘다.
+- source_plan: `_bmad-output/personal-brain/epic-foundation-and-install/story-untitled-12-plan.md`
+  summary: Postgres 복제본의 `index_configs`를 원본(SQLite 0002)에 맞춘다 — `kind`에 `document_chunk`, kind별 `chunk_params` 모양, 기본 `document_chunk` 행(epic 7).
+  evidence: `packages/postgres/migrations/0001_initial.sql`의 `index_configs_kind_check`는 `('chunk','embedding')`뿐이고 세 키 CHECK도 없다. story 1.12 리뷰에서 지적 — 8개 새 테이블 외에 기존 테이블 하나도 갈라졌다는 기록이 없었다.
+- source_plan: `_bmad-output/personal-brain/epic-foundation-and-install/story-untitled-12-plan.md`
+  summary: `message_attachments`(자리·출처 불변, `file_id`·상태 한 번 채움), `document_extractions`(상태만 진행), `document_chunks`, `file_names`, `file_metadata`의 Table Contract 변경 규칙을 trigger로 강제할지 — story 11이 미룬 `redactions` 등과 같은 결정으로 함께 정한다.
+  evidence: 0002는 플랜의 의도적 결정(AD-11의 범위)으로 `files`·`file_locations`에만 변경 거부 trigger를 둔다. story 1.12 리뷰에서 그 결정이 기록되지 않았음을 지적.
+- source_plan: `_bmad-output/personal-brain/epic-foundation-and-install/story-untitled-12-plan.md`
+  summary: 문서 조각 세대가 어떤 `index_configs` 행(`document_chunk`)으로 만들어졌는지 가리키는 칸(`document_extractions.index_config_id`가 자연스러움)을 epic 4가 문서 조각을 만들 때 `alter table add column`으로 더한다.
+  evidence: 0002의 `document_chunks`·`document_extractions`에는 `index_config_id`가 없어 기본 `document_chunk` 행을 가리키는 것이 없고, params를 바꾼 두 세대를 구별할 수 없다(`chunks`는 `index_config_id`를 키에 넣는다). story 1.12 리뷰 발견. 지금은 읽는 코드가 없어 칸 추가를 미뤘다.
