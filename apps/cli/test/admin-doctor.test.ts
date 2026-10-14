@@ -205,7 +205,8 @@ describe('brain admin doctor', () => {
     const checks = envelope.data?.checks ?? [];
     expect(checks[0]).toMatchObject({ id: 'db', status: 'fail', code: 'DB_UNAVAILABLE' });
     expect(checks[0]?.detail).toBeTruthy();
-    expect(checks[1]).toEqual({ id: 'pgvector', status: 'skip' });
+    // Nothing was probed, so `db` is the whole report.
+    expect(checks).toHaveLength(1);
   });
 
   it('exits 2 with CONFIG_MISSING when there is no configuration folder', async () => {

@@ -23,7 +23,7 @@ import { fixedClock } from './clock.js';
 const DEFAULT_HEALTH: StoreHealth = {
   ok: true,
   serverVersion: '18.1',
-  vector: { available: '0.8.7', installed: '0.8.7' },
+  source: { location: 'memory', probes: [{ id: 'vector', ok: true, detail: '0.8.7' }] },
 };
 
 /** 2026-01-01T00:00:00Z, so the default ids and timestamps are reproducible. */

@@ -43,8 +43,13 @@ describe('postgresStore against a real database', () => {
       expect(health.ok).toBe(true);
       if (!health.ok) return;
       expect(health.serverVersion).toMatch(/^\d+/);
-      expect(health.vector.installed).toMatch(/^\d+\./);
-      expect(health.vector.available).toMatch(/^\d+\./);
+      // The location is printed, so it names the database and not the URL:
+      // no password ever reaches a report.
+      expect(health.source.location).toContain('/');
+      expect(health.source.location).not.toContain('postgres:postgres@');
+      expect(health.source.probes.map((probe) => probe.id)).toEqual(['vector']);
+      expect(health.source.probes[0]?.ok).toBe(true);
+      expect(health.source.probes[0]?.detail).toMatch(/^\d+\./);
     } finally {
       await store.close();
     }

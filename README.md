@@ -5,7 +5,7 @@ thin shell over the `second_brain` SDK. This repository is not published to npm.
 
 ## Install
 
-On a Mac with nothing but [Node](https://nodejs.org) 24 or newer and git:
+On a Mac with nothing but [Node](https://nodejs.org) 24.16 or newer and git:
 
 ```sh
 npx github:gmae199boy/second-brain

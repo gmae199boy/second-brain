@@ -81,9 +81,15 @@ export function postgresStore(options: PostgresStoreOptions): HealthStore & Sche
         return {
           ok: true,
           serverVersion: versionRow.server_version,
-          vector: {
-            available: vectorRow.available,
-            installed: vectorRow.installed,
+          source: {
+            location: locationOf(options.databaseUrl),
+            probes: [
+              {
+                id: 'vector',
+                ok: vectorRow.installed !== null,
+                detail: vectorDetail(vectorRow),
+              },
+            ],
           },
         };
       } catch (error) {
@@ -123,6 +129,38 @@ export function postgresStore(options: PostgresStoreOptions): HealthStore & Sche
       await db.destroy();
     },
   };
+}
+
+/**
+ * What the vector probe says it found. The wording is the one `admin doctor`
+ * has always printed, because the probe now carries the sentence that used to
+ * be composed in Core — and the line a person reads must not change just
+ * because the shape behind it did.
+ */
+function vectorDetail(vector: VectorRow): string {
+  if (vector.installed !== null) return vector.installed;
+  return vector.available !== null
+    ? `not installed (available: ${vector.available})`
+    : 'not installed (not available on this server)';
+}
+
+/**
+ * Where this source lives, for a human reading a report: host, port and
+ * database. Built by hand from the parsed URL rather than by printing it,
+ * because the URL carries the password and `location` is printed.
+ */
+function locationOf(databaseUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(databaseUrl);
+  } catch {
+    return 'postgres';
+  }
+
+  const host = url.port === '' ? url.hostname : `${url.hostname}:${url.port}`;
+  const database = url.pathname.replace(/^\//, '');
+  if (host === '') return database === '' ? 'postgres' : database;
+  return database === '' ? host : `${host}/${database}`;
 }
 
 /**

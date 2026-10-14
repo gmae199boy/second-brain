@@ -10,7 +10,7 @@
     "tooling/bootstrap/bin/second-brain.js"
   ],
   "engines": {
-    "node": ">=24",
+    "node": ">=24.16.0",
     "pnpm": ">=12"
   },
   "scripts": {

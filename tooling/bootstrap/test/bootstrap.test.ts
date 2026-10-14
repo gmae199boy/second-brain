@@ -9,6 +9,7 @@ import {
   DEFAULT_HOME_FOLDER,
   DEFAULT_REPO,
   HOME_ENV,
+  MIN_NODE_MAJOR,
   MIN_PNPM_MAJOR,
   PNPM_INSTALL_COMMAND,
   REPO_ENV,
@@ -568,8 +569,23 @@ describe('the root manifest', () => {
     expect(root.packageManager).toBeUndefined();
   });
 
-  it('asks for the same node major the entry point checks for', () => {
-    expect(root.engines?.node).toBe('>=24');
+  it('asks for the node major the entry point checks for, and may ask for more', () => {
+    const floor = root.engines?.node ?? '';
+    const match = /^>=(\d+)(?:\.\d+\.\d+)?$/.exec(floor);
+
+    expect(match, `engines.node is ${floor}, which is not a \`>=major[.minor.patch]\` floor`)
+      .not.toBeNull();
+    expect(Number(match?.[1])).toBe(MIN_NODE_MAJOR);
+    // The manifest may be stricter than the entry point: `node:sqlite` became a
+    // release candidate in 24.15.0 and `crypto.randomUUIDv7` arrived in
+    // 24.16.0, and the source of truth sits on both. The entry point checks the
+    // major alone because it runs before anything is cloned and cannot know
+    // which minor this repository will turn out to need.
+    //
+    // Nothing enforces the minor yet: pnpm 12.11.2 does not fail an install on
+    // `engines.node` here (measured 2026-10-14), so `>=24.16.0` is a statement
+    // of the requirement and not a gate. The check that catches a node too old
+    // for `node:sqlite` belongs to `admin doctor`, in story 8.
   });
 });
 

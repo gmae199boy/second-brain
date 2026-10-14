@@ -10,14 +10,28 @@ import type { SchemaVersion } from '../domain/schema-version.js';
 import type { ToolNote } from '../domain/tool-note.js';
 
 /**
- * Health of the vector capability, reported with a neutral name: Core never
- * learns which extension provides it. Adapters map their own concept onto this.
+ * One capability an adapter checked on its own source, under a name Core never
+ * interprets. A SQLite source answers for WAL, FTS5 and foreign keys; a
+ * Postgres one answers for its vector extension. Core only passes the list on,
+ * which is why the probes are a list and not a field per capability: adding a
+ * capability to an adapter must not change the shape every adapter implements.
  */
-export interface StoreVectorHealth {
-  /** Version the server offers, or `null` when it offers none. */
-  available: string | null;
-  /** Version installed in this database, or `null` when it is not installed. */
-  installed: string | null;
+export interface StoreProbe {
+  /** Stable, neutral identifier, unique within one health report. */
+  id: string;
+  ok: boolean;
+  /** What was found, or why it failed. Present whenever there is anything to say. */
+  detail?: string;
+}
+
+/**
+ * Where the source lives and what it can do. `location` is for a human reading
+ * a doctor report — the file, or the host and database — and never carries a
+ * secret, because it is printed.
+ */
+export interface StoreSourceHealth {
+  location: string;
+  probes: readonly StoreProbe[];
 }
 
 /**
@@ -28,7 +42,7 @@ export type StoreHealth =
   | {
       ok: true;
       serverVersion: string;
-      vector: StoreVectorHealth;
+      source: StoreSourceHealth;
     }
   | {
       ok: false;

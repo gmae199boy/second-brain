@@ -34,7 +34,7 @@ describe('package boundaries (AD-1)', () => {
     expect(root.scripts?.prepare).toBeUndefined();
   });
 
-  it.each(['postgres', 'claude-code', 'modelstudio'])(
+  it.each(['postgres', 'sqlite', 'claude-code', 'modelstudio'])(
     'the %s adapter depends on core alone among workspace packages',
     (adapter) => {
       const pkg = manifest(`packages/${adapter}/package.json`);
@@ -49,6 +49,7 @@ describe('package boundaries (AD-1)', () => {
       '@second-brain/core',
       '@second-brain/modelstudio',
       '@second-brain/postgres',
+      '@second-brain/sqlite',
     ]);
   });
 

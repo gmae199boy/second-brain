@@ -13,7 +13,8 @@ export type {
   SessionStore,
   Store,
   StoreHealth,
-  StoreVectorHealth,
+  StoreProbe,
+  StoreSourceHealth,
   StoreWarningCode,
 } from './store.js';
 export type { ParseResult, Parser } from './parser.js';

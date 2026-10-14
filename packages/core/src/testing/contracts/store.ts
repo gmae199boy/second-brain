@@ -47,15 +47,25 @@ export function storeContract(): ContractCase<HealthStore>[] {
 export function assertStoreHealth(health: StoreHealth): void {
   if (health.ok) {
     assertNonEmptyString(health.serverVersion, 'a healthy store must name its server version');
-    const { vector } = health;
+    const { source } = health;
     assertTrue(
-      typeof vector === 'object' && vector !== null,
-      'a healthy store must report the vector capability',
+      typeof source === 'object' && source !== null,
+      'a healthy store must report where its source is',
     );
-    for (const field of ['available', 'installed'] as const) {
-      const value = vector[field];
-      if (value !== null) {
-        assertNonEmptyString(value, `vector.${field} must be a version or null`);
+    assertNonEmptyString(source.location, 'a healthy store must say where its source lives');
+    assertTrue(
+      Array.isArray(source.probes),
+      'a healthy store must report its probes as a list, even an empty one',
+    );
+
+    const seen = new Set<string>();
+    for (const probe of source.probes) {
+      assertNonEmptyString(probe.id, 'every probe must carry a non-empty id');
+      assertTrue(!seen.has(probe.id), `two probes share the id ${probe.id}`);
+      seen.add(probe.id);
+      assertTrue(typeof probe.ok === 'boolean', `probe ${probe.id} must answer with a boolean`);
+      if (probe.detail !== undefined) {
+        assertNonEmptyString(probe.detail, `probe ${probe.id} must detail something or nothing`);
       }
     }
     return;

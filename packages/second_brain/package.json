@@ -23,7 +23,8 @@
     "@second-brain/claude-code": "workspace:*",
     "@second-brain/core": "workspace:*",
     "@second-brain/modelstudio": "workspace:*",
-    "@second-brain/postgres": "workspace:*"
+    "@second-brain/postgres": "workspace:*",
+    "@second-brain/sqlite": "workspace:*"
   },
   "devDependencies": {
     "typescript": "7.0.2"

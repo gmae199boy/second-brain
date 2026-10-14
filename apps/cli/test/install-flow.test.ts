@@ -281,11 +281,9 @@ function fakeDatabase(world: DbWorld = {}): Database {
 
   const report = (url: string): DoctorReport => {
     if (unreachable.has(url)) {
+      // An unreachable store ran no probes, so `db` is the whole report.
       return {
-        checks: [
-          { id: 'db', status: 'fail', code: 'DB_UNAVAILABLE', detail: 'connection refused' },
-          { id: 'vector', status: 'skip' },
-        ],
+        checks: [{ id: 'db', status: 'fail', code: 'DB_UNAVAILABLE', detail: 'connection refused' }],
       };
     }
     const vector: DoctorCheck =
