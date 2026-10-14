@@ -16,6 +16,8 @@ export {
 export { withWrite, type WriteOptions, type WriteResult } from './write.js';
 export { sqliteStore, type SqliteStoreOptions } from './store.js';
 export {
+  SQLITE_MIGRATIONS_DIRECTORY,
+  SQLITE_SCHEMA_VERSION,
   runSqliteMigrations,
   type RunSqliteMigrationsOptions,
   type SqliteMigrationResult,

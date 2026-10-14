@@ -1,21 +1,43 @@
 import { readFile, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { BUSY_TIMEOUT_MS, formatInstant, type Clock } from '@second-brain/core';
 import { sql } from 'kysely';
 import { describe, openSqlite, type SqliteConnection } from './connect.js';
 import { withWrite } from './write.js';
 
 /**
- * What `runSqliteMigrations` needs. The folder is an argument because the real
- * first migration is story 11's: the default folder and the `SCHEMA_VERSION`
- * this code expects arrive with it, and until then the runner is exercised by
- * folders the tests write.
+ * The version this code expects the source to be at: the number of the last
+ * migration file this package ships. Runtime commands compare it against the
+ * stored version and refuse to write when the two differ (AD-20).
+ *
+ * The name carries the adapter's prefix because the one writing surface
+ * re-exports this package beside `@second-brain/postgres`, which has a
+ * `SCHEMA_VERSION` of its own: the two databases are migrated apart and nothing
+ * says their numbers move together (AD-22).
  */
+export const SQLITE_SCHEMA_VERSION = 1;
+
+/**
+ * The migrations this package ships. One level up from this module, which is
+ * `src/` when the tests run it and `dist/` when it is installed — `migrations/`
+ * sits beside both, and is in the package's `files` so it survives packing.
+ */
+export const SQLITE_MIGRATIONS_DIRECTORY = fileURLToPath(
+  new URL('../migrations/', import.meta.url),
+);
+
+/** What `runSqliteMigrations` needs. */
 export interface RunSqliteMigrationsOptions {
   /** The database file. Created by this call if it is not there (AD-20). */
   path: string;
-  /** Folder of numbered `.sql` files. */
-  directory: string;
+  /**
+   * Folder of numbered `.sql` files. Defaults to the one this package ships,
+   * which is what every caller outside this package's own tests wants; the
+   * tests pass folders they wrote, to exercise the runner on schemas small
+   * enough to read.
+   */
+  directory?: string;
   /** Lock budget. A migration may legitimately wait behind another installer. */
   busyTimeoutMs?: number;
   /** Source of `applied_at`. Defaults to the wall clock. */
@@ -77,7 +99,12 @@ interface MigrationFile {
 export async function runSqliteMigrations(
   options: RunSqliteMigrationsOptions,
 ): Promise<SqliteMigrationResult> {
-  const { path, directory, busyTimeoutMs = BUSY_TIMEOUT_MS.command, clock } = options;
+  const {
+    path,
+    directory = SQLITE_MIGRATIONS_DIRECTORY,
+    busyTimeoutMs = BUSY_TIMEOUT_MS.command,
+    clock,
+  } = options;
   const files = await readMigrationFiles(directory);
 
   const opened = openSqlite({ path, busyTimeoutMs, create: true });
@@ -195,9 +222,14 @@ async function recordVersion(
 /**
  * The migration files, in order. A folder that is missing, unreadable or holds
  * two files with the same number is a packaging bug, so it throws (Conventions:
- * exceptions are for bugs). There is no check against a `SCHEMA_VERSION` yet
- * because the version this code expects arrives with the first real migration
- * in story 11.
+ * exceptions are for bugs).
+ *
+ * The shipped folder is held to `SQLITE_SCHEMA_VERSION` as well: a file that
+ * was added without moving the constant, or a folder that arrived without its
+ * files, would otherwise report a clean run to the wrong version and every
+ * runtime command after it would refuse to write without saying why. A folder a
+ * caller named is their own business and is not checked — that is how the
+ * runner's own tests reach it.
  */
 async function readMigrationFiles(directory: string): Promise<readonly MigrationFile[]> {
   const entries = await readdir(directory);
@@ -220,6 +252,17 @@ async function readMigrationFiles(directory: string): Promise<readonly Migration
       );
     }
   });
+
+  // `resolve`, not `===`: the same folder spelled relatively, or without the
+  // trailing slash, is the same folder and has to be held to the same version.
+  if (resolve(directory) === resolve(SQLITE_MIGRATIONS_DIRECTORY)) {
+    const highest = files.at(-1)?.version ?? 0;
+    if (highest !== SQLITE_SCHEMA_VERSION) {
+      throw new Error(
+        `the migrations folder reaches version ${highest}, not SQLITE_SCHEMA_VERSION ${SQLITE_SCHEMA_VERSION}: ${directory}`,
+      );
+    }
+  }
 
   return files;
 }

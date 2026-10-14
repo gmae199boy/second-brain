@@ -142,8 +142,9 @@ describe('runSqliteMigrations on a folder it cannot use', () => {
     const path = join(await scratch(), 'brain.db');
     expect(await readdir(directory)).toEqual([]);
 
-    // The check against a `SCHEMA_VERSION` arrives with the first real
-    // migration in story 11; until then an empty folder is simply empty.
+    // `SQLITE_SCHEMA_VERSION` is only held against the folder this package
+    // ships; a folder the caller named is theirs, and an empty one is simply
+    // empty. The shipped folder's own check is in `schema.test.ts`.
     expect(await runSqliteMigrations({ path, directory })).toEqual({
       ok: true,
       from: 0,
