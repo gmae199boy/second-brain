@@ -8,7 +8,7 @@ PRD에는 "무엇"만 있다. 이 문서는 인터뷰와 사전 시험에서 나
 
 | 요소 | 값 | 근거 |
 |---|---|---|
-| 저장소 | PostgreSQL + pgvector | 원문·작업 로그·색인을 한 DB에. **기준선은 SQLite+인메모리 코사인으로 쟀다.** 정확 검색이라 순위는 같을 것으로 보지만, pgvector의 근사 인덱스에서 같은 점수가 나오는지는 재지 않았다 |
+| 저장소 | SQLite(로컬 파일, Node 내장 `node:sqlite`) + FTS5 trigram. 선택 색인은 sqlite-vec (2026-10-14 변경, 이전: PostgreSQL + pgvector) | 원문·작업 로그·색인을 한 DB에. **기준선은 SQLite+인메모리 코사인으로 쟀다.** 정확 검색이라 순위는 같을 것으로 보지만, pgvector의 근사 인덱스에서 같은 점수가 나오는지는 재지 않았다 |
 | 임베딩 | Alibaba Model Studio `qwen3.7-text-embedding`, 1024차원. `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | 다국어. $0.07/M. 1024는 pgvector 인덱스 한도(2000) 안 |
 | 재순위 | 같은 키의 `qwen3-rerank`. `https://dashscope-intl.aliyuncs.com/compatible-api/v1/reranks`(Cohere 와이어 포맷) | 1.2~1.5초. 영어 reranker는 한국어를 망가뜨림(≈1/10), 로컬 bge-reranker-v2-m3는 31초. `qwen3.7-text-rerank`는 국제 리전에 없음 |
 | 조각 크기 | 약 1,200자, 메시지 경계, 인접 겹침 1메시지 | 4,000자와 점수 같고 주입 맥락 절반(8,220자 vs 16,062자) |
@@ -70,8 +70,8 @@ ingest_failures id, harness, harness_session_id, stage, error, occurred_at
 
 | 포트 | slice 1 구현 | 비고 |
 |---|---|---|
-| 세션·메시지·작업 로그 저장소 | Postgres | |
-| 색인·검색(`MemoryProvider` 자리) | pgvector | 나중에 Hindsight 등을 같은 포트 뒤에 붙일 수 있음 |
+| 세션·메시지·작업 로그 저장소 | SQLite(원본). Postgres는 이후 복제 대상 | |
+| 색인·검색(`MemoryProvider` 자리) | FTS5 trigram, 선택 시 sqlite-vec | 나중에 Hindsight 등을 같은 포트 뒤에 붙일 수 있음 |
 | 임베딩 | Model Studio (OpenAI 호환) | |
 | 재순위 | Model Studio (Cohere 호환) | 응답이 없으면 벡터 순위 그대로 돌려주되 결과에 표시한다(FR-25, NFR-2). 영어 전용 모델로 대체하지 않는다(NFR-4) |
 | 내보내기 | 표준 형식 파일(예: JSON Lines) | NFR-9. `pg_dump`와 별개로 Brain 없이 읽을 수 있는 형식 |

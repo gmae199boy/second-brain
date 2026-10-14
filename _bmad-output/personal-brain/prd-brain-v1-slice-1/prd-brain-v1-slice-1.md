@@ -412,7 +412,7 @@ Core의 모든 기능은 SDK 호출로 쓸 수 있다.
 
 ## 9. Constraints
 
-- 원본 저장소는 PostgreSQL 하나다. 원문, 작업 로그, 색인이 같은 곳에 있다. 세션별 Markdown 미러는 원본에서 다시 만들 수 있는 파생물이다.
+- 원본 저장소는 이 기계의 로컬 SQLite 파일 하나다. 원문, 작업 로그, 색인이 같은 곳에 있고, 설치에 서버나 Docker가 필요 없다. 다른 DB(Postgres)나 클라우드 폴더(Drive)는 원본을 따라오는 선택 복제 대상이며 slice 1 이후에 붙는다(2026-10-14 결정, `../change-local-sqlite-primary/`). 세션별 Markdown 미러는 원본에서 다시 만들 수 있는 파생물이다.
 - 실행 환경은 내 Mac 한 대(운영은 집 Mac mini)다.
 - 구현 언어는 TypeScript다.
 - 선행 작업: 대화에 평문으로 노출된 적이 있는 Model Studio API 키를 slice 1을 설정하기 전에 다시 발급한다.
