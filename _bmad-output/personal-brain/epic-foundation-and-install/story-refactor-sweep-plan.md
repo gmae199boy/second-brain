@@ -3,7 +3,7 @@ title: 'Refactor sweep: 에픽 1 동안 미룬 정리'
 type: 'refactor'
 ticket: '9'
 created: '2026-10-15'
-status: 'built'
+status: done
 baseline_revision: 'cc732119e2c21cb1682eabebaa5ce3d0d23e369c'
 route: 'full'
 route_source: 'auto'

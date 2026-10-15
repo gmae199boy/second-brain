@@ -49,3 +49,4 @@ AD-4·6·7·8·9·11·12·13·21·23·24, Table Contract(projects, worktrees, wo
 ## Notes
 
 - Decision(2026-10-14): 원본 SQLite 전환과 추가안 A(첨부·추출)로 범위가 늘었다. 인셉션 때 다시 나눈다. 꼬리표 권위 출처와 `failures.fingerprint` 정의는 인셉션에서 정한다(spine Deferred).
+- Carry(2026-10-15, epic 1 closure): 인셉션 때 넣을 것 — `packages/second_brain/test/import-side-effects.test.ts`가 `second_brain` import 시 SQLite DB 파일을 열지 않음도 단정하게(지금은 Postgres 연결 없음만 본다, Done when 5). 설치기 설정 보존 버그 2건(`deferred-work.md` story 13 항목). SQLite `SessionStore`(ensure·ingest·readSession) 계약 통과.

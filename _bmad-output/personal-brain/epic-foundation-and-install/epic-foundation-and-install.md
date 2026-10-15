@@ -5,7 +5,7 @@ parent: personal-brain
 covers: [CAP-10, CAP-11, CAP-14]
 after: []
 assignee: ""
-status: in-progress
+status: done
 risk: high
 ---
 
@@ -23,7 +23,7 @@ pnpm workspace와 패키지 경계, Core의 port, SQLite 원본 스키마(Table 
 
 - E1-1 (CAP-10): pnpm workspace — core(런타임 의존성 0), sqlite(원본), postgres(복제 adapter, epic 7. V1은 계약 테스트만), claude-code, modelstudio, second_brain(재export만), apps/cli. adapter는 core에만 의존. import 시 부작용 없음. (spine AD-1·2·3)
 - E1-2 (CAP-10): Core port(Store, Parser, Embedder, Reranker, Clock, IdGen)와 도메인 타입, port별 계약 테스트 틀. Runtime이 Clock과 UUIDv7 IdGen을 구현. (AD-1·8)
-- E1-3 (CAP-11, CAP-14 — 스키마 자리만, 동작은 epic 2·4): SQLite 첫 마이그레이션(원본) — 파일·첨부·추출·work_items를 포함한 Table Contract의 모든 테이블과 UNIQUE 멱등 키, schema_version, messages·tool_notes 불변 trigger와 redact 전용 우회 경로, redactions. embeddings는 제외(임베딩을 켤 때 설정 차원으로 생성, AD-15). 마이그레이션은 setup만 실행. Postgres 마이그레이션은 복제 대상용으로 남는다. (AD-7·10·11·20·21·23·24, Table Contract)
+- E1-3 (CAP-11, CAP-14 — 스키마 자리만, 동작은 epic 2·4): SQLite 마이그레이션(원본, 0001 대화·로그 + 0002 파일·첨부·추출·work_items) — Table Contract의 모든 테이블과 UNIQUE 멱등 키, schema_version, messages·tool_notes 불변 trigger와 redact 전용 우회 경로, redactions. embeddings는 제외(임베딩을 켤 때 설정 차원으로 생성, AD-15). 마이그레이션은 setup만 실행. Postgres 마이그레이션은 복제 대상용으로 남는다. (AD-7·10·11·20·21·23·24, Table Contract)
 - E1-4 (CAP-10, CAP-11): 설정 코덱(config.toml schema_version + .env), `brain <ns> <verb>` 디스패처, `--json` 봉투와 경고 코드, hook 경로 exit 0, 런타임 스키마 버전 확인. (AD-5·18·20, Conventions)
 - E1-5 (CAP-11): 설치 — `npx github:gmae199boy/second-brain` 진입, 내려받기·빌드, 의존성 설치 동의, DB 파일 위치(`[store] path`)와 파일 저장소 위치(`[files] path`), 설정·키 기록, 마이그레이션, index_configs 기본 행, shim, connector 등록부와 `setup connect`, `setup run` 재실행 멱등. (AD-2·19)
 - E1-6 (CAP-11): `brain admin doctor` 틀과 기본 항목 — store(DB 파일·WAL·FTS5), 스키마 버전, shim·node 경로, 설정 유효성, `DB_UNAVAILABLE`. 이후 에픽이 항목을 더한다. (AD-19·20, FR-25)
@@ -35,7 +35,7 @@ pnpm workspace와 패키지 경계, Core의 port, SQLite 원본 스키마(Table 
 3. `messages`·`tool_notes`에 UPDATE·DELETE를 시도하면 DB가 거부한다.
 4. `brain setup run`을 두 번 돌려도 결과가 같고, 현재 값을 기본값으로 보여 준다.
 5. `core` 패키지에 런타임 의존성이 없고, `second_brain` 하나를 import해도 DB 연결이나 키 읽기가 일어나지 않는다.
-6. 첫 마이그레이션이 Table Contract의 모든 테이블(embeddings 제외)을 만들고, `files`·`file_locations`·`message_attachments`·`document_extractions`·`document_chunks`·`work_items`의 멱등 키가 중복 삽입을 거부하며, FTS5 trigram 질의가 한국어 부분 일치로 동작한다.
+6. SQLite 마이그레이션(0001·0002)이 Table Contract의 모든 테이블(embeddings 제외)을 만들고, `files`·`file_locations`·`message_attachments`·`document_extractions`·`document_chunks`·`work_items`의 멱등 키가 중복 삽입을 거부하며, FTS5 trigram 질의가 한국어 부분 일치로 동작한다.
 
 ## Boundaries
 
@@ -59,3 +59,6 @@ AD-1·2·3·5·10·11(trigger)·18·19·20(schema_version), Table Contract, Conv
 - Decision(2026-10-14): epic 1의 SQLite adapter는 HealthStore·SchemaStore까지다. SQLite `SessionStore`(ensure·ingest·readSession)와 그 계약 사례는 epic 2가 통과시킨다.
 - Decision(2026-10-14): 8(doctor)은 10~13 뒤에 둔다. 점검 대상이 store로 바뀌므로. 11(대화·로그)과 12(파일·일감)는 한 세션에 맞추려고 나눴다.
 - Decision(2026-10-14): Postgres 전제로 쓴 story 1.8 초안(종료된 세션)은 지웠다.
+- Decision(2026-10-15): Done when 1은 대체 증거로 인정하고 닫는다 — `npx --yes git+file://<bare>` 테스트(`tooling/bootstrap/test/npx.test.ts`)와 별도의 `setup run --yes`(DB 0600·`files/` 0700·마이그레이션·shim). 실제 `npx github:` 실행은 push 뒤 확인한다.
+- Decision(2026-10-15): 설치기 설정 보존 버그 2건(읽을 수 없는 값 하나에 묻지 않는 값까지 기본값으로 되돌림, 모르는 키를 경고 없이 지움)은 epic 1 밖, epic 2 인셉션에서 다룬다. busy 예산 분기 테스트는 story 9가 더했다.
+- Closed(2026-10-15): closure 검증 — E1-1~6 충족, Done when 2~6 충족, 1은 위 대체 증거. 스토리 13개 done.

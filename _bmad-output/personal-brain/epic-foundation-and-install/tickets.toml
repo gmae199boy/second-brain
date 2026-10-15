@@ -11,7 +11,7 @@ after = []
 hitl = true
 risk = "medium"
 references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-1"]
-
+notes = ["Superseded(2026-10-15): 원본이 로컬 SQLite로 바뀌어(story 13) Docker·Postgres 기준의 description·verify는 더 이상 살아 있는 수락 기준이 아니다. 현재 기준은 epic Done when과 story 13."]
 [[entry]]
 id = 2
 type = "story"
@@ -49,7 +49,7 @@ risk = "medium"
 id = 5
 type = "story"
 title = "설치 진입점: 내려받기와 빌드"
-description = "`npx github:gmae199boy/second-brain`이 의존성 없는 빌드된 단일 진입 파일을 실행해 저장소를 ~/.second_brain/app에 clone(있으면 갱신)하고, pnpm@12.10.1이 없으면 설치를 묻고, pnpm install·build 후 빌드된 설치기에 넘긴다. 루트 package.json에는 의존성과 prepare가 없다."
+description = "`npx github:gmae199boy/second-brain`이 의존성 없는 빌드된 단일 진입 파일을 실행해 저장소를 ~/.second_brain/app에 clone(있으면 갱신)하고, pnpm이 없거나 12 미만이면 동의를 받아 최신 pnpm을 설치하고(버전 고정 없음, 루트 `engines.pnpm >=12`), pnpm install·build 후 빌드된 설치기에 넘긴다. 루트 package.json에는 의존성과 prepare가 없다."
 verify = "깨끗한 사용자 계정에서 명령 하나로 ~/.second_brain/app이 빌드되고 설치기가 시작된다."
 covers = ["E1-5"]
 after = [1]
@@ -67,7 +67,7 @@ covers = ["E1-5"]
 after = [3, 4, 5]
 hitl = true
 risk = "high"
-
+notes = ["Superseded(2026-10-15): 원본이 로컬 SQLite로 바뀌어(story 13) Docker·Postgres 기준의 description·verify는 더 이상 살아 있는 수락 기준이 아니다. 현재 기준은 epic Done when과 story 13."]
 [[entry]]
 id = 7
 type = "story"

@@ -3,7 +3,7 @@ title: 'shim, connector 등록부, setup run·connect'
 type: 'feature'
 ticket: '7'
 created: '2026-10-14'
-status: 'built'
+status: done
 baseline_revision: '2f6c25f778e1a8fe7f373959f9f9d1b2bccb9bfd'
 route: 'full'
 route_source: 'auto'

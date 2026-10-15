@@ -3,7 +3,7 @@ title: 'SQLite 두 번째 마이그레이션: 파일·첨부·추출·일감 스
 type: 'feature'
 ticket: '12'
 created: '2026-10-14'
-status: 'built'
+status: done
 baseline_revision: 'cc77697f367ec91d30b1bc7d28f386d913a2460b'
 route: 'full'
 route_source: 'auto'

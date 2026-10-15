@@ -3,7 +3,7 @@ title: 'Core port와 도메인 타입'
 type: 'feature'
 ticket: '2'
 created: '2026-10-13'
-status: 'built'
+status: done
 baseline_revision: '1d0a80ee17639b6f99c2f09f8b2aea47eeb28c3c'
 route: 'full'
 route_source: 'auto'

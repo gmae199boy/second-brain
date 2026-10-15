@@ -3,7 +3,7 @@ title: '설치기 흐름: 의존성, DB, 설정, 마이그레이션'
 type: 'feature'
 ticket: '6'
 created: '2026-10-13'
-status: 'built'
+status: done
 baseline_revision: '8a05aeca87cca410af2af749df0790557cc893b9'
 route: 'full'
 route_source: 'auto'

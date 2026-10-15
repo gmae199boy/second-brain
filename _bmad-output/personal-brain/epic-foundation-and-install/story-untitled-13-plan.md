@@ -3,7 +3,7 @@ title: '런타임·설치기를 로컬 SQLite 원본으로 전환'
 type: 'feature'
 ticket: '13'
 created: '2026-10-14'
-status: 'built'
+status: done
 baseline_revision: 'a9a233a79f5433c5017533c70f05215cf8272891'
 route: 'full'
 route_source: 'auto'

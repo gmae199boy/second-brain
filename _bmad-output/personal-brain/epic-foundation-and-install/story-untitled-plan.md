@@ -3,7 +3,7 @@ title: '설치 진입점: 내려받기와 빌드'
 type: 'feature'
 ticket: '5'
 created: '2026-10-13'
-status: 'built'
+status: done
 baseline_revision: 'd824e47c267dc99e9fe8eeb6c6dab86ed843055d'
 route: 'full'
 route_source: 'auto'

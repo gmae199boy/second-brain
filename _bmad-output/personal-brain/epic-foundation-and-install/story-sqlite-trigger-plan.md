@@ -3,7 +3,7 @@ title: 'SQLite 첫 마이그레이션: 대화·로그 테이블과 불변 trigge
 type: 'feature'
 ticket: '11'
 created: '2026-10-14'
-status: 'built'
+status: done
 baseline_revision: '7eeadafdb753c1ec7bcee5779e1aa80ccd58c88f'
 route: 'full'
 route_source: 'auto'

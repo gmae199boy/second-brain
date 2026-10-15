@@ -3,7 +3,7 @@ title: 'SQLite store 기반: 드라이버, 쓰기 통로, 시각 코덱'
 type: 'feature'
 ticket: '10'
 created: '2026-10-14'
-status: 'built'
+status: done
 baseline_revision: '2afd31c907ace72685ee62937e7fa61f7e3ea6ea'
 route: 'full'
 route_source: 'auto'

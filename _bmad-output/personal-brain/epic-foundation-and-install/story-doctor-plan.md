@@ -3,7 +3,7 @@ title: 'doctor 틀 완성 — 점검 등록 구조와 store·스키마·shim·no
 type: 'feature'
 ticket: '8'
 created: '2026-10-14'
-status: 'built'
+status: done
 baseline_revision: '276415a06bc92e04c4b798458ae5bfe45f7daf2a'
 route: 'full'
 route_source: 'auto'

@@ -3,7 +3,7 @@ title: '설정 코덱, CLI 응답 형식, 스키마 확인'
 type: 'feature'
 ticket: '4'
 created: '2026-10-13'
-status: 'built'
+status: done
 baseline_revision: '7e9b555310a60d4afddf19cb7b358d86e11cb7d5'
 route: 'full'
 route_source: 'auto'

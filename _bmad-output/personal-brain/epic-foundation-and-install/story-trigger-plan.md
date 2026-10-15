@@ -3,7 +3,7 @@ title: '첫 마이그레이션과 원문 불변 trigger'
 type: 'feature'
 ticket: '3'
 created: '2026-10-13'
-status: 'built'
+status: done
 baseline_revision: '780610fa3412e0ed3a9c15695cd28fd8b1e56b18'
 route: 'full'
 route_source: 'auto'
