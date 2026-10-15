@@ -6,9 +6,17 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { runSqliteMigrations } from 'second_brain';
+import {
+  BUSY_TIMEOUT_MS,
+  runSqliteMigrations,
+  type HealthStore,
+  type SchemaStore,
+  type SqliteStoreOptions,
+} from 'second_brain';
 import { writeConfig } from '../src/config/codec.js';
 import { HOME_ENV } from '../src/config/paths.js';
+import { dispatch, type CommandSpec, type CreateStore } from '../src/dispatch.js';
+import { systemClock } from '../src/runtime/clock.js';
 
 /**
  * The dispatcher, against a real SQLite file and a registry that exists only
@@ -618,5 +626,110 @@ describe('the dispatcher and an unusable configuration', () => {
     await runDispatch(['fake', 'diagnostic', '--json'], { [HOME_ENV]: home });
 
     expect(await readdir(home)).toEqual([]);
+  });
+});
+
+/**
+ * The lock budget of AD-7 is a choice the dispatcher makes before it opens
+ * anything, so these run in process with a store creator of their own: the fake
+ * records the options it was handed and opens nothing at all. The subprocess
+ * tests above cannot see this, which is why the seam exists.
+ */
+describe('the dispatcher and the lock budget', () => {
+  /** A store that opens no file and remembers how it was asked for. */
+  function recorder(): { calls: SqliteStoreOptions[]; createStore: CreateStore } {
+    const calls: SqliteStoreOptions[] = [];
+    const createStore: CreateStore = (options) => {
+      calls.push(options);
+      const unavailable = {
+        ok: false as const,
+        code: 'DB_UNAVAILABLE' as const,
+        message: 'the budget tests never open a database',
+      };
+      const store: HealthStore & SchemaStore = {
+        async checkHealth() {
+          return unavailable;
+        },
+        async readSchemaVersion() {
+          return unavailable;
+        },
+        async close() {
+          // Nothing was ever opened.
+        },
+      };
+      return store;
+    };
+    return { calls, createStore };
+  }
+
+  const registry: readonly CommandSpec[] = [
+    {
+      ns: 'fake',
+      verb: 'hook-read',
+      description: 'a hook command on the critical path of a turn',
+      hook: true,
+      run: async () => ({ ok: true, data: { read: true } }),
+    },
+    {
+      ns: 'fake',
+      verb: 'read',
+      description: 'a command the person ran and is watching',
+      run: async () => ({ ok: true, data: { read: true } }),
+    },
+  ];
+
+  /** One in-process invocation against the recording store. */
+  async function run(
+    argv: readonly string[],
+    home: string,
+  ): Promise<{ exit: number; calls: SqliteStoreOptions[] }> {
+    const { calls, createStore } = recorder();
+    const exit = await dispatch(registry, argv, {
+      clock: systemClock,
+      env: { [HOME_ENV]: home },
+      // The envelope has its own tests; nothing here should reach the console.
+      stdout: () => {},
+      stderr: () => {},
+      createStore,
+    });
+    return { exit, calls };
+  }
+
+  it('gives a hook command the shorter turn budget', async () => {
+    const path = await missingDatabase();
+    const home = await homeFor(path);
+
+    // No exit code in here: a hook command returns 0 whatever happens (AD-6),
+    // so asserting it would assert nothing.
+    const { calls } = await run(['fake', 'hook-read', '--json'], home);
+
+    expect(calls).toEqual([{ path, busyTimeoutMs: BUSY_TIMEOUT_MS.turn }]);
+  });
+
+  it('gives any other command the command budget', async () => {
+    const path = await missingDatabase();
+    const home = await homeFor(path);
+
+    const { exit, calls } = await run(['fake', 'read', '--json'], home);
+
+    expect(exit).toBe(0);
+    expect(calls).toEqual([{ path, busyTimeoutMs: BUSY_TIMEOUT_MS.command }]);
+  });
+
+  it('makes no database file with nothing injected, as the default store must not', async () => {
+    // No `createStore`: the default is the real one, which refuses a file that
+    // is not there rather than making one (AD-20).
+    const path = await missingDatabase();
+    const home = await homeFor(path);
+
+    const exit = await dispatch(registry, ['fake', 'read', '--json'], {
+      clock: systemClock,
+      env: { [HOME_ENV]: home },
+      stdout: () => {},
+      stderr: () => {},
+    });
+
+    expect(exit).toBe(0);
+    expect(existsSync(path)).toBe(false);
   });
 });

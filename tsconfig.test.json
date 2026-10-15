@@ -1,0 +1,21 @@
+{
+  // The test files, type-checked and nothing more: `pnpm typecheck` runs this
+  // between `pnpm build` and vitest, because vitest strips the types instead of
+  // checking them, so an error in a test file would otherwise sit there unseen.
+  //
+  // One config for every package's `test/` folder, with `node` types available,
+  // since the tests open files, spawn processes and listen on sockets. A test
+  // imports `../src/...`, so the sources come in with it — but what a source
+  // may use is settled by its own package config during `pnpm build`, which
+  // runs first: `packages/core` builds with `types: []` and still has no node
+  // types, whatever this config allows the tests.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["packages/*/test", "apps/*/test", "tooling/*/test"]
+}

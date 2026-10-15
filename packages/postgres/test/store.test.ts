@@ -1,27 +1,9 @@
-import { createServer } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '@second-brain/test-db';
 import { schemaStoreContract, storeContract } from '@second-brain/core/testing';
 import { postgresStore } from '../src/store.js';
 import { SCHEMA_VERSION, runMigrations } from '../src/migrate.js';
-
-/** A TCP port nothing listens on, so connecting is refused immediately. */
-async function closedPort(): Promise<number> {
-  const server = createServer();
-  const port = await new Promise<number>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      if (address === null || typeof address === 'string') {
-        reject(new Error('could not determine the listening port'));
-        return;
-      }
-      resolve(address.port);
-    });
-  });
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  return port;
-}
+import { closedPort } from './closed-port.js';
 
 // Only the blocks in here need a database, so only they set one up.
 describe('postgresStore against a real database', () => {

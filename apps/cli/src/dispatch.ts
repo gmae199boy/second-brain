@@ -7,6 +7,9 @@ import {
   sqliteStore,
   type Brain,
   type Clock,
+  type HealthStore,
+  type SchemaStore,
+  type SqliteStoreOptions,
   type WarningCode,
 } from 'second_brain';
 import { readConfig, type BrainConfig } from './config/codec.js';
@@ -158,11 +161,20 @@ export interface StandaloneCommandSpec<T = unknown> extends CommandSpecBase {
 /** A command, as the registry holds it. */
 export type CommandSpec<T = unknown> = DatabaseCommandSpec<T> | StandaloneCommandSpec<T>;
 
+/**
+ * How the dispatcher opens the database file. The one implementation is
+ * `sqliteStore`; the seam exists so a test can see which lock budget the
+ * dispatcher chose for an invocation without opening a file (AD-7).
+ */
+export type CreateStore = (options: SqliteStoreOptions) => HealthStore & SchemaStore;
+
 export interface DispatchRuntime {
   clock: Clock;
   env?: NodeJS.ProcessEnv;
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
+  /** Defaults to `sqliteStore`, which is what every real invocation uses. */
+  createStore?: CreateStore;
 }
 
 /** What `execute` decided, before anything is printed. */
@@ -211,7 +223,7 @@ export async function dispatch(
 
   let outcome: Outcome;
   try {
-    outcome = await execute(registry, argv, clock, env);
+    outcome = await execute(registry, argv, clock, env, runtime.createStore ?? sqliteStore);
   } catch (error) {
     // An exception here is a bug, and a bug must still not break the harness.
     if (!hook) throw error;
@@ -247,6 +259,7 @@ async function execute(
   argv: readonly string[],
   clock: Clock,
   env: NodeJS.ProcessEnv,
+  createStore: CreateStore,
 ): Promise<Outcome> {
   const selected = select(registry, argv);
   if (selected.kind === 'helped') {
@@ -285,7 +298,7 @@ async function execute(
   // gets a store that says exactly that: the report then carries the machine
   // checks as well, which is the point of running at all (Decision 2026-10-14).
   const store = config.ok
-    ? sqliteStore({
+    ? createStore({
         path: config.config.storePath,
         busyTimeoutMs: spec.hook === true ? BUSY_TIMEOUT_MS.turn : BUSY_TIMEOUT_MS.command,
       })

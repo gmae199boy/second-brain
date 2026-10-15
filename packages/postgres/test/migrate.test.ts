@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 import { readdirSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '@second-brain/test-db';
 import { SCHEMA_VERSION, runMigrations } from '../src/migrate.js';
+import { closedPort } from './closed-port.js';
 
 /**
  * The Table Contract minus `embeddings`, which arrives the day embedding is
@@ -68,24 +68,6 @@ const CHUNK_PARAMS = JSON.stringify({
   overlapMessages: 1,
   splitMessagesOverChars: 2400,
 });
-
-/** A TCP port nothing listens on, so connecting is refused immediately. */
-async function closedPort(): Promise<number> {
-  const server = createServer();
-  const port = await new Promise<number>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      if (address === null || typeof address === 'string') {
-        reject(new Error('could not determine the listening port'));
-        return;
-      }
-      resolve(address.port);
-    });
-  });
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  return port;
-}
 
 const databases: TestDatabase[] = [];
 

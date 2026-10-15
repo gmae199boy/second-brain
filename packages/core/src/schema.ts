@@ -40,11 +40,26 @@ export async function checkSchema(store: SchemaStore, expected: number): Promise
   return {
     ok: false,
     code: 'SCHEMA_MISMATCH',
-    message:
-      found === null
-        ? `the database holds no schema version; this code expects ${String(expected)}. Run \`brain setup run\`.`
-        : `the database is at schema version ${String(found)}; this code expects ${String(expected)}. Run \`brain setup upgrade\`.`,
+    message: mismatchMessage(found, expected),
     found,
     expected,
   };
+}
+
+/**
+ * What the person can do about it, which depends on which way the versions
+ * differ. `brain setup run` is the one command that migrates today —
+ * `setup upgrade` is an epic 5 plan — but it only migrates forwards: the runner
+ * skips every migration at or below the stored version. So a database that is
+ * ahead of this build cannot be fixed by running anything here, and saying
+ * otherwise would send the reader to a command that changes nothing.
+ */
+function mismatchMessage(found: number | null, expected: number): string {
+  if (found === null) {
+    return `the database holds no schema version; this code expects ${String(expected)}. Run \`brain setup run\`.`;
+  }
+  const versions = `the database is at schema version ${String(found)}; this code expects ${String(expected)}.`;
+  return found > expected
+    ? `${versions} This build is older than the database: install a newer build.`
+    : `${versions} Run \`brain setup run\`.`;
 }

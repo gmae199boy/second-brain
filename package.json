@@ -15,7 +15,8 @@
   },
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm build && vitest run",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "pnpm build && pnpm typecheck && vitest run",
     "brain": "node apps/cli/dist/bin.js"
   },
   "devDependencies": {

@@ -291,7 +291,10 @@ describe('brain admin doctor', () => {
       status: 'fail',
       code: 'SCHEMA_MISMATCH',
     });
-    expect(found.get('schema-version')?.detail).toContain('setup upgrade');
+    // What the report tells the person to run has to be a command they have:
+    // `setup upgrade` is an epic 5 plan and does not exist yet.
+    expect(found.get('schema-version')?.detail).toContain('setup run');
+    expect(found.get('schema-version')?.detail).not.toContain('setup upgrade');
   });
 
   it('reports DB_UNAVAILABLE as a warning, and makes no file, when there is none', async () => {

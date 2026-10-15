@@ -781,7 +781,10 @@ describe('the types SQLite does not have', () => {
     connection = await seeded();
   });
 
-  it.each([
+  // The cases name the type, because without it TypeScript unions the rows and
+  // every column missing from one case comes back as `undefined`, which `Row`
+  // does not allow.
+  it.each<{ name: string; table: string; row: Row }>([
     {
       name: 'an instant that is not the canonical 24 characters',
       table: 'sessions',

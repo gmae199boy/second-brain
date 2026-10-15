@@ -24,7 +24,26 @@ describe('checkSchema', () => {
     if (result.code !== 'SCHEMA_MISMATCH') return;
     expect(result.found).toBe(2);
     expect(result.expected).toBe(1);
-    expect(result.message).toContain('setup upgrade');
+    // The database is ahead of this build, and migrations only go forwards, so
+    // naming a command here would name one that does nothing. `setup upgrade`
+    // is an epic 5 plan and must not be named either.
+    expect(result.message).toContain('install a newer build');
+    expect(result.message).not.toContain('setup run');
+    expect(result.message).not.toContain('setup upgrade');
+  });
+
+  it('tells the reader to run setup when the database is behind this build', async () => {
+    const result = await checkSchema(memorySchemaStore({ version: 1 }), 2);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('SCHEMA_MISMATCH');
+    if (result.code !== 'SCHEMA_MISMATCH') return;
+    expect(result.found).toBe(1);
+    expect(result.expected).toBe(2);
+    // The one command that migrates today; `setup upgrade` is an epic 5 plan.
+    expect(result.message).toContain('setup run');
+    expect(result.message).not.toContain('setup upgrade');
   });
 
   it('reports SCHEMA_MISMATCH when the database holds no version row', async () => {
