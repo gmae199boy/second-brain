@@ -11,7 +11,7 @@ sources: []
 
 # Personal Brain V1 slice 1 — 수집하고, 적어 두고, 찾는다
 
-읽는 법: 이 커널의 CAP이 기준이다. FR별 testable consequences는 PRD에, 구현 불변식(AD-1~20, Table Contract)은 architecture spine에 있다. 둘 다 companion이며 그대로 따른다. addendum은 SM-3 확장 채점표(§8)와 규모 시험 결과(§1)를 위해 읽는다. spine과 다르면 spine이 우선한다.
+읽는 법: 이 커널의 CAP이 기준이다. FR별 testable consequences는 PRD에, 구현 불변식(AD-1~28, Table Contract)은 architecture spine에 있다. 둘 다 companion이며 그대로 따른다. addendum은 SM-3 확장 채점표(§8)와 규모 시험 결과(§1)를 위해 읽는다. spine과 다르면 spine이 우선한다.
 
 ## Why
 
@@ -48,10 +48,10 @@ sources: []
   - **success:** 원문과 대조되지 않은 규칙은 주입되지 않는다. 내가 끈 규칙은 자동으로 다시 켜지지 않는다. "처음엔 뭐였지"에 대체된 결정이 근거 대화와 함께 답한다. 수정 이력이 모두 남는다. 같은 뜻의 규칙을 다시 말하는 횟수가 주 1회 이하(SM-6)다.
 - **CAP-10 SDK와 CLI 도구** (FR-23~24)
   - **intent:** 모든 기능을 SDK 하나(`second_brain`)로 쓰고, 에이전트와 나는 같은 기능을 Harness에 묶이지 않는 CLI로 쓴다.
-  - **success:** spine AD-5 표의 명령이 모두 있고, 각각 `--json`과 사람용 출력을 낸다. CLI·hook에 SDK를 거치지 않는 경로가 없다. Core 패키지에 외부 런타임 의존성이 없다.
+  - **success:** spine AD-5 표의 slice 1 명령(epic 9 예약 행 `mcp`·`daemon` 제외)이 모두 있고, 각각 `--json`과 사람용 출력을 낸다. 명령 메타에서 `admin schema`가 나오고, 확인이 필요한 명령은 비대화형에서 종료 코드 3으로 멈춘다. CLI·hook에 SDK를 거치지 않는 경로가 없다. Core 패키지에 외부 런타임 의존성이 없다.
 - **CAP-11 설치·설정·점검·운영** (FR-25)
   - **intent:** 대화형 설치기 하나로 의존성, DB, 미러 경로, 임베딩, Harness 연결을 묻고 설치한다. 언제든 다시 설정하고, 업그레이드하고, 제거하고, 상태를 점검한다.
-  - **success:** 빈 Mac에서 설치기 한 번으로 첫 세션이 수집된다. 재설정을 반복해도 hook이 중복 등록되지 않는다. 점검이 FR-25 항목과 spool·스키마 버전·마지막 hook 수신 시각을 보여 준다. 제거 후 Brain hook이 남지 않는다.
+  - **success:** 빈 Mac에서 설치기 한 번으로, 또는 Claude Code 플러그인을 켜면 첫 세션이 설치를 시작하고(그 세션은 설치가 끝난 뒤 폴더 스캔으로 수집) 다음 세션부터 hook으로 수집된다. 재설정·플러그인 갱신을 반복해도 hook은 하나다. 점검이 FR-25 항목과 spool·스키마 버전·마지막 hook 수신 시각·플러그인 버전 일치를 보여 준다. 제거 후 Brain hook이 남지 않는다.
 - **CAP-12 내보내기와 복구** (NFR-9)
   - **intent:** 모든 원문과 작업 로그를 Brain 없이 읽을 수 있는 형식으로 내보내고, 그것에서 되살린다.
   - **success:** 되살린 뒤 메시지 수와 작업 로그 수가 내보내기 전과 같다. 내보내기가 설정한 기간보다 오래되면 점검이 경고한다.
@@ -65,7 +65,7 @@ sources: []
 ## Constraints
 
 - 원본 저장소는 로컬 SQLite 파일 하나다. 복제 대상(Postgres·Drive)은 원본을 따라올 뿐 원본이 아니다. 미러·조각·색인은 파생물이다(AD-10).
-- 구현 언어는 TypeScript, 실행 환경은 내 Mac 한 대, 상주 프로세스는 없다(AD-5, AD-6).
+- 구현 언어는 TypeScript, 실행 환경은 내 Mac 한 대. slice 1에는 상주 프로세스가 없고, 데몬은 epic 9에서 선택으로 더하며 데몬 없이도 전부 동작한다(AD-5, AD-6, AD-25, AD-27).
 - Brain은 LLM을 부르지 않는다. 기본 구성의 외부 전송·비용은 0이고, 임베딩·재순위는 선택이다(NFR-5, NFR-6, AD-15).
 - 원문은 저장 후 바뀌지 않는다. 유일한 예외는 비밀 가리기다(NFR-1, AD-11).
 - 실패는 조용히 지나가지 않는다. 저하된 결과는 반드시 경고 코드와 함께 돌려준다(NFR-2).
@@ -80,7 +80,7 @@ sources: []
 - 대화를 사실 문장으로 다시 쓰는 추출·통합 엔진, LLM 세션 요약, LLM 주제 분류
 - 프롬프트마다 맥락을 밀어 넣는 것
 - 규칙을 Harness 지시 파일(CLAUDE.md 등)에 복사하는 것
-- slice 1에서의 팀 공유·다중 사용자, Claude Code 외 Harness 수집, 과거 세션 가져오기, MCP, 데몬, 두 번째 기계
+- slice 1에서의 팀 공유·다중 사용자, Claude Code 외 Harness 수집, 과거 세션 가져오기, 두 번째 기계. MCP·데몬은 slice 1 밖이지만 epic 9로 계획한다(2026-10-15)
 - Harness 원본 transcript와 도구 출력 보관
 
 ## Success signal

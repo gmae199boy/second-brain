@@ -12,7 +12,7 @@ risk: high
 
 ## Description
 
-Personal Brain V1 slice 1. Claude Code 세션을 자동으로 수집하고, 일하는 에이전트가 결정·규칙·진행·선호를 그 순간에 적고, 넓은 것에서 원문으로 찾는다. 기능·제약·비목표는 spec이 갖고, 구현 불변식은 architecture spine(AD-1~25, Table Contract)이 갖는다.
+Personal Brain V1 slice 1. Claude Code 세션을 자동으로 수집하고, 일하는 에이전트가 결정·규칙·진행·선호를 그 순간에 적고, 넓은 것에서 원문으로 찾는다. 기능·제약·비목표는 spec이 갖고, 구현 불변식은 architecture spine(AD-1~28, Table Contract)이 갖는다.
 
 ## Outcome
 
@@ -28,9 +28,10 @@ Personal Brain V1 slice 1. Claude Code 세션을 자동으로 수집하고, 일�
 
 ## Boundaries
 
-spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡는다. spec Non-goals를 따른다(팀 공유, Claude Code 외 Harness 수집, MCP, 데몬 제외). 첫 시연 경로: 세션에서 규칙을 말하면 로그로 적히고, 다음 세션 시작에 자동으로 들어온다(epic 1 → 2 → 3).
+spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡는다. spec Non-goals를 따른다(팀 공유, Claude Code 외 Harness 수집 제외. MCP·데몬은 V1 뒤 epic 9). 첫 시연 경로: 세션에서 규칙을 말하면 로그로 적히고, 다음 세션 시작에 자동으로 들어온다(epic 1 → 2 → 3).
 
-- Touch point: Claude Code 설정 파일(`~/.claude/settings.json`) — hook 등록만; owner: epic-capture
+- Touch point: Claude Code 플러그인(`plugin/`: hooks.json·skills·bootstrap 복사본) — hook·설치 진입점; owner: epic-capture(hook·bootstrap), epic-log-and-context(skills)
+- Touch point: UNIX 소켓·LaunchAgent KeepAlive — 데몬; owner: epic-daemon
 - Touch point: SQLite(Node 내장 `node:sqlite`) — 원본 DB 파일; owner: epic-foundation-and-install
 - Touch point: Docker·Postgres — 복제 대상; owner: epic-replicas
 - Touch point: Google Drive API — 첨부 원본 저장소·외부 문서; owner: epic-drive
@@ -40,8 +41,10 @@ spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡
 ## References
 
 - spec — _bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md
-- architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, 전체(AD-1~25, Table Contract, Conventions)
+- architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, 전체(AD-1~28, Table Contract, Conventions)
 - change — _bmad-output/personal-brain/change-local-sqlite-primary/change-local-sqlite-primary.md
+- change — _bmad-output/personal-brain/change-surface-plugin-daemon/change-surface-plugin-daemon.md
+- inputs — _bmad-output/personal-brain/inputs/weknora-patterns.md (각 에픽 인셉션의 입력)
 - prd — _bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md, FR별 testable consequences
 
 ## Notes
@@ -56,3 +59,4 @@ spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡
 - Decision: spool은 epic 2. epic 1의 스키마 불일치는 쓰기를 거부하고 `SCHEMA_MISMATCH`를 내며, spool로 보내는 경로는 epic 2가 붙인다(2026-10-08).
 - Waits on: 각 에픽의 선행 조건은 `tickets.toml`의 `after`에 있다.
 - Decision(2026-10-14): 원본은 로컬 SQLite 파일(Docker·서버 없음). Postgres·Drive 기록 복제는 epic 7. 첨부 원본 보관과 문서 본문 검색은 V1(FR-27·28, CAP-14). Drive 연동은 API로 epic 8. 주기 실행은 launchd(epic 5). 임베딩은 지금 하지 않고 epic 6은 맨 뒤(사용자).
+- Decision(2026-10-15, `change-surface-plugin-daemon/`): Claude Code 설치·hook 진입점은 플러그인, npx는 CI·사람·개발·대체 경로. 당분간 Claude Code만(Codex 제외). Node 24 이상 유지. 데몬·MCP는 epic 9(epic 5 다음, 7 앞). 확인 필요 종료 코드 3. WeKnora 흡수 목록(`inputs/weknora-patterns.md`)은 각 에픽 인셉션의 입력(사용자).

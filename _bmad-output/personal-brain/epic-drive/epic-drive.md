@@ -47,6 +47,7 @@ AD-23·24·25. 사용자의 외부 파일은 옮기거나 지우지 않는다. �
 - spec — _bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md, Capabilities CAP-12, CAP-14
 - architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-23, AD-24, AD-25, Deferred
 - change — _bmad-output/personal-brain/change-local-sqlite-primary/change-local-sqlite-primary.md, §7
+- inputs — _bmad-output/personal-brain/inputs/weknora-patterns.md, §2 (조건부: lease 먼저 적기, 저장 보상과 삭제 순서, 참조 수 삭제, 배치 엔벨로프)
 
 ## Notes
 

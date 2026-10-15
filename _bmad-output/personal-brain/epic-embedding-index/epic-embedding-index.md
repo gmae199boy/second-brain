@@ -39,6 +39,7 @@ AD-15, Table Contract(embeddings, index_configs). 기본 구성에서는 외부 
 - spec — _bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md, Capabilities CAP-6
 - architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md
 - prd — _bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md
+- inputs — _bmad-output/personal-brain/inputs/weknora-patterns.md, §2 (조건부: sqlite-vec vec0 확인·`k` 필수·트랜잭션 밖 생성, RRF k=60·벡터 0.7/키워드 0.3, 질의 임베딩 2초 초과면 키워드만)
 
 ## Notes
 

@@ -1,4 +1,4 @@
-# Personal Brain V1 slice 1 — 에픽 순서(표 순서 = 만드는 순서). V1 = 1~5, 그 뒤 7·8, 임베딩 6은 맨 뒤.
+# Personal Brain V1 slice 1 — 에픽 순서(표 순서 = 만드는 순서). V1 = 1~5, 그 뒤 9(데몬·MCP)·7·8, 임베딩 6은 맨 뒤.
 
 [[epic]]
 id = 1
@@ -33,6 +33,13 @@ slug = "epic-operations"
 title = "운영: 내보내기·복구, 업그레이드, 제거"
 covers = ["CAP-12", "CAP-11"]
 after = [{ epic = 4, needs = "모든 테이블이 있어야 내보내기가 전체를 덮음" }]
+
+[[epic]]
+id = 9
+slug = "epic-daemon"
+title = "데몬과 MCP 표면"
+covers = ["CAP-10", "CAP-11"]
+after = [{ epic = 5, needs = "LaunchAgent·upgrade·uninstall 흐름과 doctor 틀" }, { epic = 2, needs = "명령 메타(brain admin schema)와 플러그인 뼈대(.mcp.json 등록 자리)" }]
 
 [[epic]]
 id = 7

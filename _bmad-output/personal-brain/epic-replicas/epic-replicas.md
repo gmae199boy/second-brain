@@ -14,6 +14,8 @@ risk: medium
 
 로컬 SQLite 원본을 그대로 두고, 사용자가 고른 복제 대상(Postgres, Drive의 기계별 append-only 파일)이 원본을 따라오게 한다. 남겨 둔 `packages/postgres`와 설치기의 Docker 흐름을 다시 쓴다. 사용자가 원하면 `brain setup move-store --to postgres`로 원본을 검증된 방식으로 옮긴다. 나중에 `/brain:migration` 스킬이 이 명령을 감싼다.
 
+2026-10-15 변경(추가안 B, `../change-surface-plugin-daemon/`)으로 더한 것: SQLite↔Postgres 스키마 동등성 테스트(한쪽이 더한 테이블·컬럼을 다른 쪽에서 `pragma_table_info`·`information_schema`로 확인), SQLite 마이그레이션 헤더의 `-- Mirrors postgres NNNN`, 번호 중복 감지 테스트. 첫 대상은 0003의 `chunk_locator`·`pattern_version`·`attempt`·`failed_stage`·`source_unreachable_at`과 기존 deferred(`index_configs` 갈라짐, `tool_notes` 가리기 trigger). 원천: `inputs/weknora-patterns.md` §1.6.
+
 ## Outcome
 
 Postgres나 Drive를 붙여도 원본은 하나로 남고, 복제 대상이 늦어지거나 실패해도 기억을 잃지 않는다.
@@ -42,6 +44,8 @@ AD-10·22. 원본은 로컬 SQLite이고, 복제 대상의 읽기·검색은 하
 - spec — _bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md, Capabilities CAP-11, CAP-12
 - architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-10, AD-22, Deferred
 - change — _bmad-output/personal-brain/change-local-sqlite-primary/change-local-sqlite-primary.md, §4, §7
+- inputs — _bmad-output/personal-brain/inputs/weknora-patterns.md, §1.6 (F1·F2)
+- change — _bmad-output/personal-brain/change-surface-plugin-daemon/change-surface-plugin-daemon.md, §4.1
 
 ## Notes
 
