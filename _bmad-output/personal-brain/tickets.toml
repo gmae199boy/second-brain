@@ -10,7 +10,7 @@ covers = ["CAP-10", "CAP-11", "CAP-14"]
 id = 2
 slug = "epic-capture"
 title = "세션 수집과 비밀 가리기"
-covers = ["CAP-1", "CAP-2", "CAP-14"]
+covers = ["CAP-1", "CAP-2", "CAP-10", "CAP-11", "CAP-14"]
 after = [{ epic = 1, needs = "SQLite store와 원본 스키마(Table Contract, 파일·첨부·추출·work_items 포함), [files] path 루트, withWrite, CLI 뼈대, 설치기의 Harness 연결 단계" }]
 
 [[epic]]

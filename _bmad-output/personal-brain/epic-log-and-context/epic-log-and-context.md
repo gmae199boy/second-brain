@@ -37,7 +37,7 @@ risk: high
 
 ## Boundaries
 
-AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, context_injections). 검색은 epic-recall-and-mirror. 플러그인 뼈대(hooks·bootstrap)는 epic-capture, 이 에픽은 `plugin/skills/`와 `admin guide`.
+AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, context_injections). 검색은 epic-recall-and-mirror. 플러그인 뼈대(hooks·bootstrap)는 epic-capture, 이 에픽은 `plugin/skills/`와 `admin guide`의 본문(Core 상수·스킬 생성)이다. `admin guide` 명령 자체와 그 메타는 epic-capture의 CLI 규약 보강. 경고 코드 `RULE_UNVERIFIED`를 맡는다(`SPOOLED`는 epic-capture가 정의하고 이 에픽의 `log append`가 쓴다).
 
 ## References
 

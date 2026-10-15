@@ -22,7 +22,7 @@ risk: medium
 
 ## Requirements
 
-인셉션 때 채운다. spec의 CAP-4, CAP-5, CAP-6, CAP-7, CAP-13와 그것이 인용하는 PRD FR·spine AD가 원천이다.
+인셉션 때 채운다. spec의 CAP-4, CAP-5, CAP-6, CAP-7, CAP-13, CAP-14(문서 검색 부분)와 그것이 인용하는 PRD FR·spine AD가 원천이다.
 
 ## Done when
 
@@ -36,13 +36,14 @@ risk: medium
 
 ## Boundaries
 
-AD-13·15·16·23·24, Table Contract(chunks, index_configs, document_chunks, file_names, file_metadata). 경고 코드 `FILE_SOURCE_UNREACHABLE`·`RESULT_TRUNCATED`와 오류 코드 `SEARCH_FAILED`. 미러 쓰기는 DB 잠금 밖에서 하고 일감으로 직렬화한다. 임베딩은 epic-embedding-index.
+AD-13·15·16·23·24, Table Contract(chunks, index_configs, document_chunks, file_names, file_metadata). 경고 코드 `FILE_SOURCE_UNREACHABLE`·`RESULT_TRUNCATED`·`UNINDEXED`와 오류 코드 `SEARCH_FAILED`. 미러 쓰기는 DB 잠금 밖에서 하고 일감으로 직렬화한다. 임베딩은 epic-embedding-index.
 
 ## References
 
 - parent — _bmad-output/personal-brain/initiative-personal-brain.md
-- spec — _bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md, Capabilities CAP-4, CAP-5, CAP-6, CAP-7, CAP-13
+- spec — _bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md, Capabilities CAP-4, CAP-5, CAP-6, CAP-7, CAP-13, CAP-14
 - architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md
 - prd — _bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md
+- prd addendum — _bmad-output/personal-brain/prd-brain-v1-slice-1/addendum.md, §8 (SM-3 확장 채점표)
 - inputs — _bmad-output/personal-brain/inputs/weknora-patterns.md, §1.3 (C1~C10)
 - change — _bmad-output/personal-brain/change-surface-plugin-daemon/change-surface-plugin-daemon.md, §4.1, §4.2(AD-15)

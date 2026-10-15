@@ -14,7 +14,7 @@ risk: high
 
 Drive API로 Drive를 직접 다룬다. Drive는 5TB이고 Mac은 512GB라서 Mac에 동기화하지 않는다.
 - 연동하면 Brain이 맡은 첨부 원본이 Drive로 옮겨 간다. 순서는 업로드 → 해시 검증 → `home` 전환 → 로컬 삭제 일감이다.
-- 사용자가 고른 기존 Drive 폴더의 문서는 목록 → export 또는 임시 다운로드 → 추출 → 삭제 순서로 텍스트만 색인한다. 바뀐 것은 changes API와 launchd 주기 실행(`brain sources sync`)으로 반영한다.
+- 사용자가 고른 기존 Drive 폴더의 문서는 목록 → export 또는 임시 다운로드 → 추출 → 삭제 순서로 텍스트만 색인한다. 바뀐 것은 changes API로 반영한다. 동기화는 drain의 일감 종류(`source_sync`)로 돌아 launchd 주기 실행이든 데몬이든 같은 경로이고, `brain sources sync`는 그 일감을 지금 만들어 돌리는 명령이다(AD-25).
 - 연동 해제는 Drive에 둔 채 연결만 끊는다.
 - DB 스냅샷을 Drive에 보관해 새 기계에서 복구한다. 나중에 `/brain:db-migration` 스킬이 이것을 감싼다.
 
@@ -33,9 +33,10 @@ Drive API로 Drive를 직접 다룬다. Drive는 5TB이고 Mac은 512GB라서 Ma
 
 1. 연동하면 첨부 원본이 Drive로 옮겨지고, 로컬 사본은 검증 뒤에만 지워진다.
 2. 고른 Drive 폴더의 문서가 Mac에 남지 않은 채 본문으로 검색되고, 결과에 Drive 링크가 붙는다.
-3. Drive에서 바뀐 문서가 다음 주기 동기화에 반영된다.
+3. Drive에서 바뀐 문서가 다음 drain(launchd 주기든 데몬이든)에서 반영된다.
 4. 연동 해제 뒤에도 검색되고, 원본은 접근 불가로 표시된다.
 5. 새 Mac에서 Drive 스냅샷으로 복구하면 건수가 같다.
+6. 데몬이 켜진 상태와 꺼진 상태 둘 다에서 1~5가 통과한다(AD-27).
 
 ## Boundaries
 

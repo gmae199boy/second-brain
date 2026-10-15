@@ -16,7 +16,7 @@ risk: medium
 
 2026-10-14 변경으로 더한 것: `setup run` 흐름에 LaunchAgent 등록 단계 추가(고정 Label, 5분 간격 `brain admin drain`, 60초 예산, doctor의 마지막 주기 실행 경고, AD-25). 내보내기는 문서 추출 세대·조각과 파일 메타데이터를 포함하고 `manifest.json`에 파일 본체 범위를 적는다.
 
-2026-10-15 변경(추가안 B, `../change-surface-plugin-daemon/`)으로 더한 것: manifest에 테이블별 sha256, 내보내기 파일은 임시 파일→rename, 직전 버전 DB 업그레이드 테스트(확인용 행 + 불변 trigger 생존), launchd 실행 겹침 잠금과 일감 청구 만료 회수, drain 시작 시 남은 `running` 정리. 주기 실행의 주인은 설정 `[daemon] enabled`이고 `setup run`·`setup upgrade`는 두 LaunchAgent Label(주기·데몬)의 적재 상태를 설정과 일치시킨다(이 에픽은 `enabled=false`의 주기 Label과 그 일치 함수를 만들고, 데몬 Label은 epic-daemon이 더한다). `setup upgrade` 순서는 코드 갱신 → 빌드 → 마이그레이션 → shim 재작성 → LaunchAgent 일치 → (데몬 재시작) → doctor → 완료 기록(`installed.json`)이고, 플러그인 hook이 시작하는 ff+build와 같은 함수다. `setup uninstall`은 표식 hook·shim·두 Label·`<home>/run/`·`<home>/log/`·`installed.json`을 지우고, 플러그인은 안내만 한다. drain은 마지막 실행 시각을 `<home>/run/last-drain`(mtime)에 남긴다. 원천: `inputs/weknora-patterns.md` §1.4.
+2026-10-15 변경(추가안 B, `../change-surface-plugin-daemon/`)으로 더한 것: manifest에 테이블별 sha256, 내보내기 파일은 임시 파일→rename, 직전 버전 DB 업그레이드 테스트(확인용 행 + 불변 trigger 생존), launchd 실행 겹침 잠금과 일감 청구 만료 회수, drain 시작 시 남은 `running` 정리. 주기 실행의 주인은 설정 `[daemon] enabled`이고 `setup run`·`setup upgrade`는 두 LaunchAgent Label(주기·데몬)의 적재 상태를 설정과 일치시킨다(이 에픽이 설정 키 `[daemon] enabled`와 `enabled=false`의 주기 Label, 그 일치 함수를 만들고, 데몬 Label은 epic-daemon이 더한다). `setup upgrade` 순서는 코드 갱신 → 빌드 → 마이그레이션 → shim 재작성 → LaunchAgent 일치 → (데몬 재시작) → doctor → 완료 기록(`installed.json`)이고, 플러그인 hook이 시작하는 ff+build와 같은 함수다. `setup uninstall`은 표식 hook·shim·두 Label·`<home>/run/`·`<home>/log/`·`installed.json`을 지우고, 플러그인은 안내만 한다. drain은 마지막 실행 시각을 `<home>/run/last-drain`(mtime)에 남긴다. 원천: `inputs/weknora-patterns.md` §1.4.
 
 ## Outcome
 

@@ -2,7 +2,7 @@
 type: epic
 title: "세션 수집과 비밀 가리기"
 parent: personal-brain
-covers: [CAP-1, CAP-2, CAP-14]
+covers: [CAP-1, CAP-2, CAP-10, CAP-11, CAP-14]
 after: ["epic-foundation-and-install"]
 assignee: ""
 risk: high
@@ -28,7 +28,7 @@ Claude Code 세션이 손대지 않아도 비밀이 가려진 채 빠짐없이 �
 
 ## Requirements
 
-인셉션 때 채운다. spec의 CAP-1, CAP-2와 그것이 인용하는 PRD FR·spine AD가 원천이다.
+인셉션 때 채운다. spec의 CAP-1, CAP-2, CAP-14(첨부·추출 부분)와 CAP-10·CAP-11의 플러그인 진입점·CLI 규약 부분, 그것들이 인용하는 PRD FR·spine AD가 원천이다.
 
 ## Done when
 
@@ -45,12 +45,12 @@ Claude Code 세션이 손대지 않아도 비밀이 가려진 채 빠짐없이 �
 
 ## Boundaries
 
-AD-4·5·6·7·8·9·11·12·13·18·19·21·23·24, Table Contract(projects, worktrees, workspaces, sessions, messages, tool_notes, redactions, failures, transcript_files, work_items, files, file_locations, message_attachments, document_extractions, document_chunks), Conventions(엔벨로프·종료 코드·명령 메타·설치·런타임 기록). 경고 코드 `SPOOLED`·`CURSOR_RESET`·`DB_UNAVAILABLE`·`ATTACHMENT_NOT_REDACTED`·`PLUGIN_NOT_INSTALLED`·`PLUGIN_BEHIND`·`PLUGIN_DUPLICATE`와 오류 코드 `CONFIRMATION_REQUIRED`(정의와 `messages redact`·`files redact`의 게이트)를 맡는다. `SEARCH_FAILED`는 epic-recall-and-mirror, 데몬·MCP 코드는 epic-daemon. 문서 검색은 epic-recall-and-mirror, Drive 저장소 구현은 epic-drive. 작업 로그는 만들지 않는다(epic-log-and-context). 미러는 epic-recall-and-mirror.
+AD-4·5·6·7·8·9·11·12·13·18·19·21·23·24, Table Contract(projects, worktrees, workspaces, sessions, messages, tool_notes, redactions, failures, transcript_files, work_items, files, file_locations, message_attachments, document_extractions, document_chunks), Conventions(엔벨로프·종료 코드·명령 메타·설치·런타임 기록). 경고 코드 `SPOOLED`·`CURSOR_RESET`·`DB_UNAVAILABLE`·`ATTACHMENT_NOT_REDACTED`·`PLUGIN_NOT_INSTALLED`·`PLUGIN_BEHIND`·`PLUGIN_DUPLICATE`와 오류 코드 `CONFIRMATION_REQUIRED`(정의와 `messages redact`·`files redact`의 게이트)를 맡는다. `SEARCH_FAILED`는 epic-recall-and-mirror, 데몬·MCP 코드는 epic-daemon. CAP-10·CAP-11은 플러그인 진입점·hook 출처·CLI 규약 보강 부분만 맡는다(설치 기본은 epic-foundation-and-install, 운영은 epic-operations, 데몬·MCP는 epic-daemon). 문서 검색은 epic-recall-and-mirror, Drive 저장소 구현은 epic-drive. 작업 로그는 만들지 않는다(epic-log-and-context). 미러는 epic-recall-and-mirror.
 
 ## References
 
 - parent — _bmad-output/personal-brain/initiative-personal-brain.md
-- spec — _bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md, Capabilities CAP-1, CAP-2
+- spec — _bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md, Capabilities CAP-1, CAP-2, CAP-10, CAP-11, CAP-14
 - architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md
 - prd — _bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md
 - inputs — _bmad-output/personal-brain/inputs/weknora-patterns.md, §1.1 (A1~A10), §1.5 (E1~E11)

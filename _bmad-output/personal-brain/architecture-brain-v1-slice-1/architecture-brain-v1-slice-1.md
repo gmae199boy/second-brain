@@ -272,7 +272,7 @@ sequenceDiagram
 - **Binds:** FR-25, NFR-6
 - **Prevents:** 키가 공개 저장소로 들어오는 것, 설정을 읽는 곳이 흩어지는 것, 모르는 설정이 조용히 기본값으로 떨어지는 것
 - **Rule:**
-  - 설정은 `~/.second_brain/config.toml`(`schema_version` 포함), 키는 `~/.second_brain/.env`에 둔다. 설정 파일에는 키 값이 아니라 환경 변수 이름만 적는다. 원본 위치는 `[store] path`, 미러 위치는 `[mirror] path`, 데몬 사용 여부는 `[daemon] enabled`(기본 false, epic 9)다. 복제 대상은 epic 7에서 `[[replicas]]` 목록(Postgres URL은 환경 변수 이름으로)으로 더한다. 설치 기록(`<home>/installed.json`)과 런타임 상태(`<home>/run/`)는 설정이 아니라 사실이고 코덱을 거치지 않는다(AD-19, Conventions).
+  - 설정은 `~/.second_brain/config.toml`(`schema_version` 포함), 키는 `~/.second_brain/.env`에 둔다. 설정 파일에는 키 값이 아니라 환경 변수 이름만 적는다. 원본 위치는 `[store] path`, 미러 위치는 `[mirror] path`, 데몬 사용 여부는 `[daemon] enabled`(기본 false. 키와 주기 Label 선택은 epic 5가, 데몬 동작은 epic 9가 맡는다)다. 복제 대상은 epic 7에서 `[[replicas]]` 목록(Postgres URL은 환경 변수 이름으로)으로 더한다. 설치 기록(`<home>/installed.json`)과 런타임 상태(`<home>/run/`)는 설정이 아니라 사실이고 코덱을 거치지 않는다(AD-19, Conventions).
   - 읽기·쓰기는 Runtime의 설정 코덱 하나만 한다(설치기 포함). 모르는 키는 경고하고, Core에는 값으로 넘긴다.
 
 ### AD-19 — 설치 진입점, 플러그인, Harness 연결
@@ -346,7 +346,7 @@ sequenceDiagram
 - **Binds:** NFR-2, NFR-3
 - **Prevents:** 주기 작업 때문에 상주 프로세스를 강제하는 것, 주기 실행 둘(launchd와 데몬)이 겹치는 것, 일감이 다음 세션 시작까지 밀리는 것, 주기 실행이 멈췄는데 아무도 모르는 것
 - **Rule:**
-  - 설치기가 고정 Label(`<reverse-dns>.second-brain.drain`)의 LaunchAgent 하나를 등록한다. 같은 Label이면 다시 등록하지 않는다(Brain 표식과 같은 멱등). shim을 통해 기본 5분마다 `brain admin drain`(epic 8 이후 `brain sources sync`도)을 부르고, 한 번의 실행은 시간 예산(기본 60초) 안에서 끝낸다. `setup uninstall`이 지운다.
+  - 설치기가 고정 Label(`<reverse-dns>.second-brain.drain`)의 LaunchAgent 하나를 등록한다. 같은 Label이면 다시 등록하지 않는다(Brain 표식과 같은 멱등). shim을 통해 기본 5분마다 `brain admin drain`을 부르고(epic 8의 Drive 동기화는 drain의 일감 종류로 들어가 launchd·데몬 어느 쪽이든 같은 경로로 돈다), 한 번의 실행은 시간 예산(기본 60초) 안에서 끝낸다. `setup uninstall`이 지운다.
   - drain은 마지막 실행 시각을 `<home>/run/last-drain`(파일 mtime)에 남기고, doctor는 그것이 간격의 3배보다 오래되면 경고한다.
   - 주기 실행의 주인은 설정 `[daemon] enabled` 한 줄이다(AD-18). `setup run`·`setup upgrade`(플러그인 bootstrap이 부르는 것도 같은 함수)는 "없으면 더하기"가 아니라 두 Label(주기 `…drain`, 데몬 `…daemon`)의 적재 상태를 설정과 일치시킨다. `enabled=false`면 주기 Label만, `true`면 데몬 Label만 올라간다. 둘 다 `admin.drain` 하나를 부른다. `daemon stop`은 임시 정지이고 주기 Label을 되살리지 않으며 doctor가 `warn`이다. 데몬이 꺼져 있을 때의 동작은 이 AD와 AD-6·7·9 그대로다.
 

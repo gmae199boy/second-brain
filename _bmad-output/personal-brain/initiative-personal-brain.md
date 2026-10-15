@@ -30,7 +30,7 @@ Personal Brain V1 slice 1. Claude Code 세션을 자동으로 수집하고, 일�
 
 spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡는다. spec Non-goals를 따른다(팀 공유, Claude Code 외 Harness 수집 제외. MCP·데몬은 V1 뒤 epic 9). 첫 시연 경로: 세션에서 규칙을 말하면 로그로 적히고, 다음 세션 시작에 자동으로 들어온다(epic 1 → 2 → 3).
 
-- Touch point: Claude Code 플러그인(`plugin/`: hooks.json·skills·bootstrap 복사본) — hook·설치 진입점; owner: epic-capture(hook·bootstrap), epic-log-and-context(skills)
+- Touch point: Claude Code 플러그인 체계(marketplace·`/plugin install`·hook 계약·`.mcp.json`) — hook·설치 진입점; owner: epic-capture(hook·bootstrap), epic-log-and-context(skills), epic-daemon(`.mcp.json`·래퍼, AD-28). `plugin/` 폴더 자체는 에픽이 만드는 코드다
 - Touch point: UNIX 소켓·LaunchAgent KeepAlive — 데몬; owner: epic-daemon
 - Touch point: SQLite(Node 내장 `node:sqlite`) — 원본 DB 파일; owner: epic-foundation-and-install
 - Touch point: Docker·Postgres — 복제 대상; owner: epic-replicas
@@ -60,3 +60,5 @@ spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡
 - Waits on: 각 에픽의 선행 조건은 `tickets.toml`의 `after`에 있다.
 - Decision(2026-10-14): 원본은 로컬 SQLite 파일(Docker·서버 없음). Postgres·Drive 기록 복제는 epic 7. 첨부 원본 보관과 문서 본문 검색은 V1(FR-27·28, CAP-14). Drive 연동은 API로 epic 8. 주기 실행은 launchd(epic 5). 임베딩은 지금 하지 않고 epic 6은 맨 뒤(사용자).
 - Decision(2026-10-15, `change-surface-plugin-daemon/`): Claude Code 설치·hook 진입점은 플러그인, npx는 CI·사람·개발·대체 경로. 당분간 Claude Code만(Codex 제외). Node 24 이상 유지. 데몬·MCP는 epic 9(epic 5 다음, 7 앞). 확인 필요 종료 코드 3. WeKnora 흡수 목록(`inputs/weknora-patterns.md`)은 각 에픽 인셉션의 입력(사용자).
+- Decision(2026-10-15, 트리 검증): epic 9는 epic 7 앞에 고정한다. 두 에픽이 `setup run`의 선택 단계·doctor 등록부·설정 코덱을 함께 건드리므로 순서를 바꾸면 충돌 비용이 든다. 설정 키 `[daemon] enabled`는 epic 5가 더하고(주기 Label 선택), 데몬 동작은 epic 9. Drive 동기화는 drain의 일감 종류로 돌아 launchd·데몬 어느 쪽이든 같은 경로다(epic 8이 9를 기다리지 않게).
+- Decision(2026-10-15, 사용자): CAP-11은 다섯 에픽(1·2·5·7·9)이 각자 Boundaries의 경계 문장으로 나눠 맡는다. spec의 CAP 번호는 쪼개지 않는다. epic 7·8은 데몬 켜짐·꺼짐 둘 다에서 통과해야 한다(Done when에 추가).
