@@ -37,8 +37,8 @@ Claude Code 세션이 손대지 않아도 비밀이 가려진 채 빠짐없이 �
 
 ## Requirements
 
-- E2-1 (CAP-10): CLI 규약 — 모든 명령의 메타 7칸과 그것에서 만드는 `guide schema`·`--help`, `guide exit-codes`, `guide show`(CLI 사용 규약 절), Core 엔벨로프 코덱과 경고·오류 코드 상수, SDK 확인 게이트와 종료 코드 3, doctor `warn`·`skip`·`summary`, 빈 위치 인자·제어문자 거부, README 종료 코드 표와 코드의 양방향 대조. (spine AD-5, Conventions; inputs §1.5 E1~E11)
-- E2-2 (CAP-11): 설치기 — 흐름 결과와 실패 계약, 재실행 때 설정 보존(부분 읽기, 모르는 키), store 준비 뒤 config 쓰기, DB 확인 뒤 권한 변경, TTY 동의와 비대화형 동의 게이트. (AD-18·19; 회고 F1~F6·F10·F11)
+- E2-1 (CAP-10): CLI 규약 — 모든 명령의 메타 7칸과 그것에서 만드는 `guide schema`·`--help`, `guide exit-codes`, `guide show`(CLI 사용 규약 절), Core 엔벨로프 코덱과 경고·오류 코드 상수, SDK 확인 게이트와 종료 코드 3, doctor `warn`·`skip`·`summary`, 빈 위치 인자·제어문자 거부, README 종료 코드 표와 코드의 양방향 대조, 사람이 읽는 출력(오류 message·hint, `--help`, doctor 줄)의 한국어와 그 회귀 검사(2026-10-16). (spine AD-5, Conventions '출력 언어'; inputs §1.5 E1~E11)
+- E2-2 (CAP-11): 설치기 — 흐름 결과와 실패 계약, 재실행 때 설정 보존(부분 읽기, 모르는 키), store 준비 뒤 config 쓰기, DB 확인 뒤 권한 변경, TTY 동의와 비대화형 동의 게이트, 설치기 질문·진행 줄의 한국어(2026-10-16). (AD-18·19, Conventions '출력 언어'; 회고 F1~F6·F10·F11)
 - E2-3 (CAP-11): 플러그인 진입점 — `plugin/`(매니페스트, hooks, node를 찾는 런처, bootstrap 복사본, `app-ref`)과 marketplace, bootstrap(설치 잠금, Node 24.16 하한, ref로만 ff, `--frozen-lockfile --ignore-scripts`, 앞설 때만 갱신, 완료 검증, `installed.json`, 빌드 신원), shim의 node 고정과 폴백, `setup connect claude-code`의 확인·안내·옛 hook 제거, doctor의 플러그인·마지막 hook 항목. hook의 출처는 플러그인 하나. (AD-2·19·20; 회고 F7·F8·F9)
 - E2-4 (CAP-1): Claude Code transcript parser와 hook 입출력 — 메인 대화의 본문과 서브에이전트 최종 보고, 도구 메모 한 줄, 추적 정보, 커서와 증분 읽기, 앞부분이 바뀐 transcript의 다시 읽기와 `CURSOR_RESET`, `parser_version`. (FR-1~3, AD-4·6)
 - E2-5 (CAP-1): 수집 — `sessions.ingest`와 SQLite `SessionStore`, `users`('나' 한 행, `setup run`이 만듦, 2026-10-16), 세션 행은 수집만 만들고 `seq`는 Store가 배정, 멱등 삽입, 같은 세션의 겹친 수집, `ingest_source`(live·import). (FR-1·5·6, AD-7·8·12)
@@ -56,7 +56,7 @@ Claude Code 세션이 손대지 않아도 비밀이 가려진 채 빠짐없이 �
 5. 같은 레포의 두 워크트리 세션이 한 프로젝트(git remote 정체성)로 묶이고, 레포 밖에서 연 세션은 프로젝트 없이 수집된다.
 6. 플러그인을 켜고 세션을 열면 hook 하나로 수집되고, 설치기가 쓴 hook과 플러그인 hook이 동시에 살아 있지 않다. 세션 두 개가 동시에 첫 시작해도 bootstrap은 한 번만 돌고 다른 쪽은 아무것도 하지 않는다. `claude plugin update`로 `app-ref`가 앞서면 첫 세션에서 ff+build가 한 번 돌고 세션 시작은 막히지 않으며, 뒤처지면 아무것도 하지 않고 doctor가 `PLUGIN_BEHIND`를 보인다. doctor가 미수집 세션·실패 수집·spool 건수·마지막 hook 수신 시각·`installed.json`의 `commit`과 `app-ref`·빌드 신원의 관계를 보인다.
 7. compact 뒤 다시 수집해도 기존 메시지의 `seq`와 본문이 그대로다. 겹친 drain 두 개가 같은 일감을 두 번 처리하지 않고, 다시 할 수 있는 오류로 10번 실패했거나 영구 오류로 한 번 실패한 일감은 `failures`에 남고 닫히며, 다시 하기는 새 일감이다(2026-10-16). 청구를 놓친 것은 시도 횟수를 올리지 않는다.
-8. `brain guide schema`가 모든 명령을 내고, 명령 메타가 빠진 명령은 테스트가 잡는다. 비TTY에서 `--yes` 없이 `messages redact`를 부르면 exit 3과 `error.retry`(`confirm: true`)·`error.retry_argv`가 온다. doctor의 `writable` 검사 불가는 `warn`이다.
+8. `brain guide schema`가 모든 명령을 내고, 명령 메타가 빠진 명령은 테스트가 잡는다. 비TTY에서 `--yes` 없이 `messages redact`를 부르면 exit 3과 `error.retry`(`confirm: true`)·`error.retry_argv`가 온다. doctor의 `writable` 검사 불가는 `warn`이다. 설치기 줄·doctor 줄·오류 message와 hint·`--help`가 한국어이고, 사람이 읽는 출력에 영어 문장을 새로 넣으면 출력 언어 검사가 잡는다(2026-10-16).
 
 ## Boundaries
 
@@ -128,3 +128,5 @@ AD-4·5·6·7·8·9·11·12·13·18·19·21, Table Contract(projects, worktrees,
 - Decision(2026-10-16, 사용자): `failures` 키는 `work_items`와 같은 대상 키 `(target_kind, target_id, stage, fingerprint)`다. 2.6의 0004가 재생성한다(행 없음). 세션 수집 실패는 `session`/세션 토큰이라 세션 행이 없어도 기록된다. 위의 Note(nullable·고정 키)와 "세션이 없는 실패의 키 칸은 11이 정한다"는 이것으로 닫는다.
 - Decision(2026-10-16, 사용자): 자동 업데이트는 설정 `[update] auto`(기본 true)다. 켜져 있으면 플러그인 `app-ref`가 앞설 때 bootstrap(데몬이 있으면 데몬)이 갱신하고, 꺼져 있으면 doctor `UPDATE_AVAILABLE`과 CLI 직접 갱신이다(2.5, spine AD-18·19·27).
 - Decision(2026-10-16, 사용자): 사람이 읽는 출력은 한국어로 쓴다(설치기 질문·진행 줄, doctor 줄, 텍스트 모드 오류 줄과 hint, `--help`, 개발용 스크립트 안내, README). 에이전트만 읽는 것은 한국어가 아니어도 되고, 코드·JSON 키·점검 id·명령과 옵션 이름·설정 키는 영어다. 기존 영어 문구는 16이 2.2 바로 뒤에서 바꾸고, 이후 스토리가 새로 쓰는 문구도 이 규칙을 따른다(spine Conventions '출력 언어'). 16은 3과 같은 파일(코드 표 hint, `--help`, README, doctor 등록부)을 고치므로 3이 16 뒤에 오고, 선행 관계는 1·2·16·3~15 한 줄이 된다.
+- Assumption(2026-10-16): 플러그인 hook이 내는 `systemMessage`(2.5의 node 못 찾음, bootstrap 완료·실패)는 사용자 화면에도 보이므로 사람이 읽는 문장으로 보고 한국어로 쓴다(2.5·2.14). 사용자가 다르게 정하면 바꾼다.
+- Decision(2026-10-16, 사용자): 16은 출력 언어 회귀 검사를 남기고, E2-1·E2-2 본문과 Done when 8에 출력 언어를 넣는다. 그래서 3~14가 새로 쓰는 영어 문구도 sweep(15)의 Done when 재실행에서 잡힌다.
