@@ -25,13 +25,25 @@ risk = "high"
 references = ["_bmad-output/personal-brain/epic-capture/epic-capture-research.md, §1, §4", "_bmad-output/personal-brain/change-users-and-review-gaps/change-users-and-review-gaps.md, §3 D0"]
 
 [[entry]]
+id = 16
+type = "story"
+title = "사람이 읽는 출력을 한국어로"
+description = "spine Conventions '출력 언어'대로, 지금까지 만든 출력 중 사람이 읽는 문장을 한국어로 바꾼다: `setup run` 질문·진행 줄, doctor 텍스트 줄(detail 포함), 오류 message와 Core 코드 표의 hint(텍스트 모드와 `--json`이 같은 문장), 명령 `--help` 설명과 commander가 찍는 기본 라벨(`Usage:`·`Options:` 등), 개발용 스크립트 안내(`tooling/dev/tracer-session.sh`는 2026-10-16에 이미 바뀜), README. 코드(`USAGE` 등)·JSON 키·점검 id·명령과 옵션 이름·설정 키는 영어로 둔다. 2.1의 hint 문체 검사를 한국어 기준(마침표 없음, 명령은 백틱)으로 고치고, 파괴적 hint 금지 검사가 한국어 hint에서도 걸러지게(지우·삭제·제거 등) 바꾸며, 영어 문장을 단정하던 테스트를 맞춘다(2026-10-16 사용자 결정)."
+verify = "TTY와 `--yes` 두 방식의 `setup run`, doctor, `sessions ingest`의 실패 줄, `brain --help`가 한국어 문장을 내고, `--json` 엔벨로프의 `error.message`·`hint`가 텍스트 모드와 같은 한국어 문장이며 `code`·키·점검 id는 바뀌지 않고, hint 문체 검사가 한국어 hint를 통과시키고 마침표로 끝나는 hint를 거부한다."
+covers = ["E2-1", "E2-2"]
+after = [2]
+hitl = false
+risk = "low"
+references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, Conventions '출력 언어'"]
+
+[[entry]]
 id = 3
 type = "story"
 title = "명령 메타, guide 명령(schema·exit-codes·show)과 이름공간 정리"
 description = "모든 CommandSpec이 메타 7칸(`used_for`·`required`·`examples`·`output`·`risk`·`hook`·`dryRun`)을 선언하게 하고(빠지면 테스트 실패), 그 메타에서 `brain guide schema [ns verb]`와 `--help`를, Core 코드 상수에서 `brain guide exit-codes`(`{code, meaning, agent_action}`)를, CLI 사용 규약 절(종료 코드, 에이전트 금지 행동 6개, stderr는 실패 신호가 아님)로 `brain guide show`를 내며(기록 규율 본문은 epic 3), README 종료 코드 표와 Core 코드 목록의 양방향 대조 테스트를 두며, 이름공간을 AD-5대로 정리해 이미 있는 `brain admin doctor`를 `brain doctor run`으로 옮긴다(아직 사용자가 없으므로 옛 이름은 남기지 않고, Core hint·README·설치기 안내·SDK `Brain.admin`·테스트를 맞춤, 2026-10-16)."
 verify = "메타가 빠진 명령을 등록하면 테스트가 실패하고, `guide schema`가 등록된 모든 명령과 그 메타를 내며, `guide exit-codes`가 Core 상수와 같고, README 표에서 코드를 하나 빼거나 더하면 대조 테스트가 실패하며, `brain admin doctor`는 USAGE로 거부되고 `brain doctor run`이 같은 보고를 낸다."
 covers = ["E2-1"]
-after = [1, 2]
+after = [1, 2, 16]
 hitl = false
 risk = "medium"
 references = ["_bmad-output/personal-brain/inputs/weknora-patterns.md, §1.5 (E1, E2, E9~E11)"]
@@ -174,7 +186,7 @@ title = "Refactor sweep"
 description = "에픽 동안 미룬 정리만 한다; 범위는 시작할 때 각 플랜과 미룬 리뷰 지적, 회고 Action 9(second_brain의 postgres 재export가 hook 경로에 주는 지연, 중복 헬퍼, 임시 home 테스트 헬퍼)와 F12 테스트 공백에서 정한다."
 verify = "전체 테스트와 패키지 의존 경계 검사가 통과하고, hook 경로(`sessions ingest`)의 시작 지연을 재서 플랜에 남기며, 에픽 Done when 1~8을 다시 돌려 모두 통과한다."
 covers = ["E2-1", "E2-2", "E2-3", "E2-4", "E2-5", "E2-6", "E2-7", "E2-8", "E2-9"]
-after = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+after = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16]
 hitl = false
 risk = "low"
 references = ["_bmad-output/personal-brain/epic-foundation-and-install/epic-foundation-and-install-retrospective.md, Action items 9, F12"]

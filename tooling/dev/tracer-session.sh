@@ -21,7 +21,7 @@ repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 bin="$repo_root/apps/cli/dist/bin.js"
 
 if [ ! -f "$bin" ]; then
-  echo "$bin does not exist. Run \`pnpm build\` first." >&2
+  echo "$bin 이 없습니다. 먼저 \`pnpm build\`를 실행하세요." >&2
   exit 1
 fi
 
@@ -33,13 +33,13 @@ else
   home=$(mktemp -d "${TMPDIR:-/tmp}/brain-tracer-XXXXXX")
 fi
 
-echo "configuration folder: $home"
+echo "설정 폴더: $home"
 
 # `--yes` because nothing can be asked here, and `--json` so the install's own
 # lines do not drown the instructions below. The envelope goes to the folder,
 # for reading if something went wrong.
 SECOND_BRAIN_HOME="$home" node "$bin" setup run --yes --json > "$home/setup-run.json"
-echo "installed, and the envelope is in $home/setup-run.json"
+echo "설치했습니다. 결과 엔벨로프는 $home/setup-run.json 에 있습니다."
 
 settings="$home/claude-settings.json"
 
@@ -67,22 +67,22 @@ cat > "$settings" <<JSON
 }
 JSON
 
-echo "wrote $settings"
+echo "$settings 를 썼습니다."
 echo
-echo "Now have a two-turn conversation in a throwaway folder:"
+echo "이제 버려도 되는 폴더에서 두 턴 대화해 보세요:"
 echo
 echo "  claude --settings $settings"
 echo
-echo "Then look at what landed, and ingest the same turn again to see that"
-echo "nothing moves:"
+echo "그다음 들어간 내용을 보고, 같은 턴을 다시 수집해도 아무것도 바뀌지"
+echo "않는지 확인하세요:"
 echo
 echo "  sqlite3 $home/brain.db \\"
 echo "    'select seq, role, substr(body, 1, 40) from messages order by seq'"
 echo "  sqlite3 $home/brain.db 'select id, name, is_self from users'"
 echo
-echo "Expected: the conversation from seq 0 in the order it happened, one row"
-echo "in users, and a second ingest of the same payload that changes no count."
+echo "기대 결과: 대화가 seq 0부터 일어난 순서대로 있고, users에는 한 행이 있으며,"
+echo "같은 payload를 다시 수집해도 건수가 바뀌지 않습니다."
 echo
-echo "Nothing outside $home was touched. Remove it when you are done:"
+echo "$home 밖은 아무것도 건드리지 않았습니다. 다 쓰면 지우세요:"
 echo
 echo "  rm -rf $home"
