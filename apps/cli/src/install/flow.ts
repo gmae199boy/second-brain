@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { Connector, DoctorReport, SqliteMigrationResult } from 'second_brain';
 import { formatCheck } from '../commands/admin-doctor.js';
+import type { SelfUserResult } from './store.js';
 import {
   defaultFilesPath,
   defaultMirrorPath,
@@ -82,6 +83,13 @@ export interface InstallConfigIo {
 export interface InstallStore {
   /** Create the file at 0600 if it is not there, then migrate it (AD-20). */
   prepare(path: string): Promise<SqliteMigrationResult>;
+  /**
+   * Record who this brain belongs to, if nobody is yet (AD-12). It is a step
+   * of its own and not part of `prepare`, because a migration can do neither
+   * half of it: SQL cannot read an operating system user name and cannot mint
+   * a UUIDv7. An owner already recorded is left exactly as it is.
+   */
+  self(path: string): Promise<SelfUserResult>;
   /**
    * The same checks `brain admin doctor` runs: the store ones against this
    * file, the machine ones against the home being installed. Both, because an
@@ -239,6 +247,20 @@ export async function runInstall(
     migrated.applied.length === 0
       ? `the schema is already at version ${String(migrated.to)}`
       : `applied ${migrated.applied.join(', ')}, schema version ${String(migrated.to)}`,
+  );
+
+  // Straight after the migrations, because the `users` table arrives with one,
+  // and before anything else, because every session this brain ingests points
+  // at this row (AD-12).
+  const owner = await deps.store.self(store.path);
+  if (!owner.ok) {
+    deps.log(`${owner.code}: ${owner.message}`);
+    return 1;
+  }
+  deps.log(
+    owner.created
+      ? `the brain belongs to ${owner.name}`
+      : `already belongs to ${owner.name}`,
   );
 
   const filesRoot = await deps.files.prepare(filesPath);

@@ -26,6 +26,7 @@ function hash(ordinal: number): string {
 }
 
 const ids = {
+  user: id(0),
   session: id(1),
   message: id(2),
   fileA: id(10),
@@ -87,8 +88,8 @@ async function migratedPath(): Promise<string> {
   expect(applied).toEqual({
     ok: true,
     from: 0,
-    to: 2,
-    applied: ['0001_initial.sql', '0002_files_and_work.sql'],
+    to: 3,
+    applied: ['0001_initial.sql', '0002_files_and_work.sql', '0003_users.sql'],
   });
   return path;
 }
@@ -153,11 +154,18 @@ function blocksHolding(connection: SqliteConnection, index: string, text: string
  * the other one's rows.
  */
 function seed(connection: SqliteConnection): void {
+  // Before the session: `sessions.user_id` points at it (AD-12).
+  insert(connection, 'users', {
+    id: ids.user,
+    name: 'brain-owner',
+    is_self: 1,
+    created_at: SEEDED_AT,
+  });
   insert(connection, 'sessions', {
     id: ids.session,
     harness: 'demo',
     harness_session_id: 'session-0001',
-    user_id: 'owner',
+    user_id: ids.user,
     machine: 'demo-machine',
     started_at: SEEDED_AT,
     ingest_source: 'live',
@@ -280,8 +288,8 @@ async function seeded(): Promise<SqliteConnection> {
   return connection;
 }
 
-describe('the upgrade from 0001 to 0002', () => {
-  it('keeps the rows and the key index of the table it has to rebuild', async () => {
+describe('the upgrade from 0001 through 0003', () => {
+  it('keeps the rows and the keys of the two tables it has to rebuild', async () => {
     // Only the first file, so the database stops at version 1 the way an
     // install from before this story did. A folder the caller names is not
     // held to `SQLITE_SCHEMA_VERSION`, which is how the tests reach it.
@@ -324,8 +332,8 @@ describe('the upgrade from 0001 to 0002', () => {
     expect(await runSqliteMigrations({ path })).toEqual({
       ok: true,
       from: 1,
-      to: 2,
-      applied: ['0002_files_and_work.sql'],
+      to: 3,
+      applied: ['0002_files_and_work.sql', '0003_users.sql'],
     });
 
     const after = open(path);
@@ -339,6 +347,12 @@ describe('the upgrade from 0001 to 0002', () => {
     // `chunks` still refers to `index_configs` by that name, and the rows it
     // points at are the ones that were put back.
     expect(count(after, 'chunks')).toBe(1);
+    // The session survived 0003's rebuild of `sessions`, and the user id it
+    // named got a row to point at rather than being stranded.
+    expect(count(after, 'sessions')).toBe(1);
+    expect(
+      after.database.prepare('select id, name, is_self from users').all(),
+    ).toEqual([{ id: 'owner', name: 'owner', is_self: 0 }]);
     expect(after.database.prepare('pragma foreign_key_check').all()).toEqual([]);
     // The unique index went with the dropped table and had to be recreated.
     expect(

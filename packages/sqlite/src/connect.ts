@@ -78,6 +78,18 @@ export function setRedactAllowed(connection: SqliteConnection, allowed: boolean)
   set(allowed);
 }
 
+/**
+ * Reaching the open connection, or the reason there is none. It is a function
+ * and not the connection itself because the file is opened on the first call
+ * that needs it: the capability modules are handed this rather than a handle,
+ * so importing the bundle still touches no disk (AD-3). The failure is not
+ * cached either: a brain installed between two calls must be found by the
+ * second.
+ */
+export type SqliteConnect = () =>
+  | { ok: true; connection: SqliteConnection }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
 export type OpenSqliteResult =
   | { ok: true; connection: SqliteConnection }
   | { ok: false; code: 'DB_UNAVAILABLE'; message: string };

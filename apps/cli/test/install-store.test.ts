@@ -5,10 +5,16 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { SQLITE_SCHEMA_VERSION } from 'second_brain';
+import { isUuidV7 } from 'second_brain/testing';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { writeConfig } from '../src/config/codec.js';
 import { runtimeChecks } from '../src/doctor/checks.js';
-import { doctorAt, prepareFilesRoot, prepareStore } from '../src/install/store.js';
+import {
+  doctorAt,
+  prepareFilesRoot,
+  prepareSelfUser,
+  prepareStore,
+} from '../src/install/store.js';
 import { writeShim } from '../src/install/shim.js';
 
 /** The built entry point, which is the one a shim the installer wrote names. */
@@ -161,6 +167,59 @@ describe('prepareStore', () => {
     if (result.code !== 'MIGRATION_FAILED') return;
     expect(result.file).toBe('');
     expect(result.message.split('\n')).toHaveLength(1);
+  });
+});
+
+describe('prepareSelfUser', () => {
+  /** Every `users` row of a database, as SQLite holds them. */
+  function users(path: string): Record<string, unknown>[] {
+    const database = new DatabaseSync(path, { readOnly: true });
+    try {
+      return database.prepare('select id, name, is_self from users').all() as Record<
+        string,
+        unknown
+      >[];
+    } finally {
+      database.close();
+    }
+  }
+
+  it('records one owner, with a UUIDv7 and the account it ran as', async () => {
+    const path = join(await scratch(), 'brain.db');
+    expect((await prepareStore(path)).ok).toBe(true);
+
+    const result = await prepareSelfUser(path);
+
+    expect(result).toMatchObject({ ok: true, created: true });
+    const rows = users(path);
+    expect(rows).toHaveLength(1);
+    expect(isUuidV7(String(rows[0]?.id))).toBe(true);
+    expect(rows[0]?.is_self).toBe(1);
+    if (!result.ok) return;
+    expect(rows[0]?.name).toBe(result.name);
+    expect(result.name).not.toBe('');
+  });
+
+  it('keeps the first owner on a second run, id and all', async () => {
+    const path = join(await scratch(), 'brain.db');
+    expect((await prepareStore(path)).ok).toBe(true);
+    expect((await prepareSelfUser(path)).ok).toBe(true);
+    const before = users(path);
+
+    const again = await prepareSelfUser(path);
+
+    // This is the row a database copied from another machine arrives with:
+    // the owner is decided once, by the install that made it (AD-12).
+    expect(again).toMatchObject({ ok: true, created: false });
+    expect(users(path)).toEqual(before);
+  });
+
+  it('says why rather than throwing when there is no database to record it in', async () => {
+    const result = await prepareSelfUser(join(await scratch(), 'brain.db'));
+
+    expect(result).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+    if (result.ok) return;
+    expect(result.message).not.toBe('');
   });
 });
 

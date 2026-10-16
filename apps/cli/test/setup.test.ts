@@ -131,6 +131,16 @@ function rowCounts(path: string): Record<string, number> {
   }
 }
 
+/** The owner row, which the install writes once and never again (AD-12). */
+function owner(path: string): unknown {
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    return database.prepare('select id, name, is_self from users').all();
+  } finally {
+    database.close();
+  }
+}
+
 function spawned(
   command: string,
   args: readonly string[],
@@ -321,6 +331,7 @@ describe('brain setup run against the local SQLite source', () => {
     const configBefore = await readFile(configFilePath(home), 'utf8');
     const shimBefore = await readFile(shimPath(home), 'utf8');
     const countsBefore = rowCounts(join(home, 'brain.db'));
+    const ownerBefore = owner(join(home, 'brain.db'));
 
     const again = await runBrain(args, home);
 
@@ -329,6 +340,9 @@ describe('brain setup run against the local SQLite source', () => {
     expect(await readFile(configFilePath(home), 'utf8')).toBe(configBefore);
     expect(await readFile(shimPath(home), 'utf8')).toBe(shimBefore);
     expect(rowCounts(join(home, 'brain.db'))).toEqual(countsBefore);
+    // The same owner, down to the id: a re-run, and a database carried here
+    // from another machine, both land on this branch (AD-12).
+    expect(owner(join(home, 'brain.db'))).toEqual(ownerBefore);
     expect(again.stdout).toContain('is already current');
     expect(((await stat(shimPath(home))).mode & 0o777).toString(8)).toBe('755');
     expect(((await stat(join(home, 'brain.db'))).mode & 0o777).toString(8)).toBe('600');

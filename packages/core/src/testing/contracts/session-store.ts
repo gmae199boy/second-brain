@@ -1,6 +1,6 @@
 import type { Message } from '../../domain/message.js';
 import type { Session } from '../../domain/session.js';
-import type { SessionStore } from '../../ports/store.js';
+import type { SessionStore, UserStore } from '../../ports/store.js';
 import {
   assertEqual,
   assertNotOk,
@@ -12,21 +12,31 @@ import {
   otherSessionId,
   sampleEnsureSessionInput,
   sampleIngestBatch,
+  sampleSelfUserInput,
   sampleSessionId,
   sampleSessionToken,
   unknownSessionToken,
 } from '../fixtures.js';
 
 /**
- * The session capability: find-or-create, an idempotent batch write, and a
- * read by session token. Every case gets a fresh, empty subject.
+ * What the session cases run against. It is the session capability plus the
+ * identity one, because a session belongs to a user and a real adapter has the
+ * foreign key to prove it (AD-12): a case cannot create a session without
+ * first making the owner the fixture points at.
  */
-export function sessionStoreContract(): ContractCase<SessionStore>[] {
+export type SessionStoreSubject = SessionStore & UserStore;
+
+/**
+ * The session capability: find-or-create, an idempotent batch write that owns
+ * `seq`, and a read by session token. Every case gets a fresh, empty subject.
+ */
+export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
   return [
-    contractCase<SessionStore>(
+    contractCase<SessionStoreSubject>(
       'ensureSession creates the row once and keeps the first id',
       async (make) => {
         await withSubject(make, async (store) => {
+          await owner(store);
           const first = await store.ensureSession(
             sampleEnsureSessionInput({ id: sampleSessionId }),
           );
@@ -59,10 +69,11 @@ export function sessionStoreContract(): ContractCase<SessionStore>[] {
       },
     ),
 
-    contractCase<SessionStore>(
+    contractCase<SessionStoreSubject>(
       'ensureSession keeps the key, the tags and the immutable columns',
       async (make) => {
         await withSubject(make, async (store) => {
+          await owner(store);
           const input = sampleEnsureSessionInput();
           const created = await store.ensureSession(input);
           assertOk(created, 'ensureSession failed');
@@ -100,17 +111,17 @@ export function sessionStoreContract(): ContractCase<SessionStore>[] {
 
           // A second ensureSession for the same key must find, not overwrite:
           // the key, the tags and the immutable columns are decided once, by
-          // whoever created the session (AD-12).
+          // whoever created the session (AD-12). The user id is not proposed
+          // differently here: a real adapter would refuse an id with no row.
           const again = await store.ensureSession(
             sampleEnsureSessionInput({
               id: otherSessionId,
-              userId: 'someone-else',
               machine: 'other-machine',
               startedAt: new Date('2027-06-07T08:09:10.000Z'),
               ingestSource: 'import',
-              workspaceId: '01940000-0000-7000-8000-00000000000a',
-              projectId: '01940000-0000-7000-8000-00000000000b',
-              worktreeId: '01940000-0000-7000-8000-00000000000c',
+              workspaceId: '01940000-0000-7000-8000-00000000001a',
+              projectId: '01940000-0000-7000-8000-00000000001b',
+              worktreeId: '01940000-0000-7000-8000-00000000001c',
             }),
           );
           assertOk(again, 'the second ensureSession failed');
@@ -123,10 +134,11 @@ export function sessionStoreContract(): ContractCase<SessionStore>[] {
       },
     ),
 
-    contractCase<SessionStore>(
+    contractCase<SessionStoreSubject>(
       'ingest adds nothing the second time the same batch arrives',
       async (make) => {
         await withSubject(make, async (store) => {
+          await owner(store);
           assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
           const batch = sampleIngestBatch();
 
@@ -161,14 +173,20 @@ export function sessionStoreContract(): ContractCase<SessionStore>[] {
             afterFirst.toolNotes.length,
             'replaying a batch changed the tool note count',
           );
+          assertEqual(
+            afterSecond.messages.map((message) => message.seq),
+            afterFirst.messages.map((message) => message.seq),
+            'replaying a batch renumbered the messages that were already stored',
+          );
         });
       },
     ),
 
-    contractCase<SessionStore>(
-      'ingest stores the messages and the tool notes of the batch',
+    contractCase<SessionStoreSubject>(
+      'ingest stores the batch in its own order, numbering seq from 0',
       async (make) => {
         await withSubject(make, async (store) => {
+          await owner(store);
           const created = await store.ensureSession(sampleEnsureSessionInput());
           assertOk(created, 'ensureSession failed');
           const batch = sampleIngestBatch();
@@ -185,12 +203,24 @@ export function sessionStoreContract(): ContractCase<SessionStore>[] {
           assertEqual(
             read.messages.map(bodyOf),
             batch.messages.map((message) => message.body),
-            'the stored message bodies are not the ones the batch carried',
+            'the stored message bodies are not the ones the batch carried, in its order',
           );
+          // `seq` is the store's, and the first batch of an empty session runs
+          // 0, 1, 2, … in the order the batch carried (AD-8).
           assertEqual(
             read.messages.map((message) => message.seq),
-            batch.messages.map((message) => message.seq),
-            'readSession must return the messages in seq order',
+            batch.messages.map((_message, index) => index),
+            'the first batch of a session must be numbered 0, 1, 2, … in batch order',
+          );
+          assertEqual(
+            read.messages.map((message) => message.id),
+            batch.messages.map((message) => message.id),
+            'the stored rows must keep the ids the batch minted (AD-8)',
+          );
+          assertEqual(
+            read.toolNotes.map((note) => note.id),
+            batch.toolNotes.map((note) => note.id),
+            'the stored tool notes must keep the ids the batch minted (AD-8)',
           );
           assertEqual(
             read.toolNotes.map((note) => note.target).slice().sort(),
@@ -208,10 +238,107 @@ export function sessionStoreContract(): ContractCase<SessionStore>[] {
       },
     ),
 
-    contractCase<SessionStore>(
+    contractCase<SessionStoreSubject>(
+      'a batch that carries on from the last one takes the numbers after it',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
+
+          // The transcript as it stood after one turn, then the whole of it:
+          // exactly what a second hook on a longer file hands over.
+          const first = sampleIngestBatch({ only: ['msg-1', 'msg-2'] });
+          assertOk(await store.ingest(first), 'the first ingest failed');
+          const second = sampleIngestBatch({ idStart: 100 });
+
+          const result = await store.ingest(second);
+          assertOk(result, 'the second ingest failed');
+          assertEqual(
+            result.inserted.messages,
+            second.messages.length - first.messages.length,
+            'only the messages the session did not have yet may be inserted',
+          );
+
+          const read = await store.readSession(sampleSessionToken);
+          assertOk(read, 'the session could not be read');
+          assertEqual(
+            read.messages.map((message) => message.seq),
+            read.messages.map((_message, index) => index),
+            'an appended batch must carry the numbering on with no gaps',
+          );
+          assertEqual(
+            read.messages.map((message) => message.harnessMessageId),
+            second.messages.map((message) => message.harnessMessageId),
+            'the stored messages are not the ones the two batches carried, in order',
+          );
+          assertEqual(
+            read.messages.slice(0, first.messages.length).map((message) => message.id),
+            first.messages.map((message) => message.id),
+            'a second ingest must leave the ids of the stored messages alone',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
+      'a batch whose front changed leaves the stored seq, body and id alone',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
+
+          // What a compact or a fork does: the messages that are already
+          // stored come back with something new in front of them.
+          const stored = sampleIngestBatch({ only: ['msg-2', 'msg-3'] });
+          assertOk(await store.ingest(stored), 'the first ingest failed');
+          const before = await store.readSession(sampleSessionToken);
+          assertOk(before, 'the session could not be read after the first ingest');
+
+          const rewritten = sampleIngestBatch({ idStart: 200 });
+          const result = await store.ingest(rewritten);
+          assertOk(result, 'the second ingest failed');
+          assertEqual(
+            result.inserted.messages,
+            1,
+            'only the message that was not stored yet may be inserted',
+          );
+
+          const after = await store.readSession(sampleSessionToken);
+          assertOk(after, 'the session could not be read after the second ingest');
+          const byId = new Map(
+            after.messages.map((message) => [message.harnessMessageId, message]),
+          );
+          for (const was of before.messages) {
+            const now = byId.get(was.harnessMessageId);
+            if (now === undefined) {
+              assertTrue(false, `message ${was.harnessMessageId} disappeared`);
+              continue;
+            }
+            assertEqual(now.seq, was.seq, `the seq of ${was.harnessMessageId} changed`);
+            assertEqual(now.id, was.id, `the id of ${was.harnessMessageId} changed`);
+            assertEqual(now.body, was.body, `the body of ${was.harnessMessageId} changed`);
+          }
+          // The newcomer goes at the end of the numbering, not at the front of
+          // it: nothing already stored may be renumbered (AD-4).
+          const newcomer = byId.get('msg-1');
+          if (newcomer === undefined) {
+            assertTrue(false, 'the message that arrived in front was not stored at all');
+            return;
+          }
+          assertEqual(
+            newcomer.seq,
+            before.messages.length,
+            'a message that arrived in front must take the next free number, not 0',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
       'ingest advances the cursor and records the parser version',
       async (make) => {
         await withSubject(make, async (store) => {
+          await owner(store);
           assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
           const batch = sampleIngestBatch();
           assertOk(await store.ingest(batch), 'ingest failed');
@@ -228,14 +355,20 @@ export function sessionStoreContract(): ContractCase<SessionStore>[] {
             batch.tracking.cursor,
             'the session did not advance to the cursor of the batch',
           );
+          assertEqual(
+            read.session.ingestedAt,
+            batch.tracking.ingestedAt,
+            'the session must record the instant the batch carried, not one of its own (AD-13)',
+          );
         });
       },
     ),
 
-    contractCase<SessionStore>(
+    contractCase<SessionStoreSubject>(
       'ingest warns with CURSOR_RESET when the parser read from the start',
       async (make) => {
         await withSubject(make, async (store) => {
+          await owner(store);
           assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
           const result = await store.ingest(
             sampleIngestBatch({ tracking: { cursorReset: true } }),
@@ -250,7 +383,7 @@ export function sessionStoreContract(): ContractCase<SessionStore>[] {
       },
     ),
 
-    contractCase<SessionStore>(
+    contractCase<SessionStoreSubject>(
       'ingest reports an unknown session as a value',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -266,10 +399,11 @@ export function sessionStoreContract(): ContractCase<SessionStore>[] {
       },
     ),
 
-    contractCase<SessionStore>(
+    contractCase<SessionStoreSubject>(
       'readSession reports an unknown token as a value',
       async (make) => {
         await withSubject(make, async (store) => {
+          await owner(store);
           assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
           const result = await store.readSession(unknownSessionToken);
           assertNotOk(result, 'readSession of a token nobody stored');
@@ -283,6 +417,16 @@ export function sessionStoreContract(): ContractCase<SessionStore>[] {
       },
     ),
   ];
+}
+
+/**
+ * The owner `sampleEnsureSessionInput` points at. Every case that creates a
+ * session starts with this: `sessions.user_id` is a foreign key in a real
+ * adapter, so a session with no user is a row the database refuses (AD-12).
+ */
+async function owner(store: UserStore): Promise<void> {
+  const created = await store.ensureSelfUser(sampleSelfUserInput());
+  assertOk(created, 'the owner row could not be created, so no session can be');
 }
 
 function bodyOf(message: Message): string {

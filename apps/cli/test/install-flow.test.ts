@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Connector, DoctorReport, SqliteMigrationResult } from 'second_brain';
+import type { SelfUserResult } from '../src/install/store.js';
 import { memoryConnector, type MemoryConnector } from 'second_brain/testing';
 import type { WriteConfigInput } from '../src/config/codec.js';
 import { HOME_ENV } from '../src/config/paths.js';
@@ -131,6 +132,8 @@ function fakePrompts(answers: Answers): Prompts {
 interface StoreWorld {
   /** What `prepare` answers. A fresh install by default. */
   prepare?: SqliteMigrationResult;
+  /** What the owner step answers. A first run that recorded it by default. */
+  self?: SelfUserResult;
   /** Doctor's own verdict on the file. */
   walFails?: boolean;
 }
@@ -138,6 +141,8 @@ interface StoreWorld {
 interface Store extends InstallStore {
   /** Every path prepared, in order. */
   prepared: string[];
+  /** Every path the owner step was pointed at, in order. */
+  owned: string[];
   doctored: string[];
   /** Every home doctor was pointed at, in order. */
   doctoredHomes: string[];
@@ -145,11 +150,13 @@ interface Store extends InstallStore {
 
 function fakeStore(world: StoreWorld = {}): Store {
   const prepared: string[] = [];
+  const owned: string[] = [];
   const doctored: string[] = [];
   const doctoredHomes: string[] = [];
 
   return {
     prepared,
+    owned,
     doctored,
     doctoredHomes,
     async prepare(path) {
@@ -158,10 +165,18 @@ function fakeStore(world: StoreWorld = {}): Store {
         world.prepare ?? {
           ok: true,
           from: 0,
-          to: 2,
-          applied: ['0001_initial.sql', '0002_files_and_work.sql'],
+          to: 3,
+          applied: [
+            '0001_initial.sql',
+            '0002_files_and_work.sql',
+            '0003_users.sql',
+          ],
         }
       );
+    },
+    async self(path) {
+      owned.push(path);
+      return world.self ?? { ok: true, name: 'brain-owner', created: true };
     },
     async doctor(home, path): Promise<DoctorReport> {
       doctoredHomes.push(home);
@@ -174,7 +189,7 @@ function fakeStore(world: StoreWorld = {}): Store {
           : { id: 'wal', status: 'ok', detail: 'wal' },
         { id: 'fts5-trigram', status: 'ok', detail: 'fts5 with the trigram tokenizer' },
         { id: 'foreign-keys', status: 'ok', detail: 'enforced on this connection' },
-        { id: 'schema-version', status: 'ok', detail: '2' },
+        { id: 'schema-version', status: 'ok', detail: '3' },
         { id: 'config', status: 'ok', detail: join(home, 'config.toml') },
         { id: 'shim', status: 'ok', detail: shimPath(home) },
         { id: 'node-path', status: 'ok', detail: 'node 24.16.0 at /usr/bin/node' },
@@ -363,6 +378,10 @@ describe('the installer flow on an empty folder', () => {
           order.push('store');
           return store.prepare(path);
         },
+        self: async (path) => {
+          order.push('owner');
+          return store.self(path);
+        },
         doctor: async (home, path) => {
           order.push('doctor');
           return store.doctor(home, path);
@@ -383,7 +402,7 @@ describe('the installer flow on an empty folder', () => {
     };
 
     expect(await runInstallFlow([], ENV, deps)).toBe(0);
-    expect(order).toEqual(['config', 'store', 'files', 'shim', 'doctor']);
+    expect(order).toEqual(['config', 'store', 'owner', 'files', 'shim', 'doctor']);
   });
 
   it('says what the migrations applied, and the modes it left behind', async () => {
@@ -391,10 +410,39 @@ describe('the installer flow on an empty folder', () => {
 
     await runInstallFlow([], ENV, kit.deps);
 
-    expect(kit.output()).toContain('applied 0001_initial.sql, 0002_files_and_work.sql');
-    expect(kit.output()).toContain('schema version 2');
+    expect(kit.output()).toContain(
+      'applied 0001_initial.sql, 0002_files_and_work.sql, 0003_users.sql',
+    );
+    expect(kit.output()).toContain('schema version 3');
     expect(kit.output()).toContain(`created ${FILES} (mode 0700)`);
     expect(kit.output()).toContain(`wrote ${shimPath(HOME)} (mode 0755)`);
+  });
+
+  it('records the owner against the database it just migrated', async () => {
+    const kit = harness();
+
+    await runInstallFlow([], ENV, kit.deps);
+
+    expect(kit.store.owned).toEqual([STORE]);
+    expect(kit.output()).toContain('the brain belongs to brain-owner');
+  });
+
+  it('exits 1 and stops when the owner could not be recorded', async () => {
+    const kit = harness({
+      store: {
+        self: { ok: false, code: 'DB_UNAVAILABLE', message: 'the file went away' },
+      },
+    });
+
+    const exit = await runInstallFlow([], ENV, kit.deps);
+
+    // Nothing after it runs: a brain nobody owns cannot ingest a session, so
+    // finishing the install would report an install that does not work.
+    expect(exit).toBe(1);
+    expect(kit.output()).toContain('DB_UNAVAILABLE: the file went away');
+    expect(kit.files.prepared).toEqual([]);
+    expect(kit.shimmed).toEqual([]);
+    expect(kit.store.doctored).toEqual([]);
   });
 
   it('exits 1 when doctor fails a check, having finished every step', async () => {
@@ -574,14 +622,20 @@ describe('the installer flow run a second time', () => {
     const kit = harness({
       recorded: true,
       filesCreated: false,
-      store: { prepare: { ok: true, from: 2, to: 2, applied: [] } },
+      store: {
+        prepare: { ok: true, from: 3, to: 3, applied: [] },
+        self: { ok: true, name: 'brain-owner', created: false },
+      },
     });
 
     const exit = await runInstallFlow([], ENV, kit.deps);
 
     expect(exit).toBe(0);
     expect(kit.written).toEqual([kept()]);
-    expect(kit.output()).toContain('the schema is already at version 2');
+    expect(kit.output()).toContain('the schema is already at version 3');
+    // The owner is decided once: a re-run says whose it is and changes nothing
+    // (AD-12).
+    expect(kit.output()).toContain('already belongs to brain-owner');
     expect(kit.output()).toContain('is already there');
   });
 

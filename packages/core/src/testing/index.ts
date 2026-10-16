@@ -42,8 +42,10 @@ export {
   schemaStoreContract,
   sessionStoreContract,
   storeContract,
+  userStoreContract,
   type ConnectorSubject,
   type ParserSubject,
+  type SessionStoreSubject,
 } from './contracts/index.js';
 export {
   memorySchemaStore,
@@ -63,6 +65,11 @@ export {
   type MemoryParserOptions,
 } from './fakes/parser.js';
 export {
+  memoryTranscriptReader,
+  type MemoryTranscriptReader,
+  type MemoryTranscriptReaderOptions,
+} from './fakes/transcript.js';
+export {
   memoryConnector,
   type MemoryConnector,
   type MemoryConnectorOptions,
@@ -73,12 +80,16 @@ export { fixedClock, steppingClock } from './fakes/clock.js';
 export { sequenceIdGen, type SequenceIdGenOptions } from './fakes/id-gen.js';
 export {
   otherSessionId,
+  otherUserId,
   sampleEnsureSessionInput,
   sampleIngestBatch,
+  sampleSelfUserInput,
   sampleSessionId,
   sampleSessionKey,
   sampleSessionToken,
+  sampleUserId,
   unknownSessionToken,
+  type SampleIngestBatchOverrides,
 } from './fixtures.js';
 export { smallHash } from './hash.js';
 export { UUID_V7_PATTERN, isUuidV7 } from './uuid-v7.js';

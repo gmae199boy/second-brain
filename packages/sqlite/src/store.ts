@@ -1,14 +1,22 @@
 import {
   BUSY_TIMEOUT_MS,
   parseInstant,
-  type HealthStore,
   type ReadSchemaVersionResult,
   type SchemaStore,
+  type Store,
   type StoreHealth,
   type StoreProbe,
 } from '@second-brain/core';
 import { sql } from 'kysely';
-import { describe, isBusy, openSqlite, type SqliteConnection } from './connect.js';
+import {
+  describe,
+  isBusy,
+  openSqlite,
+  type SqliteConnect,
+  type SqliteConnection,
+} from './connect.js';
+import { sqliteSessionStore } from './sessions.js';
+import { sqliteUserStore } from './users.js';
 
 export interface SqliteStoreOptions {
   /** Path of the database file. It is never created from here (AD-20). */
@@ -39,17 +47,18 @@ interface SchemaVersionRow {
 }
 
 /**
- * Build a SQLite-backed `HealthStore` and `SchemaStore` over one file.
+ * Build a SQLite-backed `Store` and `SchemaStore` over one file.
  *
  * The file is opened on the first call, not on import and not in this factory,
  * so importing the bundle touches no disk (AD-3). A file that is not there is
  * `DB_UNAVAILABLE` every time it is asked, and never becomes one by being
  * asked.
  *
- * It implements the health and schema-version capabilities only; `SessionStore`
- * arrives with the tables, in epic 2, and the return type widens then (AD-10).
+ * It implements every capability of `Store` -- health, sessions, identity --
+ * plus the schema version, so the whole `Store` contract applies to it
+ * (AD-10).
  */
-export function sqliteStore(options: SqliteStoreOptions): HealthStore & SchemaStore {
+export function sqliteStore(options: SqliteStoreOptions): Store & SchemaStore {
   const { path, busyTimeoutMs = BUSY_TIMEOUT_MS.command } = options;
 
   let connection: SqliteConnection | undefined;
@@ -58,17 +67,18 @@ export function sqliteStore(options: SqliteStoreOptions): HealthStore & SchemaSt
    * The open connection, or the reason there is none. The failure is not
    * cached: a brain installed between two calls must be found by the second.
    */
-  function connect():
-    | { ok: true; connection: SqliteConnection }
-    | { ok: false; code: 'DB_UNAVAILABLE'; message: string } {
+  const connect: SqliteConnect = () => {
     if (connection !== undefined) return { ok: true, connection };
     const opened = openSqlite({ path, busyTimeoutMs });
     if (!opened.ok) return opened;
     connection = opened.connection;
     return { ok: true, connection };
-  }
+  };
 
   return {
+    ...sqliteSessionStore(connect),
+    ...sqliteUserStore(connect),
+
     async checkHealth(): Promise<StoreHealth> {
       const opened = connect();
       if (!opened.ok) {

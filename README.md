@@ -40,15 +40,16 @@ It then asks whether to turn embeddings on — which is still "not supported
 yet", so saying yes only says so and writes nothing.
 
 After the questions it writes the configuration, creates and migrates the
-database file, creates the file store's root at mode 0700
-(`~/.second_brain/files` by default), writes the shim (below), offers to connect
-the harnesses it found, and finishes by running the same checks as
-`brain admin doctor`. Exit 0 means every check passed. Running it again changes
-nothing: it offers the recorded paths as the defaults, applies no migration the
-file already has, leaves the index config rows the migrations wrote alone, and
-leaves the shim and the harness entries alone when they already say the right
-thing. Point it at another database file and it makes a new one — the old file
-stays exactly where it is, and the install says so in one line.
+database file, records who the brain belongs to, creates the file store's root
+at mode 0700 (`~/.second_brain/files` by default), writes the shim (below),
+offers to connect the harnesses it found, and finishes by running the same
+checks as `brain admin doctor`. Exit 0 means every check passed. Running it
+again changes nothing: it offers the recorded paths as the defaults, applies no
+migration the file already has, leaves the index config rows the migrations
+wrote alone, leaves the owner exactly as it is, and leaves the shim and the
+harness entries alone when they already say the right thing. Point it at
+another database file and it makes a new one — the old file stays exactly
+where it is, and the install says so in one line.
 
 Where there is no terminal to ask in — a script, or CI — `--yes` is the consent,
 and the flags say the rest. Without it the install stops before it writes
@@ -69,6 +70,55 @@ the default) and no harness is connected unless `--connect` names it.
 | `--mirror-path <path>` | Absolute path for the mirror folder |
 | `--connect <harness>` | Connect this harness; repeat it for more than one |
 | `--yes` | Agree in advance to what the install has to do |
+
+## Who the brain belongs to
+
+The install records one row in `users`, the owner, named after the account the
+installer ran as, and every session ingested afterwards points at it. It is an
+install step and not a migration because SQL can do neither half of it: it
+cannot read an operating system user name and cannot mint a UUIDv7.
+
+It is decided once. A second install says `already belongs to <name>` and
+changes nothing — same id, same name — so a database copied to another
+machine keeps the person it was made for, whatever that machine's accounts
+are called.
+Merging two brains, and what to do about a name that no longer matches, is the
+import epic's.
+
+A database that has the table and no owner row cannot attribute a session, so
+ingesting says `USER_MISSING` and names `brain setup run`.
+
+## Read a harness session
+
+```sh
+brain sessions ingest <harness> < the harness's hook payload
+```
+
+It reads the hook payload on stdin, reads the transcript that payload names,
+and appends whatever is not stored yet. This build reads `claude-code`.
+
+It is the one command on a harness hook path, so it follows the hook rules
+whole: exit 0 whatever happened, nothing on stdout when it worked, and one
+line on stderr when it did not — a broken brain never breaks a turn. Running
+it twice over the same transcript inserts nothing the second time, and two
+copies racing each other insert the conversation exactly once between them.
+
+What it stores is the conversation and only the conversation: the person's
+turns and the model's answers. Thinking, tool calls, tool results, the
+editor's own notices, a subagent's conversation and a compact summary are all
+in a transcript and none of them is a turn of it.
+
+Position comes from the file, not the clock: `messages.seq` runs from 0 and is
+chosen when the row is inserted, never by the parser. So a transcript whose
+front was rewritten — a compact, a fork — leaves every stored message's
+number where it was, and whatever arrived in front of them takes the next
+free one.
+
+Nothing registers the hook yet: the Claude Code plugin is a later story. To
+watch one real conversation go in, `tooling/dev/tracer-session.sh` installs a
+throwaway brain in a temporary folder and writes the settings file that points
+a Stop hook at it, then tells you the `claude --settings …` to run. It never
+touches your own `~/.claude/settings.json` or `~/.second_brain`.
 
 ## Re-configure, and connect a harness
 
@@ -169,12 +219,13 @@ at it.
 packages/core/          domain types, use cases, ports -- no runtime dependencies
 packages/sqlite/        the Store port on the local SQLite source -- the originals
 packages/postgres/      the Store port on Postgres + pgvector -- a replica, epic 7
-packages/claude-code/   Claude Code connector (placeholder)
+packages/claude-code/   Claude Code connector: the transcript parser and hook I/O
 packages/modelstudio/   embeddings and reranking (placeholder)
 packages/second_brain/  the one writing surface: re-exports only
 apps/cli/               the brain command
 tooling/bootstrap/      the install entry point: src/ plus its committed build
 tooling/test-db/        dev-only throwaway test databases
+tooling/dev/            dev-only scripts, for checks no test can make
 ```
 
 ## Build

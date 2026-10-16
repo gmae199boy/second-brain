@@ -16,7 +16,12 @@ import {
   type RecordedConfig,
 } from './install/flow.js';
 import { writeShim } from './install/shim.js';
-import { doctorAt, prepareFilesRoot, prepareStore } from './install/store.js';
+import {
+  doctorAt,
+  prepareFilesRoot,
+  prepareSelfUser,
+  prepareStore,
+} from './install/store.js';
 
 /**
  * The installer, as its own entry point. It is deliberately not a command of
@@ -125,6 +130,7 @@ export function systemInstallDeps(): InstallDeps {
     },
     store: {
       prepare: (path: string) => prepareStore(path),
+      self: (path: string) => prepareSelfUser(path),
       doctor: (home: string, path: string) => doctorAt(home, path),
     },
     files: { prepare: prepareFilesRoot },

@@ -1,6 +1,8 @@
 import { connectors } from '../connectors/index.js';
 import type { CommandSpec } from '../dispatch.js';
+import { harnesses } from '../harnesses.js';
 import { adminDoctor } from './admin-doctor.js';
+import { sessionsIngestCommand } from './sessions-ingest.js';
 import { setupConnectCommand } from './setup-connect.js';
 import { setupRun } from './setup-run.js';
 
@@ -15,6 +17,7 @@ import { setupRun } from './setup-run.js';
  */
 export const commands: readonly CommandSpec[] = [
   adminDoctor,
+  sessionsIngestCommand(harnesses),
   setupRun,
   setupConnectCommand(connectors),
 ];

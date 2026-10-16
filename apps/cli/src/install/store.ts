@@ -1,4 +1,5 @@
 import { chmod, mkdir, open } from 'node:fs/promises';
+import { userInfo } from 'node:os';
 import { dirname } from 'node:path';
 import {
   SQLITE_SCHEMA_VERSION,
@@ -9,6 +10,8 @@ import {
   type SqliteMigrationResult,
 } from 'second_brain';
 import { runtimeChecks } from '../doctor/checks.js';
+import { systemClock } from '../runtime/clock.js';
+import { uuidV7IdGen } from '../runtime/id-gen.js';
 
 /**
  * The installer's side of the local source: the database file, the blob root,
@@ -63,6 +66,54 @@ export async function prepareStore(path: string): Promise<SqliteMigrationResult>
   }
 
   return migrated;
+}
+
+/**
+ * What `prepareSelfUser` found or made, or why it could not. A failure is a
+ * value for the same reason the store's is: the flow has one line to print and
+ * an exit code to return.
+ */
+export type SelfUserResult =
+  | {
+      ok: true;
+      /** The owner's name, for the line the install prints. */
+      name: string;
+      /** Whether this run is the one that recorded it. */
+      created: boolean;
+    }
+  | { ok: false; code: string; message: string };
+
+/**
+ * Record who this brain belongs to, if nobody is recorded yet (AD-12).
+ *
+ * It is an install step and not a migration because SQL can do neither half of
+ * it: a migration cannot read an operating system user name and cannot mint a
+ * UUIDv7. It runs straight after the migrations, because the `users` table
+ * arrives with one, and before anything can ingest, because `sessions.user_id`
+ * is a foreign key into it.
+ *
+ * An owner that is already there is left exactly as it is — same id, same name.
+ * A database carried from another machine keeps the person it was made for, and
+ * what to do about a name that no longer matches the machine is epic 5's
+ * (Boundaries).
+ */
+export async function prepareSelfUser(path: string): Promise<SelfUserResult> {
+  const store = sqliteStore({ path });
+  try {
+    const ensured = await store.ensureSelfUser({
+      id: uuidV7IdGen().next(),
+      // The account the installer is running as. `userInfo` throws on a user
+      // with no passwd entry, which the catch below turns into a line.
+      name: userInfo().username,
+      createdAt: systemClock.now(),
+    });
+    if (!ensured.ok) return ensured;
+    return { ok: true, name: ensured.user.name, created: ensured.created };
+  } catch (error) {
+    return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) };
+  } finally {
+    await store.close();
+  }
 }
 
 /**

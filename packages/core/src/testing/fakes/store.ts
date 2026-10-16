@@ -6,19 +6,19 @@ import {
   type SessionToken,
 } from '../../domain/session-token.js';
 import type { ToolNote } from '../../domain/tool-note.js';
-import type { Clock } from '../../ports/clock.js';
-import type { IdGen } from '../../ports/id-gen.js';
+import type { User } from '../../domain/user.js';
 import type {
+  EnsureSelfUserInput,
+  EnsureSelfUserResult,
   EnsureSessionInput,
   EnsureSessionResult,
   IngestResult,
+  ReadSelfUserResult,
   ReadSessionResult,
   Store,
   StoreHealth,
   StoreWarningCode,
 } from '../../ports/store.js';
-import { sequenceIdGen } from './id-gen.js';
-import { fixedClock } from './clock.js';
 
 const DEFAULT_HEALTH: StoreHealth = {
   ok: true,
@@ -26,20 +26,14 @@ const DEFAULT_HEALTH: StoreHealth = {
   source: { location: 'memory', probes: [{ id: 'vector', ok: true, detail: '0.8.7' }] },
 };
 
-/** 2026-01-01T00:00:00Z, so the default ids and timestamps are reproducible. */
-const DEFAULT_INSTANT = new Date('2026-01-01T00:00:00.000Z');
-
 export interface MemoryStoreOptions {
   /** What `checkHealth` answers. Defaults to a healthy store. */
   health?: StoreHealth;
-  /** Ids for the rows this store creates. Defaults to a deterministic sequence. */
-  idGen?: IdGen;
-  /** Source of `ingestedAt`. Defaults to a fixed instant. */
-  clock?: Clock;
 }
 
 /** What the store holds, for the owning test. Contract cases never use it. */
 export interface MemoryStoreSnapshot {
+  users: readonly User[];
   sessions: readonly Session[];
   messages: readonly Message[];
   toolNotes: readonly ToolNote[];
@@ -54,18 +48,27 @@ export interface MemoryStore extends Store {
  * The in-memory `Store`: the reference every real adapter is measured against.
  * It keeps rows in maps keyed by the natural idempotency keys of the Table
  * Contract, so a replayed batch adds nothing (AD-8).
+ *
+ * It mints nothing and reads no clock: every id and every instant arrives in
+ * the input, exactly as a real adapter's does (AD-8, AD-13). The one thing it
+ * decides for itself is `seq`, and it decides it the way the contract requires
+ * — `max(seq) + 1` for the session, in batch order, skipping the messages it
+ * already holds — so a transcript whose front was rewritten leaves the numbers
+ * that are already stored alone (AD-4).
  */
 export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
-  const {
-    health = DEFAULT_HEALTH,
-    idGen = sequenceIdGen({ timestampMs: DEFAULT_INSTANT.getTime() }),
-    clock = fixedClock(DEFAULT_INSTANT),
-  } = options;
+  const { health = DEFAULT_HEALTH } = options;
 
+  const users = new Map<string, User>();
   const sessions = new Map<SessionToken, Session>();
   const messages = new Map<SessionToken, Message[]>();
   const toolNotes = new Map<SessionToken, ToolNote[]>();
   let closes = 0;
+
+  /** The one `isSelf` row, or undefined. A map, so a snapshot can show two. */
+  function self(): User | undefined {
+    return [...users.values()].find((user) => user.isSelf);
+  }
 
   return {
     async checkHealth(): Promise<StoreHealth> {
@@ -74,6 +77,26 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
 
     async close(): Promise<void> {
       closes += 1;
+    },
+
+    async ensureSelfUser(input: EnsureSelfUserInput): Promise<EnsureSelfUserResult> {
+      const existing = self();
+      if (existing !== undefined) {
+        return { ok: true, created: false, user: { ...existing } };
+      }
+      const user: User = {
+        id: input.id,
+        name: input.name,
+        isSelf: true,
+        createdAt: input.createdAt,
+      };
+      users.set(user.id, user);
+      return { ok: true, created: true, user: { ...user } };
+    },
+
+    async readSelfUser(): Promise<ReadSelfUserResult> {
+      const existing = self();
+      return { ok: true, user: existing === undefined ? null : { ...existing } };
     },
 
     async ensureSession(input: EnsureSessionInput): Promise<EnsureSessionResult> {
@@ -123,22 +146,29 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       let insertedMessages = 0;
       let insertedToolNotes = 0;
 
+      // Where this session's numbering carries on from. Read once, before any
+      // insert, so the batch is numbered in its own order (AD-8).
+      let nextSeq = storedMessages.reduce((highest, stored) => {
+        return stored.seq >= highest ? stored.seq + 1 : highest;
+      }, 0);
+      const storedIds = new Set(storedMessages.map((stored) => stored.harnessMessageId));
+
       for (const parsed of batch.messages) {
-        const duplicate = storedMessages.some(
-          (stored) =>
-            stored.harnessMessageId === parsed.harnessMessageId || stored.seq === parsed.seq,
-        );
-        if (duplicate) continue;
+        // Only the harness message id decides a duplicate: `seq` is this
+        // store's own, so nothing about it can make a message a replay.
+        if (storedIds.has(parsed.harnessMessageId)) continue;
+        storedIds.add(parsed.harnessMessageId);
         storedMessages.push({
-          id: idGen.next(),
+          id: parsed.id,
           sessionId: session.id,
           harnessMessageId: parsed.harnessMessageId,
-          seq: parsed.seq,
+          seq: nextSeq,
           role: parsed.role,
           model: parsed.model,
           body: parsed.body,
           occurredAt: parsed.occurredAt,
         });
+        nextSeq += 1;
         insertedMessages += 1;
       }
 
@@ -150,7 +180,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         );
         if (duplicate) continue;
         storedToolNotes.push({
-          id: idGen.next(),
+          id: parsed.id,
           sessionId: session.id,
           harnessMessageId: parsed.harnessMessageId,
           ordinal: parsed.ordinal,
@@ -172,7 +202,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         cursor: batch.tracking.cursor ?? session.cursor,
         parserVersion: batch.tracking.parserVersion,
         endedAt: batch.tracking.endedAt ?? session.endedAt,
-        ingestedAt: clock.now(),
+        ingestedAt: batch.tracking.ingestedAt,
       });
 
       const warnings: StoreWarningCode[] = batch.tracking.cursorReset
@@ -195,16 +225,27 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
           message: `no session for ${token}`,
         };
       }
+      const sessionToolNotes = [...(toolNotes.get(token) ?? [])];
+      const seqOf = new Map(
+        (messages.get(token) ?? []).map((message) => [message.harnessMessageId, message.seq]),
+      );
+      sessionToolNotes.sort((left, right) => {
+        const bySeq =
+          (seqOf.get(left.harnessMessageId) ?? Number.MAX_SAFE_INTEGER) -
+          (seqOf.get(right.harnessMessageId) ?? Number.MAX_SAFE_INTEGER);
+        return bySeq === 0 ? left.ordinal - right.ordinal : bySeq;
+      });
       return {
         ok: true,
         session: { ...session },
         messages: [...(messages.get(token) ?? [])],
-        toolNotes: [...(toolNotes.get(token) ?? [])],
+        toolNotes: sessionToolNotes,
       };
     },
 
     snapshot(): MemoryStoreSnapshot {
       return {
+        users: [...users.values()],
         sessions: [...sessions.values()],
         messages: [...messages.values()].flat(),
         toolNotes: [...toolNotes.values()].flat(),

@@ -11,10 +11,13 @@ export {
   sqliteErrcode,
   type OpenSqliteOptions,
   type OpenSqliteResult,
+  type SqliteConnect,
   type SqliteConnection,
 } from './connect.js';
 export { withWrite, type WriteOptions, type WriteResult } from './write.js';
 export { sqliteStore, type SqliteStoreOptions } from './store.js';
+export { sqliteSessionStore } from './sessions.js';
+export { sqliteUserStore } from './users.js';
 export {
   SQLITE_MIGRATIONS_DIRECTORY,
   SQLITE_SCHEMA_VERSION,

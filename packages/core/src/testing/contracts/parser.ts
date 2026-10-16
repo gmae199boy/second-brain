@@ -49,42 +49,47 @@ export function parserContract(): ContractCase<ParserSubject>[] {
       });
     }),
 
-    contractCase<ParserSubject>('seq starts at 0 and grows by one', async (make) => {
-      await withSubject(make, async ({ parser, readable }) => {
-        for (const content of readable) {
-          const result = parser.parse(content);
-          assertOk(result, 'a readable transcript did not parse');
-          assertEqual(
-            result.messages.map((message) => message.seq),
-            result.messages.map((_message, index) => index),
-            'message seq must run 0, 1, 2, … with no gaps (AD-4)',
-          );
-        }
-      });
-    }),
+    contractCase<ParserSubject>(
+      'the harness message ids of one parse do not repeat',
+      async (make) => {
+        await withSubject(make, async ({ parser, readable }) => {
+          for (const content of readable) {
+            const result = parser.parse(content);
+            assertOk(result, 'a readable transcript did not parse');
+            // The parser says nothing about `seq` — the store decides that
+            // inside the insert (AD-8) — so the harness message id is the whole
+            // of what identifies a message. Two messages sharing one would make
+            // the second a replay of the first: idempotency would silently drop
+            // it, and nobody would be told (AD-4, NFR-2).
+            const seen = new Set<string>();
+            for (const message of result.messages) {
+              assertTrue(
+                !seen.has(message.harnessMessageId),
+                `two messages of one parse share the harness id ${message.harnessMessageId}`,
+              );
+              seen.add(message.harnessMessageId);
+            }
+          }
+        });
+      },
+    ),
 
     contractCase<ParserSubject>('every message is well formed', async (make) => {
       await withSubject(make, async ({ parser, readable }) => {
         for (const content of readable) {
           const result = parser.parse(content);
           assertOk(result, 'a readable transcript did not parse');
-          const seen = new Set<string>();
           for (const message of result.messages) {
             assertNonEmptyString(
               message.harnessMessageId,
               'a message must carry the harness message id',
             );
             assertTrue(
-              !seen.has(message.harnessMessageId),
-              `two messages share the harness id ${message.harnessMessageId}`,
-            );
-            seen.add(message.harnessMessageId);
-            assertTrue(
               message.role === 'user' || message.role === 'assistant',
               `a message role must be user or assistant, got ${message.role}`,
             );
             assertValidDate(message.occurredAt, 'a message must carry when it was uttered');
-            assertInteger(message.seq, 'a message seq must be an integer');
+            assertNonEmptyString(message.body, 'a message must carry a body');
           }
         }
       });

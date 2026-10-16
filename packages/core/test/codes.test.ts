@@ -59,6 +59,7 @@ describe('the error codes', () => {
       CONFIG_INVALID: 2,
       DB_UNAVAILABLE: 2,
       SESSION_REQUIRED: 2,
+      USER_MISSING: 2,
       DB_LOCKED: 1,
       SCHEMA_MISMATCH: 1,
       MIGRATION_FAILED: 1,

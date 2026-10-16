@@ -12,9 +12,10 @@ export interface MemoryParserOptions {
 
 /**
  * A parser over a neutral JSON transcript, so the parser contract can run
- * without any harness format in Core (AD-4). `seq` comes from the order of the
- * messages and the tool-note ordinal from the order inside a message, which
- * makes the result a pure function of the content (AD-4).
+ * without any harness format in Core (AD-4). The messages come out in the
+ * order the file holds them and the tool-note ordinal from the order inside a
+ * message, which makes the result a pure function of the content (AD-4). It
+ * says nothing about `seq`: that is the store's (AD-8).
  *
  * ```json
  * { "messages": [ { "harnessMessageId": "m1", "role": "user",
@@ -79,7 +80,6 @@ export function memoryParser(options: MemoryParserOptions = {}): Parser {
 
         messages.push({
           harnessMessageId,
-          seq: index,
           role,
           model: asString(record['model']) ?? null,
           body,

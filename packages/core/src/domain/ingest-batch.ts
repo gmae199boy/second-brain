@@ -3,26 +3,50 @@ import type { ParserCursor } from './session.js';
 import type { SessionKey } from './session-token.js';
 
 /**
- * A message as the parser produced it: no row id and no session id yet, since
- * those belong to the store. `seq` is the parser's, and the same transcript
- * always yields the same one (AD-4).
+ * A message as the parser produced it: no row id, no session id and no `seq`.
+ *
+ * The order of the array is the order of the conversation, and that is the
+ * whole of what the parser says about position: `seq` is the store's, decided
+ * inside the insert transaction (AD-4, AD-8). A parser cannot own it, because
+ * a compact or a fork rewrites the front of a transcript, and a number the
+ * parser worked out from the file would then land on a message that already
+ * has one.
  */
 export interface ParsedMessage {
   harnessMessageId: string;
-  seq: number;
   role: MessageRole;
   model: string | null;
   body: string;
   occurredAt: Date;
 }
 
-/** A tool note as the parser produced it; `ordinal` is the parser's (AD-4). */
+/**
+ * A tool note as the parser produced it; `ordinal` is the parser's (AD-4).
+ * Unlike `seq` it is a position *inside one message*, and a message's content
+ * never changes, so the same call keeps the same number forever.
+ */
 export interface ParsedToolNote {
   harnessMessageId: string;
   ordinal: number;
   tool: string;
   target: string;
   ok: boolean;
+}
+
+/**
+ * A parsed message with the row id the caller minted for it. Ids belong to the
+ * side that creates the row (AD-8), so the use case mints them before the
+ * batch is handed over and the store never reaches for an `IdGen`.
+ */
+export interface IngestMessage extends ParsedMessage {
+  /** UUIDv7, minted by the caller. */
+  id: string;
+}
+
+/** The same for a tool note (AD-8). */
+export interface IngestToolNote extends ParsedToolNote {
+  /** UUIDv7, minted by the caller. */
+  id: string;
 }
 
 /** The tracking information that travels with a batch (AD-4). */
@@ -39,15 +63,23 @@ export interface IngestTracking {
   cursorReset: boolean;
   /** Best-effort end of the session, when the harness told us (AD-6). */
   endedAt: Date | null;
+  /**
+   * When this batch reached the DB, read once from the `Clock` by the caller
+   * (AD-13). The store records it rather than asking a clock of its own, so a
+   * spooled batch keeps the instant it was first given (AD-9).
+   */
+  ingestedAt: Date;
 }
 
 /**
  * Core's one ingest input. It is harness neutral: the connector's parser has
- * already turned the harness format into this (AD-4).
+ * already turned the harness format into this, and the use case has added the
+ * ids and the instant (AD-4, AD-8).
  */
 export interface IngestBatch {
   key: SessionKey;
   tracking: IngestTracking;
-  messages: readonly ParsedMessage[];
-  toolNotes: readonly ParsedToolNote[];
+  /** In conversation order. The store turns that order into `seq` (AD-8). */
+  messages: readonly IngestMessage[];
+  toolNotes: readonly IngestToolNote[];
 }

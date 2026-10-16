@@ -9,7 +9,7 @@ import type { Clock } from '../src/ports/clock.js';
 import type { IdGen } from '../src/ports/id-gen.js';
 import type { Embedder } from '../src/ports/embedder.js';
 import type { Reranker } from '../src/ports/reranker.js';
-import type { SchemaStore, SessionStore } from '../src/ports/store.js';
+import type { SchemaStore, UserStore } from '../src/ports/store.js';
 import {
   clockContract,
   connectorContract,
@@ -27,6 +27,7 @@ import {
   rerankerContract,
   sampleEnsureSessionInput,
   sampleIngestBatch,
+  sampleSelfUserInput,
   sampleSessionToken,
   schemaStoreContract,
   sequenceIdGen,
@@ -35,9 +36,11 @@ import {
   storeContract,
   unknownSessionToken,
   unreadableTranscript,
+  userStoreContract,
   type ConnectorSubject,
   type ContractCase,
   type ParserSubject,
+  type SessionStoreSubject,
   type SubjectFactory,
 } from '../src/testing/index.js';
 
@@ -79,6 +82,14 @@ describe('the health contract against the memory store', () => {
 
 describe('the session contract against the memory store', () => {
   for (const testCase of sessionStoreContract()) {
+    it(testCase.name, async () => {
+      await testCase.run(async () => memoryStore());
+    });
+  }
+});
+
+describe('the identity contract against the memory store', () => {
+  for (const testCase of userStoreContract()) {
     it(testCase.name, async () => {
       await testCase.run(async () => memoryStore());
     });
@@ -275,7 +286,7 @@ describe('the id contract against the sequence generator', () => {
 
 describe('the contracts catch a wrong store', () => {
   it('catches a store that creates a new session row every time', async () => {
-    const make = async (): Promise<SessionStore> => {
+    const make = async (): Promise<SessionStoreSubject> => {
       const inner = memoryStore();
       let serial = 0;
       return {
@@ -300,8 +311,67 @@ describe('the contracts catch a wrong store', () => {
     );
   });
 
+  it('catches a store that takes the seq of the batch instead of deciding it', async () => {
+    const make = async (): Promise<SessionStoreSubject> => {
+      const inner = memoryStore();
+      // The numbering the last batch would give, which is the mistake: `seq`
+      // read off the transcript rather than off the session, so a compact or a
+      // fork renumbers every message behind the one that arrived (AD-4).
+      let fromBatch: readonly string[] = [];
+      return {
+        ...inner,
+        async ingest(batch) {
+          fromBatch = batch.messages.map((message) => message.harnessMessageId);
+          return inner.ingest(batch);
+        },
+        async readSession(token) {
+          const result = await inner.readSession(token);
+          if (!result.ok) return result;
+          const renumbered = result.messages.map((message) => {
+            const place = fromBatch.indexOf(message.harnessMessageId);
+            return place < 0 ? message : { ...message, seq: place };
+          });
+          return {
+            ...result,
+            messages: [...renumbered].sort((left, right) => left.seq - right.seq),
+          };
+        },
+      };
+    };
+
+    // The front-changed case is the one this breaks: the stored messages come
+    // back renumbered even though something only arrived in front of them.
+    expect(await failedCases(sessionStoreContract(), make)).toContain(
+      'a batch whose front changed leaves the stored seq, body and id alone',
+    );
+  });
+
+  it('catches a store that makes a second owner', async () => {
+    const make = async (): Promise<UserStore> => {
+      const inner = memoryStore();
+      return {
+        ...inner,
+        async ensureSelfUser(input) {
+          // Creates a row every time rather than finding one, so the same
+          // person ends up with two ids (AD-12 broken).
+          const created = await inner.ensureSelfUser(input);
+          if (!created.ok) return created;
+          return {
+            ok: true,
+            created: true,
+            user: { id: input.id, name: input.name, isSelf: true, createdAt: input.createdAt },
+          };
+        },
+      };
+    };
+
+    expect(await failedCases(userStoreContract(), make)).toContain(
+      'a second ensureSelfUser keeps the first row, whatever it proposes',
+    );
+  });
+
   it('catches a store that re-inserts the messages of every batch', async () => {
-    const make = async (): Promise<SessionStore> => {
+    const make = async (): Promise<SessionStoreSubject> => {
       const inner = memoryStore();
       return {
         ...inner,
@@ -323,7 +393,7 @@ describe('the contracts catch a wrong store', () => {
   });
 
   it('catches a store that throws for an unknown session', async () => {
-    const make = async (): Promise<SessionStore> => {
+    const make = async (): Promise<SessionStoreSubject> => {
       const inner = memoryStore();
       return {
         ...inner,
@@ -342,7 +412,7 @@ describe('the contracts catch a wrong store', () => {
   });
 
   it('catches a store that drops the cursor reset warning', async () => {
-    const make = async (): Promise<SessionStore> => {
+    const make = async (): Promise<SessionStoreSubject> => {
       const inner = memoryStore();
       return {
         ...inner,
@@ -402,7 +472,7 @@ describe('the contracts catch a wrong schema store', () => {
 });
 
 describe('the contracts catch a wrong parser', () => {
-  it('catches a parser whose seq does not start at 0', async () => {
+  it('catches a parser that gives two messages the same harness id', async () => {
     const make = async (): Promise<ParserSubject> => {
       const inner = memoryParser();
       return {
@@ -412,11 +482,17 @@ describe('the contracts catch a wrong parser', () => {
           parse(content) {
             const result = inner.parse(content);
             if (!result.ok) return result;
+            const first = result.messages[0];
+            if (first === undefined) return result;
+            // Every message under the first one's id. The harness message id is
+            // the whole of what identifies a message now that `seq` is the
+            // store's, so a store would take the rest for replays of the first
+            // and drop them without a word (AD-4, NFR-2).
             return {
               ...result,
               messages: result.messages.map((message) => ({
                 ...message,
-                seq: message.seq + 1,
+                harnessMessageId: first.harnessMessageId,
               })),
             };
           },
@@ -427,7 +503,7 @@ describe('the contracts catch a wrong parser', () => {
     };
 
     expect(await failedCases(parserContract(), make)).toContain(
-      'seq starts at 0 and grows by one',
+      'the harness message ids of one parse do not repeat',
     );
   });
 
@@ -703,6 +779,7 @@ describe('session tokens', () => {
 
   it('reads the session back by the token the caller formatted', async () => {
     const store = memoryStore();
+    await store.ensureSelfUser(sampleSelfUserInput());
     await store.ensureSession(sampleEnsureSessionInput());
     await store.ingest(sampleIngestBatch());
 

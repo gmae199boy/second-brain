@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createBrain } from '../src/brain.js';
+import { createBrain, type BrainDependencies } from '../src/brain.js';
 import { runDoctor, type DoctorCheck, type DoctorCheckSource } from '../src/admin/doctor.js';
 import type {
   HealthStore,
@@ -9,6 +9,11 @@ import type {
   StoreProbe,
 } from '../src/ports/store.js';
 import { memorySchemaStore } from '../src/testing/fakes/schema-store.js';
+import { memoryStore } from '../src/testing/fakes/store.js';
+import { memoryParser } from '../src/testing/fakes/parser.js';
+import { memoryTranscriptReader } from '../src/testing/fakes/transcript.js';
+import { fixedClock } from '../src/testing/fakes/clock.js';
+import { sequenceIdGen } from '../src/testing/fakes/id-gen.js';
 
 /** The version these tests call current, so a mismatch is an explicit choice. */
 const CURRENT = 2;
@@ -315,13 +320,35 @@ describe('the summary of a report', () => {
   });
 });
 
+/**
+ * The ports `createBrain` needs beside the store. Doctor uses none of them, so
+ * they are the in-memory fakes and nothing here says anything about them: what
+ * these two tests are about is that the report is wired to the store.
+ */
+function otherDependencies(): Omit<BrainDependencies, 'store' | 'schemaVersion' | 'checks'> {
+  const instant = new Date('2026-01-02T03:04:05.000Z');
+  return {
+    clock: fixedClock(instant),
+    idGen: sequenceIdGen({ timestampMs: instant.getTime() }),
+    parsers: [memoryParser()],
+    transcripts: memoryTranscriptReader(),
+    machine: 'demo-machine',
+  };
+}
+
+/** Doctor's fake with the session and identity halves filled in by the fake. */
+function brainStore(store: FakeStore): BrainDependencies['store'] {
+  return { ...memoryStore(), ...store };
+}
+
 describe('createBrain', () => {
   it('wires doctor to the store, with the schema version and the checks', async () => {
     const store = fakeStore(healthy({ id: 'vector', ok: true, detail: '0.8.7' }));
     const brain = createBrain({
-      store,
+      store: brainStore(store),
       schemaVersion: CURRENT,
       checks: [source({ id: 'shim', status: 'ok' })],
+      ...otherDependencies(),
     });
 
     const report = await brain.admin.doctor();
@@ -337,7 +364,11 @@ describe('createBrain', () => {
   });
 
   it('registers nothing when no check was handed in', async () => {
-    const brain = createBrain({ store: fakeStore(healthy()), schemaVersion: CURRENT });
+    const brain = createBrain({
+      store: brainStore(fakeStore(healthy())),
+      schemaVersion: CURRENT,
+      ...otherDependencies(),
+    });
 
     const report = await brain.admin.doctor();
     expect(report.checks.map((check) => check.id)).toEqual(['db', 'schema-version']);

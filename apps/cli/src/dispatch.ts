@@ -1,4 +1,5 @@
 import { Command, CommanderError } from 'commander';
+import { hostname } from 'node:os';
 import {
   BUSY_TIMEOUT_MS,
   SQLITE_SCHEMA_VERSION,
@@ -8,15 +9,20 @@ import {
   type Brain,
   type Clock,
   type FailureExit,
-  type HealthStore,
+  type IdGen,
   type SchemaStore,
   type SqliteStoreOptions,
+  type Store,
   type WarningCode,
 } from 'second_brain';
 import { readConfig, type BrainConfig } from './config/codec.js';
 import { configHome } from './config/paths.js';
 import { runtimeChecks } from './doctor/checks.js';
 import { failedConfigStore } from './doctor/store.js';
+import { harnessParsers, harnesses } from './harnesses.js';
+import { uuidV7IdGen } from './runtime/id-gen.js';
+import { readStdin } from './runtime/stdin.js';
+import { fileTranscriptReader } from './runtime/transcript.js';
 import {
   JSON_FLAG,
   argumentName,
@@ -63,6 +69,13 @@ export interface CommandContextBase {
   options: Record<string, unknown>;
   /** The positional arguments, in the order `arguments` declared them. */
   args: readonly string[];
+  /**
+   * Everything on standard input, as text. The one thing this CLI reads from
+   * there is a harness hook payload, so it is a function and not a value: a
+   * command that does not want it must not wait on a pipe nobody is writing
+   * to, and a terminal answers with the empty string at once.
+   */
+  stdin: () => Promise<string>;
 }
 
 /** What a command gets. No file, no environment, no connection of its own. */
@@ -205,7 +218,7 @@ export type CommandSpec<T = unknown> = DatabaseCommandSpec<T> | StandaloneComman
  * `sqliteStore`; the seam exists so a test can see which lock budget the
  * dispatcher chose for an invocation without opening a file (AD-7).
  */
-export type CreateStore = (options: SqliteStoreOptions) => HealthStore & SchemaStore;
+export type CreateStore = (options: SqliteStoreOptions) => Store & SchemaStore;
 
 export interface DispatchRuntime {
   clock: Clock;
@@ -214,6 +227,10 @@ export interface DispatchRuntime {
   stderr?: (text: string) => void;
   /** Defaults to `sqliteStore`, which is what every real invocation uses. */
   createStore?: CreateStore;
+  /** Reads the hook payload. Defaults to this process's standard input. */
+  stdin?: () => Promise<string>;
+  /** Mints row ids. Defaults to UUIDv7, which is what every row carries (AD-8). */
+  idGen?: IdGen;
 }
 
 /** What `execute` decided, before anything is printed. */
@@ -275,13 +292,11 @@ export async function dispatch(
 
   let outcome: Outcome;
   try {
-    outcome = await execute(
-      registry,
-      argv,
-      { clock, json, positional: [] },
-      env,
-      runtime.createStore ?? sqliteStore,
-    );
+    outcome = await execute(registry, argv, { clock, json, positional: [] }, env, {
+      createStore: runtime.createStore ?? sqliteStore,
+      stdin: runtime.stdin ?? (() => readStdin()),
+      idGen: runtime.idGen ?? uuidV7IdGen(),
+    });
   } catch (error) {
     // An exception here is a bug, and a bug must still not break the harness.
     if (!hook) throw error;
@@ -311,15 +326,23 @@ export async function dispatch(
   return hook ? 0 : outcome.exit;
 }
 
+/** The parts of the runtime `execute` passes on to a command or to the SDK. */
+interface Wiring {
+  createStore: CreateStore;
+  stdin: () => Promise<string>;
+  idGen: IdGen;
+}
+
 /** Everything but the printing, so the hook wrapper has one thing to catch. */
 async function execute(
   registry: readonly CommandSpec[],
   argv: readonly string[],
   base: Rendering,
   env: NodeJS.ProcessEnv,
-  createStore: CreateStore,
+  wiring: Wiring,
 ): Promise<Outcome> {
   const { clock } = base;
+  const { createStore, stdin, idGen } = wiring;
   const selected = select(registry, argv);
   if (selected.kind === 'helped') {
     return { envelope: null, text: [], warningLines: [], exit: 0 };
@@ -343,7 +366,7 @@ async function execute(
   // Before the configuration, because this command may be the one that writes
   // it, and before the store, because it has no database to reach.
   if (spec.standalone === true) {
-    return finish(rendering, await spec.run({ env, clock, options, args }), [], []);
+    return finish(rendering, await spec.run({ env, clock, options, args, stdin }), [], []);
   }
 
   const home = configHome(env);
@@ -376,6 +399,15 @@ async function execute(
   const brain = createBrain({
     store,
     schemaVersion: SQLITE_SCHEMA_VERSION,
+    clock,
+    idGen,
+    // The ingest registry, not the connector one: a harness can be ingested
+    // from before anything has written its hook entry (see `harnesses.ts`).
+    parsers: harnessParsers(harnesses),
+    transcripts: fileTranscriptReader(),
+    // Recorded on every session this machine ingests (AD-12). The host name,
+    // because it is the one name a person reading a report would recognise.
+    machine: hostname(),
     // One list, for the dispatcher and the installer both: see `doctor/checks`.
     checks: runtimeChecks({ home, config }),
   });
@@ -403,6 +435,7 @@ async function execute(
       clock,
       options,
       args,
+      stdin,
     });
     return finish(rendering, outcome, warningCodes, warningLines);
   } finally {

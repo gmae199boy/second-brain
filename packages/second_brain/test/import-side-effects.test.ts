@@ -1,16 +1,22 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { runSqliteMigrations } from 'second_brain';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
 const homes: string[] = [];
+const children: ChildProcessWithoutNullStreams[] = [];
 
 afterEach(async () => {
+  for (const child of children.splice(0)) {
+    child.kill('SIGKILL');
+  }
   await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
 
@@ -62,7 +68,115 @@ describe('importing second_brain has no side effects', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  /**
+   * The local source is a file, not a socket, so the Postgres test above says
+   * nothing about it: a `DatabaseSync` opened at import time would show up as
+   * an open file descriptor and as nothing else. So this one looks at the file
+   * descriptors the child holds.
+   *
+   * The control is the point of the test. "The database is not in `lsof`" is
+   * worth nothing on its own — a path spelled slightly differently would also
+   * not be in there — so a second child opens the very same file through
+   * `sqliteStore` and has to be found. One assertion proves the behaviour, the
+   * other proves the assertion can fail.
+   */
+  it('holds the database file open only once something asks the store a question', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'brain-import-sqlite-'));
+    homes.push(home);
+    const path = join(home, 'brain.db');
+    expect((await runSqliteMigrations({ path })).ok).toBe(true);
+    // As `lsof` spells it: on a Mac the temporary folder is reached through a
+    // symlink, and a comparison against the unresolved path would pass by
+    // accident.
+    const real = realpathSync(path);
+
+    const imported = await held(home, 'await import("second_brain");');
+    expect(imported).not.toContain(real);
+
+    const asked = await held(
+      home,
+      `const { sqliteStore } = await import("second_brain");
+       const store = sqliteStore({ path: ${JSON.stringify(path)} });
+       const health = await store.checkHealth();
+       if (!health.ok) throw new Error(health.message);`,
+    );
+    expect(asked).toContain(real);
+  });
 });
+
+/**
+ * The open files of a child that ran `body` and is now waiting. It waits rather
+ * than exits because a process that has finished holds nothing open.
+ */
+async function held(home: string, body: string): Promise<string> {
+  const script = [
+    body,
+    'console.log("ready");',
+    // Wait for the parent, which is looking at this process's open files.
+    'process.stdin.resume();',
+    'process.stdin.once("data", () => { process.exit(0); });',
+  ].join('\n');
+
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: join(repoRoot, 'apps', 'cli'),
+    env: { ...process.env, SECOND_BRAIN_HOME: home },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  children.push(child);
+
+  let stderr = '';
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`the child never became ready: ${stderr}`));
+    }, 20_000);
+    child.once('error', reject);
+    child.once('close', () => {
+      clearTimeout(timer);
+      reject(new Error(`the child exited before it was ready: ${stderr}`));
+    });
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('ready')) {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+  });
+
+  const open = await lsof(child.pid ?? 0);
+  child.stdin.write('go\n');
+  expect(stderr).toBe('');
+  // Proof the reading itself works: whatever else it found, it found the
+  // process's own executable.
+  expect(open).not.toBe('');
+  return open;
+}
+
+/** The open files of one process, as text. */
+async function lsof(pid: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // `-F n` would be terser, but the plain listing is what a person debugging
+    // a failure here would run by hand.
+    execFile('lsof', ['-p', String(pid)], (error, stdout) => {
+      // `lsof` exits non-zero when it could not ask about every file
+      // descriptor, which is the normal case for a process it does not own, so
+      // the output is what counts and an empty one is the only failure.
+      if (stdout !== '') {
+        resolve(stdout);
+        return;
+      }
+      reject(
+        new Error(
+          `lsof produced nothing for pid ${String(pid)}: ${error === null ? 'no error' : error.message}`,
+        ),
+      );
+    });
+  });
+}
 
 function run(
   port: number,

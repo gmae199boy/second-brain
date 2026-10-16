@@ -3,14 +3,14 @@ title: 'Tracer: Stop hook 한 턴이 brain.db에 남는다'
 type: 'feature'
 ticket: '2'
 created: '2026-10-16'
-status: 'draft'
-baseline_revision: ''
+status: 'built'
+baseline_revision: 'a6576865b45514e988fb41bb94b078272d63fa82'
 route: 'full'
 route_source: 'auto'
 risk: 'high'
-review: ''
-review_source: ''
-lenses_ran: []
+review: 'quick'
+review_source: 'pinned'
+lenses_ran: [quick]
 review_loop_iteration: 0
 context: []
 ---
@@ -106,7 +106,8 @@ parser 계약은 `seq`를 parser에게 맡긴다. 그래서 compact·fork로 tra
 - `packages/core/src/ports/store.ts`:
   - 타입: `EnsureSessionInput`(호출자가 `id`를 정함), `EnsureSessionResult`, `IngestResult`, `ReadSessionResult`, `SessionStore`(141-148), `Store`(155), `SchemaStore`(174)
   - 실패 union에 `DB_LOCKED`가 없다. `withWrite`는 `packages/sqlite/src/write.ts:16-18`에서 그것을 돌려준다.
-- `packages/core/src/codes.ts` -- `ERROR_CODES`. 각 항목에 `exit`, `retryable`, `hint`가 있다. 2.1에서 hint 문체를 테스트로 검사하게 했다.
+- `packages/core/src/codes.ts` -- `ERROR_CODES`. 각 항목에 `exit`, `retryable`, `hint`가 있다. 2.1에서 hint 문체를 테스트로 검사하게 했다. `USER_MISSING`(exit 2)의 출처는 spine Conventions의 CLI `--json` 응답 행과 AD-12다.
+- 문서는 이미 맞춰져 있다(`change-users-and-review-gaps`): spine AD-12·Table Contract `users` 행, epic 5 Notes(가져오기 합치기·`users.name`), epic 7 첫 대상(`users`·FK). 그래서 이 스토리는 deferred-work에 문서·epic 5·7 항목을 적지 않는다.
 - `packages/core/src/brain.ts`:
   - 지금 모양: `BrainDependencies{store: HealthStore & SchemaStore, schemaVersion, checks?}`, `Brain{admin, close}`
   - 호출처는 두 곳뿐이다: `apps/cli/src/dispatch.ts:376`, `packages/core/test/doctor.test.ts:321·340`
@@ -157,46 +158,46 @@ parser 계약은 `seq`를 parser에게 맡긴다. 그래서 compact·fork로 tra
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `packages/core/src/domain/{ingest-batch,message,user}.ts`, `ports/parser.ts` -- 도메인 타입을 바꾼다:
+- [x] `packages/core/src/domain/{ingest-batch,message,user}.ts`, `ports/parser.ts` -- 도메인 타입을 바꾼다:
   - `ParsedMessage`에서 `seq`를 뺀다.
   - `IngestMessage`·`IngestToolNote`(Parsed* + `id`)와 `IngestTracking.ingestedAt`을 더한다.
   - `User{id, name, isSelf, createdAt}`를 더한다.
   - 주석은 "순서는 배열 순서, seq는 Store"로 고친다.
-- [ ] `packages/core/src/ports/store.ts` -- port를 바꾼다:
+- [x] `packages/core/src/ports/store.ts` -- port를 바꾼다:
   - `UserStore`를 더한다.
     - `ensureSelfUser({id, name, createdAt})`: 찾거나 만들고 `created`를 돌려준다.
     - `readSelfUser()`: 없으면 `user: null`
   - `Store`에 `UserStore`를 합친다.
   - ensure·ingest 실패 코드에 `DB_LOCKED`를 더한다.
-- [ ] `packages/core/src/codes.ts` -- `USER_MISSING`(exit 2, hint ``run `brain setup run` ``)을 더한다.
-- [ ] `packages/core/src/ports/{transcript,hook}.ts`(신규) -- 두 port를 만든다:
+- [x] `packages/core/src/codes.ts` -- `USER_MISSING`(exit 2, hint ``run `brain setup run` ``)을 더한다.
+- [x] `packages/core/src/ports/{transcript,hook}.ts`(신규) -- 두 port를 만든다:
   - `TranscriptReader.read(path)`: `{ok, content}` 또는 `TRANSCRIPT_UNREADABLE`
   - `HookInput{harnessSessionId, transcriptPath}`와 `HookInputReader(stdin)`: 실패는 `USAGE`
-- [ ] `packages/core/src/sessions/ingest.ts`(신규), `brain.ts` -- Core 수집 use case:
+- [x] `packages/core/src/sessions/ingest.ts`(신규), `brain.ts` -- Core 수집 use case:
   - `BrainDependencies`에 `clock`, `idGen`, `parsers`, `transcripts`, `machine`을 더하고, `store`를 `Store & SchemaStore`로 넓힌다.
   - `Brain.sessions.ingest({session, transcriptPath})`의 순서: 토큰 → parser → 읽기 → parse → (메시지가 있으면) "나" 읽기 → ensure → ingest
   - 토큰이나 harness가 맞지 않으면 `USAGE`, "나"가 없으면 `USER_MISSING`
   - 결과는 `{session, created, inserted, warnings}`
-- [ ] `packages/core/src/testing/fakes/{store,parser}.ts`, `fixtures.ts`, `index.ts` -- 가짜를 새 계약에 맞춘다:
+- [x] `packages/core/src/testing/fakes/{store,parser}.ts`, `fixtures.ts`, `index.ts` -- 가짜를 새 계약에 맞춘다:
   - 메모리 store는 seq를 정하고, 배치의 ID와 `ingestedAt`을 쓰고, `UserStore`를 구현한다. `idGen`·`clock` 옵션은 뺀다.
   - `memoryParser`는 seq를 내지 않는다.
   - `sampleIngestBatch`가 ID를 붙인다.
   - `memoryTranscriptReader` 가짜를 더한다.
-- [ ] `packages/core/src/testing/contracts/{session-store,user-store,parser}.ts` -- 계약 사례:
+- [x] `packages/core/src/testing/contracts/{session-store,user-store,parser}.ts` -- 계약 사례:
   - session-store 사례 4: seq가 배치 순서대로 0..n-1이고, 저장된 ID가 배치의 ID와 같다.
   - session-store 새 사례: 이어 넣은 배치는 저장된 메시지 뒤 번호를 받는다.
   - session-store 새 사례: 앞부분이 바뀐 배치를 넣어도 기존 seq·본문·ID가 그대로다.
   - user-store: 두 번째 `ensureSelfUser`는 다른 id·이름을 줘도 첫 행을 돌려준다(`created:false`). 만들기 전 `readSelfUser`는 null이다.
   - parser: seq 사례를 "한 번의 parse 안에서 `harnessMessageId`가 겹치지 않는다"로 바꾼다.
-- [ ] `packages/core/test/{contracts,doctor,sessions-ingest,codes}.test.ts` -- 테스트:
+- [x] `packages/core/test/{contracts,doctor,sessions-ingest,codes}.test.ts` -- 테스트:
   - 음성 사례: 배치 순번을 그대로 seq로 쓰는 store, harness id가 겹치는 parser, "나"를 둘 만드는 store가 잡히는지
   - `createBrain` 호출 갱신
   - use case 테스트(메모리 store·parser·reader): 매트릭스의 Core 행
-- [ ] `packages/sqlite/migrations/0003_users.sql`(신규), `src/migrate.ts` -- 마이그레이션:
+- [x] `packages/sqlite/migrations/0003_users.sql`(신규), `src/migrate.ts` -- 마이그레이션:
   - `users` STRICT 테이블. `is_self`는 0/1 CHECK와 `where is_self = 1` 부분 UNIQUE, `created_at`은 GLOB CHECK
   - `sessions`를 0002의 `index_configs` 방식으로 재생성해 `user_id references users (id)`를 더한다. 나머지 칸·제약은 그대로 둔다.
   - `SQLITE_SCHEMA_VERSION = 3`
-- [ ] `packages/sqlite/src/{sessions,users}.ts`(신규), `store.ts`, `index.ts` -- `sqliteStore`가 `SessionStore`·`UserStore`도 구현한다:
+- [x] `packages/sqlite/src/{sessions,users}.ts`(신규), `store.ts`, `index.ts` -- `sqliteStore`가 `SessionStore`·`UserStore`도 구현한다:
   - 공개 이름에 `sqlite` 접두사를 붙인다.
   - `ensureSelfUser`·`ensureSession`: insert `on conflict do nothing` 뒤 다시 읽는다.
   - `ingest`: 한 `withWrite` 안에서 차례로 한다:
@@ -206,20 +207,20 @@ parser 계약은 `seq`를 parser에게 맡긴다. 그래서 compact·fork로 tra
     4. 도구 메모
     5. 세션 추적 칸 갱신
   - `readSession`: 메시지는 seq 순서, 도구 메모는 메시지 seq와 ordinal 순서로 읽는다.
-- [ ] `packages/sqlite/test/{session-store,users}.test.ts`(신규), 기존 버전 2 단정 -- SQLite 테스트:
+- [x] `packages/sqlite/test/{session-store,users}.test.ts`(신규), 기존 버전 2 단정 -- SQLite 테스트:
   - 계약: `sessionStoreContract`·`userStoreContract` 통과
   - 일부러 만든 seq 충돌은 조용히 버려지지 않고 오류가 난다.
   - "나" 행 두 개는 DB가 거부한다.
   - 버전 2 DB가 데이터를 보존한 채 3이 된다.
   - 없는 user를 가리키는 세션은 FK가 거부한다.
-- [ ] `apps/cli/src/install/{store,flow}.ts`, `install.ts` -- 설치기:
+- [x] `apps/cli/src/install/{store,flow}.ts`, `install.ts` -- 설치기:
   - 마이그레이션 직후 `deps.store.self(path)`를 부른다. 이 단계는 `ensureSelfUser`(UUIDv7, `os.userInfo().username`)를 하고, 실패하면 exit 1과 안내 줄을 낸다.
   - 안내 줄 "the brain belongs to <name>" 또는 "already belongs to <name>"
-- [ ] `apps/cli/test/{install-flow,install-store,setup}.test.ts` -- 설치기 테스트:
+- [x] `apps/cli/test/{install-flow,install-store,setup}.test.ts` -- 설치기 테스트:
   - 흐름 가짜 deps에 `self`를 더한다.
   - 첫 실행·재실행 행 수
   - 버전 3을 단정하도록 고친다.
-- [ ] `packages/claude-code/src/{parser,hook,index}.ts` -- Claude Code adapter:
+- [x] `packages/claude-code/src/{parser,hook,index}.ts` -- Claude Code adapter:
   - `claudeCodeParser()`: harness `claude-code`, version `1`
     - 줄은 `\n`으로만 나눈다. 끝의 미완성 줄은 건너뛰고, 중간의 깨진 줄은 `TRANSCRIPT_UNREADABLE`이다.
     - 들어가는 항목: `type`이 user·assistant이고 `isSidechain`·`isMeta`·`isCompactSummary`가 아닌 것. 본문은 문자열이거나 `text` 블록을 이은 것이고, 빈 본문은 넣지 않는다.
@@ -227,8 +228,8 @@ parser 계약은 `seq`를 parser에게 맡긴다. 그래서 compact·fork로 tra
     - 같은 uuid는 처음 것만 넣는다.
     - 커서: 마지막 메시지의 uuid와, 그 줄까지 내용의 sha256
   - `readClaudeCodeHookInput(stdin)`
-- [ ] `packages/claude-code/test/{parser,hook}.test.ts`, `test/fixtures/two-turns.jsonl` -- `parserContract`, 매트릭스의 parser 행, hook 입력 오류를 시험한다.
-- [ ] `apps/cli/src/runtime/{transcript,stdin}.ts`, `harnesses.ts`, `commands/{sessions-ingest,index}.ts`, `dispatch.ts`, `bin.ts` -- CLI 연결:
+- [x] `packages/claude-code/test/{parser,hook}.test.ts`, `test/fixtures/two-turns.jsonl` -- `parserContract`, 매트릭스의 parser 행, hook 입력 오류를 시험한다.
+- [x] `apps/cli/src/runtime/{transcript,stdin}.ts`, `harnesses.ts`, `commands/{sessions-ingest,index}.ts`, `dispatch.ts`, `bin.ts` -- CLI 연결:
   - `runtime/transcript.ts`: fs 읽기로 `TranscriptReader`를 구현한다.
   - `runtime/stdin.ts`: TTY면 곧바로 `''`를 돌려준다.
   - `harnesses.ts`: `[{parser, readHookInput}]`
@@ -237,27 +238,13 @@ parser 계약은 `seq`를 parser에게 맡긴다. 그래서 compact·fork로 tra
     - `DispatchRuntime`에 `stdin?`·`idGen?`을 더한다(기본값 `uuidV7IdGen`).
     - `CommandContext.stdin`을 둔다.
     - `createBrain`에 새 의존성을 넘긴다. `machine`=`os.hostname()`
-- [ ] `apps/cli/test/sessions-ingest.test.ts`(신규) -- 매트릭스의 CLI 행을 시험한다. `dist/bin.js`를 stdin pipe로 띄우고, 겹친 수집은 두 프로세스를 동시에 돌린다.
-- [ ] `packages/second_brain/test/import-side-effects.test.ts` -- import만으로 DB가 열리지 않는지 본다:
+- [x] `apps/cli/test/sessions-ingest.test.ts`(신규) -- 매트릭스의 CLI 행을 시험한다. `dist/bin.js`를 stdin pipe로 띄우고, 겹친 수집은 두 프로세스를 동시에 돌린다.
+- [x] `packages/second_brain/test/import-side-effects.test.ts` -- import만으로 DB가 열리지 않는지 본다:
   - 마이그레이션한 DB를 가리키는 home에서 `second_brain`을 import한 자식 프로세스를 `lsof -p`로 본다. DB 경로가 열려 있지 않아야 한다.
   - 대조군: `sqliteStore(…).checkHealth()` 뒤에는 그 경로가 보여야 한다.
-- [ ] `tooling/dev/tracer-session.sh`(신규), `README.md` -- 스크립트와 README:
+- [x] `tooling/dev/tracer-session.sh`(신규), `README.md` -- 스크립트와 README:
   - 스크립트: 임시 home에서 `setup run --yes --json`을 돌리고, 개발용 Stop hook settings 파일을 만든 뒤 `claude --settings <file>` 명령을 알려 준다.
   - README: `sessions ingest` 문단, setup의 "나" 단계, Layout
-- [ ] `_bmad-output/personal-brain/deferred-work.md` -- 항목 셋을 더한다:
-  - 문서 갱신
-    - AD-12의 users·"나"
-    - Table Contract의 `users` 행과 `sessions.user_id` FK
-    - PRD §6.2 문구
-    - Conventions의 `USER_MISSING`
-    - 2.6 티켓 문구(마이그레이션 0004, 버전 4)
-  - epic 5 가져오기
-    - 기존 DB에 합치기
-    - 들어오는 "나" id를 받는 쪽 "나"로 바꾸기
-    - 파생물 재생성
-    - 먼저 스키마 버전 맞추기
-    - `users.name` 갱신 정책
-  - epic 7 Postgres 복제본의 `users`·FK
 
 **Acceptance Criteria:**
 - Given 마이그레이션한 SQLite DB, when `sessionStoreContract()`와 `userStoreContract()`를 돌리면, then 모든 사례가 통과하고 메모리 가짜도 같은 사례를 통과한다.
@@ -297,6 +284,90 @@ parser 계약은 `seq`를 parser에게 맡긴다. 그래서 compact·fork로 tra
 
 ## Implementation Notes
 
+Built as planned. Four things are worth reading before the diff.
+
+**`sessions` rebuild back-fills `users`.** Migration 0003 stashes `sessions`,
+drops it and rebuilds it with `user_id text not null references users (id)`,
+following 0002's `index_configs` recipe. The plan called that safe because no
+build before this story could write a session -- true, and the rebuild still
+needs one more step: a stashed session names a `user_id`, and the new foreign
+key refuses it unless something points it at a row. So 0003 inserts a
+non-owner row (`is_self = 0`, name = the id, `created_at` = the epoch) for
+every user id the stash names and `users` does not hold. It fires on no
+database any released build wrote; it is there because a migration that would
+strand the row it is meant to preserve is one nobody can run on the database
+that turns out to have one. `schema-files.test.ts`'s 0001-to-0002 upgrade test
+is the case: it seeds a session at version 1, so it walks through 0003 too and
+now asserts the session survived and its user got a row.
+
+**`sessionStoreContract` takes `SessionStore & UserStore`.** It had to: the
+fixture session points at a user, and with the foreign key in place a case
+cannot create one without making the owner first. Each case starts with
+`ensureSelfUser(sampleSelfUserInput())`. `sampleEnsureSessionInput().userId` is
+no longer the string `owner` but `sampleUserId`, a UUIDv7.
+
+**`ensureSelfUser` and `ensureSession` read `created` off `returning`.**
+`insert ... on conflict do nothing returning id` inside the one `withWrite`,
+then a read of the row by its natural key. Comparing the read row's id against
+the proposed one would also work and would be wrong for the one case where a
+caller proposes an id that is already there.
+
+**`seq` never leaves a gap.** `ingest` reads the session's stored
+`harness_message_id`s and `max(seq)` before any insert, in the same
+transaction, and numbers from there in batch order, skipping what it already
+holds. The inserts conflict on `(session_id, harness_message_id)` alone, so a
+`seq` collision -- which would mean this code numbered two messages the same --
+raises instead of being swallowed. `session-store.test.ts` holds a deliberate
+collision against the unique index.
+
+Smaller decisions:
+
+- The Claude Code cursor fingerprints the content **up to the end of the line
+  the cursor names, that line's newline excluded**. Not the whole file, because
+  a transcript grows by appending and a whole-file fingerprint would change
+  every turn and never match; and not the newline either, because a Stop hook
+  can read the file with the cursor's own line written and the newline after it
+  not yet, which would give one message two fingerprints. Nothing reads the
+  cursor yet (2.7), but it is stored, so it had to be a value 2.7 can use.
+- `bin.ts` is unchanged. `DispatchRuntime.stdin` and `.idGen` default to
+  `readStdin` and `uuidV7IdGen()` inside `dispatch`, so the entry point stays
+  the one line it was.
+- `CommandContextBase.stdin` is a function, not a string. A command that does
+  not want a hook payload must not wait on a pipe nobody is writing to, and a
+  TTY answers with `''` at once rather than waiting for a Ctrl-D nobody
+  mentioned.
+- `USER_MISSING`'s hint reads "record who this **database** belongs to": the
+  hint-style test refuses the word `brain` outside backticks.
+- The parser contract's "every message is well formed" case lost its
+  `assertInteger(seq)` and its id-uniqueness check; uniqueness is now the one
+  case the negative test in `contracts.test.ts` aims at.
+
 ## Plan Change Log
 
+- 2026-10-16 -- Migration 0003 back-fills a `users` row for every `user_id` a
+  stashed session names. Without it the new foreign key refuses data the
+  migration is meant to preserve, and `schema-files.test.ts`'s existing
+  0001-to-0002 upgrade test (which seeds a session at version 1) would fail.
+- 2026-10-16 -- `sessionStoreContract`'s subject widened from `SessionStore` to
+  `SessionStore & UserStore`, and `sampleEnsureSessionInput().userId` changed
+  from `'owner'` to a UUIDv7 fixture. With the foreign key in place a case
+  cannot create a session without creating the owner first.
+
 ## Review Triage Log
+
+### Pass 1 (2026-10-16, lens: quick)
+
+Verdicts: high 0, medium 0, low 9, false 1, maybe-false 0. Patch 6, defer 1, reject 3.
+
+| # | Finding | Verdict | Route | Evidence |
+|---|---------|---------|-------|----------|
+| 1 | `claude-code/src/parser.ts` cursor fingerprint changes with whether the cursor line ended the file | low | patch | `fingerprintEnd` adds the newline only when `index !== lastIndex`; the reviewer reproduced two fingerprints for one cursor. Fix: always hash up to the line end without its newline |
+| 2 | `core/src/sessions/ingest.ts` `started_at` is the batch minimum, not the first message | low | patch | Frozen Boundaries: `started_at`은 첫 메시지의 발화 시각; `firstOccurredAt` loops for the minimum while the parser orders by file position |
+| 3 | `TRANSCRIPT_UNREADABLE`·`SESSION_NOT_FOUND` absent from `ERROR_CODES` | low | defer | Both codes predate this story (port failure codes since epic 1); `errorEnvelope` gives them exit 1 and no hint. Hidden on the hook path; fix adds public surface the plan does not settle |
+| 4 | `sqlite/src/sessions.ts` `nextSeq` advances on a conflicting insert | low | patch | Unreachable under `BEGIN IMMEDIATE` and the `seen` set, but a direct correction (`+= inserted.rows.length`) keeps the memory store and SQLite identical |
+| 5 | `sqlite/test/users.test.ts` "too old" test never reaches the `catch` | low | patch | It opens a path with no file, so `connect()` fails first (`connect.ts` `mode=rw`) |
+| 6 | `dispatch.ts` hands Core the module registry, not the command's | low | reject | Production passes the same constant; only a test building a different registry meets it, and the fix adds a parameter through dispatch |
+| 7 | `apps/cli/test/sessions-ingest.test.ts` concurrency test throws `SyntaxError` when a run is refused | low | reject | The test still fails, only less readably; the fix adds a guard. Not met in everyday use |
+| 8 | Plan Change Log lacks the deleted deferred-work task | false | reject | The task was removed during planning before approval (CHECKPOINT 1 summary), not an implementation deviation; the fix would edit this plan |
+| 9 | `README.md` two prose lines over the ~79-column wrap | low | patch | Lines 46 and 50 of the new paragraph; direct rewrap |
+| 10 | `sqlite/test/schema-files.test.ts` describe title still says 0001 to 0002 | low | patch | Its assertions now walk through 0003; direct rename |

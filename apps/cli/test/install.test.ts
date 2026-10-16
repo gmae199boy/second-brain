@@ -140,6 +140,10 @@ describe('the installer with no Docker and no Postgres', () => {
     expect(counts['schema_version']).toBe(1);
     // Both default index configs come from the migrations, not an install step.
     expect(counts['index_configs']).toBe(2);
+    // The owner, which is the one row an install step writes: SQL can read no
+    // account name and mint no UUIDv7 (AD-12).
+    expect(counts['users']).toBe(1);
+    expect(run.stdout).toContain('the brain belongs to');
   });
 
   it('records the schema version this build ships', async () => {
@@ -175,6 +179,8 @@ describe('the installer with no Docker and no Postgres', () => {
       `the schema is already at version ${String(SQLITE_SCHEMA_VERSION)}`,
     );
     expect(again.stdout).toContain('is already there');
+    // Same owner, named rather than replaced.
+    expect(again.stdout).toContain('already belongs to');
     expect(await readFile(configFilePath(home), 'utf8')).toBe(configBefore);
     expect(await readFile(shimPath(home), 'utf8')).toBe(shimBefore);
     expect(rowCounts(join(home, 'brain.db'))).toEqual(countsBefore);

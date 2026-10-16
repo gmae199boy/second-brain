@@ -18,6 +18,7 @@ export {
   type SessionToken,
 } from './session-token.js';
 export type { Message, MessageRole } from './message.js';
+export type { User } from './user.js';
 export type { ToolNote } from './tool-note.js';
 export type { LogEntry, LogEntryEdit, LogEntryKind, RuleState } from './log-entry.js';
 export type { ChunkParams, IndexConfig, IndexConfigKind } from './index-config.js';
@@ -30,6 +31,8 @@ export type { TranscriptFile } from './transcript-file.js';
 export type { SchemaVersion } from './schema-version.js';
 export type {
   IngestBatch,
+  IngestMessage,
+  IngestToolNote,
   IngestTracking,
   ParsedMessage,
   ParsedToolNote,

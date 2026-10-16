@@ -175,6 +175,21 @@ const CODES = {
     hint: 'pass the session token the harness hook reported',
   },
   /**
+   * The database is at a version that has a `users` table and holds no owner
+   * row, so there is nobody to attribute a session to (AD-12).
+   *
+   * It is 2 and not 1 for the same reason `CONFIG_MISSING` is: the install
+   * step that creates the row has not run here, so the command could not run
+   * at all rather than ran and failed. The hint names the installer, which is
+   * the only thing that creates it — a migration cannot read an operating
+   * system user name.
+   */
+  USER_MISSING: {
+    exit: 2,
+    retryable: false,
+    hint: 'run `brain setup run` to record who this database belongs to',
+  },
+  /**
    * The verb is gated: it changes or removes something, and nothing in the
    * invocation agreed to it. `error.retry` carries the same call with
    * `confirm: true`, and the CLI adds the argv for it.

@@ -45,6 +45,10 @@
   summary: 쓰기 가드의 `DB_UNAVAILABLE` 실패가 exit 1로 남아 있다 — Conventions 표는 이 코드를 2로 적는다. 둘 중 하나를 맞춘다.
   evidence: `apps/cli/src/dispatch.ts`의 쓰기 가드가 `exit: 1`을 명시해 `ERROR_CODES.DB_UNAVAILABLE.exit = 2`를 덮는다. story 2.1의 frozen Boundaries가 "기존 실패의 exit는 지금과 같다"로 정해 이번엔 바꾸지 않았다. epic 2가 이 거부를 spool로 바꾸면 실패 자체가 사라질 수 있어 그때 함께 정한다.
 
+- source_plan: `_bmad-output/personal-brain/epic-capture/story-tracer-stop-hook-brain-db-plan.md`
+  summary: `TRANSCRIPT_UNREADABLE`·`SESSION_NOT_FOUND`를 Core `ERROR_CODES`(exit·retryable·hint)와 spine Conventions 오류 코드 목록에 넣을지 정한다.
+  evidence: 두 코드는 epic 1부터 parser·store port의 실패 코드였지만 표에 없다. story 2.2의 `sessions ingest`가 처음으로 둘을 명령 실패로 내보내고, `errorEnvelope`가 표에 없는 코드를 `exit_code: 1`·hint 없음으로 만든다. hook 경로는 엔벨로프를 버리므로 지금은 보이지 않는다. SDK와 `guide exit-codes`(문서 대조 테스트)가 생길 때 드러난다. 2.3(명령 메타) 또는 guide 스토리가 자연스러운 자리다.
+
 ## Triage (2026-10-16, epic 2 인셉션)
 
 위 항목은 빌드가 append-only로 쓴다. 이 표는 각 항목의 현재 처분이다(epic 1 회고 Action 4). "story"는 epic-capture `tickets.toml`의 entry id다.

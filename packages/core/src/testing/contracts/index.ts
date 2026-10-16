@@ -1,5 +1,6 @@
 export { assertStoreHealth, storeContract } from './store.js';
-export { sessionStoreContract } from './session-store.js';
+export { sessionStoreContract, type SessionStoreSubject } from './session-store.js';
+export { userStoreContract } from './user-store.js';
 export { assertReadSchemaVersion, schemaStoreContract } from './schema-store.js';
 export { parserContract, type ParserSubject } from './parser.js';
 export { connectorContract, type ConnectorSubject } from './connector.js';

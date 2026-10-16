@@ -11,7 +11,12 @@ export interface Message {
   /** Key together with `harnessMessageId`, and again with `seq`. */
   sessionId: string;
   harnessMessageId: string;
-  /** Position in the session, chosen by the parser: 0, 1, 2, … (AD-4). */
+  /**
+   * Position in the session: 0, 1, 2, …, chosen by the store inside the insert
+   * transaction, from the order of the batch (AD-4, AD-8). Once given it never
+   * changes, so a transcript whose front was rewritten by a compact or a fork
+   * leaves every stored message where it was.
+   */
   seq: number;
   role: MessageRole;
   /** Model that produced the message. Recorded only; it changes nothing (AD-4). */

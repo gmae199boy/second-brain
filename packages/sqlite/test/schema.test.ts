@@ -42,6 +42,7 @@ const EXPECTED_TABLES = [
   'sessions',
   'tool_notes',
   'transcript_files',
+  'users',
   'work_items',
   'workspaces',
   'worktrees',
@@ -67,6 +68,7 @@ const ids = {
   failure: id(12),
   transcriptFile: id(13),
   redaction: id(14),
+  user: id(15),
 };
 
 /** The row the migration itself writes (AD-15). */
@@ -112,8 +114,8 @@ async function migratedPath(): Promise<string> {
   expect(applied).toEqual({
     ok: true,
     from: 0,
-    to: 2,
-    applied: ['0001_initial.sql', '0002_files_and_work.sql'],
+    to: 3,
+    applied: ['0001_initial.sql', '0002_files_and_work.sql', '0003_users.sql'],
   });
   return path;
 }
@@ -188,11 +190,18 @@ function seed(connection: SqliteConnection): void {
     path: '/demo/repo',
     removed_at: null,
   });
+  // Before the session: `sessions.user_id` points at it (AD-12).
+  insert(connection, 'users', {
+    id: ids.user,
+    name: 'brain-owner',
+    is_self: 1,
+    created_at: SEEDED_AT,
+  });
   insert(connection, 'sessions', {
     id: ids.session,
     harness: 'demo',
     harness_session_id: 'session-0001',
-    user_id: 'owner',
+    user_id: ids.user,
     machine: 'demo-machine',
     started_at: SEEDED_AT,
     workspace_id: ids.workspace,
@@ -372,7 +381,7 @@ describe('the migration this package ships', () => {
     const before = tableNames(connection);
     const configs = count(connection, 'index_configs');
 
-    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 2, to: 2, applied: [] });
+    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 3, to: 3, applied: [] });
 
     expect(tableNames(connection)).toEqual(before);
     expect(count(connection, 'index_configs')).toBe(configs);
@@ -555,7 +564,7 @@ function duplicateKeyCases(): DuplicateKeyCase[] {
     id: id(104),
     harness: 'demo',
     harness_session_id: 'session-0002',
-    user_id: 'owner',
+    user_id: ids.user,
     machine: 'demo-machine',
     started_at: SEEDED_AT,
     ingest_source: 'live',
@@ -792,7 +801,7 @@ describe('the types SQLite does not have', () => {
         id: id(301),
         harness: 'demo',
         harness_session_id: 'session-0301',
-        user_id: 'owner',
+        user_id: ids.user,
         machine: 'demo-machine',
         started_at: '2026-10-14T01:02:03Z',
         ingest_source: 'live',

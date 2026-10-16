@@ -9,9 +9,9 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   BUSY_TIMEOUT_MS,
   runSqliteMigrations,
-  type HealthStore,
   type SchemaStore,
   type SqliteStoreOptions,
+  type Store,
 } from 'second_brain';
 import { writeConfig } from '../src/config/codec.js';
 import { HOME_ENV } from '../src/config/paths.js';
@@ -508,7 +508,10 @@ describe('the dispatcher and a standalone command', () => {
     expect(envelope.data).toEqual({
       args: ['thing'],
       home: '/nonexistent/home',
-      keys: ['args', 'clock', 'env', 'options'],
+      // No brain and no config, and `stdin` is a function it never called:
+      // a standalone command that does not read a hook payload must not wait
+      // on a pipe nobody is writing to.
+      keys: ['args', 'clock', 'env', 'options', 'stdin'],
     });
   });
 
@@ -942,11 +945,29 @@ describe('the dispatcher and the lock budget', () => {
         code: 'DB_UNAVAILABLE' as const,
         message: 'the budget tests never open a database',
       };
-      const store: HealthStore & SchemaStore = {
+      // The whole `Store`, because that is what `createBrain` takes: these
+      // tests are about the lock budget, so every capability answers the same
+      // way and none of them is reached.
+      const store: Store & SchemaStore = {
         async checkHealth() {
           return unavailable;
         },
         async readSchemaVersion() {
+          return unavailable;
+        },
+        async ensureSelfUser() {
+          return unavailable;
+        },
+        async readSelfUser() {
+          return unavailable;
+        },
+        async ensureSession() {
+          return unavailable;
+        },
+        async ingest() {
+          return unavailable;
+        },
+        async readSession() {
           return unavailable;
         },
         async close() {

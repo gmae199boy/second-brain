@@ -43,4 +43,17 @@ export {
   type DoctorReport,
   type DoctorSummary,
 } from './admin/doctor.js';
-export { createBrain, type Brain, type BrainAdmin, type BrainDependencies } from './brain.js';
+export {
+  createBrain,
+  type Brain,
+  type BrainAdmin,
+  type BrainDependencies,
+  type BrainSessions,
+} from './brain.js';
+export {
+  ingestSession,
+  type IngestSessionData,
+  type IngestSessionDependencies,
+  type IngestSessionInput,
+  type IngestSessionResult,
+} from './sessions/ingest.js';

@@ -8,6 +8,7 @@ import type {
 import type { SessionKey, SessionToken } from '../domain/session-token.js';
 import type { SchemaVersion } from '../domain/schema-version.js';
 import type { ToolNote } from '../domain/tool-note.js';
+import type { User } from '../domain/user.js';
 
 /**
  * One capability an adapter checked on its own source, under a name Core never
@@ -91,10 +92,17 @@ export interface EnsureSessionInput {
   worktreeId: string | null;
 }
 
-/** Find-or-create, so a second call with another proposed id changes nothing. */
+/**
+ * Find-or-create, so a second call with another proposed id changes nothing.
+ *
+ * `DB_LOCKED` is in here because this is a write: SQLite has one writer per
+ * database, so a hook that arrives while another one is committing waits out
+ * its budget and then says so (AD-7). Epic 2's spool is what turns that into a
+ * retry; until then it is a failure the caller reports.
+ */
 export type EnsureSessionResult =
   | { ok: true; created: boolean; session: Session }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /** How many rows a batch actually added. A replayed batch adds none (AD-8). */
 export interface IngestCounts {
@@ -114,7 +122,7 @@ export type IngestResult =
     }
   | {
       ok: false;
-      code: 'SESSION_NOT_FOUND' | 'DB_UNAVAILABLE';
+      code: 'SESSION_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED';
       message: string;
     };
 
@@ -147,12 +155,57 @@ export interface SessionStore {
   readSession(token: SessionToken): Promise<ReadSessionResult>;
 }
 
+/** What `ensureSelfUser` needs to create the owner's row (AD-12). */
+export interface EnsureSelfUserInput {
+  /**
+   * The id to give a new row. The caller mints it (AD-8); a row that is
+   * already there keeps the id it has, which is what makes a brain copied to
+   * another machine keep its owner.
+   */
+  id: string;
+  /** The operating system user name. Never used to update an existing row. */
+  name: string;
+  createdAt: Date;
+}
+
+/**
+ * Find-or-create the owner. `created` is false for every call after the first,
+ * whatever id or name it proposed: the owner is decided once, by the install
+ * that made the database (AD-12).
+ */
+export type EnsureSelfUserResult =
+  | { ok: true; created: boolean; user: User }
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+
+/**
+ * The owner, or `null` for a database that has none yet — a version 3 schema
+ * whose install step never ran. `null` is a value and not a failure, because
+ * the caller's next move is to say `USER_MISSING` and name the command that
+ * fixes it, not to catch anything.
+ */
+export type ReadSelfUserResult =
+  | { ok: true; user: User | null }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
+/**
+ * The identity capability: who this brain belongs to. It is a capability of
+ * its own because two unrelated callers need exactly this and nothing more —
+ * the installer, which creates the row, and `sessions.ingest`, which reads it
+ * to fill `sessions.user_id` (AD-12).
+ */
+export interface UserStore {
+  /** Find-or-create the one `is_self` row. Never creates a second (AD-12). */
+  ensureSelfUser(input: EnsureSelfUserInput): Promise<EnsureSelfUserResult>;
+  /** The owner, or `null` when the install step has not run here. */
+  readSelfUser(): Promise<ReadSelfUserResult>;
+}
+
 /**
  * The persistence port: the sum of its capabilities. An adapter grows into it
  * one capability at a time, and the day it implements `SessionStore` it passes
  * the whole `Store` contract (AD-10).
  */
-export type Store = HealthStore & SessionStore;
+export type Store = HealthStore & SessionStore & UserStore;
 
 /**
  * Result of reading the single `schema_version` row. `version: null` means the
