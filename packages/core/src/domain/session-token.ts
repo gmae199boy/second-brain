@@ -54,7 +54,7 @@ export function parseSessionToken(token: string): ParseSessionTokenResult {
     return {
       ok: false,
       code: 'SESSION_TOKEN_INVALID',
-      message: `a session token looks like "harness${SESSION_TOKEN_SEPARATOR}id", got: ${token}`,
+      message: `세션 토큰은 "harness${SESSION_TOKEN_SEPARATOR}id" 모양이어야 합니다. 받은 값: ${token}`,
     };
   }
   const harness = token.slice(0, cut);
@@ -63,7 +63,7 @@ export function parseSessionToken(token: string): ParseSessionTokenResult {
     return {
       ok: false,
       code: 'SESSION_TOKEN_INVALID',
-      message: `both halves of a session token must be set, got: ${token}`,
+      message: `세션 토큰의 두 쪽 모두 값이 있어야 합니다. 받은 값: ${token}`,
     };
   }
   return { ok: true, key: { harness, harnessSessionId } };

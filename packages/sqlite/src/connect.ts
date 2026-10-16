@@ -114,7 +114,11 @@ export function openSqlite(options: OpenSqliteOptions): OpenSqliteResult {
     const target = create ? path : new URL(`${pathToFileURL(path).href}?mode=rw`);
     database = new DatabaseSync(target, { timeout: busyTimeoutMs });
   } catch (error) {
-    return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) };
+    return {
+      ok: false,
+      code: 'DB_UNAVAILABLE',
+      message: `데이터베이스를 열 수 없습니다: ${describe(error)}`,
+    };
   }
 
   let redactAllowed = false;
@@ -130,7 +134,11 @@ export function openSqlite(options: OpenSqliteOptions): OpenSqliteResult {
     database.function('brain_redact_allowed', () => (redactAllowed ? 1 : 0));
   } catch (error) {
     database.close();
-    return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) };
+    return {
+      ok: false,
+      code: 'DB_UNAVAILABLE',
+      message: `데이터베이스 연결을 준비할 수 없습니다: ${describe(error)}`,
+    };
   }
 
   const db = createKysely(database, { onQuery });
@@ -193,5 +201,5 @@ export function describe(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
   const code: unknown = (error as { code?: unknown }).code;
   const candidates = [error.message, typeof code === 'string' ? code : '', error.name];
-  return candidates.find((candidate) => candidate !== '') ?? 'unknown error';
+  return candidates.find((candidate) => candidate !== '') ?? '알 수 없는 오류';
 }

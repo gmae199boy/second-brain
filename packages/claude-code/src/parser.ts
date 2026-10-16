@@ -86,7 +86,7 @@ export function claudeCodeParser(): Parser {
           return {
             ok: false,
             code: 'TRANSCRIPT_UNREADABLE',
-            message: `line ${String(index + 1)} is not JSON, so the transcript cannot be read as Claude Code's`,
+            message: `${String(index + 1)}번째 줄이 JSON이 아니어서 이 트랜스크립트를 Claude Code의 것으로 읽을 수 없습니다`,
           };
         }
 

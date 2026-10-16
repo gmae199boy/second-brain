@@ -297,7 +297,7 @@ describe('doctorAt', () => {
     expect(report.checks[1]).toEqual({
       id: 'schema-version',
       status: 'skip',
-      detail: 'prereq failed: db',
+      detail: '앞선 점검 실패: db',
     });
     expect(report.checks.map((check) => check.id)).toEqual([
       'db',

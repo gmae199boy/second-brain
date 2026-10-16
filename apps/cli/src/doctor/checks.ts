@@ -126,18 +126,18 @@ interface ShimState {
  */
 async function inspectShim(home: string): Promise<ShimState> {
   const path = shimPath(home);
-  const rerun = 'Run `brain setup run`.';
+  const rerun = '`brain setup run`을 실행하세요.';
 
   let text: string;
   try {
     text = await readFile(path, 'utf8');
   } catch (error) {
-    return { path, message: `${path}: ${describe(error)}. ${rerun}` };
+    return { path, message: `${path}을 읽을 수 없습니다: ${describe(error)}. ${rerun}` };
   }
 
   const shim = parseShim(text);
   if (shim === undefined) {
-    return { path, message: `${path} could not be read back. ${rerun}` };
+    return { path, message: `${path}을 다시 읽어 들일 수 없습니다. ${rerun}` };
   }
 
   // From here the shim's own facts are known, so they travel with every answer
@@ -147,21 +147,21 @@ async function inspectShim(home: string): Promise<ShimState> {
   try {
     await access(path, constants.X_OK);
   } catch {
-    return failed(`${path} is not executable. ${rerun}`);
+    return failed(`${path}에 실행 권한이 없습니다. ${rerun}`);
   }
 
   if (!text.includes(SHIM_SIGNATURE)) {
-    return failed(`${path} carries no brain signature line. ${rerun}`);
+    return failed(`${path}에 brain 서명 줄이 없습니다. ${rerun}`);
   }
 
   if (shim.home !== home) {
     // Another installation's shim, sitting where this one's belongs. A hook
     // calling it would write into the other brain, silently.
-    return failed(`${path} carries the folder ${shim.home}, not ${home}. ${rerun}`);
+    return failed(`${path}이 담고 있는 폴더가 ${home}이 아니라 ${shim.home}입니다. ${rerun}`);
   }
 
   if (!(await isReadable(shim.bin))) {
-    return failed(`${path} names an entry point that is not there: ${shim.bin}. ${rerun}`);
+    return failed(`${path}이 가리키는 진입점이 없습니다: ${shim.bin}. ${rerun}`);
   }
 
   return { path, shim };
@@ -193,7 +193,7 @@ async function nodePathCheck(state: ShimState, runNode: RunNode): Promise<Doctor
 
   const run = await runNode(node);
   if (!run.ok) {
-    return { id: 'node-path', status: 'fail', detail: `${node}: ${run.message}` };
+    return { id: 'node-path', status: 'fail', detail: `${node}을 실행할 수 없습니다: ${run.message}` };
   }
 
   const version = parseVersion(run.stdout);
@@ -201,7 +201,7 @@ async function nodePathCheck(state: ShimState, runNode: RunNode): Promise<Doctor
     return {
       id: 'node-path',
       status: 'fail',
-      detail: `${node} answered --version with ${oneLine(run.stdout)}, which is not a version`,
+      detail: `${node}이 \`--version\`에 "${oneLine(run.stdout)}"이라고 답했는데, 이것은 버전이 아닙니다`,
     };
   }
 
@@ -209,10 +209,10 @@ async function nodePathCheck(state: ShimState, runNode: RunNode): Promise<Doctor
     return {
       id: 'node-path',
       status: 'fail',
-      detail: `${node} is node ${version}, below the ${NODE_FLOOR} this build needs`,
+      detail: `${node}은 node ${version}이고, 이 빌드가 필요한 ${NODE_FLOOR}보다 낮습니다`,
     };
   }
-  return { id: 'node-path', status: 'ok', detail: `node ${version} at ${node}` };
+  return { id: 'node-path', status: 'ok', detail: `${node}의 node ${version}` };
 }
 
 /** The node running this process, which is the one that answered the command. */
@@ -222,7 +222,7 @@ function nodeVersionCheck(): DoctorCheck {
     return {
       id: 'node-version',
       status: 'fail',
-      detail: `node ${version} is below the ${NODE_FLOOR} this build needs`,
+      detail: `node ${version}은 이 빌드가 필요한 ${NODE_FLOOR}보다 낮습니다`,
     };
   }
   return { id: 'node-version', status: 'ok', detail: `node ${version}` };
@@ -310,7 +310,7 @@ function describe(error: unknown): string {
   if (!(error instanceof Error)) return oneLine(String(error));
   const code: unknown = (error as { code?: unknown }).code;
   const candidates = [oneLine(error.message), typeof code === 'string' ? code : '', error.name];
-  return candidates.find((candidate) => candidate !== '') ?? 'unknown error';
+  return candidates.find((candidate) => candidate !== '') ?? '알 수 없는 오류';
 }
 
 function oneLine(text: string): string {

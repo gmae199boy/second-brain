@@ -21,6 +21,10 @@ import {
   type CommandRequest,
   type CommandResult,
 } from '../src/bootstrap.js';
+// By path, not by package name: this package depends on nothing but `node:`
+// built-ins, so there is no `second_brain` in its own `node_modules` to import
+// the check from (`englishSentences` is Core's, under `testing/`).
+import { assertKoreanProse } from '../../../packages/core/src/testing/language.js';
 
 const packageRoot = fileURLToPath(new URL('..', import.meta.url));
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
@@ -81,6 +85,11 @@ function harness(options: HarnessOptions = {}): Harness {
     },
     isTTY: options.isTTY ?? true,
     log: (line: string): void => {
+      // Every line the installer prints goes through here, so the
+      // output-language rule covers all of them at once (Conventions, output
+      // language 2026-10-16): a later story that adds an English line fails
+      // the first test that reaches it.
+      assertKoreanProse(line, { label: 'bootstrap line' });
       lines.push(line);
     },
     exists: () => options.exists ?? false,
@@ -228,7 +237,7 @@ describe('an app folder Brain must not touch', () => {
 
     expect(code).toBe(1);
     expect(run.calls).not.toContain(`git -C ${APP} pull --ff-only`);
-    expect(run.lines.join('\n')).toContain('has local changes');
+    expect(run.lines.join('\n')).toContain('로컬 변경이 있으므로');
     expect(run.lines.join('\n')).toContain(`git -C ${APP} status`);
   });
 
@@ -249,7 +258,7 @@ describe('an app folder Brain must not touch', () => {
       `git -C ${APP} status --porcelain`,
       `git -C ${APP} pull --ff-only`,
     ]);
-    expect(run.lines.join('\n')).toContain('cannot be fast-forwarded');
+    expect(run.lines.join('\n')).toContain('fast-forward할 수 없으므로');
   });
 
   it('stops when the folder is not a git repository at all', async () => {
@@ -267,7 +276,7 @@ describe('an app folder Brain must not touch', () => {
       'git --version',
       `git -C ${APP} rev-parse --show-toplevel`,
     ]);
-    expect(run.lines.join('\n')).toContain('not a git clone');
+    expect(run.lines.join('\n')).toContain('git 클론이 아니므로');
     expect(run.lines.join('\n')).toContain(HOME_ENV);
   });
 
@@ -286,7 +295,7 @@ describe('an app folder Brain must not touch', () => {
     expect(code).toBe(1);
     // Above all: the enclosing repository was not pulled.
     expect(run.calls).toEqual(['git --version', `git -C ${APP} rev-parse --show-toplevel`]);
-    expect(run.lines.join('\n')).toContain('not a git clone');
+    expect(run.lines.join('\n')).toContain('git 클론이 아니므로');
   });
 
   it('stops when the clone came from another repository', async () => {
@@ -313,7 +322,7 @@ describe('pnpm', () => {
 
     expect(run.questions).toEqual([]);
     expect(run.calls).not.toContain('npm install -g pnpm@latest');
-    expect(run.lines).toContain('pnpm 12.11.2 is in place');
+    expect(run.lines).toContain('pnpm 12.11.2이 준비되어 있습니다');
   });
 
   it('is installed after a yes when it is missing', async () => {
@@ -341,7 +350,7 @@ describe('pnpm', () => {
       'pnpm build',
       INSTALLER,
     ]);
-    expect(run.lines.join('\n')).toContain('pnpm is not installed');
+    expect(run.lines.join('\n')).toContain('pnpm이 설치되어 있지 않습니다');
   });
 
   it('is installed after a yes when it is older than 12', async () => {
@@ -355,7 +364,7 @@ describe('pnpm', () => {
     });
 
     expect(await main([], ENV, run.deps)).toBe(0);
-    expect(run.lines.join('\n')).toContain(`pnpm 10.34.4 is older than ${MIN_PNPM_MAJOR}`);
+    expect(run.lines.join('\n')).toContain(`pnpm 10.34.4은 ${MIN_PNPM_MAJOR}보다 오래되었습니다`);
     expect(run.calls).toContain('npm install -g pnpm@latest');
   });
 
@@ -373,7 +382,9 @@ describe('pnpm', () => {
     // Nothing was built with the pnpm that is still too old.
     expect(run.calls).not.toContain('pnpm install --frozen-lockfile');
     const said = run.lines.join('\n');
-    expect(said).toContain(`pnpm 10.34.4 is older than ${MIN_PNPM_MAJOR}, even after`);
+    expect(said).toContain(
+      `\`${PNPM_INSTALL_COMMAND}\` 뒤에도 pnpm 10.34.4은 ${MIN_PNPM_MAJOR}보다 오래되었습니다`,
+    );
     expect(said).toContain('which -a pnpm');
   });
 
@@ -431,7 +442,7 @@ describe('required tools', () => {
 
     expect(code).toBe(1);
     expect(run.calls).toEqual(['git --version']);
-    expect(run.lines.join('\n')).toContain('node 24 or newer');
+    expect(run.lines.join('\n')).toContain(`node ${MIN_NODE_MAJOR} 이상이 필요한데`);
     expect(run.lines.join('\n')).toContain('brew install node');
   });
 
@@ -475,7 +486,7 @@ describe('a step that fails', () => {
     const code = await main([], ENV, run.deps);
 
     expect(code).toBe(1);
-    expect(run.lines).toContain(`${step} failed with exit code 3.`);
+    expect(run.lines).toContain(`\`${step}\`이 실패했습니다. 종료 코드 3.`);
     expect(run.calls).not.toContain(INSTALLER);
   });
 });

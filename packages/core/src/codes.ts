@@ -84,10 +84,11 @@ export interface ErrorCodeSpec {
    */
   retryable?: boolean;
   /**
-   * What to do about it: lower case, no full stop, commands in backticks, and
-   * the real first step rather than a command that would fail the same way
-   * (Conventions). Never destructive — a code a typo can produce must not
-   * suggest removing anything.
+   * What to do about it, in Korean, because a person reads it (Conventions,
+   * output language, 2026-10-16): no full stop, commands in backticks, and the
+   * real first step rather than a command that would fail the same way. Never
+   * destructive — a code a typo can produce must not suggest removing
+   * anything.
    */
   hint: string;
 }
@@ -97,13 +98,13 @@ const CODES = {
   USAGE: {
     exit: 2,
     retryable: false,
-    hint: 'run the command with `--help` to see what it takes',
+    hint: '`--help`를 붙여 이 명령이 무엇을 받는지 확인하세요',
   },
   /** There is no `config.toml`, so the installer has not run here (AD-18). */
   CONFIG_MISSING: {
     exit: 2,
     retryable: false,
-    hint: 'run `brain setup run` to install this brain',
+    hint: '`brain setup run`으로 설치하세요',
   },
   /**
    * There is a configuration and it cannot be understood or used.
@@ -112,12 +113,17 @@ const CODES = {
    * whole from what it can read, so running it over a configuration with one
    * unreadable value writes the keys nothing asks about — the time zone, the
    * file store root, the mirror — back as their defaults (deferred, fixed in
-   * 2.4). Editing the one key the message names loses nothing.
+   * 2.4). Editing the one value the message names loses nothing.
+   *
+   * It says "value" and not "key" because the same code answers a flag the
+   * installer could not use — `setup run --store-path notes/brain.db` — and a
+   * hint that sent that reader to `config.toml` would send them to a file that
+   * is not the problem.
    */
   CONFIG_INVALID: {
     exit: 2,
     retryable: false,
-    hint: 'fix the key the message names in `config.toml`',
+    hint: '메시지가 가리키는 값을 고치세요 — `config.toml`의 키거나 명령의 옵션입니다',
   },
   /**
    * The database could not be reached. The Conventions table puts it at 2
@@ -126,53 +132,53 @@ const CODES = {
   DB_UNAVAILABLE: {
     exit: 2,
     retryable: false,
-    hint: 'run `brain admin doctor` to see what the database is doing',
+    hint: '`brain admin doctor`로 데이터베이스 상태를 확인하세요',
   },
   /** Another connection held the write lock for longer than the budget (AD-7). */
   DB_LOCKED: {
     exit: 1,
     retryable: true,
-    hint: 'another process is writing; run the command again in a moment',
+    hint: '다른 프로세스가 쓰는 중이니 잠시 뒤 같은 명령을 다시 실행하세요',
   },
   /** The stored schema version is not the one this build was made for (AD-20). */
   SCHEMA_MISMATCH: {
     exit: 1,
     retryable: false,
-    hint: 'run `brain setup run` to bring the database to this build',
+    hint: '`brain setup run`으로 데이터베이스를 이 빌드에 맞추세요',
   },
   /** A migration was applied and the database refused it. */
   MIGRATION_FAILED: {
     exit: 1,
     retryable: false,
-    hint: 'run `brain admin doctor`, then `brain setup run` once the file it names is readable',
+    hint: '`brain admin doctor`를 실행하고, 가리키는 파일을 읽을 수 있게 되면 `brain setup run`을 실행하세요',
   },
   /** The file store's root could not be made or written. */
   FILES_UNAVAILABLE: {
     exit: 1,
-    hint: 'check that the file store root is a folder this user may write',
+    hint: '파일 저장소 루트가 이 사용자가 쓸 수 있는 폴더인지 확인하세요',
   },
   /** `<home>/bin/brain` is not there, so there is nothing to register (AD-19). */
   SHIM_MISSING: {
     exit: 1,
     retryable: false,
-    hint: 'run `brain setup run` to write the shim',
+    hint: '`brain setup run`으로 shim 파일을 만드세요',
   },
   /** The search itself failed, so there is no result to report. */
   SEARCH_FAILED: {
     exit: 1,
-    hint: 'run `brain admin doctor` to see whether the index is healthy',
+    hint: '`brain admin doctor`로 색인이 건강한지 확인하세요',
   },
   /** The daemon handshake found a build other than this one's (epic 9). */
   VERSION_MISMATCH: {
     exit: 1,
     retryable: false,
-    hint: 'restart the daemon so it runs the build this command came from',
+    hint: '이 명령을 낸 빌드로 daemon을 다시 시작하세요',
   },
   /** The verb needs a session and the invocation named none (AD-8). */
   SESSION_REQUIRED: {
     exit: 2,
     retryable: false,
-    hint: 'pass the session token the harness hook reported',
+    hint: '하네스 hook이 보고한 세션 토큰을 넘기세요',
   },
   /**
    * The database is at a version that has a `users` table and holds no owner
@@ -187,21 +193,22 @@ const CODES = {
   USER_MISSING: {
     exit: 2,
     retryable: false,
-    hint: 'run `brain setup run` to record who this database belongs to',
+    hint: '`brain setup run`으로 이 데이터베이스의 주인을 기록하세요',
   },
   /**
    * The verb is gated: it changes or removes something, and nothing in the
    * invocation agreed to it. `error.retry` carries the same call with
    * `confirm: true`, and the CLI adds the argv for it.
    *
-   * The hint names `error.retry` and not the CLI's `error.retry_argv`: this
-   * table is read by the socket and the MCP server too, and neither of those
-   * has an argv to run (AD-5).
+   * The hint says what to do rather than which field to read: text mode prints
+   * it under the failure, where there is no envelope to look `error.retry` up
+   * in. What the consent is spelled as — `--yes` on a command line, `confirm`
+   * in `error.retry` — is the same consent on every surface (Conventions).
    */
   CONFIRMATION_REQUIRED: {
     exit: 3,
     retryable: false,
-    hint: 'ask the person whether to go ahead, and make the call in `error.retry` only if they say yes',
+    hint: '사람에게 진행해도 되는지 묻고, 그렇다고 할 때만 같은 명령에 `--yes`를 붙여 다시 실행하세요',
   },
 } as const satisfies Record<string, ErrorCodeSpec>;
 

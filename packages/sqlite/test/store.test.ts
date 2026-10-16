@@ -291,7 +291,7 @@ describe('sqliteStore probing a database another process is writing to', () => {
         // Doctor turns that into `warn`, which does not fail the command.
         expect(writable?.ok).toBe(true);
         expect(writable?.warn).toBe(true);
-        expect(writable?.detail).toContain('write lock');
+        expect(writable?.detail).toContain('쓰기 잠금');
         // It did not wait for the holder, and it did not wait for its budget.
         expect(waited).toBeLessThan(1000);
       } finally {

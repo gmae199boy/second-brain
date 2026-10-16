@@ -72,7 +72,7 @@ export async function main(argv, env, deps) {
     const pnpm = await ensurePnpm(app, deps);
     if (pnpm !== 0)
         return pnpm;
-    deps.log(`installing dependencies in ${app}`);
+    deps.log(`${app}에 의존성을 설치합니다`);
     const install = await deps.run({
         command: 'pnpm',
         args: ['install', '--frozen-lockfile'],
@@ -80,11 +80,11 @@ export async function main(argv, env, deps) {
     });
     if (install.code !== 0)
         return failedStep('pnpm install', install.code, deps);
-    deps.log('building');
+    deps.log('빌드합니다');
     const build = await deps.run({ command: 'pnpm', args: ['build'], cwd: app });
     if (build.code !== 0)
         return failedStep('pnpm build', build.code, deps);
-    deps.log('starting the installer');
+    deps.log('설치기를 시작합니다');
     const installer = await deps.run({
         command: deps.nodePath,
         args: [join(app, 'apps', 'cli', 'dist', 'install.js'), ...argv],
@@ -101,11 +101,11 @@ async function missingTools(deps) {
     const missing = [];
     const major = majorOf(deps.nodeVersion);
     if (major === undefined || major < MIN_NODE_MAJOR) {
-        missing.push(`node ${MIN_NODE_MAJOR} or newer is required, this is ${deps.nodeVersion}. Install it with: brew install node`);
+        missing.push(`node ${MIN_NODE_MAJOR} 이상이 필요한데 이것은 ${deps.nodeVersion}입니다. \`brew install node\`로 설치하세요`);
     }
     const git = await deps.run({ command: 'git', args: ['--version'], capture: true });
     if (git.code !== 0) {
-        missing.push('git is required. Install it with: xcode-select --install');
+        missing.push('git이 필요합니다. `xcode-select --install`로 설치하세요');
     }
     return missing;
 }
@@ -116,7 +116,7 @@ async function missingTools(deps) {
  */
 async function prepareApp(app, repo, deps) {
     if (!deps.exists(app)) {
-        deps.log(`cloning ${repo} into ${app}`);
+        deps.log(`${repo}를 ${app}에 클론합니다`);
         // git creates the parent folders of the destination itself.
         const clone = await deps.run({ command: 'git', args: ['clone', repo, app] });
         if (clone.code !== 0)
@@ -129,15 +129,15 @@ async function prepareApp(app, repo, deps) {
     // pulled, one folder up from where Brain was looking.
     const toplevel = await capture(['rev-parse', '--show-toplevel'], app, deps);
     if (toplevel.code !== 0 || deps.realpath(toplevel.stdout.trim()) !== deps.realpath(app)) {
-        deps.log(`${app} is there but is not a git clone, so Brain will not touch it.`);
+        deps.log(`${app}이 있지만 git 클론이 아니므로 Brain은 건드리지 않습니다.`);
         deps.log(leaveItAlone(app));
         return 1;
     }
     const origin = await capture(['remote', 'get-url', 'origin'], app, deps);
     const url = origin.stdout.trim();
     if (origin.code !== 0 || !sameRepo(url, repo)) {
-        const what = url === '' ? 'an unknown repository' : url;
-        deps.log(`${app} is a clone of ${what}, not of ${repo}, so Brain will not touch it.`);
+        const what = url === '' ? '알 수 없는 저장소' : url;
+        deps.log(`${app}은 ${repo}가 아니라 ${what}의 클론이므로 Brain은 건드리지 않습니다.`);
         deps.log(leaveItAlone(app));
         return 1;
     }
@@ -145,17 +145,17 @@ async function prepareApp(app, repo, deps) {
     if (status.code !== 0)
         return failedStep('git status', status.code, deps);
     if (status.stdout.trim() !== '') {
-        deps.log(`${app} has local changes, so Brain will not update it.`);
-        deps.log(`See them with: git -C ${app} status`);
-        deps.log('Keep or drop them yourself, then run this again.');
+        deps.log(`${app}에 로컬 변경이 있으므로 Brain은 업데이트하지 않습니다.`);
+        deps.log(`\`git -C ${app} status\`로 변경 내용을 보세요`);
+        deps.log('변경을 직접 정리한 뒤 다시 실행하세요.');
         return 1;
     }
-    deps.log(`updating ${app}`);
+    deps.log(`${app}을 업데이트합니다`);
     // Fast-forward only: if history has diverged, a human decides, not Brain.
     const pull = await deps.run({ command: 'git', args: ['-C', app, 'pull', '--ff-only'] });
     if (pull.code !== 0) {
-        deps.log(`${app} cannot be fast-forwarded, so Brain left it as it is.`);
-        deps.log(`See why with: git -C ${app} log --oneline --graph --all -n 20`);
+        deps.log(`${app}은 fast-forward할 수 없으므로 Brain은 그대로 두었습니다.`);
+        deps.log(`\`git -C ${app} log --oneline --graph --all -n 20\`로 이유를 보세요`);
         return 1;
     }
     return 0;
@@ -168,17 +168,17 @@ async function prepareApp(app, repo, deps) {
 async function ensurePnpm(app, deps) {
     const found = await pnpmVersion(app, deps);
     if (found.enough) {
-        deps.log(`pnpm ${found.version} is in place`);
+        deps.log(`pnpm ${found.version}이 준비되어 있습니다`);
         return 0;
     }
     deps.log(`${found.reason}.`);
     if (!deps.isTTY) {
-        deps.log(`Run this yourself and start again: ${PNPM_INSTALL_COMMAND}`);
+        deps.log(`\`${PNPM_INSTALL_COMMAND}\`를 직접 실행한 뒤 다시 시작하세요`);
         return 1;
     }
-    const agreed = await deps.ask(`Install the latest pnpm now (${PNPM_INSTALL_COMMAND})?`);
+    const agreed = await deps.ask(`지금 최신 pnpm을 설치할까요? (\`${PNPM_INSTALL_COMMAND}\`)`);
     if (!agreed) {
-        deps.log(`Run this yourself and start again: ${PNPM_INSTALL_COMMAND}`);
+        deps.log(`\`${PNPM_INSTALL_COMMAND}\`를 직접 실행한 뒤 다시 시작하세요`);
         return 1;
     }
     const installed = await deps.run({
@@ -193,11 +193,11 @@ async function ensurePnpm(app, deps) {
     // failed for no stated reason.
     const after = await pnpmVersion(app, deps);
     if (!after.enough) {
-        deps.log(`${after.reason}, even after ${PNPM_INSTALL_COMMAND}.`);
-        deps.log('Another pnpm must come first on your PATH. Find it with: which -a pnpm');
+        deps.log(`\`${PNPM_INSTALL_COMMAND}\` 뒤에도 ${after.reason}.`);
+        deps.log('다른 pnpm이 PATH 앞쪽에 있습니다. `which -a pnpm`으로 찾으세요');
         return 1;
     }
-    deps.log(`pnpm ${after.version} is in place`);
+    deps.log(`pnpm ${after.version}이 준비되어 있습니다`);
     return 0;
 }
 /** What `pnpm` the PATH finds, in the clone, where a pin would still apply. */
@@ -209,19 +209,19 @@ async function pnpmVersion(app, deps) {
         return { enough: true, version, reason: '' };
     }
     const reason = found.code === 0 && major !== undefined
-        ? `pnpm ${version} is older than ${MIN_PNPM_MAJOR}`
-        : 'pnpm is not installed';
+        ? `pnpm ${version}은 ${MIN_PNPM_MAJOR}보다 오래되었습니다`
+        : 'pnpm이 설치되어 있지 않습니다';
     return { enough: false, version, reason };
 }
 function capture(args, app, deps) {
     return deps.run({ command: 'git', args: ['-C', app, ...args], capture: true });
 }
 function leaveItAlone(app) {
-    return `Move ${app} aside, or point ${HOME_ENV} somewhere else, then run this again.`;
+    return `${app}을 다른 곳으로 옮기거나 ${HOME_ENV}을 다른 곳으로 가리킨 뒤 다시 실행하세요.`;
 }
 /** Every failure of a step says which step and what code. Exit 1 throughout. */
 function failedStep(step, code, deps) {
-    deps.log(`${step} failed with exit code ${code}.`);
+    deps.log(`\`${step}\`이 실패했습니다. 종료 코드 ${code}.`);
     return 1;
 }
 /** The major of `12.11.2` or `v24.16.0`; undefined when it is not a version. */

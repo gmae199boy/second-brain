@@ -21,14 +21,14 @@ export interface SetupRunData {
 export const setupRun: CommandSpec<SetupRunData> = {
   ns: 'setup',
   verb: 'run',
-  nsDescription: 'install, re-configure and connect harnesses',
-  description: 'run the installer again, keeping what is already there',
+  nsDescription: '설치하고, 다시 설정하고, 하네스를 연결합니다',
+  description: '이미 있는 것을 지키면서 설치기를 다시 실행합니다',
   standalone: true,
   options: [
-    { flags: '--store-path <path>', description: 'absolute path for the database file' },
-    { flags: '--mirror-path <path>', description: 'absolute path for the mirror folder' },
-    { flags: '--connect <harness...>', description: 'connect these harnesses, by name' },
-    { flags: '-y, --yes', description: 'agree in advance to what the install has to do' },
+    { flags: '--store-path <path>', description: '데이터베이스 파일의 절대 경로' },
+    { flags: '--mirror-path <path>', description: '미러 폴더의 절대 경로' },
+    { flags: '--connect <harness...>', description: '이 하네스들을 이름으로 연결합니다' },
+    { flags: '-y, --yes', description: '설치가 해야 할 일에 미리 동의합니다' },
   ],
 
   async run(context: StandaloneCommandContext) {
@@ -106,7 +106,7 @@ const CODED_LINE = /^([A-Z][A-Z0-9_]*): (.+)$/;
  */
 function reason(lines: readonly string[]): { code: string; message: string } {
   const said = [...lines].reverse().find((line) => line !== '' && !line.startsWith(' '));
-  if (said === undefined) return { code: 'USAGE', message: 'the installer could not run' };
+  if (said === undefined) return { code: 'USAGE', message: '설치기를 실행할 수 없었습니다' };
   const coded = CODED_LINE.exec(said);
   if (coded?.[1] === undefined || coded[2] === undefined) {
     return { code: 'USAGE', message: said };

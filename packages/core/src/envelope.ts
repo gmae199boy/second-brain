@@ -153,7 +153,8 @@ export function requireConfirmation(call: VerbCall, message?: string): Failure |
   if (call.args[CONFIRM_ARG] === true) return undefined;
   return {
     code: 'CONFIRMATION_REQUIRED',
-    message: message ?? `${call.ns} ${call.verb} needs confirmation, and this call gave none`,
+    message:
+      message ?? `${call.ns} ${call.verb}에는 확인이 필요한데 이 호출은 확인을 주지 않았습니다`,
     // No `exit`, no `retryable` and no `hint`: the code table answers for all
     // three, and a second spelling of them here is a second thing to keep.
     retry: { ns: call.ns, verb: call.verb, args: { ...call.args, [CONFIRM_ARG]: true } },

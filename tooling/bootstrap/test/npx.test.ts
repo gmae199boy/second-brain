@@ -86,11 +86,11 @@ describe('npx github:gmae199boy/second-brain', () => {
       // install needs. That code travelling all the way back out is the
       // handover this test is about.
       expect(first.status).toBe(3);
-      expect(first.stdout).toContain(`cloning file://${bare}`);
+      expect(first.stdout).toContain(`file://${bare}를 `);
       // The clone built itself: the CLI that story 1.4 left is there.
       expect(existsSync(join(home, 'app', 'apps', 'cli', 'dist', 'bin.js'))).toBe(true);
       expect(first.stdout).toContain('second-brain 0.0.0');
-      expect(first.stdout).toContain(`Configuration folder: ${home}`);
+      expect(first.stdout).toContain(`설정 폴더: ${home}`);
       expect(first.stdout).toContain('--yes');
     },
     SLOW,
@@ -102,11 +102,11 @@ describe('npx github:gmae199boy/second-brain', () => {
       const second = npx();
 
       expect(second.status).toBe(3);
-      expect(second.stdout).toContain(`updating ${join(home, 'app')}`);
-      expect(second.stdout).not.toContain('cloning');
+      expect(second.stdout).toContain(`${join(home, 'app')}을 업데이트합니다`);
+      expect(second.stdout).not.toContain('클론합니다');
       // Same ending as the first run.
       expect(second.stdout).toContain('second-brain 0.0.0');
-      expect(second.stdout).toContain(`Configuration folder: ${home}`);
+      expect(second.stdout).toContain(`설정 폴더: ${home}`);
     },
     SLOW,
   );

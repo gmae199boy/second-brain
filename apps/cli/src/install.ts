@@ -48,7 +48,7 @@ export function installerIntro(env: NodeJS.ProcessEnv = process.env): readonly s
   return [
     `${NAME} ${version()}`,
     `node ${process.versions.node}`,
-    `Configuration folder: ${configHome(env)}`,
+    `설정 폴더: ${configHome(env)}`,
   ];
 }
 
@@ -91,7 +91,7 @@ async function guarded(
     return await run();
   } catch (error) {
     if (error instanceof Cancelled) {
-      deps.log('Stopped at your request. Nothing more was changed.');
+      deps.log('요청대로 멈췄습니다. 더 바뀐 것은 없습니다.');
       return 1;
     }
     throw error;
@@ -180,7 +180,7 @@ function clackPrompts(): InstallPrompts {
 /** The answer, or `Cancelled` when the user pressed Ctrl-C. */
 function answered<T>(value: T | symbol): T {
   if (isCancel(value)) {
-    cancel('cancelled');
+    cancel('취소했습니다');
     throw new Cancelled();
   }
   return value as T;

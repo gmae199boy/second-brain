@@ -46,12 +46,12 @@ export interface DoctorReport {
 
 /**
  * The `detail` of a check that did not run because another one failed. One
- * phrase, so `prereq failed: db` and `prereq failed: shim` read as the same
+ * phrase, so `앞선 점검 실패: db` and `앞선 점검 실패: shim` read as the same
  * kind of answer wherever the skipped check lives — Core's own, or one the
  * runtime registered.
  */
 export function prereqFailed(id: string): string {
-  return `prereq failed: ${id}`;
+  return `앞선 점검 실패: ${id}`;
 }
 
 /**
@@ -179,12 +179,12 @@ async function registered(source: DoctorCheckSource): Promise<DoctorCheck> {
   try {
     return await source.run();
   } catch (error) {
-    return { id: source.id, status: 'fail', detail: oneLine(error) };
+    return { id: source.id, status: 'fail', detail: `점검이 실패했습니다: ${oneLine(error)}` };
   }
 }
 
 /** The first line of whatever went wrong, so a detail stays one line. */
 function oneLine(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
-  return text.split('\n')[0]?.trim() ?? 'unknown error';
+  return text.split('\n')[0]?.trim() ?? '알 수 없는 오류';
 }

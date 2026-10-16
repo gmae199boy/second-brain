@@ -94,7 +94,7 @@ export function sqliteStore(options: SqliteStoreOptions): Store & SchemaStore {
           return {
             ok: false,
             code: 'DB_UNAVAILABLE',
-            message: 'the database answered the health probe with no rows',
+            message: '데이터베이스가 상태 탐침에 아무 행도 돌려주지 않았습니다',
           };
         }
 
@@ -112,7 +112,11 @@ export function sqliteStore(options: SqliteStoreOptions): Store & SchemaStore {
           },
         };
       } catch (error) {
-        return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) };
+        return {
+          ok: false,
+          code: 'DB_UNAVAILABLE',
+          message: `데이터베이스 상태를 확인할 수 없습니다: ${describe(error)}`,
+        };
       }
     },
 
@@ -133,7 +137,11 @@ export function sqliteStore(options: SqliteStoreOptions): Store & SchemaStore {
           // An empty database: the table arrives with the first migration.
           return { ok: true, version: null };
         }
-        return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) };
+        return {
+          ok: false,
+          code: 'DB_UNAVAILABLE',
+          message: `스키마 버전을 읽을 수 없습니다: ${describe(error)}`,
+        };
       }
 
       const row = rows[0];
@@ -151,7 +159,7 @@ export function sqliteStore(options: SqliteStoreOptions): Store & SchemaStore {
         return {
           ok: false,
           code: 'DB_UNAVAILABLE',
-          message: `schema_version.applied_at is unreadable: ${appliedAt.message}`,
+          message: `schema_version.applied_at을 읽을 수 없습니다: ${appliedAt.message}`,
         };
       }
 
@@ -204,7 +212,7 @@ async function writableProbe(
       database.exec('pragma busy_timeout = 0');
       database.exec('begin immediate');
       database.exec('create table main.brain_probe_writable(x)');
-      return { ok: true, detail: 'the file took a write and gave it back' };
+      return { ok: true, detail: '파일이 쓰기를 받아들이고 되돌렸습니다' };
     } catch (error) {
       if (isBusy(error)) {
         // Only a brain in use holds this lock, and holding it says nothing
@@ -214,10 +222,10 @@ async function writableProbe(
         return {
           ok: true,
           warn: true,
-          detail: 'another process holds the write lock, so writability was not tested',
+          detail: '다른 프로세스가 쓰기 잠금을 들고 있어 쓰기 가능 여부를 확인하지 못했습니다',
         };
       }
-      return { ok: false, detail: describe(error) };
+      return { ok: false, detail: `쓰기를 시험할 수 없습니다: ${describe(error)}` };
     } finally {
       // Undoes the table whether or not it was made; with no transaction open
       // there is nothing to undo and SQLite says so, which is not a failure.
@@ -248,7 +256,7 @@ async function walProbe(connection: SqliteConnection): Promise<StoreProbe> {
     const mode = result.rows[0]?.journal_mode ?? 'unknown';
     return mode.toLowerCase() === 'wal'
       ? { ok: true, detail: mode }
-      : { ok: false, detail: `journal_mode is ${mode}, not wal` };
+      : { ok: false, detail: `journal_mode가 wal이 아니라 ${mode}입니다` };
   });
 }
 
@@ -273,8 +281,8 @@ async function trigramProbe(connection: SqliteConnection): Promise<StoreProbe> {
          where brain_probe_fts match ${'"rob"'}
       `.execute(connection.db);
       return matched.rows[0]?.matched === 1
-        ? { ok: true, detail: 'fts5 with the trigram tokenizer' }
-        : { ok: false, detail: 'an fts5 trigram index matched nothing it had just indexed' };
+        ? { ok: true, detail: 'trigram 토크나이저가 있는 fts5' }
+        : { ok: false, detail: '방금 색인한 것을 fts5 trigram 색인이 하나도 찾지 못했습니다' };
     } finally {
       await sql`drop table if exists temp.brain_probe_fts`
         .execute(connection.db)
@@ -292,8 +300,8 @@ async function foreignKeyProbe(connection: SqliteConnection): Promise<StoreProbe
   return probe('foreign-keys', async () => {
     const result = await sql<ForeignKeysRow>`pragma foreign_keys`.execute(connection.db);
     return result.rows[0]?.foreign_keys === 1
-      ? { ok: true, detail: 'enforced on this connection' }
-      : { ok: false, detail: 'not enforced on this connection' };
+      ? { ok: true, detail: '이 연결에서 적용됩니다' }
+      : { ok: false, detail: '이 연결에서 적용되지 않습니다' };
   });
 }
 
@@ -308,7 +316,7 @@ async function probe(
     // only where a probe meant something by it.
     return warn === true ? { id, ok, warn, detail } : { id, ok, detail };
   } catch (error) {
-    return { id, ok: false, detail: describe(error) };
+    return { id, ok: false, detail: `탐침이 실패했습니다: ${describe(error)}` };
   }
 }
 

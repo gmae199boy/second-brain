@@ -33,8 +33,8 @@ export function setupConnectCommand(
   return {
     ns: 'setup',
     verb: 'connect',
-    nsDescription: 'install, re-configure and connect harnesses',
-    description: 'register this brain with one harness',
+    nsDescription: '설치하고, 다시 설정하고, 하네스를 연결합니다',
+    description: '이 brain을 하네스 하나에 등록합니다',
     standalone: true,
     arguments: ['<harness>'],
 
@@ -45,7 +45,7 @@ export function setupConnectCommand(
         return {
           ok: false as const,
           code: 'USAGE',
-          message: `no connector for "${name}". ${known(registry)}`,
+          message: `"${name}"를 위한 커넥터가 없습니다. ${known(registry)}`,
           exit: 2 as const,
         };
       }
@@ -58,7 +58,7 @@ export function setupConnectCommand(
         return {
           ok: false as const,
           code: 'SHIM_MISSING',
-          message: `${path} does not exist. Run \`brain setup run\` first.`,
+          message: `${path}이 없습니다. 먼저 \`brain setup run\`을 실행하세요.`,
         };
       }
 
@@ -71,8 +71,8 @@ export function setupConnectCommand(
         data: { harness: connector.harness, target: result.target, changed: result.changed },
         text: [
           result.changed
-            ? `connected ${connector.label} in ${result.target}`
-            : `${connector.label} was already connected in ${result.target}`,
+            ? `${result.target}에 ${connector.label}를 연결했습니다`
+            : `${result.target}에 ${connector.label}가 이미 연결되어 있습니다`,
         ],
       };
     },
@@ -81,8 +81,8 @@ export function setupConnectCommand(
 
 /** The names this build accepts, for the `USAGE` message. */
 function known(registry: readonly Connector[]): string {
-  if (registry.length === 0) return 'This build registers no connector yet (epic 2).';
-  return `Known harnesses: ${registry.map((connector) => connector.harness).join(', ')}.`;
+  if (registry.length === 0) return '이 빌드는 아직 커넥터를 등록하지 않습니다 (epic 2).';
+  return `아는 하네스: ${registry.map((connector) => connector.harness).join(', ')}.`;
 }
 
 async function exists(path: string): Promise<boolean> {

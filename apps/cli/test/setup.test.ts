@@ -203,9 +203,9 @@ describe('brain setup connect', () => {
     const first = await runConnect([demo], ['setup', 'connect', 'demo'], home);
     const again = await runConnect([demo], ['setup', 'connect', 'demo'], home);
 
-    expect(first.stdout).toBe(`connected Demo in /memory/demo/settings.json\n`);
+    expect(first.stdout).toBe(`/memory/demo/settings.json에 Demo를 연결했습니다\n`);
     expect(again.stdout).toBe(
-      `Demo was already connected in /memory/demo/settings.json\n`,
+      `/memory/demo/settings.json에 Demo가 이미 연결되어 있습니다\n`,
     );
     expect(first.stderr).toBe('');
   });
@@ -221,7 +221,7 @@ describe('brain setup connect', () => {
     const envelope = JSON.parse(run.stdout) as Envelope;
     expect(envelope.ok).toBe(false);
     expect(envelope.error?.code).toBe('USAGE');
-    expect(envelope.error?.message).toContain('Known harnesses: demo.');
+    expect(envelope.error?.message).toContain('아는 하네스: demo.');
     expect(demo.entries()).toEqual([]);
   });
 
@@ -242,7 +242,7 @@ describe('brain setup connect', () => {
     const envelope = JSON.parse(run.stdout) as Envelope;
     expect(envelope.error?.code).toBe('USAGE');
     expect(envelope.error?.message).toContain('harness');
-    expect(envelope.error?.message).toContain('empty');
+    expect(envelope.error?.message).toContain('비어 있습니다');
     expect(demo.entries()).toEqual([]);
   });
 
@@ -269,7 +269,7 @@ describe('brain setup connect', () => {
     const run = await runConnect([], ['setup', 'connect', 'anything', '--json'], home);
 
     expect(run.code).toBe(2);
-    expect((JSON.parse(run.stdout) as Envelope).error?.message).toContain('no connector yet');
+    expect((JSON.parse(run.stdout) as Envelope).error?.message).toContain('아직 커넥터를 등록하지 않습니다');
   });
 
   it('reports SHIM_MISSING and writes nothing when the shim is gone', async () => {
@@ -343,7 +343,7 @@ describe('brain setup run against the local SQLite source', () => {
     // The same owner, down to the id: a re-run, and a database carried here
     // from another machine, both land on this branch (AD-12).
     expect(owner(join(home, 'brain.db'))).toEqual(ownerBefore);
-    expect(again.stdout).toContain('is already current');
+    expect(again.stdout).toContain('이미 최신입니다');
     expect(((await stat(shimPath(home))).mode & 0o777).toString(8)).toBe('755');
     expect(((await stat(join(home, 'brain.db'))).mode & 0o777).toString(8)).toBe('600');
     expect(((await stat(join(home, 'files'))).mode & 0o777).toString(8)).toBe('700');
@@ -359,7 +359,7 @@ describe('brain setup run against the local SQLite source', () => {
     expect(config).toContain(`path = "${join(home, 'brain.db')}"`);
     expect(config).toContain(`path = "${join(home, 'files')}"`);
     expect(config).toContain(`path = "${join(home, 'mirror')}"`);
-    expect(run.stdout).toContain('no harness to connect yet (epic 2)');
+    expect(run.stdout).toContain('아직 연결할 하네스가 없습니다 (epic 2)');
     // The mirror folder itself is epic 4's to create.
     expect(existsSync(join(home, 'mirror'))).toBe(false);
   });
@@ -448,6 +448,11 @@ describe('brain setup run against the local SQLite source', () => {
     expect(envelope.error?.exit_code).toBe(3);
     // Running it again unchanged cannot work: it needs the consent, not time.
     expect(envelope.error?.retryable).toBe(false);
+    // The flow's own Korean line, without the colon that introduced the flag
+    // list the envelope now carries as `retry_argv`.
+    expect(envelope.error?.message).toBe(
+      '터미널이 아니어서 아무것도 물을 수 없습니다. --yes로 미리 동의하세요',
+    );
     expect(envelope.error?.hint).toBeTruthy();
     expect(envelope.error?.retry).toEqual({
       ns: 'setup',
@@ -562,7 +567,7 @@ describe('brain setup run against the local SQLite source', () => {
     expect(envelope.data?.checks?.[1]).toEqual({
       id: 'schema-version',
       status: 'skip',
-      detail: 'prereq failed: db',
+      detail: '앞선 점검 실패: db',
     });
     expect(envelope.data?.checks?.[0]).toMatchObject({
       id: 'db',

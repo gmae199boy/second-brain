@@ -186,7 +186,7 @@ export async function runInstall(
     (name) => !deps.connectors.some((connector) => connector.harness === name),
   );
   if (unknown.length > 0) {
-    deps.log(`USAGE: no connector for ${unknown.join(', ')}. ${knownHarnesses(deps)}`);
+    deps.log(`USAGE: ${unknown.join(', ')}를 위한 커넥터가 없습니다. ${knownHarnesses(deps)}`);
     return 2;
   }
 
@@ -212,16 +212,16 @@ export async function runInstall(
 
   const store = await chooseStorePath(flags, home, recorded, deps);
   if (!store.ok) return store.exit;
-  deps.log(`the database file is ${store.path}`);
+  deps.log(`데이터베이스 파일은 ${store.path}입니다`);
   // Nothing is moved and nothing is removed (Boundaries): a re-run pointed
   // somewhere else makes a second database, and saying so is all that is owed.
   if (recorded !== undefined && recorded.storePath !== store.path) {
-    deps.log(`${recorded.storePath} is left where it is; nothing was moved or removed.`);
+    deps.log(`${recorded.storePath}는 있던 자리에 그대로 둡니다. 아무것도 옮기지 않았습니다.`);
   }
 
   const mirror = await chooseMirrorPath(flags, home, recorded, deps);
   if (!mirror.ok) return mirror.exit;
-  deps.log(`the mirror goes in ${mirror.path}`);
+  deps.log(`미러는 ${mirror.path}에 둡니다`);
 
   await askAboutEmbeddings(deps);
 
@@ -230,7 +230,7 @@ export async function runInstall(
   const filesPath = recorded?.filesPath ?? defaultFilesPath(home);
 
   await deps.config.write(home, settings(recorded, store.path, filesPath, mirror.path));
-  deps.log(`wrote ${configFilePath(home)} and ${envFilePath(home)} (mode 0600)`);
+  deps.log(`${configFilePath(home)}과 ${envFilePath(home)}를 썼습니다 (mode 0600)`);
 
   const migrated = await deps.store.prepare(store.path);
   if (!migrated.ok) {
@@ -239,14 +239,14 @@ export async function runInstall(
     // is refused before the first migration is in hand, and "the migration the
     // database refused is ." says less than nothing.
     if (migrated.code === 'MIGRATION_FAILED' && migrated.file !== '') {
-      deps.log(`The migration the database refused is ${migrated.file}.`);
+      deps.log(`데이터베이스가 거부한 마이그레이션은 ${migrated.file}입니다.`);
     }
     return 1;
   }
   deps.log(
     migrated.applied.length === 0
-      ? `the schema is already at version ${String(migrated.to)}`
-      : `applied ${migrated.applied.join(', ')}, schema version ${String(migrated.to)}`,
+      ? `스키마는 이미 버전 ${String(migrated.to)}입니다`
+      : `${migrated.applied.join(', ')}을 적용했고, 스키마 버전은 ${String(migrated.to)}입니다`,
   );
 
   // Straight after the migrations, because the `users` table arrives with one,
@@ -259,8 +259,8 @@ export async function runInstall(
   }
   deps.log(
     owner.created
-      ? `the brain belongs to ${owner.name}`
-      : `already belongs to ${owner.name}`,
+      ? `이 brain은 ${owner.name}의 것입니다`
+      : `이미 ${owner.name}의 것입니다`,
   );
 
   const filesRoot = await deps.files.prepare(filesPath);
@@ -270,14 +270,14 @@ export async function runInstall(
   }
   deps.log(
     filesRoot.created
-      ? `created ${filesRoot.path} (mode 0700)`
-      : `${filesRoot.path} is already there (mode 0700)`,
+      ? `${filesRoot.path}를 만들었습니다 (mode 0700)`
+      : `${filesRoot.path}는 이미 있습니다 (mode 0700)`,
   );
 
   // The shim before the harnesses, because connecting one means registering
   // this exact path with it.
   const shim = await deps.shim.write(home);
-  deps.log(shim.changed ? `wrote ${shim.path} (mode 0755)` : `${shim.path} is already current`);
+  deps.log(shim.changed ? `${shim.path}을 썼습니다 (mode 0755)` : `${shim.path}은 이미 최신입니다`);
 
   const connected = await connectHarnesses(flags, shim.path, deps);
 
@@ -326,9 +326,9 @@ async function chooseStorePath(
     {
       flag: flags.storePath,
       flagName: '--store-path',
-      question: 'Where should the database file go?',
+      question: '데이터베이스 파일을 어디에 둘까요?',
       fallback: recorded?.storePath ?? defaultStorePath(home),
-      what: 'database file',
+      what: '데이터베이스 파일',
     },
     deps,
   );
@@ -345,9 +345,9 @@ async function chooseMirrorPath(
     {
       flag: flags.mirrorPath,
       flagName: '--mirror-path',
-      question: 'Where should the mirror go?',
+      question: '미러를 어디에 둘까요?',
       fallback: recorded?.mirrorPath ?? defaultMirrorPath(home),
-      what: 'mirror',
+      what: '미러',
     },
     deps,
   );
@@ -375,7 +375,7 @@ async function choosePath(question: PathQuestion, deps: InstallDeps): Promise<Ch
   if (question.flag !== undefined) {
     const given = expandHome(question.flag);
     if (isAbsolute(given)) return { ok: true, path: given };
-    deps.log(`CONFIG_INVALID: ${question.flagName} ${question.flag} is not an absolute path.`);
+    deps.log(`CONFIG_INVALID: ${question.flagName} ${question.flag}는 절대 경로가 아닙니다.`);
     // A terminal can be asked again; a script cannot, and taking the default
     // instead would put the path somewhere the flag plainly did not ask for.
     if (!deps.isTTY) return { ok: false, exit: 2 };
@@ -387,10 +387,10 @@ async function choosePath(question: PathQuestion, deps: InstallDeps): Promise<Ch
     const typed = (await deps.prompts.text(question.question, question.fallback)).trim();
     const chosen = typed === '' ? question.fallback : expandHome(typed);
     if (isAbsolute(chosen)) return { ok: true, path: chosen };
-    deps.log(`CONFIG_INVALID: ${chosen} is not an absolute path.`);
+    deps.log(`CONFIG_INVALID: ${chosen}는 절대 경로가 아닙니다.`);
   }
   deps.log(
-    `No usable ${question.what} path in ${String(PATH_ATTEMPTS)} attempts, so nothing was written.`,
+    `${String(PATH_ATTEMPTS)}번 물어도 쓸 수 있는 ${question.what} 경로가 없어서 아무것도 쓰지 않았습니다.`,
   );
   return { ok: false, exit: 2 };
 }
@@ -403,14 +403,14 @@ async function choosePath(question: PathQuestion, deps: InstallDeps): Promise<Ch
  */
 async function askAboutEmbeddings(deps: InstallDeps): Promise<void> {
   if (!deps.isTTY) {
-    deps.log('embeddings are off (not supported yet)');
+    deps.log('임베딩은 꺼져 있습니다 (아직 지원하지 않습니다)');
     return;
   }
-  const wanted = await deps.prompts.confirm('Turn embeddings on?', false);
+  const wanted = await deps.prompts.confirm('임베딩을 켤까요?', false);
   deps.log(
     wanted
-      ? 'Embeddings are not supported yet, so they stay off. Nothing was written.'
-      : 'embeddings are off',
+      ? '임베딩은 아직 지원하지 않으므로 꺼진 채로 둡니다. 아무것도 쓰지 않았습니다.'
+      : '임베딩은 꺼져 있습니다',
   );
 }
 
@@ -425,13 +425,13 @@ async function connectHarnesses(
   deps: InstallDeps,
 ): Promise<boolean> {
   if (deps.connectors.length === 0) {
-    deps.log('no harness to connect yet (epic 2)');
+    deps.log('아직 연결할 하네스가 없습니다 (epic 2)');
     return true;
   }
 
   const chosen = await chooseHarnesses(flags, deps);
   if (chosen.length === 0) {
-    deps.log('no harness was connected');
+    deps.log('연결한 하네스가 없습니다');
     return true;
   }
 
@@ -445,8 +445,8 @@ async function connectHarnesses(
     }
     deps.log(
       result.changed
-        ? `connected ${connector.label} in ${result.target}`
-        : `${connector.label} was already connected in ${result.target}`,
+        ? `${result.target}에 ${connector.label}를 연결했습니다`
+        : `${result.target}에 ${connector.label}가 이미 연결되어 있습니다`,
     );
   }
   return allConnected;
@@ -471,14 +471,14 @@ async function chooseHarnesses(
     if (await connector.detect()) detected.push(connector);
   }
   if (detected.length === 0) {
-    deps.log('no harness this build knows is installed here');
+    deps.log('이 빌드가 아는 하네스가 여기에 설치되어 있지 않습니다');
     return [];
   }
 
   // Everything detected starts out checked: connecting is what the user came
   // for, and unchecking is the cheaper correction of the two.
   const answer = await deps.prompts.multiselect(
-    'Which harnesses should this brain connect to?',
+    '이 brain을 어떤 하네스에 연결할까요?',
     detected.map((connector) => ({ value: connector.harness, label: connector.label })),
     detected.map((connector) => connector.harness),
   );
@@ -496,8 +496,8 @@ export function expandHome(path: string): string {
 }
 
 function knownHarnesses(deps: InstallDeps): string {
-  if (deps.connectors.length === 0) return 'This build registers no connector yet (epic 2).';
-  return `Known harnesses: ${deps.connectors.map((connector) => connector.harness).join(', ')}.`;
+  if (deps.connectors.length === 0) return '이 빌드는 아직 커넥터를 등록하지 않습니다 (epic 2).';
+  return `아는 하네스: ${deps.connectors.map((connector) => connector.harness).join(', ')}.`;
 }
 
 export type ParsedFlags =
@@ -519,7 +519,7 @@ export function parseFlags(argv: readonly string[]): ParsedFlags {
       case '--store-path': {
         const value = argv[index + 1];
         if (value === undefined || value.startsWith('-')) {
-          return { ok: false, message: '--store-path needs a path after it.' };
+          return { ok: false, message: '--store-path 뒤에는 경로가 와야 합니다.' };
         }
         flags.storePath = value;
         index += 1;
@@ -528,7 +528,7 @@ export function parseFlags(argv: readonly string[]): ParsedFlags {
       case '--mirror-path': {
         const value = argv[index + 1];
         if (value === undefined || value.startsWith('-')) {
-          return { ok: false, message: '--mirror-path needs a path after it.' };
+          return { ok: false, message: '--mirror-path 뒤에는 경로가 와야 합니다.' };
         }
         flags.mirrorPath = value;
         index += 1;
@@ -537,7 +537,7 @@ export function parseFlags(argv: readonly string[]): ParsedFlags {
       case '--connect': {
         const value = argv[index + 1];
         if (value === undefined || value.startsWith('-')) {
-          return { ok: false, message: '--connect needs a harness name after it.' };
+          return { ok: false, message: '--connect 뒤에는 하네스 이름이 와야 합니다.' };
         }
         // Repeatable: one `--connect` per harness, so no separator has to be
         // invented and a name with a comma in it stays one name.
@@ -554,7 +554,7 @@ export function parseFlags(argv: readonly string[]): ParsedFlags {
         flags.help = true;
         continue;
       default:
-        return { ok: false, message: `unknown argument ${String(argument)}.` };
+        return { ok: false, message: `모르는 인자입니다: ${String(argument)}.` };
     }
   }
 
@@ -563,19 +563,19 @@ export function parseFlags(argv: readonly string[]): ParsedFlags {
 
 export function usage(): readonly string[] {
   return [
-    'Usage: second-brain [--store-path <path>] [--mirror-path <path>]',
-    '                    [--connect <harness>]… [--yes]',
-    '  --store-path <path>   absolute path for the database file',
-    '  --mirror-path <path>  absolute path for the mirror folder',
-    '  --connect <harness>   connect this harness; repeat for more than one',
-    '  --yes                 agree in advance to what the install has to do',
+    '사용법: second-brain [--store-path <경로>] [--mirror-path <경로>]',
+    '                     [--connect <하네스>]… [--yes]',
+    '  --store-path <경로>   데이터베이스 파일의 절대 경로',
+    '  --mirror-path <경로>  미러 폴더의 절대 경로',
+    '  --connect <하네스>    이 하네스를 연결합니다. 여럿이면 되풀이하세요',
+    '  --yes                 설치가 해야 할 일에 미리 동의합니다',
   ];
 }
 
 function nonInteractiveGuidance(): readonly string[] {
   return [
-    'This is not a terminal, so nothing can be asked. Agree in advance with --yes:',
-    '  --yes                       install with what is recorded, or the defaults',
-    '  --store-path <path> --yes   put the database file somewhere else',
+    '터미널이 아니어서 아무것도 물을 수 없습니다. --yes로 미리 동의하세요:',
+    '  --yes                        기록된 값이나 기본값으로 설치합니다',
+    '  --store-path <경로> --yes    데이터베이스 파일을 다른 곳에 둡니다',
   ];
 }

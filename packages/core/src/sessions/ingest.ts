@@ -99,8 +99,8 @@ export async function ingestSession(
       code: 'USAGE',
       message:
         known === ''
-          ? `this build can read no harness, so it cannot ingest "${key.harness}"`
-          : `no parser for harness "${key.harness}". Known harnesses: ${known}.`,
+          ? `이 빌드는 어떤 하네스도 읽지 못하므로 "${key.harness}"를 수집할 수 없습니다`
+          : `"${key.harness}" 하네스를 읽을 파서가 없습니다. 아는 하네스: ${known}.`,
     };
   }
 
@@ -108,7 +108,7 @@ export async function ingestSession(
     return {
       ok: false,
       code: 'USAGE',
-      message: 'the hook named no transcript, so there is nothing to read',
+      message: 'hook이 트랜스크립트를 알려 주지 않아 읽을 것이 없습니다',
     };
   }
 
@@ -136,7 +136,7 @@ export async function ingestSession(
     return {
       ok: false,
       code: 'USER_MISSING',
-      message: 'this database records no owner, so a session has nobody to belong to',
+      message: '이 데이터베이스에 주인이 기록되어 있지 않아 세션이 속할 사람이 없습니다',
     };
   }
 

@@ -13,6 +13,7 @@ import {
   writeConfig,
 } from '../src/config/codec.js';
 import { HOME_ENV, configFilePath, configHome, envFilePath } from '../src/config/paths.js';
+import { assertKoreanLine } from './language.js';
 
 const homes: string[] = [];
 
@@ -121,6 +122,7 @@ describe('readConfig and a key it does not know', () => {
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]?.code).toBe('CONFIG_UNKNOWN_KEY');
     expect(result.warnings[0]?.message).toContain('colour');
+    assertKoreanLine(result.warnings[0]?.message ?? '', { label: 'CONFIG_UNKNOWN_KEY' });
   });
 
   it('warns about the url_env an earlier layout wrote, rather than dropping it', async () => {
@@ -193,6 +195,7 @@ describe('readConfig and a folder it cannot use', () => {
     if (result.ok) return;
     expect(result.code).toBe('CONFIG_MISSING');
     expect(result.message).toContain('config.toml');
+    assertKoreanLine(result.message, { label: 'CONFIG_MISSING' });
   });
 
   it.each([
@@ -223,6 +226,10 @@ describe('readConfig and a folder it cannot use', () => {
     if (result.ok) return;
     expect(result.code).toBe('CONFIG_INVALID');
     expect(result.message.split('\n')).toHaveLength(1);
+    // Every branch of the codec's refusal, in one place: the message is the
+    // one thing a person reads, so it is Korean whichever key was wrong
+    // (Conventions, output language 2026-10-16).
+    assertKoreanLine(result.message, { label: 'CONFIG_INVALID' });
   });
 
   it('names the key in the message for a relative path', async () => {
@@ -233,7 +240,7 @@ describe('readConfig and a folder it cannot use', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.message).toContain('store.path');
-    expect(result.message).toContain('absolute path');
+    expect(result.message).toContain('절대 경로여야 합니다');
   });
 
   it('reports CONFIG_INVALID when config.toml is a directory, not a file', async () => {
@@ -245,6 +252,7 @@ describe('readConfig and a folder it cannot use', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe('CONFIG_INVALID');
+    assertKoreanLine(result.message, { label: 'CONFIG_INVALID' });
   });
 });
 

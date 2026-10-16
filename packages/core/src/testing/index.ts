@@ -91,5 +91,11 @@ export {
   unknownSessionToken,
   type SampleIngestBatchOverrides,
 } from './fixtures.js';
+export {
+  ALLOWED_PROPER_NOUNS,
+  assertKoreanProse,
+  englishSentences,
+  type LanguageCheckOptions,
+} from './language.js';
 export { smallHash } from './hash.js';
 export { UUID_V7_PATTERN, isUuidV7 } from './uuid-v7.js';

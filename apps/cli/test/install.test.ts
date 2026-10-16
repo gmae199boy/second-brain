@@ -143,7 +143,7 @@ describe('the installer with no Docker and no Postgres', () => {
     // The owner, which is the one row an install step writes: SQL can read no
     // account name and mint no UUIDv7 (AD-12).
     expect(counts['users']).toBe(1);
-    expect(run.stdout).toContain('the brain belongs to');
+    expect(run.stdout).toContain('의 것입니다');
   });
 
   it('records the schema version this build ships', async () => {
@@ -152,7 +152,7 @@ describe('the installer with no Docker and no Postgres', () => {
     const run = await runInstaller(['--yes'], home);
 
     expect(run.code).toBe(0);
-    expect(run.stdout).toContain(`schema version ${String(SQLITE_SCHEMA_VERSION)}`);
+    expect(run.stdout).toContain(`스키마 버전은 ${String(SQLITE_SCHEMA_VERSION)}입니다`);
     const database = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
     try {
       expect(database.prepare('select version from schema_version').get()).toEqual({
@@ -176,11 +176,11 @@ describe('the installer with no Docker and no Postgres', () => {
     expect(again.stderr).toBe('');
     expect(again.code).toBe(0);
     expect(again.stdout).toContain(
-      `the schema is already at version ${String(SQLITE_SCHEMA_VERSION)}`,
+      `스키마는 이미 버전 ${String(SQLITE_SCHEMA_VERSION)}입니다`,
     );
-    expect(again.stdout).toContain('is already there');
+    expect(again.stdout).toContain('이미 있습니다');
     // Same owner, named rather than replaced.
-    expect(again.stdout).toContain('already belongs to');
+    expect(again.stdout).toMatch(/이미 \S+의 것입니다/);
     expect(await readFile(configFilePath(home), 'utf8')).toBe(configBefore);
     expect(await readFile(shimPath(home), 'utf8')).toBe(shimBefore);
     expect(rowCounts(join(home, 'brain.db'))).toEqual(countsBefore);
@@ -215,7 +215,7 @@ describe('the installer with no Docker and no Postgres', () => {
     const moved = await runInstaller(['--store-path', second, '--yes'], home);
 
     expect(moved.code).toBe(0);
-    expect(moved.stdout).toContain(`${first} is left where it is`);
+    expect(moved.stdout).toContain(`${first}는 있던 자리에 그대로 둡니다`);
     expect(existsSync(first)).toBe(true);
     expect(existsSync(second)).toBe(true);
   });
@@ -250,8 +250,8 @@ describe('the installer with no Docker and no Postgres', () => {
     const run = await runInstaller([flag, 'postgres://x/y', '--yes'], home);
 
     expect(run.code).toBe(2);
-    expect(run.stdout).toContain(`unknown argument ${flag}`);
-    expect(run.stdout).toContain('Usage: second-brain');
+    expect(run.stdout).toContain(`모르는 인자입니다: ${flag}`);
+    expect(run.stdout).toContain('사용법: second-brain');
     expect(existsSync(configFilePath(home))).toBe(false);
   });
 
@@ -272,6 +272,6 @@ describe('the installer with no Docker and no Postgres', () => {
 
     const run = await runInstaller([], home);
 
-    expect(run.stdout).toContain(`Configuration folder: ${home}`);
+    expect(run.stdout).toContain(`설정 폴더: ${home}`);
   });
 });

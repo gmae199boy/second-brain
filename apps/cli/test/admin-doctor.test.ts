@@ -11,6 +11,7 @@ import { writeConfig } from '../src/config/codec.js';
 import { HOME_ENV, configFilePath } from '../src/config/paths.js';
 import { runtimeChecks } from '../src/doctor/checks.js';
 import { shimPath, writeShim } from '../src/install/shim.js';
+import { assertKoreanLine, assertKoreanLines } from './language.js';
 
 const binPath = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
@@ -120,10 +121,41 @@ function runBrain(args: string[], env: Record<string, string | undefined>): Prom
     stderr += chunk.toString();
   });
 
-  return new Promise((resolve, reject) => {
+  const finished = new Promise<Run>((resolve, reject) => {
     child.once('error', reject);
     child.once('close', (code) => resolve({ code, stdout, stderr }));
   });
+
+  // Every branch of the report goes through here, so the output-language rule
+  // is checked on all of them at once rather than once per `it` (Conventions,
+  // output language 2026-10-16). A branch added below is covered the moment it
+  // runs. After the promise, not inside the `close` handler: a failure there
+  // would be an uncaught exception rather than a failing test.
+  return finished.then((run) => {
+    assertKoreanDoctorOutput(run);
+    return run;
+  });
+}
+
+/**
+ * The report, in Korean. Under `--json` the sentences are the checks' details
+ * and the envelope's own `message` and `hint`; in text mode they are the lines.
+ * The check ids and the status words stay English (Boundaries), which the
+ * checker knows about.
+ */
+function assertKoreanDoctorOutput(run: Run): void {
+  if (run.stdout.startsWith('{')) {
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    for (const check of envelope.data?.checks ?? []) {
+      assertKoreanLine(check.detail ?? '', { label: `${check.id} detail` });
+    }
+    if (envelope.error !== undefined) {
+      assertKoreanLine(envelope.error.message, { label: `${envelope.error.code} message` });
+    }
+  } else {
+    assertKoreanLines(run.stdout, { label: 'doctor stdout' });
+  }
+  assertKoreanLines(run.stderr, { label: 'doctor stderr' });
 }
 
 afterEach(async () => {
@@ -189,7 +221,7 @@ describe('brain admin doctor', () => {
     // Last, so the line that says whether to read the rest is the one left on
     // screen (Conventions: passed, warned, failed, skipped).
     expect(lines.at(-1)).toBe(
-      `summary: ${String(CHECKS.length)} passed, 0 warned, 0 failed, 0 skipped`,
+      `요약: 통과 ${String(CHECKS.length)}, 경고 0, 실패 0, 건너뜀 0`,
     );
   });
 
@@ -266,7 +298,7 @@ describe('brain admin doctor', () => {
     expect(found.get('db')).toMatchObject({ status: 'ok' });
     expect(found.get('wal')).toMatchObject({ status: 'fail' });
     expect(found.get('wal')?.code).toBeUndefined();
-    expect(found.get('wal')?.detail).toContain('not wal');
+    expect(found.get('wal')?.detail).toContain('wal이 아니라');
     // One failing probe is not a failing report: everything else still ran.
     expect(found.get('writable')).toMatchObject({ status: 'ok' });
     expect(found.get('node-version')).toMatchObject({ status: 'ok' });
@@ -317,7 +349,7 @@ describe('brain admin doctor', () => {
       const envelope = JSON.parse(run.stdout) as Envelope;
       const found = byId(envelope);
       expect(found.get('writable')).toMatchObject({ status: 'warn' });
-      expect(found.get('writable')?.detail).toContain('write lock');
+      expect(found.get('writable')?.detail).toContain('쓰기 잠금');
       expect(found.get('db')).toMatchObject({ status: 'ok' });
 
       const summary = envelope.data?.summary;
@@ -345,7 +377,7 @@ describe('brain admin doctor', () => {
       expect(run.code).toBe(0);
       expect(run.stdout).toContain('writable: warn');
       expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
-        `summary: ${String(CHECKS.length - 1)} passed, 1 warned, 0 failed, 0 skipped`,
+        `요약: 통과 ${String(CHECKS.length - 1)}, 경고 1, 실패 0, 건너뜀 0`,
       );
     } finally {
       holder.exec('rollback');
@@ -406,7 +438,7 @@ describe('brain admin doctor', () => {
     expect(checks[1]).toEqual({
       id: 'schema-version',
       status: 'skip',
-      detail: 'prereq failed: db',
+      detail: '앞선 점검 실패: db',
     });
     expect(checks.filter((check) => check.status === 'fail')).toHaveLength(1);
     // A skip is not a pass: the summary counts it as its own thing.
@@ -435,7 +467,7 @@ describe('brain admin doctor', () => {
     // prerequisite uses, so nobody has to guess which line above is the cause.
     expect(found.get('node-path')).toMatchObject({
       status: 'skip',
-      detail: 'prereq failed: shim',
+      detail: '앞선 점검 실패: shim',
     });
     // The store knew nothing about any of this and said so anyway.
     expect(found.get('db')).toMatchObject({ status: 'ok' });
@@ -490,7 +522,7 @@ describe('brain admin doctor without a configuration it can read', () => {
     const found = byId(envelope);
     expect(found.get('config')).toMatchObject({ status: 'fail', code: 'CONFIG_MISSING' });
     expect(found.get('db')).toMatchObject({ status: 'fail', code: 'DB_UNAVAILABLE' });
-    expect(found.get('db')?.detail).toContain('configuration');
+    expect(found.get('db')?.detail).toContain('설정을 읽을 수 없어서');
     expect(found.get('shim')).toMatchObject({ status: 'ok' });
     expect(found.get('node-path')).toMatchObject({ status: 'ok' });
     expect(found.get('node-version')).toMatchObject({ status: 'ok' });
@@ -498,7 +530,7 @@ describe('brain admin doctor without a configuration it can read', () => {
     expect([...found.keys()]).toEqual(NO_DATABASE_CHECKS);
     expect(found.get('schema-version')).toMatchObject({
       status: 'skip',
-      detail: 'prereq failed: db',
+      detail: '앞선 점검 실패: db',
     });
     expect(envelope.warnings).toEqual(['DB_UNAVAILABLE']);
   });
@@ -532,11 +564,11 @@ describe('brain admin doctor without a configuration it can read', () => {
     expect(run.stdout).toContain('config: fail [CONFIG_MISSING]');
     expect(run.stdout).toContain('db: fail [DB_UNAVAILABLE]');
     expect(run.stdout).toContain('shim: fail');
-    expect(run.stdout).toContain('schema-version: skip prereq failed: db');
-    expect(run.stdout).toContain('node-path: skip prereq failed: shim');
+    expect(run.stdout).toContain('schema-version: skip 앞선 점검 실패: db');
+    expect(run.stdout).toContain('node-path: skip 앞선 점검 실패: shim');
     // Three failures, two skips, one pass: the summary is the last line.
     expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
-      'summary: 1 passed, 0 warned, 3 failed, 2 skipped',
+      '요약: 통과 1, 경고 0, 실패 3, 건너뜀 2',
     );
     // Not an error envelope, so nothing goes to stderr but the warning line.
     expect(run.stderr).not.toContain('CONFIG_MISSING');

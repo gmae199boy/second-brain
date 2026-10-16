@@ -65,7 +65,7 @@ export async function withWrite<T>(
       // with the primary code in the low byte (see `isBusy`).
       if (isBusy(error)) {
         // Nothing was opened, so there is nothing to roll back.
-        return { ok: false, code: 'DB_LOCKED', message: describe(error) };
+        return { ok: false, code: 'DB_LOCKED', message: `쓰기 잠금을 얻지 못했습니다: ${describe(error)}` };
       }
       throw error;
     }

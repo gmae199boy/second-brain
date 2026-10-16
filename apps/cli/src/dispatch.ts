@@ -318,7 +318,17 @@ export async function dispatch(
       stdout(`${JSON.stringify(outcome.envelope)}\n`);
     } else {
       for (const line of outcome.text) stdout(`${line}\n`);
-      if (failure !== undefined) stderr(`${failure.code}: ${failure.message}\n`);
+      if (failure !== undefined) {
+        stderr(`${failure.code}: ${failure.message}\n`);
+        // The hint, indented under the sentence it belongs to (Decision
+        // 2026-10-16): text mode reads it instead of the envelope, and a
+        // failure whose hint only `--json` carried would be a next step the
+        // person at the terminal never sees. The hook path above never gets
+        // here — one line is all a harness turn may be told (AD-6).
+        if (failure.hint !== undefined && failure.hint !== '') {
+          stderr(`  ${failure.hint}\n`);
+        }
+      }
       for (const line of outcome.warningLines) stderr(`${line}\n`);
     }
   }
@@ -377,7 +387,7 @@ async function execute(
 
   const warningCodes = config.ok ? config.warnings.map((warning) => warning.code) : [];
   const warningLines = config.ok
-    ? config.warnings.map((warning) => `warning: ${warning.message}`)
+    ? config.warnings.map((warning) => `경고: ${warning.message}`)
     : [];
 
   // The file is opened, never created: a runtime command that made an empty
@@ -395,7 +405,7 @@ async function execute(
       })
     // No `config.message` in here: the `config` check carries it, and the same
     // sentence printed twice in one report reads as two problems.
-    : failedConfigStore('the configuration could not be read, so the database location is unknown');
+    : failedConfigStore('설정을 읽을 수 없어서 데이터베이스 위치를 알 수 없습니다');
   const brain = createBrain({
     store,
     schemaVersion: SQLITE_SCHEMA_VERSION,
@@ -464,7 +474,7 @@ function finish(
       outcome.meta,
     ),
     text: outcome.text ?? [],
-    warningLines: [...warningLines, ...commandWarnings.map((code) => `warning: ${code}`)],
+    warningLines: [...warningLines, ...commandWarnings.map((code) => `경고: ${code}`)],
     exit: outcome.failed === true ? 1 : 0,
   };
 }
@@ -522,12 +532,12 @@ function unusableArgument(
   args: readonly string[],
 ): string | undefined {
   for (const [index, value] of args.entries()) {
-    const name = argumentName(positional[index] ?? `argument ${String(index + 1)}`);
+    const name = argumentName(positional[index] ?? `${String(index + 1)}번째 인자`);
     if (value.trim() === '') {
-      return `the ${name} argument is empty. A positional argument is an id, so an empty one is usually a shell capture that produced nothing.`;
+      return `${name} 인자가 비어 있습니다. 위치 인자는 id이므로, 빈 값은 보통 아무것도 내놓지 못한 셸 치환입니다.`;
     }
     if (CONTROL_CHARACTERS.test(value)) {
-      return `the ${name} argument carries a control or invisible character, which no id of this brain has.`;
+      return `${name} 인자에 제어 문자나 보이지 않는 문자가 있습니다. 이 brain의 어떤 id에도 그런 문자는 없습니다.`;
     }
   }
   return undefined;
@@ -571,20 +581,20 @@ function buildProgram(
   registry: readonly CommandSpec[],
   onSelect: (selection: Selection) => void,
 ): Command {
-  const program = quiet(new Command().name('brain').description('Personal Brain command line'));
+  const program = quiet(new Command().name('brain').description('Personal Brain 명령줄'));
 
   const namespaces = new Map<string, Command>();
   for (const spec of registry) {
     let namespace = namespaces.get(spec.ns);
     if (namespace === undefined) {
       namespace = quiet(
-        program.command(spec.ns).description(spec.nsDescription ?? `${spec.ns} commands`),
+        program.command(spec.ns).description(spec.nsDescription ?? `${spec.ns} 명령`),
       );
       namespaces.set(spec.ns, namespace);
     }
 
     const command = quiet(namespace.command(spec.verb).description(spec.description));
-    command.option(JSON_FLAG, 'print the machine-readable response envelope');
+    command.option(JSON_FLAG, '기계가 읽는 응답 엔벨로프를 출력합니다');
     for (const option of spec.options ?? []) {
       command.option(option.flags, option.description);
     }
@@ -616,18 +626,90 @@ function quiet(command: Command): Command {
     // stdout after the envelope. `-h`/`--help` is the one help path; `help` is
     // just a command nobody registered.
     .helpCommand(false)
+    // The one flag every command carries whether or not it declared it, so its
+    // description is written here rather than in thirty registry entries.
+    .helpOption('-h, --help', '이 명령의 도움말을 보여 줍니다')
+    // Commander writes its section headings itself, and `styleTitle` is the one
+    // place it hands them over (`Usage:`, `Options:`, …). Anything it adds
+    // later falls through untranslated rather than disappearing.
+    .configureHelp({ styleTitle: (title: string) => HELP_TITLES[title] ?? title })
     .configureOutput({ writeErr: () => {} });
 }
 
+/** Commander's own section headings, in Korean. */
+const HELP_TITLES: Readonly<Record<string, string>> = {
+  'Usage:': '사용법:',
+  'Arguments:': '인자:',
+  'Options:': '옵션:',
+  'Global Options:': '전체 옵션:',
+  'Commands:': '명령:',
+};
+
+/**
+ * What commander refused, said in Korean. Its own messages are English and
+ * built from a template, so they are not translated but replaced: the code is
+ * the stable fact, and the values worth keeping — the option, the argument, the
+ * command it named — travel in quotes inside its message (Conventions, output
+ * language).
+ */
+const COMMANDER_REASONS: Readonly<Record<string, string>> = {
+  'commander.unknownOption': '모르는 옵션입니다',
+  'commander.unknownCommand': '모르는 명령입니다',
+  'commander.missingArgument': '반드시 주어야 하는 인자가 빠졌습니다',
+  'commander.optionMissingArgument': '옵션에 값이 빠졌습니다',
+  'commander.missingMandatoryOptionValue': '반드시 주어야 하는 옵션이 빠졌습니다',
+  'commander.conflictingOption': '함께 쓸 수 없는 옵션입니다',
+  'commander.excessArguments': '인자가 너무 많습니다',
+  'commander.invalidArgument': '인자 값이 올바르지 않습니다',
+};
+
 function usageMessage(registry: readonly CommandSpec[], error: CommanderError | undefined): string {
   const known = registry.map((spec) => `${spec.ns} ${spec.verb}`).join(', ');
-  // `commander.help` is the help commander prints when no command was given;
-  // its own message is a placeholder, so say what happened instead.
-  const detail =
-    error === undefined || error.code === 'commander.help'
-      ? 'no command given'
-      : error.message.replace(/^error:\s*/, '');
-  return `${detail}. Usage: brain <ns> <verb> [--json]. Known commands: ${known}.`;
+  return `${usageReason(error)}. 사용법: brain <ns> <verb> [--json]. 아는 명령: ${known}.`;
+}
+
+/**
+ * Why this invocation did not name a command to run.
+ *
+ * `commander.help` is the help commander prints when no command was given; its
+ * own message is a placeholder, so say what happened instead. A code this table
+ * does not know keeps commander's own sentence after a Korean one: inventing a
+ * translation for a message nobody here has read would say less than the
+ * original does (Boundaries).
+ */
+function usageReason(error: CommanderError | undefined): string {
+  if (error === undefined || error.code === 'commander.help') return '명령이 없습니다';
+  const original = error.message.replace(/^error:\s*/, '').replace(/\s+/g, ' ').trim();
+  const reason = COMMANDER_REASONS[error.code];
+  if (reason === undefined) return `명령을 읽을 수 없습니다: ${original}`;
+  // Everything commander quoted, in the order it quoted it: the flag, the
+  // argument name, the command. The rest of its sentence is the part this
+  // table just said in Korean.
+  const quoted = [...original.matchAll(/'[^']*'/g)].map(([value]) => value);
+  const first = quoted[0];
+  const said =
+    // "too many arguments for 'connect'" names the command, not the extra
+    // argument, so the quoted value goes in front of the sentence: appended
+    // after it, it would read as the argument that was one too many.
+    error.code === 'commander.excessArguments' && first !== undefined
+      ? `${first}에 ${reason}`
+      : quoted.length === 0
+        ? reason
+        : `${reason}: ${quoted.join(', ')}`;
+  return withSuggestion(said, original);
+}
+
+/**
+ * `reason`, plus what commander guessed the person meant. The guess is the most
+ * useful half of an unknown-option failure — it is the difference between "that
+ * flag does not exist" and "you wrote `--jsn`" — so it is carried over rather
+ * than dropped with the rest of the English sentence. Only the flag names are
+ * kept: commander's own wording around them is said here instead.
+ */
+function withSuggestion(reason: string, original: string): string {
+  const guessed = /\(Did you mean (.+?)\?\)/.exec(original)?.[1];
+  if (guessed === undefined) return reason;
+  return `${reason} (혹시 ${guessed.replace(/^one of /, '')}?)`;
 }
 
 /**
@@ -648,5 +730,5 @@ function findSpec(
 /** The first line of whatever went wrong: a hook failure gets one line. */
 function oneLine(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
-  return text.split('\n')[0]?.trim() ?? 'unknown error';
+  return text.split('\n')[0]?.trim() ?? '알 수 없는 오류';
 }

@@ -149,11 +149,11 @@ export async function runSqliteMigrations(
         // share one shape — so the message is where that goes, and it has to
         // say it: a reader told only "the database was busy" would not know
         // the schema had moved.
-        const sofar = applied.length === 0 ? '' : ` after applying ${applied.join(', ')}`;
+        const sofar = applied.length === 0 ? '' : ` (${applied.join(', ')}을 적용한 뒤)`;
         return {
           ok: false,
           code: 'DB_UNAVAILABLE',
-          message: `${file.name} could not take the write lock${sofar}: ${outcome.message}`,
+          message: `${file.name}이 쓰기 잠금을 얻지 못했습니다${sofar}: ${outcome.message}`,
         };
       }
 
@@ -171,7 +171,7 @@ export async function runSqliteMigrations(
     return {
       ok: false,
       code: 'MIGRATION_FAILED',
-      message: describe(error),
+      message: `마이그레이션이 거부되었습니다: ${describe(error)}`,
       file: attempting ?? '',
     };
   } finally {

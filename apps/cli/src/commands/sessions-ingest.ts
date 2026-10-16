@@ -31,8 +31,8 @@ export function sessionsIngestCommand(
   return {
     ns: 'sessions',
     verb: 'ingest',
-    nsDescription: 'read and search what harnesses wrote',
-    description: 'ingest the transcript a harness hook reported, from its payload on stdin',
+    nsDescription: '하네스가 쓴 것을 읽고 찾습니다',
+    description: 'stdin의 페이로드로 하네스 hook이 알린 트랜스크립트를 수집합니다',
     hook: true,
     writes: true,
     arguments: ['<harness>'],
@@ -44,7 +44,7 @@ export function sessionsIngestCommand(
         return {
           ok: false as const,
           code: 'USAGE',
-          message: `no harness called "${name}". ${known(registry)}`,
+          message: `"${name}"라는 하네스가 없습니다. ${known(registry)}`,
           exit: 2 as const,
         };
       }
@@ -91,6 +91,6 @@ export function sessionsIngestCommand(
 
 /** The names this build accepts, for the `USAGE` message. */
 function known(registry: readonly Harness[]): string {
-  if (registry.length === 0) return 'This build can ingest from no harness.';
-  return `Known harnesses: ${registry.map((harness) => harness.parser.harness).join(', ')}.`;
+  if (registry.length === 0) return '이 빌드는 어떤 하네스에서도 수집할 수 없습니다.';
+  return `아는 하네스: ${registry.map((harness) => harness.parser.harness).join(', ')}.`;
 }

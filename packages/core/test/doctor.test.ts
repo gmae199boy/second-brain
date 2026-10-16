@@ -108,7 +108,7 @@ describe('runDoctor', () => {
         code: 'DB_UNAVAILABLE',
         detail: 'connect ECONNREFUSED 127.0.0.1:54329',
       },
-      { id: 'schema-version', status: 'skip', detail: 'prereq failed: db' },
+      { id: 'schema-version', status: 'skip', detail: '앞선 점검 실패: db' },
     ]);
   });
 
@@ -260,7 +260,7 @@ describe('runDoctor and the checks the runtime registers', () => {
       id: 'shim',
       status: 'fail',
       // One line: the stack is not a detail anybody can act on.
-      detail: 'EACCES: permission denied',
+      detail: '점검이 실패했습니다: EACCES: permission denied',
     });
     expect(report.checks.at(-1)).toMatchObject({ id: 'node-version', status: 'ok' });
   });
@@ -271,7 +271,11 @@ describe('runDoctor and the checks the runtime registers', () => {
       checks: [{ id: 'shim', run: async (): Promise<DoctorCheck> => Promise.reject('nope') }],
     });
 
-    expect(report.checks.at(-1)).toEqual({ id: 'shim', status: 'fail', detail: 'nope' });
+    expect(report.checks.at(-1)).toEqual({
+      id: 'shim',
+      status: 'fail',
+      detail: '점검이 실패했습니다: nope',
+    });
   });
 });
 
@@ -289,7 +293,7 @@ describe('the summary of a report', () => {
         ...OPTIONS,
         checks: [
           source({ id: 'shim', status: 'fail', detail: 'no shim' }),
-          source({ id: 'node-path', status: 'skip', detail: 'prereq failed: shim' }),
+          source({ id: 'node-path', status: 'skip', detail: '앞선 점검 실패: shim' }),
         ],
       },
     );

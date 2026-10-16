@@ -30,8 +30,8 @@ export interface AdminDoctorData {
 export const adminDoctor: CommandSpec<AdminDoctorData> = {
   ns: 'admin',
   verb: 'doctor',
-  nsDescription: 'administrative commands',
-  description: 'check that the brain is reachable and healthy',
+  nsDescription: '관리 명령',
+  description: 'brain에 닿는지, 건강한지 확인합니다',
   diagnostic: true,
 
   async run(context) {
@@ -71,7 +71,7 @@ export function formatCheck(check: DoctorCheck): string {
 /** The counts as the report's last line, in the Conventions' order. */
 function formatSummary(summary: DoctorSummary): string {
   return (
-    `summary: ${String(summary.passed)} passed, ${String(summary.warned)} warned, ` +
-    `${String(summary.failed)} failed, ${String(summary.skipped)} skipped`
+    `요약: 통과 ${String(summary.passed)}, 경고 ${String(summary.warned)}, ` +
+    `실패 ${String(summary.failed)}, 건너뜀 ${String(summary.skipped)}`
   );
 }

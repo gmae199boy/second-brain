@@ -35,7 +35,7 @@ export function formatInstant(instant: Date): FormatInstantResult {
     return {
       ok: false,
       code: 'INVALID_INSTANT',
-      message: 'an instant must be a valid Date',
+      message: '시각은 올바른 Date여야 합니다',
     };
   }
 
@@ -44,7 +44,7 @@ export function formatInstant(instant: Date): FormatInstantResult {
     return {
       ok: false,
       code: 'INVALID_INSTANT',
-      message: `${value} is not a canonical instant: expected YYYY-MM-DDTHH:MM:SS.mmmZ`,
+      message: `${value}는 표준 시각 표기가 아닙니다. \`YYYY-MM-DDTHH:MM:SS.mmmZ\` 형식이어야 합니다`,
     };
   }
   return { ok: true, value };
@@ -60,7 +60,7 @@ export function parseInstant(text: string): ParseInstantResult {
     return {
       ok: false,
       code: 'INVALID_INSTANT',
-      message: `${describe(text)} is not a canonical instant: expected YYYY-MM-DDTHH:MM:SS.mmmZ`,
+      message: `${describe(text)}는 표준 시각 표기가 아닙니다. \`YYYY-MM-DDTHH:MM:SS.mmmZ\` 형식이어야 합니다`,
     };
   }
 
@@ -69,7 +69,7 @@ export function parseInstant(text: string): ParseInstantResult {
     return {
       ok: false,
       code: 'INVALID_INSTANT',
-      message: `${text} is not a real instant`,
+      message: `${text}는 실제로 있는 시각이 아닙니다`,
     };
   }
   return { ok: true, value };

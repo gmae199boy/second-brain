@@ -7,6 +7,7 @@ import {
   isWarningCode,
   type ErrorCode,
 } from '../src/codes.js';
+import { assertKoreanProse, englishSentences } from '../src/testing/language.js';
 
 /**
  * The two code lists against the Conventions table. They are a constant rather
@@ -100,36 +101,118 @@ describe('the error codes', () => {
 });
 
 /**
- * The hint style of the Conventions table, on every code: lower case, no full
- * stop, commands in backticks. A hint is what an agent reads instead of
- * guessing a next step, so one written in another voice is one it will skip.
+ * The hint style of the Conventions table, on every code: Korean, no full stop,
+ * commands in backticks. A hint is what an agent reads instead of guessing a
+ * next step, so one written in another voice is one it will skip — and since
+ * the person reading it reads Korean (Conventions, output language 2026-10-16),
+ * an English hint is one of the two ways to get that wrong.
+ *
+ * There is no "starts in lower case" rule any more: Korean has no case, so the
+ * rule that used to carry the register is `assertKoreanProse` plus the full
+ * stop below.
  */
+/**
+ * Everything wrong with one hint's style, as a list rather than as assertions,
+ * so the rules themselves can be held against hints that break them — a style
+ * check nobody has ever seen fail is a style check that may not work.
+ */
+function hintStyleProblems(hint: string): readonly string[] {
+  const problems: string[] = [];
+  if (hint === '') problems.push('빈 hint');
+  if (/[.。]$/.test(hint)) problems.push('마침표로 끝난다');
+  // Everything inside backticks removed: what is left must not read like a
+  // command. A command is the binary followed by a verb — `brain` on its own
+  // is the noun, which a Korean sentence says all the time (`이 brain을 …`),
+  // and JavaScript's `\b` does not see a Hangul particle as a word break.
+  if (/brain +[a-z]/.test(hint.replace(/`[^`]*`/g, ''))) problems.push('백틱 밖의 명령');
+  if (hint.split('`').length % 2 === 0) problems.push('백틱이 짝이 맞지 않는다');
+  // A code a typo can produce must not point at a destructive command
+  // (Conventions): the hint is read by something that will run it. Both
+  // languages, because the command stays English inside a Korean sentence.
+  if (/\b(rm|delete|remove|uninstall|drop)\b/.test(hint)) problems.push('파괴적인 명령');
+  if (/(지우|삭제|제거|없애|비우)/.test(hint)) problems.push('파괴적인 안내');
+  return problems;
+}
+
 describe('the hint of every error code', () => {
   const codes = Object.keys(ERROR_CODES) as ErrorCode[];
 
-  it.each(codes)('%s has one', (code) => {
-    expect(ERROR_CODES[code].hint).not.toBe('');
-  });
-
-  it.each(codes)('%s starts in lower case and ends without a full stop', (code) => {
+  it.each(codes)('%s has one, in the Conventions style', (code) => {
     const { hint } = ERROR_CODES[code];
 
-    expect(hint).toMatch(/^[a-z]/);
-    expect(hint).not.toMatch(/\.$/);
+    expect(hint).not.toBe('');
+    expect(hintStyleProblems(hint), hint).toEqual([]);
   });
 
-  it.each(codes)('%s spells every command in backticks', (code) => {
-    // Everything inside backticks removed: what is left must not read like a
-    // command, which here means it must not name the binary at all.
-    const prose = ERROR_CODES[code].hint.replace(/`[^`]*`/g, '');
+  it.each(codes)('%s is Korean', (code) => {
+    assertKoreanProse(ERROR_CODES[code].hint, { label: `${code} hint` });
+  });
+});
 
-    expect(prose).not.toContain('brain ');
-    expect(ERROR_CODES[code].hint.split('`').length % 2).toBe(1);
+describe('the hint style check', () => {
+  it.each([
+    ['마침표로 끝나는 한국어 hint', '`brain setup run`으로 설치하세요.', '마침표로 끝난다'],
+    ['백틱 없는 명령', 'brain setup run 을 실행하세요', '백틱 밖의 명령'],
+    ['백틱 없는 명령이 뒤에 섞인 것', '`--help`를 보고 brain admin doctor 하세요', '백틱 밖의 명령'],
+    ['열린 백틱', '`brain setup run으로 설치하세요', '백틱이 짝이 맞지 않는다'],
+    ['영어 파괴 낱말', '`brain setup run`을 rm 하세요', '파괴적인 명령'],
+    ['한국어 파괴 안내', '`config.toml`을 지우고 다시 실행하세요', '파괴적인 안내'],
+  ])('catches %s', (_what, hint, problem) => {
+    expect(hintStyleProblems(hint)).toContain(problem);
   });
 
-  it.each(codes)('%s never suggests removing anything', (code) => {
-    // A code a typo can produce must not point at a destructive command
-    // (Conventions): the hint is read by something that will run it.
-    expect(ERROR_CODES[code].hint).not.toMatch(/\b(rm|delete|remove|uninstall|drop)\b/);
+  it('allows brain as a noun, which a Korean sentence needs', () => {
+    expect(hintStyleProblems('`brain setup run`으로 이 brain을 설치하세요')).toEqual([]);
+  });
+
+  it('passes every hint this build ships', () => {
+    for (const spec of Object.values(ERROR_CODES)) {
+      expect(hintStyleProblems(spec.hint), spec.hint).toEqual([]);
+    }
+  });
+});
+
+/**
+ * The checker itself, on the cases it exists for. A test that only ever ran
+ * against text that passes would not notice a checker that passes everything —
+ * and every later story leans on this one to catch an English sentence it
+ * added.
+ */
+describe('the output-language check', () => {
+  it('passes a Korean sentence that carries commands, codes and paths', () => {
+    expect(
+      englishSentences('`brain setup run`으로 이 brain을 설치하세요'),
+    ).toEqual([]);
+    expect(
+      englishSentences('config: fail [CONFIG_MISSING] /home/me/config.toml이 없습니다'),
+    ).toEqual([]);
+    expect(englishSentences('요약: 통과 3, 경고 0, 실패 1, 건너뜀 2')).toEqual([]);
+    // A detail that is only data — a version, a path — is not prose at all.
+    expect(englishSentences('db: ok 3.50.4')).toEqual([]);
+  });
+
+  it('catches an English hint', () => {
+    expect(englishSentences('run `brain setup run` to install this brain')).not.toEqual([]);
+    expect(() => assertKoreanProse('fix the key the message names')).toThrow(/영어/);
+  });
+
+  it('catches an English doctor detail', () => {
+    expect(englishSentences('wal: fail journal_mode is delete, not wal')).not.toEqual([]);
+    // One English word and no Korean anywhere is still an English line.
+    expect(englishSentences('foreign-keys: ok enforced')).not.toEqual([]);
+  });
+
+  it('catches an English clause in a line that is otherwise Korean', () => {
+    // Hangul is decided per clause: a line that ends in an English sentence is
+    // the usual way a translation gets left out, and the Korean in front of it
+    // must not excuse it.
+    expect(
+      englishSentences('/x/bin/brain에 실행 권한이 없습니다. Run `brain setup run`.'),
+    ).not.toEqual([]);
+    expect(englishSentences('요약: passed 3, warned 0, failed 1, skipped 2')).not.toEqual([]);
+  });
+
+  it('names what it caught, so a failing test says which string to fix', () => {
+    expect(() => assertKoreanProse('this is not Korean', { label: 'hint' })).toThrow(/hint/);
   });
 });

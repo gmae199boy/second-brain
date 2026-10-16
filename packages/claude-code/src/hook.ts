@@ -23,7 +23,7 @@ export function readClaudeCodeHookInput(stdin: string): ReadHookInputResult {
       ok: false,
       code: 'USAGE',
       message:
-        'nothing arrived on stdin. `sessions ingest claude-code` reads the JSON payload a Claude Code hook writes there.',
+        'stdin으로 아무것도 오지 않았습니다. `sessions ingest claude-code`는 Claude Code hook이 그곳에 쓰는 JSON 페이로드를 읽습니다.',
     };
   }
 
@@ -34,7 +34,7 @@ export function readClaudeCodeHookInput(stdin: string): ReadHookInputResult {
     return {
       ok: false,
       code: 'USAGE',
-      message: `the hook payload on stdin is not JSON: ${error instanceof Error ? error.message : String(error)}`,
+      message: `stdin의 hook 페이로드가 JSON이 아닙니다: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
 
@@ -42,7 +42,7 @@ export function readClaudeCodeHookInput(stdin: string): ReadHookInputResult {
     return {
       ok: false,
       code: 'USAGE',
-      message: 'the hook payload on stdin is JSON but not an object',
+      message: 'stdin의 hook 페이로드가 JSON이지만 객체가 아닙니다',
     };
   }
 
@@ -57,7 +57,7 @@ export function readClaudeCodeHookInput(stdin: string): ReadHookInputResult {
     return {
       ok: false,
       code: 'USAGE',
-      message: `the hook payload is missing ${missing.join(' and ')}, which every Claude Code hook event carries`,
+      message: `hook 페이로드에 ${missing.join('와 ')}가 없습니다. Claude Code의 모든 hook 이벤트가 담고 있는 값입니다`,
     };
   }
 

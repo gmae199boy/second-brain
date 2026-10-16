@@ -18,6 +18,7 @@ import {
   type RecordedConfig,
 } from '../src/install/flow.js';
 import { shimPath } from '../src/install/shim.js';
+import { assertKoreanLine } from './language.js';
 
 /**
  * The whole installer flow against fakes: no terminal, no filesystem, no
@@ -33,6 +34,13 @@ const ENV: NodeJS.ProcessEnv = { [HOME_ENV]: HOME };
 const STORE = join(HOME, 'brain.db');
 const FILES = join(HOME, 'files');
 const MIRROR = join(HOME, 'mirror');
+
+/**
+ * The harness names these tests register. The flow lists them back — "아는
+ * 하네스: demo." — and a harness name is an identifier, not prose, so the
+ * output-language check is told about them rather than tripping over them.
+ */
+const HARNESS_NAMES = ['demo', 'other', 'absent', 'nope'] as const;
 
 /**
  * What the codec must be handed every time: all four values, because
@@ -183,16 +191,16 @@ function fakeStore(world: StoreWorld = {}): Store {
       doctored.push(path);
       const checks: DoctorReport['checks'] = [
         { id: 'db', status: 'ok', detail: '3.50.4' },
-        { id: 'writable', status: 'ok', detail: 'the file took a write and gave it back' },
+        { id: 'writable', status: 'ok', detail: '파일이 쓰기를 받아들이고 되돌렸습니다' },
         world.walFails === true
-          ? { id: 'wal', status: 'fail', detail: 'journal_mode is delete, not wal' }
+          ? { id: 'wal', status: 'fail', detail: 'journal_mode가 wal이 아니라 delete입니다' }
           : { id: 'wal', status: 'ok', detail: 'wal' },
-        { id: 'fts5-trigram', status: 'ok', detail: 'fts5 with the trigram tokenizer' },
-        { id: 'foreign-keys', status: 'ok', detail: 'enforced on this connection' },
+        { id: 'fts5-trigram', status: 'ok', detail: 'trigram 토크나이저가 있는 fts5' },
+        { id: 'foreign-keys', status: 'ok', detail: '이 연결에서 적용됩니다' },
         { id: 'schema-version', status: 'ok', detail: '3' },
         { id: 'config', status: 'ok', detail: join(home, 'config.toml') },
         { id: 'shim', status: 'ok', detail: shimPath(home) },
-        { id: 'node-path', status: 'ok', detail: 'node 24.16.0 at /usr/bin/node' },
+        { id: 'node-path', status: 'ok', detail: '/usr/bin/node의 node 24.16.0' },
         { id: 'node-version', status: 'ok', detail: 'node 24.16.0' },
       ];
       return {
@@ -223,7 +231,7 @@ function fakeFiles(created = true, fails = false): Files {
         return {
           ok: false,
           code: 'FILES_UNAVAILABLE',
-          message: 'EEXIST: file already exists',
+          message: '파일 저장소 루트를 만들 수 없습니다: EEXIST: file already exists',
         };
       }
       return { ok: true, path, created };
@@ -283,6 +291,13 @@ function harness(options: HarnessOptions = {}): Harness {
     prompts,
     isTTY: options.isTTY ?? true,
     log: (line: string): void => {
+      // Every line the flow prints goes through here, so the output-language
+      // rule covers the whole flow at once (Conventions, output language
+      // 2026-10-16) — including the lines a branch below has yet to add. The
+      // `CODE: ` prefix and whatever Node said stay English (Boundaries),
+      // which the checker is told about.
+      // The harness names the flow lists are identifiers, not prose.
+      assertKoreanLine(line, { label: 'flow line', allow: HARNESS_NAMES });
       lines.push(line);
     },
     config: {
@@ -331,9 +346,9 @@ describe('the installer flow on an empty folder', () => {
 
     expect(exit).toBe(0);
     expect(kit.prompts.asked).toEqual([
-      'Where should the database file go?',
-      'Where should the mirror go?',
-      'Turn embeddings on?',
+      '데이터베이스 파일을 어디에 둘까요?',
+      '미러를 어디에 둘까요?',
+      '임베딩을 켤까요?',
     ]);
     expect(kit.prompts.placeholders).toEqual([STORE, MIRROR]);
     expect(kit.written).toEqual([fresh()]);
@@ -411,11 +426,11 @@ describe('the installer flow on an empty folder', () => {
     await runInstallFlow([], ENV, kit.deps);
 
     expect(kit.output()).toContain(
-      'applied 0001_initial.sql, 0002_files_and_work.sql, 0003_users.sql',
+      '0001_initial.sql, 0002_files_and_work.sql, 0003_users.sql을 적용했고',
     );
-    expect(kit.output()).toContain('schema version 3');
-    expect(kit.output()).toContain(`created ${FILES} (mode 0700)`);
-    expect(kit.output()).toContain(`wrote ${shimPath(HOME)} (mode 0755)`);
+    expect(kit.output()).toContain('스키마 버전은 3입니다');
+    expect(kit.output()).toContain(`${FILES}를 만들었습니다 (mode 0700)`);
+    expect(kit.output()).toContain(`${shimPath(HOME)}을 썼습니다 (mode 0755)`);
   });
 
   it('records the owner against the database it just migrated', async () => {
@@ -424,13 +439,13 @@ describe('the installer flow on an empty folder', () => {
     await runInstallFlow([], ENV, kit.deps);
 
     expect(kit.store.owned).toEqual([STORE]);
-    expect(kit.output()).toContain('the brain belongs to brain-owner');
+    expect(kit.output()).toContain('이 brain은 brain-owner의 것입니다');
   });
 
   it('exits 1 and stops when the owner could not be recorded', async () => {
     const kit = harness({
       store: {
-        self: { ok: false, code: 'DB_UNAVAILABLE', message: 'the file went away' },
+        self: { ok: false, code: 'DB_UNAVAILABLE', message: '파일이 사라졌습니다' },
       },
     });
 
@@ -439,7 +454,7 @@ describe('the installer flow on an empty folder', () => {
     // Nothing after it runs: a brain nobody owns cannot ingest a session, so
     // finishing the install would report an install that does not work.
     expect(exit).toBe(1);
-    expect(kit.output()).toContain('DB_UNAVAILABLE: the file went away');
+    expect(kit.output()).toContain('DB_UNAVAILABLE: 파일이 사라졌습니다');
     expect(kit.files.prepared).toEqual([]);
     expect(kit.shimmed).toEqual([]);
     expect(kit.store.doctored).toEqual([]);
@@ -482,7 +497,7 @@ describe('the installer flow and the database file', () => {
     const exit = await runInstallFlow(['--store-path', '~/notes/brain.db'], ENV, kit.deps);
 
     expect(exit).toBe(0);
-    expect(kit.prompts.asked).toEqual(['Where should the mirror go?', 'Turn embeddings on?']);
+    expect(kit.prompts.asked).toEqual(['미러를 어디에 둘까요?', '임베딩을 켤까요?']);
     expect(kit.written).toEqual([fresh(join(homedir(), 'notes/brain.db'))]);
   });
 
@@ -514,7 +529,7 @@ describe('the installer flow and the database file', () => {
     const exit = await runInstallFlow([], ENV, kit.deps);
 
     expect(exit).toBe(2);
-    expect(kit.output()).toContain('No usable database file path in 3 attempts');
+    expect(kit.output()).toContain('3번 물어도 쓸 수 있는 데이터베이스 파일 경로가 없어서');
     expect(kit.written).toEqual([]);
     expect(kit.store.prepared).toEqual([]);
   });
@@ -559,8 +574,8 @@ describe('the installer flow and the database file', () => {
     const exit = await runInstallFlow([], ENV, kit.deps);
 
     expect(exit).toBe(0);
-    expect(kit.output()).toContain('/tmp/notes/brain.db is left where it is');
-    expect(kit.output()).toContain('nothing was moved or removed');
+    expect(kit.output()).toContain('/tmp/notes/brain.db는 있던 자리에 그대로 둡니다');
+    expect(kit.output()).toContain('아무것도 옮기지 않았습니다');
     expect(kit.store.prepared).toEqual(['/tmp/elsewhere/brain.db']);
   });
 
@@ -569,7 +584,7 @@ describe('the installer flow and the database file', () => {
 
     await runInstallFlow([], ENV, kit.deps);
 
-    expect(kit.output()).not.toContain('is left where it is');
+    expect(kit.output()).not.toContain('있던 자리에 그대로 둡니다');
   });
 });
 
@@ -581,7 +596,7 @@ describe('the installer flow and the file store', () => {
 
     expect(exit).toBe(0);
     expect(kit.files.prepared).toEqual([FILES]);
-    expect(kit.prompts.asked).not.toContain('Where should the files go?');
+    expect(kit.prompts.asked).not.toContain('파일을 어디에 둘까요?');
   });
 
   it('keeps a recorded root rather than resetting it to the default', async () => {
@@ -600,7 +615,7 @@ describe('the installer flow and the file store', () => {
     const exit = await runInstallFlow([], ENV, kit.deps);
 
     expect(exit).toBe(1);
-    expect(kit.output()).toContain('FILES_UNAVAILABLE: EEXIST: file already exists');
+    expect(kit.output()).toContain('FILES_UNAVAILABLE: 파일 저장소 루트를 만들 수 없습니다: EEXIST');
     // The store was already prepared; the shim and doctor are not reached.
     expect(kit.store.prepared).toEqual([STORE]);
     expect(kit.shimmed).toEqual([]);
@@ -612,8 +627,8 @@ describe('the installer flow and the file store', () => {
 
     await runInstallFlow([], ENV, kit.deps);
 
-    expect(kit.output()).toContain(`${FILES} is already there (mode 0700)`);
-    expect(kit.output()).not.toContain(`created ${FILES}`);
+    expect(kit.output()).toContain(`${FILES}는 이미 있습니다 (mode 0700)`);
+    expect(kit.output()).not.toContain(`${FILES}를 만들었습니다`);
   });
 });
 
@@ -632,11 +647,11 @@ describe('the installer flow run a second time', () => {
 
     expect(exit).toBe(0);
     expect(kit.written).toEqual([kept()]);
-    expect(kit.output()).toContain('the schema is already at version 3');
+    expect(kit.output()).toContain('스키마는 이미 버전 3입니다');
     // The owner is decided once: a re-run says whose it is and changes nothing
     // (AD-12).
-    expect(kit.output()).toContain('already belongs to brain-owner');
-    expect(kit.output()).toContain('is already there');
+    expect(kit.output()).toContain('이미 brain-owner의 것입니다');
+    expect(kit.output()).toContain('이미 있습니다');
   });
 
   it('keeps a time zone it did not choose', async () => {
@@ -673,7 +688,7 @@ describe('the installer flow when the store cannot be prepared', () => {
         prepare: {
           ok: false,
           code: 'MIGRATION_FAILED',
-          message: 'table sessions already exists',
+          message: '마이그레이션이 거부되었습니다: table sessions already exists',
           file: '0001_initial.sql',
         },
       },
@@ -682,7 +697,7 @@ describe('the installer flow when the store cannot be prepared', () => {
     const exit = await runInstallFlow([], ENV, kit.deps);
 
     expect(exit).toBe(1);
-    expect(kit.output()).toContain('MIGRATION_FAILED: table sessions already exists');
+    expect(kit.output()).toContain('MIGRATION_FAILED: 마이그레이션이 거부되었습니다: table sessions already exists');
     expect(kit.output()).toContain('0001_initial.sql');
     expect(kit.files.prepared).toEqual([]);
     expect(kit.shimmed).toEqual([]);
@@ -695,7 +710,7 @@ describe('the installer flow when the store cannot be prepared', () => {
         prepare: {
           ok: false,
           code: 'MIGRATION_FAILED',
-          message: 'file is not a database',
+          message: '데이터베이스를 열 수 없습니다: file is not a database',
           file: '',
         },
       },
@@ -704,22 +719,26 @@ describe('the installer flow when the store cannot be prepared', () => {
     const exit = await runInstallFlow([], ENV, kit.deps);
 
     expect(exit).toBe(1);
-    expect(kit.output()).toContain('MIGRATION_FAILED: file is not a database');
-    expect(kit.output()).not.toContain('The migration the database refused is');
+    expect(kit.output()).toContain('MIGRATION_FAILED: 데이터베이스를 열 수 없습니다: file is not a database');
+    expect(kit.output()).not.toContain('데이터베이스가 거부한 마이그레이션은');
     expect(kit.shimmed).toEqual([]);
   });
 
   it('reports DB_UNAVAILABLE in one line when the path cannot hold a database', async () => {
     const kit = harness({
       store: {
-        prepare: { ok: false, code: 'DB_UNAVAILABLE', message: 'EISDIR: illegal operation' },
+        prepare: {
+          ok: false,
+          code: 'DB_UNAVAILABLE',
+          message: '데이터베이스 파일을 만들 수 없습니다: EISDIR: illegal operation',
+        },
       },
     });
 
     const exit = await runInstallFlow([], ENV, kit.deps);
 
     expect(exit).toBe(1);
-    expect(kit.output()).toContain('DB_UNAVAILABLE: EISDIR: illegal operation');
+    expect(kit.output()).toContain('DB_UNAVAILABLE: 데이터베이스 파일을 만들 수 없습니다: EISDIR');
     expect(kit.output()).not.toContain('MIGRATION_FAILED');
     expect(kit.shimmed).toEqual([]);
   });
@@ -758,7 +777,7 @@ describe('the installer flow with no terminal', () => {
     expect(kit.written).toEqual([fresh()]);
     expect(kit.store.prepared).toEqual([STORE]);
     expect(kit.files.prepared).toEqual([FILES]);
-    expect(kit.output()).toContain('embeddings are off (not supported yet)');
+    expect(kit.output()).toContain('임베딩은 꺼져 있습니다 (아직 지원하지 않습니다)');
   });
 
   it('takes both path flags without asking', async () => {
@@ -783,7 +802,7 @@ describe('the installer flow and the mirror path', () => {
 
     expect(exit).toBe(0);
     expect(kit.prompts.placeholders[1]).toBe(MIRROR);
-    expect(kit.output()).toContain(`the mirror goes in ${MIRROR}`);
+    expect(kit.output()).toContain(`미러는 ${MIRROR}에 둡니다`);
   });
 
   it('records the absolute path the answer named', async () => {
@@ -802,8 +821,8 @@ describe('the installer flow and the mirror path', () => {
 
     expect(exit).toBe(0);
     expect(kit.prompts.asked).toEqual([
-      'Where should the database file go?',
-      'Turn embeddings on?',
+      '데이터베이스 파일을 어디에 둘까요?',
+      '임베딩을 켤까요?',
     ]);
     expect(kit.written).toEqual([fresh(STORE, FILES, join(homedir(), 'notes/brain'))]);
   });
@@ -841,8 +860,8 @@ describe('the installer flow and embeddings', () => {
     const exit = await runInstallFlow([], ENV, kit.deps);
 
     expect(exit).toBe(0);
-    expect(kit.prompts.asked).toContain('Turn embeddings on?');
-    expect(kit.output()).toContain('not supported yet');
+    expect(kit.prompts.asked).toContain('임베딩을 켤까요?');
+    expect(kit.output()).toContain('아직 지원하지 않으므로');
     // The same write as a run that said no: there is no key for this yet.
     expect(kit.written).toEqual([fresh()]);
   });
@@ -854,7 +873,7 @@ describe('the installer flow and embeddings', () => {
 
     expect(exit).toBe(0);
     expect(kit.prompts.asked).toEqual([]);
-    expect(kit.output()).toContain('embeddings are off');
+    expect(kit.output()).toContain('임베딩은 꺼져 있습니다');
   });
 });
 
@@ -866,7 +885,7 @@ describe('the installer flow, the shim and the harnesses', () => {
 
     expect(exit).toBe(0);
     expect(kit.shimmed).toEqual([HOME]);
-    expect(kit.output()).toContain(`wrote ${shimPath(HOME)} (mode 0755)`);
+    expect(kit.output()).toContain(`${shimPath(HOME)}을 썼습니다 (mode 0755)`);
   });
 
   it('says the shim is current rather than claiming it wrote one', async () => {
@@ -874,7 +893,7 @@ describe('the installer flow, the shim and the harnesses', () => {
 
     await runInstallFlow([], ENV, kit.deps);
 
-    expect(kit.output()).toContain('is already current');
+    expect(kit.output()).toContain('이미 최신입니다');
     expect(kit.output()).not.toContain('(mode 0755)');
   });
 
@@ -884,7 +903,7 @@ describe('the installer flow, the shim and the harnesses', () => {
     const exit = await runInstallFlow([], ENV, kit.deps);
 
     expect(exit).toBe(0);
-    expect(kit.output()).toContain('no harness to connect yet (epic 2)');
+    expect(kit.output()).toContain('아직 연결할 하네스가 없습니다 (epic 2)');
     expect(kit.prompts.checked).toEqual([]);
   });
 
@@ -903,7 +922,7 @@ describe('the installer flow, the shim and the harnesses', () => {
     expect(demo.marked()).toHaveLength(1);
     expect(demo.entries()[0]).toContain(shimPath(HOME));
     expect(other.entries()).toEqual([]);
-    expect(kit.output()).toContain('connected Demo in');
+    expect(kit.output()).toContain('Demo를 연결했습니다');
   });
 
   it('never offers a harness that is not installed here', async () => {
@@ -914,7 +933,7 @@ describe('the installer flow, the shim and the harnesses', () => {
 
     expect(exit).toBe(0);
     expect(kit.prompts.checked).toEqual([]);
-    expect(kit.output()).toContain('no harness this build knows is installed here');
+    expect(kit.output()).toContain('이 빌드가 아는 하네스가 여기에 설치되어 있지 않습니다');
     expect(absent.entries()).toEqual([]);
   });
 
@@ -932,7 +951,7 @@ describe('the installer flow, the shim and the harnesses', () => {
     await run();
     const second = await run();
 
-    expect(second).toContain('Demo was already connected in');
+    expect(second).toContain('Demo가 이미 연결되어 있습니다');
     expect(demo.marked()).toHaveLength(1);
   });
 
@@ -958,7 +977,7 @@ describe('the installer flow, the shim and the harnesses', () => {
 
     expect(exit).toBe(0);
     expect(demo.entries()).toEqual([]);
-    expect(kit.output()).toContain('no harness was connected');
+    expect(kit.output()).toContain('연결한 하네스가 없습니다');
   });
 
   it('takes --connect over the question in a terminal too', async () => {
@@ -980,8 +999,8 @@ describe('the installer flow, the shim and the harnesses', () => {
     const exit = await runInstallFlow(['--connect', 'nope', '--yes'], ENV, kit.deps);
 
     expect(exit).toBe(2);
-    expect(kit.output()).toContain('USAGE: no connector for nope');
-    expect(kit.output()).toContain('Known harnesses: demo.');
+    expect(kit.output()).toContain('USAGE: nope를 위한 커넥터가 없습니다');
+    expect(kit.output()).toContain('아는 하네스: demo.');
     expect(kit.written).toEqual([]);
     expect(kit.shimmed).toEqual([]);
     expect(kit.store.prepared).toEqual([]);
@@ -991,14 +1010,14 @@ describe('the installer flow, the shim and the harnesses', () => {
   it('exits 1 when a connector refuses, having finished everything else', async () => {
     const broken: MemoryConnector = memoryConnector({
       harness: 'demo',
-      failure: { code: 'HARNESS_UNREADABLE', message: 'settings.json is not JSON' },
+      failure: { code: 'HARNESS_UNREADABLE', message: 'settings.json이 JSON이 아닙니다' },
     });
     const kit = harness({ isTTY: false, connectors: [broken] });
 
     const exit = await runInstallFlow(['--connect', 'demo', '--yes'], ENV, kit.deps);
 
     expect(exit).toBe(1);
-    expect(kit.output()).toContain('HARNESS_UNREADABLE: settings.json is not JSON');
+    expect(kit.output()).toContain('HARNESS_UNREADABLE: settings.json이 JSON이 아닙니다');
     // The database half of the install still happened and still counts.
     expect(kit.store.prepared).toEqual([STORE]);
     expect(kit.output()).toContain('db: ok');
@@ -1045,15 +1064,15 @@ describe('the installer flags', () => {
   });
 
   it.each([
-    { argv: ['--nope'], contains: 'unknown argument' },
+    { argv: ['--nope'], contains: '모르는 인자입니다' },
     // The flags the Postgres install needed are gone, and an unknown flag is
     // refused rather than ignored.
-    { argv: ['--database-url', 'postgres://x/y'], contains: 'unknown argument' },
-    { argv: ['--docker'], contains: 'unknown argument' },
-    { argv: ['--store-path'], contains: 'needs a path' },
-    { argv: ['--store-path', '--yes'], contains: 'needs a path' },
-    { argv: ['--mirror-path'], contains: 'needs a path' },
-    { argv: ['--connect'], contains: 'needs a harness name' },
+    { argv: ['--database-url', 'postgres://x/y'], contains: '모르는 인자입니다' },
+    { argv: ['--docker'], contains: '모르는 인자입니다' },
+    { argv: ['--store-path'], contains: '뒤에는 경로가 와야 합니다' },
+    { argv: ['--store-path', '--yes'], contains: '뒤에는 경로가 와야 합니다' },
+    { argv: ['--mirror-path'], contains: '뒤에는 경로가 와야 합니다' },
+    { argv: ['--connect'], contains: '뒤에는 하네스 이름이 와야 합니다' },
   ])('refuses $argv', ({ argv, contains }) => {
     const parsed = parseFlags(argv);
     expect(parsed.ok).toBe(false);
@@ -1067,8 +1086,8 @@ describe('the installer flags', () => {
     const exit = await runInstallFlow(['--nope'], ENV, kit.deps);
 
     expect(exit).toBe(2);
-    expect(kit.output()).toContain('Usage: second-brain');
-    expect(kit.output()).toContain('--store-path <path>');
+    expect(kit.output()).toContain('사용법: second-brain');
+    expect(kit.output()).toContain('--store-path <경로>');
     expect(kit.output()).not.toContain('--database-url');
     expect(kit.written).toEqual([]);
   });

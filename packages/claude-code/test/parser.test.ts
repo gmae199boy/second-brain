@@ -177,7 +177,7 @@ describe('the Claude Code parser', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe('TRANSCRIPT_UNREADABLE');
-    expect(result.message).toContain('line 7');
+    expect(result.message).toContain('7번째 줄');
   });
 
   it('keeps only the first of two lines carrying the same uuid', () => {

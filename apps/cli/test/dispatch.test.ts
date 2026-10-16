@@ -543,7 +543,10 @@ describe('the dispatcher and a standalone command', () => {
     expect(run.code).toBe(2);
     const envelope = JSON.parse(run.stdout) as Envelope;
     expect(envelope.error?.code).toBe('USAGE');
-    expect(envelope.error?.message).toContain("missing required argument 'name'");
+    // The Korean sentence the code table chose, with commander's own quoted
+    // value kept: the argument it named is the fact worth carrying over.
+    expect(envelope.error?.message).toContain('반드시 주어야 하는 인자가 빠졌습니다');
+    expect(envelope.error?.message).toContain("'name'");
   });
 });
 

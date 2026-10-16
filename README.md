@@ -1,128 +1,123 @@
 # second-brain
 
-A personal brain for one Mac: a local SQLite file holds the originals, the
-`brain` CLI is a thin shell over the `second_brain` SDK. This repository is not
-published to npm.
+Mac 한 대를 위한 개인 두뇌입니다. 원본은 로컬 SQLite 파일 하나에 들어 있고,
+`brain` CLI는 `second_brain` SDK를 얇게 감싼 껍데기입니다. 이 저장소는 npm에
+올리지 않습니다.
 
-## Install
+## 설치
 
-On a Mac with nothing but [Node](https://nodejs.org) 24.16 or newer and git:
+[Node](https://nodejs.org) 24.16 이상과 git만 있는 Mac에서:
 
 ```sh
 npx github:gmae199boy/second-brain
 ```
 
-That runs one committed, dependency-free file. It checks node and git, clones
-this repository into `~/.second_brain/app` (fast-forwarding it on a later run),
-offers to install the latest pnpm if yours is older than 12, builds the clone,
-and starts the installer. It never resets or discards anything you changed
-under `~/.second_brain/app`: if the folder is not a clean clone of this
-repository, it says so and stops.
+커밋되어 있는 의존성 없는 파일 하나가 실행됩니다. node와 git을 확인하고, 이
+저장소를 `~/.second_brain/app`에 클론하고(다음 실행에서는 fast-forward),
+pnpm이 12보다 오래되었으면 최신 pnpm 설치를 제안하고, 클론을 빌드한 뒤
+설치기를 시작합니다. `~/.second_brain/app` 안에서 당신이 바꾼 것은 되돌리거나
+버리지 않습니다. 그 폴더가 이 저장소의 깨끗한 클론이 아니면, 그렇다고 말하고
+멈춥니다.
 
-Two environment variables move it off the defaults:
+기본값을 바꾸는 환경 변수는 둘입니다.
 
-| Variable | Default | What it does |
+| 변수 | 기본값 | 하는 일 |
 | --- | --- | --- |
-| `SECOND_BRAIN_HOME` | `~/.second_brain` | Where the configuration and the clone go |
-| `SECOND_BRAIN_REPO` | `https://github.com/gmae199boy/second-brain.git` | Which repository to clone, for a fork or a test |
+| `SECOND_BRAIN_HOME` | `~/.second_brain` | 설정과 클론이 들어가는 곳 |
+| `SECOND_BRAIN_REPO` | `https://github.com/gmae199boy/second-brain.git` | 클론할 저장소. 포크나 시험용 |
 
-There is no database server to install and no Docker to start: the originals
-live in one SQLite file. The installer asks two questions and nothing more:
+설치할 데이터베이스 서버도, 띄울 Docker도 없습니다. 원본은 SQLite 파일 하나에
+삽니다. 설치기가 묻는 것은 둘뿐입니다.
 
-- **Where the database file should go.** Anything absolute; the default is
-  `~/.second_brain/brain.db`. It creates the file at mode 0600 before the
-  migrations run, so neither it nor its write-ahead log is ever readable by
-  anyone else, and it creates a parent folder it had to make at 0700.
-- **Where the mirror folder should go.** Anything absolute; the default is
-  `~/.second_brain/mirror`. Nothing creates that folder yet.
+- **데이터베이스 파일을 어디에 둘지.** 절대 경로면 무엇이든 되고, 기본값은
+  `~/.second_brain/brain.db`입니다. 마이그레이션 전에 파일을 mode 0600으로
+  만들므로 파일도, 그 write-ahead log도 다른 사람이 읽을 수 없습니다. 만들어야
+  했던 상위 폴더는 0700으로 만듭니다.
+- **미러 폴더를 어디에 둘지.** 절대 경로면 무엇이든 되고, 기본값은
+  `~/.second_brain/mirror`입니다. 아직 그 폴더를 만드는 것은 없습니다.
 
-It then asks whether to turn embeddings on — which is still "not supported
-yet", so saying yes only says so and writes nothing.
+그다음 임베딩을 켤지 묻는데, 이것은 여전히 "아직 지원하지 않습니다"라서 켠다고
+답해도 그렇게 말하기만 하고 아무것도 쓰지 않습니다.
 
-After the questions it writes the configuration, creates and migrates the
-database file, records who the brain belongs to, creates the file store's root
-at mode 0700 (`~/.second_brain/files` by default), writes the shim (below),
-offers to connect the harnesses it found, and finishes by running the same
-checks as `brain admin doctor`. Exit 0 means every check passed. Running it
-again changes nothing: it offers the recorded paths as the defaults, applies no
-migration the file already has, leaves the index config rows the migrations
-wrote alone, leaves the owner exactly as it is, and leaves the shim and the
-harness entries alone when they already say the right thing. Point it at
-another database file and it makes a new one — the old file stays exactly
-where it is, and the install says so in one line.
+질문이 끝나면 설정을 쓰고, 데이터베이스 파일을 만들어 마이그레이션하고, 이
+brain의 주인을 기록하고, 파일 저장소 루트를 mode 0700으로 만들고(기본값은
+`~/.second_brain/files`), shim을 쓰고(아래), 찾은 하네스를 연결할지 물은 뒤,
+`brain admin doctor`와 같은 점검으로 마칩니다. exit 0이면 모든 점검이
+통과했다는 뜻입니다. 다시 실행해도 바뀌는 것은 없습니다. 기록된 경로를
+기본값으로 내놓고, 파일이 이미 가진 마이그레이션은 적용하지 않고, 마이그레이션이
+쓴 index config 행을 그대로 두고, 주인을 그대로 두고, shim과 하네스 항목이 이미
+맞게 적혀 있으면 건드리지 않습니다. 다른 데이터베이스 파일을 가리키면 새로
+만듭니다. 옛 파일은 있던 자리에 그대로 있고, 설치는 그렇다고 한 줄로 말합니다.
 
-Where there is no terminal to ask in — a script, or CI — `--yes` is the consent,
-and the flags say the rest. Without it the install stops before it writes
-anything and exits 3, "a confirmation nobody gave": not a mistake in the
-command, and nothing broken — a question for the person running it.
+물어볼 터미널이 없는 곳 — 스크립트나 CI — 에서는 `--yes`가 동의이고 나머지는
+플래그로 말합니다. `--yes`가 없으면 설치는 아무것도 쓰기 전에 멈추고 exit 3,
+"아무도 주지 않은 확인"으로 끝납니다. 명령이 틀린 것도 아니고 무엇이 망가진
+것도 아닙니다. 실행하는 사람에게 던지는 질문입니다.
 
 ```sh
 node apps/cli/dist/install.js --yes
 node apps/cli/dist/install.js --store-path /Volumes/notes/brain.db --yes
 ```
 
-Without a terminal nothing is asked, so each path keeps whatever is recorded (or
-the default) and no harness is connected unless `--connect` names it.
+터미널이 없으면 아무것도 묻지 않으므로 각 경로는 기록된 값(없으면 기본값)을
+지키고, `--connect`가 이름을 대지 않은 하네스는 연결되지 않습니다.
 
-| Flag | What it does |
+| 플래그 | 하는 일 |
 | --- | --- |
-| `--store-path <path>` | Absolute path for the database file |
-| `--mirror-path <path>` | Absolute path for the mirror folder |
-| `--connect <harness>` | Connect this harness; repeat it for more than one |
-| `--yes` | Agree in advance to what the install has to do |
+| `--store-path <경로>` | 데이터베이스 파일의 절대 경로 |
+| `--mirror-path <경로>` | 미러 폴더의 절대 경로 |
+| `--connect <하네스>` | 이 하네스를 연결합니다. 여럿이면 되풀이하세요 |
+| `--yes` | 설치가 해야 할 일에 미리 동의합니다 |
 
-## Who the brain belongs to
+## 이 brain은 누구의 것인가
 
-The install records one row in `users`, the owner, named after the account the
-installer ran as, and every session ingested afterwards points at it. It is an
-install step and not a migration because SQL can do neither half of it: it
-cannot read an operating system user name and cannot mint a UUIDv7.
+설치는 `users`에 주인 행 하나를 기록합니다. 이름은 설치기를 실행한 계정에서
+가져오고, 이후 수집되는 모든 세션이 그 행을 가리킵니다. 마이그레이션이 아니라
+설치 단계인 이유는 SQL이 그 두 가지를 다 하지 못하기 때문입니다. 운영체제의
+사용자 이름을 읽을 수 없고, UUIDv7을 만들 수도 없습니다.
 
-It is decided once. A second install says `already belongs to <name>` and
-changes nothing — same id, same name — so a database copied to another
-machine keeps the person it was made for, whatever that machine's accounts
-are called.
-Merging two brains, and what to do about a name that no longer matches, is the
-import epic's.
+한 번 정해지면 끝입니다. 두 번째 설치는 `이미 <이름>의 것입니다`라고 말하고
+아무것도 바꾸지 않습니다 — 같은 id, 같은 이름 — 그래서 다른 기계로 복사한
+데이터베이스는 그 기계의 계정 이름이 무엇이든 처음 만들어진 사람을 그대로
+지킵니다. 두 brain을 합치는 일과, 더 이상 맞지 않는 이름을 어떻게 할지는 import
+에픽의 몫입니다.
 
-A database that has the table and no owner row cannot attribute a session, so
-ingesting says `USER_MISSING` and names `brain setup run`.
+테이블은 있는데 주인 행이 없는 데이터베이스는 세션을 누구에게도 붙일 수 없으므로
+수집은 `USER_MISSING`이라고 말하고 `brain setup run`을 가리킵니다.
 
-## Read a harness session
+## 하네스 세션 읽기
 
 ```sh
-brain sessions ingest <harness> < the harness's hook payload
+brain sessions ingest <harness> < 하네스가 보낸 hook 페이로드
 ```
 
-It reads the hook payload on stdin, reads the transcript that payload names,
-and appends whatever is not stored yet. This build reads `claude-code`.
+stdin의 hook 페이로드를 읽고, 그 페이로드가 가리키는 트랜스크립트를 읽어, 아직
+저장되지 않은 것을 덧붙입니다. 이 빌드는 `claude-code`를 읽습니다.
 
-It is the one command on a harness hook path, so it follows the hook rules
-whole: exit 0 whatever happened, nothing on stdout when it worked, and one
-line on stderr when it did not — a broken brain never breaks a turn. Running
-it twice over the same transcript inserts nothing the second time, and two
-copies racing each other insert the conversation exactly once between them.
+하네스 hook 경로에 있는 유일한 명령이므로 hook 규칙을 전부 따릅니다. 무슨 일이
+있어도 exit 0, 잘되면 stdout에 아무것도 없고, 안 되면 stderr에 한 줄. 망가진
+brain이 턴을 망치는 일은 없습니다. 같은 트랜스크립트에 두 번 실행하면 두 번째는
+아무것도 넣지 않고, 두 복사본이 경쟁해도 대화는 둘 사이에서 정확히 한 번만
+들어갑니다.
 
-What it stores is the conversation and only the conversation: the person's
-turns and the model's answers. Thinking, tool calls, tool results, the
-editor's own notices, a subagent's conversation and a compact summary are all
-in a transcript and none of them is a turn of it.
+저장하는 것은 대화, 그리고 대화뿐입니다. 사람의 턴과 모델의 답입니다. 사고,
+도구 호출, 도구 결과, 편집기 자신의 알림, 서브에이전트의 대화, compact 요약은
+모두 트랜스크립트에 있지만 그중 어느 것도 대화의 턴이 아닙니다.
 
-Position comes from the file, not the clock: `messages.seq` runs from 0 and is
-chosen when the row is inserted, never by the parser. So a transcript whose
-front was rewritten — a compact, a fork — leaves every stored message's
-number where it was, and whatever arrived in front of them takes the next
-free one.
+순서는 시계가 아니라 파일에서 옵니다. `messages.seq`는 0부터 시작하고 행이
+들어갈 때 정해지며, 파서가 정하는 일은 없습니다. 그래서 앞부분이 다시 쓰인
+트랜스크립트 — compact, fork — 에서도 저장된 메시지의 번호는 그대로 있고, 그
+앞에 새로 온 것이 다음 빈 번호를 받습니다.
 
-Nothing registers the hook yet: the Claude Code plugin is a later story. To
-watch one real conversation go in, `tooling/dev/tracer-session.sh` installs a
-throwaway brain in a temporary folder and writes the settings file that points
-a Stop hook at it, then tells you the `claude --settings …` to run. It never
-touches your own `~/.claude/settings.json` or `~/.second_brain`.
+아직 hook을 등록하는 것은 없습니다. Claude Code 플러그인은 뒤 스토리입니다.
+실제 대화 하나가 들어가는 것을 보고 싶으면 `tooling/dev/tracer-session.sh`가
+임시 폴더에 버려도 되는 brain을 설치하고 Stop hook이 그것을 가리키는 설정
+파일을 쓴 뒤, 실행할 `claude --settings …`를 알려 줍니다. 당신의
+`~/.claude/settings.json`이나 `~/.second_brain`은 건드리지 않습니다.
 
-## Re-configure, and connect a harness
+## 다시 설정하기, 하네스 연결하기
 
-The installer is also a command, so there is nothing to re-run from a clone:
+설치기는 명령이기도 하므로 클론에서 다시 실행할 것은 없습니다.
 
 ```sh
 brain setup run [--store-path <path>] [--mirror-path <path>] \
@@ -130,14 +125,14 @@ brain setup run [--store-path <path>] [--mirror-path <path>] \
 brain setup connect <harness>
 ```
 
-`brain setup run` is the same flow in the same order, idempotent, showing what
-is recorded as the default. It is one of two commands that need neither the
-configuration nor the database to exist — it is what writes the configuration —
-and with `--json` it hands back every line of the flow in `data.lines`.
+`brain setup run`은 같은 흐름을 같은 순서로 밟고, 몇 번 실행해도 결과가 같고,
+기록된 값을 기본값으로 보여 줍니다. 설정도 데이터베이스도 없어도 되는 두 명령
+가운데 하나이고 — 설정을 쓰는 쪽이 이 명령이니까요 — `--json`을 붙이면 흐름의
+모든 줄을 `data.lines`로 돌려줍니다.
 
-`--json` runs non-interactively, exactly as a run with no terminal does: it
-asks nothing, so it needs `--yes`. Without it nothing is written and the
-envelope says what to run instead:
+`--json`은 터미널이 없는 실행과 똑같이 비대화형으로 돕니다. 아무것도 묻지
+않으므로 `--yes`가 필요합니다. 없으면 아무것도 쓰지 않고, 엔벨로프가 무엇을
+실행하면 되는지 말합니다.
 
 ```json
 {
@@ -145,61 +140,59 @@ envelope says what to run instead:
   "warnings": [],
   "error": {
     "code": "CONFIRMATION_REQUIRED",
-    "message": "This is not a terminal, so nothing can be asked. Agree in advance with --yes",
+    "message": "터미널이 아니어서 아무것도 물을 수 없습니다. --yes로 미리 동의하세요",
     "exit_code": 3,
     "retryable": false,
-    "hint": "ask the person whether to go ahead, and make the call in `error.retry` only if they say yes",
+    "hint": "사람에게 진행해도 되는지 묻고, 그렇다고 할 때만 같은 명령에 `--yes`를 붙여 다시 실행하세요",
     "retry": { "ns": "setup", "verb": "run", "args": { "confirm": true } },
     "retry_argv": ["brain", "setup", "run", "--yes", "--json"]
   }
 }
 ```
 
-`retry` is the same call with the consent added, and never more than that: the
-flags you gave travel in it, the defaults you did not give do not. `retry_argv`
-is that call as a command line. Both are there so the consent can be asked for
-once, by a person — not attached by whatever is reading this.
+`retry`는 같은 호출에 동의를 더한 것이고, 그 이상은 아닙니다. 당신이 준
+플래그는 그 안에 담기고, 주지 않은 기본값은 담기지 않습니다. `retry_argv`는 그
+호출을 명령줄로 적은 것입니다. 둘이 있는 이유는 동의를 한 번, 사람에게 물을 수
+있게 하려는 것입니다 — 이것을 읽는 무엇이 알아서 붙이게 하려는 것이 아닙니다.
 
-`brain setup connect <harness>` registers this brain with one harness, for a
-harness installed after the install. The entry it writes carries a Brain mark,
-and that mark is the only thing "already connected" is ever decided by, so
-running it twice registers once (`changed: false` the second time) and nothing
-you put in that file yourself is ever touched. It reports `SHIM_MISSING` if the
-shim is not there, and exits 2 naming the harnesses this build knows if the
-name is not one of them. Every argument you type after a verb is an id — a body
-is read from stdin, never typed as an argument — so one that is empty, or that
-carries control or invisible characters, is refused as a `USAGE` before
-anything is read: an empty argument is nearly always a `$(…)` that produced
-nothing, and looking it up would answer "not found" to a broken command line.
-This build knows no harness yet: the Claude Code connector is a later epic, so
-`brain setup run` says there is no harness to connect and carries on.
+`brain setup connect <harness>`는 이 brain을 하네스 하나에 등록합니다. 설치
+뒤에 설치한 하네스를 위한 것입니다. 쓰는 항목에는 Brain 표시가 붙고, "이미
+연결됨"은 오직 그 표시로만 판단하므로 두 번 실행해도 등록은 한 번이고(두 번째는
+`changed: false`) 당신이 그 파일에 직접 넣은 것은 건드리지 않습니다. shim이
+없으면 `SHIM_MISSING`이라고 말하고, 이름이 이 빌드가 아는 하네스가 아니면 아는
+하네스를 대면서 exit 2로 끝납니다. 동사 뒤에 치는 모든 인자는 id입니다 —
+본문은 stdin으로 읽고 인자로 치지 않습니다 — 그래서 비어 있거나 제어 문자·보이지
+않는 문자를 품은 인자는 무엇을 읽기 전에 `USAGE`로 거절합니다. 빈 인자는 거의
+언제나 아무것도 내놓지 못한 `$(…)`이고, 그것을 찾아보면 망가진 명령줄에
+"없습니다"라고 답하게 됩니다. 이 빌드는 아직 아는 하네스가 없습니다. Claude
+Code 커넥터는 뒤 에픽이라서 `brain setup run`은 연결할 하네스가 없다고 말하고
+넘어갑니다.
 
-## Exit codes
+## 종료 코드
 
-| Code | What it means |
+| 코드 | 뜻 |
 |------|---------------|
-| 0 | it worked |
-| 1 | it ran and failed, or came back degraded |
-| 2 | it could not run at all: the command line, the configuration, no database |
-| 3 | it needs a confirmation nobody gave |
+| 0 | 잘되었다 |
+| 1 | 실행했고 실패했다, 또는 degraded로 끝났다 |
+| 2 | 아예 실행할 수 없었다: 명령줄, 설정, 데이터베이스 없음 |
+| 3 | 아무도 주지 않은 확인이 필요하다 |
 
-Under `--json` the same number is in `error.exit_code`, so a caller reading the
-envelope never has to look at the shell to find out which it was. `error.hint`
-says what to do about it, and `error.retryable` says whether running the same
-command again could work at all — `false` on a usage mistake, `true` on a lock
-somebody else is holding, absent when it depends.
+`--json`에서는 같은 숫자가 `error.exit_code`에 있으므로, 엔벨로프를 읽는 쪽은
+어느 것이었는지 알려고 셸을 볼 필요가 없습니다. `error.hint`는 무엇을 하면
+되는지 말하고, `error.retryable`은 같은 명령을 다시 실행해서 될 일인지 말합니다
+— 사용법 실수에는 `false`, 남이 들고 있는 잠금에는 `true`, 경우에 따라 다르면
+아예 없습니다.
 
-A command on a harness hook path always exits 0, whatever happened, so a brain
-that is broken never breaks a turn (the failure goes to stderr as one line). A
-hook that runs into exit 3 does not do the thing and does not ask: it stops.
+하네스 hook 경로의 명령은 무슨 일이 있어도 exit 0입니다. 망가진 brain이 턴을
+망치지 않도록(실패는 stderr에 한 줄로 갑니다). exit 3에 부딪힌 hook은 그 일을
+하지도, 묻지도 않고 멈춥니다.
 
-## The shim
+## shim
 
-The installer writes `~/.second_brain/bin/brain`, mode 0755, and that is the
-`brain` a harness hook calls. A hook starts with none of your shell
-environment, so the shim carries everything it needs as literals: the `node`
-that ran the installer, the built entry point beside it, and the configuration
-folder of that install. It never calls `npx`.
+설치기는 `~/.second_brain/bin/brain`을 mode 0755로 쓰고, 하네스 hook이 부르는
+`brain`은 그것입니다. hook은 당신의 셸 환경을 하나도 물려받지 않으므로 shim은
+필요한 모든 것을 리터럴로 품고 있습니다. 설치기를 실행한 `node`, 그 옆의 빌드된
+진입점, 그리고 그 설치의 설정 폴더입니다. `npx`는 부르지 않습니다.
 
 ```sh
 #!/bin/sh
@@ -208,12 +201,11 @@ SECOND_BRAIN_HOME=${SECOND_BRAIN_HOME:-'/Users/me/.second_brain'}; export SECOND
 exec '/opt/homebrew/bin/node' '/Users/me/.second_brain/app/apps/cli/dist/bin.js' "$@"
 ```
 
-A `SECOND_BRAIN_HOME` already in the environment wins, so a second
-installation's shim does not fight the first one. Change node — a new `nvm`
-version, a Homebrew upgrade — and run `brain setup run` again to point the shim
-at it.
+환경에 이미 있는 `SECOND_BRAIN_HOME`이 이깁니다. 그래서 두 번째 설치의 shim이
+첫 번째와 다투지 않습니다. node를 바꾸면 — 새 `nvm` 버전, Homebrew 업그레이드 —
+`brain setup run`을 다시 실행해 shim이 그것을 가리키게 하세요.
 
-## Layout
+## 구조
 
 ```text
 packages/core/          domain types, use cases, ports -- no runtime dependencies
@@ -228,28 +220,28 @@ tooling/test-db/        dev-only throwaway test databases
 tooling/dev/            dev-only scripts, for checks no test can make
 ```
 
-## Build
+## 빌드
 
 ```sh
 pnpm install && pnpm build
 ```
 
-`pnpm` is not pinned: the root manifest asks for `>=12` and nothing more, so
-whatever current pnpm you have is the one that runs. A pinned `packageManager`
-only moved the failure earlier — a newer pnpm would refuse to downgrade itself
-and die before any work started.
+`pnpm`은 고정하지 않습니다. 루트 매니페스트는 `>=12`만 요구하므로, 당신이 가진
+최신 pnpm이 그대로 돕니다. `packageManager`로 고정하는 것은 실패를 앞으로
+당기기만 했습니다. 더 새 pnpm은 스스로 낮추기를 거부하고 어떤 일도 시작하기 전에
+죽습니다.
 
-`tooling/bootstrap/bin/second-brain.js` is a build output that is committed,
-because npm installs this repository from git without building it. Change
-`tooling/bootstrap/src/bootstrap.ts`, run `pnpm build`, and commit both; a test
-fails if the two disagree.
+`tooling/bootstrap/bin/second-brain.js`는 커밋된 빌드 산출물입니다. npm이 이
+저장소를 git에서 빌드 없이 설치하기 때문입니다. `tooling/bootstrap/src/bootstrap.ts`를
+바꾸면 `pnpm build`를 실행하고 둘을 함께 커밋하세요. 둘이 어긋나면 테스트가
+실패합니다.
 
-## Test database
+## 테스트 데이터베이스
 
-`packages/postgres` is the replication target of epic 7, and its tests use a
-real database rather than a mock. Nothing else needs one: the CLI and
-`packages/sqlite` run against files in a temporary folder. Start the test-only
-container, then point `BRAIN_TEST_DATABASE_URL` at it:
+`packages/postgres`는 에픽 7의 복제 대상이고, 그 테스트는 목이 아니라 실제
+데이터베이스를 씁니다. 다른 것은 필요 없습니다. CLI와 `packages/sqlite`는 임시
+폴더의 파일을 상대로 돕니다. 테스트 전용 컨테이너를 띄우고
+`BRAIN_TEST_DATABASE_URL`을 그것으로 가리키세요.
 
 ```sh
 docker compose -f compose.test.yaml up -d --wait
@@ -258,17 +250,16 @@ pnpm test
 docker compose -f compose.test.yaml down
 ```
 
-The container keeps no volume, so stopping it discards the data.
+컨테이너는 볼륨을 두지 않으므로, 멈추면 데이터는 사라집니다.
 
-## Check the install
+## 설치 상태 확인
 
-Configuration lives outside the repository, in `~/.second_brain` (or the folder
-`SECOND_BRAIN_HOME` names). `config.toml` holds the time zone and three absolute
-paths — the database file, the file store's root and the mirror — and no key
-values; a key value would live in `.env` at mode 0600, and this version has
-none. The installer writes both — there is nothing to write by hand. To check a
-working tree without touching the real folder, point the installer somewhere
-else:
+설정은 저장소 밖, `~/.second_brain`(또는 `SECOND_BRAIN_HOME`이 가리키는 폴더)에
+있습니다. `config.toml`은 시간대와 절대 경로 셋 — 데이터베이스 파일, 파일 저장소
+루트, 미러 — 을 담고 키 값은 담지 않습니다. 키 값은 mode 0600의 `.env`에
+있겠지만 이 버전에는 키가 없습니다. 둘 다 설치기가 씁니다. 손으로 쓸 것은
+없습니다. 실제 폴더를 건드리지 않고 작업 트리를 확인하려면 설치기를 다른 곳으로
+가리키세요.
 
 ```sh
 export SECOND_BRAIN_HOME=$(mktemp -d)
@@ -276,57 +267,55 @@ node apps/cli/dist/install.js --yes
 
 pnpm brain admin doctor --json
 
-# the shim of that install, which carries the folder it belongs to
+# 그 설치의 shim. 자신이 속한 폴더를 품고 있습니다
 env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" admin doctor
 ```
 
-`admin doctor` reports one line per check and then a summary line counting
-them. These are the checks:
+`admin doctor`는 점검마다 한 줄, 그리고 그것을 센 요약 줄을 냅니다. 점검은
+다음과 같습니다.
 
-| Check | What it says |
+| 점검 | 말하는 것 |
 |-------|--------------|
-| `db` | the source answered at all, and which SQLite version it is |
-| `writable` | this process could really write: a transaction is opened, a table created and the whole thing rolled back, so nothing is left behind. Opening a database file succeeds even at mode 0444, which is why it is asked separately. It waits for nobody — a brain another process is writing to answers `warn` and says the question was not settled |
-| `wal` | the file is in write-ahead mode, which is what lets a reader and the writer share it |
-| `fts5-trigram` | this Node's SQLite was built with FTS5 and the `trigram` tokenizer, proved by indexing a row and searching it |
-| `foreign-keys` | they are enforced on this connection |
-| `schema-version` | the stored version is the one this build was made for; a mismatch is `SCHEMA_MISMATCH`, and `brain setup run` is what migrates. `skip` when `db` failed, since there was nothing to ask |
-| `config` | `config.toml` is there and understandable, and where it is |
-| `shim` | `<home>/bin/brain` is there, executable, written by brain, and names an entry point that exists |
-| `node-path` | the node that shim names runs and is at least the version in `engines.node`. `skip` when there is no shim to read it from |
-| `node-version` | the node running the command is at least that version too |
+| `db` | 원본이 응답했는지, 그리고 어느 SQLite 버전인지 |
+| `writable` | 이 프로세스가 정말 쓸 수 있었는지. 트랜잭션을 열고 테이블을 만들고 전부 롤백하므로 남는 것은 없습니다. 데이터베이스 파일은 mode 0444에서도 열리기 때문에 따로 묻습니다. 아무도 기다리지 않습니다 — 다른 프로세스가 쓰고 있는 brain은 `warn`으로 답하고 확인하지 못했다고 말합니다 |
+| `wal` | 파일이 write-ahead 모드인지. 읽는 쪽과 쓰는 쪽이 파일을 함께 쓰게 해 주는 것이 그것입니다 |
+| `fts5-trigram` | 이 Node의 SQLite가 FTS5와 `trigram` 토크나이저로 빌드되었는지. 행을 색인하고 찾아보아 증명합니다 |
+| `foreign-keys` | 이 연결에서 적용되는지 |
+| `schema-version` | 저장된 버전이 이 빌드가 만들어진 그 버전인지. 어긋나면 `SCHEMA_MISMATCH`이고, 마이그레이션하는 것은 `brain setup run`입니다. `db`가 실패했으면 물을 것이 없으므로 `skip` |
+| `config` | `config.toml`이 있고 읽을 수 있는지, 그리고 어디에 있는지 |
+| `shim` | `<home>/bin/brain`이 있고, 실행할 수 있고, brain이 썼고, 있는 진입점을 가리키는지 |
+| `node-path` | 그 shim이 가리키는 node가 실행되고 `engines.node`의 버전 이상인지. 읽을 shim이 없으면 `skip` |
+| `node-version` | 명령을 실행한 node도 그 버전 이상인지 |
 
-Every check comes to one of four answers: `ok`, `warn` — it ran and settled
-nothing, which is neither a pass nor a problem — `fail`, or `skip`, which says
-in its detail which check made it pointless (`prereq failed: db`). The last
-line is the counts:
+모든 점검은 넷 중 하나로 끝납니다. `ok`, `warn` — 실행했지만 아무것도 확정하지
+못했다는 뜻으로, 통과도 문제도 아닙니다 — `fail`, 그리고 `skip`은 어느 점검이
+자신을 무의미하게 만들었는지 detail에 적습니다(`앞선 점검 실패: db`). 마지막
+줄은 그 수입니다.
 
 ```text
-summary: 9 passed, 1 warned, 0 failed, 0 skipped
+요약: 통과 9, 경고 1, 실패 0, 건너뜀 0
 ```
 
-They are in `data.summary` under `--json`, so nothing has to add up ten lines
-to find the one `warn` among them.
+`--json`에서는 `data.summary`에 있으므로, 열 줄을 더해 가며 그중 하나뿐인
+`warn`을 찾을 필요가 없습니다.
 
-Only a `fail` fails the command: exit 0 means nothing failed, 1 means something
-did, and 2 means the command could not run at all. Nothing is ever repaired:
-doctor reports, and `setup run` is what fixes things.
+`fail`만 명령을 실패시킵니다. exit 0은 아무것도 실패하지 않았다는 뜻, 1은 무언가
+실패했다는 뜻, 2는 명령을 아예 실행할 수 없었다는 뜻입니다. 고치는 일은 하지
+않습니다. doctor는 알려 주고, 고치는 것은 `setup run`입니다.
 
-If `writable` fails, fix `brain.db-wal` and `brain.db-shm` along with
-`brain.db`: SQLite gives the sidecars the database file's own permissions, so a
-database that was once read-only keeps failing this check after its own mode is
-put right, until theirs is too.
+`writable`이 실패하면 `brain.db`와 함께 `brain.db-wal`과 `brain.db-shm`도
+고치세요. SQLite는 사이드카에 데이터베이스 파일의 권한을 그대로 주므로, 한때
+읽기 전용이었던 데이터베이스는 자기 mode를 바로잡아도 사이드카가 그대로인 동안
+이 점검에서 계속 실패합니다.
 
-A runtime command opens the database file and never creates it, so a missing
-`brain.db` is reported as `DB_UNAVAILABLE` rather than quietly replaced with an
-empty one — and when the database cannot be reached there is nothing to say
-about its probes, so those lines are absent rather than guessed at. The schema
-version still gets its line, as a `skip` naming `db`: "not checked" and
-"checked and fine" are different answers, and leaving the line out would make
-you work out which one was meant from what is missing.
+런타임 명령은 데이터베이스 파일을 열기만 하고 만들지 않습니다. 그래서 없는
+`brain.db`는 빈 파일로 슬쩍 대체되지 않고 `DB_UNAVAILABLE`로 보고됩니다 — 그리고
+데이터베이스에 닿을 수 없으면 그 탐침에 대해 할 말이 없으므로, 그 줄들은
+짐작되는 대신 아예 없습니다. 스키마 버전은 그래도 자기 줄을 받습니다. `db`를
+이유로 든 `skip`으로요. "확인하지 않았다"와 "확인했고 괜찮다"는 다른 답이고,
+줄을 빼 버리면 없는 것으로부터 어느 쪽인지 알아내야 합니다.
 
-`admin doctor` is the one command that runs without a configuration, because it
-is the command to run when the install is already broken: a missing or
-unreadable `config.toml` is a failing `config` check and an exit 1, with `db`
-failing for want of a path and the shim and node checks reported as usual. Every
-other command exits 2 on the same folder.
+`admin doctor`는 설정 없이도 도는 유일한 명령입니다. 설치가 이미 망가졌을 때
+실행하는 명령이기 때문입니다. 없거나 읽을 수 없는 `config.toml`은 실패한
+`config` 점검과 exit 1이 되고, `db`는 경로가 없어서 실패하고, shim과 node 점검은
+평소처럼 보고됩니다. 다른 모든 명령은 같은 폴더에서 exit 2로 끝납니다.

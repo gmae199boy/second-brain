@@ -68,7 +68,11 @@ export function sqliteUserStore(connect: SqliteConnect): UserStore {
           return { created: inserted.rows.length > 0, user };
         });
       } catch (error) {
-        return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) };
+        return {
+          ok: false,
+          code: 'DB_UNAVAILABLE',
+          message: `주인을 기록할 수 없습니다: ${describe(error)}`,
+        };
       }
       if (!written.ok) return written;
 
@@ -80,7 +84,7 @@ export function sqliteUserStore(connect: SqliteConnect): UserStore {
         return {
           ok: false,
           code: 'DB_UNAVAILABLE',
-          message: `the owner could not be created and none is recorded: ${input.id} is already a user that is not the owner`,
+          message: `주인을 만들지 못했고 기록된 주인도 없습니다. ${input.id}는 이미 주인이 아닌 다른 사용자입니다`,
         };
       }
       return { ok: true, created, user };
@@ -98,7 +102,11 @@ export function sqliteUserStore(connect: SqliteConnect): UserStore {
         // unreachable for this question rather than an owner-less one: saying
         // `null` would send the caller to `brain setup run` for a schema
         // problem the write guard reports better (AD-20).
-        return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) };
+        return {
+          ok: false,
+          code: 'DB_UNAVAILABLE',
+          message: `주인을 읽을 수 없습니다: ${describe(error)}`,
+        };
       }
     },
   };
@@ -118,7 +126,7 @@ async function readSelf(held: Kysely<SqliteSchema>): Promise<User | null> {
 export function toUser(row: UserRow): User {
   const createdAt = parseInstant(row.created_at);
   if (!createdAt.ok) {
-    throw new Error(`users.created_at is unreadable: ${createdAt.message}`);
+    throw new Error(`users.created_at을 읽을 수 없습니다: ${createdAt.message}`);
   }
   return {
     id: row.id,

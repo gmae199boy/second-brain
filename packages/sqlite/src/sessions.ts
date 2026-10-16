@@ -120,7 +120,7 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
         return {
           ok: false,
           code: 'DB_UNAVAILABLE',
-          message: `no session for ${input.key.harness}:${input.key.harnessSessionId} after ensureSession: ${input.id} already belongs to another session`,
+          message: `${input.key.harness}:${input.key.harnessSessionId} 세션이 ensureSession 뒤에도 없습니다. ${input.id}는 이미 다른 세션의 것입니다`,
         };
       }
       return { ok: true, created, session: toSession(row) };
@@ -232,7 +232,7 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
         return {
           ok: false,
           code: 'SESSION_NOT_FOUND',
-          message: `no session for ${batch.key.harness}:${batch.key.harnessSessionId}. Call ensureSession first (AD-12).`,
+          message: `${batch.key.harness}:${batch.key.harnessSessionId} 세션이 없습니다. ensureSession을 먼저 호출하세요 (AD-12).`,
         };
       }
 
@@ -257,7 +257,7 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
       try {
         const row = await readSessionRow(db, parsed.key);
         if (row === null) {
-          return { ok: false, code: 'SESSION_NOT_FOUND', message: `no session for ${token}` };
+          return { ok: false, code: 'SESSION_NOT_FOUND', message: `${token} 세션이 없습니다` };
         }
 
         const messages = await sql<MessageRow>`
@@ -286,7 +286,11 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
           toolNotes: toolNotes.rows.map(toToolNote),
         };
       } catch (error) {
-        return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) };
+        return {
+          ok: false,
+          code: 'DB_UNAVAILABLE',
+          message: `세션을 읽을 수 없습니다: ${describe(error)}`,
+        };
       }
     },
   };
@@ -326,7 +330,7 @@ function instant(value: Date, column: string): string {
 function at(value: string, column: string): Date {
   const parsed = parseInstant(value);
   if (!parsed.ok) {
-    throw new Error(`${column} is unreadable: ${parsed.message}`);
+    throw new Error(`${column}을 읽을 수 없습니다: ${parsed.message}`);
   }
   return parsed.value;
 }

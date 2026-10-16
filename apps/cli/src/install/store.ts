@@ -52,7 +52,11 @@ export async function prepareStore(path: string): Promise<SqliteMigrationResult>
   } catch (error) {
     // The path is a folder, or the folder cannot be made, or the file cannot be
     // opened. Nothing was migrated, which is what `DB_UNAVAILABLE` says.
-    return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) };
+    return {
+      ok: false,
+      code: 'DB_UNAVAILABLE',
+      message: `데이터베이스 파일을 만들 수 없습니다: ${describe(error)}`,
+    };
   }
 
   const migrated = await runSqliteMigrations({ path });
@@ -110,7 +114,11 @@ export async function prepareSelfUser(path: string): Promise<SelfUserResult> {
     if (!ensured.ok) return ensured;
     return { ok: true, name: ensured.user.name, created: ensured.created };
   } catch (error) {
-    return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) };
+    return {
+      ok: false,
+      code: 'DB_UNAVAILABLE',
+      message: `주인을 기록할 수 없습니다: ${describe(error)}`,
+    };
   } finally {
     await store.close();
   }
@@ -147,7 +155,11 @@ export async function prepareFilesRoot(path: string): Promise<FilesRootResult> {
     // with `undefined` when there was nothing to create.
     return { ok: true, path, created: made !== undefined };
   } catch (error) {
-    return { ok: false, code: 'FILES_UNAVAILABLE', message: describe(error) };
+    return {
+      ok: false,
+      code: 'FILES_UNAVAILABLE',
+      message: `파일 저장소 루트를 만들 수 없습니다: ${describe(error)}`,
+    };
   }
 }
 
@@ -178,5 +190,5 @@ function describe(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
   const code: unknown = (error as { code?: unknown }).code;
   const candidates = [error.message, typeof code === 'string' ? code : '', error.name];
-  return candidates.find((candidate) => candidate !== '') ?? 'unknown error';
+  return candidates.find((candidate) => candidate !== '') ?? '알 수 없는 오류';
 }

@@ -56,10 +56,10 @@ export async function checkSchema(store: SchemaStore, expected: number): Promise
  */
 function mismatchMessage(found: number | null, expected: number): string {
   if (found === null) {
-    return `the database holds no schema version; this code expects ${String(expected)}. Run \`brain setup run\`.`;
+    return `데이터베이스에 스키마 버전이 없습니다. 이 코드는 ${String(expected)}을 기대합니다. \`brain setup run\`을 실행하세요.`;
   }
-  const versions = `the database is at schema version ${String(found)}; this code expects ${String(expected)}.`;
+  const versions = `데이터베이스는 스키마 버전 ${String(found)}이고, 이 코드는 ${String(expected)}을 기대합니다.`;
   return found > expected
-    ? `${versions} This build is older than the database: install a newer build.`
-    : `${versions} Run \`brain setup run\`.`;
+    ? `${versions} 이 빌드가 데이터베이스보다 오래되었습니다. 더 새 빌드를 설치하세요.`
+    : `${versions} \`brain setup run\`을 실행하세요.`;
 }

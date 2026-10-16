@@ -21,7 +21,11 @@ export function fileTranscriptReader(): TranscriptReader {
       try {
         return { ok: true, content: await readFile(path, 'utf8') };
       } catch (error) {
-        return { ok: false, code: 'TRANSCRIPT_UNREADABLE', message: describe(error) };
+        return {
+          ok: false,
+          code: 'TRANSCRIPT_UNREADABLE',
+          message: `트랜스크립트를 읽을 수 없습니다: ${describe(error)}`,
+        };
       }
     },
   };
@@ -32,5 +36,5 @@ function describe(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
   const code: unknown = (error as { code?: unknown }).code;
   const candidates = [error.message, typeof code === 'string' ? code : '', error.name];
-  return candidates.find((candidate) => candidate !== '') ?? 'unknown error';
+  return candidates.find((candidate) => candidate !== '') ?? '알 수 없는 오류';
 }

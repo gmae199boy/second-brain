@@ -124,21 +124,29 @@ export async function readConfig(home: string): Promise<ReadConfigResult> {
     return {
       ok: false,
       code: 'CONFIG_MISSING',
-      message: `${configPath} does not exist. Run the installer, or \`brain setup run\`.`,
+      message: `${configPath}이 없습니다. 설치기나 \`brain setup run\`을 실행하세요.`,
     };
   }
   if (source.state === 'unreadable') {
-    return { ok: false, code: 'CONFIG_INVALID', message: `${configPath}: ${source.message}` };
+    return {
+      ok: false,
+      code: 'CONFIG_INVALID',
+      message: `${configPath}을 읽을 수 없습니다: ${source.message}`,
+    };
   }
 
   let document: unknown;
   try {
     document = parseToml(source.text);
   } catch (error) {
-    return { ok: false, code: 'CONFIG_INVALID', message: `${configPath}: ${oneLine(error)}` };
+    return {
+      ok: false,
+      code: 'CONFIG_INVALID',
+      message: `${configPath}을 TOML로 읽을 수 없습니다: ${oneLine(error)}`,
+    };
   }
   if (!isTable(document)) {
-    return { ok: false, code: 'CONFIG_INVALID', message: `${configPath}: not a TOML table` };
+    return { ok: false, code: 'CONFIG_INVALID', message: `${configPath}: TOML 테이블이 아닙니다` };
   }
 
   const fields = flatten(document);
@@ -149,21 +157,21 @@ export async function readConfig(home: string): Promise<ReadConfigResult> {
     return {
       ok: false,
       code: 'CONFIG_INVALID',
-      message: `${configPath}: no schema_version. Expected schema_version = ${String(CONFIG_SCHEMA_VERSION)}.`,
+      message: `${configPath}: schema_version이 없습니다. schema_version = ${String(CONFIG_SCHEMA_VERSION)}이어야 합니다.`,
     };
   }
   if (typeof schemaVersion !== 'number' || !Number.isInteger(schemaVersion)) {
     return {
       ok: false,
       code: 'CONFIG_INVALID',
-      message: `${configPath}: schema_version must be an integer, got ${kindOf(schemaVersion)}`,
+      message: `${configPath}: schema_version은 정수여야 하는데 ${kindOf(schemaVersion)}입니다`,
     };
   }
   if (schemaVersion !== CONFIG_SCHEMA_VERSION) {
     return {
       ok: false,
       code: 'CONFIG_INVALID',
-      message: `${configPath}: schema_version ${String(schemaVersion)} is not supported; this code reads ${String(CONFIG_SCHEMA_VERSION)}.`,
+      message: `${configPath}: schema_version ${String(schemaVersion)}은 지원하지 않습니다. 이 코드가 읽는 것은 ${String(CONFIG_SCHEMA_VERSION)}입니다.`,
     };
   }
 
@@ -172,14 +180,14 @@ export async function readConfig(home: string): Promise<ReadConfigResult> {
     return {
       ok: false,
       code: 'CONFIG_INVALID',
-      message: `${configPath}: timezone must be a non-empty string, got ${kindOf(timezone)}`,
+      message: `${configPath}: timezone은 비어 있지 않은 문자열이어야 하는데 ${kindOf(timezone)}입니다`,
     };
   }
   if (!isTimeZone(timezone)) {
     return {
       ok: false,
       code: 'CONFIG_INVALID',
-      message: `${configPath}: timezone "${timezone}" is not a time zone this machine knows`,
+      message: `${configPath}: timezone "${timezone}"은 이 기계가 아는 시간대가 아닙니다`,
     };
   }
 
@@ -223,7 +231,7 @@ function readPath(
       failure: {
         ok: false,
         code: 'CONFIG_INVALID',
-        message: `${configPath}: ${key} must be a non-empty string, got ${kindOf(value)}`,
+        message: `${configPath}: ${key}는 비어 있지 않은 문자열이어야 하는데 ${kindOf(value)}입니다`,
       },
     };
   }
@@ -233,7 +241,7 @@ function readPath(
       failure: {
         ok: false,
         code: 'CONFIG_INVALID',
-        message: `${configPath}: ${key} "${value}" must be an absolute path`,
+        message: `${configPath}: ${key} "${value}"는 절대 경로여야 합니다`,
       },
     };
   }
@@ -301,13 +309,13 @@ export async function writeConfig(home: string, input: WriteConfigInput): Promis
 
   await writeFile(
     configFilePath(home),
-    `# Personal Brain configuration. No keys here — key values live in .env.\n${document}\n`,
+    `# Personal Brain 설정. 키 값은 여기가 아니라 .env에 있습니다.\n${document}\n`,
     'utf8',
   );
   // The mode is set at creation, so a secret is never briefly world-readable.
   await writeFile(
     envPath,
-    `# Written by brain. Keys live here, not in config.toml, and not in the repository.\n${lines.join('\n')}\n`,
+    `# brain이 쓴 파일입니다. 키 값은 config.toml이 아니라 여기에 있고, 저장소에는 들어가지 않습니다.\n${lines.join('\n')}\n`,
     { encoding: 'utf8', mode: 0o600 },
   );
   // `writeFile`'s mode only applies to a file it creates, so tighten an
@@ -380,7 +388,7 @@ function unknownKeyWarnings(
     .sort()
     .map((key) => ({
       code: 'CONFIG_UNKNOWN_KEY' as const,
-      message: `${configPath}: ignoring unknown key "${key}"`,
+      message: `${configPath}: 모르는 키 "${key}"를 무시합니다`,
     }));
 }
 
@@ -407,14 +415,18 @@ function isTimeZone(value: string): boolean {
 /** The first line of whatever went wrong, so a message stays one line. */
 function oneLine(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
-  return text.split('\n')[0]?.trim() ?? 'unknown error';
+  return text.split('\n')[0]?.trim() ?? '알 수 없는 오류';
 }
 
 function kindOf(value: unknown): string {
   if (value === null) return 'null';
-  if (Array.isArray(value)) return 'an array';
-  if (value instanceof Date) return 'a date';
-  if (typeof value === 'object') return 'a table';
-  if (typeof value === 'string') return `the string "${value}"`;
-  return `the ${typeof value} ${String(value)}`;
+  if (Array.isArray(value)) return '배열';
+  if (value instanceof Date) return '날짜';
+  if (typeof value === 'object') return '테이블';
+  if (typeof value === 'string') return `문자열 "${value}"`;
+  if (typeof value === 'number') return `숫자 ${String(value)}`;
+  if (typeof value === 'boolean') return `참거짓 값 ${String(value)}`;
+  // TOML has no other kind of value, so this is a document `smol-toml` would
+  // not have produced; name it rather than print the JavaScript type's name.
+  return `알 수 없는 종류의 값 ${String(value)}`;
 }

@@ -16,6 +16,7 @@ import {
   type RuntimeChecksOptions,
 } from '../src/doctor/checks.js';
 import { shimPath, writeShim } from '../src/install/shim.js';
+import { assertKoreanLine } from './language.js';
 
 /**
  * The machine half of doctor, against the real filesystem — the shim, its mode,
@@ -46,11 +47,21 @@ async function installedHome(): Promise<string> {
   return home;
 }
 
-/** Every check, run in order, as a map from id to what it answered. */
+/**
+ * Every check, run in order, as a map from id to what it answered.
+ *
+ * Each `detail` is held against the output-language rule here, which is what
+ * covers every branch below at once (Conventions, output language 2026-10-16):
+ * a check added to `doctor/checks.ts` with an English detail fails the first
+ * test that reaches it. The id and the status word stay English (Boundaries),
+ * and so does whatever Node itself said, which the checker is told about.
+ */
 async function report(options: RuntimeChecksOptions): Promise<Map<string, DoctorCheck>> {
   const checks = new Map<string, DoctorCheck>();
   for (const source of runtimeChecks(options)) {
-    checks.set(source.id, await source.run());
+    const check = await source.run();
+    assertKoreanLine(check.detail ?? '', { label: `${check.id} detail` });
+    checks.set(source.id, check);
   }
   return checks;
 }
@@ -159,7 +170,7 @@ describe('the config check', () => {
     // what the command ran with — a second read could say something else.
     const checks = await report({
       home,
-      config: { ok: false, code: 'CONFIG_INVALID', message: 'as the dispatcher found it' },
+      config: { ok: false, code: 'CONFIG_INVALID', message: '디스패처가 읽은 그대로입니다' },
       runNode: nodeSaying('24.16.0'),
     });
 
@@ -167,7 +178,7 @@ describe('the config check', () => {
       id: 'config',
       status: 'fail',
       code: 'CONFIG_INVALID',
-      detail: 'as the dispatcher found it',
+      detail: '디스패처가 읽은 그대로입니다',
     });
   });
 });
@@ -192,7 +203,7 @@ describe('the shim check', () => {
     const checks = await report({ home, runNode: nodeSaying('24.16.0') });
 
     expect(checks.get('shim')).toMatchObject({ status: 'fail' });
-    expect(checks.get('shim')?.detail).toContain('not executable');
+    expect(checks.get('shim')?.detail).toContain('실행 권한이 없습니다');
     // The file was read and parsed, so the node it names is known — and a
     // report that skipped it would hide a second thing that is also wrong.
     expect(checks.get('node-path')).toMatchObject({ status: 'ok' });
@@ -207,7 +218,7 @@ describe('the shim check', () => {
     const checks = await report({ home, runNode: nodeSaying('24.16.0') });
 
     expect(checks.get('shim')).toMatchObject({ status: 'fail' });
-    expect(checks.get('shim')?.detail).toContain('signature');
+    expect(checks.get('shim')?.detail).toContain('서명 줄이 없습니다');
     expect(checks.get('node-path')).toMatchObject({ status: 'ok' });
   });
 
@@ -245,7 +256,7 @@ describe('the shim check', () => {
     const checks = await report({ home, runNode: nodeSaying('24.16.0') });
 
     expect(checks.get('shim')).toMatchObject({ status: 'fail' });
-    expect(checks.get('shim')?.detail).toContain('read back');
+    expect(checks.get('shim')?.detail).toContain('다시 읽어 들일 수 없습니다');
     // Not read and not parsed are the only two states with no node name in
     // them, and so the only two that skip.
     expect(checks.get('node-path')?.status).toBe('skip');

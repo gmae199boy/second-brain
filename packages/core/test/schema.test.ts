@@ -26,7 +26,7 @@ describe('checkSchema', () => {
     // The database is ahead of this build, and migrations only go forwards, so
     // naming a command here would name one that does nothing. `setup upgrade`
     // is an epic 5 plan and must not be named either.
-    expect(result.message).toContain('install a newer build');
+    expect(result.message).toContain('더 새 빌드를 설치하세요');
     expect(result.message).not.toContain('setup run');
     expect(result.message).not.toContain('setup upgrade');
   });
