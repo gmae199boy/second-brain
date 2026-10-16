@@ -41,7 +41,7 @@ risk: medium
 
 ## Boundaries
 
-AD-7·9·11·21·23·24, Table Contract(files, file_locations, message_attachments, document_extractions, document_chunks, file_names, file_metadata). 스키마 0003은 epic-capture가 만든다. 문서 검색·`files show`·`files url`은 epic-recall-and-mirror, Drive 저장소는 epic-drive, 내보내기는 epic-operations. 경고 코드 `ATTACHMENT_NOT_REDACTED`를 맡는다. 도구 결과 안의 이미지(스크린샷)는 도구 출력이라 첨부가 아니다.
+AD-7·9·11·21·23·24, Table Contract(files, file_locations, message_attachments, document_extractions, document_chunks, file_names, file_metadata). 스키마 0004는 epic-capture(2.6)가 만든다(2026-10-16 번호 변경). 문서 검색·`files show`·`files url`은 epic-recall-and-mirror, Drive 저장소는 epic-drive, 내보내기는 epic-operations. 경고 코드 `ATTACHMENT_NOT_REDACTED`를 맡는다. 도구 결과 안의 이미지(스크린샷)는 도구 출력이라 첨부가 아니다.
 
 ## References
 
@@ -56,7 +56,14 @@ AD-7·9·11·21·23·24, Table Contract(files, file_locations, message_attachmen
 ## Notes
 
 - Decision(2026-10-15, epic-capture 인셉션): epic-capture에서 나눴다. 순서는 epic-capture 바로 뒤. 인셉션은 차례가 올 때 한다(사용자).
-- Waits on epic-capture because: 0003 스키마, parser와 수집 경로, 일감 대기열과 drain, Core 마스킹 함수, 확인 게이트.
+- Waits on epic-capture because: 0004 스키마(2.6), parser와 수집 경로, 일감 대기열과 drain, Core 마스킹 함수, 확인 게이트.
 - Open question: 한 달 실측에서 사용자가 붙인 것은 붙여 넣은 이미지 11건과 @파일 5건뿐이고 PDF·문서 블록은 0건이었다(`../epic-capture/epic-capture-research.md` §4). PDF·docx 추출기의 첫 실사용은 epic-drive(기존 Drive 문서 색인)일 수 있다. 추출기를 이 에픽에 둘지 epic-drive로 옮길지 인셉션에서 정한다.
 - Open question: epic-capture만으로 수집된 세션의 첨부는 수집 때 채워지지 않았다. 이 에픽이 디스크에 남은 transcript(기본 30일)를 다시 읽어 `message_attachments`를 채우는 방법을 인셉션에서 정한다.
 - Open question: `message_attachments`·`document_extractions` 등 0002 테이블의 변경 거부 trigger를 둘지 정한다(`../deferred-work.md` story-untitled-12-plan 항목).
+- Note(2026-10-16, `../change-users-and-review-gaps/`, 인셉션 입력, 원문은 `../inputs/external-review-2026-10-16.md`):
+  - S9: 청구가 만료된 추출 일감의 열린 세대(`finished_at` null)는 다음 청구가 `failed`로 닫고 새 `attempt`를 만든다(spine AD-24).
+  - S10: 실패한 세대의 조각·FTS는 그 실패를 기록하는 쓰기(또는 정리 일감)가 지운다.
+  - S13: `files.redact` 연쇄에 `file_names`·이름 FTS·`file_metadata` 삭제를 넣고, 재생성은 가린 파일을 건너뛴다(spine AD-23).
+  - S12: pdf가 아니면 `page`는 null이다. Store 비교는 null까지 같아야 하고, TS에서 undefined와 null을 구분한다.
+- Note(2026-10-16, 인셉션 입력): 추출 오류에 분류 코드를 붙인다. 지원하지 않는 형식·손상·암호화 파일은 영구 오류(첫 실패에서 기록하고 닫음), 원본에 잠시 접근하지 못한 것은 일시 오류다(spine AD-21 재시도 분류).
+- Note(2026-10-16): 추출 실패의 다시 하기는 `failures retry`에 대상 종류 `file`을 더해서 한다(2.12가 명령을 만든다, spine AD-5).

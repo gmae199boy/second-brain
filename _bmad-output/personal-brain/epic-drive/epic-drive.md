@@ -3,7 +3,7 @@ type: epic
 title: "Google Drive 연동"
 parent: personal-brain
 covers: [CAP-14, CAP-12]
-after: ["epic-attachments", "epic-recall-and-mirror", "epic-operations"]
+after: ["epic-attachments", "epic-recall-and-mirror", "epic-operations", "epic-daemon"]
 assignee: ""
 risk: high
 ---
@@ -40,7 +40,7 @@ Drive API로 Drive를 직접 다룬다. Drive는 5TB이고 Mac은 512GB라서 Ma
 
 ## Boundaries
 
-AD-23·24·25. 사용자의 외부 파일은 옮기거나 지우지 않는다. 기록의 원본(SQLite)은 Drive로 옮기지 않는다. 임베딩은 쓰지 않는다. OCR, HWP, 좌표의 장소 이름 변환은 범위 밖이다.
+AD-11·23·24·25. 사용자의 외부 파일은 옮기거나 지우지 않는다. 기록의 원본(SQLite)은 Drive로 옮기지 않는다. 임베딩은 쓰지 않는다. OCR, HWP, 좌표의 장소 이름 변환은 범위 밖이다.
 
 ## References
 
@@ -56,3 +56,7 @@ AD-23·24·25. 사용자의 외부 파일은 옮기거나 지우지 않는다. �
 - Waits on epic-attachments because: `FileStore` port와 로컬 구현, 첨부 저장, 추출 일감(2026-10-15 epic-capture에서 나뉨).
 - Waits on epic-recall-and-mirror because: 문서 검색 경로.
 - Waits on epic-operations because: 스냅샷 형식과 launchd 주기 실행.
+- Waits on epic-daemon because: Done when의 데몬 켜짐·꺼짐 두 상태 검증(2026-10-16, `../change-users-and-review-gaps/` D2).
+- Note(2026-10-16, `../change-users-and-review-gaps/`, 인셉션 입력): D5 가리기 이전의 DB 스냅샷은 새 스냅샷이 검증된 뒤 지운다(spine AD-11). Drive 기록 복제 파일의 다시 쓰기는 epic-replicas 몫이다.
+- Note(2026-10-16, 인셉션 입력): Drive API 오류에 분류 코드를 붙인다. 429·5xx·네트워크는 일시 오류이고 `Retry-After`를 따른다. 403·404·삭제됨은 영구 오류다(spine AD-21 재시도 분류).
+- Note(2026-10-16): Drive 일감 실패의 다시 하기는 `failures retry`에 대상 종류를 더해서 한다(2.12가 명령을 만든다, spine AD-5).

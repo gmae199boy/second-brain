@@ -11,6 +11,8 @@ trigger: '사용자 결정(2026-10-14), story 1.7 완료 직후 대화'
 
 # Sprint Change Proposal — 원본을 로컬 SQLite로
 
+> 반영 완료 기록이다. 이후의 기준은 spine·PRD·spec·에픽 파일이고, 이 문서와 다르면 그쪽이 우선한다(2026-10-16).
+
 ## 1. Issue Summary
 
 **문제:** 지금 설계는 원본이 Postgres 하나다(AD-10). 그래서 Postgres나 Docker가 없는 사람은 Brain을 쓸 수 없다. 설치기가 Docker를 깔아 주기는 하지만, 쓰려면 Docker Desktop이 항상 떠 있어야 한다. 사용자는 저장 위치를 로컬·Drive(클라우드)·DB 중 하나 이상 고를 수 있기를 원한다.

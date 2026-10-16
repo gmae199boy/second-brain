@@ -22,6 +22,8 @@ PRD에는 "무엇"만 있다. 이 문서는 인터뷰와 사전 시험에서 나
 
 ## 2. 저장 구조 스케치
 
+> 2026-10-16: 이 스케치는 Postgres 시절(2026-10-08)의 출발점이고 역사 기록으로만 남긴다. 테이블·키·이름은 spine의 Table Contract가 정한다(예: `only_project_id` → `apply_project_id`, `ingest_failures` → `failures`, 벡터는 선택 색인).
+
 architecture에서 확정한다. PRD의 FR이 요구하는 것을 담을 수 있는지 보이는 용도.
 
 ```

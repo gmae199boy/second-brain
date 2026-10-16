@@ -52,16 +52,17 @@
 | 항목 | 처분 |
 | --- | --- |
 | runMigrations 실패를 `DB_UNAVAILABLE`과 구분(Postgres) | epic 7(복제 대상의 Postgres 마이그레이션) |
-| `redactions` 등 불변 테이블의 변경 거부 trigger | `redactions`: epic 2 story 6(0003). `log_entry_edits`·`context_injections`: epic 3. `index_configs`: 두지 않음(setup만 쓴다) |
+| `redactions` 등 불변 테이블의 변경 거부 trigger | `redactions`: epic 2 story 6(0004, 2026-10-16 번호 변경). `log_entry_edits`·`context_injections`: epic 3. `index_configs`: 두지 않음(setup만 쓴다) |
 | `transcript_files.size_bytes` bigint(Postgres) | epic 7 |
 | `tickets.toml` story 5의 pnpm 문구 | 해결됨(epic 1 마무리) |
 | 루트 `engines.node` 하한 강제 | doctor 하한은 해결됨(1.8). 진입점 하한은 epic 2 story 5(회고 F7) |
 | Postgres의 `tool_notes` 가리기 | epic 7 |
-| `files.redact`의 `redactions` 자리 | epic 2 story 6(0003) |
+| `files.redact`의 `redactions` 자리 | epic 2 story 6(0004, 2026-10-16 번호 변경) |
 | Postgres `index_configs` 맞춤 | epic 7 |
 | 0002 새 테이블 5개의 변경 규칙 trigger | epic-attachments 인셉션 |
-| `document_extractions.index_config_id` | epic 2 story 6(0003)으로 앞당김. 문서 조각은 epic-attachments가 만든다 |
+| `document_extractions.index_config_id` | epic 2 story 6(0004, 2026-10-16 번호 변경)으로 앞당김. 문서 조각은 epic-attachments가 만든다 |
 | `setup run` 부분 읽기 리셋 | epic 2 story 4 |
 | busy 예산 분기 테스트 | 해결됨(1.9) |
 | 설치기가 모르는 키를 지움 | epic 2 story 4 |
 | `checkSchema`의 `setup upgrade` 문구 | 해결됨(1.9) |
+| 쓰기 가드의 `DB_UNAVAILABLE` exit 1 vs 표 2 (2.1) | epic 2 story 10(쓰기 가드를 spool로 바꿀 때 함께 정한다, 2026-10-16) |

@@ -18,7 +18,7 @@ id = 10
 slug = "epic-attachments"
 title = "첨부 원본과 문서 추출"
 covers = ["CAP-14", "CAP-2"]
-after = [{ epic = 2, needs = "0003 스키마, parser와 수집 경로, 일감 대기열과 drain, Core 마스킹 함수, 확인 게이트" }]
+after = [{ epic = 2, needs = "0004 스키마(2.6), parser와 수집 경로, 일감 대기열과 drain, Core 마스킹 함수, 확인 게이트" }]
 
 [[epic]]
 id = 3
@@ -46,21 +46,21 @@ id = 9
 slug = "epic-daemon"
 title = "데몬과 MCP 표면"
 covers = ["CAP-10", "CAP-11"]
-after = [{ epic = 5, needs = "LaunchAgent·upgrade·uninstall 흐름과 doctor 틀" }, { epic = 2, needs = "명령 메타(brain admin schema)와 플러그인 뼈대(.mcp.json 등록 자리)" }]
+after = [{ epic = 5, needs = "LaunchAgent·upgrade·uninstall 흐름과 doctor 틀" }, { epic = 2, needs = "명령 메타(brain guide schema)와 플러그인 뼈대(.mcp.json 등록 자리)" }]
 
 [[epic]]
 id = 7
 slug = "epic-replicas"
 title = "복제 대상과 원본 이전"
 covers = ["CAP-11", "CAP-12"]
-after = [{ epic = 5, needs = "내보내기 형식과 운영 명령(복제·이전의 검증 기준)" }]
+after = [{ epic = 5, needs = "내보내기 형식과 운영 명령(복제·이전의 검증 기준)" }, { epic = 9, needs = "데몬 런타임(Done when의 데몬 켜짐·꺼짐 두 상태 검증), setup run·doctor·설정 코덱의 선택 단계" }]
 
 [[epic]]
 id = 8
 slug = "epic-drive"
 title = "Google Drive 연동"
 covers = ["CAP-14", "CAP-12"]
-after = [{ epic = 10, needs = "FileStore port와 로컬 구현, 첨부 원본 저장, 추출 일감" }, { epic = 4, needs = "문서 검색 경로" }, { epic = 5, needs = "스냅샷 형식과 launchd 주기 실행" }]
+after = [{ epic = 10, needs = "FileStore port와 로컬 구현, 첨부 원본 저장, 추출 일감" }, { epic = 4, needs = "문서 검색 경로" }, { epic = 5, needs = "스냅샷 형식과 launchd 주기 실행" }, { epic = 9, needs = "데몬 런타임(Done when의 데몬 켜짐·꺼짐 두 상태 검증)" }]
 
 [[epic]]
 id = 6
