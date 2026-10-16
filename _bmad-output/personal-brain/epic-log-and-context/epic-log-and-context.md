@@ -37,7 +37,7 @@ risk: high
 
 ## Boundaries
 
-AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, context_injections). 검색은 epic-recall-and-mirror. 플러그인 뼈대(hooks·bootstrap)는 epic-capture, 이 에픽은 `plugin/skills/`와 `admin guide`의 본문(Core 상수·스킬 생성)이다. `admin guide` 명령 자체와 그 메타는 epic-capture의 CLI 규약 보강. 경고 코드 `RULE_UNVERIFIED`를 맡는다(`SPOOLED`는 epic-capture가 정의하고 이 에픽의 `log append`가 쓴다).
+AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, context_injections). 검색은 epic-recall-and-mirror. 플러그인 뼈대(hooks·bootstrap)는 epic-capture가 만든다. 이 에픽은 `plugin/skills/`, SessionStart 동기 `context show` hook 줄, `admin guide`의 본문(Core 상수·스킬 생성)을 만든다. `admin guide` 명령 자체와 그 메타는 epic-capture의 CLI 규약 보강. 경고 코드 `RULE_UNVERIFIED`를 맡는다(`SPOOLED`는 epic-capture가 정의하고 이 에픽의 `log append`가 쓴다).
 
 ## References
 
@@ -47,3 +47,10 @@ AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, contex
 - prd — _bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md
 - inputs — _bmad-output/personal-brain/inputs/weknora-patterns.md, §1.2 (B1~B7), §1.3 (C3~C6)
 - change — _bmad-output/personal-brain/change-surface-plugin-daemon/change-surface-plugin-daemon.md, §4.1, §4.2(AD-17)
+
+## Notes
+
+- Decision 참조(2026-10-15, epic-capture Notes):
+  - 플러그인 `hooks/hooks.json`의 SessionStart 동기 `context show` 줄은 이 에픽이 `context show`와 함께 더한다. 이 줄도 epic-capture의 node 런처를 거치고 `|| exit 0`으로 감싼다.
+  - `log append`는 epic-capture의 세션 토큰 수집으로 그 세션을 먼저 수집한다. transcript를 찾지 못하면 세션 행을 만들지 않고 spool로 간다. 꼬리표는 첫 메시지의 cwd로만 정한다.
+- Decision 참조(2026-10-15, 사용자): slice 1은 회사/개인 경계를 두지 않는다. 워크스페이스는 쓰지 않고, 로그 한 줄 단위의 범위도 두지 않는다. 규칙의 적용 범위(어디서나 / 이 프로젝트)만 쓴다.

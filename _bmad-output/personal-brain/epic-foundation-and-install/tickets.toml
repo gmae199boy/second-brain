@@ -33,6 +33,7 @@ covers = ["E1-3"]
 after = [1]
 hitl = false
 risk = "medium"
+notes = ["Superseded(2026-10-16): 원본이 로컬 SQLite로 바뀌어(story 11) Postgres 마이그레이션 기준의 description·verify는 더 이상 살아 있는 수락 기준이 아니다. Postgres 마이그레이션은 복제 대상으로 남는다(epic 7). 현재 기준은 epic Done when과 story 11."]
 
 [[entry]]
 id = 4

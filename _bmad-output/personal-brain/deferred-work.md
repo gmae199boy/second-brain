@@ -40,3 +40,24 @@
 - source_plan: `_bmad-output/personal-brain/epic-foundation-and-install/story-doctor-plan.md`
   summary: Core `checkSchema`의 불일치 메시지가 아직 없는 명령 `brain setup upgrade`(epic 5)를 안내한다.
   evidence: story 3부터 있던 문구다. 이번 변경으로 doctor의 `schema-version` 항목이 이 문구를 사용자에게 보여 준다. 등록된 명령은 admin doctor·setup run·setup connect뿐이다. epic 5가 upgrade를 만들 때까지는 `brain setup run`으로 안내하거나, 그때 함께 맞춘다.
+
+## Triage (2026-10-16, epic 2 인셉션)
+
+위 항목은 빌드가 append-only로 쓴다. 이 표는 각 항목의 현재 처분이다(epic 1 회고 Action 4). "story"는 epic-capture `tickets.toml`의 entry id다.
+
+| 항목 | 처분 |
+| --- | --- |
+| runMigrations 실패를 `DB_UNAVAILABLE`과 구분(Postgres) | epic 7(복제 대상의 Postgres 마이그레이션) |
+| `redactions` 등 불변 테이블의 변경 거부 trigger | `redactions`: epic 2 story 6(0003). `log_entry_edits`·`context_injections`: epic 3. `index_configs`: 두지 않음(setup만 쓴다) |
+| `transcript_files.size_bytes` bigint(Postgres) | epic 7 |
+| `tickets.toml` story 5의 pnpm 문구 | 해결됨(epic 1 마무리) |
+| 루트 `engines.node` 하한 강제 | doctor 하한은 해결됨(1.8). 진입점 하한은 epic 2 story 5(회고 F7) |
+| Postgres의 `tool_notes` 가리기 | epic 7 |
+| `files.redact`의 `redactions` 자리 | epic 2 story 6(0003) |
+| Postgres `index_configs` 맞춤 | epic 7 |
+| 0002 새 테이블 5개의 변경 규칙 trigger | epic-attachments 인셉션 |
+| `document_extractions.index_config_id` | epic 2 story 6(0003)으로 앞당김. 문서 조각은 epic-attachments가 만든다 |
+| `setup run` 부분 읽기 리셋 | epic 2 story 4 |
+| busy 예산 분기 테스트 | 해결됨(1.9) |
+| 설치기가 모르는 키를 지움 | epic 2 story 4 |
+| `checkSchema`의 `setup upgrade` 문구 | 해결됨(1.9) |

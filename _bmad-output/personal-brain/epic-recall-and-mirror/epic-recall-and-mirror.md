@@ -3,7 +3,7 @@ type: epic
 title: "조회와 미러"
 parent: personal-brain
 covers: [CAP-4, CAP-5, CAP-6, CAP-7, CAP-13, CAP-14]
-after: ["epic-capture", "epic-log-and-context"]
+after: ["epic-capture", "epic-log-and-context", "epic-attachments"]
 assignee: ""
 risk: medium
 ---
@@ -12,7 +12,12 @@ risk: medium
 
 ## Description
 
-조각 생성(drain), 키워드 검색(FTS5 trigram, 질의는 Core 함수 하나가 구절로 감쌈), 문서 조각·파일 이름·경로·EXIF 촬영 일시 검색(`recall docs`, `files show`·`files url`), 종류별 결과 계약, `brain recall time/logs/chunks/tools/expand`, `brain sessions list/read`, 결과 계약(출처·근접 정렬·8,000자), 세션별 Markdown 미러와 `admin mirror-rebuild`, 조각 색인을 다시 만드는 `admin reindex`(키워드 구성), `log`·`recall` 직전 증분 수집을 만든다.
+조각 생성(drain), 키워드 검색(FTS5 trigram, 질의는 Core 함수 하나가 구절로 감쌈), 문서 조각·파일 이름·경로·EXIF 촬영 일시 검색(`recall docs`, `files show`·`files url`), 종류별 결과 계약, `brain recall time/logs/chunks/tools/expand`, `brain sessions list/read`, 결과 계약(출처·근접 정렬·8,000자), 세션별 Markdown 미러와 `admin mirror-rebuild`, 조각 색인을 다시 만드는 `admin reindex`(키워드 구성), `recall` 직전 증분 수집(epic-capture의 세션 토큰 수집을 부른다. `log append`의 선수집은 epic-log-and-context)을 만든다.
+
+2026-10-15 epic-capture 인셉션으로 정한 것:
+- 근접 정렬은 같은 워크트리 → 프로젝트 → 전체다. 워크스페이스는 slice 1에서 쓰지 않는다.
+- `messages redact` 연쇄 중 가린 메시지의 조각·미러 재생성 일감은 이 에픽이 붙인다. epic-capture는 행 삭제까지 한다(AD-11).
+- 문서 추출 세대·조각과 `file_names`는 epic-attachments가 만든다. 이 에픽은 그것을 검색한다.
 
 2026-10-15 변경(추가안 B, `../change-surface-plugin-daemon/`)으로 더한 것: 결과 계약 보강 — 잘림은 낮은 순위 행부터 통째로, 1위는 남기고 `meta.omitted{count, reason}`·`meta.next{ns, verb, args}`를 붙인다(AD-15). 검색을 수행하지 못한 것(오류 `SEARCH_FAILED`)과 0건(`ok`, `data: []`, `meta.hint`에 다음 행동)과 미설치(exit 2)를 구분한다. `has_more`는 limit+1로 판정하고 0건도 `count`를 낸다. 문서 결과의 위치는 `chunk_locator`다. 3자 미만 LIKE 폴백에 `ESCAPE` 명시, `EXPLAIN QUERY PLAN` 인덱스 회귀 테스트, 미러 파일명의 `<project>` 정리(제어문자·`<>:"/\|?*`→`_`, 대소문자 충돌은 ` (2)`). 원천: `inputs/weknora-patterns.md` §1.3.
 
@@ -47,3 +52,7 @@ AD-13·15·16·23·24, Table Contract(chunks, index_configs, document_chunks, fi
 - prd addendum — _bmad-output/personal-brain/prd-brain-v1-slice-1/addendum.md, §8 (SM-3 확장 채점표)
 - inputs — _bmad-output/personal-brain/inputs/weknora-patterns.md, §1.3 (C1~C10)
 - change — _bmad-output/personal-brain/change-surface-plugin-daemon/change-surface-plugin-daemon.md, §4.1, §4.2(AD-15)
+
+## Notes
+
+- Waits on epic-attachments because: 문서 추출 세대·조각과 `file_names`가 문서 검색의 대상이다(2026-10-15 epic-capture에서 나뉨).

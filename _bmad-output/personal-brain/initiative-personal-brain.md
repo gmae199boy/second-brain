@@ -28,15 +28,16 @@ Personal Brain V1 slice 1. Claude Code 세션을 자동으로 수집하고, 일�
 
 ## Boundaries
 
-spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡는다. spec Non-goals를 따른다(팀 공유, Claude Code 외 Harness 수집 제외. MCP·데몬은 V1 뒤 epic 9). 첫 시연 경로: 세션에서 규칙을 말하면 로그로 적히고, 다음 세션 시작에 자동으로 들어온다(epic 1 → 2 → 3).
+spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡는다. spec Non-goals를 따른다(팀 공유, Claude Code 외 Harness 수집 제외. MCP·데몬은 V1 뒤 epic 9). 첫 시연 경로: 세션에서 규칙을 말하면 로그로 적히고, 다음 세션 시작에 자동으로 들어온다(epic 1 → 2 → 3). epic 10은 2와 3 사이에 있지만 시연 경로 밖이라, 시연이 한 에픽 늦게 온다.
 
-- Touch point: Claude Code 플러그인 체계(marketplace·`/plugin install`·hook 계약·`.mcp.json`) — hook·설치 진입점; owner: epic-capture(hook·bootstrap), epic-log-and-context(skills), epic-daemon(`.mcp.json`·래퍼, AD-28). `plugin/` 폴더 자체는 에픽이 만드는 코드다
+- Touch point: Claude Code 플러그인 체계(marketplace·`/plugin install`·hook 계약·`.mcp.json`) — hook·설치 진입점; owner: epic-capture(hook·bootstrap·node 런처), epic-log-and-context(skills, SessionStart 동기 `context show` hook 줄), epic-daemon(`.mcp.json`·래퍼, AD-28). `plugin/` 폴더 자체는 에픽이 만드는 코드다
 - Touch point: UNIX 소켓·LaunchAgent KeepAlive — 데몬; owner: epic-daemon
 - Touch point: SQLite(Node 내장 `node:sqlite`) — 원본 DB 파일; owner: epic-foundation-and-install
 - Touch point: Docker·Postgres — 복제 대상; owner: epic-replicas
 - Touch point: Google Drive API — 첨부 원본 저장소·외부 문서; owner: epic-drive
 - Touch point: launchd — 주기 실행 LaunchAgent; owner: epic-operations
 - Touch point: Model Studio — 임베딩·재순위 호출(선택); owner: epic-embedding-index
+- Touch point: 문서 추출 라이브러리(`pdfjs-dist`, `mammoth`, `file-type`, `exif-reader`) — 첨부·문서 텍스트 추출과 EXIF; owner: epic-attachments
 
 ## References
 
@@ -62,3 +63,17 @@ spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡
 - Decision(2026-10-15, `change-surface-plugin-daemon/`): Claude Code 설치·hook 진입점은 플러그인, npx는 CI·사람·개발·대체 경로. 당분간 Claude Code만(Codex 제외). Node 24 이상 유지. 데몬·MCP는 epic 9(epic 5 다음, 7 앞). 확인 필요 종료 코드 3. WeKnora 흡수 목록(`inputs/weknora-patterns.md`)은 각 에픽 인셉션의 입력(사용자).
 - Decision(2026-10-15, 트리 검증): epic 9는 epic 7 앞에 고정한다. 두 에픽이 `setup run`의 선택 단계·doctor 등록부·설정 코덱을 함께 건드리므로 순서를 바꾸면 충돌 비용이 든다. 설정 키 `[daemon] enabled`는 epic 5가 더하고(주기 Label 선택), 데몬 동작은 epic 9. Drive 동기화는 drain의 일감 종류로 돌아 launchd·데몬 어느 쪽이든 같은 경로다(epic 8이 9를 기다리지 않게).
 - Decision(2026-10-15, 사용자): CAP-11은 다섯 에픽(1·2·5·7·9)이 각자 Boundaries의 경계 문장으로 나눠 맡는다. spec의 CAP 번호는 쪼개지 않는다. epic 7·8은 데몬 켜짐·꺼짐 둘 다에서 통과해야 한다(Done when에 추가).
+- Decision(2026-10-15, epic 2 인셉션): 첨부 원본과 문서 추출을 epic-capture에서 나눠 epic 10(`epic-attachments`)으로 만들고, epic 2 바로 뒤에 둔다. CAP-14는 다섯 에픽이 나눠 맡는다.
+  - epic 1: 스키마 자리(0001·0002)
+  - epic 2: 0003 스키마
+  - epic 10: 첨부 저장, 문서 추출, `files redact`
+  - epic 4: 문서 검색
+  - epic 8: Drive 저장소와 기존 Drive 문서
+  - (사용자)
+- Decision(2026-10-15, epic 2 인셉션): 수집 범위와 꼬리표.
+  - 꼬리표는 프로젝트와 워크트리뿐이고, 근거는 첫 메시지의 transcript cwd다.
+  - 워크스페이스는 slice 1에서 쓰지 않는다. 칸은 예약으로 남긴다. 회사/개인 경계는 내보내기·지우기·팀 공유를 경계 단위로 할 때 정한다.
+  - 설치 때 디스크에 남은 Claude Code transcript는 한 번 가져온다. 그 밖의 과거 세션 가져오기는 그대로 범위 밖이다.
+  - 서브에이전트는 최종 보고만 수집한다.
+  - spec·PRD·spine 문구는 2026-10-16에 맞췄다.
+  - (사용자)

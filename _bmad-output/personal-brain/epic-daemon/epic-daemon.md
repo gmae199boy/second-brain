@@ -12,7 +12,7 @@ risk: medium
 
 ## Description
 
-같은 빌드 안에 두 번째·세 번째 런타임을 더한다. 데몬이 없을 때의 동작(epic 2~5)이 기준이고, 데몬이 꺼져 있어도 모든 명령·hook·launchd 경로가 그대로 동작한다.
+같은 빌드 안에 두 번째·세 번째 런타임을 더한다. 데몬이 없을 때의 동작(epic 2·10·3·4·5)이 기준이고, 데몬이 꺼져 있어도 모든 명령·hook·launchd 경로가 그대로 동작한다.
 
 - **`brain mcp serve`(stdio)**: AD-5의 명령 메타에서 도구 이름(`<ns>_<verb>`)·입력 스키마·설명을 만든다. 쓰기 verb는 `session` 인자(시작 맥락 머리말의 토큰 줄)가 없으면 `SESSION_REQUIRED`다. 세션 토큰 출처의 우선순위는 명시 인자 > 소켓 요청 필드 > 환경 변수(AD-4). 플러그인 `.mcp.json`은 `${CLAUDE_PLUGIN_ROOT}`의 래퍼를 가리키고 래퍼가 shim을 exec한다. 결과는 CLI와 같은 엔벨로프를 `content`에 담고 `ok: false`면 `isError`다. 데몬이 필요 없다.
 - **`brain daemon run`**: UNIX 소켓 `<home>/run/brain.sock`(0600). 요청 `{ns, verb, args, session?}`, 응답은 CLI와 같은 엔벨로프(코덱은 Core). 첫 메시지는 handshake `{build: <commit>, schema_version}`(빌드 신원, AD-19). 다르면 `VERSION_MISMATCH`로 답한 뒤 정상 종료하고 KeepAlive가 새 빌드로 다시 띄운다. 단일 인스턴스 잠금 `<home>/run/daemon.pid`(설치 잠금과 같은 규칙), 잠금 뒤 남은 소켓 unlink, SIGTERM 정상 종료, 로그 `<home>/log/daemon.log`(크기 회전 1MB×5), heartbeat `<home>/run/heartbeat`(mtime, 30초). drain 루프(AD-21)와 transcript 폴더 watcher(hook 없는 수집 보완)를 돈다. DB에 못 쓰면 같은 spool 형식을 구간(60초 또는 1,000줄)마다 닫는다(AD-9).
@@ -30,7 +30,7 @@ LLM이 Brain을 도구로 직접 부르고(MCP), 수집이 hook 없이도 실시
 
 ## Done when
 
-1. 데몬을 끄고도 모든 명령·hook·launchd 경로가 그대로 동작한다(epic 2~5의 테스트가 데몬 없이 통과).
+1. 데몬을 끄고도 모든 명령·hook·launchd 경로가 그대로 동작한다(epic 2·10·3·4·5의 테스트가 데몬 없이 통과).
 2. 데몬을 켜면 Stop hook 없이 저장된 transcript가 N초(인셉션에서 SM-7에 맞춰 정함) 안에 수집된다.
 3. 빌드를 갱신하면 데몬이 handshake 불일치로 정상 종료하고 KeepAlive가 새 빌드로 다시 띄우며, 그 사이 hook은 프로세스 안 경로로 처리되고 `DAEMON_UNAVAILABLE` 경고만 남는다.
 4. `brain mcp serve`가 모든 읽기 verb와 세션 인자가 있는 쓰기 verb를 도구로 내고, 스키마는 `brain admin schema`와 같다. `session` 없는 쓰기는 `SESSION_REQUIRED`다.

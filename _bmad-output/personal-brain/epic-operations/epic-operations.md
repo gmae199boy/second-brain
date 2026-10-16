@@ -3,7 +3,7 @@ type: epic
 title: "운영: 내보내기·복구, 업그레이드, 제거"
 parent: personal-brain
 covers: [CAP-12, CAP-11]
-after: ["epic-recall-and-mirror"]
+after: ["epic-recall-and-mirror", "epic-attachments"]
 assignee: ""
 risk: medium
 ---

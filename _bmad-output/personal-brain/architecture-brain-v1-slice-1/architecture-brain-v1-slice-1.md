@@ -7,7 +7,7 @@ paradigm: 'hexagonal (ports & adapters), 단명 CLI 런타임(데몬은 선택, 
 scope: 'slice 1 — 세션 수집, 작업 로그, 조회, 시작 맥락, 설치·운영. 개인용, 기계 한 대, 수집 경로는 Claude Code 하나(Harness 중립 구조). 설치·hook 진입점은 Claude Code 플러그인'
 status: final
 created: '2026-10-08'
-updated: '2026-10-15'
+updated: '2026-10-16'
 binds: [FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, FR-12, FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22, FR-23, FR-24, FR-25, FR-26, FR-27, FR-28, NFR-1, NFR-2, NFR-3, NFR-4, NFR-5, NFR-6, NFR-7, NFR-8, NFR-9]
 sources:
   - ../prd-brain-v1-slice-1/prd-brain-v1-slice-1.md
@@ -76,6 +76,7 @@ flowchart LR
 - **Rule:**
   - Core의 수집 입력은 `IngestBatch`(세션 키 + 추적 정보 + 메시지 + 도구 메모)다.
   - connector의 **필수 요소는 transcript parser 하나**다. 출력은 (transcript 내용, `parser_version`)의 순수 함수다. parser는 메시지마다 `harness_message_id`, 발화 시각, transcript 안의 순서만 낸다. **`seq`는 parser가 정하지 않는다**(AD-8) — compact·fork로 transcript 앞부분이 바뀌어도 이미 저장된 메시지의 번호가 다른 메시지에 가지 않게 하기 위해서다.
+  - parser는 메인 대화의 메시지만 낸다. 사이드체인(서브에이전트) 대화는 최종 보고 하나만 표시와 함께 낸다. 대화가 아닌 항목과 Harness가 만든 요약은 메시지가 아니다(2026-10-15 epic 2 인셉션).
   - parser 커서는 (마지막 Harness 메시지 ID, 그 지점까지의 fingerprint)다. 커서 메시지가 사라졌거나(compact·fork) fingerprint가 다르면 처음부터 다시 읽는다. 멱등이므로 중복은 생기지 않고, 경고를 남긴다.
   - parser 버그로 이미 저장된 메시지는 고치지 않는다(원문 불변 우선). 재수집은 빠진 것만 추가한다. 세션마다 `parser_version`을 기록한다.
   - **hook 입출력**(stdin 해석, `hookSpecificOutput`·`systemMessage` 형식, 세션 환경 변수 쓰기)은 connector adapter가 소유한다. CLI의 `--json` 봉투와는 별개인 세 번째 출력 모드다. hook 출력은 10,000자를 넘지 않는다.
@@ -100,7 +101,7 @@ flowchart LR
 | ns | verb | 하는 일 (FR) |
 | --- | --- | --- |
 | `context` | `show` | 시작 맥락 출력 (17) |
-| `sessions` | `ingest`, `list`, `read`, `assign-workspace`, `failures`, `retry` | 수집, 목록(로그 없는 세션 포함), 넓히기(메시지·도구 메모), 워크스페이스 넣기, 실패 조회·다시 수집 (1~6, 9, 15) |
+| `sessions` | `ingest`, `list`, `read`, `failures`, `retry` | 수집(세션 토큰만으로도), 목록(로그 없는 세션 포함), 넓히기(메시지·도구 메모), 실패 조회·다시 수집 (1~6, 9, 15). `assign-workspace`는 예약(워크스페이스는 slice 1에서 쓰지 않음, 2026-10-15) |
 | `log` | `append`, `list`, `edit`, `set-state`, `set-scope` | 적기, 조회(종류·꼬리표·기간), 고치기, 끄기·켜기, 규칙 적용 범위 (7, 8, 19~22) |
 | `recall` | `time`, `logs`, `chunks`, `docs`, `tools`, `expand` | 시간 조회, 대분류, 소분류, 문서 조각·이름 검색, 도구 메모 검색, 앞뒤 조각 (12~16, 28) |
 | `files` | `show`, `url`, `redact`, `reindex` | 파일 정보·위치, 원본 URL, 첨부 가리기, 재추출 (27, 28, 26) |
@@ -204,8 +205,8 @@ sequenceDiagram
 - **Prevents:** 같은 세션이 두 행이 되는 것, 꼬리표의 두 번째 진실, 사람·기계마다 같은 레포가 다른 프로젝트로 갈라지는 것
 - **Rule:**
   - 세션 행은 `sessions.ensure(harness, harness_session_id)` 하나만 만든다(find-or-create, 같은 잠금 안에서). 세션 키를 모르는 쓰기는 행을 만들지 않고 spool로 간다.
-  - 꼬리표(워크스페이스·프로젝트·워크트리)는 `sessions`에만 둔다. 로그와 조각은 `session_id`로 따라간다. [ADOPTED]
-  - 꼬리표는 세션을 만드는 첫 수집이 transcript의 cwd로부터 **한 번** 계산한다(시작 hook은 세션 행을 만들지 않는다, AD-6). 이후 사람이 하는 워크스페이스 지정 외에는 바뀌지 않는다.
+  - 꼬리표(프로젝트·워크트리. 워크스페이스는 예약이고 slice 1에서 쓰지 않는다)는 `sessions`에만 둔다. 로그와 조각은 `session_id`로 따라간다. [ADOPTED]
+  - 꼬리표의 근거는 그 세션 첫 메시지의 transcript cwd 하나다. 세션을 만드는 첫 수집이 그것으로 **한 번** 계산하고(시작 hook은 세션 행을 만들지 않는다, AD-6), 이후 바뀌지 않는다. 프로세스의 cwd는 근거가 아니다. transcript를 찾지 못한 쓰기는 세션 행을 만들지 않고 spool로 간다(2026-10-15 epic 2 인셉션, 리뷰 H-2 해소).
   - 프로젝트 정체성은 Core의 정규화 함수 하나가 정한다: git remote URL을 `host/owner/repo`(소문자 host, scheme·사용자·포트·`.git` 제거, ssh와 https 동일)로 만든다. remote가 없을 때만 로컬 git 공통 디렉터리를 쓴다. 워크트리는 (프로젝트, 작업 폴더 경로)이고 폴더가 지워져도 행은 남는다.
   - 세션에는 사용자 식별자(설정값)와 기계 이름이 있다. slice 1에서 사용자는 항상 나다.
   - **규칙의 적용 범위는 꼬리표가 아니라 규칙의 속성이다**(`apply_project_id`). 이것이 "꼬리표는 세션에만"의 유일한 예외다.
@@ -243,7 +244,7 @@ sequenceDiagram
     - 모델·차원 변경은 `admin.reindex`가 새 테이블을 만든 뒤 교체한다. 교체 전까지는 옛 테이블로 검색한다.
     - 재순위가 실패하면 벡터 순위를 그대로 돌려주고 경고 `RERANK_FAILED`를 낸다.
   - **결과 계약**: 결과는 종류(`conversation | log | document`)로 갈라지는 출처를 붙인다. 대화·로그는 `session` 토큰, `harness`, 날짜, 꼬리표, `seq_from`·`seq_to`, `chunk_id` 또는 `log_entry_id`이고, 이것이 `recall.expand`·`sessions.read`의 입력이다. 문서는 `file_id`, 표시 이름, 조각 위치(`chunk_locator`: `type ∈ {pdf, docx, text, time, sheet}`와 종류별 필드 `page`·`bbox` / `block` / `start`·`end` / `start_ms`·`end_ms` / `sheet`·`row_start`·`row_end`, AD-24), 그때 만든 URL, 첨부라면 그 세션·`seq`이고, `files.show`의 입력이다. 문서는 첨부된 세션의 근접 단계를 물려받는다.
-  - 정렬은 근접 단계(같은 워크트리 → 프로젝트 → 워크스페이스 → 전체) 다음 관련도 순이다.
+  - 정렬은 근접 단계(같은 워크트리 → 프로젝트 → 전체. 워크스페이스 단계는 워크스페이스를 쓰게 될 때 더한다) 다음 관련도 순이다.
   - 한 번의 결과는 기본 5건, 총 8,000자 이하다. 넘치면 낮은 순위 행부터 통째로 빼되 1위는 남기고, 경고 `RESULT_TRUNCATED`와 함께 `meta.omitted{count, reason}`·`meta.next{ns, verb, args}`를 붙인다. 행 안을 자르는 것은 최후 수단이다. `has_more`는 limit+1로 판정하고 0건도 `count`를 낸다.
   - 검색을 수행하지 못한 것(오류 `SEARCH_FAILED`: FTS 오류·DB 잠금 초과)과 0건(`ok`, `data: []`, `meta.hint`에 다음 행동)은 구분한다. 미설치·미초기화는 exit 2 코드(`CONFIG_MISSING`·`DB_UNAVAILABLE`)로 드러나며, 어느 경우도 "기록이 없다"로 읽히게 두지 않는다(NFR-2).
 
@@ -284,7 +285,7 @@ sequenceDiagram
   - 대화형 흐름의 순서: 환경 확인 → 빠진 의존성(pnpm 등)은 설치를 묻고 동의하면 설치 → 원본 DB 파일 위치(기본 `~/.second_brain/brain.db`; 서버·Docker 불필요, 복제 대상은 epic 7의 선택 단계) → 미러 경로 → 임베딩(기본 아니오) → Harness 연결 → LaunchAgent 일치(AD-25) → doctor → 완료 기록. 재설정은 `brain setup run`이고, 같은 흐름을 멱등으로 돌리며 현재 값을 기본값으로 보여 준다.
   - **hook의 출처는 Harness마다 하나다.** Claude Code에서는 플러그인 `hooks/hooks.json`이다. connector의 `setup.connect`(claude-code)는 `installed.json`의 `plugin_root`로 플러그인 설치 여부를 판정해 없으면 경고 `PLUGIN_NOT_INSTALLED`를 내고(설치 실패가 아니다, `ok: true`), 설치기가 예전에 쓴 Brain 표식 hook을 지운다. Brain은 Harness의 플러그인 폴더 구조를 모른다. 플러그인 체계가 없는 Harness에서만 `setup.connect`가 설정 파일에 hook을 쓰고, 그때의 "이미 있음" 판정은 Brain 표식으로만 한다. 플러그인은 한 출처로만 설치한다. 기록된 `plugin_root`와 다른 root에서 hook이 오면 doctor `warn`(`PLUGIN_DUPLICATE`)이다.
   - **빌드 신원과 완료 기록.** 빌드는 `apps/cli/dist/build.json`에 `{commit, schema_version}`을 박는다. 설치 완료 기록은 `<home>/installed.json`(`{commit, schema_version, installed_at, node, plugin_root?}`)이고, 완료 검증(shim이 가리키는 `bin.js`로 `brain admin schema --json`이 exit 0) 뒤 흐름의 마지막에 임시 파일→rename으로 쓴다. 쓰는 곳은 bootstrap·`setup run`뿐이다. 소켓 handshake(AD-26)와 플러그인 비교는 이 `commit`을 쓴다.
-  - **bootstrap**은 설치 잠금(`<home>/install.lock/` 디렉터리, 원자적 mkdir, 안에 pid·시작 시각; pid가 없거나 시작 시각이 30분을 넘으면 stale로 보고 회수; 잠금이 있으면 "설치 진행 중"으로 아무것도 하지 않고 exit 0)을 잡는다. 진입점에서 Node 24.16 하한을 본다(major만 보지 않는다). 플러그인에 적힌 ref로만 fast-forward하고 `pnpm install --frozen-lockfile`(가능하면 `--ignore-scripts`)로 빌드한다. 빌드는 `dist`를 제자리에서 다시 쓰므로 그 창에서 hook이 실패할 수 있다. 플러그인 hook 명령은 전부 `|| exit 0`으로 감싸고, 놓친 턴은 drain의 transcript 폴더 스캔이 줍는다. bootstrap의 종료 코드는 성공·무작업·진행 중 0, 실패 비0이고, 실패는 stdout의 `systemMessage` 한 줄로만 알린다. 비동기 hook의 stdout은 버려지지 않고 다음 턴에 모델로 들어가므로 그 한 줄 외에는 아무것도 찍지 않는다. `claude -p` 세션은 비동기 hook을 죽이므로 설치가 잘릴 수 있고, 잠금 회수와 멱등 ff로 다음 세션이 이어 간다. 앱은 `~/.second_brain/app`이다(두 진입점과 launchd가 같은 곳을 보게. 플러그인 데이터 폴더 `${CLAUDE_PLUGIN_DATA}`는 플러그인 전용이라 쓰지 않는다). 플러그인 캐시 안에서는 빌드하지 않는다.
+  - **bootstrap**은 설치 잠금(`<home>/install.lock/` 디렉터리, 원자적 mkdir, 안에 pid·시작 시각; pid가 없거나 시작 시각이 30분을 넘으면 stale로 보고 회수; 잠금이 있으면 "설치 진행 중"으로 아무것도 하지 않고 exit 0)을 잡는다. 진입점에서 Node 24.16 하한을 본다(major만 보지 않는다). 플러그인에 적힌 ref로만 fast-forward하고 `pnpm install --frozen-lockfile --ignore-scripts`로 빌드한다(2026-10-15 검증: 설치 스크립트를 가진 의존성이 없다). 빌드는 `dist`를 제자리에서 다시 쓰므로 그 창에서 hook이 실패할 수 있다. 플러그인 hook 명령은 전부 플러그인 안의 sh 런처를 거쳐 node를 찾고(shim과 같은 순서, PATH에 기대지 않는다) `|| exit 0`으로 감싼다. 놓친 턴은 drain의 transcript 폴더 스캔이 줍는다. bootstrap의 종료 코드는 성공·무작업·진행 중 0, 실패 비0이고, 실패는 stdout의 `systemMessage` 한 줄로만 알린다. 비동기 hook의 stdout은 버려지지 않고 다음 턴에 모델로 들어가므로 그 한 줄 외에는 아무것도 찍지 않는다. `claude -p` 세션은 비동기 hook을 죽이므로 설치가 잘릴 수 있고, 잠금 회수와 멱등 ff로 다음 세션이 이어 간다. 앱은 `~/.second_brain/app`이다(두 진입점과 launchd가 같은 곳을 보게. 플러그인 데이터 폴더 `${CLAUDE_PLUGIN_DATA}`는 플러그인 전용이라 쓰지 않는다). 플러그인 캐시 안에서는 빌드하지 않는다.
   - **shim**(`~/.second_brain/bin/brain`)은 설치 시점의 node 실제 바이너리 절대 경로(`realpath`로 푼 것)를 담고 `npx`를 부르지 않는다. 버전 관리자의 shim(volta 등)은 고정하지 않는다. 고정한 경로가 없으면 nvm 버전 폴더(24.16 이상 최신) → Homebrew → `/usr/local/bin` 순으로 찾아 쓰고, 설치 잠금 안에서 임시 파일→rename으로 다시 고정한다(volta·fnm·asdf·mise는 Deferred). hook·launchd는 대화형 셸의 PATH를 받지 못하므로 `node`를 못 찾는 것은 미설치가 아니다.
   - **플러그인은 작다**: `plugin/`에 `.claude-plugin/plugin.json`(매니페스트는 여기만), `hooks/hooks.json`, `skills/`(빌드 생성·커밋, AD-17), 의존성 없는 `bootstrap.js` 복사본(테스트로 원본과 동기화), `app-ref`(40자 소문자 sha 한 줄). `package.json`·lockfile은 두지 않는다(Claude Code가 의존성 설치를 시도한다). 루트 `.claude-plugin/marketplace.json`이 `./plugin`을 가리킨다. 플러그인 `version`이 앱 커밋을 고정하며, 고정된 동안에는 커밋을 밀어도 사용자에게 가지 않으므로 `app-ref`를 올릴 때 `version`도 올린다. 개인 마켓플레이스는 autoUpdate 기본이 꺼짐이라 갱신은 사람이 `claude plugin update`로 한다. 플러그인 설명에 첫 세션의 자동 clone·install·build를 명시한다. 첫 세션은 설치가 끝날 때까지 시작 맥락·라이브 수집이 없고, 끝나면 drain의 폴더 스캔이 그 세션을 줍는다. `/plugin uninstall`은 플러그인 캐시와 그 플러그인의 데이터·옵션만 지우고 `~/.second_brain`과 LaunchAgent는 남기므로 `setup uninstall`은 남는다(AD-20).
   - **doctor**는 원본(`store`: 이미 있는 파일로 열림, 쓰기 가능 — 다른 프로세스가 잠금을 쥐고 있어 확인할 수 없으면 `warn`, WAL, FTS5 `trigram`, `foreign_keys`를 버전 문자열이 아니라 직접 찔러 봄), 스키마 버전, shim과 node 경로의 실존, 실행 중인 node가 Stack 하한 이상인지, Harness별 마지막 hook 수신 시각, 플러그인(`installed.json`의 `commit`과 `app-ref`·빌드 신원의 관계, `PLUGIN_NOT_INSTALLED`·`PLUGIN_BEHIND`·`PLUGIN_DUPLICATE`는 `warn`)을 검사한다. 상태는 `ok | warn | fail | skip`(`skip`은 `detail`에 사유)이고, 선행 점검이 실패하면 그에 의존하는 점검은 `skip`이며 `detail`에 선행 항목을 적는다. `summary`(passed·warned·failed·skipped 건수)를 낸다. `warn`은 exit 0이다.
@@ -366,7 +367,7 @@ sequenceDiagram
 - **Rule:**
   - 데몬은 `brain daemon run`(같은 빌드·같은 shim)이고 SDK만 부른다. Core는 그대로다(FR-23). 단일 인스턴스 잠금은 `<home>/run/daemon.pid`(설치 잠금과 같은 규칙: 원자적 생성, pid 생존, 상한 시간)이고, 잠금을 잡은 뒤 남은 소켓 파일을 unlink하고 새로 연다. SIGTERM 정상 종료. 로그는 `<home>/log/daemon.log`이고 크기 기준 회전(기본 1MB×5)이다. heartbeat는 `<home>/run/heartbeat`(파일 mtime, 기본 30초)다. LaunchAgent는 KeepAlive 별도 Label(`<reverse-dns>.second-brain.daemon`)이다. 재시작 주체는 KeepAlive다: 데몬은 `VERSION_MISMATCH`를 만나거나 `setup upgrade`·`daemon stop`의 요청을 받으면 정상 종료하고, KeepAlive가 새 빌드로 다시 띄운다(`stop`은 KeepAlive를 먼저 내린다)(AD-20).
   - 데몬은 drain 루프(AD-21)와 transcript 폴더 watcher(hook 없는 수집 보완)를 돈다. 데몬이 켜져 있으면 CLI의 기회적 drain은 꺼진다(AD-7). DB에 쓸 수 없으면 같은 spool 형식을 쓰되 구간마다 파일을 닫는다(AD-9).
-  - hook 클라이언트(shim → `bin.js`)는 소켓이 있으면 거기로 보내고, 없거나 `VERSION_MISMATCH`면 지금처럼 프로세스 안에서 처리한다. **데몬이 꺼져 있어도 모든 명령·hook·launchd 경로가 동작한다**(AD-6·7·9·25가 기준 경로). epic 2~5의 테스트는 데몬 없이 통과해야 한다.
+  - hook 클라이언트(shim → `bin.js`)는 소켓이 있으면 거기로 보내고, 없거나 `VERSION_MISMATCH`면 지금처럼 프로세스 안에서 처리한다. **데몬이 꺼져 있어도 모든 명령·hook·launchd 경로가 동작한다**(AD-6·7·9·25가 기준 경로). epic 2·10·3·4·5의 테스트는 데몬 없이 통과해야 한다.
   - doctor는 데몬 생존·소켓 응답·버전 일치·마지막 heartbeat를 보이고, 켜져 있어야 하는데 죽어 있으면 `warn`이다.
 
 ### AD-28 — MCP 표면은 명령 메타에서 생성한다
@@ -384,10 +385,10 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 
 | 테이블 | 멱등 키 (UNIQUE) | 작성자 | 변경 가능성 |
 | --- | --- | --- | --- |
-| `projects` | `remote_identity` | `sessions.ensure` (find-or-create) | `workspace_id`만 사람이 바꿈 |
+| `projects` | `remote_identity` | `sessions.ensure` (find-or-create) | 불변. `workspace_id`는 예약(slice 1은 쓰지 않음) |
 | `worktrees` | `(project_id, path)` | `sessions.ensure` | `removed_at`만 drain이 채움 |
-| `workspaces` | `name` | 사람(`sessions.assign-workspace`) | 이름 변경 |
-| `sessions` | `(harness, harness_session_id)` | 생성: `sessions.ensure`. 갱신: `sessions.ingest` | 불변: 키, `user_id`, `machine`, `started_at`, 꼬리표, `ingest_source(live\|import)`. 단조: `ended_at`, 커서(`last_harness_message_id`, fingerprint), `parser_version`, `ingested_at`. 변경 가능: `workspace_id`(사람), `start_source(startup\|resume\|clear\|compact\|fork)`, `continued_from_session_id`(예약, slice 1은 채우지 않음) |
+| `workspaces` | `name` | 예약(slice 1은 쓰지 않음, 2026-10-15) | — |
+| `sessions` | `(harness, harness_session_id)` | 생성: `sessions.ensure`. 갱신: `sessions.ingest` | 불변: 키, `user_id`, `machine`, `started_at`, 꼬리표, `ingest_source(live\|import)`. 단조: `ended_at`, 커서(`last_harness_message_id`, fingerprint), `parser_version`, `ingested_at`. 예약: `workspace_id`(slice 1은 쓰지 않음). 변경 가능: `start_source(startup\|resume\|clear\|compact\|fork)`, `continued_from_session_id`(예약, slice 1은 채우지 않음) |
 | `messages` | `(session_id, harness_message_id)`, `(session_id, seq)`. `seq`는 원본 Store가 배정 | `sessions.ingest` | 불변(예외: `messages.redact`). `occurred_at`은 원래 발화 시각 |
 | `tool_notes` | `(session_id, harness_message_id, ordinal)` | `sessions.ingest` | 불변 |
 | `log_entries` | `id`(작성 프로세스가 정한 UUIDv7) | 생성: `log.append`. 문장: `log.edit`. 상태·범위: `log.set-state`, `log.set-scope`. 연결·`pending→on`: drain·`log.append` | `kind`, `session_id`, `occurred_at`, `author_model` 불변 |
@@ -399,7 +400,7 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `context_injections` | `id` | `context.show`가 spool에 쓰고 drain이 넣음 | 불변 |
 | `failures` | `(harness, harness_session_id, stage, fingerprint)`. `session_id`는 비어 있을 수 있음 | 모든 경로(실패 기록 함수 하나) | `resolved_at`만 drain이 채움 |
 | `transcript_files` | `(harness, path)` | drain(폴더 스캔) | 크기·fingerprint·커서 단조 |
-| `files` | `content_hash` | 첨부 수집(epic 2), 소스 동기화(epic 8) | 내용 불변. `home`, `current_extraction_id`, `redacted_at`(`files.redact`), `source_unreachable_at`(복구·연동 해제)만 바뀜 |
+| `files` | `content_hash` | 첨부 수집(epic 10), 소스 동기화(epic 8) | 내용 불변. `home`, `current_extraction_id`, `redacted_at`(`files.redact`), `source_unreachable_at`(복구·연동 해제)만 바뀜 |
 | `file_locations` | `(file_id, store_kind, locator)` | 파일 저장·이전 함수, 소스 동기화 | `ownership` 불변. 검증 시각·삭제 시각만 채움 |
 | `message_attachments` | `(message_id, ordinal)` | `sessions.ingest` | 자리·출처 불변. `file_id`·상태는 수집이 한 번 채움 |
 | `document_extractions` | `id`, `(file_id, attempt)`. `attempt`는 Store가 삽입 트랜잭션에서 `max+1` 배정. 파일당 진행 중(`finished_at` null) 세대는 하나 | drain(추출) | 상태·`failed_stage`만 진행. 내보내기에 포함 |
@@ -411,8 +412,8 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 
 ```mermaid
 erDiagram
-  workspaces ||--o{ projects : contains
-  workspaces ||--o{ sessions : "contains (프로젝트 없는 세션)"
+  workspaces ||--o{ projects : "contains (예약)"
+  workspaces ||--o{ sessions : "contains (예약)"
   projects ||--o{ worktrees : has
   projects ||--o{ sessions : tags
   worktrees ||--o{ sessions : tags
@@ -444,7 +445,7 @@ erDiagram
 | 명령 메타 | 모든 CommandSpec은 `used_for`, `required`, `examples`, `output`, `risk(read \| write \| destructive)`, `hook`, `dryRun`을 선언한다. `admin schema`·`--help`·MCP 스키마는 이 메타 하나에서 생성한다. 누락은 테스트 실패 |
 | hint·retry 문체 | 소문자로 시작, 마침표 없음, 명령은 백틱. hint가 비면 코드별 기본 문구 표에서 채운다. `retry.args`에는 실제로 바꾼 인자만, 비밀값 제외. 어차피 실패할 명령 대신 진짜 첫 단계를 가리킨다. 오타일 수 있는 상황에 파괴적 hint 금지 |
 | doctor 상태 | `ok \| warn \| fail \| skip`(`skip`은 `detail`에 사유). `fail`만 exit 1. `summary`에 passed·warned·failed·skipped 건수 |
-| 설치·런타임 기록 | `apps/cli/dist/build.json` `{commit, schema_version}`(빌드가 씀), `<home>/installed.json`(bootstrap·`setup run`이 완료 검증 뒤 마지막에 임시 파일→rename), `<home>/run/`(`daemon.pid`, `brain.sock`, `heartbeat`, `last-drain` — 파일 mtime이 시각), `<home>/log/`(크기 회전). 설정 코덱을 거치지 않는다(AD-18, AD-19, AD-27) |
+| 설치·런타임 기록 | `apps/cli/dist/build.json` `{commit, schema_version}`(빌드가 씀), `<home>/installed.json`(bootstrap·`setup run`이 완료 검증 뒤 마지막에 임시 파일→rename), `<home>/run/`(`daemon.pid`, `brain.sock`, `heartbeat`, `last-drain`, `last-hook-<harness>` — 파일 mtime이 시각), `<home>/log/`(크기 회전). 설정 코덱을 거치지 않는다(AD-18, AD-19, AD-27) |
 | hook 응답 | connector adapter 소유(AD-4). 10,000자 이하. hook 경로는 항상 exit 0으로 끝낸다(Stop의 exit 2는 턴을 이어 가게 하므로 금지) |
 | 오류 | Core는 예상된 실패를 코드가 있는 값으로 돌려주고, 예외는 버그에만 쓴다. 실패는 `failures`에, DB에 쓸 수 없으면 spool에 남긴다. stderr만으로 끝내지 않는다 |
 | 내보내기 (NFR-9) | 한 스냅샷 트랜잭션 안에서 테이블당 JSON Lines 하나 + `manifest.json`(스키마 버전, 테이블별 건수, 시각). 복구는 의존 순서대로 insert하고, 원본이 같은 DB 안에 있는 파생물(`chunks`, FTS, `embeddings`, `file_names`, 미러)만 다시 만든다. 문서 추출 세대·조각은 내보내고 복구한다. `manifest.json`에 파일 본체 포함 범위(`none | brain_owned`)를 적는다 |
@@ -514,6 +515,7 @@ flowchart TB
 | 세션 수집 (FR-1~6) | core `sessions` + claude-code parser + sqlite | AD-4, AD-6, AD-7, AD-8, AD-11, AD-12, Table Contract |
 | 작업 로그 (FR-7~9) | core `log` | AD-6, AD-9, AD-14, AD-17 |
 | 색인 (FR-10~11) | core `index`(drain) + sqlite(FTS5 trigram) + modelstudio(선택) | AD-7, AD-15 |
+| 첨부·문서 추출 (FR-27~28) | core files + FileStore(로컬) + sqlite + 추출 일감(drain) | AD-21, AD-23, AD-24, Table Contract |
 | 조회 (FR-12~16) | core `recall`, 미러 | AD-13, AD-15, AD-16 |
 | 시작 맥락 (FR-17~18) | core `context` + connector hook 입출력 | AD-4, AD-6, AD-9, AD-13, AD-17 |
 | 규칙·결정·선호 (FR-19~22) | core `log` + sqlite trigger | AD-11, AD-12, AD-14 |
@@ -532,12 +534,12 @@ flowchart TB
 | --- | --- |
 | MCP 도구 | 해소(2026-10-15): epic 9, AD-28. 세션 ID는 쓰기 verb의 `session` 인자로 받는다 |
 | 데몬·파일 watcher | 해소(2026-10-15): epic 9, AD-26·27. 데몬 없이도 동작하는 것이 기준이고, Telegram·원격 기계 수집·승인 대기는 그 뒤의 조각 |
-| 소켓 프레이밍, watcher 지연 목표, 데몬의 세션 안 짧은 핸들(`L12`·`M34` 같은 별칭 — AD-8대로 내부 UUID가 아니라 데몬이 harness 세션별로 매기는 별칭), hook 환경의 PATH 실측, `pnpm --ignore-scripts` 가능 여부 | epic 9·epic 2 인셉션에서 정한다 |
+| 소켓 프레이밍, watcher 지연 목표, 데몬의 세션 안 짧은 핸들(`L12`·`M34` 같은 별칭 — AD-8대로 내부 UUID가 아니라 데몬이 harness 세션별로 매기는 별칭) | epic 9 인셉션에서 정한다. hook 환경의 PATH와 `pnpm --ignore-scripts`는 2026-10-15 epic 2 인셉션에서 풀었다(hook은 런처가 node를 찾고, 설치는 `--ignore-scripts`) |
 | Codex 등 다른 Harness | 다음 조각. AD-4의 계약(parser 필수, hook 선택)만으로 추가한다. 2026-10-15 사용자: 당분간 Claude Code만. Codex 플러그인은 있으나 hook이 실험 기능(`[features] hooks`, 옛 이름 `codex_hooks`)이고 hook 항목의 신뢰 해시로 바뀐 항목을 조용히 건너뛴다(비공식 확인) — shim 내용 갱신이 해시에 걸리는지 확인 필요 |
 | volta·fnm·asdf·mise의 node 경로 폴백 | 버전 관리자 shim은 실제 바이너리가 아니라 고정할 수 없다(AD-19). 사용자가 생기면 `realpath` 규칙으로 더한다 |
 | `node:sqlite`의 호환성 깨짐(RC) | Node 업그레이드에서 API가 깨지면. 대안은 better-sqlite3, node-sqlite3-wasm. 드라이버는 adapter 안의 얇은 층 하나다(AD-7) |
 | sqlite-vec 유지보수 정지 | epic 6 착수 때 다시 본다. 대안은 FTS만 유지하거나 다른 벡터 확장 |
-| 꼬리표의 권위 출처, `failures.fingerprint` 정의 | epic 2 인셉션에서 정한다(2026-10-14 리뷰 H-2·H-8) |
+| 꼬리표의 권위 출처, `failures.fingerprint` 정의 | 해소(2026-10-15, epic 2 인셉션): 꼬리표는 첫 메시지의 transcript cwd(AD-12). fingerprint는 Core 함수 하나가 (stage, 안정된 입력 식별자, 오류 분류 코드)로 만든다(`epic-capture` Notes) |
 | 기계 교체·원본 이전 | 지금은 `admin.export`→`import`(빈 DB에만). 복제 대상의 승격은 epic 7에서 정한다 |
 | Drive 연동 (epic 8) | OAuth, Drive `FileStore` 구현, 첨부 원본 이전, 기존 Drive 문서 색인(목록 → export·임시 다운로드 → 추출 → 삭제, Mac에 동기화하지 않음), changes 동기화, 연동 해제(Drive에 둔 채 연결만 끊음), DB 스냅샷의 Drive 보관과 새 기계 복구, 로컬 캐시 상한. 외부 소스 테이블은 그때 더한다 |
 | `/brain:migration`, `/brain:db-migration` 스킬 | CLI 명령(`setup move-store`, 스냅샷 업로드·복구)이 생긴 뒤 감싼다 |
@@ -548,6 +550,6 @@ flowchart TB
 | 임베딩 기본 켜기 | 실사용 채점(SM-3)에서 키워드 검색과 질의 바꾸기로 "왜"나 한영 교차 질문을 놓칠 때 |
 | parser 버그로 저장된 메시지의 교정 | 원문 불변과 충돌. 필요해지면 세션 단위 수집 세대 교체를 별도 결정으로 |
 | 이어받은 세션 자동 연결, Execution 분리 | `continued_from_session_id`·`start_source` 자리만 둔다. 한 작업에 Harness 둘이 올 때 |
-| 과거 세션 가져오기, LLM 세션 요약 | PRD §6.2·§8-1 그대로. `ingest_source`가 자리다 |
+| 과거 세션 가져오기, LLM 세션 요약 | 설치 때 디스크에 남은 Claude Code transcript는 epic 2가 한 번 가져온다(`import`, 2026-10-15). 그 밖의 과거 세션 가져오기와 LLM 세션 요약은 PRD §6.2·§8-1 그대로 |
 | Keychain 등 키 저장소 | `.env`로 시작. 설정 코덱 한 곳만 바꾸면 된다(AD-18) |
 | 두 번째 기계 | `machine` 칸과 멱등 키로 수용. 연결 방식은 그때 |

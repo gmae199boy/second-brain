@@ -1,4 +1,4 @@
-# Personal Brain V1 slice 1 — 에픽 순서(표 순서 = 만드는 순서). V1 = 1~5, 그 뒤 9(데몬·MCP)·7·8, 임베딩 6은 맨 뒤.
+# Personal Brain V1 slice 1 — 에픽 순서(표 순서 = 만드는 순서). V1 = 1·2·10·3·4·5, 그 뒤 9(데몬·MCP)·7·8, 임베딩 6은 맨 뒤.
 
 [[epic]]
 id = 1
@@ -14,25 +14,32 @@ covers = ["CAP-1", "CAP-2", "CAP-10", "CAP-11", "CAP-14"]
 after = [{ epic = 1, needs = "SQLite store와 원본 스키마(Table Contract, 파일·첨부·추출·work_items 포함), [files] path 루트, withWrite, CLI 뼈대, 설치기의 Harness 연결 단계" }]
 
 [[epic]]
+id = 10
+slug = "epic-attachments"
+title = "첨부 원본과 문서 추출"
+covers = ["CAP-14", "CAP-2"]
+after = [{ epic = 2, needs = "0003 스키마, parser와 수집 경로, 일감 대기열과 drain, Core 마스킹 함수, 확인 게이트" }]
+
+[[epic]]
 id = 3
 slug = "epic-log-and-context"
 title = "작업 로그와 시작 맥락"
 covers = ["CAP-3", "CAP-8", "CAP-9"]
-after = [{ epic = 2, needs = "수집된 메시지(로그-대화 연결과 규칙 인용 대조), sessions.ensure, spool, drain" }]
+after = [{ epic = 2, needs = "수집된 메시지(로그-대화 연결과 규칙 인용 대조), 세션 토큰 수집(`log append`의 선수집), spool, drain" }]
 
 [[epic]]
 id = 4
 slug = "epic-recall-and-mirror"
 title = "조회와 미러"
 covers = ["CAP-4", "CAP-5", "CAP-6", "CAP-7", "CAP-13", "CAP-14"]
-after = [{ epic = 2, needs = "메시지와 도구 메모" }, { epic = 3, needs = "작업 로그(대분류 검색)" }]
+after = [{ epic = 2, needs = "메시지와 도구 메모" }, { epic = 3, needs = "작업 로그(대분류 검색)" }, { epic = 10, needs = "문서 추출 세대·조각과 file_names(문서 검색의 대상)" }]
 
 [[epic]]
 id = 5
 slug = "epic-operations"
 title = "운영: 내보내기·복구, 업그레이드, 제거"
 covers = ["CAP-12", "CAP-11"]
-after = [{ epic = 4, needs = "모든 테이블이 있어야 내보내기가 전체를 덮음" }]
+after = [{ epic = 4, needs = "모든 테이블이 있어야 내보내기가 전체를 덮음" }, { epic = 10, needs = "문서 추출 세대·조각·파일 메타데이터와 FileStore(내보내기의 파일 범위)" }]
 
 [[epic]]
 id = 9
@@ -53,7 +60,7 @@ id = 8
 slug = "epic-drive"
 title = "Google Drive 연동"
 covers = ["CAP-14", "CAP-12"]
-after = [{ epic = 2, needs = "FileStore port와 로컬 구현, 첨부 원본 저장, 추출 일감" }, { epic = 4, needs = "문서 검색 경로" }, { epic = 5, needs = "스냅샷 형식과 launchd 주기 실행" }]
+after = [{ epic = 10, needs = "FileStore port와 로컬 구현, 첨부 원본 저장, 추출 일감" }, { epic = 4, needs = "문서 검색 경로" }, { epic = 5, needs = "스냅샷 형식과 launchd 주기 실행" }]
 
 [[epic]]
 id = 6
