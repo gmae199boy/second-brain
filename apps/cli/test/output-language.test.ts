@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { exitCodeGuide, guideShow } from 'second_brain';
 import { commands } from '../src/commands/index.js';
 import { HOME_ENV } from '../src/config/paths.js';
 import { assertKoreanLine, assertKoreanLines, englishLines } from './language.js';
@@ -61,6 +62,11 @@ const COMMAND_WORDS: readonly string[] = [
   ...commands.map((spec) => `${spec.ns} ${spec.verb}`),
   ...commands.map((spec) => spec.ns),
   ...commands.map((spec) => spec.verb),
+  // The meta's own English by construction: the names of the inputs a command
+  // takes, and the words of the example command lines it prints under
+  // `--help`. Both are things you type, which Boundaries keeps in English.
+  ...commands.flatMap((spec) => [...spec.required]),
+  ...commands.flatMap((spec) => spec.examples.flatMap((example) => example.split(/\s+/))),
 ];
 
 /** `brain`, every namespace, and every command, as `--help` takes them. */
@@ -78,17 +84,62 @@ beforeAll(() => {
 
 describe('the registry', () => {
   it.each(commands.map((spec) => [`${spec.ns} ${spec.verb}`, spec] as const))(
-    '%s describes itself, its namespace and its flags in Korean',
+    '%s describes itself, its namespace, its meta and its flags in Korean',
     (_name, spec) => {
-      assertKoreanLine(spec.description, { label: `${spec.ns} ${spec.verb} description` });
+      const where = `${spec.ns} ${spec.verb}`;
+      // The two sentences of the meta a person reads: what the command is for,
+      // which is also the `--help` description, and what comes back from it.
+      assertKoreanLine(spec.usedFor, { label: `${where} usedFor` });
+      assertKoreanLine(spec.output, { label: `${where} output`, allow: COMMAND_WORDS });
       if (spec.nsDescription !== undefined) {
         assertKoreanLine(spec.nsDescription, { label: `${spec.ns} nsDescription` });
       }
       for (const option of spec.options ?? []) {
-        assertKoreanLine(option.description, { label: `${spec.ns} ${spec.verb} ${option.flags}` });
+        assertKoreanLine(option.description, { label: `${where} ${option.flags}` });
       }
     },
   );
+});
+
+/**
+ * The code tables, which are prose as much as the commands are: `meaning` says
+ * what happened and `agent_action` says what to do about it, and both are read
+ * by a person as well as by an agent (Conventions, output language).
+ *
+ * They are checked here rather than in Core's own tests because this is where
+ * the CLI wrapper that knows about untranslated system originals lives, and
+ * because `brain guide exit-codes` prints these very strings.
+ */
+describe('the code tables', () => {
+  const guide = exitCodeGuide();
+
+  it.each(guide.exit_codes.map((row) => [row.code, row] as const))(
+    'exit code %s says what it means and what to do, in Korean',
+    (_code, row) => {
+      assertKoreanLine(row.meaning, { label: `exit ${row.code} meaning` });
+      assertKoreanLine(row.agent_action, { label: `exit ${row.code} agent_action` });
+    },
+  );
+
+  it.each(guide.error_codes.map((row) => [row.code, row] as const))(
+    '%s says what it means, in Korean',
+    (code, row) => {
+      expect(row.meaning).not.toBe('');
+      assertKoreanLine(row.meaning, { label: `${code} meaning` });
+    },
+  );
+
+  it.each(guide.warning_codes.map((row) => [row.code, row] as const))(
+    '%s says what it means, in Korean',
+    (code, row) => {
+      expect(row.meaning).not.toBe('');
+      assertKoreanLine(row.meaning, { label: `${code} meaning` });
+    },
+  );
+
+  it('writes the guide section in Korean', () => {
+    assertKoreanLines(guideShow(), { label: 'guide show', allow: COMMAND_WORDS });
+  });
 });
 
 describe('--help', () => {
@@ -118,8 +169,8 @@ describe('a command line commander refuses', () => {
   it.each([
     ['no command at all', ['--json'] as string[]],
     ['an unknown namespace', ['nope', 'verb', '--json']],
-    ['an unknown verb', ['admin', 'nope', '--json']],
-    ['an unknown option', ['admin', 'doctor', '--nope', '--json']],
+    ['an unknown verb', ['doctor', 'nope', '--json']],
+    ['an unknown option', ['doctor', 'run', '--nope', '--json']],
     ['a missing argument', ['setup', 'connect', '--json']],
     ['one argument too many', ['setup', 'connect', 'demo', 'extra', '--json']],
     ['an option with no value', ['setup', 'run', '--json', '--store-path']],
@@ -148,19 +199,19 @@ describe('a command line commander refuses', () => {
   });
 
   it("carries commander's guess over, in Korean", async () => {
-    const option = await runBrain(['admin', 'doctor', '--jsn', '--json']);
-    const verb = await runBrain(['admin', 'docter', '--json']);
+    const option = await runBrain(['doctor', 'run', '--jsn', '--json']);
+    const verb = await runBrain(['doctor', 'rn', '--json']);
 
     const said = (run: Run): string =>
       (JSON.parse(run.stdout) as { error?: { message: string } }).error?.message ?? '';
     expect(said(option)).toContain("모르는 옵션입니다: '--jsn' (혹시 --json?)");
-    expect(said(verb)).toContain("모르는 명령입니다: 'docter' (혹시 doctor?)");
+    expect(said(verb)).toContain("모르는 명령입니다: 'rn' (혹시 run?)");
     assertKoreanLine(said(option), { label: 'guess', allow: COMMAND_WORDS });
     assertKoreanLine(said(verb), { label: 'guess', allow: COMMAND_WORDS });
   });
 
   it('prints the message and, under it, the hint on stderr in text mode', async () => {
-    const run = await runBrain(['admin', 'doctor', '--nope']);
+    const run = await runBrain(['doctor', 'run', '--nope']);
 
     expect(run.code).toBe(2);
     expect(run.stdout).toBe('');
@@ -173,8 +224,8 @@ describe('a command line commander refuses', () => {
   });
 
   it('says the same message and hint in text mode as the envelope does', async () => {
-    const text = await runBrain(['admin', 'doctor', '--nope']);
-    const json = await runBrain(['admin', 'doctor', '--nope', '--json']);
+    const text = await runBrain(['doctor', 'run', '--nope']);
+    const json = await runBrain(['doctor', 'run', '--nope', '--json']);
 
     const envelope = JSON.parse(json.stdout) as {
       error?: { code: string; message: string; hint?: string };

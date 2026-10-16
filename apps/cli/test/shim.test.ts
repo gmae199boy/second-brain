@@ -306,7 +306,7 @@ describe('the shim, run as a hook would run it', () => {
 
   /**
    * The detail of the `config` check, which is where doctor says which folder
-   * it looked in. `admin doctor` is `diagnostic`, so a folder with no
+   * it looked in. `doctor run` is `diagnostic`, so a folder with no
    * configuration in it is a failing check and an exit 1 rather than an error
    * envelope — which still proves the shim reached the CLI and pointed it
    * somewhere, and now says where.
@@ -324,7 +324,7 @@ describe('the shim, run as a hook would run it', () => {
     const home = await tempHome();
     const { path } = await writeShim(home, { bin: distBin });
 
-    const run = await runShim(path, ['admin', 'doctor', '--json']);
+    const run = await runShim(path, ['doctor', 'run', '--json']);
 
     // Ran, and reported a brain that is not installed: exit 1, not 2.
     expect(run.code).toBe(1);
@@ -336,7 +336,7 @@ describe('the shim, run as a hook would run it', () => {
     const other = await tempHome();
     const { path } = await writeShim(home, { bin: distBin });
 
-    const run = await runShim(path, ['admin', 'doctor', '--json'], { [HOME_ENV]: other });
+    const run = await runShim(path, ['doctor', 'run', '--json'], { [HOME_ENV]: other });
 
     const detail = configDetail(run.stdout);
     expect(detail).toContain(other);
@@ -348,7 +348,7 @@ describe('the shim, run as a hook would run it', () => {
     const home = join(parent, 'two words');
     const { path } = await writeShim(home, { bin: distBin });
 
-    const run = await runShim(path, ['admin', 'doctor', '--json']);
+    const run = await runShim(path, ['doctor', 'run', '--json']);
 
     expect(run.code).toBe(1);
     expect(configDetail(run.stdout)).toContain(home);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createBrain, type BrainDependencies } from '../src/brain.js';
-import { runDoctor, type DoctorCheck, type DoctorCheckSource } from '../src/admin/doctor.js';
+import { runDoctor, type DoctorCheck, type DoctorCheckSource } from '../src/doctor/doctor.js';
 import type {
   HealthStore,
   ReadSchemaVersionResult,
@@ -355,7 +355,7 @@ describe('createBrain', () => {
       ...otherDependencies(),
     });
 
-    const report = await brain.admin.doctor();
+    const report = await brain.doctor.run();
     expect(report.checks.map((check) => check.id)).toEqual([
       'db',
       'vector',
@@ -374,7 +374,7 @@ describe('createBrain', () => {
       ...otherDependencies(),
     });
 
-    const report = await brain.admin.doctor();
+    const report = await brain.doctor.run();
     expect(report.checks.map((check) => check.id)).toEqual(['db', 'schema-version']);
   });
 });

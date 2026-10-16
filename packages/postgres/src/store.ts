@@ -132,7 +132,7 @@ export function postgresStore(options: PostgresStoreOptions): HealthStore & Sche
 }
 
 /**
- * What the vector probe says it found. The wording is the one `admin doctor`
+ * What the vector probe says it found. The wording is the one `doctor run`
  * has always printed, because the probe now carries the sentence that used to
  * be composed in Core — and the line a person reads must not change just
  * because the shape behind it did.

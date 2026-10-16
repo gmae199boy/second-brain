@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { Connector, DoctorReport, SqliteMigrationResult } from 'second_brain';
-import { formatCheck } from '../commands/admin-doctor.js';
+import { formatCheck } from '../commands/doctor-run.js';
 import type { SelfUserResult } from './store.js';
 import {
   defaultFilesPath,
@@ -91,7 +91,7 @@ export interface InstallStore {
    */
   self(path: string): Promise<SelfUserResult>;
   /**
-   * The same checks `brain admin doctor` runs: the store ones against this
+   * The same checks `brain doctor run` runs: the store ones against this
    * file, the machine ones against the home being installed. Both, because an
    * install whose shim or node is wrong is an install that works until the
    * first harness turn.

@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   ERROR_CODES,
+  EXIT_CODES,
   WARNING_CODES,
+  WARNING_CODE_MEANINGS,
   errorCodeSpec,
+  exitCodeGuide,
   isErrorCode,
   isWarningCode,
   type ErrorCode,
 } from '../src/codes.js';
+import { guideShow } from '../src/guide.js';
 import { assertKoreanProse, englishSentences } from '../src/testing/language.js';
 
 /**
@@ -45,6 +49,16 @@ describe('the warning codes', () => {
     expect(isWarningCode('CONFIG_MISSING')).toBe(false);
     expect(isWarningCode('db_unavailable')).toBe(false);
     expect(isWarningCode('')).toBe(false);
+  });
+
+  it('says what every one of them means, and means nothing it does not list', () => {
+    // The list is an array because its order is the table's; the meanings are
+    // a record beside it. The two can only disagree by one of them growing
+    // without the other, which is what this holds them to.
+    expect(Object.keys(WARNING_CODE_MEANINGS).sort()).toEqual([...WARNING_CODES].sort());
+    for (const code of WARNING_CODES) {
+      expect(WARNING_CODE_MEANINGS[code], code).not.toBe('');
+    }
   });
 });
 
@@ -153,7 +167,7 @@ describe('the hint style check', () => {
   it.each([
     ['마침표로 끝나는 한국어 hint', '`brain setup run`으로 설치하세요.', '마침표로 끝난다'],
     ['백틱 없는 명령', 'brain setup run 을 실행하세요', '백틱 밖의 명령'],
-    ['백틱 없는 명령이 뒤에 섞인 것', '`--help`를 보고 brain admin doctor 하세요', '백틱 밖의 명령'],
+    ['백틱 없는 명령이 뒤에 섞인 것', '`--help`를 보고 brain doctor run 하세요', '백틱 밖의 명령'],
     ['열린 백틱', '`brain setup run으로 설치하세요', '백틱이 짝이 맞지 않는다'],
     ['영어 파괴 낱말', '`brain setup run`을 rm 하세요', '파괴적인 명령'],
     ['한국어 파괴 안내', '`config.toml`을 지우고 다시 실행하세요', '파괴적인 안내'],
@@ -214,5 +228,109 @@ describe('the output-language check', () => {
 
   it('names what it caught, so a failing test says which string to fix', () => {
     expect(() => assertKoreanProse('this is not Korean', { label: 'hint' })).toThrow(/hint/);
+  });
+});
+
+/**
+ * The exit-code table, and the one value every surface renders it from. It is
+ * the fact an agent needs most and the one nothing else in the code says: the
+ * numbers themselves live in `FailureExit`, what they mean and what to do
+ * about them live only here.
+ */
+describe('the exit codes', () => {
+  it('covers 0 through 3 and the hook rule that overrides all of them', () => {
+    expect(EXIT_CODES.map((row) => row.code)).toEqual(['0', '1', '2', '3', 'hook']);
+  });
+
+  it('says what each one means and what an agent should do about it', () => {
+    for (const row of EXIT_CODES) {
+      expect(row.meaning, row.code).not.toBe('');
+      expect(row.agent_action, row.code).not.toBe('');
+    }
+  });
+
+  it('gives every error code an exit code the table also explains', () => {
+    const explained = new Set(EXIT_CODES.map((row) => row.code));
+    for (const spec of Object.values(ERROR_CODES)) {
+      expect(explained).toContain(String(spec.exit));
+    }
+  });
+});
+
+describe('the guide', () => {
+  it('carries the three tables, whole', () => {
+    const guide = exitCodeGuide();
+
+    expect(guide.exit_codes).toEqual([...EXIT_CODES]);
+    expect(guide.error_codes.map((row) => row.code)).toEqual(Object.keys(ERROR_CODES));
+    expect(guide.warning_codes.map((row) => row.code)).toEqual([...WARNING_CODES]);
+  });
+
+  it('hands each error code its own exit code, retryability, meaning and hint', () => {
+    for (const row of exitCodeGuide().error_codes) {
+      const spec = ERROR_CODES[row.code];
+      expect(row.exit_code).toBe(spec.exit);
+      expect(row.meaning).toBe(spec.meaning);
+      expect(row.hint).toBe(spec.hint);
+      // Left out rather than guessed at, the way the spec leaves it out.
+      expect('retryable' in row).toBe(spec.retryable !== undefined);
+    }
+  });
+
+  it('cannot be changed by whoever asked for it', () => {
+    // Every surface renders this; one that edited the table it was handed
+    // would change what the next caller is told. The row fields are `readonly`,
+    // so this takes a cast — and the copy `exitCodeGuide` hands out is what
+    // makes even the cast harmless.
+    const first = exitCodeGuide();
+    (first.exit_codes[0] as { meaning: string }).meaning = '아무 말';
+
+    expect(exitCodeGuide().exit_codes[0]?.meaning).toBe(EXIT_CODES[0]?.meaning);
+  });
+
+  it('writes a conventions section built from the same exit-code table', () => {
+    const shown = guideShow();
+
+    expect(shown).toContain('## CLI 사용 규약');
+    for (const row of EXIT_CODES) {
+      expect(shown).toContain(row.meaning);
+      expect(shown).toContain(row.agent_action);
+    }
+  });
+
+  it('names all six things an agent must not do', () => {
+    const shown = guideShow();
+
+    // The Conventions' own list. A section that quietly loses one is a section
+    // that permits it.
+    for (const forbidden of [
+      '`--yes`',
+      '`error.retry`',
+      '백오프',
+      '덜 파괴적인 동사',
+      '이전 승인',
+      '`--json`으로 확인을 피해',
+    ]) {
+      expect(shown, forbidden).toContain(forbidden);
+    }
+    expect(shown).toContain('stderr');
+  });
+});
+
+describe('the meaning of every error code', () => {
+  const codes = Object.keys(ERROR_CODES) as ErrorCode[];
+
+  it.each(codes)('%s says what happened, not what to do about it', (code) => {
+    const { meaning, hint } = ERROR_CODES[code];
+
+    expect(meaning).not.toBe('');
+    // The two are different sentences: the meaning is the diagnosis and the
+    // hint is the next step, and one standing in for the other leaves a reader
+    // either with no problem named or with no way out of it.
+    expect(meaning).not.toBe(hint);
+  });
+
+  it.each(codes)('%s is Korean', (code) => {
+    assertKoreanProse(ERROR_CODES[code].meaning, { label: `${code} meaning` });
   });
 });

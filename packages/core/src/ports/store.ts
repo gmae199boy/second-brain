@@ -63,7 +63,7 @@ export type StoreHealth =
 /**
  * The health capability of the persistence port, plus the teardown every store
  * needs. It is a port of its own so an adapter can offer it before it can offer
- * the rest: `createBrain` and `admin.doctor` ask for nothing more (AD-10).
+ * the rest: `createBrain` and `doctor.run` ask for nothing more (AD-10).
  */
 export interface HealthStore {
   /** Probe the store. Never throws: unreachable stores come back as `ok: false`. */
@@ -221,7 +221,7 @@ export type ReadSchemaVersionResult =
  * The schema-version capability of the persistence port. A capability of its
  * own, not part of `Store`, because two unrelated callers need exactly this and
  * nothing more: the write guard before every `writes` command (AD-20) and the
- * schema check of `admin doctor`. Folding it into `HealthStore` would change
+ * schema check of `doctor run`. Folding it into `HealthStore` would change
  * the shape of the health probe every adapter already passes (AD-10).
  */
 export interface SchemaStore {

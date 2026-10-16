@@ -274,7 +274,7 @@ describe('sqliteStore probing a database another process is writing to', () => {
     const holder = await holdLock(path, 2000);
 
     try {
-      // The command budget, which is what a real `admin doctor` runs with: the
+      // The command budget, which is what a real `doctor run` runs with: the
       // probe must not spend it waiting for somebody else's write.
       const store = sqliteStore({ path, busyTimeoutMs: BUSY_TIMEOUT_MS.command });
       try {

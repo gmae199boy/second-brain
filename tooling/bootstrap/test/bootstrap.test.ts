@@ -596,7 +596,7 @@ describe('the root manifest', () => {
     // Nothing enforces the minor yet: pnpm 12.11.2 does not fail an install on
     // `engines.node` here (measured 2026-10-14), so `>=24.16.0` is a statement
     // of the requirement and not a gate. The check that catches a node too old
-    // for `node:sqlite` belongs to `admin doctor`, in story 8.
+    // for `node:sqlite` belongs to `doctor run`, in story 8.
   });
 });
 

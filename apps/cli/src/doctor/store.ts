@@ -13,7 +13,7 @@ import type { SchemaStore, Store } from 'second_brain';
  * installed (AD-20).
  *
  * It answers the session and identity capabilities too, with the same code.
- * They are not there for `admin doctor`, which asks for neither: they are
+ * They are not there for `doctor run`, which asks for neither: they are
  * there because `createBrain` takes one `Store`, and a type that let this
  * stand in for only half of it would mean two kinds of store to assemble a
  * brain from (AD-10).

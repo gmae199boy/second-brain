@@ -2,7 +2,7 @@ import {
   runDoctor,
   type DoctorCheckSource,
   type DoctorReport,
-} from './admin/doctor.js';
+} from './doctor/doctor.js';
 import type { Clock } from './ports/clock.js';
 import type { IdGen } from './ports/id-gen.js';
 import type { Parser } from './ports/parser.js';
@@ -16,10 +16,10 @@ import {
 
 export interface BrainDependencies {
   /**
-   * The persistence port, plus the schema-version capability `admin.doctor`
+   * The persistence port, plus the schema-version capability `doctor.run`
    * asks for. It is the whole `Store` now that a verb writes conversation
    * data: an adapter that offers only health and the schema version can still
-   * answer `admin.doctor`, but it cannot ingest, and the type is where that is
+   * answer `doctor.run`, but it cannot ingest, and the type is where that is
    * decided rather than at the call (AD-10).
    */
   store: Store & SchemaStore;
@@ -47,8 +47,9 @@ export interface BrainDependencies {
   checks?: readonly DoctorCheckSource[];
 }
 
-export interface BrainAdmin {
-  doctor(): Promise<DoctorReport>;
+export interface BrainDoctor {
+  /** Check whether this brain is reachable and healthy, and report. */
+  run(): Promise<DoctorReport>;
 }
 
 export interface BrainSessions {
@@ -57,7 +58,7 @@ export interface BrainSessions {
 }
 
 export interface Brain {
-  admin: BrainAdmin;
+  doctor: BrainDoctor;
   sessions: BrainSessions;
   close(): Promise<void>;
 }
@@ -70,8 +71,8 @@ export function createBrain(dependencies: BrainDependencies): Brain {
   const { store, schemaVersion, clock, idGen, parsers, transcripts, machine, checks } =
     dependencies;
   return {
-    admin: {
-      doctor: () => runDoctor(store, { schemaVersion, checks }),
+    doctor: {
+      run: () => runDoctor(store, { schemaVersion, checks }),
     },
     sessions: {
       ingest: (input) =>

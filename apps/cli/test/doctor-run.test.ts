@@ -162,7 +162,7 @@ afterEach(async () => {
   await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
 
-describe('brain admin doctor', () => {
+describe('brain doctor run', () => {
   beforeAll(() => {
     if (!existsSync(binPath)) {
       throw new Error(`${binPath} does not exist. Run \`pnpm build\` before these tests.`);
@@ -171,7 +171,7 @@ describe('brain admin doctor', () => {
 
   it('reports every check as ok against the local database', async () => {
     const home = await configuredHome();
-    const run = await runBrain(['admin', 'doctor', '--json'], { [HOME_ENV]: home });
+    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
 
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
@@ -210,7 +210,7 @@ describe('brain admin doctor', () => {
 
   it('prints one line per check in text mode, then the summary', async () => {
     const home = await configuredHome();
-    const run = await runBrain(['admin', 'doctor'], { [HOME_ENV]: home });
+    const run = await runBrain(['doctor', 'run'], { [HOME_ENV]: home });
 
     expect(run.code).toBe(0);
     const lines = run.stdout.trimEnd().split('\n');
@@ -231,7 +231,7 @@ describe('brain admin doctor', () => {
     // `env -u SECOND_BRAIN_HOME`: the shim carries the folder it belongs to,
     // which is the whole reason a hook can call it (AD-19).
     const run = await new Promise<Run>((resolve, reject) => {
-      const child = spawn(shimPath(home), ['admin', 'doctor', '--json'], {
+      const child = spawn(shimPath(home), ['doctor', 'run', '--json'], {
         env: (() => {
           const childEnv = { ...process.env };
           delete childEnv[HOME_ENV];
@@ -261,7 +261,7 @@ describe('brain admin doctor', () => {
     const home = await configuredHome();
     await appendFile(configFilePath(home), 'colour = "x"\n', 'utf8');
 
-    const run = await runBrain(['admin', 'doctor', '--json'], { [HOME_ENV]: home });
+    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
 
     expect(run.code).toBe(0);
     const envelope = JSON.parse(run.stdout) as Envelope;
@@ -274,7 +274,7 @@ describe('brain admin doctor', () => {
     const home = await configuredHome();
     await appendFile(configFilePath(home), 'colour = "x"\n', 'utf8');
 
-    const run = await runBrain(['admin', 'doctor'], { [HOME_ENV]: home });
+    const run = await runBrain(['doctor', 'run'], { [HOME_ENV]: home });
 
     expect(run.code).toBe(0);
     expect(run.stderr).toContain('colour');
@@ -287,7 +287,7 @@ describe('brain admin doctor', () => {
     database.exec('pragma journal_mode = DELETE');
     database.close();
 
-    const run = await runBrain(['admin', 'doctor', '--json'], { [HOME_ENV]: home });
+    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
 
     expect(run.code).toBe(1);
     const envelope = JSON.parse(run.stdout) as Envelope;
@@ -310,7 +310,7 @@ describe('brain admin doctor', () => {
     await chmod(database, 0o444);
 
     try {
-      const run = await runBrain(['admin', 'doctor', '--json'], { [HOME_ENV]: home });
+      const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
 
       expect(run.code).toBe(1);
       const envelope = JSON.parse(run.stdout) as Envelope;
@@ -340,7 +340,7 @@ describe('brain admin doctor', () => {
     holder.exec('create table brain_lock_holder(x)');
 
     try {
-      const run = await runBrain(['admin', 'doctor', '--json'], { [HOME_ENV]: home });
+      const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
 
       // A brain in use is not a brain that cannot be written to, and it is not
       // one that proved it can be either: `warn` is the only honest answer,
@@ -372,7 +372,7 @@ describe('brain admin doctor', () => {
     holder.exec('create table brain_lock_holder(x)');
 
     try {
-      const run = await runBrain(['admin', 'doctor'], { [HOME_ENV]: home });
+      const run = await runBrain(['doctor', 'run'], { [HOME_ENV]: home });
 
       expect(run.code).toBe(0);
       expect(run.stdout).toContain('writable: warn');
@@ -391,7 +391,7 @@ describe('brain admin doctor', () => {
     database.exec('update schema_version set version = 1');
     database.close();
 
-    const run = await runBrain(['admin', 'doctor', '--json'], { [HOME_ENV]: home });
+    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
 
     expect(run.code).toBe(1);
     const envelope = JSON.parse(run.stdout) as Envelope;
@@ -416,7 +416,7 @@ describe('brain admin doctor', () => {
     await writeShim(home, { bin: binPath });
 
     const startedAt = Date.now();
-    const run = await runBrain(['admin', 'doctor', '--json'], { [HOME_ENV]: home });
+    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
     const elapsed = Date.now() - startedAt;
 
     expect(run.stderr).toBe('');
@@ -457,7 +457,7 @@ describe('brain admin doctor', () => {
     const home = await configuredHome();
     await rm(shimPath(home));
 
-    const run = await runBrain(['admin', 'doctor', '--json'], { [HOME_ENV]: home });
+    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
 
     expect(run.code).toBe(1);
     const envelope = JSON.parse(run.stdout) as Envelope;
@@ -483,7 +483,7 @@ describe('brain admin doctor', () => {
     const home = await configuredHome();
     await writeShim(home, { bin: binPath, node: join(home, 'nonexistent', 'node') });
 
-    const run = await runBrain(['admin', 'doctor', '--json'], { [HOME_ENV]: home });
+    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
 
     expect(run.code).toBe(1);
     const found = byId(JSON.parse(run.stdout) as Envelope);
@@ -500,7 +500,7 @@ describe('brain admin doctor', () => {
  * fails because nothing says where the database is, and the machine checks
  * answer as usual (Decision 2026-10-14).
  */
-describe('brain admin doctor without a configuration it can read', () => {
+describe('brain doctor run without a configuration it can read', () => {
   beforeAll(() => {
     if (!existsSync(binPath)) {
       throw new Error(`${binPath} does not exist. Run \`pnpm build\` before these tests.`);
@@ -511,7 +511,7 @@ describe('brain admin doctor without a configuration it can read', () => {
     const home = await emptyHome();
     await writeShim(home, { bin: binPath });
 
-    const run = await runBrain(['admin', 'doctor', '--json'], { [HOME_ENV]: home });
+    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
 
     expect(run.code).toBe(1);
     const envelope = JSON.parse(run.stdout) as Envelope;
@@ -546,7 +546,7 @@ describe('brain admin doctor without a configuration it can read', () => {
       'utf8',
     );
 
-    const run = await runBrain(['admin', 'doctor', '--json'], { [HOME_ENV]: home });
+    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
 
     expect(run.code).toBe(1);
     const found = byId(JSON.parse(run.stdout) as Envelope);
@@ -558,7 +558,7 @@ describe('brain admin doctor without a configuration it can read', () => {
   it('prints the failing checks, and no error line, in text mode', async () => {
     const home = await emptyHome();
 
-    const run = await runBrain(['admin', 'doctor'], { [HOME_ENV]: home });
+    const run = await runBrain(['doctor', 'run'], { [HOME_ENV]: home });
 
     expect(run.code).toBe(1);
     expect(run.stdout).toContain('config: fail [CONFIG_MISSING]');

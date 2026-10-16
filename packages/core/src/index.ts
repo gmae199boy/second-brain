@@ -2,15 +2,23 @@ export * from './domain/index.js';
 export * from './ports/index.js';
 export {
   ERROR_CODES,
+  EXIT_CODES,
   WARNING_CODES,
+  WARNING_CODE_MEANINGS,
   errorCodeSpec,
+  exitCodeGuide,
   isErrorCode,
   isWarningCode,
   type ErrorCode,
+  type ErrorCodeRow,
   type ErrorCodeSpec,
+  type ExitCodeGuide,
+  type ExitCodeRow,
   type FailureExit,
   type WarningCode,
+  type WarningCodeRow,
 } from './codes.js';
+export { guideShow } from './guide.js';
 export {
   CONFIRM_ARG,
   errorEnvelope,
@@ -42,11 +50,11 @@ export {
   type DoctorOptions,
   type DoctorReport,
   type DoctorSummary,
-} from './admin/doctor.js';
+} from './doctor/doctor.js';
 export {
   createBrain,
   type Brain,
-  type BrainAdmin,
+  type BrainDoctor,
   type BrainDependencies,
   type BrainSessions,
 } from './brain.js';

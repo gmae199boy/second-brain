@@ -516,7 +516,7 @@ describe('brain setup run against the local SQLite source', () => {
     const installed = await runBrain(['setup', 'run', '--yes'], home);
     expect(installed.code).toBe(0);
 
-    const run = await runShim(home, ['admin', 'doctor', '--json']);
+    const run = await runShim(home, ['doctor', 'run', '--json']);
 
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
@@ -547,7 +547,7 @@ describe('brain setup run against the local SQLite source', () => {
     expect((await runBrain(['setup', 'run', '--yes'], home)).code).toBe(0);
     await unlink(join(home, 'brain.db'));
 
-    const run = await runBrain(['admin', 'doctor', '--json'], home);
+    const run = await runBrain(['doctor', 'run', '--json'], home);
 
     expect(run.code).toBe(1);
     const envelope = JSON.parse(run.stdout) as Envelope & {

@@ -2,7 +2,7 @@
 configs:
   install-vector:
     # The image ships pgvector but installs it in no database, so do it once at
-    # first start. That makes `brain admin doctor` green against this container.
+    # first start. That makes `brain doctor run` green against this container.
     content: |
       create extension if not exists vector;
 

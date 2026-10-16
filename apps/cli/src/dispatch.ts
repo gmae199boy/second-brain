@@ -154,12 +154,60 @@ export interface CommandFailure {
 
 export type CommandOutcome<T> = CommandSuccess<T> | CommandFailure;
 
+/**
+ * How much a command can cost whoever runs it. `read` changes nothing,
+ * `write` adds or changes something, `destructive` removes something or
+ * changes it in a way nothing here can undo (Conventions).
+ */
+export type CommandRisk = 'read' | 'write' | 'destructive';
+
+/**
+ * What a command says about itself, in the seven fields every one of them
+ * declares (Conventions, 명령 메타). It is one place and not several because
+ * `--help`, `brain guide schema` and — in epic 9 — the MCP tool schema are all
+ * rendered from it: a command described twice is a command whose two
+ * descriptions will disagree, and the one an agent happens to read will be the
+ * stale one.
+ *
+ * The JSON spelling is the envelope's, `snake_case`: `used_for`, `dry_run`.
+ * `guide schema` does that translation; the type stays `camelCase` like the
+ * rest of the TypeScript (Conventions, 이름).
+ */
+export interface CommandMeta {
+  /** One line: what this is for. It is also the `--help` description. */
+  usedFor: string;
+  /**
+   * The names of the inputs a caller must supply: a positional argument or an
+   * option by name, and `stdin` for a command that reads a payload from there.
+   * Names, not syntax — `harness`, not `<harness>` — because the same list
+   * answers for a flag, for an argument and for standard input.
+   */
+  required: readonly string[];
+  /** Whole command lines, starting `brain <ns> <verb>`. */
+  examples: readonly string[];
+  /** One line about the shape of `data`. */
+  output: string;
+  risk: CommandRisk;
+  /**
+   * This command runs on a harness hook path, so it must never fail the
+   * harness: whatever happens, the exit code is 0 and the failure is one line
+   * on stderr (AD-6, Conventions).
+   */
+  hook: boolean;
+  /**
+   * This command takes `--dry-run` and will say what it would do without doing
+   * it. Every command of this build sets it false; the field is declared
+   * anyway, because "this cannot be rehearsed" is an answer an agent needs and
+   * an absent field is not one.
+   */
+  dryRun: boolean;
+}
+
 /** What every command declares, standalone or not. */
-export interface CommandSpecBase {
+export interface CommandSpecBase extends CommandMeta {
   /** The namespace, as in `brain <ns> <verb>` (AD-5). */
   ns: string;
   verb: string;
-  description: string;
   /** Description of the namespace itself, for `--help`. First one wins. */
   nsDescription?: string;
   options?: readonly CommandOption[];
@@ -169,12 +217,6 @@ export interface CommandSpecBase {
    * `context.args` in this order, and a missing required one is a `USAGE`.
    */
   arguments?: readonly string[];
-  /**
-   * This command runs on a harness hook path, so it must never fail the
-   * harness: whatever happens, the exit code is 0 and the failure is one line
-   * on stderr (AD-6, Conventions).
-   */
-  hook?: boolean;
 }
 
 /** A command that talks to the brain, which is nearly all of them. */
@@ -190,7 +232,7 @@ export interface DatabaseCommandSpec<T = unknown> extends CommandSpecBase {
    * This command's job is to report on a brain that may be broken, so it runs
    * even when the configuration could not be read: the dispatcher hands it a
    * store that answers `DB_UNAVAILABLE` and a `config` of `undefined` instead
-   * of refusing with exit 2 (Decision 2026-10-14). `brain admin doctor` is the
+   * of refusing with exit 2 (Decision 2026-10-14). `brain doctor run` is the
    * one command that sets it — a command that would write, or that needs a
    * path out of the configuration, has nothing useful to do without one.
    */
@@ -593,11 +635,15 @@ function buildProgram(
       namespaces.set(spec.ns, namespace);
     }
 
-    const command = quiet(namespace.command(spec.verb).description(spec.description));
+    const command = quiet(namespace.command(spec.verb).description(spec.usedFor));
     command.option(JSON_FLAG, '기계가 읽는 응답 엔벨로프를 출력합니다');
     for (const option of spec.options ?? []) {
       command.option(option.flags, option.description);
     }
+    // The rest of the meta, under the flags commander listed: the same seven
+    // fields `brain guide schema` answers with, so `--help` and the schema
+    // cannot describe one command two ways.
+    command.addHelpText('after', helpAfter(spec));
     const positional = spec.arguments ?? [];
     for (const argument of positional) command.argument(argument);
     // Commander hands the declared arguments in first, then the options, then
@@ -634,6 +680,114 @@ function quiet(command: Command): Command {
     // later falls through untranslated rather than disappearing.
     .configureHelp({ styleTitle: (title: string) => HELP_TITLES[title] ?? title })
     .configureOutput({ writeErr: () => {} });
+}
+
+/** What each `risk` means to the person reading `--help`, in Korean. */
+const RISK_LABELS: Readonly<Record<CommandRisk, string>> = {
+  read: '읽기만 하고 아무것도 바꾸지 않습니다',
+  write: '무언가를 더하거나 바꿉니다',
+  destructive: '무언가를 지우거나 되돌릴 수 없게 바꿉니다',
+};
+
+/**
+ * The meta `--help` prints after commander's own sections: the examples, the
+ * inputs that must be given, the shape of the result, and how much this command
+ * can cost. `usedFor` is already the description above, so it is not repeated,
+ * and `hook`/`dryRun` are left to `guide schema` — they are facts about how a
+ * caller is wired, not about how to type this line.
+ */
+function helpAfter(spec: CommandSpec): string {
+  const lines: string[] = [];
+  if (spec.required.length > 0) {
+    // In backticks, as every identifier in a sentence of this CLI is: these are
+    // input names, not prose, and the output-language check knows the
+    // difference by the backticks.
+    lines.push('', '반드시 줄 것:', `  ${spec.required.map((name) => `\`${name}\``).join(', ')}`);
+  }
+  lines.push('', '예시:', ...spec.examples.map((example) => `  ${example}`));
+  lines.push('', `출력: ${spec.output}`, `위험도: ${RISK_LABELS[spec.risk]}`);
+  return lines.join('\n');
+}
+
+/**
+ * Everything wrong with one command's meta, as a list rather than as thrown
+ * errors, so a test can hold the rules against a spec that breaks them. The
+ * type already makes the seven fields mandatory; this exists for the two things
+ * a type cannot see — a value outside its union at runtime, because a registry
+ * entry may be built from a cast or from data, and the agreements *between*
+ * fields: a command that writes is not a `read`, a declared `<argument>` is a
+ * required input, an example has to be a line somebody could actually type.
+ *
+ * Empty means the spec is fine. The problems are English, because only a test
+ * ever reads them.
+ */
+export function validateCommandMeta(spec: CommandSpec): readonly string[] {
+  const problems: string[] = [];
+  const where = `${spec.ns} ${spec.verb}`;
+
+  if (typeof spec.usedFor !== 'string' || spec.usedFor.trim() === '') {
+    problems.push(`${where}: usedFor is missing`);
+  }
+  if (!Array.isArray(spec.required) || spec.required.some((name) => typeof name !== 'string')) {
+    problems.push(`${where}: required must be a list of input names`);
+  }
+  if (!Array.isArray(spec.examples) || spec.examples.length === 0) {
+    problems.push(`${where}: examples is missing`);
+  }
+  if (typeof spec.output !== 'string' || spec.output.trim() === '') {
+    problems.push(`${where}: output is missing`);
+  }
+  // `Object.hasOwn`, not `in`: `in` walks the prototype, so `risk: 'toString'`
+  // would pass a check that is supposed to accept exactly three words.
+  if (!Object.hasOwn(RISK_LABELS, spec.risk)) {
+    problems.push(`${where}: risk must be one of read, write, destructive`);
+  }
+  if (typeof spec.hook !== 'boolean') problems.push(`${where}: hook is missing`);
+  if (typeof spec.dryRun !== 'boolean') problems.push(`${where}: dryRun is missing`);
+
+  // A command that writes and calls itself a read would be a command an agent
+  // reaches for believing it changes nothing.
+  if (spec.standalone !== true && spec.writes === true && spec.risk === 'read') {
+    problems.push(`${where}: writes, so risk may not be read`);
+  }
+  // `dryRun` is a promise about a flag; the flag has to be there to keep it.
+  if (spec.dryRun === true && !(spec.options ?? []).some((option) => hasDryRun(option.flags))) {
+    problems.push(`${where}: dryRun is true, so it must declare a --dry-run option`);
+  }
+  // Every required positional argument is an input a caller must supply, so it
+  // belongs in the one list that answers "what do I have to give this".
+  for (const declared of spec.arguments ?? []) {
+    if (!declared.startsWith('<')) continue;
+    const name = argumentName(declared);
+    if (!(Array.isArray(spec.required) ? spec.required : []).includes(name)) {
+      problems.push(`${where}: required does not name the argument ${declared}`);
+    }
+  }
+  for (const example of Array.isArray(spec.examples) ? spec.examples : []) {
+    if (typeof example !== 'string' || !example.startsWith(`brain ${where}`)) {
+      problems.push(`${where}: example does not start with \`brain ${where}\`: ${String(example)}`);
+    }
+  }
+
+  return problems;
+}
+
+/** Whether one option declaration is the `--dry-run` flag. */
+function hasDryRun(flags: string): boolean {
+  return /(?:^|[\s,])--dry-run\b/.test(flags);
+}
+
+/**
+ * Which command an argv selects, without running it. The examples of the meta
+ * have to be lines this very registry accepts, and the only honest way to check
+ * that is to put each one through the same selection a real invocation takes.
+ */
+export function selectedCommand(
+  registry: readonly CommandSpec[],
+  argv: readonly string[],
+): CommandSpec | undefined {
+  const selected = select(registry, argv);
+  return selected.kind === 'selected' ? selected.selection.spec : undefined;
 }
 
 /** Commander's own section headings, in Korean. */

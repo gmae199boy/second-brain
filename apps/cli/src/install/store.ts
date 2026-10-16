@@ -170,7 +170,7 @@ export async function prepareFilesRoot(path: string): Promise<FilesRootResult> {
  *
  * The runtime checks are the dispatcher's own list, over the home being
  * installed — so the last line of an install is the same report
- * `brain admin doctor` gives, and a check added to that list is a check the
+ * `brain doctor run` gives, and a check added to that list is a check the
  * installer runs too.
  */
 export async function doctorAt(home: string, path: string): Promise<DoctorReport> {

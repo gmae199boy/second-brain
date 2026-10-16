@@ -322,9 +322,9 @@ describe('doctorAt', () => {
 
   it('takes its machine checks from the registry, not from a second list', async () => {
     // One list, two callers (story 8): the installer's last step and
-    // `brain admin doctor` have to agree on what was checked, or an install
+    // `brain doctor run` have to agree on what was checked, or an install
     // that ends green is no promise about the command that follows it. The
-    // dispatcher's end of this is asserted the same way in `admin-doctor`.
+    // dispatcher's end of this is asserted the same way in `doctor-run`.
     const registered = runtimeChecks({ home: '/nowhere' }).map((source) => source.id);
     expect(registered).toEqual(['config', 'shim', 'node-path', 'node-version']);
 

@@ -42,7 +42,7 @@ pnpm이 12보다 오래되었으면 최신 pnpm 설치를 제안하고, 클론�
 질문이 끝나면 설정을 쓰고, 데이터베이스 파일을 만들어 마이그레이션하고, 이
 brain의 주인을 기록하고, 파일 저장소 루트를 mode 0700으로 만들고(기본값은
 `~/.second_brain/files`), shim을 쓰고(아래), 찾은 하네스를 연결할지 물은 뒤,
-`brain admin doctor`와 같은 점검으로 마칩니다. exit 0이면 모든 점검이
+`brain doctor run`과 같은 점검으로 마칩니다. exit 0이면 모든 점검이
 통과했다는 뜻입니다. 다시 실행해도 바뀌는 것은 없습니다. 기록된 경로를
 기본값으로 내놓고, 파일이 이미 가진 마이그레이션은 적용하지 않고, 마이그레이션이
 쓴 index config 행을 그대로 두고, 주인을 그대로 두고, shim과 하네스 항목이 이미
@@ -170,12 +170,16 @@ Code 커넥터는 뒤 에픽이라서 `brain setup run`은 연결할 하네스�
 
 ## 종료 코드
 
-| 코드 | 뜻 |
-|------|---------------|
-| 0 | 잘되었다 |
-| 1 | 실행했고 실패했다, 또는 degraded로 끝났다 |
-| 2 | 아예 실행할 수 없었다: 명령줄, 설정, 데이터베이스 없음 |
-| 3 | 아무도 주지 않은 확인이 필요하다 |
+| 코드 | 뜻 | 에이전트 행동 |
+| --- | --- | --- |
+| `0` | 잘되었습니다 | `data`를 그대로 쓰세요 |
+| `1` | 실행했고 실패했거나 degraded로 끝났습니다 | `warnings[]`와 `error`를 읽고, `error.retryable`이 참일 때만 같은 명령을 다시 실행하세요 |
+| `2` | 아예 실행할 수 없었습니다: 명령줄, 설정, 또는 데이터베이스가 없음 | 같은 명령을 다시 실행하지 말고, `error.hint`가 가리키는 것을 먼저 고치세요 |
+| `3` | 아무도 주지 않은 확인이 필요합니다 | 사람에게 진행해도 되는지 묻고, 그렇다고 할 때만 `error.retry`가 말하는 대로 다시 부르세요. 스스로 동의하지 마세요 |
+| `hook` | 하네스 hook 경로의 명령은 무슨 일이 있어도 0으로 끝납니다 | 종료 코드로는 실패를 알 수 없으니 stderr 한 줄을 읽으세요 |
+
+이 표는 코드에 있는 목록 하나에서 나오고, `brain guide exit-codes`가 같은 것을
+냅니다. 아래 두 표도 그렇습니다 — 표와 코드가 어긋나면 대조 테스트가 실패합니다.
 
 `--json`에서는 같은 숫자가 `error.exit_code`에 있으므로, 엔벨로프를 읽는 쪽은
 어느 것이었는지 알려고 셸을 볼 필요가 없습니다. `error.hint`는 무엇을 하면
@@ -183,9 +187,78 @@ Code 커넥터는 뒤 에픽이라서 `brain setup run`은 연결할 하네스�
 — 사용법 실수에는 `false`, 남이 들고 있는 잠금에는 `true`, 경우에 따라 다르면
 아예 없습니다.
 
+stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `hint`도 그리로
+가므로, 잘되었는지는 종료 코드로 판단하세요.
+
 하네스 hook 경로의 명령은 무슨 일이 있어도 exit 0입니다. 망가진 brain이 턴을
 망치지 않도록(실패는 stderr에 한 줄로 갑니다). exit 3에 부딪힌 hook은 그 일을
 하지도, 묻지도 않고 멈춥니다.
+
+### 오류 코드
+
+실패한 명령의 `error.code`입니다. 각 코드가 어느 종료 코드를 쓰는지는 코드 표가
+정하고, 실패 하나가 따로 정하지 않으면 그대로 쓰입니다. `error.hint`까지 함께
+보려면 `brain guide exit-codes`를 실행하세요. 커넥터는 자기 코드를 쓰므로 이
+표에 없는 `error.code`도 올 수 있고, 그때는 exit 1이고 hint가 붙지 않습니다.
+
+| 코드 | exit | 뜻 |
+| --- | --- | --- |
+| `USAGE` | 2 | 명령을 잘못 불렀습니다 — 모르는 동사, 잘못된 플래그, 쓸 수 없는 인자 |
+| `CONFIG_MISSING` | 2 | 이 폴더에 설정 파일이 없습니다 — 설치가 여기서 돈 적이 없습니다 |
+| `CONFIG_INVALID` | 2 | 설정은 있고, 그 값 하나를 읽거나 쓸 수 없습니다 |
+| `DB_UNAVAILABLE` | 2 | 데이터베이스에 닿지 못했습니다 |
+| `DB_LOCKED` | 1 | 다른 연결이 쓰기 잠금을 예산보다 오래 쥐고 있었습니다 |
+| `SCHEMA_MISMATCH` | 1 | 저장된 스키마 버전이 이 빌드가 만들어진 버전과 다릅니다 |
+| `MIGRATION_FAILED` | 1 | 마이그레이션을 적용하다 데이터베이스가 거절했습니다 |
+| `FILES_UNAVAILABLE` | 1 | 파일 저장소 루트를 만들거나 거기에 쓸 수 없었습니다 |
+| `SHIM_MISSING` | 1 | 하네스 hook이 부르는 shim 파일이 없습니다 |
+| `SEARCH_FAILED` | 1 | 검색 자체가 실패해서 보고할 결과가 없습니다 |
+| `VERSION_MISMATCH` | 1 | daemon이 이 명령을 낸 빌드와 다른 빌드로 돌고 있습니다 |
+| `SESSION_REQUIRED` | 2 | 이 동사는 세션이 필요한데 아무것도 주어지지 않았습니다 |
+| `USER_MISSING` | 2 | 이 데이터베이스에 주인 행이 없어서 세션을 누구에게도 붙일 수 없습니다 |
+| `CONFIRMATION_REQUIRED` | 3 | 사람의 동의가 필요한 동사인데 아무도 동의하지 않았습니다 |
+
+### 경고 코드
+
+실행은 되었고 결과가 저하된 경우 엔벨로프의 `warnings[]`에 담기는 코드입니다.
+조용한 실패는 없습니다.
+
+| 코드 | 뜻 |
+| --- | --- |
+| `SPOOLED` | 쓰기가 데이터베이스가 아니라 spool로 갔습니다 |
+| `DB_UNAVAILABLE` | 데이터베이스에 닿지 못했습니다 |
+| `SCHEMA_MISMATCH` | 저장된 스키마 버전이 이 코드가 기대하는 버전과 다릅니다 |
+| `RERANK_FAILED` | 다시 순위를 매기려 했고 실패해서, 매기기 전 순서를 그대로 씁니다 |
+| `INDEX_CONFIG_MISMATCH` | 행들이 지금 쓰는 것과 다른 색인 설정으로 만들어졌습니다 |
+| `UNINDEXED` | 찾아본 자료의 일부에 아직 임베딩이 없습니다 |
+| `RESULT_TRUNCATED` | 결과가 크기 한도에 맞춰 잘렸습니다 |
+| `RULE_UNVERIFIED` | 규칙이 확인되지 않은 채 포함되었습니다 |
+| `CURSOR_RESET` | 커서를 잃어서 파서가 트랜스크립트를 처음부터 읽었습니다 |
+| `CONFIG_UNKNOWN_KEY` | 설정 파일에 이 버전이 모르는 키가 있고, 어떤 키를 무시했는지 말합니다 |
+| `ATTACHMENT_NOT_REDACTED` | 첨부가 받아야 할 마스킹 없이 저장되었습니다 |
+| `FILE_SOURCE_UNREACHABLE` | 이 brain이 가리키기만 하는 파일을 그 자리에서 읽을 수 없었습니다 |
+| `DAEMON_UNAVAILABLE` | daemon이 설정되어 있고 닿지 못해서, 이 명령은 직접 돌았습니다 |
+| `PLUGIN_NOT_INSTALLED` | 이 brain이 기대하는 하네스 플러그인이 설치되어 있지 않습니다 |
+| `PLUGIN_BEHIND` | 설치된 플러그인이 이 명령에 답하는 빌드보다 오래되었습니다 |
+| `PLUGIN_DUPLICATE` | 플러그인이 두 벌 이상 설치되어 hook이 두 번 돌 수 있습니다 |
+
+## 규약과 명령 메타
+
+```sh
+brain guide schema [<ns> [<verb>]]   # 명령마다 메타 일곱 칸과 인자·옵션
+brain guide exit-codes               # 위의 세 표
+brain guide show                     # CLI 사용 규약 절(Markdown)
+```
+
+모든 명령은 자기 자신에 대해 일곱 칸을 선언합니다. `used_for`(한 줄 설명),
+`required`(반드시 줘야 하는 입력 이름), `examples`(명령줄), `output`(`data`의
+모양), `risk`(`read`·`write`·`destructive`), `hook`, `dry_run`입니다. `--help`와
+`brain guide schema`는 둘 다 그 하나에서 나오므로 어긋날 수 없고, 칸이 빠진
+명령은 테스트가 잡습니다.
+
+`brain guide show`는 에이전트가 무엇을 하지 않아야 하는지를 담은 CLI 사용 규약
+절을 냅니다. 세 명령 모두 설정도 데이터베이스도 없이 돌므로, 아직 아무것도
+설치되지 않은 기계에서도 답합니다.
 
 ## shim
 
@@ -265,13 +338,13 @@ docker compose -f compose.test.yaml down
 export SECOND_BRAIN_HOME=$(mktemp -d)
 node apps/cli/dist/install.js --yes
 
-pnpm brain admin doctor --json
+pnpm brain doctor run --json
 
 # 그 설치의 shim. 자신이 속한 폴더를 품고 있습니다
-env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" admin doctor
+env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" doctor run
 ```
 
-`admin doctor`는 점검마다 한 줄, 그리고 그것을 센 요약 줄을 냅니다. 점검은
+`doctor run`은 점검마다 한 줄, 그리고 그것을 센 요약 줄을 냅니다. 점검은
 다음과 같습니다.
 
 | 점검 | 말하는 것 |
@@ -315,7 +388,9 @@ env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" admin doctor
 이유로 든 `skip`으로요. "확인하지 않았다"와 "확인했고 괜찮다"는 다른 답이고,
 줄을 빼 버리면 없는 것으로부터 어느 쪽인지 알아내야 합니다.
 
-`admin doctor`는 설정 없이도 도는 유일한 명령입니다. 설치가 이미 망가졌을 때
-실행하는 명령이기 때문입니다. 없거나 읽을 수 없는 `config.toml`은 실패한
-`config` 점검과 exit 1이 되고, `db`는 경로가 없어서 실패하고, shim과 node 점검은
-평소처럼 보고됩니다. 다른 모든 명령은 같은 폴더에서 exit 2로 끝납니다.
+`doctor run`은 망가진 설정에 대해 **보고하는** 유일한 명령입니다. 설치가 이미
+망가졌을 때 실행하는 명령이기 때문입니다. 없거나 읽을 수 없는 `config.toml`은
+실패한 `config` 점검과 exit 1이 되고, `db`는 경로가 없어서 실패하고, shim과 node
+점검은 평소처럼 보고됩니다. 설정이 필요한 명령은 같은 폴더에서 exit 2로
+끝납니다. 설정을 아예 읽지 않는 명령 — `guide` 셋과 `setup run`·`setup connect`
+— 는 그 폴더에서도 평소처럼 돕니다.

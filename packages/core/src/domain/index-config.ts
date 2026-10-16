@@ -13,7 +13,7 @@ export interface ChunkParams {
 
 /**
  * An index generation. Immutable: changing the model or the dimensions means a
- * new row and `admin.reindex` (AD-15, Table Contract).
+ * new row and `index rebuild` (AD-15, Table Contract).
  */
 export interface IndexConfig {
   /** UUIDv7 minted by whoever creates the row (AD-8). */

@@ -15,7 +15,12 @@ import {
 } from 'second_brain';
 import { writeConfig } from '../src/config/codec.js';
 import { HOME_ENV } from '../src/config/paths.js';
-import { dispatch, type CommandSpec, type CreateStore } from '../src/dispatch.js';
+import {
+  dispatch,
+  type CommandMeta,
+  type CommandSpec,
+  type CreateStore,
+} from '../src/dispatch.js';
 import { systemClock } from '../src/runtime/clock.js';
 
 /**
@@ -53,19 +58,37 @@ interface Envelope {
   };
 }
 
-/** The fake registry, as source the child evaluates. */
+/**
+ * The fake registry, as source the child evaluates.
+ *
+ * `meta` fills the seven mandatory fields of a spec (Conventions, 명령 메타)
+ * from the one line each fake is about, so these tests stay about the
+ * dispatcher's rules. That the real registry declares them properly is
+ * `command-meta.test.ts`'s question, not this file's.
+ */
 const REGISTRY = `
+const meta = (ns, verb, usedFor, over) => ({
+  usedFor,
+  required: [],
+  examples: ['brain ' + ns + ' ' + verb],
+  output: 'whatever this fake answers with',
+  risk: 'read',
+  hook: false,
+  dryRun: false,
+  ...over,
+});
+
 const registry = [
   {
     ns: 'fake',
     verb: 'read',
-    description: 'a read command',
+    ...meta('fake', 'read', 'a read command'),
     run: async () => ({ ok: true, data: { read: true }, text: ['read ok'] }),
   },
   {
     ns: 'fake',
     verb: 'write',
-    description: 'a write command',
+    ...meta('fake', 'write', 'a write command'),
     writes: true,
     run: async () => {
       // Proof the guard runs before this: a blocked write never gets here.
@@ -76,14 +99,14 @@ const registry = [
   {
     ns: 'fake',
     verb: 'read-arg',
-    description: 'a read command with a positional argument',
+    ...meta('fake', 'read-arg', 'a read command with a positional argument'),
     arguments: ['<name>', '[extra]'],
     run: async (context) => ({ ok: true, data: { args: context.args } }),
   },
   {
     ns: 'fake',
     verb: 'standalone',
-    description: 'a command that runs before there is any configuration',
+    ...meta('fake', 'standalone', 'a command that runs before there is any configuration'),
     standalone: true,
     arguments: ['<name>'],
     run: async (context) => ({
@@ -100,14 +123,14 @@ const registry = [
   {
     ns: 'fake',
     verb: 'standalone-fails',
-    description: 'a standalone command that could not run',
+    ...meta('fake', 'standalone-fails', 'a standalone command that could not run'),
     standalone: true,
     run: async () => ({ ok: false, code: 'SHIM_MISSING', message: 'no shim', exit: 1 }),
   },
   {
     ns: 'fake',
     verb: 'hook-throw',
-    description: 'a hook command that throws',
+    ...meta('fake', 'hook-throw', 'a hook command that throws'),
     hook: true,
     run: async () => {
       throw new Error('the hook blew up');
@@ -116,7 +139,7 @@ const registry = [
   {
     ns: 'fake',
     verb: 'hook-write',
-    description: 'a hook command that writes',
+    ...meta('fake', 'hook-write', 'a hook command that writes'),
     hook: true,
     writes: true,
     run: async () => ({ ok: true, data: { wrote: true } }),
@@ -124,14 +147,14 @@ const registry = [
   {
     ns: 'fake',
     verb: 'hook-read',
-    description: 'a hook command that succeeds',
+    ...meta('fake', 'hook-read', 'a hook command that succeeds'),
     hook: true,
     run: async () => ({ ok: true, data: { read: true }, text: ['hook ok'] }),
   },
   {
     ns: 'fake',
     verb: 'hook-degraded',
-    description: 'a hook command that ran and came back degraded',
+    ...meta('fake', 'hook-degraded', 'a hook command that ran and came back degraded'),
     hook: true,
     run: async () => ({
       ok: true,
@@ -144,7 +167,7 @@ const registry = [
   {
     ns: 'fake',
     verb: 'gated',
-    description: 'a command that may not run without the consent of a person',
+    ...meta('fake', 'gated', 'a command that may not run without the consent of a person'),
     standalone: true,
     arguments: ['<id>'],
     options: [
@@ -168,7 +191,7 @@ const registry = [
   {
     ns: 'fake',
     verb: 'hook-gated',
-    description: 'a hook command that runs into the same gate',
+    ...meta('fake', 'hook-gated', 'a hook command that runs into the same gate'),
     standalone: true,
     hook: true,
     run: async () => {
@@ -180,14 +203,14 @@ const registry = [
   {
     ns: 'fake',
     verb: 'locked',
-    description: 'a command that failed on something worth running again',
+    ...meta('fake', 'locked', 'a command that failed on something worth running again'),
     standalone: true,
     run: async () => ({ ok: false, code: 'DB_LOCKED', message: 'database is locked' }),
   },
   {
     ns: 'fake',
     verb: 'connector-fails',
-    description: 'a command whose failure carries a code no table knows',
+    ...meta('fake', 'connector-fails', 'a command whose failure carries a code no table knows'),
     standalone: true,
     run: async () => ({
       ok: false,
@@ -198,7 +221,7 @@ const registry = [
   {
     ns: 'fake',
     verb: 'meta',
-    description: 'a command with something to say about its own result',
+    ...meta('fake', 'meta', 'a command with something to say about its own result'),
     standalone: true,
     run: async () => ({
       ok: true,
@@ -209,10 +232,10 @@ const registry = [
   {
     ns: 'fake',
     verb: 'diagnostic',
-    description: 'a command that runs without a configuration, as doctor does',
+    ...meta('fake', 'diagnostic', 'a command that runs without a configuration, as doctor does'),
     diagnostic: true,
     run: async (context) => {
-      const report = await context.brain.admin.doctor();
+      const report = await context.brain.doctor.run();
       return {
         ok: true,
         data: {
@@ -982,18 +1005,31 @@ describe('the dispatcher and the lock budget', () => {
     return { calls, createStore };
   }
 
+  /** The seven mandatory fields, for a fake these tests do not vary them on. */
+  function meta(ns: string, verb: string, usedFor: string): CommandMeta {
+    return {
+      usedFor,
+      required: [],
+      examples: [`brain ${ns} ${verb}`],
+      output: 'whatever this fake answers with',
+      risk: 'read',
+      hook: false,
+      dryRun: false,
+    };
+  }
+
   const registry: readonly CommandSpec[] = [
     {
       ns: 'fake',
       verb: 'hook-read',
-      description: 'a hook command on the critical path of a turn',
+      ...meta('fake', 'hook-read', 'a hook command on the critical path of a turn'),
       hook: true,
       run: async () => ({ ok: true, data: { read: true } }),
     },
     {
       ns: 'fake',
       verb: 'read',
-      description: 'a command the person ran and is watching',
+      ...meta('fake', 'read', 'a command the person ran and is watching'),
       run: async () => ({ ok: true, data: { read: true } }),
     },
   ];

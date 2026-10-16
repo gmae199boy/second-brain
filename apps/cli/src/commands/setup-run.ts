@@ -22,7 +22,17 @@ export const setupRun: CommandSpec<SetupRunData> = {
   ns: 'setup',
   verb: 'run',
   nsDescription: '설치하고, 다시 설정하고, 하네스를 연결합니다',
-  description: '이미 있는 것을 지키면서 설치기를 다시 실행합니다',
+  usedFor: '이미 있는 것을 지키면서 설치기를 다시 실행합니다',
+  required: [],
+  examples: [
+    'brain setup run',
+    'brain setup run --yes',
+    'brain setup run --store-path /Volumes/notes/brain.db --yes',
+  ],
+  output: '흐름이 찍은 모든 줄인 `lines`',
+  risk: 'write',
+  hook: false,
+  dryRun: false,
   standalone: true,
   options: [
     { flags: '--store-path <path>', description: '데이터베이스 파일의 절대 경로' },

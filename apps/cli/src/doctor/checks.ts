@@ -44,7 +44,7 @@ export interface RuntimeChecksOptions {
 }
 
 /**
- * The runtime's half of `brain admin doctor`, for one configuration folder: the
+ * The runtime's half of `brain doctor run`, for one configuration folder: the
  * checks a store cannot answer because they are facts about this machine — the
  * configuration file, the shim a harness hook calls, and the node behind it —
  * in the order they are reported.
