@@ -51,7 +51,9 @@ thing. Point it at another database file and it makes a new one — the old file
 stays exactly where it is, and the install says so in one line.
 
 Where there is no terminal to ask in — a script, or CI — `--yes` is the consent,
-and the flags say the rest:
+and the flags say the rest. Without it the install stops before it writes
+anything and exits 3, "a confirmation nobody gave": not a mistake in the
+command, and nothing broken — a question for the person running it.
 
 ```sh
 node apps/cli/dist/install.js --yes
@@ -84,7 +86,29 @@ configuration nor the database to exist — it is what writes the configuration 
 and with `--json` it hands back every line of the flow in `data.lines`.
 
 `--json` runs non-interactively, exactly as a run with no terminal does: it
-asks nothing, so it needs `--yes`, and it exits 2 saying so if it has none.
+asks nothing, so it needs `--yes`. Without it nothing is written and the
+envelope says what to run instead:
+
+```json
+{
+  "ok": false,
+  "warnings": [],
+  "error": {
+    "code": "CONFIRMATION_REQUIRED",
+    "message": "This is not a terminal, so nothing can be asked. Agree in advance with --yes",
+    "exit_code": 3,
+    "retryable": false,
+    "hint": "ask the person whether to go ahead, and make the call in `error.retry` only if they say yes",
+    "retry": { "ns": "setup", "verb": "run", "args": { "confirm": true } },
+    "retry_argv": ["brain", "setup", "run", "--yes", "--json"]
+  }
+}
+```
+
+`retry` is the same call with the consent added, and never more than that: the
+flags you gave travel in it, the defaults you did not give do not. `retry_argv`
+is that call as a command line. Both are there so the consent can be asked for
+once, by a person — not attached by whatever is reading this.
 
 `brain setup connect <harness>` registers this brain with one harness, for a
 harness installed after the install. The entry it writes carries a Brain mark,
@@ -92,9 +116,32 @@ and that mark is the only thing "already connected" is ever decided by, so
 running it twice registers once (`changed: false` the second time) and nothing
 you put in that file yourself is ever touched. It reports `SHIM_MISSING` if the
 shim is not there, and exits 2 naming the harnesses this build knows if the
-name is not one of them. This build knows none yet: the Claude Code connector
-is a later epic, so `brain setup run` says there is no harness to connect and
-carries on.
+name is not one of them. Every argument you type after a verb is an id — a body
+is read from stdin, never typed as an argument — so one that is empty, or that
+carries control or invisible characters, is refused as a `USAGE` before
+anything is read: an empty argument is nearly always a `$(…)` that produced
+nothing, and looking it up would answer "not found" to a broken command line.
+This build knows no harness yet: the Claude Code connector is a later epic, so
+`brain setup run` says there is no harness to connect and carries on.
+
+## Exit codes
+
+| Code | What it means |
+|------|---------------|
+| 0 | it worked |
+| 1 | it ran and failed, or came back degraded |
+| 2 | it could not run at all: the command line, the configuration, no database |
+| 3 | it needs a confirmation nobody gave |
+
+Under `--json` the same number is in `error.exit_code`, so a caller reading the
+envelope never has to look at the shell to find out which it was. `error.hint`
+says what to do about it, and `error.retryable` says whether running the same
+command again could work at all — `false` on a usage mistake, `true` on a lock
+somebody else is holding, absent when it depends.
+
+A command on a harness hook path always exits 0, whatever happened, so a brain
+that is broken never breaks a turn (the failure goes to stderr as one line). A
+hook that runs into exit 3 does not do the thing and does not ask: it stops.
 
 ## The shim
 
@@ -182,24 +229,37 @@ pnpm brain admin doctor --json
 env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" admin doctor
 ```
 
-`admin doctor` reports one line per check, and these are the checks:
+`admin doctor` reports one line per check and then a summary line counting
+them. These are the checks:
 
 | Check | What it says |
 |-------|--------------|
 | `db` | the source answered at all, and which SQLite version it is |
-| `writable` | this process could really write: a transaction is opened, a table created and the whole thing rolled back, so nothing is left behind. Opening a database file succeeds even at mode 0444, which is why it is asked separately. It waits for nobody — a brain another process is writing to answers `ok` and says the question was not settled |
+| `writable` | this process could really write: a transaction is opened, a table created and the whole thing rolled back, so nothing is left behind. Opening a database file succeeds even at mode 0444, which is why it is asked separately. It waits for nobody — a brain another process is writing to answers `warn` and says the question was not settled |
 | `wal` | the file is in write-ahead mode, which is what lets a reader and the writer share it |
 | `fts5-trigram` | this Node's SQLite was built with FTS5 and the `trigram` tokenizer, proved by indexing a row and searching it |
 | `foreign-keys` | they are enforced on this connection |
-| `schema-version` | the stored version is the one this build was made for; a mismatch is `SCHEMA_MISMATCH`, and `brain setup run` is what migrates |
+| `schema-version` | the stored version is the one this build was made for; a mismatch is `SCHEMA_MISMATCH`, and `brain setup run` is what migrates. `skip` when `db` failed, since there was nothing to ask |
 | `config` | `config.toml` is there and understandable, and where it is |
 | `shim` | `<home>/bin/brain` is there, executable, written by brain, and names an entry point that exists |
 | `node-path` | the node that shim names runs and is at least the version in `engines.node`. `skip` when there is no shim to read it from |
 | `node-version` | the node running the command is at least that version too |
 
-Exit 0 means every check passed, 1 means a check failed, and 2 means the command
-could not run at all. Nothing is ever repaired: doctor reports, and `setup run`
-is what fixes things.
+Every check comes to one of four answers: `ok`, `warn` — it ran and settled
+nothing, which is neither a pass nor a problem — `fail`, or `skip`, which says
+in its detail which check made it pointless (`prereq failed: db`). The last
+line is the counts:
+
+```text
+summary: 9 passed, 1 warned, 0 failed, 0 skipped
+```
+
+They are in `data.summary` under `--json`, so nothing has to add up ten lines
+to find the one `warn` among them.
+
+Only a `fail` fails the command: exit 0 means nothing failed, 1 means something
+did, and 2 means the command could not run at all. Nothing is ever repaired:
+doctor reports, and `setup run` is what fixes things.
 
 If `writable` fails, fix `brain.db-wal` and `brain.db-shm` along with
 `brain.db`: SQLite gives the sidecars the database file's own permissions, so a
@@ -209,8 +269,10 @@ put right, until theirs is too.
 A runtime command opens the database file and never creates it, so a missing
 `brain.db` is reported as `DB_UNAVAILABLE` rather than quietly replaced with an
 empty one — and when the database cannot be reached there is nothing to say
-about its probes or its schema version, so those lines are absent rather than
-guessed at.
+about its probes, so those lines are absent rather than guessed at. The schema
+version still gets its line, as a `skip` naming `db`: "not checked" and
+"checked and fine" are different answers, and leaving the line out would make
+you work out which one was meant from what is missing.
 
 `admin doctor` is the one command that runs without a configuration, because it
 is the command to run when the install is already broken: a missing or

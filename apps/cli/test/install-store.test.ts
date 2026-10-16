@@ -232,16 +232,29 @@ describe('doctorAt', () => {
 
     const report = await doctorAt(directory, path);
 
-    // Nothing was probed and no schema version is known, so `db` is the whole
-    // store half of the report; the machine checks still ran.
+    // Nothing was probed, so no probe is reported; the schema version is a
+    // `skip` that names why, and the machine checks still ran.
     expect(report.checks[0]).toMatchObject({ id: 'db', status: 'fail', code: 'DB_UNAVAILABLE' });
+    expect(report.checks[1]).toEqual({
+      id: 'schema-version',
+      status: 'skip',
+      detail: 'prereq failed: db',
+    });
     expect(report.checks.map((check) => check.id)).toEqual([
       'db',
+      'schema-version',
       'config',
       'shim',
       'node-path',
       'node-version',
     ]);
+    // The counts are the report's own, so they cannot disagree with it.
+    expect(report.summary.failed).toBe(
+      report.checks.filter((check) => check.status === 'fail').length,
+    );
+    expect(report.summary.skipped).toBe(
+      report.checks.filter((check) => check.status === 'skip').length,
+    );
     // Not the database, not its log, not its shared memory, and not a
     // configuration folder either: a probe that made what it was looking for
     // would report a brain nobody installed.

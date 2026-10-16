@@ -166,21 +166,28 @@ function fakeStore(world: StoreWorld = {}): Store {
     async doctor(home, path): Promise<DoctorReport> {
       doctoredHomes.push(home);
       doctored.push(path);
+      const checks: DoctorReport['checks'] = [
+        { id: 'db', status: 'ok', detail: '3.50.4' },
+        { id: 'writable', status: 'ok', detail: 'the file took a write and gave it back' },
+        world.walFails === true
+          ? { id: 'wal', status: 'fail', detail: 'journal_mode is delete, not wal' }
+          : { id: 'wal', status: 'ok', detail: 'wal' },
+        { id: 'fts5-trigram', status: 'ok', detail: 'fts5 with the trigram tokenizer' },
+        { id: 'foreign-keys', status: 'ok', detail: 'enforced on this connection' },
+        { id: 'schema-version', status: 'ok', detail: '2' },
+        { id: 'config', status: 'ok', detail: join(home, 'config.toml') },
+        { id: 'shim', status: 'ok', detail: shimPath(home) },
+        { id: 'node-path', status: 'ok', detail: 'node 24.16.0 at /usr/bin/node' },
+        { id: 'node-version', status: 'ok', detail: 'node 24.16.0' },
+      ];
       return {
-        checks: [
-          { id: 'db', status: 'ok', detail: '3.50.4' },
-          { id: 'writable', status: 'ok', detail: 'the file took a write and gave it back' },
-          world.walFails === true
-            ? { id: 'wal', status: 'fail', detail: 'journal_mode is delete, not wal' }
-            : { id: 'wal', status: 'ok', detail: 'wal' },
-          { id: 'fts5-trigram', status: 'ok', detail: 'fts5 with the trigram tokenizer' },
-          { id: 'foreign-keys', status: 'ok', detail: 'enforced on this connection' },
-          { id: 'schema-version', status: 'ok', detail: '2' },
-          { id: 'config', status: 'ok', detail: join(home, 'config.toml') },
-          { id: 'shim', status: 'ok', detail: shimPath(home) },
-          { id: 'node-path', status: 'ok', detail: 'node 24.16.0 at /usr/bin/node' },
-          { id: 'node-version', status: 'ok', detail: 'node 24.16.0' },
-        ],
+        checks,
+        summary: {
+          passed: checks.filter((check) => check.status === 'ok').length,
+          warned: checks.filter((check) => check.status === 'warn').length,
+          failed: checks.filter((check) => check.status === 'fail').length,
+          skipped: checks.filter((check) => check.status === 'skip').length,
+        },
       };
     },
   };
@@ -665,12 +672,14 @@ describe('the installer flow when the store cannot be prepared', () => {
 });
 
 describe('the installer flow with no terminal', () => {
-  it('names the consent it needs and exits 2 when it has none', async () => {
+  it('names the consent it needs and exits 3 when it has none', async () => {
     const kit = harness({ isTTY: false });
 
     const exit = await runInstallFlow([], ENV, kit.deps);
 
-    expect(exit).toBe(2);
+    // 3, not 2: nothing was wrong with the invocation and nothing is broken —
+    // somebody has to agree to what the install does (Conventions).
+    expect(exit).toBe(3);
     expect(kit.output()).toContain('--yes');
     expect(kit.prompts.asked).toEqual([]);
     expect(kit.written).toEqual([]);
@@ -678,10 +687,10 @@ describe('the installer flow with no terminal', () => {
     expect(kit.shimmed).toEqual([]);
   });
 
-  it('exits 2 when a path flag is given without the consent to use it', async () => {
+  it('exits 3 when a path flag is given without the consent to use it', async () => {
     const kit = harness({ isTTY: false });
 
-    expect(await runInstallFlow(['--store-path', '/tmp/a/brain.db'], ENV, kit.deps)).toBe(2);
+    expect(await runInstallFlow(['--store-path', '/tmp/a/brain.db'], ENV, kit.deps)).toBe(3);
     expect(kit.written).toEqual([]);
   });
 

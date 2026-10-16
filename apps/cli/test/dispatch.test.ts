@@ -29,6 +29,7 @@ const distDir = fileURLToPath(new URL('../dist/', import.meta.url));
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const dispatchModule = join(distDir, 'dispatch.js');
 const clockModule = join(distDir, 'runtime/clock.js');
+const envelopeModule = join(distDir, 'envelope.js');
 
 interface Run {
   code: number | null;
@@ -41,7 +42,15 @@ interface Envelope {
   now: string;
   data?: unknown;
   warnings: string[];
-  error?: { code: string; message: string };
+  error?: {
+    code: string;
+    message: string;
+    exit_code?: number;
+    retryable?: boolean;
+    hint?: string;
+    retry?: { ns: string; verb: string; args: Record<string, unknown> };
+    retry_argv?: string[];
+  };
 }
 
 /** The fake registry, as source the child evaluates. */
@@ -134,6 +143,71 @@ const registry = [
   },
   {
     ns: 'fake',
+    verb: 'gated',
+    description: 'a command that may not run without the consent of a person',
+    standalone: true,
+    arguments: ['<id>'],
+    options: [
+      { flags: '--reason <reason>', description: 'why this is being done' },
+      { flags: '-y, --yes', description: 'agree in advance' },
+    ],
+    run: async (context) => {
+      // What the caller actually gave, which is what the retry has to ask for
+      // back: not a default, and not the output flag.
+      const args = { id: context.args[0] };
+      if (typeof context.options.reason === 'string') args.reason = context.options.reason;
+      if (context.options.yes === true) args.confirm = true;
+
+      const gate = requireConfirmation({ ns: 'fake', verb: 'gated', args });
+      if (gate !== undefined) return { ok: false, ...gate };
+      // Proof the gate runs before this: a refused call never gets here.
+      console.log('RAN');
+      return { ok: true, data: { id: args.id } };
+    },
+  },
+  {
+    ns: 'fake',
+    verb: 'hook-gated',
+    description: 'a hook command that runs into the same gate',
+    standalone: true,
+    hook: true,
+    run: async () => {
+      const gate = requireConfirmation({ ns: 'fake', verb: 'hook-gated', args: {} });
+      if (gate !== undefined) return { ok: false, ...gate };
+      return { ok: true, data: { ran: true } };
+    },
+  },
+  {
+    ns: 'fake',
+    verb: 'locked',
+    description: 'a command that failed on something worth running again',
+    standalone: true,
+    run: async () => ({ ok: false, code: 'DB_LOCKED', message: 'database is locked' }),
+  },
+  {
+    ns: 'fake',
+    verb: 'connector-fails',
+    description: 'a command whose failure carries a code no table knows',
+    standalone: true,
+    run: async () => ({
+      ok: false,
+      code: 'CLAUDE_CODE_SETTINGS_UNREADABLE',
+      message: 'settings.json could not be parsed',
+    }),
+  },
+  {
+    ns: 'fake',
+    verb: 'meta',
+    description: 'a command with something to say about its own result',
+    standalone: true,
+    run: async () => ({
+      ok: true,
+      data: { rows: [] },
+      meta: { count: 0, has_more: false },
+    }),
+  },
+  {
+    ns: 'fake',
     verb: 'diagnostic',
     description: 'a command that runs without a configuration, as doctor does',
     diagnostic: true,
@@ -157,6 +231,7 @@ function runDispatch(args: string[], env: Record<string, string | undefined>): P
   const script = [
     `const { dispatch } = await import(${JSON.stringify(dispatchModule)});`,
     `const { systemClock } = await import(${JSON.stringify(clockModule)});`,
+    `const { requireConfirmation } = await import(${JSON.stringify(envelopeModule)});`,
     REGISTRY,
     // With `node -e`, `process.argv[1]` is already the first user argument.
     'process.exitCode = await dispatch(registry, process.argv.slice(1), { clock: systemClock });',
@@ -497,6 +572,227 @@ describe('the dispatcher and positional arguments', () => {
 
     expect(run.code).toBe(2);
     expect((JSON.parse(run.stdout) as Envelope).error?.code).toBe('USAGE');
+  });
+
+  /**
+   * Every positional argument of this CLI is an id — a body arrives on stdin,
+   * never as an argument — so an empty one or one carrying control characters
+   * can only be a broken command line. The check is in the dispatcher because
+   * it has to hold for every command without each one remembering it.
+   */
+  it.each([
+    ['an empty one', ''],
+    ['one that is only spaces', '   '],
+    ['one that is only a tab', '\t'],
+  ])('answers USAGE and names the argument for %s', async (_what, value) => {
+    const home = await homeFor(await emptyDatabase());
+
+    const run = await runDispatch(['fake', 'read-arg', value, '--json'], { [HOME_ENV]: home });
+
+    expect(run.code).toBe(2);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.error?.code).toBe('USAGE');
+    // Named, so the caller knows which of two arguments came back empty — which
+    // is nearly always a shell capture that produced nothing.
+    expect(envelope.error?.message).toContain('name');
+  });
+
+  it.each([
+    ['a C0 control', 'one\u0001two'],
+    ['an escape', '\u001b[31mred'],
+    ['a delete', 'one\u007ftwo'],
+    ['a C1 control', 'one\u0085two'],
+    ['a zero-width space', 'one\u200btwo'],
+    ['a zero-width joiner', 'one\u200dtwo'],
+    ['a byte-order mark', 'one\ufefftwo'],
+    ['a line separator', 'one\u2028two'],
+    ['a paragraph separator', 'one\u2029two'],
+    ['a bidi override', 'one\u202etwo'],
+    ['a bidi isolate', 'one\u2066two'],
+  ])('answers USAGE for an argument carrying %s', async (_what, value) => {
+    const home = await homeFor(await emptyDatabase());
+
+    const run = await runDispatch(['fake', 'read-arg', value, '--json'], { [HOME_ENV]: home });
+
+    expect(run.code).toBe(2);
+    expect((JSON.parse(run.stdout) as Envelope).error?.code).toBe('USAGE');
+  });
+
+  it('checks the optional argument too, not just the first one', async () => {
+    const home = await homeFor(await emptyDatabase());
+
+    const run = await runDispatch(['fake', 'read-arg', 'one', '', '--json'], { [HOME_ENV]: home });
+
+    expect(run.code).toBe(2);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.error?.code).toBe('USAGE');
+    expect(envelope.error?.message).toContain('extra');
+  });
+
+  it('refuses before it reads the configuration, so a broken home is beside the point', async () => {
+    const run = await runDispatch(['fake', 'read-arg', '', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    // CONFIG_MISSING would be the answer if anything had been read; it is not,
+    // because an argument that cannot be used is settled before that.
+    expect(run.code).toBe(2);
+    expect((JSON.parse(run.stdout) as Envelope).error?.code).toBe('USAGE');
+  });
+
+  it('lets through everything an id really contains', async () => {
+    const home = await homeFor(await emptyDatabase());
+    const id = '0199a0b1-2c3d-7e4f-8a9b-0c1d2e3f4a5b';
+
+    const run = await runDispatch(['fake', 'read-arg', id, 'claude-code:abc', '--json'], {
+      [HOME_ENV]: home,
+    });
+
+    expect(run.code).toBe(0);
+    expect((JSON.parse(run.stdout) as Envelope).data).toEqual({
+      args: [id, 'claude-code:abc'],
+    });
+  });
+});
+
+/**
+ * Exit code 3 and the shape that goes with it: the gate is Core's, the argv is
+ * this surface's, and the two have to agree about what the caller should run.
+ */
+describe('the dispatcher and a command that needs confirmation', () => {
+  it('exits 3 with the call to run instead, and never runs the command', async () => {
+    const run = await runDispatch(['fake', 'gated', 'm-1', '--reason', 'secret', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect(run.code).toBe(3);
+    expect(run.stdout).not.toContain('RAN');
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('CONFIRMATION_REQUIRED');
+    expect(envelope.error?.exit_code).toBe(3);
+    expect(envelope.error?.retryable).toBe(false);
+    expect(envelope.error?.hint).toBeTruthy();
+    expect(envelope.error?.retry).toEqual({
+      ns: 'fake',
+      verb: 'gated',
+      args: { id: 'm-1', reason: 'secret', confirm: true },
+    });
+    // The declared argument goes in bare and the rest as flags, because only
+    // the registry knows which of the two a key is.
+    expect(envelope.error?.retry_argv).toEqual([
+      'brain',
+      'fake',
+      'gated',
+      'm-1',
+      '--reason',
+      'secret',
+      '--yes',
+      '--json',
+    ]);
+  });
+
+  it('selects the same command, with the same arguments, when that argv is run back', async () => {
+    const refused = await runDispatch(['fake', 'gated', 'm-1', '--reason', 'secret', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+    const argv = (JSON.parse(refused.stdout) as Envelope).error?.retry_argv ?? [];
+
+    // `brain` is the binary this test is already running, so what is handed
+    // back to the dispatcher is the rest of the line, unedited.
+    const accepted = await runDispatch(argv.slice(1), { [HOME_ENV]: '/nonexistent/home' });
+
+    expect(accepted.code).toBe(0);
+    expect(accepted.stdout).toContain('RAN');
+    const envelope = JSON.parse(accepted.stdout.split('\n')[1] ?? '{}') as Envelope;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data).toEqual({ id: 'm-1' });
+  });
+
+  it('leaves the output choice of the caller out of the argv in text mode', async () => {
+    const run = await runDispatch(['fake', 'gated', 'm-1'], { [HOME_ENV]: '/nonexistent/home' });
+
+    expect(run.code).toBe(3);
+    // Text mode prints the failure, not the envelope, so the argv is not on
+    // screen — but it is still the argv a JSON caller would have been given.
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toContain('CONFIRMATION_REQUIRED');
+  });
+
+  it('exits 0 on a hook path, with one line on stderr and nothing on stdout', async () => {
+    // A gate on a hook path must not fail the harness turn, and must not do
+    // the thing either: it says so on stderr and stops (AD-6, Conventions).
+    const run = await runDispatch(['fake', 'hook-gated', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect(run.code).toBe(0);
+    expect(run.stdout).toBe('');
+    expect(run.stderr.trimEnd().split('\n')).toHaveLength(1);
+    expect(run.stderr).toContain('CONFIRMATION_REQUIRED');
+  });
+});
+
+/**
+ * The envelope's `error.exit_code` is the number the process exited with, for
+ * every failure there is: an agent that read one and got the other would have
+ * to check the shell to find out which to believe.
+ */
+describe('the dispatcher and the exit code in the envelope', () => {
+  it.each([
+    ['fake', 'gated', 'm-1'],
+    ['fake', 'locked'],
+    ['fake', 'connector-fails'],
+    ['fake', 'standalone-fails'],
+    ['nope', 'verb'],
+  ])('agrees with the process for `%s %s`', async (...words) => {
+    const run = await runDispatch([...words, '--json'], { [HOME_ENV]: '/nonexistent/home' });
+
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.exit_code).toBe(run.code);
+  });
+
+  it('fills a blank hint from the code table, and says a lock is worth retrying', async () => {
+    const run = await runDispatch(['fake', 'locked', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect(run.code).toBe(1);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.error?.retryable).toBe(true);
+    expect(envelope.error?.hint).toBeTruthy();
+  });
+
+  it('exits 1 and adds no hint for a code the table does not know', async () => {
+    const run = await runDispatch(['fake', 'connector-fails', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    // A connector names its own codes, and guessing a hint for one would be
+    // the dispatcher claiming to know what another package's failure means.
+    expect(run.code).toBe(1);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.error).toEqual({
+      code: 'CLAUDE_CODE_SETTINGS_UNREADABLE',
+      message: 'settings.json could not be parsed',
+      exit_code: 1,
+    });
+  });
+
+  it('carries the meta a command had to add, and nothing when it had none', async () => {
+    const withMeta = await runDispatch(['fake', 'meta', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+    const without = await runDispatch(['fake', 'standalone', 'x', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect((JSON.parse(withMeta.stdout) as { meta?: unknown }).meta).toEqual({
+      count: 0,
+      has_more: false,
+    });
+    expect('meta' in (JSON.parse(without.stdout) as object)).toBe(false);
   });
 });
 

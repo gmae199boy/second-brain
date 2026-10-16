@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { checkSchema } from '../src/schema.js';
-import { WARNING_CODES, isWarningCode } from '../src/warnings.js';
 import { memorySchemaStore } from '../src/testing/index.js';
 
 /**
@@ -80,29 +79,5 @@ describe('checkSchema', () => {
   });
 });
 
-describe('the warning codes', () => {
-  it('holds the nine codes of the Conventions table plus CONFIG_UNKNOWN_KEY', () => {
-    expect([...WARNING_CODES]).toEqual([
-      'SPOOLED',
-      'DB_UNAVAILABLE',
-      'SCHEMA_MISMATCH',
-      'RERANK_FAILED',
-      'INDEX_CONFIG_MISMATCH',
-      'UNINDEXED',
-      'RESULT_TRUNCATED',
-      'RULE_UNVERIFIED',
-      'CURSOR_RESET',
-      'CONFIG_UNKNOWN_KEY',
-    ]);
-    expect(new Set(WARNING_CODES).size).toBe(WARNING_CODES.length);
-  });
-
-  it('recognises its own codes and nothing else', () => {
-    for (const code of WARNING_CODES) {
-      expect(isWarningCode(code)).toBe(true);
-    }
-    expect(isWarningCode('CONFIG_MISSING')).toBe(false);
-    expect(isWarningCode('db_unavailable')).toBe(false);
-    expect(isWarningCode('')).toBe(false);
-  });
-});
+// The warning and error codes have their own file now that they live in
+// `src/codes.ts`: see `test/codes.test.ts`.

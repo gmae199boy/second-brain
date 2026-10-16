@@ -2,7 +2,7 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
-import type { DoctorCheck, DoctorCheckSource } from 'second_brain';
+import { prereqFailed, type DoctorCheck, type DoctorCheckSource } from 'second_brain';
 import { readConfig, type ReadConfigResult } from '../config/codec.js';
 import { configFilePath } from '../config/paths.js';
 import { SHIM_SIGNATURE, parseShim, shimPath, type ParsedShim } from '../install/shim.js';
@@ -185,7 +185,10 @@ async function nodePathCheck(state: ShimState, runNode: RunNode): Promise<Doctor
   if (node === undefined) {
     // Nothing is known about a node nobody could read the name of. Reporting
     // that as a failure would be a second line about the same one problem.
-    return { id: 'node-path', status: 'skip', detail: 'the shim could not be read' };
+    // The detail names the check that failed, in the phrase every skipped
+    // prerequisite uses, so a reader does not have to guess which line above
+    // this one is the cause.
+    return { id: 'node-path', status: 'skip', detail: prereqFailed('shim') };
   }
 
   const run = await runNode(node);

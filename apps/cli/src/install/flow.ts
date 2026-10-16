@@ -22,8 +22,14 @@ import { configFilePath, configHome, envFilePath } from '../config/paths.js';
  * the shim, the harnesses, doctor.
  */
 
-/** 0 it worked, 1 it ran and something failed, 2 it could not run at all. */
-export type InstallExitCode = 0 | 1 | 2;
+/**
+ * 0 it worked, 1 it ran and something failed, 2 it could not run at all, 3 it
+ * needs the consent nobody gave (Conventions). 3 is the one a caller has to
+ * tell apart: everything else is this run's own problem, and 3 is a question
+ * for the person — which is why `brain setup run` turns it into a
+ * `CONFIRMATION_REQUIRED` envelope with the command to run instead.
+ */
+export type InstallExitCode = 0 | 1 | 2 | 3;
 
 /** One option of a question with a fixed set of answers. */
 export interface Choice<T extends string> {
@@ -179,9 +185,17 @@ export async function runInstall(
   // A question needs an answer and a place to be read. Without both, `--yes` is
   // the only consent there is, and saying so is the only useful thing left to
   // do (I/O matrix).
+  //
+  // Exit 3, not 2: nothing about the invocation was wrong, and nothing here is
+  // broken — somebody has to agree to what the install does. That is a distinct
+  // answer from "could not run", and the whole reason an agent can tell a
+  // question for the person from a mistake of its own (Conventions).
+  //
+  // One branch for both doors: `brain setup run` and the npx installer come
+  // through here, so neither can drift into deciding consent differently.
   if (!deps.isTTY && !flags.yes) {
     for (const line of nonInteractiveGuidance()) deps.log(line);
-    return 2;
+    return 3;
   }
 
   // Read before anything is asked: what the folder already says is what a

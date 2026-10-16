@@ -245,9 +245,11 @@ describe('sqliteStore probing a database file nobody may write', () => {
 
       expect(health.ok).toBe(true);
       if (!health.ok) return;
-      expect(health.source.probes.find((probe) => probe.id === 'writable')).toMatchObject({
-        ok: true,
-      });
+      const writable = health.source.probes.find((probe) => probe.id === 'writable');
+      expect(writable).toMatchObject({ ok: true });
+      // A probe that settled its question carries no `warn` key at all, so a
+      // report shows it as a plain pass.
+      expect(writable?.warn).toBeUndefined();
     } finally {
       await store.close();
     }
@@ -284,8 +286,11 @@ describe('sqliteStore probing a database another process is writing to', () => {
         expect(health.ok).toBe(true);
         if (!health.ok) return;
         const writable = health.source.probes.find((probe) => probe.id === 'writable');
-        // A brain in use is not a brain that cannot be written to.
+        // A brain in use is not a brain that cannot be written to — and it is
+        // not one that proved it can be either, so the probe passes and warns.
+        // Doctor turns that into `warn`, which does not fail the command.
         expect(writable?.ok).toBe(true);
+        expect(writable?.warn).toBe(true);
         expect(writable?.detail).toContain('write lock');
         // It did not wait for the holder, and it did not wait for its budget.
         expect(waited).toBeLessThan(1000);

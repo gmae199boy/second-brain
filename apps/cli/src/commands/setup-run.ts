@@ -1,4 +1,5 @@
 import type { CommandSpec, StandaloneCommandContext } from '../dispatch.js';
+import { requireConfirmation } from '../envelope.js';
 import type { InstallFlags } from '../install/flow.js';
 
 /**
@@ -57,6 +58,22 @@ export const setupRun: CommandSpec<SetupRunData> = {
       isTTY: json ? false : deps.isTTY,
     });
 
+    // Exit 3 is "somebody has to agree to this first", which is a question for
+    // the person and not a mistake of the caller's. The gate is Core's, so the
+    // shape of the answer — above all `retry`, the same call with the consent
+    // added — is the one every gated verb will use (Conventions).
+    if (exit === 3) {
+      const message = consentMessage(lines);
+      const gate = requireConfirmation(
+        { ns: 'setup', verb: 'run', args: givenArgs(context.options) },
+        message,
+      );
+      // The flow answers 3 only where nothing gave consent, so the gate is
+      // closed; the fallback is there so a later change cannot turn a 3 into a
+      // silent success.
+      return { ok: false as const, ...(gate ?? { code: 'CONFIRMATION_REQUIRED', message }) };
+    }
+
     // Exit 2 is "could not run at all", which is an error envelope and not a
     // result: the flow's own last line says which flag was missing.
     if (exit === 2) {
@@ -95,6 +112,37 @@ function reason(lines: readonly string[]): { code: string; message: string } {
     return { code: 'USAGE', message: said };
   }
   return { code: coded[1], message: coded[2] };
+}
+
+/**
+ * What the flow said about the consent it needs, as one line for the envelope.
+ * It is the flow's own sentence rather than a second one written here: the two
+ * would drift, and the flow is what knows why it could ask nothing. The
+ * trailing colon goes — it introduced the flag list, which `hint` and
+ * `retry_argv` now carry instead.
+ */
+function consentMessage(lines: readonly string[]): string {
+  return reason(lines).message.replace(/:$/, '');
+}
+
+/**
+ * The arguments the user actually gave, as `error.retry` carries them: not the
+ * defaults the flow would fall back to, not `--json`, and not `--yes` — the
+ * consent travels as `confirm`, which is the one name it has on every surface
+ * (Conventions). So a retry asks for this very install, not a wider one.
+ */
+function givenArgs(options: Record<string, unknown>): Record<string, unknown> {
+  const args: Record<string, unknown> = {};
+  const storePath = options['storePath'];
+  if (typeof storePath === 'string') args['storePath'] = storePath;
+  const mirrorPath = options['mirrorPath'];
+  if (typeof mirrorPath === 'string') args['mirrorPath'] = mirrorPath;
+  const connect = options['connect'];
+  if (Array.isArray(connect)) {
+    const named = connect.filter((name): name is string => typeof name === 'string');
+    if (named.length > 0) args['connect'] = named;
+  }
+  return args;
 }
 
 /** Commander's options, as the flags the flow takes. */

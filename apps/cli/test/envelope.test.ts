@@ -4,73 +4,124 @@
 process.env.TZ = 'Asia/Seoul';
 
 import { describe, expect, it } from 'vitest';
-import { fixedClock, steppingClock } from 'second_brain/testing';
-import { errorEnvelope, isoWithOffset, okEnvelope } from '../src/envelope.js';
+import { ERROR_CODES, type VerbCall } from 'second_brain';
+import { fixedClock } from 'second_brain/testing';
+import {
+  argumentName,
+  errorEnvelope,
+  okEnvelope,
+  requireConfirmation,
+  retryArgv,
+} from '../src/envelope.js';
 
 const INSTANT = new Date('2026-01-02T03:04:05.678Z');
 
-describe('the ok envelope', () => {
-  it('matches the shape of the Conventions table, at the instant of the clock', () => {
-    expect(okEnvelope(fixedClock(INSTANT), { checks: [] })).toEqual({
-      ok: true,
-      now: '2026-01-02T12:04:05.678+09:00',
-      data: { checks: [] },
-      warnings: [],
+/**
+ * The CLI reuses Core's codec whole, so the shape of an envelope is tested in
+ * `packages/core/test/envelope.test.ts` and not again here. What is this
+ * surface's own is `retry_argv`: the call as a command line, which no other
+ * surface has any use for.
+ */
+describe('the envelope this surface prints', () => {
+  it('is Core’s, and fills a blank hint from the code table', () => {
+    const envelope = errorEnvelope(fixedClock(INSTANT), {
+      code: 'SHIM_MISSING',
+      message: 'no shim',
     });
-  });
 
-  it('carries the warning codes it was given', () => {
-    const envelope = okEnvelope(fixedClock(INSTANT), null, ['DB_UNAVAILABLE', 'SCHEMA_MISMATCH']);
-
-    expect(envelope.warnings).toEqual(['DB_UNAVAILABLE', 'SCHEMA_MISMATCH']);
-    expect(envelope.error).toBeUndefined();
-  });
-
-  it('copies the warnings, so the caller cannot change a sent envelope', () => {
-    const warnings: ('SPOOLED' | 'UNINDEXED')[] = ['SPOOLED'];
-    const envelope = okEnvelope(fixedClock(INSTANT), null, warnings);
-
-    warnings.push('UNINDEXED');
-
-    expect(envelope.warnings).toEqual(['SPOOLED']);
+    expect(envelope.now).toBe('2026-01-02T12:04:05.678+09:00');
+    expect(envelope.error?.exit_code).toBe(1);
+    expect(envelope.error?.hint).toBe(ERROR_CODES.SHIM_MISSING.hint);
+    expect(okEnvelope(fixedClock(INSTANT), { ok: 1 }).ok).toBe(true);
   });
 });
 
-describe('the error envelope', () => {
-  it('matches the shape of the Conventions table and carries no data', () => {
-    expect(errorEnvelope(fixedClock(INSTANT), 'CONFIG_MISSING', 'no config.toml')).toEqual({
-      ok: false,
-      now: '2026-01-02T12:04:05.678+09:00',
-      warnings: [],
-      error: { code: 'CONFIG_MISSING', message: 'no config.toml' },
-    });
+describe('the argv of a retry', () => {
+  /** The gate's own answer, so the argv is rendered from what a command sends. */
+  function gated(args: Record<string, unknown>): VerbCall {
+    const retry = requireConfirmation({ ns: 'setup', verb: 'run', args })?.retry;
+    if (retry === undefined) throw new Error('the gate opened for a call with no consent');
+    return retry;
+  }
+
+  it('is the whole command line, with --yes for the consent', () => {
+    expect(retryArgv(gated({}), [], true)).toEqual(['brain', 'setup', 'run', '--yes', '--json']);
   });
 
-  it('still reports the warnings collected before the failure', () => {
-    const envelope = errorEnvelope(fixedClock(INSTANT), 'SCHEMA_MISMATCH', 'at 2, expected 1', [
-      'CONFIG_UNKNOWN_KEY',
-      'SCHEMA_MISMATCH',
+  it('keeps the output choice of the invocation it is answering', () => {
+    expect(retryArgv(gated({}), [], false)).toEqual(['brain', 'setup', 'run', '--yes']);
+  });
+
+  it('spells a camelCase key as the kebab-case flag with its value', () => {
+    expect(retryArgv(gated({ storePath: '/abs/b.db' }), [], true)).toEqual([
+      'brain',
+      'setup',
+      'run',
+      '--store-path',
+      '/abs/b.db',
+      '--yes',
+      '--json',
     ]);
+  });
 
-    expect(envelope.warnings).toEqual(['CONFIG_UNKNOWN_KEY', 'SCHEMA_MISMATCH']);
-    expect(envelope.data).toBeUndefined();
+  it('repeats a flag per item rather than joining a list', () => {
+    // A harness name with a comma in it has to stay one name.
+    expect(retryArgv(gated({ connect: ['claude-code', 'other'] }))).toEqual([
+      'brain',
+      'setup',
+      'run',
+      '--connect',
+      'claude-code',
+      '--connect',
+      'other',
+      '--yes',
+    ]);
+  });
+
+  it('puts a declared argument in bare, in the order the command declares them', () => {
+    const retry: VerbCall = {
+      ns: 'messages',
+      verb: 'redact',
+      args: { id: 'm-1', reason: 'secret', confirm: true },
+    };
+
+    expect(retryArgv(retry, ['<id>'], true)).toEqual([
+      'brain',
+      'messages',
+      'redact',
+      'm-1',
+      '--reason',
+      'secret',
+      '--yes',
+      '--json',
+    ]);
+  });
+
+  it('writes a boolean flag as the flag alone, and leaves a false one out', () => {
+    const retry: VerbCall = {
+      ns: 'files',
+      verb: 'redact',
+      args: { dryRun: true, force: false, confirm: true },
+    };
+
+    expect(retryArgv(retry)).toEqual(['brain', 'files', 'redact', '--dry-run', '--yes']);
+  });
+
+  it('leaves out a declared argument the call says nothing about', () => {
+    const retry: VerbCall = { ns: 'fake', verb: 'verb', args: { confirm: true } };
+
+    expect(retryArgv(retry, ['<id>', '[extra]'])).toEqual(['brain', 'fake', 'verb', '--yes']);
   });
 });
 
-describe('the envelope time', () => {
-  it('comes from the clock, never from the system clock', () => {
-    const clock = steppingClock(INSTANT, 1000);
-
-    expect(okEnvelope(clock, null).now).toBe('2026-01-02T12:04:05.678+09:00');
-    expect(okEnvelope(clock, null).now).toBe('2026-01-02T12:04:06.678+09:00');
-  });
-
-  it('is an ISO-8601 instant with the offset, that parses back to the same time', () => {
-    for (const instant of [INSTANT, new Date('1999-12-31T23:59:59.001Z'), new Date(0)]) {
-      const formatted = isoWithOffset(instant);
-
-      expect(formatted).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/);
-      expect(new Date(formatted).getTime()).toBe(instant.getTime());
-    }
+describe('the name behind a declared argument', () => {
+  it.each([
+    ['<harness>', 'harness'],
+    ['[harness]', 'harness'],
+    ['<names...>', 'names'],
+    ['<session-id>', 'sessionId'],
+    ['[session-id...]', 'sessionId'],
+  ])('reads %s as %s', (declared, name) => {
+    expect(argumentName(declared)).toBe(name);
   });
 });

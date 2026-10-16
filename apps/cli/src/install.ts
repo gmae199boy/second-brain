@@ -49,8 +49,9 @@ export function installerIntro(env: NodeJS.ProcessEnv = process.env): readonly s
 
 /**
  * Run the installer and hand back an exit code: 0 it worked, 1 it ran and
- * something failed, 2 it could not run at all. `argv` is the user's arguments,
- * without the node and script entries.
+ * something failed, 2 it could not run at all, 3 it needs a consent nobody gave
+ * (Conventions). `argv` is the user's arguments, without the node and script
+ * entries.
  */
 export async function runInstaller(
   argv: readonly string[] = process.argv.slice(2),

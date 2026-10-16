@@ -214,12 +214,14 @@ describe('the installer with no Docker and no Postgres', () => {
     expect(existsSync(second)).toBe(true);
   });
 
-  it('names the consent it needs and exits 2 with no terminal and no --yes', async () => {
+  it('names the consent it needs and exits 3 with no terminal and no --yes', async () => {
     const home = await emptyHome();
 
     const run = await runInstaller([], home);
 
-    expect(run.code).toBe(2);
+    // The npx door and `brain setup run` share this branch, so both answer 3:
+    // the consent is a question for the person, not a mistake of the caller's.
+    expect(run.code).toBe(3);
     expect(run.stdout).toContain('--yes');
     expect(existsSync(configFilePath(home))).toBe(false);
     expect(existsSync(join(home, 'brain.db'))).toBe(false);

@@ -1,8 +1,19 @@
-import { isWarningCode, type DoctorCheck, type WarningCode } from 'second_brain';
+import {
+  isWarningCode,
+  type DoctorCheck,
+  type DoctorSummary,
+  type WarningCode,
+} from 'second_brain';
 import type { CommandSpec } from '../dispatch.js';
 
 export interface AdminDoctorData {
   checks: DoctorCheck[];
+  /**
+   * The counts, from Core's report rather than counted again here: a reader
+   * that had to add up ten lines to find out whether anything failed is a
+   * reader that will miss the one `warn` among them.
+   */
+  summary: DoctorSummary;
 }
 
 /**
@@ -37,9 +48,13 @@ export const adminDoctor: CommandSpec<AdminDoctorData> = {
 
     return {
       ok: true,
-      data: { checks },
+      data: { checks, summary: report.summary },
       warnings,
-      text: checks.map(formatCheck),
+      // The summary last, so the line that says whether to read the rest is
+      // the one still on screen.
+      text: [...checks.map(formatCheck), formatSummary(report.summary)],
+      // Only `fail` (Conventions): a `warn` is a check that ran and settled
+      // nothing, which is worth printing and not worth failing a hook over.
       failed: checks.some((check) => check.status === 'fail'),
     };
   },
@@ -51,4 +66,12 @@ export function formatCheck(check: DoctorCheck): string {
   if (check.code !== undefined) parts.push(`[${check.code}]`);
   if (check.detail !== undefined && check.detail !== '') parts.push(check.detail);
   return parts.join(' ');
+}
+
+/** The counts as the report's last line, in the Conventions' order. */
+function formatSummary(summary: DoctorSummary): string {
+  return (
+    `summary: ${String(summary.passed)} passed, ${String(summary.warned)} warned, ` +
+    `${String(summary.failed)} failed, ${String(summary.skipped)} skipped`
+  );
 }

@@ -20,6 +20,15 @@ export interface StoreProbe {
   /** Stable, neutral identifier, unique within one health report. */
   id: string;
   ok: boolean;
+  /**
+   * The probe passed without settling its question, so a report shows it as a
+   * `warn` rather than a pass (Conventions). Only an adapter can tell the two
+   * apart — a write probe that gave up on somebody else's lock found nothing
+   * wrong with the file, and calling that `ok` would hide that it never
+   * actually wrote. Meaningful only when `ok` is true, and a probe that sets it
+   * must say why in `detail`.
+   */
+  warn?: boolean;
   /** What was found, or why it failed. Present whenever there is anything to say. */
   detail?: string;
 }

@@ -174,7 +174,8 @@ export function sqliteStore(options: SqliteStoreOptions): HealthStore & SchemaSt
  * caller's budget afterwards. A question about permissions must not sit on the
  * command's whole lock budget because a hook happens to be writing, and a
  * database somebody else is writing to is not one to report as unwritable — so
- * a busy answer is an `ok` that says the question was not settled.
+ * a busy answer is an `ok` that warns, which doctor shows as `warn`: the probe
+ * found nothing wrong and settled nothing either.
  *
  * Note for whoever reads a failure here: SQLite leaves `-wal` and `-shm` beside
  * the database at the database file's own mode, so a file that was once 0444
@@ -198,9 +199,11 @@ async function writableProbe(
       if (isBusy(error)) {
         // Only a brain in use holds this lock, and holding it says nothing
         // about whether this process may write. Reporting `fail` here would
-        // make a busy brain look like a broken one.
+        // make a busy brain look like a broken one — and a plain `ok` would
+        // claim a write that never happened, so it warns.
         return {
           ok: true,
+          warn: true,
           detail: 'another process holds the write lock, so writability was not tested',
         };
       }
@@ -287,11 +290,13 @@ async function foreignKeyProbe(connection: SqliteConnection): Promise<StoreProbe
 /** Run one probe. A probe that throws is a failed probe, never a failed report. */
 async function probe(
   id: string,
-  run: () => Promise<{ ok: boolean; detail: string }>,
+  run: () => Promise<{ ok: boolean; warn?: boolean; detail: string }>,
 ): Promise<StoreProbe> {
   try {
-    const { ok, detail } = await run();
-    return { id, ok, detail };
+    const { ok, warn, detail } = await run();
+    // `warn` is left out rather than set to false, so a report carries the key
+    // only where a probe meant something by it.
+    return warn === true ? { id, ok, warn, detail } : { id, ok, detail };
   } catch (error) {
     return { id, ok: false, detail: describe(error) };
   }

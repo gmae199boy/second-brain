@@ -1,20 +1,57 @@
 import { checkSchema } from '../schema.js';
 import type { HealthStore, SchemaStore, StoreProbe } from '../ports/store.js';
 
-export type DoctorCheckStatus = 'ok' | 'fail' | 'skip';
+/**
+ * What one check came to (Conventions). `warn` is the status a report needs
+ * most: a check that ran and could not settle its question — a brain another
+ * process is writing to, a probe that has to wait for a lock — is neither a
+ * pass nor a failure, and reporting it as either hides something. `skip` is a
+ * check that never ran, and says in its `detail` why.
+ *
+ * Only `fail` makes the command exit 1. A `warn` is worth printing and not
+ * worth failing a hook over.
+ */
+export type DoctorCheckStatus = 'ok' | 'warn' | 'fail' | 'skip';
 
 export interface DoctorCheck {
   /** Stable, neutral identifier for the check. */
   id: string;
   status: DoctorCheckStatus;
-  /** Human-readable extra information, when there is any. */
+  /**
+   * Human-readable extra information, when there is any. Required in spirit
+   * for `warn` and `skip`: the whole content of those two is why.
+   */
   detail?: string;
   /** Machine-readable code, set only for failures that carry one. */
   code?: string;
 }
 
+/** How many checks came to each status. The last line of a report (Conventions). */
+export interface DoctorSummary {
+  passed: number;
+  warned: number;
+  failed: number;
+  skipped: number;
+}
+
 export interface DoctorReport {
   checks: DoctorCheck[];
+  /**
+   * The counts of `checks`, computed here rather than by each reader: three
+   * surfaces print this report, and three loops over it would be three chances
+   * to count a `warn` as a pass.
+   */
+  summary: DoctorSummary;
+}
+
+/**
+ * The `detail` of a check that did not run because another one failed. One
+ * phrase, so `prereq failed: db` and `prereq failed: shim` read as the same
+ * kind of answer wherever the skipped check lives — Core's own, or one the
+ * runtime registered.
+ */
+export function prereqFailed(id: string): string {
+  return `prereq failed: ${id}`;
 }
 
 /**
@@ -51,13 +88,18 @@ export interface DoctorOptions {
  * The order is store first, then machine: `db`, the adapter's own probes, the
  * schema version, and then whatever the runtime registered.
  *
- * A store that could not be reached reports the `db` check and no probe and no
- * schema version. It ran no probes, so there is nothing else to say about it,
- * and inventing a row for each capability the adapter might have had would
- * claim knowledge Core does not have — it never learns which capabilities a
- * source offers (AD-10). The registered checks still run: the shim and the node
- * behind it are facts about the machine, and an unreachable database is often
- * exactly when a person needs to know them.
+ * A store that could not be reached reports the `db` check and no probe: it ran
+ * no probes, so there is nothing to say about them, and inventing a row for
+ * each capability the adapter might have had would claim knowledge Core does
+ * not have — it never learns which capabilities a source offers (AD-10). The
+ * schema version is reported all the same, as a `skip` naming `db` as the
+ * reason: "not checked" and "checked and fine" are different answers, and a
+ * report that left the line out entirely would make a reader work out which
+ * one it meant from what is missing.
+ *
+ * The registered checks still run: the shim and the node behind it are facts
+ * about the machine, and an unreachable database is often exactly when a person
+ * needs to know them.
  */
 export async function runDoctor(
   store: HealthStore & SchemaStore,
@@ -68,6 +110,7 @@ export async function runDoctor(
   const health = await store.checkHealth();
   if (!health.ok) {
     checks.push({ id: 'db', status: 'fail', code: health.code, detail: health.message });
+    checks.push({ id: 'schema-version', status: 'skip', detail: prereqFailed('db') });
   } else {
     checks.push({ id: 'db', status: 'ok', detail: health.serverVersion });
     checks.push(...health.source.probes.map(probeCheck));
@@ -78,16 +121,38 @@ export async function runDoctor(
     checks.push(await registered(source));
   }
 
-  return { checks };
+  return { checks, summary: summarise(checks) };
 }
 
-/** One probe as one check. Core passes the adapter's own name through. */
+/** The counts of one report, in the order the summary line prints them. */
+function summarise(checks: readonly DoctorCheck[]): DoctorSummary {
+  const count = (status: DoctorCheckStatus): number =>
+    checks.filter((check) => check.status === status).length;
+  return {
+    passed: count('ok'),
+    warned: count('warn'),
+    failed: count('fail'),
+    skipped: count('skip'),
+  };
+}
+
+/**
+ * One probe as one check. Core passes the adapter's own name through, and its
+ * own verdict: a probe that passed without settling the question says so with
+ * `warn: true`, because only the adapter knows that it had to give up on the
+ * lock rather than find the file unwritable.
+ */
 function probeCheck(probe: StoreProbe): DoctorCheck {
-  const check: DoctorCheck = { id: probe.id, status: probe.ok ? 'ok' : 'fail' };
+  const check: DoctorCheck = { id: probe.id, status: probeStatus(probe) };
   if (probe.detail !== undefined && probe.detail !== '') {
     check.detail = probe.detail;
   }
   return check;
+}
+
+function probeStatus(probe: StoreProbe): DoctorCheckStatus {
+  if (!probe.ok) return 'fail';
+  return probe.warn === true ? 'warn' : 'ok';
 }
 
 /**

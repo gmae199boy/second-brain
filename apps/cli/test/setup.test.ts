@@ -37,7 +37,15 @@ interface Envelope {
   now: string;
   data?: { harness?: string; target?: string; changed?: boolean; lines?: string[] };
   warnings: string[];
-  error?: { code: string; message: string };
+  error?: {
+    code: string;
+    message: string;
+    exit_code?: number;
+    retryable?: boolean;
+    hint?: string;
+    retry?: { ns: string; verb: string; args: Record<string, unknown> };
+    retry_argv?: string[];
+  };
 }
 
 const homes: string[] = [];
@@ -207,6 +215,43 @@ describe('brain setup connect', () => {
     expect(demo.entries()).toEqual([]);
   });
 
+  it.each([
+    ['an empty harness name', ''],
+    ['a harness name of spaces', '  '],
+  ])('answers USAGE, naming the argument, for %s', async (_what, name) => {
+    const home = await emptyHome();
+    await writeShim(home, { bin: binPath });
+    const demo = memoryConnector({ harness: 'demo' });
+
+    const run = await runConnect([demo], ['setup', 'connect', name, '--json'], home);
+
+    // `brain setup connect "$(…)"` with a capture that came back empty: a
+    // command that went looking for the harness "" would answer "no connector
+    // for" what is really a broken command line.
+    expect(run.code).toBe(2);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.error?.code).toBe('USAGE');
+    expect(envelope.error?.message).toContain('harness');
+    expect(envelope.error?.message).toContain('empty');
+    expect(demo.entries()).toEqual([]);
+  });
+
+  it.each([
+    ['an escape sequence', '\u001b[31mdemo'],
+    ['a zero-width space', 'de\u200bmo'],
+    ['a bidi override', 'de\u202emo'],
+  ])('answers USAGE for a harness name carrying %s', async (_what, name) => {
+    const home = await emptyHome();
+    await writeShim(home, { bin: binPath });
+    const demo = memoryConnector({ harness: 'demo' });
+
+    const run = await runConnect([demo], ['setup', 'connect', name, '--json'], home);
+
+    expect(run.code).toBe(2);
+    expect((JSON.parse(run.stdout) as Envelope).error?.code).toBe('USAGE');
+    expect(demo.entries()).toEqual([]);
+  });
+
   it('says there is no connector at all when the registry is empty', async () => {
     const home = await emptyHome();
     await writeShim(home, { bin: binPath });
@@ -373,16 +418,78 @@ describe('brain setup run against the local SQLite source', () => {
     expect(existsSync(join(home, 'brain.db'))).toBe(false);
   });
 
-  it('answers USAGE and exits 2 when --json leaves it nothing to go on', async () => {
+  it('asks for confirmation and exits 3 when --json leaves it nothing to go on', async () => {
     const home = await emptyHome();
 
     const run = await runBrain(['setup', 'run', '--json'], home);
 
-    expect(run.code).toBe(2);
+    // Not a usage mistake and not a broken install: somebody has to agree to
+    // what the install does, which is its own exit code (Conventions).
+    expect(run.code).toBe(3);
     const envelope = JSON.parse(run.stdout) as Envelope;
     expect(envelope.ok).toBe(false);
-    expect(envelope.error?.code).toBe('USAGE');
+    expect(envelope.error?.code).toBe('CONFIRMATION_REQUIRED');
+    // The envelope says the same number the process exited with, so nobody has
+    // to read the shell to find out what happened.
+    expect(envelope.error?.exit_code).toBe(3);
+    // Running it again unchanged cannot work: it needs the consent, not time.
+    expect(envelope.error?.retryable).toBe(false);
+    expect(envelope.error?.hint).toBeTruthy();
+    expect(envelope.error?.retry).toEqual({
+      ns: 'setup',
+      verb: 'run',
+      args: { confirm: true },
+    });
+    expect(envelope.error?.retry_argv).toEqual(['brain', 'setup', 'run', '--yes', '--json']);
+    // And nothing was written: a gate that had already installed would be no
+    // gate at all.
     expect(existsSync(configFilePath(home))).toBe(false);
+    expect(existsSync(join(home, 'brain.db'))).toBe(false);
+  });
+
+  it('keeps the arguments the caller gave in the retry it asks for', async () => {
+    const home = await emptyHome();
+    const path = join(home, 'elsewhere', 'b.db');
+
+    const run = await runBrain(['setup', 'run', '--store-path', path, '--json'], home);
+
+    expect(run.code).toBe(3);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    // The retry asks for this very install, not a wider one: the path the
+    // caller chose travels, the defaults it did not choose do not, and `--json`
+    // is output rather than input so it is not an argument either.
+    expect(envelope.error?.retry).toEqual({
+      ns: 'setup',
+      verb: 'run',
+      args: { storePath: path, confirm: true },
+    });
+    expect(envelope.error?.retry_argv).toEqual([
+      'brain',
+      'setup',
+      'run',
+      '--store-path',
+      path,
+      '--yes',
+      '--json',
+    ]);
+    expect(existsSync(configFilePath(home))).toBe(false);
+  });
+
+  it('installs when the argv it asked for is run back, and only then', async () => {
+    const home = await emptyHome();
+    const refused = await runBrain(['setup', 'run', '--json'], home);
+    expect(refused.code).toBe(3);
+    const argv = (JSON.parse(refused.stdout) as Envelope).error?.retry_argv ?? [];
+
+    // The first word is the binary, which this test supplies itself; the rest
+    // is the command line, run exactly as it was handed over.
+    expect(argv[0]).toBe('brain');
+    const accepted = await runBrain(argv.slice(1), home);
+
+    expect(accepted.code).toBe(0);
+    const envelope = JSON.parse(accepted.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    expect(existsSync(configFilePath(home))).toBe(true);
   });
 
   it('leaves a shim that runs doctor with no SECOND_BRAIN_HOME in the environment', async () => {
@@ -425,17 +532,24 @@ describe('brain setup run against the local SQLite source', () => {
 
     expect(run.code).toBe(1);
     const envelope = JSON.parse(run.stdout) as Envelope & {
-      data?: { checks?: { id: string; status: string; code?: string }[] };
+      data?: { checks?: { id: string; status: string; code?: string; detail?: string }[] };
     };
-    // The store's half of the report is `db` alone — nothing was probed, so
-    // there is nothing else it can say — and the machine checks still ran.
+    // No probe is reported — nothing was probed — and the schema version says
+    // it was skipped and why, rather than being left out for a reader to work
+    // out. The machine checks still ran.
     expect(envelope.data?.checks?.map((check) => check.id)).toEqual([
       'db',
+      'schema-version',
       'config',
       'shim',
       'node-path',
       'node-version',
     ]);
+    expect(envelope.data?.checks?.[1]).toEqual({
+      id: 'schema-version',
+      status: 'skip',
+      detail: 'prereq failed: db',
+    });
     expect(envelope.data?.checks?.[0]).toMatchObject({
       id: 'db',
       status: 'fail',

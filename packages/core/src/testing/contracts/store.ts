@@ -67,6 +67,21 @@ export function assertStoreHealth(health: StoreHealth): void {
       if (probe.detail !== undefined) {
         assertNonEmptyString(probe.detail, `probe ${probe.id} must detail something or nothing`);
       }
+      if (probe.warn !== undefined) {
+        assertTrue(
+          typeof probe.warn === 'boolean',
+          `probe ${probe.id} must answer warn with a boolean`,
+        );
+      }
+      if (probe.warn === true) {
+        // A probe cannot both fail and merely warn: `warn` is what a pass that
+        // settled nothing looks like, so it has no meaning beside `ok: false`.
+        assertTrue(probe.ok, `probe ${probe.id} cannot warn and fail at once`);
+        assertNonEmptyString(
+          probe.detail,
+          `probe ${probe.id} warns, so it must say what it could not settle`,
+        );
+      }
     }
     return;
   }

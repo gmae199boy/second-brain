@@ -21,10 +21,20 @@ interface Run {
   stderr: string;
 }
 
+interface Summary {
+  passed: number;
+  warned: number;
+  failed: number;
+  skipped: number;
+}
+
 interface Envelope {
   ok: boolean;
   now: string;
-  data?: { checks: { id: string; status: string; detail?: string; code?: string }[] };
+  data?: {
+    checks: { id: string; status: string; detail?: string; code?: string }[];
+    summary: Summary;
+  };
   warnings: string[];
   error?: { code: string; message: string };
 }
@@ -49,6 +59,12 @@ const CHECKS = [
 
 /** The machine checks alone: what is still reported when there is no database. */
 const MACHINE_CHECKS = ['config', 'shim', 'node-path', 'node-version'];
+
+/**
+ * What a report says about a database nobody can reach: `db` and the schema
+ * version it could not ask for, then the machine half (story 2.1).
+ */
+const NO_DATABASE_CHECKS = ['db', 'schema-version', ...MACHINE_CHECKS];
 
 const homes: string[] = [];
 
@@ -151,18 +167,30 @@ describe('brain admin doctor', () => {
     const registered = runtimeChecks({ home }).map((source) => source.id);
     expect(checks.slice(-registered.length).map((check) => check.id)).toEqual(registered);
     expect(registered).toEqual(MACHINE_CHECKS);
+    // Everything passed, so the counts say so and add up to the whole report.
+    expect(envelope.data?.summary).toEqual({
+      passed: CHECKS.length,
+      warned: 0,
+      failed: 0,
+      skipped: 0,
+    });
   });
 
-  it('prints one line per check in text mode, with the same exit code', async () => {
+  it('prints one line per check in text mode, then the summary', async () => {
     const home = await configuredHome();
     const run = await runBrain(['admin', 'doctor'], { [HOME_ENV]: home });
 
     expect(run.code).toBe(0);
     const lines = run.stdout.trimEnd().split('\n');
-    expect(lines).toHaveLength(CHECKS.length);
+    expect(lines).toHaveLength(CHECKS.length + 1);
     for (const [index, id] of CHECKS.entries()) {
       expect(lines[index]).toMatch(new RegExp(`^${id}: ok`));
     }
+    // Last, so the line that says whether to read the rest is the one left on
+    // screen (Conventions: passed, warned, failed, skipped).
+    expect(lines.at(-1)).toBe(
+      `summary: ${String(CHECKS.length)} passed, 0 warned, 0 failed, 0 skipped`,
+    );
   });
 
   it('reports the same checks through the shim of that install, as a hook would', async () => {
@@ -218,7 +246,7 @@ describe('brain admin doctor', () => {
 
     expect(run.code).toBe(0);
     expect(run.stderr).toContain('colour');
-    expect(run.stdout.trimEnd().split('\n')).toHaveLength(CHECKS.length);
+    expect(run.stdout.trimEnd().split('\n')).toHaveLength(CHECKS.length + 1);
   });
 
   it('fails the wal check and exits 1 when the file is not in write-ahead mode', async () => {
@@ -272,6 +300,59 @@ describe('brain admin doctor', () => {
     }
   });
 
+  it('warns on writable, and still exits 0, while another connection holds the lock', async () => {
+    const home = await configuredHome();
+    const holder = new DatabaseSync(join(home, 'brain.db'));
+    holder.exec('pragma busy_timeout = 0');
+    holder.exec('begin immediate');
+    holder.exec('create table brain_lock_holder(x)');
+
+    try {
+      const run = await runBrain(['admin', 'doctor', '--json'], { [HOME_ENV]: home });
+
+      // A brain in use is not a brain that cannot be written to, and it is not
+      // one that proved it can be either: `warn` is the only honest answer,
+      // and only `fail` makes the command exit 1 (Conventions).
+      expect(run.code).toBe(0);
+      const envelope = JSON.parse(run.stdout) as Envelope;
+      const found = byId(envelope);
+      expect(found.get('writable')).toMatchObject({ status: 'warn' });
+      expect(found.get('writable')?.detail).toContain('write lock');
+      expect(found.get('db')).toMatchObject({ status: 'ok' });
+
+      const summary = envelope.data?.summary;
+      expect(summary).toEqual({ passed: CHECKS.length - 1, warned: 1, failed: 0, skipped: 0 });
+      // The counts and the lines cannot disagree about one report.
+      expect((summary?.passed ?? 0) + (summary?.warned ?? 0)).toBe(
+        envelope.data?.checks.length,
+      );
+    } finally {
+      holder.exec('rollback');
+      holder.close();
+    }
+  });
+
+  it('prints a warned check and the summary that counts it in text mode', async () => {
+    const home = await configuredHome();
+    const holder = new DatabaseSync(join(home, 'brain.db'));
+    holder.exec('pragma busy_timeout = 0');
+    holder.exec('begin immediate');
+    holder.exec('create table brain_lock_holder(x)');
+
+    try {
+      const run = await runBrain(['admin', 'doctor'], { [HOME_ENV]: home });
+
+      expect(run.code).toBe(0);
+      expect(run.stdout).toContain('writable: warn');
+      expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
+        `summary: ${String(CHECKS.length - 1)} passed, 1 warned, 0 failed, 0 skipped`,
+      );
+    } finally {
+      holder.exec('rollback');
+      holder.close();
+    }
+  });
+
   it('fails schema-version with SCHEMA_MISMATCH, and warns, when the stored version differs', async () => {
     const home = await configuredHome();
     const database = new DatabaseSync(join(home, 'brain.db'));
@@ -317,11 +398,24 @@ describe('brain admin doctor', () => {
     const checks = envelope.data?.checks ?? [];
     expect(checks[0]).toMatchObject({ id: 'db', status: 'fail', code: 'DB_UNAVAILABLE' });
     expect(checks[0]?.detail).toBeTruthy();
-    // Nothing was probed and no version is known, so the store's half of the
-    // report is `db` alone — and the machine checks still ran, which is most of
-    // what a person needs when the database is the thing that is missing.
-    expect(checks.map((check) => check.id)).toEqual(['db', ...MACHINE_CHECKS]);
+    // Nothing was probed, so no probe is reported. The schema version says it
+    // was skipped and which check made it pointless, and the machine checks
+    // still ran — most of what a person needs when the database is the thing
+    // that is missing.
+    expect(checks.map((check) => check.id)).toEqual(NO_DATABASE_CHECKS);
+    expect(checks[1]).toEqual({
+      id: 'schema-version',
+      status: 'skip',
+      detail: 'prereq failed: db',
+    });
     expect(checks.filter((check) => check.status === 'fail')).toHaveLength(1);
+    // A skip is not a pass: the summary counts it as its own thing.
+    expect(envelope.data?.summary).toEqual({
+      passed: MACHINE_CHECKS.length,
+      warned: 0,
+      failed: 1,
+      skipped: 1,
+    });
     // And nothing was created: a doctor that made the database it was looking
     // for would report a brain nobody installed (AD-20).
     expect((await readdir(home)).some((entry) => entry.startsWith('brain.db'))).toBe(false);
@@ -334,11 +428,23 @@ describe('brain admin doctor', () => {
     const run = await runBrain(['admin', 'doctor', '--json'], { [HOME_ENV]: home });
 
     expect(run.code).toBe(1);
-    const found = byId(JSON.parse(run.stdout) as Envelope);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    const found = byId(envelope);
     expect(found.get('shim')).toMatchObject({ status: 'fail' });
-    expect(found.get('node-path')).toMatchObject({ status: 'skip' });
+    // The skip names the check that caused it, in the one phrase every skipped
+    // prerequisite uses, so nobody has to guess which line above is the cause.
+    expect(found.get('node-path')).toMatchObject({
+      status: 'skip',
+      detail: 'prereq failed: shim',
+    });
     // The store knew nothing about any of this and said so anyway.
     expect(found.get('db')).toMatchObject({ status: 'ok' });
+    expect(envelope.data?.summary).toEqual({
+      passed: CHECKS.length - 2,
+      warned: 0,
+      failed: 1,
+      skipped: 1,
+    });
   });
 
   it('fails node-path when the shim names a node that is not there', async () => {
@@ -388,8 +494,12 @@ describe('brain admin doctor without a configuration it can read', () => {
     expect(found.get('shim')).toMatchObject({ status: 'ok' });
     expect(found.get('node-path')).toMatchObject({ status: 'ok' });
     expect(found.get('node-version')).toMatchObject({ status: 'ok' });
-    // No store means no probes and no schema version to report on.
-    expect([...found.keys()]).toEqual(['db', ...MACHINE_CHECKS]);
+    // No store means no probes, and a schema version nobody could ask for.
+    expect([...found.keys()]).toEqual(NO_DATABASE_CHECKS);
+    expect(found.get('schema-version')).toMatchObject({
+      status: 'skip',
+      detail: 'prereq failed: db',
+    });
     expect(envelope.warnings).toEqual(['DB_UNAVAILABLE']);
   });
 
@@ -422,7 +532,12 @@ describe('brain admin doctor without a configuration it can read', () => {
     expect(run.stdout).toContain('config: fail [CONFIG_MISSING]');
     expect(run.stdout).toContain('db: fail [DB_UNAVAILABLE]');
     expect(run.stdout).toContain('shim: fail');
-    expect(run.stdout).toContain('node-path: skip');
+    expect(run.stdout).toContain('schema-version: skip prereq failed: db');
+    expect(run.stdout).toContain('node-path: skip prereq failed: shim');
+    // Three failures, two skips, one pass: the summary is the last line.
+    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
+      'summary: 1 passed, 0 warned, 3 failed, 2 skipped',
+    );
     // Not an error envelope, so nothing goes to stderr but the warning line.
     expect(run.stderr).not.toContain('CONFIG_MISSING');
   });

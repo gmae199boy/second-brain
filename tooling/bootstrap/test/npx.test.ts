@@ -81,10 +81,11 @@ describe('npx github:gmae199boy/second-brain', () => {
 
       expect(first.stderr).not.toContain('npm error');
       // `spawnSync` gives the child pipes, not a terminal, so the installer
-      // cannot ask anything and ends in the exit code that says so (2), naming
-      // the consent a non-interactive install needs. That code travelling all
-      // the way back out is the handover this test is about.
-      expect(first.status).toBe(2);
+      // cannot ask anything and ends in the exit code that says so (3, "needs
+      // a confirmation nobody gave"), naming the consent a non-interactive
+      // install needs. That code travelling all the way back out is the
+      // handover this test is about.
+      expect(first.status).toBe(3);
       expect(first.stdout).toContain(`cloning file://${bare}`);
       // The clone built itself: the CLI that story 1.4 left is there.
       expect(existsSync(join(home, 'app', 'apps', 'cli', 'dist', 'bin.js'))).toBe(true);
@@ -100,7 +101,7 @@ describe('npx github:gmae199boy/second-brain', () => {
     () => {
       const second = npx();
 
-      expect(second.status).toBe(2);
+      expect(second.status).toBe(3);
       expect(second.stdout).toContain(`updating ${join(home, 'app')}`);
       expect(second.stdout).not.toContain('cloning');
       // Same ending as the first run.

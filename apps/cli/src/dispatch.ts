@@ -7,6 +7,7 @@ import {
   sqliteStore,
   type Brain,
   type Clock,
+  type FailureExit,
   type HealthStore,
   type SchemaStore,
   type SqliteStoreOptions,
@@ -16,7 +17,17 @@ import { readConfig, type BrainConfig } from './config/codec.js';
 import { configHome } from './config/paths.js';
 import { runtimeChecks } from './doctor/checks.js';
 import { failedConfigStore } from './doctor/store.js';
-import { errorEnvelope, okEnvelope, type Envelope } from './envelope.js';
+import {
+  JSON_FLAG,
+  argumentName,
+  errorEnvelope,
+  okEnvelope,
+  retryArgv,
+  type CliEnvelope,
+  type EnvelopeMeta,
+  type Failure,
+  type VerbCall,
+} from './envelope.js';
 
 /**
  * The one path every command takes. It reads the configuration, builds the SDK,
@@ -27,14 +38,15 @@ import { errorEnvelope, okEnvelope, type Envelope } from './envelope.js';
  * that will be forgotten once.
  */
 
-/** The flag that switches the agent-readable output on, on every command. */
-const JSON_FLAG = '--json';
-
 /**
  * 0 success, 1 ran but failed or degraded, 2 could not run at all (usage or
- * configuration). A `hook` command returns 0 whatever happens.
+ * configuration), 3 needs a confirmation nobody gave. A `hook` command returns
+ * 0 whatever happens, confirmation included (AD-6, Conventions).
+ *
+ * Which number a failure takes is the code table's answer, not this module's:
+ * see `ERROR_CODES` in Core, and `FailureExit` for the three a failure may use.
  */
-export type ExitCode = 0 | 1 | 2;
+export type ExitCode = 0 | FailureExit;
 
 /** One flag of a command, in commander's own syntax. */
 export interface CommandOption {
@@ -87,17 +99,44 @@ export interface CommandSuccess<T> {
   warnings?: readonly WarningCode[];
   /** Lines for the human-readable output. The command owns their shape. */
   text?: readonly string[];
+  /**
+   * What the result is, beside the result itself: a count, a page marker, the
+   * call that carries on from here (Conventions).
+   */
+  meta?: EnvelopeMeta;
   /** The command ran and the outcome is a failure: exit 1, envelope still ok. */
   failed?: boolean;
 }
 
-/** The command did not produce a result. */
+/**
+ * The command did not produce a result. Only `code` and `message` are the
+ * command's to supply: the exit code, the retryability and the hint come from
+ * the code table unless this one failure names its own (Core `ERROR_CODES`).
+ *
+ * `code` stays a string rather than the union of known codes, because a
+ * connector names its own (`ports/connector.ts`) and the envelope handles a
+ * code the table does not know by exiting 1 and adding no hint.
+ */
 export interface CommandFailure {
   ok: false;
   code: string;
   message: string;
-  /** 1 = ran and failed, 2 = could not run. Defaults to 1. */
-  exit?: 1 | 2;
+  /**
+   * 1 = ran and failed, 2 = could not run, 3 = needs confirmation. Left out,
+   * the code decides — which is the only way thirty commands agree on the exit
+   * code of a code. Set it to keep a failure at the number it has always had.
+   */
+  exit?: FailureExit;
+  /** Whether running it again can work. Left out, the code decides. */
+  retryable?: boolean;
+  /** What to do about it. Left out, the code's own hint is used. */
+  hint?: string;
+  /**
+   * The same call with the consent added, for a gated verb. The dispatcher
+   * renders `error.retry_argv` from it and the command's declared arguments;
+   * the value itself comes from Core's `requireConfirmation`.
+   */
+  retry?: VerbCall;
 }
 
 export type CommandOutcome<T> = CommandSuccess<T> | CommandFailure;
@@ -180,11 +219,24 @@ export interface DispatchRuntime {
 /** What `execute` decided, before anything is printed. */
 interface Outcome {
   /** `null` when commander already wrote the output, as it does for `--help`. */
-  envelope: Envelope<unknown> | null;
+  envelope: CliEnvelope<unknown> | null;
   text: readonly string[];
   /** Warning lines for the human-readable output, on stderr. */
   warningLines: readonly string[];
   exit: ExitCode;
+}
+
+/**
+ * What an envelope needs to know about the invocation it belongs to, beyond
+ * the outcome itself: the clock, whether the caller asked for JSON, and the
+ * arguments the chosen command declares. The last two exist for `retry_argv` —
+ * a retry has to be spelled the way this invocation was.
+ */
+interface Rendering {
+  clock: Clock;
+  json: boolean;
+  /** The chosen command's `arguments`, in commander's syntax. Empty before one. */
+  positional: readonly string[];
 }
 
 interface Selection {
@@ -223,7 +275,13 @@ export async function dispatch(
 
   let outcome: Outcome;
   try {
-    outcome = await execute(registry, argv, clock, env, runtime.createStore ?? sqliteStore);
+    outcome = await execute(
+      registry,
+      argv,
+      { clock, json, positional: [] },
+      env,
+      runtime.createStore ?? sqliteStore,
+    );
   } catch (error) {
     // An exception here is a bug, and a bug must still not break the harness.
     if (!hook) throw error;
@@ -257,31 +315,41 @@ export async function dispatch(
 async function execute(
   registry: readonly CommandSpec[],
   argv: readonly string[],
-  clock: Clock,
+  base: Rendering,
   env: NodeJS.ProcessEnv,
   createStore: CreateStore,
 ): Promise<Outcome> {
+  const { clock } = base;
   const selected = select(registry, argv);
   if (selected.kind === 'helped') {
     return { envelope: null, text: [], warningLines: [], exit: 0 };
   }
   if (selected.kind === 'usage') {
     // Nothing is read and nothing is connected: the command never ran.
-    return failed(clock, 'USAGE', selected.message, 2, [], []);
+    return failed(base, { code: 'USAGE', message: selected.message, exit: 2 }, [], []);
   }
 
   const { spec, options, args } = selected.selection;
+  const rendering: Rendering = { ...base, positional: spec.arguments ?? [] };
+
+  // Right after the choice and before anything is read, opened or run: a
+  // positional argument is an id, and an id that is empty or carries control
+  // characters is a broken command line rather than a thing to look up.
+  const unusable = unusableArgument(rendering.positional, args);
+  if (unusable !== undefined) {
+    return failed(rendering, { code: 'USAGE', message: unusable, exit: 2 }, [], []);
+  }
 
   // Before the configuration, because this command may be the one that writes
   // it, and before the store, because it has no database to reach.
   if (spec.standalone === true) {
-    return finish(clock, await spec.run({ env, clock, options, args }), [], []);
+    return finish(rendering, await spec.run({ env, clock, options, args }), [], []);
   }
 
   const home = configHome(env);
   const config = await readConfig(home);
   if (!config.ok && spec.diagnostic !== true) {
-    return failed(clock, config.code, config.message, 2, [], []);
+    return failed(rendering, { code: config.code, message: config.message, exit: 2 }, [], []);
   }
 
   const warningCodes = config.ok ? config.warnings.map((warning) => warning.code) : [];
@@ -317,11 +385,12 @@ async function execute(
       // forgetting it. Epic 2 turns this refusal into a spool.
       const schema = await checkSchema(store, SQLITE_SCHEMA_VERSION);
       if (!schema.ok) {
+        // Exit 1 is named rather than left to the code table: this refusal has
+        // always exited 1, and the table puts `DB_UNAVAILABLE` at 2. Epic 2
+        // turns the refusal into a spool, which settles the question.
         return failed(
-          clock,
-          schema.code,
-          schema.message,
-          1,
+          rendering,
+          { code: schema.code, message: schema.message, exit: 1 },
           [...warningCodes, schema.code],
           warningLines,
         );
@@ -335,7 +404,7 @@ async function execute(
       options,
       args,
     });
-    return finish(clock, outcome, warningCodes, warningLines);
+    return finish(rendering, outcome, warningCodes, warningLines);
   } finally {
     await brain.close();
   }
@@ -343,45 +412,92 @@ async function execute(
 
 /** One command's outcome as an `Outcome`, the same way for every command. */
 function finish(
-  clock: Clock,
+  rendering: Rendering,
   outcome: CommandOutcome<unknown>,
   warningCodes: readonly WarningCode[],
   warningLines: readonly string[],
 ): Outcome {
   if (!outcome.ok) {
-    return failed(
-      clock,
-      outcome.code,
-      outcome.message,
-      outcome.exit ?? 1,
-      warningCodes,
-      warningLines,
-    );
+    const { ok: _ran, ...failure } = outcome;
+    return failed(rendering, failure, warningCodes, warningLines);
   }
 
   const commandWarnings = outcome.warnings ?? [];
   return {
-    envelope: okEnvelope(clock, outcome.data, [...warningCodes, ...commandWarnings]),
+    envelope: okEnvelope(
+      rendering.clock,
+      outcome.data,
+      [...warningCodes, ...commandWarnings],
+      outcome.meta,
+    ),
     text: outcome.text ?? [],
     warningLines: [...warningLines, ...commandWarnings.map((code) => `warning: ${code}`)],
     exit: outcome.failed === true ? 1 : 0,
   };
 }
 
+/**
+ * One failure as an `Outcome`. The exit code is read back out of the envelope
+ * rather than decided a second time here, which is what makes `error.exit_code`
+ * and the process's own exit code the same number by construction.
+ *
+ * `retry_argv` is added here and nowhere else: Core decided the call, and the
+ * command's declared arguments — which only the registry knows — say which of
+ * its keys go on the command line bare and which as flags.
+ */
 function failed(
-  clock: Clock,
-  code: string,
-  message: string,
-  exit: 1 | 2,
+  rendering: Rendering,
+  failure: Failure,
   warnings: readonly WarningCode[],
   warningLines: readonly string[],
 ): Outcome {
+  const envelope: CliEnvelope<never> = errorEnvelope(rendering.clock, failure, warnings);
+  const error = envelope.error;
+  if (error?.retry !== undefined) {
+    error.retry_argv = retryArgv(error.retry, rendering.positional, rendering.json);
+  }
   return {
-    envelope: errorEnvelope(clock, code, message, warnings),
+    envelope,
     text: [],
     warningLines,
-    exit,
+    exit: error?.exit_code ?? 1,
   };
+}
+
+/**
+ * Characters that must never reach a command inside a positional argument: C0
+ * and C1 controls (ESC among them), the zero-width ones, the line and
+ * paragraph separators, and the bidirectional overrides. Every positional
+ * argument of this CLI is an id — a body is read from stdin, never typed as an
+ * argument — so none of these can be anything but a broken command line, a
+ * pasted terminal escape, or a name built to read as something it is not. The
+ * separators are in here with the controls because text-mode output is one
+ * line per thing, and an id carrying one would split a line in two.
+ */
+const CONTROL_CHARACTERS =
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060\u2066-\u2069\ufeff]/u;
+
+/**
+ * Why one of these positional arguments cannot be used, or `undefined` when
+ * they are all fine. The empty case is worth its own sentence: an empty
+ * argument is almost always a shell capture that came back empty — `brain
+ * setup connect "$(…)"` — and a command that went looking for the id "" would
+ * answer "not found" to what is really a broken command line.
+ */
+function unusableArgument(
+  positional: readonly string[],
+  args: readonly string[],
+): string | undefined {
+  for (const [index, value] of args.entries()) {
+    const name = argumentName(positional[index] ?? `argument ${String(index + 1)}`);
+    if (value.trim() === '') {
+      return `the ${name} argument is empty. A positional argument is an id, so an empty one is usually a shell capture that produced nothing.`;
+    }
+    if (CONTROL_CHARACTERS.test(value)) {
+      return `the ${name} argument carries a control or invisible character, which no id of this brain has.`;
+    }
+  }
+  return undefined;
 }
 
 type Selected =

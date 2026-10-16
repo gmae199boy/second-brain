@@ -86,14 +86,16 @@ describe('runDoctor', () => {
     expect(report.checks[1]?.code).toBeUndefined();
   });
 
-  it('reports the db check alone and carries the code when the store is unavailable', async () => {
+  it('reports db and a skipped schema version when the store is unavailable', async () => {
     const report = await runDoctor(
       fakeStore({ ok: false, code: 'DB_UNAVAILABLE', message: 'connect ECONNREFUSED 127.0.0.1:54329' }),
       OPTIONS,
     );
 
-    // Nothing was probed, so there is no probe to report on — and nothing is
-    // known about the schema either, so there is no row claiming otherwise.
+    // Nothing was probed, so there is no probe to report on. The schema version
+    // gets a line all the same, as a `skip` naming the check that made it
+    // pointless: a report that left it out would make a reader work out from
+    // what is missing whether it was skipped or never existed.
     expect(report.checks).toEqual([
       {
         id: 'db',
@@ -101,7 +103,39 @@ describe('runDoctor', () => {
         code: 'DB_UNAVAILABLE',
         detail: 'connect ECONNREFUSED 127.0.0.1:54329',
       },
+      { id: 'schema-version', status: 'skip', detail: 'prereq failed: db' },
     ]);
+  });
+
+  it('reports a probe that passed without settling its question as warn', async () => {
+    const report = await runDoctor(
+      fakeStore(
+        healthy({
+          id: 'writable',
+          ok: true,
+          warn: true,
+          detail: 'another process holds the write lock',
+        }),
+      ),
+      OPTIONS,
+    );
+
+    // The adapter's own verdict, passed through: only it knows it gave up on a
+    // lock rather than finding the file unwritable.
+    expect(report.checks[1]).toEqual({
+      id: 'writable',
+      status: 'warn',
+      detail: 'another process holds the write lock',
+    });
+  });
+
+  it('reports a failing probe as fail even if it also set warn', async () => {
+    const report = await runDoctor(
+      fakeStore(healthy({ id: 'writable', ok: false, warn: true, detail: 'EACCES' })),
+      OPTIONS,
+    );
+
+    expect(report.checks[1]).toMatchObject({ id: 'writable', status: 'fail' });
   });
 
   it('reports one check per probe, under the names the adapter chose', async () => {
@@ -200,7 +234,7 @@ describe('runDoctor and the checks the runtime registers', () => {
       { ...OPTIONS, checks: [source({ id: 'shim', status: 'ok' })] },
     );
 
-    expect(report.checks.map((check) => check.id)).toEqual(['db', 'shim']);
+    expect(report.checks.map((check) => check.id)).toEqual(['db', 'schema-version', 'shim']);
   });
 
   it('turns a check that throws into that id failing, and keeps going', async () => {
@@ -233,6 +267,51 @@ describe('runDoctor and the checks the runtime registers', () => {
     });
 
     expect(report.checks.at(-1)).toEqual({ id: 'shim', status: 'fail', detail: 'nope' });
+  });
+});
+
+describe('the summary of a report', () => {
+  it('counts every check once, under the status it came to', async () => {
+    const report = await runDoctor(
+      fakeStore(
+        healthy(
+          { id: 'wal', ok: true, detail: 'wal' },
+          { id: 'writable', ok: true, warn: true, detail: 'the lock is held' },
+          { id: 'fts5-trigram', ok: false, detail: 'no such tokenizer' },
+        ),
+      ),
+      {
+        ...OPTIONS,
+        checks: [
+          source({ id: 'shim', status: 'fail', detail: 'no shim' }),
+          source({ id: 'node-path', status: 'skip', detail: 'prereq failed: shim' }),
+        ],
+      },
+    );
+
+    // db ok, wal ok, writable warn, fts fail, schema ok, shim fail, node skip.
+    expect(report.summary).toEqual({ passed: 3, warned: 1, failed: 2, skipped: 1 });
+    const counted =
+      report.summary.passed +
+      report.summary.warned +
+      report.summary.failed +
+      report.summary.skipped;
+    expect(counted).toBe(report.checks.length);
+  });
+
+  it('counts the skipped schema version of an unreachable store', async () => {
+    const report = await runDoctor(
+      fakeStore({ ok: false, code: 'DB_UNAVAILABLE', message: 'down' }),
+      OPTIONS,
+    );
+
+    expect(report.summary).toEqual({ passed: 0, warned: 0, failed: 1, skipped: 1 });
+  });
+
+  it('is all passes for a healthy brain', async () => {
+    const report = await runDoctor(fakeStore(healthy({ id: 'wal', ok: true })), OPTIONS);
+
+    expect(report.summary).toEqual({ passed: 3, warned: 0, failed: 0, skipped: 0 });
   });
 });
 
