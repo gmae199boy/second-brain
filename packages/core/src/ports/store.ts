@@ -142,14 +142,48 @@ export type ReadSessionResult =
     };
 
 /**
+ * The session row for one key, or `null` for a key no session has. `null` is a
+ * value and not a failure: a session nobody has ingested yet is the normal
+ * state of a session's first seconds.
+ */
+export type FindSessionResult =
+  | { ok: true; session: Session | null }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
+/**
  * The session capability: the two writes of AD-14 that touch conversation data
- * and the read that widens a result back out. Only `sessions.ensure` creates a
+ * and the reads that widen a result back out. Only `sessions.ensure` creates a
  * session row, and every write is idempotent on the natural keys (AD-8).
  */
 export interface SessionStore {
   /** Find-or-create the session row (AD-12). */
   ensureSession(input: EnsureSessionInput): Promise<EnsureSessionResult>;
-  /** Append a batch and advance the cursor in one transaction (AD-7). */
+  /**
+   * The session row alone, with none of its conversation.
+   *
+   * It is a verb of its own because `sessions.ingest` needs exactly this and
+   * nothing more: the stored cursor, before it reads the transcript, so the
+   * parser can start where the last read stopped (AD-4). `readSession` would
+   * answer the same question by loading every message and tool note of the
+   * session, which is the whole of what the incremental read exists to avoid.
+   */
+  findSession(key: SessionKey): Promise<FindSessionResult>;
+  /**
+   * Append a batch and advance the tracking columns in one transaction (AD-7).
+   *
+   * Three rules about the tracking the batch carries, and every adapter keeps
+   * them:
+   *
+   *   * `startSource` is written only when the batch carries one. A read that
+   *     saw no `SessionStart` attachment knows nothing about the start, and a
+   *     `null` must not erase what an earlier read did know.
+   *   * the cursor only moves forward. It is replaced when the batch reset it,
+   *     or when the session has no cursor message stored, or when the new
+   *     cursor message is at or after the stored one in `seq` — so two hooks
+   *     that overlap, the older one arriving last, cannot wind the session back
+   *     to a message the newer one had already passed.
+   *   * `cursorReset` surfaces as the `CURSOR_RESET` warning, never silently.
+   */
   ingest(batch: IngestBatch): Promise<IngestResult>;
   /** Read a session by the token that crossed the process boundary (AD-8). */
   readSession(token: SessionToken): Promise<ReadSessionResult>;

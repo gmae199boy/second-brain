@@ -44,6 +44,7 @@ export {
   storeContract,
   userStoreContract,
   type ConnectorSubject,
+  type ParserPair,
   type ParserSubject,
   type SessionStoreSubject,
 } from './contracts/index.js';

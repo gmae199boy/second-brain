@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import type { ParserCursor } from '../src/domain/session.js';
 import { formatSessionToken } from '../src/domain/session-token.js';
+import type { ParseResult } from '../src/ports/parser.js';
 import { ingestSession, type IngestSessionDependencies } from '../src/sessions/ingest.js';
 import { fixedClock } from '../src/testing/fakes/clock.js';
 import { sequenceIdGen } from '../src/testing/fakes/id-gen.js';
@@ -78,7 +80,7 @@ describe('sessions.ingest on a transcript nothing has read yet', () => {
       ok: true,
       session: TOKEN,
       created: true,
-      inserted: { messages: 3, toolNotes: 2 },
+      inserted: { messages: 4, toolNotes: 2 },
       warnings: [],
     });
 
@@ -91,12 +93,13 @@ describe('sessions.ingest on a transcript nothing has read yet', () => {
       userId: OWNER.id,
       machine: 'demo-machine',
       ingestSource: 'live',
-      // The tags are story 2.8's and `start_source` is 2.7's: a value invented
-      // now would be one they have to migrate away from.
+      // The tags are story 2.8's: a value invented now would be one it has to
+      // migrate away from. `start_source` is this story's, and the sample
+      // transcript says the harness started the session fresh.
       workspaceId: null,
       projectId: null,
       worktreeId: null,
-      startSource: null,
+      startSource: 'startup',
     });
     // The first utterance of the transcript, not the moment it was read (AD-13).
     expect(session?.startedAt).toEqual(new Date('2026-01-02T03:04:05.000Z'));
@@ -118,6 +121,7 @@ describe('sessions.ingest on a transcript nothing has read yet', () => {
       [0, 'msg-1'],
       [1, 'msg-2'],
       [2, 'msg-3'],
+      [3, 'msg-4'],
     ]);
   });
 
@@ -175,7 +179,7 @@ describe('sessions.ingest on a transcript it has already read', () => {
     });
     const snapshot = store.snapshot();
     expect(snapshot.sessions).toHaveLength(1);
-    expect(snapshot.messages).toHaveLength(3);
+    expect(snapshot.messages).toHaveLength(4);
     expect(snapshot.toolNotes).toHaveLength(2);
   });
 
@@ -196,11 +200,171 @@ describe('sessions.ingest on a transcript it has already read', () => {
     transcripts.write(PATH, memoryTranscript);
     const again = await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
 
-    expect(again).toMatchObject({ ok: true, created: false, inserted: { messages: 2 } });
+    expect(again).toMatchObject({ ok: true, created: false, inserted: { messages: 3 } });
     const read = await store.readSession(TOKEN);
     expect(read.ok).toBe(true);
     if (!read.ok) return;
-    expect(read.messages.map((message) => message.seq)).toEqual([0, 1, 2]);
+    expect(read.messages.map((message) => message.seq)).toEqual([0, 1, 2, 3]);
+  });
+});
+
+describe('sessions.ingest and the cursor it starts from', () => {
+  it('reads the stored cursor before the transcript and hands it to the parser', async () => {
+    const { deps, store } = await kit();
+    const seen: (ParserCursor | null | undefined)[] = [];
+    const inner = memoryParser();
+    const watched = {
+      ...inner,
+      parse(content: string, cursor?: ParserCursor | null) {
+        seen.push(cursor);
+        return inner.parse(content, cursor);
+      },
+    };
+    const deps2 = { ...deps, parsers: [watched] };
+
+    await ingestSession(deps2, { session: TOKEN, transcriptPath: PATH });
+    await ingestSession(deps2, { session: TOKEN, transcriptPath: PATH });
+
+    // The first read has nothing to start from; the second starts at the
+    // message the first one stopped at, which is the whole point of the order
+    // `findSession → read → parse` (AD-4).
+    const read = await store.readSession(TOKEN);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(seen[0]).toBeNull();
+    expect(seen[1]).toEqual(read.session.cursor);
+  });
+
+  it('hands over no cursor for a session another parser version read', async () => {
+    const { deps, store } = await kit();
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    const stored = await store.readSession(TOKEN);
+    expect(stored.ok).toBe(true);
+    if (!stored.ok) return;
+    expect(stored.session.cursor).not.toBeNull();
+
+    // The same session, read again by a parser whose rules have moved. The
+    // cursor it left means something else now — lines it dropped are messages
+    // under the new rules — so the transcript is read from the front again.
+    const seen: (ParserCursor | null | undefined)[] = [];
+    const inner = memoryParser({ version: '2' });
+    const next = {
+      ...inner,
+      parse(content: string, cursor?: ParserCursor | null) {
+        seen.push(cursor);
+        return inner.parse(content, cursor);
+      },
+    };
+
+    const again = await ingestSession(
+      { ...deps, parsers: [next] },
+      { session: TOKEN, transcriptPath: PATH },
+    );
+
+    expect(again.ok).toBe(true);
+    expect(seen).toEqual([null]);
+    // Reading it all again is idempotent, so nothing is inserted twice, and
+    // the session now records the version that read it (AD-4, AD-8).
+    expect(again).toMatchObject({ inserted: { messages: 0, toolNotes: 0 } });
+    expect(store.snapshot().sessions[0]?.parserVersion).toBe('2');
+  });
+
+  it('warns with CURSOR_RESET when the transcript no longer fits the cursor', async () => {
+    const { deps, store, transcripts } = await kit();
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    const before = await store.readSession(TOKEN);
+    expect(before.ok).toBe(true);
+
+    // What a compact or a fork does: the part the cursor fingerprinted is not
+    // what it was any more, so the parse starts at the front again.
+    transcripts.write(
+      PATH,
+      memoryTranscript.replace(
+        'Where did we leave the import notes?',
+        'Where did we put the import notes?',
+      ),
+    );
+    const again = await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
+
+    expect(again).toMatchObject({ ok: true, warnings: ['CURSOR_RESET'] });
+    // Degraded but successful: nothing already stored changed, because ingest
+    // is idempotent on the harness message id (AD-8).
+    const after = await store.readSession(TOKEN);
+    expect(after.ok).toBe(true);
+    if (!after.ok || !before.ok) return;
+    expect(after.messages).toEqual(before.messages);
+  });
+
+  it('ingests a batch of tool notes alone into a session that is already there', async () => {
+    // A read that found no new message but did find the answer to a call the
+    // last read left waiting. There is no row to create and nothing to
+    // attribute, and the notes belong to messages the session already holds.
+    const { deps, store } = await kit();
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    const notesOnly = {
+      ...memoryParser(),
+      parse: (): ParseResult => ({
+        ok: true,
+        parserVersion: '1',
+        messages: [],
+        toolNotes: [
+          { harnessMessageId: 'msg-2', ordinal: 2, tool: 'read', target: 'notes/open.md', ok: false },
+        ],
+        cursor: null,
+        cursorReset: false,
+        startSource: null,
+      }),
+    };
+
+    const result = await ingestSession(
+      { ...deps, parsers: [notesOnly] },
+      { session: TOKEN, transcriptPath: PATH },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      created: false,
+      inserted: { messages: 0, toolNotes: 1 },
+    });
+    expect(store.snapshot().toolNotes).toHaveLength(3);
+  });
+
+  it('creates no session for a batch of tool notes with no session to put them in', async () => {
+    const { deps, store } = await kit();
+    const notesOnly = {
+      ...memoryParser(),
+      parse: (): ParseResult => ({
+        ok: true,
+        parserVersion: '1',
+        messages: [],
+        toolNotes: [
+          { harnessMessageId: 'msg-2', ordinal: 0, tool: 'read', target: 'notes/open.md', ok: true },
+        ],
+        cursor: null,
+        cursorReset: false,
+        startSource: null,
+      }),
+    };
+
+    const result = await ingestSession(
+      { ...deps, parsers: [notesOnly] },
+      { session: TOKEN, transcriptPath: PATH },
+    );
+
+    // A session row created for notes alone would be a session with no
+    // conversation in it, and no `started_at` that is true.
+    expect(result).toMatchObject({ ok: true, inserted: { messages: 0, toolNotes: 0 } });
+    expect(store.snapshot().sessions).toEqual([]);
+  });
+
+  it('passes the start source the transcript carried to the session row', async () => {
+    const { deps, store } = await kit({
+      content: memoryTranscript.replace('"startSource":"startup"', '"startSource":"compact"'),
+    });
+
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+
+    expect(store.snapshot().sessions[0]?.startSource).toBe('compact');
   });
 });
 

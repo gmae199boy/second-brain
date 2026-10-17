@@ -21,7 +21,32 @@ export interface ParserSubject {
   readable: readonly string[];
   /** Content it must refuse. May be empty. */
   unreadable: readonly string[];
+  /**
+   * A transcript and the same transcript with more of the session appended:
+   * what a second hook on a longer file hands over. `before`'s cursor must
+   * still fit `after`, so the incremental read of `after` is the tail of its
+   * whole read. May be empty for a parser with no incremental read.
+   */
+  grown: readonly ParserPair[];
+  /**
+   * A transcript and the same session with something in front of the part the
+   * cursor named changed — a compact, a fork, a file rewritten underneath us.
+   * `before`'s cursor must *not* fit `after`.
+   */
+  rewritten: readonly ParserPair[];
 }
+
+/** Two states of one transcript, the second read with the first one's cursor. */
+export interface ParserPair {
+  before: string;
+  after: string;
+}
+
+/** A cursor no content can match, for the "somebody else's cursor" case. */
+const FOREIGN_CURSOR = {
+  lastHarnessMessageId: 'no-message-carries-this-id',
+  fingerprint: '0000000000000000000000000000000000000000000000000000000000000000',
+};
 
 /**
  * The parser contract. The heart of it is determinism: the output is a pure
@@ -90,6 +115,21 @@ export function parserContract(): ContractCase<ParserSubject>[] {
             );
             assertValidDate(message.occurredAt, 'a message must carry when it was uttered');
             assertNonEmptyString(message.body, 'a message must carry a body');
+            // The tracking of migration 0004, as a shape: the branch and the
+            // cwd are whatever the line carried or `null`, never missing, and
+            // the report mark is a decision the parser has already made.
+            assertTrue(
+              message.gitBranch === null || typeof message.gitBranch === 'string',
+              'a message must carry the branch of its line, or null',
+            );
+            assertTrue(
+              message.cwd === null || typeof message.cwd === 'string',
+              'a message must carry the cwd of its line, or null',
+            );
+            assertTrue(
+              typeof message.isSubagentReport === 'boolean',
+              'a message must say whether it is a subagent report',
+            );
           }
         }
       });
@@ -179,6 +219,161 @@ export function parserContract(): ContractCase<ParserSubject>[] {
               result.parserVersion,
               parser.version,
               'the result must carry the version of the parser that produced it',
+            );
+          }
+        });
+      },
+    ),
+
+    contractCase<ParserSubject>(
+      'a parse with no cursor reads from the front and calls it no reset',
+      async (make) => {
+        await withSubject(make, async ({ parser, readable }) => {
+          for (const content of readable) {
+            const result = parser.parse(content);
+            assertOk(result, 'a readable transcript did not parse');
+            // Reading a transcript from the start is the normal first read of
+            // a session. Calling it a reset would make `CURSOR_RESET` a warning
+            // on every new session, and so a warning that means nothing (AD-4).
+            assertEqual(
+              result.cursorReset,
+              false,
+              'a parse that was given no cursor cannot have reset one',
+            );
+            assertEqual(
+              parser.parse(content, null),
+              result,
+              'a null cursor must read exactly what no cursor reads',
+            );
+            assertTrue(
+              result.startSource === null ||
+                result.startSource === 'startup' ||
+                result.startSource === 'resume' ||
+                result.startSource === 'clear' ||
+                result.startSource === 'compact' ||
+                result.startSource === 'fork',
+              `the start source must be one the domain names, or null, got ${String(result.startSource)}`,
+            );
+          }
+        });
+      },
+    ),
+
+    contractCase<ParserSubject>(
+      'a cursor the content still fits is read from, and nothing before it',
+      async (make) => {
+        await withSubject(make, async ({ parser, grown }) => {
+          for (const { before, after } of grown) {
+            const first = parser.parse(before);
+            assertOk(first, 'the shorter transcript did not parse');
+            const { cursor } = first;
+            if (cursor === null) {
+              fail('the `before` of a grown pair must carry a cursor to read from');
+            }
+
+            const whole = parser.parse(after);
+            assertOk(whole, 'the longer transcript did not parse');
+            const incremental = parser.parse(after, cursor);
+            assertOk(incremental, 'the longer transcript did not parse with a cursor');
+
+            assertEqual(
+              incremental.cursorReset,
+              false,
+              'a cursor the content still carries is not a reset',
+            );
+            const from = whole.messages.findIndex(
+              (message) => message.harnessMessageId === cursor.lastHarnessMessageId,
+            );
+            assertTrue(
+              from >= 0,
+              'the whole read must still carry the message the cursor named',
+            );
+            // The point of the incremental read: what it reports is exactly the
+            // tail of the whole read, from the cursor's own message on. Nothing
+            // is skipped and nothing is read twice differently, so a store that
+            // gets either lands in the same place (AD-4).
+            assertEqual(
+              incremental.messages,
+              whole.messages.slice(from),
+              'an incremental read must report the whole read from the cursor message on',
+            );
+            const ids = new Set(
+              incremental.messages.map((message) => message.harnessMessageId),
+            );
+            assertEqual(
+              incremental.toolNotes,
+              whole.toolNotes.filter((note) => ids.has(note.harnessMessageId)),
+              'an incremental read must report the notes of the messages it carried',
+            );
+            assertEqual(
+              incremental.cursor,
+              whole.cursor,
+              'both reads of one content end at the same place',
+            );
+            assertEqual(
+              incremental.startSource,
+              whole.startSource,
+              'the start source answers for the content, so a cursor cannot change it',
+            );
+          }
+        });
+      },
+    ),
+
+    contractCase<ParserSubject>(
+      'a cursor the content does not fit reads from the front and says so',
+      async (make) => {
+        await withSubject(make, async ({ parser, readable, rewritten }) => {
+          const pairs = [
+            ...rewritten.map(({ before, after }) => {
+              const first = parser.parse(before);
+              if (!first.ok || first.cursor === null) {
+                fail('the `before` of a rewritten pair must parse and carry a cursor');
+              }
+              return { content: after, cursor: first.cursor };
+            }),
+            // Somebody else's cursor: a message this content never carried,
+            // which is what a compact or a fork leaves behind.
+            ...readable.map((content) => ({ content, cursor: FOREIGN_CURSOR })),
+          ];
+
+          for (const { content, cursor } of pairs) {
+            const whole = parser.parse(content);
+            assertOk(whole, 'a readable transcript did not parse');
+            const result = parser.parse(content, cursor);
+            assertOk(result, 'a readable transcript did not parse with a stale cursor');
+
+            assertEqual(
+              result.cursorReset,
+              true,
+              'a cursor the content does not fit must be reported as a reset',
+            );
+            // And the read is the whole content, because that is the only
+            // answer left: the store is idempotent, so re-reading what it
+            // already holds inserts nothing (AD-4).
+            assertEqual(
+              { ...result, cursorReset: false },
+              whole,
+              'a reset parse must report what a parse from the front reports',
+            );
+          }
+        });
+      },
+    ),
+
+    contractCase<ParserSubject>(
+      'the same content and cursor parse to the same result twice',
+      async (make) => {
+        await withSubject(make, async ({ parser, grown, rewritten }) => {
+          for (const { before, after } of [...grown, ...rewritten]) {
+            const first = parser.parse(before);
+            assertOk(first, 'the `before` of a pair did not parse');
+            const { cursor } = first;
+            if (cursor === null) fail('the `before` of a pair must carry a cursor');
+            assertEqual(
+              parser.parse(after, cursor),
+              parser.parse(after, cursor),
+              'parsing the same content with the same cursor gave two results',
             );
           }
         });

@@ -14,6 +14,7 @@ import {
   sampleIngestBatch,
   sampleSelfUserInput,
   sampleSessionId,
+  sampleSessionKey,
   sampleSessionToken,
   unknownSessionToken,
 } from '../fixtures.js';
@@ -289,7 +290,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
 
           // What a compact or a fork does: the messages that are already
           // stored come back with something new in front of them.
-          const stored = sampleIngestBatch({ only: ['msg-2', 'msg-3'] });
+          const stored = sampleIngestBatch({ only: ['msg-2', 'msg-3', 'msg-4'] });
           assertOk(await store.ingest(stored), 'the first ingest failed');
           const before = await store.readSession(sampleSessionToken);
           assertOk(before, 'the session could not be read after the first ingest');
@@ -359,6 +360,182 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
             read.session.ingestedAt,
             batch.tracking.ingestedAt,
             'the session must record the instant the batch carried, not one of its own (AD-13)',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
+      'ingest keeps the branch and the subagent-report mark of every message',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
+          const batch = sampleIngestBatch();
+          assertOk(await store.ingest(batch), 'ingest failed');
+
+          const read = await store.readSession(sampleSessionToken);
+          assertOk(read, 'the ingested session could not be read');
+          // Both columns of migration 0004, as the batch carried them: the
+          // branch exactly as the line had it, nulls included, and the mark on
+          // the one message that is a delegated run's report.
+          assertEqual(
+            read.messages.map((message) => [
+              message.harnessMessageId,
+              message.gitBranch,
+              message.isSubagentReport,
+            ]),
+            batch.messages.map((message) => [
+              message.harnessMessageId,
+              message.gitBranch,
+              message.isSubagentReport,
+            ]),
+            'the stored branch or report mark is not the one the batch carried',
+          );
+          assertTrue(
+            batch.messages.some((message) => message.isSubagentReport),
+            'the session fixture must carry a subagent report, or this proves nothing',
+          );
+          // `cwd` travels on the parsed message and is tagged onto the session
+          // by story 2.8; no message row keeps it (migration 0004).
+          for (const message of read.messages) {
+            assertTrue(
+              !Object.hasOwn(message, 'cwd'),
+              'a stored message must not keep the cwd of its line',
+            );
+          }
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
+      'ingest records the start source the batch carried and keeps it when it carries none',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          // Created knowing nothing about the start, which is the state of a
+          // session whose first read saw no `SessionStart` attachment.
+          assertOk(
+            await store.ensureSession(sampleEnsureSessionInput({ startSource: null })),
+            'ensureSession failed',
+          );
+
+          assertOk(
+            await store.ingest(sampleIngestBatch({ tracking: { startSource: 'resume' } })),
+            'the first ingest failed',
+          );
+          const learned = await store.readSession(sampleSessionToken);
+          assertOk(learned, 'the session could not be read after the first ingest');
+          assertEqual(
+            learned.session.startSource,
+            'resume',
+            'a batch that carries a start source must record it',
+          );
+
+          assertOk(
+            await store.ingest(
+              sampleIngestBatch({ idStart: 300, tracking: { startSource: null } }),
+            ),
+            'the second ingest failed',
+          );
+          const kept = await store.readSession(sampleSessionToken);
+          assertOk(kept, 'the session could not be read after the second ingest');
+          // A read that saw no attachment knows nothing about the start. Its
+          // `null` must not erase what an earlier read did know.
+          assertEqual(
+            kept.session.startSource,
+            'resume',
+            'a batch with no start source must leave the stored one alone',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
+      'the cursor does not go backwards unless the parse was reset',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
+
+          const whole = sampleIngestBatch();
+          assertOk(await store.ingest(whole), 'the first ingest failed');
+          const ahead = await store.readSession(sampleSessionToken);
+          assertOk(ahead, 'the session could not be read after the first ingest');
+          assertEqual(
+            ahead.session.cursor,
+            whole.tracking.cursor,
+            'the session did not advance to the cursor of the batch',
+          );
+
+          // An older hook, committing last: it read less of the same transcript,
+          // so its cursor names a message the stored one has already passed.
+          const behind = sampleIngestBatch({ idStart: 400, only: ['msg-1', 'msg-2'] });
+          assertOk(await store.ingest(behind), 'the overlapping ingest failed');
+          const after = await store.readSession(sampleSessionToken);
+          assertOk(after, 'the session could not be read after the overlapping ingest');
+          assertEqual(
+            after.session.cursor,
+            whole.tracking.cursor,
+            'an older batch must not wind the cursor back to a message already passed',
+          );
+
+          // Unless the parse was reset: then the front of the transcript is not
+          // what it was, and the batch's cursor is the only one that still
+          // describes the file (AD-4).
+          const reset = sampleIngestBatch({
+            idStart: 500,
+            only: ['msg-1', 'msg-2'],
+            tracking: { cursorReset: true },
+          });
+          assertOk(await store.ingest(reset), 'the reset ingest failed');
+          const moved = await store.readSession(sampleSessionToken);
+          assertOk(moved, 'the session could not be read after the reset ingest');
+          assertEqual(
+            moved.session.cursor,
+            reset.tracking.cursor,
+            'a reset parse must be allowed to move the cursor back',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
+      'findSession answers with the row alone, or null for a key nobody stored',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          const missing = await store.findSession(sampleSessionKey);
+          assertOk(missing, 'findSession failed for a key nobody stored');
+          // A value, not a failure: that is the state of every session before
+          // its first ingest, and the caller's next move is to read the whole
+          // transcript rather than to catch anything.
+          assertEqual(
+            missing.session,
+            null,
+            'findSession must answer null for a key no session has',
+          );
+
+          const created = await store.ensureSession(sampleEnsureSessionInput());
+          assertOk(created, 'ensureSession failed');
+          const found = await store.findSession(sampleSessionKey);
+          assertOk(found, 'findSession failed for a key that is stored');
+          assertEqual(
+            found.session,
+            created.session,
+            'findSession must answer with the row ensureSession made',
+          );
+
+          // And it carries the cursor, which is the whole reason it exists: the
+          // next parse starts where the last one stopped (AD-4).
+          const batch = sampleIngestBatch();
+          assertOk(await store.ingest(batch), 'ingest failed');
+          const tracked = await store.findSession(sampleSessionKey);
+          assertOk(tracked, 'findSession failed after an ingest');
+          assertEqual(
+            tracked.session?.cursor,
+            batch.tracking.cursor,
+            'findSession must carry the cursor the last batch left',
           );
         });
       },

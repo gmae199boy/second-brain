@@ -5,6 +5,7 @@ import {
   sampleEnsureSessionInput,
   sampleIngestBatch,
   sampleSelfUserInput,
+  sampleSessionKey,
   sampleSessionToken,
   sessionStoreContract,
   type SessionStoreSubject,
@@ -75,7 +76,7 @@ describe('the SQLite session store and the columns behind it', () => {
       const row = opened.connection.database
         .prepare(
           `select started_at, ingested_at, last_harness_message_id, cursor_fingerprint,
-                  parser_version, ended_at
+                  parser_version, ended_at, start_source
              from sessions`,
         )
         .get();
@@ -85,17 +86,23 @@ describe('the SQLite session store and the columns behind it', () => {
         last_harness_message_id: batch.tracking.cursor?.lastHarnessMessageId,
         cursor_fingerprint: batch.tracking.cursor?.fingerprint,
         parser_version: batch.tracking.parserVersion,
-        // Story 2.7's: nothing tells us when a session ended yet (AD-6).
+        start_source: batch.tracking.startSource,
+        // Nothing tells us when a session ended yet (AD-6).
         ended_at: null,
       });
       expect(
         opened.connection.database
-          .prepare('select seq, role from messages order by seq')
+          .prepare(
+            'select seq, role, git_branch, is_subagent_report from messages order by seq',
+          )
           .all(),
       ).toEqual([
-        { seq: 0, role: 'user' },
-        { seq: 1, role: 'assistant' },
-        { seq: 2, role: 'user' },
+        // The branch exactly as the line carried it, and the report mark as the
+        // integer SQLite stores a boolean in (migration 0004).
+        { seq: 0, role: 'user', git_branch: 'main', is_subagent_report: 0 },
+        { seq: 1, role: 'assistant', git_branch: 'main', is_subagent_report: 0 },
+        { seq: 2, role: 'user', git_branch: 'topic/notes', is_subagent_report: 0 },
+        { seq: 3, role: 'assistant', git_branch: 'topic/notes', is_subagent_report: 1 },
       ]);
     } finally {
       await opened.connection.close();
@@ -183,8 +190,47 @@ describe('the SQLite session store and the columns behind it', () => {
         ok: false,
         code: 'DB_UNAVAILABLE',
       });
+      expect(await store.findSession(sampleSessionKey)).toMatchObject({
+        ok: false,
+        code: 'DB_UNAVAILABLE',
+      });
     } finally {
       await store.close();
+    }
+  });
+
+  it('refuses a report mark that is neither 0 nor 1', async () => {
+    // The `check` of migration 0004 is what keeps the column to a boolean, so
+    // nothing but this code can put a third value in it.
+    const path = await migratedPath();
+    const store = sqliteStore({ path });
+    try {
+      expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
+      expect((await store.ensureSession(sampleEnsureSessionInput())).ok).toBe(true);
+      expect((await store.ingest(sampleIngestBatch())).ok).toBe(true);
+    } finally {
+      await store.close();
+    }
+
+    const opened = openSqlite({ path, busyTimeoutMs: 3000 });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    try {
+      const sessionId = String(
+        opened.connection.database.prepare('select id from sessions').get()?.id,
+      );
+      expect(() =>
+        opened.connection.database
+          .prepare(
+            `insert into messages (id, session_id, harness_message_id, seq, role, model,
+                                   body, occurred_at, git_branch, is_subagent_report)
+                  values (?, ?, 'msg-9', 9, 'user', null, 'a message with a third value',
+                          '2026-01-02T03:04:05.000Z', 'main', 2)`,
+          )
+          .run('01940000-0000-7000-8000-0000000009fe', sessionId),
+      ).toThrow(/CHECK/i);
+    } finally {
+      await opened.connection.close();
     }
   });
 });

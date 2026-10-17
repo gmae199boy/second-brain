@@ -24,6 +24,15 @@ const installPath = fileURLToPath(new URL('../dist/install.js', import.meta.url)
 const FIXTURE = fileURLToPath(
   new URL('../../../packages/claude-code/test/fixtures/two-turns.jsonl', import.meta.url),
 );
+/** The whole-session fixture: reports, tool calls, a compact, a branch change. */
+const SESSION_FIXTURE = fileURLToPath(
+  new URL('../../../packages/claude-code/test/fixtures/full-session.jsonl', import.meta.url),
+);
+/** How many lines of it end with its fifth message. */
+const SESSION_HALF_LINES = 25;
+/** The markers the session fixture puts in every tool output and every image. */
+const TOOL_OUTPUT = 'TOOL-OUTPUT-MUST-NOT-BE-STORED';
+const BASE64 = 'QkFTRTY0TVVTVE5PVEJFU1RPUkVE';
 
 interface Run {
   code: number | null;
@@ -169,15 +178,46 @@ function storedMessages(path: string): { seq: number; role: string; body: string
   }
 }
 
+/** Every tool note, in the order a reader walks the conversation. */
+function storedToolNotes(
+  path: string,
+): { tool: string; target: string; ok: number }[] {
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    return database
+      .prepare(
+        `select n.tool, n.target, n.ok
+           from tool_notes n
+           left join messages m
+             on m.session_id = n.session_id
+            and m.harness_message_id = n.harness_message_id
+          order by m.seq is null, m.seq, n.ordinal`,
+      )
+      .all() as { tool: string; target: string; ok: number }[];
+  } finally {
+    database.close();
+  }
+}
+
 function databaseIn(home: string): string {
   return join(home, 'brain.db');
+}
+
+/** The session fixture in this test's own folder, whole or only its front. */
+async function sessionTranscriptIn(home: string, lines?: number): Promise<string> {
+  const path = join(home, 'session.jsonl');
+  const whole = await readFile(SESSION_FIXTURE, 'utf8');
+  const text =
+    lines === undefined ? whole : `${whole.split('\n').slice(0, lines).join('\n')}\n`;
+  await writeFile(path, text, 'utf8');
+  return path;
 }
 
 describe('brain sessions ingest claude-code', () => {
   beforeAll(async () => {
     // The binary and the installer are what these tests run, so a stale build
     // would make every one of them lie.
-    for (const path of [binPath, installPath, FIXTURE]) {
+    for (const path of [binPath, installPath, FIXTURE, SESSION_FIXTURE]) {
       await readFile(path);
     }
   });
@@ -199,8 +239,8 @@ describe('brain sessions ingest claude-code', () => {
     expect(envelope.data).toEqual({
       session: `claude-code:${HARNESS_SESSION}`,
       created: true,
-      // Tool notes are story 2.7's, so the count is there and is zero.
-      inserted: { messages: 4, toolNotes: 0 },
+      // One `Read`, which the fixture's one tool call is.
+      inserted: { messages: 4, toolNotes: 1 },
     });
     expect(envelope.warnings).toEqual([]);
 
@@ -384,6 +424,147 @@ describe('brain sessions ingest claude-code', () => {
       inserted: { messages: 0, toolNotes: 0 },
     });
     expect(rowCounts(databaseIn(home))['sessions']).toBe(0);
+  });
+});
+
+describe('brain sessions ingest claude-code on a whole session', () => {
+  it('reads what is new, then says CURSOR_RESET, over one session in order', async () => {
+    // The acceptance sequence, in one brain and one session: the transcript as
+    // it stood halfway through, then the whole of it, then the same file with a
+    // line in front of the cursor's own changed.
+    const home = await installedHome();
+    const transcript = await sessionTranscriptIn(home, SESSION_HALF_LINES);
+    const payload = stopPayload(transcript);
+
+    const first = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      payload,
+    );
+    expect(first.code).toBe(0);
+    expect((JSON.parse(first.stdout) as Envelope).data).toMatchObject({
+      created: true,
+      inserted: { messages: 5, toolNotes: 3 },
+    });
+    const half = storedMessages(databaseIn(home));
+
+    await sessionTranscriptIn(home);
+    const second = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      payload,
+    );
+
+    expect(second.code).toBe(0);
+    const grown = JSON.parse(second.stdout) as Envelope;
+    expect(grown.warnings).toEqual([]);
+    expect(grown.data).toMatchObject({
+      created: false,
+      // Only what the rest of the file added: the read started at the message
+      // the first one stopped at.
+      inserted: { messages: 5, toolNotes: 1 },
+    });
+    const whole = storedMessages(databaseIn(home));
+    expect(whole.map((message) => message.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(whole.slice(0, half.length)).toEqual(half);
+    expect(storedToolNotes(databaseIn(home))).toEqual([
+      { tool: 'Read', target: 'notes/import.md', ok: 1 },
+      { tool: 'Bash', target: 'wc -l notes/import.md', ok: 0 },
+      { tool: 'Agent', target: 'Summarise the notes folder', ok: 1 },
+      { tool: 'Agent', target: 'Check the links in the notes', ok: 1 },
+    ]);
+
+    // A compact, a fork, a transcript rewritten underneath us: the part the
+    // cursor fingerprinted is not what it was, so the parse starts at the front.
+    await writeFile(
+      transcript,
+      (await readFile(SESSION_FIXTURE, 'utf8')).replace(
+        'Can you check the import notes and summarise them?',
+        'Can you check the import notes, please?',
+      ),
+      'utf8',
+    );
+    const third = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      payload,
+    );
+
+    expect(third.code).toBe(0);
+    const reset = JSON.parse(third.stdout) as Envelope;
+    // Degraded but successful, and never silent (Conventions).
+    expect(reset.ok).toBe(true);
+    expect(reset.warnings).toEqual(['CURSOR_RESET']);
+    expect(reset.data).toMatchObject({ inserted: { messages: 0, toolNotes: 0 } });
+    // Not one number and not one body moved: everything the reset read saw
+    // again is already stored, and ingest is idempotent on the harness id
+    // (AD-8).
+    expect(storedMessages(databaseIn(home))).toEqual(whole);
+    expect(whole[0]?.body).toBe('Can you check the import notes and summarise them?');
+  });
+
+  it('keeps no tool output and no pasted image anywhere in the database', async () => {
+    const home = await installedHome();
+    const transcript = await sessionTranscriptIn(home);
+
+    expect(
+      (await runBrain(['sessions', 'ingest', 'claude-code'], home, stopPayload(transcript)))
+        .code,
+    ).toBe(0);
+
+    const text = [
+      ...storedMessages(databaseIn(home)).map((message) => message.body),
+      ...storedToolNotes(databaseIn(home)).map((note) => `${note.tool} ${note.target}`),
+    ].join('\n');
+    expect(await readFile(transcript, 'utf8')).toContain(TOOL_OUTPUT);
+    expect(text).not.toContain(TOOL_OUTPUT);
+    expect(text).not.toContain(BASE64);
+    expect(text).not.toContain('<local-command-stdout>');
+    expect(text).not.toContain('<bash-stdout>');
+  });
+
+  it('marks the two reports of delegated runs and stores none of their conversation', async () => {
+    const home = await installedHome();
+    const transcript = await sessionTranscriptIn(home);
+
+    expect(
+      (await runBrain(['sessions', 'ingest', 'claude-code'], home, stopPayload(transcript)))
+        .code,
+    ).toBe(0);
+
+    const database = new DatabaseSync(databaseIn(home), { readOnly: true });
+    try {
+      expect(
+        database
+          .prepare(
+            `select seq, role, model, git_branch from messages
+              where is_subagent_report = 1 order by seq`,
+          )
+          .all(),
+      ).toEqual([
+        { seq: 4, role: 'assistant', model: null, git_branch: 'main' },
+        { seq: 8, role: 'assistant', model: null, git_branch: 'feature/notes' },
+      ]);
+      // The subagent's own turns are a sidechain and never messages of this
+      // session: the final report is the whole of what a delegated run leaves.
+      expect(
+        database
+          .prepare(`select count(*) as rows from messages where body like '%folder holds four%'`)
+          .get(),
+      ).toEqual({ rows: 1 });
+      expect(
+        database
+          .prepare(`select count(*) as rows from messages where body like '%read every file%'`)
+          .get(),
+      ).toEqual({ rows: 0 });
+      // And the session learned why the harness started it, from the last
+      // `SessionStart` attachment in the file.
+      expect(database.prepare('select start_source from sessions').get()).toEqual({
+        start_source: 'compact',
+      });
+    } finally {
+      database.close();
+    }
   });
 });
 

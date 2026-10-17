@@ -5,6 +5,7 @@ export type {
   EnsureSelfUserResult,
   EnsureSessionInput,
   EnsureSessionResult,
+  FindSessionResult,
   HealthStore,
   IngestCounts,
   IngestResult,

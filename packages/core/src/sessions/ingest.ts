@@ -3,6 +3,7 @@ import type {
   IngestMessage,
   IngestToolNote,
 } from '../domain/ingest-batch.js';
+import type { ParserCursor, Session } from '../domain/session.js';
 import {
   parseSessionToken,
   type SessionKey,
@@ -66,14 +67,22 @@ export interface IngestSessionDependencies {
  *
  * The order is the whole of the use case, and it is this order on purpose:
  *
- *   token → parser → read → parse → owner → ensure → ingest
+ *   token → parser → findSession → read → parse → owner → ensure → ingest
  *
  * Reading and parsing come before anything is written, because they are the
  * slow part and a write transaction that waited on a disk would hold the one
- * SQLite writer for as long as the file takes (AD-7). The session row is
- * created only once there is at least one message to put in it — a transcript
- * with no conversation in it yet is the usual state of a session's first
- * seconds, and a row for it would be a session that never happened.
+ * SQLite writer for as long as the file takes (AD-7). `findSession` comes
+ * before the read because what it brings back is the cursor the parse needs:
+ * the message the last read stopped at, so this one can start there instead of
+ * at the front of a transcript that only grows (AD-4). It is a read of one row
+ * and takes no lock.
+ *
+ * The session row is created only once there is at least one message to put in
+ * it — a transcript with no conversation in it yet is the usual state of a
+ * session's first seconds, and a row for it would be a session that never
+ * happened. A batch of tool notes with no messages is the one case that still
+ * goes in: the session is already there, so there is nothing to create, and the
+ * notes belong to messages it already holds.
  *
  * Every id and every instant is decided here and handed over: the store mints
  * nothing and reads no clock (AD-8, AD-13), so the same batch spooled and
@@ -112,15 +121,28 @@ export async function ingestSession(
     };
   }
 
+  // The stored cursor, before the file is read: it is what lets the parse start
+  // where the last one stopped (AD-4). A session nobody has ingested yet comes
+  // back as `null`, which is a value and not a failure.
+  const found = await store.findSession(key);
+  if (!found.ok) return found;
+  const stored = found.session;
+
   const read = await transcripts.read(input.transcriptPath);
   if (!read.ok) return read;
 
-  const parsed = parser.parse(read.content);
+  // A cursor is only worth anything to the parser that made it. A session read
+  // under an older parser version is read again from the front, because the
+  // rules that decided what a message is have moved: lines the old version
+  // dropped are messages now, and starting at its cursor would leave them
+  // behind for good. Re-reading inserts nothing that is already stored (AD-8).
+  const parsed = parser.parse(read.content, cursorFor(stored, parser.version));
   if (!parsed.ok) return parsed;
 
-  // No conversation yet: no row, nothing inserted, and no failure either. The
-  // Stop hook of a turn whose last answer has not been flushed arrives here.
-  if (parsed.messages.length === 0) {
+  // Nothing to put anywhere: no row, nothing inserted, and no failure either.
+  // The Stop hook of a turn whose last answer has not been flushed arrives
+  // here, and so does every hook of a session's first seconds.
+  if (parsed.messages.length === 0 && (stored === null || parsed.toolNotes.length === 0)) {
     return {
       ok: true,
       session: input.session,
@@ -151,32 +173,41 @@ export async function ingestSession(
     id: idGen.next(),
   }));
 
-  const ensured = await store.ensureSession({
-    id: idGen.next(),
-    key,
-    userId: owner.user.id,
-    machine,
-    // When the session's first message was uttered. An existing row keeps the
-    // `started_at` it already has.
-    startedAt: firstOccurredAt(messages),
-    ingestSource: 'live',
-    // The tags are story 2.8's and `start_source` is story 2.7's: a value
-    // invented here would be one they have to migrate away from.
-    startSource: null,
-    workspaceId: null,
-    projectId: null,
-    worktreeId: null,
-  });
-  if (!ensured.ok) return ensured;
+  // A batch with no messages is one of tool notes alone, and only for a session
+  // that is already there — so there is nothing to create and no `started_at`
+  // to propose. Everything else goes through find-or-create (AD-12).
+  let created = false;
+  if (messages.length > 0) {
+    const ensured = await store.ensureSession({
+      id: idGen.next(),
+      key,
+      userId: owner.user.id,
+      machine,
+      // When the session's first message was uttered. An existing row keeps the
+      // `started_at` it already has.
+      startedAt: firstOccurredAt(messages),
+      ingestSource: 'live',
+      // Why the harness started this session, when the transcript said so. An
+      // existing row takes it from the batch instead, which is what lets a
+      // session created by an earlier read still learn its start source.
+      startSource: parsed.startSource,
+      // The tags are story 2.8's: a value invented here would be one it has to
+      // migrate away from.
+      workspaceId: null,
+      projectId: null,
+      worktreeId: null,
+    });
+    if (!ensured.ok) return ensured;
+    created = ensured.created;
+  }
 
   const batch: IngestBatch = {
     key,
     tracking: {
       parserVersion: parsed.parserVersion,
       cursor: parsed.cursor,
-      // The cursor is story 2.7's; until then every read starts at the front,
-      // which is the normal case and not a reset of anything.
-      cursorReset: false,
+      cursorReset: parsed.cursorReset,
+      startSource: parsed.startSource,
       endedAt: null,
       ingestedAt,
     },
@@ -190,7 +221,7 @@ export async function ingestSession(
   return {
     ok: true,
     session: input.session,
-    created: ensured.created,
+    created,
     inserted: ingested.inserted,
     warnings: ingested.warnings,
   };
@@ -206,6 +237,24 @@ export async function ingestSession(
  * happened, and taking the minimum here would start the session at a message
  * that is not its first.
  */
+/**
+ * The cursor to hand the parser: the stored one, but only when this parser is
+ * the one that left it.
+ *
+ * A session read by an older version of the parser has a cursor whose meaning
+ * has changed — what counts as a message, and so where the read may begin, is
+ * the version's own rule. Handing it over would pin the session to the old
+ * reading for ever; `null` reads the transcript again from the front, which is
+ * idempotent and picks up everything the new rules keep (AD-4).
+ */
+function cursorFor(
+  stored: Session | null,
+  parserVersion: string,
+): ParserCursor | null {
+  if (stored === null || stored.parserVersion !== parserVersion) return null;
+  return stored.cursor;
+}
+
 function firstOccurredAt(messages: readonly IngestMessage[]): Date {
   const first = messages[0];
   if (first === undefined) {

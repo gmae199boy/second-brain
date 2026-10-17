@@ -4,10 +4,12 @@ import {
   parseSessionToken,
   SESSION_TOKEN_SEPARATOR,
 } from '../src/domain/session-token.js';
+import type { Session } from '../src/domain/session.js';
 import { BRAIN_MARKER, type ConnectResult, type Connector } from '../src/ports/connector.js';
 import type { Clock } from '../src/ports/clock.js';
 import type { IdGen } from '../src/ports/id-gen.js';
 import type { Embedder } from '../src/ports/embedder.js';
+import type { Parser } from '../src/ports/parser.js';
 import type { Reranker } from '../src/ports/reranker.js';
 import type { SchemaStore, UserStore } from '../src/ports/store.js';
 import {
@@ -117,12 +119,38 @@ describe('the schema contract against the memory schema store', () => {
   });
 });
 
-describe('the parser contract against the memory parser', () => {
-  const make = async (): Promise<ParserSubject> => ({
-    parser: memoryParser(),
+/** The sample transcript as it stood after its first `count` messages. */
+function memoryPrefix(count: number): string {
+  const parsed = JSON.parse(memoryTranscript) as Record<string, unknown>;
+  const messages = parsed['messages'] as unknown[];
+  return JSON.stringify({ ...parsed, messages: messages.slice(0, count) });
+}
+
+/** The same transcript with the body of a message in front of the cursor's changed. */
+function memoryRewritten(): string {
+  return memoryTranscript.replace(
+    'Where did we leave the import notes?',
+    'Where did we put the import notes?',
+  );
+}
+
+/** Everything the parser contract needs about the memory parser. */
+function parserSubject(parser = memoryParser()): ParserSubject {
+  return {
+    parser,
     readable: [memoryTranscript, JSON.stringify({ messages: [] })],
     unreadable: [unreadableTranscript, JSON.stringify({ notes: [] })],
-  });
+    // Two turns, then the whole conversation: what a second hook on a longer
+    // transcript hands over.
+    grown: [{ before: memoryPrefix(2), after: memoryTranscript }],
+    // And the same conversation with its front rewritten, which is what a
+    // compact or a fork leaves behind.
+    rewritten: [{ before: memoryPrefix(2), after: memoryRewritten() }],
+  };
+}
+
+describe('the parser contract against the memory parser', () => {
+  const make = async (): Promise<ParserSubject> => parserSubject();
 
   for (const testCase of parserContract()) {
     it(testCase.name, async () => {
@@ -427,6 +455,36 @@ describe('the contracts catch a wrong store', () => {
       'ingest warns with CURSOR_RESET when the parser read from the start',
     );
   });
+
+  it('catches a store that lets an older batch wind the cursor back', async () => {
+    const make = async (): Promise<SessionStoreSubject> => {
+      const inner = memoryStore();
+      const cursors = new Map<string, NonNullable<Session['cursor']>>();
+      return {
+        ...inner,
+        async ingest(batch) {
+          const result = await inner.ingest(batch);
+          if (result.ok && batch.tracking.cursor !== null) {
+            // The batch's cursor every time, whatever the session had: the
+            // next read would then parse a stretch of the transcript that is
+            // already stored (AD-4).
+            cursors.set(formatSessionToken(batch.key), batch.tracking.cursor);
+          }
+          return result;
+        },
+        async readSession(token) {
+          const result = await inner.readSession(token);
+          const wound = cursors.get(token);
+          if (!result.ok || wound === undefined) return result;
+          return { ...result, session: { ...result.session, cursor: wound } };
+        },
+      };
+    };
+
+    expect(await failedCases(sessionStoreContract(), make)).toContain(
+      'the cursor does not go backwards unless the parse was reset',
+    );
+  });
 });
 
 describe('the contracts catch a wrong schema store', () => {
@@ -475,31 +533,28 @@ describe('the contracts catch a wrong parser', () => {
   it('catches a parser that gives two messages the same harness id', async () => {
     const make = async (): Promise<ParserSubject> => {
       const inner = memoryParser();
-      return {
-        parser: {
-          harness: inner.harness,
-          version: inner.version,
-          parse(content) {
-            const result = inner.parse(content);
-            if (!result.ok) return result;
-            const first = result.messages[0];
-            if (first === undefined) return result;
-            // Every message under the first one's id. The harness message id is
-            // the whole of what identifies a message now that `seq` is the
-            // store's, so a store would take the rest for replays of the first
-            // and drop them without a word (AD-4, NFR-2).
-            return {
-              ...result,
-              messages: result.messages.map((message) => ({
-                ...message,
-                harnessMessageId: first.harnessMessageId,
-              })),
-            };
-          },
+      const wrong: Parser = {
+        harness: inner.harness,
+        version: inner.version,
+        parse(content, cursor) {
+          const result = inner.parse(content, cursor);
+          if (!result.ok) return result;
+          const first = result.messages[0];
+          if (first === undefined) return result;
+          // Every message under the first one's id. The harness message id is
+          // the whole of what identifies a message now that `seq` is the
+          // store's, so a store would take the rest for replays of the first
+          // and drop them without a word (AD-4, NFR-2).
+          return {
+            ...result,
+            messages: result.messages.map((message) => ({
+              ...message,
+              harnessMessageId: first.harnessMessageId,
+            })),
+          };
         },
-        readable: [memoryTranscript],
-        unreadable: [],
       };
+      return parserSubject(wrong);
     };
 
     expect(await failedCases(parserContract(), make)).toContain(
@@ -511,20 +566,17 @@ describe('the contracts catch a wrong parser', () => {
     const make = async (): Promise<ParserSubject> => {
       const inner = memoryParser();
       let calls = 0;
-      return {
-        parser: {
-          harness: inner.harness,
-          version: inner.version,
-          parse(content) {
-            calls += 1;
-            const result = inner.parse(content);
-            if (!result.ok) return result;
-            return { ...result, messages: result.messages.slice(0, calls) };
-          },
+      const wrong: Parser = {
+        harness: inner.harness,
+        version: inner.version,
+        parse(content, cursor) {
+          calls += 1;
+          const result = inner.parse(content, cursor);
+          if (!result.ok) return result;
+          return { ...result, messages: result.messages.slice(0, calls) };
         },
-        readable: [memoryTranscript],
-        unreadable: [],
       };
+      return parserSubject(wrong);
     };
 
     expect(await failedCases(parserContract(), make)).toContain(
@@ -535,22 +587,19 @@ describe('the contracts catch a wrong parser', () => {
   it('catches a parser that repeats a (message, ordinal) pair', async () => {
     const make = async (): Promise<ParserSubject> => {
       const inner = memoryParser();
-      return {
-        parser: {
-          harness: inner.harness,
-          version: inner.version,
-          parse(content) {
-            const result = inner.parse(content);
-            if (!result.ok) return result;
-            return {
-              ...result,
-              toolNotes: result.toolNotes.map((note) => ({ ...note, ordinal: 0 })),
-            };
-          },
+      const wrong: Parser = {
+        harness: inner.harness,
+        version: inner.version,
+        parse(content, cursor) {
+          const result = inner.parse(content, cursor);
+          if (!result.ok) return result;
+          return {
+            ...result,
+            toolNotes: result.toolNotes.map((note) => ({ ...note, ordinal: 0 })),
+          };
         },
-        readable: [memoryTranscript],
-        unreadable: [],
       };
+      return parserSubject(wrong);
     };
 
     expect(await failedCases(parserContract(), make)).toContain(
@@ -561,23 +610,65 @@ describe('the contracts catch a wrong parser', () => {
   it('catches a parser that throws instead of refusing', async () => {
     const make = async (): Promise<ParserSubject> => {
       const inner = memoryParser();
-      return {
-        parser: {
-          harness: inner.harness,
-          version: inner.version,
-          parse(content) {
-            const result = inner.parse(content);
-            if (!result.ok) throw new Error('cannot read this transcript');
-            return result;
-          },
+      const wrong: Parser = {
+        harness: inner.harness,
+        version: inner.version,
+        parse(content, cursor) {
+          const result = inner.parse(content, cursor);
+          if (!result.ok) throw new Error('cannot read this transcript');
+          return result;
         },
-        readable: [memoryTranscript],
-        unreadable: [unreadableTranscript],
       };
+      return parserSubject(wrong);
     };
 
     expect(await failedCases(parserContract(), make)).toContain(
       'content the parser cannot read fails as a value',
+    );
+  });
+
+  it('catches a parser whose incremental read leaves the cursor message out', async () => {
+    const make = async (): Promise<ParserSubject> => {
+      const inner = memoryParser();
+      const wrong: Parser = {
+        harness: inner.harness,
+        version: inner.version,
+        parse(content, cursor) {
+          const result = inner.parse(content, cursor);
+          if (!result.ok || cursor === undefined || cursor === null) return result;
+          // Starts *after* the cursor message instead of at it. The store would
+          // never see a message again -- which is fine until the cursor message
+          // is one whose tool notes arrived late, and then those notes point at
+          // a message the batch does not carry (AD-4).
+          return { ...result, messages: result.messages.slice(1) };
+        },
+      };
+      return parserSubject(wrong);
+    };
+
+    expect(await failedCases(parserContract(), make)).toContain(
+      'a cursor the content still fits is read from, and nothing before it',
+    );
+  });
+
+  it('catches a parser that reads from the front without saying it reset', async () => {
+    const make = async (): Promise<ParserSubject> => {
+      const inner = memoryParser();
+      const wrong: Parser = {
+        harness: inner.harness,
+        version: inner.version,
+        parse(content, cursor) {
+          const result = inner.parse(content, cursor);
+          // A reset nobody is told about: the session would look as though it
+          // had been read incrementally all along (Conventions).
+          return result.ok ? { ...result, cursorReset: false } : result;
+        },
+      };
+      return parserSubject(wrong);
+    };
+
+    expect(await failedCases(parserContract(), make)).toContain(
+      'a cursor the content does not fit reads from the front and says so',
     );
   });
 });
@@ -786,7 +877,7 @@ describe('session tokens', () => {
     const read = await store.readSession(sampleSessionToken);
     expect(read.ok).toBe(true);
     if (!read.ok) return;
-    expect(read.messages).toHaveLength(3);
+    expect(read.messages).toHaveLength(4);
     expect(read.toolNotes).toHaveLength(2);
 
     const missing = await store.readSession(unknownSessionToken);

@@ -4,6 +4,7 @@ import {
   parseSessionToken,
   type EnsureSessionInput,
   type EnsureSessionResult,
+  type FindSessionResult,
   type IngestBatch,
   type IngestResult,
   type Message,
@@ -52,6 +53,9 @@ interface MessageRow {
   model: string | null;
   body: string;
   occurred_at: string;
+  git_branch: string | null;
+  /** `integer` with a `check (x in (0, 1))`: SQLite has no boolean (0004). */
+  is_subagent_report: number;
 }
 
 interface ToolNoteRow {
@@ -126,6 +130,26 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
       return { ok: true, created, session: toSession(row) };
     },
 
+    async findSession(key: SessionKey): Promise<FindSessionResult> {
+      const opened = connect();
+      if (!opened.ok) {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      }
+
+      try {
+        const row = await readSessionRow(opened.connection.db, key);
+        // One row and none of its conversation: this is what `sessions.ingest`
+        // reads the cursor with, before it reads the transcript (AD-4).
+        return { ok: true, session: row === null ? null : toSession(row) };
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'DB_UNAVAILABLE',
+          message: `세션을 찾을 수 없습니다: ${describe(error)}`,
+        };
+      }
+    },
+
     async ingest(batch: IngestBatch): Promise<IngestResult> {
       const opened = connect();
       if (!opened.ok) {
@@ -164,12 +188,16 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
         for (const { message, occurredAt } of pending) {
           if (seen.has(message.harnessMessageId)) continue;
           seen.add(message.harnessMessageId);
+          // `cwd` is not among the columns on purpose: the parser reports it so
+          // story 2.8 can tag the session with the first message's one, and no
+          // message row keeps it (migration 0004).
           const inserted = await sql<{ id: string }>`
             insert into messages (id, session_id, harness_message_id, seq, role, model,
-                                  body, occurred_at)
+                                  body, occurred_at, git_branch, is_subagent_report)
                  values (${message.id}, ${session.id}, ${message.harnessMessageId},
                          ${nextSeq}, ${message.role}, ${message.model}, ${message.body},
-                         ${occurredAt})
+                         ${occurredAt}, ${message.gitBranch},
+                         ${message.isSubagentReport ? 1 : 0})
             on conflict (session_id, harness_message_id) do nothing
               returning id
           `.execute(held);
@@ -202,8 +230,18 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
                  ingested_at = ${ingestedAt}
            where id = ${session.id}
         `.execute(held);
+        // Only when the batch carries one: a read that saw no `SessionStart`
+        // attachment knows nothing about the start, and writing its `null` would
+        // erase what an earlier read did know.
+        if (batch.tracking.startSource !== null) {
+          await sql`
+            update sessions
+               set start_source = ${batch.tracking.startSource}
+             where id = ${session.id}
+          `.execute(held);
+        }
         const cursor = batch.tracking.cursor;
-        if (cursor !== null) {
+        if (cursor !== null && (await cursorMayMove(held, session, batch))) {
           await sql`
             update sessions
                set last_harness_message_id = ${cursor.lastHarnessMessageId},
@@ -261,7 +299,8 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
         }
 
         const messages = await sql<MessageRow>`
-          select id, session_id, harness_message_id, seq, role, model, body, occurred_at
+          select id, session_id, harness_message_id, seq, role, model, body, occurred_at,
+                 git_branch, is_subagent_report
             from messages
            where session_id = ${row.id}
            order by seq
@@ -294,6 +333,46 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
       }
     },
   };
+}
+
+/**
+ * Whether this batch's cursor may replace the stored one (port contract).
+ *
+ * Two hooks can overlap — one of them reading a longer transcript than the
+ * other, and the shorter read committing last. Taking its cursor would point
+ * the session at a message the other read had already passed, and the next read
+ * would parse a stretch of the transcript it has already stored. So the cursor
+ * moves only forward: a reset, a session with no cursor message among its rows,
+ * or a cursor message at or after the stored one in `seq`.
+ *
+ * It runs inside the same transaction as the inserts, so the `seq` it reads for
+ * the new cursor message is the one this batch just gave it.
+ */
+async function cursorMayMove(
+  held: Kysely<SqliteSchema>,
+  session: SessionRow,
+  batch: IngestBatch,
+): Promise<boolean> {
+  const cursor = batch.tracking.cursor;
+  if (cursor === null) return false;
+  const was = session.last_harness_message_id;
+  if (batch.tracking.cursorReset || was === null) return true;
+
+  const seqs = await sql<{ harness_message_id: string; seq: number }>`
+    select harness_message_id, seq
+      from messages
+     where session_id = ${session.id}
+       and harness_message_id in (${was}, ${cursor.lastHarnessMessageId})
+  `.execute(held);
+  const seqOf = (harnessMessageId: string): number | undefined =>
+    seqs.rows.find((row) => row.harness_message_id === harnessMessageId)?.seq;
+
+  const storedSeq = seqOf(was);
+  // The stored cursor names a message this session does not hold: nothing to
+  // compare against, so the batch's cursor is the better one.
+  if (storedSeq === undefined) return true;
+  const nextSeq = seqOf(cursor.lastHarnessMessageId);
+  return nextSeq !== undefined && nextSeq >= storedSeq;
 }
 
 /** The row for one session key, or `null`. The one place the key is spelled. */
@@ -374,6 +453,10 @@ function toMessage(row: MessageRow): Message {
     model: row.model,
     body: row.body,
     occurredAt: at(row.occurred_at, 'messages.occurred_at'),
+    // As the line carried it, nulls included: nothing normalises a branch
+    // (migration 0004).
+    gitBranch: row.git_branch,
+    isSubagentReport: row.is_subagent_report === 1,
   };
 }
 

@@ -3,6 +3,7 @@ import type { Message } from '../../domain/message.js';
 import type { Session } from '../../domain/session.js';
 import {
   formatSessionToken,
+  type SessionKey,
   type SessionToken,
 } from '../../domain/session-token.js';
 import type { ToolNote } from '../../domain/tool-note.js';
@@ -12,6 +13,7 @@ import type {
   EnsureSelfUserResult,
   EnsureSessionInput,
   EnsureSessionResult,
+  FindSessionResult,
   IngestResult,
   ReadSelfUserResult,
   ReadSessionResult,
@@ -130,6 +132,13 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       return { ok: true, created: true, session: { ...session } };
     },
 
+    async findSession(key: SessionKey): Promise<FindSessionResult> {
+      const existing = sessions.get(formatSessionToken(key));
+      // A key no session has is `null` and not a failure: that is the state of
+      // every session before its first ingest.
+      return { ok: true, session: existing === undefined ? null : { ...existing } };
+    },
+
     async ingest(batch: IngestBatch): Promise<IngestResult> {
       const token = formatSessionToken(batch.key);
       const session = sessions.get(token);
@@ -167,6 +176,11 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
           model: parsed.model,
           body: parsed.body,
           occurredAt: parsed.occurredAt,
+          gitBranch: parsed.gitBranch,
+          isSubagentReport: parsed.isSubagentReport,
+          // `cwd` is deliberately not here: the parser reports it and story 2.8
+          // tags the session with the first message's one, but no message row
+          // keeps it (migration 0004).
         });
         nextSeq += 1;
         insertedMessages += 1;
@@ -199,10 +213,14 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       // land in the same step as the rows (AD-7).
       sessions.set(token, {
         ...session,
-        cursor: batch.tracking.cursor ?? session.cursor,
+        cursor: nextCursor(session, batch, storedMessages),
         parserVersion: batch.tracking.parserVersion,
         endedAt: batch.tracking.endedAt ?? session.endedAt,
         ingestedAt: batch.tracking.ingestedAt,
+        // Only when the batch carries one: a read that saw no `SessionStart`
+        // attachment knows nothing about the start, and its `null` must not
+        // erase what an earlier read did know (port contract).
+        startSource: batch.tracking.startSource ?? session.startSource,
       });
 
       const warnings: StoreWarningCode[] = batch.tracking.cursorReset
@@ -253,4 +271,33 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       };
     },
   };
+}
+
+/**
+ * Where the session's cursor stands after this batch: the batch's own, unless
+ * that would wind the session back (port contract).
+ *
+ * Two hooks can overlap — one reading a longer transcript than the other, and
+ * the older one committing last. Taking the newer cursor every time would then
+ * point the session at a message the other read had already passed, and the
+ * next read would parse a stretch of transcript it has already stored. So the
+ * cursor is replaced only when the batch reset it, when the session has no
+ * cursor message among its rows, or when the batch's cursor message is at or
+ * after the stored one.
+ */
+function nextCursor(
+  session: Session,
+  batch: IngestBatch,
+  stored: readonly Message[],
+): Session['cursor'] {
+  const cursor = batch.tracking.cursor;
+  if (cursor === null) return session.cursor;
+  if (batch.tracking.cursorReset || session.cursor === null) return cursor;
+
+  const seqOf = (harnessMessageId: string): number | undefined =>
+    stored.find((message) => message.harnessMessageId === harnessMessageId)?.seq;
+  const was = seqOf(session.cursor.lastHarnessMessageId);
+  if (was === undefined) return cursor;
+  const now = seqOf(cursor.lastHarnessMessageId);
+  return now !== undefined && now >= was ? cursor : session.cursor;
 }

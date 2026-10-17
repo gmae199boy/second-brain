@@ -130,7 +130,8 @@ export function sampleIngestBatch(
     tracking: {
       parserVersion: parsed.parserVersion,
       cursor,
-      cursorReset: false,
+      cursorReset: parsed.cursorReset,
+      startSource: parsed.startSource,
       endedAt: null,
       ingestedAt: new Date('2026-01-02T03:06:00.000Z'),
       ...overrides.tracking,

@@ -1,5 +1,5 @@
 import type { MessageRole } from './message.js';
-import type { ParserCursor } from './session.js';
+import type { ParserCursor, SessionStartSource } from './session.js';
 import type { SessionKey } from './session-token.js';
 
 /**
@@ -18,6 +18,16 @@ export interface ParsedMessage {
   model: string | null;
   body: string;
   occurredAt: Date;
+  /** The branch the line carried, as it carried it, or `null` (migration 0004). */
+  gitBranch: string | null;
+  /**
+   * The working directory the line carried, or `null`. It is *not* stored on
+   * the message: story 2.8 reads the first message's one to tag the session,
+   * which is why the parser reports it and the `Message` has no such field.
+   */
+  cwd: string | null;
+  /** The final report of a subagent, read from the main transcript (AD-4). */
+  isSubagentReport: boolean;
 }
 
 /**
@@ -61,6 +71,13 @@ export interface IngestTracking {
    * warning (AD-4).
    */
   cursorReset: boolean;
+  /**
+   * Why the harness started the session, when the transcript said so. The store
+   * writes it only when it is there: a read that saw no `SessionStart` hook
+   * attachment knows nothing about the start, and `null` must not erase what an
+   * earlier read did know.
+   */
+  startSource: SessionStartSource | null;
   /** Best-effort end of the session, when the harness told us (AD-6). */
   endedAt: Date | null;
   /**

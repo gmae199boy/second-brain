@@ -25,4 +25,18 @@ export interface Message {
   body: string;
   /** When the message was uttered, not when it reached the DB (AD-13). */
   occurredAt: Date;
+  /**
+   * The branch the line carried, exactly as it carried it, or `null` for a line
+   * that carried none. Tracking information on the message and not a label: a
+   * branch renamed later was still this branch when the message was written, so
+   * nothing normalises it (migration 0004).
+   */
+  gitBranch: string | null;
+  /**
+   * The final report of a subagent: the one message of a delegated run worth
+   * recalling as a result rather than as a step (migration 0004). Where it is
+   * read from is a question about one harness's transcript, and the parser
+   * settles it; here it is only a mark.
+   */
+  isSubagentReport: boolean;
 }

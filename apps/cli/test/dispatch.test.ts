@@ -1027,6 +1027,9 @@ describe('the dispatcher and the lock budget', () => {
         async ensureSession() {
           return unavailable;
         },
+        async findSession() {
+          return unavailable;
+        },
         async ingest() {
           return unavailable;
         },

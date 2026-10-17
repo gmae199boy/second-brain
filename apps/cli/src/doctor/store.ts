@@ -36,6 +36,9 @@ export function failedConfigStore(message: string): Store & SchemaStore {
     async ensureSession() {
       return unavailable;
     },
+    async findSession() {
+      return unavailable;
+    },
     async ingest() {
       return unavailable;
     },
