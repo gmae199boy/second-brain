@@ -32,6 +32,7 @@ export const KNOWN_KEYS = [
   'store.path',
   'files.path',
   'mirror.path',
+  'update.auto',
 ] as const;
 
 /** File name of the default source database, under the configuration folder. */
@@ -42,6 +43,15 @@ export const DEFAULT_FILES_FOLDER = 'files';
 
 /** Folder name of the default mirror, under the configuration folder. */
 export const DEFAULT_MIRROR_FOLDER = 'mirror';
+
+/**
+ * Whether the harness plugin may install a newer app on its own, when the
+ * folder does not say. On: the point of the plugin is that a session which
+ * carries a newer app installs it without anybody being asked (AD-19), and a
+ * default of off would make every install a manual one. Turning it off leaves
+ * the plugin check to say `UPDATE_AVAILABLE` instead of acting.
+ */
+export const DEFAULT_UPDATE_AUTO = true;
 
 /**
  * Where the source database goes when the file does not say. Relative to the
@@ -81,6 +91,8 @@ export interface BrainConfig {
   filesPath: string;
   /** Absolute path of the mirror folder. Nothing here creates it (epic 4). */
   mirrorPath: string;
+  /** Whether the plugin's `SessionStart` may install a newer app (AD-19). */
+  updateAuto: boolean;
 }
 
 /** A problem that does not stop the command: it travels in `warnings[]`. */
@@ -198,6 +210,15 @@ export async function readConfig(home: string): Promise<ReadConfigResult> {
   const mirrorPath = readPath(configPath, fields, 'mirror.path', defaultMirrorPath(home));
   if (!mirrorPath.ok) return mirrorPath.failure;
 
+  const updateAuto = fields.get('update.auto') ?? DEFAULT_UPDATE_AUTO;
+  if (typeof updateAuto !== 'boolean') {
+    return {
+      ok: false,
+      code: 'CONFIG_INVALID',
+      message: `${configPath}: update.auto는 참거짓 값이어야 하는데 ${kindOf(updateAuto)}입니다`,
+    };
+  }
+
   return {
     ok: true,
     config: {
@@ -206,6 +227,7 @@ export async function readConfig(home: string): Promise<ReadConfigResult> {
       storePath: storePath.path,
       filesPath: filesPath.path,
       mirrorPath: mirrorPath.path,
+      updateAuto,
     },
     warnings,
   };
@@ -266,6 +288,8 @@ export interface SetupConfig {
   filesPath?: string;
   /** Absolute. A re-run offers it as the default and must never reset it. */
   mirrorPath?: string;
+  /** What the folder says about automatic updating. A re-run offers it back. */
+  updateAuto?: boolean;
   /**
    * The keys this version does not know, as the document held them, so writing
    * the folder back keeps them rather than dropping them in silence (AD-18).
@@ -384,6 +408,15 @@ export async function readConfigForSetup(home: string): Promise<ReadSetupConfigR
     warnings.push(reset(configPath, key, value, defaultFor(home, key)));
   }
 
+  const updateAuto = fields.get('update.auto');
+  if (updateAuto !== undefined) {
+    if (typeof updateAuto === 'boolean') {
+      recorded.updateAuto = updateAuto;
+    } else {
+      warnings.push(reset(configPath, 'update.auto', updateAuto, String(DEFAULT_UPDATE_AUTO)));
+    }
+  }
+
   return { ok: true, recorded, warnings };
 }
 
@@ -457,6 +490,8 @@ export interface WriteConfigInput {
   filesPath?: string;
   /** Absolute. Left out means `defaultMirrorPath(home)`, as reading does. */
   mirrorPath?: string;
+  /** Left out means `DEFAULT_UPDATE_AUTO`, as reading does. */
+  updateAuto?: boolean;
   /**
    * Keys this version does not know, as `readConfigForSetup` read them back.
    * They are rendered again exactly as they came, and a known key wins over
@@ -531,6 +566,7 @@ export async function writeConfig(
           store: { path: storePath },
           files: { path: filesPath },
           mirror: { path: mirrorPath },
+          update: { auto: input.updateAuto ?? DEFAULT_UPDATE_AUTO },
         },
         input.extra ?? {},
       ),

@@ -6,6 +6,42 @@ Mac 한 대를 위한 개인 두뇌입니다. 원본은 로컬 SQLite 파일 하
 
 ## 설치
 
+두 가지 길이 있습니다. Claude Code를 쓴다면 플러그인이 더 쉽습니다. 둘 다 같은
+설치기를 돌리고 같은 `~/.second_brain`을 만듭니다.
+
+### Claude Code 플러그인으로
+
+이 저장소를 로컬 marketplace로 등록하고 플러그인을 켜면 됩니다.
+
+```sh
+claude plugin marketplace add /path/to/second-brain
+claude plugin install second-brain@second-brain
+```
+
+그다음 세션을 시작하면 `SessionStart` hook 하나가 비동기로 돌면서, 아직 설치되지
+않았으면 저장소를 `~/.second_brain/app`에 clone하고 의존성을 설치하고 빌드한 뒤
+설치기를 돌립니다. 아무것도 묻지 않습니다 — 플러그인을 켠 것이 동의입니다.
+끝나면 `{"systemMessage": "Brain을 <짧은 sha>로 설치했습니다"}` 한 줄만 냅니다.
+진행 줄과 git·pnpm의 출력은 `~/.second_brain/log/bootstrap.log`에 쌓입니다.
+
+이 hook은 PATH를 믿지 않습니다. hook은 Claude Code의 환경을 그대로 물려받고, GUI로
+띄운 Claude Code의 PATH에는 `nvm`도, 때로는 Homebrew도 없습니다. 그래서 런처가
+node를 직접 찾습니다. shim에 박힌 node → `nvm`의 24.16.0 이상 중 가장 높은 버전 →
+`/opt/homebrew/bin` → `/usr/local/bin` 순서입니다. 하나도 못 찾으면 아무것도 하지
+않고, 어디를 찾아봤는지 한 줄로 말하고 끝납니다. 세션은 그대로 시작됩니다.
+
+두 번째 세션부터는 `~/.second_brain/installed.json`의 commit과 플러그인의
+`app-ref`를 비교만 합니다. 같으면 git도 pnpm도 부르지 않고 조용히 끝납니다.
+플러그인이 더 새 commit을 담고 있으면 그것으로 fast-forward하고 설치기를 다시
+돌립니다 — 그것이 업그레이드입니다.
+
+아무것도 하지 않기로 한 경우에는 아무 말도 하지 않습니다. 다른 세션이 설치 중일
+때, 플러그인이 설치된 것보다 오래되었을 때, 이력이 갈라졌을 때, `[update] auto`가
+꺼져 있을 때입니다. 비동기 hook의 stdout은 다음 턴에 모델의 맥락으로 가므로, 매
+세션 같은 줄을 넣는 대신 `brain doctor run`의 `plugin` 점검이 말합니다.
+
+### npx로
+
 [Node](https://nodejs.org) 24.16 이상과 git만 있는 Mac에서:
 
 ```sh
@@ -25,6 +61,7 @@ pnpm이 12보다 오래되었으면 최신 pnpm 설치를 제안하고, 클론�
 | --- | --- | --- |
 | `SECOND_BRAIN_HOME` | `~/.second_brain` | 설정과 클론이 들어가는 곳 |
 | `SECOND_BRAIN_REPO` | `https://github.com/gmae199boy/second-brain.git` | 클론할 저장소. 포크나 시험용 |
+| `SECOND_BRAIN_NODE_DIRS` | `/opt/homebrew/bin:/usr/local/bin` | node를 찾아볼 고정 폴더들. 시험용 |
 
 설치할 데이터베이스 서버도, 띄울 Docker도 없습니다. 원본은 SQLite 파일 하나에
 삽니다. 설치기가 값을 묻는 것은 둘뿐입니다.
@@ -42,6 +79,13 @@ pnpm이 12보다 오래되었으면 최신 pnpm 설치를 제안하고, 클론�
 그다음 임베딩을 켤지 묻는데, 이것은 여전히 "아직 지원하지 않습니다"라서 켠다고
 답해도 그렇게 말하기만 하고 아무것도 쓰지 않습니다.
 
+그다음 자동 업데이트를 켤지 묻습니다. 이것은 실제로 쓰이는 값입니다 —
+`config.toml`의 `[update] auto`이고, 플러그인의 `SessionStart`가 더 새 앱을 설치해도
+되는지를 그 값으로 판단합니다. 기본값은 켜짐이고, 이미 기록된 값이 있으면 그것을
+기본값으로 내놓습니다. 터미널이 없으면 묻지 않고 기록된 값(없으면 켜짐)을 씁니다.
+꺼 두면 플러그인이 더 새 commit을 담고 있어도 아무것도 하지 않고, `brain doctor
+run`이 `UPDATE_AVAILABLE` 경고로 알려 줍니다.
+
 마지막으로, 아직 아무것도 쓰지 않은 자리에서 쓸 것을 다 보여 주고 한 번
 묻습니다. 설정 두 파일, 데이터베이스 파일(새로 만드는지 있는 파일을
 마이그레이션하는지), 파일 저장소 루트, shim의 경로입니다. 여기서 아니요라고
@@ -58,6 +102,35 @@ pnpm이 12보다 오래되었으면 최신 pnpm 설치를 제안하고, 클론�
 뒤, `brain doctor run`과 같은 점검으로 마칩니다. exit 0이면 모든 점검이
 통과했다는 뜻입니다. 점검에 `fail`이 하나라도 있으면 `SETUP_INCOMPLETE`이고,
 그래도 doctor는 끝까지 돌고 그 줄을 다 찍습니다.
+
+마지막 단계는 이 프로세스 밖에서 설치를 확인하는 것입니다. `<home>/bin/brain
+guide schema --json`을 실제로 실행해서 exit 0과 `ok: true` 엔벨로프를 받아야
+합니다. 하네스 hook이 brain에 닿는 길이 그것뿐이고, doctor는 이 프로세스 안에서
+부품이 제자리에 있는지만 말할 수 있기 때문입니다. 이것이 통과하지 못하면
+`SETUP_INCOMPLETE`(exit 1)이고 완료 기록을 쓰지 않습니다.
+
+통과하면 `<home>/installed.json`을 temp+rename으로 씁니다(mode 0644).
+
+```json
+{
+  "commit": "b9b011c2f05a932345e249f11b724c428781bf3b",
+  "schema_version": 3,
+  "node": "/opt/homebrew/bin/node",
+  "plugin_root": "/Users/me/.claude/plugins/cache/second-brain/second-brain/0.1.0",
+  "installed_at": "2026-10-17T15:11:42.113Z"
+}
+```
+
+`commit`과 `schema_version`은 `apps/cli/dist/build.json`에서 옵니다. 그 파일은
+`apps/cli`의 빌드가 `tsc` 뒤에 쓰는 `{commit, schema_version}`이고, `commit`은
+`git rev-parse HEAD`(git이 없으면 `null`)입니다. `dist/`는 git에 들어가지 않으므로
+"이 `dist/`가 어느 소스에서 왔는가"에 답할 수 있는 것은 이 파일뿐입니다.
+`node`는 shim에 고정한 node 경로이고, `plugin_root`는 `--plugin-root`가 가리킨
+폴더(없으면 이전 기록의 값, 그것도 없으면 `null`)입니다.
+
+이 두 파일은 설정이 아니므로 설정 코덱을 지나지 않습니다(AD-18). 설정은 사람이
+고르고 고칠 수 있는 것이고, 이 둘은 이 기계가 한 일입니다. 읽을 수 없으면
+고치지 않고 "모른다"로 답합니다.
 
 데이터베이스 파일로 가리킨 자리에 SQLite 데이터베이스가 아닌 파일이 있으면
 `DB_UNAVAILABLE`로 거절합니다. 첫 16바이트를 보고 판정하며, 그 전에는 mode도
@@ -86,6 +159,7 @@ node apps/cli/dist/install.js --store-path /Volumes/notes/brain.db --yes
 | --- | --- |
 | `--store-path <경로>` | 데이터베이스 파일의 절대 경로 |
 | `--mirror-path <경로>` | 미러 폴더의 절대 경로 |
+| `--plugin-root <경로>` | 이 설치를 시작한 플러그인 폴더의 절대 경로. 완료 기록에 적힙니다 |
 | `--connect <하네스>` | 이 하네스를 연결합니다. 여럿이면 되풀이하세요 |
 | `--yes` | 설치가 해야 할 일에 미리 동의합니다 |
 
@@ -308,6 +382,7 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `PLUGIN_NOT_INSTALLED` | 이 brain이 기대하는 하네스 플러그인이 설치되어 있지 않습니다 |
 | `PLUGIN_BEHIND` | 설치된 플러그인이 이 명령에 답하는 빌드보다 오래되었습니다 |
 | `PLUGIN_DUPLICATE` | 플러그인이 두 벌 이상 설치되어 hook이 두 번 돌 수 있습니다 |
+| `UPDATE_AVAILABLE` | 플러그인이 더 새 앱을 담고 있는데 자동 업데이트가 꺼져 있습니다 |
 
 ## 규약과 명령 메타
 
@@ -331,19 +406,43 @@ brain guide show                     # CLI 사용 규약 절(Markdown)
 
 설치기는 `~/.second_brain/bin/brain`을 mode 0755로 쓰고, 하네스 hook이 부르는
 `brain`은 그것입니다. hook은 당신의 셸 환경을 하나도 물려받지 않으므로 shim은
-필요한 모든 것을 리터럴로 품고 있습니다. 설치기를 실행한 `node`, 그 옆의 빌드된
-진입점, 그리고 그 설치의 설정 폴더입니다. `npx`는 부르지 않습니다.
+필요한 모든 것을 리터럴로 품고 있습니다. 설치기를 실행한 `node`(symlink를 다 푼
+실제 경로), 그 옆의 빌드된 진입점, 그리고 그 설치의 설정 폴더입니다. `npx`는
+부르지 않습니다.
 
 ```sh
 #!/bin/sh
 # Written by second-brain. `brain setup run` rewrites it.
 SECOND_BRAIN_HOME=${SECOND_BRAIN_HOME:-'/Users/me/.second_brain'}; export SECOND_BRAIN_HOME
-exec '/opt/homebrew/bin/node' '/Users/me/.second_brain/app/apps/cli/dist/bin.js' "$@"
+NODE='/opt/homebrew/bin/node'
+BIN='/Users/me/.second_brain/app/apps/cli/dist/bin.js'
+# …node를 찾는 sh 함수들…
+if [ ! -x "$NODE" ]; then
+  if brain_find_node; then
+    NODE=$brain_node
+    brain_repin
+  else
+    echo "brain: node …" >&2
+    exit 127
+  fi
+fi
+exec "$NODE" "$BIN" "$@"
 ```
 
 환경에 이미 있는 `SECOND_BRAIN_HOME`이 이깁니다. 그래서 두 번째 설치의 shim이
-첫 번째와 다투지 않습니다. node를 바꾸면 — 새 `nvm` 버전, Homebrew 업그레이드 —
-`brain setup run`을 다시 실행해 shim이 그것을 가리키게 하세요.
+첫 번째와 다투지 않습니다.
+
+박아 둔 node가 사라졌을 때 — `nvm` 버전을 지웠을 때, Homebrew가 올라갔을 때 —
+shim은 조용히 실패하지 않습니다. 플러그인 런처와 같은 찾기 함수로 다른 node를
+찾아 그것으로 실행하고, 설치 잠금을 잡을 수 있으면 자기 `NODE=` 줄을
+temp+rename으로 바꿔 둡니다. 그래서 다음 hook은 다시 찾지 않습니다. 잠금을
+못 잡아도 찾은 node로는 실행합니다 — 다시 찾는 쪽이 느릴 뿐이고, 틀리지는
+않습니다. 하한 이상의 node를 하나도 못 찾으면 어디를 찾아봤는지 stderr에 한 줄로
+말하고 exit 127입니다.
+
+node 찾기 규칙의 정본은 `apps/cli/src/install/shim.ts`의 상수 하나입니다.
+shim과 `plugin/bin/session-start.sh`가 같은 바이트를 담고, 테스트가 둘을
+대조합니다.
 
 ## 구조
 
@@ -356,6 +455,8 @@ packages/modelstudio/   embeddings and reranking (placeholder)
 packages/second_brain/  the one writing surface: re-exports only
 apps/cli/               the brain command
 tooling/bootstrap/      the install entry point: src/ plus its committed build
+plugin/                 the Claude Code plugin: manifest, SessionStart hook, launcher
+.claude-plugin/         the local marketplace that offers plugin/
 tooling/test-db/        dev-only throwaway test databases
 tooling/dev/            dev-only scripts, for checks no test can make
 ```
@@ -372,9 +473,29 @@ pnpm install && pnpm build
 죽습니다.
 
 `tooling/bootstrap/bin/second-brain.js`는 커밋된 빌드 산출물입니다. npm이 이
-저장소를 git에서 빌드 없이 설치하기 때문입니다. `tooling/bootstrap/src/bootstrap.ts`를
-바꾸면 `pnpm build`를 실행하고 둘을 함께 커밋하세요. 둘이 어긋나면 테스트가
-실패합니다.
+저장소를 git에서 빌드 없이 설치하기 때문입니다. `plugin/bootstrap.mjs`는 그것의
+복사본입니다. marketplace가 플러그인 루트 밖을 가리키는 `source`를 거부하므로
+참조로 공유할 수 없습니다. `tooling/bootstrap/src/bootstrap.ts`를 바꾸면
+`pnpm build`를 실행하고 셋을 함께 커밋하세요. 어긋나면 테스트가 실패합니다.
+
+`apps/cli/dist/build.json`도 빌드가 씁니다(`scripts/write-build-info.mjs`).
+`dist/`는 git에 들어가지 않으므로 커밋할 것은 없습니다.
+
+## 릴리스
+
+플러그인을 쓰는 사람에게 새 앱이 가려면 두 파일이 함께 올라가야 합니다.
+
+- `plugin/app-ref` — 설치할 commit. 40자 소문자 hex 한 줄입니다. 자기 자신을
+  담은 커밋은 만들 수 없으므로, 내용을 바꾼 커밋 **다음** 커밋에서 앞 커밋의 sha로
+  올립니다.
+- `plugin/.claude-plugin/plugin.json`의 `version` — 플러그인 캐시의 키입니다.
+  원격 marketplace는 플러그인을
+  `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`에 복사하고, 이 값이
+  바뀔 때까지 그 사본을 계속 씁니다. 그러므로 `app-ref`를 올릴 때 `version`도 함께
+  올립니다. 올리지 않으면 아무도 새 `app-ref`를 보지 못합니다.
+
+로컬 marketplace(상대 경로 `source`)는 복사하지 않고 그 자리에서 읽으므로 개발
+중에는 `version`이 영향을 주지 않습니다. 그래서 잊기 쉽습니다.
 
 ## 테스트 데이터베이스
 
@@ -397,9 +518,17 @@ docker compose -f compose.test.yaml down
 설정은 저장소 밖, `~/.second_brain`(또는 `SECOND_BRAIN_HOME`이 가리키는 폴더)에
 있습니다. `config.toml`은 `schema_version`, 시간대, 절대 경로 셋 — 데이터베이스
 파일(`store.path`), 파일 저장소 루트(`files.path`), 미러(`mirror.path`) — 을
-담고 키 값은 담지 않습니다. 이 버전이 모르는 키가 있으면 그대로 남습니다. 키 값은 mode 0600의 `.env`에
+담고, 플러그인이 더 새 앱을 스스로 설치해도 되는지(`update.auto`, 기본 참)를
+담고, 키 값은 담지 않습니다. 이 버전이 모르는 키가 있으면 그대로 남습니다. 키 값은 mode 0600의 `.env`에
 있겠지만 이 버전에는 키가 없습니다. 둘 다 설치기가 씁니다. 손으로 쓸 것은
-없습니다. 실제 폴더를 건드리지 않고 작업 트리를 확인하려면 설치기를 다른 곳으로
+없습니다.
+
+같은 폴더에 설정이 아닌 파일도 셋 있습니다. 완료 기록 `installed.json`(위),
+설치 잠금 `install.lock/`(폴더 하나와 그 안의 `pid` 파일 — bootstrap과 shim이
+번갈아 잡습니다), 그리고 플러그인 hook의 로그 `log/bootstrap.log`입니다. 설정
+코덱은 이 셋을 읽지도 쓰지도 않습니다.
+
+실제 폴더를 건드리지 않고 작업 트리를 확인하려면 설치기를 다른 곳으로
 가리키세요.
 
 ```sh
@@ -427,6 +556,7 @@ env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" doctor run
 | `shim` | `<home>/bin/brain`이 있고, 실행할 수 있고, brain이 썼고, 있는 진입점을 가리키는지 |
 | `node-path` | 그 shim이 가리키는 node가 실행되고 `engines.node`의 버전 이상인지. 읽을 shim이 없으면 `skip` |
 | `node-version` | 명령을 실행한 node도 그 버전 이상인지 |
+| `plugin` | 완료 기록(`installed.json`)과 플러그인의 `app-ref`와 지금 도는 빌드(`build.json`)의 관계. 기록이 없으면 `ok`, 플러그인에서 설치한 것이 아니면 `ok`, 셋이 같으면 `ok`. 플러그인이 더 오래되었으면 `warn PLUGIN_BEHIND`, 더 새롭고 `[update] auto`가 켜져 있으면 `ok`("다음 세션에서 갱신합니다"), 더 새롭고 꺼져 있으면 `warn UPDATE_AVAILABLE`. app-ref를 못 읽거나, 빌드가 기록과 다르거나, 관계를 알 수 없으면 코드 없는 `warn` |
 
 모든 점검은 넷 중 하나로 끝납니다. `ok`, `warn` — 실행했지만 아무것도 확정하지
 못했다는 뜻으로, 통과도 문제도 아닙니다 — `fail`, 그리고 `skip`은 어느 점검이

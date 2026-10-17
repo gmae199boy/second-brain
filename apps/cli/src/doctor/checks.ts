@@ -4,15 +4,25 @@ import { access, readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { prereqFailed, type DoctorCheck, type DoctorCheckSource } from 'second_brain';
 import { readConfig, type ReadConfigResult } from '../config/codec.js';
-import { configFilePath } from '../config/paths.js';
+import { HOME_ENV, configFilePath } from '../config/paths.js';
+import {
+  appRootPath,
+  readAppRef,
+  readBuildIdentity,
+  readInstalled,
+  shortCommit,
+  type BuildIdentity,
+} from '../install/installed.js';
 import { SHIM_SIGNATURE, parseShim, shimPath, type ParsedShim } from '../install/shim.js';
+import { NODE_FLOOR, atLeast, meetsNodeFloor } from '../runtime/node-floor.js';
 
 /**
- * Lowest node this build runs on. One constant, and a test holds it against
- * the root `package.json`'s `engines.node`: two spellings of a floor is how an
- * installer comes to accept a node the hooks then fail on.
+ * Lowest node this build runs on, and the comparison behind it. They live in
+ * `runtime/node-floor.ts` because `install/shim.ts` writes the same floor into
+ * the `sh` it generates and cannot import this module back, and they are
+ * re-exported here because this is where a reader of doctor looks for them.
  */
-export const NODE_FLOOR = '24.16.0';
+export { NODE_FLOOR, atLeast, meetsNodeFloor };
 
 /**
  * How long the shim's node is given to answer `--version`. It is a check, not
@@ -20,6 +30,14 @@ export const NODE_FLOOR = '24.16.0';
  * slower by two seconds, not hang it.
  */
 export const NODE_PROBE_TIMEOUT_MS = 2_000;
+
+/**
+ * How long git is given to answer an ancestry question. Longer than the node
+ * probe because it may be the first command to touch a cold object database,
+ * and still short enough that a clone on a disconnected network share makes
+ * doctor slower rather than hanging it.
+ */
+export const GIT_PROBE_TIMEOUT_MS = 5_000;
 
 /** What asking a node for its version came back with. */
 export type NodeRun = { ok: true; stdout: string } | { ok: false; message: string };
@@ -41,7 +59,20 @@ export interface RuntimeChecksOptions {
   config?: ReadConfigResult;
   /** Test seam. Defaults to `execFile` with the timeout above. */
   runNode?: RunNode;
+  /** Test seam for the `plugin` check's ancestry questions. */
+  runGit?: RunGit;
 }
+
+/**
+ * Asking git whether one commit is an ancestor of another, injected because the
+ * interesting answers — behind, ahead, diverged, unknown — cannot all be
+ * arranged in the clone the tests run from.
+ *
+ * The answer is the exit code of `git merge-base --is-ancestor`, as a code and
+ * not a boolean: 0 is yes, 1 is no, and anything else means git could not
+ * answer, which is a third thing the check has to be able to say.
+ */
+export type RunGit = (args: readonly string[]) => Promise<{ code: number }>;
 
 /**
  * The runtime's half of `brain doctor run`, for one configuration folder: the
@@ -71,15 +102,20 @@ export interface RuntimeChecksOptions {
 export function runtimeChecks(options: RuntimeChecksOptions): readonly DoctorCheckSource[] {
   const { home } = options;
   const runNode = options.runNode ?? systemRunNode;
+  const runGit = options.runGit ?? systemRunGit;
   // Read and parsed once: `shim` and `node-path` are two statements about the
   // same file, and two reads could disagree about it.
   const shim = once(async () => inspectShim(home));
+  // The same rule for the configuration: `config` reports it and `plugin`
+  // reads `[update] auto` out of it, and one report makes one statement.
+  const config = once(async () => options.config ?? (await readConfig(home)));
 
   return [
-    { id: 'config', run: async () => configCheck(home, options.config) },
+    { id: 'config', run: async () => configCheck(home, await config()) },
     { id: 'shim', run: async () => shimCheck(await shim()) },
     { id: 'node-path', run: async () => nodePathCheck(await shim(), runNode) },
     { id: 'node-version', run: async () => nodeVersionCheck() },
+    { id: 'plugin', run: async () => pluginCheck(home, await config(), runGit) },
   ];
 }
 
@@ -89,11 +125,7 @@ export function runtimeChecks(options: RuntimeChecksOptions): readonly DoctorChe
  * "there is no configuration" is something the report says instead of something
  * that stops the report (Decision 2026-10-14).
  */
-async function configCheck(
-  home: string,
-  given: ReadConfigResult | undefined,
-): Promise<DoctorCheck> {
-  const read = given ?? (await readConfig(home));
+function configCheck(home: string, read: ReadConfigResult): DoctorCheck {
   if (!read.ok) {
     return { id: 'config', status: 'fail', code: read.code, detail: read.message };
   }
@@ -115,6 +147,14 @@ interface ShimState {
   shim?: ParsedShim;
   /** Why the shim is not usable. Unset when it is. */
   message?: string;
+  /**
+   * What is worth saying about a shim that is still usable. A shim carrying
+   * another folder than the one being asked about is the one of these: it is
+   * somebody's second installation, or a `SECOND_BRAIN_HOME` pointed somewhere
+   * for an afternoon, and calling that a failure made doctor refuse to say
+   * anything else about a working install (F9).
+   */
+  warning?: string;
 }
 
 /**
@@ -140,9 +180,21 @@ async function inspectShim(home: string): Promise<ShimState> {
     return { path, message: `${path}을 다시 읽어 들일 수 없습니다. ${rerun}` };
   }
 
+  // Not a failure, and every check below carries on: this file works, it just
+  // belongs to another folder than the one being asked about (F9). Both paths
+  // are named, because which of the two is wrong is the reader's to decide.
+  const carried =
+    shim.home === home
+      ? {}
+      : {
+          warning:
+            `${path}이 담고 있는 폴더는 ${shim.home}이고, 지금 보는 폴더는 ${home}입니다. ` +
+            `두 설치가 있거나 ${HOME_ENV}이 다른 곳을 가리킵니다.`,
+        };
+
   // From here the shim's own facts are known, so they travel with every answer
   // below: the node it names is asked about whichever of these failed.
-  const failed = (message: string): ShimState => ({ path, shim, message });
+  const failed = (message: string): ShimState => ({ path, shim, ...carried, message });
 
   try {
     await access(path, constants.X_OK);
@@ -154,24 +206,147 @@ async function inspectShim(home: string): Promise<ShimState> {
     return failed(`${path}에 brain 서명 줄이 없습니다. ${rerun}`);
   }
 
-  if (shim.home !== home) {
-    // Another installation's shim, sitting where this one's belongs. A hook
-    // calling it would write into the other brain, silently.
-    return failed(`${path}이 담고 있는 폴더가 ${home}이 아니라 ${shim.home}입니다. ${rerun}`);
-  }
-
   if (!(await isReadable(shim.bin))) {
     return failed(`${path}이 가리키는 진입점이 없습니다: ${shim.bin}. ${rerun}`);
   }
 
-  return { path, shim };
+  return { path, shim, ...carried };
 }
 
 function shimCheck(state: ShimState): DoctorCheck {
   if (state.message !== undefined) {
     return { id: 'shim', status: 'fail', detail: state.message };
   }
+  if (state.warning !== undefined) {
+    // No code: nothing is degraded and nothing is being worked around, so
+    // there is no shared code that would mean this (Conventions).
+    return { id: 'shim', status: 'warn', detail: state.warning };
+  }
   return { id: 'shim', status: 'ok', detail: state.path };
+}
+
+/**
+ * The plugin's relationship to this installation: what the last install
+ * recorded, what the plugin folder it came from now asks for, and what the
+ * `dist/` answering this command was built from (AD-19, F7).
+ *
+ * It is the one line that tells a person why a session did not update. The
+ * bootstrap's `SessionStart` is silent about everything it decides not to do —
+ * a line per session would go into the model's context every turn (Decision
+ * 2026-10-17) — so "there is a newer app and `[update] auto` is off" has to be
+ * said here or nowhere.
+ *
+ * Every answer but a clean match is a `warn`, never a `fail`: none of them is a
+ * broken installation. The two that have a shared code carry it, so the
+ * envelope's `warnings[]` names them; the rest say their sentence and no more.
+ */
+async function pluginCheck(
+  home: string,
+  config: ReadConfigResult,
+  runGit: RunGit,
+): Promise<DoctorCheck> {
+  const ok = (detail: string): DoctorCheck => ({ id: 'plugin', status: 'ok', detail });
+  const warn = (detail: string, code?: string): DoctorCheck => ({
+    id: 'plugin',
+    status: 'warn',
+    ...(code === undefined ? {} : { code }),
+    detail,
+  });
+
+  const record = await readInstalled(home);
+  if (record === undefined) {
+    // Nothing has finished installing here yet, which the `config` and `shim`
+    // checks above already say. One problem, one line.
+    return ok('완료 기록이 아직 없습니다');
+  }
+  if (record.plugin_root === null) {
+    return ok('플러그인이 아닌 경로로 설치되었습니다');
+  }
+  const installed = record.commit;
+  if (installed === null) {
+    return warn(`${record.plugin_root}에서 설치했지만 기록에 빌드 commit이 없습니다`);
+  }
+
+  const ref = await readAppRef(record.plugin_root);
+  if (ref === undefined) {
+    return warn(`${record.plugin_root}의 app-ref를 읽을 수 없습니다`);
+  }
+
+  const mismatch = buildMismatch(await readBuildIdentity(), installed);
+  if (mismatch !== undefined) return warn(mismatch);
+
+  if (ref === installed) {
+    return ok(`플러그인과 설치가 같은 ${shortCommit(ref)}입니다`);
+  }
+
+  const behind = await isAncestor(ref, installed, runGit);
+  if (behind === true) {
+    return warn(
+      `플러그인의 app-ref ${shortCommit(ref)}가 설치된 ${shortCommit(installed)}보다 오래되었습니다`,
+      'PLUGIN_BEHIND',
+    );
+  }
+
+  const ahead = await isAncestor(installed, ref, runGit);
+  if (ahead === true) {
+    const auto = config.ok ? config.config.updateAuto : true;
+    return auto
+      ? ok(`플러그인이 ${shortCommit(ref)}를 담고 있어서 다음 세션에서 갱신합니다`)
+      : warn(
+          `플러그인이 ${shortCommit(ref)}를 담고 있는데 자동 업데이트가 꺼져 있습니다. ` +
+            `${configFilePath(home)}의 \`[update] auto = true\`로 켜세요.`,
+          'UPDATE_AVAILABLE',
+        );
+  }
+  if (behind === false && ahead === false) {
+    return warn(
+      `플러그인의 app-ref ${shortCommit(ref)}와 설치된 ${shortCommit(installed)}의 이력이 갈라졌습니다`,
+    );
+  }
+  // One of the two questions could not be answered — the ref is not in this
+  // clone, or there is no clone to ask. "Not known" and "not related" are
+  // different answers, and guessing either way would be the silent failure.
+  return warn(
+    `플러그인의 app-ref ${shortCommit(ref)}와 설치된 ${shortCommit(installed)}의 관계를 알 수 없습니다`,
+  );
+}
+
+/** Why the build answering this command is not the one the record names. */
+function buildMismatch(
+  build: BuildIdentity | undefined,
+  recorded: string,
+): string | undefined {
+  if (build === undefined) return '이 빌드에 build.json이 없어서 어느 commit인지 알 수 없습니다';
+  if (build.commit === null) return '이 빌드의 build.json에 commit이 없습니다';
+  if (build.commit === recorded) return undefined;
+  return `지금 도는 빌드는 ${shortCommit(build.commit)}인데 완료 기록은 ${shortCommit(recorded)}입니다`;
+}
+
+/**
+ * Whether `maybeAncestor` is an ancestor of `descendant`, or `undefined` when
+ * git could not answer — which happens for a commit that is not in this clone,
+ * and for a `dist/` that was copied out of one.
+ *
+ * It runs in the clone this build came from, because that is the only place
+ * both commits exist: the plugin folder is a copy of three files and has no
+ * object database of its own.
+ */
+async function isAncestor(
+  maybeAncestor: string,
+  descendant: string,
+  runGit: RunGit,
+): Promise<boolean | undefined> {
+  const run = await runGit([
+    '-C',
+    appRootPath(),
+    'merge-base',
+    '--is-ancestor',
+    maybeAncestor,
+    descendant,
+  ]);
+  if (run.code === 0) return true;
+  if (run.code === 1) return false;
+  return undefined;
 }
 
 /**
@@ -228,30 +403,6 @@ function nodeVersionCheck(): DoctorCheck {
   return { id: 'node-version', status: 'ok', detail: `node ${version}` };
 }
 
-/** Whether a version is at or above `NODE_FLOOR`. Exported for its own test. */
-export function meetsNodeFloor(version: string): boolean {
-  return atLeast(version, NODE_FLOOR);
-}
-
-/**
- * Whether `version` is at or above `floor`, comparing major, minor and patch as
- * numbers. Anything after the patch — `-nightly`, `+build` — is ignored: a
- * prerelease of a version at the floor is close enough for a check that is
- * about "is this node too old", and the alternative is semver's whole order for
- * one comparison.
- */
-export function atLeast(version: string, floor: string): boolean {
-  const left = parts(version);
-  const right = parts(floor);
-  if (left === undefined || right === undefined) return false;
-  for (let index = 0; index < 3; index += 1) {
-    const mine = left[index] ?? 0;
-    const theirs = right[index] ?? 0;
-    if (mine !== theirs) return mine > theirs;
-  }
-  return true;
-}
-
 /** `v24.16.0\n` as `24.16.0`, or `undefined` when there is no version in it. */
 function parseVersion(output: string): string | undefined {
   const found = parts(output.trim());
@@ -283,6 +434,29 @@ async function systemRunNode(path: string): Promise<NodeRun> {
     return { ok: true, stdout: result.stdout };
   } catch (error) {
     return { ok: false, message: describe(error) };
+  }
+}
+
+/**
+ * One git question, as its exit code. A git that is not installed, a folder
+ * that is not a clone and a commit that is not there all come back as a code
+ * rather than an exception, because a check never throws — and because the
+ * three of them mean the same thing to the caller: git could not answer.
+ *
+ * 127 for a git that could not be started at all, which is the shell's own
+ * code for it and is not one of the two codes `--is-ancestor` answers with.
+ */
+async function systemRunGit(args: readonly string[]): Promise<{ code: number }> {
+  try {
+    await execFile('git', [...args], {
+      timeout: GIT_PROBE_TIMEOUT_MS,
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    return { code: 0 };
+  } catch (error) {
+    const code: unknown = (error as { code?: unknown }).code;
+    return { code: typeof code === 'number' ? code : 127 };
   }
 }
 

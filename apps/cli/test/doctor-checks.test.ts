@@ -1,9 +1,9 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { DoctorCheck } from 'second_brain';
+import { isWarningCode, type DoctorCheck } from 'second_brain';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { writeConfig } from '../src/config/codec.js';
 import { configFilePath } from '../src/config/paths.js';
@@ -12,6 +12,7 @@ import {
   atLeast,
   meetsNodeFloor,
   runtimeChecks,
+  type RunGit,
   type RunNode,
   type RuntimeChecksOptions,
 } from '../src/doctor/checks.js';
@@ -82,12 +83,13 @@ beforeAll(() => {
 });
 
 describe('runtimeChecks', () => {
-  it('registers the four machine checks, in the order they are reported', () => {
+  it('registers the five machine checks, in the order they are reported', () => {
     expect(runtimeChecks({ home: '/nowhere' }).map((source) => source.id)).toEqual([
       'config',
       'shim',
       'node-path',
       'node-version',
+      'plugin',
     ]);
   });
 
@@ -222,18 +224,35 @@ describe('the shim check', () => {
     expect(checks.get('node-path')).toMatchObject({ status: 'ok' });
   });
 
-  it('fails when the shim carries a home other than this one', async () => {
+  it('warns, and does not fail, when the shim carries a home other than this one', async () => {
     const home = await tempHome();
     const other = await tempHome();
-    // A hook calling this would write into the other brain, silently.
+    // Two installations, or a `SECOND_BRAIN_HOME` pointed somewhere for an
+    // afternoon. Calling it a failure made doctor refuse to say anything else
+    // about an install that works (F9).
     await writeShim(home, { bin: distBin, home: other });
 
     const checks = await report({ home, runNode: nodeSaying('24.16.0') });
 
-    expect(checks.get('shim')).toMatchObject({ status: 'fail' });
+    expect(checks.get('shim')).toMatchObject({ status: 'warn' });
+    // No shared code: nothing is degraded and nothing is being worked around.
+    expect(checks.get('shim')?.code).toBeUndefined();
     expect(checks.get('shim')?.detail).toContain(other);
     expect(checks.get('shim')?.detail).toContain(home);
+    // And every check after it still runs, which is the point.
     expect(checks.get('node-path')).toMatchObject({ status: 'ok' });
+    expect(checks.get('node-version')).toMatchObject({ status: 'ok' });
+  });
+
+  it('still fails a shim that carries another home and names no entry point', async () => {
+    const home = await tempHome();
+    const other = await tempHome();
+    await writeShim(home, { bin: join(home, 'gone', 'bin.js'), home: other });
+
+    const checks = await report({ home, runNode: nodeSaying('24.16.0') });
+
+    // A file that cannot work is a failure whatever else is true of it.
+    expect(checks.get('shim')).toMatchObject({ status: 'fail' });
   });
 
   it('passes when the shim carries exactly this folder', async () => {
@@ -376,5 +395,219 @@ describe('atLeast', () => {
     expect(atLeast('', '24.16.0')).toBe(false);
     expect(atLeast('24.16', '24.16.0')).toBe(false);
     expect(atLeast('unknown', '24.16.0')).toBe(false);
+  });
+});
+
+/**
+ * The `plugin` check's judgement table, row by row (AD-19, F7).
+ *
+ * The record and the `app-ref` are real files in temporary folders, because
+ * reading them is half of what the check does. Only the ancestry questions are
+ * injected: "behind", "ahead", "diverged" and "cannot say" are four answers
+ * git gives about commits that would have to exist in this clone, and three of
+ * them cannot be arranged here.
+ */
+describe('the plugin check', () => {
+  /** What this build says about itself, which the check holds the record to. */
+  const build = JSON.parse(
+    readFileSync(fileURLToPath(new URL('../dist/build.json', import.meta.url)), 'utf8'),
+  ) as { commit: string | null; schema_version: number };
+
+  /** Another commit, for the rows about two commits that are not the same. */
+  const OTHER = 'b'.repeat(40);
+
+  /** Ancestry, as `merge-base --is-ancestor` answers it: 0 yes, 1 no. */
+  function ancestry(answers: Record<string, number>): RunGit {
+    return async (args) => {
+      const [maybeAncestor, descendant] = args.slice(-2);
+      return { code: answers[`${String(maybeAncestor)} ${String(descendant)}`] ?? 128 };
+    };
+  }
+
+  /** A home with a configuration, a shim and a completion record. */
+  async function recorded(
+    facts: { commit?: string | null; pluginRoot?: string | null },
+    config: { updateAuto?: boolean } = {},
+  ): Promise<string> {
+    const home = await tempHome();
+    await writeConfig(home, config);
+    await writeShim(home, { bin: distBin });
+    await writeFile(
+      join(home, 'installed.json'),
+      JSON.stringify({
+        commit: facts.commit === undefined ? build.commit : facts.commit,
+        schema_version: build.schema_version,
+        node: process.execPath,
+        plugin_root: facts.pluginRoot === undefined ? null : facts.pluginRoot,
+        installed_at: '2026-10-17T00:00:00.000Z',
+      }),
+      'utf8',
+    );
+    return home;
+  }
+
+  /** A plugin folder whose `app-ref` names this commit. */
+  async function pluginAt(ref: string | undefined): Promise<string> {
+    const folder = await tempHome();
+    if (ref !== undefined) await writeFile(join(folder, 'app-ref'), `${ref}\n`, 'utf8');
+    return folder;
+  }
+
+  async function pluginCheck(home: string, runGit?: RunGit): Promise<DoctorCheck> {
+    const checks = await report({
+      home,
+      runNode: nodeSaying(NODE_FLOOR),
+      ...(runGit === undefined ? {} : { runGit }),
+    });
+    const check = checks.get('plugin');
+    expect(check).toBeDefined();
+    return check as DoctorCheck;
+  }
+
+  it('is ok, and says so, when nothing has finished installing here', async () => {
+    const home = await tempHome();
+
+    expect(await pluginCheck(home)).toMatchObject({ status: 'ok' });
+  });
+
+  it('is ok when the install did not come from a plugin', async () => {
+    const home = await recorded({ pluginRoot: null });
+
+    expect(await pluginCheck(home)).toMatchObject({ status: 'ok' });
+  });
+
+  it('warns with no code when the app-ref cannot be read', async () => {
+    const plugin = await pluginAt(undefined);
+    const home = await recorded({ pluginRoot: plugin });
+
+    const check = await pluginCheck(home);
+
+    expect(check).toMatchObject({ status: 'warn' });
+    expect(check.code).toBeUndefined();
+    expect(check.detail).toContain(plugin);
+  });
+
+  it('warns with no code when the build answering this command is another one', async () => {
+    const plugin = await pluginAt(OTHER);
+    const home = await recorded({ pluginRoot: plugin, commit: 'c'.repeat(40) });
+
+    const check = await pluginCheck(home);
+
+    expect(check).toMatchObject({ status: 'warn' });
+    expect(check.code).toBeUndefined();
+    expect(check.detail).toContain('ccccccc');
+  });
+
+  it('warns with no code when the record carries no commit at all', async () => {
+    const plugin = await pluginAt(OTHER);
+    const home = await recorded({ pluginRoot: plugin, commit: null });
+
+    const check = await pluginCheck(home);
+
+    expect(check).toMatchObject({ status: 'warn' });
+    expect(check.code).toBeUndefined();
+  });
+
+  it('is ok when the plugin and the install are the same commit', async () => {
+    const commit = build.commit ?? 'a'.repeat(40);
+    const plugin = await pluginAt(commit);
+    const home = await recorded({ pluginRoot: plugin, commit });
+
+    const check = await pluginCheck(home);
+
+    expect(check).toMatchObject({ status: 'ok' });
+    expect(check.detail).toContain(commit.slice(0, 7));
+  });
+
+  it('warns PLUGIN_BEHIND when the plugin asks for something older', async () => {
+    const commit = build.commit ?? 'a'.repeat(40);
+    const plugin = await pluginAt(OTHER);
+    const home = await recorded({ pluginRoot: plugin, commit });
+
+    const check = await pluginCheck(home, ancestry({ [`${OTHER} ${commit}`]: 0 }));
+
+    expect(check).toMatchObject({ status: 'warn', code: 'PLUGIN_BEHIND' });
+  });
+
+  it('is ok when the plugin is ahead and automatic updating is on', async () => {
+    const commit = build.commit ?? 'a'.repeat(40);
+    const plugin = await pluginAt(OTHER);
+    const home = await recorded({ pluginRoot: plugin, commit }, { updateAuto: true });
+
+    const check = await pluginCheck(
+      home,
+      ancestry({ [`${OTHER} ${commit}`]: 1, [`${commit} ${OTHER}`]: 0 }),
+    );
+
+    expect(check).toMatchObject({ status: 'ok' });
+    expect(check.detail).toContain('다음 세션');
+  });
+
+  it('warns UPDATE_AVAILABLE when the plugin is ahead and nothing will fetch it', async () => {
+    const commit = build.commit ?? 'a'.repeat(40);
+    const plugin = await pluginAt(OTHER);
+    const home = await recorded({ pluginRoot: plugin, commit }, { updateAuto: false });
+
+    const check = await pluginCheck(
+      home,
+      ancestry({ [`${OTHER} ${commit}`]: 1, [`${commit} ${OTHER}`]: 0 }),
+    );
+
+    expect(check).toMatchObject({ status: 'warn', code: 'UPDATE_AVAILABLE' });
+    // The detail is the only place anybody is told how to turn it on.
+    expect(check.detail).toContain('[update] auto = true');
+  });
+
+  it('warns with no code when the two histories have diverged', async () => {
+    const commit = build.commit ?? 'a'.repeat(40);
+    const plugin = await pluginAt(OTHER);
+    const home = await recorded({ pluginRoot: plugin, commit });
+
+    const check = await pluginCheck(
+      home,
+      ancestry({ [`${OTHER} ${commit}`]: 1, [`${commit} ${OTHER}`]: 1 }),
+    );
+
+    expect(check).toMatchObject({ status: 'warn' });
+    expect(check.code).toBeUndefined();
+    expect(check.detail).toContain('갈라졌습니다');
+  });
+
+  it('warns with no code when git cannot answer at all', async () => {
+    const commit = build.commit ?? 'a'.repeat(40);
+    const plugin = await pluginAt(OTHER);
+    const home = await recorded({ pluginRoot: plugin, commit });
+
+    // A ref that is not in this clone, or no clone to ask: "not known" and
+    // "not related" are different answers.
+    const check = await pluginCheck(home, async () => ({ code: 128 }));
+
+    expect(check).toMatchObject({ status: 'warn' });
+    expect(check.code).toBeUndefined();
+    expect(check.detail).toContain('알 수 없습니다');
+  });
+
+  it.each(['PLUGIN_BEHIND', 'UPDATE_AVAILABLE'])(
+    'carries %s as a shared code, so the envelope lifts it into warnings',
+    (code) => {
+      // `doctor-run.ts` puts a check's `code` into `warnings[]` when it is one
+      // of the shared ones, so a code this check invented would be reported as
+      // a detail and nowhere else (Conventions, NFR-2).
+      expect(isWarningCode(code)).toBe(true);
+    },
+  );
+
+  it('really asks git when nothing is injected, rather than only ever a fake', async () => {
+    const commit = build.commit ?? 'a'.repeat(40);
+    const plugin = await pluginAt(OTHER);
+    const home = await recorded({ pluginRoot: plugin, commit });
+
+    // `OTHER` is not a commit of this repository, so git answers that it
+    // cannot say — which is the one real answer available here, and proves the
+    // default seam runs git rather than nothing.
+    const check = await pluginCheck(home);
+
+    expect(check).toMatchObject({ status: 'warn' });
+    expect(check.detail).toContain('알 수 없습니다');
   });
 });

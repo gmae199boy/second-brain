@@ -33,6 +33,7 @@ const ALL_CHECKS = [
   'shim',
   'node-path',
   'node-version',
+  'plugin',
 ];
 
 /**
@@ -363,6 +364,7 @@ describe('doctorAt', () => {
       'shim',
       'node-path',
       'node-version',
+      'plugin',
     ]);
     // The counts are the report's own, so they cannot disagree with it.
     expect(report.summary.failed).toBe(
@@ -383,7 +385,7 @@ describe('doctorAt', () => {
     // that ends green is no promise about the command that follows it. The
     // dispatcher's end of this is asserted the same way in `doctor-run`.
     const registered = runtimeChecks({ home: '/nowhere' }).map((source) => source.id);
-    expect(registered).toEqual(['config', 'shim', 'node-path', 'node-version']);
+    expect(registered).toEqual(['config', 'shim', 'node-path', 'node-version', 'plugin']);
 
     const home = await scratch();
     const report = await doctorAt(home, join(home, 'brain.db'));

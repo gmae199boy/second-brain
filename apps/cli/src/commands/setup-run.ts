@@ -31,7 +31,8 @@ export const setupRun: CommandSpec<SetupRunData> = {
     'brain setup run --yes',
     'brain setup run --store-path /Volumes/notes/brain.db --yes',
   ],
-  output: '설치 보고: `home`, `config_path`, `store`, `owner`, `files`, `mirror_path`, `shim`, `harnesses`, `checks`, `summary`',
+  output:
+    '설치 보고: `home`, `config_path`, `store`, `owner`, `files`, `mirror_path`, `shim`, `harnesses`, `checks`, `summary`, `update`, `installed`',
   risk: 'write',
   hook: false,
   dryRun: false,
@@ -39,6 +40,10 @@ export const setupRun: CommandSpec<SetupRunData> = {
   options: [
     { flags: '--store-path <path>', description: '데이터베이스 파일의 절대 경로' },
     { flags: '--mirror-path <path>', description: '미러 폴더의 절대 경로' },
+    {
+      flags: '--plugin-root <path>',
+      description: '이 설치를 시작한 플러그인 폴더의 절대 경로',
+    },
     { flags: '--connect <harness...>', description: '이 하네스들을 이름으로 연결합니다' },
     { flags: '-y, --yes', description: '설치가 해야 할 일에 미리 동의합니다' },
   ],
@@ -91,6 +96,7 @@ function toFlags(options: Record<string, unknown>): InstallFlags {
   return {
     storePath: typeof options['storePath'] === 'string' ? options['storePath'] : undefined,
     mirrorPath: typeof options['mirrorPath'] === 'string' ? options['mirrorPath'] : undefined,
+    pluginRoot: typeof options['pluginRoot'] === 'string' ? options['pluginRoot'] : undefined,
     connect: Array.isArray(connect)
       ? connect.filter((name): name is string => typeof name === 'string')
       : [],

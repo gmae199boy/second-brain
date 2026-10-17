@@ -7,7 +7,7 @@
     "bin"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && mv bin/bootstrap.js bin/second-brain.js && chmod +x bin/second-brain.js"
+    "build": "tsc -p tsconfig.json && mv bin/bootstrap.js bin/second-brain.js && chmod +x bin/second-brain.js && cp bin/second-brain.js ../../plugin/bootstrap.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

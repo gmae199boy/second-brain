@@ -61,6 +61,12 @@ export const WARNING_CODES = [
   'PLUGIN_BEHIND',
   /** More than one copy of the plugin is installed, so hooks may run twice. */
   'PLUGIN_DUPLICATE',
+  /**
+   * The plugin carries a newer app than the one installed, and automatic
+   * updating is off, so nothing will fetch it: the next session would install
+   * it if `[update] auto` were on (AD-19).
+   */
+  'UPDATE_AVAILABLE',
 ] as const;
 
 /** One of the codes above. The only thing `warnings[]` may contain. */
@@ -93,6 +99,7 @@ export const WARNING_CODE_MEANINGS: Readonly<Record<WarningCode, string>> = {
   PLUGIN_NOT_INSTALLED: '이 brain이 기대하는 하네스 플러그인이 설치되어 있지 않습니다',
   PLUGIN_BEHIND: '설치된 플러그인이 이 명령에 답하는 빌드보다 오래되었습니다',
   PLUGIN_DUPLICATE: '플러그인이 두 벌 이상 설치되어 hook이 두 번 돌 수 있습니다',
+  UPDATE_AVAILABLE: '플러그인이 더 새 앱을 담고 있는데 자동 업데이트가 꺼져 있습니다',
 };
 
 const KNOWN_WARNINGS = new Set<string>(WARNING_CODES);

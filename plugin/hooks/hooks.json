@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/session-start.sh\" || exit 0",
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

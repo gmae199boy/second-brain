@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +8,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { BRAIN_MARKER } from 'second_brain';
 import { HOME_ENV } from '../src/config/paths.js';
 import {
+  NODE_FINDER_SH,
   SHIM_SIGNATURE,
   cliEntryPath,
   parseShim,
@@ -15,6 +16,8 @@ import {
   shimPath,
   writeShim,
 } from '../src/install/shim.js';
+import { NODE_FLOOR } from '../src/runtime/node-floor.js';
+import { assertKoreanLine } from './language.js';
 
 /**
  * The shim is the one file a harness hook ever calls, started with none of the
@@ -67,7 +70,7 @@ afterEach(async () => {
 });
 
 describe('renderShim', () => {
-  it('is POSIX sh that execs the node and the entry point it was given', () => {
+  it('is POSIX sh that pins the node and the entry point it was given', () => {
     const text = renderShim({
       node: '/opt/homebrew/bin/node',
       bin: '/home/me/.second_brain/app/apps/cli/dist/bin.js',
@@ -76,10 +79,20 @@ describe('renderShim', () => {
 
     expect(text.split('\n')[0]).toBe('#!/bin/sh');
     expect(text).toContain(SHIM_SIGNATURE);
-    expect(text).toContain(
-      `exec '/opt/homebrew/bin/node' '/home/me/.second_brain/app/apps/cli/dist/bin.js' "$@"`,
-    );
+    // Two assignments and one `exec` over them: the node is the one fact the
+    // shim may have to replace at runtime, so it is a line of its own.
+    expect(text).toContain(`\nNODE='/opt/homebrew/bin/node'\n`);
+    expect(text).toContain(`\nBIN='/home/me/.second_brain/app/apps/cli/dist/bin.js'\n`);
+    expect(text).toContain(`\nexec "$NODE" "$BIN" "$@"\n`);
     expect(text.endsWith('\n')).toBe(true);
+  });
+
+  it('carries the one node finder, so a pin that has gone stale is recoverable', () => {
+    const text = renderShim({ node: '/n', bin: '/b', home: '/h' });
+
+    expect(text).toContain(NODE_FINDER_SH);
+    expect(text).toContain('if [ ! -x "$NODE" ]; then');
+    expect(text).toContain('brain_repin');
   });
 
   it('passes the folder in assignment context, so the quotes do not survive', () => {
@@ -113,7 +126,8 @@ describe('renderShim', () => {
       home: "/h o/m'e",
     });
 
-    expect(text).toContain(`exec '/opt/no de/b'\\''in/node' '/a b/bin.js' "$@"`);
+    expect(text).toContain(`NODE='/opt/no de/b'\\''in/node'`);
+    expect(text).toContain(`BIN='/a b/bin.js'`);
     expect(text).toContain(`:-'/h o/m'\\''e'}`);
   });
 });
@@ -173,24 +187,25 @@ describe('parseShim', () => {
     expect(parseShim('')).toBeUndefined();
   });
 
-  it('answers undefined when the exec line is there but the home line is not', () => {
-    expect(parseShim(`#!/bin/sh\nexec '/n' '/b' "$@"\n`)).toBeUndefined();
+  it('answers undefined when a line is there but the home line is not', () => {
+    expect(parseShim(`#!/bin/sh\nNODE='/n'\nBIN='/b'\nexec "$NODE" "$BIN" "$@"\n`)).toBeUndefined();
   });
 
-  it('answers undefined when a quoted word never closes', () => {
-    const text = renderShim({ node: '/n', bin: '/b', home: '/h' }).replace(
-      `exec '/n' '/b' "$@"`,
-      `exec '/n' '/b "$@"`,
-    );
+  it.each([
+    ['the node', `NODE='/n'`],
+    ['the entry point', `BIN='/b'`],
+  ])('answers undefined when %s is missing', (_what, line) => {
+    const text = renderShim({ node: '/n', bin: '/b', home: '/h' }).replace(`${line}\n`, '');
 
     expect(parseShim(text)).toBeUndefined();
   });
 
-  it('answers undefined when the exec line names only one path', () => {
-    const text = renderShim({ node: '/n', bin: '/b', home: '/h' }).replace(
-      `exec '/n' '/b' "$@"`,
-      `exec '/n' "$@"`,
-    );
+  it.each([
+    ['a quoted word that never closes', `NODE='/n`],
+    ['a word that is not quoted at all', 'NODE=/n'],
+    ['something after the quoted word', `NODE='/n' # the node`],
+  ])('answers undefined for %s', (_what, line) => {
+    const text = renderShim({ node: '/n', bin: '/b', home: '/h' }).replace(`NODE='/n'`, line);
 
     expect(parseShim(text)).toBeUndefined();
   });
@@ -198,13 +213,13 @@ describe('parseShim', () => {
   it.each([
     // A shim that does not pass the arguments on would run every hook as a
     // bare `brain` with no command at all.
-    ['nothing after the entry point', `exec '/n' '/b'`],
-    ['the arguments unquoted', `exec '/n' '/b' $@`],
-    ['something else after them', `exec '/n' '/b' "$@" >/dev/null`],
-    ['no space before them', `exec '/n' '/b'"$@"`],
+    ['nothing after the entry point', `exec "$NODE" "$BIN"`],
+    ['the arguments unquoted', `exec "$NODE" "$BIN" $@`],
+    ['something else after them', `exec "$NODE" "$BIN" "$@" >/dev/null`],
+    ['the two words the other way round', `exec "$BIN" "$NODE" "$@"`],
   ])('answers undefined for an exec line with %s', (_name, line) => {
     const text = renderShim({ node: '/n', bin: '/b', home: '/h' }).replace(
-      `exec '/n' '/b' "$@"`,
+      `exec "$NODE" "$BIN" "$@"`,
       line,
     );
 
@@ -218,7 +233,7 @@ describe('writeShim', () => {
 
     const written = await writeShim(home);
 
-    expect(written).toEqual({ path: shimPath(home), changed: true });
+    expect(written).toEqual({ path: shimPath(home), changed: true, node: process.execPath });
     expect(written.path).toBe(join(home, 'bin', 'brain'));
     const mode = (await stat(written.path)).mode & 0o777;
     expect(mode.toString(8)).toBe('755');
@@ -259,7 +274,7 @@ describe('writeShim', () => {
 
     const again = await writeShim(home);
 
-    expect(again).toEqual({ path: first.path, changed: false });
+    expect(again).toEqual({ path: first.path, changed: false, node: process.execPath });
     expect(await readFile(first.path, 'utf8')).toBe(before);
     expect((await stat(first.path)).mtimeMs).toBe(mtimeBefore);
   });
@@ -352,5 +367,161 @@ describe('the shim, run as a hook would run it', () => {
 
     expect(run.code).toBe(1);
     expect(configDetail(run.stdout)).toContain(home);
+  });
+});
+
+describe('the pinned node', () => {
+  it('is the real path, not the symlink the installer happened to be started by', async () => {
+    const home = await tempHome();
+    const link = join(home, 'node-link');
+    await symlink(process.execPath, link);
+
+    const written = await writeShim(home, { bin: distBin, node: link });
+
+    // A version manager's `bin` entry is a symlink into a folder named after
+    // the version, and a symlink is the thing most likely to be re-pointed at
+    // a node this build cannot run.
+    expect(written.node).toBe(process.execPath);
+    expect(await readFile(written.path, 'utf8')).toContain(`NODE='${process.execPath}'`);
+  });
+
+  it('is left as it is when it cannot be resolved at all', async () => {
+    const home = await tempHome();
+
+    const written = await writeShim(home, { bin: distBin, node: '/nonexistent/node' });
+
+    expect(written.node).toBe('/nonexistent/node');
+  });
+});
+
+/**
+ * The shim's own recovery, with real `sh`: a pin that has gone stale — an `nvm`
+ * version removed, a Homebrew upgrade — must not make every harness turn fail
+ * in silence (AD-19, F7).
+ *
+ * The fixed folders and `nvm`'s are both pointed into a temporary directory, so
+ * nothing here depends on what this machine happens to have installed.
+ */
+describe('a shim whose node is gone', () => {
+  /** A folder holding a `node` that answers `--version` with this version. */
+  async function fakeNode(version: string): Promise<string> {
+    const folder = await mkdtemp(join(tmpdir(), 'brain-node-'));
+    homes.push(folder);
+    const path = join(folder, 'node');
+    await writeFile(
+      path,
+      `#!/bin/sh\nif [ "$1" = "--version" ]; then echo v${version}; exit 0; fi\nexit 0\n`,
+      { mode: 0o755 },
+    );
+    return folder;
+  }
+
+  /** An `nvm` layout with one version per entry. */
+  async function fakeNvm(versions: readonly string[]): Promise<string> {
+    const nvm = await mkdtemp(join(tmpdir(), 'brain-nvm-'));
+    homes.push(nvm);
+    for (const version of versions) {
+      const bin = join(nvm, 'versions', 'node', `v${version}`, 'bin');
+      await mkdir(bin, { recursive: true });
+      await writeFile(
+        join(bin, 'node'),
+        `#!/bin/sh\nif [ "$1" = "--version" ]; then echo v${version}; exit 0; fi\nexit 0\n`,
+        { mode: 0o755 },
+      );
+    }
+    return nvm;
+  }
+
+  /** The node a shim on disk is pinned to right now. */
+  async function pinnedNode(path: string): Promise<string | undefined> {
+    return parseShim(await readFile(path, 'utf8'))?.node;
+  }
+
+  it('finds another node, runs with it, and pins it for the next hook', async () => {
+    const home = await tempHome();
+    const folder = await fakeNode(NODE_FLOOR);
+    const empty = await tempHome();
+    const { path } = await writeShim(home, { bin: distBin, node: '/nonexistent/node' });
+
+    const run = await runShim(path, ['guide', 'schema'], {
+      NVM_DIR: join(empty, 'nvm'),
+      SECOND_BRAIN_NODE_DIRS: folder,
+    });
+
+    // The fake node exits 0 for anything that is not `--version`, so a clean
+    // exit is this shim having found it and handed over to it.
+    expect(run.code).toBe(0);
+    expect(run.stderr).toBe('');
+    expect(await pinnedNode(path)).toBe(join(folder, 'node'));
+    // The lock is taken to re-pin and released again, whatever happened.
+    expect(existsSync(join(home, 'install.lock'))).toBe(false);
+  });
+
+  it('prefers the highest nvm version over the fixed folders', async () => {
+    const home = await tempHome();
+    const nvm = await fakeNvm(['24.16.0', '24.19.0', '22.20.0']);
+    const folder = await fakeNode('25.0.0');
+    const { path } = await writeShim(home, { bin: distBin, node: '/nonexistent/node' });
+
+    await runShim(path, ['guide', 'schema'], {
+      NVM_DIR: nvm,
+      SECOND_BRAIN_NODE_DIRS: folder,
+    });
+
+    // The highest of the versions that meet the floor, and the one below it
+    // never considered — even though the fixed folder holds a newer node, the
+    // order is nvm first (Boundaries).
+    expect(await pinnedNode(path)).toBe(join(nvm, 'versions', 'node', 'v24.19.0', 'bin', 'node'));
+  });
+
+  it('ignores an nvm version below the floor', async () => {
+    const home = await tempHome();
+    const nvm = await fakeNvm(['22.20.0']);
+    const folder = await fakeNode(NODE_FLOOR);
+    const { path } = await writeShim(home, { bin: distBin, node: '/nonexistent/node' });
+
+    await runShim(path, ['guide', 'schema'], {
+      NVM_DIR: nvm,
+      SECOND_BRAIN_NODE_DIRS: folder,
+    });
+
+    expect(await pinnedNode(path)).toBe(join(folder, 'node'));
+  });
+
+  it('runs with the node it found even when the lock cannot be taken', async () => {
+    const home = await tempHome();
+    const folder = await fakeNode(NODE_FLOOR);
+    const empty = await tempHome();
+    const { path } = await writeShim(home, { bin: distBin, node: '/nonexistent/node' });
+    // An install in flight: the shim must not touch the file, and must not
+    // refuse to run either.
+    await mkdir(join(home, 'install.lock'));
+
+    const run = await runShim(path, ['guide', 'schema'], {
+      NVM_DIR: join(empty, 'nvm'),
+      SECOND_BRAIN_NODE_DIRS: folder,
+    });
+
+    expect(run.code).toBe(0);
+    expect(await pinnedNode(path)).toBe('/nonexistent/node');
+  });
+
+  it('says one Korean line and exits 127 when there is no node at all', async () => {
+    const home = await tempHome();
+    const empty = await tempHome();
+    const { path } = await writeShim(home, { bin: distBin, node: '/nonexistent/node' });
+
+    const run = await runShim(path, ['guide', 'schema'], {
+      NVM_DIR: join(empty, 'nvm'),
+      SECOND_BRAIN_NODE_DIRS: empty,
+    });
+
+    expect(run.code).toBe(127);
+    expect(run.stdout).toBe('');
+    assertKoreanLine(run.stderr.trim(), { label: 'shim refusal' });
+    expect(run.stderr).toContain(NODE_FLOOR);
+    expect(run.stderr).toContain(empty);
+    // Nothing was rewritten over a refusal.
+    expect(await pinnedNode(path)).toBe('/nonexistent/node');
   });
 });

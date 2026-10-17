@@ -14,6 +14,7 @@ import {
 import { formatCheck } from '../commands/doctor-run.js';
 import type { SelfUserResult } from './store.js';
 import {
+  DEFAULT_UPDATE_AUTO,
   defaultFilesPath,
   defaultMirrorPath,
   defaultStorePath,
@@ -23,6 +24,7 @@ import {
   type WriteConfigResult,
 } from '../config/codec.js';
 import { configFilePath, configHome, envFilePath } from '../config/paths.js';
+import type { BuildIdentity, InstalledFacts, InstalledRecord } from './installed.js';
 import { shimPath } from './shim.js';
 
 /**
@@ -74,6 +76,14 @@ export interface InstallReport {
   harnesses: readonly { harness: string; target: string; changed: boolean }[];
   checks: readonly DoctorCheck[];
   summary: DoctorSummary;
+  /** Whether the plugin may install a newer app on its own (AD-19). */
+  update: { auto: boolean };
+  /**
+   * The completion record this run wrote, once the install proved itself from
+   * the outside. A report that said nothing about it would leave the one fact
+   * a plugin's `SessionStart` reads unaccounted for.
+   */
+  installed: { path: string; commit: string | null };
 }
 
 /**
@@ -218,7 +228,27 @@ export interface InstallFiles {
 /** Writing the shim, injected so the flow test touches no filesystem. */
 export interface InstallShim {
   /** Write `<home>/bin/brain`, or leave it alone when it already says this. */
-  write(home: string): Promise<{ path: string; changed: boolean }>;
+  write(home: string): Promise<{ path: string; changed: boolean; node: string }>;
+}
+
+/**
+ * The completion record, and the proof that goes before it (AD-19, AD-20).
+ *
+ * `verify` is separate from doctor on purpose: doctor says the parts are in
+ * place, from inside this process, and `verify` runs the shim from the outside
+ * as a harness hook would. An install that passes the first and fails the
+ * second is exactly the install that fails on every turn and looks fine in
+ * every report, which is what the record is supposed to rule out.
+ */
+export interface InstallInstalled {
+  /** `<home>/bin/brain guide schema --json`: exit 0 and an `ok: true` envelope. */
+  verify(home: string): Promise<{ ok: true } | { ok: false; message: string }>;
+  /** What this `dist/` was built from, or `undefined` when it cannot say. */
+  build(): Promise<BuildIdentity | undefined>;
+  /** What a previous install recorded here, for the values a re-run keeps. */
+  read(home: string): Promise<InstalledRecord | undefined>;
+  /** Write the record, temp file and rename. The time is the writer's. */
+  write(home: string, facts: InstalledFacts): Promise<{ path: string }>;
 }
 
 export interface InstallDeps {
@@ -230,6 +260,7 @@ export interface InstallDeps {
   store: InstallStore;
   files: InstallFiles;
   shim: InstallShim;
+  installed: InstallInstalled;
   /** Every harness this build can connect to. Empty until epic 2. */
   connectors: readonly Connector[];
 }
@@ -242,6 +273,14 @@ export interface InstallFlags {
   mirrorPath?: string;
   /** Harnesses to connect, by name. The only consent there is without a TTY. */
   connect: readonly string[];
+  /**
+   * The plugin folder this install was started from, absolute. The bootstrap's
+   * hook mode passes it on so the completion record says where the app-ref that
+   * asked for this commit lives, which is what the `plugin` check reads. Left
+   * out — an `npx` install, or `brain setup run` by hand — keeps whatever a
+   * previous install recorded.
+   */
+  pluginRoot?: string;
   /** Consent, given in advance, to everything the install has to do. */
   yes: boolean;
   help: boolean;
@@ -356,6 +395,8 @@ export async function runInstall(
 
   await askAboutEmbeddings(deps);
 
+  const updateAuto = await askAboutUpdates(recorded, deps);
+
   // Nothing asks for the file store's root, so a re-run can only keep what is
   // recorded; a first run takes the default beside the configuration folder
   // (F10).
@@ -429,7 +470,7 @@ export async function runInstall(
   // (epic 4) — so it is recorded as chosen.
   const written = await deps.config.write(
     home,
-    settings(recorded, store.path, filesPath, mirror.path),
+    settings(recorded, store.path, filesPath, mirror.path, updateAuto),
   );
   if (!written.ok) {
     return fail({ code: written.code, message: written.message, exit: 1 });
@@ -465,6 +506,39 @@ export async function runInstall(
     });
   }
 
+  // The last step, and the only one that runs the installation from outside
+  // this process: the shim, the node it pinned, the entry point it names and
+  // the CLI behind them, as a harness hook would reach them (AD-19).
+  //
+  // After doctor rather than instead of it: doctor's lines are what a person
+  // reads to find out what is wrong, and a report cut short because the shim
+  // would not start would hide every check that passed.
+  const verified = await deps.installed.verify(home);
+  if (!verified.ok) {
+    return fail({
+      code: 'SETUP_INCOMPLETE',
+      message: `설치는 끝까지 돌았고 shim으로 확인하지 못했습니다. ${verified.message}`,
+      exit: 1,
+    });
+  }
+
+  // Only now, and only here: `installed.json` means "this install finished and
+  // answered", so it is written after the proof and never before it. A plugin's
+  // `SessionStart` compares the commit it carries against this record, and a
+  // record written for an install that does not run would stop every future
+  // session from repairing it.
+  const build = await deps.installed.build();
+  const previous = await deps.installed.read(home);
+  const installed = await deps.installed.write(home, {
+    commit: build?.commit ?? null,
+    // The build's version when there is one; otherwise the version the file
+    // actually ends at, which this run has just measured.
+    schema_version: build?.schema_version ?? migrated.to,
+    node: shim.node,
+    plugin_root: flags.pluginRoot ?? previous?.plugin_root ?? null,
+  });
+  deps.log(`${installed.path}에 완료 기록을 썼습니다`);
+
   return {
     ok: true,
     warnings,
@@ -479,6 +553,8 @@ export async function runInstall(
       harnesses: connected.connected,
       checks: report.checks,
       summary: report.summary,
+      update: { auto: updateAuto },
+      installed: { path: installed.path, commit: build?.commit ?? null },
     },
   };
 }
@@ -500,6 +576,7 @@ function givenArgs(flags: InstallFlags): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   if (flags.storePath !== undefined) args['storePath'] = flags.storePath;
   if (flags.mirrorPath !== undefined) args['mirrorPath'] = flags.mirrorPath;
+  if (flags.pluginRoot !== undefined) args['pluginRoot'] = flags.pluginRoot;
   if (flags.connect.length > 0) args['connect'] = [...flags.connect];
   return args;
 }
@@ -560,6 +637,7 @@ function settings(
   storePath: string,
   filesPath: string,
   mirrorPath: string,
+  updateAuto: boolean,
 ): WriteConfigInput {
   const extra = recorded?.extra;
   return {
@@ -567,6 +645,7 @@ function settings(
     storePath,
     filesPath,
     mirrorPath,
+    updateAuto,
     ...(extra === undefined || Object.keys(extra).length === 0 ? {} : { extra }),
   };
 }
@@ -688,6 +767,34 @@ async function askAboutEmbeddings(deps: InstallDeps): Promise<void> {
       ? '임베딩은 아직 지원하지 않으므로 꺼진 채로 둡니다. 아무것도 쓰지 않았습니다.'
       : '임베딩은 꺼져 있습니다',
   );
+}
+
+/**
+ * Whether the harness plugin may install a newer app by itself (AD-19). Unlike
+ * the embedding question this one is real: the answer is written as
+ * `[update] auto`, and it is what the bootstrap's `SessionStart` reads before
+ * it fetches anything.
+ *
+ * The default offered is what the folder already says, so a person who turned
+ * it off once does not have to turn it off at every re-run. Without a terminal
+ * the recorded value stands — and a first install with nothing recorded gets
+ * the codec's default, which is on: the plugin exists so that a session carries
+ * its own update.
+ */
+async function askAboutUpdates(
+  recorded: RecordedConfig | undefined,
+  deps: InstallDeps,
+): Promise<boolean> {
+  const initial = recorded?.updateAuto ?? DEFAULT_UPDATE_AUTO;
+  const auto = deps.isTTY
+    ? await deps.prompts.confirm('자동 업데이트를 켤까요?', initial)
+    : initial;
+  deps.log(
+    auto
+      ? '자동 업데이트는 켜져 있습니다. 플러그인이 더 새 앱을 담고 있으면 다음 세션에서 설치합니다'
+      : '자동 업데이트는 꺼져 있습니다. 갱신할 것이 있으면 `brain doctor run`이 말합니다',
+  );
+  return auto;
 }
 
 /** What the harness step did: what it registered, and the first refusal. */
@@ -840,6 +947,22 @@ export function parseFlags(argv: readonly string[]): ParsedFlags {
         index += 1;
         continue;
       }
+      case '--plugin-root': {
+        const value = argv[index + 1];
+        if (value === undefined || value.startsWith('-')) {
+          return { ok: false, message: '--plugin-root 뒤에는 경로가 와야 합니다.' };
+        }
+        // Absolute only, and refused rather than expanded: the only caller is
+        // the plugin launcher, which passes `CLAUDE_PLUGIN_ROOT` straight on,
+        // and a relative one would be recorded against whatever working
+        // directory that hook happened to have.
+        if (!isAbsolute(value)) {
+          return { ok: false, message: `--plugin-root ${value}는 절대 경로가 아닙니다.` };
+        }
+        flags.pluginRoot = value;
+        index += 1;
+        continue;
+      }
       case '--connect': {
         const value = argv[index + 1];
         if (value === undefined || value.startsWith('-')) {
@@ -870,9 +993,10 @@ export function parseFlags(argv: readonly string[]): ParsedFlags {
 export function usage(): readonly string[] {
   return [
     '사용법: second-brain [--store-path <경로>] [--mirror-path <경로>]',
-    '                     [--connect <하네스>]… [--yes]',
+    '                     [--plugin-root <경로>] [--connect <하네스>]… [--yes]',
     '  --store-path <경로>   데이터베이스 파일의 절대 경로',
     '  --mirror-path <경로>  미러 폴더의 절대 경로',
+    '  --plugin-root <경로>  이 설치를 시작한 플러그인 폴더의 절대 경로',
     '  --connect <하네스>    이 하네스를 연결합니다. 여럿이면 되풀이하세요',
     '  --yes                 설치가 해야 할 일에 미리 동의합니다',
   ];

@@ -20,10 +20,16 @@ import {
   type InstallFlags,
   type InstallFlowResult,
   type InstallPrompts,
+  type InstallInstalled,
   type InstallResult,
   type InstallStore,
   type RecordedConfig,
 } from '../src/install/flow.js';
+import type {
+  BuildIdentity,
+  InstalledFacts,
+  InstalledRecord,
+} from '../src/install/installed.js';
 import { shimPath } from '../src/install/shim.js';
 import { assertKoreanLine } from './language.js';
 
@@ -56,7 +62,7 @@ const HARNESS_NAMES = ['demo', 'other', 'absent', 'nope'] as const;
  * value that has a default of its own rather than a question.
  */
 function fresh(storePath = STORE, filesPath = FILES, mirrorPath = MIRROR): WriteConfigInput {
-  return { timezone: undefined, storePath, filesPath, mirrorPath };
+  return { timezone: undefined, storePath, filesPath, mirrorPath, updateAuto: true };
 }
 
 /** The same, over a folder that already said something. */
@@ -66,18 +72,18 @@ function kept(
   filesPath = FILES,
   mirrorPath = MIRROR,
 ): WriteConfigInput {
-  return { timezone, storePath, filesPath, mirrorPath };
+  return { timezone, storePath, filesPath, mirrorPath, updateAuto: true };
 }
 
 /**
  * What a run answers to the questions every path in a terminal now ends with:
  * Enter for the database file, Enter for the mirror path — both take the
- * default — no to embeddings, and yes to the screen that says what the install
- * is about to write. They are appended to whatever a test queues, so a test
- * that cares about none of them says nothing about them; the per-kind queues
- * keep the order right either way.
+ * default — no to embeddings, yes to automatic updating, and yes to the screen
+ * that says what the install is about to write. They are appended to whatever a
+ * test queues, so a test that cares about none of them says nothing about them;
+ * the per-kind queues keep the order right either way.
  */
-const TAIL: Answers = { text: ['', ''], confirm: [false, true] };
+const TAIL: Answers = { text: ['', ''], confirm: [false, true, true] };
 
 function answersWith(own: Answers, tail: Answers): Answers {
   return {
@@ -100,6 +106,8 @@ interface Prompts extends InstallPrompts {
   placeholders: string[];
   /** What each `multiselect` started out with checked. */
   checked: readonly string[][];
+  /** Each `confirm` question and the answer it offered as its default. */
+  initial: readonly [string, boolean][];
 }
 
 /**
@@ -113,13 +121,16 @@ function fakePrompts(answers: Answers): Prompts {
   const asked: string[] = [];
   const placeholders: string[] = [];
   const checked: string[][] = [];
+  const initial: [string, boolean][] = [];
 
   return {
     asked,
     placeholders,
     checked,
-    async confirm(question: string): Promise<boolean> {
+    initial,
+    async confirm(question: string, offered: boolean): Promise<boolean> {
       asked.push(question);
+      initial.push([question, offered]);
       const answer = confirms.shift();
       if (answer === undefined) throw new Error(`no answer queued for: ${question}`);
       return answer;
@@ -261,6 +272,7 @@ interface Harness {
   lines: string[];
   /** Every home the shim was written for, in order. */
   shimmed: string[];
+  installed: Installed;
   output(): string;
 }
 
@@ -280,6 +292,7 @@ interface HarnessOptions {
   recordedStorePath?: string;
   recordedFilesPath?: string;
   recordedMirrorPath?: string;
+  recordedUpdateAuto?: boolean;
   /** Keys this version does not know, as the codec reads them back. */
   recordedExtra?: Record<string, unknown>;
   /** The warnings the codec collected while reading the folder value by value. */
@@ -292,6 +305,54 @@ interface HarnessOptions {
   connectors?: readonly Connector[];
   /** The shim was already there and says exactly this. */
   shimCurrent?: boolean;
+  /** Running the shim from outside the process refuses, with this sentence. */
+  verifyFails?: string;
+  /** What `dist/build.json` says. A build with no identity leaves it out. */
+  build?: BuildIdentity;
+  /** What a previous install recorded here. */
+  recordedInstalled?: InstalledRecord;
+}
+
+/** The node the fake shim pins, which is what the record has to carry. */
+const PINNED_NODE = '/opt/homebrew/bin/node';
+
+/** The commit the fake `build.json` names, unless a test says otherwise. */
+const BUILD_COMMIT = 'a'.repeat(40);
+
+interface Installed extends InstallInstalled {
+  /** Every home the completion check ran against, in order. */
+  verified: string[];
+  /** Every record written, in order. */
+  wrote: InstalledFacts[];
+}
+
+function fakeInstalled(options: HarnessOptions): Installed {
+  const verified: string[] = [];
+  const wrote: InstalledFacts[] = [];
+
+  return {
+    verified,
+    wrote,
+    async verify(home) {
+      verified.push(home);
+      return options.verifyFails === undefined
+        ? { ok: true as const }
+        : { ok: false as const, message: options.verifyFails };
+    },
+    async build() {
+      return 'build' in options
+        ? options.build
+        : { commit: BUILD_COMMIT, schema_version: 3 };
+    },
+    async read() {
+      return options.recordedInstalled;
+    },
+    async write(home, facts) {
+      expect(home).toBe(HOME);
+      wrote.push(facts);
+      return { path: join(home, 'installed.json') };
+    },
+  };
 }
 
 function harness(options: HarnessOptions = {}): Harness {
@@ -299,6 +360,7 @@ function harness(options: HarnessOptions = {}): Harness {
   const shimmed: string[] = [];
   const store = fakeStore(options.store);
   const files = fakeFiles(options.filesCreated ?? true, options.filesFails ?? false);
+  const installed = fakeInstalled(options);
   const written: WriteConfigInput[] = [];
   const lines: string[] = [];
   const recorded =
@@ -307,6 +369,7 @@ function harness(options: HarnessOptions = {}): Harness {
     options.recordedStorePath !== undefined ||
     options.recordedFilesPath !== undefined ||
     options.recordedMirrorPath !== undefined ||
+    options.recordedUpdateAuto !== undefined ||
     options.recordedExtra !== undefined;
 
   const deps: InstallDeps = {
@@ -341,6 +404,7 @@ function harness(options: HarnessOptions = {}): Harness {
               storePath: options.recordedStorePath ?? STORE,
               filesPath: options.recordedFilesPath ?? FILES,
               mirrorPath: options.recordedMirrorPath ?? MIRROR,
+              updateAuto: options.recordedUpdateAuto ?? true,
               extra: options.recordedExtra ?? {},
             }
           : undefined;
@@ -350,11 +414,12 @@ function harness(options: HarnessOptions = {}): Harness {
     store,
     files,
     shim: {
-      write: async (home: string): Promise<{ path: string; changed: boolean }> => {
+      write: async (home: string): Promise<{ path: string; changed: boolean; node: string }> => {
         shimmed.push(home);
-        return { path: shimPath(home), changed: options.shimCurrent !== true };
+        return { path: shimPath(home), changed: options.shimCurrent !== true, node: PINNED_NODE };
       },
     },
+    installed,
     connectors: options.connectors ?? [],
   };
 
@@ -366,6 +431,7 @@ function harness(options: HarnessOptions = {}): Harness {
     written,
     lines,
     shimmed,
+    installed,
     output: () => lines.join('\n'),
   };
 }
@@ -417,6 +483,7 @@ describe('the installer flow on an empty folder', () => {
       '데이터베이스 파일을 어디에 둘까요?',
       '미러를 어디에 둘까요?',
       '임베딩을 켤까요?',
+      '자동 업데이트를 켤까요?',
       '이대로 진행할까요?',
     ]);
     expect(kit.prompts.placeholders).toEqual([STORE, MIRROR]);
@@ -546,7 +613,7 @@ describe('the installer flow on an empty folder', () => {
 
 describe('the installer flow and the database file', () => {
   it('records the absolute path the answer named', async () => {
-    const kit = harness({ tail: { text: ['/tmp/notes/brain.db', ''], confirm: [false, true] } });
+    const kit = harness({ tail: { text: ['/tmp/notes/brain.db', ''], confirm: [false, true, true] } });
 
     const exit = await install([], kit);
 
@@ -556,7 +623,7 @@ describe('the installer flow and the database file', () => {
   });
 
   it('expands a leading ~, which no shell expanded for a typed answer', async () => {
-    const kit = harness({ tail: { text: ['~/notes/brain.db', ''], confirm: [false, true] } });
+    const kit = harness({ tail: { text: ['~/notes/brain.db', ''], confirm: [false, true, true] } });
 
     const exit = await install([], kit);
 
@@ -565,7 +632,7 @@ describe('the installer flow and the database file', () => {
   });
 
   it('expands a leading ~ on the flag too, and never asks about it', async () => {
-    const kit = harness({ tail: { text: [''], confirm: [false, true] } });
+    const kit = harness({ tail: { text: [''], confirm: [false, true, true] } });
 
     const exit = await install(['--store-path', '~/notes/brain.db'], kit);
 
@@ -573,6 +640,7 @@ describe('the installer flow and the database file', () => {
     expect(kit.prompts.asked).toEqual([
       '미러를 어디에 둘까요?',
       '임베딩을 켤까요?',
+      '자동 업데이트를 켤까요?',
       '이대로 진행할까요?',
     ]);
     expect(kit.written).toEqual([fresh(join(homedir(), 'notes/brain.db'))]);
@@ -580,7 +648,7 @@ describe('the installer flow and the database file', () => {
 
   it('asks again after a relative answer, and takes the next one', async () => {
     const kit = harness({
-      tail: { text: ['notes/brain.db', '/tmp/notes/brain.db', ''], confirm: [false, true] },
+      tail: { text: ['notes/brain.db', '/tmp/notes/brain.db', ''], confirm: [false, true, true] },
     });
 
     const exit = await install([], kit);
@@ -594,7 +662,7 @@ describe('the installer flow and the database file', () => {
   });
 
   it('asks again after a relative flag when there is a terminal to ask in', async () => {
-    const kit = harness({ tail: { text: ['/tmp/notes/brain.db', ''], confirm: [false, true] } });
+    const kit = harness({ tail: { text: ['/tmp/notes/brain.db', ''], confirm: [false, true, true] } });
 
     const exit = await install(['--store-path', 'brain.db'], kit);
 
@@ -649,7 +717,7 @@ describe('the installer flow and the database file', () => {
   it('says the old file is still there when a re-run picks another path', async () => {
     const kit = harness({
       recordedStorePath: '/tmp/notes/brain.db',
-      tail: { text: ['/tmp/elsewhere/brain.db', ''], confirm: [false, true] },
+      tail: { text: ['/tmp/elsewhere/brain.db', ''], confirm: [false, true, true] },
     });
 
     const exit = await install([], kit);
@@ -1030,7 +1098,7 @@ describe('the installer flow asking before it writes', () => {
   });
 
   it('writes nothing at all when the answer is no', async () => {
-    const kit = harness({ tail: { text: ['', ''], confirm: [false, false] } });
+    const kit = harness({ tail: { text: ['', ''], confirm: [false, true, false] } });
 
     const exit = await install([], kit);
 
@@ -1044,7 +1112,7 @@ describe('the installer flow asking before it writes', () => {
   });
 
   it('skips this one question for --yes, and keeps the path questions', async () => {
-    const kit = harness({ tail: { text: ['', ''], confirm: [false] } });
+    const kit = harness({ tail: { text: ['', ''], confirm: [false, true] } });
 
     const exit = await install(['--yes'], kit);
 
@@ -1053,6 +1121,7 @@ describe('the installer flow asking before it writes', () => {
       '데이터베이스 파일을 어디에 둘까요?',
       '미러를 어디에 둘까요?',
       '임베딩을 켤까요?',
+      '자동 업데이트를 켤까요?',
     ]);
     expect(kit.output()).not.toContain('이제 이것들을 씁니다.');
   });
@@ -1112,7 +1181,7 @@ describe('the installer flow and the mirror path', () => {
   });
 
   it('records the absolute path the answer named', async () => {
-    const kit = harness({ tail: { text: ['', '/tmp/notes/brain'], confirm: [false, true] } });
+    const kit = harness({ tail: { text: ['', '/tmp/notes/brain'], confirm: [false, true, true] } });
 
     const exit = await install([], kit);
 
@@ -1121,7 +1190,7 @@ describe('the installer flow and the mirror path', () => {
   });
 
   it('expands a leading ~ on the flag, and never asks', async () => {
-    const kit = harness({ tail: { text: [''], confirm: [false, true] } });
+    const kit = harness({ tail: { text: [''], confirm: [false, true, true] } });
 
     const exit = await install(['--mirror-path', '~/notes/brain'], kit);
 
@@ -1129,6 +1198,7 @@ describe('the installer flow and the mirror path', () => {
     expect(kit.prompts.asked).toEqual([
       '데이터베이스 파일을 어디에 둘까요?',
       '임베딩을 켤까요?',
+      '자동 업데이트를 켤까요?',
       '이대로 진행할까요?',
     ]);
     expect(kit.written).toEqual([fresh(STORE, FILES, join(homedir(), 'notes/brain'))]);
@@ -1158,7 +1228,7 @@ describe('the installer flow and the mirror path', () => {
 
 describe('the installer flow and embeddings', () => {
   it('says they are not supported yet when the answer is yes, and writes nothing about them', async () => {
-    const kit = harness({ tail: { text: ['', ''], confirm: [true, true] } });
+    const kit = harness({ tail: { text: ['', ''], confirm: [true, true, true] } });
 
     const exit = await install([], kit);
 
@@ -1217,7 +1287,7 @@ describe('the installer flow, the shim and the harnesses', () => {
     const other = memoryConnector({ harness: 'other', label: 'Other' });
     const kit = harness({
       connectors: [demo, other],
-      tail: { text: ['', ''], confirm: [false, true], multiselect: [['demo']] },
+      tail: { text: ['', ''], confirm: [false, true, true], multiselect: [['demo']] },
     });
 
     const exit = await install([], kit);
@@ -1247,7 +1317,7 @@ describe('the installer flow, the shim and the harnesses', () => {
     const run = async (): Promise<string> => {
       const kit = harness({
         connectors: [demo],
-        tail: { text: ['', ''], confirm: [false, true], multiselect: [['demo']] },
+        tail: { text: ['', ''], confirm: [false, true, true], multiselect: [['demo']] },
       });
       expect(await install([], kit)).toBe(0);
       return kit.output();
@@ -1381,6 +1451,15 @@ describe('the installer flags', () => {
       argv: ['--connect', 'demo', '--connect', 'demo'],
       expected: { connect: ['demo'], yes: false, help: false },
     },
+    {
+      argv: ['--yes', '--plugin-root', '/Users/me/.claude/plugins/cache/x/second-brain/0.1.0'],
+      expected: {
+        pluginRoot: '/Users/me/.claude/plugins/cache/x/second-brain/0.1.0',
+        connect: [],
+        yes: true,
+        help: false,
+      },
+    },
   ])('reads $argv', ({ argv, expected }) => {
     const parsed = parseFlags(argv);
     expect(parsed.ok).toBe(true);
@@ -1389,6 +1468,10 @@ describe('the installer flags', () => {
   });
 
   it.each([
+    { argv: ['--plugin-root'], contains: '--plugin-root 뒤에는 경로가 와야 합니다' },
+    // Absolute only: the only caller is the plugin launcher, and a relative
+    // one would be recorded against whatever directory that hook had.
+    { argv: ['--plugin-root', 'plugin'], contains: '절대 경로가 아닙니다' },
     { argv: ['--nope'], contains: '모르는 인자입니다' },
     // The flags the Postgres install needed are gone, and an unknown flag is
     // refused rather than ignored.
@@ -1434,5 +1517,149 @@ describe('the installer flags', () => {
 
     expect(exit).toBe(0);
     expect(kit.written).toEqual([fresh('/tmp/a/brain.db')]);
+  });
+});
+
+/**
+ * The last two steps of AD-19, which are what a plugin's `SessionStart` reads:
+ * proving the installation answers from outside this process, and only then
+ * recording that it did.
+ */
+describe('the installer flow, proving itself and recording it', () => {
+  it('runs the shim after doctor, then writes the record, and reports both', async () => {
+    const kit = harness();
+
+    const result = await resultOf([], kit);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Doctor first: its lines are what a person reads to find out what is
+    // wrong, and a report cut short by a shim that will not start would hide
+    // every check that passed.
+    expect(kit.store.doctored).toHaveLength(1);
+    expect(kit.installed.verified).toEqual([HOME]);
+    expect(kit.installed.wrote).toEqual([
+      {
+        commit: BUILD_COMMIT,
+        schema_version: 3,
+        node: PINNED_NODE,
+        // Nothing named a plugin folder and nothing was recorded before.
+        plugin_root: null,
+      },
+    ]);
+    expect(result.report.installed).toEqual({
+      path: join(HOME, 'installed.json'),
+      commit: BUILD_COMMIT,
+    });
+  });
+
+  it('records the plugin folder the install was started from', async () => {
+    const kit = harness();
+
+    await installWithFlags(
+      { connect: [], yes: true, help: false, pluginRoot: '/plugins/second-brain' },
+      kit,
+    );
+
+    expect(kit.installed.wrote[0]?.plugin_root).toBe('/plugins/second-brain');
+  });
+
+  it('keeps the plugin folder a previous install recorded when nothing names one', async () => {
+    // `brain setup run` by hand must not turn a plugin install into one the
+    // `plugin` check then says nothing about.
+    const kit = harness({
+      recordedInstalled: {
+        commit: 'f'.repeat(40),
+        schema_version: 3,
+        node: PINNED_NODE,
+        plugin_root: '/plugins/second-brain',
+        installed_at: '2026-10-17T00:00:00.000Z',
+      },
+    });
+
+    await install(['--yes'], kit);
+
+    expect(kit.installed.wrote[0]?.plugin_root).toBe('/plugins/second-brain');
+  });
+
+  it('falls back to the schema version this run measured when there is no build.json', async () => {
+    const kit = harness({ build: undefined });
+
+    const result = await resultOf([], kit);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(kit.installed.wrote[0]).toMatchObject({ commit: null, schema_version: 3 });
+    expect(result.report.installed.commit).toBeNull();
+  });
+
+  it('is SETUP_INCOMPLETE, and writes no record, when the shim will not answer', async () => {
+    const kit = harness({ verifyFails: 'shim이 `ok: true`가 아닌 엔벨로프를 냈습니다' });
+
+    const result = await resultOf([], kit);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure).toMatchObject({ code: 'SETUP_INCOMPLETE', exit: 1 });
+    // The record means "this install finished and answered", so a run that
+    // could not answer must not leave one: a `SessionStart` would otherwise
+    // never try again.
+    expect(kit.installed.wrote).toEqual([]);
+  });
+
+  it('does not reach the record when doctor already failed', async () => {
+    const kit = harness({ store: { walFails: true } });
+
+    const result = await resultOf([], kit);
+
+    expect(result.ok).toBe(false);
+    expect(kit.installed.verified).toEqual([]);
+    expect(kit.installed.wrote).toEqual([]);
+  });
+});
+
+describe('the installer flow and automatic updating', () => {
+  it('asks, writes the answer, and reports it', async () => {
+    // The question after embeddings, answered no: the one new value an install
+    // records (AD-19).
+    const kit = harness({ tail: { text: ['', ''], confirm: [false, false, true] } });
+
+    const result = await resultOf([], kit);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(kit.prompts.asked).toContain('자동 업데이트를 켤까요?');
+    expect(kit.written[0]?.updateAuto).toBe(false);
+    expect(result.report.update).toEqual({ auto: false });
+    expect(kit.output()).toContain('자동 업데이트는 꺼져 있습니다');
+  });
+
+  it('offers what the folder already says as the default', async () => {
+    const kit = harness({ recorded: true, recordedUpdateAuto: false });
+
+    await install([], kit);
+
+    // Somebody who turned it off once does not have to turn it off again at
+    // every re-run, which is what a default of `true` here would mean.
+    expect(kit.prompts.initial).toContainEqual(['자동 업데이트를 켤까요?', false]);
+  });
+
+  it('keeps the recorded value without asking when there is no terminal', async () => {
+    const kit = harness({ isTTY: false, recorded: true, recordedUpdateAuto: false });
+
+    const result = await resultOf(['--yes'], kit);
+
+    expect(kit.prompts.asked).toEqual([]);
+    expect(kit.written[0]?.updateAuto).toBe(false);
+    expect(result.ok && result.report.update).toEqual({ auto: false });
+  });
+
+  it('is on for a first install with nothing recorded and nobody to ask', async () => {
+    const kit = harness({ isTTY: false });
+
+    const result = await resultOf(['--yes'], kit);
+
+    expect(kit.written[0]?.updateAuto).toBe(true);
+    expect(result.ok && result.report.update).toEqual({ auto: true });
   });
 });

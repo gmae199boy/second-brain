@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   CONFIG_SCHEMA_VERSION,
   DEFAULT_TIMEZONE,
+  DEFAULT_UPDATE_AUTO,
   defaultFilesPath,
   defaultMirrorPath,
   defaultStorePath,
@@ -69,6 +70,7 @@ describe('readConfig with a complete folder', () => {
         storePath: '/tmp/elsewhere/brain.db',
         filesPath: '/tmp/elsewhere/files',
         mirrorPath: '/tmp/elsewhere/brain-mirror',
+        updateAuto: true,
       },
     });
   });
@@ -278,6 +280,7 @@ describe('writeConfig', () => {
         storePath: '/tmp/elsewhere/brain.db',
         filesPath: '/tmp/elsewhere/files',
         mirrorPath: '/tmp/elsewhere/brain-mirror',
+        updateAuto: true,
       },
     });
 
@@ -442,6 +445,9 @@ describe('readConfigForSetup', () => {
         storePath: '/tmp/a/brain.db',
         filesPath: '/tmp/a/files',
         mirrorPath: '/tmp/a/mirror',
+        // `writeConfig` records the default even when nothing asked for it, so
+        // a re-run offers it back rather than asking again from scratch.
+        updateAuto: true,
         extra: {},
       },
       warnings: [],
@@ -596,5 +602,87 @@ describe('readConfigForSetup', () => {
     // And `readConfig` reads back what this wrote, which is the whole point of
     // sharing the checks.
     expect((await readConfig(home)).ok).toBe(true);
+  });
+});
+
+/**
+ * `[update] auto`: whether the harness plugin may install a newer app on its
+ * own (AD-19). It is the first boolean key the codec has, and the three
+ * readings of it differ on purpose — a command refuses a value it cannot use,
+ * an install repairs it, and the bootstrap reads it with no parser at all.
+ */
+describe('[update] auto', () => {
+  it('defaults to on, because that is what a plugin is for', async () => {
+    const home = await given({ config: VALID_CONFIG });
+
+    const result = await readConfig(home);
+
+    expect(result.ok && result.config.updateAuto).toBe(true);
+    expect(DEFAULT_UPDATE_AUTO).toBe(true);
+  });
+
+  it('is read as what the file says', async () => {
+    const home = await given({ config: `${VALID_CONFIG}\n[update]\nauto = false\n` });
+
+    const result = await readConfig(home);
+
+    expect(result.ok && result.config.updateAuto).toBe(false);
+  });
+
+  it('is CONFIG_INVALID for a command when it is not a boolean', async () => {
+    const home = await given({ config: `${VALID_CONFIG}\n[update]\nauto = "yes"\n` });
+
+    const result = await readConfig(home);
+
+    expect(result).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toContain('update.auto');
+      assertKoreanLine(result.message, { label: 'update.auto message' });
+    }
+  });
+
+  it('is dropped with a CONFIG_VALUE_RESET for an install, keeping the rest', async () => {
+    const home = await given({
+      config: [
+        VALID_CONFIG.trim(),
+        'timezone = "Europe/Berlin"',
+        '[update]',
+        'auto = "yes"',
+        '',
+      ].join('\n'),
+    });
+
+    const read = await readConfigForSetup(home);
+
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    // That key, and only that key: a single typo must not reset the others.
+    expect(read.recorded?.updateAuto).toBeUndefined();
+    expect(read.recorded?.timezone).toBe('Europe/Berlin');
+    expect(read.warnings.map((warning) => warning.code)).toEqual(['CONFIG_VALUE_RESET']);
+    expect(read.warnings[0]?.message).toContain('update.auto');
+    expect(read.warnings[0]?.message).toContain('true');
+  });
+
+  it('is written, and read back, both ways round', async () => {
+    for (const auto of [true, false]) {
+      const home = await tempHome();
+
+      await writeConfig(home, { updateAuto: auto });
+      const result = await readConfig(home);
+
+      expect(result.ok && result.config.updateAuto).toBe(auto);
+      const read = await readConfigForSetup(home);
+      expect(read.ok && read.recorded?.updateAuto).toBe(auto);
+    }
+  });
+
+  it('is a known key, so it is not reported as one this version ignores', async () => {
+    const home = await given({ config: `${VALID_CONFIG}\n[update]\nauto = true\n` });
+
+    const result = await readConfig(home);
+
+    expect(result.ok && result.warnings).toEqual([]);
   });
 });

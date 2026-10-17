@@ -1,0 +1,13 @@
+{
+  "name": "second-brain",
+  "owner": {
+    "name": "gmae199boy"
+  },
+  "plugins": [
+    {
+      "name": "second-brain",
+      "source": "./plugin",
+      "description": "개인 두뇌(Personal Brain)를 Claude Code에 붙입니다. 첫 세션에서 ~/.second_brain/app에 저장소를 clone하고, 의존성을 설치하고, 빌드하고, 설치기를 돌리는 것까지 자동으로 합니다. git, pnpm 12 이상, node 24.16.0 이상이 있어야 합니다."
+    }
+  ]
+}

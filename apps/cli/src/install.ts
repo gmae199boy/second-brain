@@ -17,6 +17,13 @@ import {
   type InstallPrompts,
   type InstallResult,
 } from './install/flow.js';
+import {
+  readBuildIdentity,
+  readInstalled,
+  verifyCompletion,
+  writeInstalled,
+  type InstalledFacts,
+} from './install/installed.js';
 import { writeShim } from './install/shim.js';
 import {
   doctorAt,
@@ -164,6 +171,15 @@ export function systemInstallDeps(): InstallDeps {
     // The node running this process, and the entry point beside the shim
     // module: whatever node started the installer is the node the hooks get.
     shim: { write: (home: string) => writeShim(home) },
+    // The proof and the record of AD-19's last step. `verify` runs the shim as
+    // a harness hook would — from outside this process, with none of its
+    // environment — which is the one thing no check inside it can establish.
+    installed: {
+      verify: (home: string) => verifyCompletion(home),
+      build: readBuildIdentity,
+      read: readInstalled,
+      write: (home: string, facts: InstalledFacts) => writeInstalled(home, facts),
+    },
     connectors,
   };
 }

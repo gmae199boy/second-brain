@@ -11,7 +11,7 @@ import { memoryConnector, type MemoryConnector } from 'second_brain/testing';
 import { HOME_ENV, configFilePath, envFilePath } from '../src/config/paths.js';
 import { setupConnectCommand } from '../src/commands/setup-connect.js';
 import { dispatch } from '../src/dispatch.js';
-import { shimPath, writeShim } from '../src/install/shim.js';
+import { parseShim, shimPath, writeShim } from '../src/install/shim.js';
 import { systemClock } from '../src/runtime/clock.js';
 
 /**
@@ -47,8 +47,10 @@ interface Envelope {
     mirror_path?: string;
     shim?: { path?: string; changed?: boolean };
     harnesses?: { harness: string; target: string; changed: boolean }[];
-    checks?: { id: string; status: string }[];
+    checks?: { id: string; status: string; code?: string; detail?: string }[];
     summary?: { passed?: number; failed?: number };
+    update?: { auto?: boolean };
+    installed?: { path?: string; commit?: string | null };
   };
   warnings: string[];
   error?: {
@@ -403,6 +405,10 @@ describe('brain setup run against the local SQLite source', () => {
     expect(data.harnesses).toEqual([]);
     expect(data.checks?.map((check) => check.id)).toContain('wal');
     expect(data.summary?.failed).toBe(0);
+    // The two this story added: what the install decided about updating, and
+    // the completion record a plugin's `SessionStart` reads (AD-19).
+    expect(data.update).toEqual({ auto: true });
+    expect(data.installed?.path).toBe(join(home, 'installed.json'));
   });
 
   it('keeps every value beside the one it could not use, and warns', async () => {
@@ -664,6 +670,7 @@ describe('brain setup run against the local SQLite source', () => {
       'shim',
       'node-path',
       'node-version',
+      'plugin',
     ]);
     const failed = (envelope.data?.checks ?? []).filter((check) => check.status !== 'ok');
     expect(failed, JSON.stringify(failed)).toEqual([]);
@@ -690,6 +697,7 @@ describe('brain setup run against the local SQLite source', () => {
       'shim',
       'node-path',
       'node-version',
+      'plugin',
     ]);
     expect(envelope.data?.checks?.[1]).toEqual({
       id: 'schema-version',
@@ -703,5 +711,80 @@ describe('brain setup run against the local SQLite source', () => {
     });
     expect(envelope.data?.checks?.filter((check) => check.status === 'fail')).toHaveLength(1);
     expect(existsSync(join(home, 'brain.db'))).toBe(false);
+  });
+});
+
+/**
+ * The completion record, written by the real install against a real home: the
+ * shim is run from outside the process, the build's identity is read off
+ * `dist/build.json`, and only then is the record written (AD-19, AD-20).
+ */
+describe('brain setup run and the completion record', () => {
+  interface Record {
+    commit?: string | null;
+    schema_version?: number;
+    node?: string;
+    plugin_root?: string | null;
+    installed_at?: string;
+  }
+
+  async function recordOf(home: string): Promise<Record> {
+    return JSON.parse(await readFile(join(home, 'installed.json'), 'utf8')) as Record;
+  }
+
+  it('records the build, the pinned node and no plugin folder, at mode 0644', async () => {
+    const home = await emptyHome();
+
+    const run = await runBrain(['setup', 'run', '--yes'], home);
+
+    expect(run.code).toBe(0);
+    const record = await recordOf(home);
+    // `dist/build.json` is written by this package's own build, so the commit
+    // and the schema version are this build's own facts.
+    const build = JSON.parse(
+      await readFile(fileURLToPath(new URL('../dist/build.json', import.meta.url)), 'utf8'),
+    ) as { commit: string | null; schema_version: number };
+    expect(record.commit).toBe(build.commit);
+    expect(record.schema_version).toBe(build.schema_version);
+    // The node the shim was pinned to, which is the node a hook will run.
+    expect(record.node).toBe(parseShim(await readFile(shimPath(home), 'utf8'))?.node);
+    // Nothing started this install from a plugin folder.
+    expect(record.plugin_root).toBeNull();
+    expect(record.installed_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // Nothing private in it, and a hook may run as another process than the
+    // install did.
+    expect(((await stat(join(home, 'installed.json'))).mode & 0o777).toString(8)).toBe('644');
+  });
+
+  it('records the plugin folder --plugin-root names, and keeps it on a re-run', async () => {
+    const home = await emptyHome();
+
+    await runBrain(['setup', 'run', '--yes', '--plugin-root', '/plugins/second-brain'], home);
+    expect((await recordOf(home)).plugin_root).toBe('/plugins/second-brain');
+
+    // A hand-run `setup run` afterwards must not turn a plugin install into
+    // one the `plugin` check then has nothing to say about.
+    const again = await runBrain(['setup', 'run', '--yes'], home);
+    expect(again.code).toBe(0);
+    expect((await recordOf(home)).plugin_root).toBe('/plugins/second-brain');
+  });
+
+  it('records [update] auto and reads it back as a configuration key', async () => {
+    const home = await emptyHome();
+
+    await runBrain(['setup', 'run', '--yes'], home);
+
+    expect(await readFile(configFilePath(home), 'utf8')).toContain('auto = true');
+  });
+
+  it('reports the plugin check as ok, since the install came from no plugin', async () => {
+    const home = await emptyHome();
+    await runBrain(['setup', 'run', '--yes'], home);
+
+    const run = await runBrain(['doctor', 'run', '--json'], home);
+
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    const plugin = envelope.data?.checks?.find((check) => check.id === 'plugin');
+    expect(plugin).toMatchObject({ status: 'ok' });
   });
 });

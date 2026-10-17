@@ -56,10 +56,11 @@ const CHECKS = [
   'shim',
   'node-path',
   'node-version',
+  'plugin',
 ];
 
 /** The machine checks alone: what is still reported when there is no database. */
-const MACHINE_CHECKS = ['config', 'shim', 'node-path', 'node-version'];
+const MACHINE_CHECKS = ['config', 'shim', 'node-path', 'node-version', 'plugin'];
 
 /**
  * What a report says about a database nobody can reach: `db` and the schema
@@ -566,9 +567,11 @@ describe('brain doctor run without a configuration it can read', () => {
     expect(run.stdout).toContain('shim: fail');
     expect(run.stdout).toContain('schema-version: skip 앞선 점검 실패: db');
     expect(run.stdout).toContain('node-path: skip 앞선 점검 실패: shim');
-    // Three failures, two skips, one pass: the summary is the last line.
+    // Three failures, two skips, two passes — `node-version` and `plugin`,
+    // which has nothing to report about a folder nothing installed into: the
+    // summary is the last line.
     expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
-      '요약: 통과 1, 경고 0, 실패 3, 건너뜀 2',
+      '요약: 통과 2, 경고 0, 실패 3, 건너뜀 2',
     );
     // Not an error envelope, so nothing goes to stderr but the warning line.
     expect(run.stderr).not.toContain('CONFIG_MISSING');
