@@ -333,3 +333,4 @@ deferred: []
   - auto가 꺼져 있고 새 ref가 아직 클론에 없으면 doctor가 `UPDATE_AVAILABLE` 대신 "관계를 알 수 없음" warn을 낸다(doctor는 fetch하지 않음).
   - 플러그인 캐시 경로는 버전마다 바뀌어서, auto가 꺼진 동안 `installed.json.plugin_root`가 옛 경로를 가리킬 수 있다.
   - 잠금 폴더를 만들 수 없는 환경에서는 hook이 조용히 아무것도 하지 않는다(기각한 리뷰 항목).
+- **커밋:** 스토리 커밋 `2781bb7d13020e295721fa65b8bd2aa5ad85a6bf`. 이어진 별도 커밋에서 `plugin/app-ref`를 이 sha로, `plugin.json` version을 0.1.1로 올렸다. push는 하지 않았다.
