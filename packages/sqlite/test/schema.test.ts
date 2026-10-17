@@ -114,8 +114,13 @@ async function migratedPath(): Promise<string> {
   expect(applied).toEqual({
     ok: true,
     from: 0,
-    to: 3,
-    applied: ['0001_initial.sql', '0002_files_and_work.sql', '0003_users.sql'],
+    to: 4,
+    applied: [
+      '0001_initial.sql',
+      '0002_files_and_work.sql',
+      '0003_users.sql',
+      '0004_capture_columns.sql',
+    ],
   });
   return path;
 }
@@ -274,10 +279,11 @@ function seed(connection: SqliteConnection): void {
   });
   insert(connection, 'failures', {
     id: ids.failure,
-    harness: 'demo',
-    harness_session_id: 'session-0001',
+    target_kind: 'session',
+    target_id: 'demo:session-0001',
     stage: 'ingest',
     fingerprint: 'c0ffee',
+    harness: 'demo',
     session_id: ids.session,
     code: 'DB_UNAVAILABLE',
     message: 'the database was not there',
@@ -381,7 +387,7 @@ describe('the migration this package ships', () => {
     const before = tableNames(connection);
     const configs = count(connection, 'index_configs');
 
-    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 3, to: 3, applied: [] });
+    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 4, to: 4, applied: [] });
 
     expect(tableNames(connection)).toEqual(before);
     expect(count(connection, 'index_configs')).toBe(configs);
@@ -639,10 +645,11 @@ function duplicateKeyCases(): DuplicateKeyCase[] {
   };
   const failure = {
     id: id(113),
-    harness: 'demo',
-    harness_session_id: 'session-0002',
+    target_kind: 'session',
+    target_id: 'demo:session-0002',
     stage: 'ingest',
     fingerprint: 'beef',
+    harness: 'demo',
     session_id: null,
     code: 'DB_UNAVAILABLE',
     message: 'again',
@@ -730,7 +737,7 @@ function duplicateKeyCases(): DuplicateKeyCase[] {
     },
     {
       table: 'failures',
-      key: '(harness, harness_session_id, stage, fingerprint)',
+      key: '(target_kind, target_id, stage, fingerprint)',
       first: failure,
       second: other(failure, 213),
     },

@@ -141,7 +141,7 @@ describe('the SQLite identity store', () => {
     }
   });
 
-  it('upgrades a version 2 database to 3, keeping its rows and adding the key', async () => {
+  it('upgrades a version 2 database to the current one, keeping its rows and adding the key', async () => {
     const path = await versionTwoPath();
 
     const before = openSqlite({ path, busyTimeoutMs: 3000 });
@@ -155,8 +155,8 @@ describe('the SQLite identity store', () => {
     expect(await runSqliteMigrations({ path })).toEqual({
       ok: true,
       from: 2,
-      to: 3,
-      applied: ['0003_users.sql'],
+      to: 4,
+      applied: ['0003_users.sql', '0004_capture_columns.sql'],
     });
 
     const after = openSqlite({ path, busyTimeoutMs: 3000 });

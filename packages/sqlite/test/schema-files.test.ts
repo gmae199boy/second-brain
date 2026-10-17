@@ -65,6 +65,12 @@ const NEEDLE_TRIGRAM = '회의록';
 
 const EXTRACTOR = 'doc/1+demo-0.0.0';
 
+// Canonical chunk locators, in the one spelling migration 0004 lets in: `type`
+// first, no whitespace (AD-24). The PDF one carries the page `document_chunks`
+// keeps a copy of; the text one is a character range and has no page at all.
+const PDF_LOCATOR = '{"type":"pdf","page":1}';
+const TEXT_LOCATOR = '{"type":"text","start":0,"end":11}';
+
 const directories: string[] = [];
 const connections: SqliteConnection[] = [];
 
@@ -88,8 +94,13 @@ async function migratedPath(): Promise<string> {
   expect(applied).toEqual({
     ok: true,
     from: 0,
-    to: 3,
-    applied: ['0001_initial.sql', '0002_files_and_work.sql', '0003_users.sql'],
+    to: 4,
+    applied: [
+      '0001_initial.sql',
+      '0002_files_and_work.sql',
+      '0003_users.sql',
+      '0004_capture_columns.sql',
+    ],
   });
   return path;
 }
@@ -206,17 +217,21 @@ function seed(connection: SqliteConnection): void {
     id: ids.extractionA,
     file_id: ids.fileA,
     extractor_version: EXTRACTOR,
+    attempt: 1,
     media_type: 'application/pdf',
     status: 'ok',
     started_at: SEEDED_AT,
     finished_at: LATER,
   });
+  // A PDF piece, so `page` is the locator's own page and not a second fact
+  // (AD-24, migration 0004).
   insert(connection, 'document_chunks', {
     id: ids.chunkA,
     extraction_id: ids.extractionA,
     ordinal: 0,
     page: 1,
     body: DOCUMENT_BODY,
+    chunk_locator: PDF_LOCATOR,
   });
   insert(connection, 'file_names', {
     id: ids.nameA,
@@ -267,17 +282,20 @@ function seed(connection: SqliteConnection): void {
     id: ids.extractionB,
     file_id: ids.fileB,
     extractor_version: EXTRACTOR,
+    attempt: 1,
     media_type: 'image/jpeg',
     status: 'ok',
     started_at: SEEDED_AT,
     finished_at: LATER,
   });
+  // Not a PDF, so no page at all: the locator is a character range.
   insert(connection, 'document_chunks', {
     id: ids.chunkB,
     extraction_id: ids.extractionB,
     ordinal: 0,
     page: null,
     body: OTHER_BODY,
+    chunk_locator: TEXT_LOCATOR,
   });
 }
 
@@ -288,7 +306,7 @@ async function seeded(): Promise<SqliteConnection> {
   return connection;
 }
 
-describe('the upgrade from 0001 through 0003', () => {
+describe('the upgrade from 0001 through 0004', () => {
   it('keeps the rows and the keys of the two tables it has to rebuild', async () => {
     // Only the first file, so the database stops at version 1 the way an
     // install from before this story did. A folder the caller names is not
@@ -332,8 +350,8 @@ describe('the upgrade from 0001 through 0003', () => {
     expect(await runSqliteMigrations({ path })).toEqual({
       ok: true,
       from: 1,
-      to: 3,
-      applied: ['0002_files_and_work.sql', '0003_users.sql'],
+      to: 4,
+      applied: ['0002_files_and_work.sql', '0003_users.sql', '0004_capture_columns.sql'],
     });
 
     const after = open(path);
@@ -404,13 +422,19 @@ function duplicateKeyCases(): DuplicateKeyCase[] {
     id: id(105),
     file_id: ids.fileB,
     extractor_version: 'doc/2+demo-0.0.0',
+    attempt: 2,
+    // Finished, so the conflict below is the `(file_id, attempt)` key and not
+    // the one-running-generation index (migration 0004).
+    status: 'ok',
     started_at: SEEDED_AT,
+    finished_at: LATER,
   };
   const chunk = {
     id: id(106),
     extraction_id: ids.extractionB,
     ordinal: 5,
     body: 'a piece of the other document',
+    chunk_locator: TEXT_LOCATOR,
   };
   const name = {
     id: id(107),
@@ -449,7 +473,7 @@ function duplicateKeyCases(): DuplicateKeyCase[] {
     },
     {
       table: 'document_extractions',
-      key: '(file_id, extractor_version) of the generations still running',
+      key: '(file_id, attempt)',
       first: extraction,
       second: other(extraction, 205),
     },
@@ -557,24 +581,33 @@ describe('the extraction generations (AD-24)', () => {
     connection = await seeded();
   });
 
-  it('allows one running generation per version, and another once it has finished', () => {
+  it('allows one running generation per file, and another once it has finished', () => {
     const running = {
       id: id(401),
       file_id: ids.fileA,
       extractor_version: EXTRACTOR,
+      attempt: 2,
       started_at: SEEDED_AT,
     };
     // The seeded generation is finished, so this one may start.
     insert(connection, 'document_extractions', running);
+    // Another version of the extractor is still a second reading of the same
+    // file: since migration 0004 the key is per file, because `attempt` is what
+    // orders the generations and two readings at once is the race it settles.
     expect(() =>
-      insert(connection, 'document_extractions', { ...running, id: id(402) }),
+      insert(connection, 'document_extractions', {
+        ...running,
+        id: id(402),
+        attempt: 3,
+        extractor_version: 'doc/9+demo-0.0.0',
+      }),
     ).toThrow(/UNIQUE constraint failed/);
 
     connection.database.exec(
       `update document_extractions set status = 'ok', finished_at = '${LATER}'
          where id = '${running.id}'`,
     );
-    insert(connection, 'document_extractions', { ...running, id: id(403) });
+    insert(connection, 'document_extractions', { ...running, id: id(403), attempt: 3 });
   });
 
   it.each([
@@ -586,6 +619,7 @@ describe('the extraction generations (AD-24)', () => {
         id: id(404),
         file_id: ids.fileB,
         extractor_version: 'doc/3+demo-0.0.0',
+        attempt: 2,
         status,
         started_at: SEEDED_AT,
         finished_at: finished,

@@ -197,11 +197,12 @@ function fakeStore(world: StoreWorld = {}): Store {
         world.prepare ?? {
           ok: true,
           from: 0,
-          to: 3,
+          to: 4,
           applied: [
             '0001_initial.sql',
             '0002_files_and_work.sql',
             '0003_users.sql',
+            '0004_capture_columns.sql',
           ],
         }
       );
@@ -221,7 +222,7 @@ function fakeStore(world: StoreWorld = {}): Store {
           : { id: 'wal', status: 'ok', detail: 'wal' },
         { id: 'fts5-trigram', status: 'ok', detail: 'trigram 토크나이저가 있는 fts5' },
         { id: 'foreign-keys', status: 'ok', detail: '이 연결에서 적용됩니다' },
-        { id: 'schema-version', status: 'ok', detail: '3' },
+        { id: 'schema-version', status: 'ok', detail: '4' },
         { id: 'config', status: 'ok', detail: join(home, 'config.toml') },
         { id: 'shim', status: 'ok', detail: shimPath(home) },
         { id: 'node-path', status: 'ok', detail: '/usr/bin/node의 node 24.16.0' },
@@ -342,7 +343,7 @@ function fakeInstalled(options: HarnessOptions): Installed {
     async build() {
       return 'build' in options
         ? options.build
-        : { commit: BUILD_COMMIT, schema_version: 3 };
+        : { commit: BUILD_COMMIT, schema_version: 4 };
     },
     async read() {
       return options.recordedInstalled;
@@ -566,9 +567,9 @@ describe('the installer flow on an empty folder', () => {
     await install([], kit);
 
     expect(kit.output()).toContain(
-      '0001_initial.sql, 0002_files_and_work.sql, 0003_users.sql을 적용했고',
+      '0001_initial.sql, 0002_files_and_work.sql, 0003_users.sql, 0004_capture_columns.sql을 적용했고',
     );
-    expect(kit.output()).toContain('스키마 버전은 3입니다');
+    expect(kit.output()).toContain('스키마 버전은 4입니다');
     expect(kit.output()).toContain(`${FILES}를 만들었습니다 (mode 0700)`);
     expect(kit.output()).toContain(`${shimPath(HOME)}을 썼습니다 (mode 0755)`);
   });
@@ -787,7 +788,7 @@ describe('the installer flow run a second time', () => {
       recorded: true,
       filesCreated: false,
       store: {
-        prepare: { ok: true, from: 3, to: 3, applied: [] },
+        prepare: { ok: true, from: 4, to: 4, applied: [] },
         self: { ok: true, name: 'brain-owner', created: false },
       },
     });
@@ -796,7 +797,7 @@ describe('the installer flow run a second time', () => {
 
     expect(exit).toBe(0);
     expect(kit.written).toEqual([kept()]);
-    expect(kit.output()).toContain('스키마는 이미 버전 3입니다');
+    expect(kit.output()).toContain('스키마는 이미 버전 4입니다');
     // The owner is decided once: a re-run says whose it is and changes nothing
     // (AD-12).
     expect(kit.output()).toContain('이미 brain-owner의 것입니다');
@@ -1141,8 +1142,13 @@ describe('what the installer flow reports when it worked', () => {
       config_path: `${HOME}/config.toml`,
       store: {
         path: STORE,
-        schema_version: 3,
-        applied: ['0001_initial.sql', '0002_files_and_work.sql', '0003_users.sql'],
+        schema_version: 4,
+        applied: [
+          '0001_initial.sql',
+          '0002_files_and_work.sql',
+          '0003_users.sql',
+          '0004_capture_columns.sql',
+        ],
       },
       owner: { name: 'brain-owner', created: true },
       files: { path: FILES, created: true },
@@ -1541,7 +1547,7 @@ describe('the installer flow, proving itself and recording it', () => {
     expect(kit.installed.wrote).toEqual([
       {
         commit: BUILD_COMMIT,
-        schema_version: 3,
+        schema_version: 4,
         node: PINNED_NODE,
         // Nothing named a plugin folder and nothing was recorded before.
         plugin_root: null,
@@ -1570,7 +1576,7 @@ describe('the installer flow, proving itself and recording it', () => {
     const kit = harness({
       recordedInstalled: {
         commit: 'f'.repeat(40),
-        schema_version: 3,
+        schema_version: 4,
         node: PINNED_NODE,
         plugin_root: '/plugins/second-brain',
         installed_at: '2026-10-17T00:00:00.000Z',
@@ -1589,7 +1595,7 @@ describe('the installer flow, proving itself and recording it', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(kit.installed.wrote[0]).toMatchObject({ commit: null, schema_version: 3 });
+    expect(kit.installed.wrote[0]).toMatchObject({ commit: null, schema_version: 4 });
     expect(result.report.installed.commit).toBeNull();
   });
 

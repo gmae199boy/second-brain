@@ -774,7 +774,7 @@ const CONFIG_PATH = join(HOME, CONFIG_FILE);
 function record(commit: string): string {
   return JSON.stringify({
     commit,
-    schema_version: 3,
+    schema_version: 4,
     node: '/opt/homebrew/bin/node',
     plugin_root: '/plugin',
     installed_at: '2026-10-17T00:00:00.000Z',

@@ -114,7 +114,7 @@ guide schema --json`을 실제로 실행해서 exit 0과 `ok: true` 엔벨로프
 ```json
 {
   "commit": "b9b011c2f05a932345e249f11b724c428781bf3b",
-  "schema_version": 3,
+  "schema_version": 4,
   "node": "/opt/homebrew/bin/node",
   "plugin_root": "/Users/me/.claude/plugins/cache/second-brain/second-brain/0.1.0",
   "installed_at": "2026-10-17T15:11:42.113Z"
@@ -250,7 +250,7 @@ brain setup connect <harness>
   "data": {
     "home": "/Users/me/.second_brain",
     "config_path": "/Users/me/.second_brain/config.toml",
-    "store": { "path": "/Users/me/.second_brain/brain.db", "schema_version": 3, "applied": [] },
+    "store": { "path": "/Users/me/.second_brain/brain.db", "schema_version": 4, "applied": [] },
     "owner": { "name": "me", "created": false },
     "files": { "path": "/Users/me/.second_brain/files", "created": false },
     "mirror_path": "/Users/me/.second_brain/mirror",

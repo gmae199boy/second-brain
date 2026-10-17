@@ -460,8 +460,8 @@ describe('brain sessions ingest on the hook path', () => {
   it('says USER_MISSING when nobody owns the brain, and writes nothing', async () => {
     const home = await installedHome();
     const transcript = await transcriptIn(home);
-    // The one state the install step is there to prevent: a version 3 database
-    // whose owner row is gone.
+    // The one state the install step is there to prevent: a database at the
+    // current version whose owner row is gone.
     const database = new DatabaseSync(databaseIn(home));
     try {
       database.exec('delete from users');

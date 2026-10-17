@@ -56,17 +56,19 @@
 | 항목 | 처분 |
 | --- | --- |
 | runMigrations 실패를 `DB_UNAVAILABLE`과 구분(Postgres) | epic 7(복제 대상의 Postgres 마이그레이션) |
-| `redactions` 등 불변 테이블의 변경 거부 trigger | `redactions`: epic 2 story 6(0004, 2026-10-16 번호 변경). `log_entry_edits`·`context_injections`: epic 3. `index_configs`: 두지 않음(setup만 쓴다) |
+| `redactions` 등 불변 테이블의 변경 거부 trigger | `redactions`: 해결됨(2.6, 0004 `redactions_immutable_update`·`_delete`). `log_entry_edits`·`context_injections`: epic 3. `index_configs`: 두지 않음(setup만 쓴다) |
 | `transcript_files.size_bytes` bigint(Postgres) | epic 7 |
 | `tickets.toml` story 5의 pnpm 문구 | 해결됨(epic 1 마무리) |
 | 루트 `engines.node` 하한 강제 | doctor 하한은 해결됨(1.8). 진입점 하한은 epic 2 story 5(회고 F7) |
 | Postgres의 `tool_notes` 가리기 | epic 7 |
-| `files.redact`의 `redactions` 자리 | epic 2 story 6(0004, 2026-10-16 번호 변경) |
+| `files.redact`의 `redactions` 자리 | 해결됨(2.6, 0004의 `redactions.file_id`, 위치 없음). 동작은 epic-attachments |
 | Postgres `index_configs` 맞춤 | epic 7 |
 | 0002 새 테이블 5개의 변경 규칙 trigger | epic-attachments 인셉션 |
-| `document_extractions.index_config_id` | epic 2 story 6(0004, 2026-10-16 번호 변경)으로 앞당김. 문서 조각은 epic-attachments가 만든다 |
+| `document_extractions.index_config_id` | 해결됨(2.6, 0004, nullable). 문서 조각은 epic-attachments가 만든다 |
 | `setup run` 부분 읽기 리셋 | epic 2 story 4 |
 | busy 예산 분기 테스트 | 해결됨(1.9) |
 | 설치기가 모르는 키를 지움 | epic 2 story 4 |
 | `checkSchema`의 `setup upgrade` 문구 | 해결됨(1.9) |
 | 쓰기 가드의 `DB_UNAVAILABLE` exit 1 vs 표 2 (2.1) | epic 2 story 10(쓰기 가드를 spool로 바꿀 때 함께 정한다, 2026-10-16) |
+| Postgres가 0004만큼 더 갈라짐(`messages.git_branch`·`is_subagent_report`와 불변 trigger, `files.source_unreachable_at`, `document_chunks.chunk_locator`와 trigger, `redactions` 재생성·불변 trigger, `document_extractions`의 `attempt`·`failed_stage`·`index_config_id`·키, `failures` 대상 키, `work_items_due_idx`) | epic 7(2.6 리뷰, 2026-10-18) |
+| Core `Failure` 타입이 0004에서 없어진 `harness_session_id`를 키로 적음(`packages/core/src/domain/failure.ts`). `Redaction`·`Message`도 새 칸이 없음 | `Failure`: epic 2 story 11(실패 기록 함수가 타입을 대상 키로 바꿈). `Redaction`: story 9. `Message`: story 7(2.6 Decision, 2026-10-18) |
