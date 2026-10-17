@@ -15,6 +15,13 @@ import type { Harness } from '../harnesses.js';
  * line on stderr: this is on the critical path of a turn and a broken brain
  * must never break one (AD-6). `writes: true`, so the dispatcher's write guard
  * compares the stored schema version first (AD-20).
+ *
+ * Nothing in here masks anything: the secrets of a conversation are taken out
+ * by Core as the batch is built, so this command only ever sees the count
+ * (AD-11). It reports it in the JSON envelope's `inserted.redactions` and
+ * nowhere else — text mode prints nothing at all, because this runs after every
+ * turn. The count is of body maskings alone: a tool note's target is masked
+ * too, and leaves no record to count (Decision 2026-10-18).
  */
 
 export interface SessionsIngestData {
@@ -37,7 +44,8 @@ export function sessionsIngestCommand(
     // caller has to supply, and the only place it can be supplied is there.
     required: ['harness', 'stdin'],
     examples: ['brain sessions ingest claude-code'],
-    output: '세션 토큰 `session`, 그 세션을 이 호출이 만들었는지인 `created`, 넣은 건수 `inserted`',
+    output:
+      '세션 토큰 `session`, 그 세션을 이 호출이 만들었는지인 `created`, 넣은 건수 `inserted`(메시지 `messages`, 도구 메모 `toolNotes`, 저장 전에 가린 비밀의 기록 `redactions`)',
     risk: 'write',
     hook: true,
     dryRun: false,

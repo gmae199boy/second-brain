@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
+import { SECRET_PATTERN_VERSION } from 'second_brain';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { HOME_ENV } from '../src/config/paths.js';
 
@@ -38,6 +39,21 @@ const FIXTURE = fileURLToPath(
 const SESSION_FIXTURE = fileURLToPath(
   new URL('../../../packages/claude-code/test/fixtures/full-session.jsonl', import.meta.url),
 );
+/** The secrets fixture: invented credentials, and the things that only look like them. */
+const SECRETS_FIXTURE = fileURLToPath(
+  new URL('../../../packages/claude-code/test/fixtures/secrets-session.jsonl', import.meta.url),
+);
+/**
+ * Every secret that fixture pastes, each of them invented and valid nowhere.
+ * None of these may be anywhere in the database afterwards (AD-11).
+ */
+const SECRETS = [
+  'sk-AAAAAAAAAAAAAAAAAAAA',
+  'Tiger2024',
+  'swordfish99',
+  'pw9911',
+  'xyz123',
+] as const;
 /** How many lines of it end with its fifth message. */
 const SESSION_HALF_LINES = 25;
 /** The markers the session fixture puts in every tool output and every image. */
@@ -56,7 +72,7 @@ interface Envelope {
   data?: {
     session?: string;
     created?: boolean;
-    inserted?: { messages: number; toolNotes: number };
+    inserted?: { messages: number; toolNotes: number; redactions: number };
   };
   error?: { code: string; message: string; exit_code?: number; hint?: string };
 }
@@ -196,6 +212,30 @@ function rowCounts(path: string): Record<string, number> {
   }
 }
 
+/**
+ * Every row of every user table, for a test that has to say "this string is
+ * nowhere in the database" rather than "not in the column I thought of".
+ */
+function rowDump(path: string): Record<string, unknown[]> {
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    const tables = database
+      .prepare(
+        `select name from sqlite_master
+          where type = 'table' and name not like 'sqlite_%'
+          order by name`,
+      )
+      .all() as { name: string }[];
+    const rows: Record<string, unknown[]> = {};
+    for (const { name } of tables) {
+      rows[name] = database.prepare(`select * from "${name}"`).all();
+    }
+    return rows;
+  } finally {
+    database.close();
+  }
+}
+
 /** The conversation as it is stored, in `seq` order. */
 function storedMessages(path: string): { seq: number; role: string; body: string }[] {
   const database = new DatabaseSync(path, { readOnly: true });
@@ -249,7 +289,7 @@ describe('brain sessions ingest claude-code', () => {
   beforeAll(async () => {
     // The binary and the installer are what these tests run, so a stale build
     // would make every one of them lie.
-    for (const path of [binPath, installPath, FIXTURE, SESSION_FIXTURE]) {
+    for (const path of [binPath, installPath, FIXTURE, SESSION_FIXTURE, SECRETS_FIXTURE]) {
       await readFile(path);
     }
   });
@@ -271,8 +311,9 @@ describe('brain sessions ingest claude-code', () => {
     expect(envelope.data).toEqual({
       session: `claude-code:${HARNESS_SESSION}`,
       created: true,
-      // One `Read`, which the fixture's one tool call is.
-      inserted: { messages: 4, toolNotes: 1 },
+      // One `Read`, which the fixture's one tool call is, and nothing masked:
+      // there is no secret anywhere in this transcript.
+      inserted: { messages: 4, toolNotes: 1, redactions: 0 },
     });
     expect(envelope.warnings).toEqual([]);
 
@@ -597,6 +638,182 @@ describe('brain sessions ingest claude-code on a whole session', () => {
     } finally {
       database.close();
     }
+  });
+});
+
+/**
+ * The masking rows of the story's matrix, through the real binary and a real
+ * SQLite file: what the fixture's conversation pasted must not be in the
+ * database, what it merely mentioned must be, and every record must name the
+ * version of the pattern list that made it (AD-11).
+ *
+ * The secrets in the fixture are invented. They have the shape of the real
+ * thing and none of them is valid anywhere.
+ */
+describe('brain sessions ingest claude-code and the secrets it masks', () => {
+  /** Every masking record, with the columns the ticket asks about. */
+  function storedRedactions(path: string): {
+    kind: string;
+    pattern_version: string | null;
+    file_id: string | null;
+    start: number;
+    end: number;
+    content_hash: string;
+    seq: number;
+  }[] {
+    const database = new DatabaseSync(path, { readOnly: true });
+    try {
+      return database
+        .prepare(
+          `select r.kind, r.pattern_version, r.file_id, r.start, r."end", r.content_hash, m.seq
+             from redactions r join messages m on m.id = r.message_id
+            order by m.seq, r.start`,
+        )
+        .all() as {
+        kind: string;
+        pattern_version: string | null;
+        file_id: string | null;
+        start: number;
+        end: number;
+        content_hash: string;
+        seq: number;
+      }[];
+    } finally {
+      database.close();
+    }
+  }
+
+  /** The fixture in this test's own folder, so nothing writes to the repository. */
+  async function secretsTranscriptIn(home: string): Promise<string> {
+    const path = join(home, 'secrets.jsonl');
+    await copyFile(SECRETS_FIXTURE, path);
+    return path;
+  }
+
+  it('stores no secret of the transcript, in any body or any target', async () => {
+    const home = await installedHome();
+    const transcript = await secretsTranscriptIn(home);
+
+    const run = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      stopPayload(transcript),
+    );
+
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data?.inserted).toEqual({ messages: 2, toolNotes: 1, redactions: 4 });
+
+    const path = databaseIn(home);
+    const stored = [
+      ...storedMessages(path).map((message) => message.body),
+      ...storedToolNotes(path).map((note) => `${note.tool} ${note.target}`),
+    ].join('\n');
+    // Each of these is in the file on disk and in none of the columns.
+    const file = await readFile(transcript, 'utf8');
+    for (const secret of SECRETS) {
+      expect(file, `${secret} is not in the fixture any more`).toContain(secret);
+      expect(stored, `${secret} reached the database`).not.toContain(secret);
+    }
+    // And nothing anywhere in the file holds them either: the records keep a
+    // hash and no text (AD-11).
+    const everything = JSON.stringify(rowDump(path));
+    for (const secret of SECRETS) {
+      expect(everything, `${secret} is in some other column`).not.toContain(secret);
+    }
+  });
+
+  it('leaves what is not a secret exactly where it was', async () => {
+    // The regression table, in a real conversation: a commit, a path, a name,
+    // an address, a private host, an epoch and a Korean sentence about a
+    // password (inputs A3). A message is never rewritten once stored.
+    const home = await installedHome();
+    const transcript = await secretsTranscriptIn(home);
+
+    expect(
+      (await runBrain(['sessions', 'ingest', 'claude-code'], home, stopPayload(transcript)))
+        .code,
+    ).toBe(0);
+
+    const bodies = storedMessages(databaseIn(home))
+      .map((message) => message.body)
+      .join('\n');
+    for (const kept of [
+      '9f1c0e2a7b3d4e5f60718293a4b5c6d7e8f90123',
+      'notes/import.md',
+      'packages/core/src/index.ts',
+      'max_tokens: 4096',
+      'someone@demo.example',
+      '192.168.0.1:8080',
+      '1760745600000',
+      '비밀번호는 바꿨어요',
+    ]) {
+      expect(bodies, `${kept} was masked`).toContain(kept);
+    }
+  });
+
+  it('records every masked span against its message, with the pattern version', async () => {
+    const home = await installedHome();
+    const transcript = await secretsTranscriptIn(home);
+
+    expect(
+      (await runBrain(['sessions', 'ingest', 'claude-code'], home, stopPayload(transcript)))
+        .code,
+    ).toBe(0);
+
+    const records = storedRedactions(databaseIn(home));
+    expect(records).toHaveLength(4);
+    expect(records.map((record) => record.kind)).toEqual([
+      'api_key',
+      'password',
+      'password',
+      'url_credentials',
+    ]);
+    for (const record of records) {
+      // The version of Core's list, so the rows an older list produced can be
+      // found again when it grows (inputs A6).
+      expect(record.pattern_version).toBe(SECRET_PATTERN_VERSION);
+      // A message redaction, so the file target is empty and the range is not.
+      expect(record.file_id).toBe(null);
+      expect(record.start).toBeGreaterThanOrEqual(0);
+      expect(record.end).toBeGreaterThan(record.start);
+      expect(record.content_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+      // Every record belongs to the first message, which is the one that
+      // carried the secrets.
+      expect(record.seq).toBe(0);
+    }
+    // The tool note's masked value left no row: a redaction is a span over a
+    // body, and 0004 has no column that could name a tool note (Decision
+    // 2026-10-18).
+    expect(storedToolNotes(databaseIn(home))).toEqual([
+      { tool: 'Bash', target: 'OPENAI_API_KEY=[REDACTED:password] node run.js', ok: 1 },
+    ]);
+  });
+
+  it('adds no record the second time the same transcript arrives', async () => {
+    const home = await installedHome();
+    const transcript = await secretsTranscriptIn(home);
+    const payload = stopPayload(transcript);
+    expect((await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code).toBe(0);
+    const before = rowCounts(databaseIn(home));
+
+    const again = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      payload,
+    );
+
+    expect(again.code).toBe(0);
+    expect((JSON.parse(again.stdout) as Envelope).data?.inserted).toEqual({
+      messages: 0,
+      toolNotes: 0,
+      redactions: 0,
+    });
+    // Every table, not only the three this story touches.
+    expect(rowCounts(databaseIn(home))).toEqual(before);
+    expect(before['redactions']).toBe(4);
   });
 });
 

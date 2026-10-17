@@ -219,6 +219,12 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
       const pending = batch.messages.map((message) => ({
         message,
         occurredAt: instant(message.occurredAt, 'messages.occurred_at'),
+        // The masking records of this message, with their instants already in
+        // the canonical text, for the same reason as the message's own.
+        redactions: message.redactions.map((redaction) => ({
+          redaction,
+          occurredAt: instant(redaction.occurredAt, 'redactions.occurred_at'),
+        })),
       }));
 
       const written = await withWrite(opened.connection, async (held) => {
@@ -237,7 +243,8 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
         let nextSeq = (top.rows[0]?.top ?? -1) + 1;
 
         let insertedMessages = 0;
-        for (const { message, occurredAt } of pending) {
+        let insertedRedactions = 0;
+        for (const { message, occurredAt, redactions } of pending) {
           if (seen.has(message.harnessMessageId)) continue;
           seen.add(message.harnessMessageId);
           // `cwd` is not among the columns on purpose: the parser reports it so
@@ -258,6 +265,23 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
           // in a column the contract says runs 0, 1, 2, … with no gaps.
           nextSeq += inserted.rows.length;
           insertedMessages += inserted.rows.length;
+
+          // The masking records, and only for a message this call actually
+          // stored. A message the session already held came back with a fresh
+          // set of record ids from a fresh parse: writing them would record the
+          // same masking twice, and the `message_id` of the one that was
+          // dropped points at no row at all (port contract, AD-11).
+          if (inserted.rows.length === 0) continue;
+          for (const { redaction, occurredAt: maskedAt } of redactions) {
+            await sql`
+              insert into redactions (id, message_id, file_id, start, "end", kind,
+                                      content_hash, occurred_at, pattern_version)
+                   values (${redaction.id}, ${message.id}, ${null}, ${redaction.start},
+                           ${redaction.end}, ${redaction.kind}, ${redaction.contentHash},
+                           ${maskedAt}, ${redaction.patternVersion})
+            `.execute(held);
+            insertedRedactions += 1;
+          }
         }
 
         let insertedToolNotes = 0;
@@ -313,7 +337,11 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
 
         return {
           sessionId: session.id,
-          inserted: { messages: insertedMessages, toolNotes: insertedToolNotes },
+          inserted: {
+            messages: insertedMessages,
+            toolNotes: insertedToolNotes,
+            redactions: insertedRedactions,
+          },
         };
       });
       if (!written.ok) return written;

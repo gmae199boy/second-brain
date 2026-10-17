@@ -1,9 +1,11 @@
 import type {
   IngestBatch,
   IngestMessage,
+  IngestRedaction,
   IngestToolNote,
   IngestTracking,
 } from '../domain/ingest-batch.js';
+import { SECRET_PATTERN_VERSION } from '../domain/secret-patterns.js';
 import { formatSessionToken, type SessionKey } from '../domain/session-token.js';
 import type {
   EnsureCheckoutInput,
@@ -109,6 +111,12 @@ export interface SampleIngestBatchOverrides {
   idStart?: number;
   /** Keep only the messages whose harness id is in here, in this order. */
   only?: readonly string[];
+  /**
+   * How many masking records to hang on every message. The default is none,
+   * because that is what nearly every message carries; a case about the
+   * records asks for them (AD-11).
+   */
+  redactions?: number;
 }
 
 /**
@@ -140,10 +148,25 @@ export function sampleIngestBatch(
     timestampMs: FIXTURE_INSTANT.getTime(),
     start: overrides.idStart ?? 0,
   });
-  const messages: IngestMessage[] = kept.map((message) => ({
-    ...message,
-    id: idGen.next(),
-  }));
+  const ingestedAt = overrides.tracking?.ingestedAt ?? new Date('2026-01-02T03:06:00.000Z');
+  const perMessage = overrides.redactions ?? 0;
+  const messages: IngestMessage[] = kept.map((message) => {
+    // The message's id first and then its records', which is the order the use
+    // case mints them in (AD-8).
+    const id = idGen.next();
+    const redactions: IngestRedaction[] = Array.from({ length: perMessage }, (_unused, index) => ({
+      id: idGen.next(),
+      // Any valid half-open range: the schema only asks for `0 <= start < end`,
+      // and no store reads the body to check that something was there.
+      start: index * 10,
+      end: index * 10 + 5,
+      kind: 'api_key',
+      contentHash: `sha256:${String(index).padStart(64, '0')}`,
+      patternVersion: SECRET_PATTERN_VERSION,
+      occurredAt: ingestedAt,
+    }));
+    return { ...message, id, redactions };
+  });
   const toolNotes: IngestToolNote[] = parsed.toolNotes
     .filter((note) => keptIds.has(note.harnessMessageId))
     .map((note) => ({ ...note, id: idGen.next() }));
@@ -164,7 +187,7 @@ export function sampleIngestBatch(
       cursorReset: parsed.cursorReset,
       startSource: parsed.startSource,
       endedAt: null,
-      ingestedAt: new Date('2026-01-02T03:06:00.000Z'),
+      ingestedAt,
       ...overrides.tracking,
     },
     messages,

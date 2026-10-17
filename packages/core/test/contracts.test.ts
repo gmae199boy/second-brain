@@ -409,7 +409,11 @@ describe('the contracts catch a wrong store', () => {
           if (!result.ok) return result;
           return {
             ...result,
-            inserted: { messages: batch.messages.length, toolNotes: batch.toolNotes.length },
+            inserted: {
+              messages: batch.messages.length,
+              toolNotes: batch.toolNotes.length,
+              redactions: result.inserted.redactions,
+            },
           };
         },
       };
@@ -417,6 +421,31 @@ describe('the contracts catch a wrong store', () => {
 
     expect(await failedCases(sessionStoreContract(), make)).toContain(
       'ingest adds nothing the second time the same batch arrives',
+    );
+  });
+
+  it('catches a store that writes the masking records of a message it skipped', async () => {
+    const make = async (): Promise<SessionStoreSubject> => {
+      const inner = memoryStore();
+      return {
+        ...inner,
+        async ingest(batch) {
+          // Every record of every batch, whether or not its message went in:
+          // the same masking is recorded again on each replay, and the ones
+          // whose message was skipped point at a message id no row has (AD-11).
+          const result = await inner.ingest(batch);
+          if (!result.ok) return result;
+          const all = batch.messages.reduce(
+            (total, message) => total + message.redactions.length,
+            0,
+          );
+          return { ...result, inserted: { ...result.inserted, redactions: all } };
+        },
+      };
+    };
+
+    expect(await failedCases(sessionStoreContract(), make)).toContain(
+      'the records of a message the session already holds are dropped',
     );
   });
 

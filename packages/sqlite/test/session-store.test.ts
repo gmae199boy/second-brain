@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { SECRET_PATTERN_VERSION } from '@second-brain/core';
 import {
   otherProjectId,
   otherSessionId,
@@ -108,6 +109,88 @@ describe('the SQLite session store and the columns behind it', () => {
         { seq: 2, role: 'user', git_branch: 'topic/notes', is_subagent_report: 0 },
         { seq: 3, role: 'assistant', git_branch: 'topic/notes', is_subagent_report: 1 },
       ]);
+    } finally {
+      await opened.connection.close();
+    }
+  });
+
+  it('writes a masking record as a message redaction with the pattern version', async () => {
+    const path = await migratedPath();
+    const store = sqliteStore({ path });
+    const batch = sampleIngestBatch({ redactions: 1 });
+    try {
+      expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
+      expect((await store.ensureSession(sampleEnsureSessionInput())).ok).toBe(true);
+      const ingested = await store.ingest(batch);
+      expect(ingested.ok).toBe(true);
+      if (!ingested.ok) return;
+      expect(ingested.inserted.redactions).toBe(batch.messages.length);
+    } finally {
+      await store.close();
+    }
+
+    const opened = openSqlite({ path, busyTimeoutMs: 3000 });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    try {
+      // `file_id` is null and the range is filled: the `check` of migration
+      // 0004 says a redaction has exactly one target, and that a message one
+      // carries a half-open range over the body.
+      expect(
+        opened.connection.database
+          .prepare(
+            `select r.id, r.file_id, r.start, r."end", r.kind, r.content_hash,
+                    r.occurred_at, r.pattern_version, m.seq
+               from redactions r join messages m on m.id = r.message_id
+              order by m.seq`,
+          )
+          .all(),
+      ).toEqual(
+        batch.messages.map((message, seq) => ({
+          id: message.redactions[0]?.id,
+          file_id: null,
+          start: message.redactions[0]?.start,
+          end: message.redactions[0]?.end,
+          kind: message.redactions[0]?.kind,
+          content_hash: message.redactions[0]?.contentHash,
+          occurred_at: '2026-01-02T03:06:00.000Z',
+          pattern_version: SECRET_PATTERN_VERSION,
+          seq,
+        })),
+      );
+    } finally {
+      await opened.connection.close();
+    }
+  });
+
+  it('refuses a masking record whose message is not there', async () => {
+    // The foreign key is what keeps a record from outliving the body it is
+    // about, and it is why the records of a message the store skipped are
+    // dropped rather than written (port contract).
+    const path = await migratedPath();
+    const store = sqliteStore({ path });
+    try {
+      expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
+      expect((await store.ensureSession(sampleEnsureSessionInput())).ok).toBe(true);
+      expect((await store.ingest(sampleIngestBatch())).ok).toBe(true);
+    } finally {
+      await store.close();
+    }
+
+    const opened = openSqlite({ path, busyTimeoutMs: 3000 });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    try {
+      expect(() =>
+        opened.connection.database
+          .prepare(
+            `insert into redactions (id, message_id, file_id, start, "end", kind,
+                                     content_hash, occurred_at, pattern_version)
+                  values (?, '01940000-0000-7000-8000-00000000dead', null, 0, 5, 'api_key',
+                          ?, '2026-01-02T03:06:00.000Z', '1')`,
+          )
+          .run('01940000-0000-7000-8000-0000000009fd', `sha256:${'0'.repeat(64)}`),
+      ).toThrow(/FOREIGN KEY/i);
     } finally {
       await opened.connection.close();
     }

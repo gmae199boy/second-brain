@@ -26,6 +26,15 @@ export type { ChunkParams, IndexConfig, IndexConfigKind } from './index-config.j
 export type { Chunk } from './chunk.js';
 export type { Embedding, EmbeddingTargetKind } from './embedding.js';
 export type { Redaction } from './redaction.js';
+export {
+  SECRET_PATTERNS,
+  SECRET_PATTERN_VERSION,
+  maskSecrets,
+  type MaskSecretsResult,
+  type SecretField,
+  type SecretSpan,
+} from './secret-patterns.js';
+export { CONTENT_HASH_PREFIX, contentHash, sha256, sha256Hex, utf8Bytes } from './sha256.js';
 export type { ContextInjection } from './context-injection.js';
 export type { Failure } from './failure.js';
 export type { TranscriptFile } from './transcript-file.js';
@@ -33,6 +42,7 @@ export type { SchemaVersion } from './schema-version.js';
 export type {
   IngestBatch,
   IngestMessage,
+  IngestRedaction,
   IngestToolNote,
   IngestTracking,
   ParsedMessage,

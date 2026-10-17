@@ -1,6 +1,7 @@
 import type { IngestBatch } from '../../domain/ingest-batch.js';
 import type { Message } from '../../domain/message.js';
 import type { Project } from '../../domain/project.js';
+import type { Redaction } from '../../domain/redaction.js';
 import type { Session } from '../../domain/session.js';
 import type { Worktree } from '../../domain/worktree.js';
 import {
@@ -45,6 +46,8 @@ export interface MemoryStoreSnapshot {
   sessions: readonly Session[];
   messages: readonly Message[];
   toolNotes: readonly ToolNote[];
+  /** One row per masked span that was written, in the order it went in (AD-11). */
+  redactions: readonly Redaction[];
   closes: number;
 }
 
@@ -75,6 +78,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const sessions = new Map<SessionToken, Session>();
   const messages = new Map<SessionToken, Message[]>();
   const toolNotes = new Map<SessionToken, ToolNote[]>();
+  /** Keyed by the session, like the rows above; the records are append only. */
+  const redactions = new Map<SessionToken, Redaction[]>();
   let closes = 0;
 
   /** The one `isSelf` row, or undefined. A map, so a snapshot can show two. */
@@ -169,6 +174,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       sessions.set(token, session);
       messages.set(token, []);
       toolNotes.set(token, []);
+      redactions.set(token, []);
       return { ok: true, created: true, session: { ...session } };
     },
 
@@ -192,8 +198,10 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
 
       const storedMessages = messages.get(token) ?? [];
       const storedToolNotes = toolNotes.get(token) ?? [];
+      const storedRedactions = redactions.get(token) ?? [];
       let insertedMessages = 0;
       let insertedToolNotes = 0;
+      let insertedRedactions = 0;
 
       // Where this session's numbering carries on from. Read once, before any
       // insert, so the batch is numbered in its own order (AD-8).
@@ -224,6 +232,25 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         });
         nextSeq += 1;
         insertedMessages += 1;
+
+        // The masking records of the messages that actually went in, and only
+        // those: a message the session already held came back with a fresh set
+        // of record ids, and keeping them would record the same masking twice
+        // or leave a record pointing at a message id no row carries (port
+        // contract, AD-11).
+        for (const redaction of parsed.redactions) {
+          storedRedactions.push({
+            id: redaction.id,
+            messageId: parsed.id,
+            start: redaction.start,
+            end: redaction.end,
+            kind: redaction.kind,
+            contentHash: redaction.contentHash,
+            occurredAt: redaction.occurredAt,
+            patternVersion: redaction.patternVersion,
+          });
+          insertedRedactions += 1;
+        }
       }
 
       for (const parsed of batch.toolNotes) {
@@ -248,6 +275,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       storedMessages.sort((left, right) => left.seq - right.seq);
       messages.set(token, storedMessages);
       toolNotes.set(token, storedToolNotes);
+      redactions.set(token, storedRedactions);
 
       // The cursor, the parser version and the end only move forward, and they
       // land in the same step as the rows (AD-7).
@@ -269,7 +297,11 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       return {
         ok: true,
         sessionId: session.id,
-        inserted: { messages: insertedMessages, toolNotes: insertedToolNotes },
+        inserted: {
+          messages: insertedMessages,
+          toolNotes: insertedToolNotes,
+          redactions: insertedRedactions,
+        },
         warnings,
       };
     },
@@ -309,6 +341,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         sessions: [...sessions.values()],
         messages: [...messages.values()].flat(),
         toolNotes: [...toolNotes.values()].flat(),
+        redactions: [...redactions.values()].flat(),
         closes,
       };
     },

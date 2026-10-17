@@ -137,6 +137,11 @@ export type EnsureSessionResult =
 export interface IngestCounts {
   messages: number;
   toolNotes: number;
+  /**
+   * Masking records written with the messages of this batch. Only the records
+   * of messages that actually went in are counted, so a replay reports 0 (AD-11).
+   */
+  redactions: number;
 }
 
 /** Degraded-but-successful ingests carry a code, never silence (Conventions). */
@@ -231,6 +236,15 @@ export interface SessionStore {
    *     that overlap, the older one arriving last, cannot wind the session back
    *     to a message the newer one had already passed.
    *   * `cursorReset` surfaces as the `CURSOR_RESET` warning, never silently.
+   *
+   * And one rule about the masking records a message carries:
+   *
+   *   * a message's `redactions` go in only when *that* message went in on
+   *     *this* call, and in the same transaction as it. A message the session
+   *     already holds came back with a fresh set of ids from a fresh parse, and
+   *     writing those would record the same masking a second time — or point a
+   *     foreign key at a message id no row carries. They are dropped instead,
+   *     and `inserted.redactions` counts only what was written (AD-11).
    */
   ingest(batch: IngestBatch): Promise<IngestResult>;
   /** Read a session by the token that crossed the process boundary (AD-8). */

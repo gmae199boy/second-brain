@@ -20,4 +20,14 @@ export interface Redaction {
   /** Hash of the removed text. The text itself is gone (AD-11). */
   contentHash: string;
   occurredAt: Date;
+  /**
+   * Which version of Core's secret-pattern list did this masking
+   * (`SECRET_PATTERN_VERSION`), or `null` for a record no pattern made — a
+   * masking somebody asked for by hand, or a row written before migration 0004
+   * gave the column a place to live.
+   *
+   * It is on the record so the list can grow: when a pattern is added, the rows
+   * that an older version produced are the ones worth looking at again (AD-11).
+   */
+  patternVersion: string | null;
 }

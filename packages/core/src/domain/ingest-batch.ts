@@ -44,16 +44,58 @@ export interface ParsedToolNote {
 }
 
 /**
+ * One masked span of a message, travelling with the message it belongs to.
+ *
+ * It rides on the message rather than on the batch on purpose. A re-ingest
+ * mints a new id for every message, and the store skips the ones it already
+ * holds; a record that travelled separately would then point at a message id
+ * no row carries — a foreign key error at best, and the same masking recorded
+ * twice at worst. Attached, "only the records of the messages that went in" is
+ * one loop (Design Notes).
+ */
+export interface IngestRedaction {
+  /** UUIDv7, minted by the caller, like every other id in the batch (AD-8). */
+  id: string;
+  /**
+   * Half-open code point range over the body *before* this masking, which is
+   * the body the parser read (Conventions, AD-11). Not UTF-16 units.
+   */
+  start: number;
+  end: number;
+  /** The word inside the `[REDACTED:<kind>]` the body now carries (AD-11). */
+  kind: string;
+  /** `sha256:<hex>` of what was removed. The text itself is gone (AD-11). */
+  contentHash: string;
+  /** The `SECRET_PATTERN_VERSION` that masked it (AD-11, inputs A6). */
+  patternVersion: string;
+  /** The batch's `ingestedAt`: when the masking happened (AD-13). */
+  occurredAt: Date;
+}
+
+/**
  * A parsed message with the row id the caller minted for it. Ids belong to the
  * side that creates the row (AD-8), so the use case mints them before the
  * batch is handed over and the store never reaches for an `IdGen`.
+ *
+ * `body` is the *masked* body: `sessions.ingest` runs Core's pattern list over
+ * what the parser read before the batch exists, so nothing downstream of here —
+ * the store, a spool file, a log line — ever holds a secret (AD-11).
  */
 export interface IngestMessage extends ParsedMessage {
   /** UUIDv7, minted by the caller. */
   id: string;
+  /**
+   * What masking took out of `body`, in the order it sits in the body. Empty
+   * for a message that held nothing, which is nearly every message.
+   */
+  redactions: readonly IngestRedaction[];
 }
 
-/** The same for a tool note (AD-8). */
+/**
+ * The same for a tool note (AD-8). Its `target` is masked too, and it carries
+ * no records: migration 0004's `redactions` row is a span over a *body* and has
+ * no column that could name a tool note (Decision 2026-10-18).
+ */
 export interface IngestToolNote extends ParsedToolNote {
   /** UUIDv7, minted by the caller. */
   id: string;
