@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -265,6 +265,42 @@ describe('the installer with no Docker and no Postgres', () => {
     expect(run.code).toBe(1);
     expect(run.stdout).toMatch(/\n(DB_UNAVAILABLE|MIGRATION_FAILED): .+\n/);
     expect(existsSync(shimPath(home))).toBe(false);
+  });
+
+  it('refuses a store path that is not a database, leaving the file alone', async () => {
+    const home = await emptyHome();
+    const stranger = join(home, 'notes.txt');
+    await writeFile(stranger, 'not a database\n', 'utf8');
+    await chmod(stranger, 0o644);
+
+    const run = await runInstaller(['--store-path', stranger, '--yes'], home);
+
+    // The same exit code this has always had, under the code that says what
+    // actually happened: the file is not a database, so no migration was
+    // attempted (F4).
+    expect(run.code).toBe(1);
+    expect(run.stdout).toContain('DB_UNAVAILABLE: ');
+    expect(run.stdout).not.toContain('MIGRATION_FAILED');
+    expect(await readFile(stranger, 'utf8')).toBe('not a database\n');
+    expect(await mode(stranger)).toBe('644');
+    expect(existsSync(`${stranger}-wal`)).toBe(false);
+    expect(existsSync(configFilePath(home))).toBe(false);
+  });
+
+  it('prints the failure with its code and, under it, the hint', async () => {
+    const home = await emptyHome();
+
+    const run = await runInstaller([], home);
+
+    // This door has no envelope, so it is the one that renders the failure —
+    // and the hint is the half a person at a terminal would otherwise never
+    // see (Decision 2026-10-16).
+    expect(run.code).toBe(3);
+    const lines = run.stdout.trimEnd().split('\n');
+    expect(lines.at(-2)).toMatch(/^CONFIRMATION_REQUIRED: /);
+    expect(lines.at(-1)).toBe(
+      '  사람에게 진행해도 되는지 묻고, 그렇다고 할 때만 같은 명령에 `--yes`를 붙여 다시 실행하세요',
+    );
   });
 
   it('says where it will write, before it writes anything', async () => {

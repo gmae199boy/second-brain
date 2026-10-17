@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, stat, unlink } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { BRAIN_MARKER } from 'second_brain';
 import { memoryConnector, type MemoryConnector } from 'second_brain/testing';
-import { HOME_ENV, configFilePath } from '../src/config/paths.js';
+import { HOME_ENV, configFilePath, envFilePath } from '../src/config/paths.js';
 import { setupConnectCommand } from '../src/commands/setup-connect.js';
 import { dispatch } from '../src/dispatch.js';
 import { shimPath, writeShim } from '../src/install/shim.js';
@@ -35,7 +35,21 @@ interface Run {
 interface Envelope {
   ok: boolean;
   now: string;
-  data?: { harness?: string; target?: string; changed?: boolean; lines?: string[] };
+  data?: {
+    harness?: string;
+    target?: string;
+    changed?: boolean;
+    home?: string;
+    config_path?: string;
+    store?: { path?: string; schema_version?: number; applied?: string[] };
+    owner?: { name?: string; created?: boolean };
+    files?: { path?: string; created?: boolean };
+    mirror_path?: string;
+    shim?: { path?: string; changed?: boolean };
+    harnesses?: { harness: string; target: string; changed: boolean }[];
+    checks?: { id: string; status: string }[];
+    summary?: { passed?: number; failed?: number };
+  };
   warnings: string[];
   error?: {
     code: string;
@@ -364,7 +378,7 @@ describe('brain setup run against the local SQLite source', () => {
     expect(existsSync(join(home, 'mirror'))).toBe(false);
   });
 
-  it('answers a `--json` envelope carrying every line of the flow', async () => {
+  it('answers a `--json` envelope carrying a structured report, not log lines', async () => {
     const home = await emptyHome();
 
     const run = await runBrain(['setup', 'run', '--yes', '--json'], home);
@@ -373,11 +387,124 @@ describe('brain setup run against the local SQLite source', () => {
     const envelope = JSON.parse(run.stdout) as Envelope;
     expect(envelope.ok).toBe(true);
     expect(envelope.warnings).toEqual([]);
-    const lines = envelope.data?.lines ?? [];
-    expect(lines.some((line) => line.startsWith('db: ok'))).toBe(true);
-    expect(lines.some((line) => line.startsWith('wal: ok'))).toBe(true);
-    expect(lines.some((line) => line.includes('mode 0755'))).toBe(true);
-    expect(lines.some((line) => line.includes('mode 0700'))).toBe(true);
+    const data = envelope.data ?? {};
+    // Facts, not sentences: a caller that had to parse the lines back would
+    // read a different install the moment one of them is reworded (F6).
+    expect('lines' in data).toBe(false);
+    expect(data.home).toBe(home);
+    expect(data.config_path).toBe(configFilePath(home));
+    expect(data.store).toMatchObject({ path: join(home, 'brain.db') });
+    expect(data.store?.applied?.length).toBeGreaterThan(0);
+    expect(data.owner).toMatchObject({ created: true });
+    expect(data.files).toEqual({ path: join(home, 'files'), created: true });
+    expect(data.mirror_path).toBe(join(home, 'mirror'));
+    expect(data.shim).toEqual({ path: shimPath(home), changed: true });
+    // No connector in this build, so nothing was registered (epic 2).
+    expect(data.harnesses).toEqual([]);
+    expect(data.checks?.map((check) => check.id)).toContain('wal');
+    expect(data.summary?.failed).toBe(0);
+  });
+
+  it('keeps every value beside the one it could not use, and warns', async () => {
+    const home = await emptyHome();
+    // A relative `store.path` beside a files root, a mirror and a time zone
+    // the user chose. Before this story one bad value reset all four (F1).
+    await writeFile(
+      configFilePath(home),
+      [
+        'schema_version = 1',
+        'timezone = "Europe/Berlin"',
+        '[store]',
+        'path = "brain.db"',
+        '[files]',
+        `path = "${join(home, 'elsewhere', 'files')}"`,
+        '[mirror]',
+        `path = "${join(home, 'elsewhere', 'mirror')}"`,
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const run = await runBrain(['setup', 'run', '--yes', '--json'], home);
+
+    expect(run.code).toBe(0);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.warnings).toEqual(['CONFIG_VALUE_RESET']);
+    const config = await readFile(configFilePath(home), 'utf8');
+    expect(config).toContain('timezone = "Europe/Berlin"');
+    expect(config).toContain(`path = "${join(home, 'elsewhere', 'files')}"`);
+    expect(config).toContain(`path = "${join(home, 'elsewhere', 'mirror')}"`);
+    // Only the store fell back to the default.
+    expect(config).toContain(`path = "${join(home, 'brain.db')}"`);
+  });
+
+  it('writes the keys it does not know straight back, byte for byte on a re-run', async () => {
+    const home = await emptyHome();
+    await writeFile(
+      configFilePath(home),
+      ['schema_version = 1', '[database]', 'url_env = "X"', '[store]', 'extra = 1', ''].join('\n'),
+      'utf8',
+    );
+
+    const first = await runBrain(['setup', 'run', '--yes', '--json'], home);
+
+    expect(first.code).toBe(0);
+    expect((JSON.parse(first.stdout) as Envelope).warnings).toEqual([
+      'CONFIG_UNKNOWN_KEY',
+      'CONFIG_UNKNOWN_KEY',
+    ]);
+    const once = await readFile(configFilePath(home), 'utf8');
+    expect(once).toContain('url_env = "X"');
+    expect(once).toContain('extra = 1');
+
+    const again = await runBrain(['setup', 'run', '--yes'], home);
+
+    expect(again.code).toBe(0);
+    expect(await readFile(configFilePath(home), 'utf8')).toBe(once);
+  });
+
+  it('refuses a store path that is not a database, touching neither file', async () => {
+    const home = await emptyHome();
+    expect((await runBrain(['setup', 'run', '--yes'], home)).code).toBe(0);
+    const configBefore = await readFile(configFilePath(home), 'utf8');
+    const envBefore = await readFile(envFilePath(home), 'utf8');
+    const stranger = join(home, 'notes.txt');
+    await writeFile(stranger, 'not a database\n', 'utf8');
+    await chmod(stranger, 0o644);
+
+    const run = await runBrain(
+      ['setup', 'run', '--store-path', stranger, '--yes', '--json'],
+      home,
+    );
+
+    expect(run.code).toBe(1);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.error?.code).toBe('DB_UNAVAILABLE');
+    expect(envelope.error?.exit_code).toBe(1);
+    // The file is as it was, there is no log beside it, and the recorded paths
+    // did not move: the configuration is written after the store, not before
+    // (F3, F4).
+    expect(await readFile(stranger, 'utf8')).toBe('not a database\n');
+    expect(((await stat(stranger)).mode & 0o777).toString(8)).toBe('644');
+    expect(existsSync(`${stranger}-wal`)).toBe(false);
+    expect(await readFile(configFilePath(home), 'utf8')).toBe(configBefore);
+    expect(await readFile(envFilePath(home), 'utf8')).toBe(envBefore);
+  });
+
+  it('refuses a configuration it cannot read at all, writing nothing', async () => {
+    const home = await emptyHome();
+    await writeFile(configFilePath(home), 'schema_version = 2\n', 'utf8');
+
+    const run = await runBrain(['setup', 'run', '--yes', '--json'], home);
+
+    expect(run.code).toBe(2);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.error?.code).toBe('CONFIG_INVALID');
+    expect(envelope.error?.exit_code).toBe(2);
+    // The one copy of what the person chose is still there to be fixed by hand.
+    expect(await readFile(configFilePath(home), 'utf8')).toBe('schema_version = 2\n');
+    expect(existsSync(join(home, 'brain.db'))).toBe(false);
   });
 
   it('keeps paths the folder already chose, rather than resetting them', async () => {

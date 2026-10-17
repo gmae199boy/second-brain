@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -14,6 +14,7 @@ import {
   prepareFilesRoot,
   prepareSelfUser,
   prepareStore,
+  storeFileExists,
 } from '../src/install/store.js';
 import { writeShim } from '../src/install/shim.js';
 
@@ -152,21 +153,77 @@ describe('prepareStore', () => {
     expect(result.message.length).toBeGreaterThan(0);
   });
 
-  it('answers MIGRATION_FAILED with one line when the file is not a database', async () => {
-    const path = join(await scratch(), 'brain.db');
+  it('refuses a file that is not a database, leaving its mode and bytes alone', async () => {
+    const directory = await scratch();
+    const path = join(directory, 'brain.db');
     await writeFile(path, 'this is not a SQLite database\n', 'utf8');
+    await chmod(path, 0o644);
 
     const result = await prepareStore(path);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    // Open succeeds — SQLite only reads the header when a statement runs — so
-    // the refusal comes from the runner, before the first migration file: the
-    // file it names is empty because no file was in hand yet.
-    expect(result.code).toBe('MIGRATION_FAILED');
-    if (result.code !== 'MIGRATION_FAILED') return;
-    expect(result.file).toBe('');
+    // The header is read before the `open` and the `chmod`, so one mistyped
+    // `--store-path` cannot change the mode of somebody else's file or leave a
+    // write-ahead log beside it (F4).
+    expect(result.code).toBe('DB_UNAVAILABLE');
     expect(result.message.split('\n')).toHaveLength(1);
+    expect(await mode(path)).toBe('644');
+    expect(await readFile(path, 'utf8')).toBe('this is not a SQLite database\n');
+    expect(await readdir(directory)).toEqual(['brain.db']);
+  });
+
+  it('takes a file of zero bytes for a new database and migrates it', async () => {
+    const path = join(await scratch(), 'brain.db');
+    // What an interrupted run leaves behind: `open(path, 'a')` made the file
+    // and the migrations had not started. It has no header yet and it is ours.
+    await writeFile(path, '', 'utf8');
+
+    const result = await prepareStore(path);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.to).toBe(SQLITE_SCHEMA_VERSION);
+    expect(await mode(path)).toBe('600');
+  });
+
+  it('refuses a file it cannot read, rather than tightening and migrating it', async () => {
+    const path = join(await scratch(), 'brain.db');
+    await writeFile(path, 'not a database\n', 'utf8');
+    // Ours, and write-only: the header cannot be read, so whether this is a
+    // database is unknown — and a `chmod` to 0600 followed by a migration
+    // would be this code changing a file it never managed to look at.
+    await chmod(path, 0o200);
+
+    const result = await prepareStore(path);
+
+    expect(result).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+    expect(await mode(path)).toBe('200');
+    expect(existsSync(`${path}-wal`)).toBe(false);
+  });
+
+  it('refuses a file whose first bytes are too few to be a header', async () => {
+    const path = join(await scratch(), 'brain.db');
+    await writeFile(path, 'short', 'utf8');
+
+    const result = await prepareStore(path);
+
+    expect(result).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+    expect(await readFile(path, 'utf8')).toBe('short');
+  });
+});
+
+describe('storeFileExists', () => {
+  it('tells a database that is there from one that is not, and from a folder', async () => {
+    const directory = await scratch();
+    const path = join(directory, 'brain.db');
+
+    expect(await storeFileExists(path)).toBe(false);
+    expect((await prepareStore(path)).ok).toBe(true);
+    expect(await storeFileExists(path)).toBe(true);
+    // A folder is not a file to migrate, so the screen that asks must not say
+    // it will migrate one.
+    expect(await storeFileExists(directory)).toBe(false);
   });
 });
 

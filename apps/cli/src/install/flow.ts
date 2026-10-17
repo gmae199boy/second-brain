@@ -1,15 +1,29 @@
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import type { Connector, DoctorReport, SqliteMigrationResult } from 'second_brain';
+import {
+  errorCodeSpec,
+  requireConfirmation,
+  type Connector,
+  type DoctorCheck,
+  type DoctorReport,
+  type DoctorSummary,
+  type Failure,
+  type SqliteMigrationResult,
+  type WarningCode,
+} from 'second_brain';
 import { formatCheck } from '../commands/doctor-run.js';
 import type { SelfUserResult } from './store.js';
 import {
   defaultFilesPath,
   defaultMirrorPath,
   defaultStorePath,
+  type ReadSetupConfigResult,
+  type SetupConfig,
   type WriteConfigInput,
+  type WriteConfigResult,
 } from '../config/codec.js';
 import { configFilePath, configHome, envFilePath } from '../config/paths.js';
+import { shimPath } from './shim.js';
 
 /**
  * The installer's one flow, as a function of its dependencies. Every question
@@ -31,6 +45,88 @@ import { configFilePath, configHome, envFilePath } from '../config/paths.js';
  * `CONFIRMATION_REQUIRED` envelope with the command to run instead.
  */
 export type InstallExitCode = 0 | 1 | 2 | 3;
+
+/**
+ * What the install did, as a structured report rather than as the lines it
+ * printed. The keys are `snake_case` because this is the envelope's `data`
+ * (Conventions, CLI `--json` 응답) and `brain setup run --json` hands it over
+ * untouched: a caller that had to parse log lines back into facts — which is
+ * what `data.lines` made it do — reads a different install than the one that
+ * ran the moment a sentence is reworded.
+ */
+export interface InstallReport {
+  /** The configuration folder this install belongs to. */
+  home: string;
+  config_path: string;
+  store: {
+    path: string;
+    /** The version the file ends at. */
+    schema_version: number;
+    /** The migration files this run applied. Empty on a re-run. */
+    applied: readonly string[];
+  };
+  owner: { name: string; created: boolean };
+  files: { path: string; created: boolean };
+  /** Recorded, not created: the folder itself is epic 4's. */
+  mirror_path: string;
+  shim: { path: string; changed: boolean };
+  /** The harnesses this run registered the shim with. */
+  harnesses: readonly { harness: string; target: string; changed: boolean }[];
+  checks: readonly DoctorCheck[];
+  summary: DoctorSummary;
+}
+
+/**
+ * What the flow answers with: the report, or the failure, and in both cases the
+ * warning codes it collected.
+ *
+ * A value and not an exit code, because an exit code is a number somebody has
+ * to look the meaning of up again — which `setup run` did by parsing the log
+ * lines backwards, and which is how an install that exited 1 came back as
+ * `ok: true` (F6). The doors render this; the flow prints no failure line of
+ * its own.
+ */
+export type InstallResult =
+  | { ok: true; report: InstallReport; warnings: readonly WarningCode[] }
+  | { ok: false; failure: Failure; warnings: readonly WarningCode[] };
+
+/** `--help` printed the usage; there was no install to report on. */
+export interface InstallHelped {
+  ok: true;
+  helped: true;
+}
+
+/** What `runInstallFlow` answers: a result, or the usage it just printed. */
+export type InstallFlowResult = InstallResult | InstallHelped;
+
+/** Whether this result is the usage rather than an install. */
+export function wasHelped(result: InstallFlowResult): result is InstallHelped {
+  return result.ok && 'helped' in result;
+}
+
+/**
+ * The exit code of one result, decided in one place so the npx entry point and
+ * `brain setup run` cannot answer a failure with two different numbers. The
+ * rule is the envelope's own: the failure's `exit` when it named one, then the
+ * code table's, then 1 (Conventions).
+ */
+export function installExit(result: InstallFlowResult): InstallExitCode {
+  if (result.ok) return 0;
+  return result.failure.exit ?? errorCodeSpec(result.failure.code)?.exit ?? 1;
+}
+
+/**
+ * One failure as the lines a door prints: the coded sentence, and the hint
+ * indented under it as every other failure of this CLI prints it (Decision
+ * 2026-10-16). The flow prints neither — it hands back the value — and this
+ * lives here so the npx entry point and a test read it the same way.
+ */
+export function failureLines(failure: Failure): readonly string[] {
+  const lines = [`${failure.code}: ${failure.message}`];
+  const hint = failure.hint ?? errorCodeSpec(failure.code)?.hint;
+  if (hint !== undefined && hint !== '') lines.push(`  ${hint}`);
+  return lines;
+}
 
 /** One option of a question with a fixed set of answers. */
 export interface Choice<T extends string> {
@@ -61,28 +157,39 @@ export interface InstallPrompts {
  * back and written out again: `writeConfig` renders the whole file from its
  * input, so passing only the database path would quietly reset a time zone, a
  * file store or a mirror the user chose.
+ *
+ * Every value is optional, because the codec reads them one at a time: a value
+ * it cannot use is the only one dropped, and this install writes its default
+ * for that key alone (AD-18, F1).
+ *
+ * It is the codec's own `SetupConfig`, under the name the flow calls it by, and
+ * not a second shape: the two would have to be kept in step, and the adapter
+ * that used to translate between them is what lost the warnings (F1, F2).
  */
-export interface RecordedConfig {
-  timezone: string;
-  /** Absolute. A re-run offers it as the default and must never reset it. */
-  storePath: string;
-  /** Absolute. Nothing asks for it, so a re-run can only keep it. */
-  filesPath: string;
-  /** Absolute. A re-run offers it as the default and must never reset it. */
-  mirrorPath: string;
-}
+export type RecordedConfig = SetupConfig;
 
 /** The configuration codec, as the flow uses it (AD-18: only the codec writes). */
 export interface InstallConfigIo {
-  write(home: string, input: WriteConfigInput): Promise<void>;
-  /** What `<home>` already holds, or `undefined` when it holds nothing usable. */
-  read(home: string): Promise<RecordedConfig | undefined>;
+  /** Both files, whole. Never throws: a failure is a value (`CONFIG_INVALID`). */
+  write(home: string, input: WriteConfigInput): Promise<WriteConfigResult>;
+  /**
+   * What `<home>` already holds, value by value, with a warning for each value
+   * it had to drop — or a refusal when the file as a whole cannot be read,
+   * which stops the install before a byte is written (F1).
+   */
+  read(home: string): Promise<ReadSetupConfigResult>;
 }
 
 /** The source database: made at the right mode, migrated, then reported on. */
 export interface InstallStore {
   /** Create the file at 0600 if it is not there, then migrate it (AD-20). */
   prepare(path: string): Promise<SqliteMigrationResult>;
+  /**
+   * Whether there is already a file here. Only the screen that asks for
+   * consent uses it: "a new database" and "the database already there" are
+   * different promises, and the person agreeing is owed the right one.
+   */
+  exists(path: string): Promise<boolean>;
   /**
    * Record who this brain belongs to, if nobody is yet (AD-12). It is a step
    * of its own and not part of `prepare`, because a migration can do neither
@@ -151,17 +258,19 @@ export async function runInstallFlow(
   argv: readonly string[],
   env: NodeJS.ProcessEnv,
   deps: InstallDeps,
-): Promise<InstallExitCode> {
+): Promise<InstallFlowResult> {
   const parsed = parseFlags(argv);
   if (!parsed.ok) {
-    deps.log(parsed.message);
+    // The usage goes out as progress lines, because it is what the reader needs
+    // next; the refusal itself travels as the value, so the door prints it with
+    // its code and its hint exactly once.
     for (const line of usage()) deps.log(line);
-    return 2;
+    return { ok: false, warnings: [], failure: { code: 'USAGE', message: parsed.message, exit: 2 } };
   }
   const flags = parsed.flags;
   if (flags.help) {
     for (const line of usage()) deps.log(line);
-    return 0;
+    return { ok: true, helped: true };
   }
 
   return runInstall(flags, env, deps);
@@ -176,8 +285,11 @@ export async function runInstall(
   flags: InstallFlags,
   env: NodeJS.ProcessEnv,
   deps: InstallDeps,
-): Promise<InstallExitCode> {
+): Promise<InstallResult> {
   const home = configHome(env);
+  const warnings: WarningCode[] = [];
+  /** One failure, with whatever warnings had been collected by then. */
+  const fail = (failure: Failure): InstallResult => ({ ok: false, failure, warnings });
 
   // Named before anything is asked or written: a harness nobody registered is
   // a typo, and finding that out after the database is set up would leave the
@@ -186,8 +298,11 @@ export async function runInstall(
     (name) => !deps.connectors.some((connector) => connector.harness === name),
   );
   if (unknown.length > 0) {
-    deps.log(`USAGE: ${unknown.join(', ')}를 위한 커넥터가 없습니다. ${knownHarnesses(deps)}`);
-    return 2;
+    return fail({
+      code: 'USAGE',
+      message: `${unknown.join(', ')}를 위한 커넥터가 없습니다. ${knownHarnesses(deps)}`,
+      exit: 2,
+    });
   }
 
   // A question needs an answer and a place to be read. Without both, `--yes` is
@@ -199,49 +314,88 @@ export async function runInstall(
   // answer from "could not run", and the whole reason an agent can tell a
   // question for the person from a mistake of its own (Conventions).
   //
-  // One branch for both doors: `brain setup run` and the npx installer come
-  // through here, so neither can drift into deciding consent differently.
+  // Core's gate, called here rather than translated by a command afterwards:
+  // `error.retry` is the same call with the consent added, and the one place
+  // that knows which arguments this call actually carried is this one. Both
+  // doors come through here, so neither can decide consent differently.
   if (!deps.isTTY && !flags.yes) {
-    for (const line of nonInteractiveGuidance()) deps.log(line);
-    return 3;
+    const gate = requireConfirmation(
+      { ns: 'setup', verb: 'run', args: givenArgs(flags) },
+      NO_TERMINAL,
+    );
+    // The branch is reached only where nothing gave consent, so the gate is
+    // closed; the fallback is there so a later change cannot turn this into a
+    // silent success.
+    return fail(gate ?? { code: 'CONFIRMATION_REQUIRED', message: NO_TERMINAL });
   }
 
   // Read before anything is asked: what the folder already says is what a
-  // re-run offers as its defaults, and what it must not overwrite with them.
-  const recorded = await deps.config.read(home);
+  // re-run offers as its defaults, and what it must not overwrite with them. A
+  // file that cannot be read at all stops the install here, with nothing
+  // written: one typo must not cost the keys nothing asks about (F1).
+  const read = await deps.config.read(home);
+  if (!read.ok) return fail({ code: read.code, message: read.message, exit: 2 });
+  const recorded = read.recorded;
+  for (const warning of read.warnings) {
+    warnings.push(warning.code);
+    deps.log(`경고: ${warning.message}`);
+  }
 
   const store = await chooseStorePath(flags, home, recorded, deps);
-  if (!store.ok) return store.exit;
+  if (!store.ok) return fail(store.failure);
   deps.log(`데이터베이스 파일은 ${store.path}입니다`);
   // Nothing is moved and nothing is removed (Boundaries): a re-run pointed
   // somewhere else makes a second database, and saying so is all that is owed.
-  if (recorded !== undefined && recorded.storePath !== store.path) {
+  if (recorded?.storePath !== undefined && recorded.storePath !== store.path) {
     deps.log(`${recorded.storePath}는 있던 자리에 그대로 둡니다. 아무것도 옮기지 않았습니다.`);
   }
 
   const mirror = await chooseMirrorPath(flags, home, recorded, deps);
-  if (!mirror.ok) return mirror.exit;
+  if (!mirror.ok) return fail(mirror.failure);
   deps.log(`미러는 ${mirror.path}에 둡니다`);
 
   await askAboutEmbeddings(deps);
 
   // Nothing asks for the file store's root, so a re-run can only keep what is
-  // recorded; a first run takes the default beside the configuration folder.
+  // recorded; a first run takes the default beside the configuration folder
+  // (F10).
   const filesPath = recorded?.filesPath ?? defaultFilesPath(home);
 
-  await deps.config.write(home, settings(recorded, store.path, filesPath, mirror.path));
-  deps.log(`${configFilePath(home)}과 ${envFilePath(home)}를 썼습니다 (mode 0600)`);
+  // The last moment at which nothing has been written. Every question has an
+  // answer, so what the install is about to do can be said in full — and a
+  // person who says no here loses nothing, which is the only kind of no worth
+  // offering.
+  const agreed = await askToProceed(
+    { home, storePath: store.path, filesPath, mirrorPath: mirror.path },
+    flags,
+    deps,
+  );
+  if (!agreed) {
+    return fail({
+      code: 'SETUP_CANCELLED',
+      message: '진행하지 않기로 했습니다. 아무것도 쓰지 않았습니다.',
+      exit: 1,
+    });
+  }
 
+  // The store, the owner and the file store's root before the configuration:
+  // what is recorded has to be a place this run has actually managed to use,
+  // or one bad `--store-path` would overwrite the path that worked (F3).
   const migrated = await deps.store.prepare(store.path);
   if (!migrated.ok) {
-    deps.log(`${migrated.code}: ${migrated.message}`);
-    // Only when there is a file to name: a target that is not a database at all
-    // is refused before the first migration is in hand, and "the migration the
-    // database refused is ." says less than nothing.
-    if (migrated.code === 'MIGRATION_FAILED' && migrated.file !== '') {
-      deps.log(`데이터베이스가 거부한 마이그레이션은 ${migrated.file}입니다.`);
-    }
-    return 1;
+    return fail({
+      code: migrated.code,
+      // Only when there is a file to name: a target that is not a database at
+      // all is refused before the first migration is in hand, and "the
+      // migration the database refused is ." says less than nothing.
+      message:
+        migrated.code === 'MIGRATION_FAILED' && migrated.file !== ''
+          ? `${migrated.message} 데이터베이스가 거부한 마이그레이션은 ${migrated.file}입니다.`
+          : migrated.message,
+      // Named rather than left to the table, which puts `DB_UNAVAILABLE` at 2:
+      // this install ran and this step failed, which has always been a 1.
+      exit: 1,
+    });
   }
   deps.log(
     migrated.applied.length === 0
@@ -253,10 +407,7 @@ export async function runInstall(
   // and before anything else, because every session this brain ingests points
   // at this row (AD-12).
   const owner = await deps.store.self(store.path);
-  if (!owner.ok) {
-    deps.log(`${owner.code}: ${owner.message}`);
-    return 1;
-  }
+  if (!owner.ok) return fail({ code: owner.code, message: owner.message, exit: 1 });
   deps.log(
     owner.created
       ? `이 brain은 ${owner.name}의 것입니다`
@@ -265,14 +416,27 @@ export async function runInstall(
 
   const filesRoot = await deps.files.prepare(filesPath);
   if (!filesRoot.ok) {
-    deps.log(`${filesRoot.code}: ${filesRoot.message}`);
-    return 1;
+    return fail({ code: filesRoot.code, message: filesRoot.message, exit: 1 });
   }
   deps.log(
     filesRoot.created
       ? `${filesRoot.path}를 만들었습니다 (mode 0700)`
       : `${filesRoot.path}는 이미 있습니다 (mode 0700)`,
   );
+
+  // Now, and not before: every path in here is one this run has used. The
+  // mirror is the exception and has nothing to prove — nobody creates it yet
+  // (epic 4) — so it is recorded as chosen.
+  const written = await deps.config.write(
+    home,
+    settings(recorded, store.path, filesPath, mirror.path),
+  );
+  if (!written.ok) {
+    return fail({ code: written.code, message: written.message, exit: 1 });
+  }
+  // Only `.env` is named at 0600: it is the one of the two that holds a key
+  // value, and the one the codec tightens. `config.toml` holds no secret.
+  deps.log(`${configFilePath(home)}과 ${envFilePath(home)}를 썼습니다 (.env는 mode 0600)`);
 
   // The shim before the harnesses, because connecting one means registering
   // this exact path with it.
@@ -281,19 +445,115 @@ export async function runInstall(
 
   const connected = await connectHarnesses(flags, shim.path, deps);
 
-  // Doctor has the last word, and its verdict is the exit code: an install that
-  // finished every step and still cannot report a healthy brain did not work.
+  // Doctor has the last word, and it runs to the end whatever a connector did:
+  // its ten lines are what a person reads to find out what is wrong, and
+  // skipping them because a harness file could not be written would hide the
+  // half of the install that worked.
   const report = await deps.store.doctor(home, store.path);
   for (const check of report.checks) deps.log(formatCheck(check));
-  return report.checks.some((check) => check.status === 'fail') || !connected ? 1 : 0;
+
+  // A connector's own code wins, because it is the more specific thing that
+  // went wrong; `SETUP_INCOMPLETE` is for an install whose every step took and
+  // whose closing checks still do not pass.
+  if (connected.failure !== undefined) return fail(connected.failure);
+  const failed = report.checks.filter((check) => check.status === 'fail');
+  if (failed.length > 0) {
+    return fail({
+      code: 'SETUP_INCOMPLETE',
+      message: `설치는 끝까지 돌았고 점검 ${failed.map((check) => check.id).join(', ')}이 실패했습니다.`,
+      exit: 1,
+    });
+  }
+
+  return {
+    ok: true,
+    warnings,
+    report: {
+      home,
+      config_path: configFilePath(home),
+      store: { path: store.path, schema_version: migrated.to, applied: migrated.applied },
+      owner: { name: owner.name, created: owner.created },
+      files: { path: filesRoot.path, created: filesRoot.created },
+      mirror_path: mirror.path,
+      shim: { path: shim.path, changed: shim.changed },
+      harnesses: connected.connected,
+      checks: report.checks,
+      summary: report.summary,
+    },
+  };
+}
+
+/**
+ * The one sentence a run with nothing to ask and nobody to ask can say. It is
+ * the failure's `message` on both doors, so the envelope and the terminal say
+ * the same thing (Conventions, output language).
+ */
+const NO_TERMINAL = '터미널이 아니어서 아무것도 물을 수 없습니다. --yes로 미리 동의하세요';
+
+/**
+ * The arguments this invocation actually gave, as `error.retry` carries them:
+ * not the defaults the flow would fall back to, not `--json`, and not `--yes` —
+ * the consent travels as `confirm`, which is the one name it has on every
+ * surface (Conventions). So a retry asks for this very install, not a wider one.
+ */
+function givenArgs(flags: InstallFlags): Record<string, unknown> {
+  const args: Record<string, unknown> = {};
+  if (flags.storePath !== undefined) args['storePath'] = flags.storePath;
+  if (flags.mirrorPath !== undefined) args['mirrorPath'] = flags.mirrorPath;
+  if (flags.connect.length > 0) args['connect'] = [...flags.connect];
+  return args;
+}
+
+/** The four places this install has settled on, for the screen that asks. */
+interface Settled {
+  home: string;
+  storePath: string;
+  filesPath: string;
+  mirrorPath: string;
+}
+
+/**
+ * Show what the install is about to do, and ask once (AD-19's consent, in the
+ * terminal). It is the last step before the first write, so a no costs
+ * nothing — which is why the question is worth asking at all.
+ *
+ * `--yes` skips this one question and nothing else: the path questions are
+ * about what to install, and this one is about whether to. Without a terminal
+ * there is nothing to show and nobody to answer, and the consent gate above has
+ * already turned that into an exit 3.
+ */
+async function askToProceed(
+  settled: Settled,
+  flags: InstallFlags,
+  deps: InstallDeps,
+): Promise<boolean> {
+  if (!deps.isTTY || flags.yes) return true;
+
+  deps.log('이제 이것들을 씁니다.');
+  deps.log(
+    `  설정 파일 ${configFilePath(settled.home)}과 ${envFilePath(settled.home)} (.env는 mode 0600)`,
+  );
+  deps.log(
+    (await deps.store.exists(settled.storePath))
+      ? `  이미 있는 데이터베이스 ${settled.storePath}를 마이그레이션합니다`
+      : `  데이터베이스 ${settled.storePath}를 새로 만듭니다 (mode 0600)`,
+  );
+  deps.log(`  파일 저장소 루트 ${settled.filesPath} (mode 0700)`);
+  deps.log(`  하네스 hook이 부를 shim ${shimPath(settled.home)} (mode 0755)`);
+  // The mirror is recorded and not created, so it is not on the list of what
+  // this run writes (epic 4).
+  deps.log(`  미러 경로 ${settled.mirrorPath}는 적어 두기만 하고 폴더는 만들지 않습니다`);
+
+  return deps.prompts.confirm('이대로 진행할까요?', true);
 }
 
 /**
  * Everything the folder decided, which is what the codec has to be handed every
  * time: it renders both files whole, so anything left out is written back as
- * its default. That is the trap stories 6 and 7 will meet — a re-run that
- * passed only the database path would silently move the file store and the
- * mirror back under the configuration folder.
+ * its default. That is the trap F1 names — a re-run that passed only the
+ * database path would silently move the file store and the mirror back under
+ * the configuration folder — and `extra` is the same rule for the keys this
+ * version does not know (F2).
  */
 function settings(
   recorded: RecordedConfig | undefined,
@@ -301,16 +561,18 @@ function settings(
   filesPath: string,
   mirrorPath: string,
 ): WriteConfigInput {
+  const extra = recorded?.extra;
   return {
     timezone: recorded?.timezone,
     storePath,
     filesPath,
     mirrorPath,
+    ...(extra === undefined || Object.keys(extra).length === 0 ? {} : { extra }),
   };
 }
 
-/** Chosen path, or the exit code of a run that could not settle on one. */
-type ChosenPath = { ok: true; path: string } | { ok: false; exit: 2 };
+/** Chosen path, or why this run could not settle on one. */
+type ChosenPath = { ok: true; path: string } | { ok: false; failure: Failure };
 
 /**
  * Where this install's database file goes. Nothing here creates it: the file is
@@ -375,10 +637,16 @@ async function choosePath(question: PathQuestion, deps: InstallDeps): Promise<Ch
   if (question.flag !== undefined) {
     const given = expandHome(question.flag);
     if (isAbsolute(given)) return { ok: true, path: given };
-    deps.log(`CONFIG_INVALID: ${question.flagName} ${question.flag}는 절대 경로가 아닙니다.`);
+    const refused = `${question.flagName} ${question.flag}는 절대 경로가 아닙니다.`;
     // A terminal can be asked again; a script cannot, and taking the default
     // instead would put the path somewhere the flag plainly did not ask for.
-    if (!deps.isTTY) return { ok: false, exit: 2 };
+    if (!deps.isTTY) {
+      return { ok: false, failure: { code: 'CONFIG_INVALID', message: refused, exit: 2 } };
+    }
+    // A progress line and not a failure: the question below is about to offer
+    // a way out of it, and a `CODE: …` line for something this run recovers
+    // from is a failure the reader then has to un-read.
+    deps.log(`${refused} 다시 묻습니다.`);
   } else if (!deps.isTTY) {
     return { ok: true, path: question.fallback };
   }
@@ -387,12 +655,20 @@ async function choosePath(question: PathQuestion, deps: InstallDeps): Promise<Ch
     const typed = (await deps.prompts.text(question.question, question.fallback)).trim();
     const chosen = typed === '' ? question.fallback : expandHome(typed);
     if (isAbsolute(chosen)) return { ok: true, path: chosen };
-    deps.log(`CONFIG_INVALID: ${chosen}는 절대 경로가 아닙니다.`);
+    deps.log(
+      attempt === PATH_ATTEMPTS
+        ? `${chosen}는 절대 경로가 아닙니다.`
+        : `${chosen}는 절대 경로가 아닙니다. 다시 묻습니다.`,
+    );
   }
-  deps.log(
-    `${String(PATH_ATTEMPTS)}번 물어도 쓸 수 있는 ${question.what} 경로가 없어서 아무것도 쓰지 않았습니다.`,
-  );
-  return { ok: false, exit: 2 };
+  return {
+    ok: false,
+    failure: {
+      code: 'CONFIG_INVALID',
+      message: `${String(PATH_ATTEMPTS)}번 물어도 쓸 수 있는 ${question.what} 경로가 없어서 아무것도 쓰지 않았습니다.`,
+      exit: 2,
+    },
+  };
 }
 
 /**
@@ -414,42 +690,72 @@ async function askAboutEmbeddings(deps: InstallDeps): Promise<void> {
   );
 }
 
+/** What the harness step did: what it registered, and the first refusal. */
+interface Connected {
+  connected: readonly { harness: string; target: string; changed: boolean }[];
+  /** The first connector that refused, as the failure the result carries. */
+  failure?: Failure;
+}
+
 /**
  * Register the shim with the harnesses the user chose. Only `connect` writes a
  * harness's own file (AD-19), so everything here is a question and a log line.
- * Comes back false when a connector refused, which the exit code picks up.
+ *
+ * A refusal does not stop the others: the harnesses are independent, and a
+ * second one left unconnected because the first had a broken settings file
+ * would be two problems where there was one. The first refusal travels on as
+ * the failure, with the rest named in its sentence.
  */
 async function connectHarnesses(
   flags: InstallFlags,
-  shimPath: string,
+  shim: string,
   deps: InstallDeps,
-): Promise<boolean> {
+): Promise<Connected> {
   if (deps.connectors.length === 0) {
     deps.log('아직 연결할 하네스가 없습니다 (epic 2)');
-    return true;
+    return { connected: [] };
   }
 
   const chosen = await chooseHarnesses(flags, deps);
   if (chosen.length === 0) {
     deps.log('연결한 하네스가 없습니다');
-    return true;
+    return { connected: [] };
   }
 
-  let allConnected = true;
+  const connected: { harness: string; target: string; changed: boolean }[] = [];
+  const refused: { harness: string; code: string; message: string }[] = [];
   for (const connector of chosen) {
-    const result = await connector.connect({ shimPath });
+    const result = await connector.connect({ shimPath: shim });
     if (!result.ok) {
-      deps.log(`${result.code}: ${result.message}`);
-      allConnected = false;
+      refused.push({ harness: connector.harness, code: result.code, message: result.message });
       continue;
     }
+    connected.push({
+      harness: connector.harness,
+      target: result.target,
+      changed: result.changed,
+    });
     deps.log(
       result.changed
         ? `${result.target}에 ${connector.label}를 연결했습니다`
         : `${result.target}에 ${connector.label}가 이미 연결되어 있습니다`,
     );
   }
-  return allConnected;
+
+  const first = refused[0];
+  if (first === undefined) return { connected };
+  const others = refused.slice(1).map((one) => one.harness);
+  return {
+    connected,
+    failure: {
+      code: first.code,
+      message:
+        others.length === 0
+          ? first.message
+          : `${first.message} ${others.join(', ')}도 연결하지 못했습니다.`,
+      exit: 1,
+    },
+  };
 }
 
 /** Which harnesses to connect: the ones checked, or the ones the flags named. */
@@ -569,13 +875,5 @@ export function usage(): readonly string[] {
     '  --mirror-path <경로>  미러 폴더의 절대 경로',
     '  --connect <하네스>    이 하네스를 연결합니다. 여럿이면 되풀이하세요',
     '  --yes                 설치가 해야 할 일에 미리 동의합니다',
-  ];
-}
-
-function nonInteractiveGuidance(): readonly string[] {
-  return [
-    '터미널이 아니어서 아무것도 물을 수 없습니다. --yes로 미리 동의하세요:',
-    '  --yes                        기록된 값이나 기본값으로 설치합니다',
-    '  --store-path <경로> --yes    데이터베이스 파일을 다른 곳에 둡니다',
   ];
 }

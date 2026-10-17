@@ -10,6 +10,7 @@ import {
   defaultMirrorPath,
   defaultStorePath,
   readConfig,
+  readConfigForSetup,
   writeConfig,
 } from '../src/config/codec.js';
 import { HOME_ENV, configFilePath, configHome, envFilePath } from '../src/config/paths.js';
@@ -336,10 +337,18 @@ describe('writeConfig', () => {
     expect(text).not.toContain('/tmp/elsewhere/brain.db');
   });
 
-  it('refuses a timezone it would then refuse to read back', async () => {
+  it('refuses a timezone it would then refuse to read back, as a value', async () => {
     const home = await tempHome();
 
-    await expect(writeConfig(home, { timezone: 'Nowhere/Nope' })).rejects.toThrow(/time zone/);
+    const result = await writeConfig(home, { timezone: 'Nowhere/Nope' });
+
+    // A value and not a throw: the installer has a line to print and an exit
+    // code to answer with, and a stack trace is neither (F5).
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('CONFIG_INVALID');
+    assertKoreanLine(result.message, { label: 'writeConfig timezone' });
+    expect(existsSync(configFilePath(home))).toBe(false);
   });
 
   it.each([
@@ -349,7 +358,243 @@ describe('writeConfig', () => {
   ])('refuses a relative %s, which it would refuse to read back', async (_name, input) => {
     const home = await tempHome();
 
-    await expect(writeConfig(home, input)).rejects.toThrow(/absolute path/);
+    const result = await writeConfig(home, input);
+
+    expect(result).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+    if (result.ok) return;
+    expect(result.message).toContain('절대 경로');
     expect(existsSync(configFilePath(home))).toBe(false);
+  });
+
+  it('refuses a .env value it cannot represent, and writes neither file', async () => {
+    const home = await tempHome();
+    // Unquoted, so Node reads the rest of the line: a value holding both an
+    // apostrophe and a double quote is one `.env` cannot be written back from.
+    await writeFile(envFilePath(home), 'BOTH=it\'s "x"\n', 'utf8');
+
+    const result = await writeConfig(home, {});
+
+    // `.env` as Node reads it has no escape syntax, so a value holding both
+    // quotes cannot be round-tripped. Saying so beats recording something else.
+    expect(result).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+    if (result.ok) return;
+    expect(result.message).toContain('BOTH');
+    expect(existsSync(configFilePath(home))).toBe(false);
+  });
+
+  it('writes the keys this version does not know back, under the ones it does', async () => {
+    const home = await tempHome();
+
+    const result = await writeConfig(home, {
+      extra: { database: { url_env: 'X' }, store: { extra: 1 }, colour: 'red' },
+    });
+
+    expect(result).toEqual({ ok: true });
+    const document = await readFile(configFilePath(home), 'utf8');
+    expect(document).toContain('url_env = "X"');
+    expect(document).toContain('extra = 1');
+    expect(document).toContain('colour = "red"');
+    // The table this version owns keeps its own key beside the unknown one.
+    expect(document).toContain(`path = "${defaultStorePath(home)}"`);
+  });
+
+  it('lets a known key win over an unknown one of the same name', async () => {
+    const home = await tempHome();
+
+    await writeConfig(home, {
+      storePath: '/tmp/chosen/brain.db',
+      extra: { store: { path: '/tmp/stale/brain.db' }, timezone: 'Nowhere/Nope' },
+    });
+
+    const document = await readFile(configFilePath(home), 'utf8');
+    expect(document).toContain('path = "/tmp/chosen/brain.db"');
+    expect(document).not.toContain('/tmp/stale/brain.db');
+    expect(document).not.toContain('Nowhere/Nope');
+  });
+});
+
+describe('readConfigForSetup', () => {
+  it('says nothing is recorded when there is no file, rather than failing', async () => {
+    const home = await tempHome();
+
+    expect(await readConfigForSetup(home)).toEqual({
+      ok: true,
+      recorded: undefined,
+      warnings: [],
+    });
+  });
+
+  it('reads every value a complete folder holds', async () => {
+    const home = await tempHome();
+    await writeConfig(home, {
+      timezone: 'Europe/Berlin',
+      storePath: '/tmp/a/brain.db',
+      filesPath: '/tmp/a/files',
+      mirrorPath: '/tmp/a/mirror',
+    });
+
+    const read = await readConfigForSetup(home);
+
+    expect(read).toEqual({
+      ok: true,
+      recorded: {
+        timezone: 'Europe/Berlin',
+        storePath: '/tmp/a/brain.db',
+        filesPath: '/tmp/a/files',
+        mirrorPath: '/tmp/a/mirror',
+        extra: {},
+      },
+      warnings: [],
+    });
+  });
+
+  it('drops only the value it cannot use, and names it', async () => {
+    const home = await given({
+      config: [
+        `schema_version = ${String(CONFIG_SCHEMA_VERSION)}`,
+        'timezone = "Europe/Berlin"',
+        '[store]',
+        'path = "brain.db"',
+        '[files]',
+        'path = "/tmp/a/files"',
+        '[mirror]',
+        'path = "/tmp/a/mirror"',
+        '',
+      ].join('\n'),
+    });
+
+    const read = await readConfigForSetup(home);
+
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    // The relative store path is gone; the three values beside it are not.
+    expect(read.recorded).toEqual({
+      timezone: 'Europe/Berlin',
+      filesPath: '/tmp/a/files',
+      mirrorPath: '/tmp/a/mirror',
+      extra: {},
+    });
+    expect(read.warnings.map((warning) => warning.code)).toEqual(['CONFIG_VALUE_RESET']);
+    expect(read.warnings[0]?.message).toContain('store.path');
+    // The default, named as the default: a `--store-path` flag or a typed
+    // answer wins over it, so a message promising it would be used would be
+    // one the next line contradicts.
+    expect(read.warnings[0]?.message).toContain(`기본값은 "${defaultStorePath(home)}"입니다`);
+    assertKoreanLine(read.warnings[0]?.message ?? '', { label: 'reset warning' });
+  });
+
+  it.each([
+    ['a time zone this machine does not know', 'timezone = "Nowhere/Nope"', 'timezone'],
+    ['a store path that is a number', '[store]\npath = 7', 'store.path'],
+    ['an empty files path', '[files]\npath = ""', 'files.path'],
+  ])('resets %s on its own', async (_what, lines, key) => {
+    const home = await given({
+      config: `schema_version = ${String(CONFIG_SCHEMA_VERSION)}\n${lines}\n`,
+    });
+
+    const read = await readConfigForSetup(home);
+
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.warnings.map((warning) => warning.code)).toEqual(['CONFIG_VALUE_RESET']);
+    expect(read.warnings[0]?.message).toContain(key);
+  });
+
+  it.each([
+    ['no schema_version at all', 'timezone = "Asia/Seoul"\n'],
+    ['a schema_version that is not an integer', 'schema_version = "1"\n'],
+  ])('warns and writes version 1 for %s', async (_what, config) => {
+    const home = await given({ config });
+
+    const read = await readConfigForSetup(home);
+
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.warnings.map((warning) => warning.code)).toContain('CONFIG_VALUE_RESET');
+    const said = read.warnings.find((warning) => warning.message.includes('schema_version'));
+    expect(said).toBeDefined();
+    // A value that is not there has no kind to name, and `undefined` is not a
+    // word in a sentence a person reads.
+    expect(said?.message).not.toContain('undefined');
+    expect(said?.message).toContain('기본값은 "1"입니다');
+    assertKoreanLine(said?.message ?? '', { label: 'schema_version reset' });
+  });
+
+  it('keeps the keys it does not know, and warns about each of them', async () => {
+    const home = await given({
+      config: [
+        `schema_version = ${String(CONFIG_SCHEMA_VERSION)}`,
+        '[database]',
+        'url_env = "X"',
+        '[store]',
+        `path = "/tmp/a/brain.db"`,
+        'extra = 1',
+        '',
+      ].join('\n'),
+    });
+
+    const read = await readConfigForSetup(home);
+
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    // In the shape the document had them, so writing the folder back renders
+    // them again without this version knowing anything about them (F2).
+    expect(read.recorded?.extra).toEqual({ database: { url_env: 'X' }, store: { extra: 1 } });
+    expect(read.warnings.map((warning) => warning.code)).toEqual([
+      'CONFIG_UNKNOWN_KEY',
+      'CONFIG_UNKNOWN_KEY',
+    ]);
+  });
+
+  it.each([
+    ['a document that is not TOML', 'this is not toml\n'],
+    ['a schema_version from a newer layout', 'schema_version = 2\n'],
+  ])('refuses %s, so the install writes nothing over it', async (_what, config) => {
+    const home = await given({ config });
+
+    const read = await readConfigForSetup(home);
+
+    expect(read).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+    if (read.ok) return;
+    assertKoreanLine(read.message, { label: 'readConfigForSetup refusal' });
+  });
+
+  it('round-trips the whole folder, unknown keys and all', async () => {
+    const home = await given({
+      config: [
+        `schema_version = ${String(CONFIG_SCHEMA_VERSION)}`,
+        'timezone = "Europe/Berlin"',
+        '[store]',
+        'path = "/tmp/a/brain.db"',
+        'extra = 1',
+        '[files]',
+        'path = "/tmp/a/files"',
+        '[mirror]',
+        'path = "/tmp/a/mirror"',
+        '[database]',
+        'url_env = "X"',
+        '',
+      ].join('\n'),
+    });
+
+    const first = await readConfigForSetup(home);
+    expect(first.ok).toBe(true);
+    if (!first.ok || first.recorded === undefined) return;
+    expect(await writeConfig(home, { ...first.recorded })).toEqual({ ok: true });
+    const once = await readFile(configFilePath(home), 'utf8');
+
+    const again = await readConfigForSetup(home);
+    expect(again.ok).toBe(true);
+    if (!again.ok || again.recorded === undefined) return;
+    expect(await writeConfig(home, { ...again.recorded })).toEqual({ ok: true });
+
+    // Byte for byte: a re-run that reordered or dropped a key would be a
+    // folder nobody could keep by hand.
+    expect(await readFile(configFilePath(home), 'utf8')).toBe(once);
+    expect(once).toContain('url_env = "X"');
+    expect(once).toContain('extra = 1');
+    // And `readConfig` reads back what this wrote, which is the whole point of
+    // sharing the checks.
+    expect((await readConfig(home)).ok).toBe(true);
   });
 });

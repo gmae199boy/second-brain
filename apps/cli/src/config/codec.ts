@@ -248,6 +248,206 @@ function readPath(
   return { ok: true, path: value };
 }
 
+/**
+ * What `<home>` already says, key by key, for the installer.
+ *
+ * Every field is optional and for the same reason: a value this version cannot
+ * use is dropped on its own, with a warning, and the installer falls back to
+ * its default for that one key. `readConfig` cannot do this — a command must
+ * not run against a configuration it only half understands — but an install is
+ * exactly the moment to repair one, and resetting the four keys around the
+ * broken one is how a single typo loses a file store nothing asks about (F1).
+ */
+export interface SetupConfig {
+  timezone?: string;
+  /** Absolute. A re-run offers it as the default and must never reset it. */
+  storePath?: string;
+  /** Absolute. Nothing asks for it, so a re-run can only keep it. */
+  filesPath?: string;
+  /** Absolute. A re-run offers it as the default and must never reset it. */
+  mirrorPath?: string;
+  /**
+   * The keys this version does not know, as the document held them, so writing
+   * the folder back keeps them rather than dropping them in silence (AD-18).
+   */
+  extra: Record<string, unknown>;
+}
+
+export type ReadSetupConfigResult =
+  | {
+      ok: true;
+      /** `undefined` when there is no `config.toml` at all: a first install. */
+      recorded: SetupConfig | undefined;
+      warnings: readonly ConfigWarning[];
+    }
+  | {
+      ok: false;
+      /** The whole file is unusable, so nothing may be written over it. */
+      code: 'CONFIG_INVALID';
+      message: string;
+    };
+
+/**
+ * Read the configuration folder the way the installer has to: value by value.
+ *
+ * It answers `CONFIG_INVALID` only for the three things that make the whole
+ * document unusable — it cannot be read, it is not TOML, it is not a table —
+ * and for a `schema_version` that is an integer other than this version's,
+ * which may well be a newer layout this build would mangle. Everything else is
+ * repaired in place: the key is dropped, a `CONFIG_VALUE_RESET` warning names
+ * it and what will be written instead, and the install carries on with the
+ * other values intact.
+ *
+ * The checks are `readConfig`'s own, called here rather than copied, so a
+ * folder this function accepts a value from is a folder `readConfig` will read
+ * that value back out of.
+ */
+export async function readConfigForSetup(home: string): Promise<ReadSetupConfigResult> {
+  const configPath = configFilePath(home);
+
+  const source = await readTextFile(configPath);
+  if (source.state === 'missing') return { ok: true, recorded: undefined, warnings: [] };
+  if (source.state === 'unreadable') {
+    return {
+      ok: false,
+      code: 'CONFIG_INVALID',
+      message: `${configPath}을 읽을 수 없습니다: ${source.message}`,
+    };
+  }
+
+  let document: unknown;
+  try {
+    document = parseToml(source.text);
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'CONFIG_INVALID',
+      message: `${configPath}을 TOML로 읽을 수 없습니다: ${oneLine(error)}`,
+    };
+  }
+  if (!isTable(document)) {
+    return { ok: false, code: 'CONFIG_INVALID', message: `${configPath}: TOML 테이블이 아닙니다` };
+  }
+
+  const fields = flatten(document);
+  const warnings: ConfigWarning[] = [...unknownKeyWarnings(configPath, fields)];
+
+  // A version this build does not read is the one value that cannot be
+  // repaired: the keys under it may mean something else entirely, so writing
+  // this version's layout over it would be this code guessing.
+  const schemaVersion = fields.get('schema_version');
+  if (
+    typeof schemaVersion === 'number' &&
+    Number.isInteger(schemaVersion) &&
+    schemaVersion !== CONFIG_SCHEMA_VERSION
+  ) {
+    return {
+      ok: false,
+      code: 'CONFIG_INVALID',
+      message: `${configPath}: schema_version ${String(schemaVersion)}은 지원하지 않습니다. 이 코드가 읽는 것은 ${String(CONFIG_SCHEMA_VERSION)}입니다.`,
+    };
+  }
+  if (schemaVersion !== CONFIG_SCHEMA_VERSION) {
+    warnings.push(
+      reset(
+        configPath,
+        'schema_version',
+        schemaVersion,
+        String(CONFIG_SCHEMA_VERSION),
+      ),
+    );
+  }
+
+  const recorded: SetupConfig = { extra: unknownKeys(fields) };
+
+  const timezone = fields.get('timezone');
+  if (timezone !== undefined) {
+    if (typeof timezone === 'string' && timezone !== '' && isTimeZone(timezone)) {
+      recorded.timezone = timezone;
+    } else {
+      warnings.push(reset(configPath, 'timezone', timezone, DEFAULT_TIMEZONE));
+    }
+  }
+
+  for (const [key, field] of [
+    ['store.path', 'storePath'],
+    ['files.path', 'filesPath'],
+    ['mirror.path', 'mirrorPath'],
+  ] as const) {
+    const value = fields.get(key);
+    if (value === undefined) continue;
+    const read = readPath(configPath, fields, key, '');
+    if (read.ok) {
+      recorded[field] = read.path;
+      continue;
+    }
+    warnings.push(reset(configPath, key, value, defaultFor(home, key)));
+  }
+
+  return { ok: true, recorded, warnings };
+}
+
+/**
+ * One value that was dropped: the key, what it said, and the default for that
+ * key.
+ *
+ * It names the default as the default and not as what will be written, because
+ * it is not always what is written: a `--store-path` flag or an answer typed
+ * into the question wins over it, and a warning that promised the default
+ * would be used would be a warning the next line contradicts.
+ */
+function reset(
+  configPath: string,
+  key: string,
+  value: unknown,
+  instead: string,
+): ConfigWarning {
+  // An absent value has no kind to name and nothing to discard, and
+  // `kindOf(undefined)` would put "undefined" into a sentence a person reads.
+  const said =
+    value === undefined
+      ? `${key} 키가 없습니다`
+      : `${key}는 ${kindOf(value)}입니다. 쓸 수 없으므로 버립니다`;
+  return {
+    code: 'CONFIG_VALUE_RESET',
+    message: `${configPath}: ${said}. 기본값은 "${instead}"입니다`,
+  };
+}
+
+/** What this install writes for one path key when the file's value is unusable. */
+function defaultFor(home: string, key: 'store.path' | 'files.path' | 'mirror.path'): string {
+  if (key === 'store.path') return defaultStorePath(home);
+  if (key === 'files.path') return defaultFilesPath(home);
+  return defaultMirrorPath(home);
+}
+
+/**
+ * The keys this version does not know, back in the shape the document had
+ * them: `[database] url_env` comes out as `{ database: { url_env } }`, so
+ * `writeConfig` can render it again without knowing anything about it.
+ */
+function unknownKeys(fields: ReadonlyMap<string, unknown>): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
+  for (const key of unknownKeyNames(fields)) {
+    const parts = key.split('.');
+    const last = parts.pop();
+    if (last === undefined) continue;
+    let table = extra;
+    for (const part of parts) {
+      const next = table[part];
+      if (!isTable(next)) {
+        const made: Record<string, unknown> = {};
+        table[part] = made;
+        table = made;
+        continue;
+      }
+      table = next;
+    }
+    table[last] = fields.get(key);
+  }
+  return extra;
+}
+
 /** What `writeConfig` records. Everything left out keeps its default. */
 export interface WriteConfigInput {
   timezone?: string;
@@ -257,7 +457,18 @@ export interface WriteConfigInput {
   filesPath?: string;
   /** Absolute. Left out means `defaultMirrorPath(home)`, as reading does. */
   mirrorPath?: string;
+  /**
+   * Keys this version does not know, as `readConfigForSetup` read them back.
+   * They are rendered again exactly as they came, and a known key wins over
+   * one of these: a configuration is never quietly shortened (AD-18).
+   */
+  extra?: Record<string, unknown>;
 }
+
+/** What `writeConfig` did. A failure is a value, never an exception. */
+export type WriteConfigResult =
+  | { ok: true }
+  | { ok: false; code: 'CONFIG_INVALID'; message: string };
 
 /**
  * Write the configuration folder, creating it when needed. `.env` keeps the
@@ -266,15 +477,24 @@ export interface WriteConfigInput {
  * created or already existed — there is no key to write into it yet, and the
  * mode rule has to hold before there is one rather than after.
  */
-export async function writeConfig(home: string, input: WriteConfigInput): Promise<void> {
+export async function writeConfig(
+  home: string,
+  input: WriteConfigInput,
+): Promise<WriteConfigResult> {
   const timezone = input.timezone ?? DEFAULT_TIMEZONE;
   const storePath = input.storePath ?? defaultStorePath(home);
   const filesPath = input.filesPath ?? defaultFilesPath(home);
   const mirrorPath = input.mirrorPath ?? defaultMirrorPath(home);
   // The same checks `readConfig` makes, made here as well: a folder this codec
-  // wrote must be one it can read back.
+  // wrote must be one it can read back. A value, not an exception: the
+  // installer has a line to print and an exit code to answer with, and a
+  // throw from here would reach the terminal as a stack (Conventions).
   if (!isTimeZone(timezone)) {
-    throw new Error(`${timezone} is not a time zone this machine knows`);
+    return {
+      ok: false,
+      code: 'CONFIG_INVALID',
+      message: `timezone "${timezone}"은 이 기계가 아는 시간대가 아닙니다`,
+    };
   }
   for (const [key, path] of [
     ['store.path', storePath],
@@ -282,59 +502,121 @@ export async function writeConfig(home: string, input: WriteConfigInput): Promis
     ['mirror.path', mirrorPath],
   ] as const) {
     if (!isAbsolute(path)) {
-      throw new Error(`${key} ${path} is not an absolute path`);
+      return {
+        ok: false,
+        code: 'CONFIG_INVALID',
+        message: `${key} "${path}"는 절대 경로여야 합니다`,
+      };
     }
   }
 
-  await mkdir(home, { recursive: true, mode: 0o700 });
-
   const envPath = envFilePath(home);
-  const existing = await readTextFile(envPath);
-  const values: Record<string, string | undefined> =
-    existing.state === 'read' ? { ...parseEnv(existing.text) } : {};
+  let document: string;
+  let lines: string[];
+  try {
+    await mkdir(home, { recursive: true, mode: 0o700 });
 
-  // Both files are rendered before either is written, so a value `.env` cannot
-  // represent fails with nothing written rather than leaving half a folder
-  // behind for `readConfig` to call incomplete.
-  const document = stringifyToml({
-    schema_version: CONFIG_SCHEMA_VERSION,
-    timezone,
-    store: { path: storePath },
-    files: { path: filesPath },
-    mirror: { path: mirrorPath },
-  });
-  const lines = Object.entries(values).flatMap(([name, value]) =>
-    value === undefined ? [] : [`${name}=${quote(name, value)}`],
-  );
+    const existing = await readTextFile(envPath);
+    const values: Record<string, string | undefined> =
+      existing.state === 'read' ? { ...parseEnv(existing.text) } : {};
 
-  await writeFile(
-    configFilePath(home),
-    `# Personal Brain 설정. 키 값은 여기가 아니라 .env에 있습니다.\n${document}\n`,
-    'utf8',
-  );
-  // The mode is set at creation, so a secret is never briefly world-readable.
-  await writeFile(
-    envPath,
-    `# brain이 쓴 파일입니다. 키 값은 config.toml이 아니라 여기에 있고, 저장소에는 들어가지 않습니다.\n${lines.join('\n')}\n`,
-    { encoding: 'utf8', mode: 0o600 },
-  );
-  // `writeFile`'s mode only applies to a file it creates, so tighten an
-  // existing one too.
-  await chmod(envPath, 0o600);
+    // Both files are rendered before either is written, so a value `.env`
+    // cannot represent fails with nothing written rather than leaving half a
+    // folder behind for `readConfig` to call incomplete.
+    document = stringifyToml(
+      merged(
+        {
+          schema_version: CONFIG_SCHEMA_VERSION,
+          timezone,
+          store: { path: storePath },
+          files: { path: filesPath },
+          mirror: { path: mirrorPath },
+        },
+        input.extra ?? {},
+      ),
+    );
+    lines = [];
+    for (const [name, value] of Object.entries(values)) {
+      if (value === undefined) continue;
+      const quoted = quote(value);
+      if (quoted === undefined) {
+        return {
+          ok: false,
+          code: 'CONFIG_INVALID',
+          message: `${name}에 작은따옴표와 큰따옴표가 다 들어 있어서 .env로 나타낼 수 없습니다`,
+        };
+      }
+      lines.push(`${name}=${quoted}`);
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'CONFIG_INVALID',
+      message: `${home}에 설정을 쓸 수 없습니다: ${oneLine(error)}`,
+    };
+  }
+
+  try {
+    await writeFile(
+      configFilePath(home),
+      `# Personal Brain 설정. 키 값은 여기가 아니라 .env에 있습니다.\n${document}\n`,
+      'utf8',
+    );
+    // The mode is set at creation, so a secret is never briefly world-readable.
+    await writeFile(
+      envPath,
+      `# brain이 쓴 파일입니다. 키 값은 config.toml이 아니라 여기에 있고, 저장소에는 들어가지 않습니다.\n${lines.join('\n')}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    );
+    // `writeFile`'s mode only applies to a file it creates, so tighten an
+    // existing one too.
+    await chmod(envPath, 0o600);
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'CONFIG_INVALID',
+      message: `${home}에 설정을 쓸 수 없습니다: ${oneLine(error)}`,
+    };
+  }
+
+  return { ok: true };
+}
+
+/**
+ * This version's keys, plus the ones it does not know, as one document. A known
+ * key wins: a `[store] path` the installer just chose is not overwritten by
+ * whatever the file happened to hold under the same name, and a table is merged
+ * rather than replaced so `[store] extra` survives beside `[store] path`.
+ */
+function merged(
+  known: Record<string, unknown>,
+  extra: Record<string, unknown>,
+): Record<string, unknown> {
+  const document: Record<string, unknown> = { ...known };
+  for (const [key, value] of Object.entries(extra)) {
+    const mine = document[key];
+    if (isTable(mine) && isTable(value)) {
+      document[key] = merged(mine, value);
+      continue;
+    }
+    // A known key wins, so an unknown one of the same name is dropped — which
+    // only happens for a scalar written where this version keeps a table.
+    if (mine !== undefined) continue;
+    document[key] = value;
+  }
+  return document;
 }
 
 /**
  * `.env` as Node reads it has no escape syntax, so a value is quoted with
  * whichever quote it does not contain. A value holding both cannot be written
- * back faithfully, and a codec that cannot round-trip a value must say so
- * rather than record something else.
+ * back faithfully — `undefined` says so — and a codec that cannot round-trip a
+ * value must say so rather than record something else.
  */
-function quote(name: string, value: string): string {
+function quote(value: string): string | undefined {
   if (!value.includes('"')) return `"${value}"`;
   if (!value.includes("'")) return `'${value}'`;
-  throw new Error(
-    `${name} holds both a single and a double quote, which .env cannot represent`,
-  );
+  return undefined;
 }
 
 type TextFile =
@@ -373,23 +655,33 @@ function flatten(table: Record<string, unknown>, prefix = ''): Map<string, unkno
   return fields;
 }
 
-function unknownKeyWarnings(
-  configPath: string,
-  fields: ReadonlyMap<string, unknown>,
-): readonly ConfigWarning[] {
+/**
+ * Every key of the document this version does not know, in the document's own
+ * order. One list, because the warning that names them and the record that
+ * carries them through a write have to agree about which keys those are: a key
+ * reported and then dropped is the silent loss AD-18 forbids.
+ */
+function unknownKeyNames(fields: ReadonlyMap<string, unknown>): readonly string[] {
   const known = new Set<string>(KNOWN_KEYS);
   // A table that only holds known keys is known even when it is empty, so an
   // untouched `[store]` is not reported as a key nobody recognises.
   const isKnown = (key: string): boolean =>
     known.has(key) || KNOWN_KEYS.some((candidate) => candidate.startsWith(`${key}.`));
 
-  return [...fields.keys()]
-    .filter((key) => !isKnown(key))
-    .sort()
-    .map((key) => ({
-      code: 'CONFIG_UNKNOWN_KEY' as const,
-      message: `${configPath}: 모르는 키 "${key}"를 무시합니다`,
-    }));
+  return [...fields.keys()].filter((key) => !isKnown(key));
+}
+
+function unknownKeyWarnings(
+  configPath: string,
+  fields: ReadonlyMap<string, unknown>,
+): readonly ConfigWarning[] {
+  // Neutral about what becomes of it, because the two readers do different
+  // things with it and both read this sentence: a command does not use the key,
+  // and the installer writes it straight back rather than dropping it (AD-18).
+  return [...unknownKeyNames(fields)].sort().map((key) => ({
+    code: 'CONFIG_UNKNOWN_KEY' as const,
+    message: `${configPath}: 이 버전이 모르는 키 "${key}"가 있습니다. 쓰지는 않고 그대로 둡니다`,
+  }));
 }
 
 /**

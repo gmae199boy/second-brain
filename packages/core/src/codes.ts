@@ -43,6 +43,12 @@ export const WARNING_CODES = [
    * dropped in silence: the command runs and says which key it ignored (AD-18).
    */
   'CONFIG_UNKNOWN_KEY',
+  /**
+   * One value of the configuration could not be used, so that key — and only
+   * that key — was written back as its default. The others keep what they
+   * said: a single typo must not reset the keys nothing asks about (AD-18).
+   */
+  'CONFIG_VALUE_RESET',
   /** An attachment was stored without the masking it should have had (AD-23). */
   'ATTACHMENT_NOT_REDACTED',
   /** A file this brain only points at could not be read where it lives. */
@@ -80,6 +86,7 @@ export const WARNING_CODE_MEANINGS: Readonly<Record<WarningCode, string>> = {
   RULE_UNVERIFIED: '규칙이 확인되지 않은 채 포함되었습니다',
   CURSOR_RESET: '커서를 잃어서 파서가 트랜스크립트를 처음부터 읽었습니다',
   CONFIG_UNKNOWN_KEY: '설정 파일에 이 버전이 모르는 키가 있고, 어떤 키를 무시했는지 말합니다',
+  CONFIG_VALUE_RESET: '설정 값 하나를 쓸 수 없어서 그 키만 기본값으로 다시 썼습니다',
   ATTACHMENT_NOT_REDACTED: '첨부가 받아야 할 마스킹 없이 저장되었습니다',
   FILE_SOURCE_UNREACHABLE: '이 brain이 가리키기만 하는 파일을 그 자리에서 읽을 수 없었습니다',
   DAEMON_UNAVAILABLE: 'daemon이 설정되어 있고 닿지 못해서, 이 명령은 직접 돌았습니다',
@@ -212,6 +219,35 @@ const CODES = {
     meaning: '하네스 hook이 부르는 shim 파일이 없습니다',
     retryable: false,
     hint: '`brain setup run`으로 shim 파일을 만드세요',
+  },
+  /**
+   * Every install step ran and the checks that close the install did not all
+   * pass. It is 1 and not 2 because the install did run: the configuration, the
+   * database and the shim are all where they belong, and what is left is one
+   * check to read. The hint names `doctor run` rather than `setup run`, because
+   * running the install again would end on the same report (AD-19).
+   */
+  SETUP_INCOMPLETE: {
+    exit: 1,
+    meaning: '설치는 끝까지 돌았고 마지막 점검이 통과하지 못했습니다',
+    retryable: false,
+    hint: '`brain doctor run`으로 어느 점검이 실패했는지 읽고 그것을 고치세요',
+  },
+  /**
+   * A person stopped the install themselves: no at the screen that says what
+   * it is about to write, or Ctrl-C at a question.
+   *
+   * At the consent screen — and at any question before it — nothing has been
+   * written yet, which is the whole point of asking there. Ctrl-C at a later
+   * question, such as which harnesses to connect, stops where it is and leaves
+   * the steps already taken as they are. Either way this is not a failure of
+   * the machine but an answer.
+   */
+  SETUP_CANCELLED: {
+    exit: 1,
+    meaning: '사람이 설치를 진행하지 않겠다고 답했습니다',
+    retryable: false,
+    hint: '진행해도 되면 같은 명령을 다시 실행하고 진행에 동의하세요',
   },
   /** The search itself failed, so there is no result to report. */
   SEARCH_FAILED: {

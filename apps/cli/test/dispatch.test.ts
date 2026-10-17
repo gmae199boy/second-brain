@@ -129,6 +129,19 @@ const registry = [
   },
   {
     ns: 'fake',
+    verb: 'standalone-warns-and-fails',
+    ...meta('fake', 'standalone-warns-and-fails', 'a standalone command that warned, then failed'),
+    standalone: true,
+    run: async () => ({
+      ok: false,
+      code: 'SHIM_MISSING',
+      message: 'no shim',
+      exit: 1,
+      warnings: ['CONFIG_UNKNOWN_KEY'],
+    }),
+  },
+  {
+    ns: 'fake',
     verb: 'hook-throw',
     ...meta('fake', 'hook-throw', 'a hook command that throws'),
     hook: true,
@@ -556,6 +569,30 @@ describe('the dispatcher and a standalone command', () => {
     const envelope = JSON.parse(run.stdout) as Envelope;
     expect(envelope.ok).toBe(false);
     expect(envelope.error?.code).toBe('SHIM_MISSING');
+  });
+
+  it('carries the warnings it collected before it failed', async () => {
+    const run = await runDispatch(['fake', 'standalone-warns-and-fails', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect(run.code).toBe(1);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(false);
+    // A code collected before the failure is still a code the caller has to
+    // see: `brain setup run` over a configuration with an unknown key says so
+    // whether or not the install then got as far as finishing (NFR-2).
+    expect(envelope.warnings).toEqual(['CONFIG_UNKNOWN_KEY']);
+  });
+
+  it('prints the warning line of a failure on stderr too, as a result does', async () => {
+    const run = await runDispatch(['fake', 'standalone-warns-and-fails'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect(run.code).toBe(1);
+    expect(run.stderr).toContain('SHIM_MISSING: no shim');
+    expect(run.stderr).toContain('경고: CONFIG_UNKNOWN_KEY');
   });
 
   it('answers USAGE when a required argument is missing', async () => {

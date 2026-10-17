@@ -150,6 +150,13 @@ export interface CommandFailure {
    * the value itself comes from Core's `requireConfirmation`.
    */
   retry?: VerbCall;
+  /**
+   * Codes for `warnings[]`, for a command that collected some before it
+   * failed. A failure envelope carries them for the same reason a result does:
+   * `brain setup run` over a configuration with an unknown key says so whether
+   * or not the install then got as far as finishing (NFR-2).
+   */
+  warnings?: readonly WarningCode[];
 }
 
 export type CommandOutcome<T> = CommandSuccess<T> | CommandFailure;
@@ -503,8 +510,17 @@ function finish(
   warningLines: readonly string[],
 ): Outcome {
   if (!outcome.ok) {
-    const { ok: _ran, ...failure } = outcome;
-    return failed(rendering, failure, warningCodes, warningLines);
+    // The command's own warnings join the configuration's, and say so on
+    // stderr the same way a result's do: a code collected before the failure
+    // is still a code the caller has to see (NFR-2).
+    const { ok: _ran, warnings: failureWarnings, ...failure } = outcome;
+    const collected = failureWarnings ?? [];
+    return failed(
+      rendering,
+      failure,
+      [...warningCodes, ...collected],
+      [...warningLines, ...collected.map((code) => `경고: ${code}`)],
+    );
   }
 
   const commandWarnings = outcome.warnings ?? [];

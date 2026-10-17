@@ -1,4 +1,4 @@
-import { chmod, mkdir, open } from 'node:fs/promises';
+import { chmod, mkdir, open, stat } from 'node:fs/promises';
 import { userInfo } from 'node:os';
 import { dirname } from 'node:path';
 import {
@@ -24,6 +24,71 @@ import { uuidV7IdGen } from '../runtime/id-gen.js';
 const SIDECARS = ['-wal', '-shm'] as const;
 
 /**
+ * The first sixteen bytes of every SQLite database file, the header string of
+ * the file format. It is the only way to tell a database from somebody else's
+ * file before touching it: `open` tells nothing, because SQLite itself only
+ * reads the header when a statement runs.
+ */
+const SQLITE_HEADER = Buffer.from('SQLite format 3\u0000', 'latin1');
+
+/**
+ * Whether there is a file here, for the screen that asks before anything is
+ * written: "a new database" and "the database you already have" are different
+ * sentences, and a person agreeing to an install is owed the right one.
+ */
+export async function storeFileExists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Why this path must not be used as a database, or `undefined` when it may be.
+ *
+ * It runs before the `open` and the `chmod` of `prepareStore`, and that order
+ * is the point: a text file somebody else owns, pointed at by one mistyped
+ * `--store-path`, must come back with its mode and its bytes exactly as they
+ * were and with no `-wal` beside it. A file of zero bytes is a new database —
+ * that is what `open(path,'a')` leaves behind, so a run interrupted between the
+ * two has to be able to carry on.
+ *
+ * Only a file that is not there may fall through to the rest of `prepareStore`.
+ * Anything else that cannot be opened or read — a write-only file, a folder, a
+ * mode this user cannot read — is refused here: carrying on would `chmod` and
+ * migrate a file this code never managed to look at, which is the one thing the
+ * check exists to prevent.
+ */
+async function notADatabase(path: string): Promise<string | undefined> {
+  let handle;
+  try {
+    handle = await open(path, 'r');
+  } catch (error) {
+    if (isMissing(error)) return undefined;
+    return `${path}를 읽을 수 없어서 SQLite 데이터베이스인지 확인하지 못했습니다. 아무것도 바꾸지 않았습니다: ${describe(error)}`;
+  }
+  try {
+    const header = Buffer.alloc(SQLITE_HEADER.length);
+    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    if (bytesRead === 0) return undefined;
+    if (bytesRead === SQLITE_HEADER.length && header.equals(SQLITE_HEADER)) return undefined;
+    return `${path}는 SQLite 데이터베이스 파일이 아닙니다. 아무것도 바꾸지 않았습니다 — 다른 경로를 주거나 이 파일을 옮기세요.`;
+  } catch (error) {
+    return `${path}의 앞부분을 읽을 수 없어서 SQLite 데이터베이스인지 확인하지 못했습니다. 아무것도 바꾸지 않았습니다: ${describe(error)}`;
+  } finally {
+    await handle.close();
+  }
+}
+
+/** A file that is not there, as opposed to one that could not be opened. */
+function isMissing(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'ENOENT'
+  );
+}
+
+/**
  * Create the database file if it is not there and bring it up to the version
  * this build ships.
  *
@@ -38,6 +103,14 @@ const SIDECARS = ['-wal', '-shm'] as const;
  * world-readable folder of our own making is our doing.
  */
 export async function prepareStore(path: string): Promise<SqliteMigrationResult> {
+  // Before the folder is made, before the file is opened, and above all before
+  // the `chmod`: a file that is not a database is somebody else's, and this
+  // install has no business changing its mode or writing a log beside it.
+  const refused = await notADatabase(path);
+  if (refused !== undefined) {
+    return { ok: false, code: 'DB_UNAVAILABLE', message: refused };
+  }
+
   try {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     // `a`, so an existing database is opened rather than truncated. The mode

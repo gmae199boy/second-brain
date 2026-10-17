@@ -2,10 +2,12 @@
 import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { cancel, confirm, isCancel, multiselect, text, type Option } from '@clack/prompts';
-import { readConfig, writeConfig } from './config/codec.js';
+import { readConfigForSetup, writeConfig } from './config/codec.js';
 import { configHome } from './config/paths.js';
 import { connectors } from './connectors/index.js';
 import {
+  failureLines,
+  installExit,
   runInstall,
   runInstallFlow,
   type Choice,
@@ -13,7 +15,7 @@ import {
   type InstallExitCode,
   type InstallFlags,
   type InstallPrompts,
-  type RecordedConfig,
+  type InstallResult,
 } from './install/flow.js';
 import { writeShim } from './install/shim.js';
 import {
@@ -21,6 +23,7 @@ import {
   prepareFilesRoot,
   prepareSelfUser,
   prepareStore,
+  storeFileExists,
 } from './install/store.js';
 
 /**
@@ -63,36 +66,63 @@ export async function runInstaller(
   env: NodeJS.ProcessEnv = process.env,
   deps: InstallDeps = systemInstallDeps(),
 ): Promise<InstallExitCode> {
-  return guarded(env, deps, () => runInstallFlow(argv, env, deps));
+  const result = await guarded(env, deps, () => runInstallFlow(argv, env, deps));
+  // This door has no envelope, so it is the one that renders the failure: the
+  // coded sentence and the hint under it, exactly as the dispatcher prints a
+  // failure in text mode. The flow printed neither — it handed back the value.
+  if (!result.ok) for (const line of failureLines(result.failure)) deps.log(line);
+  return installExit(result);
 }
 
 /**
- * The same installer, from flags somebody else parsed. `brain setup run` takes
- * this door: commander has already read its options, and re-rendering them as
- * an argument list only to parse them again would be two readings of one
- * intent, which is how two spellings of the same flag come about.
+ * The same installer, from flags somebody else parsed, as the result itself.
+ * `brain setup run` takes this door: commander has already read its options,
+ * and re-rendering them as an argument list only to parse them again would be
+ * two readings of one intent, which is how two spellings of the same flag come
+ * about.
+ *
+ * It renders nothing. The dispatcher owns the envelope and the text-mode
+ * failure line for every command, and a line printed here as well would be the
+ * same failure said twice.
  */
 export async function runInstallerWithFlags(
   flags: InstallFlags,
   env: NodeJS.ProcessEnv = process.env,
   deps: InstallDeps = systemInstallDeps(),
-): Promise<InstallExitCode> {
+): Promise<InstallResult> {
   return guarded(env, deps, () => runInstall(flags, env, deps));
 }
 
-/** The intro, and Ctrl-C turned back into an exit code rather than a stack. */
-async function guarded(
+/**
+ * The intro, and Ctrl-C turned back into a result rather than a stack.
+ *
+ * Generic over what the flow answers, so the caller keeps the narrower type it
+ * asked for: `runInstall` cannot print a usage, and a command that took
+ * `InstallFlowResult` back from it would have to handle a variant that cannot
+ * happen.
+ */
+async function guarded<T>(
   env: NodeJS.ProcessEnv,
   deps: InstallDeps,
-  run: () => Promise<InstallExitCode>,
-): Promise<InstallExitCode> {
+  run: () => Promise<T>,
+): Promise<T | InstallResult> {
   for (const line of installerIntro(env)) deps.log(line);
   try {
     return await run();
   } catch (error) {
     if (error instanceof Cancelled) {
-      deps.log('요청대로 멈췄습니다. 더 바뀐 것은 없습니다.');
-      return 1;
+      // The one answer a question can give that is not a value: the person
+      // pressed Ctrl-C. It is the same answer as saying no to the consent
+      // screen, so it comes back as the same code.
+      return {
+        ok: false,
+        warnings: [],
+        failure: {
+          code: 'SETUP_CANCELLED',
+          message: '요청대로 멈췄습니다. 더 바뀐 것은 없습니다.',
+          exit: 1,
+        },
+      };
     }
     throw error;
   }
@@ -116,20 +146,17 @@ export function systemInstallDeps(): InstallDeps {
     log: (line: string): void => {
       process.stdout.write(`${line}\n`);
     },
+    // The codec's own two functions, with nothing in between: the partial read
+    // and the warnings it collects belong to the codec (AD-18), and the
+    // adapter that used to sit here is what turned a broken value into
+    // "nothing recorded" and dropped every warning with it (F1, F2).
     config: {
       write: writeConfig,
-      read: async (home: string): Promise<RecordedConfig | undefined> => {
-        const read = await readConfig(home);
-        if (!read.ok) return undefined;
-        // All four come back, because the codec renders the whole folder from
-        // what it is given: a re-run that passed only the database path would
-        // reset the rest to their defaults.
-        const { timezone, storePath, filesPath, mirrorPath } = read.config;
-        return { timezone, storePath, filesPath, mirrorPath };
-      },
+      read: readConfigForSetup,
     },
     store: {
       prepare: (path: string) => prepareStore(path),
+      exists: (path: string) => storeFileExists(path),
       self: (path: string) => prepareSelfUser(path),
       doctor: (home: string, path: string) => doctorAt(home, path),
     },
