@@ -1,7 +1,17 @@
-import { spawn } from 'node:child_process';
-import { appendFile, copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile, spawn } from 'node:child_process';
+import {
+  appendFile,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -127,6 +137,28 @@ async function installedHome(): Promise<string> {
 async function transcriptIn(home: string): Promise<string> {
   const path = join(home, 'transcript.jsonl');
   await copyFile(FIXTURE, path);
+  return path;
+}
+
+/**
+ * The same fixture with every line's `cwd` pointing at a real folder, under a
+ * name of its own, so one home can hold a transcript per folder.
+ *
+ * The `cwd` of the lines is the only thing the tags are read from (AD-12); the
+ * `cwd` of the hook payload is deliberately left alone, so a test that passes
+ * cannot be passing because of it.
+ */
+async function transcriptForFolder(
+  home: string,
+  cwd: string,
+  name = 'transcript',
+): Promise<string> {
+  const path = join(home, `${name}.jsonl`);
+  const text = (await readFile(FIXTURE, 'utf8')).replaceAll(
+    '"cwd": "/demo/repo"',
+    `"cwd": ${JSON.stringify(cwd)}`,
+  );
+  await writeFile(path, text, 'utf8');
   return path;
 }
 
@@ -565,6 +597,238 @@ describe('brain sessions ingest claude-code on a whole session', () => {
     } finally {
       database.close();
     }
+  });
+});
+
+/**
+ * The identity rows of the story's matrix, through the real binary and real
+ * git repositories in a temporary folder: two worktrees of one clone, an ssh
+ * clone and an https clone of one repository, a folder that is no repository,
+ * and an ingest that runs again after the remote changed and the folder went.
+ *
+ * Nothing here reads or writes a git setting of this machine: every repository
+ * is made with its identity on the command line.
+ */
+describe('brain sessions ingest claude-code and the project it tags', () => {
+  const runGit = promisify(execFile);
+  const IDENTITY = [
+    '-c',
+    'user.name=brain-owner',
+    '-c',
+    'user.email=brain-owner@demo.example',
+    '-c',
+    'commit.gpgsign=false',
+    '-c',
+    'init.defaultBranch=main',
+  ];
+
+  async function git(cwd: string, ...args: string[]): Promise<string> {
+    const { stdout } = await runGit('git', ['-C', cwd, ...IDENTITY, ...args], {
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    });
+    return stdout;
+  }
+
+  /** A repository with one commit, inside this test's own home. */
+  async function repositoryIn(
+    home: string,
+    name: string,
+    remote: string | null,
+  ): Promise<string> {
+    const path = join(await realpath(home), name);
+    await mkdir(path, { recursive: true });
+    await git(path, 'init', '-q');
+    await writeFile(join(path, 'notes.md'), 'the import notes\n', 'utf8');
+    await git(path, 'add', 'notes.md');
+    await git(path, 'commit', '-q', '-m', 'the first note');
+    if (remote !== null) await git(path, 'remote', 'add', 'origin', remote);
+    return path;
+  }
+
+  /** Every project, worktree and session tag, read without writing. */
+  function tags(path: string): {
+    projects: { remote_identity: string }[];
+    worktrees: { path: string; removed_at: string | null }[];
+    sessions: { harness_session_id: string; identity: string | null; path: string | null }[];
+  } {
+    const database = new DatabaseSync(path, { readOnly: true });
+    try {
+      return {
+        projects: database
+          .prepare('select remote_identity from projects order by remote_identity')
+          .all() as { remote_identity: string }[],
+        worktrees: database
+          .prepare('select path, removed_at from worktrees order by path')
+          .all() as { path: string; removed_at: string | null }[],
+        sessions: database
+          .prepare(
+            `select s.harness_session_id, p.remote_identity as identity, w.path as path
+               from sessions s
+               left join projects p on p.id = s.project_id
+               left join worktrees w on w.id = s.worktree_id
+              order by s.harness_session_id`,
+          )
+          .all() as {
+          harness_session_id: string;
+          identity: string | null;
+          path: string | null;
+        }[],
+      };
+    } finally {
+      database.close();
+    }
+  }
+
+  /** One session per folder, so every ingest here creates a row of its own. */
+  function sessionIdFor(ordinal: number): string {
+    return `4f1e7a90-1c2b-4d3e-8f55-00000000000${String(ordinal)}`;
+  }
+
+  it('puts two worktrees of one clone under one project', async () => {
+    const home = await installedHome();
+    const main = await repositoryIn(home, 'repo', 'git@demo.example:brain-owner/notes.git');
+    const review = join(await realpath(home), 'review');
+    await git(main, 'worktree', 'add', '-q', review, '-b', 'review');
+
+    for (const [ordinal, cwd] of [main, review].entries()) {
+      const transcript = await transcriptForFolder(home, cwd, `t${String(ordinal)}`);
+      const ran = await runBrain(
+        ['sessions', 'ingest', 'claude-code', '--json'],
+        home,
+        stopPayload(transcript, sessionIdFor(ordinal + 1)),
+      );
+      expect(ran.stderr, ran.stderr).toBe('');
+      expect(ran.code).toBe(0);
+    }
+
+    const stored = tags(databaseIn(home));
+    // One identity, two folders, and the two sessions on different worktrees
+    // of the same project (AD-12).
+    expect(stored.projects).toEqual([{ remote_identity: 'demo.example/brain-owner/notes' }]);
+    expect(stored.worktrees).toEqual([
+      { path: main, removed_at: null },
+      { path: review, removed_at: null },
+    ]);
+    expect(stored.sessions.map((session) => session.identity)).toEqual([
+      'demo.example/brain-owner/notes',
+      'demo.example/brain-owner/notes',
+    ]);
+    expect(new Set(stored.sessions.map((session) => session.path)).size).toBe(2);
+  });
+
+  it('makes one session, one project and one worktree when two first ingests overlap', async () => {
+    const home = await installedHome();
+    const main = await repositoryIn(home, 'repo', 'git@demo.example:brain-owner/notes.git');
+    const transcript = await transcriptForFolder(home, main, 't0');
+    const payload = stopPayload(transcript, sessionIdFor(1));
+
+    // Both processes find no session and inspect the folder; the one SQLite
+    // writer lines them up, and the second finds the row the first made.
+    const runs = await Promise.all([
+      runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, payload),
+      runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, payload),
+    ]);
+    for (const run of runs) expect(run.code, run.stderr).toBe(0);
+
+    const stored = tags(databaseIn(home));
+    expect(stored.projects).toEqual([{ remote_identity: 'demo.example/brain-owner/notes' }]);
+    expect(stored.worktrees).toEqual([{ path: main, removed_at: null }]);
+    expect(stored.sessions).toEqual([
+      {
+        harness_session_id: sessionIdFor(1),
+        identity: 'demo.example/brain-owner/notes',
+        path: main,
+      },
+    ]);
+  });
+
+  it('puts an ssh clone and an https clone of one repository under one project', async () => {
+    const home = await installedHome();
+    const overSsh = await repositoryIn(home, 'ssh', 'git@DEMO.example:brain-owner/notes.git');
+    const overHttps = await repositoryIn(
+      home,
+      'https',
+      'https://brain-owner:s3cr3t-token@demo.example/brain-owner/notes.git',
+    );
+
+    for (const [ordinal, cwd] of [overSsh, overHttps].entries()) {
+      const transcript = await transcriptForFolder(home, cwd, `t${String(ordinal)}`);
+      expect(
+        (
+          await runBrain(
+            ['sessions', 'ingest', 'claude-code'],
+            home,
+            stopPayload(transcript, sessionIdFor(ordinal + 1)),
+          )
+        ).code,
+      ).toBe(0);
+    }
+
+    const stored = tags(databaseIn(home));
+    expect(stored.projects).toEqual([{ remote_identity: 'demo.example/brain-owner/notes' }]);
+    // And the token of the https remote reached no column anywhere (NFR-1).
+    const everything = await readFile(databaseIn(home));
+    expect(everything.includes(Buffer.from('s3cr3t-token'))).toBe(false);
+  });
+
+  it('ingests a session opened outside a repository with no project at all', async () => {
+    const home = await installedHome();
+    const plain = join(await realpath(home), 'not-a-repo');
+    await mkdir(plain, { recursive: true });
+
+    // Two folders git can say nothing about: one that is there and is no
+    // repository, and one the transcript names that does not exist any more.
+    for (const [ordinal, cwd] of [plain, '/demo/repo'].entries()) {
+      const transcript = await transcriptForFolder(home, cwd, `t${String(ordinal)}`);
+      const ran = await runBrain(
+        ['sessions', 'ingest', 'claude-code', '--json'],
+        home,
+        stopPayload(transcript, sessionIdFor(ordinal + 1)),
+      );
+      expect(ran.code).toBe(0);
+      // Not a failure and not a warning: capture comes before the tags
+      // (Decision 2026-10-18).
+      expect((JSON.parse(ran.stdout) as Envelope).warnings).toEqual([]);
+      expect((JSON.parse(ran.stdout) as Envelope).data).toMatchObject({ created: true });
+    }
+
+    const stored = tags(databaseIn(home));
+    expect(stored.projects).toEqual([]);
+    expect(stored.worktrees).toEqual([]);
+    expect(stored.sessions.map((session) => [session.identity, session.path])).toEqual([
+      [null, null],
+      [null, null],
+    ]);
+  });
+
+  it('leaves the tags alone when the same session is ingested after the repository moved', async () => {
+    const home = await installedHome();
+    const path = await repositoryIn(home, 'repo', 'git@demo.example:brain-owner/notes.git');
+    const transcript = await transcriptForFolder(home, path);
+    const payload = stopPayload(transcript);
+    expect((await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code).toBe(0);
+    const before = tags(databaseIn(home));
+
+    // The remote changed and the folder went: the one thing the tags may never
+    // do is follow (AD-12). The transcript still names the old folder.
+    await git(path, 'remote', 'set-url', 'origin', 'git@demo.example:brain-owner/other.git');
+    await rm(path, { recursive: true, force: true });
+    const again = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      payload,
+    );
+
+    expect(again.code).toBe(0);
+    expect((JSON.parse(again.stdout) as Envelope).data).toMatchObject({
+      created: false,
+      inserted: { messages: 0, toolNotes: 0 },
+    });
+    // Not one row and not one tag moved, and `removed_at` is still empty:
+    // marking a folder that is gone is drain's, not this verb's.
+    expect(tags(databaseIn(home))).toEqual(before);
+    expect(before.projects).toEqual([{ remote_identity: 'demo.example/brain-owner/notes' }]);
+    expect(before.worktrees).toEqual([{ path, removed_at: null }]);
   });
 });
 

@@ -2,6 +2,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  otherProjectId,
+  otherSessionId,
+  otherWorktreeId,
+  sampleCheckoutInput,
   sampleEnsureSessionInput,
   sampleIngestBatch,
   sampleSelfUserInput,
@@ -104,6 +108,176 @@ describe('the SQLite session store and the columns behind it', () => {
         { seq: 2, role: 'user', git_branch: 'topic/notes', is_subagent_report: 0 },
         { seq: 3, role: 'assistant', git_branch: 'topic/notes', is_subagent_report: 1 },
       ]);
+    } finally {
+      await opened.connection.close();
+    }
+  });
+
+  it('writes the project and the worktree of a checkout, and tags the session with them', async () => {
+    const path = await migratedPath();
+    const store = sqliteStore({ path });
+    const checkout = sampleCheckoutInput();
+    try {
+      expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
+      const created = await store.ensureSession(sampleEnsureSessionInput({ checkout }));
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      expect(created.session.projectId).toBe(checkout.projectId);
+      expect(created.session.worktreeId).toBe(checkout.worktreeId);
+
+      // The same repository from another folder, with ids nobody has seen:
+      // the identity keeps the id it has, and the path becomes its own row.
+      const elsewhere = await store.ensureSession(
+        sampleEnsureSessionInput({
+          id: otherSessionId,
+          key: { harness: sampleSessionKey.harness, harnessSessionId: 'session-0002' },
+          checkout: sampleCheckoutInput({
+            projectId: otherProjectId,
+            worktreeId: otherWorktreeId,
+            worktreePath: '/demo/repo-review',
+          }),
+        }),
+      );
+      expect(elsewhere.ok).toBe(true);
+      if (!elsewhere.ok) return;
+      expect(elsewhere.session.projectId).toBe(checkout.projectId);
+      expect(elsewhere.session.worktreeId).toBe(otherWorktreeId);
+    } finally {
+      await store.close();
+    }
+
+    const opened = openSqlite({ path, busyTimeoutMs: 3000 });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    try {
+      // One project for the identity, two worktrees under it, and `removed_at`
+      // untouched: marking a folder that is gone is drain's (AD-12).
+      expect(
+        opened.connection.database
+          .prepare('select id, remote_identity, workspace_id from projects')
+          .all(),
+      ).toEqual([
+        {
+          id: checkout.projectId,
+          remote_identity: checkout.remoteIdentity,
+          workspace_id: null,
+        },
+      ]);
+      expect(
+        opened.connection.database
+          .prepare('select project_id, path, removed_at from worktrees order by path')
+          .all(),
+      ).toEqual([
+        { project_id: checkout.projectId, path: '/demo/repo', removed_at: null },
+        { project_id: checkout.projectId, path: '/demo/repo-review', removed_at: null },
+      ]);
+      expect(
+        opened.connection.database
+          .prepare(
+            `select harness_session_id, project_id, worktree_id, workspace_id
+               from sessions order by harness_session_id`,
+          )
+          .all(),
+      ).toEqual([
+        {
+          harness_session_id: sampleSessionKey.harnessSessionId,
+          project_id: checkout.projectId,
+          worktree_id: checkout.worktreeId,
+          workspace_id: null,
+        },
+        {
+          harness_session_id: 'session-0002',
+          project_id: checkout.projectId,
+          worktree_id: otherWorktreeId,
+          workspace_id: null,
+        },
+      ]);
+    } finally {
+      await opened.connection.close();
+    }
+  });
+
+  it('writes no project row for a checkout handed to a session that is already there', async () => {
+    const path = await migratedPath();
+    const store = sqliteStore({ path });
+    try {
+      expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
+      // Created from a cwd that said nothing, then ingested again by a run
+      // whose git did answer: the tags are decided once (AD-12).
+      expect((await store.ensureSession(sampleEnsureSessionInput())).ok).toBe(true);
+      const again = await store.ensureSession(
+        sampleEnsureSessionInput({ checkout: sampleCheckoutInput() }),
+      );
+      expect(again.ok).toBe(true);
+      if (!again.ok) return;
+      expect(again.session.projectId).toBeNull();
+      expect(again.session.worktreeId).toBeNull();
+    } finally {
+      await store.close();
+    }
+
+    const opened = openSqlite({ path, busyTimeoutMs: 3000 });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    try {
+      // A project nothing points at is a project nobody will ever find again,
+      // so the session check comes before the insert (port contract).
+      expect(
+        opened.connection.database.prepare('select count(*) as rows from projects').get(),
+      ).toEqual({ rows: 0 });
+      expect(
+        opened.connection.database.prepare('select count(*) as rows from worktrees').get(),
+      ).toEqual({ rows: 0 });
+    } finally {
+      await opened.connection.close();
+    }
+  });
+
+  it('leaves no project or worktree behind when a proposed id is already taken', async () => {
+    const path = await migratedPath();
+    const store = sqliteStore({ path });
+    try {
+      expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
+      const taken = sampleCheckoutInput();
+      expect((await store.ensureSession(sampleEnsureSessionInput({ checkout: taken }))).ok).toBe(
+        true,
+      );
+
+      // A second repository whose worktree proposal reuses the id the first
+      // worktree already has: nothing about this call can be settled.
+      const clash = await store.ensureSession(
+        sampleEnsureSessionInput({
+          id: otherSessionId,
+          key: { harness: sampleSessionKey.harness, harnessSessionId: 'session-0002' },
+          checkout: sampleCheckoutInput({
+            projectId: otherProjectId,
+            remoteIdentity: 'demo.example/brain-owner/other',
+            worktreeId: taken.worktreeId,
+            worktreePath: '/demo/other',
+          }),
+        }),
+      );
+      expect(clash).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+    } finally {
+      await store.close();
+    }
+
+    const opened = openSqlite({ path, busyTimeoutMs: 3000 });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    try {
+      // The whole transaction rolled back: the project the failed call had
+      // already inserted is gone with it, because a project no session points
+      // at is a project nobody will ever find again (port contract).
+      expect(
+        opened.connection.database.prepare('select remote_identity from projects').all(),
+      ).toEqual([{ remote_identity: sampleCheckoutInput().remoteIdentity }]);
+      expect(opened.connection.database.prepare('select path from worktrees').all()).toEqual([
+        { path: '/demo/repo' },
+      ]);
+      expect(
+        opened.connection.database.prepare('select count(*) as rows from sessions').get(),
+      ).toEqual({ rows: 1 });
     } finally {
       await opened.connection.close();
     }

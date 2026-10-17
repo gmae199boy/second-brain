@@ -3,6 +3,7 @@ import type {
   IngestMessage,
   IngestToolNote,
 } from '../domain/ingest-batch.js';
+import { normalizeRemoteIdentity } from '../domain/project-identity.js';
 import type { ParserCursor, Session } from '../domain/session.js';
 import {
   parseSessionToken,
@@ -13,7 +14,13 @@ import type { WarningCode } from '../codes.js';
 import type { Clock } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
 import type { Parser } from '../ports/parser.js';
-import type { IngestCounts, SessionStore, UserStore } from '../ports/store.js';
+import type { RepositoryInspector } from '../ports/repository.js';
+import type {
+  EnsureCheckoutInput,
+  IngestCounts,
+  SessionStore,
+  UserStore,
+} from '../ports/store.js';
 import type { TranscriptReader } from '../ports/transcript.js';
 
 /**
@@ -58,6 +65,11 @@ export interface IngestSessionDependencies {
   /** Every parser this build can read a transcript with, by harness (AD-4). */
   parsers: readonly Parser[];
   transcripts: TranscriptReader;
+  /**
+   * Asking git what a working folder is, for the tags of a session this call
+   * is about to create (AD-12). Core has no git of its own (AD-1).
+   */
+  repositories: RepositoryInspector;
   /** The machine this session ran on, recorded once on the row (AD-12). */
   machine: string;
 }
@@ -67,7 +79,7 @@ export interface IngestSessionDependencies {
  *
  * The order is the whole of the use case, and it is this order on purpose:
  *
- *   token → parser → findSession → read → parse → owner → ensure → ingest
+ *   token → parser → findSession → read → parse → owner → inspect → ensure → ingest
  *
  * Reading and parsing come before anything is written, because they are the
  * slow part and a write transaction that waited on a disk would hold the one
@@ -84,6 +96,14 @@ export interface IngestSessionDependencies {
  * goes in: the session is already there, so there is nothing to create, and the
  * notes belong to messages it already holds.
  *
+ * `inspect` sits where it does because the tags are decided once and never
+ * again (AD-12): it is asked only when `findSession` found nothing and the
+ * parse brought a message, which is the one moment a session row can be
+ * created. A session that is already there is never inspected — the hook of
+ * every later turn would then pay for a git call whose answer is thrown away,
+ * and a repository whose remote has since changed would answer differently
+ * from the row that is already stored.
+ *
  * Every id and every instant is decided here and handed over: the store mints
  * nothing and reads no clock (AD-8, AD-13), so the same batch spooled and
  * replayed later lands with the values it was first given (AD-9).
@@ -92,7 +112,7 @@ export async function ingestSession(
   dependencies: IngestSessionDependencies,
   input: IngestSessionInput,
 ): Promise<IngestSessionResult> {
-  const { store, clock, idGen, parsers, transcripts, machine } = dependencies;
+  const { store, clock, idGen, parsers, transcripts, repositories, machine } = dependencies;
 
   const token = parseSessionToken(input.session);
   if (!token.ok) {
@@ -178,6 +198,14 @@ export async function ingestSession(
   // to propose. Everything else goes through find-or-create (AD-12).
   let created = false;
   if (messages.length > 0) {
+    // The tags, and the one place they are ever worked out: only for a session
+    // `findSession` did not find, and only from the first message's `cwd`
+    // (AD-12). The process's own cwd is never the evidence — a hook runs
+    // wherever the harness happened to leave it.
+    const checkout =
+      stored === null
+        ? await checkoutFor(repositories, idGen, messages[0]?.cwd ?? null)
+        : null;
     const ensured = await store.ensureSession({
       id: idGen.next(),
       key,
@@ -191,11 +219,9 @@ export async function ingestSession(
       // existing row takes it from the batch instead, which is what lets a
       // session created by an earlier read still learn its start source.
       startSource: parsed.startSource,
-      // The tags are story 2.8's: a value invented here would be one it has to
-      // migrate away from.
+      // Slice 1 never groups projects, so nothing fills this (AD-12).
       workspaceId: null,
-      projectId: null,
-      worktreeId: null,
+      checkout,
     });
     if (!ensured.ok) return ensured;
     created = ensured.created;
@@ -253,6 +279,43 @@ function cursorFor(
 ): ParserCursor | null {
   if (stored === null || stored.parserVersion !== parserVersion) return null;
   return stored.cursor;
+}
+
+/**
+ * The project and worktree a cwd belongs to, with an id minted for each in case
+ * this call is the one that creates the row (AD-8, AD-12).
+ *
+ * A line that carried no `cwd` is not asked about at all: there is nothing to
+ * inspect, and a guess would be a tag that can never be corrected. A folder git
+ * cannot answer for comes back as `null`, and the session is ingested with no
+ * tags rather than refused — capture comes before the tags, and a machine with
+ * no git must not be a machine that stores no sessions (Decision 2026-10-18).
+ *
+ * The identity is the normalized remote when there is one, and the git common
+ * directory only when there is not. A common directory is an absolute path, so
+ * it starts with `/` and can never collide with a `host/…` identity. It carries
+ * no prefix and no machine name: AD-12 says the common directory, and a
+ * decoration would be one more thing to migrate away from.
+ */
+async function checkoutFor(
+  repositories: RepositoryInspector,
+  idGen: IdGen,
+  cwd: string | null,
+): Promise<EnsureCheckoutInput | null> {
+  if (cwd === null) return null;
+  const checkout = await repositories.inspect(cwd);
+  if (checkout === null) return null;
+
+  // A remote nothing can be named from is a remote this repository does not
+  // have: the fallback is the same as for a repository with no remote at all.
+  const fromRemote =
+    checkout.remoteUrl === null ? null : normalizeRemoteIdentity(checkout.remoteUrl);
+  return {
+    projectId: idGen.next(),
+    remoteIdentity: fromRemote ?? checkout.commonDir,
+    worktreeId: idGen.next(),
+    worktreePath: checkout.worktreePath,
+  };
 }
 
 function firstOccurredAt(messages: readonly IngestMessage[]): Date {

@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type { ParserCursor } from '../src/domain/session.js';
 import { formatSessionToken } from '../src/domain/session-token.js';
 import type { ParseResult } from '../src/ports/parser.js';
+import type { Checkout } from '../src/ports/repository.js';
 import { ingestSession, type IngestSessionDependencies } from '../src/sessions/ingest.js';
 import { fixedClock } from '../src/testing/fakes/clock.js';
 import { sequenceIdGen } from '../src/testing/fakes/id-gen.js';
 import { memoryParser, memoryTranscript } from '../src/testing/fakes/parser.js';
+import {
+  memoryRepositories,
+  type MemoryRepositories,
+} from '../src/testing/fakes/repository.js';
 import { memoryStore, type MemoryStore } from '../src/testing/fakes/store.js';
 import {
   memoryTranscriptReader,
@@ -31,10 +36,22 @@ const OWNER = {
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
 };
 
+/**
+ * The folder the sample transcript's every line carries, and what git says it
+ * is. The paths are made up: there is no filesystem in here (AD-1).
+ */
+const CWD = '/demo/repo';
+const CHECKOUT: Checkout = {
+  remoteUrl: 'git@demo.example:brain-owner/notes.git',
+  commonDir: '/demo/repo/.git',
+  worktreePath: CWD,
+};
+
 interface Kit {
   deps: IngestSessionDependencies;
   store: MemoryStore;
   transcripts: MemoryTranscriptReader;
+  repositories: MemoryRepositories;
 }
 
 interface KitOptions {
@@ -44,6 +61,11 @@ interface KitOptions {
   missing?: boolean;
   /** Skip the install step, so there is no owner to attribute a session to. */
   withoutOwner?: boolean;
+  /**
+   * What git answers, by folder. Left out, `CWD` is the checkout above; `{}`
+   * is the "outside a repository" row.
+   */
+  checkouts?: Readonly<Record<string, Checkout>>;
 }
 
 async function kit(options: KitOptions = {}): Promise<Kit> {
@@ -56,15 +78,18 @@ async function kit(options: KitOptions = {}): Promise<Kit> {
       ? {}
       : { files: { [PATH]: options.content ?? memoryTranscript } },
   );
+  const repositories = memoryRepositories(options.checkouts ?? { [CWD]: CHECKOUT });
   return {
     store,
     transcripts,
+    repositories,
     deps: {
       store,
       clock: fixedClock(INGESTED_AT),
       idGen: sequenceIdGen({ timestampMs: INGESTED_AT.getTime() }),
       parsers: [memoryParser()],
       transcripts,
+      repositories,
       machine: 'demo-machine',
     },
   };
@@ -93,14 +118,23 @@ describe('sessions.ingest on a transcript nothing has read yet', () => {
       userId: OWNER.id,
       machine: 'demo-machine',
       ingestSource: 'live',
-      // The tags are story 2.8's: a value invented now would be one it has to
-      // migrate away from. `start_source` is this story's, and the sample
-      // transcript says the harness started the session fresh.
+      // Slice 1 never groups projects, and the sample transcript says the
+      // harness started the session fresh.
       workspaceId: null,
-      projectId: null,
-      worktreeId: null,
       startSource: 'startup',
     });
+    // Tagged from the first message's folder, with the rows the tags point at
+    // (AD-12). The identity is the normalized remote, not the URL git printed.
+    expect(snapshot.projects).toEqual([
+      {
+        id: session?.projectId,
+        remoteIdentity: 'demo.example/brain-owner/notes',
+        workspaceId: null,
+      },
+    ]);
+    expect(snapshot.worktrees).toEqual([
+      { id: session?.worktreeId, projectId: session?.projectId, path: CWD, removedAt: null },
+    ]);
     // The first utterance of the transcript, not the moment it was read (AD-13).
     expect(session?.startedAt).toEqual(new Date('2026-01-02T03:04:05.000Z'));
     expect(session?.ingestedAt).toEqual(INGESTED_AT);
@@ -161,6 +195,176 @@ describe('sessions.ingest on a transcript nothing has read yet', () => {
     await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
 
     expect(transcripts.reads()).toEqual([PATH]);
+  });
+});
+
+describe('sessions.ingest and the folder it tags a session from', () => {
+  it('asks git about the first message, and about nothing else', async () => {
+    // The first message's cwd is the whole of the evidence (AD-12). The sample
+    // transcript carries it on every line, so the point of the case is the
+    // count: one question, about the first folder.
+    const { deps, repositories } = await kit({
+      content: memoryTranscript.replace('"cwd":"/demo/repo"', '"cwd":"/demo/elsewhere"'),
+      checkouts: { '/demo/elsewhere': { ...CHECKOUT, worktreePath: '/demo/elsewhere' } },
+    });
+
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+
+    expect(repositories.inspects()).toEqual(['/demo/elsewhere']);
+  });
+
+  it('asks git nothing at all once the session is there', async () => {
+    const { deps, repositories, store } = await kit();
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    const tagged = store.snapshot().sessions[0];
+
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+
+    // Once, on the ingest that created the row. Every hook after that pays
+    // nothing for a git call whose answer would be thrown away (AD-12).
+    expect(repositories.inspects()).toEqual([CWD]);
+    const after = store.snapshot();
+    expect(after.projects).toHaveLength(1);
+    expect(after.worktrees).toHaveLength(1);
+    expect(after.sessions[0]?.projectId).toBe(tagged?.projectId);
+    expect(after.sessions[0]?.worktreeId).toBe(tagged?.worktreeId);
+  });
+
+  it('tags nothing and asks nothing when the first message carried no folder', async () => {
+    const { deps, store, repositories } = await kit({
+      content: JSON.stringify({
+        messages: [
+          {
+            harnessMessageId: 'msg-1',
+            role: 'user',
+            occurredAt: '2026-01-02T03:04:05.000Z',
+            body: 'a line the harness wrote without a folder',
+          },
+        ],
+      }),
+    });
+
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+
+    // Nothing to inspect, and a guess would be a tag nothing can correct.
+    expect(repositories.inspects()).toEqual([]);
+    const snapshot = store.snapshot();
+    expect(snapshot.sessions[0]).toMatchObject({ projectId: null, worktreeId: null });
+    expect(snapshot.projects).toEqual([]);
+    expect(snapshot.worktrees).toEqual([]);
+  });
+
+  it('stores the session with no tags when the folder is not a repository', async () => {
+    // The "outside a repository" row: git answers `null`, and the session is
+    // ingested anyway. Capture comes before the tags (Decision 2026-10-18).
+    const { deps, store, repositories } = await kit({ checkouts: {} });
+
+    const result = await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
+
+    expect(result).toMatchObject({ ok: true, created: true, inserted: { messages: 4 } });
+    expect(repositories.inspects()).toEqual([CWD]);
+    const snapshot = store.snapshot();
+    expect(snapshot.sessions[0]).toMatchObject({ projectId: null, worktreeId: null });
+    expect(snapshot.projects).toEqual([]);
+  });
+
+  it('falls back to the git common directory for a repository with no remote', async () => {
+    const { deps, store } = await kit({
+      checkouts: { [CWD]: { ...CHECKOUT, remoteUrl: null } },
+    });
+
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+
+    // The absolute path as it came, with no prefix and no machine name (AD-12).
+    expect(store.snapshot().projects[0]?.remoteIdentity).toBe('/demo/repo/.git');
+  });
+
+  it('falls back to the common directory for a remote that names no repository', async () => {
+    const { deps, store } = await kit({
+      checkouts: { [CWD]: { ...CHECKOUT, remoteUrl: 'file:///srv/notes.git' } },
+    });
+
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+
+    // A remote nothing can be named from is a remote this clone may as well
+    // not have.
+    expect(store.snapshot().projects[0]?.remoteIdentity).toBe('/demo/repo/.git');
+  });
+
+  it('joins two folders of a repository with no remote into a single project', async () => {
+    // The `git init`-only row of the matrix: there is no remote to name the
+    // project by, and the common directory is what the two folders share.
+    const { deps, store, transcripts } = await kit({
+      checkouts: {
+        [CWD]: { remoteUrl: null, commonDir: '/demo/repo/.git', worktreePath: CWD },
+        '/demo/repo-review': {
+          remoteUrl: null,
+          commonDir: '/demo/repo/.git',
+          worktreePath: '/demo/repo-review',
+        },
+      },
+    });
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+
+    const other = '/memory/transcripts/session-0002.jsonl';
+    transcripts.write(
+      other,
+      memoryTranscript.replaceAll('"cwd":"/demo/repo"', '"cwd":"/demo/repo-review"'),
+    );
+    expect(
+      (await ingestSession(deps, { session: 'demo:session-0002', transcriptPath: other })).ok,
+    ).toBe(true);
+
+    const snapshot = store.snapshot();
+    expect(snapshot.projects).toHaveLength(1);
+    expect(snapshot.projects[0]?.remoteIdentity).toBe('/demo/repo/.git');
+    expect(snapshot.worktrees.map((worktree) => worktree.path).sort()).toEqual([
+      '/demo/repo',
+      '/demo/repo-review',
+    ]);
+    expect(new Set(snapshot.sessions.map((session) => session.projectId)).size).toBe(1);
+    expect(new Set(snapshot.sessions.map((session) => session.worktreeId)).size).toBe(2);
+  });
+
+  it('joins two folders of one repository into a single project', async () => {
+    // The two-worktree row of the matrix: one remote, two tops, two sessions.
+    const { deps, store, transcripts } = await kit({
+      checkouts: {
+        [CWD]: CHECKOUT,
+        // The same repository through its https remote, which normalizes to
+        // the same identity as the ssh one above.
+        '/demo/repo-review': {
+          remoteUrl: 'https://demo.example/brain-owner/notes',
+          commonDir: '/demo/repo/.git',
+          worktreePath: '/demo/repo-review',
+        },
+      },
+    });
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+
+    const other = '/memory/transcripts/session-0002.jsonl';
+    transcripts.write(
+      other,
+      memoryTranscript.replaceAll('"cwd":"/demo/repo"', '"cwd":"/demo/repo-review"'),
+    );
+    const review = await ingestSession(deps, {
+      session: 'demo:session-0002',
+      transcriptPath: other,
+    });
+
+    expect(review.ok).toBe(true);
+    const snapshot = store.snapshot();
+    // One project, two worktrees, and the two sessions tagged accordingly: an
+    // ssh clone and an https clone of one repository are one project.
+    expect(snapshot.projects).toHaveLength(1);
+    expect(snapshot.worktrees.map((worktree) => worktree.path).sort()).toEqual([
+      '/demo/repo',
+      '/demo/repo-review',
+    ]);
+    const projectIds = new Set(snapshot.sessions.map((session) => session.projectId));
+    expect(projectIds.size).toBe(1);
+    expect(new Set(snapshot.sessions.map((session) => session.worktreeId)).size).toBe(2);
   });
 });
 

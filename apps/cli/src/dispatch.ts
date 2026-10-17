@@ -20,6 +20,7 @@ import { configHome } from './config/paths.js';
 import { runtimeChecks } from './doctor/checks.js';
 import { failedConfigStore } from './doctor/store.js';
 import { harnessParsers, harnesses } from './harnesses.js';
+import { gitRepositoryInspector } from './runtime/git.js';
 import { uuidV7IdGen } from './runtime/id-gen.js';
 import { readStdin } from './runtime/stdin.js';
 import { fileTranscriptReader } from './runtime/transcript.js';
@@ -464,6 +465,9 @@ async function execute(
     // from before anything has written its hook entry (see `harnesses.ts`).
     parsers: harnessParsers(harnesses),
     transcripts: fileTranscriptReader(),
+    // Asking git what the first message's folder is, for the project and
+    // worktree tags of a session this run may create (AD-12).
+    repositories: gitRepositoryInspector(),
     // Recorded on every session this machine ingests (AD-12). The host name,
     // because it is the one name a person reading a report would recognise.
     machine: hostname(),

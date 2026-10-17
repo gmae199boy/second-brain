@@ -1,6 +1,8 @@
 import type { IngestBatch } from '../../domain/ingest-batch.js';
 import type { Message } from '../../domain/message.js';
+import type { Project } from '../../domain/project.js';
 import type { Session } from '../../domain/session.js';
+import type { Worktree } from '../../domain/worktree.js';
 import {
   formatSessionToken,
   type SessionKey,
@@ -36,6 +38,10 @@ export interface MemoryStoreOptions {
 /** What the store holds, for the owning test. Contract cases never use it. */
 export interface MemoryStoreSnapshot {
   users: readonly User[];
+  /** One row per remote identity, in the order they were first seen (AD-12). */
+  projects: readonly Project[];
+  /** One row per `(project, path)`, in the order they were first seen. */
+  worktrees: readonly Worktree[];
   sessions: readonly Session[];
   messages: readonly Message[];
   toolNotes: readonly ToolNote[];
@@ -62,6 +68,10 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const { health = DEFAULT_HEALTH } = options;
 
   const users = new Map<string, User>();
+  // Keyed by the idempotency keys of the Table Contract: a project by its
+  // remote identity, a worktree by its project and path.
+  const projects = new Map<string, Project>();
+  const worktrees = new Map<string, Worktree>();
   const sessions = new Map<SessionToken, Session>();
   const messages = new Map<SessionToken, Message[]>();
   const toolNotes = new Map<SessionToken, ToolNote[]>();
@@ -105,7 +115,35 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       const token = formatSessionToken(input.key);
       const existing = sessions.get(token);
       if (existing !== undefined) {
+        // The session comes first, and a key that is already stored ends the
+        // call: a project row created for a session nobody creates would be a
+        // row nothing ever points at (port contract).
         return { ok: true, created: false, session: { ...existing } };
+      }
+
+      // Find-or-create, in the order the real adapter does it and inside the
+      // same step as the session: the identity, then the path under it.
+      let projectId: string | null = null;
+      let worktreeId: string | null = null;
+      if (input.checkout !== null) {
+        const { remoteIdentity, worktreePath } = input.checkout;
+        const project = projects.get(remoteIdentity) ?? {
+          id: input.checkout.projectId,
+          remoteIdentity,
+          workspaceId: null,
+        };
+        projects.set(remoteIdentity, project);
+        projectId = project.id;
+
+        const path = worktreeKey(project.id, worktreePath);
+        const worktree = worktrees.get(path) ?? {
+          id: input.checkout.worktreeId,
+          projectId: project.id,
+          path: worktreePath,
+          removedAt: null,
+        };
+        worktrees.set(path, worktree);
+        worktreeId = worktree.id;
       }
 
       const session: Session = {
@@ -116,8 +154,10 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         machine: input.machine,
         startedAt: input.startedAt,
         workspaceId: input.workspaceId,
-        projectId: input.projectId,
-        worktreeId: input.worktreeId,
+        // The ids that were actually attached, which are the stored ones
+        // wherever the identity or the path was already there.
+        projectId,
+        worktreeId,
         ingestSource: input.ingestSource,
         endedAt: null,
         cursor: null,
@@ -264,6 +304,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     snapshot(): MemoryStoreSnapshot {
       return {
         users: [...users.values()],
+        projects: [...projects.values()],
+        worktrees: [...worktrees.values()],
         sessions: [...sessions.values()],
         messages: [...messages.values()].flat(),
         toolNotes: [...toolNotes.values()].flat(),
@@ -271,6 +313,14 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       };
     },
   };
+}
+
+/**
+ * One worktree's key. A newline, because a path may hold anything else a
+ * separator could be made of.
+ */
+function worktreeKey(projectId: string, path: string): string {
+  return `${projectId}\n${path}`;
 }
 
 /**

@@ -6,6 +6,7 @@ import {
 import type { Clock } from './ports/clock.js';
 import type { IdGen } from './ports/id-gen.js';
 import type { Parser } from './ports/parser.js';
+import type { RepositoryInspector } from './ports/repository.js';
 import type { SchemaStore, Store } from './ports/store.js';
 import type { TranscriptReader } from './ports/transcript.js';
 import {
@@ -37,6 +38,11 @@ export interface BrainDependencies {
   parsers: readonly Parser[];
   /** Reading a transcript file. Core has no filesystem of its own (AD-1). */
   transcripts: TranscriptReader;
+  /**
+   * Asking git what a working folder is, for the project and worktree tags of
+   * a session (AD-12). Core has no git of its own (AD-1).
+   */
+  repositories: RepositoryInspector;
   /** The machine sessions ingested here ran on, recorded per session (AD-12). */
   machine: string;
   /**
@@ -68,15 +74,27 @@ export interface Brain {
  * connection is made by the adapter factory the caller already built (AD-3).
  */
 export function createBrain(dependencies: BrainDependencies): Brain {
-  const { store, schemaVersion, clock, idGen, parsers, transcripts, machine, checks } =
-    dependencies;
+  const {
+    store,
+    schemaVersion,
+    clock,
+    idGen,
+    parsers,
+    transcripts,
+    repositories,
+    machine,
+    checks,
+  } = dependencies;
   return {
     doctor: {
       run: () => runDoctor(store, { schemaVersion, checks }),
     },
     sessions: {
       ingest: (input) =>
-        ingestSession({ store, clock, idGen, parsers, transcripts, machine }, input),
+        ingestSession(
+          { store, clock, idGen, parsers, transcripts, repositories, machine },
+          input,
+        ),
     },
     close: () => store.close(),
   };

@@ -9,7 +9,10 @@ import {
 } from '../assert.js';
 import { contractCase, withSubject, type ContractCase } from '../contract.js';
 import {
+  otherProjectId,
   otherSessionId,
+  otherWorktreeId,
+  sampleCheckoutInput,
   sampleEnsureSessionInput,
   sampleIngestBatch,
   sampleSelfUserInput,
@@ -99,8 +102,10 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
               input.workspaceId,
               `the workspace tag changed ${where}`,
             );
-            assertEqual(session.projectId, input.projectId, `the project tag changed ${where}`);
-            assertEqual(session.worktreeId, input.worktreeId, `the worktree tag changed ${where}`);
+            // Created from a cwd that said nothing, so both tags are null and
+            // stay null: a later call's checkout may not fill them in.
+            assertEqual(session.projectId, null, `the project tag changed ${where}`);
+            assertEqual(session.worktreeId, null, `the worktree tag changed ${where}`);
             assertEqual(
               session.continuedFromSessionId,
               null,
@@ -121,8 +126,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
               startedAt: new Date('2027-06-07T08:09:10.000Z'),
               ingestSource: 'import',
               workspaceId: '01940000-0000-7000-8000-00000000001a',
-              projectId: '01940000-0000-7000-8000-00000000001b',
-              worktreeId: '01940000-0000-7000-8000-00000000001c',
+              checkout: sampleCheckoutInput(),
             }),
           );
           assertOk(again, 'the second ensureSession failed');
@@ -131,6 +135,171 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
           const read = await store.readSession(sampleSessionToken);
           assertOk(read, 'the session could not be read');
           check(read.session, 'when read back');
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
+      'ensureSession tags a new session with the project and worktree of its checkout',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          const checkout = sampleCheckoutInput();
+          const created = await store.ensureSession(sampleEnsureSessionInput({ checkout }));
+          assertOk(created, 'ensureSession failed');
+          // Nothing was there, so both proposals became rows and the session
+          // carries their ids (AD-8, AD-12).
+          assertEqual(
+            created.session.projectId,
+            checkout.projectId,
+            'a new identity must become the project the session is tagged with',
+          );
+          assertEqual(
+            created.session.worktreeId,
+            checkout.worktreeId,
+            'a new path must become the worktree the session is tagged with',
+          );
+          // `workspace_id` stays empty: slice 1 never groups projects (AD-12).
+          assertEqual(
+            created.session.workspaceId,
+            null,
+            'nothing in slice 1 may fill the workspace tag',
+          );
+
+          const read = await store.readSession(sampleSessionToken);
+          assertOk(read, 'the tagged session could not be read');
+          assertEqual(
+            [read.session.projectId, read.session.worktreeId],
+            [checkout.projectId, checkout.worktreeId],
+            'the tags that were read back are not the ones the session was created with',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
+      'a second session of the same repository joins the project it already has',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          const first = sampleCheckoutInput();
+          const created = await store.ensureSession(sampleEnsureSessionInput({ checkout: first }));
+          assertOk(created, 'the first ensureSession failed');
+
+          // The same repository, a second working folder, and ids nobody has
+          // seen: this is the second worktree of one clone (I/O matrix).
+          const elsewhere = await store.ensureSession(
+            sampleEnsureSessionInput({
+              id: otherSessionId,
+              key: { harness: sampleSessionKey.harness, harnessSessionId: 'session-0002' },
+              checkout: sampleCheckoutInput({
+                projectId: otherProjectId,
+                worktreeId: otherWorktreeId,
+                worktreePath: '/demo/repo-review',
+              }),
+            }),
+          );
+          assertOk(elsewhere, 'the second ensureSession failed');
+          assertEqual(
+            elsewhere.session.projectId,
+            first.projectId,
+            'an identity that is already stored must keep its id, not take the proposal',
+          );
+          assertEqual(
+            elsewhere.session.worktreeId,
+            otherWorktreeId,
+            'another path under the same project must become a worktree of its own',
+          );
+
+          // And the same path again: one worktree, however many sessions were
+          // opened in it and whatever id each of them proposed.
+          const sameFolder = await store.ensureSession(
+            sampleEnsureSessionInput({
+              id: '01940000-0000-7000-8000-000000000003',
+              key: { harness: sampleSessionKey.harness, harnessSessionId: 'session-0003' },
+              checkout: sampleCheckoutInput({
+                projectId: '01940000-0000-7000-8000-000000000013',
+                worktreeId: '01940000-0000-7000-8000-000000000014',
+              }),
+            }),
+          );
+          assertOk(sameFolder, 'the third ensureSession failed');
+          assertEqual(
+            [sameFolder.session.projectId, sameFolder.session.worktreeId],
+            [first.projectId, first.worktreeId],
+            'the same identity and the same path must be the same project and worktree',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
+      'a checkout handed to a session that already exists creates nothing',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          // Created from a cwd that said nothing, which is the state of every
+          // session this case is about.
+          assertOk(
+            await store.ensureSession(sampleEnsureSessionInput({ checkout: null })),
+            'ensureSession failed',
+          );
+
+          const late = sampleCheckoutInput({ projectId: otherProjectId });
+          const again = await store.ensureSession(sampleEnsureSessionInput({ checkout: late }));
+          assertOk(again, 'the second ensureSession failed');
+          assertEqual(
+            [again.session.projectId, again.session.worktreeId],
+            [null, null],
+            'a session that is already stored must not take the tags of a later checkout',
+          );
+
+          // And no project row was created either. Nothing in the port reads
+          // the table, so it is asked the only way the port allows: a *new*
+          // session with the same identity proposes an id of its own, and it
+          // keeps that id only if the call above stored nothing.
+          const fresh = await store.ensureSession(
+            sampleEnsureSessionInput({
+              id: otherSessionId,
+              key: { harness: sampleSessionKey.harness, harnessSessionId: 'session-0002' },
+              checkout: sampleCheckoutInput(),
+            }),
+          );
+          assertOk(fresh, 'the ensureSession of the second session failed');
+          assertEqual(
+            fresh.session.projectId,
+            sampleCheckoutInput().projectId,
+            'the checkout of a session that already existed must not have left a project row',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
+      'a session created without a checkout has no project and no worktree',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          // The "outside a repository" row of the matrix: the session is
+          // stored, with both tags empty, and that is a success (Decision
+          // 2026-10-18).
+          const created = await store.ensureSession(
+            sampleEnsureSessionInput({ checkout: null }),
+          );
+          assertOk(created, 'ensureSession failed');
+          assertEqual(
+            [created.session.projectId, created.session.worktreeId],
+            [null, null],
+            'a session with no checkout must carry no tags',
+          );
+
+          const read = await store.readSession(sampleSessionToken);
+          assertOk(read, 'the untagged session could not be read');
+          assertEqual(
+            [read.session.projectId, read.session.worktreeId],
+            [null, null],
+            'the untagged session came back with tags',
+          );
         });
       },
     ),

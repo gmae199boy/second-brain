@@ -11,6 +11,7 @@ import type {
 import { memorySchemaStore } from '../src/testing/fakes/schema-store.js';
 import { memoryStore } from '../src/testing/fakes/store.js';
 import { memoryParser } from '../src/testing/fakes/parser.js';
+import { memoryRepositories } from '../src/testing/fakes/repository.js';
 import { memoryTranscriptReader } from '../src/testing/fakes/transcript.js';
 import { fixedClock } from '../src/testing/fakes/clock.js';
 import { sequenceIdGen } from '../src/testing/fakes/id-gen.js';
@@ -336,6 +337,7 @@ function otherDependencies(): Omit<BrainDependencies, 'store' | 'schemaVersion' 
     idGen: sequenceIdGen({ timestampMs: instant.getTime() }),
     parsers: [memoryParser()],
     transcripts: memoryTranscriptReader(),
+    repositories: memoryRepositories(),
     machine: 'demo-machine',
   };
 }

@@ -21,7 +21,7 @@ import {
 import { sql, type Kysely } from 'kysely';
 import { describe, type SqliteConnect } from './connect.js';
 import type { SqliteSchema } from './driver.js';
-import { withWrite } from './write.js';
+import { withWrite, type WriteResult } from './write.js';
 
 /** A `sessions` row as SQLite hands it back: text instants, no booleans. */
 interface SessionRow {
@@ -56,6 +56,35 @@ interface MessageRow {
   git_branch: string | null;
   /** `integer` with a `check (x in (0, 1))`: SQLite has no boolean (0004). */
   is_subagent_report: number;
+}
+
+/**
+ * What one `ensureSession` transaction settled: the row and whether this call
+ * is the one that made it.
+ */
+interface EnsuredSession {
+  created: boolean;
+  row: SessionRow;
+}
+
+/**
+ * The one reason an `ensureSession` transaction gives up: a proposed id that
+ * already belongs to another row, so neither the session nor its tags can be
+ * settled.
+ *
+ * It is thrown and not returned, because `withWrite` commits whatever the
+ * callback hands back — and a return here would commit the project and the
+ * worktree this transaction had already inserted, leaving rows with no session
+ * pointing at them, which is the one thing the port rule forbids. Thrown, the
+ * transaction rolls back; the message is caught at the call and becomes the
+ * coded value the caller sees (Conventions: expected failures are values).
+ */
+class UnsettledEnsure extends Error {}
+
+/** The two tags of a settled checkout. */
+interface CheckoutTags {
+  projectId: string | null;
+  worktreeId: string | null;
 }
 
 interface ToolNoteRow {
@@ -95,7 +124,19 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
 
       const startedAt = instant(input.startedAt, 'sessions.started_at');
 
-      const written = await withWrite(opened.connection, async (held) => {
+      const ensure = async (held: Kysely<SqliteSchema>): Promise<EnsuredSession> => {
+        // The session first, and a key that is already stored ends the call:
+        // the tags are decided once, by whoever created the session, and a
+        // project row created for a session nobody creates would be a row
+        // nothing ever points at (port contract).
+        const stored = await readSessionRow(held, input.key);
+        if (stored !== null) return { created: false, row: stored };
+
+        // Find-or-create the checkout in the same transaction as the session,
+        // so a session is never tagged with a project that is not there and a
+        // project is never left behind by a session that was not created.
+        const tags = await ensureCheckout(held, input);
+
         // `on conflict do nothing` with no target, so both of this table's
         // keys land here: the primary key and `(harness, harness_session_id)`.
         // `returning` is how "did this call create it?" is answered — a row
@@ -106,27 +147,38 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
                                 ingest_source, start_source)
                values (${input.id}, ${input.key.harness}, ${input.key.harnessSessionId},
                        ${input.userId}, ${input.machine}, ${startedAt},
-                       ${input.workspaceId}, ${input.projectId}, ${input.worktreeId},
+                       ${input.workspaceId}, ${tags.projectId}, ${tags.worktreeId},
                        ${input.ingestSource}, ${input.startSource})
           on conflict do nothing
             returning id
         `.execute(held);
         const row = await readSessionRow(held, input.key);
+        if (row === null) {
+          // The insert did nothing and the key is still not there: the proposed
+          // id already belongs to another session, which is a caller reusing an
+          // id it did not mint. Thrown, so the project and the worktree this
+          // transaction may have inserted go back with it.
+          throw new UnsettledEnsure(
+            `${input.key.harness}:${input.key.harnessSessionId} 세션이 ensureSession 뒤에도 없습니다. ${input.id}는 이미 다른 세션의 것입니다`,
+          );
+        }
         return { created: inserted.rows.length > 0, row };
-      });
+      };
+
+      let written: WriteResult<EnsuredSession>;
+      try {
+        written = await withWrite(opened.connection, ensure);
+      } catch (error) {
+        // The one failure this transaction gives up on, as a value. Anything
+        // else is a bug and goes on throwing (Conventions).
+        if (error instanceof UnsettledEnsure) {
+          return { ok: false, code: 'DB_UNAVAILABLE', message: error.message };
+        }
+        throw error;
+      }
       if (!written.ok) return written;
 
       const { created, row } = written.value;
-      if (row === null) {
-        // The insert did nothing and the key is still not there: the proposed
-        // id already belongs to another session, which is a caller reusing an
-        // id it did not mint.
-        return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: `${input.key.harness}:${input.key.harnessSessionId} 세션이 ensureSession 뒤에도 없습니다. ${input.id}는 이미 다른 세션의 것입니다`,
-        };
-      }
       return { ok: true, created, session: toSession(row) };
     },
 
@@ -333,6 +385,68 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
       }
     },
   };
+}
+
+/**
+ * Find-or-create the project and the worktree of a checkout, and hand back the
+ * two ids the session row will carry (AD-12).
+ *
+ * `insert … on conflict do nothing` and then a `select`, rather than
+ * `returning`: a `returning` says nothing when the conflict clause dropped the
+ * row, which is exactly the case that matters — the identity was already there
+ * and its own id is the one to use. The proposals are then quietly discarded,
+ * which is what makes two worktrees of one clone a single project.
+ *
+ * It runs inside the caller's write transaction, so the select reads what the
+ * insert just did and nothing can slip in between (AD-7). A proposal that
+ * cannot be settled throws `UnsettledEnsure`, which rolls the whole
+ * transaction back: a project row left behind by a session that was never
+ * created is a row nothing will ever point at.
+ */
+async function ensureCheckout(
+  held: Kysely<SqliteSchema>,
+  input: EnsureSessionInput,
+): Promise<CheckoutTags> {
+  const checkout = input.checkout;
+  if (checkout === null) return { projectId: null, worktreeId: null };
+
+  await sql`
+    insert into projects (id, remote_identity)
+         values (${checkout.projectId}, ${checkout.remoteIdentity})
+    on conflict do nothing
+  `.execute(held);
+  const projects = await sql<{ id: string }>`
+    select id from projects where remote_identity = ${checkout.remoteIdentity}
+  `.execute(held);
+  const projectId = projects.rows[0]?.id;
+  if (projectId === undefined) {
+    // The insert did nothing and the identity is still not there: the proposed
+    // id already belongs to another project, which is a caller reusing an id
+    // it did not mint.
+    throw new UnsettledEnsure(
+      `프로젝트 ${checkout.remoteIdentity}가 ensureSession 뒤에도 없습니다. ${checkout.projectId}는 이미 다른 프로젝트의 것입니다`,
+    );
+  }
+
+  await sql`
+    insert into worktrees (id, project_id, path)
+         values (${checkout.worktreeId}, ${projectId}, ${checkout.worktreePath})
+    on conflict do nothing
+  `.execute(held);
+  const worktrees = await sql<{ id: string }>`
+    select id from worktrees
+     where project_id = ${projectId} and path = ${checkout.worktreePath}
+  `.execute(held);
+  const worktreeId = worktrees.rows[0]?.id;
+  if (worktreeId === undefined) {
+    throw new UnsettledEnsure(
+      `워크트리 ${checkout.worktreePath}가 ensureSession 뒤에도 없습니다. ${checkout.worktreeId}는 이미 다른 워크트리의 것입니다`,
+    );
+  }
+
+  // `removed_at` is never touched here: a folder that is gone is marked by
+  // drain, and this verb only ever adds rows (AD-12).
+  return { projectId, worktreeId };
 }
 
 /**

@@ -72,6 +72,27 @@ export interface HealthStore {
   close(): Promise<void>;
 }
 
+/**
+ * The checkout a new session is tagged with, worked out once by the caller from
+ * the first message's `cwd` (AD-12).
+ *
+ * The two ids are *proposals*, in the sense `EnsureSessionInput.id` is: ids
+ * belong to the side that creates the row (AD-8), so the caller mints one for
+ * the project and one for the worktree before it knows whether either row
+ * exists. A store that finds the identity already there keeps the id it has and
+ * drops the proposal.
+ */
+export interface EnsureCheckoutInput {
+  /** The id to give the `projects` row, if this call is the one creating it. */
+  projectId: string;
+  /** `host/owner/repo`, or the git common directory (`normalizeRemoteIdentity`). */
+  remoteIdentity: string;
+  /** The id to give the `worktrees` row, if this call is the one creating it. */
+  worktreeId: string;
+  /** The absolute path of the top of the working folder. Key with the project. */
+  worktreePath: string;
+}
+
 /** What `sessions.ensure` needs to create a session row (AD-12). */
 export interface EnsureSessionInput {
   /**
@@ -86,10 +107,18 @@ export interface EnsureSessionInput {
   startedAt: Date;
   ingestSource: SessionIngestSource;
   startSource: SessionStartSource | null;
-  /** Tags, computed once by the caller from the cwd (AD-12). */
+  /**
+   * Reserved: slice 1 never groups projects, so this is always `null` and no
+   * verb fills it (AD-12).
+   */
   workspaceId: string | null;
-  projectId: string | null;
-  worktreeId: string | null;
+  /**
+   * The project and worktree to tag a *new* session with, or `null` for a
+   * session whose cwd said nothing. Computed once by the caller from the first
+   * message's cwd, and never again: a session that is already there keeps the
+   * tags it was created with, whatever this call carries (AD-12).
+   */
+  checkout: EnsureCheckoutInput | null;
 }
 
 /**
@@ -156,7 +185,26 @@ export type FindSessionResult =
  * session row, and every write is idempotent on the natural keys (AD-8).
  */
 export interface SessionStore {
-  /** Find-or-create the session row (AD-12). */
+  /**
+   * Find-or-create the session row, and with it the project and worktree its
+   * checkout names (AD-12).
+   *
+   * Three rules about the tags, and every adapter keeps them:
+   *
+   *   * the session is looked for first. A key that is already stored comes
+   *     back untouched and nothing else is written — not even a project row
+   *     for the checkout this call carried, because a row nothing points at is
+   *     a row nobody will ever find again.
+   *   * otherwise the project is found-or-created on `remoteIdentity` and the
+   *     worktree on `(project_id, path)`. An identity or a path that is already
+   *     there keeps the id it has, and the proposal is dropped.
+   *   * all of it lands in one transaction with the session, so a session is
+   *     never tagged with a project that is not in the database and a project
+   *     is never created for a session that was not.
+   *
+   * `removed_at` is not this verb's: a worktree whose folder is gone is marked
+   * by drain, and `ensureSession` never changes a project or worktree row.
+   */
   ensureSession(input: EnsureSessionInput): Promise<EnsureSessionResult>;
   /**
    * The session row alone, with none of its conversation.

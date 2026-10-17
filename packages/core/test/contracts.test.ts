@@ -485,6 +485,64 @@ describe('the contracts catch a wrong store', () => {
       'the cursor does not go backwards unless the parse was reset',
     );
   });
+
+  it('catches a store that makes a new project for every session', async () => {
+    const make = async (): Promise<SessionStoreSubject> => {
+      const inner = memoryStore();
+      return {
+        ...inner,
+        async ensureSession(input) {
+          const result = await inner.ensureSession(input);
+          if (!result.ok || input.checkout === null) return result;
+          // Takes the proposed ids every time rather than finding the identity
+          // that is already stored, so the same repository becomes a project
+          // per session and two worktrees of one clone never meet (AD-12).
+          return {
+            ...result,
+            session: {
+              ...result.session,
+              projectId: input.checkout.projectId,
+              worktreeId: input.checkout.worktreeId,
+            },
+          };
+        },
+      };
+    };
+
+    expect(await failedCases(sessionStoreContract(), make)).toContain(
+      'a second session of the same repository joins the project it already has',
+    );
+  });
+
+  it('catches a store that lets a later checkout retag a stored session', async () => {
+    const make = async (): Promise<SessionStoreSubject> => {
+      const inner = memoryStore();
+      const retagged = new Map<string, { projectId: string; worktreeId: string }>();
+      return {
+        ...inner,
+        async ensureSession(input) {
+          const result = await inner.ensureSession(input);
+          if (!result.ok) return result;
+          // The tags of whatever the last call carried, even for a session that
+          // was already there: the one thing the tags may never do is change
+          // after the session was created (AD-12).
+          if (!result.created && input.checkout !== null) {
+            retagged.set(formatSessionToken(input.key), {
+              projectId: input.checkout.projectId,
+              worktreeId: input.checkout.worktreeId,
+            });
+          }
+          const tags = retagged.get(formatSessionToken(input.key));
+          if (tags === undefined) return result;
+          return { ...result, session: { ...result.session, ...tags } };
+        },
+      };
+    };
+
+    expect(await failedCases(sessionStoreContract(), make)).toContain(
+      'ensureSession keeps the key, the tags and the immutable columns',
+    );
+  });
 });
 
 describe('the contracts catch a wrong schema store', () => {

@@ -66,6 +66,10 @@ export {
   type MemoryParserOptions,
 } from './fakes/parser.js';
 export {
+  memoryRepositories,
+  type MemoryRepositories,
+} from './fakes/repository.js';
+export {
   memoryTranscriptReader,
   type MemoryTranscriptReader,
   type MemoryTranscriptReaderOptions,
@@ -80,15 +84,20 @@ export { memoryReranker, type MemoryRerankerOptions } from './fakes/reranker.js'
 export { fixedClock, steppingClock } from './fakes/clock.js';
 export { sequenceIdGen, type SequenceIdGenOptions } from './fakes/id-gen.js';
 export {
+  otherProjectId,
   otherSessionId,
   otherUserId,
+  otherWorktreeId,
+  sampleCheckoutInput,
   sampleEnsureSessionInput,
   sampleIngestBatch,
+  sampleProjectId,
   sampleSelfUserInput,
   sampleSessionId,
   sampleSessionKey,
   sampleSessionToken,
   sampleUserId,
+  sampleWorktreeId,
   unknownSessionToken,
   type SampleIngestBatchOverrides,
 } from './fixtures.js';

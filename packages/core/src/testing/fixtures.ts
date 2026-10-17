@@ -5,7 +5,11 @@ import type {
   IngestTracking,
 } from '../domain/ingest-batch.js';
 import { formatSessionToken, type SessionKey } from '../domain/session-token.js';
-import type { EnsureSelfUserInput, EnsureSessionInput } from '../ports/store.js';
+import type {
+  EnsureCheckoutInput,
+  EnsureSelfUserInput,
+  EnsureSessionInput,
+} from '../ports/store.js';
 import { memoryParser, memoryTranscript } from './fakes/parser.js';
 import { sequenceIdGen } from './fakes/id-gen.js';
 
@@ -35,6 +39,15 @@ export const otherSessionId = '01940000-0000-7000-8000-000000000002';
 export const sampleUserId = '01940000-0000-7000-8000-00000000000a';
 export const otherUserId = '01940000-0000-7000-8000-00000000000b';
 
+/**
+ * The project and worktree `sampleCheckoutInput` proposes, and two more so a
+ * case can propose different ones for the same identity and the same path.
+ */
+export const sampleProjectId = '01940000-0000-7000-8000-00000000000c';
+export const otherProjectId = '01940000-0000-7000-8000-00000000000d';
+export const sampleWorktreeId = '01940000-0000-7000-8000-00000000000e';
+export const otherWorktreeId = '01940000-0000-7000-8000-00000000000f';
+
 /** 2026-01-01T00:00:00Z, so the fixture ids and instants are reproducible. */
 const FIXTURE_INSTANT = new Date('2026-01-01T00:00:00.000Z');
 
@@ -61,8 +74,26 @@ export function sampleEnsureSessionInput(
     ingestSource: 'live',
     startSource: 'startup',
     workspaceId: null,
-    projectId: null,
-    worktreeId: null,
+    // No tags by default: a session whose cwd said nothing is the shape most
+    // cases want, and the ones about the tags ask for a checkout themselves.
+    checkout: null,
+    ...overrides,
+  };
+}
+
+/**
+ * The checkout a tagged session is created with. Neutral names only, and a
+ * normalized identity: `host/owner/repo` is what Core's one normalizing
+ * function produces, and the store never looks at a URL (AD-12).
+ */
+export function sampleCheckoutInput(
+  overrides: Partial<EnsureCheckoutInput> = {},
+): EnsureCheckoutInput {
+  return {
+    projectId: sampleProjectId,
+    remoteIdentity: 'demo.example/brain-owner/notes',
+    worktreeId: sampleWorktreeId,
+    worktreePath: '/demo/repo',
     ...overrides,
   };
 }
