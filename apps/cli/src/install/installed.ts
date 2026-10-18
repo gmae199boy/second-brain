@@ -3,12 +3,13 @@ import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { installedPath } from '../config/paths.js';
+import { installedPath, pluginRunPath } from '../config/paths.js';
 import { shimPath } from './shim.js';
 
 /**
- * The two runtime records of an installation: what the build is, and what the
- * last finished install left behind (AD-19, Conventions: 설치·런타임 기록).
+ * The three runtime records of an installation: what the build is, what the
+ * last finished install left behind, and what the last harness session saw
+ * (AD-19, Conventions: 설치·런타임 기록).
  *
  * Neither goes through the configuration codec (AD-18). Configuration is what a
  * person chose and may edit; these two are what this machine did, and a codec
@@ -121,6 +122,103 @@ export async function readInstalled(home: string): Promise<InstalledRecord | und
     plugin_root: pluginRoot,
     installed_at: installedAt,
   };
+}
+
+/** How the last `SessionStart` bootstrap that did anything ended. */
+export interface LastBootstrap {
+  /** When it ended, ISO-8601 in UTC (Conventions). */
+  at: string;
+  result: 'installed' | 'failed';
+  /** The step it stopped at. Only on a failure. */
+  step?: string;
+  /** The log the reason is in. */
+  log: string;
+}
+
+/**
+ * `<home>/run/plugin.json`, as the bootstrap writes it: which plugin folder
+ * called it, which commit that folder asks for, and how its last run ended.
+ *
+ * It is the record that makes the `plugin` check true after a
+ * `claude plugin update` that nothing has installed yet: the plugin cache keeps
+ * one folder per version, so `installed.json`'s `plugin_root` is the folder the
+ * last install came from and this is the folder that is now asking.
+ */
+export interface PluginRunRecord {
+  plugin_root: string;
+  app_ref: string;
+  seen_at: string;
+  last_bootstrap?: LastBootstrap;
+}
+
+/**
+ * Reading that record: there is one, there is none, or there is a file that
+ * cannot be read back whole. The third is its own answer rather than the
+ * second, because doctor says one line about it — a record it silently ignored
+ * would leave a person wondering why the plugin folder it reports on is not the
+ * one they just installed.
+ */
+export type PluginRunRead =
+  | { status: 'ok'; record: PluginRunRecord }
+  | { status: 'missing' }
+  | { status: 'invalid' };
+
+/**
+ * What the last harness session recorded in `<home>`. Every field is checked,
+ * for the same reason `readInstalled` checks its own: the path in it decides
+ * which plugin folder doctor reports on, and half a record would point it at a
+ * folder nothing ever wrote here.
+ */
+export async function readPluginRun(home: string): Promise<PluginRunRead> {
+  const text = await readText(pluginRunPath(home));
+  if (text === undefined) return { status: 'missing' };
+
+  let document: unknown;
+  try {
+    document = JSON.parse(text);
+  } catch {
+    return { status: 'invalid' };
+  }
+  if (typeof document !== 'object' || document === null) return { status: 'invalid' };
+
+  const found = document as Record<string, unknown>;
+  const root = found['plugin_root'];
+  const appRef = found['app_ref'];
+  const seenAt = found['seen_at'];
+  if (typeof root !== 'string' || root === '') return { status: 'invalid' };
+  if (!isCommit(appRef)) return { status: 'invalid' };
+  if (typeof seenAt !== 'string' || seenAt === '') return { status: 'invalid' };
+
+  const last = lastBootstrapOf(found['last_bootstrap']);
+  if (last === 'invalid') return { status: 'invalid' };
+  return {
+    status: 'ok',
+    record: {
+      plugin_root: root,
+      app_ref: appRef,
+      seen_at: seenAt,
+      ...(last === undefined ? {} : { last_bootstrap: last }),
+    },
+  };
+}
+
+/** The outcome in a record: absent, readable, or there and not readable. */
+function lastBootstrapOf(value: unknown): LastBootstrap | 'invalid' | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'object' || value === null) return 'invalid';
+
+  const found = value as Record<string, unknown>;
+  const at = found['at'];
+  const result = found['result'];
+  const log = found['log'];
+  const step = found['step'];
+  if (typeof at !== 'string' || at === '') return 'invalid';
+  if (result !== 'installed' && result !== 'failed') return 'invalid';
+  if (typeof log !== 'string' || log === '') return 'invalid';
+  const named = typeof step === 'string' && step !== '';
+  // A failure with no step names nothing a person could act on.
+  if (result === 'failed' && !named) return 'invalid';
+  return { at, result, log, ...(named ? { step: step as string } : {}) };
 }
 
 export interface WrittenInstalled {

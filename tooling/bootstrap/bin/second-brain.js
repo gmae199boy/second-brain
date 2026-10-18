@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, writeSync, } from 'node:fs';
+import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync, } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -36,6 +36,22 @@ export const LOCK_PID_FILE = 'pid';
 /** Where this file's own progress lines go in hook mode. */
 export const LOG_FOLDER = 'log';
 export const BOOTSTRAP_LOG_FILE = 'bootstrap.log';
+/** Where the records of a running installation live (Conventions). */
+export const RUN_FOLDER = 'run';
+/**
+ * What the last `SessionStart` saw and did: which plugin folder called this
+ * file, which commit that folder asks for, and how the last run that did
+ * anything ended.
+ *
+ * It exists because the plugin cache is keyed by version — a
+ * `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` per version, with
+ * the older folders left behind — so `installed.json`'s `plugin_root` names the
+ * folder the last *install* came from, which after a `claude plugin update`
+ * with `[update] auto = false` is not the folder that is now asking for
+ * anything. Without this record `brain doctor run` compares the installation
+ * against a stale folder and reports that all is well (2.5 human check 1).
+ */
+export const PLUGIN_RUN_FILE = 'plugin.json';
 /** The configuration file, read here for one key and nothing else. */
 export const CONFIG_FILE = 'config.toml';
 /**
@@ -88,11 +104,14 @@ export function resolveRepo(env) {
  * `--ref` is this file's own and is consumed here: the installer knows nothing
  * about commits. `--plugin-root` is not consumed — it is the installer's, and
  * is passed straight on, so what the completion record says about where the
- * install came from is what the launcher actually handed over.
+ * install came from is what the launcher actually handed over. It is read on
+ * the way past all the same, because the plugin record is written by sessions
+ * that do not install anything and so never reach the installer.
  */
 export function parseArgs(argv) {
     const rest = [];
     let ref;
+    let pluginRoot;
     for (let index = 0; index < argv.length; index += 1) {
         const argument = argv[index];
         if (argument === '--ref') {
@@ -107,9 +126,21 @@ export function parseArgs(argv) {
             // an install of the wrong thing.
             continue;
         }
+        if (argument === '--plugin-root') {
+            const value = argv[index + 1];
+            if (value !== undefined && !value.startsWith('-')) {
+                const trimmed = value.trim();
+                if (trimmed !== '')
+                    pluginRoot = trimmed;
+            }
+        }
         rest.push(argument ?? '');
     }
-    return ref === undefined ? { rest } : { ref, rest };
+    return {
+        ...(ref === undefined ? {} : { ref }),
+        ...(pluginRoot === undefined ? {} : { pluginRoot }),
+        rest,
+    };
 }
 /**
  * The whole run, as an exit code. `argv` is the user's arguments, without the
@@ -120,7 +151,7 @@ export async function main(argv, env, deps) {
     const parsed = parseArgs(argv);
     return parsed.ref === undefined
         ? npxMode(parsed.rest, env, deps)
-        : hookMode(parsed.ref, parsed.rest, env, deps);
+        : hookMode(parsed.ref, parsed.pluginRoot, parsed.rest, env, deps);
 }
 /**
  * The door a person takes. It asks, it prints as it goes, and it hands the
@@ -177,9 +208,16 @@ async function npxMode(argv, env, deps) {
  * An asynchronous hook's stdout goes into the model's context on the next turn,
  * every session, so a line per decision would be a line per turn about nothing
  * (Decision 2026-10-17). `brain doctor run`'s `plugin` check is where those
- * four are said out loud, to somebody who asked.
+ * four are said out loud, to somebody who asked — which it can only do about
+ * the folder that actually called, so the first thing this does is write that
+ * folder down (`PLUGIN_RUN_FILE`).
+ *
+ * What it does say, it says to the model: an asynchronous hook's `systemMessage`
+ * reaches the next turn's context and not the user's screen (2.5 human check 4,
+ * Decision 2026-10-18), so the three lines below are written to be passed on in
+ * one sentence rather than read directly.
  */
-async function hookMode(ref, installerArgs, env, deps) {
+async function hookMode(ref, pluginRoot, installerArgs, env, deps) {
     const home = resolve(resolveHome(env));
     const app = join(home, APP_FOLDER);
     const repo = resolveRepo(env);
@@ -188,9 +226,16 @@ async function hookMode(ref, installerArgs, env, deps) {
     // the log, not a line in the model's context. The file itself is only opened
     // when something is actually written to it.
     deps.logToFile(logPath);
+    // Before any decision below, because almost every one of them is to do
+    // nothing and return. The write itself only happens when the folder or the
+    // commit it asks for has moved, so the fast path stays a few reads
+    // (Boundaries).
+    const seen = noteSeenPlugin(home, pluginRoot, ref, deps);
     /** One failure: the step in the message, the reason in the log. */
     const failed = (step) => {
-        deps.message(`Brain 설치가 ${step}에서 멈췄습니다. 까닭은 ${logPath}에 있습니다`);
+        noteBootstrap(home, seen, { result: 'failed', step, log: logPath }, deps);
+        deps.message(`Brain 설치가 ${step}에서 멈췄습니다. 까닭은 ${logPath}에 있습니다. ` +
+            '이것을 사용자에게 한 줄로 전하고, 자세한 상태는 `brain doctor run`이 말한다고 알려 주세요');
         return 1;
     };
     // The fast path, and the one that runs on almost every session: one JSON
@@ -248,7 +293,8 @@ async function hookMode(ref, installerArgs, env, deps) {
             deps.log(`설치기가 끝났는데 ${join(home, INSTALLED_FILE)}이 ${ref}를 담고 있지 않습니다.`);
             return failed('완료 기록 확인');
         }
-        deps.message(`Brain을 ${shortRef(ref)}로 설치했습니다`);
+        noteBootstrap(home, seen, { result: 'installed', log: logPath }, deps);
+        deps.message(`Brain을 ${shortRef(ref)}로 설치했습니다. 이것을 사용자에게 한 줄로 전해 주세요`);
         return 0;
     }
     finally {
@@ -559,6 +605,118 @@ function updateAuto(home, deps) {
         return true;
     return !readsUpdateAutoOff(text);
 }
+function pluginRunPath(home) {
+    return join(home, RUN_FOLDER, PLUGIN_RUN_FILE);
+}
+/**
+ * Write down which plugin folder called and what it asks for, and answer with
+ * the record as it now stands — `undefined` only when there is nothing to
+ * record, which is a hook run with no `--plugin-root` and no record from an
+ * earlier one.
+ *
+ * Nothing is written when the folder and the commit are the ones already on
+ * disk. That is the case on almost every session, and this runs before the
+ * decision not to install anything: a record rewritten per session would turn
+ * the cheapest path in the program into a write, and `seen_at` would stop
+ * meaning when this plugin was first seen.
+ */
+function noteSeenPlugin(home, pluginRoot, ref, deps) {
+    const before = readPluginRun(home, deps);
+    if (pluginRoot === undefined)
+        return before;
+    if (before?.plugin_root === pluginRoot && before.app_ref === ref)
+        return before;
+    const record = {
+        plugin_root: pluginRoot,
+        app_ref: ref,
+        seen_at: isoTime(deps.nowMs()),
+        // Carried over: it is still the last thing a bootstrap did on this machine,
+        // and the session that moves the folder forward has not run the installer
+        // yet — or is never going to, which is the case this record exists for.
+        ...(before?.last_bootstrap === undefined ? {} : { last_bootstrap: before.last_bootstrap }),
+    };
+    return writePluginRun(home, record, deps) ? record : before;
+}
+/** Add how this run ended to the record, keeping what it says about the plugin. */
+function noteBootstrap(home, seen, outcome, deps) {
+    if (seen === undefined)
+        return;
+    writePluginRun(home, { ...seen, last_bootstrap: { ...outcome, at: isoTime(deps.nowMs()) } }, deps);
+}
+/** Temp file and rename, so a doctor reading it sees one record or the other. */
+function writePluginRun(home, record, deps) {
+    const path = pluginRunPath(home);
+    const temp = `${path}.${String(deps.pid)}.tmp`;
+    deps.makeFolders(join(home, RUN_FOLDER));
+    deps.writeText(temp, `${JSON.stringify(record, undefined, 2)}\n`);
+    if (deps.moveFile(temp, path))
+        return true;
+    // Said out loud rather than swallowed (Conventions): a doctor that goes on
+    // reading the completion record's folder is the consequence, and this is the
+    // only account of why.
+    deps.log(`${path}에 플러그인 기록을 쓸 수 없었습니다.`);
+    return false;
+}
+/**
+ * The record as it was last written, or `undefined` when there is none or it
+ * cannot be read back whole. Every field is checked, because this file is read
+ * by `brain doctor run` to decide which folder it reports on, and a half-read
+ * record would point it at a path that was never written here.
+ */
+function readPluginRun(home, deps) {
+    const text = deps.readText(pluginRunPath(home));
+    if (text === undefined)
+        return undefined;
+    let document;
+    try {
+        document = JSON.parse(text);
+    }
+    catch {
+        return undefined;
+    }
+    if (typeof document !== 'object' || document === null)
+        return undefined;
+    const record = document;
+    const root = record['plugin_root'];
+    const appRef = record['app_ref'];
+    const seenAt = record['seen_at'];
+    if (typeof root !== 'string' || root === '')
+        return undefined;
+    if (!isCommit(appRef) || typeof seenAt !== 'string' || seenAt === '')
+        return undefined;
+    const last = lastBootstrapOf(record['last_bootstrap']);
+    return {
+        plugin_root: root,
+        app_ref: appRef,
+        seen_at: seenAt,
+        ...(last === undefined ? {} : { last_bootstrap: last }),
+    };
+}
+/** The outcome in a record, or `undefined` when it is not one to carry over. */
+function lastBootstrapOf(value) {
+    if (typeof value !== 'object' || value === null)
+        return undefined;
+    const found = value;
+    const at = found['at'];
+    const result = found['result'];
+    const log = found['log'];
+    const step = found['step'];
+    if (typeof at !== 'string' || at === '')
+        return undefined;
+    if (result !== 'installed' && result !== 'failed')
+        return undefined;
+    if (typeof log !== 'string' || log === '')
+        return undefined;
+    const named = typeof step === 'string' && step !== '';
+    // A failure with no step names nothing a person could act on.
+    if (result === 'failed' && !named)
+        return undefined;
+    return { at, result, log, ...(named ? { step: step } : {}) };
+}
+/** The storage normal form of a time (Conventions): UTC, to the millisecond. */
+function isoTime(ms) {
+    return new Date(ms).toISOString();
+}
 /**
  * Take `<home>/install.lock`, or answer that somebody else has it.
  *
@@ -764,6 +922,21 @@ export function systemDeps() {
                 // The lock is the folder; its `pid` file is only the owner's name, and
                 // a lock with no name in it is still held. Failing the install over a
                 // file nobody has to read would be the wrong trade.
+            }
+        },
+        moveFile: (from, to) => {
+            try {
+                renameSync(from, to);
+                return true;
+            }
+            catch {
+                try {
+                    rmSync(from, { force: true });
+                }
+                catch {
+                    // Nothing left to try. The caller says so in the log.
+                }
+                return false;
             }
         },
         makeFolder: (path) => {

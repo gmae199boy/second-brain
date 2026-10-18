@@ -231,6 +231,10 @@ describe('the launcher', () => {
     expect(said.systemMessage).toContain(MIN_NODE_VERSION);
     expect(said.systemMessage).toContain(empty);
     expect(said.systemMessage).toMatch(/[가-힣]/);
+    // The bootstrap never ran on this path, so there is no record for doctor
+    // to report and this line is the whole account — and it reaches the model,
+    // not the screen (Decision 2026-10-18).
+    expect(said.systemMessage).toContain('사용자에게 한 줄로');
   });
 
   it('says one JSON line and exits 0 when the app-ref cannot be read', () => {
@@ -248,5 +252,6 @@ describe('the launcher', () => {
     expect(lines).toHaveLength(1);
     const said = JSON.parse(lines[0] ?? '') as { systemMessage?: string };
     expect(said.systemMessage).toContain('app-ref');
+    expect(said.systemMessage).toContain('사용자에게 한 줄로');
   });
 });

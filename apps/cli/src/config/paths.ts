@@ -38,6 +38,23 @@ export const LOCK_FOLDER = 'install.lock';
 /** The owner of the lock: one decimal line, the pid that took it. */
 export const LOCK_PID_FILE = 'pid';
 
+/**
+ * Where the records of a running installation live — a daemon's pid and socket,
+ * the heartbeat, the last drain, the last hook per harness, and the plugin
+ * record below. None of them goes through the configuration codec (AD-18,
+ * AD-19, AD-27, Conventions: 설치·런타임 기록).
+ */
+export const RUN_FOLDER = 'run';
+
+/**
+ * What the last `SessionStart` saw and did: `{plugin_root, app_ref, seen_at}`
+ * and the last bootstrap's outcome. The bootstrap writes it, `doctor run`'s
+ * `plugin` check reads it, and it is the one record that names the plugin
+ * folder a session actually came from — `installed.json` names the folder the
+ * last install came from, and the plugin cache keeps one folder per version.
+ */
+export const PLUGIN_RUN_FILE = 'plugin.json';
+
 /** Where the install's own progress lines go when nobody is watching. */
 export const LOG_FOLDER = 'log';
 
@@ -68,6 +85,11 @@ export function envFilePath(home: string): string {
 /** Where this installation's completion record lives. */
 export function installedPath(home: string): string {
   return join(home, INSTALLED_FILE);
+}
+
+/** The plugin record the last `SessionStart` of this folder left behind. */
+export function pluginRunPath(home: string): string {
+  return join(home, RUN_FOLDER, PLUGIN_RUN_FILE);
 }
 
 /** The install lock of this configuration folder. */

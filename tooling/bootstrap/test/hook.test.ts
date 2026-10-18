@@ -9,6 +9,7 @@ import {
   readFileSync,
   readlinkSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -16,7 +17,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { BOOTSTRAP_LOG_FILE, INSTALLED_FILE, LOG_FOLDER } from '../src/bootstrap.js';
+import {
+  BOOTSTRAP_LOG_FILE,
+  INSTALLED_FILE,
+  LOG_FOLDER,
+  PLUGIN_RUN_FILE,
+  RUN_FOLDER,
+} from '../src/bootstrap.js';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -107,6 +114,21 @@ function installed(): Record {
   return JSON.parse(readFileSync(join(home, INSTALLED_FILE), 'utf8')) as Record;
 }
 
+interface PluginRun {
+  plugin_root?: string;
+  app_ref?: string;
+  seen_at?: string;
+  last_bootstrap?: { at?: string; result?: string; step?: string; log?: string };
+}
+
+function runRecordPath(): string {
+  return join(home, RUN_FOLDER, PLUGIN_RUN_FILE);
+}
+
+function runRecord(): PluginRun {
+  return JSON.parse(readFileSync(runRecordPath(), 'utf8')) as PluginRun;
+}
+
 function sessionStart(): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync('sh', [join(plugin, 'bin', 'session-start.sh')], {
     cwd: root,
@@ -158,6 +180,17 @@ describe('the plugin SessionStart hook', () => {
       expect(existsSync(join(home, 'install.lock'))).toBe(false);
       // Everything it did on the way is in the log, not in the model's context.
       expect(log()).toContain('설치기를 시작합니다');
+
+      // And the record of the session itself: which plugin folder called, what
+      // it asked for, and how this run ended (2.5 human check 1).
+      expect(runRecord()).toMatchObject({
+        plugin_root: plugin,
+        app_ref: snapshotCommit,
+        last_bootstrap: {
+          result: 'installed',
+          log: join(home, LOG_FOLDER, BOOTSTRAP_LOG_FILE),
+        },
+      });
     },
     SLOW,
   );
@@ -166,6 +199,7 @@ describe('the plugin SessionStart hook', () => {
     'does nothing at all on a second session with the same ref',
     () => {
       const before = log();
+      const recorded = statSync(runRecordPath()).mtimeMs;
 
       const run = sessionStart();
 
@@ -175,6 +209,9 @@ describe('the plugin SessionStart hook', () => {
       expect(run.stdout).toBe('');
       expect(run.stderr).toBe('');
       expect(log()).toBe(before);
+      // Including the record: the folder and the ref are the ones in it
+      // already, so there is nothing to write (Acceptance).
+      expect(statSync(runRecordPath()).mtimeMs).toBe(recorded);
     },
     SLOW,
   );

@@ -4,14 +4,16 @@ import { access, readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { prereqFailed, type DoctorCheck, type DoctorCheckSource } from 'second_brain';
 import { readConfig, type ReadConfigResult } from '../config/codec.js';
-import { HOME_ENV, configFilePath } from '../config/paths.js';
+import { HOME_ENV, configFilePath, pluginRunPath } from '../config/paths.js';
 import {
   appRootPath,
   readAppRef,
   readBuildIdentity,
   readInstalled,
+  readPluginRun,
   shortCommit,
   type BuildIdentity,
+  type LastBootstrap,
 } from '../install/installed.js';
 import { SHIM_SIGNATURE, parseShim, shimPath, type ParsedShim } from '../install/shim.js';
 import { NODE_FLOOR, atLeast, meetsNodeFloor } from '../runtime/node-floor.js';
@@ -226,15 +228,17 @@ function shimCheck(state: ShimState): DoctorCheck {
 }
 
 /**
- * The plugin's relationship to this installation: what the last install
- * recorded, what the plugin folder it came from now asks for, and what the
- * `dist/` answering this command was built from (AD-19, F7).
+ * The plugin's relationship to this installation: which plugin folder the last
+ * session came from, what that folder asks for, what the last install recorded,
+ * and what the `dist/` answering this command was built from (AD-19, F7).
  *
- * It is the one line that tells a person why a session did not update. The
- * bootstrap's `SessionStart` is silent about everything it decides not to do —
- * a line per session would go into the model's context every turn (Decision
- * 2026-10-17) — so "there is a newer app and `[update] auto` is off" has to be
- * said here or nowhere.
+ * It is the one line that tells a person why a session did not update, and the
+ * one place the last bootstrap's own outcome is reported. The bootstrap's
+ * `SessionStart` is silent about everything it decides not to do — a line per
+ * session would go into the model's context every turn (Decision 2026-10-17) —
+ * and what it does say reaches the model and not the screen (Decision
+ * 2026-10-18), so "there is a newer app and `[update] auto` is off" and "the
+ * last install stopped at the build" have to be said here or nowhere.
  *
  * Every answer but a clean match is a `warn`, never a `fail`: none of them is a
  * broken installation. The two that have a shared code carry it, so the
@@ -245,6 +249,65 @@ async function pluginCheck(
   config: ReadConfigResult,
   runGit: RunGit,
 ): Promise<DoctorCheck> {
+  const seen = await readPluginRun(home);
+  // What is added to whatever the comparison below comes to. Both are about
+  // the same one subject — the plugin — so they are one check's one line and
+  // not a second check (Conventions: one problem, one line).
+  const notes: string[] = [];
+  if (seen.status === 'invalid') {
+    notes.push(
+      `${pluginRunPath(home)}을 읽을 수 없어서 완료 기록이 가리키는 플러그인 폴더를 봅니다`,
+    );
+  }
+  const last = seen.status === 'ok' ? seen.record.last_bootstrap : undefined;
+  if (last !== undefined) notes.push(lastBootstrapSentence(last));
+
+  const verdict = await pluginVerdict(
+    home,
+    config,
+    runGit,
+    seen.status === 'ok' ? seen.record.plugin_root : undefined,
+  );
+
+  // A bootstrap that stopped part way through is worth saying out loud however
+  // the comparison came out: the hook says it once, to the model, in a session
+  // the person may never have looked at (Decision 2026-10-18).
+  const status = verdict.status === 'ok' && last?.result === 'failed' ? 'warn' : verdict.status;
+  const detail = sentences(verdict.detail, ...notes);
+  return { ...verdict, status, ...(detail === '' ? {} : { detail }) };
+}
+
+/** One sentence about the last bootstrap, for somebody who was not watching. */
+function lastBootstrapSentence(last: LastBootstrap): string {
+  if (last.result === 'installed') return `마지막 설치는 ${last.at}에 끝났습니다`;
+  const step = last.step ?? '알 수 없는 단계';
+  return `마지막 설치는 ${last.at}에 ${step}에서 멈췄습니다. 까닭은 ${last.log}에 있습니다`;
+}
+
+/** Sentences into one line, with one full stop between each pair of them. */
+function sentences(...parts: readonly (string | undefined)[]): string {
+  return parts
+    .filter((part): part is string => part !== undefined && part !== '')
+    .map((part) => part.replace(/\.$/, ''))
+    .join('. ');
+}
+
+/**
+ * The comparison itself: what the record says, what the plugin folder asks
+ * for, and how the two are related.
+ *
+ * `seenRoot` is the folder the last session's hook came from, when there is a
+ * record of one. It comes first because it is the folder that is asking now,
+ * and `installed.json`'s is the folder that asked last time anything was
+ * installed — which after a `claude plugin update` with no install since is a
+ * version-numbered folder nothing calls any more (2.5 human check 1).
+ */
+async function pluginVerdict(
+  home: string,
+  config: ReadConfigResult,
+  runGit: RunGit,
+  seenRoot: string | undefined,
+): Promise<DoctorCheck> {
   const ok = (detail: string): DoctorCheck => ({ id: 'plugin', status: 'ok', detail });
   const warn = (detail: string, code?: string): DoctorCheck => ({
     id: 'plugin',
@@ -254,22 +317,27 @@ async function pluginCheck(
   });
 
   const record = await readInstalled(home);
-  if (record === undefined) {
-    // Nothing has finished installing here yet, which the `config` and `shim`
-    // checks above already say. One problem, one line.
-    return ok('완료 기록이 아직 없습니다');
+  const pluginRoot = seenRoot ?? record?.plugin_root ?? null;
+  if (pluginRoot === null) {
+    return record === undefined
+      ? // Nothing has finished installing here yet, which the `config` and
+        // `shim` checks above already say. One problem, one line.
+        ok('완료 기록이 아직 없습니다')
+      : ok('플러그인이 아닌 경로로 설치되었습니다');
   }
-  if (record.plugin_root === null) {
-    return ok('플러그인이 아닌 경로로 설치되었습니다');
+  if (record === undefined) {
+    // A plugin has run a hook here and no install has finished: either one is
+    // running right now, or the one that ran did not get through.
+    return ok(`${pluginRoot}의 플러그인이 왔지만 완료 기록이 아직 없습니다`);
   }
   const installed = record.commit;
   if (installed === null) {
-    return warn(`${record.plugin_root}에서 설치했지만 기록에 빌드 commit이 없습니다`);
+    return warn(`${pluginRoot}에서 설치했지만 기록에 빌드 commit이 없습니다`);
   }
 
-  const ref = await readAppRef(record.plugin_root);
+  const ref = await readAppRef(pluginRoot);
   if (ref === undefined) {
-    return warn(`${record.plugin_root}의 app-ref를 읽을 수 없습니다`);
+    return warn(`${pluginRoot}의 app-ref를 읽을 수 없습니다`);
   }
 
   const mismatch = buildMismatch(await readBuildIdentity(), installed);

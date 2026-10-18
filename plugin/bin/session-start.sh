@@ -103,7 +103,8 @@ brain_json_escape() {
 }
 
 # The one line this script is allowed to say. It goes into the model's context
-# on the next turn, so there is one of these per run at most.
+# on the next turn and not onto the user's screen (2.5 human check 4), so there
+# is one of these per run at most and it is written to be passed on.
 brain_say() {
   printf '{"systemMessage":"%s"}\n' "$(brain_json_escape "$1")"
 }
@@ -131,7 +132,7 @@ case $brain_ref in
   *[!0123456789abcdef]*) brain_ref='' ;;
 esac
 if [ "${#brain_ref}" -ne 40 ]; then
-  brain_say "second-brain 플러그인의 app-ref를 읽을 수 없어서 아무것도 하지 않았습니다: $ROOT/app-ref"
+  brain_say "second-brain 플러그인의 app-ref를 읽을 수 없어서 아무것도 하지 않았습니다: $ROOT/app-ref. 이것을 사용자에게 한 줄로 전해 주세요"
   exit 0
 fi
 
@@ -140,7 +141,10 @@ if brain_pinned_node; then
 elif brain_find_node; then
   :
 else
-  brain_say "second-brain: node $SECOND_BRAIN_NODE_FLOOR 이상을 찾지 못해서 아무것도 하지 않았습니다. 찾아본 곳: $(brain_node_places)"
+  # The bootstrap never runs on this path, so there is no record of it for
+  # `brain doctor run` to report: this one line is the whole account, and the
+  # model is the only one who will see it unless it passes it on.
+  brain_say "second-brain: node $SECOND_BRAIN_NODE_FLOOR 이상을 찾지 못해서 아무것도 하지 않았습니다. 찾아본 곳: $(brain_node_places). 이것을 사용자에게 한 줄로 전해 주세요"
   exit 0
 fi
 

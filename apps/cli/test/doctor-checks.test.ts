@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isWarningCode, type DoctorCheck } from 'second_brain';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { writeConfig } from '../src/config/codec.js';
-import { configFilePath } from '../src/config/paths.js';
+import { configFilePath, pluginRunPath } from '../src/config/paths.js';
 import {
   NODE_FLOOR,
   atLeast,
@@ -453,6 +453,16 @@ describe('the plugin check', () => {
     return folder;
   }
 
+  /** What a `SessionStart` left under `<home>/run/`, as text or as a record. */
+  async function sessionSaw(home: string, record: unknown): Promise<void> {
+    await mkdir(join(home, 'run'), { recursive: true, mode: 0o700 });
+    await writeFile(
+      pluginRunPath(home),
+      typeof record === 'string' ? record : JSON.stringify(record),
+      'utf8',
+    );
+  }
+
   async function pluginCheck(home: string, runGit?: RunGit): Promise<DoctorCheck> {
     const checks = await report({
       home,
@@ -596,6 +606,151 @@ describe('the plugin check', () => {
       expect(isWarningCode(code)).toBe(true);
     },
   );
+
+  /**
+   * The folder the last session came from, which is the one that is asking.
+   * The plugin cache keeps one folder per version, so after a
+   * `claude plugin update` with nothing installed since, the completion
+   * record's folder is a version nothing calls any more and comparing against
+   * it reported that all was well (2.5 human check 1).
+   */
+  describe('with a record of the last session', () => {
+    /** The record a session with this folder and this ref leaves behind. */
+    function saw(root: string, ref: string, last?: unknown): unknown {
+      return {
+        plugin_root: root,
+        app_ref: ref,
+        seen_at: '2026-10-18T00:00:00.000Z',
+        ...(last === undefined ? {} : { last_bootstrap: last }),
+      };
+    }
+
+    it('warns UPDATE_AVAILABLE about the new folder, not the installed one', async () => {
+      const commit = build.commit ?? 'a'.repeat(40);
+      const old = await pluginAt(commit);
+      const fresh = await pluginAt(OTHER);
+      const home = await recorded({ pluginRoot: old, commit }, { updateAuto: false });
+      await sessionSaw(home, saw(fresh, OTHER));
+
+      const check = await pluginCheck(
+        home,
+        ancestry({ [`${OTHER} ${commit}`]: 1, [`${commit} ${OTHER}`]: 0 }),
+      );
+
+      // Against the old folder this is `ok`, which is what the check used to
+      // say: both of them hold the installed commit.
+      expect(check).toMatchObject({ status: 'warn', code: 'UPDATE_AVAILABLE' });
+    });
+
+    it('warns PLUGIN_BEHIND about the new folder when it asks for something older', async () => {
+      const commit = build.commit ?? 'a'.repeat(40);
+      const fresh = await pluginAt(OTHER);
+      const home = await recorded({ pluginRoot: null, commit });
+      await sessionSaw(home, saw(fresh, OTHER));
+
+      const check = await pluginCheck(home, ancestry({ [`${OTHER} ${commit}`]: 0 }));
+
+      expect(check).toMatchObject({ status: 'warn', code: 'PLUGIN_BEHIND' });
+    });
+
+    it('falls back to the completion record when there is no record of a session', async () => {
+      const commit = build.commit ?? 'a'.repeat(40);
+      const plugin = await pluginAt(commit);
+      const home = await recorded({ pluginRoot: plugin, commit });
+
+      // An installation from before this record existed, and an npx one: both
+      // have to go on working exactly as they did (Boundaries).
+      expect(await pluginCheck(home)).toMatchObject({ status: 'ok' });
+    });
+
+    it('ignores a record it cannot read back, and says that it did', async () => {
+      const commit = build.commit ?? 'a'.repeat(40);
+      const plugin = await pluginAt(commit);
+      const home = await recorded({ pluginRoot: plugin, commit });
+      await sessionSaw(home, '{ not json');
+
+      const check = await pluginCheck(home);
+
+      expect(check).toMatchObject({ status: 'ok' });
+      expect(check.detail).toContain(commit.slice(0, 7));
+      expect(check.detail).toContain(pluginRunPath(home));
+    });
+
+    it.each([
+      ['a plugin folder that is not a path', { plugin_root: '', app_ref: 'a'.repeat(40), seen_at: 'x' }],
+      ['a ref that is not a commit', { plugin_root: '/p', app_ref: 'nope', seen_at: 'x' }],
+      ['no time at all', { plugin_root: '/p', app_ref: 'a'.repeat(40) }],
+      [
+        'an outcome with no step on a failure',
+        {
+          plugin_root: '/p',
+          app_ref: 'a'.repeat(40),
+          seen_at: 'x',
+          last_bootstrap: { at: 'y', result: 'failed', log: '/l' },
+        },
+      ],
+    ])('refuses %s rather than reporting on half a record', async (_what, broken) => {
+      const commit = build.commit ?? 'a'.repeat(40);
+      const plugin = await pluginAt(commit);
+      const home = await recorded({ pluginRoot: plugin, commit });
+      await sessionSaw(home, broken);
+
+      const check = await pluginCheck(home);
+
+      expect(check.detail).toContain(pluginRunPath(home));
+    });
+
+    it('reports a finished install in one more sentence, and stays ok', async () => {
+      const commit = build.commit ?? 'a'.repeat(40);
+      const plugin = await pluginAt(commit);
+      const home = await recorded({ pluginRoot: plugin, commit });
+      await sessionSaw(
+        home,
+        saw(plugin, commit, {
+          at: '2026-10-18T02:12:40.000Z',
+          result: 'installed',
+          log: join(home, 'log', 'bootstrap.log'),
+        }),
+      );
+
+      const check = await pluginCheck(home);
+
+      expect(check).toMatchObject({ status: 'ok' });
+      expect(check.detail).toContain('2026-10-18T02:12:40.000Z');
+    });
+
+    it('warns about a bootstrap that stopped, naming the step and the log', async () => {
+      // The hook said it once, to the model, in a session nobody may have
+      // looked at (Decision 2026-10-18).
+      const commit = build.commit ?? 'a'.repeat(40);
+      const plugin = await pluginAt(commit);
+      const home = await recorded({ pluginRoot: plugin, commit });
+      const log = join(home, 'log', 'bootstrap.log');
+      await sessionSaw(
+        home,
+        saw(plugin, commit, { at: '2026-10-18T02:12:40.000Z', result: 'failed', step: '클론 빌드', log }),
+      );
+
+      const check = await pluginCheck(home);
+
+      expect(check).toMatchObject({ status: 'warn' });
+      expect(check.detail).toContain('클론 빌드');
+      expect(check.detail).toContain(log);
+    });
+
+    it('is ok, and says so, when a plugin came but nothing has finished installing', async () => {
+      const home = await tempHome();
+      await writeConfig(home, {});
+      await writeShim(home, { bin: distBin });
+      const plugin = await pluginAt(OTHER);
+      await sessionSaw(home, saw(plugin, OTHER));
+
+      const check = await pluginCheck(home);
+
+      expect(check).toMatchObject({ status: 'ok' });
+      expect(check.detail).toContain(plugin);
+    });
+  });
 
   it('really asks git when nothing is injected, rather than only ever a fake', async () => {
     const commit = build.commit ?? 'a'.repeat(40);

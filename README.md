@@ -21,8 +21,15 @@ claude plugin install second-brain@second-brain
 그다음 세션을 시작하면 `SessionStart` hook 하나가 비동기로 돌면서, 아직 설치되지
 않았으면 저장소를 `~/.second_brain/app`에 clone하고 의존성을 설치하고 빌드한 뒤
 설치기를 돌립니다. 아무것도 묻지 않습니다 — 플러그인을 켠 것이 동의입니다.
-끝나면 `{"systemMessage": "Brain을 <짧은 sha>로 설치했습니다"}` 한 줄만 냅니다.
+끝나면 `{"systemMessage": "…"}` 한 줄만 냅니다.
 진행 줄과 git·pnpm의 출력은 `~/.second_brain/log/bootstrap.log`에 쌓입니다.
+
+이 한 줄은 당신이 아니라 모델이 받습니다. 비동기 hook의 stdout은 다음 턴의
+맥락으로 들어갈 뿐 화면에는 보이지 않습니다(2026-10-18 실측). 그래서 문장은
+"Brain을 `<짧은 sha>`로 설치했습니다. 이것을 사용자에게 한 줄로 전해 주세요"처럼
+모델이 당신에게 옮기도록 쓰여 있습니다. 확실하게 보고 싶으면 `brain doctor run`의
+`plugin` 점검이 마지막 설치가 언제 끝났는지, 또는 어느 단계에서 멈췄고 까닭이 어느
+로그에 있는지 말합니다.
 
 이 hook은 PATH를 믿지 않습니다. hook은 Claude Code의 환경을 그대로 물려받고, GUI로
 띄운 Claude Code의 PATH에는 `nvm`도, 때로는 Homebrew도 없습니다. 그래서 런처가
@@ -34,6 +41,31 @@ node를 직접 찾습니다. shim에 박힌 node → `nvm`의 24.16.0 이상 중
 `app-ref`를 비교만 합니다. 같으면 git도 pnpm도 부르지 않고 조용히 끝납니다.
 플러그인이 더 새 commit을 담고 있으면 그것으로 fast-forward하고 설치기를 다시
 돌립니다 — 그것이 업그레이드입니다.
+
+세션마다 hook은 자기를 부른 플러그인 폴더를 `~/.second_brain/run/plugin.json`에
+적어 둡니다.
+
+```json
+{
+  "plugin_root": "/Users/me/.claude/plugins/cache/second-brain/second-brain/0.1.2",
+  "app_ref": "b9b011c2f05a932345e249f11b724c428781bf3b",
+  "seen_at": "2026-10-18T02:12:27.381Z",
+  "last_bootstrap": {
+    "at": "2026-10-18T02:13:04.902Z",
+    "result": "installed",
+    "log": "/Users/me/.second_brain/log/bootstrap.log"
+  }
+}
+```
+
+플러그인 캐시는 버전마다 폴더가 다르고(`~/.claude/plugins/cache/<마켓플레이스>/<플러그인>/<버전>/`,
+옛 폴더도 남습니다) 완료 기록의 `plugin_root`는 "마지막으로 설치한 폴더"일
+뿐이므로, `claude plugin update` 뒤에 `[update] auto`가 꺼져 있으면 그 폴더는
+아무도 부르지 않는 옛 버전입니다. 이 기록이 있어야 `brain doctor run`이 지금
+부르고 있는 폴더를 보고 `UPDATE_AVAILABLE`을 말할 수 있습니다. 기록이 없거나
+읽히지 않으면 doctor는 지금까지처럼 완료 기록의 폴더를 봅니다 — 옛 설치와 npx
+설치는 그대로 동작합니다. 적을 폴더와 commit이 이미 적힌 것과 같으면 파일을 다시
+쓰지 않으므로, 아무것도 하지 않는 세션은 디스크를 건드리지 않습니다.
 
 아무것도 하지 않기로 한 경우에는 아무 말도 하지 않습니다. 다른 세션이 설치 중일
 때, 플러그인이 설치된 것보다 오래되었을 때, 이력이 갈라졌을 때, `[update] auto`가
@@ -128,9 +160,9 @@ guide schema --json`을 실제로 실행해서 exit 0과 `ok: true` 엔벨로프
 `node`는 shim에 고정한 node 경로이고, `plugin_root`는 `--plugin-root`가 가리킨
 폴더(없으면 이전 기록의 값, 그것도 없으면 `null`)입니다.
 
-이 두 파일은 설정이 아니므로 설정 코덱을 지나지 않습니다(AD-18). 설정은 사람이
-고르고 고칠 수 있는 것이고, 이 둘은 이 기계가 한 일입니다. 읽을 수 없으면
-고치지 않고 "모른다"로 답합니다.
+이 두 파일도, 위의 `run/plugin.json`도 설정이 아니므로 설정 코덱을 지나지
+않습니다(AD-18). 설정은 사람이 고르고 고칠 수 있는 것이고, 이것들은 이 기계가 한
+일입니다. 읽을 수 없으면 고치지 않고 "모른다"로 답합니다.
 
 데이터베이스 파일로 가리킨 자리에 SQLite 데이터베이스가 아닌 파일이 있으면
 `DB_UNAVAILABLE`로 거절합니다. 첫 16바이트를 보고 판정하며, 그 전에는 mode도

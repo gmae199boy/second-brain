@@ -18,8 +18,10 @@ import {
   LOG_FOLDER,
   MIN_NODE_VERSION,
   MIN_PNPM_MAJOR,
+  PLUGIN_RUN_FILE,
   PNPM_INSTALL_COMMAND,
   REPO_ENV,
+  RUN_FOLDER,
   atLeastVersion,
   childStdio,
   main,
@@ -60,6 +62,10 @@ interface Harness {
   logPath?: string;
   /** Whether the lock folder is there right now. */
   locked(): boolean;
+  /** Every path written, in order, including the temporary ones. */
+  writes: string[];
+  /** What one file holds now, or `undefined` when there is no such file. */
+  file(path: string): string | undefined;
 }
 
 interface HarnessOptions {
@@ -82,6 +88,8 @@ interface HarnessOptions {
    * written by the installer, and the step after it reads what was written.
    */
   installerWrites?: Record<string, string>;
+  /** A filesystem on which a rename never works, for the record that cannot be written. */
+  brokenMove?: boolean;
 }
 
 /** A folder that exists only in the harness's own map of folders. */
@@ -111,6 +119,7 @@ function harness(options: HarnessOptions = {}): Harness {
   const lines: string[] = [];
   const questions: string[] = [];
   const messages: string[] = [];
+  const writes: string[] = [];
   const files = new Map<string, string>(Object.entries(options.files ?? {}));
   const folders = new Map<string, number>();
   const alive = new Set<number>(options.alive ?? [PID]);
@@ -162,7 +171,17 @@ function harness(options: HarnessOptions = {}): Harness {
     realpath: (path: string) => path,
     readText: (path: string) => files.get(path),
     writeText: (path: string, text: string) => {
+      writes.push(path);
       files.set(path, text);
+    },
+    moveFile: (from: string, to: string) => {
+      const text = files.get(from);
+      // The real one removes the source whatever happens, so a failed write
+      // cannot leave a temporary file beside the record.
+      files.delete(from);
+      if (options.brokenMove === true || text === undefined) return false;
+      files.set(to, text);
+      return true;
     },
     makeFolder: (path: string) => {
       if (folders.has(path)) return false;
@@ -192,6 +211,8 @@ function harness(options: HarnessOptions = {}): Harness {
     lines,
     questions,
     messages,
+    writes,
+    file: (path: string) => files.get(path),
     get logPath() {
       return logPath;
     },
@@ -756,6 +777,9 @@ describe('the configuration folder rule', () => {
     ['LOCK_PID_FILE', LOCK_PID_FILE],
     ['LOG_FOLDER', LOG_FOLDER],
     ['BOOTSTRAP_LOG_FILE', BOOTSTRAP_LOG_FILE],
+    // The record this file writes and the `plugin` check reads.
+    ['RUN_FOLDER', RUN_FOLDER],
+    ['PLUGIN_RUN_FILE', PLUGIN_RUN_FILE],
   ])('agrees with the CLI on %s', (constant, value) => {
     expect(paths).toContain(`export const ${constant} = '${value}';`);
   });
@@ -803,7 +827,18 @@ describe('parseArgs', () => {
   it('takes the ref for itself and passes everything else on', () => {
     expect(parseArgs([...HOOK_ARGS])).toEqual({
       ref: REF,
+      // Read on the way past and still passed on: the installer records it,
+      // and hook mode needs it for the sessions that never reach the installer.
+      pluginRoot: '/plugin',
       rest: ['--yes', '--plugin-root', '/plugin'],
+    });
+  });
+
+  it('reads no plugin root from a --plugin-root with nothing after it', () => {
+    expect(parseArgs(['--ref', REF, '--plugin-root'])).toEqual({ ref: REF, rest: ['--plugin-root'] });
+    expect(parseArgs(['--ref', REF, '--plugin-root', '--yes'])).toEqual({
+      ref: REF,
+      rest: ['--plugin-root', '--yes'],
     });
   });
 
@@ -1145,7 +1180,11 @@ describe('hook mode when it worked', () => {
     const code = await main([...HOOK_ARGS], ENV, run.deps);
 
     expect(code).toBe(0);
-    expect(run.messages).toEqual([`Brain을 ${REF.slice(0, 7)}로 설치했습니다`]);
+    expect(run.messages).toHaveLength(1);
+    expect(run.messages[0]).toContain(`Brain을 ${REF.slice(0, 7)}로 설치했습니다`);
+    // The line reaches the model and not the screen (Decision 2026-10-18), so
+    // it asks for the one thing that gets it to the person.
+    expect(run.messages[0]).toContain('사용자에게 한 줄로');
     expect(run.locked()).toBe(false);
   });
 
@@ -1185,6 +1224,177 @@ describe('childStdio', () => {
   it('closes stdin for a captured probe either way, and pipes its stdout', () => {
     expect(childStdio(true, undefined)).toEqual(['ignore', 'pipe', 'inherit']);
     expect(childStdio(true, 7)).toEqual(['ignore', 'pipe', 7]);
+  });
+});
+
+/**
+ * The record a `SessionStart` leaves under `<home>/run/`, which is what makes
+ * `brain doctor run` able to speak about the plugin folder that is actually
+ * calling. The plugin cache keeps one folder per version, so after a
+ * `claude plugin update` that nothing has installed yet, `installed.json`'s
+ * `plugin_root` names a folder nothing calls any more (2.5 human check 1).
+ */
+describe('the plugin record', () => {
+  const RUN_PATH = join(HOME, RUN_FOLDER, PLUGIN_RUN_FILE);
+
+  /** The time the harness's clock is stopped at, as the record spells it. */
+  const NOW = '2023-11-14T22:13:20.000Z';
+
+  interface Written {
+    plugin_root?: string;
+    app_ref?: string;
+    seen_at?: string;
+    last_bootstrap?: { at?: string; result?: string; step?: string; log?: string };
+  }
+
+  function written(run: Harness): Written {
+    const text = run.file(RUN_PATH);
+    expect(text, `${RUN_PATH}에 기록이 없습니다`).toBeDefined();
+    return JSON.parse(text ?? '') as Written;
+  }
+
+  /** The record a session with this folder and this ref would have left. */
+  function seen(root: string, ref: string, last?: Written['last_bootstrap']): string {
+    return JSON.stringify({
+      plugin_root: root,
+      app_ref: ref,
+      seen_at: '2026-10-17T00:00:00.000Z',
+      ...(last === undefined ? {} : { last_bootstrap: last }),
+    });
+  }
+
+  it('names the plugin folder and its ref even when nothing is installed', async () => {
+    // The row this record exists for: a new plugin folder, an older install,
+    // and `[update] auto` off, so the session does nothing at all.
+    const run = harness({
+      exists: true,
+      files: {
+        [INSTALLED_PATH]: record(OTHER),
+        [CONFIG_PATH]: '[update]\nauto = false\n',
+      },
+    });
+
+    const code = await main([...HOOK_ARGS], ENV, run.deps);
+
+    expect(code).toBe(0);
+    expect(run.calls).toEqual([]);
+    expect(run.messages).toEqual([]);
+    expect(written(run)).toEqual({ plugin_root: '/plugin', app_ref: REF, seen_at: NOW });
+  });
+
+  it('writes nothing at all when the folder and the ref are the ones on disk', async () => {
+    const run = harness({
+      exists: true,
+      files: {
+        [INSTALLED_PATH]: record(OTHER),
+        [CONFIG_PATH]: '[update]\nauto = false\n',
+        [RUN_PATH]: seen('/plugin', REF),
+      },
+    });
+
+    expect(await main([...HOOK_ARGS], ENV, run.deps)).toBe(0);
+    // The fast path runs on almost every session: a record rewritten per
+    // session would make the cheapest path in the program a write.
+    expect(run.writes).toEqual([]);
+    expect(run.file(RUN_PATH)).toBe(seen('/plugin', REF));
+  });
+
+  it('replaces a record that names another folder, keeping the last outcome', async () => {
+    const last = { at: '2026-10-17T00:00:00.000Z', result: 'installed', log: '/log/bootstrap.log' };
+    const run = harness({
+      exists: true,
+      files: {
+        [INSTALLED_PATH]: record(REF),
+        [RUN_PATH]: seen('/plugin/0.1.1', OTHER, last),
+      },
+    });
+
+    expect(await main([...HOOK_ARGS], ENV, run.deps)).toBe(0);
+    expect(written(run)).toEqual({
+      plugin_root: '/plugin',
+      app_ref: REF,
+      seen_at: NOW,
+      // Still the last thing a bootstrap did here: this session installed
+      // nothing, which is the whole reason the folder moved without an install.
+      last_bootstrap: last,
+    });
+  });
+
+  it('replaces a record it cannot read back, rather than reporting on it', async () => {
+    const run = harness({
+      exists: true,
+      files: { [INSTALLED_PATH]: record(REF), [RUN_PATH]: '{ not json' },
+    });
+
+    expect(await main([...HOOK_ARGS], ENV, run.deps)).toBe(0);
+    expect(written(run)).toEqual({ plugin_root: '/plugin', app_ref: REF, seen_at: NOW });
+  });
+
+  it('is written through a temporary file, so a reader never sees half of one', async () => {
+    const run = harness({ exists: true, files: { [INSTALLED_PATH]: record(REF) } });
+
+    await main([...HOOK_ARGS], ENV, run.deps);
+
+    expect(run.writes).toEqual([`${RUN_PATH}.${String(PID)}.tmp`]);
+    expect(run.file(`${RUN_PATH}.${String(PID)}.tmp`)).toBeUndefined();
+  });
+
+  it('says so in the log when the record cannot be written, and installs anyway', async () => {
+    const run = harness({
+      exists: false,
+      brokenMove: true,
+      respond: atRef,
+      installerWrites: { [INSTALLED_PATH]: record(REF) },
+    });
+
+    expect(await main([...HOOK_ARGS], ENV, run.deps)).toBe(0);
+    expect(run.file(RUN_PATH)).toBeUndefined();
+    expect(run.lines.join('\n')).toContain('플러그인 기록을 쓸 수 없었습니다');
+  });
+
+  it('records the step a failed install stopped at, and where the reason is', async () => {
+    const run = harness({
+      exists: false,
+      respond: (line) => (line === 'pnpm build' ? { code: 3 } : atRef(line)),
+    });
+
+    expect(await main([...HOOK_ARGS], ENV, run.deps)).toBe(1);
+    expect(written(run).last_bootstrap).toEqual({
+      at: NOW,
+      result: 'failed',
+      step: '클론 빌드',
+      log: join(HOME, LOG_FOLDER, BOOTSTRAP_LOG_FILE),
+    });
+  });
+
+  it('records an install that finished, with no step and the log it wrote', async () => {
+    const run = harness({
+      exists: false,
+      respond: atRef,
+      installerWrites: { [INSTALLED_PATH]: record(REF) },
+    });
+
+    expect(await main([...HOOK_ARGS], ENV, run.deps)).toBe(0);
+    expect(written(run)).toEqual({
+      plugin_root: '/plugin',
+      app_ref: REF,
+      seen_at: NOW,
+      last_bootstrap: {
+        at: NOW,
+        result: 'installed',
+        log: join(HOME, LOG_FOLDER, BOOTSTRAP_LOG_FILE),
+      },
+    });
+  });
+
+  it('leaves no record at all when the launcher named no plugin folder', async () => {
+    // Not a path any launcher takes; it is here because a record naming no
+    // folder would be worse than none, and the check for it is one line.
+    const run = harness({ exists: true, files: { [INSTALLED_PATH]: record(OTHER) } });
+
+    await main(['--yes', '--ref', REF], ENV, run.deps);
+
+    expect(run.file(RUN_PATH)).toBeUndefined();
   });
 });
 
