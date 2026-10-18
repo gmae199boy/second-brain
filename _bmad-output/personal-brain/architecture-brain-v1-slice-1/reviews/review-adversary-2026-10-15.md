@@ -68,15 +68,15 @@ inputs:
 
 **각자 AD를 지키는 방식**
 
-- U-plg는 AD-19를 글자 그대로 쓴다: "플러그인의 SessionStart 비동기 hook이 shim이 없거나 플러그인의 `app-ref`가 `~/.second_brain`에 기록된 ref와 다를 때만 `bootstrap.js --yes --ref <commit>`를 돌린다. 매 세션은 그 검사만 한다(파일 둘 읽기)." `plugin/app-ref`는 커밋된 파일이므로 형식은 자유롭게 정한다 — 사람이 읽을 수 있게 `ref: 149974f\n`로 쓴다. `~/.second_brain` 쪽은 AD-18이 "설정의 읽기·쓰기는 Runtime의 설정 코덱 하나만 한다"로 닫아 두었고 플러그인의 `bootstrap.js`는 **의존성이 없어야 하므로**(AD-19) `smol-toml`을 쓸 수 없다. 그래서 `~/.second_brain/app-ref`에 같은 형식으로 쓴다.
-- U-ops는 AD-20을 글자 그대로 쓴다: "`setup upgrade`는 … shim 재작성 … 순서다. 플러그인 hook의 `app-ref` 갱신은 같은 함수를 쓴다(AD-19)." `setup upgrade`는 빌드된 앱 안에서 도니 `git -C <home>/app rev-parse HEAD`가 진실이고, 기록은 기계가 읽을 것이므로 `{"ref":"149974f…","at":"2026-10-15T…Z"}` JSON 한 줄로 쓴다(Conventions의 시각 정규형까지 지킨다).
+- U-plg는 AD-19를 글자 그대로 쓴다: "플러그인의 SessionStart 비동기 hook이 shim이 없거나 플러그인의 `app-ref`가 `~/.second_brain`에 기록된 ref와 다를 때만 `bootstrap.js --yes --ref <commit>`를 돌린다. 매 세션은 그 검사만 한다(파일 둘 읽기)." `plugin/app-ref`는 커밋된 파일이므로 형식은 자유롭게 정한다 — 사람이 읽을 수 있게 `ref: 0f7ae34\n`로 쓴다. `~/.second_brain` 쪽은 AD-18이 "설정의 읽기·쓰기는 Runtime의 설정 코덱 하나만 한다"로 닫아 두었고 플러그인의 `bootstrap.js`는 **의존성이 없어야 하므로**(AD-19) `smol-toml`을 쓸 수 없다. 그래서 `~/.second_brain/app-ref`에 같은 형식으로 쓴다.
+- U-ops는 AD-20을 글자 그대로 쓴다: "`setup upgrade`는 … shim 재작성 … 순서다. 플러그인 hook의 `app-ref` 갱신은 같은 함수를 쓴다(AD-19)." `setup upgrade`는 빌드된 앱 안에서 도니 `git -C <home>/app rev-parse HEAD`가 진실이고, 기록은 기계가 읽을 것이므로 `{"ref":"0f7ae34…","at":"2026-10-15T…Z"}` JSON 한 줄로 쓴다(Conventions의 시각 정규형까지 지킨다).
 
 둘 다 AD 위반이 없다. **"기록된 ref"의 경로·형식·작성자가 spine에 없기 때문이다.**
 
 **왜 못 붙는가**
 
 - 경로가 다르면(`<home>/app-ref` vs `<home>/state.json` vs `config.toml`의 키) 플러그인 hook의 비교는 **대상이 없는 비교**가 된다. "파일이 없다 = 다르다"로 읽으면 매 세션 ff+build가 돌고, "없으면 검사 생략"으로 읽으면 `/plugin update` 뒤에 아무 일도 일어나지 않는다.
-- 경로가 같아도 형식이 다르면 문자열 비교가 **항상 불일치**다(`ref: 149974f` ≠ `{"ref":"149974f"}`). 비교 방법(trim? 전체 일치? 접두 7자?)도 없다. 짧은 sha와 긴 sha를 섞으면 같은 커밋이 다르게 읽힌다.
+- 경로가 같아도 형식이 다르면 문자열 비교가 **항상 불일치**다(`ref: 0f7ae34` ≠ `{"ref":"0f7ae34"}`). 비교 방법(trim? 전체 일치? 접두 7자?)도 없다. 짧은 sha와 긴 sha를 섞으면 같은 커밋이 다르게 읽힌다.
 - 누가 쓰는가도 비어 있다. 지금 코드에서 bootstrap은 `apps/cli/dist/install.js`에 **넘기고 그 종료 코드를 그대로 돌려준다**(`bootstrap.ts` 마지막 단계). 설치가 exit 1로 끝났는데 bootstrap이 먼저 ref를 적었으면 **깨진 설치가 다시는 재시도되지 않는다**.
 
 **증상.** 매 세션 몇 분짜리 `pnpm install && pnpm build`가 비동기로 돌아 팬이 돌고 디스크가 닳지만 아무 오류가 없다. 또는 플러그인을 업데이트했는데 몇 주 동안 옛 앱이 돈다. 둘 다 "조용한 실패 금지"(NFR-2)의 사각지대다 — 실패가 아니라 **아무 말 없는 성공**이다.

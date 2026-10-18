@@ -11,25 +11,25 @@ headless: false
 
 ## Epic summary
 
-- 에픽: `epic-foundation-and-install`(epic 1 기반과 설치). `tickets.py status`: 13/13 done, `pending_tickets` 없음, `built`에 머문 티켓 없음(2026-10-15 사용자 요청으로 `mark done`, 커밋 `09c2a6f`).
+- 에픽: `epic-foundation-and-install`(epic 1 기반과 설치). `tickets.py status`: 13/13 done, `pending_tickets` 없음, `built`에 머문 티켓 없음(2026-10-15 사용자 요청으로 `mark done`, 커밋 `e9f1920`).
 - 기준: 에픽 파일의 Done when 1~6(declared). 사용자가 무게를 둔 곳: 설치기·설정 흐름, 미룬 작업의 양.
-- 범위: 저장소 코드만(`_bmad`·`_bmad-output`·`.agents`·`.claude`·lockfile 제외) `06c7ac6..149974f` — 157개 파일, +21,766 / −21.
+- 범위: 저장소 코드만(`_bmad`·`_bmad-output`·`.agents`·`.claude`·lockfile 제외) `a41d037..0f7ae34` — 157개 파일, +21,766 / −21.
 
 | 티켓 | 플랜 | 범위(baseline → 다음 baseline) | 커밋 | 비고 |
 | --- | --- | --- | --- | --- |
-| 1.1 | story-tracer-workspace-doctor-plan.md | 06c7ac6..1d0a80e | 3 | `1d0a80e`(BMad 갱신)이 범위에 섞임 |
-| 1.2 | story-core-port-plan.md | 1d0a80e..780610f | 2 | |
-| 1.3 | story-trigger-plan.md | 780610f..7e9b555 | 1 | |
-| 1.4 | story-cli-plan.md | 7e9b555..d824e47 | 1 | |
-| 1.5 | story-untitled-plan.md | d824e47..8a05aec | 1 | |
-| 1.6 | story-db-plan.md | 8a05aec..2f6c25f | 1 | |
-| 1.7 | story-shim-connector-plan.md | 2f6c25f..2afd31c | 4 | correct-course 문서 커밋 3개(`9a12d04`·`47760fb`·`2afd31c`)가 범위에 섞임 |
-| 1.10 | story-sqlite-store-plan.md | 2afd31c..7eeadaf | 1 | |
-| 1.11 | story-sqlite-trigger-plan.md | 7eeadaf..cc77697 | 1 | |
-| 1.12 | story-untitled-12-plan.md | cc77697..a9a233a | 1 | |
-| 1.13 | story-untitled-13-plan.md | a9a233a..276415a | 1 | −2,084(Postgres 연결 제거) |
-| 1.8 | story-doctor-plan.md | 276415a..cc73211 | 1 | |
-| 1.9 | story-refactor-sweep-plan.md | cc73211..149974f | 1 | 마지막 범위는 HEAD가 아니라 `149974f`에서 자름(뒤의 `09c2a6f`는 티켓 문서만) |
+| 1.1 | story-tracer-workspace-doctor-plan.md | a41d037..ab84bb2 | 3 | `ab84bb2`(BMad 갱신)이 범위에 섞임 |
+| 1.2 | story-core-port-plan.md | ab84bb2..594cbb9 | 2 | |
+| 1.3 | story-trigger-plan.md | 594cbb9..971ffef | 1 | |
+| 1.4 | story-cli-plan.md | 971ffef..5ce6b34 | 1 | |
+| 1.5 | story-untitled-plan.md | 5ce6b34..b3e6cec | 1 | |
+| 1.6 | story-db-plan.md | b3e6cec..f92c51c | 1 | |
+| 1.7 | story-shim-connector-plan.md | f92c51c..99e3c54 | 4 | correct-course 문서 커밋 3개(`b4cbf7c`·`72058c6`·`99e3c54`)가 범위에 섞임 |
+| 1.10 | story-sqlite-store-plan.md | 99e3c54..62aa282 | 1 | |
+| 1.11 | story-sqlite-trigger-plan.md | 62aa282..3c4c542 | 1 | |
+| 1.12 | story-untitled-12-plan.md | 3c4c542..60872ca | 1 | |
+| 1.13 | story-untitled-13-plan.md | 60872ca..b4ab1dc | 1 | −2,084(Postgres 연결 제거) |
+| 1.8 | story-doctor-plan.md | b4ab1dc..b555cff | 1 | |
+| 1.9 | story-refactor-sweep-plan.md | b555cff..0f7ae34 | 1 | 마지막 범위는 HEAD가 아니라 `0f7ae34`에서 자름(뒤의 `e9f1920`는 티켓 문서만) |
 
 증거 목록:
 - 있음: 에픽 파일, 이니셔티브·spec·architecture·PRD, `tickets.toml` 엔트리 13개(파일로 꺼낸 스토리 없음), 플랜 13개(Review Triage Log·Verification 모두 있음), 커밋, `deferred-work.md`.

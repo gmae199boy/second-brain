@@ -4,7 +4,7 @@ type: 'bugfix'
 ticket: ''
 created: '2026-10-18'
 status: 'built'
-baseline_revision: '5125931035f089f7818c6e6dba48d4b0c7023490'
+baseline_revision: 'a3c4841b79f85a303a0f263cdbb8a0738f512b74'
 route: 'full'
 route_source: 'auto'
 risk: 'high'
@@ -20,7 +20,7 @@ warnings: [oversized]
 
 ## Intent
 
-**Problem:** 2.5의 사람 확인(2026-10-18)에서 두 가지가 나왔다. (1) doctor의 `plugin` 점검은 `installed.json.plugin_root`의 `app-ref`만 본다. 그런데 Claude Code 플러그인 캐시는 버전마다 폴더가 다르다(`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`, 옛 폴더도 남는다). 그래서 `claude plugin update` 뒤 `[update] auto = false`면 bootstrap이 아무것도 하지 않고 기록도 옛 폴더에 머물러, `UPDATE_AVAILABLE`과 `PLUGIN_BEHIND`가 나오지 않는다. 재현: 2781bb7로 설치한 임시 home에 auto=false를 두고 app-ref가 HEAD인 플러그인 복사본을 `--plugin-dir`로 열면, doctor가 "플러그인과 설치가 같은 2781bb7입니다"(ok)를 낸다. (2) 비동기 SessionStart hook의 `systemMessage`는 다음 턴에 모델만 받고 사용자 화면에는 보이지 않았다. epic-capture Notes의 Assumption(2026-10-16)이 틀렸다.
+**Problem:** 2.5의 사람 확인(2026-10-18)에서 두 가지가 나왔다. (1) doctor의 `plugin` 점검은 `installed.json.plugin_root`의 `app-ref`만 본다. 그런데 Claude Code 플러그인 캐시는 버전마다 폴더가 다르다(`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`, 옛 폴더도 남는다). 그래서 `claude plugin update` 뒤 `[update] auto = false`면 bootstrap이 아무것도 하지 않고 기록도 옛 폴더에 머물러, `UPDATE_AVAILABLE`과 `PLUGIN_BEHIND`가 나오지 않는다. 재현: 2774cd7로 설치한 임시 home에 auto=false를 두고 app-ref가 HEAD인 플러그인 복사본을 `--plugin-dir`로 열면, doctor가 "플러그인과 설치가 같은 2774cd7입니다"(ok)를 낸다. (2) 비동기 SessionStart hook의 `systemMessage`는 다음 턴에 모델만 받고 사용자 화면에는 보이지 않았다. epic-capture Notes의 Assumption(2026-10-16)이 틀렸다.
 
 **Approach:** hook 모드 bootstrap이 세션마다 자기를 부른 플러그인의 위치와 app-ref를 `<home>/run/` 아래 기록에 남긴다(값이 바뀔 때만 쓴다). doctor는 그 기록이 있으면 그것을 `installed.json.plugin_root`보다 앞세운다. (2) 같은 기록에 마지막 bootstrap 결과를 남겨 doctor가 사람에게 보이고, hook의 `systemMessage`는 모델이 사용자에게 전하도록 쓴 문장으로 바꾼다. Assumption은 Decision으로 바꾼다.
 
@@ -45,7 +45,7 @@ warnings: [oversized]
 
 | Scenario | Input / State | Expected Output / Behavior | Error Handling |
 |----------|--------------|---------------------------|----------------|
-| 새 폴더, auto 꺼짐 | 설치 2781bb7, auto=false, 새 플러그인 폴더의 app-ref가 앞섬 | 갱신 안 함, 기록이 새 폴더를 가리킴, doctor `UPDATE_AVAILABLE` | doctor exit 0 |
+| 새 폴더, auto 꺼짐 | 설치 2774cd7, auto=false, 새 플러그인 폴더의 app-ref가 앞섬 | 갱신 안 함, 기록이 새 폴더를 가리킴, doctor `UPDATE_AVAILABLE` | doctor exit 0 |
 | 새 폴더, 뒤처짐 | 새 폴더의 app-ref가 설치본의 조상 | doctor `PLUGIN_BEHIND` | exit 0 |
 | 같은 폴더·ref | 이미 기록된 값과 같음 | 파일을 다시 쓰지 않음(mtime 그대로) | — |
 | 기록 없음 | 옛 설치 또는 npx 설치 | 지금처럼 `installed.json.plugin_root` 사용 | — |
@@ -118,7 +118,7 @@ warnings: [oversized]
 ### 2026-10-18 — Review pass (quick)
 - verdicts: 8 findings — high 1, medium 1, low 6, false 0, maybe-false 0
 - findings:
-  - `[high]` `[patch]` `checks.ts` `isAncestor`가 `<home>/app`에서 돈다 — 실제 사용에서 플러그인의 새 ref는 설치 뒤 push된 commit이라 클론에 없고, doctor는 `UPDATE_AVAILABLE` 대신 코드 없는 "관계를 알 수 없습니다"를 낸다(사람 확인 재현은 새 commit이 이미 있는 로컬 저장소에서 clone해 통과했다) — hook 모드가 기록을 새로 쓴 세션(폴더나 ref가 바뀜)에서 설치하지 않고 돌아갈 때 `git -C <app> fetch origin`을 한 번 한다. checkout·HEAD는 그대로, 실패는 로그만. 설치 뒤 push된 commit으로 다시 재현해 `warnings:["UPDATE_AVAILABLE"]`을 확인했다(`44d2766`).
+  - `[high]` `[patch]` `checks.ts` `isAncestor`가 `<home>/app`에서 돈다 — 실제 사용에서 플러그인의 새 ref는 설치 뒤 push된 commit이라 클론에 없고, doctor는 `UPDATE_AVAILABLE` 대신 코드 없는 "관계를 알 수 없습니다"를 낸다(사람 확인 재현은 새 commit이 이미 있는 로컬 저장소에서 clone해 통과했다) — hook 모드가 기록을 새로 쓴 세션(폴더나 ref가 바뀜)에서 설치하지 않고 돌아갈 때 `git -C <app> fetch origin`을 한 번 한다. checkout·HEAD는 그대로, 실패는 로그만. 설치 뒤 push된 commit으로 다시 재현해 `warnings:["UPDATE_AVAILABLE"]`을 확인했다(`e527807`).
   - `[medium]` `[patch]` `checks.ts` `pluginCheck` — hook 설치가 실패한 뒤 npx·`setup run`으로 회복해도 기록이 다시 써지지 않아 doctor가 영원히 warn — `installed.json.installed_at`이 `last_bootstrap.at`보다 나중이면 올리지 않는다.
   - `[low]` `[patch]` `checks.ts` `sentences` — 붙일 문장이 없어도 기존 `UPDATE_AVAILABLE` 줄의 마침표를 깎는다 — 두 개 이상일 때만 정규화.
   - `[low]` `[patch]` `checks.ts` 깨진 기록 문장 — 완료 기록이 없을 때 "완료 기록이 가리키는 폴더를 봅니다"가 판정과 모순 — "…을 읽을 수 없어서 무시했습니다"로 바꾸고 그 경우 테스트를 더했다.
@@ -126,4 +126,4 @@ warnings: [oversized]
   - `[low]` `[patch]` `bootstrap.ts` `parseArgs` — 상대 경로 `--plugin-root`도 기록한다(설치기는 거부함) — `isAbsolute`일 때만 받는다. `rest`는 그대로.
   - `[low]` `[patch]` `bootstrap.ts` `noteSeenPlugin`/`noteBootstrap` — 첫 쓰기가 실패하면 결과가 옛 폴더·ref에 붙는다 — 쓰려던 기록을 돌려준다.
   - `[low]` `[patch]` `bootstrap.test.ts` — 실패 `systemMessage`만 모델용 문구 단정이 없다 — 단정을 더했다.
-- 메모: 서브에이전트가 두 라운드 커밋을 합치려던 `git reset --soft`는 권한 분류기에 막혔고, 이력을 덮지 않고 커밋 둘(`44d2766`, `8360bf5`)을 더 쌓았다. 그래서 플러그인 version은 0.1.3이다(0.1.2는 `c1c364c`가 이미 썼다).
+- 메모: 서브에이전트가 두 라운드 커밋을 합치려던 `git reset --soft`는 권한 분류기에 막혔고, 이력을 덮지 않고 커밋 둘(`e527807`, `cceb816`)을 더 쌓았다. 그래서 플러그인 version은 0.1.3이다(0.1.2는 `0be9fbb`가 이미 썼다).

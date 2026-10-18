@@ -11,7 +11,7 @@ review_source: 'pinned'
 lenses_ran: [quick]
 review_loop_iteration: 0
 context: []
-baseline_revision: '06c7ac616d001169e4d8970e581b2e1736452c3d'
+baseline_revision: 'a41d0376d6ff12491c18adc7b39e510a4672614c'
 ---
 
 <frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">

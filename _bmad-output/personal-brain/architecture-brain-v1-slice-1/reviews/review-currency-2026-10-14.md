@@ -363,7 +363,7 @@ $ ls packages
 claude-code  core  modelstudio  postgres  second_brain      # sqlite 없음
 ```
 
-그리고 **존재하는 것**은 Postgres 전용으로 완성되어 있다(커밋 7e9b555·d824e47·2f6c25f·40fd74b).
+그리고 **존재하는 것**은 Postgres 전용으로 완성되어 있다(커밋 971ffef·5ce6b34·f92c51c·78317c2).
 
 | 커밋된 산출물 | 개정된 spine이 요구하는 것 |
 | --- | --- |

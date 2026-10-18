@@ -4,7 +4,7 @@ type: 'feature'
 ticket: '5'
 created: '2026-10-17'
 status: 'built'
-baseline_revision: 'b9b011c2f05a932345e249f11b724c428781bf3b'
+baseline_revision: '10a09d2ef60fcf3b607f8562192c2ea8a59d3981'
 route: 'full'
 route_source: 'auto'
 risk: 'high'
@@ -237,7 +237,7 @@ deferred: []
 ## Deferred to the commit step
 
 - `plugin/app-ref`와 `plugin/.claude-plugin/plugin.json`의 `version`은 지금
-  baseline sha(`b9b011c…`)와 `0.1.0`이다. 플랜대로 스토리 커밋 **뒤**의 별도
+  baseline sha(`10a09d2…`)와 `0.1.0`이다. 플랜대로 스토리 커밋 **뒤**의 별도
   커밋에서 스토리 커밋 sha로 올려야 한다(오케스트레이터).
 
 ## Plan Change Log
@@ -333,4 +333,4 @@ deferred: []
   - auto가 꺼져 있고 새 ref가 아직 클론에 없으면 doctor가 `UPDATE_AVAILABLE` 대신 "관계를 알 수 없음" warn을 낸다(doctor는 fetch하지 않음).
   - 플러그인 캐시 경로는 버전마다 바뀌어서, auto가 꺼진 동안 `installed.json.plugin_root`가 옛 경로를 가리킬 수 있다.
   - 잠금 폴더를 만들 수 없는 환경에서는 hook이 조용히 아무것도 하지 않는다(기각한 리뷰 항목).
-- **커밋:** 스토리 커밋 `2781bb7d13020e295721fa65b8bd2aa5ad85a6bf`. 이어진 별도 커밋에서 `plugin/app-ref`를 이 sha로, `plugin.json` version을 0.1.1로 올렸다. push는 하지 않았다.
+- **커밋:** 스토리 커밋 `2774cd7174992615fd41192e40cee46eb4f4089f`. 이어진 별도 커밋에서 `plugin/app-ref`를 이 sha로, `plugin.json` version을 0.1.1로 올렸다. push는 하지 않았다.

@@ -48,7 +48,7 @@ node를 직접 찾습니다. shim에 박힌 node → `nvm`의 24.16.0 이상 중
 ```json
 {
   "plugin_root": "/Users/me/.claude/plugins/cache/second-brain/second-brain/0.1.2",
-  "app_ref": "b9b011c2f05a932345e249f11b724c428781bf3b",
+  "app_ref": "10a09d2ef60fcf3b607f8562192c2ea8a59d3981",
   "seen_at": "2026-10-18T02:12:27.381Z",
   "last_bootstrap": {
     "at": "2026-10-18T02:13:04.902Z",
@@ -152,7 +152,7 @@ guide schema --json`을 실제로 실행해서 exit 0과 `ok: true` 엔벨로프
 
 ```json
 {
-  "commit": "b9b011c2f05a932345e249f11b724c428781bf3b",
+  "commit": "10a09d2ef60fcf3b607f8562192c2ea8a59d3981",
   "schema_version": 4,
   "node": "/opt/homebrew/bin/node",
   "plugin_root": "/Users/me/.claude/plugins/cache/second-brain/second-brain/0.1.0",
