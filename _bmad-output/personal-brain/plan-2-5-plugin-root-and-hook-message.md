@@ -3,14 +3,14 @@ title: '2.5 사람 확인 후속: 지금 플러그인 위치와 hook 메시지�
 type: 'bugfix'
 ticket: ''
 created: '2026-10-18'
-status: 'built'
+status: 'in-review'
 baseline_revision: '5125931035f089f7818c6e6dba48d4b0c7023490'
 route: 'full'
 route_source: 'auto'
 risk: 'high'
-review: ''
-review_source: ''
-lenses_ran: []
+review: 'quick'
+review_source: 'pinned'
+lenses_ran: [quick]
 review_loop_iteration: 0
 context: []
 warnings: [oversized]
@@ -107,7 +107,9 @@ warnings: [oversized]
 - 폴더가 바뀌어 기록을 갈아 쓸 때 이전 `last_bootstrap`은 그대로 옮긴다. 갱신하지 않기로 한 세션이 바로 그 경우여서, 지우면 "마지막 설치"를 말할 수 없게 된다.
 - doctor는 `pluginCheck`(기록 읽기·문장 덧붙이기·실패면 `warn`으로 올리기)와 `pluginVerdict`(원래의 판정표, 플러그인 폴더를 인자로 받음)로 나뉘었다. 문장은 `sentences()`가 마침표 하나로 잇는다.
 - 완료 기록이 없고 세션 기록만 있는 상태(설치 중이거나 설치가 끝나지 못한 경우)에 `plugin: ok "<폴더>의 플러그인이 왔지만 완료 기록이 아직 없습니다"`가 새로 생겼다. 설치기 끝의 doctor가 이 줄을 낸다.
-- 알아 둘 한계(이 스토리가 만든 것이 아니라 드러낸 것): doctor의 조상 질문은 `<home>/app` 클론에서 돈다. 플러그인이 가리키는 새 commit이 아직 그 클론에 없으면(마지막 설치 뒤에 push된 경우) `UPDATE_AVAILABLE`이 아니라 기존의 "관계를 알 수 없습니다" 가지로 간다. doctor가 fetch하는 것은 범위 밖이다(Never: 자동 갱신 동작 변경).
+- doctor의 조상 질문은 `<home>/app` 클론에서 돈다. 플러그인이 가리키는 새 commit은 마지막 설치 뒤에 push된 것이라 클론에 없고, 그러면 `UPDATE_AVAILABLE`이 아니라 "관계를 알 수 없습니다"가 나온다(첫 수동 재현이 이것을 놓친 이유는 bare 저장소에 두 commit이 다 있었기 때문이다). 그래서 **기록이 실제로 바뀐 세션이 갱신하지 않고 돌아갈 때만** `git -C <app> fetch origin`을 한 번 한다 — 체크아웃도 HEAD도 건드리지 않고, 실패는 로그 한 줄이다. 기록이 그대로인 보통 세션은 git을 전혀 부르지 않는다(두 경우 모두 테스트가 있다). doctor 자체는 여전히 fetch하지 않는다(Never: 자동 갱신 동작 변경).
+- 마지막 결과가 `failed`인데 `installed.json.installed_at`이 그보다 **나중**이면 doctor는 `warn`으로 올리지 않는다. npx나 `setup run`으로 밖에서 회복하면 다음 세션은 빠른 경로라 기록을 다시 쓰지 않으므로, 올리면 경고가 영원히 남는다. 문장은 그대로 보인다.
+- doctor 쪽 `readPluginRun`은 `last_bootstrap`만 깨진 기록을 통째로 버리지 않고 그 칸만 떨어뜨린다(bootstrap의 reader와 같은 규칙). 통째로 버리면 bootstrap은 폴더·ref가 같다고 보고 다시 쓰지 않아 빠져나올 수 없는 상태가 된다.
 
 ## Plan Change Log
 

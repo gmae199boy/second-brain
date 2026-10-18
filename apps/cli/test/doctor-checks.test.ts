@@ -426,7 +426,7 @@ describe('the plugin check', () => {
 
   /** A home with a configuration, a shim and a completion record. */
   async function recorded(
-    facts: { commit?: string | null; pluginRoot?: string | null },
+    facts: { commit?: string | null; pluginRoot?: string | null; installedAt?: string },
     config: { updateAuto?: boolean } = {},
   ): Promise<string> {
     const home = await tempHome();
@@ -439,7 +439,7 @@ describe('the plugin check', () => {
         schema_version: build.schema_version,
         node: process.execPath,
         plugin_root: facts.pluginRoot === undefined ? null : facts.pluginRoot,
-        installed_at: '2026-10-17T00:00:00.000Z',
+        installed_at: facts.installedAt ?? '2026-10-17T00:00:00.000Z',
       }),
       'utf8',
     );
@@ -673,22 +673,26 @@ describe('the plugin check', () => {
 
       expect(check).toMatchObject({ status: 'ok' });
       expect(check.detail).toContain(commit.slice(0, 7));
-      expect(check.detail).toContain(pluginRunPath(home));
+      // True whether or not there is a completion record to fall back to.
+      expect(check.detail).toContain(`${pluginRunPath(home)}을 읽을 수 없어서 무시했습니다`);
+    });
+
+    it('says the record was ignored even when there is no completion record', async () => {
+      const home = await tempHome();
+      await writeConfig(home, {});
+      await writeShim(home, { bin: distBin });
+      await sessionSaw(home, '{ not json');
+
+      const check = await pluginCheck(home);
+
+      expect(check.detail).toContain('완료 기록이 아직 없습니다');
+      expect(check.detail).toContain('무시했습니다');
     });
 
     it.each([
       ['a plugin folder that is not a path', { plugin_root: '', app_ref: 'a'.repeat(40), seen_at: 'x' }],
       ['a ref that is not a commit', { plugin_root: '/p', app_ref: 'nope', seen_at: 'x' }],
       ['no time at all', { plugin_root: '/p', app_ref: 'a'.repeat(40) }],
-      [
-        'an outcome with no step on a failure',
-        {
-          plugin_root: '/p',
-          app_ref: 'a'.repeat(40),
-          seen_at: 'x',
-          last_bootstrap: { at: 'y', result: 'failed', log: '/l' },
-        },
-      ],
     ])('refuses %s rather than reporting on half a record', async (_what, broken) => {
       const commit = build.commit ?? 'a'.repeat(40);
       const plugin = await pluginAt(commit);
@@ -698,6 +702,24 @@ describe('the plugin check', () => {
       const check = await pluginCheck(home);
 
       expect(check.detail).toContain(pluginRunPath(home));
+    });
+
+    it('drops an outcome it cannot read and keeps the rest of the record', async () => {
+      // The bootstrap's own reader drops it too, and it decides what to write
+      // from the folder and the ref alone: refusing the whole record here
+      // would be a state nothing ever writes its way out of.
+      const commit = build.commit ?? 'a'.repeat(40);
+      const plugin = await pluginAt(commit);
+      const home = await recorded({ pluginRoot: null, commit });
+      await sessionSaw(home, saw(plugin, commit, { at: 'y', result: 'failed', log: '/l' }));
+
+      const check = await pluginCheck(home);
+
+      // The folder in the record was used, so the record was not refused.
+      expect(check).toMatchObject({ status: 'ok' });
+      expect(check.detail).toContain(commit.slice(0, 7));
+      expect(check.detail).not.toContain('마지막 설치');
+      expect(check.detail).not.toContain(pluginRunPath(home));
     });
 
     it('reports a finished install in one more sentence, and stays ok', async () => {
@@ -736,6 +758,32 @@ describe('the plugin check', () => {
       expect(check).toMatchObject({ status: 'warn' });
       expect(check.detail).toContain('클론 빌드');
       expect(check.detail).toContain(log);
+    });
+
+    it('stops warning about a failure the install got past by another door', async () => {
+      // `npx` or `brain setup run` finishes the install, and the next session
+      // takes the fast path and never rewrites the record — so a warn about
+      // that old failure would be there for good.
+      const commit = build.commit ?? 'a'.repeat(40);
+      const plugin = await pluginAt(commit);
+      const home = await recorded({
+        pluginRoot: plugin,
+        commit,
+        installedAt: '2026-10-18T03:00:00.000Z',
+      });
+      await sessionSaw(
+        home,
+        saw(plugin, commit, {
+          at: '2026-10-18T02:00:00.000Z',
+          result: 'failed',
+          step: '클론 빌드',
+          log: join(home, 'log', 'bootstrap.log'),
+        }),
+      );
+
+      const check = await pluginCheck(home);
+
+      expect(check).toMatchObject({ status: 'ok' });
     });
 
     it('is ok, and says so, when a plugin came but nothing has finished installing', async () => {

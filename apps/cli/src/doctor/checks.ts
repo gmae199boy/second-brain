@@ -13,6 +13,7 @@ import {
   readPluginRun,
   shortCommit,
   type BuildIdentity,
+  type InstalledRecord,
   type LastBootstrap,
 } from '../install/installed.js';
 import { SHIM_SIGNATURE, parseShim, shimPath, type ParsedShim } from '../install/shim.js';
@@ -249,21 +250,21 @@ async function pluginCheck(
   config: ReadConfigResult,
   runGit: RunGit,
 ): Promise<DoctorCheck> {
+  const record = await readInstalled(home);
   const seen = await readPluginRun(home);
   // What is added to whatever the comparison below comes to. Both are about
   // the same one subject — the plugin — so they are one check's one line and
   // not a second check (Conventions: one problem, one line).
   const notes: string[] = [];
   if (seen.status === 'invalid') {
-    notes.push(
-      `${pluginRunPath(home)}을 읽을 수 없어서 완료 기록이 가리키는 플러그인 폴더를 봅니다`,
-    );
+    notes.push(`${pluginRunPath(home)}을 읽을 수 없어서 무시했습니다`);
   }
   const last = seen.status === 'ok' ? seen.record.last_bootstrap : undefined;
   if (last !== undefined) notes.push(lastBootstrapSentence(last));
 
   const verdict = await pluginVerdict(
     home,
+    record,
     config,
     runGit,
     seen.status === 'ok' ? seen.record.plugin_root : undefined,
@@ -271,10 +272,25 @@ async function pluginCheck(
 
   // A bootstrap that stopped part way through is worth saying out loud however
   // the comparison came out: the hook says it once, to the model, in a session
-  // the person may never have looked at (Decision 2026-10-18).
-  const status = verdict.status === 'ok' && last?.result === 'failed' ? 'warn' : verdict.status;
+  // the person may never have looked at (Decision 2026-10-18). Unless the
+  // install finished afterwards by another door — an `npx` run or a
+  // `setup run` — in which case the hook has had nothing to do since and will
+  // never rewrite the record, and a warn about it would never go away.
+  const stillStopped =
+    last?.result === 'failed' &&
+    !(record !== undefined && finishedAfter(record.installed_at, last.at));
+  const status = verdict.status === 'ok' && stillStopped ? 'warn' : verdict.status;
   const detail = sentences(verdict.detail, ...notes);
   return { ...verdict, status, ...(detail === '' ? {} : { detail }) };
+}
+
+/** Whether the completion record was written after that outcome was recorded. */
+function finishedAfter(installedAt: string, at: string): boolean {
+  const installed = Date.parse(installedAt);
+  const stopped = Date.parse(at);
+  // Either time unreadable is not "later": the outcome stands until something
+  // says otherwise.
+  return Number.isFinite(installed) && Number.isFinite(stopped) && installed > stopped;
 }
 
 /** One sentence about the last bootstrap, for somebody who was not watching. */
@@ -284,12 +300,15 @@ function lastBootstrapSentence(last: LastBootstrap): string {
   return `마지막 설치는 ${last.at}에 ${step}에서 멈췄습니다. 까닭은 ${last.log}에 있습니다`;
 }
 
-/** Sentences into one line, with one full stop between each pair of them. */
+/**
+ * Sentences into one line, with one full stop between each pair of them. One
+ * part is handed back exactly as it was: the sentences below are written whole,
+ * and only joining them calls for a stop to be taken off the end of one.
+ */
 function sentences(...parts: readonly (string | undefined)[]): string {
-  return parts
-    .filter((part): part is string => part !== undefined && part !== '')
-    .map((part) => part.replace(/\.$/, ''))
-    .join('. ');
+  const found = parts.filter((part): part is string => part !== undefined && part !== '');
+  if (found.length < 2) return found[0] ?? '';
+  return found.map((part) => part.replace(/\.$/, '')).join('. ');
 }
 
 /**
@@ -304,6 +323,7 @@ function sentences(...parts: readonly (string | undefined)[]): string {
  */
 async function pluginVerdict(
   home: string,
+  record: InstalledRecord | undefined,
   config: ReadConfigResult,
   runGit: RunGit,
   seenRoot: string | undefined,
@@ -316,7 +336,6 @@ async function pluginVerdict(
     detail,
   });
 
-  const record = await readInstalled(home);
   const pluginRoot = seenRoot ?? record?.plugin_root ?? null;
   if (pluginRoot === null) {
     return record === undefined

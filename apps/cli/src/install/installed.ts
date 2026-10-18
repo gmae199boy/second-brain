@@ -189,8 +189,11 @@ export async function readPluginRun(home: string): Promise<PluginRunRead> {
   if (!isCommit(appRef)) return { status: 'invalid' };
   if (typeof seenAt !== 'string' || seenAt === '') return { status: 'invalid' };
 
+  // A malformed outcome is dropped and the rest of the record kept, which is
+  // what the bootstrap's own reader does. Refusing the whole record here
+  // instead would be a stuck state: the bootstrap would read the same file,
+  // find the folder and the ref unchanged, and never rewrite it.
   const last = lastBootstrapOf(found['last_bootstrap']);
-  if (last === 'invalid') return { status: 'invalid' };
   return {
     status: 'ok',
     record: {
@@ -202,22 +205,21 @@ export async function readPluginRun(home: string): Promise<PluginRunRead> {
   };
 }
 
-/** The outcome in a record: absent, readable, or there and not readable. */
-function lastBootstrapOf(value: unknown): LastBootstrap | 'invalid' | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'object' || value === null) return 'invalid';
+/** The outcome in a record, or `undefined` when there is none to report. */
+function lastBootstrapOf(value: unknown): LastBootstrap | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
 
   const found = value as Record<string, unknown>;
   const at = found['at'];
   const result = found['result'];
   const log = found['log'];
   const step = found['step'];
-  if (typeof at !== 'string' || at === '') return 'invalid';
-  if (result !== 'installed' && result !== 'failed') return 'invalid';
-  if (typeof log !== 'string' || log === '') return 'invalid';
+  if (typeof at !== 'string' || at === '') return undefined;
+  if (result !== 'installed' && result !== 'failed') return undefined;
+  if (typeof log !== 'string' || log === '') return undefined;
   const named = typeof step === 'string' && step !== '';
   // A failure with no step names nothing a person could act on.
-  if (result === 'failed' && !named) return 'invalid';
+  if (result === 'failed' && !named) return undefined;
   return { at, result, log, ...(named ? { step: step as string } : {}) };
 }
 

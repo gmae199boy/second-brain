@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync, } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 /**
@@ -129,8 +129,11 @@ export function parseArgs(argv) {
         if (argument === '--plugin-root') {
             const value = argv[index + 1];
             if (value !== undefined && !value.startsWith('-')) {
+                // Absolute only, which is what the installer accepts: a relative path
+                // would be recorded against this process's working directory, and a
+                // hook's working directory is whatever the harness was started in.
                 const trimmed = value.trim();
-                if (trimmed !== '')
+                if (isAbsolute(trimmed))
                     pluginRoot = trimmed;
             }
         }
@@ -233,7 +236,7 @@ async function hookMode(ref, pluginRoot, installerArgs, env, deps) {
     const seen = noteSeenPlugin(home, pluginRoot, ref, deps);
     /** One failure: the step in the message, the reason in the log. */
     const failed = (step) => {
-        noteBootstrap(home, seen, { result: 'failed', step, log: logPath }, deps);
+        noteBootstrap(home, seen.record, { result: 'failed', step, log: logPath }, deps);
         deps.message(`Brain 설치가 ${step}에서 멈췄습니다. 까닭은 ${logPath}에 있습니다. ` +
             '이것을 사용자에게 한 줄로 전하고, 자세한 상태는 `brain doctor run`이 말한다고 알려 주세요');
         return 1;
@@ -245,8 +248,17 @@ async function hookMode(ref, pluginRoot, installerArgs, env, deps) {
         return 0;
     // A first install happens whatever the configuration says — there is no
     // installation yet for an update to be automatic about.
-    if (before.present && !updateAuto(home, deps))
+    if (before.present && !updateAuto(home, deps)) {
+        // Nothing is being installed, and the one thing a person will ask next is
+        // what the difference is. `doctor run` answers that by asking the clone
+        // which of the two commits is the ancestor, and the plugin's commit was
+        // pushed after the last install, so the clone does not have it and the
+        // check can only say it does not know. One fetch, no checkout: the clone
+        // stays exactly where it is (Never: the update behaviour itself).
+        if (seen.moved)
+            await fetchOrigin(app, deps);
         return 0;
+    }
     const missing = await missingTools(deps);
     if (missing.length > 0) {
         for (const line of missing)
@@ -293,7 +305,7 @@ async function hookMode(ref, pluginRoot, installerArgs, env, deps) {
             deps.log(`설치기가 끝났는데 ${join(home, INSTALLED_FILE)}이 ${ref}를 담고 있지 않습니다.`);
             return failed('완료 기록 확인');
         }
-        noteBootstrap(home, seen, { result: 'installed', log: logPath }, deps);
+        noteBootstrap(home, seen.record, { result: 'installed', log: logPath }, deps);
         deps.message(`Brain을 ${shortRef(ref)}로 설치했습니다. 이것을 사용자에게 한 줄로 전해 주세요`);
         return 0;
     }
@@ -609,10 +621,7 @@ function pluginRunPath(home) {
     return join(home, RUN_FOLDER, PLUGIN_RUN_FILE);
 }
 /**
- * Write down which plugin folder called and what it asks for, and answer with
- * the record as it now stands — `undefined` only when there is nothing to
- * record, which is a hook run with no `--plugin-root` and no record from an
- * earlier one.
+ * Write down which plugin folder called and what it asks for.
  *
  * Nothing is written when the folder and the commit are the ones already on
  * disk. That is the case on almost every session, and this runs before the
@@ -622,10 +631,12 @@ function pluginRunPath(home) {
  */
 function noteSeenPlugin(home, pluginRoot, ref, deps) {
     const before = readPluginRun(home, deps);
-    if (pluginRoot === undefined)
-        return before;
-    if (before?.plugin_root === pluginRoot && before.app_ref === ref)
-        return before;
+    if (pluginRoot === undefined) {
+        return { ...(before === undefined ? {} : { record: before }), moved: false };
+    }
+    if (before?.plugin_root === pluginRoot && before.app_ref === ref) {
+        return { record: before, moved: false };
+    }
     const record = {
         plugin_root: pluginRoot,
         app_ref: ref,
@@ -635,7 +646,22 @@ function noteSeenPlugin(home, pluginRoot, ref, deps) {
         // yet — or is never going to, which is the case this record exists for.
         ...(before?.last_bootstrap === undefined ? {} : { last_bootstrap: before.last_bootstrap }),
     };
-    return writePluginRun(home, record, deps) ? record : before;
+    writePluginRun(home, record, deps);
+    return { record, moved: true };
+}
+/**
+ * Bring origin's commits into the clone without touching what is checked out.
+ *
+ * A failure is logged and no more: this runs on a path that is not installing
+ * anything, and the only thing that depends on it is how well `doctor run` can
+ * describe two commits.
+ */
+async function fetchOrigin(app, deps) {
+    deps.log(`${app}에서 origin을 가져옵니다`);
+    const fetched = await deps.run({ command: 'git', args: ['-C', app, 'fetch', 'origin'] });
+    if (fetched.code !== 0) {
+        deps.log(`\`git fetch\`가 실패했습니다. 종료 코드 ${String(fetched.code)}.`);
+    }
 }
 /** Add how this run ended to the record, keeping what it says about the plugin. */
 function noteBootstrap(home, seen, outcome, deps) {

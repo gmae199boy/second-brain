@@ -88,8 +88,8 @@ interface HarnessOptions {
    * written by the installer, and the step after it reads what was written.
    */
   installerWrites?: Record<string, string>;
-  /** A filesystem on which a rename never works, for the record that cannot be written. */
-  brokenMove?: boolean;
+  /** How many renames fail before one works, for the record that cannot be written. */
+  brokenMoves?: number;
 }
 
 /** A folder that exists only in the harness's own map of folders. */
@@ -120,6 +120,7 @@ function harness(options: HarnessOptions = {}): Harness {
   const questions: string[] = [];
   const messages: string[] = [];
   const writes: string[] = [];
+  let moves = 0;
   const files = new Map<string, string>(Object.entries(options.files ?? {}));
   const folders = new Map<string, number>();
   const alive = new Set<number>(options.alive ?? [PID]);
@@ -179,7 +180,8 @@ function harness(options: HarnessOptions = {}): Harness {
       // The real one removes the source whatever happens, so a failed write
       // cannot leave a temporary file beside the record.
       files.delete(from);
-      if (options.brokenMove === true || text === undefined) return false;
+      moves += 1;
+      if (moves <= (options.brokenMoves ?? 0) || text === undefined) return false;
       files.set(to, text);
       return true;
     },
@@ -793,6 +795,17 @@ const OTHER = 'd'.repeat(40);
 
 const INSTALLED_PATH = join(HOME, INSTALLED_FILE);
 const CONFIG_PATH = join(HOME, CONFIG_FILE);
+const RUN_PATH = join(HOME, RUN_FOLDER, PLUGIN_RUN_FILE);
+
+/** The record a session with this plugin folder and this ref left behind. */
+function saw(root: string, ref: string, last?: Record<string, unknown>): string {
+  return JSON.stringify({
+    plugin_root: root,
+    app_ref: ref,
+    seen_at: '2026-10-17T00:00:00.000Z',
+    ...(last === undefined ? {} : { last_bootstrap: last }),
+  });
+}
 
 /** The `installed.json` a finished install of `commit` left behind. */
 function record(commit: string): string {
@@ -839,6 +852,15 @@ describe('parseArgs', () => {
     expect(parseArgs(['--ref', REF, '--plugin-root', '--yes'])).toEqual({
       ref: REF,
       rest: ['--plugin-root', '--yes'],
+    });
+  });
+
+  it('records no relative plugin root, and still passes it on untouched', () => {
+    // The installer refuses a relative path, and a hook's working directory is
+    // whatever the harness was started in.
+    expect(parseArgs(['--ref', REF, '--plugin-root', 'plugin'])).toEqual({
+      ref: REF,
+      rest: ['--plugin-root', 'plugin'],
     });
   });
 
@@ -989,6 +1011,9 @@ describe('hook mode when there is nothing to do', () => {
       files: {
         [INSTALLED_PATH]: record(OTHER),
         [CONFIG_PATH]: 'schema_version = 1\n\n[update]\nauto = false\n',
+        // The plugin has not moved since the last session, so this is the
+        // ordinary fast path and touches nothing at all.
+        [RUN_PATH]: saw('/plugin', REF),
       },
     });
 
@@ -1141,6 +1166,9 @@ describe('hook mode when a step fails', () => {
     expect(run.messages).toHaveLength(1);
     expect(run.messages[0]).toContain(step);
     expect(run.messages[0]).toContain(join(HOME, LOG_FOLDER, BOOTSTRAP_LOG_FILE));
+    // It reaches the model and not the screen (Decision 2026-10-18), so it
+    // asks for the one thing that gets it to the person.
+    expect(run.messages[0]).toContain('사용자에게 한 줄로');
     expect(run.locked()).toBe(false);
   });
 
@@ -1235,8 +1263,6 @@ describe('childStdio', () => {
  * `plugin_root` names a folder nothing calls any more (2.5 human check 1).
  */
 describe('the plugin record', () => {
-  const RUN_PATH = join(HOME, RUN_FOLDER, PLUGIN_RUN_FILE);
-
   /** The time the harness's clock is stopped at, as the record spells it. */
   const NOW = '2023-11-14T22:13:20.000Z';
 
@@ -1253,19 +1279,9 @@ describe('the plugin record', () => {
     return JSON.parse(text ?? '') as Written;
   }
 
-  /** The record a session with this folder and this ref would have left. */
-  function seen(root: string, ref: string, last?: Written['last_bootstrap']): string {
-    return JSON.stringify({
-      plugin_root: root,
-      app_ref: ref,
-      seen_at: '2026-10-17T00:00:00.000Z',
-      ...(last === undefined ? {} : { last_bootstrap: last }),
-    });
-  }
-
   it('names the plugin folder and its ref even when nothing is installed', async () => {
     // The row this record exists for: a new plugin folder, an older install,
-    // and `[update] auto` off, so the session does nothing at all.
+    // and `[update] auto` off, so the session installs nothing.
     const run = harness({
       exists: true,
       files: {
@@ -1277,26 +1293,47 @@ describe('the plugin record', () => {
     const code = await main([...HOOK_ARGS], ENV, run.deps);
 
     expect(code).toBe(0);
-    expect(run.calls).toEqual([]);
     expect(run.messages).toEqual([]);
     expect(written(run)).toEqual({ plugin_root: '/plugin', app_ref: REF, seen_at: NOW });
+    // One fetch and nothing else: `doctor run` asks this clone which of the
+    // two commits is the ancestor, and the plugin's one was pushed after the
+    // last install. Nothing is checked out and HEAD does not move.
+    expect(run.calls).toEqual([git('fetch', 'origin')]);
   });
 
-  it('writes nothing at all when the folder and the ref are the ones on disk', async () => {
+  it('asks git nothing when the folder and the ref are the ones on disk', async () => {
     const run = harness({
       exists: true,
       files: {
         [INSTALLED_PATH]: record(OTHER),
         [CONFIG_PATH]: '[update]\nauto = false\n',
-        [RUN_PATH]: seen('/plugin', REF),
+        [RUN_PATH]: saw('/plugin', REF),
       },
     });
 
     expect(await main([...HOOK_ARGS], ENV, run.deps)).toBe(0);
     // The fast path runs on almost every session: a record rewritten per
-    // session would make the cheapest path in the program a write.
+    // session would make the cheapest path in the program a write, and a fetch
+    // would make it a network call.
     expect(run.writes).toEqual([]);
-    expect(run.file(RUN_PATH)).toBe(seen('/plugin', REF));
+    expect(run.calls).toEqual([]);
+    expect(run.file(RUN_PATH)).toBe(saw('/plugin', REF));
+  });
+
+  it('goes on when the fetch it makes for doctor fails', async () => {
+    const run = harness({
+      exists: true,
+      files: {
+        [INSTALLED_PATH]: record(OTHER),
+        [CONFIG_PATH]: '[update]\nauto = false\n',
+      },
+      respond: respondWith({ [git('fetch', 'origin')]: { code: 1 } }),
+    });
+
+    expect(await main([...HOOK_ARGS], ENV, run.deps)).toBe(0);
+    expect(run.messages).toEqual([]);
+    expect(run.lines.join('\n')).toContain('실패했습니다');
+    expect(written(run).plugin_root).toBe('/plugin');
   });
 
   it('replaces a record that names another folder, keeping the last outcome', async () => {
@@ -1305,7 +1342,7 @@ describe('the plugin record', () => {
       exists: true,
       files: {
         [INSTALLED_PATH]: record(REF),
-        [RUN_PATH]: seen('/plugin/0.1.1', OTHER, last),
+        [RUN_PATH]: saw('/plugin/0.1.1', OTHER, last),
       },
     });
 
@@ -1342,7 +1379,7 @@ describe('the plugin record', () => {
   it('says so in the log when the record cannot be written, and installs anyway', async () => {
     const run = harness({
       exists: false,
-      brokenMove: true,
+      brokenMoves: 10,
       respond: atRef,
       installerWrites: { [INSTALLED_PATH]: record(REF) },
     });
@@ -1350,6 +1387,27 @@ describe('the plugin record', () => {
     expect(await main([...HOOK_ARGS], ENV, run.deps)).toBe(0);
     expect(run.file(RUN_PATH)).toBeUndefined();
     expect(run.lines.join('\n')).toContain('플러그인 기록을 쓸 수 없었습니다');
+  });
+
+  it('records the outcome against this session’s folder after a write that failed', async () => {
+    // The first write did not take, so the file still names the old folder.
+    // Writing the outcome onto that would put this session's result beside a
+    // folder it never came from.
+    const run = harness({
+      exists: false,
+      brokenMoves: 1,
+      respond: atRef,
+      files: { [RUN_PATH]: saw('/plugin/0.1.1', OTHER) },
+      installerWrites: { [INSTALLED_PATH]: record(REF) },
+    });
+
+    expect(await main([...HOOK_ARGS], ENV, run.deps)).toBe(0);
+    expect(written(run)).toMatchObject({
+      plugin_root: '/plugin',
+      app_ref: REF,
+      seen_at: NOW,
+      last_bootstrap: { result: 'installed' },
+    });
   });
 
   it('records the step a failed install stopped at, and where the reason is', async () => {
