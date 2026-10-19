@@ -1,0 +1,15 @@
+#!/bin/sh
+# Refuse a commit whose added lines carry this machine's home folder path.
+# The remote is public and the OS user name can be a real name.
+. "$(dirname "$0")/home-path-pattern.sh"
+
+found=$(git diff --cached --no-color --no-ext-diff -U0 \
+  | grep -E '^(\+\+\+ b/|\+)' \
+  | awk '/^\+\+\+ b\// { file = substr($0, 7); next } { print file ": " substr($0, 2) }' \
+  | grep -E -- "$home_path_pattern")
+
+if [ -n "$found" ]; then
+  echo "커밋 거부: 추가한 줄에 $home_path_hint" >&2
+  printf '%s\n' "$found" | cut -c1-200 >&2
+  exit 1
+fi

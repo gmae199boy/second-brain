@@ -506,6 +506,13 @@ tooling/dev/            dev-only scripts, for checks no test can make
 pnpm install && pnpm build
 ```
 
+복제한 뒤 한 번 커밋 훅을 켜세요. 추가한 줄이나 커밋 메시지에 이 기계의 홈 폴더
+절대 경로가 있으면 커밋을 거부합니다. 원격이 공개 저장소이기 때문입니다.
+
+```sh
+git config core.hooksPath .githooks
+```
+
 `pnpm`은 고정하지 않습니다. 루트 매니페스트는 `>=12`만 요구하므로, 당신이 가진
 최신 pnpm이 그대로 돕니다. `packageManager`로 고정하는 것은 실패를 앞으로
 당기기만 했습니다. 더 새 pnpm은 스스로 낮추기를 거부하고 어떤 일도 시작하기 전에
