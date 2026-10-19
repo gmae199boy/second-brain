@@ -547,17 +547,31 @@ git config core.hooksPath .githooks
 
 `packages/postgres`는 에픽 7의 복제 대상이고, 그 테스트는 목이 아니라 실제
 데이터베이스를 씁니다. 다른 것은 필요 없습니다. CLI와 `packages/sqlite`는 임시
-폴더의 파일을 상대로 돕니다. 테스트 전용 컨테이너를 띄우고
-`BRAIN_TEST_DATABASE_URL`을 그것으로 가리키세요.
+폴더의 파일을 상대로 돕니다.
+
+Docker만 켜 두면 준비할 것은 없습니다.
 
 ```sh
-docker compose -f compose.test.yaml up -d --wait
-export BRAIN_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:54329/postgres
 pnpm test
-docker compose -f compose.test.yaml down
 ```
 
+Postgres 테스트가 돌기 직전에 `pnpm test`가 한 번 확인합니다. 테스트 DB가 없으면
+`compose.test.yaml`로 띄우고 `BRAIN_TEST_DATABASE_URL`을 채우고, 끝나면 자기가
+띄운 컨테이너만 내립니다. 손으로 띄워 둔 컨테이너는 쓰기만 하고 그대로 둡니다.
 컨테이너는 볼륨을 두지 않으므로, 멈추면 데이터는 사라집니다.
+
+이미 있는 Postgres로 돌리려면 `BRAIN_TEST_DATABASE_URL`을 그것으로 가리키세요.
+변수가 있으면 Docker는 부르지 않습니다. pgvector가 있어야 합니다.
+
+```sh
+export BRAIN_TEST_DATABASE_URL=postgres://<user>:<password>@<host>:<port>/<database>
+pnpm test
+```
+
+Docker도 없고 변수도 없으면, 테스트를 하나도 돌리지 않고 이 둘 중 하나를 하라는
+안내 한 번으로 멈춥니다. Postgres 테스트를 건너뛰거나 목으로 바꾸는 길은
+없습니다. Postgres를 고르지 않은 실행(`vitest run --project sqlite` 등)은 Docker를
+부르지 않습니다.
 
 ## 설치 상태 확인
 

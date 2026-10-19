@@ -1,5 +1,20 @@
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
+import { DEFAULT_TEST_DATABASE_URL, TEST_DATABASE_URL_ENV } from './global-setup.js';
+
+// The package boundary is this one entry point (`exports: "."`), so the
+// preparation step is re-exported here rather than imported by its path.
+export {
+  COMPOSE_FILE,
+  DEFAULT_TEST_DATABASE_URL,
+  TEST_DATABASE_URL_ENV,
+  prepareTestDatabase,
+  default as setupTestDatabase,
+  type CommandResult,
+  type CommandRunner,
+  type PrepareOptions,
+  type Teardown,
+} from './global-setup.js';
 
 /**
  * Dev-only helper shared by the integration tests of `@second-brain/postgres`
@@ -27,14 +42,18 @@ export interface TestDatabase {
   drop(): Promise<void>;
 }
 
+// Only a run that went around the `globalSetup` of `packages/postgres` gets
+// this far unprepared — `pnpm test` sets the variable itself. It is left in
+// place for that run, which otherwise has nothing to go on.
 const MISSING_URL = [
-  'BRAIN_TEST_DATABASE_URL is not set, so the Postgres integration tests cannot run.',
+  `${TEST_DATABASE_URL_ENV} is not set, so the Postgres integration tests cannot run.`,
   'These tests use a real database on purpose and are never mocked or skipped.',
   '',
-  'Start the test database and point the variable at it:',
+  'Run them through `pnpm test`, which starts the test database itself,',
+  'or start it and point the variable at it by hand:',
   '',
-  '  docker compose -f compose.test.yaml up -d',
-  '  export BRAIN_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:54329/postgres',
+  '  docker compose -f compose.test.yaml up -d --wait',
+  `  export ${TEST_DATABASE_URL_ENV}=${DEFAULT_TEST_DATABASE_URL}`,
   '',
   'Stop it again when you are done (it keeps no volume, so the data is discarded):',
   '',
@@ -46,7 +65,7 @@ const MISSING_URL = [
  * command that starts the database. Reading happens here, never at import time.
  */
 export function requireAdminDatabaseUrl(): string {
-  const url = process.env.BRAIN_TEST_DATABASE_URL?.trim();
+  const url = process.env[TEST_DATABASE_URL_ENV]?.trim();
   if (url === undefined || url === '') {
     throw new Error(MISSING_URL);
   }
