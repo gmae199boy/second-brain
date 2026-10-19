@@ -118,6 +118,7 @@ after = [6, 8]
 hitl = false
 risk = "high"
 references = ["_bmad-output/personal-brain/inputs/weknora-patterns.md, §1.1 (A2~A6)"]
+notes = ["2026-10-19 마스킹 B(change-masking-b-and-review-fixes): 수집 경로의 가리기와 수집 중 `redactions` 쓰기는 17이 뺀다. 패턴 목록과 `maskSecrets`는 출력 함수로 남는다."]
 
 [[entry]]
 id = 10
@@ -157,16 +158,63 @@ references = ["_bmad-output/personal-brain/epic-capture/epic-capture-research.md
 notes = ["내역 관리를 하면 안되나? 설치 했을 때 한 번 하고 너가 말한대로 데몬이 꺼져있었거나 했던 것들을 내역으로 관리해서?"]
 
 [[entry]]
+id = 19
+type = "story"
+title = "parser v3: peer handback 보고"
+description = "Claude Code parser가 user 항목 중 `origin.kind === 'peer'`이고 `origin.handback === true`인 것을 서브에이전트 최종 보고로 받게 한다(본문은 `origin.handbackReportText`(trim), `isSubagentReport: true`, role `assistant`, model null; 그 밖의 peer 항목은 지금처럼 뺀다). `CLAUDE_CODE_PARSER_VERSION`을 '3'으로 올려, 버전이 다르면 처음부터 다시 읽는 규칙(7)으로 빠졌던 보고가 더해지게 하고, 실제 transcript의 키·모양을 따르되 문장은 직접 쓴 중립 fixture를 더하며, 이 스토리의 리뷰는 7 전체를 다시 보는 follow-up 리뷰로 한다(deferred-work 2026-10-18 항목, 2026-10-19 change-masking-b-and-review-fixes D10)."
+verify = "peer handback이 든 fixture에서 보고가 표시와 함께 메시지로 들어가고 다른 peer 항목은 들어가지 않으며, 버전 2로 수집한 세션을 다시 넣으면 빠진 보고만 더해지고 기존 메시지의 seq·본문이 그대로이며, 이 Mac transcript의 구조만 센 보고 누락 비율(수정 전 약 58%)을 plan에 남긴다."
+covers = ["E2-4"]
+after = [7, 12]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/epic-capture/story-transcript-parser-plan.md, Decision '애매한 user 항목은 빼는 쪽'", "_bmad-output/personal-brain/change-masking-b-and-review-fixes/change-masking-b-and-review-fixes.md, §3 D10"]
+
+[[entry]]
+id = 17
+type = "story"
+title = "마스킹 B: 나갈 때 가리기로 바꾸기"
+description = "9가 수집 경로에 넣은 가리기(`sessions.ingest` use case의 `maskSecrets` 호출, `IngestMessage.redactions`, Store가 수집 중 쓰는 `redactions` 행, `IngestCounts.redactions`)를 빼서 메시지 본문과 도구 메모 대상을 원문 그대로 저장하고, `maskSecrets`를 Core의 출력 가리기 함수로 남겨 Core의 출력 코덱(엔벨로프 코덱의 `data`·`error`·`warnings`·`meta` 문자열, hook 출력 코덱)이 그것을 부르게 하며(도구 메모를 돌려주는 읽기 결과는 그 칸에만 `tool_target` 규칙(셸 `NAME=value`)을 먼저 걸고, 코덱은 모든 문자열에 본문 규칙을 건다; 가린 표시는 다시 잡히지 않아 두 번 걸려도 같다 — 2026-10-19 사용자), 출력 코덱 등록부와 계약 테스트(비밀 fixture를 수집한 뒤 등록된 모든 코덱의 출력에 값이 없고 저장본에는 있음; 등록하지 않은 코덱이 있으면 실패; 미러·내보내기·복제·임베딩 코덱은 그것을 만드는 에픽이 등록)를 두고, 9가 미룬 패턴 문제 셋(영어 키워드 값이 평범한 코드·문장까지 가림, 한국어 '비밀번호 X'·'비밀번호가 X'를 놓침, 값이 `!` 같은 구두점에서 끊겨 뒤가 남음)을 고쳐 `SECRET_PATTERN_VERSION`을 '2'로 올린다(놓침은 넓히는 쪽, 과잉 가림은 값 모양 규칙으로; 세부는 plan, 2026-10-19 change-masking-b-and-review-fixes D1·D4)."
+verify = "비밀 fixture를 수집하면 `messages.body`·`tool_notes.target`이 transcript와 글자 단위로 같고 수집이 `redactions`에 행을 쓰지 않으며, 그 세션의 저장본을 엔벨로프 코덱과 hook 출력 코덱에 통과시킨 결과(코덱 계약 테스트)에 비밀값이 없고, 등록하지 않은 출력 코덱이 있으면 테스트가 실패하며, `let token = parse(input);`·`secret: see the README`·`{\"token\": 123}`과 본문의 `NODE_ENV=production`은 그대로 나오고 도구 메모 대상의 `API_KEY=xyz123`은 값이 가려지고 `비밀번호 Tiger2024`·`비밀번호가 Tiger2024`·`password: Pa!ss2024`는 값 전체가 가려진다."
+covers = ["E2-8"]
+after = [9, 12, 19]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/epic-capture/story-untitled-9-plan.md, Review Triage Log, frontmatter deferred", "_bmad-output/personal-brain/change-masking-b-and-review-fixes/change-masking-b-and-review-fixes.md, §3 D1·D4"]
+
+[[entry]]
+id = 18
+type = "story"
+title = "마이그레이션 0005: 도구 메모 가리기 기록·실패 단계 강제·프로젝트 비교 키"
+description = "SQLite 다섯 번째 마이그레이션으로 `redactions`에 `tool_note_id`(→ `tool_notes.id`)를 더하고 대상을 `message_id`·`file_id`·`tool_note_id` 중 하나만으로 하며(도구 메모 가리기의 위치는 그 대상 위의 구간; 0004와 같은 재생성, 불변 trigger 유지), `document_extractions`에 `failed`가 되는 insert·update는 `failed_stage`가 있어야 한다는 trigger를 두고(이미 `failed`인 0004 이전 행은 건드리지 않음), `projects`에 비교 키 `identity_key`(not null, UNIQUE; 기존 행은 `github.com/`·`bitbucket.org/`로 시작하면 소문자, 그 밖은 그대로 채움; `remote_identity`는 표시용으로 남음)를 더하고, 대소문자만 다른 이름은 같은 프로젝트이므로 0005 전에 setup이 비교 키가 겹치는 기존 프로젝트 묶음을 찾아 이미 있다고 보이고(묶음마다 `remote_identity`·세션 수), 합칠지 묻는다(SDK 확인 게이트; TTY는 묻고, 비대화형은 `--yes` 없으면 exit 3 `CONFIRMATION_REQUIRED`). 동의하면 묶음마다 먼저 만든 프로젝트(id가 가장 작은 UUIDv7) 하나로 합쳐 `worktrees`(같은 경로면 워크트리도 하나로)·`sessions`·`log_entries.apply_project_id`를 그쪽으로 옮기고 나머지 행을 지운 뒤 0005를 적용하며, 거절하면 아무것도 바꾸지 않고 DB를 버전 4로 둔 채 `SETUP_CANCELLED`로 끝낸다(2026-10-19 사용자), `SQLITE_SCHEMA_VERSION`을 5로 올린다; 동작은 13(도구 메모 가리기)·20(비교 키)과 epic-attachments(추출 실패)가 만든다."
+verify = "버전 4 DB가 데이터를 보존한 채 5가 되고, 대상이 둘이거나 없는 `redactions` 행과 위치가 없는 `tool_note_id` 행과 `failed_stage` 없이 `failed`가 되는 추출 세대와 비교 키가 같은 두 프로젝트가 거부되며, 대소문자만 다른 두 프로젝트가 있는 DB에서 `setup run`이 그 묶음을 보이고 묻고, 동의하면 한 프로젝트로 합쳐져 세션·워크트리 건수가 보존되고, 거절하면 DB가 바뀌지 않고 버전 4로 남으며, 0004 이전의 `failed` 행은 그대로 읽히고, 마이그레이션 재실행이 `applied=[]`이다."
+covers = ["E2-10"]
+after = [6, 17]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/epic-capture/story-0004-plan.md, Decision 3", "_bmad-output/personal-brain/change-masking-b-and-review-fixes/change-masking-b-and-review-fixes.md, §3 D5·D7·D9"]
+
+[[entry]]
+id = 20
+type = "story"
+title = "정체성 보강: 대소문자 비교 키와 비어 있는 꼬리표 다시 채우기"
+description = "Core 정규화에 비교 키 함수를 더하고(대소문자를 구분하지 않는 호스트 목록은 Core 상수, 처음은 `github.com`·`bitbucket.org`; 그 호스트면 정체성을 소문자로 접고, 그 밖의 호스트와 로컬 공통 디렉터리 정체성은 그대로) Store가 프로젝트를 18의 `identity_key`로 찾거나 만들게 하며(표시는 처음 본 `remote_identity`), `RepositoryInspector.inspect`의 결과를 checkout·레포 아님·모름(git 없음, 시간 초과, 권한, 비정상 출력) 셋으로 나눠 모름이면 꼬리표 없이 수집하고 그 세션의 `session_identity` 일감을 남긴다; drain은 그 일감에서 12의 세션 토큰 수집 경로로 transcript 첫 메시지 cwd를 다시 읽어 묻고, 성공하면 비어 있던 꼬리표를 한 번 채우며(null → 값만, 이미 있으면 그대로; 레포 아님이면 일감을 닫음), 끝내 실패하면 11의 실패 기록 함수로 `failures`에 남겨 doctor가 보인다."
+verify = "`github.com/Owner/Repo`와 `github.com/owner/repo` remote의 두 세션이 한 프로젝트이고 목록에 없는 호스트의 대소문자만 다른 두 remote는 두 프로젝트이며, git을 찾을 수 없게 한 채 연 세션은 꼬리표 없이 수집되고 git을 되돌린 뒤 drain이 꼬리표를 채우며, 레포 밖 세션에는 일감이 남지 않고, 꼬리표가 있는 세션은 drain이 바꾸지 않는다."
+covers = ["E2-6"]
+after = [8, 11, 12, 18]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/epic-capture/story-untitled-8-plan.md, Decision 'git 조회가 실패하면', 'host 이름은 소문자'", "_bmad-output/personal-brain/change-masking-b-and-review-fixes/change-masking-b-and-review-fixes.md, §3 D7·D8"]
+
+[[entry]]
 id = 13
 type = "story"
 title = "messages redact 연쇄"
-description = "`brain messages redact`(SDK 확인 게이트, 메타 `risk: destructive`)가 한 쓰기 트랜잭션에서 본문 일부나 전체와 그 메시지의 도구 메모 대상을 `[REDACTED:<kind>]`로 바꾸고, `redactions`에 위치·종류·지운 내용의 해시를 남기고, 그 메시지가 걸린 조각과 FTS 행을 지우며, 하나라도 못 하면 롤백해 실패로 답한다(spool 금지; 조각·미러 재생성 일감은 epic 4, 내보내기는 epic 5, `ATTACHMENT_NOT_REDACTED`는 epic-attachments)."
-verify = "가린 문자열이 DB 어디에도(본문, 도구 메모, chunks와 FTS, redactions) 남지 않고, redact 직후 같은 연결의 일반 UPDATE가 거부되며 롤백 뒤 표시가 남지 않고, 비TTY에서 `--yes` 없이 부르면 exit 3과 `error.retry`·`retry_argv`가 온다."
+description = "`brain messages redact`(SDK 확인 게이트, 메타 `risk: destructive`)는 저장본에서 지우는 사람의 가리기다(나갈 때의 가리기는 17). 입력은 메시지와 지울 글자 그대로(종류는 사람이 주거나 `manual`), 또는 `detected`(그 메시지에서 지금 패턴이 찾는 구간 전부, `pattern_version` 기록)이고, 한 쓰기 트랜잭션에서 본문 일부나 전체와 그 메시지의 도구 메모 대상을 `[REDACTED:<kind>]`로 바꾸고, `redactions`에 위치·종류·지운 내용의 해시를 남기고(도구 메모 대상은 18의 `tool_note_id`, 위치는 그 대상 위), 그 메시지가 걸린 조각과 FTS 행을 지우며, 하나라도 못 하면 롤백해 실패로 답한다(spool 금지; 조각·미러 재생성 일감은 epic 4, 내보내기는 epic 5, `ATTACHMENT_NOT_REDACTED`는 epic-attachments)."
+verify = "가린 문자열이 DB 어디에도(본문, 도구 메모, chunks와 FTS, redactions) 남지 않고, redact 직후 같은 연결의 일반 UPDATE가 거부되며 롤백 뒤 표시가 남지 않고, 비TTY에서 `--yes` 없이 부르면 exit 3과 `error.retry`·`retry_argv`가 오며, `detected`로 가린 메시지의 저장 본문에 패턴이 찾던 값이 없고, 도구 메모 대상 가리기가 `tool_note_id` 행으로 남는다."
 covers = ["E2-8"]
-after = [1, 9, 12]
+after = [1, 12, 17, 18, 20]
 hitl = false
 risk = "high"
-unknown = "마스킹 B와 결정 검토 수정(`_bmad-output/personal-brain/inputs/masking-b-and-review-fixes.md`)의 correct-course가 승인되기 전에는 시작하지 않는다."
 
 [[entry]]
 id = 14
@@ -175,10 +223,9 @@ title = "플러그인 수집 hook 개통"
 description = "플러그인 hooks에 Stop·SessionEnd 수집과 SessionStart 비동기 drain을 더하고(모두 5의 런처를 거쳐 `|| exit 0`, SessionEnd는 최선 노력), hook으로 온 수집이 `<home>/run/`에 Harness별 마지막 수신 시각(파일 mtime)을 남기게 하며, claude-code connector를 등록해 `setup connect claude-code`가 `installed.json.plugin_root`로 플러그인을 확인하고(`PLUGIN_NOT_INSTALLED`는 경고) 설치기가 예전에 쓴 Brain 표식 hook을 지우며 shim은 doctor의 `inspectShim`으로 검사하게 하고(F8), doctor에 마지막 hook 수신 시각과 `PLUGIN_DUPLICATE`를 더한 뒤, 사람이 이 기계에서 실제 수집을 켠다."
 verify = "플러그인을 켠 실제 세션이 hook 하나로 수집되고 설치기 hook과 플러그인 hook이 함께 있지 않으며, 시작 hook만 돈 세션에는 행이 없고 첫 설치 세션은 설치가 끝난 뒤 drain이 줍고, doctor가 마지막 hook 수신 시각과 `installed.json`·`app-ref`·빌드 신원의 관계를 보인다."
 covers = ["E2-3", "E2-4"]
-after = [5, 8, 9, 12, 13, "1.7"]
+after = [5, 8, 12, 13, 19, 20, "1.7"]
 hitl = true
 risk = "high"
-unknown = "마스킹 B와 결정 검토 수정(`_bmad-output/personal-brain/inputs/masking-b-and-review-fixes.md`)의 correct-course가 승인되기 전에는 시작하지 않는다."
 references = ["_bmad-output/personal-brain/epic-capture/epic-capture-research.md, §1, §2"]
 
 [[entry]]
@@ -187,8 +234,8 @@ type = "story"
 title = "Refactor sweep"
 description = "에픽 동안 미룬 정리만 한다; 범위는 시작할 때 각 플랜과 미룬 리뷰 지적, 회고 Action 9(second_brain의 postgres 재export가 hook 경로에 주는 지연, 중복 헬퍼, 임시 home 테스트 헬퍼)와 F12 테스트 공백에서 정한다."
 verify = "전체 테스트와 패키지 의존 경계 검사가 통과하고, hook 경로(`sessions ingest`)의 시작 지연을 재서 플랜에 남기며, 에픽 Done when 1~8을 다시 돌려 모두 통과한다."
-covers = ["E2-1", "E2-2", "E2-3", "E2-4", "E2-5", "E2-6", "E2-7", "E2-8", "E2-9"]
-after = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16]
+covers = ["E2-1", "E2-2", "E2-3", "E2-4", "E2-5", "E2-6", "E2-7", "E2-8", "E2-9", "E2-10"]
+after = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20]
 hitl = false
 risk = "low"
 references = ["_bmad-output/personal-brain/epic-foundation-and-install/epic-foundation-and-install-retrospective.md, Action items 9, F12"]

@@ -60,3 +60,4 @@ AD-11·23·24·25. 사용자의 외부 파일은 옮기거나 지우지 않는�
 - Note(2026-10-16, `../change-users-and-review-gaps/`, 인셉션 입력): D5 가리기 이전의 DB 스냅샷은 새 스냅샷이 검증된 뒤 지운다(spine AD-11). Drive 기록 복제 파일의 다시 쓰기는 epic-replicas 몫이다.
 - Note(2026-10-16, 인셉션 입력): Drive API 오류에 분류 코드를 붙인다. 429·5xx·네트워크는 일시 오류이고 `Retry-After`를 따른다. 403·404·삭제됨은 영구 오류다(spine AD-21 재시도 분류).
 - Note(2026-10-16): Drive 일감 실패의 다시 하기는 `failures retry`에 대상 종류를 더해서 한다(2.12가 명령을 만든다, spine AD-5).
+- Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. Drive로 올리는 DB 스냅샷도 나가는 길이다. 가린 사본을 만들어 올리고, 그것으로 되살린 Brain의 비밀은 가린 채 돌아온다(D6). 첨부 원본 바이트는 가리지 않는다(`files.redact`가 그 길).

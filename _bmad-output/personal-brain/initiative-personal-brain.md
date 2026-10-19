@@ -80,3 +80,4 @@ spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡
   - spec·PRD·spine 문구는 2026-10-16에 맞췄다.
   - (사용자)
 - Decision(2026-10-16, `change-users-and-review-gaps/`): 사용자 정체성은 `users` 테이블이다('나' 한 행, `setup run`이 만듦, `sessions.user_id` FK, UUIDv7 유지, 정체성은 DB와 함께 옮겨짐). 외부 리뷰(`inputs/external-review-2026-10-16.md`)의 빈틈을 D1~D8로 보강했다: 브랜치는 메시지 칸, epic 7·8은 9 뒤, 데몬 판단은 살아 있는 소켓과 `daemon start`, 데몬은 자기가 낡았을 때만 종료, 가리기는 복제 대상에도 전파, 규칙이 hook 상한을 넘으면 생략 줄과 doctor `fail`, 첫 요청 문장은 꺼내 씀, spool 레코드는 회수하고 10번 실패하면 보존(사용자).
+- Decision(2026-10-19, `change-masking-b-and-review-fixes/`): 비밀은 저장할 때가 아니라 나갈 때 가린다(마스킹 B, 2026-10-18 사용자). Core 출력 코덱이 가리고, 색인은 원문 위다. 내보내기와 Drive 스냅샷도 가린다. 결정 검토 수정 넷(parser peer handback, 프로젝트 비교 키와 꼬리표 다시 채우기, `failed_stage` 강제, 도구 메모 가리기 기록)과 함께 epic 2에 스토리 17~20을 더했다(사용자).

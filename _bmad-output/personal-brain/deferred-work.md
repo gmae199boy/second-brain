@@ -70,10 +70,15 @@
 | 설치기가 모르는 키를 지움 | epic 2 story 4 |
 | `checkSchema`의 `setup upgrade` 문구 | 해결됨(1.9) |
 | 쓰기 가드의 `DB_UNAVAILABLE` exit 1 vs 표 2 (2.1) | epic 2 story 10(쓰기 가드를 spool로 바꿀 때 함께 정한다, 2026-10-16) |
-| Postgres가 0004만큼 더 갈라짐(`messages.git_branch`·`is_subagent_report`와 불변 trigger, `files.source_unreachable_at`, `document_chunks.chunk_locator`와 trigger, `redactions` 재생성·불변 trigger, `document_extractions`의 `attempt`·`failed_stage`·`index_config_id`·키, `failures` 대상 키, `work_items_due_idx`) | epic 7(2.6 리뷰, 2026-10-18) |
-| Core `Failure` 타입이 0004에서 없어진 `harness_session_id`를 키로 적음(`packages/core/src/domain/failure.ts`). `Redaction`·`Message`도 새 칸이 없음 | `Failure`: epic 2 story 11(실패 기록 함수가 타입을 대상 키로 바꿈). `Redaction`: `patternVersion`만 해결됨(2.9). 아직 `messageId: string`·non-null `start`/`end`라 0004의 파일 가리기(`file_id`, 위치 없음)를 표현하지 못한다 — `fileId` 추가와 `messageId`·`start`·`end` nullable화는 `files.redact`를 만드는 epic-attachments. `Message`: story 7(2.6 Decision, 2026-10-18) |
-| 도구 메모 대상을 가린 기록 자리가 없음 | epic-attachments 또는 epic 7과 함께(다음 마이그레이션). 0004의 `redactions` 행은 대상이 `message_id`·`file_id` 둘뿐이고 위치는 **본문** 위의 구간이라, 가려진 `tool_notes.target`을 가리킬 칸이 없다. 2.9는 대상의 값을 가리되 기록은 남기지 않는다(Decision 2026-10-18). 넣으려면 0005에 `redactions.tool_note_id`를 더하고 위치를 그 대상 위의 구간으로 정의해야 한다 |
-| `messages redact`(2.13)가 같은 문제를 만난다 | epic 2 story 13. AD-11은 `messages.redact`가 `tool_notes.target`도 함께 가린다고 정하는데, 그 가리기 역시 남길 행이 없다. 위 항목과 한 번에 결정한다(2.9, 2026-10-18) |
+| Postgres가 0004만큼 더 갈라짐(`messages.git_branch`·`is_subagent_report`와 불변 trigger, `files.source_unreachable_at`, `document_chunks.chunk_locator`와 trigger, `redactions` 재생성·불변 trigger, `document_extractions`의 `attempt`·`failed_stage`·`index_config_id`·키, `failures` 대상 키, `work_items_due_idx`) | epic 7(2.6 리뷰, 2026-10-18). 0005(`redactions.tool_note_id`, `failed_stage` trigger, `projects.identity_key`)도 epic 7(2026-10-19) |
+| Core `Failure` 타입이 0004에서 없어진 `harness_session_id`를 키로 적음(`packages/core/src/domain/failure.ts`). `Redaction`·`Message`도 새 칸이 없음 | `Failure`: epic 2 story 11(실패 기록 함수가 타입을 대상 키로 바꿈). `Redaction`: `patternVersion`만 해결됨(2.9). 아직 `messageId: string`·non-null `start`/`end`라 0004의 파일 가리기(`file_id`, 위치 없음)를 표현하지 못한다 — `fileId` 추가와 `messageId`·`start`·`end` nullable화는 `files.redact`를 만드는 epic-attachments. `toolNoteId`는 story 13(18의 칸을 처음 쓸 때, 2026-10-19). `Message`: story 7(2.6 Decision, 2026-10-18) |
+| 도구 메모 대상을 가린 기록 자리가 없음 | 2026-10-19: 마스킹 B로 수집은 도구 메모 대상을 가리지 않는다(원문 저장). 기록이 필요한 것은 2.13의 저장본 가리기뿐이고, 0005(story 18)의 `redactions.tool_note_id`가 맡는다. (이전 처분: epic-attachments 또는 epic 7과 함께(다음 마이그레이션). 0004의 `redactions` 행은 대상이 `message_id`·`file_id` 둘뿐이고 위치는 **본문** 위의 구간이라, 가려진 `tool_notes.target`을 가리킬 칸이 없다. 2.9는 대상의 값을 가리되 기록은 남기지 않는다(Decision 2026-10-18). 넣으려면 0005에 `redactions.tool_note_id`를 더하고 위치를 그 대상 위의 구간으로 정의해야 한다) |
+| `messages redact`(2.13)가 같은 문제를 만난다 | 2026-10-19: story 18(자리)과 story 13(쓰기). 이전 처분: epic 2 story 13. AD-11은 `messages.redact`가 `tool_notes.target`도 함께 가린다고 정하는데, 그 가리기 역시 남길 행이 없다. 위 항목과 한 번에 결정한다(2.9, 2026-10-18) |
+| 2.9 deferred: 영어 키워드 과잉 가림, 한국어 표현 놓침 (`story-untitled-9-plan.md` frontmatter) | epic 2 story 17(마스킹 B에서 패턴 버전 2로, 값 끊김 포함, 2026-10-19) |
+| auto-build 커밋을 이력에서 빼기 (2026-10-18) | push 전, 사용자(티켓 밖). 끝나면 `app-ref`·`version`·`baseline_revision`·커밋 번호를 다시 맞춘다 |
+| 무인 루프 v2가 커밋을 기다리지 않음 (2026-10-18) | 저장소 밖 도구. 2.10~를 무인으로 돌리기 전에 고친다 |
+| 2.7 follow-up 리뷰 (2026-10-18) | epic 2 story 19의 리뷰로 한다(change-masking-b-and-review-fixes D10) |
+| 백업 브랜치 `backup/pre-path-rewrite-2026-10-18` | push 전에 지운다(사용자) |
 - source_plan: none
   summary: 옛 무인 루프 스크립트(`tooling/dev/auto-build.sh`)를 넣은 커밋(`10a09d2`)을 지우는 커밋이 아니라 그 커밋을 빼고 다시 쌓는 방식으로 이력에서 뺀다(`git rebase --onto 10a09d2^ 10a09d2 main`, 시작 전 백업 브랜치).
   evidence: 2026-10-18 사용자 결정. 그 뒤 해시가 다시 바뀌므로 `plugin/app-ref`(AGENTS.md 규칙대로 version도 함께), plan의 `baseline_revision`, 문서의 커밋 번호를 다시 맞춘다. 원격에는 첫 커밋뿐이라 push 전에 해야 한다. dev-workflow 저장소에서는 같은 일을 이미 끝냈다.

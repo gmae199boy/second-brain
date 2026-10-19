@@ -57,3 +57,4 @@ AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, contex
 - Note(2026-10-16, `../change-users-and-review-gaps/`, 인셉션 입력, 원문은 `../inputs/external-review-2026-10-16.md`):
   - D6: 시작 맥락은 고정 머리말(세션 토큰 포함) → 규칙 → 최근 로그 → 안내 요약 순서로 채운다. 규칙만으로 hook 상한(10,000자)을 넘으면 현재 프로젝트 규칙 → 어디서나 규칙, 각각 최신 순으로 넣고 "규칙 N개 생략" 한 줄과 doctor `fail`(spine AD-17, PRD FR-17).
   - S2: 대조 대기(`pending`) 규칙이 출처 메시지를 지정받았다면 그것을 기록할 자리를 정한다.
+- Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 시작 맥락은 hook 출력 코덱이 가린다(spine AD-11). 작업 로그·규칙 문장은 원문으로 저장한다. 규칙 인용 대조는 저장된 원문과 하므로, 에이전트가 가린 출력에서 인용해 `[REDACTED:…]`가 든 인용은 대조가 실패한다. 양쪽을 가린 뒤 비교할지 인셉션에서 정한다.

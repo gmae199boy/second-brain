@@ -58,3 +58,4 @@ AD-5·6·7·9·18·20·21·25·26·27·28. Core는 그대로다(FR-23: Core는 �
   - D3: "데몬이 켜져 있다"는 살아 있는 소켓(handshake 응답)으로 판단한다. 설정 `[daemon] enabled`가 기준이 아니다. `daemon start`가 데몬 Label을 다시 올린다(spine AD-5·7·25·27).
   - D4: handshake 버전이 다르면 데몬은 `VERSION_MISMATCH`로 답하고, 자기 빌드가 `installed.json`의 `commit`과 다를 때만 종료한다(spine AD-26).
 - Note(2026-10-16, 사용자): 자동 업데이트는 `[update] auto`(기본 true)를 따른다. true면 데몬이 `app-ref`가 앞선 것을 보고 설치 잠금 안에서 스스로 업그레이드하고 종료해 KeepAlive가 새 빌드로 띄운다(spine AD-27). false면 doctor `UPDATE_AVAILABLE`과 CLI 직접 갱신이다. D4(낡은 데몬만 종료)는 손으로 빌드한 경우 등을 막는 보조로 남는다.
+- Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 소켓·MCP 응답은 같은 엔벨로프 코덱을 쓰므로 따로 가리지 않는다(spine AD-11).

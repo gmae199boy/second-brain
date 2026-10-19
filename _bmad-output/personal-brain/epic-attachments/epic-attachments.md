@@ -18,7 +18,7 @@ risk: medium
 - `FileStore` port와 계약 테스트(`brain` 소유이면서 루트 안인 위치만 쓰고 지움), 로컬 구현(내용 주소 locator, 임시 파일 → rename, 0700/0600).
 - parser의 첨부 자리·출처(붙여 넣은 이미지, @파일 `attachment` 항목)와 수집의 첨부 저장·메시지 연결(같은 내용은 한 번, 사용자 원본은 `external` 위치). epic-capture만으로 수집된 세션의 첨부 채우기(디스크에 남은 transcript 다시 읽기). `file_names` 채우기.
 - 고아 블롭 정리 일감.
-- 문서 텍스트 추출 일감: 형식은 내용으로 판정, `attempt`·`failed_stage`·포인터 가드, `chunk_locator` Core 코덱과 `page` 사본, 추출 텍스트의 저장 전 마스킹, 조각·FTS 배치 쓰기, `extractor_version`.
+- 문서 텍스트 추출 일감: 형식은 내용으로 판정, `attempt`·`failed_stage`·포인터 가드, `chunk_locator` Core 코덱과 `page` 사본, 추출 텍스트는 원문 저장·출력에서 가림(마스킹 B, 2026-10-19), 조각·FTS 배치 쓰기, `extractor_version`.
 - 형식별 추출기(txt·md·PDF·docx, 이미지 EXIF와 촬영 일시 세 칸), `files reindex`.
 - `files redact` 연쇄(확인 게이트)와 `messages redact`의 `ATTACHMENT_NOT_REDACTED`.
 
@@ -67,3 +67,4 @@ AD-7·9·11·21·23·24, Table Contract(files, file_locations, message_attachmen
   - S12: pdf가 아니면 `page`는 null이다. Store 비교는 null까지 같아야 하고, TS에서 undefined와 null을 구분한다.
 - Note(2026-10-16, 인셉션 입력): 추출 오류에 분류 코드를 붙인다. 지원하지 않는 형식·손상·암호화 파일은 영구 오류(첫 실패에서 기록하고 닫음), 원본에 잠시 접근하지 못한 것은 일시 오류다(spine AD-21 재시도 분류).
 - Note(2026-10-16): 추출 실패의 다시 하기는 `failures retry`에 대상 종류 `file`을 더해서 한다(2.12가 명령을 만든다, spine AD-5).
+- Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 추출한 문서 텍스트는 원문으로 저장하고 나갈 때 가린다(spine AD-23). `failed`가 되는 추출 세대는 `failed_stage`가 있어야 하고 0005(epic-capture 18)의 trigger가 강제한다.

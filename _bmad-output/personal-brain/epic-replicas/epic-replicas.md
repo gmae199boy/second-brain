@@ -56,3 +56,4 @@ AD-10·11·22. 원본은 로컬 SQLite이고, 복제 대상의 읽기·검색은
 - Note(2026-10-16, `../change-users-and-review-gaps/`, 인셉션 입력): D5 가리기는 복제 대상에도 전파한다. Postgres는 같은 가리기 함수로 하고, `tool_notes` trigger deferred 항목과 함께 정한다. Drive의 기록 복제 파일은 평소 append-only이고, 가리기 때만 그 메시지가 든 파일을 다시 쓰고 옛 파일을 지운다. 끝날 때까지 doctor `warn`(spine AD-10·11·22).
 - Note(2026-10-16, 인셉션 입력): 복제 대상 오류에 분류 코드를 붙인다. Postgres 연결 실패·Drive 429·5xx는 일시 오류이고, 인증 거부·권한 없음은 영구 오류다. 복제 실패는 원본 쓰기를 막지 않는다(spine AD-10·21).
 - Note(2026-10-16): 복제 일감 실패의 다시 하기는 `failures retry`에 대상 종류를 더해서 한다(2.12가 명령을 만든다, spine AD-5).
+- Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 복제 payload는 출력 코덱이다. 가린 텍스트를 보내고 패턴 버전을 적으며, 버전이 오르면 D5(`../change-users-and-review-gaps/`)의 복제 가리기 일감과 같은 경로로 다시 가린다. `setup move-store`는 복제본이 아니라 원본에서 복사해 원문을 잃지 않는다. Postgres는 0005(`redactions.tool_note_id`, `failed_stage` trigger, `projects.identity_key`)만큼 더 갈라진다(deferred Triage).

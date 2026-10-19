@@ -7,13 +7,15 @@ paradigm: 'hexagonal (ports & adapters), 단명 CLI 런타임(데몬은 선택, 
 scope: 'slice 1 — 세션 수집, 작업 로그, 조회, 시작 맥락, 설치·운영. 개인용, 기계 한 대, 수집 경로는 Claude Code 하나(Harness 중립 구조). 설치·hook 진입점은 Claude Code 플러그인'
 status: final
 created: '2026-10-08'
-updated: '2026-10-16'
+updated: '2026-10-19'
 binds: [FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, FR-12, FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22, FR-23, FR-24, FR-25, FR-26, FR-27, FR-28, NFR-1, NFR-2, NFR-3, NFR-4, NFR-5, NFR-6, NFR-7, NFR-8, NFR-9]
 sources:
   - ../prd-brain-v1-slice-1/prd-brain-v1-slice-1.md
   - ../prd-brain-v1-slice-1/addendum.md
   - ../change-surface-plugin-daemon/change-surface-plugin-daemon.md
   - ../change-users-and-review-gaps/change-users-and-review-gaps.md
+  - ../change-masking-b-and-review-fixes/change-masking-b-and-review-fixes.md
+  - ../inputs/masking-b-and-review-fixes.md
   - ../inputs/weknora-patterns.md
   - ../inputs/external-review-2026-10-16.md
   - ./.memlog.md
@@ -195,16 +197,18 @@ sequenceDiagram
   - Store port의 모든 구현(sqlite, postgres)은 하나의 공통 계약 테스트를 통과한다.
   - Core와 런타임 경로는 설정이 준 경로 하나로만 원본에 접근한다. DB 파일 생성과 마이그레이션은 설치기·`setup`에만 있다(AD-19, AD-20).
 
-### AD-11 — 원문 불변, 그리고 유일한 예외인 가리기
+### AD-11 — 원문 불변, 나갈 때 가리기, 그리고 유일한 예외인 저장본 가리기
 
 - **Binds:** FR-1, FR-20, FR-21, FR-22, FR-26, NFR-1
-- **Prevents:** 코드 실수로 원문이 바뀌는 것, 비밀이 영구히 남는 것, 작업 로그의 현재 문장 위치가 단위마다 달라지는 것
+- **Prevents:** 코드 실수로 원문이 바뀌는 것, 비밀이 Brain 밖으로 나가는 것, 패턴의 과잉 가림이 저장된 원문을 되돌릴 수 없게 망가뜨리는 것, 나가는 길 하나가 가리기를 잊는 것, 작업 로그의 현재 문장 위치가 단위마다 달라지는 것
 - **Rule:**
-  - **저장 전 마스킹**: 수집은 알려진 비밀 패턴(API 키, 토큰, 개인 키, `password=` 류)을 `[REDACTED:<kind>]`로 바꾼 뒤 저장한다. 패턴 목록은 Core에 하나만 두고 버전을 가지며, 가린 기록은 그 버전을 적는다(`redactions.pattern_version`).
-  - `messages`와 `tool_notes`는 UPDATE·DELETE를 거부하는 DB trigger를 가진다. **유일한 예외는 `messages.redact`**다. 이 함수는 본문 일부나 전체를 `[REDACTED:<kind>]`로 바꾸고, 같은 트랜잭션에서 `redactions`에 위치·종류·지운 내용의 해시만 남긴다(지운 내용은 보존하지 않는다). trigger는 redact 표시가 있을 때만 통과시킨다. 표시는 Store adapter의 redact 함수 한 곳이 `try/finally`로 세우고 지운다(SQLite에서는 프로세스 변수를 읽는 SQL 함수다).
-  - 가리기는 **한 트랜잭션 안의 연쇄**다: 본문 치환 + `redactions` + 그 메시지가 걸린 `chunks`·FTS·`embeddings` 행 삭제 + 조각 재생성·미러 재생성 일감 + 복제 대상이 있으면 복제 가리기 일감(AD-21·22: Postgres는 같은 가리기 함수, Drive는 그 메시지가 든 파일을 가린 본문으로 다시 쓰고 옛 파일을 지움, 가리기 이전의 DB 스냅샷은 새 스냅샷이 검증된 뒤 지움)이다. 하나라도 못 하면 롤백하고 실패로 답한다(spool 금지). 복제 가리기 일감이 끝날 때까지 doctor는 `warn`이다(2026-10-16). 같은 경로로 `tool_notes.target`도 가린다(`messages.redact`가 메시지와 그 도구 메모를 함께 받는다).
-  - 계약 테스트: redact 직후 같은 연결의 일반 UPDATE 거부, 롤백 뒤 표시 없음, redact 뒤 조각·도구 메모·검색·미러·내보내기·복제 대상(복제 가리기 일감이 끝난 뒤) 어디에서도 지운 문자열이 나오지 않음.
-  - `redactions`의 위치 `[start, end)`는 그 가리기 직전 본문 위의 구간이다(저장 전 마스킹이면 마스킹 전 원문, story 1.3).
+  - **나갈 때 가리기**(마스킹 B, 2026-10-18 사용자): 수집은 본문과 도구 메모 대상을 Harness가 준 그대로 저장한다(추출한 문서 텍스트도 같다, AD-23). 알려진 비밀 패턴(API 키, 토큰, 개인 키, `password=` 류)은 Brain 밖으로 나갈 때 `[REDACTED:<kind>]`로 바뀐다. 패턴 목록과 가리기 함수는 Core에 하나만 두고 버전(`SECRET_PATTERN_VERSION`)을 가진다. 나가는 길은 Core의 **출력 코덱**이고 모두 그 함수를 부른다: 엔벨로프 코덱(CLI·MCP·소켓이 공유, `data`·`error`·`warnings`·`meta`의 문자열), hook 출력 코덱(시작 맥락), 미러 렌더러(AD-16), 내보내기 writer, 복제 payload(AD-22), 임베딩·재순위 요청(AD-15). 도구 메모 대상만 쓰는 규칙(셸 `NAME=value`)은 도구 메모를 돌려주는 읽기 결과가 그 칸에만 먼저 걸고, 코덱은 모든 문자열에 본문 규칙을 건다(가린 표시는 다시 잡히지 않아 두 번 걸려도 같다, 2026-10-19 사용자). Store와 adapter는 원문을 돌려주고, 출력 코덱을 거치지 않고 Brain 밖으로 텍스트를 내는 경로는 없다. 출력 가리기는 `redactions`를 남기지 않는다.
+  - 남아 있는 출력(미러 파일, 복제 대상)은 쓴 패턴 버전을 적는다. 버전이 오르면 미러 재생성 일감과 복제 가리기 일감을 만든다. 내보내기는 manifest에 버전을 적고, 이미 쓴 내보내기 파일은 건드리지 않는다.
+  - 저장소 파일(`brain.db`와 `-wal`·`-shm`)에는 비밀이 원문으로 있다. AD-10의 규칙(동기화 폴더 금지, 권한 0600)이 그것을 지킨다. 저장본에서도 지우려면 `messages.redact`를 쓴다.
+  - `messages`와 `tool_notes`는 UPDATE·DELETE를 거부하는 DB trigger를 가진다. **유일한 예외는 `messages.redact`**다. 사람이 요청해 저장본에서 지우는 가리기다. 입력은 지울 글자 그대로이거나 `detected`(지금 패턴이 그 메시지에서 찾는 구간 전부, `redactions.pattern_version`에 그 버전)다. 이 함수는 본문 일부나 전체를 `[REDACTED:<kind>]`로 바꾸고, 같은 트랜잭션에서 `redactions`에 위치·종류·지운 내용의 해시만 남긴다(지운 내용은 보존하지 않는다). trigger는 redact 표시가 있을 때만 통과시킨다. 표시는 Store adapter의 redact 함수 한 곳이 `try/finally`로 세우고 지운다(SQLite에서는 프로세스 변수를 읽는 SQL 함수다).
+  - 가리기는 **한 트랜잭션 안의 연쇄**다: 본문 치환 + `redactions` + 그 메시지가 걸린 `chunks`·FTS·`embeddings` 행 삭제 + 조각 재생성·미러 재생성 일감 + 복제 대상이 있으면 복제 가리기 일감(AD-21·22: Postgres는 같은 가리기 함수, Drive는 그 메시지가 든 파일을 가린 본문으로 다시 쓰고 옛 파일을 지움, 가리기 이전의 DB 스냅샷은 새 스냅샷이 검증된 뒤 지움)이다. 하나라도 못 하면 롤백하고 실패로 답한다(spool 금지). 복제 가리기 일감이 끝날 때까지 doctor는 `warn`이다(2026-10-16). 같은 경로로 `tool_notes.target`도 가린다(`messages.redact`가 메시지와 그 도구 메모를 함께 받고, 기록은 `redactions.tool_note_id`, 0005).
+  - 계약 테스트: redact 직후 같은 연결의 일반 UPDATE 거부, 롤백 뒤 표시 없음, redact 뒤 조각·도구 메모·검색·미러·내보내기·복제 대상(복제 가리기 일감이 끝난 뒤) 어디에서도 지운 문자열이 나오지 않음. 출력 코덱 계약: 비밀 fixture를 수집하면 저장본에는 원문이 있고, 등록된 모든 출력 코덱의 결과에는 없다. 코덱을 새로 만들고 등록부에 넣지 않으면 테스트가 실패한다(2026-10-19).
+  - `redactions`의 위치 `[start, end)`는 그 가리기 직전 대상(본문 또는 도구 메모 대상) 위의 구간이다. 수집이 남기던 저장 전 마스킹 기록은 마스킹 B로 없어졌다(2026-10-19).
   - 작업 로그의 현재 문장은 `log_entries` 행에 있다. 수정은 `log.edit` 하나만 하고, 같은 트랜잭션에서 이전 문장을 `log_entry_edits`에 남긴다.
   - 결정·선호의 대체는 수정이 아니라 새 행 + `supersedes_id`다.
 
@@ -215,8 +219,8 @@ sequenceDiagram
 - **Rule:**
   - 세션 행은 `sessions.ensure(harness, harness_session_id)` 하나만 만든다(find-or-create, 같은 잠금 안에서). 세션 키를 모르는 쓰기는 행을 만들지 않고 spool로 간다.
   - 꼬리표(프로젝트·워크트리. 워크스페이스는 예약이고 slice 1에서 쓰지 않는다)는 `sessions`에만 둔다. 로그와 조각은 `session_id`로 따라간다. [ADOPTED]
-  - 꼬리표의 근거는 그 세션 첫 메시지의 transcript cwd 하나다. 세션을 만드는 첫 수집이 그것으로 **한 번** 계산하고(시작 hook은 세션 행을 만들지 않는다, AD-6), 이후 바뀌지 않는다. 프로세스의 cwd는 근거가 아니다. transcript를 찾지 못한 쓰기는 세션 행을 만들지 않고 spool로 간다(2026-10-15 epic 2 인셉션, 리뷰 H-2 해소).
-  - 프로젝트 정체성은 Core의 정규화 함수 하나가 정한다: git remote URL을 `host/owner/repo`(소문자 host, scheme·사용자·포트·`.git` 제거, ssh와 https 동일)로 만든다. remote가 없을 때만 로컬 git 공통 디렉터리를 쓴다. 워크트리는 (프로젝트, 작업 폴더 경로)이고 폴더가 지워져도 행은 남는다.
+  - 꼬리표의 근거는 그 세션 첫 메시지의 transcript cwd 하나다. 세션을 만드는 첫 수집이 그것으로 **한 번** 계산하고(시작 hook은 세션 행을 만들지 않는다, AD-6), 이후 바뀌지 않는다. 프로세스의 cwd는 근거가 아니다. transcript를 찾지 못한 쓰기는 세션 행을 만들지 않고 spool로 간다(2026-10-15 epic 2 인셉션, 리뷰 H-2 해소). git 조회가 "레포가 아님"이 아닌 이유(git 없음, 시간 초과, 권한, 비정상 출력)로 답을 못 하면 꼬리표 없이 수집하고 그 세션의 `session_identity` 일감(AD-21)을 남긴다. 그 일감이 성공하면 비어 있던 꼬리표를 한 번 채운다(null → 값만). 끝내 실패하면 `failures`로 가고 doctor가 보인다(2026-10-19).
+  - 프로젝트 정체성은 Core의 정규화 함수 하나가 정한다: git remote URL을 `host/owner/repo`(소문자 host, scheme·사용자·포트·`.git` 제거, ssh와 https 동일)로 만든다. remote가 없을 때만 로컬 git 공통 디렉터리를 쓴다. 워크트리는 (프로젝트, 작업 폴더 경로)이고 폴더가 지워져도 행은 남는다. 프로젝트는 비교 키 `identity_key`로 찾는다. 대소문자를 구분하지 않는 호스트(Core 상수 목록, 처음은 `github.com`·`bitbucket.org`)는 정체성을 소문자로 접은 값이고, 그 밖은 정체성 그대로다. `remote_identity`는 처음 본 모양 그대로의 표시용이다. 대소문자만 다른 이름은 같은 프로젝트다. 비교 키를 들이는 마이그레이션(0005) 전에 이미 갈라진 프로젝트가 있으면 setup이 그 묶음을 보이고 합칠지 묻는다(확인 게이트). 동의하면 먼저 만든 프로젝트로 합치고, 거절하면 아무것도 바꾸지 않는다. 이 합치기가 `projects` 불변의 유일한 예외다(2026-10-19 사용자).
   - 세션은 사용자(`users` 행)와 기계 이름을 가진다. slice 1의 사용자는 "나"(`is_self = 1`) 한 행이고, `setup run`이 마이그레이션 직후 찾거나 만든다(`id`는 UUIDv7, `name`은 OS 사용자 이름이고 표시용이다). 수집은 그 id를 `sessions.user_id`(FK)에 넣고, "나" 행이 없으면 쓰지 않고 `USER_MISSING`(exit 2)으로 답한다. 정체성은 DB와 함께 옮겨진다. 두 DB를 합치는 가져오기를 만들면 들어오는 "나"를 받는 쪽 "나"로 바꾼다(만들지는 epic 5 인셉션에서 정한다). 2026-10-16 사용자 결정.
   - 브랜치는 꼬리표가 아니라 메시지의 추적 정보다(`messages.git_branch`, transcript 줄의 값 그대로, 불변. 2026-10-16).
   - **규칙의 적용 범위는 꼬리표가 아니라 규칙의 속성이다**(`apply_project_id`). 이것이 "꼬리표는 세션에만"의 유일한 예외다.
@@ -248,6 +252,7 @@ sequenceDiagram
 - **Rule:**
   - **조각은 항상 만든다.** 조각 규칙(목표 1,200자, 메시지 경계, 인접 겹침 1메시지, 2,400자 넘는 메시지는 분할, 머리말 없음)은 `index_configs`에 기록된 값을 따른다.
   - 기본 검색은 키워드다. `chunks.body`, `log_entries.text`, `tool_notes.target`에 FTS5 `trigram` 색인을 둔다(부분 일치, 대소문자 무시). 문서 조각(`document_chunks.body`)과 파일 경로·이름(`files`의 경로 텍스트)도 같은 키워드 색인 대상이다(AD-24). FTS 행은 원본 행을 쓰는 같은 트랜잭션에서 adapter가 함께 쓴다. 질의는 Core의 함수 하나가 만든다: `"`를 이스케이프하고 전체를 하나의 구절로 감싸므로 FTS 연산자는 글자 그대로다. 구절 안 연속 글자가 3자 미만이면 `LIKE` 순차 검색이다(개인 규모에서 허용). 계약 테스트에 공백 든 질의, `a-b`, `AND`, `"`를 넣는다.
+  - 색인(조각·FTS·임베딩 대상)은 원문 위에 만든다. 결과는 엔벨로프 코덱에서 가려지므로(AD-11), 비밀 값으로 검색하면 맞는 행이 나오되 값은 가려진다(이 기계 안의 일이라 허용, 2026-10-19). 임베딩·재순위로 보내는 텍스트는 가린 텍스트다.
   - 한국어·영어 교차는 에이전트가 질의를 바꿔 다시 찾는 것으로 충족한다. 그 방법은 시작 맥락 안내에 넣는다.
   - 임베딩·재순위는 port 뒤의 선택 색인이고 **slice 1 기본값은 꺼짐**이다. 켜는 경우:
     - 차원은 설정 시점에 고정한다(sqlite-vec 차원 고정 테이블, 예: 1024). 확장은 임베딩이 켜진 경로의 연결에서만 `allowExtension: true`로 연다(연결을 만든 뒤에는 켤 수 없다).
@@ -264,7 +269,7 @@ sequenceDiagram
 - **Binds:** FR-15, FR-24, NFR-6, NFR-9
 - **Prevents:** 미러가 두 번째 원본이 되는 것, 증분 쓰기와 재생성이 같은 파일에서 부딪치는 것
 - **Rule:**
-  - 세션당 파일 하나다. 파일 이름은 `YYYY-MM-DD_<harness>_<project>_<session 토큰 뒤 12자>.md`이고, 내용은 그 세션의 DB 상태만으로 정해지는 순수 함수다(frontmatter + 메시지 + 도구 메모). `<project>`는 프로젝트 정체성에서 제어문자와 `<>:"/\|?*`를 `_`로 바꾼 것이다(WeKnora C9). 충돌 처리는 epic 4가 정한다.
+  - 세션당 파일 하나다. 파일 이름은 `YYYY-MM-DD_<harness>_<project>_<session 토큰 뒤 12자>.md`이고, 내용은 그 세션의 DB 상태와 비밀 패턴 버전으로 정해지는 순수 함수다(frontmatter + 메시지 + 도구 메모. 본문은 AD-11대로 가리고, frontmatter에 패턴 버전을 적는다). `<project>`는 프로젝트 정체성에서 제어문자와 `<>:"/\|?*`를 `_`로 바꾼 것이다(WeKnora C9). 충돌 처리는 epic 4가 정한다.
   - 쓰기는 항상 전체 교체(임시 파일 → rename)다. DB 쓰기 잠금 밖에서, 읽기 스냅샷으로 내용을 만든 뒤 쓴다(AD-7). 같은 세션의 미러 쓰기는 미러 일감(AD-21) 하나로 직렬화된다. 증분 갱신과 `mirror.rebuild`는 같은 함수를 쓴다. 실패는 실패 기록에 남는다.
   - 미러를 읽어 DB에 쓰는 경로는 없다. 경로는 설정 한 줄(기본 `~/.second_brain/mirror/`)이고, Brain은 그 폴더가 동기화 폴더인지 모른다.
 
@@ -345,7 +350,7 @@ sequenceDiagram
   - `files.home`은 `brain` 위치 하나를 가리킨다. 원본 이전은 넣기 → 저장소 해시(`remote_checksum`) 또는 되읽기로 검증 → **같은 쓰기 트랜잭션에서 검증 시각 기록과 `home` 전환** → 옛 위치 삭제는 별도 일감이다. 이전은 양방향(로컬 ↔ Drive)이고, 검증 없이 지우는 경로는 없다.
   - 첨부는 파일을 먼저 저장소에 넣고(트랜잭션 밖) 그 뒤 행을 쓴다(AD-7). 루트 안에 있으나 위치 행이 없고 유예(기본 24시간)가 지난 블롭은 drain의 고아 정리 일감이 지우고, doctor가 건수·바이트를 보인다. 첨부 바이트는 spool에 넣지 않는다(spool 한 줄은 64KB 이하, 첨부는 메타데이터 한 줄만).
   - `message_attachments`의 키는 `(message_id, ordinal)`이다. parser는 첨부의 자리와 출처만 내고, 내용(`file_id`)과 상태(`stored | missing_at_ingest`)는 수집이 한 번 채운다.
-  - **가리기**: 원문 불변의 두 번째 예외는 `files.redact`다. 한 트랜잭션에서 `redacted_at`, 그 내용의 추출 세대·조각·FTS 삭제, 그 내용의 `file_names`(와 이름 FTS)·`file_metadata` 삭제, `redactions` 기록, 모든 `brain` 위치에 블롭 삭제 일감을 남긴다. 이름·메타데이터 재생성은 가린 파일을 건너뛴다(2026-10-16). 가리기는 내용 단위다. 가린 파일은 다시 추출하지 않는다. 첨부 텍스트의 저장 전 마스킹은 추출 시점에 Core의 같은 패턴 목록으로 한다(바이트는 그대로). `messages.redact`는 가리지 않은 첨부가 남아 있으면 경고 `ATTACHMENT_NOT_REDACTED`를 낸다.
+  - **가리기**: 원문 불변의 두 번째 예외는 `files.redact`다. 한 트랜잭션에서 `redacted_at`, 그 내용의 추출 세대·조각·FTS 삭제, 그 내용의 `file_names`(와 이름 FTS)·`file_metadata` 삭제, `redactions` 기록, 모든 `brain` 위치에 블롭 삭제 일감을 남긴다. 이름·메타데이터 재생성은 가린 파일을 건너뛴다(2026-10-16). 가리기는 내용 단위다. 가린 파일은 다시 추출하지 않는다. 추출한 문서 텍스트는 원문으로 저장하고 나갈 때 같은 함수로 가린다(AD-11). 파일 바이트는 가리지 않는다(`files.redact`가 그 길이다). `messages.redact`는 가리지 않은 첨부가 남아 있으면 경고 `ATTACHMENT_NOT_REDACTED`를 낸다.
 
 ### AD-24 — 문서 텍스트는 세대가 있는 파생물이다
 
@@ -353,7 +358,7 @@ sequenceDiagram
 - **Prevents:** 추출 실패가 조용히 빠지는 것, 두 세대의 조각이 함께 검색되는 것, 복구 한 번에 문서 검색이 사라지는 것, 수집이 추출을 기다리는 것
 - **Rule:**
   - 추출은 drain의 일감(AD-21)이다. 형식은 확장자가 아니라 내용으로 판정한다.
-  - 추출 한 번은 `document_extractions` 한 행(파일, `extractor_version`, 파일당 단조 증가하는 `attempt`(Store가 삽입 트랜잭션 안에서 `max+1`로 배정, `(file_id, attempt)` UNIQUE), 상태 `ok | failed | unsupported | too_large | redacted`, 실패하면 `failed_stage(read | extract | chunk | index)`)이고, 조각(`document_chunks`)은 그 행에 속한다. 조각마다 `chunk_locator`(JSON; `type ∈ {pdf, docx, text, time, sheet}` 뒤에 종류별 필드: pdf 쪽·영역 `page`·`bbox` / docx 블록 `block` / text 글자 범위 `start`·`end`(코드 포인트, Conventions) / time 밀리초 `start_ms`·`end_ms` / sheet `sheet`·`row_start`·`row_end`)를 둔다. 정규형은 Core 코덱 하나가 만든다(`type` 첫 키, 정해진 키 순서, null 생략, 공백 없음). 기존 `page` 컬럼은 `chunk_locator.page`의 읽기 전용 사본(인덱스·정렬용)이고 같은 트랜잭션에서 채운다. 진실 출처는 `chunk_locator`다. pdf가 아니면 `page`는 null이다. 두 값이 다르면(null 포함 비교) Store가 쓰기를 거부한다. `files.current_extraction_id`가 검색에 쓰이는 단 하나의 세대다. 재추출은 새 세대를 만든 뒤 같은 트랜잭션에서 포인터를 바꾸고 옛 세대와 FTS 행을 지운다. 포인터 전환은 현재 세대보다 `attempt`가 큰 세대만 할 수 있다(늦게 끝난 옛 시도가 덮어쓰지 못한다). 실패하면 포인터는 그대로이고, 그 세대가 남긴 조각·FTS는 실패를 기록하는 쓰기(또는 뒤따르는 정리 일감)가 지운다. 청구가 만료된 추출 일감의 열린 세대(`finished_at` null)는 다음 청구가 `failed`(`failed_stage`는 마지막 단계)로 닫은 뒤 새 `attempt`를 만든다. 열린 세대를 건너뛰는 것은 그 세대의 일감 청구가 살아 있을 때뿐이다(AD-21, 2026-10-16). 조각과 FTS 쓰기는 배치(예: 200조각)로 나눠 AD-7의 2초를 지킨다.
+  - 추출 한 번은 `document_extractions` 한 행(파일, `extractor_version`, 파일당 단조 증가하는 `attempt`(Store가 삽입 트랜잭션 안에서 `max+1`로 배정, `(file_id, attempt)` UNIQUE), 상태 `ok | failed | unsupported | too_large | redacted`, 실패하면 `failed_stage(read | extract | chunk | index)`)이고, 조각(`document_chunks`)은 그 행에 속한다. `failed`가 되는 쓰기는 `failed_stage`를 가져야 하고 trigger가 강제한다(0005, 그 이전 행은 예외, 2026-10-19). 조각마다 `chunk_locator`(JSON; `type ∈ {pdf, docx, text, time, sheet}` 뒤에 종류별 필드: pdf 쪽·영역 `page`·`bbox` / docx 블록 `block` / text 글자 범위 `start`·`end`(코드 포인트, Conventions) / time 밀리초 `start_ms`·`end_ms` / sheet `sheet`·`row_start`·`row_end`)를 둔다. 정규형은 Core 코덱 하나가 만든다(`type` 첫 키, 정해진 키 순서, null 생략, 공백 없음). 기존 `page` 컬럼은 `chunk_locator.page`의 읽기 전용 사본(인덱스·정렬용)이고 같은 트랜잭션에서 채운다. 진실 출처는 `chunk_locator`다. pdf가 아니면 `page`는 null이다. 두 값이 다르면(null 포함 비교) Store가 쓰기를 거부한다. `files.current_extraction_id`가 검색에 쓰이는 단 하나의 세대다. 재추출은 새 세대를 만든 뒤 같은 트랜잭션에서 포인터를 바꾸고 옛 세대와 FTS 행을 지운다. 포인터 전환은 현재 세대보다 `attempt`가 큰 세대만 할 수 있다(늦게 끝난 옛 시도가 덮어쓰지 못한다). 실패하면 포인터는 그대로이고, 그 세대가 남긴 조각·FTS는 실패를 기록하는 쓰기(또는 뒤따르는 정리 일감)가 지운다. 청구가 만료된 추출 일감의 열린 세대(`finished_at` null)는 다음 청구가 `failed`(`failed_stage`는 마지막 단계)로 닫은 뒤 새 `attempt`를 만든다. 열린 세대를 건너뛰는 것은 그 세대의 일감 청구가 살아 있을 때뿐이다(AD-21, 2026-10-16). 조각과 FTS 쓰기는 배치(예: 200조각)로 나눠 AD-7의 2초를 지킨다.
   - `extractor_version`은 사용한 라이브러리 버전을 담은 Core 상수다(예: `doc/1+pdfjs-6.4.299+mammoth-1.13.0`). 라이브러리만 올리고 상수를 그대로 두는 변경은 하지 않는다.
   - 원본이 DB 밖에 있으므로 추출 세대와 조각은 내보내기·복구에 **포함한다**(다시 만드는 파생물이 아니다). 원본에 접근할 수 없는 파일(복구 직후, 연동 해제)은 `files.source_unreachable_at`으로 표시하고 기존 조각은 계속 검색된다. 결과에 경고 `FILE_SOURCE_UNREACHABLE`를 붙이고 재추출 일감은 만들지 않는다.
   - 이름·경로는 내용과 별도로 색인한다: 위치의 경로와 첨부의 표시 이름을 모은 `file_names`(파생)가 색인 대상이다. 이미지는 `file_metadata`에 EXIF를 남긴다. 촬영 일시는 시간대가 없으므로 `captured_at_local`(원문), `captured_at`(시간대를 알 때만 AD-13 정규형), `captured_at_source`를 둔다. EXIF는 신뢰할 수 없는 입력이다.
@@ -403,10 +408,10 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | 테이블 | 멱등 키 (UNIQUE) | 작성자 | 변경 가능성 |
 | --- | --- | --- | --- |
 | `users` | `id`. `is_self = 1`인 행은 하나 | `setup run`(마이그레이션 직후 찾거나 만듦). 가져오기 합치기(epic 5) | `id`·`is_self`·`created_at` 불변. `name`은 표시용(갱신 규칙은 epic 5). 2026-10-16 |
-| `projects` | `remote_identity` | `sessions.ensure` (find-or-create) | 불변. `workspace_id`는 예약(slice 1은 쓰지 않음) |
+| `projects` | `identity_key`(대소문자 비교 키, AD-12) | `sessions.ensure` (find-or-create) | 불변. `remote_identity`는 표시용. `workspace_id`는 예약(slice 1은 쓰지 않음) |
 | `worktrees` | `(project_id, path)` | `sessions.ensure` | `removed_at`만 drain이 채움 |
 | `workspaces` | `name` | 예약(slice 1은 쓰지 않음, 2026-10-15) | — |
-| `sessions` | `(harness, harness_session_id)` | 생성: `sessions.ensure`. 갱신: `sessions.ingest` | 불변: 키, `user_id`(→ `users.id`), `machine`, `started_at`, 꼬리표, `ingest_source(live\|import)`. 단조: `ended_at`, 커서(`last_harness_message_id`, fingerprint), `parser_version`, `ingested_at`. 예약: `workspace_id`(slice 1은 쓰지 않음). 변경 가능: `start_source(startup\|resume\|clear\|compact\|fork)`, `continued_from_session_id`(예약, slice 1은 채우지 않음) |
+| `sessions` | `(harness, harness_session_id)` | 생성: `sessions.ensure`. 갱신: `sessions.ingest` | 불변: 키, `user_id`(→ `users.id`), `machine`, `started_at`, 꼬리표(비어 있으면 `session_identity` 일감이 한 번 채울 수 있음, AD-12), `ingest_source(live\|import)`. 단조: `ended_at`, 커서(`last_harness_message_id`, fingerprint), `parser_version`, `ingested_at`. 예약: `workspace_id`(slice 1은 쓰지 않음). 변경 가능: `start_source(startup\|resume\|clear\|compact\|fork)`, `continued_from_session_id`(예약, slice 1은 채우지 않음) |
 | `messages` | `(session_id, harness_message_id)`, `(session_id, seq)`. `seq`는 원본 Store가 배정 | `sessions.ingest` | 불변(예외: `messages.redact`). `occurred_at`은 원래 발화 시각 |
 | `tool_notes` | `(session_id, harness_message_id, ordinal)` | `sessions.ingest` | 불변 |
 | `log_entries` | `id`(작성 프로세스가 정한 UUIDv7) | 생성: `log.append`. 문장: `log.edit`. 상태·범위: `log.set-state`, `log.set-scope`. 연결·`pending→on`: drain·`log.append` | `kind`, `session_id`, `occurred_at`, `author_model` 불변 |
@@ -414,7 +419,7 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `chunks` | `(session_id, index_config_id, seq_from, seq_to)` | drain | 파생, 다시 만들 수 있음 |
 | `embeddings` | `(target_kind, target_id, index_config_id)` | drain | 파생 |
 | `index_configs` | `(kind, model, dimensions, chunk_params)` | `setup run`, `index.rebuild` | 불변 |
-| `redactions` | `id` | `messages.redact`, `files.redact`, 수집·추출의 저장 전 마스킹(`pattern_version` 기록) | 불변 |
+| `redactions` | `id`. 대상은 `message_id`·`file_id`·`tool_note_id` 중 하나 | `messages.redact`(본문과 도구 메모 대상. `detected`면 `pattern_version` 기록), `files.redact`. 수집·추출은 쓰지 않는다(마스킹 B, AD-11) | 불변 |
 | `context_injections` | `id` | `context.show`가 spool에 쓰고 drain이 넣음 | 불변 |
 | `failures` | `(target_kind, target_id, stage, fingerprint)`. 대상 키는 `work_items`와 같다. 세션 수집 실패는 `session`/세션 토큰(`harness:harness_session_id`, 세션 행이 없어도 됨). `harness`·`session_id`는 정보 칸이고 비어 있을 수 있음(2026-10-16) | 모든 경로(실패 기록 함수 하나) | `resolved_at`만 drain이 채움 |
 | `transcript_files` | `(harness, path)` | drain(폴더 스캔) | 크기·fingerprint·커서 단조 |
@@ -442,6 +447,8 @@ erDiagram
   log_entries |o--o| log_entries : supersedes
   projects |o--o{ log_entries : "rule apply scope"
   messages ||--o{ redactions : "redacted by"
+  tool_notes ||--o{ redactions : "redacted by"
+  files ||--o{ redactions : "redacted by"
   sessions ||--o{ chunks : "indexed as"
   index_configs ||--o{ chunks : "built with"
   chunks ||--o{ embeddings : "선택 색인"
@@ -468,7 +475,7 @@ erDiagram
 | 이름 | DB 테이블·컬럼은 `snake_case` 복수형. TS 타입은 `PascalCase`, 함수·필드는 `camelCase`. SDK `<ns>.<verb>` ↔ CLI `brain <ns> <verb>` ↔ MCP `<ns>_<verb>` |
 | ID | UUIDv7, DB에서는 TEXT(정규 소문자 문자열), JSON에서는 문자열. 프로세스 경계를 넘는 세션 토큰은 `harness:harness_session_id` |
 | 시각 | DB·spool·내보내기·복제 payload는 저장 정규형 `YYYY-MM-DDTHH:MM:SS.sssZ`(AD-13). 오프셋을 포함한 ISO-8601은 CLI `--json` 응답에만 쓴다. 사람용 출력만 설정 시간대로 표시 |
-| 텍스트 | 저장 본문은 Harness가 준 그대로(마스킹 제외). 비교·대조는 NFC 정규화 후. 위치는 코드 포인트 `[start, end)` |
+| 텍스트 | 저장 본문은 Harness가 준 그대로(사람이 요청한 저장본 가리기 제외). Brain 밖으로 나가는 텍스트는 Core 출력 코덱의 가리기를 거친다(AD-11). 비교·대조는 NFC 정규화 후. 위치는 코드 포인트 `[start, end)` |
 | 출력 언어 | 사람이 읽는 문장은 한국어다: 설치기 질문·진행 줄, doctor 줄, 텍스트 모드의 오류 줄과 hint, `--help` 설명, 개발용 스크립트 안내, README. 에이전트만 읽는 것은 한국어가 아니어도 되고, 오류 message·hint는 텍스트 모드와 `--json`이 같은 문장을 쓴다. 코드(`USAGE` 등)·JSON 키·점검 id·명령과 옵션 이름·설정 키는 영어 그대로다. 2026-10-16 사용자 결정 |
 | CLI `--json` 응답 | `{ ok, now, data, warnings[], error?, meta? }`. `error`는 `{ code, message, exit_code, retryable?, hint?, retry?{ns, verb, args} }`(`retryable`은 true/false/생략=모름). `meta`는 `{ hint?, count?, has_more?, omitted?{count, reason}, next?{ns, verb, args} }`. 저하된 결과는 반드시 `warnings[]`에 코드로 넣는다: `SPOOLED`, `DB_UNAVAILABLE`, `SCHEMA_MISMATCH`, `RERANK_FAILED`, `INDEX_CONFIG_MISMATCH`, `UNINDEXED`, `RESULT_TRUNCATED`, `RULE_UNVERIFIED`, `CURSOR_RESET`, `CONFIG_UNKNOWN_KEY`, `CONFIG_VALUE_RESET`, `ATTACHMENT_NOT_REDACTED`, `FILE_SOURCE_UNREACHABLE`, `DAEMON_UNAVAILABLE`, `PLUGIN_NOT_INSTALLED`, `PLUGIN_BEHIND`, `PLUGIN_DUPLICATE`, `UPDATE_AVAILABLE`. 오류 코드(`error.code`)에 `CONFIG_MISSING`·`DB_UNAVAILABLE`·`USER_MISSING`(exit 2), `SEARCH_FAILED`, `SETUP_INCOMPLETE`·`SETUP_CANCELLED`(exit 1, 설치 흐름의 끝 점검 실패와 사람의 거절), `CONFIRMATION_REQUIRED`(exit 3), `SESSION_REQUIRED`, `VERSION_MISMATCH`(소켓 handshake 응답에만)가 있다. 경고·오류 코드 목록은 Core 상수 하나이고 `guide exit-codes`와 문서 대조 테스트가 그것을 읽는다 |
 | 종료 코드 | 0 성공 / 1 실행했으나 실패·저하 / 2 실행 불가(사용법·설정·DB 없음) / 3 확인 필요(SDK 게이트가 `confirm: true`를 요구하는 verb — `messages redact`, `files redact`, `setup uninstall`의 데이터 삭제, 비대화형 `setup run`의 동의 — 를 `--yes` 없이 비TTY·`--json`으로 부름. `ok: false`, `error.code = CONFIRMATION_REQUIRED`, `error.retry`는 `confirm: true`를 더한 입력, CLI는 `error.retry_argv`를 덧붙임). hook 경로는 항상 0이고, hook에서 확인 필요가 나면 수행하지 않고 실패로 기록한다. `guide exit-codes`가 이 표를 `{code, meaning, agent_action}`로 낸다. 문서의 에이전트 금지 행동: `--yes` 자동 부착, `retry`를 그대로 실행, 백오프 루프 재시도, 덜 파괴적 동사로 우회, 이전 승인 재사용, `--json`으로 게이트 우회 |
@@ -478,7 +485,7 @@ erDiagram
 | 설치·런타임 기록 | `apps/cli/dist/build.json` `{commit, schema_version}`(빌드가 씀), `<home>/installed.json`(bootstrap·`setup run`이 완료 검증 뒤 마지막에 임시 파일→rename), `<home>/run/`(`daemon.pid`, `brain.sock`, `heartbeat`, `last-drain`, `last-hook-<harness>` — 파일 mtime이 시각 — 그리고 `plugin.json`: 마지막 SessionStart가 본 `{plugin_root, app_ref, seen_at, last_bootstrap?{at, result, step?, log}}`를 bootstrap이 임시 파일→rename으로 쓰고 값이 바뀔 때만 쓴다. doctor `plugin` 점검이 `installed.json.plugin_root`보다 이것을 앞세운다 — 플러그인 캐시는 버전마다 폴더가 다르므로 완료 기록의 폴더는 "마지막으로 설치한 폴더"일 뿐이다. 2.5 사람 확인 1), `<home>/log/`(크기 회전). 설정 코덱을 거치지 않는다(AD-18, AD-19, AD-27) |
 | hook 응답 | connector adapter 소유(AD-4). 10,000자 이하. hook 경로는 항상 exit 0으로 끝낸다(Stop의 exit 2는 턴을 이어 가게 하므로 금지) |
 | 오류 | Core는 예상된 실패를 코드가 있는 값으로 돌려주고, 예외는 버그에만 쓴다. 실패는 `failures`에, DB에 쓸 수 없으면 spool에 남긴다. stderr만으로 끝내지 않는다 |
-| 내보내기 (NFR-9) | 한 스냅샷 트랜잭션 안에서 테이블당 JSON Lines 하나 + `manifest.json`(스키마 버전, 테이블별 건수, 시각). 복구는 의존 순서대로 insert하고(`files.home_location_id`↔`file_locations.file_id` 순환은 포인터를 비운 채 `files`를 넣고, 위치를 넣은 뒤 포인터를 채운다. BEFORE INSERT 포인터 trigger 때문에 `defer_foreign_keys`만으로는 안 된다. `users`도 내보낸다), 원본이 같은 DB 안에 있는 파생물(`chunks`, FTS, `embeddings`, `file_names`, 미러)만 다시 만든다. 문서 추출 세대·조각은 내보내고 복구한다. `manifest.json`에 파일 본체 포함 범위(`none | brain_owned`)를 적는다 |
+| 내보내기 (NFR-9) | 한 스냅샷 트랜잭션 안에서 테이블당 JSON Lines 하나 + `manifest.json`(스키마 버전, 테이블별 건수, 시각, 비밀 패턴 버전). 복구는 의존 순서대로 insert하고(`files.home_location_id`↔`file_locations.file_id` 순환은 포인터를 비운 채 `files`를 넣고, 위치를 넣은 뒤 포인터를 채운다. BEFORE INSERT 포인터 trigger 때문에 `defer_foreign_keys`만으로는 안 된다. `users`도 내보낸다), 원본이 같은 DB 안에 있는 파생물(`chunks`, FTS, `embeddings`, `file_names`, 미러)만 다시 만든다. 문서 추출 세대·조각은 내보내고 복구한다. `manifest.json`에 파일 본체 포함 범위(`none | brain_owned`)를 적는다. 본문은 AD-11대로 가린 텍스트다. 그래서 되살린 Brain의 비밀은 가린 채 돌아온다(2026-10-19) |
 | 마이그레이션 | SQL 파일, 순번 접두사, 앞으로만. trigger·확장·인덱스도 SQL로. trigger와 `redactions`·마스킹은 첫 마이그레이션에 함께 들어간다 |
 | 테스트 | port마다 계약 테스트 묶음 하나, 모든 adapter가 통과. 저장소는 실제 DB(SQLite는 임시 파일, Postgres는 테스트 전용 데이터베이스)로 통합 테스트하고 mock하지 않는다. parser는 회사 내용을 지운 실제 transcript fixture로 테스트한다 |
 | 공개 저장소 위생 | 저장소에는 회사 이름·내용·실제 대화를 넣지 않는다. 예시와 fixture는 중립 이름을 쓴다 |
@@ -551,7 +558,7 @@ flowchart TB
 | 규칙·결정·선호 (FR-19~22) | core `log` + sqlite trigger | AD-11, AD-12, AD-14 |
 | SDK·도구·설정 (FR-23~25) | second_brain, apps/cli, 설치기 | AD-1, AD-2, AD-3, AD-5, AD-18, AD-19, AD-20 |
 | 표면: 플러그인·MCP·데몬 (FR-24, FR-25) | `plugin/`, apps/cli `mcp`·`daemon`(epic 9) | AD-5, AD-17, AD-19, AD-26, AD-27, AD-28 |
-| 원문 불변·가리기 (NFR-1, FR-26) | sqlite trigger, `messages.redact` | AD-11 |
+| 원문 불변·가리기 (NFR-1, FR-26) | sqlite trigger, `messages.redact`, Core 출력 코덱(엔벨로프·hook·미러·내보내기·복제·임베딩 요청) | AD-11 |
 | 조용한 실패 금지 (NFR-2) | `warnings[]`, `failures`, spool, `context_injections`, doctor | AD-7, AD-9, AD-15, AD-17, AD-20, Conventions |
 | Harness 비차단 (NFR-3) | async hook, exit 0, import 부작용 없음 | AD-3, AD-6 |
 | 비용·LLM 미호출 (NFR-5) | Core에 LLM port 없음, 임베딩 기본 꺼짐 | AD-1, AD-15 |

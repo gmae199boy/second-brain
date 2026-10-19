@@ -12,7 +12,7 @@ risk: high
 
 ## Description
 
-Claude Code transcript parser, `sessions.ensure`, 턴마다 증분 수집(세션 잠금), 프로젝트·워크트리 식별(git remote 정규화), Claude Code connector와 hook 등록(`setup connect`), drain(실패 재시도·transcript 폴더 스캔), spool(스키마 불일치 포함), `failures list`·`failures retry`, 저장 전 비밀 마스킹과 `messages redact`를 만든다.
+Claude Code transcript parser, `sessions.ensure`, 턴마다 증분 수집(세션 잠금), 프로젝트·워크트리 식별(git remote 정규화), Claude Code connector와 hook 등록(`setup connect`), drain(실패 재시도·transcript 폴더 스캔), spool(스키마 불일치 포함), `failures list`·`failures retry`, 비밀 가리기(저장은 원문, 나갈 때 가림 — 마스킹 B, 2026-10-18)와 저장본에서 지우는 `messages redact`를 만든다.
 
 2026-10-14 변경으로 더한 것: SQLite `SessionStore`(ensure·ingest·readSession)와 계약 사례, 쓰기는 `withWrite`, `seq`는 원본 Store가 배정(AD-4·8), 시작 hook은 읽기 전용이고 세션 행은 첫 수집이 만듦(AD-6), 일감 대기열 `work_items`(미완료 `(kind, target_kind, target_id)` 하나, 짧은 쓰기 트랜잭션 청구, 종류별 청구 기간·지수 재시도 Core 상수, 10회 실패 시 `failures`, AD-21)와 모든 명령의 기회적 drain. 같은 변경으로 들어온 `FileStore`·첨부 원본 저장·문서 텍스트 추출·고아 블롭 정리·`files redact`(AD-23·24)는 2026-10-15 인셉션에서 epic-attachments로 옮겼다.
 
@@ -33,34 +33,35 @@ Claude Code transcript parser, `sessions.ensure`, 턴마다 증분 수집(세션
 
 ## Outcome
 
-Claude Code 세션이 손대지 않아도 비밀이 가려진 채 빠짐없이 쌓인다.
+Claude Code 세션이 손대지 않아도 원문 그대로 빠짐없이 쌓이고, Brain 밖으로 나가는 것에서는 비밀이 가려진다.
 
 ## Requirements
 
 - E2-1 (CAP-10): CLI 규약 — 모든 명령의 메타 7칸과 그것에서 만드는 `guide schema`·`--help`, `guide exit-codes`, `guide show`(CLI 사용 규약 절), Core 엔벨로프 코덱과 경고·오류 코드 상수, SDK 확인 게이트와 종료 코드 3, doctor `warn`·`skip`·`summary`, 빈 위치 인자·제어문자 거부, README 종료 코드 표와 코드의 양방향 대조, 사람이 읽는 출력(오류 message·hint, `--help`, doctor 줄)의 한국어와 그 회귀 검사(2026-10-16). (spine AD-5, Conventions '출력 언어'; inputs §1.5 E1~E11)
 - E2-2 (CAP-11): 설치기 — 흐름 결과와 실패 계약, 재실행 때 설정 보존(부분 읽기, 모르는 키), store 준비 뒤 config 쓰기, DB 확인 뒤 권한 변경, TTY 동의와 비대화형 동의 게이트, 설치기 질문·진행 줄의 한국어(2026-10-16). (AD-18·19, Conventions '출력 언어'; 회고 F1~F6·F10·F11)
 - E2-3 (CAP-11): 플러그인 진입점 — `plugin/`(매니페스트, hooks, node를 찾는 런처, bootstrap 복사본, `app-ref`)과 marketplace, bootstrap(설치 잠금, Node 24.16 하한, ref로만 ff, `--frozen-lockfile --ignore-scripts`, 앞설 때만 갱신, 완료 검증, `installed.json`, 빌드 신원), shim의 node 고정과 폴백, `setup connect claude-code`의 확인·안내·옛 hook 제거, doctor의 플러그인·마지막 hook 항목. hook의 출처는 플러그인 하나. (AD-2·19·20; 회고 F7·F8·F9)
-- E2-4 (CAP-1): Claude Code transcript parser와 hook 입출력 — 메인 대화의 본문과 서브에이전트 최종 보고, 도구 메모 한 줄, 추적 정보, 커서와 증분 읽기, 앞부분이 바뀐 transcript의 다시 읽기와 `CURSOR_RESET`, `parser_version`. (FR-1~3, AD-4·6)
+- E2-4 (CAP-1): Claude Code transcript parser와 hook 입출력 — 메인 대화의 본문과 서브에이전트 최종 보고(peer handback 포함, 19), 도구 메모 한 줄, 추적 정보, 커서와 증분 읽기, 앞부분이 바뀐 transcript의 다시 읽기와 `CURSOR_RESET`, `parser_version`. (FR-1~3, AD-4·6)
 - E2-5 (CAP-1): 수집 — `sessions.ingest`와 SQLite `SessionStore`, `users`('나' 한 행, `setup run`이 만듦, 2026-10-16), 세션 행은 수집만 만들고 `seq`는 Store가 배정, 멱등 삽입, 같은 세션의 겹친 수집, `ingest_source`(live·import). (FR-1·5·6, AD-7·8·12)
-- E2-6 (CAP-1): 프로젝트·워크트리 정체성 — git remote 정규화(없으면 공통 디렉터리), 첫 메시지 cwd가 유일한 근거, 꼬리표는 한 번 정해 불변, 워크트리 행. 워크스페이스는 slice 1에서 쓰지 않는다. (FR-4, AD-12)
+- E2-6 (CAP-1): 프로젝트·워크트리 정체성 — git remote 정규화(없으면 공통 디렉터리), 첫 메시지 cwd가 유일한 근거, 꼬리표는 한 번 정해 불변, 워크트리 행, 대소문자를 구분하지 않는 호스트의 비교 키, git 조회가 잠깐 실패한 세션의 꼬리표 다시 채우기(20, 2026-10-19). 워크스페이스는 slice 1에서 쓰지 않는다. (FR-4, AD-12)
 - E2-7 (CAP-1): 빠짐없이 — spool, `work_items` 대기열과 `queue drain`, 기회적 drain, 실패 기록 함수와 fingerprint, 내역(`transcript_files`) 기반 폴더 스캔(설치 직후 첫 스캔이 디스크에 남은 transcript를 모두 가져온다; 스캔이 처음 만든 세션은 `import`, hook이 만든 세션은 `live`), 세션 토큰만으로 하는 증분 수집(epic 3·4가 부름), `failures list`·`failures retry`, doctor의 미수집·실패·spool 항목. (FR-5·6, AD-6·7·9·21)
-- E2-8 (CAP-2): 비밀 가리기 — 버전 있는 Core 패턴 목록과 저장 전 마스킹, `messages redact` 연쇄와 확인 게이트. (FR-26, AD-11)
+- E2-8 (CAP-2): 비밀 가리기 — 버전 있는 Core 패턴 목록과 출력 가리기 함수(저장은 원문, Core 출력 코덱이 가림, 출력 코덱 등록부와 계약 테스트), 저장본에서 지우는 `messages redact` 연쇄(`detected` 포함)와 확인 게이트. (FR-26, AD-11)
 - E2-9 (CAP-14 스키마 자리, CAP-2, CAP-1): 마이그레이션 0004(0003은 2.2의 `users`) — `chunk_locator`, `redactions.pattern_version`·파일 가리기 자리·변경 거부 trigger, `document_extractions`의 `attempt`·`failed_stage`·`index_config_id`, `files.source_unreachable_at`, 서브에이전트 표시 칸, `messages.git_branch`, drain 청구 인덱스, `failures` 대상 키. 파일 쪽 동작은 epic-attachments. (AD-11·23·24, Table Contract)
+- E2-10 (CAP-2, CAP-1, CAP-14 스키마 자리): 마이그레이션 0005 — `redactions.tool_note_id`, `document_extractions`의 `failed_stage` 강제 trigger, `projects.identity_key`. 동작은 13·20과 epic-attachments. (AD-11·12·24, Table Contract)
 
 ## Done when
 
 1. 이 기계의 Claude Code 세션 수와 Brain 세션 수가 같다(SM-5). 설치 때 디스크에 남은 transcript도 들어간다.
 2. 같은 transcript를 두 번 수집해도 모든 테이블의 건수가 같고, 같은 세션의 Stop hook이 겹쳐도 seq 충돌이 없다.
 3. 세션 도중 프로세스를 죽여도 마지막 턴까지 남고, DB에 쓸 수 없는 동안(잠금 시간 초과·스키마 불일치)의 수집이 spool에 남았다가 쓸 수 있게 되면 drain으로 채워진다. 시작 hook만 돈 세션은 세션 행을 만들지 않고 첫 수집이 만든다.
-4. 알려진 비밀 패턴이 든 세션의 저장 본문에 그 값이 없고, `brain messages redact`로 가린 부분은 DB 어디에도 남지 않는다.
-5. 같은 레포의 두 워크트리 세션이 한 프로젝트(git remote 정체성)로 묶이고, 레포 밖에서 연 세션은 프로젝트 없이 수집된다.
+4. 알려진 비밀 패턴이 든 세션을 수집하면 저장 본문은 원문 그대로이고, Core 출력 코덱(엔벨로프·hook 출력)을 지난 결과 어디에도 그 값이 없다. `brain messages redact`로 가린 부분은 DB 어디에도 남지 않는다(2026-10-19).
+5. 같은 레포의 두 워크트리 세션이 한 프로젝트(git remote 정체성)로 묶이고, 레포 밖에서 연 세션은 프로젝트 없이 수집된다. 대소문자만 다른 GitHub·Bitbucket remote의 세션이 한 프로젝트로 묶이고, git 조회가 잠깐 실패한 세션의 꼬리표는 뒤따르는 일감이 채운다(2026-10-19).
 6. 플러그인을 켜고 세션을 열면 hook 하나로 수집되고, 설치기가 쓴 hook과 플러그인 hook이 동시에 살아 있지 않다. 세션 두 개가 동시에 첫 시작해도 bootstrap은 한 번만 돌고 다른 쪽은 아무것도 하지 않는다. `claude plugin update`로 `app-ref`가 앞서면 첫 세션에서 ff+build가 한 번 돌고 세션 시작은 막히지 않으며, 뒤처지면 아무것도 하지 않고 doctor가 `PLUGIN_BEHIND`를 보인다. doctor가 미수집 세션·실패 수집·spool 건수·마지막 hook 수신 시각·`installed.json`의 `commit`과 `app-ref`·빌드 신원의 관계를 보인다.
 7. compact 뒤 다시 수집해도 기존 메시지의 `seq`와 본문이 그대로다. 겹친 drain 두 개가 같은 일감을 두 번 처리하지 않고, 다시 할 수 있는 오류로 10번 실패했거나 영구 오류로 한 번 실패한 일감은 `failures`에 남고 닫히며, 다시 하기는 새 일감이다(2026-10-16). 청구를 놓친 것은 시도 횟수를 올리지 않는다.
 8. `brain guide schema`가 모든 명령을 내고, 명령 메타가 빠진 명령은 테스트가 잡는다. 비TTY에서 `--yes` 없이 `messages redact`를 부르면 exit 3과 `error.retry`(`confirm: true`)·`error.retry_argv`가 온다. doctor의 `writable` 검사 불가는 `warn`이다. 설치기 줄·doctor 줄·오류 message와 hint·`--help`가 한국어이고, 사람이 읽는 출력에 영어 문장을 새로 넣으면 출력 언어 검사가 잡는다(2026-10-16).
 
 ## Boundaries
 
-AD-4·5·6·7·8·9·11·12·13·18·19·21, Table Contract(projects, worktrees, sessions, messages, tool_notes, redactions, failures, transcript_files, work_items)와 0003의 `users`(2.2)·0004의 스키마(2.6, 파일·추출 칸 포함, 그 동작은 epic-attachments), Conventions(엔벨로프·종료 코드·명령 메타·설치·런타임 기록). AD-11 중 가린 메시지의 조각·미러 재생성 일감은 epic-recall-and-mirror가, 내보내기는 epic-operations가 붙인다. 경고 코드 `SPOOLED`·`CURSOR_RESET`·`DB_UNAVAILABLE`·`PLUGIN_NOT_INSTALLED`·`PLUGIN_BEHIND`·`PLUGIN_DUPLICATE`·`UPDATE_AVAILABLE`과 오류 코드 `CONFIRMATION_REQUIRED`(정의와 `messages redact`의 게이트)를 맡는다. 첨부·`FileStore`·문서 추출·`files reindex`·`files redact`·`ATTACHMENT_NOT_REDACTED`는 epic-attachments. 워크스페이스(`workspaces`, `sessions assign-workspace`)는 slice 1에서 쓰지 않는다(칸은 예약). 플러그인의 `skills/`와 SessionStart 동기 `context show` hook 줄은 epic-log-and-context가 더한다. `SEARCH_FAILED`는 epic-recall-and-mirror, 데몬·MCP 코드는 epic-daemon. CAP-10·CAP-11은 플러그인 진입점·hook 출처·CLI 규약 보강 부분만 맡는다(설치 기본은 epic-foundation-and-install, 운영은 epic-operations, 데몬·MCP는 epic-daemon). 문서 검색은 epic-recall-and-mirror, Drive 저장소 구현은 epic-drive. 작업 로그는 만들지 않는다(epic-log-and-context). 미러와 세션 목록·읽기는 epic-recall-and-mirror.
+AD-4·5·6·7·8·9·11·12·13·18·19·21, Table Contract(projects, worktrees, sessions, messages, tool_notes, redactions, failures, transcript_files, work_items)와 0003의 `users`(2.2)·0004의 스키마(2.6, 파일·추출 칸 포함, 그 동작은 epic-attachments)·0005(18), Conventions(엔벨로프·종료 코드·명령 메타·설치·런타임 기록). 출력 가리기 함수와 엔벨로프·hook 출력 코덱의 적용은 이 에픽(17)이 한다. 미러·내보내기·복제·임베딩 요청은 그것을 만드는 에픽이 같은 함수를 부르고 등록부에 넣는다. AD-11 중 가린 메시지의 조각·미러 재생성 일감은 epic-recall-and-mirror가, 내보내기는 epic-operations가 붙인다. 경고 코드 `SPOOLED`·`CURSOR_RESET`·`DB_UNAVAILABLE`·`PLUGIN_NOT_INSTALLED`·`PLUGIN_BEHIND`·`PLUGIN_DUPLICATE`·`UPDATE_AVAILABLE`과 오류 코드 `CONFIRMATION_REQUIRED`(정의와 `messages redact`의 게이트)를 맡는다. 첨부·`FileStore`·문서 추출·`files reindex`·`files redact`·`ATTACHMENT_NOT_REDACTED`는 epic-attachments. 워크스페이스(`workspaces`, `sessions assign-workspace`)는 slice 1에서 쓰지 않는다(칸은 예약). 플러그인의 `skills/`와 SessionStart 동기 `context show` hook 줄은 epic-log-and-context가 더한다. `SEARCH_FAILED`는 epic-recall-and-mirror, 데몬·MCP 코드는 epic-daemon. CAP-10·CAP-11은 플러그인 진입점·hook 출처·CLI 규약 보강 부분만 맡는다(설치 기본은 epic-foundation-and-install, 운영은 epic-operations, 데몬·MCP는 epic-daemon). 문서 검색은 epic-recall-and-mirror, Drive 저장소 구현은 epic-drive. 작업 로그는 만들지 않는다(epic-log-and-context). 미러와 세션 목록·읽기는 epic-recall-and-mirror.
 
 ## References
 
@@ -116,7 +117,7 @@ AD-4·5·6·7·8·9·11·12·13·18·19·21, Table Contract(projects, worktrees,
 - 검증(2026-10-15~16):
   - 14개 초안은 Set·Ticket·Dependencies 검증과 Tree·Dependencies 검증을 서브에이전트로 돌렸고, 결과를 반영했다.
   - 15개로 바꾼 뒤의 재검증은 서브에이전트가 사용량 한도로 멈추고 사용자가 중단해서, 직접 했다. 선행 관계가 1~15 한 줄이라 겹치는 쌍이 없다. E2-1~9와 Done when 1~8은 모두 특정 스토리에 걸려 있다. 4→5 넘겨받기는 양쪽에 적었다.
-  - 가장 큰 스토리는 5와 12다. 빌드 플랜에서 한 세션에 넘치면 나눈다.
+  - 가장 큰 스토리는 5와 12다. 빌드 플랜에서 한 세션에 넘치면 나눈다. 17도 크다(2026-10-19). 넘치면 패턴 버전 2를 뒤 조각으로 나눈다.
 - Decision(2026-10-16, `../change-users-and-review-gaps/`): 재조정. 이유는 story 2.2 계획 중의 `users` 테이블 결정(D0)과 외부 리뷰 대조(`../inputs/external-review-2026-10-16.md`)다.
   - 2.2가 마이그레이션 0003(`users`, `sessions.user_id` FK)을 가져가므로 2.6은 0004·버전 4가 된다. 2.6은 `messages.git_branch`(D1)와 drain 청구 인덱스(S8)도 더한다.
   - 보강: 2.5(node를 못 찾을 때 `systemMessage`, 잠금 stale 판정), 2.7(메시지마다 브랜치, 서브에이전트 파일과 스캔 범위), 2.10(`.claiming` 회수), 2.11(10번 실패한 행 닫기), 2.12(스캔 범위, spool 레코드 10번 실패 보존).
@@ -130,3 +131,13 @@ AD-4·5·6·7·8·9·11·12·13·18·19·21, Table Contract(projects, worktrees,
 - Decision(2026-10-16, 사용자): 사람이 읽는 출력은 한국어로 쓴다(설치기 질문·진행 줄, doctor 줄, 텍스트 모드 오류 줄과 hint, `--help`, 개발용 스크립트 안내, README). 에이전트만 읽는 것은 한국어가 아니어도 되고, 코드·JSON 키·점검 id·명령과 옵션 이름·설정 키는 영어다. 기존 영어 문구는 16이 2.2 바로 뒤에서 바꾸고, 이후 스토리가 새로 쓰는 문구도 이 규칙을 따른다(spine Conventions '출력 언어'). 16은 3과 같은 파일(코드 표 hint, `--help`, README, doctor 등록부)을 고치므로 3이 16 뒤에 오고, 선행 관계는 1·2·16·3~15 한 줄이 된다.
 - Decision(2026-10-18, 사용자 — 2026-10-16 Assumption을 대체): 비동기 hook의 `systemMessage`는 다음 턴에 모델만 받고 사용자 화면에는 보이지 않는다(2.5 사람 확인 4, 실측). 그래서 세 경우(설치 완료, 설치 실패, node 못 찾음)는 그대로 두되 "이것을 사용자에게 한 줄로 전해 주세요"처럼 모델이 전하도록 쓴 한국어 문장으로 바꾼다. 사람용 결과는 doctor로 옮긴다: bootstrap이 `<home>/run/plugin.json`에 마지막 결과(시각, `installed` 또는 실패 단계, 로그 위치)를 남기고 doctor `plugin` 점검이 보인다(실패면 `warn`). node 못 찾음은 bootstrap이 돌지 않으므로 기록 없이 hook 줄만 남는다(2.5·2.14).
 - Decision(2026-10-16, 사용자): 16은 출력 언어 회귀 검사를 남기고, E2-1·E2-2 본문과 Done when 8에 출력 언어를 넣는다. 그래서 3~14가 새로 쓰는 영어 문구도 sweep(15)의 Done when 재실행에서 잡힌다.
+- Decision(2026-10-19, `../change-masking-b-and-review-fixes/`): 마스킹 B. 비밀은 저장할 때가 아니라 Core 출력 코덱에서 가린다. 9의 수집 경로 가리기는 17이 빼고, 미룬 패턴 문제 셋도 17이 고친다(패턴 버전 2). 결정 검토 수정으로 19(parser peer handback), 18(0005), 20(비교 키·꼬리표 다시 채우기)을 더했다. 13은 저장본 가리기로 남고 `detected`와 도구 메모 기록을 갖는다. 순서는 10→11→12→19→17→18→20→13→14→15다. 13·14의 `unknown`은 이 승인으로 닫았다(사용자 change 승인으로 받아들임).
+- Decision(2026-10-19, 순서의 이유, change-masking-b-and-review-fixes D11):
+  - 10~12는 마스킹 B와 무관해 먼저 간다.
+  - 19는 parser만 고치므로 독립적이고, 2.7 follow-up 리뷰를 일찍 닫는다.
+  - 17이 출력 코덱 규칙을 세운 뒤 18이 0005 스키마를 놓는다.
+  - 20은 11의 실패 기록 함수, 12의 세션 토큰 수집, 18의 `identity_key`가 필요하다.
+  - 13은 17(저장본 가리기와 출력 가리기의 경계)과 18(`tool_note_id`) 뒤다. 20 뒤에 둔 것은 핫스팟 때문에 한 줄을 지키려는 것이다.
+  - 14는 13·19·20이 끝난 뒤 실제 수집을 켠다. 저장한 메시지와 꼬리표는 바뀌지 않기 때문이다.
+  - (검증 서브에이전트 권고, 사용자 change 승인으로 받아들임)
+- Decision(2026-10-19, 사용자, change-masking-b-and-review-fixes 검증 뒤): (1) 대소문자만 다른 이름은 같은 프로젝트다. 0005 전에 이미 갈라진 프로젝트가 있으면 setup이 이미 있다고 보이고, 합칠지 묻고(확인 게이트), 동의하면 먼저 만든 프로젝트로 합친다. 거절하면 DB를 바꾸지 않는다(18). (2) 셸 `NAME=value` 규칙은 도구 메모를 돌려주는 읽기 결과가 그 칸에만 먼저 걸고, 코덱은 모든 문자열에 본문 규칙을 건다(17).

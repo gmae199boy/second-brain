@@ -55,3 +55,4 @@ AD-8·12·18·19·20·24·25, Conventions(내보내기, 설치·런타임 기록
   - T10: 복구 확인에 파일·위치·메타데이터 건수와 Brain 원본 파일 열기를 넣는다(PRD NFR-9, spec CAP-12, initiative Done when 4).
   - D0: 내보내기에 `users`를 넣는다(spine AD-12, Table Contract, Conventions 내보내기, Deferred '기계 교체·원본 이전'). 가져오기가 기존 DB에 합치기도 지원하면 들어오는 "나" id를 받는 쪽 "나"로 바꾸고, 파생물을 다시 만들고, 먼저 스키마 버전을 맞추고, `users.name`을 갱신할지 정한다.
 - Note(2026-10-16): `setup upgrade`는 `[update] auto = false`일 때의 직접 갱신 경로이고, `UPDATE_AVAILABLE`의 hint가 이 명령을 가리킨다(spine AD-19).
+- Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 내보내기 writer는 출력 코덱으로 등록하고 manifest에 비밀 패턴 버전을 적는다. 내보내기에서 되살린 Brain의 비밀은 가린 채 돌아오고, 복구 확인의 건수 비교는 그대로 맞는다(D6).
