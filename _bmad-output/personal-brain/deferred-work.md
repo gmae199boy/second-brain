@@ -74,3 +74,15 @@
 | Core `Failure` 타입이 0004에서 없어진 `harness_session_id`를 키로 적음(`packages/core/src/domain/failure.ts`). `Redaction`·`Message`도 새 칸이 없음 | `Failure`: epic 2 story 11(실패 기록 함수가 타입을 대상 키로 바꿈). `Redaction`: `patternVersion`만 해결됨(2.9). 아직 `messageId: string`·non-null `start`/`end`라 0004의 파일 가리기(`file_id`, 위치 없음)를 표현하지 못한다 — `fileId` 추가와 `messageId`·`start`·`end` nullable화는 `files.redact`를 만드는 epic-attachments. `Message`: story 7(2.6 Decision, 2026-10-18) |
 | 도구 메모 대상을 가린 기록 자리가 없음 | epic-attachments 또는 epic 7과 함께(다음 마이그레이션). 0004의 `redactions` 행은 대상이 `message_id`·`file_id` 둘뿐이고 위치는 **본문** 위의 구간이라, 가려진 `tool_notes.target`을 가리킬 칸이 없다. 2.9는 대상의 값을 가리되 기록은 남기지 않는다(Decision 2026-10-18). 넣으려면 0005에 `redactions.tool_note_id`를 더하고 위치를 그 대상 위의 구간으로 정의해야 한다 |
 | `messages redact`(2.13)가 같은 문제를 만난다 | epic 2 story 13. AD-11은 `messages.redact`가 `tool_notes.target`도 함께 가린다고 정하는데, 그 가리기 역시 남길 행이 없다. 위 항목과 한 번에 결정한다(2.9, 2026-10-18) |
+- source_plan: none
+  summary: 옛 무인 루프 스크립트(`tooling/dev/auto-build.sh`)를 넣은 커밋(`10a09d2`)을 지우는 커밋이 아니라 그 커밋을 빼고 다시 쌓는 방식으로 이력에서 뺀다(`git rebase --onto 10a09d2^ 10a09d2 main`, 시작 전 백업 브랜치).
+  evidence: 2026-10-18 사용자 결정. 그 뒤 해시가 다시 바뀌므로 `plugin/app-ref`(AGENTS.md 규칙대로 version도 함께), plan의 `baseline_revision`, 문서의 커밋 번호를 다시 맞춘다. 원격에는 첫 커밋뿐이라 push 전에 해야 한다. dev-workflow 저장소에서는 같은 일을 이미 끝냈다.
+- source_plan: none
+  summary: 무인 루프 v2(`~/.local/share/auto-build/auto-build.sh`, 저장소 밖)가 plan이 built가 된 뒤 커밋을 기다리지 않아 "작업 트리 더러움"으로 멈추는 버그를 고친다.
+  evidence: 2026-10-18 실행에서 관찰. 루프는 이 저장소의 티켓을 돌리므로 2.10~2.15를 무인으로 돌리기 전에 고친다.
+- source_plan: none
+  summary: brain 2.7(parser) follow-up 리뷰를 한 번 더 돌린다.
+  evidence: 2026-10-18 결정 검토에서 peer handback 누락(보고 약 58%)이 나왔다. 수정은 `inputs/masking-b-and-review-fixes.md` §2에 있고, 다른 빈틈이 없는지 리뷰로 확인하자는 권장이다.
+- source_plan: none
+  summary: 이력 다시 쓰기 전 백업 브랜치 `backup/pre-path-rewrite-2026-10-18`(로컬)을 push 전에 지운다.
+  evidence: 옛 커밋에 실명 경로가 남아 있다. 원격에 올라가면 안 된다. 이력 다시 쓰기는 2026-10-18 `24f0063` 앞에서 끝났다.

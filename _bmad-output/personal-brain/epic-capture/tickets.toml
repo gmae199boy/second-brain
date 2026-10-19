@@ -166,6 +166,7 @@ covers = ["E2-8"]
 after = [1, 9, 12]
 hitl = false
 risk = "high"
+unknown = "마스킹 B와 결정 검토 수정(`_bmad-output/personal-brain/inputs/masking-b-and-review-fixes.md`)의 correct-course가 승인되기 전에는 시작하지 않는다."
 
 [[entry]]
 id = 14
@@ -177,6 +178,7 @@ covers = ["E2-3", "E2-4"]
 after = [5, 8, 9, 12, 13, "1.7"]
 hitl = true
 risk = "high"
+unknown = "마스킹 B와 결정 검토 수정(`_bmad-output/personal-brain/inputs/masking-b-and-review-fixes.md`)의 correct-course가 승인되기 전에는 시작하지 않는다."
 references = ["_bmad-output/personal-brain/epic-capture/epic-capture-research.md, §1, §2"]
 
 [[entry]]
