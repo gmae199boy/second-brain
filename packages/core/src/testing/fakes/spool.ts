@@ -68,6 +68,11 @@ export interface MemorySpoolFile {
   lines: readonly string[];
   /** When it was claimed, or `null` while it is waiting. */
   claimedAtMs: number | null;
+  /**
+   * For a file a `rewrite` left: the instant before which no claim takes it.
+   * `null` for a file an `append` wrote, which is due at once.
+   */
+  dueAtMs: number | null;
 }
 
 /**
@@ -121,7 +126,7 @@ export function memorySpool(options: MemorySpoolOptions = {}): MemorySpool {
 
       const stem = `${String(serial).padStart(6, '0')}`;
       serial += 1;
-      files.push({ stem, lines, claimedAtMs: null });
+      files.push({ stem, lines, claimedAtMs: null, dueAtMs: null });
       return { ok: true, file: `${stem}.jsonl` };
     },
 
@@ -138,7 +143,10 @@ export function memorySpool(options: MemorySpoolOptions = {}): MemorySpool {
         }
       }
 
-      const waiting = files.find((file) => file.claimedAtMs === null);
+      // Not yet due is not waiting: a rewrite set it aside until then (AD-9).
+      const waiting = files.find(
+        (file) => file.claimedAtMs === null && (file.dueAtMs === null || file.dueAtMs <= nowMs),
+      );
       if (waiting === undefined) return { ok: true, claim: null };
       waiting.claimedAtMs = nowMs;
       return { ok: true, claim: { handle: handleOf(waiting), lines: [...waiting.lines] } };
@@ -172,16 +180,20 @@ export function memorySpool(options: MemorySpoolOptions = {}): MemorySpool {
         return { ok: false, message: `claim한 spool 파일이 아닙니다: ${handle}` };
       }
       failed.push(...input.failed);
-      if (input.keep.length === 0) {
-        files.splice(files.indexOf(file), 1);
-        return { ok: true };
-      }
-      // The kept lines stay in this file's own place in the claim order, which
-      // is what the file adapter does by reusing the claimed file's stem: a
-      // rewrite must not send what is left of the oldest file to the back of
-      // the queue behind files that were written after it (AD-9).
-      file.lines = [...input.keep];
-      file.claimedAtMs = null;
+      files.splice(files.indexOf(file), 1);
+      if (input.keep.length === 0) return { ok: true };
+      // The kept lines go to the back, as a file of their own that no claim
+      // takes before `keepDueAt` — the file adapter does the same by naming the
+      // file after that instant. A record that keeps failing must not stand in
+      // front of everything written after it (AD-9).
+      const stem = `${String(serial).padStart(6, '0')}`;
+      serial += 1;
+      files.push({
+        stem,
+        lines: [...input.keep],
+        claimedAtMs: null,
+        dueAtMs: input.keepDueAt === undefined ? null : input.keepDueAt.getTime(),
+      });
       return { ok: true };
     },
 

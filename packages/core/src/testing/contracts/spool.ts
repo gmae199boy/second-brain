@@ -377,13 +377,12 @@ export function spoolContract(): ContractCase<Spool>[] {
     }),
 
     contractCase<Spool>(
-      'the lines a rewrite kept are claimed before a newer file',
+      'the lines a rewrite kept go behind a newer file',
       async (make) => {
         await withSubject(make, async (spool) => {
           // Two files, oldest first, and the oldest keeps one of its two lines.
-          // What it keeps has to stay at the head of the claim order: sending it
-          // behind the newer file would let a record that has already failed
-          // nine times wait behind everything written since (AD-9).
+          // What it keeps goes to the back: a record that keeps failing must not
+          // stand in front of everything written after it (AD-9).
           assertOk(
             await spool.append([
               sampleSpoolRecord({ id: FIRST_ID }),
@@ -415,14 +414,62 @@ export function spoolContract(): ContractCase<Spool>[] {
           const next = await spool.claim();
           assertOk(next, 'claim failed after a rewrite');
           if (next.claim === null) {
-            assertTrue(false, 'the kept line must be claimable again');
+            assertTrue(false, 'the newer file must still be claimable');
             return;
           }
           assertEqual(
             next.claim.lines.map(recordOf).map((record) => record.id),
-            [SECOND_ID],
-            'a rewrite must leave the kept lines where the file was in the claim order',
+            [THIRD_ID],
+            'a rewrite must put the kept lines behind the files already waiting',
           );
+
+          const last = await spool.claim();
+          assertOk(last, 'claim failed after the newer file');
+          if (last.claim === null) {
+            assertTrue(false, 'the kept line must be claimable once it is due');
+            return;
+          }
+          assertEqual(
+            last.claim.lines.map(recordOf).map((record) => record.id),
+            [SECOND_ID],
+            'the kept line comes after the newer file',
+          );
+        });
+      },
+    ),
+
+    contractCase<Spool>(
+      'a claim does not hand over kept lines before they are due',
+      async (make) => {
+        await withSubject(make, async (spool) => {
+          assertOk(await spool.append([sampleSpoolRecord({ id: FIRST_ID })]), 'append failed');
+          const claimed = await spool.claim();
+          assertOk(claimed, 'claim failed');
+          if (claimed.claim === null) {
+            assertTrue(false, 'claim found nothing after an append');
+            return;
+          }
+          // Far beyond any clock a test gives a spool: not due during the case.
+          assertOk(
+            await spool.rewrite(claimed.claim.handle, {
+              keep: [...claimed.claim.lines],
+              failed: [],
+              keepDueAt: new Date('2100-01-01T00:00:00.000Z'),
+            }),
+            'rewrite failed',
+          );
+
+          const again = await spool.claim();
+          assertOk(again, 'claim failed after a rewrite');
+          assertEqual(
+            again.claim,
+            null,
+            'a kept line must wait out its retry interval before any claim takes it',
+          );
+
+          const stats = await spool.stats();
+          assertOk(stats, 'stats failed after a rewrite');
+          assertEqual(stats.records, 1, 'a line waiting for its time is still waiting (AD-9)');
         });
       },
     ),

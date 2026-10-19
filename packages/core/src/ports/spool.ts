@@ -24,6 +24,9 @@ import type { SpoolRecord } from '../domain/spool-record.js';
  *   * `complete` removes a claimed file, `release` puts it back where a later
  *     claim will find it again, and `rewrite` replaces it with what is left of
  *     it. Nothing else may move a claimed file.
+ *   * what a `rewrite` kept goes behind the files already waiting, and is not
+ *     handed to a claim before its `keepDueAt`. A record that keeps failing
+ *     therefore never holds up newer files, and waits out its retry interval.
  */
 
 /** Where one `append` put the records, so a caller can say which file. */
@@ -71,6 +74,16 @@ export type SpoolReleaseResult = { ok: true } | { ok: false; message: string };
 export interface SpoolRewriteInput {
   keep: readonly string[];
   failed: readonly string[];
+  /**
+   * When the earliest of the kept lines may be tried again. Left out, at once.
+   *
+   * The kept lines go *behind* the files already waiting, and no claim hands
+   * them over before this instant. That is what stops one record that keeps
+   * failing from holding up every newer file, and what stops one drain run from
+   * claiming the same lines again and again until their attempts are spent
+   * (AD-9).
+   */
+  keepDueAt?: Date;
 }
 
 export type SpoolRewriteResult = { ok: true } | { ok: false; message: string };
@@ -116,7 +129,8 @@ export interface Spool {
    */
   append(records: readonly SpoolRecord[]): Promise<SpoolAppendResult>;
   /**
-   * Take one file for this process to replay, oldest first.
+   * Take one file for this process to replay, oldest first, skipping the
+   * files a `rewrite` left that are not due yet.
    *
    * Before it looks, an implementation takes back the claims that will never
    * finish: a claim whose process is gone, or one older than
@@ -129,8 +143,9 @@ export interface Spool {
   /** Not replayed: put the file back, for this drain or another one to retry. */
   release(handle: string): Promise<SpoolReleaseResult>;
   /**
-   * Partly replayed: write what is left as a new waiting file, put what nobody
-   * will retry aside, and remove the claimed file (AD-9).
+   * Partly replayed: write what is left as a new waiting file — behind the
+   * files already waiting, and not claimable before `keepDueAt` — put what
+   * nobody will retry aside, and remove the claimed file (AD-9).
    *
    * The order is the whole of it. Both files are written *before* the claimed
    * one is removed, so a process killed in the middle leaves the claim behind —

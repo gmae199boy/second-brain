@@ -180,31 +180,37 @@ describe('replaySpool when every record goes back in', () => {
 });
 
 describe('replaySpool when a record does not go back in', () => {
-  it('writes the record back with its attempt raised, and stops the run', async () => {
+  it('writes the record back with its attempt raised and a retry instant, and walks on', async () => {
     const spool = memorySpool();
     await withFiles(spool, 2);
     const { handlers } = failingAfter(0);
 
     const report = await replaySpool(deps(spool, handlers));
 
-    expect(report.completed).toBe(0);
-    expect(report.replayed).toBe(0);
-    expect(report.failed).toBe(0);
-    expect(report.stopped).toContain('the database is still unreachable');
-    // Both records are still waiting — the one that was tried, now carrying one
-    // attempt, and the file behind it, untouched.
+    // Both files were tried: a file whose record failed does not stop the run
+    // any more, and neither kept line is due again inside it (AD-9).
+    expect(report).toMatchObject({ completed: 0, replayed: 0, failed: 0 });
+    expect(report.stopped).toBeUndefined();
     expect(await spool.stats()).toMatchObject({ records: 2 });
-    expect(waiting(spool).map((record) => [record.id, record.attempts ?? 0])).toEqual(
+    // One attempt each, and the queue's first wait — one second — before the
+    // next (AD-21).
+    expect(
+      waiting(spool).map((record) => [
+        record.id,
+        record.attempts ?? 0,
+        record.nextAttemptAt?.toISOString(),
+      ]),
+    ).toEqual(
       expect.arrayContaining([
-        [IDS[0], 1],
-        [IDS[1], 0],
+        [IDS[0], 1, new Date(NOW.getTime() + 1000).toISOString()],
+        [IDS[1], 1, new Date(NOW.getTime() + 1000).toISOString()],
       ]),
     );
   });
 
   it('keeps only the lines that did not go in', async () => {
     // The whole point of the rewrite: a record that landed is gone from the
-    // spool, and the two that did not are the file a later drain claims.
+    // spool, and the one that did not is the file a later drain claims.
     const spool = memorySpool();
     expect(
       await spool.append([
@@ -219,29 +225,48 @@ describe('replaySpool when a record does not go back in', () => {
 
     expect(report.completed).toBe(0);
     expect(report.replayed).toBe(2);
-    expect(report.stopped).toContain('3번째 줄');
     expect(seen).toHaveLength(2);
     expect(waiting(spool).map((record) => [record.id, record.attempts ?? 0])).toEqual([
       [IDS[2], 1],
     ]);
   });
 
-  it('stops without walking the files behind the one that failed', async () => {
-    const spool = memorySpool();
+  it('does not let a record that keeps failing hold up the files behind it', async () => {
+    const spool = memorySpool({ now: () => current });
+    let current = NOW;
     await withFiles(spool, 3);
     let calls = 0;
+    const accepted: string[] = [];
     const handlers: SpoolReplayHandlers = {
-      session_ingest: async () => {
+      session_ingest: async (record) => {
         calls += 1;
-        return { ok: false, message: 'still unreachable' };
+        if (record.id === IDS[0]) return { ok: false, message: 'still unreadable' };
+        accepted.push(record.id);
+        return { ok: true };
       },
     };
+    const clock = { now: () => current };
+    const run = () =>
+      replaySpool({ ...deps(spool, handlers), clock });
 
-    await replaySpool(deps(spool, handlers));
+    // The oldest file fails and goes behind the other two, which go in during
+    // the same run.
+    await run();
+    expect(accepted).toEqual([IDS[1], IDS[2]]);
+    expect(calls).toBe(3);
 
-    // One call, not three: the reason the first file failed is the reason the
-    // next two would, and walking them would be three attempts on one problem.
-    expect(calls).toBe(1);
+    // At once again: the failing record waits out its interval, so a run right
+    // after spends none of its attempts.
+    await run();
+    expect(calls).toBe(3);
+
+    // Once the interval has passed it is tried again, and the next wait doubles.
+    current = new Date(NOW.getTime() + 1000);
+    await run();
+    expect(calls).toBe(4);
+    expect(waiting(spool).map((record) => [record.attempts, record.nextAttemptAt?.getTime()])).toEqual([
+      [2, NOW.getTime() + 1000 + 2000],
+    ]);
   });
 
   it('hands the whole file back untouched when the database refused a write', async () => {
@@ -281,7 +306,7 @@ describe('replaySpool when a record does not go back in', () => {
     // process must not hold up every record behind it.
     expect(report.replayed).toBe(1);
     expect(report.failed).toBe(1);
-    expect(report.stopped).toContain('1번째 줄');
+    expect(report.stopped).toBeUndefined();
     expect(seen.map((record) => record.id)).toEqual([IDS[1]]);
     expect(held.failedLines()).toHaveLength(1);
   });

@@ -8,7 +8,7 @@ import {
   type SpoolRecord,
   type SpoolRecordKind,
 } from '../domain/spool-record.js';
-import { MAX_WORK_ATTEMPTS } from '../domain/work-item.js';
+import { DEFAULT_WORK_POLICY, MAX_WORK_ATTEMPTS } from '../domain/work-item.js';
 import type { Clock } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
 import type { Spool } from '../ports/spool.js';
@@ -28,9 +28,13 @@ import type { WorkStore } from '../ports/store.js';
  *     claimed file goes back whole, with every attempt count exactly as it was,
  *     and the run stops: the next record would meet the same database (AD-21).
  *   * any other refusal spends one of the record's ten attempts. Under ten, the
- *     line is written back with the raised count; at ten it is recorded in
- *     `failures` and moved aside to `spool/failed/`, where nothing will try it
- *     again and doctor counts it (2026-10-16).
+ *     line is written back with the raised count and the instant it may be
+ *     tried again — the queue's own exponential wait, so ten attempts take
+ *     minutes rather than ten commands in a row — behind the files already
+ *     waiting. At ten it is recorded in `failures` and moved aside to
+ *     `spool/failed/`, where nothing will try it again and doctor counts it
+ *     (2026-10-16).
+ *   * a line whose retry instant has not come yet is left exactly as it is.
  *   * a line nothing can read — broken JSON, a version or a kind this build does
  *     not know — goes straight aside. It cannot be retried, because there is no
  *     record to retry, and it must not stop the file either: one half-written
@@ -143,8 +147,10 @@ export async function replaySpool(
   let completed = 0;
   let replayed = 0;
   let failed = 0;
+  /** Files this run has claimed, whatever became of them: what `maxFiles` counts. */
+  let taken = 0;
 
-  while (maxFiles === undefined || completed < maxFiles) {
+  while (maxFiles === undefined || taken < maxFiles) {
     if (deadline !== undefined && clock.now().getTime() >= deadline) {
       return {
         completed,
@@ -166,6 +172,7 @@ export async function replaySpool(
     // Nothing waiting, which is the state of a brain whose database is fine.
     if (claimed.claim === null) return { completed, replayed, failed };
 
+    taken += 1;
     const { handle, lines } = claimed.claim;
     const outcome = await replayFile({ handlers, store, clock, idGen }, lines);
     replayed += outcome.replayed;
@@ -207,6 +214,7 @@ export async function replaySpool(
     const rewritten = await spool.rewrite(handle, {
       keep: outcome.keep,
       failed: outcome.failed,
+      ...(outcome.keepDueAt === undefined ? {} : { keepDueAt: outcome.keepDueAt }),
     });
     if (!rewritten.ok) {
       // The claimed file is still there with all of its lines, so nothing is
@@ -219,18 +227,10 @@ export async function replaySpool(
       };
     }
     failed += outcome.failed.length;
-
-    // And the run ends here, which is the rule story 2.10 established and this
-    // one keeps: stop at the first file that did not go back whole. It is not
-    // politeness — the kept lines are waiting under a name a claim looks for, so
-    // carrying on would claim them again in this same run and spend every one of
-    // their ten attempts on one unavailable database, in one loop, in seconds.
-    return {
-      completed,
-      replayed,
-      failed,
-      stopped: outcome.refused ?? '일부 spool 줄이 되넣어지지 않았습니다',
-    };
+    // And on to the next file. What was kept went behind every file already
+    // waiting and is not due before its retry instant, so this run cannot claim
+    // it again and spend its attempts in a loop, and one record that keeps
+    // failing does not hold up the files written after it (AD-9).
   }
 
   return { completed, replayed, failed };
@@ -244,8 +244,8 @@ interface FileOutcome {
   keep: readonly string[];
   /** Lines to move aside: unreadable, or out of attempts. */
   failed: readonly string[];
-  /** What the first line that did not go in had to say, for the report. */
-  refused?: string;
+  /** When the earliest kept line may be tried again, for `rewrite`. */
+  keepDueAt?: Date;
   /**
    * Set when the file has to go back exactly as it was: the database would not
    * take a write, or this build has no handler for one of its kinds. `code` is
@@ -281,8 +281,12 @@ async function replayFile(
   let replayed = 0;
   const keep: string[] = [];
   const failed: string[] = [];
-  /** The first refusal, which is the one the report names. */
-  let refused: string | undefined;
+  /** The earliest instant among the kept lines, for `keepDueAt`. */
+  let keepDueAt: Date | undefined;
+  const kept = (line: string, due: Date): void => {
+    keep.push(line);
+    if (keepDueAt === undefined || due.getTime() < keepDueAt.getTime()) keepDueAt = due;
+  };
 
   for (const [index, line] of lines.entries()) {
     const where = `${String(index + 1)}번째 줄`;
@@ -291,10 +295,16 @@ async function replayFile(
     if (!decoded.ok) {
       // Nothing to retry and nothing to count against: there is no record here.
       failed.push(line);
-      refused ??= `spool 파일의 ${where}: ${decoded.message}`;
       continue;
     }
     const record = decoded.record;
+
+    // Not its time yet: left exactly as it was, attempts and all.
+    const now = clock.now();
+    if (record.nextAttemptAt !== undefined && record.nextAttemptAt.getTime() > now.getTime()) {
+      kept(line, record.nextAttemptAt);
+      continue;
+    }
 
     const handler = handlers[record.kind];
     if (handler === undefined) {
@@ -324,9 +334,10 @@ async function replayFile(
       };
     }
 
-    refused ??= `spool 파일의 ${where}: ${handled.message}`;
     const attempts = (record.attempts ?? 0) + 1;
-    const again = encodeSpoolLine({ ...record, attempts });
+    // The queue's own wait after the attempt that just failed (AD-21).
+    const nextAttemptAt = new Date(clock.now().getTime() + DEFAULT_WORK_POLICY.retryDelayMs(attempts));
+    const again = encodeSpoolLine({ ...record, attempts, nextAttemptAt });
     if (!again.ok) {
       // A record this build cannot spell any more. There is nothing to write
       // back, so it goes aside rather than being dropped in silence (NFR-2).
@@ -335,7 +346,7 @@ async function replayFile(
     }
 
     if (attempts < MAX_WORK_ATTEMPTS) {
-      keep.push(again.line.replace(/\n$/, ''));
+      kept(again.line.replace(/\n$/, ''), nextAttemptAt);
       continue;
     }
 
@@ -355,7 +366,7 @@ async function replayFile(
     failed.push(again.line.replace(/\n$/, ''));
   }
 
-  return refused === undefined ? { replayed, keep, failed } : { replayed, keep, failed, refused };
+  return keepDueAt === undefined ? { replayed, keep, failed } : { replayed, keep, failed, keepDueAt };
 }
 
 /**

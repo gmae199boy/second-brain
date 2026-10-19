@@ -189,6 +189,13 @@ Core(`packages/core/src`, node·fs 없음; `Failure` 이름은 루트에서 enve
 
 ## Implementation Notes
 
+- (후속, 2026-10-19 사용자 "둘 다 고쳐") 남은 위험 둘을 실측한 뒤 spool 쪽을 고쳤다.
+  - 막힘: 다시 쓴 줄은 이제 새 이름(`<다음 시도 시각>-<pid>-<순번>-r.jsonl`)으로 기다리는 파일들 뒤에 간다. claim은 그 시각 전의 `-r` 파일을 건너뛴다. 재주입은 일부만 들어간 파일 뒤에도 멈추지 않고 다음 파일로 간다. 막힘 재현에서 정상 줄이 11번째 drain이 아니라 첫 drain에 들어갔다.
+  - 재시도 간격: 줄에 선택 키 `next_attempt_at`이 생겼다(줄 형식 버전 1 그대로). 실패할 때마다 `DEFAULT_WORK_POLICY.retryDelayMs`로 정하고, 아직 때가 안 된 줄은 그대로 둔다.
+  - `maxFiles`는 이제 완료한 파일이 아니라 집은 파일 수를 센다.
+  - 바뀐 곳: `domain/spool-record.ts`, `ports/spool.ts`(`keepDueAt`), `spool/replay.ts`, 가짜 spool, spool 계약(같은 자리에 둔다는 사례를 "뒤로 간다"로 뒤집고 "때가 되기 전엔 안 집힌다"를 더함), `apps/cli/src/runtime/spool.ts`, 테스트, README.
+  - 2초 예산은 실측 규모(세션 133개, 319MB, 최대 19.3MB)에서 문제가 없어 고치지 않았다. 설치 직후 첫 두 명령만 약 2.1초 걸리고, 그 뒤 조용한 명령은 약 0.12초로 스캔을 켜도 꺼도 같았다.
+
 ## Plan Change Log
 
 ## Review Triage Log
@@ -283,8 +290,8 @@ return { ...queue, replayed: replay.replayed, spoolFailed: replay.failed, enqueu
 - `TRANSCRIPT_UNREADABLE`·`USER_MISSING`은 `session_ingest`에서 영구 오류다.
 
 **남은 위험:**
-- 실제 `~/.claude`로는 돌려 보지 않았다(스위치가 꺼져 있다). 2.14가 켤 때 실제 폴더 규모(파일 수백 개, 최대 약 19MB)에서 기회적 drain 2초 예산이 괜찮은지 봐야 한다.
-- 계속 실패하는 spool 줄 하나는 10번이 될 때까지 drain마다 그보다 새 spool 파일들을 앞에서 막는다(파일 adapter는 같은 stem을 다시 쓴다).
+- 실제 `~/.claude`로는 돌려 보지 않았다(스위치가 꺼져 있다). 합성 실측 규모에서는 기회적 drain 2초 예산이 괜찮았다(Implementation Notes 후속). 실제 세션은 새 세션마다 git 조회가 붙어 설치 직후 첫 가져오기가 조금 더 걸릴 수 있다.
+- (해결됨, 후속) 계속 실패하는 spool 줄이 뒤 파일을 막던 문제와 재시도 간격이 없던 문제.
 - `rewrite` 도중 죽으면 남긴 줄이 한 번 더 시도된다(레코드는 id로 멱등).
 - 성공한 `session_ingest`마다 `resolveFailures` 쓰기 트랜잭션이 하나 더 든다.
 

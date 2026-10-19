@@ -319,3 +319,27 @@ describe('the spool constants', () => {
     expect(SPOOL_CLAIM_STALE_MS).toBe(600_000);
   });
 });
+
+describe('the retry instant of a spool line', () => {
+  it('round-trips, and is left off a line nothing has retried', () => {
+    const fresh = encodeSpoolLine(sampleSpoolRecord());
+    expect(fresh.ok && fresh.line.includes('next_attempt_at')).toBe(false);
+
+    const due = new Date('2026-02-03T04:05:08.000Z');
+    const encoded = encodeSpoolLine({ ...sampleSpoolRecord(), attempts: 1, nextAttemptAt: due });
+    expect(encoded.ok).toBe(true);
+    if (!encoded.ok) return;
+    expect(encoded.line).toContain('"next_attempt_at":"2026-02-03T04:05:08.000Z"');
+
+    const decoded = decodeSpoolLine(encoded.line.trimEnd());
+    expect(decoded.ok && decoded.record.nextAttemptAt?.toISOString()).toBe(due.toISOString());
+  });
+
+  it('refuses a line whose retry instant is not a stored instant', () => {
+    const encoded = encodeSpoolLine(sampleSpoolRecord());
+    expect(encoded.ok).toBe(true);
+    if (!encoded.ok) return;
+    const edited = encoded.line.trimEnd().replace('"payload"', '"next_attempt_at":"tomorrow","payload"');
+    expect(decodeSpoolLine(edited)).toMatchObject({ ok: false });
+  });
+});

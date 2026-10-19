@@ -161,6 +161,18 @@ interface SpoolRecordBase {
    * would instead make every older build refuse the whole file.
    */
   attempts?: number;
+  /**
+   * The earliest instant this record may be tried again, after a failed replay
+   * (AD-9, AD-21).
+   *
+   * Absent means at once, which is what every record a write path produces
+   * carries. A failed replay sets it from the same exponential wait the queue
+   * uses (`DEFAULT_WORK_POLICY.retryDelayMs`), so ten attempts are spread over
+   * minutes instead of being spent by ten commands in a row. An optional key
+   * like `attempts`, for the same reason: an older build ignores it and only
+   * tries the record a little early.
+   */
+  nextAttemptAt?: Date;
 }
 
 export interface SessionIngestSpoolRecord extends SpoolRecordBase {
@@ -223,6 +235,15 @@ export function encodeSpoolLine(record: SpoolRecord): EncodeSpoolLineResult {
     };
   }
 
+  let nextAttemptAt: string | undefined;
+  if (record.nextAttemptAt !== undefined) {
+    const formatted = formatInstant(record.nextAttemptAt);
+    if (!formatted.ok) {
+      return { ok: false, message: `spool 레코드의 next_attempt_at: ${formatted.message}` };
+    }
+    nextAttemptAt = formatted.value;
+  }
+
   const payload = encodePayload(record);
   if (!payload.ok) return payload;
 
@@ -236,6 +257,7 @@ export function encodeSpoolLine(record: SpoolRecord): EncodeSpoolLineResult {
     // compares two writes of one record byte for byte still can, and an older
     // build reading a fresh spool sees nothing new at all.
     ...(attempts === 0 ? {} : { attempts }),
+    ...(nextAttemptAt === undefined ? {} : { next_attempt_at: nextAttemptAt }),
     payload: payload.value,
   })}\n`;
 
@@ -365,6 +387,25 @@ export function decodeSpoolLine(line: string): DecodeSpoolLineResult {
   }
   const attempts = rawAttempts ?? 0;
 
+  // Absent is "at once". A value that is not a stored instant is a line
+  // somebody edited, refused like a broken `attempts`.
+  const rawNext = parsed['next_attempt_at'];
+  let nextAttemptAt: Date | undefined;
+  if (rawNext !== undefined) {
+    if (typeof rawNext !== 'string') {
+      return {
+        ok: false,
+        message: `spool 줄의 next_attempt_at이 문자열이 아닙니다: ${describe(rawNext)}`,
+      };
+    }
+    const next = parseInstant(rawNext);
+    if (!next.ok) {
+      return { ok: false, message: `spool 줄의 next_attempt_at: ${next.message}` };
+    }
+    nextAttemptAt = next.value;
+  }
+  const retry = nextAttemptAt === undefined ? {} : { nextAttemptAt };
+
   const payload = parsed['payload'];
   if (!isRecord(payload)) {
     return { ok: false, message: 'spool 줄의 payload가 JSON 객체가 아닙니다' };
@@ -381,6 +422,7 @@ export function decodeSpoolLine(line: string): DecodeSpoolLineResult {
         kind,
         occurredAt: instant.value,
         attempts,
+        ...retry,
         payload: decoded.value,
       },
     };
@@ -410,6 +452,7 @@ export function decodeSpoolLine(line: string): DecodeSpoolLineResult {
       kind,
       occurredAt: instant.value,
       attempts,
+      ...retry,
       payload: { session, transcriptPath, cause },
     },
   };

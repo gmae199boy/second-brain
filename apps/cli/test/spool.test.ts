@@ -434,6 +434,38 @@ describe('a file only some of whose lines went back in', () => {
     expect(again.claim.lines).toEqual([second]);
   });
 
+  it('names the kept lines by when they are due, and hands them over only then', async () => {
+    const folder = await spoolFolder();
+    const clock = movableClock(INSTANT);
+    const spool = fileSpool({ folder, clock });
+    await spool.append([sampleSpoolRecord({ id: FIRST_ID })]);
+    const claimed = await spool.claim();
+    if (!claimed.ok || claimed.claim === null) throw new Error('nothing was claimed');
+
+    const due = new Date(INSTANT.getTime() + 60_000);
+    expect(
+      await spool.rewrite(claimed.claim.handle, {
+        keep: [...claimed.claim.lines],
+        failed: [],
+        keepDueAt: due,
+      }),
+    ).toEqual({ ok: true });
+
+    // The name starts with the due instant and carries the retry mark, so it
+    // sorts behind every file already waiting (AD-9).
+    const names = await readdir(folder);
+    expect(names).toHaveLength(1);
+    expect(names[0]).toMatch(/^20260102T030700000Z-\d+-\d+-r\.jsonl$/);
+
+    // Not before its time, and then like any other file.
+    expect(await spool.claim()).toEqual({ ok: true, claim: null });
+    expect(await spool.stats()).toMatchObject({ ok: true, records: 1 });
+    clock.advance(60_000);
+    const again = await spool.claim();
+    if (!again.ok || again.claim === null) throw new Error('the kept line was not claimable when due');
+    expect(again.claim.lines).toEqual(claimed.claim.lines);
+  });
+
   it('writes no waiting file when there is nothing to keep', async () => {
     const folder = await spoolFolder();
     const spool = fileSpool({ folder, clock: { now: () => INSTANT } });

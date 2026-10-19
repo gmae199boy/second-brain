@@ -84,6 +84,14 @@ const CLAIMING_SUFFIX = '.claiming';
 const FAILED_DIRECTORY = 'failed';
 
 /**
+ * The end of a stem `rewrite` made for the lines it kept. Such a stem starts
+ * with the instant those lines are due rather than the instant of their first
+ * record, and `claim` does not take the file before then (AD-9). A stem an
+ * `append` made has no mark and is due at once.
+ */
+const RETRY_MARK = '-r';
+
+/**
  * This process's own count, so two appends in one millisecond get different
  * names. It is module-wide and not per `fileSpool`, because one process builds
  * more than one of them over the same folder — the dispatcher's, for the SDK,
@@ -176,7 +184,10 @@ export function fileSpool(options: FileSpoolOptions): Spool {
       const after = await list(folder);
       if (!after.ok) return after;
 
-      for (const file of after.files.filter((candidate) => candidate.claim === undefined)) {
+      const waiting = after.files.filter(
+        (candidate) => candidate.claim === undefined && isDue(candidate.stem, nowMs),
+      );
+      for (const file of waiting) {
         const claimed = join(folder, `${file.stem}.${String(pid)}-${String(nowMs)}${CLAIMING_SUFFIX}`);
         try {
           await rename(join(folder, file.name), claimed);
@@ -240,13 +251,18 @@ export function fileSpool(options: FileSpoolOptions): Spool {
       // rather than a file that was deleted with lines nothing has kept.
       try {
         if (input.keep.length > 0) {
-          // The same stem the release would use, so the name order is still the
-          // time order: the file holds the same records, minus the ones that
-          // went in, plus a raised attempt count.
-          const open = join(folder, `${parsed.stem}${OPEN_SUFFIX}`);
+          // A new stem led by the instant the kept lines are due, and marked as
+          // a retry. Names sort by their instant, so the file goes behind every
+          // file already waiting — a record that keeps failing must not hold up
+          // the ones written after it — and `claim` leaves it alone until that
+          // instant, so one drain run cannot spend its attempts in a loop.
+          const due = input.keepDueAt ?? clock.now();
+          const stem = `${compactInstant(due)}-${String(pid)}-${String(serial)}${RETRY_MARK}`;
+          serial += 1;
+          const open = join(folder, `${stem}${OPEN_SUFFIX}`);
           await mkdir(folder, { recursive: true, mode: 0o700 });
           await writeFile(open, lineText(input.keep), { encoding: 'utf8', mode: 0o600 });
-          await rename(open, join(folder, `${parsed.stem}${READY_SUFFIX}`));
+          await rename(open, join(folder, `${stem}${READY_SUFFIX}`));
         }
         if (input.failed.length > 0) {
           const failedFolder = join(folder, FAILED_DIRECTORY);
@@ -397,7 +413,7 @@ async function reclaimOpen(options: {
  * is the pid.
  */
 function pidOf(stem: string): number | undefined {
-  const matched = /^[^-]+-(\d+)-\d+$/.exec(stem);
+  const matched = /^[^-]+-(\d+)-\d+(?:-r)?$/.exec(stem);
   const pid = matched?.[1];
   return pid === undefined ? undefined : Number(pid);
 }
@@ -470,6 +486,21 @@ function parseName(name: string): SpoolFile | undefined {
  */
 function compactInstant(instant: Date): string {
   return instant.toISOString().replace(/[-:.]/g, '');
+}
+
+/**
+ * Whether a waiting file may be claimed now: always for a file an `append`
+ * wrote, and for one a `rewrite` wrote once the instant its name starts with
+ * has come (`RETRY_MARK`).
+ */
+function isDue(stem: string, nowMs: number): boolean {
+  if (!stem.endsWith(RETRY_MARK)) return true;
+  const matched = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(\d{3})Z-/.exec(stem);
+  if (matched === null) return true;
+  const [, year, month, day, hour, minute, second, ms] = matched;
+  const due = Date.parse(`${year}-${month}-${day}T${hour}:${minute}:${second}.${ms}Z`);
+  // A name nobody can read a time out of is not a reason to hold a record back.
+  return Number.isNaN(due) || due <= nowMs;
 }
 
 /** The lines of one file, with the trailing newline of the last one dropped. */
