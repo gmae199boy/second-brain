@@ -9,6 +9,7 @@ import type {
   StoreProbe,
 } from '../src/ports/store.js';
 import { memorySchemaStore } from '../src/testing/fakes/schema-store.js';
+import { memorySpool } from '../src/testing/fakes/spool.js';
 import { memoryStore } from '../src/testing/fakes/store.js';
 import { memoryParser } from '../src/testing/fakes/parser.js';
 import { memoryRepositories } from '../src/testing/fakes/repository.js';
@@ -338,6 +339,7 @@ function otherDependencies(): Omit<BrainDependencies, 'store' | 'schemaVersion' 
     parsers: [memoryParser()],
     transcripts: memoryTranscriptReader(),
     repositories: memoryRepositories(),
+    spool: memorySpool(),
     machine: 'demo-machine',
   };
 }

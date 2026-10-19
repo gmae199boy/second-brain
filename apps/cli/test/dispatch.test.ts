@@ -98,6 +98,30 @@ const registry = [
   },
   {
     ns: 'fake',
+    verb: 'write-spool',
+    ...meta('fake', 'write-spool', 'a write command whose write can wait'),
+    writes: true,
+    run: async () => {
+      // Proof the guard runs before this: a blocked write never gets here,
+      // and a command with a spool branch has its branch called instead.
+      console.log('RAN');
+      return { ok: true, data: { wrote: true } };
+    },
+    spool: async (context) => ({
+      ok: true,
+      data: {
+        spooled: true,
+        cause: context.cause,
+        said: context.message !== '',
+        // No brain, no store, no config: the branch is handed none of them,
+        // so a mismatched database is unreachable by construction.
+        keys: Object.keys(context).sort(),
+      },
+      warnings: ['SPOOLED', context.cause],
+    }),
+  },
+  {
+    ns: 'fake',
     verb: 'read-arg',
     ...meta('fake', 'read-arg', 'a read command with a positional argument'),
     arguments: ['<name>', '[extra]'],
@@ -428,14 +452,68 @@ describe('the dispatcher', () => {
     const run = await runDispatch(['fake', 'write', '--json'], { [HOME_ENV]: home });
     const elapsed = Date.now() - startedAt;
 
-    expect(run.code).toBe(1);
+    // Exit 2, as the code table says for `DB_UNAVAILABLE`: the command could
+    // not run at all (Conventions, 종료 코드). A command whose write can wait
+    // declares `spool` instead and is not refused at all.
+    expect(run.code).toBe(2);
     expect(elapsed).toBeLessThan(5000);
     expect(run.stdout).not.toContain('RAN');
     const envelope = JSON.parse(run.stdout) as Envelope;
     expect(envelope.error?.code).toBe('DB_UNAVAILABLE');
+    expect(envelope.error?.exit_code).toBe(2);
     expect(envelope.warnings).toEqual(['DB_UNAVAILABLE']);
     // A runtime command opens the file and never creates it (AD-20).
     expect(existsSync(path)).toBe(false);
+  });
+
+  it('calls the spool branch instead of run when the version does not match', async () => {
+    const home = await homeFor(await emptyDatabase());
+
+    const run = await runDispatch(['fake', 'write-spool', '--json'], { [HOME_ENV]: home });
+
+    // A success, and `run` was never called: a mismatched database is
+    // unreachable by construction rather than by care (AD-9, AD-20).
+    expect(run.code).toBe(0);
+    expect(run.stdout).not.toContain('RAN');
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.warnings).toEqual(['SPOOLED', 'SCHEMA_MISMATCH']);
+    expect(envelope.data).toEqual({
+      spooled: true,
+      cause: 'SCHEMA_MISMATCH',
+      said: true,
+      // The invocation, why the database is out of reach, and the one function
+      // that writes the mark — and nothing else. No `brain`, no `config`.
+      keys: ['args', 'cause', 'clock', 'message', 'options', 'spoolIngest', 'stdin'],
+    });
+  });
+
+  it('calls the spool branch, and makes no file, when there is no database', async () => {
+    const path = await missingDatabase();
+    const home = await homeFor(path);
+
+    const run = await runDispatch(['fake', 'write-spool', '--json'], { [HOME_ENV]: home });
+
+    expect(run.code).toBe(0);
+    expect(run.stdout).not.toContain('RAN');
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.warnings).toEqual(['SPOOLED', 'DB_UNAVAILABLE']);
+    expect(envelope.data).toMatchObject({ cause: 'DB_UNAVAILABLE' });
+    // Still nothing created: the spool branch has no store to open (AD-20).
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it('runs the command itself when the version matches, spool branch or not', async () => {
+    const home = await homeFor(await migratedDatabase());
+
+    const run = await runDispatch(['fake', 'write-spool', '--json'], { [HOME_ENV]: home });
+
+    expect(run.code).toBe(0);
+    expect(run.stdout).toContain('RAN');
+    const envelope = JSON.parse(run.stdout.split('\n')[1] ?? '{}') as Envelope;
+    expect(envelope.data).toEqual({ wrote: true });
+    expect(envelope.warnings).toEqual([]);
   });
 
   it('runs a read against a missing file, and still creates nothing', async () => {

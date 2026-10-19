@@ -55,6 +55,15 @@ export const RUN_FOLDER = 'run';
  */
 export const PLUGIN_RUN_FILE = 'plugin.json';
 
+/**
+ * The queue of writes the database could not take (AD-9): one JSON Lines file
+ * per process, picked up by a later drain. It is not configuration and not a
+ * derived store — it is the only copy of a write that has not landed yet — so
+ * it lives under the configuration folder and not under the mirror or the file
+ * store, whose paths a person may point anywhere.
+ */
+export const SPOOL_FOLDER = 'spool';
+
 /** Where the install's own progress lines go when nobody is watching. */
 export const LOG_FOLDER = 'log';
 
@@ -90,6 +99,16 @@ export function installedPath(home: string): string {
 /** The plugin record the last `SessionStart` of this folder left behind. */
 export function pluginRunPath(home: string): string {
   return join(home, RUN_FOLDER, PLUGIN_RUN_FILE);
+}
+
+/**
+ * The spool folder of this configuration folder. It is derived from `home` and
+ * never from the configuration: a write that could not reach the database must
+ * have somewhere to go even when the configuration is the thing that is broken
+ * (AD-9, AD-18).
+ */
+export function spoolPath(home: string): string {
+  return join(home, SPOOL_FOLDER);
 }
 
 /** The install lock of this configuration folder. */

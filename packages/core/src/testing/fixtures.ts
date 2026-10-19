@@ -7,6 +7,11 @@ import type {
 } from '../domain/ingest-batch.js';
 import { SECRET_PATTERN_VERSION } from '../domain/secret-patterns.js';
 import { formatSessionToken, type SessionKey } from '../domain/session-token.js';
+import {
+  SPOOL_RECORD_VERSION,
+  type SpoolCause,
+  type SpoolRecord,
+} from '../domain/spool-record.js';
 import type {
   EnsureCheckoutInput,
   EnsureSelfUserInput,
@@ -97,6 +102,39 @@ export function sampleCheckoutInput(
     worktreeId: sampleWorktreeId,
     worktreePath: '/demo/repo',
     ...overrides,
+  };
+}
+
+/** A spool record's own id, so a case can tell two of them apart. */
+export const sampleSpoolRecordId = '01940000-0000-7000-8000-0000000000b0';
+
+/** What `sampleSpoolRecord` can be asked to change. */
+export interface SampleSpoolRecordOverrides {
+  id?: string;
+  occurredAt?: Date;
+  session?: string;
+  transcriptPath?: string;
+  cause?: SpoolCause;
+}
+
+/**
+ * One "ingest this session again" mark, as the ingest use case writes it
+ * (AD-9). The default cause is a held lock, which is the row of the matrix a
+ * turn actually meets.
+ */
+export function sampleSpoolRecord(
+  overrides: SampleSpoolRecordOverrides = {},
+): SpoolRecord {
+  return {
+    schemaVersion: SPOOL_RECORD_VERSION,
+    id: overrides.id ?? sampleSpoolRecordId,
+    kind: 'session_ingest',
+    occurredAt: overrides.occurredAt ?? new Date('2026-01-02T03:06:00.000Z'),
+    payload: {
+      session: overrides.session ?? sampleSessionToken,
+      transcriptPath: overrides.transcriptPath ?? '/memory/transcripts/session-0001.jsonl',
+      cause: overrides.cause ?? 'DB_LOCKED',
+    },
   };
 }
 

@@ -1,10 +1,12 @@
 import { execFile, spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import {
   appendFile,
   copyFile,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rm,
   writeFile,
@@ -14,9 +16,14 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { SECRET_PATTERN_VERSION } from 'second_brain';
+import {
+  SECRET_PATTERN_VERSION,
+  decodeSpoolLine,
+  isoWithOffset,
+  type SpoolRecord,
+} from 'second_brain';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { HOME_ENV } from '../src/config/paths.js';
+import { HOME_ENV, spoolPath } from '../src/config/paths.js';
 
 /**
  * `brain sessions ingest claude-code` end to end: the built `brain`, started
@@ -71,6 +78,7 @@ interface Envelope {
   warnings: string[];
   data?: {
     session?: string;
+    spooled?: boolean;
     created?: boolean;
     inserted?: { messages: number; toolNotes: number; redactions: number };
   };
@@ -310,6 +318,8 @@ describe('brain sessions ingest claude-code', () => {
     expect(envelope.ok).toBe(true);
     expect(envelope.data).toEqual({
       session: `claude-code:${HARNESS_SESSION}`,
+      // Straight into the database, so nothing went to the spool (AD-9).
+      spooled: false,
       created: true,
       // One `Read`, which the fixture's one tool call is, and nothing masked:
       // there is no secret anywhere in this transcript.
@@ -1144,7 +1154,197 @@ describe('brain sessions ingest on the hook path', () => {
     await expectQuietFailure(run, 'USER_MISSING', home);
   });
 
-  it('says SCHEMA_MISMATCH rather than writing into a database at another version', async () => {
+  it('says CONFIG_MISSING in one line when no brain is installed here', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'brain-ingest-bare-'));
+    homes.push(home);
+
+    const run = await runBrain(
+      ['sessions', 'ingest', 'claude-code'],
+      home,
+      stopPayload(join(home, 'transcript.jsonl')),
+    );
+
+    expect(run.code).toBe(0);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toContain('CONFIG_MISSING');
+    expect(run.stderr.trimEnd().split('\n')).toHaveLength(1);
+  });
+});
+
+/**
+ * The spool rows of the story's matrix, through the real binary and a real
+ * SQLite file: a turn whose write the database would not take ends as a
+ * success with a mark in `<home>/spool/`, and nothing reaches the database
+ * (AD-9).
+ *
+ * Every row here is one a person actually meets. A held lock is two hooks of
+ * the same session overlapping; a schema mismatch is a build that moved ahead
+ * of its database; a missing file is a database somebody moved or removed.
+ */
+describe('brain sessions ingest claude-code when the database will not take the turn', () => {
+  const lockHolderPath = fileURLToPath(new URL('./fixtures/lock-holder.mjs', import.meta.url));
+
+  /** Every spool file of a home, oldest first, with the records it holds. */
+  async function spooled(home: string): Promise<SpoolRecord[]> {
+    const folder = spoolPath(home);
+    let names: string[];
+    try {
+      names = (await readdir(folder)).sort();
+    } catch {
+      return [];
+    }
+    const records: SpoolRecord[] = [];
+    for (const name of names) {
+      // Nothing half-written may be read, and nothing is claimed here: a
+      // waiting file is a `.jsonl` and nothing else (AD-9).
+      expect(name.endsWith('.jsonl'), `${name} is not a finished spool file`).toBe(true);
+      const text = await readFile(join(folder, name), 'utf8');
+      for (const line of text.split('\n').filter((candidate) => candidate !== '')) {
+        const decoded = decodeSpoolLine(line);
+        expect(decoded.ok, decoded.ok ? '' : decoded.message).toBe(true);
+        if (decoded.ok) records.push(decoded.record);
+      }
+    }
+    return records;
+  }
+
+  /** What every spooled row of the matrix has in common. */
+  function expectSpooledTurn(run: Run, warnings: readonly string[]): Envelope {
+    // Exit 0 and a result, not a failure: the turn worked, and the warning
+    // codes are how it says the write has not landed yet (NFR-2, NFR-3).
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.warnings).toEqual(warnings);
+    expect(envelope.data).toMatchObject({
+      session: `claude-code:${HARNESS_SESSION}`,
+      spooled: true,
+      created: false,
+      inserted: { messages: 0, toolNotes: 0, redactions: 0 },
+    });
+    return envelope;
+  }
+
+  /** A second process holding the one SQLite writer, and when to let go. */
+  async function holdTheLock(home: string, holdMs: number): Promise<() => Promise<void>> {
+    const child = spawn(process.execPath, [lockHolderPath, databaseIn(home), String(holdMs)], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    let errors = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      errors += chunk.toString();
+    });
+    await new Promise<void>((resolve, reject) => {
+      child.stdout.on('data', (chunk: Buffer) => {
+        output += chunk.toString();
+        if (output.includes('held')) resolve();
+      });
+      child.once('error', reject);
+      child.once('close', () => reject(new Error(`the lock holder stopped: ${errors}`)));
+    });
+    return async () => {
+      child.kill('SIGKILL');
+      await new Promise<void>((resolve) => {
+        child.once('close', () => resolve());
+      });
+    };
+  }
+
+  it('spools the turn, after waiting out its budget once, while another process holds the lock', async () => {
+    const home = await installedHome();
+    const transcript = await transcriptIn(home);
+    const before = rowCounts(databaseIn(home));
+    // Longer than the turn budget, so the lock is still held when the ingest
+    // gives up: what is measured is the hook's own three seconds (AD-7).
+    const release = await holdTheLock(home, 20_000);
+
+    const startedAt = Date.now();
+    const run = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      stopPayload(transcript),
+    );
+    const elapsed = Date.now() - startedAt;
+
+    try {
+      // `DB_LOCKED` is not a warning code, so a lock leaves `SPOOLED` alone.
+      expectSpooledTurn(run, ['SPOOLED']);
+      const records = await spooled(home);
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        schemaVersion: 1,
+        kind: 'session_ingest',
+        payload: {
+          session: `claude-code:${HARNESS_SESSION}`,
+          transcriptPath: transcript,
+          cause: 'DB_LOCKED',
+        },
+      });
+      // The transcript is not copied into the record: the replay reads the
+      // file again (story 12).
+      expect(JSON.stringify(records)).not.toContain('import notes');
+      // Not one row: the one write it tried never went in.
+      expect(rowCounts(databaseIn(home))).toEqual(before);
+
+      // The budget once, and not once per store step: a turn that waited three
+      // seconds four times would be twelve seconds of somebody's attention
+      // (Boundaries). The lock was still held when it gave up.
+      expect(elapsed).toBeGreaterThanOrEqual(2_500);
+      expect(elapsed).toBeLessThan(9_000);
+    } finally {
+      await release();
+    }
+  }, 30_000);
+
+  it('spools the turn, without calling run, when the database is at another version', async () => {
+    const home = await installedHome();
+    const transcript = await transcriptIn(home);
+    const database = new DatabaseSync(databaseIn(home));
+    try {
+      database.exec('update schema_version set version = 2');
+    } finally {
+      database.close();
+    }
+    const before = rowCounts(databaseIn(home));
+
+    const run = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      stopPayload(transcript),
+    );
+
+    // The write guard of AD-20: `run` is never called, so the mismatched
+    // database is unreachable by construction and not by care.
+    expectSpooledTurn(run, ['SPOOLED', 'SCHEMA_MISMATCH']);
+    expect((await spooled(home))[0]?.payload.cause).toBe('SCHEMA_MISMATCH');
+    // Every table, not only the three this command writes to.
+    expect(rowCounts(databaseIn(home))).toEqual(before);
+  });
+
+  it('spools the turn, and makes no database, when the file has been removed', async () => {
+    const home = await installedHome();
+    const transcript = await transcriptIn(home);
+    for (const suffix of ['', '-wal', '-shm']) {
+      await rm(`${databaseIn(home)}${suffix}`, { force: true });
+    }
+
+    const run = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      stopPayload(transcript),
+    );
+
+    expectSpooledTurn(run, ['SPOOLED', 'DB_UNAVAILABLE']);
+    expect((await spooled(home))[0]?.payload.cause).toBe('DB_UNAVAILABLE');
+    // A runtime command opens the store and never creates it (AD-10): a brain
+    // that made an empty database here would report itself healthy to
+    // somebody who has not installed one.
+    expect(existsSync(databaseIn(home))).toBe(false);
+  });
+
+  it('says nothing on stdout in text mode when it spools, as when it stores', async () => {
     const home = await installedHome();
     const transcript = await transcriptIn(home);
     const database = new DatabaseSync(databaseIn(home));
@@ -1160,24 +1360,118 @@ describe('brain sessions ingest on the hook path', () => {
       stopPayload(transcript),
     );
 
-    // The write guard of AD-20, in the dispatcher: this command declares
-    // `writes`, so it never reaches the store.
-    await expectQuietFailure(run, 'SCHEMA_MISMATCH', home);
+    expect(run.code).toBe(0);
+    expect(run.stdout).toBe('');
+    // The warning line still goes to stderr, as a degraded result's does.
+    expect(run.stderr).toContain('SPOOLED');
+    expect(await spooled(home)).toHaveLength(1);
   });
 
-  it('says CONFIG_MISSING in one line when no brain is installed here', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'brain-ingest-bare-'));
-    homes.push(home);
+  it('reports the original failure, in one line, when the spool cannot be written either', async () => {
+    const home = await installedHome();
+    const transcript = await transcriptIn(home);
+    const database = new DatabaseSync(databaseIn(home));
+    try {
+      database.exec('update schema_version set version = 2');
+    } finally {
+      database.close();
+    }
+    // A plain file where the spool folder belongs, which is the one state that
+    // takes the last place a write could go away.
+    await writeFile(spoolPath(home), 'not a folder\n', 'utf8');
 
     const run = await runBrain(
-      ['sessions', 'ingest', 'claude-code'],
+      ['sessions', 'ingest', 'claude-code', '--json'],
       home,
-      stopPayload(join(home, 'transcript.jsonl')),
+      stopPayload(transcript),
+    );
+
+    // The code of what stopped the write, one line on stderr, exit 0: a hook
+    // never fails a turn, whatever happened (AD-6).
+    expect(run.code).toBe(0);
+    expect(run.stdout).toBe('');
+    expect(run.stderr.trimEnd().split('\n')).toHaveLength(1);
+    expect(run.stderr).toContain('SCHEMA_MISMATCH');
+    // And the message says the fallback failed too, which is the whole reason
+    // there is nothing else to report (NFR-2).
+    expect(run.stderr).toContain('spool');
+    expect(rowCounts(databaseIn(home))['sessions']).toBe(0);
+  });
+
+  it('leaves no spool file behind on an ordinary ingest', async () => {
+    const home = await installedHome();
+    const transcript = await transcriptIn(home);
+
+    const run = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      stopPayload(transcript),
     );
 
     expect(run.code).toBe(0);
-    expect(run.stdout).toBe('');
-    expect(run.stderr).toContain('CONFIG_MISSING');
-    expect(run.stderr.trimEnd().split('\n')).toHaveLength(1);
+    expect((JSON.parse(run.stdout) as Envelope).data).toMatchObject({ spooled: false });
+    // Not even the folder: it is made by the first write that needs it.
+    expect(existsSync(spoolPath(home))).toBe(false);
+    expect(await spooled(home)).toEqual([]);
+  });
+
+  it('shows the spooled turn in the doctor report, and still exits 0', async () => {
+    // The acceptance criterion, whole: a mark left by a lock timeout, read
+    // back through the command a person actually runs. The lock is what makes
+    // it a brain with nothing else wrong with it — a schema mismatch would
+    // leave a mark too, and a failing check with it, so the exit code would
+    // say nothing about the spool.
+    const home = await installedHome();
+    const transcript = await transcriptIn(home);
+    const release = await holdTheLock(home, 20_000);
+    try {
+      expect(
+        (await runBrain(['sessions', 'ingest', 'claude-code'], home, stopPayload(transcript)))
+          .code,
+      ).toBe(0);
+    } finally {
+      await release();
+    }
+    const [record] = await spooled(home);
+    expect(record).toBeDefined();
+
+    const doctor = await runBrain(['doctor', 'run', '--json'], home, '');
+
+    // Exit 0: `warn` is a check that ran and settled nothing, and only `fail`
+    // fails the command (Conventions, doctor 상태).
+    expect(doctor.code).toBe(0);
+    const envelope = JSON.parse(doctor.stdout) as {
+      warnings: string[];
+      data?: {
+        checks: { id: string; status: string; code?: string; detail?: string }[];
+        summary: { failed: number };
+      };
+    };
+    const spool = envelope.data?.checks.find((check) => check.id === 'spool');
+    expect(spool).toMatchObject({ status: 'warn', code: 'SPOOLED' });
+    expect(spool?.detail).toContain('1건');
+    expect(spool?.detail).toContain(isoWithOffset(record?.occurredAt ?? new Date(0)));
+    // A shared code, so the degraded result travels in `warnings[]` too, and
+    // nothing else about this brain is wrong.
+    expect(envelope.warnings).toContain('SPOOLED');
+    expect(envelope.data?.summary.failed).toBe(0);
+  }, 30_000);
+
+  it('is ok in the doctor report of a brain with an empty spool', async () => {
+    const home = await installedHome();
+
+    const doctor = await runBrain(['doctor', 'run', '--json'], home, '');
+
+    expect(doctor.code).toBe(0);
+    const envelope = JSON.parse(doctor.stdout) as {
+      warnings: string[];
+      data?: { checks: { id: string; status: string; detail?: string }[] };
+    };
+    expect(envelope.data?.checks.find((check) => check.id === 'spool')).toEqual({
+      id: 'spool',
+      status: 'ok',
+      detail: '0건',
+    });
+    expect(envelope.warnings).toEqual([]);
   });
 });

@@ -5,23 +5,29 @@ import {
   SQLITE_SCHEMA_VERSION,
   checkSchema,
   createBrain,
+  spoolSessionIngest,
   sqliteStore,
   type Brain,
   type Clock,
   type FailureExit,
   type IdGen,
+  type IngestSessionInput,
+  type IngestSessionResult,
   type SchemaStore,
+  type Spool,
+  type SpoolCause,
   type SqliteStoreOptions,
   type Store,
   type WarningCode,
 } from 'second_brain';
 import { readConfig, type BrainConfig } from './config/codec.js';
-import { configHome } from './config/paths.js';
+import { configHome, spoolPath } from './config/paths.js';
 import { runtimeChecks } from './doctor/checks.js';
 import { failedConfigStore } from './doctor/store.js';
 import { harnessParsers, harnesses } from './harnesses.js';
 import { gitRepositoryInspector } from './runtime/git.js';
 import { uuidV7IdGen } from './runtime/id-gen.js';
+import { fileSpool } from './runtime/spool.js';
 import { readStdin } from './runtime/stdin.js';
 import { fileTranscriptReader } from './runtime/transcript.js';
 import {
@@ -92,6 +98,32 @@ export interface CommandContext extends CommandContextBase {
    * on the `undefined` rather than by checking anything else.
    */
   config: BrainConfig | undefined;
+}
+
+/**
+ * What a command's `spool` branch gets: no brain, no store, and no
+ * configuration — only the invocation itself, why the database is out of
+ * reach, and the one function that writes the mark (AD-9, AD-20).
+ *
+ * The absence is the design. A build where `run` is never called on a
+ * mismatched schema cannot write to one by mistake, and a branch that is handed
+ * no store cannot write to one at all: the type is what keeps the promise, not
+ * the care of whoever adds the next command (Design Notes).
+ */
+export interface SpoolCommandContext extends CommandContextBase {
+  /**
+   * Why the guard refused. Both are warning codes as well, so the envelope
+   * names them in `warnings[]` beside `SPOOLED` (Conventions).
+   */
+  cause: 'SCHEMA_MISMATCH' | 'DB_UNAVAILABLE';
+  /** What the guard said, for a branch that wants to pass it on. */
+  message: string;
+  /**
+   * Core's `spoolSessionIngest` with this run's spool, clock and id generator
+   * already bound. The branch supplies the session and the transcript it read
+   * off its own input, and the cause it was given.
+   */
+  spoolIngest(input: IngestSessionInput, cause: SpoolCause): Promise<IngestSessionResult>;
 }
 
 /**
@@ -232,10 +264,23 @@ export interface DatabaseCommandSpec<T = unknown> extends CommandSpecBase {
   standalone?: false;
   /**
    * This command writes to the database, so the dispatcher compares the stored
-   * schema version with `SQLITE_SCHEMA_VERSION` first and refuses on a mismatch
-   * (AD-20). Read commands leave this unset and are never blocked.
+   * schema version with `SQLITE_SCHEMA_VERSION` first and does not call `run`
+   * on a mismatch (AD-20). Read commands leave this unset and are never
+   * blocked.
    */
   writes?: boolean;
+  /**
+   * What this command does instead of writing, when the guard above found the
+   * database out of reach: write the mark that says "do this later" to the
+   * spool and answer as a degraded success (AD-9).
+   *
+   * Declaring it is a statement that this command's write *can* wait. A
+   * command whose write may not be deferred — `messages redact`, which has to
+   * remove a secret from the stored copy or fail — leaves it unset and is
+   * refused, which is the behaviour every `writes` command had before this
+   * existed (Boundaries).
+   */
+  spool?(context: SpoolCommandContext): Promise<CommandOutcome<T>>;
   /**
    * This command's job is to report on a brain that may be broken, so it runs
    * even when the configuration could not be read: the dispatcher hands it a
@@ -456,8 +501,15 @@ async function execute(
     // No `config.message` in here: the `config` check carries it, and the same
     // sentence printed twice in one report reads as two problems.
     : failedConfigStore('설정을 읽을 수 없어서 데이터베이스 위치를 알 수 없습니다');
+  // Under `home` and not under a configured path: a write that could not reach
+  // the database has to have somewhere to go even when the configuration is
+  // the thing that is broken, and `home` is known from the environment alone
+  // (AD-9, AD-18). Building this opens nothing — the folder is made by the
+  // first `append` that needs it (AD-3).
+  const spool = fileSpool({ folder: spoolPath(home), clock });
   const brain = createBrain({
     store,
+    spool,
     schemaVersion: SQLITE_SCHEMA_VERSION,
     clock,
     idGen,
@@ -477,15 +529,35 @@ async function execute(
   try {
     if (spec.writes === true) {
       // The write guard of AD-20, in the one place that cannot be skipped by
-      // forgetting it. Epic 2 turns this refusal into a spool.
+      // forgetting it: `run` is not called at all when the database is at
+      // another version, so no code path of this build can write into one.
       const schema = await checkSchema(store, SQLITE_SCHEMA_VERSION);
       if (!schema.ok) {
-        // Exit 1 is named rather than left to the code table: this refusal has
-        // always exited 1, and the table puts `DB_UNAVAILABLE` at 2. Epic 2
-        // turns the refusal into a spool, which settles the question.
+        // A command whose write can wait writes the mark instead, with no
+        // brain and no store in its hands (AD-9). The codes of that outcome
+        // are the branch's own — `SPOOLED` and the cause beside it, which is
+        // what `spoolSessionIngest` answers with — so the guard adds none of
+        // its own here: the same code twice in `warnings[]` would read as two
+        // problems (Conventions).
+        if (spec.spool !== undefined) {
+          const spooled = await spec.spool({
+            clock,
+            options,
+            args,
+            stdin,
+            cause: schema.code,
+            message: schema.message,
+            spoolIngest: (input, cause) =>
+              spoolSessionIngest({ spool, clock, idGen }, input, cause),
+          });
+          return finish(rendering, spooled, warningCodes, warningLines);
+        }
+        // And one whose write cannot is refused, at the exit code the table
+        // gives its code: `DB_UNAVAILABLE` is 2 because the command could not
+        // run at all, `SCHEMA_MISMATCH` is 1 (Conventions, 종료 코드).
         return failed(
           rendering,
-          { code: schema.code, message: schema.message, exit: 1 },
+          { code: schema.code, message: schema.message },
           [...warningCodes, schema.code],
           warningLines,
         );
@@ -769,6 +841,11 @@ export function validateCommandMeta(spec: CommandSpec): readonly string[] {
   // reaches for believing it changes nothing.
   if (spec.standalone !== true && spec.writes === true && spec.risk === 'read') {
     problems.push(`${where}: writes, so risk may not be read`);
+  }
+  // The spool branch is reached from the write guard and from nowhere else, so
+  // one declared without `writes` is a branch that can never run (AD-9).
+  if (spec.standalone !== true && spec.spool !== undefined && spec.writes !== true) {
+    problems.push(`${where}: declares spool, so it must declare writes`);
   }
   // `dryRun` is a promise about a flag; the flag has to be there to keep it.
   if (spec.dryRun === true && !(spec.options ?? []).some((option) => hasDryRun(option.flags))) {

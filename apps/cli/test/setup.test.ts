@@ -671,6 +671,7 @@ describe('brain setup run against the local SQLite source', () => {
       'node-path',
       'node-version',
       'plugin',
+      'spool',
     ]);
     const failed = (envelope.data?.checks ?? []).filter((check) => check.status !== 'ok');
     expect(failed, JSON.stringify(failed)).toEqual([]);
@@ -698,6 +699,7 @@ describe('brain setup run against the local SQLite source', () => {
       'node-path',
       'node-version',
       'plugin',
+      'spool',
     ]);
     expect(envelope.data?.checks?.[1]).toEqual({
       id: 'schema-version',

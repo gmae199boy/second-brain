@@ -12,6 +12,7 @@ import {
   memoryRepositories,
   type MemoryRepositories,
 } from '../src/testing/fakes/repository.js';
+import { memorySpool, type MemorySpool } from '../src/testing/fakes/spool.js';
 import { memoryStore, type MemoryStore } from '../src/testing/fakes/store.js';
 import {
   memoryTranscriptReader,
@@ -51,6 +52,7 @@ const CHECKOUT: Checkout = {
 interface Kit {
   deps: IngestSessionDependencies;
   store: MemoryStore;
+  spool: MemorySpool;
   transcripts: MemoryTranscriptReader;
   repositories: MemoryRepositories;
 }
@@ -67,6 +69,8 @@ interface KitOptions {
    * is the "outside a repository" row.
    */
   checkouts?: Readonly<Record<string, Checkout>>;
+  /** The spool a turn goes to when the store will not take it. */
+  spool?: MemorySpool;
 }
 
 async function kit(options: KitOptions = {}): Promise<Kit> {
@@ -80,12 +84,15 @@ async function kit(options: KitOptions = {}): Promise<Kit> {
       : { files: { [PATH]: options.content ?? memoryTranscript } },
   );
   const repositories = memoryRepositories(options.checkouts ?? { [CWD]: CHECKOUT });
+  const spool = options.spool ?? memorySpool();
   return {
     store,
+    spool,
     transcripts,
     repositories,
     deps: {
       store,
+      spool,
       clock: fixedClock(INGESTED_AT),
       idGen: sequenceIdGen({ timestampMs: INGESTED_AT.getTime() }),
       parsers: [memoryParser()],
@@ -803,26 +810,187 @@ describe('sessions.ingest on a database with no owner', () => {
 });
 
 describe('sessions.ingest when the store cannot take the write', () => {
-  it('passes a held lock back as DB_LOCKED', async () => {
-    const { deps, store } = await kit();
-    const locked = {
+  /**
+   * A store whose one step answers like a database out of reach.
+   *
+   * The code differs by step because the port does: a read can only fail with
+   * `DB_UNAVAILABLE` — nothing waits on a lock to read, under WAL — and only
+   * the two writes can come back `DB_LOCKED` (`ports/store.ts`).
+   */
+  function refusing(
+    store: MemoryStore,
+    step: 'findSession' | 'readSelfUser' | 'ensureSession' | 'ingest',
+    code: 'DB_UNAVAILABLE' | 'DB_LOCKED',
+  ): MemoryStore {
+    const message = 'the database is out of reach';
+    const unavailable = { ok: false as const, code: 'DB_UNAVAILABLE' as const, message };
+    const refusal = { ok: false as const, code, message };
+    switch (step) {
+      case 'findSession':
+        return { ...store, findSession: async () => unavailable };
+      case 'readSelfUser':
+        return { ...store, readSelfUser: async () => unavailable };
+      case 'ensureSession':
+        return { ...store, ensureSession: async () => refusal };
+      default:
+        return { ...store, ingest: async () => refusal };
+    }
+  }
+
+  it.each([
+    ['the session row', 'ensureSession'],
+    ['the batch', 'ingest'],
+  ] as const)('spools the turn when %s meets a held lock', async (_what, step) => {
+    const { deps, store, spool } = await kit();
+
+    const result = await ingestSession(
+      { ...deps, store: refusing(store, step, 'DB_LOCKED') },
+      { session: TOKEN, transcriptPath: PATH },
+    );
+
+    // A success, because the turn worked: the conversation is safe and a later
+    // drain will put it in (AD-9, NFR-3). The counts say what reached the
+    // database, which is nothing.
+    expect(result).toEqual({
+      ok: true,
+      session: TOKEN,
+      spooled: true,
+      created: false,
+      inserted: { messages: 0, toolNotes: 0, redactions: 0 },
+      // `DB_LOCKED` is not a warning code, so a lock leaves `SPOOLED` alone.
+      warnings: ['SPOOLED'],
+    });
+    expect(spool.records()).toEqual([
+      {
+        schemaVersion: 1,
+        id: expect.any(String),
+        kind: 'session_ingest',
+        occurredAt: INGESTED_AT,
+        payload: { session: TOKEN, transcriptPath: PATH, cause: 'DB_LOCKED' },
+      },
+    ]);
+    // The transcript is not in the record: the replay reads the file again,
+    // and a copy would be stale the moment it was written (story 12).
+    expect(JSON.stringify(spool.records())).not.toContain('import notes');
+  });
+
+  it.each([
+    ['the cursor read', 'findSession'],
+    ['the owner read', 'readSelfUser'],
+    ['the session row', 'ensureSession'],
+    ['the batch', 'ingest'],
+  ] as const)(
+    'spools the turn, and names the cause beside SPOOLED, when %s cannot reach the database',
+    async (_what, step) => {
+      const { deps, store, spool } = await kit();
+
+      const result = await ingestSession(
+        { ...deps, store: refusing(store, step, 'DB_UNAVAILABLE') },
+        { session: TOKEN, transcriptPath: PATH },
+      );
+
+      // Two facts, and a reader needs both: the write is in the spool, and the
+      // database was unreachable (NFR-2).
+      expect(result).toMatchObject({
+        ok: true,
+        spooled: true,
+        created: false,
+        inserted: { messages: 0, toolNotes: 0, redactions: 0 },
+        warnings: ['SPOOLED', 'DB_UNAVAILABLE'],
+      });
+      expect(spool.records()[0]?.payload).toEqual({
+        session: TOKEN,
+        transcriptPath: PATH,
+        cause: 'DB_UNAVAILABLE',
+      });
+    },
+  );
+
+  it('spools once, at the first step that could not write', async () => {
+    // Which is what keeps a hook to one lock budget: a turn that waited three
+    // seconds four times would be a turn the person is waiting twelve for
+    // (Boundaries).
+    const { deps, store, spool } = await kit();
+    const refusal = {
+      ok: false as const,
+      code: 'DB_LOCKED' as const,
+      message: 'the database is out of reach',
+    };
+    const calls: string[] = [];
+    const locked: MemoryStore = {
       ...store,
+      async findSession(key) {
+        calls.push('findSession');
+        return store.findSession(key);
+      },
+      async readSelfUser() {
+        calls.push('readSelfUser');
+        // A read can only be unavailable; nothing waits on a lock to read.
+        return { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: refusal.message };
+      },
       async ensureSession() {
-        return {
-          ok: false as const,
-          code: 'DB_LOCKED' as const,
-          message: 'another process is writing',
-        };
+        calls.push('ensureSession');
+        return refusal;
+      },
+      async ingest() {
+        calls.push('ingest');
+        return refusal;
       },
     };
 
-    const result = await ingestSession({ ...deps, store: locked }, {
-      session: TOKEN,
-      transcriptPath: PATH,
-    });
+    expect(
+      await ingestSession({ ...deps, store: locked }, { session: TOKEN, transcriptPath: PATH }),
+    ).toMatchObject({ ok: true, spooled: true });
 
-    // Epic 2's spool is what turns this into a retry; until then the caller
-    // reports it (Boundaries).
+    expect(calls).toEqual(['findSession', 'readSelfUser']);
+    expect(spool.records()).toHaveLength(1);
+  });
+
+  it('reports the original failure when the spool could not take it either', async () => {
+    const spool = memorySpool({ appendFailure: 'spool 폴더 자리에 일반 파일이 있습니다' });
+    const { deps, store } = await kit({ spool });
+
+    const result = await ingestSession(
+      { ...deps, store: refusing(store, 'ensureSession', 'DB_LOCKED') },
+      { session: TOKEN, transcriptPath: PATH },
+    );
+
+    // The code stays the cause's — that is what a caller acts on — and the
+    // message carries both halves (Boundaries).
     expect(result).toMatchObject({ ok: false, code: 'DB_LOCKED' });
+    if (result.ok) return;
+    expect(result.message).toContain('spool');
+    expect(result.message).toContain('일반 파일');
+  });
+
+  it('does not spool a failure no amount of waiting fixes', async () => {
+    // A database with no owner, a transcript that is not there, a token that
+    // is not one: none of them is a write the database refused (AD-21).
+    const missingOwner = await kit({ withoutOwner: true });
+    expect(
+      await ingestSession(missingOwner.deps, { session: TOKEN, transcriptPath: PATH }),
+    ).toMatchObject({ ok: false, code: 'USER_MISSING' });
+    expect(missingOwner.spool.records()).toEqual([]);
+
+    const noTranscript = await kit({ missing: true });
+    expect(
+      await ingestSession(noTranscript.deps, { session: TOKEN, transcriptPath: PATH }),
+    ).toMatchObject({ ok: false, code: 'TRANSCRIPT_UNREADABLE' });
+    expect(noTranscript.spool.records()).toEqual([]);
+
+    const badToken = await kit();
+    expect(
+      await ingestSession(badToken.deps, { session: 'session-0001', transcriptPath: PATH }),
+    ).toMatchObject({ ok: false, code: 'USAGE' });
+    expect(badToken.spool.records()).toEqual([]);
+  });
+
+  it('writes nothing to the spool on an ordinary ingest', async () => {
+    const { deps, spool } = await kit();
+
+    const result = await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
+
+    expect(result).toMatchObject({ ok: true, spooled: false });
+    expect(spool.records()).toEqual([]);
   });
 });

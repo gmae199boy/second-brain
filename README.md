@@ -260,6 +260,20 @@ brain이 턴을 망치는 일은 없습니다. 같은 트랜스크립트에 두 
 트랜스크립트 — compact, fork — 에서도 저장된 메시지의 번호는 그대로 있고, 그
 앞에 새로 온 것이 다음 빈 번호를 받습니다.
 
+데이터베이스에 쓸 수 없을 때 — 다른 프로세스가 쓰기 잠금을 예산보다 오래 쥐고
+있을 때, 파일이 없을 때, 저장된 스키마 버전이 이 빌드의 것과 다를 때 — 턴은
+실패하지 않습니다. "이 세션을 다시 수집할 것" 한 줄이 `~/.second_brain/spool/`에
+남고, 명령은 `warnings`에 `SPOOLED`를, `data.spooled`에 `true`를 담아 성공으로
+답합니다. 트랜스크립트는 그 줄에 복사하지 않습니다 — 다시 읽으면 그동안 늘어난
+것까지 들어오므로, 복사본은 쓰는 순간부터 낡은 것입니다. 스키마 버전이 어긋나면
+수집 본문은 아예 불리지 않습니다. 그래서 어긋난 데이터베이스에 쓰기가 닿을 길이
+구조적으로 없습니다.
+
+spool은 프로세스마다 새 파일(JSON Lines)이고, 다 쓴 뒤 이름을 바꿔야 비로소
+다른 프로세스가 집습니다. 두 프로세스가 한 파일에 함께 쓰는 일은 없습니다.
+기다리는 건수와 가장 오래된 시각은 `brain doctor run`의 `spool` 줄이 보여 줍니다.
+그 줄을 비우는 것 — 밀린 것을 다시 넣는 `brain queue drain` — 은 뒤 스토리입니다.
+
 아직 hook을 등록하는 것은 없습니다. Claude Code 플러그인은 뒤 스토리입니다.
 실제 대화 하나가 들어가는 것을 보고 싶으면 `tooling/dev/tracer-session.sh`가
 임시 폴더에 버려도 되는 brain을 설치하고 Stop hook이 그것을 가리키는 설정
@@ -617,6 +631,7 @@ env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" doctor run
 | `node-path` | 그 shim이 가리키는 node가 실행되고 `engines.node`의 버전 이상인지. 읽을 shim이 없으면 `skip` |
 | `node-version` | 명령을 실행한 node도 그 버전 이상인지 |
 | `plugin` | 완료 기록(`installed.json`)과 플러그인의 `app-ref`와 지금 도는 빌드(`build.json`)의 관계. 기록이 없으면 `ok`, 플러그인에서 설치한 것이 아니면 `ok`, 셋이 같으면 `ok`. 플러그인이 더 오래되었으면 `warn PLUGIN_BEHIND`, 더 새롭고 `[update] auto`가 켜져 있으면 `ok`("다음 세션에서 갱신합니다"), 더 새롭고 꺼져 있으면 `warn UPDATE_AVAILABLE`. app-ref를 못 읽거나, 빌드가 기록과 다르거나, 관계를 알 수 없으면 코드 없는 `warn` |
+| `spool` | 데이터베이스에 못 들어간 쓰기가 몇 건 기다리는지와 그중 가장 오래된 시각. 0건이면 `ok`, 있으면 `warn SPOOLED`. 기다리는 것이 있다는 것은 망가졌다는 뜻이 아니라 아직 안 들어갔다는 뜻입니다 — 폴더가 없으면 0건이고, 읽을 수 없으면 `fail` |
 
 모든 점검은 넷 중 하나로 끝납니다. `ok`, `warn` — 실행했지만 아무것도 확정하지
 못했다는 뜻으로, 통과도 문제도 아닙니다 — `fail`, 그리고 `skip`은 어느 점검이
@@ -624,7 +639,7 @@ env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" doctor run
 줄은 그 수입니다.
 
 ```text
-요약: 통과 9, 경고 1, 실패 0, 건너뜀 0
+요약: 통과 11, 경고 1, 실패 0, 건너뜀 0
 ```
 
 `--json`에서는 `data.summary`에 있으므로, 열 줄을 더해 가며 그중 하나뿐인

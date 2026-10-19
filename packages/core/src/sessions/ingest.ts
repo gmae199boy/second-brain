@@ -12,11 +12,13 @@ import {
   type SessionKey,
   type SessionToken,
 } from '../domain/session-token.js';
+import type { SpoolCause } from '../domain/spool-record.js';
 import type { WarningCode } from '../codes.js';
 import type { Clock } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
 import type { Parser } from '../ports/parser.js';
 import type { RepositoryInspector } from '../ports/repository.js';
+import type { Spool } from '../ports/spool.js';
 import type {
   EnsureCheckoutInput,
   IngestCounts,
@@ -24,6 +26,7 @@ import type {
   UserStore,
 } from '../ports/store.js';
 import type { TranscriptReader } from '../ports/transcript.js';
+import { spoolSessionIngest } from './spool-ingest.js';
 
 /**
  * What a caller asks `sessions.ingest` for. Surface neutral: the session is the
@@ -40,6 +43,13 @@ export interface IngestSessionInput {
 /** What one ingest did. A replay reports the same session and inserts nothing. */
 export interface IngestSessionData {
   session: SessionToken;
+  /**
+   * The database could not take this, so a mark went to the spool instead and
+   * a later drain will ingest the session again (AD-9). Nothing was created
+   * and nothing was inserted when this is true — the counts below say what
+   * reached the database, and this says where the write went.
+   */
+  spooled: boolean;
   /** Whether this call is the one that created the session row. */
   created: boolean;
   inserted: IngestCounts;
@@ -55,13 +65,21 @@ export type IngestSessionResult =
         | 'USER_MISSING'
         | 'SESSION_NOT_FOUND'
         | 'DB_UNAVAILABLE'
-        | 'DB_LOCKED';
+        | 'DB_LOCKED'
+        | 'SCHEMA_MISMATCH';
       message: string;
     };
 
 /** Everything the use case is given, all of it a port (AD-1). */
 export interface IngestSessionDependencies {
   store: SessionStore & UserStore;
+  /**
+   * Where a turn goes when the database will not take it (AD-9). It is a
+   * dependency of the ingest and not of its caller because the lock that stops
+   * a write is discovered in the middle of the use case, and the only honest
+   * answer from there is the spool rather than a failure the hook would drop.
+   */
+  spool: Spool;
   clock: Clock;
   idGen: IdGen;
   /** Every parser this build can read a transcript with, by harness (AD-4). */
@@ -115,12 +133,26 @@ export interface IngestSessionDependencies {
  * batch object exists — so a secret is gone by the time anything can hold on to
  * it, and a record of what went is attached to the message it came out of
  * (AD-11).
+ *
+ * Every store step can answer "the database will not take this" — the file is
+ * not there, or another process held the one SQLite writer for longer than this
+ * path's budget — and every one of them then goes to the same place: a mark in
+ * the spool and a success carrying `SPOOLED` (AD-9). The first such answer ends
+ * the call, so a hook spends its three-second budget once and not four times
+ * (Boundaries). Nothing else is spooled: a transcript that cannot be read, a
+ * database with no owner and a call that named no session are all things no
+ * amount of waiting fixes.
  */
 export async function ingestSession(
   dependencies: IngestSessionDependencies,
   input: IngestSessionInput,
 ): Promise<IngestSessionResult> {
-  const { store, clock, idGen, parsers, transcripts, repositories, machine } = dependencies;
+  const { store, spool, clock, idGen, parsers, transcripts, repositories, machine } =
+    dependencies;
+
+  /** The one way out when the database will not take a write (AD-9). */
+  const spooled = async (cause: SpoolCause): Promise<IngestSessionResult> =>
+    spoolSessionIngest({ spool, clock, idGen }, input, cause);
 
   const token = parseSessionToken(input.session);
   if (!token.ok) {
@@ -153,7 +185,7 @@ export async function ingestSession(
   // where the last one stopped (AD-4). A session nobody has ingested yet comes
   // back as `null`, which is a value and not a failure.
   const found = await store.findSession(key);
-  if (!found.ok) return found;
+  if (!found.ok) return unwritable(found.code) ? spooled(found.code) : found;
   const stored = found.session;
 
   const read = await transcripts.read(input.transcriptPath);
@@ -174,6 +206,7 @@ export async function ingestSession(
     return {
       ok: true,
       session: input.session,
+      spooled: false,
       created: false,
       inserted: { messages: 0, toolNotes: 0, redactions: 0 },
       warnings: [],
@@ -181,7 +214,7 @@ export async function ingestSession(
   }
 
   const owner = await store.readSelfUser();
-  if (!owner.ok) return owner;
+  if (!owner.ok) return unwritable(owner.code) ? spooled(owner.code) : owner;
   if (owner.user === null) {
     return {
       ok: false,
@@ -253,7 +286,7 @@ export async function ingestSession(
       workspaceId: null,
       checkout,
     });
-    if (!ensured.ok) return ensured;
+    if (!ensured.ok) return unwritable(ensured.code) ? spooled(ensured.code) : ensured;
     created = ensured.created;
   }
 
@@ -272,15 +305,29 @@ export async function ingestSession(
   };
 
   const ingested = await store.ingest(batch);
-  if (!ingested.ok) return ingested;
+  if (!ingested.ok) return unwritable(ingested.code) ? spooled(ingested.code) : ingested;
 
   return {
     ok: true,
     session: input.session,
+    spooled: false,
     created,
     inserted: ingested.inserted,
     warnings: ingested.warnings,
   };
+}
+
+/**
+ * Whether a store's failure means "the database will not take a write", which
+ * is the one class of failure that goes to the spool rather than back to the
+ * caller (AD-9, AD-21).
+ *
+ * The parameter is a `string` because the four store steps each have a narrower
+ * code union of their own and a predicate has to be assignable to what it
+ * narrows; the union it narrows *to* is what keeps the call sites honest.
+ */
+function unwritable(code: string): code is 'DB_UNAVAILABLE' | 'DB_LOCKED' {
+  return code === 'DB_UNAVAILABLE' || code === 'DB_LOCKED';
 }
 
 /**

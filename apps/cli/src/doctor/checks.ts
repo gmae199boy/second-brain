@@ -2,9 +2,15 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
-import { prereqFailed, type DoctorCheck, type DoctorCheckSource } from 'second_brain';
+import {
+  isoWithOffset,
+  prereqFailed,
+  type DoctorCheck,
+  type DoctorCheckSource,
+  type Spool,
+} from 'second_brain';
 import { readConfig, type ReadConfigResult } from '../config/codec.js';
-import { HOME_ENV, configFilePath, pluginRunPath } from '../config/paths.js';
+import { HOME_ENV, configFilePath, pluginRunPath, spoolPath } from '../config/paths.js';
 import {
   appRootPath,
   readAppRef,
@@ -17,7 +23,9 @@ import {
   type LastBootstrap,
 } from '../install/installed.js';
 import { SHIM_SIGNATURE, parseShim, shimPath, type ParsedShim } from '../install/shim.js';
+import { systemClock } from '../runtime/clock.js';
 import { NODE_FLOOR, atLeast, meetsNodeFloor } from '../runtime/node-floor.js';
+import { fileSpool } from '../runtime/spool.js';
 
 /**
  * Lowest node this build runs on, and the comparison behind it. They live in
@@ -64,6 +72,12 @@ export interface RuntimeChecksOptions {
   runNode?: RunNode;
   /** Test seam for the `plugin` check's ancestry questions. */
   runGit?: RunGit;
+  /**
+   * The spool the `spool` check reports on. Defaults to this home's folder,
+   * which is what every real invocation wants; a test hands in the in-memory
+   * fake to reach the answers a folder cannot be put into.
+   */
+  spool?: Spool;
 }
 
 /**
@@ -89,13 +103,9 @@ export type RunGit = (args: readonly string[]) => Promise<{ code: number }>;
  * else being touched, which is the whole reason it is a list and not two call
  * sites with four checks written out.
  *
- * Later epics add to it here: a connector's own check per harness (epic 2), the
- * spool's depth and the last hook arrival (epic 2, 3), the mirror and the
- * export (epic 4, 5), the embedding backlog and replication lag (epic 6, 7).
- *
- * ```ts
- * return [...above, { id: 'spool', run: () => spoolCheck(config) }];
- * ```
+ * Later epics add to it here: a connector's own check per harness and the last
+ * hook arrival (epic 2, 3), the mirror and the export (epic 4, 5), the
+ * embedding backlog and replication lag (epic 6, 7).
  *
  * `node-path` comes after `shim` because it is a statement about the node the
  * shim names: with no node name to read, there is nothing to ask, which is a
@@ -106,6 +116,7 @@ export function runtimeChecks(options: RuntimeChecksOptions): readonly DoctorChe
   const { home } = options;
   const runNode = options.runNode ?? systemRunNode;
   const runGit = options.runGit ?? systemRunGit;
+  const spool = options.spool ?? fileSpool({ folder: spoolPath(home), clock: systemClock });
   // Read and parsed once: `shim` and `node-path` are two statements about the
   // same file, and two reads could disagree about it.
   const shim = once(async () => inspectShim(home));
@@ -119,7 +130,38 @@ export function runtimeChecks(options: RuntimeChecksOptions): readonly DoctorChe
     { id: 'node-path', run: async () => nodePathCheck(await shim(), runNode) },
     { id: 'node-version', run: async () => nodeVersionCheck() },
     { id: 'plugin', run: async () => pluginCheck(home, await config(), runGit) },
+    { id: 'spool', run: async () => spoolCheck(spool) },
   ];
+}
+
+/**
+ * What is waiting in the spool: writes the database could not take, which a
+ * later drain will put in (AD-9).
+ *
+ * It is a `warn` and not a `fail` whenever there is anything, because nothing
+ * is broken — the spool working is the brain working, and the records are safe
+ * until drain runs. But it may not be silent either: the one failure mode this
+ * whole mechanism has is a spool that fills up and nobody notices, and until
+ * drain exists (story 11) this line is the only place anyone would see it.
+ *
+ * A folder that is not there is nothing waiting, which is the state of a brain
+ * whose database has always been reachable.
+ */
+async function spoolCheck(spool: Spool): Promise<DoctorCheck> {
+  const stats = await spool.stats();
+  if (!stats.ok) {
+    return { id: 'spool', status: 'fail', detail: stats.message };
+  }
+  if (stats.records === 0) {
+    return { id: 'spool', status: 'ok', detail: '0건' };
+  }
+  const count = `${String(stats.records)}건`;
+  // The instant with this machine's offset, as every instant a person reads
+  // is (Conventions, 시각). `null` only for records nothing could decode: the
+  // count is still worth saying.
+  const detail =
+    stats.earliest === null ? count : `${count}, 가장 오래된 것 ${isoWithOffset(stats.earliest)}`;
+  return { id: 'spool', status: 'warn', code: 'SPOOLED', detail };
 }
 
 /**

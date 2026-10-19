@@ -33,3 +33,12 @@ export type { EmbedResult, Embedder } from './embedder.js';
 export type { RerankResult, RerankedDocument, Reranker } from './reranker.js';
 export type { Clock } from './clock.js';
 export type { IdGen } from './id-gen.js';
+export type {
+  Spool,
+  SpoolAppendResult,
+  SpoolClaim,
+  SpoolClaimResult,
+  SpoolCompleteResult,
+  SpoolReleaseResult,
+  SpoolStatsResult,
+} from './spool.js';

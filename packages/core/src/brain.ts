@@ -7,6 +7,7 @@ import type { Clock } from './ports/clock.js';
 import type { IdGen } from './ports/id-gen.js';
 import type { Parser } from './ports/parser.js';
 import type { RepositoryInspector } from './ports/repository.js';
+import type { Spool } from './ports/spool.js';
 import type { SchemaStore, Store } from './ports/store.js';
 import type { TranscriptReader } from './ports/transcript.js';
 import {
@@ -24,6 +25,13 @@ export interface BrainDependencies {
    * decided rather than at the call (AD-10).
    */
   store: Store & SchemaStore;
+  /**
+   * Where a write goes when the database will not take it (AD-9). Every verb
+   * that writes conversation data needs it, because a lock that is held too
+   * long is not a failure of the verb — it is a write that has to wait, and
+   * the spool is where it waits.
+   */
+  spool: Spool;
   /**
    * Schema version this build was made for. The caller passes the constant of
    * the adapter it built, because which schema is current is the adapter's
@@ -76,6 +84,7 @@ export interface Brain {
 export function createBrain(dependencies: BrainDependencies): Brain {
   const {
     store,
+    spool,
     schemaVersion,
     clock,
     idGen,
@@ -92,7 +101,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     sessions: {
       ingest: (input) =>
         ingestSession(
-          { store, clock, idGen, parsers, transcripts, repositories, machine },
+          { store, spool, clock, idGen, parsers, transcripts, repositories, machine },
           input,
         ),
     },

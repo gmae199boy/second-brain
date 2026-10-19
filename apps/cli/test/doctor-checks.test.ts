@@ -3,10 +3,11 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isWarningCode, type DoctorCheck } from 'second_brain';
+import { isoWithOffset, isWarningCode, type DoctorCheck } from 'second_brain';
+import { memorySpool, sampleSpoolRecord, type MemorySpool } from 'second_brain/testing';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { writeConfig } from '../src/config/codec.js';
-import { configFilePath, pluginRunPath } from '../src/config/paths.js';
+import { configFilePath, pluginRunPath, spoolPath } from '../src/config/paths.js';
 import {
   NODE_FLOOR,
   atLeast,
@@ -17,6 +18,8 @@ import {
   type RuntimeChecksOptions,
 } from '../src/doctor/checks.js';
 import { shimPath, writeShim } from '../src/install/shim.js';
+import { systemClock } from '../src/runtime/clock.js';
+import { fileSpool } from '../src/runtime/spool.js';
 import { assertKoreanLine } from './language.js';
 
 /**
@@ -83,13 +86,14 @@ beforeAll(() => {
 });
 
 describe('runtimeChecks', () => {
-  it('registers the five machine checks, in the order they are reported', () => {
+  it('registers the six machine checks, in the order they are reported', () => {
     expect(runtimeChecks({ home: '/nowhere' }).map((source) => source.id)).toEqual([
       'config',
       'shim',
       'node-path',
       'node-version',
       'plugin',
+      'spool',
     ]);
   });
 
@@ -812,5 +816,108 @@ describe('the plugin check', () => {
 
     expect(check).toMatchObject({ status: 'warn' });
     expect(check.detail).toContain('알 수 없습니다');
+  });
+});
+
+/**
+ * The spool check: what is waiting to go into the database (AD-9). It is a
+ * `warn` whenever there is anything, because nothing is broken — the records
+ * are safe and a later drain puts them in — and it may not be silent, because
+ * a spool nobody looks at is the one failure mode the whole mechanism has.
+ */
+describe('the spool check', () => {
+  /** The spool check's answer for one spool. */
+  async function spoolCheck(home: string, spool?: MemorySpool): Promise<DoctorCheck> {
+    const source = runtimeChecks({ home, ...(spool === undefined ? {} : { spool }) }).find(
+      (candidate) => candidate.id === 'spool',
+    );
+    if (source === undefined) throw new Error('there is no spool check');
+    const check = await source.run();
+    assertKoreanLine(check.detail ?? '', { label: 'spool detail' });
+    return check;
+  }
+
+  it('is ok with nothing waiting, and says so rather than nothing', async () => {
+    const home = await installedHome();
+
+    expect(await spoolCheck(home)).toEqual({ id: 'spool', status: 'ok', detail: '0건' });
+  });
+
+  it('is ok when there is no spool folder at all', async () => {
+    // Which is the state of a brain whose database has always been reachable:
+    // the folder is made by the first write that could not reach it.
+    const home = await tempHome();
+
+    expect(await spoolCheck(home)).toMatchObject({ id: 'spool', status: 'ok', detail: '0건' });
+  });
+
+  it('warns with SPOOLED, the count and the oldest instant when something is waiting', async () => {
+    const home = await installedHome();
+    const spool = memorySpool();
+    const older = new Date('2026-01-02T03:04:05.000Z');
+    expect(
+      await spool.append([
+        sampleSpoolRecord({ id: '01940000-0000-7000-8000-0000000000e1' }),
+        sampleSpoolRecord({ id: '01940000-0000-7000-8000-0000000000e2', occurredAt: older }),
+      ]),
+    ).toMatchObject({ ok: true });
+
+    const check = await spoolCheck(home, spool);
+
+    // A shared code, so the envelope carries it in `warnings[]` too.
+    expect(check).toMatchObject({ id: 'spool', status: 'warn', code: 'SPOOLED' });
+    expect(isWarningCode(check.code ?? '')).toBe(true);
+    expect(check.detail).toContain('2건');
+    // The instant with this machine's offset, as every instant a person reads
+    // is (Conventions, 시각).
+    expect(check.detail).toContain(isoWithOffset(older));
+  });
+
+  it('counts the records of a claimed file too', async () => {
+    // A record a drain is in the middle of replaying has still not reached the
+    // database, so a report that stopped counting it would say the spool had
+    // emptied when somebody merely picked it up.
+    const home = await installedHome();
+    const spool = memorySpool();
+    expect(await spool.append([sampleSpoolRecord()])).toMatchObject({ ok: true });
+    expect(await spool.claim()).toMatchObject({ ok: true });
+
+    expect(await spoolCheck(home, spool)).toMatchObject({ status: 'warn', code: 'SPOOLED' });
+  });
+
+  it('reports the count with no instant when nothing waiting could be read', async () => {
+    const home = await installedHome();
+    const spool = memorySpool();
+    const unreadable: MemorySpool = {
+      ...spool,
+      async stats() {
+        return { ok: true, records: 2, earliest: null };
+      },
+    };
+
+    const check = await spoolCheck(home, unreadable);
+
+    expect(check).toMatchObject({ status: 'warn', code: 'SPOOLED', detail: '2건' });
+  });
+
+  it('fails when the spool itself cannot be read', async () => {
+    const home = await installedHome();
+    const spool = memorySpool({ statsFailure: 'spool 폴더를 읽을 수 없습니다' });
+
+    expect(await spoolCheck(home, spool)).toEqual({
+      id: 'spool',
+      status: 'fail',
+      detail: 'spool 폴더를 읽을 수 없습니다',
+    });
+  });
+
+  it('reports the real folder of the home it was asked about', async () => {
+    // Nothing injected: the default is this home's `spool/`, which is what
+    // every real invocation reports on.
+    const home = await installedHome();
+    const spool = fileSpool({ folder: spoolPath(home), clock: systemClock });
+    expect(await spool.append([sampleSpoolRecord()])).toMatchObject({ ok: true });
+
+    expect(await spoolCheck(home)).toMatchObject({ status: 'warn', code: 'SPOOLED', detail: expect.stringContaining('1건') });
   });
 });

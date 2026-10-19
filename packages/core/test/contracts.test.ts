@@ -11,6 +11,7 @@ import type { IdGen } from '../src/ports/id-gen.js';
 import type { Embedder } from '../src/ports/embedder.js';
 import type { Parser } from '../src/ports/parser.js';
 import type { Reranker } from '../src/ports/reranker.js';
+import type { Spool } from '../src/ports/spool.js';
 import type { SchemaStore, UserStore } from '../src/ports/store.js';
 import {
   clockContract,
@@ -23,6 +24,7 @@ import {
   memoryParser,
   memoryReranker,
   memorySchemaStore,
+  memorySpool,
   memoryStore,
   memoryTranscript,
   parserContract,
@@ -31,9 +33,11 @@ import {
   sampleIngestBatch,
   sampleSelfUserInput,
   sampleSessionToken,
+  sampleSpoolRecord,
   schemaStoreContract,
   sequenceIdGen,
   sessionStoreContract,
+  spoolContract,
   steppingClock,
   storeContract,
   unknownSessionToken,
@@ -271,6 +275,67 @@ describe('the embedder contract against the memory embedder', () => {
       await testCase.run(async () => memoryEmbedder({ dimensions: 16 }));
     });
   }
+});
+
+describe('the spool contract against the memory spool', () => {
+  for (const testCase of spoolContract()) {
+    it(testCase.name, async () => {
+      await testCase.run(async () => memorySpool());
+    });
+  }
+
+  it('accepts a spool that cannot be written to as a value', async () => {
+    // The row of the matrix where there is a plain file where the folder
+    // belongs: every verb answers, and none of them throws.
+    const make = async (): Promise<Spool> =>
+      memorySpool({
+        appendFailure: 'the spool folder is a file',
+        claimFailure: 'the spool folder is a file',
+        statsFailure: 'the spool folder is a file',
+      });
+    const spool = await make();
+    expect(await spool.append([sampleSpoolRecord()])).toMatchObject({ ok: false });
+    expect(await spool.claim()).toMatchObject({ ok: false });
+    expect(await spool.stats()).toMatchObject({ ok: false });
+  });
+
+  it('takes back a claim nobody will ever finish', async () => {
+    // A drain that was killed between the claim and the replay. The fake has
+    // no process to kill (AD-1), so it says the same thing by ageing the claim
+    // past `SPOOL_CLAIM_STALE_MS`; the file adapter's own tests kill a real
+    // child process.
+    const spool = memorySpool();
+    expect(await spool.append([sampleSpoolRecord()])).toMatchObject({ ok: true });
+    expect(await spool.claim()).toMatchObject({ ok: true, claim: { lines: [expect.any(String)] } });
+    expect(await spool.claim()).toMatchObject({ ok: true, claim: null });
+
+    spool.abandonClaims();
+
+    expect(await spool.claim()).toMatchObject({ ok: true, claim: { lines: [expect.any(String)] } });
+  });
+});
+
+describe('the contracts catch a wrong spool', () => {
+  it('catches a spool that hands the same file to two claims', async () => {
+    const make = async (): Promise<Spool> => {
+      const inner = memorySpool();
+      return {
+        ...inner,
+        async claim() {
+          // Never renames and never marks: every claim sees the first file
+          // again, so two drains replay the same records (AD-9 broken).
+          const files = inner.files();
+          const first = files[0];
+          if (first === undefined) return { ok: true, claim: null };
+          return { ok: true, claim: { handle: `${first.stem}.claiming`, lines: [...first.lines] } };
+        },
+      };
+    };
+
+    expect(await failedCases(spoolContract(), make)).toContain(
+      'a claimed file is not claimed a second time',
+    );
+  });
 });
 
 describe('the reranker contract against the memory reranker', () => {

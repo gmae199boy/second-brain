@@ -65,3 +65,16 @@ export {
   type IngestSessionInput,
   type IngestSessionResult,
 } from './sessions/ingest.js';
+export {
+  spoolSessionIngest,
+  type SpoolSessionIngestDependencies,
+} from './sessions/spool-ingest.js';
+export {
+  replaySpool,
+  type ReplaySpoolDependencies,
+  type ReplaySpoolOptions,
+  type ReplaySpoolReport,
+  type SpoolReplayHandler,
+  type SpoolReplayHandlerResult,
+  type SpoolReplayHandlers,
+} from './spool/replay.js';

@@ -41,6 +41,7 @@ export {
   rerankerContract,
   schemaStoreContract,
   sessionStoreContract,
+  spoolContract,
   storeContract,
   userStoreContract,
   type ConnectorSubject,
@@ -59,6 +60,12 @@ export {
   type MemoryStoreOptions,
   type MemoryStoreSnapshot,
 } from './fakes/store.js';
+export {
+  memorySpool,
+  type MemorySpool,
+  type MemorySpoolFile,
+  type MemorySpoolOptions,
+} from './fakes/spool.js';
 export {
   memoryParser,
   memoryTranscript,
@@ -96,10 +103,13 @@ export {
   sampleSessionId,
   sampleSessionKey,
   sampleSessionToken,
+  sampleSpoolRecord,
+  sampleSpoolRecordId,
   sampleUserId,
   sampleWorktreeId,
   unknownSessionToken,
   type SampleIngestBatchOverrides,
+  type SampleSpoolRecordOverrides,
 } from './fixtures.js';
 export {
   ALLOWED_PROPER_NOUNS,

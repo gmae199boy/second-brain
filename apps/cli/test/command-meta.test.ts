@@ -123,6 +123,20 @@ describe('the meta check', () => {
     expect(validateCommandMeta(spec).join('\n')).toContain('risk may not be read');
   });
 
+  it('refuses a spool branch on a command that does not write', () => {
+    // The branch is reached from the write guard and from nowhere else, so one
+    // declared without `writes` is a branch that can never run (AD-9).
+    const spec: CommandSpec = {
+      ...wellFormed(),
+      standalone: false,
+      risk: 'write',
+      run: async () => ({ ok: true as const, data: null }),
+      spool: async () => ({ ok: true as const, data: null }),
+    };
+
+    expect(validateCommandMeta(spec).join('\n')).toContain('must declare writes');
+  });
+
   it('accepts the same command once it says it writes', () => {
     const spec: CommandSpec = {
       ...wellFormed(),

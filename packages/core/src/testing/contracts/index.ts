@@ -6,5 +6,6 @@ export { parserContract, type ParserPair, type ParserSubject } from './parser.js
 export { connectorContract, type ConnectorSubject } from './connector.js';
 export { embedderContract } from './embedder.js';
 export { rerankerContract } from './reranker.js';
+export { spoolContract } from './spool.js';
 export { clockContract } from './clock.js';
 export { idGenContract } from './id-gen.js';

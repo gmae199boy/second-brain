@@ -35,6 +35,21 @@ export {
   type SecretSpan,
 } from './secret-patterns.js';
 export { CONTENT_HASH_PREFIX, contentHash, sha256, sha256Hex, utf8Bytes } from './sha256.js';
+export {
+  SPOOL_CAUSES,
+  SPOOL_CLAIM_STALE_MS,
+  SPOOL_LINE_MAX_BYTES,
+  SPOOL_RECORD_KINDS,
+  SPOOL_RECORD_VERSION,
+  decodeSpoolLine,
+  encodeSpoolLine,
+  type DecodeSpoolLineResult,
+  type EncodeSpoolLineResult,
+  type SessionIngestSpoolPayload,
+  type SpoolCause,
+  type SpoolRecord,
+  type SpoolRecordKind,
+} from './spool-record.js';
 export type { ContextInjection } from './context-injection.js';
 export type { Failure } from './failure.js';
 export type { TranscriptFile } from './transcript-file.js';

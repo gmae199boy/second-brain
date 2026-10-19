@@ -44,6 +44,7 @@
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-untitled-plan.md`
   summary: 쓰기 가드의 `DB_UNAVAILABLE` 실패가 exit 1로 남아 있다 — Conventions 표는 이 코드를 2로 적는다. 둘 중 하나를 맞춘다.
   evidence: `apps/cli/src/dispatch.ts`의 쓰기 가드가 `exit: 1`을 명시해 `ERROR_CODES.DB_UNAVAILABLE.exit = 2`를 덮는다. story 2.1의 frozen Boundaries가 "기존 실패의 exit는 지금과 같다"로 정해 이번엔 바꾸지 않았다. epic 2가 이 거부를 spool로 바꾸면 실패 자체가 사라질 수 있어 그때 함께 정한다.
+  resolution: 해결됨(2.10, 2026-10-19). 쓰기 가드에서 `exit: 1`과 그 주석을 지웠으므로 거부는 코드 표를 따른다 — `DB_UNAVAILABLE`은 2, `SCHEMA_MISMATCH`는 1이다. `spool` 갈래를 선언한 명령은 애초에 거부되지 않고 표시를 남기며 성공한다.
 
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-tracer-stop-hook-brain-db-plan.md`
   summary: `TRANSCRIPT_UNREADABLE`·`SESSION_NOT_FOUND`를 Core `ERROR_CODES`(exit·retryable·hint)와 spine Conventions 오류 코드 목록에 넣을지 정한다.
@@ -69,7 +70,7 @@
 | busy 예산 분기 테스트 | 해결됨(1.9) |
 | 설치기가 모르는 키를 지움 | epic 2 story 4 |
 | `checkSchema`의 `setup upgrade` 문구 | 해결됨(1.9) |
-| 쓰기 가드의 `DB_UNAVAILABLE` exit 1 vs 표 2 (2.1) | epic 2 story 10(쓰기 가드를 spool로 바꿀 때 함께 정한다, 2026-10-16) |
+| 쓰기 가드의 `DB_UNAVAILABLE` exit 1 vs 표 2 (2.1) | 해결됨(2.10, 2026-10-19). 거부는 코드 표의 종료 코드를 따르고(`DB_UNAVAILABLE` 2, `SCHEMA_MISMATCH` 1), `spool` 갈래가 있는 명령은 거부되지 않는다 |
 | Postgres가 0004만큼 더 갈라짐(`messages.git_branch`·`is_subagent_report`와 불변 trigger, `files.source_unreachable_at`, `document_chunks.chunk_locator`와 trigger, `redactions` 재생성·불변 trigger, `document_extractions`의 `attempt`·`failed_stage`·`index_config_id`·키, `failures` 대상 키, `work_items_due_idx`) | epic 7(2.6 리뷰, 2026-10-18). 0005(`redactions.tool_note_id`, `failed_stage` trigger, `projects.identity_key`)도 epic 7(2026-10-19) |
 | Core `Failure` 타입이 0004에서 없어진 `harness_session_id`를 키로 적음(`packages/core/src/domain/failure.ts`). `Redaction`·`Message`도 새 칸이 없음 | `Failure`: epic 2 story 11(실패 기록 함수가 타입을 대상 키로 바꿈). `Redaction`: `patternVersion`만 해결됨(2.9). 아직 `messageId: string`·non-null `start`/`end`라 0004의 파일 가리기(`file_id`, 위치 없음)를 표현하지 못한다 — `fileId` 추가와 `messageId`·`start`·`end` nullable화는 `files.redact`를 만드는 epic-attachments. `toolNoteId`는 story 13(18의 칸을 처음 쓸 때, 2026-10-19). `Message`: story 7(2.6 Decision, 2026-10-18) |
 | 도구 메모 대상을 가린 기록 자리가 없음 | 2026-10-19: 마스킹 B로 수집은 도구 메모 대상을 가리지 않는다(원문 저장). 기록이 필요한 것은 2.13의 저장본 가리기뿐이고, 0005(story 18)의 `redactions.tool_note_id`가 맡는다. (이전 처분: epic-attachments 또는 epic 7과 함께(다음 마이그레이션). 0004의 `redactions` 행은 대상이 `message_id`·`file_id` 둘뿐이고 위치는 **본문** 위의 구간이라, 가려진 `tool_notes.target`을 가리킬 칸이 없다. 2.9는 대상의 값을 가리되 기록은 남기지 않는다(Decision 2026-10-18). 넣으려면 0005에 `redactions.tool_note_id`를 더하고 위치를 그 대상 위의 구간으로 정의해야 한다) |
@@ -79,6 +80,8 @@
 | 무인 루프 v2가 커밋을 기다리지 않음 (2026-10-18) | 저장소 밖 도구. 2.10~를 무인으로 돌리기 전에 고친다 |
 | 2.7 follow-up 리뷰 (2026-10-18) | epic 2 story 19의 리뷰로 한다(change-masking-b-and-review-fixes D10) |
 | 백업 브랜치 `backup/pre-path-rewrite-2026-10-18` | push 전에 지운다(사용자) |
+| 비정상 종료로 남은 `.open` 회수 (2.10) | epic 2 story 11·12(drain과 일부 줄 다시 쓰기와 함께, 2026-10-19) |
+| 업그레이드 경로 correct-course: 마이그레이션 완료 뒤 전환·실패 시 재시도·마이그레이션 승인 (2.10) | AD-19·20을 바꾸는 입력. bootstrap 2.5·shim·`setup upgrade`(epic 5)에 걸리므로 correct-course로 먼저 본다(2026-10-19 사용자) |
 - source_plan: none
   summary: 옛 무인 루프 스크립트(`tooling/dev/auto-build.sh`)를 넣은 커밋(`10a09d2`)을 지우는 커밋이 아니라 그 커밋을 빼고 다시 쌓는 방식으로 이력에서 뺀다(`git rebase --onto 10a09d2^ 10a09d2 main`, 시작 전 백업 브랜치).
   evidence: 2026-10-18 사용자 결정. 그 뒤 해시가 다시 바뀌므로 `plugin/app-ref`(AGENTS.md 규칙대로 version도 함께), plan의 `baseline_revision`, 문서의 커밋 번호를 다시 맞춘다. 원격에는 첫 커밋뿐이라 push 전에 해야 한다. dev-workflow 저장소에서는 같은 일을 이미 끝냈다.
@@ -88,6 +91,12 @@
 - source_plan: none
   summary: brain 2.7(parser) follow-up 리뷰를 한 번 더 돌린다.
   evidence: 2026-10-18 결정 검토에서 peer handback 누락(보고 약 58%)이 나왔다. 수정은 `inputs/masking-b-and-review-fixes.md` §2에 있고, 다른 빈틈이 없는지 리뷰로 확인하자는 권장이다.
+- source_plan: `_bmad-output/personal-brain/epic-capture/story-spool-db-plan.md`
+  summary: 비정상 종료로 남은 `<home>/spool/*.jsonl.open` 파일을 회수한다.
+  evidence: 2.10은 `.open`을 절대 claim하지 않는다(쓰는 중인 파일을 반쯤 읽는 것을 막는다). 그래서 append 도중에 죽은 프로세스가 남긴 `.open`은 영원히 남고, doctor의 `spool` 건수에도 들어가지 않는다. 회수 규칙(mtime 기준 유예 뒤 `.jsonl`로 돌릴지, `spool/failed/`로 옮길지, 마지막 줄이 깨졌을 때 어떻게 할지)은 drain과 일부 줄 다시 쓰기가 있는 story 11·12에서 정하는 것이 자연스럽다.
+- source_plan: `_bmad-output/personal-brain/epic-capture/story-spool-db-plan.md`
+  summary: 업그레이드 경로를 correct-course로 다시 본다 — 마이그레이션이 끝난 뒤에만 새 빌드로 전환하고, 실패하면 마이그레이션부터 다시 하며, 업그레이드 때 사람의 마이그레이션 승인을 받는다.
+  evidence: 2026-10-19 사용자 결정. 스키마 불일치는 고칠 대상이고 고치는 길은 업그레이드 경로의 마이그레이션이며, 2.10의 spool은 그 전까지 남는 틈을 받치는 안전망일 뿐이다. 이 셋은 AD-19·20을 바꾸는 일이라 스토리 안에서 하지 않는다. 닿는 곳은 bootstrap(2.5), shim, `setup upgrade`(epic 5)다.
 - source_plan: none
   summary: 이력 다시 쓰기 전 백업 브랜치 `backup/pre-path-rewrite-2026-10-18`(로컬)을 push 전에 지운다.
   evidence: 옛 커밋에 실명 경로가 남아 있다. 원격에 올라가면 안 된다. 이력 다시 쓰기는 2026-10-18 `24f0063` 앞에서 끝났다.
