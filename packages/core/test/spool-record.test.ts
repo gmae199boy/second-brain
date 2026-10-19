@@ -230,6 +230,9 @@ function failureRecord(overrides: Record<string, unknown> = {}): SpoolRecord {
     id: '01940000-0000-7000-8000-0000000000c1',
     kind: 'failure',
     occurredAt: new Date('2026-02-03T04:05:06.000Z'),
+    // No replay has failed yet, which is what every record a write path makes
+    // carries; the key is left off the line entirely (AD-9).
+    attempts: 0,
     payload: {
       targetKind: 'session',
       targetId: 'demo:session-0001',

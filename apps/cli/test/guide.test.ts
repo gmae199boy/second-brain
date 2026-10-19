@@ -6,6 +6,7 @@ import { exitCodeGuide, guideShow } from 'second_brain';
 import { commands } from '../src/commands/index.js';
 import { HOME_ENV } from '../src/config/paths.js';
 import { assertKoreanLines } from './language.js';
+import { withoutHarnessFolders } from './environment.js';
 
 /**
  * The three `guide` commands, against the built binary in a home where nothing
@@ -36,7 +37,10 @@ interface Envelope<T> {
 }
 
 function runBrain(args: readonly string[]): Promise<Run> {
-  const env: NodeJS.ProcessEnv = { ...process.env, [HOME_ENV]: NO_HOME };
+  const env: NodeJS.ProcessEnv = withoutHarnessFolders({
+    ...process.env,
+    [HOME_ENV]: NO_HOME,
+  });
   const child = spawn(process.execPath, [binPath, ...args], {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { HOME_ENV } from '../src/config/paths.js';
 import { assertKoreanLines } from './language.js';
+import { withoutHarnessFolders } from './environment.js';
 
 /**
  * `brain queue drain` end to end: the built `brain`, against a real SQLite file
@@ -64,11 +65,11 @@ beforeAll(() => {
  * here can reach a real brain or a real database server.
  */
 function childEnvironment(home: string): NodeJS.ProcessEnv {
-  const childEnv: NodeJS.ProcessEnv = {
+  const childEnv: NodeJS.ProcessEnv = withoutHarnessFolders({
     ...process.env,
     PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
     [HOME_ENV]: home,
-  };
+  });
   delete childEnv['SECOND_BRAIN_DATABASE_URL'];
   delete childEnv['BRAIN_TEST_DATABASE_URL'];
   return childEnv;
@@ -121,6 +122,11 @@ describe('brain queue drain', () => {
     expect(envelope.ok).toBe(true);
     expect(envelope.warnings).toEqual([]);
     expect(envelope.data).toEqual({
+      // Nothing in the spool, no transcript folder to scan — the capture
+      // switch is off in these tests — and nothing on the queue.
+      replayed: 0,
+      spool_failed: 0,
+      enqueued: 0,
       claimed: 0,
       completed: 0,
       retried: 0,
@@ -128,7 +134,6 @@ describe('brain queue drain', () => {
       released: 0,
       lost: 0,
       spooled: 0,
-      // This build has no kinds of work, so there is nothing it could claim.
       stopped: 'empty',
     });
   });
@@ -141,6 +146,11 @@ describe('brain queue drain', () => {
     expect(run.code).toBe(0);
     const lines = run.stdout.trimEnd().split('\n');
     expect(lines).toHaveLength(1);
+    // Every clause carries `건`, the three new ones included: the drain's own
+    // three steps are one answer (Design Notes).
+    expect(lines[0]).toContain('되넣음 0건');
+    expect(lines[0]).toContain('실패로 옮김 0건');
+    expect(lines[0]).toContain('새 일감 0건');
     expect(lines[0]).toContain('청구 0건');
     expect(lines[0]).toContain('할 일이 없습니다');
     // Clause by clause, not line by line: a count with no Korean beside it is

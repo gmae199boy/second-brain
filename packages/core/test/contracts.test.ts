@@ -12,7 +12,12 @@ import type { Embedder } from '../src/ports/embedder.js';
 import type { Parser } from '../src/ports/parser.js';
 import type { Reranker } from '../src/ports/reranker.js';
 import type { Spool } from '../src/ports/spool.js';
-import type { SchemaStore, UserStore, WorkStore } from '../src/ports/store.js';
+import type {
+  SchemaStore,
+  TranscriptFileStore,
+  UserStore,
+  WorkStore,
+} from '../src/ports/store.js';
 import {
   clockContract,
   connectorContract,
@@ -40,6 +45,7 @@ import {
   spoolContract,
   steppingClock,
   storeContract,
+  transcriptFileStoreContract,
   unknownSessionToken,
   unreadableTranscript,
   userStoreContract,
@@ -105,6 +111,14 @@ describe('the identity contract against the memory store', () => {
 
 describe('the queue contract against the memory store', () => {
   for (const testCase of workStoreContract()) {
+    it(testCase.name, async () => {
+      await testCase.run(async () => memoryStore());
+    });
+  }
+});
+
+describe('the transcript history contract against the memory store', () => {
+  for (const testCase of transcriptFileStoreContract()) {
     it(testCase.name, async () => {
       await testCase.run(async () => memoryStore());
     });
@@ -343,6 +357,27 @@ describe('the contracts catch a wrong spool', () => {
 
     expect(await failedCases(spoolContract(), make)).toContain(
       'a claimed file is not claimed a second time',
+    );
+  });
+});
+
+describe('the contracts catch a wrong transcript history', () => {
+  it('catches a store that lets the size go backwards', async () => {
+    const make = async (): Promise<TranscriptFileStore> => {
+      const inner = memoryStore();
+      return {
+        ...inner,
+        async recordTranscriptFile(input) {
+          // Takes whatever it is given: a read that finished late would then
+          // wind the history back, and the next scan would re-read a stretch
+          // of transcript that is already stored (Table Contract broken).
+          return inner.recordTranscriptFile({ ...input, reset: true });
+        },
+      };
+    };
+
+    expect(await failedCases(transcriptFileStoreContract(), make)).toContain(
+      'a smaller size is dropped unless it is a reset',
     );
   });
 });

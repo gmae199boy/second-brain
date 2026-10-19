@@ -8,11 +8,17 @@ import {
   type ClaimWorkResult,
   type CompleteWorkInput,
   type DueWorkQuery,
+  type FailureRecord,
   type FinishWorkInput,
   type FinishWorkResult,
   type HasDueWorkResult,
+  type ListFailuresQuery,
+  type ListFailuresResult,
+  type ListOpenWorkTargetsResult,
   type RecordFailureInput,
   type RecordFailureResult,
+  type ResolveFailuresInput,
+  type ResolveFailuresResult,
   type RetryWorkInput,
   type WorkItem,
   type WorkStore,
@@ -367,6 +373,131 @@ export function sqliteWorkStore(connect: SqliteConnect): WorkStore {
       }
       return { ok: true, outcome: 'recorded', created, failureId };
     },
+
+    async listOpenWorkTargets(query: { kind: string }): Promise<ListOpenWorkTargetsResult> {
+      const opened = connect();
+      if (!opened.ok) {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      }
+      try {
+        // A plain read on the shared handle: the folder scan asks this before it
+        // decides whether to write anything, and a read that took the write lock
+        // would defeat the point of asking (AD-7).
+        const found = await sql<{ target_kind: string; target_id: string }>`
+          select target_kind, target_id
+            from work_items
+           where kind = ${query.kind} and completed_at is null
+        `.execute(opened.connection.db);
+        return {
+          ok: true,
+          targets: found.rows.map((row) => ({
+            targetKind: row.target_kind,
+            targetId: row.target_id,
+          })),
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'DB_UNAVAILABLE',
+          message: `열린 일감을 읽을 수 없습니다: ${describe(error)}`,
+        };
+      }
+    },
+
+    async listFailures(query: ListFailuresQuery): Promise<ListFailuresResult> {
+      const opened = connect();
+      if (!opened.ok) {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      }
+
+      // Every clause is bound and every narrowing is optional, so one query
+      // answers all four shapes the port allows. `limit` of `-1` is SQLite's own
+      // "no limit", which keeps this one statement rather than two.
+      const includeResolved = query.includeResolved === true ? 1 : 0;
+      const targetKind = query.targetKind ?? null;
+      const stage = query.stage ?? null;
+      const limit = query.limit ?? -1;
+      try {
+        const found = await sql<FailureRow>`
+          select id, target_kind, target_id, stage, fingerprint, harness, session_id,
+                 code, message, occurred_at, resolved_at
+            from failures
+           where (${includeResolved} = 1 or resolved_at is null)
+             and (${targetKind} is null or target_kind = ${targetKind})
+             and (${stage} is null or stage = ${stage})
+        order by occurred_at desc, id desc
+           limit ${limit}
+        `.execute(opened.connection.db);
+        return { ok: true, failures: found.rows.map(toFailure) };
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'DB_UNAVAILABLE',
+          message: `실패를 읽을 수 없습니다: ${describe(error)}`,
+        };
+      }
+    },
+
+    async resolveFailures(input: ResolveFailuresInput): Promise<ResolveFailuresResult> {
+      const opened = connect();
+      if (!opened.ok) {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      }
+      const now = instant(input.now, 'failures.resolved_at');
+
+      let written;
+      try {
+        written = await withWrite(opened.connection, async (held) =>
+          changesOf(
+            await sql`
+              update failures
+                 set resolved_at = ${now}
+               where target_kind = ${input.targetKind} and target_id = ${input.targetId}
+                 and stage = ${input.stage} and resolved_at is null
+            `.execute(held),
+          ),
+        );
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'DB_UNAVAILABLE',
+          message: `실패를 해결로 표시할 수 없습니다: ${describe(error)}`,
+        };
+      }
+      if (!written.ok) return written;
+      return { ok: true, resolved: written.value };
+    },
+  };
+}
+
+/** A `failures` row as SQLite hands it back: text instants (0004). */
+interface FailureRow {
+  id: string;
+  target_kind: string;
+  target_id: string;
+  stage: string;
+  fingerprint: string;
+  harness: string | null;
+  session_id: string | null;
+  code: string;
+  message: string;
+  occurred_at: string;
+  resolved_at: string | null;
+}
+
+function toFailure(row: FailureRow): FailureRecord {
+  return {
+    id: row.id,
+    targetKind: row.target_kind,
+    targetId: row.target_id,
+    stage: row.stage,
+    fingerprint: row.fingerprint,
+    harness: row.harness,
+    sessionId: row.session_id,
+    code: row.code,
+    message: row.message,
+    occurredAt: at(row.occurred_at, 'failures.occurred_at'),
+    resolvedAt: row.resolved_at === null ? null : at(row.resolved_at, 'failures.resolved_at'),
   };
 }
 

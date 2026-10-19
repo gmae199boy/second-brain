@@ -12,7 +12,8 @@
  *
  * There is no kind in here. A kind is a fact about a unit of work — `ingest`,
  * `chunk`, `mirror` — and the unit that knows how to do it is the one that names
- * it; this story adds none (Boundaries). What is here is what every kind shares.
+ * it: `session_ingest` is named in `capture/session-ingest-work.ts`, beside the
+ * handler that does it. What is here is what every kind shares.
  */
 
 /**
@@ -116,11 +117,11 @@ export const DEFAULT_WORK_POLICY: WorkKindPolicy = {
 /**
  * The kinds that want something other than the default.
  *
- * Empty, and that is not an oversight: this build has no kinds of work at all
- * (Boundaries), and a table seeded with guesses about kinds nobody has written
- * yet would be a set of numbers no measurement ever produced. A kind that needs
- * a shorter claim or a longer wait adds its entry in the story that adds the
- * kind.
+ * Empty, and that is not an oversight. The one kind this build has —
+ * `session_ingest` — wants exactly the default: a ten-minute claim, the
+ * exponential wait and fifteen minutes for an external hiccup. A table seeded
+ * with numbers no measurement produced would be worse than no table, so a kind
+ * earns an entry here only when something has shown it needs one.
  */
 const WORK_KIND_POLICIES: Readonly<Record<string, WorkKindPolicy>> = {};
 

@@ -422,7 +422,7 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `redactions` | `id`. 대상은 `message_id`·`file_id`·`tool_note_id` 중 하나 | `messages.redact`(본문과 도구 메모 대상. `detected`면 `pattern_version` 기록), `files.redact`. 수집·추출은 쓰지 않는다(마스킹 B, AD-11) | 불변 |
 | `context_injections` | `id` | `context.show`가 spool에 쓰고 drain이 넣음 | 불변 |
 | `failures` | `(target_kind, target_id, stage, fingerprint)`. 대상 키는 `work_items`와 같다. 세션 수집 실패는 `session`/세션 토큰(`harness:harness_session_id`, 세션 행이 없어도 됨). `harness`·`session_id`는 정보 칸이고 비어 있을 수 있음(2026-10-16) | 모든 경로(실패 기록 함수 하나) | `resolved_at`은 drain이 채움. 같은 키를 다시 만나면 실패 기록 함수가 그 행을 다시 열고(`resolved_at = null`) `occurred_at`(마지막으로 난 때)·`message`를 바꾸며, 0005부터 `first_occurred_at`은 그대로 두고 `occurrences`를 1 올린다(2026-10-19 사용자) |
-| `transcript_files` | `(harness, path)` | drain(폴더 스캔) | 크기·fingerprint·커서 단조 |
+| `transcript_files` | `(harness, path)` | drain(폴더 스캔)과 성공한 모든 `sessions.ingest`(hook 경로 포함, 2026-10-19 story 12 Decision 2) | 크기·fingerprint·커서 단조. 단 `cursorReset`인 parse는 줄어든 크기도 쓴다(compact) |
 | `files` | `content_hash` | 첨부 수집(epic 10), 소스 동기화(epic 8) | 내용 불변. `home`, `current_extraction_id`, `redacted_at`(`files.redact`), `source_unreachable_at`(복구·연동 해제)만 바뀜 |
 | `file_locations` | `(file_id, store_kind, locator)` | 파일 저장·이전 함수, 소스 동기화 | `ownership` 불변. 검증 시각·삭제 시각만 채움 |
 | `message_attachments` | `(message_id, ordinal)` | `sessions.ingest` | 자리·출처 불변. `file_id`·상태는 수집이 한 번 채움 |

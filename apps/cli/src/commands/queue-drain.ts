@@ -1,4 +1,4 @@
-import { DRAIN_BUDGET_MS, type DrainQueueReport } from 'second_brain';
+import { DRAIN_BUDGET_MS, type BrainDrainReport } from 'second_brain';
 import type { CommandSpec } from '../dispatch.js';
 
 /**
@@ -16,13 +16,19 @@ import type { CommandSpec } from '../dispatch.js';
  * which is what a queue is. A database the guard found out of reach means the
  * command is refused at the exit code of the guard's own code.
  *
- * This build has no kinds of work, so every invocation answers `empty`. The
- * command exists now rather than with the first kind because the kinds arrive
- * one per story and each one would otherwise have to add a command as well.
+ * One run is three steps, and the counts of all three are in one answer: the
+ * spool goes back in, the transcript folders are scanned, and the queue is
+ * worked (`BrainDrainReport`, Design Notes).
  */
 
 /** The report, in the envelope's spelling (Conventions, 이름). */
 export interface QueueDrainData {
+  /** Spool records that went back into the database (AD-9). */
+  replayed: number;
+  /** Spool lines moved aside because nobody will try them again (AD-9). */
+  spool_failed: number;
+  /** `session_ingest` items the folder scan put on the queue (AD-4). */
+  enqueued: number;
   claimed: number;
   completed: number;
   retried: number;
@@ -46,7 +52,7 @@ export const queueDrainCommand: CommandSpec<QueueDrainData> = {
   required: [],
   examples: ['brain queue drain', 'brain queue drain --budget 60 --json'],
   output:
-    '청구·완료·다시 시도·실패·돌려줌·놓침·spool 건수(`claimed`, `completed`, `retried`, `failed`, `released`, `lost`, `spooled`)와 멈춘 이유 `stopped`',
+    '되넣음·실패로 옮김·새 일감 건수(`replayed`, `spool_failed`, `enqueued`), 청구·완료·다시 시도·실패·돌려줌·놓침·spool 건수(`claimed`, `completed`, `retried`, `failed`, `released`, `lost`, `spooled`)와 멈춘 이유 `stopped`',
   risk: 'write',
   hook: false,
   dryRun: false,
@@ -80,6 +86,9 @@ export const queueDrainCommand: CommandSpec<QueueDrainData> = {
     return {
       ok: true as const,
       data: {
+        replayed: report.replayed,
+        spool_failed: report.spoolFailed,
+        enqueued: report.enqueued,
         claimed: report.claimed,
         completed: report.completed,
         retried: report.retried,
@@ -95,7 +104,7 @@ export const queueDrainCommand: CommandSpec<QueueDrainData> = {
 };
 
 /** Why the run stopped, for the person reading the one line it prints. */
-const reasons: Readonly<Record<DrainQueueReport['stopped'], string>> = {
+const reasons: Readonly<Record<BrainDrainReport['stopped'], string>> = {
   empty: '할 일이 없습니다.',
   budget: '시간 예산이 끝나 남은 일은 다음 실행으로 넘깁니다.',
   unwritable: '데이터베이스에 쓸 수 없습니다.',
@@ -109,8 +118,10 @@ const reasons: Readonly<Record<DrainQueueReport['stopped'], string>> = {
  * Korean in it at all — which is exactly what that check exists to catch
  * (Conventions, 출력 언어).
  */
-function counts(report: DrainQueueReport): string {
+function counts(report: BrainDrainReport): string {
   return (
+    `되넣음 ${String(report.replayed)}건, 실패로 옮김 ${String(report.spoolFailed)}건, ` +
+    `새 일감 ${String(report.enqueued)}건, ` +
     `청구 ${String(report.claimed)}건, 완료 ${String(report.completed)}건, ` +
     `다시 시도 ${String(report.retried)}건, 실패 ${String(report.failed)}건, ` +
     `돌려줌 ${String(report.released)}건, 놓침 ${String(report.lost)}건, ` +

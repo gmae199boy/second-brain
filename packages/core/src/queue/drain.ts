@@ -18,9 +18,10 @@ import type { WorkStore } from '../ports/store.js';
  *
  * It is a frame and not a worker. What a kind of work *is* belongs to the unit
  * that named it, so the handlers come from outside and this decides only the
- * order, the classification and the bookkeeping. This build ships no handlers at
- * all (Boundaries): the first kind arrives with the session ingest of story 12,
- * and until then every run of this answers `empty`.
+ * order, the classification and the bookkeeping. The kinds this build can do
+ * are whatever `createBrain` was assembled with — `session_ingest` is Core's
+ * own (`capture/session-ingest-work.ts`) — and an item of any other kind is
+ * left alone rather than claimed or closed.
  *
  * Nothing in here throws. A handler that throws is caught and treated as an
  * error nobody classified, because one buggy kind of work must not take the
@@ -50,6 +51,18 @@ export interface WorkHandlerFailure {
    * (AD-13).
    */
   retryAfter?: Date;
+  /**
+   * Which harness this item was about, when it was about one. Information only,
+   * and left out by every kind of work that is not about a conversation (Table
+   * Contract, `failures.harness`).
+   */
+  harness?: string;
+  /**
+   * The Brain-side session id, when there is a row for it. Left out whenever
+   * there is not — a session whose very first collection failed has no row, and
+   * the token in `target_id` is what identifies it either way (AD-12).
+   */
+  sessionId?: string;
 }
 
 /** One attempt at one item: it worked, or it did not and said why. */
@@ -378,10 +391,10 @@ async function record(
     targetId: item.targetId,
     stage,
     fingerprint: failureFingerprint({ stage, input, code: outcome.code }),
-    // Both null from here: drain knows which item failed, not which harness or
-    // session it belonged to. The session kinds of work fill them (story 12).
-    harness: null,
-    sessionId: null,
+    // Information, from the handler when it had any to give: the drain knows
+    // which item failed, not which conversation it was about (Table Contract).
+    harness: outcome.harness ?? null,
+    sessionId: outcome.sessionId ?? null,
     code: outcome.code,
     message,
     occurredAt: now,

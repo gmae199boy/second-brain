@@ -23,6 +23,7 @@ import {
   type CreateStore,
 } from '../src/dispatch.js';
 import { systemClock } from '../src/runtime/clock.js';
+import { withoutHarnessFolders } from './environment.js';
 
 /**
  * The dispatcher, against a real SQLite file and a registry that exists only
@@ -327,7 +328,7 @@ function runDispatch(args: string[], env: Record<string, string | undefined>): P
     'process.exitCode = await dispatch(registry, process.argv.slice(1), { clock: systemClock, workHandlers });',
   ].join('\n');
 
-  const childEnv: NodeJS.ProcessEnv = { ...process.env };
+  const childEnv: NodeJS.ProcessEnv = withoutHarnessFolders(process.env);
   delete childEnv[HOME_ENV];
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) delete childEnv[key];
@@ -1363,6 +1364,21 @@ describe('the dispatcher and the lock budget', () => {
           return unavailable;
         },
         async recordFailure() {
+          return unavailable;
+        },
+        async listOpenWorkTargets() {
+          return unavailable;
+        },
+        async listFailures() {
+          return unavailable;
+        },
+        async resolveFailures() {
+          return unavailable;
+        },
+        async listTranscriptFiles() {
+          return unavailable;
+        },
+        async recordTranscriptFile() {
           return unavailable;
         },
         async close() {

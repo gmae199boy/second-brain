@@ -12,3 +12,7 @@ export {
   claudeCodeParser,
 } from './parser.js';
 export { readClaudeCodeHookInput } from './hook.js';
+export {
+  claudeCodeTranscriptFolder,
+  type ClaudeCodeTranscriptFolderOptions,
+} from './transcript-folder.js';

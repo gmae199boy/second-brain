@@ -43,6 +43,7 @@ export {
   sessionStoreContract,
   spoolContract,
   storeContract,
+  transcriptFileStoreContract,
   userStoreContract,
   workStoreContract,
   type ConnectorSubject,
@@ -83,6 +84,12 @@ export {
   type MemoryTranscriptReaderOptions,
 } from './fakes/transcript.js';
 export {
+  memoryTranscriptFolder,
+  type MemoryTranscriptFile,
+  type MemoryTranscriptFolder,
+  type MemoryTranscriptFolderOptions,
+} from './fakes/transcript-folder.js';
+export {
   memoryConnector,
   type MemoryConnector,
   type MemoryConnectorOptions,
@@ -96,6 +103,7 @@ export {
   otherFailureId,
   otherProjectId,
   otherSessionId,
+  otherTranscriptFileId,
   otherUserId,
   otherWorkItemId,
   otherWorktreeId,
@@ -103,6 +111,7 @@ export {
   sampleEnsureSessionInput,
   sampleFailureId,
   sampleFailureInput,
+  sampleFailureSpoolRecord,
   sampleIngestBatch,
   sampleProjectId,
   sampleSelfUserInput,
@@ -111,11 +120,14 @@ export {
   sampleSessionToken,
   sampleSpoolRecord,
   sampleSpoolRecordId,
+  sampleTranscriptFileId,
+  sampleTranscriptFileInput,
   sampleUserId,
   sampleWorkInput,
   sampleWorkItemId,
   sampleWorktreeId,
   unknownSessionToken,
+  type SampleFailureSpoolRecordOverrides,
   type SampleIngestBatchOverrides,
   type SampleSpoolRecordOverrides,
 } from './fixtures.js';

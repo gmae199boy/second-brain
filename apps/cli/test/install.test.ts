@@ -9,6 +9,7 @@ import { SQLITE_SCHEMA_VERSION } from 'second_brain';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { configFilePath, envFilePath, HOME_ENV } from '../src/config/paths.js';
 import { shimPath } from '../src/install/shim.js';
+import { withoutHarnessFolders } from './environment.js';
 
 /**
  * The installer end to end, against a real SQLite file, through the built entry
@@ -40,7 +41,7 @@ async function emptyHome(): Promise<string> {
 
 function runInstaller(args: readonly string[], home: string): Promise<Run> {
   const childEnv: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...withoutHarnessFolders(process.env),
     [HOME_ENV]: home,
     // No Docker on the way, and nothing that could stand in for a Postgres.
     PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,

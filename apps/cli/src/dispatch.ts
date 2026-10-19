@@ -27,7 +27,7 @@ import { readConfig, type BrainConfig } from './config/codec.js';
 import { configHome, spoolPath } from './config/paths.js';
 import { runtimeChecks } from './doctor/checks.js';
 import { failedConfigStore } from './doctor/store.js';
-import { harnessParsers, harnesses } from './harnesses.js';
+import { harnessParsers, harnesses, transcriptFolders } from './harnesses.js';
 import { gitRepositoryInspector } from './runtime/git.js';
 import { uuidV7IdGen } from './runtime/id-gen.js';
 import { fileSpool } from './runtime/spool.js';
@@ -342,10 +342,10 @@ export interface DispatchRuntime {
   /** Mints row ids. Defaults to UUIDv7, which is what every row carries (AD-8). */
   idGen?: IdGen;
   /**
-   * What the opportunistic drain can do, by kind of work (AD-21). Empty for
-   * every real invocation, because this build has no kinds; the seam exists so
-   * a test can watch a command's own drain pick an item up without a kind of
-   * work having to exist first.
+   * Kinds of work the opportunistic drain can do *beyond* the ones Core owns
+   * (AD-21). Empty for every real invocation — `session_ingest` is Core's own
+   * and `createBrain` merges it in — and the seam exists so a test can watch a
+   * command's own drain pick up a kind of its own.
    */
   workHandlers?: WorkHandlers;
 }
@@ -460,7 +460,7 @@ interface Wiring {
   createStore: CreateStore;
   stdin: () => Promise<string>;
   idGen: IdGen;
-  /** What the opportunistic drain can do. Empty for every real invocation. */
+  /** Kinds beyond Core's own. Empty for every real invocation. */
   workHandlers: WorkHandlers;
   /**
    * Where the one line about a drain that threw goes. The opportunistic drain
@@ -551,6 +551,11 @@ async function execute(
     // from before anything has written its hook entry (see `harnesses.ts`).
     parsers: harnessParsers(harnesses),
     transcripts: fileTranscriptReader(),
+    // Empty unless this invocation's environment asked for the folders
+    // (`CAPTURE_ENV`). With no folder, the drain's scan, finding a transcript
+    // from a token alone and doctor's `transcripts` check are all off, and
+    // collecting what a hook named is unaffected (`harnesses.ts`).
+    transcriptFolders: transcriptFolders(env),
     // Asking git what the first message's folder is, for the project and
     // worktree tags of a session this run may create (AD-12).
     repositories: gitRepositoryInspector(),
@@ -559,8 +564,8 @@ async function execute(
     machine: hostname(),
     // One list, for the dispatcher and the installer both: see `doctor/checks`.
     checks: runtimeChecks({ home, config }),
-    // What the opportunistic drain below can do. Empty for every real
-    // invocation of this build: there are no kinds of work yet (AD-21).
+    // Kinds beyond Core's own, which `createBrain` merges in. Empty for every
+    // real invocation of this build (AD-21).
     workHandlers,
   };
   const brain = createBrain(dependencies);

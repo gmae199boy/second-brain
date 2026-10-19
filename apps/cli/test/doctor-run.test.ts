@@ -12,6 +12,7 @@ import { HOME_ENV, configFilePath } from '../src/config/paths.js';
 import { runtimeChecks } from '../src/doctor/checks.js';
 import { shimPath, writeShim } from '../src/install/shim.js';
 import { assertKoreanLine, assertKoreanLines } from './language.js';
+import { withoutHarnessFolders } from './environment.js';
 
 const binPath = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
@@ -52,6 +53,8 @@ const CHECKS = [
   'fts5-trigram',
   'foreign-keys',
   'schema-version',
+  'failures',
+  'transcripts',
   'config',
   'shim',
   'node-path',
@@ -67,7 +70,21 @@ const MACHINE_CHECKS = ['config', 'shim', 'node-path', 'node-version', 'plugin',
  * What a report says about a database nobody can reach: `db` and the schema
  * version it could not ask for, then the machine half (story 2.1).
  */
-const NO_DATABASE_CHECKS = ['db', 'schema-version', ...MACHINE_CHECKS];
+const NO_DATABASE_CHECKS = [
+  'db',
+  'schema-version',
+  'failures',
+  'transcripts',
+  ...MACHINE_CHECKS,
+];
+
+/**
+ * The one check that is not `ok` on a finished install: no test here sets
+ * `SECOND_BRAIN_CAPTURE`, so this build looks in no transcript folder and
+ * `transcripts` is a `skip` saying so (Boundaries, Decision 1 2026-10-19).
+ * Story 2.14 turns the folders on by default and this becomes `ok`.
+ */
+const SKIPPED_WITHOUT_CAPTURE = 'transcripts';
 
 const homes: string[] = [];
 
@@ -101,7 +118,7 @@ function byId(envelope: Envelope): Map<string, { status: string; detail?: string
 }
 
 function runBrain(args: string[], env: Record<string, string | undefined>): Promise<Run> {
-  const childEnv: NodeJS.ProcessEnv = { ...process.env };
+  const childEnv: NodeJS.ProcessEnv = withoutHarnessFolders(process.env);
   delete childEnv[HOME_ENV];
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) delete childEnv[key];
@@ -185,8 +202,11 @@ describe('brain doctor run', () => {
 
     const checks = envelope.data?.checks ?? [];
     expect(checks.map((check) => check.id)).toEqual(CHECKS);
-    const failed = checks.filter((check) => check.status !== 'ok');
+    const failed = checks.filter(
+      (check) => check.status !== 'ok' && check.id !== SKIPPED_WITHOUT_CAPTURE,
+    );
     expect(failed, JSON.stringify(failed)).toEqual([]);
+    expect(byId(envelope).get(SKIPPED_WITHOUT_CAPTURE)?.status).toBe('skip');
     // The SQLite version, then what each probe and each machine check found.
     expect(checks[0]?.detail).toMatch(/^\d+\./);
     const found = byId(envelope);
@@ -201,12 +221,13 @@ describe('brain doctor run', () => {
     const registered = runtimeChecks({ home }).map((source) => source.id);
     expect(checks.slice(-registered.length).map((check) => check.id)).toEqual(registered);
     expect(registered).toEqual(MACHINE_CHECKS);
-    // Everything passed, so the counts say so and add up to the whole report.
+    // Everything passed but the folders nobody asked for, and the counts add
+    // up to the whole report.
     expect(envelope.data?.summary).toEqual({
-      passed: CHECKS.length,
+      passed: CHECKS.length - 1,
       warned: 0,
       failed: 0,
-      skipped: 0,
+      skipped: 1,
     });
   });
 
@@ -218,12 +239,13 @@ describe('brain doctor run', () => {
     const lines = run.stdout.trimEnd().split('\n');
     expect(lines).toHaveLength(CHECKS.length + 1);
     for (const [index, id] of CHECKS.entries()) {
-      expect(lines[index]).toMatch(new RegExp(`^${id}: ok`));
+      const status = id === SKIPPED_WITHOUT_CAPTURE ? 'skip' : 'ok';
+      expect(lines[index]).toMatch(new RegExp(`^${id}: ${status}`));
     }
     // Last, so the line that says whether to read the rest is the one left on
     // screen (Conventions: passed, warned, failed, skipped).
     expect(lines.at(-1)).toBe(
-      `요약: 통과 ${String(CHECKS.length)}, 경고 0, 실패 0, 건너뜀 0`,
+      `요약: 통과 ${String(CHECKS.length - 1)}, 경고 0, 실패 0, 건너뜀 1`,
     );
   });
 
@@ -235,7 +257,7 @@ describe('brain doctor run', () => {
     const run = await new Promise<Run>((resolve, reject) => {
       const child = spawn(shimPath(home), ['doctor', 'run', '--json'], {
         env: (() => {
-          const childEnv = { ...process.env };
+          const childEnv = withoutHarnessFolders(process.env);
           delete childEnv[HOME_ENV];
           return childEnv;
         })(),
@@ -256,7 +278,11 @@ describe('brain doctor run', () => {
     expect(run.code).toBe(0);
     const envelope = JSON.parse(run.stdout) as Envelope;
     expect((envelope.data?.checks ?? []).map((check) => check.id)).toEqual(CHECKS);
-    expect((envelope.data?.checks ?? []).every((check) => check.status === 'ok')).toBe(true);
+    expect(
+      (envelope.data?.checks ?? []).every(
+        (check) => check.status === 'ok' || check.id === SKIPPED_WITHOUT_CAPTURE,
+      ),
+    ).toBe(true);
   });
 
   it('runs anyway and warns when the configuration holds a key it does not know', async () => {
@@ -355,11 +381,11 @@ describe('brain doctor run', () => {
       expect(found.get('db')).toMatchObject({ status: 'ok' });
 
       const summary = envelope.data?.summary;
-      expect(summary).toEqual({ passed: CHECKS.length - 1, warned: 1, failed: 0, skipped: 0 });
+      expect(summary).toEqual({ passed: CHECKS.length - 2, warned: 1, failed: 0, skipped: 1 });
       // The counts and the lines cannot disagree about one report.
-      expect((summary?.passed ?? 0) + (summary?.warned ?? 0)).toBe(
-        envelope.data?.checks.length,
-      );
+      expect(
+        (summary?.passed ?? 0) + (summary?.warned ?? 0) + (summary?.skipped ?? 0),
+      ).toBe(envelope.data?.checks.length);
     } finally {
       holder.exec('rollback');
       holder.close();
@@ -379,7 +405,7 @@ describe('brain doctor run', () => {
       expect(run.code).toBe(0);
       expect(run.stdout).toContain('writable: warn');
       expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
-        `요약: 통과 ${String(CHECKS.length - 1)}, 경고 1, 실패 0, 건너뜀 0`,
+        `요약: 통과 ${String(CHECKS.length - 2)}, 경고 1, 실패 0, 건너뜀 1`,
       );
     } finally {
       holder.exec('rollback');
@@ -443,12 +469,14 @@ describe('brain doctor run', () => {
       detail: '앞선 점검 실패: db',
     });
     expect(checks.filter((check) => check.status === 'fail')).toHaveLength(1);
-    // A skip is not a pass: the summary counts it as its own thing.
+    // A skip is not a pass: the summary counts it as its own thing. Three of
+    // them here — the schema version and the two capture checks, all of which
+    // a store would have answered (`runDoctor`).
     expect(envelope.data?.summary).toEqual({
       passed: MACHINE_CHECKS.length,
       warned: 0,
       failed: 1,
-      skipped: 1,
+      skipped: 3,
     });
     // And nothing was created: a doctor that made the database it was looking
     // for would report a brain nobody installed (AD-20).
@@ -474,10 +502,11 @@ describe('brain doctor run', () => {
     // The store knew nothing about any of this and said so anyway.
     expect(found.get('db')).toMatchObject({ status: 'ok' });
     expect(envelope.data?.summary).toEqual({
-      passed: CHECKS.length - 2,
+      passed: CHECKS.length - 3,
       warned: 0,
       failed: 1,
-      skipped: 1,
+      // `node-path` and, with no capture switch, `transcripts`.
+      skipped: 2,
     });
   });
 
@@ -574,7 +603,7 @@ describe('brain doctor run without a configuration it can read', () => {
     // the summary is the last line.
     expect(run.stdout).toContain('spool: ok 0건');
     expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
-      '요약: 통과 3, 경고 0, 실패 3, 건너뜀 2',
+      '요약: 통과 3, 경고 0, 실패 3, 건너뜀 4',
     );
     // Not an error envelope, so nothing goes to stderr but the warning line.
     expect(run.stderr).not.toContain('CONFIG_MISSING');

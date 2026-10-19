@@ -44,11 +44,9 @@ describe('readClaudeCodeHookInput', () => {
     ['a truncated object', '{"session_id":"abc"'],
     ['JSON that is not an object', '["abc"]'],
     ['an object with neither field', JSON.stringify({ hook_event_name: 'Stop' })],
-    ['no transcript path', JSON.stringify({ session_id: 'abc' })],
     ['no session id', JSON.stringify({ transcript_path: '/demo/t.jsonl' })],
     ['an empty session id', JSON.stringify({ ...STOP, session_id: '' })],
     ['a session id that is not a string', JSON.stringify({ ...STOP, session_id: 7 })],
-    ['a transcript path that is not a string', JSON.stringify({ ...STOP, transcript_path: null })],
   ])('refuses %s as a USAGE, saying why', (_name, stdin) => {
     const result = readClaudeCodeHookInput(stdin);
 
@@ -59,10 +57,24 @@ describe('readClaudeCodeHookInput', () => {
   });
 
   it('names the field that was missing, so the line on stderr is worth reading', () => {
-    const result = readClaudeCodeHookInput(JSON.stringify({ session_id: 'abc' }));
+    const result = readClaudeCodeHookInput(JSON.stringify({ transcript_path: '/demo/t.jsonl' }));
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.message).toContain('transcript_path');
+    expect(result.message).toContain('session_id');
+  });
+
+  it.each([
+    ['a payload with no transcript path', JSON.stringify({ session_id: 'abc' })],
+    ['a transcript path that is not a string', JSON.stringify({ ...STOP, transcript_path: null })],
+    ['an empty transcript path', JSON.stringify({ ...STOP, transcript_path: '' })],
+  ])('reads %s as a session with no path, not as a USAGE', (_name, stdin) => {
+    // The path is optional: the session id is what a collection needs, and the
+    // ingest looks the file up in the editor's folder by session id when no
+    // path was given (story 12). Refusing it would turn the one recoverable
+    // payload into a `USAGE` the hook could do nothing about.
+    const result = readClaudeCodeHookInput(stdin);
+
+    expect(result).toMatchObject({ ok: true, input: { transcriptPath: null } });
   });
 });

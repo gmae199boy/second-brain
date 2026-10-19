@@ -288,6 +288,152 @@ export function spoolContract(): ContractCase<Spool>[] {
         });
       },
     ),
+
+    contractCase<Spool>(
+      'rewrite leaves the kept lines waiting and the failed ones aside',
+      async (make) => {
+        await withSubject(make, async (spool) => {
+          assertOk(
+            await spool.append([
+              sampleSpoolRecord({ id: FIRST_ID }),
+              sampleSpoolRecord({ id: SECOND_ID }),
+              sampleSpoolRecord({ id: THIRD_ID }),
+            ]),
+            'append failed',
+          );
+          const claimed = await spool.claim();
+          assertOk(claimed, 'claim failed');
+          if (claimed.claim === null) {
+            assertTrue(false, 'claim found nothing after an append');
+            return;
+          }
+          const [first, second, third] = claimed.claim.lines;
+          if (first === undefined || second === undefined || third === undefined) {
+            assertTrue(false, 'a claimed file must hold one line per appended record');
+            return;
+          }
+
+          // The middle record failed and has an attempt left; the last one is
+          // out of attempts. The first went in, so it is in neither list.
+          const rewritten = await spool.rewrite(claimed.claim.handle, {
+            keep: [second],
+            failed: [third],
+          });
+          assertOk(rewritten, 'rewrite failed');
+
+          const stats = await spool.stats();
+          assertOk(stats, 'stats failed after a rewrite');
+          assertEqual(stats.records, 1, 'only the kept line may still be waiting');
+          assertEqual(stats.failed, 1, 'the failed line must be counted apart (AD-9)');
+
+          const again = await spool.claim();
+          assertOk(again, 'claim failed after a rewrite');
+          if (again.claim === null) {
+            assertTrue(false, 'the kept line must be claimable again');
+            return;
+          }
+          assertEqual(
+            again.claim.lines.map(recordOf).map((record) => record.id),
+            [SECOND_ID],
+            'a rewrite must hand the kept lines to the next claim, and nothing else',
+          );
+        });
+      },
+    ),
+
+    contractCase<Spool>('rewrite with nothing to keep leaves nothing waiting', async (make) => {
+      await withSubject(make, async (spool) => {
+        assertOk(await spool.append([sampleSpoolRecord({ id: FIRST_ID })]), 'append failed');
+        const claimed = await spool.claim();
+        assertOk(claimed, 'claim failed');
+        if (claimed.claim === null) {
+          assertTrue(false, 'claim found nothing after an append');
+          return;
+        }
+        const [only] = claimed.claim.lines;
+        if (only === undefined) {
+          assertTrue(false, 'a claimed file must hold the appended record');
+          return;
+        }
+
+        assertOk(
+          await spool.rewrite(claimed.claim.handle, { keep: [], failed: [only] }),
+          'rewrite failed',
+        );
+
+        const stats = await spool.stats();
+        assertOk(stats, 'stats failed after a rewrite that kept nothing');
+        assertEqual(stats.records, 0, 'a rewrite that keeps nothing leaves nothing waiting');
+        assertEqual(stats.failed, 1, 'the line that was given up on must still be counted');
+
+        const again = await spool.claim();
+        assertOk(again, 'claim failed after a rewrite that kept nothing');
+        assertEqual(
+          again.claim,
+          null,
+          'a line moved aside must never be handed to a claim again (AD-9)',
+        );
+      });
+    }),
+
+    contractCase<Spool>(
+      'the lines a rewrite kept are claimed before a newer file',
+      async (make) => {
+        await withSubject(make, async (spool) => {
+          // Two files, oldest first, and the oldest keeps one of its two lines.
+          // What it keeps has to stay at the head of the claim order: sending it
+          // behind the newer file would let a record that has already failed
+          // nine times wait behind everything written since (AD-9).
+          assertOk(
+            await spool.append([
+              sampleSpoolRecord({ id: FIRST_ID }),
+              sampleSpoolRecord({ id: SECOND_ID }),
+            ]),
+            'the first append failed',
+          );
+          assertOk(
+            await spool.append([sampleSpoolRecord({ id: THIRD_ID })]),
+            'the second append failed',
+          );
+
+          const claimed = await spool.claim();
+          assertOk(claimed, 'claim failed');
+          if (claimed.claim === null) {
+            assertTrue(false, 'claim found nothing after two appends');
+            return;
+          }
+          const [, second] = claimed.claim.lines;
+          if (second === undefined) {
+            assertTrue(false, 'the oldest file must hold both of its records');
+            return;
+          }
+          assertOk(
+            await spool.rewrite(claimed.claim.handle, { keep: [second], failed: [] }),
+            'rewrite failed',
+          );
+
+          const next = await spool.claim();
+          assertOk(next, 'claim failed after a rewrite');
+          if (next.claim === null) {
+            assertTrue(false, 'the kept line must be claimable again');
+            return;
+          }
+          assertEqual(
+            next.claim.lines.map(recordOf).map((record) => record.id),
+            [SECOND_ID],
+            'a rewrite must leave the kept lines where the file was in the claim order',
+          );
+        });
+      },
+    ),
+
+    contractCase<Spool>('stats counts nothing as failed on a fresh spool', async (make) => {
+      await withSubject(make, async (spool) => {
+        const stats = await spool.stats();
+        assertOk(stats, 'stats failed on an empty spool');
+        assertEqual(stats.failed, 0, 'a spool nobody has given up on has no failed lines');
+      });
+    }),
   ];
 }
 

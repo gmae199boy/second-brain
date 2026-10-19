@@ -1,5 +1,6 @@
 /**
- * The two things a harness hook tells us about the turn that just ended. Every
+ * What a harness hook tells us about the turn that just ended: the session it
+ * was, and — when the payload says — where its transcript is. Every
  * harness spells its payload its own way — Claude Code writes JSON on stdin
  * with snake_case keys — so reading it is the connector's job and this is what
  * comes out of it (AD-4).
@@ -11,14 +12,23 @@
 export interface HookInput {
   /** The harness's own session identifier; the second half of a token (AD-8). */
   harnessSessionId: string;
-  /** Where the harness is writing this session's transcript. */
-  transcriptPath: string;
+  /**
+   * Where the harness is writing this session's transcript, or `null` when the
+   * payload did not say.
+   *
+   * It is nullable because not every payload carries one, and because a path is
+   * no longer the only way to find a transcript: the ingest can look the file up
+   * in the harness's folder by session id (`IngestSessionInput.transcriptPath`).
+   * So a payload with no path is a payload that still names a session, and
+   * refusing it would turn the one recoverable case into a `USAGE`.
+   */
+  transcriptPath: string | null;
 }
 
 /**
  * What reading a hook payload produced. A payload that is empty, not JSON, or
- * missing one of the two fields is a `USAGE`: nothing about the brain is
- * wrong, the call was made wrongly (Conventions).
+ * missing the session id is a `USAGE`: nothing about the brain is wrong, the
+ * call was made wrongly (Conventions).
  */
 export type ReadHookInputResult =
   | { ok: true; input: HookInput }

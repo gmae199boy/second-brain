@@ -24,6 +24,7 @@ import {
   writeInstalled,
   type InstalledFacts,
 } from './install/installed.js';
+import { transcriptFolders } from './harnesses.js';
 import { writeShim } from './install/shim.js';
 import {
   doctorAt,
@@ -165,7 +166,11 @@ export function systemInstallDeps(): InstallDeps {
       prepare: (path: string) => prepareStore(path),
       exists: (path: string) => storeFileExists(path),
       self: (path: string) => prepareSelfUser(path),
-      doctor: (home: string, path: string) => doctorAt(home, path),
+      // The same folders a command would look in, so the report the install
+      // ends on is the report `brain doctor run` gives afterwards. Empty unless
+      // this environment asked for them (`CAPTURE_ENV`).
+      doctor: (home: string, path: string) =>
+        doctorAt(home, path, transcriptFolders(process.env)),
     },
     files: { prepare: prepareFilesRoot },
     // The node running this process, and the entry point beside the shim

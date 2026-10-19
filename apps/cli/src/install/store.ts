@@ -8,6 +8,7 @@ import {
   sqliteStore,
   type DoctorReport,
   type SqliteMigrationResult,
+  type TranscriptFolder,
 } from 'second_brain';
 import { runtimeChecks } from '../doctor/checks.js';
 import { systemClock } from '../runtime/clock.js';
@@ -246,11 +247,21 @@ export async function prepareFilesRoot(path: string): Promise<FilesRootResult> {
  * `brain doctor run` gives, and a check added to that list is a check the
  * installer runs too.
  */
-export async function doctorAt(home: string, path: string): Promise<DoctorReport> {
+export async function doctorAt(
+  home: string,
+  path: string,
+  folders: readonly TranscriptFolder[] = [],
+): Promise<DoctorReport> {
   const store = sqliteStore({ path });
   try {
     return await runDoctor(store, {
       schemaVersion: SQLITE_SCHEMA_VERSION,
+      // The same store, under the capabilities the capture checks read. Empty
+      // folders are the ordinary case: the install does not turn capture on,
+      // so `transcripts` is a `skip` rather than a report about nothing.
+      store,
+      clock: systemClock,
+      folders,
       checks: runtimeChecks({ home }),
     });
   } finally {

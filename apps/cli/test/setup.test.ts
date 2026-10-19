@@ -13,6 +13,7 @@ import { setupConnectCommand } from '../src/commands/setup-connect.js';
 import { dispatch } from '../src/dispatch.js';
 import { parseShim, shimPath, writeShim } from '../src/install/shim.js';
 import { systemClock } from '../src/runtime/clock.js';
+import { withoutHarnessFolders } from './environment.js';
 
 /**
  * `brain setup connect` against a fake harness, and `brain setup run` against a
@@ -99,10 +100,10 @@ async function runConnect(
  * every database variable is gone.
  */
 function childEnvironment(): NodeJS.ProcessEnv {
-  const childEnv: NodeJS.ProcessEnv = {
+  const childEnv: NodeJS.ProcessEnv = withoutHarnessFolders({
     ...process.env,
     PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
-  };
+  });
   delete childEnv['SECOND_BRAIN_DATABASE_URL'];
   delete childEnv['BRAIN_TEST_DATABASE_URL'];
   return childEnv;
@@ -666,6 +667,8 @@ describe('brain setup run against the local SQLite source', () => {
       'fts5-trigram',
       'foreign-keys',
       'schema-version',
+      'failures',
+      'transcripts',
       'config',
       'shim',
       'node-path',
@@ -673,8 +676,16 @@ describe('brain setup run against the local SQLite source', () => {
       'plugin',
       'spool',
     ]);
-    const failed = (envelope.data?.checks ?? []).filter((check) => check.status !== 'ok');
+    // Everything but `transcripts`: no test here sets `SECOND_BRAIN_CAPTURE`,
+    // so this build looks in no transcript folder and that check is a `skip`
+    // saying so (Boundaries, Decision 1 2026-10-19).
+    const failed = (envelope.data?.checks ?? []).filter(
+      (check) => check.status !== 'ok' && check.id !== 'transcripts',
+    );
     expect(failed, JSON.stringify(failed)).toEqual([]);
+    expect(
+      (envelope.data?.checks ?? []).find((check) => check.id === 'transcripts')?.status,
+    ).toBe('skip');
   });
 
   it('reports db as DB_UNAVAILABLE, and makes no file, once the database is gone', async () => {
@@ -694,6 +705,8 @@ describe('brain setup run against the local SQLite source', () => {
     expect(envelope.data?.checks?.map((check) => check.id)).toEqual([
       'db',
       'schema-version',
+      'failures',
+      'transcripts',
       'config',
       'shim',
       'node-path',

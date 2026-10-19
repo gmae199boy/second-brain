@@ -402,5 +402,191 @@ export function workStoreContract(): ContractCase<WorkStore>[] {
         assertTrue(!due.due, 'recordFailure with closeWork must close the item (AD-21)');
       });
     }),
+
+    contractCase<WorkStore>(
+      'listOpenWorkTargets answers the open items of one kind, and nothing else',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          const empty = await store.listOpenWorkTargets({ kind: 'demo_work' });
+          assertOk(empty, 'listOpenWorkTargets must answer with a value on an empty queue');
+          assertEqual(empty.targets.length, 0, 'an empty queue has no open targets');
+
+          assertOk(await store.addWork(sampleWorkInput()), 'addWork failed');
+          assertOk(
+            await store.addWork(
+              sampleWorkInput({
+                id: otherWorkItemId,
+                kind: 'other_work',
+                targetId: 'demo:session-0002',
+              }),
+            ),
+            'the second addWork failed',
+          );
+
+          const open = await store.listOpenWorkTargets({ kind: 'demo_work' });
+          assertOk(open, 'listOpenWorkTargets failed');
+          assertEqual(open.targets.length, 1, 'only the asked-for kind may come back');
+          assertEqual(
+            open.targets[0],
+            { targetKind: 'session', targetId: sampleWorkInput().targetId },
+            'listOpenWorkTargets must answer with the target of the open item',
+          );
+
+          // Completed is not open: the scan uses this to decide what it need
+          // not enqueue, and work that finished has to be enqueued again.
+          const claimed = await store.claimWork({ now: NOW, claimedBy: 'a', kinds: KINDS });
+          assertOk(claimed, 'claimWork failed');
+          assertOk(
+            await store.completeWork({ id: sampleWorkItemId, claimedBy: 'a', now: NOW }),
+            'completeWork failed',
+          );
+          const after = await store.listOpenWorkTargets({ kind: 'demo_work' });
+          assertOk(after, 'listOpenWorkTargets failed after the item was completed');
+          assertEqual(after.targets.length, 0, 'a completed item is not an open target (AD-21)');
+        });
+      },
+    ),
+
+    contractCase<WorkStore>('listFailures answers newest first and narrows', async (make) => {
+      await withSubject(make, async (store) => {
+        const first = await store.recordFailure(
+          sampleFailureInput({ occurredAt: NOW, code: 'DEMO_FAILED' }),
+        );
+        assertOk(first, 'the first recordFailure failed');
+        const second = await store.recordFailure(
+          sampleFailureInput({
+            id: otherFailureId,
+            targetKind: 'file',
+            targetId: 'sha256:demo',
+            stage: 'other_work',
+            fingerprint: 'sha256:other',
+            occurredAt: LATER,
+          }),
+        );
+        assertOk(second, 'the second recordFailure failed');
+
+        const all = await store.listFailures({});
+        assertOk(all, 'listFailures failed');
+        assertEqual(all.failures.length, 2, 'both failures must come back');
+        assertEqual(
+          all.failures.map((failure) => failure.id),
+          [otherFailureId, sampleFailureId],
+          'listFailures must answer newest first (occurred_at desc, id desc)',
+        );
+
+        const narrowed = await store.listFailures({ targetKind: 'file' });
+        assertOk(narrowed, 'listFailures with a target kind failed');
+        assertEqual(narrowed.failures.length, 1, 'targetKind must narrow the answer');
+        assertEqual(narrowed.failures[0]?.targetKind, 'file', 'the wrong row came back');
+
+        const byStage = await store.listFailures({ stage: 'demo_work' });
+        assertOk(byStage, 'listFailures with a stage failed');
+        assertEqual(byStage.failures.length, 1, 'stage must narrow the answer');
+
+        const paged = await store.listFailures({ limit: 1 });
+        assertOk(paged, 'listFailures with a limit failed');
+        assertEqual(paged.failures.length, 1, 'limit must cut the answer');
+        assertEqual(
+          paged.failures[0]?.id,
+          otherFailureId,
+          'a limited page must still be the newest rows',
+        );
+      });
+    }),
+
+    contractCase<WorkStore>(
+      'resolveFailures closes the open rows of one target and stage only',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          assertOk(await store.recordFailure(sampleFailureInput()), 'recordFailure failed');
+          assertOk(
+            await store.recordFailure(
+              sampleFailureInput({
+                id: otherFailureId,
+                stage: 'other_work',
+                fingerprint: 'sha256:other',
+              }),
+            ),
+            'the second recordFailure failed',
+          );
+
+          const resolved = await store.resolveFailures({
+            targetKind: 'session',
+            targetId: sampleFailureInput().targetId,
+            stage: 'demo_work',
+            now: LATER,
+          });
+          assertOk(resolved, 'resolveFailures failed');
+          assertEqual(resolved.resolved, 1, 'only the asked-for stage may be resolved');
+
+          const open = await store.listFailures({});
+          assertOk(open, 'listFailures failed after a resolve');
+          assertEqual(
+            open.failures.map((failure) => failure.id),
+            [otherFailureId],
+            'a resolved row must be out of the unresolved list',
+          );
+
+          const everything = await store.listFailures({ includeResolved: true });
+          assertOk(everything, 'listFailures with includeResolved failed');
+          assertEqual(everything.failures.length, 2, 'includeResolved must bring history back');
+          const was = everything.failures.find((failure) => failure.id === sampleFailureId);
+          assertEqual(
+            was?.resolvedAt?.getTime(),
+            LATER.getTime(),
+            'a resolved row must carry the instant it was resolved at',
+          );
+
+          // A second resolve changes nothing: the row keeps the instant it was
+          // first resolved at, so a success does not rewrite history.
+          const again = await store.resolveFailures({
+            targetKind: 'session',
+            targetId: sampleFailureInput().targetId,
+            stage: 'demo_work',
+            now: new Date('2026-02-03T06:05:06.000Z'),
+          });
+          assertOk(again, 'the second resolveFailures failed');
+          assertEqual(again.resolved, 0, 'only unresolved rows may be resolved (port contract)');
+          const unchanged = await store.listFailures({ includeResolved: true });
+          assertOk(unchanged, 'listFailures failed after the second resolve');
+          assertEqual(
+            unchanged.failures.find((failure) => failure.id === sampleFailureId)?.resolvedAt?.getTime(),
+            LATER.getTime(),
+            'a resolved row must keep the instant it was first resolved at',
+          );
+        });
+      },
+    ),
+
+    contractCase<WorkStore>(
+      'the same cause met again is open once more, and resolvable again',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          assertOk(await store.recordFailure(sampleFailureInput()), 'recordFailure failed');
+          assertOk(
+            await store.resolveFailures({
+              targetKind: 'session',
+              targetId: sampleFailureInput().targetId,
+              stage: 'demo_work',
+              now: NOW,
+            }),
+            'resolveFailures failed',
+          );
+
+          const again = await store.recordFailure(
+            sampleFailureInput({ id: otherFailureId, occurredAt: LATER }),
+          );
+          assertOk(again, 'the second recordFailure failed');
+
+          const open = await store.listFailures({});
+          assertOk(open, 'listFailures failed after the cause was met again');
+          assertEqual(
+            open.failures.map((failure) => failure.id),
+            [sampleFailureId],
+            'a cause met again must reopen the row it already has (Table Contract)',
+          );
+        });
+      },
+    ),
   ];
 }

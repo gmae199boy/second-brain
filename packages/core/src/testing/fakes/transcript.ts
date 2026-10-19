@@ -1,3 +1,4 @@
+import { contentHash, utf8Bytes } from '../../domain/sha256.js';
 import type { ReadTranscriptResult, TranscriptReader } from '../../ports/transcript.js';
 
 export interface MemoryTranscriptReaderOptions {
@@ -37,7 +38,15 @@ export function memoryTranscriptReader(
           message: `no transcript at ${path}`,
         };
       }
-      return { ok: true, content };
+      // The size and the fingerprint of exactly the bytes handed back, worked
+      // out the same way the file adapter does: the history a successful ingest
+      // writes has to be measurable without a filesystem (AD-1).
+      return {
+        ok: true,
+        content,
+        sizeBytes: utf8Bytes(content).length,
+        fingerprint: contentHash(content),
+      };
     },
     reads: () => [...asked],
     write(path: string, content: string): void {

@@ -69,7 +69,7 @@ export function sessionsIngestCommand(
     required: ['harness', 'stdin'],
     examples: ['brain sessions ingest claude-code'],
     output:
-      '세션 토큰 `session`, 데이터베이스 대신 spool로 갔는지인 `spooled`, 그 세션을 이 호출이 만들었는지인 `created`, 넣은 건수 `inserted`(메시지 `messages`, 도구 메모 `toolNotes`, 저장 전에 가린 비밀의 기록 `redactions`)',
+      '세션 토큰 `session`, 데이터베이스 대신 spool로 갔는지인 `spooled`, 그 세션을 이 호출이 만들었는지인 `created`, 넣은 건수 `inserted`(메시지 `messages`, 도구 메모 `toolNotes`, 저장 전에 가린 비밀의 기록 `redactions`). 페이로드에 `transcript_path`가 없으면 그 하네스의 트랜스크립트 폴더에서 `session_id`로 찾습니다',
     risk: 'write',
     hook: true,
     dryRun: false,
@@ -173,7 +173,10 @@ async function readPayload(
         harness: harness.parser.harness,
         harnessSessionId: payload.input.harnessSessionId,
       }),
-      transcriptPath: payload.input.transcriptPath,
+      // The empty string for a payload that named no path, which is what makes
+      // the ingest look the file up in the harness's folder by session id: a
+      // hook that reported only `session_id` is still a hook worth acting on.
+      transcriptPath: payload.input.transcriptPath ?? '',
     },
   };
 }

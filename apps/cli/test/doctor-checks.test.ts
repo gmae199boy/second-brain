@@ -885,13 +885,35 @@ describe('the spool check', () => {
     expect(await spoolCheck(home, spool)).toMatchObject({ status: 'warn', code: 'SPOOLED' });
   });
 
+  it('warns about the lines nobody will try again, even with nothing waiting', async () => {
+    // A line moved to `failed/` has given up: nothing will touch it again, and
+    // a work log entry has no original to be read a second time. So it must not
+    // be silent, and this line is the only place anybody would see it (NFR-2,
+    // 2026-10-16).
+    const home = await installedHome();
+    const spool = memorySpool();
+    expect(await spool.append([sampleSpoolRecord()])).toMatchObject({ ok: true });
+    const claimed = await spool.claim();
+    expect(claimed).toMatchObject({ ok: true });
+    if (!claimed.ok || claimed.claim === null) return;
+    expect(
+      await spool.rewrite(claimed.claim.handle, { keep: [], failed: claimed.claim.lines }),
+    ).toMatchObject({ ok: true });
+
+    const check = await spoolCheck(home, spool);
+
+    expect(check).toMatchObject({ status: 'warn', code: 'SPOOLED' });
+    expect(check.detail).toContain('0건');
+    expect(check.detail).toContain('실패로 옮긴 줄 1건');
+  });
+
   it('reports the count with no instant when nothing waiting could be read', async () => {
     const home = await installedHome();
     const spool = memorySpool();
     const unreadable: MemorySpool = {
       ...spool,
       async stats() {
-        return { ok: true, records: 2, earliest: null };
+        return { ok: true, records: 2, earliest: null, failed: 0 };
       },
     };
 

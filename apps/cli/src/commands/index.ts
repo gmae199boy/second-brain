@@ -2,6 +2,8 @@ import { connectors } from '../connectors/index.js';
 import type { CommandSpec } from '../dispatch.js';
 import { harnesses } from '../harnesses.js';
 import { doctorRun } from './doctor-run.js';
+import { failuresListCommand } from './failures-list.js';
+import { failuresRetryCommand } from './failures-retry.js';
 import { guideExitCodes } from './guide-exit-codes.js';
 import { guideSchemaCommand } from './guide-schema.js';
 import { guideShowCommand } from './guide-show.js';
@@ -26,6 +28,8 @@ import { setupRun } from './setup-run.js';
  */
 export const commands: readonly CommandSpec[] = [
   doctorRun,
+  failuresListCommand,
+  failuresRetryCommand,
   // A function, not the list: `guide schema` describes the registry it is in,
   // and a value would have to be defined before itself.
   guideSchemaCommand(() => commands),

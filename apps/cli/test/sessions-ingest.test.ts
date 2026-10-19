@@ -25,6 +25,7 @@ import {
 } from 'second_brain';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { HOME_ENV, spoolPath } from '../src/config/paths.js';
+import { withoutHarnessFolders } from './environment.js';
 
 /**
  * `brain sessions ingest claude-code` end to end: the built `brain`, started
@@ -99,11 +100,11 @@ afterEach(async () => {
  * here can reach a real brain or a real database server.
  */
 function childEnvironment(home: string): NodeJS.ProcessEnv {
-  const childEnv: NodeJS.ProcessEnv = {
+  const childEnv: NodeJS.ProcessEnv = withoutHarnessFolders({
     ...process.env,
     PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
     [HOME_ENV]: home,
-  };
+  });
   delete childEnv['SECOND_BRAIN_DATABASE_URL'];
   delete childEnv['BRAIN_TEST_DATABASE_URL'];
   return childEnv;
@@ -1107,13 +1108,29 @@ describe('brain sessions ingest on the hook path', () => {
     ['nothing at all', ''],
     ['text that is not JSON', 'Stop'],
     ['an object with no session id', JSON.stringify({ transcript_path: '/demo/t.jsonl' })],
-    ['an object with no transcript path', JSON.stringify({ session_id: 'abc' })],
   ])('says USAGE for a payload that is %s', async (_name, payload) => {
     const home = await installedHome();
 
     const run = await runBrain(['sessions', 'ingest', 'claude-code'], home, payload);
 
     await expectQuietFailure(run, 'USAGE', home);
+  });
+
+  it('looks the transcript up by session id when the payload named no path', async () => {
+    // A payload with only `session_id` is still one worth acting on: the ingest
+    // asks that harness's transcript folder for the file (story 12). With no
+    // folder — the capture switch is off here — there is nowhere to look, and
+    // the answer is the same code as a file that cannot be read.
+    const home = await installedHome();
+
+    const run = await runBrain(
+      ['sessions', 'ingest', 'claude-code'],
+      home,
+      JSON.stringify({ session_id: 'abc' }),
+    );
+
+    await expectQuietFailure(run, 'TRANSCRIPT_UNREADABLE', home);
+    expect(run.stderr).toContain('트랜스크립트를 찾을 수 없습니다');
   });
 
   it('says USAGE for a harness this build cannot read', async () => {

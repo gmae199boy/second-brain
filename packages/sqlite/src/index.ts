@@ -17,6 +17,7 @@ export {
 export { withWrite, type WriteOptions, type WriteResult } from './write.js';
 export { sqliteStore, type SqliteStoreOptions } from './store.js';
 export { sqliteSessionStore } from './sessions.js';
+export { sqliteTranscriptFileStore } from './transcript-files.js';
 export { sqliteUserStore } from './users.js';
 export {
   claimCandidateQuery,

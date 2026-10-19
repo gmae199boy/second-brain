@@ -1,5 +1,16 @@
 export * from './domain/index.js';
 export * from './ports/index.js';
+/**
+ * The `failures` row, under a second name.
+ *
+ * `Failure` at this entry point is the envelope's — the shape of a command that
+ * did not produce a result — because an explicitly re-exported name wins over a
+ * `export *` one, and that has been the meaning of the word here since the
+ * envelope existed. An adapter outside this package still needs the domain type,
+ * so it gets a name of its own, and the name says what the table is: a record of
+ * what went wrong, and never a queue (AD-21).
+ */
+export type { Failure as FailureRecord } from './domain/failure.js';
 export {
   ERROR_CODES,
   EXIT_CODES,
@@ -48,6 +59,7 @@ export {
   type DoctorCheckSource,
   type DoctorCheckStatus,
   type DoctorOptions,
+  type DoctorReadStore,
   type DoctorReport,
   type DoctorSummary,
 } from './doctor/doctor.js';
@@ -56,10 +68,41 @@ export {
   type Brain,
   type BrainDoctor,
   type BrainDependencies,
+  type BrainDrainReport,
+  type BrainFailures,
   type BrainQueue,
   type BrainQueueDrainInput,
   type BrainSessions,
 } from './brain.js';
+export {
+  FAILURE_RETRY_KINDS,
+  SESSION_INGEST_KIND,
+  sessionIngestHandler,
+  type SessionIngestWorkDependencies,
+} from './capture/session-ingest-work.js';
+export {
+  scanTranscripts,
+  transcriptChanges,
+  type ScanTranscriptsDependencies,
+  type ScanTranscriptsOptions,
+  type ScanTranscriptsReport,
+} from './capture/scan.js';
+export {
+  FAILURES_LIST_LIMIT,
+  listFailures,
+  type FailuresListData,
+  type FailuresListDependencies,
+  type FailuresListInput,
+  type FailuresListResult,
+} from './failures/list.js';
+export {
+  retryFailures,
+  type FailuresRetryData,
+  type FailuresRetryDependencies,
+  type FailuresRetryInput,
+  type FailuresRetryResult,
+  type FailuresRetrySkipped,
+} from './failures/retry.js';
 export {
   WORK_HANDLER_MISSING,
   WORK_HANDLER_THREW,
@@ -79,6 +122,7 @@ export {
   type IngestSessionData,
   type IngestSessionDependencies,
   type IngestSessionInput,
+  type IngestSessionOptions,
   type IngestSessionResult,
 } from './sessions/ingest.js';
 export {
@@ -86,6 +130,7 @@ export {
   type SpoolSessionIngestDependencies,
 } from './sessions/spool-ingest.js';
 export {
+  SPOOL_REPLAY_FAILED,
   replaySpool,
   type ReplaySpoolDependencies,
   type ReplaySpoolOptions,

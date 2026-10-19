@@ -1,10 +1,13 @@
+import type { Failure } from '../domain/failure.js';
 import type { IngestBatch } from '../domain/ingest-batch.js';
 import type { Message } from '../domain/message.js';
 import type {
+  ParserCursor,
   Session,
   SessionIngestSource,
   SessionStartSource,
 } from '../domain/session.js';
+import type { TranscriptFile } from '../domain/transcript-file.js';
 import type { SessionKey, SessionToken } from '../domain/session-token.js';
 import type { SchemaVersion } from '../domain/schema-version.js';
 import type { ToolNote } from '../domain/tool-note.js';
@@ -445,6 +448,71 @@ export type RecordFailureResult =
   | { ok: true; outcome: 'lost' }
   | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
+/** What has to be done something to: the target half of the queue key (AD-21). */
+export interface WorkTarget {
+  targetKind: string;
+  targetId: string;
+}
+
+/**
+ * The targets of every open item of one kind, as a lock-free read.
+ *
+ * It exists for the transcript scan, which has to leave alone the sessions
+ * somebody has already queued: a scan that enqueued them again would add
+ * nothing — `addWork` is find-or-create — but it would take the write lock to
+ * find that out, every drain, for every session waiting in the backlog (Design
+ * Notes). Only `DB_UNAVAILABLE`, because a read does not wait for the writer.
+ */
+export type ListOpenWorkTargetsResult =
+  | { ok: true; targets: readonly WorkTarget[] }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
+/** Which failures to read back. Every field narrows; all of them are optional. */
+export interface ListFailuresQuery {
+  /** Only this kind of target — `session` for a collection failure (AD-12). */
+  targetKind?: string;
+  /** Only this step: for a work item, the kind of work. */
+  stage?: string;
+  /**
+   * Include the rows somebody has already fixed. Left out, only the unresolved
+   * ones: a record with `resolved_at` set is history, and the question `brain
+   * failures list` answers is "what is still wrong" (Boundaries).
+   */
+  includeResolved?: boolean;
+  /** At most this many rows. Left out, the store answers with every match. */
+  limit?: number;
+}
+
+/**
+ * The failures one query names, newest first (`occurred_at desc, id desc`).
+ *
+ * Newest first because the instant on the row is when the cause was last met
+ * (Table Contract), and the id breaks the tie: two rows recorded in the same
+ * millisecond would otherwise come back in whatever order the storage felt
+ * like, and a list that reorders itself between two calls cannot be paged.
+ */
+export type ListFailuresResult =
+  | { ok: true; failures: readonly Failure[] }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
+/** Which failures one piece of work that finally went through has settled. */
+export interface ResolveFailuresInput {
+  targetKind: string;
+  targetId: string;
+  stage: string;
+  /** When it was fixed, read once from `Clock` (AD-13). */
+  now: Date;
+}
+
+/**
+ * How many rows were closed. Zero is the ordinary answer and not a failure: a
+ * piece of work that succeeded on its first attempt never recorded anything,
+ * and the handler calls this either way rather than asking first.
+ */
+export type ResolveFailuresResult =
+  | { ok: true; resolved: number }
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+
 /**
  * The queue capability: the one backlog of AD-21, and the one place a failure is
  * recorded.
@@ -498,6 +566,89 @@ export interface WorkStore {
    * hundred (Table Contract).
    */
   recordFailure(input: RecordFailureInput): Promise<RecordFailureResult>;
+  /** The targets of the open items of one kind. A read (AD-7). */
+  listOpenWorkTargets(query: { kind: string }): Promise<ListOpenWorkTargetsResult>;
+  /** The recorded failures, newest first. A read (AD-7). */
+  listFailures(query: ListFailuresQuery): Promise<ListFailuresResult>;
+  /**
+   * Close the open failures of one target and stage, because the work finally
+   * went through (Table Contract).
+   *
+   * Only the open ones: a row somebody already resolved keeps the instant it
+   * was resolved at, so a second success does not rewrite history.
+   */
+  resolveFailures(input: ResolveFailuresInput): Promise<ResolveFailuresResult>;
+}
+
+/** Which harness's transcript history to read. */
+export interface ListTranscriptFilesQuery {
+  harness: string;
+}
+
+export type ListTranscriptFilesResult =
+  | { ok: true; files: readonly TranscriptFile[] }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
+/** What one successful read of a transcript leaves behind (Table Contract). */
+export interface RecordTranscriptFileInput {
+  /**
+   * The id to give a new row. The caller mints it (AD-8); a row that is already
+   * there keeps the id it has, and the proposal is dropped.
+   */
+  id: string;
+  /** Key together with `path`. */
+  harness: string;
+  path: string;
+  /** How many bytes this read saw, and the fingerprint of exactly those bytes. */
+  sizeBytes: number;
+  fingerprint: string;
+  /** How far the file has been read, from the parse (AD-4). */
+  cursor: ParserCursor | null;
+  scannedAt: Date;
+  /**
+   * This parse read the file from the front because the cursor was lost — a
+   * compact, a fork, a transcript rewritten underneath us (`cursorReset`).
+   *
+   * It is the one case in which the size may go backwards: a compacted
+   * transcript is genuinely smaller than it was, and a store that kept the old
+   * number would call that file "unchanged" for ever (Boundaries).
+   */
+  reset: boolean;
+}
+
+export type RecordTranscriptFileResult =
+  | { ok: true; file: TranscriptFile }
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+
+/**
+ * The transcript-history capability: what has already been read out of which
+ * file, so the drain's folder scan opens only what changed (AD-7, AD-21).
+ *
+ * It is a capability of its own because two unrelated callers need exactly
+ * these two verbs: the scan, which compares a folder listing against the rows,
+ * and `sessions.ingest`, which records what it read. The second of those is why
+ * every successful ingest writes here and not only the scan — a hook that
+ * ingests a live session every turn has to move the history forward too, or the
+ * next scan would read the whole file again as "grown" (Decision 2, 2026-10-19).
+ */
+export interface TranscriptFileStore {
+  /** The history of one harness's files. A read, so it takes no lock (AD-7). */
+  listTranscriptFiles(query: ListTranscriptFilesQuery): Promise<ListTranscriptFilesResult>;
+  /**
+   * Record what a read saw, as find-or-create on `(harness, path)`.
+   *
+   * Two rules, and every adapter keeps them:
+   *
+   *   * the size only moves forward. A smaller size is dropped and the stored
+   *     row is handed back unchanged, because two reads of a growing file can
+   *     finish out of order and the older one must not wind the history back.
+   *   * unless `reset`, which is the one case where a smaller file is the truth.
+   *
+   * The cursor moves with the size: they are one fact about one read, and a
+   * cursor from a read whose size was dropped would point into bytes the row
+   * does not claim to have seen.
+   */
+  recordTranscriptFile(input: RecordTranscriptFileInput): Promise<RecordTranscriptFileResult>;
 }
 
 /**
@@ -505,7 +656,11 @@ export interface WorkStore {
  * one capability at a time, and the day it implements `SessionStore` it passes
  * the whole `Store` contract (AD-10).
  */
-export type Store = HealthStore & SessionStore & UserStore & WorkStore;
+export type Store = HealthStore &
+  SessionStore &
+  UserStore &
+  WorkStore &
+  TranscriptFileStore;
 
 /**
  * Result of reading the single `schema_version` row. `version: null` means the

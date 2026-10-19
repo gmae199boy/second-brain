@@ -10,6 +10,8 @@ import type {
   SpoolClaimResult,
   SpoolCompleteResult,
   SpoolReleaseResult,
+  SpoolRewriteInput,
+  SpoolRewriteResult,
   SpoolStatsResult,
 } from '../../ports/spool.js';
 
@@ -29,6 +31,8 @@ export interface MemorySpoolOptions {
   completeFailure?: string;
   /** Answer every `release` with this instead of putting the file back. */
   releaseFailure?: string;
+  /** Answer every `rewrite` with this instead of writing the two files. */
+  rewriteFailure?: string;
   /** Answer every `stats` with this instead of counting. */
   statsFailure?: string;
   /**
@@ -41,6 +45,11 @@ export interface MemorySpoolOptions {
 export interface MemorySpool extends Spool {
   /** Every file, in the order they were appended, for a test that looks. */
   files(): readonly MemorySpoolFile[];
+  /**
+   * Every line moved aside, in the order it was moved. The fake's stand-in for
+   * `spool/failed/`: there is no folder here (AD-1), so the lines are a list.
+   */
+  failedLines(): readonly string[];
   /** The records of every file that is still waiting, claimed ones included. */
   records(): readonly SpoolRecord[];
   /**
@@ -75,11 +84,14 @@ export function memorySpool(options: MemorySpoolOptions = {}): MemorySpool {
     claimFailure,
     completeFailure,
     releaseFailure,
+    rewriteFailure,
     statsFailure,
     now = () => DEFAULT_INSTANT,
   } = options;
 
   const files: MemorySpoolFile[] = [];
+  /** `spool/failed/`, as a list: lines nothing will ever try again (AD-9). */
+  const failed: string[] = [];
   let serial = 0;
 
   /** The handle a claimed file answers to, built the way a file name is. */
@@ -153,6 +165,26 @@ export function memorySpool(options: MemorySpoolOptions = {}): MemorySpool {
       return { ok: true };
     },
 
+    async rewrite(handle: string, input: SpoolRewriteInput): Promise<SpoolRewriteResult> {
+      if (rewriteFailure !== undefined) return { ok: false, message: rewriteFailure };
+      const file = find(handle);
+      if (file === undefined) {
+        return { ok: false, message: `claim한 spool 파일이 아닙니다: ${handle}` };
+      }
+      failed.push(...input.failed);
+      if (input.keep.length === 0) {
+        files.splice(files.indexOf(file), 1);
+        return { ok: true };
+      }
+      // The kept lines stay in this file's own place in the claim order, which
+      // is what the file adapter does by reusing the claimed file's stem: a
+      // rewrite must not send what is left of the oldest file to the back of
+      // the queue behind files that were written after it (AD-9).
+      file.lines = [...input.keep];
+      file.claimedAtMs = null;
+      return { ok: true };
+    },
+
     async stats(): Promise<SpoolStatsResult> {
       if (statsFailure !== undefined) return { ok: false, message: statsFailure };
       const records = decoded(files);
@@ -167,10 +199,14 @@ export function memorySpool(options: MemorySpoolOptions = {}): MemorySpool {
         ok: true,
         records: files.reduce((total, file) => total + file.lines.length, 0),
         earliest,
+        // Apart from `records`, because nothing is waiting for these: no drain
+        // will touch them again (AD-9).
+        failed: failed.length,
       };
     },
 
     files: () => files.map((file) => ({ ...file, lines: [...file.lines] })),
+    failedLines: () => [...failed],
     records: () => decoded(files),
     abandonClaims: () => {
       for (const file of files) {

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -200,7 +200,7 @@ describe('a spool file that is still being written', () => {
     );
 
     expect(await spool.claim()).toEqual({ ok: true, claim: null });
-    expect(await spool.stats()).toEqual({ ok: true, records: 0, earliest: null });
+    expect(await spool.stats()).toEqual({ ok: true, records: 0, earliest: null, failed: 0 });
     // And it is still there: only the process writing it may touch it.
     expect(await readdir(folder)).toEqual(['20260102T030600000Z-9999-0.jsonl.open']);
   });
@@ -366,21 +366,21 @@ describe('what the spool reports to doctor', () => {
     ]);
     await spool.append([sampleSpoolRecord({ id: THIRD_ID, occurredAt: INSTANT })]);
 
-    expect(await spool.stats()).toEqual({ ok: true, records: 3, earliest: older });
+    expect(await spool.stats()).toEqual({ ok: true, records: 3, earliest: older, failed: 0 });
   });
 
   it('reports an empty folder, and a folder that is not there, as nothing waiting', async () => {
     const folder = await spoolFolder();
     const spool = fileSpool({ folder, clock: { now: () => INSTANT } });
 
-    expect(await spool.stats()).toEqual({ ok: true, records: 0, earliest: null });
+    expect(await spool.stats()).toEqual({ ok: true, records: 0, earliest: null, failed: 0 });
 
     await spool.append([sampleSpoolRecord()]);
     const claimed = await spool.claim();
     if (!claimed.ok || claimed.claim === null) throw new Error('nothing was claimed');
     await spool.complete(claimed.claim.handle);
 
-    expect(await spool.stats()).toEqual({ ok: true, records: 0, earliest: null });
+    expect(await spool.stats()).toEqual({ ok: true, records: 0, earliest: null, failed: 0 });
   });
 
   it('counts a line it cannot read, and reports the count with no instant', async () => {
@@ -399,7 +399,152 @@ describe('what the spool reports to doctor', () => {
     // Counted, because it is still a write that has not landed; no instant,
     // because nothing here could read one. Saying the count is more than
     // refusing to say either (NFR-2).
-    expect(await spool.stats()).toEqual({ ok: true, records: 1, earliest: null });
+    expect(await spool.stats()).toEqual({ ok: true, records: 1, earliest: null, failed: 0 });
+  });
+});
+
+describe('a file only some of whose lines went back in', () => {
+  it('leaves the kept lines waiting and the given-up ones in failed/', async () => {
+    const folder = await spoolFolder();
+    const spool = fileSpool({ folder, clock: { now: () => INSTANT } });
+    await spool.append([
+      sampleSpoolRecord({ id: FIRST_ID }),
+      sampleSpoolRecord({ id: SECOND_ID }),
+      sampleSpoolRecord({ id: THIRD_ID }),
+    ]);
+    const claimed = await spool.claim();
+    if (!claimed.ok || claimed.claim === null) throw new Error('nothing was claimed');
+    const [, second, third] = claimed.claim.lines;
+    if (second === undefined || third === undefined) throw new Error('three lines were expected');
+
+    expect(await spool.rewrite(claimed.claim.handle, { keep: [second], failed: [third] })).toEqual({
+      ok: true,
+    });
+
+    // The claimed file is gone, one `.jsonl` is waiting, and the line nobody
+    // will try again is under `failed/`.
+    const names = (await readdir(folder)).sort();
+    expect(names.filter((name) => name.endsWith('.claiming'))).toEqual([]);
+    expect(names.filter((name) => name.endsWith('.jsonl'))).toHaveLength(1);
+    expect(names).toContain('failed');
+    expect(await spool.stats()).toMatchObject({ ok: true, records: 1, failed: 1 });
+
+    const again = await spool.claim();
+    if (!again.ok || again.claim === null) throw new Error('the kept line was not claimable');
+    expect(again.claim.lines).toEqual([second]);
+  });
+
+  it('writes no waiting file when there is nothing to keep', async () => {
+    const folder = await spoolFolder();
+    const spool = fileSpool({ folder, clock: { now: () => INSTANT } });
+    await spool.append([sampleSpoolRecord({ id: FIRST_ID })]);
+    const claimed = await spool.claim();
+    if (!claimed.ok || claimed.claim === null) throw new Error('nothing was claimed');
+    const [only] = claimed.claim.lines;
+    if (only === undefined) throw new Error('one line was expected');
+
+    expect(await spool.rewrite(claimed.claim.handle, { keep: [], failed: [only] })).toEqual({
+      ok: true,
+    });
+
+    expect(await spool.stats()).toMatchObject({ ok: true, records: 0, failed: 1 });
+    expect(await spool.claim()).toEqual({ ok: true, claim: null });
+  });
+
+  it('counts a failed file a killed process left half published', async () => {
+    // A process killed between writing `failed/<…>.jsonl.open` and renaming it
+    // leaves a file nothing will ever publish. It is counted all the same: a
+    // write that will never reach the database must not be silent (NFR-2).
+    const folder = await spoolFolder();
+    const spool = fileSpool({ folder, clock: { now: () => INSTANT } });
+    await spool.append([sampleSpoolRecord({ id: FIRST_ID })]);
+    const claimed = await spool.claim();
+    if (!claimed.ok || claimed.claim === null) throw new Error('nothing was claimed');
+    await spool.complete(claimed.claim.handle);
+    const failedFolder = join(folder, 'failed');
+    await mkdir(failedFolder, { recursive: true });
+    await writeFile(
+      join(failedFolder, '20260102T030600000Z-9999-0.jsonl.open'),
+      encodedLine(sampleSpoolRecord()),
+      'utf8',
+    );
+
+    expect(await spool.stats()).toMatchObject({ ok: true, records: 0, failed: 1 });
+  });
+
+  it('refuses a handle that is not a claimed file', async () => {
+    const folder = await spoolFolder();
+    const spool = fileSpool({ folder, clock: { now: () => INSTANT } });
+
+    expect(await spool.rewrite(join(folder, 'not-a-claim.jsonl'), { keep: [], failed: [] })).toMatchObject({
+      ok: false,
+    });
+  });
+
+  it('never hands a line under failed/ to a claim, and counts it apart', async () => {
+    const folder = await spoolFolder();
+    const spool = fileSpool({ folder, clock: { now: () => INSTANT } });
+    await spool.append([sampleSpoolRecord({ id: FIRST_ID })]);
+    const claimed = await spool.claim();
+    if (!claimed.ok || claimed.claim === null) throw new Error('nothing was claimed');
+    await spool.rewrite(claimed.claim.handle, { keep: [], failed: claimed.claim.lines });
+
+    // `failed/` is a folder inside the spool, and no claim may reach into it:
+    // those lines are kept so nothing is lost, not so they are tried again.
+    expect(await spool.claim()).toEqual({ ok: true, claim: null });
+    expect(await spool.stats()).toMatchObject({ ok: true, records: 0, failed: 1 });
+  });
+});
+
+describe('a `.open` file nobody will finish writing', () => {
+  it('is moved to failed/ once its process is gone and it is old enough', async () => {
+    const folder = await spoolFolder();
+    const clock = movableClock(INSTANT);
+    const spool = fileSpool({ folder, clock, pid: 1, isAlive: (pid) => pid !== 9999 });
+    // One append, so the folder exists, then the orphan by hand: the real
+    // window cannot be caught, because the rename that ends it is atomic.
+    await spool.append([sampleSpoolRecord({ id: FIRST_ID })]);
+    const claimed = await spool.claim();
+    if (!claimed.ok || claimed.claim === null) throw new Error('nothing was claimed');
+    await spool.complete(claimed.claim.handle);
+    const orphan = '20260102T030600000Z-9999-0.jsonl.open';
+    await writeFile(join(folder, orphan), encodedLine(sampleSpoolRecord()), 'utf8');
+    // Its age is measured against the one clock, so the file has to carry an
+    // instant that clock can reach (AD-13).
+    await utimes(join(folder, orphan), INSTANT, INSTANT);
+
+    // One millisecond short of the stale window, and it is left alone: a
+    // process may still be writing it, and only that process may touch it.
+    clock.advance(SPOOL_CLAIM_STALE_MS - 1);
+    expect(await spool.claim()).toEqual({ ok: true, claim: null });
+    expect(await readdir(folder)).toEqual([orphan]);
+
+    clock.advance(1);
+    expect(await spool.claim()).toEqual({ ok: true, claim: null });
+
+    // Moved rather than replayed (Decision 6, 2026-10-19): the last line of a
+    // `.open` file may be half a line, and the process that was writing it has
+    // already told its caller the write failed. It is kept, and counted.
+    expect(await readdir(folder)).toEqual(['failed']);
+    expect(await spool.stats()).toMatchObject({ ok: true, records: 0, failed: 1 });
+  });
+
+  it('is left alone while its process is alive, however old it is', async () => {
+    const folder = await spoolFolder();
+    const clock = movableClock(INSTANT);
+    const spool = fileSpool({ folder, clock, pid: 1, isAlive: () => true });
+    await spool.append([sampleSpoolRecord({ id: FIRST_ID })]);
+    const claimed = await spool.claim();
+    if (!claimed.ok || claimed.claim === null) throw new Error('nothing was claimed');
+    await spool.complete(claimed.claim.handle);
+    const orphan = '20260102T030600000Z-9999-0.jsonl.open';
+    await writeFile(join(folder, orphan), encodedLine(sampleSpoolRecord()), 'utf8');
+    await utimes(join(folder, orphan), INSTANT, INSTANT);
+
+    clock.advance(SPOOL_CLAIM_STALE_MS * 10);
+    expect(await spool.claim()).toEqual({ ok: true, claim: null });
+
+    expect(await readdir(folder)).toEqual([orphan]);
   });
 });
 

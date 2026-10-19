@@ -3,8 +3,8 @@ import type { SpoolRecord } from '../domain/spool-record.js';
 /**
  * The spool port: the queue of writes the database could not take (AD-9).
  *
- * Core defines the five verbs and the rules between them and has no filesystem
- * of its own (AD-1). The one implementation is the Runtime's file spool; the
+ * Core defines the verbs and the rules between them and has no filesystem of
+ * its own (AD-1). The one implementation is the Runtime's file spool; the
  * in-memory fake in `@second-brain/core/testing` is what the contract is
  * measured against, and both pass the same cases.
  *
@@ -22,7 +22,8 @@ import type { SpoolRecord } from '../domain/spool-record.js';
  *   * `claim` hands one file to one caller. A second claim gets another file or
  *     nothing, never the same one.
  *   * `complete` removes a claimed file, `release` puts it back where a later
- *     claim will find it again. Nothing else may move a claimed file.
+ *     claim will find it again, and `rewrite` replaces it with what is left of
+ *     it. Nothing else may move a claimed file.
  */
 
 /** Where one `append` put the records, so a caller can say which file. */
@@ -58,6 +59,23 @@ export type SpoolCompleteResult = { ok: true } | { ok: false; message: string };
 export type SpoolReleaseResult = { ok: true } | { ok: false; message: string };
 
 /**
+ * What a claimed file turns into when some of its lines went in and some did
+ * not (AD-9).
+ *
+ * `keep` are the lines a later drain has to try again — the ones that failed,
+ * with their attempt counts raised — and `failed` are the ones nobody will try
+ * again: a line nothing can read, or a record that has now failed ten times.
+ * Both are lines and not records, because the attempt count is written by
+ * re-encoding the record and the replay is what does that (`encodeSpoolLine`).
+ */
+export interface SpoolRewriteInput {
+  keep: readonly string[];
+  failed: readonly string[];
+}
+
+export type SpoolRewriteResult = { ok: true } | { ok: false; message: string };
+
+/**
  * What is waiting: how many records, and the earliest instant among them. It
  * covers the files a claim could take *and* the claimed ones, because a record
  * somebody is in the middle of replaying has still not reached the database
@@ -68,7 +86,22 @@ export type SpoolReleaseResult = { ok: true } | { ok: false; message: string };
  * could be read: a count with no instant is still worth reporting.
  */
 export type SpoolStatsResult =
-  | { ok: true; records: number; earliest: Date | null }
+  | {
+      ok: true;
+      records: number;
+      earliest: Date | null;
+      /**
+       * Lines moved aside because nobody will try them again: a line nothing
+       * could read, or a record that failed its ten attempts (AD-9).
+       *
+       * They are counted apart from `records` because they are not waiting for
+       * anything — no drain will touch them — and they are counted at all
+       * because a log entry or an injection record has no original to be read
+       * again from, so the one thing that must not happen is their going
+       * unnoticed (2026-10-16).
+       */
+      failed: number;
+    }
   | { ok: false; message: string };
 
 export interface Spool {
@@ -95,6 +128,17 @@ export interface Spool {
   complete(handle: string): Promise<SpoolCompleteResult>;
   /** Not replayed: put the file back, for this drain or another one to retry. */
   release(handle: string): Promise<SpoolReleaseResult>;
-  /** How much is waiting, for `brain doctor run` (AD-9). */
+  /**
+   * Partly replayed: write what is left as a new waiting file, put what nobody
+   * will retry aside, and remove the claimed file (AD-9).
+   *
+   * The order is the whole of it. Both files are written *before* the claimed
+   * one is removed, so a process killed in the middle leaves the claim behind —
+   * which a later drain takes back and replays, idempotently (AD-8) — rather
+   * than a file that was deleted with lines nothing has kept. A `keep` or
+   * `failed` of no lines writes no file.
+   */
+  rewrite(handle: string, input: SpoolRewriteInput): Promise<SpoolRewriteResult>;
+  /** How much is waiting and how much was given up on, for doctor (AD-9). */
   stats(): Promise<SpoolStatsResult>;
 }

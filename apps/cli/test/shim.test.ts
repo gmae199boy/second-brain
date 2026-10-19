@@ -18,6 +18,7 @@ import {
 } from '../src/install/shim.js';
 import { NODE_FLOOR } from '../src/runtime/node-floor.js';
 import { assertKoreanLine } from './language.js';
+import { withoutHarnessFolders } from './environment.js';
 
 /**
  * The shim is the one file a harness hook ever calls, started with none of the
@@ -47,7 +48,7 @@ function runShim(
   args: readonly string[],
   env: NodeJS.ProcessEnv = {},
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
+  const childEnv: NodeJS.ProcessEnv = { ...withoutHarnessFolders(process.env), ...env };
   if (env[HOME_ENV] === undefined) delete childEnv[HOME_ENV];
 
   const child = spawn(path, [...args], { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });

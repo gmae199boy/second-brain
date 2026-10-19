@@ -80,11 +80,12 @@
 | 무인 루프 v2가 커밋을 기다리지 않음 (2026-10-18) | 저장소 밖 도구. 2.10~를 무인으로 돌리기 전에 고친다 |
 | 2.7 follow-up 리뷰 (2026-10-18) | epic 2 story 19의 리뷰로 한다(change-masking-b-and-review-fixes D10) |
 | 백업 브랜치 `backup/pre-path-rewrite-2026-10-18` | push 전에 지운다(사용자) |
-| 비정상 종료로 남은 `.open` 회수 (2.10) | epic 2 story 12(2.11은 일감 대기열만 만들고 spool 파일은 건드리지 않았다. 일부 줄 다시 쓰기와 같은 자리, 2026-10-19) |
+| 비정상 종료로 남은 `.open` 회수 (2.10) | 해결됨(2.12, 2026-10-19). `claim`이 할 일이다: 이름의 pid가 살아 있지 않고 mtime이 `SPOOL_CLAIM_STALE_MS`보다 오래된 `.open`은 `spool/failed/`로 옮기고 재주입하지 않는다(쓴 쪽이 이미 실패로 답한 쓰기다, Decision 6) |
 | 업그레이드 경로 correct-course: 마이그레이션 완료 뒤 전환·실패 시 재시도·마이그레이션 승인 (2.10) | AD-19·20을 바꾸는 입력. bootstrap 2.5·shim·`setup upgrade`(epic 5)에 걸리므로 correct-course로 먼저 본다(2026-10-19 사용자) |
-| spool `failure` 레코드 재주입 handler (2.11) | epic 2 story 12(세션 수집 handler와 같은 자리) |
+| spool `failure` 레코드 재주입 handler (2.11) | 해결됨(2.12, 2026-10-19). `createBrain`의 spool handler 표에 `failure` 항목: payload 그대로 `recordFailure`, id는 레코드 id, `closeWork` 없음 |
 | 데몬 켜짐 예외: 기회적 drain 끄기 (2.11) | epic-daemon(epic 9, 소켓 handshake가 생길 때) |
-| 같은 실패 키의 `occurred_at`·`message` 갱신 여부 (2.11) | 사람 확인. `failures list`(2.12)를 쓰면서 판단한다 |
+| 같은 실패 키의 `occurred_at`·`message` 갱신 여부 (2.11) | 해결됨(2.11, 2026-10-19 사용자) |
+| 2.14: `SECOND_BRAIN_CAPTURE` 스위치를 없애고 트랜스크립트 폴더를 기본으로 켠다 (2.12) | epic 2 story 2.14(플러그인 hook 등록과 같은 자리) |
 - source_plan: none
   summary: 옛 무인 루프 스크립트(`tooling/dev/auto-build.sh`)를 넣은 커밋(`10a09d2`)을 지우는 커밋이 아니라 그 커밋을 빼고 다시 쌓는 방식으로 이력에서 뺀다(`git rebase --onto 10a09d2^ 10a09d2 main`, 시작 전 백업 브랜치).
   evidence: 2026-10-18 사용자 결정. 그 뒤 해시가 다시 바뀌므로 `plugin/app-ref`(AGENTS.md 규칙대로 version도 함께), plan의 `baseline_revision`, 문서의 커밋 번호를 다시 맞춘다. 원격에는 첫 커밋뿐이라 push 전에 해야 한다. dev-workflow 저장소에서는 같은 일을 이미 끝냈다.
@@ -95,7 +96,7 @@
   summary: brain 2.7(parser) follow-up 리뷰를 한 번 더 돌린다.
   evidence: 2026-10-18 결정 검토에서 peer handback 누락(보고 약 58%)이 나왔다. 수정은 `inputs/masking-b-and-review-fixes.md` §2에 있고, 다른 빈틈이 없는지 리뷰로 확인하자는 권장이다.
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-spool-db-plan.md`
-  summary: 비정상 종료로 남은 `<home>/spool/*.jsonl.open` 파일을 회수한다.
+  summary: 해결됨(2.12, 2026-10-19) — `claim`이 할 일 앞에서 회수한다: 이름의 pid가 살아 있지 않고 mtime이 `SPOOL_CLAIM_STALE_MS`보다 오래된 `.open`은 `spool/failed/`로 옮기고 다시 넣지 않으며(Decision 6: 반쯤 쓰인 마지막 줄이 있을 수 있고, 쓴 쪽은 이미 실패로 답했다) doctor의 `spool` 줄이 그 건수를 보인다. 원래 질문: 비정상 종료로 남은 `<home>/spool/*.jsonl.open` 파일을 회수한다.
   evidence: 2.10은 `.open`을 절대 claim하지 않는다(쓰는 중인 파일을 반쯤 읽는 것을 막는다). 그래서 append 도중에 죽은 프로세스가 남긴 `.open`은 영원히 남고, doctor의 `spool` 건수에도 들어가지 않는다. 회수 규칙(mtime 기준 유예 뒤 `.jsonl`로 돌릴지, `spool/failed/`로 옮길지, 마지막 줄이 깨졌을 때 어떻게 할지)은 drain과 일부 줄 다시 쓰기가 있는 story 11·12에서 정하는 것이 자연스럽다.
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-spool-db-plan.md`
   summary: 업그레이드 경로를 correct-course로 다시 본다 — 마이그레이션이 끝난 뒤에만 새 빌드로 전환하고, 실패하면 마이그레이션부터 다시 하며, 업그레이드 때 사람의 마이그레이션 승인을 받는다.
@@ -104,7 +105,7 @@
   summary: 이력 다시 쓰기 전 백업 브랜치 `backup/pre-path-rewrite-2026-10-18`(로컬)을 push 전에 지운다.
   evidence: 옛 커밋에 실명 경로가 남아 있다. 원격에 올라가면 안 된다. 이력 다시 쓰기는 2026-10-18 `24f0063` 앞에서 끝났다.
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-drain-plan.md`
-  summary: spool의 `failure` 레코드를 다시 넣는 재주입 handler를 만든다(`spool/replay.ts`의 handler 표에 `failure` 항목).
+  summary: 해결됨(2.12, 2026-10-19) — `createBrain`이 handler 표에 `failure`를 넣는다: payload 그대로 `recordFailure`, id는 레코드 id, `closeWork` 없음(청구는 이미 만료되었고 다음 drain이 그 일감을 다시 만난다). 원래 질문: spool의 `failure` 레코드를 다시 넣는 재주입 handler를 만든다.
   evidence: story 11이 레코드 종류와 줄 코덱, 그리고 `recordFailure`가 `DB_LOCKED`·`DB_UNAVAILABLE`로 답할 때 그 줄을 쓰는 쪽을 만들었다. 되넣는 쪽은 없다 — `replaySpool`은 handler 없는 kind를 "되돌리고 멈춤"으로 다루므로 줄은 안전하게 남지만 영원히 남는다. handler는 세션 수집 handler와 같은 자리(2.12)가 자연스럽다.
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-drain-plan.md`
   summary: 데몬이 살아 있을 때 CLI의 기회적 drain을 끈다(AD-7·27의 예외).
@@ -112,3 +113,6 @@
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-drain-plan.md`
   summary: 해결됨(2026-10-19 사용자, B) — 같은 실패 키가 다시 나오면 행을 다시 열고 `occurred_at`·`message`를 최신으로 바꾼다(2.11). 처음 난 때와 횟수 칸은 story 18(0005). 원래 질문: 같은 실패 키가 다시 나올 때 `occurred_at`·`message`를 최신으로 갱신할지 정한다.
   evidence: story 11 Decision 2(2026-10-19, 무인 실행에서 에이전트가 고름). Table Contract의 `failures` 행이 "`resolved_at`만 drain이 채움"이라 그대로 지켰고, 그래서 백 번째 실패를 봐도 보이는 시각과 문장은 첫 번째 것이다. "마지막으로 언제 실패했나"를 알고 싶으면 칸이나 규칙을 바꿔야 한다. `failures list`(2.12)를 쓰면서 판단하는 것이 자연스럽다.
+- source_plan: `_bmad-output/personal-brain/epic-capture/story-spool-plan.md`
+  summary: `SECOND_BRAIN_CAPTURE` 스위치를 없애고 하네스 트랜스크립트 폴더를 기본으로 켠다(`apps/cli/src/harnesses.ts`의 `transcriptFolders`).
+  evidence: 2.12 Decision 1(2026-10-19). 실제 폴더를 읽는 것은 "지금 디스크에 있는 것을 이 빌드의 parser와 마스킹 규칙으로 수집한다"는 뜻이고, 저장된 메시지는 다시 쓰지 않으므로(AD-11) 17·19·20 전에 켜면 그 세션은 옛 규칙으로 굳는다. 그래서 에픽 결정("실제 수집은 14에서 켠다")을 지켜 스위치를 두었다. 2.14는 그 스위치를 지우고, 그때 doctor `transcripts`는 `skip`이 아니라 `ok`가 되며, 모든 CLI 테스트는 이미 빈 `CLAUDE_CONFIG_DIR`로 격리되어 있다(`apps/cli/test/environment.ts`).

@@ -48,20 +48,24 @@ export function readClaudeCodeHookInput(stdin: string): ReadHookInputResult {
 
   const record = payload as Record<string, unknown>;
   const harnessSessionId = asString(record['session_id']);
-  const transcriptPath = asString(record['transcript_path']);
-  const missing = [
-    harnessSessionId === undefined ? 'session_id' : '',
-    transcriptPath === undefined ? 'transcript_path' : '',
-  ].filter((name) => name !== '');
-  if (harnessSessionId === undefined || transcriptPath === undefined) {
+  if (harnessSessionId === undefined) {
     return {
       ok: false,
       code: 'USAGE',
-      message: `hook 페이로드에 ${missing.join('와 ')}가 없습니다. Claude Code의 모든 hook 이벤트가 담고 있는 값입니다`,
+      message:
+        'hook 페이로드에 session_id가 없습니다. Claude Code의 모든 hook 이벤트가 담고 있는 값입니다',
     };
   }
 
-  return { ok: true, input: { harnessSessionId, transcriptPath } };
+  // The path is optional, and that is deliberate: the session id is what a
+  // collection needs, and a payload that carries only that is still one the
+  // ingest can act on — it looks the file up in the editor's folder by session
+  // id instead (`IngestSessionInput.transcriptPath`). Refusing it would turn
+  // the one recoverable payload into a `USAGE` the hook could do nothing about.
+  return {
+    ok: true,
+    input: { harnessSessionId, transcriptPath: asString(record['transcript_path']) ?? null },
+  };
 }
 
 function asString(value: unknown): string | undefined {

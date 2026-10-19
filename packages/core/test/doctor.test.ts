@@ -63,7 +63,20 @@ function source(check: DoctorCheck): DoctorCheckSource {
   return { id: check.id, run: async () => check };
 }
 
-const OPTIONS = { schemaVersion: CURRENT };
+/**
+ * The options every case here shares.
+ *
+ * `store` and `clock` are what the two capture checks read: the failures that
+ * are still open and the transcript history (`DoctorReadStore`). An empty
+ * memory store is what a healthy brain looks like, so `failures` is `ok` and —
+ * with no folder — `transcripts` is a `skip`, which is exactly what a build
+ * whose capture switch is off reports (Boundaries).
+ */
+const OPTIONS = {
+  schemaVersion: CURRENT,
+  store: memoryStore(),
+  clock: fixedClock(new Date('2026-03-04T05:06:07.000Z')),
+};
 
 describe('runDoctor', () => {
   it('reports db, vector and the schema version as ok when everything is healthy', async () => {
@@ -76,6 +89,10 @@ describe('runDoctor', () => {
       { id: 'db', status: 'ok', detail: '18.1' },
       { id: 'vector', status: 'ok', detail: '0.8.7' },
       { id: 'schema-version', status: 'ok', detail: '2' },
+      // Nothing is failing, and there is no folder to compare against, which
+      // is what a build with its capture switch off reports (Boundaries).
+      { id: 'failures', status: 'ok', detail: '0건' },
+      { id: 'transcripts', status: 'skip', detail: '트랜스크립트 폴더 수집이 꺼져 있습니다' },
     ]);
   });
 
@@ -111,6 +128,11 @@ describe('runDoctor', () => {
         detail: 'connect ECONNREFUSED 127.0.0.1:54329',
       },
       { id: 'schema-version', status: 'skip', detail: '앞선 점검 실패: db' },
+      // Everything a store would have answered is skipped under the same
+      // reason: a reader must never have to work out from what is missing
+      // whether a check was skipped or never existed.
+      { id: 'failures', status: 'skip', detail: '앞선 점검 실패: db' },
+      { id: 'transcripts', status: 'skip', detail: '앞선 점검 실패: db' },
     ]);
   });
 
@@ -163,13 +185,20 @@ describe('runDoctor', () => {
       { id: 'fts5-trigram', status: 'fail', detail: 'no such tokenizer' },
       { id: 'foreign-keys', status: 'ok' },
       { id: 'schema-version', status: 'ok', detail: '2' },
+      { id: 'failures', status: 'ok', detail: '0건' },
+      { id: 'transcripts', status: 'skip', detail: '트랜스크립트 폴더 수집이 꺼져 있습니다' },
     ]);
   });
 
   it('reports db and the schema version alone when a healthy source ran no probes', async () => {
     const report = await runDoctor(fakeStore(healthy()), OPTIONS);
 
-    expect(report.checks.map((check) => check.id)).toEqual(['db', 'schema-version']);
+    expect(report.checks.map((check) => check.id)).toEqual([
+      'db',
+      'schema-version',
+      'failures',
+      'transcripts',
+    ]);
   });
 
   it('does not throw when the store is unavailable', async () => {
@@ -181,7 +210,7 @@ describe('runDoctor', () => {
 
 describe('runDoctor and the schema version', () => {
   it('fails with SCHEMA_MISMATCH and names both versions when they differ', async () => {
-    const report = await runDoctor(fakeStore(healthy()), { schemaVersion: 7 });
+    const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, schemaVersion: 7 });
 
     const schema = report.checks.find((check) => check.id === 'schema-version');
     expect(schema).toMatchObject({ status: 'fail', code: 'SCHEMA_MISMATCH' });
@@ -228,6 +257,8 @@ describe('runDoctor and the checks the runtime registers', () => {
       'db',
       'wal',
       'schema-version',
+      'failures',
+      'transcripts',
       'config',
       'shim',
       'node-path',
@@ -241,7 +272,13 @@ describe('runDoctor and the checks the runtime registers', () => {
       { ...OPTIONS, checks: [source({ id: 'shim', status: 'ok' })] },
     );
 
-    expect(report.checks.map((check) => check.id)).toEqual(['db', 'schema-version', 'shim']);
+    expect(report.checks.map((check) => check.id)).toEqual([
+      'db',
+      'schema-version',
+      'failures',
+      'transcripts',
+      'shim',
+    ]);
   });
 
   it('turns a check that throws into that id failing, and keeps going', async () => {
@@ -300,8 +337,9 @@ describe('the summary of a report', () => {
       },
     );
 
-    // db ok, wal ok, writable warn, fts fail, schema ok, shim fail, node skip.
-    expect(report.summary).toEqual({ passed: 3, warned: 1, failed: 2, skipped: 1 });
+    // db ok, wal ok, writable warn, fts fail, schema ok, failures ok,
+    // transcripts skip, shim fail, node skip.
+    expect(report.summary).toEqual({ passed: 4, warned: 1, failed: 2, skipped: 2 });
     const counted =
       report.summary.passed +
       report.summary.warned +
@@ -316,13 +354,15 @@ describe('the summary of a report', () => {
       OPTIONS,
     );
 
-    expect(report.summary).toEqual({ passed: 0, warned: 0, failed: 1, skipped: 1 });
+    expect(report.summary).toEqual({ passed: 0, warned: 0, failed: 1, skipped: 3 });
   });
 
-  it('is all passes for a healthy brain', async () => {
+  it('is all passes for a healthy brain, bar the folders nobody asked for', async () => {
     const report = await runDoctor(fakeStore(healthy({ id: 'wal', ok: true })), OPTIONS);
 
-    expect(report.summary).toEqual({ passed: 3, warned: 0, failed: 0, skipped: 0 });
+    // db, wal, schema-version and failures pass; `transcripts` is a `skip`,
+    // because this brain's capture switch is off (Boundaries).
+    expect(report.summary).toEqual({ passed: 4, warned: 0, failed: 0, skipped: 1 });
   });
 });
 
@@ -364,6 +404,8 @@ describe('createBrain', () => {
       'db',
       'vector',
       'schema-version',
+      'failures',
+      'transcripts',
       'shim',
     ]);
 
@@ -379,6 +421,11 @@ describe('createBrain', () => {
     });
 
     const report = await brain.doctor.run();
-    expect(report.checks.map((check) => check.id)).toEqual(['db', 'schema-version']);
+    expect(report.checks.map((check) => check.id)).toEqual([
+      'db',
+      'schema-version',
+      'failures',
+      'transcripts',
+    ]);
   });
 });

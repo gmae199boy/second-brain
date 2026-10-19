@@ -63,7 +63,9 @@ export async function spoolSessionIngest(
     occurredAt: clock.now(),
     payload: {
       session: input.session,
-      transcriptPath: input.transcriptPath,
+      // The empty string is a path nobody gave: the replay then looks the file
+      // up by session id, the same way this ingest would have (story 12).
+      transcriptPath: input.transcriptPath ?? '',
       cause,
     },
   };

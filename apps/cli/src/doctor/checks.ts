@@ -152,16 +152,28 @@ async function spoolCheck(spool: Spool): Promise<DoctorCheck> {
   if (!stats.ok) {
     return { id: 'spool', status: 'fail', detail: stats.message };
   }
+
+  // Lines nobody will try again: a line nothing could read, a record that
+  // failed its ten attempts, a `.open` file a killed process left behind. They
+  // are added to whichever sentence this check was going to say, because this
+  // line is the only place anybody would ever see them (2026-10-16).
+  const aside = stats.failed === 0 ? '' : `, 실패로 옮긴 줄 ${String(stats.failed)}건`;
+
   if (stats.records === 0) {
-    return { id: 'spool', status: 'ok', detail: '0건' };
+    // Still a `warn` when something was given up on, and still not a `fail`:
+    // nothing is broken, and the records are kept rather than lost — but a
+    // write that will never reach the database must not be silent (NFR-2).
+    return stats.failed === 0
+      ? { id: 'spool', status: 'ok', detail: '0건' }
+      : { id: 'spool', status: 'warn', code: 'SPOOLED', detail: `0건${aside}` };
   }
   const count = `${String(stats.records)}건`;
   // The instant with this machine's offset, as every instant a person reads
   // is (Conventions, 시각). `null` only for records nothing could decode: the
   // count is still worth saying.
-  const detail =
+  const waiting =
     stats.earliest === null ? count : `${count}, 가장 오래된 것 ${isoWithOffset(stats.earliest)}`;
-  return { id: 'spool', status: 'warn', code: 'SPOOLED', detail };
+  return { id: 'spool', status: 'warn', code: 'SPOOLED', detail: `${waiting}${aside}` };
 }
 
 /**

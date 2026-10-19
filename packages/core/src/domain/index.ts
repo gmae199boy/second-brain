@@ -71,7 +71,11 @@ export {
   type WorkItem,
   type WorkKindPolicy,
 } from './work-item.js';
-export type { TranscriptFile } from './transcript-file.js';
+export {
+  TRANSCRIPT_DEADLINE_WARN_DAYS,
+  TRANSCRIPT_RETENTION_DAYS,
+  type TranscriptFile,
+} from './transcript-file.js';
 export type { SchemaVersion } from './schema-version.js';
 export type {
   IngestBatch,

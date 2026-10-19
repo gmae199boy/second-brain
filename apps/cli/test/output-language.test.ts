@@ -6,6 +6,7 @@ import { exitCodeGuide, guideShow } from 'second_brain';
 import { commands } from '../src/commands/index.js';
 import { HOME_ENV } from '../src/config/paths.js';
 import { assertKoreanLine, assertKoreanLines, englishLines } from './language.js';
+import { withoutHarnessFolders } from './environment.js';
 
 /**
  * 사람이 읽는 출력은 한국어라는 Conventions의 결정(2026-10-16)을, 명령 표면
@@ -31,7 +32,10 @@ interface Run {
 }
 
 function runBrain(args: readonly string[]): Promise<Run> {
-  const env: NodeJS.ProcessEnv = { ...process.env, [HOME_ENV]: NO_HOME };
+  const env: NodeJS.ProcessEnv = withoutHarnessFolders({
+    ...process.env,
+    [HOME_ENV]: NO_HOME,
+  });
   const child = spawn(process.execPath, [binPath, ...args], {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],

@@ -195,6 +195,37 @@ describe('an item that fails permanently', () => {
       expect(store.snapshot().failures).toHaveLength(1);
     }
   });
+
+  it('records the information columns a handler gave, and null for the ones it did not', async () => {
+    // `harness` and `session_id` are information and both nullable: the drain
+    // knows which item failed, not which conversation it was about, so they
+    // come from the handler (Table Contract).
+    const withBoth = await withItem();
+    await withBoth.drain(async () => ({
+      ok: false,
+      code: 'DEMO_FAILED',
+      message: '형식이 깨졌습니다',
+      retryable: false,
+      harness: 'demo',
+      sessionId: '01940000-0000-7000-8000-00000000aaaa',
+    }));
+    expect(withBoth.store.snapshot().failures[0]).toMatchObject({
+      harness: 'demo',
+      sessionId: '01940000-0000-7000-8000-00000000aaaa',
+    });
+
+    const withNeither = await withItem();
+    await withNeither.drain(async () => ({
+      ok: false,
+      code: 'DEMO_FAILED',
+      message: '형식이 깨졌습니다',
+      retryable: false,
+    }));
+    expect(withNeither.store.snapshot().failures[0]).toMatchObject({
+      harness: null,
+      sessionId: null,
+    });
+  });
 });
 
 describe('an item that failed on somebody else’s hiccup', () => {

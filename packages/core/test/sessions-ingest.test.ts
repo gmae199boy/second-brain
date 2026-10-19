@@ -18,6 +18,7 @@ import {
   memoryTranscriptReader,
   type MemoryTranscriptReader,
 } from '../src/testing/fakes/transcript.js';
+import { memoryTranscriptFolder } from '../src/testing/fakes/transcript-folder.js';
 import { isUuidV7 } from '../src/testing/uuid-v7.js';
 
 /**
@@ -71,6 +72,14 @@ interface KitOptions {
   checkouts?: Readonly<Record<string, Checkout>>;
   /** The spool a turn goes to when the store will not take it. */
   spool?: MemorySpool;
+  /**
+   * The harness's transcript folder, for a call that gives no path. Left out,
+   * there is none — which is what this build's capture switch being off means
+   * (Boundaries, Decision 1 2026-10-19).
+   */
+  folderFiles?: readonly { harnessSessionId: string; path: string }[];
+  /** Answer every listing with this instead of the files. */
+  folderFailure?: string;
 }
 
 async function kit(options: KitOptions = {}): Promise<Kit> {
@@ -97,6 +106,23 @@ async function kit(options: KitOptions = {}): Promise<Kit> {
       idGen: sequenceIdGen({ timestampMs: INGESTED_AT.getTime() }),
       parsers: [memoryParser()],
       transcripts,
+      ...(options.folderFiles === undefined && options.folderFailure === undefined
+        ? {}
+        : {
+            transcriptFolders: [
+              memoryTranscriptFolder({
+                harness: 'demo',
+                files: (options.folderFiles ?? []).map((file) => ({
+                  ...file,
+                  sizeBytes: 1,
+                  modifiedAt: INGESTED_AT,
+                })),
+                ...(options.folderFailure === undefined
+                  ? {}
+                  : { listFailure: options.folderFailure }),
+              }),
+            ],
+          }),
       repositories,
       machine: 'demo-machine',
     },
@@ -775,12 +801,17 @@ describe('sessions.ingest and the session it was asked for', () => {
     expect(transcripts.reads()).toEqual([]);
   });
 
-  it('refuses a call that named no transcript', async () => {
+  it('says it cannot find the transcript when no path was given and no folder is read', async () => {
+    // A call with no path looks the file up in that harness's folder, and a
+    // build with no folder for it has nowhere to look — which is what the
+    // capture switch being off means (Boundaries, Decision 1).
     const { deps } = await kit();
 
     const result = await ingestSession(deps, { session: TOKEN, transcriptPath: '' });
 
-    expect(result).toMatchObject({ ok: false, code: 'USAGE' });
+    expect(result).toMatchObject({ ok: false, code: 'TRANSCRIPT_UNREADABLE' });
+    if (result.ok) return;
+    expect(result.message).toContain('트랜스크립트를 찾을 수 없습니다');
   });
 });
 
@@ -866,6 +897,8 @@ describe('sessions.ingest when the store cannot take the write', () => {
         id: expect.any(String),
         kind: 'session_ingest',
         occurredAt: INGESTED_AT,
+        // No replay has failed yet: the count is the replay's own bookkeeping.
+        attempts: 0,
         payload: { session: TOKEN, transcriptPath: PATH, cause: 'DB_LOCKED' },
       },
     ]);
@@ -991,6 +1024,174 @@ describe('sessions.ingest when the store cannot take the write', () => {
     const result = await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
 
     expect(result).toMatchObject({ ok: true, spooled: false });
+    expect(spool.records()).toEqual([]);
+  });
+});
+
+describe('sessions.ingest when the caller gave no transcript path', () => {
+  it('finds the file in that harness folder by session id', async () => {
+    const { deps, store, transcripts } = await kit({
+      folderFiles: [{ harnessSessionId: 'session-0001', path: PATH }],
+    });
+
+    const result = await ingestSession(deps, { session: TOKEN });
+
+    expect(result).toMatchObject({ ok: true, created: true });
+    // The path the folder named, and no other: Core never builds one.
+    expect(transcripts.reads()).toEqual([PATH]);
+    expect(store.snapshot().sessions).toHaveLength(1);
+  });
+
+  it('says it cannot find it when the folder holds no file for that session', async () => {
+    const { deps, transcripts } = await kit({
+      folderFiles: [{ harnessSessionId: 'session-9999', path: '/elsewhere.jsonl' }],
+    });
+
+    const result = await ingestSession(deps, { session: TOKEN });
+
+    expect(result).toMatchObject({ ok: false, code: 'TRANSCRIPT_UNREADABLE' });
+    // Nothing was opened: there was nothing to open.
+    expect(transcripts.reads()).toEqual([]);
+  });
+
+  it('says why when the folder itself could not be listed', async () => {
+    const { deps } = await kit({ folderFailure: 'EACCES: permission denied' });
+
+    const result = await ingestSession(deps, { session: TOKEN });
+
+    expect(result).toMatchObject({ ok: false, code: 'TRANSCRIPT_UNREADABLE' });
+    if (result.ok) return;
+    // The reason is in the sentence, because the three ways to come back with
+    // nothing have different fixes (`locateTranscript`).
+    expect(result.message).toContain('EACCES');
+  });
+
+  it('never looks in a folder when the caller did give a path', async () => {
+    // The hook path does not depend on the folders at all: a path the harness
+    // named is the path that is read (Boundaries).
+    const { deps, transcripts } = await kit();
+
+    expect(await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).toMatchObject({
+      ok: true,
+    });
+    expect(transcripts.reads()).toEqual([PATH]);
+  });
+});
+
+describe('sessions.ingest and where the session came from', () => {
+  it('records a session the caller called an import as one', async () => {
+    const { deps, store } = await kit();
+
+    await ingestSession(deps, { session: TOKEN, transcriptPath: PATH, source: 'import' });
+
+    expect(store.snapshot().sessions[0]).toMatchObject({ ingestSource: 'import' });
+  });
+
+  it('leaves the source of a session that is already there alone', async () => {
+    // Decided once, when the row is created, and never again: a session first
+    // seen by a folder scan stays an import however many live turns follow
+    // (Table Contract).
+    const { deps, store } = await kit();
+    await ingestSession(deps, { session: TOKEN, transcriptPath: PATH, source: 'import' });
+
+    await ingestSession(deps, { session: TOKEN, transcriptPath: PATH, source: 'live' });
+
+    expect(store.snapshot().sessions[0]).toMatchObject({ ingestSource: 'import' });
+  });
+
+  it('defaults to live, which is what a hook reports', async () => {
+    const { deps, store } = await kit();
+
+    await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
+
+    expect(store.snapshot().sessions[0]).toMatchObject({ ingestSource: 'live' });
+  });
+});
+
+describe('sessions.ingest and the history it leaves for the next scan', () => {
+  it('records what it read: the bytes, their fingerprint and this cursor', async () => {
+    const { deps, store } = await kit();
+
+    await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
+
+    const [history] = store.snapshot().transcriptFiles;
+    expect(history).toMatchObject({ harness: 'demo', path: PATH });
+    expect(history?.sizeBytes).toBe(Buffer.byteLength(memoryTranscript, 'utf8'));
+    expect(history?.fingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
+    // The cursor the parse produced, so the next read starts where this one
+    // stopped (AD-4).
+    expect(history?.cursor).not.toBe(null);
+    expect(history?.scannedAt.getTime()).toBe(INGESTED_AT.getTime());
+  });
+
+  it('records it even for a transcript with no conversation in it yet', async () => {
+    // Otherwise a scan would read that file again on every drain, for a session
+    // that has nothing in it: the one case where nothing ever settles.
+    const { deps, store } = await kit({ content: JSON.stringify({ messages: [] }) });
+
+    expect(await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).toMatchObject({
+      ok: true,
+      created: false,
+      inserted: { messages: 0 },
+    });
+    expect(store.snapshot().transcriptFiles).toHaveLength(1);
+  });
+
+  it('answers success even when the history could not be written', async () => {
+    // The history is a shortcut and not a fact anything depends on: a scan that
+    // does not find it reads the file again and inserts nothing (AD-8).
+    const { deps, store } = await kit();
+    const refusing = {
+      ...deps,
+      store: {
+        ...store,
+        async recordTranscriptFile() {
+          return {
+            ok: false as const,
+            code: 'DB_LOCKED' as const,
+            message: '다른 연결이 쓰고 있습니다',
+          };
+        },
+      },
+    };
+
+    expect(await ingestSession(refusing, { session: TOKEN, transcriptPath: PATH })).toMatchObject({
+      ok: true,
+      created: true,
+      spooled: false,
+    });
+    expect(store.snapshot().messages.length).toBeGreaterThan(0);
+  });
+});
+
+describe('sessions.ingest for a caller that is itself the deferred path', () => {
+  it('hands the code back instead of spooling, and writes no mark', async () => {
+    // The drain and the spool replay both come here with `spoolOnUnwritable`
+    // false: a mark written from there would be a second copy of work the queue
+    // is already holding, and the honest answer is the code so the item is
+    // released with its attempt intact (AD-21).
+    const { deps, store, spool } = await kit();
+    const locked = {
+      ...deps,
+      store: {
+        ...store,
+        async ingest() {
+          return {
+            ok: false as const,
+            code: 'DB_LOCKED' as const,
+            message: '다른 연결이 쓰고 있습니다',
+          };
+        },
+      },
+    };
+
+    const result = await ingestSession(
+      locked,
+      { session: TOKEN, transcriptPath: PATH },
+      { spoolOnUnwritable: false },
+    );
+
+    expect(result).toMatchObject({ ok: false, code: 'DB_LOCKED' });
     expect(spool.records()).toEqual([]);
   });
 });

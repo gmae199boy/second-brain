@@ -16,6 +16,7 @@ import {
   type SqliteConnection,
 } from './connect.js';
 import { sqliteSessionStore } from './sessions.js';
+import { sqliteTranscriptFileStore } from './transcript-files.js';
 import { sqliteUserStore } from './users.js';
 import { sqliteWorkStore } from './work.js';
 
@@ -80,6 +81,7 @@ export function sqliteStore(options: SqliteStoreOptions): Store & SchemaStore {
     ...sqliteSessionStore(connect),
     ...sqliteUserStore(connect),
     ...sqliteWorkStore(connect),
+    ...sqliteTranscriptFileStore(connect),
 
     async checkHealth(): Promise<StoreHealth> {
       const opened = connect();

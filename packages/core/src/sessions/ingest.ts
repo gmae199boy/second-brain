@@ -6,14 +6,14 @@ import type {
 } from '../domain/ingest-batch.js';
 import { normalizeRemoteIdentity } from '../domain/project-identity.js';
 import { SECRET_PATTERN_VERSION, maskSecrets } from '../domain/secret-patterns.js';
-import type { ParserCursor, Session } from '../domain/session.js';
+import type { ParserCursor, Session, SessionIngestSource } from '../domain/session.js';
 import {
   parseSessionToken,
   type SessionKey,
   type SessionToken,
 } from '../domain/session-token.js';
 import type { SpoolCause } from '../domain/spool-record.js';
-import type { WarningCode } from '../codes.js';
+import { ERROR_CODES, type WarningCode } from '../codes.js';
 import type { Clock } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
 import type { Parser } from '../ports/parser.js';
@@ -23,21 +23,53 @@ import type {
   EnsureCheckoutInput,
   IngestCounts,
   SessionStore,
+  TranscriptFileStore,
   UserStore,
 } from '../ports/store.js';
-import type { TranscriptReader } from '../ports/transcript.js';
+import type { TranscriptFolder, TranscriptReader } from '../ports/transcript.js';
 import { spoolSessionIngest } from './spool-ingest.js';
 
 /**
  * What a caller asks `sessions.ingest` for. Surface neutral: the session is the
- * token that crosses process boundaries (AD-8, AD-28), and the transcript is a
- * path the harness named — Core never goes looking for one.
+ * token that crosses process boundaries (AD-8, AD-28).
  */
 export interface IngestSessionInput {
   /** `harness:harness_session_id`, as the hook reported it. */
   session: SessionToken;
-  /** Where the harness is writing the transcript. Read through the port. */
-  transcriptPath: string;
+  /**
+   * Where the harness is writing the transcript, when the caller knows.
+   *
+   * Left out — or empty, which is what a hook payload with no path comes to —
+   * the file is looked up in that harness's folder by session id
+   * (`transcriptFolders`). That is what lets a session be collected from the
+   * token alone: the drain's scan and `brain sessions ingest` with a payload
+   * that carried only `session_id` both arrive here with no path.
+   */
+  transcriptPath?: string;
+  /**
+   * Whether this is a session being collected as it happens or one being read
+   * off the disk afterwards. Defaults to `live`.
+   *
+   * It is used only when the session row is created, and never again: a session
+   * first seen by a folder scan was imported however many live turns follow
+   * (Table Contract, `sessions.ingest_source`).
+   */
+  source?: SessionIngestSource;
+}
+
+/** What the caller of one ingest decides, beyond the input itself. */
+export interface IngestSessionOptions {
+  /**
+   * Whether a database that will not take a write goes to the spool (AD-9).
+   *
+   * True for a hook, which is the whole reason the spool exists: a turn whose
+   * conversation could not be stored must still be a turn that worked. False
+   * for the drain, which is *already* the deferred path — a mark written there
+   * would be a second copy of work the queue is holding, and the honest answer
+   * is the code, so that the item is handed back with its attempt intact
+   * (AD-21).
+   */
+  spoolOnUnwritable?: boolean;
 }
 
 /** What one ingest did. A replay reports the same session and inserts nothing. */
@@ -72,7 +104,7 @@ export type IngestSessionResult =
 
 /** Everything the use case is given, all of it a port (AD-1). */
 export interface IngestSessionDependencies {
-  store: SessionStore & UserStore;
+  store: SessionStore & UserStore & TranscriptFileStore;
   /**
    * Where a turn goes when the database will not take it (AD-9). It is a
    * dependency of the ingest and not of its caller because the lock that stops
@@ -85,6 +117,15 @@ export interface IngestSessionDependencies {
   /** Every parser this build can read a transcript with, by harness (AD-4). */
   parsers: readonly Parser[];
   transcripts: TranscriptReader;
+  /**
+   * The transcript folders this build may look in, by harness (AD-4).
+   *
+   * Empty is a working build and not a broken one: it is what a brain whose
+   * capture switch is off has, and then an ingest that was given no path has
+   * nowhere to look and says so. The hook path, which carries a path, does not
+   * depend on this list at all (Boundaries).
+   */
+  transcriptFolders?: readonly TranscriptFolder[];
   /**
    * Asking git what a working folder is, for the tags of a session this call
    * is about to create (AD-12). Core has no git of its own (AD-1).
@@ -99,7 +140,8 @@ export interface IngestSessionDependencies {
  *
  * The order is the whole of the use case, and it is this order on purpose:
  *
- *   token → parser → findSession → read → parse → owner → inspect → ensure → ingest
+ *   token → parser → locate → findSession → read → parse → owner → inspect →
+ *   ensure → ingest → history
  *
  * Reading and parsing come before anything is written, because they are the
  * slow part and a write transaction that waited on a disk would hold the one
@@ -146,13 +188,37 @@ export interface IngestSessionDependencies {
 export async function ingestSession(
   dependencies: IngestSessionDependencies,
   input: IngestSessionInput,
+  options: IngestSessionOptions = {},
 ): Promise<IngestSessionResult> {
-  const { store, spool, clock, idGen, parsers, transcripts, repositories, machine } =
-    dependencies;
+  const {
+    store,
+    spool,
+    clock,
+    idGen,
+    parsers,
+    transcripts,
+    transcriptFolders = [],
+    repositories,
+    machine,
+  } = dependencies;
+  const { spoolOnUnwritable = true } = options;
 
-  /** The one way out when the database will not take a write (AD-9). */
+  /**
+   * Where the transcript is. The caller's, when it gave one; otherwise the
+   * folder listing's answer, worked out below once the harness is known. The
+   * spool mark carries whatever this ends up being, so a replay of it does not
+   * have to look the file up a second time.
+   */
+  let transcriptPath = input.transcriptPath ?? '';
+
+  /**
+   * The one way out when the database will not take a write (AD-9) — or, for a
+   * caller that is itself the deferred path, the code and nothing else.
+   */
   const spooled = async (cause: SpoolCause): Promise<IngestSessionResult> =>
-    spoolSessionIngest({ spool, clock, idGen }, input, cause);
+    spoolOnUnwritable
+      ? spoolSessionIngest({ spool, clock, idGen }, { ...input, transcriptPath }, cause)
+      : { ok: false, code: cause, message: ERROR_CODES[cause].meaning };
 
   const token = parseSessionToken(input.session);
   if (!token.ok) {
@@ -173,12 +239,14 @@ export async function ingestSession(
     };
   }
 
-  if (input.transcriptPath === '') {
-    return {
-      ok: false,
-      code: 'USAGE',
-      message: 'hook이 트랜스크립트를 알려 주지 않아 읽을 것이 없습니다',
-    };
+  // No path, so the file has to be found: the folder of this harness, by the
+  // session id the token carries. A build with no folder for it says so under
+  // the same code as a file that cannot be read, because from here the two are
+  // the same answer — there is nothing to ingest (`ports/transcript.ts`).
+  if (transcriptPath === '') {
+    const located = await locateTranscript(transcriptFolders, key);
+    if (!located.ok) return located;
+    transcriptPath = located.path;
   }
 
   // The stored cursor, before the file is read: it is what lets the parse start
@@ -188,7 +256,7 @@ export async function ingestSession(
   if (!found.ok) return unwritable(found.code) ? spooled(found.code) : found;
   const stored = found.session;
 
-  const read = await transcripts.read(input.transcriptPath);
+  const read = await transcripts.read(transcriptPath);
   if (!read.ok) return read;
 
   // A cursor is only worth anything to the parser that made it. A session read
@@ -199,10 +267,37 @@ export async function ingestSession(
   const parsed = parser.parse(read.content, cursorFor(stored, parser.version));
   if (!parsed.ok) return parsed;
 
+  /**
+   * What this read saw, written to `transcript_files` so the next folder scan
+   * knows this file has been read this far (Decision 2, 2026-10-19).
+   *
+   * Its failure is deliberately dropped. The history is a shortcut and not a
+   * fact anything depends on: a scan that does not find it reads the file again
+   * and inserts nothing, because an ingest is idempotent (AD-8). Failing the
+   * ingest over it would turn a successful collection into a failed turn for
+   * the sake of an optimisation.
+   */
+  const recordHistory = async (): Promise<void> => {
+    await store.recordTranscriptFile({
+      id: idGen.next(),
+      harness: key.harness,
+      path: transcriptPath,
+      sizeBytes: read.sizeBytes,
+      fingerprint: read.fingerprint,
+      cursor: parsed.cursor,
+      scannedAt: clock.now(),
+      reset: parsed.cursorReset,
+    });
+  };
+
   // Nothing to put anywhere: no row, nothing inserted, and no failure either.
   // The Stop hook of a turn whose last answer has not been flushed arrives
-  // here, and so does every hook of a session's first seconds.
+  // here, and so does every hook of a session's first seconds. The history is
+  // still written — the file *was* read this far, and a scan that read it again
+  // every drain for a session with no conversation yet would be the one case
+  // where nothing ever settles.
   if (parsed.messages.length === 0 && (stored === null || parsed.toolNotes.length === 0)) {
+    await recordHistory();
     return {
       ok: true,
       session: input.session,
@@ -277,7 +372,10 @@ export async function ingestSession(
       // When the session's first message was uttered. An existing row keeps the
       // `started_at` it already has.
       startedAt: firstOccurredAt(messages),
-      ingestSource: 'live',
+      // Only ever read when this call creates the row: a session first seen by
+      // a folder scan stays an import however many live turns follow it (Table
+      // Contract).
+      ingestSource: input.source ?? 'live',
       // Why the harness started this session, when the transcript said so. An
       // existing row takes it from the batch instead, which is what lets a
       // session created by an earlier read still learn its start source.
@@ -307,6 +405,12 @@ export async function ingestSession(
   const ingested = await store.ingest(batch);
   if (!ingested.ok) return unwritable(ingested.code) ? spooled(ingested.code) : ingested;
 
+  // After the batch is in and not before: the history says "this file has been
+  // read this far", and a row written before the rows it describes would, for
+  // the width of one failed insert, tell the next scan to skip a file whose
+  // conversation never landed.
+  await recordHistory();
+
   return {
     ok: true,
     session: input.session,
@@ -315,6 +419,53 @@ export async function ingestSession(
     inserted: ingested.inserted,
     warnings: ingested.warnings,
   };
+}
+
+/**
+ * The transcript of one session, found in the folder of its harness.
+ *
+ * Three ways to come back with nothing, and all three are the same answer to
+ * the caller: this build has no folder for that harness — which is what the
+ * capture switch being off looks like (Boundaries) — the folder could not be
+ * listed, or it holds no file for that session id. There is nothing to ingest
+ * in any of them and nothing anybody can do from here, which is exactly what
+ * `TRANSCRIPT_UNREADABLE` says (`ports/transcript.ts`).
+ *
+ * The reason is still in the sentence, because the three have different fixes:
+ * turn capture on, repair the folder, or accept that the harness has deleted
+ * the file.
+ */
+async function locateTranscript(
+  folders: readonly TranscriptFolder[],
+  key: SessionKey,
+): Promise<{ ok: true; path: string } | { ok: false; code: 'TRANSCRIPT_UNREADABLE'; message: string }> {
+  const unreadable = (
+    message: string,
+  ): { ok: false; code: 'TRANSCRIPT_UNREADABLE'; message: string } => ({
+    ok: false,
+    code: 'TRANSCRIPT_UNREADABLE',
+    message: `트랜스크립트를 찾을 수 없습니다: ${message}`,
+  });
+
+  const folder = folders.find((candidate) => candidate.harness === key.harness);
+  if (folder === undefined) {
+    return unreadable(
+      `이 빌드는 "${key.harness}" 하네스의 트랜스크립트 폴더를 보지 않습니다. 수집이 꺼져 있거나 그 하네스를 모릅니다`,
+    );
+  }
+
+  const listed = await folder.list();
+  if (!listed.ok) {
+    return unreadable(`"${key.harness}" 폴더를 읽을 수 없습니다: ${listed.message}`);
+  }
+
+  const file = listed.files.find(
+    (candidate) => candidate.harnessSessionId === key.harnessSessionId,
+  );
+  if (file === undefined) {
+    return unreadable(`"${key.harness}" 폴더에 그 세션의 파일이 없습니다`);
+  }
+  return { ok: true, path: file.path };
 }
 
 /**

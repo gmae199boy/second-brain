@@ -1,5 +1,18 @@
+import { transcriptChanges } from '../capture/scan.js';
+import {
+  TRANSCRIPT_DEADLINE_WARN_DAYS,
+  TRANSCRIPT_RETENTION_DAYS,
+} from '../domain/transcript-file.js';
 import { checkSchema } from '../schema.js';
-import type { HealthStore, SchemaStore, StoreProbe } from '../ports/store.js';
+import type { Clock } from '../ports/clock.js';
+import type {
+  HealthStore,
+  SchemaStore,
+  StoreProbe,
+  TranscriptFileStore,
+  WorkStore,
+} from '../ports/store.js';
+import type { TranscriptFolder, TranscriptListing } from '../ports/transcript.js';
 
 /**
  * What one check came to (Conventions). `warn` is the status a report needs
@@ -72,9 +85,36 @@ export interface DoctorCheckSource {
   run(): Promise<DoctorCheck>;
 }
 
+/**
+ * The reads the two capture checks need: what is still failing, and what has
+ * been collected out of which transcript (AD-21, Table Contract).
+ *
+ * It is a type of its own and not the whole `Store` because doctor may read and
+ * must never write: a report is the command a person runs when things are
+ * already wrong, and a check that took the write lock would be the one thing
+ * that makes a busy brain look broken (AD-7).
+ */
+export type DoctorReadStore = Pick<WorkStore, 'listFailures'> &
+  Pick<TranscriptFileStore, 'listTranscriptFiles'>;
+
 export interface DoctorOptions {
   /** Schema version this build was made for, for the `schema-version` check. */
   schemaVersion: number;
+  /**
+   * The same store, under the capabilities the `failures` and `transcripts`
+   * checks read. It is a second field rather than a wider first parameter
+   * because `runDoctor`'s first parameter is what every adapter has to offer to
+   * be reportable at all, and these two capabilities arrive later (AD-10).
+   */
+  store: DoctorReadStore;
+  /** The one clock: the transcript deadline is measured against it (AD-13). */
+  clock: Clock;
+  /**
+   * The transcript folders this build looks in. Empty — which is what the
+   * capture switch being off means — makes the `transcripts` check a `skip`
+   * rather than a report about nothing (Boundaries).
+   */
+  folders?: readonly TranscriptFolder[];
   /** Checks the runtime registered, run in order after the store's own. */
   checks?: readonly DoctorCheckSource[];
 }
@@ -110,11 +150,18 @@ export async function runDoctor(
   const health = await store.checkHealth();
   if (!health.ok) {
     checks.push({ id: 'db', status: 'fail', code: health.code, detail: health.message });
-    checks.push({ id: 'schema-version', status: 'skip', detail: prereqFailed('db') });
+    // Everything a store would have answered is skipped under the same reason,
+    // so a reader never has to work out from what is missing whether a check
+    // was skipped or never existed.
+    for (const id of ['schema-version', 'failures', 'transcripts']) {
+      checks.push({ id, status: 'skip', detail: prereqFailed('db') });
+    }
   } else {
     checks.push({ id: 'db', status: 'ok', detail: health.serverVersion });
     checks.push(...health.source.probes.map(probeCheck));
     checks.push(await schemaCheck(store, options.schemaVersion));
+    checks.push(await failuresCheck(options.store));
+    checks.push(await transcriptsCheck(options));
   }
 
   for (const source of options.checks ?? []) {
@@ -169,6 +216,106 @@ async function schemaCheck(store: SchemaStore, expected: number): Promise<Doctor
   }
   return { id: 'schema-version', status: 'fail', code: schema.code, detail: schema.message };
 }
+
+/**
+ * What is still failing (FR-5, NFR-2).
+ *
+ * A `warn` and not a `fail` whenever there is anything, because a recorded
+ * failure is the mechanism working: the work stopped, it said so, and `brain
+ * failures retry` is what asks for another go. Nothing is broken about the
+ * brain, and a hook must not be failed over it.
+ *
+ * No code: a failure record is not one of the degraded states of the
+ * Conventions table, and inventing a code for it would mean every surface had
+ * to learn a word that says no more than the count does (Boundaries).
+ */
+async function failuresCheck(store: DoctorReadStore): Promise<DoctorCheck> {
+  const read = await store.listFailures({ includeResolved: false });
+  if (!read.ok) {
+    return { id: 'failures', status: 'fail', code: read.code, detail: read.message };
+  }
+  if (read.failures.length === 0) {
+    return { id: 'failures', status: 'ok', detail: '0건' };
+  }
+
+  // By kind of target, because that is what tells a reader which command to
+  // reach for: sessions are collected again, and other kinds arrive with the
+  // stories that add them (`FAILURE_RETRY_KINDS`).
+  const byKind = new Map<string, number>();
+  for (const failure of read.failures) {
+    byKind.set(failure.targetKind, (byKind.get(failure.targetKind) ?? 0) + 1);
+  }
+  const detail = [...byKind.entries()]
+    .map(([kind, count]) => `${kind} ${String(count)}건`)
+    .join(', ');
+  return { id: 'failures', status: 'warn', detail };
+}
+
+/**
+ * How many transcripts on the disk this brain has not collected, and whether
+ * any of them is close to being deleted (FR-5, SM-5).
+ *
+ * The comparison is the scan's own function, so the number this reports is the
+ * number a drain would act on (`transcriptChanges`). What makes it a `warn` is
+ * a deadline and not a count: a harness keeps a transcript for
+ * `TRANSCRIPT_RETENTION_DAYS` and then it is gone for good, so an uncollected
+ * file older than that minus `TRANSCRIPT_DEADLINE_WARN_DAYS` is the one case
+ * where waiting loses something. A folder nobody could list is a `warn` too —
+ * "there is nothing to collect" and "I could not look" are different answers,
+ * and reporting the second as the first is the silent failure of NFR-2.
+ *
+ * No folders is a `skip`, naming why: a build whose capture switch is off is
+ * not a build with nothing to collect, and `ok` would say it was (Boundaries).
+ */
+async function transcriptsCheck(options: DoctorOptions): Promise<DoctorCheck> {
+  const folders = options.folders ?? [];
+  if (folders.length === 0) {
+    return {
+      id: 'transcripts',
+      status: 'skip',
+      detail: '트랜스크립트 폴더 수집이 꺼져 있습니다',
+    };
+  }
+
+  const uncollected: TranscriptListing[] = [];
+  const problems: string[] = [];
+  for (const folder of folders) {
+    const listed = await folder.list();
+    if (!listed.ok) {
+      problems.push(`"${folder.harness}" 폴더를 읽을 수 없습니다: ${listed.message}`);
+      continue;
+    }
+    const history = await options.store.listTranscriptFiles({ harness: folder.harness });
+    if (!history.ok) {
+      problems.push(`"${folder.harness}" 내역을 읽을 수 없습니다: ${history.message}`);
+      continue;
+    }
+    uncollected.push(...transcriptChanges(listed.files, history.files));
+  }
+
+  const count = `미수집 ${String(uncollected.length)}건`;
+  if (problems.length > 0) {
+    return { id: 'transcripts', status: 'warn', detail: `${count}, ${problems.join('. ')}` };
+  }
+
+  const deadlineMs =
+    options.clock.now().getTime() -
+    (TRANSCRIPT_RETENTION_DAYS - TRANSCRIPT_DEADLINE_WARN_DAYS) * DAY_MS;
+  const overdue = uncollected.filter((file) => file.modifiedAt.getTime() < deadlineMs);
+  if (overdue.length > 0) {
+    return {
+      id: 'transcripts',
+      status: 'warn',
+      detail:
+        `${count}, 그중 ${String(overdue.length)}건은 하네스가 ` +
+        `${String(TRANSCRIPT_RETENTION_DAYS)}일 뒤 지우는 기한에 가까워졌습니다`,
+    };
+  }
+  return { id: 'transcripts', status: 'ok', detail: count };
+}
+
+/** One day in milliseconds, for the retention arithmetic above. */
+const DAY_MS = 86_400_000;
 
 /**
  * One registered check. A source that throws is a failed check and nothing

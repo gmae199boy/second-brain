@@ -12,6 +12,7 @@ import {
 import type { ToolNote } from '../../domain/tool-note.js';
 import type { User } from '../../domain/user.js';
 import type { Failure } from '../../domain/failure.js';
+import type { TranscriptFile } from '../../domain/transcript-file.js';
 import { workKindPolicy, type WorkItem } from '../../domain/work-item.js';
 import type {
   AddWorkInput,
@@ -29,10 +30,19 @@ import type {
   FinishWorkResult,
   HasDueWorkResult,
   IngestResult,
+  ListFailuresQuery,
+  ListFailuresResult,
+  ListOpenWorkTargetsResult,
+  ListTranscriptFilesQuery,
+  ListTranscriptFilesResult,
   ReadSelfUserResult,
   ReadSessionResult,
   RecordFailureInput,
   RecordFailureResult,
+  RecordTranscriptFileInput,
+  RecordTranscriptFileResult,
+  ResolveFailuresInput,
+  ResolveFailuresResult,
   RetryWorkInput,
   Store,
   StoreHealth,
@@ -66,6 +76,8 @@ export interface MemoryStoreSnapshot {
   workItems: readonly WorkItem[];
   /** One row per `(target, stage, fingerprint)`, in the order first seen. */
   failures: readonly Failure[];
+  /** One row per `(harness, path)`, in the order they were first recorded. */
+  transcriptFiles: readonly TranscriptFile[];
   closes: number;
 }
 
@@ -106,6 +118,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
    */
   const workItems: WorkItem[] = [];
   const failures: Failure[] = [];
+  /** Keyed by `(harness, path)`, the idempotency key of the Table Contract. */
+  const transcriptFiles = new Map<string, TranscriptFile>();
   let closes = 0;
 
   /** The open row for one piece of work, or undefined (`work_items_open_key_idx`). */
@@ -513,6 +527,93 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       return { ok: true, outcome: 'recorded', created, failureId };
     },
 
+    async listOpenWorkTargets(query: { kind: string }): Promise<ListOpenWorkTargetsResult> {
+      const targets = workItems
+        .filter((item) => item.completedAt === null && item.kind === query.kind)
+        .map((item) => ({ targetKind: item.targetKind, targetId: item.targetId }));
+      return { ok: true, targets };
+    },
+
+    async listFailures(query: ListFailuresQuery): Promise<ListFailuresResult> {
+      const matched = failures
+        .filter((failure) => query.targetKind === undefined || failure.targetKind === query.targetKind)
+        .filter((failure) => query.stage === undefined || failure.stage === query.stage)
+        .filter((failure) => query.includeResolved === true || failure.resolvedAt === null)
+        // Newest first, the id breaking the tie: two rows recorded in the same
+        // millisecond must come back in one order, or a page would reshuffle
+        // itself between two calls (port contract).
+        .sort((left, right) => {
+          const byInstant = right.occurredAt.getTime() - left.occurredAt.getTime();
+          return byInstant === 0 ? right.id.localeCompare(left.id) : byInstant;
+        })
+        .map((failure) => ({ ...failure }));
+      return {
+        ok: true,
+        failures: query.limit === undefined ? matched : matched.slice(0, query.limit),
+      };
+    },
+
+    async resolveFailures(input: ResolveFailuresInput): Promise<ResolveFailuresResult> {
+      let resolved = 0;
+      for (const failure of failures) {
+        if (
+          failure.targetKind !== input.targetKind ||
+          failure.targetId !== input.targetId ||
+          failure.stage !== input.stage ||
+          // Only the open ones: a row somebody already resolved keeps the
+          // instant it was resolved at (port contract).
+          failure.resolvedAt !== null
+        ) {
+          continue;
+        }
+        failure.resolvedAt = input.now;
+        resolved += 1;
+      }
+      return { ok: true, resolved };
+    },
+
+    async listTranscriptFiles(
+      query: ListTranscriptFilesQuery,
+    ): Promise<ListTranscriptFilesResult> {
+      const files = [...transcriptFiles.values()]
+        .filter((file) => file.harness === query.harness)
+        .map((file) => ({ ...file }));
+      return { ok: true, files };
+    },
+
+    async recordTranscriptFile(
+      input: RecordTranscriptFileInput,
+    ): Promise<RecordTranscriptFileResult> {
+      const key = transcriptKey(input.harness, input.path);
+      const existing = transcriptFiles.get(key);
+      if (existing === undefined) {
+        const file: TranscriptFile = {
+          id: input.id,
+          harness: input.harness,
+          path: input.path,
+          sizeBytes: input.sizeBytes,
+          fingerprint: input.fingerprint,
+          cursor: input.cursor,
+          scannedAt: input.scannedAt,
+        };
+        transcriptFiles.set(key, file);
+        return { ok: true, file: { ...file } };
+      }
+
+      // The size only moves forward, and the cursor moves with it: two reads of
+      // a growing file can finish out of order, and the older one must not wind
+      // the history back. A reset is the one case where a smaller file is the
+      // truth — a compacted transcript really is shorter (port contract).
+      if (!input.reset && input.sizeBytes < existing.sizeBytes) {
+        return { ok: true, file: { ...existing } };
+      }
+      existing.sizeBytes = input.sizeBytes;
+      existing.fingerprint = input.fingerprint;
+      existing.cursor = input.cursor;
+      existing.scannedAt = input.scannedAt;
+      return { ok: true, file: { ...existing } };
+    },
+
     snapshot(): MemoryStoreSnapshot {
       return {
         users: [...users.values()],
@@ -524,6 +625,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         redactions: [...redactions.values()].flat(),
         workItems: workItems.map((item) => ({ ...item })),
         failures: failures.map((failure) => ({ ...failure })),
+        transcriptFiles: [...transcriptFiles.values()].map((file) => ({ ...file })),
         closes,
       };
     },
@@ -562,6 +664,11 @@ function candidates(items: readonly WorkItem[], query: DueWorkQuery): WorkItem[]
  */
 function worktreeKey(projectId: string, path: string): string {
   return `${projectId}\n${path}`;
+}
+
+/** One transcript file's key, for the same reason and the same way. */
+function transcriptKey(harness: string, path: string): string {
+  return `${harness}\n${path}`;
 }
 
 /**

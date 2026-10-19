@@ -19,11 +19,20 @@ export type {
   HealthStore,
   IngestCounts,
   IngestResult,
+  ListFailuresQuery,
+  ListFailuresResult,
+  ListOpenWorkTargetsResult,
+  ListTranscriptFilesQuery,
+  ListTranscriptFilesResult,
   ReadSchemaVersionResult,
   ReadSelfUserResult,
   ReadSessionResult,
   RecordFailureInput,
   RecordFailureResult,
+  RecordTranscriptFileInput,
+  RecordTranscriptFileResult,
+  ResolveFailuresInput,
+  ResolveFailuresResult,
   RetryWorkInput,
   SchemaStore,
   SessionContents,
@@ -33,12 +42,20 @@ export type {
   StoreProbe,
   StoreSourceHealth,
   StoreWarningCode,
+  TranscriptFileStore,
   UserStore,
   WorkFinishOutcome,
   WorkStore,
+  WorkTarget,
 } from './store.js';
 export type { ParseResult, Parser } from './parser.js';
-export type { ReadTranscriptResult, TranscriptReader } from './transcript.js';
+export type {
+  ListTranscriptsResult,
+  ReadTranscriptResult,
+  TranscriptFolder,
+  TranscriptListing,
+  TranscriptReader,
+} from './transcript.js';
 export type { Checkout, RepositoryInspector } from './repository.js';
 export type { HookInput, HookInputReader, ReadHookInputResult } from './hook.js';
 export { BRAIN_MARKER } from './connector.js';
@@ -54,5 +71,7 @@ export type {
   SpoolClaimResult,
   SpoolCompleteResult,
   SpoolReleaseResult,
+  SpoolRewriteInput,
+  SpoolRewriteResult,
   SpoolStatsResult,
 } from './spool.js';

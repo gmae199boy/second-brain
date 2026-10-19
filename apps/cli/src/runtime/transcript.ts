@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import type { ReadTranscriptResult, TranscriptReader } from 'second_brain';
+import { CONTENT_HASH_PREFIX, type ReadTranscriptResult, type TranscriptReader } from 'second_brain';
 
 /**
  * The Runtime's `TranscriptReader`: the one place a harness transcript is read
@@ -19,7 +20,19 @@ export function fileTranscriptReader(): TranscriptReader {
   return {
     async read(path: string): Promise<ReadTranscriptResult> {
       try {
-        return { ok: true, content: await readFile(path, 'utf8') };
+        // The bytes, not the text, and the two facts about them the history
+        // keeps: how many there were and what they hash to (Table Contract).
+        // Measured on the bytes rather than on the decoded string because that
+        // is what the folder listing reports and what the next scan compares
+        // against — `content.length` would be code units and would disagree
+        // with `stat` for every transcript holding a non-ASCII character.
+        const bytes = await readFile(path);
+        return {
+          ok: true,
+          content: bytes.toString('utf8'),
+          sizeBytes: bytes.byteLength,
+          fingerprint: `${CONTENT_HASH_PREFIX}${createHash('sha256').update(bytes).digest('hex')}`,
+        };
       } catch (error) {
         return {
           ok: false,

@@ -146,6 +146,21 @@ interface SpoolRecordBase {
   id: string;
   /** When the thing this record is about happened, read once from `Clock`. */
   occurredAt: Date;
+  /**
+   * How many replays of this record have already failed (AD-9).
+   *
+   * Absent means none, which is what every record a write path produces carries:
+   * the count is the replay's own bookkeeping, written back when it rewrites the
+   * lines that did not go in. At `MAX_WORK_ATTEMPTS` the record is recorded as a
+   * failure and moved aside instead of tried again.
+   *
+   * It is an optional key and not a new line format, deliberately (Decision 5,
+   * 2026-10-19): `schema_version` says how a line is spelled, and a build that
+   * does not know this key ignores it and replays the record once more, which is
+   * harmless — every record is idempotent on its id (AD-8). Raising the version
+   * would instead make every older build refuse the whole file.
+   */
+  attempts?: number;
 }
 
 export interface SessionIngestSpoolRecord extends SpoolRecordBase {
@@ -200,6 +215,14 @@ export function encodeSpoolLine(record: SpoolRecord): EncodeSpoolLineResult {
     return { ok: false, message: 'spool 레코드에 id가 없습니다' };
   }
 
+  const attempts = record.attempts ?? 0;
+  if (!Number.isInteger(attempts) || attempts < 0) {
+    return {
+      ok: false,
+      message: `spool 레코드의 attempts가 0 이상의 정수가 아닙니다: ${describe(record.attempts)}`,
+    };
+  }
+
   const payload = encodePayload(record);
   if (!payload.ok) return payload;
 
@@ -208,6 +231,11 @@ export function encodeSpoolLine(record: SpoolRecord): EncodeSpoolLineResult {
     id: record.id,
     kind: record.kind,
     occurred_at: occurredAt.value,
+    // Written only when it is not the default, so a record nothing has retried
+    // is spelled exactly as it was before this key existed: a test that
+    // compares two writes of one record byte for byte still can, and an older
+    // build reading a fresh spool sees nothing new at all.
+    ...(attempts === 0 ? {} : { attempts }),
     payload: payload.value,
   })}\n`;
 
@@ -321,6 +349,22 @@ export function decodeSpoolLine(line: string): DecodeSpoolLineResult {
     return { ok: false, message: `spool 줄의 occurred_at: ${instant.message}` };
   }
 
+  // Absent is none, which is what every line written before this key existed
+  // means. Anything else that is not a whole count is a line somebody edited,
+  // and guessing at it would be guessing at how close a record is to being
+  // given up on.
+  const rawAttempts = parsed['attempts'];
+  if (
+    rawAttempts !== undefined &&
+    (typeof rawAttempts !== 'number' || !Number.isInteger(rawAttempts) || rawAttempts < 0)
+  ) {
+    return {
+      ok: false,
+      message: `spool 줄의 attempts가 0 이상의 정수가 아닙니다: ${describe(rawAttempts)}`,
+    };
+  }
+  const attempts = rawAttempts ?? 0;
+
   const payload = parsed['payload'];
   if (!isRecord(payload)) {
     return { ok: false, message: 'spool 줄의 payload가 JSON 객체가 아닙니다' };
@@ -336,6 +380,7 @@ export function decodeSpoolLine(line: string): DecodeSpoolLineResult {
         id,
         kind,
         occurredAt: instant.value,
+        attempts,
         payload: decoded.value,
       },
     };
@@ -364,6 +409,7 @@ export function decodeSpoolLine(line: string): DecodeSpoolLineResult {
       id,
       kind,
       occurredAt: instant.value,
+      attempts,
       payload: { session, transcriptPath, cause },
     },
   };

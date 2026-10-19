@@ -29,6 +29,8 @@ const ALL_CHECKS = [
   'fts5-trigram',
   'foreign-keys',
   'schema-version',
+  'failures',
+  'transcripts',
   'config',
   'shim',
   'node-path',
@@ -340,8 +342,13 @@ describe('doctorAt', () => {
     const report = await doctorAt(home, path);
 
     expect(report.checks.map((check) => check.id)).toEqual(ALL_CHECKS);
-    const failed = report.checks.filter((check) => check.status !== 'ok');
+    // Everything but `transcripts`: the install does not turn the folders on,
+    // so that one is a `skip` saying so (Boundaries, Decision 1 2026-10-19).
+    const failed = report.checks.filter(
+      (check) => check.status !== 'ok' && check.id !== 'transcripts',
+    );
     expect(failed, JSON.stringify(failed)).toEqual([]);
+    expect(report.checks.find((check) => check.id === 'transcripts')?.status).toBe('skip');
   });
 
   it('reports db as DB_UNAVAILABLE, and creates nothing, when the file is not there', async () => {
@@ -361,6 +368,8 @@ describe('doctorAt', () => {
     expect(report.checks.map((check) => check.id)).toEqual([
       'db',
       'schema-version',
+      'failures',
+      'transcripts',
       'config',
       'shim',
       'node-path',

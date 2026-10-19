@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   SPOOL_CLAIM_STALE_MS,
@@ -11,6 +11,8 @@ import {
   type SpoolCompleteResult,
   type SpoolRecord,
   type SpoolReleaseResult,
+  type SpoolRewriteInput,
+  type SpoolRewriteResult,
   type SpoolStatsResult,
 } from 'second_brain';
 
@@ -67,6 +69,19 @@ interface SpoolFile {
 const OPEN_SUFFIX = '.jsonl.open';
 const READY_SUFFIX = '.jsonl';
 const CLAIMING_SUFFIX = '.claiming';
+
+/**
+ * The subfolder of lines nothing will ever try again: a line nothing could read,
+ * a record that failed its ten attempts, and a `.open` file a killed process
+ * left behind (AD-9).
+ *
+ * They are kept and not deleted because some of them have no original to be
+ * read again from — a work log entry, an injection record — and because the one
+ * failure mode this whole mechanism has is losing a write in silence. Nothing
+ * reads this folder but `stats`, which counts it so doctor can say so
+ * (2026-10-16).
+ */
+const FAILED_DIRECTORY = 'failed';
 
 /**
  * This process's own count, so two appends in one millisecond get different
@@ -135,6 +150,16 @@ export function fileSpool(options: FileSpoolOptions): Spool {
       // them (AD-9). A reclaim that loses a race is not a failure: somebody
       // else got there, and the file is claimed either way.
       const nowMs = clock.now().getTime();
+
+      // And the `.open` files nobody will finish writing. They are moved aside
+      // rather than replayed, and that is the deliberate half (Decision 6,
+      // 2026-10-19): a `.open` file is a write that was still being spelled, so
+      // its last line may be half a line — and the process that was writing it
+      // has already answered its caller that the write failed, so nobody is
+      // waiting for it to go in. Both tests have to hold: a pid that is gone
+      // *and* a file older than the stale window, because a pid is reused and a
+      // live append is only milliseconds old.
+      await reclaimOpen({ folder, nowMs, isAlive });
       for (const file of listed.files) {
         if (file.claim === undefined) continue;
         const dead = !isAlive(file.claim.pid);
@@ -203,6 +228,42 @@ export function fileSpool(options: FileSpoolOptions): Spool {
       }
     },
 
+    async rewrite(handle: string, input: SpoolRewriteInput): Promise<SpoolRewriteResult> {
+      const parsed = parseName(basename(handle));
+      if (parsed?.claim === undefined) {
+        return { ok: false, message: `claim한 spool 파일 이름이 아닙니다: ${handle}` };
+      }
+
+      // Both new files before the claimed one is removed, and that order is the
+      // whole guarantee: a process killed in the middle leaves the claim behind
+      // — which a later drain takes back and replays, idempotently (AD-8) —
+      // rather than a file that was deleted with lines nothing has kept.
+      try {
+        if (input.keep.length > 0) {
+          // The same stem the release would use, so the name order is still the
+          // time order: the file holds the same records, minus the ones that
+          // went in, plus a raised attempt count.
+          const open = join(folder, `${parsed.stem}${OPEN_SUFFIX}`);
+          await mkdir(folder, { recursive: true, mode: 0o700 });
+          await writeFile(open, lineText(input.keep), { encoding: 'utf8', mode: 0o600 });
+          await rename(open, join(folder, `${parsed.stem}${READY_SUFFIX}`));
+        }
+        if (input.failed.length > 0) {
+          const failedFolder = join(folder, FAILED_DIRECTORY);
+          await mkdir(failedFolder, { recursive: true, mode: 0o700 });
+          // The claim in the name, so two rewrites of the same stem — this
+          // drain and a later one over the lines it kept — cannot collide.
+          const open = join(failedFolder, `${parsed.stem}.${parsed.claim.pid}-${parsed.claim.atMs}${OPEN_SUFFIX}`);
+          await writeFile(open, lineText(input.failed), { encoding: 'utf8', mode: 0o600 });
+          await rename(open, open.slice(0, -'.open'.length));
+        }
+        await unlink(handle);
+      } catch (error) {
+        return { ok: false, message: `spool 줄을 다시 쓸 수 없습니다: ${describe(error)}` };
+      }
+      return { ok: true };
+    },
+
     async stats(): Promise<SpoolStatsResult> {
       const listed = await list(folder);
       if (!listed.ok) return listed;
@@ -230,10 +291,115 @@ export function fileSpool(options: FileSpoolOptions): Spool {
           if (earliest === null || at.getTime() < earliest.getTime()) earliest = at;
         }
       }
-      return { ok: true, records, earliest };
+
+      const given = await countFailed(join(folder, FAILED_DIRECTORY));
+      if (!given.ok) return given;
+      return { ok: true, records, earliest, failed: given.lines };
     },
   };
   return spool;
+}
+
+/** The lines of a file, each with its newline. The one place that is spelled. */
+function lineText(lines: readonly string[]): string {
+  return lines.map((line) => `${line}\n`).join('');
+}
+
+/**
+ * How many lines are in `failed/`, for doctor (AD-9).
+ *
+ * No folder is none, which is the state of a brain nothing has been given up
+ * on. The lines are counted and never decoded: a line in here may be exactly
+ * the line nothing could read, so asking the codec about it would be asking a
+ * question whose answer is already known.
+ */
+async function countFailed(
+  folder: string,
+): Promise<{ ok: true; lines: number } | { ok: false; message: string }> {
+  let names: string[];
+  try {
+    names = await readdir(folder);
+  } catch (error) {
+    if (isMissing(error)) return { ok: true, lines: 0 };
+    return { ok: false, message: `spool 실패 폴더를 읽을 수 없습니다: ${describe(error)}` };
+  }
+
+  let lines = 0;
+  for (const name of names) {
+    // `.jsonl.open` too, which is the one name in here nothing will ever
+    // rename: a process killed between writing the failed file and publishing
+    // it leaves one, and a count that skipped it would say nothing had been
+    // given up on (NFR-2). Nothing reads this folder but this count, so there
+    // is no half-written file to protect from a reader.
+    if (!name.endsWith(READY_SUFFIX) && !name.endsWith(OPEN_SUFFIX)) continue;
+    try {
+      lines += splitLines(await readFile(join(folder, name), 'utf8')).length;
+    } catch (error) {
+      if (isMissing(error)) continue;
+      return { ok: false, message: `spool 실패 파일을 읽을 수 없습니다: ${describe(error)}` };
+    }
+  }
+  return { ok: true, lines };
+}
+
+/**
+ * Move aside every `.open` file nobody will finish writing (Decision 6,
+ * 2026-10-19).
+ *
+ * A `.open` file is a write still being spelled, so the last line of one may be
+ * half a line — and the process that was writing it has already told its caller
+ * the write failed. Nothing is waiting for it, so it is not replayed; it is kept
+ * because it may hold the only copy of something (AD-9), and doctor counts it.
+ *
+ * Both tests have to hold. A pid that is gone, because a live append is in the
+ * middle of writing and must not be touched — and an age past
+ * `SPOOL_CLAIM_STALE_MS`, because pids are reused and a stranger's pid being
+ * alive would otherwise keep an orphan forever. Every failure in here is
+ * swallowed: this is housekeeping at the front of a claim, and a file that could
+ * not be moved is one the next claim tries again.
+ */
+async function reclaimOpen(options: {
+  folder: string;
+  nowMs: number;
+  isAlive: (pid: number) => boolean;
+}): Promise<void> {
+  const { folder, nowMs, isAlive } = options;
+  let names: string[];
+  try {
+    names = await readdir(folder);
+  } catch {
+    return;
+  }
+
+  for (const name of names) {
+    if (!name.endsWith(OPEN_SUFFIX)) continue;
+    const stem = name.slice(0, -OPEN_SUFFIX.length);
+    const pid = pidOf(stem);
+    if (pid === undefined || isAlive(pid)) continue;
+    const path = join(folder, name);
+    try {
+      const { mtimeMs } = await stat(path);
+      if (nowMs - mtimeMs < SPOOL_CLAIM_STALE_MS) continue;
+      const failedFolder = join(folder, FAILED_DIRECTORY);
+      await mkdir(failedFolder, { recursive: true, mode: 0o700 });
+      await rename(path, join(failedFolder, `${stem}${READY_SUFFIX}`));
+    } catch {
+      // Gone, or not ours to move. The next claim asks again.
+    }
+  }
+}
+
+/**
+ * The pid a stem carries, or `undefined` for a name this spool did not write.
+ *
+ * A stem is `<compact instant>-<pid>-<serial>`, and the compact instant has had
+ * its separators taken out, so there are exactly three parts and the middle one
+ * is the pid.
+ */
+function pidOf(stem: string): number | undefined {
+  const matched = /^[^-]+-(\d+)-\d+$/.exec(stem);
+  const pid = matched?.[1];
+  return pid === undefined ? undefined : Number(pid);
 }
 
 /**
@@ -272,6 +438,9 @@ async function list(
  */
 function parseName(name: string): SpoolFile | undefined {
   if (name.endsWith(OPEN_SUFFIX)) return undefined;
+  // The subfolder of lines nobody will try again. It is a name `readdir` hands
+  // back like any other, and no claim may ever reach inside it (AD-9).
+  if (name === FAILED_DIRECTORY) return undefined;
 
   if (name.endsWith(READY_SUFFIX)) {
     const stem = name.slice(0, -READY_SUFFIX.length);
