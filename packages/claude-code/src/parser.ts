@@ -18,11 +18,20 @@ export const CLAUDE_CODE_HARNESS = 'claude-code';
  * what this parser *produces* changes, so a reader can tell which rows came out
  * of which rules.
  *
- * `2` is this story: tool notes, the final reports of delegated runs, the
- * branch and cwd of every line, the session's start source, and the incremental
- * read. `1` produced message bodies and nothing else.
+ * `3` is this story: the report a subagent hands back with `SubagentHandback`,
+ * which arrives on a peer user line and which `2` threw away, is read as a
+ * report — and the one sentence the editor leaves in its place where the
+ * `Agent` call's own result used to be is no longer stored as one. `2` added
+ * tool notes, the final reports of delegated runs, the branch and cwd of every
+ * line, the session's start source, and the incremental read. `1` produced
+ * message bodies and nothing else.
+ *
+ * A session already stored under an older version is read again from the front
+ * the next time it is ingested — `sessions.ingest` hands over no cursor when
+ * the versions differ — so the reports `2` missed are added behind what it
+ * stored, and nothing it stored is touched (AD-4, AD-11).
  */
-export const CLAUDE_CODE_PARSER_VERSION = '2';
+export const CLAUDE_CODE_PARSER_VERSION = '3';
 
 /** The four markers a tool's own output starts a user line with (Boundaries). */
 const TOOL_OUTPUT_MARKERS = [
@@ -31,6 +40,21 @@ const TOOL_OUTPUT_MARKERS = [
   '<bash-stdout>',
   '<bash-stderr>',
 ] as const;
+
+/**
+ * The whole of what the editor leaves where a hand-back run's result would be.
+ *
+ * When a subagent ends by calling `SubagentHandback`, its report is delivered
+ * on a peer line of its own (`readHandback`) and the `Agent` call's own result
+ * — or the `<result>` of its task notification — says only that, naming the
+ * sender. Reading it as the report would store a sentence nobody said *and*
+ * leave two reports for the one run, now that the real one is read. The id
+ * inside the quotes is the only free part: the match is on the whole trimmed
+ * body, so a result that carries this sentence **and** something else is still
+ * a report (Boundaries).
+ */
+const HANDBACK_NOTICE =
+  /^This agent's report was delivered to you as a message from "[^"]*" \(its SubagentHandback call\)\. Read it there; it is not repeated here\.$/;
 
 /** One `tool_use` waiting to find out whether it worked. */
 interface PendingNote {
@@ -68,14 +92,17 @@ interface ParseStart {
  * message when all of these hold:
  *
  *   * `type` is `user` or `assistant`;
- *   * it is not `isSidechain` (a subagent's own conversation), `isMeta` (the
- *     editor talking to the model on the user's behalf) or `isCompactSummary`
- *     (a summary of a conversation, not a turn of one);
+ *   * it is not `isSidechain` — a subagent's own conversation, whatever else
+ *     the line carries;
+ *   * it is not `isMeta` (the editor talking to the model on the user's behalf)
+ *     or `isCompactSummary` (a summary of a conversation, not a turn of one),
+ *     unless it is a peer's hand-back report: that line is `isMeta` precisely
+ *     because nobody typed it, and it is read as a report (below);
  *   * it is not an assistant line marked `isApiErrorMessage` — the editor
  *     rendering a failure, not the model answering;
  *   * it is not a user line whose `origin.kind` is `task-notification` (the
- *     editor telling the model a delegated run moved on; the report exception
- *     is below) or `peer` (another agent's traffic);
+ *     editor telling the model a delegated run moved on) or `peer` (another
+ *     agent's traffic) — both have a report exception, below;
  *   * it is not a user line whose body starts with a tool-output marker — the
  *     stdout of a `!` command or a background shell, which the editor hands to
  *     the model as a user turn;
@@ -289,11 +316,20 @@ function readMessage(
 ): ParsedMessage | undefined {
   const role = asRole(entry['type']);
   if (role === undefined) return undefined;
-  // Three flags, all of which mean "not a turn of this conversation".
+  // A subagent's own conversation, and nothing else gets a say: a hand-back
+  // written inside a sidechain is a report that run made to *its* caller, not
+  // to this one (Boundaries).
+  if (entry['isSidechain'] === true) return undefined;
+
+  // The report a peer handed back, judged *before* the two flags below. The
+  // editor delivers that line on the person's behalf and so marks it `isMeta`
+  // — every one of them does, measured — so a filter that ran first would drop
+  // the one thing a delegated run leaves behind.
+  const handback = readHandback(entry);
+  // Two flags that both mean "not a turn of this conversation".
   if (
-    entry['isSidechain'] === true ||
-    entry['isMeta'] === true ||
-    entry['isCompactSummary'] === true
+    handback === undefined &&
+    (entry['isMeta'] === true || entry['isCompactSummary'] === true)
   ) {
     return undefined;
   }
@@ -316,7 +352,7 @@ function readMessage(
   // A delegated run's final report comes in on a user line, and it is the one
   // thing worth recalling out of a whole subagent run. It is read as an
   // assistant message with no model of its own.
-  const report = readReport(entry, message, content, lineStart);
+  const report = handback ?? readReport(entry, message, content, lineStart);
   if (report !== undefined) {
     return {
       harnessMessageId,
@@ -377,6 +413,10 @@ function readMessage(
  *
  * The id is checked by searching the content in front of the line in both the
  * full and the incremental case, so the two read the same thing (Design Notes).
+ *
+ * A run that ended with `SubagentHandback` reports through neither of those: it
+ * leaves `HANDBACK_NOTICE` in both places, and `readHandback` reads the report
+ * off the peer line the editor delivered it on.
  */
 function readReport(
   entry: Record<string, unknown>,
@@ -393,7 +433,7 @@ function readReport(
     result['status'] === 'completed'
   ) {
     const body = readBody(result['content']);
-    if (body !== '') return body;
+    if (body !== '' && !HANDBACK_NOTICE.test(body)) return body;
   }
 
   const origin = asRecord(entry['origin']);
@@ -410,7 +450,43 @@ function readReport(
   // The report ends at the last one, so a report that carries the closing tag
   // inside it still comes out whole.
   const body = between(notice, '<result>', '</result>', 'last')?.trim();
-  return body === undefined || body === '' ? undefined : body;
+  if (body === undefined || body === '' || HANDBACK_NOTICE.test(body)) return undefined;
+  return body;
+}
+
+/**
+ * The report a subagent handed back, read off this line's `origin`, or
+ * `undefined` when the line is not one.
+ *
+ * A run that ends by calling `SubagentHandback` does not answer through its
+ * `Agent` call at all. The editor delivers the report as a user line from a
+ * peer — `origin.kind` `peer`, `origin.handback` `true` — and because nobody
+ * typed that line it is marked `isMeta`, which is why `readMessage` asks this
+ * question first.
+ *
+ * The body is `origin.handbackReportText` and nothing else. `message.content`
+ * and `origin.body` carry the editor's own framing wrapped around the report —
+ * who sent it, that it is model output and carries no user authority, the
+ * report indented inside it — and a body cut back out of that framing would be
+ * text this parser invented, in a row that can never be corrected (AD-11).
+ *
+ * `handback` must be the boolean: a string `"true"` is a shape this parser has
+ * not seen and will not guess at. A hand-back from before the harness wrote
+ * `handbackReportText` (Claude Code up to 2.1.296) carries the report only
+ * inside that framing and is dropped — a message that was stored cannot be
+ * taken back, while one that was dropped arrives later when the parser version
+ * moves (Decision 2026-10-19).
+ */
+function readHandback(entry: Record<string, unknown>): string | undefined {
+  if (entry['type'] !== 'user') return undefined;
+  const origin = asRecord(entry['origin']);
+  if (origin === undefined) return undefined;
+  if (origin['kind'] !== 'peer' || origin['handback'] !== true) return undefined;
+
+  const text = origin['handbackReportText'];
+  if (typeof text !== 'string') return undefined;
+  const body = text.trim();
+  return body === '' ? undefined : body;
 }
 
 /**
@@ -593,8 +669,13 @@ function isToolOutput(body: string): boolean {
 
 /**
  * Whether this user line came from somewhere other than the person: the editor
- * reporting on a delegated run, or another agent. A `task-notification` that is
- * a finished run's report never reaches here — `readReport` has taken it.
+ * reporting on a delegated run, or another agent. A report never reaches here:
+ * a `task-notification` that carries a finished run's answer has been taken by
+ * `readReport`, and a peer's hand-back by `readHandback`. What is left of
+ * `peer` is another agent's own traffic — and the hand-backs `readHandback`
+ * would not read either, those carrying no usable `handbackReportText`, which
+ * are dropped: by the `isMeta` filter when the line has it, and here when it
+ * does not.
  */
 function isForeignOrigin(value: unknown): boolean {
   const origin = asRecord(value);

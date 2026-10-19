@@ -52,6 +52,10 @@ const SESSION_FIXTURE = fileURLToPath(
 const SECRETS_FIXTURE = fileURLToPath(
   new URL('../../../packages/claude-code/test/fixtures/secrets-session.jsonl', import.meta.url),
 );
+/** The hand-back fixture: the report a run delivered on a peer line (story 19). */
+const HANDBACK_FIXTURE = fileURLToPath(
+  new URL('../../../packages/claude-code/test/fixtures/peer-handback.jsonl', import.meta.url),
+);
 /**
  * Every secret that fixture pastes, each of them invented and valid nowhere.
  * None of these may be anywhere in the database afterwards (AD-11).
@@ -68,6 +72,16 @@ const SESSION_HALF_LINES = 25;
 /** The markers the session fixture puts in every tool output and every image. */
 const TOOL_OUTPUT = 'TOOL-OUTPUT-MUST-NOT-BE-STORED';
 const BASE64 = 'QkFTRTY0TVVTVE5PVEJFU1RPUkVE';
+/**
+ * The marker the hand-back fixture puts in the editor's framing around every
+ * report, and in the report text of every line that is not a hand-back.
+ */
+const FRAME = 'FRAME-MUST-NOT-BE-STORED';
+/** The two reports `peer-handback.jsonl` carries, trimmed as they are stored. */
+const HANDBACK_REPORTS = [
+  'The notes folder holds four files, and import.md is the newest.',
+  'Every link in notes/ still resolves. Two of them point at the same page.',
+] as const;
 
 interface Run {
   code: number | null;
@@ -283,6 +297,68 @@ function storedToolNotes(
 
 function databaseIn(home: string): string {
   return join(home, 'brain.db');
+}
+
+/** The parser version the one stored session records. */
+function storedParserVersion(path: string): string | null {
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    return (
+      database.prepare('select parser_version from sessions').get() as {
+        parser_version: string | null;
+      }
+    ).parser_version;
+  } finally {
+    database.close();
+  }
+}
+
+/**
+ * The session put back on the parser version that stored it, which is what
+ * makes the next ingest read the transcript from the front instead of from the
+ * cursor that version left (AD-4).
+ */
+function setParserVersion(path: string, version: string): void {
+  const database = new DatabaseSync(path);
+  try {
+    const update = database.prepare('update sessions set parser_version = ?');
+    update.run(version);
+  } finally {
+    database.close();
+  }
+}
+
+/**
+ * The hand-back fixture in this test's own folder, either whole or with every
+ * hand-back line taken out.
+ *
+ * Without them it stands in for a session parser `2` stored, and it is not the
+ * whole of one: `2` would also have stored the two notices the editor left
+ * where the results of those runs were (the fixture's `agent-4e1` result and
+ * its `agent-8b3` notification) as reports, and `3` cannot write those rows at
+ * all. So the pair of ingests pins the half that matters here — re-reading adds
+ * the hand-back reports and leaves every stored row's seq and body alone — and
+ * says nothing about the fake reports `2` left behind, which are a message that
+ * cannot be taken back (AD-11).
+ */
+async function handbackTranscriptIn(
+  home: string,
+  options: { handbacks?: boolean } = {},
+): Promise<string> {
+  const path = join(home, 'handback.jsonl');
+  const whole = await readFile(HANDBACK_FIXTURE, 'utf8');
+  const lines =
+    options.handbacks === false
+      ? whole
+          .trimEnd()
+          .split('\n')
+          .filter((line) => {
+            const entry = JSON.parse(line) as { origin?: { handback?: unknown } };
+            return entry.origin?.handback !== true;
+          })
+      : whole.trimEnd().split('\n');
+  await writeFile(path, `${lines.join('\n')}\n`, 'utf8');
+  return path;
 }
 
 /** The session fixture in this test's own folder, whole or only its front. */
@@ -650,6 +726,121 @@ describe('brain sessions ingest claude-code on a whole session', () => {
     } finally {
       database.close();
     }
+  });
+});
+
+/**
+ * The report a run hands back with `SubagentHandback`, through the real binary
+ * and a real SQLite file (story 19).
+ *
+ * It arrives on a peer line the editor marked `isMeta` and wrapped in framing
+ * of its own, and it leaves one sentence where the `Agent` call's result used
+ * to be. Parser `2` stored that sentence and threw the report away; `3` does
+ * the other thing, and a session `2` stored is read again from the front so the
+ * reports it missed land behind what it stored.
+ */
+describe('brain sessions ingest claude-code and a report handed back', () => {
+  it('stores the two reports, and neither the notice nor the framing', async () => {
+    const home = await installedHome();
+    const transcript = await handbackTranscriptIn(home);
+
+    const run = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      stopPayload(transcript),
+    );
+
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.warnings).toEqual([]);
+    // The question, the two reports, the answer — and the two `Agent` calls.
+    expect(envelope.data?.inserted).toEqual({ messages: 4, toolNotes: 2, redactions: 0 });
+
+    const database = new DatabaseSync(databaseIn(home), { readOnly: true });
+    try {
+      expect(
+        database
+          .prepare(
+            `select seq, role, model, git_branch, body from messages
+              where is_subagent_report = 1 order by seq`,
+          )
+          .all(),
+      ).toEqual([
+        {
+          seq: 1,
+          role: 'assistant',
+          model: null,
+          git_branch: 'main',
+          body: HANDBACK_REPORTS[0],
+        },
+        {
+          seq: 2,
+          role: 'assistant',
+          model: null,
+          git_branch: 'feature/notes',
+          body: HANDBACK_REPORTS[1],
+        },
+      ]);
+    } finally {
+      database.close();
+    }
+
+    // Nowhere in the database, rather than nowhere in a column somebody thought
+    // of: the editor's framing, the report text of every line that is not a
+    // hand-back, and the sentence left where the two results would be.
+    const dump = JSON.stringify(rowDump(databaseIn(home)));
+    expect(await readFile(transcript, 'utf8')).toContain(FRAME);
+    expect(dump).not.toContain(FRAME);
+    expect(dump).not.toContain('SubagentHandback');
+    expect(dump).not.toContain('<agent-message');
+  });
+
+  it('adds only the reports to a session an older parser version stored', async () => {
+    const home = await installedHome();
+    // The transcript as the older parser left the session: its hand-back lines
+    // never became messages, so here they are not in the file at all.
+    const transcript = await handbackTranscriptIn(home, { handbacks: false });
+    const payload = stopPayload(transcript);
+    expect(
+      (await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code,
+    ).toBe(0);
+    const before = storedMessages(databaseIn(home));
+    expect(before).toHaveLength(2);
+    expect(storedParserVersion(databaseIn(home))).toBe('3');
+
+    // And the version that read it, which is the whole of what makes the next
+    // ingest start at the front rather than at the cursor it left.
+    setParserVersion(databaseIn(home), '2');
+    await copyFile(HANDBACK_FIXTURE, transcript);
+
+    const run = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      payload,
+    );
+
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    // Reading it all again is idempotent, so only the two reports go in, and
+    // not one tool note is written twice (AD-8).
+    expect(envelope.data?.inserted).toEqual({ messages: 2, toolNotes: 0, redactions: 0 });
+    // Degraded reads are never silent, and this is not one: the cursor was not
+    // reset, it was never handed over.
+    expect(envelope.warnings).toEqual([]);
+
+    const after = storedMessages(databaseIn(home));
+    // Not one number and not one body of what was already stored moved: a
+    // message cannot be corrected, only added behind (AD-11).
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(after.slice(before.length)).toEqual([
+      { seq: 2, role: 'assistant', body: HANDBACK_REPORTS[0] },
+      { seq: 3, role: 'assistant', body: HANDBACK_REPORTS[1] },
+    ]);
+    expect(storedParserVersion(databaseIn(home))).toBe('3');
   });
 });
 
