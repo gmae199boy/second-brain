@@ -323,9 +323,10 @@ export function sqliteWorkStore(connect: SqliteConnect): WorkStore {
           // replaying a spooled record proposes the id it minted the first time.
           const before = await readFailureId(held, input);
 
-          // `do update set resolved_at = null` and nothing else: the same cause
-          // met again is this row, open again, with the id, the message and the
-          // instant it was first given (Decision 2, Table Contract).
+          // The same cause met again is this row: it keeps its id, is open
+          // again, and carries this occurrence's instant and sentence, so it
+          // says when the cause was last met (Decision 2, 2026-10-19 사용자,
+          // Table Contract). The first instant and the count arrive with 0005.
           await sql`
             insert into failures (id, target_kind, target_id, stage, fingerprint, harness,
                                   session_id, code, message, occurred_at)
@@ -333,7 +334,9 @@ export function sqliteWorkStore(connect: SqliteConnect): WorkStore {
                          ${input.fingerprint}, ${input.harness}, ${input.sessionId},
                          ${input.code}, ${input.message}, ${occurredAt})
             on conflict (target_kind, target_id, stage, fingerprint)
-              do update set resolved_at = null
+              do update set occurred_at = excluded.occurred_at,
+                            message = excluded.message,
+                            resolved_at = null
           `.execute(held);
           return before === null
             ? { created: true, failureId: await readFailureId(held, input) }

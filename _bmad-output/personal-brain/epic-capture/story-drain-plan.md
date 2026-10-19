@@ -35,6 +35,7 @@ deferred:
       같은 실패 키가 다시 날 때 `occurred_at`·`message`를 최신으로 바꿀지 사람이 정해야 한다.
     evidence: |-
       Decision 2는 Table Contract("`resolved_at`만 바뀜")를 지켜 `resolved_at`만 비운다. 그래서 100번째 실패도 처음 시각과 문장을 보인다. doctor·`failures list`(2.12)가 보일 값이다.
+      해결됨(2026-10-19 사용자, B): 다시 날 때 `occurred_at`·`message`를 방금 것으로 바꾼다(이 커밋에서 고침). 처음 난 때와 횟수는 스토리 18의 0005가 칸으로 더한다.
     location: >-
       packages/sqlite/src/work.ts
     severity: low
@@ -67,7 +68,7 @@ deferred:
   5. 일시 오류와 모르는 오류는 n ≥ 10이면 실패 기록과 닫기를 한다.
 - **던진 handler.** handler가 던지면 drain이 잡는다. 모르는 오류(code `HANDLER_THREW`, Core 상수. 코드 표에 넣지 않는다)로 다룬다. 한 일감의 버그가 drain 전체를 죽이지 않는다.
 - **실패 기록 함수 하나(Store `recordFailure`).** `failures`에 쓴다. 키는 `(target_kind, target_id, stage, fingerprint)`, 정보 칸은 `harness`·`session_id`(nullable), 그리고 `code`, `message`, `occurred_at`이다.
-  - 같은 키가 있으면 `resolved_at = null`만 한다(다시 연다). id·message·occurred_at은 처음 것 그대로다.
+  - 같은 키가 있으면 그 행을 다시 연다(`resolved_at = null`). `occurred_at`·`message`는 방금 것으로 바꾸고, id와 정보 칸은 처음 것 그대로다(2026-10-19 사용자, Decision 2).
   - 선택 인자 `closeWork: {id, claimedBy, now}`가 있으면 같은 트랜잭션에서 그 일감을 닫는다(`completed_at`, `last_error`, 청구 칸 비움). 청구가 우리 것이 아니면 실패 행도 쓰지 않고 `lost`로 답한다.
   - drain은 마지막 시도에서만 이 함수를 부른다. `stage`는 일감 종류다. drain이 넘기는 `harness`·`session_id`는 null이다(2.12가 세션 대상에 채운다).
 - **fingerprint(Core 함수 하나).** `failureFingerprint({stage, input, code})` = `sha256:` + `JSON.stringify([stage, input, code])`의 해시(`domain/sha256.ts`)다. 오류 문장·시각·경로·스택은 넣지 않는다. drain의 `input`은 `${target_kind}:${target_id}`다.
@@ -96,7 +97,7 @@ deferred:
 - 사람이 읽는 새 문구는 한국어다(Conventions '출력 언어'). README와 코드 대조, 출력 언어 검사가 통과해야 한다.
 - Decision(2026-10-19, 무인 실행에서 에이전트가 고름) 다섯 가지:
   1. 시도 횟수는 **청구할 때** 올린다. 처리 중에 죽은 일감도 한 번으로 세어, 워커를 죽이는 일감이 끝없이 돌지 않게 한다. DB에 쓸 수 없어 멈출 때만 돌려주기로 되돌린다. 돌려주기마저 못 쓰면 그 한 번은 남는다. 다른 안: 실패를 기록할 때 올림(죽은 워커는 세지 않음).
-  2. 같은 실패 키가 다시 나면 `resolved_at`만 비운다. Table Contract의 "`resolved_at`만 바뀜"을 지킨다. 다른 안: `occurred_at`·`message`도 최신으로.
+  2. (2026-10-19 사용자가 B로 정함 — 처음 에이전트는 `resolved_at`만 비우는 안을 골랐다) 같은 실패 키가 다시 나면 행을 다시 열고 `occurred_at`·`message`를 방금 것으로 바꾼다. 그래서 `occurred_at`은 마지막으로 난 때다. 처음 난 때(`first_occurred_at`)와 횟수(`occurrences`)는 스토리 18의 0005가 칸으로 더하고 `recordFailure`가 채운다. 다른 안: A(칸 없이 최신으로만), C(실패한 일감마다 한 행).
   3. 기회적 drain은 hook이 아닌 DB 명령 전부(지금은 `doctor run`)가 결과를 만든 뒤 돈다. 명령이 성공했고 스키마가 맞을 때만이다. 다른 안: `doctor`는 제외(그러면 지금 기회적 drain을 부르는 명령이 없다).
   4. handler가 없는 종류는 청구하지 않는다. 다른 안: 영구 오류로 닫음(새 빌드가 넣은 일감을 옛 빌드가 지워 버린다).
   5. 오류 문자열은 저장 전에 가린다. 티켓이 그렇게 정했고, 마스킹 B("저장은 원문")는 대화 데이터에 대한 결정이다. 오류 문자열은 대화가 아니고 로그에 가깝다.
@@ -277,7 +278,7 @@ SQLite가 이 능력을 구현한다. 청구는 트랜잭션 하나이고 compar
 
 **에이전트가 대신 내린 결정**(Always의 Decision 1~5, Implementation Notes):
 1. 시도 횟수는 청구 때 올린다.
-2. 같은 실패 키가 다시 나면 `resolved_at`만 비운다.
+2. 같은 실패 키가 다시 나면 `resolved_at`만 비운다. 사람 확인 뒤 B로 바뀌었다(아래 사람 확인 결과).
 3. 기회적 drain은 hook이 아닌 DB 명령 전부에서 돈다. 성공·스키마 일치일 때만이고, 리뷰 뒤 `failed: true`도 뺐다.
 4. handler가 없는 종류는 청구하지 않는다.
 5. 오류 문자열은 저장 전에 가린다.
@@ -285,3 +286,7 @@ SQLite가 이 능력을 구현한다. 청구는 트랜잭션 하나이고 compar
 구현이 더한 결정도 있다. 청구 질의에 `indexed by work_items_due_idx`를 박았다. 이것이 없으면 플래너가 `kind`의 인덱스와 임시 정렬을 고른다(실측).
 
 **남은 위험:** 실제 일감 종류가 없어서 루프는 주입된 handler로만 돌았다. spool `failure` 줄은 2.12 전까지 다시 들어가지 않는다. `hasDueWork`·청구는 미완료 백로그가 커지면 선형으로 훑는다.
+
+**사람 확인 결과(2026-10-19):**
+- Decision 1·3·4·5는 그대로다. 3(기회적 drain)은 남기고, 데몬이 살아 있을 때 끄는 예외는 epic-daemon이 맡는다. 4의 빈틈(모르는 종류의 일감이 doctor에 보이지 않음)은 남겨만 둔다.
+- Decision 2는 B로 바뀌었다. 같은 원인이 다시 나면 행을 다시 열고 시각·문장을 방금 것으로 바꾼다(`work.ts`, 가짜 store, 포트 주석, README, SQLite 테스트). 처음 난 때와 횟수 칸은 스토리 18(0005)의 티켓에 넣었다. Table Contract·epic Notes·deferred-work도 맞췄다.

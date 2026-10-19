@@ -493,8 +493,10 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         failureId = input.id;
         created = true;
       } else {
-        // Reopened and nothing else: the id, the message and the instant stay
-        // the first one's (Decision 2, Table Contract).
+        // Reopened, with the latest instant and sentence: the id stays the
+        // first one's (Decision 2, 2026-10-19 사용자, Table Contract).
+        existing.occurredAt = input.occurredAt;
+        existing.message = input.message;
         existing.resolvedAt = null;
         failureId = existing.id;
         created = false;

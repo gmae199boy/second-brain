@@ -46,7 +46,7 @@ Claude Code 세션이 손대지 않아도 원문 그대로 빠짐없이 쌓이�
 - E2-7 (CAP-1): 빠짐없이 — spool, `work_items` 대기열과 `queue drain`, 기회적 drain, 실패 기록 함수와 fingerprint, 내역(`transcript_files`) 기반 폴더 스캔(설치 직후 첫 스캔이 디스크에 남은 transcript를 모두 가져온다; 스캔이 처음 만든 세션은 `import`, hook이 만든 세션은 `live`), 세션 토큰만으로 하는 증분 수집(epic 3·4가 부름), `failures list`·`failures retry`, doctor의 미수집·실패·spool 항목. (FR-5·6, AD-6·7·9·21)
 - E2-8 (CAP-2): 비밀 가리기 — 버전 있는 Core 패턴 목록과 출력 가리기 함수(저장은 원문, Core 출력 코덱이 가림, 출력 코덱 등록부와 계약 테스트), 저장본에서 지우는 `messages redact` 연쇄(`detected` 포함)와 확인 게이트. (FR-26, AD-11)
 - E2-9 (CAP-14 스키마 자리, CAP-2, CAP-1): 마이그레이션 0004(0003은 2.2의 `users`) — `chunk_locator`, `redactions.pattern_version`·파일 가리기 자리·변경 거부 trigger, `document_extractions`의 `attempt`·`failed_stage`·`index_config_id`, `files.source_unreachable_at`, 서브에이전트 표시 칸, `messages.git_branch`, drain 청구 인덱스, `failures` 대상 키. 파일 쪽 동작은 epic-attachments. (AD-11·23·24, Table Contract)
-- E2-10 (CAP-2, CAP-1, CAP-14 스키마 자리): 마이그레이션 0005 — `redactions.tool_note_id`, `document_extractions`의 `failed_stage` 강제 trigger, `projects.identity_key`. 동작은 13·20과 epic-attachments. (AD-11·12·24, Table Contract)
+- E2-10 (CAP-2, CAP-1, CAP-14 스키마 자리): 마이그레이션 0005 — `redactions.tool_note_id`, `document_extractions`의 `failed_stage` 강제 trigger, `projects.identity_key`, `failures`의 `first_occurred_at`·`occurrences`(2026-10-19). 동작은 13·20과 epic-attachments. (AD-11·12·24, Table Contract)
 
 ## Done when
 
@@ -141,3 +141,4 @@ AD-4·5·6·7·8·9·11·12·13·18·19·21, Table Contract(projects, worktrees,
   - 14는 13·19·20이 끝난 뒤 실제 수집을 켠다. 저장한 메시지와 꼬리표는 바뀌지 않기 때문이다.
   - (검증 서브에이전트 권고, 사용자 change 승인으로 받아들임)
 - Decision(2026-10-19, 사용자, change-masking-b-and-review-fixes 검증 뒤): (1) 대소문자만 다른 이름은 같은 프로젝트다. 0005 전에 이미 갈라진 프로젝트가 있으면 setup이 이미 있다고 보이고, 합칠지 묻고(확인 게이트), 동의하면 먼저 만든 프로젝트로 합친다. 거절하면 DB를 바꾸지 않는다(18). (2) 셸 `NAME=value` 규칙은 도구 메모를 돌려주는 읽기 결과가 그 칸에만 먼저 걸고, 코덱은 모든 문자열에 본문 규칙을 건다(17).
+- Decision(2026-10-19, 사용자, 2.11 확인): 같은 실패 원인(일감 종류·대상·오류 코드)은 한 행으로 둔다. 다시 나면 그 행을 다시 열고 `occurred_at`(마지막으로 난 때)·`message`를 방금 것으로 바꾼다(11). 처음 난 때 `first_occurred_at`과 횟수 `occurrences`는 18의 0005가 칸으로 더하고 실패 기록 함수가 채운다. 다른 안이었던 "칸 없이 최신으로만"과 "실패한 일감마다 한 행"은 고르지 않았다. 11의 나머지 결정(청구 때 시도 횟수, 기회적 drain 유지, handler 없는 종류는 그대로 둠, 오류 문장은 저장 전에 가림)은 그대로 받아들였다.

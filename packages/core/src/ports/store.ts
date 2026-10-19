@@ -434,9 +434,11 @@ export interface RecordFailureInput {
  * What the record came to.
  *
  * `created` tells a reopened row from a new one: the same cause met a hundred
- * times is one row, and the second through hundredth answers only clear
- * `resolved_at` — the id, the message and the instant stay the first one's
- * (Decision 2, 2026-10-19, Table Contract).
+ * times is one row. The second through hundredth keep the row's id, open it
+ * again (`resolved_at` cleared) and replace `occurred_at` and `message` with
+ * this occurrence's, so the row says when the cause was last met. When it was
+ * first met and how often arrive with migration 0005 (Decision 2, 2026-10-19
+ * 사용자, Table Contract).
  */
 export type RecordFailureResult =
   | { ok: true; outcome: 'recorded'; created: boolean; failureId: string }
@@ -491,8 +493,9 @@ export interface WorkStore {
    * Record one failure, and optionally close the item it was about, in one
    * transaction (AD-21).
    *
-   * The same key met again only clears `resolved_at`, so a recurring problem is
-   * one row that is open again rather than a hundred rows (Table Contract).
+   * The same key met again is the same row, open again and carrying the latest
+   * instant and sentence, so a recurring problem is one row rather than a
+   * hundred (Table Contract).
    */
   recordFailure(input: RecordFailureInput): Promise<RecordFailureResult>;
 }

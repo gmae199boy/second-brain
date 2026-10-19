@@ -174,7 +174,7 @@ describe('the columns the SQLite queue writes', () => {
     }
   });
 
-  it('keeps the first failure row and only reopens it, closing the item with it', async () => {
+  it('keeps one failure row, reopening it with the latest instant and sentence, and closes the item with it', async () => {
     const path = await migratedPath();
     const store = sqliteStore({ path });
     try {
@@ -225,8 +225,9 @@ describe('the columns the SQLite queue writes', () => {
         claimed_by: null,
       });
 
-      // Resolved, then met again: only `resolved_at` is cleared, and the id,
-      // the message and the instant stay the first one's (Decision 2).
+      // Resolved, then met again: the same row keeps its id, is open again, and
+      // carries the latest instant and sentence (Decision 2, 2026-10-19 사용자).
+      // The information columns stay what the first record said.
       const opened = openSqlite({ path, busyTimeoutMs: 3000 });
       if (!opened.ok) throw new Error(opened.message);
       opened.connection.database.exec(
@@ -254,8 +255,8 @@ describe('the columns the SQLite queue writes', () => {
       });
       expect(rows(path, 'failures')[0]).toMatchObject({
         id: '01940000-0000-7000-8000-000000000020',
-        message: '열 번 모두 실패했습니다',
-        occurred_at: '2026-02-03T04:05:06.000Z',
+        message: '다른 문장',
+        occurred_at: '2026-02-03T06:00:00.000Z',
         harness: null,
         resolved_at: null,
       });
