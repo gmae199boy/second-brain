@@ -19,6 +19,11 @@ export { sqliteStore, type SqliteStoreOptions } from './store.js';
 export { sqliteSessionStore } from './sessions.js';
 export { sqliteUserStore } from './users.js';
 export {
+  claimCandidateQuery,
+  sqliteWorkStore,
+  type WorkItemRow,
+} from './work.js';
+export {
   SQLITE_MIGRATIONS_DIRECTORY,
   SQLITE_SCHEMA_VERSION,
   runSqliteMigrations,

@@ -5,6 +5,7 @@ import type {
   IngestToolNote,
   IngestTracking,
 } from '../domain/ingest-batch.js';
+import { failureFingerprint } from '../domain/failure.js';
 import { SECRET_PATTERN_VERSION } from '../domain/secret-patterns.js';
 import { formatSessionToken, type SessionKey } from '../domain/session-token.js';
 import {
@@ -13,9 +14,11 @@ import {
   type SpoolRecord,
 } from '../domain/spool-record.js';
 import type {
+  AddWorkInput,
   EnsureCheckoutInput,
   EnsureSelfUserInput,
   EnsureSessionInput,
+  RecordFailureInput,
 } from '../ports/store.js';
 import { memoryParser, memoryTranscript } from './fakes/parser.js';
 import { sequenceIdGen } from './fakes/id-gen.js';
@@ -101,6 +104,63 @@ export function sampleCheckoutInput(
     remoteIdentity: 'demo.example/brain-owner/notes',
     worktreeId: sampleWorktreeId,
     worktreePath: '/demo/repo',
+    ...overrides,
+  };
+}
+
+/**
+ * The queue and the record, and two ids of each so a case can propose a
+ * different one twice (AD-21).
+ */
+export const sampleWorkItemId = '01940000-0000-7000-8000-000000000010';
+export const otherWorkItemId = '01940000-0000-7000-8000-000000000011';
+/** A third, so a case can check that the id breaks a tie on attempts. */
+export const lastWorkItemId = '01940000-0000-7000-8000-000000000014';
+export const sampleFailureId = '01940000-0000-7000-8000-000000000012';
+export const otherFailureId = '01940000-0000-7000-8000-000000000013';
+
+/**
+ * One piece of work, due at once.
+ *
+ * `demo_work` is a neutral kind nothing in this build handles, which is what a
+ * contract wants: the cases are about the queue's rules, and a kind that some
+ * story later gives a meaning to would make them about that story.
+ */
+export function sampleWorkInput(overrides: Partial<AddWorkInput> = {}): AddWorkInput {
+  return {
+    id: sampleWorkItemId,
+    kind: 'demo_work',
+    targetKind: 'session',
+    targetId: sampleSessionToken,
+    createdAt: new Date('2026-02-03T04:05:06.000Z'),
+    nextAttemptAt: new Date('2026-02-03T04:05:06.000Z'),
+    ...overrides,
+  };
+}
+
+/**
+ * One failure, as drain records it: the target key of the work item, the kind of
+ * work as the stage, and no harness or session — drain knows which item failed,
+ * not which conversation it belonged to (Boundaries).
+ */
+export function sampleFailureInput(
+  overrides: Partial<RecordFailureInput> = {},
+): RecordFailureInput {
+  return {
+    id: sampleFailureId,
+    targetKind: 'session',
+    targetId: sampleSessionToken,
+    stage: 'demo_work',
+    fingerprint: failureFingerprint({
+      stage: 'demo_work',
+      input: `session:${sampleSessionToken}`,
+      code: 'DEMO_FAILED',
+    }),
+    harness: null,
+    sessionId: null,
+    code: 'DEMO_FAILED',
+    message: '이 일감은 열 번 모두 실패했습니다',
+    occurredAt: new Date('2026-02-03T04:05:06.000Z'),
     ...overrides,
   };
 }

@@ -67,15 +67,16 @@ export const SPOOL_CAUSES: readonly SpoolCause[] = [
 ];
 
 /**
- * What kinds of record a spool line may carry. Slice 1 writes one: the mark
- * that says a session has to be ingested again. The log entries, the injection
- * attempts and the attachment metadata of AD-9 are their own epics, and each
- * one adds a kind here and a handler to the replay frame.
+ * What kinds of record a spool line may carry. Slice 1 writes two: the mark
+ * that says a session has to be ingested again, and the failure record the
+ * database would not take. The log entries, the injection attempts and the
+ * attachment metadata of AD-9 are their own epics, and each one adds a kind here
+ * and a handler to the replay frame.
  */
-export type SpoolRecordKind = 'session_ingest';
+export type SpoolRecordKind = 'session_ingest' | 'failure';
 
 /** The kinds above as a list, for a decoder that has to check one. */
-export const SPOOL_RECORD_KINDS: readonly SpoolRecordKind[] = ['session_ingest'];
+export const SPOOL_RECORD_KINDS: readonly SpoolRecordKind[] = ['session_ingest', 'failure'];
 
 /**
  * "This session has to be ingested again, and here is where to read it from."
@@ -94,22 +95,67 @@ export interface SessionIngestSpoolPayload {
 }
 
 /**
+ * "This failure could not be written to `failures`, so here it is."
+ *
+ * Drain records a failure only on the last attempt of an item (AD-21), which
+ * means the row is the one place that attempt is remembered: an item closed
+ * with no record anywhere would be work that quietly stopped. So when the
+ * database refuses the record itself, the same content comes here, and a later
+ * drain puts it in (story 12 writes that handler).
+ *
+ * The fields are `failures`'s own, plus `workItemId`: the item the record was
+ * going to close. The replay needs it to close the item too, and it is nullable
+ * because a path that records a failure outside the queue has none.
+ */
+export interface FailureSpoolPayload {
+  /** The key of `failures`, column for column (Table Contract). */
+  targetKind: string;
+  targetId: string;
+  stage: string;
+  fingerprint: string;
+  /** Information, both nullable: not every failure is about a session (AD-12). */
+  harness: string | null;
+  sessionId: string | null;
+  code: string;
+  /** Already through `failureText`: masked, and inside the byte limit. */
+  message: string;
+  /** When the failure happened, in the canonical spelling on the line (AD-13). */
+  occurredAt: Date;
+  /** The work item this record closes, or `null` outside the queue. */
+  workItemId: string | null;
+}
+
+/**
  * One record of the spool.
  *
  * `id` and `occurredAt` belong to the process that first made the record and
  * are never changed by a replay (AD-9): the instant is when the thing happened,
  * not when the database finally took it, and the id is what makes a replay of
  * the same line idempotent (AD-8).
+ *
+ * It is a union on `kind`, so a handler that took the wrong payload apart is a
+ * compile error rather than an undefined at replay time.
  */
-export interface SpoolRecord {
+export type SpoolRecord = SessionIngestSpoolRecord | FailureSpoolRecord;
+
+/** What every record carries, whatever its kind. */
+interface SpoolRecordBase {
   /** `SPOOL_RECORD_VERSION` as this build writes it. */
   schemaVersion: number;
   /** UUIDv7, minted by the process that made the record (AD-8). */
   id: string;
-  kind: 'session_ingest';
   /** When the thing this record is about happened, read once from `Clock`. */
   occurredAt: Date;
+}
+
+export interface SessionIngestSpoolRecord extends SpoolRecordBase {
+  kind: 'session_ingest';
   payload: SessionIngestSpoolPayload;
+}
+
+export interface FailureSpoolRecord extends SpoolRecordBase {
+  kind: 'failure';
+  payload: FailureSpoolPayload;
 }
 
 /**
@@ -154,16 +200,15 @@ export function encodeSpoolLine(record: SpoolRecord): EncodeSpoolLineResult {
     return { ok: false, message: 'spool 레코드에 id가 없습니다' };
   }
 
+  const payload = encodePayload(record);
+  if (!payload.ok) return payload;
+
   const line = `${JSON.stringify({
     schema_version: record.schemaVersion,
     id: record.id,
     kind: record.kind,
     occurred_at: occurredAt.value,
-    payload: {
-      session: record.payload.session,
-      transcript_path: record.payload.transcriptPath,
-      cause: record.payload.cause,
-    },
+    payload: payload.value,
   })}\n`;
 
   const bytes = utf8Bytes(line).length;
@@ -176,6 +221,51 @@ export function encodeSpoolLine(record: SpoolRecord): EncodeSpoolLineResult {
     };
   }
   return { ok: true, line };
+}
+
+/**
+ * One record's payload as the object that goes on the line, `snake_case` and in
+ * a fixed key order, or why it cannot be spelled.
+ *
+ * It is a `switch` on the kind rather than a spread of the payload, so a kind
+ * added to the union without a case here does not compile — a record written as
+ * `{}` would be a line the decoder refuses and a record nobody can get back.
+ */
+function encodePayload(
+  record: SpoolRecord,
+): { ok: true; value: Record<string, unknown> } | { ok: false; message: string } {
+  switch (record.kind) {
+    case 'session_ingest':
+      return {
+        ok: true,
+        value: {
+          session: record.payload.session,
+          transcript_path: record.payload.transcriptPath,
+          cause: record.payload.cause,
+        },
+      };
+    case 'failure': {
+      const occurredAt = formatInstant(record.payload.occurredAt);
+      if (!occurredAt.ok) {
+        return { ok: false, message: `실패 레코드의 occurred_at: ${occurredAt.message}` };
+      }
+      return {
+        ok: true,
+        value: {
+          target_kind: record.payload.targetKind,
+          target_id: record.payload.targetId,
+          stage: record.payload.stage,
+          fingerprint: record.payload.fingerprint,
+          harness: record.payload.harness,
+          session_id: record.payload.sessionId,
+          code: record.payload.code,
+          message: record.payload.message,
+          occurred_at: occurredAt.value,
+          work_item_id: record.payload.workItemId,
+        },
+      };
+    }
+  }
 }
 
 /**
@@ -235,6 +325,22 @@ export function decodeSpoolLine(line: string): DecodeSpoolLineResult {
   if (!isRecord(payload)) {
     return { ok: false, message: 'spool 줄의 payload가 JSON 객체가 아닙니다' };
   }
+
+  if (kind === 'failure') {
+    const decoded = decodeFailurePayload(payload);
+    if (!decoded.ok) return decoded;
+    return {
+      ok: true,
+      record: {
+        schemaVersion: SPOOL_RECORD_VERSION,
+        id,
+        kind,
+        occurredAt: instant.value,
+        payload: decoded.value,
+      },
+    };
+  }
+
   const session = payload['session'];
   const transcriptPath = payload['transcript_path'];
   const cause = payload['cause'];
@@ -259,6 +365,75 @@ export function decodeSpoolLine(line: string): DecodeSpoolLineResult {
       kind,
       occurredAt: instant.value,
       payload: { session, transcriptPath, cause },
+    },
+  };
+}
+
+/**
+ * One `failure` payload, checked field by field.
+ *
+ * The four key columns and `code` have to be non-empty strings, because they are
+ * what the row is found by and a row keyed on `''` is a row that collides with
+ * the next one. `message` may be empty — a driver that said nothing is still a
+ * failure — and `harness`, `session_id` and `work_item_id` may be null, which is
+ * the normal state of a failure that is not about a session or not about a queue
+ * item.
+ */
+function decodeFailurePayload(
+  payload: Record<string, unknown>,
+): { ok: true; value: FailureSpoolPayload } | { ok: false; message: string } {
+  const required = ['target_kind', 'target_id', 'stage', 'fingerprint', 'code'] as const;
+  for (const key of required) {
+    const value = payload[key];
+    if (typeof value !== 'string' || value === '') {
+      return {
+        ok: false,
+        message: `spool 줄의 ${key}가 비어 있지 않은 문자열이 아닙니다: ${describe(value)}`,
+      };
+    }
+  }
+
+  const message = payload['message'];
+  if (typeof message !== 'string') {
+    return { ok: false, message: `spool 줄의 message가 문자열이 아닙니다: ${describe(message)}` };
+  }
+
+  const occurredAt = payload['occurred_at'];
+  if (typeof occurredAt !== 'string') {
+    return {
+      ok: false,
+      message: `spool 줄의 실패 occurred_at이 문자열이 아닙니다: ${describe(occurredAt)}`,
+    };
+  }
+  const instant = parseInstant(occurredAt);
+  if (!instant.ok) {
+    return { ok: false, message: `spool 줄의 실패 occurred_at: ${instant.message}` };
+  }
+
+  const optional = ['harness', 'session_id', 'work_item_id'] as const;
+  for (const key of optional) {
+    const value = payload[key];
+    if (value !== null && typeof value !== 'string') {
+      return {
+        ok: false,
+        message: `spool 줄의 ${key}가 문자열도 null도 아닙니다: ${describe(value)}`,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    value: {
+      targetKind: payload['target_kind'] as string,
+      targetId: payload['target_id'] as string,
+      stage: payload['stage'] as string,
+      fingerprint: payload['fingerprint'] as string,
+      harness: payload['harness'] as string | null,
+      sessionId: payload['session_id'] as string | null,
+      code: payload['code'] as string,
+      message,
+      occurredAt: instant.value,
+      workItemId: payload['work_item_id'] as string | null,
     },
   };
 }

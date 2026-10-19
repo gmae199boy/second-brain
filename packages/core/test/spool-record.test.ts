@@ -210,8 +210,102 @@ describe('a spool line that is not one', () => {
     for (const cause of ['DB_UNAVAILABLE', 'DB_LOCKED', 'SCHEMA_MISMATCH'] as const) {
       const back = decodeSpoolLine(encoded(sampleSpoolRecord({ cause })));
       expect(back.ok).toBe(true);
-      if (back.ok) expect(back.record.payload.cause).toBe(cause);
+      // Narrowed on the kind, because the record is a union: a payload read
+      // without asking which kind it is would be the bug this shape prevents.
+      if (back.ok && back.record.kind === 'session_ingest') {
+        expect(back.record.payload.cause).toBe(cause);
+      }
     }
+  });
+});
+
+/**
+ * One failure record the database would not take (AD-9, story 11). Written out
+ * here rather than put in the fixtures: the one caller is drain, and a fixture
+ * would be a second place to keep the shape right.
+ */
+function failureRecord(overrides: Record<string, unknown> = {}): SpoolRecord {
+  return {
+    schemaVersion: SPOOL_RECORD_VERSION,
+    id: '01940000-0000-7000-8000-0000000000c1',
+    kind: 'failure',
+    occurredAt: new Date('2026-02-03T04:05:06.000Z'),
+    payload: {
+      targetKind: 'session',
+      targetId: 'demo:session-0001',
+      stage: 'demo_work',
+      fingerprint: 'sha256:0000',
+      harness: null,
+      sessionId: null,
+      code: 'DEMO_FAILED',
+      message: '열 번 모두 실패했습니다',
+      occurredAt: new Date('2026-02-03T04:05:06.000Z'),
+      workItemId: '01940000-0000-7000-8000-000000000010',
+      ...overrides,
+    },
+  };
+}
+
+describe('the failure record on a spool line', () => {
+  it('spells the key columns, the information columns and the item in snake_case', () => {
+    const line = encoded(failureRecord());
+
+    expect(parsed(line)).toEqual({
+      schema_version: 1,
+      id: '01940000-0000-7000-8000-0000000000c1',
+      kind: 'failure',
+      occurred_at: '2026-02-03T04:05:06.000Z',
+      payload: {
+        target_kind: 'session',
+        target_id: 'demo:session-0001',
+        stage: 'demo_work',
+        fingerprint: 'sha256:0000',
+        // Information, and null is a value: drain knows which item failed, not
+        // which conversation it belonged to (story 11 Boundaries).
+        harness: null,
+        session_id: null,
+        code: 'DEMO_FAILED',
+        message: '열 번 모두 실패했습니다',
+        occurred_at: '2026-02-03T04:05:06.000Z',
+        work_item_id: '01940000-0000-7000-8000-000000000010',
+      },
+    });
+  });
+
+  it('round-trips, keeping the instants and the nulls', () => {
+    const record = failureRecord({ harness: 'demo', sessionId: null, workItemId: null });
+    const back = decodeSpoolLine(encoded(record));
+
+    expect(back.ok, back.ok ? '' : back.message).toBe(true);
+    if (!back.ok) return;
+    expect(back.record).toEqual(record);
+  });
+
+  it('refuses a line whose key columns are missing or empty', () => {
+    for (const key of ['target_kind', 'target_id', 'stage', 'fingerprint', 'code']) {
+      const line = parsed(encoded(failureRecord()));
+      (line['payload'] as Record<string, unknown>)[key] = '';
+      const back = decodeSpoolLine(JSON.stringify(line));
+      expect(back.ok, `${key} was accepted empty`).toBe(false);
+      if (!back.ok) expect(back.message).toContain(key);
+    }
+  });
+
+  it('refuses a failure instant that is not the stored form', () => {
+    const line = parsed(encoded(failureRecord()));
+    (line['payload'] as Record<string, unknown>)['occurred_at'] = '2026-02-03T04:05:06+09:00';
+
+    const back = decodeSpoolLine(JSON.stringify(line));
+    expect(back.ok).toBe(false);
+  });
+
+  it('refuses an information column that is neither a string nor null', () => {
+    const line = parsed(encoded(failureRecord()));
+    (line['payload'] as Record<string, unknown>)['harness'] = 7;
+
+    const back = decodeSpoolLine(JSON.stringify(line));
+    expect(back.ok).toBe(false);
+    if (!back.ok) expect(back.message).toContain('harness');
   });
 });
 

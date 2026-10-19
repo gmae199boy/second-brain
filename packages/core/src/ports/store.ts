@@ -9,6 +9,7 @@ import type { SessionKey, SessionToken } from '../domain/session-token.js';
 import type { SchemaVersion } from '../domain/schema-version.js';
 import type { ToolNote } from '../domain/tool-note.js';
 import type { User } from '../domain/user.js';
+import type { WorkItem } from '../domain/work-item.js';
 
 /**
  * One capability an adapter checked on its own source, under a name Core never
@@ -296,12 +297,212 @@ export interface UserStore {
   readSelfUser(): Promise<ReadSelfUserResult>;
 }
 
+/** What `addWork` needs to put one piece of work on the queue (AD-21). */
+export interface AddWorkInput {
+  /**
+   * The id to give a new row. The caller mints it (AD-8); an open row that is
+   * already there keeps the id it has, and the proposal is dropped.
+   */
+  id: string;
+  /** What has to be done. A Core constant of the unit that does it. */
+  kind: string;
+  /** Together with `targetId` and `kind`, the open-row key. */
+  targetKind: string;
+  targetId: string;
+  createdAt: Date;
+  /** Not before this instant. A fresh row is usually due at once (AD-13). */
+  nextAttemptAt: Date;
+}
+
+/**
+ * Find-or-create on the open-row key `(kind, target_kind, target_id)`, so a
+ * second call changes nothing and `created` says which call was the first.
+ *
+ * `created: false` is the ordinary answer and not a failure: two hooks that both
+ * noticed the same session needs re-ingesting have both done their job, and the
+ * queue holds one item (AD-21). A row that was *completed* is not in the key, so
+ * the same work asked for again after it finished is a new row — which is what
+ * `failures retry` depends on.
+ */
+export type AddWorkResult =
+  | { ok: true; created: boolean; item: WorkItem }
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+
+/** What `hasDueWork` and `claimWork` both ask about. */
+export interface DueWorkQuery {
+  /** The instant "due" is measured against, read once from `Clock` (AD-13). */
+  now: Date;
+  /**
+   * The kinds this build can actually do, which is the kinds it has a handler
+   * for. An item of any other kind is left alone rather than claimed or closed:
+   * a new build's work must survive an old build's drain (Decision 4,
+   * 2026-10-19). An empty list matches nothing.
+   */
+  kinds: readonly string[];
+}
+
+/**
+ * Whether anything is due, as a lock-free read.
+ *
+ * It exists so that a drain with nothing to do never takes the write lock
+ * (AD-7): the opportunistic run at the end of every command would otherwise
+ * queue behind whatever is writing, for nothing. Only `DB_UNAVAILABLE`, because
+ * a read does not wait for the writer.
+ */
+export type HasDueWorkResult =
+  | { ok: true; due: boolean }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
+export interface ClaimWorkInput extends DueWorkQuery {
+  /** The id of this drain run. Every finishing verb is checked against it. */
+  claimedBy: string;
+}
+
+/**
+ * The item this run now holds, or `null` when there was nothing to take.
+ *
+ * `null` covers both "the queue is empty" and "somebody else got there first",
+ * and the two need not be told apart: either way this run has no item, and
+ * losing a race is not a failure (AD-21).
+ */
+export type ClaimWorkResult =
+  | { ok: true; item: WorkItem | null }
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+
+/** Which claim a finishing verb is speaking for (Design Notes). */
+export interface FinishWorkInput {
+  id: string;
+  /** The `claimedBy` this run claimed with. A row holding another is `lost`. */
+  claimedBy: string;
+}
+
+export interface CompleteWorkInput extends FinishWorkInput {
+  /** When it finished, read once from `Clock` (AD-13). */
+  now: Date;
+}
+
+export interface RetryWorkInput extends FinishWorkInput {
+  /** When the next attempt may start. Decided by the retry policy (AD-21). */
+  nextAttemptAt: Date;
+  /** Already through `failureText`: masked and inside the byte limit (AD-11). */
+  lastError: string;
+}
+
+/**
+ * What a finishing verb did: changed the row, or found the claim was not ours.
+ *
+ * `lost` is the compare-and-set saying no. The claim had expired and another
+ * worker took the row, so this one's late answer must not overwrite the new
+ * worker's state — otherwise "processed exactly once" and "a worker that lost
+ * its claim does not raise the count" would both break (Design Notes).
+ */
+export type WorkFinishOutcome = 'done' | 'lost';
+
+export type FinishWorkResult =
+  | { ok: true; outcome: WorkFinishOutcome }
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+
+/** What the one failure-recording function writes (AD-21, Table Contract). */
+export interface RecordFailureInput {
+  /** The id to give a new row. The caller mints it (AD-8). */
+  id: string;
+  /** The key, together with `targetId`, `stage` and `fingerprint`. */
+  targetKind: string;
+  targetId: string;
+  stage: string;
+  fingerprint: string;
+  /** Information, both nullable: not every failure is about a session (AD-12). */
+  harness: string | null;
+  sessionId: string | null;
+  code: string;
+  /** Already through `failureText`: masked and inside the byte limit (AD-11). */
+  message: string;
+  occurredAt: Date;
+  /**
+   * Close this work item in the same transaction as the record (AD-21).
+   *
+   * The two belong together: an item closed without its record is work that
+   * stopped with nothing to show, and a record without the item closed is a
+   * problem reported about work that is still being retried. When the claim is
+   * not ours the whole call is `lost` and *no* failure row is written either —
+   * the new worker owns the outcome of this item now.
+   */
+  closeWork?: CompleteWorkInput;
+}
+
+/**
+ * What the record came to.
+ *
+ * `created` tells a reopened row from a new one: the same cause met a hundred
+ * times is one row, and the second through hundredth answers only clear
+ * `resolved_at` — the id, the message and the instant stay the first one's
+ * (Decision 2, 2026-10-19, Table Contract).
+ */
+export type RecordFailureResult =
+  | { ok: true; outcome: 'recorded'; created: boolean; failureId: string }
+  | { ok: true; outcome: 'lost' }
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+
+/**
+ * The queue capability: the one backlog of AD-21, and the one place a failure is
+ * recorded.
+ *
+ * Six verbs and one shape of promise. Adding is find-or-create on the open-row
+ * key. Claiming raises `attempts` inside the same transaction that takes the
+ * row, so an item that killed its worker still counted once. Every verb that
+ * finishes an item — completing, retrying, releasing, recording — changes the row
+ * only when the claim is still ours, and answers `lost` when it is not.
+ *
+ * `recordFailure` is in here and not in a capability of its own because the two
+ * are one transaction: the last attempt of an item writes the record and closes
+ * the item together or does neither.
+ */
+export interface WorkStore {
+  /** Put one piece of work on the queue, once (AD-21). */
+  addWork(input: AddWorkInput): Promise<AddWorkResult>;
+  /** Is anything due? A read, so it never takes the write lock (AD-7). */
+  hasDueWork(query: DueWorkQuery): Promise<HasDueWorkResult>;
+  /**
+   * Take one due item, least attempted first, and raise its `attempts`.
+   *
+   * One transaction: the row is chosen and marked in the same `BEGIN IMMEDIATE`,
+   * because two drains that read first and wrote second would both take the
+   * same row. The order is `(attempts, id)`, so one poisonous item cannot starve
+   * the backlog behind it, and the index of 0004 is shaped for exactly that
+   * query.
+   */
+  claimWork(input: ClaimWorkInput): Promise<ClaimWorkResult>;
+  /** Done: stamp `completed_at` and clear the claim (AD-21). */
+  completeWork(input: CompleteWorkInput): Promise<FinishWorkResult>;
+  /**
+   * Not done, and worth another attempt: move `next_attempt_at`, keep the
+   * sentence, clear the claim. `attempts` is left where the claim put it.
+   */
+  retryWork(input: RetryWorkInput): Promise<FinishWorkResult>;
+  /**
+   * Hand the item back as though it had never been claimed: `attempts - 1` and
+   * the claim cleared, with `next_attempt_at` untouched.
+   *
+   * It is what happens when the database could not be written to, which is not
+   * a failure of the item (AD-21): nothing was tried, so nothing was attempted.
+   */
+  releaseWork(input: FinishWorkInput): Promise<FinishWorkResult>;
+  /**
+   * Record one failure, and optionally close the item it was about, in one
+   * transaction (AD-21).
+   *
+   * The same key met again only clears `resolved_at`, so a recurring problem is
+   * one row that is open again rather than a hundred rows (Table Contract).
+   */
+  recordFailure(input: RecordFailureInput): Promise<RecordFailureResult>;
+}
+
 /**
  * The persistence port: the sum of its capabilities. An adapter grows into it
  * one capability at a time, and the day it implements `SessionStore` it passes
  * the whole `Store` contract (AD-10).
  */
-export type Store = HealthStore & SessionStore & UserStore;
+export type Store = HealthStore & SessionStore & UserStore & WorkStore;
 
 /**
  * Result of reading the single `schema_version` row. `version: null` means the

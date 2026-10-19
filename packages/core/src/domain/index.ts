@@ -45,13 +45,32 @@ export {
   encodeSpoolLine,
   type DecodeSpoolLineResult,
   type EncodeSpoolLineResult,
+  type FailureSpoolPayload,
+  type FailureSpoolRecord,
   type SessionIngestSpoolPayload,
+  type SessionIngestSpoolRecord,
   type SpoolCause,
   type SpoolRecord,
   type SpoolRecordKind,
 } from './spool-record.js';
 export type { ContextInjection } from './context-injection.js';
-export type { Failure } from './failure.js';
+export {
+  FAILURE_MESSAGE_MAX_BYTES,
+  failureFingerprint,
+  failureText,
+  truncateUtf8,
+  type Failure,
+  type FailureFingerprintInput,
+} from './failure.js';
+export {
+  DEFAULT_WORK_POLICY,
+  DRAIN_BUDGET_MS,
+  MAX_WORK_ATTEMPTS,
+  retryDelayMs,
+  workKindPolicy,
+  type WorkItem,
+  type WorkKindPolicy,
+} from './work-item.js';
 export type { TranscriptFile } from './transcript-file.js';
 export type { SchemaVersion } from './schema-version.js';
 export type {

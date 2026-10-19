@@ -2,12 +2,14 @@ import { Command, CommanderError } from 'commander';
 import { hostname } from 'node:os';
 import {
   BUSY_TIMEOUT_MS,
+  DRAIN_BUDGET_MS,
   SQLITE_SCHEMA_VERSION,
   checkSchema,
   createBrain,
   spoolSessionIngest,
   sqliteStore,
   type Brain,
+  type BrainDependencies,
   type Clock,
   type FailureExit,
   type IdGen,
@@ -19,6 +21,7 @@ import {
   type SqliteStoreOptions,
   type Store,
   type WarningCode,
+  type WorkHandlers,
 } from 'second_brain';
 import { readConfig, type BrainConfig } from './config/codec.js';
 import { configHome, spoolPath } from './config/paths.js';
@@ -282,6 +285,18 @@ export interface DatabaseCommandSpec<T = unknown> extends CommandSpecBase {
    */
   spool?(context: SpoolCommandContext): Promise<CommandOutcome<T>>;
   /**
+   * Set to `false` to keep the opportunistic drain from running after this
+   * command (AD-7).
+   *
+   * Every other database command gets one: a harness without hooks has no
+   * periodic drain, so the end of a command a person ran is the one moment the
+   * backlog can be worked at all. `queue drain` itself turns it off — a drain
+   * at the end of a drain would be a second run of the same loop with whatever
+   * budget was left over — and so would any command whose own work must not be
+   * followed by a write.
+   */
+  drain?: false;
+  /**
    * This command's job is to report on a brain that may be broken, so it runs
    * even when the configuration could not be read: the dispatcher hands it a
    * store that answers `DB_UNAVAILABLE` and a `config` of `undefined` instead
@@ -326,6 +341,13 @@ export interface DispatchRuntime {
   stdin?: () => Promise<string>;
   /** Mints row ids. Defaults to UUIDv7, which is what every row carries (AD-8). */
   idGen?: IdGen;
+  /**
+   * What the opportunistic drain can do, by kind of work (AD-21). Empty for
+   * every real invocation, because this build has no kinds; the seam exists so
+   * a test can watch a command's own drain pick an item up without a kind of
+   * work having to exist first.
+   */
+  workHandlers?: WorkHandlers;
 }
 
 /** What `execute` decided, before anything is printed. */
@@ -391,6 +413,8 @@ export async function dispatch(
       createStore: runtime.createStore ?? sqliteStore,
       stdin: runtime.stdin ?? (() => readStdin()),
       idGen: runtime.idGen ?? uuidV7IdGen(),
+      workHandlers: runtime.workHandlers ?? {},
+      stderr,
     });
   } catch (error) {
     // An exception here is a bug, and a bug must still not break the harness.
@@ -436,6 +460,14 @@ interface Wiring {
   createStore: CreateStore;
   stdin: () => Promise<string>;
   idGen: IdGen;
+  /** What the opportunistic drain can do. Empty for every real invocation. */
+  workHandlers: WorkHandlers;
+  /**
+   * Where the one line about a drain that threw goes. The opportunistic drain
+   * has no envelope of its own — it must not change the command's result — so
+   * stderr is the only thing it may say anything on (AD-7).
+   */
+  stderr: (text: string) => void;
 }
 
 /** Everything but the printing, so the hook wrapper has one thing to catch. */
@@ -447,7 +479,7 @@ async function execute(
   wiring: Wiring,
 ): Promise<Outcome> {
   const { clock } = base;
-  const { createStore, stdin, idGen } = wiring;
+  const { createStore, stdin, idGen, workHandlers, stderr } = wiring;
   const selected = select(registry, argv);
   if (selected.kind === 'helped') {
     return { envelope: null, text: [], warningLines: [], exit: 0 };
@@ -507,7 +539,9 @@ async function execute(
   // (AD-9, AD-18). Building this opens nothing — the folder is made by the
   // first `append` that needs it (AD-3).
   const spool = fileSpool({ folder: spoolPath(home), clock });
-  const brain = createBrain({
+  // Held as a value rather than spelled inline, because the opportunistic drain
+  // below builds a second brain from the same ports over a store of its own.
+  const dependencies = {
     store,
     spool,
     schemaVersion: SQLITE_SCHEMA_VERSION,
@@ -525,7 +559,11 @@ async function execute(
     machine: hostname(),
     // One list, for the dispatcher and the installer both: see `doctor/checks`.
     checks: runtimeChecks({ home, config }),
-  });
+    // What the opportunistic drain below can do. Empty for every real
+    // invocation of this build: there are no kinds of work yet (AD-21).
+    workHandlers,
+  };
+  const brain = createBrain(dependencies);
   try {
     if (spec.writes === true) {
       // The write guard of AD-20, in the one place that cannot be skipped by
@@ -572,9 +610,109 @@ async function execute(
       args,
       stdin,
     });
-    return finish(rendering, outcome, warningCodes, warningLines);
+    const result = finish(rendering, outcome, warningCodes, warningLines);
+
+    // The opportunistic drain of AD-7, after the result is built and before the
+    // connection is closed: a harness without hooks has no periodic drain, so
+    // the end of a command a person ran is the one moment the backlog gets
+    // worked at all. Nothing about it reaches the envelope or the exit code —
+    // the command has already answered, and a drain that changed that answer
+    // would make every command's result depend on somebody else's backlog.
+    if (shouldDrain(spec, config.ok, outcome) && config.ok) {
+      await drainOpportunistically(
+        { ...dependencies, createStore, storePath: config.config.storePath },
+        stderr,
+      );
+    }
+    return result;
   } finally {
     await brain.close();
+  }
+}
+
+/**
+ * Whether the drain at the end of this command may run (AD-7).
+ *
+ * Every condition is a way of saying "this command is a normal, successful use
+ * of a database we could reach":
+ *
+ *   * not a hook command. A turn is somebody waiting, and the drain's budget is
+ *     time taken from them (AD-6).
+ *   * not a command that turned it off — `queue drain` itself.
+ *   * the configuration was read, so there is a database at all. Without one
+ *     the store answers `DB_UNAVAILABLE` to everything anyway, and a
+ *     `diagnostic` command reporting on a broken brain must not try to write.
+ *   * the command succeeded *and* its result is not a failure. Both halves are
+ *     needed, because a command can answer `ok: true, failed: true` — which is
+ *     exactly what `doctor run` does when a check fails. A drain right after
+ *     that would write into the database the report just called broken.
+ *
+ * The schema check is the last one and is made at the call, because it costs a
+ * query. A standalone command never gets here: it returns before the store is
+ * built.
+ */
+function shouldDrain(
+  spec: DatabaseCommandSpec,
+  hasConfig: boolean,
+  outcome: CommandOutcome<unknown>,
+): boolean {
+  return (
+    spec.hook !== true &&
+    spec.drain !== false &&
+    hasConfig &&
+    outcome.ok &&
+    outcome.failed !== true
+  );
+}
+
+/** What the drain at the end of a command is built from. */
+type OpportunisticDrain = BrainDependencies & {
+  createStore: CreateStore;
+  /** Where the database is, from the configuration this invocation read. */
+  storePath: string;
+};
+
+/**
+ * Work the backlog for a moment, and say nothing unless something threw.
+ *
+ * It opens a connection of its own, and the reason is the budget. A drain is
+ * two seconds of somebody else's command, but the command's own store waits
+ * `BUSY_TIMEOUT_MS.command` — ten seconds — for the write lock, and
+ * `DRAIN_BUDGET_MS.opportunistic` does not bound that wait: it decides whether
+ * to claim again, not how long one claim may block. On a database somebody else
+ * is writing to, the command's output would be held for ten seconds over work
+ * nobody asked for. So the drain's store waits its own budget and no longer
+ * (AD-7).
+ *
+ * The schema is checked with the same function the write guard uses, on that
+ * same store: a database at another version is one this build must not write
+ * to, and that is as true of a drain nobody asked for as of the command
+ * itself (AD-20).
+ *
+ * The `catch` is the whole reason this is a function. A bug in a handler must
+ * not turn a command that already succeeded into a crash, so whatever comes out
+ * of it is one line on stderr — not a warning code, because the envelope has
+ * been built and sealed, and not a non-zero exit, because the command did its
+ * job (AD-7).
+ */
+async function drainOpportunistically(
+  options: OpportunisticDrain,
+  stderr: (text: string) => void,
+): Promise<void> {
+  const { createStore, storePath, ...dependencies } = options;
+  let store: (Store & SchemaStore) | undefined;
+  try {
+    store = createStore({ path: storePath, busyTimeoutMs: DRAIN_BUDGET_MS.opportunistic });
+    const schema = await checkSchema(store, SQLITE_SCHEMA_VERSION);
+    if (!schema.ok) return;
+    const brain = createBrain({ ...dependencies, store });
+    await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.opportunistic });
+  } catch (error) {
+    stderr(`brain: 밀린 일 처리 중 오류: ${oneLine(error)}\n`);
+  } finally {
+    // This connection is the drain's own, so closing it is the drain's own job;
+    // the command's store is closed by the `finally` around the command.
+    await store?.close().catch(() => undefined);
   }
 }
 

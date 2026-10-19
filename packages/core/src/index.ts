@@ -56,8 +56,24 @@ export {
   type Brain,
   type BrainDoctor,
   type BrainDependencies,
+  type BrainQueue,
+  type BrainQueueDrainInput,
   type BrainSessions,
 } from './brain.js';
+export {
+  WORK_HANDLER_MISSING,
+  WORK_HANDLER_THREW,
+  classifyWorkFailure,
+  drainQueue,
+  type DrainQueueDependencies,
+  type DrainQueueInput,
+  type DrainQueueReport,
+  type WorkHandler,
+  type WorkHandlerFailure,
+  type WorkHandlerResult,
+  type WorkHandlers,
+  type WorkVerdict,
+} from './queue/drain.js';
 export {
   ingestSession,
   type IngestSessionData,

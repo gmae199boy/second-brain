@@ -17,6 +17,7 @@ import {
 } from './connect.js';
 import { sqliteSessionStore } from './sessions.js';
 import { sqliteUserStore } from './users.js';
+import { sqliteWorkStore } from './work.js';
 
 export interface SqliteStoreOptions {
   /** Path of the database file. It is never created from here (AD-20). */
@@ -78,6 +79,7 @@ export function sqliteStore(options: SqliteStoreOptions): Store & SchemaStore {
   return {
     ...sqliteSessionStore(connect),
     ...sqliteUserStore(connect),
+    ...sqliteWorkStore(connect),
 
     async checkHealth(): Promise<StoreHealth> {
       const opened = connect();

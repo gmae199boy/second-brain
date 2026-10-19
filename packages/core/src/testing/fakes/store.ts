@@ -11,15 +11,29 @@ import {
 } from '../../domain/session-token.js';
 import type { ToolNote } from '../../domain/tool-note.js';
 import type { User } from '../../domain/user.js';
+import type { Failure } from '../../domain/failure.js';
+import { workKindPolicy, type WorkItem } from '../../domain/work-item.js';
 import type {
+  AddWorkInput,
+  AddWorkResult,
+  ClaimWorkInput,
+  ClaimWorkResult,
+  CompleteWorkInput,
+  DueWorkQuery,
   EnsureSelfUserInput,
   EnsureSelfUserResult,
   EnsureSessionInput,
   EnsureSessionResult,
   FindSessionResult,
+  FinishWorkInput,
+  FinishWorkResult,
+  HasDueWorkResult,
   IngestResult,
   ReadSelfUserResult,
   ReadSessionResult,
+  RecordFailureInput,
+  RecordFailureResult,
+  RetryWorkInput,
   Store,
   StoreHealth,
   StoreWarningCode,
@@ -48,6 +62,10 @@ export interface MemoryStoreSnapshot {
   toolNotes: readonly ToolNote[];
   /** One row per masked span that was written, in the order it went in (AD-11). */
   redactions: readonly Redaction[];
+  /** The queue, in the order rows were added (AD-21). */
+  workItems: readonly WorkItem[];
+  /** One row per `(target, stage, fingerprint)`, in the order first seen. */
+  failures: readonly Failure[];
   closes: number;
 }
 
@@ -80,7 +98,46 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const toolNotes = new Map<SessionToken, ToolNote[]>();
   /** Keyed by the session, like the rows above; the records are append only. */
   const redactions = new Map<SessionToken, Redaction[]>();
+  /**
+   * The queue and the record, as lists rather than maps: the keys of both are
+   * partial — the open-row key of `work_items` covers only the rows still to be
+   * done — and a map keyed on a partial key would lose the completed rows the
+   * contract asks about.
+   */
+  const workItems: WorkItem[] = [];
+  const failures: Failure[] = [];
   let closes = 0;
+
+  /** The open row for one piece of work, or undefined (`work_items_open_key_idx`). */
+  function openWork(kind: string, targetKind: string, targetId: string): WorkItem | undefined {
+    return workItems.find(
+      (item) =>
+        item.completedAt === null &&
+        item.kind === kind &&
+        item.targetKind === targetKind &&
+        item.targetId === targetId,
+    );
+  }
+
+  /**
+   * The row this claim may change, or `null` for a claim that is not ours.
+   *
+   * This is the compare-and-set of the Design Notes: `id` *and* `claimedBy`, so
+   * a worker whose claim expired and was taken by another cannot overwrite the
+   * new worker's state.
+   */
+  function claimed(input: FinishWorkInput): WorkItem | null {
+    return (
+      workItems.find((item) => item.id === input.id && item.claimedBy === input.claimedBy) ?? null
+    );
+  }
+
+  /** The claim columns, cleared. They are one fact, so they go together. */
+  function unclaim(item: WorkItem): void {
+    item.claimedAt = null;
+    item.claimExpiresAt = null;
+    item.claimedBy = null;
+  }
 
   /** The one `isSelf` row, or undefined. A map, so a snapshot can show two. */
   function self(): User | undefined {
@@ -333,6 +390,127 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       };
     },
 
+    async addWork(input: AddWorkInput): Promise<AddWorkResult> {
+      const existing = openWork(input.kind, input.targetKind, input.targetId);
+      if (existing !== undefined) {
+        // Find-or-create: an open row for this work keeps everything it has,
+        // including its own id and its own `next_attempt_at` (AD-21).
+        return { ok: true, created: false, item: { ...existing } };
+      }
+      const item: WorkItem = {
+        id: input.id,
+        kind: input.kind,
+        targetKind: input.targetKind,
+        targetId: input.targetId,
+        createdAt: input.createdAt,
+        attempts: 0,
+        nextAttemptAt: input.nextAttemptAt,
+        claimedAt: null,
+        claimExpiresAt: null,
+        claimedBy: null,
+        lastError: null,
+        completedAt: null,
+      };
+      workItems.push(item);
+      return { ok: true, created: true, item: { ...item } };
+    },
+
+    async hasDueWork(query: DueWorkQuery): Promise<HasDueWorkResult> {
+      return { ok: true, due: candidates(workItems, query).length > 0 };
+    },
+
+    async claimWork(input: ClaimWorkInput): Promise<ClaimWorkResult> {
+      const [next] = candidates(workItems, input);
+      if (next === undefined) return { ok: true, item: null };
+
+      // The attempt is raised by the claim and not by the outcome, so an item
+      // that kills the worker holding it still counted once (Decision 1).
+      next.attempts += 1;
+      next.claimedAt = input.now;
+      next.claimExpiresAt = new Date(input.now.getTime() + workKindPolicy(next.kind).claimForMs);
+      next.claimedBy = input.claimedBy;
+      return { ok: true, item: { ...next } };
+    },
+
+    async completeWork(input: CompleteWorkInput): Promise<FinishWorkResult> {
+      const item = claimed(input);
+      if (item === null) return { ok: true, outcome: 'lost' };
+      item.completedAt = input.now;
+      unclaim(item);
+      return { ok: true, outcome: 'done' };
+    },
+
+    async retryWork(input: RetryWorkInput): Promise<FinishWorkResult> {
+      const item = claimed(input);
+      if (item === null) return { ok: true, outcome: 'lost' };
+      item.nextAttemptAt = input.nextAttemptAt;
+      item.lastError = input.lastError;
+      unclaim(item);
+      return { ok: true, outcome: 'done' };
+    },
+
+    async releaseWork(input: FinishWorkInput): Promise<FinishWorkResult> {
+      const item = claimed(input);
+      if (item === null) return { ok: true, outcome: 'lost' };
+      // The attempt goes back too: nothing was tried, so nothing was attempted
+      // (AD-21). `next_attempt_at` is deliberately left alone.
+      item.attempts = Math.max(0, item.attempts - 1);
+      unclaim(item);
+      return { ok: true, outcome: 'done' };
+    },
+
+    async recordFailure(input: RecordFailureInput): Promise<RecordFailureResult> {
+      // The claim is checked before anything is written: when it is not ours,
+      // no failure row goes in either, because the new worker owns the outcome
+      // of this item now (port contract).
+      if (input.closeWork !== undefined && claimed(input.closeWork) === null) {
+        return { ok: true, outcome: 'lost' };
+      }
+
+      const existing = failures.find(
+        (failure) =>
+          failure.targetKind === input.targetKind &&
+          failure.targetId === input.targetId &&
+          failure.stage === input.stage &&
+          failure.fingerprint === input.fingerprint,
+      );
+      let failureId: string;
+      let created: boolean;
+      if (existing === undefined) {
+        failures.push({
+          id: input.id,
+          targetKind: input.targetKind,
+          targetId: input.targetId,
+          stage: input.stage,
+          fingerprint: input.fingerprint,
+          harness: input.harness,
+          sessionId: input.sessionId,
+          code: input.code,
+          message: input.message,
+          occurredAt: input.occurredAt,
+          resolvedAt: null,
+        });
+        failureId = input.id;
+        created = true;
+      } else {
+        // Reopened and nothing else: the id, the message and the instant stay
+        // the first one's (Decision 2, Table Contract).
+        existing.resolvedAt = null;
+        failureId = existing.id;
+        created = false;
+      }
+
+      if (input.closeWork !== undefined) {
+        const item = claimed(input.closeWork);
+        if (item !== null) {
+          item.completedAt = input.closeWork.now;
+          item.lastError = input.message;
+          unclaim(item);
+        }
+      }
+      return { ok: true, outcome: 'recorded', created, failureId };
+    },
+
     snapshot(): MemoryStoreSnapshot {
       return {
         users: [...users.values()],
@@ -342,10 +520,38 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         messages: [...messages.values()].flat(),
         toolNotes: [...toolNotes.values()].flat(),
         redactions: [...redactions.values()].flat(),
+        workItems: workItems.map((item) => ({ ...item })),
+        failures: failures.map((failure) => ({ ...failure })),
         closes,
       };
     },
   };
+}
+
+/**
+ * The due, unclaimed, handled items in the order a claim takes them: least
+ * attempted first, oldest id breaking the tie (AD-21).
+ *
+ * The four conditions are the claim query's own, column for column. A live
+ * claim hides the row; an expired one does not, which is what lets a drain take
+ * over from a worker that was killed. A kind nobody handles is left alone rather
+ * than claimed or closed (Decision 4, 2026-10-19).
+ */
+function candidates(items: readonly WorkItem[], query: DueWorkQuery): WorkItem[] {
+  const kinds = new Set(query.kinds);
+  return items
+    .filter(
+      (item) =>
+        item.completedAt === null &&
+        item.nextAttemptAt.getTime() <= query.now.getTime() &&
+        (item.claimExpiresAt === null || item.claimExpiresAt.getTime() <= query.now.getTime()) &&
+        kinds.has(item.kind),
+    )
+    .sort((left, right) =>
+      left.attempts === right.attempts
+        ? left.id.localeCompare(right.id)
+        : left.attempts - right.attempts,
+    );
 }
 
 /**

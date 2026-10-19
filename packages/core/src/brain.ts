@@ -11,6 +11,11 @@ import type { Spool } from './ports/spool.js';
 import type { SchemaStore, Store } from './ports/store.js';
 import type { TranscriptReader } from './ports/transcript.js';
 import {
+  drainQueue,
+  type DrainQueueReport,
+  type WorkHandlers,
+} from './queue/drain.js';
+import {
   ingestSession,
   type IngestSessionInput,
   type IngestSessionResult,
@@ -59,6 +64,16 @@ export interface BrainDependencies {
    * from whoever does.
    */
   checks?: readonly DoctorCheckSource[];
+  /**
+   * What this build's drain can actually do, by kind of work (AD-21).
+   *
+   * It is a dependency and not a constant because a handler needs the ports the
+   * caller assembled — a transcript reader, a file store — and because the kinds
+   * a build can do are a fact about the build, not about Core. This build ships
+   * none, so every drain run answers `empty`; the kinds Core will own itself are
+   * merged in below as they arrive (Boundaries).
+   */
+  workHandlers?: WorkHandlers;
 }
 
 export interface BrainDoctor {
@@ -71,9 +86,27 @@ export interface BrainSessions {
   ingest(input: IngestSessionInput): Promise<IngestSessionResult>;
 }
 
+/** What one call to `queue.drain` is given (AD-7, AD-21). */
+export interface BrainQueueDrainInput {
+  /** How long this run may keep claiming, in milliseconds (`DRAIN_BUDGET_MS`). */
+  budgetMs: number;
+  /**
+   * Handlers for this call only, merged over the ones the brain was built with.
+   * The seam exists for a test and for a caller that knows about a kind the
+   * assembly did not — never to replace the build's own set silently.
+   */
+  handlers?: WorkHandlers;
+}
+
+export interface BrainQueue {
+  /** Work the backlog within a time budget, and report what happened (AD-21). */
+  drain(input: BrainQueueDrainInput): Promise<DrainQueueReport>;
+}
+
 export interface Brain {
   doctor: BrainDoctor;
   sessions: BrainSessions;
+  queue: BrainQueue;
   close(): Promise<void>;
 }
 
@@ -93,7 +126,13 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     repositories,
     machine,
     checks,
+    workHandlers,
   } = dependencies;
+  // The kinds Core owns, and then the caller's. Empty on both sides today: this
+  // build has no kinds of work (Boundaries), and the merge is here so that the
+  // story adding the first one has one place to add it.
+  const coreHandlers: WorkHandlers = {};
+  const handlers: WorkHandlers = { ...coreHandlers, ...workHandlers };
   return {
     doctor: {
       run: () => runDoctor(store, { schemaVersion, checks }),
@@ -103,6 +142,16 @@ export function createBrain(dependencies: BrainDependencies): Brain {
         ingestSession(
           { store, spool, clock, idGen, parsers, transcripts, repositories, machine },
           input,
+        ),
+    },
+    queue: {
+      drain: (input) =>
+        drainQueue(
+          { store, spool, clock, idGen },
+          {
+            budgetMs: input.budgetMs,
+            handlers: input.handlers === undefined ? handlers : { ...handlers, ...input.handlers },
+          },
         ),
     },
     close: () => store.close(),

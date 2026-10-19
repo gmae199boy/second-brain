@@ -12,7 +12,7 @@ import type { Embedder } from '../src/ports/embedder.js';
 import type { Parser } from '../src/ports/parser.js';
 import type { Reranker } from '../src/ports/reranker.js';
 import type { Spool } from '../src/ports/spool.js';
-import type { SchemaStore, UserStore } from '../src/ports/store.js';
+import type { SchemaStore, UserStore, WorkStore } from '../src/ports/store.js';
 import {
   clockContract,
   connectorContract,
@@ -43,6 +43,7 @@ import {
   unknownSessionToken,
   unreadableTranscript,
   userStoreContract,
+  workStoreContract,
   type ConnectorSubject,
   type ContractCase,
   type ParserSubject,
@@ -96,6 +97,14 @@ describe('the session contract against the memory store', () => {
 
 describe('the identity contract against the memory store', () => {
   for (const testCase of userStoreContract()) {
+    it(testCase.name, async () => {
+      await testCase.run(async () => memoryStore());
+    });
+  }
+});
+
+describe('the queue contract against the memory store', () => {
+  for (const testCase of workStoreContract()) {
     it(testCase.name, async () => {
       await testCase.run(async () => memoryStore());
     });
@@ -436,6 +445,53 @@ describe('the contracts catch a wrong store', () => {
     // back renumbered even though something only arrived in front of them.
     expect(await failedCases(sessionStoreContract(), make)).toContain(
       'a batch whose front changed leaves the stored seq, body and id alone',
+    );
+  });
+
+  it('catches a queue whose claim does not raise the attempt', async () => {
+    const make = async (): Promise<WorkStore> => {
+      const inner = memoryStore();
+      return {
+        ...inner,
+        async claimWork(input) {
+          const claim = await inner.claimWork(input);
+          if (!claim.ok || claim.item === null) return claim;
+          // The attempt counted in the row but not in the answer, which is the
+          // same mistake as not counting it: a drain that read it would retry
+          // for ever rather than record on the tenth (Decision 1, AD-21).
+          return { ...claim, item: { ...claim.item, attempts: claim.item.attempts - 1 } };
+        },
+      };
+    };
+
+    expect(await failedCases(workStoreContract(), make)).toContain(
+      'claimWork raises attempts inside the claim',
+    );
+  });
+
+  it('catches a queue that finishes an item under somebody else\'s claim', async () => {
+    const make = async (): Promise<WorkStore> => {
+      const inner = memoryStore();
+      const held = new Map<string, string>();
+      return {
+        ...inner,
+        async claimWork(input) {
+          const claim = await inner.claimWork(input);
+          if (claim.ok && claim.item !== null) held.set(claim.item.id, input.claimedBy);
+          return claim;
+        },
+        async completeWork(input) {
+          // By id alone, ignoring whose claim it is: the late answer of a
+          // worker that lost the row overwrites the live worker's state, and
+          // "processed exactly once" is gone (Design Notes).
+          const owner = held.get(input.id);
+          return inner.completeWork({ ...input, claimedBy: owner ?? input.claimedBy });
+        },
+      };
+    };
+
+    expect(await failedCases(workStoreContract(), make)).toContain(
+      "finishing with somebody else's claim is lost",
     );
   });
 

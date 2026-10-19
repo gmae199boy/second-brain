@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   BUSY_TIMEOUT_MS,
+  DRAIN_BUDGET_MS,
   runSqliteMigrations,
   type SchemaStore,
   type SqliteStoreOptions,
@@ -119,6 +120,25 @@ const registry = [
       },
       warnings: ['SPOOLED', context.cause],
     }),
+  },
+  {
+    ns: 'fake',
+    verb: 'read-fails',
+    ...meta('fake', 'read-fails', 'a database command that ran and failed'),
+    run: async () => ({ ok: false, code: 'SEARCH_FAILED', message: 'nothing came back' }),
+  },
+  {
+    ns: 'fake',
+    verb: 'read-degraded',
+    ...meta('fake', 'read-degraded', 'a database command that ran and came back degraded'),
+    run: async () => ({ ok: true, data: { partial: true }, failed: true }),
+  },
+  {
+    ns: 'fake',
+    verb: 'no-drain',
+    ...meta('fake', 'no-drain', 'a database command that turned the drain off'),
+    drain: false,
+    run: async () => ({ ok: true, data: { read: true }, text: ['read ok'] }),
   },
   {
     ns: 'fake',
@@ -293,8 +313,18 @@ function runDispatch(args: string[], env: Record<string, string | undefined>): P
     `const { systemClock } = await import(${JSON.stringify(clockModule)});`,
     `const { requireConfirmation } = await import(${JSON.stringify(envelopeModule)});`,
     REGISTRY,
+    // The handler the opportunistic drain gets, only when a test named a file
+    // for it to append to: every real invocation of this build has none
+    // (AD-21), so the seam is what lets these tests watch the drain at all.
+    `const log = process.env.DRAIN_LOG;`,
+    `const workHandlers = log === undefined ? {} : {`,
+    `  demo_work: async (item) => {`,
+    `    (await import('node:fs')).appendFileSync(log, item.id + '\\n');`,
+    `    return { ok: true };`,
+    `  },`,
+    `};`,
     // With `node -e`, `process.argv[1]` is already the first user argument.
-    'process.exitCode = await dispatch(registry, process.argv.slice(1), { clock: systemClock });',
+    'process.exitCode = await dispatch(registry, process.argv.slice(1), { clock: systemClock, workHandlers });',
   ].join('\n');
 
   const childEnv: NodeJS.ProcessEnv = { ...process.env };
@@ -1070,6 +1100,206 @@ describe('the dispatcher and an unusable configuration', () => {
 });
 
 /**
+ * The opportunistic drain of AD-7: the run at the end of an ordinary command,
+ * which is the one moment a harness without hooks gets its backlog worked at
+ * all.
+ *
+ * Nothing about it may reach the command's own answer, so every case here looks
+ * at two things — whether the item was handled, and whether the envelope and
+ * the exit code are what they are without a drain.
+ */
+describe('the dispatcher and the drain at the end of a command', () => {
+  /** One item of `demo_work`, due now, as a drain would find it. */
+  function seedWork(path: string, id: string): void {
+    const database = new DatabaseSync(path);
+    try {
+      const now = new Date().toISOString();
+      database
+        .prepare(
+          `insert into work_items (id, kind, target_kind, target_id, created_at,
+                                   attempts, next_attempt_at)
+                values (?, 'demo_work', 'session', ?, ?, 0, ?)`,
+        )
+        .run(id, `demo:${id}`, now, now);
+    } finally {
+      database.close();
+    }
+  }
+
+  /** Whether the one item is closed, and by whom nothing is holding it. */
+  function closed(path: string, id: string): boolean {
+    const database = new DatabaseSync(path, { readOnly: true });
+    try {
+      const row = database.prepare('select completed_at from work_items where id = ?').get(id) as
+        | { completed_at: string | null }
+        | undefined;
+      return row?.completed_at !== null && row?.completed_at !== undefined;
+    } finally {
+      database.close();
+    }
+  }
+
+  const ITEM = '01940000-0000-7000-8000-000000000031';
+
+  it('works the backlog after an ordinary command', async () => {
+    const path = await migratedDatabase();
+    const home = await homeFor(path);
+    const log = join(await scratch(), 'handled.log');
+    seedWork(path, ITEM);
+
+    const run = await runDispatch(['fake', 'read', '--json'], {
+      [HOME_ENV]: home,
+      DRAIN_LOG: log,
+    });
+
+    expect(run.code).toBe(0);
+    // The command's own answer, unchanged: the drain adds no warning, no field
+    // and no exit code of its own.
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data).toEqual({ read: true });
+    expect(envelope.warnings).toEqual([]);
+    expect(run.stderr).toBe('');
+
+    expect(await readFile(log, 'utf8')).toBe(`${ITEM}\n`);
+    expect(closed(path, ITEM)).toBe(true);
+  });
+
+  it('answers exactly what it answers without a drain', async () => {
+    const withDrain = await (async () => {
+      const path = await migratedDatabase();
+      seedWork(path, ITEM);
+      return runDispatch(['fake', 'read', '--json'], {
+        [HOME_ENV]: await homeFor(path),
+        DRAIN_LOG: join(await scratch(), 'handled.log'),
+      });
+    })();
+    const without = await runDispatch(['fake', 'read', '--json'], {
+      [HOME_ENV]: await homeFor(await migratedDatabase()),
+    });
+
+    expect(withDrain.code).toBe(without.code);
+    const left = JSON.parse(withDrain.stdout) as Envelope;
+    const right = JSON.parse(without.stdout) as Envelope;
+    // `now` is the one field that differs, because it is this invocation's.
+    expect({ ...left, now: '' }).toEqual({ ...right, now: '' });
+  });
+
+  it('does not run on a hook path', async () => {
+    const path = await migratedDatabase();
+    const home = await homeFor(path);
+    const log = join(await scratch(), 'handled.log');
+    seedWork(path, ITEM);
+
+    const run = await runDispatch(['fake', 'hook-read', '--json'], {
+      [HOME_ENV]: home,
+      DRAIN_LOG: log,
+    });
+
+    // A turn is somebody waiting, and the drain's budget is time taken from
+    // them (AD-6, AD-7).
+    expect(run.code).toBe(0);
+    expect(existsSync(log)).toBe(false);
+    expect(closed(path, ITEM)).toBe(false);
+  });
+
+  it('does not run after a command that failed', async () => {
+    const path = await migratedDatabase();
+    const home = await homeFor(path);
+    const log = join(await scratch(), 'handled.log');
+    seedWork(path, ITEM);
+
+    const run = await runDispatch(['fake', 'read-fails', '--json'], {
+      [HOME_ENV]: home,
+      DRAIN_LOG: log,
+    });
+
+    // A command that failed may have failed because of the database, and a
+    // drain right after it would be a second write into the same problem.
+    expect(run.code).toBe(1);
+    expect(existsSync(log)).toBe(false);
+    expect(closed(path, ITEM)).toBe(false);
+  });
+
+  it('does not run after a command whose own result is a failure', async () => {
+    const path = await migratedDatabase();
+    const home = await homeFor(path);
+    const log = join(await scratch(), 'handled.log');
+    seedWork(path, ITEM);
+
+    // `ok: true, failed: true` is exactly what `doctor run` answers when a
+    // check fails: the command ran, and its answer is that this brain is
+    // broken. A drain right after it would write into that brain.
+    const run = await runDispatch(['fake', 'read-degraded', '--json'], {
+      [HOME_ENV]: home,
+      DRAIN_LOG: log,
+    });
+
+    expect(run.code).toBe(1);
+    expect((JSON.parse(run.stdout) as Envelope).ok).toBe(true);
+    expect(existsSync(log)).toBe(false);
+    expect(closed(path, ITEM)).toBe(false);
+  });
+
+  it('does not run after a command that turned it off', async () => {
+    const path = await migratedDatabase();
+    const home = await homeFor(path);
+    const log = join(await scratch(), 'handled.log');
+    seedWork(path, ITEM);
+
+    const run = await runDispatch(['fake', 'no-drain', '--json'], {
+      [HOME_ENV]: home,
+      DRAIN_LOG: log,
+    });
+
+    expect(run.code).toBe(0);
+    expect(existsSync(log)).toBe(false);
+    expect(closed(path, ITEM)).toBe(false);
+  });
+
+  it('does not run on a database at another schema version', async () => {
+    const path = await migratedDatabase();
+    const home = await homeFor(path);
+    const log = join(await scratch(), 'handled.log');
+    seedWork(path, ITEM);
+    const database = new DatabaseSync(path);
+    try {
+      database.exec('update schema_version set version = 2');
+    } finally {
+      database.close();
+    }
+
+    // A read is not guarded, so the command itself succeeds — and the drain
+    // behind it still must not write to a mismatched database (AD-20).
+    const run = await runDispatch(['fake', 'read', '--json'], {
+      [HOME_ENV]: home,
+      DRAIN_LOG: log,
+    });
+
+    expect(run.code).toBe(0);
+    expect((JSON.parse(run.stdout) as Envelope).ok).toBe(true);
+    expect(existsSync(log)).toBe(false);
+    expect(closed(path, ITEM)).toBe(false);
+  });
+
+  it('does not run without a configuration, and creates nothing', async () => {
+    const home = await scratch();
+    const log = join(await scratch(), 'handled.log');
+
+    const run = await runDispatch(['fake', 'diagnostic', '--json'], {
+      [HOME_ENV]: home,
+      DRAIN_LOG: log,
+    });
+
+    // The store a `diagnostic` command gets answers `DB_UNAVAILABLE` to
+    // everything; the drain is skipped before it can ask (AD-20).
+    expect(run.code).toBe(1);
+    expect(existsSync(log)).toBe(false);
+    expect(await readdir(home)).toEqual([]);
+  });
+});
+
+/**
  * The lock budget of AD-7 is a choice the dispatcher makes before it opens
  * anything, so these run in process with a store creator of their own: the fake
  * records the options it was handed and opens nothing at all. The subprocess
@@ -1112,6 +1342,27 @@ describe('the dispatcher and the lock budget', () => {
           return unavailable;
         },
         async readSession() {
+          return unavailable;
+        },
+        async addWork() {
+          return unavailable;
+        },
+        async hasDueWork() {
+          return unavailable;
+        },
+        async claimWork() {
+          return unavailable;
+        },
+        async completeWork() {
+          return unavailable;
+        },
+        async retryWork() {
+          return unavailable;
+        },
+        async releaseWork() {
+          return unavailable;
+        },
+        async recordFailure() {
           return unavailable;
         },
         async close() {
@@ -1180,14 +1431,21 @@ describe('the dispatcher and the lock budget', () => {
     expect(calls).toEqual([{ path, busyTimeoutMs: BUSY_TIMEOUT_MS.turn }]);
   });
 
-  it('gives any other command the command budget', async () => {
+  it('gives any other command the command budget, and the drain behind it its own', async () => {
     const path = await missingDatabase();
     const home = await homeFor(path);
 
     const { exit, calls } = await run(['fake', 'read', '--json'], home);
 
     expect(exit).toBe(0);
-    expect(calls).toEqual([{ path, busyTimeoutMs: BUSY_TIMEOUT_MS.command }]);
+    expect(calls).toEqual([
+      { path, busyTimeoutMs: BUSY_TIMEOUT_MS.command },
+      // The drain at the end of a successful command opens a connection of its
+      // own, and the reason is the budget: the command's store waits ten
+      // seconds for the write lock, and the drain may only spend two. Its own
+      // store waits its own budget and no longer (AD-7).
+      { path, busyTimeoutMs: DRAIN_BUDGET_MS.opportunistic },
+    ]);
   });
 
   it('makes no database file with nothing injected, as the default store must not', async () => {

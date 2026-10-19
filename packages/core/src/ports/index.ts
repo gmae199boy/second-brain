@@ -1,18 +1,30 @@
 // The ports every adapter implements, each with its own contract cases in
 // `@second-brain/core/testing`.
 export type {
+  AddWorkInput,
+  AddWorkResult,
+  ClaimWorkInput,
+  ClaimWorkResult,
+  CompleteWorkInput,
+  DueWorkQuery,
   EnsureCheckoutInput,
   EnsureSelfUserInput,
   EnsureSelfUserResult,
   EnsureSessionInput,
   EnsureSessionResult,
   FindSessionResult,
+  FinishWorkInput,
+  FinishWorkResult,
+  HasDueWorkResult,
   HealthStore,
   IngestCounts,
   IngestResult,
   ReadSchemaVersionResult,
   ReadSelfUserResult,
   ReadSessionResult,
+  RecordFailureInput,
+  RecordFailureResult,
+  RetryWorkInput,
   SchemaStore,
   SessionContents,
   SessionStore,
@@ -22,6 +34,8 @@ export type {
   StoreSourceHealth,
   StoreWarningCode,
   UserStore,
+  WorkFinishOutcome,
+  WorkStore,
 } from './store.js';
 export type { ParseResult, Parser } from './parser.js';
 export type { ReadTranscriptResult, TranscriptReader } from './transcript.js';

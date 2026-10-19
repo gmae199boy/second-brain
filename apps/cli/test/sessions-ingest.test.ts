@@ -20,6 +20,7 @@ import {
   SECRET_PATTERN_VERSION,
   decodeSpoolLine,
   isoWithOffset,
+  type SessionIngestSpoolRecord,
   type SpoolRecord,
 } from 'second_brain';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -1184,8 +1185,22 @@ describe('brain sessions ingest on the hook path', () => {
 describe('brain sessions ingest claude-code when the database will not take the turn', () => {
   const lockHolderPath = fileURLToPath(new URL('./fixtures/lock-holder.mjs', import.meta.url));
 
+  /**
+   * Every "ingest this session again" mark of a home, oldest first.
+   *
+   * It narrows to the one kind on purpose: a record of another kind in here
+   * would be a different fact about a different thing, and a helper that handed
+   * back the union would let a test about an ingest mark pass on a failure
+   * record (AD-9).
+   */
+  async function spooled(home: string): Promise<SessionIngestSpoolRecord[]> {
+    return (await spooledRecords(home)).filter(
+      (record): record is SessionIngestSpoolRecord => record.kind === 'session_ingest',
+    );
+  }
+
   /** Every spool file of a home, oldest first, with the records it holds. */
-  async function spooled(home: string): Promise<SpoolRecord[]> {
+  async function spooledRecords(home: string): Promise<SpoolRecord[]> {
     const folder = spoolPath(home);
     let names: string[];
     try {

@@ -5,6 +5,7 @@ import { doctorRun } from './doctor-run.js';
 import { guideExitCodes } from './guide-exit-codes.js';
 import { guideSchemaCommand } from './guide-schema.js';
 import { guideShowCommand } from './guide-show.js';
+import { queueDrainCommand } from './queue-drain.js';
 import { sessionsIngestCommand } from './sessions-ingest.js';
 import { setupConnectCommand } from './setup-connect.js';
 import { setupRun } from './setup-run.js';
@@ -30,6 +31,7 @@ export const commands: readonly CommandSpec[] = [
   guideSchemaCommand(() => commands),
   guideExitCodes,
   guideShowCommand,
+  queueDrainCommand,
   sessionsIngestCommand(harnesses),
   setupRun,
   setupConnectCommand(connectors),
