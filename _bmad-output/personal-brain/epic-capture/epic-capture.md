@@ -24,7 +24,7 @@ Claude Code transcript parser, `sessions.ensure`, 턴마다 증분 수집(세션
 
 2026-10-15 인셉션에서 정한 것은 Notes의 Decision에 있다.
 - 첨부와 추출은 epic-attachments로 나눴다.
-- 꼬리표는 첫 메시지의 cwd로 정하는 프로젝트·워크트리뿐이다. 워크스페이스는 slice 1에서 쓰지 않는다.
+- 꼬리표는 cwd가 있는 첫 메시지의 cwd로 정하는 프로젝트·워크트리뿐이다. 워크스페이스는 slice 1에서 쓰지 않는다.
 - 서브에이전트는 최종 보고만 넣는다.
 - 폴더 스캔은 내역(`transcript_files`) 기반이다. 설치 직후 첫 스캔이 디스크에 남은 transcript를 가져온다.
 - `failures.fingerprint`도 정했다.
@@ -40,13 +40,13 @@ Claude Code 세션이 손대지 않아도 원문 그대로 빠짐없이 쌓이�
 - E2-1 (CAP-10): CLI 규약 — 모든 명령의 메타 7칸과 그것에서 만드는 `guide schema`·`--help`, `guide exit-codes`, `guide show`(CLI 사용 규약 절), Core 엔벨로프 코덱과 경고·오류 코드 상수, SDK 확인 게이트와 종료 코드 3, doctor `warn`·`skip`·`summary`, 빈 위치 인자·제어문자 거부, README 종료 코드 표와 코드의 양방향 대조, 사람이 읽는 출력(오류 message·hint, `--help`, doctor 줄)의 한국어와 그 회귀 검사(2026-10-16). (spine AD-5, Conventions '출력 언어'; inputs §1.5 E1~E11)
 - E2-2 (CAP-11): 설치기 — 흐름 결과와 실패 계약, 재실행 때 설정 보존(부분 읽기, 모르는 키), store 준비 뒤 config 쓰기, DB 확인 뒤 권한 변경, TTY 동의와 비대화형 동의 게이트, 설치기 질문·진행 줄의 한국어(2026-10-16). (AD-18·19, Conventions '출력 언어'; 회고 F1~F6·F10·F11)
 - E2-3 (CAP-11): 플러그인 진입점 — `plugin/`(매니페스트, hooks, node를 찾는 런처, bootstrap 복사본, `app-ref`)과 marketplace, bootstrap(설치 잠금, Node 24.16 하한, ref로만 ff, `--frozen-lockfile --ignore-scripts`, 앞설 때만 갱신, 완료 검증, `installed.json`, 빌드 신원), shim의 node 고정과 폴백, `setup connect claude-code`의 확인·안내·옛 hook 제거, doctor의 플러그인·마지막 hook 항목. hook의 출처는 플러그인 하나. (AD-2·19·20; 회고 F7·F8·F9)
-- E2-4 (CAP-1): Claude Code transcript parser와 hook 입출력 — 메인 대화의 본문과 서브에이전트 최종 보고(peer handback 포함, 19), 도구 메모 한 줄, 추적 정보, 커서와 증분 읽기, 앞부분이 바뀐 transcript의 다시 읽기와 `CURSOR_RESET`, `parser_version`. (FR-1~3, AD-4·6)
-- E2-5 (CAP-1): 수집 — `sessions.ingest`와 SQLite `SessionStore`, `users`('나' 한 행, `setup run`이 만듦, 2026-10-16), 세션 행은 수집만 만들고 `seq`는 Store가 배정, 멱등 삽입, 같은 세션의 겹친 수집, `ingest_source`(live·import). (FR-1·5·6, AD-7·8·12)
-- E2-6 (CAP-1): 프로젝트·워크트리 정체성 — git remote 정규화(없으면 공통 디렉터리), 첫 메시지 cwd가 유일한 근거, 꼬리표는 한 번 정해 불변, 워크트리 행, 대소문자를 구분하지 않는 호스트의 비교 키, git 조회가 잠깐 실패한 세션의 꼬리표 다시 채우기(20, 2026-10-19). 워크스페이스는 slice 1에서 쓰지 않는다. (FR-4, AD-12)
+- E2-4 (CAP-1): Claude Code transcript parser와 hook 입출력 — 메인 대화의 본문과 서브에이전트 최종 보고(peer handback 포함, 19; 안내 문장·출처 판정은 22, 도구 메모 호출 키는 23), 도구 메모 한 줄, 추적 정보, 커서와 증분 읽기, 앞부분이 바뀐 transcript의 다시 읽기와 `CURSOR_RESET`, `parser_version`, 끝이 아닌 깨진 줄 건너뛰기와 `TRANSCRIPT_LINES_SKIPPED`·시각 검증·이유별 버린 줄 수(23, 2026-10-20). (FR-1~3, AD-4·6)
+- E2-5 (CAP-1): 수집 — `sessions.ingest`와 SQLite `SessionStore`, `users`('나' 한 행, `setup run`이 만듦, 2026-10-16), 세션 행은 수집만 만들고 `seq`는 Store가 배정, 멱등 삽입, 같은 세션의 겹친 수집, `ingest_source`(live·import), 대화 순서 읽기는 `occurred_at`, 같으면 `seq` 순서(21, 2026-10-20). (FR-1·5·6, AD-7·8·12)
+- E2-6 (CAP-1): 프로젝트·워크트리 정체성 — git remote 정규화(없으면 공통 디렉터리), cwd가 있는 첫 메시지의 cwd가 유일한 근거(handback 메시지는 cwd가 없다, 22, 2026-10-20), 꼬리표는 한 번 정해 불변, 워크트리 행, 대소문자를 구분하지 않는 호스트의 비교 키, git 조회가 잠깐 실패한 세션의 꼬리표 다시 채우기(20, 2026-10-19). 워크스페이스는 slice 1에서 쓰지 않는다. (FR-4, AD-12)
 - E2-7 (CAP-1): 빠짐없이 — spool, `work_items` 대기열과 `queue drain`, 기회적 drain, 실패 기록 함수와 fingerprint, 내역(`transcript_files`) 기반 폴더 스캔(설치 직후 첫 스캔이 디스크에 남은 transcript를 모두 가져온다; 스캔이 처음 만든 세션은 `import`, hook이 만든 세션은 `live`), 세션 토큰만으로 하는 증분 수집(epic 3·4가 부름), `failures list`·`failures retry`, doctor의 미수집·실패·spool 항목. (FR-5·6, AD-6·7·9·21)
 - E2-8 (CAP-2): 비밀 가리기 — 버전 있는 Core 패턴 목록과 출력 가리기 함수(저장은 원문, Core 출력 코덱이 가림, 출력 코덱 등록부와 계약 테스트), 저장본에서 지우는 `messages redact` 연쇄(`detected` 포함)와 확인 게이트. (FR-26, AD-11)
 - E2-9 (CAP-14 스키마 자리, CAP-2, CAP-1): 마이그레이션 0004(0003은 2.2의 `users`) — `chunk_locator`, `redactions.pattern_version`·파일 가리기 자리·변경 거부 trigger, `document_extractions`의 `attempt`·`failed_stage`·`index_config_id`, `files.source_unreachable_at`, 서브에이전트 표시 칸, `messages.git_branch`, drain 청구 인덱스, `failures` 대상 키. 파일 쪽 동작은 epic-attachments. (AD-11·23·24, Table Contract)
-- E2-10 (CAP-2, CAP-1, CAP-14 스키마 자리): 마이그레이션 0005 — `redactions.tool_note_id`, `document_extractions`의 `failed_stage` 강제 trigger, `projects.identity_key`, `failures`의 `first_occurred_at`·`occurrences`(2026-10-19). 동작은 13·20과 epic-attachments. (AD-11·12·24, Table Contract)
+- E2-10 (CAP-2, CAP-1, CAP-14 스키마 자리): 마이그레이션 0005 — `redactions.tool_note_id`, `document_extractions`의 `failed_stage` 강제 trigger, `projects.identity_key`, `failures`의 `first_occurred_at`·`occurrences`(2026-10-19), `tool_notes.call_id`(2026-10-20). 동작은 13·20·23과 epic-attachments. (AD-11·12·24, Table Contract)
 
 ## Done when
 
@@ -61,7 +61,7 @@ Claude Code 세션이 손대지 않아도 원문 그대로 빠짐없이 쌓이�
 
 ## Boundaries
 
-AD-4·5·6·7·8·9·11·12·13·18·19·21, Table Contract(projects, worktrees, sessions, messages, tool_notes, redactions, failures, transcript_files, work_items)와 0003의 `users`(2.2)·0004의 스키마(2.6, 파일·추출 칸 포함, 그 동작은 epic-attachments)·0005(18), Conventions(엔벨로프·종료 코드·명령 메타·설치·런타임 기록). 출력 가리기 함수와 엔벨로프·hook 출력 코덱의 적용은 이 에픽(17)이 한다. 미러·내보내기·복제·임베딩 요청은 그것을 만드는 에픽이 같은 함수를 부르고 등록부에 넣는다. AD-11 중 가린 메시지의 조각·미러 재생성 일감은 epic-recall-and-mirror가, 내보내기는 epic-operations가 붙인다. 경고 코드 `SPOOLED`·`CURSOR_RESET`·`DB_UNAVAILABLE`·`PLUGIN_NOT_INSTALLED`·`PLUGIN_BEHIND`·`PLUGIN_DUPLICATE`·`UPDATE_AVAILABLE`과 오류 코드 `CONFIRMATION_REQUIRED`(정의와 `messages redact`의 게이트)를 맡는다. 첨부·`FileStore`·문서 추출·`files reindex`·`files redact`·`ATTACHMENT_NOT_REDACTED`는 epic-attachments. 워크스페이스(`workspaces`, `sessions assign-workspace`)는 slice 1에서 쓰지 않는다(칸은 예약). 플러그인의 `skills/`와 SessionStart 동기 `context show` hook 줄은 epic-log-and-context가 더한다. `SEARCH_FAILED`는 epic-recall-and-mirror, 데몬·MCP 코드는 epic-daemon. CAP-10·CAP-11은 플러그인 진입점·hook 출처·CLI 규약 보강 부분만 맡는다(설치 기본은 epic-foundation-and-install, 운영은 epic-operations, 데몬·MCP는 epic-daemon). 문서 검색은 epic-recall-and-mirror, Drive 저장소 구현은 epic-drive. 작업 로그는 만들지 않는다(epic-log-and-context). 미러와 세션 목록·읽기는 epic-recall-and-mirror.
+AD-4·5·6·7·8·9·11·12·13·18·19·21, Table Contract(projects, worktrees, sessions, messages, tool_notes, redactions, failures, transcript_files, work_items)와 0003의 `users`(2.2)·0004의 스키마(2.6, 파일·추출 칸 포함, 그 동작은 epic-attachments)·0005(18), Conventions(엔벨로프·종료 코드·명령 메타·설치·런타임 기록). 출력 가리기 함수와 엔벨로프·hook 출력 코덱의 적용은 이 에픽(17)이 한다. 미러·내보내기·복제·임베딩 요청은 그것을 만드는 에픽이 같은 함수를 부르고 등록부에 넣는다. AD-11 중 가린 메시지의 조각·미러 재생성 일감은 epic-recall-and-mirror가, 내보내기는 epic-operations가 붙인다. 경고 코드 `SPOOLED`·`CURSOR_RESET`·`DB_UNAVAILABLE`·`PLUGIN_NOT_INSTALLED`·`PLUGIN_BEHIND`·`PLUGIN_DUPLICATE`·`UPDATE_AVAILABLE`·`TRANSCRIPT_LINES_SKIPPED`(23)와 오류 코드 `CONFIRMATION_REQUIRED`(정의와 `messages redact`의 게이트)를 맡는다. 첨부·`FileStore`·문서 추출·`files reindex`·`files redact`·`ATTACHMENT_NOT_REDACTED`는 epic-attachments. 워크스페이스(`workspaces`, `sessions assign-workspace`)는 slice 1에서 쓰지 않는다(칸은 예약). 플러그인의 `skills/`와 SessionStart 동기 `context show` hook 줄은 epic-log-and-context가 더한다. `SEARCH_FAILED`는 epic-recall-and-mirror, 데몬·MCP 코드는 epic-daemon. CAP-10·CAP-11은 플러그인 진입점·hook 출처·CLI 규약 보강 부분만 맡는다(설치 기본은 epic-foundation-and-install, 운영은 epic-operations, 데몬·MCP는 epic-daemon). 문서 검색은 epic-recall-and-mirror, Drive 저장소 구현은 epic-drive. 작업 로그는 만들지 않는다(epic-log-and-context). 미러와 세션 목록·읽기는 epic-recall-and-mirror.
 
 ## References
 
@@ -142,3 +142,13 @@ AD-4·5·6·7·8·9·11·12·13·18·19·21, Table Contract(projects, worktrees,
   - (검증 서브에이전트 권고, 사용자 change 승인으로 받아들임)
 - Decision(2026-10-19, 사용자, change-masking-b-and-review-fixes 검증 뒤): (1) 대소문자만 다른 이름은 같은 프로젝트다. 0005 전에 이미 갈라진 프로젝트가 있으면 setup이 이미 있다고 보이고, 합칠지 묻고(확인 게이트), 동의하면 먼저 만든 프로젝트로 합친다. 거절하면 DB를 바꾸지 않는다(18). (2) 셸 `NAME=value` 규칙은 도구 메모를 돌려주는 읽기 결과가 그 칸에만 먼저 걸고, 코덱은 모든 문자열에 본문 규칙을 건다(17).
 - Decision(2026-10-19, 사용자, 2.11 확인): 같은 실패 원인(일감 종류·대상·오류 코드)은 한 행으로 둔다. 다시 나면 그 행을 다시 열고 `occurred_at`(마지막으로 난 때)·`message`를 방금 것으로 바꾼다(11). 처음 난 때 `first_occurred_at`과 횟수 `occurrences`는 18의 0005가 칸으로 더하고 실패 기록 함수가 채운다. 다른 안이었던 "칸 없이 최신으로만"과 "실패한 일감마다 한 행"은 고르지 않았다. 11의 나머지 결정(청구 때 시도 횟수, 기회적 drain 유지, handler 없는 종류는 그대로 둠, 오류 문장은 저장 전에 가림)은 그대로 받아들였다.
+- Decision(2026-10-20, 사용자, 2.7 follow-up 리뷰): deferred-work의 "2.7 follow-up 리뷰"를 돌렸다(`story-transcript-parser-follow-up-review.md`, 지적 21건). 고칠 것은 기존 티켓이 맡지 않으므로 새 스토리 셋과 기존 스토리 보강으로 나눈다(검증 서브에이전트 권고, 사용자가 "권장으로 진행"으로 받아들임).
+  - 18(0005)은 도구 메모를 호출 자체로 알아보는 `tool_notes.call_id` 칸을 더한다.
+  - 21(수집 경로 보강)은 커서 경고, 대화 순서 읽기, `start_source`, 큰 transcript를 맡는다.
+  - 22(보고 판정·출처)는 안내 문장·handback 출처·user 줄 허용 목록을 맡고, deferred-work의 옛 handback 본문 항목을 합친다. parser 버전은 올리지 않는다.
+  - 23(parser v4)은 도구 메모 호출 키·줄 읽기·버린 줄 집계를 맡고, parser 버전을 한 번 올린다.
+  - 잘린 도구 메모 대상 끝의 비밀 조각은 17의 출력 가리기가 맡는다.
+  - 순서는 17→18→21→22→23→20→13→14→15다. 21이 parser 버전 업보다 먼저다. 저장 쪽을 고치기 전에 버전을 올리면 그 버전 업이 메모 중복과 순서 어긋남을 만든다. 20은 22가 바꾼 꼬리표 근거를 쓰므로 그 뒤다.
+- Decision(2026-10-20, 사용자): 버전 업으로 대화 중간에 더해진 메시지의 `seq`는 지금처럼 맨 뒤에 붙는다. 메시지를 대화 순서로 돌려주는 읽기가 `occurred_at` 순서로, 같으면 `seq` 순서로 정렬한다. 칸은 더하지 않는다(21). 다른 안이었던 "앞뒤 사이 값 칸"과 "그대로 둠"은 고르지 않았다.
+- Decision(2026-10-20, 사용자): `start_source`는 이 세션이 처음 어떻게 시작했나다. 이미 값이 있으면 바꾸지 않는다(21). 실측으로 211개 중 37개 세션이 값이 둘 이상이고, 34개가 startup 뒤 resume이다.
+- Decision(2026-10-20, 사용자): handback 메시지는 cwd·branch가 없으므로, 세션 꼬리표의 근거는 cwd가 있는 첫 메시지의 cwd다. 8의 규칙을 22가 바꾸고, 20의 다시 채우기도 같은 근거를 쓴다.

@@ -78,7 +78,7 @@
 | 2.9 deferred: 영어 키워드 과잉 가림, 한국어 표현 놓침 (`story-untitled-9-plan.md` frontmatter) | epic 2 story 17(마스킹 B에서 패턴 버전 2로, 값 끊김 포함, 2026-10-19) |
 | auto-build 커밋을 이력에서 빼기 (2026-10-18) | push 전, 사용자(티켓 밖). 끝나면 `app-ref`·`version`·`baseline_revision`·커밋 번호를 다시 맞춘다 |
 | 무인 루프 v2가 커밋을 기다리지 않음 (2026-10-18) | 저장소 밖 도구. 2.10~를 무인으로 돌리기 전에 고친다 |
-| 2.7 follow-up 리뷰 (2026-10-18) | 열려 있음. story 19가 peer handback 누락은 고쳤지만 그 리뷰는 story 19의 diff만 보았다. 같은 계열의 두 번째 안내 문장("has not reported yet")은 아직 보고로 저장되고(story 19 plan `deferred`), 2.7의 나머지 규칙을 다시 보는 일이 남았다 |
+| 2.7 follow-up 리뷰 (2026-10-18) | 리뷰 끝남(2026-10-20, `epic-capture/story-transcript-parser-follow-up-review.md`, 지적 21건). 수정은 epic 2 story 21(수집 경로 보강)·22(보고 판정·출처, "has not reported yet" 포함)·23(parser v4)과 17·18 보강이 맡는다 |
 | 백업 브랜치 `backup/pre-path-rewrite-2026-10-18` | push 전에 지운다(사용자) |
 | 비정상 종료로 남은 `.open` 회수 (2.10) | 해결됨(2.12, 2026-10-19). `claim`이 할 일이다: 이름의 pid가 살아 있지 않고 mtime이 `SPOOL_CLAIM_STALE_MS`보다 오래된 `.open`은 `spool/failed/`로 옮기고 재주입하지 않는다(쓴 쪽이 이미 실패로 답한 쓰기다, Decision 6) |
 | 업그레이드 경로 correct-course: 마이그레이션 완료 뒤 전환·실패 시 재시도·마이그레이션 승인 (2.10) | AD-19·20을 바꾸는 입력. bootstrap 2.5·shim·`setup upgrade`(epic 5)에 걸리므로 correct-course로 먼저 본다(2026-10-19 사용자) |
@@ -86,8 +86,8 @@
 | 데몬 켜짐 예외: 기회적 drain 끄기 (2.11) | epic-daemon(epic 9, 소켓 handshake가 생길 때) |
 | 같은 실패 키의 `occurred_at`·`message` 갱신 여부 (2.11) | 해결됨(2.11, 2026-10-19 사용자) |
 | 2.14: `SECOND_BRAIN_CAPTURE` 스위치를 없애고 트랜스크립트 폴더를 기본으로 켠다 (2.12) | epic 2 story 2.14(플러그인 hook 등록과 같은 자리) |
-| 옛 handback(`handbackReportText` 없음)의 본문 출처 (19) | 미정. 넣으려면 `origin.body`의 앞머리·들여쓰기를 걷어내는 규칙을 정하고 parser 버전을 또 올린다. 실제 수집을 켜는 2.14 전에 볼 가치가 있다 |
-| 버전이 올라도 크기가 같은 파일은 스캔이 다시 큐에 넣지 않는다 (19) | 미정. 2.14(폴더 스캔을 기본으로 켤 때)가 자연스러운 자리다 |
+| 옛 handback(`handbackReportText` 없음)의 본문 출처 (19) | epic 2 story 22(보고 판정·출처)에 합침(2026-10-20). 넣을지와 규칙은 22가 정한다 |
+| 버전이 올라도 크기가 같은 파일은 스캔이 다시 큐에 넣지 않는다 (19) | 미정. 2.14(폴더 스캔을 기본으로 켤 때)가 자연스러운 자리다. 23(parser v4)도 버전을 올리지만 실제 수집 전이라 다시 읽을 저장 세션이 없다(2026-10-20) |
 - source_plan: none
   summary: 옛 무인 루프 스크립트(`tooling/dev/auto-build.sh`)를 넣은 커밋(`10a09d2`)을 지우는 커밋이 아니라 그 커밋을 빼고 다시 쌓는 방식으로 이력에서 뺀다(`git rebase --onto 10a09d2^ 10a09d2 main`, 시작 전 백업 브랜치).
   evidence: 2026-10-18 사용자 결정. 그 뒤 해시가 다시 바뀌므로 `plugin/app-ref`(AGENTS.md 규칙대로 version도 함께), plan의 `baseline_revision`, 문서의 커밋 번호를 다시 맞춘다. 원격에는 첫 커밋뿐이라 push 전에 해야 한다. dev-workflow 저장소에서는 같은 일을 이미 끝냈다.
@@ -95,7 +95,7 @@
   summary: 무인 루프 v2(`~/.local/share/auto-build/auto-build.sh`, 저장소 밖)가 plan이 built가 된 뒤 커밋을 기다리지 않아 "작업 트리 더러움"으로 멈추는 버그를 고친다.
   evidence: 2026-10-18 실행에서 관찰. 루프는 이 저장소의 티켓을 돌리므로 2.10~2.15를 무인으로 돌리기 전에 고친다.
 - source_plan: none
-  summary: 열려 있음 — brain 2.7(parser) follow-up 리뷰를 한 번 더 돌린다. story 19가 알려진 빈틈(`SubagentHandback`으로 끝난 서브에이전트의 보고가 peer user 줄로 와서 parser v2가 버렸다)은 고쳤지만, story 19의 리뷰는 그 diff 하나를 빠른 렌즈로 본 것이고 2.7의 다른 규칙을 다시 본 것이 아니다.
+  summary: 리뷰 끝남(2026-10-20) — 지적 21건은 `epic-capture/story-transcript-parser-follow-up-review.md`에 있고, 수정은 epic 2 story 21·22·23과 17·18 보강이 맡는다(epic-capture Notes 2026-10-20 Decision). 원래 질문: brain 2.7(parser) follow-up 리뷰를 한 번 더 돌린다. story 19가 알려진 빈틈(`SubagentHandback`으로 끝난 서브에이전트의 보고가 peer user 줄로 와서 parser v2가 버렸다)은 고쳤지만, story 19의 리뷰는 그 diff 하나를 빠른 렌즈로 본 것이고 2.7의 다른 규칙을 다시 본 것이 아니다.
   evidence: 2026-10-18 결정 검토에서 peer handback 누락(보고 약 58%)이 나왔다. 2026-10-19 실측(이 Mac의 메인 transcript 208개, 구조와 건수만)으로 다시 세면 수정 전 누락은 65.8%였고, parser v3가 handback 줄을 보고로 읽고 같은 자리에 남는 안내 문장("Read it there")을 더는 저장하지 않는다. 그 리뷰에서 같은 계열의 두 번째 빈틈이 나왔다 — `<result>`가 "This agent has not reported yet: …will deliver its report through SubagentHandback when that finishes."뿐인 task-notification은 아직 보고로 저장된다(story 19 plan frontmatter의 `deferred`로 미뤘고 고치지 않았다). 그래서 이 항목은 열려 있다: 2.7의 나머지 규칙(안내 문장 계열 전체, 도구 메모, 커서)을 다시 보는 일이 남았다. v3 뒤에도 남는 옛 handback 본문과 폴더 스캔 항목은 아래 새 항목 둘로 떼어 두었다.
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-spool-db-plan.md`
   summary: 해결됨(2.12, 2026-10-19) — `claim`이 할 일 앞에서 회수한다: 이름의 pid가 살아 있지 않고 mtime이 `SPOOL_CLAIM_STALE_MS`보다 오래된 `.open`은 `spool/failed/`로 옮기고 다시 넣지 않으며(Decision 6: 반쯤 쓰인 마지막 줄이 있을 수 있고, 쓴 쪽은 이미 실패로 답했다) doctor의 `spool` 줄이 그 건수를 보인다. 원래 질문: 비정상 종료로 남은 `<home>/spool/*.jsonl.open` 파일을 회수한다.
@@ -119,7 +119,7 @@
   summary: `SECOND_BRAIN_CAPTURE` 스위치를 없애고 하네스 트랜스크립트 폴더를 기본으로 켠다(`apps/cli/src/harnesses.ts`의 `transcriptFolders`).
   evidence: 2.12 Decision 1(2026-10-19). 실제 폴더를 읽는 것은 "지금 디스크에 있는 것을 이 빌드의 parser와 마스킹 규칙으로 수집한다"는 뜻이고, 저장된 메시지는 다시 쓰지 않으므로(AD-11) 17·19·20 전에 켜면 그 세션은 옛 규칙으로 굳는다. 그래서 에픽 결정("실제 수집은 14에서 켠다")을 지켜 스위치를 두었다. 2.14는 그 스위치를 지우고, 그때 doctor `transcripts`는 `skip`이 아니라 `ok`가 되며, 모든 CLI 테스트는 이미 빈 `CLAUDE_CONFIG_DIR`로 격리되어 있다(`apps/cli/test/environment.ts`).
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-parser-v3-peer-handback-plan.md`
-  summary: `handbackReportText`가 없는 옛 handback의 본문을 `origin.body`에서 읽을지 정한다(편집기 앞머리 문장을 떼고 보고의 들여쓰기를 걷어낸다).
+  summary: epic 2 story 22(보고 판정·출처)에 합침(2026-10-20). 원래 질문: `handbackReportText`가 없는 옛 handback의 본문을 `origin.body`에서 읽을지 정한다(편집기 앞머리 문장을 떼고 보고의 들여쓰기를 걷어낸다).
   evidence: story 19 Decision(2026-10-19, 무인 실행에서 에이전트가 고름). 티켓이 본문 출처를 `origin.handbackReportText`로 정했고, 2.7 Decision "애매한 user 항목은 빼는 쪽"(넣은 것은 못 고치고 빠진 것은 버전을 올려 더할 수 있다, AD-11)을 따라 그 키가 없는 줄은 뺐다. 실측(2026-10-19)으로 handback 367건 중 244건이 그 키가 없다(Claude Code 2.1.273~2.1.296) — 실제 보고 381건의 64.0%다. 넣으려면 앞머리와 들여쓰기를 걷어내는 규칙을 정해야 하고, 규칙이 틀리면 고칠 수 없는 본문이 남는다. 실제 수집을 켜는 2.14 전에 보면 그 세션이 옛 규칙으로 굳는 것을 막는다.
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-parser-v3-peer-handback-plan.md`
   summary: parser 버전이 올라간 뒤 이미 수집된 세션을 다시 읽히는 거리를 만든다 — 지금은 트랜스크립트 폴더 스캔이 크기가 같은 파일을 다시 큐에 넣지 않는다.
