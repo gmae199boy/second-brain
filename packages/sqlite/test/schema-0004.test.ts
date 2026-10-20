@@ -133,7 +133,7 @@ async function versionThreePath(): Promise<string> {
 async function migratedPath(): Promise<string> {
   const path = join(await scratch(), 'brain.db');
   const applied = await runSqliteMigrations({ path });
-  expect(applied).toMatchObject({ ok: true, to: 4 });
+  expect(applied).toMatchObject({ ok: true, to: 5 });
   return path;
 }
 
@@ -242,8 +242,8 @@ describe('the upgrade from version 3 to version 4', () => {
     expect(await runSqliteMigrations({ path })).toEqual({
       ok: true,
       from: 3,
-      to: 4,
-      applied: ['0004_capture_columns.sql'],
+      to: 5,
+      applied: ['0004_capture_columns.sql', '0005_identity_and_records.sql'],
     });
 
     connection = open(path);
@@ -280,6 +280,8 @@ describe('the upgrade from version 3 to version 4', () => {
         content_hash: 'not-a-real-hash',
         occurred_at: SEEDED_AT,
         pattern_version: null,
+        // 0005's column, which no row written before it has anything to put in.
+        tool_note_id: null,
       },
     ]);
   });
@@ -343,7 +345,7 @@ describe('the upgrade from version 3 to version 4', () => {
 
   it('applies nothing the second time', async () => {
     const path = await migratedPath();
-    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 4, to: 4, applied: [] });
+    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 5, to: 5, applied: [] });
   });
 });
 
@@ -437,6 +439,10 @@ describe('the failure target key of 0004 (AD-21)', () => {
     code: 'DB_UNAVAILABLE',
     message: 'the database was not there',
     occurred_at: SEEDED_AT,
+    // Both `not null` with no default since 0005, which this file's own rows
+    // have to fill because `migratedPath` is at the shipped version.
+    first_occurred_at: SEEDED_AT,
+    occurrences: 1,
   };
 
   beforeAll(async () => {

@@ -1,12 +1,26 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdtemp, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { BRAIN_MARKER } from 'second_brain';
+import {
+  BRAIN_MARKER,
+  SQLITE_MIGRATIONS_DIRECTORY,
+  runSqliteMigrations,
+} from 'second_brain';
 import { memoryConnector, type MemoryConnector } from 'second_brain/testing';
 import { HOME_ENV, configFilePath, envFilePath } from '../src/config/paths.js';
 import { setupConnectCommand } from '../src/commands/setup-connect.js';
@@ -726,6 +740,149 @@ describe('brain setup run against the local SQLite source', () => {
     });
     expect(envelope.data?.checks?.filter((check) => check.status === 'fail')).toHaveLength(1);
     expect(existsSync(join(home, 'brain.db'))).toBe(false);
+  });
+});
+
+/**
+ * The one upgrade that can need somebody's consent, against a real database.
+ *
+ * Migration 0005 makes the project comparison key `unique`, and a brain that
+ * split one repository into two projects over nothing but the case of its
+ * remote has two rows that become one key. The install shows them, asks, and
+ * merges inside the migration's own transaction — so a no leaves the file at
+ * the version it was, and a yes keeps every session (AD-12).
+ */
+describe('brain setup run on a database whose projects collide', () => {
+  /** Ids in the UUIDv7 shape every row carries (AD-8). */
+  function id(ordinal: number): string {
+    return `01960000-0000-7000-8000-${String(ordinal).padStart(12, '0')}`;
+  }
+
+  const AT = '2026-02-03T04:05:06.000Z';
+  const REMOTE_UPPER = 'github.com/Brain-Owner/Notes';
+  const REMOTE_LOWER = 'github.com/brain-owner/notes';
+
+  /**
+   * A `<home>/brain.db` at version 4 — the version before the key — holding the
+   * two projects, three sessions and three worktrees a merge has to reconcile.
+   *
+   * The folder of migration files is one this test writes, because a folder the
+   * caller names is not held to `SQLITE_SCHEMA_VERSION`: that is the only way
+   * to stop at an earlier version with the files this build ships.
+   */
+  async function versionFourHome(): Promise<string> {
+    const home = await emptyHome();
+    const directory = join(home, 'migrations-0004');
+    await mkdir(directory, { recursive: true });
+    for (const name of [
+      '0001_initial.sql',
+      '0002_files_and_work.sql',
+      '0003_users.sql',
+      '0004_capture_columns.sql',
+    ]) {
+      await copyFile(join(SQLITE_MIGRATIONS_DIRECTORY, name), join(directory, name));
+    }
+    const path = join(home, 'brain.db');
+    expect(await runSqliteMigrations({ path, directory })).toMatchObject({ ok: true, to: 4 });
+
+    const database = new DatabaseSync(path);
+    try {
+      database.exec('pragma foreign_keys = ON');
+      database.exec(
+        `insert into users (id, name, is_self, created_at)
+              values ('${id(1)}', 'brain-owner', 1, '${AT}')`,
+      );
+      database.exec(
+        `insert into projects (id, remote_identity)
+              values ('${id(2)}', '${REMOTE_UPPER}'), ('${id(3)}', '${REMOTE_LOWER}')`,
+      );
+      // `/demo/repo` under both projects is one checkout seen twice, so the
+      // merge folds it; `/demo/repo-review` belongs to the loser alone.
+      database.exec(
+        `insert into worktrees (id, project_id, path)
+              values ('${id(4)}', '${id(2)}', '/demo/repo'),
+                     ('${id(5)}', '${id(3)}', '/demo/repo'),
+                     ('${id(6)}', '${id(3)}', '/demo/repo-review')`,
+      );
+      for (const [ordinal, project, worktree] of [
+        [7, id(2), id(4)],
+        [8, id(3), id(5)],
+        [9, id(3), id(6)],
+      ] as const) {
+        database.exec(
+          `insert into sessions (id, harness, harness_session_id, user_id, machine,
+                                 started_at, ingest_source, project_id, worktree_id)
+                values ('${id(ordinal)}', 'demo', 'session-000${String(ordinal)}', '${id(1)}',
+                        'demo-machine', '${AT}', 'live', '${project}', '${worktree}')`,
+        );
+      }
+    } finally {
+      database.close();
+    }
+    return home;
+  }
+
+  /** One scalar off the database, read without writing. */
+  function scalar(path: string, query: string): unknown {
+    const database = new DatabaseSync(path, { readOnly: true });
+    try {
+      return (database.prepare(query).get() as Record<string, unknown> | undefined)?.['n'];
+    } finally {
+      database.close();
+    }
+  }
+
+  it('shows the group, merges it and reaches version 5 with every session kept', async () => {
+    const home = await versionFourHome();
+    const path = join(home, 'brain.db');
+
+    const run = await runBrain(['setup', 'run', '--yes'], home);
+
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    // The trade, in full: both remotes, both session counts, and which row
+    // stays. `--yes` is consent given in advance, not consent in the dark.
+    expect(run.stdout).toContain(`비교 키 ${REMOTE_LOWER}로 겹치는 프로젝트가 2개 있습니다`);
+    expect(run.stdout).toContain(`${REMOTE_UPPER} (세션 1건)`);
+    expect(run.stdout).toContain(`${REMOTE_LOWER} (세션 2건)`);
+    expect(run.stdout).toContain('겹치는 프로젝트 1묶음을 하나로 합쳤습니다');
+    expect(run.stdout).toContain('0005_identity_and_records.sql');
+    expect(run.stdout).toContain('스키마 버전은 5입니다');
+
+    // One project, under the older id and keeping the remote it was written
+    // with, and the shared folder folded into one worktree.
+    expect(scalar(path, 'select count(*) as n from projects')).toBe(1);
+    expect(scalar(path, `select remote_identity as n from projects`)).toBe(REMOTE_UPPER);
+    expect(scalar(path, 'select count(*) as n from worktrees')).toBe(2);
+    // Every session is still here, and every one points at what is left.
+    expect(scalar(path, 'select count(*) as n from sessions')).toBe(3);
+    expect(scalar(path, `select count(*) as n from sessions where project_id = '${id(2)}'`)).toBe(3);
+    expect(scalar(path, 'select count(*) as n from pragma_foreign_key_check')).toBe(0);
+
+    // The same number doctor reports, which is the question a later command
+    // refuses to write on (AD-20).
+    const doctor = await runBrain(['doctor', 'run', '--json'], home);
+    const checks = (JSON.parse(doctor.stdout) as Envelope).data?.checks ?? [];
+    expect(checks.find((check) => check.id === 'schema-version')).toMatchObject({
+      status: 'ok',
+      detail: '5',
+    });
+  });
+
+  it('exits 3 without a terminal and without --yes, leaving the file byte for byte', async () => {
+    const home = await versionFourHome();
+    const path = join(home, 'brain.db');
+    const before = await readFile(path);
+
+    const run = await runBrain(['setup', 'run', '--json'], home);
+
+    expect(run.code).toBe(3);
+    expect((JSON.parse(run.stdout) as Envelope).error?.code).toBe('CONFIRMATION_REQUIRED');
+    // The consent gate is before every question, the merge one included, so
+    // nothing was read and nothing was written.
+    expect(await readFile(path)).toEqual(before);
+    expect(scalar(path, 'select version as n from schema_version')).toBe(4);
+    expect(existsSync(configFilePath(home))).toBe(false);
   });
 });
 

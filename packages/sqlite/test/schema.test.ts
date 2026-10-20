@@ -114,12 +114,13 @@ async function migratedPath(): Promise<string> {
   expect(applied).toEqual({
     ok: true,
     from: 0,
-    to: 4,
+    to: 5,
     applied: [
       '0001_initial.sql',
       '0002_files_and_work.sql',
       '0003_users.sql',
       '0004_capture_columns.sql',
+      '0005_identity_and_records.sql',
     ],
   });
   return path;
@@ -188,6 +189,9 @@ function seed(connection: SqliteConnection): void {
     id: ids.project,
     remote_identity: 'example.com/demo/repo',
     workspace_id: ids.workspace,
+    // `not null` since 0005. `example.com` is not one of the hosts the key
+    // folds, so it is the remote spelled exactly as it stands.
+    identity_key: 'example.com/demo/repo',
   });
   insert(connection, 'worktrees', {
     id: ids.worktree,
@@ -289,6 +293,9 @@ function seed(connection: SqliteConnection): void {
     message: 'the database was not there',
     occurred_at: SEEDED_AT,
     resolved_at: null,
+    // Both `not null` with no default since 0005.
+    first_occurred_at: SEEDED_AT,
+    occurrences: 1,
   });
   insert(connection, 'transcript_files', {
     id: ids.transcriptFile,
@@ -387,7 +394,7 @@ describe('the migration this package ships', () => {
     const before = tableNames(connection);
     const configs = count(connection, 'index_configs');
 
-    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 4, to: 4, applied: [] });
+    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 5, to: 5, applied: [] });
 
     expect(tableNames(connection)).toEqual(before);
     expect(count(connection, 'index_configs')).toBe(configs);
@@ -564,7 +571,12 @@ interface DuplicateKeyCase {
 
 function duplicateKeyCases(): DuplicateKeyCase[] {
   const workspace = { id: id(101), name: 'second-workspace' };
-  const project = { id: id(102), remote_identity: 'example.com/demo/other', workspace_id: null };
+  const project = {
+    id: id(102),
+    remote_identity: 'example.com/demo/other',
+    workspace_id: null,
+    identity_key: 'example.com/demo/other',
+  };
   const worktree = { id: id(103), project_id: ids.project, path: '/demo/other' };
   const session = {
     id: id(104),
@@ -654,6 +666,8 @@ function duplicateKeyCases(): DuplicateKeyCase[] {
     code: 'DB_UNAVAILABLE',
     message: 'again',
     occurred_at: SEEDED_AT,
+    first_occurred_at: SEEDED_AT,
+    occurrences: 1,
   };
   const transcriptFile = {
     id: id(114),

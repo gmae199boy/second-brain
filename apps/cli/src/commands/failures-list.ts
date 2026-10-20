@@ -27,6 +27,9 @@ export interface FailuresListRow {
   /** ISO-8601 with this machine's offset, as every instant in `--json` is. */
   occurred_at: string;
   resolved_at: string | null;
+  /** When the cause was first met, and how often it has been met (0005). */
+  first_occurred_at: string;
+  occurrences: number;
 }
 
 export interface FailuresListData {
@@ -45,7 +48,7 @@ export const failuresListCommand: CommandSpec<FailuresListData> = {
     'brain failures list --all --limit 20',
   ],
   output:
-    '실패 목록 `failures`(각 행에 `id`, `target_kind`, `target_id`, `stage`, `code`, `message`, `harness`, `session_id`, `occurred_at`, `resolved_at`)와 건수 `count`·더 있는지 `has_more`',
+    '실패 목록 `failures`(각 행에 `id`, `target_kind`, `target_id`, `stage`, `code`, `message`, `harness`, `session_id`, `occurred_at`, `resolved_at`, `first_occurred_at`, `occurrences`)와 건수 `count`·더 있는지 `has_more`',
   risk: 'read',
   hook: false,
   dryRun: false,
@@ -96,7 +99,8 @@ function lines(failures: readonly FailureRecord[]): readonly string[] {
   const rows = failures.map(
     (failure) =>
       `${isoWithOffset(failure.occurredAt)} 대상 ${failure.targetKind} ${failure.targetId}, ` +
-      `단계 ${failure.stage}, 코드 ${failure.code}` +
+      `단계 ${failure.stage}, 코드 ${failure.code}, ` +
+      `횟수 ${String(failure.occurrences)}` +
       `${failure.resolvedAt === null ? '' : ' (해결됨)'}: ${failure.message}`,
   );
   // Always, 0 included: "there is nothing wrong" is an answer, and an empty
@@ -118,6 +122,8 @@ function row(failure: FailureRecord): FailuresListRow {
     // (Conventions, 시각); the storage form is the database's own.
     occurred_at: isoWithOffset(failure.occurredAt),
     resolved_at: failure.resolvedAt === null ? null : isoWithOffset(failure.resolvedAt),
+    first_occurred_at: isoWithOffset(failure.firstOccurredAt),
+    occurrences: failure.occurrences,
   };
 }
 

@@ -193,15 +193,24 @@ export interface SessionStore {
    * Find-or-create the session row, and with it the project and worktree its
    * checkout names (AD-12).
    *
-   * Three rules about the tags, and every adapter keeps them:
+   * Three rules about the tags. Every adapter keeps them, with one difference
+   * the second rule spells out:
    *
    *   * the session is looked for first. A key that is already stored comes
    *     back untouched and nothing else is written — not even a project row
    *     for the checkout this call carried, because a row nothing points at is
    *     a row nobody will ever find again.
-   *   * otherwise the project is found-or-created on `remoteIdentity` and the
-   *     worktree on `(project_id, path)`. An identity or a path that is already
-   *     there keeps the id it has, and the proposal is dropped.
+   *   * otherwise the project is found-or-created on the identity of the
+   *     remote and the worktree on `(project_id, path)`. An identity or a path
+   *     that is already there keeps the id it has, and the proposal is
+   *     dropped. What counts as "the same identity" is the one place the
+   *     adapters do not yet agree: since 0005 the SQLite store finds and
+   *     creates on the comparison key, which folds the case of a
+   *     GitHub or Bitbucket remote, so `github.com/Owner/Repo` and
+   *     `github.com/owner/repo` are one project there; the memory fake still
+   *     keys on `remoteIdentity` verbatim and so has two. Core's own key
+   *     function, the host list and the fake follow in story 20, and this
+   *     bullet says one thing again then.
    *   * all of it lands in one transaction with the session, so a session is
    *     never tagged with a project that is not in the database and a project
    *     is never created for a session that was not.
@@ -442,9 +451,10 @@ export interface RecordFailureInput {
  * `created` tells a reopened row from a new one: the same cause met a hundred
  * times is one row. The second through hundredth keep the row's id, open it
  * again (`resolved_at` cleared) and replace `occurred_at` and `message` with
- * this occurrence's, so the row says when the cause was last met. When it was
- * first met and how often arrive with migration 0005 (Decision 2, 2026-10-19
- * 사용자, Table Contract).
+ * this occurrence's, so the row says when the cause was last met. Since 0005
+ * they also raise `occurrences` by one and leave `firstOccurredAt` where the
+ * first record put it, so the row says when it started as well (Decision 2,
+ * 2026-10-19 사용자, Table Contract).
  */
 export type RecordFailureResult =
   | { ok: true; outcome: 'recorded'; created: boolean; failureId: string }

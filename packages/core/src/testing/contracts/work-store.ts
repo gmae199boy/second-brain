@@ -382,6 +382,53 @@ export function workStoreContract(): ContractCase<WorkStore>[] {
       });
     }),
 
+    contractCase<WorkStore>(
+      'the same cause three times is one row that counts them, keeping the first instant',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          const THIRD = new Date('2026-02-03T06:05:06.000Z');
+          // Three occurrences of one cause, each with its own sentence: what
+          // the row has to end up saying is when it started, when it last
+          // happened, and how many times (0005, I/O matrix).
+          for (const [index, occurredAt] of [NOW, LATER, THIRD].entries()) {
+            const recorded = await store.recordFailure(
+              sampleFailureInput({
+                id: index === 0 ? sampleFailureId : otherFailureId,
+                message: `${String(index + 1)}번째 문장`,
+                occurredAt,
+              }),
+            );
+            assertOk(recorded, `recordFailure ${String(index + 1)} failed`);
+            if (recorded.outcome !== 'recorded') {
+              assertTrue(false, `recordFailure ${String(index + 1)} did not record`);
+              return;
+            }
+            assertTrue(
+              recorded.created === (index === 0),
+              'only the first record of a cause may create the row',
+            );
+          }
+
+          const listed = await store.listFailures({});
+          assertOk(listed, 'listFailures failed after the cause was met three times');
+          assertEqual(listed.failures.length, 1, 'three records of one cause must be one row');
+          const row = listed.failures[0];
+          assertEqual(row?.occurrences, 3, 'the row must count every occurrence of the cause');
+          assertEqual(
+            row?.firstOccurredAt.getTime(),
+            NOW.getTime(),
+            'the first instant must stay the first occurrence\'s (0005)',
+          );
+          assertEqual(
+            row?.occurredAt.getTime(),
+            THIRD.getTime(),
+            'the instant must be the latest occurrence\'s (Decision 2)',
+          );
+          assertEqual(row?.message, '3번째 문장', 'the sentence must be the latest occurrence\'s');
+        });
+      },
+    ),
+
     contractCase<WorkStore>('recordFailure closes the item it was about', async (make) => {
       await withSubject(make, async (store) => {
         const added = await store.addWork(sampleWorkInput());

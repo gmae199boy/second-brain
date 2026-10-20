@@ -21,6 +21,7 @@ import {
 import { sql, type Kysely } from 'kysely';
 import { describe, type SqliteConnect } from './connect.js';
 import type { SqliteSchema } from './driver.js';
+import { PROJECT_IDENTITY_KEY_SQL } from './project-keys.js';
 import { withWrite, type WriteResult } from './write.js';
 
 /** A `sessions` row as SQLite hands it back: text instants, no booleans. */
@@ -416,13 +417,30 @@ async function ensureCheckout(
   const checkout = input.checkout;
   if (checkout === null) return { projectId: null, worktreeId: null };
 
+  // `identity_key` is `not null`, so the insert has to fill it, and the lookup
+  // has to be on it: two remotes that only differ by case are one project
+  // (0005, AD-12), and a `where remote_identity = …` that missed the row that
+  // is already there would propose an id the key refuses and come back as
+  // `UnsettledEnsure`. The expression is `project-keys.ts`'s, so the value
+  // written here and the value 0005 computed for the rows already stored are
+  // the same value. Core's own function arrives with story 20.
+  // The key is computed by the database and then bound, rather than spelled
+  // inside the two statements below: one expression, evaluated once, and the
+  // insert keeps the plain `values` form an upsert can be attached to without
+  // the parser having to guess what its `on` belongs to.
+  const keyed = await sql<{ identity_key: string }>`
+    select ${sql.raw(PROJECT_IDENTITY_KEY_SQL)} as identity_key
+      from (select ${checkout.remoteIdentity} as remote_identity)
+  `.execute(held);
+  const identityKey = keyed.rows[0]?.identity_key ?? checkout.remoteIdentity;
+
   await sql`
-    insert into projects (id, remote_identity)
-         values (${checkout.projectId}, ${checkout.remoteIdentity})
+    insert into projects (id, remote_identity, identity_key)
+         values (${checkout.projectId}, ${checkout.remoteIdentity}, ${identityKey})
     on conflict do nothing
   `.execute(held);
   const projects = await sql<{ id: string }>`
-    select id from projects where remote_identity = ${checkout.remoteIdentity}
+    select id from projects where identity_key = ${identityKey}
   `.execute(held);
   const projectId = projects.rows[0]?.id;
   if (projectId === undefined) {

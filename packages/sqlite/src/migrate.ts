@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { BUSY_TIMEOUT_MS, formatInstant, type Clock } from '@second-brain/core';
 import { sql } from 'kysely';
 import { describe, openSqlite, type SqliteConnection } from './connect.js';
+import { mergeSqliteProjectKeyCollisions } from './project-keys.js';
 import { withWrite } from './write.js';
 
 /**
@@ -16,7 +17,7 @@ import { withWrite } from './write.js';
  * `SCHEMA_VERSION` of its own: the two databases are migrated apart and nothing
  * says their numbers move together (AD-22).
  */
-export const SQLITE_SCHEMA_VERSION = 4;
+export const SQLITE_SCHEMA_VERSION = 5;
 
 /**
  * The migrations this package ships. One level up from this module, which is
@@ -42,6 +43,18 @@ export interface RunSqliteMigrationsOptions {
   busyTimeoutMs?: number;
   /** Source of `applied_at`. Defaults to the wall clock. */
   clock?: Clock;
+  /**
+   * Fold the projects that only differ by comparison key into one, in the same
+   * transaction as migration 0005 (AD-12).
+   *
+   * Off by default, and the installer is the one caller that turns it on —
+   * after it has shown the groups and been told yes. Without it, a database
+   * that holds `github.com/Owner/Repo` beside `github.com/owner/repo` has 0005
+   * refused by `projects.identity_key unique` and stays at the version it was,
+   * which is the right outcome: deleting somebody's project rows is not
+   * something a migration decides on its own.
+   */
+  mergeProjectKeyCollisions?: boolean;
 }
 
 /**
@@ -79,6 +92,13 @@ export type SqliteMigrationResult =
 /** Migrations go forward only, one numbered SQL file at a time (Conventions). */
 const MIGRATION_FILE = /^(\d{4})_.+\.sql$/;
 
+/**
+ * The file that makes the project comparison key a `unique` column, and so the
+ * one file a merge has to go in front of (AD-12). A literal, because the number
+ * is 0005's forever while `SQLITE_SCHEMA_VERSION` moves on.
+ */
+const PROJECT_KEY_MIGRATION = 5;
+
 interface MigrationFile {
   name: string;
   version: number;
@@ -104,6 +124,7 @@ export async function runSqliteMigrations(
     directory = SQLITE_MIGRATIONS_DIRECTORY,
     busyTimeoutMs = BUSY_TIMEOUT_MS.command,
     clock,
+    mergeProjectKeyCollisions = false,
   } = options;
   const files = await readMigrationFiles(directory);
 
@@ -133,6 +154,15 @@ export async function runSqliteMigrations(
         if (file.version <= stored) {
           // Someone else got here first, or we did on an earlier run.
           return { stored, took: false };
+        }
+        // Immediately before the file that makes the comparison key `unique`,
+        // and only when the caller agreed to it: the merge and 0005 commit
+        // together or not at all, so nobody is left with the rows gone and the
+        // key missing (Design Notes). It uses `held` and never
+        // `connection.db` — a query on the shared handle from in here waits on
+        // the connection this transaction is holding and never returns.
+        if (file.version === PROJECT_KEY_MIGRATION && mergeProjectKeyCollisions) {
+          await mergeSqliteProjectKeyCollisions(held);
         }
         // The raw handle, because a migration file holds many statements and a
         // prepared statement holds one.

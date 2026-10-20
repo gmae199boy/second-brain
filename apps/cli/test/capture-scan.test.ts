@@ -16,6 +16,7 @@ import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { isoWithOffset } from 'second_brain';
 import { HOME_ENV, spoolPath } from '../src/config/paths.js';
 import { CAPTURE_ENV } from '../src/harnesses.js';
 import { withoutHarnessFolders } from './environment.js';
@@ -72,7 +73,11 @@ interface FailuresData {
     code: string;
     harness: string | null;
     session_id: string | null;
+    occurred_at: string;
     resolved_at: string | null;
+    /** When the cause was first met, and how often it has been met (0005). */
+    first_occurred_at: string;
+    occurrences: number;
   }[];
 }
 
@@ -496,9 +501,17 @@ describe('a session the drain could not collect', () => {
       expect(listed.code).toBe(0);
       const list = envelopeOf<FailuresData>(listed);
       expect(list.meta).toMatchObject({ count: 1, has_more: false });
+      // The first record of this cause, so the first instant is the stored
+      // `occurred_at` — in the offset form every `--json` instant carries,
+      // which is what tells it from the database's own spelling (Conventions,
+      // 시각).
+      const stored = String(failures[0]?.['occurred_at']);
       expect(list.data?.failures[0]).toMatchObject({
         target_kind: 'session',
         code: 'TRANSCRIPT_UNREADABLE',
+        occurred_at: isoWithOffset(new Date(stored)),
+        first_occurred_at: isoWithOffset(new Date(stored)),
+        occurrences: 1,
       });
     } finally {
       await chmod(path, 0o600);
@@ -583,6 +596,8 @@ describe('brain failures list and retry in text mode', () => {
     expect(lines[0]).toContain('대상 session claude-code:session-aaaa');
     expect(lines[0]).toContain('단계 session_ingest');
     expect(lines[0]).toContain('코드 TRANSCRIPT_UNREADABLE');
+    // How often the cause has been met, which the row counts since 0005.
+    expect(lines[0]).toContain('횟수 1');
     expect(lines[0]).toContain('읽을 수 없습니다');
     expect(lines[1]).toBe('실패 1건.');
     // Every clause carries Korean, the identifiers included (Conventions,
@@ -611,9 +626,11 @@ describe('brain failures list and retry in text mode', () => {
       database
         .prepare(
           `insert into failures (id, target_kind, target_id, stage, fingerprint, harness,
-                                 session_id, code, message, occurred_at)
+                                 session_id, code, message, occurred_at,
+                                 first_occurred_at, occurrences)
            values (?, 'file', 'sha256:demo', 'extract', 'sha256:one', null, null,
-                   'DEMO_FAILED', '안 됩니다', '2026-03-04T05:06:07.000Z')`,
+                   'DEMO_FAILED', '안 됩니다', '2026-03-04T05:06:07.000Z',
+                   '2026-03-04T05:06:07.000Z', 1)`,
         )
         .run('01940000-0000-7000-8000-0000000000aa');
     } finally {
@@ -646,10 +663,11 @@ function recordFailureRow(path: string): void {
     database
       .prepare(
         `insert into failures (id, target_kind, target_id, stage, fingerprint, harness,
-                               session_id, code, message, occurred_at)
+                               session_id, code, message, occurred_at,
+                               first_occurred_at, occurrences)
          values (?, 'session', 'claude-code:session-aaaa', 'session_ingest', 'sha256:one',
                  'claude-code', null, 'TRANSCRIPT_UNREADABLE', '읽을 수 없습니다',
-                 '2026-03-04T05:06:07.000Z')`,
+                 '2026-03-04T05:06:07.000Z', '2026-03-04T05:06:07.000Z', 1)`,
       )
       .run('01940000-0000-7000-8000-0000000000ab');
   } finally {

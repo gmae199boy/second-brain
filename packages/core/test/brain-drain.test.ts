@@ -63,11 +63,11 @@ async function kit(
     store: {
       ...store,
       async readSchemaVersion() {
-        return { ok: true, version: { version: 4, appliedAt: NOW } };
+        return { ok: true, version: { version: 5, appliedAt: NOW } };
       },
     },
     spool,
-    schemaVersion: 4,
+    schemaVersion: 5,
     clock: fixedClock(NOW),
     idGen: sequenceIdGen({ timestampMs: NOW.getTime() }),
     parsers: [memoryParser()],

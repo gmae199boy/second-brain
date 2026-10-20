@@ -3,11 +3,13 @@ import { userInfo } from 'node:os';
 import { dirname } from 'node:path';
 import {
   SQLITE_SCHEMA_VERSION,
+  findSqliteProjectKeyCollisions,
   runDoctor,
   runSqliteMigrations,
   sqliteStore,
   type DoctorReport,
   type SqliteMigrationResult,
+  type SqliteProjectKeyCollision,
   type TranscriptFolder,
 } from 'second_brain';
 import { runtimeChecks } from '../doctor/checks.js';
@@ -89,6 +91,15 @@ function isMissing(error: unknown): boolean {
   );
 }
 
+export interface PrepareStoreOptions {
+  /**
+   * Fold the projects that only differ by comparison key into one, inside the
+   * same transaction as migration 0005 (AD-12). On only when the flow has shown
+   * the groups and been told yes.
+   */
+  mergeProjects?: boolean;
+}
+
 /**
  * Create the database file if it is not there and bring it up to the version
  * this build ships.
@@ -103,7 +114,10 @@ function isMissing(error: unknown): boolean {
  * The parent folder is created at 0700 for the same reason: a database under a
  * world-readable folder of our own making is our doing.
  */
-export async function prepareStore(path: string): Promise<SqliteMigrationResult> {
+export async function prepareStore(
+  path: string,
+  options: PrepareStoreOptions = {},
+): Promise<SqliteMigrationResult> {
   // Before the folder is made, before the file is opened, and above all before
   // the `chmod`: a file that is not a database is somebody else's, and this
   // install has no business changing its mode or writing a log beside it.
@@ -133,7 +147,10 @@ export async function prepareStore(path: string): Promise<SqliteMigrationResult>
     };
   }
 
-  const migrated = await runSqliteMigrations({ path });
+  const migrated = await runSqliteMigrations({
+    path,
+    mergeProjectKeyCollisions: options.mergeProjects === true,
+  });
 
   for (const suffix of SIDECARS) {
     try {
@@ -144,6 +161,30 @@ export async function prepareStore(path: string): Promise<SqliteMigrationResult>
   }
 
   return migrated;
+}
+
+/**
+ * The projects that migration 0005 would fold into one comparison key, for the
+ * screen that asks before it happens (AD-12).
+ *
+ * It opens nothing it would have to create and changes nothing: a path with no
+ * file at it, and a path holding somebody else's file, both come back with no
+ * groups — there is nothing to merge in either, and which of the two it is is
+ * `prepareStore`'s to say and to say once. The `notADatabase` check is the same
+ * one `prepareStore` runs, so a text file named by a mistyped `--store-path` is
+ * not opened as a database here either.
+ */
+export async function storeCollisions(
+  path: string,
+): Promise<readonly SqliteProjectKeyCollision[]> {
+  if (!(await storeFileExists(path))) return [];
+  if ((await notADatabase(path)) !== undefined) return [];
+
+  const found = await findSqliteProjectKeyCollisions(path);
+  // A file that cannot be opened is not an answer this screen can use: the
+  // install is about to call `prepareStore`, which opens the same file and
+  // reports the failure with the one message the flow prints.
+  return found.ok ? found.groups : [];
 }
 
 /**

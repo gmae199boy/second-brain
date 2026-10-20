@@ -262,6 +262,72 @@ describe('the SQLite session store and the columns behind it', () => {
     }
   });
 
+  it('puts two GitHub remotes that differ only in case into one project', async () => {
+    // GitHub compares an owner and a repository name without case, so these are
+    // one repository under two spellings — and one project, under the id the
+    // first checkout minted (0005, AD-12). Only this store can be held to it:
+    // the comparison key is SQL until story 20 moves it into Core, and the
+    // memory fake still keys a project on `remoteIdentity`.
+    const path = await migratedPath();
+    const store = sqliteStore({ path });
+    const first = sampleCheckoutInput({ remoteIdentity: 'github.com/Brain-Owner/Notes' });
+    try {
+      expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
+      const created = await store.ensureSession(sampleEnsureSessionInput({ checkout: first }));
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      expect(created.session.projectId).toBe(first.projectId);
+
+      const lowered = await store.ensureSession(
+        sampleEnsureSessionInput({
+          id: otherSessionId,
+          key: { harness: sampleSessionKey.harness, harnessSessionId: 'session-0002' },
+          checkout: sampleCheckoutInput({
+            projectId: otherProjectId,
+            remoteIdentity: 'github.com/brain-owner/notes',
+            worktreeId: otherWorktreeId,
+            worktreePath: '/demo/repo-review',
+          }),
+        }),
+      );
+      // No `UnsettledEnsure`: the lookup is on the comparison key, so the
+      // project that is already there is found rather than inserted again.
+      expect(lowered.ok).toBe(true);
+      if (!lowered.ok) return;
+      expect(lowered.session.projectId).toBe(first.projectId);
+      expect(lowered.session.worktreeId).toBe(otherWorktreeId);
+    } finally {
+      await store.close();
+    }
+
+    const opened = openSqlite({ path, busyTimeoutMs: 3000 });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    try {
+      // One row, keeping the remote the first checkout wrote: the key answers
+      // "same repository", and `remote_identity` stays the value a person
+      // recognises.
+      expect(
+        opened.connection.database
+          .prepare('select id, remote_identity, identity_key from projects')
+          .all(),
+      ).toEqual([
+        {
+          id: first.projectId,
+          remote_identity: 'github.com/Brain-Owner/Notes',
+          identity_key: 'github.com/brain-owner/notes',
+        },
+      ]);
+      expect(
+        opened.connection.database
+          .prepare('select count(*) as rows from worktrees where project_id = ?')
+          .get(first.projectId),
+      ).toEqual({ rows: 2 });
+    } finally {
+      await opened.connection.close();
+    }
+  });
+
   it('writes no project row for a checkout handed to a session that is already there', async () => {
     const path = await migratedPath();
     const store = sqliteStore({ path });

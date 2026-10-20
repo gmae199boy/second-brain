@@ -216,6 +216,9 @@ describe('the columns the SQLite queue writes', () => {
           message: '열 번 모두 실패했습니다',
           occurred_at: '2026-02-03T04:05:06.000Z',
           resolved_at: null,
+          // The first record: the cause was first met now, and met once (0005).
+          first_occurred_at: '2026-02-03T04:05:06.000Z',
+          occurrences: 1,
         },
       ]);
       // The item is closed in the same transaction, with the sentence on it.
@@ -259,6 +262,11 @@ describe('the columns the SQLite queue writes', () => {
         occurred_at: '2026-02-03T06:00:00.000Z',
         harness: null,
         resolved_at: null,
+        // The second occurrence: the count goes up and the first instant does
+        // not move, so the row says both when it started and when it last
+        // happened (0005).
+        first_occurred_at: '2026-02-03T04:05:06.000Z',
+        occurrences: 2,
       });
     } finally {
       await store.close();
@@ -290,6 +298,14 @@ describe('the same cause, again and again', () => {
         expect(recorded).toMatchObject({ ok: true, outcome: 'recorded', created: n === 1 });
       }
       expect(rows(path, 'failures')).toHaveLength(1);
+      // One row, and it says so: a hundred occurrences, the first of them the
+      // one the first record carried (0005, I/O matrix).
+      expect(rows(path, 'failures')[0]).toMatchObject({
+        first_occurred_at: '2026-02-03T04:05:07.000Z',
+        occurrences: 100,
+        occurred_at: '2026-02-03T04:06:46.000Z',
+        message: '100번째 실패',
+      });
 
       const other = await store.recordFailure(one(101, 'OTHER_FAILED'));
       expect(other).toMatchObject({ ok: true, outcome: 'recorded', created: true });

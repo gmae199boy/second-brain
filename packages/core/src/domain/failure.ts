@@ -39,9 +39,20 @@ export interface Failure {
   code: string;
   /** Already through `failureText`: masked, and inside the byte limit. */
   message: string;
+  /** When the cause was last met: the latest occurrence replaces it (2.11). */
   occurredAt: Date;
   /** Filled by drain once the work went through (Table Contract). */
   resolvedAt: Date | null;
+  /**
+   * When the cause was *first* met, and how many times it has been met (0005).
+   *
+   * The pair is what tells a problem that has been happening every ten minutes
+   * for a week from one that happened once a moment ago — `occurredAt` alone
+   * reads the same either way. The first instant never moves once the row
+   * exists; the count goes up by one on every record of the same key.
+   */
+  firstOccurredAt: Date;
+  occurrences: number;
 }
 
 /** What one fingerprint is made of (`epic-capture` Notes, spine Deferred). */

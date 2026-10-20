@@ -332,17 +332,26 @@ export function sqliteWorkStore(connect: SqliteConnect): WorkStore {
           // The same cause met again is this row: it keeps its id, is open
           // again, and carries this occurrence's instant and sentence, so it
           // says when the cause was last met (Decision 2, 2026-10-19 사용자,
-          // Table Contract). The first instant and the count arrive with 0005.
+          // Table Contract).
+          //
+          // `first_occurred_at` is written once and never again — the `do
+          // update` leaves it out, which is the whole of the rule — and
+          // `occurrences` counts from the row's own value rather than from
+          // `excluded`, so a hundred records are a hundred. Neither column has
+          // a default in 0005, so both are named here on the way in.
           await sql`
             insert into failures (id, target_kind, target_id, stage, fingerprint, harness,
-                                  session_id, code, message, occurred_at)
+                                  session_id, code, message, occurred_at,
+                                  first_occurred_at, occurrences)
                  values (${input.id}, ${input.targetKind}, ${input.targetId}, ${input.stage},
                          ${input.fingerprint}, ${input.harness}, ${input.sessionId},
-                         ${input.code}, ${input.message}, ${occurredAt})
+                         ${input.code}, ${input.message}, ${occurredAt},
+                         ${occurredAt}, 1)
             on conflict (target_kind, target_id, stage, fingerprint)
               do update set occurred_at = excluded.occurred_at,
                             message = excluded.message,
-                            resolved_at = null
+                            resolved_at = null,
+                            occurrences = failures.occurrences + 1
           `.execute(held);
           return before === null
             ? { created: true, failureId: await readFailureId(held, input) }
@@ -420,7 +429,7 @@ export function sqliteWorkStore(connect: SqliteConnect): WorkStore {
       try {
         const found = await sql<FailureRow>`
           select id, target_kind, target_id, stage, fingerprint, harness, session_id,
-                 code, message, occurred_at, resolved_at
+                 code, message, occurred_at, resolved_at, first_occurred_at, occurrences
             from failures
            where (${includeResolved} = 1 or resolved_at is null)
              and (${targetKind} is null or target_kind = ${targetKind})
@@ -470,7 +479,7 @@ export function sqliteWorkStore(connect: SqliteConnect): WorkStore {
   };
 }
 
-/** A `failures` row as SQLite hands it back: text instants (0004). */
+/** A `failures` row as SQLite hands it back: text instants (0004, 0005). */
 interface FailureRow {
   id: string;
   target_kind: string;
@@ -483,6 +492,8 @@ interface FailureRow {
   message: string;
   occurred_at: string;
   resolved_at: string | null;
+  first_occurred_at: string;
+  occurrences: number;
 }
 
 function toFailure(row: FailureRow): FailureRecord {
@@ -498,6 +509,8 @@ function toFailure(row: FailureRow): FailureRecord {
     message: row.message,
     occurredAt: at(row.occurred_at, 'failures.occurred_at'),
     resolvedAt: row.resolved_at === null ? null : at(row.resolved_at, 'failures.resolved_at'),
+    firstOccurredAt: at(row.first_occurred_at, 'failures.first_occurred_at'),
+    occurrences: row.occurrences,
   };
 }
 

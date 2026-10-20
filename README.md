@@ -130,8 +130,22 @@ run`이 `UPDATE_AVAILABLE` 경고로 알려 줍니다.
 마이그레이션하는지), 파일 저장소 루트, shim의 경로입니다. 여기서 아니요라고
 답하면 — 또는 그 앞의 어느 질문에서 Ctrl-C를 누르면 — 한 바이트도 쓰지 않고
 `SETUP_CANCELLED`로 끝납니다. 뒤 질문에서 누른 Ctrl-C는 그 자리에서 멈추므로,
-그때까지 밟은 단계는 그대로 남습니다. `--yes`는 이 질문만 건너뜁니다 — 경로
+그때까지 밟은 단계는 그대로 남습니다. `--yes`는 이 질문을 건너뜁니다 — 경로
 질문은 그대로 묻습니다. 하네스를 연결할지는 뒤에서 따로 묻습니다.
+
+그 동의 바로 뒤에, 하나 더 묻는 경우가 있습니다. 마이그레이션 0005가 프로젝트
+비교 키를 UNIQUE로 만드는데, remote의 **대소문자만 다른** 프로젝트로 갈라진
+데이터베이스는 그 키가 하나로 겹칩니다(GitHub·Bitbucket은 소유자와 저장소
+이름을 대소문자 없이 봅니다). 그래서 설치는 겹치는 묶음마다 그 묶음의
+`remote_identity`를 하나씩 세션 수와 함께, 그리고 남을 쪽을 보여 주고 합칠지
+묻습니다(한 묶음에 셋 이상일 수도 있습니다). 합치면 지는 쪽의
+워크트리·세션·로그가 남는 쪽으로 옮겨지고(같은 경로의 워크트리는 하나로
+합쳐집니다) 지는 프로젝트 행이 사라집니다 — 세션은 하나도 잃지 않습니다.
+아니요라고 답하면 `SETUP_CANCELLED`(exit 1)이고 데이터베이스는 **한 바이트도**
+바뀌지 않습니다: 0005를 적용하지 않았으므로 스키마 버전도 그대로입니다.
+합치기와 0005는 한 트랜잭션이라 함께 되거나 함께 안 됩니다. `--yes`는 "미리 준
+모든 동의"이므로 이 물음에도 동의가 되고(플러그인의 비대화형 bootstrap도
+마찬가지입니다) 묶음은 그래도 다 찍힙니다. 겹침이 없으면 묻지 않습니다.
 
 동의한 다음에는 데이터베이스 파일을 만들어 마이그레이션하고, 이 brain의 주인을
 기록하고, 파일 저장소 루트를 mode 0700으로 만들고, **그다음에** 설정을 씁니다.
@@ -153,7 +167,7 @@ guide schema --json`을 실제로 실행해서 exit 0과 `ok: true` 엔벨로프
 ```json
 {
   "commit": "10a09d2ef60fcf3b607f8562192c2ea8a59d3981",
-  "schema_version": 4,
+  "schema_version": 5,
   "node": "/opt/homebrew/bin/node",
   "plugin_root": "/Users/me/.claude/plugins/cache/second-brain/second-brain/0.1.0",
   "installed_at": "2026-10-17T15:11:42.113Z"
@@ -401,6 +415,11 @@ brain failures retry [--target-kind <kind>]
 `data.failures[]`와 `meta.count`·`meta.has_more`이고, 텍스트 모드는 실패마다 한
 줄과 끝에 건수 줄입니다.
 
+행마다 **처음 난 때**(`first_occurred_at`)와 **횟수**(`occurrences`)가 함께
+옵니다. 같은 원인은 한 행이고 `occurred_at`·`message`는 마지막 occurrence의
+것이므로, 이 둘이 없으면 열 분마다 일주일째 나는 실패와 방금 한 번 난 실패가
+똑같이 보입니다. 텍스트 줄에는 `횟수 N`으로 들어갑니다.
+
 `failures retry`는 미해결 실패의 **대상마다** 일감을 하나 넣습니다. 한 대상이 세
 단계에서 실패했어도 일감은 하나입니다. 대상 종류에 맞는 일감 종류는 Core의 표가
 정합니다(지금은 세션 → `session_ingest` 하나뿐). 표에 없는 종류는 건너뛰고
@@ -434,7 +453,7 @@ brain setup connect <harness>
   "data": {
     "home": "/Users/me/.second_brain",
     "config_path": "/Users/me/.second_brain/config.toml",
-    "store": { "path": "/Users/me/.second_brain/brain.db", "schema_version": 4, "applied": [] },
+    "store": { "path": "/Users/me/.second_brain/brain.db", "schema_version": 5, "applied": [] },
     "owner": { "name": "me", "created": false },
     "files": { "path": "/Users/me/.second_brain/files", "created": false },
     "mirror_path": "/Users/me/.second_brain/mirror",

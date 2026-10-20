@@ -1,7 +1,12 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { Connector, DoctorReport, SqliteMigrationResult } from 'second_brain';
+import type {
+  Connector,
+  DoctorReport,
+  SqliteMigrationResult,
+  SqliteProjectKeyCollision,
+} from 'second_brain';
 import type { SelfUserResult } from '../src/install/store.js';
 import { memoryConnector, type MemoryConnector } from 'second_brain/testing';
 import type { ConfigWarning, WriteConfigInput } from '../src/config/codec.js';
@@ -165,11 +170,21 @@ interface StoreWorld {
   walFails?: boolean;
   /** Whether there is already a file at the database path. */
   exists?: boolean;
+  /**
+   * The projects migration 0005 would fold into one comparison key. None by
+   * default: a database that never split a repository over the case of its
+   * remote is every database but the ones this story is about (AD-12).
+   */
+  collisions?: readonly SqliteProjectKeyCollision[];
 }
 
 interface Store extends InstallStore {
   /** Every path prepared, in order. */
   prepared: string[];
+  /** The options each `prepare` was given, in the same order. */
+  preparedWith: ({ mergeProjects?: boolean } | undefined)[];
+  /** Every path the collision screen was pointed at, in order. */
+  asked: string[];
   /** Every path the owner step was pointed at, in order. */
   owned: string[];
   doctored: string[];
@@ -179,30 +194,40 @@ interface Store extends InstallStore {
 
 function fakeStore(world: StoreWorld = {}): Store {
   const prepared: string[] = [];
+  const preparedWith: ({ mergeProjects?: boolean } | undefined)[] = [];
+  const asked: string[] = [];
   const owned: string[] = [];
   const doctored: string[] = [];
   const doctoredHomes: string[] = [];
 
   return {
     prepared,
+    preparedWith,
+    asked,
     owned,
     doctored,
     doctoredHomes,
     async exists() {
       return world.exists ?? false;
     },
-    async prepare(path) {
+    async collisions(path) {
+      asked.push(path);
+      return world.collisions ?? [];
+    },
+    async prepare(path, options) {
       prepared.push(path);
+      preparedWith.push(options);
       return (
         world.prepare ?? {
           ok: true,
           from: 0,
-          to: 4,
+          to: 5,
           applied: [
             '0001_initial.sql',
             '0002_files_and_work.sql',
             '0003_users.sql',
             '0004_capture_columns.sql',
+            '0005_identity_and_records.sql',
           ],
         }
       );
@@ -222,7 +247,7 @@ function fakeStore(world: StoreWorld = {}): Store {
           : { id: 'wal', status: 'ok', detail: 'wal' },
         { id: 'fts5-trigram', status: 'ok', detail: 'trigram 토크나이저가 있는 fts5' },
         { id: 'foreign-keys', status: 'ok', detail: '이 연결에서 적용됩니다' },
-        { id: 'schema-version', status: 'ok', detail: '4' },
+        { id: 'schema-version', status: 'ok', detail: '5' },
         { id: 'config', status: 'ok', detail: join(home, 'config.toml') },
         { id: 'shim', status: 'ok', detail: shimPath(home) },
         { id: 'node-path', status: 'ok', detail: '/usr/bin/node의 node 24.16.0' },
@@ -343,7 +368,7 @@ function fakeInstalled(options: HarnessOptions): Installed {
     async build() {
       return 'build' in options
         ? options.build
-        : { commit: BUILD_COMMIT, schema_version: 4 };
+        : { commit: BUILD_COMMIT, schema_version: 5 };
     },
     async read() {
       return options.recordedInstalled;
@@ -527,9 +552,10 @@ describe('the installer flow on an empty folder', () => {
       },
       store: {
         exists: store.exists,
-        prepare: async (path) => {
+        collisions: store.collisions,
+        prepare: async (path, options) => {
           order.push('store');
-          return store.prepare(path);
+          return store.prepare(path, options);
         },
         self: async (path) => {
           order.push('owner');
@@ -567,9 +593,10 @@ describe('the installer flow on an empty folder', () => {
     await install([], kit);
 
     expect(kit.output()).toContain(
-      '0001_initial.sql, 0002_files_and_work.sql, 0003_users.sql, 0004_capture_columns.sql을 적용했고',
+      '0001_initial.sql, 0002_files_and_work.sql, 0003_users.sql, ' +
+        '0004_capture_columns.sql, 0005_identity_and_records.sql을 적용했고',
     );
-    expect(kit.output()).toContain('스키마 버전은 4입니다');
+    expect(kit.output()).toContain('스키마 버전은 5입니다');
     expect(kit.output()).toContain(`${FILES}를 만들었습니다 (mode 0700)`);
     expect(kit.output()).toContain(`${shimPath(HOME)}을 썼습니다 (mode 0755)`);
   });
@@ -788,7 +815,7 @@ describe('the installer flow run a second time', () => {
       recorded: true,
       filesCreated: false,
       store: {
-        prepare: { ok: true, from: 4, to: 4, applied: [] },
+        prepare: { ok: true, from: 5, to: 5, applied: [] },
         self: { ok: true, name: 'brain-owner', created: false },
       },
     });
@@ -797,7 +824,7 @@ describe('the installer flow run a second time', () => {
 
     expect(exit).toBe(0);
     expect(kit.written).toEqual([kept()]);
-    expect(kit.output()).toContain('스키마는 이미 버전 4입니다');
+    expect(kit.output()).toContain('스키마는 이미 버전 5입니다');
     // The owner is decided once: a re-run says whose it is and changes nothing
     // (AD-12).
     expect(kit.output()).toContain('이미 brain-owner의 것입니다');
@@ -828,6 +855,102 @@ describe('the installer flow run a second time', () => {
     expect(kit.written).toEqual([
       kept('Europe/Berlin', '/tmp/a/brain.db', '/tmp/a/files', '/tmp/a/mirror'),
     ]);
+  });
+});
+
+/**
+ * The projects that only differ by the case of their remote (AD-12).
+ *
+ * Migration 0005 makes the comparison key `unique`, so a database that split
+ * one repository into two projects over nothing but case cannot take it. Folding
+ * them deletes a row, so this is the one thing the install asks about on its
+ * own — and the one no it offers after everything else is agreed.
+ */
+describe('the installer flow and projects that collide on the comparison key', () => {
+  const GROUP: SqliteProjectKeyCollision = {
+    identityKey: 'github.com/brain-owner/notes',
+    projects: [
+      {
+        id: '01960000-0000-7000-8000-000000000001',
+        remoteIdentity: 'github.com/Brain-Owner/Notes',
+        sessions: 3,
+      },
+      {
+        id: '01960000-0000-7000-8000-000000000002',
+        remoteIdentity: 'github.com/brain-owner/notes',
+        sessions: 1,
+      },
+    ],
+  };
+
+  /** The usual tail with one more answer on it: the merge question. */
+  function tailAnswering(merge: boolean): Answers {
+    return { text: ['', ''], confirm: [false, true, true, merge] };
+  }
+
+  it('shows the group, asks once, and merges inside the migration when told yes', async () => {
+    const kit = harness({ store: { collisions: [GROUP] }, tail: tailAnswering(true) });
+
+    const exit = await install([], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.store.asked).toEqual([STORE]);
+    // Both remotes, both session counts, and which one is kept: a person
+    // agreeing to this is agreeing to lose a row, and they are owed the trade.
+    expect(kit.output()).toContain(
+      '비교 키 github.com/brain-owner/notes로 겹치는 프로젝트가 2개 있습니다',
+    );
+    expect(kit.output()).toContain('github.com/Brain-Owner/Notes (세션 3건)');
+    expect(kit.output()).toContain('github.com/brain-owner/notes (세션 1건)');
+    expect(kit.output()).toContain('남는 쪽은 github.com/Brain-Owner/Notes입니다');
+    expect(kit.prompts.asked).toContain('겹치는 프로젝트 1묶음을 하나로 합칠까요?');
+    // The flag the migration runner reads, and the line that says it took.
+    expect(kit.store.preparedWith).toEqual([{ mergeProjects: true }]);
+    expect(kit.output()).toContain('겹치는 프로젝트 1묶음을 하나로 합쳤습니다');
+  });
+
+  it('is SETUP_CANCELLED and writes nothing at all when told no', async () => {
+    const kit = harness({ store: { collisions: [GROUP] }, tail: tailAnswering(false) });
+
+    const exit = await install([], kit);
+
+    expect(exit).toBe(1);
+    expect(kit.output()).toContain(
+      'SETUP_CANCELLED: 프로젝트를 합치지 않기로 했습니다. 데이터베이스는 바꾸지 않았습니다.',
+    );
+    // The database is untouched, which is the whole of the promise: no
+    // migration ran, so it stays at the version it was.
+    expect(kit.store.prepared).toEqual([]);
+    expect(kit.written).toEqual([]);
+    expect(kit.files.prepared).toEqual([]);
+    expect(kit.shimmed).toEqual([]);
+    expect(kit.store.doctored).toEqual([]);
+  });
+
+  it('merges without asking when --yes gave every consent in advance', async () => {
+    const kit = harness({ store: { collisions: [GROUP] } });
+
+    const exit = await install(['--yes'], kit);
+
+    expect(exit).toBe(0);
+    // `--yes` means every question answered in advance, this one included, and
+    // the group is still printed: consent given early is not consent in the
+    // dark (README).
+    expect(kit.prompts.asked).not.toContain('겹치는 프로젝트 1묶음을 하나로 합칠까요?');
+    expect(kit.output()).toContain('github.com/Brain-Owner/Notes (세션 3건)');
+    expect(kit.store.preparedWith).toEqual([{ mergeProjects: true }]);
+  });
+
+  it('asks nothing and merges nothing when no group collides', async () => {
+    const kit = harness();
+
+    const exit = await install([], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.store.asked).toEqual([STORE]);
+    expect(kit.prompts.asked).not.toContain('겹치는 프로젝트 1묶음을 하나로 합칠까요?');
+    expect(kit.store.preparedWith).toEqual([{}]);
+    expect(kit.output()).not.toContain('합쳤습니다');
   });
 });
 
@@ -1142,12 +1265,13 @@ describe('what the installer flow reports when it worked', () => {
       config_path: `${HOME}/config.toml`,
       store: {
         path: STORE,
-        schema_version: 4,
+        schema_version: 5,
         applied: [
           '0001_initial.sql',
           '0002_files_and_work.sql',
           '0003_users.sql',
           '0004_capture_columns.sql',
+          '0005_identity_and_records.sql',
         ],
       },
       owner: { name: 'brain-owner', created: true },
@@ -1547,7 +1671,7 @@ describe('the installer flow, proving itself and recording it', () => {
     expect(kit.installed.wrote).toEqual([
       {
         commit: BUILD_COMMIT,
-        schema_version: 4,
+        schema_version: 5,
         node: PINNED_NODE,
         // Nothing named a plugin folder and nothing was recorded before.
         plugin_root: null,
@@ -1595,7 +1719,7 @@ describe('the installer flow, proving itself and recording it', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(kit.installed.wrote[0]).toMatchObject({ commit: null, schema_version: 4 });
+    expect(kit.installed.wrote[0]).toMatchObject({ commit: null, schema_version: 5 });
     expect(result.report.installed.commit).toBeNull();
   });
 

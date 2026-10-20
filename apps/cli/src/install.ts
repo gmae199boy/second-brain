@@ -32,6 +32,7 @@ import {
   prepareFilesRoot,
   prepareSelfUser,
   prepareStore,
+  storeCollisions,
   storeFileExists,
 } from './install/store.js';
 
@@ -166,7 +167,9 @@ export function systemInstallDeps(): InstallDeps {
       read: readConfigForSetup,
     },
     store: {
-      prepare: (path: string) => prepareStore(path),
+      prepare: (path: string, options?: { mergeProjects?: boolean }) =>
+        prepareStore(path, options ?? {}),
+      collisions: (path: string) => storeCollisions(path),
       exists: (path: string) => storeFileExists(path),
       self: (path: string) => prepareSelfUser(path),
       // The same folders a command would look in, so the report the install

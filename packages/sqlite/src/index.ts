@@ -25,6 +25,13 @@ export {
   type WorkItemRow,
 } from './work.js';
 export {
+  findSqliteProjectKeyCollisions,
+  mergeSqliteProjectKeyCollisions,
+  type FindSqliteProjectKeyCollisionsResult,
+  type SqliteProjectKeyCollision,
+  type SqliteProjectKeyCollisionProject,
+} from './project-keys.js';
+export {
   SQLITE_MIGRATIONS_DIRECTORY,
   SQLITE_SCHEMA_VERSION,
   runSqliteMigrations,

@@ -489,15 +489,21 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
           message: input.message,
           occurredAt: input.occurredAt,
           resolvedAt: null,
+          // The first occurrence is this one, and it has been met once (0005).
+          firstOccurredAt: input.occurredAt,
+          occurrences: 1,
         });
         failureId = input.id;
         created = true;
       } else {
         // Reopened, with the latest instant and sentence: the id stays the
         // first one's (Decision 2, 2026-10-19 사용자, Table Contract).
+        // `firstOccurredAt` is deliberately untouched — it is the one thing the
+        // row knows that this occurrence cannot say (0005).
         existing.occurredAt = input.occurredAt;
         existing.message = input.message;
         existing.resolvedAt = null;
+        existing.occurrences += 1;
         failureId = existing.id;
         created = false;
       }

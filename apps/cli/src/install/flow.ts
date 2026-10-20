@@ -9,6 +9,7 @@ import {
   type DoctorSummary,
   type Failure,
   type SqliteMigrationResult,
+  type SqliteProjectKeyCollision,
   type WarningCode,
 } from 'second_brain';
 import { formatCheck } from '../commands/doctor-run.js';
@@ -193,7 +194,15 @@ export interface InstallConfigIo {
 /** The source database: made at the right mode, migrated, then reported on. */
 export interface InstallStore {
   /** Create the file at 0600 if it is not there, then migrate it (AD-20). */
-  prepare(path: string): Promise<SqliteMigrationResult>;
+  prepare(path: string, options?: { mergeProjects?: boolean }): Promise<SqliteMigrationResult>;
+  /**
+   * The projects migration 0005 would fold into one comparison key (AD-12).
+   *
+   * Read-only, and it creates nothing: a path with no database at it answers
+   * with no groups. The flow asks before it writes anything, because folding
+   * two projects into one deletes rows and nothing may do that unasked.
+   */
+  collisions(path: string): Promise<readonly SqliteProjectKeyCollision[]>;
   /**
    * Whether there is already a file here. Only the screen that asks for
    * consent uses it: "a new database" and "the database already there" are
@@ -419,10 +428,54 @@ export async function runInstall(
     });
   }
 
+  // The one thing this install may have to destroy, asked for on its own
+  // (AD-12). Migration 0005 makes the project comparison key `unique`, and a
+  // database that split one repository into two projects over nothing but the
+  // case of its remote has two rows that become one key. Folding them deletes
+  // a row and moves its sessions, which no migration may decide by itself — so
+  // the groups are shown, the question is asked, and a no leaves the database
+  // exactly as it is, at the version it was.
+  //
+  // After `askToProceed` and before `prepare`: it is the last question, and it
+  // is only worth asking once everything else is agreed.
+  const collisions = await deps.store.collisions(store.path);
+  if (collisions.length > 0) {
+    for (const group of collisions) {
+      const kept = group.projects[0];
+      deps.log(
+        `비교 키 ${group.identityKey}로 겹치는 프로젝트가 ` +
+          `${String(group.projects.length)}개 있습니다:`,
+      );
+      for (const project of group.projects) {
+        deps.log(`  ${project.remoteIdentity} (세션 ${String(project.sessions)}건)`);
+      }
+      if (kept !== undefined) deps.log(`  남는 쪽은 ${kept.remoteIdentity}입니다`);
+    }
+    // `--yes` is every consent given in advance, which is what it means
+    // everywhere else in this flow — including the plugin's non-interactive
+    // bootstrap (README).
+    const agreedToMerge =
+      flags.yes ||
+      (await deps.prompts.confirm(
+        `겹치는 프로젝트 ${String(collisions.length)}묶음을 하나로 합칠까요?`,
+        true,
+      ));
+    if (!agreedToMerge) {
+      return fail({
+        code: 'SETUP_CANCELLED',
+        message: '프로젝트를 합치지 않기로 했습니다. 데이터베이스는 바꾸지 않았습니다.',
+        exit: 1,
+      });
+    }
+  }
+
   // The store, the owner and the file store's root before the configuration:
   // what is recorded has to be a place this run has actually managed to use,
   // or one bad `--store-path` would overwrite the path that worked (F3).
-  const migrated = await deps.store.prepare(store.path);
+  const migrated = await deps.store.prepare(
+    store.path,
+    collisions.length > 0 ? { mergeProjects: true } : {},
+  );
   if (!migrated.ok) {
     return fail({
       code: migrated.code,
@@ -443,6 +496,11 @@ export async function runInstall(
       ? `스키마는 이미 버전 ${String(migrated.to)}입니다`
       : `${migrated.applied.join(', ')}을 적용했고, 스키마 버전은 ${String(migrated.to)}입니다`,
   );
+  // Said after the fact, not before: the merge happened inside the migration's
+  // own transaction, so this line is the one place that can say it took.
+  if (collisions.length > 0) {
+    deps.log(`겹치는 프로젝트 ${String(collisions.length)}묶음을 하나로 합쳤습니다`);
+  }
 
   // Straight after the migrations, because the `users` table arrives with one,
   // and before anything else, because every session this brain ingests points
