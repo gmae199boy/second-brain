@@ -1,4 +1,5 @@
 import { errorCodeSpec, type FailureExit, type WarningCode } from './codes.js';
+import { maskOutputValue } from './output/mask.js';
 import type { Clock } from './ports/clock.js';
 
 /**
@@ -10,6 +11,12 @@ import type { Clock } from './ports/clock.js';
  * an error looks like (AD-5). Nothing here knows about a command line: the one
  * thing only a CLI can render, the argv of `error.retry`, is the CLI's own
  * (`apps/cli/src/envelope.ts`).
+ *
+ * It is also the `envelope` output codec (AD-11, 마스킹 B): `data`, `warnings`,
+ * `meta` and `error` are masked value by value as the envelope is built, so
+ * the three surfaces are covered at the one point they share and a new command
+ * is covered by existing. `now` is not masked — it is this clock's instant and
+ * never a caller's text.
  */
 
 /** A call to one verb, as `error.retry` and `meta.next` name it. */
@@ -94,10 +101,10 @@ export function okEnvelope<T>(
   const envelope: Envelope<T> = {
     ok: true,
     now: isoWithOffset(clock.now()),
-    data,
-    warnings: [...warnings],
+    data: maskOutputValue(data),
+    warnings: maskOutputValue([...warnings]),
   };
-  if (meta !== undefined) envelope.meta = meta;
+  if (meta !== undefined) envelope.meta = maskOutputValue(meta);
   return envelope;
 }
 
@@ -129,7 +136,13 @@ export function errorEnvelope(
   if (hint !== undefined && hint !== '') error.hint = hint;
   if (failure.retry !== undefined) error.retry = failure.retry;
 
-  return { ok: false, now: isoWithOffset(clock.now()), warnings: [...warnings], error };
+  return {
+    ok: false,
+    now: isoWithOffset(clock.now()),
+    warnings: maskOutputValue([...warnings]),
+    // `retry.args` included: that is the caller's own input coming back out.
+    error: maskOutputValue(error),
+  };
 }
 
 /** The key that carries consent through every surface (Conventions). */

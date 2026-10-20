@@ -90,7 +90,7 @@ export async function spoolSessionIngest(
     // Nothing was created and nothing was inserted: the numbers say what
     // reached the database, and `spooled` says where the write went instead.
     created: false,
-    inserted: { messages: 0, toolNotes: 0, redactions: 0 },
+    inserted: { messages: 0, toolNotes: 0 },
     warnings: warningsFor(cause),
   };
 }

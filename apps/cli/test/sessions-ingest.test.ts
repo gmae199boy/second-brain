@@ -17,7 +17,6 @@ import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import {
-  SECRET_PATTERN_VERSION,
   decodeSpoolLine,
   isoWithOffset,
   type SessionIngestSpoolRecord,
@@ -26,6 +25,12 @@ import {
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { HOME_ENV, spoolPath } from '../src/config/paths.js';
 import { withoutHarnessFolders } from './environment.js';
+import {
+  KEPT_IN_FIXTURE,
+  SECRETS,
+  SECRETS_FIXTURE,
+  TRUNCATED_HALF_KEY,
+} from './secrets-fixture.js';
 
 /**
  * `brain sessions ingest claude-code` end to end: the built `brain`, started
@@ -48,25 +53,10 @@ const FIXTURE = fileURLToPath(
 const SESSION_FIXTURE = fileURLToPath(
   new URL('../../../packages/claude-code/test/fixtures/full-session.jsonl', import.meta.url),
 );
-/** The secrets fixture: invented credentials, and the things that only look like them. */
-const SECRETS_FIXTURE = fileURLToPath(
-  new URL('../../../packages/claude-code/test/fixtures/secrets-session.jsonl', import.meta.url),
-);
 /** The hand-back fixture: the report a run delivered on a peer line (story 19). */
 const HANDBACK_FIXTURE = fileURLToPath(
   new URL('../../../packages/claude-code/test/fixtures/peer-handback.jsonl', import.meta.url),
 );
-/**
- * Every secret that fixture pastes, each of them invented and valid nowhere.
- * None of these may be anywhere in the database afterwards (AD-11).
- */
-const SECRETS = [
-  'sk-AAAAAAAAAAAAAAAAAAAA',
-  'Tiger2024',
-  'swordfish99',
-  'pw9911',
-  'xyz123',
-] as const;
 /** How many lines of it end with its fifth message. */
 const SESSION_HALF_LINES = 25;
 /** The markers the session fixture puts in every tool output and every image. */
@@ -96,7 +86,7 @@ interface Envelope {
     session?: string;
     spooled?: boolean;
     created?: boolean;
-    inserted?: { messages: number; toolNotes: number; redactions: number };
+    inserted?: { messages: number; toolNotes: number };
   };
   error?: { code: string; message: string; exit_code?: number; hint?: string };
 }
@@ -401,7 +391,7 @@ describe('brain sessions ingest claude-code', () => {
       created: true,
       // One `Read`, which the fixture's one tool call is, and nothing masked:
       // there is no secret anywhere in this transcript.
-      inserted: { messages: 4, toolNotes: 1, redactions: 0 },
+      inserted: { messages: 4, toolNotes: 1 },
     });
     expect(envelope.warnings).toEqual([]);
 
@@ -756,7 +746,7 @@ describe('brain sessions ingest claude-code and a report handed back', () => {
     expect(envelope.ok).toBe(true);
     expect(envelope.warnings).toEqual([]);
     // The question, the two reports, the answer — and the two `Agent` calls.
-    expect(envelope.data?.inserted).toEqual({ messages: 4, toolNotes: 2, redactions: 0 });
+    expect(envelope.data?.inserted).toEqual({ messages: 4, toolNotes: 2 });
 
     const database = new DatabaseSync(databaseIn(home), { readOnly: true });
     try {
@@ -827,7 +817,7 @@ describe('brain sessions ingest claude-code and a report handed back', () => {
     expect(envelope.ok).toBe(true);
     // Reading it all again is idempotent, so only the two reports go in, and
     // not one tool note is written twice (AD-8).
-    expect(envelope.data?.inserted).toEqual({ messages: 2, toolNotes: 0, redactions: 0 });
+    expect(envelope.data?.inserted).toEqual({ messages: 2, toolNotes: 0 });
     // Degraded reads are never silent, and this is not one: the cursor was not
     // reset, it was never handed over.
     expect(envelope.warnings).toEqual([]);
@@ -845,47 +835,19 @@ describe('brain sessions ingest claude-code and a report handed back', () => {
 });
 
 /**
- * The masking rows of the story's matrix, through the real binary and a real
- * SQLite file: what the fixture's conversation pasted must not be in the
- * database, what it merely mentioned must be, and every record must name the
- * version of the pattern list that made it (AD-11).
+ * The storage half of the story's matrix, through the real binary and a real
+ * SQLite file: everything the fixture's conversation pasted is in the database
+ * character for character, and no `redactions` row was written at all.
+ *
+ * This is 마스킹 B. Capture does not mask, because a stored message is never
+ * rewritten and a pattern that masked one word too many would be a deletion
+ * nobody could undo. The other half — that none of these values survives a
+ * trip through an output codec — is `output-codecs.test.ts`.
  *
  * The secrets in the fixture are invented. They have the shape of the real
  * thing and none of them is valid anywhere.
  */
-describe('brain sessions ingest claude-code and the secrets it masks', () => {
-  /** Every masking record, with the columns the ticket asks about. */
-  function storedRedactions(path: string): {
-    kind: string;
-    pattern_version: string | null;
-    file_id: string | null;
-    start: number;
-    end: number;
-    content_hash: string;
-    seq: number;
-  }[] {
-    const database = new DatabaseSync(path, { readOnly: true });
-    try {
-      return database
-        .prepare(
-          `select r.kind, r.pattern_version, r.file_id, r.start, r."end", r.content_hash, m.seq
-             from redactions r join messages m on m.id = r.message_id
-            order by m.seq, r.start`,
-        )
-        .all() as {
-        kind: string;
-        pattern_version: string | null;
-        file_id: string | null;
-        start: number;
-        end: number;
-        content_hash: string;
-        seq: number;
-      }[];
-    } finally {
-      database.close();
-    }
-  }
-
+describe('brain sessions ingest claude-code stores the secrets it reads, unmasked', () => {
   /** The fixture in this test's own folder, so nothing writes to the repository. */
   async function secretsTranscriptIn(home: string): Promise<string> {
     const path = join(home, 'secrets.jsonl');
@@ -893,7 +855,34 @@ describe('brain sessions ingest claude-code and the secrets it masks', () => {
     return path;
   }
 
-  it('stores no secret of the transcript, in any body or any target', async () => {
+  /** The bodies and the targets of the transcript, as the harness wrote them. */
+  async function fixtureTexts(
+    transcript: string,
+  ): Promise<{ bodies: string[]; targets: string[] }> {
+    const bodies: string[] = [];
+    const targets: string[] = [];
+    for (const line of (await readFile(transcript, 'utf8')).trimEnd().split('\n')) {
+      const entry = JSON.parse(line) as {
+        type?: string;
+        message?: { content?: unknown };
+      };
+      const content = entry.message?.content;
+      if (entry.type === 'user' && typeof content === 'string') bodies.push(content);
+      if (entry.type === 'assistant' && Array.isArray(content)) {
+        for (const block of content as { type?: string; text?: string; input?: unknown }[]) {
+          if (block.type === 'text' && typeof block.text === 'string') bodies.push(block.text);
+          if (block.type === 'tool_use') {
+            const command = (block.input as { command?: string } | undefined)?.command ?? '';
+            // The parser's own cut: the first line, to its first 500 units.
+            targets.push(command.split('\n')[0]?.slice(0, 500) ?? '');
+          }
+        }
+      }
+    }
+    return { bodies, targets };
+  }
+
+  it('stores every body and every target exactly as the transcript holds it', async () => {
     const home = await installedHome();
     const transcript = await secretsTranscriptIn(home);
 
@@ -907,31 +896,65 @@ describe('brain sessions ingest claude-code and the secrets it masks', () => {
     expect(run.code).toBe(0);
     const envelope = JSON.parse(run.stdout) as Envelope;
     expect(envelope.ok).toBe(true);
-    expect(envelope.data?.inserted).toEqual({ messages: 2, toolNotes: 1, redactions: 4 });
+    // Two keys and no third: ingest writes no masking record, so there is
+    // nothing to count (AD-11).
+    expect(envelope.data?.inserted).toEqual({ messages: 2, toolNotes: 2 });
+
+    const path = databaseIn(home);
+    const expected = await fixtureTexts(transcript);
+    expect(storedMessages(path).map((message) => message.body)).toEqual(expected.bodies);
+    expect(storedToolNotes(path).map((note) => note.target)).toEqual(expected.targets);
+    // Character for character, which is what "no marker anywhere" says in one
+    // line: a masked body would carry one.
+    expect(JSON.stringify(rowDump(path))).not.toContain('[REDACTED:');
+  });
+
+  it('keeps every pasted secret in the database, and writes no redaction row', async () => {
+    const home = await installedHome();
+    const transcript = await secretsTranscriptIn(home);
+
+    expect(
+      (await runBrain(['sessions', 'ingest', 'claude-code'], home, stopPayload(transcript)))
+        .code,
+    ).toBe(0);
 
     const path = databaseIn(home);
     const stored = [
       ...storedMessages(path).map((message) => message.body),
       ...storedToolNotes(path).map((note) => `${note.tool} ${note.target}`),
     ].join('\n');
-    // Each of these is in the file on disk and in none of the columns.
     const file = await readFile(transcript, 'utf8');
     for (const secret of SECRETS) {
       expect(file, `${secret} is not in the fixture any more`).toContain(secret);
-      expect(stored, `${secret} reached the database`).not.toContain(secret);
+      expect(stored, `${secret} did not reach the database`).toContain(secret);
     }
-    // And nothing anywhere in the file holds them either: the records keep a
-    // hash and no text (AD-11).
-    const everything = JSON.stringify(rowDump(path));
-    for (const secret of SECRETS) {
-      expect(everything, `${secret} is in some other column`).not.toContain(secret);
-    }
+    // The one table that could hold a trace of a masking stays empty until
+    // somebody runs `messages redact` (story 2.13).
+    expect(rowCounts(path)['redactions']).toBe(0);
   });
 
-  it('leaves what is not a secret exactly where it was', async () => {
+  it('stores the tool note target the parser cut, key and all', async () => {
+    // The long `Bash` command: the cut lands inside an `sk-` key, so what is
+    // stored ends in the front half of one. The truncated-tail rule is what
+    // takes that half out of the output, and it is not this test's business.
+    const home = await installedHome();
+    const transcript = await secretsTranscriptIn(home);
+
+    expect(
+      (await runBrain(['sessions', 'ingest', 'claude-code'], home, stopPayload(transcript)))
+        .code,
+    ).toBe(0);
+
+    const targets = storedToolNotes(databaseIn(home)).map((note) => note.target);
+    expect(targets[0]).toBe('OPENAI_API_KEY=xyz123 node run.js');
+    expect(targets[1]).toHaveLength(500);
+    expect(targets[1]?.endsWith(TRUNCATED_HALF_KEY)).toBe(true);
+  });
+
+  it('leaves ordinary code and prose exactly where they were', async () => {
     // The regression table, in a real conversation: a commit, a path, a name,
-    // an address, a private host, an epoch and a Korean sentence about a
-    // password (inputs A3). A message is never rewritten once stored.
+    // an address, a private host, an epoch, a Korean sentence about a
+    // password, and the three lines version 1 used to mask (inputs A3, D4).
     const home = await installedHome();
     const transcript = await secretsTranscriptIn(home);
 
@@ -943,59 +966,12 @@ describe('brain sessions ingest claude-code and the secrets it masks', () => {
     const bodies = storedMessages(databaseIn(home))
       .map((message) => message.body)
       .join('\n');
-    for (const kept of [
-      '9f1c0e2a7b3d4e5f60718293a4b5c6d7e8f90123',
-      'notes/import.md',
-      'packages/core/src/index.ts',
-      'max_tokens: 4096',
-      'someone@demo.example',
-      '192.168.0.1:8080',
-      '1760745600000',
-      '비밀번호는 바꿨어요',
-    ]) {
-      expect(bodies, `${kept} was masked`).toContain(kept);
+    for (const kept of KEPT_IN_FIXTURE) {
+      expect(bodies, `${kept} is not in the stored conversation`).toContain(kept);
     }
   });
 
-  it('records every masked span against its message, with the pattern version', async () => {
-    const home = await installedHome();
-    const transcript = await secretsTranscriptIn(home);
-
-    expect(
-      (await runBrain(['sessions', 'ingest', 'claude-code'], home, stopPayload(transcript)))
-        .code,
-    ).toBe(0);
-
-    const records = storedRedactions(databaseIn(home));
-    expect(records).toHaveLength(4);
-    expect(records.map((record) => record.kind)).toEqual([
-      'api_key',
-      'password',
-      'password',
-      'url_credentials',
-    ]);
-    for (const record of records) {
-      // The version of Core's list, so the rows an older list produced can be
-      // found again when it grows (inputs A6).
-      expect(record.pattern_version).toBe(SECRET_PATTERN_VERSION);
-      // A message redaction, so the file target is empty and the range is not.
-      expect(record.file_id).toBe(null);
-      expect(record.start).toBeGreaterThanOrEqual(0);
-      expect(record.end).toBeGreaterThan(record.start);
-      expect(record.content_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
-      // Every record belongs to the first message, which is the one that
-      // carried the secrets.
-      expect(record.seq).toBe(0);
-    }
-    // The tool note's masked value left no row: a redaction is a span over a
-    // body, and 0004 has no column that could name a tool note (Decision
-    // 2026-10-18).
-    expect(storedToolNotes(databaseIn(home))).toEqual([
-      { tool: 'Bash', target: 'OPENAI_API_KEY=[REDACTED:password] node run.js', ok: 1 },
-    ]);
-  });
-
-  it('adds no record the second time the same transcript arrives', async () => {
+  it('adds nothing the second time the same transcript arrives', async () => {
     const home = await installedHome();
     const transcript = await secretsTranscriptIn(home);
     const payload = stopPayload(transcript);
@@ -1012,11 +988,10 @@ describe('brain sessions ingest claude-code and the secrets it masks', () => {
     expect((JSON.parse(again.stdout) as Envelope).data?.inserted).toEqual({
       messages: 0,
       toolNotes: 0,
-      redactions: 0,
     });
-    // Every table, not only the three this story touches.
+    // Every table, not only the two this story touches.
     expect(rowCounts(databaseIn(home))).toEqual(before);
-    expect(before['redactions']).toBe(4);
+    expect(before['redactions']).toBe(0);
   });
 });
 
@@ -1444,7 +1419,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
       session: `claude-code:${HARNESS_SESSION}`,
       spooled: true,
       created: false,
-      inserted: { messages: 0, toolNotes: 0, redactions: 0 },
+      inserted: { messages: 0, toolNotes: 0 },
     });
     return envelope;
   }

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import type { ParserCursor } from '../src/domain/session.js';
-import { SECRET_PATTERN_VERSION } from '../src/domain/secret-patterns.js';
 import { formatSessionToken } from '../src/domain/session-token.js';
 import type { ParseResult } from '../src/ports/parser.js';
 import type { Checkout } from '../src/ports/repository.js';
@@ -402,7 +401,7 @@ describe('sessions.ingest and the folder it tags a session from', () => {
   });
 });
 
-describe('sessions.ingest and the secrets it masks before anything is stored', () => {
+describe('sessions.ingest and the secrets it stores exactly as it read them', () => {
   /**
    * A transcript whose conversation carries invented secrets, and one Bash call
    * whose command carries another. Everything in here has the shape of the real
@@ -429,106 +428,55 @@ describe('sessions.ingest and the secrets it masks before anything is stored', (
     ],
   });
 
-  it('stores the masked body and a record of every span it took out', async () => {
+  it('stores the body and the target character for character, and masks nothing', async () => {
+    // 마스킹 B: a stored message is never rewritten, so over-masking on the way
+    // in would be a deletion nobody could undo. The secrets go in whole and the
+    // output codecs take them out on the way back (AD-11).
     const { deps, store } = await kit({ content: SECRETS });
 
     const result = await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
 
     expect(result).toMatchObject({
       ok: true,
-      inserted: { messages: 2, toolNotes: 1, redactions: 2 },
+      inserted: { messages: 2, toolNotes: 1 },
     });
 
     const snapshot = store.snapshot();
-    const bodies = snapshot.messages.map((message) => message.body);
-    expect(bodies[0]).toBe('키는 [REDACTED:api_key] 이고 비밀번호는 [REDACTED:password]');
-    // Not masked, and this is the half of the story that matters: a commit is
-    // not a secret, and a message is never rewritten once it is stored.
-    expect(bodies[1]).toBe(
+    expect(snapshot.messages.map((message) => message.body)).toEqual([
+      '키는 sk-AAAAAAAAAAAAAAAAAAAA 이고 비밀번호는 Tiger2024',
       'notes/import.md 를 보세요. 커밋은 9f1c0e2a7b3d4e5f60718293a4b5c6d7e8f90123 입니다.',
-    );
-    for (const secret of ['sk-AAAAAAAAAAAAAAAAAAAA', 'Tiger2024', 'xyz123']) {
-      expect(JSON.stringify(snapshot), `${secret} reached the store`).not.toContain(secret);
-    }
-  });
-
-  it('records the kind, the range, the hash and the pattern version of each span', async () => {
-    const { deps, store } = await kit({ content: SECRETS });
-
-    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
-
-    const snapshot = store.snapshot();
-    const [first] = snapshot.messages;
-    expect(snapshot.redactions.map((redaction) => redaction.kind)).toEqual([
-      'api_key',
-      'password',
     ]);
-    expect(snapshot.redactions).toEqual(
-      snapshot.redactions.map((redaction) => ({
-        ...redaction,
-        // Every record points at the message it came out of, carries the
-        // version of the list that masked it, and its instant is the batch's
-        // (AD-11, AD-13).
-        messageId: first?.id,
-        patternVersion: SECRET_PATTERN_VERSION,
-        occurredAt: INGESTED_AT,
-      })),
-    );
-    for (const redaction of snapshot.redactions) {
-      expect(isUuidV7(redaction.id)).toBe(true);
-      expect(redaction.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
-      expect(redaction.start).toBeGreaterThanOrEqual(0);
-      expect(redaction.end).toBeGreaterThan(redaction.start);
-    }
-    // The ranges are over the body the parser read, which is the only body the
-    // positions could mean anything against (Conventions).
-    const original = '키는 sk-AAAAAAAAAAAAAAAAAAAA 이고 비밀번호는 Tiger2024';
-    const slices = snapshot.redactions.map((redaction) =>
-      [...original].slice(redaction.start, redaction.end).join(''),
-    );
-    expect(slices).toEqual(['sk-AAAAAAAAAAAAAAAAAAAA', 'Tiger2024']);
-  });
-
-  it('masks a tool note target and leaves no record for it', async () => {
-    // A `redactions` row is a span over a body, and migration 0004 has no
-    // column that could name a tool note (Decision 2026-10-18).
-    const { deps, store } = await kit({ content: SECRETS });
-
-    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
-
-    const snapshot = store.snapshot();
     expect(snapshot.toolNotes.map((note) => note.target)).toEqual([
-      'OPENAI_API_KEY=[REDACTED:password] node run.js',
+      'OPENAI_API_KEY=xyz123 node run.js',
     ]);
-    expect(snapshot.redactions.every((redaction) => redaction.messageId !== undefined)).toBe(true);
-    expect(snapshot.redactions).toHaveLength(2);
+    // No marker anywhere, and no record of one either.
+    expect(JSON.stringify(snapshot)).not.toContain('[REDACTED:');
+    expect(snapshot.redactions).toEqual([]);
   });
 
-  it('adds no record the second time the same transcript is read', async () => {
+  it('counts the messages and the tool notes, and nothing else', async () => {
+    const { deps } = await kit({ content: SECRETS });
+
+    const result = await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(Object.keys(result.inserted).sort()).toEqual(['messages', 'toolNotes']);
+  });
+
+  it('writes no record the second time the same transcript is read either', async () => {
     const { deps, store } = await kit({ content: SECRETS });
     expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
 
     const again = await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
 
-    expect(again).toMatchObject({
-      ok: true,
-      inserted: { messages: 0, toolNotes: 0, redactions: 0 },
-    });
-    expect(store.snapshot().redactions).toHaveLength(2);
-  });
-
-  it('masks nothing in an ordinary transcript and reports no record', async () => {
-    const { deps, store } = await kit();
-
-    const result = await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
-
-    expect(result).toMatchObject({ ok: true, inserted: { redactions: 0 } });
+    expect(again).toMatchObject({ ok: true, inserted: { messages: 0, toolNotes: 0 } });
     expect(store.snapshot().redactions).toEqual([]);
   });
 
-  it('tags the session from the folder of a message whose body was masked', async () => {
-    // Masking rewrites the body and nothing else: `cwd` is not a column of the
-    // message, and the tags are read from it (AD-12).
+  it('tags the session from the folder of a message that carried a secret', async () => {
+    // The body is not touched and neither is `cwd`: the tags are read from it
+    // (AD-12), and this case is what says the two never interfered.
     const { deps, store, repositories } = await kit({ content: SECRETS });
 
     expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
@@ -887,7 +835,7 @@ describe('sessions.ingest when the store cannot take the write', () => {
       session: TOKEN,
       spooled: true,
       created: false,
-      inserted: { messages: 0, toolNotes: 0, redactions: 0 },
+      inserted: { messages: 0, toolNotes: 0 },
       // `DB_LOCKED` is not a warning code, so a lock leaves `SPOOLED` alone.
       warnings: ['SPOOLED'],
     });
@@ -928,7 +876,7 @@ describe('sessions.ingest when the store cannot take the write', () => {
         ok: true,
         spooled: true,
         created: false,
-        inserted: { messages: 0, toolNotes: 0, redactions: 0 },
+        inserted: { messages: 0, toolNotes: 0 },
         warnings: ['SPOOLED', 'DB_UNAVAILABLE'],
       });
       expect(spool.records()[0]?.payload).toEqual({

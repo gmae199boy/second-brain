@@ -342,7 +342,7 @@ describe('the session_ingest handler', () => {
           session: input.session,
           spooled: false,
           created: true,
-          inserted: { messages: 1, toolNotes: 0, redactions: 0 },
+          inserted: { messages: 1, toolNotes: 0 },
           warnings: [],
         };
       },
@@ -385,7 +385,7 @@ describe('the session_ingest handler', () => {
         session: input.session,
         spooled: false,
         created: false,
-        inserted: { messages: 2, toolNotes: 0, redactions: 0 },
+        inserted: { messages: 2, toolNotes: 0 },
         warnings: [],
       }),
       store,

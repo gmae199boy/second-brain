@@ -316,7 +316,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
           assertOk(first, 'the first ingest failed');
           assertEqual(
             first.inserted,
-            { messages: batch.messages.length, toolNotes: batch.toolNotes.length, redactions: 0 },
+            { messages: batch.messages.length, toolNotes: batch.toolNotes.length },
             'the first ingest did not insert the whole batch',
           );
 
@@ -327,7 +327,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
           assertOk(second, 'the second ingest failed');
           assertEqual(
             second.inserted,
-            { messages: 0, toolNotes: 0, redactions: 0 },
+            { messages: 0, toolNotes: 0 },
             'replaying a batch must insert nothing (AD-8)',
           );
 
@@ -353,58 +353,23 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
     ),
 
     contractCase<SessionStoreSubject>(
-      'ingest writes the masking records of the messages it stored',
+      'ingest counts messages and tool notes, and nothing else',
       async (make) => {
         await withSubject(make, async (store) => {
           await owner(store);
           assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
-          // Two records per message, so a store that wrote one per message, or
-          // one per batch, would not add up either (AD-11).
-          const batch = sampleIngestBatch({ redactions: 2 });
-          const expected = batch.messages.reduce(
-            (total, message) => total + message.redactions.length,
-            0,
-          );
-          assertTrue(expected > 0, 'the fixture must carry records, or this proves nothing');
+          const batch = sampleIngestBatch();
 
           const result = await store.ingest(batch);
           assertOk(result, 'ingest failed');
+          // Exactly two keys. Ingest writes no `redactions` row — the body it
+          // stored is the body it was given, and secrets are masked on the way
+          // out instead (마스킹 B, AD-11) — so a count of them would be a
+          // count of something that cannot happen.
           assertEqual(
-            result.inserted,
-            {
-              messages: batch.messages.length,
-              toolNotes: batch.toolNotes.length,
-              redactions: expected,
-            },
-            'the records of the messages that went in must all be written, in the same call',
-          );
-        });
-      },
-    ),
-
-    contractCase<SessionStoreSubject>(
-      'the records of a message the session already holds are dropped',
-      async (make) => {
-        await withSubject(make, async (store) => {
-          await owner(store);
-          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
-          assertOk(
-            await store.ingest(sampleIngestBatch({ redactions: 2 })),
-            'the first ingest failed',
-          );
-
-          // The same transcript read again: the use case minted a new id for
-          // every message and for every record, and the messages are all
-          // already stored. Writing the records anyway would record the same
-          // masking twice and leave rows pointing at message ids no row has.
-          const again = await store.ingest(
-            sampleIngestBatch({ idStart: 700, redactions: 2 }),
-          );
-          assertOk(again, 'the second ingest failed');
-          assertEqual(
-            again.inserted,
-            { messages: 0, toolNotes: 0, redactions: 0 },
-            'a message that was not inserted must not leave its masking records behind',
+            Object.keys(result.inserted).sort(),
+            ['messages', 'toolNotes'],
+            'inserted must report the messages and the tool notes alone',
           );
         });
       },

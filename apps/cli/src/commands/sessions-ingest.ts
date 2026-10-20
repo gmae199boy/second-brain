@@ -34,12 +34,12 @@ import type { Harness } from '../harnesses.js';
  * session come off stdin either way and a second reading of it would be a
  * second thing to keep right.
  *
- * Nothing in here masks anything: the secrets of a conversation are taken out
- * by Core as the batch is built, so this command only ever sees the count
- * (AD-11). It reports it in the JSON envelope's `inserted.redactions` and
- * nowhere else — text mode prints nothing at all, because this runs after every
- * turn. The count is of body maskings alone: a tool note's target is masked
- * too, and leaves no record to count (Decision 2026-10-18).
+ * Nothing in here masks anything, and neither does what it calls: a message
+ * body and a tool note target are stored exactly as the harness wrote them.
+ * Secrets are masked where text leaves Brain — this command's own `--json`
+ * envelope included, since Core masks an envelope as it builds it (마스킹 B,
+ * AD-11). Taking a stored secret out of the database is `brain messages
+ * redact` (story 2.13) and nothing else.
  */
 
 export interface SessionsIngestData {
@@ -69,7 +69,7 @@ export function sessionsIngestCommand(
     required: ['harness', 'stdin'],
     examples: ['brain sessions ingest claude-code'],
     output:
-      '세션 토큰 `session`, 데이터베이스 대신 spool로 갔는지인 `spooled`, 그 세션을 이 호출이 만들었는지인 `created`, 넣은 건수 `inserted`(메시지 `messages`, 도구 메모 `toolNotes`, 저장 전에 가린 비밀의 기록 `redactions`). 페이로드에 `transcript_path`가 없으면 그 하네스의 트랜스크립트 폴더에서 `session_id`로 찾습니다',
+      '세션 토큰 `session`, 데이터베이스 대신 spool로 갔는지인 `spooled`, 그 세션을 이 호출이 만들었는지인 `created`, 넣은 건수 `inserted`(메시지 `messages`, 도구 메모 `toolNotes`). 본문과 도구 메모 대상은 원문 그대로 저장하고, 비밀은 나갈 때 가립니다. 페이로드에 `transcript_path`가 없으면 그 하네스의 트랜스크립트 폴더에서 `session_id`로 찾습니다',
     risk: 'write',
     hook: true,
     dryRun: false,

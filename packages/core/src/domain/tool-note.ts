@@ -1,4 +1,15 @@
 /**
+ * The first line of a tool note's target, cut to this many UTF-16 units by the
+ * connector's parser before Core ever sees it.
+ *
+ * It lives here rather than in the connector because the cut is what makes the
+ * truncated-tail rule necessary: a key that straddles the limit is stored as
+ * the harmless-looking first half of itself, and the output masking has to
+ * know where that half can only have come from (`output/mask.ts`, AD-11).
+ */
+export const TOOL_NOTE_TARGET_LIMIT = 500;
+
+/**
  * One line per tool call: the tool, what it acted on, whether it worked. The
  * tool's output is never kept (PRD glossary). Written by `sessions.ingest` and
  * immutable afterwards (Table Contract).

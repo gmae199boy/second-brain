@@ -31,8 +31,10 @@ function maskedBody(text: string): string {
 }
 
 describe('the pattern list itself', () => {
-  it('starts at version 1', () => {
-    expect(SECRET_PATTERN_VERSION).toBe('1');
+  it('is at version 2', () => {
+    // Bumped by 마스킹 B: the value set, the Korean separators and the English
+    // value-shape rules all changed (change D4).
+    expect(SECRET_PATTERN_VERSION).toBe('2');
   });
 
   it('is built the way the masking function needs: global, unicode, with indices', () => {
@@ -118,6 +120,66 @@ describe('the keyword forms', () => {
     expect(maskedBody('max_tokens: 4096')).toBe('max_tokens: 4096');
     expect(maskedBody('max_tokens')).toBe('max_tokens');
     expect(maskedBody('tokenizer: fast')).toBe('tokenizer: fast');
+  });
+
+  it('keeps a value whole through the punctuation version 1 stopped at', () => {
+    // Version 1's value set ended at `!`, `?`, `.` and `:`, so the back half of
+    // a password stayed in the output. Those characters are inside a value now.
+    expect(maskedBody('password: Pa!ss2024')).toBe('password: [REDACTED:password]');
+    expect(maskedBody('passwd=a.b:c?d')).toBe('passwd=[REDACTED:password]');
+  });
+
+  it('still stops the value at a comma, a semicolon or Hangul', () => {
+    expect(maskedBody('password: hunter2x, 다음')).toBe('password: [REDACTED:password], 다음');
+    expect(maskedBody('password=hunter2x;echo')).toBe('password=[REDACTED:password];echo');
+    expect(maskedBody('token: abc123그리고')).toBe('token: [REDACTED:password]그리고');
+  });
+
+  it('reads the three Korean separators version 2 added', () => {
+    // A bare space and the common particles. Version 1 knew only `:`, `=`, `은`
+    // and `는`, and let the rest out of Brain (change D4).
+    expect(maskedBody('비밀번호 Tiger2024')).toBe('비밀번호 [REDACTED:password]');
+    expect(maskedBody('비밀번호가 Tiger2024')).toBe('비밀번호가 [REDACTED:password]');
+    expect(maskedBody('비밀번호를 Tiger2024')).toBe('비밀번호를 [REDACTED:password]');
+    expect(maskedBody('암호 = Tiger2024')).toBe('암호 = [REDACTED:password]');
+  });
+
+  it('leaves an English keyword whose value is code or prose alone', () => {
+    // Unquoted values only, and three shapes: a call, digits, and a word with
+    // another word after it. Over-masking costs nothing stored, but a masked
+    // line of code is a line nobody can read (change D4).
+    expect(maskedBody('let token = parse(input);')).toBe('let token = parse(input);');
+    expect(maskedBody('secret: see the README')).toBe('secret: see the README');
+    expect(maskedBody('{"token": 123}')).toBe('{"token": 123}');
+  });
+
+  it('masks a value that only begins like a call', () => {
+    // The whole value has to be the call. `foo(bar)baz` is not one, and a
+    // credential is not spared for opening with an identifier and a bracket.
+    expect(maskedBody('token=foo(bar)baz')).toBe('token=[REDACTED:password]');
+  });
+
+  it('masks a word at the end of a line whatever the next line says', () => {
+    // The sentence rule reads a space or a tab, never a newline: the word
+    // after a line break is a different sentence. It used to depend on how
+    // the caller had joined the lines, so one codec masked and another did not.
+    expect(maskedBody('secret: hunterpass\nok done')).toBe(
+      'secret: [REDACTED:password]\nok done',
+    );
+    expect(maskedBody('secret: hunterpass')).toBe('secret: [REDACTED:password]');
+  });
+
+  it('masks a quoted value whatever shape it has', () => {
+    // The quotes say somebody meant the string, so the shape rules step aside.
+    expect(maskedBody('secret: "see"')).toBe('secret: "[REDACTED:password]"');
+    expect(maskedBody("token='123'")).toBe("token='[REDACTED:password]'");
+  });
+
+  it('takes an unmatched closing bracket off the end of a value', () => {
+    // `{"token": 1a}` ends in the object's brace, and `parse(input)` does not:
+    // that bracket is matched, which is what lets the call rule see a call.
+    expect(maskedBody('{"token": 1a}')).toBe('{"token": [REDACTED:password]}');
+    expect(maskedBody('(password=x2)')).toBe('(password=[REDACTED:password])');
   });
 });
 
@@ -239,6 +301,11 @@ describe('the regression table: what must never be masked', () => {
     // Thirteen digits of epoch milliseconds, which is neither a card number nor
     // a resident registration number.
     '1760745600000',
+    // The identifiers an envelope carries on every single answer: masking any
+    // of them would make the output unusable rather than safe (change D1).
+    'claude-code:4f1e7a90-1c2b-4d3e-8f55-000000000000',
+    '2026-10-19T01:06:00.000+09:00',
+    '2026-10-19T01:06:00.000-08:00',
   ];
 
   it.each(keep)('leaves %j in a body exactly as it was', (text) => {

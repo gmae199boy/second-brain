@@ -1,7 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SECRET_PATTERN_VERSION } from '@second-brain/core';
 import {
   otherProjectId,
   otherSessionId,
@@ -114,17 +113,19 @@ describe('the SQLite session store and the columns behind it', () => {
     }
   });
 
-  it('writes a masking record as a message redaction with the pattern version', async () => {
+  it('writes no masking record at all, and stores the body as it was given', async () => {
+    // 마스킹 B: capture masks nothing, so the one table that could hold a
+    // secret's hash stays empty until somebody runs `messages redact` (AD-11).
     const path = await migratedPath();
     const store = sqliteStore({ path });
-    const batch = sampleIngestBatch({ redactions: 1 });
+    const batch = sampleIngestBatch();
     try {
       expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
       expect((await store.ensureSession(sampleEnsureSessionInput())).ok).toBe(true);
       const ingested = await store.ingest(batch);
       expect(ingested.ok).toBe(true);
       if (!ingested.ok) return;
-      expect(ingested.inserted.redactions).toBe(batch.messages.length);
+      expect(Object.keys(ingested.inserted).sort()).toEqual(['messages', 'toolNotes']);
     } finally {
       await store.close();
     }
@@ -133,31 +134,12 @@ describe('the SQLite session store and the columns behind it', () => {
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;
     try {
-      // `file_id` is null and the range is filled: the `check` of migration
-      // 0004 says a redaction has exactly one target, and that a message one
-      // carries a half-open range over the body.
       expect(
-        opened.connection.database
-          .prepare(
-            `select r.id, r.file_id, r.start, r."end", r.kind, r.content_hash,
-                    r.occurred_at, r.pattern_version, m.seq
-               from redactions r join messages m on m.id = r.message_id
-              order by m.seq`,
-          )
-          .all(),
-      ).toEqual(
-        batch.messages.map((message, seq) => ({
-          id: message.redactions[0]?.id,
-          file_id: null,
-          start: message.redactions[0]?.start,
-          end: message.redactions[0]?.end,
-          kind: message.redactions[0]?.kind,
-          content_hash: message.redactions[0]?.contentHash,
-          occurred_at: '2026-01-02T03:06:00.000Z',
-          pattern_version: SECRET_PATTERN_VERSION,
-          seq,
-        })),
-      );
+        opened.connection.database.prepare('select count(*) as rows from redactions').get(),
+      ).toEqual({ rows: 0 });
+      expect(
+        opened.connection.database.prepare('select body from messages order by seq').all(),
+      ).toEqual(batch.messages.map((message) => ({ body: message.body })));
     } finally {
       await opened.connection.close();
     }
@@ -165,8 +147,8 @@ describe('the SQLite session store and the columns behind it', () => {
 
   it('refuses a masking record whose message is not there', async () => {
     // The foreign key is what keeps a record from outliving the body it is
-    // about, and it is why the records of a message the store skipped are
-    // dropped rather than written (port contract).
+    // about. Capture writes no record of its own any more (마스킹 B), but
+    // `messages.redact` (story 2.13) will, and this is the rule it inherits.
     const path = await migratedPath();
     const store = sqliteStore({ path });
     try {

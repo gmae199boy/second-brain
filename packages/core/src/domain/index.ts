@@ -20,7 +20,7 @@ export {
 } from './session-token.js';
 export type { Message, MessageRole } from './message.js';
 export type { User } from './user.js';
-export type { ToolNote } from './tool-note.js';
+export { TOOL_NOTE_TARGET_LIMIT, type ToolNote } from './tool-note.js';
 export type { LogEntry, LogEntryEdit, LogEntryKind, RuleState } from './log-entry.js';
 export type { ChunkParams, IndexConfig, IndexConfigKind } from './index-config.js';
 export type { Chunk } from './chunk.js';
@@ -80,7 +80,6 @@ export type { SchemaVersion } from './schema-version.js';
 export type {
   IngestBatch,
   IngestMessage,
-  IngestRedaction,
   IngestToolNote,
   IngestTracking,
   ParsedMessage,

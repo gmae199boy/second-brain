@@ -1,3 +1,4 @@
+import { encodeTextLine } from 'second_brain';
 import type { CommandSpec, StandaloneCommandContext } from '../dispatch.js';
 import type { InstallFlags, InstallReport } from '../install/flow.js';
 
@@ -55,8 +56,11 @@ export const setupRun: CommandSpec<SetupRunData> = {
     // and then migrates, and output the dispatcher printed at the end would
     // arrive after the questions it belongs to. Under `--json` the result is
     // the envelope's `data` and nothing is printed at all.
+    // This command's own sink, because the flow prints as it asks rather than
+    // at the end. It is the `text` codec, like every other human-readable line
+    // (AD-11, sink table of `test/output-codecs.test.ts`).
     const log = (line: string): void => {
-      if (!json) process.stdout.write(`${line}\n`);
+      if (!json) process.stdout.write(`${encodeTextLine(line)}\n`);
     };
 
     // Imported here, not at the top: the installer's own graph is the terminal

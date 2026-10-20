@@ -1,11 +1,9 @@
 import type {
   IngestBatch,
   IngestMessage,
-  IngestRedaction,
   IngestToolNote,
 } from '../domain/ingest-batch.js';
 import { normalizeRemoteIdentity } from '../domain/project-identity.js';
-import { SECRET_PATTERN_VERSION, maskSecrets } from '../domain/secret-patterns.js';
 import type { ParserCursor, Session, SessionIngestSource } from '../domain/session.js';
 import {
   parseSessionToken,
@@ -303,7 +301,7 @@ export async function ingestSession(
       session: input.session,
       spooled: false,
       created: false,
-      inserted: { messages: 0, toolNotes: 0, redactions: 0 },
+      inserted: { messages: 0, toolNotes: 0 },
       warnings: [],
     };
   }
@@ -321,34 +319,19 @@ export async function ingestSession(
   // One instant for the whole batch, read once (AD-13).
   const ingestedAt = clock.now();
 
-  // Masking happens here, where the batch is built, and not where it is stored.
-  // Everything after this line — the store, a spool file, a log, an error
-  // message — only ever sees a body that has already been through the pattern
-  // list, so a secret pasted into a conversation has no second place to leak
-  // from (AD-11). `cwd` is untouched by it, so the tags below read the folder
-  // the line actually carried.
-  const messages: IngestMessage[] = parsed.messages.map((message) => {
-    const masked = maskSecrets(message.body, 'body');
-    const id = idGen.next();
-    const redactions: IngestRedaction[] = masked.spans.map((span) => ({
-      id: idGen.next(),
-      start: span.start,
-      end: span.end,
-      kind: span.kind,
-      // The hash of what went, never the text: that is the whole point (AD-11).
-      contentHash: span.removed,
-      patternVersion: SECRET_PATTERN_VERSION,
-      occurredAt: ingestedAt,
-    }));
-    return { ...message, id, body: masked.text, redactions };
-  });
-  // The target is masked too, and leaves no record: a `redactions` row is a
-  // span over a body, and 0004 has no column that could name a tool note
-  // (Decision 2026-10-18).
+  // Nothing is masked here. The body and the target go to the store exactly as
+  // the parser read them, because a stored message is never rewritten: a
+  // pattern that masked one word too many on the way in would have deleted
+  // something nobody could get back. Secrets are masked where text leaves
+  // Brain instead, in Core's output codecs (마스킹 B, AD-11), and the ids are
+  // all this step adds (AD-8).
+  const messages: IngestMessage[] = parsed.messages.map((message) => ({
+    ...message,
+    id: idGen.next(),
+  }));
   const toolNotes: IngestToolNote[] = parsed.toolNotes.map((note) => ({
     ...note,
     id: idGen.next(),
-    target: maskSecrets(note.target, 'tool_target').text,
   }));
 
   // A batch with no messages is one of tool notes alone, and only for a session

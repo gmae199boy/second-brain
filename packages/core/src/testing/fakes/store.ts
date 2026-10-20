@@ -70,7 +70,13 @@ export interface MemoryStoreSnapshot {
   sessions: readonly Session[];
   messages: readonly Message[];
   toolNotes: readonly ToolNote[];
-  /** One row per masked span that was written, in the order it went in (AD-11). */
+  /**
+   * One row per masked span that was written, in the order it went in (AD-11).
+   *
+   * Always empty for now: ingest masks nothing and writes nothing here (마스킹
+   * B), and the one writer of the table — `messages.redact` — is story 2.13.
+   * The field stays so that story has somewhere to put its rows.
+   */
   redactions: readonly Redaction[];
   /** The queue, in the order rows were added (AD-21). */
   workItems: readonly WorkItem[];
@@ -269,10 +275,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
 
       const storedMessages = messages.get(token) ?? [];
       const storedToolNotes = toolNotes.get(token) ?? [];
-      const storedRedactions = redactions.get(token) ?? [];
       let insertedMessages = 0;
       let insertedToolNotes = 0;
-      let insertedRedactions = 0;
 
       // Where this session's numbering carries on from. Read once, before any
       // insert, so the batch is numbered in its own order (AD-8).
@@ -303,25 +307,9 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         });
         nextSeq += 1;
         insertedMessages += 1;
-
-        // The masking records of the messages that actually went in, and only
-        // those: a message the session already held came back with a fresh set
-        // of record ids, and keeping them would record the same masking twice
-        // or leave a record pointing at a message id no row carries (port
-        // contract, AD-11).
-        for (const redaction of parsed.redactions) {
-          storedRedactions.push({
-            id: redaction.id,
-            messageId: parsed.id,
-            start: redaction.start,
-            end: redaction.end,
-            kind: redaction.kind,
-            contentHash: redaction.contentHash,
-            occurredAt: redaction.occurredAt,
-            patternVersion: redaction.patternVersion,
-          });
-          insertedRedactions += 1;
-        }
+        // No masking record is kept, because ingest does no masking: the body
+        // is stored as the batch carried it and the output codecs mask it on
+        // the way out (마스킹 B, AD-11).
       }
 
       for (const parsed of batch.toolNotes) {
@@ -346,7 +334,6 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       storedMessages.sort((left, right) => left.seq - right.seq);
       messages.set(token, storedMessages);
       toolNotes.set(token, storedToolNotes);
-      redactions.set(token, storedRedactions);
 
       // The cursor, the parser version and the end only move forward, and they
       // land in the same step as the rows (AD-7).
@@ -371,7 +358,6 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         inserted: {
           messages: insertedMessages,
           toolNotes: insertedToolNotes,
-          redactions: insertedRedactions,
         },
         warnings,
       };

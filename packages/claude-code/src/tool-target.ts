@@ -1,3 +1,5 @@
+import { TOOL_NOTE_TARGET_LIMIT } from '@second-brain/core';
+
 /**
  * What a tool call acted on, as one short line: the file it read, the command
  * it ran, the pattern it searched for (AD-15, PRD glossary).
@@ -52,8 +54,13 @@ const FALLBACK_KEYS = [
  * The first line of the target, cut to this many characters. A `Bash` command
  * can be a whole heredoc and a `Grep` pattern a long alternation; a note is a
  * reminder and not the call itself, so it keeps the opening and drops the rest.
+ *
+ * The number is Core's, because the output masking has to know it too: a
+ * secret the cut split in half is left as a prefix no pattern recognises, and
+ * the truncated-tail rule exists for exactly that (`TOOL_NOTE_TARGET_LIMIT`,
+ * AD-11). Neither the value nor the way the cut is made changes here.
  */
-export const TOOL_TARGET_LIMIT = 500;
+export const TOOL_TARGET_LIMIT = TOOL_NOTE_TARGET_LIMIT;
 
 /**
  * The target of one `tool_use` block, or `''` when the input holds nothing that

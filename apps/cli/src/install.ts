@@ -2,6 +2,7 @@
 import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { cancel, confirm, isCancel, multiselect, text, type Option } from '@clack/prompts';
+import { encodeTextLine } from 'second_brain';
 import { readConfigForSetup, writeConfig } from './config/codec.js';
 import { configHome } from './config/paths.js';
 import { connectors } from './connectors/index.js';
@@ -151,8 +152,10 @@ export function systemInstallDeps(): InstallDeps {
     // Both ends have to be a terminal: a question needs an answer and a place
     // to be read. Anything else counts as not interactive at all.
     isTTY: process.stdin.isTTY === true && process.stdout.isTTY === true,
+    // The installer's sink. It runs before there is a dispatcher, so it is the
+    // `text` codec here rather than there (AD-11, sink table).
     log: (line: string): void => {
-      process.stdout.write(`${line}\n`);
+      process.stdout.write(`${encodeTextLine(line)}\n`);
     },
     // The codec's own two functions, with nothing in between: the partial read
     // and the warnings it collects belong to the codec (AD-18), and the

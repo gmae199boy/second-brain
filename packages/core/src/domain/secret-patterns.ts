@@ -5,9 +5,15 @@ import { contentHash } from './sha256.js';
  * runs it (AD-11).
  *
  * Everything in here is a pure function of its input: no clock, no id, no port.
- * That is what lets masking happen where the batch is built rather than where
- * it is stored — a batch that has been masked carries no secret, so a spool
- * that writes it to disk later (story 2.10) writes no secret either.
+ * That is what lets masking happen where text leaves Brain rather than where it
+ * is stored: capture writes the original down and the output codecs
+ * (`output/codecs.ts`) run this list over whatever goes out (마스킹 B,
+ * 2026-10-18 사용자).
+ *
+ * Which way a pattern errs follows from that. Missing a secret lets it out of
+ * Brain, so the keyword forms are wide. Masking too much costs one unreadable
+ * line of output and nothing more — the stored original is untouched — so the
+ * value-shape rules below are a convenience and not a safety net.
  *
  * Two rules hold the whole file together:
  *
@@ -26,7 +32,7 @@ import { contentHash } from './sha256.js';
  * added, removed or changed, so a record can be found again when the list
  * grows (AD-11, inputs A6).
  */
-export const SECRET_PATTERN_VERSION = '1';
+export const SECRET_PATTERN_VERSION = '2';
 
 /** Where a text came from, which decides which patterns run over it. */
 export type SecretField = 'body' | 'tool_target';
@@ -46,26 +52,54 @@ interface SecretPattern {
   /** The fields this pattern runs over. Most run over both. */
   fields: readonly SecretField[];
   /**
-   * A last check on the matched text the expression alone cannot make, such as
-   * the Luhn sum of a card number. A match it refuses leaves no span.
+   * A last check the expression alone cannot make: the Luhn sum of a card
+   * number, or the shape of a keyword's value. A match it refuses leaves no
+   * span. The second argument is everything about the match this file knows
+   * that the matched text alone does not say.
    */
-  accept?: (matched: string) => boolean;
+  accept?: (matched: string, context: SecretMatch) => boolean;
+  /**
+   * Take unmatched closing brackets off the end of the span. Only the keyword
+   * forms want it: their value set holds brackets so that `parse(input)` stays
+   * one value, and `{"token": 123}` would otherwise end in the object's `}`.
+   */
+  trimClosers?: boolean;
+}
+
+/** What `accept` is told about a match, beyond the matched text itself. */
+export interface SecretMatch {
+  /** The text the span covers right now — the value, for a keyword form. */
+  value: string;
+  /** Whether the pattern consumed an opening quote right before the value. */
+  quoted: boolean;
+  /** What follows the span in the text, cut to a few characters. */
+  after: string;
 }
 
 const BOTH: readonly SecretField[] = ['body', 'tool_target'];
 
-/**
- * The value of a keyword assignment: everything up to the first space, comma,
- * full stop, semicolon, colon, quote or backtick (inputs A4).
- *
- * `\S+` would swallow the rest of a sentence that has no space in it, which in
- * Korean is most of a sentence; the stop set is what keeps a masked keyword to
- * the value that followed it.
- */
-const VALUE = String.raw`[^\s,.;:!?，。、'"\u0060]+`;
-
 /** Hangul syllables and the bare jamo, for "the value must not start in Korean". */
 const HANGUL = String.raw`\uAC00-\uD7A3\u1100-\u11FF\u3130-\u318F`;
+
+/**
+ * The value of a keyword assignment: everything up to the first whitespace,
+ * quote, backtick, comma, semicolon, full-width punctuation or Hangul
+ * character (version 2).
+ *
+ * `!`, `?`, `.`, `:` and brackets are *inside* a value. Version 1 stopped at
+ * them, which cut `Pa!ss2024` in half and left the rest of the password in the
+ * output. Hangul is a stop instead, because a Korean sentence after a value is
+ * the common case and nothing of that sentence is the secret.
+ *
+ * `\S+` would still be wrong: it swallows the rest of a line.
+ */
+const VALUE = String.raw`[^\s,;，。、'"\u0060${HANGUL}]+`;
+
+/** Closing brackets, and the opener each one would have to be paired with. */
+const CLOSERS: Readonly<Record<string, string>> = { ')': '(', ']': '[', '}': '{', '>': '<' };
+
+/** How much of the text after a span `accept` is shown. */
+const AFTER_WINDOW = 24;
 
 /**
  * The patterns, in the order they are tried. Order decides only which `kind` a
@@ -165,25 +199,40 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
     kind: 'password',
     expression: new RegExp(
       String.raw`(?<![A-Za-z0-9])(?:password|passwd|secret|token|api[_ -]?key|access[_ -]?key)` +
-        String.raw`["']?\s*[:=]\s*(?!=)["']?(?<value>${VALUE})`,
+        String.raw`["']?\s*[:=]\s*(?!=)(?<open>["'])?(?<value>${VALUE})`,
       'gdiu',
     ),
     value: ['value'],
+    trimClosers: true,
+    accept: keywordValueLooksLikeSecret,
     fields: BOTH,
   },
   {
     // The Korean keyword form. No `\b` anywhere near the Hangul: JavaScript's
     // word boundary is ASCII only and would quietly never match (inputs A4).
     //
-    // A value that starts in Korean is not a value: "비밀번호는 바꿨어" is
-    // somebody saying they changed it, and masking the next word would delete a
-    // sentence rather than a secret.
+    // Three separators, which is version 2's widening (change D4): the colon
+    // or equals sign, a particle, or simply a space. "비밀번호 Tiger2024" and
+    // "비밀번호가 Tiger2024" are how a person actually writes it, and version
+    // 1 let both of them out of Brain.
+    //
+    // A value that starts in Korean is still not a value: "비밀번호는 바꿨어"
+    // is somebody saying they changed it, and masking the next word would
+    // delete a sentence rather than a secret. That one rule is what makes a
+    // bare space safe as a separator.
+    //
+    // No value-shape rule here. The English one exists because English
+    // keywords collide with ordinary code (`let token = parse(x)`); nothing
+    // writes "비밀번호" in a program.
     kind: 'password',
     expression: new RegExp(
-      String.raw`(?:비밀번호|암호|패스워드)\s*[:=은는]\s*(?<value>(?![${HANGUL}])${VALUE})`,
+      String.raw`(?:비밀번호|암호|패스워드)` +
+        String.raw`(?:\s*[:=]\s*|[은는이가을를도]\s*(?:[:=]\s*)?|\s+)` +
+        String.raw`(?<value>(?![${HANGUL}])${VALUE})`,
       'gdu',
     ),
     value: ['value'],
+    trimClosers: true,
     fields: BOTH,
   },
   {
@@ -213,8 +262,11 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
     // expression accepts is the inputs regex unchanged.
     //
     // Tool note targets only. A body's `NODE_ENV=production` is an ordinary
-    // line of a conversation, and a message is never rewritten once stored, so
-    // masking it would be a deletion nobody could undo (Decision 2026-10-18).
+    // line of a conversation, and a reader who cannot see it has lost
+    // something; a `NAME=value` on a command line is far more often a
+    // credential (Decision 2026-10-18, kept by D1). Which column a string came
+    // from is what `toolNoteForOutput` carries, because a codec walking a
+    // finished answer can no longer tell.
     kind: 'shell_assignment',
     expression:
       /(?:^|[;|&\s])(?:export\s+)?[A-Z_][A-Z0-9_]{0,127}=(?:"(?<quoted>[^"]*)"|'(?<single>[^']*)'|(?<bare>[^\s;|&]+))/gdu,
@@ -258,9 +310,9 @@ interface RawSpan {
  *
  * The same input always gives the same output, and masking an already masked
  * text changes nothing: a marker is skipped rather than masked again, so a
- * second pass over a stored body is a no-op. That matters because ingest is
- * idempotent — the same transcript is read again and again — and a marker that
- * grew a marker every time would make the body drift.
+ * second pass is a no-op. That matters because the same text goes out more
+ * than once — a read, then a mirror, then an export — and a marker that grew a
+ * marker every time would make the output drift.
  */
 export function maskSecrets(text: string, field: SecretField): MaskSecretsResult {
   if (text === '') return { text, spans: [] };
@@ -281,10 +333,20 @@ export function maskSecrets(text: string, field: SecretField): MaskSecretsResult
         expression.lastIndex += 1;
         continue;
       }
-      if (pattern.accept !== undefined && !pattern.accept(matched)) continue;
-      const span = spanOf(match, matched, pattern);
-      if (span === null) continue;
+      const raw = spanOf(match, matched, pattern);
+      if (raw === null) continue;
+      const span = pattern.trimClosers === true ? trimClosers(text, raw) : raw;
       if (span.end <= span.start) continue;
+      if (
+        pattern.accept !== undefined &&
+        !pattern.accept(matched, {
+          value: text.slice(span.start, span.end),
+          quoted: match.indices?.groups?.['open'] !== undefined,
+          after: text.slice(span.end, span.end + AFTER_WINDOW),
+        })
+      ) {
+        continue;
+      }
       // Already masked: this is what makes a second pass a no-op. Only a span
       // that lies wholly inside a marker is dropped — `token=[REDACTED:api_key]`
       // gives the value `[REDACTED`, which is the marker's own text. A span that
@@ -335,6 +397,66 @@ export function maskSecrets(text: string, field: SecretField): MaskSecretsResult
   pieces.push(text.slice(read));
 
   return { text: pieces.join(''), spans };
+}
+
+/**
+ * The same span with unmatched closing brackets taken off the end.
+ *
+ * `{"token": 123}` gives the value `123}`, and the brace belongs to the JSON
+ * around it and not to the value. `parse(input)` keeps its bracket, because
+ * that one is matched — and that is what lets the call-shape rule below see a
+ * call at all.
+ */
+function trimClosers(
+  text: string,
+  span: { start: number; end: number },
+): { start: number; end: number } {
+  let end = span.end;
+  while (end > span.start) {
+    const last = text[end - 1] ?? '';
+    const opener = CLOSERS[last];
+    if (opener === undefined) break;
+    let open = 0;
+    let close = 0;
+    for (let at = span.start; at < end; at += 1) {
+      const character = text[at];
+      if (character === opener) open += 1;
+      else if (character === last) close += 1;
+    }
+    if (close <= open) break;
+    end -= 1;
+  }
+  return { start: span.start, end };
+}
+
+/**
+ * Whether an English keyword's value is worth masking (change D4).
+ *
+ * A quoted value always is: somebody who wrote `secret: "see"` meant the
+ * string and not the sentence. An unquoted one is judged by shape, and three
+ * shapes are ordinary code or prose rather than a credential:
+ *
+ *   * a call — `token = parse(input)`;
+ *   * digits alone — `{"token": 123}`, and a count is not a password. A
+ *     numeric PIN is the price of that one;
+ *   * a word of letters with another word after it — `secret: see the README`.
+ *
+ * Getting this wrong costs a masked word in one line of output, never a
+ * stored message: capture keeps the original (마스킹 B).
+ */
+function keywordValueLooksLikeSecret(_matched: string, context: SecretMatch): boolean {
+  if (context.quoted) return true;
+  // The *whole* value has to be the call. `foo(bar)baz` only begins like one,
+  // and a credential that happens to open with an identifier and a bracket is
+  // still a credential.
+  if (/^[A-Za-z_$][A-Za-z0-9_$]*\(.*\)$/su.test(context.value)) return false;
+  if (/^\d+$/u.test(context.value)) return false;
+  // Space or tab, never a newline: the next line is a different sentence, and
+  // a value at the end of one would otherwise be spared by whatever happened
+  // to follow it — which differs from codec to codec, since one joins the
+  // texts with a newline and another with a space.
+  if (/^[A-Za-z]+$/u.test(context.value) && /^[ \t]+[A-Za-z]/u.test(context.after)) return false;
+  return true;
 }
 
 /** Where the markers of an earlier masking sit, in UTF-16 units. */

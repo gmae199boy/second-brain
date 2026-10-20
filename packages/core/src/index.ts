@@ -42,6 +42,24 @@ export {
   type Failure,
   type VerbCall,
 } from './envelope.js';
+/**
+ * The output masking and the registry of the ways out (AD-11, 마스킹 B).
+ * `TOOL_NOTE_TARGET_LIMIT` is not repeated here: it is a domain constant and
+ * the `export *` above already carries it.
+ */
+export {
+  OUTPUT_CODECS,
+  encodeHookLine,
+  encodeHookOutput,
+  encodeTextLine,
+  maskOutputText,
+  maskOutputValue,
+  maskToolNoteTarget,
+  toolNoteForOutput,
+  type MaskableToolNote,
+  type OutputCodec,
+  type OutputProbe,
+} from './output/index.js';
 export {
   INSTANT_PATTERN,
   formatInstant,

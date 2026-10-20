@@ -6,6 +6,8 @@ import {
   SQLITE_SCHEMA_VERSION,
   checkSchema,
   createBrain,
+  encodeHookLine,
+  encodeTextLine,
   spoolSessionIngest,
   sqliteStore,
   type Brain,
@@ -390,6 +392,11 @@ export async function dispatch(
 ): Promise<ExitCode> {
   const { clock } = runtime;
   const env = runtime.env ?? process.env;
+  // The two sinks of this file. What reaches them has already been through an
+  // output codec — `encodeTextLine` for the lines a person reads, and
+  // `encodeHookLine` on the hook path — and the `--json` envelope was masked
+  // where Core built it. Nothing writes to either without passing one of the
+  // three (AD-11, and the sink table of `test/output-codecs.test.ts`).
   const stdout =
     runtime.stdout ??
     ((text: string): void => {
@@ -419,7 +426,7 @@ export async function dispatch(
   } catch (error) {
     // An exception here is a bug, and a bug must still not break the harness.
     if (!hook) throw error;
-    stderr(`brain: ${oneLine(error)}\n`);
+    stderr(`${encodeHookLine(`brain: ${oneLine(error)}`)}\n`);
     return 0;
   }
 
@@ -428,7 +435,7 @@ export async function dispatch(
   // codes worth printing — it just must not report the failure as an exit code.
   const failure = outcome.envelope?.error;
   if (hook && failure !== undefined) {
-    stderr(`brain: ${failure.code}: ${failure.message}\n`);
+    stderr(`${encodeHookLine(`brain: ${failure.code}: ${failure.message}`)}\n`);
     return 0;
   }
 
@@ -436,19 +443,19 @@ export async function dispatch(
     if (json) {
       stdout(`${JSON.stringify(outcome.envelope)}\n`);
     } else {
-      for (const line of outcome.text) stdout(`${line}\n`);
+      for (const line of outcome.text) stdout(`${encodeTextLine(line)}\n`);
       if (failure !== undefined) {
-        stderr(`${failure.code}: ${failure.message}\n`);
+        stderr(`${encodeTextLine(`${failure.code}: ${failure.message}`)}\n`);
         // The hint, indented under the sentence it belongs to (Decision
         // 2026-10-16): text mode reads it instead of the envelope, and a
         // failure whose hint only `--json` carried would be a next step the
         // person at the terminal never sees. The hook path above never gets
         // here — one line is all a harness turn may be told (AD-6).
         if (failure.hint !== undefined && failure.hint !== '') {
-          stderr(`  ${failure.hint}\n`);
+          stderr(`  ${encodeTextLine(failure.hint)}\n`);
         }
       }
-      for (const line of outcome.warningLines) stderr(`${line}\n`);
+      for (const line of outcome.warningLines) stderr(`${encodeTextLine(line)}\n`);
     }
   }
   // A hook command never fails the harness, whatever the outcome was (AD-6).
@@ -713,7 +720,7 @@ async function drainOpportunistically(
     const brain = createBrain({ ...dependencies, store });
     await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.opportunistic });
   } catch (error) {
-    stderr(`brain: 밀린 일 처리 중 오류: ${oneLine(error)}\n`);
+    stderr(`${encodeTextLine(`brain: 밀린 일 처리 중 오류: ${oneLine(error)}`)}\n`);
   } finally {
     // This connection is the drain's own, so closing it is the drain's own job;
     // the command's store is closed by the `finally` around the command.
