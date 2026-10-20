@@ -42,6 +42,22 @@ export const SECRETS = [
 export const TRUNCATED_HALF_KEY = 'sk-BBBBBBB';
 
 /**
+ * The two `tool_notes.target` values the fixture stores, in `ordinal` order and
+ * exactly as the rows hold them.
+ *
+ * Written out here rather than worked out from the fixture: the expectation
+ * used to apply the parser's own cut (`split('\n')[0].slice(0, 500)`) to the
+ * command, so it followed the parser instead of pinning it and a changed cut
+ * would have passed (follow-up review). The second value is the long `Bash`
+ * command as the 500-unit cut left it — `echo `, 484 `x`, a space, and the
+ * front half of a key the cut broke in two.
+ */
+export const FIXTURE_TOOL_TARGETS = [
+  'OPENAI_API_KEY=xyz123 node run.js',
+  `echo ${'x'.repeat(484)} ${TRUNCATED_HALF_KEY}`,
+] as const;
+
+/**
  * The regression table as the fixture writes it: identifiers, paths, an
  * address, a Korean sentence about a password, and the three lines version 1
  * of the pattern list used to mask (inputs A3, change D4).

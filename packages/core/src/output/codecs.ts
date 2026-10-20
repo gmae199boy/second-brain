@@ -1,6 +1,6 @@
 import { errorEnvelope, okEnvelope } from '../envelope.js';
 import type { Clock } from '../ports/clock.js';
-import { maskOutputText, maskOutputValue } from './mask.js';
+import { maskOutputText, maskOutputValue, sessionForOutput } from './mask.js';
 
 /**
  * Every way text leaves Brain, in one registry (AD-11, change D1).
@@ -28,15 +28,19 @@ export interface OutputCodec {
 }
 
 /**
- * The sample one `render` is handed: the texts of a stored session.
+ * The sample one `render` is handed: a stored session, **as it is stored**.
  *
- * `texts` holds the message bodies as they are stored and the tool note
- * targets already through `toolNoteForOutput` — which is the order a read does
- * it in, because the shell rule runs over that column alone (Decision
- * 2026-10-19).
+ * `texts` holds the message bodies and `toolNotes` the notes, both exactly as
+ * the database has them — nothing here is masked. That is on purpose: the
+ * probe used to arrive with the tool notes already through `toolNoteForOutput`,
+ * so the one rule that belongs to a codec was applied by the test that was
+ * supposed to be checking it, and a codec that forgot it stayed green
+ * (follow-up review). A codec owns the rule now: every `render` below calls
+ * `sessionForOutput`, exactly as a read verb must.
  */
 export interface OutputProbe {
   texts: readonly string[];
+  toolNotes: readonly { tool: string; target: string }[];
 }
 
 /** A fixed instant, so a codec's output is a function of the probe alone. */
@@ -76,34 +80,56 @@ export const OUTPUT_CODECS: readonly OutputCodec[] = [
     // one anybody reads.
     name: 'envelope',
     render: (probe) => {
+      // The tool note rule first, as a read verb does it (`sessionForOutput`);
+      // the envelope then masks every string of what it is given.
+      const read = sessionForOutput(probe);
       const ok = okEnvelope(
         probeClock,
-        { texts: [...probe.texts] },
+        { texts: [...read.texts], toolNotes: [...read.toolNotes] },
         [],
-        { hint: probe.texts.join(' ') },
+        { hint: allTexts(read) },
       );
-      // The failure half too, `retry.args` included: that is where a caller's
-      // own input comes back out, and it is the one part of an envelope that
-      // is made of what somebody typed.
+      // The failure half too: that is where a caller's own input comes back
+      // out, and it is the one part of an envelope made of what somebody
+      // typed. `retry` carries the texts as well — a retry whose arguments
+      // masking changed is dropped whole, so nothing of it should reach the
+      // output either way, and this is what fails if both halves of that ever
+      // stop happening.
       const failed = errorEnvelope(probeClock, {
         code: 'INVALID_ARGUMENT',
-        message: probe.texts.join(' '),
-        hint: probe.texts.join(' '),
-        retry: { ns: 'sessions', verb: 'ingest', args: { note: probe.texts.join(' ') } },
+        message: allTexts(read),
+        hint: allTexts(read),
+        retry: { ns: 'sessions', verb: 'ingest', args: { note: allTexts(read) } },
       });
       return `${JSON.stringify(ok)}\n${JSON.stringify(failed)}`;
     },
   },
   {
     name: 'hook',
-    render: (probe) =>
-      [
-        encodeHookOutput({ systemMessage: probe.texts.join('\n') }),
-        ...probe.texts.map((text) => encodeHookLine(text)),
-      ].join('\n'),
+    render: (probe) => {
+      const read = sessionForOutput(probe);
+      return [
+        encodeHookOutput({ systemMessage: allTexts(read), toolNotes: [...read.toolNotes] }),
+        ...read.texts.map((text) => encodeHookLine(text)),
+        ...read.toolNotes.map((note) => encodeHookLine(`${note.tool} ${note.target}`)),
+      ].join('\n');
+    },
   },
   {
     name: 'text',
-    render: (probe) => probe.texts.map((text) => encodeTextLine(text)).join('\n'),
+    render: (probe) => {
+      const read = sessionForOutput(probe);
+      return [
+        ...read.texts.map((text) => encodeTextLine(text)),
+        ...read.toolNotes.map((note) => encodeTextLine(`${note.tool} ${note.target}`)),
+      ].join('\n');
+    },
   },
 ];
+
+/** Every text of a read, as one string, for the places that take only one. */
+function allTexts(read: OutputProbe): string {
+  return [...read.texts, ...read.toolNotes.map((note) => `${note.tool} ${note.target}`)].join(
+    '\n',
+  );
+}

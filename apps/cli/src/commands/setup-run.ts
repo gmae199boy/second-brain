@@ -21,6 +21,30 @@ import type { InstallFlags, InstallReport } from '../install/flow.js';
 /** The install's structured report. The shape is `InstallReport`. */
 export type SetupRunData = InstallReport;
 
+/**
+ * This command's own sink, because the flow prints as it asks rather than at
+ * the end. It is the `text` codec, like every other human-readable line
+ * (AD-11, sink table of `test/output-codecs.test.ts`).
+ *
+ * In text mode the lines go out as they happen: this flow asks questions and
+ * then migrates, and output the dispatcher printed at the end would arrive
+ * after the questions it belongs to. Under `--json` the result is the
+ * envelope's `data` and nothing is printed at all.
+ *
+ * `write` is a parameter so a test can hold the masking in place without
+ * running an installer (follow-up review).
+ */
+export function setupRunLog(
+  json: boolean,
+  write: (text: string) => void = (text) => {
+    process.stdout.write(text);
+  },
+): (line: string) => void {
+  return (line: string): void => {
+    if (!json) write(`${encodeTextLine(line)}\n`);
+  };
+}
+
 export const setupRun: CommandSpec<SetupRunData> = {
   ns: 'setup',
   verb: 'run',
@@ -52,16 +76,7 @@ export const setupRun: CommandSpec<SetupRunData> = {
   async run(context: StandaloneCommandContext) {
     const json = context.options['json'] === true;
 
-    // In text mode the lines go out as they happen: this flow asks questions
-    // and then migrates, and output the dispatcher printed at the end would
-    // arrive after the questions it belongs to. Under `--json` the result is
-    // the envelope's `data` and nothing is printed at all.
-    // This command's own sink, because the flow prints as it asks rather than
-    // at the end. It is the `text` codec, like every other human-readable line
-    // (AD-11, sink table of `test/output-codecs.test.ts`).
-    const log = (line: string): void => {
-      if (!json) process.stdout.write(`${encodeTextLine(line)}\n`);
-    };
+    const log = setupRunLog(json);
 
     // Imported here, not at the top: the installer's own graph is the terminal
     // prompt library, the migration runner and a module that checks whether

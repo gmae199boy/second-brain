@@ -134,15 +134,29 @@ export function errorEnvelope(
   if (retryable !== undefined) error.retryable = retryable;
   const hint = failure.hint ?? spec?.hint;
   if (hint !== undefined && hint !== '') error.hint = hint;
-  if (failure.retry !== undefined) error.retry = failure.retry;
+  // `retry` is the one part of an envelope that is meant to be *run*, not read:
+  // the CLI prints it as `retry_argv` and a caller may hand it straight back.
+  // So a masked argument makes it a command that would write `[REDACTED:…]`
+  // into real data, and the honest answer is to leave the retry out and let
+  // the caller retype the call (follow-up review). Everything else about the
+  // failure — the code, the sentence, the hint — still says what happened.
+  if (failure.retry !== undefined && !maskingChangesArgs(failure.retry.args)) {
+    error.retry = failure.retry;
+  }
 
   return {
     ok: false,
     now: isoWithOffset(clock.now()),
     warnings: maskOutputValue([...warnings]),
-    // `retry.args` included: that is the caller's own input coming back out.
     error: maskOutputValue(error),
   };
+}
+
+/** Whether masking would change any value of a retry's arguments. */
+function maskingChangesArgs(args: Record<string, unknown>): boolean {
+  // Through JSON on both sides: masking only ever rewrites strings, and this
+  // is the form the arguments go out in anyway.
+  return JSON.stringify(maskOutputValue(args)) !== JSON.stringify(args);
 }
 
 /** The key that carries consent through every surface (Conventions). */

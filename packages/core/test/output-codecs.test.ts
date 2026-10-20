@@ -11,6 +11,7 @@ import {
   maskOutputText,
   maskOutputValue,
   maskToolNoteTarget,
+  sessionForOutput,
   toolNoteForOutput,
 } from '../src/output/mask.js';
 import type { Clock } from '../src/ports/clock.js';
@@ -65,11 +66,49 @@ describe('maskOutputValue', () => {
     expect(input.body).toBe(`키는 ${SECRET}`);
   });
 
-  it('hands back anything it could not rebuild', () => {
-    // A `Date` has no plain-object copy, and guessing at one would quietly
-    // turn an instant into `{}`.
+  it('masks a non-plain object the way JSON would emit it', () => {
+    // Anything with a `toJSON` is masked through that value, because that is
+    // what `JSON.stringify` writes — a `Date` is its ISO string.
     const when = new Date('2026-01-02T03:04:05.000Z');
-    expect(maskOutputValue({ when }).when).toBe(when);
+    expect(maskOutputValue({ when }).when).toBe('2026-01-02T03:04:05.000Z');
+    expect(JSON.stringify(maskOutputValue({ when }))).toBe(JSON.stringify({ when }));
+  });
+
+  it('masks the credentials of a URL, which JSON writes as its href', () => {
+    // Handed back untouched, a `URL` let the whole credential out: nothing
+    // masked it and `JSON.stringify` serialised it anyway (follow-up review).
+    const url = new URL('https://deploy:pw9911@registry.example/x');
+
+    const masked = maskOutputValue({ url });
+
+    expect(JSON.stringify(masked)).not.toContain('pw9911');
+    expect(masked.url).toBe('https://deploy:[REDACTED:url_credentials]@registry.example/x');
+  });
+
+  it('masks the string fields of a class instance, as JSON sees them', () => {
+    class Report {
+      constructor(
+        readonly note: string,
+        readonly count: number,
+      ) {}
+    }
+
+    const masked = maskOutputValue({ report: new Report(`키는 ${SECRET}`, 2) });
+
+    expect(masked.report).toEqual({ note: '키는 [REDACTED:api_key]', count: 2 });
+    expect(JSON.stringify(masked)).not.toContain(SECRET);
+  });
+
+  it('turns a Map or a Set into the empty object JSON makes of them', () => {
+    const masked = maskOutputValue({
+      map: new Map([['password', 'hunter2x']]),
+      set: new Set(['hunter2x']),
+    });
+
+    expect(masked).toEqual({ map: {}, set: {} });
+    expect(JSON.stringify(masked)).toBe(
+      JSON.stringify({ map: new Map([['password', 'hunter2x']]), set: new Set(['hunter2x']) }),
+    );
   });
 });
 
@@ -166,22 +205,48 @@ describe('the envelope codec masks as the envelope is built', () => {
     expect(envelope.now).toContain('2026-01-02T');
   });
 
-  it('masks the message, the hint and the retry arguments of a failure', () => {
+  it('masks the message and the hint of a failure', () => {
     const envelope = errorEnvelope(clock, {
       code: 'INVALID_ARGUMENT',
       message: `키가 ${SECRET} 입니다`,
       hint: `${SECRET} 를 지우세요`,
-      retry: { ns: 'sessions', verb: 'ingest', args: { note: SECRET, confirm: true } },
     });
 
     expect(JSON.stringify(envelope)).not.toContain(SECRET);
-    expect(envelope.error?.retry?.args).toEqual({
-      note: '[REDACTED:api_key]',
-      // Not a string, so nothing happens to it — and `retry_argv` is built
-      // from this, so the CLI prints the masked call.
-      confirm: true,
-    });
+    expect(envelope.error?.message).toBe('키가 [REDACTED:api_key] 입니다');
     expect(envelope.error?.code).toBe('INVALID_ARGUMENT');
+  });
+
+  it('drops a retry whose arguments masking changed', () => {
+    // `retry` is meant to be run, not read. A masked argument would make it a
+    // command that writes `[REDACTED:…]` into real data, so there is no retry
+    // to offer and the caller retypes the call (follow-up review).
+    const envelope = errorEnvelope(clock, {
+      code: 'INVALID_ARGUMENT',
+      message: '키가 틀렸습니다',
+      retry: { ns: 'sessions', verb: 'ingest', args: { note: SECRET, confirm: true } },
+    });
+
+    expect(envelope.error?.retry).toBeUndefined();
+    expect(JSON.stringify(envelope)).not.toContain(SECRET);
+    // The failure itself still says what happened.
+    expect(envelope.error?.code).toBe('INVALID_ARGUMENT');
+  });
+
+  it('keeps a retry no pattern touched, down to the last argument', () => {
+    const retry = {
+      ns: 'sessions',
+      verb: 'ingest',
+      args: { harness: 'claude-code', path: '/demo/repo/a.jsonl', confirm: true },
+    };
+
+    const envelope = errorEnvelope(clock, {
+      code: 'CONFIRMATION_REQUIRED',
+      message: '확인이 필요합니다',
+      retry,
+    });
+
+    expect(envelope.error?.retry).toEqual(retry);
   });
 });
 
@@ -193,12 +258,11 @@ describe('the registry of the ways out', () => {
   });
 
   it('keeps every secret of the probe out of every codec', () => {
+    // The probe is the stored session, unmasked: the tool note rule is the
+    // codec's to apply, not the test's (follow-up review).
     const probe = {
-      texts: [
-        `키는 ${SECRET} 이고 비밀번호 Tiger2024`,
-        'password: Pa!ss2024',
-        toolNoteForOutput({ target: 'OPENAI_API_KEY=xyz123 node run.js' }).target,
-      ],
+      texts: [`키는 ${SECRET} 이고 비밀번호 Tiger2024`, 'password: Pa!ss2024'],
+      toolNotes: [{ tool: 'Bash', target: 'OPENAI_API_KEY=xyz123 node run.js' }],
     };
 
     for (const codec of OUTPUT_CODECS) {
@@ -209,16 +273,58 @@ describe('the registry of the ways out', () => {
     }
   });
 
-  it('leaves ordinary code and prose in every codec', () => {
-    const kept = ['let token = parse(input);', 'secret: see the README', 'NODE_ENV=production'];
-    const probe = { texts: kept };
+  it('applies the shell rule in every codec, even for a name no keyword covers', () => {
+    // `MY_CREDENTIAL` is no keyword of the list, so the body rule alone sees
+    // nothing here: only the target column's shell rule catches it, and only a
+    // codec that called `sessionForOutput` ran that rule.
+    const probe = {
+      texts: [],
+      toolNotes: [{ tool: 'Bash', target: 'MY_CREDENTIAL=abc123 node run.js' }],
+    };
 
     for (const codec of OUTPUT_CODECS) {
       const rendered = codec.render(probe);
-      for (const text of kept) {
+      expect(rendered, `abc123 came out of the ${codec.name} codec`).not.toContain('abc123');
+      // The name stays: that is what makes the note readable afterwards.
+      expect(rendered).toContain('MY_CREDENTIAL');
+    }
+  });
+
+  it('leaves ordinary code and prose in every codec', () => {
+    const kept = ['let token = parse(input);', 'secret: see the README'];
+    const probe = { texts: kept, toolNotes: [{ tool: 'Bash', target: 'node run.js --model=demo' }] };
+
+    for (const codec of OUTPUT_CODECS) {
+      const rendered = codec.render(probe);
+      for (const text of [...kept, 'node run.js --model=demo']) {
         expect(rendered, `the ${codec.name} codec masked ${text}`).toContain(text);
       }
     }
+  });
+});
+
+describe('sessionForOutput', () => {
+  it('runs every tool note of a read through the target rule and nothing else', () => {
+    const read = {
+      session: { id: 'session-1' },
+      messages: [{ body: 'password: hunter2x' }],
+      toolNotes: [
+        { tool: 'Bash', target: 'OPENAI_API_KEY=xyz123 node run.js', ok: true },
+        { tool: 'Read', target: 'notes/import.md', ok: true },
+      ],
+    };
+
+    const out = sessionForOutput(read);
+
+    expect(out.toolNotes.map((note) => note.target)).toEqual([
+      'OPENAI_API_KEY=[REDACTED:password] node run.js',
+      'notes/import.md',
+    ]);
+    // The bodies are the codec's to mask, and the session row is untouched.
+    expect(out.messages).toEqual(read.messages);
+    expect(out.session).toEqual(read.session);
+    // The input is never changed.
+    expect(read.toolNotes[0]?.target).toBe('OPENAI_API_KEY=xyz123 node run.js');
   });
 });
 

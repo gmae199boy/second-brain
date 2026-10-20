@@ -55,6 +55,7 @@ export {
   maskOutputText,
   maskOutputValue,
   maskToolNoteTarget,
+  sessionForOutput,
   toolNoteForOutput,
   type MaskableToolNote,
   type OutputCodec,

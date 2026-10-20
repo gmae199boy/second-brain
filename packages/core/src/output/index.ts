@@ -10,6 +10,7 @@ export {
   maskOutputText,
   maskOutputValue,
   maskToolNoteTarget,
+  sessionForOutput,
   toolNoteForOutput,
   type MaskableToolNote,
 } from './mask.js';

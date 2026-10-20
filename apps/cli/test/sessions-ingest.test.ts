@@ -26,6 +26,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { HOME_ENV, spoolPath } from '../src/config/paths.js';
 import { withoutHarnessFolders } from './environment.js';
 import {
+  FIXTURE_TOOL_TARGETS,
   KEPT_IN_FIXTURE,
   SECRETS,
   SECRETS_FIXTURE,
@@ -855,12 +856,14 @@ describe('brain sessions ingest claude-code stores the secrets it reads, unmaske
     return path;
   }
 
-  /** The bodies and the targets of the transcript, as the harness wrote them. */
-  async function fixtureTexts(
-    transcript: string,
-  ): Promise<{ bodies: string[]; targets: string[] }> {
+  /**
+   * The message bodies of the transcript, as the harness wrote them. The two
+   * targets are `FIXTURE_TOOL_TARGETS`, written out rather than worked out: an
+   * expectation that applied the parser's own cut would follow a changed cut
+   * instead of failing on it (follow-up review).
+   */
+  async function fixtureBodies(transcript: string): Promise<string[]> {
     const bodies: string[] = [];
-    const targets: string[] = [];
     for (const line of (await readFile(transcript, 'utf8')).trimEnd().split('\n')) {
       const entry = JSON.parse(line) as {
         type?: string;
@@ -869,17 +872,12 @@ describe('brain sessions ingest claude-code stores the secrets it reads, unmaske
       const content = entry.message?.content;
       if (entry.type === 'user' && typeof content === 'string') bodies.push(content);
       if (entry.type === 'assistant' && Array.isArray(content)) {
-        for (const block of content as { type?: string; text?: string; input?: unknown }[]) {
+        for (const block of content as { type?: string; text?: string }[]) {
           if (block.type === 'text' && typeof block.text === 'string') bodies.push(block.text);
-          if (block.type === 'tool_use') {
-            const command = (block.input as { command?: string } | undefined)?.command ?? '';
-            // The parser's own cut: the first line, to its first 500 units.
-            targets.push(command.split('\n')[0]?.slice(0, 500) ?? '');
-          }
         }
       }
     }
-    return { bodies, targets };
+    return bodies;
   }
 
   it('stores every body and every target exactly as the transcript holds it', async () => {
@@ -901,9 +899,10 @@ describe('brain sessions ingest claude-code stores the secrets it reads, unmaske
     expect(envelope.data?.inserted).toEqual({ messages: 2, toolNotes: 2 });
 
     const path = databaseIn(home);
-    const expected = await fixtureTexts(transcript);
-    expect(storedMessages(path).map((message) => message.body)).toEqual(expected.bodies);
-    expect(storedToolNotes(path).map((note) => note.target)).toEqual(expected.targets);
+    expect(storedMessages(path).map((message) => message.body)).toEqual(
+      await fixtureBodies(transcript),
+    );
+    expect(storedToolNotes(path).map((note) => note.target)).toEqual([...FIXTURE_TOOL_TARGETS]);
     // Character for character, which is what "no marker anywhere" says in one
     // line: a masked body would carry one.
     expect(JSON.stringify(rowDump(path))).not.toContain('[REDACTED:');
@@ -946,7 +945,7 @@ describe('brain sessions ingest claude-code stores the secrets it reads, unmaske
     ).toBe(0);
 
     const targets = storedToolNotes(databaseIn(home)).map((note) => note.target);
-    expect(targets[0]).toBe('OPENAI_API_KEY=xyz123 node run.js');
+    expect(targets).toEqual([...FIXTURE_TOOL_TARGETS]);
     expect(targets[1]).toHaveLength(500);
     expect(targets[1]?.endsWith(TRUNCATED_HALF_KEY)).toBe(true);
   });

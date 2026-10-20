@@ -74,6 +74,21 @@ export interface SecretMatch {
   quoted: boolean;
   /** What follows the span in the text, cut to a few characters. */
   after: string;
+  /**
+   * The whole text the match was found in, unmasked, and where the span starts
+   * in it (UTF-16 units).
+   *
+   * A rule that reads only the value reads a value the pattern already cut at
+   * the first space: `compute(a, b)` arrives as `compute(a`, which is why the
+   * call-shape rule judges the text from `start` instead (follow-up review).
+   */
+  text: string;
+  start: number;
+  /**
+   * Whether one named group of the pattern took part in this match — the one
+   * thing that says *which* alternative matched, and so which rule applies.
+   */
+  matchedGroup: (name: string) => boolean;
 }
 
 const BOTH: readonly SecretField[] = ['body', 'tool_target'];
@@ -97,6 +112,19 @@ const VALUE = String.raw`[^\s,;，。、'"\u0060${HANGUL}]+`;
 
 /** Closing brackets, and the opener each one would have to be paired with. */
 const CLOSERS: Readonly<Record<string, string>> = { ')': '(', ']': '[', '}': '{', '>': '<' };
+
+/** Opening brackets, and the closer each one is paired with. */
+const OPENERS: Readonly<Record<string, string>> = { '(': ')', '[': ']', '{': '}', '<': '>' };
+
+/**
+ * The group a pattern names for the opening quote it consumed. A pattern that
+ * has one says two things with it: the value is quoted, and the value runs to
+ * the matching quote rather than to the first space (`toClosingQuote`).
+ */
+const OPEN_GROUP = 'open';
+
+/** The group the Korean keyword form names for its bare-space separator. */
+const BARE_GROUP = 'bare';
 
 /** How much of the text after a span `accept` is shown. */
 const AFTER_WINDOW = 24;
@@ -196,6 +224,11 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
     // The separator is one character, so `(?!=)` is what keeps a comparison
     // from looking like an assignment: in `if (password === input)` the class
     // takes the first `=` and the rest of the operator would become the value.
+    //
+    // `open` is the opening quote, and naming it does two things: the value
+    // runs to the matching closing quote on the same line rather than to the
+    // first space (`password: "correct horse battery staple"` is one value,
+    // not one of four words), and a quoted value skips the shape rules below.
     kind: 'password',
     expression: new RegExp(
       String.raw`(?<![A-Za-z0-9])(?:password|passwd|secret|token|api[_ -]?key|access[_ -]?key)` +
@@ -216,23 +249,30 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
     // "비밀번호가 Tiger2024" are how a person actually writes it, and version
     // 1 let both of them out of Brain.
     //
+    // The bare space is the one separator that is also how a sentence reads, so
+    // it is the narrow one: `비밀번호`/`패스워드` alone take it, and `암호` does
+    // not. "암호 AES-256-GCM 을 씁니다" is a sentence about which cipher is in
+    // use, and `암호` is a word inside other words besides — a bare space after
+    // it masked prose (follow-up review). The bare form has a shape rule of its
+    // own in `koreanKeywordValueLooksLikeSecret`, which is what `bare` names.
+    //
     // A value that starts in Korean is still not a value: "비밀번호는 바꿨어"
     // is somebody saying they changed it, and masking the next word would
-    // delete a sentence rather than a secret. That one rule is what makes a
-    // bare space safe as a separator.
+    // delete a sentence rather than a secret.
     //
-    // No value-shape rule here. The English one exists because English
-    // keywords collide with ordinary code (`let token = parse(x)`); nothing
-    // writes "비밀번호" in a program.
+    // The bare separator is a space or a tab and never a newline: the next line
+    // is a different sentence, and "비밀번호" at the end of one says nothing
+    // about the word that opens the next.
     kind: 'password',
     expression: new RegExp(
-      String.raw`(?:비밀번호|암호|패스워드)` +
-        String.raw`(?:\s*[:=]\s*|[은는이가을를도]\s*(?:[:=]\s*)?|\s+)` +
+      String.raw`(?:(?:비밀번호|암호|패스워드)(?:\s*[:=]\s*|[은는이가을를도]\s*(?:[:=]\s*)?)` +
+        String.raw`|(?:비밀번호|패스워드)(?<${BARE_GROUP}>[ \t]+))` +
         String.raw`(?<value>(?![${HANGUL}])${VALUE})`,
       'gdu',
     ),
     value: ['value'],
     trimClosers: true,
+    accept: koreanKeywordValueLooksLikeSecret,
     fields: BOTH,
   },
   {
@@ -335,16 +375,29 @@ export function maskSecrets(text: string, field: SecretField): MaskSecretsResult
       }
       const raw = spanOf(match, matched, pattern);
       if (raw === null) continue;
-      const span = pattern.trimClosers === true ? trimClosers(text, raw) : raw;
+      const groups = match.indices?.groups;
+      const opened = groups?.[OPEN_GROUP];
+      // A quoted value runs to its closing quote, not to the first space.
+      const quoted = opened === undefined ? raw : toClosingQuote(text, raw, text[opened[0]] ?? '');
+      const span = pattern.trimClosers === true ? trimClosers(text, quoted) : quoted;
       if (span.end <= span.start) continue;
       if (
         pattern.accept !== undefined &&
         !pattern.accept(matched, {
           value: text.slice(span.start, span.end),
-          quoted: match.indices?.groups?.['open'] !== undefined,
+          quoted: opened !== undefined,
           after: text.slice(span.end, span.end + AFTER_WINDOW),
+          text,
+          start: span.start,
+          matchedGroup: (name) => groups?.[name] !== undefined,
         })
       ) {
+        // Carry on *inside* the refused match. `token = decrypt(password=…)` is
+        // a call this list leaves alone, and the keyword inside it is a secret
+        // this list knows; a scan that resumed past the whole match would never
+        // see it (follow-up review). The next match can only start further
+        // along than this one did, so the loop still ends.
+        expression.lastIndex = Math.max(span.start, match.index + 1);
         continue;
       }
       // Already masked: this is what makes a second pass a no-op. Only a span
@@ -411,34 +464,100 @@ function trimClosers(
   text: string,
   span: { start: number; end: number },
 ): { start: number; end: number } {
+  // Counted once, in one pass, and then walked back. Counting again per
+  // trimmed bracket made this quadratic, and a value of fifty thousand `)` —
+  // which a pasted log can be — took seconds (follow-up review). Taking a
+  // closer off the span is the same as lowering its count by one, which is
+  // what the walk does instead of rescanning.
+  const brackets = new Map<string, { open: number; close: number }>();
+  const countOf = (closer: string): { open: number; close: number } => {
+    const found = brackets.get(closer);
+    if (found !== undefined) return found;
+    const fresh = { open: 0, close: 0 };
+    brackets.set(closer, fresh);
+    return fresh;
+  };
+  for (let at = span.start; at < span.end; at += 1) {
+    const character = text[at] ?? '';
+    if (CLOSERS[character] !== undefined) countOf(character).close += 1;
+    else {
+      const closer = OPENERS[character];
+      if (closer !== undefined) countOf(closer).open += 1;
+    }
+  }
+
   let end = span.end;
   while (end > span.start) {
     const last = text[end - 1] ?? '';
-    const opener = CLOSERS[last];
-    if (opener === undefined) break;
-    let open = 0;
-    let close = 0;
-    for (let at = span.start; at < end; at += 1) {
-      const character = text[at];
-      if (character === opener) open += 1;
-      else if (character === last) close += 1;
-    }
-    if (close <= open) break;
+    const count = brackets.get(last);
+    if (count === undefined || count.close <= count.open) break;
+    count.close -= 1;
     end -= 1;
   }
   return { start: span.start, end };
 }
 
 /**
+ * The same span widened to the closing quote on the same line.
+ *
+ * A value stops at the first space, so `password: "correct horse battery
+ * staple"` reached the marker as `correct` and let the other three words out
+ * of Brain (follow-up review). The quotes say where the value ends, so when
+ * the pattern consumed an opening one the value runs to its partner.
+ *
+ * A quote with no partner on its line leaves the span as it was: that opening
+ * quote is as likely to be an apostrophe in a sentence as a delimiter, and
+ * running the mask to the end of the line over one would delete the sentence.
+ */
+function toClosingQuote(
+  text: string,
+  span: { start: number; end: number },
+  quote: string,
+): { start: number; end: number } {
+  if (quote === '') return span;
+  for (let at = span.end; at < text.length; at += 1) {
+    const character = text[at];
+    if (character === '\n') break;
+    if (character === quote) return { start: span.start, end: at };
+  }
+  return span;
+}
+
+/**
+ * The values that say "there is nothing here", which are what an unquoted
+ * English keyword carries in a status line, a template or a diagnostic:
+ * `token: ok`, `api_key: null`, `secret: (none)`.
+ *
+ * Masking one hides the fact that the field was *empty*, which is the one
+ * thing a reader of that line wanted to know (follow-up review).
+ */
+const PLACEHOLDER_VALUE =
+  /^(?:null|nil|none|undefined|true|false|ok|yes|no|empty|n\/a|unset|\(none\))$/iu;
+
+/** A run of stars, which is a value somebody else already masked. */
+const STARS = /^\*+$/u;
+
+/** `<your-password>`: a template telling the reader what to put there. */
+const ANGLE_PLACEHOLDER = /^<[^<>]*>$/u;
+
+/** `$DB_PASSWORD` or `${DB_PASSWORD}`: a reference, not the value itself. */
+const ENV_REFERENCE = /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/u;
+
+/** Another word after the value, on the same line: a sentence carrying on. */
+const WORD_AFTER = new RegExp(String.raw`^[ \t]+[A-Za-z${HANGUL}]`, 'u');
+
+/**
  * Whether an English keyword's value is worth masking (change D4).
  *
  * A quoted value always is: somebody who wrote `secret: "see"` meant the
- * string and not the sentence. An unquoted one is judged by shape, and three
- * shapes are ordinary code or prose rather than a credential:
+ * string and not the sentence. An unquoted one is judged by shape, and these
+ * shapes are ordinary code, prose or emptiness rather than a credential:
  *
- *   * a call — `token = parse(input)`;
+ *   * a call — `token = parse(input)`, judged on the text (`isWholeCall`);
  *   * digits alone — `{"token": 123}`, and a count is not a password. A
  *     numeric PIN is the price of that one;
+ *   * a placeholder or a status — `ok`, `null`, `(none)`, `***`, `<secret>`,
+ *     `$DB_PASSWORD`;
  *   * a word of letters with another word after it — `secret: see the README`.
  *
  * Getting this wrong costs a masked word in one line of output, never a
@@ -446,17 +565,74 @@ function trimClosers(
  */
 function keywordValueLooksLikeSecret(_matched: string, context: SecretMatch): boolean {
   if (context.quoted) return true;
-  // The *whole* value has to be the call. `foo(bar)baz` only begins like one,
-  // and a credential that happens to open with an identifier and a bracket is
-  // still a credential.
-  if (/^[A-Za-z_$][A-Za-z0-9_$]*\(.*\)$/su.test(context.value)) return false;
+  if (isWholeCall(context.text, context.start)) return false;
   if (/^\d+$/u.test(context.value)) return false;
+  if (PLACEHOLDER_VALUE.test(context.value)) return false;
+  if (STARS.test(context.value)) return false;
+  if (ANGLE_PLACEHOLDER.test(context.value)) return false;
+  if (ENV_REFERENCE.test(context.value)) return false;
   // Space or tab, never a newline: the next line is a different sentence, and
   // a value at the end of one would otherwise be spared by whatever happened
   // to follow it — which differs from codec to codec, since one joins the
   // texts with a newline and another with a space.
   if (/^[A-Za-z]+$/u.test(context.value) && /^[ \t]+[A-Za-z]/u.test(context.after)) return false;
   return true;
+}
+
+/**
+ * Whether a Korean keyword's value is worth masking.
+ *
+ * Only the bare-space form is judged, and only for the one shape a sentence
+ * takes: a plain English word with another word — Latin or Hangul — after it
+ * on the same line. "비밀번호 input 필드" is somebody naming a field, and
+ * masking `input` deletes the sentence rather than a secret (follow-up
+ * review). "비밀번호 Tiger2024" is not that shape, and "비밀번호 hunterpass"
+ * at the end of a line has nothing after it, so both still go.
+ *
+ * The `:`/`=` and particle forms are not judged at all: those spellings are
+ * how a person writes down a credential and almost never how they write a
+ * sentence.
+ */
+function koreanKeywordValueLooksLikeSecret(_matched: string, context: SecretMatch): boolean {
+  if (!context.matchedGroup(BARE_GROUP)) return true;
+  if (!/^[A-Za-z]+$/u.test(context.value)) return true;
+  return !WORD_AFTER.test(context.after);
+}
+
+/**
+ * Whether the value at `start` is a whole call — `parse(input)` — read off the
+ * text rather than off the value.
+ *
+ * The value stops at the first space or comma, so `compute(a, b)` reaches this
+ * rule as `compute(a`, and a rule that read the value alone called that a
+ * credential and masked the front of a line of code (follow-up review).
+ *
+ * The closing bracket has to end the token, which is what keeps
+ * `token=foo(bar)baz` masked: a credential that happens to open with an
+ * identifier and a bracket is still a credential. And the call has to close on
+ * its own line — an opening bracket whose partner is three lines down is a
+ * block, not a value.
+ */
+function isWholeCall(text: string, start: number): boolean {
+  let at = start;
+  if (!/[A-Za-z_$]/u.test(text[at] ?? '')) return false;
+  at += 1;
+  while (at < text.length && /[A-Za-z0-9_$]/u.test(text[at] ?? '')) at += 1;
+  if (text[at] !== '(') return false;
+
+  let depth = 0;
+  for (; at < text.length; at += 1) {
+    const character = text[at];
+    if (character === '\n') return false;
+    if (character === '(') depth += 1;
+    else if (character === ')') {
+      depth -= 1;
+      if (depth > 0) continue;
+      const next = text[at + 1];
+      return next === undefined || /[\s;,)\]}]/u.test(next);
+    }
+  }
+  return false;
 }
 
 /** Where the markers of an earlier masking sit, in UTF-16 units. */

@@ -245,7 +245,16 @@ export interface SessionStore {
    *     body is `messages.redact` (마스킹 B, AD-11).
    */
   ingest(batch: IngestBatch): Promise<IngestResult>;
-  /** Read a session by the token that crossed the process boundary (AD-8). */
+  /**
+   * Read a session by the token that crossed the process boundary (AD-8).
+   *
+   * What comes back is the stored text, unmasked — the store never masks
+   * anything (마스킹 B). Whoever answers somebody with this result runs
+   * `sessionForOutput` over it first (`output/mask.ts`): the tool note target
+   * carries the shell `NAME=value` rule and the truncated tail, and a codec
+   * walking the finished answer can no longer tell which string came from that
+   * column. The codec then masks every string of what is left (AD-11).
+   */
   readSession(token: SessionToken): Promise<ReadSessionResult>;
 }
 

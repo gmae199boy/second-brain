@@ -159,6 +159,79 @@ describe('the keyword forms', () => {
     expect(maskedBody('token=foo(bar)baz')).toBe('token=[REDACTED:password]');
   });
 
+  it('reads the call off the text, so a call with an argument list survives', () => {
+    // The value stops at the first space or comma, so the rule used to see
+    // `compute(a` and mask the front of a line of code (follow-up review).
+    expect(maskedBody('const token = compute(a, b)')).toBe('const token = compute(a, b)');
+    expect(maskedBody('const token = compute(a, b);')).toBe('const token = compute(a, b);');
+    expect(maskedBody('secret: parse(input)')).toBe('secret: parse(input)');
+  });
+
+  it('finds a keyword secret inside a call it refused to mask', () => {
+    // A refused match is not a scanned match: the scan carries on inside it,
+    // or the password in the argument list leaves Brain (follow-up review).
+    expect(maskedBody('token = decrypt(password=hunter2x)')).toBe(
+      'token = decrypt(password=[REDACTED:password])',
+    );
+    expect(maskedBody('secret: see the README, token=hunter2x')).toBe(
+      'secret: see the README, token=[REDACTED:password]',
+    );
+  });
+
+  it('runs a quoted value to its closing quote and not to the first space', () => {
+    // Four words and one secret. The value set stops at a space, so three of
+    // the four used to leave Brain (follow-up review).
+    expect(maskedBody('password: "correct horse battery staple"')).toBe(
+      'password: "[REDACTED:password]"',
+    );
+    expect(maskedBody("secret = 'two words' 뒤")).toBe("secret = '[REDACTED:password]' 뒤");
+    // A value that already ended at its quote is not widened by a quote
+    // further along the line.
+    expect(maskedBody('"api_key": "abc123def", "model": "demo"')).toBe(
+      '"api_key": "[REDACTED:password]", "model": "demo"',
+    );
+    // An opening quote with no partner on its line is as likely an apostrophe:
+    // the value stays what the value set made it.
+    expect(maskedBody('password: "hunter2x and more')).toBe(
+      'password: "[REDACTED:password] and more',
+    );
+  });
+
+  it('does not let the Korean bare space cross a line break', () => {
+    // The next line is a different sentence, whatever word opens it.
+    expect(maskedBody('비밀번호\nTiger2024')).toBe('비밀번호\nTiger2024');
+    expect(maskedBody('비밀번호\tTiger2024')).toBe('비밀번호\t[REDACTED:password]');
+  });
+
+  it('keeps the Korean bare space off prose', () => {
+    // `암호` takes the `:`/`=` and particle forms only: it is a word inside
+    // other words, and a bare space after it masked sentences (follow-up
+    // review). The bare form also leaves an English word with another word
+    // after it alone.
+    expect(maskedBody('암호 AES-256-GCM 을 씁니다')).toBe('암호 AES-256-GCM 을 씁니다');
+    expect(maskedBody('비밀번호 input 필드')).toBe('비밀번호 input 필드');
+    expect(maskedBody('비밀번호 reset and retry')).toBe('비밀번호 reset and retry');
+    // And still masks what version 2 widened the separator for.
+    expect(maskedBody('비밀번호 Tiger2024')).toBe('비밀번호 [REDACTED:password]');
+    expect(maskedBody('비밀번호 hunterpass')).toBe('비밀번호 [REDACTED:password]');
+    expect(maskedBody('비밀번호가 Tiger2024')).toBe('비밀번호가 [REDACTED:password]');
+    expect(maskedBody('암호: AES-256-GCM')).toBe('암호: [REDACTED:password]');
+  });
+
+  it('masks a long run of closing brackets without taking a second over it', () => {
+    // Trimming unmatched closers used to recount the whole span per bracket,
+    // which is quadratic: this took about two seconds (follow-up review).
+    const text = `token=${')'.repeat(50_000)}`;
+    const started = performance.now();
+    const result = maskSecrets(text, 'body');
+    const spent = performance.now() - started;
+
+    // Every bracket is unmatched, so the span is trimmed away to nothing and
+    // there is nothing left to mask.
+    expect(result.text).toBe(text);
+    expect(spent, `trimming 50000 closers took ${String(Math.round(spent))}ms`).toBeLessThan(500);
+  });
+
   it('masks a word at the end of a line whatever the next line says', () => {
     // The sentence rule reads a space or a tab, never a newline: the word
     // after a line break is a different sentence. It used to depend on how
@@ -296,6 +369,20 @@ describe('the regression table: what must never be masked', () => {
     'if (password === input)',
     'token == expected',
     'secret == null',
+    // A status or a placeholder, which is what an unquoted English keyword
+    // carries in a diagnostic, a template or a sample: masking it hides the
+    // one thing the line said, that the field was empty (follow-up review).
+    'token: ok',
+    'api_key: null',
+    'secret: (none)',
+    'password: ***',
+    'token: undefined',
+    'api_key: n/a',
+    'secret: <your-secret>',
+    'password: $DB_PASSWORD',
+    'password: ${DB_PASSWORD}',
+    // A call read off the text, whose argument list has a space in it.
+    'const token = compute(a, b)',
     '비밀번호는 바꿨어',
     '암호화는 AES로 한다',
     // Thirteen digits of epoch milliseconds, which is neither a card number nor

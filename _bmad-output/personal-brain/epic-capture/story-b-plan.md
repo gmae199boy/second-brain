@@ -12,7 +12,7 @@ review: 'quick'
 review_source: 'pinned'
 lenses_ran: [quick]
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context:
   - '{project-root}/_bmad-output/personal-brain/epic-capture/story-untitled-9-plan.md'
   - '{project-root}/_bmad-output/personal-brain/change-masking-b-and-review-fixes/change-masking-b-and-review-fixes.md'
@@ -243,6 +243,38 @@ deferred: []
   - `[low]` `[reject]` `maskSecrets`가 이제 쓰지 않는 `spans`(코드 포인트 표, 구간마다 SHA-256)를 출력마다 만듦 — 실제 비용이다. 다만 매치가 있을 때만 들고 2.9 측정으로 240KB에 약 1ms다. 고치려면 텍스트 전용 경로를 새로 두는 리팩터가 된다.
   - `[low]` `[patch]` `packages/core/test/sessions-ingest.test.ts`에 쓰지 않는 `SECRET_PATTERN_VERSION` import가 남음 — 지웠다.
   - `[low]` `[patch]` deferred-work의 `SECOND_BRAIN_CAPTURE` 행이 아직 "마스킹 규칙으로 굳는다"고 하고, 17을 관문으로 적음 — parser 쪽 이유만 남기고 관문을 19·20으로 고쳤다.
+
+### 2026-10-20 — Follow-up review pass (bmad-review: adversarial·edge-case-hunter·verification-gap)
+- verdicts: 30 findings — 패치 24, 미룸 4(deferred-work), 거부 1, 다른 패치에 흡수 1
+- 패치(패턴, 버전 2 안에서):
+  - 호출로 판정해 거부한 매치 안쪽을 다시 훑는다. `decrypt(password=…)`의 값을 가린다.
+  - 호출 판정을 원문 위에서 한다. 같은 줄에서 괄호가 닫히고 토큰이 끝나야 호출이다. `compute(a, b)`는 그대로 둔다.
+  - 따옴표 값은 같은 줄의 닫는 따옴표까지다.
+  - 한국어 공백 구분자는 같은 줄(`[ \t]+`)이고 `비밀번호·패스워드`만 쓴다. 공백 구분자 뒤 영문 단어 다음에 단어가 이어지면 가리지 않는다.
+  - `trimClosers`를 선형으로 바꿨다(괄호 5만 개: 2.3초 → 3ms).
+  - 영어 키워드 값이 자리표시자(`null`·`ok`·`(none)`·`***`·`<…>`·`$NAME`)면 가리지 않는다.
+- 패치(출력):
+  - `maskOutputValue`가 평범하지 않은 객체를 JSON이 내는 모양으로 가린다(`toJSON`, 자기 속성).
+  - 가리기로 `retry.args`가 바뀌면 `retry`를 뺀다.
+  - 코덱이 도구 메모 규칙을 스스로 건다(`OutputProbe.toolNotes`, `sessionForOutput`). 계약 시험은 원문 행으로 견본을 만들고, 키워드가 아닌 셸 이름(`MY_CREDENTIAL=`) 사례를 더했다.
+- 패치(CLI):
+  - `bin.ts`가 예외를 잡아 스택을 줄마다 `encodeTextLine`으로 내고 1로 끝난다.
+  - 출력 자리 검색을 넓혔다(별칭·`writeSync`·`pipe`). commander 도움말과 @clack 질문은 면제 이유를 적었다.
+  - 설치기 log, `setup run` log, drain 오류 줄에 변이로 확인한 시험을 더했다.
+- 패치(시험·문서):
+  - 저장 대상 기대값을 리터럴로 고정했다.
+  - 상한 500을 고정하는 시험을 더했다.
+  - README에 `inserted` 모양·대상 자르기·면제 출력을 적었다.
+- 미룸(`deferred-work.md`에 기록):
+  - 출력에 패턴 버전 표기 → 미러·복제·내보내기 에픽
+  - `redactions`가 있는 메시지를 가리켜야 한다는 포트 계약 → 2.13
+  - 잘림을 길이로 추론하고 첫 줄 자르기를 덮지 못함 → 18·23의 `tool_notes` 잘림 칸
+  - 앞으로의 읽기는 `sessionForOutput`을 부를 것
+- 거부:
+  - 공백도 마커도 없는 500자 대상을 통째로 가리는 것(edge 6). 잘린 단일 토큰은 JWT 같은 비밀 자체일 수 있다. 가림은 출력에서만 일어나므로 그대로 둔다.
+- 다른 패치에 흡수:
+  - "호출 전체는 그대로 둔다" claim(edge 12). 호출 판정 패치로 참이 됐다.
+- 검증: `pnpm test` 62파일 1981건 통과. 구현 에이전트가 고친 항목마다 변이 확인을 했다.
 
 ## Design Notes
 

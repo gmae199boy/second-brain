@@ -25,9 +25,17 @@ export function maskOutputText(text: string): string {
  *
  * Keys are left alone, and so are numbers, booleans and `null`: a key is the
  * shape of the answer and not its content, and a pattern run over `"password"`
- * as a key would turn a readable envelope into a puzzle. Arrays and plain
- * objects are copied; anything else — a `Date`, a class instance — is handed
- * back as it came, because this function has no way to rebuild it.
+ * as a key would turn a readable envelope into a puzzle.
+ *
+ * What comes back is what `JSON.stringify` would have emitted, masked — which
+ * is the only definition that holds, because every surface this feeds turns
+ * the result into JSON. So a `Date`, a `URL` or anything else with a `toJSON`
+ * is masked through that method's value (a `Date` becomes its masked ISO
+ * string), and a class instance, a `Map` or a `Set` through its own enumerable
+ * string-keyed properties — which is how `JSON.stringify` sees all three, and
+ * why a `Map` comes back as `{}`. Handing a non-plain object back untouched
+ * instead let a `URL` carrying `user:password@host` out whole (follow-up
+ * review).
  */
 export function maskOutputValue<T>(value: T): T {
   return maskUnknown(value) as T;
@@ -36,7 +44,14 @@ export function maskOutputValue<T>(value: T): T {
 function maskUnknown(value: unknown): unknown {
   if (typeof value === 'string') return maskOutputText(value);
   if (Array.isArray(value)) return value.map((item) => maskUnknown(item));
-  if (!isPlainObject(value)) return value;
+  if (typeof value !== 'object' || value === null) return value;
+  if (!isPlainObject(value)) {
+    const own = value as { toJSON?: unknown };
+    // Called on the object, so a method that reads `this` still works.
+    if (typeof own.toJSON === 'function') {
+      return maskUnknown((own as { toJSON: () => unknown }).toJSON());
+    }
+  }
   const masked: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) masked[key] = maskUnknown(item);
   return masked;
@@ -115,6 +130,28 @@ export interface MaskableToolNote {
  */
 export function toolNoteForOutput<T extends MaskableToolNote>(note: T): T {
   return { ...note, target: maskToolNoteTarget(note.target) };
+}
+
+/**
+ * A session read result whose every tool note has been through the target
+ * rule — **the one function a path that answers with tool notes has to call**.
+ *
+ * A read verb, the mirror renderer and an MCP read all hand their answer to a
+ * codec, and a codec walking a finished structure can no longer tell which
+ * string came from the `target` column; the shell `NAME=value` rule and the
+ * truncated tail run over that column alone (Decision 2026-10-19, 사용자). So
+ * this is where that knowledge lives: call it on the store's result, then let
+ * the codec run the body rule over the rest. `SessionStore.readSession` says
+ * the same thing (`ports/store.ts`).
+ *
+ * Structural, not tied to the port's own types, so a narrower read result — a
+ * page of notes, a mirror's view — keeps the type it came in as.
+ */
+export function sessionForOutput<
+  N extends MaskableToolNote,
+  T extends { toolNotes: readonly N[] },
+>(read: T): T {
+  return { ...read, toolNotes: read.toolNotes.map((note) => toolNoteForOutput(note)) };
 }
 
 export { TOOL_NOTE_TARGET_LIMIT };

@@ -1133,3 +1133,24 @@ function oneLine(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   return text.split('\n')[0]?.trim() ?? '알 수 없는 오류';
 }
+
+/**
+ * What an exception out of `dispatch` prints, line by line, through the `text`
+ * codec — the stack included.
+ *
+ * A non-hook command that throws reaches the entry point, and node's own
+ * handler writes the message and the stack exactly as they are. An exception's
+ * message is made of whatever the code was holding when it broke, which is as
+ * likely to be a secret as any other output (follow-up review), so the entry
+ * point catches it and prints this instead (`bin.ts`).
+ *
+ * The stack is kept, masked a line at a time: the first line of a crash says
+ * what, and the rest says where, and a crash report without the where is one
+ * nobody can act on. It is a function here, beside the dispatcher's other
+ * output, so the masking can be tested without starting a process.
+ */
+export function crashLines(error: unknown): string[] {
+  const text =
+    error instanceof Error ? (error.stack ?? error.message) : `알 수 없는 오류: ${String(error)}`;
+  return text.split('\n').map((line) => encodeTextLine(line));
+}
