@@ -2,7 +2,7 @@
 title: '기록 규율 점검(Stop hook), 지표 명령, 검색 회귀 러너와 집계 모드'
 type: sprint-change-proposal
 created: '2026-10-20'
-status: approved
+status: applied
 approved: '2026-10-20'
 scope: moderate
 mode: batch
@@ -15,7 +15,7 @@ inputs:
 
 # Sprint Change Proposal — 기록 규율 점검, 지표, 검색 회귀·집계
 
-> 제안 문서다. §4.3은 2026-10-20에 spine에 반영됐다(리뷰 게이트 포함, `architecture-brain-v1-slice-1/.memlog.md`). 승인 뒤 소유 스킬이 spine·PRD·addendum·에픽 파일에 적용하고, 적용이 끝나면 이 문서 머리에 "반영 완료"를 적는다. **적용은 다른 세션의 story 2.18 작업이 커밋된 뒤에 한다**(그 세션이 `deferred-work.md`·README·코드를 쓰고 있다). 이 문서는 그 세션이 건드리지 않는 새 폴더 하나다.
+> **반영 완료(2026-10-20).** §4.3은 spine(리뷰 게이트 포함, `architecture-brain-v1-slice-1/.memlog.md`), §4.2·§4.4는 PRD·addendum, §4.1·§4.6은 epic 3·4·5 파일과 이니셔티브 Notes에 들어갔다. 이후의 기준은 spine·PRD·spec·에픽 파일이고, 이 문서와 다르면 그쪽이 우선한다. **적용은 다른 세션의 story 2.18 작업이 커밋된 뒤에 한다**(그 세션이 `deferred-work.md`·README·코드를 쓰고 있다). 이 문서는 그 세션이 건드리지 않는 새 폴더 하나다.
 
 ## 0. 체크리스트 상태
 
