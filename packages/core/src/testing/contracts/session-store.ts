@@ -31,8 +31,15 @@ import {
 export type SessionStoreSubject = SessionStore & UserStore;
 
 /**
- * The session capability: find-or-create, an idempotent batch write that owns
- * `seq`, and a read by session token. Every case gets a fresh, empty subject.
+ * The session capability: find-or-create, an idempotent batch write, and a read
+ * by session token. Every case gets a fresh, empty subject.
+ *
+ * A message carries no number of its own (migration 0006), so the cases hold
+ * every store to the two rules that replaced one: a message is identified by
+ * `(session, harness message id)`, and it is read back in the order it was
+ * uttered. The fixture's four messages are 2026-01-02T03:04:05, 03:04:07,
+ * 03:05:01 and 03:05:20, so a case can carry them in any order it likes and
+ * still know which order they come back in.
  */
 export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
   return [
@@ -343,10 +350,20 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
             afterFirst.toolNotes.length,
             'replaying a batch changed the tool note count',
           );
+          // Row for row, in the same order: a replay may not move, rewrite or
+          // re-identify anything it already holds (AD-8).
           assertEqual(
-            afterSecond.messages.map((message) => message.seq),
-            afterFirst.messages.map((message) => message.seq),
-            'replaying a batch renumbered the messages that were already stored',
+            afterSecond.messages.map((message) => [
+              message.harnessMessageId,
+              message.id,
+              message.body,
+            ]),
+            afterFirst.messages.map((message) => [
+              message.harnessMessageId,
+              message.id,
+              message.body,
+            ]),
+            'replaying a batch changed the stored messages or the order they are read in',
           );
         });
       },
@@ -376,7 +393,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
     ),
 
     contractCase<SessionStoreSubject>(
-      'ingest stores the batch in its own order, numbering seq from 0',
+      'ingest stores the whole batch and reads it back in conversation order',
       async (make) => {
         await withSubject(make, async (store) => {
           await owner(store);
@@ -393,17 +410,20 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
 
           const read = await store.readSession(sampleSessionToken);
           assertOk(read, 'the ingested session could not be read');
+          // The fixture's messages are in conversation order and their
+          // instants rise with it, so this is both assertions in one: every
+          // body is there, and the read is ordered by `occurredAt` (AD-8).
           assertEqual(
             read.messages.map(bodyOf),
             batch.messages.map((message) => message.body),
-            'the stored message bodies are not the ones the batch carried, in its order',
+            'the stored message bodies are not the ones the batch carried, in conversation order',
           );
-          // `seq` is the store's, and the first batch of an empty session runs
-          // 0, 1, 2, … in the order the batch carried (AD-8).
           assertEqual(
-            read.messages.map((message) => message.seq),
-            batch.messages.map((_message, index) => index),
-            'the first batch of a session must be numbered 0, 1, 2, … in batch order',
+            read.messages.map((message) => message.occurredAt),
+            [...batch.messages]
+              .map((message) => message.occurredAt)
+              .sort((left, right) => left.getTime() - right.getTime()),
+            'a read must hand the messages back by the instant they were uttered',
           );
           assertEqual(
             read.messages.map((message) => message.id),
@@ -432,7 +452,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
     ),
 
     contractCase<SessionStoreSubject>(
-      'a batch that carries on from the last one takes the numbers after it',
+      'a batch that carries on from the last one inserts only what is new',
       async (make) => {
         await withSubject(make, async (store) => {
           await owner(store);
@@ -455,11 +475,6 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
           const read = await store.readSession(sampleSessionToken);
           assertOk(read, 'the session could not be read');
           assertEqual(
-            read.messages.map((message) => message.seq),
-            read.messages.map((_message, index) => index),
-            'an appended batch must carry the numbering on with no gaps',
-          );
-          assertEqual(
             read.messages.map((message) => message.harnessMessageId),
             second.messages.map((message) => message.harnessMessageId),
             'the stored messages are not the ones the two batches carried, in order',
@@ -474,7 +489,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
     ),
 
     contractCase<SessionStoreSubject>(
-      'a batch whose front changed leaves the stored seq, body and id alone',
+      'a batch whose front changed leaves the stored rows alone and is read first',
       async (make) => {
         await withSubject(make, async (store) => {
           await owner(store);
@@ -507,21 +522,71 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
               assertTrue(false, `message ${was.harnessMessageId} disappeared`);
               continue;
             }
-            assertEqual(now.seq, was.seq, `the seq of ${was.harnessMessageId} changed`);
             assertEqual(now.id, was.id, `the id of ${was.harnessMessageId} changed`);
             assertEqual(now.body, was.body, `the body of ${was.harnessMessageId} changed`);
           }
-          // The newcomer goes at the end of the numbering, not at the front of
-          // it: nothing already stored may be renumbered (AD-4).
-          const newcomer = byId.get('msg-1');
-          if (newcomer === undefined) {
-            assertTrue(false, 'the message that arrived in front was not stored at all');
-            return;
-          }
+          // And it is read where it was uttered, which here is the front: the
+          // message that arrived last is the earliest one of the conversation,
+          // and nothing about the order it was inserted in may show (AD-8,
+          // migration 0006).
           assertEqual(
-            newcomer.seq,
-            before.messages.length,
-            'a message that arrived in front must take the next free number, not 0',
+            after.messages.map((message) => message.harnessMessageId),
+            ['msg-1', 'msg-2', 'msg-3', 'msg-4'],
+            'a message that arrived in front must be read in front',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
+      'a message uttered in the middle of a stored conversation is read in its place',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
+
+          // What a parser version that starts keeping a kind of line does: the
+          // conversation was stored without msg-2, and the next read of the
+          // same transcript carries it — from the middle, where it was uttered
+          // (migration 0006). msg-3 is seeded with a tool note of its own, so
+          // the note order has something to be wrong about: msg-2's notes were
+          // inserted last and were uttered first.
+          const seeded = sampleIngestBatch({ only: ['msg-1', 'msg-3', 'msg-4'] });
+          assertOk(
+            await store.ingest({
+              ...seeded,
+              toolNotes: [...seeded.toolNotes, middleToolNote],
+            }),
+            'the first ingest failed',
+          );
+
+          const whole = sampleIngestBatch({ idStart: 600 });
+          const result = await store.ingest({
+            ...whole,
+            toolNotes: [...whole.toolNotes, middleToolNote],
+          });
+          assertOk(result, 'the second ingest failed');
+          assertEqual(
+            result.inserted,
+            { messages: 1, toolNotes: 2 },
+            'only the message the session did not hold, and its own notes, may be inserted',
+          );
+
+          const read = await store.readSession(sampleSessionToken);
+          assertOk(read, 'the session could not be read after the second ingest');
+          assertEqual(
+            read.messages.map((message) => message.harnessMessageId),
+            ['msg-1', 'msg-2', 'msg-3', 'msg-4'],
+            'a message uttered in the middle must be read in the middle, whichever batch carried it',
+          );
+          assertEqual(
+            read.toolNotes.map((note) => [note.harnessMessageId, note.ordinal]),
+            [
+              ['msg-2', 0],
+              ['msg-2', 1],
+              ['msg-3', 0],
+            ],
+            'a tool note must follow its message in the conversation, not the batch it arrived in',
           );
         });
       },
@@ -693,6 +758,61 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
     ),
 
     contractCase<SessionStoreSubject>(
+      'the cursor is compared by when the messages were uttered, not by when they arrived',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
+
+          // Two reads of one transcript, overlapping. The first stopped at
+          // msg-4 (03:05:20); the second read less of the file and stopped at
+          // msg-3 (03:05:01), which it also inserts — so msg-3 is the newest
+          // row in the table and still the earlier moment. A store that
+          // compared the two by insertion order would wind the cursor back to
+          // it (migration 0006).
+          const ahead = sampleIngestBatch({ only: ['msg-1', 'msg-2', 'msg-4'] });
+          assertOk(await store.ingest(ahead), 'the first ingest failed');
+
+          const behind = sampleIngestBatch({
+            idStart: 700,
+            only: ['msg-1', 'msg-2', 'msg-3'],
+          });
+          const result = await store.ingest(behind);
+          assertOk(result, 'the overlapping ingest failed');
+          assertEqual(
+            result.inserted.messages,
+            1,
+            'the overlapping batch carried exactly one message the session did not hold',
+          );
+
+          const after = await store.readSession(sampleSessionToken);
+          assertOk(after, 'the session could not be read after the overlapping ingest');
+          assertEqual(
+            after.session.cursor,
+            ahead.tracking.cursor,
+            'a cursor on an earlier message must not move the session, however late it arrived',
+          );
+
+          // And a reset says the front of the file is not what it was, so the
+          // batch's cursor is the only one that still describes it (AD-4).
+          const reset = sampleIngestBatch({
+            idStart: 800,
+            only: ['msg-1', 'msg-2', 'msg-3'],
+            tracking: { cursorReset: true },
+          });
+          assertOk(await store.ingest(reset), 'the reset ingest failed');
+          const moved = await store.readSession(sampleSessionToken);
+          assertOk(moved, 'the session could not be read after the reset ingest');
+          assertEqual(
+            moved.session.cursor,
+            reset.tracking.cursor,
+            'a reset parse must be allowed to move the cursor back',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
       'findSession answers with the row alone, or null for a key nobody stored',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -787,6 +907,21 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
     ),
   ];
 }
+
+/**
+ * A tool note on msg-3, which the "uttered in the middle" case seeds before the
+ * message that was uttered *before* it arrives. The fixture transcript puts its
+ * only tool calls on msg-2, so without this the note order would have nothing
+ * to get wrong. The id is outside the range `sampleIngestBatch` mints from.
+ */
+const middleToolNote = {
+  id: '01940000-0000-7000-8000-0000000009f1',
+  harnessMessageId: 'msg-3',
+  ordinal: 0,
+  tool: 'read',
+  target: 'notes/import.md',
+  ok: true,
+};
 
 /**
  * The owner `sampleEnsureSessionInput` points at. Every case that creates a

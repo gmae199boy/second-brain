@@ -41,10 +41,11 @@ export type ParseResult =
  * into harness-neutral messages and tool notes, always the same way for the
  * same input.
  *
- * It says nothing about `seq`: the order of `messages` is the order of the
- * conversation, and the number is the store's, decided inside the insert
- * transaction (AD-8). The tool-note ordinals are the parser's, because they
- * number the calls *within one message* and a message's content never changes.
+ * It numbers nothing and sorts nothing: the order of `messages` is the order of
+ * the file, and what a message is read back in order by is its own
+ * `occurredAt` (AD-8, migration 0006). The tool-note ordinals are the
+ * parser's, because they number the calls *within one message* and a message's
+ * content never changes.
  */
 export interface Parser {
   /** Neutral harness name; the first half of every session token (AD-8). */

@@ -448,38 +448,89 @@ describe('the contracts catch a wrong store', () => {
     );
   });
 
-  it('catches a store that takes the seq of the batch instead of deciding it', async () => {
+  it('catches a store that reads the messages in the order they were inserted', async () => {
     const make = async (): Promise<SessionStoreSubject> => {
       const inner = memoryStore();
-      // The numbering the last batch would give, which is the mistake: `seq`
-      // read off the transcript rather than off the session, so a compact or a
-      // fork renumbers every message behind the one that arrived (AD-4).
-      let fromBatch: readonly string[] = [];
+      // The order the rows went in, which is the mistake migration 0006 is
+      // about: a message the parser only started keeping arrives in a later
+      // batch, and reading by arrival puts it at the end of a conversation it
+      // happened in the middle of (AD-8).
+      const arrived: string[] = [];
       return {
         ...inner,
         async ingest(batch) {
-          fromBatch = batch.messages.map((message) => message.harnessMessageId);
+          for (const message of batch.messages) {
+            if (!arrived.includes(message.harnessMessageId)) {
+              arrived.push(message.harnessMessageId);
+            }
+          }
           return inner.ingest(batch);
         },
         async readSession(token) {
           const result = await inner.readSession(token);
           if (!result.ok) return result;
-          const renumbered = result.messages.map((message) => {
-            const place = fromBatch.indexOf(message.harnessMessageId);
-            return place < 0 ? message : { ...message, seq: place };
-          });
           return {
             ...result,
-            messages: [...renumbered].sort((left, right) => left.seq - right.seq),
+            messages: [...result.messages].sort(
+              (left, right) =>
+                arrived.indexOf(left.harnessMessageId) -
+                arrived.indexOf(right.harnessMessageId),
+            ),
           };
         },
       };
     };
 
-    // The front-changed case is the one this breaks: the stored messages come
-    // back renumbered even though something only arrived in front of them.
     expect(await failedCases(sessionStoreContract(), make)).toContain(
-      'a batch whose front changed leaves the stored seq, body and id alone',
+      'a message uttered in the middle of a stored conversation is read in its place',
+    );
+  });
+
+  it('catches a store that compares the cursor by the order the rows arrived', async () => {
+    const make = async (): Promise<SessionStoreSubject> => {
+      const inner = memoryStore();
+      // The same mistake on the other column: "did the cursor move forward?"
+      // answered with insertion order. Two overlapping reads disagree about
+      // exactly that, and the shorter one's last message is the newest row
+      // (migration 0006).
+      const arrived: string[] = [];
+      let cursor: Session['cursor'] = null;
+      return {
+        ...inner,
+        async ingest(batch) {
+          for (const message of batch.messages) {
+            if (!arrived.includes(message.harnessMessageId)) {
+              arrived.push(message.harnessMessageId);
+            }
+          }
+          const result = await inner.ingest(batch);
+          const proposed = batch.tracking.cursor;
+          if (
+            proposed !== null &&
+            (batch.tracking.cursorReset ||
+              cursor === null ||
+              arrived.indexOf(proposed.lastHarnessMessageId) >=
+                arrived.indexOf(cursor.lastHarnessMessageId))
+          ) {
+            cursor = proposed;
+          }
+          return result;
+        },
+        async readSession(token) {
+          const result = await inner.readSession(token);
+          if (!result.ok) return result;
+          return { ...result, session: { ...result.session, cursor } };
+        },
+        async findSession(key) {
+          const result = await inner.findSession(key);
+          if (!result.ok || result.session === null) return result;
+          return { ...result, session: { ...result.session, cursor } };
+        },
+      };
+    };
+
+    expect(await failedCases(sessionStoreContract(), make)).toContain(
+      'the cursor is compared by when the messages were uttered, not by when they arrived',
     );
   });
 
@@ -782,10 +833,10 @@ describe('the contracts catch a wrong parser', () => {
           if (!result.ok) return result;
           const first = result.messages[0];
           if (first === undefined) return result;
-          // Every message under the first one's id. The harness message id is
-          // the whole of what identifies a message now that `seq` is the
-          // store's, so a store would take the rest for replays of the first
-          // and drop them without a word (AD-4, NFR-2).
+          // Every message under the first one's id. A message carries no
+          // number, so `(session, harness message id)` is the whole of what
+          // identifies it (migration 0006): a store would take the rest for
+          // replays of the first and drop them without a word (AD-4, NFR-2).
           return {
             ...result,
             messages: result.messages.map((message) => ({

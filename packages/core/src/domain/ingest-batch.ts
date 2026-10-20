@@ -3,14 +3,13 @@ import type { ParserCursor, SessionStartSource } from './session.js';
 import type { SessionKey } from './session-token.js';
 
 /**
- * A message as the parser produced it: no row id, no session id and no `seq`.
+ * A message as the parser produced it: no row id and no session id.
  *
- * The order of the array is the order of the conversation, and that is the
- * whole of what the parser says about position: `seq` is the store's, decided
- * inside the insert transaction (AD-4, AD-8). A parser cannot own it, because
- * a compact or a fork rewrites the front of a transcript, and a number the
- * parser worked out from the file would then land on a message that already
- * has one.
+ * The order of the array is the order of the file, which is the whole of what
+ * the parser says about position: it numbers nothing and sorts nothing
+ * (AD-4). What a message is read in order *by* is its own `occurredAt`, and
+ * the store neither assigns nor needs anything else — a message carries no
+ * number at all (AD-8, migration 0006).
  */
 export interface ParsedMessage {
   harnessMessageId: string;
@@ -32,8 +31,10 @@ export interface ParsedMessage {
 
 /**
  * A tool note as the parser produced it; `ordinal` is the parser's (AD-4).
- * Unlike `seq` it is a position *inside one message*, and a message's content
- * never changes, so the same call keeps the same number forever.
+ * It is a position *inside one message*, and a message's content never
+ * changes, so the same call keeps the same number forever. That is why the
+ * parser may own this number while it owns none for a message: the thing it
+ * counts within cannot be rewritten under it.
  */
 export interface ParsedToolNote {
   harnessMessageId: string;
@@ -104,7 +105,11 @@ export interface IngestTracking {
 export interface IngestBatch {
   key: SessionKey;
   tracking: IngestTracking;
-  /** In conversation order. The store turns that order into `seq` (AD-8). */
+  /**
+   * In the order the file carried them. The store stores them as they are and
+   * reads them back by `occurredAt`, so the order of this array decides
+   * nothing beyond which messages the batch is about (AD-8, migration 0006).
+   */
   messages: readonly IngestMessage[];
   toolNotes: readonly IngestToolNote[];
 }

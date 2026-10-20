@@ -251,12 +251,16 @@ function rowDump(path: string): Record<string, unknown[]> {
   }
 }
 
-/** The conversation as it is stored, in `seq` order. */
-function storedMessages(path: string): { seq: number; role: string; body: string }[] {
+/**
+ * The conversation as it is stored, in conversation order — which since
+ * migration 0006 is `occurred_at` and there is no number to read.
+ */
+function storedMessages(path: string): { role: string; body: string }[] {
   const database = new DatabaseSync(path, { readOnly: true });
   try {
-    return database.prepare('select seq, role, body from messages order by seq').all() as {
-      seq: number;
+    return database
+      .prepare('select role, body from messages order by occurred_at')
+      .all() as {
       role: string;
       body: string;
     }[];
@@ -278,7 +282,8 @@ function storedToolNotes(
            left join messages m
              on m.session_id = n.session_id
             and m.harness_message_id = n.harness_message_id
-          order by m.seq is null, m.seq, n.ordinal`,
+          order by m.occurred_at is null, m.occurred_at, n.harness_message_id,
+                   n.ordinal`,
       )
       .all() as { tool: string; target: string; ok: number }[];
   } finally {
@@ -328,7 +333,7 @@ function setParserVersion(path: string, version: string): void {
  * where the results of those runs were (the fixture's `agent-4e1` result and
  * its `agent-8b3` notification) as reports, and `3` cannot write those rows at
  * all. So the pair of ingests pins the half that matters here — re-reading adds
- * the hand-back reports and leaves every stored row's seq and body alone — and
+ * the hand-back reports and leaves every stored row's body alone — and
  * says nothing about the fake reports `2` left behind, which are a message that
  * cannot be taken back (AD-11).
  */
@@ -398,14 +403,13 @@ describe('brain sessions ingest claude-code', () => {
 
     const path = databaseIn(home);
     expect(storedMessages(path)).toEqual([
-      { seq: 0, role: 'user', body: 'Where did we leave the import notes?' },
+      { role: 'user', body: 'Where did we leave the import notes?' },
       {
-        seq: 1,
         role: 'assistant',
         body: 'They are in notes/import.md.\nI added the open question at the end.',
       },
-      { seq: 2, role: 'user', body: 'Good. Write that down as a decision.' },
-      { seq: 3, role: 'assistant', body: "Written down, with today's date." },
+      { role: 'user', body: 'Good. Write that down as a decision.' },
+      { role: 'assistant', body: "Written down, with today's date." },
     ]);
     // One session, attributed to the owner the install recorded (AD-12).
     const database = new DatabaseSync(path, { readOnly: true });
@@ -486,8 +490,20 @@ describe('brain sessions ingest claude-code', () => {
     // Between them they inserted the conversation exactly once, however the
     // two happened to interleave.
     expect(inserted).toBe(4);
-    expect(storedMessages(databaseIn(home)).map((message) => message.seq)).toEqual([0, 1, 2, 3]);
+    expect(storedMessages(databaseIn(home)).map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
     expect(rowCounts(databaseIn(home))['sessions']).toBe(1);
+
+    // Every table, not only the messages: the overlap leaves exactly what one
+    // ingest of the same transcript leaves.
+    const once = await installedHome();
+    const single = stopPayload(await transcriptIn(once));
+    expect((await runBrain(['sessions', 'ingest', 'claude-code'], once, single)).code).toBe(0);
+    expect(rowCounts(databaseIn(home))).toEqual(rowCounts(databaseIn(once)));
   });
 
   it('appends only what grew when the transcript has one more turn', async () => {
@@ -519,11 +535,12 @@ describe('brain sessions ingest claude-code', () => {
       inserted: { messages: 1, toolNotes: 0 },
     });
     const stored = storedMessages(databaseIn(home));
-    expect(stored.map((message) => message.seq)).toEqual([0, 1, 2, 3, 4]);
+    expect(stored).toHaveLength(5);
+    // The turn that grew the file was uttered last, so it is read last.
     expect(stored.at(-1)?.body).toBe('One more thing.');
   });
 
-  it('gives a message that arrived in front of the stored ones the last number', async () => {
+  it('reads a message that arrived in front of the stored ones in front of them', async () => {
     const home = await installedHome();
     const transcript = await transcriptIn(home);
     const payload = stopPayload(transcript);
@@ -550,13 +567,13 @@ describe('brain sessions ingest claude-code', () => {
       inserted: { messages: 1, toolNotes: 0 },
     });
     const after = storedMessages(databaseIn(home));
-    // Nothing already stored moved; the newcomer took the next free number.
-    expect(after.slice(0, before.length)).toEqual(before);
-    expect(after.at(-1)).toEqual({
-      seq: before.length,
-      role: 'user',
-      body: 'Something that came first.',
-    });
+    // The newcomer was uttered at 03:03, before everything stored, so that is
+    // where it is read — and the rows behind it are untouched and still in the
+    // same order (migration 0006).
+    expect(after).toEqual([
+      { role: 'user', body: 'Something that came first.' },
+      ...before,
+    ]);
   });
 
   it('creates no session for a transcript with no conversation in it', async () => {
@@ -617,7 +634,9 @@ describe('brain sessions ingest claude-code on a whole session', () => {
       inserted: { messages: 5, toolNotes: 1 },
     });
     const whole = storedMessages(databaseIn(home));
-    expect(whole.map((message) => message.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(whole).toHaveLength(10);
+    // Everything the rest of the file added was uttered after everything the
+    // first read stored, so the front of the conversation is unchanged.
     expect(whole.slice(0, half.length)).toEqual(half);
     expect(storedToolNotes(databaseIn(home))).toEqual([
       { tool: 'Read', target: 'notes/import.md', ok: 1 },
@@ -648,11 +667,20 @@ describe('brain sessions ingest claude-code on a whole session', () => {
     expect(reset.ok).toBe(true);
     expect(reset.warnings).toEqual(['CURSOR_RESET']);
     expect(reset.data).toMatchObject({ inserted: { messages: 0, toolNotes: 0 } });
-    // Not one number and not one body moved: everything the reset read saw
+    // Not one body and not one place moved: everything the reset read saw
     // again is already stored, and ingest is idempotent on the harness id
     // (AD-8).
     expect(storedMessages(databaseIn(home))).toEqual(whole);
-    expect(whole[0]?.body).toBe('Can you check the import notes and summarise them?');
+    // The line the reset read with different words is still the one that was
+    // stored: a message cannot be corrected, only added to (AD-11).
+    expect(whole.map((message) => message.body)).toContain(
+      'Can you check the import notes and summarise them?',
+    );
+    // And the order is when the lines were uttered, which this fixture puts
+    // deliberately out of step with the file: the second line of one answer
+    // carries a stamp a minute before the question, so it is read first
+    // (migration 0006).
+    expect(whole[0]?.body).toBe('The open question is still at the end.');
   });
 
   it('keeps no tool output and no pasted image anywhere in the database', async () => {
@@ -689,13 +717,23 @@ describe('brain sessions ingest claude-code on a whole session', () => {
       expect(
         database
           .prepare(
-            `select seq, role, model, git_branch from messages
-              where is_subagent_report = 1 order by seq`,
+            `select occurred_at, role, model, git_branch from messages
+              where is_subagent_report = 1 order by occurred_at`,
           )
           .all(),
       ).toEqual([
-        { seq: 4, role: 'assistant', model: null, git_branch: 'main' },
-        { seq: 8, role: 'assistant', model: null, git_branch: 'feature/notes' },
+        {
+          occurred_at: '2026-02-03T10:00:21.000Z',
+          role: 'assistant',
+          model: null,
+          git_branch: 'main',
+        },
+        {
+          occurred_at: '2026-02-03T10:00:32.000Z',
+          role: 'assistant',
+          model: null,
+          git_branch: 'feature/notes',
+        },
       ]);
       // The subagent's own turns are a sidechain and never messages of this
       // session: the final report is the whole of what a delegated run leaves.
@@ -754,20 +792,20 @@ describe('brain sessions ingest claude-code and a report handed back', () => {
       expect(
         database
           .prepare(
-            `select seq, role, model, git_branch, body from messages
-              where is_subagent_report = 1 order by seq`,
+            `select occurred_at, role, model, git_branch, body from messages
+              where is_subagent_report = 1 order by occurred_at`,
           )
           .all(),
       ).toEqual([
         {
-          seq: 1,
+          occurred_at: '2026-03-04T11:00:08.000Z',
           role: 'assistant',
           model: null,
           git_branch: 'main',
           body: HANDBACK_REPORTS[0],
         },
         {
-          seq: 2,
+          occurred_at: '2026-03-04T11:00:16.000Z',
           role: 'assistant',
           model: null,
           git_branch: 'feature/notes',
@@ -824,12 +862,15 @@ describe('brain sessions ingest claude-code and a report handed back', () => {
     expect(envelope.warnings).toEqual([]);
 
     const after = storedMessages(databaseIn(home));
-    // Not one number and not one body of what was already stored moved: a
-    // message cannot be corrected, only added behind (AD-11).
-    expect(after.slice(0, before.length)).toEqual(before);
-    expect(after.slice(before.length)).toEqual([
-      { seq: 2, role: 'assistant', body: HANDBACK_REPORTS[0] },
-      { seq: 3, role: 'assistant', body: HANDBACK_REPORTS[1] },
+    // The two reports were uttered at 11:00:08 and 11:00:16, between the
+    // question and the answer the older version had already stored — so that
+    // is where they are read, however late they arrived. No stored body
+    // changed: a message cannot be corrected, only added (AD-11, 0006).
+    expect(after).toEqual([
+      before[0],
+      { role: 'assistant', body: HANDBACK_REPORTS[0] },
+      { role: 'assistant', body: HANDBACK_REPORTS[1] },
+      before[1],
     ]);
     expect(storedParserVersion(databaseIn(home))).toBe('3');
   });

@@ -811,7 +811,7 @@ function saw(root: string, ref: string, last?: Record<string, unknown>): string 
 function record(commit: string): string {
   return JSON.stringify({
     commit,
-    schema_version: 5,
+    schema_version: 6,
     node: '/opt/homebrew/bin/node',
     plugin_root: '/plugin',
     installed_at: '2026-10-17T00:00:00.000Z',

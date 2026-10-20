@@ -176,7 +176,7 @@ describe('sessions.ingest on a transcript nothing has read yet', () => {
     for (const message of snapshot.messages) expect(isUuidV7(message.id)).toBe(true);
   });
 
-  it('numbers the messages from 0 in the order the transcript holds them', async () => {
+  it('reads the messages back in the order they were uttered', async () => {
     const { deps, store } = await kit();
 
     await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
@@ -184,11 +184,15 @@ describe('sessions.ingest on a transcript nothing has read yet', () => {
     const read = await store.readSession(TOKEN);
     expect(read.ok).toBe(true);
     if (!read.ok) return;
-    expect(read.messages.map((message) => [message.seq, message.harnessMessageId])).toEqual([
-      [0, 'msg-1'],
-      [1, 'msg-2'],
-      [2, 'msg-3'],
-      [3, 'msg-4'],
+    // No number anywhere: the order is `occurredAt`, which for this transcript
+    // is also the order of the file (migration 0006).
+    expect(
+      read.messages.map((message) => [message.harnessMessageId, message.occurredAt]),
+    ).toEqual([
+      ['msg-1', new Date('2026-01-02T03:04:05.000Z')],
+      ['msg-2', new Date('2026-01-02T03:04:07.000Z')],
+      ['msg-3', new Date('2026-01-02T03:05:01.000Z')],
+      ['msg-4', new Date('2026-01-02T03:05:20.000Z')],
     ]);
   });
 
@@ -505,7 +509,7 @@ describe('sessions.ingest on a transcript it has already read', () => {
     expect(snapshot.toolNotes).toHaveLength(2);
   });
 
-  it('appends only what grew, with the numbering carried on', async () => {
+  it('appends only what grew, and reads the whole conversation in order', async () => {
     const shorter = JSON.stringify({
       messages: [
         {
@@ -526,7 +530,12 @@ describe('sessions.ingest on a transcript it has already read', () => {
     const read = await store.readSession(TOKEN);
     expect(read.ok).toBe(true);
     if (!read.ok) return;
-    expect(read.messages.map((message) => message.seq)).toEqual([0, 1, 2, 3]);
+    expect(read.messages.map((message) => message.harnessMessageId)).toEqual([
+      'msg-1',
+      'msg-2',
+      'msg-3',
+      'msg-4',
+    ]);
   });
 });
 

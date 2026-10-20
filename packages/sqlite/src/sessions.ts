@@ -49,7 +49,6 @@ interface MessageRow {
   id: string;
   session_id: string;
   harness_message_id: string;
-  seq: number;
   role: string;
   model: string | null;
   body: string;
@@ -102,18 +101,27 @@ interface ToolNoteRow {
  * The session capability on the local source: find-or-create, an idempotent
  * batch append, and a read by session token (AD-14).
  *
- * The one thing worth reading twice is where `seq` comes from. It is decided
- * here, inside the `withWrite` transaction, and never by the parser: a compact
- * or a fork rewrites the front of a transcript, so a number worked out from the
- * file would land on a message that already has one (AD-4, AD-8). The batch
- * continues from `max(seq) + 1` in its own order, skipping the messages this
- * session already holds.
+ * Three rules this adapter and Core's fake keep word for word (migration 0006,
+ * AD-8):
  *
- * The inserts conflict on the natural key alone — `(session_id,
- * harness_message_id)` — and never on `(session_id, seq)`. That is deliberate:
- * a `seq` collision means this code numbered two messages the same, which is a
- * bug, and `on conflict (session_id, seq) do nothing` would swallow it. Left
- * out, the unique index raises and the transaction rolls back.
+ *   * **a message has no number.** Its identity is `(session_id,
+ *     harness_message_id)`, which is what the harness itself called it, and
+ *     that is the one key an insert conflicts on. Nothing here counts
+ *     messages, so a compact or a fork that rewrites the front of a transcript
+ *     cannot renumber what is already stored.
+ *   * **conversation order is `occurred_at`.** A read hands the messages back
+ *     by it, so a message the parser only started keeping in a later version
+ *     is read where it was uttered rather than at the end. Two messages at the
+ *     same instant come back in no defined order. Tool notes follow their
+ *     message's instant, then their message, then their own `ordinal`, so one
+ *     message's notes stay together even then.
+ *   * **the cursor is compared by the same instant.** It moves on a reset, on
+ *     a session whose stored cursor message is not among its rows, or when the
+ *     batch's cursor message was uttered at or after the stored one.
+ *
+ * The instants are the canonical 24-character text of AD-13, so SQLite's
+ * string comparison *is* the chronological one and no parsing is needed to
+ * sort or to compare.
  */
 export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
   return {
@@ -226,16 +234,14 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
         const session = await readSessionRow(held, batch.key);
         if (session === null) return null;
 
-        // Both read before any insert, so the batch is numbered in its own
-        // order and a message already stored keeps the number it has.
+        // Read before any insert: which messages this session already holds,
+        // so a batch that carries them again writes nothing. It is the whole
+        // of what ingest has to know about the stored conversation — there is
+        // no counter to continue from (migration 0006).
         const stored = await sql<{ harness_message_id: string }>`
           select harness_message_id from messages where session_id = ${session.id}
         `.execute(held);
         const seen = new Set(stored.rows.map((row) => row.harness_message_id));
-        const top = await sql<{ top: number | null }>`
-          select max(seq) as top from messages where session_id = ${session.id}
-        `.execute(held);
-        let nextSeq = (top.rows[0]?.top ?? -1) + 1;
 
         let insertedMessages = 0;
         for (const { message, occurredAt } of pending) {
@@ -245,19 +251,15 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
           // story 2.8 can tag the session with the first message's one, and no
           // message row keeps it (migration 0004).
           const inserted = await sql<{ id: string }>`
-            insert into messages (id, session_id, harness_message_id, seq, role, model,
+            insert into messages (id, session_id, harness_message_id, role, model,
                                   body, occurred_at, git_branch, is_subagent_report)
                  values (${message.id}, ${session.id}, ${message.harnessMessageId},
-                         ${nextSeq}, ${message.role}, ${message.model}, ${message.body},
+                         ${message.role}, ${message.model}, ${message.body},
                          ${occurredAt}, ${message.gitBranch},
                          ${message.isSubagentReport ? 1 : 0})
             on conflict (session_id, harness_message_id) do nothing
               returning id
           `.execute(held);
-          // By what actually went in, not by one: a row the conflict clause
-          // dropped took no number, and advancing past it would leave a hole
-          // in a column the contract says runs 0, 1, 2, … with no gaps.
-          nextSeq += inserted.rows.length;
           insertedMessages += inserted.rows.length;
           // No `redactions` row is written here, by anybody: ingest stores the
           // body as it read it, and masking happens on the way out (마스킹 B,
@@ -357,16 +359,26 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
           return { ok: false, code: 'SESSION_NOT_FOUND', message: `${token} 세션이 없습니다` };
         }
 
+        // Conversation order, which is when the messages were uttered
+        // (migration 0006). `messages_session_occurred_idx` is this `order
+        // by`, column for column, so the rows come off the index already
+        // sorted. Two messages of one instant come back in whatever order the
+        // index holds them, and nothing promises which.
         const messages = await sql<MessageRow>`
-          select id, session_id, harness_message_id, seq, role, model, body, occurred_at,
+          select id, session_id, harness_message_id, role, model, body, occurred_at,
                  git_branch, is_subagent_report
             from messages
            where session_id = ${row.id}
-           order by seq
+           order by occurred_at
         `.execute(db);
-        // Ordered by the message's own position and then by the ordinal inside
-        // it, so a reader walking the notes walks the conversation. A note
-        // whose message is not stored sorts last rather than disappearing.
+        // Ordered by its message's instant, then by the message, then by the
+        // ordinal inside it, so a reader walking the notes walks the
+        // conversation. The middle key is what keeps one message's notes
+        // together when two messages of the session share an instant —
+        // without it the two sets interleave by ordinal. It orders notes and
+        // says nothing about which of those two messages is read first, which
+        // stays undefined (migration 0006). A note whose message is not stored
+        // sorts last rather than disappearing.
         const toolNotes = await sql<ToolNoteRow>`
           select n.id, n.session_id, n.harness_message_id, n.ordinal, n.tool, n.target, n.ok
             from tool_notes n
@@ -374,7 +386,7 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
               on m.session_id = n.session_id
              and m.harness_message_id = n.harness_message_id
            where n.session_id = ${row.id}
-           order by m.seq is null, m.seq, n.ordinal
+           order by m.occurred_at is null, m.occurred_at, n.harness_message_id, n.ordinal
         `.execute(db);
 
         return {
@@ -481,10 +493,17 @@ async function ensureCheckout(
  * the session at a message the other read had already passed, and the next read
  * would parse a stretch of the transcript it has already stored. So the cursor
  * moves only forward: a reset, a session with no cursor message among its rows,
- * or a cursor message at or after the stored one in `seq`.
+ * or a cursor message uttered at or after the stored one.
  *
- * It runs inside the same transaction as the inserts, so the `seq` it reads for
- * the new cursor message is the one this batch just gave it.
+ * The comparison is on `occurred_at` and not on the order the rows went in
+ * (migration 0006). Insertion order is what the two overlapping reads
+ * disagree about: the shorter read's last message may well be the newest row
+ * in the table and is still the earlier moment of the conversation.
+ *
+ * It runs inside the same transaction as the inserts, so a cursor message this
+ * batch just stored is already there to be compared. One that is not stored at
+ * all leaves the cursor where it was: the instants are canonical text, so a
+ * plain `>=` on the strings is the chronological comparison (AD-13).
  */
 async function cursorMayMove(
   held: Kysely<SqliteSchema>,
@@ -496,21 +515,21 @@ async function cursorMayMove(
   const was = session.last_harness_message_id;
   if (batch.tracking.cursorReset || was === null) return true;
 
-  const seqs = await sql<{ harness_message_id: string; seq: number }>`
-    select harness_message_id, seq
+  const instants = await sql<{ harness_message_id: string; occurred_at: string }>`
+    select harness_message_id, occurred_at
       from messages
      where session_id = ${session.id}
        and harness_message_id in (${was}, ${cursor.lastHarnessMessageId})
   `.execute(held);
-  const seqOf = (harnessMessageId: string): number | undefined =>
-    seqs.rows.find((row) => row.harness_message_id === harnessMessageId)?.seq;
+  const instantOf = (harnessMessageId: string): string | undefined =>
+    instants.rows.find((row) => row.harness_message_id === harnessMessageId)?.occurred_at;
 
-  const storedSeq = seqOf(was);
+  const storedAt = instantOf(was);
   // The stored cursor names a message this session does not hold: nothing to
   // compare against, so the batch's cursor is the better one.
-  if (storedSeq === undefined) return true;
-  const nextSeq = seqOf(cursor.lastHarnessMessageId);
-  return nextSeq !== undefined && nextSeq >= storedSeq;
+  if (storedAt === undefined) return true;
+  const nextAt = instantOf(cursor.lastHarnessMessageId);
+  return nextAt !== undefined && nextAt >= storedAt;
 }
 
 /** The row for one session key, or `null`. The one place the key is spelled. */
@@ -586,7 +605,6 @@ function toMessage(row: MessageRow): Message {
     id: row.id,
     sessionId: row.session_id,
     harnessMessageId: row.harness_message_id,
-    seq: row.seq,
     role: row.role === 'assistant' ? 'assistant' : 'user',
     model: row.model,
     body: row.body,

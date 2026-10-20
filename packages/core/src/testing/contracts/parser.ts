@@ -51,7 +51,8 @@ const FOREIGN_CURSOR = {
 /**
  * The parser contract. The heart of it is determinism: the output is a pure
  * function of the content and the parser version, so the same transcript always
- * produces the same `seq` and the same tool-note ordinals (AD-4).
+ * produces the same messages, in the same order, with the same tool-note
+ * ordinals (AD-4). A parser assigns no message number at all (AD-8).
  */
 export function parserContract(): ContractCase<ParserSubject>[] {
   return [
@@ -81,9 +82,9 @@ export function parserContract(): ContractCase<ParserSubject>[] {
           for (const content of readable) {
             const result = parser.parse(content);
             assertOk(result, 'a readable transcript did not parse');
-            // The parser says nothing about `seq` — the store decides that
-            // inside the insert (AD-8) — so the harness message id is the whole
-            // of what identifies a message. Two messages sharing one would make
+            // A message carries no number, so `(session, harness message id)`
+            // is the whole of what identifies it (AD-8, migration 0006).
+            // Two messages of one parse sharing one would make
             // the second a replay of the first: idempotency would silently drop
             // it, and nobody would be told (AD-4, NFR-2).
             const seen = new Set<string>();

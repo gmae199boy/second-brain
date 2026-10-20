@@ -114,13 +114,14 @@ async function migratedPath(): Promise<string> {
   expect(applied).toEqual({
     ok: true,
     from: 0,
-    to: 5,
+    to: 6,
     applied: [
       '0001_initial.sql',
       '0002_files_and_work.sql',
       '0003_users.sql',
       '0004_capture_columns.sql',
       '0005_identity_and_records.sql',
+      '0006_drop_message_seq.sql',
     ],
   });
   return path;
@@ -223,7 +224,6 @@ function seed(connection: SqliteConnection): void {
     id: ids.message,
     session_id: ids.session,
     harness_message_id: 'h-1',
-    seq: 0,
     role: 'user',
     model: null,
     body: MESSAGE_BODY,
@@ -249,8 +249,6 @@ function seed(connection: SqliteConnection): void {
     rule_state: 'on',
     apply_project_id: ids.project,
     supersedes_id: null,
-    anchor_seq: 0,
-    joined_upto_seq: 0,
   });
   insert(connection, 'log_entry_edits', {
     id: ids.edit,
@@ -269,8 +267,10 @@ function seed(connection: SqliteConnection): void {
     id: ids.chunk,
     session_id: ids.session,
     index_config_id: DEFAULT_INDEX_CONFIG,
-    seq_from: 0,
-    seq_to: 0,
+    // The stretch of conversation the chunk covers, as the instants of its
+    // first and last message -- here the one message above (migration 0006).
+    from_at: SEEDED_AT,
+    to_at: SEEDED_AT,
     body: MESSAGE_BODY,
   });
   insert(connection, 'context_injections', {
@@ -394,7 +394,7 @@ describe('the migration this package ships', () => {
     const before = tableNames(connection);
     const configs = count(connection, 'index_configs');
 
-    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 5, to: 5, applied: [] });
+    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 6, to: 6, applied: [] });
 
     expect(tableNames(connection)).toEqual(before);
     expect(count(connection, 'index_configs')).toBe(configs);
@@ -427,13 +427,13 @@ describe('the immutability triggers (AD-11)', () => {
     { statement: `update messages set occurred_at = '2026-03-04T05:06:07.000Z'`, table: 'messages' },
     { statement: `delete from messages`, table: 'messages' },
     {
-      statement: `insert or replace into messages (id, session_id, harness_message_id, seq, role, body, occurred_at)
-                       values ('${id(55)}', '${ids.session}', 'h-1', 0, 'user', 'rewritten', '${SEEDED_AT}')`,
+      statement: `insert or replace into messages (id, session_id, harness_message_id, role, body, occurred_at)
+                       values ('${id(55)}', '${ids.session}', 'h-1', 'user', 'rewritten', '${SEEDED_AT}')`,
       table: 'messages',
     },
     {
-      statement: `insert into messages (id, session_id, harness_message_id, seq, role, body, occurred_at)
-                       values ('${id(56)}', '${ids.session}', 'h-1', 0, 'user', 'rewritten', '${SEEDED_AT}')
+      statement: `insert into messages (id, session_id, harness_message_id, role, body, occurred_at)
+                       values ('${id(56)}', '${ids.session}', 'h-1', 'user', 'rewritten', '${SEEDED_AT}')
                   on conflict (session_id, harness_message_id) do update set body = 'rewritten'`,
       table: 'messages',
     },
@@ -592,7 +592,6 @@ function duplicateKeyCases(): DuplicateKeyCase[] {
     id: id(105),
     session_id: ids.session,
     harness_message_id: 'h-2',
-    seq: 1,
     role: 'assistant',
     body: 'a second message',
     occurred_at: SEEDED_AT,
@@ -634,8 +633,8 @@ function duplicateKeyCases(): DuplicateKeyCase[] {
     id: id(110),
     session_id: ids.session,
     index_config_id: DEFAULT_INDEX_CONFIG,
-    seq_from: 1,
-    seq_to: 2,
+    from_at: '2026-02-03T04:05:07.000Z',
+    to_at: '2026-02-03T04:05:08.000Z',
     body: 'a chunk',
   };
   const redaction = {
@@ -699,13 +698,7 @@ function duplicateKeyCases(): DuplicateKeyCase[] {
       table: 'messages',
       key: '(session_id, harness_message_id)',
       first: message,
-      second: { ...other(message, 205), seq: 2 },
-    },
-    {
-      table: 'messages',
-      key: '(session_id, seq)',
-      first: message,
-      second: { ...other(message, 206), harness_message_id: 'h-3' },
+      second: { ...other(message, 205), body: 'another body under the same id' },
     },
     {
       table: 'tool_notes',
@@ -733,7 +726,7 @@ function duplicateKeyCases(): DuplicateKeyCase[] {
     },
     {
       table: 'chunks',
-      key: '(session_id, index_config_id, seq_from, seq_to)',
+      key: '(session_id, index_config_id, from_at, to_at)',
       first: chunk,
       second: { ...other(chunk, 210), body: 'another chunk' },
     },
@@ -859,7 +852,6 @@ describe('the types SQLite does not have', () => {
         id: id(304),
         session_id: ids.session,
         harness_message_id: 'h-role',
-        seq: 31,
         role: 'system',
         body: 'x',
         occurred_at: SEEDED_AT,
@@ -915,10 +907,13 @@ describe('the types SQLite does not have', () => {
         id: id(308),
         session_id: ids.session,
         harness_message_id: 'h-real',
-        seq: 1.5,
         role: 'user',
         body: 'x',
         occurred_at: SEEDED_AT,
+        // The boolean column, because `messages` has no other integer left
+        // since 0006 took the number away. A `check (x in (0, 1))` would catch
+        // it too, so the point of the case is which complaint comes back.
+        is_subagent_report: 1.5,
       }),
     ).toThrow(/cannot store REAL value in INTEGER column/);
   });

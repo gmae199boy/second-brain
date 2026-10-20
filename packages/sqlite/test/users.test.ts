@@ -155,8 +155,13 @@ describe('the SQLite identity store', () => {
     expect(await runSqliteMigrations({ path })).toEqual({
       ok: true,
       from: 2,
-      to: 5,
-      applied: ['0003_users.sql', '0004_capture_columns.sql', '0005_identity_and_records.sql'],
+      to: 6,
+      applied: [
+        '0003_users.sql',
+        '0004_capture_columns.sql',
+        '0005_identity_and_records.sql',
+        '0006_drop_message_seq.sql',
+      ],
     });
 
     const after = openSqlite({ path, busyTimeoutMs: 3000 });

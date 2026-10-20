@@ -94,13 +94,14 @@ async function migratedPath(): Promise<string> {
   expect(applied).toEqual({
     ok: true,
     from: 0,
-    to: 5,
+    to: 6,
     applied: [
       '0001_initial.sql',
       '0002_files_and_work.sql',
       '0003_users.sql',
       '0004_capture_columns.sql',
       '0005_identity_and_records.sql',
+      '0006_drop_message_seq.sql',
     ],
   });
   return path;
@@ -186,7 +187,6 @@ function seed(connection: SqliteConnection): void {
     id: ids.message,
     session_id: ids.session,
     harness_message_id: 'h-1',
-    seq: 0,
     role: 'user',
     body: 'the draft is attached',
     occurred_at: SEEDED_AT,
@@ -307,7 +307,7 @@ async function seeded(): Promise<SqliteConnection> {
   return connection;
 }
 
-describe('the upgrade from 0001 through 0004', () => {
+describe('the upgrade from 0001 through 0006', () => {
   it('keeps the rows and the keys of the two tables it has to rebuild', async () => {
     // Only the first file, so the database stops at version 1 the way an
     // install from before this story did. A folder the caller names is not
@@ -337,6 +337,19 @@ describe('the upgrade from 0001 through 0004', () => {
       started_at: SEEDED_AT,
       ingest_source: 'live',
     });
+    // The message the chunk's range names. 0006 turns `seq_from`/`seq_to`
+    // into the instants of those messages, and a chunk naming a `seq` no
+    // message has takes that migration down -- which is the point: nothing can
+    // write such a row, so one would be a bug (migration 0006).
+    insert(before, 'messages', {
+      id: ids.message,
+      session_id: ids.session,
+      harness_message_id: 'h-1',
+      seq: 0,
+      role: 'user',
+      body: 'the message the chunk covers',
+      occurred_at: SEEDED_AT,
+    });
     insert(before, 'chunks', {
       id: id(30),
       session_id: ids.session,
@@ -351,12 +364,13 @@ describe('the upgrade from 0001 through 0004', () => {
     expect(await runSqliteMigrations({ path })).toEqual({
       ok: true,
       from: 1,
-      to: 5,
+      to: 6,
       applied: [
         '0002_files_and_work.sql',
         '0003_users.sql',
         '0004_capture_columns.sql',
         '0005_identity_and_records.sql',
+        '0006_drop_message_seq.sql',
       ],
     });
 

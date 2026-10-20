@@ -96,12 +96,11 @@ export interface MemoryStore extends Store {
  * It keeps rows in maps keyed by the natural idempotency keys of the Table
  * Contract, so a replayed batch adds nothing (AD-8).
  *
- * It mints nothing and reads no clock: every id and every instant arrives in
- * the input, exactly as a real adapter's does (AD-8, AD-13). The one thing it
- * decides for itself is `seq`, and it decides it the way the contract requires
- * — `max(seq) + 1` for the session, in batch order, skipping the messages it
- * already holds — so a transcript whose front was rewritten leaves the numbers
- * that are already stored alone (AD-4).
+ * It mints nothing, reads no clock and decides nothing of its own: every id and
+ * every instant arrives in the input, exactly as a real adapter's does (AD-8,
+ * AD-13). A message carries no number, so there is nothing left to assign —
+ * `(session, harness message id)` is its identity and `occurredAt` is the order
+ * it is read back in (migration 0006).
  */
 export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const { health = DEFAULT_HEALTH } = options;
@@ -278,23 +277,20 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       let insertedMessages = 0;
       let insertedToolNotes = 0;
 
-      // Where this session's numbering carries on from. Read once, before any
-      // insert, so the batch is numbered in its own order (AD-8).
-      let nextSeq = storedMessages.reduce((highest, stored) => {
-        return stored.seq >= highest ? stored.seq + 1 : highest;
-      }, 0);
+      // Read once, before any insert: which messages are already here. It is
+      // all ingest needs to know about them, because nothing is numbered
+      // (migration 0006).
       const storedIds = new Set(storedMessages.map((stored) => stored.harnessMessageId));
 
       for (const parsed of batch.messages) {
-        // Only the harness message id decides a duplicate: `seq` is this
-        // store's own, so nothing about it can make a message a replay.
+        // The harness message id is the whole of what makes a message a
+        // replay: there is nothing else about it that this store decides.
         if (storedIds.has(parsed.harnessMessageId)) continue;
         storedIds.add(parsed.harnessMessageId);
         storedMessages.push({
           id: parsed.id,
           sessionId: session.id,
           harnessMessageId: parsed.harnessMessageId,
-          seq: nextSeq,
           role: parsed.role,
           model: parsed.model,
           body: parsed.body,
@@ -305,7 +301,6 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
           // tags the session with the first message's one, but no message row
           // keeps it (migration 0004).
         });
-        nextSeq += 1;
         insertedMessages += 1;
         // No masking record is kept, because ingest does no masking: the body
         // is stored as the batch carried it and the output codecs mask it on
@@ -331,7 +326,15 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         insertedToolNotes += 1;
       }
 
-      storedMessages.sort((left, right) => left.seq - right.seq);
+      // Conversation order, held on the stored list so every `readSession`
+      // hands it back the way a real adapter's `order by occurred_at` does
+      // (migration 0006). `sort` is stable, which is this fake's answer to two
+      // messages of one instant: it keeps the order they went in, and promises
+      // nothing about it — a case that depended on it would be a case the
+      // SQLite store is free to fail.
+      storedMessages.sort(
+        (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
+      );
       messages.set(token, storedMessages);
       toolNotes.set(token, storedToolNotes);
 
@@ -373,14 +376,27 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         };
       }
       const sessionToolNotes = [...(toolNotes.get(token) ?? [])];
-      const seqOf = new Map(
-        (messages.get(token) ?? []).map((message) => [message.harnessMessageId, message.seq]),
+      // Its message's instant, then its message, then its own ordinal. The
+      // middle key is what keeps one message's notes together when two
+      // messages of the session share an instant; it orders notes and says
+      // nothing about which of those messages is read first. A note whose
+      // message is not stored sorts last rather than disappearing, which is
+      // what the adapters' `left join` does (port contract, migration 0006).
+      const instantOf = new Map(
+        (messages.get(token) ?? []).map((message) => [
+          message.harnessMessageId,
+          message.occurredAt.getTime(),
+        ]),
       );
       sessionToolNotes.sort((left, right) => {
-        const bySeq =
-          (seqOf.get(left.harnessMessageId) ?? Number.MAX_SAFE_INTEGER) -
-          (seqOf.get(right.harnessMessageId) ?? Number.MAX_SAFE_INTEGER);
-        return bySeq === 0 ? left.ordinal - right.ordinal : bySeq;
+        const byInstant =
+          (instantOf.get(left.harnessMessageId) ?? Number.MAX_SAFE_INTEGER) -
+          (instantOf.get(right.harnessMessageId) ?? Number.MAX_SAFE_INTEGER);
+        if (byInstant !== 0) return byInstant;
+        if (left.harnessMessageId !== right.harnessMessageId) {
+          return left.harnessMessageId < right.harnessMessageId ? -1 : 1;
+        }
+        return left.ordinal - right.ordinal;
       });
       return {
         ok: true,
@@ -672,8 +688,13 @@ function transcriptKey(harness: string, path: string): string {
  * point the session at a message the other read had already passed, and the
  * next read would parse a stretch of transcript it has already stored. So the
  * cursor is replaced only when the batch reset it, when the session has no
- * cursor message among its rows, or when the batch's cursor message is at or
- * after the stored one.
+ * cursor message among its rows, or when the batch's cursor message was
+ * uttered at or after the stored one.
+ *
+ * The comparison is on `occurredAt` and not on the order the rows went in
+ * (migration 0006): insertion order is exactly what the two overlapping reads
+ * disagree about, and the shorter read's last message can be the newest row
+ * and still the earlier moment.
  */
 function nextCursor(
   session: Session,
@@ -684,10 +705,12 @@ function nextCursor(
   if (cursor === null) return session.cursor;
   if (batch.tracking.cursorReset || session.cursor === null) return cursor;
 
-  const seqOf = (harnessMessageId: string): number | undefined =>
-    stored.find((message) => message.harnessMessageId === harnessMessageId)?.seq;
-  const was = seqOf(session.cursor.lastHarnessMessageId);
+  const instantOf = (harnessMessageId: string): number | undefined =>
+    stored
+      .find((message) => message.harnessMessageId === harnessMessageId)
+      ?.occurredAt.getTime();
+  const was = instantOf(session.cursor.lastHarnessMessageId);
   if (was === undefined) return cursor;
-  const now = seqOf(cursor.lastHarnessMessageId);
+  const now = instantOf(cursor.lastHarnessMessageId);
   return now !== undefined && now >= was ? cursor : session.cursor;
 }

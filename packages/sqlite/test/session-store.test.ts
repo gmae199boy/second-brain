@@ -21,9 +21,10 @@ import { sqliteStore } from '../src/store.js';
 
 /**
  * The session capability against the file this package writes: the shared
- * contract, and the things only a real database can be held to — that a
- * `seq` collision is an error rather than a row quietly dropped, and that a
- * session with no user is refused.
+ * contract, and the things only a real database can be held to — that the
+ * columns hold what the schema says, that a session with no user is refused,
+ * and that the rows come back in conversation order, which since migration
+ * 0006 is `occurred_at` and nothing else.
  */
 
 const directories: string[] = [];
@@ -97,16 +98,38 @@ describe('the SQLite session store and the columns behind it', () => {
       expect(
         opened.connection.database
           .prepare(
-            'select seq, role, git_branch, is_subagent_report from messages order by seq',
+            `select occurred_at, role, git_branch, is_subagent_report
+               from messages order by occurred_at`,
           )
           .all(),
       ).toEqual([
-        // The branch exactly as the line carried it, and the report mark as the
-        // integer SQLite stores a boolean in (migration 0004).
-        { seq: 0, role: 'user', git_branch: 'main', is_subagent_report: 0 },
-        { seq: 1, role: 'assistant', git_branch: 'main', is_subagent_report: 0 },
-        { seq: 2, role: 'user', git_branch: 'topic/notes', is_subagent_report: 0 },
-        { seq: 3, role: 'assistant', git_branch: 'topic/notes', is_subagent_report: 1 },
+        // No number in the table at all (migration 0006): the instant is what
+        // orders them. The branch is exactly as the line carried it, and the
+        // report mark is the integer SQLite stores a boolean in (0004).
+        {
+          occurred_at: '2026-01-02T03:04:05.000Z',
+          role: 'user',
+          git_branch: 'main',
+          is_subagent_report: 0,
+        },
+        {
+          occurred_at: '2026-01-02T03:04:07.000Z',
+          role: 'assistant',
+          git_branch: 'main',
+          is_subagent_report: 0,
+        },
+        {
+          occurred_at: '2026-01-02T03:05:01.000Z',
+          role: 'user',
+          git_branch: 'topic/notes',
+          is_subagent_report: 0,
+        },
+        {
+          occurred_at: '2026-01-02T03:05:20.000Z',
+          role: 'assistant',
+          git_branch: 'topic/notes',
+          is_subagent_report: 1,
+        },
       ]);
     } finally {
       await opened.connection.close();
@@ -138,7 +161,9 @@ describe('the SQLite session store and the columns behind it', () => {
         opened.connection.database.prepare('select count(*) as rows from redactions').get(),
       ).toEqual({ rows: 0 });
       expect(
-        opened.connection.database.prepare('select body from messages order by seq').all(),
+        opened.connection.database
+          .prepare('select body from messages order by occurred_at')
+          .all(),
       ).toEqual(batch.messages.map((message) => ({ body: message.body })));
     } finally {
       await opened.connection.close();
@@ -414,11 +439,11 @@ describe('the SQLite session store and the columns behind it', () => {
     }
   });
 
-  it('raises on a seq collision rather than dropping the row in silence', async () => {
-    // The point of conflicting on `(session_id, harness_message_id)` alone: a
-    // `seq` that is already taken means this code numbered two messages the
-    // same, which is a bug, and `on conflict (session_id, seq) do nothing`
-    // would swallow it (NFR-2).
+  it('takes a second message at an instant it already holds', async () => {
+    // What replaced the `(session_id, seq)` key: nothing. Two messages of one
+    // session may share an instant — the schema has no opinion about which of
+    // them is read first and no column that could hold one (migration 0006) —
+    // so the only thing that may be refused here is a repeated harness id.
     const path = await migratedPath();
     const store = sqliteStore({ path });
     try {
@@ -438,18 +463,104 @@ describe('the SQLite session store and the columns behind it', () => {
       const sessionId = String(
         opened.connection.database.prepare('select id from sessions').get()?.id,
       );
-      expect(() =>
+      const insert = (rowId: string, harnessMessageId: string): void => {
         opened.connection.database
           .prepare(
-            `insert into messages (id, session_id, harness_message_id, seq, role, model,
+            `insert into messages (id, session_id, harness_message_id, role, model,
                                    body, occurred_at)
-                  values (?, ?, 'msg-9', 0, 'user', null, 'a different message',
+                  values (?, ?, ?, 'user', null, 'a different message',
                           '2026-01-02T03:04:05.000Z')`,
           )
-          .run('01940000-0000-7000-8000-0000000009ff', sessionId),
-      ).toThrow(/UNIQUE/i);
+          .run(rowId, sessionId, harnessMessageId);
+      };
+      // msg-1's instant exactly, under a harness id of its own: allowed.
+      insert('01940000-0000-7000-8000-0000000009ff', 'msg-9');
+      expect(
+        opened.connection.database
+          .prepare(`select count(*) as rows from messages where occurred_at = ?`)
+          .get('2026-01-02T03:04:05.000Z'),
+      ).toEqual({ rows: 2 });
+      // The one key that is left.
+      expect(() => insert('01940000-0000-7000-8000-0000000009fc', 'msg-1')).toThrow(/UNIQUE/i);
     } finally {
       await opened.connection.close();
+    }
+  });
+
+  it('keeps one message\u2019s tool notes together when two share an instant', async () => {
+    // The order of two messages at one instant is not defined (migration
+    // 0006), but their notes must not interleave: a reader walking them would
+    // see one call of each message, then the next of each. The notes are
+    // written here in exactly that interleaved order, so only the `order by`
+    // can put them back together.
+    const path = await migratedPath();
+    const store = sqliteStore({ path });
+    try {
+      expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
+      expect((await store.ensureSession(sampleEnsureSessionInput())).ok).toBe(true);
+    } finally {
+      await store.close();
+    }
+
+    const opened = openSqlite({ path, busyTimeoutMs: 3000 });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    try {
+      const { database } = opened.connection;
+      const sessionId = String(database.prepare('select id from sessions').get()?.id);
+      const at = '2026-01-02T03:04:05.000Z';
+      for (const [rowId, harnessMessageId] of [
+        ['01940000-0000-7000-8000-0000000009a1', 'msg-a'],
+        ['01940000-0000-7000-8000-0000000009a2', 'msg-b'],
+      ] as const) {
+        database
+          .prepare(
+            `insert into messages (id, session_id, harness_message_id, role, model,
+                                   body, occurred_at)
+                  values (?, ?, ?, 'user', null, 'one of two at the same instant', ?)`,
+          )
+          .run(rowId, sessionId, harnessMessageId, at);
+      }
+      for (const [rowId, harnessMessageId, ordinal] of [
+        ['01940000-0000-7000-8000-0000000009b1', 'msg-a', 0],
+        ['01940000-0000-7000-8000-0000000009b2', 'msg-b', 0],
+        ['01940000-0000-7000-8000-0000000009b3', 'msg-a', 1],
+        ['01940000-0000-7000-8000-0000000009b4', 'msg-b', 1],
+      ] as const) {
+        database
+          .prepare(
+            `insert into tool_notes (id, session_id, harness_message_id, ordinal, tool,
+                                     target, ok)
+                  values (?, ?, ?, ?, 'read', 'notes/import.md', 1)`,
+          )
+          .run(rowId, sessionId, harnessMessageId, ordinal);
+      }
+    } finally {
+      await opened.connection.close();
+    }
+
+    const reader = sqliteStore({ path });
+    try {
+      const read = await reader.readSession(sampleSessionToken);
+      expect(read.ok).toBe(true);
+      if (!read.ok) return;
+      const walked = read.toolNotes.map((note) => note.harnessMessageId);
+      expect(walked).toHaveLength(4);
+      // Each message's notes are one unbroken run. Interleaved they would be
+      // four runs of one, and this counts runs rather than naming an order:
+      // which of the two messages is read first is not promised.
+      const runs = walked.filter((harnessMessageId, index) => harnessMessageId !== walked[index - 1]);
+      expect(runs).toHaveLength(2);
+      expect(new Set(runs).size).toBe(2);
+      for (const harnessMessageId of runs) {
+        expect(
+          read.toolNotes
+            .filter((note) => note.harnessMessageId === harnessMessageId)
+            .map((note) => note.ordinal),
+        ).toEqual([0, 1]);
+      }
+    } finally {
+      await reader.close();
     }
   });
 
@@ -527,9 +638,9 @@ describe('the SQLite session store and the columns behind it', () => {
       expect(() =>
         opened.connection.database
           .prepare(
-            `insert into messages (id, session_id, harness_message_id, seq, role, model,
+            `insert into messages (id, session_id, harness_message_id, role, model,
                                    body, occurred_at, git_branch, is_subagent_report)
-                  values (?, ?, 'msg-9', 9, 'user', null, 'a message with a third value',
+                  values (?, ?, 'msg-9', 'user', null, 'a message with a third value',
                           '2026-01-02T03:04:05.000Z', 'main', 2)`,
           )
           .run('01940000-0000-7000-8000-0000000009fe', sessionId),

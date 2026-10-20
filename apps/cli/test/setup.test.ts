@@ -832,7 +832,7 @@ describe('brain setup run on a database whose projects collide', () => {
     }
   }
 
-  it('shows the group, merges it and reaches version 5 with every session kept', async () => {
+  it('shows the group, merges it and reaches the current version with every session kept', async () => {
     const home = await versionFourHome();
     const path = join(home, 'brain.db');
 
@@ -847,7 +847,7 @@ describe('brain setup run on a database whose projects collide', () => {
     expect(run.stdout).toContain(`${REMOTE_LOWER} (세션 2건)`);
     expect(run.stdout).toContain('겹치는 프로젝트 1묶음을 하나로 합쳤습니다');
     expect(run.stdout).toContain('0005_identity_and_records.sql');
-    expect(run.stdout).toContain('스키마 버전은 5입니다');
+    expect(run.stdout).toContain('스키마 버전은 6입니다');
 
     // One project, under the older id and keeping the remote it was written
     // with, and the shared folder folded into one worktree.
@@ -865,7 +865,7 @@ describe('brain setup run on a database whose projects collide', () => {
     const checks = (JSON.parse(doctor.stdout) as Envelope).data?.checks ?? [];
     expect(checks.find((check) => check.id === 'schema-version')).toMatchObject({
       status: 'ok',
-      detail: '5',
+      detail: '6',
     });
   });
 
@@ -883,6 +883,172 @@ describe('brain setup run on a database whose projects collide', () => {
     expect(await readFile(path)).toEqual(before);
     expect(scalar(path, 'select version as n from schema_version')).toBe(4);
     expect(existsSync(configFilePath(home))).toBe(false);
+  });
+});
+
+/**
+ * The upgrade migration 0006 is: `messages.seq` goes away, and with it the
+ * table it was a column of. The table is dropped and rebuilt, which is the one
+ * shape of upgrade that can lose rows, so this runs it against a real
+ * `<home>/brain.db` through the built `brain` and counts what came out.
+ */
+describe('brain setup run on a version 5 database', () => {
+  /** Ids in the UUIDv7 shape every row carries (AD-8). */
+  function id(ordinal: number): string {
+    return `01970000-0000-7000-8000-${String(ordinal).padStart(12, '0')}`;
+  }
+
+  const AT = '2026-02-03T04:05:06.000Z';
+  /**
+   * Two messages whose numbers run the other way from their instants, which is
+   * exactly the state 0006 exists for: the second one of the conversation was
+   * collected later and took the higher number.
+   */
+  const FIRST_BODY = '먼저 한 말';
+  const SECOND_BODY = 'the answer, collected in a later batch';
+
+  /**
+   * A `<home>/brain.db` at version 5 with a conversation in it. The folder of
+   * migration files is one this test writes, because a folder the caller names
+   * is not held to `SQLITE_SCHEMA_VERSION`: that is the only way to stop at an
+   * earlier version with the files this build ships.
+   */
+  async function versionFiveHome(): Promise<string> {
+    const home = await emptyHome();
+    const directory = join(home, 'migrations-0005');
+    await mkdir(directory, { recursive: true });
+    for (const name of [
+      '0001_initial.sql',
+      '0002_files_and_work.sql',
+      '0003_users.sql',
+      '0004_capture_columns.sql',
+      '0005_identity_and_records.sql',
+    ]) {
+      await copyFile(join(SQLITE_MIGRATIONS_DIRECTORY, name), join(directory, name));
+    }
+    const path = join(home, 'brain.db');
+    expect(await runSqliteMigrations({ path, directory })).toMatchObject({ ok: true, to: 5 });
+
+    const database = new DatabaseSync(path);
+    try {
+      database.exec('pragma foreign_keys = ON');
+      database.exec(
+        `insert into users (id, name, is_self, created_at)
+              values ('${id(1)}', 'brain-owner', 1, '${AT}')`,
+      );
+      database.exec(
+        `insert into sessions (id, harness, harness_session_id, user_id, machine,
+                               started_at, ingest_source)
+              values ('${id(2)}', 'demo', 'session-0001', '${id(1)}', 'demo-machine',
+                      '${AT}', 'live')`,
+      );
+      // `seq` 1 at 04:05:07 and `seq` 0 at 04:05:08: the numbers and the
+      // instants disagree, so the upgrade cannot quietly be sorting by either
+      // and still come out right.
+      database.exec(
+        `insert into messages (id, session_id, harness_message_id, seq, role, model, body,
+                               occurred_at, git_branch, is_subagent_report)
+              values ('${id(3)}', '${id(2)}', 'h-1', 1, 'user', null, '${FIRST_BODY}',
+                      '2026-02-03T04:05:07.000Z', 'main', 0),
+                     ('${id(4)}', '${id(2)}', 'h-2', 0, 'assistant', 'demo-model',
+                      '${SECOND_BODY}', '2026-02-03T04:05:08.000Z', 'main', 1)`,
+      );
+      database.exec(
+        `insert into tool_notes (id, session_id, harness_message_id, ordinal, tool, target, ok)
+              values ('${id(5)}', '${id(2)}', 'h-2', 0, 'Read', '/demo/repo/notes.md', 1)`,
+      );
+      database.exec(
+        `insert into log_entries (id, kind, session_id, occurred_at, recorded_at, "text",
+                                  anchor_seq, joined_upto_seq)
+              values ('${id(6)}', 'progress', '${id(2)}', '${AT}', '${AT}', '초안을 읽었습니다',
+                      0, 1)`,
+      );
+    } finally {
+      database.close();
+    }
+    return home;
+  }
+
+  /** Every row of one query, read without writing. */
+  function rows(path: string, query: string): unknown[] {
+    const database = new DatabaseSync(path, { readOnly: true });
+    try {
+      return database.prepare(query).all();
+    } finally {
+      database.close();
+    }
+  }
+
+  it('reaches version 6 and keeps the conversation, with no number left in it', async () => {
+    const home = await versionFiveHome();
+    const path = join(home, 'brain.db');
+
+    const run = await runBrain(['setup', 'run', '--yes'], home);
+
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    expect(run.stdout).toContain('0006_drop_message_seq.sql');
+    expect(run.stdout).toContain('스키마 버전은 6입니다');
+
+    // The number doctor reports, which is the one a later command refuses to
+    // write on (AD-20).
+    const doctor = await runBrain(['doctor', 'run', '--json'], home);
+    const checks = (JSON.parse(doctor.stdout) as Envelope).data?.checks ?? [];
+    expect(checks.find((check) => check.id === 'schema-version')).toMatchObject({
+      status: 'ok',
+      detail: '6',
+    });
+
+    // Every row came back, under its own id and body, and in the order it was
+    // uttered rather than the order it was numbered.
+    expect(
+      rows(
+        path,
+        `select id, harness_message_id, role, model, body, occurred_at, git_branch,
+                is_subagent_report
+           from messages order by occurred_at`,
+      ),
+    ).toEqual([
+      {
+        id: id(3),
+        harness_message_id: 'h-1',
+        role: 'user',
+        model: null,
+        body: FIRST_BODY,
+        occurred_at: '2026-02-03T04:05:07.000Z',
+        git_branch: 'main',
+        is_subagent_report: 0,
+      },
+      {
+        id: id(4),
+        harness_message_id: 'h-2',
+        role: 'assistant',
+        model: 'demo-model',
+        body: SECOND_BODY,
+        occurred_at: '2026-02-03T04:05:08.000Z',
+        git_branch: 'main',
+        is_subagent_report: 1,
+      },
+    ]);
+    expect(rows(path, 'select id, tool, target, ok from tool_notes')).toEqual([
+      { id: id(5), tool: 'Read', target: '/demo/repo/notes.md', ok: 1 },
+    ]);
+    expect(rows(path, 'select id, "text" from log_entries')).toEqual([
+      { id: id(6), text: '초안을 읽었습니다' },
+    ]);
+
+    // And the columns are gone, not merely unused.
+    expect(
+      rows(path, `select name from pragma_table_info('messages') where name = 'seq'`),
+    ).toEqual([]);
+    expect(
+      rows(
+        path,
+        `select name from pragma_table_info('log_entries')
+          where name in ('anchor_seq', 'joined_upto_seq')`,
+      ),
+    ).toEqual([]);
+    expect(rows(path, 'select * from pragma_foreign_key_check')).toEqual([]);
   });
 });
 

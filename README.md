@@ -167,7 +167,7 @@ guide schema --json`을 실제로 실행해서 exit 0과 `ok: true` 엔벨로프
 ```json
 {
   "commit": "10a09d2ef60fcf3b607f8562192c2ea8a59d3981",
-  "schema_version": 5,
+  "schema_version": 6,
   "node": "/opt/homebrew/bin/node",
   "plugin_root": "/Users/me/.claude/plugins/cache/second-brain/second-brain/0.1.0",
   "installed_at": "2026-10-17T15:11:42.113Z"
@@ -295,10 +295,12 @@ hook이 내는 줄입니다. 도구 메모 대상은 셸 `NAME=value` 규칙도 
 권한 0600과 "동기화 폴더에 두지 않기"입니다. 저장본에서도 지우려면
 `brain messages redact`를 쓰세요(아직 없습니다 — 뒤 스토리입니다).
 
-순서는 시계가 아니라 파일에서 옵니다. `messages.seq`는 0부터 시작하고 행이
-들어갈 때 정해지며, 파서가 정하는 일은 없습니다. 그래서 앞부분이 다시 쓰인
-트랜스크립트 — compact, fork — 에서도 저장된 메시지의 번호는 그대로 있고, 그
-앞에 새로 온 것이 다음 빈 번호를 받습니다.
+메시지에는 번호가 없습니다. 메시지를 가리키는 것은 하네스가 준
+`(session_id, harness_message_id)` 하나뿐이어서, 앞부분이 다시 쓰인
+트랜스크립트 — compact, fork — 에서도 저장된 메시지가 다른 메시지로 바뀌지
+않습니다. 대화 순서는 발화 시각(`occurred_at`)입니다. 그래서 파서 버전이 올라
+대화 중간의 줄을 새로 남기게 되면, 그 메시지는 나중 수집으로 들어와도 읽을 때는
+제자리에 놓입니다. 같은 시각 두 메시지의 순서는 정하지 않습니다.
 
 데이터베이스에 쓸 수 없을 때 — 다른 프로세스가 쓰기 잠금을 예산보다 오래 쥐고
 있을 때, 파일이 없을 때, 저장된 스키마 버전이 이 빌드의 것과 다를 때 — 턴은
@@ -453,7 +455,7 @@ brain setup connect <harness>
   "data": {
     "home": "/Users/me/.second_brain",
     "config_path": "/Users/me/.second_brain/config.toml",
-    "store": { "path": "/Users/me/.second_brain/brain.db", "schema_version": 5, "applied": [] },
+    "store": { "path": "/Users/me/.second_brain/brain.db", "schema_version": 6, "applied": [] },
     "owner": { "name": "me", "created": false },
     "files": { "path": "/Users/me/.second_brain/files", "created": false },
     "mirror_path": "/Users/me/.second_brain/mirror",

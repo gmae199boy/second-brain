@@ -133,7 +133,7 @@ async function versionThreePath(): Promise<string> {
 async function migratedPath(): Promise<string> {
   const path = join(await scratch(), 'brain.db');
   const applied = await runSqliteMigrations({ path });
-  expect(applied).toMatchObject({ ok: true, to: 5 });
+  expect(applied).toMatchObject({ ok: true, to: 6 });
   return path;
 }
 
@@ -242,8 +242,12 @@ describe('the upgrade from version 3 to version 4', () => {
     expect(await runSqliteMigrations({ path })).toEqual({
       ok: true,
       from: 3,
-      to: 5,
-      applied: ['0004_capture_columns.sql', '0005_identity_and_records.sql'],
+      to: 6,
+      applied: [
+        '0004_capture_columns.sql',
+        '0005_identity_and_records.sql',
+        '0006_drop_message_seq.sql',
+      ],
     });
 
     connection = open(path);
@@ -345,7 +349,7 @@ describe('the upgrade from version 3 to version 4', () => {
 
   it('applies nothing the second time', async () => {
     const path = await migratedPath();
-    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 5, to: 5, applied: [] });
+    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 6, to: 6, applied: [] });
   });
 });
 
@@ -508,7 +512,6 @@ describe('the redaction record of 0004 (AD-11, AD-23)', () => {
       id: ids.message,
       session_id: ids.session,
       harness_message_id: 'h-1',
-      seq: 0,
       role: 'user',
       body: 'the key is somewhere in here',
       occurred_at: SEEDED_AT,
@@ -621,7 +624,6 @@ describe('the new message columns of 0004 (AD-4, AD-11)', () => {
       id: ids.message,
       session_id: ids.session,
       harness_message_id: 'h-1',
-      seq: 0,
       role: 'user',
       body: BODY,
       occurred_at: SEEDED_AT,
@@ -636,7 +638,6 @@ describe('the new message columns of 0004 (AD-4, AD-11)', () => {
         id: id(401),
         session_id: ids.session,
         harness_message_id: 'h-2',
-        seq: 1,
         role: 'assistant',
         body: 'x',
         occurred_at: SEEDED_AT,

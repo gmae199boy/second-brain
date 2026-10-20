@@ -18,7 +18,13 @@ export interface LogEntry {
   kind: LogEntryKind;
   /** Immutable. */
   sessionId: string;
-  /** Immutable. Set once by the writing process through `Clock` (AD-13). */
+  /**
+   * Immutable. Set once by the writing process through `Clock` (AD-13), and
+   * the whole of the line's place in the conversation: the messages around it
+   * are the ones either side of this instant, read when somebody asks. No link
+   * to a message is stored, so a message collected after the line leaves
+   * nothing to repair (AD-14, migration 0006).
+   */
   occurredAt: Date;
   /** When the row reached the DB, apart from `occurredAt` (AD-13). */
   recordedAt: Date;
@@ -35,11 +41,6 @@ export interface LogEntry {
   applyProjectId: string | null;
   /** Replacing a decision or preference is a new row plus this link (AD-11). */
   supersedesId: string | null;
-  /** The message this line was joined to: the latest `seq` at or before
-   * `occurredAt`, or `null` while no message qualifies yet (AD-14). */
-  anchorSeq: number | null;
-  /** How far the messages were read when the join was made (AD-14). */
-  joinedUptoSeq: number | null;
 }
 
 /** The sentence a `log.edit` replaced, written in the same transaction (AD-11). */

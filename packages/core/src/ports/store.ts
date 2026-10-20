@@ -159,7 +159,14 @@ export type IngestResult =
       message: string;
     };
 
-/** Everything a session holds, in `seq` order. */
+/**
+ * Everything a session holds. The messages are in conversation order, which is
+ * `occurredAt` ascending; two messages at the same instant come back in no
+ * defined order (AD-8, migration 0006). A tool note follows its message's
+ * instant, then its message, then its own `ordinal` — so one message's notes
+ * stay together even when two messages share an instant — and a note whose
+ * message is not stored comes last rather than disappearing.
+ */
 export interface SessionContents {
   session: Session;
   messages: readonly Message[];
@@ -240,7 +247,7 @@ export interface SessionStore {
    *     `null` must not erase what an earlier read did know.
    *   * the cursor only moves forward. It is replaced when the batch reset it,
    *     or when the session has no cursor message stored, or when the new
-   *     cursor message is at or after the stored one in `seq` — so two hooks
+   *     cursor message was uttered at or after the stored one — so two hooks
    *     that overlap, the older one arriving last, cannot wind the session back
    *     to a message the newer one had already passed.
    *   * `cursorReset` surfaces as the `CURSOR_RESET` warning, never silently.

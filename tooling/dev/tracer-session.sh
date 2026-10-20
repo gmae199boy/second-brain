@@ -77,10 +77,10 @@ echo "그다음 들어간 내용을 보고, 같은 턴을 다시 수집해도 �
 echo "않는지 확인하세요:"
 echo
 echo "  sqlite3 $home/brain.db \\"
-echo "    'select seq, role, substr(body, 1, 40) from messages order by seq'"
+echo "    'select occurred_at, role, substr(body, 1, 40) from messages order by occurred_at'"
 echo "  sqlite3 $home/brain.db 'select id, name, is_self from users'"
 echo
-echo "기대 결과: 대화가 seq 0부터 일어난 순서대로 있고, users에는 한 행이 있으며,"
+echo "기대 결과: 대화가 일어난 시각 순서로 있고, users에는 한 행이 있으며,"
 echo "같은 payload를 다시 수집해도 건수가 바뀌지 않습니다."
 echo
 echo "$home 밖은 아무것도 건드리지 않았습니다. 다 쓰면 지우세요:"

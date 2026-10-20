@@ -8,22 +8,27 @@ export type MessageRole = 'user' | 'assistant';
 export interface Message {
   /** UUIDv7 minted by whoever creates the row (AD-8). */
   id: string;
-  /** Key together with `harnessMessageId`, and again with `seq`. */
+  /**
+   * Key together with `harnessMessageId`, and that pair is the whole of the
+   * message's identity: it carries no number of its own (AD-8, migration
+   * 0006). The harness named the message, so a transcript whose front was
+   * rewritten by a compact or a fork still cannot turn one stored message into
+   * another.
+   */
   sessionId: string;
   harnessMessageId: string;
-  /**
-   * Position in the session: 0, 1, 2, …, chosen by the store inside the insert
-   * transaction, from the order of the batch (AD-4, AD-8). Once given it never
-   * changes, so a transcript whose front was rewritten by a compact or a fork
-   * leaves every stored message where it was.
-   */
-  seq: number;
   role: MessageRole;
   /** Model that produced the message. Recorded only; it changes nothing (AD-4). */
   model: string | null;
   /** As the harness gave it, store-time masking aside (AD-11). */
   body: string;
-  /** When the message was uttered, not when it reached the DB (AD-13). */
+  /**
+   * When the message was uttered, not when it reached the DB (AD-13). It is
+   * also the conversation order: a read hands the messages back by it, so a
+   * message that arrives in a later batch is read where it was uttered rather
+   * than at the end. The order of two messages at the same instant is not
+   * defined (AD-8, migration 0006).
+   */
   occurredAt: Date;
   /**
    * The branch the line carried, exactly as it carried it, or `null` for a line

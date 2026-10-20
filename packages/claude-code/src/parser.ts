@@ -117,11 +117,13 @@ interface ParseStart {
  * that was dropped arrives later when the parser version moves and the session
  * is read again.
  *
- * It says nothing about `seq`. The order of the array is the order of the file,
- * and the number is the store's (AD-8). Ordering is by position in the file and
- * never by timestamp: Claude Code writes in order, and sorting by a clock would
- * reorder two messages of the same millisecond differently on different runs —
- * and a transcript really does carry lines whose stamps go backwards.
+ * It numbers nothing and sorts nothing. The array comes out in the order of the
+ * file and never in the order of a clock: Claude Code writes in order, and
+ * sorting by a timestamp would reorder two lines of the same millisecond
+ * differently on different runs — and a transcript really does carry lines
+ * whose stamps go backwards. What a stored message is read back in order *by*
+ * is its own `occurredAt`, and that is the store's business, not this one's
+ * (AD-8, migration 0006).
  *
  * Lines are separated by `\n` alone. U+2028 and U+2029 are characters inside a
  * JSON string here, not line breaks, and a raw one in a body is read as part of

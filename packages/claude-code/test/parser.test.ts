@@ -419,13 +419,19 @@ describe('the Claude Code parser', () => {
     expect(result.cursorReset).toBe(false);
   });
 
-  it('says nothing about seq: the order of the array is all it claims', () => {
+  it('numbers nothing: the order of the array is all it claims', () => {
+    // A message has no number anywhere, the parser's included (migration
+    // 0006): the harness id is its identity and its instant is its place in
+    // the conversation, both of which the lines above already check.
     const result = claudeCodeParser().parse(transcript);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
+    const positional = ['seq', 'index', 'ordinal', 'position'];
     for (const message of result.messages) {
-      expect(message).not.toHaveProperty('seq');
+      for (const field of positional) {
+        expect(message).not.toHaveProperty(field);
+      }
     }
   });
 

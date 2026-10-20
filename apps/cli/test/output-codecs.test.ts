@@ -164,7 +164,9 @@ function probeFrom(home: string): OutputProbe {
   const database = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
   try {
     const bodies = (
-      database.prepare('select body from messages order by seq').all() as { body: string }[]
+      database.prepare('select body from messages order by occurred_at').all() as {
+        body: string;
+      }[]
     ).map((row) => row.body);
     const toolNotes = database
       .prepare('select tool, target from tool_notes order by ordinal')

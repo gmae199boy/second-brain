@@ -16,7 +16,8 @@ export interface MemoryParserOptions {
  * without any harness format in Core (AD-4). The messages come out in the
  * order the file holds them and the tool-note ordinal from the order inside a
  * message, which makes the result a pure function of the content and the cursor
- * (AD-4). It says nothing about `seq`: that is the store's (AD-8).
+ * (AD-4). It numbers nothing and sorts nothing: reading a message back in
+ * conversation order is the store's, by `occurredAt` (AD-8, migration 0006).
  *
  * ```json
  * { "startSource": "startup",
