@@ -37,17 +37,17 @@ sessions       id, workspace_id? (프로젝트 없는 세션을 직접 넣을 �
                continued_from_session_id?, continuation_kind? (resume | handoff),
                work_context_id? (예약: 여러 세션이 한 작업을 이을 때),
                ingest_source (live | import), ingested_at, ingest_status, metadata jsonb
-messages       id, session_id, seq, role, model?, occurred_at, body (원문 그대로)
-tool_notes     id, session_id, message_id?, seq, tool, target, ok, occurred_at
+messages       id, session_id, role, model?, occurred_at, body (원문 그대로)
+tool_notes     id, session_id, message_id?, ordinal, tool, target, ok
 log_entries    id, kind (progress | decision | rule | preference), text, reason?,
-               session_id, occurred_at, message_seq? (수집 후 채우는 파생값), author_model,
+               session_id, occurred_at, author_model,
                -- decision / preference
                subject?, status? (active | superseded), supersedes_id?,
                -- rule: text는 출처 메시지의 인용
                quote_message_id?, quote_start?, quote_end?,
                rule_state? (on | off), only_project_id? (적용 범위 제한이 있을 때만)
 log_entry_edits id, log_entry_id, previous_text, edited_at
-chunks         id, session_id, message_seq_from, message_seq_to, body
+chunks         id, session_id, from_at, to_at, body
 embeddings     id, target_kind (chunk | log_entry), target_id, index_config_id, vector
 index_configs  id, embedding_provider, embedding_model, dimensions, chunk_target_chars
 ingest_failures id, harness, harness_session_id, stage, error, occurred_at
@@ -58,7 +58,7 @@ ingest_failures id, harness, harness_session_id, stage, error, occurred_at
 - **프로젝트 없는 세션의 워크스페이스**: `sessions.workspace_id`로 직접 넣는다(UJ-6의 Keyboard). 프로젝트가 있으면 워크스페이스는 프로젝트를 따라간다.
 - **"나"는 테이블이 아니라 전체 그 자체다.** 규칙의 `only_project_id`는 꼬리표와 별개인 적용 범위이고 기본은 비어 있다(어디서나).
 - **규칙은 인용이다**(FR-19): `text`는 `quote_message_id`의 `quote_start..quote_end` 구간과 글자 단위로 같아야 한다. 에이전트는 구간만 고른다. 수집 전에 적히면 구간 대신 문장을 받아 두고, 수집 후 원문과 대조해 인용 위치를 확정한다. 대조에 실패하면 규칙을 켜지 않고 점검에 올린다.
-- **join**: 작업 로그는 시각을 기록하고 "그 시각 직전의 메시지"로 대화에 이어진다. `message_seq`는 수집 후 채우는 파생값이다(§5).
+- **join**: 작업 로그는 시각을 기록하고, 그 시각으로 대화 속 자리가 정해진다. 메시지와의 연결은 저장하지 않는다(§5, 2026-10-20).
 - **세션과 실행의 분리**: 초안 14·38절은 Session(작업 맥락)과 Execution(에이전트 실행 한 번)을 구분한다. slice 1은 Harness 세션 하나를 세션 한 행으로 두지만, 실행 속성을 한 묶음으로 표시해 두고 `continuation_kind`·`work_context_id`를 예약해, 한 작업에 Harness 둘이 올 때 재설계가 되지 않게 한다.
 - **벡터를 따로 둔다**: 조각과 로그 행에 `vector(1024)`를 박으면 색인 설정을 바꿀 때(FR-11) 스키마가 걸린다. `embeddings`를 분리해 설정별로 공존하게 한다. pgvector 인덱스는 차원이 고정이라 설정별 부분 인덱스나 테이블이 필요할 수 있다 — architecture에서 정한다.
 - **수정 이력**: 여러 번 고쳐도 남아야 하므로(FR-22) `log_entry_edits`로 둔다.
@@ -108,7 +108,7 @@ FR-7은 "에이전트가 시키지 않아도 적는다"를 요구한다. 수단�
 - 수집 원천은 hook이 넘겨주는 transcript 경로의 jsonl. 메시지별 모델명, 세션 ID, cwd, git 브랜치, 버전, 타임스탬프가 들어 있다.
 - 변환 규칙(시험의 `convert.py`): user/assistant의 text 블록만 본문으로, tool_use는 도구 메모 한 줄로, tool_result·system·meta는 버림. 7.72MB → 50.7KB(1/150).
 - **쓰기 API는 둘로 나눈다**(사용자 확인): 대화 쌓기(`sessions.ingest` — hook이 호출, 여러 건, 멱등)와 로그 쌓기(`log.append` — 에이전트가 호출, 한 줄). 로그는 hook이 쓸 수 없다. 문장을 쓰는 것은 에이전트다. 조회(`context`, `recall`, `expand`)는 별개의 읽기 API.
-- **작업 로그와 수집 시점**: 로그는 세션 중에 적히는데 메시지는 세션 끝에 수집되면, 로그가 먼저 도착한다. 권장: 두 API 모두 `(harness, harness_session_id)`를 열쇠로 쓰고, `log.append`는 처음 보는 세션이면 빈 세션을 먼저 만든다. 로그는 메시지 순번 대신 **시각**을 기록하고, join은 "로그 시각 직전의 메시지"로 맞춘다(스케치의 `message_seq`는 수집 후 채우는 파생값). 대안은 턴마다 증분 수집(`Stop` hook은 턴마다 발화). PRD §8-7.
+- **작업 로그와 수집 시점**: 로그는 세션 중에 적히는데 메시지는 세션 끝에 수집되면, 로그가 먼저 도착한다. 권장: 두 API 모두 `(harness, harness_session_id)`를 열쇠로 쓰고, `log.append`는 처음 보는 세션이면 빈 세션을 먼저 만든다. 로그는 메시지 순번 대신 **시각**을 기록하고, join은 "로그 시각 직전의 메시지"로 맞춘다(연결은 저장하지 않는다, 2026-10-20). 대안은 턴마다 증분 수집(`Stop` hook은 턴마다 발화). PRD §8-7.
 - **재시도의 주체**: 데몬이 없으므로 밀린 수집·색인·인용 대조는 다음 `SessionStart` hook이나 점검 도구가 실행될 때 처리한다. 수집이 Claude Code hook에만 얹히면 다른 Harness를 붙일 때 다시 만들어야 하므로, hook은 "밀린 일을 처리하라"는 SDK 호출 하나만 부르게 한다(PRD §8-7).
 - **세션 ID 전달**: Claude Code는 hook에 세션 ID를 넘긴다. `SessionStart` hook이 그 값을 세션 환경에 심어 두면 에이전트가 부르는 `brain log`가 자동으로 그 세션에 붙는다.
 - 참고: Hindsight의 Claude Code hook 패키지도 `SessionStart`·`UserPromptSubmit`·`Stop`을 쓰고, 대화 턴 + 도구명 한 줄만 보낸다.

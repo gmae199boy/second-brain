@@ -1,0 +1,2065 @@
+diff --git a/README.md b/README.md
+index 734d31e..cea8793 100644
+--- a/README.md
++++ b/README.md
+@@ -300,6 +300,18 @@ hook이 내는 줄입니다. 도구 메모 대상은 셸 `NAME=value` 규칙도
+ 트랜스크립트 — compact, fork — 에서도 저장된 메시지의 번호는 그대로 있고, 그
+ 앞에 새로 온 것이 다음 빈 번호를 받습니다.
+ 
++읽을 때의 순서는 `seq`가 아니라 `occurred_at`이고, 같은 시각끼리는 `seq`입니다.
++`seq`는 **들어온** 순서라서, 파서 버전이 올라가 대화 중간의 메시지가 나중
++배치로 들어오면 그 메시지는 대화 끝 뒤의 번호를 받습니다 — 저장된 번호는 바꾸지
++않고, 읽을 때 말해진 자리로 돌려놓습니다. 도구 메모도 자기 메시지의 그 자리를
++따라갑니다.
++
++세션이 시작한 이유(`sessions.start_source`)는 트랜스크립트의 **첫**
++`SessionStart` 첨부에서 오고, 한 번 저장되면 바뀌지 않습니다. 한 트랜스크립트는
++시작마다 첨부가 하나씩 쌓이므로(`startup` 뒤의 `resume`, compact 뒤의
++`compact`), 마지막 값은 "그 뒤에 무슨 일이 있었나"이고 이 칸이 답하는 것은 "왜
++시작했나"입니다.
++
+ 데이터베이스에 쓸 수 없을 때 — 다른 프로세스가 쓰기 잠금을 예산보다 오래 쥐고
+ 있을 때, 파일이 없을 때, 저장된 스키마 버전이 이 빌드의 것과 다를 때 — 턴은
+ 실패하지 않습니다. "이 세션을 다시 수집할 것" 한 줄이 `~/.second_brain/spool/`에
+diff --git a/_bmad-output/personal-brain/deferred-work.md b/_bmad-output/personal-brain/deferred-work.md
+index dd9f5c3..24c2985 100644
+--- a/_bmad-output/personal-brain/deferred-work.md
++++ b/_bmad-output/personal-brain/deferred-work.md
+@@ -78,7 +78,8 @@
+ | 2.9 deferred: 영어 키워드 과잉 가림, 한국어 표현 놓침 (`story-untitled-9-plan.md` frontmatter) | 해결됨(2.17, 2026-10-20, `SECRET_PATTERN_VERSION = '2'`). 과잉 가림: 영어 키워드의 **따옴표 없는** 값에 모양 규칙 셋 — 호출(`parse(input)`), 숫자만(`{"token": 123}`), 영문자 단어 뒤에 또 영문자 단어(`see the README`)는 가리지 않는다. 놓침: 한국어 구분자에 조사(`은는이가을를도`)와 공백을 더해 `비밀번호 X`·`비밀번호가 X`를 잡는다. 값 끊김: 값 문자 집합이 `!`·`?`·`.`·`:`·괄호를 품고 공백·따옴표·`,`·`;`·전각 구두점·한글에서만 멈추며, 끝의 짝 없는 닫는 괄호는 뗀다. (이전 처분: epic 2 story 17(마스킹 B에서 패턴 버전 2로, 값 끊김 포함, 2026-10-19)) |
+ | auto-build 커밋을 이력에서 빼기 (2026-10-18) | push 전, 사용자(티켓 밖). 끝나면 `app-ref`·`version`·`baseline_revision`·커밋 번호를 다시 맞춘다 |
+ | 무인 루프 v2가 커밋을 기다리지 않음 (2026-10-18) | 저장소 밖 도구. 2.10~를 무인으로 돌리기 전에 고친다 |
+-| 2.7 follow-up 리뷰 (2026-10-18) | 리뷰 끝남(2026-10-20, `epic-capture/story-transcript-parser-follow-up-review.md`, 지적 21건). 수정은 epic 2 story 21(수집 경로 보강)·22(보고 판정·출처, "has not reported yet" 포함)·23(parser v4)과 17·18 보강이 맡는다 |
++| 2.7 follow-up 리뷰 (2026-10-18) | 리뷰 끝남(2026-10-20, `epic-capture/story-transcript-parser-follow-up-review.md`, 지적 21건). 수정은 epic 2 story 21(수집 경로 보강)·22(보고 판정·출처, "has not reported yet" 포함)·23(parser v4)과 17·18 보강이 맡는다. #21은 17이, #10·#16~#20은 21이 닫았다(아래 두 항목) |
++| 2.7 follow-up 리뷰 #10·#16~#20: 수집 경로 보강 | 해결됨(21, 2026-10-20). #16: 메시지를 찾지 못한 reset 읽기도 Store `ingest`까지 가므로 `CURSOR_RESET`이 나오고, 배치 커서가 null이면 세션 커서를 지운다(다음 읽기는 맞출 커서가 없어 경고하지 않는다). #17: 배치가 읽기 시작 때의 커서 `IngestTracking.cursorBase`를 들고 가고, reset 이동은 "지금 커서 = 그 기준"일 때만 허용한다(아니면 `seq` 전진 규칙). #10: `readSession`은 `occurred_at`, 같으면 `seq` 순서로 읽고 도구 메모는 자기 메시지의 그 자리를 따른다(`seq`는 그대로 들어온 순서다). #18: parser는 **첫** `SessionStart` 값을 내고 Store는 `start_source is null`일 때만 쓴다. #19: SQLite `ensureSession`의 `toSession`과 `recordTranscriptFile` 전체가 `DB_UNAVAILABLE`로 답하고(외래 키 위반은 그대로 예외 — 호출자 버그다), Core ingest는 내역 기록의 예외를 삼킨다. #20: 증분 읽기가 앞부분을 sha256 한 번만 지나고(`Hash.copy()`로 커서 지문을 이어 만든다), 커서 줄을 뒤에서부터 찾고, `start_source`는 첫 값에서 멈추고, 줄 번호는 오류 때만 세고, task-notification의 `agentId`는 앞부분을 한 번만(늦게) 모은 집합으로 본다 |
+ | 2.7 follow-up 리뷰 #21: 500자로 자른 도구 메모 대상 끝에 걸친 키 조각 | 해결됨(2.17, 2026-10-20). 상한이 Core 상수 `TOOL_NOTE_TARGET_LIMIT`가 되고(`TOOL_TARGET_LIMIT`가 그 값을 쓴다), 출력의 `maskToolNoteTarget`이 상한에 닿은 대상의 마지막 토큰을 `[REDACTED:truncated]`로 가린다(토큰의 시작은 마지막 공백 뒤와 마지막 가린 표시의 끝 중 더 뒤쪽, 길이 0이면 가리지 않음). 저장본은 그대로다 |
+ | 출력 가리기의 남은 위험 (2.17, 2026-10-20) | 셋 다 받아들인 대가다. (1) 출력 가리기는 패턴이 아는 것만 가리고, 저장소 파일(`brain.db`·`-wal`·`-shm`)에는 비밀이 원문으로 남는다 — 지키는 것은 AD-10(권한 0600, 동기화 폴더 금지)이고, 저장본에서도 지우려면 `messages redact`(2.13)다. (2) 잘린 꼬리 규칙은 상한에 닿은 대상의 마지막 토큰이 평범한 단어여도 가린다(출력에서만). (3) 영어 키워드의 따옴표 없는 값 중 모양 규칙에 걸리는 것은 가리지 않는다 — 숫자만인 값(`password: 1234`), 영문자만이고 같은 줄에 영문자 단어가 뒤따르는 값(`secret: hunterpass and done`), 그리고 후속 리뷰로 더한 자리 표시·상태 값(`ok`·`null`·`***`·`<...>`·`$NAME` 모양이면 진짜 비밀이어도 가리지 않는다). 한국어도 같은 쪽으로 좁혔다(후속 리뷰, 2026-10-20) — `암호`는 공백 구분자를 더는 받지 않으므로 "암호 Tiger2024"는 가려지지 않고(`암호: `·`암호가 ` 형태는 그대로 가린다), `비밀번호`·`패스워드`의 공백 형태도 영문자만인 값 뒤에 같은 줄의 단어가 이어지면 가리지 않는다("비밀번호 input 필드"가 문장이기 때문이다) |
+ | 출력에 패턴 버전 도장이 없음 (2.17 후속 리뷰, 2026-10-20) | 오래 남는 출력을 쓰는 에픽이 맡는다 — 미러 파일·복제 payload·내보내기는 가린 결과와 함께 `SECRET_PATTERN_VERSION`을 적어야 한다(AD-11, 기록은 `pattern_version`을 남기는데 출력은 아무것도 남기지 않는다). 지금 출력은 한 번 읽고 사라지는 줄과 엔벨로프뿐이라 어느 버전이 가렸는지 되물을 자리가 없다. epic-recall-and-mirror·epic-replicas·epic-operations |
+diff --git a/apps/cli/test/sessions-ingest.test.ts b/apps/cli/test/sessions-ingest.test.ts
+index d387aed..71a0afc 100644
+--- a/apps/cli/test/sessions-ingest.test.ts
++++ b/apps/cli/test/sessions-ingest.test.ts
+@@ -352,6 +352,118 @@ async function handbackTranscriptIn(
+   return path;
+ }
+ 
++/** The cursor the one stored session holds, both halves of it. */
++function storedCursor(
++  path: string,
++): { last_harness_message_id: string | null; cursor_fingerprint: string | null } {
++  const database = new DatabaseSync(path, { readOnly: true });
++  try {
++    return database
++      .prepare('select last_harness_message_id, cursor_fingerprint from sessions')
++      .get() as { last_harness_message_id: string | null; cursor_fingerprint: string | null };
++  } finally {
++    database.close();
++  }
++}
++
++/** Why the harness started the one stored session, as the row holds it. */
++function startSourceIn(path: string): string | null {
++  const database = new DatabaseSync(path, { readOnly: true });
++  try {
++    return (
++      database.prepare('select start_source from sessions').get() as {
++        start_source: string | null;
++      }
++    ).start_source;
++  } finally {
++    database.close();
++  }
++}
++
++/**
++ * A `started_at` the column's `glob` check accepts and no calendar has, which
++ * is the shape of a row a human edited (follow-up review #19).
++ */
++function setStartedAt(path: string, value: string): void {
++  const database = new DatabaseSync(path);
++  try {
++    database.prepare('update sessions set started_at = ?').run(value);
++  } finally {
++    database.close();
++  }
++}
++
++/** The uuid these hand-written lines use for their nth line. */
++function lineId(serial: number): string {
++  return `00000000-0000-4000-8000-${String(serial).padStart(12, '0')}`;
++}
++
++/** One turn of conversation, in the shape the editor writes one. */
++function userLine(serial: number, body: string, at: string): string {
++  return JSON.stringify({
++    parentUuid: null,
++    isSidechain: false,
++    cwd: '/demo/repo',
++    gitBranch: 'main',
++    uuid: lineId(serial),
++    timestamp: at,
++    type: 'user',
++    message: { role: 'user', content: body },
++  });
++}
++
++/** A `SessionStart` hook attachment, which is where the start source comes from. */
++function startLine(serial: number, source: string, at: string): string {
++  return JSON.stringify({
++    parentUuid: null,
++    isSidechain: false,
++    cwd: '/demo/repo',
++    uuid: lineId(serial),
++    timestamp: at,
++    type: 'attachment',
++    attachment: { type: 'hook_success', hookName: `SessionStart:${source}` },
++  });
++}
++
++/**
++ * A transcript of about 30 MB, which is the size of the largest one on the
++ * machine the follow-up review measured (#20).
++ *
++ * The size is in tool results, because that is where it comes from in a real
++ * session — a `tool_result` block is not a message and not a tool note, so the
++ * file is thirty megabytes the parser reads and three rows it stores. It ends
++ * with a message on purpose: the cursor names the last one, so an incremental
++ * read of it begins near the end of the file rather than near its front.
++ */
++function hugeTranscript(): string {
++  const chunk = 'x'.repeat(1_000_000);
++  const lines = [
++    startLine(0, 'startup', '2026-02-03T10:00:00.000Z'),
++    userLine(1, 'Index every file under notes/.', '2026-02-03T10:00:01.000Z'),
++  ];
++  for (let serial = 0; serial < 30; serial += 1) {
++    lines.push(
++      JSON.stringify({
++        parentUuid: null,
++        isSidechain: false,
++        cwd: '/demo/repo',
++        gitBranch: 'main',
++        uuid: lineId(100 + serial),
++        timestamp: '2026-02-03T10:00:02.000Z',
++        type: 'user',
++        message: {
++          role: 'user',
++          content: [
++            { type: 'tool_result', tool_use_id: `call-${String(serial)}`, content: chunk },
++          ],
++        },
++      }),
++    );
++  }
++  lines.push(userLine(2, 'That is all of them.', '2026-02-03T10:00:30.000Z'));
++  return `${lines.join('\n')}\n`;
++}
++
+ /** The session fixture in this test's own folder, whole or only its front. */
+ async function sessionTranscriptIn(home: string, lines?: number): Promise<string> {
+   const path = join(home, 'session.jsonl');
+@@ -709,15 +821,209 @@ describe('brain sessions ingest claude-code on a whole session', () => {
+           .prepare(`select count(*) as rows from messages where body like '%read every file%'`)
+           .get(),
+       ).toEqual({ rows: 0 });
+-      // And the session learned why the harness started it, from the last
+-      // `SessionStart` attachment in the file.
++      // And the session learned why the harness started it, from the *first*
++      // `SessionStart` attachment in the file: the `compact` further down is
++      // what happened to the session afterwards, not why it began (follow-up
++      // review #18).
+       expect(database.prepare('select start_source from sessions').get()).toEqual({
+-        start_source: 'compact',
++        start_source: 'startup',
+       });
+     } finally {
+       database.close();
+     }
+   });
++
++  it('warns once when the transcript is rewritten down to nothing, then stops', async () => {
++    const home = await installedHome();
++    const transcript = await sessionTranscriptIn(home);
++    const payload = stopPayload(transcript);
++    expect(
++      (await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code,
++    ).toBe(0);
++    const before = storedMessages(databaseIn(home));
++    expect(before.length).toBeGreaterThan(0);
++
++    // The same path, with no conversation in it any more. The cursor cannot be
++    // found, so the parse resets — and then it finds no message, which is the
++    // read that used to end before either the warning or the stale cursor was
++    // dealt with (follow-up review #16).
++    await writeFile(transcript, '{"type":"mode","mode":"normal","sessionId":"s"}\n', 'utf8');
++    const reset = await runBrain(
++      ['sessions', 'ingest', 'claude-code', '--json'],
++      home,
++      payload,
++    );
++
++    expect(reset.stderr).toBe('');
++    expect(reset.code).toBe(0);
++    const warned = JSON.parse(reset.stdout) as Envelope;
++    expect(warned.ok).toBe(true);
++    expect(warned.warnings).toEqual(['CURSOR_RESET']);
++    expect(warned.data).toMatchObject({
++      created: false,
++      inserted: { messages: 0, toolNotes: 0 },
++    });
++    // Nothing stored moved, and the cursor is gone rather than left naming a
++    // message of the file that was.
++    expect(storedMessages(databaseIn(home))).toEqual(before);
++    expect(storedCursor(databaseIn(home))).toEqual({
++      last_harness_message_id: null,
++      cursor_fingerprint: null,
++    });
++
++    // And the same read again is no longer a reset: there is no cursor left
++    // for it to fail to match, so the warning is raised once and not for ever.
++    const quiet = await runBrain(
++      ['sessions', 'ingest', 'claude-code', '--json'],
++      home,
++      payload,
++    );
++    expect(quiet.code).toBe(0);
++    expect((JSON.parse(quiet.stdout) as Envelope).warnings).toEqual([]);
++  });
++
++  it('keeps the start source it learned first, whatever a later read sees', async () => {
++    const home = await installedHome();
++    const transcript = join(home, 'restart.jsonl');
++    const payload = stopPayload(transcript);
++
++    // A session whose first read saw no `SessionStart` attachment at all: a
++    // transcript from before the plugin was installed, or a session nobody
++    // hooked. It knows nothing about the start and says so.
++    await writeFile(
++      transcript,
++      `${userLine(1, 'Where did we leave the import notes?', '2026-02-03T10:00:01.000Z')}\n`,
++      'utf8',
++    );
++    expect(
++      (await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code,
++    ).toBe(0);
++    expect(startSourceIn(databaseIn(home))).toBeNull();
++
++    // Reopened: the editor's attachment lands in the same file, behind what is
++    // already stored, so the session learns why it was started after the fact.
++    await appendFile(
++      transcript,
++      `${startLine(2, 'resume', '2026-02-03T10:05:00.000Z')}\n${userLine(
++        3,
++        'Carry on where we stopped.',
++        '2026-02-03T10:05:01.000Z',
++      )}\n`,
++      'utf8',
++    );
++    const second = await runBrain(
++      ['sessions', 'ingest', 'claude-code', '--json'],
++      home,
++      payload,
++    );
++    expect(second.code).toBe(0);
++    expect((JSON.parse(second.stdout) as Envelope).warnings).toEqual([]);
++    expect(startSourceIn(databaseIn(home))).toBe('resume');
++
++    // And then the front of the file is rewritten with a `startup` in front of
++    // it, which is what a fork into the same path looks like. The read answers
++    // `startup` — it is the first attachment the content now carries — and the
++    // stored `resume` is still the one that says why this session began.
++    await writeFile(
++      transcript,
++      `${startLine(4, 'startup', '2026-02-03T10:00:00.000Z')}\n${userLine(
++        5,
++        'Where were we?',
++        '2026-02-03T10:10:00.000Z',
++      )}\n`,
++      'utf8',
++    );
++    const third = await runBrain(
++      ['sessions', 'ingest', 'claude-code', '--json'],
++      home,
++      payload,
++    );
++    expect(third.code).toBe(0);
++    expect((JSON.parse(third.stdout) as Envelope).warnings).toEqual(['CURSOR_RESET']);
++    expect(startSourceIn(databaseIn(home))).toBe('resume');
++  });
++
++  it('ends with a code and no stack when a session row holds an impossible instant', async () => {
++    const home = await installedHome();
++    const transcript = await sessionTranscriptIn(home);
++    const payload = stopPayload(transcript);
++    expect(
++      (await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code,
++    ).toBe(0);
++
++    // A row a human edited. The column's own `glob` check is happy with it —
++    // four digits, two, two — and there is no such date, so the row is only
++    // wrong on the way back out (follow-up review #19).
++    setStartedAt(databaseIn(home), '2026-13-45T00:00:00.000Z');
++
++    const run = await runBrain(
++      ['sessions', 'ingest', 'claude-code', '--json'],
++      home,
++      payload,
++    );
++
++    // A coded answer and not a stack: from the hook's side a row it cannot read
++    // is a database it cannot reach, so the turn goes to the spool (AD-9).
++    expect(run.stderr).toBe('');
++    expect(run.code).toBe(0);
++    const envelope = JSON.parse(run.stdout) as Envelope;
++    expect(envelope.ok).toBe(true);
++    expect(envelope.warnings).toEqual(['SPOOLED', 'DB_UNAVAILABLE']);
++    expect(envelope.data).toMatchObject({ spooled: true });
++  });
++
++  it(
++    'reads a 30 MB transcript again inside the Stop hook budget',
++    async () => {
++      const home = await installedHome();
++      const transcript = join(home, 'huge.jsonl');
++      await writeFile(transcript, hugeTranscript(), 'utf8');
++      const payload = stopPayload(transcript);
++
++      // The first read is the one that pays for the whole file, and nothing
++      // budgets it: it happens once per session, off the hook path as often as
++      // not. What a Stop hook does every turn is the second one.
++      const first = await runBrain(
++        ['sessions', 'ingest', 'claude-code', '--json'],
++        home,
++        payload,
++      );
++      expect(first.stderr).toBe('');
++      expect(first.code).toBe(0);
++      expect((JSON.parse(first.stdout) as Envelope).data).toMatchObject({
++        created: true,
++        inserted: { messages: 2, toolNotes: 0 },
++      });
++
++      await appendFile(
++        transcript,
++        `${userLine(9, 'And now the summary.', '2026-02-03T11:00:00.000Z')}\n`,
++        'utf8',
++      );
++      const started = performance.now();
++      const again = await runBrain(
++        ['sessions', 'ingest', 'claude-code', '--json'],
++        home,
++        payload,
++      );
++      const spent = performance.now() - started;
++
++      expect(again.stderr).toBe('');
++      expect(again.code).toBe(0);
++      expect((JSON.parse(again.stdout) as Envelope).data).toMatchObject({
++        created: false,
++        inserted: { messages: 1, toolNotes: 0 },
++      });
++      // The whole command, because that is what the hook waits for: the
++      // process, the file, the parse and the write. The budget is the Stop
++      // hook's five seconds (AD-6).
++      expect(
++        spent,
++        `the second ingest of a 30 MB transcript took ${String(Math.round(spent))}ms`,
++      ).toBeLessThan(5000);
++    },
++    120_000,
++  );
+ });
+ 
+ /**
+diff --git a/packages/claude-code/src/parser.ts b/packages/claude-code/src/parser.ts
+index d4e99d8..f8e0bf7 100644
+--- a/packages/claude-code/src/parser.ts
++++ b/packages/claude-code/src/parser.ts
+@@ -1,4 +1,4 @@
+-import { createHash } from 'node:crypto';
++import { createHash, type Hash } from 'node:crypto';
+ import type {
+   MessageRole,
+   ParseResult,
+@@ -68,13 +68,46 @@ interface PendingNote {
+   messagesBefore: number;
+ }
+ 
+-/** Where a parse starts, and whether the cursor it was given was any use. */
++/**
++ * Where a parse starts, whether the cursor it was given was any use, and the
++ * two things the content in front of that point has already been read for.
++ *
++ * Both of those exist so that the prefix of a transcript is walked once per
++ * parse rather than once per question asked of it. A 30 MB transcript is real
++ * (follow-up review #20), and the incremental read exists precisely so that a
++ * hook on a long session costs what the tail costs.
++ */
+ interface ParseStart {
+   /** Offset of the first line to read. */
+   offset: number;
+-  /** How many lines of the content come before it, for a line number. */
+-  linesBefore: number;
+   reset: boolean;
++  /**
++   * SHA-256 of the content up to `hashedTo`, still open. The cursor this parse
++   * produces continues from this state instead of hashing the same bytes again
++   * (`cursorFor`), so the prefix a fingerprint covers goes through SHA-256 once.
++   */
++  prefix: Hash;
++  /** How much of the content `prefix` has taken in. */
++  hashedTo: number;
++  /** Which agents the content in front of `offset` started (`agentIds`). */
++  agents: AgentIds;
++}
++
++/**
++ * Which agents the content in front of a line started, as the
++ * task-notification rule asks it (`readReport`).
++ *
++ * The question is whether `"agentId":"<id>"` appears anywhere before the line,
++ * and the answer has to be the same whether the parse began at the front of the
++ * file or at a cursor in the middle of it (Design Notes). So the prefix in
++ * front of the read is scanned once — lazily, because most reads never ask —
++ * and the lines of the read itself join it as they go past.
++ */
++interface AgentIds {
++  /** Whether anything before the line being judged carried this id. */
++  has(agentId: string): boolean;
++  /** Take in one line, once the line after it is the one being judged. */
++  note(line: string): void;
+ }
+ 
+ /**
+@@ -164,11 +197,18 @@ export function claudeCodeParser(): Parser {
+       const lastIndex = content.endsWith('\n') ? -1 : lines.length - 1;
+ 
+       let offset = start.offset;
++      /** The line before the one being read, for `AgentIds.note`. */
++      let behind = '';
+       for (const [index, line] of lines.entries()) {
+         const lineStart = offset;
+         // `+ 1` for the newline that separated it. On the final piece of a file
+         // with no trailing newline there is none, and nothing reads this.
+         offset += line.length + 1;
++        // Before anything may skip this line: the line before it is now in
++        // front of the one being judged, whatever happens to this one, and the
++        // task-notification rule asks what the content in front of a line said.
++        start.agents.note(behind);
++        behind = line;
+         if (line.trim() === '') continue;
+ 
+         const entry = readJson(line);
+@@ -177,7 +217,9 @@ export function claudeCodeParser(): Parser {
+           // line that is allowed to be half written, and skipped rather than
+           // refused (research §1).
+           if (index === lastIndex) continue;
+-          const number = start.linesBefore + index + 1;
++          // Counted only here, where a sentence needs it: every read would
++          // otherwise walk the prefix for a number nobody asks for (#20).
++          const number = countLines(content, start.offset) + index + 1;
+           return {
+             ok: false,
+             code: 'TRANSCRIPT_UNREADABLE',
+@@ -201,7 +243,7 @@ export function claudeCodeParser(): Parser {
+         // an `Agent` call and the report that call came back with.
+         readOutcomes(entry, outcomes);
+ 
+-        const message = readMessage(entry, content, lineStart);
++        const message = readMessage(entry, start.agents);
+         if (message !== undefined) {
+           messages.push(message);
+           lastMessageId = message.harnessMessageId;
+@@ -216,7 +258,7 @@ export function claudeCodeParser(): Parser {
+         parserVersion: CLAUDE_CODE_PARSER_VERSION,
+         messages,
+         toolNotes: resolveNotes(pending, outcomes, messages.length),
+-        cursor: cursorFor(messages, content, fingerprintEnd),
++        cursor: cursorFor(messages, content, fingerprintEnd, start),
+         cursorReset: start.reset,
+         // From the whole content and not from the part that was read, so an
+         // incremental parse answers the same as a full one (port contract).
+@@ -247,34 +289,125 @@ export function claudeCodeParser(): Parser {
+  * `null` instead, so the whole session is read again under the new rules.
+  */
+ function startFor(content: string, cursor: ParserCursor | null): ParseStart {
+-  if (cursor === null) return { offset: 0, linesBefore: 0, reset: false };
+-
+-  const pattern = new RegExp(`"uuid"\\s*:\\s*"${escapeForRegExp(cursor.lastHarnessMessageId)}"`, 'g');
+-  for (let match = pattern.exec(content); match !== null; match = pattern.exec(content)) {
+-    const lineStart = content.lastIndexOf('\n', match.index) + 1;
+-    const newline = content.indexOf('\n', match.index);
++  const fromTheFront = (reset: boolean): ParseStart => ({
++    offset: 0,
++    reset,
++    prefix: createHash('sha256'),
++    hashedTo: 0,
++    agents: agentIds(content, 0),
++  });
++  if (cursor === null) return fromTheFront(false);
++
++  // Backwards, because the cursor names a message near the end of the file it
++  // came out of: `lastIndexOf` reaches it after a few hundred bytes, where a
++  // forward scan reads the whole transcript to get there (#20). The key is
++  // searched for rather than the id alone, so `parentUuid` and `leafUuid` — a
++  // capital U, and the quote in front rules out both — do not have to be parsed
++  // to be rejected; `at > 0` is the end of the walk, because a JSON line opens
++  // with `{` and `"uuid"` can never sit at offset 0.
++  for (
++    let at = content.lastIndexOf(UUID_KEY);
++    at > 0;
++    at = content.lastIndexOf(UUID_KEY, at - 1)
++  ) {
++    if (!holdsValue(content, at + UUID_KEY.length, cursor.lastHarnessMessageId)) continue;
++    const lineStart = content.lastIndexOf('\n', at) + 1;
++    const newline = content.indexOf('\n', at);
+     const lineEnd = newline < 0 ? content.length : newline;
+ 
++    // The line is still parsed and the id checked again before any of it is
++    // believed, because a search is a search.
+     const entry = readJson(content.slice(lineStart, lineEnd));
+     if (entry === undefined) continue;
+     if (asString(entry['uuid']) !== cursor.lastHarnessMessageId) continue;
+-    if (readMessage(entry, content, lineStart) === undefined) continue;
+-    const fingerprint = createHash('sha256')
+-      .update(content.slice(0, lineEnd), 'utf8')
+-      .digest('hex');
+-    if (fingerprint !== cursor.fingerprint) continue;
++    const agents = agentIds(content, lineStart);
++    if (readMessage(entry, agents) === undefined) continue;
+ 
+-    return {
+-      offset: lineStart,
+-      linesBefore: countLines(content, lineStart),
+-      reset: false,
+-    };
++    // The prefix the fingerprint covers, hashed once and kept open: the cursor
++    // this parse ends with carries on from here (`cursorFor`). In practice this
++    // runs for one candidate — a fingerprint pins the whole prefix, so no two
++    // lines of one file can match the same one.
++    const prefix = createHash('sha256').update(content.slice(0, lineEnd), 'utf8');
++    if (prefix.copy().digest('hex') !== cursor.fingerprint) continue;
++
++    return { offset: lineStart, reset: false, prefix, hashedTo: lineEnd, agents };
+   }
+ 
+   // Gone, or the content in front of it is not what it was: a compact, a fork,
+   // a transcript rewritten underneath us. Reading it all again inserts nothing
+   // that is already stored, so this is a warning and not a failure (AD-4).
+-  return { offset: 0, linesBefore: 0, reset: true };
++  return fromTheFront(true);
++}
++
++/** The key a cursor's message is found by, as the harness writes it. */
++const UUID_KEY = '"uuid"';
++
++/**
++ * Whether the JSON text at `from` is `: "<value>"` — the one value this key may
++ * have for the line to be the cursor's.
++ *
++ * Spelled out rather than left to a pattern per candidate: it reads the few
++ * characters after the key and nothing else, and it takes the whitespace a
++ * pretty-printed line puts around the colon.
++ */
++function holdsValue(content: string, from: number, value: string): boolean {
++  let at = skipSpace(content, from);
++  if (content[at] !== ':') return false;
++  at = skipSpace(content, at + 1);
++  if (content[at] !== '"') return false;
++  at += 1;
++  return content.startsWith(value, at) && content[at + value.length] === '"';
++}
++
++function skipSpace(content: string, from: number): number {
++  let at = from;
++  while (content[at] === ' ' || content[at] === '\t') at += 1;
++  return at;
++}
++
++/** The `"agentId"` values of a stretch of content, as `AgentIds` collects them. */
++const AGENT_ID_PATTERN = /"agentId"\s*:\s*"([^"]*)"/;
++
++/**
++ * The agents a read has seen started, up to `boundary` and then line by line.
++ *
++ * The prefix scan is deferred until something asks, because only a
++ * task-notification line does and most reads carry none. It is also run over
++ * the content itself with the boundary as a stop, never over a copy of the
++ * prefix: slicing 30 MB to search it costs 30 MB (#20). The ids of the read's
++ * own lines may well arrive before the prefix is scanned — the result is one
++ * set either way, so the order they join in cannot change an answer.
++ */
++function agentIds(content: string, boundary: number): AgentIds {
++  const seen = new Set<string>();
++  let scanned = false;
++
++  const collect = (text: string, stop: number): void => {
++    // Nothing is in front of offset 0, which is every read from the front: the
++    // scan would walk the whole file to find a match it then throws away.
++    if (stop <= 0) return;
++    const pattern = new RegExp(AGENT_ID_PATTERN, 'g');
++    for (let match = pattern.exec(text); match !== null; match = pattern.exec(text)) {
++      if (match.index >= stop) return;
++      const found = match[1];
++      if (found !== undefined) seen.add(found);
++    }
++  };
++
++  return {
++    has(agentId: string): boolean {
++      if (!scanned) {
++        scanned = true;
++        collect(content, boundary);
++      }
++      return seen.has(agentId);
++    },
++    note(line: string): void {
++      // The cheap test first: almost no line carries one.
++      if (!line.includes('"agentId"')) return;
++      collect(line, line.length);
++    },
++  };
+ }
+ 
+ /**
+@@ -299,20 +432,32 @@ function cursorFor(
+   messages: readonly ParsedMessage[],
+   content: string,
+   end: number,
++  start: ParseStart,
+ ): ParserCursor | null {
+   const last = messages.at(-1);
+   if (last === undefined) return null;
+   return {
+     lastHarnessMessageId: last.harnessMessageId,
+-    fingerprint: createHash('sha256').update(content.slice(0, end), 'utf8').digest('hex'),
++    // Carried on from the state the start left, so the prefix a cursor read
++    // already hashed is not hashed a second time (#20). A `digest` on the
++    // state itself would close it, so the copy is what is finished.
++    fingerprint:
++      end < start.hashedTo
++        ? // Not reachable from a cursor read, whose first message is the
++          // cursor's own line and so never ends before it: here because a
++          // negative continuation would silently hash the wrong bytes.
++          createHash('sha256').update(content.slice(0, end), 'utf8').digest('hex')
++        : start.prefix
++            .copy()
++            .update(content.slice(start.hashedTo, end), 'utf8')
++            .digest('hex'),
+   };
+ }
+ 
+ /** One transcript line as a message, or `undefined` when it is not one. */
+ function readMessage(
+   entry: Record<string, unknown>,
+-  content: string,
+-  lineStart: number,
++  agents: AgentIds,
+ ): ParsedMessage | undefined {
+   const role = asRole(entry['type']);
+   if (role === undefined) return undefined;
+@@ -352,7 +497,7 @@ function readMessage(
+   // A delegated run's final report comes in on a user line, and it is the one
+   // thing worth recalling out of a whole subagent run. It is read as an
+   // assistant message with no model of its own.
+-  const report = handback ?? readReport(entry, message, content, lineStart);
++  const report = handback ?? readReport(entry, message, agents);
+   if (report !== undefined) {
+     return {
+       harnessMessageId,
+@@ -421,8 +566,7 @@ function readMessage(
+ function readReport(
+   entry: Record<string, unknown>,
+   message: Record<string, unknown>,
+-  content: string,
+-  lineStart: number,
++  agents: AgentIds,
+ ): string | undefined {
+   if (entry['type'] !== 'user') return undefined;
+ 
+@@ -445,7 +589,7 @@ function readReport(
+   // `</task-id>` must not swallow the id, and an id is one token anyway.
+   const taskId = between(notice, '<task-id>', '</task-id>', 'first')?.trim();
+   if (taskId === undefined || taskId === '') return undefined;
+-  if (!carriesAgentId(content.slice(0, lineStart), taskId)) return undefined;
++  if (!agents.has(taskId)) return undefined;
+ 
+   // The report ends at the last one, so a report that carries the closing tag
+   // inside it still comes out whole.
+@@ -593,7 +737,7 @@ function resolveNotes(
+ }
+ 
+ /**
+- * Why the harness started this session, from the last `SessionStart` hook
++ * Why the harness started this session, from the *first* `SessionStart` hook
+  * attachment in the content, or `null` when it carries none.
+  *
+  * The transcript says so because a hook ran: Claude Code renders the output of
+@@ -603,18 +747,23 @@ function resolveNotes(
+  * carries one; a transcript from before that, or from a session nobody hooked,
+  * says nothing and gets `null` rather than a guess.
+  *
+- * The *last* one, because a compact writes a new attachment onto the same
+- * transcript and the newest is why the session is running now.
++ * The first one, because a resume or a compact writes another attachment onto
++ * the same transcript and this column answers why the session *began*. Measured
++ * on this machine: 37 of 211 sessions carry more than one, 34 of them a
++ * `startup` followed by a `resume` — so taking the last turned a third of the
++ * column into "what happened to it most recently" (follow-up review #18). The
++ * store keeps the same rule from the other side: it writes the value only into
++ * a row that has none (`ports/store.ts`).
+  *
+- * It searches the content and then parses only the lines that matched, so it
+- * costs one scan rather than a parse of every line: `hookName` cannot be
+- * mistaken for text in a body, because a `"` inside a JSON string is written
+- * `\"`. Judged by `hookName` alone — the attachment carries `hookEvent` too,
+- * but not in every version that wrote a transcript this may read.
++ * It searches the content and then parses only the lines that matched, and it
++ * stops at the first answer, so an ordinary transcript costs a scan of its
++ * front rather than of the whole file: `hookName` cannot be mistaken for text
++ * in a body, because a `"` inside a JSON string is written `\"`. Judged by
++ * `hookName` alone — the attachment carries `hookEvent` too, but not in every
++ * version that wrote a transcript this may read.
+  */
+ function readStartSource(content: string): SessionStartSource | null {
+   const pattern = /"hookName"\s*:\s*"SessionStart:(startup|resume|clear|compact|fork)"/g;
+-  let found: SessionStartSource | null = null;
+ 
+   for (let match = pattern.exec(content); match !== null; match = pattern.exec(content)) {
+     const lineStart = content.lastIndexOf('\n', match.index) + 1;
+@@ -624,10 +773,10 @@ function readStartSource(content: string): SessionStartSource | null {
+     const attachment = asRecord(entry['attachment']);
+     if (attachment === undefined) continue;
+     const source = startSourceOf(asString(attachment['hookName']) ?? '');
+-    if (source !== null) found = source;
++    if (source !== null) return source;
+   }
+ 
+-  return found;
++  return null;
+ }
+ 
+ /** `SessionStart:<source>` as the source, or `null` for anything else. */
+@@ -684,17 +833,6 @@ function isForeignOrigin(value: unknown): boolean {
+   return kind === 'task-notification' || kind === 'peer';
+ }
+ 
+-/**
+- * Whether the content in front of a notification started the agent it names.
+- *
+- * A plain search, which is the point: the same search over the same prefix
+- * gives the same answer whether the parse started at the front of the file or
+- * at a cursor in the middle of it (Design Notes).
+- */
+-function carriesAgentId(before: string, agentId: string): boolean {
+-  return new RegExp(`"agentId"\\s*:\\s*"${escapeForRegExp(agentId)}"`).test(before);
+-}
+-
+ /**
+  * What one pair of tags holds, from the first opening tag to the first or the
+  * last closing one. Which of the two is the caller's: a value that may contain
+@@ -726,11 +864,6 @@ function countLines(content: string, offset: number): number {
+   return lines;
+ }
+ 
+-/** One literal, safe to put in a pattern. Ids are hex and dashes, but still. */
+-function escapeForRegExp(literal: string): string {
+-  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+-}
+-
+ function readJson(line: string): Record<string, unknown> | undefined {
+   try {
+     return asRecord(JSON.parse(line));
+diff --git a/packages/claude-code/test/parser.test.ts b/packages/claude-code/test/parser.test.ts
+index 25dac04..b837e69 100644
+--- a/packages/claude-code/test/parser.test.ts
++++ b/packages/claude-code/test/parser.test.ts
+@@ -258,6 +258,75 @@ function half(): string {
+   return `${session.split('\n').slice(0, HALF_LINES).join('\n')}\n`;
+ }
+ 
++/** The three lines the agent-id cases are built out of, in the file's shape. */
++function said(serial: number, body: string): string {
++  return JSON.stringify({
++    parentUuid: null,
++    isSidechain: false,
++    cwd: '/demo/workspace',
++    gitBranch: 'main',
++    uuid: id(serial),
++    timestamp: `2026-02-03T11:00:${String(serial % 60).padStart(2, '0')}.000Z`,
++    type: 'user',
++    message: { role: 'user', content: body },
++  });
++}
++
++/**
++ * The editor handing back the result of an `Agent` call that is still running:
++ * not a message — the only block is a `tool_result`, so nothing anybody said is
++ * in it — and the one line that carries the agent's id.
++ */
++function startedAgent(agentId: string, serial: number): string {
++  return JSON.stringify({
++    parentUuid: null,
++    isSidechain: false,
++    cwd: '/demo/workspace',
++    gitBranch: 'main',
++    uuid: id(serial),
++    timestamp: '2026-02-03T11:00:10.000Z',
++    type: 'user',
++    toolUseResult: { agentId, status: 'running' },
++    message: {
++      role: 'user',
++      content: [{ type: 'tool_result', tool_use_id: 'call-f1', content: 'The run started.' }],
++    },
++  });
++}
++
++/** The notification the editor writes when a delegated run comes back later. */
++function notification(taskId: string, serial: number): string {
++  return JSON.stringify({
++    parentUuid: null,
++    isSidechain: false,
++    cwd: '/demo/workspace',
++    gitBranch: 'main',
++    uuid: id(serial),
++    timestamp: '2026-02-03T11:00:20.000Z',
++    type: 'user',
++    origin: { kind: 'task-notification', taskId },
++    message: {
++      role: 'user',
++      content: `<task-notification><task-id>${taskId}</task-id><status>completed</status><result>Both checks passed.</result></task-notification>`,
++    },
++  });
++}
++
++/**
++ * One `SessionStart` hook attachment, in the shape the editor renders it: the
++ * source is in `hookName`, which is the only thing the parser reads it by.
++ */
++function startAttachment(source: string, serial: number): string {
++  return JSON.stringify({
++    parentUuid: null,
++    isSidechain: false,
++    type: 'attachment',
++    uuid: id(serial),
++    timestamp: '2026-02-03T10:00:00.000Z',
++    attachment: { type: 'hook_success', hookName: `SessionStart:${source}` },
++  });
++}
++
+ /** The same session with a line in front of the cursor's changed. */
+ function rewrittenSession(): string {
+   return session.replace(
+@@ -763,13 +832,65 @@ describe('the Claude Code parser on a whole session', () => {
+     expect(read?.body).toBe(report);
+   });
+ 
+-  it('takes the start source from the last SessionStart attachment', () => {
++  it('finds the agent of a notification in the content in front of the read', () => {
++    // The incremental read has to answer "did this session start that agent?"
++    // the same way the full read does, and the only evidence is in the stretch
++    // the incremental read never looks at (Design Notes). So: a line that
++    // started an agent, a turn after it, and then the notification — with the
++    // cursor on that turn.
++    const transcriptFor = (taskId: string): string =>
++      [
++        said(300, 'Start the two checks, please.'),
++        startedAgent('agent-f1', 301),
++        said(302, 'And summarise them when they land.'),
++        notification(taskId, 303),
++      ].join('\n');
++
++    const started = transcriptFor('agent-f1');
++    const front = claudeCodeParser().parse(
++      `${started.split('\n').slice(0, 3).join('\n')}\n`,
++    );
++    expect(front.ok).toBe(true);
++    if (!front.ok) return;
++    expect(front.cursor?.lastHarnessMessageId).toBe(id(302));
++
++    const incremental = claudeCodeParser().parse(started, front.cursor);
++    const whole = claudeCodeParser().parse(started);
++    expect(incremental.ok).toBe(true);
++    expect(whole.ok).toBe(true);
++    if (!incremental.ok || !whole.ok) return;
++    expect(incremental.cursorReset).toBe(false);
++    expect(whole.messages.at(-1)).toMatchObject({
++      harnessMessageId: id(303),
++      body: 'Both checks passed.',
++      isSubagentReport: true,
++    });
++    // From the cursor's own message on, which is the second of the three.
++    expect(incremental.messages).toEqual(whole.messages.slice(1));
++
++    // And an agent nobody here started is not a report of this session, read
++    // either way.
++    const foreign = transcriptFor('agent-zz');
++    const unknownWhole = claudeCodeParser().parse(foreign);
++    const unknownTail = claudeCodeParser().parse(foreign, front.cursor);
++    expect(unknownWhole.ok).toBe(true);
++    expect(unknownTail.ok).toBe(true);
++    if (!unknownWhole.ok || !unknownTail.ok) return;
++    expect(unknownWhole.messages.map((message) => message.harnessMessageId)).toEqual([
++      id(300),
++      id(302),
++    ]);
++    expect(unknownTail.messages.map((message) => message.harnessMessageId)).toEqual([id(302)]);
++  });
++
++  it('takes the start source from the first SessionStart attachment', () => {
+     const result = claudeCodeParser().parse(session);
+     expect(result.ok).toBe(true);
+     if (!result.ok) return;
+     // The file carries `startup` and then, after the compact, `compact`. The
+-    // newest is why the session is running now.
+-    expect(result.startSource).toBe('compact');
++    // first is why the session began, which is what this column answers; the
++    // compact is what happened to it afterwards (follow-up review #18).
++    expect(result.startSource).toBe('startup');
+ 
+     const beforeTheCompact = claudeCodeParser().parse(half());
+     expect(beforeTheCompact.ok).toBe(true);
+@@ -777,6 +898,41 @@ describe('the Claude Code parser on a whole session', () => {
+     expect(beforeTheCompact.startSource).toBe('startup');
+   });
+ 
++  it('reads each of the five sources the harness names, and none of anything else', () => {
++    for (const source of ['startup', 'resume', 'clear', 'compact', 'fork'] as const) {
++      const result = claudeCodeParser().parse(`${startAttachment(source, 100)}\n`);
++      expect(result.ok).toBe(true);
++      if (!result.ok) return;
++      expect(result.startSource).toBe(source);
++    }
++
++    // A session reopened: 34 of the 37 transcripts on this machine that carry
++    // more than one attachment are a `startup` followed by a `resume`, and the
++    // session still began with the `startup`.
++    const reopened = claudeCodeParser().parse(
++      `${startAttachment('startup', 100)}\n${startAttachment('resume', 101)}\n`,
++    );
++    expect(reopened.ok).toBe(true);
++    if (!reopened.ok) return;
++    expect(reopened.startSource).toBe('startup');
++
++    // Another hook's attachment says nothing about the start, and neither does
++    // a `SessionStart` whose source this parser does not know.
++    for (const hookName of ['Stop', 'SessionStart:somethingElse']) {
++      const result = claudeCodeParser().parse(
++        `${JSON.stringify({
++          type: 'attachment',
++          uuid: id(102),
++          timestamp: '2026-02-03T10:00:00.000Z',
++          attachment: { type: 'hook_success', hookName },
++        })}\n`,
++      );
++      expect(result.ok).toBe(true);
++      if (!result.ok) return;
++      expect(result.startSource).toBeNull();
++    }
++  });
++
+   it('answers for the whole content even when it read only the tail', () => {
+     const first = claudeCodeParser().parse(half());
+     expect(first.ok).toBe(true);
+@@ -794,7 +950,28 @@ describe('the Claude Code parser on a whole session', () => {
+     expect(incremental.toolNotes).toEqual([SESSION_NOTES[3]]);
+     expect(incremental.cursor).toEqual(whole.cursor);
+     // The start source is a fact about the content, not about the part read.
+-    expect(incremental.startSource).toBe('compact');
++    expect(incremental.startSource).toBe('startup');
++  });
++
++  it('answers with the first start source even when a resume is behind the cursor', () => {
++    // A session the person reopened: the `resume` attachment is in the stretch
++    // only the incremental read sees, and the answer is still the `startup` at
++    // the front of the file — which is what makes the incremental read and the
++    // full one agree (port contract).
++    const first = claudeCodeParser().parse(half());
++    expect(first.ok).toBe(true);
++    if (!first.ok) return;
++
++    const reopened = `${session}${startAttachment('resume', 200)}\n`;
++    const incremental = claudeCodeParser().parse(reopened, first.cursor);
++    const whole = claudeCodeParser().parse(reopened);
++
++    expect(incremental.ok).toBe(true);
++    expect(whole.ok).toBe(true);
++    if (!incremental.ok || !whole.ok) return;
++    expect(incremental.cursorReset).toBe(false);
++    expect(incremental.startSource).toBe('startup');
++    expect(whole.startSource).toBe('startup');
+   });
+ 
+   it('reads from the front and says so when the front of the file changed', () => {
+diff --git a/packages/core/src/domain/ingest-batch.ts b/packages/core/src/domain/ingest-batch.ts
+index 8b958e3..53e177f 100644
+--- a/packages/core/src/domain/ingest-batch.ts
++++ b/packages/core/src/domain/ingest-batch.ts
+@@ -71,19 +71,39 @@ export interface IngestToolNote extends ParsedToolNote {
+ export interface IngestTracking {
+   /** The parser that produced the batch; recorded on the session (AD-4). */
+   parserVersion: string;
+-  /** Where the parser stopped. Stored with the batch, in one transaction (AD-7). */
++  /**
++   * Where the parser stopped, or `null` for a read that found no message at
++   * all. Stored with the batch, in one transaction (AD-7).
++   */
+   cursor: ParserCursor | null;
+   /**
+    * The old cursor was gone or did not match, so the parser read from the
+    * start. Ingest is idempotent, so this only raises a `CURSOR_RESET`
+-   * warning (AD-4).
++   * warning (AD-4) — and it is what lets `cursor` replace the stored one even
++   * when it points further back, because the front of the transcript is not
++   * what it was (`ports/store.ts`).
+    */
+   cursorReset: boolean;
+   /**
+-   * Why the harness started the session, when the transcript said so. The store
+-   * writes it only when it is there: a read that saw no `SessionStart` hook
+-   * attachment knows nothing about the start, and `null` must not erase what an
+-   * earlier read did know.
++   * The cursor the session held when this read started, which is what the store
++   * compares against before it lets a reset move the cursor backwards.
++   *
++   * It is the raw stored cursor — whatever `findSession` brought back, whatever
++   * parser version left it, and `null` for a session that is not stored yet —
++   * and never the cursor that was handed to the parser. Two reads of one
++   * session can overlap, and a reset cursor from the one that started first
++   * must not wind the session back over what the second already stored: the
++   * store moves it only while the session still stands where this read found it
++   * (Design Notes, story 21).
++   */
++  cursorBase: ParserCursor | null;
++  /**
++   * Why the harness started the session, when the transcript said so, and the
++   * *first* such answer the content carried. The store writes it only when the
++   * session has none yet: a read that saw no `SessionStart` hook attachment
++   * knows nothing about the start, and `null` must not erase what an earlier
++   * read did know — and a later attachment (a resume, a compact) is not why the
++   * session began (`ports/parser.ts`).
+    */
+   startSource: SessionStartSource | null;
+   /** Best-effort end of the session, when the harness told us (AD-6). */
+diff --git a/packages/core/src/ports/parser.ts b/packages/core/src/ports/parser.ts
+index 56465f7..e00d1a5 100644
+--- a/packages/core/src/ports/parser.ts
++++ b/packages/core/src/ports/parser.ts
+@@ -27,6 +27,12 @@ export type ParseResult =
+        * `null` when it did not. A parse that read only the tail of a transcript
+        * still answers for the whole content, so the value never depends on the
+        * cursor.
++       *
++       * The *first* answer the content carries, not the last. A transcript
++       * collects an attachment per start — a `startup` and then the `resume`
++       * that reopened it, or the `compact` that rewrote it — and the question
++       * this answers is why the session began, which only its first one says
++       * (follow-up review #18).
+        */
+       startSource: SessionStartSource | null;
+     }
+diff --git a/packages/core/src/ports/store.ts b/packages/core/src/ports/store.ts
+index ad57aa4..779d391 100644
+--- a/packages/core/src/ports/store.ts
++++ b/packages/core/src/ports/store.ts
+@@ -159,7 +159,21 @@ export type IngestResult =
+       message: string;
+     };
+ 
+-/** Everything a session holds, in `seq` order. */
++/**
++ * Everything a session holds, in conversation order: by `occurred_at`, and by
++ * `seq` among messages that share an instant.
++ *
++ * `seq` alone is the order the rows were *stored* in, which is not the order
++ * they were said in. A message that the parser only started keeping — a
++ * delegated run's report the version before it threw away — arrives in a later
++ * batch and takes a number after everything already there, however early in the
++ * conversation it belongs (follow-up review #10). `occurred_at` puts it back
++ * where it was said, and `seq` breaks the tie for the lines of one instant,
++ * which is the file's own order.
++ *
++ * The tool notes come in the order of the message each one hangs off, and then
++ * by `ordinal` inside it, so a reader walking the notes walks the conversation.
++ */
+ export interface SessionContents {
+   session: Session;
+   messages: readonly Message[];
+@@ -235,15 +249,27 @@ export interface SessionStore {
+    * Three rules about the tracking the batch carries, and every adapter keeps
+    * them:
+    *
+-   *   * `startSource` is written only when the batch carries one. A read that
+-   *     saw no `SessionStart` attachment knows nothing about the start, and a
+-   *     `null` must not erase what an earlier read did know.
+-   *   * the cursor only moves forward. It is replaced when the batch reset it,
+-   *     or when the session has no cursor message stored, or when the new
+-   *     cursor message is at or after the stored one in `seq` — so two hooks
+-   *     that overlap, the older one arriving last, cannot wind the session back
+-   *     to a message the newer one had already passed.
+-   *   * `cursorReset` surfaces as the `CURSOR_RESET` warning, never silently.
++   *   * `startSource` is written only when the batch carries one **and** the
++   *     session has none yet. A read that saw no `SessionStart` attachment
++   *     knows nothing about the start, and a `null` must not erase what an
++   *     earlier read did know; the first answer a read did find is the one that
++   *     says why the session began, so a later batch never overwrites it.
++   *   * the cursor moves forward, and backwards only for the read that still
++   *     stands where it started. A batch that did not reset replaces the cursor
++   *     when the session has no cursor message stored or when the new cursor
++   *     message is at or after the stored one in `seq` — so two hooks that
++   *     overlap, the older one arriving last, cannot wind the session back to a
++   *     message the newer one had already passed. A batch that *did* reset read
++   *     a transcript whose front had changed, so its cursor is the only one that
++   *     still describes the file and may well point further back: it is taken
++   *     whole — `null` included, which clears the cursor — but only while the
++   *     session's cursor is still the `cursorBase` that read began from. A reset
++   *     batch that finds the session somewhere else is an overlapping read
++   *     whose answer is already stale, and it falls back to the forward-only
++   *     rule (Design Notes, story 21).
++   *   * `cursorReset` surfaces as the `CURSOR_RESET` warning, never silently —
++   *     including for a batch that carries no message at all, which is what a
++   *     transcript rewritten down to nothing looks like.
+    *
+    * And one rule about the text itself:
+    *
+diff --git a/packages/core/src/sessions/ingest.ts b/packages/core/src/sessions/ingest.ts
+index 6354678..0e96bd5 100644
+--- a/packages/core/src/sessions/ingest.ts
++++ b/packages/core/src/sessions/ingest.ts
+@@ -152,9 +152,11 @@ export interface IngestSessionDependencies {
+  * The session row is created only once there is at least one message to put in
+  * it — a transcript with no conversation in it yet is the usual state of a
+  * session's first seconds, and a row for it would be a session that never
+- * happened. A batch of tool notes with no messages is the one case that still
+- * goes in: the session is already there, so there is nothing to create, and the
+- * notes belong to messages it already holds.
++ * happened. Two kinds of batch with no messages still go to the store, and
++ * neither creates anything: one of tool notes alone, whose notes belong to
++ * messages the session already holds, and one of a read that found the front of
++ * the transcript rewritten, which carries the `CURSOR_RESET` warning and the
++ * cursor to clear (#16).
+  *
+  * `inspect` sits where it does because the tags are decided once and never
+  * again (AD-12): it is asked only when `findSession` found nothing and the
+@@ -276,25 +278,47 @@ export async function ingestSession(
+    * the sake of an optimisation.
+    */
+   const recordHistory = async (): Promise<void> => {
+-    await store.recordTranscriptFile({
+-      id: idGen.next(),
+-      harness: key.harness,
+-      path: transcriptPath,
+-      sizeBytes: read.sizeBytes,
+-      fingerprint: read.fingerprint,
+-      cursor: parsed.cursor,
+-      scannedAt: clock.now(),
+-      reset: parsed.cursorReset,
+-    });
++    try {
++      await store.recordTranscriptFile({
++        id: idGen.next(),
++        harness: key.harness,
++        path: transcriptPath,
++        sizeBytes: read.sizeBytes,
++        fingerprint: read.fingerprint,
++        cursor: parsed.cursor,
++        scannedAt: clock.now(),
++        reset: parsed.cursorReset,
++      });
++    } catch {
++      // Dropped, like the coded failure above it: an adapter that throws where
++      // the port says it answers is a bug, and the honest thing is still to
++      // report the collection that *did* happen rather than to lose a stored
++      // turn over a shortcut (follow-up review #19).
++    }
+   };
+ 
+-  // Nothing to put anywhere: no row, nothing inserted, and no failure either.
+-  // The Stop hook of a turn whose last answer has not been flushed arrives
+-  // here, and so does every hook of a session's first seconds. The history is
+-  // still written — the file *was* read this far, and a scan that read it again
+-  // every drain for a session with no conversation yet would be the one case
+-  // where nothing ever settles.
+-  if (parsed.messages.length === 0 && (stored === null || parsed.toolNotes.length === 0)) {
++  /**
++   * Nothing to put anywhere: no row and nothing to insert. The Stop hook of a
++   * turn whose last answer has not been flushed arrives here, and so does every
++   * hook of a session's first seconds.
++   */
++  const nothingToStore =
++    parsed.messages.length === 0 && (stored === null || parsed.toolNotes.length === 0);
++  /**
++   * The read found the front of the transcript changed, and there is a stored
++   * session to tell about it. That is reported even when the read then found no
++   * message at all — a transcript rewritten down to nothing — because the
++   * session's cursor describes a file that no longer exists: left there, every
++   * later read starts at the front and the warning is never raised (#16). The
++   * empty batch below is what carries both to the store: the warning, and the
++   * cursor to clear.
++   */
++  const resetToReport = parsed.cursorReset && stored !== null;
++
++  if (nothingToStore && !resetToReport) {
++    // The history is still written — the file *was* read this far, and a scan
++    // that read it again every drain for a session with no conversation yet
++    // would be the one case where nothing ever settles.
+     await recordHistory();
+     return {
+       ok: true,
+@@ -377,6 +401,11 @@ export async function ingestSession(
+       parserVersion: parsed.parserVersion,
+       cursor: parsed.cursor,
+       cursorReset: parsed.cursorReset,
++      // Where the session stood when this read began, as `findSession` found
++      // it: the raw stored cursor, whatever parser version left it. It is what
++      // lets the store tell a reset that is still current from one whose read
++      // has been overtaken (`domain/ingest-batch.ts`, #17).
++      cursorBase: stored?.cursor ?? null,
+       startSource: parsed.startSource,
+       endedAt: null,
+       ingestedAt,
+diff --git a/packages/core/src/testing/contracts/session-store.ts b/packages/core/src/testing/contracts/session-store.ts
+index 8d1c3d5..266f6c0 100644
+--- a/packages/core/src/testing/contracts/session-store.ts
++++ b/packages/core/src/testing/contracts/session-store.ts
+@@ -1,3 +1,4 @@
++import type { IngestBatch } from '../../domain/ingest-batch.js';
+ import type { Message } from '../../domain/message.js';
+ import type { Session } from '../../domain/session.js';
+ import type { SessionStore, UserStore } from '../../ports/store.js';
+@@ -30,6 +31,13 @@ import {
+  */
+ export type SessionStoreSubject = SessionStore & UserStore;
+ 
++/**
++ * The id of the one note a case hangs on a message by hand, because the sample
++ * transcript puts all of its tool calls on a single message and the order of
++ * the notes is only visible across two.
++ */
++const lateNoteId = '01940000-0000-7000-8000-0000000000c0';
++
+ /**
+  * The session capability: find-or-create, an idempotent batch write that owns
+  * `seq`, and a read by session token. Every case gets a fresh, empty subject.
+@@ -601,7 +609,66 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
+     ),
+ 
+     contractCase<SessionStoreSubject>(
+-      'ingest records the start source the batch carried and keeps it when it carries none',
++      'a message that arrived late is read where it was said, not where it was stored',
++      async (make) => {
++        await withSubject(make, async (store) => {
++          await owner(store);
++          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
++
++          // What a parser version bump does: the read that stored the messages
++          // around it threw this one away, and the read that keeps it arrives
++          // afterwards. `msg-2` was uttered between the two already stored.
++          const around = sampleIngestBatch({ only: ['msg-1', 'msg-3'] });
++          // One note on the later of the two, so the notes of this session do
++          // not come in the same order under both rules.
++          const withNote: IngestBatch = {
++            ...around,
++            toolNotes: [
++              {
++                id: lateNoteId,
++                harnessMessageId: 'msg-3',
++                ordinal: 0,
++                tool: 'read',
++                target: 'notes/decisions.md',
++                ok: true,
++              },
++            ],
++          };
++          assertOk(await store.ingest(withNote), 'the first ingest failed');
++
++          const late = sampleIngestBatch({ idStart: 800, only: ['msg-2'] });
++          assertOk(await store.ingest(late), 'the ingest of the late message failed');
++
++          const read = await store.readSession(sampleSessionToken);
++          assertOk(read, 'the session could not be read');
++          // `seq` is the order the rows were stored in, so the latecomer keeps
++          // the number after everything that was already there (AD-8) — and the
++          // read puts it back where it was said (`ports/store.ts`).
++          assertEqual(
++            read.messages.map((message) => [message.harnessMessageId, message.seq]),
++            [
++              ['msg-1', 0],
++              ['msg-2', 2],
++              ['msg-3', 1],
++            ],
++            'a late message must keep the next free seq and still be read where it was said',
++          );
++          // And the notes walk the conversation with it.
++          assertEqual(
++            read.toolNotes.map((note) => [note.harnessMessageId, note.ordinal]),
++            [
++              ['msg-2', 0],
++              ['msg-2', 1],
++              ['msg-3', 0],
++            ],
++            'the tool notes must come in the order of the messages they hang off',
++          );
++        });
++      },
++    ),
++
++    contractCase<SessionStoreSubject>(
++      'ingest records the start source the batch carried and never overwrites it',
+       async (make) => {
+         await withSubject(make, async (store) => {
+           await owner(store);
+@@ -639,6 +706,25 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
+             'resume',
+             'a batch with no start source must leave the stored one alone',
+           );
++
++          // And neither may a batch that carries another one. A transcript
++          // collects an attachment per start, and the parser answers with the
++          // first of them — so a value that disagrees with what is stored is a
++          // read of a file whose front this session has already been told about
++          // (follow-up review #18).
++          assertOk(
++            await store.ingest(
++              sampleIngestBatch({ idStart: 400, tracking: { startSource: 'startup' } }),
++            ),
++            'the third ingest failed',
++          );
++          const first = await store.readSession(sampleSessionToken);
++          assertOk(first, 'the session could not be read after the third ingest');
++          assertEqual(
++            first.session.startSource,
++            'resume',
++            'the stored start source is the first one learned and must never be overwritten',
++          );
+         });
+       },
+     ),
+@@ -672,13 +758,14 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
+             'an older batch must not wind the cursor back to a message already passed',
+           );
+ 
+-          // Unless the parse was reset: then the front of the transcript is not
+-          // what it was, and the batch's cursor is the only one that still
+-          // describes the file (AD-4).
++          // Unless the parse was reset and the session still stands where that
++          // read found it: then the front of the transcript is not what it was,
++          // and the batch's cursor is the only one that still describes the
++          // file (AD-4).
+           const reset = sampleIngestBatch({
+             idStart: 500,
+             only: ['msg-1', 'msg-2'],
+-            tracking: { cursorReset: true },
++            tracking: { cursorReset: true, cursorBase: whole.tracking.cursor },
+           });
+           assertOk(await store.ingest(reset), 'the reset ingest failed');
+           const moved = await store.readSession(sampleSessionToken);
+@@ -692,6 +779,47 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
+       },
+     ),
+ 
++    contractCase<SessionStoreSubject>(
++      'two reset batches from one base leave the cursor where the longer read put it',
++      async (make) => {
++        await withSubject(make, async (store) => {
++          await owner(store);
++          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
++
++          // One read first, so both of the overlapping reads below start from
++          // the cursor it left behind.
++          const first = sampleIngestBatch({ only: ['msg-1'] });
++          assertOk(await store.ingest(first), 'the first ingest failed');
++          const base = first.tracking.cursor;
++
++          // Two hooks that both found the front of the transcript rewritten,
++          // both from that base. The one that read further commits first.
++          const longer = sampleIngestBatch({
++            idStart: 600,
++            tracking: { cursorReset: true, cursorBase: base },
++          });
++          assertOk(await store.ingest(longer), 'the longer reset ingest failed');
++          const shorter = sampleIngestBatch({
++            idStart: 700,
++            only: ['msg-1', 'msg-2'],
++            tracking: { cursorReset: true, cursorBase: base },
++          });
++          assertOk(await store.ingest(shorter), 'the shorter reset ingest failed');
++
++          const after = await store.readSession(sampleSessionToken);
++          assertOk(after, 'the session could not be read after the overlapping resets');
++          // The shorter read's reset is already stale: the session is no longer
++          // where it began, so its answer is the one that must give way, or the
++          // next read would parse a stretch that is already stored.
++          assertEqual(
++            after.session.cursor,
++            longer.tracking.cursor,
++            'an overlapping reset must not wind the cursor back over what the other read stored',
++          );
++        });
++      },
++    ),
++
+     contractCase<SessionStoreSubject>(
+       'findSession answers with the row alone, or null for a key nobody stored',
+       async (make) => {
+@@ -752,6 +880,58 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
+       },
+     ),
+ 
++    contractCase<SessionStoreSubject>(
++      'a reset batch with no message warns and clears the cursor',
++      async (make) => {
++        await withSubject(make, async (store) => {
++          await owner(store);
++          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
++          const stored = sampleIngestBatch();
++          assertOk(await store.ingest(stored), 'the first ingest failed');
++
++          // The transcript was rewritten down to something with no
++          // conversation in it: the parse found the front changed and then
++          // found no message, so it has no cursor to offer either.
++          const empty = sampleIngestBatch({
++            only: [],
++            tracking: {
++              cursorReset: true,
++              cursorBase: stored.tracking.cursor,
++              cursor: null,
++            },
++          });
++          const result = await store.ingest(empty);
++          assertOk(result, 'the empty reset ingest failed');
++          assertEqual(
++            [...result.warnings],
++            ['CURSOR_RESET'],
++            'a reset must warn even when the batch carries no message at all',
++          );
++          assertEqual(
++            result.inserted,
++            { messages: 0, toolNotes: 0 },
++            'a batch with nothing in it must insert nothing',
++          );
++
++          const after = await store.readSession(sampleSessionToken);
++          assertOk(after, 'the session could not be read after the empty reset ingest');
++          // Cleared, and not left pointing at a message of the transcript that
++          // was: a cursor nothing can match again makes every later read start
++          // at the front and warn, for ever (follow-up review #16).
++          assertEqual(
++            after.session.cursor,
++            null,
++            'a reset batch with no cursor must clear the stored one',
++          );
++          assertEqual(
++            after.messages.map((message) => message.harnessMessageId),
++            stored.messages.map((message) => message.harnessMessageId),
++            'an empty batch must leave the stored conversation alone',
++          );
++        });
++      },
++    ),
++
+     contractCase<SessionStoreSubject>(
+       'ingest reports an unknown session as a value',
+       async (make) => {
+diff --git a/packages/core/src/testing/fakes/store.ts b/packages/core/src/testing/fakes/store.ts
+index c4c0fb0..27bcf9d 100644
+--- a/packages/core/src/testing/fakes/store.ts
++++ b/packages/core/src/testing/fakes/store.ts
+@@ -331,7 +331,14 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
+         insertedToolNotes += 1;
+       }
+ 
+-      storedMessages.sort((left, right) => left.seq - right.seq);
++      // Conversation order, which is not storage order: a message the parser
++      // only started keeping arrives in a later batch with a higher `seq` than
++      // the messages around it, and `occurred_at` is where it was said. `seq`
++      // breaks the tie for the lines of one instant (`ports/store.ts`).
++      storedMessages.sort((left, right) => {
++        const byInstant = left.occurredAt.getTime() - right.occurredAt.getTime();
++        return byInstant === 0 ? left.seq - right.seq : byInstant;
++      });
+       messages.set(token, storedMessages);
+       toolNotes.set(token, storedToolNotes);
+ 
+@@ -343,10 +350,12 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
+         parserVersion: batch.tracking.parserVersion,
+         endedAt: batch.tracking.endedAt ?? session.endedAt,
+         ingestedAt: batch.tracking.ingestedAt,
+-        // Only when the batch carries one: a read that saw no `SessionStart`
+-        // attachment knows nothing about the start, and its `null` must not
+-        // erase what an earlier read did know (port contract).
+-        startSource: batch.tracking.startSource ?? session.startSource,
++        // Only when the batch carries one and the session has none yet: a read
++        // that saw no `SessionStart` attachment knows nothing about the start,
++        // and its `null` must not erase what an earlier read did know — while a
++        // value that disagrees with the stored one is a later attachment, which
++        // is not why the session began (port contract).
++        startSource: session.startSource ?? batch.tracking.startSource,
+       });
+ 
+       const warnings: StoreWarningCode[] = batch.tracking.cursorReset
+@@ -373,14 +382,20 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
+         };
+       }
+       const sessionToolNotes = [...(toolNotes.get(token) ?? [])];
+-      const seqOf = new Map(
+-        (messages.get(token) ?? []).map((message) => [message.harnessMessageId, message.seq]),
++      // The messages are held in conversation order, so a message's position in
++      // that list is where a reader walking the notes meets it. A note whose
++      // message is not stored sorts last rather than disappearing.
++      const positionOf = new Map(
++        (messages.get(token) ?? []).map((message, position) => [
++          message.harnessMessageId,
++          position,
++        ]),
+       );
+       sessionToolNotes.sort((left, right) => {
+-        const bySeq =
+-          (seqOf.get(left.harnessMessageId) ?? Number.MAX_SAFE_INTEGER) -
+-          (seqOf.get(right.harnessMessageId) ?? Number.MAX_SAFE_INTEGER);
+-        return bySeq === 0 ? left.ordinal - right.ordinal : bySeq;
++        const byMessage =
++          (positionOf.get(left.harnessMessageId) ?? Number.MAX_SAFE_INTEGER) -
++          (positionOf.get(right.harnessMessageId) ?? Number.MAX_SAFE_INTEGER);
++        return byMessage === 0 ? left.ordinal - right.ordinal : byMessage;
+       });
+       return {
+         ok: true,
+@@ -670,19 +685,31 @@ function transcriptKey(harness: string, path: string): string {
+  * Two hooks can overlap — one reading a longer transcript than the other, and
+  * the older one committing last. Taking the newer cursor every time would then
+  * point the session at a message the other read had already passed, and the
+- * next read would parse a stretch of transcript it has already stored. So the
+- * cursor is replaced only when the batch reset it, when the session has no
+- * cursor message among its rows, or when the batch's cursor message is at or
+- * after the stored one.
++ * next read would parse a stretch of transcript it has already stored. So an
++ * ordinary batch replaces the cursor only when the session has no cursor
++ * message among its rows or when the batch's cursor message is at or after the
++ * stored one.
++ *
++ * A batch that reset is the exception, and it is taken whole — `null` included,
++ * which clears the cursor. The front of that transcript changed, so the read
++ * before it describes a file that no longer exists and a cursor pointing into
++ * it would reset every read from now on (#16). Moving backwards is right there;
++ * what is not right is doing it over an overlapping read's work, so it is
++ * allowed only while the session's cursor is still the one that read began from
++ * (`cursorBase`, #17).
+  */
+ function nextCursor(
+   session: Session,
+   batch: IngestBatch,
+   stored: readonly Message[],
+ ): Session['cursor'] {
++  if (batch.tracking.cursorReset && sameCursor(session.cursor, batch.tracking.cursorBase)) {
++    return batch.tracking.cursor;
++  }
++
+   const cursor = batch.tracking.cursor;
+   if (cursor === null) return session.cursor;
+-  if (batch.tracking.cursorReset || session.cursor === null) return cursor;
++  if (session.cursor === null) return cursor;
+ 
+   const seqOf = (harnessMessageId: string): number | undefined =>
+     stored.find((message) => message.harnessMessageId === harnessMessageId)?.seq;
+@@ -691,3 +718,12 @@ function nextCursor(
+   const now = seqOf(cursor.lastHarnessMessageId);
+   return now !== undefined && now >= was ? cursor : session.cursor;
+ }
++
++/** Whether two cursors name the same message with the same fingerprint. */
++function sameCursor(left: Session['cursor'], right: Session['cursor']): boolean {
++  if (left === null || right === null) return left === right;
++  return (
++    left.lastHarnessMessageId === right.lastHarnessMessageId &&
++    left.fingerprint === right.fingerprint
++  );
++}
+diff --git a/packages/core/src/testing/fixtures.ts b/packages/core/src/testing/fixtures.ts
+index 235aeff..aeebe86 100644
+--- a/packages/core/src/testing/fixtures.ts
++++ b/packages/core/src/testing/fixtures.ts
+@@ -337,6 +337,10 @@ export function sampleIngestBatch(
+       parserVersion: parsed.parserVersion,
+       cursor,
+       cursorReset: parsed.cursorReset,
++      // Where the session stood when this read began. `null` is the honest
++      // default for a fixture: the sample batch is what a first read produces,
++      // and a case about an overlapping reset says what its base was itself.
++      cursorBase: null,
+       startSource: parsed.startSource,
+       endedAt: null,
+       ingestedAt,
+diff --git a/packages/core/test/contracts.test.ts b/packages/core/test/contracts.test.ts
+index f9bd524..d3e60df 100644
+--- a/packages/core/test/contracts.test.ts
++++ b/packages/core/test/contracts.test.ts
+@@ -4,7 +4,7 @@ import {
+   parseSessionToken,
+   SESSION_TOKEN_SEPARATOR,
+ } from '../src/domain/session-token.js';
+-import type { Session } from '../src/domain/session.js';
++import type { Session, SessionStartSource } from '../src/domain/session.js';
+ import { BRAIN_MARKER, type ConnectResult, type Connector } from '../src/ports/connector.js';
+ import type { Clock } from '../src/ports/clock.js';
+ import type { IdGen } from '../src/ports/id-gen.js';
+@@ -669,6 +669,97 @@ describe('the contracts catch a wrong store', () => {
+     );
+   });
+ 
++  it('catches a store that lets an overlapping reset wind the cursor back', async () => {
++    const make = async (): Promise<SessionStoreSubject> => {
++      const inner = memoryStore();
++      const cursors = new Map<string, Session['cursor']>();
++      return {
++        ...inner,
++        async ingest(batch) {
++          const result = await inner.ingest(batch);
++          // Every reset's cursor, whatever the session had moved to since that
++          // read began: the rule before `cursorBase`, which lets the shorter of
++          // two overlapping reads undo the longer one (#17).
++          if (result.ok && batch.tracking.cursorReset) {
++            cursors.set(formatSessionToken(batch.key), batch.tracking.cursor);
++          }
++          return result;
++        },
++        async readSession(token) {
++          const result = await inner.readSession(token);
++          if (!result.ok || !cursors.has(token)) return result;
++          return {
++            ...result,
++            session: { ...result.session, cursor: cursors.get(token) ?? null },
++          };
++        },
++      };
++    };
++
++    expect(await failedCases(sessionStoreContract(), make)).toContain(
++      'two reset batches from one base leave the cursor where the longer read put it',
++    );
++  });
++
++  it('catches a store that lets a later batch overwrite the start source', async () => {
++    const make = async (): Promise<SessionStoreSubject> => {
++      const inner = memoryStore();
++      const sources = new Map<string, SessionStartSource>();
++      return {
++        ...inner,
++        async ingest(batch) {
++          const result = await inner.ingest(batch);
++          // The last value wins, so a `resume` the session learned first is
++          // replaced by the `startup` of a later read (#18).
++          if (result.ok && batch.tracking.startSource !== null) {
++            sources.set(formatSessionToken(batch.key), batch.tracking.startSource);
++          }
++          return result;
++        },
++        async readSession(token) {
++          const result = await inner.readSession(token);
++          const latest = sources.get(token);
++          if (!result.ok || latest === undefined) return result;
++          return { ...result, session: { ...result.session, startSource: latest } };
++        },
++      };
++    };
++
++    expect(await failedCases(sessionStoreContract(), make)).toContain(
++      'ingest records the start source the batch carried and never overwrites it',
++    );
++  });
++
++  it('catches a store that reads a session in the order it stored the rows', async () => {
++    const make = async (): Promise<SessionStoreSubject> => {
++      const inner = memoryStore();
++      return {
++        ...inner,
++        async readSession(token) {
++          const result = await inner.readSession(token);
++          if (!result.ok) return result;
++          // `seq` order, which is the order the rows went in and not the order
++          // they were said in (#10).
++          const messages = [...result.messages].sort((left, right) => left.seq - right.seq);
++          const positionOf = new Map(
++            messages.map((message, position) => [message.harnessMessageId, position]),
++          );
++          const toolNotes = [...result.toolNotes].sort((left, right) => {
++            const byMessage =
++              (positionOf.get(left.harnessMessageId) ?? Number.MAX_SAFE_INTEGER) -
++              (positionOf.get(right.harnessMessageId) ?? Number.MAX_SAFE_INTEGER);
++            return byMessage === 0 ? left.ordinal - right.ordinal : byMessage;
++          });
++          return { ...result, messages, toolNotes };
++        },
++      };
++    };
++
++    expect(await failedCases(sessionStoreContract(), make)).toContain(
++      'a message that arrived late is read where it was said, not where it was stored',
++    );
++  });
++
+   it('catches a store that makes a new project for every session', async () => {
+     const make = async (): Promise<SessionStoreSubject> => {
+       const inner = memoryStore();
+diff --git a/packages/core/test/sessions-ingest.test.ts b/packages/core/test/sessions-ingest.test.ts
+index 884bbd3..3bb16bb 100644
+--- a/packages/core/test/sessions-ingest.test.ts
++++ b/packages/core/test/sessions-ingest.test.ts
+@@ -617,6 +617,86 @@ describe('sessions.ingest and the cursor it starts from', () => {
+     expect(after.messages).toEqual(before.messages);
+   });
+ 
++  it('warns and clears the cursor when a reset read finds no message at all', async () => {
++    const { deps, store, transcripts } = await kit();
++    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
++    const before = await store.readSession(TOKEN);
++    expect(before.ok).toBe(true);
++    if (!before.ok) return;
++    expect(before.session.cursor).not.toBeNull();
++
++    // The transcript was rewritten down to something with no conversation in
++    // it. The cursor cannot be found, so the parse resets — and then it finds
++    // nothing, which used to end the call before the warning or the stale
++    // cursor could be dealt with (follow-up review #16).
++    transcripts.write(PATH, JSON.stringify({ messages: [] }));
++    const reset = await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
++
++    expect(reset).toMatchObject({
++      ok: true,
++      created: false,
++      inserted: { messages: 0, toolNotes: 0 },
++      warnings: ['CURSOR_RESET'],
++    });
++    const after = await store.readSession(TOKEN);
++    expect(after.ok).toBe(true);
++    if (!after.ok) return;
++    expect(after.session.cursor).toBeNull();
++    // Nothing stored was touched, because ingest is idempotent (AD-8).
++    expect(after.messages).toEqual(before.messages);
++
++    // And the next read of the same file is no longer a reset: there is no
++    // cursor left for it to fail to match.
++    const again = await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
++    expect(again).toMatchObject({ ok: true, warnings: [] });
++  });
++
++  it('reports the collection when the transcript history throws', async () => {
++    const { deps, store } = await kit();
++    const throwing: MemoryStore = {
++      ...store,
++      recordTranscriptFile() {
++        // An adapter that throws where the port says it answers. The history is
++        // a shortcut nothing depends on, so the turn it was collecting must not
++        // break over it (follow-up review #19).
++        throw new Error('the history table is gone');
++      },
++    };
++
++    const result = await ingestSession(
++      { ...deps, store: throwing },
++      { session: TOKEN, transcriptPath: PATH },
++    );
++
++    expect(result).toMatchObject({
++      ok: true,
++      created: true,
++      inserted: { messages: 4, toolNotes: 2 },
++      warnings: [],
++    });
++    expect(store.snapshot().messages).toHaveLength(4);
++  });
++
++  it('reports the empty read when the transcript history throws', async () => {
++    // The other call site of the same shortcut: the early return that a
++    // transcript with no conversation in it takes.
++    const { deps, store } = await kit({ content: JSON.stringify({ messages: [] }) });
++    const throwing: MemoryStore = {
++      ...store,
++      recordTranscriptFile() {
++        throw new Error('the history table is gone');
++      },
++    };
++
++    const result = await ingestSession(
++      { ...deps, store: throwing },
++      { session: TOKEN, transcriptPath: PATH },
++    );
++
++    expect(result).toMatchObject({ ok: true, inserted: { messages: 0, toolNotes: 0 } });
++    expect(store.snapshot().sessions).toEqual([]);
++  });
++
+   it('ingests a batch of tool notes alone into a session that is already there', async () => {
+     // A read that found no new message but did find the answer to a call the
+     // last read left waiting. There is no row to create and nothing to
+diff --git a/packages/sqlite/src/sessions.ts b/packages/sqlite/src/sessions.ts
+index a9f54a6..0a49e19 100644
+--- a/packages/sqlite/src/sessions.ts
++++ b/packages/sqlite/src/sessions.ts
+@@ -8,6 +8,7 @@ import {
+   type IngestBatch,
+   type IngestResult,
+   type Message,
++  type ParserCursor,
+   type ReadSessionResult,
+   type Session,
+   type SessionIngestSource,
+@@ -171,7 +172,8 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
+         written = await withWrite(opened.connection, ensure);
+       } catch (error) {
+         // The one failure this transaction gives up on, as a value. Anything
+-        // else is a bug and goes on throwing (Conventions).
++        // else is a bug and goes on throwing (Conventions): a broken foreign
++        // key here is a caller that passed an owner it had not read.
+         if (error instanceof UnsettledEnsure) {
+           return { ok: false, code: 'DB_UNAVAILABLE', message: error.message };
+         }
+@@ -180,7 +182,20 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
+       if (!written.ok) return written;
+ 
+       const { created, row } = written.value;
+-      return { ok: true, created, session: toSession(row) };
++      try {
++        // Widening the row is one more thing that can fail, and not because of
++        // anything the caller did: `toSession` parses the instants it holds, so
++        // a `started_at` that is `glob`-shaped but not a date — a row a human
++        // edited — would otherwise leave this verb throwing where every caller
++        // expects a code (follow-up review #19).
++        return { ok: true, created, session: toSession(row) };
++      } catch (error) {
++        return {
++          ok: false,
++          code: 'DB_UNAVAILABLE',
++          message: `세션을 읽을 수 없습니다: ${describe(error)}`,
++        };
++      }
+     },
+ 
+     async findSession(key: SessionKey): Promise<FindSessionResult> {
+@@ -286,22 +301,29 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
+                  ingested_at = ${ingestedAt}
+            where id = ${session.id}
+         `.execute(held);
+-        // Only when the batch carries one: a read that saw no `SessionStart`
+-        // attachment knows nothing about the start, and writing its `null` would
+-        // erase what an earlier read did know.
++        // Only when the batch carries one and the row has none yet: a read that
++        // saw no `SessionStart` attachment knows nothing about the start, and
++        // writing its `null` would erase what an earlier read did know — while
++        // the `and start_source is null` keeps the first answer learned, because
++        // a second attachment is a later start and not why the session began
++        // (follow-up review #18).
+         if (batch.tracking.startSource !== null) {
+           await sql`
+             update sessions
+                set start_source = ${batch.tracking.startSource}
+              where id = ${session.id}
++               and start_source is null
+           `.execute(held);
+         }
+-        const cursor = batch.tracking.cursor;
+-        if (cursor !== null && (await cursorMayMove(held, session, batch))) {
++        const moved = await cursorMove(held, session, batch);
++        if (moved.move) {
++          // `null` for both halves is the cursor cleared, which is what a reset
++          // read that found no message leaves behind: the table's own check
++          // wants both halves or neither.
+           await sql`
+             update sessions
+-               set last_harness_message_id = ${cursor.lastHarnessMessageId},
+-                   cursor_fingerprint = ${cursor.fingerprint}
++               set last_harness_message_id = ${moved.to?.lastHarnessMessageId ?? null},
++                   cursor_fingerprint = ${moved.to?.fingerprint ?? null}
+              where id = ${session.id}
+           `.execute(held);
+         }
+@@ -357,12 +379,18 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
+           return { ok: false, code: 'SESSION_NOT_FOUND', message: `${token} 세션이 없습니다` };
+         }
+ 
++        // Conversation order, which is not storage order: a message the parser
++        // only started keeping arrives in a later batch and takes a `seq` after
++        // everything already there, however early it belongs. `occurred_at`
++        // puts it back where it was said and `seq` breaks the tie for the lines
++        // of one instant, which is the file's own order (port contract,
++        // follow-up review #10).
+         const messages = await sql<MessageRow>`
+           select id, session_id, harness_message_id, seq, role, model, body, occurred_at,
+                  git_branch, is_subagent_report
+             from messages
+            where session_id = ${row.id}
+-           order by seq
++           order by occurred_at, seq
+         `.execute(db);
+         // Ordered by the message's own position and then by the ordinal inside
+         // it, so a reader walking the notes walks the conversation. A note
+@@ -374,7 +402,7 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
+               on m.session_id = n.session_id
+              and m.harness_message_id = n.harness_message_id
+            where n.session_id = ${row.id}
+-           order by m.seq is null, m.seq, n.ordinal
++           order by m.seq is null, m.occurred_at, m.seq, n.ordinal
+         `.execute(db);
+ 
+         return {
+@@ -473,28 +501,49 @@ async function ensureCheckout(
+   return { projectId, worktreeId };
+ }
+ 
++/** Whether the stored cursor is replaced, and by what — `null` clears it. */
++interface CursorMove {
++  move: boolean;
++  to: ParserCursor | null;
++}
++
+ /**
+- * Whether this batch's cursor may replace the stored one (port contract).
++ * Whether this batch's cursor replaces the stored one, and with what (port
++ * contract).
+  *
+  * Two hooks can overlap — one of them reading a longer transcript than the
+  * other, and the shorter read committing last. Taking its cursor would point
+  * the session at a message the other read had already passed, and the next read
+- * would parse a stretch of the transcript it has already stored. So the cursor
+- * moves only forward: a reset, a session with no cursor message among its rows,
+- * or a cursor message at or after the stored one in `seq`.
++ * would parse a stretch of the transcript it has already stored. So an ordinary
++ * batch moves the cursor only forward: a session with no cursor message among
++ * its rows, or a cursor message at or after the stored one in `seq`.
++ *
++ * A batch that reset is the one that may go backwards, and it is taken whole —
++ * `null` included, which clears the cursor. The front of that transcript is not
++ * what it was, so the file may well be shorter than the stored cursor claims,
++ * and a cursor nothing can match again would reset every read from now on
++ * (#16). What must not happen is a reset undoing an overlapping read, so it is
++ * allowed only while the session's cursor is still the one that read began from
++ * (`cursorBase`, #17); a reset that finds the session somewhere else falls back
++ * to the forward-only rule.
+  *
+  * It runs inside the same transaction as the inserts, so the `seq` it reads for
+  * the new cursor message is the one this batch just gave it.
+  */
+-async function cursorMayMove(
++async function cursorMove(
+   held: Kysely<SqliteSchema>,
+   session: SessionRow,
+   batch: IngestBatch,
+-): Promise<boolean> {
++): Promise<CursorMove> {
+   const cursor = batch.tracking.cursor;
+-  if (cursor === null) return false;
++  if (batch.tracking.cursorReset && sameCursor(storedCursor(session), batch.tracking.cursorBase)) {
++    return { move: true, to: cursor };
++  }
++
++  const stay: CursorMove = { move: false, to: null };
++  if (cursor === null) return stay;
+   const was = session.last_harness_message_id;
+-  if (batch.tracking.cursorReset || was === null) return true;
++  if (was === null) return { move: true, to: cursor };
+ 
+   const seqs = await sql<{ harness_message_id: string; seq: number }>`
+     select harness_message_id, seq
+@@ -508,9 +557,29 @@ async function cursorMayMove(
+   const storedSeq = seqOf(was);
+   // The stored cursor names a message this session does not hold: nothing to
+   // compare against, so the batch's cursor is the better one.
+-  if (storedSeq === undefined) return true;
++  if (storedSeq === undefined) return { move: true, to: cursor };
+   const nextSeq = seqOf(cursor.lastHarnessMessageId);
+-  return nextSeq !== undefined && nextSeq >= storedSeq;
++  return nextSeq !== undefined && nextSeq >= storedSeq ? { move: true, to: cursor } : stay;
++}
++
++/** The cursor a row holds, in the shape the batch carries its own in. */
++function storedCursor(session: SessionRow): ParserCursor | null {
++  if (session.last_harness_message_id === null || session.cursor_fingerprint === null) {
++    return null;
++  }
++  return {
++    lastHarnessMessageId: session.last_harness_message_id,
++    fingerprint: session.cursor_fingerprint,
++  };
++}
++
++/** Whether two cursors name the same message with the same fingerprint. */
++function sameCursor(left: ParserCursor | null, right: ParserCursor | null): boolean {
++  if (left === null || right === null) return left === right;
++  return (
++    left.lastHarnessMessageId === right.lastHarnessMessageId &&
++    left.fingerprint === right.fingerprint
++  );
+ }
+ 
+ /** The row for one session key, or `null`. The one place the key is spelled. */
+diff --git a/packages/sqlite/src/transcript-files.ts b/packages/sqlite/src/transcript-files.ts
+index b4438cb..390e1cb 100644
+--- a/packages/sqlite/src/transcript-files.ts
++++ b/packages/sqlite/src/transcript-files.ts
+@@ -70,15 +70,19 @@ export function sqliteTranscriptFileStore(connect: SqliteConnect): TranscriptFil
+         return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+       }
+ 
+-      const scannedAt = instant(input.scannedAt, 'transcript_files.scanned_at');
+       // Both halves of the cursor or neither: the table's own check says so,
+       // because half a cursor is a cursor no parse could start from.
+       const cursorId = input.cursor === null ? null : input.cursor.lastHarnessMessageId;
+       const cursorFingerprint = input.cursor === null ? null : input.cursor.fingerprint;
+ 
+-      let written;
++      // Everything that can fail is inside the one `try`, the codec of the
++      // instant on the way in and the one on the way out included: this verb is
++      // called by a successful ingest for its own bookkeeping, and a throw out
++      // of here would turn a collected turn into a broken one over a row
++      // nothing depends on (follow-up review #19).
+       try {
+-        written = await withWrite(opened.connection, async (held) => {
++        const scannedAt = instant(input.scannedAt, 'transcript_files.scanned_at');
++        const written = await withWrite(opened.connection, async (held) => {
+           const existing = await readOne(held, input.harness, input.path);
+           if (existing === null) {
+             await sql`
+@@ -113,6 +117,21 @@ export function sqliteTranscriptFileStore(connect: SqliteConnect): TranscriptFil
+           `.execute(held);
+           return readOne(held, input.harness, input.path);
+         });
++        if (!written.ok) return written;
++
++        const row = written.value;
++        if (row === null) {
++          // Not reachable: this transaction holds the only writer, so the
++          // insert either added the row or the lookup above found it. Here
++          // because the read-back is typed as nullable and a silent `undefined`
++          // further on would be worse than a sentence nobody reads.
++          return {
++            ok: false,
++            code: 'DB_UNAVAILABLE',
++            message: '트랜스크립트 내역을 기록한 뒤에도 그 행을 읽을 수 없습니다',
++          };
++        }
++        return { ok: true, file: toTranscriptFile(row) };
+       } catch (error) {
+         return {
+           ok: false,
+@@ -120,21 +139,6 @@ export function sqliteTranscriptFileStore(connect: SqliteConnect): TranscriptFil
+           message: `트랜스크립트 내역을 기록할 수 없습니다: ${describe(error)}`,
+         };
+       }
+-      if (!written.ok) return written;
+-
+-      const row = written.value;
+-      if (row === null) {
+-        // Not reachable: this transaction holds the only writer, so the insert
+-        // either added the row or the lookup above found it. Here because the
+-        // read-back is typed as nullable and a silent `undefined` further on
+-        // would be worse than a sentence nobody reads.
+-        return {
+-          ok: false,
+-          code: 'DB_UNAVAILABLE',
+-          message: '트랜스크립트 내역을 기록한 뒤에도 그 행을 읽을 수 없습니다',
+-        };
+-      }
+-      return { ok: true, file: toTranscriptFile(row) };
+     },
+   };
+ }

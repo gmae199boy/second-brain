@@ -25,7 +25,7 @@ id = 3
 slug = "epic-log-and-context"
 title = "작업 로그와 시작 맥락"
 covers = ["CAP-3", "CAP-8", "CAP-9"]
-after = [{ epic = 2, needs = "수집된 메시지(로그-대화 연결과 규칙 인용 대조), 세션 토큰 수집(`log append`의 선수집), spool, drain" }]
+after = [{ epic = 2, needs = "수집된 메시지(로그의 앞뒤 메시지를 시각으로 읽기, 규칙 인용 대조), 세션 토큰 수집(`log append`의 선수집), spool, drain" }]
 
 [[epic]]
 id = 4

@@ -61,7 +61,7 @@ AD-13·14(로그 없는 세션의 첫 요청 문장, FR-9 표시)·15·16·23·2
 - Waits on epic-attachments because: 문서 추출 세대·조각과 `file_names`가 문서 검색의 대상이다(2026-10-15 epic-capture에서 나뉨).
 - Note(2026-10-16, `../change-users-and-review-gaps/`, 인셉션 입력, 원문은 `../inputs/external-review-2026-10-16.md`):
   - T4: 문서 조각의 앞뒤를 읽는 길이 없다(`recall expand`가 `document_chunk`도 받거나 `files`의 동사).
-  - D7: 로그 없는 세션의 첫 요청 문장은 seq가 가장 낮은 user 메시지에서 꺼낸다. 저장하지 않는다(spine AD-14).
+  - D7: 로그 없는 세션의 첫 요청 문장은 `occurred_at`이 가장 이른 user 메시지에서 꺼낸다. 저장하지 않는다(spine AD-14).
   - T9: 미러 파일명 정제(C9)는 spine AD-16에 들어갔다. " (2)" 충돌 접미사가 AD-16의 "순수 함수"와 어울리게 정한다.
 - Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 조회 결과·넓히기·세션 읽기는 엔벨로프 코덱이 가린다(D1). 조각·FTS는 원문 위이고, 비밀 값으로 찾으면 행은 나오되 값은 가려진다(D2). 미러 렌더러는 출력 코덱으로 등록한다. 미러는 (DB 상태, 패턴 버전)의 순수 함수이고 frontmatter에 버전을 적으며, 버전이 오르면 모든 세션의 미러 재생성 일감을 만든다(D3, spine AD-16).
 - Note(2026-10-20, `../change-discipline-and-metrics/`, 인셉션 입력): D5·D6. 러너의 문항 파일 형식(verb·query·expect·k)은 인셉션에서 정한다. 대분류 먼저(PRD §8-5)와 조각 직접 검색의 비교도 같은 러너로 잰다.

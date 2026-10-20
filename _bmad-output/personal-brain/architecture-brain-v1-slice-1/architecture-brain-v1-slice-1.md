@@ -79,7 +79,7 @@ flowchart LR
 - **Prevents:** Harness 형식이 Core로 새는 것, 같은 transcript에서 수집할 때마다 다른 결과가 나오는 것
 - **Rule:**
   - Core의 수집 입력은 `IngestBatch`(세션 키 + 추적 정보 + 메시지 + 도구 메모)다.
-  - connector의 **필수 요소는 transcript parser 하나**다. 출력은 (transcript 내용, `parser_version`)의 순수 함수다. parser는 메시지마다 `harness_message_id`, 발화 시각, transcript 안의 순서만 낸다. **`seq`는 parser가 정하지 않는다**(AD-8) — compact·fork로 transcript 앞부분이 바뀌어도 이미 저장된 메시지의 번호가 다른 메시지에 가지 않게 하기 위해서다.
+  - connector의 **필수 요소는 transcript parser 하나**다. 출력은 (transcript 내용, `parser_version`)의 순수 함수다. parser는 메시지마다 `harness_message_id`와 발화 시각을 transcript 안의 순서대로 낸다. 메시지 번호는 없다(AD-8) — 메시지의 정체는 harness가 준 id이므로 compact·fork로 transcript 앞부분이 바뀌어도 저장된 메시지가 다른 메시지로 바뀌지 않는다.
   - parser는 메인 대화의 메시지만 낸다. 사이드체인(서브에이전트) 대화는 최종 보고 하나만 표시와 함께 낸다. 대화가 아닌 항목과 Harness가 만든 요약은 메시지가 아니다(2026-10-15 epic 2 인셉션).
   - parser 커서는 (마지막 Harness 메시지 ID, 그 지점까지의 fingerprint)다. 커서 메시지가 사라졌거나(compact·fork) fingerprint가 다르면 처음부터 다시 읽는다. 멱등이므로 중복은 생기지 않고, 경고를 남긴다.
   - parser 버그로 이미 저장된 메시지는 고치지 않는다(원문 불변 우선). 재수집은 빠진 것만 추가한다. 세션마다 `parser_version`을 기록한다.
@@ -151,12 +151,12 @@ sequenceDiagram
 ### AD-7 — 동시성: 세션 잠금과 drain
 
 - **Binds:** FR-5, FR-8, FR-11, FR-19, NFR-2
-- **Prevents:** 같은 세션의 겹친 수집이 seq를 충돌시키거나 조용히 사라지는 것, Harness마다 재시도를 다시 만드는 것
+- **Prevents:** 같은 세션의 겹친 수집이 메시지를 겹치게 넣거나 조용히 사라지는 것, Harness마다 재시도를 다시 만드는 것
 - **Rule:**
   - DB에 쓰는 모든 경로는 SQLite adapter의 쓰기 함수 하나(`withWrite`)를 지난다. 이 함수만 `BEGIN IMMEDIATE`를 낸다(Kysely의 `db.transaction()`은 DEFERRED라 쓰지 않는다). 잠금은 데이터베이스 단위다(개인 규모라 허용). 커서 전진과 배치 삽입은 같은 트랜잭션이다.
   - 쓰기 트랜잭션 안에서는 파일·네트워크 I/O를 하지 않고, 어떤 쓰기 트랜잭션도 2초를 넘겨 잠금을 쥐지 않는다(긴 일은 일감으로 쪼갠다).
   - `busy_timeout`은 호출 경로별 Core 상수다(턴 수집 3초, 동기 hook 경로 `context.show`·`log.remind` 1초, 사람이 부른 명령 10초, drain 10초). 시간 초과는 실패가 아니라 spool로 간다(AD-9). `journal_mode=WAL`은 파일 속성이라 DB를 만드는 설치기·마이그레이션이 한 번 건다. 연결마다 거는 것은 `busy_timeout`, `foreign_keys=ON`, `recursive_triggers=ON`이고, 이 설정은 adapter의 연결 함수 한 곳에만 있다.
-  - 밀린 일(실패한 수집, transcript 폴더 스캔, 조각·색인 생성, 규칙 인용 대조, 로그-메시지 연결, spool 재주입, 미러 갱신)은 SDK의 `queue.drain()` 하나가 처리한다. 호출자는 시작 hook(async)과 `brain doctor run`이다.
+  - 밀린 일(실패한 수집, transcript 폴더 스캔, 조각·색인 생성, 규칙 인용 대조, spool 재주입, 미러 갱신)은 SDK의 `queue.drain()` 하나가 처리한다. 호출자는 시작 hook(async)과 `brain doctor run`이다.
   - drain은 동시 실행을 전제하고, 일감은 `work_items`(AD-21)에서 짧은 쓰기 트랜잭션으로 청구한 뒤 트랜잭션 밖에서 처리한다. 모든 백그라운드 작업은 멱등이다. hook이 없는 Harness를 위해 사람이 부른 명령은 끝에 짧은 시간 예산으로 drain을 한 번 기회적으로 돈다. 예외: 동기 hook(`context show`, `log remind`)과 hook 경로의 명령은 돌지 않고(AD-6), 데몬이 살아 있으면(소켓 handshake가 응답하면. 설정 `[daemon] enabled`가 기준이 아니다) 어떤 명령도 돌지 않으며(AD-27), 기회적 drain은 읽기로 할 일이 있는지 본 뒤에만 쓰기 잠금을 잡는다.
 
 ### AD-8 — ID와 멱등 키
@@ -167,9 +167,9 @@ sequenceDiagram
   - 모든 레코드 ID는 생성하는 쪽이 UUIDv7로 정한다(`IdGen` port). DB 생성 ID는 쓰지 않는다.
   - 테이블마다 자연 멱등 키를 UNIQUE 제약으로 둔다(키는 Table Contract 참고).
   - 프로세스 경계를 넘는 세션 토큰은 `harness:harness_session_id` 문자열뿐이다. Brain 내부 UUID는 프로세스 밖으로 나가지 않는다.
-  - **`messages.seq`는 원본 Store가 삽입 트랜잭션 안에서 배정한다.** 세션마다 0부터, 구멍 없이 늘어나며, 이미 있는 `harness_message_id`는 건너뛴다. `tool_notes`의 순번도 같다. 복제 대상은 원본의 값을 복사만 한다(AD-22).
+  - **메시지에는 번호가 없다.** 메시지의 정체는 `(session_id, harness_message_id)`이고 이미 있는 것은 건너뛴다. 대화 순서는 `occurred_at`이고 같은 시각의 순서는 정하지 않는다(2026-10-20 실측: parser가 남기는 메시지 6,818쌍에서 시각 역전 0, 같은 밀리초 0). 도구 메모는 그 메시지의 `occurred_at`, 그다음 `ordinal` 순서다. 커서가 뒤로 가지 않는다는 판정도 커서 메시지의 `occurred_at`으로 한다. 복제 대상은 원본의 값을 복사만 한다(AD-22).
   - 멱등 삽입은 `ON CONFLICT DO NOTHING`뿐이다. `INSERT OR REPLACE`·`REPLACE INTO`·upsert의 `DO UPDATE`는 불변 테이블에 쓰지 않는다(SQLite의 REPLACE는 trigger 없이 행을 지운다).
-  - 계약 테스트에 "같은 배치를 두 번 넣으면 모든 테이블의 건수가 같다"와 "앞부분이 바뀐 transcript를 다시 넣어도 기존 메시지의 `seq`·본문이 그대로다"를 넣는다.
+  - 계약 테스트에 "같은 배치를 두 번 넣으면 모든 테이블의 건수가 같다"와 "앞부분이 바뀐 transcript를 다시 넣어도 기존 메시지의 본문·건수가 그대로다"를 넣는다.
 
 ### AD-9 — DB에 못 쓴 것은 spool에 쌓는다
 
@@ -208,7 +208,7 @@ sequenceDiagram
   - 남아 있는 출력(미러 파일, 복제 대상)은 쓴 패턴 버전을 적는다. 버전이 오르면 미러 재생성 일감과 복제 가리기 일감을 만든다. 내보내기는 manifest에 버전을 적고, 이미 쓴 내보내기 파일은 건드리지 않는다.
   - 저장소 파일(`brain.db`와 `-wal`·`-shm`)에는 비밀이 원문으로 있다. AD-10의 규칙(동기화 폴더 금지, 권한 0600)이 그것을 지킨다. 저장본에서도 지우려면 `messages.redact`를 쓴다.
   - `messages`와 `tool_notes`는 UPDATE·DELETE를 거부하는 DB trigger를 가진다. **유일한 예외는 `messages.redact`**다. 사람이 요청해 저장본에서 지우는 가리기다. 입력은 지울 글자 그대로이거나 `detected`(지금 패턴이 그 메시지에서 찾는 구간 전부, `redactions.pattern_version`에 그 버전)다. 이 함수는 본문 일부나 전체를 `[REDACTED:<kind>]`로 바꾸고, 같은 트랜잭션에서 `redactions`에 위치·종류·지운 내용의 해시만 남긴다(지운 내용은 보존하지 않는다). trigger는 redact 표시가 있을 때만 통과시킨다. 표시는 Store adapter의 redact 함수 한 곳이 `try/finally`로 세우고 지운다(SQLite에서는 프로세스 변수를 읽는 SQL 함수다).
-  - 가리기는 **한 트랜잭션 안의 연쇄**다: 본문 치환 + `redactions` + 그 메시지가 걸린 `chunks`·FTS·`embeddings` 행 삭제 + 조각 재생성·미러 재생성 일감 + 복제 대상이 있으면 복제 가리기 일감(AD-21·22: Postgres는 같은 가리기 함수, Drive는 그 메시지가 든 파일을 가린 본문으로 다시 쓰고 옛 파일을 지움, 가리기 이전의 DB 스냅샷은 새 스냅샷이 검증된 뒤 지움)이다. 하나라도 못 하면 롤백하고 실패로 답한다(spool 금지). 복제 가리기 일감이 끝날 때까지 doctor는 `warn`이다(2026-10-16). 같은 경로로 `tool_notes.target`도 가린다(`messages.redact`가 메시지와 그 도구 메모를 함께 받고, 기록은 `redactions.tool_note_id`, 0005).
+  - 가리기는 **한 트랜잭션 안의 연쇄**다: 본문 치환 + `redactions` + 그 메시지가 걸린 `chunks`(그 메시지의 `occurred_at`이 `from_at..to_at` 안에 드는 조각)·FTS·`embeddings` 행 삭제 + 조각 재생성·미러 재생성 일감 + 복제 대상이 있으면 복제 가리기 일감(AD-21·22: Postgres는 같은 가리기 함수, Drive는 그 메시지가 든 파일을 가린 본문으로 다시 쓰고 옛 파일을 지움, 가리기 이전의 DB 스냅샷은 새 스냅샷이 검증된 뒤 지움)이다. 하나라도 못 하면 롤백하고 실패로 답한다(spool 금지). 복제 가리기 일감이 끝날 때까지 doctor는 `warn`이다(2026-10-16). 같은 경로로 `tool_notes.target`도 가린다(`messages.redact`가 메시지와 그 도구 메모를 함께 받고, 기록은 `redactions.tool_note_id`, 0005).
   - 계약 테스트: redact 직후 같은 연결의 일반 UPDATE 거부, 롤백 뒤 표시 없음, redact 뒤 조각·도구 메모·검색·미러·내보내기·복제 대상(복제 가리기 일감이 끝난 뒤) 어디에서도 지운 문자열이 나오지 않음. 출력 코덱 계약: 비밀 fixture를 수집하면 저장본에는 원문이 있고, 등록된 모든 출력 코덱의 결과에는 없다. 코덱을 새로 만들고 등록부에 넣지 않으면 테스트가 실패한다(2026-10-19).
   - `redactions`의 위치 `[start, end)`는 그 가리기 직전 대상(본문 또는 도구 메모 대상) 위의 구간이다. 수집이 남기던 저장 전 마스킹 기록은 마스킹 B로 없어졌다(2026-10-19).
   - 작업 로그의 현재 문장은 `log_entries` 행에 있다. 수정은 `log.edit` 하나만 하고, 같은 트랜잭션에서 이전 문장을 `log_entry_edits`에 남긴다.
@@ -242,8 +242,8 @@ sequenceDiagram
 - **Prevents:** 자동 경로가 로그를 써서 SM-4가 오염되는 것, 로그가 엉뚱한 대화에 붙는 것, 다시 쓴 규칙이 켜지거나 내가 끈 규칙이 되살아나는 것
 - **Rule:**
   - **작업 로그는 에이전트(또는 나)가 `log.append`로만 만든다.** hook, 수집, drain은 로그 행을 만들지 않는다. 쓰기 API는 둘이다: 대화 쌓기(`sessions.ingest`)와 로그 쌓기(`log.append`).
-  - 로그는 `occurred_at` 직전의 메시지(`seq`가 가장 큰, `occurred_at` 이하인 메시지)에 이어진다. 연결 결과(`anchor_seq`)와 연결할 때까지 본 메시지 범위(`joined_upto_seq`)를 함께 기록한다. 더 이른 메시지가 나중에 들어오면 drain이 같은 식으로 다시 잇는다.
-  - 로그가 없는 세션의 첫 요청 문장은 seq가 가장 낮은 user 메시지에서 꺼낸다. 따로 저장하지 않는다(가리기가 한 곳에서 끝나게, 2026-10-16).
+  - 로그는 자기 `occurred_at`으로 대화 속 자리가 정해진다. 메시지와의 연결은 저장하지 않으며(칸도 drain 일감도 없다), 앞뒤 메시지는 그 시각 앞뒤로 읽는다. 메시지가 로그보다 늦게 수집돼도 고칠 것이 없다(2026-10-20).
+  - 로그가 없는 세션의 첫 요청 문장은 `occurred_at`이 가장 이른 user 메시지에서 꺼낸다. 따로 저장하지 않는다(가리기가 한 곳에서 끝나게, 2026-10-16).
   - 규칙 상태는 `pending | on | off`다. `pending`은 주입하지 않는다. `log.append`와 drain은 `pending`만 `on`으로 바꿀 수 있고, `off`는 사람의 `log.set-state`만 정한다.
   - 인용 대조는 저장된 본문과 인용을 **양쪽 다 NFC로 정규화해서** 비교한다. 위치는 저장된 본문 위의 **코드 포인트 반열린 구간** `[start, end)`다. 위치 없이 받은 인용은 본문에서 한 군데에만 맞을 때 성공한다. 대조가 끝내 실패한 규칙은 `pending`으로 남고 점검에 올라간다.
 
@@ -261,7 +261,7 @@ sequenceDiagram
     - 사용 중인 색인 설정은 DB에 기록하고, 설정 파일과 다르면 경고 `INDEX_CONFIG_MISMATCH`를 낸다.
     - 모델·차원 변경은 `index.rebuild`가 새 테이블을 만든 뒤 교체한다. 교체 전까지는 옛 테이블로 검색한다.
     - 재순위가 실패하면 벡터 순위를 그대로 돌려주고 경고 `RERANK_FAILED`를 낸다.
-  - **결과 계약**: 결과는 종류(`conversation | log | document`)로 갈라지는 출처를 붙인다. 대화·로그는 `session` 토큰, `harness`, 날짜, 꼬리표, `seq_from`·`seq_to`, `chunk_id` 또는 `log_entry_id`이고, 이것이 `recall.expand`·`sessions.read`의 입력이다. 문서는 `file_id`, 표시 이름, 조각 위치(`chunk_locator`: `type ∈ {pdf, docx, text, time, sheet}`와 종류별 필드 `page`·`bbox` / `block` / `start`·`end` / `start_ms`·`end_ms` / `sheet`·`row_start`·`row_end`, AD-24), 그때 만든 URL, 첨부라면 그 세션·`seq`이고, `files.show`의 입력이다. 문서는 첨부된 세션의 근접 단계를 물려받는다.
+  - **결과 계약**: 결과는 종류(`conversation | log | document`)로 갈라지는 출처를 붙인다. 대화·로그는 `session` 토큰, `harness`, 날짜, 꼬리표, `from_at`·`to_at`(대화는 조각의 첫·끝 메시지 시각, 로그는 그 줄의 시각), `chunk_id` 또는 `log_entry_id`이고, 이것이 `recall.expand`·`sessions.read`의 입력이다. 문서는 `file_id`, 표시 이름, 조각 위치(`chunk_locator`: `type ∈ {pdf, docx, text, time, sheet}`와 종류별 필드 `page`·`bbox` / `block` / `start`·`end` / `start_ms`·`end_ms` / `sheet`·`row_start`·`row_end`, AD-24), 그때 만든 URL, 첨부라면 그 세션·메시지 id이고, `files.show`의 입력이다. 문서는 첨부된 세션의 근접 단계를 물려받는다.
   - 정렬은 근접 단계(같은 워크트리 → 프로젝트 → 전체. 워크스페이스 단계는 워크스페이스를 쓰게 될 때 더한다) 다음 관련도 순이다.
   - 한 번의 결과는 기본 5건, 총 8,000자 이하다. 넘치면 낮은 순위 행부터 통째로 빼되 1위는 남기고, 경고 `RESULT_TRUNCATED`와 함께 `meta.omitted{count, reason}`·`meta.next{ns, verb, args}`를 붙인다. 행 안을 자르는 것은 최후 수단이다. `has_more`는 limit+1로 판정하고 0건도 `count`를 낸다. `--count`(`chunks`·`logs`·`docs`)는 같은 필터로 집계만 `data`로 돌려준다: `chunks`·`logs`는 `{sessions, rows, by_month}`, `docs`는 `{files, rows, by_month}`이고 `by_month`는 기간 필터 안의 달만(AD-13의 구간 함수). 그 응답의 `meta.count`는 1, `has_more`는 false이고 `RESULT_TRUNCATED`는 붙지 않는다. 회귀 러너(`tooling/eval`)의 결과 파일은 식별자·질의·점수만 담고 본문을 쓰지 않는다(2026-10-20).
   - 검색을 수행하지 못한 것(오류 `SEARCH_FAILED`: FTS 오류·DB 잠금 초과)과 0건(`ok`, `data: []`, `meta.hint`에 다음 행동)은 구분한다. 미설치·미초기화는 exit 2 코드(`CONFIG_MISSING`·`DB_UNAVAILABLE`)로 드러나며, 어느 경우도 "기록이 없다"로 읽히게 두지 않는다(NFR-2).
@@ -339,7 +339,7 @@ sequenceDiagram
 - **Binds:** AD-10, NFR-9
 - **Prevents:** 복제 쪽 기본값·타입·정렬 규칙이 원본과 다른 값을 만들어 두 저장소가 갈라지는 것
 - **Rule:**
-  - 모든 값(ID, `seq`, 시각, `recorded_at` 포함)은 원본이 정하고, 복제 adapter는 그대로 복사한다. 복제 쪽에서 `DEFAULT now()`, 자동 번호, 대소문자를 무시하는 정렬 규칙을 쓰지 않는다.
+  - 모든 값(ID, 시각, `recorded_at` 포함)은 원본이 정하고, 복제 adapter는 그대로 복사한다. 복제 쪽에서 `DEFAULT now()`, 자동 번호, 대소문자를 무시하는 정렬 규칙을 쓰지 않는다.
   - 복제 adapter는 Core의 ID·시각 코덱으로 읽고 써서, 원본과 같은 값으로 되읽히는지를 계약 테스트로 확인한다.
 
 ### AD-23 — 파일: 내용과 위치를 나누고, 소유는 위치에 붙인다
@@ -415,11 +415,11 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `worktrees` | `(project_id, path)` | `sessions.ensure` | `removed_at`만 drain이 채움 |
 | `workspaces` | `name` | 예약(slice 1은 쓰지 않음, 2026-10-15) | — |
 | `sessions` | `(harness, harness_session_id)` | 생성: `sessions.ensure`. 갱신: `sessions.ingest` | 불변: 키, `user_id`(→ `users.id`), `machine`, `started_at`, 꼬리표(비어 있으면 `session_identity` 일감이 한 번 채울 수 있음, AD-12), `ingest_source(live\|import)`. 단조: `ended_at`, 커서(`last_harness_message_id`, fingerprint), `parser_version`, `ingested_at`. 예약: `workspace_id`(slice 1은 쓰지 않음). 변경 가능: `start_source(startup\|resume\|clear\|compact\|fork)`, `continued_from_session_id`(예약, slice 1은 채우지 않음) |
-| `messages` | `(session_id, harness_message_id)`, `(session_id, seq)`. `seq`는 원본 Store가 배정 | `sessions.ingest` | 불변(예외: `messages.redact`). `occurred_at`은 원래 발화 시각 |
+| `messages` | `(session_id, harness_message_id)`. 순서는 `occurred_at`(번호 없음) | `sessions.ingest` | 불변(예외: `messages.redact`). `occurred_at`은 원래 발화 시각 |
 | `tool_notes` | `(session_id, harness_message_id, ordinal)` | `sessions.ingest` | 불변 |
-| `log_entries` | `id`(작성 프로세스가 정한 UUIDv7) | 생성: `log.append`. 문장: `log.edit`. 상태·범위: `log.set-state`, `log.set-scope`. 연결·`pending→on`: drain·`log.append` | `kind`, `session_id`, `occurred_at`, `author_model` 불변 |
+| `log_entries` | `id`(작성 프로세스가 정한 UUIDv7) | 생성: `log.append`. 문장: `log.edit`. 상태·범위: `log.set-state`, `log.set-scope`. `pending→on`: drain·`log.append` | `kind`, `session_id`, `occurred_at`, `author_model` 불변 |
 | `log_entry_edits` | `id` | `log.edit` | 불변 |
-| `chunks` | `(session_id, index_config_id, seq_from, seq_to)` | drain | 파생, 다시 만들 수 있음 |
+| `chunks` | `(session_id, index_config_id, from_at, to_at)` | drain | 파생, 다시 만들 수 있음 |
 | `embeddings` | `(target_kind, target_id, index_config_id)` | drain | 파생 |
 | `index_configs` | `(kind, model, dimensions, chunk_params)` | `setup run`, `index.rebuild` | 불변 |
 | `redactions` | `id`. 대상은 `message_id`·`file_id`·`tool_note_id` 중 하나 | `messages.redact`(본문과 도구 메모 대상. `detected`면 `pattern_version` 기록), `files.redact`. 수집·추출은 쓰지 않는다(마스킹 B, AD-11) | 불변 |
