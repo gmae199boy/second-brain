@@ -91,7 +91,7 @@ FR-7은 "에이전트가 시키지 않아도 적는다"를 요구한다. 수단�
 |---|---|---|---|
 | 시작 맥락의 안내 | Brain이 세션 시작 때 "진행·결정·규칙·선호가 생기면 로그를 적어라"를 주입 | Brain이 한 곳에서 관리, Harness 공통 | 지시일 뿐. 긴 세션에서 잊힐 수 있음 |
 | AGENTS.md / CLAUDE.md | 전역 지시 파일에 같은 내용 | 가장 단순, 모든 Harness | 파일 관리가 Brain 밖 |
-| Claude Code plugin (hook + skill) | 설치 한 번으로 hook(수집·주입)과 skill(기록 절차)을 묶음 | Claude Code에서 가장 강함. `Stop`·`PreCompact` hook으로 "아직 안 적은 결정이 있나" 점검 가능 | Harness마다 따로 만들어야 함 |
+| Claude Code plugin (hook + skill) | 설치 한 번으로 hook(수집·주입)과 skill(기록 절차)을 묶음 | Claude Code에서 가장 강함. `Stop`·`PreCompact` hook으로 "아직 안 적은 결정이 있나" 점검 가능 [2026-10-20 채택: Stop 점검 `log remind`, 설정 토글, 조건은 spine AD-17, `../change-discipline-and-metrics/`] | Harness마다 따로 만들어야 함 |
 | BMad 연계 | BMad 스킬이 memlog를 쓸 때 Brain에도 쓰거나, Brain이 `.memlog.md`를 읽음 | BMad 작업 중에는 이미 규율이 있음 | BMad를 쓰는 세션에만 해당 |
 
 도구의 형태도 둘이다.
@@ -154,3 +154,7 @@ FR-7은 "에이전트가 시키지 않아도 적는다"를 요구한다. 수단�
 | 세션 간 변화 | "임베딩 차원 결정이 어떻게 바뀌었지" | 결정의 대체 체인이 덮는지 |
 | 모순 해소 | "지금 Supermemory를 쓰기로 한 거야 아니야" | 옛 발언과 새 발언이 함께 나올 때 |
 | 시점 추론 | "shim을 고친 건 Hindsight 시험 전이야 후야" | 날짜가 붙은 출처로 답이 되는지 |
+
+**기계 지표와의 구분(2026-10-20).** epic 4의 회귀 러너(`tooling/eval`)는 같은 문항 파일로 고정 질의의 적중률(hit@k)을 잰다. 에이전트의 질의 바꾸기가 빠지므로 SM-3이 아니라 검색 랭킹의 회귀 지표다. SM-3은 사람이 채점한다. 둘 다 `~/.second_brain/eval/`에 남는다(spine AD-15).
+
+**집계 유형(2026-10-20).** "몇 번이나 했지"는 `recall chunks --count`·`logs --count`가 세션 수·행 수·월별 건수로 답한다(spine AD-15). 조각 top-5로 세지 않는다.

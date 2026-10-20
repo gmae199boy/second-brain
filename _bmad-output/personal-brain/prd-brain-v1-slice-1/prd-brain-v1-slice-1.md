@@ -2,7 +2,7 @@
 title: "PRD: Personal Brain V1 slice 1"
 status: final
 created: 2026-10-02
-updated: 2026-10-19
+updated: 2026-10-20
 ---
 
 # PRD: Personal Brain V1 slice 1 — 수집하고, 적어 두고, 찾는다
@@ -402,6 +402,7 @@ Core의 모든 기능은 SDK 호출로 쓸 수 있다.
 | 데스크톱·모바일 앱 | 항상 켜져 있어야 하는 일이 생길 때 |
 | 스케줄러, Telegram, Google Calendar | 이후 조각 |
 | Graphify, Jira, Confluence | 이후 조각 |
+| 웹 채팅(ChatGPT·Claude.ai) 내보내기 가져오기 | slice 2. 내보내기 JSON도 transcript이므로 parser 하나로 붙는다(AD-4). cwd가 없어 꼬리표 없이, 도구 메모 없이 들어온다(2026-10-20, `../change-discipline-and-metrics/`) |
 | Google Drive 연동(첨부 원본 이전, 기존 문서 색인, 변경 동기화, 연동 해제, DB 스냅샷 보관) | 다음 조각(epic 8). Drive API로 하고 Mac에 동기화하지 않는다. 결정은 `../change-local-sqlite-primary/` §7 |
 | 팀 공유(원문 포함), 다중 사용자 | 이후 조각. 개인 사용을 먼저 검증한 뒤 단계적으로 도입한다. 진짜 개인적인 것 외에는 원문까지 공유하는 방향이다. 팀 저장소와 도입 순서는 그때 정한다. slice 1은 프로젝트를 git remote로 식별하고, 세션이 `users` 테이블의 사용자를 가리키게 해 대비한다(slice 1은 '나' 한 행, 2026-10-16) |
 | Task, Goal, OpenLoop, Schedule | 이후 조각 |
@@ -429,12 +430,12 @@ Core의 모든 기능은 SDK 호출로 쓸 수 있다.
 
 1. **LLM 세션 요약이 필요한가.** slice 1은 작업 로그만으로 간다. 로그가 없는 세션은 첫 요청 문장과 도구 메모로만 보인다(FR-9). SM-4가 목표에 못 미치거나 과거 세션 가져오기를 만들 때(옛 세션에는 로그가 없다) 세션당 요약 1회를 안전망으로 넣을지 다시 판단한다. 기준선 측정에서 요약은 시간 질문 2/2를 만들었지만 괄호·대비 절·수치를 빠뜨렸다.
 2. **BMad와의 연계.** BMad의 memlog와 작업 로그는 "그 순간에 한 줄"이라는 방식이 같다. BMad 스킬이 memlog에 적을 때 Brain에도 적히게 할지, Brain이 프로젝트의 `.memlog.md`와 BMad 문서를 읽어 들일지, 따로 둘지 정하지 않았다. 종류 체계의 대응은 `addendum.md` §2.
-3. **에이전트에게 기록을 시키는 수단.** 시작 맥락의 안내만으로 충분한지, AGENTS.md·skill·plugin 같은 더 강한 수단이 필요한지는 SM-4로 드러난다. 후보는 `addendum.md` §4. Harness마다 수단이 달라질 수 있다. [부분 해결 2026-10-15: 수단은 Claude Code 플러그인이고, 스킬은 Brain 안내문의 생성물이다(architecture AD-17·AD-19). 충분한지는 여전히 SM-4로 본다.]
+3. **에이전트에게 기록을 시키는 수단.** 시작 맥락의 안내만으로 충분한지, AGENTS.md·skill·plugin 같은 더 강한 수단이 필요한지는 SM-4로 드러난다. 후보는 `addendum.md` §4. Harness마다 수단이 달라질 수 있다. [부분 해결 2026-10-15: 수단은 Claude Code 플러그인이고, 스킬은 Brain 안내문의 생성물이다(architecture AD-17·AD-19). 충분한지는 여전히 SM-4로 본다.] [2026-10-20: 후보 중 Stop hook 점검을 설정 토글(`[discipline] stop_remind`, 기본 꺼짐)로 더한다(`../change-discipline-and-metrics/` D1~D3). 2주 실사용의 둘째 주에 켜고 `stats show`로 SM-4a를 비교한 뒤 기본값을 정한다. 자세한 조건은 architecture AD-17.]
 4. **도구의 형태.** [해결: architecture AD-5] slice 1은 CLI만 낸다. MCP는 같은 이름·입출력 규칙으로 나중에 붙인다. [2026-10-15: epic 9에서 `brain mcp serve`(stdio)로, 쓰기 도구는 세션 인자 규약(AD-28).]
 5. **대분류 먼저가 실제로 나은가.** 작업 로그 검색 → 조각 검색의 2단계는 재지 않았다. 기준선에서 잰 것은 LLM 요약(6.5/8)과 조각(8/8)이고, 에이전트가 적은 작업 로그는 아직 데이터가 없다. architecture 단계와 실사용에서 같은 채점표로 비교한다.
 6. **규모.** 기준선은 조각 29개였다. 2026-10-08 규모 시험(실세션 226개, 조각 5,016개)에서 파일 grep만으로 13.5/16, 임베딩+재순위 14/16이 나왔다(`addendum.md` §1). 작업 로그가 쌓인 실사용 데이터로는 아직 재지 않았다.
 7. **수집 시점과 재시도의 주체.** [해결: architecture AD-6, AD-7] 턴마다 증분 수집하고, 밀린 일은 drain 하나가 다음 세션 시작과 점검 때 처리한다.
-8. **에이전트가 스스로 조회하는가.** 프롬프트마다 넣지 않기로 했으므로(FR-18), 내가 "전에 하던 거"라고 했을 때 에이전트가 실제로 Brain을 조회하는지가 SM-1을 좌우한다. 모자라면 "내가 과거를 언급한 프롬프트에만 조회"를 검토한다.
+8. **에이전트가 스스로 조회하는가.** 프롬프트마다 넣지 않기로 했으므로(FR-18), 내가 "전에 하던 거"라고 했을 때 에이전트가 실제로 Brain을 조회하는지가 SM-1을 좌우한다. 모자라면 "내가 과거를 언급한 프롬프트에만 조회"를 검토한다. [2026-10-20: 대리 지표(과거형 단서가 든 발화 뒤 에이전트가 `brain recall`을 불렀는가)를 `stats show`가 센다(architecture AD-5·AD-17). 모자라면 '과거를 언급한 프롬프트에만 한 줄 힌트'(UserPromptSubmit `additionalContext`)를 검토한다. 내용 주입은 여전히 하지 않는다(FR-18).]
 
 ## 9. Constraints
 
