@@ -15,7 +15,7 @@ inputs:
 
 # Sprint Change Proposal — 기록 규율 점검, 지표, 검색 회귀·집계
 
-> 제안 문서다. 승인 뒤 소유 스킬이 spine·PRD·addendum·에픽 파일에 적용하고, 적용이 끝나면 이 문서 머리에 "반영 완료"를 적는다. **적용은 다른 세션의 story 2.18 작업이 커밋된 뒤에 한다**(그 세션이 `deferred-work.md`·README·코드를 쓰고 있다). 이 문서는 그 세션이 건드리지 않는 새 폴더 하나다.
+> 제안 문서다. §4.3은 2026-10-20에 spine에 반영됐다(리뷰 게이트 포함, `architecture-brain-v1-slice-1/.memlog.md`). 승인 뒤 소유 스킬이 spine·PRD·addendum·에픽 파일에 적용하고, 적용이 끝나면 이 문서 머리에 "반영 완료"를 적는다. **적용은 다른 세션의 story 2.18 작업이 커밋된 뒤에 한다**(그 세션이 `deferred-work.md`·README·코드를 쓰고 있다). 이 문서는 그 세션이 건드리지 않는 새 폴더 하나다.
 
 ## 0. 체크리스트 상태
 
@@ -183,6 +183,14 @@ inputs:
 
 변경 없음(D8).
 
+### 4.6 spine 리뷰 게이트(2026-10-20)가 더한 인셉션 입력 (적용: `bmad-ticket`, §4.1과 함께)
+
+§4.3 적용 뒤 spine 리뷰(currency·adversary·rubric-reconcile, `architecture-brain-v1-slice-1/reviews/*-2026-10-20.md`)에서 나온 것 중 spine에는 들어갔고 에픽 Notes에도 적어야 할 것이다. spine 문장이 기준이고 여기는 가리키는 메모다.
+
+- **epic 3 Notes에 더한다:** "Note(2026-10-20, spine 리뷰): Stop 점검의 조건은 넷(spine AD-17 — `stop_hook_active` false, transcript로 센 사용자 발화 ≥ 상수, `log_entries`와 spool 어디에도 로그 없음, 표식 파일 없음), `Stop` 이벤트만, 표식은 차단 뒤에만, 모르면 묻지 않는다. `hooks.json`의 Stop 줄은 둘(2.14 비동기 수집 + 이 에픽의 동기 점검, `timeout` 5초)이고 Done when은 **플러그인으로 설치한 상태**에서 검증한다(플러그인 hook의 `decision: block`이 settings hook과 같다는 명시 서술이 문서에 없다). 인셉션에서 실측할 것: `hookSpecificOutput.additionalContext`만으로도 모델이 이어 가는지(되면 오류 대신 피드백으로 보이므로 그쪽), 발화 수 상수 3 vs 4(transcript 비동기 기록으로 하나 적게 셀 수 있다). 메타 `hook: only`라 MCP 도구로 나오지 않는다(AD-28). 표식 파일은 drain이 30일 지난 것을 지운다."
+- **epic 4 Notes에 더한다:** "Note(2026-10-20, spine 리뷰): `--count`는 `chunks`·`logs`가 `{sessions, rows, by_month}`, `docs`가 `{files, rows, by_month}`, `by_month`는 기간 안의 달만이고 AD-13의 구간 함수(날짜+설정 시간대 → 반열린 UTC)를 쓰며 `meta`에 구간을 되울린다. 회귀 러너 결과 파일은 식별자·질의·점수만(본문 없음)."
+- **epic 5 Notes에 더한다:** "Note(2026-10-20, spine 리뷰): `stats show`의 SM-4a는 전체 세션과 적격 세션(발화 ≥ 상수) 두 모집단으로 낸다. `import` 세션 제외는 기본이 아니라 옵션(`--exclude-import`) — 폴더 스캔이 처음 만든 세션도 `import`라 기본 제외하면 hook을 놓친 실사용 세션이 빠진다. 잴 수 없는 지표는 0이 아니라 null + 경고(예: transcript 폴더 없음 → SM-5). 'Stop 점검 뒤 로그가 생긴 비율'의 분모는 `context_injections(kind='stop', ok=1)`이고 API 오류로 끝난 턴(`StopFailure`, 점검 없음)은 들어오지 않는다. `brain recall`이 불렸다는 판정은 Core 함수 하나(도구 메모 대상 앞머리, MCP 이름 포함). `context_injections.elapsed_ms`는 Brain 내부 처리 시간이다(SM-7 내부값)."
+
 ## 5. Implementation Handoff
 
 **범위: Moderate** — 인셉션 전 에픽 셋의 입력과 문서 문장 편집. 코드는 그 에픽의 스토리가 만든다.
@@ -190,7 +198,7 @@ inputs:
 **적용 순서(모두 story 2.18 세션의 커밋 뒤):**
 1. `bmad-architecture` — §4.3(AD-5·6·15·17·18, Table Contract, Deferred).
 2. `bmad-prd` — §4.2와 §4.4(addendum).
-3. `bmad-ticket` — §4.1(epic 3·4·5 파일, 이니셔티브 Notes). 스토리 쪼개기는 각 에픽 인셉션에서.
+3. `bmad-ticket` — §4.1과 §4.6(epic 3·4·5 파일, 이니셔티브 Notes). 스토리 쪼개기는 각 에픽 인셉션에서.
 4. 이 문서 머리에 "반영 완료(날짜)"와 "이후의 기준은 spine·PRD·에픽 파일".
 
 **성공 기준:**

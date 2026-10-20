@@ -7,7 +7,7 @@ paradigm: 'hexagonal (ports & adapters), 단명 CLI 런타임(데몬은 선택, 
 scope: 'slice 1 — 세션 수집, 작업 로그, 조회, 시작 맥락, 설치·운영. 개인용, 기계 한 대, 수집 경로는 Claude Code 하나(Harness 중립 구조). 설치·hook 진입점은 Claude Code 플러그인'
 status: final
 created: '2026-10-08'
-updated: '2026-10-19'
+updated: '2026-10-20'
 binds: [FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, FR-12, FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22, FR-23, FR-24, FR-25, FR-26, FR-27, FR-28, NFR-1, NFR-2, NFR-3, NFR-4, NFR-5, NFR-6, NFR-7, NFR-8, NFR-9]
 sources:
   - ../prd-brain-v1-slice-1/prd-brain-v1-slice-1.md
@@ -83,7 +83,7 @@ flowchart LR
   - parser는 메인 대화의 메시지만 낸다. 사이드체인(서브에이전트) 대화는 최종 보고 하나만 표시와 함께 낸다. 대화가 아닌 항목과 Harness가 만든 요약은 메시지가 아니다(2026-10-15 epic 2 인셉션).
   - parser 커서는 (마지막 Harness 메시지 ID, 그 지점까지의 fingerprint)다. 커서 메시지가 사라졌거나(compact·fork) fingerprint가 다르면 처음부터 다시 읽는다. 멱등이므로 중복은 생기지 않고, 경고를 남긴다.
   - parser 버그로 이미 저장된 메시지는 고치지 않는다(원문 불변 우선). 재수집은 빠진 것만 추가한다. 세션마다 `parser_version`을 기록한다.
-  - **hook 입출력**(stdin 해석, `hookSpecificOutput`·`systemMessage` 형식, 세션 환경 변수 쓰기)은 connector adapter가 소유한다. CLI의 `--json` 봉투와는 별개인 세 번째 출력 모드다. hook 출력은 10,000자를 넘지 않는다.
+  - **hook 입출력**(stdin 해석, `hookSpecificOutput`·`systemMessage`·Stop의 top-level `decision`·`reason` 형식, 세션 환경 변수 쓰기)은 connector adapter가 소유한다. CLI의 `--json` 봉투와는 별개인 세 번째 출력 모드다. hook 출력은 10,000자를 넘지 않는다.
   - hook과 세션 환경 변수는 **선택 요소**다. 없으면 다음 대체 경로로 동작한다.
 
 | Brain이 필요한 것 | hook 있는 Harness | 없는 Harness |
@@ -100,19 +100,20 @@ flowchart LR
 - **Prevents:** 진입점마다 동작이 갈리는 것, 데몬·MCP 도입 시 재작성
 - **Rule:** CLI 명령에는 인자 해석과 출력 형식 변환 외의 로직이 없다. SDK 메서드 `<ns>.<verb>`는 CLI `brain <ns> <verb>`, MCP 도구 `<ns>_<verb>`(AD-28)와 같은 입출력 형태를 1:1로 갖는다. 출력은 `--json`(에이전트용)과 텍스트(사람용) 두 가지다. slice 1은 CLI만 내고(MCP·데몬은 epic 9), 표면은 아래 표로 고정한다. 이름공간은 명령이 다루는 대상이다. 대상이 없는 모음 이름공간(예전의 `admin`)은 두지 않는다(2026-10-16 사용자).
   - **표면 중립.** `args`는 SDK 입력 객체(JSON)이고 CLI 플래그는 그 키의 kebab-case다. 확인 게이트는 SDK가 소유한다: 동의가 필요한 verb는 입력 `confirm: true`가 없으면 `CONFIRMATION_REQUIRED`를 돌려주고, CLI `--yes`는 `confirm: true`로 바뀐다. 다음 단계·재시도는 SDK가 `{ns, verb, args}`로 돌려주고(`error.retry`는 같은 verb에 `confirm: true`를 더한 입력, `meta.next`는 다른 verb), CLI만 거기에 `retry_argv`를 덧붙이며, MCP는 도구 호출로, hook은 `systemMessage`로 바꾼다. 어느 표면도 다른 표면의 표현을 만들지 않는다. 엔벨로프 코덱은 Core에 하나이고 모든 표면이 쓴다.
-  - 모든 명령은 메타(`used_for`, `required`, `examples`, `output`, `risk(read | write | destructive)`, `hook`, `dryRun`)를 선언하고, `guide schema`·`--help`·MCP 스키마는 그 메타 하나에서 생성한다(Conventions). 상주 명령(`daemon run`, `mcp serve`)은 stdout에 엔벨로프를 내지 않는다(전송이 출력이다).
+  - 모든 명령은 메타(`used_for`, `required`, `examples`, `output`, `risk(read | write | destructive)`, `hook(no | yes | only)`, `dryRun`)를 선언하고, `guide schema`·`--help`·MCP 스키마는 그 메타 하나에서 생성한다(Conventions). `hook: only`인 verb(`context.show`, `log.remind`)는 hook 경로 전용이라 MCP 도구·소켓 verb로 생성하지 않는다(AD-28, 2026-10-20). 상주 명령(`daemon run`, `mcp serve`)은 stdout에 엔벨로프를 내지 않는다(전송이 출력이다).
 
 | ns | verb | 하는 일 (FR) |
 | --- | --- | --- |
 | `context` | `show` | 시작 맥락 출력 (17) |
 | `sessions` | `ingest`, `list`, `read` | 수집(세션 토큰만으로도), 목록(로그 없는 세션 포함), 넓히기(메시지·도구 메모) (1~6, 9, 15). `assign-workspace`는 예약(워크스페이스는 slice 1에서 쓰지 않음, 2026-10-15) |
-| `log` | `append`, `list`, `edit`, `set-state`, `set-scope` | 적기, 조회(종류·꼬리표·기간), 고치기, 끄기·켜기, 규칙 적용 범위 (7, 8, 19~22) |
+| `log` | `append`, `list`, `edit`, `set-state`, `set-scope`, `remind` | 적기, 조회(종류·꼬리표·기간), 고치기, 끄기·켜기, 규칙 적용 범위, Stop 점검(`hook: only`, 읽기. 로그 없는 세션에 한 번 묻는다, AD-17) (7, 8, 19~22) |
 | `recall` | `time`, `logs`, `chunks`, `docs`, `tools`, `expand` | 시간 조회, 대분류, 소분류, 문서 조각·이름 검색, 도구 메모 검색, 앞뒤 조각 (12~16, 28) |
 | `files` | `show`, `url`, `redact`, `reindex` | 파일 정보·위치, 원본 URL, 첨부 가리기, 재추출 (27, 28, 26) |
 | `messages` | `redact` | 비밀 가리기 (AD-11) |
 | `failures` | `list`, `retry` | 실패 조회(대상 종류로 거름), 다시 하기(대상 종류에 맞는 일감을 새로 만듦) (5, NFR-2) |
 | `queue` | `drain` | 밀린 일 처리 (5, AD-7, AD-21) |
 | `doctor` | `run` | 점검 (25, NFR-2) |
+| `stats` | `show` | 기계가 셀 수 있는 지표(SM-4a·5·C1·C3·7, PRD §8-8 대리 지표). 기간 필터는 AD-13의 구간 함수, 기본은 기간만 거르고 `import` 세션 제외는 옵션. 잴 수 없는 지표는 0이 아니라 null + 경고 (SM, epic 5) |
 | `backup` | `export`, `import` | 내보내기·복구 (NFR-9) |
 | `index` | `rebuild` | 재색인 (11) |
 | `mirror` | `rebuild` | 미러 재생성 (AD-16) |
@@ -126,9 +127,9 @@ flowchart LR
 - **Binds:** FR-1, FR-5, FR-7, FR-8, FR-10, FR-17, FR-18, NFR-3, NFR-7
 - **Prevents:** 비정상 종료 세션 유실, Harness가 수집을 기다리는 것, 정확성이 종료 hook에 의존하는 것
 - **Rule:** 아래 매핑을 따른다.
-  - 동기 경로(시작 hook)에는 네트워크 호출이 없고, **쓰기 트랜잭션도 없다**(읽기 전용). 세션 행은 같은 세션의 첫 수집(`sessions.ingest`)이 만들고, 주입 시도 기록은 spool에 써서 drain이 넣는다. DB 단위 쓰기 잠금(AD-7)이 시작 맥락을 막지 않게 하기 위해서다.
+  - 동기 경로(시작 hook)에는 네트워크 호출이 없고, **쓰기 트랜잭션도 없다**(읽기 전용). 세션 행은 같은 세션의 첫 수집(`sessions.ingest`)이 만들고, 주입 시도 기록은 spool에 써서 drain이 넣는다. DB 단위 쓰기 잠금(AD-7)이 시작 맥락을 막지 않게 하기 위해서다. 동기 Stop 점검(`log.remind`, AD-17)도 같은 규칙이다: 읽기, spool, `<home>/run/` 표식 파일만. `log.remind`는 설정과 표식 파일만 읽고 끝나는 조기 반환 경로를 가지며(토글이 꺼진 기본 설치에서는 DB를 열지 않는다), 전체 시간 상한은 Core 상수이고 플러그인 `hooks.json`의 그 줄은 `timeout` 5초다 — command hook 기본 600초가 세션 종료를 막지 않게(2026-10-20).
   - **정확성은 `SessionEnd`에 의존하지 않는다.** 종료 hook은 최선 노력이고, 놓친 일은 drain이 한다.
-  - `brain log`와 `brain recall`은 connector가 transcript를 찾을 수 있으면 그 세션을 먼저 증분 수집한다.
+  - 선수집은 `log.append`·`list`·`edit`·`set-state`·`set-scope`와 `recall.*`에만 적용한다: connector가 transcript를 찾을 수 있으면 그 세션을 먼저 증분 수집한다. hook 경로 verb(`context.show`, `log.remind`)는 선수집하지 않는다(쓰기 트랜잭션 금지, 2026-10-20).
 
 ```mermaid
 sequenceDiagram
@@ -141,6 +142,7 @@ sequenceDiagram
   H--)B: SessionStart (async) → brain queue drain
   loop 턴마다
     H--)B: Stop (async) → brain sessions ingest (로컬 DB만)
+    H->>B: Stop (동기, timeout 5초) → brain log remind (토글 켜짐·조건 충족 때만 decision: block, AD-17)
   end
   Note over H,B: 에이전트가 brain log append / brain recall … → 그 세션 증분 수집 후 처리
   H--)B: SessionEnd (async, 최선 노력) → 마지막 수집
@@ -153,9 +155,9 @@ sequenceDiagram
 - **Rule:**
   - DB에 쓰는 모든 경로는 SQLite adapter의 쓰기 함수 하나(`withWrite`)를 지난다. 이 함수만 `BEGIN IMMEDIATE`를 낸다(Kysely의 `db.transaction()`은 DEFERRED라 쓰지 않는다). 잠금은 데이터베이스 단위다(개인 규모라 허용). 커서 전진과 배치 삽입은 같은 트랜잭션이다.
   - 쓰기 트랜잭션 안에서는 파일·네트워크 I/O를 하지 않고, 어떤 쓰기 트랜잭션도 2초를 넘겨 잠금을 쥐지 않는다(긴 일은 일감으로 쪼갠다).
-  - `busy_timeout`은 호출 경로별 Core 상수다(턴 수집 3초, 사람이 부른 명령 10초, drain 10초). 시간 초과는 실패가 아니라 spool로 간다(AD-9). `journal_mode=WAL`은 파일 속성이라 DB를 만드는 설치기·마이그레이션이 한 번 건다. 연결마다 거는 것은 `busy_timeout`, `foreign_keys=ON`, `recursive_triggers=ON`이고, 이 설정은 adapter의 연결 함수 한 곳에만 있다.
+  - `busy_timeout`은 호출 경로별 Core 상수다(턴 수집 3초, 동기 hook 경로 `context.show`·`log.remind` 1초, 사람이 부른 명령 10초, drain 10초). 시간 초과는 실패가 아니라 spool로 간다(AD-9). `journal_mode=WAL`은 파일 속성이라 DB를 만드는 설치기·마이그레이션이 한 번 건다. 연결마다 거는 것은 `busy_timeout`, `foreign_keys=ON`, `recursive_triggers=ON`이고, 이 설정은 adapter의 연결 함수 한 곳에만 있다.
   - 밀린 일(실패한 수집, transcript 폴더 스캔, 조각·색인 생성, 규칙 인용 대조, 로그-메시지 연결, spool 재주입, 미러 갱신)은 SDK의 `queue.drain()` 하나가 처리한다. 호출자는 시작 hook(async)과 `brain doctor run`이다.
-  - drain은 동시 실행을 전제하고, 일감은 `work_items`(AD-21)에서 짧은 쓰기 트랜잭션으로 청구한 뒤 트랜잭션 밖에서 처리한다. 모든 백그라운드 작업은 멱등이다. hook이 없는 Harness를 위해 사람이 부른 명령은 끝에 짧은 시간 예산으로 drain을 한 번 기회적으로 돈다. 예외: 동기 시작 hook(`context show`)과 hook 경로의 명령은 돌지 않고(AD-6), 데몬이 살아 있으면(소켓 handshake가 응답하면. 설정 `[daemon] enabled`가 기준이 아니다) 어떤 명령도 돌지 않으며(AD-27), 기회적 drain은 읽기로 할 일이 있는지 본 뒤에만 쓰기 잠금을 잡는다.
+  - drain은 동시 실행을 전제하고, 일감은 `work_items`(AD-21)에서 짧은 쓰기 트랜잭션으로 청구한 뒤 트랜잭션 밖에서 처리한다. 모든 백그라운드 작업은 멱등이다. hook이 없는 Harness를 위해 사람이 부른 명령은 끝에 짧은 시간 예산으로 drain을 한 번 기회적으로 돈다. 예외: 동기 hook(`context show`, `log remind`)과 hook 경로의 명령은 돌지 않고(AD-6), 데몬이 살아 있으면(소켓 handshake가 응답하면. 설정 `[daemon] enabled`가 기준이 아니다) 어떤 명령도 돌지 않으며(AD-27), 기회적 drain은 읽기로 할 일이 있는지 본 뒤에만 쓰기 잠금을 잡는다.
 
 ### AD-8 — ID와 멱등 키
 
@@ -202,7 +204,7 @@ sequenceDiagram
 - **Binds:** FR-1, FR-20, FR-21, FR-22, FR-26, NFR-1
 - **Prevents:** 코드 실수로 원문이 바뀌는 것, 비밀이 Brain 밖으로 나가는 것, 패턴의 과잉 가림이 저장된 원문을 되돌릴 수 없게 망가뜨리는 것, 나가는 길 하나가 가리기를 잊는 것, 작업 로그의 현재 문장 위치가 단위마다 달라지는 것
 - **Rule:**
-  - **나갈 때 가리기**(마스킹 B, 2026-10-18 사용자): 수집은 본문과 도구 메모 대상을 Harness가 준 그대로 저장한다(추출한 문서 텍스트도 같다, AD-23). 알려진 비밀 패턴(API 키, 토큰, 개인 키, `password=` 류)은 Brain 밖으로 나갈 때 `[REDACTED:<kind>]`로 바뀐다. 패턴 목록과 가리기 함수는 Core에 하나만 두고 버전(`SECRET_PATTERN_VERSION`)을 가진다. 나가는 길은 Core의 **출력 코덱**이고 모두 그 함수를 부른다: 엔벨로프 코덱(CLI·MCP·소켓이 공유, `data`·`error`·`warnings`·`meta`의 문자열), hook 출력 코덱(시작 맥락), 미러 렌더러(AD-16), 내보내기 writer, 복제 payload(AD-22), 임베딩·재순위 요청(AD-15). 도구 메모 대상만 쓰는 규칙(셸 `NAME=value`)은 도구 메모를 돌려주는 읽기 결과가 그 칸에만 먼저 걸고, 코덱은 모든 문자열에 본문 규칙을 건다(가린 표시는 다시 잡히지 않아 두 번 걸려도 같다, 2026-10-19 사용자). Store와 adapter는 원문을 돌려주고, 출력 코덱을 거치지 않고 Brain 밖으로 텍스트를 내는 경로는 없다. 출력 가리기는 `redactions`를 남기지 않는다.
+  - **나갈 때 가리기**(마스킹 B, 2026-10-18 사용자): 수집은 본문과 도구 메모 대상을 Harness가 준 그대로 저장한다(추출한 문서 텍스트도 같다, AD-23). 알려진 비밀 패턴(API 키, 토큰, 개인 키, `password=` 류)은 Brain 밖으로 나갈 때 `[REDACTED:<kind>]`로 바뀐다. 패턴 목록과 가리기 함수는 Core에 하나만 두고 버전(`SECRET_PATTERN_VERSION`)을 가진다. 나가는 길은 Core의 **출력 코덱**이고 모두 그 함수를 부른다: 엔벨로프 코덱(CLI·MCP·소켓이 공유, `data`·`error`·`warnings`·`meta`의 문자열), hook 출력 코덱(시작 맥락, Stop 점검의 `reason`), 미러 렌더러(AD-16), 내보내기 writer, 복제 payload(AD-22), 임베딩·재순위 요청(AD-15). 도구 메모 대상만 쓰는 규칙(셸 `NAME=value`)은 도구 메모를 돌려주는 읽기 결과가 그 칸에만 먼저 걸고, 코덱은 모든 문자열에 본문 규칙을 건다(가린 표시는 다시 잡히지 않아 두 번 걸려도 같다, 2026-10-19 사용자). Store와 adapter는 원문을 돌려주고, 출력 코덱을 거치지 않고 Brain 밖으로 텍스트를 내는 경로는 없다. 출력 가리기는 `redactions`를 남기지 않는다.
   - 남아 있는 출력(미러 파일, 복제 대상)은 쓴 패턴 버전을 적는다. 버전이 오르면 미러 재생성 일감과 복제 가리기 일감을 만든다. 내보내기는 manifest에 버전을 적고, 이미 쓴 내보내기 파일은 건드리지 않는다.
   - 저장소 파일(`brain.db`와 `-wal`·`-shm`)에는 비밀이 원문으로 있다. AD-10의 규칙(동기화 폴더 금지, 권한 0600)이 그것을 지킨다. 저장본에서도 지우려면 `messages.redact`를 쓴다.
   - `messages`와 `tool_notes`는 UPDATE·DELETE를 거부하는 DB trigger를 가진다. **유일한 예외는 `messages.redact`**다. 사람이 요청해 저장본에서 지우는 가리기다. 입력은 지울 글자 그대로이거나 `detected`(지금 패턴이 그 메시지에서 찾는 구간 전부, `redactions.pattern_version`에 그 버전)다. 이 함수는 본문 일부나 전체를 `[REDACTED:<kind>]`로 바꾸고, 같은 트랜잭션에서 `redactions`에 위치·종류·지운 내용의 해시만 남긴다(지운 내용은 보존하지 않는다). trigger는 redact 표시가 있을 때만 통과시킨다. 표시는 Store adapter의 redact 함수 한 곳이 `try/finally`로 세우고 지운다(SQLite에서는 프로세스 변수를 읽는 SQL 함수다).
@@ -230,7 +232,7 @@ sequenceDiagram
 - **Binds:** FR-6, FR-12, FR-17
 - **Prevents:** Core 안의 자연어 날짜 해석기, 에이전트가 오늘을 잘못 아는 것, 재주입이 시각을 바꾸는 것
 - **Rule:**
-  - 저장·입력·출력은 모두 절대 시각이다. 저장 정규형은 정확히 `YYYY-MM-DDTHH:MM:SS.sssZ`(24글자)이고, Core의 시각 코덱 한 곳이 만든다. Store는 경계에서 다른 형태를 거부한다. 재주입이 바꾸지 않는 것은 순간이고, 표현을 정규형으로 맞추는 것은 변경이 아니다. "어제·지난주" 변환은 에이전트 몫이고 Brain은 절대 범위만 받는다.
+  - 저장·입력·출력은 모두 절대 시각이다. 저장 정규형은 정확히 `YYYY-MM-DDTHH:MM:SS.sssZ`(24글자)이고, Core의 시각 코덱 한 곳이 만든다. Store는 경계에서 다른 형태를 거부한다. 재주입이 바꾸지 않는 것은 순간이고, 표현을 정규형으로 맞추는 것은 변경이 아니다. "어제·지난주" 변환은 에이전트 몫이고 Brain은 절대 범위만 받는다. 날짜 인자(`--from`·`--to`, `stats.show`와 `recall --count`)와 월 버킷(`by_month`)은 (날짜, 설정 시간대) → 반열린 UTC 구간을 만드는 Core 함수 하나로 바꾸고, 응답 `meta`에 쓴 구간을 되울린다 — 두 명령이 같은 사건을 다른 날·달에 넣지 않게(2026-10-20).
   - 발생 시각(`occurred_at`)은 사건이 일어난 프로세스가 `Clock` port로 한 번 정한다. DB에 들어간 시각은 `recorded_at`으로 따로 둔다.
   - 시작 맥락에는 오늘 날짜와 시간대(설정, 기본 `Asia/Seoul`) 한 줄이 들어간다. 모든 `--json` 응답은 `now`와, 받은 범위를 되울린다.
 
@@ -261,7 +263,7 @@ sequenceDiagram
     - 재순위가 실패하면 벡터 순위를 그대로 돌려주고 경고 `RERANK_FAILED`를 낸다.
   - **결과 계약**: 결과는 종류(`conversation | log | document`)로 갈라지는 출처를 붙인다. 대화·로그는 `session` 토큰, `harness`, 날짜, 꼬리표, `seq_from`·`seq_to`, `chunk_id` 또는 `log_entry_id`이고, 이것이 `recall.expand`·`sessions.read`의 입력이다. 문서는 `file_id`, 표시 이름, 조각 위치(`chunk_locator`: `type ∈ {pdf, docx, text, time, sheet}`와 종류별 필드 `page`·`bbox` / `block` / `start`·`end` / `start_ms`·`end_ms` / `sheet`·`row_start`·`row_end`, AD-24), 그때 만든 URL, 첨부라면 그 세션·`seq`이고, `files.show`의 입력이다. 문서는 첨부된 세션의 근접 단계를 물려받는다.
   - 정렬은 근접 단계(같은 워크트리 → 프로젝트 → 전체. 워크스페이스 단계는 워크스페이스를 쓰게 될 때 더한다) 다음 관련도 순이다.
-  - 한 번의 결과는 기본 5건, 총 8,000자 이하다. 넘치면 낮은 순위 행부터 통째로 빼되 1위는 남기고, 경고 `RESULT_TRUNCATED`와 함께 `meta.omitted{count, reason}`·`meta.next{ns, verb, args}`를 붙인다. 행 안을 자르는 것은 최후 수단이다. `has_more`는 limit+1로 판정하고 0건도 `count`를 낸다.
+  - 한 번의 결과는 기본 5건, 총 8,000자 이하다. 넘치면 낮은 순위 행부터 통째로 빼되 1위는 남기고, 경고 `RESULT_TRUNCATED`와 함께 `meta.omitted{count, reason}`·`meta.next{ns, verb, args}`를 붙인다. 행 안을 자르는 것은 최후 수단이다. `has_more`는 limit+1로 판정하고 0건도 `count`를 낸다. `--count`(`chunks`·`logs`·`docs`)는 같은 필터로 집계만 `data`로 돌려준다: `chunks`·`logs`는 `{sessions, rows, by_month}`, `docs`는 `{files, rows, by_month}`이고 `by_month`는 기간 필터 안의 달만(AD-13의 구간 함수). 그 응답의 `meta.count`는 1, `has_more`는 false이고 `RESULT_TRUNCATED`는 붙지 않는다. 회귀 러너(`tooling/eval`)의 결과 파일은 식별자·질의·점수만 담고 본문을 쓰지 않는다(2026-10-20).
   - 검색을 수행하지 못한 것(오류 `SEARCH_FAILED`: FTS 오류·DB 잠금 초과)과 0건(`ok`, `data: []`, `meta.hint`에 다음 행동)은 구분한다. 미설치·미초기화는 exit 2 코드(`CONFIG_MISSING`·`DB_UNAVAILABLE`)로 드러나며, 어느 경우도 "기록이 없다"로 읽히게 두지 않는다(NFR-2).
 
 ### AD-16 — Markdown 미러는 DB에서 파일로만 간다
@@ -279,17 +281,18 @@ sequenceDiagram
 - **Prevents:** Harness마다 규율이나 규칙 사본이 갈라지는 것, 주입이 조용히 실패하는 것, 토크나이저에 의존하는 것
 - **Rule:**
   - 규율(기록 규칙, 인용 규칙, 질의 작성 안내)의 **원본은 Core 상수 하나**다. `guide.show`가 전문을 내고, 시작 맥락에는 그 요약과 "자세한 것은 `brain guide show`"만 들어간다. 플러그인 스킬 파일은 빌드가 Core 상수에서 생성해 커밋하고(bootstrap 복사본과 같은 방식), parity 테스트(생성물과 커밋본의 일치, `tested_against`, 코드블록의 명령·flag 실존)가 어긋남을 막는다. `guide.show`의 출력은 Markdown이다. AGENTS.md·CLAUDE.md에는 "Brain을 써서 찾고 적어라" 이상을 넣지 않는다. 켜진 규칙은 시작 맥락으로만 나간다.
+  - 규율의 두 번째 수단은 Stop 점검이다(`log.remind`, `hook: only`, 설정 `[discipline] stop_remind`, 기본 false): 로그 없는 세션이 멈출 때 세션당 한 번만 `decision: block`과 규율 문장을 돌려준다. `Stop` 이벤트에만 응답한다(`SubagentStop`·`StopFailure`에는 걸지 않는다). 조건은 넷 모두다: `stop_hook_active`가 false; 그 세션의 사용자 발화가 Core 상수 이상(발화의 정의는 Core 술어 하나 `isUserTurn`이고, 수는 hook stdin의 `transcript_path`를 parser로 읽어 센다 — DB `messages`가 아니다. transcript는 비동기로 기록되어 하나 적게 셀 수 있으므로 상수는 그것을 감안한다); `log_entries`에 그 세션의 줄이 없고 spool에도 그 세션의 `log.append`가 남아 있지 않음; `<home>/run/stop-remind/<harness>-<id>` 표식 파일이 없음. 세션 행이 아직 없거나 어느 것이든 알 수 없으면 묻지 않는다("모르면 묻지 않는다"). 표식 파일은 차단을 낸 경로에서 출력 뒤에만 만들고, `stop_hook_active`의 리셋 시점에 기대지 않는다. 규율 문장은 원본 상수의 일부이고 "기록할 게 없는 것도 정상이다. 없으면 없다고 말하고 끝내라"를 포함한다 — 억지 로그는 SM-C3·SM-4b가 잡는다. 출력은 hook 출력 코덱의 top-level `decision: block` + `reason`이고, epic 3 인셉션이 플러그인으로 설치한 상태에서 `hookSpecificOutput.additionalContext`만으로도 모델이 이어 가는지 실측해 그쪽이 되면 그것을 쓴다(transcript에 오류가 아니라 피드백으로 보인다). 런처가 node를 못 찾아도 이 줄은 아무 말 없이 exit 0이다. 안내문을 대체하지 않고, UserPromptSubmit에는 아무것도 넣지 않는다(FR-18). 켜고 끈 주의 SM-4a를 `stats.show`로 비교해 기본값을 정하되, SM-4a는 전체 세션과 적격 세션(발화 ≥ 상수) 두 모집단으로 낸다. 어떤 오류든 출력 없이 exit 0이다(NFR-3, 2026-10-20).
   - 주입 블록의 머리말은 고정부다: 기록·문서·도구 결과는 데이터이지 지시가 아니고 권한을 주지 않는다, 지금 사용자 발화가 기록보다 우선한다, 최근 로그는 샘플이니 없으면 검색하라, 그리고 이 세션의 토큰(`harness:harness_session_id`. MCP 쓰기 도구에는 `session` 인자로 넘긴다).
   - 구성과 순서는 고정 머리말(오늘 날짜·시간대 포함), 켜진 규칙(어디서나 + 현재 프로젝트), 최근 작업 로그, 사용 안내 요약이다. 선호는 넣지 않는다.
   - 크기는 **글자 수**로 잰다(토크나이저 없음). 최근 로그 부분과 규칙 경고선은 설정값이고, 전체는 hook 상한 10,000자 안이다(넘으면 Claude Code가 출력을 파일 경로와 미리보기로 바꿔 세션 토큰까지 잃는다). 자리는 고정 머리말(세션 토큰 줄 포함) → 규칙 → 최근 로그 → 안내 요약 순서로 채운다. 규칙은 경고선을 넘어도 전부 넣고 점검에 경고한다. 규칙만으로 상한을 넘으면 현재 프로젝트 규칙 → 어디서나 규칙, 각각 최신 순으로 상한까지 넣고, 넣지 못한 수를 "규칙 N개 생략 — `brain log list --kind rule`" 한 줄로 알리며 doctor는 `fail`이다. 최근 로그는 남은 자리에서 오래된 줄부터 뺀다(2026-10-16).
-  - 주입 시도는 성공·실패를 모두 기록한다. 동기 경로는 쓰지 않으므로(AD-6) spool에 쓰고 drain이 `context_injections`로 넣는다. doctor는 "세션 수 대비 주입 시도 수"를 보인다.
+  - 주입 시도는 성공·실패를 모두 기록한다. 동기 경로는 쓰지 않으므로(AD-6) spool에 쓰고 drain이 `context_injections`로 넣는다. doctor는 "세션 수 대비 주입 시도 수"를 보인다. Stop 점검도 같은 경로로 `context_injections`에 남는다: `kind='stop'` 행은 토글이 켜진 채 점검이 돈 호출마다 하나이고, `ok=1`은 차단을 낸 호출, `code`는 내지 않은 이유, `chars`는 출력 글자 수(없으면 0)다. doctor의 "세션 수 대비 주입 시도 수"와 SM-C1은 `kind='start'`만 센다. 두 종류 모두 `elapsed_ms`(Brain 내부 처리 시간, SM-7 내부값)를 기록한다. `stats.show`의 "`brain recall`이 불렸다" 판정은 도구 메모 대상의 앞머리(`brain recall`·`brain sessions read`, MCP 도구 이름 `recall_*`·`sessions_read`)를 보는 Core 함수 하나다(2026-10-20).
 
 ### AD-18 — 설정과 키는 저장소 밖 한 곳에서 읽는다
 
 - **Binds:** FR-25, NFR-6
 - **Prevents:** 키가 공개 저장소로 들어오는 것, 설정을 읽는 곳이 흩어지는 것, 모르는 설정이 조용히 기본값으로 떨어지는 것
 - **Rule:**
-  - 설정은 `~/.second_brain/config.toml`(`schema_version` 포함), 키는 `~/.second_brain/.env`에 둔다. 설정 파일에는 키 값이 아니라 환경 변수 이름만 적는다. 원본 위치는 `[store] path`, 미러 위치는 `[mirror] path`, 데몬 사용 여부는 `[daemon] enabled`(기본 false. 키와 주기 Label 선택은 epic 5가, 데몬 동작은 epic 9가 맡는다)다. 자동 업데이트 여부는 `[update] auto`(기본 true. 설치기가 TTY에서 묻는다, AD-19·27, 2026-10-16)다. 복제 대상은 epic 7에서 `[[replicas]]` 목록(Postgres URL은 환경 변수 이름으로)으로 더한다. 설치 기록(`<home>/installed.json`)과 런타임 상태(`<home>/run/`)는 설정이 아니라 사실이고 코덱을 거치지 않는다(AD-19, Conventions).
+  - 설정은 `~/.second_brain/config.toml`(`schema_version` 포함), 키는 `~/.second_brain/.env`에 둔다. 설정 파일에는 키 값이 아니라 환경 변수 이름만 적는다. 원본 위치는 `[store] path`, 미러 위치는 `[mirror] path`, 데몬 사용 여부는 `[daemon] enabled`(기본 false. 키와 주기 Label 선택은 epic 5가, 데몬 동작은 epic 9가 맡는다)다. 자동 업데이트 여부는 `[update] auto`(기본 true. 설치기가 TTY에서 묻는다, AD-19·27, 2026-10-16)다. Stop 점검 여부는 `[discipline] stop_remind`(기본 false. 설치기는 묻지 않는다. epic 3, AD-17, 2026-10-20)다. 복제 대상은 epic 7에서 `[[replicas]]` 목록(Postgres URL은 환경 변수 이름으로)으로 더한다. 설치 기록(`<home>/installed.json`)과 런타임 상태(`<home>/run/`)는 설정이 아니라 사실이고 코덱을 거치지 않는다(AD-19, Conventions).
   - 읽기·쓰기는 Runtime의 설정 코덱 하나만 한다(설치기 포함). 모르는 키는 경고하고, Core에는 값으로 넘긴다.
 
 ### AD-19 — 설치 진입점, 플러그인, Harness 연결
@@ -315,7 +318,7 @@ sequenceDiagram
   - 런타임 명령은 시작할 때 버전을 확인한다. 다르면 DB에 쓰지 않고 spool로 보내며, 경고 `SCHEMA_MISMATCH`와 함께 doctor에 올린다.
   - `setup upgrade`는 코드 갱신 → 빌드 → 마이그레이션 → shim 재작성(플러그인 없는 Harness만 hook 재등록) → LaunchAgent 일치(AD-25) → 데몬이 있으면 재시작(AD-27) → doctor → 완료 기록(AD-19) 순서다. 플러그인 hook이 시작하는 ff+build도 같은 함수를 쓴다(AD-19).
   - 백업은 `backup.export`다. 내보내기 위치는 설정이고, doctor는 마지막 내보내기가 설정한 기간(기본 7일)보다 오래되면 경고한다.
-  - `setup uninstall`은 Brain 표식이 붙은 hook, shim, LaunchAgent 두 Label(주기·데몬), `<home>/run/`(소켓·pid·heartbeat), `<home>/log/`, `installed.json`을 지운다. 플러그인은 사용자가 `claude plugin uninstall`로 지운다(안내만). 원본 DB 파일(`brain.db`)과 데이터 폴더(`files/`, spool, 미러)는 별도의 명시적 확인을 받아야 지운다.
+  - `setup uninstall`은 Brain 표식이 붙은 hook, shim, LaunchAgent 두 Label(주기·데몬), `<home>/run/`(소켓·pid·heartbeat·`stop-remind/`), `<home>/log/`, `installed.json`을 지운다. 플러그인은 사용자가 `claude plugin uninstall`로 지운다(안내만). 원본 DB 파일(`brain.db`)과 데이터 폴더(`files/`, spool, 미러)는 별도의 명시적 확인을 받아야 지운다.
 
 ### AD-21 — 밀린 일은 `work_items` 하나에 쌓는다
 
@@ -397,7 +400,7 @@ sequenceDiagram
 - **Binds:** FR-23, FR-24
 - **Prevents:** MCP 도구가 CLI와 다른 이름·입출력을 갖는 것, 세션 귀속 없는 쓰기, 도구 스키마를 손으로 베끼는 것
 - **Rule:**
-  - `brain mcp serve`는 stdio MCP 서버다(데몬이 필요 없다). 도구 이름은 `<ns>_<verb>`이고 입력 스키마·설명은 AD-5의 명령 메타에서 생성한다. 플러그인 `.mcp.json`에 선택으로 등록한다.
+  - `brain mcp serve`는 stdio MCP 서버다(데몬이 필요 없다). 도구 이름은 `<ns>_<verb>`이고 입력 스키마·설명은 AD-5의 명령 메타에서 생성한다. 메타 `hook: only`인 verb는 생성하지 않는다(2026-10-20). 플러그인 `.mcp.json`에 선택으로 등록한다.
   - 쓰기 verb(`log.append`, `sessions.ingest`, `messages.redact` 등)는 `session` 인자(`harness:harness_session_id`)가 필수이고 없으면 오류 `SESSION_REQUIRED`다. 읽기 verb는 선택이다. 세션 토큰은 시작 맥락의 토큰 줄이 준다(AD-17). 출처 우선순위는 AD-4와 같다(명시 인자 > 소켓 필드 > 환경 변수). 플러그인 `.mcp.json`은 `${CLAUDE_PLUGIN_ROOT}`의 래퍼를 가리키고 래퍼가 shim을 exec한다.
   - 확인이 필요한 명령은 MCP에서도 같은 코드(`CONFIRMATION_REQUIRED`)로 멈춘다. MCP 도구 결과는 CLI와 같은 엔벨로프를 `content`에 담고, `ok: false`면 `isError: true`다.
 
@@ -420,7 +423,7 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `embeddings` | `(target_kind, target_id, index_config_id)` | drain | 파생 |
 | `index_configs` | `(kind, model, dimensions, chunk_params)` | `setup run`, `index.rebuild` | 불변 |
 | `redactions` | `id`. 대상은 `message_id`·`file_id`·`tool_note_id` 중 하나 | `messages.redact`(본문과 도구 메모 대상. `detected`면 `pattern_version` 기록), `files.redact`. 수집·추출은 쓰지 않는다(마스킹 B, AD-11) | 불변 |
-| `context_injections` | `id` | `context.show`가 spool에 쓰고 drain이 넣음 | 불변 |
+| `context_injections` | `id` | `context.show`·`log.remind`가 spool에 쓰고 drain이 넣음(`kind`: `start` \| `stop`, 칸의 뜻은 AD-17) | 불변 |
 | `failures` | `(target_kind, target_id, stage, fingerprint)`. 대상 키는 `work_items`와 같다. 세션 수집 실패는 `session`/세션 토큰(`harness:harness_session_id`, 세션 행이 없어도 됨). `harness`·`session_id`는 정보 칸이고 비어 있을 수 있음(2026-10-16) | 모든 경로(실패 기록 함수 하나) | `resolved_at`은 drain이 채움. 같은 키를 다시 만나면 실패 기록 함수가 그 행을 다시 열고(`resolved_at = null`) `occurred_at`(마지막으로 난 때)·`message`를 바꾸며, 0005부터 `first_occurred_at`은 그대로 두고 `occurrences`를 1 올린다(2026-10-19 사용자) |
 | `transcript_files` | `(harness, path)` | drain(폴더 스캔)과 성공한 모든 `sessions.ingest`(hook 경로 포함, 2026-10-19 story 12 Decision 2) | 크기·fingerprint·커서 단조. 단 `cursorReset`인 parse는 줄어든 크기도 쓴다(compact) |
 | `files` | `content_hash` | 첨부 수집(epic 10), 소스 동기화(epic 8) | 내용 불변. `home`, `current_extraction_id`, `redacted_at`(`files.redact`), `source_unreachable_at`(복구·연동 해제)만 바뀜 |
@@ -482,8 +485,8 @@ erDiagram
 | 명령 메타 | 모든 CommandSpec은 `used_for`, `required`, `examples`, `output`, `risk(read \| write \| destructive)`, `hook`, `dryRun`을 선언한다. `guide schema`·`--help`·MCP 스키마는 이 메타 하나에서 생성한다. 누락은 테스트 실패 |
 | hint·retry 문체 | 마침표 없음, 명령은 백틱(영어 문장이면 소문자로 시작). hint가 비면 코드별 기본 문구 표에서 채운다. `retry.args`에는 실제로 바꾼 인자만, 비밀값 제외. 어차피 실패할 명령 대신 진짜 첫 단계를 가리킨다. 오타일 수 있는 상황에 파괴적 hint 금지 |
 | doctor 상태 | `ok \| warn \| fail \| skip`(`skip`은 `detail`에 사유). `fail`만 exit 1. `summary`에 passed·warned·failed·skipped 건수 |
-| 설치·런타임 기록 | `apps/cli/dist/build.json` `{commit, schema_version}`(빌드가 씀), `<home>/installed.json`(bootstrap·`setup run`이 완료 검증 뒤 마지막에 임시 파일→rename), `<home>/run/`(`daemon.pid`, `brain.sock`, `heartbeat`, `last-drain`, `last-hook-<harness>` — 파일 mtime이 시각 — 그리고 `plugin.json`: 마지막 SessionStart가 본 `{plugin_root, app_ref, seen_at, last_bootstrap?{at, result, step?, log}}`를 bootstrap이 임시 파일→rename으로 쓰고 값이 바뀔 때만 쓴다. doctor `plugin` 점검이 `installed.json.plugin_root`보다 이것을 앞세운다 — 플러그인 캐시는 버전마다 폴더가 다르므로 완료 기록의 폴더는 "마지막으로 설치한 폴더"일 뿐이다. 2.5 사람 확인 1), `<home>/log/`(크기 회전). 설정 코덱을 거치지 않는다(AD-18, AD-19, AD-27) |
-| hook 응답 | connector adapter 소유(AD-4). 10,000자 이하. hook 경로는 항상 exit 0으로 끝낸다(Stop의 exit 2는 턴을 이어 가게 하므로 금지) |
+| 설치·런타임 기록 | `apps/cli/dist/build.json` `{commit, schema_version}`(빌드가 씀), `<home>/installed.json`(bootstrap·`setup run`이 완료 검증 뒤 마지막에 임시 파일→rename), `<home>/run/`(`daemon.pid`, `brain.sock`, `heartbeat`, `last-drain`, `last-hook-<harness>` — 파일 mtime이 시각 — `stop-remind/<harness>-<id>` 표식(`log.remind`가 차단 뒤에 만들고, drain이 30일 지난 것을 지우며, `setup uninstall`이 폴더째 지운다, AD-17) — 그리고 `plugin.json`: 마지막 SessionStart가 본 `{plugin_root, app_ref, seen_at, last_bootstrap?{at, result, step?, log}}`를 bootstrap이 임시 파일→rename으로 쓰고 값이 바뀔 때만 쓴다. doctor `plugin` 점검이 `installed.json.plugin_root`보다 이것을 앞세운다 — 플러그인 캐시는 버전마다 폴더가 다르므로 완료 기록의 폴더는 "마지막으로 설치한 폴더"일 뿐이다. 2.5 사람 확인 1), `<home>/log/`(크기 회전). 설정 코덱을 거치지 않는다(AD-18, AD-19, AD-27) |
+| hook 응답 | connector adapter 소유(AD-4). 10,000자 이하. hook 경로는 항상 exit 0으로 끝낸다. 턴을 이어 가게 하는 길은 `log.remind`의 top-level `decision: block` 하나뿐이고(AD-17), Stop의 exit 2는 쓰지 않는다 |
 | 오류 | Core는 예상된 실패를 코드가 있는 값으로 돌려주고, 예외는 버그에만 쓴다. 실패는 `failures`에, DB에 쓸 수 없으면 spool에 남긴다. stderr만으로 끝내지 않는다 |
 | 내보내기 (NFR-9) | 한 스냅샷 트랜잭션 안에서 테이블당 JSON Lines 하나 + `manifest.json`(스키마 버전, 테이블별 건수, 시각, 비밀 패턴 버전). 복구는 의존 순서대로 insert하고(`files.home_location_id`↔`file_locations.file_id` 순환은 포인터를 비운 채 `files`를 넣고, 위치를 넣은 뒤 포인터를 채운다. BEFORE INSERT 포인터 trigger 때문에 `defer_foreign_keys`만으로는 안 된다. `users`도 내보낸다), 원본이 같은 DB 안에 있는 파생물(`chunks`, FTS, `embeddings`, `file_names`, 미러)만 다시 만든다. 문서 추출 세대·조각은 내보내고 복구한다. `manifest.json`에 파일 본체 포함 범위(`none | brain_owned`)를 적는다. 본문은 AD-11대로 가린 텍스트다. 그래서 되살린 Brain의 비밀은 가린 채 돌아온다(2026-10-19) |
 | 마이그레이션 | SQL 파일, 순번 접두사, 앞으로만. trigger·확장·인덱스도 SQL로. trigger와 `redactions`·마스킹은 첫 마이그레이션에 함께 들어간다 |
@@ -525,6 +528,8 @@ second-brain/
     cli/           # brain 명령, 대화형 설치기, 설정 코덱, spool, shim 생성. epic 9: daemon·mcp 하위 명령
   plugin/          # Claude Code 플러그인: .claude-plugin/plugin.json, hooks/, skills/(빌드 생성·커밋), bootstrap.js 복사본, app-ref (AD-19)
   .claude-plugin/  # marketplace.json: 같은 저장소의 ./plugin을 가리킨다
+  tooling/
+    eval/          # 검색 회귀 러너(SDK 읽기 전용). 문항·결과는 ~/.second_brain/eval/ (AD-15, epic 4)
 ```
 
 ```mermaid
@@ -556,6 +561,7 @@ flowchart TB
 | 조회 (FR-12~16) | core `recall`, 미러 | AD-13, AD-15, AD-16 |
 | 시작 맥락 (FR-17~18) | core `context` + connector hook 입출력 | AD-4, AD-6, AD-9, AD-13, AD-17 |
 | 규칙·결정·선호 (FR-19~22) | core `log` + sqlite trigger | AD-11, AD-12, AD-14 |
+| 지표 (SM-4a·5·C1·C3·7, PRD §8-8) | core `stats`(단서 목록·`isUserTurn`·recall 판정 함수) + sqlite 집계 | AD-5, AD-13, AD-17 |
 | SDK·도구·설정 (FR-23~25) | second_brain, apps/cli, 설치기 | AD-1, AD-2, AD-3, AD-5, AD-18, AD-19, AD-20 |
 | 표면: 플러그인·MCP·데몬 (FR-24, FR-25) | `plugin/`, apps/cli `mcp`·`daemon`(epic 9) | AD-5, AD-17, AD-19, AD-26, AD-27, AD-28 |
 | 원문 불변·가리기 (NFR-1, FR-26) | sqlite trigger, `messages.redact`, Core 출력 코덱(엔벨로프·hook·미러·내보내기·복제·임베딩 요청) | AD-11 |
@@ -572,7 +578,10 @@ flowchart TB
 | MCP 도구 | 해소(2026-10-15): epic 9, AD-28. 세션 ID는 쓰기 verb의 `session` 인자로 받는다 |
 | 데몬·파일 watcher | 해소(2026-10-15): epic 9, AD-26·27. 데몬 없이도 동작하는 것이 기준이고, Telegram·원격 기계 수집·승인 대기는 그 뒤의 조각 |
 | 소켓 프레이밍, watcher 지연 목표, 데몬의 세션 안 짧은 핸들(`L12`·`M34` 같은 별칭 — AD-8대로 내부 UUID가 아니라 데몬이 harness 세션별로 매기는 별칭) | epic 9 인셉션에서 정한다. hook 환경의 PATH와 `pnpm --ignore-scripts`는 2026-10-15 epic 2 인셉션에서 풀었다(hook은 런처가 node를 찾고, 설치는 `--ignore-scripts`) |
-| Codex 등 다른 Harness | 다음 조각. AD-4의 계약(parser 필수, hook 선택)만으로 추가한다. 2026-10-15 사용자: 당분간 Claude Code만. Codex 플러그인은 있으나 hook이 실험 기능(`[features] hooks`, 옛 이름 `codex_hooks`)이고 hook 항목의 신뢰 해시로 바뀐 항목을 조용히 건너뛴다(비공식 확인) — shim 내용 갱신이 해시에 걸리는지 확인 필요 |
+| Codex 등 다른 Harness | 다음 조각. AD-4의 계약(parser 필수, hook 선택)만으로 추가한다. 2026-10-15 사용자: 당분간 Claude Code만. Codex 플러그인은 있으나 hook이 실험 기능(`[features] hooks`, 옛 이름 `codex_hooks`)이고 hook 항목의 신뢰 해시로 바뀐 항목을 조용히 건너뛴다(비공식 확인) — shim 내용 갱신이 해시에 걸리는지 확인 필요. 2026-10-20 사용자: 수집 주체는 상관없고 Core가 급하다 → slice 1 밖. 다시 볼 때는 수집 전용으로 작게 — parser + 폴더 등록(AD-4의 connector 계약 그대로)만, hook·`setup connect`·시작 맥락 없음. Codex rollout JSONL의 `type`은 12종(`session_meta`, `response_item`, `event_msg`, `compacted`, `turn_context`, `inter_agent_communication`(+`_metadata`), `token_usage_record`, `world_state`, `retained_context`, `security_risk_score`, `realtime_item`)이고 이 Mac의 `~/.codex/sessions`(2026-10-20, 252개)에는 8종이 보인다. parser의 실제 일은 `compacted`·`turn_context`·`inter_agent_communication*`이다. 규모 시험(2026-10-08)은 125개를 읽었다 |
+| 웹 채팅(ChatGPT·Claude.ai) 내보내기 parser | slice 2. AD-4대로 parser 하나. `harness_session_id`는 대화 uuid, cwd 없음(꼬리표 없음), 도구 메모 없음. 핵심 고통(코딩 작업 기억)과 거리가 있어 뒤로(2026-10-20) |
+| 용어 대응표(한↔영·약칭을 질의 함수가 OR 구절로 넓힘) | SM-3 실사용 채점에서 한영 교차 문항이 떨어질 때. 떨어진 문항이 약칭·용어 때문이면 이것을 먼저(싸고 결정적), 뜻 때문이면 임베딩 켜기를 먼저 본다. 규모 시험(2026-10-08)은 한영 교차 4문항을 grep + 질의 바꾸기로 다 풀었다(2026-10-20) |
+| `mcp serve`를 epic 9에서 떼어 앞당기기 | 두 번째 하네스가 생길 때만 다시 본다. 그때까지는 AD-5대로 slice 1은 CLI만이고, Claude Code만 쓰는 동안은 Bash로 CLI를 부르는 것과 같다. 기술적 전제(데몬 불필요, 메타에서 생성)는 이미 AD-28에 있다(2026-10-20) |
 | volta·fnm·asdf·mise의 node 경로 폴백 | 버전 관리자 shim은 실제 바이너리가 아니라 고정할 수 없다(AD-19). 사용자가 생기면 `realpath` 규칙으로 더한다 |
 | `node:sqlite`의 호환성 깨짐(RC) | Node 업그레이드에서 API가 깨지면. 대안은 better-sqlite3, node-sqlite3-wasm. 드라이버는 adapter 안의 얇은 층 하나다(AD-7) |
 | sqlite-vec 유지보수 정지 | epic 6 착수 때 다시 본다. 대안은 FTS만 유지하거나 다른 벡터 확장 |
@@ -584,7 +593,7 @@ flowchart TB
 | 복제 대상 (Postgres, Drive 파일)과 대상별 지연 표시 | epic 7(epic 5 다음). AD-10의 원본·복제 규칙 안에서 `[[replicas]]`, 커서 따라잡기, doctor 지연을 정한다. 남겨 둔 `packages/postgres`와 설치기의 Docker 흐름을 다시 쓴다 |
 | 팀 공유 (원문 포함) | 개인 사용을 먼저 검증한 뒤. 팀 저장소 선택(공유 드라이브 동기화 폴더 / 공유 DB 복제 대상 / 회사 git)과 단계적 도입은 그때 정한다. AD-12의 remote 정체성·`users` 테이블과 AD-11의 마스킹이 그 준비다 |
 | BMad memlog 연계, 플러그인 스킬 이상의 기록 보강 수단 | 플러그인·스킬은 AD-17·19로 확정(epic 2·3). 그 이상은 SM-4(로그가 실제로 적히는가) 결과를 본 뒤. 어떤 수단도 AD-17(원본 하나)을 넘지 않는다 |
-| 임베딩 기본 켜기 | 실사용 채점(SM-3)에서 키워드 검색과 질의 바꾸기로 "왜"나 한영 교차 질문을 놓칠 때 |
+| 임베딩 기본 켜기 | 실사용 채점(SM-3)에서 키워드 검색과 질의 바꾸기로 "왜"나 한영 교차 질문을 놓칠 때. 판단의 숫자는 epic 4의 회귀 러너 결과(2026-10-20) |
 | parser 버그로 저장된 메시지의 교정 | 원문 불변과 충돌. 필요해지면 세션 단위 수집 세대 교체를 별도 결정으로 |
 | 이어받은 세션 자동 연결, Execution 분리 | `continued_from_session_id`·`start_source` 자리만 둔다. 한 작업에 Harness 둘이 올 때 |
 | 과거 세션 가져오기, LLM 세션 요약 | 설치 때 디스크에 남은 Claude Code transcript는 epic 2가 한 번 가져온다(`import`, 2026-10-15). 그 밖의 과거 세션 가져오기와 LLM 세션 요약은 PRD §6.2·§8-1 그대로 |
