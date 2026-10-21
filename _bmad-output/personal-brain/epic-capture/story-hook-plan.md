@@ -149,7 +149,7 @@ deferred: []
 - [x] `plugin/hooks/hooks.json`, `plugin/bin/session-start.sh`, `plugin/bin/brain.sh`, `tooling/bootstrap/test/plugin.test.ts` -- hooks 셋. 런처 시험: shim이 없으면 stdout이 비고 exit 0이다. 가짜 shim(인자·stdin·`SECOND_BRAIN_PLUGIN_ROOT`를 파일에 적는 sh)이면 그대로 넘긴다. session-start가 drain 출력을 내지 않는다.
 - [x] `tooling/bootstrap/test/hook.test.ts` -- 수락 기준 1·2.
 - [x] `README.md`, spine AD-19, `deferred-work.md` -- 위 문서.
-- [ ] (사람) 이 기계에서 로컬 marketplace로 플러그인을 켜고 실제 수집을 시작한다. 아래 Verification의 사람 확인이다.
+- [x] (사람) 이 기계에서 로컬 marketplace로 플러그인을 켜고 실제 수집을 시작한다. 아래 Verification의 사람 확인이다.
 
 **Acceptance Criteria:**
 - Given 2.5의 느린 hook 테스트 환경(스냅샷 bare 저장소, 임시 home, app-ref를 스냅샷 sha로 둔 플러그인 사본)과, 대화 transcript 하나가 있는 임시 `CLAUDE_CONFIG_DIR`가 있을 때, when hooks.json의 SessionStart 명령을 처음 돌리면, then 설치가 끝나고 그 transcript의 세션이 `ingest_source = import`로 DB에 들어 있으며 stdout은 JSON 한 줄이다.
@@ -239,3 +239,15 @@ deferred: []
   - 플러그인 갱신 직후 열린 옛 세션의 hook은 잠깐 `PLUGIN_DUPLICATE`를 보일 수 있다(Design Notes).
   - 버전이 오른 뒤 크기가 같은 transcript를 스캔이 다시 큐에 넣지 않는 문제는 deferred-work에 그대로 남아 있다. 지금은 저장된 옛 버전 세션이 없다.
   - 새 코드는 저장소의 다른 파일보다 주석이 적고 줄이 길다. 동작에는 영향이 없다.
+
+## 실제 수집 켜기 결과 (2026-10-21)
+
+사용자 승인 뒤 에이전트가 이 기계에서 돌렸다.
+- `claude plugin marketplace add ./` → `claude plugin install second-brain@second-brain`(user 범위, 0.1.5, `<repo>/plugin`에서 그 자리로 읽힘).
+- Orca 터미널에서 대화형 `claude`를 띄웠다. 커밋을 push하지 않아서 `SECOND_BRAIN_REPO=file://<repo>`를 주었다. 그래서 `~/.second_brain/app`의 origin은 이 로컬 저장소다.
+- 첫 세션의 SessionStart가 15초 안에 설치를 끝냈다: `installed.json.commit` = `01d3341`, `plugin_root` = `<repo>/plugin`. 이어진 drain이 디스크의 세션 277개, 메시지 7,506개를 `import`로 가져왔다.
+- 설치 완료 안내 한 줄은 모델이 첫 답에 붙여 사용자에게 전했다("Brain이 01d3341 버전으로 설치되었습니다").
+- 두 턴 대화 뒤 그 세션은 `live`, `start_source = startup`이고 프로젝트 꼬리표가 `github.com/gmae199boy/second-brain`, 워크트리가 `<repo>`이며, 메시지는 4개로 중복이 없다.
+- `brain doctor run`: 통과 15, 경고 0. `plugin`은 "플러그인과 설치가 같은 01d3341", `last-hook`은 그 시각, `transcripts`는 미수집 1건(돌고 있던 세션)이다.
+- 실제 `~/.claude/settings.json`에 `# second-brain` 표식 hook은 없다(플러그인 등록 항목 둘만 있다). `brain setup connect claude-code --json`은 `ok`, 경고 없음, `changed: false`, `plugin_root` = `<repo>/plugin`이다.
+- GUI 실행 PATH: 최소 PATH(`/usr/bin:/bin:/usr/sbin:/sbin`)에서 `/usr/bin/git`(Apple Git 2.54)이 잡히므로 꼬리표에 문제가 없다.
