@@ -173,8 +173,7 @@ export function systemInstallDeps(): InstallDeps {
       exists: (path: string) => storeFileExists(path),
       self: (path: string) => prepareSelfUser(path),
       // The same folders a command would look in, so the report the install
-      // ends on is the report `brain doctor run` gives afterwards. Empty unless
-      // this environment asked for them (`CAPTURE_ENV`).
+      // ends on is the report `brain doctor run` gives afterwards.
       doctor: (home: string, path: string) =>
         doctorAt(home, path, transcriptFolders(process.env)),
     },
@@ -191,7 +190,7 @@ export function systemInstallDeps(): InstallDeps {
       read: readInstalled,
       write: (home: string, facts: InstalledFacts) => writeInstalled(home, facts),
     },
-    connectors,
+    connectors: connectors(process.env),
   };
 }
 

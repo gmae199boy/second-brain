@@ -1,8 +1,8 @@
-import { access } from 'node:fs/promises';
 import type { Connector } from 'second_brain';
 import { configHome } from '../config/paths.js';
 import type { CommandSpec, StandaloneCommandContext } from '../dispatch.js';
-import { shimPath } from '../install/shim.js';
+import { inspectShim } from '../doctor/checks.js';
+import { installedPluginRoot, connectionLines } from '../connectors/plugin.js';
 
 /**
  * `brain setup connect <harness>`: register the shim with one harness. It is
@@ -20,15 +20,15 @@ export interface SetupConnectData {
   target: string;
   /** False when the harness already said exactly this. */
   changed: boolean;
+  plugin_root: string | null;
 }
 
 /**
  * Built from a registry rather than importing the one registry, so a test can
- * hand it a fake harness: the real connectors are epic 2's, and until then the
- * registry is empty.
+ * hand it a fake harness. The production factory reads this invocation's environment.
  */
 export function setupConnectCommand(
-  registry: readonly Connector[],
+  registry: readonly Connector[] | ((env: NodeJS.ProcessEnv) => readonly Connector[]),
 ): CommandSpec<SetupConnectData> {
   return {
     ns: 'setup',
@@ -37,7 +37,7 @@ export function setupConnectCommand(
     usedFor: '이 brain을 하네스 하나에 등록합니다',
     required: ['harness'],
     examples: ['brain setup connect claude-code'],
-    output: '연결한 하네스 `harness`, 쓴 파일 `target`, 바뀌었는지인 `changed`',
+    output: '연결한 하네스 `harness`, 설정 파일 `target`, 바뀌었는지인 `changed`, 플러그인 폴더 `plugin_root`(없으면 null)',
     risk: 'write',
     hook: false,
     dryRun: false,
@@ -45,41 +45,33 @@ export function setupConnectCommand(
     arguments: ['<harness>'],
 
     async run(context: StandaloneCommandContext) {
+      const available = typeof registry === 'function' ? registry(context.env) : registry;
       const name = context.args[0] ?? '';
-      const connector = registry.find((candidate) => candidate.harness === name);
+      const connector = available.find((candidate) => candidate.harness === name);
       if (connector === undefined) {
         return {
           ok: false as const,
           code: 'USAGE',
-          message: `"${name}"를 위한 커넥터가 없습니다. ${known(registry)}`,
+          message: `"${name}"를 위한 커넥터가 없습니다. ${known(available)}`,
           exit: 2 as const,
         };
       }
 
-      // The shim is what gets registered, so there is nothing to register
-      // without it — and writing a hook that points at a file that is not
-      // there would be a harness that fails on every turn.
-      const path = shimPath(configHome(context.env));
-      if (!(await exists(path))) {
-        return {
-          ok: false as const,
-          code: 'SHIM_MISSING',
-          message: `${path}이 없습니다. 먼저 \`brain setup run\`을 실행하세요.`,
-        };
+      const home = configHome(context.env);
+      const state = await inspectShim(home);
+      if (state.message !== undefined) {
+        return { ok: false as const, code: state.shim === undefined ? 'SHIM_MISSING' : 'SHIM_INVALID', message: state.message };
       }
-
-      const result = await connector.connect({ shimPath: path });
+      const pluginRoot = await installedPluginRoot(home);
+      const result = await connector.connect({ shimPath: state.path, pluginRoot });
       if (!result.ok) {
         return { ok: false as const, code: result.code, message: result.message };
       }
       return {
         ok: true as const,
-        data: { harness: connector.harness, target: result.target, changed: result.changed },
-        text: [
-          result.changed
-            ? `${result.target}에 ${connector.label}를 연결했습니다`
-            : `${result.target}에 ${connector.label}가 이미 연결되어 있습니다`,
-        ],
+        data: { harness: connector.harness, target: result.target, changed: result.changed, plugin_root: pluginRoot },
+        warnings: result.warnings,
+        text: connectionLines(connector, result, pluginRoot),
       };
     },
   };
@@ -89,13 +81,4 @@ export function setupConnectCommand(
 function known(registry: readonly Connector[]): string {
   if (registry.length === 0) return '이 빌드는 아직 커넥터를 등록하지 않습니다 (epic 2).';
   return `아는 하네스: ${registry.map((connector) => connector.harness).join(', ')}.`;
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
 }

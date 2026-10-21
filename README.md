@@ -21,7 +21,11 @@ claude plugin install second-brain@second-brain
 그다음 세션을 시작하면 `SessionStart` hook 하나가 비동기로 돌면서, 아직 설치되지
 않았으면 저장소를 `~/.second_brain/app`에 clone하고 의존성을 설치하고 빌드한 뒤
 설치기를 돌립니다. 아무것도 묻지 않습니다 — 플러그인을 켠 것이 동의입니다.
-끝나면 `{"systemMessage": "…"}` 한 줄만 냅니다.
+끝나면 `{"systemMessage": "…"}` 한 줄만 냅니다. 이어서 같은 런처가 `queue drain`을
+돌려 첫 설치 세션을 포함한 기존 트랜스크립트를 수집하며, drain 출력은 버립니다.
+`Stop`과 `SessionEnd`도 각각 비동기 hook 하나로 수집합니다. 수집 런처는
+`<home>/bin/brain` shim에 인자와 stdin을 넘기며, shim이 아직 없으면 조용히 끝납니다.
+`SessionEnd`는 최선 노력이고 놓친 대화는 다음 drain이 줍습니다.
 진행 줄과 git·pnpm의 출력은 `~/.second_brain/log/bootstrap.log`에 쌓입니다.
 
 이 한 줄은 당신이 아니라 모델이 받습니다. 비동기 hook의 stdout은 다음 턴의
@@ -400,11 +404,9 @@ brain에서 `brain queue drain` 한 번이 디스크에 남은 세션을 모두 
 종류를 하나씩 더합니다. 종류를 모르는 일감은 청구하지 않습니다 — 새 빌드가 넣은
 일감을 옛 빌드가 지우지 않게 하려고요.
 
-**실제 폴더는 기본으로 보지 않습니다.** 환경 변수 `SECOND_BRAIN_CAPTURE=1`일
-때만 하네스 폴더를 봅니다(Claude Code는 `CLAUDE_CONFIG_DIR`, 없으면
-`~/.claude`). 끄면 스캔, 토큰만으로 트랜스크립트 찾기, doctor의 `transcripts`
-점검이 모두 꺼집니다. hook이 경로를 알려 준 수집은 이 스위치와 무관합니다.
-플러그인 hook을 등록하는 스토리가 이 스위치를 없애고 기본으로 켭니다.
+하네스 트랜스크립트 폴더는 기본으로 읽습니다. Claude Code는 `CLAUDE_CONFIG_DIR`,
+없으면 `~/.claude`를 봅니다. 폴더 스캔, 세션 토큰만으로 트랜스크립트 찾기,
+doctor의 `transcripts` 점검이 같은 등록부를 씁니다.
 
 세 번째 단계는 이렇게 돕니다. 쓰기 잠금을 잡기 전에 잠금 없는 읽기로 할 일이
 있는지 먼저 봅니다 — 할 일이 없으면 쓰기를 아예 부르지 않습니다. 있으면 짧은
@@ -532,18 +534,20 @@ brain setup connect <harness>
 호출을 명령줄로 적은 것입니다. 둘이 있는 이유는 동의를 한 번, 사람에게 물을 수
 있게 하려는 것입니다 — 이것을 읽는 무엇이 알아서 붙이게 하려는 것이 아닙니다.
 
-`brain setup connect <harness>`는 이 brain을 하네스 하나에 등록합니다. 설치
-뒤에 설치한 하네스를 위한 것입니다. 쓰는 항목에는 Brain 표시가 붙고, "이미
-연결됨"은 오직 그 표시로만 판단하므로 두 번 실행해도 등록은 한 번이고(두 번째는
-`changed: false`) 당신이 그 파일에 직접 넣은 것은 건드리지 않습니다. shim이
-없으면 `SHIM_MISSING`이라고 말하고, 이름이 이 빌드가 아는 하네스가 아니면 아는
-하네스를 대면서 exit 2로 끝납니다. 동사 뒤에 치는 모든 인자는 id입니다 —
-본문은 stdin으로 읽고 인자로 치지 않습니다 — 그래서 비어 있거나 제어 문자·보이지
-않는 문자를 품은 인자는 무엇을 읽기 전에 `USAGE`로 거절합니다. 빈 인자는 거의
-언제나 아무것도 내놓지 못한 `$(…)`이고, 그것을 찾아보면 망가진 명령줄에
-"없습니다"라고 답하게 됩니다. 이 빌드는 아직 아는 하네스가 없습니다. Claude
-Code 커넥터는 뒤 에픽이라서 `brain setup run`은 연결할 하네스가 없다고 말하고
-넘어갑니다.
+`brain setup connect claude-code`는 플러그인 연결을 확인하고 `settings.json`에서
+명령 끝에 `# second-brain` 표식이 붙은 옛 hook만 지웁니다. 남의 항목은 그대로이며,
+두 번째 실행은 `changed: false`입니다. 플러그인 기록이 없으면 성공하면서
+`PLUGIN_NOT_INSTALLED` 경고와 설치 안내를 냅니다. `plugin_root`는
+`run/plugin.json`을 먼저 보고 `installed.json`을 다음으로 봅니다(없으면 null).
+shim을 읽거나 해석할 수 없으면 `SHIM_MISSING`, 실행 권한·서명·진입점이 잘못되면
+`SHIM_INVALID`로 끝납니다. 둘 다 `brain setup run`으로 다시 쓸 수 있습니다.
+모르는 하네스는 `USAGE`(exit 2)입니다.
+
+`brain doctor run`의 `last-hook` 줄은 마지막으로 받은 수집 hook의 시각을
+하네스마다 표시합니다. 기록이 없으면 아직 받은 hook이 없다고 말합니다.
+`run/last-hook-<harness>`의 내용은 수집 런처의 플러그인 root이고 시각은 파일 mtime입니다.
+현재 플러그인 기록과 root가 다르면 `PLUGIN_DUPLICATE` 경고와 두 폴더를 보여 줍니다.
+플러그인 갱신 직후 열린 옛 세션에서 hook이 오면 잠깐 경고할 수 있습니다.
 
 ## 종료 코드
 
@@ -590,6 +594,7 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `SCHEMA_MISMATCH` | 1 | 저장된 스키마 버전이 이 빌드가 만들어진 버전과 다릅니다 |
 | `MIGRATION_FAILED` | 1 | 마이그레이션을 적용하다 데이터베이스가 거절했습니다 |
 | `FILES_UNAVAILABLE` | 1 | 파일 저장소 루트를 만들거나 거기에 쓸 수 없었습니다 |
+| `SHIM_INVALID` | 1 | 하네스 hook이 부르는 shim 파일이 올바르지 않습니다 |
 | `SHIM_MISSING` | 1 | 하네스 hook이 부르는 shim 파일이 없습니다 |
 | `SETUP_INCOMPLETE` | 1 | 설치는 끝까지 돌았고 마지막 점검이 통과하지 못했습니다 |
 | `SETUP_CANCELLED` | 1 | 사람이 설치를 진행하지 않겠다고 답했습니다 |
@@ -697,7 +702,7 @@ packages/modelstudio/   embeddings and reranking (placeholder)
 packages/second_brain/  the one writing surface: re-exports only
 apps/cli/               the brain command
 tooling/bootstrap/      the install entry point: src/ plus its committed build
-plugin/                 the Claude Code plugin: manifest, SessionStart hook, launcher
+plugin/                 the Claude Code plugin: manifest, SessionStart/Stop/SessionEnd hooks, launchers
 .claude-plugin/         the local marketplace that offers plugin/
 tooling/test-db/        dev-only throwaway test databases
 tooling/dev/            dev-only scripts, for checks no test can make

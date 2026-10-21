@@ -18,7 +18,6 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { isoWithOffset } from 'second_brain';
 import { HOME_ENV, spoolPath } from '../src/config/paths.js';
-import { CAPTURE_ENV } from '../src/harnesses.js';
 import { withoutHarnessFolders } from './environment.js';
 import { assertKoreanLine, assertKoreanLines } from './language.js';
 
@@ -113,14 +112,11 @@ async function scratch(prefix: string): Promise<string> {
  * A child environment with no database server to find, pointed at one
  * configuration folder and one harness folder.
  *
- * `capture` is off unless a test asks: real collection is turned on by default
- * in story 2.14, and until then every other test in this repository has to go
- * on seeing a brain that reads no folders (Decision 1, 2026-10-19).
+ * Every invocation reads the isolated harness folder by default.
  */
 function environment(options: {
   home: string;
   configDir: string;
-  capture?: boolean;
 }): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = {
     ...withoutHarnessFolders(process.env),
@@ -130,7 +126,6 @@ function environment(options: {
   };
   delete childEnv['SECOND_BRAIN_DATABASE_URL'];
   delete childEnv['BRAIN_TEST_DATABASE_URL'];
-  if (options.capture === true) childEnv[CAPTURE_ENV] = '1';
   return childEnv;
 }
 
@@ -251,7 +246,7 @@ describe('brain queue drain and the transcript folder', () => {
 
     const first = await spawned(
       ['queue', 'drain', '--json'],
-      environment({ home, configDir, capture: true }),
+      environment({ home, configDir }),
     );
 
     expect(first.code, first.stderr).toBe(0);
@@ -269,7 +264,7 @@ describe('brain queue drain and the transcript folder', () => {
 
     const second = await spawned(
       ['queue', 'drain', '--json'],
-      environment({ home, configDir, capture: true }),
+      environment({ home, configDir }),
     );
 
     expect(second.code).toBe(0);
@@ -288,7 +283,7 @@ describe('brain queue drain and the transcript folder', () => {
       lines: 25,
     });
     const closed = await transcript(configDir, { project: '-demo-b', sessionId: 'session-bbbb' });
-    const capture = environment({ home, configDir, capture: true });
+    const capture = environment({ home, configDir });
     expect((await spawned(['queue', 'drain', '--json'], capture)).code).toBe(0);
     const path = databaseIn(home);
     const firstCounts = rowCounts(path);
@@ -328,7 +323,7 @@ describe('brain queue drain and the transcript folder', () => {
     }
   });
 
-  it('does nothing without the capture switch, and says so in doctor', async () => {
+  it('collects transcripts by default and reports them in doctor', async () => {
     const { home, configDir } = await installed();
     await transcript(configDir, { project: '-demo-a', sessionId: 'session-aaaa' });
     const off = environment({ home, configDir });
@@ -337,15 +332,15 @@ describe('brain queue drain and the transcript folder', () => {
     const doctored = await spawned(['doctor', 'run', '--json'], off);
 
     expect(drained.code).toBe(0);
-    expect(envelopeOf<DrainData>(drained).data).toMatchObject({ enqueued: 0, claimed: 0 });
-    expect(rowCounts(databaseIn(home))['sessions']).toBe(0);
+    expect(envelopeOf<DrainData>(drained).data).toMatchObject({ enqueued: 1, claimed: 1 });
+    expect(rowCounts(databaseIn(home))['sessions']).toBe(1);
 
     expect(doctored.code).toBe(0);
     const checks = (
       JSON.parse(doctored.stdout) as { data?: { checks: { id: string; status: string }[] } }
     ).data?.checks;
     const transcripts = checks?.find((check) => check.id === 'transcripts');
-    expect(transcripts).toMatchObject({ status: 'skip' });
+    expect(transcripts).toMatchObject({ status: 'ok' });
   });
 
   // One install per case, because `doctor run` ends in the opportunistic drain
@@ -364,7 +359,7 @@ describe('brain queue drain and the transcript folder', () => {
 
     const run = await spawned(
       ['doctor', 'run', '--json'],
-      environment({ home, configDir, capture: true }),
+      environment({ home, configDir }),
     );
 
     expect(run.code).toBe(0);
@@ -388,7 +383,7 @@ describe('brain sessions ingest with no transcript path', () => {
       fixture: FULL_SESSION,
       lines: 25,
     });
-    const capture = environment({ home, configDir, capture: true });
+    const capture = environment({ home, configDir });
     expect((await spawned(['queue', 'drain', '--json'], capture)).code).toBe(0);
     const before = rowCounts(databaseIn(home))['messages'] ?? 0;
 
@@ -409,7 +404,7 @@ describe('brain sessions ingest with no transcript path', () => {
     expect(rowCounts(databaseIn(home))['sessions']).toBe(1);
   });
 
-  it('says it cannot find the transcript when the switch is off', async () => {
+  it('finds a transcript from the session id by default', async () => {
     const { home, configDir } = await installed();
     await transcript(configDir, { project: '-demo-a', sessionId: 'session-aaaa' });
 
@@ -420,9 +415,9 @@ describe('brain sessions ingest with no transcript path', () => {
 
     // Exit 0 whatever happened: this is a hook path (AD-6).
     expect(run.code).toBe(0);
-    expect(run.stderr).toContain('TRANSCRIPT_UNREADABLE');
+    expect(run.stderr).toBe('');
     assertKoreanLines(run.stderr, { label: 'stderr' });
-    expect(rowCounts(databaseIn(home))['sessions']).toBe(0);
+    expect(rowCounts(databaseIn(home))['sessions']).toBe(1);
   });
 });
 
@@ -430,7 +425,7 @@ describe('a mark the hook left in the spool', () => {
   it('goes in as a live session once the lock is gone, and empties the spool', async () => {
     const { home, configDir } = await installed();
     const path = await transcript(configDir, { project: '-demo-a', sessionId: 'session-aaaa' });
-    const capture = environment({ home, configDir, capture: true });
+    const capture = environment({ home, configDir });
 
     // A second process holding the one SQLite writer for longer than the turn
     // budget, so the hook spools rather than waits (AD-7, AD-9).
@@ -469,7 +464,7 @@ describe('a session the drain could not collect', () => {
     const { home, configDir } = await installed();
     const path = await transcript(configDir, { project: '-demo-a', sessionId: 'session-aaaa' });
     await chmod(path, 0o000);
-    const capture = environment({ home, configDir, capture: true });
+    const capture = environment({ home, configDir });
     const db = databaseIn(home);
 
     try {
@@ -543,7 +538,7 @@ describe('a session the drain could not collect', () => {
     const { home, configDir } = await installed();
     const path = await transcript(configDir, { project: '-demo-a', sessionId: 'session-aaaa' });
     await chmod(path, 0o000);
-    const capture = environment({ home, configDir, capture: true });
+    const capture = environment({ home, configDir });
     try {
       expect((await spawned(['queue', 'drain', '--json'], capture)).code).toBe(0);
 

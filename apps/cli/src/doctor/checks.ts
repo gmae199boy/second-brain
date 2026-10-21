@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { constants } from 'node:fs';
-import { access, readFile } from 'node:fs/promises';
+import { access, readFile, stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import {
   isoWithOffset,
@@ -10,7 +10,7 @@ import {
   type Spool,
 } from 'second_brain';
 import { readConfig, type ReadConfigResult } from '../config/codec.js';
-import { HOME_ENV, configFilePath, pluginRunPath, spoolPath } from '../config/paths.js';
+import { HOME_ENV, configFilePath, pluginRunPath, spoolPath, lastHookPath } from '../config/paths.js';
 import {
   appRootPath,
   readAppRef,
@@ -23,6 +23,7 @@ import {
   type LastBootstrap,
 } from '../install/installed.js';
 import { SHIM_SIGNATURE, parseShim, shimPath, type ParsedShim } from '../install/shim.js';
+import { harnesses } from '../harnesses.js';
 import { systemClock } from '../runtime/clock.js';
 import { NODE_FLOOR, atLeast, meetsNodeFloor } from '../runtime/node-floor.js';
 import { fileSpool } from '../runtime/spool.js';
@@ -60,6 +61,7 @@ export type NodeRun = { ok: true; stdout: string } | { ok: false; message: strin
 export type RunNode = (path: string) => Promise<NodeRun>;
 
 export interface RuntimeChecksOptions {
+  harnessNames?: readonly string[];
   /** The configuration folder these checks are about. */
   home: string;
   /**
@@ -130,6 +132,7 @@ export function runtimeChecks(options: RuntimeChecksOptions): readonly DoctorChe
     { id: 'node-path', run: async () => nodePathCheck(await shim(), runNode) },
     { id: 'node-version', run: async () => nodeVersionCheck() },
     { id: 'plugin', run: async () => pluginCheck(home, await config(), runGit) },
+    { id: 'last-hook', run: async () => lastHookCheck(home, options.harnessNames ?? harnesses.map((h) => h.parser.harness)) },
     { id: 'spool', run: async () => spoolCheck(spool) },
   ];
 }
@@ -198,7 +201,7 @@ function configCheck(home: string, read: ReadConfigResult): DoctorCheck {
  * checking even then. Only a file that could not be read, or not parsed, leaves
  * `shim` unset.
  */
-interface ShimState {
+export interface ShimState {
   path: string;
   /** The shim's three facts, when the file could be read and parsed. */
   shim?: ParsedShim;
@@ -221,7 +224,7 @@ interface ShimState {
  * (AD-19), so any one of these missing means every turn fails silently — which
  * is exactly the failure a doctor check is for.
  */
-async function inspectShim(home: string): Promise<ShimState> {
+export async function inspectShim(home: string): Promise<ShimState> {
   const path = shimPath(home);
   const rerun = '`brain setup run`을 실행하세요.';
 
@@ -630,4 +633,31 @@ function describe(error: unknown): string {
 
 function oneLine(text: string): string {
   return text.split('\n')[0]?.trim() ?? '';
+}
+
+/** Hook arrival is evidence even when a database write went to spool. */
+async function lastHookCheck(home: string, names: readonly string[]): Promise<DoctorCheck> {
+  const seen = await readPluginRun(home);
+  const installed = await readInstalled(home);
+  const root = seen.status === 'ok' ? seen.record.plugin_root : installed?.plugin_root;
+  const parts: string[] = [];
+  let duplicate = false;
+  for (const harness of names) {
+    const path = lastHookPath(home, harness);
+    try {
+      const [text, info] = await Promise.all([readFile(path, 'utf8'), stat(path)]);
+      const received = text.trim();
+      let detail = `${harness}: ${isoWithOffset(info.mtime)}`;
+      if (received !== '' && root != null && received !== root) {
+        duplicate = true;
+        detail += `, hook의 플러그인 폴더 ${received}와 현재 플러그인 폴더 ${root}가 다릅니다`;
+      }
+      parts.push(detail);
+    } catch (error) {
+      parts.push((error as NodeJS.ErrnoException).code === 'ENOENT'
+        ? `${harness}: 아직 받은 hook이 없습니다`
+        : `${harness}: hook 기록을 읽을 수 없습니다`);
+    }
+  }
+  return { id: 'last-hook', status: duplicate ? 'warn' : 'ok', ...(duplicate ? { code: 'PLUGIN_DUPLICATE' } : {}), detail: parts.join('. ') };
 }

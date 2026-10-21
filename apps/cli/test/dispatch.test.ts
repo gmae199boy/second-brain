@@ -515,7 +515,7 @@ describe('the dispatcher', () => {
       said: true,
       // The invocation, why the database is out of reach, and the one function
       // that writes the mark — and nothing else. No `brain`, no `config`.
-      keys: ['args', 'cause', 'clock', 'message', 'options', 'spoolIngest', 'stdin'],
+      keys: ['args', 'cause', 'clock', 'message', 'options', 'recordHookArrival', 'spoolIngest', 'stdin'],
     });
   });
 
@@ -656,7 +656,7 @@ describe('the dispatcher and a standalone command', () => {
       // No brain and no config, and `stdin` is a function it never called:
       // a standalone command that does not read a hook payload must not wait
       // on a pipe nobody is writing to.
-      keys: ['args', 'clock', 'env', 'options', 'stdin'],
+      keys: ['args', 'clock', 'env', 'options', 'recordHookArrival', 'stdin'],
     });
   });
 
@@ -1433,7 +1433,7 @@ describe('the dispatcher and the lock budget', () => {
     const { calls, createStore } = recorder();
     const exit = await dispatch(registry, argv, {
       clock: systemClock,
-      env: { [HOME_ENV]: home },
+      env: withoutHarnessFolders({ [HOME_ENV]: home }),
       // The envelope has its own tests; nothing here should reach the console.
       stdout: () => {},
       stderr: () => {},
@@ -1478,7 +1478,7 @@ describe('the dispatcher and the lock budget', () => {
 
     const exit = await dispatch(registry, ['fake', 'read', '--json'], {
       clock: systemClock,
-      env: { [HOME_ENV]: home },
+      env: withoutHarnessFolders({ [HOME_ENV]: home }),
       stdout: () => {},
       stderr: () => {},
     });

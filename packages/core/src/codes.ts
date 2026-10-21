@@ -239,6 +239,12 @@ const CODES = {
     hint: '파일 저장소 루트가 이 사용자가 쓸 수 있는 폴더인지 확인하세요',
   },
   /** `<home>/bin/brain` is not there, so there is nothing to register (AD-19). */
+  SHIM_INVALID: {
+    exit: 1,
+    meaning: '하네스 hook이 부르는 shim 파일이 올바르지 않습니다',
+    retryable: false,
+    hint: '`brain setup run`으로 shim 파일을 다시 쓰세요',
+  },
   SHIM_MISSING: {
     exit: 1,
     meaning: '하네스 hook이 부르는 shim 파일이 없습니다',

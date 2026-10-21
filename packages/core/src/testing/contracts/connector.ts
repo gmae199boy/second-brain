@@ -16,6 +16,8 @@ export interface ConnectorSubject {
   connector: Connector;
   /** An absolute shim path to hand `connect`. */
   shimPath: string;
+  /** Seed a legacy Brain entry to verify cleanup by plugin sources. */
+  addMarkedEntry(): Promise<void>;
   /** Every entry of the target, as the harness holds them. */
   entries(): Promise<readonly string[]>;
   /** The entries of the target that carry `BRAIN_MARKER`. */
@@ -61,9 +63,10 @@ export function connectorContract(): ContractCase<ConnectorSubject>[] {
       });
     }),
 
-    contractCase<ConnectorSubject>('connect records one marked entry and names the target', async (make) => {
+    contractCase<ConnectorSubject>('a settings source records one marked entry and names the target', async (make) => {
       await withSubject(make, async ({ connector, shimPath, marked }) => {
-        const result = await connector.connect({ shimPath });
+        if (connector.hookSource !== 'settings') return;
+        const result = await connector.connect({ shimPath, pluginRoot: '/plugin' });
         assertOk(result, 'connect refused a harness the contract set up for it');
         assertNonEmptyString(result.target, 'connect must say which file it wrote');
         assertEqual(result.changed, true, 'the first connect must report a change');
@@ -76,19 +79,34 @@ export function connectorContract(): ContractCase<ConnectorSubject>[] {
       });
     }),
 
+    contractCase<ConnectorSubject>('a plugin source removes all marked entries and warns without a plugin', async (make) => {
+      await withSubject(make, async ({ connector, shimPath, marked, addMarkedEntry }) => {
+        if (connector.hookSource !== 'plugin') return;
+        await addMarkedEntry();
+        await addMarkedEntry();
+        const result = await connector.connect({ shimPath, pluginRoot: null });
+        assertOk(result, 'a missing plugin must not fail connection');
+        assertNonEmptyString(result.target, 'connect must name its settings file');
+        assertEqual(result.changed, true, 'legacy entries must be removed');
+        assertEqual(result.warnings, ['PLUGIN_NOT_INSTALLED'], 'a missing plugin must warn');
+        assertEqual((await marked()).length, 0, 'plugin hooks must have only one source');
+      });
+    }),
+
     contractCase<ConnectorSubject>('connecting twice changes nothing the second time', async (make) => {
-      await withSubject(make, async ({ connector, shimPath, entries, marked }) => {
-        const first = await connector.connect({ shimPath });
+      await withSubject(make, async ({ connector, shimPath, entries, marked, addMarkedEntry }) => {
+        if (connector.hookSource === 'plugin') await addMarkedEntry();
+        const first = await connector.connect({ shimPath, pluginRoot: '/plugin' });
         assertOk(first, 'the first connect failed');
         const after = [...(await entries())];
 
-        const second = await connector.connect({ shimPath });
+        const second = await connector.connect({ shimPath, pluginRoot: '/plugin' });
         assertOk(second, 'the second connect failed');
         assertEqual(second.changed, false, 'the second connect must report no change (AD-19)');
         assertEqual(second.target, first.target, 'the two connects named two targets');
         assertEqual(
           (await marked()).length,
-          1,
+          connector.hookSource === 'plugin' ? 0 : 1,
           'connecting twice must leave one registration, not two',
         );
         assertEqual([...(await entries())], after, 'the second connect changed the target anyway');
@@ -106,8 +124,8 @@ export function connectorContract(): ContractCase<ConnectorSubject>[] {
           const foreign = ['the user put this here', 'and this'];
           for (const entry of foreign) await addForeignEntry(entry);
 
-          await connector.connect({ shimPath });
-          await connector.connect({ shimPath });
+          await connector.connect({ shimPath, pluginRoot: '/plugin' });
+          await connector.connect({ shimPath, pluginRoot: '/plugin' });
 
           const left = [...(await entries())].filter((entry) => !entry.includes(BRAIN_MARKER));
           assertEqual(left, foreign, 'connect changed entries it did not write');

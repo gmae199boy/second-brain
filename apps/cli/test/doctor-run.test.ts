@@ -60,11 +60,12 @@ const CHECKS = [
   'node-path',
   'node-version',
   'plugin',
+  'last-hook',
   'spool',
 ];
 
 /** The machine checks alone: what is still reported when there is no database. */
-const MACHINE_CHECKS = ['config', 'shim', 'node-path', 'node-version', 'plugin', 'spool'];
+const MACHINE_CHECKS = ['config', 'shim', 'node-path', 'node-version', 'plugin', 'last-hook', 'spool'];
 
 /**
  * What a report says about a database nobody can reach: `db` and the schema
@@ -77,14 +78,6 @@ const NO_DATABASE_CHECKS = [
   'transcripts',
   ...MACHINE_CHECKS,
 ];
-
-/**
- * The one check that is not `ok` on a finished install: no test here sets
- * `SECOND_BRAIN_CAPTURE`, so this build looks in no transcript folder and
- * `transcripts` is a `skip` saying so (Boundaries, Decision 1 2026-10-19).
- * Story 2.14 turns the folders on by default and this becomes `ok`.
- */
-const SKIPPED_WITHOUT_CAPTURE = 'transcripts';
 
 const homes: string[] = [];
 
@@ -203,10 +196,10 @@ describe('brain doctor run', () => {
     const checks = envelope.data?.checks ?? [];
     expect(checks.map((check) => check.id)).toEqual(CHECKS);
     const failed = checks.filter(
-      (check) => check.status !== 'ok' && check.id !== SKIPPED_WITHOUT_CAPTURE,
+      (check) => check.status !== 'ok',
     );
     expect(failed, JSON.stringify(failed)).toEqual([]);
-    expect(byId(envelope).get(SKIPPED_WITHOUT_CAPTURE)?.status).toBe('skip');
+    expect(byId(envelope).get('transcripts')?.status).toBe('ok');
     // The SQLite version, then what each probe and each machine check found.
     expect(checks[0]?.detail).toMatch(/^\d+\./);
     const found = byId(envelope);
@@ -224,10 +217,10 @@ describe('brain doctor run', () => {
     // Everything passed but the folders nobody asked for, and the counts add
     // up to the whole report.
     expect(envelope.data?.summary).toEqual({
-      passed: CHECKS.length - 1,
+      passed: CHECKS.length,
       warned: 0,
       failed: 0,
-      skipped: 1,
+      skipped: 0,
     });
   });
 
@@ -239,13 +232,13 @@ describe('brain doctor run', () => {
     const lines = run.stdout.trimEnd().split('\n');
     expect(lines).toHaveLength(CHECKS.length + 1);
     for (const [index, id] of CHECKS.entries()) {
-      const status = id === SKIPPED_WITHOUT_CAPTURE ? 'skip' : 'ok';
+      const status = 'ok';
       expect(lines[index]).toMatch(new RegExp(`^${id}: ${status}`));
     }
     // Last, so the line that says whether to read the rest is the one left on
     // screen (Conventions: passed, warned, failed, skipped).
     expect(lines.at(-1)).toBe(
-      `요약: 통과 ${String(CHECKS.length - 1)}, 경고 0, 실패 0, 건너뜀 1`,
+      `요약: 통과 ${String(CHECKS.length)}, 경고 0, 실패 0, 건너뜀 0`,
     );
   });
 
@@ -280,7 +273,7 @@ describe('brain doctor run', () => {
     expect((envelope.data?.checks ?? []).map((check) => check.id)).toEqual(CHECKS);
     expect(
       (envelope.data?.checks ?? []).every(
-        (check) => check.status === 'ok' || check.id === SKIPPED_WITHOUT_CAPTURE,
+        (check) => check.status === 'ok',
       ),
     ).toBe(true);
   });
@@ -381,7 +374,7 @@ describe('brain doctor run', () => {
       expect(found.get('db')).toMatchObject({ status: 'ok' });
 
       const summary = envelope.data?.summary;
-      expect(summary).toEqual({ passed: CHECKS.length - 2, warned: 1, failed: 0, skipped: 1 });
+      expect(summary).toEqual({ passed: CHECKS.length - 1, warned: 1, failed: 0, skipped: 0 });
       // The counts and the lines cannot disagree about one report.
       expect(
         (summary?.passed ?? 0) + (summary?.warned ?? 0) + (summary?.skipped ?? 0),
@@ -405,7 +398,7 @@ describe('brain doctor run', () => {
       expect(run.code).toBe(0);
       expect(run.stdout).toContain('writable: warn');
       expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
-        `요약: 통과 ${String(CHECKS.length - 2)}, 경고 1, 실패 0, 건너뜀 1`,
+        `요약: 통과 ${String(CHECKS.length - 1)}, 경고 1, 실패 0, 건너뜀 0`,
       );
     } finally {
       holder.exec('rollback');
@@ -502,11 +495,11 @@ describe('brain doctor run', () => {
     // The store knew nothing about any of this and said so anyway.
     expect(found.get('db')).toMatchObject({ status: 'ok' });
     expect(envelope.data?.summary).toEqual({
-      passed: CHECKS.length - 3,
+      passed: CHECKS.length - 2,
       warned: 0,
       failed: 1,
-      // `node-path` and, with no capture switch, `transcripts`.
-      skipped: 2,
+      // The missing shim leaves node-path without a node to inspect.
+      skipped: 1,
     });
   });
 
@@ -603,7 +596,7 @@ describe('brain doctor run without a configuration it can read', () => {
     // the summary is the last line.
     expect(run.stdout).toContain('spool: ok 0건');
     expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
-      '요약: 통과 3, 경고 0, 실패 3, 건너뜀 4',
+      '요약: 통과 4, 경고 0, 실패 3, 건너뜀 4',
     );
     // Not an error envelope, so nothing goes to stderr but the warning line.
     expect(run.stderr).not.toContain('CONFIG_MISSING');

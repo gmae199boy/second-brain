@@ -33,6 +33,7 @@ import { harnessParsers, harnesses, transcriptFolders } from './harnesses.js';
 import { gitRepositoryInspector } from './runtime/git.js';
 import { uuidV7IdGen } from './runtime/id-gen.js';
 import { fileSpool } from './runtime/spool.js';
+import { recordHookArrival } from './runtime/hook-arrival.js';
 import { readStdin } from './runtime/stdin.js';
 import { fileTranscriptReader } from './runtime/transcript.js';
 import {
@@ -88,6 +89,7 @@ export interface CommandContextBase {
    * to, and a terminal answers with the empty string at once.
    */
   stdin: () => Promise<string>;
+  recordHookArrival: (harness: string) => Promise<void>;
 }
 
 /** What a command gets. No file, no environment, no connection of its own. */
@@ -421,6 +423,7 @@ export async function dispatch(
     outcome = await execute(registry, argv, { clock, json, positional: [] }, env, {
       createStore: runtime.createStore ?? sqliteStore,
       stdin: runtime.stdin ?? (() => readStdin()),
+      recordHookArrival: (harness) => recordHookArrival(configHome(env), harness, env['SECOND_BRAIN_PLUGIN_ROOT']),
       idGen: runtime.idGen ?? uuidV7IdGen(),
       workHandlers: runtime.workHandlers ?? {},
       stderr,
@@ -473,6 +476,7 @@ export async function dispatch(
 interface Wiring {
   createStore: CreateStore;
   stdin: () => Promise<string>;
+  recordHookArrival: (harness: string) => Promise<void>;
   idGen: IdGen;
   /** Kinds beyond Core's own. Empty for every real invocation. */
   workHandlers: WorkHandlers;
@@ -493,7 +497,7 @@ async function execute(
   wiring: Wiring,
 ): Promise<Outcome> {
   const { clock } = base;
-  const { createStore, stdin, idGen, workHandlers, stderr } = wiring;
+  const { createStore, stdin, recordHookArrival, idGen, workHandlers, stderr } = wiring;
   const selected = select(registry, argv);
   if (selected.kind === 'helped') {
     return { envelope: null, text: [], warningLines: [], exit: 0 };
@@ -517,10 +521,10 @@ async function execute(
   // Before the configuration, because this command may be the one that writes
   // it, and before the store, because it has no database to reach.
   if (spec.standalone === true) {
-    return finish(rendering, await spec.run({ env, clock, options, args, stdin }), [], []);
+    return finish(rendering, await spec.run({ env, clock, options, args, stdin, recordHookArrival }), [], []);
   }
 
-  const preflight = spec.preflight?.({ clock, options, args, stdin });
+  const preflight = spec.preflight?.({ clock, options, args, stdin, recordHookArrival });
   if (preflight !== undefined) return failed(rendering, preflight, [], []);
 
   const home = configHome(env);
@@ -564,14 +568,10 @@ async function execute(
     schemaVersion: SQLITE_SCHEMA_VERSION,
     clock,
     idGen,
-    // The ingest registry, not the connector one: a harness can be ingested
-    // from before anything has written its hook entry (see `harnesses.ts`).
+    // Parsers and connectors come from the same harness registry.
     parsers: harnessParsers(harnesses),
     transcripts: fileTranscriptReader(),
-    // Empty unless this invocation's environment asked for the folders
-    // (`CAPTURE_ENV`). With no folder, the drain's scan, finding a transcript
-    // from a token alone and doctor's `transcripts` check are all off, and
-    // collecting what a hook named is unaffected (`harnesses.ts`).
+    // Every registered harness folder is scanned by default.
     transcriptFolders: transcriptFolders(env),
     // Asking git what the first message's folder is, for the project and
     // worktree tags of a session this run may create (AD-12).
@@ -605,6 +605,7 @@ async function execute(
             options,
             args,
             stdin,
+            recordHookArrival,
             cause: schema.code,
             message: schema.message,
             spoolIngest: (input, cause) =>
@@ -631,6 +632,7 @@ async function execute(
       options,
       args,
       stdin,
+      recordHookArrival,
     });
     const result = finish(rendering, outcome, warningCodes, warningLines);
 

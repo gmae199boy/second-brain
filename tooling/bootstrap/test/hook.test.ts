@@ -13,6 +13,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,6 +52,7 @@ let bare: string;
 let home: string;
 let plugin: string;
 let snapshotCommit: string;
+let configDir: string;
 
 function git(args: readonly string[]): string {
   return execFileSync('git', [...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -62,6 +64,9 @@ beforeAll(() => {
   home = join(root, 'home');
   plugin = join(root, 'plugin');
   mkdirSync(home, { recursive: true });
+  configDir = join(root, 'claude-config');
+  mkdirSync(join(configDir, 'projects', '-demo'), { recursive: true });
+  copyFileSync(join(repoRoot, 'packages/claude-code/test/fixtures/two-turns.jsonl'), join(configDir, 'projects', '-demo', 'first-session.jsonl'));
 
   const work = join(root, 'work');
   snapshot(work);
@@ -129,8 +134,12 @@ function runRecord(): PluginRun {
   return JSON.parse(readFileSync(runRecordPath(), 'utf8')) as PluginRun;
 }
 
-function sessionStart(): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync('sh', [join(plugin, 'bin', 'session-start.sh')], {
+function hook(event: string, input = ''): { status: number | null; stdout: string; stderr: string } {
+  const hooks = JSON.parse(readFileSync(join(plugin, 'hooks/hooks.json'), 'utf8')) as { hooks: { [event: string]: { hooks: { command: string }[] }[] } };
+  const command = hooks.hooks[event]?.[0]?.hooks[0]?.command;
+  if (command === undefined) throw new Error(`Missing hook: ${event}`);
+  const result = spawnSync('sh', ['-c', command], {
+    input,
     cwd: root,
     encoding: 'utf8',
     env: {
@@ -138,6 +147,7 @@ function sessionStart(): { status: number | null; stdout: string; stderr: string
       SECOND_BRAIN_HOME: home,
       SECOND_BRAIN_REPO: `file://${bare}`,
       CLAUDE_PLUGIN_ROOT: plugin,
+      CLAUDE_CONFIG_DIR: configDir,
     },
     maxBuffer: 32 * 1024 * 1024,
   });
@@ -150,7 +160,7 @@ describe('the plugin SessionStart hook', () => {
   it(
     'clones, builds, installs, and records the commit the plugin asked for',
     () => {
-      const run = sessionStart();
+      const run = hook('SessionStart');
 
       expect(run.status).toBe(0);
       // At most one line, and it is the JSON a harness turns into a
@@ -164,6 +174,11 @@ describe('the plugin SessionStart hook', () => {
       expect(record.commit).toBe(snapshotCommit);
       expect(record.plugin_root).toBe(plugin);
       expect(record.schema_version).toBeGreaterThan(0);
+      const db = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
+      try {
+        expect(db.prepare('select ingest_source from sessions where harness_session_id = ?').get('first-session')).toMatchObject({ ingest_source: 'import' });
+      } finally { db.close(); }
+
       // The node the shim was pinned to, which is the node a hook will run.
       expect(record.node).toBe(
         readFileSync(join(home, 'bin', 'brain'), 'utf8')
@@ -201,7 +216,7 @@ describe('the plugin SessionStart hook', () => {
       const before = log();
       const recorded = statSync(runRecordPath()).mtimeMs;
 
-      const run = sessionStart();
+      const run = hook('SessionStart');
 
       expect(run.status).toBe(0);
       // No line for the model, and no line in the log either: the fast path
@@ -215,6 +230,30 @@ describe('the plugin SessionStart hook', () => {
     },
     SLOW,
   );
+  it('collects a Stop payload, records its arrival, and ignores a transcript with no conversation', () => {
+    const transcript = join(root, 'stop-transcript.jsonl');
+    copyFileSync(join(repoRoot, 'packages/claude-code/test/fixtures/two-turns.jsonl'), transcript);
+    const run = hook('Stop', JSON.stringify({ session_id: 'stop-session', transcript_path: transcript }));
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toBe('');
+    expect(readFileSync(join(home, 'run', 'last-hook-claude-code'), 'utf8')).toBe(`${plugin}\n`);
+    const doctor = spawnSync(join(home, 'bin', 'brain'), ['doctor', 'run', '--json'], { encoding: 'utf8', env: { ...process.env, SECOND_BRAIN_HOME: home, CLAUDE_CONFIG_DIR: configDir } });
+    expect(doctor.status).toBe(0);
+    const report = JSON.parse(doctor.stdout) as { data: { checks: { id: string; status: string; detail: string }[] } };
+    expect(report.data.checks.find((check) => check.id === 'last-hook')).toMatchObject({ status: 'ok', detail: expect.stringMatching(/claude-code: \d{4}-/) });
+    expect(report.data.checks.find((check) => check.id === 'plugin')).toMatchObject({ status: 'ok', detail: expect.stringContaining(snapshotCommit.slice(0, 7)) });
+    const empty = join(root, 'empty-transcript.jsonl');
+    writeFileSync(empty, JSON.stringify({ type: 'system', subtype: 'init', sessionId: 'empty-session', timestamp: new Date().toISOString() }) + '\n');
+    expect(hook('Stop', JSON.stringify({ session_id: 'empty-session', transcript_path: empty })).status).toBe(0);
+    const db = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
+    try {
+      const session = db.prepare('select id from sessions where harness_session_id = ?').get('stop-session') as { id: string };
+      expect(db.prepare('select count(*) as n from messages where session_id = ?').get(session.id)).toMatchObject({ n: 4 });
+      expect(db.prepare('select id from sessions where harness_session_id = ?').get('empty-session')).toBeUndefined();
+    } finally { db.close(); }
+  }, SLOW);
+
 });
 
 /**

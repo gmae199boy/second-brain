@@ -155,4 +155,7 @@ fi
 PATH=$(dirname "$brain_node"):/opt/homebrew/bin:/usr/local/bin:$PATH
 export PATH
 
-exec "$brain_node" "$ROOT/bootstrap.mjs" --yes --ref "$brain_ref" --plugin-root "$ROOT"
+"$brain_node" "$ROOT/bootstrap.mjs" --yes --ref "$brain_ref" --plugin-root "$ROOT"
+brain_bootstrap_status=$?
+sh "$ROOT/bin/brain.sh" queue drain </dev/null >/dev/null 2>&1
+exit "$brain_bootstrap_status"

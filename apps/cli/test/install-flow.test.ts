@@ -1796,3 +1796,36 @@ describe('the installer flow and automatic updating', () => {
     expect(result.ok && result.report.update).toEqual({ auto: true });
   });
 });
+
+describe('installer plugin connections', () => {
+  it('includes plugin warnings without failing the install', async () => {
+    const plugin = memoryConnector({ harness: 'claude-code', label: 'Claude Code', hookSource: 'plugin' });
+    const kit = harness({ isTTY: false, connectors: [plugin] });
+    const result = await resultOf(['--connect', 'claude-code', '--yes'], kit);
+    expect(result.ok).toBe(true);
+    expect('warnings' in result && result.warnings).toEqual(['PLUGIN_NOT_INSTALLED']);
+    expect(kit.output()).toContain('Claude Code 플러그인이 설치되어 있지 않습니다');
+  });
+  it('passes the explicit plugin root and explains legacy cleanup', async () => {
+    const plugin = memoryConnector({ harness: 'claude-code', label: 'Claude Code', hookSource: 'plugin' });
+    plugin.addMarkedEntry();
+    const kit = harness({ isTTY: false, connectors: [plugin] });
+    const result = await resultOf(['--connect', 'claude-code', '--plugin-root', '/plugins/current', '--yes'], kit);
+    expect(result.ok).toBe(true);
+    expect('warnings' in result && result.warnings).toEqual([]);
+    expect(plugin.marked()).toEqual([]);
+    expect(kit.output()).toContain('에서 예전 brain hook을 지웠습니다');
+    expect(kit.output()).toContain('Claude Code는 /plugins/current의 플러그인으로 연결되어 있습니다');
+  });
+  it('uses the previous completion record when the plugin flag is absent', async () => {
+    const plugin = memoryConnector({ harness: 'claude-code', label: 'Claude Code', hookSource: 'plugin' });
+    const kit = harness({ isTTY: false, connectors: [plugin], recordedInstalled: {
+      commit: BUILD_COMMIT, schema_version: 6, node: PINNED_NODE,
+      plugin_root: '/plugins/recorded', installed_at: '2026-10-17T00:00:00.000Z',
+    } });
+    const result = await resultOf(['--connect', 'claude-code', '--yes'], kit);
+    expect(result.ok).toBe(true);
+    expect('warnings' in result && result.warnings).toEqual([]);
+    expect(kit.output()).toContain('Claude Code는 /plugins/recorded의 플러그인으로 연결되어 있습니다');
+  });
+});

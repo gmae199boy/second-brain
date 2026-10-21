@@ -177,6 +177,8 @@ async function readPayload(
     return { ok: false, code: payload.code, message: payload.message, exit: 2 };
   }
 
+  await context.recordHookArrival(harness.parser.harness);
+
   return {
     ok: true,
     input: {

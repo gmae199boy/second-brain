@@ -1872,7 +1872,7 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
     await mkdir(folder, { recursive: true });
     await copyFile(transcript, join(folder, `${sessionIdFor(1)}.jsonl`));
     const ran = await runBrain(['queue', 'drain', '--json'], home, '', {
-      SECOND_BRAIN_CAPTURE: '1', CLAUDE_CONFIG_DIR: config,
+      CLAUDE_CONFIG_DIR: config,
     });
     expect(ran.code, ran.stderr).toBe(0);
     const stored = tags(databaseIn(home));
@@ -2541,5 +2541,47 @@ describe('brain sessions ingest claude-code when the database will not take the 
       detail: '0건',
     });
     expect(envelope.warnings).toEqual([]);
+  });
+});
+
+describe('hook arrival evidence', () => {
+  it.each([false, true])('records plugin root before collection, spool=%s', async (spooled) => {
+    const home = await installedHome();
+    const transcript = await transcriptIn(home);
+    if (spooled) {
+      const db = new DatabaseSync(databaseIn(home));
+      try { db.exec('update schema_version set version = 2'); } finally { db.close(); }
+    }
+    const run = await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, stopPayload(transcript), { SECOND_BRAIN_PLUGIN_ROOT: '/demo/plugin' });
+    expect(run.code).toBe(0);
+    expect((JSON.parse(run.stdout) as Envelope).data?.spooled).toBe(spooled);
+    expect(await readFile(join(home, 'run', 'last-hook-claude-code'), 'utf8')).toBe('/demo/plugin\n');
+  });
+  it('records an empty file without a plugin root', async () => {
+    const home = await installedHome();
+    const transcript = await transcriptIn(home);
+    expect((await runBrain(['sessions', 'ingest', 'claude-code'], home, stopPayload(transcript), { SECOND_BRAIN_PLUGIN_ROOT: '' })).code).toBe(0);
+    expect(await readFile(join(home, 'run', 'last-hook-claude-code'), 'utf8')).toBe('');
+  });
+  it('continues collecting when the diagnostic record cannot be written', async () => {
+    const home = await installedHome();
+    const transcript = await transcriptIn(home);
+    await mkdir(join(home, 'run'), { recursive: true });
+    await mkdir(join(home, 'run', 'last-hook-claude-code'));
+    const run = await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, stopPayload(transcript));
+    expect((JSON.parse(run.stdout) as Envelope).data?.inserted?.messages).toBeGreaterThan(0);
+    expect(run.code).toBe(0);
+  });
+});
+
+describe('duplicate plugin diagnosis through the CLI', () => {
+  it('raises PLUGIN_DUPLICATE in the doctor envelope warnings', async () => {
+    const home = await installedHome();
+    const transcript = await transcriptIn(home);
+    await runBrain(['sessions', 'ingest', 'claude-code'], home, stopPayload(transcript), { SECOND_BRAIN_PLUGIN_ROOT: '/plugins/old' });
+    await writeFile(join(home, 'run', 'plugin.json'), JSON.stringify({ plugin_root: '/plugins/current', app_ref: 'a'.repeat(40), seen_at: new Date().toISOString() }));
+    const run = await runBrain(['doctor', 'run', '--json'], home, '');
+    expect(run.code).toBe(0);
+    expect((JSON.parse(run.stdout) as Envelope).warnings).toContain('PLUGIN_DUPLICATE');
   });
 });

@@ -195,6 +195,7 @@ function connectorSubject(connector = memoryConnector()): ConnectorSubject {
     shimPath: SHIM,
     entries: async () => connector.entries(),
     marked: async () => connector.marked(),
+    addMarkedEntry: async () => connector.addMarkedEntry(),
     addForeignEntry: async (entry: string) => {
       connector.addForeignEntry(entry);
     },
@@ -212,8 +213,8 @@ describe('the connector contract against the memory connector', () => {
     const connector = memoryConnector();
     connector.addForeignEntry('the user put this here');
 
-    await connector.connect({ shimPath: SHIM });
-    await connector.connect({ shimPath: SHIM });
+    await connector.connect({ shimPath: SHIM, pluginRoot: null });
+    await connector.connect({ shimPath: SHIM, pluginRoot: null });
 
     expect(connector.entries()).toEqual([
       'the user put this here',
@@ -224,9 +225,9 @@ describe('the connector contract against the memory connector', () => {
 
   it('replaces its own entry rather than adding a second one for a new shim', async () => {
     const connector = memoryConnector();
-    await connector.connect({ shimPath: '/memory/old/bin/brain' });
+    await connector.connect({ shimPath: '/memory/old/bin/brain', pluginRoot: null });
 
-    const again = await connector.connect({ shimPath: SHIM });
+    const again = await connector.connect({ shimPath: SHIM, pluginRoot: null });
 
     expect(again).toEqual({ ok: true, target: '/memory/demo/settings.json', changed: true });
     expect(connector.marked()).toEqual([`${BRAIN_MARKER} hook -> ${SHIM}`]);
@@ -237,7 +238,7 @@ describe('the connector contract against the memory connector', () => {
       failure: { code: 'HARNESS_UNREADABLE', message: 'settings.json is not JSON' },
     });
 
-    const result = await connector.connect({ shimPath: SHIM });
+    const result = await connector.connect({ shimPath: SHIM, pluginRoot: null });
 
     expect(result).toEqual({
       ok: false,
@@ -256,6 +257,7 @@ describe('the contracts catch a wrong connector', () => {
       const connector: Connector = {
         harness: inner.harness,
         label: inner.label,
+        hookSource: 'settings',
         parser: inner.parser,
         detect: () => inner.detect(),
         async connect(input): Promise<ConnectResult> {
@@ -268,6 +270,7 @@ describe('the contracts catch a wrong connector', () => {
         connector,
         shimPath: SHIM,
         entries: async () => entries,
+        addMarkedEntry: async () => { entries.push(BRAIN_MARKER); },
         marked: async () => entries.filter((entry) => entry.includes(BRAIN_MARKER)),
         addForeignEntry: async (entry: string) => {
           entries.push(entry);
@@ -1376,4 +1379,12 @@ describe('identity contracts reject incorrect stores', () => {
     });
     expect(failures).toContain('identity work opens only when ensureSession creates a session');
   });
+});
+
+describe('the connector contract against a plugin source', () => {
+  for (const testCase of connectorContract()) {
+    it(testCase.name, async () => {
+      await testCase.run(async () => connectorSubject(memoryConnector({ hookSource: 'plugin' })));
+    });
+  }
 });

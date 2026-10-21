@@ -85,6 +85,7 @@ describe('the error codes', () => {
       MIGRATION_FAILED: 1,
       FILES_UNAVAILABLE: 1,
       SHIM_MISSING: 1,
+      SHIM_INVALID: 1,
       SETUP_INCOMPLETE: 1,
       SETUP_CANCELLED: 1,
       SEARCH_FAILED: 1,

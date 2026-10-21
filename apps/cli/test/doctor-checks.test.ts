@@ -93,6 +93,7 @@ describe('runtimeChecks', () => {
       'node-path',
       'node-version',
       'plugin',
+      'last-hook',
       'spool',
     ]);
   });
@@ -941,5 +942,45 @@ describe('the spool check', () => {
     expect(await spool.append([sampleSpoolRecord()])).toMatchObject({ ok: true });
 
     expect(await spoolCheck(home)).toMatchObject({ status: 'warn', code: 'SPOOLED', detail: expect.stringContaining('1건') });
+  });
+});
+
+describe('last-hook check', () => {
+  async function hookCheck(home: string, names = ['claude-code']): Promise<DoctorCheck> {
+    const check = runtimeChecks({ home, harnessNames: names }).find((source) => source.id === 'last-hook');
+    if (check === undefined) throw new Error('missing last-hook check');
+    return check.run();
+  }
+  it('reports missing records per harness', async () => {
+    const home = await installedHome();
+    expect(await hookCheck(home, ['claude-code', 'other'])).toEqual({ id: 'last-hook', status: 'ok', detail: 'claude-code: 아직 받은 hook이 없습니다. other: 아직 받은 hook이 없습니다' });
+  });
+  it('reports the mtime with an offset and accepts empty root content', async () => {
+    const home = await installedHome();
+    await mkdir(join(home, 'run'), { recursive: true });
+    const path = join(home, 'run', 'last-hook-claude-code');
+    await writeFile(path, '');
+    const { stat } = await import('node:fs/promises');
+    expect(await hookCheck(home)).toEqual({ id: 'last-hook', status: 'ok', detail: `claude-code: ${isoWithOffset((await stat(path)).mtime)}` });
+  });
+  it('prefers the running plugin root and detects a second plugin folder', async () => {
+    const home = await installedHome();
+    const { recordHookArrival } = await import('../src/runtime/hook-arrival.js');
+    await recordHookArrival(home, 'claude-code', '/old/plugin');
+    await writeFile(join(home, 'installed.json'), JSON.stringify({ commit: 'a'.repeat(40), schema_version: 6, node: process.execPath, plugin_root: '/installed/plugin', installed_at: new Date().toISOString() }));
+    await writeFile(pluginRunPath(home), JSON.stringify({ plugin_root: '/current/plugin', app_ref: 'a'.repeat(40), seen_at: new Date().toISOString() }));
+    const check = await hookCheck(home);
+    expect(check).toMatchObject({ status: 'warn', code: 'PLUGIN_DUPLICATE' });
+    expect(check.detail).toContain('/old/plugin');
+    expect(check.detail).toContain('/current/plugin');
+    await recordHookArrival(home, 'claude-code', '/current/plugin');
+    expect(await hookCheck(home)).toMatchObject({ status: 'ok' });
+  });
+  it('falls back to the installed plugin root', async () => {
+    const home = await installedHome();
+    const { recordHookArrival } = await import('../src/runtime/hook-arrival.js');
+    await recordHookArrival(home, 'claude-code', '/old/plugin');
+    await writeFile(join(home, 'installed.json'), JSON.stringify({ commit: 'a'.repeat(40), schema_version: 6, node: process.execPath, plugin_root: '/installed/plugin', installed_at: new Date().toISOString() }));
+    expect(await hookCheck(home)).toMatchObject({ status: 'warn', code: 'PLUGIN_DUPLICATE', detail: expect.stringContaining('/installed/plugin') });
   });
 });

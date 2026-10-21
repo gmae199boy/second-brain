@@ -627,7 +627,7 @@ describe('the sinks outside the dispatcher, one at a time', () => {
     let stderr = '';
     const exit = await dispatch(registry, ['fake', 'drains', '--json'], {
       clock: systemClock,
-      env: { [HOME_ENV]: home },
+      env: withoutHarnessFolders({ [HOME_ENV]: home }),
       createStore,
       stdout: (text) => {
         stdout += text;

@@ -7,6 +7,7 @@ import {
 import { memoryParser } from './parser.js';
 
 export interface MemoryConnectorOptions {
+  hookSource?: 'plugin' | 'settings';
   /** Neutral harness name. Defaults to `demo`. */
   harness?: string;
   /** What to call it in a question. Defaults to the harness name. */
@@ -26,6 +27,7 @@ export interface MemoryConnector extends Connector {
   marked(): readonly string[];
   /** Put an entry nobody from Brain wrote into the target. */
   addForeignEntry(entry: string): void;
+  addMarkedEntry(): void;
 }
 
 /**
@@ -48,6 +50,7 @@ export function memoryConnector(options: MemoryConnectorOptions = {}): MemoryCon
   return {
     harness,
     label,
+    hookSource: options.hookSource ?? 'settings',
     parser: memoryParser({ harness }),
 
     async detect(): Promise<boolean> {
@@ -59,6 +62,11 @@ export function memoryConnector(options: MemoryConnectorOptions = {}): MemoryCon
         return { ok: false, code: options.failure.code, message: options.failure.message };
       }
 
+      if (options.hookSource === 'plugin') {
+        const changed = entries.some(isMarked);
+        for (let i = entries.length - 1; i >= 0; i--) if (isMarked(entries[i] ?? '')) entries.splice(i, 1);
+        return { ok: true, target, changed, ...(input.pluginRoot === null ? { warnings: ['PLUGIN_NOT_INSTALLED'] as const } : {}) };
+      }
       const wanted = entryFor(input.shimPath);
       const index = entries.findIndex(isMarked);
       // An entry that already says the same thing is left exactly as it is, so
@@ -74,6 +82,7 @@ export function memoryConnector(options: MemoryConnectorOptions = {}): MemoryCon
       return { ok: true, target, changed: true };
     },
 
+    addMarkedEntry: () => { entries.push(entryFor('/old/bin/brain')); },
     entries: () => [...entries],
     marked: () => entries.filter(isMarked),
     addForeignEntry: (entry: string): void => {

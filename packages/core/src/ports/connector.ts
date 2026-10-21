@@ -1,3 +1,4 @@
+import type { WarningCode } from '../codes.js';
 import type { Parser } from './parser.js';
 
 /**
@@ -18,6 +19,8 @@ export interface ConnectInput {
    * (AD-19).
    */
   shimPath: string;
+  /** Plugin root from the current run, then the completed installation, or null. */
+  pluginRoot: string | null;
 }
 
 /**
@@ -31,6 +34,7 @@ export type ConnectResult =
       target: string;
       /** False when nothing had to be written. */
       changed: boolean;
+      warnings?: readonly WarningCode[];
     }
   | {
       ok: false;
@@ -54,13 +58,15 @@ export interface Connector {
   readonly harness: string;
   /** What to call this harness in a question or a line of output. */
   readonly label: string;
+  /** Plugin sources remove old marked hooks; settings sources register the shim. */
+  readonly hookSource: 'plugin' | 'settings';
   readonly parser: Parser;
   /** Whether this harness is installed on this machine. Never writes. */
   detect(): Promise<boolean>;
   /**
-   * Register the shim with this harness, idempotently: the entry carries
-   * `BRAIN_MARKER`, an entry that already says the same thing is left alone,
-   * and nothing without the marker is touched.
+   * Connect idempotently. Settings sources register one marked shim entry;
+   * plugin sources remove all marked legacy entries and warn if no plugin is
+   * recorded. Nothing without the marker is touched.
    */
   connect(input: ConnectInput): Promise<ConnectResult>;
 }

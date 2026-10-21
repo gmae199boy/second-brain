@@ -297,9 +297,8 @@ export async function doctorAt(
   try {
     return await runDoctor(store, {
       schemaVersion: SQLITE_SCHEMA_VERSION,
-      // The same store, under the capabilities the capture checks read. Empty
-      // folders are the ordinary case: the install does not turn capture on,
-      // so `transcripts` is a `skip` rather than a report about nothing.
+      // The caller supplies registered folders for its environment. Direct
+      // callers can omit them to run only the store and runtime checks.
       store,
       clock: systemClock,
       folders,

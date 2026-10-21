@@ -12,6 +12,7 @@ import {
   type SqliteProjectKeyCollision,
   type WarningCode,
 } from 'second_brain';
+import { installedPluginRoot, connectionLines } from '../connectors/plugin.js';
 import { formatCheck } from '../commands/doctor-run.js';
 import type { SelfUserResult } from './store.js';
 import {
@@ -542,7 +543,7 @@ export async function runInstall(
   const shim = await deps.shim.write(home);
   deps.log(shim.changed ? `${shim.path}을 썼습니다 (mode 0755)` : `${shim.path}은 이미 최신입니다`);
 
-  const connected = await connectHarnesses(flags, shim.path, deps);
+  const connected = await connectHarnesses(flags, shim.path, deps, home, warnings);
 
   // Doctor has the last word, and it runs to the end whatever a connector did:
   // its ten lines are what a person reads to find out what is wrong, and
@@ -875,6 +876,8 @@ async function connectHarnesses(
   flags: InstallFlags,
   shim: string,
   deps: InstallDeps,
+  home: string,
+  warnings: WarningCode[],
 ): Promise<Connected> {
   if (deps.connectors.length === 0) {
     deps.log('아직 연결할 하네스가 없습니다 (epic 2)');
@@ -889,8 +892,9 @@ async function connectHarnesses(
 
   const connected: { harness: string; target: string; changed: boolean }[] = [];
   const refused: { harness: string; code: string; message: string }[] = [];
+  const pluginRoot = flags.pluginRoot ?? await installedPluginRoot(home, (folder) => deps.installed.read(folder));
   for (const connector of chosen) {
-    const result = await connector.connect({ shimPath: shim });
+    const result = await connector.connect({ shimPath: shim, pluginRoot });
     if (!result.ok) {
       refused.push({ harness: connector.harness, code: result.code, message: result.message });
       continue;
@@ -900,11 +904,8 @@ async function connectHarnesses(
       target: result.target,
       changed: result.changed,
     });
-    deps.log(
-      result.changed
-        ? `${result.target}에 ${connector.label}를 연결했습니다`
-        : `${result.target}에 ${connector.label}가 이미 연결되어 있습니다`,
-    );
+    warnings.push(...(result.warnings ?? []));
+    for (const line of connectionLines(connector, result, pluginRoot)) deps.log(line);
   }
 
   const first = refused[0];

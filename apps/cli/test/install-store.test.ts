@@ -36,6 +36,7 @@ const ALL_CHECKS = [
   'node-path',
   'node-version',
   'plugin',
+      'last-hook',
   'spool',
 ];
 
@@ -375,6 +376,7 @@ describe('doctorAt', () => {
       'node-path',
       'node-version',
       'plugin',
+      'last-hook',
       'spool',
     ]);
     // The counts are the report's own, so they cannot disagree with it.
@@ -402,6 +404,7 @@ describe('doctorAt', () => {
       'node-path',
       'node-version',
       'plugin',
+      'last-hook',
       'spool',
     ]);
 

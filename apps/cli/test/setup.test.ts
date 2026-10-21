@@ -18,6 +18,8 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   BRAIN_MARKER,
+  claudeCodeConnector,
+  type Connector,
   SQLITE_MIGRATIONS_DIRECTORY,
   runSqliteMigrations,
 } from 'second_brain';
@@ -54,6 +56,7 @@ interface Envelope {
     harness?: string;
     target?: string;
     changed?: boolean;
+    plugin_root?: string | null;
     home?: string;
     config_path?: string;
     store?: { path?: string; schema_version?: number; applied?: string[] };
@@ -89,7 +92,7 @@ async function emptyHome(): Promise<string> {
 
 /** One in-process invocation against a registry this test owns. */
 async function runConnect(
-  registry: readonly MemoryConnector[],
+  registry: readonly Connector[],
   args: readonly string[],
   home: string,
 ): Promise<Run> {
@@ -97,7 +100,7 @@ async function runConnect(
   let stderr = '';
   const code = await dispatch([setupConnectCommand(registry)], args, {
     clock: systemClock,
-    env: { [HOME_ENV]: home },
+    env: withoutHarnessFolders({ [HOME_ENV]: home }),
     stdout: (text) => {
       stdout += text;
     },
@@ -215,11 +218,13 @@ describe('brain setup connect', () => {
     expect((JSON.parse(first.stdout) as Envelope).data).toEqual({
       harness: 'demo',
       target: '/memory/demo/settings.json',
+      plugin_root: null,
       changed: true,
     });
     expect((JSON.parse(again.stdout) as Envelope).data).toEqual({
       harness: 'demo',
       target: '/memory/demo/settings.json',
+      plugin_root: null,
       changed: false,
     });
     // One entry, carrying the marker, naming this home's shim.
@@ -390,7 +395,7 @@ describe('brain setup run against the local SQLite source', () => {
     expect(config).toContain(`path = "${join(home, 'brain.db')}"`);
     expect(config).toContain(`path = "${join(home, 'files')}"`);
     expect(config).toContain(`path = "${join(home, 'mirror')}"`);
-    expect(run.stdout).toContain('아직 연결할 하네스가 없습니다 (epic 2)');
+    expect(run.stdout).toContain('연결한 하네스가 없습니다');
     // The mirror folder itself is epic 4's to create.
     expect(existsSync(join(home, 'mirror'))).toBe(false);
   });
@@ -688,18 +693,11 @@ describe('brain setup run against the local SQLite source', () => {
       'node-path',
       'node-version',
       'plugin',
+      'last-hook',
       'spool',
     ]);
-    // Everything but `transcripts`: no test here sets `SECOND_BRAIN_CAPTURE`,
-    // so this build looks in no transcript folder and that check is a `skip`
-    // saying so (Boundaries, Decision 1 2026-10-19).
-    const failed = (envelope.data?.checks ?? []).filter(
-      (check) => check.status !== 'ok' && check.id !== 'transcripts',
-    );
+    const failed = (envelope.data?.checks ?? []).filter((check) => check.status !== 'ok');
     expect(failed, JSON.stringify(failed)).toEqual([]);
-    expect(
-      (envelope.data?.checks ?? []).find((check) => check.id === 'transcripts')?.status,
-    ).toBe('skip');
   });
 
   it('reports db as DB_UNAVAILABLE, and makes no file, once the database is gone', async () => {
@@ -726,6 +724,7 @@ describe('brain setup run against the local SQLite source', () => {
       'node-path',
       'node-version',
       'plugin',
+      'last-hook',
       'spool',
     ]);
     expect(envelope.data?.checks?.[1]).toEqual({
@@ -1124,5 +1123,57 @@ describe('brain setup run and the completion record', () => {
     const envelope = JSON.parse(run.stdout) as Envelope;
     const plugin = envelope.data?.checks?.find((check) => check.id === 'plugin');
     expect(plugin).toMatchObject({ status: 'ok' });
+  });
+});
+
+describe('plugin connections', () => {
+  it.each(['mode', 'signature', 'entry', 'parse'])('rejects an unusable shim before invoking the connector: %s', async (problem) => {
+    const home = await emptyHome();
+    const { path } = await writeShim(home, { bin: binPath });
+    if (problem === 'mode') await chmod(path, 0o600);
+    if (problem === 'signature') await writeFile(path, (await readFile(path, 'utf8')).replace('Written by second-brain', 'Written by somebody'));
+    if (problem === 'entry') await writeShim(home, { bin: join(home, 'missing.js') });
+    if (problem === 'parse') await writeFile(path, '#!/bin/sh\nexit 0\n');
+    const demo = memoryConnector();
+    const run = await runConnect([demo], ['setup', 'connect', 'demo', '--json'], home);
+    expect(run.code).toBe(1);
+    expect((JSON.parse(run.stdout) as Envelope).error?.code).toBe(problem === 'parse' ? 'SHIM_MISSING' : 'SHIM_INVALID');
+    expect(demo.entries()).toEqual([]);
+  });
+  it('warns when no plugin has run and leaves unmarked settings byte for byte', async () => {
+    const home = await emptyHome();
+    await writeShim(home, { bin: binPath });
+    const config = join(home, 'claude');
+    await mkdir(config);
+    const target = join(config, 'settings.json');
+    const text = '{ "hooks": {"Stop":[{"hooks":[{"type":"command","command":"echo user"}]}]} }';
+    await writeFile(target, text);
+    const run = await runConnect([claudeCodeConnector({ configDir: config })], ['setup', 'connect', 'claude-code', '--json'], home);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(run.code).toBe(0);
+    expect(envelope.ok).toBe(true);
+    expect(envelope.warnings).toEqual(['PLUGIN_NOT_INSTALLED']);
+    expect(envelope.data).toMatchObject({ plugin_root: null, changed: false });
+    expect(await readFile(target, 'utf8')).toBe(text);
+    const human = await runConnect([claudeCodeConnector({ configDir: config })], ['setup', 'connect', 'claude-code'], home);
+    expect(human.stdout).toContain('Claude Code 플러그인이 설치되어 있지 않습니다. Claude Code에서 second-brain 플러그인을 설치하세요');
+  });
+  it('prefers run/plugin.json, reports the root and explains cleanup in Korean', async () => {
+    const home = await emptyHome();
+    await writeShim(home, { bin: binPath });
+    const config = join(home, 'claude');
+    await mkdir(config);
+    const target = join(config, 'settings.json');
+    await writeFile(target, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'old # second-brain' }] }] } }));
+    await mkdir(join(home, 'run'));
+    await writeFile(join(home, 'installed.json'), JSON.stringify({ commit: 'a'.repeat(40), schema_version: 6, node: process.execPath, plugin_root: '/installed/plugin', installed_at: new Date().toISOString() }));
+    await writeFile(join(home, 'run', 'plugin.json'), JSON.stringify({ plugin_root: '/current/plugin', app_ref: 'a'.repeat(40), seen_at: new Date().toISOString() }));
+    const connector = claudeCodeConnector({ configDir: config });
+    const text = await runConnect([connector], ['setup', 'connect', 'claude-code'], home);
+    expect(text.stdout).toBe(`${target}에서 예전 brain hook을 지웠습니다\nClaude Code는 /current/plugin의 플러그인으로 연결되어 있습니다\n`);
+    const run = await runConnect([connector], ['setup', 'connect', 'claude-code', '--json'], home);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.warnings).toEqual([]);
+    expect(envelope.data).toMatchObject({ plugin_root: '/current/plugin', changed: false });
   });
 });

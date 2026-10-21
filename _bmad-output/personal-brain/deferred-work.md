@@ -99,7 +99,7 @@
 | spool `failure` 레코드 재주입 handler (2.11) | 해결됨(2.12, 2026-10-19). `createBrain`의 spool handler 표에 `failure` 항목: payload 그대로 `recordFailure`, id는 레코드 id, `closeWork` 없음 |
 | 데몬 켜짐 예외: 기회적 drain 끄기 (2.11) | epic-daemon(epic 9, 소켓 handshake가 생길 때) |
 | 같은 실패 키의 `occurred_at`·`message` 갱신 여부 (2.11) | 해결됨(2.11, 2026-10-19 사용자) |
-| 2.14: `SECOND_BRAIN_CAPTURE` 스위치를 없애고 트랜스크립트 폴더를 기본으로 켠다 (2.12) | epic 2 story 2.14(플러그인 hook 등록과 같은 자리) |
+| 2.14: `SECOND_BRAIN_CAPTURE` 스위치를 없애고 트랜스크립트 폴더를 기본으로 켠다 (2.12) | 해결됨(2.14, 2026-10-21). 폴더 수집은 기본이며 플러그인 수집 hook을 함께 연결했다 |
 | 옛 handback(`handbackReportText` 없음)의 본문 출처 (19) | 해결됨(22, 2026-10-21). 읽는다: `origin.body`의 첫 줄이 편집기 머리글과 정확히 같고 그 뒤 비지 않은 줄이 모두 두 칸 들여쓰기일 때만, 앞 두 칸을 떼고 trim한 것이 본문이다(한 줄이라도 어긋나면 메시지 아님). 실측(2026-10-21, 메인 transcript 250개): 옛 238건·새 152건 모두 그 모양이고, 둘 다 가진 152건에서 이 규칙의 결과가 `handbackReportText.trim()`과 152/152 같다. 이 Mac에서 보고가 162 → 396으로 는다 |
 | 버전이 올라도 크기가 같은 파일은 스캔이 다시 큐에 넣지 않는다 (19) | 미정. 2.14(폴더 스캔을 기본으로 켤 때)가 자연스러운 자리다. 23(parser v4)도 버전을 올리지만 실제 수집 전이라 다시 읽을 저장 세션이 없다(2026-10-20) |
 | orca 워커 세션의 코디네이터 지시가 내 발화로 저장된다 (2026-10-21) | 후보, 실제로 거슬리면 스토리로 만든다. orca는 터미널에 글자를 쳐서 보내므로 transcript가 그 줄을 출처 `human`으로 적고, hook(`UserPromptSubmit` 포함)도 parser도 사람이 친 것과 구분할 정보가 없다. 23은 고정 머리말 세 가지로 시작하는 줄만 뺀다(2026-10-21 사용자, A안). 남는 것: orca가 띄운 워커 세션(실측 244개 중 15개 세션, user 줄 75개 중 머리말 19개)에서 코디네이터가 이어 보낸 지시. B안: 첫 user 줄이 orca 머리말인 세션을 '워커 세션'으로 표시하고(세션 칸, 마이그레이션) 그 세션의 user 줄을 에이전트의 지시로 다룬다. hook 환경의 `ORCA_*` 변수는 사람이 직접 쓰는 세션에도 있어 워커 판정에 쓸 수 없다 |
@@ -133,7 +133,7 @@
   summary: 해결됨(2026-10-19 사용자, B; 칸은 18, 2026-10-20) — 같은 실패 키가 다시 나오면 행을 다시 열고 `occurred_at`·`message`를 최신으로 바꾼다(2.11). 처음 난 때와 횟수 칸도 끝났다: 0005의 `failures.first_occurred_at`·`occurrences`(기본값 없음), `recordFailure`가 새 행에 `first = occurred`·`occurrences = 1`을 쓰고 같은 키에는 `occurrences + 1`만 올리며 첫 시각은 건드리지 않는다. Core `Failure`·`listFailures`·`failures list`(`--json`의 두 칸, 텍스트의 `횟수 N`)가 읽는다. 원래 질문: 같은 실패 키가 다시 나올 때 `occurred_at`·`message`를 최신으로 갱신할지 정한다.
   evidence: story 11 Decision 2(2026-10-19, 무인 실행에서 에이전트가 고름). Table Contract의 `failures` 행이 "`resolved_at`만 drain이 채움"이라 그대로 지켰고, 그래서 백 번째 실패를 봐도 보이는 시각과 문장은 첫 번째 것이다. "마지막으로 언제 실패했나"를 알고 싶으면 칸이나 규칙을 바꿔야 한다. `failures list`(2.12)를 쓰면서 판단하는 것이 자연스럽다.
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-spool-plan.md`
-  summary: `SECOND_BRAIN_CAPTURE` 스위치를 없애고 하네스 트랜스크립트 폴더를 기본으로 켠다(`apps/cli/src/harnesses.ts`의 `transcriptFolders`).
+  summary: 해결됨(2.14, 2026-10-21) — `SECOND_BRAIN_CAPTURE` 스위치를 없애고 하네스 트랜스크립트 폴더를 기본으로 켠다(`apps/cli/src/harnesses.ts`의 `transcriptFolders`).
   evidence: 2.12 Decision 1(2026-10-19). 실제 폴더를 읽는 것은 "지금 디스크에 있는 것을 이 빌드의 parser로 수집한다"는 뜻이고, 저장된 메시지는 다시 쓰지 않으므로(AD-11) 19·20 전에 켜면 그 세션은 옛 parser 규칙으로 굳는다. 마스킹은 더 이상 이 이유가 아니다 — 17(마스킹 B, 2026-10-20)로 수집은 원문을 저장하고 패턴은 나갈 때만 돌므로, 패턴이 바뀌어도 저장된 세션은 영향을 받지 않는다. 그래서 에픽 결정("실제 수집은 14에서 켠다")을 지켜 스위치를 두었다. 2.14는 그 스위치를 지우고, 그때 doctor `transcripts`는 `skip`이 아니라 `ok`가 되며, 모든 CLI 테스트는 이미 빈 `CLAUDE_CONFIG_DIR`로 격리되어 있다(`apps/cli/test/environment.ts`).
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-parser-v3-peer-handback-plan.md`
   summary: 해결됨(22, 2026-10-21) — 읽는다. `origin.body`의 첫 줄이 편집기 머리글과 정확히 같고 그 뒤 비지 않은 줄이 모두 두 칸 들여쓰기일 때만, 그 줄들에서 앞 두 칸을 떼고 trim한 것이 본문이고, 한 줄이라도 어긋나면 메시지가 아니다. 실측(2026-10-21, 이 Mac 메인 transcript 250개)으로 옛 238건·새 152건이 모두 그 모양이고, 둘 다 가진 152건에서 이 규칙의 결과가 `handbackReportText.trim()`과 152/152 같아 규칙이 본문을 지어내지 않음을 확인했다. 원래 질문: `handbackReportText`가 없는 옛 handback의 본문을 `origin.body`에서 읽을지 정한다(편집기 앞머리 문장을 떼고 보고의 들여쓰기를 걷어낸다).

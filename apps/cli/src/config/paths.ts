@@ -120,3 +120,8 @@ export function lockPath(home: string): string {
 export function bootstrapLogPath(home: string): string {
   return join(home, LOG_FOLDER, BOOTSTRAP_LOG_FILE);
 }
+
+/** Last accepted hook payload for one registered harness. */
+export function lastHookPath(home: string, harness: string): string {
+  return join(home, RUN_FOLDER, `last-hook-${harness}`);
+}

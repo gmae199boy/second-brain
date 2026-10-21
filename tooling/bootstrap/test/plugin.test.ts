@@ -82,11 +82,11 @@ describe('the hooks file', () => {
 
   const hooks = json(join(pluginRoot, 'hooks', 'hooks.json')) as Hooks;
 
-  it('registers exactly one event, SessionStart', () => {
+  it('registers the startup and collecting events', () => {
     // A plugin's hooks are merged with the settings files' and all of them
     // run, so one source of hook entries is the only way a turn is not
     // ingested twice (AD-19). The collecting hooks are story 2.14's.
-    expect(Object.keys(hooks.hooks ?? {})).toEqual(['SessionStart']);
+    expect(Object.keys(hooks.hooks ?? {})).toEqual(['SessionStart', 'Stop', 'SessionEnd']);
   });
 
   it('registers exactly one command, asynchronously and with no matcher', () => {
@@ -191,7 +191,7 @@ describe('the launcher', () => {
 
   it('hands the bootstrap the ref and the plugin root, and consents in advance', () => {
     expect(launcher).toContain(
-      'exec "$brain_node" "$ROOT/bootstrap.mjs" --yes --ref "$brain_ref" --plugin-root "$ROOT"',
+      '"$brain_node" "$ROOT/bootstrap.mjs" --yes --ref "$brain_ref" --plugin-root "$ROOT"',
     );
   });
 
@@ -253,5 +253,52 @@ describe('the launcher', () => {
     const said = JSON.parse(lines[0] ?? '') as { systemMessage?: string };
     expect(said.systemMessage).toContain('app-ref');
     expect(said.systemMessage).toContain('사용자에게 한 줄로');
+  });
+});
+
+describe('collecting launchers', () => {
+  it.each(['Stop', 'SessionEnd'])('registers one asynchronous %s command without a matcher', (event) => {
+    const config = json(join(pluginRoot, 'hooks', 'hooks.json')) as { hooks: Record<string, unknown> };
+    expect(config.hooks[event]).toEqual([{ hooks: [{ type: 'command', command: 'sh "${CLAUDE_PLUGIN_ROOT}/bin/brain.sh" sessions ingest claude-code || exit 0', async: true }] }]);
+  });
+  it('is silent before installation, with no node to find', () => {
+    const home = temporaryFolder('brain-no-shim-');
+    const run = spawnSync('sh', [join(pluginRoot, 'bin', 'brain.sh'), 'sessions', 'ingest', 'claude-code'], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin', HOME: home }, input: 'payload' });
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toBe('');
+  });
+  it('passes arguments, stdin, plugin root and PATH to the shim', async () => {
+    const { mkdirSync, chmodSync } = await import('node:fs');
+    const home = temporaryFolder('brain-shim-launch-');
+    mkdirSync(join(home, 'bin'));
+    const shim = join(home, 'bin', 'brain');
+    writeFileSync(shim, '#!/bin/sh\nprintf "%s\\n" "$@" > "$SECOND_BRAIN_HOME/args"\ncat > "$SECOND_BRAIN_HOME/input"\nprintf "%s" "$SECOND_BRAIN_PLUGIN_ROOT" > "$SECOND_BRAIN_HOME/root"\nprintf "%s" "$PATH" > "$SECOND_BRAIN_HOME/path"\n');
+    chmodSync(shim, 0o755);
+    const run = spawnSync('sh', [join(pluginRoot, 'bin', 'brain.sh'), 'sessions', 'ingest', 'a b'], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin', HOME: home, SECOND_BRAIN_HOME: home }, input: 'payload\n' });
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toBe('');
+    expect(readFileSync(join(home, 'args'), 'utf8')).toBe('sessions\ningest\na b\n');
+    expect(readFileSync(join(home, 'input'), 'utf8')).toBe('payload\n');
+    expect(readFileSync(join(home, 'root'), 'utf8')).toBe(pluginRoot.replace(/\/$/, ''));
+    expect(readFileSync(join(home, 'path'), 'utf8')).toBe('/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin');
+  });
+  it('drains after bootstrap, silences drain output and preserves bootstrap status', async () => {
+    const { chmodSync, mkdirSync } = await import('node:fs');
+    const home = temporaryFolder('brain-drain-launch-');
+    const plugin = temporaryFolder('brain-drain-plugin-');
+    cpSync(pluginRoot, plugin, { recursive: true });
+    mkdirSync(join(home, 'bin'));
+    const shim = join(home, 'bin', 'brain');
+    writeFileSync(shim, `#!/bin/sh\nNODE='${process.execPath}'\nprintf "noise\\n"\nprintf "error\\n" >&2\ncat > "$SECOND_BRAIN_HOME/drain-input"\nprintf "%s\\n" "$@" > "$SECOND_BRAIN_HOME/drain-args"\nexit 9\n`);
+    chmodSync(shim, 0o755);
+    writeFileSync(join(plugin, 'bootstrap.mjs'), 'console.log(JSON.stringify({systemMessage:"설치 완료"})); process.exitCode = 7;\n');
+    const run = spawnSync('sh', [join(plugin, 'bin', 'session-start.sh')], { encoding: 'utf8', input: 'session payload', env: { PATH: process.env['PATH'], HOME: home, SECOND_BRAIN_HOME: home, CLAUDE_PLUGIN_ROOT: plugin } });
+    expect(run.status).toBe(7);
+    expect(run.stdout).toBe('{"systemMessage":"설치 완료"}\n');
+    expect(run.stderr).toBe('');
+    expect(readFileSync(join(home, 'drain-input'), 'utf8')).toBe('');
+    expect(readFileSync(join(home, 'drain-args'), 'utf8')).toBe('queue\ndrain\n');
   });
 });
