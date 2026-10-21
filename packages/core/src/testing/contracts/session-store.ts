@@ -1,3 +1,4 @@
+import { planRedaction } from '../../domain/redact-plan.js';
 import type {
   IngestBatch,
   IngestToolNote,
@@ -48,6 +49,60 @@ export type SessionStoreSubject = SessionStore & UserStore & Pick<WorkStore, "li
  */
 export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
   return [
+    contractCase<SessionStoreSubject>(
+      'redaction changes body and notes atomically, refuses missing text, and survives ingest replay',
+      async (make) => withSubject(make, async (store) => {
+        await owner(store);
+        assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensure');
+        const original = sampleIngestBatch();
+        const message = original.messages[0]!;
+        const note = original.toolNotes[0]!;
+        const batch = { ...original, messages: [{ ...message, body: 'hunter2-x hunter2-x keep-this' }],
+          toolNotes: [{ ...note, harnessMessageId: message.harnessMessageId, target: 'hunter2-x hunter2-x keep-this' }] };
+        assertOk(await store.ingest(batch), 'ingest');
+        let sequence = 100;
+        const redact = (text: string, messageId = message.id) => store.redactMessage({ messageId,
+          plan: (current) => {
+            const plan = planRedaction(current, { mode: 'text', text, kind: 'manual' }, {
+              now: () => new Date('2026-10-21T00:00:00.000Z'), newId: () => `01940000-0000-7000-8000-${String(sequence++).padStart(12, '0')}` });
+            if (!('refused' in plan)) {
+              for (const record of plan.redactions) {
+                assertTrue(record.messageId === current.message.id && record.toolNoteId === null
+                  || record.messageId === null && current.toolNotes.some((row) => row.id === record.toolNoteId), 'record points to a missing target');
+              }
+            }
+            return plan;
+          } });
+        const missing = await redact('absent');
+        assertNotOk(missing, 'missing text succeeded');
+        assertEqual(missing.code, 'REDACT_TEXT_NOT_FOUND', 'missing text code');
+        const unknown = await redact('hunter2-x', '01940000-0000-7000-8000-999999999999');
+        assertNotOk(unknown, 'unknown message succeeded');
+        assertEqual(unknown.code, 'MESSAGE_NOT_FOUND', 'unknown message code');
+        const before = await store.readSession(sampleSessionToken);
+        assertOk(before, 'read original');
+        assertEqual(before.messages[0]?.body, batch.messages[0]?.body, 'refusal changed body');
+        const result = await redact('hunter2-x');
+        assertOk(result, 'redact');
+        assertEqual(result.bodySpans, 2, 'body count');
+        assertEqual(result.toolNoteSpans, 2, 'note count');
+        assertEqual(result.toolNotesChanged, 1, 'changed note count');
+        const first = await store.readSession(sampleSessionToken);
+        assertOk(first, 'first read');
+        assertEqual(first.messages[0]?.body, '[REDACTED:manual] [REDACTED:manual] keep-this', 'body replacement');
+        assertEqual(first.toolNotes[0]?.target, first.messages[0]?.body, 'note replacement');
+        assertOk(await redact('keep-this'), 'second redaction');
+        const second = await store.readSession(sampleSessionToken);
+        assertOk(second, 'second read');
+        const replay = await store.ingest(batch);
+        assertOk(replay, 'replay');
+        assertEqual(replay.inserted.messages + replay.inserted.toolNotes, 0, 'replay inserts');
+        const after = await store.readSession(sampleSessionToken);
+        assertOk(after, 'read replay');
+        assertEqual(after.messages[0]?.body, second.messages[0]?.body, 'replay revived body');
+        assertEqual(after.toolNotes[0]?.target, second.toolNotes[0]?.target, 'replay revived target');
+      }),
+    ),
     contractCase<SessionStoreSubject>(
       'project lookup uses the supplied identity key across display identities',
       async (make) => withSubject(make, async (store) => {

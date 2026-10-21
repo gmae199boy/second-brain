@@ -1,3 +1,4 @@
+import type { RedactionCurrent, RedactionPlan, RedactionRefusal } from '../domain/redact-plan.js';
 import type { Failure } from '../domain/failure.js';
 import type { IngestBatch } from '../domain/ingest-batch.js';
 import type { Message } from '../domain/message.js';
@@ -209,7 +210,17 @@ export type FillSessionTagsResult =
  * and the reads that widen a result back out. Only `sessions.ensure` creates a
  * session row, and every write is idempotent on the natural keys (AD-8).
  */
+export interface RedactMessageInput {
+  messageId: string;
+  /** Synchronous pure callback, run on current text inside the write transaction. */
+  plan(current: RedactionCurrent): RedactionPlan | RedactionRefusal;
+}
+export type RedactMessageResult =
+  | { ok: true; sessionId: string; bodySpans: number; toolNoteSpans: number; toolNotesChanged: number; chunksRemoved: number }
+  | { ok: false; code: 'REDACT_TEXT_NOT_FOUND' | 'MESSAGE_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+
 export interface SessionStore {
+  redactMessage(input: RedactMessageInput): Promise<RedactMessageResult>;
   /** Fill only when both tags are null; never creates rows for an already tagged session. */
   fillSessionTags(input: FillSessionTagsInput): Promise<FillSessionTagsResult>;
   /**

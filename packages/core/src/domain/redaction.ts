@@ -6,12 +6,14 @@
 export interface Redaction {
   /** UUIDv7 minted by whoever creates the row (AD-8). */
   id: string;
-  messageId: string;
+  messageId: string | null;
+  /** Exactly one of messageId and toolNoteId is present. */
+  toolNoteId: string | null;
   /**
-   * Half-open code point range where the removed text sat: over the body as it
+   * Half-open code point range where the removed text sat: over the target as it
    * stood just before this masking, not as it reads now (Conventions). The
    * marker took that span's place, so a later masking of the same message
-   * counts over the body this one left behind.
+   * counts over the target this one left behind.
    */
   start: number;
   end: number;

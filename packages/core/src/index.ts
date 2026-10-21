@@ -92,6 +92,7 @@ export {
   type BrainQueue,
   type BrainQueueDrainInput,
   type BrainSessions,
+  type BrainMessages,
 } from './brain.js';
 export {
   FAILURE_RETRY_KINDS,
@@ -162,3 +163,5 @@ export {
 } from './spool/replay.js';
 
 export { SESSION_IDENTITY_KIND, REPOSITORY_UNANSWERED, sessionIdentityHandler, type SessionIdentityWorkDependencies } from './capture/session-identity-work.js';
+
+export { redactMessage, checkMessagesRedact, type MessagesRedactInput, type MessagesRedactData, type MessagesRedactResult } from './messages/redact.js';

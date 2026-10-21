@@ -13,6 +13,8 @@ import {
   type Message,
   type ParserCursor,
   type ReadSessionResult,
+  type RedactMessageInput,
+  type RedactMessageResult,
   type Session,
   type SessionIngestSource,
   type SessionKey,
@@ -132,6 +134,44 @@ interface ToolNoteRow {
  */
 export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
   return {
+    async redactMessage(input: RedactMessageInput): Promise<RedactMessageResult> {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: '데이터베이스에 닿지 못했습니다' };
+      const connection = opened.connection;
+      const written = await withWrite(connection, async (held): Promise<RedactMessageResult> => {
+        const found = await sql<MessageRow>`select * from messages where id = ${input.messageId}`.execute(held);
+        const message = found.rows[0];
+        if (message === undefined) return { ok: false, code: 'MESSAGE_NOT_FOUND', message: '지정한 메시지가 없습니다' };
+        const notes = await sql<ToolNoteRow>`select * from tool_notes
+          where session_id = ${message.session_id} and harness_message_id = ${message.harness_message_id}`.execute(held);
+        const plan = input.plan({ message: toMessage(message), toolNotes: notes.rows.map(toToolNote) });
+        if ('refused' in plan) return { ok: false, code: plan.refused, message: '가릴 글자를 찾지 못했습니다' };
+        if (plan.bodySpans > 0) await sql`update messages set body = ${plan.body} where id = ${message.id}`.execute(held);
+        for (const note of plan.toolNotes) {
+          await sql`update tool_notes set target = ${note.target} where id = ${note.id}`.execute(held);
+        }
+        for (const record of plan.redactions) {
+          await sql`insert into redactions (id, message_id, tool_note_id, start, "end", kind, content_hash, occurred_at, pattern_version)
+            values (${record.id}, ${record.messageId}, ${record.toolNoteId}, ${record.start}, ${record.end},
+              ${record.kind}, ${record.contentHash}, ${instant(record.occurredAt, 'redactions.occurred_at')}, ${record.patternVersion})`.execute(held);
+        }
+        let chunksRemoved = 0;
+        if (plan.bodySpans + plan.toolNoteSpans > 0) {
+          const removed = await sql<{ id: string }>`delete from chunks where session_id = ${message.session_id}
+            and from_at <= ${message.occurred_at} and to_at >= ${message.occurred_at} returning id`.execute(held);
+          chunksRemoved = removed.rows.length;
+        }
+        return { ok: true, sessionId: message.session_id, bodySpans: plan.bodySpans,
+          toolNoteSpans: plan.toolNoteSpans, toolNotesChanged: plan.toolNotes.length, chunksRemoved };
+      }, { redact: true });
+      if (!written.ok) return written;
+      if (written.value.ok) {
+        // Busy or failure here cannot undo the committed redaction.
+        await sql`pragma wal_checkpoint(TRUNCATE)`.execute(connection.db).catch(() => {});
+      }
+      return written.value;
+    },
+
     async ensureSession(input: EnsureSessionInput): Promise<EnsureSessionResult> {
       const opened = connect();
       if (!opened.ok) {

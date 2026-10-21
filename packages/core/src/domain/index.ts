@@ -86,3 +86,5 @@ export type {
   ParsedToolNote,
   ToolNotePosition,
 } from './ingest-batch.js';
+
+export { planRedaction, type RedactionCurrent, type RedactionRequest, type RedactionPlan, type RedactionRefusal } from './redact-plan.js';

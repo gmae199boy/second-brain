@@ -15,6 +15,8 @@ import type { Failure } from '../../domain/failure.js';
 import type { TranscriptFile } from '../../domain/transcript-file.js';
 import { workKindPolicy, type WorkItem } from '../../domain/work-item.js';
 import type {
+  RedactMessageInput,
+  RedactMessageResult,
   AddWorkInput,
   AddWorkResult,
   ClaimWorkInput,
@@ -76,9 +78,7 @@ export interface MemoryStoreSnapshot {
   /**
    * One row per masked span that was written, in the order it went in (AD-11).
    *
-   * Always empty for now: ingest masks nothing and writes nothing here (마스킹
-   * B), and the one writer of the table — `messages.redact` — is story 2.13.
-   * The field stays so that story has somewhere to put its rows.
+   * Written only by messages.redact; ingest never creates these records.
    */
   redactions: readonly Redaction[];
   /** The queue, in the order rows were added (AD-21). */
@@ -313,6 +313,27 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       toolNotes.set(token, []);
       redactions.set(token, []);
       return { ok: true, created: true, session: { ...session } };
+    },
+
+    async redactMessage(input: RedactMessageInput): Promise<RedactMessageResult> {
+      for (const [token, rows] of messages) {
+        const message = rows.find((row) => row.id === input.messageId);
+        if (message === undefined) continue;
+        const notes = toolNotes.get(token) ?? [];
+        const plan = input.plan({ message: { ...message }, toolNotes: notes
+          .filter((note) => note.harnessMessageId === message.harnessMessageId).map((note) => ({ ...note })) });
+        if ('refused' in plan) return { ok: false, code: plan.refused, message: '가릴 글자를 찾지 못했습니다' };
+        // Prepare the whole replacement before publishing it, including ids.
+        const records = [...(redactions.get(token) ?? []), ...plan.redactions];
+        if (new Set(records.map((record) => record.id)).size !== records.length) throw new Error('가리기 기록 id가 중복됩니다');
+        const changed = new Map(plan.toolNotes.map((note) => [note.id, note.target]));
+        messages.set(token, rows.map((row) => row.id === message.id ? { ...row, body: plan.body } : row));
+        toolNotes.set(token, notes.map((note) => ({ ...note, target: changed.get(note.id) ?? note.target })));
+        redactions.set(token, records);
+        return { ok: true, sessionId: message.sessionId, bodySpans: plan.bodySpans,
+          toolNoteSpans: plan.toolNoteSpans, toolNotesChanged: plan.toolNotes.length, chunksRemoved: 0 };
+      }
+      return { ok: false, code: 'MESSAGE_NOT_FOUND', message: '지정한 메시지가 없습니다' };
     },
 
     async fillSessionTags(input: FillSessionTagsInput): Promise<FillSessionTagsResult> {

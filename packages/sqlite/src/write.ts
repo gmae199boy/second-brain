@@ -72,6 +72,7 @@ export async function withWrite<T>(
 
     if (redact) setRedactAllowed(connection, true);
     try {
+      if (redact) await sql`pragma secure_delete = on`.execute(held);
       const value = await work(held);
       await sql`commit`.execute(held);
       return { ok: true, value };
@@ -83,7 +84,10 @@ export async function withWrite<T>(
       // Never conditional on the outcome. A marker left raised would let every
       // later update in this process past the triggers of AD-11, which are the
       // only defence the original text has (NFR-1).
-      if (redact) setRedactAllowed(connection, false);
+      if (redact) {
+        setRedactAllowed(connection, false);
+        await sql`pragma secure_delete = off`.execute(held);
+      }
     }
   });
 }

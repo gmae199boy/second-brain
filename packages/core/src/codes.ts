@@ -202,6 +202,15 @@ const CODES = {
     retryable: false,
     hint: '`brain doctor run`으로 데이터베이스 상태를 확인하세요',
   },
+  /** No stored message has the requested id. */
+  MESSAGE_NOT_FOUND: {
+    exit: 1, meaning: '지정한 메시지가 없습니다', retryable: false,
+    hint: '메시지 id를 확인하세요',
+  },
+  REDACT_TEXT_NOT_FOUND: {
+    exit: 1, meaning: '가릴 글자를 찾지 못했습니다', retryable: false,
+    hint: '가릴 글자와 메시지 id를 확인하세요',
+  },
   /** Another connection held the write lock for longer than the budget (AD-7). */
   DB_LOCKED: {
     exit: 1,

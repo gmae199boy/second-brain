@@ -274,6 +274,8 @@ export interface DatabaseCommandSpec<T = unknown> extends CommandSpecBase {
    * blocked.
    */
   writes?: boolean;
+  /** Input validation and consent before configuration, schema checks or database I/O. */
+  preflight?(context: CommandContextBase): CommandFailure | undefined;
   /**
    * What this command does instead of writing, when the guard above found the
    * database out of reach: write the mark that says "do this later" to the
@@ -454,6 +456,11 @@ export async function dispatch(
         if (failure.hint !== undefined && failure.hint !== '') {
           stderr(`  ${encodeTextLine(failure.hint)}\n`);
         }
+        if (failure.retry_argv !== undefined) {
+          const quoted = failure.retry_argv.map((arg) => /^[a-zA-Z0-9_./:=@-]+$/u.test(arg)
+            ? arg : "'" + arg.replaceAll("'", "'\\''") + "'").join(' ');
+          stderr(`  다시 하려면: ${encodeTextLine(quoted)}\n`);
+        }
       }
       for (const line of outcome.warningLines) stderr(`${encodeTextLine(line)}\n`);
     }
@@ -512,6 +519,9 @@ async function execute(
   if (spec.standalone === true) {
     return finish(rendering, await spec.run({ env, clock, options, args, stdin }), [], []);
   }
+
+  const preflight = spec.preflight?.({ clock, options, args, stdin });
+  if (preflight !== undefined) return failed(rendering, preflight, [], []);
 
   const home = configHome(env);
   const config = await readConfig(home);

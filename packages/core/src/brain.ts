@@ -1,3 +1,4 @@
+import { redactMessage, type MessagesRedactInput, type MessagesRedactResult } from './messages/redact.js';
 import { SESSION_IDENTITY_KIND, sessionIdentityHandler } from './capture/session-identity-work.js';
 import {
   SESSION_INGEST_KIND,
@@ -154,7 +155,12 @@ export interface BrainQueue {
   drain(input: BrainQueueDrainInput): Promise<BrainDrainReport>;
 }
 
+export interface BrainMessages {
+  redact(input: MessagesRedactInput): Promise<MessagesRedactResult>;
+}
+
 export interface Brain {
+  messages: BrainMessages;
   doctor: BrainDoctor;
   sessions: BrainSessions;
   failures: BrainFailures;
@@ -263,6 +269,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
   };
 
   return {
+    messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
     doctor: {
       run: () =>
         runDoctor(store, {

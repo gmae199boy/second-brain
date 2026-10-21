@@ -29,6 +29,8 @@ export type {
   ReadSchemaVersionResult,
   ReadSelfUserResult,
   ReadSessionResult,
+  RedactMessageInput,
+  RedactMessageResult,
   RecordFailureInput,
   RecordFailureResult,
   RecordTranscriptFileInput,
