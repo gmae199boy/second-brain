@@ -1,4 +1,4 @@
-import { FAILURE_RETRY_KINDS } from '../capture/session-ingest-work.js';
+import { FAILURE_RETRY_KINDS, FAILURE_RETRY_STAGES } from '../capture/session-ingest-work.js';
 import type { Clock } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
 import type { WorkStore } from '../ports/store.js';
@@ -55,8 +55,8 @@ export interface FailuresRetryDependencies {
 /**
  * Queue one piece of work per target that is still failing.
  *
- * One item per target and not per row: a session that failed at three stages is
- * one session to collect again, and the open-row key of AD-21 would have
+ * One item per kind and target, so separate ingest and identity failures
+ * each get their own work, and the open-row key of AD-21 would have
  * collapsed the duplicates anyway — at the cost of a write lock per duplicate.
  *
  * `created: false` is counted apart from `added` because the two mean different
@@ -82,11 +82,15 @@ export async function retryFailures(
   const seen = new Set<string>();
 
   for (const failure of read.failures) {
-    const target = `${failure.targetKind}\n${failure.targetId}`;
+    const kind = Object.hasOwn(FAILURE_RETRY_STAGES, failure.stage)
+      ? FAILURE_RETRY_STAGES[failure.stage]
+      : Object.hasOwn(FAILURE_RETRY_KINDS, failure.targetKind)
+        ? FAILURE_RETRY_KINDS[failure.targetKind]
+        : undefined;
+    const target = `${kind ?? ''}\n${failure.targetKind}\n${failure.targetId}`;
     if (seen.has(target)) continue;
     seen.add(target);
 
-    const kind = FAILURE_RETRY_KINDS[failure.targetKind];
     if (kind === undefined) {
       skipped.set(failure.targetKind, (skipped.get(failure.targetKind) ?? 0) + 1);
       continue;

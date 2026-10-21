@@ -27,16 +27,11 @@ import type {
 /** The kind, as `work_items.kind` spells it. */
 export const SESSION_INGEST_KIND = 'session_ingest';
 
-/**
- * Which kind of work asks for one more go at each kind of target, for `brain
- * failures retry` (Boundaries).
- *
- * A table rather than a guess, because a failure's target kind does not say
- * what would fix it: `session` is collected again, and the project identity of
- * story 2.20 will want its own kind for the same target. A target kind that is
- * not in here is reported as skipped and left alone — retrying work nobody has
- * written would be a row no handler ever claims.
- */
+/** Known stages take precedence; the target table supports older failure rows. */
+export const FAILURE_RETRY_STAGES: Readonly<Record<string, string>> = {
+  session_ingest: SESSION_INGEST_KIND,
+  session_identity: 'session_identity',
+};
 export const FAILURE_RETRY_KINDS: Readonly<Record<string, string>> = {
   session: SESSION_INGEST_KIND,
 };
@@ -138,7 +133,7 @@ const PERMANENT_CODES = new Set<string>(['TRANSCRIPT_UNREADABLE', 'USER_MISSING'
  * interesting one, and a database that cannot answer this read will refuse the
  * record as well.
  */
-async function about(
+export async function about(
   store: Pick<SessionStore, 'findSession'>,
   session: string,
 ): Promise<{ harness?: string; sessionId?: string }> {

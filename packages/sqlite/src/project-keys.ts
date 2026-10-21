@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises';
-import { BUSY_TIMEOUT_MS } from '@second-brain/core';
+import { BUSY_TIMEOUT_MS, CASE_INSENSITIVE_HOSTS } from '@second-brain/core';
 import { sql, type Kysely } from 'kysely';
 import { describe, openSqlite } from './connect.js';
 import type { SqliteSchema } from './driver.js';
@@ -37,12 +37,10 @@ import type { SqliteSchema } from './driver.js';
  * Bitbucket owner and repository names are ASCII.
  *
  * It names the column bare, so it reads the `projects` row of whatever query it
- * is dropped into. Core's own function and the host list arrive with story 20;
- * until then this is the one spelling in this package.
+ * is dropped into. The host list belongs to Core; parity with its ASCII key function is tested.
  */
 export const PROJECT_IDENTITY_KEY_SQL = `case
-            when lower(remote_identity) glob 'github.com/*'
-              or lower(remote_identity) glob 'bitbucket.org/*'
+            when ${CASE_INSENSITIVE_HOSTS.map((host) => `lower(remote_identity) glob '${host}/*'`).join(' or ')}
               then lower(remote_identity)
             else remote_identity
           end`;

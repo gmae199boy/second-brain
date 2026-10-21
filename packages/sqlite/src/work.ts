@@ -92,6 +92,35 @@ export function claimCandidateQuery(query: DueWorkQuery): RawBuilder<WorkItemRow
   `;
 }
 
+/** Shared with session creation so identity work and its session commit together. */
+export async function ensureWork(held: Kysely<SqliteSchema>, input: AddWorkInput) {
+  const createdAt = instant(input.createdAt, 'work_items.created_at');
+  const nextAttemptAt = instant(input.nextAttemptAt, 'work_items.next_attempt_at');
+  // Looked up *before* the insert, in the same transaction: `created`
+  // means "this call put the row there", and that cannot be read off
+  // the id. A caller replaying a record proposes the id it minted the
+  // first time, so `row.id === input.id` would call a second call a
+  // creation — and the memory fake, which answers `false`, would then
+  // disagree with this one.
+  const existing = await readOpenWork(held, input);
+  if (existing !== null) return { created: false, row: existing };
+
+  // The partial unique index of 0002 is the target, so the conflict is
+  // only over the rows still to be done: the same work asked for again
+  // after it completed is a new row (AD-21). Nothing else can be
+  // writing — `BEGIN IMMEDIATE` holds the one writer — so the clause is
+  // the index's guarantee restated and not a race this relies on.
+  await sql`
+    insert into work_items (id, kind, target_kind, target_id, created_at,
+                            attempts, next_attempt_at)
+         values (${input.id}, ${input.kind}, ${input.targetKind}, ${input.targetId},
+                 ${createdAt}, 0, ${nextAttemptAt})
+    on conflict (kind, target_kind, target_id) where completed_at is null
+      do nothing
+  `.execute(held);
+  return { created: true, row: await readOpenWork(held, input) };
+}
+
 /**
  * The queue capability on the local source: one backlog, claimed in a short
  * write transaction and worked on outside it (AD-7, AD-21).
@@ -117,36 +146,9 @@ export function sqliteWorkStore(connect: SqliteConnect): WorkStore {
         return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       }
 
-      const createdAt = instant(input.createdAt, 'work_items.created_at');
-      const nextAttemptAt = instant(input.nextAttemptAt, 'work_items.next_attempt_at');
-
       let written;
       try {
-        written = await withWrite(opened.connection, async (held) => {
-          // Looked up *before* the insert, in the same transaction: `created`
-          // means "this call put the row there", and that cannot be read off
-          // the id. A caller replaying a record proposes the id it minted the
-          // first time, so `row.id === input.id` would call a second call a
-          // creation — and the memory fake, which answers `false`, would then
-          // disagree with this one.
-          const existing = await readOpenWork(held, input);
-          if (existing !== null) return { created: false, row: existing };
-
-          // The partial unique index of 0002 is the target, so the conflict is
-          // only over the rows still to be done: the same work asked for again
-          // after it completed is a new row (AD-21). Nothing else can be
-          // writing — `BEGIN IMMEDIATE` holds the one writer — so the clause is
-          // the index's guarantee restated and not a race this relies on.
-          await sql`
-            insert into work_items (id, kind, target_kind, target_id, created_at,
-                                    attempts, next_attempt_at)
-                 values (${input.id}, ${input.kind}, ${input.targetKind}, ${input.targetId},
-                         ${createdAt}, 0, ${nextAttemptAt})
-            on conflict (kind, target_kind, target_id) where completed_at is null
-              do nothing
-          `.execute(held);
-          return { created: true, row: await readOpenWork(held, input) };
-        });
+        written = await withWrite(opened.connection, (held) => ensureWork(held, input));
       } catch (error) {
         return {
           ok: false,

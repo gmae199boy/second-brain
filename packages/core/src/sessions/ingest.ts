@@ -3,7 +3,7 @@ import type {
   IngestMessage,
   IngestToolNote,
 } from '../domain/ingest-batch.js';
-import { normalizeRemoteIdentity } from '../domain/project-identity.js';
+import { normalizeRemoteIdentity, projectIdentityKey } from '../domain/project-identity.js';
 import type { ParserCursor, Session, SessionIngestSource } from '../domain/session.js';
 import {
   parseSessionToken,
@@ -15,7 +15,7 @@ import { ERROR_CODES, type WarningCode } from '../codes.js';
 import type { Clock } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
 import type { Parser } from '../ports/parser.js';
-import type { RepositoryInspector } from '../ports/repository.js';
+import type { Checkout, InspectResult, RepositoryInspector } from '../ports/repository.js';
 import type { Spool } from '../ports/spool.js';
 import type {
   EnsureCheckoutInput,
@@ -153,7 +153,7 @@ export interface IngestSessionDependencies {
  * The order is the whole of the use case, and it is this order on purpose:
  *
  *   token → parser → locate → findSession → read → parse → owner → inspect →
- *   ensure → ingest → history
+ *   ensure (session + optional identity work) → ingest → history
  *
  * Reading and parsing come before anything is written, because they are the
  * slow part and a write transaction that waited on a disk would hold the one
@@ -172,23 +172,21 @@ export interface IngestSessionDependencies {
  * the transcript rewritten, which carries the `CURSOR_RESET` warning and the
  * cursor to clear (#16).
  *
- * `inspect` sits where it does because the tags are decided once and never
- * again (AD-12): it is asked only when `findSession` found nothing and the
+ * Initial `inspect` is asked only when `findSession` found nothing and the
  * parse brought a message, which is the one moment a session row can be
  * created. A session that is already there is never inspected — the hook of
  * every later turn would then pay for a git call whose answer is thrown away,
  * and a repository whose remote has since changed would answer differently
- * from the row that is already stored.
+ * from the row that is already stored. Unknown answers create identity work
+ * atomically with the session; its handler may fill only still-empty tags.
  *
  * Every id and every instant is decided here and handed over: the store mints
  * nothing and reads no clock (AD-8, AD-13), so the same batch spooled and
  * replayed later lands with the values it was first given (AD-9).
  *
- * Masking belongs to the same step. The bodies and the tool note targets go
- * through Core's versioned pattern list as the batch is assembled, before the
- * batch object exists — so a secret is gone by the time anything can hold on to
- * it, and a record of what went is attached to the message it came out of
- * (AD-11).
+ * Bodies and tool targets are stored verbatim. Masking belongs at output
+ * boundaries, so a mistaken pattern cannot permanently erase source text
+ * during capture (AD-11).
  *
  * Every store step can answer "the database will not take this" — the file is
  * not there, or another process held the one SQLite writer for longer than this
@@ -404,12 +402,13 @@ export async function ingestSession(
   // to propose. Everything else goes through find-or-create (AD-12).
   let created = false;
   if (messages.length > 0) {
-    // The tags, and the one place they are ever worked out: only for a session
+    // Inspect only for a session
     // `findSession` did not find, and only from the cwd of the first message
     // that carries one (AD-12). The process's own cwd is never the evidence —
     // a hook runs wherever the harness happened to leave it.
-    const checkout =
-      stored === null ? await checkoutFor(repositories, idGen, firstCwd(messages)) : null;
+    const asked = stored === null
+      ? await checkoutFor(repositories, idGen, firstCwd(messages))
+      : { checkout: null, unknown: null };
     const ensured = await store.ensureSession({
       id: idGen.next(),
       key,
@@ -428,7 +427,15 @@ export async function ingestSession(
       startSource: parsed.startSource,
       // Slice 1 never groups projects, so nothing fills this (AD-12).
       workspaceId: null,
-      checkout,
+      checkout: asked.checkout,
+      identityWork: asked.unknown === null ? null : {
+        id: idGen.next(),
+        kind: 'session_identity',
+        targetKind: 'session',
+        targetId: input.session,
+        createdAt: ingestedAt,
+        nextAttemptAt: ingestedAt,
+      },
     });
     if (!ensured.ok) {
       return unwritable(ensured.code) ? spooled(ensured.code, afterParse) : ensured;
@@ -498,7 +505,7 @@ export async function ingestSession(
  * turn capture on, repair the folder, or accept that the harness has deleted
  * the file.
  */
-async function locateTranscript(
+export async function locateTranscript(
   folders: readonly TranscriptFolder[],
   key: SessionKey,
 ): Promise<{ ok: true; path: string } | { ok: false; code: 'TRANSCRIPT_UNREADABLE'; message: string }> {
@@ -578,10 +585,8 @@ function cursorFor(
  *
  * A batch whose messages carried no `cwd` at all is not asked about: there is
  * nothing to inspect, and a guess would be a tag that can never be corrected
- * (`firstCwd`). A folder git
- * cannot answer for comes back as `null`, and the session is ingested with no
- * tags rather than refused — capture comes before the tags, and a machine with
- * no git must not be a machine that stores no sessions (Decision 2026-10-18).
+ * (`firstCwd`). Unknown answers defer the tags through work created atomically
+ * with the session. A definite non-repository needs no deferred inspection.
  *
  * The identity is the normalized remote when there is one, and the git common
  * directory only when there is not. A common directory is an absolute path, so
@@ -589,22 +594,26 @@ function cursorFor(
  * no prefix and no machine name: AD-12 says the common directory, and a
  * decoration would be one more thing to migrate away from.
  */
-async function checkoutFor(
+export async function checkoutFor(
   repositories: RepositoryInspector,
   idGen: IdGen,
   cwd: string | null,
-): Promise<EnsureCheckoutInput | null> {
-  if (cwd === null) return null;
-  const checkout = await repositories.inspect(cwd);
-  if (checkout === null) return null;
+): Promise<{ checkout: EnsureCheckoutInput | null; unknown: Extract<InspectResult, { kind: 'unknown' }> | null }> {
+  if (cwd === null) return { checkout: null, unknown: null };
+  const result = await repositories.inspect(cwd);
+  if (result.kind === 'unknown') return { checkout: null, unknown: result };
+  if (result.kind === 'not_repository') return { checkout: null, unknown: null };
+  return { checkout: checkoutInput(result.checkout, idGen), unknown: null };
+}
 
-  // A remote nothing can be named from is a remote this repository does not
-  // have: the fallback is the same as for a repository with no remote at all.
-  const fromRemote =
-    checkout.remoteUrl === null ? null : normalizeRemoteIdentity(checkout.remoteUrl);
+/** Shared by initial capture and deferred identity work to avoid divergent tags. */
+export function checkoutInput(checkout: Checkout, idGen: IdGen): EnsureCheckoutInput {
+  const remoteIdentity = (checkout.remoteUrl === null
+    ? null : normalizeRemoteIdentity(checkout.remoteUrl)) ?? checkout.commonDir;
   return {
     projectId: idGen.next(),
-    remoteIdentity: fromRemote ?? checkout.commonDir,
+    remoteIdentity,
+    identityKey: projectIdentityKey(remoteIdentity),
     worktreeId: idGen.next(),
     worktreePath: checkout.worktreePath,
   };
@@ -618,10 +627,10 @@ async function checkoutFor(
  * at all — a harness is free to write a line without one, and a parser answers
  * `null` rather than guessing for any line whose folder is not this
  * conversation's. A session whose first message is one of those would otherwise
- * be tagged with nothing, and a session's tags are worked out once and never
- * again (AD-12), so "nothing" would be permanent.
+ * be tagged with nothing. Initial capture and deferred work use this same
+ * evidence (AD-12), so both must select the first available cwd.
  */
-function firstCwd(messages: readonly IngestMessage[]): string | null {
+export function firstCwd(messages: readonly { cwd: string | null }[]): string | null {
   for (const message of messages) {
     if (message.cwd !== null && message.cwd !== '') return message.cwd;
   }

@@ -1,124 +1,95 @@
 import { execFile } from 'node:child_process';
+import { stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
-import type { Checkout, RepositoryInspector } from 'second_brain';
+import type { InspectResult, InspectUnknownReason, RepositoryInspector } from 'second_brain';
 
-/**
- * The Runtime's `RepositoryInspector`: the one place git is asked what a
- * working folder is (AD-1).
- *
- * Three read-only commands, `execFile` and no shell. No shell because a cwd
- * comes out of a transcript — it is whatever the harness wrote — and a path
- * with a quote or a semicolon in it must be an argument and never a word of a
- * command line. Read-only because this runs on the critical path of a turn: a
- * `git fetch` would reach the network and `GIT_OPTIONAL_LOCKS=0` keeps git from
- * even refreshing the index, so nothing here can block on somebody else's
- * `git` or leave a file behind.
- *
- * Everything that can go wrong answers `null`: a folder that is not a
- * repository, a path that is gone, a bare repository, a machine with no git, a
- * call that ran past its budget, output in a shape this code does not know.
- * The session is then ingested with no tags, because capture comes before the
- * tags and a brain that refuses a session until git works is a brain that
- * loses turns (Decision 2026-10-18).
- */
-export function gitRepositoryInspector(): RepositoryInspector {
+type GitFailure = Exclude<InspectResult, { kind: 'checkout' }>;
+type GitResult = { ok: true; stdout: string } | { ok: false; result: GitFailure };
+
+const unknown = (reason: InspectUnknownReason, message: string): GitFailure => ({
+  kind: 'unknown', reason, message,
+});
+
+/** Read-only execFile calls keep transcript paths out of shell interpretation. */
+export function gitRepositoryInspector(
+  { command = 'git', timeoutMs = 2000 }: { command?: string; timeoutMs?: number } = {},
+): RepositoryInspector {
+  const git = (cwd: string, args: readonly string[]): Promise<GitResult> => new Promise((resolve) => {
+    execFile(command, ['-C', cwd, ...args], {
+      timeout: timeoutMs,
+      env: {
+        ...gitFreeEnvironment(), LC_ALL: 'C',
+        GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0',
+      },
+      maxBuffer: 1024 * 1024,
+      encoding: 'utf8',
+    }, (error, stdout, stderr) => {
+      if (error === null) return resolve({ ok: true, stdout });
+      let result: GitFailure;
+      if (error.code === 'ENOENT') result = unknown('git_missing', 'git을 실행할 수 없습니다');
+      else if (error.killed) result = unknown('timeout', 'git 응답 시간이 초과되었습니다');
+      else if (error.code === 'EACCES' || error.code === 'EPERM' ||
+          /dubious ownership|Permission denied/i.test(stderr)) {
+        result = unknown('permission', '저장소를 확인할 권한이 없습니다');
+      } else if (/not a git repository|must be run in a work tree/i.test(stderr)) {
+        result = { kind: 'not_repository' };
+      } else result = unknown('unexpected', 'git이 정상적인 응답을 반환하지 않았습니다');
+      resolve({ ok: false, result });
+    });
+  });
+
+  // Once rev-parse succeeded a remote failure cannot establish a local-only identity.
+  const remoteFailure = (failure: GitFailure): GitFailure =>
+    failure.kind === 'not_repository'
+      ? unknown('unexpected', '저장소의 remote를 확인하지 못했습니다')
+      : failure;
+
   return {
-    async inspect(cwd: string): Promise<Checkout | null> {
-      // A relative path would be resolved against this process's own working
-      // directory, and the process's cwd is never the evidence a tag may rest
-      // on (AD-12). A transcript that carried one tells us nothing.
-      if (!isAbsolute(cwd)) return null;
-
-      // Absolute, so the identity of a repository with no remote is a path
-      // that means the same thing from every working folder (AD-12). The two
-      // lines come back in the order the options are written.
+    async inspect(cwd): Promise<InspectResult> {
+      if (!isAbsolute(cwd)) return { kind: 'not_repository' };
+      try {
+        if (!(await stat(cwd)).isDirectory()) return { kind: 'not_repository' };
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT' || code === 'ENOTDIR') return { kind: 'not_repository' };
+        return code === 'EACCES' || code === 'EPERM'
+          ? unknown('permission', '작업 폴더를 읽을 권한이 없습니다')
+          : unknown('unexpected', '작업 폴더를 확인하지 못했습니다');
+      }
       const paths = await git(cwd, [
-        'rev-parse',
-        '--path-format=absolute',
-        '--show-toplevel',
-        '--git-common-dir',
+        'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir',
       ]);
-      if (paths === null) return null;
-      const [worktreePath, commonDir] = lines(paths);
-      // A bare repository has a common directory and no top: it is nobody's
-      // working folder, so there is nothing here to tag a session with.
-      if (worktreePath === undefined || commonDir === undefined) return null;
+      if (!paths.ok) return paths.result;
+      const values = lines(paths.stdout);
+      const [worktreePath, commonDir] = values;
+      if (values.length !== 2 || worktreePath === undefined || commonDir === undefined ||
+          !isAbsolute(worktreePath) || !isAbsolute(commonDir)) {
+        return unknown('unexpected', 'git의 저장소 경로 응답을 읽을 수 없습니다');
+      }
 
-      return { remoteUrl: await remoteUrl(cwd), commonDir, worktreePath };
+      const listed = await git(cwd, ['remote']);
+      if (!listed.ok) return remoteFailure(listed.result);
+      const names = lines(listed.stdout);
+      const name = names.includes('origin') ? 'origin' : names[0];
+      let remoteUrl: string | null = null;
+      if (name !== undefined) {
+        const url = await git(cwd, ['remote', 'get-url', name]);
+        if (!url.ok) return remoteFailure(url.result);
+        remoteUrl = lines(url.stdout)[0] ?? null;
+        if (remoteUrl === null) return unknown('unexpected', 'git의 remote 주소 응답이 비어 있습니다');
+      }
+      return { kind: 'checkout', checkout: { remoteUrl, commonDir, worktreePath } };
     },
   };
 }
 
-/** How long one git call may take before it is the same as no answer. */
-const TIMEOUT_MS = 2000;
-
-/**
- * The URL of the remote this checkout came from, or `null`.
- *
- * `origin` when there is one, and otherwise the first name git lists. Picking
- * one rather than looking at them all is deliberate: the identity must come
- * out the same on every machine that has this clone, and a rule that searched
- * the existing projects for a match would make it depend on what this database
- * happens to hold already (Decision 2026-10-18).
- */
-async function remoteUrl(cwd: string): Promise<string | null> {
-  const listed = await git(cwd, ['remote']);
-  if (listed === null) return null;
-  const names = lines(listed);
-  const name = names.includes('origin') ? 'origin' : names[0];
-  if (name === undefined) return null;
-
-  const url = await git(cwd, ['remote', 'get-url', name]);
-  if (url === null) return null;
-  // A remote whose URL git cannot print is a remote this repository may as
-  // well not have: the caller falls back to the common directory.
-  return lines(url)[0] ?? null;
-}
-
-/**
- * One git call's standard output, or `null` for anything that went wrong.
- *
- * `GIT_TERMINAL_PROMPT=0` so a repository whose remote wants credentials
- * answers instead of waiting for somebody to type, and `GIT_OPTIONAL_LOCKS=0`
- * so a read never queues behind another git in the same folder.
- */
-function git(cwd: string, args: readonly string[]): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile(
-      'git',
-      ['-C', cwd, ...args],
-      {
-        timeout: TIMEOUT_MS,
-        env: { ...gitFreeEnvironment(), GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
-        // Plenty for a few paths, and a cap rather than a promise: output
-        // past it is an answer this code does not understand, which is `null`.
-        maxBuffer: 1024 * 1024,
-        encoding: 'utf8',
-      },
-      (error, stdout) => {
-        resolve(error === null ? stdout : null);
-      },
-    );
-  });
-}
-
-/**
- * This process's environment with every `GIT_` variable taken out.
- *
- * A hook inherits whatever the shell around it was carrying, and git reads a
- * great deal from there: `GIT_DIR`, `GIT_WORK_TREE` and `GIT_COMMON_DIR` each
- * win over the `-C <cwd>` this code passes. A session opened inside one
- * repository would then be tagged with another — a `git commit` hook, or a
- * terminal left inside a `git rebase`, is enough to do it. So the folder is
- * the only thing that decides what git answers here (AD-12).
- */
+/** Inherited git state can override -C and silently identify a different repository. */
 function gitFreeEnvironment(): NodeJS.ProcessEnv {
   return Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
+    Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_') && name !== 'LANGUAGE'),
   );
 }
 
-/** The non-empty lines of a git answer, trimmed of the newline it ends with. */
 function lines(output: string): string[] {
   return output.split('\n').filter((line) => line !== '');
 }

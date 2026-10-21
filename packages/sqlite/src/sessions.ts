@@ -3,6 +3,9 @@ import {
   parseInstant,
   parseSessionToken,
   type EnsureSessionInput,
+  type EnsureCheckoutInput,
+  type FillSessionTagsInput,
+  type FillSessionTagsResult,
   type EnsureSessionResult,
   type FindSessionResult,
   type IngestBatch,
@@ -22,7 +25,7 @@ import {
 import { sql, type Kysely } from 'kysely';
 import { describe, type SqliteConnect } from './connect.js';
 import type { SqliteSchema } from './driver.js';
-import { PROJECT_IDENTITY_KEY_SQL } from './project-keys.js';
+import { ensureWork } from './work.js';
 import { withWrite, type WriteResult } from './write.js';
 
 /** A `sessions` row as SQLite hands it back: text instants, no booleans. */
@@ -148,7 +151,7 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
         // Find-or-create the checkout in the same transaction as the session,
         // so a session is never tagged with a project that is not there and a
         // project is never left behind by a session that was not created.
-        const tags = await ensureCheckout(held, input);
+        const tags = await ensureCheckout(held, input.checkout);
 
         // `on conflict do nothing` with no target, so both of this table's
         // keys land here: the primary key and `(harness, harness_session_id)`.
@@ -174,6 +177,13 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
           throw new UnsettledEnsure(
             `${input.key.harness}:${input.key.harnessSessionId} 세션이 ensureSession 뒤에도 없습니다. ${input.id}는 이미 다른 세션의 것입니다`,
           );
+        }
+        if (inserted.rows.length > 0 && input.identityWork !== null) {
+          try {
+            await ensureWork(held, input.identityWork);
+          } catch (error) {
+            throw new UnsettledEnsure(`정체성 일감을 만들 수 없습니다: ${describe(error)}`);
+          }
         }
         return { created: inserted.rows.length > 0, row };
       };
@@ -206,6 +216,33 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
           code: 'DB_UNAVAILABLE',
           message: `세션을 읽을 수 없습니다: ${describe(error)}`,
         };
+      }
+    },
+
+    async fillSessionTags(input: FillSessionTagsInput): Promise<FillSessionTagsResult> {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const written = await withWrite(opened.connection, async (held): Promise<FillSessionTagsResult> => {
+          const stored = await readSessionRow(held, input.key);
+          if (stored === null) {
+            return { ok: false, code: 'SESSION_NOT_FOUND', message: '세션을 찾을 수 없습니다' };
+          }
+          if (stored.project_id !== null || stored.worktree_id !== null) {
+            return { ok: true, filled: false, session: toSession(stored) };
+          }
+          const tags = await ensureCheckout(held, input.checkout);
+          await sql`
+            update sessions set project_id = ${tags.projectId}, worktree_id = ${tags.worktreeId}
+             where id = ${stored.id} and project_id is null and worktree_id is null
+          `.execute(held);
+          const row = await readSessionRow(held, input.key);
+          if (row === null) throw new UnsettledEnsure('꼬리표를 채운 세션을 읽을 수 없습니다');
+          return { ok: true, filled: true, session: toSession(row) };
+        });
+        return written.ok ? written.value : written;
+      } catch (error) {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: `꼬리표를 채울 수 없습니다: ${describe(error)}` };
       }
     },
 
@@ -494,27 +531,12 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
  */
 async function ensureCheckout(
   held: Kysely<SqliteSchema>,
-  input: EnsureSessionInput,
+  checkout: EnsureCheckoutInput | null,
 ): Promise<CheckoutTags> {
-  const checkout = input.checkout;
   if (checkout === null) return { projectId: null, worktreeId: null };
 
-  // `identity_key` is `not null`, so the insert has to fill it, and the lookup
-  // has to be on it: two remotes that only differ by case are one project
-  // (0005, AD-12), and a `where remote_identity = …` that missed the row that
-  // is already there would propose an id the key refuses and come back as
-  // `UnsettledEnsure`. The expression is `project-keys.ts`'s, so the value
-  // written here and the value 0005 computed for the rows already stored are
-  // the same value. Core's own function arrives with story 20.
-  // The key is computed by the database and then bound, rather than spelled
-  // inside the two statements below: one expression, evaluated once, and the
-  // insert keeps the plain `values` form an upsert can be attached to without
-  // the parser having to guess what its `on` belongs to.
-  const keyed = await sql<{ identity_key: string }>`
-    select ${sql.raw(PROJECT_IDENTITY_KEY_SQL)} as identity_key
-      from (select ${checkout.remoteIdentity} as remote_identity)
-  `.execute(held);
-  const identityKey = keyed.rows[0]?.identity_key ?? checkout.remoteIdentity;
+  // Core owns comparison; the display identity stays the first inserted value.
+  const identityKey = checkout.identityKey;
 
   await sql`
     insert into projects (id, remote_identity, identity_key)

@@ -2,7 +2,7 @@
 // Contract, plus the ingest input of AD-4 and the session token of AD-8.
 export type { Workspace } from './workspace.js';
 export type { Project } from './project.js';
-export { normalizeRemoteIdentity } from './project-identity.js';
+export { normalizeRemoteIdentity, CASE_INSENSITIVE_HOSTS, projectIdentityKey } from './project-identity.js';
 export type { Worktree } from './worktree.js';
 export type {
   ParserCursor,

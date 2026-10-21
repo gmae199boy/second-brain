@@ -1,3 +1,5 @@
+import { projectIdentityKey } from '@second-brain/core';
+import { PROJECT_IDENTITY_KEY_SQL } from '../src/project-keys.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -685,5 +687,50 @@ describe('the SQLite session store and the columns behind it', () => {
     } finally {
       await opened.connection.close();
     }
+  });
+});
+
+describe('Core and SQLite project comparison parity', () => {
+  it('uses exactly the same comparison key for host, path, ASCII and Unicode samples', async () => {
+    const opened = openSqlite({ path: await migratedPath(), busyTimeoutMs: 3000 });
+    if (!opened.ok) throw new Error(opened.message);
+    try {
+      const identities = [
+        'github.com/Brain-Owner/Notes', 'GITHUB.COM/brain-owner/notes',
+        'bitbucket.org/Brain-Owner/Notes', 'BITBUCKET.ORG/Ä/İ/Σ',
+        'demo.example/Brain-Owner/Notes', 'demo.example/brain-owner/notes',
+        '/demo/GitHub.com/Notes', 'github.com.evil/Owner/Repo', '',
+      ];
+      for (const identity of identities) {
+        const row = opened.connection.database.prepare(
+          `select ${PROJECT_IDENTITY_KEY_SQL} as identity_key from (select ? as remote_identity)`,
+        ).get(identity);
+        expect(row).toEqual({ identity_key: projectIdentityKey(identity) });
+      }
+    } finally {
+      await opened.connection.db.destroy();
+    }
+  });
+
+  it('rolls back session creation when its identity work cannot be inserted', async () => {
+    const path = await migratedPath();
+    const store = sqliteStore({ path });
+    try {
+      await store.ensureSelfUser(sampleSelfUserInput());
+      const now = new Date('2026-01-03T00:00:00.000Z');
+      const work = { id: '01940000-0000-7000-8000-000000000810', kind: 'session_identity',
+        targetKind: 'session', targetId: 'demo:other', createdAt: now, nextAttemptAt: now };
+      await store.addWork(work);
+      expect(await store.ensureSession(sampleEnsureSessionInput({
+        checkout: sampleCheckoutInput(), identityWork: { ...work, targetId: sampleSessionToken },
+      }))).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+      expect(await store.findSession(sampleSessionKey)).toEqual({ ok: true, session: null });
+      const opened = openSqlite({ path, busyTimeoutMs: 3000 });
+      if (!opened.ok) throw new Error(opened.message);
+      try {
+        expect(opened.connection.database.prepare('select count(*) as n from projects').get()).toEqual({ n: 0 });
+        expect(opened.connection.database.prepare('select count(*) as n from worktrees').get()).toEqual({ n: 0 });
+      } finally { await opened.connection.db.destroy(); }
+    } finally { await store.close(); }
   });
 });

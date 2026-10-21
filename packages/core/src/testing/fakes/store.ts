@@ -26,6 +26,9 @@ import type {
   EnsureSessionInput,
   EnsureSessionResult,
   FindSessionResult,
+  EnsureCheckoutInput,
+  FillSessionTagsInput,
+  FillSessionTagsResult,
   FinishWorkInput,
   FinishWorkResult,
   HasDueWorkResult,
@@ -135,7 +138,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
 
   const users = new Map<string, User>();
   // Keyed by the idempotency keys of the Table Contract: a project by its
-  // remote identity, a worktree by its project and path.
+  // comparison key, a worktree by its project and path.
   const projects = new Map<string, Project>();
   const worktrees = new Map<string, Worktree>();
   const sessions = new Map<SessionToken, Session>();
@@ -191,6 +194,58 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     return [...users.values()].find((user) => user.isSelf);
   }
 
+  function checkoutTags(checkout: EnsureCheckoutInput | null) {
+    let projectId: string | null = null;
+    let worktreeId: string | null = null;
+    if (checkout !== null) {
+      const { remoteIdentity, identityKey, worktreePath } = checkout;
+      const project = projects.get(identityKey) ?? {
+        id: checkout.projectId,
+        remoteIdentity,
+        workspaceId: null,
+      };
+      projects.set(identityKey, project);
+      projectId = project.id;
+
+      const path = worktreeKey(project.id, worktreePath);
+      const worktree = worktrees.get(path) ?? {
+        id: checkout.worktreeId,
+        projectId: project.id,
+        path: worktreePath,
+        removedAt: null,
+      };
+      worktrees.set(path, worktree);
+      worktreeId = worktree.id;
+    }
+
+    return { projectId, worktreeId };
+  }
+
+  function addWork(input: AddWorkInput): AddWorkResult {
+    const existing = openWork(input.kind, input.targetKind, input.targetId);
+    if (existing !== undefined) {
+      // Find-or-create: an open row for this work keeps everything it has,
+      // including its own id and its own `next_attempt_at` (AD-21).
+      return { ok: true, created: false, item: { ...existing } };
+    }
+    const item: WorkItem = {
+      id: input.id,
+      kind: input.kind,
+      targetKind: input.targetKind,
+      targetId: input.targetId,
+      createdAt: input.createdAt,
+      attempts: 0,
+      nextAttemptAt: input.nextAttemptAt,
+      claimedAt: null,
+      claimExpiresAt: null,
+      claimedBy: null,
+      lastError: null,
+      completedAt: null,
+    };
+    workItems.push(item);
+    return { ok: true, created: true, item: { ...item } };
+  }
+
   return {
     async checkHealth(): Promise<StoreHealth> {
       return health;
@@ -230,30 +285,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         return { ok: true, created: false, session: { ...existing } };
       }
 
-      // Find-or-create, in the order the real adapter does it and inside the
-      // same step as the session: the identity, then the path under it.
-      let projectId: string | null = null;
-      let worktreeId: string | null = null;
-      if (input.checkout !== null) {
-        const { remoteIdentity, worktreePath } = input.checkout;
-        const project = projects.get(remoteIdentity) ?? {
-          id: input.checkout.projectId,
-          remoteIdentity,
-          workspaceId: null,
-        };
-        projects.set(remoteIdentity, project);
-        projectId = project.id;
-
-        const path = worktreeKey(project.id, worktreePath);
-        const worktree = worktrees.get(path) ?? {
-          id: input.checkout.worktreeId,
-          projectId: project.id,
-          path: worktreePath,
-          removedAt: null,
-        };
-        worktrees.set(path, worktree);
-        worktreeId = worktree.id;
-      }
+      const { projectId, worktreeId } = checkoutTags(input.checkout);
 
       const session: Session = {
         id: input.id,
@@ -275,11 +307,24 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         startSource: input.startSource,
         continuedFromSessionId: null,
       };
+      if (input.identityWork !== null) addWork(input.identityWork);
       sessions.set(token, session);
       messages.set(token, []);
       toolNotes.set(token, []);
       redactions.set(token, []);
       return { ok: true, created: true, session: { ...session } };
+    },
+
+    async fillSessionTags(input: FillSessionTagsInput): Promise<FillSessionTagsResult> {
+      const session = sessions.get(formatSessionToken(input.key));
+      if (session === undefined) {
+        return { ok: false, code: 'SESSION_NOT_FOUND', message: '세션을 찾을 수 없습니다' };
+      }
+      if (session.projectId !== null || session.worktreeId !== null) {
+        return { ok: true, filled: false, session: { ...session } };
+      }
+      Object.assign(session, checkoutTags(input.checkout));
+      return { ok: true, filled: true, session: { ...session } };
     },
 
     async findSession(key: SessionKey): Promise<FindSessionResult> {
@@ -458,28 +503,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     },
 
     async addWork(input: AddWorkInput): Promise<AddWorkResult> {
-      const existing = openWork(input.kind, input.targetKind, input.targetId);
-      if (existing !== undefined) {
-        // Find-or-create: an open row for this work keeps everything it has,
-        // including its own id and its own `next_attempt_at` (AD-21).
-        return { ok: true, created: false, item: { ...existing } };
-      }
-      const item: WorkItem = {
-        id: input.id,
-        kind: input.kind,
-        targetKind: input.targetKind,
-        targetId: input.targetId,
-        createdAt: input.createdAt,
-        attempts: 0,
-        nextAttemptAt: input.nextAttemptAt,
-        claimedAt: null,
-        claimExpiresAt: null,
-        claimedBy: null,
-        lastError: null,
-        completedAt: null,
-      };
-      workItems.push(item);
-      return { ok: true, created: true, item: { ...item } };
+      return addWork(input);
     },
 
     async hasDueWork(query: DueWorkQuery): Promise<HasDueWorkResult> {

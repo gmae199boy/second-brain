@@ -139,8 +139,8 @@
   summary: parser 버전이 올라간 뒤 이미 수집된 세션을 다시 읽히는 거리를 만든다 — 지금은 트랜스크립트 폴더 스캔이 크기가 같은 파일을 다시 큐에 넣지 않는다.
   evidence: 2.12의 스캔은 `transcript_files.size_bytes`와 견주어 바뀐 파일만 `session_ingest`로 큐에 넣는다. story 19가 `CLAUDE_CODE_PARSER_VERSION`을 `'3'`으로 올렸지만, 더 자라지 않은 트랜스크립트는 스캔이 집지 않으므로 그 세션의 빠진 handback 보고는 다음 Stop hook이나 손으로 돌린 수집 때까지 들어오지 않는다. 다시 읽는 쪽은 이미 있다 — `sessions.ingest`는 `sessions.parser_version`이 다르면 커서를 넘기지 않고 처음부터 읽는다. 없는 것은 "다시 넣을 거리"뿐이어서, 스캔이 `parser_version`도 함께 보거나 버전 올림 때 한 번 도는 일감 종류를 두는 쪽이 자연스럽다. 폴더 스캔을 기본으로 켜는 2.14가 그 자리다.
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-0005-plan.md`
-  summary: 프로젝트 비교 키 식을 Core의 함수·호스트 상수로 옮긴다 — 지금은 SQLite 쪽에만 있고, 두 곳에 두 번 적혀 있다.
-  evidence: 0005(story 18, 2026-10-20)가 `projects.identity_key`를 놓으면서 식(`github.com/*`·`bitbucket.org/*`면 `lower()`, 그 밖은 그대로)을 `packages/sqlite/migrations/0005_identity_and_records.sql`과 `packages/sqlite/src/project-keys.ts`(`PROJECT_IDENTITY_KEY_SQL`)에 각각 적었다. 마이그레이션 파일은 상수를 import할 수 없어서 두 번이고, 둘이 같은지는 `packages/sqlite/test/schema-0005.test.ts`의 "찾기가 보인 묶음 = 0005가 거부하는 묶음" 사례가 지킨다. 가짜 store(`packages/core/src/testing/fakes/store.ts`)는 아직 `remoteIdentity`로 프로젝트를 키잉하므로 대소문자만 다른 두 remote가 두 프로젝트가 되고, 그래서 "한 프로젝트로 들어간다"를 보는 사례는 SQLite 쪽에만 있다(`session-store.test.ts`). Core 함수·호스트 목록·포트 입력·가짜 store의 키는 story 20이 맡는다.
+  summary: 닫힘(20, 2026-10-21) — 프로젝트 비교 키를 Core 함수·호스트 상수와 포트 입력으로 통일했다.
+  evidence: `projectIdentityKey`는 ASCII만 접고, 두 Store는 `EnsureCheckoutInput.identityKey`로 프로젝트를 찾는다. SQL 식은 Core 호스트 상수에서 만들며 SQLite 표본 대조와 공유 Store 계약이 같은 값을 확인한다. 0005 마이그레이션은 그대로다.
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-parser-plan.md`
   summary: 닫힘(2026-10-21 사용자 결정, 23) — 서브에이전트 보고는 저장하지 않는다. 원래: 동기 handback 보고(`toolUseResult.handbackReport.text`)를 읽을지 정한다 — 지금 parser는 이 보고를 아무 데서도 읽지 않는다.
   evidence: 22의 intent-contract가 "이 키를 보고로 읽지 않는다"로 못박았다(새 출처 결정이라 범위 밖). 실측(2026-10-21, 이 Mac 메인 transcript 250개): 동기 handback 105건의 보고가 메인 transcript의 어느 user·peer 줄에도 없고 그 결과의 `handbackReport.text`에만 있다 — 그만큼을 잃는다. 읽으려면 그 칸이 정말 보고인지, 같은 run의 handback 줄과 겹치지 않는지(겹치면 한 run에 두 행이 남는다)를 정해야 하고, 저장된 세션이 다시 읽히려면 parser 버전을 올려야 한다. 자리는 23(parser v4)이다.

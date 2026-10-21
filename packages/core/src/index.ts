@@ -95,6 +95,7 @@ export {
 } from './brain.js';
 export {
   FAILURE_RETRY_KINDS,
+  FAILURE_RETRY_STAGES,
   SESSION_INGEST_KIND,
   sessionIngestHandler,
   type SessionIngestWorkDependencies,
@@ -159,3 +160,5 @@ export {
   type SpoolReplayHandlerResult,
   type SpoolReplayHandlers,
 } from './spool/replay.js';
+
+export { SESSION_IDENTITY_KIND, REPOSITORY_UNANSWERED, sessionIdentityHandler, type SessionIdentityWorkDependencies } from './capture/session-identity-work.js';

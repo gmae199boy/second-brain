@@ -1,31 +1,24 @@
-import type { Checkout, RepositoryInspector } from '../../ports/repository.js';
+import type { Checkout, InspectResult, RepositoryInspector } from '../../ports/repository.js';
 
 export interface MemoryRepositories extends RepositoryInspector {
-  /** Every cwd `inspect` was asked about, in order. */
   inspects(): readonly string[];
+  set(cwd: string, result: Checkout | InspectResult): void;
 }
 
-/**
- * A `RepositoryInspector` over a map from cwd to checkout, so the ingest use
- * case can be driven with no git and no filesystem (AD-1).
- *
- * A cwd nobody put in the map is the "not a repository" row of the matrix, and
- * it answers `null` rather than throwing, exactly as the real one does. It
- * counts the calls because the rule worth proving is not only what the tags
- * come out as but *how often git is asked*: once, on the ingest that creates
- * the session, and never again (AD-12).
- */
+/** Mutable answers allow a test to restore git between capture and drain. */
 export function memoryRepositories(
-  checkouts: Readonly<Record<string, Checkout>> = {},
+  checkouts: Readonly<Record<string, Checkout | InspectResult>> = {},
 ): MemoryRepositories {
-  const known = new Map<string, Checkout>(Object.entries(checkouts));
+  const known = new Map<string, Checkout | InspectResult>(Object.entries(checkouts));
   const asked: string[] = [];
-
   return {
-    async inspect(cwd: string): Promise<Checkout | null> {
+    async inspect(cwd): Promise<InspectResult> {
       asked.push(cwd);
-      return known.get(cwd) ?? null;
+      const result = known.get(cwd);
+      if (result === undefined) return { kind: 'not_repository' };
+      return 'kind' in result ? result : { kind: 'checkout', checkout: result };
     },
+    set: (cwd, result) => { known.set(cwd, result); },
     inspects: () => [...asked],
   };
 }

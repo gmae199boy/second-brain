@@ -1,3 +1,4 @@
+import { projectIdentityKey } from '../domain/project-identity.js';
 import type {
   IngestBatch,
   IngestMessage,
@@ -86,6 +87,7 @@ export function sampleEnsureSessionInput(
     // No tags by default: a session whose cwd said nothing is the shape most
     // cases want, and the ones about the tags ask for a checkout themselves.
     checkout: null,
+    identityWork: null,
     ...overrides,
   };
 }
@@ -101,6 +103,7 @@ export function sampleCheckoutInput(
   return {
     projectId: sampleProjectId,
     remoteIdentity: 'demo.example/brain-owner/notes',
+    identityKey: projectIdentityKey(overrides.remoteIdentity ?? 'demo.example/brain-owner/notes'),
     worktreeId: sampleWorktreeId,
     worktreePath: '/demo/repo',
     ...overrides,

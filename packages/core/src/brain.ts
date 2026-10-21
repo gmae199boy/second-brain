@@ -1,3 +1,4 @@
+import { SESSION_IDENTITY_KIND, sessionIdentityHandler } from './capture/session-identity-work.js';
 import {
   SESSION_INGEST_KIND,
   sessionIngestHandler,
@@ -197,6 +198,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
   // because what it does is a use case and the ports it needs are the ones this
   // brain was assembled from (`capture/session-ingest-work.ts`).
   const coreHandlers: WorkHandlers = {
+    [SESSION_IDENTITY_KIND]: sessionIdentityHandler(ingestDependencies),
     [SESSION_INGEST_KIND]: sessionIngestHandler({
       ingest: (input, options) => ingestSession(ingestDependencies, input, options),
       store,

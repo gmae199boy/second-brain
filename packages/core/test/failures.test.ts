@@ -208,12 +208,14 @@ describe('failures.retry', () => {
       failure({
         id: '01940000-0000-7000-8000-0000000000d7',
         targetKind: 'file',
+        stage: 'unknown_stage',
         targetId: 'sha256:demo',
         fingerprint: 'sha256:three',
       }),
       failure({
         id: '01940000-0000-7000-8000-0000000000d8',
         targetKind: 'file',
+        stage: 'unknown_stage',
         targetId: 'sha256:other',
         fingerprint: 'sha256:four',
       }),
@@ -227,6 +229,22 @@ describe('failures.retry', () => {
       skipped: [{ targetKind: 'file', count: 2 }],
     });
     expect(store.snapshot().workItems).toEqual([]);
+  });
+
+  it.each(['toString', '__proto__'])('treats prototype property %s as an unknown stage', async (stage) => {
+    const store = await holding(failure({ stage }));
+    expect(await retryFailures(retryDependencies(store))).toMatchObject({ ok: true, added: 1 });
+    expect(store.snapshot().workItems[0]?.kind).toBe('session_ingest');
+  });
+
+  it('queues distinct stages for one target while deduplicating each kind', async () => {
+    const store = await holding(
+      failure(),
+      failure({ id: '01940000-0000-7000-8000-000000000891', stage: 'session_identity', fingerprint: 'sha256:identity' }),
+      failure({ id: '01940000-0000-7000-8000-000000000892', stage: 'session_identity', fingerprint: 'sha256:identity-other' }),
+    );
+    expect(await retryFailures(retryDependencies(store))).toMatchObject({ ok: true, added: 2 });
+    expect(store.snapshot().workItems.map((item) => item.kind).sort()).toEqual(['session_identity', 'session_ingest']);
   });
 
   it('leaves the failure rows exactly as they were', async () => {

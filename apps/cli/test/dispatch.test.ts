@@ -1333,6 +1333,9 @@ describe('the dispatcher and the lock budget', () => {
         async readSelfUser() {
           return unavailable;
         },
+        async fillSessionTags() {
+          return unavailable;
+        },
         async ensureSession() {
           return unavailable;
         },

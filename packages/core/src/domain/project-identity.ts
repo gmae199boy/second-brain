@@ -123,3 +123,14 @@ function pathOf(path: string): string | null {
   if (named !== '') segments.push(named);
   return segments.length === 0 ? null : segments.join('/');
 }
+
+/** These hosts compare repository paths without case; other hosts may not. */
+export const CASE_INSENSITIVE_HOSTS = ['github.com', 'bitbucket.org'] as const;
+
+/** Match SQLite lower(): Unicode case folding would merge distinct keys. */
+export function projectIdentityKey(identity: string): string {
+  const folded = identity.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+  return CASE_INSENSITIVE_HOSTS.some((host) => folded.startsWith(`${host}/`))
+    ? folded
+    : identity;
+}

@@ -5,7 +5,7 @@ import type {
 } from '../../domain/ingest-batch.js';
 import type { Message } from '../../domain/message.js';
 import type { Session } from '../../domain/session.js';
-import type { SessionStore, UserStore } from '../../ports/store.js';
+import type { SessionStore, UserStore, WorkStore } from '../../ports/store.js';
 import {
   assertEqual,
   assertNotOk,
@@ -33,7 +33,7 @@ import {
  * foreign key to prove it (AD-12): a case cannot create a session without
  * first making the owner the fixture points at.
  */
-export type SessionStoreSubject = SessionStore & UserStore;
+export type SessionStoreSubject = SessionStore & UserStore & Pick<WorkStore, "listOpenWorkTargets">;
 
 /**
  * The session capability: find-or-create, an idempotent batch write, and a read
@@ -48,6 +48,64 @@ export type SessionStoreSubject = SessionStore & UserStore;
  */
 export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
   return [
+    contractCase<SessionStoreSubject>(
+      'project lookup uses the supplied identity key across display identities',
+      async (make) => withSubject(make, async (store) => {
+        await owner(store);
+        const first = await store.ensureSession(sampleEnsureSessionInput({
+          checkout: sampleCheckoutInput({ remoteIdentity: 'github.com/Brain-Owner/Notes' }),
+        }));
+        const second = await store.ensureSession(sampleEnsureSessionInput({
+          id: otherSessionId, key: { ...sampleSessionKey, harnessSessionId: 'other' },
+          checkout: sampleCheckoutInput({ projectId: otherProjectId, worktreeId: otherWorktreeId,
+            remoteIdentity: 'github.com/brain-owner/notes', worktreePath: '/demo/other' }),
+        }));
+        assertOk(first, 'first session failed');
+        assertOk(second, 'second session failed');
+        assertEqual(second.session.projectId, first.session.projectId, 'comparison key split the project');
+      }),
+    ),
+    contractCase<SessionStoreSubject>(
+      'identity work opens only when ensureSession creates a session',
+      async (make) => withSubject(make, async (store) => {
+        await owner(store);
+        const now = new Date('2026-01-02T03:06:00.000Z');
+        const work = { id: '01940000-0000-7000-8000-000000000810', kind: 'session_identity',
+          targetKind: 'session', targetId: sampleSessionToken, createdAt: now, nextAttemptAt: now };
+        assertOk(await store.ensureSession(sampleEnsureSessionInput({ identityWork: work })), 'ensure failed');
+        assertOk(await store.ensureSession(sampleEnsureSessionInput({ identityWork: { ...work, targetId: 'demo:late' } })), 'repeat failed');
+        const open = await store.listOpenWorkTargets({ kind: 'session_identity' });
+        assertOk(open, 'work lookup failed');
+        assertEqual(open.targets, [{ targetKind: 'session', targetId: sampleSessionToken }], 'work must be atomic and creation-only');
+      }),
+    ),
+    contractCase<SessionStoreSubject>(
+      'fillSessionTags fills empty tags once and creates nothing for tagged sessions',
+      async (make) => withSubject(make, async (store) => {
+        await owner(store);
+        assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensure failed');
+        const first = await store.fillSessionTags({ key: sampleSessionKey, checkout: sampleCheckoutInput() });
+        assertOk(first, 'fill failed');
+        assertTrue(first.filled, 'empty tags were not filled');
+        const unused = sampleCheckoutInput({ projectId: otherProjectId, worktreeId: otherWorktreeId,
+          remoteIdentity: 'demo.example/brain-owner/other', worktreePath: '/demo/other' });
+        const repeat = await store.fillSessionTags({ key: sampleSessionKey, checkout: unused });
+        assertOk(repeat, 'repeat failed');
+        assertTrue(!repeat.filled, 'existing tags were overwritten');
+        assertEqual(repeat.session.projectId, first.session.projectId, 'project changed');
+        const next = await store.ensureSession(sampleEnsureSessionInput({
+          id: otherSessionId, key: { ...sampleSessionKey, harnessSessionId: 'other' },
+          checkout: sampleCheckoutInput({ projectId: '01940000-0000-7000-8000-000000000899', worktreeId: '01940000-0000-7000-8000-000000000898', remoteIdentity: unused.remoteIdentity }),
+        }));
+        assertOk(next, 'next ensure failed');
+        assertEqual(next.session.projectId, '01940000-0000-7000-8000-000000000899', 'fill created an unreferenced project');
+        const absent = await store.fillSessionTags({
+          key: { ...sampleSessionKey, harnessSessionId: 'absent' }, checkout: sampleCheckoutInput(),
+        });
+        assertNotOk(absent, 'missing session succeeded');
+        assertEqual(absent.code, 'SESSION_NOT_FOUND', 'missing session code changed');
+      }),
+    ),
     contractCase<SessionStoreSubject>(
       'ensureSession creates the row once and keeps the first id',
       async (make) => {

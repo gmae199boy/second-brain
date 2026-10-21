@@ -38,6 +38,9 @@ export function failedConfigStore(message: string): Store & SchemaStore {
     async readSelfUser() {
       return unavailable;
     },
+    async fillSessionTags() {
+      return unavailable;
+    },
     async ensureSession() {
       return unavailable;
     },

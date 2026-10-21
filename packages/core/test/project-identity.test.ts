@@ -1,3 +1,4 @@
+import { projectIdentityKey } from '../src/domain/project-identity.js';
 import { describe, expect, it } from 'vitest';
 import { normalizeRemoteIdentity } from '../src/domain/project-identity.js';
 
@@ -112,5 +113,19 @@ describe('normalizeRemoteIdentity on a remote that names no repository', () => {
     expect(normalizeRemoteIdentity('https://demo.example/owner/repo')?.startsWith('/')).toBe(
       false,
     );
+  });
+});
+
+
+describe('projectIdentityKey', () => {
+  it.each([
+    ['GitHub.com/Brain-Owner/Notes', 'github.com/brain-owner/notes'],
+    ['bitbucket.org/Brain-Owner/Notes', 'bitbucket.org/brain-owner/notes'],
+    ['github.com/Ä/İ/Σ', 'github.com/Ä/İ/Σ'],
+    ['demo.example/Brain-Owner/Notes', 'demo.example/Brain-Owner/Notes'],
+    ['/demo/GitHub.com/Notes', '/demo/GitHub.com/Notes'],
+    ['github.com.evil/Owner/Repo', 'github.com.evil/Owner/Repo'],
+  ])('compares %s as %s', (identity, expected) => {
+    expect(projectIdentityKey(identity)).toBe(expected);
   });
 });

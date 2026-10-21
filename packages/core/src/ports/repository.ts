@@ -25,17 +25,16 @@ export interface Checkout {
   worktreePath: string;
 }
 
-/**
- * Asking git what a folder is, as a port (AD-1).
- *
- * Its shape is `TranscriptReader`'s: it answers with a value and never throws.
- * `null` is not a failure here — a folder that is not a repository, a path that
- * is gone, a bare repository, a machine with no git, a call that took too long:
- * every one of them means the same thing to the caller, which is that this
- * session gets no tags and is ingested anyway (Decision 2026-10-18). Capture
- * comes before the tags.
- */
+
+export type InspectUnknownReason = 'git_missing' | 'timeout' | 'permission' | 'unexpected';
+
+export type InspectResult =
+  | { kind: 'checkout'; checkout: Checkout }
+  | { kind: 'not_repository' }
+  | { kind: 'unknown'; reason: InspectUnknownReason; message: string };
+
+/** Capture proceeds when git cannot answer; unknown results need deferred work. */
 export interface RepositoryInspector {
-  /** What the folder is part of, or `null`. Never throws. */
-  inspect(cwd: string): Promise<Checkout | null>;
+  /** Answers with a value and never throws. */
+  inspect(cwd: string): Promise<InspectResult>;
 }

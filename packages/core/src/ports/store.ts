@@ -91,6 +91,8 @@ export interface EnsureCheckoutInput {
   projectId: string;
   /** `host/owner/repo`, or the git common directory (`normalizeRemoteIdentity`). */
   remoteIdentity: string;
+  /** Comparison key supplied by Core projectIdentityKey. */
+  identityKey: string;
   /** The id to give the `worktrees` row, if this call is the one creating it. */
   worktreeId: string;
   /** The absolute path of the top of the working folder. Key with the project. */
@@ -119,11 +121,13 @@ export interface EnsureSessionInput {
   /**
    * The project and worktree to tag a *new* session with, or `null` for a
    * session whose cwd said nothing. Computed once by the caller from the cwd
-   * of the first message that carries one, since a line may carry none —
-   * and never again: a session that is already there keeps the tags it was
-   * created with, whatever this call carries (AD-12).
+   * of the first message that carries one, since a line may carry none.
+   * A session already there ignores this input. Deferred identity work can
+   * fill its tags separately only while both remain null (AD-12).
    */
   checkout: EnsureCheckoutInput | null;
+  /** Opened atomically only by the call creating the session. */
+  identityWork: AddWorkInput | null;
 }
 
 /**
@@ -191,37 +195,31 @@ export type FindSessionResult =
   | { ok: true; session: Session | null }
   | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
 
+export interface FillSessionTagsInput {
+  key: SessionKey;
+  checkout: EnsureCheckoutInput;
+}
+
+export type FillSessionTagsResult =
+  | { ok: true; filled: boolean; session: Session }
+  | { ok: false; code: 'SESSION_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+
 /**
  * The session capability: the two writes of AD-14 that touch conversation data
  * and the reads that widen a result back out. Only `sessions.ensure` creates a
  * session row, and every write is idempotent on the natural keys (AD-8).
  */
 export interface SessionStore {
+  /** Fill only when both tags are null; never creates rows for an already tagged session. */
+  fillSessionTags(input: FillSessionTagsInput): Promise<FillSessionTagsResult>;
   /**
    * Find-or-create the session row, and with it the project and worktree its
    * checkout names (AD-12).
    *
-   * Three rules about the tags. Every adapter keeps them, with one difference
-   * the second rule spells out:
-   *
-   *   * the session is looked for first. A key that is already stored comes
-   *     back untouched and nothing else is written — not even a project row
-   *     for the checkout this call carried, because a row nothing points at is
-   *     a row nobody will ever find again.
-   *   * otherwise the project is found-or-created on the identity of the
-   *     remote and the worktree on `(project_id, path)`. An identity or a path
-   *     that is already there keeps the id it has, and the proposal is
-   *     dropped. What counts as "the same identity" is the one place the
-   *     adapters do not yet agree: since 0005 the SQLite store finds and
-   *     creates on the comparison key, which folds the case of a
-   *     GitHub or Bitbucket remote, so `github.com/Owner/Repo` and
-   *     `github.com/owner/repo` are one project there; the memory fake still
-   *     keys on `remoteIdentity` verbatim and so has two. Core's own key
-   *     function, the host list and the fake follow in story 20, and this
-   *     bullet says one thing again then.
-   *   * all of it lands in one transaction with the session, so a session is
-   *     never tagged with a project that is not in the database and a project
-   *     is never created for a session that was not.
+   * Existing sessions are untouched and create no checkout or work rows.
+   * New sessions find projects by the caller's identityKey and worktrees by
+   * (project, path), keeping the first display identity. The session, checkout
+   * and optional identityWork are committed together.
    *
    * `removed_at` is not this verb's: a worktree whose folder is gone is marked
    * by drain, and `ensureSession` never changes a project or worktree row.

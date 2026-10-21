@@ -9,6 +9,7 @@ import {
   readdir,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -135,6 +136,8 @@ function childEnvironment(home: string): NodeJS.ProcessEnv {
     ...process.env,
     PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
     [HOME_ENV]: home,
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, 'xdg'),
   });
   delete childEnv['SECOND_BRAIN_DATABASE_URL'];
   delete childEnv['BRAIN_TEST_DATABASE_URL'];
@@ -142,10 +145,10 @@ function childEnvironment(home: string): NodeJS.ProcessEnv {
 }
 
 /** The built `brain`, with `stdin` piped in rather than ignored. */
-function runBrain(args: readonly string[], home: string, stdin: string): Promise<Run> {
+function runBrain(args: readonly string[], home: string, stdin: string, environment: NodeJS.ProcessEnv = {}): Promise<Run> {
   const child = spawn(process.execPath, [binPath, ...args], {
     cwd: repoRoot,
-    env: childEnvironment(home),
+    env: { ...childEnvironment(home), ...environment },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
@@ -1758,7 +1761,7 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
 
   async function git(cwd: string, ...args: string[]): Promise<string> {
     const { stdout } = await runGit('git', ['-C', cwd, ...IDENTITY, ...args], {
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: { ...childEnvironment(cwd), GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
     });
     return stdout;
   }
@@ -1817,6 +1820,94 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
   function sessionIdFor(ordinal: number): string {
     return `4f1e7a90-1c2b-4d3e-8f55-00000000000${String(ordinal)}`;
   }
+
+
+  it.each([
+    ['github.com', 1], ['bitbucket.org', 1], ['demo.example', 2],
+  ])('compares clone identity paths for %s (projects: %s)', async (host, count) => {
+    const home = await installedHome();
+    const folders = [
+      await repositoryIn(home, 'upper', `https://${host}/Brain-Owner/Notes.git`),
+      await repositoryIn(home, 'lower', `git@${host}:brain-owner/notes.git`),
+    ];
+    for (const [ordinal, cwd] of folders.entries()) {
+      const transcript = await transcriptForFolder(home, cwd, `case-${ordinal}`);
+      const ran = await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home,
+        stopPayload(transcript, sessionIdFor(ordinal + 1)));
+      expect(ran.code, ran.stderr).toBe(0);
+    }
+    const db = new DatabaseSync(databaseIn(home), { readOnly: true });
+    try {
+      const projects = db.prepare('select remote_identity, identity_key from projects order by remote_identity').all();
+      expect(projects).toHaveLength(count);
+      if (count === 1) {
+        expect(projects[0]).toEqual({ remote_identity: `${host}/Brain-Owner/Notes`, identity_key: `${host}/brain-owner/notes` });
+        const sessions = db.prepare('select distinct project_id from sessions').all();
+        expect(sessions).toHaveLength(1);
+      }
+    } finally { db.close(); }
+  });
+
+  it('defers unknown identity without git and restores tags through queue drain', async () => {
+    const home = await installedHome();
+    const cwd = await repositoryIn(home, 'repo', 'git@github.com:brain-owner/notes.git');
+    const transcript = await transcriptForFolder(home, cwd);
+    const bin = join(home, 'node-only-bin');
+    await mkdir(bin);
+    await symlink(process.execPath, join(bin, 'node'));
+    const payload = stopPayload(transcript, sessionIdFor(1));
+    // Both initial captures can observe unknown, but only one creates the session and its work.
+    for (const run of await Promise.all([1, 2].map(() => runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'], home, payload, { PATH: bin },
+    )))) expect(run.code, run.stderr).toBe(0);
+    let db = new DatabaseSync(databaseIn(home), { readOnly: true });
+    try {
+      expect(db.prepare('select project_id, worktree_id from sessions').all())
+        .toEqual([{ project_id: null, worktree_id: null }]);
+      expect(db.prepare('select kind, completed_at from work_items').all())
+        .toEqual([{ kind: 'session_identity', completed_at: null }]);
+    } finally { db.close(); }
+    const config = join(home, 'claude-config');
+    const folder = join(config, 'projects', 'demo-repo');
+    await mkdir(folder, { recursive: true });
+    await copyFile(transcript, join(folder, `${sessionIdFor(1)}.jsonl`));
+    const ran = await runBrain(['queue', 'drain', '--json'], home, '', {
+      SECOND_BRAIN_CAPTURE: '1', CLAUDE_CONFIG_DIR: config,
+    });
+    expect(ran.code, ran.stderr).toBe(0);
+    const stored = tags(databaseIn(home));
+    expect(stored.sessions).toEqual([{
+      harness_session_id: sessionIdFor(1), identity: 'github.com/brain-owner/notes', path: cwd,
+    }]);
+    db = new DatabaseSync(databaseIn(home), { readOnly: true });
+    try {
+      expect(db.prepare("select completed_at from work_items where kind = 'session_identity'").get()?.['completed_at']).not.toBeNull();
+    } finally { db.close(); }
+    const failures = await runBrain(['failures', 'list', '--json'], home, '');
+    expect(JSON.parse(failures.stdout)).toMatchObject({ ok: true, data: { failures: [] } });
+  });
+
+  it('closes identity work for tagged sessions without changing tags or checkout rows', async () => {
+    const home = await installedHome();
+    const cwd = await repositoryIn(home, 'repo', 'git@demo.example:brain-owner/notes.git');
+    const transcript = await transcriptForFolder(home, cwd);
+    expect((await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home,
+      stopPayload(transcript, sessionIdFor(1)))).code).toBe(0);
+    const before = tags(databaseIn(home));
+    const db = new DatabaseSync(databaseIn(home));
+    try {
+      db.prepare(`insert into work_items(id, kind, target_kind, target_id, created_at, attempts, next_attempt_at)
+        values (?, 'session_identity', 'session', ?, ?, 0, ?)`).run(
+          '01940000-0000-7000-8000-000000000810', `claude-code:${sessionIdFor(1)}`,
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+    } finally { db.close(); }
+    expect((await runBrain(['queue', 'drain', '--json'], home, '')).code).toBe(0);
+    expect(tags(databaseIn(home))).toEqual(before);
+    const read = new DatabaseSync(databaseIn(home), { readOnly: true });
+    try {
+      expect(read.prepare("select completed_at from work_items where kind = 'session_identity'").get()?.['completed_at']).not.toBeNull();
+    } finally { read.close(); }
+  });
 
   it('puts two worktrees of one clone under one project', async () => {
     const home = await installedHome();
@@ -1968,6 +2059,10 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
       [null, null],
       [null, null],
     ]);
+    const database = new DatabaseSync(databaseIn(home), { readOnly: true });
+    try {
+      expect(database.prepare('select count(*) as count from work_items').get()).toEqual({ count: 0 });
+    } finally { database.close(); }
   });
 
   it('leaves the tags alone when the same session is ingested after the repository moved', async () => {

@@ -1346,3 +1346,34 @@ describe('session tokens', () => {
     expect(missing.ok).toBe(false);
   });
 });
+
+describe('identity contracts reject incorrect stores', () => {
+  it('detects a fill that overwrites existing tags', async () => {
+    const failures = await failedCases(sessionStoreContract(), async () => {
+      const inner = memoryStore();
+      return {
+        ...inner,
+        async fillSessionTags(input) {
+          const result = await inner.fillSessionTags(input);
+          return result.ok ? { ...result, filled: true } : result;
+        },
+      };
+    });
+    expect(failures).toContain('fillSessionTags fills empty tags once and creates nothing for tagged sessions');
+  });
+
+  it('detects ensure opening identity work for an existing session', async () => {
+    const failures = await failedCases(sessionStoreContract(), async () => {
+      const inner = memoryStore();
+      return {
+        ...inner,
+        async ensureSession(input) {
+          const result = await inner.ensureSession(input);
+          if (result.ok && input.identityWork !== null) await inner.addWork(input.identityWork);
+          return result;
+        },
+      };
+    });
+    expect(failures).toContain('identity work opens only when ensureSession creates a session');
+  });
+});
