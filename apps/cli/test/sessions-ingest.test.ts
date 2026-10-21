@@ -73,6 +73,23 @@ const HANDBACK_REPORTS = [
   'The notes folder holds four files, and import.md is the newest.',
   'Every link in notes/ still resolves. Two of them point at the same page.',
 ] as const;
+/** The provenance fixture: which reports are this session's (story 22). */
+const PROVENANCE_FIXTURE = fileURLToPath(
+  new URL(
+    '../../../packages/claude-code/test/fixtures/report-provenance.jsonl',
+    import.meta.url,
+  ),
+);
+/** The five reports it carries, in the order a reader walks them. */
+const PROVENANCE_REPORTS = [
+  'The first report, handed back before anybody typed.',
+  'The prior report, handed back before its notification.',
+  'The second report, which the notice said was still coming.',
+  'Both checks passed and nothing else changed.',
+  'The old report, read out of the framing.\n\nIt kept its second paragraph.',
+] as const;
+/** The folder its first line puts on the hand-back, which is a subagent's. */
+const PROVENANCE_SUBAGENT_CWD = '/demo/elsewhere';
 
 interface Run {
   code: number | null;
@@ -354,6 +371,32 @@ async function handbackTranscriptIn(
           })
       : whole.trimEnd().split('\n');
   await writeFile(path, `${lines.join('\n')}\n`, 'utf8');
+  return path;
+}
+
+/**
+ * The provenance fixture in this test's own folder, optionally with the
+ * conversation's own folder pointed at a real one.
+ *
+ * Only `/demo/workspace` is replaced. The hand-back line's
+ * `PROVENANCE_SUBAGENT_CWD` is left exactly as it is — it stands for the other
+ * worktree a subagent ran in, and the whole point of the tag case is that it
+ * reaches nothing.
+ */
+async function provenanceTranscriptIn(
+  home: string,
+  cwd?: string,
+  name = 'provenance',
+): Promise<string> {
+  const path = join(home, `${name}.jsonl`);
+  const whole = await readFile(PROVENANCE_FIXTURE, 'utf8');
+  await writeFile(
+    path,
+    cwd === undefined
+      ? whole
+      : whole.replaceAll('"cwd":"/demo/workspace"', `"cwd":${JSON.stringify(cwd)}`),
+    'utf8',
+  );
   return path;
 }
 
@@ -1191,18 +1234,20 @@ describe('brain sessions ingest claude-code and a report handed back', () => {
           )
           .all(),
       ).toEqual([
+        // No branch on either: the one the hand-back line carries is the
+        // subagent's, and the cwd beside it has no column at all (story 22).
         {
           occurred_at: '2026-03-04T11:00:08.000Z',
           role: 'assistant',
           model: null,
-          git_branch: 'main',
+          git_branch: null,
           body: HANDBACK_REPORTS[0],
         },
         {
           occurred_at: '2026-03-04T11:00:16.000Z',
           role: 'assistant',
           model: null,
-          git_branch: 'feature/notes',
+          git_branch: null,
           body: HANDBACK_REPORTS[1],
         },
       ]);
@@ -1267,6 +1312,70 @@ describe('brain sessions ingest claude-code and a report handed back', () => {
       before[1],
     ]);
     expect(storedParserVersion(databaseIn(home))).toBe('3');
+  });
+});
+
+/**
+ * Which reports are this session's, through the real binary and a real SQLite
+ * file (story 22).
+ *
+ * The fixture is one line per row of the story's matrix, and what the database
+ * has to show is both halves of it: the five reports that are this session's,
+ * and nothing anywhere of the sentences, the rewordings, the framing, the
+ * hand-back nobody here asked for or the origins no person typed — every one
+ * of which the fixture marks with `FRAME`.
+ */
+describe('brain sessions ingest claude-code and where a report came from', () => {
+  it('stores the five reports and nothing the rules threw away', async () => {
+    const home = await installedHome();
+    const transcript = await provenanceTranscriptIn(home);
+
+    const run = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      stopPayload(transcript),
+    );
+
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.warnings).toEqual([]);
+    // Eight messages — five reports, two the person typed, one answer — and
+    // the one `Agent` call.
+    expect(envelope.data?.inserted).toEqual({ messages: 8, toolNotes: 1 });
+
+    const database = new DatabaseSync(databaseIn(home), { readOnly: true });
+    try {
+      expect(
+        database
+          .prepare(
+            `select body, git_branch from messages
+              where is_subagent_report = 1 order by occurred_at`,
+          )
+          .all(),
+      ).toEqual([
+        // The hand-backs carry no branch: the one on their line is the
+        // subagent's, and its cwd has no column at all. The notification's
+        // report is written on a line of this conversation and keeps it.
+        { body: PROVENANCE_REPORTS[0], git_branch: null },
+        { body: PROVENANCE_REPORTS[1], git_branch: null },
+        { body: PROVENANCE_REPORTS[2], git_branch: null },
+        { body: PROVENANCE_REPORTS[3], git_branch: 'main' },
+        { body: PROVENANCE_REPORTS[4], git_branch: null },
+      ]);
+    } finally {
+      database.close();
+    }
+
+    // Nowhere in the database, rather than nowhere in a column somebody
+    // thought of.
+    const dump = JSON.stringify(rowDump(databaseIn(home)));
+    expect(await readFile(transcript, 'utf8')).toContain(FRAME);
+    expect(dump).not.toContain(FRAME);
+    expect(dump).not.toContain('has not reported yet');
+    expect(dump).not.toContain('<agent-message');
+    expect(dump).not.toContain('<task-notification');
   });
 });
 
@@ -1543,6 +1652,41 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
       'demo.example/brain-owner/notes',
     ]);
     expect(new Set(stored.sessions.map((session) => session.path)).size).toBe(2);
+  });
+
+  it('tags a session whose first message is a hand-back from the next message', async () => {
+    // The shape this story is here for: the conversation opens with a report
+    // handed back by a subagent that ran in another worktree, and that line
+    // carries the subagent's folder. Taken as the session's, it would tag the
+    // whole conversation with somebody else's checkout — for ever, because the
+    // tags are worked out once (AD-12, follow-up review #3). The parser
+    // reports no folder for that line, so the evidence is the next message's.
+    const home = await installedHome();
+    const main = await repositoryIn(home, 'repo', 'git@demo.example:brain-owner/notes.git');
+    const transcript = await provenanceTranscriptIn(home, main);
+    // The subagent's folder is still in the file, and it is not a repository
+    // of this home: if anything asked git about it the answer would be null
+    // and the session would come out untagged.
+    expect(await readFile(transcript, 'utf8')).toContain(PROVENANCE_SUBAGENT_CWD);
+
+    const ran = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      stopPayload(transcript, sessionIdFor(1)),
+    );
+
+    expect(ran.stderr, ran.stderr).toBe('');
+    expect(ran.code).toBe(0);
+    const stored = tags(databaseIn(home));
+    expect(stored.projects).toEqual([{ remote_identity: 'demo.example/brain-owner/notes' }]);
+    expect(stored.worktrees).toEqual([{ path: main, removed_at: null }]);
+    expect(stored.sessions).toEqual([
+      {
+        harness_session_id: sessionIdFor(1),
+        identity: 'demo.example/brain-owner/notes',
+        path: main,
+      },
+    ]);
   });
 
   it('makes one session, one project and one worktree when two first ingests overlap', async () => {

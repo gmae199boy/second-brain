@@ -20,9 +20,12 @@ export interface ParsedMessage {
   /** The branch the line carried, as it carried it, or `null` (migration 0004). */
   gitBranch: string | null;
   /**
-   * The working directory the line carried, or `null`. It is *not* stored on
-   * the message: story 2.8 reads the first message's one to tag the session,
-   * which is why the parser reports it and the `Message` has no such field.
+   * The working directory the line carried, or `null` — which a parser also
+   * answers for a line whose folder is not this conversation's, the way a
+   * hand-back report's is the subagent's. It is *not* stored on the message:
+   * story 2.8 tags the session with the cwd of the first message that carries
+   * one, which is why the parser reports it and the `Message` has no such
+   * field.
    */
   cwd: string | null;
   /** The final report of a subagent, read from the main transcript (AD-4). */

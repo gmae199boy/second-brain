@@ -221,7 +221,7 @@ sequenceDiagram
 - **Rule:**
   - 세션 행은 `sessions.ensure(harness, harness_session_id)` 하나만 만든다(find-or-create, 같은 잠금 안에서). 세션 키를 모르는 쓰기는 행을 만들지 않고 spool로 간다.
   - 꼬리표(프로젝트·워크트리. 워크스페이스는 예약이고 slice 1에서 쓰지 않는다)는 `sessions`에만 둔다. 로그와 조각은 `session_id`로 따라간다. [ADOPTED]
-  - 꼬리표의 근거는 그 세션 첫 메시지의 transcript cwd 하나다. 세션을 만드는 첫 수집이 그것으로 **한 번** 계산하고(시작 hook은 세션 행을 만들지 않는다, AD-6), 이후 바뀌지 않는다. 프로세스의 cwd는 근거가 아니다. transcript를 찾지 못한 쓰기는 세션 행을 만들지 않고 spool로 간다(2026-10-15 epic 2 인셉션, 리뷰 H-2 해소). git 조회가 "레포가 아님"이 아닌 이유(git 없음, 시간 초과, 권한, 비정상 출력)로 답을 못 하면 꼬리표 없이 수집하고 그 세션의 `session_identity` 일감(AD-21)을 남긴다. 그 일감이 성공하면 비어 있던 꼬리표를 한 번 채운다(null → 값만). 끝내 실패하면 `failures`로 가고 doctor가 보인다(2026-10-19).
+  - 꼬리표의 근거는 그 세션에서 cwd를 가진 **첫 메시지**의 transcript cwd 하나다(handback 메시지는 cwd가 없다 — 그 줄의 폴더는 서브에이전트의 것이라 parser가 비워서 낸다, 22). 세션을 만드는 첫 수집이 그것으로 **한 번** 계산하고(시작 hook은 세션 행을 만들지 않는다, AD-6), 이후 바뀌지 않는다. 프로세스의 cwd는 근거가 아니다. transcript를 찾지 못한 쓰기는 세션 행을 만들지 않고 spool로 간다(2026-10-15 epic 2 인셉션, 리뷰 H-2 해소). git 조회가 "레포가 아님"이 아닌 이유(git 없음, 시간 초과, 권한, 비정상 출력)로 답을 못 하면 꼬리표 없이 수집하고 그 세션의 `session_identity` 일감(AD-21)을 남긴다. 그 일감이 성공하면 비어 있던 꼬리표를 한 번 채운다(null → 값만). 끝내 실패하면 `failures`로 가고 doctor가 보인다(2026-10-19).
   - 프로젝트 정체성은 Core의 정규화 함수 하나가 정한다: git remote URL을 `host/owner/repo`(소문자 host, scheme·사용자·포트·`.git` 제거, ssh와 https 동일)로 만든다. remote가 없을 때만 로컬 git 공통 디렉터리를 쓴다. 워크트리는 (프로젝트, 작업 폴더 경로)이고 폴더가 지워져도 행은 남는다. 프로젝트는 비교 키 `identity_key`로 찾는다. 대소문자를 구분하지 않는 호스트(Core 상수 목록, 처음은 `github.com`·`bitbucket.org`)는 정체성을 소문자로 접은 값이고, 그 밖은 정체성 그대로다. `remote_identity`는 처음 본 모양 그대로의 표시용이다. 대소문자만 다른 이름은 같은 프로젝트다. 비교 키를 들이는 마이그레이션(0005) 전에 이미 갈라진 프로젝트가 있으면 setup이 그 묶음을 보이고 합칠지 묻는다(확인 게이트). 동의하면 먼저 만든 프로젝트로 합치고, 거절하면 아무것도 바꾸지 않는다. 이 합치기가 `projects` 불변의 유일한 예외다(2026-10-19 사용자).
   - 세션은 사용자(`users` 행)와 기계 이름을 가진다. slice 1의 사용자는 "나"(`is_self = 1`) 한 행이고, `setup run`이 마이그레이션 직후 찾거나 만든다(`id`는 UUIDv7, `name`은 OS 사용자 이름이고 표시용이다). 수집은 그 id를 `sessions.user_id`(FK)에 넣고, "나" 행이 없으면 쓰지 않고 `USER_MISSING`(exit 2)으로 답한다. 정체성은 DB와 함께 옮겨진다. 두 DB를 합치는 가져오기를 만들면 들어오는 "나"를 받는 쪽 "나"로 바꾼다(만들지는 epic 5 인셉션에서 정한다). 2026-10-16 사용자 결정.
   - 브랜치는 꼬리표가 아니라 메시지의 추적 정보다(`messages.git_branch`, transcript 줄의 값 그대로, 불변. 2026-10-16).
@@ -585,7 +585,7 @@ flowchart TB
 | volta·fnm·asdf·mise의 node 경로 폴백 | 버전 관리자 shim은 실제 바이너리가 아니라 고정할 수 없다(AD-19). 사용자가 생기면 `realpath` 규칙으로 더한다 |
 | `node:sqlite`의 호환성 깨짐(RC) | Node 업그레이드에서 API가 깨지면. 대안은 better-sqlite3, node-sqlite3-wasm. 드라이버는 adapter 안의 얇은 층 하나다(AD-7) |
 | sqlite-vec 유지보수 정지 | epic 6 착수 때 다시 본다. 대안은 FTS만 유지하거나 다른 벡터 확장 |
-| 꼬리표의 권위 출처, `failures.fingerprint` 정의 | 해소(2026-10-15, epic 2 인셉션): 꼬리표는 첫 메시지의 transcript cwd(AD-12). fingerprint는 Core 함수 하나가 (stage, 안정된 입력 식별자, 오류 분류 코드)로 만든다(`epic-capture` Notes) |
+| 꼬리표의 권위 출처, `failures.fingerprint` 정의 | 해소(2026-10-15, epic 2 인셉션): 꼬리표는 cwd를 가진 첫 메시지의 transcript cwd(AD-12. handback 메시지는 cwd가 없다, 22). fingerprint는 Core 함수 하나가 (stage, 안정된 입력 식별자, 오류 분류 코드)로 만든다(`epic-capture` Notes) |
 | 기계 교체·원본 이전 | 지금은 `backup.export`→`import`(빈 DB에만). 기존 DB에 합치는 가져오기(들어오는 "나"를 받는 쪽 "나"로, 2026-10-16)는 epic 5에서 정한다. 복제 대상의 승격은 epic 7에서 정한다 |
 | Drive 연동 (epic 8) | OAuth, Drive `FileStore` 구현, 첨부 원본 이전, 기존 Drive 문서 색인(목록 → export·임시 다운로드 → 추출 → 삭제, Mac에 동기화하지 않음), changes 동기화, 연동 해제(Drive에 둔 채 연결만 끊음), DB 스냅샷의 Drive 보관과 새 기계 복구, 로컬 캐시 상한. 외부 소스 테이블은 그때 더한다 |
 | `/brain:migration`, `/brain:db-migration` 스킬 | CLI 명령(`setup move-store`, 스냅샷 업로드·복구)이 생긴 뒤 감싼다 |

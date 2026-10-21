@@ -11,7 +11,7 @@ import {
 import { TOOL_TARGET_LIMIT, toolTarget } from '../src/tool-target.js';
 
 /**
- * The Claude Code parser against three transcripts with the real structure in
+ * The Claude Code parser against four transcripts with the real structure in
  * them.
  *
  * `two-turns.jsonl` is the smallest one: editor state with no uuid at all, hook
@@ -24,10 +24,18 @@ import { TOOL_TARGET_LIMIT, toolTarget } from '../src/tool-target.js';
  * that changes halfway, a compact, a raw U+2028, a stamp that goes backwards,
  * and a call nothing has answered yet.
  *
- * `peer-handback.jsonl` is this story's: the report a run handed back with
+ * `peer-handback.jsonl` is story 19's: the report a run handed back with
  * `SubagentHandback`, which arrives on a peer line the editor marked `isMeta`,
  * in every shape one of those lines comes in — with the sentence the editor
  * leaves where that run's result used to be.
+ *
+ * `report-provenance.jsonl` is this story's: what says a report is this
+ * session's and what says it is not, one line per row of the matrix — the two
+ * sentences, a result that carries a `handback` field, a hand-back before and
+ * after the notification that repeats it, a notification that did not finish
+ * and one with two results, a hand-back from a run nobody here started, the
+ * old framing a report has to be read out of and three shapes of it one line
+ * out of place, three origins no person typed, and two tool outputs.
  *
  * The sentences are neutral because this repository is public (Conventions);
  * the shape around them is the editor's own.
@@ -36,12 +44,15 @@ import { TOOL_TARGET_LIMIT, toolTarget } from '../src/tool-target.js';
 const TWO_TURNS = fileURLToPath(new URL('./fixtures/two-turns.jsonl', import.meta.url));
 const FULL_SESSION = fileURLToPath(new URL('./fixtures/full-session.jsonl', import.meta.url));
 const PEER_HANDBACK = fileURLToPath(new URL('./fixtures/peer-handback.jsonl', import.meta.url));
+const PROVENANCE = fileURLToPath(
+  new URL('./fixtures/report-provenance.jsonl', import.meta.url),
+);
 
 /** How many lines of `full-session.jsonl` end with its fifth message. */
 const HALF_LINES = 25;
 
 /** How many lines of `peer-handback.jsonl` end with its second report. */
-const HANDBACK_LINES = 16;
+const HANDBACK_LINES = 18;
 
 /**
  * The two separators that are characters inside a JSON string and not line
@@ -70,11 +81,13 @@ const NOTICE =
 let transcript: string;
 let session: string;
 let handbacks: string;
+let provenance: string;
 
 beforeAll(async () => {
   transcript = await readFile(TWO_TURNS, 'utf8');
   session = await readFile(FULL_SESSION, 'utf8');
   handbacks = await readFile(PEER_HANDBACK, 'utf8');
+  provenance = await readFile(PROVENANCE, 'utf8');
 });
 
 /** The uuid the fixture gives its nth conversation line. */
@@ -352,21 +365,23 @@ const HANDBACK_MESSAGES = [
   },
   {
     // The first hand-back: the report text, trimmed, and nothing of the
-    // framing the editor wrapped it in.
+    // framing the editor wrapped it in. The branch is null because the one on
+    // that line is the subagent's, not this conversation's (#3).
     harnessMessageId: handbackId(8),
     role: 'assistant',
     model: null,
     body: 'The notes folder holds four files, and import.md is the newest.',
-    gitBranch: 'main',
+    gitBranch: null,
     isSubagentReport: true,
   },
   {
-    // The second, after the branch changed: the branch is the line's own.
+    // The second, on a line whose branch had changed — and dropped for the
+    // same reason, so the change cannot reach a row either.
     harnessMessageId: handbackId(16),
     role: 'assistant',
     model: null,
     body: 'Every link in notes/ still resolves. Two of them point at the same page.',
-    gitBranch: 'feature/notes',
+    gitBranch: null,
     isSubagentReport: true,
   },
   {
@@ -413,6 +428,113 @@ function rewrittenHandbacks(): string {
   );
 }
 
+/** The uuid `report-provenance.jsonl` gives its nth line. */
+function provenanceId(serial: number): string {
+  return `33333333-4444-4555-8666-${String(serial).padStart(12, '0')}`;
+}
+
+/**
+ * The eight messages `report-provenance.jsonl` holds, in the file's order.
+ *
+ * Five of them are reports, and which five is the whole point of the fixture:
+ * a hand-back read before anybody typed, two hand-backs read instead of the
+ * notifications that repeat them, the one notification that really did carry a
+ * run's answer, and a hand-back read out of the old framing.
+ */
+const PROVENANCE_MESSAGES = [
+  {
+    // The subagent's folder and branch are on the line and on no row: a
+    // hand-back reports the text and nothing about where it ran (#3).
+    harnessMessageId: provenanceId(3),
+    role: 'assistant',
+    model: null,
+    body: 'The first report, handed back before anybody typed.',
+    gitBranch: null,
+    cwd: null,
+    isSubagentReport: true,
+  },
+  {
+    harnessMessageId: provenanceId(4),
+    role: 'user',
+    model: null,
+    body: 'Line up what every run reported.',
+    gitBranch: 'main',
+    cwd: '/demo/workspace',
+    isSubagentReport: false,
+  },
+  {
+    harnessMessageId: provenanceId(5),
+    role: 'user',
+    model: null,
+    body: 'And say which of them is still running.',
+    gitBranch: 'main',
+    cwd: '/demo/workspace',
+    isSubagentReport: false,
+  },
+  {
+    harnessMessageId: provenanceId(9),
+    role: 'assistant',
+    model: null,
+    body: 'The prior report, handed back before its notification.',
+    gitBranch: null,
+    cwd: null,
+    isSubagentReport: true,
+  },
+  {
+    harnessMessageId: provenanceId(13),
+    role: 'assistant',
+    model: null,
+    body: 'The second report, which the notice said was still coming.',
+    gitBranch: null,
+    cwd: null,
+    isSubagentReport: true,
+  },
+  {
+    // A notification carries no framing of its own, so this report keeps the
+    // tracking of the line the editor wrote it on.
+    harnessMessageId: provenanceId(15),
+    role: 'assistant',
+    model: null,
+    body: 'Both checks passed and nothing else changed.',
+    gitBranch: 'main',
+    cwd: '/demo/workspace',
+    isSubagentReport: true,
+  },
+  {
+    // Out of the old framing, with the two-space indent taken off and the
+    // blank line between its paragraphs kept.
+    harnessMessageId: provenanceId(24),
+    role: 'assistant',
+    model: null,
+    body: 'The old report, read out of the framing.\n\nIt kept its second paragraph.',
+    gitBranch: null,
+    cwd: null,
+    isSubagentReport: true,
+  },
+  {
+    harnessMessageId: provenanceId(36),
+    role: 'assistant',
+    model: 'demo-model',
+    body: 'That is every report accounted for.',
+    gitBranch: 'main',
+    cwd: '/demo/workspace',
+    isSubagentReport: false,
+  },
+] as const;
+
+/** The first `lines` lines of it, as a complete file. */
+function provenanceUpTo(lines: number): string {
+  return `${provenance.split('\n').slice(0, lines).join('\n')}\n`;
+}
+
+/** The same file with a line in front of every cursor changed. */
+function rewrittenProvenance(): string {
+  return provenance.replace(
+    'Line up what every run reported.',
+    'Line up what each of them reported.',
+  );
+}
+
 describe('the parser contract against the Claude Code parser', () => {
   for (const testCase of parserContract()) {
     it(testCase.name, async () => {
@@ -422,6 +544,7 @@ describe('the parser contract against the Claude Code parser', () => {
           transcript,
           session,
           handbacks,
+          provenance,
           // A transcript with no conversation in it yet: the state of a
           // session's first seconds (research §1).
           '{"type":"mode","mode":"normal","sessionId":"s"}\n',
@@ -438,6 +561,15 @@ describe('the parser contract against the Claude Code parser', () => {
           // And a cursor that names a hand-back report: the incremental read
           // has to begin at it, so the rules have to keep it a message.
           { before: handbackHalf(), after: handbacks },
+          // A cursor standing on each report of the provenance fixture in
+          // turn. Every rule in it asks what the content *before* a line said,
+          // so a cursor between the evidence and the line it settles is
+          // exactly where a read that looked at its own stretch alone would
+          // answer differently from a read of the whole file.
+          ...[3, 9, 13, 15, 24].map((line) => ({
+            before: provenanceUpTo(line),
+            after: provenance,
+          })),
         ],
         rewritten: [
           { before: half(), after: rewrittenSession() },
@@ -447,6 +579,7 @@ describe('the parser contract against the Claude Code parser', () => {
             after: `${session.split('\n').slice(HALF_LINES).join('\n')}`,
           },
           { before: handbackHalf(), after: rewrittenHandbacks() },
+          { before: provenanceUpTo(15), after: rewrittenProvenance() },
         ],
       });
       await testCase.run(make);
@@ -1059,9 +1192,13 @@ describe('the Claude Code parser on a report a run handed back', () => {
       handbackId(8),
       handbackId(16),
     ]);
-    // The branch, the cwd and the instant are the hand-back line's own, the
-    // way they are for any other message (Boundaries).
-    for (const message of result.messages) expect(message.cwd).toBe('/demo/workspace');
+    // The instant is the hand-back line's own, the way it is for any other
+    // message — but the branch and the cwd are not: those belong to the
+    // subagent's run, and a session tagged from them would be tagged with
+    // somebody else's worktree (#3).
+    for (const message of result.messages) {
+      expect(message.cwd).toBe(message.isSubagentReport ? null : '/demo/workspace');
+    }
     expect(reports[1]?.occurredAt).toEqual(new Date('2026-03-04T11:00:16.000Z'));
     expect(result.startSource).toBe('startup');
   });
@@ -1088,10 +1225,12 @@ describe('the Claude Code parser on a report a run handed back', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const ids = result.messages.map((message) => message.harnessMessageId);
-    // No `handbackReportText` at all (every harness up to 2.1.296), one that is
-    // only whitespace, and one that is not a string: the ticket names that key
-    // as where a report comes from, and a line that does not carry one is
-    // dropped rather than guessed at (Decision 2026-10-19).
+    // No `handbackReportText` at all (every harness up to 2.1.296), one that
+    // is only whitespace, and one that is not a string. The second source is
+    // the editor's framing in `origin.body`, and these three carry framing
+    // this parser does not recognise, so nothing is read: a body guessed out
+    // of an unknown shape is a row nobody can correct (AD-11). A hand-back in
+    // the framing it *does* recognise is `report-provenance.jsonl`.
     for (const serial of [9, 10, 11]) {
       expect(ids).not.toContain(handbackId(serial));
     }
@@ -1198,6 +1337,238 @@ describe('the Claude Code parser on a report a run handed back', () => {
     expect(incremental.messages).toEqual(whole.messages.slice(2));
     expect(incremental.toolNotes).toEqual([]);
     expect(incremental.cursor).toEqual(whole.cursor);
+  });
+});
+
+/**
+ * What makes a report this session's, row by row of the story's matrix.
+ *
+ * The rule under all of these is that a line is judged by itself and by the
+ * content *in front of it* and never by what follows, so that the incremental
+ * read and the full read answer the same thing — which the parser contract
+ * checks with a cursor standing on each report of this fixture.
+ */
+describe('the Claude Code parser on where a report came from', () => {
+  it('keeps the eight messages, and marks the five that are reports', () => {
+    const result = claudeCodeParser().parse(provenance);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.messages.map((message) => ({
+        harnessMessageId: message.harnessMessageId,
+        role: message.role,
+        model: message.model,
+        body: message.body,
+        gitBranch: message.gitBranch,
+        cwd: message.cwd,
+        isSubagentReport: message.isSubagentReport,
+      })),
+    ).toEqual([...PROVENANCE_MESSAGES]);
+    expect(result.startSource).toBe('startup');
+  });
+
+  it('never lets the editor’s own framing into a body or a target', () => {
+    const result = claudeCodeParser().parse(provenance);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The fixture puts the same marker in everything a rule is supposed to
+    // throw away: every notice, every result of a run that did not report,
+    // every framing, and the report text of the hand-back nobody here asked
+    // for. None of it is anybody's words, so none of it is stored.
+    const stored = [
+      ...result.messages.map((message) => message.body),
+      ...result.toolNotes.map((note) => note.target),
+    ].join('\n');
+    expect(provenance).toContain(FRAME);
+    expect(stored).not.toContain(FRAME);
+    expect(stored).not.toContain('<agent-message');
+    expect(stored).not.toContain('<task-notification');
+  });
+
+  it('reads no report from a result that carries a handback field', () => {
+    const result = claudeCodeParser().parse(provenance);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The field says the run answered somewhere else, whatever the sentence
+    // the editor left in the result now reads: the fixture's is reworded on
+    // purpose, so a rule that only matched the sentence would store it (#1).
+    const bodies = result.messages.map((message) => message.body).join('\n');
+    expect(bodies).not.toContain('a reworded sentence the editor left in place');
+    expect(bodies).not.toContain('the report only the handback field carries');
+    // And the `Agent` call's note is untouched: the result is still a result.
+    expect(result.toolNotes).toEqual([
+      {
+        harnessMessageId: provenanceId(5),
+        ordinal: 0,
+        tool: 'Agent',
+        target: 'Run the sync check',
+        ok: true,
+      },
+    ]);
+  });
+
+  it('reads no report from a notification whose hand-back is already behind it', () => {
+    const result = claudeCodeParser().parse(provenance);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // One run, one report: the hand-back, read where it landed. The
+    // notification that repeats it — reworded, so again the sentence is not
+    // what settles it — is not a second one (#1).
+    const bodies = result.messages.map((message) => message.body);
+    expect(bodies).toContain('The prior report, handed back before its notification.');
+    expect(bodies.join('\n')).not.toContain('a reworded sentence pointing at the message above');
+  });
+
+  it('reads no report from the sentence that says a run has not reported yet', () => {
+    const result = claudeCodeParser().parse(provenance);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Here the hand-back comes *after* the notice, so nothing in front of the
+    // notification says the run answered: the sentence is the only thing that
+    // drops it, which is why both sentences are matched whole (#1).
+    const bodies = result.messages.map((message) => message.body);
+    expect(bodies.join('\n')).not.toContain('has not reported yet');
+    expect(bodies).toContain('The second report, which the notice said was still coming.');
+  });
+
+  it('reads no report from a run that did not finish, whatever it quoted', () => {
+    const result = claudeCodeParser().parse(provenance);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // A `failed` notification, and a `stopped` one whose own answer quotes
+    // `<status>completed</status>`: the status is the first one in the body,
+    // so a report cannot promote the run that produced it (#4).
+    const bodies = result.messages.map((message) => message.body).join('\n');
+    expect(bodies).not.toContain('the run ended in an error');
+    expect(bodies).not.toContain('in its own answer');
+  });
+
+  it('reads the status from in front of the result, whichever order they came in', () => {
+    // The editor is not promised to write `<status>` before `<result>`. When
+    // it does not, searching the whole body for the first `<status>` reads the
+    // one the report quoted inside its own answer — and a failed run's answer
+    // would go in as a report nobody can take back (#4, AD-11).
+    const notified = (body: string): string =>
+      `${[
+        said(400, 'Start the check, please.'),
+        startedAgent('agent-f1', 401),
+        JSON.stringify({
+          parentUuid: null,
+          isSidechain: false,
+          cwd: '/demo/workspace',
+          gitBranch: 'main',
+          uuid: id(402),
+          timestamp: '2026-02-03T11:00:20.000Z',
+          type: 'user',
+          origin: { kind: 'task-notification', taskId: 'agent-f1' },
+          message: {
+            role: 'user',
+            content: `<task-notification><task-id>agent-f1</task-id>${body}</task-notification>`,
+          },
+        }),
+      ].join('\n')}\n`;
+    const quoted = '<result>It printed <status>completed</status> as it worked.</result>';
+
+    const reports = (content: string): string[] => {
+      const result = claudeCodeParser().parse(content);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return ['the transcript did not parse'];
+      return result.messages.filter((message) => message.isSubagentReport).map((m) => m.body);
+    };
+
+    // The result first and the real status behind it: not a report, and not
+    // because of the status that follows — a body with no status in front of
+    // its result is a shape this parser has not seen, so neither order of the
+    // two is read.
+    expect(reports(notified(`${quoted}<status>failed</status>`))).toEqual([]);
+    expect(reports(notified(`${quoted}<status>completed</status>`))).toEqual([]);
+    // Written the way the harness does write it, the same report is read.
+    expect(reports(notified(`<status>completed</status>${quoted}`))).toEqual([
+      'It printed <status>completed</status> as it worked.',
+    ]);
+  });
+
+  it('reads no report from a notification that carries two results', () => {
+    const result = claudeCodeParser().parse(provenance);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Reading from the first opening tag to the last closing one would join
+    // two runs' answers into one row nobody can take apart, and a row cannot
+    // be corrected (#4, AD-11).
+    const bodies = result.messages.map((message) => message.body).join('\n');
+    expect(bodies).not.toContain("the first run's answer");
+    expect(bodies).not.toContain("the second run's answer");
+  });
+
+  it('reads no hand-back from a run this session never started', () => {
+    const result = claudeCodeParser().parse(provenance);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // A peer line carries other agents' traffic too. A report somebody else's
+    // run made to somebody else would be an answer in a conversation that
+    // never asked (#2).
+    expect(
+      result.messages.map((message) => message.body).join('\n'),
+    ).not.toContain('a report this session never asked for');
+  });
+
+  it('reads a hand-back out of the old framing, and only when it fits exactly', () => {
+    const result = claudeCodeParser().parse(provenance);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Every harness up to 2.1.296 wrote no report text, and the report
+    // survives only indented under the editor's heading. Measured on this
+    // machine, the two agree on all 152 hand-backs that carry both.
+    const bodies = result.messages.map((message) => message.body);
+    expect(bodies).toContain(
+      'The old report, read out of the framing.\n\nIt kept its second paragraph.',
+    );
+    // And the three shapes one line out of place are read as nothing at all:
+    // a heading of some later release, a note above the frame, and a line at
+    // column zero inside the report.
+    const ids = result.messages.map((message) => message.harnessMessageId);
+    for (const serial of [26, 28, 30]) expect(ids).not.toContain(provenanceId(serial));
+  });
+
+  it('keeps a user line only when its origin says a person typed it', () => {
+    const result = claudeCodeParser().parse(provenance);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // No origin and `human` are kept; a kind nobody has looked at, an origin
+    // that is not a record, and one with no kind are not. An allow list, so a
+    // kind the editor invents next is not stored as something said (#5).
+    const bodies = result.messages.map((message) => message.body);
+    expect(bodies).toContain('Line up what every run reported.');
+    expect(bodies).toContain('And say which of them is still running.');
+    for (const absent of [
+      'the editor announced something',
+      'an origin that is a string',
+      'an origin with no kind in it',
+    ]) {
+      expect(bodies.join('\n')).not.toContain(absent);
+    }
+  });
+
+  it('drops the two tool outputs this story added to the markers', () => {
+    const result = claudeCodeParser().parse(provenance);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // A `!` command's stderr and a hook the editor ran on the way in: both
+    // arrive as a user turn and neither is something anybody said (#6).
+    const bodies = result.messages.map((message) => message.body).join('\n');
+    expect(bodies).not.toContain('<local-command-stderr>');
+    expect(bodies).not.toContain('<user-prompt-submit-hook>');
   });
 });
 

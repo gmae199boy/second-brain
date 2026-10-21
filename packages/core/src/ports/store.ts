@@ -78,7 +78,7 @@ export interface HealthStore {
 
 /**
  * The checkout a new session is tagged with, worked out once by the caller from
- * the first message's `cwd` (AD-12).
+ * the `cwd` of the first message that carries one (AD-12).
  *
  * The two ids are *proposals*, in the sense `EnsureSessionInput.id` is: ids
  * belong to the side that creates the row (AD-8), so the caller mints one for
@@ -118,9 +118,10 @@ export interface EnsureSessionInput {
   workspaceId: string | null;
   /**
    * The project and worktree to tag a *new* session with, or `null` for a
-   * session whose cwd said nothing. Computed once by the caller from the first
-   * message's cwd, and never again: a session that is already there keeps the
-   * tags it was created with, whatever this call carries (AD-12).
+   * session whose cwd said nothing. Computed once by the caller from the cwd
+   * of the first message that carries one — a hand-back report carries none —
+   * and never again: a session that is already there keeps the tags it was
+   * created with, whatever this call carries (AD-12).
    */
   checkout: EnsureCheckoutInput | null;
 }

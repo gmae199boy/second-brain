@@ -236,10 +236,10 @@ describe('sessions.ingest on a transcript nothing has read yet', () => {
 });
 
 describe('sessions.ingest and the folder it tags a session from', () => {
-  it('asks git about the first message, and about nothing else', async () => {
-    // The first message's cwd is the whole of the evidence (AD-12). The sample
-    // transcript carries it on every line, so the point of the case is the
-    // count: one question, about the first folder.
+  it('asks git about the first message that carries a folder, and about nothing else', async () => {
+    // The cwd of the first message that carries one is the whole of the
+    // evidence (AD-12). The sample transcript carries it on every line, so the
+    // point of the case is the count: one question, about the first folder.
     const { deps, repositories } = await kit({
       content: memoryTranscript.replace('"cwd":"/demo/repo"', '"cwd":"/demo/elsewhere"'),
       checkouts: { '/demo/elsewhere': { ...CHECKOUT, worktreePath: '/demo/elsewhere' } },
@@ -268,7 +268,47 @@ describe('sessions.ingest and the folder it tags a session from', () => {
     expect(after.sessions[0]?.worktreeId).toBe(tagged?.worktreeId);
   });
 
-  it('tags nothing and asks nothing when the first message carried no folder', async () => {
+  it('skips past a first message with no folder to the one that has it', async () => {
+    // What a session that opens with a subagent's hand-back looks like: the
+    // parser reports no cwd for that line, because the folder on it is the
+    // subagent's and not this conversation's. Taking the first message's cwd
+    // literally would leave the session untagged for ever (AD-12).
+    const { deps, store, repositories } = await kit({
+      content: JSON.stringify({
+        messages: [
+          {
+            harnessMessageId: 'msg-1',
+            role: 'assistant',
+            occurredAt: '2026-01-02T03:04:05.000Z',
+            body: 'The report a delegated run handed back.',
+            isSubagentReport: true,
+          },
+          {
+            harnessMessageId: 'msg-2',
+            role: 'user',
+            occurredAt: '2026-01-02T03:04:06.000Z',
+            body: 'Thanks — now summarise it.',
+            gitBranch: 'main',
+            cwd: CWD,
+          },
+        ],
+      }),
+    });
+
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+
+    // One question, about the folder of the second message.
+    expect(repositories.inspects()).toEqual([CWD]);
+    const snapshot = store.snapshot();
+    expect(snapshot.projects).toHaveLength(1);
+    expect(snapshot.worktrees[0]?.path).toBe(CWD);
+    expect(snapshot.sessions[0]?.projectId).toBe(snapshot.projects[0]?.id);
+    // And the session still began when its first message was uttered, folder
+    // or no folder.
+    expect(snapshot.sessions[0]?.startedAt).toEqual(new Date('2026-01-02T03:04:05.000Z'));
+  });
+
+  it('tags nothing and asks nothing when no message carried a folder', async () => {
     const { deps, store, repositories } = await kit({
       content: JSON.stringify({
         messages: [

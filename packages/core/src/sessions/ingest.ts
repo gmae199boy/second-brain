@@ -364,13 +364,11 @@ export async function ingestSession(
   let created = false;
   if (messages.length > 0) {
     // The tags, and the one place they are ever worked out: only for a session
-    // `findSession` did not find, and only from the first message's `cwd`
-    // (AD-12). The process's own cwd is never the evidence — a hook runs
-    // wherever the harness happened to leave it.
+    // `findSession` did not find, and only from the cwd of the first message
+    // that carries one (AD-12). The process's own cwd is never the evidence —
+    // a hook runs wherever the harness happened to leave it.
     const checkout =
-      stored === null
-        ? await checkoutFor(repositories, idGen, messages[0]?.cwd ?? null)
-        : null;
+      stored === null ? await checkoutFor(repositories, idGen, firstCwd(messages)) : null;
     const ensured = await store.ensureSession({
       id: idGen.next(),
       key,
@@ -525,8 +523,9 @@ function cursorFor(
  * The project and worktree a cwd belongs to, with an id minted for each in case
  * this call is the one that creates the row (AD-8, AD-12).
  *
- * A line that carried no `cwd` is not asked about at all: there is nothing to
- * inspect, and a guess would be a tag that can never be corrected. A folder git
+ * A batch whose messages carried no `cwd` at all is not asked about: there is
+ * nothing to inspect, and a guess would be a tag that can never be corrected
+ * (`firstCwd`). A folder git
  * cannot answer for comes back as `null`, and the session is ingested with no
  * tags rather than refused — capture comes before the tags, and a machine with
  * no git must not be a machine that stores no sessions (Decision 2026-10-18).
@@ -556,6 +555,25 @@ async function checkoutFor(
     worktreeId: idGen.next(),
     worktreePath: checkout.worktreePath,
   };
+}
+
+/**
+ * The folder this session is tagged from: the cwd of the first message that
+ * carries one, or `null` when no message in the batch does.
+ *
+ * Not the first message's, because a message can arrive with no folder on it
+ * at all. A subagent's hand-back report is the one that does: the harness
+ * writes that line with the *subagent's* cwd, which is often another worktree
+ * of the same repository, so the parser reports none rather than the wrong one
+ * (`claude-code`, follow-up review #3). A session whose first message is such a
+ * report would otherwise be tagged with nothing — and a session's tags are
+ * worked out once and never again (AD-12), so "nothing" would be permanent.
+ */
+function firstCwd(messages: readonly IngestMessage[]): string | null {
+  for (const message of messages) {
+    if (message.cwd !== null && message.cwd !== '') return message.cwd;
+  }
+  return null;
 }
 
 function firstOccurredAt(messages: readonly IngestMessage[]): Date {
