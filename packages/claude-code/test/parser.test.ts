@@ -258,6 +258,75 @@ function half(): string {
   return `${session.split('\n').slice(0, HALF_LINES).join('\n')}\n`;
 }
 
+/** The three lines the agent-id cases are built out of, in the file's shape. */
+function said(serial: number, body: string): string {
+  return JSON.stringify({
+    parentUuid: null,
+    isSidechain: false,
+    cwd: '/demo/workspace',
+    gitBranch: 'main',
+    uuid: id(serial),
+    timestamp: `2026-02-03T11:00:${String(serial % 60).padStart(2, '0')}.000Z`,
+    type: 'user',
+    message: { role: 'user', content: body },
+  });
+}
+
+/**
+ * The editor handing back the result of an `Agent` call that is still running:
+ * not a message — the only block is a `tool_result`, so nothing anybody said is
+ * in it — and the one line that carries the agent's id.
+ */
+function startedAgent(agentId: string, serial: number): string {
+  return JSON.stringify({
+    parentUuid: null,
+    isSidechain: false,
+    cwd: '/demo/workspace',
+    gitBranch: 'main',
+    uuid: id(serial),
+    timestamp: '2026-02-03T11:00:10.000Z',
+    type: 'user',
+    toolUseResult: { agentId, status: 'running' },
+    message: {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 'call-f1', content: 'The run started.' }],
+    },
+  });
+}
+
+/** The notification the editor writes when a delegated run comes back later. */
+function notification(taskId: string, serial: number): string {
+  return JSON.stringify({
+    parentUuid: null,
+    isSidechain: false,
+    cwd: '/demo/workspace',
+    gitBranch: 'main',
+    uuid: id(serial),
+    timestamp: '2026-02-03T11:00:20.000Z',
+    type: 'user',
+    origin: { kind: 'task-notification', taskId },
+    message: {
+      role: 'user',
+      content: `<task-notification><task-id>${taskId}</task-id><status>completed</status><result>Both checks passed.</result></task-notification>`,
+    },
+  });
+}
+
+/**
+ * One `SessionStart` hook attachment, in the shape the editor renders it: the
+ * source is in `hookName`, which is the only thing the parser reads it by.
+ */
+function startAttachment(source: string, serial: number): string {
+  return JSON.stringify({
+    parentUuid: null,
+    isSidechain: false,
+    type: 'attachment',
+    uuid: id(serial),
+    timestamp: '2026-02-03T10:00:00.000Z',
+    attachment: { type: 'hook_success', hookName: `SessionStart:${source}` },
+  });
+}
+
 /** The same session with a line in front of the cursor's changed. */
 function rewrittenSession(): string {
   return session.replace(
@@ -769,18 +838,105 @@ describe('the Claude Code parser on a whole session', () => {
     expect(read?.body).toBe(report);
   });
 
-  it('takes the start source from the last SessionStart attachment', () => {
+  it('finds the agent of a notification in the content in front of the read', () => {
+    // The incremental read has to answer "did this session start that agent?"
+    // the same way the full read does, and the only evidence is in the stretch
+    // the incremental read never looks at (Design Notes). So: a line that
+    // started an agent, a turn after it, and then the notification — with the
+    // cursor on that turn.
+    const transcriptFor = (taskId: string): string =>
+      [
+        said(300, 'Start the two checks, please.'),
+        startedAgent('agent-f1', 301),
+        said(302, 'And summarise them when they land.'),
+        notification(taskId, 303),
+      ].join('\n');
+
+    const started = transcriptFor('agent-f1');
+    const front = claudeCodeParser().parse(
+      `${started.split('\n').slice(0, 3).join('\n')}\n`,
+    );
+    expect(front.ok).toBe(true);
+    if (!front.ok) return;
+    expect(front.cursor?.lastHarnessMessageId).toBe(id(302));
+
+    const incremental = claudeCodeParser().parse(started, front.cursor);
+    const whole = claudeCodeParser().parse(started);
+    expect(incremental.ok).toBe(true);
+    expect(whole.ok).toBe(true);
+    if (!incremental.ok || !whole.ok) return;
+    expect(incremental.cursorReset).toBe(false);
+    expect(whole.messages.at(-1)).toMatchObject({
+      harnessMessageId: id(303),
+      body: 'Both checks passed.',
+      isSubagentReport: true,
+    });
+    // From the cursor's own message on, which is the second of the three.
+    expect(incremental.messages).toEqual(whole.messages.slice(1));
+
+    // And an agent nobody here started is not a report of this session, read
+    // either way.
+    const foreign = transcriptFor('agent-zz');
+    const unknownWhole = claudeCodeParser().parse(foreign);
+    const unknownTail = claudeCodeParser().parse(foreign, front.cursor);
+    expect(unknownWhole.ok).toBe(true);
+    expect(unknownTail.ok).toBe(true);
+    if (!unknownWhole.ok || !unknownTail.ok) return;
+    expect(unknownWhole.messages.map((message) => message.harnessMessageId)).toEqual([
+      id(300),
+      id(302),
+    ]);
+    expect(unknownTail.messages.map((message) => message.harnessMessageId)).toEqual([id(302)]);
+  });
+
+  it('takes the start source from the first SessionStart attachment', () => {
     const result = claudeCodeParser().parse(session);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     // The file carries `startup` and then, after the compact, `compact`. The
-    // newest is why the session is running now.
-    expect(result.startSource).toBe('compact');
+    // first is why the session began, which is what this column answers; the
+    // compact is what happened to it afterwards (follow-up review #18).
+    expect(result.startSource).toBe('startup');
 
     const beforeTheCompact = claudeCodeParser().parse(half());
     expect(beforeTheCompact.ok).toBe(true);
     if (!beforeTheCompact.ok) return;
     expect(beforeTheCompact.startSource).toBe('startup');
+  });
+
+  it('reads each of the five sources the harness names, and none of anything else', () => {
+    for (const source of ['startup', 'resume', 'clear', 'compact', 'fork'] as const) {
+      const result = claudeCodeParser().parse(`${startAttachment(source, 100)}\n`);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.startSource).toBe(source);
+    }
+
+    // A session reopened: 34 of the 37 transcripts on this machine that carry
+    // more than one attachment are a `startup` followed by a `resume`, and the
+    // session still began with the `startup`.
+    const reopened = claudeCodeParser().parse(
+      `${startAttachment('startup', 100)}\n${startAttachment('resume', 101)}\n`,
+    );
+    expect(reopened.ok).toBe(true);
+    if (!reopened.ok) return;
+    expect(reopened.startSource).toBe('startup');
+
+    // Another hook's attachment says nothing about the start, and neither does
+    // a `SessionStart` whose source this parser does not know.
+    for (const hookName of ['Stop', 'SessionStart:somethingElse']) {
+      const result = claudeCodeParser().parse(
+        `${JSON.stringify({
+          type: 'attachment',
+          uuid: id(102),
+          timestamp: '2026-02-03T10:00:00.000Z',
+          attachment: { type: 'hook_success', hookName },
+        })}\n`,
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.startSource).toBeNull();
+    }
   });
 
   it('answers for the whole content even when it read only the tail', () => {
@@ -800,7 +956,28 @@ describe('the Claude Code parser on a whole session', () => {
     expect(incremental.toolNotes).toEqual([SESSION_NOTES[3]]);
     expect(incremental.cursor).toEqual(whole.cursor);
     // The start source is a fact about the content, not about the part read.
-    expect(incremental.startSource).toBe('compact');
+    expect(incremental.startSource).toBe('startup');
+  });
+
+  it('answers with the first start source even when a resume is behind the cursor', () => {
+    // A session the person reopened: the `resume` attachment is in the stretch
+    // only the incremental read sees, and the answer is still the `startup` at
+    // the front of the file — which is what makes the incremental read and the
+    // full one agree (port contract).
+    const first = claudeCodeParser().parse(half());
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const reopened = `${session}${startAttachment('resume', 200)}\n`;
+    const incremental = claudeCodeParser().parse(reopened, first.cursor);
+    const whole = claudeCodeParser().parse(reopened);
+
+    expect(incremental.ok).toBe(true);
+    expect(whole.ok).toBe(true);
+    if (!incremental.ok || !whole.ok) return;
+    expect(incremental.cursorReset).toBe(false);
+    expect(incremental.startSource).toBe('startup');
+    expect(whole.startSource).toBe('startup');
   });
 
   it('reads from the front and says so when the front of the file changed', () => {

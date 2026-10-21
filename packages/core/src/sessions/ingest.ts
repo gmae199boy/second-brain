@@ -152,9 +152,11 @@ export interface IngestSessionDependencies {
  * The session row is created only once there is at least one message to put in
  * it — a transcript with no conversation in it yet is the usual state of a
  * session's first seconds, and a row for it would be a session that never
- * happened. A batch of tool notes with no messages is the one case that still
- * goes in: the session is already there, so there is nothing to create, and the
- * notes belong to messages it already holds.
+ * happened. Two kinds of batch with no messages still go to the store, and
+ * neither creates anything: one of tool notes alone, whose notes belong to
+ * messages the session already holds, and one of a read that found the front of
+ * the transcript rewritten, which carries the `CURSOR_RESET` warning and the
+ * cursor to clear (#16).
  *
  * `inspect` sits where it does because the tags are decided once and never
  * again (AD-12): it is asked only when `findSession` found nothing and the
@@ -276,25 +278,47 @@ export async function ingestSession(
    * the sake of an optimisation.
    */
   const recordHistory = async (): Promise<void> => {
-    await store.recordTranscriptFile({
-      id: idGen.next(),
-      harness: key.harness,
-      path: transcriptPath,
-      sizeBytes: read.sizeBytes,
-      fingerprint: read.fingerprint,
-      cursor: parsed.cursor,
-      scannedAt: clock.now(),
-      reset: parsed.cursorReset,
-    });
+    try {
+      await store.recordTranscriptFile({
+        id: idGen.next(),
+        harness: key.harness,
+        path: transcriptPath,
+        sizeBytes: read.sizeBytes,
+        fingerprint: read.fingerprint,
+        cursor: parsed.cursor,
+        scannedAt: clock.now(),
+        reset: parsed.cursorReset,
+      });
+    } catch {
+      // Dropped, like the coded failure above it: an adapter that throws where
+      // the port says it answers is a bug, and the honest thing is still to
+      // report the collection that *did* happen rather than to lose a stored
+      // turn over a shortcut (follow-up review #19).
+    }
   };
 
-  // Nothing to put anywhere: no row, nothing inserted, and no failure either.
-  // The Stop hook of a turn whose last answer has not been flushed arrives
-  // here, and so does every hook of a session's first seconds. The history is
-  // still written — the file *was* read this far, and a scan that read it again
-  // every drain for a session with no conversation yet would be the one case
-  // where nothing ever settles.
-  if (parsed.messages.length === 0 && (stored === null || parsed.toolNotes.length === 0)) {
+  /**
+   * Nothing to put anywhere: no row and nothing to insert. The Stop hook of a
+   * turn whose last answer has not been flushed arrives here, and so does every
+   * hook of a session's first seconds.
+   */
+  const nothingToStore =
+    parsed.messages.length === 0 && (stored === null || parsed.toolNotes.length === 0);
+  /**
+   * The read found the front of the transcript changed, and there is a stored
+   * session to tell about it. That is reported even when the read then found no
+   * message at all — a transcript rewritten down to nothing — because the
+   * session's cursor describes a file that no longer exists: left there, every
+   * later read starts at the front and the warning is never raised (#16). The
+   * empty batch below is what carries both to the store: the warning, and the
+   * cursor to clear.
+   */
+  const resetToReport = parsed.cursorReset && stored !== null;
+
+  if (nothingToStore && !resetToReport) {
+    // The history is still written — the file *was* read this far, and a scan
+    // that read it again every drain for a session with no conversation yet
+    // would be the one case where nothing ever settles.
     await recordHistory();
     return {
       ok: true,
@@ -377,6 +401,11 @@ export async function ingestSession(
       parserVersion: parsed.parserVersion,
       cursor: parsed.cursor,
       cursorReset: parsed.cursorReset,
+      // Where the session stood when this read began, as `findSession` found
+      // it: the raw stored cursor, whatever parser version left it. It is what
+      // lets the store tell a reset that is still current from one whose read
+      // has been overtaken (`domain/ingest-batch.ts`, #17).
+      cursorBase: stored?.cursor ?? null,
       startSource: parsed.startSource,
       endedAt: null,
       ingestedAt,

@@ -346,10 +346,12 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         parserVersion: batch.tracking.parserVersion,
         endedAt: batch.tracking.endedAt ?? session.endedAt,
         ingestedAt: batch.tracking.ingestedAt,
-        // Only when the batch carries one: a read that saw no `SessionStart`
-        // attachment knows nothing about the start, and its `null` must not
-        // erase what an earlier read did know (port contract).
-        startSource: batch.tracking.startSource ?? session.startSource,
+        // Only when the batch carries one and the session has none yet: a read
+        // that saw no `SessionStart` attachment knows nothing about the start,
+        // and its `null` must not erase what an earlier read did know — while a
+        // value that disagrees with the stored one is a later attachment, which
+        // is not why the session began (port contract).
+        startSource: session.startSource ?? batch.tracking.startSource,
       });
 
       const warnings: StoreWarningCode[] = batch.tracking.cursorReset
@@ -686,24 +688,36 @@ function transcriptKey(harness: string, path: string): string {
  * Two hooks can overlap — one reading a longer transcript than the other, and
  * the older one committing last. Taking the newer cursor every time would then
  * point the session at a message the other read had already passed, and the
- * next read would parse a stretch of transcript it has already stored. So the
- * cursor is replaced only when the batch reset it, when the session has no
- * cursor message among its rows, or when the batch's cursor message was
- * uttered at or after the stored one.
+ * next read would parse a stretch of transcript it has already stored. So an
+ * ordinary batch replaces the cursor only when the session has no cursor
+ * message among its rows or when the batch's cursor message was uttered at or
+ * after the stored one.
  *
- * The comparison is on `occurredAt` and not on the order the rows went in
+ * That comparison is on `occurredAt` and not on the order the rows went in
  * (migration 0006): insertion order is exactly what the two overlapping reads
- * disagree about, and the shorter read's last message can be the newest row
- * and still the earlier moment.
+ * disagree about, and the shorter read's last message can be the newest row and
+ * still the earlier moment.
+ *
+ * A batch that reset is the exception, and it is taken whole — `null` included,
+ * which clears the cursor. The front of that transcript changed, so the read
+ * before it describes a file that no longer exists and a cursor pointing into
+ * it would reset every read from now on (#16). Moving backwards is right there;
+ * what is not right is doing it over an overlapping read's work, so it is
+ * allowed only while the session's cursor is still the one that read began from
+ * (`cursorBase`, #17).
  */
 function nextCursor(
   session: Session,
   batch: IngestBatch,
   stored: readonly Message[],
 ): Session['cursor'] {
+  if (batch.tracking.cursorReset && sameCursor(session.cursor, batch.tracking.cursorBase)) {
+    return batch.tracking.cursor;
+  }
+
   const cursor = batch.tracking.cursor;
   if (cursor === null) return session.cursor;
-  if (batch.tracking.cursorReset || session.cursor === null) return cursor;
+  if (session.cursor === null) return cursor;
 
   const instantOf = (harnessMessageId: string): number | undefined =>
     stored
@@ -713,4 +727,13 @@ function nextCursor(
   if (was === undefined) return cursor;
   const now = instantOf(cursor.lastHarnessMessageId);
   return now !== undefined && now >= was ? cursor : session.cursor;
+}
+
+/** Whether two cursors name the same message with the same fingerprint. */
+function sameCursor(left: Session['cursor'], right: Session['cursor']): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.lastHarnessMessageId === right.lastHarnessMessageId &&
+    left.fingerprint === right.fingerprint
+  );
 }

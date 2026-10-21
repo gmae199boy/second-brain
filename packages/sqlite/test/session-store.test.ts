@@ -579,6 +579,43 @@ describe('the SQLite session store and the columns behind it', () => {
     }
   });
 
+  it('answers with a code when the stored row holds an impossible instant', async () => {
+    const path = await migratedPath();
+    const store = sqliteStore({ path });
+    try {
+      expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
+      expect((await store.ensureSession(sampleEnsureSessionInput())).ok).toBe(true);
+    } finally {
+      await store.close();
+    }
+
+    // A row a human edited. The column's own `glob` check is happy with it —
+    // four digits, two, two — and no calendar has that day, so the row is only
+    // wrong on the way back out, where `toSession` parses it (follow-up review
+    // #19). `sessions ingest` meets this through `findSession`; `ensureSession`
+    // is the door every other caller comes in by.
+    const opened = openSqlite({ path, busyTimeoutMs: 3000 });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    try {
+      opened.connection.database
+        .prepare('update sessions set started_at = ?')
+        .run('2026-13-45T00:00:00.000Z');
+    } finally {
+      await opened.connection.close();
+    }
+
+    const reopened = sqliteStore({ path });
+    try {
+      expect(await reopened.ensureSession(sampleEnsureSessionInput())).toMatchObject({
+        ok: false,
+        code: 'DB_UNAVAILABLE',
+      });
+    } finally {
+      await reopened.close();
+    }
+  });
+
   it('reads nothing back for a token that is not one', async () => {
     const store = sqliteStore({ path: await migratedPath() });
     try {

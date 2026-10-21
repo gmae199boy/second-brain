@@ -8,6 +8,7 @@ import {
   type IngestBatch,
   type IngestResult,
   type Message,
+  type ParserCursor,
   type ReadSessionResult,
   type Session,
   type SessionIngestSource,
@@ -115,9 +116,12 @@ interface ToolNoteRow {
  *     same instant come back in no defined order. Tool notes follow their
  *     message's instant, then their message, then their own `ordinal`, so one
  *     message's notes stay together even then.
- *   * **the cursor is compared by the same instant.** It moves on a reset, on
- *     a session whose stored cursor message is not among its rows, or when the
- *     batch's cursor message was uttered at or after the stored one.
+ *   * **the cursor is compared by the same instant.** It moves on a session
+ *     whose stored cursor message is not among its rows, or when the batch's
+ *     cursor message was uttered at or after the stored one. A batch that read
+ *     from the start may also move it back, or clear it, but only while the
+ *     session's cursor is still the `cursorBase` that read began from
+ *     (`cursorMove`).
  *
  * The instants are the canonical 24-character text of AD-13, so SQLite's
  * string comparison *is* the chronological one and no parsing is needed to
@@ -179,7 +183,8 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
         written = await withWrite(opened.connection, ensure);
       } catch (error) {
         // The one failure this transaction gives up on, as a value. Anything
-        // else is a bug and goes on throwing (Conventions).
+        // else is a bug and goes on throwing (Conventions): a broken foreign
+        // key here is a caller that passed an owner it had not read.
         if (error instanceof UnsettledEnsure) {
           return { ok: false, code: 'DB_UNAVAILABLE', message: error.message };
         }
@@ -188,7 +193,20 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
       if (!written.ok) return written;
 
       const { created, row } = written.value;
-      return { ok: true, created, session: toSession(row) };
+      try {
+        // Widening the row is one more thing that can fail, and not because of
+        // anything the caller did: `toSession` parses the instants it holds, so
+        // a `started_at` that is `glob`-shaped but not a date — a row a human
+        // edited — would otherwise leave this verb throwing where every caller
+        // expects a code (follow-up review #19).
+        return { ok: true, created, session: toSession(row) };
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'DB_UNAVAILABLE',
+          message: `세션을 읽을 수 없습니다: ${describe(error)}`,
+        };
+      }
     },
 
     async findSession(key: SessionKey): Promise<FindSessionResult> {
@@ -288,22 +306,29 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
                  ingested_at = ${ingestedAt}
            where id = ${session.id}
         `.execute(held);
-        // Only when the batch carries one: a read that saw no `SessionStart`
-        // attachment knows nothing about the start, and writing its `null` would
-        // erase what an earlier read did know.
+        // Only when the batch carries one and the row has none yet: a read that
+        // saw no `SessionStart` attachment knows nothing about the start, and
+        // writing its `null` would erase what an earlier read did know — while
+        // the `and start_source is null` keeps the first answer learned, because
+        // a second attachment is a later start and not why the session began
+        // (follow-up review #18).
         if (batch.tracking.startSource !== null) {
           await sql`
             update sessions
                set start_source = ${batch.tracking.startSource}
              where id = ${session.id}
+               and start_source is null
           `.execute(held);
         }
-        const cursor = batch.tracking.cursor;
-        if (cursor !== null && (await cursorMayMove(held, session, batch))) {
+        const moved = await cursorMove(held, session, batch);
+        if (moved.move) {
+          // `null` for both halves is the cursor cleared, which is what a reset
+          // read that found no message leaves behind: the table's own check
+          // wants both halves or neither.
           await sql`
             update sessions
-               set last_harness_message_id = ${cursor.lastHarnessMessageId},
-                   cursor_fingerprint = ${cursor.fingerprint}
+               set last_harness_message_id = ${moved.to?.lastHarnessMessageId ?? null},
+                   cursor_fingerprint = ${moved.to?.fingerprint ?? null}
              where id = ${session.id}
           `.execute(held);
         }
@@ -485,35 +510,56 @@ async function ensureCheckout(
   return { projectId, worktreeId };
 }
 
+/** Whether the stored cursor is replaced, and by what — `null` clears it. */
+interface CursorMove {
+  move: boolean;
+  to: ParserCursor | null;
+}
+
 /**
- * Whether this batch's cursor may replace the stored one (port contract).
+ * Whether this batch's cursor replaces the stored one, and with what (port
+ * contract).
  *
  * Two hooks can overlap — one of them reading a longer transcript than the
  * other, and the shorter read committing last. Taking its cursor would point
  * the session at a message the other read had already passed, and the next read
- * would parse a stretch of the transcript it has already stored. So the cursor
- * moves only forward: a reset, a session with no cursor message among its rows,
- * or a cursor message uttered at or after the stored one.
+ * would parse a stretch of the transcript it has already stored. So an ordinary
+ * batch moves the cursor only forward: a session with no cursor message among
+ * its rows, or a cursor message uttered at or after the stored one.
  *
- * The comparison is on `occurred_at` and not on the order the rows went in
- * (migration 0006). Insertion order is what the two overlapping reads
- * disagree about: the shorter read's last message may well be the newest row
- * in the table and is still the earlier moment of the conversation.
+ * That comparison is on `occurred_at` and not on the order the rows went in
+ * (migration 0006). Insertion order is what the two overlapping reads disagree
+ * about: the shorter read's last message may well be the newest row in the table
+ * and is still the earlier moment of the conversation.
+ *
+ * A batch that reset is the one that may go backwards, and it is taken whole —
+ * `null` included, which clears the cursor. The front of that transcript is not
+ * what it was, so the file may well be shorter than the stored cursor claims,
+ * and a cursor nothing can match again would reset every read from now on
+ * (#16). What must not happen is a reset undoing an overlapping read, so it is
+ * allowed only while the session's cursor is still the one that read began from
+ * (`cursorBase`, #17); a reset that finds the session somewhere else falls back
+ * to the forward-only rule.
  *
  * It runs inside the same transaction as the inserts, so a cursor message this
  * batch just stored is already there to be compared. One that is not stored at
  * all leaves the cursor where it was: the instants are canonical text, so a
  * plain `>=` on the strings is the chronological comparison (AD-13).
  */
-async function cursorMayMove(
+async function cursorMove(
   held: Kysely<SqliteSchema>,
   session: SessionRow,
   batch: IngestBatch,
-): Promise<boolean> {
+): Promise<CursorMove> {
   const cursor = batch.tracking.cursor;
-  if (cursor === null) return false;
+  if (batch.tracking.cursorReset && sameCursor(storedCursor(session), batch.tracking.cursorBase)) {
+    return { move: true, to: cursor };
+  }
+
+  const stay: CursorMove = { move: false, to: null };
+  if (cursor === null) return stay;
   const was = session.last_harness_message_id;
-  if (batch.tracking.cursorReset || was === null) return true;
+  if (was === null) return { move: true, to: cursor };
 
   const instants = await sql<{ harness_message_id: string; occurred_at: string }>`
     select harness_message_id, occurred_at
@@ -527,9 +573,29 @@ async function cursorMayMove(
   const storedAt = instantOf(was);
   // The stored cursor names a message this session does not hold: nothing to
   // compare against, so the batch's cursor is the better one.
-  if (storedAt === undefined) return true;
+  if (storedAt === undefined) return { move: true, to: cursor };
   const nextAt = instantOf(cursor.lastHarnessMessageId);
-  return nextAt !== undefined && nextAt >= storedAt;
+  return nextAt !== undefined && nextAt >= storedAt ? { move: true, to: cursor } : stay;
+}
+
+/** The cursor a row holds, in the shape the batch carries its own in. */
+function storedCursor(session: SessionRow): ParserCursor | null {
+  if (session.last_harness_message_id === null || session.cursor_fingerprint === null) {
+    return null;
+  }
+  return {
+    lastHarnessMessageId: session.last_harness_message_id,
+    fingerprint: session.cursor_fingerprint,
+  };
+}
+
+/** Whether two cursors name the same message with the same fingerprint. */
+function sameCursor(left: ParserCursor | null, right: ParserCursor | null): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.lastHarnessMessageId === right.lastHarnessMessageId &&
+    left.fingerprint === right.fingerprint
+  );
 }
 
 /** The row for one session key, or `null`. The one place the key is spelled. */

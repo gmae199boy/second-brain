@@ -72,19 +72,39 @@ export interface IngestToolNote extends ParsedToolNote {
 export interface IngestTracking {
   /** The parser that produced the batch; recorded on the session (AD-4). */
   parserVersion: string;
-  /** Where the parser stopped. Stored with the batch, in one transaction (AD-7). */
+  /**
+   * Where the parser stopped, or `null` for a read that found no message at
+   * all. Stored with the batch, in one transaction (AD-7).
+   */
   cursor: ParserCursor | null;
   /**
    * The old cursor was gone or did not match, so the parser read from the
    * start. Ingest is idempotent, so this only raises a `CURSOR_RESET`
-   * warning (AD-4).
+   * warning (AD-4) — and it is what lets `cursor` replace the stored one even
+   * when it points further back, because the front of the transcript is not
+   * what it was (`ports/store.ts`).
    */
   cursorReset: boolean;
   /**
-   * Why the harness started the session, when the transcript said so. The store
-   * writes it only when it is there: a read that saw no `SessionStart` hook
-   * attachment knows nothing about the start, and `null` must not erase what an
-   * earlier read did know.
+   * The cursor the session held when this read started, which is what the store
+   * compares against before it lets a reset move the cursor backwards.
+   *
+   * It is the raw stored cursor — whatever `findSession` brought back, whatever
+   * parser version left it, and `null` for a session that is not stored yet —
+   * and never the cursor that was handed to the parser. Two reads of one
+   * session can overlap, and a reset cursor from the one that started first
+   * must not wind the session back over what the second already stored: the
+   * store moves it only while the session still stands where this read found it
+   * (Design Notes, story 21).
+   */
+  cursorBase: ParserCursor | null;
+  /**
+   * Why the harness started the session, when the transcript said so, and the
+   * *first* such answer the content carried. The store writes it only when the
+   * session has none yet: a read that saw no `SessionStart` hook attachment
+   * knows nothing about the start, and `null` must not erase what an earlier
+   * read did know — and a later attachment (a resume, a compact) is not why the
+   * session began (`ports/parser.ts`).
    */
   startSource: SessionStartSource | null;
   /** Best-effort end of the session, when the harness told us (AD-6). */

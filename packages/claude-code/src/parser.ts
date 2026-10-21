@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, type Hash } from 'node:crypto';
 import type {
   MessageRole,
   ParseResult,
@@ -68,13 +68,46 @@ interface PendingNote {
   messagesBefore: number;
 }
 
-/** Where a parse starts, and whether the cursor it was given was any use. */
+/**
+ * Where a parse starts, whether the cursor it was given was any use, and the
+ * two things the content in front of that point has already been read for.
+ *
+ * Both of those exist so that the prefix of a transcript is walked once per
+ * parse rather than once per question asked of it. A 30 MB transcript is real
+ * (follow-up review #20), and the incremental read exists precisely so that a
+ * hook on a long session costs what the tail costs.
+ */
 interface ParseStart {
   /** Offset of the first line to read. */
   offset: number;
-  /** How many lines of the content come before it, for a line number. */
-  linesBefore: number;
   reset: boolean;
+  /**
+   * SHA-256 of the content up to `hashedTo`, still open. The cursor this parse
+   * produces continues from this state instead of hashing the same bytes again
+   * (`cursorFor`), so the prefix a fingerprint covers goes through SHA-256 once.
+   */
+  prefix: Hash;
+  /** How much of the content `prefix` has taken in. */
+  hashedTo: number;
+  /** Which agents the content in front of `offset` started (`agentIds`). */
+  agents: AgentIds;
+}
+
+/**
+ * Which agents the content in front of a line started, as the
+ * task-notification rule asks it (`readReport`).
+ *
+ * The question is whether `"agentId":"<id>"` appears anywhere before the line,
+ * and the answer has to be the same whether the parse began at the front of the
+ * file or at a cursor in the middle of it (Design Notes). So the prefix in
+ * front of the read is scanned once — lazily, because most reads never ask —
+ * and the lines of the read itself join it as they go past.
+ */
+interface AgentIds {
+  /** Whether anything before the line being judged carried this id. */
+  has(agentId: string): boolean;
+  /** Take in one line, once the line after it is the one being judged. */
+  note(line: string): void;
 }
 
 /**
@@ -166,11 +199,18 @@ export function claudeCodeParser(): Parser {
       const lastIndex = content.endsWith('\n') ? -1 : lines.length - 1;
 
       let offset = start.offset;
+      /** The line before the one being read, for `AgentIds.note`. */
+      let behind = '';
       for (const [index, line] of lines.entries()) {
         const lineStart = offset;
         // `+ 1` for the newline that separated it. On the final piece of a file
         // with no trailing newline there is none, and nothing reads this.
         offset += line.length + 1;
+        // Before anything may skip this line: the line before it is now in
+        // front of the one being judged, whatever happens to this one, and the
+        // task-notification rule asks what the content in front of a line said.
+        start.agents.note(behind);
+        behind = line;
         if (line.trim() === '') continue;
 
         const entry = readJson(line);
@@ -179,7 +219,9 @@ export function claudeCodeParser(): Parser {
           // line that is allowed to be half written, and skipped rather than
           // refused (research §1).
           if (index === lastIndex) continue;
-          const number = start.linesBefore + index + 1;
+          // Counted only here, where a sentence needs it: every read would
+          // otherwise walk the prefix for a number nobody asks for (#20).
+          const number = countLines(content, start.offset) + index + 1;
           return {
             ok: false,
             code: 'TRANSCRIPT_UNREADABLE',
@@ -203,7 +245,7 @@ export function claudeCodeParser(): Parser {
         // an `Agent` call and the report that call came back with.
         readOutcomes(entry, outcomes);
 
-        const message = readMessage(entry, content, lineStart);
+        const message = readMessage(entry, start.agents);
         if (message !== undefined) {
           messages.push(message);
           lastMessageId = message.harnessMessageId;
@@ -218,7 +260,7 @@ export function claudeCodeParser(): Parser {
         parserVersion: CLAUDE_CODE_PARSER_VERSION,
         messages,
         toolNotes: resolveNotes(pending, outcomes, messages.length),
-        cursor: cursorFor(messages, content, fingerprintEnd),
+        cursor: cursorFor(messages, content, fingerprintEnd, start),
         cursorReset: start.reset,
         // From the whole content and not from the part that was read, so an
         // incremental parse answers the same as a full one (port contract).
@@ -249,34 +291,125 @@ export function claudeCodeParser(): Parser {
  * `null` instead, so the whole session is read again under the new rules.
  */
 function startFor(content: string, cursor: ParserCursor | null): ParseStart {
-  if (cursor === null) return { offset: 0, linesBefore: 0, reset: false };
+  const fromTheFront = (reset: boolean): ParseStart => ({
+    offset: 0,
+    reset,
+    prefix: createHash('sha256'),
+    hashedTo: 0,
+    agents: agentIds(content, 0),
+  });
+  if (cursor === null) return fromTheFront(false);
 
-  const pattern = new RegExp(`"uuid"\\s*:\\s*"${escapeForRegExp(cursor.lastHarnessMessageId)}"`, 'g');
-  for (let match = pattern.exec(content); match !== null; match = pattern.exec(content)) {
-    const lineStart = content.lastIndexOf('\n', match.index) + 1;
-    const newline = content.indexOf('\n', match.index);
+  // Backwards, because the cursor names a message near the end of the file it
+  // came out of: `lastIndexOf` reaches it after a few hundred bytes, where a
+  // forward scan reads the whole transcript to get there (#20). The key is
+  // searched for rather than the id alone, so `parentUuid` and `leafUuid` — a
+  // capital U, and the quote in front rules out both — do not have to be parsed
+  // to be rejected; `at > 0` is the end of the walk, because a JSON line opens
+  // with `{` and `"uuid"` can never sit at offset 0.
+  for (
+    let at = content.lastIndexOf(UUID_KEY);
+    at > 0;
+    at = content.lastIndexOf(UUID_KEY, at - 1)
+  ) {
+    if (!holdsValue(content, at + UUID_KEY.length, cursor.lastHarnessMessageId)) continue;
+    const lineStart = content.lastIndexOf('\n', at) + 1;
+    const newline = content.indexOf('\n', at);
     const lineEnd = newline < 0 ? content.length : newline;
 
+    // The line is still parsed and the id checked again before any of it is
+    // believed, because a search is a search.
     const entry = readJson(content.slice(lineStart, lineEnd));
     if (entry === undefined) continue;
     if (asString(entry['uuid']) !== cursor.lastHarnessMessageId) continue;
-    if (readMessage(entry, content, lineStart) === undefined) continue;
-    const fingerprint = createHash('sha256')
-      .update(content.slice(0, lineEnd), 'utf8')
-      .digest('hex');
-    if (fingerprint !== cursor.fingerprint) continue;
+    const agents = agentIds(content, lineStart);
+    if (readMessage(entry, agents) === undefined) continue;
 
-    return {
-      offset: lineStart,
-      linesBefore: countLines(content, lineStart),
-      reset: false,
-    };
+    // The prefix the fingerprint covers, hashed once and kept open: the cursor
+    // this parse ends with carries on from here (`cursorFor`). In practice this
+    // runs for one candidate — a fingerprint pins the whole prefix, so no two
+    // lines of one file can match the same one.
+    const prefix = createHash('sha256').update(content.slice(0, lineEnd), 'utf8');
+    if (prefix.copy().digest('hex') !== cursor.fingerprint) continue;
+
+    return { offset: lineStart, reset: false, prefix, hashedTo: lineEnd, agents };
   }
 
   // Gone, or the content in front of it is not what it was: a compact, a fork,
   // a transcript rewritten underneath us. Reading it all again inserts nothing
   // that is already stored, so this is a warning and not a failure (AD-4).
-  return { offset: 0, linesBefore: 0, reset: true };
+  return fromTheFront(true);
+}
+
+/** The key a cursor's message is found by, as the harness writes it. */
+const UUID_KEY = '"uuid"';
+
+/**
+ * Whether the JSON text at `from` is `: "<value>"` — the one value this key may
+ * have for the line to be the cursor's.
+ *
+ * Spelled out rather than left to a pattern per candidate: it reads the few
+ * characters after the key and nothing else, and it takes the whitespace a
+ * pretty-printed line puts around the colon.
+ */
+function holdsValue(content: string, from: number, value: string): boolean {
+  let at = skipSpace(content, from);
+  if (content[at] !== ':') return false;
+  at = skipSpace(content, at + 1);
+  if (content[at] !== '"') return false;
+  at += 1;
+  return content.startsWith(value, at) && content[at + value.length] === '"';
+}
+
+function skipSpace(content: string, from: number): number {
+  let at = from;
+  while (content[at] === ' ' || content[at] === '\t') at += 1;
+  return at;
+}
+
+/** The `"agentId"` values of a stretch of content, as `AgentIds` collects them. */
+const AGENT_ID_PATTERN = /"agentId"\s*:\s*"([^"]*)"/;
+
+/**
+ * The agents a read has seen started, up to `boundary` and then line by line.
+ *
+ * The prefix scan is deferred until something asks, because only a
+ * task-notification line does and most reads carry none. It is also run over
+ * the content itself with the boundary as a stop, never over a copy of the
+ * prefix: slicing 30 MB to search it costs 30 MB (#20). The ids of the read's
+ * own lines may well arrive before the prefix is scanned — the result is one
+ * set either way, so the order they join in cannot change an answer.
+ */
+function agentIds(content: string, boundary: number): AgentIds {
+  const seen = new Set<string>();
+  let scanned = false;
+
+  const collect = (text: string, stop: number): void => {
+    // Nothing is in front of offset 0, which is every read from the front: the
+    // scan would walk the whole file to find a match it then throws away.
+    if (stop <= 0) return;
+    const pattern = new RegExp(AGENT_ID_PATTERN, 'g');
+    for (let match = pattern.exec(text); match !== null; match = pattern.exec(text)) {
+      if (match.index >= stop) return;
+      const found = match[1];
+      if (found !== undefined) seen.add(found);
+    }
+  };
+
+  return {
+    has(agentId: string): boolean {
+      if (!scanned) {
+        scanned = true;
+        collect(content, boundary);
+      }
+      return seen.has(agentId);
+    },
+    note(line: string): void {
+      // The cheap test first: almost no line carries one.
+      if (!line.includes('"agentId"')) return;
+      collect(line, line.length);
+    },
+  };
 }
 
 /**
@@ -301,20 +434,32 @@ function cursorFor(
   messages: readonly ParsedMessage[],
   content: string,
   end: number,
+  start: ParseStart,
 ): ParserCursor | null {
   const last = messages.at(-1);
   if (last === undefined) return null;
   return {
     lastHarnessMessageId: last.harnessMessageId,
-    fingerprint: createHash('sha256').update(content.slice(0, end), 'utf8').digest('hex'),
+    // Carried on from the state the start left, so the prefix a cursor read
+    // already hashed is not hashed a second time (#20). A `digest` on the
+    // state itself would close it, so the copy is what is finished.
+    fingerprint:
+      end < start.hashedTo
+        ? // Not reachable from a cursor read, whose first message is the
+          // cursor's own line and so never ends before it: here because a
+          // negative continuation would silently hash the wrong bytes.
+          createHash('sha256').update(content.slice(0, end), 'utf8').digest('hex')
+        : start.prefix
+            .copy()
+            .update(content.slice(start.hashedTo, end), 'utf8')
+            .digest('hex'),
   };
 }
 
 /** One transcript line as a message, or `undefined` when it is not one. */
 function readMessage(
   entry: Record<string, unknown>,
-  content: string,
-  lineStart: number,
+  agents: AgentIds,
 ): ParsedMessage | undefined {
   const role = asRole(entry['type']);
   if (role === undefined) return undefined;
@@ -354,7 +499,7 @@ function readMessage(
   // A delegated run's final report comes in on a user line, and it is the one
   // thing worth recalling out of a whole subagent run. It is read as an
   // assistant message with no model of its own.
-  const report = handback ?? readReport(entry, message, content, lineStart);
+  const report = handback ?? readReport(entry, message, agents);
   if (report !== undefined) {
     return {
       harnessMessageId,
@@ -423,8 +568,7 @@ function readMessage(
 function readReport(
   entry: Record<string, unknown>,
   message: Record<string, unknown>,
-  content: string,
-  lineStart: number,
+  agents: AgentIds,
 ): string | undefined {
   if (entry['type'] !== 'user') return undefined;
 
@@ -447,7 +591,7 @@ function readReport(
   // `</task-id>` must not swallow the id, and an id is one token anyway.
   const taskId = between(notice, '<task-id>', '</task-id>', 'first')?.trim();
   if (taskId === undefined || taskId === '') return undefined;
-  if (!carriesAgentId(content.slice(0, lineStart), taskId)) return undefined;
+  if (!agents.has(taskId)) return undefined;
 
   // The report ends at the last one, so a report that carries the closing tag
   // inside it still comes out whole.
@@ -595,7 +739,7 @@ function resolveNotes(
 }
 
 /**
- * Why the harness started this session, from the last `SessionStart` hook
+ * Why the harness started this session, from the *first* `SessionStart` hook
  * attachment in the content, or `null` when it carries none.
  *
  * The transcript says so because a hook ran: Claude Code renders the output of
@@ -605,18 +749,23 @@ function resolveNotes(
  * carries one; a transcript from before that, or from a session nobody hooked,
  * says nothing and gets `null` rather than a guess.
  *
- * The *last* one, because a compact writes a new attachment onto the same
- * transcript and the newest is why the session is running now.
+ * The first one, because a resume or a compact writes another attachment onto
+ * the same transcript and this column answers why the session *began*. Measured
+ * on this machine: 37 of 211 sessions carry more than one, 34 of them a
+ * `startup` followed by a `resume` — so taking the last turned a third of the
+ * column into "what happened to it most recently" (follow-up review #18). The
+ * store keeps the same rule from the other side: it writes the value only into
+ * a row that has none (`ports/store.ts`).
  *
- * It searches the content and then parses only the lines that matched, so it
- * costs one scan rather than a parse of every line: `hookName` cannot be
- * mistaken for text in a body, because a `"` inside a JSON string is written
- * `\"`. Judged by `hookName` alone — the attachment carries `hookEvent` too,
- * but not in every version that wrote a transcript this may read.
+ * It searches the content and then parses only the lines that matched, and it
+ * stops at the first answer, so an ordinary transcript costs a scan of its
+ * front rather than of the whole file: `hookName` cannot be mistaken for text
+ * in a body, because a `"` inside a JSON string is written `\"`. Judged by
+ * `hookName` alone — the attachment carries `hookEvent` too, but not in every
+ * version that wrote a transcript this may read.
  */
 function readStartSource(content: string): SessionStartSource | null {
   const pattern = /"hookName"\s*:\s*"SessionStart:(startup|resume|clear|compact|fork)"/g;
-  let found: SessionStartSource | null = null;
 
   for (let match = pattern.exec(content); match !== null; match = pattern.exec(content)) {
     const lineStart = content.lastIndexOf('\n', match.index) + 1;
@@ -626,10 +775,10 @@ function readStartSource(content: string): SessionStartSource | null {
     const attachment = asRecord(entry['attachment']);
     if (attachment === undefined) continue;
     const source = startSourceOf(asString(attachment['hookName']) ?? '');
-    if (source !== null) found = source;
+    if (source !== null) return source;
   }
 
-  return found;
+  return null;
 }
 
 /** `SessionStart:<source>` as the source, or `null` for anything else. */
@@ -687,17 +836,6 @@ function isForeignOrigin(value: unknown): boolean {
 }
 
 /**
- * Whether the content in front of a notification started the agent it names.
- *
- * A plain search, which is the point: the same search over the same prefix
- * gives the same answer whether the parse started at the front of the file or
- * at a cursor in the middle of it (Design Notes).
- */
-function carriesAgentId(before: string, agentId: string): boolean {
-  return new RegExp(`"agentId"\\s*:\\s*"${escapeForRegExp(agentId)}"`).test(before);
-}
-
-/**
  * What one pair of tags holds, from the first opening tag to the first or the
  * last closing one. Which of the two is the caller's: a value that may contain
  * the closing tag has to run to the last, and one that may not must stop at the
@@ -726,11 +864,6 @@ function countLines(content: string, offset: number): number {
     index = content.indexOf('\n', index + 1);
   }
   return lines;
-}
-
-/** One literal, safe to put in a pattern. Ids are hex and dashes, but still. */
-function escapeForRegExp(literal: string): string {
-  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function readJson(line: string): Record<string, unknown> | undefined {

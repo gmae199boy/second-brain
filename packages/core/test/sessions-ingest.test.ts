@@ -626,6 +626,86 @@ describe('sessions.ingest and the cursor it starts from', () => {
     expect(after.messages).toEqual(before.messages);
   });
 
+  it('warns and clears the cursor when a reset read finds no message at all', async () => {
+    const { deps, store, transcripts } = await kit();
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    const before = await store.readSession(TOKEN);
+    expect(before.ok).toBe(true);
+    if (!before.ok) return;
+    expect(before.session.cursor).not.toBeNull();
+
+    // The transcript was rewritten down to something with no conversation in
+    // it. The cursor cannot be found, so the parse resets — and then it finds
+    // nothing, which used to end the call before the warning or the stale
+    // cursor could be dealt with (follow-up review #16).
+    transcripts.write(PATH, JSON.stringify({ messages: [] }));
+    const reset = await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
+
+    expect(reset).toMatchObject({
+      ok: true,
+      created: false,
+      inserted: { messages: 0, toolNotes: 0 },
+      warnings: ['CURSOR_RESET'],
+    });
+    const after = await store.readSession(TOKEN);
+    expect(after.ok).toBe(true);
+    if (!after.ok) return;
+    expect(after.session.cursor).toBeNull();
+    // Nothing stored was touched, because ingest is idempotent (AD-8).
+    expect(after.messages).toEqual(before.messages);
+
+    // And the next read of the same file is no longer a reset: there is no
+    // cursor left for it to fail to match.
+    const again = await ingestSession(deps, { session: TOKEN, transcriptPath: PATH });
+    expect(again).toMatchObject({ ok: true, warnings: [] });
+  });
+
+  it('reports the collection when the transcript history throws', async () => {
+    const { deps, store } = await kit();
+    const throwing: MemoryStore = {
+      ...store,
+      recordTranscriptFile() {
+        // An adapter that throws where the port says it answers. The history is
+        // a shortcut nothing depends on, so the turn it was collecting must not
+        // break over it (follow-up review #19).
+        throw new Error('the history table is gone');
+      },
+    };
+
+    const result = await ingestSession(
+      { ...deps, store: throwing },
+      { session: TOKEN, transcriptPath: PATH },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      created: true,
+      inserted: { messages: 4, toolNotes: 2 },
+      warnings: [],
+    });
+    expect(store.snapshot().messages).toHaveLength(4);
+  });
+
+  it('reports the empty read when the transcript history throws', async () => {
+    // The other call site of the same shortcut: the early return that a
+    // transcript with no conversation in it takes.
+    const { deps, store } = await kit({ content: JSON.stringify({ messages: [] }) });
+    const throwing: MemoryStore = {
+      ...store,
+      recordTranscriptFile() {
+        throw new Error('the history table is gone');
+      },
+    };
+
+    const result = await ingestSession(
+      { ...deps, store: throwing },
+      { session: TOKEN, transcriptPath: PATH },
+    );
+
+    expect(result).toMatchObject({ ok: true, inserted: { messages: 0, toolNotes: 0 } });
+    expect(store.snapshot().sessions).toEqual([]);
+  });
+
   it('ingests a batch of tool notes alone into a session that is already there', async () => {
     // A read that found no new message but did find the answer to a call the
     // last read left waiting. There is no row to create and nothing to

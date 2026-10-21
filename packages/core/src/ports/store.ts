@@ -242,15 +242,27 @@ export interface SessionStore {
    * Three rules about the tracking the batch carries, and every adapter keeps
    * them:
    *
-   *   * `startSource` is written only when the batch carries one. A read that
-   *     saw no `SessionStart` attachment knows nothing about the start, and a
-   *     `null` must not erase what an earlier read did know.
-   *   * the cursor only moves forward. It is replaced when the batch reset it,
-   *     or when the session has no cursor message stored, or when the new
-   *     cursor message was uttered at or after the stored one — so two hooks
-   *     that overlap, the older one arriving last, cannot wind the session back
-   *     to a message the newer one had already passed.
-   *   * `cursorReset` surfaces as the `CURSOR_RESET` warning, never silently.
+   *   * `startSource` is written only when the batch carries one **and** the
+   *     session has none yet. A read that saw no `SessionStart` attachment
+   *     knows nothing about the start, and a `null` must not erase what an
+   *     earlier read did know; the first answer a read did find is the one that
+   *     says why the session began, so a later batch never overwrites it.
+   *   * the cursor moves forward, and backwards only for the read that still
+   *     stands where it started. A batch that did not reset replaces the cursor
+   *     when the session has no cursor message stored or when the new cursor
+   *     message was uttered at or after the stored one — so two hooks that
+   *     overlap, the older one arriving last, cannot wind the session back to a
+   *     message the newer one had already passed. A batch that *did* reset read
+   *     a transcript whose front had changed, so its cursor is the only one that
+   *     still describes the file and may well point further back: it is taken
+   *     whole — `null` included, which clears the cursor — but only while the
+   *     session's cursor is still the `cursorBase` that read began from. A reset
+   *     batch that finds the session somewhere else is an overlapping read
+   *     whose answer is already stale, and it falls back to the forward-only
+   *     rule (Design Notes, story 21).
+   *   * `cursorReset` surfaces as the `CURSOR_RESET` warning, never silently —
+   *     including for a batch that carries no message at all, which is what a
+   *     transcript rewritten down to nothing looks like.
    *
    * And one rule about the text itself:
    *

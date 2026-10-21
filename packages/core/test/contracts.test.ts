@@ -4,7 +4,7 @@ import {
   parseSessionToken,
   SESSION_TOKEN_SEPARATOR,
 } from '../src/domain/session-token.js';
-import type { Session } from '../src/domain/session.js';
+import type { Session, SessionStartSource } from '../src/domain/session.js';
 import { BRAIN_MARKER, type ConnectResult, type Connector } from '../src/ports/connector.js';
 import type { Clock } from '../src/ports/clock.js';
 import type { IdGen } from '../src/ports/id-gen.js';
@@ -717,6 +717,67 @@ describe('the contracts catch a wrong store', () => {
 
     expect(await failedCases(sessionStoreContract(), make)).toContain(
       'the cursor does not go backwards unless the parse was reset',
+    );
+  });
+
+  it('catches a store that lets an overlapping reset wind the cursor back', async () => {
+    const make = async (): Promise<SessionStoreSubject> => {
+      const inner = memoryStore();
+      const cursors = new Map<string, Session['cursor']>();
+      return {
+        ...inner,
+        async ingest(batch) {
+          const result = await inner.ingest(batch);
+          // Every reset's cursor, whatever the session had moved to since that
+          // read began: the rule before `cursorBase`, which lets the shorter of
+          // two overlapping reads undo the longer one (#17).
+          if (result.ok && batch.tracking.cursorReset) {
+            cursors.set(formatSessionToken(batch.key), batch.tracking.cursor);
+          }
+          return result;
+        },
+        async readSession(token) {
+          const result = await inner.readSession(token);
+          if (!result.ok || !cursors.has(token)) return result;
+          return {
+            ...result,
+            session: { ...result.session, cursor: cursors.get(token) ?? null },
+          };
+        },
+      };
+    };
+
+    expect(await failedCases(sessionStoreContract(), make)).toContain(
+      'two reset batches from one base leave the cursor where the longer read put it',
+    );
+  });
+
+  it('catches a store that lets a later batch overwrite the start source', async () => {
+    const make = async (): Promise<SessionStoreSubject> => {
+      const inner = memoryStore();
+      const sources = new Map<string, SessionStartSource>();
+      return {
+        ...inner,
+        async ingest(batch) {
+          const result = await inner.ingest(batch);
+          // The last value wins, so a `resume` the session learned first is
+          // replaced by the `startup` of a later read (#18).
+          if (result.ok && batch.tracking.startSource !== null) {
+            sources.set(formatSessionToken(batch.key), batch.tracking.startSource);
+          }
+          return result;
+        },
+        async readSession(token) {
+          const result = await inner.readSession(token);
+          const latest = sources.get(token);
+          if (!result.ok || latest === undefined) return result;
+          return { ...result, session: { ...result.session, startSource: latest } };
+        },
+      };
+    };
+
+    expect(await failedCases(sessionStoreContract(), make)).toContain(
+      'ingest records the start source the batch carried and never overwrites it',
     );
   });
 

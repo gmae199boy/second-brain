@@ -1,3 +1,4 @@
+import type { IngestBatch } from '../../domain/ingest-batch.js';
 import type { Message } from '../../domain/message.js';
 import type { Session } from '../../domain/session.js';
 import type { SessionStore, UserStore } from '../../ports/store.js';
@@ -666,7 +667,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
     ),
 
     contractCase<SessionStoreSubject>(
-      'ingest records the start source the batch carried and keeps it when it carries none',
+      'ingest records the start source the batch carried and never overwrites it',
       async (make) => {
         await withSubject(make, async (store) => {
           await owner(store);
@@ -704,6 +705,25 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
             'resume',
             'a batch with no start source must leave the stored one alone',
           );
+
+          // And neither may a batch that carries another one. A transcript
+          // collects an attachment per start, and the parser answers with the
+          // first of them — so a value that disagrees with what is stored is a
+          // read of a file whose front this session has already been told about
+          // (follow-up review #18).
+          assertOk(
+            await store.ingest(
+              sampleIngestBatch({ idStart: 400, tracking: { startSource: 'startup' } }),
+            ),
+            'the third ingest failed',
+          );
+          const first = await store.readSession(sampleSessionToken);
+          assertOk(first, 'the session could not be read after the third ingest');
+          assertEqual(
+            first.session.startSource,
+            'resume',
+            'the stored start source is the first one learned and must never be overwritten',
+          );
         });
       },
     ),
@@ -737,13 +757,14 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
             'an older batch must not wind the cursor back to a message already passed',
           );
 
-          // Unless the parse was reset: then the front of the transcript is not
-          // what it was, and the batch's cursor is the only one that still
-          // describes the file (AD-4).
+          // Unless the parse was reset and the session still stands where that
+          // read found it: then the front of the transcript is not what it was,
+          // and the batch's cursor is the only one that still describes the
+          // file (AD-4).
           const reset = sampleIngestBatch({
             idStart: 500,
             only: ['msg-1', 'msg-2'],
-            tracking: { cursorReset: true },
+            tracking: { cursorReset: true, cursorBase: whole.tracking.cursor },
           });
           assertOk(await store.ingest(reset), 'the reset ingest failed');
           const moved = await store.readSession(sampleSessionToken);
@@ -794,11 +815,12 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
           );
 
           // And a reset says the front of the file is not what it was, so the
-          // batch's cursor is the only one that still describes it (AD-4).
+          // batch's cursor is the only one that still describes it (AD-4) — as
+          // long as the session is still where that read began (story 21).
           const reset = sampleIngestBatch({
             idStart: 800,
             only: ['msg-1', 'msg-2', 'msg-3'],
-            tracking: { cursorReset: true },
+            tracking: { cursorReset: true, cursorBase: ahead.tracking.cursor },
           });
           assertOk(await store.ingest(reset), 'the reset ingest failed');
           const moved = await store.readSession(sampleSessionToken);
@@ -807,6 +829,47 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
             moved.session.cursor,
             reset.tracking.cursor,
             'a reset parse must be allowed to move the cursor back',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
+      'two reset batches from one base leave the cursor where the longer read put it',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
+
+          // One read first, so both of the overlapping reads below start from
+          // the cursor it left behind.
+          const first = sampleIngestBatch({ only: ['msg-1'] });
+          assertOk(await store.ingest(first), 'the first ingest failed');
+          const base = first.tracking.cursor;
+
+          // Two hooks that both found the front of the transcript rewritten,
+          // both from that base. The one that read further commits first.
+          const longer = sampleIngestBatch({
+            idStart: 600,
+            tracking: { cursorReset: true, cursorBase: base },
+          });
+          assertOk(await store.ingest(longer), 'the longer reset ingest failed');
+          const shorter = sampleIngestBatch({
+            idStart: 700,
+            only: ['msg-1', 'msg-2'],
+            tracking: { cursorReset: true, cursorBase: base },
+          });
+          assertOk(await store.ingest(shorter), 'the shorter reset ingest failed');
+
+          const after = await store.readSession(sampleSessionToken);
+          assertOk(after, 'the session could not be read after the overlapping resets');
+          // The shorter read's reset is already stale: the session is no longer
+          // where it began, so its answer is the one that must give way, or the
+          // next read would parse a stretch that is already stored.
+          assertEqual(
+            after.session.cursor,
+            longer.tracking.cursor,
+            'an overlapping reset must not wind the cursor back over what the other read stored',
           );
         });
       },
@@ -867,6 +930,58 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
             [...result.warnings],
             ['CURSOR_RESET'],
             'a cursor reset must surface as a warning code, never silently',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
+      'a reset batch with no message warns and clears the cursor',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
+          const stored = sampleIngestBatch();
+          assertOk(await store.ingest(stored), 'the first ingest failed');
+
+          // The transcript was rewritten down to something with no
+          // conversation in it: the parse found the front changed and then
+          // found no message, so it has no cursor to offer either.
+          const empty = sampleIngestBatch({
+            only: [],
+            tracking: {
+              cursorReset: true,
+              cursorBase: stored.tracking.cursor,
+              cursor: null,
+            },
+          });
+          const result = await store.ingest(empty);
+          assertOk(result, 'the empty reset ingest failed');
+          assertEqual(
+            [...result.warnings],
+            ['CURSOR_RESET'],
+            'a reset must warn even when the batch carries no message at all',
+          );
+          assertEqual(
+            result.inserted,
+            { messages: 0, toolNotes: 0 },
+            'a batch with nothing in it must insert nothing',
+          );
+
+          const after = await store.readSession(sampleSessionToken);
+          assertOk(after, 'the session could not be read after the empty reset ingest');
+          // Cleared, and not left pointing at a message of the transcript that
+          // was: a cursor nothing can match again makes every later read start
+          // at the front and warn, for ever (follow-up review #16).
+          assertEqual(
+            after.session.cursor,
+            null,
+            'a reset batch with no cursor must clear the stored one',
+          );
+          assertEqual(
+            after.messages.map((message) => message.harnessMessageId),
+            stored.messages.map((message) => message.harnessMessageId),
+            'an empty batch must leave the stored conversation alone',
           );
         });
       },

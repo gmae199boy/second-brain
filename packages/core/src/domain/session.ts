@@ -41,12 +41,22 @@ export interface Session {
   ingestSource: SessionIngestSource;
   /** Monotonic; best effort, since correctness never waits for session end (AD-6). */
   endedAt: Date | null;
-  /** Monotonic cursor, advanced in the same transaction as the batch (AD-7). */
+  /**
+   * The cursor, advanced in the same transaction as the batch (AD-7).
+   * Monotonic, with one exception: a read that found the front of the
+   * transcript changed may move it back, or clear it, while the session still
+   * stands at the `cursorBase` that read began from (`ports/store.ts`).
+   */
   cursor: ParserCursor | null;
   /** Monotonic. Recorded per session so parser changes stay traceable (AD-4). */
   parserVersion: string | null;
   /** Monotonic. When the data reached the DB, apart from `startedAt` (AD-13). */
   ingestedAt: Date | null;
+  /**
+   * Written once: the first answer any read found, never overwritten. It says
+   * why the session began, and a later `SessionStart` attachment is what
+   * happened to it afterwards (`ports/store.ts`).
+   */
   startSource: SessionStartSource | null;
   /** Reserved: slice 1 never fills it (Table Contract). */
   continuedFromSessionId: string | null;

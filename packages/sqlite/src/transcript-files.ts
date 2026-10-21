@@ -70,15 +70,19 @@ export function sqliteTranscriptFileStore(connect: SqliteConnect): TranscriptFil
         return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       }
 
-      const scannedAt = instant(input.scannedAt, 'transcript_files.scanned_at');
       // Both halves of the cursor or neither: the table's own check says so,
       // because half a cursor is a cursor no parse could start from.
       const cursorId = input.cursor === null ? null : input.cursor.lastHarnessMessageId;
       const cursorFingerprint = input.cursor === null ? null : input.cursor.fingerprint;
 
-      let written;
+      // Everything that can fail is inside the one `try`, the codec of the
+      // instant on the way in and the one on the way out included: this verb is
+      // called by a successful ingest for its own bookkeeping, and a throw out
+      // of here would turn a collected turn into a broken one over a row
+      // nothing depends on (follow-up review #19).
       try {
-        written = await withWrite(opened.connection, async (held) => {
+        const scannedAt = instant(input.scannedAt, 'transcript_files.scanned_at');
+        const written = await withWrite(opened.connection, async (held) => {
           const existing = await readOne(held, input.harness, input.path);
           if (existing === null) {
             await sql`
@@ -113,6 +117,21 @@ export function sqliteTranscriptFileStore(connect: SqliteConnect): TranscriptFil
           `.execute(held);
           return readOne(held, input.harness, input.path);
         });
+        if (!written.ok) return written;
+
+        const row = written.value;
+        if (row === null) {
+          // Not reachable: this transaction holds the only writer, so the
+          // insert either added the row or the lookup above found it. Here
+          // because the read-back is typed as nullable and a silent `undefined`
+          // further on would be worse than a sentence nobody reads.
+          return {
+            ok: false,
+            code: 'DB_UNAVAILABLE',
+            message: '트랜스크립트 내역을 기록한 뒤에도 그 행을 읽을 수 없습니다',
+          };
+        }
+        return { ok: true, file: toTranscriptFile(row) };
       } catch (error) {
         return {
           ok: false,
@@ -120,21 +139,6 @@ export function sqliteTranscriptFileStore(connect: SqliteConnect): TranscriptFil
           message: `트랜스크립트 내역을 기록할 수 없습니다: ${describe(error)}`,
         };
       }
-      if (!written.ok) return written;
-
-      const row = written.value;
-      if (row === null) {
-        // Not reachable: this transaction holds the only writer, so the insert
-        // either added the row or the lookup above found it. Here because the
-        // read-back is typed as nullable and a silent `undefined` further on
-        // would be worse than a sentence nobody reads.
-        return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: '트랜스크립트 내역을 기록한 뒤에도 그 행을 읽을 수 없습니다',
-        };
-      }
-      return { ok: true, file: toTranscriptFile(row) };
     },
   };
 }

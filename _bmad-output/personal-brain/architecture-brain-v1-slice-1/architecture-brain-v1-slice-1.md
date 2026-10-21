@@ -81,7 +81,7 @@ flowchart LR
   - Core의 수집 입력은 `IngestBatch`(세션 키 + 추적 정보 + 메시지 + 도구 메모)다.
   - connector의 **필수 요소는 transcript parser 하나**다. 출력은 (transcript 내용, `parser_version`)의 순수 함수다. parser는 메시지마다 `harness_message_id`와 발화 시각을 transcript 안의 순서대로 낸다. 메시지 번호는 없다(AD-8) — 메시지의 정체는 harness가 준 id이므로 compact·fork로 transcript 앞부분이 바뀌어도 저장된 메시지가 다른 메시지로 바뀌지 않는다.
   - parser는 메인 대화의 메시지만 낸다. 사이드체인(서브에이전트) 대화는 최종 보고 하나만 표시와 함께 낸다. 대화가 아닌 항목과 Harness가 만든 요약은 메시지가 아니다(2026-10-15 epic 2 인셉션).
-  - parser 커서는 (마지막 Harness 메시지 ID, 그 지점까지의 fingerprint)다. 커서 메시지가 사라졌거나(compact·fork) fingerprint가 다르면 처음부터 다시 읽는다. 멱등이므로 중복은 생기지 않고, 경고를 남긴다.
+  - parser 커서는 (마지막 Harness 메시지 ID, 그 지점까지의 fingerprint)다. 커서 메시지가 사라졌거나(compact·fork) fingerprint가 다르면 처음부터 다시 읽는다. 멱등이므로 중복은 생기지 않고, 경고를 남긴다. 그렇게 처음부터 읽은 배치는 세션의 지금 커서가 그 읽기가 시작할 때의 기준(`cursorBase`)과 같을 때만 커서를 뒤로 옮기거나 지울 수 있다 — 겹친 읽기가 남의 전진을 되돌리지 않게(story 21, 2026-10-21).
   - parser 버그로 이미 저장된 메시지는 고치지 않는다(원문 불변 우선). 재수집은 빠진 것만 추가한다. 세션마다 `parser_version`을 기록한다.
   - **hook 입출력**(stdin 해석, `hookSpecificOutput`·`systemMessage`·Stop의 top-level `decision`·`reason` 형식, 세션 환경 변수 쓰기)은 connector adapter가 소유한다. CLI의 `--json` 봉투와는 별개인 세 번째 출력 모드다. hook 출력은 10,000자를 넘지 않는다.
   - hook과 세션 환경 변수는 **선택 요소**다. 없으면 다음 대체 경로로 동작한다.
@@ -414,7 +414,7 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `projects` | `identity_key`(대소문자 비교 키, AD-12) | `sessions.ensure` (find-or-create) | 불변. `remote_identity`는 표시용. `workspace_id`는 예약(slice 1은 쓰지 않음) |
 | `worktrees` | `(project_id, path)` | `sessions.ensure` | `removed_at`만 drain이 채움 |
 | `workspaces` | `name` | 예약(slice 1은 쓰지 않음, 2026-10-15) | — |
-| `sessions` | `(harness, harness_session_id)` | 생성: `sessions.ensure`. 갱신: `sessions.ingest` | 불변: 키, `user_id`(→ `users.id`), `machine`, `started_at`, 꼬리표(비어 있으면 `session_identity` 일감이 한 번 채울 수 있음, AD-12), `ingest_source(live\|import)`. 단조: `ended_at`, 커서(`last_harness_message_id`, fingerprint), `parser_version`, `ingested_at`. 예약: `workspace_id`(slice 1은 쓰지 않음). 변경 가능: `start_source(startup\|resume\|clear\|compact\|fork)`, `continued_from_session_id`(예약, slice 1은 채우지 않음) |
+| `sessions` | `(harness, harness_session_id)` | 생성: `sessions.ensure`. 갱신: `sessions.ingest` | 불변: 키, `user_id`(→ `users.id`), `machine`, `started_at`, 꼬리표(비어 있으면 `session_identity` 일감이 한 번 채울 수 있음, AD-12), `ingest_source(live\|import)`. 단조: `ended_at`, `parser_version`, `ingested_at`, 커서(`last_harness_message_id`, fingerprint) — 단 처음부터 읽은 배치는 기준이 같을 때 뒤로 옮기거나 지울 수 있다(AD-4). 한 번만 씀(처음 값): `start_source(startup\|resume\|clear\|compact\|fork)` — null인 행에만 쓰고 덮어쓰지 않는다. 예약: `workspace_id`(slice 1은 쓰지 않음), `continued_from_session_id`(slice 1은 채우지 않음) |
 | `messages` | `(session_id, harness_message_id)`. 순서는 `occurred_at`(번호 없음) | `sessions.ingest` | 불변(예외: `messages.redact`). `occurred_at`은 원래 발화 시각 |
 | `tool_notes` | `(session_id, harness_message_id, ordinal)` | `sessions.ingest` | 불변 |
 | `log_entries` | `id`(작성 프로세스가 정한 UUIDv7) | 생성: `log.append`. 문장: `log.edit`. 상태·범위: `log.set-state`, `log.set-scope`. `pending→on`: drain·`log.append` | `kind`, `session_id`, `occurred_at`, `author_model` 불변 |

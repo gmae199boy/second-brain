@@ -27,6 +27,12 @@ export type ParseResult =
        * `null` when it did not. A parse that read only the tail of a transcript
        * still answers for the whole content, so the value never depends on the
        * cursor.
+       *
+       * The *first* answer the content carries, not the last. A transcript
+       * collects an attachment per start — a `startup` and then the `resume`
+       * that reopened it, or the `compact` that rewrote it — and the question
+       * this answers is why the session began, which only its first one says
+       * (follow-up review #18).
        */
       startSource: SessionStartSource | null;
     }

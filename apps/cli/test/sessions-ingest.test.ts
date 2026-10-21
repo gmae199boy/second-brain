@@ -357,6 +357,198 @@ async function handbackTranscriptIn(
   return path;
 }
 
+/** The cursor the one stored session holds, both halves of it. */
+function storedCursor(
+  path: string,
+): { last_harness_message_id: string | null; cursor_fingerprint: string | null } {
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    return database
+      .prepare('select last_harness_message_id, cursor_fingerprint from sessions')
+      .get() as { last_harness_message_id: string | null; cursor_fingerprint: string | null };
+  } finally {
+    database.close();
+  }
+}
+
+/** Why the harness started the one stored session, as the row holds it. */
+function startSourceIn(path: string): string | null {
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    return (
+      database.prepare('select start_source from sessions').get() as {
+        start_source: string | null;
+      }
+    ).start_source;
+  } finally {
+    database.close();
+  }
+}
+
+/**
+ * A `started_at` the column's `glob` check accepts and no calendar has, which
+ * is the shape of a row a human edited (follow-up review #19).
+ */
+function setStartedAt(path: string, value: string): void {
+  const database = new DatabaseSync(path);
+  try {
+    database.prepare('update sessions set started_at = ?').run(value);
+  } finally {
+    database.close();
+  }
+}
+
+/** The uuid these hand-written lines use for their nth line. */
+function lineId(serial: number): string {
+  return `00000000-0000-4000-8000-${String(serial).padStart(12, '0')}`;
+}
+
+/** One turn of conversation, in the shape the editor writes one. */
+function userLine(serial: number, body: string, at: string): string {
+  return JSON.stringify({
+    parentUuid: null,
+    isSidechain: false,
+    cwd: '/demo/repo',
+    gitBranch: 'main',
+    uuid: lineId(serial),
+    timestamp: at,
+    type: 'user',
+    message: { role: 'user', content: body },
+  });
+}
+
+/** A `SessionStart` hook attachment, which is where the start source comes from. */
+function startLine(serial: number, source: string, at: string): string {
+  return JSON.stringify({
+    parentUuid: null,
+    isSidechain: false,
+    cwd: '/demo/repo',
+    uuid: lineId(serial),
+    timestamp: at,
+    type: 'attachment',
+    attachment: { type: 'hook_success', hookName: `SessionStart:${source}` },
+  });
+}
+
+/**
+ * The editor handing back the result of an `Agent` call that is still running:
+ * not a message — its only block is a `tool_result` — and the one line of this
+ * transcript that carries an `"agentId"`.
+ */
+function agentStartLine(agentId: string, serial: number, at: string): string {
+  return JSON.stringify({
+    parentUuid: null,
+    isSidechain: false,
+    cwd: '/demo/repo',
+    gitBranch: 'main',
+    uuid: lineId(serial),
+    timestamp: at,
+    type: 'user',
+    toolUseResult: { agentId, status: 'running' },
+    message: {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: `call-${agentId}`, content: 'Started.' }],
+    },
+  });
+}
+
+/** The line the editor writes when a delegated run reports back later. */
+function notificationLine(taskId: string, serial: number, at: string): string {
+  return JSON.stringify({
+    parentUuid: null,
+    isSidechain: false,
+    cwd: '/demo/repo',
+    gitBranch: 'main',
+    uuid: lineId(serial),
+    timestamp: at,
+    type: 'user',
+    origin: { kind: 'task-notification', taskId },
+    message: {
+      role: 'user',
+      content: `<task-notification><task-id>${taskId}</task-id><status>completed</status><result>The checks passed.</result></task-notification>`,
+    },
+  });
+}
+
+/**
+ * How many task-notification lines `hugeTranscript` puts behind the cursor.
+ *
+ * Enough that the rule before this story goes over the budget rather than near
+ * it: a copy of the prefix searched once per line costs about 1.2 ms of the
+ * 30 MB each, so six thousand of them spend some seven seconds where the one
+ * set this read collects spends about 150 ms. A fixture that only *touched* the
+ * path would pass either way and guard nothing (attempt 1, review #4).
+ */
+const HUGE_NOTIFICATIONS = 6000;
+
+/**
+ * A transcript of about 30 MB, which is the size of the largest one on the
+ * machine the follow-up review measured (#20).
+ *
+ * The size is in tool results, because that is where it comes from in a real
+ * session — a `tool_result` block is not a message and not a tool note, so the
+ * file is thirty megabytes the parser reads and three rows it stores.
+ *
+ * The shape behind that size is what makes it a measurement of #20 rather than
+ * of the disk. Two things:
+ *
+ *   * the last *message* is the `That is all of them.` turn, which has the
+ *     whole 30 MB in front of it and thousands of lines behind it. The cursor
+ *     names that line, so an incremental read starts there and still has to
+ *     answer every question about the stretch it is not reading;
+ *   * behind that line sit thousands of `task-notification` lines naming runs
+ *     this session never started. Each one asks "is this an agent of mine?",
+ *     which is a question about that whole 30 MB prefix and is answered `no`
+ *     only by looking at all of it. Asked once per line against a fresh copy of
+ *     the prefix — the rule before this story — it is the squared cost of #20;
+ *     asked against one set the read collects once, it is one scan. The `Agent`
+ *     call near the front is there so the scan has something real to find, and
+ *     the notification in front of the cursor is the same question answered
+ *     `yes`, so a fixture that stopped answering it at all would show up as a
+ *     missing row rather than as a faster run.
+ */
+function hugeTranscript(): string {
+  const chunk = 'x'.repeat(1_000_000);
+  const lines = [
+    startLine(0, 'startup', '2026-02-03T10:00:00.000Z'),
+    userLine(1, 'Index every file under notes/.', '2026-02-03T10:00:01.000Z'),
+    agentStartLine('agent-f1', 3, '2026-02-03T10:00:01.500Z'),
+  ];
+  for (let serial = 0; serial < 30; serial += 1) {
+    lines.push(
+      JSON.stringify({
+        parentUuid: null,
+        isSidechain: false,
+        cwd: '/demo/repo',
+        gitBranch: 'main',
+        uuid: lineId(100 + serial),
+        timestamp: '2026-02-03T10:00:02.000Z',
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: `call-${String(serial)}`, content: chunk },
+          ],
+        },
+      }),
+    );
+  }
+  // The run this session did start, reporting back: a message, and the one
+  // place the prefix scan has to answer `yes`.
+  lines.push(notificationLine('agent-f1', 4, '2026-02-03T10:00:20.000Z'));
+  lines.push(userLine(2, 'That is all of them.', '2026-02-03T10:00:30.000Z'));
+  for (let serial = 0; serial < HUGE_NOTIFICATIONS; serial += 1) {
+    lines.push(
+      notificationLine(
+        `agent-elsewhere-${String(serial)}`,
+        500 + serial,
+        '2026-02-03T10:00:31.000Z',
+      ),
+    );
+  }
+  return `${lines.join('\n')}\n`;
+}
+
 /** The session fixture in this test's own folder, whole or only its front. */
 async function sessionTranscriptIn(home: string, lines?: number): Promise<string> {
   const path = join(home, 'session.jsonl');
@@ -747,15 +939,217 @@ describe('brain sessions ingest claude-code on a whole session', () => {
           .prepare(`select count(*) as rows from messages where body like '%read every file%'`)
           .get(),
       ).toEqual({ rows: 0 });
-      // And the session learned why the harness started it, from the last
-      // `SessionStart` attachment in the file.
+      // And the session learned why the harness started it, from the *first*
+      // `SessionStart` attachment in the file: the `compact` further down is
+      // what happened to the session afterwards, not why it began (follow-up
+      // review #18).
       expect(database.prepare('select start_source from sessions').get()).toEqual({
-        start_source: 'compact',
+        start_source: 'startup',
       });
     } finally {
       database.close();
     }
   });
+
+  it('warns once when the transcript is rewritten down to nothing, then stops', async () => {
+    const home = await installedHome();
+    const transcript = await sessionTranscriptIn(home);
+    const payload = stopPayload(transcript);
+    expect(
+      (await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code,
+    ).toBe(0);
+    const before = storedMessages(databaseIn(home));
+    expect(before.length).toBeGreaterThan(0);
+
+    // The same path, with no conversation in it any more. The cursor cannot be
+    // found, so the parse resets — and then it finds no message, which is the
+    // read that used to end before either the warning or the stale cursor was
+    // dealt with (follow-up review #16).
+    await writeFile(transcript, '{"type":"mode","mode":"normal","sessionId":"s"}\n', 'utf8');
+    const reset = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      payload,
+    );
+
+    expect(reset.stderr).toBe('');
+    expect(reset.code).toBe(0);
+    const warned = JSON.parse(reset.stdout) as Envelope;
+    expect(warned.ok).toBe(true);
+    expect(warned.warnings).toEqual(['CURSOR_RESET']);
+    expect(warned.data).toMatchObject({
+      created: false,
+      inserted: { messages: 0, toolNotes: 0 },
+    });
+    // Nothing stored moved, and the cursor is gone rather than left naming a
+    // message of the file that was.
+    expect(storedMessages(databaseIn(home))).toEqual(before);
+    expect(storedCursor(databaseIn(home))).toEqual({
+      last_harness_message_id: null,
+      cursor_fingerprint: null,
+    });
+
+    // And the same read again is no longer a reset: there is no cursor left
+    // for it to fail to match, so the warning is raised once and not for ever.
+    const quiet = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      payload,
+    );
+    expect(quiet.code).toBe(0);
+    expect((JSON.parse(quiet.stdout) as Envelope).warnings).toEqual([]);
+  });
+
+  it('keeps the start source it learned first, whatever a later read sees', async () => {
+    const home = await installedHome();
+    const transcript = join(home, 'restart.jsonl');
+    const payload = stopPayload(transcript);
+
+    // A session whose first read saw no `SessionStart` attachment at all: a
+    // transcript from before the plugin was installed, or a session nobody
+    // hooked. It knows nothing about the start and says so.
+    await writeFile(
+      transcript,
+      `${userLine(1, 'Where did we leave the import notes?', '2026-02-03T10:00:01.000Z')}\n`,
+      'utf8',
+    );
+    expect(
+      (await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code,
+    ).toBe(0);
+    expect(startSourceIn(databaseIn(home))).toBeNull();
+
+    // Reopened: the editor's attachment lands in the same file, behind what is
+    // already stored, so the session learns why it was started after the fact.
+    await appendFile(
+      transcript,
+      `${startLine(2, 'resume', '2026-02-03T10:05:00.000Z')}\n${userLine(
+        3,
+        'Carry on where we stopped.',
+        '2026-02-03T10:05:01.000Z',
+      )}\n`,
+      'utf8',
+    );
+    const second = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      payload,
+    );
+    expect(second.code).toBe(0);
+    expect((JSON.parse(second.stdout) as Envelope).warnings).toEqual([]);
+    expect(startSourceIn(databaseIn(home))).toBe('resume');
+
+    // And then the front of the file is rewritten with a `startup` in front of
+    // it, which is what a fork into the same path looks like. The read answers
+    // `startup` — it is the first attachment the content now carries — and the
+    // stored `resume` is still the one that says why this session began.
+    await writeFile(
+      transcript,
+      `${startLine(4, 'startup', '2026-02-03T10:00:00.000Z')}\n${userLine(
+        5,
+        'Where were we?',
+        '2026-02-03T10:10:00.000Z',
+      )}\n`,
+      'utf8',
+    );
+    const third = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      payload,
+    );
+    expect(third.code).toBe(0);
+    expect((JSON.parse(third.stdout) as Envelope).warnings).toEqual(['CURSOR_RESET']);
+    expect(startSourceIn(databaseIn(home))).toBe('resume');
+  });
+
+  it('ends with a code and no stack when a session row holds an impossible instant', async () => {
+    const home = await installedHome();
+    const transcript = await sessionTranscriptIn(home);
+    const payload = stopPayload(transcript);
+    expect(
+      (await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code,
+    ).toBe(0);
+
+    // A row a human edited. The column's own `glob` check is happy with it —
+    // four digits, two, two — and there is no such date, so the row is only
+    // wrong on the way back out (follow-up review #19).
+    setStartedAt(databaseIn(home), '2026-13-45T00:00:00.000Z');
+
+    const run = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      payload,
+    );
+
+    // A coded answer and not a stack: from the hook's side a row it cannot read
+    // is a database it cannot reach, so the turn goes to the spool (AD-9).
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.warnings).toEqual(['SPOOLED', 'DB_UNAVAILABLE']);
+    expect(envelope.data).toMatchObject({ spooled: true });
+  });
+
+  it(
+    'reads a 30 MB transcript again inside the Stop hook budget',
+    async () => {
+      const home = await installedHome();
+      const transcript = join(home, 'huge.jsonl');
+      await writeFile(transcript, hugeTranscript(), 'utf8');
+      const payload = stopPayload(transcript);
+
+      // The first read is the one that pays for the whole file, and nothing
+      // budgets it: it happens once per session, off the hook path as often as
+      // not. What a Stop hook does every turn is the second one.
+      const first = await runBrain(
+        ['sessions', 'ingest', 'claude-code', '--json'],
+        home,
+        payload,
+      );
+      expect(first.stderr).toBe('');
+      expect(first.code).toBe(0);
+      // Three: the two turns and the one report of a run this session started.
+      // The `HUGE_NOTIFICATIONS` notifications about runs it did not start
+      // are the question, not the answer, and none of them is a row.
+      expect((JSON.parse(first.stdout) as Envelope).data).toMatchObject({
+        created: true,
+        inserted: { messages: 3, toolNotes: 0 },
+      });
+      expect(storedMessages(databaseIn(home)).map((message) => message.body)).toEqual([
+        'Index every file under notes/.',
+        'The checks passed.',
+        'That is all of them.',
+      ]);
+
+      await appendFile(
+        transcript,
+        `${userLine(9, 'And now the summary.', '2026-02-03T11:00:00.000Z')}\n`,
+        'utf8',
+      );
+      const started = performance.now();
+      const again = await runBrain(
+        ['sessions', 'ingest', 'claude-code', '--json'],
+        home,
+        payload,
+      );
+      const spent = performance.now() - started;
+
+      expect(again.stderr).toBe('');
+      expect(again.code).toBe(0);
+      expect((JSON.parse(again.stdout) as Envelope).data).toMatchObject({
+        created: false,
+        inserted: { messages: 1, toolNotes: 0 },
+      });
+      // The whole command, because that is what the hook waits for: the
+      // process, the file, the parse and the write. The budget is the Stop
+      // hook's five seconds (AD-6).
+      expect(
+        spent,
+        `the second ingest of a 30 MB transcript took ${String(Math.round(spent))}ms`,
+      ).toBeLessThan(5000);
+    },
+    120_000,
+  );
 });
 
 /**

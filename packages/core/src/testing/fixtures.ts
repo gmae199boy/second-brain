@@ -337,6 +337,10 @@ export function sampleIngestBatch(
       parserVersion: parsed.parserVersion,
       cursor,
       cursorReset: parsed.cursorReset,
+      // Where the session stood when this read began. `null` is the honest
+      // default for a fixture: the sample batch is what a first read produces,
+      // and a case about an overlapping reset says what its base was itself.
+      cursorBase: null,
       startSource: parsed.startSource,
       endedAt: null,
       ingestedAt,
