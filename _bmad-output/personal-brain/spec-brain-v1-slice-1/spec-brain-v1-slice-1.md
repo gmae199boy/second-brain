@@ -81,7 +81,7 @@ sources: []
 - 프롬프트마다 맥락을 밀어 넣는 것
 - 규칙을 Harness 지시 파일(CLAUDE.md 등)에 복사하는 것
 - slice 1에서의 팀 공유·다중 사용자, Claude Code 외 Harness 수집, 과거 세션 가져오기(설치 때 디스크에 남은 Claude Code transcript를 한 번 가져오는 것은 범위 안, 2026-10-15), 두 번째 기계. MCP·데몬은 slice 1 밖이지만 epic 9로 계획한다(2026-10-15)
-- Harness 원본 transcript와 도구 출력 보관(서브에이전트의 최종 보고 하나는 그 세션의 메시지로 남긴다, 2026-10-15)
+- Harness 원본 transcript와 도구 출력 보관(서브에이전트의 대화와 보고도 남기지 않는다, 2026-10-21. 서브에이전트를 부른 일은 도구 메모로 남는다)
 
 ## Success signal
 

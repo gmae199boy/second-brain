@@ -80,7 +80,7 @@ flowchart LR
 - **Rule:**
   - Core의 수집 입력은 `IngestBatch`(세션 키 + 추적 정보 + 메시지 + 도구 메모)다.
   - connector의 **필수 요소는 transcript parser 하나**다. 출력은 (transcript 내용, `parser_version`)의 순수 함수다. parser는 메시지마다 `harness_message_id`와 발화 시각을 transcript 안의 순서대로 낸다. 메시지 번호는 없다(AD-8) — 메시지의 정체는 harness가 준 id이므로 compact·fork로 transcript 앞부분이 바뀌어도 저장된 메시지가 다른 메시지로 바뀌지 않는다.
-  - parser는 메인 대화의 메시지만 낸다. 사이드체인(서브에이전트) 대화는 최종 보고 하나만 표시와 함께 낸다. 대화가 아닌 항목과 Harness가 만든 요약은 메시지가 아니다(2026-10-15 epic 2 인셉션).
+  - parser는 메인 대화의 메시지만 낸다. 사이드체인(서브에이전트) 대화와 서브에이전트의 보고는 내지 않는다(2026-10-15에는 최종 보고 하나를 냈으나 2026-10-21 사용자 결정으로 뺌, epic-capture Notes). 서브에이전트를 부른 일은 도구 메모로 남는다. 대화가 아닌 항목과 Harness가 만든 요약은 메시지가 아니다(2026-10-15 epic 2 인셉션).
   - parser 커서는 (마지막 Harness 메시지 ID, 그 지점까지의 fingerprint)다. 커서 메시지가 사라졌거나(compact·fork) fingerprint가 다르면 처음부터 다시 읽는다. 멱등이므로 중복은 생기지 않고, 경고를 남긴다. 그렇게 처음부터 읽은 배치는 세션의 지금 커서가 그 읽기가 시작할 때의 기준(`cursorBase`)과 같을 때만 커서를 뒤로 옮기거나 지울 수 있다 — 겹친 읽기가 남의 전진을 되돌리지 않게(story 21, 2026-10-21).
   - parser 버그로 이미 저장된 메시지는 고치지 않는다(원문 불변 우선). 재수집은 빠진 것만 추가한다. 세션마다 `parser_version`을 기록한다.
   - **hook 입출력**(stdin 해석, `hookSpecificOutput`·`systemMessage`·Stop의 top-level `decision`·`reason` 형식, 세션 환경 변수 쓰기)은 connector adapter가 소유한다. CLI의 `--json` 봉투와는 별개인 세 번째 출력 모드다. hook 출력은 10,000자를 넘지 않는다.
