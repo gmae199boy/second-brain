@@ -54,6 +54,16 @@ export interface SessionsIngestData {
   /** Whether this call is the one that created the session row. */
   created: boolean;
   inserted: IngestCounts;
+  /**
+   * How many lines of the transcript the parser walked past, by reason, or
+   * `null` for a turn that went to the spool and so parsed nothing.
+   *
+   * It is `data` and not `meta`: a caller reading this is asking what was
+   * collected, and "how much of the file was not" is part of that answer —
+   * `unreadable`, the one reason that is a problem, also raises
+   * `TRANSCRIPT_LINES_SKIPPED`.
+   */
+  droppedLines: Readonly<Record<string, number>> | null;
 }
 
 export function sessionsIngestCommand(
@@ -69,7 +79,7 @@ export function sessionsIngestCommand(
     required: ['harness', 'stdin'],
     examples: ['brain sessions ingest claude-code'],
     output:
-      '세션 토큰 `session`, 데이터베이스 대신 spool로 갔는지인 `spooled`, 그 세션을 이 호출이 만들었는지인 `created`, 넣은 건수 `inserted`(메시지 `messages`, 도구 메모 `toolNotes`). 본문과 도구 메모 대상은 원문 그대로 저장하고, 비밀은 나갈 때 가립니다. 페이로드에 `transcript_path`가 없으면 그 하네스의 트랜스크립트 폴더에서 `session_id`로 찾습니다',
+      '세션 토큰 `session`, 데이터베이스 대신 spool로 갔는지인 `spooled`, 그 세션을 이 호출이 만들었는지인 `created`, 넣은 건수 `inserted`(메시지 `messages`, 도구 메모 `toolNotes`), 파서가 메시지로 두지 않은 줄 수를 이유별로 담은 `droppedLines`(spool로 갔으면 `null`). 트랜스크립트는 대부분 대화가 아니므로 `droppedLines`는 정상입니다. 읽을 수 없던 줄인 `droppedLines.unreadable`만 `TRANSCRIPT_LINES_SKIPPED` 경고를 함께 냅니다. 본문과 도구 메모 대상은 원문 그대로 저장하고, 비밀은 나갈 때 가립니다. 페이로드에 `transcript_path`가 없으면 그 하네스의 트랜스크립트 폴더에서 `session_id`로 찾습니다',
     risk: 'write',
     hook: true,
     dryRun: false,
@@ -126,6 +136,7 @@ function answer(result: Extract<IngestSessionResult, { ok: true }>): {
       spooled: result.spooled,
       created: result.created,
       inserted: result.inserted,
+      droppedLines: result.droppedLines,
     },
     warnings: result.warnings,
     // Nothing on stdout: this runs after every turn, and a brain that printed

@@ -146,10 +146,23 @@ export function parserContract(): ContractCase<ParserSubject>[] {
             const messageIds = new Set(
               result.messages.map((message) => message.harnessMessageId),
             );
+            const firstId = result.messages[0]?.harnessMessageId;
             const seen = new Set<string>();
+            const callIds = new Set<string>();
             for (const note of result.toolNotes) {
               assertInteger(note.ordinal, 'a tool note ordinal must be an integer');
-              assertTrue(note.ordinal >= 0, 'a tool note ordinal must not be negative');
+              // A negative ordinal means "a call made in front of this
+              // message's own line", and only the first message of the content
+              // can have anything in front of it. Anywhere else it would be a
+              // position two notes could collide on
+              // (`domain/ingest-batch.ts`, story 23).
+              if (note.ordinal < 0) {
+                assertEqual(
+                  note.harnessMessageId,
+                  firstId,
+                  'only the first message of the content may carry a negative-ordinal note',
+                );
+              }
               const key = `${note.harnessMessageId}#${String(note.ordinal)}`;
               assertTrue(!seen.has(key), `two tool notes share (message, ordinal) ${key}`);
               seen.add(key);
@@ -158,6 +171,26 @@ export function parserContract(): ContractCase<ParserSubject>[] {
                 `tool note ${key} points at a message the batch does not carry`,
               );
               assertNonEmptyString(note.tool, 'a tool note must name the tool');
+              // The call id is what a store recognises the same call by across
+              // parser versions, so two notes of one parse must not share one.
+              if (note.callId !== null) {
+                assertNonEmptyString(note.callId, 'a tool note call id must not be empty');
+                assertTrue(
+                  !callIds.has(note.callId),
+                  `two tool notes of one parse share the call id ${note.callId}`,
+                );
+                callIds.add(note.callId);
+              }
+              for (const earlier of note.earlierPositions) {
+                assertNonEmptyString(
+                  earlier.harnessMessageId,
+                  'an earlier position must name a message',
+                );
+                assertInteger(
+                  earlier.ordinal,
+                  'an earlier position ordinal must be an integer',
+                );
+              }
             }
           }
         });
@@ -220,6 +253,36 @@ export function parserContract(): ContractCase<ParserSubject>[] {
               result.parserVersion,
               parser.version,
               'the result must carry the version of the parser that produced it',
+            );
+          }
+        });
+      },
+    ),
+
+    contractCase<ParserSubject>(
+      'the dropped-line counts are non-negative integers under their own reasons',
+      async (make) => {
+        await withSubject(make, async ({ parser, readable, grown }) => {
+          const contents = [...readable, ...grown.map((pair) => pair.after)];
+          for (const content of contents) {
+            const result = parser.parse(content);
+            assertOk(result, 'a readable transcript did not parse');
+            for (const [reason, count] of Object.entries(result.droppedLines)) {
+              // A reason is a code, not a sentence: it goes into an envelope
+              // and a person reads it there (`ports/parser.ts`).
+              assertTrue(
+                /^[a-z][a-z0-9_]*$/u.test(reason),
+                `a dropped-line reason must be snake_case, got ${reason}`,
+              );
+              assertInteger(count, `the count of ${reason} must be an integer`);
+              assertTrue(count >= 0, `the count of ${reason} must not be negative`);
+            }
+            // The one reason Core reads has to be there whatever the file said,
+            // because `sessions.ingest` turns it into a warning and a missing
+            // key would read as "nothing was skipped" either way.
+            assertTrue(
+              Object.hasOwn(result.droppedLines, 'unreadable'),
+              'a parser must report the reserved `unreadable` count, zero included',
             );
           }
         });
@@ -303,7 +366,16 @@ export function parserContract(): ContractCase<ParserSubject>[] {
             );
             assertEqual(
               incremental.toolNotes,
-              whole.toolNotes.filter((note) => ids.has(note.harnessMessageId)),
+              whole.toolNotes.filter(
+                (note) =>
+                  ids.has(note.harnessMessageId) &&
+                  // Except the calls in *front* of the cursor's own message:
+                  // an incremental read starts at that message's line, so the
+                  // lines before it are not read again — and their notes are
+                  // already stored from the read that produced the cursor
+                  // (story 23, Design Notes).
+                  !(note.harnessMessageId === cursor.lastHarnessMessageId && note.ordinal < 0),
+              ),
               'an incremental read must report the notes of the messages it carried',
             );
             assertEqual(

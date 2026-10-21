@@ -39,6 +39,13 @@ export const WARNING_CODES = [
   /** The parser read a transcript from the start because the cursor was lost. */
   'CURSOR_RESET',
   /**
+   * Part of the transcript was not readable, so those lines were skipped and
+   * the rest was collected. A broken line in the middle of a file must not cost
+   * a session its conversation, but it is never silent either: how many such
+   * lines there were is `data.droppedLines.unreadable` (story 23, NFR-2).
+   */
+  'TRANSCRIPT_LINES_SKIPPED',
+  /**
    * The configuration file holds a key this version does not know. It is never
    * dropped in silence: the command runs and says which key it ignored (AD-18).
    */
@@ -91,6 +98,8 @@ export const WARNING_CODE_MEANINGS: Readonly<Record<WarningCode, string>> = {
   RESULT_TRUNCATED: '결과가 크기 한도에 맞춰 잘렸습니다',
   RULE_UNVERIFIED: '규칙이 확인되지 않은 채 포함되었습니다',
   CURSOR_RESET: '커서를 잃어서 파서가 트랜스크립트를 처음부터 읽었습니다',
+  TRANSCRIPT_LINES_SKIPPED:
+    '트랜스크립트의 일부 줄을 읽을 수 없어서 건너뛰고 나머지를 수집했습니다',
   CONFIG_UNKNOWN_KEY: '설정 파일에 이 버전이 모르는 키가 있고, 어떤 키를 무시했는지 말합니다',
   CONFIG_VALUE_RESET: '설정 값 하나를 쓸 수 없어서 그 키만 기본값으로 다시 썼습니다',
   ATTACHMENT_NOT_REDACTED: '첨부가 받아야 할 마스킹 없이 저장되었습니다',

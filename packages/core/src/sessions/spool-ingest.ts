@@ -41,18 +41,38 @@ export interface SpoolSessionIngestDependencies {
 }
 
 /**
+ * What the transcript read had already found by the time the write was refused,
+ * for a mark written *after* the parse (`sessions/ingest.ts`).
+ *
+ * A lock is discovered in the middle of the use case, and by then the file has
+ * been read: what the parse walked past is a fact about the transcript and not
+ * about where the write went, so it is reported either way, and a line it could
+ * not read at all still has to raise its warning. Left out for the one spool
+ * that happens before any parse, where there is nothing to report.
+ */
+export interface SpoolSessionIngestRead {
+  /** How many lines the parse walked past, by reason (`ports/parser.ts`). */
+  droppedLines: Readonly<Record<string, number>>;
+  /** The warnings that read raised, which go behind the spool's own. */
+  warnings: readonly WarningCode[];
+}
+
+/**
  * Write the mark and answer as a degraded success, or — when even the spool
  * could not take it — as the failure of whatever sent us here.
  *
  * `warnings` always carries `SPOOLED`, and the cause too when the cause is one
  * of the shared warning codes: "the write is in the spool" and "the database
  * was unreachable" are two different facts and a reader needs both (NFR-2).
- * `DB_LOCKED` is not a warning code, so a lock leaves `SPOOLED` alone.
+ * `DB_LOCKED` is not a warning code, so a lock leaves `SPOOLED` alone. A read
+ * that had already happened adds its own warnings behind those, without
+ * repeating one (`SpoolSessionIngestRead`).
  */
 export async function spoolSessionIngest(
   dependencies: SpoolSessionIngestDependencies,
   input: IngestSessionInput,
   cause: SpoolCause,
+  read: SpoolSessionIngestRead | null = null,
 ): Promise<IngestSessionResult> {
   const { spool, clock, idGen } = dependencies;
 
@@ -91,8 +111,27 @@ export async function spoolSessionIngest(
     // reached the database, and `spooled` says where the write went instead.
     created: false,
     inserted: { messages: 0, toolNotes: 0 },
-    warnings: warningsFor(cause),
+    // What the parse found, when there was one. `null` is "this read never
+    // happened" — the spool that beat the parse to it — where an empty record
+    // would read as "the whole file was conversation" (`sessions/ingest.ts`).
+    droppedLines: read?.droppedLines ?? null,
+    warnings: warningsOf(cause, read),
   };
+}
+
+/**
+ * The spool's own warnings first, then the read's, and neither twice: where the
+ * write went is this function's news, and what the file looked like is the
+ * read's (NFR-2).
+ */
+function warningsOf(
+  cause: SpoolCause,
+  read: SpoolSessionIngestRead | null,
+): readonly WarningCode[] {
+  const spooled = warningsFor(cause);
+  if (read === null) return spooled;
+  const already = new Set<string>(spooled);
+  return [...spooled, ...read.warnings.filter((code) => !already.has(code))];
 }
 
 function warningsFor(cause: SpoolCause): readonly WarningCode[] {

@@ -147,6 +147,7 @@ export {
 export {
   spoolSessionIngest,
   type SpoolSessionIngestDependencies,
+  type SpoolSessionIngestRead,
 } from './sessions/spool-ingest.js';
 export {
   SPOOL_REPLAY_FAILED,

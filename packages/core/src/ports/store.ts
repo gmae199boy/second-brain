@@ -119,7 +119,7 @@ export interface EnsureSessionInput {
   /**
    * The project and worktree to tag a *new* session with, or `null` for a
    * session whose cwd said nothing. Computed once by the caller from the cwd
-   * of the first message that carries one — a hand-back report carries none —
+   * of the first message that carries one, since a line may carry none —
    * and never again: a session that is already there keeps the tags it was
    * created with, whatever this call carries (AD-12).
    */

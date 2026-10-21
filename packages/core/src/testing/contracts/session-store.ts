@@ -1,4 +1,8 @@
-import type { IngestBatch } from '../../domain/ingest-batch.js';
+import type {
+  IngestBatch,
+  IngestToolNote,
+  ToolNotePosition,
+} from '../../domain/ingest-batch.js';
 import type { Message } from '../../domain/message.js';
 import type { Session } from '../../domain/session.js';
 import type { SessionStore, UserStore } from '../../ports/store.js';
@@ -988,6 +992,143 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
     ),
 
     contractCase<SessionStoreSubject>(
+      'a call the session already holds is not stored at a second position',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
+          assertOk(
+            await store.ingest(
+              oneNote(sampleIngestBatch(), {
+                id: firstNoteId,
+                harnessMessageId: 'msg-2',
+                ordinal: 0,
+                callId: 'call-x',
+              }),
+            ),
+            'the first ingest failed',
+          );
+
+          // The same call, at the position a *newer* parser version puts it.
+          // Two rows for one call would be two notes nobody can tell apart,
+          // and a note cannot be taken back (AD-11, #9).
+          const again = await store.ingest(
+            oneNote(sampleIngestBatch({ idStart: 50 }), {
+              id: secondNoteId,
+              harnessMessageId: 'msg-3',
+              ordinal: 0,
+              callId: 'call-x',
+            }),
+          );
+          assertOk(again, 'the second ingest failed');
+          assertEqual(
+            again.inserted.toolNotes,
+            0,
+            'a call the session already holds must not be stored again',
+          );
+
+          const read = await store.readSession(sampleSessionToken);
+          assertOk(read, 'the session could not be read');
+          assertEqual(
+            read.toolNotes.map((note) => [note.id, note.harnessMessageId, note.ordinal]),
+            [[firstNoteId, 'msg-2', 0]],
+            'the row the first ingest wrote must be the only one, where it was',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
+      'a note at a position an older version used is recognised by that position',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
+          // A row with no call id, which is what a parser version that named
+          // its calls nothing left behind.
+          assertOk(
+            await store.ingest(
+              oneNote(sampleIngestBatch(), {
+                id: firstNoteId,
+                harnessMessageId: 'msg-2',
+                ordinal: 0,
+                callId: null,
+              }),
+            ),
+            'the first ingest failed',
+          );
+
+          const again = await store.ingest(
+            oneNote(sampleIngestBatch({ idStart: 50 }), {
+              id: secondNoteId,
+              harnessMessageId: 'msg-3',
+              ordinal: 0,
+              callId: 'call-x',
+              earlierPositions: [{ harnessMessageId: 'msg-2', ordinal: 0 }],
+            }),
+          );
+          assertOk(again, 'the second ingest failed');
+          assertEqual(
+            again.inserted.toolNotes,
+            0,
+            'a row with no call id at a named earlier position is the same call',
+          );
+
+          const read = await store.readSession(sampleSessionToken);
+          assertOk(read, 'the session could not be read');
+          assertEqual(
+            read.toolNotes.map((note) => note.id),
+            [firstNoteId],
+            'the row with no call id must be left exactly as it was',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
+      'a note whose earlier positions name no stored row is a new call',
+      async (make) => {
+        await withSubject(make, async (store) => {
+          await owner(store);
+          assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensureSession failed');
+          assertOk(
+            await store.ingest(
+              oneNote(sampleIngestBatch(), {
+                id: firstNoteId,
+                harnessMessageId: 'msg-2',
+                ordinal: 0,
+                callId: null,
+              }),
+            ),
+            'the first ingest failed',
+          );
+
+          // A different position, and nothing claims the stored row is this
+          // call: the list is a superset on purpose, and a position nobody
+          // named is simply not matched (`domain/ingest-batch.ts`).
+          const again = await store.ingest(
+            oneNote(sampleIngestBatch({ idStart: 50 }), {
+              id: secondNoteId,
+              harnessMessageId: 'msg-3',
+              ordinal: 0,
+              callId: 'call-y',
+            }),
+          );
+          assertOk(again, 'the second ingest failed');
+          assertEqual(again.inserted.toolNotes, 1, 'a new call must be stored');
+
+          const read = await store.readSession(sampleSessionToken);
+          assertOk(read, 'the session could not be read');
+          assertEqual(
+            read.toolNotes.map((note) => note.id).slice().sort(),
+            [firstNoteId, secondNoteId].slice().sort(),
+            'both calls must be stored, each at its own position',
+          );
+        });
+      },
+    ),
+
+    contractCase<SessionStoreSubject>(
       'ingest reports an unknown session as a value',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -1024,6 +1165,40 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
 }
 
 /**
+ * Two note ids outside the range `sampleIngestBatch` mints from, so a case can
+ * name the row a particular ingest wrote.
+ */
+const firstNoteId = '01940000-0000-7000-8000-0000000009f2';
+const secondNoteId = '01940000-0000-7000-8000-0000000009f3';
+
+/**
+ * The batch with one tool note and nothing else, for the three cases about how
+ * a store recognises the same call across parser versions (#9).
+ */
+function oneNote(
+  batch: IngestBatch,
+  note: {
+    id: string;
+    harnessMessageId: string;
+    ordinal: number;
+    callId: string | null;
+    earlierPositions?: readonly ToolNotePosition[];
+  },
+): IngestBatch {
+  const only: IngestToolNote = {
+    id: note.id,
+    harnessMessageId: note.harnessMessageId,
+    ordinal: note.ordinal,
+    tool: 'read',
+    target: 'notes/import.md',
+    ok: true,
+    callId: note.callId,
+    earlierPositions: note.earlierPositions ?? [],
+  };
+  return { ...batch, toolNotes: [only] };
+}
+
+/**
  * A tool note on msg-3, which the "uttered in the middle" case seeds before the
  * message that was uttered *before* it arrives. The fixture transcript puts its
  * only tool calls on msg-2, so without this the note order would have nothing
@@ -1036,6 +1211,10 @@ const middleToolNote = {
   tool: 'read',
   target: 'notes/import.md',
   ok: true,
+  // A harness that names its calls nothing, which is the `null` case every
+  // store has to handle: the note is then recognised by its position alone.
+  callId: null,
+  earlierPositions: [],
 };
 
 /**

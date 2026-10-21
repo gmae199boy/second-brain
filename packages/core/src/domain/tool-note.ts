@@ -1,6 +1,11 @@
 /**
- * The first line of a tool note's target, cut to this many UTF-16 units by the
- * connector's parser before Core ever sees it.
+ * The first line of a tool note's target, cut to *at most* this many UTF-16
+ * units by the connector's parser before Core ever sees it.
+ *
+ * At most, and not exactly: a connector cuts on a character boundary, so a
+ * target whose limit fell between the two halves of one code point comes out
+ * one unit shorter. That is why the masking asks `>= LIMIT - 1` rather than
+ * `=== LIMIT` (`output/mask.ts`, story 23).
  *
  * It lives here rather than in the connector because the cut is what makes the
  * truncated-tail rule necessary: a key that straddles the limit is stored as

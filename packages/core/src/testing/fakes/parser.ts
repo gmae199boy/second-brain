@@ -127,6 +127,13 @@ export function memoryParser(options: MemoryParserOptions = {}): Parser {
             tool,
             target,
             ok: callRecord['ok'] !== false,
+            // This format names its calls nothing, which is the `null` case the
+            // store has to handle: a note is then recognised by its position
+            // alone (`domain/ingest-batch.ts`).
+            callId: asString(callRecord['callId']) ?? null,
+            // Nothing here ever moves a note: this parser has only one version,
+            // so no position of it has ever been anything else.
+            earlierPositions: [],
           });
         }
       }
@@ -155,6 +162,10 @@ export function memoryParser(options: MemoryParserOptions = {}): Parser {
         // Answered from the whole content, never from the part that was read,
         // so a cursor cannot change it (port contract).
         startSource: asStartSource(raw['startSource']),
+        // This format carries nothing that is not a message, so the one reason
+        // Core reads is reported as the zero it always is: the keys of this
+        // record do not change from transcript to transcript (port contract).
+        droppedLines: { unreadable: 0 },
       };
     },
   };

@@ -284,18 +284,63 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
           // AD-11). The only writer of that table is `messages.redact`.
         }
 
+        // Read once, before any insert, the way the messages above are: which
+        // calls this session already holds, by the harness's own id for the
+        // call and by position. A query per note would be a round trip per
+        // call on a transcript that can carry thousands (#20).
+        const heldNotes = await sql<{
+          harness_message_id: string;
+          ordinal: number;
+          call_id: string | null;
+        }>`
+          select harness_message_id, ordinal, call_id
+            from tool_notes where session_id = ${session.id}
+        `.execute(held);
+        /** The call ids this session already has a row for. */
+        const heldCalls = new Set(
+          heldNotes.rows
+            .map((row) => row.call_id)
+            .filter((callId): callId is string => callId !== null),
+        );
+        /** The positions it holds a row with *no* call id at. */
+        const heldPlaces = new Set(
+          heldNotes.rows
+            .filter((row) => row.call_id === null)
+            .map((row) => place(row.harness_message_id, row.ordinal)),
+        );
+
         let insertedToolNotes = 0;
         for (const note of batch.toolNotes) {
+          // Already here, and the insert is not even attempted: the same call
+          // under its own id wherever it sits, or a row an older parser version
+          // left with no id at this note's position or at one of the positions
+          // that version may have used (`domain/ingest-batch.ts`, #9).
+          if (note.callId !== null && heldCalls.has(note.callId)) continue;
+          const places = [
+            place(note.harnessMessageId, note.ordinal),
+            ...note.earlierPositions.map((at) => place(at.harnessMessageId, at.ordinal)),
+          ];
+          if (places.some((at) => heldPlaces.has(at))) continue;
+          // Bare `do nothing`, so *either* key may be the one that stops it:
+          // the position, which some other call may already stand at, and the
+          // partial unique index on `(session_id, call_id)`. A dropped insert
+          // is not counted, because nothing was written.
           const inserted = await sql<{ id: string }>`
             insert into tool_notes (id, session_id, harness_message_id, ordinal, tool,
-                                    target, ok)
+                                    target, ok, call_id)
                  values (${note.id}, ${session.id}, ${note.harnessMessageId},
                          ${note.ordinal}, ${note.tool}, ${note.target},
-                         ${note.ok ? 1 : 0})
-            on conflict (session_id, harness_message_id, ordinal) do nothing
+                         ${note.ok ? 1 : 0}, ${note.callId})
+            on conflict do nothing
               returning id
           `.execute(held);
           insertedToolNotes += inserted.rows.length;
+          if (inserted.rows.length > 0) {
+            // So that two notes of one batch cannot both land at one position:
+            // the rows read above are what was there before this batch.
+            if (note.callId !== null) heldCalls.add(note.callId);
+            else heldPlaces.add(place(note.harnessMessageId, note.ordinal));
+          }
         }
 
         // The tracking columns land in the same transaction as the rows, so a
@@ -692,4 +737,13 @@ function toToolNote(row: ToolNoteRow): ToolNote {
     target: row.target,
     ok: row.ok === 1,
   };
+}
+
+/**
+ * One tool-note position as a set key. The ordinal may be negative — a call the
+ * harness made in front of its message's own line — so the separator is spelled
+ * out rather than left to concatenation (`domain/ingest-batch.ts`).
+ */
+function place(harnessMessageId: string, ordinal: number): string {
+  return `${harnessMessageId}#${String(ordinal)}`;
 }

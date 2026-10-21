@@ -135,6 +135,22 @@ describe('the truncated tail of a tool note target', () => {
     expect(masked).toBe(`${cut.slice(0, cut.length - HALF_KEY.length)}[REDACTED:truncated]`);
   });
 
+  it('masks the last token of a target one unit short of the limit', () => {
+    // A connector cuts on a character boundary, so a target whose limit fell
+    // between the two halves of one code point is `LIMIT - 1` units long and
+    // just as truncated as a full one (`claude-code/tool-target.ts`, story 23).
+    const oneShort = `${cut.slice(0, cut.length - HALF_KEY.length - 2)} ${HALF_KEY}`;
+
+    expect(oneShort.length).toBe(TOOL_NOTE_TARGET_LIMIT - 1);
+    expect(maskToolNoteTarget(oneShort)).toBe(
+      `${oneShort.slice(0, oneShort.length - HALF_KEY.length)}[REDACTED:truncated]`,
+    );
+    // Two short is a target that simply is that long, and keeps its last word.
+    const twoShort = `echo ${'x'.repeat(TOOL_NOTE_TARGET_LIMIT - 7)}`;
+    expect(twoShort.length).toBe(TOOL_NOTE_TARGET_LIMIT - 2);
+    expect(maskToolNoteTarget(twoShort)).toBe(twoShort);
+  });
+
   it('masks nothing when the cut target ends on a space or on a marker', () => {
     // A token of length zero. There is nothing of a secret in either.
     const endsOnSpace = `${'y'.repeat(TOOL_NOTE_TARGET_LIMIT - 1)} `;

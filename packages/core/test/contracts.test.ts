@@ -630,6 +630,53 @@ describe('the contracts catch a wrong store', () => {
     );
   });
 
+  it('catches a store that stores the same call again at a second position', async () => {
+    const make = async (): Promise<SessionStoreSubject> => {
+      const inner = memoryStore();
+      return {
+        ...inner,
+        async ingest(batch) {
+          // A store that keys a note on its position alone, which is what
+          // every store did before the call id existed: a parser version that
+          // moves a note leaves one call as two rows (#9).
+          return inner.ingest({
+            ...batch,
+            toolNotes: batch.toolNotes.map((note) => ({
+              ...note,
+              callId: null,
+              earlierPositions: [],
+            })),
+          });
+        },
+      };
+    };
+
+    expect(await failedCases(sessionStoreContract(), make)).toContain(
+      'a call the session already holds is not stored at a second position',
+    );
+  });
+
+  it('catches a store that ignores the positions an older version used', async () => {
+    const make = async (): Promise<SessionStoreSubject> => {
+      const inner = memoryStore();
+      return {
+        ...inner,
+        async ingest(batch) {
+          // The call id alone, which answers nothing about the rows a version
+          // that named no call left behind: those are recognised by position.
+          return inner.ingest({
+            ...batch,
+            toolNotes: batch.toolNotes.map((note) => ({ ...note, earlierPositions: [] })),
+          });
+        },
+      };
+    };
+
+    expect(await failedCases(sessionStoreContract(), make)).toContain(
+      'a note at a position an older version used is recognised by that position',
+    );
+  });
+
   it('catches a store that still counts masking records on an ingest', async () => {
     const make = async (): Promise<SessionStoreSubject> => {
       const inner = memoryStore();
@@ -912,6 +959,68 @@ describe('the contracts catch a wrong parser', () => {
 
     expect(await failedCases(parserContract(), make)).toContain(
       'the harness message ids of one parse do not repeat',
+    );
+  });
+
+  it('catches a parser that leaves out the reserved dropped-line count', async () => {
+    const make = async (): Promise<ParserSubject> => {
+      const inner = memoryParser();
+      const wrong: Parser = {
+        harness: inner.harness,
+        version: inner.version,
+        parse(content, cursor) {
+          const result = inner.parse(content, cursor);
+          if (!result.ok) return result;
+          // A missing `unreadable` reads exactly like a zero, so a parser that
+          // never answered it would quietly turn "part of this file could not
+          // be read" into silence (`ports/parser.ts`, NFR-2).
+          return { ...result, droppedLines: {} };
+        },
+      };
+      return parserSubject(wrong);
+    };
+
+    expect(await failedCases(parserContract(), make)).toContain(
+      'the dropped-line counts are non-negative integers under their own reasons',
+    );
+  });
+
+  it('catches a parser that hangs a negative-ordinal note on a later message', async () => {
+    const make = async (): Promise<ParserSubject> => {
+      const inner = memoryParser();
+      const wrong: Parser = {
+        harness: inner.harness,
+        version: inner.version,
+        parse(content, cursor) {
+          const result = inner.parse(content, cursor);
+          if (!result.ok) return result;
+          const last = result.messages.at(-1);
+          if (last === undefined) return result;
+          // Only the first message of the content has anything in front of it,
+          // so a negative ordinal anywhere else is a position two notes could
+          // collide on (`domain/ingest-batch.ts`).
+          return {
+            ...result,
+            toolNotes: [
+              ...result.toolNotes,
+              {
+                harnessMessageId: last.harnessMessageId,
+                ordinal: -1,
+                tool: 'read',
+                target: 'notes/import.md',
+                ok: true,
+                callId: null,
+                earlierPositions: [],
+              },
+            ],
+          };
+        },
+      };
+      return parserSubject(wrong);
+    };
+
+    expect(await failedCases(parserContract(), make)).toContain(
+      'tool notes are unique per message and ordinal, and point at a parsed message',
     );
   });
 

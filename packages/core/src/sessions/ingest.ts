@@ -25,7 +25,10 @@ import type {
   UserStore,
 } from '../ports/store.js';
 import type { TranscriptFolder, TranscriptReader } from '../ports/transcript.js';
-import { spoolSessionIngest } from './spool-ingest.js';
+import {
+  spoolSessionIngest,
+  type SpoolSessionIngestRead,
+} from './spool-ingest.js';
 
 /**
  * What a caller asks `sessions.ingest` for. Surface neutral: the session is the
@@ -83,6 +86,17 @@ export interface IngestSessionData {
   /** Whether this call is the one that created the session row. */
   created: boolean;
   inserted: IngestCounts;
+  /**
+   * How many lines of the transcript the parser walked past, by reason, or
+   * `null` when nothing was parsed at all — which is what the spool path
+   * answers, since it never reads the file (`ports/parser.ts`).
+   *
+   * A transcript is mostly not conversation, so this is the normal shape of a
+   * successful ingest and not a complaint. It is reported because it is the
+   * only number that says how much of a file was skipped and why: the reserved
+   * `unreadable` count is the one that also raises a warning.
+   */
+  droppedLines: Readonly<Record<string, number>> | null;
 }
 
 export type IngestSessionResult =
@@ -214,10 +228,18 @@ export async function ingestSession(
   /**
    * The one way out when the database will not take a write (AD-9) — or, for a
    * caller that is itself the deferred path, the code and nothing else.
+   *
+   * `read` is what the transcript read had already found, for every caller
+   * after the parse: the file *was* read, so what the parse walked past is
+   * reported and a line it could not read still raises its warning. Only the
+   * one step in front of the parse leaves it out (`SpoolSessionIngestRead`).
    */
-  const spooled = async (cause: SpoolCause): Promise<IngestSessionResult> =>
+  const spooled = async (
+    cause: SpoolCause,
+    read: SpoolSessionIngestRead | null = null,
+  ): Promise<IngestSessionResult> =>
     spoolOnUnwritable
-      ? spoolSessionIngest({ spool, clock, idGen }, { ...input, transcriptPath }, cause)
+      ? spoolSessionIngest({ spool, clock, idGen }, { ...input, transcriptPath }, cause, read)
       : { ok: false, code: cause, message: ERROR_CODES[cause].meaning };
 
   const token = parseSessionToken(input.session);
@@ -253,6 +275,7 @@ export async function ingestSession(
   // where the last one stopped (AD-4). A session nobody has ingested yet comes
   // back as `null`, which is a value and not a failure.
   const found = await store.findSession(key);
+  // The one spool in front of the parse, so it reports nothing about the file.
   if (!found.ok) return unwritable(found.code) ? spooled(found.code) : found;
   const stored = found.session;
 
@@ -315,6 +338,23 @@ export async function ingestSession(
    */
   const resetToReport = parsed.cursorReset && stored !== null;
 
+  /**
+   * The warnings of this read itself, in front of whatever the store adds.
+   *
+   * Lines the parser could not read at all are the one thing in `droppedLines`
+   * that is a problem rather than the filter working: the rest of the file was
+   * collected, and a reader has to be told that part of it was not (NFR-2,
+   * story 23). Everything else the parser walked past is reported as a number
+   * and raises nothing.
+   */
+  const readWarnings: readonly WarningCode[] =
+    (parsed.droppedLines['unreadable'] ?? 0) > 0 ? ['TRANSCRIPT_LINES_SKIPPED'] : [];
+  /** The same two facts for a spool mark written from here on (AD-9). */
+  const afterParse: SpoolSessionIngestRead = {
+    droppedLines: parsed.droppedLines,
+    warnings: readWarnings,
+  };
+
   if (nothingToStore && !resetToReport) {
     // The history is still written — the file *was* read this far, and a scan
     // that read it again every drain for a session with no conversation yet
@@ -326,12 +366,13 @@ export async function ingestSession(
       spooled: false,
       created: false,
       inserted: { messages: 0, toolNotes: 0 },
-      warnings: [],
+      droppedLines: parsed.droppedLines,
+      warnings: readWarnings,
     };
   }
 
   const owner = await store.readSelfUser();
-  if (!owner.ok) return unwritable(owner.code) ? spooled(owner.code) : owner;
+  if (!owner.ok) return unwritable(owner.code) ? spooled(owner.code, afterParse) : owner;
   if (owner.user === null) {
     return {
       ok: false,
@@ -389,7 +430,9 @@ export async function ingestSession(
       workspaceId: null,
       checkout,
     });
-    if (!ensured.ok) return unwritable(ensured.code) ? spooled(ensured.code) : ensured;
+    if (!ensured.ok) {
+      return unwritable(ensured.code) ? spooled(ensured.code, afterParse) : ensured;
+    }
     created = ensured.created;
   }
 
@@ -413,7 +456,10 @@ export async function ingestSession(
   };
 
   const ingested = await store.ingest(batch);
-  if (!ingested.ok) return unwritable(ingested.code) ? spooled(ingested.code) : ingested;
+  if (!ingested.ok) {
+    return unwritable(ingested.code) ? spooled(ingested.code, afterParse) : ingested;
+  }
+  const alreadyWarned = new Set<string>(ingested.warnings);
 
   // After the batch is in and not before: the history says "this file has been
   // read this far", and a row written before the rows it describes would, for
@@ -427,7 +473,14 @@ export async function ingestSession(
     spooled: false,
     created,
     inserted: ingested.inserted,
-    warnings: ingested.warnings,
+    droppedLines: parsed.droppedLines,
+    // The store's first, then this read's, and neither twice: the store's
+    // warnings are about the write that just happened and this one is about the
+    // file it came out of (NFR-2).
+    warnings: [
+      ...ingested.warnings,
+      ...readWarnings.filter((code) => !alreadyWarned.has(code)),
+    ],
   };
 }
 
@@ -562,12 +615,11 @@ async function checkoutFor(
  * carries one, or `null` when no message in the batch does.
  *
  * Not the first message's, because a message can arrive with no folder on it
- * at all. A subagent's hand-back report is the one that does: the harness
- * writes that line with the *subagent's* cwd, which is often another worktree
- * of the same repository, so the parser reports none rather than the wrong one
- * (`claude-code`, follow-up review #3). A session whose first message is such a
- * report would otherwise be tagged with nothing — and a session's tags are
- * worked out once and never again (AD-12), so "nothing" would be permanent.
+ * at all — a harness is free to write a line without one, and a parser answers
+ * `null` rather than guessing for any line whose folder is not this
+ * conversation's. A session whose first message is one of those would otherwise
+ * be tagged with nothing, and a session's tags are worked out once and never
+ * again (AD-12), so "nothing" would be permanent.
  */
 function firstCwd(messages: readonly IngestMessage[]): string | null {
   for (const message of messages) {

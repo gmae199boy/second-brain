@@ -1,0 +1,282 @@
+{
+  "parserVersion": "3",
+  "fixtures": {
+    "full-session.jsonl": {
+      "messages": [
+        {
+          "harnessMessageId": "11111111-2222-4333-8444-000000000003",
+          "role": "user",
+          "model": null,
+          "body": "Can you check the import notes and summarise them?",
+          "occurredAt": "2026-02-03T10:00:03.000Z",
+          "gitBranch": "main",
+          "isSubagentReport": false
+        },
+        {
+          "harnessMessageId": "11111111-2222-4333-8444-000000000009",
+          "role": "assistant",
+          "model": "demo-model",
+          "body": "The notes are in notes/import.md.",
+          "occurredAt": "2026-02-03T10:00:09.000Z",
+          "gitBranch": "main",
+          "isSubagentReport": false
+        },
+        {
+          "harnessMessageId": "11111111-2222-4333-8444-000000000010",
+          "role": "assistant",
+          "model": "demo-model",
+          "body": "The open question is still at the end.",
+          "occurredAt": "2026-02-03T09:59:00.000Z",
+          "gitBranch": "main",
+          "isSubagentReport": false
+        },
+        {
+          "harnessMessageId": "11111111-2222-4333-8444-000000000016",
+          "role": "user",
+          "model": null,
+          "body": "Here is the screenshot of the folder.",
+          "occurredAt": "2026-02-03T10:00:16.000Z",
+          "gitBranch": "main",
+          "isSubagentReport": false
+        },
+        {
+          "harnessMessageId": "11111111-2222-4333-8444-000000000021",
+          "role": "assistant",
+          "model": null,
+          "body": "The folder holds four files. import.md is the newest and ends with one open question.",
+          "occurredAt": "2026-02-03T10:00:21.000Z",
+          "gitBranch": "main",
+          "isSubagentReport": true
+        },
+        {
+          "harnessMessageId": "11111111-2222-4333-8444-000000000026",
+          "role": "user",
+          "model": null,
+          "body": "<command-name>/demo-notes</command-name><command-message>demo-notes is running</command-message><command-args>import</command-args>",
+          "occurredAt": "2026-02-03T10:00:26.000Z",
+          "gitBranch": "feature/notes",
+          "isSubagentReport": false
+        },
+        {
+          "harnessMessageId": "11111111-2222-4333-8444-000000000028",
+          "role": "user",
+          "model": null,
+          "body": "<bash-input>ls notes</bash-input>",
+          "occurredAt": "2026-02-03T10:00:28.000Z",
+          "gitBranch": "feature/notes",
+          "isSubagentReport": false
+        },
+        {
+          "harnessMessageId": "11111111-2222-4333-8444-000000000031",
+          "role": "user",
+          "model": null,
+          "body": "Two things while that runs. Keep the summary short. And say which links are dead.",
+          "occurredAt": "2026-02-03T10:00:31.000Z",
+          "gitBranch": "feature/notes",
+          "isSubagentReport": false
+        },
+        {
+          "harnessMessageId": "11111111-2222-4333-8444-000000000032",
+          "role": "assistant",
+          "model": null,
+          "body": "Every link in notes/ still resolves. Two of them point at the same page.",
+          "occurredAt": "2026-02-03T10:00:32.000Z",
+          "gitBranch": "feature/notes",
+          "isSubagentReport": true
+        },
+        {
+          "harnessMessageId": "11111111-2222-4333-8444-000000000033",
+          "role": "assistant",
+          "model": "demo-model",
+          "body": "Both reports are in; I am writing the summary now.",
+          "occurredAt": "2026-02-03T10:00:33.000Z",
+          "gitBranch": "feature/notes",
+          "isSubagentReport": false
+        }
+      ],
+      "toolNotes": [
+        {
+          "harnessMessageId": "11111111-2222-4333-8444-000000000003",
+          "ordinal": 0,
+          "tool": "Read",
+          "target": "notes/import.md",
+          "ok": true
+        },
+        {
+          "harnessMessageId": "11111111-2222-4333-8444-000000000003",
+          "ordinal": 1,
+          "tool": "Bash",
+          "target": "wc -l notes/import.md",
+          "ok": false
+        },
+        {
+          "harnessMessageId": "11111111-2222-4333-8444-000000000016",
+          "ordinal": 0,
+          "tool": "Agent",
+          "target": "Summarise the notes folder",
+          "ok": true
+        },
+        {
+          "harnessMessageId": "11111111-2222-4333-8444-000000000021",
+          "ordinal": 0,
+          "tool": "Agent",
+          "target": "Check the links in the notes",
+          "ok": true
+        }
+      ],
+      "cursor": {
+        "lastHarnessMessageId": "11111111-2222-4333-8444-000000000033",
+        "fingerprint": "98f067a5727007df84a5b9327e81bd55d545db1ff1b4c94410de39bce11e2e3f"
+      }
+    },
+    "peer-handback.jsonl": {
+      "messages": [
+        {
+          "harnessMessageId": "22222222-3333-4444-8555-000000000002",
+          "role": "user",
+          "model": null,
+          "body": "Can you line up what the two subagents reported?",
+          "occurredAt": "2026-03-04T11:00:02.000Z",
+          "gitBranch": "main",
+          "isSubagentReport": false
+        },
+        {
+          "harnessMessageId": "22222222-3333-4444-8555-000000000008",
+          "role": "assistant",
+          "model": null,
+          "body": "The notes folder holds four files, and import.md is the newest.",
+          "occurredAt": "2026-03-04T11:00:08.000Z",
+          "gitBranch": null,
+          "isSubagentReport": true
+        },
+        {
+          "harnessMessageId": "22222222-3333-4444-8555-000000000016",
+          "role": "assistant",
+          "model": null,
+          "body": "Every link in notes/ still resolves. Two of them point at the same page.",
+          "occurredAt": "2026-03-04T11:00:16.000Z",
+          "gitBranch": null,
+          "isSubagentReport": true
+        },
+        {
+          "harnessMessageId": "22222222-3333-4444-8555-000000000017",
+          "role": "assistant",
+          "model": "demo-model",
+          "body": "Both reports are in; here is the comparison.",
+          "occurredAt": "2026-03-04T11:00:17.000Z",
+          "gitBranch": "feature/notes",
+          "isSubagentReport": false
+        }
+      ],
+      "toolNotes": [
+        {
+          "harnessMessageId": "22222222-3333-4444-8555-000000000002",
+          "ordinal": 0,
+          "tool": "Agent",
+          "target": "Summarise the notes folder",
+          "ok": true
+        },
+        {
+          "harnessMessageId": "22222222-3333-4444-8555-000000000002",
+          "ordinal": 1,
+          "tool": "Agent",
+          "target": "Check the links in the notes",
+          "ok": true
+        }
+      ],
+      "cursor": {
+        "lastHarnessMessageId": "22222222-3333-4444-8555-000000000017",
+        "fingerprint": "d52924c0c300ee7a951778cf48e559fbf3c068509891ae1f11b34d12a8f42c79"
+      }
+    },
+    "report-provenance.jsonl": {
+      "messages": [
+        {
+          "harnessMessageId": "33333333-4444-4555-8666-000000000003",
+          "role": "assistant",
+          "model": null,
+          "body": "The first report, handed back before anybody typed.",
+          "occurredAt": "2026-04-05T09:00:03.000Z",
+          "gitBranch": null,
+          "isSubagentReport": true
+        },
+        {
+          "harnessMessageId": "33333333-4444-4555-8666-000000000004",
+          "role": "user",
+          "model": null,
+          "body": "Line up what every run reported.",
+          "occurredAt": "2026-04-05T09:00:04.000Z",
+          "gitBranch": "main",
+          "isSubagentReport": false
+        },
+        {
+          "harnessMessageId": "33333333-4444-4555-8666-000000000005",
+          "role": "user",
+          "model": null,
+          "body": "And say which of them is still running.",
+          "occurredAt": "2026-04-05T09:00:05.000Z",
+          "gitBranch": "main",
+          "isSubagentReport": false
+        },
+        {
+          "harnessMessageId": "33333333-4444-4555-8666-000000000009",
+          "role": "assistant",
+          "model": null,
+          "body": "The prior report, handed back before its notification.",
+          "occurredAt": "2026-04-05T09:00:09.000Z",
+          "gitBranch": null,
+          "isSubagentReport": true
+        },
+        {
+          "harnessMessageId": "33333333-4444-4555-8666-000000000013",
+          "role": "assistant",
+          "model": null,
+          "body": "The second report, which the notice said was still coming.",
+          "occurredAt": "2026-04-05T09:00:13.000Z",
+          "gitBranch": null,
+          "isSubagentReport": true
+        },
+        {
+          "harnessMessageId": "33333333-4444-4555-8666-000000000015",
+          "role": "assistant",
+          "model": null,
+          "body": "Both checks passed and nothing else changed.",
+          "occurredAt": "2026-04-05T09:00:15.000Z",
+          "gitBranch": "main",
+          "isSubagentReport": true
+        },
+        {
+          "harnessMessageId": "33333333-4444-4555-8666-000000000024",
+          "role": "assistant",
+          "model": null,
+          "body": "The old report, read out of the framing.\n\nIt kept its second paragraph.",
+          "occurredAt": "2026-04-05T09:00:24.000Z",
+          "gitBranch": null,
+          "isSubagentReport": true
+        },
+        {
+          "harnessMessageId": "33333333-4444-4555-8666-000000000036",
+          "role": "assistant",
+          "model": "demo-model",
+          "body": "That is every report accounted for.",
+          "occurredAt": "2026-04-05T09:00:36.000Z",
+          "gitBranch": "main",
+          "isSubagentReport": false
+        }
+      ],
+      "toolNotes": [
+        {
+          "harnessMessageId": "33333333-4444-4555-8666-000000000005",
+          "ordinal": 0,
+          "tool": "Agent",
+          "target": "Run the sync check",
+          "ok": true
+        }
+      ],
+      "cursor": {
+        "lastHarnessMessageId": "33333333-4444-4555-8666-000000000036",
+        "fingerprint": "93c00b5697f3e733be8c119d95d6aff1dcdfefb0b0f2fb4e61b1ec863714d732"
+      }
+    }
+  }
+}

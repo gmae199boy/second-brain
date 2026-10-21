@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ParserCursor } from '../src/domain/session.js';
 import { formatSessionToken } from '../src/domain/session-token.js';
-import type { ParseResult } from '../src/ports/parser.js';
+import type { ParseResult, Parser } from '../src/ports/parser.js';
 import type { Checkout } from '../src/ports/repository.js';
 import { ingestSession, type IngestSessionDependencies } from '../src/sessions/ingest.js';
 import { fixedClock } from '../src/testing/fakes/clock.js';
@@ -127,6 +127,150 @@ async function kit(options: KitOptions = {}): Promise<Kit> {
     },
   };
 }
+
+describe('sessions.ingest and what the parser walked past', () => {
+  /** A parser that answers like the memory one, with the counts it is given. */
+  function counting(droppedLines: Record<string, number>): Parser {
+    const inner = memoryParser();
+    return {
+      ...inner,
+      parse: (content, cursor): ParseResult => {
+        const result = inner.parse(content, cursor);
+        return result.ok ? { ...result, droppedLines } : result;
+      },
+    };
+  }
+
+  it('reports the counts and raises no warning for the lines a filter dropped', async () => {
+    const { deps } = await kit();
+
+    const result = await ingestSession(
+      { ...deps, parsers: [counting({ unreadable: 0, not_conversation: 7 })] },
+      { session: TOKEN, transcriptPath: PATH },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      // A transcript is mostly not conversation, so this is the normal shape of
+      // a successful ingest and not a complaint (story 23).
+      droppedLines: { unreadable: 0, not_conversation: 7 },
+      warnings: [],
+    });
+  });
+
+  it('warns once when part of the transcript could not be read at all', async () => {
+    const { deps } = await kit();
+
+    const result = await ingestSession(
+      { ...deps, parsers: [counting({ unreadable: 2, not_conversation: 1 })] },
+      { session: TOKEN, transcriptPath: PATH },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      droppedLines: { unreadable: 2, not_conversation: 1 },
+      // The rest of the file was collected, and never in silence (NFR-2).
+      warnings: ['TRANSCRIPT_LINES_SKIPPED'],
+    });
+  });
+
+  it('warns behind the store, and about a read that stored nothing', async () => {
+    const { deps, store } = await kit();
+    const parsers = [counting({ unreadable: 1 })];
+    expect(
+      (await ingestSession({ ...deps, parsers }, { session: TOKEN, transcriptPath: PATH })).ok,
+    ).toBe(true);
+    // A read of the same content again: nothing new to store, and the broken
+    // line is still there to be told about.
+    const again = await ingestSession(
+      { ...deps, parsers },
+      { session: TOKEN, transcriptPath: PATH },
+    );
+    expect(again).toMatchObject({
+      ok: true,
+      inserted: { messages: 0, toolNotes: 0 },
+      warnings: ['TRANSCRIPT_LINES_SKIPPED'],
+    });
+
+    // And behind the store's own warning, which is about the write rather than
+    // about the file it came out of.
+    const reset = {
+      ...memoryParser(),
+      parse: (content: string, cursor?: ParserCursor | null): ParseResult => {
+        const result = memoryParser().parse(content, cursor);
+        return result.ok
+          ? { ...result, cursorReset: true, droppedLines: { unreadable: 1 } }
+          : result;
+      },
+    };
+    const third = await ingestSession(
+      { ...deps, parsers: [reset] },
+      { session: TOKEN, transcriptPath: PATH },
+    );
+    expect(third).toMatchObject({
+      ok: true,
+      warnings: ['CURSOR_RESET', 'TRANSCRIPT_LINES_SKIPPED'],
+    });
+    expect(store.snapshot().sessions).toHaveLength(1);
+  });
+
+  it('says nothing about skipped lines for a read that never happened', async () => {
+    // `findSession` is the one store step in front of the parse, so this spool
+    // mark is written before any file was read: `null` is the honest answer,
+    // where an empty record would read as "the whole file was conversation".
+    const { deps, store } = await kit();
+
+    const result = await ingestSession(
+      {
+        ...deps,
+        store: {
+          ...store,
+          async findSession() {
+            return { ok: false, code: 'DB_UNAVAILABLE', message: 'the database is away' };
+          },
+        },
+      },
+      { session: TOKEN, transcriptPath: PATH },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      spooled: true,
+      droppedLines: null,
+      warnings: ['SPOOLED', 'DB_UNAVAILABLE'],
+    });
+  });
+
+  it('still reports the counts and the warning when the write is spooled', async () => {
+    // The lock is found in the middle of the use case, by which time the file
+    // has been read: what the parse walked past is a fact about the transcript
+    // and not about where the write went, and a line it could not read at all
+    // still has to be reported (NFR-2).
+    const { deps, store } = await kit();
+
+    const result = await ingestSession(
+      {
+        ...deps,
+        parsers: [counting({ unreadable: 3, not_conversation: 2 })],
+        store: {
+          ...store,
+          async ingest() {
+            return { ok: false, code: 'DB_UNAVAILABLE', message: 'the database is away' };
+          },
+        },
+      },
+      { session: TOKEN, transcriptPath: PATH },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      spooled: true,
+      droppedLines: { unreadable: 3, not_conversation: 2 },
+      // Where the write went first, then what the file looked like.
+      warnings: ['SPOOLED', 'DB_UNAVAILABLE', 'TRANSCRIPT_LINES_SKIPPED'],
+    });
+  });
+});
 
 describe('sessions.ingest on a transcript nothing has read yet', () => {
   it('creates the session, attributes it to the owner, and stores every message', async () => {
@@ -759,11 +903,20 @@ describe('sessions.ingest and the cursor it starts from', () => {
         parserVersion: '1',
         messages: [],
         toolNotes: [
-          { harnessMessageId: 'msg-2', ordinal: 2, tool: 'read', target: 'notes/open.md', ok: false },
+          {
+            harnessMessageId: 'msg-2',
+            ordinal: 2,
+            tool: 'read',
+            target: 'notes/open.md',
+            ok: false,
+            callId: null,
+            earlierPositions: [],
+          },
         ],
         cursor: null,
         cursorReset: false,
         startSource: null,
+        droppedLines: { unreadable: 0 },
       }),
     };
 
@@ -789,11 +942,20 @@ describe('sessions.ingest and the cursor it starts from', () => {
         parserVersion: '1',
         messages: [],
         toolNotes: [
-          { harnessMessageId: 'msg-2', ordinal: 0, tool: 'read', target: 'notes/open.md', ok: true },
+          {
+            harnessMessageId: 'msg-2',
+            ordinal: 0,
+            tool: 'read',
+            target: 'notes/open.md',
+            ok: true,
+            callId: null,
+            earlierPositions: [],
+          },
         ],
         cursor: null,
         cursorReset: false,
         startSource: null,
+        droppedLines: { unreadable: 0 },
       }),
     };
 
@@ -965,7 +1127,11 @@ describe('sessions.ingest when the store cannot take the write', () => {
       spooled: true,
       created: false,
       inserted: { messages: 0, toolNotes: 0 },
-      // `DB_LOCKED` is not a warning code, so a lock leaves `SPOOLED` alone.
+      // The lock was met *after* the parse, so what the read found is still
+      // reported: the file was read either way (AD-9).
+      droppedLines: { unreadable: 0 },
+      // `DB_LOCKED` is not a warning code, so a lock leaves `SPOOLED` alone,
+      // and this read had nothing of its own to add.
       warnings: ['SPOOLED'],
     });
     expect(spool.records()).toEqual([

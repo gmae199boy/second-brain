@@ -84,4 +84,5 @@ export type {
   IngestTracking,
   ParsedMessage,
   ParsedToolNote,
+  ToolNotePosition,
 } from './ingest-batch.js';

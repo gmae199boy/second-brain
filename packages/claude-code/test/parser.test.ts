@@ -19,23 +19,18 @@ import { TOOL_TARGET_LIMIT, toolTarget } from '../src/tool-target.js';
  * thinking, a tool call and its result, a subagent's own conversation, an
  * attachment, and a compact summary — with two actual turns among them.
  *
- * `full-session.jsonl` is story 2.7's: the delegated runs and their reports,
- * the lines that look like conversation and are not, a pasted image, a branch
- * that changes halfway, a compact, a raw U+2028, a stamp that goes backwards,
- * and a call nothing has answered yet.
+ * `full-session.jsonl` is story 2.7's: the delegated runs and what the editor
+ * wrote about them, the lines that look like conversation and are not, a pasted
+ * image, a branch that changes halfway, a compact, a raw U+2028, a stamp that
+ * goes backwards, and a call nothing has answered yet.
  *
- * `peer-handback.jsonl` is story 19's: the report a run handed back with
- * `SubagentHandback`, which arrives on a peer line the editor marked `isMeta`,
- * in every shape one of those lines comes in — with the sentence the editor
- * leaves where that run's result used to be.
- *
- * `report-provenance.jsonl` is this story's: what says a report is this
- * session's and what says it is not, one line per row of the matrix — the two
- * sentences, a result that carries a `handback` field, a hand-back before and
- * after the notification that repeats it, a notification that did not finish
- * and one with two results, a hand-back from a run nobody here started, the
- * old framing a report has to be read out of and three shapes of it one line
- * out of place, three origins no person typed, and two tool outputs.
+ * `peer-handback.jsonl` is story 19's and `report-provenance.jsonl` story 22's.
+ * Both were built to pin down *which* subagent report a line carried, and since
+ * story 23 stores none of them they are the strongest input this parser has for
+ * the opposite rule: between them they hold every shape a report arrives in, and
+ * not one word of any of them may reach a row. They still carry the `Agent`
+ * calls, the editor's own traffic and the tool outputs, which are what the
+ * remaining rules are measured on.
  *
  * The sentences are neutral because this repository is public (Conventions);
  * the shape around them is the editor's own.
@@ -48,10 +43,10 @@ const PROVENANCE = fileURLToPath(
   new URL('./fixtures/report-provenance.jsonl', import.meta.url),
 );
 
-/** How many lines of `full-session.jsonl` end with its fifth message. */
+/** How many lines of `full-session.jsonl` end with its fourth message. */
 const HALF_LINES = 25;
 
-/** How many lines of `peer-handback.jsonl` end with its second report. */
+/** How many lines of `peer-handback.jsonl` end with its only early message. */
 const HANDBACK_LINES = 18;
 
 /**
@@ -66,17 +61,11 @@ const PARAGRAPH_SEPARATOR = String.fromCodePoint(0x2029);
 const TOOL_OUTPUT = 'TOOL-OUTPUT-MUST-NOT-BE-STORED';
 const BASE64 = 'QkFTRTY0TVVTVE5PVEJFU1RPUkVE';
 /**
- * The marker the hand-back fixture puts in everything around a report: the
- * editor's framing in `message.content` and in `origin.body`, and every report
- * text on a line that is not a hand-back.
+ * The marker both report fixtures put in everything around a report: the
+ * editor's framing in `message.content` and in `origin.body`, every notice, and
+ * every report text.
  */
 const FRAME = 'FRAME-MUST-NOT-BE-STORED';
-/**
- * The sentence the editor leaves where the result of a handed-back run would
- * be, with the sender of the fixture's first hand-back named in it.
- */
-const NOTICE =
-  'This agent\'s report was delivered to you as a message from "1a2b3c4d5e6f70818" (its SubagentHandback call). Read it there; it is not repeated here.';
 
 let transcript: string;
 let session: string;
@@ -178,15 +167,6 @@ const SESSION_MESSAGES = [
     isSubagentReport: false,
   },
   {
-    // A delegated run the model waited for: an assistant message with no model.
-    harnessMessageId: id(21),
-    role: 'assistant',
-    model: null,
-    body: 'The folder holds four files. import.md is the newest and ends with one open question.',
-    gitBranch: 'main',
-    isSubagentReport: true,
-  },
-  {
     // A slash command the person typed. The editor renders it into the
     // conversation, tags and all, and it is still something they said.
     harnessMessageId: id(26),
@@ -218,15 +198,6 @@ const SESSION_MESSAGES = [
     isSubagentReport: false,
   },
   {
-    // The report of a run that came back later, out of its notification.
-    harnessMessageId: id(32),
-    role: 'assistant',
-    model: null,
-    body: 'Every link in notes/ still resolves. Two of them point at the same page.',
-    gitBranch: 'feature/notes',
-    isSubagentReport: true,
-  },
-  {
     harnessMessageId: id(33),
     role: 'assistant',
     model: 'demo-model',
@@ -236,9 +207,24 @@ const SESSION_MESSAGES = [
   },
 ];
 
-/** The four tool notes it holds. The fifth call has no answer yet. */
+/**
+ * The four tool notes it holds, without `earlierPositions`, which has a case of
+ * its own. The fifth call has no answer yet.
+ *
+ * The two `Agent` calls both hang off the message the person wrote, and the
+ * second one's position is where version 3 differs: version 3 kept the first
+ * run's result line as a report, so its note for that call sat at `(that line,
+ * 0)` — which is what `earlierPositions` carries.
+ */
 const SESSION_NOTES = [
-  { harnessMessageId: id(3), ordinal: 0, tool: 'Read', target: 'notes/import.md', ok: true },
+  {
+    harnessMessageId: id(3),
+    ordinal: 0,
+    tool: 'Read',
+    target: 'notes/import.md',
+    ok: true,
+    callId: 'toolu_01',
+  },
   {
     // The first line of a two-line command, and the result said `is_error`.
     harnessMessageId: id(3),
@@ -246,6 +232,7 @@ const SESSION_NOTES = [
     tool: 'Bash',
     target: 'wc -l notes/import.md',
     ok: false,
+    callId: 'toolu_02',
   },
   {
     harnessMessageId: id(16),
@@ -253,26 +240,68 @@ const SESSION_NOTES = [
     tool: 'Agent',
     target: 'Summarise the notes folder',
     ok: true,
+    callId: 'toolu_03',
   },
   {
-    harnessMessageId: id(21),
-    ordinal: 0,
+    harnessMessageId: id(16),
+    ordinal: 1,
     tool: 'Agent',
     target: 'Check the links in the notes',
     ok: true,
+    callId: 'toolu_04',
   },
 ];
 
-/** The two of its messages that are a delegated run's final report. */
-const SESSION_REPORTS = [id(21), id(32)];
+/** The fields `SESSION_NOTES` pins, so one case can leave the rest alone. */
+function noteWithout(note: {
+  harnessMessageId: string;
+  ordinal: number;
+  tool: string;
+  target: string;
+  ok: boolean;
+  callId: string | null;
+}): Record<string, unknown> {
+  return {
+    harnessMessageId: note.harnessMessageId,
+    ordinal: note.ordinal,
+    tool: note.tool,
+    target: note.target,
+    ok: note.ok,
+    callId: note.callId,
+  };
+}
+
+/**
+ * Every line of `full-session.jsonl` that is not a message, by the reason that
+ * caught it. Eight messages and thirty dropped lines is the whole file.
+ */
+const SESSION_DROPS = {
+  unreadable: 0,
+  duplicate: 0,
+  // Editor state, snapshots, the prompt queue, the title, attachments, system
+  // notices: eight lines that are not a turn of anything.
+  not_conversation: 8,
+  sidechain: 2,
+  meta: 2,
+  incomplete: 0,
+  timestamp: 0,
+  api_error: 1,
+  // A peer's line and two task notifications.
+  not_human: 3,
+  // Thinking, four tool calls, four tool results, and the synchronous result of
+  // a delegated run — which version 3 read as a report.
+  empty: 10,
+  tool_output: 4,
+  orca_header: 0,
+};
 
 /** The first `HALF_LINES` lines of the session, as a complete file. */
 function half(): string {
   return `${session.split('\n').slice(0, HALF_LINES).join('\n')}\n`;
 }
 
-/** The three lines the agent-id cases are built out of, in the file's shape. */
-function said(serial: number, body: string): string {
+/** One line of a transcript, in the shape every fixture here writes. */
+function line(serial: number, extra: Record<string, unknown>): string {
   return JSON.stringify({
     parentUuid: null,
     isSidechain: false,
@@ -280,47 +309,49 @@ function said(serial: number, body: string): string {
     gitBranch: 'main',
     uuid: id(serial),
     timestamp: `2026-02-03T11:00:${String(serial % 60).padStart(2, '0')}.000Z`,
-    type: 'user',
-    message: { role: 'user', content: body },
+    ...extra,
   });
 }
 
-/**
- * The editor handing back the result of an `Agent` call that is still running:
- * not a message — the only block is a `tool_result`, so nothing anybody said is
- * in it — and the one line that carries the agent's id.
- */
-function startedAgent(agentId: string, serial: number): string {
-  return JSON.stringify({
-    parentUuid: null,
-    isSidechain: false,
-    cwd: '/demo/workspace',
-    gitBranch: 'main',
-    uuid: id(serial),
-    timestamp: '2026-02-03T11:00:10.000Z',
-    type: 'user',
-    toolUseResult: { agentId, status: 'running' },
+/** A turn the person typed. */
+function said(serial: number, body: string): string {
+  return line(serial, { type: 'user', message: { role: 'user', content: body } });
+}
+
+/** An assistant line that is nothing but tool calls. */
+function called(
+  serial: number,
+  calls: readonly { id: string; name: string; input: Record<string, unknown> }[],
+): string {
+  return line(serial, {
+    type: 'assistant',
     message: {
-      role: 'user',
-      content: [{ type: 'tool_result', tool_use_id: 'call-f1', content: 'The run started.' }],
+      role: 'assistant',
+      model: 'demo-model',
+      content: calls.map((call) => ({
+        type: 'tool_use',
+        id: call.id,
+        name: call.name,
+        input: call.input,
+      })),
     },
   });
 }
 
-/** The notification the editor writes when a delegated run comes back later. */
-function notification(taskId: string, serial: number): string {
-  return JSON.stringify({
-    parentUuid: null,
-    isSidechain: false,
-    cwd: '/demo/workspace',
-    gitBranch: 'main',
-    uuid: id(serial),
-    timestamp: '2026-02-03T11:00:20.000Z',
+/** The editor feeding a call's result back as a user turn. */
+function answered(serial: number, callId: string, isError = false): string {
+  return line(serial, {
     type: 'user',
-    origin: { kind: 'task-notification', taskId },
     message: {
       role: 'user',
-      content: `<task-notification><task-id>${taskId}</task-id><status>completed</status><result>Both checks passed.</result></task-notification>`,
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: callId,
+          content: 'done',
+          ...(isError ? { is_error: true } : {}),
+        },
+      ],
     },
   });
 }
@@ -353,7 +384,7 @@ function handbackId(serial: number): string {
   return `22222222-3333-4444-8555-${String(serial).padStart(12, '0')}`;
 }
 
-/** The four messages `peer-handback.jsonl` holds, in the file's order. */
+/** The two messages `peer-handback.jsonl` holds, now that no report is one. */
 const HANDBACK_MESSAGES = [
   {
     harnessMessageId: handbackId(2),
@@ -362,27 +393,6 @@ const HANDBACK_MESSAGES = [
     body: 'Can you line up what the two subagents reported?',
     gitBranch: 'main',
     isSubagentReport: false,
-  },
-  {
-    // The first hand-back: the report text, trimmed, and nothing of the
-    // framing the editor wrapped it in. The branch is null because the one on
-    // that line is the subagent's, not this conversation's (#3).
-    harnessMessageId: handbackId(8),
-    role: 'assistant',
-    model: null,
-    body: 'The notes folder holds four files, and import.md is the newest.',
-    gitBranch: null,
-    isSubagentReport: true,
-  },
-  {
-    // The second, on a line whose branch had changed — and dropped for the
-    // same reason, so the change cannot reach a row either.
-    harnessMessageId: handbackId(16),
-    role: 'assistant',
-    model: null,
-    body: 'Every link in notes/ still resolves. Two of them point at the same page.',
-    gitBranch: null,
-    isSubagentReport: true,
   },
   {
     harnessMessageId: handbackId(17),
@@ -394,33 +404,12 @@ const HANDBACK_MESSAGES = [
   },
 ];
 
-/**
- * The two notes it holds. Both `Agent` calls were made before the first report
- * landed, so both hang off the message the person wrote.
- */
-const HANDBACK_NOTES = [
-  {
-    harnessMessageId: handbackId(2),
-    ordinal: 0,
-    tool: 'Agent',
-    target: 'Summarise the notes folder',
-    ok: true,
-  },
-  {
-    harnessMessageId: handbackId(2),
-    ordinal: 1,
-    tool: 'Agent',
-    target: 'Check the links in the notes',
-    ok: true,
-  },
-];
-
 /** The first `HANDBACK_LINES` lines of it, as a complete file. */
 function handbackHalf(): string {
   return `${handbacks.split('\n').slice(0, HANDBACK_LINES).join('\n')}\n`;
 }
 
-/** The same file with a line in front of the cursor's changed. */
+/** The same file with the cursor's own line changed. */
 function rewrittenHandbacks(): string {
   return handbacks.replace(
     'Can you line up what the two subagents reported?',
@@ -433,26 +422,8 @@ function provenanceId(serial: number): string {
   return `33333333-4444-4555-8666-${String(serial).padStart(12, '0')}`;
 }
 
-/**
- * The eight messages `report-provenance.jsonl` holds, in the file's order.
- *
- * Five of them are reports, and which five is the whole point of the fixture:
- * a hand-back read before anybody typed, two hand-backs read instead of the
- * notifications that repeat them, the one notification that really did carry a
- * run's answer, and a hand-back read out of the old framing.
- */
+/** The three messages `report-provenance.jsonl` holds. */
 const PROVENANCE_MESSAGES = [
-  {
-    // The subagent's folder and branch are on the line and on no row: a
-    // hand-back reports the text and nothing about where it ran (#3).
-    harnessMessageId: provenanceId(3),
-    role: 'assistant',
-    model: null,
-    body: 'The first report, handed back before anybody typed.',
-    gitBranch: null,
-    cwd: null,
-    isSubagentReport: true,
-  },
   {
     harnessMessageId: provenanceId(4),
     role: 'user',
@@ -472,46 +443,6 @@ const PROVENANCE_MESSAGES = [
     isSubagentReport: false,
   },
   {
-    harnessMessageId: provenanceId(9),
-    role: 'assistant',
-    model: null,
-    body: 'The prior report, handed back before its notification.',
-    gitBranch: null,
-    cwd: null,
-    isSubagentReport: true,
-  },
-  {
-    harnessMessageId: provenanceId(13),
-    role: 'assistant',
-    model: null,
-    body: 'The second report, which the notice said was still coming.',
-    gitBranch: null,
-    cwd: null,
-    isSubagentReport: true,
-  },
-  {
-    // A notification carries no framing of its own, so this report keeps the
-    // tracking of the line the editor wrote it on.
-    harnessMessageId: provenanceId(15),
-    role: 'assistant',
-    model: null,
-    body: 'Both checks passed and nothing else changed.',
-    gitBranch: 'main',
-    cwd: '/demo/workspace',
-    isSubagentReport: true,
-  },
-  {
-    // Out of the old framing, with the two-space indent taken off and the
-    // blank line between its paragraphs kept.
-    harnessMessageId: provenanceId(24),
-    role: 'assistant',
-    model: null,
-    body: 'The old report, read out of the framing.\n\nIt kept its second paragraph.',
-    gitBranch: null,
-    cwd: null,
-    isSubagentReport: true,
-  },
-  {
     harnessMessageId: provenanceId(36),
     role: 'assistant',
     model: 'demo-model',
@@ -527,7 +458,7 @@ function provenanceUpTo(lines: number): string {
   return `${provenance.split('\n').slice(0, lines).join('\n')}\n`;
 }
 
-/** The same file with a line in front of every cursor changed. */
+/** The same file with a line in front of the cursor changed. */
 function rewrittenProvenance(): string {
   return provenance.replace(
     'Line up what every run reported.',
@@ -549,8 +480,14 @@ describe('the parser contract against the Claude Code parser', () => {
           // session's first seconds (research §1).
           '{"type":"mode","mode":"normal","sessionId":"s"}\n',
           '',
+          // One broken line among readable ones: skipped and counted, never a
+          // refusal, so this is `readable` and not `unreadable` (#11).
+          `${said(700, 'Keep going.')}\nnot json at all {\n${said(701, 'That is all.')}\n`,
         ],
-        unreadable: ['{"type":"user"}\nnot json at all {\n'],
+        // Nothing readable in it at all, which is the only content left that a
+        // parser may refuse: a file whose every line is broken is not a Claude
+        // Code transcript, where one broken line in a readable file is a crash.
+        unreadable: ['not json at all {\nnor is this one {\n'],
         grown: [
           { before: half(), after: session },
           // The same thing one turn at a time, on the smaller fixture.
@@ -558,18 +495,31 @@ describe('the parser contract against the Claude Code parser', () => {
             before: `${transcript.trimEnd().split('\n').slice(0, 10).join('\n')}\n`,
             after: transcript,
           },
-          // And a cursor that names a hand-back report: the incremental read
-          // has to begin at it, so the rules have to keep it a message.
           { before: handbackHalf(), after: handbacks },
-          // A cursor standing on each report of the provenance fixture in
-          // turn. Every rule in it asks what the content *before* a line said,
-          // so a cursor between the evidence and the line it settles is
-          // exactly where a read that looked at its own stretch alone would
-          // answer differently from a read of the whole file.
-          ...[3, 9, 13, 15, 24].map((line) => ({
-            before: provenanceUpTo(line),
+          // A cursor standing on each message of the provenance fixture in
+          // turn, so the stretch of editor traffic behind it is read both ways.
+          ...[5, 10, 20].map((at) => ({
+            before: provenanceUpTo(at),
             after: provenance,
           })),
+          // A cursor on the one message a call was made in front of: the
+          // incremental read must not report that call's note again, because
+          // its line is in front of the cursor (`earlierPositions`, story 23).
+          {
+            before: `${[
+              called(710, [{ id: 'toolu_e1', name: 'Read', input: { file_path: 'a.md' } }]),
+              answered(711, 'toolu_e1'),
+              said(712, 'Carry on.'),
+            ].join('\n')}\n`,
+            after: `${[
+              called(710, [{ id: 'toolu_e1', name: 'Read', input: { file_path: 'a.md' } }]),
+              answered(711, 'toolu_e1'),
+              said(712, 'Carry on.'),
+              called(713, [{ id: 'toolu_e2', name: 'Read', input: { file_path: 'b.md' } }]),
+              answered(714, 'toolu_e2'),
+              said(715, 'Thank you.'),
+            ].join('\n')}\n`,
+          },
         ],
         rewritten: [
           { before: half(), after: rewrittenSession() },
@@ -579,7 +529,7 @@ describe('the parser contract against the Claude Code parser', () => {
             after: `${session.split('\n').slice(HALF_LINES).join('\n')}`,
           },
           { before: handbackHalf(), after: rewrittenHandbacks() },
-          { before: provenanceUpTo(15), after: rewrittenProvenance() },
+          { before: provenanceUpTo(20), after: rewrittenProvenance() },
         ],
       });
       await testCase.run(make);
@@ -593,12 +543,12 @@ describe('the Claude Code parser', () => {
     expect(parser.harness).toBe(CLAUDE_CODE_HARNESS);
     expect(parser.harness).toBe('claude-code');
     expect(parser.version).toBe(CLAUDE_CODE_PARSER_VERSION);
-    // The version moves when what the parser produces changes. `2` added the
-    // notes, the reports, the tracking and the incremental read; `3` reads the
-    // report a run hands back and stops storing the notice left in its place,
-    // which is what makes a session stored by `2` read again from the front and
-    // the missing reports land behind what it stored (AD-4).
-    expect(parser.version).toBe('3');
+    // The version moves when what the parser produces changes. `4` stores no
+    // subagent report at all, names every tool note by its call id, keeps the
+    // calls in front of the first message, counts the lines it walked past, and
+    // drops orca's own prompt headings — so a session stored by `3` is read
+    // again from the front under the new rules (AD-4).
+    expect(parser.version).toBe('4');
   });
 
   it('keeps the two turns and nothing else the editor wrote', () => {
@@ -614,6 +564,8 @@ describe('the Claude Code parser', () => {
         tool: 'Read',
         target: 'notes/import.md',
         ok: true,
+        callId: 'toolu_01',
+        earlierPositions: [],
       },
     ]);
     expect(result.parserVersion).toBe(CLAUDE_CODE_PARSER_VERSION);
@@ -683,11 +635,14 @@ describe('the Claude Code parser', () => {
     expect(result.messages).toEqual([]);
     expect(result.cursor).toBeNull();
     expect(result.startSource).toBeNull();
+    // The mode line is not conversation, and that is a count and not a warning.
+    expect(result.droppedLines).toMatchObject({ not_conversation: 1, unreadable: 0 });
   });
 
-  it('skips a last line the harness is still writing', () => {
+  it('skips a last line the harness is still writing, and does not count it', () => {
     // No trailing newline, and the tail is half an object: the one line that
-    // is allowed to be incomplete, because the editor appends as it goes.
+    // is allowed to be incomplete, because the editor appends as it goes — so
+    // it is not a line yet and nothing is said about it.
     const halfLine = '{"parentUuid":null,"isSidechain":false,"type":"user","uuid":"u-9"';
 
     const result = claudeCodeParser().parse(`${transcript}${halfLine}`);
@@ -695,34 +650,88 @@ describe('the Claude Code parser', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.messages).toEqual(EXPECTED);
+    expect(result.droppedLines['unreadable']).toBe(0);
   });
 
-  it('refuses a broken line in the middle, because that is not a half write', () => {
+  it('skips a broken line in the middle and counts it, keeping the rest', () => {
     const lines = transcript.split('\n');
     lines.splice(6, 0, '{"type":"user", this is not json');
 
     const result = claudeCodeParser().parse(lines.join('\n'));
 
+    // A crash or a truncated write left that line behind. Refusing the file
+    // over it would cost this session every message around it, for good (#11).
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.messages).toEqual(EXPECTED);
+    expect(result.droppedLines['unreadable']).toBe(1);
+  });
+
+  it('reads a line that is JSON and not an object, rather than calling it broken', () => {
+    // `null`, a list, a number: shapes the harness has never written, but the
+    // line itself read perfectly well. Counting them `unreadable` would warn
+    // that part of the file could not be read when all of it could.
+    const result = claudeCodeParser().parse(
+      `null\n${said(820, 'And this one is a real turn.')}\n[]\n`,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.messages.map((message) => message.body)).toEqual([
+      'And this one is a real turn.',
+    ]);
+    expect(result.droppedLines['unreadable']).toBe(0);
+    expect(result.droppedLines['not_conversation']).toBe(2);
+  });
+
+  it('does not refuse a file whose every line is JSON and not an object', () => {
+    // Nothing here is a Claude Code line, and nothing here is unreadable
+    // either: the answer is a transcript with no conversation in it.
+    const result = claudeCodeParser().parse('[]\n42\n"a string"\nnull\n');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.messages).toEqual([]);
+    expect(result.cursor).toBeNull();
+    expect(result.droppedLines['unreadable']).toBe(0);
+    expect(result.droppedLines['not_conversation']).toBe(4);
+  });
+
+  it('refuses content with no readable line in it at all', () => {
+    const result = claudeCodeParser().parse('not json at all {\nnor is this one {\n');
+
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe('TRANSCRIPT_UNREADABLE');
-    expect(result.message).toContain('7번째 줄');
+    expect(result.message).toContain('JSON');
   });
 
-  it('numbers a broken line by its place in the file, not in the part it read', () => {
-    // After a cursor read the parse starts in the middle of the file, and a
-    // line number counted from there would send a reader to the wrong line.
-    const first = claudeCodeParser().parse(half());
+  it('counts a broken line of the part it read, not of the whole file', () => {
+    // Two broken lines, one on either side of where the cursor will stand, and
+    // the cursor taken from this same content so its fingerprint fits.
+    const lines = session.split('\n');
+    lines.splice(2, 0, '{"type":"user", this is not json');
+    lines.splice(HALF_LINES + 4, 0, '{"type":"user", nor is this');
+    const patched = lines.join('\n');
+    const first = claudeCodeParser().parse(
+      `${patched.split('\n').slice(0, HALF_LINES + 1).join('\n')}\n`,
+    );
     expect(first.ok).toBe(true);
     if (!first.ok) return;
-    const lines = session.split('\n');
-    lines.splice(HALF_LINES + 2, 0, '{"type":"user", this is not json');
+    expect(first.cursor?.lastHarnessMessageId).toBe(id(16));
+    expect(first.droppedLines['unreadable']).toBe(1);
 
-    const result = claudeCodeParser().parse(lines.join('\n'), first.cursor);
+    const whole = claudeCodeParser().parse(patched);
+    const result = claudeCodeParser().parse(patched, first.cursor);
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.message).toContain(`${String(HALF_LINES + 3)}번째 줄`);
+    expect(whole.ok).toBe(true);
+    expect(result.ok).toBe(true);
+    if (!whole.ok || !result.ok) return;
+    expect(result.cursorReset).toBe(false);
+    expect(whole.droppedLines['unreadable']).toBe(2);
+    // Only the one behind the cursor: the broken line near the front is in the
+    // stretch this read never looks at.
+    expect(result.droppedLines['unreadable']).toBe(1);
   });
 
   it('keeps only the first of two lines carrying the same uuid', () => {
@@ -742,22 +751,74 @@ describe('the Claude Code parser', () => {
       EXPECTED.map((message) => message.harnessMessageId),
     );
     expect(result.messages[0]?.body).toBe('Where did we leave the import notes?');
+    expect(result.droppedLines['duplicate']).toBe(1);
   });
 
-  it('skips a line whose timestamp is not a date, rather than storing an invalid one', () => {
-    const line = JSON.stringify({
+  it.each([
+    ['a sentence', 'the day before yesterday'],
+    ['no milliseconds', '2026-02-03T11:00:05Z'],
+    ['a space for the T and no zone', '2026-02-03 11:00:05.000'],
+    ['an expanded year', '+010000-02-03T11:00:05.000Z'],
+    ['a day the calendar has not got', '2026-02-30T11:00:05.000Z'],
+  ])('reads no instant from %s, so that line is not a message', (_name, timestamp) => {
+    // `new Date(s)` takes every one of these and answers something. Stored, it
+    // would be an instant the harness never wrote in the column that orders
+    // the whole conversation, and no row can be corrected (#12, AD-11).
+    const content = `${JSON.stringify({
       type: 'user',
       isSidechain: false,
-      uuid: '00000000-0000-4000-8000-0000000000ff',
-      timestamp: 'the day before yesterday',
+      uuid: id(800),
+      timestamp,
       message: { role: 'user', content: 'a message with no usable instant' },
-    });
+    })}\n`;
 
-    const result = claudeCodeParser().parse(`${transcript}${line}\n`);
+    const result = claudeCodeParser().parse(content);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.messages).toEqual(EXPECTED);
+    expect(result.messages).toEqual([]);
+    expect(result.droppedLines['timestamp']).toBe(1);
+  });
+
+  it('keeps an instant written exactly the way the harness writes it', () => {
+    const result = claudeCodeParser().parse(
+      `${said(801, 'And this one has a real stamp.')}\n`,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.messages[0]?.occurredAt).toEqual(new Date('2026-02-03T11:00:21.000Z'));
+    expect(result.droppedLines['timestamp']).toBe(0);
+  });
+
+  it.each([
+    ['You are working inside Orca', 'You are working inside Orca, a coordinator.\n\nDo this.'],
+    [
+      'Please carry out this task from my Orca coordinator',
+      'Please carry out this task from my Orca coordinator:\n\nRead the notes.',
+    ],
+    ['You have N orchestration messages', 'You have 3 orchestration messages waiting.'],
+  ])('drops a user line that opens with the orca heading %s', (_name, body) => {
+    const result = claudeCodeParser().parse(`${said(810, body)}\n`);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // orca writes its prompt into the worker's session as if it had been typed,
+    // so no `origin` says otherwise: the words are the coordinator's (story 23).
+    expect(result.messages).toEqual([]);
+    expect(result.droppedLines['orca_header']).toBe(1);
+  });
+
+  it.each([
+    'I think you are working inside Orca right now, are you not?',
+    'Say that you have 3 orchestration messages and see what happens.',
+  ])('keeps a line that only mentions the same words mid-sentence', (body) => {
+    const result = claudeCodeParser().parse(`${said(811, body)}\n`);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.messages.map((message) => message.body)).toEqual([body]);
+    expect(result.droppedLines['orca_header']).toBe(0);
   });
 
   it.each([
@@ -769,11 +830,13 @@ describe('the Claude Code parser', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.messages).toEqual([]);
+    // A blank line is not a line, so it is neither a message nor a drop.
+    expect(Object.values(result.droppedLines).every((count) => count === 0)).toBe(true);
   });
 });
 
 describe('the Claude Code parser on a whole session', () => {
-  it('keeps the ten messages, with the branch, the cwd and the report mark', () => {
+  it('keeps the eight messages, with the branch and the cwd', () => {
     const result = claudeCodeParser().parse(session);
 
     expect(result.ok).toBe(true);
@@ -798,24 +861,25 @@ describe('the Claude Code parser on a whole session', () => {
     );
   });
 
-  it('reads the two reports of delegated runs and none of their conversation', () => {
+  it('stores no subagent report, in either shape the editor writes one', () => {
     const result = claudeCodeParser().parse(session);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    const reports = result.messages.filter((message) => message.isSubagentReport);
-    expect(reports.map((message) => message.harnessMessageId)).toEqual(SESSION_REPORTS);
-    // A report is an answer, so it is read as the assistant's, and no model of
-    // this session produced it.
-    for (const report of reports) {
-      expect(report.role).toBe('assistant');
-      expect(report.model).toBeNull();
-    }
-    // The subagent's own turns are `isSidechain` and never messages of this
-    // session: the final report is the whole of what a delegated run leaves.
+    // A report is long, model-written text that nobody said, and the main
+    // agent's own turn — which *is* stored — carries the conclusion a person
+    // would recall (epic 2 Decision, 2026-10-21).
+    expect(result.messages.some((message) => message.isSubagentReport)).toBe(false);
     const bodies = result.messages.map((message) => message.body).join('\n');
+    // The synchronous result of the first run, the notification of the second,
+    // and the subagent's own conversation: none of it is anybody's words.
+    expect(bodies).not.toContain('import.md is the newest and ends with one open question');
+    expect(bodies).not.toContain('Every link in notes/ still resolves');
     expect(bodies).not.toContain('the folder holds four files');
     expect(bodies).not.toContain('read every file in notes/');
+    // And the `Agent` calls are still there: that a run was delegated is a
+    // fact about the turn.
+    expect(result.toolNotes.filter((note) => note.tool === 'Agent')).toHaveLength(2);
   });
 
   it('writes one note per tool call, and none for a call with no answer yet', () => {
@@ -823,13 +887,49 @@ describe('the Claude Code parser on a whole session', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.toolNotes).toEqual(SESSION_NOTES);
+    expect(result.toolNotes.map(noteWithout)).toEqual(SESSION_NOTES.map(noteWithout));
     // The last line of the fixture is a `Write` whose result has not arrived
     // and that nothing was said after: the harness is still working, so the
     // note waits for the next read rather than going in as a failure.
     expect(result.toolNotes.some((note) => note.tool === 'Write')).toBe(false);
     // And the cursor does not pass it either, so the next read sees it again.
     expect(result.cursor?.lastHarnessMessageId).toBe(id(33));
+  });
+
+  it('names the position version 3 may have stored the same call under', () => {
+    const result = claudeCodeParser().parse(session);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Version 3 read the first run's synchronous result as a report, so that
+    // line was a message to it and the second `Agent` call's note hung off it
+    // at ordinal 0. Version 4 drops the line, and the call moves back onto the
+    // message the person wrote — which is one call at two positions unless the
+    // store is told where to look (#9).
+    const second = result.toolNotes.find((note) => note.callId === 'toolu_04');
+    expect(second?.harnessMessageId).toBe(id(16));
+    expect(second?.ordinal).toBe(1);
+    expect(second?.earlierPositions).toEqual([{ harnessMessageId: id(21), ordinal: 0 }]);
+    // Every other call has the same position it always had.
+    for (const callId of ['toolu_01', 'toolu_02', 'toolu_03']) {
+      expect(
+        result.toolNotes.find((note) => note.callId === callId)?.earlierPositions,
+      ).toEqual([]);
+    }
+  });
+
+  it('counts every line it walked past, under the reason that caught it', () => {
+    const result = claudeCodeParser().parse(session);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.droppedLines).toEqual(SESSION_DROPS);
+    // The counts add up: the messages plus the drops are the whole file, which
+    // is what makes a filter that quietly stops keeping something visible.
+    const lines = session.trimEnd().split('\n').filter((text) => text.trim() !== '');
+    expect(
+      result.messages.length + Object.values(result.droppedLines).reduce((a, b) => a + b, 0),
+    ).toBe(lines.length);
   });
 
   it('writes ok: false for a call the conversation moved past unanswered', () => {
@@ -855,6 +955,8 @@ describe('the Claude Code parser on a whole session', () => {
       tool: 'Write',
       target: 'notes/summary.md',
       ok: false,
+      callId: 'toolu_05',
+      earlierPositions: [],
     });
   });
 
@@ -905,12 +1007,11 @@ describe('the Claude Code parser on a whole session', () => {
       '<local-command-caveat>',
       '<bash-stdout>',
       '<bash-stderr>',
+      // Every task notification, now that none of them is read as a report.
+      '<task-notification',
     ]) {
       expect(bodies).not.toContain(absent);
     }
-    // A background shell reporting in is a task notification with no report in
-    // it, and its task is a command and not an agent this session started: not
-    // a message, and not a subagent report either.
     expect(bodies).not.toContain('bash-1');
     expect(result.messages).toHaveLength(SESSION_MESSAGES.length);
   });
@@ -942,84 +1043,8 @@ describe('the Claude Code parser on a whole session', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.toolNotes).toEqual(SESSION_NOTES);
+    expect(result.toolNotes.map(noteWithout)).toEqual(SESSION_NOTES.map(noteWithout));
     expect(result.messages).toHaveLength(SESSION_MESSAGES.length);
-  });
-
-  it('reads a task id up to its first closing tag, and a report up to its last', () => {
-    // A report that mentions the tags itself. The id is one token and must stop
-    // at the first `</task-id>`, or a later tag would swallow it and the report
-    // would be lost; the report runs to the last `</result>` so it comes out
-    // whole.
-    const report = 'The agent printed </task-id> and </result> in its own answer.';
-    const notice = `<task-notification><task-id>agent-9c2</task-id><status>completed</status><result>${report}</result></task-notification>`;
-    const lines = session.trimEnd().split('\n');
-    const index = lines.findIndex((line) => line.includes('<task-id>agent-9c2</task-id>'));
-    expect(index).toBeGreaterThanOrEqual(0);
-    const patched = lines.map((line, at) => {
-      if (at !== index) return line;
-      const entry = JSON.parse(line) as Record<string, unknown>;
-      return JSON.stringify({ ...entry, message: { role: 'user', content: notice } });
-    });
-
-    const result = claudeCodeParser().parse(`${patched.join('\n')}\n`);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const read = result.messages.find((message) => message.harnessMessageId === id(32));
-    expect(read?.isSubagentReport).toBe(true);
-    expect(read?.body).toBe(report);
-  });
-
-  it('finds the agent of a notification in the content in front of the read', () => {
-    // The incremental read has to answer "did this session start that agent?"
-    // the same way the full read does, and the only evidence is in the stretch
-    // the incremental read never looks at (Design Notes). So: a line that
-    // started an agent, a turn after it, and then the notification — with the
-    // cursor on that turn.
-    const transcriptFor = (taskId: string): string =>
-      [
-        said(300, 'Start the two checks, please.'),
-        startedAgent('agent-f1', 301),
-        said(302, 'And summarise them when they land.'),
-        notification(taskId, 303),
-      ].join('\n');
-
-    const started = transcriptFor('agent-f1');
-    const front = claudeCodeParser().parse(
-      `${started.split('\n').slice(0, 3).join('\n')}\n`,
-    );
-    expect(front.ok).toBe(true);
-    if (!front.ok) return;
-    expect(front.cursor?.lastHarnessMessageId).toBe(id(302));
-
-    const incremental = claudeCodeParser().parse(started, front.cursor);
-    const whole = claudeCodeParser().parse(started);
-    expect(incremental.ok).toBe(true);
-    expect(whole.ok).toBe(true);
-    if (!incremental.ok || !whole.ok) return;
-    expect(incremental.cursorReset).toBe(false);
-    expect(whole.messages.at(-1)).toMatchObject({
-      harnessMessageId: id(303),
-      body: 'Both checks passed.',
-      isSubagentReport: true,
-    });
-    // From the cursor's own message on, which is the second of the three.
-    expect(incremental.messages).toEqual(whole.messages.slice(1));
-
-    // And an agent nobody here started is not a report of this session, read
-    // either way.
-    const foreign = transcriptFor('agent-zz');
-    const unknownWhole = claudeCodeParser().parse(foreign);
-    const unknownTail = claudeCodeParser().parse(foreign, front.cursor);
-    expect(unknownWhole.ok).toBe(true);
-    expect(unknownTail.ok).toBe(true);
-    if (!unknownWhole.ok || !unknownTail.ok) return;
-    expect(unknownWhole.messages.map((message) => message.harnessMessageId)).toEqual([
-      id(300),
-      id(302),
-    ]);
-    expect(unknownTail.messages.map((message) => message.harnessMessageId)).toEqual([id(302)]);
   });
 
   it('takes the start source from the first SessionStart attachment', () => {
@@ -1076,6 +1101,7 @@ describe('the Claude Code parser on a whole session', () => {
     const first = claudeCodeParser().parse(half());
     expect(first.ok).toBe(true);
     if (!first.ok) return;
+    expect(first.cursor?.lastHarnessMessageId).toBe(id(16));
 
     const incremental = claudeCodeParser().parse(session, first.cursor);
     const whole = claudeCodeParser().parse(session);
@@ -1085,8 +1111,11 @@ describe('the Claude Code parser on a whole session', () => {
     if (!incremental.ok || !whole.ok) return;
     expect(incremental.cursorReset).toBe(false);
     // It starts at the cursor's own message and reports the rest of the file.
-    expect(incremental.messages).toEqual(whole.messages.slice(4));
-    expect(incremental.toolNotes).toEqual([SESSION_NOTES[3]]);
+    expect(incremental.messages).toEqual(whole.messages.slice(3));
+    // Both `Agent` calls hang off that message, `earlierPositions` and all: the
+    // judgement looks at the line and the lines in front of it inside this
+    // read, never at the stretch it skipped (port contract).
+    expect(incremental.toolNotes).toEqual(whole.toolNotes.slice(2));
     expect(incremental.cursor).toEqual(whole.cursor);
     // The start source is a fact about the content, not about the part read.
     expect(incremental.startSource).toBe('startup');
@@ -1169,8 +1198,17 @@ describe('the Claude Code parser on a whole session', () => {
   });
 });
 
-describe('the Claude Code parser on a report a run handed back', () => {
-  it('reads the two hand-backs as reports, with the tracking of their own lines', () => {
+/**
+ * The two report fixtures, read for the one thing they now have to prove: that
+ * no shape of a subagent report reaches a row.
+ *
+ * Between them they carry every shape one arrives in — a hand-back on a peer
+ * line, a synchronous `Agent` result, a task notification, the old framing, the
+ * notices the editor leaves in a report's place — and story 23 stores none of
+ * them (epic 2 Decision, 2026-10-21).
+ */
+describe('the Claude Code parser on the two report fixtures', () => {
+  it('keeps the two turns of the hand-back fixture and neither report', () => {
     const result = claudeCodeParser().parse(handbacks);
 
     expect(result.ok).toBe(true);
@@ -1185,171 +1223,13 @@ describe('the Claude Code parser on a report a run handed back', () => {
         isSubagentReport: message.isSubagentReport,
       })),
     ).toEqual(HANDBACK_MESSAGES);
-    // A report is an answer, so it is read as the assistant's, and no model of
-    // this session produced it.
-    const reports = result.messages.filter((message) => message.isSubagentReport);
-    expect(reports.map((message) => message.harnessMessageId)).toEqual([
-      handbackId(8),
-      handbackId(16),
-    ]);
-    // The instant is the hand-back line's own, the way it is for any other
-    // message — but the branch and the cwd are not: those belong to the
-    // subagent's run, and a session tagged from them would be tagged with
-    // somebody else's worktree (#3).
-    for (const message of result.messages) {
-      expect(message.cwd).toBe(message.isSubagentReport ? null : '/demo/workspace');
-    }
-    expect(reports[1]?.occurredAt).toEqual(new Date('2026-03-04T11:00:16.000Z'));
     expect(result.startSource).toBe('startup');
+    // Every hand-back line is `isMeta`, which is the rule that drops it now
+    // that nothing looks at `origin.handback` at all.
+    expect(result.droppedLines['meta']).toBeGreaterThan(0);
   });
 
-  it('takes a report from handbackReportText alone, never from the framing', () => {
-    const result = claudeCodeParser().parse(handbacks);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    // `message.content` and `origin.body` wrap the report in the editor's own
-    // framing — who sent it, that it is model output. Cutting a body back out
-    // of that would be text the parser invented, in a row nobody can correct.
-    const stored = result.messages.map((message) => message.body).join('\n');
-    expect(handbacks).toContain(FRAME);
-    expect(stored).not.toContain(FRAME);
-    expect(stored).not.toContain('<agent-message');
-    // And the padding the fixture put around the first report is gone.
-    expect(stored).not.toContain('  The notes folder');
-  });
-
-  it('drops a hand-back the harness wrote no usable report text for', () => {
-    const result = claudeCodeParser().parse(handbacks);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const ids = result.messages.map((message) => message.harnessMessageId);
-    // No `handbackReportText` at all (every harness up to 2.1.296), one that
-    // is only whitespace, and one that is not a string. The second source is
-    // the editor's framing in `origin.body`, and these three carry framing
-    // this parser does not recognise, so nothing is read: a body guessed out
-    // of an unknown shape is a row nobody can correct (AD-11). A hand-back in
-    // the framing it *does* recognise is `report-provenance.jsonl`.
-    for (const serial of [9, 10, 11]) {
-      expect(ids).not.toContain(handbackId(serial));
-    }
-  });
-
-  it('drops a peer line that is not a hand-back, whatever it carries', () => {
-    const result = claudeCodeParser().parse(handbacks);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const ids = result.messages.map((message) => message.harnessMessageId);
-    // Another agent's own traffic, a line with `handback: false`, and one whose
-    // flag is the string `"true"`. The last two carry a report text, so the
-    // flag is the only thing dropping them: a shape this parser has not seen is
-    // not a shape it guesses at.
-    for (const serial of [12, 13, 14]) {
-      expect(ids).not.toContain(handbackId(serial));
-    }
-  });
-
-  it('drops a hand-back written inside a sidechain', () => {
-    const result = claudeCodeParser().parse(handbacks);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    // That is a report the inner run made to *its* caller, and this parser
-    // reads a delegated run only through what it reported to this session.
-    expect(result.messages.map((message) => message.harnessMessageId)).not.toContain(
-      handbackId(15),
-    );
-  });
-
-  it('stores neither notice the editor left where the two results would be', () => {
-    const result = claudeCodeParser().parse(handbacks);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    // The `Agent` call's own result and the task notification both say only
-    // "read it there". Storing that would be a sentence nobody said, and a
-    // second, fake report for a run whose real one is now read.
-    // In the file as JSON wrote it: the quotes around the sender are escaped.
-    expect(handbacks).toContain(JSON.stringify(NOTICE).slice(1, -1));
-    const stored = result.messages.map((message) => message.body).join('\n');
-    expect(stored).not.toContain('SubagentHandback');
-    expect(stored).not.toContain('delivered to you as a message');
-    expect(result.messages).toHaveLength(HANDBACK_MESSAGES.length);
-  });
-
-  it('keeps a result that carries the notice and something more', () => {
-    // The match is on the whole trimmed body, so a result that says anything
-    // besides the notice is still a report: a partial match would throw away
-    // words somebody's run actually wrote.
-    const body = `${NOTICE}\n\nAnd it tidied notes/open.md on the way.`;
-    const lines = handbacks.trimEnd().split('\n');
-    const index = lines.findIndex((line) => line.includes('"agent-4e1"'));
-    expect(index).toBeGreaterThanOrEqual(0);
-    const patched = lines.map((line, at) => {
-      if (at !== index) return line;
-      const entry = JSON.parse(line) as Record<string, unknown>;
-      const used = entry['toolUseResult'] as Record<string, unknown>;
-      return JSON.stringify({
-        ...entry,
-        toolUseResult: { ...used, content: [{ type: 'text', text: body }] },
-      });
-    });
-
-    const result = claudeCodeParser().parse(`${patched.join('\n')}\n`);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const read = result.messages.find(
-      (message) => message.harnessMessageId === handbackId(4),
-    );
-    expect(read?.isSubagentReport).toBe(true);
-    expect(read?.body).toBe(body);
-  });
-
-  it('writes one note per Agent call, both on the message the person wrote', () => {
-    const result = claudeCodeParser().parse(handbacks);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    // Both calls were made before any report landed, so both hang off the one
-    // message in front of them — and the notice the editor left is still a
-    // result that said no error, so both notes are `ok`.
-    expect(result.toolNotes).toEqual(HANDBACK_NOTES);
-  });
-
-  it('reads on from a cursor that names a hand-back report', () => {
-    const first = claudeCodeParser().parse(handbackHalf());
-    expect(first.ok).toBe(true);
-    if (!first.ok) return;
-    expect(first.cursor?.lastHarnessMessageId).toBe(handbackId(16));
-
-    const incremental = claudeCodeParser().parse(handbacks, first.cursor);
-    const whole = claudeCodeParser().parse(handbacks);
-
-    expect(incremental.ok).toBe(true);
-    expect(whole.ok).toBe(true);
-    if (!incremental.ok || !whole.ok) return;
-    // A report is a message, so an incremental read may begin at one: it starts
-    // at the cursor's own message and reports the rest of the file.
-    expect(incremental.cursorReset).toBe(false);
-    expect(incremental.messages).toEqual(whole.messages.slice(2));
-    expect(incremental.toolNotes).toEqual([]);
-    expect(incremental.cursor).toEqual(whole.cursor);
-  });
-});
-
-/**
- * What makes a report this session's, row by row of the story's matrix.
- *
- * The rule under all of these is that a line is judged by itself and by the
- * content *in front of it* and never by what follows, so that the incremental
- * read and the full read answer the same thing — which the parser contract
- * checks with a cursor standing on each report of this fixture.
- */
-describe('the Claude Code parser on where a report came from', () => {
-  it('keeps the eight messages, and marks the five that are reports', () => {
+  it('keeps the three turns of the provenance fixture and none of its reports', () => {
     const result = claudeCodeParser().parse(provenance);
 
     expect(result.ok).toBe(true);
@@ -1365,40 +1245,71 @@ describe('the Claude Code parser on where a report came from', () => {
         isSubagentReport: message.isSubagentReport,
       })),
     ).toEqual([...PROVENANCE_MESSAGES]);
-    expect(result.startSource).toBe('startup');
   });
 
-  it('never lets the editor’s own framing into a body or a target', () => {
-    const result = claudeCodeParser().parse(provenance);
+  it.each([
+    ['the hand-back fixture', (): string => handbacks],
+    ['the provenance fixture', (): string => provenance],
+  ])('stores nothing of a report or of the framing around one, in %s', (_name, content) => {
+    const result = claudeCodeParser().parse(content());
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    // The fixture puts the same marker in everything a rule is supposed to
-    // throw away: every notice, every result of a run that did not report,
-    // every framing, and the report text of the hand-back nobody here asked
-    // for. None of it is anybody's words, so none of it is stored.
     const stored = [
       ...result.messages.map((message) => message.body),
       ...result.toolNotes.map((note) => note.target),
     ].join('\n');
-    expect(provenance).toContain(FRAME);
+    // The fixtures mark every report, every notice and every framing with the
+    // same string, so one assertion covers all of them.
+    expect(content()).toContain(FRAME);
     expect(stored).not.toContain(FRAME);
     expect(stored).not.toContain('<agent-message');
     expect(stored).not.toContain('<task-notification');
+    expect(stored).not.toContain('SubagentHandback');
+    expect(stored).not.toContain('delivered to you as a message');
+    expect(stored).not.toContain('has not reported yet');
+    expect(stored).not.toContain('[Subagent hand-back]');
+    expect(result.messages.some((message) => message.isSubagentReport)).toBe(false);
   });
 
-  it('reads no report from a result that carries a handback field', () => {
+  it('keeps one note per Agent call of the hand-back fixture', () => {
+    const result = claudeCodeParser().parse(handbacks);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Both calls were made before any report landed, so both hang off the one
+    // message in front of them. Version 3 had the first run's result lines as
+    // reports, so the second call's note may be stored at one of those.
+    expect(result.toolNotes.map(noteWithout)).toEqual([
+      {
+        harnessMessageId: handbackId(2),
+        ordinal: 0,
+        tool: 'Agent',
+        target: 'Summarise the notes folder',
+        ok: true,
+        callId: 'toolu_h1',
+      },
+      {
+        harnessMessageId: handbackId(2),
+        ordinal: 1,
+        tool: 'Agent',
+        target: 'Check the links in the notes',
+        ok: true,
+        callId: 'toolu_h2',
+      },
+    ]);
+    expect(result.toolNotes[0]?.earlierPositions).toEqual([]);
+    expect(result.toolNotes[1]?.earlierPositions).toEqual([
+      { harnessMessageId: handbackId(4), ordinal: 0 },
+      { harnessMessageId: handbackId(101), ordinal: 0 },
+    ]);
+  });
+
+  it('keeps the one Agent call of the provenance fixture', () => {
     const result = claudeCodeParser().parse(provenance);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    // The field says the run answered somewhere else, whatever the sentence
-    // the editor left in the result now reads: the fixture's is reworded on
-    // purpose, so a rule that only matched the sentence would store it (#1).
-    const bodies = result.messages.map((message) => message.body).join('\n');
-    expect(bodies).not.toContain('a reworded sentence the editor left in place');
-    expect(bodies).not.toContain('the report only the handback field carries');
-    // And the `Agent` call's note is untouched: the result is still a result.
     expect(result.toolNotes).toEqual([
       {
         harnessMessageId: provenanceId(5),
@@ -1406,137 +1317,10 @@ describe('the Claude Code parser on where a report came from', () => {
         tool: 'Agent',
         target: 'Run the sync check',
         ok: true,
+        callId: 'toolu_p1',
+        earlierPositions: [],
       },
     ]);
-  });
-
-  it('reads no report from a notification whose hand-back is already behind it', () => {
-    const result = claudeCodeParser().parse(provenance);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    // One run, one report: the hand-back, read where it landed. The
-    // notification that repeats it — reworded, so again the sentence is not
-    // what settles it — is not a second one (#1).
-    const bodies = result.messages.map((message) => message.body);
-    expect(bodies).toContain('The prior report, handed back before its notification.');
-    expect(bodies.join('\n')).not.toContain('a reworded sentence pointing at the message above');
-  });
-
-  it('reads no report from the sentence that says a run has not reported yet', () => {
-    const result = claudeCodeParser().parse(provenance);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    // Here the hand-back comes *after* the notice, so nothing in front of the
-    // notification says the run answered: the sentence is the only thing that
-    // drops it, which is why both sentences are matched whole (#1).
-    const bodies = result.messages.map((message) => message.body);
-    expect(bodies.join('\n')).not.toContain('has not reported yet');
-    expect(bodies).toContain('The second report, which the notice said was still coming.');
-  });
-
-  it('reads no report from a run that did not finish, whatever it quoted', () => {
-    const result = claudeCodeParser().parse(provenance);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    // A `failed` notification, and a `stopped` one whose own answer quotes
-    // `<status>completed</status>`: the status is the first one in the body,
-    // so a report cannot promote the run that produced it (#4).
-    const bodies = result.messages.map((message) => message.body).join('\n');
-    expect(bodies).not.toContain('the run ended in an error');
-    expect(bodies).not.toContain('in its own answer');
-  });
-
-  it('reads the status from in front of the result, whichever order they came in', () => {
-    // The editor is not promised to write `<status>` before `<result>`. When
-    // it does not, searching the whole body for the first `<status>` reads the
-    // one the report quoted inside its own answer — and a failed run's answer
-    // would go in as a report nobody can take back (#4, AD-11).
-    const notified = (body: string): string =>
-      `${[
-        said(400, 'Start the check, please.'),
-        startedAgent('agent-f1', 401),
-        JSON.stringify({
-          parentUuid: null,
-          isSidechain: false,
-          cwd: '/demo/workspace',
-          gitBranch: 'main',
-          uuid: id(402),
-          timestamp: '2026-02-03T11:00:20.000Z',
-          type: 'user',
-          origin: { kind: 'task-notification', taskId: 'agent-f1' },
-          message: {
-            role: 'user',
-            content: `<task-notification><task-id>agent-f1</task-id>${body}</task-notification>`,
-          },
-        }),
-      ].join('\n')}\n`;
-    const quoted = '<result>It printed <status>completed</status> as it worked.</result>';
-
-    const reports = (content: string): string[] => {
-      const result = claudeCodeParser().parse(content);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return ['the transcript did not parse'];
-      return result.messages.filter((message) => message.isSubagentReport).map((m) => m.body);
-    };
-
-    // The result first and the real status behind it: not a report, and not
-    // because of the status that follows — a body with no status in front of
-    // its result is a shape this parser has not seen, so neither order of the
-    // two is read.
-    expect(reports(notified(`${quoted}<status>failed</status>`))).toEqual([]);
-    expect(reports(notified(`${quoted}<status>completed</status>`))).toEqual([]);
-    // Written the way the harness does write it, the same report is read.
-    expect(reports(notified(`<status>completed</status>${quoted}`))).toEqual([
-      'It printed <status>completed</status> as it worked.',
-    ]);
-  });
-
-  it('reads no report from a notification that carries two results', () => {
-    const result = claudeCodeParser().parse(provenance);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    // Reading from the first opening tag to the last closing one would join
-    // two runs' answers into one row nobody can take apart, and a row cannot
-    // be corrected (#4, AD-11).
-    const bodies = result.messages.map((message) => message.body).join('\n');
-    expect(bodies).not.toContain("the first run's answer");
-    expect(bodies).not.toContain("the second run's answer");
-  });
-
-  it('reads no hand-back from a run this session never started', () => {
-    const result = claudeCodeParser().parse(provenance);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    // A peer line carries other agents' traffic too. A report somebody else's
-    // run made to somebody else would be an answer in a conversation that
-    // never asked (#2).
-    expect(
-      result.messages.map((message) => message.body).join('\n'),
-    ).not.toContain('a report this session never asked for');
-  });
-
-  it('reads a hand-back out of the old framing, and only when it fits exactly', () => {
-    const result = claudeCodeParser().parse(provenance);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    // Every harness up to 2.1.296 wrote no report text, and the report
-    // survives only indented under the editor's heading. Measured on this
-    // machine, the two agree on all 152 hand-backs that carry both.
-    const bodies = result.messages.map((message) => message.body);
-    expect(bodies).toContain(
-      'The old report, read out of the framing.\n\nIt kept its second paragraph.',
-    );
-    // And the three shapes one line out of place are read as nothing at all:
-    // a heading of some later release, a note above the frame, and a line at
-    // column zero inside the report.
-    const ids = result.messages.map((message) => message.harnessMessageId);
-    for (const serial of [26, 28, 30]) expect(ids).not.toContain(provenanceId(serial));
   });
 
   it('keeps a user line only when its origin says a person typed it', () => {
@@ -1559,7 +1343,7 @@ describe('the Claude Code parser on where a report came from', () => {
     }
   });
 
-  it('drops the two tool outputs this story added to the markers', () => {
+  it('drops the two tool outputs story 22 added to the markers', () => {
     const result = claudeCodeParser().parse(provenance);
 
     expect(result.ok).toBe(true);
@@ -1569,6 +1353,170 @@ describe('the Claude Code parser on where a report came from', () => {
     const bodies = result.messages.map((message) => message.body).join('\n');
     expect(bodies).not.toContain('<local-command-stderr>');
     expect(bodies).not.toContain('<user-prompt-submit-hook>');
+    expect(result.droppedLines['tool_output']).toBe(2);
+  });
+});
+
+describe('the Claude Code parser on what decides a call worked', () => {
+  it('reads an outcome only from a line of the conversation', () => {
+    // The editor writes `tool_result` blocks onto lines of its own too — 457 of
+    // them on this machine, every one an `api-request-blob`. Read as outcomes
+    // they would mark a call that worked as failed (#7).
+    const content = `${[
+      said(500, 'Count the notes, please.'),
+      called(501, [{ id: 'toolu_x', name: 'Bash', input: { command: 'wc -l notes/*' } }]),
+      JSON.stringify({
+        type: 'api-request-blob',
+        isSidechain: false,
+        uuid: id(502),
+        timestamp: '2026-02-03T11:00:02.000Z',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'toolu_x', is_error: true }],
+        },
+      }),
+      answered(503, 'toolu_x'),
+      said(504, 'Thank you.'),
+    ].join('\n')}\n`;
+
+    const result = claudeCodeParser().parse(content);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.toolNotes).toHaveLength(1);
+    expect(result.toolNotes[0]?.ok).toBe(true);
+  });
+
+  it('leaves a delegated call without a result for the next read', () => {
+    // An `Agent` is expected to answer after the conversation has moved on, so
+    // "a message came after it" says nothing about whether it failed: writing
+    // `ok: false` would freeze a run that is still going as a failure (#7).
+    const content = `${[
+      said(510, 'Start the check and carry on.'),
+      called(511, [
+        { id: 'toolu_a', name: 'Agent', input: { description: 'Check the links' } },
+        { id: 'toolu_b', name: 'Bash', input: { command: 'ls notes' } },
+      ]),
+      said(512, 'Anything yet?'),
+    ].join('\n')}\n`;
+
+    const result = claudeCodeParser().parse(content);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The `Bash` call on the same line *is* written as a failure, because an
+    // ordinary tool's result either came with the turn or is never coming.
+    expect(result.toolNotes).toEqual([
+      {
+        harnessMessageId: id(510),
+        ordinal: 1,
+        tool: 'Bash',
+        target: 'ls notes',
+        ok: false,
+        callId: 'toolu_b',
+        earlierPositions: [],
+      },
+    ]);
+  });
+
+  it('writes a delegated call once its result lands', () => {
+    const content = `${[
+      said(520, 'Start the check and carry on.'),
+      called(521, [
+        { id: 'toolu_a', name: 'Agent', input: { description: 'Check the links' } },
+      ]),
+      said(522, 'Anything yet?'),
+      answered(523, 'toolu_a'),
+      said(524, 'Good.'),
+    ].join('\n')}\n`;
+
+    const result = claudeCodeParser().parse(content);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.toolNotes.map((note) => [note.callId, note.ok])).toEqual([
+      ['toolu_a', true],
+    ]);
+  });
+});
+
+describe('the Claude Code parser on a call made before the first message', () => {
+  /** Two calls, their results, and then the first thing anybody said. */
+  const content = `${[
+    called(600, [
+      { id: 'toolu_f1', name: 'Read', input: { file_path: 'notes/import.md' } },
+      { id: 'toolu_f2', name: 'Grep', input: { pattern: 'open question' } },
+    ]),
+    answered(601, 'toolu_f1'),
+    answered(602, 'toolu_f2', true),
+    said(603, 'What did you find?'),
+  ].join('\n')}\n`;
+
+  it('hangs it on the next message at a negative ordinal, in file order', () => {
+    const result = claudeCodeParser().parse(content);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Version 3 dropped these calls: there was no message to point a note at,
+    // and the contract requires one. A negative ordinal says "in front of this
+    // message's own line", which leaves every call *after* a message at the
+    // 0-based position it has always had (#8, Design Notes).
+    expect(result.messages.map((message) => message.harnessMessageId)).toEqual([id(603)]);
+    expect(result.toolNotes).toEqual([
+      {
+        harnessMessageId: id(603),
+        ordinal: -2,
+        tool: 'Read',
+        target: 'notes/import.md',
+        ok: true,
+        callId: 'toolu_f1',
+        earlierPositions: [],
+      },
+      {
+        harnessMessageId: id(603),
+        ordinal: -1,
+        tool: 'Grep',
+        target: 'open question',
+        ok: false,
+        callId: 'toolu_f2',
+        earlierPositions: [],
+      },
+    ]);
+  });
+
+  it('drops it when the read never reaches a message at all', () => {
+    const result = claudeCodeParser().parse(
+      content.split('\n').slice(0, 3).join('\n') + '\n',
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Nothing to hang them on, and nothing is lost: the next read of the file
+    // sees the same lines again, and the cursor never passed them.
+    expect(result.messages).toEqual([]);
+    expect(result.toolNotes).toEqual([]);
+    expect(result.cursor).toBeNull();
+  });
+
+  it('does not report it again once the cursor stands on that message', () => {
+    const first = claudeCodeParser().parse(content);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const grown = `${content}${said(604, 'Anything else?')}\n`;
+    const incremental = claudeCodeParser().parse(grown, first.cursor);
+
+    expect(incremental.ok).toBe(true);
+    if (!incremental.ok) return;
+    expect(incremental.cursorReset).toBe(false);
+    // The incremental read begins *at* that message's line, so the two calls in
+    // front of it are not read again — and their notes are already stored from
+    // the read that produced the cursor.
+    expect(incremental.messages.map((message) => message.harnessMessageId)).toEqual([
+      id(603),
+      id(604),
+    ]);
+    expect(incremental.toolNotes).toEqual([]);
   });
 });
 
@@ -1590,17 +1538,54 @@ describe('what a tool note says the call acted on', () => {
     ['Agent', { description: 'Summarise the notes', prompt: 'a long brief' }, 'Summarise the notes'],
     ['Task', { description: 'Check the links', prompt: 'a long brief' }, 'Check the links'],
     ['Skill', { skill: 'demo-skill', args: '--all' }, 'demo-skill'],
+    // The two largest groups of empty targets measured, now named: a recipient,
+    // and the first of a list of questions (#13).
+    ['SendMessage', { to: 'worker-2', message: 'a long brief' }, 'worker-2'],
+    [
+      'AskUserQuestion',
+      { questions: [{ question: 'Which folder?', options: ['notes', 'docs'] }] },
+      'Which folder?',
+    ],
+    ['AskUserQuestion', { questions: [] }, ''],
     // A tool nobody listed: the first of the fallback keys it carries, from the
     // most specific thing a call can name to the least.
     ['mcp__demo__read_page', { url: 'https://example.invalid/page' }, 'https://example.invalid/page'],
     ['mcp__demo__run', { name: 'a plugin verb' }, 'a plugin verb'],
     ['mcp__demo__find', { query: 'notes', description: 'ignored' }, 'notes'],
+    // The identifying keys this story added, each one a group of empty targets
+    // that had nothing else to be described by.
+    ['mcp__demo__upload', { filename: 'notes.pdf', content: 'a whole file' }, 'notes.pdf'],
+    ['mcp__atlassian__page', { pageId: '12345' }, '12345'],
+    ['mcp__atlassian__search', { cql: 'type = page' }, 'type = page'],
+    ['TaskStop', { task_id: 'task-9' }, 'task-9'],
+    ['mcp__demo__notify', { recipient: 'worker-3' }, 'worker-3'],
+    ['mcp__demo__fetch', { id: 'row-7' }, 'row-7'],
     // Nothing that describes the call, which is a value and not a failure.
     ['mcp__demo__ping', { flag: true }, ''],
+    ['ListAgents', {}, ''],
     ['Bash', {}, ''],
     ['Read', 'not an object at all', ''],
   ])('describes a %s call by one value of its input', (tool, input, expected) => {
     expect(toolTarget(tool, input)).toBe(expected);
+  });
+
+  it.each(['content', 'message', 'code', 'script', 'payload', 'new_string', 'old_string'])(
+    'never describes a call by its %s',
+    (key) => {
+      // A note built out of one of those would be a copy of the change, which
+      // the transcript already is — and the place a secret in a call would end
+      // up in a row nobody can rewrite (AD-11).
+      expect(toolTarget('mcp__demo__write', { [key]: 'the whole payload' })).toBe('');
+    },
+  );
+
+  it('looks the tool up by its own key alone', () => {
+    // A tool named after a member of `Object.prototype` found that member on
+    // the table and read the input under a key that is a function (#14).
+    expect(toolTarget('toString', { path: 'a' })).toBe('a');
+    expect(toolTarget('constructor', { path: 'a' })).toBe('a');
+    // And the fallback keys are own keys too.
+    expect(toolTarget('mcp__demo__x', Object.create({ path: 'inherited' }))).toBe('');
   });
 
   it('keeps the first line only, cut to the limit', () => {
@@ -1610,6 +1595,29 @@ describe('what a tool note says the call acted on', () => {
 
     expect(target).toBe('x'.repeat(TOOL_TARGET_LIMIT));
     expect(target).not.toContain('the second line');
+  });
+
+  it('cuts on a character boundary, never through a surrogate pair', () => {
+    // The limit falls between the two halves of one code point. Cutting there
+    // leaves a lone surrogate — half a character, which is not text at all and
+    // then travels through a column, a search index and JSON (#14).
+    const pair = String.fromCodePoint(0x1f600);
+    const command = `${'x'.repeat(TOOL_TARGET_LIMIT - 1)}${pair}tail`;
+    expect(command.charCodeAt(TOOL_TARGET_LIMIT - 1)).toBeGreaterThanOrEqual(0xd800);
+
+    const target = toolTarget('Bash', { command });
+
+    expect(target).toHaveLength(TOOL_TARGET_LIMIT - 1);
+    expect(target).toBe('x'.repeat(TOOL_TARGET_LIMIT - 1));
+    // And nothing in it is half a character: `[...text]` walks code points, so
+    // a lone surrogate would come out as one of its own.
+    expect([...target].some((point) => /^[\uD800-\uDFFF]$/u.test(point))).toBe(false);
+
+    // A pair that ends *at* the limit is kept whole.
+    const fitting = `${'x'.repeat(TOOL_TARGET_LIMIT - 2)}${pair}tail`;
+    expect(toolTarget('Bash', { command: fitting })).toBe(
+      `${'x'.repeat(TOOL_TARGET_LIMIT - 2)}${pair}`,
+    );
   });
 
   it('splits on the newline alone, so U+2028 stays in the target', () => {

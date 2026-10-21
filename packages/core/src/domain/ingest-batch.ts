@@ -21,15 +21,38 @@ export interface ParsedMessage {
   gitBranch: string | null;
   /**
    * The working directory the line carried, or `null` — which a parser also
-   * answers for a line whose folder is not this conversation's, the way a
-   * hand-back report's is the subagent's. It is *not* stored on the message:
+   * answers for a line whose folder is not this conversation's, rather than
+   * guessing. It is *not* stored on the message:
    * story 2.8 tags the session with the cwd of the first message that carries
    * one, which is why the parser reports it and the `Message` has no such
    * field.
    */
   cwd: string | null;
-  /** The final report of a subagent, read from the main transcript (AD-4). */
+  /**
+   * The final report of a subagent, read from the main transcript (AD-4).
+   *
+   * Always `false` since story 23: a subagent's report is not stored at all.
+   * The report is model output that nobody said, and the main agent relays the
+   * conclusion in its own turn — which *is* stored — so keeping the long
+   * agent-written text as a message put words in a conversation that never
+   * carried them. The field stays because the column stays: rows the earlier
+   * versions wrote are immutable and still say `1`, and a reader has to be able
+   * to tell them apart (AD-4, spine Out of Scope).
+   */
   isSubagentReport: boolean;
+}
+
+/**
+ * Where a tool note sits, as a position alone: the message it hangs on and its
+ * number among that message's calls.
+ *
+ * It exists for `ParsedToolNote.earlierPositions`, which is a list of places an
+ * older parser version may have put *this same call* — so the two halves of
+ * that question are spelled once (AD-4, story 23).
+ */
+export interface ToolNotePosition {
+  harnessMessageId: string;
+  ordinal: number;
 }
 
 /**
@@ -38,13 +61,41 @@ export interface ParsedMessage {
  * changes, so the same call keeps the same number forever. That is why the
  * parser may own this number while it owns none for a message: the thing it
  * counts within cannot be rewritten under it.
+ *
+ * `ordinal` may be negative, and then it means "a call the harness made in
+ * front of this message's own line". Only the *first* message of the content
+ * can carry such notes, and they run `-p … -1` in file order, so the calls
+ * after a message keep counting from 0 — which is what keeps the position of
+ * every other call the same as the version before this one's (story 23, Design
+ * Notes).
  */
-export interface ParsedToolNote {
-  harnessMessageId: string;
-  ordinal: number;
+export interface ParsedToolNote extends ToolNotePosition {
   tool: string;
   target: string;
   ok: boolean;
+  /**
+   * The harness's own id for this call — `tool_use.id` in Claude Code — or
+   * `null` for a harness that names its calls nothing.
+   *
+   * It is what makes a call recognisable across parser versions: the position
+   * of a note can move when a version stops keeping a line that used to be a
+   * message, and then the same call would be stored twice under two ordinals
+   * (2.7 follow-up review #9). A store that holds this id for the session
+   * already holds this call.
+   */
+  callId: string | null;
+  /**
+   * The positions an *older* parser version may have stored this same call
+   * under, newest first, and empty when there is only this one.
+   *
+   * A store with a row at one of them, and no call id on it, already holds this
+   * call: there is nothing else it could be, because a note's position is
+   * `(message, ordinal)` and the message it names is one this version drops.
+   * A superset is safe — a position with no row simply does not match — and
+   * guessing by a similar tool and target is not done at all, since that could
+   * swallow a different call (Design Notes).
+   */
+  earlierPositions: readonly ToolNotePosition[];
 }
 
 /**

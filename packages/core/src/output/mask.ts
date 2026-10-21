@@ -85,11 +85,18 @@ const TRUNCATED_KIND = 'truncated';
  *
  * Masking a word that was only ever a word is the price, and it is paid in the
  * output alone — the stored target still says what the call was.
+ *
+ * One unit short of the limit counts as cut too. A connector cuts on a
+ * character boundary, so a target whose limit fell between the two halves of
+ * one code point is `LIMIT - 1` units long and just as truncated as a full one
+ * (`claude-code/tool-target.ts`, story 23). A target that happens to be exactly
+ * that long on its own pays a masked last word, which is the same price the
+ * rule already pays at the limit itself.
  */
 export function maskToolNoteTarget(target: string): string {
   const masked = maskSecrets(target, 'tool_target').text;
   // UTF-16 units, because that is what the parser's cut counts.
-  if (target.length < TOOL_NOTE_TARGET_LIMIT) return masked;
+  if (target.length < TOOL_NOTE_TARGET_LIMIT - 1) return masked;
   const start = Math.max(afterLastSpace(masked), afterLastMarker(masked));
   if (start >= masked.length) return masked;
   return `${masked.slice(0, start)}[REDACTED:${TRUNCATED_KIND}]`;

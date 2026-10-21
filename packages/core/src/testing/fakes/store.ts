@@ -92,6 +92,34 @@ export interface MemoryStore extends Store {
 }
 
 /**
+ * A stored tool note plus the harness's own id for the call, which the row
+ * carries (`tool_notes.call_id`, migration 0005) and no reader asks for.
+ *
+ * It is kept here and stripped on the way out because it is not what a note
+ * *says* — it is how the store recognises the same call when a later parser
+ * version puts it at another position (`domain/ingest-batch.ts`, story 23).
+ */
+interface StoredToolNote extends ToolNote {
+  callId: string | null;
+}
+
+/** Whether two notes name the same place in the conversation. */
+function samePlace(
+  left: { harnessMessageId: string; ordinal: number },
+  right: { harnessMessageId: string; ordinal: number },
+): boolean {
+  return (
+    left.harnessMessageId === right.harnessMessageId && left.ordinal === right.ordinal
+  );
+}
+
+/** A stored note as a reader sees it: the call id is the store's own business. */
+function plainToolNote(note: StoredToolNote): ToolNote {
+  const { callId: _callId, ...rest } = note;
+  return rest;
+}
+
+/**
  * The in-memory `Store`: the reference every real adapter is measured against.
  * It keeps rows in maps keyed by the natural idempotency keys of the Table
  * Contract, so a replayed batch adds nothing (AD-8).
@@ -112,7 +140,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const worktrees = new Map<string, Worktree>();
   const sessions = new Map<SessionToken, Session>();
   const messages = new Map<SessionToken, Message[]>();
-  const toolNotes = new Map<SessionToken, ToolNote[]>();
+  const toolNotes = new Map<SessionToken, StoredToolNote[]>();
   /** Keyed by the session, like the rows above; the records are append only. */
   const redactions = new Map<SessionToken, Redaction[]>();
   /**
@@ -308,12 +336,32 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       }
 
       for (const parsed of batch.toolNotes) {
-        const duplicate = storedToolNotes.some(
-          (stored) =>
-            stored.harnessMessageId === parsed.harnessMessageId &&
-            stored.ordinal === parsed.ordinal,
-        );
-        if (duplicate) continue;
+        // Three ways this session already holds this call, and the first two
+        // are what keep a parser version bump from storing it twice (2.7
+        // follow-up review #9):
+        //
+        //   * a row with the same call id, wherever it sits;
+        //   * a row with *no* call id at this note's own position — written by
+        //     a version that named its calls nothing;
+        //   * a row with no call id at one of the positions an older version
+        //     may have put this same call under (`earlierPositions`).
+        //
+        // Nothing is guessed from a similar tool or target: that could swallow
+        // a different call, and a note cannot be taken back (AD-11).
+        const held =
+          (parsed.callId !== null &&
+            storedToolNotes.some((stored) => stored.callId === parsed.callId)) ||
+          storedToolNotes.some(
+            (stored) =>
+              stored.callId === null &&
+              (samePlace(stored, parsed) ||
+                parsed.earlierPositions.some((earlier) => samePlace(stored, earlier))),
+          );
+        if (held) continue;
+        // The position is a key of its own, and a row already standing there is
+        // some other call: the insert is dropped rather than counted, the way a
+        // real adapter's `on conflict do nothing` drops it.
+        if (storedToolNotes.some((stored) => samePlace(stored, parsed))) continue;
         storedToolNotes.push({
           id: parsed.id,
           sessionId: session.id,
@@ -322,6 +370,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
           tool: parsed.tool,
           target: parsed.target,
           ok: parsed.ok,
+          callId: parsed.callId,
         });
         insertedToolNotes += 1;
       }
@@ -404,7 +453,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         ok: true,
         session: { ...session },
         messages: [...(messages.get(token) ?? [])],
-        toolNotes: sessionToolNotes,
+        toolNotes: sessionToolNotes.map(plainToolNote),
       };
     },
 
@@ -631,7 +680,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         worktrees: [...worktrees.values()],
         sessions: [...sessions.values()],
         messages: [...messages.values()].flat(),
-        toolNotes: [...toolNotes.values()].flat(),
+        toolNotes: [...toolNotes.values()].flat().map(plainToolNote),
         redactions: [...redactions.values()].flat(),
         workItems: workItems.map((item) => ({ ...item })),
         failures: failures.map((failure) => ({ ...failure })),

@@ -90,6 +90,14 @@ const PROVENANCE_REPORTS = [
 ] as const;
 /** The folder its first line puts on the hand-back, which is a subagent's. */
 const PROVENANCE_SUBAGENT_CWD = '/demo/elsewhere';
+/**
+ * What parser 3 produced from each of the three fixtures above, read by the
+ * `baseline_revision` build and committed so this test can plant it
+ * (`seedParserV3State`).
+ */
+const V3_STATE_FIXTURE = fileURLToPath(
+  new URL('./fixtures/parser-v3-state.json', import.meta.url),
+);
 
 interface Run {
   code: number | null;
@@ -105,6 +113,7 @@ interface Envelope {
     spooled?: boolean;
     created?: boolean;
     inserted?: { messages: number; toolNotes: number };
+    droppedLines?: Record<string, number> | null;
   };
   error?: { code: string; message: string; exit_code?: number; hint?: string };
 }
@@ -327,50 +336,132 @@ function storedParserVersion(path: string): string | null {
 }
 
 /**
- * The session put back on the parser version that stored it, which is what
- * makes the next ingest read the transcript from the front instead of from the
- * cursor that version left (AD-4).
+ * The deterministic ids the version-3 seed mints. They are outside the range
+ * anything else in this file uses, so a case can name a seeded row.
  */
-function setParserVersion(path: string, version: string): void {
-  const database = new DatabaseSync(path);
-  try {
-    const update = database.prepare('update sessions set parser_version = ?');
-    update.run(version);
-  } finally {
-    database.close();
-  }
+function seededRowId(serial: number): string {
+  return `01940000-0000-7000-8000-${String(serial).padStart(12, '0')}`;
+}
+
+/** One fixture's worth of what parser 3 produced (`parser-v3-state.json`). */
+interface ParserV3Fixture {
+  messages: {
+    harnessMessageId: string;
+    role: string;
+    model: string | null;
+    body: string;
+    occurredAt: string;
+    gitBranch: string | null;
+    isSubagentReport: boolean;
+  }[];
+  toolNotes: {
+    harnessMessageId: string;
+    ordinal: number;
+    tool: string;
+    target: string;
+    ok: boolean;
+  }[];
+  cursor: { lastHarnessMessageId: string; fingerprint: string } | null;
 }
 
 /**
- * The hand-back fixture in this test's own folder, either whole or with every
- * hand-back line taken out.
+ * A session planted in the database exactly as the `baseline_revision` build
+ * left it: the messages, the tool notes and the cursor parser 3 read out of one
+ * of the connector's fixtures, with `parser_version` `3` and every
+ * `tool_notes.call_id` null — because version 3 wrote none.
  *
- * Without them it stands in for a session parser `2` stored, and it is not the
- * whole of one: `2` would also have stored the two notices the editor left
- * where the results of those runs were (the fixture's `agent-4e1` result and
- * its `agent-8b3` notification) as reports, and `3` cannot write those rows at
- * all. So the pair of ingests pins the half that matters here — re-reading adds
- * the hand-back reports and leaves every stored row's body alone — and
- * says nothing about the fake reports `2` left behind, which are a message that
- * cannot be taken back (AD-11).
+ * It is planted rather than produced, because producing it would mean building
+ * and running the old parser inside this test. The state itself *was* produced
+ * by that build, by a script outside the repository, and committed as a fixture
+ * — it is the output of a neutral fixture, so it is safe to publish
+ * (Implementation Notes).
+ *
+ * This is what a parser version bump actually meets in the field, and the one
+ * case `tool_notes.call_id` and `earlierPositions` exist for (#9).
  */
-async function handbackTranscriptIn(
-  home: string,
-  options: { handbacks?: boolean } = {},
-): Promise<string> {
+async function seedParserV3State(home: string, fixture: string): Promise<ParserV3Fixture> {
+  const state = JSON.parse(await readFile(V3_STATE_FIXTURE, 'utf8')) as {
+    parserVersion: string;
+    fixtures: Record<string, ParserV3Fixture>;
+  };
+  const kept = state.fixtures[fixture];
+  if (kept === undefined) {
+    throw new Error(`the version-3 state carries nothing for ${fixture}`);
+  }
+  const first = kept.messages[0];
+  if (first === undefined) throw new Error(`${fixture} has no version-3 messages to plant`);
+
+  const database = new DatabaseSync(databaseIn(home));
+  try {
+    const owner = database.prepare('select id from users where is_self = 1').get() as {
+      id: string;
+    };
+    const sessionId = seededRowId(300);
+    database
+      .prepare(
+        `insert into sessions (id, harness, harness_session_id, user_id, machine,
+                               started_at, ingest_source, last_harness_message_id,
+                               cursor_fingerprint, parser_version, ingested_at,
+                               start_source)
+              values (?, 'claude-code', ?, ?, 'demo-machine', ?, 'live', ?, ?, ?, ?,
+                      'startup')`,
+      )
+      .run(
+        sessionId,
+        HARNESS_SESSION,
+        owner.id,
+        first.occurredAt,
+        kept.cursor?.lastHarnessMessageId ?? null,
+        kept.cursor?.fingerprint ?? null,
+        state.parserVersion,
+        first.occurredAt,
+      );
+    const message = database.prepare(
+      `insert into messages (id, session_id, harness_message_id, role, model, body,
+                             occurred_at, git_branch, is_subagent_report)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const [at, kind] of kept.messages.entries()) {
+      message.run(
+        seededRowId(200 + at),
+        sessionId,
+        kind.harnessMessageId,
+        kind.role,
+        kind.model,
+        kind.body,
+        kind.occurredAt,
+        kind.gitBranch,
+        kind.isSubagentReport ? 1 : 0,
+      );
+    }
+    // No `call_id`: version 3 did not write one, which is the whole of why a
+    // position has to be enough to recognise a call by.
+    const note = database.prepare(
+      `insert into tool_notes (id, session_id, harness_message_id, ordinal, tool,
+                               target, ok, call_id)
+            values (?, ?, ?, ?, ?, ?, ?, null)`,
+    );
+    for (const [at, kind] of kept.toolNotes.entries()) {
+      note.run(
+        seededRowId(400 + at),
+        sessionId,
+        kind.harnessMessageId,
+        kind.ordinal,
+        kind.tool,
+        kind.target,
+        kind.ok ? 1 : 0,
+      );
+    }
+  } finally {
+    database.close();
+  }
+  return kept;
+}
+
+/** The hand-back fixture in this test's own folder, so nothing writes to the repository. */
+async function handbackTranscriptIn(home: string): Promise<string> {
   const path = join(home, 'handback.jsonl');
-  const whole = await readFile(HANDBACK_FIXTURE, 'utf8');
-  const lines =
-    options.handbacks === false
-      ? whole
-          .trimEnd()
-          .split('\n')
-          .filter((line) => {
-            const entry = JSON.parse(line) as { origin?: { handback?: unknown } };
-            return entry.origin?.handback !== true;
-          })
-      : whole.trimEnd().split('\n');
-  await writeFile(path, `${lines.join('\n')}\n`, 'utf8');
+  await copyFile(HANDBACK_FIXTURE, path);
   return path;
 }
 
@@ -633,6 +724,24 @@ describe('brain sessions ingest claude-code', () => {
       // One `Read`, which the fixture's one tool call is, and nothing masked:
       // there is no secret anywhere in this transcript.
       inserted: { messages: 4, toolNotes: 1 },
+      // Twelve of the sixteen lines are not conversation, and the envelope says
+      // so by reason: a transcript is mostly editor state, hook output, tool
+      // calls and tool results, which is the normal case and not a complaint
+      // (story 23). `unreadable` is the only reason that also warns.
+      droppedLines: {
+        unreadable: 0,
+        duplicate: 0,
+        not_conversation: 5,
+        sidechain: 2,
+        meta: 2,
+        incomplete: 0,
+        timestamp: 0,
+        api_error: 0,
+        not_human: 0,
+        empty: 3,
+        tool_output: 0,
+        orca_header: 0,
+      },
     });
     expect(envelope.warnings).toEqual([]);
 
@@ -848,7 +957,7 @@ describe('brain sessions ingest claude-code on a whole session', () => {
     expect(first.code).toBe(0);
     expect((JSON.parse(first.stdout) as Envelope).data).toMatchObject({
       created: true,
-      inserted: { messages: 5, toolNotes: 3 },
+      inserted: { messages: 4, toolNotes: 3 },
     });
     const half = storedMessages(databaseIn(home));
 
@@ -866,10 +975,10 @@ describe('brain sessions ingest claude-code on a whole session', () => {
       created: false,
       // Only what the rest of the file added: the read started at the message
       // the first one stopped at.
-      inserted: { messages: 5, toolNotes: 1 },
+      inserted: { messages: 4, toolNotes: 1 },
     });
     const whole = storedMessages(databaseIn(home));
-    expect(whole).toHaveLength(10);
+    expect(whole).toHaveLength(8);
     // Everything the rest of the file added was uttered after everything the
     // first read stored, so the front of the conversation is unchanged.
     expect(whole.slice(0, half.length)).toEqual(half);
@@ -938,7 +1047,7 @@ describe('brain sessions ingest claude-code on a whole session', () => {
     expect(text).not.toContain('<bash-stdout>');
   });
 
-  it('marks the two reports of delegated runs and stores none of their conversation', async () => {
+  it('stores no report of a delegated run and none of its conversation', async () => {
     const home = await installedHome();
     const transcript = await sessionTranscriptIn(home);
 
@@ -949,39 +1058,36 @@ describe('brain sessions ingest claude-code on a whole session', () => {
 
     const database = new DatabaseSync(databaseIn(home), { readOnly: true });
     try {
+      // Not one row, and the column is still there: rows parser 2 and 3 wrote
+      // are immutable and still say `1`, so a reader can tell them apart
+      // (story 23, epic 2 Decision 2026-10-21).
       expect(
         database
-          .prepare(
-            `select occurred_at, role, model, git_branch from messages
-              where is_subagent_report = 1 order by occurred_at`,
-          )
-          .all(),
-      ).toEqual([
-        {
-          occurred_at: '2026-02-03T10:00:21.000Z',
-          role: 'assistant',
-          model: null,
-          git_branch: 'main',
-        },
-        {
-          occurred_at: '2026-02-03T10:00:32.000Z',
-          role: 'assistant',
-          model: null,
-          git_branch: 'feature/notes',
-        },
-      ]);
-      // The subagent's own turns are a sidechain and never messages of this
-      // session: the final report is the whole of what a delegated run leaves.
+          .prepare(`select count(*) as rows from messages where is_subagent_report = 1`)
+          .get(),
+      ).toEqual({ rows: 0 });
+      // Neither the report the first run handed through its own result, nor the
+      // one the second run's notification carried, nor the subagent's own turns.
       expect(
         database
           .prepare(`select count(*) as rows from messages where body like '%folder holds four%'`)
           .get(),
-      ).toEqual({ rows: 1 });
+      ).toEqual({ rows: 0 });
+      expect(
+        database
+          .prepare(`select count(*) as rows from messages where body like '%still resolves%'`)
+          .get(),
+      ).toEqual({ rows: 0 });
       expect(
         database
           .prepare(`select count(*) as rows from messages where body like '%read every file%'`)
           .get(),
       ).toEqual({ rows: 0 });
+      // The `Agent` calls are still notes: that a run was delegated is a fact
+      // about the turn.
+      expect(
+        database.prepare(`select count(*) as rows from tool_notes where tool = 'Agent'`).get(),
+      ).toEqual({ rows: 2 });
       // And the session learned why the harness started it, from the *first*
       // `SessionStart` attachment in the file: the `compact` further down is
       // what happened to the session afterwards, not why it began (follow-up
@@ -1151,16 +1257,15 @@ describe('brain sessions ingest claude-code on a whole session', () => {
       );
       expect(first.stderr).toBe('');
       expect(first.code).toBe(0);
-      // Three: the two turns and the one report of a run this session started.
-      // The `HUGE_NOTIFICATIONS` notifications about runs it did not start
-      // are the question, not the answer, and none of them is a row.
+      // Two: the two turns. Every `task-notification` in the file is the
+      // editor's own traffic and none of them is a row, the one naming a run
+      // this session started included (story 23).
       expect((JSON.parse(first.stdout) as Envelope).data).toMatchObject({
         created: true,
-        inserted: { messages: 3, toolNotes: 0 },
+        inserted: { messages: 2, toolNotes: 0 },
       });
       expect(storedMessages(databaseIn(home)).map((message) => message.body)).toEqual([
         'Index every file under notes/.',
-        'The checks passed.',
         'That is all of them.',
       ]);
 
@@ -1197,16 +1302,18 @@ describe('brain sessions ingest claude-code on a whole session', () => {
 
 /**
  * The report a run hands back with `SubagentHandback`, through the real binary
- * and a real SQLite file (story 19).
+ * and a real SQLite file (story 19), read for the one thing it now has to
+ * prove: that none of it reaches a row.
  *
  * It arrives on a peer line the editor marked `isMeta` and wrapped in framing
  * of its own, and it leaves one sentence where the `Agent` call's result used
- * to be. Parser `2` stored that sentence and threw the report away; `3` does
- * the other thing, and a session `2` stored is read again from the front so the
- * reports it missed land behind what it stored.
+ * to be. Parser `2` stored that sentence, `3` stored the report in its place,
+ * and `4` stores neither: a report is long, model-written text that nobody
+ * said, and the main agent's own turn carries the conclusion a person would
+ * recall (epic 2 Decision, 2026-10-21).
  */
 describe('brain sessions ingest claude-code and a report handed back', () => {
-  it('stores the two reports, and neither the notice nor the framing', async () => {
+  it('stores neither report, and neither the notice nor the framing', async () => {
     const home = await installedHome();
     const transcript = await handbackTranscriptIn(home);
 
@@ -1221,112 +1328,139 @@ describe('brain sessions ingest claude-code and a report handed back', () => {
     const envelope = JSON.parse(run.stdout) as Envelope;
     expect(envelope.ok).toBe(true);
     expect(envelope.warnings).toEqual([]);
-    // The question, the two reports, the answer — and the two `Agent` calls.
-    expect(envelope.data?.inserted).toEqual({ messages: 4, toolNotes: 2 });
+    // The question and the answer — and the two `Agent` calls, because that a
+    // run was delegated is a fact about the turn.
+    expect(envelope.data?.inserted).toEqual({ messages: 2, toolNotes: 2 });
 
     const database = new DatabaseSync(databaseIn(home), { readOnly: true });
     try {
+      // The column stays and no row uses it: the rows parser 2 and 3 wrote are
+      // immutable and still say `1`, so a reader can tell them apart (AD-4).
       expect(
         database
-          .prepare(
-            `select occurred_at, role, model, git_branch, body from messages
-              where is_subagent_report = 1 order by occurred_at`,
-          )
-          .all(),
-      ).toEqual([
-        // No branch on either: the one the hand-back line carries is the
-        // subagent's, and the cwd beside it has no column at all (story 22).
-        {
-          occurred_at: '2026-03-04T11:00:08.000Z',
-          role: 'assistant',
-          model: null,
-          git_branch: null,
-          body: HANDBACK_REPORTS[0],
-        },
-        {
-          occurred_at: '2026-03-04T11:00:16.000Z',
-          role: 'assistant',
-          model: null,
-          git_branch: null,
-          body: HANDBACK_REPORTS[1],
-        },
-      ]);
+          .prepare('select count(*) as rows from messages where is_subagent_report = 1')
+          .get(),
+      ).toEqual({ rows: 0 });
     } finally {
       database.close();
     }
 
     // Nowhere in the database, rather than nowhere in a column somebody thought
-    // of: the editor's framing, the report text of every line that is not a
-    // hand-back, and the sentence left where the two results would be.
+    // of: the two reports themselves, the editor's framing, and the sentence it
+    // left where the two results would be.
     const dump = JSON.stringify(rowDump(databaseIn(home)));
     expect(await readFile(transcript, 'utf8')).toContain(FRAME);
+    for (const report of HANDBACK_REPORTS) expect(dump).not.toContain(report);
     expect(dump).not.toContain(FRAME);
     expect(dump).not.toContain('SubagentHandback');
     expect(dump).not.toContain('<agent-message');
   });
 
-  it('adds only the reports to a session an older parser version stored', async () => {
+  it.each([
+    // The interesting one: version 3 read the first run's synchronous result as
+    // a report, so the *second* `Agent` call's note hung off that line. Version
+    // 4 drops the line and the call moves back onto the message the person
+    // wrote, which is one call at two positions unless the store is told where
+    // to look (#9).
+    ['full-session.jsonl', SESSION_FIXTURE, 4],
+    ['peer-handback.jsonl', HANDBACK_FIXTURE, 2],
+    ['report-provenance.jsonl', PROVENANCE_FIXTURE, 1],
+  ])(
+    'leaves one note per call when it re-reads %s over what version 3 stored',
+    async (name, fixture, calls) => {
+      const home = await installedHome();
+      const transcript = join(home, 'v3.jsonl');
+      await copyFile(fixture, transcript);
+      // The session exactly as the `baseline_revision` build left it: the
+      // messages, the notes and the cursor that parser 3 produced from this
+      // same file, read by that build's parser and committed as a fixture
+      // (`parser-v3-state.json`, Implementation Notes).
+      const seeded = await seedParserV3State(home, name);
+
+      const run = await runBrain(
+        ['sessions', 'ingest', 'claude-code', '--json'],
+        home,
+        stopPayload(transcript),
+      );
+
+      expect(run.stderr).toBe('');
+      expect(run.code).toBe(0);
+      const envelope = JSON.parse(run.stdout) as Envelope;
+      expect(envelope.ok).toBe(true);
+      // The versions differ, so no cursor was handed over and the whole file
+      // was read again — which is idempotent, and never a reset (AD-4).
+      expect(envelope.warnings).toEqual([]);
+      expect(envelope.data?.inserted).toEqual({ messages: 0, toolNotes: 0 });
+
+      // One row per call that gets a note, which is what version 3 left: not
+      // one call is stored twice, under two positions nobody could tell apart.
+      const database = new DatabaseSync(databaseIn(home), { readOnly: true });
+      try {
+        expect(database.prepare('select count(*) as rows from tool_notes').get()).toEqual({
+          rows: calls,
+        });
+        expect(seeded.toolNotes).toHaveLength(calls);
+        // And every stored row is still the one version 3 wrote, call id and
+        // all: a note cannot be corrected, only added (AD-11).
+        expect(
+          database
+            .prepare('select id, call_id from tool_notes order by id')
+            .all(),
+        ).toEqual(
+          seeded.toolNotes
+            .map((_note, at) => ({ id: seededRowId(400 + at), call_id: null }))
+            .sort((left, right) => (left.id < right.id ? -1 : 1)),
+        );
+      } finally {
+        database.close();
+      }
+      expect(storedParserVersion(databaseIn(home))).toBe('4');
+    },
+  );
+
+  it('stores no report when it re-reads over what version 3 stored', async () => {
+    // Version 3's own report rows stay: a message cannot be taken back, and
+    // `is_subagent_report` is what tells them from anything version 4 writes
+    // (AD-11, AD-4).
     const home = await installedHome();
-    // The transcript as the older parser left the session: its hand-back lines
-    // never became messages, so here they are not in the file at all.
-    const transcript = await handbackTranscriptIn(home, { handbacks: false });
-    const payload = stopPayload(transcript);
-    expect(
-      (await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code,
-    ).toBe(0);
-    const before = storedMessages(databaseIn(home));
-    expect(before).toHaveLength(2);
-    expect(storedParserVersion(databaseIn(home))).toBe('3');
-
-    // And the version that read it, which is the whole of what makes the next
-    // ingest start at the front rather than at the cursor it left.
-    setParserVersion(databaseIn(home), '2');
+    const transcript = join(home, 'v3.jsonl');
     await copyFile(HANDBACK_FIXTURE, transcript);
+    const seeded = await seedParserV3State(home, 'peer-handback.jsonl');
+    expect(seeded.messages.filter((message) => message.isSubagentReport)).toHaveLength(2);
 
-    const run = await runBrain(
-      ['sessions', 'ingest', 'claude-code', '--json'],
-      home,
-      payload,
-    );
+    expect(
+      (await runBrain(['sessions', 'ingest', 'claude-code'], home, stopPayload(transcript)))
+        .code,
+    ).toBe(0);
 
-    expect(run.stderr).toBe('');
-    expect(run.code).toBe(0);
-    const envelope = JSON.parse(run.stdout) as Envelope;
-    expect(envelope.ok).toBe(true);
-    // Reading it all again is idempotent, so only the two reports go in, and
-    // not one tool note is written twice (AD-8).
-    expect(envelope.data?.inserted).toEqual({ messages: 2, toolNotes: 0 });
-    // Degraded reads are never silent, and this is not one: the cursor was not
-    // reset, it was never handed over.
-    expect(envelope.warnings).toEqual([]);
-
-    const after = storedMessages(databaseIn(home));
-    // The two reports were uttered at 11:00:08 and 11:00:16, between the
-    // question and the answer the older version had already stored — so that
-    // is where they are read, however late they arrived. No stored body
-    // changed: a message cannot be corrected, only added (AD-11, 0006).
-    expect(after).toEqual([
-      before[0],
-      { role: 'assistant', body: HANDBACK_REPORTS[0] },
-      { role: 'assistant', body: HANDBACK_REPORTS[1] },
-      before[1],
-    ]);
-    expect(storedParserVersion(databaseIn(home))).toBe('3');
+    const database = new DatabaseSync(databaseIn(home), { readOnly: true });
+    try {
+      expect(
+        database
+          .prepare('select count(*) as rows from messages where is_subagent_report = 1')
+          .get(),
+      ).toEqual({ rows: 2 });
+      expect(database.prepare('select count(*) as rows from messages').get()).toEqual({
+        rows: seeded.messages.length,
+      });
+    } finally {
+      database.close();
+    }
   });
 });
 
 /**
- * Which reports are this session's, through the real binary and a real SQLite
- * file (story 22).
+ * The fixture story 22 built to pin down *which* report was this session's,
+ * through the real binary and a real SQLite file — read now for the opposite
+ * rule: none of them is.
  *
- * The fixture is one line per row of the story's matrix, and what the database
- * has to show is both halves of it: the five reports that are this session's,
- * and nothing anywhere of the sentences, the rewordings, the framing, the
- * hand-back nobody here asked for or the origins no person typed — every one
- * of which the fixture marks with `FRAME`.
+ * It is one line per row of that story's matrix, so between its reports, its
+ * notices, its rewordings, its framing, the hand-back nobody here asked for and
+ * the origins no person typed, it carries every shape a report arrives in. The
+ * fixture marks all of it with `FRAME`, so one assertion covers the lot.
  */
 describe('brain sessions ingest claude-code and where a report came from', () => {
-  it('stores the five reports and nothing the rules threw away', async () => {
+  it('stores the three turns and nothing the rules threw away', async () => {
     const home = await installedHome();
     const transcript = await provenanceTranscriptIn(home);
 
@@ -1341,29 +1475,17 @@ describe('brain sessions ingest claude-code and where a report came from', () =>
     const envelope = JSON.parse(run.stdout) as Envelope;
     expect(envelope.ok).toBe(true);
     expect(envelope.warnings).toEqual([]);
-    // Eight messages — five reports, two the person typed, one answer — and
-    // the one `Agent` call.
-    expect(envelope.data?.inserted).toEqual({ messages: 8, toolNotes: 1 });
+    // Three messages — two the person typed, one answer — and the one `Agent`
+    // call. Every report the fixture carries is gone.
+    expect(envelope.data?.inserted).toEqual({ messages: 3, toolNotes: 1 });
 
     const database = new DatabaseSync(databaseIn(home), { readOnly: true });
     try {
       expect(
         database
-          .prepare(
-            `select body, git_branch from messages
-              where is_subagent_report = 1 order by occurred_at`,
-          )
-          .all(),
-      ).toEqual([
-        // The hand-backs carry no branch: the one on their line is the
-        // subagent's, and its cwd has no column at all. The notification's
-        // report is written on a line of this conversation and keeps it.
-        { body: PROVENANCE_REPORTS[0], git_branch: null },
-        { body: PROVENANCE_REPORTS[1], git_branch: null },
-        { body: PROVENANCE_REPORTS[2], git_branch: null },
-        { body: PROVENANCE_REPORTS[3], git_branch: 'main' },
-        { body: PROVENANCE_REPORTS[4], git_branch: null },
-      ]);
+          .prepare('select count(*) as rows from messages where is_subagent_report = 1')
+          .get(),
+      ).toEqual({ rows: 0 });
     } finally {
       database.close();
     }
@@ -1372,10 +1494,84 @@ describe('brain sessions ingest claude-code and where a report came from', () =>
     // thought of.
     const dump = JSON.stringify(rowDump(databaseIn(home)));
     expect(await readFile(transcript, 'utf8')).toContain(FRAME);
+    for (const report of PROVENANCE_REPORTS) expect(dump).not.toContain(report);
     expect(dump).not.toContain(FRAME);
     expect(dump).not.toContain('has not reported yet');
     expect(dump).not.toContain('<agent-message');
     expect(dump).not.toContain('<task-notification');
+    expect(dump).not.toContain('[Subagent hand-back]');
+  });
+});
+
+/**
+ * The two things a read says about the lines it did *not* keep: the counts, and
+ * the one warning among them (story 23).
+ *
+ * A transcript is mostly not conversation, so `droppedLines` is the normal
+ * shape of a successful ingest. `unreadable` is the exception — content the
+ * parser could not read at all — and it is never silent (NFR-2).
+ */
+describe('brain sessions ingest claude-code on the lines it did not keep', () => {
+  it('collects the rest of a transcript with a broken line and warns about it', async () => {
+    const home = await installedHome();
+    const transcript = join(home, 'broken.jsonl');
+    const lines = (await readFile(FIXTURE, 'utf8')).trimEnd().split('\n');
+    lines.splice(6, 0, '{"type":"user", this is not json');
+    lines.splice(9, 0, '{"type":"user", nor is this one');
+    await writeFile(transcript, `${lines.join('\n')}\n`, 'utf8');
+
+    const run = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      stopPayload(transcript),
+    );
+
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.ok).toBe(true);
+    // Refusing the file would cost this session every message around the broken
+    // line, for good — but the warning says part of it was skipped (#11).
+    expect(envelope.warnings).toEqual(['TRANSCRIPT_LINES_SKIPPED']);
+    expect(envelope.data?.droppedLines?.['unreadable']).toBe(2);
+    expect(envelope.data?.inserted).toEqual({ messages: 4, toolNotes: 1 });
+    expect(storedMessages(databaseIn(home))).toHaveLength(4);
+  });
+
+  it('drops a user line that opens with one of orca orchestration headings', async () => {
+    const home = await installedHome();
+    const transcript = join(home, 'orca.jsonl');
+    const at = (serial: number): string =>
+      `2026-02-03T12:00:${String(serial).padStart(2, '0')}.000Z`;
+    await writeFile(
+      transcript,
+      `${[
+        startLine(0, 'startup', at(0)),
+        userLine(1, 'You are working inside Orca, a coordinator.\n\nDo the thing.', at(1)),
+        userLine(2, 'Please carry out this task from my Orca coordinator:\n\nRead it.', at(2)),
+        userLine(3, 'You have 2 orchestration messages waiting.', at(3)),
+        userLine(4, 'I think you are working inside Orca, are you not?', at(4)),
+      ].join('\n')}\n`,
+      'utf8',
+    );
+
+    const run = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      stopPayload(transcript),
+    );
+
+    expect(run.stderr).toBe('');
+    expect(run.code).toBe(0);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    expect(envelope.warnings).toEqual([]);
+    // orca writes its prompt into the worker's session as if it had been typed,
+    // so nothing on the line says otherwise: the words are the coordinator's.
+    // The same words inside a sentence are a message like any other.
+    expect(envelope.data?.droppedLines?.['orca_header']).toBe(3);
+    expect(storedMessages(databaseIn(home))).toEqual([
+      { role: 'user', body: 'I think you are working inside Orca, are you not?' },
+    ]);
   });
 });
 
@@ -1832,12 +2028,13 @@ describe('brain sessions ingest on the hook path', () => {
     await expectQuietFailure(run, 'TRANSCRIPT_UNREADABLE', home);
   });
 
-  it('says TRANSCRIPT_UNREADABLE for a broken line in the middle', async () => {
+  it('says TRANSCRIPT_UNREADABLE for a file with no readable line in it', async () => {
+    // One broken line in a readable file is a crash, and the rest of the
+    // session is collected with a warning (#11). A file where *nothing* parses
+    // is not a Claude Code transcript at all, and there is nothing to ingest.
     const home = await installedHome();
     const transcript = join(home, 'broken.jsonl');
-    const lines = (await readFile(FIXTURE, 'utf8')).split('\n');
-    lines.splice(6, 0, '{"type":"user", this is not json');
-    await writeFile(transcript, lines.join('\n'), 'utf8');
+    await writeFile(transcript, 'not json at all {\nnor is this one {\n', 'utf8');
 
     const run = await runBrain(
       ['sessions', 'ingest', 'claude-code'],

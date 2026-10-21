@@ -35,6 +35,29 @@ export type ParseResult =
        * (follow-up review #18).
        */
       startSource: SessionStartSource | null;
+      /**
+       * How many lines of what this parse read were not kept, by reason: a
+       * `snake_case` code the parser names itself, against a count that is a
+       * non-negative integer.
+       *
+       * A transcript is mostly not conversation, so dropping lines is the
+       * normal case and not a failure — this is the only place that says how
+       * much of a file a parse walked past and why, which is what makes a
+       * filter that quietly stops keeping something noticeable at all. A parser
+       * reports every reason it knows, zeroes included, so the keys do not
+       * change from file to file.
+       *
+       * One key is reserved and read by Core rather than only reported:
+       * `unreadable`, the lines that were not JSON. Those are the only dropped
+       * lines that *are* a problem — content the parser could not read at all —
+       * and `sessions.ingest` turns a non-zero count into a
+       * `TRANSCRIPT_LINES_SKIPPED` warning. Everything else is the filter doing
+       * its job and goes no further than this record.
+       *
+       * It counts the lines of the part that was read, so a cursor read reports
+       * the tail's drops and not the whole file's.
+       */
+      droppedLines: Readonly<Record<string, number>>;
     }
   | {
       ok: false;
@@ -52,6 +75,13 @@ export type ParseResult =
  * `occurredAt` (AD-8, migration 0006). The tool-note ordinals are the
  * parser's, because they number the calls *within one message* and a message's
  * content never changes.
+ *
+ * A line it cannot read is not a refusal on its own. A transcript is appended
+ * to while it is being read, and a half-written tail — or one broken line in
+ * the middle, left by a crash — must not cost a whole session its conversation:
+ * such a line is skipped and counted under `droppedLines.unreadable`, and only
+ * content with no readable line in it at all comes back
+ * `TRANSCRIPT_UNREADABLE` (story 23).
  */
 export interface Parser {
   /** Neutral harness name; the first half of every session token (AD-8). */
