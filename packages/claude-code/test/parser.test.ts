@@ -1625,3 +1625,41 @@ describe('what a tool note says the call acted on', () => {
     expect(toolTarget('WebSearch', { query })).toBe(query);
   });
 });
+
+
+describe('세션을 시작한 폴더', () => {
+  const turn = (uuid: string, cwd?: string) => JSON.stringify({
+    type: 'user', uuid, timestamp: '2026-01-02T03:04:05.000Z',
+    message: { role: 'user', content: '메모를 읽어 줘' }, ...(cwd === undefined ? {} : { cwd }),
+  });
+
+  it('서브에이전트와 빈 cwd를 건너뛰고 메시지 앞의 첫 줄을 보존한다', () => {
+    const content = [
+      JSON.stringify({ type: 'attachment', isSidechain: true, cwd: '/demo/other' }),
+      ...[null, '', '  ', 12].map((cwd) => JSON.stringify({ type: 'hook', cwd })),
+      JSON.stringify({ type: 'attachment', cwd: '/demo/gone' }),
+      turn('first', '/demo/gone/sub'), turn('second', '/demo/later'),
+    ].join('\n');
+    const parser = claudeCodeParser();
+    const whole = parser.parse(content);
+    expect(whole.ok).toBe(true);
+    if (!whole.ok) return;
+    expect(whole.startCwd).toBe('/demo/gone');
+    expect(whole.messages[0]?.cwd).toBe('/demo/gone/sub');
+    const tail = parser.parse(content, whole.cursor);
+    expect(tail.ok).toBe(true);
+    if (!tail.ok) return;
+    expect(tail.cursorReset).toBe(false);
+    expect(tail.messages).toHaveLength(1);
+    expect(tail.startCwd).toBe('/demo/gone');
+    expect(tail.parserVersion).toBe('4');
+  });
+
+  it('메시지만 cwd를 가지면 첫 메시지의 값을 쓰고 없으면 null이다', () => {
+    for (const cwd of ['/demo/repo', undefined]) {
+      const result = claudeCodeParser().parse(turn('first', cwd));
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.startCwd).toBe(cwd ?? null);
+    }
+  });
+});

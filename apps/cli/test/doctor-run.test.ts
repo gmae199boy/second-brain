@@ -54,6 +54,7 @@ const CHECKS = [
   'foreign-keys',
   'schema-version',
   'failures',
+  'untagged',
   'transcripts',
   'config',
   'shim',
@@ -75,6 +76,7 @@ const NO_DATABASE_CHECKS = [
   'db',
   'schema-version',
   'failures',
+  'untagged',
   'transcripts',
   ...MACHINE_CHECKS,
 ];
@@ -469,7 +471,7 @@ describe('brain doctor run', () => {
       passed: MACHINE_CHECKS.length,
       warned: 0,
       failed: 1,
-      skipped: 3,
+      skipped: 4,
     });
     // And nothing was created: a doctor that made the database it was looking
     // for would report a brain nobody installed (AD-20).
@@ -596,7 +598,7 @@ describe('brain doctor run without a configuration it can read', () => {
     // the summary is the last line.
     expect(run.stdout).toContain('spool: ok 0건');
     expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
-      '요약: 통과 4, 경고 0, 실패 3, 건너뜀 4',
+      '요약: 통과 4, 경고 0, 실패 3, 건너뜀 5',
     );
     // Not an error envelope, so nothing goes to stderr but the warning line.
     expect(run.stderr).not.toContain('CONFIG_MISSING');

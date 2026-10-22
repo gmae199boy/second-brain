@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
-import { stat } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
-import type { InspectResult, InspectUnknownReason, RepositoryInspector } from 'second_brain';
+import { readdir, stat } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
+import type { FolderListing, InspectResult, InspectUnknownReason, RepositoryInspector } from 'second_brain';
 
 type GitFailure = Exclude<InspectResult, { kind: 'checkout' }>;
 type GitResult = { ok: true; stdout: string } | { ok: false; result: GitFailure };
@@ -45,13 +45,37 @@ export function gitRepositoryInspector(
       : failure;
 
   return {
+    async listFolders(path): Promise<FolderListing> {
+      try {
+        const entries = await readdir(path, { withFileTypes: true });
+        const folders: string[] = [];
+        for (const entry of entries) {
+          const candidate = join(path, entry.name);
+          if (entry.isDirectory()) folders.push(candidate);
+          else if (entry.isSymbolicLink()) {
+            try {
+              if ((await stat(candidate)).isDirectory()) folders.push(candidate);
+            } catch (error) {
+              const code = (error as NodeJS.ErrnoException).code;
+              if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
+            }
+          }
+        }
+        return { kind: 'listed', folders: folders.sort() };
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT' || code === 'ENOTDIR') return { kind: 'missing' };
+        return { kind: 'unknown', reason: code === 'EACCES' || code === 'EPERM' ? 'permission' : 'unexpected',
+          message: '형제 폴더 목록을 읽을 수 없습니다' };
+      }
+    },
     async inspect(cwd): Promise<InspectResult> {
       if (!isAbsolute(cwd)) return { kind: 'not_repository' };
       try {
         if (!(await stat(cwd)).isDirectory()) return { kind: 'not_repository' };
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
-        if (code === 'ENOENT' || code === 'ENOTDIR') return { kind: 'not_repository' };
+        if (code === 'ENOENT' || code === 'ENOTDIR') return { kind: 'missing' };
         return code === 'EACCES' || code === 'EPERM'
           ? unknown('permission', '작업 폴더를 읽을 권한이 없습니다')
           : unknown('unexpected', '작업 폴더를 확인하지 못했습니다');

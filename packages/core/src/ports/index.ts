@@ -1,6 +1,8 @@
 // The ports every adapter implements, each with its own contract cases in
 // `@second-brain/core/testing`.
 export type {
+  ListIdentityCandidatesResult,
+  CountUntaggedSessionsResult,
   AddWorkInput,
   AddWorkResult,
   ClaimWorkInput,
@@ -60,7 +62,7 @@ export type {
   TranscriptListing,
   TranscriptReader,
 } from './transcript.js';
-export type { Checkout, InspectResult, InspectUnknownReason, RepositoryInspector } from './repository.js';
+export type { Checkout, FolderListing, InspectResult, InspectUnknownReason, RepositoryInspector } from './repository.js';
 export type { HookInput, HookInputReader, ReadHookInputResult } from './hook.js';
 export { BRAIN_MARKER } from './connector.js';
 export type { ConnectInput, ConnectResult, Connector } from './connector.js';

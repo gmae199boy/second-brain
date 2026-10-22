@@ -171,7 +171,7 @@ guide schema --json`을 실제로 실행해서 exit 0과 `ok: true` 엔벨로프
 ```json
 {
   "commit": "10a09d2ef60fcf3b607f8562192c2ea8a59d3981",
-  "schema_version": 6,
+  "schema_version": 7,
   "node": "/opt/homebrew/bin/node",
   "plugin_root": "/Users/me/.claude/plugins/cache/second-brain/second-brain/0.1.0",
   "installed_at": "2026-10-17T15:11:42.113Z"
@@ -328,17 +328,27 @@ brain messages redact <message> --detected --yes --json
 `compact`), 마지막 값은 "그 뒤에 무슨 일이 있었나"이고 이 칸이 답하는 것은 "왜
 시작했나"입니다.
 
-프로젝트·워크트리 꼬리표는 cwd가 있는 첫 메시지의 작업 폴더로 정합니다.
+프로젝트·워크트리 꼬리표는 세션을 시작한 폴더로 정합니다.
+메시지가 아닌 줄도 포함해 서브에이전트 줄을 제외한 첫 cwd를 쓰고,
+없으면 cwd가 있는 첫 메시지의 폴더를 씁니다.
 remote 정체성의 표시 철자는 처음 저장한 값을 지키고, GitHub·Bitbucket의
 대소문자만 다른 경로는 같은 프로젝트로 비교합니다. 그 밖의 호스트와 remote 없는
 저장소의 공통 디렉터리 경로는 철자를 그대로 비교합니다.
 
-폴더가 저장소가 아니거나 없어졌으면 꼬리표 없이 수집합니다. git 없음·시간 초과·
-권한·비정상 응답으로 확인하지 못하면 세션과 함께 `session_identity` 일감을
-남깁니다. drain은 트랜스크립트를 처음부터 다시 읽어 같은 근거로 확인하고,
-비어 있던 꼬리표만 한 번 채웁니다. 계속 답을 못 하면 열 번째에 실패 기록으로
-남으며 `brain failures retry`로 다시 할 수 있습니다. 트랜스크립트가 없으면
-첫 시도에서 실패합니다. 이미 붙은 꼬리표는 바꾸지 않습니다.
+폴더가 사라졌으면 처음 남아 있는 위 폴더의 저장소로 추정합니다. 위 폴더가
+저장소 밖이면 원래 폴더의 바로 위에 있는 형제 checkout들을 확인하고, 하나 이상이
+모두 같은 프로젝트일 때만 그 프로젝트로 추정합니다. 서로 다른 저장소가 섞이면
+꼬리표 없이 수집합니다. 살아 있는 레포 밖 폴더는 추정하지 않습니다.
+출처는 `sessions.tag_source`의 `cwd`·`ancestor`·`sibling`으로 남고,
+첫 근거 폴더는 꼬리표가 없어도 `first_cwd`에 보존됩니다. 추정한 워크트리의
+경로는 원래 사라진 폴더입니다.
+
+git 없음·시간 초과·권한·비정상 응답으로 확인하지 못하면 세션과 함께
+`session_identity` 일감을 남깁니다. drain은 트랜스크립트의 첫 cwd를 다시 읽고,
+원본이 사라졌으면 저장된 `first_cwd`로 판단합니다. 두 근거가 모두 없으면
+첫 시도에서 실패합니다. 계속 답을 못 하면 열 번째에 실패 기록으로 남으며
+`brain failures retry`로 다시 할 수 있습니다. 이미 붙은 꼬리표·출처·근거 폴더는
+바꾸지 않습니다. 스키마 7 이전의 꼬리표 없는 세션은 drain이 한 번 다시 판단합니다.
 
 데이터베이스에 쓸 수 없을 때 — 다른 프로세스가 쓰기 잠금을 예산보다 오래 쥐고
 있을 때, 파일이 없을 때, 저장된 스키마 버전이 이 빌드의 것과 다를 때 — 턴은
@@ -491,7 +501,7 @@ brain setup connect <harness>
   "data": {
     "home": "/Users/me/.second_brain",
     "config_path": "/Users/me/.second_brain/config.toml",
-    "store": { "path": "/Users/me/.second_brain/brain.db", "schema_version": 6, "applied": [] },
+    "store": { "path": "/Users/me/.second_brain/brain.db", "schema_version": 7, "applied": [] },
     "owner": { "name": "me", "created": false },
     "files": { "path": "/Users/me/.second_brain/files", "created": false },
     "mirror_path": "/Users/me/.second_brain/mirror",
@@ -820,6 +830,7 @@ env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" doctor run
 | `fts5-trigram` | 이 Node의 SQLite가 FTS5와 `trigram` 토크나이저로 빌드되었는지. 행을 색인하고 찾아보아 증명합니다 |
 | `foreign-keys` | 이 연결에서 적용되는지 |
 | `schema-version` | 저장된 버전이 이 빌드가 만들어진 그 버전인지. 어긋나면 `SCHEMA_MISMATCH`이고, 마이그레이션하는 것은 `brain setup run`입니다. `db`가 실패했으면 물을 것이 없으므로 `skip` |
+| `untagged` | 꼬리표 없는 세션 수. 레포 밖 세션도 정상이므로 항상 `ok`이며 `N건`을 보입니다. 읽기 실패는 `fail`, DB 실패는 `skip` |
 | `failures` | 아직 해결되지 않은 실패가 몇 건인지, 대상 종류별로. 0건이면 `ok`, 있으면 `warn`(코드 없음) — 기록이 남았다는 것은 망가졌다는 뜻이 아니라 멈췄다고 말했다는 뜻입니다. `brain failures retry`가 다시 부탁합니다. `db`가 실패했으면 `skip` |
 | `transcripts` | 디스크에 있는데 아직 수집하지 않은 트랜스크립트가 몇 건인지. 그중 하나라도 하네스가 지우는 기한(30일)에서 5일 안으로 들어왔거나 폴더를 읽지 못했으면 `warn`, 그 밖은 `ok`. 폴더를 보지 않는 설정이면 `skip`. `db`가 실패했으면 `skip` |
 | `config` | `config.toml`이 있고 읽을 수 있는지, 그리고 어디에 있는지 |

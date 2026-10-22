@@ -87,6 +87,8 @@ export function sampleEnsureSessionInput(
     // No tags by default: a session whose cwd said nothing is the shape most
     // cases want, and the ones about the tags ask for a checkout themselves.
     checkout: null,
+    firstCwd: null,
+    tagSource: overrides.checkout ? 'cwd' : null,
     identityWork: null,
     ...overrides,
   };

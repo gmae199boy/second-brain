@@ -1,3 +1,5 @@
+export type TagSource = 'cwd' | 'ancestor' | 'sibling';
+
 /** Where the session's data came from. Immutable (Table Contract). */
 export type SessionIngestSource = 'live' | 'import';
 
@@ -37,6 +39,8 @@ export interface Session {
   workspaceId: string | null;
   projectId: string | null;
   worktreeId: string | null;
+  firstCwd: string | null;
+  tagSource: TagSource | null;
   /** Immutable. */
   ingestSource: SessionIngestSource;
   /** Monotonic; best effort, since correctness never waits for session end (AD-6). */

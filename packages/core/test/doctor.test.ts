@@ -92,6 +92,7 @@ describe('runDoctor', () => {
       // Nothing is failing, and there is no folder to compare against, which
       // is what a build with its capture switch off reports (Boundaries).
       { id: 'failures', status: 'ok', detail: '0건' },
+      { id: 'untagged', status: 'ok', detail: '0건' },
       { id: 'transcripts', status: 'skip', detail: '트랜스크립트 폴더 수집이 꺼져 있습니다' },
     ]);
   });
@@ -132,6 +133,7 @@ describe('runDoctor', () => {
       // reason: a reader must never have to work out from what is missing
       // whether a check was skipped or never existed.
       { id: 'failures', status: 'skip', detail: '앞선 점검 실패: db' },
+      { id: 'untagged', status: 'skip', detail: '앞선 점검 실패: db' },
       { id: 'transcripts', status: 'skip', detail: '앞선 점검 실패: db' },
     ]);
   });
@@ -186,6 +188,7 @@ describe('runDoctor', () => {
       { id: 'foreign-keys', status: 'ok' },
       { id: 'schema-version', status: 'ok', detail: '2' },
       { id: 'failures', status: 'ok', detail: '0건' },
+      { id: 'untagged', status: 'ok', detail: '0건' },
       { id: 'transcripts', status: 'skip', detail: '트랜스크립트 폴더 수집이 꺼져 있습니다' },
     ]);
   });
@@ -197,6 +200,7 @@ describe('runDoctor', () => {
       'db',
       'schema-version',
       'failures',
+      'untagged',
       'transcripts',
     ]);
   });
@@ -258,6 +262,7 @@ describe('runDoctor and the checks the runtime registers', () => {
       'wal',
       'schema-version',
       'failures',
+      'untagged',
       'transcripts',
       'config',
       'shim',
@@ -276,6 +281,7 @@ describe('runDoctor and the checks the runtime registers', () => {
       'db',
       'schema-version',
       'failures',
+      'untagged',
       'transcripts',
       'shim',
     ]);
@@ -339,7 +345,7 @@ describe('the summary of a report', () => {
 
     // db ok, wal ok, writable warn, fts fail, schema ok, failures ok,
     // transcripts skip, shim fail, node skip.
-    expect(report.summary).toEqual({ passed: 4, warned: 1, failed: 2, skipped: 2 });
+    expect(report.summary).toEqual({ passed: 5, warned: 1, failed: 2, skipped: 2 });
     const counted =
       report.summary.passed +
       report.summary.warned +
@@ -354,7 +360,7 @@ describe('the summary of a report', () => {
       OPTIONS,
     );
 
-    expect(report.summary).toEqual({ passed: 0, warned: 0, failed: 1, skipped: 3 });
+    expect(report.summary).toEqual({ passed: 0, warned: 0, failed: 1, skipped: 4 });
   });
 
   it('is all passes for a healthy brain, bar the folders nobody asked for', async () => {
@@ -362,7 +368,7 @@ describe('the summary of a report', () => {
 
     // db, wal, schema-version and failures pass; `transcripts` is a `skip`,
     // because this brain's capture switch is off (Boundaries).
-    expect(report.summary).toEqual({ passed: 4, warned: 0, failed: 0, skipped: 1 });
+    expect(report.summary).toEqual({ passed: 5, warned: 0, failed: 0, skipped: 1 });
   });
 });
 
@@ -405,6 +411,7 @@ describe('createBrain', () => {
       'vector',
       'schema-version',
       'failures',
+      'untagged',
       'transcripts',
       'shim',
     ]);
@@ -425,7 +432,26 @@ describe('createBrain', () => {
       'db',
       'schema-version',
       'failures',
+      'untagged',
       'transcripts',
     ]);
+  });
+});
+
+describe('꼬리표 없는 세션 진단', () => {
+  it('꼬리표 없는 수는 정상으로 보인다', async () => {
+    const report = await runDoctor(fakeStore(healthy()), {
+      ...OPTIONS, store: { ...memoryStore(), async countUntaggedSessions() { return { ok: true, count: 2 }; } },
+    });
+    expect(report.checks).toContainEqual({ id: 'untagged', status: 'ok', detail: '2건' });
+  });
+  it('읽기 실패는 실패한 점검으로 보인다', async () => {
+    const report = await runDoctor(fakeStore(healthy()), {
+      ...OPTIONS, store: { ...memoryStore(), async countUntaggedSessions() {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: '세션 수를 읽을 수 없습니다' };
+      } },
+    });
+    expect(report.checks).toContainEqual({ id: 'untagged', status: 'fail',
+      code: 'DB_UNAVAILABLE', detail: '세션 수를 읽을 수 없습니다' });
   });
 });

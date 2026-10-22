@@ -310,6 +310,10 @@ export function parserContract(): ContractCase<ParserSubject>[] {
               'a null cursor must read exactly what no cursor reads',
             );
             assertTrue(
+              result.startCwd === null || (typeof result.startCwd === 'string' && result.startCwd.trim() !== ''),
+              'the start cwd must be a non-empty string or null',
+            );
+            assertTrue(
               result.startSource === null ||
                 result.startSource === 'startup' ||
                 result.startSource === 'resume' ||
@@ -382,6 +386,11 @@ export function parserContract(): ContractCase<ParserSubject>[] {
               incremental.cursor,
               whole.cursor,
               'both reads of one content end at the same place',
+            );
+            assertEqual(
+              incremental.startCwd,
+              whole.startCwd,
+              'the start cwd answers for the whole content regardless of cursor',
             );
             assertEqual(
               incremental.startSource,

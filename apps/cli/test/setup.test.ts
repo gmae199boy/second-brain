@@ -687,6 +687,7 @@ describe('brain setup run against the local SQLite source', () => {
       'foreign-keys',
       'schema-version',
       'failures',
+      'untagged',
       'transcripts',
       'config',
       'shim',
@@ -718,6 +719,7 @@ describe('brain setup run against the local SQLite source', () => {
       'db',
       'schema-version',
       'failures',
+      'untagged',
       'transcripts',
       'config',
       'shim',
@@ -846,7 +848,7 @@ describe('brain setup run on a database whose projects collide', () => {
     expect(run.stdout).toContain(`${REMOTE_LOWER} (세션 2건)`);
     expect(run.stdout).toContain('겹치는 프로젝트 1묶음을 하나로 합쳤습니다');
     expect(run.stdout).toContain('0005_identity_and_records.sql');
-    expect(run.stdout).toContain('스키마 버전은 6입니다');
+    expect(run.stdout).toContain('스키마 버전은 7입니다');
 
     // One project, under the older id and keeping the remote it was written
     // with, and the shared folder folded into one worktree.
@@ -864,7 +866,7 @@ describe('brain setup run on a database whose projects collide', () => {
     const checks = (JSON.parse(doctor.stdout) as Envelope).data?.checks ?? [];
     expect(checks.find((check) => check.id === 'schema-version')).toMatchObject({
       status: 'ok',
-      detail: '6',
+      detail: '7',
     });
   });
 
@@ -978,7 +980,7 @@ describe('brain setup run on a version 5 database', () => {
     }
   }
 
-  it('reaches version 6 and keeps the conversation, with no number left in it', async () => {
+  it('reaches version 7 and keeps the conversation, with no number left in it', async () => {
     const home = await versionFiveHome();
     const path = join(home, 'brain.db');
 
@@ -987,7 +989,7 @@ describe('brain setup run on a version 5 database', () => {
     expect(run.stderr).toBe('');
     expect(run.code).toBe(0);
     expect(run.stdout).toContain('0006_drop_message_seq.sql');
-    expect(run.stdout).toContain('스키마 버전은 6입니다');
+    expect(run.stdout).toContain('스키마 버전은 7입니다');
 
     // The number doctor reports, which is the one a later command refuses to
     // write on (AD-20).
@@ -995,7 +997,7 @@ describe('brain setup run on a version 5 database', () => {
     const checks = (JSON.parse(doctor.stdout) as Envelope).data?.checks ?? [];
     expect(checks.find((check) => check.id === 'schema-version')).toMatchObject({
       status: 'ok',
-      detail: '6',
+      detail: '7',
     });
 
     // Every row came back, under its own id and body, and in the order it was

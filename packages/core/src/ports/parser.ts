@@ -35,6 +35,8 @@ export type ParseResult =
        * (follow-up review #18).
        */
       startSource: SessionStartSource | null;
+      /** First non-empty cwd in the whole session content, independent of cursor. */
+      startCwd: string | null;
       /**
        * How many lines of what this parse read were not kept, by reason: a
        * `snake_case` code the parser names itself, against a count that is a

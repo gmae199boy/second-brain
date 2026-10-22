@@ -19,6 +19,7 @@ import {
   type SessionIngestSource,
   type SessionKey,
   type SessionStartSource,
+  type TagSource,
   type SessionStore,
   type SessionToken,
   type StoreWarningCode,
@@ -41,6 +42,8 @@ interface SessionRow {
   workspace_id: string | null;
   project_id: string | null;
   worktree_id: string | null;
+  first_cwd: string | null;
+  tag_source: string | null;
   ingest_source: string;
   ended_at: string | null;
   last_harness_message_id: string | null;
@@ -200,11 +203,11 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
         const inserted = await sql<{ id: string }>`
           insert into sessions (id, harness, harness_session_id, user_id, machine,
                                 started_at, workspace_id, project_id, worktree_id,
-                                ingest_source, start_source)
+                                ingest_source, start_source, first_cwd, tag_source)
                values (${input.id}, ${input.key.harness}, ${input.key.harnessSessionId},
                        ${input.userId}, ${input.machine}, ${startedAt},
                        ${input.workspaceId}, ${tags.projectId}, ${tags.worktreeId},
-                       ${input.ingestSource}, ${input.startSource})
+                       ${input.ingestSource}, ${input.startSource}, ${input.firstCwd}, ${input.tagSource})
           on conflict do nothing
             returning id
         `.execute(held);
@@ -268,12 +271,15 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
           if (stored === null) {
             return { ok: false, code: 'SESSION_NOT_FOUND', message: '세션을 찾을 수 없습니다' };
           }
-          if (stored.project_id !== null || stored.worktree_id !== null) {
+          await sql`update sessions set first_cwd = coalesce(first_cwd, ${input.firstCwd})
+            where id = ${stored.id}`.execute(held);
+          stored.first_cwd ??= input.firstCwd;
+          if (input.checkout === null || stored.project_id !== null || stored.worktree_id !== null) {
             return { ok: true, filled: false, session: toSession(stored) };
           }
           const tags = await ensureCheckout(held, input.checkout);
           await sql`
-            update sessions set project_id = ${tags.projectId}, worktree_id = ${tags.worktreeId}
+            update sessions set project_id = ${tags.projectId}, worktree_id = ${tags.worktreeId}, tag_source = ${input.tagSource}
              where id = ${stored.id} and project_id is null and worktree_id is null
           `.execute(held);
           const row = await readSessionRow(held, input.key);
@@ -286,6 +292,30 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
       }
     },
 
+    async listIdentityCandidates() {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const read = await sql<SessionRow>`select s.* from sessions s
+          where s.project_id is null and s.first_cwd is null
+            and not exists (select 1 from work_items w where w.kind = 'session_identity'
+              and w.target_kind = 'session' and w.target_id = s.harness || ':' || s.harness_session_id)
+          order by s.id`.execute(opened.connection.db);
+        return { ok: true, sessions: read.rows.map(toSession) };
+      } catch (error) {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: `세션 근거를 읽을 수 없습니다: ${describe(error)}` };
+      }
+    },
+    async countUntaggedSessions() {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const read = await sql<{ count: number }>`select count(*) as count from sessions where project_id is null`.execute(opened.connection.db);
+        return { ok: true, count: Number(read.rows[0]?.count ?? 0) };
+      } catch (error) {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: `꼬리표 없는 세션 수를 읽을 수 없습니다: ${describe(error)}` };
+      }
+    },
     async findSession(key: SessionKey): Promise<FindSessionResult> {
       const opened = connect();
       if (!opened.ok) {
@@ -712,7 +742,7 @@ async function readSessionRow(
 ): Promise<SessionRow | null> {
   const found = await sql<SessionRow>`
     select id, harness, harness_session_id, user_id, machine, started_at,
-           workspace_id, project_id, worktree_id, ingest_source, ended_at,
+           workspace_id, project_id, worktree_id, first_cwd, tag_source, ingest_source, ended_at,
            last_harness_message_id, cursor_fingerprint, parser_version,
            ingested_at, start_source, continued_from_session_id
       from sessions
@@ -755,6 +785,8 @@ function toSession(row: SessionRow): Session {
     workspaceId: row.workspace_id,
     projectId: row.project_id,
     worktreeId: row.worktree_id,
+    firstCwd: row.first_cwd,
+    tagSource: row.tag_source as TagSource | null,
     // The `check` constraint is what keeps these to the values the domain
     // names, so the cast states what the schema already enforces.
     ingestSource: row.ingest_source as SessionIngestSource,

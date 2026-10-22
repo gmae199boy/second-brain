@@ -62,6 +62,25 @@ describe('deferred session identity', () => {
     if (noCwd) expect(k.repositories.inspects()).toEqual([]);
   });
 
+  it.each(['ingest', 'handler'] as const)('시작 폴더가 첫 메시지와 다르면 %s도 시작 폴더에서 추정한다', async (mode) => {
+    const start = '/demo/gone';
+    const content = JSON.stringify({ ...JSON.parse(memoryTranscript), startCwd: start });
+    const k = await kit(content);
+    k.repositories.set(start, { kind: 'missing' });
+    k.repositories.set('/demo', { kind: 'checkout', checkout });
+    if (mode === 'ingest') {
+      expect(await k.brain.sessions.ingest({ session: sampleSessionToken, transcriptPath: PATH })).toMatchObject({ ok: true });
+    } else {
+      await k.store.ensureSession(sampleEnsureSessionInput());
+      const added = await k.add();
+      if (!added.ok) throw new Error(added.message);
+      expect(await sessionIdentityHandler(k.deps)(added.item)).toEqual({ ok: true });
+    }
+    expect(k.repositories.inspects()).toEqual([start, '/demo']);
+    expect(k.store.snapshot().sessions[0]).toMatchObject({ firstCwd: start, tagSource: 'ancestor' });
+    expect(k.store.snapshot().worktrees[0]).toMatchObject({ path: start });
+  });
+
   it('two overlapping initial ingests open one item', async () => {
     const k = await kit();
     const results = await Promise.all([1, 2].map(() => k.brain.sessions.ingest({ session: sampleSessionToken, transcriptPath: PATH })));
@@ -94,6 +113,46 @@ describe('deferred session identity', () => {
     if (!added.ok) throw new Error(added.message);
     expect(await sessionIdentityHandler(k.deps)(added.item)).toEqual({ ok: true });
     expect(k.store.snapshot().sessions[0]?.projectId ?? null).toBeNull();
+  });
+
+
+  it('transcript에 cwd가 없으면 저장된 근거 폴더를 유지한다', async () => {
+    const k = await kit(memoryTranscript.replaceAll('"cwd":"/demo/repo"', '"cwd":null'));
+    await k.store.ensureSession(sampleEnsureSessionInput({ firstCwd: CWD }));
+    k.repositories.set(CWD, checkout);
+    const added = await k.add();
+    if (!added.ok) throw new Error(added.message);
+    expect(await sessionIdentityHandler(k.deps)(added.item)).toEqual({ ok: true });
+    expect(k.store.snapshot().sessions[0]).toMatchObject({ firstCwd: CWD, tagSource: 'cwd' });
+  });
+
+  it('transcript가 지워져도 저장된 첫 cwd로 판단한다', async () => {
+    const k = await kit();
+    await k.store.ensureSession(sampleEnsureSessionInput({ firstCwd: CWD }));
+    await k.add();
+    k.folder.remove(PATH);
+    k.repositories.set(CWD, checkout);
+    expect(await k.brain.queue.drain({ budgetMs: 100 })).toMatchObject({ completed: 1 });
+    expect(k.store.snapshot().sessions[0]).toMatchObject({ firstCwd: CWD, tagSource: 'cwd' });
+  });
+
+  it('재판단이 비움으로 끝나도 근거를 보존하고 닫힌 일감을 다시 만들지 않는다', async () => {
+    const k = await kit();
+    await k.store.ensureSession(sampleEnsureSessionInput());
+    k.repositories.set(CWD, { kind: 'not_repository' });
+    expect(await k.brain.queue.drain({ budgetMs: 100 })).toMatchObject({ completed: 2 });
+    expect(k.store.snapshot().sessions[0]).toMatchObject({ firstCwd: CWD, tagSource: null });
+    expect(await k.brain.queue.drain({ budgetMs: 100 })).toMatchObject({ claimed: 0 });
+    expect(k.store.snapshot().workItems.filter((item) => item.kind === 'session_identity')).toHaveLength(1);
+  });
+
+  it('근거 없이 영구 실패한 재판단도 다시 열지 않는다', async () => {
+    const k = await kit();
+    await k.store.ensureSession(sampleEnsureSessionInput());
+    k.folder.remove(PATH);
+    expect(await k.brain.queue.drain({ budgetMs: 100 })).toMatchObject({ failed: 1 });
+    expect(await k.brain.queue.drain({ budgetMs: 100 })).toMatchObject({ claimed: 0 });
+    expect(k.store.snapshot().workItems).toHaveLength(1);
   });
 
   it('records unreadable transcripts permanently on the first attempt', async () => {

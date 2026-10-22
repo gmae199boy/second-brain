@@ -464,6 +464,7 @@ export function claudeCodeParser(): Parser {
         // From the whole content and not from the part that was read, so an
         // incremental parse answers the same as a full one (port contract).
         startSource: readStartSource(content),
+        startCwd: readStartCwd(content),
         droppedLines: dropped,
       };
     },
@@ -665,8 +666,7 @@ function readMessage(entry: Record<string, unknown>): ParsedMessage | DropReason
     body,
     occurredAt,
     // Tracking, taken exactly as the line carried it (migration 0004). The cwd
-    // is reported and not stored: story 2.8 tags the session with the cwd of
-    // the first message that carries one.
+    // is the fallback for a session without startCwd (AD-12).
     gitBranch: asTracking(entry['gitBranch']),
     cwd: asTracking(entry['cwd']),
     // Always false since story 23: a subagent's report is not stored at all, so
@@ -881,6 +881,22 @@ function resolveNotes(
     });
   }
   return notes;
+}
+
+/** First session cwd, including non-message lines, independent of the cursor. */
+function readStartCwd(content: string): string | null {
+  const pattern = /"cwd"\s*:/g;
+  for (let match = pattern.exec(content); match !== null; match = pattern.exec(content)) {
+    const lineStart = content.lastIndexOf('\n', match.index) + 1;
+    const newline = content.indexOf('\n', match.index);
+    // Inspect each candidate line once even when nested data also names cwd.
+    pattern.lastIndex = newline < 0 ? content.length : newline + 1;
+    const entry = readJson(content.slice(lineStart, newline < 0 ? content.length : newline));
+    if (entry === undefined || entry['isSidechain'] === true) continue;
+    const cwd = entry['cwd'];
+    if (typeof cwd === 'string' && cwd.trim() !== '') return cwd;
+  }
+  return null;
 }
 
 /**

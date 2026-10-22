@@ -1388,3 +1388,12 @@ describe('the connector contract against a plugin source', () => {
     });
   }
 });
+
+describe('꼬리표 근거 계약의 음성 가짜', () => {
+  it('틀린 꼬리표 없는 수를 거부한다', async () => {
+    const failures = await failedCases(sessionStoreContract(), async () => ({
+      ...memoryStore(), async countUntaggedSessions() { return { ok: true as const, count: 999 }; },
+    }));
+    expect(failures).toContain('tag evidence is preserved and identity candidates exclude known evidence and prior work');
+  });
+});

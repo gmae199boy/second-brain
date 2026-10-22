@@ -1,3 +1,4 @@
+import { formatSessionToken } from './domain/session-token.js';
 import { redactMessage, type MessagesRedactInput, type MessagesRedactResult } from './messages/redact.js';
 import { SESSION_IDENTITY_KIND, sessionIdentityHandler } from './capture/session-identity-work.js';
 import {
@@ -352,6 +353,18 @@ async function drain(
   }
 
   const scan = await scanTranscripts({ store, folders, clock, idGen }, { deadline });
+
+  const candidates = await store.listIdentityCandidates();
+  if (candidates.ok) {
+    for (const session of candidates.sessions) {
+      if (clock.now().getTime() >= deadline) break;
+      const now = clock.now();
+      const added = await store.addWork({ id: idGen.next(), kind: SESSION_IDENTITY_KIND,
+        targetKind: 'session', targetId: formatSessionToken(session),
+        createdAt: now, nextAttemptAt: now });
+      if (!added.ok) break;
+    }
+  }
 
   const queue = await drainQueue(
     { store, spool, clock, idGen },

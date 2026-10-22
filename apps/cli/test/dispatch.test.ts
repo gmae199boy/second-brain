@@ -1336,6 +1336,8 @@ describe('the dispatcher and the lock budget', () => {
         async redactMessage() {
           return unavailable;
         },
+        async countUntaggedSessions() { return unavailable; },
+        async listIdentityCandidates() { return unavailable; },
         async fillSessionTags() {
           return unavailable;
         },

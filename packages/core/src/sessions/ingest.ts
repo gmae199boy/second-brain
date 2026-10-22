@@ -4,7 +4,7 @@ import type {
   IngestToolNote,
 } from '../domain/ingest-batch.js';
 import { normalizeRemoteIdentity, projectIdentityKey } from '../domain/project-identity.js';
-import type { ParserCursor, Session, SessionIngestSource } from '../domain/session.js';
+import type { ParserCursor, Session, SessionIngestSource, TagSource } from '../domain/session.js';
 import {
   parseSessionToken,
   type SessionKey,
@@ -403,12 +403,13 @@ export async function ingestSession(
   let created = false;
   if (messages.length > 0) {
     // Inspect only for a session
-    // `findSession` did not find, and only from the cwd of the first message
-    // that carries one (AD-12). The process's own cwd is never the evidence —
+    // `findSession` did not find, using the session start folder, or the first
+    // message cwd when the parser has no start folder (AD-12). The process's own cwd is never the evidence —
     // a hook runs wherever the harness happened to leave it.
+    const cwd = parsed.startCwd ?? firstCwd(messages);
     const asked = stored === null
-      ? await checkoutFor(repositories, idGen, firstCwd(messages))
-      : { checkout: null, unknown: null };
+      ? await checkoutFor(repositories, idGen, cwd)
+      : { checkout: null, tagSource: null, unknown: null };
     const ensured = await store.ensureSession({
       id: idGen.next(),
       key,
@@ -428,6 +429,8 @@ export async function ingestSession(
       // Slice 1 never groups projects, so nothing fills this (AD-12).
       workspaceId: null,
       checkout: asked.checkout,
+      tagSource: asked.tagSource,
+      firstCwd: cwd,
       identityWork: asked.unknown === null ? null : {
         id: idGen.next(),
         kind: 'session_identity',
@@ -583,10 +586,13 @@ function cursorFor(
  * The project and worktree a cwd belongs to, with an id minted for each in case
  * this call is the one that creates the row (AD-8, AD-12).
  *
- * A batch whose messages carried no `cwd` at all is not asked about: there is
+ * A session with neither a start cwd nor a message cwd is not asked about: there is
  * nothing to inspect, and a guess would be a tag that can never be corrected
  * (`firstCwd`). Unknown answers defer the tags through work created atomically
  * with the session. A definite non-repository needs no deferred inspection.
+ * Only missing folders are estimated: the first surviving ancestor repository,
+ * then immediate sibling checkouts sharing one identity. Estimated worktrees
+ * keep the original cwd, while direct inspection keeps the repository top.
  *
  * The identity is the normalized remote when there is one, and the git common
  * directory only when there is not. A common directory is an absolute path, so
@@ -598,12 +604,44 @@ export async function checkoutFor(
   repositories: RepositoryInspector,
   idGen: IdGen,
   cwd: string | null,
-): Promise<{ checkout: EnsureCheckoutInput | null; unknown: Extract<InspectResult, { kind: 'unknown' }> | null }> {
-  if (cwd === null) return { checkout: null, unknown: null };
-  const result = await repositories.inspect(cwd);
-  if (result.kind === 'unknown') return { checkout: null, unknown: result };
-  if (result.kind === 'not_repository') return { checkout: null, unknown: null };
-  return { checkout: checkoutInput(result.checkout, idGen), unknown: null };
+): Promise<{ checkout: EnsureCheckoutInput | null; tagSource: TagSource | null; unknown: Extract<InspectResult, { kind: 'unknown' }> | null }> {
+  const empty = { checkout: null, tagSource: null, unknown: null };
+  if (cwd === null) return empty;
+  const original = cwd.replace(/\/+$/, '') || '/';
+  const result = await repositories.inspect(original);
+  if (result.kind === 'unknown') return { ...empty, unknown: result };
+  if (result.kind === 'not_repository') return empty;
+  if (result.kind === 'checkout') return { checkout: checkoutInput(result.checkout, idGen), tagSource: 'cwd', unknown: null };
+  const parent = (path: string): string | null =>
+    path === '/' ? null : path.slice(0, path.lastIndexOf('/')) || '/';
+  const immediate = parent(original);
+  let up = immediate;
+  let immediateMissing = false;
+  while (up !== null) {
+    const answer = await repositories.inspect(up);
+    if (answer.kind === 'unknown') return { ...empty, unknown: answer };
+    if (answer.kind === 'checkout') return {
+      checkout: { ...checkoutInput(answer.checkout, idGen), worktreePath: original },
+      tagSource: 'ancestor', unknown: null,
+    };
+    if (answer.kind === 'not_repository') break;
+    if (up === immediate) immediateMissing = true;
+    up = parent(up);
+  }
+  if (up === null || immediate === null || immediateMissing) return empty;
+  const listing = await repositories.listFolders(immediate);
+  if (listing.kind === 'unknown') return { ...empty, unknown: listing };
+  if (listing.kind === 'missing') return empty;
+  const siblings: EnsureCheckoutInput[] = [];
+  for (const folder of [...listing.folders].sort()) {
+    if (folder === original) continue;
+    const answer = await repositories.inspect(folder);
+    if (answer.kind === 'unknown') return { ...empty, unknown: answer };
+    if (answer.kind === 'checkout') siblings.push(checkoutInput(answer.checkout, idGen));
+  }
+  const first = siblings[0];
+  if (first === undefined || siblings.some((sibling) => sibling.identityKey !== first.identityKey)) return empty;
+  return { checkout: { ...first, worktreePath: original }, tagSource: 'sibling', unknown: null };
 }
 
 /** Shared by initial capture and deferred identity work to avoid divergent tags. */
@@ -620,7 +658,7 @@ export function checkoutInput(checkout: Checkout, idGen: IdGen): EnsureCheckoutI
 }
 
 /**
- * The folder this session is tagged from: the cwd of the first message that
+ * The fallback when the parser has no start cwd: the cwd of the first message that
  * carries one, or `null` when no message in the batch does.
  *
  * Not the first message's, because a message can arrive with no folder on it
@@ -628,7 +666,7 @@ export function checkoutInput(checkout: Checkout, idGen: IdGen): EnsureCheckoutI
  * `null` rather than guessing for any line whose folder is not this
  * conversation's. A session whose first message is one of those would otherwise
  * be tagged with nothing. Initial capture and deferred work use this same
- * evidence (AD-12), so both must select the first available cwd.
+ * fallback after the session start folder (AD-12).
  */
 export function firstCwd(messages: readonly { cwd: string | null }[]): string | null {
   for (const message of messages) {

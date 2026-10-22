@@ -1822,6 +1822,77 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
   }
 
 
+
+  it.each(['sibling', 'ancestor', 'ambiguous', 'start-folder'] as const)('지워진 근거 폴더를 %s 규칙으로 수집한다', async (mode) => {
+    const home = await installedHome();
+    const parent = join(await realpath(home), 'checkouts');
+    await mkdir(parent);
+    const main = await repositoryIn(parent, 'a', 'https://demo.example/brain-owner/notes.git');
+    const second = join(parent, 'b');
+    await git(main, 'worktree', 'add', '-q', second, '-b', 'second');
+    const gone = mode === 'ancestor' ? join(main, 'sub', 'gone') : join(parent, 'gone');
+    if (mode === 'ancestor') await mkdir(gone, { recursive: true });
+    else await git(main, 'worktree', 'add', '-q', gone, '-b', 'gone');
+    await rm(gone, { recursive: true });
+    if (mode === 'ambiguous') await repositoryIn(parent, 'other', 'https://demo.example/brain-owner/other.git');
+    for (const [ordinal, cwd] of [main, gone].entries()) {
+      const transcript = await transcriptForFolder(home, mode === 'start-folder' && ordinal === 1 ? join(cwd, 'sub') : cwd, `estimate-${ordinal}`);
+      if (mode === 'start-folder' && ordinal === 1) {
+        await writeFile(transcript, `${JSON.stringify({ type: 'attachment', cwd })}\n${await readFile(transcript, 'utf8')}`);
+      }
+      const run = await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home,
+        stopPayload(transcript, sessionIdFor(ordinal)));
+      expect(run.code, run.stderr).toBe(0);
+    }
+    const db = new DatabaseSync(databaseIn(home), { readOnly: true });
+    try {
+      const rows = db.prepare('select project_id,tag_source,first_cwd from sessions order by harness_session_id').all();
+      expect(rows[0]?.['tag_source']).toBe('cwd');
+      expect(rows[1]?.['first_cwd']).toBe(gone);
+      expect(rows[1]?.['tag_source']).toBe(mode === 'ambiguous' ? null : mode === 'start-folder' ? 'sibling' : mode);
+      expect(rows[1]?.['project_id']).toBe(mode === 'ambiguous' ? null : rows[0]?.['project_id']);
+      if (mode !== 'ambiguous') expect(db.prepare('select path from worktrees where path=?').get(gone)).toEqual({ path: gone });
+    } finally { db.close(); }
+  });
+
+  it('drain은 과거 세션을 한 번 다시 판단하고 doctor는 꼬리표 없는 수를 보인다', async () => {
+    const home = await installedHome();
+    const cwd = await repositoryIn(home, 'repo', 'https://demo.example/brain-owner/notes.git');
+    const transcript = await transcriptForFolder(home, cwd);
+    const config = join(home, 'claude-config');
+    const folder = join(config, 'projects', 'demo-repo');
+    await mkdir(folder, { recursive: true });
+    await copyFile(transcript, join(folder, `${sessionIdFor(1)}.jsonl`));
+    const db = new DatabaseSync(databaseIn(home));
+    try {
+      const user = db.prepare('select id from users where is_self=1').get()?.['id'];
+      db.prepare(`insert into sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source)
+        values(?, 'claude-code', ?, ?, 'demo-machine', '2026-01-01T00:00:00.000Z', 'import')`)
+        .run('01940000-0000-7000-8000-000000000991', sessionIdFor(1), user as string);
+    } finally { db.close(); }
+    const environment = { CLAUDE_CONFIG_DIR: config };
+    const first = await runBrain(['queue', 'drain', '--json'], home, '', environment);
+    expect(first.code, first.stderr).toBe(0);
+    let read = new DatabaseSync(databaseIn(home), { readOnly: true });
+    try {
+      expect(read.prepare('select first_cwd,tag_source from sessions').get()).toEqual({ first_cwd: cwd, tag_source: 'cwd' });
+      expect(read.prepare("select count(*) n from work_items where kind='session_identity'").get()?.['n']).toBe(1);
+    } finally { read.close(); }
+    const second = await runBrain(['queue', 'drain', '--json'], home, '', environment);
+    expect(second.code, second.stderr).toBe(0);
+    expect(JSON.parse(second.stdout)).toMatchObject({ ok: true, data: { claimed: 0 } });
+    read = new DatabaseSync(databaseIn(home));
+    try {
+      const user = read.prepare('select id from users where is_self=1').get()?.['id'];
+      for (let ordinal = 1; ordinal <= 2; ordinal++) read.prepare(`insert into sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source,first_cwd)
+        values(?, 'demo', ?, ?, 'demo-machine', '2026-01-01T00:00:00.000Z', 'import', '/demo/outside')`)
+        .run(`01940000-0000-7000-8000-00000000099${ordinal + 1}`, `outside-${ordinal}`, user as string);
+      expect(read.prepare("select count(*) n from work_items where kind='session_identity'").get()?.['n']).toBe(1);
+    } finally { read.close(); }
+    const doctor = await runBrain(['doctor', 'run', '--json'], home, '', environment);
+    expect(JSON.parse(doctor.stdout).data.checks).toContainEqual({ id: 'untagged', status: 'ok', detail: '2건' });
+  });
+
   it.each([
     ['github.com', 1], ['bitbucket.org', 1], ['demo.example', 2],
   ])('compares clone identity paths for %s (projects: %s)', async (host, count) => {

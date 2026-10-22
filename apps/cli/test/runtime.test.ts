@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -243,14 +243,14 @@ describe('gitRepositoryInspector on a folder it can say nothing about', () => {
     expect(checkout).toEqual({ kind: 'not_repository' });
   });
 
-  it('answers not_repository for a path with nothing at it', async () => {
+  it('answers missing for a path with nothing at it', async () => {
     const checkout = await gitRepositoryInspector().inspect(
       join(await scratch(), 'not', 'there'),
     );
 
     // The row of the matrix a transcript's own cwd produces once the folder
     // has been deleted: a value, never a throw.
-    expect(checkout).toEqual({ kind: 'not_repository' });
+    expect(checkout).toEqual({ kind: 'missing' });
   });
 
   it('answers not_repository for a relative path, which is no evidence at all', async () => {
@@ -284,7 +284,7 @@ describe('gitRepositoryInspector failure classification', () => {
     const cwd = await scratch();
     const inspector = gitRepositoryInspector({ command: join(cwd, 'missing-git') });
     expect(await inspector.inspect(cwd)).toMatchObject({ kind: 'unknown', reason: 'git_missing' });
-    expect(await inspector.inspect(join(cwd, 'missing'))).toEqual({ kind: 'not_repository' });
+    expect(await inspector.inspect(join(cwd, 'missing'))).toEqual({ kind: 'missing' });
     const file = join(cwd, 'file');
     await writeFile(file, '');
     expect(await inspector.inspect(file)).toEqual({ kind: 'not_repository' });
@@ -340,5 +340,25 @@ fi`);
       if (old === undefined) delete process.env['LANGUAGE'];
       else process.env['LANGUAGE'] = old;
     }
+  });
+});
+
+
+describe('저장소 형제 폴더 목록', () => {
+  it('폴더와 폴더 링크만 경로순으로 돌려주고 끊어진 링크는 뺀다', async () => {
+    const root = await scratch();
+    await mkdir(join(root, 'z'));
+    await mkdir(join(root, 'a'));
+    await writeFile(join(root, 'file'), '일반 파일');
+    await symlink(join(root, 'a'), join(root, 'linked'));
+    await symlink(join(root, 'absent'), join(root, 'broken'));
+    await symlink(join(root, 'file'), join(root, 'file-link'));
+    const inspector = gitRepositoryInspector();
+    expect(await inspector.listFolders(root)).toEqual({
+      kind: 'listed', folders: ['a', 'linked', 'z'].map((name) => join(root, name)),
+    });
+    expect(await inspector.listFolders(join(root, 'absent'))).toEqual({ kind: 'missing' });
+    expect(await inspector.listFolders(join(root, 'file', 'child'))).toEqual({ kind: 'missing' });
+    expect(await inspector.inspect(join(root, 'file', 'child'))).toEqual({ kind: 'missing' });
   });
 });

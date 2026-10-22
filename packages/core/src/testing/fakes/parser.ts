@@ -162,6 +162,7 @@ export function memoryParser(options: MemoryParserOptions = {}): Parser {
         // Answered from the whole content, never from the part that was read,
         // so a cursor cannot change it (port contract).
         startSource: asStartSource(raw['startSource']),
+        startCwd: asString(raw['startCwd']) ?? messages.find((message) => message.cwd !== null && message.cwd.trim() !== '')?.cwd ?? null,
         // This format carries nothing that is not a message, so the one reason
         // Core reads is reported as the zero it always is: the keys of this
         // record do not change from transcript to transcript (port contract).

@@ -157,7 +157,7 @@ async function versionFivePath(): Promise<string> {
 /** A fresh file brought up to the version this package ships. */
 async function migratedPath(): Promise<string> {
   const path = join(await scratch(), 'brain.db');
-  expect(await runSqliteMigrations({ path })).toMatchObject({ ok: true, to: 6 });
+  expect(await runSqliteMigrations({ path })).toMatchObject({ ok: true, to: 7 });
   return path;
 }
 
@@ -313,8 +313,8 @@ describe('the upgrade from version 5 to version 6', () => {
     expect(await runSqliteMigrations({ path })).toEqual({
       ok: true,
       from: 5,
-      to: 6,
-      applied: ['0006_drop_message_seq.sql'],
+      to: 7,
+      applied: ['0006_drop_message_seq.sql', '0007_session_tag_source.sql'],
     });
 
     connection = open(path);
@@ -451,7 +451,7 @@ describe('the upgrade from version 5 to version 6', () => {
 
   it('applies nothing the second time', async () => {
     const path = await migratedPath();
-    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 6, to: 6, applied: [] });
+    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 7, to: 7, applied: [] });
   });
 
   it('reaches exactly the version the folder holds', async () => {
@@ -459,8 +459,8 @@ describe('the upgrade from version 5 to version 6', () => {
       .map((name) => /^(\d{4})_.+\.sql$/.exec(name))
       .filter((match): match is RegExpExecArray => match !== null)
       .map((match) => Number(match[1]));
-    expect(Math.max(...numbered)).toBe(6);
-    expect(SQLITE_SCHEMA_VERSION).toBe(6);
+    expect(Math.max(...numbered)).toBe(7);
+    expect(SQLITE_SCHEMA_VERSION).toBe(7);
   });
 });
 

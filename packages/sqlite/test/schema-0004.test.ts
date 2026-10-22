@@ -133,7 +133,7 @@ async function versionThreePath(): Promise<string> {
 async function migratedPath(): Promise<string> {
   const path = join(await scratch(), 'brain.db');
   const applied = await runSqliteMigrations({ path });
-  expect(applied).toMatchObject({ ok: true, to: 6 });
+  expect(applied).toMatchObject({ ok: true, to: 7 });
   return path;
 }
 
@@ -242,11 +242,12 @@ describe('the upgrade from version 3 to version 4', () => {
     expect(await runSqliteMigrations({ path })).toEqual({
       ok: true,
       from: 3,
-      to: 6,
+      to: 7,
       applied: [
         '0004_capture_columns.sql',
         '0005_identity_and_records.sql',
         '0006_drop_message_seq.sql',
+      '0007_session_tag_source.sql',
       ],
     });
 
@@ -349,7 +350,7 @@ describe('the upgrade from version 3 to version 4', () => {
 
   it('applies nothing the second time', async () => {
     const path = await migratedPath();
-    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 6, to: 6, applied: [] });
+    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 7, to: 7, applied: [] });
   });
 });
 

@@ -916,6 +916,7 @@ describe('sessions.ingest and the cursor it starts from', () => {
         cursor: null,
         cursorReset: false,
         startSource: null,
+        startCwd: null,
         droppedLines: { unreadable: 0 },
       }),
     };
@@ -955,6 +956,7 @@ describe('sessions.ingest and the cursor it starts from', () => {
         cursor: null,
         cursorReset: false,
         startSource: null,
+        startCwd: null,
         droppedLines: { unreadable: 0 },
       }),
     };

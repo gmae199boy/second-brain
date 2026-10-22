@@ -3,6 +3,7 @@ import type { Failure } from '../domain/failure.js';
 import type { IngestBatch } from '../domain/ingest-batch.js';
 import type { Message } from '../domain/message.js';
 import type {
+  TagSource,
   ParserCursor,
   Session,
   SessionIngestSource,
@@ -79,7 +80,7 @@ export interface HealthStore {
 
 /**
  * The checkout a new session is tagged with, worked out once by the caller from
- * the `cwd` of the first message that carries one (AD-12).
+ * the session start folder, falling back to the first message cwd (AD-12).
  *
  * The two ids are *proposals*, in the sense `EnsureSessionInput.id` is: ids
  * belong to the side that creates the row (AD-8), so the caller mints one for
@@ -122,11 +123,14 @@ export interface EnsureSessionInput {
   /**
    * The project and worktree to tag a *new* session with, or `null` for a
    * session whose cwd said nothing. Computed once by the caller from the cwd
-   * of the first message that carries one, since a line may carry none.
+   * at session start, falling back to the first message that carries one.
    * A session already there ignores this input. Deferred identity work can
    * fill its tags separately only while both remain null (AD-12).
    */
   checkout: EnsureCheckoutInput | null;
+  /** First transcript cwd; written once, including when no tag can be assigned. */
+  firstCwd: string | null;
+  tagSource: TagSource | null;
   /** Opened atomically only by the call creating the session. */
   identityWork: AddWorkInput | null;
 }
@@ -198,7 +202,10 @@ export type FindSessionResult =
 
 export interface FillSessionTagsInput {
   key: SessionKey;
-  checkout: EnsureCheckoutInput;
+  checkout: EnsureCheckoutInput | null;
+  /** First transcript cwd; written once, including when no tag can be assigned. */
+  firstCwd: string | null;
+  tagSource: TagSource | null;
 }
 
 export type FillSessionTagsResult =
@@ -219,9 +226,19 @@ export type RedactMessageResult =
   | { ok: true; sessionId: string; bodySpans: number; toolNoteSpans: number; toolNotesChanged: number; chunksRemoved: number }
   | { ok: false; code: 'REDACT_TEXT_NOT_FOUND' | 'MESSAGE_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
+export type ListIdentityCandidatesResult =
+  | { ok: true; sessions: readonly Session[] }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+export type CountUntaggedSessionsResult =
+  | { ok: true; count: number }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
 export interface SessionStore {
+  /** Read without a write lock; excludes any prior identity work, even closed. */
+  listIdentityCandidates(): Promise<ListIdentityCandidatesResult>;
+  countUntaggedSessions(): Promise<CountUntaggedSessionsResult>;
   redactMessage(input: RedactMessageInput): Promise<RedactMessageResult>;
-  /** Fill only when both tags are null; never creates rows for an already tagged session. */
+  /** Fill firstCwd only from null; fill tags and their source together only from null. */
   fillSessionTags(input: FillSessionTagsInput): Promise<FillSessionTagsResult>;
   /**
    * Find-or-create the session row, and with it the project and worktree its

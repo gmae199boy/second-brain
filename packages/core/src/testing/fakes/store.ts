@@ -299,6 +299,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         // wherever the identity or the path was already there.
         projectId,
         worktreeId,
+        firstCwd: input.firstCwd,
+        tagSource: input.tagSource,
         ingestSource: input.ingestSource,
         endedAt: null,
         cursor: null,
@@ -341,13 +343,23 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       if (session === undefined) {
         return { ok: false, code: 'SESSION_NOT_FOUND', message: '세션을 찾을 수 없습니다' };
       }
-      if (session.projectId !== null || session.worktreeId !== null) {
+      session.firstCwd ??= input.firstCwd;
+      if (input.checkout === null || session.projectId !== null || session.worktreeId !== null) {
         return { ok: true, filled: false, session: { ...session } };
       }
-      Object.assign(session, checkoutTags(input.checkout));
+      Object.assign(session, checkoutTags(input.checkout), { tagSource: input.tagSource });
       return { ok: true, filled: true, session: { ...session } };
     },
 
+    async listIdentityCandidates() {
+      return { ok: true, sessions: [...sessions.values()].filter((session) =>
+        session.projectId === null && session.firstCwd === null &&
+        !workItems.some((item) => item.kind === 'session_identity' && item.targetKind === 'session' &&
+          item.targetId === formatSessionToken(session))).map((session) => ({ ...session })) };
+    },
+    async countUntaggedSessions() {
+      return { ok: true, count: [...sessions.values()].filter((session) => session.projectId === null).length };
+    },
     async findSession(key: SessionKey): Promise<FindSessionResult> {
       const existing = sessions.get(formatSessionToken(key));
       // A key no session has is `null` and not a failure: that is the state of

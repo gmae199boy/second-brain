@@ -114,7 +114,7 @@ async function migratedPath(): Promise<string> {
   expect(applied).toEqual({
     ok: true,
     from: 0,
-    to: 6,
+    to: 7,
     applied: [
       '0001_initial.sql',
       '0002_files_and_work.sql',
@@ -122,6 +122,7 @@ async function migratedPath(): Promise<string> {
       '0004_capture_columns.sql',
       '0005_identity_and_records.sql',
       '0006_drop_message_seq.sql',
+      '0007_session_tag_source.sql',
     ],
   });
   return path;
@@ -217,6 +218,7 @@ function seed(connection: SqliteConnection): void {
     workspace_id: ids.workspace,
     project_id: ids.project,
     worktree_id: ids.worktree,
+    tag_source: 'cwd',
     ingest_source: 'live',
     start_source: 'startup',
   });
@@ -394,7 +396,7 @@ describe('the migration this package ships', () => {
     const before = tableNames(connection);
     const configs = count(connection, 'index_configs');
 
-    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 6, to: 6, applied: [] });
+    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 7, to: 7, applied: [] });
 
     expect(tableNames(connection)).toEqual(before);
     expect(count(connection, 'index_configs')).toBe(configs);

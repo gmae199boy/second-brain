@@ -31,10 +31,18 @@ export type InspectUnknownReason = 'git_missing' | 'timeout' | 'permission' | 'u
 export type InspectResult =
   | { kind: 'checkout'; checkout: Checkout }
   | { kind: 'not_repository' }
+  | { kind: 'missing' }
   | { kind: 'unknown'; reason: InspectUnknownReason; message: string };
+
+export type FolderListing =
+  | { kind: 'listed'; folders: readonly string[] }
+  | { kind: 'missing' }
+  | Extract<InspectResult, { kind: 'unknown' }>;
 
 /** Capture proceeds when git cannot answer; unknown results need deferred work. */
 export interface RepositoryInspector {
   /** Answers with a value and never throws. */
   inspect(cwd: string): Promise<InspectResult>;
+  /** Immediate directories, following links, in path order. Never throws. */
+  listFolders(path: string): Promise<FolderListing>;
 }

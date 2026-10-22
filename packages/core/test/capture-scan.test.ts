@@ -445,6 +445,8 @@ describe('the session_ingest handler', () => {
       startSource: null,
       workspaceId: null,
       checkout: null,
+      firstCwd: null,
+      tagSource: null,
   identityWork: null,
     });
     expect(ensured).toMatchObject({ ok: true });

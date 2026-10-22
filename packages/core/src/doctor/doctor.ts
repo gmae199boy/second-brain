@@ -95,7 +95,8 @@ export interface DoctorCheckSource {
  * that makes a busy brain look broken (AD-7).
  */
 export type DoctorReadStore = Pick<WorkStore, 'listFailures'> &
-  Pick<TranscriptFileStore, 'listTranscriptFiles'>;
+  Pick<TranscriptFileStore, 'listTranscriptFiles'> &
+  Pick<import('../ports/store.js').SessionStore, 'countUntaggedSessions'>;
 
 export interface DoctorOptions {
   /** Schema version this build was made for, for the `schema-version` check. */
@@ -153,7 +154,7 @@ export async function runDoctor(
     // Everything a store would have answered is skipped under the same reason,
     // so a reader never has to work out from what is missing whether a check
     // was skipped or never existed.
-    for (const id of ['schema-version', 'failures', 'transcripts']) {
+    for (const id of ['schema-version', 'failures', 'untagged', 'transcripts']) {
       checks.push({ id, status: 'skip', detail: prereqFailed('db') });
     }
   } else {
@@ -161,6 +162,10 @@ export async function runDoctor(
     checks.push(...health.source.probes.map(probeCheck));
     checks.push(await schemaCheck(store, options.schemaVersion));
     checks.push(await failuresCheck(options.store));
+    const untagged = await options.store.countUntaggedSessions();
+    checks.push(untagged.ok
+      ? { id: 'untagged', status: 'ok', detail: `${String(untagged.count)}건` }
+      : { id: 'untagged', status: 'fail', code: untagged.code, detail: untagged.message });
     checks.push(await transcriptsCheck(options));
   }
 

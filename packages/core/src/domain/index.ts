@@ -9,6 +9,7 @@ export type {
   Session,
   SessionIngestSource,
   SessionStartSource,
+  TagSource,
 } from './session.js';
 export {
   SESSION_TOKEN_SEPARATOR,

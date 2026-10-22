@@ -50,6 +50,48 @@ export type SessionStoreSubject = SessionStore & UserStore & Pick<WorkStore, "li
 export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
   return [
     contractCase<SessionStoreSubject>(
+      'tag evidence is preserved and identity candidates exclude known evidence and prior work',
+      async (make) => withSubject(make, async (store) => {
+        await owner(store);
+        const first = await store.ensureSession(sampleEnsureSessionInput({
+          checkout: sampleCheckoutInput(), firstCwd: '/demo/first', tagSource: 'ancestor',
+        }));
+        assertOk(first, '세션 생성 실패');
+        assertEqual(first.session.firstCwd, '/demo/first', '첫 cwd 누락');
+        assertEqual(first.session.tagSource, 'ancestor', '출처 누락');
+        const repeated = await store.fillSessionTags({ key: sampleSessionKey, checkout: null,
+          firstCwd: '/demo/changed', tagSource: null });
+        assertOk(repeated, '근거 보존 실패');
+        assertEqual(repeated.session.firstCwd, '/demo/first', '첫 cwd 변경');
+        assertEqual(repeated.session.tagSource, 'ancestor', '출처 변경');
+        const key = { ...sampleSessionKey, harnessSessionId: 'empty-evidence' };
+        assertOk(await store.ensureSession(sampleEnsureSessionInput({ id: otherSessionId, key })), '빈 세션 생성');
+        let candidates = await store.listIdentityCandidates();
+        assertOk(candidates, '목록 읽기');
+        assertEqual(candidates.sessions.length, 1, '재판단 대상 수');
+        const filled = await store.fillSessionTags({ key, checkout: null, tagSource: null, firstCwd: '/demo/outside' });
+        assertOk(filled, '근거 채우기');
+        assertTrue(!filled.filled, '꼬리표 없는 근거가 꼬리표로 집계됨');
+        assertEqual(filled.session.firstCwd, '/demo/outside', '근거 누락');
+        candidates = await store.listIdentityCandidates();
+        assertOk(candidates, '목록 재읽기');
+        assertEqual(candidates.sessions.length, 0, '근거 있는 세션 재판단');
+        const count = await store.countUntaggedSessions();
+        assertOk(count, '꼬리표 없는 수');
+        assertEqual(count.count, 1, '꼬리표 없는 수 오류');
+        const workKey = { ...sampleSessionKey, harnessSessionId: 'prior-work' };
+        assertOk(await store.ensureSession(sampleEnsureSessionInput({
+          id: '01940000-0000-7000-8000-000000000991', key: workKey,
+          identityWork: { id: '01940000-0000-7000-8000-000000000992',
+            kind: 'session_identity', targetKind: 'session', targetId: 'demo:prior-work',
+            createdAt: new Date('2026-01-01T00:00:00.000Z'), nextAttemptAt: new Date('2026-01-01T00:00:00.000Z') },
+        })), '일감 있는 세션');
+        candidates = await store.listIdentityCandidates();
+        assertOk(candidates, '일감 제외 읽기');
+        assertEqual(candidates.sessions.length, 0, '이미 일감 있는 세션 재판단');
+      }),
+    ),
+    contractCase<SessionStoreSubject>(
       'redaction changes body and notes atomically, refuses missing text, and survives ingest replay',
       async (make) => withSubject(make, async (store) => {
         await owner(store);
@@ -139,12 +181,12 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       async (make) => withSubject(make, async (store) => {
         await owner(store);
         assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensure failed');
-        const first = await store.fillSessionTags({ key: sampleSessionKey, checkout: sampleCheckoutInput() });
+        const first = await store.fillSessionTags({ firstCwd: '/demo/repo', tagSource: 'cwd', key: sampleSessionKey, checkout: sampleCheckoutInput() });
         assertOk(first, 'fill failed');
         assertTrue(first.filled, 'empty tags were not filled');
         const unused = sampleCheckoutInput({ projectId: otherProjectId, worktreeId: otherWorktreeId,
           remoteIdentity: 'demo.example/brain-owner/other', worktreePath: '/demo/other' });
-        const repeat = await store.fillSessionTags({ key: sampleSessionKey, checkout: unused });
+        const repeat = await store.fillSessionTags({ firstCwd: '/demo/repo', tagSource: 'cwd', key: sampleSessionKey, checkout: unused });
         assertOk(repeat, 'repeat failed');
         assertTrue(!repeat.filled, 'existing tags were overwritten');
         assertEqual(repeat.session.projectId, first.session.projectId, 'project changed');
@@ -154,7 +196,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
         }));
         assertOk(next, 'next ensure failed');
         assertEqual(next.session.projectId, '01940000-0000-7000-8000-000000000899', 'fill created an unreferenced project');
-        const absent = await store.fillSessionTags({
+        const absent = await store.fillSessionTags({ firstCwd: '/demo/repo', tagSource: 'cwd',
           key: { ...sampleSessionKey, harnessSessionId: 'absent' }, checkout: sampleCheckoutInput(),
         });
         assertNotOk(absent, 'missing session succeeded');
