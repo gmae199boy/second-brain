@@ -15,6 +15,7 @@ import {
   type SpoolRewriteResult,
   type SpoolStatsResult,
 } from 'second_brain';
+import { oneLine } from '../error-text.js';
 
 /**
  * The Runtime's `Spool`: the queue of writes the database could not take, as
@@ -535,8 +536,4 @@ function describe(error: unknown): string {
   const code: unknown = (error as { code?: unknown }).code;
   const candidates = [oneLine(error.message), typeof code === 'string' ? code : '', error.name];
   return candidates.find((candidate) => candidate !== '') ?? '알 수 없는 오류';
-}
-
-function oneLine(text: string): string {
-  return text.split('\n')[0]?.trim() ?? '';
 }

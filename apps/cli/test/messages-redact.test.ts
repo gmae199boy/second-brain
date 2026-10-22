@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -10,14 +9,14 @@ import { SECRET_PATTERN_VERSION } from 'second_brain';
 import { DatabaseSync } from 'node:sqlite';
 import { withoutHarnessFolders } from './environment.js';
 import { assertKoreanLines } from './language.js';
+import { tempHomes } from './temp-home.js';
 
 const bin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
 const install = fileURLToPath(new URL('../dist/install.js', import.meta.url));
-const homes: string[] = [];
-afterEach(async () => { await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true }))); });
+const temporary = tempHomes();
+afterEach(() => temporary.cleanup());
 async function home() {
-  const path = await mkdtemp(join(tmpdir(), 'brain-cli-redact-'));
-  homes.push(path);
+  const path = await temporary.create('brain-cli-redact-');
   return path;
 }
 function run(home: string, args: string[], script = bin): Promise<{ code: number | null; stdout: string; stderr: string }> {

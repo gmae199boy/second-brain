@@ -11,6 +11,7 @@ import {
 } from 'second_brain';
 import { readConfig, type ReadConfigResult } from '../config/codec.js';
 import { HOME_ENV, configFilePath, pluginRunPath, spoolPath, lastHookPath } from '../config/paths.js';
+import { describeErrorLine, oneLine } from '../error-text.js';
 import {
   appRootPath,
   readAppRef,
@@ -25,7 +26,7 @@ import {
 import { SHIM_SIGNATURE, parseShim, shimPath, type ParsedShim } from '../install/shim.js';
 import { harnesses } from '../harnesses.js';
 import { systemClock } from '../runtime/clock.js';
-import { NODE_FLOOR, atLeast, meetsNodeFloor } from '../runtime/node-floor.js';
+import { NODE_FLOOR, atLeast, meetsNodeFloor, parseVersion } from '../runtime/node-floor.js';
 import { fileSpool } from '../runtime/spool.js';
 
 /**
@@ -232,7 +233,7 @@ export async function inspectShim(home: string): Promise<ShimState> {
   try {
     text = await readFile(path, 'utf8');
   } catch (error) {
-    return { path, message: `${path}을 읽을 수 없습니다: ${describe(error)}. ${rerun}` };
+    return { path, message: `${path}을 읽을 수 없습니다: ${describeErrorLine(error)}. ${rerun}` };
   }
 
   const shim = parseShim(text);
@@ -547,20 +548,6 @@ function nodeVersionCheck(): DoctorCheck {
   return { id: 'node-version', status: 'ok', detail: `node ${version}` };
 }
 
-/** `v24.16.0\n` as `24.16.0`, or `undefined` when there is no version in it. */
-function parseVersion(output: string): string | undefined {
-  const found = parts(output.trim());
-  return found === undefined ? undefined : found.join('.');
-}
-
-/** The three numbers of a version, from text that may start with `v`. */
-function parts(value: string): [number, number, number] | undefined {
-  const matched = /^v?(\d+)\.(\d+)\.(\d+)/.exec(value.trim());
-  const [major, minor, patch] = [matched?.[1], matched?.[2], matched?.[3]];
-  if (major === undefined || minor === undefined || patch === undefined) return undefined;
-  return [Number(major), Number(minor), Number(patch)];
-}
-
 const execFile = promisify(execFileCallback);
 
 /**
@@ -577,7 +564,7 @@ async function systemRunNode(path: string): Promise<NodeRun> {
     });
     return { ok: true, stdout: result.stdout };
   } catch (error) {
-    return { ok: false, message: describe(error) };
+    return { ok: false, message: describeErrorLine(error) };
   }
 }
 
@@ -621,18 +608,6 @@ function once<T>(run: () => Promise<T>): () => Promise<T> {
     pending ??= run();
     return pending;
   };
-}
-
-/** Whatever went wrong, in one non-empty line (Conventions: no silent failure). */
-function describe(error: unknown): string {
-  if (!(error instanceof Error)) return oneLine(String(error));
-  const code: unknown = (error as { code?: unknown }).code;
-  const candidates = [oneLine(error.message), typeof code === 'string' ? code : '', error.name];
-  return candidates.find((candidate) => candidate !== '') ?? '알 수 없는 오류';
-}
-
-function oneLine(text: string): string {
-  return text.split('\n')[0]?.trim() ?? '';
 }
 
 /** Hook arrival is evidence even when a database write went to spool. */

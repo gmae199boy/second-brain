@@ -4,14 +4,11 @@ import {
   chmod,
   copyFile,
   mkdir,
-  mkdtemp,
   readFile,
-  rm,
   stat,
   unlink,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +27,7 @@ import { dispatch } from '../src/dispatch.js';
 import { parseShim, shimPath, writeShim } from '../src/install/shim.js';
 import { systemClock } from '../src/runtime/clock.js';
 import { withoutHarnessFolders } from './environment.js';
+import { tempHomes } from './temp-home.js';
 
 /**
  * `brain setup connect` against a fake harness, and `brain setup run` against a
@@ -82,11 +80,10 @@ interface Envelope {
   };
 }
 
-const homes: string[] = [];
+const temporary = tempHomes();
 
 async function emptyHome(): Promise<string> {
-  const home = await mkdtemp(join(tmpdir(), 'brain-setup-'));
-  homes.push(home);
+  const home = await temporary.create('brain-setup-');
   return home;
 }
 
@@ -200,9 +197,7 @@ function spawned(
   });
 }
 
-afterEach(async () => {
-  await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
-});
+afterEach(() => temporary.cleanup());
 
 describe('brain setup connect', () => {
   it('registers the shim once, however many times it is run', async () => {

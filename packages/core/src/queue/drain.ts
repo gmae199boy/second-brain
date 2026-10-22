@@ -7,6 +7,7 @@ import {
   type WorkItem,
   type WorkKindPolicy,
 } from '../domain/work-item.js';
+import { errorLine } from '../error-text.js';
 import type { Clock } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
 import type { Spool } from '../ports/spool.js';
@@ -348,7 +349,7 @@ async function attempt(
   try {
     return await handler(item);
   } catch (error) {
-    return { ok: false, code: WORK_HANDLER_THREW, message: oneLine(error) };
+    return { ok: false, code: WORK_HANDLER_THREW, message: errorLine(error) };
   }
 }
 
@@ -441,9 +442,4 @@ function sentence(outcome: WorkHandlerResult): string {
 
 function isSpoolCause(code: string): code is SpoolCause {
   return SPOOL_CAUSES.includes(code as SpoolCause);
-}
-
-function oneLine(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
-  return text.split('\n')[0]?.trim() ?? '알 수 없는 오류';
 }

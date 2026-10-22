@@ -8,6 +8,7 @@ import {
   createBrain,
   encodeHookLine,
   encodeTextLine,
+  errorLine,
   spoolSessionIngest,
   sqliteStore,
   type Brain,
@@ -431,7 +432,7 @@ export async function dispatch(
   } catch (error) {
     // An exception here is a bug, and a bug must still not break the harness.
     if (!hook) throw error;
-    stderr(`${encodeHookLine(`brain: ${oneLine(error)}`)}\n`);
+    stderr(`${encodeHookLine(`brain: ${errorLine(error)}`)}\n`);
     return 0;
   }
 
@@ -732,7 +733,7 @@ async function drainOpportunistically(
     const brain = createBrain({ ...dependencies, store });
     await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.opportunistic });
   } catch (error) {
-    stderr(`${encodeTextLine(`brain: 밀린 일 처리 중 오류: ${oneLine(error)}`)}\n`);
+    stderr(`${encodeTextLine(`brain: 밀린 일 처리 중 오류: ${errorLine(error)}`)}\n`);
   } finally {
     // This connection is the drain's own, so closing it is the drain's own job;
     // the command's store is closed by the `finally` around the command.
@@ -861,7 +862,7 @@ function select(registry: readonly CommandSpec[], argv: readonly string[]): Sele
     program.parse([...argv], { from: 'user' });
   } catch (error) {
     if (!(error instanceof CommanderError)) throw error;
-    if (error.code === 'commander.helpDisplayed' || error.code === 'commander.version') {
+    if (error.code === 'commander.helpDisplayed') {
       return { kind: 'helped' };
     }
     return { kind: 'usage', message: usageMessage(registry, error) };
@@ -1138,12 +1139,6 @@ function findSpec(
   const [ns, verb] = words;
   if (ns === undefined || verb === undefined) return undefined;
   return registry.find((spec) => spec.ns === ns && spec.verb === verb);
-}
-
-/** The first line of whatever went wrong: a hook failure gets one line. */
-function oneLine(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
-  return text.split('\n')[0]?.trim() ?? '알 수 없는 오류';
 }
 
 /**

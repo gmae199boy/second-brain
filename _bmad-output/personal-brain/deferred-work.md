@@ -150,3 +150,6 @@
 - source_plan: `_bmad-output/personal-brain/epic-capture/story-parser-plan.md`
   summary: 닫힘(2026-10-21 사용자 결정, 23) — 보고를 읽지 않으므로 해당 없음. 원래: 받아들인 대가 — 편집기가 "has not reported yet" 문구를 바꾸면 그 알림이 다시 서브에이전트 보고로 저장된다.
   evidence: 22의 Design Notes(2026-10-21). 그 안내는 약속하는 handback **앞**에 오므로(실측 4건, 모두 handback이 뒤) "그 줄 앞만 본다"는 규칙으로는 구조로 잡을 수 없고, 문장 전체 일치만이 잡는다. 뒤를 보면 전체 읽기와 증분 읽기가 다른 답을 내고(AD-4), 저장된 메시지는 고칠 수 없다(AD-11). 첫 번째 안내 문장은 구조가 받친다 — 결과 자신의 `handback` 칸(동기 125건 중 123건)과 그 에이전트의 앞선 handback 줄(알림 97건 중 93건) — 이라 문구가 바뀌어도 안전하다.
+
+- `brain --version` 기능: 앱 버전·빌드 commit·릴리스 중 무엇을 버전으로 표시할지 결정한 뒤 구현한다. 현재는 USAGE·exit 2를 유지한다(2.15).
+- dispatch가 Core에 모듈 harness 등록부를 넘기는 것: 테스트용 등록부를 주입하는 seam을 둔다(2.2 리뷰 #6, 2.15 범위 밖).

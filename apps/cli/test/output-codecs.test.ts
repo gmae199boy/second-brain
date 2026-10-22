@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
-import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, readFile } from 'node:fs/promises';
 import { readFileSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +19,7 @@ import {
   SECRETS_FIXTURE,
   TRUNCATED_HALF_KEY,
 } from './secrets-fixture.js';
+import { tempHomes } from './temp-home.js';
 
 /**
  * The output codec contract, end to end, and the sink check that keeps it
@@ -91,11 +91,9 @@ interface Run {
   stderr: string;
 }
 
-const homes: string[] = [];
+const temporary = tempHomes();
 
-afterEach(async () => {
-  await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
-});
+afterEach(() => temporary.cleanup());
 
 function childEnvironment(home: string): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = withoutHarnessFolders({
@@ -131,8 +129,7 @@ function run(script: string, args: readonly string[], home: string, stdin: strin
 
 /** An installed brain with the secrets fixture already in it. */
 async function brainWithSecrets(): Promise<string> {
-  const home = await mkdtemp(join(tmpdir(), 'brain-codec-'));
-  homes.push(home);
+  const home = await temporary.create('brain-codec-');
   const install = await run(installPath, ['--yes'], home, '');
   expect(install.code, install.stdout + install.stderr).toBe(0);
 
@@ -587,8 +584,7 @@ describe('the sinks outside the dispatcher, one at a time', () => {
     // The drain opens a connection of its own, which is the seam: the command
     // gets a working store and the drain's own `createStore` throws, so the
     // line under test is the `catch` of `drainOpportunistically`.
-    const home = await mkdtemp(join(tmpdir(), 'brain-drain-'));
-    homes.push(home);
+    const home = await temporary.create('brain-drain-');
     await writeConfig(home, { storePath: join(home, 'brain.db') });
 
     let opened = 0;

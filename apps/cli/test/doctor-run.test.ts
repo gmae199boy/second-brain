@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { appendFile, chmod, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { appendFile, chmod, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +12,7 @@ import { runtimeChecks } from '../src/doctor/checks.js';
 import { shimPath, writeShim } from '../src/install/shim.js';
 import { assertKoreanLine, assertKoreanLines } from './language.js';
 import { withoutHarnessFolders } from './environment.js';
+import { tempHomes } from './temp-home.js';
 
 const binPath = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
@@ -81,12 +81,11 @@ const NO_DATABASE_CHECKS = [
   ...MACHINE_CHECKS,
 ];
 
-const homes: string[] = [];
+const temporary = tempHomes();
 
 /** A folder with no configuration at all. */
 async function emptyHome(): Promise<string> {
-  const home = await mkdtemp(join(tmpdir(), 'brain-doctor-'));
-  homes.push(home);
+  const home = await temporary.create('brain-doctor-');
   return home;
 }
 
@@ -172,9 +171,7 @@ function assertKoreanDoctorOutput(run: Run): void {
   assertKoreanLines(run.stderr, { label: 'doctor stderr' });
 }
 
-afterEach(async () => {
-  await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
-});
+afterEach(() => temporary.cleanup());
 
 describe('brain doctor run', () => {
   beforeAll(() => {

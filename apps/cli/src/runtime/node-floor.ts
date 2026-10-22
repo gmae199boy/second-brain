@@ -25,8 +25,8 @@ export function meetsNodeFloor(version: string): boolean {
  * one comparison.
  */
 export function atLeast(version: string, floor: string): boolean {
-  const left = parts(version);
-  const right = parts(floor);
+  const left = versionParts(version);
+  const right = versionParts(floor);
   if (left === undefined || right === undefined) return false;
   for (let index = 0; index < 3; index += 1) {
     const mine = left[index] ?? 0;
@@ -37,9 +37,14 @@ export function atLeast(version: string, floor: string): boolean {
 }
 
 /** The three numbers of a version, from text that may start with `v`. */
-function parts(value: string): [number, number, number] | undefined {
+export function versionParts(value: string): [number, number, number] | undefined {
   const matched = /^v?(\d+)\.(\d+)\.(\d+)/.exec(value.trim());
   const [major, minor, patch] = [matched?.[1], matched?.[2], matched?.[3]];
   if (major === undefined || minor === undefined || patch === undefined) return undefined;
   return [Number(major), Number(minor), Number(patch)];
+}
+
+/** Normalize the three numeric version components used by doctor. */
+export function parseVersion(output: string): string | undefined {
+  return versionParts(output)?.join('.');
 }

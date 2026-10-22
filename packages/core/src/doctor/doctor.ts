@@ -3,6 +3,7 @@ import {
   TRANSCRIPT_DEADLINE_WARN_DAYS,
   TRANSCRIPT_RETENTION_DAYS,
 } from '../domain/transcript-file.js';
+import { errorLine } from '../error-text.js';
 import { checkSchema } from '../schema.js';
 import type { Clock } from '../ports/clock.js';
 import type {
@@ -331,12 +332,6 @@ async function registered(source: DoctorCheckSource): Promise<DoctorCheck> {
   try {
     return await source.run();
   } catch (error) {
-    return { id: source.id, status: 'fail', detail: `점검이 실패했습니다: ${oneLine(error)}` };
+    return { id: source.id, status: 'fail', detail: `점검이 실패했습니다: ${errorLine(error)}` };
   }
-}
-
-/** The first line of whatever went wrong, so a detail stays one line. */
-function oneLine(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
-  return text.split('\n')[0]?.trim() ?? '알 수 없는 오류';
 }

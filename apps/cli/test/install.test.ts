@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +9,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { configFilePath, envFilePath, HOME_ENV } from '../src/config/paths.js';
 import { shimPath } from '../src/install/shim.js';
 import { withoutHarnessFolders } from './environment.js';
+import { tempHomes } from './temp-home.js';
 
 /**
  * The installer end to end, against a real SQLite file, through the built entry
@@ -31,11 +31,10 @@ interface Run {
   stderr: string;
 }
 
-const homes: string[] = [];
+const temporary = tempHomes();
 
 async function emptyHome(): Promise<string> {
-  const home = await mkdtemp(join(tmpdir(), 'brain-install-'));
-  homes.push(home);
+  const home = await temporary.create('brain-install-');
   return home;
 }
 
@@ -99,9 +98,7 @@ function rowCounts(path: string): Record<string, number> {
   }
 }
 
-afterEach(async () => {
-  await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
-});
+afterEach(() => temporary.cleanup());
 
 describe('the installer with no Docker and no Postgres', () => {
   beforeAll(() => {
@@ -310,5 +307,25 @@ describe('the installer with no Docker and no Postgres', () => {
     const run = await runInstaller([], home);
 
     expect(run.stdout).toContain(`설정 폴더: ${home}`);
+  });
+});
+
+describe('installer prompt cancellation', () => {
+  it.each([true, false])('handles Cancelled only (cancel=%s)', async (cancel) => {
+    const { Cancelled, runInstallerWithFlags, systemInstallDeps } = await import('../src/install.js');
+    const home = await emptyHome();
+    const error = cancel ? new Cancelled() : new Error('unexpected prompt error');
+    const deps = systemInstallDeps();
+    const fail = async (): Promise<never> => { throw error; };
+    const run = runInstallerWithFlags({ connect: [], yes: false, help: false },
+      { ...withoutHarnessFolders(process.env), [HOME_ENV]: home },
+      { ...deps, isTTY: true, log: () => {}, prompts: { confirm: fail, text: fail, multiselect: fail } });
+    if (cancel) {
+      expect(await run).toEqual({ ok: false, warnings: [], failure: {
+        code: 'SETUP_CANCELLED', message: '요청대로 멈췄습니다. 더 바뀐 것은 없습니다.', exit: 1,
+      } });
+    } else {
+      await expect(run).rejects.toBe(error);
+    }
   });
 });

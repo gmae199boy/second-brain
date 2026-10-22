@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { CONTENT_HASH_PREFIX, type ReadTranscriptResult, type TranscriptReader } from 'second_brain';
+import {
+  CONTENT_HASH_PREFIX,
+  describeError,
+  type ReadTranscriptResult,
+  type TranscriptReader,
+} from 'second_brain';
 
 /**
  * The Runtime's `TranscriptReader`: the one place a harness transcript is read
@@ -37,17 +42,9 @@ export function fileTranscriptReader(): TranscriptReader {
         return {
           ok: false,
           code: 'TRANSCRIPT_UNREADABLE',
-          message: `트랜스크립트를 읽을 수 없습니다: ${describe(error)}`,
+          message: `트랜스크립트를 읽을 수 없습니다: ${describeError(error)}`,
         };
       }
     },
   };
-}
-
-/** Whatever went wrong, in one non-empty line (Conventions: no silent failure). */
-function describe(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-  const code: unknown = (error as { code?: unknown }).code;
-  const candidates = [error.message, typeof code === 'string' ? code : '', error.name];
-  return candidates.find((candidate) => candidate !== '') ?? '알 수 없는 오류';
 }

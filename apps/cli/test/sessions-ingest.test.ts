@@ -4,7 +4,6 @@ import {
   appendFile,
   copyFile,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
   realpath,
@@ -12,7 +11,6 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
@@ -33,6 +31,7 @@ import {
   SECRETS_FIXTURE,
   TRUNCATED_HALF_KEY,
 } from './secrets-fixture.js';
+import { tempHomes } from './temp-home.js';
 
 /**
  * `brain sessions ingest claude-code` end to end: the built `brain`, started
@@ -121,11 +120,9 @@ interface Envelope {
 
 const HARNESS_SESSION = '4f1e7a90-1c2b-4d3e-8f55-000000000000';
 
-const homes: string[] = [];
+const temporary = tempHomes();
 
-afterEach(async () => {
-  await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
-});
+afterEach(() => temporary.cleanup());
 
 /**
  * A child environment with nothing a Postgres install left behind, so no test
@@ -170,8 +167,7 @@ function runBrain(args: readonly string[], home: string, stdin: string, environm
 
 /** An installed brain: a configuration folder, a migrated database, an owner. */
 async function installedHome(): Promise<string> {
-  const home = await mkdtemp(join(tmpdir(), 'brain-ingest-'));
-  homes.push(home);
+  const home = await temporary.create('brain-ingest-');
   const install = await new Promise<Run>((resolve, reject) => {
     const child = spawn(process.execPath, [installPath, '--yes'], {
       cwd: repoRoot,
@@ -1821,8 +1817,6 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
     return `4f1e7a90-1c2b-4d3e-8f55-00000000000${String(ordinal)}`;
   }
 
-
-
   it.each(['sibling', 'ancestor', 'ambiguous', 'start-folder'] as const)('지워진 근거 폴더를 %s 규칙으로 수집한다', async (mode) => {
     const home = await installedHome();
     const parent = join(await realpath(home), 'checkouts');
@@ -2280,8 +2274,7 @@ describe('brain sessions ingest on the hook path', () => {
   });
 
   it('says CONFIG_MISSING in one line when no brain is installed here', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'brain-ingest-bare-'));
-    homes.push(home);
+    const home = await temporary.create('brain-ingest-bare-');
 
     const run = await runBrain(
       ['sessions', 'ingest', 'claude-code'],

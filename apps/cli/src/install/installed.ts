@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { installedPath, pluginRunPath } from '../config/paths.js';
+import { describeErrorLine, oneLine } from '../error-text.js';
 import { shimPath } from './shim.js';
 
 /**
@@ -301,7 +302,7 @@ export async function verifyCompletion(home: string): Promise<CompletionCheck> {
     });
     stdout = result.stdout;
   } catch (error) {
-    return { ok: false, message: `${path}을 실행할 수 없습니다: ${describe(error)}` };
+    return { ok: false, message: `${path}을 실행할 수 없습니다: ${describeErrorLine(error)}` };
   }
 
   let envelope: unknown;
@@ -352,16 +353,4 @@ async function readText(path: string): Promise<string | undefined> {
   } catch {
     return undefined;
   }
-}
-
-/** Whatever went wrong, in one non-empty line (Conventions: no silent failure). */
-function describe(error: unknown): string {
-  if (!(error instanceof Error)) return oneLine(String(error));
-  const code: unknown = (error as { code?: unknown }).code;
-  const candidates = [oneLine(error.message), typeof code === 'string' ? code : '', error.name];
-  return candidates.find((candidate) => candidate !== '') ?? '알 수 없는 오류';
-}
-
-function oneLine(text: string): string {
-  return text.split('\n')[0]?.trim() ?? '';
 }

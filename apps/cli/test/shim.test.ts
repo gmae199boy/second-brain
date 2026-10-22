@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -19,6 +18,7 @@ import {
 import { NODE_FLOOR } from '../src/runtime/node-floor.js';
 import { assertKoreanLine } from './language.js';
 import { withoutHarnessFolders } from './environment.js';
+import { tempHomes } from './temp-home.js';
 
 /**
  * The shim is the one file a harness hook ever calls, started with none of the
@@ -34,11 +34,10 @@ import { withoutHarnessFolders } from './environment.js';
 const distBin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
 const distShimModule = fileURLToPath(new URL('../dist/install/shim.js', import.meta.url));
 
-const homes: string[] = [];
+const temporary = tempHomes();
 
 async function tempHome(): Promise<string> {
-  const home = await mkdtemp(join(tmpdir(), 'brain-shim-'));
-  homes.push(home);
+  const home = await temporary.create('brain-shim-');
   return home;
 }
 
@@ -66,9 +65,7 @@ function runShim(
   });
 }
 
-afterEach(async () => {
-  await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
-});
+afterEach(() => temporary.cleanup());
 
 describe('renderShim', () => {
   it('is POSIX sh that pins the node and the entry point it was given', () => {
@@ -406,8 +403,7 @@ describe('the pinned node', () => {
 describe('a shim whose node is gone', () => {
   /** A folder holding a `node` that answers `--version` with this version. */
   async function fakeNode(version: string): Promise<string> {
-    const folder = await mkdtemp(join(tmpdir(), 'brain-node-'));
-    homes.push(folder);
+    const folder = await temporary.create('brain-node-');
     const path = join(folder, 'node');
     await writeFile(
       path,
@@ -419,8 +415,7 @@ describe('a shim whose node is gone', () => {
 
   /** An `nvm` layout with one version per entry. */
   async function fakeNvm(versions: readonly string[]): Promise<string> {
-    const nvm = await mkdtemp(join(tmpdir(), 'brain-nvm-'));
-    homes.push(nvm);
+    const nvm = await temporary.create('brain-nvm-');
     for (const version of versions) {
       const bin = join(nvm, 'versions', 'node', `v${version}`, 'bin');
       await mkdir(bin, { recursive: true });

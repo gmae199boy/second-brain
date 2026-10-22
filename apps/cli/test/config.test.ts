@@ -1,6 +1,5 @@
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -16,12 +15,12 @@ import {
 } from '../src/config/codec.js';
 import { HOME_ENV, configFilePath, configHome, envFilePath } from '../src/config/paths.js';
 import { assertKoreanLine } from './language.js';
+import { tempHomes } from './temp-home.js';
 
-const homes: string[] = [];
+const temporary = tempHomes();
 
 async function tempHome(): Promise<string> {
-  const home = await mkdtemp(join(tmpdir(), 'brain-config-'));
-  homes.push(home);
+  const home = await temporary.create('brain-config-');
   return home;
 }
 
@@ -35,9 +34,7 @@ async function given(files: { config?: string; env?: string }): Promise<string> 
 
 const VALID_CONFIG = `schema_version = ${String(CONFIG_SCHEMA_VERSION)}\n`;
 
-afterEach(async () => {
-  await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
-});
+afterEach(() => temporary.cleanup());
 
 describe('configHome', () => {
   it('uses SECOND_BRAIN_HOME when it is set, for tests and reinstalls', () => {

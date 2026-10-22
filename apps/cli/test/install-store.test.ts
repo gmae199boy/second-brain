@@ -1,6 +1,5 @@
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +16,7 @@ import {
   storeFileExists,
 } from '../src/install/store.js';
 import { writeShim } from '../src/install/shim.js';
+import { tempHomes } from './temp-home.js';
 
 /** The built entry point, which is the one a shim the installer wrote names. */
 const distBin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
@@ -48,11 +48,10 @@ const ALL_CHECKS = [
  * fake filesystem would prove nothing about them.
  */
 
-const directories: string[] = [];
+const temporary = tempHomes();
 
 async function scratch(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'brain-install-store-'));
-  directories.push(directory);
+  const directory = await temporary.create('brain-install-store-');
   return directory;
 }
 
@@ -61,11 +60,7 @@ async function mode(path: string): Promise<string> {
   return ((await stat(path)).mode & 0o777).toString(8);
 }
 
-afterEach(async () => {
-  await Promise.all(
-    directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
-  );
-});
+afterEach(() => temporary.cleanup());
 
 beforeAll(() => {
   if (!existsSync(distBin)) {

@@ -3,6 +3,7 @@ import { userInfo } from 'node:os';
 import { dirname } from 'node:path';
 import {
   SQLITE_SCHEMA_VERSION,
+  describeError,
   findSqliteProjectKeyCollisions,
   runDoctor,
   runSqliteMigrations,
@@ -69,7 +70,7 @@ async function notADatabase(path: string): Promise<string | undefined> {
     handle = await open(path, 'r');
   } catch (error) {
     if (isMissing(error)) return undefined;
-    return `${path}를 읽을 수 없어서 SQLite 데이터베이스인지 확인하지 못했습니다. 아무것도 바꾸지 않았습니다: ${describe(error)}`;
+    return `${path}를 읽을 수 없어서 SQLite 데이터베이스인지 확인하지 못했습니다. 아무것도 바꾸지 않았습니다: ${describeError(error)}`;
   }
   try {
     const header = Buffer.alloc(SQLITE_HEADER.length);
@@ -78,7 +79,7 @@ async function notADatabase(path: string): Promise<string | undefined> {
     if (bytesRead === SQLITE_HEADER.length && header.equals(SQLITE_HEADER)) return undefined;
     return `${path}는 SQLite 데이터베이스 파일이 아닙니다. 아무것도 바꾸지 않았습니다 — 다른 경로를 주거나 이 파일을 옮기세요.`;
   } catch (error) {
-    return `${path}의 앞부분을 읽을 수 없어서 SQLite 데이터베이스인지 확인하지 못했습니다. 아무것도 바꾸지 않았습니다: ${describe(error)}`;
+    return `${path}의 앞부분을 읽을 수 없어서 SQLite 데이터베이스인지 확인하지 못했습니다. 아무것도 바꾸지 않았습니다: ${describeError(error)}`;
   } finally {
     await handle.close();
   }
@@ -143,7 +144,7 @@ export async function prepareStore(
     return {
       ok: false,
       code: 'DB_UNAVAILABLE',
-      message: `데이터베이스 파일을 만들 수 없습니다: ${describe(error)}`,
+      message: `데이터베이스 파일을 만들 수 없습니다: ${describeError(error)}`,
     };
   }
 
@@ -232,7 +233,7 @@ export async function prepareSelfUser(path: string): Promise<SelfUserResult> {
     return {
       ok: false,
       code: 'DB_UNAVAILABLE',
-      message: `주인을 기록할 수 없습니다: ${describe(error)}`,
+      message: `주인을 기록할 수 없습니다: ${describeError(error)}`,
     };
   } finally {
     await store.close();
@@ -273,7 +274,7 @@ export async function prepareFilesRoot(path: string): Promise<FilesRootResult> {
     return {
       ok: false,
       code: 'FILES_UNAVAILABLE',
-      message: `파일 저장소 루트를 만들 수 없습니다: ${describe(error)}`,
+      message: `파일 저장소 루트를 만들 수 없습니다: ${describeError(error)}`,
     };
   }
 }
@@ -307,12 +308,4 @@ export async function doctorAt(
   } finally {
     await store.close();
   }
-}
-
-/** Whatever went wrong, in one non-empty line (Conventions: no silent failure). */
-function describe(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-  const code: unknown = (error as { code?: unknown }).code;
-  const candidates = [error.message, typeof code === 'string' ? code : '', error.name];
-  return candidates.find((candidate) => candidate !== '') ?? '알 수 없는 오류';
 }

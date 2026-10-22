@@ -1,3 +1,4 @@
+import { errorLine } from '../error-text.js';
 import { formatInstant, parseInstant } from '../instant.js';
 import type { SessionToken } from './session-token.js';
 import { utf8Bytes } from './sha256.js';
@@ -333,7 +334,7 @@ export function decodeSpoolLine(line: string): DecodeSpoolLineResult {
   try {
     parsed = JSON.parse(line) as unknown;
   } catch (error) {
-    return { ok: false, message: `spool 줄이 JSON이 아닙니다: ${oneLine(error)}` };
+    return { ok: false, message: `spool 줄이 JSON이 아닙니다: ${errorLine(error)}` };
   }
   if (!isRecord(parsed)) {
     return { ok: false, message: 'spool 줄이 JSON 객체가 아닙니다' };
@@ -544,9 +545,4 @@ function describe(value: unknown): string {
   if (typeof value === 'string') return JSON.stringify(value);
   if (value === undefined) return '없음';
   return String(value);
-}
-
-function oneLine(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
-  return text.split('\n')[0]?.trim() ?? '알 수 없는 오류';
 }

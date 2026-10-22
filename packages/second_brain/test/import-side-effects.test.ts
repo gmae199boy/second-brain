@@ -1,4 +1,4 @@
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { execFile, execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Socket } from 'node:net';
@@ -207,3 +207,44 @@ function run(
     child.once('close', (code) => resolve({ code, stdout, stderr }));
   });
 }
+
+describe('Postgres is an explicit bundle subpath', () => {
+  const cacheProbe = `
+    const { createRequire } = await import('node:module');
+    const cache = createRequire(import.meta.url).cache;
+    if (Object.keys(cache).some((path) => /[/\\\\]pg[/\\\\]/.test(path))) {
+      throw new Error('pg was loaded');
+    }
+  `;
+
+  it.each(['root', 'help', 'hook'])('%s does not load pg', async (entry) => {
+    const home = await configuredHome('postgres://unused');
+    const body = entry === 'root' ? 'await import("second_brain");' : `
+      process.argv = [process.execPath, ${JSON.stringify(join(repoRoot, 'apps/cli/dist/bin.js'))},
+        ...( ${JSON.stringify(entry)} === 'help' ? ['--help'] : ['sessions', 'ingest', 'claude-code'])];
+      await import(${JSON.stringify(join(repoRoot, 'apps/cli/dist/bin.js'))});
+    `;
+    execFileSync(process.execPath, ['--input-type=module', '-e', body + cacheProbe], {
+      cwd: join(repoRoot, 'apps/cli'), env: { ...process.env, SECOND_BRAIN_HOME: home },
+      input: '{}', stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  });
+
+  it('exports the same Postgres adapter values', () => {
+    const script = `
+      const surface = await import('second_brain/postgres');
+      const adapter = await import(${JSON.stringify(join(repoRoot, 'packages/postgres/dist/index.js'))});
+      for (const name of ['postgresStore', 'runMigrations', 'SCHEMA_VERSION']) {
+        if (surface[name] === undefined || surface[name] !== adapter[name]) throw new Error(name);
+      }
+      // Positive control: importing this surface really loads pg.
+      const { createRequire } = await import('node:module');
+      if (!Object.keys(createRequire(import.meta.url).cache).some((path) => /[/\\\\]pg[/\\\\]/.test(path))) {
+        throw new Error('pg control did not load');
+      }
+    `;
+    execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      cwd: join(repoRoot, 'apps/cli'), stdio: 'pipe',
+    });
+  });
+});

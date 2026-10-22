@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { parseEnv } from 'node:util';
-import type { WarningCode } from 'second_brain';
+import { errorLine, type WarningCode } from 'second_brain';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { configFilePath, envFilePath } from './paths.js';
 
@@ -154,7 +154,7 @@ export async function readConfig(home: string): Promise<ReadConfigResult> {
     return {
       ok: false,
       code: 'CONFIG_INVALID',
-      message: `${configPath}을 TOML로 읽을 수 없습니다: ${oneLine(error)}`,
+      message: `${configPath}을 TOML로 읽을 수 없습니다: ${errorLine(error)}`,
     };
   }
   if (!isTable(document)) {
@@ -346,7 +346,7 @@ export async function readConfigForSetup(home: string): Promise<ReadSetupConfigR
     return {
       ok: false,
       code: 'CONFIG_INVALID',
-      message: `${configPath}을 TOML로 읽을 수 없습니다: ${oneLine(error)}`,
+      message: `${configPath}을 TOML로 읽을 수 없습니다: ${errorLine(error)}`,
     };
   }
   if (!isTable(document)) {
@@ -588,7 +588,7 @@ export async function writeConfig(
     return {
       ok: false,
       code: 'CONFIG_INVALID',
-      message: `${home}에 설정을 쓸 수 없습니다: ${oneLine(error)}`,
+      message: `${home}에 설정을 쓸 수 없습니다: ${errorLine(error)}`,
     };
   }
 
@@ -611,7 +611,7 @@ export async function writeConfig(
     return {
       ok: false,
       code: 'CONFIG_INVALID',
-      message: `${home}에 설정을 쓸 수 없습니다: ${oneLine(error)}`,
+      message: `${home}에 설정을 쓸 수 없습니다: ${errorLine(error)}`,
     };
   }
 
@@ -668,7 +668,7 @@ async function readTextFile(path: string): Promise<TextFile> {
     if (typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'ENOENT') {
       return { state: 'missing' };
     }
-    return { state: 'unreadable', message: oneLine(error) };
+    return { state: 'unreadable', message: errorLine(error) };
   }
 }
 
@@ -738,12 +738,6 @@ function isTimeZone(value: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** The first line of whatever went wrong, so a message stays one line. */
-function oneLine(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
-  return text.split('\n')[0]?.trim() ?? '알 수 없는 오류';
 }
 
 function kindOf(value: unknown): string {

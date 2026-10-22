@@ -32,7 +32,7 @@ companions: []
 | --- | --- | --- |
 | Core (도메인 + use case + port) | `packages/core` | 외부 패키지 없음 |
 | Adapter (port 구현) | `packages/sqlite`(원본), `packages/postgres`(복제 대상, epic 7), `packages/claude-code`, `packages/modelstudio` | `core` + 자기 제품 하나 |
-| 묶음 (조립용 표면) | `packages/second_brain` | 위 전부. 재export만, 코드 없음 |
+| 묶음 (조립용 표면) | `packages/second_brain` | 위 전부. 재export만, 코드 없음. 복제 대상 Postgres는 `second_brain/postgres` 하위 경로 |
 | Runtime (CLI·설치기·hook 진입점·설정·spool) | `apps/cli` | `second_brain` |
 | 플러그인 (Claude Code hooks·skills·bootstrap 복사본, AD-19) | `plugin/` | 코드 의존 없음. shim 절대 경로만 부른다 |
 
@@ -65,7 +65,7 @@ flowchart LR
 
 - **Binds:** FR-23, FR-25
 - **Prevents:** 쓰는 쪽이 내부 패키지를 골라 조합하다 어긋나는 것, npm 이름 충돌
-- **Rule:** npm에 발행하지 않는다. 설치 진입점은 둘이다. 공개 git 저장소(`npx github:<owner>/second-brain`)와, Claude Code에서는 같은 저장소의 `plugin/`을 가리키는 플러그인(`/plugin install`)이다. 둘 다 같은 bootstrap을 부르고 설치 본문(`setup run`)은 하나다(AD-19). 내부 패키지는 비발행 workspace 패키지다. 코드에서 쓰는 모양은 `import { createBrain, sqliteStore, … } from "second_brain"`이다.
+- **Rule:** npm에 발행하지 않는다. 설치 진입점은 둘이다. 공개 git 저장소(`npx github:<owner>/second-brain`)와, Claude Code에서는 같은 저장소의 `plugin/`을 가리키는 플러그인(`/plugin install`)이다. 둘 다 같은 bootstrap을 부르고 설치 본문(`setup run`)은 하나다(AD-19). 내부 패키지는 비발행 workspace 패키지다. 코드에서 쓰는 모양은 `import { createBrain, sqliteStore, … } from "second_brain"`이다. 복제 대상 Postgres는 `second_brain/postgres` 하위 경로로 쓴다.
 
 ### AD-3 — import 시 부작용이 없다
 

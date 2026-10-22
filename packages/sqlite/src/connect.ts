@@ -1,5 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
+import { describeError as describe } from '@second-brain/core';
+export { describeError as describe } from '@second-brain/core';
 import type { Kysely } from 'kysely';
 import { createKysely, type DriverOptions, type SqliteSchema } from './driver.js';
 
@@ -191,15 +193,4 @@ export const SQLITE_BUSY = 5;
 export function isBusy(error: unknown): boolean {
   const errcode = sqliteErrcode(error);
   return errcode !== undefined && (errcode & 0xff) === SQLITE_BUSY;
-}
-
-/**
- * Describe a failure in one non-empty line, so a coded value always carries
- * something a human can read (Conventions: no silent failure).
- */
-export function describe(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-  const code: unknown = (error as { code?: unknown }).code;
-  const candidates = [error.message, typeof code === 'string' ? code : '', error.name];
-  return candidates.find((candidate) => candidate !== '') ?? '알 수 없는 오류';
 }

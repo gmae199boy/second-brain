@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +23,7 @@ import {
 } from '../src/dispatch.js';
 import { systemClock } from '../src/runtime/clock.js';
 import { withoutHarnessFolders } from './environment.js';
+import { tempHomes } from './temp-home.js';
 
 /**
  * The dispatcher, against a real SQLite file and a registry that exists only
@@ -356,11 +356,10 @@ function runDispatch(args: string[], env: Record<string, string | undefined>): P
   });
 }
 
-const homes: string[] = [];
+const temporary = tempHomes();
 
 async function scratch(): Promise<string> {
-  const home = await mkdtemp(join(tmpdir(), 'brain-dispatch-'));
-  homes.push(home);
+  const home = await temporary.create('brain-dispatch-');
   return home;
 }
 
@@ -397,9 +396,7 @@ async function missingDatabase(): Promise<string> {
   return join(await scratch(), 'brain.db');
 }
 
-afterEach(async () => {
-  await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
-});
+afterEach(() => temporary.cleanup());
 
 describe('the dispatcher', () => {
   beforeAll(() => {
@@ -1488,4 +1485,14 @@ describe('the dispatcher and the lock budget', () => {
     expect(exit).toBe(0);
     expect(existsSync(path)).toBe(false);
   });
+});
+
+it('keeps --version as USAGE, exit 2, without writing home', async () => {
+  const home = await scratch();
+  await writeFile(join(home, 'sentinel'), 'unchanged');
+  const result = await runDispatch(['--version', '--json'], { [HOME_ENV]: home });
+  expect(result.code).toBe(2);
+  expect((JSON.parse(result.stdout) as Envelope).error?.code).toBe('USAGE');
+  expect(await readdir(home)).toEqual(['sentinel']);
+  expect(await readFile(join(home, 'sentinel'), 'utf8')).toBe('unchanged');
 });

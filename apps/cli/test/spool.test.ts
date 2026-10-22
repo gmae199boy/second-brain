@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, readdir, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -13,6 +12,7 @@ import {
 import { sampleSpoolRecord, spoolContract } from 'second_brain/testing';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { fileSpool } from '../src/runtime/spool.js';
+import { tempHomes } from './temp-home.js';
 
 /**
  * The file spool against the real filesystem (AD-9).
@@ -26,11 +26,10 @@ import { fileSpool } from '../src/runtime/spool.js';
 const claimerPath = fileURLToPath(new URL('./fixtures/spool-claimer.mjs', import.meta.url));
 const distSpool = fileURLToPath(new URL('../dist/runtime/spool.js', import.meta.url));
 
-const folders: string[] = [];
+const temporary = tempHomes();
 
 async function scratch(): Promise<string> {
-  const folder = await mkdtemp(join(tmpdir(), 'brain-spool-'));
-  folders.push(folder);
+  const folder = await temporary.create('brain-spool-');
   return folder;
 }
 
@@ -52,9 +51,7 @@ function movableClock(start: Date): Clock & { advance(ms: number): void } {
 
 const INSTANT = new Date('2026-01-02T03:06:00.000Z');
 
-afterEach(async () => {
-  await Promise.all(folders.splice(0).map((folder) => rm(folder, { recursive: true, force: true })));
-});
+afterEach(() => temporary.cleanup());
 
 describe('the spool contract against the file spool', () => {
   for (const testCase of spoolContract()) {

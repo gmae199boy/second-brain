@@ -85,7 +85,7 @@ export const setupRun: CommandSpec<SetupRunData> = {
     const { runInstallerWithFlags, systemInstallDeps } = await import('../install.js');
 
     const deps = systemInstallDeps();
-    const result = await runInstallerWithFlags(toFlags(context.options), context.env, {
+    const result = await runInstallerWithFlags(setupRunFlags(context.options), context.env, {
       ...deps,
       log,
       // `--json` means nobody is watching, so nothing may be asked (AD-19).
@@ -110,7 +110,7 @@ export const setupRun: CommandSpec<SetupRunData> = {
 };
 
 /** Commander's options, as the flags the flow takes. */
-function toFlags(options: Record<string, unknown>): InstallFlags {
+export function setupRunFlags(options: Record<string, unknown>): InstallFlags {
   const connect = options['connect'];
   return {
     storePath: typeof options['storePath'] === 'string' ? options['storePath'] : undefined,

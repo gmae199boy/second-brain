@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isoWithOffset, isWarningCode, type DoctorCheck } from 'second_brain';
@@ -21,6 +20,7 @@ import { shimPath, writeShim } from '../src/install/shim.js';
 import { systemClock } from '../src/runtime/clock.js';
 import { fileSpool } from '../src/runtime/spool.js';
 import { assertKoreanLine } from './language.js';
+import { tempHomes } from './temp-home.js';
 
 /**
  * The machine half of doctor, against the real filesystem — the shim, its mode,
@@ -35,11 +35,10 @@ const distBin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
 
 const manifest = fileURLToPath(new URL('../../../package.json', import.meta.url));
 
-const homes: string[] = [];
+const temporary = tempHomes();
 
 async function tempHome(): Promise<string> {
-  const home = await mkdtemp(join(tmpdir(), 'brain-checks-'));
-  homes.push(home);
+  const home = await temporary.create('brain-checks-');
   return home;
 }
 
@@ -75,9 +74,7 @@ function nodeSaying(version: string): RunNode {
   return async () => ({ ok: true, stdout: `${version}\n` });
 }
 
-afterEach(async () => {
-  await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
-});
+afterEach(() => temporary.cleanup());
 
 beforeAll(() => {
   if (!existsSync(distBin)) {

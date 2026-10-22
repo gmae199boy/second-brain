@@ -165,3 +165,5 @@ export {
 export { SESSION_IDENTITY_KIND, REPOSITORY_UNANSWERED, sessionIdentityHandler, type SessionIdentityWorkDependencies } from './capture/session-identity-work.js';
 
 export { redactMessage, checkMessagesRedact, type MessagesRedactInput, type MessagesRedactData, type MessagesRedactResult } from './messages/redact.js';
+
+export { errorLine, describeError } from './error-text.js';

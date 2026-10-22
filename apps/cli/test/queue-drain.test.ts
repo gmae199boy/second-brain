@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +8,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { HOME_ENV } from '../src/config/paths.js';
 import { assertKoreanLines } from './language.js';
 import { withoutHarnessFolders } from './environment.js';
+import { tempHomes } from './temp-home.js';
 
 /**
  * `brain queue drain` end to end: the built `brain`, against a real SQLite file
@@ -48,11 +48,9 @@ interface Envelope {
   error?: { code: string; message: string; exit_code?: number; hint?: string };
 }
 
-const homes: string[] = [];
+const temporary = tempHomes();
 
-afterEach(async () => {
-  await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
-});
+afterEach(() => temporary.cleanup());
 
 beforeAll(() => {
   if (!existsSync(binPath)) {
@@ -99,8 +97,7 @@ function spawned(args: readonly string[], home: string, script = binPath): Promi
 
 /** An installed brain: a configuration folder, a migrated database, an owner. */
 async function installedHome(): Promise<string> {
-  const home = await mkdtemp(join(tmpdir(), 'brain-drain-'));
-  homes.push(home);
+  const home = await temporary.create('brain-drain-');
   const install = await spawned(['--yes'], home, installPath);
   expect(install.code, install.stdout + install.stderr).toBe(0);
   return home;
@@ -222,8 +219,7 @@ describe('brain queue drain', () => {
   });
 
   it('answers CONFIG_MISSING and exit 2 where nothing is installed', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'brain-drain-bare-'));
-    homes.push(home);
+    const home = await temporary.create('brain-drain-bare-');
 
     const run = await spawned(['queue', 'drain', '--json'], home);
 
