@@ -153,3 +153,22 @@
 
 - `brain --version` 기능: 앱 버전·빌드 commit·릴리스 중 무엇을 버전으로 표시할지 결정한 뒤 구현한다. 현재는 USAGE·exit 2를 유지한다(2.15).
 - dispatch가 Core에 모듈 harness 등록부를 넘기는 것: 테스트용 등록부를 주입하는 seam을 둔다(2.2 리뷰 #6, 2.15 범위 밖).
+
+## Triage (2026-10-22, epic 2 닫기)
+
+epic 2 회고(`epic-capture/epic-capture-retrospective.md`, Findings 2절)가 위 항목을 현재 코드와 대조했다. 이 표는 2026-10-16 표에서 바뀐 것과 그 뒤 붙은 항목의 처분이다. 여기 없는 항목은 2026-10-16 처분 그대로다.
+
+| 항목 | 처분 |
+| --- | --- |
+| runMigrations 실패를 `DB_UNAVAILABLE`과 구분(Postgres) | 해결됨(`f92c51c`, `packages/postgres/src/migrate.ts`의 `MIGRATION_FAILED`). epic 7로 넘길 일 없음 |
+| node minor 하한 | 해결됨(2.5 `bb01bb4`, `tooling/bootstrap/src/bootstrap.ts`의 `24.16.0`) |
+| 설정 부분 읽기 리셋, 설치 때 모르는 키 소실 | 해결됨(2.4 `10a09d2`, `apps/cli/test/install-flow.test.ts` "keeps every other value…", "writes the keys this version does not know straight back") |
+| Postgres 스키마가 SQLite를 따라잡기 | epic 7. 0004·0005에 더해 0006(`seq` 삭제, chunk 시각 범위)과 0007(`tag_source`·`first_cwd`)도(epic-replicas Notes Carry 2026-10-22) |
+| 보고 판정·출처, 동기 handback 본문, 바뀐 안내 문구, 옛 handback `origin.body` 출처 | 닫힘 — 2026-10-21 "서브에이전트 보고는 저장하지 않는다"(23)가 대체. 위 "해결됨(22)" 표시는 역사 상태다 |
+| 버전이 올라도 크기가 같은 파일은 다시 큐에 넣지 않는다 | epic-attachments 인셉션, **다음 parser 버전 업 전에**(epic-attachments Notes Carry 2026-10-22). 2.14가 가져가지 않았다 |
+| `messages redact` 뒤 외부 WAL 읽기로 남는 바이트 | epic-operations(Notes Carry 2026-10-22) |
+| 오류 코드 `TRANSCRIPT_UNREADABLE`·`SESSION_NOT_FOUND`의 공용 메타 | epic 3 인셉션(epic-log-and-context Notes Carry 2026-10-22) |
+| harness 등록부 주입 seam | epic 3 인셉션(같은 Carry) |
+| orca 워커 세션의 코디네이터 지시 | epic 3 인셉션에서 B안 여부를 사용자가 정한다(같은 Carry) |
+| 실명 경로가 남은 백업 브랜치 | 해결됨 — 2026-10-22 사용자 확인 뒤 로컬 브랜치를 지웠다(원격에는 없었다) |
+| 대상 없음 — 사용자 결정 대기 | `tooling/dev/auto-build.sh` 커밋을 이력에서 뺄지, 저장소 밖 무인 루프의 commit 대기, TTY에서 `messages redact` 대화형 확인, `brain --version`의 의미, 개발 DB의 옛 `start_source` 다시 채우기, Amex 4-6-5 카드 형식 |

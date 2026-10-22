@@ -66,3 +66,6 @@ AD-13·14(로그 없는 세션의 첫 요청 문장, FR-9 표시)·15·16·23·2
 - Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 조회 결과·넓히기·세션 읽기는 엔벨로프 코덱이 가린다(D1). 조각·FTS는 원문 위이고, 비밀 값으로 찾으면 행은 나오되 값은 가려진다(D2). 미러 렌더러는 출력 코덱으로 등록한다. 미러는 (DB 상태, 패턴 버전)의 순수 함수이고 frontmatter에 버전을 적으며, 버전이 오르면 모든 세션의 미러 재생성 일감을 만든다(D3, spine AD-16).
 - Note(2026-10-20, `../change-discipline-and-metrics/`, 인셉션 입력): D5·D6. 러너의 문항 파일 형식(verb·query·expect·k)은 인셉션에서 정한다. 대분류 먼저(PRD §8-5)와 조각 직접 검색의 비교도 같은 러너로 잰다.
 - Note(2026-10-20, spine 리뷰): `--count`는 `chunks`·`logs`가 `{sessions, rows, by_month}`, `docs`가 `{files, rows, by_month}`, `by_month`는 기간 안의 달만이고 AD-13의 구간 함수(날짜+설정 시간대 → 반열린 UTC)를 쓰며 `meta`에 구간을 되울린다. 회귀 러너 결과 파일은 식별자·질의·점수만(본문 없음).
+- Carry(2026-10-22, epic 2 회고, 인셉션 입력):
+  - 0006은 옛 chunk의 seq 범위를 시각 범위로 바꾸므로, 같은 시각에 걸친 서로 다른 chunk 둘이 있으면 UNIQUE에 걸린다(회고 C5, `packages/sqlite/migrations/0006_drop_message_seq.sql:140-151`). 지금은 chunk를 쓰는 코드가 없어 문제가 없다. chunk writer를 만들 때 같은 시각 범위의 규칙을 정한다.
+  - 세션·메시지를 읽어 내보내는 새 읽기는 `sessionForOutput`을 거친다(I95) — 도구 메모 대상 전용 가리기 규칙은 일반 엔벨로프 가리기만으로는 걸리지 않는다.

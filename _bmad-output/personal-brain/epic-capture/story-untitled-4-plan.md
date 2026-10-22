@@ -3,7 +3,7 @@ title: '설치기 안정화: 흐름 결과와 실패 계약'
 type: 'feature'
 ticket: '4'
 created: '2026-10-17'
-status: 'built'
+status: done
 baseline_revision: '93dac507bc7f5ae0df84242489ea715b541467d6'
 route: 'full'
 route_source: 'auto'

@@ -3,7 +3,7 @@ title: 'spool: DB에 못 쓴 것의 대기열'
 type: 'feature'
 ticket: '10'
 created: '2026-10-19'
-status: 'built'
+status: done
 baseline_revision: 'a14eae40e2c443d38385b3ec629b6a98778aff9b'
 route: 'full'
 route_source: 'auto'

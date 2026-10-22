@@ -3,7 +3,7 @@ title: '마이그레이션 0005: 도구 메모 가리기 기록·호출 키·실
 type: 'feature'
 ticket: '18'
 created: '2026-10-20'
-status: 'built'
+status: done
 baseline_revision: 'a689b91eee79b042e7e15b7494d8ddc7b52e9b42'
 route: 'full'
 route_source: 'auto'

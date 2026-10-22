@@ -3,7 +3,7 @@ title: '지워진 워크트리의 꼬리표 추정과 꼬리표 근거 칸'
 type: 'feature'
 ticket: '25'
 created: '2026-10-21'
-status: built
+status: done
 baseline_revision: 'a8fb5287cacd5620870b579d087d29404616c3b4'
 route: 'full'
 route_source: 'auto'

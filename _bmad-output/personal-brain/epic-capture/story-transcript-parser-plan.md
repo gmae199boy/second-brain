@@ -3,7 +3,7 @@ title: 'transcript parser 완성: 도구 메모·서브에이전트 보고·추�
 type: 'feature'
 ticket: '7'
 created: '2026-10-18'
-status: 'built'
+status: done
 baseline_revision: '106a12c42605214bae1038d25ef19c8f65972b26'
 route: 'full'
 route_source: 'auto'

@@ -3,7 +3,7 @@ title: '수집 일감: 내역 스캔, 세션 토큰 수집, 재시도, spool 재
 type: 'feature'
 ticket: '12'
 created: '2026-10-19'
-status: 'built'
+status: done
 baseline_revision: 'db54e6809a3b04c203a896385f7266cb8fad8b1f'
 route: 'full'
 route_source: 'auto'

@@ -3,7 +3,7 @@ title: '정체성 보강: 대소문자 비교 키와 비어 있는 꼬리표 다
 type: 'feature'
 ticket: '20'
 created: '2026-10-21'
-status: 'built'
+status: done
 baseline_revision: '24d1291886607db49e392142ee3f643347db16a2'
 route: 'full'
 route_source: 'auto'

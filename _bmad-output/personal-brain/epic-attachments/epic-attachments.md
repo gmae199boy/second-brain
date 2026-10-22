@@ -68,3 +68,8 @@ AD-7·9·11·21·23·24, Table Contract(files, file_locations, message_attachmen
 - Note(2026-10-16, 인셉션 입력): 추출 오류에 분류 코드를 붙인다. 지원하지 않는 형식·손상·암호화 파일은 영구 오류(첫 실패에서 기록하고 닫음), 원본에 잠시 접근하지 못한 것은 일시 오류다(spine AD-21 재시도 분류).
 - Note(2026-10-16): 추출 실패의 다시 하기는 `failures retry`에 대상 종류 `file`을 더해서 한다(2.12가 명령을 만든다, spine AD-5).
 - Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 추출한 문서 텍스트는 원문으로 저장하고 나갈 때 가린다(spine AD-23). `failed`가 되는 추출 세대는 `failed_stage`가 있어야 하고 0005(epic-capture 18)의 trigger가 강제한다.
+- Carry(2026-10-22, epic 2 회고, 인셉션 입력):
+  - **parser 버전이 올라도 이미 닫힌 세션은 다시 읽지 않는다**(회고 C2, `deferred-work.md` I104). 스캔은 크기만 비교하고(`packages/core/src/capture/scan.ts:41-49`), 버전이 다를 때의 전체 다시 읽기(`packages/core/src/sessions/ingest.ts:283-288`)는 수집이 불릴 때만 돈다. 첨부 backfill도 이미 수집한 세션을 다시 읽어야 하므로 같은 경로로 푼다. **다음 parser 버전 업 전에** 있어야 한다 — 없으면 새 parser가 살리는 메시지·도구 메모와 결과가 늦게 온 `Agent`·`Task` 메모(C3)가 transcript 보관 기간(30일) 뒤 영영 빠진다.
+  - hook의 정상 수집이 그 세션의 이전 `session_ingest` 실패를 해소하지 않는다(회고 C4, `packages/core/src/brain.ts:285` vs `:246-251`). 위 작업과 같은 스토리에서 고친다.
+  - Core `Redaction`에 파일 대상 표현(`fileId`)이 없다(I75, `packages/core/src/domain/redaction.ts`). 파일 가리기 전에 필요하다.
+  - 줄어든 transcript가 스캔마다 다시 큐에 들어갈 수 있다(P19, `../epic-capture/story-spool-plan.md:208`). 다시 읽기 정책과 함께 정한다.

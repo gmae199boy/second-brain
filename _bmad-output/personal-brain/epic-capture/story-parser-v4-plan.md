@@ -3,7 +3,7 @@ title: 'parser v4: 도구 메모 호출 키·줄 읽기·버린 줄 집계'
 type: 'bugfix'
 ticket: '23'
 created: '2026-10-21'
-status: 'built'
+status: done
 baseline_revision: '8285bd15451e3bb3affff061e318832475ee14bd'
 route: 'full'
 route_source: 'auto'

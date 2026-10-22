@@ -3,7 +3,7 @@ title: 'Tracer: Stop hook 한 턴이 brain.db에 남는다'
 type: 'feature'
 ticket: '2'
 created: '2026-10-16'
-status: 'built'
+status: done
 baseline_revision: 'c94ab66eb094f4619f3a74b22308537201221484'
 route: 'full'
 route_source: 'auto'

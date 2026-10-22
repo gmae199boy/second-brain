@@ -3,7 +3,7 @@ title: '저장 전 비밀 마스킹: 버전 있는 패턴 목록과 같은 트�
 type: 'feature'
 ticket: '9'
 created: '2026-10-18'
-status: 'built'
+status: done
 baseline_revision: '61b4596eece61f8c8a181fc0d78a0fe1ebc26eee'
 route: 'full'
 route_source: 'auto'

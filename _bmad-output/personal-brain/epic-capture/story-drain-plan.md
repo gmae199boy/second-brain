@@ -3,7 +3,7 @@ title: '일감 대기열과 drain'
 type: 'feature'
 ticket: '11'
 created: '2026-10-19'
-status: 'built'
+status: done
 baseline_revision: '46c93ffed3bc800bb98a7ebb13bff8802263b799'
 route: 'full'
 route_source: 'auto'

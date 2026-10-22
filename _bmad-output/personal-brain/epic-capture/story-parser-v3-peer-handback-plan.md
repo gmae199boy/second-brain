@@ -3,7 +3,7 @@ title: 'parser v3: peer handback 보고'
 type: 'feature'
 ticket: '19'
 created: '2026-10-19'
-status: 'built'
+status: done
 baseline_revision: 'b901384206a1206d156f16a17fc9fd6605cdaa1a'
 route: 'full'
 route_source: 'auto'

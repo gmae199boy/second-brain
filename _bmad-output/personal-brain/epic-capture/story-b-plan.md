@@ -3,7 +3,7 @@ title: '마스킹 B: 저장은 원문, Core 출력 코덱에서 가리기'
 type: 'feature'
 ticket: '17'
 created: '2026-10-20'
-status: 'built'
+status: done
 baseline_revision: 'eedf8f26aed5c62b2d43e914248891d2398456c6'
 route: 'full'
 route_source: 'auto'

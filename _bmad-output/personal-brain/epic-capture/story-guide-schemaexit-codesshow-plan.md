@@ -3,7 +3,7 @@ title: '명령 메타, guide 명령(schema·exit-codes·show)과 이름공간 �
 type: 'feature'
 ticket: '3'
 created: '2026-10-16'
-status: 'built'
+status: done
 baseline_revision: 'f17e69d4469ee1a492a89c19e1b2aab4fca3b14c'
 route: 'full'
 route_source: 'auto'

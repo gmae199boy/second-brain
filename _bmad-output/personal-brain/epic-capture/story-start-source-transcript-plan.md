@@ -3,7 +3,7 @@ title: '수집 경로 보강: 커서 경고·start_source·큰 transcript'
 type: 'bugfix'
 ticket: '21'
 created: '2026-10-21'
-status: 'built'
+status: done
 baseline_revision: 'ea4d7660fb389e36d0450466f2beb76de9a059b1'
 route: 'full'
 route_source: 'auto'

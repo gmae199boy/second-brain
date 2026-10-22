@@ -3,7 +3,7 @@ title: '마이그레이션 0004: 가리기·추출·서브에이전트·브랜�
 type: 'feature'
 ticket: '6'
 created: '2026-10-18'
-status: 'built'
+status: done
 baseline_revision: 'bb01bb45059e6fd1454a296e30bce63475d751ed'
 route: 'full'
 route_source: 'auto'

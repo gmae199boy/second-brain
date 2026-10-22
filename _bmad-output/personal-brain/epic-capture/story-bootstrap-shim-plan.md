@@ -3,7 +3,7 @@ title: '플러그인 설치 경로: bootstrap·완료 기록·shim'
 type: 'feature'
 ticket: '5'
 created: '2026-10-17'
-status: 'built'
+status: done
 baseline_revision: '10a09d2ef60fcf3b607f8562192c2ea8a59d3981'
 route: 'full'
 route_source: 'auto'

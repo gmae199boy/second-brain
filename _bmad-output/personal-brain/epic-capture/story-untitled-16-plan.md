@@ -3,7 +3,7 @@ title: '사람이 읽는 출력을 한국어로'
 type: 'chore'
 ticket: '16'
 created: '2026-10-16'
-status: 'built'
+status: done
 baseline_revision: '488b3e31727faa927e2e9e3dfe84cc4e456219ee'
 route: 'full'
 route_source: 'auto'

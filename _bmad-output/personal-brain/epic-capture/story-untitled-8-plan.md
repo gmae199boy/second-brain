@@ -3,7 +3,7 @@ title: '프로젝트·워크트리 정체성: remote 정규화, 첫 메시지 cw
 type: 'feature'
 ticket: '8'
 created: '2026-10-18'
-status: 'built'
+status: done
 baseline_revision: '64e72ce36537bb0c26a4065b62b75c4b52eb8b93'
 route: 'full'
 route_source: 'auto'

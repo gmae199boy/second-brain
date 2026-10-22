@@ -3,7 +3,7 @@ title: 'messages redact 연쇄'
 type: 'feature'
 ticket: '13'
 created: '2026-10-21'
-status: 'built'
+status: done
 baseline_revision: '1cea083562816a392b6129b37d087d597f79470d'
 route: 'full'
 route_source: 'auto'

@@ -3,7 +3,7 @@ title: '플러그인 수집 hook 개통'
 type: 'feature'
 ticket: '14'
 created: '2026-10-21'
-status: 'built'
+status: done
 baseline_revision: '2a3d950ff60a8a9ddc43fcf033e11e4ad963e9e3'
 route: 'full'
 route_source: 'auto'

@@ -3,7 +3,7 @@ title: 'Refactor sweep: hook 경로의 pg 떼기, 중복 헬퍼, 임시 home 테
 type: 'refactor'
 ticket: '15'
 created: '2026-10-22'
-status: 'built'
+status: done
 baseline_revision: 'd7fa3000ef9d172371af997bebad55caac97bdac'
 route: 'full'
 route_source: 'auto'

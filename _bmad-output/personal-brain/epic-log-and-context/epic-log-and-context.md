@@ -63,3 +63,10 @@ AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, contex
 - Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 시작 맥락은 hook 출력 코덱이 가린다(spine AD-11). 작업 로그·규칙 문장은 원문으로 저장한다. 규칙 인용 대조는 저장된 원문과 하므로, 에이전트가 가린 출력에서 인용해 `[REDACTED:…]`가 든 인용은 대조가 실패한다. 양쪽을 가린 뒤 비교할지 인셉션에서 정한다.
 - Note(2026-10-20, `../change-discipline-and-metrics/`, 인셉션 입력): Stop hook 기록 점검(D1·D2·D3). 2주 실사용의 첫 주는 토글을 끄고 둘째 주에 켜서 `stats show`로 SM-4a(전체·적격 두 모집단)를 비교한 뒤 기본값을 정한다. PRD §8-3의 수단 후보 중 하나를 채택한 것이고 안내문(원본 하나, AD-17)을 대체하지 않는다.
 - Note(2026-10-20, spine 리뷰): Stop 점검의 조건은 넷(spine AD-17 — `stop_hook_active` false, transcript로 센 사용자 발화 ≥ 상수, `log_entries`와 spool 어디에도 로그 없음, 표식 파일 없음), `Stop` 이벤트만, 표식은 차단 뒤에만, 모르면 묻지 않는다. `hooks.json`의 Stop 줄은 둘(2.14 비동기 수집 + 이 에픽의 동기 점검, `timeout` 5초)이고 Done when은 **플러그인으로 설치한 상태**에서 검증한다(플러그인 hook의 `decision: block`이 settings hook과 같다는 명시 서술이 문서에 없다). 인셉션에서 실측할 것: `hookSpecificOutput.additionalContext`만으로도 모델이 이어 가는지(되면 오류 대신 피드백으로 보이므로 그쪽), 발화 수 상수 3 vs 4(transcript 비동기 기록으로 하나 적게 셀 수 있다). 메타 `hook: only`라 MCP 도구로 나오지 않는다(AD-28). 표식 파일은 drain이 30일 지난 것을 지운다.
+- Carry(2026-10-22, epic 2 회고, 인셉션 입력):
+  - 위 Decision 참조의 "꼬리표는 첫 메시지의 cwd로만 정한다"는 2026-10-22에 바뀌었다: 근거는 세션이 시작된 폴더(`startCwd`), 없으면 첫 메시지의 cwd이고, 폴더가 지워졌으면 추정(`tag_source`)한다(epic-capture 25). 프로젝트 범위 규칙은 이 꼬리표를 따른다.
+  - `log_entry_edits`·`context_injections`의 불변 trigger를 정한다(I60).
+  - `TRANSCRIPT_UNREADABLE`·`SESSION_NOT_FOUND`를 중앙 코드 표에 넣을지 정한다(I50, 회고 A16) — 지금은 exit 1·hint 없음으로 나간다.
+  - 잘린 도구 메모 대상의 잘림 정보를 다음 마이그레이션에 둘지 정한다(I94).
+  - harness 등록부를 Core 조립에 주입하는 자리(I155), 실제 소스 import·core의 Node API까지 보는 경계 시험(회고 A2).
+  - orca 워커 세션의 코디네이터 지시를 사람 발화와 구분할지(`deferred-work.md` I105, B안). Stop 점검의 발화 수에 영향이 있다.

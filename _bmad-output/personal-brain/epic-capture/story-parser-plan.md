@@ -3,7 +3,7 @@ title: 'parser 보고 판정·출처·꼬리표 근거'
 type: 'bugfix'
 ticket: '22'
 created: '2026-10-21'
-status: 'built'
+status: done
 baseline_revision: 'e68f75e1a5dbdfb5b83396d5abb13da2697f3e82'
 route: 'full'
 route_source: 'auto'

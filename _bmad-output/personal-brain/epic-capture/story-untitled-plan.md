@@ -3,7 +3,7 @@ title: '엔벨로프·종료 코드·확인 게이트'
 type: 'feature'
 ticket: '1'
 created: '2026-10-16'
-status: 'built'
+status: done
 baseline_revision: '2c09c22fa59ca40d0cd25ebff6d42478ef3fb50f'
 route: 'full'
 route_source: 'auto'

@@ -3,7 +3,7 @@ title: 'seq 삭제: 마이그레이션 0006과 시각 순서'
 type: 'refactor'
 ticket: '24'
 created: '2026-10-20'
-status: 'built'
+status: done
 baseline_revision: '2e64c6af0b40dc0c3723a9f54bf47604c371e7cd'
 route: 'full'
 route_source: 'auto'
