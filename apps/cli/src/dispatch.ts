@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { localFileStore } from './runtime/file-store.js';
 import { Command, CommanderError } from 'commander';
 import { hostname } from 'node:os';
 import {
@@ -566,6 +568,7 @@ async function execute(
   const dependencies = {
     store,
     spool,
+    files: localFileStore({ root: config.ok ? config.config.filesPath : join(home, 'files') }),
     schemaVersion: SQLITE_SCHEMA_VERSION,
     clock,
     idGen,

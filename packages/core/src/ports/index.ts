@@ -81,3 +81,5 @@ export type {
   SpoolRewriteResult,
   SpoolStatsResult,
 } from './spool.js';
+export * from './file-store.js';
+export type { AttachmentStore, MessageAttachment, LinkAttachmentsInput, LinkAttachmentsResult, ListMessageAttachmentsResult } from './store.js';

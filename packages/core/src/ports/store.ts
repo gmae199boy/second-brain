@@ -1,3 +1,5 @@
+import type { IngestAttachment } from '../domain/ingest-batch.js';
+import type { FileLocation } from '../domain/file.js';
 import type { RedactionCurrent, RedactionPlan, RedactionRefusal } from '../domain/redact-plan.js';
 import type { Failure } from '../domain/failure.js';
 import type { IngestBatch } from '../domain/ingest-batch.js';
@@ -735,7 +737,7 @@ export type Store = HealthStore &
   SessionStore &
   UserStore &
   WorkStore &
-  TranscriptFileStore;
+  TranscriptFileStore & AttachmentStore;
 
 /**
  * Result of reading the single `schema_version` row. `version: null` means the
@@ -759,4 +761,21 @@ export interface SchemaStore {
   readSchemaVersion(): Promise<ReadSchemaVersionResult>;
   /** Release every resource the store holds. */
   close(): Promise<void>;
+}
+
+export interface MessageAttachment {
+  id: string;
+  ordinal: number;
+  sourceKind: string;
+  sourceRef: string | null;
+  displayName: string | null;
+  status: 'stored' | 'missing_at_ingest' | null;
+  file: { id: string; contentHash: string; sizeBytes: number; home: FileLocation | null } | null;
+}
+export interface LinkAttachmentsInput { key: SessionKey; attachments: readonly IngestAttachment[]; linkedAt: Date }
+export type LinkAttachmentsResult = { ok: true; linked: number } | { ok: false; code: 'SESSION_NOT_FOUND' | 'MESSAGE_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+export type ListMessageAttachmentsResult = { ok: true; attachments: readonly MessageAttachment[] } | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+export interface AttachmentStore {
+  linkAttachments(input: LinkAttachmentsInput): Promise<LinkAttachmentsResult>;
+  listMessageAttachments(messageId: string): Promise<ListMessageAttachmentsResult>;
 }

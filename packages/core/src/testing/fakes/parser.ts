@@ -1,4 +1,4 @@
-import type { ParsedMessage, ParsedToolNote } from '../../domain/ingest-batch.js';
+import type { ParsedAttachment, ParsedMessage, ParsedToolNote } from '../../domain/ingest-batch.js';
 import type { MessageRole } from '../../domain/message.js';
 import type { ParserCursor, SessionStartSource } from '../../domain/session.js';
 import type { ParseResult, Parser } from '../../ports/parser.js';
@@ -61,6 +61,7 @@ export function memoryParser(options: MemoryParserOptions = {}): Parser {
 
       const messages: ParsedMessage[] = [];
       const toolNotes: ParsedToolNote[] = [];
+      const attachments: ParsedAttachment[] = [];
 
       for (const [index, entry] of entries.entries()) {
         const record = asRecord(entry);
@@ -100,6 +101,13 @@ export function memoryParser(options: MemoryParserOptions = {}): Parser {
           isSubagentReport: record['isSubagentReport'] === true,
         });
 
+        if (Array.isArray(record['attachments'])) {
+          for (const [ordinal, attachment] of record['attachments'].entries()) {
+            const a = asRecord(attachment);
+            if (a === undefined || !Array.isArray(a['bytes']) || a['bytes'].length === 0) continue;
+            attachments.push({ harnessMessageId, ordinal, bytes: Uint8Array.from(a['bytes'] as number[]), sourceKind: asString(a['sourceKind']) ?? 'image', sourceRef: asString(a['sourceRef']) ?? null, displayName: asString(a['displayName']) ?? null });
+          }
+        }
         const calls = record['toolCalls'];
         if (calls === undefined) continue;
         if (!Array.isArray(calls)) {
@@ -150,6 +158,7 @@ export function memoryParser(options: MemoryParserOptions = {}): Parser {
         ok: true,
         parserVersion: version,
         messages: kept,
+        attachments: attachments.filter(a => kept.some(m => m.harnessMessageId === a.harnessMessageId)),
         toolNotes: keptNotes,
         cursor:
           last === undefined

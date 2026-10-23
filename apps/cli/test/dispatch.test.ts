@@ -1318,6 +1318,8 @@ describe('the dispatcher and the lock budget', () => {
       // tests are about the lock budget, so every capability answers the same
       // way and none of them is reached.
       const store: Store & SchemaStore = {
+        async linkAttachments() { return unavailable; },
+        async listMessageAttachments() { return unavailable; },
         async checkHealth() {
           return unavailable;
         },

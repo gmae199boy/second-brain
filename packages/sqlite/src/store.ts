@@ -15,6 +15,7 @@ import {
   type SqliteConnect,
   type SqliteConnection,
 } from './connect.js';
+import { sqliteAttachmentStore } from './attachments.js';
 import { sqliteSessionStore } from './sessions.js';
 import { sqliteTranscriptFileStore } from './transcript-files.js';
 import { sqliteUserStore } from './users.js';
@@ -79,6 +80,7 @@ export function sqliteStore(options: SqliteStoreOptions): Store & SchemaStore {
 
   return {
     ...sqliteSessionStore(connect),
+    ...sqliteAttachmentStore(connect),
     ...sqliteUserStore(connect),
     ...sqliteWorkStore(connect),
     ...sqliteTranscriptFileStore(connect),

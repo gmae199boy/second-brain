@@ -139,3 +139,6 @@ export {
 } from './language.js';
 export { smallHash } from './hash.js';
 export { UUID_V7_PATTERN, isUuidV7 } from './uuid-v7.js';
+export { memoryFileStore } from './fakes/file-store.js';
+export { fileStoreContract } from './contracts/file-store.js';
+export { attachmentStoreContract, type AttachmentStoreSubject } from './contracts/attachment-store.js';

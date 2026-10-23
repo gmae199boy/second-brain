@@ -1,3 +1,4 @@
+import { attachmentStoreContract, fileStoreContract, memoryFileStore } from '../src/testing/index.js';
 import { describe, expect, it } from 'vitest';
 import {
   formatSessionToken,
@@ -1396,4 +1397,9 @@ describe('꼬리표 근거 계약의 음성 가짜', () => {
     }));
     expect(failures).toContain('tag evidence is preserved and identity candidates exclude known evidence and prior work');
   });
+});
+
+describe('파일과 첨부 계약', () => {
+  for (const c of fileStoreContract()) it(c.name, () => c.run(async () => memoryFileStore()));
+  for (const c of attachmentStoreContract()) it(c.name, () => c.run(async () => memoryStore()));
 });

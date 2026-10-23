@@ -1,3 +1,4 @@
+import { memoryFileStore } from '../src/testing/fakes/file-store.js';
 import { describe, expect, it } from 'vitest';
 import { createBrain, type BrainDependencies } from '../src/brain.js';
 import { SESSION_INGEST_KIND } from '../src/capture/session-ingest-work.js';
@@ -67,6 +68,7 @@ async function kit(
       },
     },
     spool,
+    files: memoryFileStore(),
     schemaVersion: 6,
     clock: fixedClock(NOW),
     idGen: sequenceIdGen({ timestampMs: NOW.getTime() }),
@@ -128,7 +130,7 @@ describe('brain.queue.drain', () => {
     await old.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command });
     const messages = store.snapshot().messages.length;
     const parser = memoryParser({ version: '2' });
-    if (empty) parser.parse = () => ({ ok: true, parserVersion: '2', messages: [], toolNotes: [],
+    if (empty) parser.parse = () => ({ ok: true, parserVersion: '2', messages: [], attachments: [], toolNotes: [],
       cursor: null, cursorReset: false, startSource: null, startCwd: null, droppedLines: { unreadable: 0 } });
     const { brain } = await kit({ store, parser });
     expect(await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command }))
@@ -325,4 +327,24 @@ describe('brain.sessions.ingest 실패 해소', () => {
     expect(await brain.sessions.ingest({ session: TOKEN, transcriptPath: PATH })).toMatchObject({ ok: true, spooled: false });
     expect(store.snapshot().failures[0]?.resolvedAt).toBeNull();
   });
+});
+
+it('메시지보다 먼저 온 첨부 연결은 시도를 쓰고 나중에 메시지가 생기면 원본 없이 연결한다', async () => {
+  const {brain,store,spool}=await kit({withFolder:false});
+  await brain.sessions.ingest({session:TOKEN,transcriptPath:PATH});
+  const session=store.snapshot().sessions[0]!;
+  const target=store.snapshot().messages[0]!;
+  const record = { ...sampleSpoolRecord(), kind:'attachment_link' as const, payload:{session:TOKEN,harnessMessageId:'later-image',ordinal:0,sourceKind:'image',sourceRef:null,displayName:null,contentHash:'sha256:'+'a'.repeat(64),sizeBytes:1,storeKind:'local' as const,ownership:'brain' as const,locator:`aa/aa/${'a'.repeat(64)}`} };
+  expect(await spool.append([record])).toMatchObject({ok:true});
+  expect(await brain.queue.drain({budgetMs:DRAIN_BUDGET_MS.command})).toMatchObject({replayed:0,spoolFailed:0});
+  expect(spool.records()[0]?.attempts).toBe(1);
+  expect(await store.listMessageAttachments(target.id)).toEqual({ok:true,attachments:[]});
+  // The saved metadata remains sufficient even when no transcript carries it.
+  const fresh={...target,id:'01940000-0000-7000-8000-00000000ffff',harnessMessageId:'later-image',cwd:null};
+  const {sessionId: _sessionId,...message}=fresh;
+  await store.ingest({key:{harness:session.harness,harnessSessionId:session.harnessSessionId},messages:[message],toolNotes:[],attachments:[],tracking:{parserVersion:'1',cursor:null,cursorBase:null,cursorReset:false,startSource:null,endedAt:null,ingestedAt:NOW}});
+  // Clear the retry delay without changing the immutable metadata.
+  await spool.append([{...record,id:'01940000-0000-7000-8000-00000000fffe'}]);
+  expect(await brain.queue.drain({budgetMs:DRAIN_BUDGET_MS.command})).toMatchObject({replayed:1});
+  expect(await store.listMessageAttachments(message.id)).toMatchObject({ok:true,attachments:[{status:'stored',file:{contentHash:record.payload.contentHash}}]});
 });

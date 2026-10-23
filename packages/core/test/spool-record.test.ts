@@ -343,3 +343,24 @@ describe('the retry instant of a spool line', () => {
     expect(decodeSpoolLine(edited)).toMatchObject({ ok: false });
   });
 });
+
+describe('첨부 연결 spool', () => {
+  const record: SpoolRecord = { ...sampleSpoolRecord(), kind: 'attachment_link', payload: {
+    session: 'demo:session-0001', harnessMessageId: 'm1', ordinal: 0, sourceKind: 'image', sourceRef: '42', displayName: null,
+    contentHash: 'sha256:' + 'a'.repeat(64), sizeBytes: 12, storeKind: 'local', ownership: 'brain', locator: `aa/aa/${'a'.repeat(64)}.png`,
+  } };
+  it('바이트 없는 메타데이터만 왕복하고 64KiB 초과는 거부한다', () => {
+    const line = encoded(record); const decoded = decodeSpoolLine(line);
+    expect(decoded.ok).toBe(true); if (decoded.ok) expect(decoded.record.payload).toEqual(record.payload);
+    expect(parsed(line)['payload']).not.toHaveProperty('bytes'); expect(line).not.toContain('base64');
+    expect(encodeSpoolLine({...record,payload:{...record.payload,sourceRef:'x'.repeat(SPOOL_LINE_MAX_BYTES)}}).ok).toBe(false);
+  });
+  it('잘못된 필드는 인코드와 디코드 모두 거부한다', () => {
+    for (const patch of [{contentHash:'SHA256:a'}, {ordinal:-1}, {ordinal:0.1}, {sizeBytes:-1}, {storeKind:'remote'}, {ownership:'other'}, {harnessMessageId:''}, {sourceRef:''}, {displayName:''}]) {
+      const invalid = {...record,payload:{...record.payload,...patch}} as SpoolRecord;
+      expect(encodeSpoolLine(invalid).ok).toBe(false);
+      const raw = JSON.parse(encoded(record)) as {payload:Record<string,unknown>}; for (const [key,value] of Object.entries(patch)) raw.payload[key.replace(/[A-Z]/g, letter => '_' + letter.toLowerCase())]=value;
+      expect(decodeSpoolLine(JSON.stringify(raw)).ok).toBe(false);
+    }
+  });
+});

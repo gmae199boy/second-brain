@@ -425,6 +425,7 @@ function failureTargetOf(record: SpoolRecord): {
   harness: string | null;
 } {
   switch (record.kind) {
+    case 'attachment_link':
     case 'session_ingest': {
       const session = record.payload.session;
       const token = parseSessionToken(session);

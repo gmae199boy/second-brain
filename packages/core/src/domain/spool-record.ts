@@ -74,10 +74,10 @@ export const SPOOL_CAUSES: readonly SpoolCause[] = [
  * attachment metadata of AD-9 are their own epics, and each one adds a kind here
  * and a handler to the replay frame.
  */
-export type SpoolRecordKind = 'session_ingest' | 'failure';
+export type SpoolRecordKind = 'session_ingest' | 'failure' | 'attachment_link';
 
 /** The kinds above as a list, for a decoder that has to check one. */
-export const SPOOL_RECORD_KINDS: readonly SpoolRecordKind[] = ['session_ingest', 'failure'];
+export const SPOOL_RECORD_KINDS: readonly SpoolRecordKind[] = ['session_ingest', 'failure', 'attachment_link'];
 
 /**
  * "This session has to be ingested again, and here is where to read it from."
@@ -137,7 +137,7 @@ export interface FailureSpoolPayload {
  * It is a union on `kind`, so a handler that took the wrong payload apart is a
  * compile error rather than an undefined at replay time.
  */
-export type SpoolRecord = SessionIngestSpoolRecord | FailureSpoolRecord;
+export type SpoolRecord = SessionIngestSpoolRecord | FailureSpoolRecord | AttachmentLinkSpoolRecord;
 
 /** What every record carries, whatever its kind. */
 interface SpoolRecordBase {
@@ -286,6 +286,14 @@ function encodePayload(
   record: SpoolRecord,
 ): { ok: true; value: Record<string, unknown> } | { ok: false; message: string } {
   switch (record.kind) {
+    case 'attachment_link': {
+      const checked = decodeAttachmentPayload({ ...record.payload });
+      if (!checked.ok) return checked;
+      const p = checked.value;
+      return { ok: true, value: { session: p.session, harness_message_id: p.harnessMessageId, ordinal: p.ordinal,
+        source_kind: p.sourceKind, source_ref: p.sourceRef, display_name: p.displayName,
+        content_hash: p.contentHash, size_bytes: p.sizeBytes, store_kind: p.storeKind, locator: p.locator, ownership: p.ownership } };
+    }
     case 'session_ingest':
       return {
         ok: true,
@@ -412,6 +420,13 @@ export function decodeSpoolLine(line: string): DecodeSpoolLineResult {
     return { ok: false, message: 'spool 줄의 payload가 JSON 객체가 아닙니다' };
   }
 
+  if (kind === 'attachment_link') {
+    const decoded = decodeAttachmentPayload({ session: payload['session'], harnessMessageId: payload['harness_message_id'], ordinal: payload['ordinal'],
+      sourceKind: payload['source_kind'], sourceRef: payload['source_ref'], displayName: payload['display_name'], contentHash: payload['content_hash'],
+      sizeBytes: payload['size_bytes'], storeKind: payload['store_kind'], locator: payload['locator'], ownership: payload['ownership'] });
+    if (!decoded.ok) return decoded;
+    return { ok: true, record: { schemaVersion: SPOOL_RECORD_VERSION, id, kind, occurredAt: instant.value, attempts, ...retry, payload: decoded.value } };
+  }
   if (kind === 'failure') {
     const decoded = decodeFailurePayload(payload);
     if (!decoded.ok) return decoded;
@@ -545,4 +560,32 @@ function describe(value: unknown): string {
   if (typeof value === 'string') return JSON.stringify(value);
   if (value === undefined) return '없음';
   return String(value);
+}
+
+export interface AttachmentLinkSpoolPayload {
+  session: SessionToken;
+  harnessMessageId: string;
+  ordinal: number;
+  sourceKind: string;
+  sourceRef: string | null;
+  displayName: string | null;
+  contentHash: string;
+  sizeBytes: number;
+  storeKind: 'local' | 'drive';
+  locator: string;
+  ownership: 'brain' | 'external';
+}
+export interface AttachmentLinkSpoolRecord extends SpoolRecordBase {
+  kind: 'attachment_link';
+  payload: AttachmentLinkSpoolPayload;
+}
+function decodeAttachmentPayload(p: Record<string, unknown>): { ok: true; value: AttachmentLinkSpoolPayload } | { ok: false; message: string } {
+  for (const key of ['session','harnessMessageId','sourceKind','contentHash','locator']) {
+    if (typeof p[key] !== 'string' || p[key] === '') return { ok: false, message: '첨부 연결의 문자열이 비었습니다' };
+  }
+  if ((p['contentHash'] as string).length !== 71 || !/^sha256:[0-9a-f]{64}$/.test(p['contentHash'] as string)) return { ok: false, message: '첨부 해시가 올바르지 않습니다' };
+  for (const key of ['ordinal','sizeBytes']) if (!Number.isSafeInteger(p[key]) || (p[key] as number) < 0) return { ok: false, message: '첨부 정수가 올바르지 않습니다' };
+  for (const key of ['sourceRef','displayName']) if (p[key] !== null && (typeof p[key] !== 'string' || p[key] === '')) return { ok: false, message: '첨부 문자열이 올바르지 않습니다' };
+  if ((p['storeKind'] !== 'local' && p['storeKind'] !== 'drive') || (p['ownership'] !== 'brain' && p['ownership'] !== 'external')) return { ok: false, message: '첨부 위치가 올바르지 않습니다' };
+  return { ok: true, value: p as unknown as AttachmentLinkSpoolPayload };
 }

@@ -11,3 +11,5 @@ export { rerankerContract } from './reranker.js';
 export { spoolContract } from './spool.js';
 export { clockContract } from './clock.js';
 export { idGenContract } from './id-gen.js';
+export { fileStoreContract } from './file-store.js';
+export { attachmentStoreContract, type AttachmentStoreSubject } from './attachment-store.js';

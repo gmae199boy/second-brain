@@ -1,3 +1,4 @@
+import { memoryFileStore } from '../src/testing/fakes/file-store.js';
 import { describe, expect, it } from 'vitest';
 import { createBrain } from '../src/brain.js';
 import { REPOSITORY_UNANSWERED, sessionIdentityHandler } from '../src/capture/session-identity-work.js';
@@ -28,7 +29,7 @@ async function kit(content = memoryTranscript) {
   }] });
   const deps = {
     store: { ...store, async readSchemaVersion() { return { ok: true as const, version: null }; } },
-    spool: memorySpool(), parsers: [memoryParser()], repositories, transcripts,
+    files: memoryFileStore(), spool: memorySpool(), parsers: [memoryParser()], repositories, transcripts,
     transcriptFolders: [folder], clock, idGen, schemaVersion: 6, machine: 'demo-machine',
   };
   const brain = createBrain(deps);

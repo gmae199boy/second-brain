@@ -1,3 +1,4 @@
+import { attachmentStoreContract } from '@second-brain/core/testing';
 import { projectIdentityKey } from '@second-brain/core';
 import { PROJECT_IDENTITY_KEY_SQL } from '../src/project-keys.js';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -733,4 +734,30 @@ describe('Core and SQLite project comparison parity', () => {
       } finally { await opened.connection.db.destroy(); }
     } finally { await store.close(); }
   });
+});
+
+describe('SQLite 첨부 계약', () => {
+  for (const c of attachmentStoreContract()) it(c.name, () => c.run(async () => sqliteStore({ path: await migratedPath() })));
+});
+
+it('첨부 테이블을 읽을 수 없으면 예외 대신 DB_UNAVAILABLE을 돌려준다', async () => {
+  const path = await migratedPath();
+  const opened = openSqlite({ path, busyTimeoutMs: 3000 });
+  expect(opened.ok).toBe(true);
+  if (!opened.ok) return;
+  try {
+    opened.connection.database.exec('drop table message_attachments');
+  } finally {
+    await opened.connection.close();
+  }
+  const store = sqliteStore({ path });
+  try {
+    await expect(store.listMessageAttachments('message-id')).resolves.toMatchObject({
+      ok: false,
+      code: 'DB_UNAVAILABLE',
+      message: expect.stringContaining('no such table: message_attachments'),
+    });
+  } finally {
+    await store.close();
+  }
 });

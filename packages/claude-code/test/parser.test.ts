@@ -548,7 +548,7 @@ describe('the Claude Code parser', () => {
     // calls in front of the first message, counts the lines it walked past, and
     // drops orca's own prompt headings — so a session stored by `3` is read
     // again from the front under the new rules (AD-4).
-    expect(parser.version).toBe('4');
+    expect(parser.version).toBe('5');
   });
 
   it('keeps the two turns and nothing else the editor wrote', () => {
@@ -1652,7 +1652,7 @@ describe('세션을 시작한 폴더', () => {
     expect(tail.cursorReset).toBe(false);
     expect(tail.messages).toHaveLength(1);
     expect(tail.startCwd).toBe('/demo/gone');
-    expect(tail.parserVersion).toBe('4');
+    expect(tail.parserVersion).toBe('5');
   });
 
   it('메시지만 cwd를 가지면 첫 메시지의 값을 쓰고 없으면 null이다', () => {
@@ -1661,5 +1661,50 @@ describe('세션을 시작한 폴더', () => {
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.startCwd).toBe(cwd ?? null);
     }
+  });
+});
+
+describe('붙여 넣은 이미지', () => {
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQcEj4DwADBAHAgChw2gAAAABJRU5ErkJggg==', 'base64');
+  const image = { type: 'image', source: { type: 'base64', data: png.toString('base64'), media_type: 'image/png' } };
+  function line(uuid: string, content: unknown[], fields = {}) { return JSON.stringify({ type: 'user', uuid, timestamp: '2026-10-23T00:00:00.000Z', message: { content }, ...fields }); }
+  it('텍스트와 이미지뿐인 메시지를 보존하고 출처는 자리 수가 맞을 때 문자열로 남긴다', () => {
+    const result = claudeCodeParser().parse([
+      line('a', [{type:'text',text:'그림'}, image], {imagePasteIds:[42]}),
+      line('b', [image, image], {imagePasteIds:[1]}),
+    ].join('\n'));
+    expect(result.ok).toBe(true); if (!result.ok) return;
+    expect(result.messages.map(m=>m.body)).toEqual(['그림','']);
+    expect(result.attachments.map(a=>[a.harnessMessageId,a.ordinal,a.sourceRef])).toEqual([['a',0,'42'],['b',0,null],['b',1,null]]);
+    for (const a of result.attachments) { expect(a.bytes).toEqual(new Uint8Array(png)); expect(a.sourceKind).toBe('image'); expect(a.displayName).toBeNull(); }
+  });
+  it('여러 메가바이트 이미지도 예외 없이 원본 바이트 그대로 보존한다', () => {
+    const bytes = Buffer.alloc(3_750_000, 0x5a);
+    const content = line('large-image', [{
+      type: 'image',
+      source: { type: 'base64', data: bytes.toString('base64') },
+    }]);
+    const result = claudeCodeParser().parse(content);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.messages.map(message => message.body)).toEqual(['']);
+    expect(result.attachments).toHaveLength(1);
+    const attachment = result.attachments[0]!;
+    expect(attachment.harnessMessageId).toBe('large-image');
+    expect(attachment.bytes.length).toBe(bytes.length);
+    expect(Buffer.from(attachment.bytes).equals(bytes)).toBe(true);
+  });
+  it('도구 결과와 비인간·메타·요약·sidechain·assistant와 잘못된 이미지는 첨부를 내지 않는다', () => {
+    const content = [
+      line('tool', [{type:'tool_result',content:[image]}]),
+      line('meta', [image], {isMeta:true}), line('compact', [image], {isCompactSummary:true}),
+      line('side', [image], {isSidechain:true}), line('origin',[image],{origin:{kind:'peer'}}),
+      line('assistant',[image],{type:'assistant'}),
+      line('url',[{type:'image',source:{type:'url',url:'https://example.com/x.png'}}]),
+      line('empty',[{type:'image',source:{type:'base64',data:''}}]),
+      line('bad',[{type:'image',source:{type:'base64',data:'?'}}]),
+    ].join('\n');
+    const result = claudeCodeParser().parse(content); expect(result.ok).toBe(true); if (!result.ok) return;
+    expect(result.messages).toEqual([]); expect(result.attachments).toEqual([]);
   });
 });

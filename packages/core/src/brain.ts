@@ -1,4 +1,5 @@
-import { formatSessionToken } from './domain/session-token.js';
+import type { FileStore } from './ports/file-store.js';
+import { formatSessionToken, parseSessionToken } from './domain/session-token.js';
 import { redactMessage, type MessagesRedactInput, type MessagesRedactResult } from './messages/redact.js';
 import { SESSION_IDENTITY_KIND, sessionIdentityHandler } from './capture/session-identity-work.js';
 import {
@@ -49,6 +50,8 @@ export interface BrainDependencies {
    * decided rather than at the call (AD-10).
    */
   store: Store & SchemaStore;
+  /** Original attachment bytes, written before the database transaction. */
+  files: FileStore;
   /**
    * Where a write goes when the database will not take it (AD-9). Every verb
    * that writes conversation data needs it, because a lock that is held too
@@ -181,6 +184,7 @@ export interface Brain {
 export function createBrain(dependencies: BrainDependencies): Brain {
   const {
     store,
+    files,
     spool,
     schemaVersion,
     clock,
@@ -196,6 +200,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
 
   const ingestDependencies = {
     store,
+    files,
     spool,
     clock,
     idGen,
@@ -255,6 +260,16 @@ export function createBrain(dependencies: BrainDependencies): Brain {
         now: clock.now(),
       });
       return { ok: true };
+    },
+    attachment_link: async (record) => {
+      if (record.kind !== 'attachment_link') return { ok: true };
+      const p = record.payload;
+      const token = parseSessionToken(p.session);
+      if (!token.ok) return { ok: false, code: 'USAGE', message: token.message };
+      return store.linkAttachments({ key: token.key, linkedAt: record.occurredAt, attachments: [{
+        id: idGen.next(), harnessMessageId: p.harnessMessageId, ordinal: p.ordinal, sourceKind: p.sourceKind, sourceRef: p.sourceRef, displayName: p.displayName,
+        file: { id: idGen.next(), contentHash: p.contentHash, sizeBytes: p.sizeBytes, location: { id: idGen.next(), storeKind: p.storeKind, locator: p.locator, ownership: p.ownership } },
+      }] });
     },
     failure: async (record) => {
       if (record.kind !== 'failure') return { ok: true };

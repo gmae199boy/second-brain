@@ -1,3 +1,4 @@
+import { memoryFileStore } from '../src/testing/fakes/file-store.js';
 import { describe, expect, it } from 'vitest';
 import { createBrain, type BrainDependencies } from '../src/brain.js';
 import { runDoctor, type DoctorCheck, type DoctorCheckSource } from '../src/doctor/doctor.js';
@@ -386,6 +387,7 @@ function otherDependencies(): Omit<BrainDependencies, 'store' | 'schemaVersion' 
     transcripts: memoryTranscriptReader(),
     repositories: memoryRepositories(),
     spool: memorySpool(),
+    files: memoryFileStore(),
     machine: 'demo-machine',
   };
 }

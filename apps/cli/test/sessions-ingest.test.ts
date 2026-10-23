@@ -9,6 +9,7 @@ import {
   realpath,
   rm,
   symlink,
+  stat,
   writeFile,
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -1413,7 +1414,7 @@ describe('brain sessions ingest claude-code and a report handed back', () => {
       } finally {
         database.close();
       }
-      expect(storedParserVersion(databaseIn(home))).toBe('4');
+      expect(storedParserVersion(databaseIn(home))).toBe('5');
     },
   );
 
@@ -2383,6 +2384,50 @@ describe('brain sessions ingest claude-code when the database will not take the 
       });
     };
   }
+
+  it('이미지 원본은 한 번 남고 이미지뿐인 메시지와 재수집과 잠금 뒤 재주입도 같은 연결을 만든다', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQcEj4DwADBAHAgChw2gAAAABJRU5ErkJggg==', 'base64');
+    const image = {type:'image',source:{type:'base64',media_type:'image/png',data:png.toString('base64')}};
+    const lines = [
+      {type:'user',uuid:'image-text',timestamp:'2026-10-23T00:00:00.000Z',imagePasteIds:[1],message:{content:[{type:'text',text:'그림'},image]}},
+      {type:'user',uuid:'image-only',timestamp:'2026-10-23T00:00:01.000Z',imagePasteIds:[2],message:{content:[image]}},
+      {type:'user',uuid:'tool-image',timestamp:'2026-10-23T00:00:02.000Z',message:{content:[{type:'tool_result',tool_use_id:'x',content:[image]}]}},
+    ].map(x=>JSON.stringify(x)).join('\n')+'\n';
+    async function input(home: string) { const path=join(home,'images.jsonl'); await writeFile(path,lines); return stopPayload(path); }
+    async function verify(home: string) {
+      const counts=rowCounts(databaseIn(home)); expect(counts['files']).toBe(1); expect(counts['file_locations']).toBe(1); expect(counts['message_attachments']).toBe(2); expect(counts['messages']).toBe(2);
+      const db=new DatabaseSync(databaseIn(home),{readOnly:true});
+      try {
+        const rows=db.prepare(`select m.harness_message_id, m.body, a.ordinal, a.source_kind, a.source_ref, a.status, f.content_hash, f.size_bytes, l.store_kind, l.locator, l.ownership
+          from messages m join message_attachments a on a.message_id=m.id join files f on f.id=a.file_id join file_locations l on l.id=f.home_location_id order by m.harness_message_id`).all() as {harness_message_id:string;body:string;ordinal:number;source_kind:string;source_ref:string;status:string;locator:string}[];
+        expect(rows).toHaveLength(2); expect(rows[0]?.body).toBe('');
+        for(const row of rows) {
+          expect(row).toMatchObject({ordinal:0,source_kind:'image',status:'stored',store_kind:'local',ownership:'brain',size_bytes:png.length});
+          const path=join(home,'files',row.locator); expect(await readFile(path)).toEqual(png); expect((await stat(path)).mode & 0o777).toBe(0o600);
+          for(const folder of [join(home,'files'),dirname(dirname(path)),dirname(path)]) expect((await stat(folder)).mode & 0o777).toBe(0o700);
+        }
+        const files=await readdir(join(home,'files'),{recursive:true,withFileTypes:true}); expect(files.filter(x=>x.isFile())).toHaveLength(1);
+        return rows;
+      } finally {db.close();}
+    }
+    const direct=await installedHome(); const directPayload=await input(direct);
+    const args=['sessions','ingest','claude-code','--json'];
+    expect((await runBrain(args,direct,directPayload)).code).toBe(0);
+    const expected=await verify(direct);
+    expect((await runBrain(args,direct,directPayload)).code).toBe(0); expect(await verify(direct)).toEqual(expected);
+    const locked=await installedHome(); const lockedPayload=await input(locked);
+    const release=await holdTheLock(locked,20_000);
+    try {
+      const run=await runBrain(args,locked,lockedPayload); expect(run.code).toBe(0); expect(JSON.parse(run.stdout)).toMatchObject({warnings:['SPOOLED'],data:{spooled:true}});
+      const files=await readdir(spoolPath(locked)); const pending=files.filter(x=>x.endsWith('.jsonl')); expect(pending).toHaveLength(1);
+      const text=await readFile(join(spoolPath(locked),pending[0]!), 'utf8');
+      expect(text.trim().split('\n').map(line=>(JSON.parse(line) as {kind:string}).kind)).toEqual(['session_ingest','attachment_link','attachment_link']);
+      expect(text).not.toContain(png.toString('base64'));
+    } finally {await release();}
+    expect((await runBrain(['queue','drain','--json'],locked,'')).code).toBe(0);
+    expect(await verify(locked)).toEqual(expected);
+    expect((await readdir(spoolPath(locked))).filter(x=>x.endsWith('.jsonl'))).toEqual([]);
+  },30_000);
 
   it('spools the turn, after waiting out its budget once, while another process holds the lock', async () => {
     const home = await installedHome();

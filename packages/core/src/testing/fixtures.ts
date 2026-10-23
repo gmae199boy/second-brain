@@ -352,6 +352,7 @@ export function sampleIngestBatch(
       ...overrides.tracking,
     },
     messages,
+    attachments: [],
     toolNotes,
   };
 }

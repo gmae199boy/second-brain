@@ -56,6 +56,19 @@ const FOREIGN_CURSOR = {
  */
 export function parserContract(): ContractCase<ParserSubject>[] {
   return [
+    contractCase<ParserSubject>('첨부는 같은 결과의 메시지와 유일한 자리를 가리킨다', async make => withSubject(make, async ({parser, readable}) => {
+      for (const content of readable) {
+        const parsed = parser.parse(content); assertOk(parsed, '파싱');
+        const positions = new Set<string>();
+        for (const a of parsed.attachments) {
+          assertTrue(parsed.messages.some(m => m.harnessMessageId === a.harnessMessageId), '첨부 메시지');
+          const key = `${a.harnessMessageId}:${a.ordinal}`;
+          assertTrue(!positions.has(key), '첨부 자리 중복'); positions.add(key);
+          assertTrue(Number.isInteger(a.ordinal) && a.ordinal >= 0, '첨부 자리');
+          assertTrue(a.bytes.length > 0, '원본 바이트');
+        }
+      }
+    })),
     contractCase<ParserSubject>('the parser names its harness and version', async (make) => {
       await withSubject(make, async ({ parser }) => {
         assertNonEmptyString(parser.harness, 'a parser must name its harness');

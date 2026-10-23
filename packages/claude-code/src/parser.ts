@@ -3,6 +3,7 @@ import type {
   MessageRole,
   ParseResult,
   ParsedMessage,
+  ParsedAttachment,
   ParsedToolNote,
   Parser,
   ParserCursor,
@@ -63,7 +64,7 @@ export const CLAUDE_CODE_HARNESS = 'claude-code';
  * the versions differ — so nothing an older version stored is touched and the
  * rows it never wrote arrive behind them (AD-4, AD-11).
  */
-export const CLAUDE_CODE_PARSER_VERSION = '4';
+export const CLAUDE_CODE_PARSER_VERSION = '5';
 
 /** The six markers a tool's own output starts a user line with (Boundaries). */
 const TOOL_OUTPUT_MARKERS = [
@@ -315,6 +316,7 @@ export function claudeCodeParser(): Parser {
       const start = startFor(content, cursor ?? null);
 
       const messages: ParsedMessage[] = [];
+      const attachments: ParsedAttachment[] = [];
       /** Why each line that was not kept was not kept (`DropReason`). */
       const dropped = noDrops();
       /** Whether any line of the read was JSON at all (`TRANSCRIPT_UNREADABLE`). */
@@ -412,6 +414,7 @@ export function claudeCodeParser(): Parser {
           }
         } else {
           messages.push(read);
+          if (read.role === 'user') attachments.push(...readAttachments(entry, read.harnessMessageId));
           lastMessageId = read.harnessMessageId;
           fingerprintEnd = lineStart + line.length;
           // The calls that were waiting for a message to hang on: this one, at
@@ -458,6 +461,7 @@ export function claudeCodeParser(): Parser {
         ok: true,
         parserVersion: CLAUDE_CODE_PARSER_VERSION,
         messages,
+        attachments,
         toolNotes: resolveNotes(pending, outcomes, messages.length),
         cursor: cursorFor(messages, content, fingerprintEnd, start),
         cursorReset: start.reset,
@@ -649,7 +653,7 @@ function readMessage(entry: Record<string, unknown>): ParsedMessage | DropReason
   const body = readBody(message['content']);
   // Empty once the text is out of it: a thinking block, a tool call, a tool
   // result, a pasted image.
-  if (body === '') return 'empty';
+  if (body === '' && (role !== 'user' || readAttachments(entry, harnessMessageId).length === 0)) return 'empty';
   if (role === 'user') {
     // A tool's own output, handed to the model as a user turn.
     if (isToolOutput(body)) return 'tool_output';
@@ -1076,4 +1080,28 @@ function asTracking(value: unknown): string | null {
 
 function asRole(value: unknown): MessageRole | undefined {
   return value === 'user' || value === 'assistant' ? value : undefined;
+}
+
+function readAttachments(entry: Record<string, unknown>, harnessMessageId: string): ParsedAttachment[] {
+  const message = asRecord(entry['message']);
+  const content = message?.['content'];
+  if (!Array.isArray(content)) return [];
+  const bytes: Uint8Array[] = [];
+  for (const block of content) {
+    const item = asRecord(block);
+    const source = asRecord(item?.['source']);
+    if (item?.['type'] !== 'image' || source?.['type'] !== 'base64' || typeof source['data'] !== 'string') continue;
+    const data = source['data'];
+    const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+    const unpadded = padding === 0 ? data : data.slice(0, -padding);
+    // A character-class scan keeps validation stack use independent of image size.
+    if (/[^A-Za-z0-9+/]/.test(unpadded) || unpadded.length % 4 === 1 ||
+        (padding > 0 && data.length % 4 !== 0)) continue;
+    const decoded = Buffer.from(data, 'base64');
+    if (decoded.length > 0) bytes.push(new Uint8Array(decoded));
+  }
+  const ids = entry['imagePasteIds'];
+  return bytes.map((data, ordinal) => ({ harnessMessageId, ordinal, sourceKind: 'image',
+    sourceRef: Array.isArray(ids) && ids.length === bytes.length && (typeof ids[ordinal] === 'number' || typeof ids[ordinal] === 'string') ? String(ids[ordinal]) : null,
+    displayName: null, bytes: data }));
 }

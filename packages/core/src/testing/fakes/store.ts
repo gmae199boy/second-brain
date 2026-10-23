@@ -1,3 +1,5 @@
+import type { IngestAttachment } from '../../domain/ingest-batch.js';
+import type { MessageAttachment } from '../../ports/store.js';
 import type { IngestBatch } from '../../domain/ingest-batch.js';
 import type { Message } from '../../domain/message.js';
 import type { Project } from '../../domain/project.js';
@@ -156,6 +158,31 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const failures: Failure[] = [];
   /** Keyed by `(harness, path)`, the idempotency key of the Table Contract. */
   const transcriptFiles = new Map<string, TranscriptFile>();
+  const attachmentRows = new Map<string, MessageAttachment[]>();
+  const fileRows = new Map<string, NonNullable<MessageAttachment['file']>>();
+  function link(rows: readonly IngestAttachment[], held: readonly Message[]): number {
+    let linked = 0;
+    for (const a of rows) {
+      const message = held.find(m => m.harnessMessageId === a.harnessMessageId);
+      if (message === undefined) throw new Error('첨부 메시지가 없습니다');
+      const existing = attachmentRows.get(message.id) ?? [];
+      if (existing.some(row => row.ordinal === a.ordinal)) continue;
+      let file = fileRows.get(a.file.contentHash);
+      if (file === undefined) {
+        const { storeKind, locator, ownership } = a.file.location;
+        file = { id: a.file.id, contentHash: a.file.contentHash, sizeBytes: a.file.sizeBytes, home: ownership === 'brain' ? { storeKind, locator, ownership } : null };
+        fileRows.set(a.file.contentHash, file);
+      }
+      if (file.home === null && a.file.location.ownership === 'brain') {
+        const { storeKind, locator, ownership } = a.file.location;
+        file.home = { storeKind, locator, ownership };
+      }
+      existing.push({ id: a.id, ordinal: a.ordinal, sourceKind: a.sourceKind, sourceRef: a.sourceRef, displayName: a.displayName, status: 'stored', file });
+      attachmentRows.set(message.id, existing);
+      linked++;
+    }
+    return linked;
+  }
   let closes = 0;
 
   /** The open row for one piece of work, or undefined (`work_items_open_key_idx`). */
@@ -372,6 +399,16 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       return { ok: true, session: existing === undefined ? null : { ...existing } };
     },
 
+    async listMessageAttachments(messageId) {
+      return { ok: true, attachments: (attachmentRows.get(messageId) ?? []).slice().sort((a,b) => a.ordinal - b.ordinal).map(a => ({ ...a, file: a.file === null ? null : { ...a.file, home: a.file.home === null ? null : { ...a.file.home } } })) };
+    },
+    async linkAttachments(input) {
+      const token = formatSessionToken(input.key);
+      if (!sessions.has(token)) return { ok: false, code: 'SESSION_NOT_FOUND', message: '세션이 없습니다' };
+      const held = messages.get(token) ?? [];
+      if (input.attachments.some(a => !held.some(m => m.harnessMessageId === a.harnessMessageId))) return { ok: false, code: 'MESSAGE_NOT_FOUND', message: '메시지가 없습니다' };
+      return { ok: true, linked: link(input.attachments, held) };
+    },
     async ingest(batch: IngestBatch): Promise<IngestResult> {
       const token = formatSessionToken(batch.key);
       const session = sessions.get(token);
@@ -417,6 +454,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         // is stored as the batch carried it and the output codecs mask it on
         // the way out (마스킹 B, AD-11).
       }
+
+      link(batch.attachments, storedMessages);
 
       for (const parsed of batch.toolNotes) {
         // Three ways this session already holds this call, and the first two

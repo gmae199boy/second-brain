@@ -1,3 +1,4 @@
+import { memoryFileStore } from '../src/testing/fakes/file-store.js';
 import { describe, expect, it } from 'vitest';
 import { transcriptChanges } from '../src/capture/scan.js';
 import type { ParserCursor } from '../src/domain/session.js';
@@ -100,6 +101,7 @@ async function kit(options: KitOptions = {}): Promise<Kit> {
     transcripts,
     repositories,
     deps: {
+      files: memoryFileStore(),
       store,
       spool,
       clock: fixedClock(INGESTED_AT),
@@ -755,7 +757,7 @@ describe('sessions.ingest and the cursor it starts from', () => {
     const { deps, store } = await kit();
     expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
     const next: Parser = { ...memoryParser({ version: '2' }), parse: () => ({
-      ok: true, parserVersion: '2', messages: [], toolNotes: [], cursor: null,
+      ok: true, parserVersion: '2', messages: [], attachments: [], toolNotes: [], cursor: null,
       cursorReset: false, startSource: null, startCwd: null, droppedLines: { unreadable: 0 },
     }) };
     expect(await ingestSession({ ...deps, parsers: [next] }, { session: TOKEN, transcriptPath: PATH }))
@@ -926,7 +928,7 @@ describe('sessions.ingest and the cursor it starts from', () => {
       parse: (): ParseResult => ({
         ok: true,
         parserVersion: '1',
-        messages: [],
+        messages: [], attachments: [],
         toolNotes: [
           {
             harnessMessageId: 'msg-2',
@@ -966,7 +968,7 @@ describe('sessions.ingest and the cursor it starts from', () => {
       parse: (): ParseResult => ({
         ok: true,
         parserVersion: '1',
-        messages: [],
+        messages: [], attachments: [],
         toolNotes: [
           {
             harnessMessageId: 'msg-2',
@@ -1482,3 +1484,60 @@ describe('sessions.ingest for a caller that is itself the deferred path', () => 
     expect(spool.records()).toEqual([]);
   });
 });
+
+describe('첨부 수집', () => {
+  const bytes = [137,80,78,71,13,10,26,10,0];
+  const content = JSON.stringify({messages:[1,2].map(i=>({harnessMessageId:`image-${i}`,role:'user',body:'',occurredAt:'2026-01-02T03:04:05.000Z',attachments:[{bytes}]}))});
+  it('같은 바이트는 한 번 넣고 기존 메시지의 첨부도 멱등으로 연결한다', async () => {
+    const {deps,store} = await kit({content});
+    let puts = 0; const files = deps.files;
+    deps.files = {...files, async put(b) { puts++; return files.put(b); }};
+    expect((await ingestSession(deps,{session:TOKEN,transcriptPath:PATH})).ok).toBe(true);
+    expect(puts).toBe(1);
+    const messages = store.snapshot().messages; expect(messages.map(m=>m.body)).toEqual(['','']);
+    const rows = await Promise.all(messages.map(m=>store.listMessageAttachments(m.id)));
+    expect(rows.every(r=>r.ok && r.attachments.length===1)).toBe(true);
+    expect((await ingestSession(deps,{session:TOKEN,transcriptPath:PATH})).ok).toBe(true);
+    expect(store.snapshot().messages).toHaveLength(2);
+    // A prior version stored the messages but carried no attachment data.
+    const legacy = await kit({content:JSON.stringify({messages:[{harnessMessageId:'image-1',role:'user',body:'',occurredAt:'2026-01-02T03:04:05.000Z'}]})});
+    await ingestSession(legacy.deps,{session:TOKEN,transcriptPath:PATH});
+    legacy.deps.transcripts = deps.transcripts;
+    legacy.deps.parsers = [memoryParser({version:'5'})];
+    expect((await ingestSession(legacy.deps,{session:TOKEN,transcriptPath:PATH})).ok).toBe(true);
+    const first = legacy.store.snapshot().messages[0]!;
+    expect(await legacy.store.listMessageAttachments(first.id)).toMatchObject({ok:true,attachments:[{ordinal:0,status:'stored'}]});
+  });
+  it('파일 저장 실패는 메시지와 이력과 spool을 쓰지 않는다', async () => {
+    const {deps,store,spool}=await kit({content});
+    deps.files={...deps.files,async put(){return {ok:false,code:'FILES_UNAVAILABLE',message:'저장 실패'};}};
+    expect(await ingestSession(deps,{session:TOKEN,transcriptPath:PATH})).toMatchObject({ok:false,code:'FILES_UNAVAILABLE'});
+    expect(store.snapshot().messages).toEqual([]); expect(store.snapshot().transcriptFiles).toEqual([]);
+    const claim = await spool.claim(); expect(claim).toMatchObject({ok:true,claim:null});
+  });
+  it('DB 거부는 한 append에 다시 수집할 줄 다음 첨부 연결을 쓰고 너무 큰 연결은 뺀다', async () => {
+    const {deps,spool}=await kit({content});
+    deps.store={...deps.store,async ingest(){return {ok:false,code:'DB_LOCKED',message:'잠김'};}};
+    expect(await ingestSession(deps,{session:TOKEN,transcriptPath:PATH})).toMatchObject({ok:true,spooled:true});
+    const claim=await spool.claim(); expect(claim.ok).toBe(true); if(!claim.ok || claim.claim===null) return;
+    const records=claim.claim.lines.map(line=>JSON.parse(line) as {kind:string;payload:Record<string,unknown>});
+    expect(records.map(r=>r.kind)).toEqual(['session_ingest','attachment_link','attachment_link']);
+    expect(records[1]?.payload).not.toHaveProperty('bytes');
+    expect(await spool.claim()).toMatchObject({ok:true,claim:null});
+    const huge=await kit({content:JSON.stringify({messages:[{harnessMessageId:'m',role:'user',body:'',occurredAt:'2026-01-02T03:04:05.000Z',attachments:[{bytes,sourceRef:'x'.repeat(65536)}]}]})});
+    huge.deps.store={...huge.deps.store,async ingest(){return {ok:false,code:'DB_LOCKED',message:'잠김'};}};
+    expect(await ingestSession(huge.deps,{session:TOKEN,transcriptPath:PATH})).toMatchObject({ok:true,spooled:true});
+    const h=await huge.spool.claim(); if(!h.ok || h.claim===null) throw new Error('spool 없음');
+    expect(h.claim.lines).toHaveLength(1);
+  });
+});
+
+for (const phase of ['readSelfUser','ensureSession','ingest'] as const) {
+  it(`${phase}의 DB 거부도 저장한 첨부를 같은 spool 파일에 보존한다`, async () => {
+    const content=JSON.stringify({messages:[{harnessMessageId:'image',role:'user',body:'',occurredAt:'2026-01-02T03:04:05.000Z',attachments:[{bytes:[1,2,3]}]}]});
+    const {deps,spool}=await kit({content});
+    deps.store={...deps.store,[phase]:async()=>({ok:false as const,code:'DB_UNAVAILABLE' as const,message:'접근 불가'})};
+    expect(await ingestSession(deps,{session:TOKEN,transcriptPath:PATH})).toMatchObject({ok:true,spooled:true});
+    expect(spool.files()).toHaveLength(1); expect(spool.records().map(r=>r.kind)).toEqual(['session_ingest','attachment_link']);
+  });
+}

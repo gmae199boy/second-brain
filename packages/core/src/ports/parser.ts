@@ -1,4 +1,4 @@
-import type { ParsedMessage, ParsedToolNote } from '../domain/ingest-batch.js';
+import type { ParsedAttachment, ParsedMessage, ParsedToolNote } from '../domain/ingest-batch.js';
 import type { ParserCursor, SessionStartSource } from '../domain/session.js';
 
 /**
@@ -11,6 +11,7 @@ export type ParseResult =
       ok: true;
       parserVersion: string;
       messages: readonly ParsedMessage[];
+      attachments: readonly ParsedAttachment[];
       toolNotes: readonly ParsedToolNote[];
       /** Where this content ends, for the next incremental read (AD-4). */
       cursor: ParserCursor | null;

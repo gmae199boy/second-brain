@@ -1,3 +1,4 @@
+import type { FileLocation } from './file.js';
 import type { MessageRole } from './message.js';
 import type { ParserCursor, SessionStartSource } from './session.js';
 import type { SessionKey } from './session-token.js';
@@ -186,4 +187,18 @@ export interface IngestBatch {
    */
   messages: readonly IngestMessage[];
   toolNotes: readonly IngestToolNote[];
+  attachments: readonly IngestAttachment[];
+}
+
+export interface ParsedAttachment {
+  harnessMessageId: string;
+  ordinal: number;
+  sourceKind: string;
+  sourceRef: string | null;
+  displayName: string | null;
+  bytes: Uint8Array;
+}
+export interface IngestAttachment extends Omit<ParsedAttachment, 'bytes'> {
+  id: string;
+  file: { id: string; contentHash: string; sizeBytes: number; location: FileLocation & { id: string } };
 }

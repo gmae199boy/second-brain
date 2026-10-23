@@ -1,3 +1,5 @@
+import type { IngestAttachment } from '../domain/ingest-batch.js';
+import { encodeSpoolLine } from '../domain/spool-record.js';
 import { ERROR_CODES, isWarningCode, type WarningCode } from '../codes.js';
 import {
   SPOOL_RECORD_VERSION,
@@ -55,6 +57,7 @@ export interface SpoolSessionIngestRead {
   droppedLines: Readonly<Record<string, number>>;
   /** The warnings that read raised, which go behind the spool's own. */
   warnings: readonly WarningCode[];
+  attachments?: readonly IngestAttachment[];
 }
 
 /**
@@ -90,7 +93,14 @@ export async function spoolSessionIngest(
     },
   };
 
-  const appended = await spool.append([record]);
+  const records: SpoolRecord[] = [record];
+  for (const a of read?.attachments ?? []) {
+    const link: SpoolRecord = { schemaVersion: SPOOL_RECORD_VERSION, id: idGen.next(), kind: 'attachment_link', occurredAt: record.occurredAt,
+      payload: { session: input.session, harnessMessageId: a.harnessMessageId, ordinal: a.ordinal, sourceKind: a.sourceKind, sourceRef: a.sourceRef, displayName: a.displayName,
+        contentHash: a.file.contentHash, sizeBytes: a.file.sizeBytes, storeKind: a.file.location.storeKind, locator: a.file.location.locator, ownership: a.file.location.ownership } };
+    if (encodeSpoolLine(link).ok) records.push(link);
+  }
+  const appended = await spool.append(records);
   if (!appended.ok) {
     // Both halves, in that order: what stopped the write, and that the fallback
     // did not work either. The code stays the cause's, because that is what a

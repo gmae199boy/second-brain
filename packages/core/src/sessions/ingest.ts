@@ -1,5 +1,8 @@
+import { contentHashOfBytes } from '../domain/file.js';
+import type { FileStore } from '../ports/file-store.js';
 import type {
   IngestBatch,
+  IngestAttachment,
   IngestMessage,
   IngestToolNote,
 } from '../domain/ingest-batch.js';
@@ -104,6 +107,7 @@ export type IngestSessionResult =
   | {
       ok: false;
       code:
+        | 'FILES_UNAVAILABLE'
         | 'USAGE'
         | 'TRANSCRIPT_UNREADABLE'
         | 'USER_MISSING'
@@ -117,6 +121,8 @@ export type IngestSessionResult =
 /** Everything the use case is given, all of it a port (AD-1). */
 export interface IngestSessionDependencies {
   store: SessionStore & UserStore & TranscriptFileStore;
+  /** Original attachment bytes, written before the database transaction. */
+  files: FileStore;
   /**
    * Where a turn goes when the database will not take it (AD-9). It is a
    * dependency of the ingest and not of its caller because the lock that stops
@@ -204,6 +210,7 @@ export async function ingestSession(
 ): Promise<IngestSessionResult> {
   const {
     store,
+    files,
     spool,
     clock,
     idGen,
@@ -325,7 +332,7 @@ export async function ingestSession(
    * hook of a session's first seconds.
    */
   const nothingToStore =
-    parsed.messages.length === 0 && (stored === null || parsed.toolNotes.length === 0);
+    parsed.attachments.length === 0 && parsed.messages.length === 0 && (stored === null || parsed.toolNotes.length === 0);
   /**
    * The read found the front of the transcript changed, and there is a stored
    * session to tell about it. That is reported even when the read then found no
@@ -374,6 +381,21 @@ export async function ingestSession(
     };
   }
 
+  const attachments: IngestAttachment[] = [];
+  const saved = new Map<string, Extract<Awaited<ReturnType<FileStore['put']>>, { ok: true }>>();
+  for (const a of parsed.attachments) {
+    const hash = contentHashOfBytes(a.bytes);
+    let put = saved.get(hash);
+    if (put === undefined) {
+      const result = await files.put(a.bytes);
+      if (!result.ok) return result;
+      put = result;
+      saved.set(hash, put);
+    }
+    attachments.push({ id: idGen.next(), harnessMessageId: a.harnessMessageId, ordinal: a.ordinal, sourceKind: a.sourceKind, sourceRef: a.sourceRef, displayName: a.displayName,
+      file: { id: idGen.next(), contentHash: put.contentHash, sizeBytes: put.sizeBytes, location: { ...put.location, id: idGen.next() } } });
+  }
+  afterParse.attachments = attachments;
   const owner = await store.readSelfUser();
   if (!owner.ok) return unwritable(owner.code) ? spooled(owner.code, afterParse) : owner;
   if (owner.user === null) {
@@ -467,6 +489,7 @@ export async function ingestSession(
       ingestedAt,
     },
     messages,
+    attachments,
     toolNotes,
   };
 

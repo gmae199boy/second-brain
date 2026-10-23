@@ -80,6 +80,8 @@ export {
 export type { SchemaVersion } from './schema-version.js';
 export type {
   IngestBatch,
+  IngestAttachment,
+  ParsedAttachment,
   IngestMessage,
   IngestToolNote,
   IngestTracking,
@@ -89,3 +91,5 @@ export type {
 } from './ingest-batch.js';
 
 export { planRedaction, type RedactionCurrent, type RedactionRequest, type RedactionPlan, type RedactionRefusal } from './redact-plan.js';
+export * from './file.js';
+export type { AttachmentLinkSpoolPayload, AttachmentLinkSpoolRecord } from './spool-record.js';

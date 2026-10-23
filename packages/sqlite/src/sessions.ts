@@ -29,6 +29,7 @@ import { sql, type Kysely } from 'kysely';
 import { describe, type SqliteConnect } from './connect.js';
 import type { SqliteSchema } from './driver.js';
 import { ensureWork } from './work.js';
+import { writeAttachments } from './attachments.js';
 import { withWrite, type WriteResult } from './write.js';
 
 /** A `sessions` row as SQLite hands it back: text instants, no booleans. */
@@ -376,15 +377,15 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
         // so a batch that carries them again writes nothing. It is the whole
         // of what ingest has to know about the stored conversation — there is
         // no counter to continue from (migration 0006).
-        const stored = await sql<{ harness_message_id: string }>`
-          select harness_message_id from messages where session_id = ${session.id}
+        const stored = await sql<{ id: string; harness_message_id: string }>`
+          select id, harness_message_id from messages where session_id = ${session.id}
         `.execute(held);
-        const seen = new Set(stored.rows.map((row) => row.harness_message_id));
+        const seen = new Map(stored.rows.map((row) => [row.harness_message_id, row.id]));
 
         let insertedMessages = 0;
         for (const { message, occurredAt } of pending) {
           if (seen.has(message.harnessMessageId)) continue;
-          seen.add(message.harnessMessageId);
+          seen.set(message.harnessMessageId, message.id);
           // `cwd` is not among the columns on purpose: the parser reports it so
           // story 2.8 can tag the session with the first message's one, and no
           // message row keeps it (migration 0004).
@@ -403,6 +404,8 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
           // body as it read it, and masking happens on the way out (마스킹 B,
           // AD-11). The only writer of that table is `messages.redact`.
         }
+
+        await writeAttachments(held, batch.attachments, seen, ingestedAt);
 
         // Read once, before any insert, the way the messages above are: which
         // calls this session already holds, by the harness's own id for the
