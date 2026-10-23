@@ -380,7 +380,7 @@ describe('the contracts catch a wrong transcript history', () => {
     };
 
     expect(await failedCases(transcriptFileStoreContract(), make)).toContain(
-      'a smaller size is dropped unless it is a reset',
+      '작은 크기는 더 늦게 시작했거나 reset인 읽기만 받는다',
     );
   });
 });

@@ -41,7 +41,7 @@ interface Kit {
  * recorded — which is the least a collection needs (AD-12).
  */
 async function kit(
-  options: { withFolder?: boolean; store?: MemoryStore; spool?: MemorySpool } = {},
+  options: { withFolder?: boolean; store?: MemoryStore; spool?: MemorySpool; parser?: ReturnType<typeof memoryParser> } = {},
 ): Promise<Kit> {
   const store = options.store ?? memoryStore();
   expect(await store.ensureSelfUser(sampleSelfUserInput())).toMatchObject({ ok: true });
@@ -70,7 +70,7 @@ async function kit(
     schemaVersion: 6,
     clock: fixedClock(NOW),
     idGen: sequenceIdGen({ timestampMs: NOW.getTime() }),
-    parsers: [memoryParser()],
+    parsers: [options.parser ?? memoryParser()],
     transcripts: memoryTranscriptReader({ files: { [PATH]: memoryTranscript } }),
     ...(options.withFolder === false ? {} : { transcriptFolders: [folder] }),
     repositories: memoryRepositories(),
@@ -123,6 +123,51 @@ describe('brain.queue.drain', () => {
     expect(store.snapshot().messages).toHaveLength(messagesAfterFirst);
   });
 
+  it.each([false, true])('구버전 세션은 같은 크기라도 한 번만 다시 읽는다 (빈 결과 %s)', async (empty) => {
+    const { brain: old, store } = await kit();
+    await old.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command });
+    const messages = store.snapshot().messages.length;
+    const parser = memoryParser({ version: '2' });
+    if (empty) parser.parse = () => ({ ok: true, parserVersion: '2', messages: [], toolNotes: [],
+      cursor: null, cursorReset: false, startSource: null, startCwd: null, droppedLines: { unreadable: 0 } });
+    const { brain } = await kit({ store, parser });
+    expect(await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command }))
+      .toMatchObject({ enqueued: 1, rereadMissing: 0, completed: 1 });
+    expect(store.snapshot().sessions[0]?.parserVersion).toBe('2');
+    expect(store.snapshot().messages).toHaveLength(messages);
+    expect(await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command })).toMatchObject({ enqueued: 0 });
+  });
+
+  it('구버전 세션의 파일이 사라졌으면 일감 없이 센다', async () => {
+    const { brain: old, store } = await kit();
+    await old.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command });
+    const { brain, folder } = await kit({ store, parser: memoryParser({ version: '2' }) });
+    folder.remove(PATH);
+    expect(await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command }))
+      .toMatchObject({ enqueued: 0, rereadMissing: 1 });
+  });
+
+  it('쓰기 불가로 멈춘 보고의 다시 못 읽음은 0이다', async () => {
+    const { brain: old, store } = await kit();
+    await old.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command });
+    const { brain, folder } = await kit({ store, parser: memoryParser({ version: '2' }) });
+    folder.remove(PATH);
+    await store.addWork({ id: '01940000-0000-7000-8000-0000000000c1', kind: 'probe',
+      targetKind: 'session', targetId: TOKEN, createdAt: NOW, nextAttemptAt: NOW });
+    expect(await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command, handlers: {
+      probe: async () => ({ ok: false, code: 'DB_UNAVAILABLE', message: '쓸 수 없습니다' }),
+    } })).toMatchObject({ stopped: 'unwritable', rereadMissing: 0 });
+  });
+
+  it('구버전 세션의 미해결 실패는 다시 넣지 않는다', async () => {
+    const { brain: old, store } = await kit();
+    await old.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command });
+    await recordFailure(store);
+    const { brain } = await kit({ store, parser: memoryParser({ version: '2' }) });
+    expect(await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command })).toMatchObject({ enqueued: 0 });
+    expect(store.snapshot().sessions[0]?.parserVersion).toBe('1');
+  });
+
   it('does nothing at all with no transcript folder', async () => {
     const { brain, store } = await kit({ withFolder: false });
 
@@ -169,6 +214,7 @@ describe('brain.queue.drain', () => {
       stopped: 'unwritable',
       code: 'DB_UNAVAILABLE',
       enqueued: 0,
+      rereadMissing: 0,
       claimed: 0,
     });
     // The folder was never listed: the run ended at the replay.
@@ -191,6 +237,7 @@ describe('brain.queue.drain', () => {
         'lost',
         'released',
         'replayed',
+        'rereadMissing',
         'retried',
         'spoolFailed',
         'spooled',
@@ -224,5 +271,58 @@ describe('brain.failures', () => {
       kind: SESSION_INGEST_KIND,
       targetId: TOKEN,
     });
+  });
+});
+
+async function recordFailure(store: MemoryStore): Promise<void> {
+  expect(await store.recordFailure({
+    id: '01940000-0000-7000-8000-0000000000b1', targetKind: 'session', targetId: TOKEN,
+    stage: SESSION_INGEST_KIND, fingerprint: 'sha256:one', harness: 'demo', sessionId: null,
+    code: 'TRANSCRIPT_UNREADABLE', message: '읽을 수 없습니다', occurredAt: NOW,
+  })).toMatchObject({ ok: true });
+}
+
+describe('brain.sessions.ingest 실패 해소', () => {
+  it('성공하면 이 세션의 미해결 실패를 해소하고 평소에는 쓰지 않는다', async () => {
+    const store = memoryStore();
+    let writes = 0;
+    const { brain } = await kit({ store: { ...store, async resolveFailures(input) {
+      writes += 1; return store.resolveFailures(input);
+    } } });
+    expect((await brain.sessions.ingest({ session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    expect(writes).toBe(0);
+    await recordFailure(store);
+    expect((await brain.sessions.ingest({ session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    expect(writes).toBe(1);
+    expect(await store.listFailures({})).toMatchObject({ ok: true, failures: [] });
+  });
+
+  it('spool로 가면 실패를 해소하지 않는다', async () => {
+    const store = memoryStore();
+    await recordFailure(store);
+    let writes = 0;
+    const { brain } = await kit({ store: { ...store,
+      async findSession() { return { ok: false, code: 'DB_UNAVAILABLE', message: '읽을 수 없습니다' }; },
+      async resolveFailures(input) { writes += 1; return store.resolveFailures(input); },
+    } });
+    expect(await brain.sessions.ingest({ session: TOKEN, transcriptPath: PATH })).toMatchObject({ ok: true, spooled: true });
+    expect(writes).toBe(0);
+  });
+
+  it.each(['list', 'resolve', 'throw'])('실패 해소의 오류도 수집 성공을 바꾸지 않는다: %s', async (failure) => {
+    const store = memoryStore();
+    await recordFailure(store);
+    const { brain } = await kit({ store: { ...store,
+      async listFailures(query) {
+        if (failure === 'list') return { ok: false, code: 'DB_UNAVAILABLE', message: '읽을 수 없습니다' };
+        return store.listFailures(query);
+      },
+      async resolveFailures() {
+        if (failure === 'throw') throw new Error('쓰기 실패');
+        return { ok: false, code: 'DB_LOCKED', message: '잠겨 있습니다' };
+      },
+    } });
+    expect(await brain.sessions.ingest({ session: TOKEN, transcriptPath: PATH })).toMatchObject({ ok: true, spooled: false });
+    expect(store.snapshot().failures[0]?.resolvedAt).toBeNull();
   });
 });

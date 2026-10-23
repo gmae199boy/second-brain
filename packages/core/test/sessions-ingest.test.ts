@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { transcriptChanges } from '../src/capture/scan.js';
 import type { ParserCursor } from '../src/domain/session.js';
 import { formatSessionToken } from '../src/domain/session-token.js';
 import type { ParseResult, Parser } from '../src/ports/parser.js';
@@ -750,6 +751,30 @@ describe('sessions.ingest and the cursor it starts from', () => {
     expect(seen[1]).toEqual(read.session.cursor);
   });
 
+  it('빈 다시 읽기도 현재 parser 버전을 기록한다', async () => {
+    const { deps, store } = await kit();
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    const next: Parser = { ...memoryParser({ version: '2' }), parse: () => ({
+      ok: true, parserVersion: '2', messages: [], toolNotes: [], cursor: null,
+      cursorReset: false, startSource: null, startCwd: null, droppedLines: { unreadable: 0 },
+    }) };
+    expect(await ingestSession({ ...deps, parsers: [next] }, { session: TOKEN, transcriptPath: PATH }))
+      .toMatchObject({ ok: true, inserted: { messages: 0, toolNotes: 0 } });
+    expect(store.snapshot().sessions[0]?.parserVersion).toBe('2');
+    expect(await store.listStaleSessions({ harness: 'demo', parserVersion: '2' }))
+      .toEqual({ ok: true, sessions: [] });
+  });
+
+  it('읽기가 시작한 시각을 내역에 남긴다', async () => {
+    const { deps, store, transcripts } = await kit();
+    let now = INGESTED_AT;
+    const result = await ingestSession({ ...deps, clock: { now: () => now }, transcripts: {
+      async read(path) { now = new Date(INGESTED_AT.getTime() + 5000); return transcripts.read(path); },
+    } }, { session: TOKEN, transcriptPath: PATH });
+    expect(result.ok).toBe(true);
+    expect(store.snapshot().transcriptFiles[0]?.scannedAt).toEqual(INGESTED_AT);
+  });
+
   it('hands over no cursor for a session another parser version read', async () => {
     const { deps, store } = await kit();
     expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
@@ -1367,6 +1392,23 @@ describe('sessions.ingest and the history it leaves for the next scan', () => {
     // stopped (AD-4).
     expect(history?.cursor).not.toBe(null);
     expect(history?.scannedAt.getTime()).toBe(INGESTED_AT.getTime());
+  });
+
+  it('커서가 맞는 축소 파일은 나중 읽기의 작은 크기를 기록해 다시 넣지 않는다', async () => {
+    const original = memoryTranscript + ' '.repeat(100);
+    const { deps, store, transcripts } = await kit({ content: original });
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    const cursor = store.snapshot().sessions[0]?.cursor;
+    transcripts.write(PATH, memoryTranscript);
+    const later = { ...deps, clock: fixedClock(new Date(INGESTED_AT.getTime() + 1)) };
+    const result = await ingestSession(later, { session: TOKEN, transcriptPath: PATH });
+    expect(result).toMatchObject({ ok: true, inserted: { messages: 0 } });
+    if (result.ok) expect(result.warnings).not.toContain('CURSOR_RESET');
+    expect(store.snapshot().sessions[0]?.cursor).toEqual(cursor);
+    const history = store.snapshot().transcriptFiles;
+    expect(history[0]?.sizeBytes).toBe(memoryTranscript.length);
+    expect(transcriptChanges([{ harness: 'demo', harnessSessionId: 'session-0001', path: PATH,
+      sizeBytes: memoryTranscript.length, modifiedAt: INGESTED_AT }], history)).toEqual([]);
   });
 
   it('records it even for a transcript with no conversation in it yet', async () => {

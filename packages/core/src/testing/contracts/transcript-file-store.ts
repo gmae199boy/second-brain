@@ -11,13 +11,11 @@ import {
  * The transcript-history capability: how far each file has been read, so a
  * folder scan opens only what changed (AD-7, Table Contract).
  *
- * The whole of it is "forward only". Two reads of a growing transcript can
- * finish out of order — a hook and a drain, or two hooks of overlapping turns —
- * and the older one must not wind the history back, because the only thing that
- * would come of that is the next scan reading a stretch of file it has already
- * stored. The one exception is a parse that reset its cursor: a compacted
- * transcript really is smaller than it was, and a row that kept the old number
- * would call that file unchanged for ever.
+ * A smaller size is taken only from a reset or from a read that began strictly
+ * later than the stored one. Two reads of a growing transcript can finish out of
+ * order — a hook and a drain, or two hooks of overlapping turns — and the older
+ * one must not wind the history back. A later read that finds the file smaller
+ * is the truth, though: refusing it would queue that file on every scan (P19).
  *
  * Every id and every instant arrives in the input: the store mints nothing and
  * reads no clock (AD-8, AD-13).
@@ -111,46 +109,36 @@ export function transcriptFileStoreContract(): ContractCase<TranscriptFileStore>
       },
     ),
 
-    contractCase<TranscriptFileStore>('a smaller size is dropped unless it is a reset', async (make) => {
+    contractCase<TranscriptFileStore>('작은 크기는 더 늦게 시작했거나 reset인 읽기만 받는다', async (make) => {
       await withSubject(make, async (store) => {
         assertOk(
           await store.recordTranscriptFile(sampleTranscriptFileInput({ sizeBytes: 2048 })),
           'the first record failed',
         );
 
-        const backwards = await store.recordTranscriptFile(
-          sampleTranscriptFileInput({
-            sizeBytes: 1024,
-            fingerprint: `sha256:${'e'.repeat(64)}`,
-            cursor: null,
-            scannedAt: LATER,
-          }),
-        );
-        assertOk(backwards, 'the backwards record failed');
-        assertEqual(
-          backwards.file.sizeBytes,
-          2048,
-          'a smaller size must be dropped: the history only moves forward (Table Contract)',
-        );
-        assertTrue(
-          backwards.file.cursor !== null,
-          'a dropped size must leave the cursor where it was',
-        );
-        assertEqual(
-          backwards.file.scannedAt.getTime(),
-          SCANNED.getTime(),
-          'a dropped record must change nothing at all about the row',
-        );
+        for (const scannedAt of [new Date(SCANNED.getTime() - 1), SCANNED]) {
+          const backwards = await store.recordTranscriptFile(sampleTranscriptFileInput({
+            sizeBytes: 1024, fingerprint: `sha256:${'e'.repeat(64)}`, cursor: null, scannedAt,
+          }));
+          assertOk(backwards, '작은 읽기 기록 실패');
+          assertEqual(backwards.file.sizeBytes, 2048, '더 이르거나 같은 시작 시각은 버려야 한다');
+          assertTrue(backwards.file.cursor !== null, '버린 읽기는 커서를 바꾸면 안 된다');
+          assertEqual(backwards.file.scannedAt.getTime(), SCANNED.getTime(), '버린 읽기는 시각도 그대로');
+        }
+        const later = await store.recordTranscriptFile(sampleTranscriptFileInput({
+          sizeBytes: 1024, cursor: null, scannedAt: LATER,
+        }));
+        assertOk(later, '나중 읽기 기록 실패');
+        assertEqual(later.file.sizeBytes, 1024, '더 늦게 시작한 작은 읽기는 받아야 한다');
+        assertEqual(later.file.cursor, null, '받은 크기와 커서는 함께 움직인다');
+        assertEqual(later.file.scannedAt.getTime(), LATER.getTime(), '시작 시각 누락');
 
-        // A reset is the one case where a smaller file is the truth: the
-        // transcript was compacted, and the row has to follow it down or the
-        // scan would call that file unchanged for ever.
         const reset = await store.recordTranscriptFile(
           sampleTranscriptFileInput({
             sizeBytes: 512,
             fingerprint: `sha256:${'f'.repeat(64)}`,
             cursor: { lastHarnessMessageId: 'm1', fingerprint: `sha256:${'0'.repeat(64)}` },
-            scannedAt: LATER,
+            scannedAt: SCANNED,
             reset: true,
           }),
         );

@@ -31,8 +31,8 @@ interface TranscriptFileRow {
  *
  * The read takes no lock — it is what the folder scan asks before deciding
  * whether to write anything at all (AD-7) — and the record is one short write
- * transaction that reads the row and then moves it, because "only forwards" is a
- * comparison against what is stored and two statements outside a transaction
+ * transaction that reads the row and then moves it, because the read start time
+ * is compared against what is stored and two statements outside a transaction
  * could be interleaved by another hook.
  */
 export function sqliteTranscriptFileStore(connect: SqliteConnect): TranscriptFileStore {
@@ -97,12 +97,12 @@ export function sqliteTranscriptFileStore(connect: SqliteConnect): TranscriptFil
             return readOne(held, input.harness, input.path);
           }
 
-          // The history only moves forward (Table Contract). A smaller size is
-          // an older read finishing late, and taking it would tell the next
-          // scan to re-read a stretch of file that is already stored — unless
-          // the parse reset, which is the one case where the file really did
-          // shrink under us.
-          if (!input.reset && input.sizeBytes < existing.size_bytes) {
+          // A smaller size is an older read finishing late, and taking it would
+          // wind the history back — unless the parse reset, or this read began
+          // strictly later than the stored one, which is a file that really
+          // shrank (P19). The instants are canonical text, so `<=` on the
+          // strings is the chronological comparison (AD-13).
+          if (!input.reset && input.sizeBytes < existing.size_bytes && scannedAt <= existing.scanned_at) {
             return existing;
           }
 

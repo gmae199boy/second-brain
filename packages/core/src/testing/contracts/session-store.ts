@@ -49,6 +49,25 @@ export type SessionStoreSubject = SessionStore & UserStore & Pick<WorkStore, "li
  */
 export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
   return [
+    contractCase<SessionStoreSubject>('다시 읽을 세션은 null과 다른 버전을 포함하고 다른 하네스를 제외한다',
+      async (make) => withSubject(make, async (store) => {
+        await owner(store);
+        assertOk(await store.ensureSession(sampleEnsureSessionInput()), '세션 생성');
+        let read = await store.listStaleSessions({ harness: sampleSessionKey.harness, parserVersion: 'current' });
+        assertOk(read, '목록 읽기');
+        assertEqual(read.sessions.length, 1, 'null 버전 포함');
+        assertEqual(read.sessions[0]?.harnessSessionId, sampleSessionKey.harnessSessionId, '세션 식별자');
+        assertOk(await store.ingest({ ...sampleIngestBatch(), tracking: { ...sampleIngestBatch().tracking, parserVersion: 'current' } }), '버전 기록');
+        read = await store.listStaleSessions({ harness: sampleSessionKey.harness, parserVersion: 'current' });
+        assertOk(read, '같은 버전 조회');
+        assertEqual(read.sessions.length, 0, '현재 버전 제외');
+        read = await store.listStaleSessions({ harness: sampleSessionKey.harness, parserVersion: 'next' });
+        assertOk(read, '다른 버전 조회');
+        assertEqual(read.sessions.length, 1, '다른 버전 포함');
+        read = await store.listStaleSessions({ harness: 'another-harness', parserVersion: 'next' });
+        assertOk(read, '다른 하네스 조회');
+        assertEqual(read.sessions.length, 0, '다른 하네스 제외');
+      })),
     contractCase<SessionStoreSubject>(
       'tag evidence is preserved and identity candidates exclude known evidence and prior work',
       async (make) => withSubject(make, async (store) => {

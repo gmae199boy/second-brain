@@ -29,6 +29,8 @@ export interface QueueDrainData {
   spool_failed: number;
   /** `session_ingest` items the folder scan put on the queue (AD-4). */
   enqueued: number;
+  /** Sessions an older parser read whose transcript is gone, so not re-read. */
+  reread_missing: number;
   claimed: number;
   completed: number;
   retried: number;
@@ -52,7 +54,7 @@ export const queueDrainCommand: CommandSpec<QueueDrainData> = {
   required: [],
   examples: ['brain queue drain', 'brain queue drain --budget 60 --json'],
   output:
-    '되넣음·실패로 옮김·새 일감 건수(`replayed`, `spool_failed`, `enqueued`), 청구·완료·다시 시도·실패·돌려줌·놓침·spool 건수(`claimed`, `completed`, `retried`, `failed`, `released`, `lost`, `spooled`)와 멈춘 이유 `stopped`',
+    '되넣음·실패로 옮김·새 일감·다시 못 읽음 건수(`replayed`, `spool_failed`, `enqueued`, `reread_missing`), 청구·완료·다시 시도·실패·돌려줌·놓침·spool 건수(`claimed`, `completed`, `retried`, `failed`, `released`, `lost`, `spooled`)와 멈춘 이유 `stopped`',
   risk: 'write',
   hook: false,
   dryRun: false,
@@ -89,6 +91,7 @@ export const queueDrainCommand: CommandSpec<QueueDrainData> = {
         replayed: report.replayed,
         spool_failed: report.spoolFailed,
         enqueued: report.enqueued,
+        reread_missing: report.rereadMissing,
         claimed: report.claimed,
         completed: report.completed,
         retried: report.retried,
@@ -121,7 +124,7 @@ const reasons: Readonly<Record<BrainDrainReport['stopped'], string>> = {
 function counts(report: BrainDrainReport): string {
   return (
     `되넣음 ${String(report.replayed)}건, 실패로 옮김 ${String(report.spoolFailed)}건, ` +
-    `새 일감 ${String(report.enqueued)}건, ` +
+    `새 일감 ${String(report.enqueued)}건, 다시 못 읽음 ${String(report.rereadMissing)}건, ` +
     `청구 ${String(report.claimed)}건, 완료 ${String(report.completed)}건, ` +
     `다시 시도 ${String(report.retried)}건, 실패 ${String(report.failed)}건, ` +
     `돌려줌 ${String(report.released)}건, 놓침 ${String(report.lost)}건, ` +

@@ -233,7 +233,21 @@ export type CountUntaggedSessionsResult =
   | { ok: true; count: number }
   | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
 
+export interface ListStaleSessionsQuery {
+  harness: string;
+  parserVersion: string;
+}
+export type ListStaleSessionsResult =
+  | { ok: true; sessions: readonly { harnessSessionId: string }[] }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
 export interface SessionStore {
+  /**
+   * The sessions of one harness whose `parser_version` is null or not the given
+   * one: what the folder scan queues to be read again however unchanged their
+   * files are (AD-4). A read, so it takes no lock (AD-7).
+   */
+  listStaleSessions(query: ListStaleSessionsQuery): Promise<ListStaleSessionsResult>;
   /** Read without a write lock; excludes any prior identity work, even closed. */
   listIdentityCandidates(): Promise<ListIdentityCandidatesResult>;
   countUntaggedSessions(): Promise<CountUntaggedSessionsResult>;
@@ -663,14 +677,17 @@ export interface RecordTranscriptFileInput {
   fingerprint: string;
   /** How far the file has been read, from the parse (AD-4). */
   cursor: ParserCursor | null;
+  /**
+   * When the read of the transcript began — not when it was recorded. It is
+   * what tells a later read of a shrunk file from an older read finishing late.
+   */
   scannedAt: Date;
   /**
    * This parse read the file from the front because the cursor was lost — a
    * compact, a fork, a transcript rewritten underneath us (`cursorReset`).
    *
-   * It is the one case in which the size may go backwards: a compacted
-   * transcript is genuinely smaller than it was, and a store that kept the old
-   * number would call that file "unchanged" for ever (Boundaries).
+   * A smaller size is then taken whenever the read began: a compacted
+   * transcript is genuinely smaller than it was.
    */
   reset: boolean;
 }
@@ -696,12 +713,11 @@ export interface TranscriptFileStore {
   /**
    * Record what a read saw, as find-or-create on `(harness, path)`.
    *
-   * Two rules, and every adapter keeps them:
-   *
-   *   * the size only moves forward. A smaller size is dropped and the stored
-   *     row is handed back unchanged, because two reads of a growing file can
-   *     finish out of order and the older one must not wind the history back.
-   *   * unless `reset`, which is the one case where a smaller file is the truth.
+   * A smaller size is taken only when `reset`, or when `scannedAt` is strictly
+   * later than the stored one. A smaller read that began earlier or at the same
+   * instant is an older read finishing late, and the stored row is handed back
+   * unchanged; a smaller read that began later is a file that really shrank,
+   * and keeping the old size would queue it on every scan (P19).
    *
    * The cursor moves with the size: they are one fact about one read, and a
    * cursor from a read whose size was dropped would point into bytes the row

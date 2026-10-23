@@ -292,6 +292,19 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
       }
     },
 
+    async listStaleSessions(query) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const read = await sql<{ harness_session_id: string }>`
+          select harness_session_id from sessions
+          where harness = ${query.harness} and parser_version is not ${query.parserVersion}
+          order by harness_session_id`.execute(opened.connection.db);
+        return { ok: true, sessions: read.rows.map((row) => ({ harnessSessionId: row.harness_session_id })) };
+      } catch (error) {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: `다시 읽을 세션을 찾을 수 없습니다: ${describe(error)}` };
+      }
+    },
     async listIdentityCandidates() {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };

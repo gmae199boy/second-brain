@@ -79,6 +79,7 @@ function kit(
     dependencies: {
       store,
       folders: [folder],
+      parsers: [],
       clock: fixedClock(NOW),
       idGen: sequenceIdGen({ timestampMs: NOW.getTime() }),
     },
@@ -290,6 +291,7 @@ describe('scanTranscripts', () => {
       {
         store,
         folders: [broken, fine],
+        parsers: [],
         clock: fixedClock(NOW),
         idGen: sequenceIdGen({ timestampMs: NOW.getTime() }),
       },
@@ -301,6 +303,26 @@ describe('scanTranscripts', () => {
     expect(report.stopped).toContain('EACCES');
     expect(report.enqueued).toBe(1);
     expect(queued(store).map((item) => item.targetId)).toEqual(['demo:session-a']);
+  });
+
+  it('같은 크기의 구버전 세션도 넣고 크기 변화와 경로로 중복을 없앤다', async () => {
+    const { dependencies, store } = kit([listing('session-a', 10), listing('session-b', 20)]);
+    await store.recordTranscriptFile(sampleTranscriptFileInput({ harness: 'demo', path: '/transcripts/session-a.jsonl', sizeBytes: 10 }));
+    const report = await scanTranscripts({ ...dependencies, parsers: [{ harness: 'demo', version: '2' }],
+      store: { ...store, async listStaleSessions() { return { ok: true, sessions: [
+        { harnessSessionId: 'session-a' }, { harnessSessionId: 'session-b' }, { harnessSessionId: 'missing' },
+      ] }; } } }, { deadline: DEADLINE });
+    expect(report).toMatchObject({ changed: 2, enqueued: 2, rereadMissing: 1 });
+    expect(queued(store)).toHaveLength(2);
+  });
+
+  it('구버전 목록 읽기 실패는 문장을 남기고 크기 변화만 처리한다', async () => {
+    const { dependencies } = kit([listing('session-a', 10)]);
+    const report = await scanTranscripts({ ...dependencies, parsers: [{ harness: 'demo', version: '2' }],
+      store: { ...dependencies.store, async listStaleSessions() {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: '다시 읽을 세션을 찾을 수 없습니다' };
+      } } }, { deadline: DEADLINE });
+    expect(report).toMatchObject({ enqueued: 1, rereadMissing: 0, stopped: '다시 읽을 세션을 찾을 수 없습니다' });
   });
 
   it('lists each folder once per scan', async () => {

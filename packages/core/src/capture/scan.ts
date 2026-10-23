@@ -2,7 +2,8 @@ import type { TranscriptFile } from '../domain/transcript-file.js';
 import { formatSessionToken } from '../domain/session-token.js';
 import type { Clock } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
-import type { TranscriptFileStore, WorkStore } from '../ports/store.js';
+import type { Parser } from '../ports/parser.js';
+import type { SessionStore, TranscriptFileStore, WorkStore } from '../ports/store.js';
 import type { TranscriptFolder, TranscriptListing } from '../ports/transcript.js';
 import { SESSION_INGEST_KIND } from './session-ingest-work.js';
 
@@ -17,8 +18,8 @@ import { SESSION_INGEST_KIND } from './session-ingest-work.js';
  * finds becomes one `session_ingest` item per changed file.
  *
  * The order of its reads is the whole design, and it is this order to save the
- * write lock: listing, then history, then the open items, then the unresolved
- * failures — four lock-free reads — and `addWork` only if something is left
+ * write lock: listing, history, stale sessions, open items, unresolved
+ * failures — all lock-free reads — and `addWork` only if something is left
  * over. So the opportunistic drain at the end of every command (AD-7) takes no
  * lock at all on a machine where nothing has changed, which is the ordinary
  * case.
@@ -59,10 +60,11 @@ export interface ScanTranscriptsDependencies {
    * The history to compare against, the backlog to avoid queueing twice, the
    * failures to leave alone, and the one verb that writes.
    */
-  store: TranscriptFileStore &
+  store: TranscriptFileStore & Pick<SessionStore, 'listStaleSessions'> &
     Pick<WorkStore, 'addWork' | 'listOpenWorkTargets' | 'listFailures'>;
   /** The folders this build may look in. Empty scans nothing (Boundaries). */
   folders: readonly TranscriptFolder[];
+  parsers: readonly Pick<Parser, 'harness' | 'version'>[];
   clock: Clock;
   /** Mints the id of each new queue row (AD-8). */
   idGen: IdGen;
@@ -82,8 +84,17 @@ export interface ScanTranscriptsOptions {
 
 /** What one scan did (Boundaries, `brain queue drain`). */
 export interface ScanTranscriptsReport {
-  /** Files the listing and the history disagreed about. */
+  /**
+   * Files to read: the ones the listing and the history disagree about, and the
+   * ones of a session an older parser version read, counted once per path.
+   */
   changed: number;
+  /**
+   * Sessions an older parser version read whose transcript is not in the
+   * listing. Nothing is queued for them — there is nothing left to read — and
+   * the number is reported so the loss is visible rather than silent.
+   */
+  rereadMissing: number;
   /** New `session_ingest` rows this scan put on the queue. */
   enqueued: number;
   /**
@@ -118,10 +129,10 @@ export async function scanTranscripts(
   dependencies: ScanTranscriptsDependencies,
   options: ScanTranscriptsOptions,
 ): Promise<ScanTranscriptsReport> {
-  const { store, folders, clock, idGen } = dependencies;
+  const { store, folders, parsers, clock, idGen } = dependencies;
   const { deadline } = options;
 
-  const tally = { changed: 0, enqueued: 0, skipped: 0 };
+  const tally = { changed: 0, enqueued: 0, skipped: 0, rereadMissing: 0 };
   let stopped: string | undefined;
   const changed: TranscriptListing[] = [];
 
@@ -136,7 +147,22 @@ export async function scanTranscripts(
       stopped ??= `"${folder.harness}" 트랜스크립트 내역을 읽을 수 없습니다: ${history.message}`;
       continue;
     }
-    changed.push(...transcriptChanges(listed.files, history.files));
+    const files = new Map(transcriptChanges(listed.files, history.files).map((file) => [file.path, file]));
+    const parser = parsers.find((candidate) => candidate.harness === folder.harness);
+    if (parser !== undefined) {
+      const stale = await store.listStaleSessions({ harness: folder.harness, parserVersion: parser.version });
+      if (!stale.ok) {
+        stopped ??= stale.message;
+      } else {
+        const ids = new Set(stale.sessions.map((session) => session.harnessSessionId));
+        const present = new Set(listed.files.map((file) => file.harnessSessionId));
+        tally.rereadMissing += stale.sessions.filter((session) => !present.has(session.harnessSessionId)).length;
+        for (const file of listed.files) {
+          if (ids.has(file.harnessSessionId)) files.set(file.path, file);
+        }
+      }
+    }
+    changed.push(...files.values());
   }
 
   tally.changed = changed.length;
@@ -205,7 +231,7 @@ export async function scanTranscripts(
 }
 
 function report(
-  tally: { changed: number; enqueued: number; skipped: number },
+  tally: { changed: number; enqueued: number; skipped: number; rereadMissing: number },
   stopped: string | undefined,
 ): ScanTranscriptsReport {
   return stopped === undefined ? { ...tally } : { ...tally, stopped };

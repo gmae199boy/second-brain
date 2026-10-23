@@ -277,6 +277,7 @@ export async function ingestSession(
   if (!found.ok) return unwritable(found.code) ? spooled(found.code) : found;
   const stored = found.session;
 
+  const scannedAt = clock.now();
   const read = await transcripts.read(transcriptPath);
   if (!read.ok) return read;
 
@@ -307,7 +308,7 @@ export async function ingestSession(
         sizeBytes: read.sizeBytes,
         fingerprint: read.fingerprint,
         cursor: parsed.cursor,
-        scannedAt: clock.now(),
+        scannedAt,
         reset: parsed.cursorReset,
       });
     } catch {
@@ -353,7 +354,11 @@ export async function ingestSession(
     warnings: readWarnings,
   };
 
-  if (nothingToStore && !resetToReport) {
+  // A session an older parser version read still goes to the store when the new
+  // rules keep nothing new: the empty batch is what moves `parser_version`, and
+  // without it the scan would queue that session again on every drain.
+  const versionToReport = stored !== null && stored.parserVersion !== parser.version;
+  if (nothingToStore && !resetToReport && !versionToReport) {
     // The history is still written — the file *was* read this far, and a scan
     // that read it again every drain for a session with no conversation yet
     // would be the one case where nothing ever settles.

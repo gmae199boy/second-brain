@@ -124,6 +124,7 @@ describe('brain queue drain', () => {
       replayed: 0,
       spool_failed: 0,
       enqueued: 0,
+      reread_missing: 0,
       claimed: 0,
       completed: 0,
       retried: 0,
@@ -148,6 +149,7 @@ describe('brain queue drain', () => {
     expect(lines[0]).toContain('되넣음 0건');
     expect(lines[0]).toContain('실패로 옮김 0건');
     expect(lines[0]).toContain('새 일감 0건');
+    expect(lines[0]).toContain('다시 못 읽음 0건');
     expect(lines[0]).toContain('청구 0건');
     expect(lines[0]).toContain('할 일이 없습니다');
     // Clause by clause, not line by line: a count with no Korean beside it is

@@ -351,6 +351,11 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       return { ok: true, filled: true, session: { ...session } };
     },
 
+    async listStaleSessions(query) {
+      return { ok: true, sessions: [...sessions.values()]
+        .filter((session) => session.harness === query.harness && session.parserVersion !== query.parserVersion)
+        .map((session) => ({ harnessSessionId: session.harnessSessionId })) };
+    },
     async listIdentityCandidates() {
       return { ok: true, sessions: [...sessions.values()].filter((session) =>
         session.projectId === null && session.firstCwd === null &&
@@ -716,11 +721,10 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         return { ok: true, file: { ...file } };
       }
 
-      // The size only moves forward, and the cursor moves with it: two reads of
-      // a growing file can finish out of order, and the older one must not wind
-      // the history back. A reset is the one case where a smaller file is the
-      // truth — a compacted transcript really is shorter (port contract).
-      if (!input.reset && input.sizeBytes < existing.sizeBytes) {
+      // A smaller size is an older read finishing late, unless this read began
+      // strictly later than the stored one or reset: then the file really is
+      // shorter (port contract, P19). The cursor moves with the size.
+      if (!input.reset && input.sizeBytes < existing.sizeBytes && input.scannedAt.getTime() <= existing.scannedAt.getTime()) {
         return { ok: true, file: { ...existing } };
       }
       existing.sizeBytes = input.sizeBytes;

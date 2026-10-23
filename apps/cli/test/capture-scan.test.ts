@@ -58,6 +58,7 @@ interface DrainData {
   replayed: number;
   spool_failed: number;
   enqueued: number;
+  reread_missing: number;
   claimed: number;
   completed: number;
   failed: number;
@@ -272,6 +273,54 @@ describe('brain queue drain and the transcript folder', () => {
     // Every table holds exactly what it held: a second drain over the same
     // folder adds nothing (AD-8).
     expect(rowCounts(path)).toEqual(after);
+  });
+
+  it('크기가 같은 구버전 세션을 한 번만 다시 읽고 사라진 파일은 센다', async () => {
+    const { home, configDir } = await installed();
+    const file = await transcript(configDir, { project: '-demo-a', sessionId: 'session-aaaa' });
+    const env = environment({ home, configDir });
+    expect((await spawned(['queue', 'drain', '--json'], env)).code).toBe(0);
+    const path = databaseIn(home);
+    const messages = rowCounts(path)['messages'] ?? 0;
+    const current = rows(path, 'sessions')[0]?.['parser_version'];
+    const oldVersion = () => {
+      const db = new DatabaseSync(path);
+      try { db.prepare("update sessions set parser_version = 'old'").run(); } finally { db.close(); }
+    };
+    oldVersion();
+    const first = await spawned(['queue', 'drain', '--json'], env);
+    expect(first.code).toBe(0);
+    expect(envelopeOf<DrainData>(first).data).toMatchObject({ enqueued: 1, reread_missing: 0 });
+    expect(rows(path, 'sessions')[0]?.['parser_version']).toBe(current);
+    expect(rowCounts(path)['messages']).toBeGreaterThanOrEqual(messages);
+    const before = { history: rows(path, 'transcript_files'), work: rows(path, 'work_items') };
+    const second = await spawned(['queue', 'drain', '--json'], env);
+    expect(envelopeOf<DrainData>(second).data).toMatchObject({ enqueued: 0, reread_missing: 0 });
+    expect({ history: rows(path, 'transcript_files'), work: rows(path, 'work_items') }).toEqual(before);
+    oldVersion();
+    await rm(file);
+    const missing = await spawned(['queue', 'drain', '--json'], env);
+    expect(envelopeOf<DrainData>(missing).data).toMatchObject({ enqueued: 0, reread_missing: 1 });
+  });
+
+  it('커서가 남은 채 꼬리가 잘린 파일도 한 번만 다시 읽는다', async () => {
+    const { home, configDir } = await installed();
+    const file = await transcript(configDir, { project: '-demo-a', sessionId: 'session-aaaa' });
+    await appendFile(file, '{"type":"progress"}\n{"type":"progress"}\n');
+    const env = environment({ home, configDir });
+    expect((await spawned(['queue', 'drain', '--json'], env)).code).toBe(0);
+    // 마지막 메시지 뒤의 메타데이터를 없애 커서는 그대로 맞도록 한다.
+    const lines = (await readFile(file, 'utf8')).trimEnd().split('\n');
+    const lastMessage = lines.findLastIndex((line) => {
+      const value = JSON.parse(line) as { type?: string };
+      return value.type === 'user' || value.type === 'assistant';
+    });
+    expect(lastMessage).toBeLessThan(lines.length - 1);
+    await writeFile(file, lines.slice(0, lastMessage + 1).join('\n') + '\n');
+    const first = await spawned(['queue', 'drain', '--json'], env);
+    expect(envelopeOf<DrainData>(first).data).toMatchObject({ enqueued: 1 });
+    const second = await spawned(['queue', 'drain', '--json'], env);
+    expect(envelopeOf<DrainData>(second).data).toMatchObject({ enqueued: 0 });
   });
 
   it('reads only what grew, and leaves a file it may not read alone', async () => {
@@ -532,6 +581,21 @@ describe('a session the drain could not collect', () => {
     expect(envelopeOf<FailuresData>(empty).data?.failures).toEqual([]);
     const all = await spawned(['failures', 'list', '--all', '--json'], capture);
     expect(envelopeOf<FailuresData>(all).data?.failures).toHaveLength(1);
+  });
+
+  it('읽기 권한이 돌아온 뒤 hook 수집이 성공하면 실패를 해소한다', async () => {
+    const { home, configDir } = await installed();
+    const file = await transcript(configDir, { project: '-demo-a', sessionId: 'session-aaaa' });
+    const env = environment({ home, configDir });
+    await chmod(file, 0o000);
+    try {
+      const failed = await spawned(['queue', 'drain', '--json'], env);
+      expect(envelopeOf<DrainData>(failed).data).toMatchObject({ failed: 1 });
+    } finally { await chmod(file, 0o600); }
+    expect((await ingest(env, JSON.stringify({ session_id: 'session-aaaa', transcript_path: file }))).code).toBe(0);
+    const listed = await spawned(['failures', 'list', '--json'], env);
+    expect(envelopeOf<FailuresData>(listed).data?.failures).toEqual([]);
+    expect(rows(databaseIn(home), 'failures')[0]?.['resolved_at']).not.toBe(null);
   });
 
   it('is a warn in doctor while it is unresolved', async () => {

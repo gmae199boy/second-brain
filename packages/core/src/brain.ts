@@ -149,6 +149,11 @@ export interface BrainDrainReport extends DrainQueueReport {
   spoolFailed: number;
   /** `session_ingest` items the folder scan put on the queue (AD-4). */
   enqueued: number;
+  /**
+   * Sessions an older parser version read whose transcript is no longer on the
+   * disk, so the scan could not queue them to be read again (`capture/scan.ts`).
+   */
+  rereadMissing: number;
 }
 
 export interface BrainQueue {
@@ -282,7 +287,23 @@ export function createBrain(dependencies: BrainDependencies): Brain {
         }),
     },
     sessions: {
-      ingest: (input) => ingestSession(ingestDependencies, input),
+      ingest: async (input) => {
+        const result = await ingestSession(ingestDependencies, input);
+        if (result.ok && !result.spooled) {
+          try {
+            const failures = await store.listFailures({ targetKind: 'session', stage: SESSION_INGEST_KIND });
+            if (failures.ok && failures.failures.some((failure) => failure.targetId === input.session)) {
+              await store.resolveFailures({ targetKind: 'session', targetId: input.session,
+                stage: SESSION_INGEST_KIND, now: clock.now() });
+            }
+          } catch {
+            // Dropped, as in the work handler: the collection worked, and a
+            // bookkeeping row that could not be closed must not turn it into a
+            // failed turn. The next success or `failures retry` closes it.
+          }
+        }
+        return result;
+      },
     },
     failures: {
       list: (input) => listFailures({ store }, input),
@@ -291,7 +312,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     queue: {
       drain: (input) =>
         drain(
-          { store, spool, clock, idGen, folders: transcriptFolders, spoolHandlers },
+          { store, spool, clock, idGen, folders: transcriptFolders, parsers, spoolHandlers },
           {
             budgetMs: input.budgetMs,
             handlers: input.handlers === undefined ? handlers : { ...handlers, ...input.handlers },
@@ -309,6 +330,7 @@ interface DrainDependencies {
   clock: Clock;
   idGen: IdGen;
   folders: readonly TranscriptFolder[];
+  parsers: readonly Parser[];
   spoolHandlers: SpoolReplayHandlers;
 }
 
@@ -334,7 +356,7 @@ async function drain(
   dependencies: DrainDependencies,
   input: { budgetMs: number; handlers: WorkHandlers },
 ): Promise<BrainDrainReport> {
-  const { store, spool, clock, idGen, folders, spoolHandlers } = dependencies;
+  const { store, spool, clock, idGen, folders, parsers, spoolHandlers } = dependencies;
   const deadline = clock.now().getTime() + input.budgetMs;
 
   const replay = await replaySpool(
@@ -349,10 +371,11 @@ async function drain(
       replayed: replay.replayed,
       spoolFailed: replay.failed,
       enqueued: 0,
+      rereadMissing: 0,
     };
   }
 
-  const scan = await scanTranscripts({ store, folders, clock, idGen }, { deadline });
+  const scan = await scanTranscripts({ store, folders, parsers, clock, idGen }, { deadline });
 
   const candidates = await store.listIdentityCandidates();
   if (candidates.ok) {
@@ -379,6 +402,7 @@ async function drain(
     replayed: replay.replayed,
     spoolFailed: replay.failed,
     enqueued: scan.enqueued,
+    rereadMissing: queue.stopped === 'unwritable' ? 0 : scan.rereadMissing,
   };
 }
 

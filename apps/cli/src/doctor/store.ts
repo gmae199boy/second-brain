@@ -48,6 +48,7 @@ export function failedConfigStore(message: string): Store & SchemaStore {
       return unavailable;
     },
     async countUntaggedSessions() { return unavailable; },
+    async listStaleSessions() { return unavailable; },
     async listIdentityCandidates() { return unavailable; },
     async findSession() {
       return unavailable;
