@@ -28,11 +28,12 @@ Drive API로 Drive를 직접 다룬다. Drive는 5TB이고 Mac은 512GB라서 Ma
 - E8-2 (CAP-14, 외부 문서 색인 부분): 감시 폴더 목록, 외부 소스 테이블(파일별 마지막 버전, changes 토큰), 문서만 추출, 큰 파일은 메타데이터만, 원본 삭제 시 `source_unreachable`. (AD-23·24·25)
 - E8-3 (CAP-14): 연동 해제. 검색은 계속되고 원본은 접근 불가로 표시하며, Drive 사본은 지우지 않는다.
 - E8-4 (CAP-12, Drive 스냅샷 부분): DB 스냅샷의 Drive 업로드와 새 기계 복구.
+- E8-5 (CAP-14, 형식별 추출 부분): PDF(텍스트 PDF, 조각 locator의 쪽과 `page` 사본)·docx(블록) 추출기. epic-attachments의 추출 일감·형식 판정·`extractor_version` 위에 얹는다(2026-10-22, epic-attachments 인셉션에서 옮겨 옴). (FR-28, AD-24)
 
 ## Done when
 
 1. 연동하면 첨부 원본이 Drive로 옮겨지고, 로컬 사본은 검증 뒤에만 지워진다.
-2. 고른 Drive 폴더의 문서가 Mac에 남지 않은 채 본문으로 검색되고, 결과에 Drive 링크가 붙는다.
+2. 고른 Drive 폴더의 문서(txt·md·텍스트 PDF·docx)가 Mac에 남지 않은 채 본문으로 검색되고, 결과에 Drive 링크가 붙으며, PDF 조각은 쪽을 가진다.
 3. Drive에서 바뀐 문서가 다음 drain(launchd 주기든 데몬이든)에서 반영된다.
 4. 연동 해제 뒤에도 검색되고, 원본은 접근 불가로 표시된다.
 5. 새 Mac에서 Drive 스냅샷으로 복구하면 건수가 같다.
@@ -61,3 +62,4 @@ AD-11·23·24·25. 사용자의 외부 파일은 옮기거나 지우지 않는�
 - Note(2026-10-16, 인셉션 입력): Drive API 오류에 분류 코드를 붙인다. 429·5xx·네트워크는 일시 오류이고 `Retry-After`를 따른다. 403·404·삭제됨은 영구 오류다(spine AD-21 재시도 분류).
 - Note(2026-10-16): Drive 일감 실패의 다시 하기는 `failures retry`에 대상 종류를 더해서 한다(2.12가 명령을 만든다, spine AD-5).
 - Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. Drive로 올리는 DB 스냅샷도 나가는 길이다. 가린 사본을 만들어 올리고, 그것으로 되살린 Brain의 비밀은 가린 채 돌아온다(D6). 첨부 원본 바이트는 가리지 않는다(`files.redact`가 그 길).
+- Decision(2026-10-22, epic-attachments 인셉션, 사용자): PDF·docx 추출기가 epic-attachments에서 이 에픽으로 왔다(E8-5). 한 달 실측에서 사용자가 대화에 붙인 PDF·문서는 0건이고 첫 실사용은 기존 Drive 문서 색인이다. 추출 틀은 epic-attachments가 만든다.
