@@ -25,7 +25,7 @@ id = 3
 slug = "epic-log-and-context"
 title = "작업 로그와 시작 맥락"
 covers = ["CAP-3", "CAP-8", "CAP-9"]
-after = [{ epic = 2, needs = "수집된 메시지(로그의 앞뒤 메시지를 시각으로 읽기, 규칙 인용 대조), 세션 토큰 수집(`log append`의 선수집), spool, drain" }]
+after = [{ epic = 2, needs = "수집된 메시지(로그의 앞뒤 메시지를 시각으로 읽기, 규칙 인용 대조), 세션 토큰 수집(`log append`의 선수집), spool, drain" }, { epic = 10, needs = "병렬로 만들되 순서로 묶는 셋(2026-10-23): 10.2가 정하는 Store·handler·spool record 조립 방식(3.4), 10.6의 마이그레이션 0008 뒤의 0009(3.5), 10.1이 고친 `sessions.ingest`(3.6의 선수집), 10.4 뒤의 최종 parser로 하는 Stop 발화 수 확인(3.12)" }]
 
 [[epic]]
 id = 4

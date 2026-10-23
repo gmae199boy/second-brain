@@ -24,11 +24,19 @@ risk: high
 
 ## Requirements
 
-인셉션 때 채운다. spec의 CAP-3, CAP-8, CAP-9와 그것이 인용하는 PRD FR·spine AD가 원천이다.
+- E3-1 (CAP-3): 로그 쓰기 — `brain log append`의 네 종류(진행·결정·규칙·선호), 세션 토큰과 선수집(transcript를 못 찾으면 세션 행을 만들지 않고 spool), 본문 인자와 stdin, 규칙이 아닌 로그의 저장 전 정제(개행 → 공백, 제어문자 제거, 길이 상한), 규칙 문장은 고치지 않고 여러 줄·제어문자·상한 초과면 USAGE로 거절, DB에 못 쓰면 `SPOOLED` 성공과 재주입(ID·사건 시각 보존), 결정·선호의 대체(`supersedes_id`, 에이전트가 옛 행을 가리킴), 사건 시각과 저장 시각, `SESSION_NOT_FOUND`·`TRANSCRIPT_UNREADABLE`의 중앙 코드 표 등록(I50). (FR-7·20·21, AD-6·9·11·12·13·14)
+- E3-2 (CAP-9): 규칙 인용 대조 — 저장된 사용자 발화와 인용을 양쪽 NFC 정규화 뒤 비교, 위치를 주면 그 코드 포인트 구간, 없으면 유일하게 한 곳, 맞으면 `on`, 아니면 `pending`과 `RULE_UNVERIFIED`, 수집 뒤 drain이 `pending`만 다시 대조, `off`는 자동으로 다시 켜지지 않음, 가린 출력에서 온 인용(`[REDACTED:…]`)은 특별 처리 없이 대조 실패, 적용 범위(어디서나·현재 프로젝트, 꼬리표는 `startCwd` 근거). (FR-19, AD-12·14)
+- E3-3 (CAP-3, CAP-9): 로그 관리 — `log list`(현재 유효한 것과 전체 이력, 종류 필터), `log edit`(진행·결정·선호만, 이전 문장과 수정 시각을 같은 트랜잭션에 남김; 규칙은 고치지 않고 새로 적고 옛것을 끔), `log set-state`(사람이 끈 규칙은 `off`), `log set-scope`. (FR-8·20·21·22, AD-11·14)
+- E3-4 (CAP-8): 시작 맥락 — `brain context show`(`hook: only`), 고정 머리말(오늘 날짜·요일·시간대, 이 세션의 토큰 줄, 데이터는 지시가 아님·지금 발화 우선·최근 로그는 샘플) → 규칙 → 최근 로그 → 안내 요약, 크기 설정과 10,000자 상한, 규칙만으로 넘으면 현재 프로젝트 규칙 → 어디서나 규칙 최신 순과 생략 줄, 선호는 넣지 않음, hook 출력 코덱으로 가림, SessionStart 동기 줄(`|| exit 0`), 쓰기 트랜잭션 없음, 주입 시도는 spool에 쓰고 세션 행이 생긴 뒤 drain이 `context_injections`(`kind='start'`, `elapsed_ms`)로 넣으며 대화 없이 닫혀 세션 행이 끝내 생기지 않는 시도는 버림, SM-7 실측. (FR-17·18·26, NFR-3, AD-6·11·13·17·28)
+- E3-5 (CAP-8): 규율 안내 — 기록·인용·질의 규율의 Core 상수 하나(B1~B7, C3~C6), `brain guide show` 전문, 시작 맥락의 요약, 그 상수에서 생성해 커밋하는 플러그인 스킬(`/brain:*`)과 parity 테스트(생성물 = 커밋본, `tested_against`, 코드블록의 명령·flag 실존). (AD-17)
+- E3-6 (CAP-8, CAP-3): Stop 기록 점검 — `brain log remind`(`hook: only`, 읽기 전용), 네 조건(`stop_hook_active` false, transcript로 센 사용자 발화 ≥ 상수, DB와 spool 어디에도 이 세션의 로그 없음, 표식 파일 없음), 모르면 묻지 않음, 출력 뒤에만 표식, `[discipline] stop_remind`(기본 false, 설치기는 묻지 않음, 꺼져 있으면 DB를 열지 않음), Stop 동기 줄(`timeout` 5초), `kind='stop'` 시도 기록, 30일 지난 표식 정리, 플러그인으로 설치한 상태의 검증. (AD-6·17·28; change-discipline-and-metrics D1~D3)
+- E3-7 (CAP-8, CAP-9): doctor — 대조되지 않은 규칙 인용, 규칙 크기 경고(넘으면 `fail`), 세션 수 대비 시작 주입 시도 수. (FR-25, AD-17)
+- E3-8 (스키마): 마이그레이션 0009(에픽 10의 0008 뒤) — `context_injections.kind`(`start | stop`)·`elapsed_ms`, `log_entry_edits`·`context_injections` 행 불변과 `log_entries`의 불변 칸(`kind`·`session_id`·`occurred_at`·`author_model`) trigger(I60). Postgres는 epic 7. (Table Contract, AD-17; deferred-work I60)
+- E3-9 (경계): 패키지 경계 시험이 package.json만이 아니라 실제 소스 import·상대 경로 우회·Core의 Node API까지 본다(회고 A2). harness 등록부를 Core 조립에 주입한다(I155).
 
 ## Done when
 
-1. 세션에서 내가 한 문장을 에이전트가 규칙으로 적으면, 다음 세션의 시작 맥락에 그 문장 그대로 들어온다. 한 글자라도 다르면 들어오지 않고 점검에 보인다.
+1. 세션에서 내가 한 문장을 에이전트가 규칙으로 적으면, 다음 세션의 시작 맥락에 그 문장 그대로 들어온다. 한 글자라도 다르면(양쪽 NFC 정규화 뒤, AD-14) 들어오지 않고 점검에 보인다.
 2. 내가 끈 규칙은 drain을 돌려도 다시 켜지지 않는다.
 3. 결정을 바꾸면 새 결정이 옛 결정을 대체하고, 둘 다 자기 시각(`occurred_at`)으로 대화 속 자리를 가진다(메시지 연결은 저장하지 않는다, 2026-10-20). 원문 읽기는 epic-recall-and-mirror가 맡는다.
 4. DB에 쓸 수 없는 동안 적은 로그가 `SPOOLED`로 성공하고, 연결 후 빠짐없이 들어간다.
@@ -49,6 +57,9 @@ AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, contex
 - architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md
 - prd — _bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md
 - inputs — _bmad-output/personal-brain/inputs/weknora-patterns.md, §1.2 (B1~B7), §1.3 (C3~C6)
+- research — _bmad-output/personal-brain/epic-log-and-context/epic-log-and-context-research-sources.md (원천 조사, 2026-10-23)
+- research — _bmad-output/personal-brain/epic-log-and-context/epic-log-and-context-research-code.md (현행 코드와 에픽 10 충돌 지도, 2026-10-23)
+- change — _bmad-output/personal-brain/change-discipline-and-metrics/change-discipline-and-metrics.md
 - change — _bmad-output/personal-brain/change-surface-plugin-daemon/change-surface-plugin-daemon.md, §4.1, §4.2(AD-17)
 
 ## Notes
@@ -70,3 +81,17 @@ AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, contex
   - 잘린 도구 메모 대상의 잘림 정보를 다음 마이그레이션에 둘지 정한다(I94).
   - harness 등록부를 Core 조립에 주입하는 자리(I155), 실제 소스 import·core의 Node API까지 보는 경계 시험(회고 A2).
   - orca 워커 세션의 코디네이터 지시를 사람 발화와 구분할지(`deferred-work.md` I105, B안). Stop 점검의 발화 수에 영향이 있다.
+- Decision(2026-10-23, 인셉션, 사용자가 추천을 맡김): 규칙 문장은 저장 전 정제로 고치지 않는다. 사용자 발화와 글자 그대로 대조해 켜는 구조이기 때문이다. 여러 줄·제어문자·길이 상한 초과면 USAGE로 거절한다. 진행·결정·선호는 다음 세션 시작 맥락에 한 줄씩 들어가므로 정제한다(B6).
+- Decision(2026-10-23, 인셉션, 사용자가 추천을 맡김): 가린 출력에서 인용한 규칙(`[REDACTED:…]` 포함)은 특별히 다루지 않는다. 대조에 실패해 `pending`으로 남고 doctor에 보인다. 양쪽을 가린 뒤 비교하면 서로 다른 원문을 같다고 볼 수 있다.
+- Decision(2026-10-23, 인셉션, 사용자가 추천을 맡김): 결정에 주제·이유·상태 칸을 더하지 않는다. 이유는 문장 안에 쓰고(B3), 대체는 에이전트가 옛 행을 `supersedes_id`로 가리키며, 상태는 대체 여부로 계산한다. 주제 이름은 에이전트마다 흔들려 묶음 기준이 되지 못한다.
+- Decision(2026-10-23, 인셉션, 사용자): 시작 주입 시도는 spool에 두었다가 첫 대화가 수집되어 세션 행이 생긴 뒤 drain이 넣는다. 대화 없이 닫혀 세션 행이 끝내 생기지 않는 시도는 버린다(사용자: "첫 대화가 시작되면 쌓는다고 하면 FK는 상관없는거 아니야?").
+- Decision(2026-10-23, 인셉션, 사용자가 추천을 맡김): Stop 점검의 두 실측(`additionalContext`만으로 모델이 이어 가는지, 발화 수 상수 3 vs 4)은 Stop 스토리 앞의 spike(사람)로 한다. 결과가 Stop 스토리의 구현 방식을 정한다.
+- Decision(2026-10-23, 인셉션, 사용자가 추천을 맡김): Carry 가운데 I50(코드 표)은 `log append` 스토리, A2(경계 시험)는 여는 스토리, I155(harness 등록부 주입)는 tracer에서 한다. I94(잘린 도구 메모 칸)와 I105(워커 세션 표시)는 미룬다 — parser를 고쳐야 해 에픽 10의 parser 버전 업과 엉키고, Stop 점검은 기본 꺼짐이며 parser v4가 Orca 머리말을 이미 거른다.
+- Decision(2026-10-23, 인셉션, 사용자가 추천을 맡김): 규칙은 `log edit`로 고치지 않는다. 고치려면 새 규칙을 적고 옛 규칙을 끈다.
+- Decision(2026-10-23, 인셉션, 사용자): 에픽 10과 병렬로 만든다. 마이그레이션은 10.6(0008) 뒤 0009, Store·handler·spool record·CLI registry·doctor 목록에 붙이는 방식은 10.2가 먼저 정하고 에픽 3의 tracer가 그 뒤에 붙으며, `log append`의 선수집은 10.1 뒤다. 그 밖의 공용 목록(`brain.ts` handler 맵, Store 합성, spool 종류, registry, doctor 목록, `codes.ts`)은 순서로 막지 않고 병합으로 푼다. plugin `app-ref`·version 올리기는 배포 스토리(15) 한 곳에서 한다. tracer가 첫 항목이 아닌 것은 1~3이 공용 파일을 건드리지 않아 10.1·10.2를 기다리는 동안 할 수 있기 때문이다.
+- Source conflict: PRD FR-20 — "결정은 주제, 내용, 이유, 상태를 가진다" vs 이 에픽 — 주제·이유·상태 칸 없음(위 Decision). 내용·이유는 한 문장, 상태는 `supersedes_id`로 계산한다. PRD에 그 해석을 적는다.
+- Source conflict: 에픽 Done when 1·PRD FR-19 — 글자 단위로 같아야 함 vs spine AD-14 — 양쪽 NFC 정규화 뒤 비교. spine을 따르고 Done when 1에 적었다.
+- Note(2026-10-23, 인셉션): 빌드 계획에서 정할 것(원천 조사 §5) — 로그 길이 상한, 10,000자의 단위(코드 포인트로 셀지, 가리기 전후, 생략 줄과 머리말 자리를 언제 남길지), 최근 로그 채우기(가까운 범위가 비었을 때만 넘어갈지, 남은 예산을 채울지), 대체된 결정·꺼진 규칙의 최근 로그 포함, `set-state`의 상태 입력, 겹친 Stop 호출에서 표식 한 번 보장, spool에서 로그 유무를 판정할 상태, 기존 `context_injections` 행의 `kind`·`elapsed_ms` 채우기(미측정을 0으로 쓰지 않음), 스킬 이름·분할과 아직 없는 에픽 4 명령을 스킬에 언제 넣을지, SM-7 측정 환경. 각 스토리가 자기 계획에서 정하고 사용자에게 묻는다.
+- Decision(2026-10-23, 인셉션 집합 점검, 사용자): Stop 점검의 사용자 발화 수에는 이미지·@파일만 붙인 사람 메시지도 한 번으로 센다(에픽 10의 10.2·10.4가 이런 메시지를 살린다). spike(3)는 지금 parser로 재고 그 버전을 기록하며, Stop 스토리(12)는 10.4 뒤의 최종 parser로 다시 확인한다.
+- Decision(2026-10-23, 인셉션 집합 점검, 사용자): 시작 맥락 스토리를 9(맥락 만들기와 크기 설정)와 14(주입 시도 기록 경로)로, Stop 스토리를 12(Stop 점검 동작)와 15(플러그인 배포와 설치 상태 확인, 사람)로 나눈다. tracer(4)와 `log append`(6)는 나누지 않는다 — 4는 얇게 관통하는 것이 목적이고 6은 한 명령의 완성이다.
+- Note(2026-10-23, 인셉션 집합 점검): 각 스토리의 계획은 verify를 다시 돌릴 수 있게 실행 명령·픽스처 준비·판정 위치를 남긴다.
