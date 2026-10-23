@@ -27,7 +27,7 @@ it('0007은 기존 꼬리표와 행을 보존하고 근거 불변을 강제한�
                 ('empty','demo','empty','u','demo-machine','2026-01-01T00:00:00.000Z','import',null,null);
       `);
     } finally { db.close(); }
-    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 6, to: 7, applied: ['0007_session_tag_source.sql'] });
+    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 6, to: 8, applied: ['0007_session_tag_source.sql', '0008_attachment_rules.sql'] });
     db = new DatabaseSync(path);
     try {
       expect(db.prepare('select id,project_id,worktree_id,tag_source,first_cwd from sessions order by id').all()).toEqual([

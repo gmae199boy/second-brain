@@ -152,7 +152,7 @@ async function versionFourPath(): Promise<string> {
 /** A fresh file brought up to the version this package ships. */
 async function migratedPath(): Promise<string> {
   const path = join(await scratch(), 'brain.db');
-  expect(await runSqliteMigrations({ path })).toMatchObject({ ok: true, to: 7 });
+  expect(await runSqliteMigrations({ path })).toMatchObject({ ok: true, to: 8 });
   return path;
 }
 
@@ -286,8 +286,8 @@ describe('the upgrade from version 4 to version 6', () => {
     expect(await runSqliteMigrations({ path })).toEqual({
       ok: true,
       from: 4,
-      to: 7,
-      applied: ['0005_identity_and_records.sql', '0006_drop_message_seq.sql', '0007_session_tag_source.sql'],
+      to: 8,
+      applied: ['0005_identity_and_records.sql', '0006_drop_message_seq.sql', '0007_session_tag_source.sql', '0008_attachment_rules.sql'],
     });
 
     connection = open(path);
@@ -358,20 +358,17 @@ describe('the upgrade from version 4 to version 6', () => {
     expect(all(connection, 'select call_id from tool_notes')).toEqual([{ call_id: null }]);
   });
 
-  it('still lets the other columns of an old stageless failed reading be rewritten', () => {
-    // Nothing is taken away, so the trigger has nothing to refuse: a row that
-    // failed before anything recorded a stage must not become unusable.
-    connection.database.exec(
+  it('preserves an old stageless failed reading and freezes it after 0008', () => {
+    const before = all(connection, 'select error, failed_stage from document_extractions');
+    expect(() => connection.database.exec(
       `update document_extractions set error = '다시 적습니다' where id = '${ids.extractionOld}'`,
-    );
-    expect(all(connection, 'select error, failed_stage from document_extractions')).toEqual([
-      { error: '다시 적습니다', failed_stage: null },
-    ]);
+    )).toThrow(/document_extractions is immutable/);
+    expect(all(connection, 'select error, failed_stage from document_extractions')).toEqual(before);
   });
 
   it('applies nothing the second time', async () => {
     const path = await migratedPath();
-    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 7, to: 7, applied: [] });
+    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 8, to: 8, applied: [] });
   });
 
   it('reaches exactly the version the folder holds', async () => {
@@ -379,7 +376,7 @@ describe('the upgrade from version 4 to version 6', () => {
       .map((name) => /^(\d{4})_.+\.sql$/.exec(name))
       .filter((match): match is RegExpExecArray => match !== null)
       .map((match) => Number(match[1]));
-    expect(Math.max(...numbered)).toBe(7);
+    expect(Math.max(...numbered)).toBe(8);
   });
 });
 
@@ -650,7 +647,7 @@ describe('the failed stage of 0005 (AD-24)', () => {
       connection.database.exec(
         `update document_extractions set failed_stage = null where id = '${reading.id}'`,
       ),
-    ).toThrow(/failed_stage is required/);
+    ).toThrow(/document_extractions is immutable/);
 
     expect(
       connection.database
@@ -659,7 +656,7 @@ describe('the failed stage of 0005 (AD-24)', () => {
     ).toEqual({ status: 'failed', failed_stage: 'extract' });
   });
 
-  it('leaves a reading that did not fail alone, whatever is written to it', () => {
+  it('freezes a finished unsupported reading after 0008', () => {
     insert(connection, 'document_extractions', {
       ...reading,
       id: id(503),
@@ -667,14 +664,14 @@ describe('the failed stage of 0005 (AD-24)', () => {
       status: 'unsupported',
       finished_at: LATER,
     });
-    connection.database.exec(
+    expect(() => connection.database.exec(
       `update document_extractions set error = '지원하지 않습니다' where id = '${id(503)}'`,
-    );
+    )).toThrow(/document_extractions is immutable/);
     expect(
       connection.database
         .prepare('select status, error, failed_stage from document_extractions where id = ?')
         .get(id(503)),
-    ).toEqual({ status: 'unsupported', error: '지원하지 않습니다', failed_stage: null });
+    ).toEqual({ status: 'unsupported', error: null, failed_stage: null });
   });
 });
 
@@ -902,8 +899,8 @@ describe('a version 4 database whose projects collide', () => {
     expect(await runSqliteMigrations({ path, mergeProjectKeyCollisions: true })).toEqual({
       ok: true,
       from: 4,
-      to: 7,
-      applied: ['0005_identity_and_records.sql', '0006_drop_message_seq.sql', '0007_session_tag_source.sql'],
+      to: 8,
+      applied: ['0005_identity_and_records.sql', '0006_drop_message_seq.sql', '0007_session_tag_source.sql', '0008_attachment_rules.sql'],
     });
 
     const after = open(path);
@@ -958,7 +955,7 @@ describe('a version 4 database whose projects collide', () => {
     const path = await collided();
     expect(await runSqliteMigrations({ path, mergeProjectKeyCollisions: true })).toMatchObject({
       ok: true,
-      to: 7,
+      to: 8,
     });
 
     // The key is `unique` from here on, so a colliding pair cannot be in it.
@@ -1018,7 +1015,7 @@ describe('a version 4 database whose projects collide', () => {
     // With it, every group collapses to one row and nothing else moves.
     expect(await runSqliteMigrations({ path, mergeProjectKeyCollisions: true })).toMatchObject({
       ok: true,
-      to: 7,
+      to: 8,
     });
     // The survivors, each with the key the *migration file* computed for it.
     // A count would not do: if the file's `case` folded fewer hosts than

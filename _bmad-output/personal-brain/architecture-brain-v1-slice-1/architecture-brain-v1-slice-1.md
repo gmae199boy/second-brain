@@ -262,7 +262,7 @@ sequenceDiagram
 - **Prevents:** 기본 구성에서 소분류 검색이 빈 결과를 성공으로 돌려주는 것, 색인 설정이 섞인 검색, 결과 형태가 단위마다 달라지는 것
 - **Rule:**
   - **조각은 항상 만든다.** 조각 규칙(목표 1,200자, 메시지 경계, 인접 겹침 1메시지, 2,400자 넘는 메시지는 분할, 머리말 없음)은 `index_configs`에 기록된 값을 따른다.
-  - 기본 검색은 키워드다. `chunks.body`, `log_entries.text`, `tool_notes.target`에 FTS5 `trigram` 색인을 둔다(부분 일치, 대소문자 무시). 문서 조각(`document_chunks.body`)과 파일 경로·이름(`files`의 경로 텍스트)도 같은 키워드 색인 대상이다(AD-24). FTS 행은 원본 행을 쓰는 같은 트랜잭션에서 adapter가 함께 쓴다. 질의는 Core의 함수 하나가 만든다: `"`를 이스케이프하고 전체를 하나의 구절로 감싸므로 FTS 연산자는 글자 그대로다. 구절 안 연속 글자가 3자 미만이면 `LIKE` 순차 검색이다(개인 규모에서 허용). 계약 테스트에 공백 든 질의, `a-b`, `AND`, `"`를 넣는다.
+  - 기본 검색은 키워드다. `chunks.body`, `log_entries.text`, `tool_notes.target`에 FTS5 `trigram` 색인을 둔다(부분 일치, 대소문자 무시). 문서 조각(`document_chunks.body`)과 파일 경로·이름(`file_names.text`와 이름 FTS)도 같은 키워드 색인 대상이다(AD-24). FTS 행은 원본 행을 쓰는 같은 트랜잭션에서 adapter가 함께 쓴다. 질의는 Core의 함수 하나가 만든다: `"`를 이스케이프하고 전체를 하나의 구절로 감싸므로 FTS 연산자는 글자 그대로다. 구절 안 연속 글자가 3자 미만이면 `LIKE` 순차 검색이다(개인 규모에서 허용). 계약 테스트에 공백 든 질의, `a-b`, `AND`, `"`를 넣는다.
   - 색인(조각·FTS·임베딩 대상)은 원문 위에 만든다. 결과는 엔벨로프 코덱에서 가려지므로(AD-11), 비밀 값으로 검색하면 맞는 행이 나오되 값은 가려진다(이 기계 안의 일이라 허용, 2026-10-19). 임베딩·재순위로 보내는 텍스트는 가린 텍스트다.
   - 한국어·영어 교차는 에이전트가 질의를 바꿔 다시 찾는 것으로 충족한다. 그 방법은 시작 맥락 안내에 넣는다.
   - 임베딩·재순위는 port 뒤의 선택 색인이고 **slice 1 기본값은 꺼짐**이다. 켜는 경우:
@@ -440,11 +440,11 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `transcript_files` | `(harness, path)` | drain(폴더 스캔)과 성공한 모든 `sessions.ingest`(hook 경로 포함, 2026-10-19 story 12 Decision 2) | 크기·fingerprint·커서 단조. 단 `cursorReset`인 parse는 줄어든 크기도 쓴다(compact) |
 | `files` | `content_hash` | 첨부 수집(epic 10), 소스 동기화(epic 8) | 내용 불변. `home`, `current_extraction_id`, `redacted_at`(`files.redact`), `source_unreachable_at`(복구·연동 해제)만 바뀜 |
 | `file_locations` | `(file_id, store_kind, locator)` | 파일 저장·이전 함수, 소스 동기화 | `ownership` 불변. 검증 시각·삭제 시각만 채움 |
-| `message_attachments` | `(message_id, ordinal)` | `sessions.ingest` | 자리·출처 불변. `file_id`·상태는 수집이 한 번 채움 |
-| `document_extractions` | `id`, `(file_id, attempt)`. `attempt`는 Store가 삽입 트랜잭션에서 `max+1` 배정. 파일당 진행 중(`finished_at` null) 세대는 하나 | drain(추출) | 상태·`failed_stage`만 진행. 내보내기에 포함 |
-| `document_chunks` | `(extraction_id, ordinal)`. 조각마다 `chunk_locator`(JSON, Core 정규형), `page`는 그 사본 | drain(추출) | 세대 교체·가리기로만 지움. 내보내기에 포함 |
-| `file_names` | `(file_id, name_source, text)` | drain | 파생, 다시 만들 수 있음 |
-| `file_metadata` | `(file_id, key)` | drain(추출) | 파생 |
+| `message_attachments` | `(message_id, ordinal)` | `sessions.ingest` | 자리·출처 불변, 삭제 거부. `file_id`·상태는 수집이 한 번 채움. `missing_at_ingest`도 확정 기록(0008) |
+| `document_extractions` | `id`, `(file_id, attempt)`. `attempt`는 Store가 삽입 트랜잭션에서 `max+1` 배정. 파일당 진행 중(`finished_at` null) 세대는 하나 | drain(추출) | 열린 세대만 `finished_at`·`status`·`error`·`failed_stage`·`media_type`·`index_config_id`를 닫으며 채움, 닫힌 뒤 불변(0008). 내보내기에 포함 |
+| `document_chunks` | `(extraction_id, ordinal)`. 조각마다 `chunk_locator`(JSON, Core 정규형), `page`는 그 사본 | drain(추출) | 실패 세대 정리·세대 교체(포인터 이동 뒤)·가리기로만 지움(0008). 내보내기에 포함 |
+| `file_names` | `(file_id, name_source, text)` | drain | 파생, 다시 만들 수 있음. 가린 파일에는 쓰지 않음(0008) |
+| `file_metadata` | `(file_id, key)` | drain(추출) | 파생. 가린 파일에는 쓰지 않음(0008) |
 | `work_items` | 미완료 행의 `(kind, target_kind, target_id)` | 일감을 만드는 경로(수집·가리기·로그), drain | 청구·시도·완료 컬럼만 drain이 바꿈. 완료 행은 정리할 수 있음 |
 | `schema_version` | 단일 행 | `setup run`, `setup upgrade` | 마이그레이션만 |
 
