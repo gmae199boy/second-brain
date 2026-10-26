@@ -90,3 +90,10 @@ graphify-out/
 
 # BMad rendered skill snapshots (regenerated on each run)
 _bmad/render/
+.bmad-loop/runs/
+.bmad-loop/cache/
+.bmad-loop/policy.toml
+# bmad-loop local wiring (hooks and links carry home-folder paths)
+.claude/settings.json
+.claude/skills/bmad-build-auto
+.claude/skills/bmad-review
