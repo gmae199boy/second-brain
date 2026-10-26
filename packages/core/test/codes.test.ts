@@ -81,6 +81,7 @@ describe('the error codes', () => {
       DB_LOCKED: 1,
       MESSAGE_NOT_FOUND: 1,
       REDACT_TEXT_NOT_FOUND: 1,
+      FILE_NOT_FOUND: 1,
       SCHEMA_MISMATCH: 1,
       MIGRATION_FAILED: 1,
       FILES_UNAVAILABLE: 1,

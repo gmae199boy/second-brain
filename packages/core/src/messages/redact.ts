@@ -19,6 +19,14 @@ export interface MessagesRedactData {
   toolNotesChanged: number;
   chunksRemoved: number;
   patternVersion: string | null;
+  /**
+   * Attachments of this message that are stored files nobody has masked.
+   *
+   * Above zero the caller warns `ATTACHMENT_NOT_REDACTED`: a secret taken out
+   * of a message says nothing about the bytes that message carried, and
+   * `files redact` is what removes those (마스킹 B, AD-23).
+   */
+  unredactedAttachments: number;
 }
 export type MessagesRedactResult = ({ ok: true } & MessagesRedactData) | ({ ok: false } & Failure);
 
@@ -50,5 +58,6 @@ export async function redactMessage(
   if (!result.ok) return result;
   return { ok: true, messageId: input.message, bodySpans: result.bodySpans,
     toolNoteSpans: result.toolNoteSpans, toolNotesChanged: result.toolNotesChanged,
-    chunksRemoved: result.chunksRemoved, patternVersion: input.detected === true ? SECRET_PATTERN_VERSION : null };
+    chunksRemoved: result.chunksRemoved, patternVersion: input.detected === true ? SECRET_PATTERN_VERSION : null,
+    unredactedAttachments: result.unredactedAttachments };
 }

@@ -117,3 +117,14 @@ export type {
   SetFileSourceUnreachableInput,
   SetFileSourceUnreachableResult,
 } from './store.js';
+
+// Masking one whole file: which file, who shares it, and what the masking does.
+export type {
+  FileRef,
+  ListRedactedContentHashesResult,
+  ReadFileSharingResult,
+  RedactFileCurrent,
+  RedactFileInput,
+  RedactFilePlan,
+  RedactFileResult,
+} from './store.js';

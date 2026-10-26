@@ -89,6 +89,7 @@ export {
   type BrainDependencies,
   type BrainDrainReport,
   type BrainFailures,
+  type BrainFiles,
   type BrainQueue,
   type BrainQueueDrainInput,
   type BrainSessions,
@@ -166,6 +167,19 @@ export {
 export { SESSION_IDENTITY_KIND, REPOSITORY_UNANSWERED, sessionIdentityHandler, type SessionIdentityWorkDependencies } from './capture/session-identity-work.js';
 
 export { redactMessage, checkMessagesRedact, type MessagesRedactInput, type MessagesRedactData, type MessagesRedactResult } from './messages/redact.js';
+
+/** Taking one stored file out of the brain: the check, the verb, the plan (AD-23). */
+export {
+  FILE_REDACTION_KIND,
+  FILE_REDACTION_RESOLVES,
+  checkFilesRedact,
+  planFileRedaction,
+  redactFile,
+  type FilesRedactData,
+  type FilesRedactDependencies,
+  type FilesRedactInput,
+  type FilesRedactResult,
+} from './files/redact.js';
 
 export { errorLine, describeError } from './error-text.js';
 

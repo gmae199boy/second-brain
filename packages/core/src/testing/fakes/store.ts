@@ -14,6 +14,7 @@ import {
 import type { ToolNote } from '../../domain/tool-note.js';
 import type { DocumentChunk, DocumentExtraction, DocumentExtractionFailedStage } from '../../domain/document.js';
 import { checkExtractionChunkBatch } from '../../files/extraction-chunks.js';
+import { FILE_REDACTION_RESOLVES } from '../../files/redact.js';
 import type { User } from '../../domain/user.js';
 import type { Failure } from '../../domain/failure.js';
 import type { TranscriptFile } from '../../domain/transcript-file.js';
@@ -94,9 +95,9 @@ export interface MemoryStoreSnapshot {
   messages: readonly Message[];
   toolNotes: readonly ToolNote[];
   /**
-   * One row per masked span that was written, in the order it went in (AD-11).
-   *
-   * Written only by messages.redact; ingest never creates these records.
+   * One row per masking that was written, in the order it went in (AD-11): the
+   * spans of `messages.redact` first, then the whole-file records of
+   * `files.redact`. Ingest never creates either.
    */
   redactions: readonly Redaction[];
   /** The queue, in the order rows were added (AD-21). */
@@ -196,6 +197,19 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
    * `on conflict (file_id, store_kind, locator) do nothing` of the adapter does.
    */
   const fileLocationRows: FileLocationRow[] = [];
+  /**
+   * `files.redacted_at` by file id, and the whole-file `redactions` records.
+   *
+   * The records are a list of their own and not in the per-session map above,
+   * because a file masking belongs to no session: the same content can hang off
+   * messages of five of them (`files/redact.ts`).
+   */
+  const fileRedactedAt = new Map<string, Date>();
+  const fileRedactions: Redaction[] = [];
+  /** Whether this file has been masked, which is the column every guard reads. */
+  function fileRedacted(fileId: string): boolean {
+    return fileRedactedAt.has(fileId);
+  }
   function link(rows: readonly IngestAttachment[], held: readonly Message[]): number {
     let linked = 0;
     for (const a of rows) {
@@ -460,8 +474,11 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         messages.set(token, rows.map((row) => row.id === message.id ? { ...row, body: plan.body } : row));
         toolNotes.set(token, notes.map((note) => ({ ...note, target: changed.get(note.id) ?? note.target })));
         redactions.set(token, records);
+        const unredactedAttachments = (attachmentRows.get(message.id) ?? [])
+          .filter((row) => row.status === 'stored' && row.file !== null && !fileRedacted(row.file.id)).length;
         return { ok: true, sessionId: message.sessionId, bodySpans: plan.bodySpans,
-          toolNoteSpans: plan.toolNoteSpans, toolNotesChanged: plan.toolNotes.length, chunksRemoved: 0 };
+          toolNoteSpans: plan.toolNoteSpans, toolNotesChanged: plan.toolNotes.length, chunksRemoved: 0,
+          unredactedAttachments };
       }
       return { ok: false, code: 'MESSAGE_NOT_FOUND', message: '지정한 메시지가 없습니다' };
     },
@@ -505,18 +522,26 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       const add = (fileId: string, nameSource: 'attachment_name' | 'location_path', text: string) => {
         if (![...fileNames, ...names].some(n => n.fileId === fileId && n.nameSource === nameSource && n.text === text)) names.push({ fileId, nameSource, text });
       };
+      // A masked file never gets a name back (0008's triggers, said here as the
+      // candidate never being offered).
       for (const rows of attachmentRows.values()) for (const a of rows) {
-        if (a.file === null) continue;
+        if (a.file === null || fileRedacted(a.file.id)) continue;
         if (a.displayName !== null) add(a.file.id, 'attachment_name', a.displayName);
       }
-      for (const file of fileRows.values()) for (const l of file.locations) {
-        if (l.storeKind === 'local' && l.ownership === 'external') add(file.id, 'location_path', l.locator);
+      for (const file of fileRows.values()) {
+        if (fileRedacted(file.id)) continue;
+        for (const l of file.locations) {
+          if (l.storeKind === 'local' && l.ownership === 'external') add(file.id, 'location_path', l.locator);
+        }
       }
       return { ok: true, names: names.slice(0, limit) };
     },
     async writeFileNames({ names }) {
       let inserted = 0;
       for (const name of names) {
+        // Skipped and not refused, exactly as the adapter's `insert … select …
+        // where redacted_at is null` writes no row and counts none.
+        if (fileRedacted(name.fileId)) continue;
         if (fileNames.some(n => n.fileId === name.fileId && n.nameSource === name.nameSource && n.text === name.text)) continue;
         fileNames.push({ ...name });
         inserted++;
@@ -549,6 +574,83 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       if (row.deletedAt !== null) return { ok: true, deletedAt: row.deletedAt, marked: false };
       row.deletedAt = deletedAt;
       return { ok: true, deletedAt, marked: true };
+    },
+    async readFileSharing(ref) {
+      const file = 'fileId' in ref
+        ? fileById(ref.fileId)
+        : fileRows.get(ref.contentHash);
+      if (file === undefined) return { ok: false, code: 'FILE_NOT_FOUND', message: '지정한 파일이 없습니다' };
+      // Distinct messages: the same file twice on one message is one
+      // conversation that loses it.
+      const messages = [...attachmentRows.entries()]
+        .filter(([, rows]) => rows.some((row) => row.file?.id === file.id)).length;
+      return { ok: true, file: { id: file.id, contentHash: file.contentHash,
+        redactedAt: fileRedactedAt.get(file.id) ?? null }, messages };
+    },
+    async listRedactedContentHashes(hashes) {
+      const wanted = new Set(hashes);
+      return { ok: true, hashes: [...fileRows.values()]
+        .filter((file) => wanted.has(file.contentHash) && fileRedacted(file.id))
+        .map((file) => file.contentHash) };
+    },
+    async redactFile(input) {
+      const file = fileById(input.fileId);
+      if (file === undefined) return { ok: false, code: 'FILE_NOT_FOUND', message: '지정한 파일이 없습니다' };
+      const redactedAt = fileRedactedAt.get(file.id) ?? null;
+      const plan = input.plan({
+        file: { id: file.id, contentHash: file.contentHash, redactedAt },
+        locations: fileLocationRows.filter((row) => row.fileId === file.id).map((row) => ({ ...row })),
+      });
+      const record = redactedAt === null ? plan.redaction : null;
+      let extractionsRemoved = 0;
+      let chunksRemoved = 0;
+      let namesRemoved = 0;
+      let failuresResolved = 0;
+      if (record !== null) {
+        fileRedactedAt.set(file.id, record.occurredAt);
+        currentExtractions.delete(file.id);
+        // The closed generations go with their pieces; the open one keeps its
+        // row and loses its pieces, so its worker's own `finishExtraction`
+        // closes it `redacted` (port contract).
+        for (const extraction of extractions.filter((row) => row.fileId === file.id)) {
+          chunksRemoved += chunksOf(extraction.id).length;
+          documentChunks.set(extraction.id, []);
+          if (extraction.finishedAt !== null) {
+            documentChunks.delete(extraction.id);
+            extractions.splice(extractions.indexOf(extraction), 1);
+            extractionsRemoved += 1;
+          }
+        }
+        for (const name of fileNames.filter((row) => row.fileId === file.id)) {
+          fileNames.splice(fileNames.indexOf(name), 1);
+          namesRemoved += 1;
+        }
+        fileRedactions.push({ ...record });
+        for (const failure of failures) {
+          if (failure.targetKind !== FILE_REDACTION_RESOLVES.targetKind) continue;
+          if (failure.targetId !== file.id || failure.stage !== FILE_REDACTION_RESOLVES.stage) continue;
+          if (failure.resolvedAt !== null) continue;
+          failure.resolvedAt = record.occurredAt;
+          failuresResolved += 1;
+        }
+      }
+      for (const work of plan.work) addWork(work);
+      const messages = [...attachmentRows.entries()]
+        .filter(([, rows]) => rows.some((row) => row.file?.id === file.id)).length;
+      return {
+        ok: true,
+        fileId: file.id,
+        contentHash: file.contentHash,
+        messages,
+        alreadyRedacted: redactedAt !== null,
+        extractionsRemoved,
+        chunksRemoved,
+        namesRemoved,
+        // This fake holds no `file_metadata`, so there is never a row to take.
+        metadataRemoved: 0,
+        blobDeletesQueued: plan.work.length,
+        failuresResolved,
+      };
     },
     async listMessageAttachments(messageId) {
       return { ok: true, attachments: (attachmentRows.get(messageId) ?? []).slice().sort((a,b) => a.ordinal - b.ordinal).map(a => ({ ...a, file: a.file === null ? null : { ...a.file, locations: a.file.locations.map(l => ({ ...l })), home: a.file.home === null ? null : { ...a.file.home } } })) };
@@ -734,9 +836,11 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       if (fileById(input.fileId) === undefined) {
         return { ok: false, code: 'FILE_NOT_FOUND', message: '파일이 없습니다' };
       }
-      // No `FILE_REDACTED` here: this fake has no file redaction, so
-      // `redactedAt` is always null and that case belongs to the adapters whose
-      // database carries the column (port contract).
+      // A masked file never gets another generation, which is half of why
+      // `attempt` cannot go backwards (port contract).
+      if (fileRedacted(input.fileId)) {
+        return { ok: false, code: 'FILE_REDACTED', message: '가린 파일은 다시 읽지 않습니다' };
+      }
       if (!holdsExtractionClaim(input)) {
         return { ok: false, code: 'CLAIM_LOST', message: '추출 청구가 더 이상 이 호출자의 것이 아닙니다' };
       }
@@ -793,7 +897,9 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       if (extraction.finishedAt !== null) {
         return { ok: false, code: 'EXTRACTION_CLOSED', message: '추출 세대가 이미 닫혔습니다' };
       }
-      // `FILE_REDACTED` is the adapters': see `beginExtraction`.
+      if (fileRedacted(extraction.fileId)) {
+        return { ok: false, code: 'FILE_REDACTED', message: '가린 파일의 조각은 쓰지 않습니다' };
+      }
       const held = chunksOf(input.extractionId);
       const checked = checkExtractionChunkBatch(input.chunks, {
         ordinals: new Set(held.map((chunk) => chunk.ordinal)),
@@ -838,13 +944,15 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       const { outcome } = input;
       const pointer = currentExtractions.get(extraction.fileId) ?? null;
       const currentAttempt = pointer === null ? 0 : (extractionById(pointer)?.attempt ?? 0);
-      // The pointer may only move forward, so a successful reading replaces the
-      // current one only when its own attempt is the higher of the two. A
-      // redacted file never gets here in this fake (`beginExtraction`).
-      const replaces = outcome.status === 'ok' && extraction.attempt > currentAttempt;
+      const redacted = fileRedacted(extraction.fileId);
+      // The pointer may only move forward, and never onto a reading of a file
+      // somebody masked while it ran (AD-24).
+      const replaces = outcome.status === 'ok' && !redacted && extraction.attempt > currentAttempt;
 
       extraction.finishedAt = input.finishedAt;
-      extraction.status = outcome.status;
+      // A successful reading of a file that was masked while it ran is a
+      // reading whose text may not be kept, and `redacted` says so.
+      extraction.status = outcome.status === 'ok' && redacted ? 'redacted' : outcome.status;
       extraction.mediaType = outcome.mediaType;
       extraction.error = outcome.status === 'ok' ? null : outcome.error;
       extraction.failedStage = outcome.status === 'failed' ? outcome.failedStage : null;
@@ -896,8 +1004,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         contentHash: file.contentHash,
         sizeBytes: file.sizeBytes,
         home: file.home === null ? null : { ...file.home },
-        // This fake has no file redaction (port contract).
-        redactedAt: null,
+        redactedAt: fileRedactedAt.get(fileId) ?? null,
         sourceUnreachableAt: sourceUnreachableAt.get(fileId) ?? null,
         currentExtractionId: currentExtractions.get(fileId) ?? null,
         openExtraction: open === undefined ? null : { ...open },
@@ -915,13 +1022,13 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     }: {
       limit: number;
     }): Promise<ListFilesAwaitingExtractionResult> {
-      // Bytes to read, in reach, and no generation of any outcome: the queue's
-      // input of `files/extract-work.ts`. This fake has no file redaction, so
-      // that half of the question is the adapters' (port contract).
+      // Bytes to read, in reach, not masked, and no generation of any outcome:
+      // the queue's input of `files/extract-work.ts`.
       const fileIds = [...fileRows.values()]
         .filter(
           (file) =>
             file.home !== null &&
+            !fileRedacted(file.id) &&
             !sourceUnreachableAt.has(file.id) &&
             !extractions.some((extraction) => extraction.fileId === file.id),
         )
@@ -954,17 +1061,19 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         );
       });
       const fileIds = behind
-        .filter((file) => file.home !== null && !sourceUnreachableAt.has(file.id))
+        .filter((file) => file.home !== null && !fileRedacted(file.id) && !sourceUnreachableAt.has(file.id))
         .map((file) => file.id)
         .sort((left, right) => left.localeCompare(right))
         .slice(0, limit);
       return {
         ok: true,
         fileIds,
-        // This fake has no file redaction, so that count is always zero and the
-        // adapters answer it beside their own column (port contract).
-        redacted: 0,
-        sourceUnreachable: behind.filter((file) => sourceUnreachableAt.has(file.id)).length,
+        redacted: behind.filter((file) => fileRedacted(file.id)).length,
+        // The masked ones are counted above and not again here, which is the
+        // adapter's `redacted_at is null and source_unreachable_at is not null`.
+        sourceUnreachable: behind.filter(
+          (file) => !fileRedacted(file.id) && sourceUnreachableAt.has(file.id),
+        ).length,
       };
     },
 
@@ -1189,7 +1298,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         sessions: [...sessions.values()],
         messages: [...messages.values()].flat(),
         toolNotes: [...toolNotes.values()].flat().map(plainToolNote),
-        redactions: [...redactions.values()].flat(),
+        redactions: [...[...redactions.values()].flat(), ...fileRedactions],
         workItems: workItems.map((item) => ({ ...item })),
         failures: failures.map((failure) => ({ ...failure })),
         transcriptFiles: [...transcriptFiles.values()].map((file) => ({ ...file })),

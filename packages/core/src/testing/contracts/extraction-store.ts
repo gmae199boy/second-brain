@@ -32,9 +32,11 @@ import { sequenceIdGen } from '../fakes/id-gen.js';
  * are made here through the verbs that really make them — a case that reached
  * around them would be proving something about a fixture (Code Map).
  *
- * Nothing in here asks about a redacted file: only an adapter with the column
- * can be held to `FILE_REDACTED`, and the in-memory fake has no file redaction
- * (port contract). The adapters test it beside their own schema.
+ * Nothing in here asks about a redacted file, and not because an adapter could
+ * not answer: every one of them can, the in-memory fake included. Masking a
+ * file is `redactFile`'s, and the cases that hold the two capabilities together
+ * — the open generation that loses its pieces, the `FILE_REDACTED` its worker
+ * then meets, the `redacted` it closes with — live in `file-redaction.ts`.
  */
 export type ExtractionStoreSubject = ExtractionStore &
   AttachmentStore &

@@ -1,5 +1,5 @@
 import type { SourceFileReader } from '../ports/source-file.js';
-import { contentHashOfBytes, externalLocator } from '../domain/file.js';
+import { brainLocator, contentHashOfBytes, externalLocator } from '../domain/file.js';
 import type { FileStore } from '../ports/file-store.js';
 import type {
   IngestBatch,
@@ -130,7 +130,10 @@ export const MAX_SOURCE_FILE_BYTES = 32 * 1024 * 1024;
 export interface IngestSessionDependencies {
   sources?: SourceFileReader;
   userHome?: string | null;
-  store: SessionStore & UserStore & TranscriptFileStore & Pick<AttachmentStore, 'listMessageAttachments'>;
+  store: SessionStore &
+    UserStore &
+    TranscriptFileStore &
+    Pick<AttachmentStore, 'listMessageAttachments' | 'listRedactedContentHashes'>;
   /** Original attachment bytes, written before the database transaction. */
   files: FileStore;
   /**
@@ -399,6 +402,9 @@ export async function ingestSession(
   const attachments: IngestAttachment[] = [...attachmentOverrides];
   const saved = new Map<string, Extract<Awaited<ReturnType<FileStore['put']>>, { ok: true }>>();
   const existing = await existingAttachmentPositions(store, input.session, stored !== null ? parsed.attachments : []);
+  // The bytes are resolved first and stored second, so the hashes of a whole
+  // turn can be asked about in one read before any blob is written.
+  const pending: { attachment: ParsedAttachment; bytes: Uint8Array | null; hash: string | null }[] = [];
   for (const a of parsed.attachments) {
     if (attachmentOverrides.some(saved => saved.harnessMessageId === a.harnessMessageId && saved.ordinal === a.ordinal)) continue;
     // A place that is already filled is final (0008): reading the source again
@@ -414,18 +420,43 @@ export async function ingestSession(
         if (matches) bytes = source.bytes;
       }
     }
+    pending.push({ attachment: a, bytes, hash: bytes === null ? null : contentHashOfBytes(bytes) });
+  }
+  // The file store is content addressed, so putting the same bytes again would
+  // write the blob a masking deleted straight back to the locator whose row
+  // says the bytes are gone — and the row would stay marked deleted, so nothing
+  // would ever look for the new blob again (story 11's remaining risk). One
+  // lock-free read before any put is what stops that. A read that fails stores
+  // as before: a collection must not be lost because this question could not be
+  // answered, and that is the risk this leaves standing.
+  const hashes = [...new Set(pending.flatMap(p => p.hash === null ? [] : [p.hash]))];
+  const redacted = new Set<string>();
+  if (hashes.length > 0) {
+    const read = await store.listRedactedContentHashes(hashes);
+    if (read.ok) for (const hash of read.hashes) redacted.add(hash);
+  }
+  for (const { attachment: a, bytes, hash } of pending) {
     const base = { id: idGen.next(), harnessMessageId: a.harnessMessageId, ordinal: a.ordinal,
       sourceKind: a.sourceKind, sourceRef: a.sourceRef, displayName: a.displayName };
-    if (bytes === null) {
+    if (bytes === null || hash === null) {
       attachments.push({ ...base, file: null });
       continue;
     }
-    const hash = contentHashOfBytes(bytes);
     let put = saved.get(hash);
     if (put === undefined) {
-      const result = await files.put(bytes);
-      if (!result.ok) return result;
-      put = result;
+      if (redacted.has(hash)) {
+        // No `put`, and the rows go in as they always do: the attachment is a
+        // fact about the conversation, and it points at the masked file. The
+        // locator is the one the store would have answered with — it is the
+        // content hash spelled as a path — so the `on conflict do nothing` of
+        // the adapter meets the row that is already there (`domain/file.ts`).
+        put = { ok: true, contentHash: hash, sizeBytes: bytes.length,
+          location: { storeKind: 'local', ownership: 'brain', locator: brainLocator(hash.slice(7), bytes) } };
+      } else {
+        const result = await files.put(bytes);
+        if (!result.ok) return result;
+        put = result;
+      }
       saved.set(hash, put);
     }
     const locator = a.sourcePath === null || userHome === null ? null : externalLocator(a.sourcePath, userHome);

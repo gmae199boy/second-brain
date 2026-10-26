@@ -1,5 +1,5 @@
 import { withWrite } from '../src/write.js';
-import { attachmentStoreContract } from '@second-brain/core/testing';
+import { attachmentStoreContract, fileRedactionContract } from '@second-brain/core/testing';
 import { projectIdentityKey } from '@second-brain/core';
 import { PROJECT_IDENTITY_KEY_SQL } from '../src/project-keys.js';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -739,6 +739,10 @@ describe('Core and SQLite project comparison parity', () => {
 
 describe('SQLite 첨부 계약', () => {
   for (const c of attachmentStoreContract()) it(c.name, () => c.run(async () => sqliteStore({ path: await migratedPath() })));
+});
+
+describe('SQLite 파일 가리기 계약', () => {
+  for (const c of fileRedactionContract()) it(c.name, () => c.run(async () => sqliteStore({ path: await migratedPath() })));
 });
 
 it('첨부 테이블을 읽을 수 없으면 예외 대신 DB_UNAVAILABLE을 돌려준다', async () => {

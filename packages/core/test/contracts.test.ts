@@ -1,4 +1,4 @@
-import { attachmentStoreContract, extractionStoreContract, fileStoreContract, memoryFileStore } from '../src/testing/index.js';
+import { attachmentStoreContract, extractionStoreContract, fileRedactionContract, fileStoreContract, memoryFileStore } from '../src/testing/index.js';
 import { describe, expect, it } from 'vitest';
 import {
   formatSessionToken,
@@ -1408,6 +1408,10 @@ describe('파일과 첨부 계약', () => {
 
 describe('추출 세대 계약', () => {
   for (const c of extractionStoreContract()) it(c.name, () => c.run(async () => memoryStore()));
+});
+
+describe('파일 가리기 계약', () => {
+  for (const c of fileRedactionContract()) it(c.name, () => c.run(async () => memoryStore()));
 });
 
 describe('추출 세대 계약의 음성 가짜', () => {

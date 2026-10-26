@@ -1,7 +1,23 @@
-import type { AttachmentStore, FileLocationRow, IngestAttachment, MessageAttachment, FileName, MissingFileName } from '@second-brain/core';
+import {
+  FILE_REDACTION_RESOLVES,
+  formatInstant,
+  parseInstant,
+  type AttachmentStore,
+  type FileLocationRow,
+  type FileName,
+  type FileRef,
+  type IngestAttachment,
+  type ListRedactedContentHashesResult,
+  type MessageAttachment,
+  type MissingFileName,
+  type ReadFileSharingResult,
+  type RedactFileInput,
+  type RedactFileResult,
+} from '@second-brain/core';
 import { sql, type Kysely } from 'kysely';
 import type { SqliteSchema } from './driver.js';
 import { describe, type SqliteConnect } from './connect.js';
+import { ensureWork } from './work.js';
 import { withWrite } from './write.js';
 
 /** Shared by ingest and replay; every statement uses the held transaction. */
@@ -44,6 +60,26 @@ interface FileLocationColumns {
 
 function fileLocationRow(row: FileLocationColumns): FileLocationRow {
   return { ...row, deletedAt: row.deletedAt === null ? null : new Date(row.deletedAt) };
+}
+
+/** An instant as the column holds it. A caller's bad instant is a bug (AD-13). */
+function instant(value: Date, column: string): string {
+  const formatted = formatInstant(value);
+  if (!formatted.ok) throw new TypeError(`${column} cannot hold this instant: ${formatted.message}`);
+  return formatted.value;
+}
+
+/** The other direction. A row holding anything else was not written by us. */
+function at(value: string, column: string): Date {
+  const parsed = parseInstant(value);
+  if (!parsed.ok) throw new Error(`${column}을 읽을 수 없습니다: ${parsed.message}`);
+  return parsed.value;
+}
+
+/** The `where` that picks one file by id or by content hash (`FileRef`). */
+function fileWhere(ref: FileRef, alias: string): ReturnType<typeof sql> {
+  const column = sql.ref(`${alias}.${'fileId' in ref ? 'id' : 'content_hash'}`);
+  return sql`${column} = ${'fileId' in ref ? ref.fileId : ref.contentHash}`;
 }
 
 export function sqliteAttachmentStore(connect: SqliteConnect): AttachmentStore {
@@ -133,6 +169,165 @@ export function sqliteAttachmentStore(connect: SqliteConnect): AttachmentStore {
         return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 위치를 표시할 수 없습니다: ${describe(error)}` };
       }
       return result.ok ? result.value : result;
+    },
+    async readFileSharing(ref: FileRef): Promise<ReadFileSharingResult> {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        // One statement, because the port says this is one read: the count a
+        // confirmation message is built from must be the count as of the same
+        // instant as the row, and two statements could straddle a write.
+        // `count(distinct message_id)` and not attachment rows — the same file
+        // attached twice to one message is one conversation that loses it.
+        const row = (await sql<{ id: string; contentHash: string; redactedAt: string | null; messages: number }>`
+          select f.id, f.content_hash as "contentHash", f.redacted_at as "redactedAt",
+                 (select count(distinct a.message_id) from message_attachments a
+                   where a.file_id = f.id) as messages
+            from files f where ${fileWhere(ref, 'f')}
+        `.execute(opened.connection.db)).rows[0];
+        if (row === undefined) return { ok: false, code: 'FILE_NOT_FOUND', message: '지정한 파일이 없습니다' };
+        return {
+          ok: true,
+          file: {
+            id: row.id,
+            contentHash: row.contentHash,
+            redactedAt: row.redactedAt === null ? null : at(row.redactedAt, 'files.redacted_at'),
+          },
+          messages: Number(row.messages),
+        };
+      } catch (error) {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: `파일을 읽을 수 없습니다: ${describe(error)}` };
+      }
+    },
+    async listRedactedContentHashes(hashes): Promise<ListRedactedContentHashesResult> {
+      // No hashes is no question, and the collection path asks this on every
+      // turn: a turn with no attachment must not open the database for it.
+      if (hashes.length === 0) return { ok: true, hashes: [] };
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const rows = await sql<{ contentHash: string }>`
+          select content_hash as "contentHash" from files
+           where redacted_at is not null and content_hash in (${sql.join(hashes.map(hash => sql`${hash}`))})
+        `.execute(opened.connection.db);
+        return { ok: true, hashes: rows.rows.map(row => row.contentHash) };
+      } catch (error) {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: `가린 파일을 읽을 수 없습니다: ${describe(error)}` };
+      }
+    },
+    async redactFile(input: RedactFileInput): Promise<RedactFileResult> {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: '데이터베이스에 닿지 못했습니다' };
+      const connection = opened.connection;
+      const written = await withWrite(connection, async (held): Promise<RedactFileResult> => {
+        const file = (await sql<{ id: string; contentHash: string; redactedAt: string | null }>`
+          select id, content_hash as "contentHash", redacted_at as "redactedAt"
+            from files where id = ${input.fileId}
+        `.execute(held)).rows[0];
+        if (file === undefined) return { ok: false, code: 'FILE_NOT_FOUND', message: '지정한 파일이 없습니다' };
+        const locations = (await sql<FileLocationColumns>`
+          select id, file_id as "fileId", store_kind as "storeKind", locator, ownership,
+                 deleted_at as "deletedAt"
+            from file_locations where file_id = ${input.fileId} order by ownership, locator
+        `.execute(held)).rows.map(fileLocationRow);
+        const redactedAt = file.redactedAt === null ? null : at(file.redactedAt, 'files.redacted_at');
+        const plan = input.plan({
+          file: { id: file.id, contentHash: file.contentHash, redactedAt },
+          locations,
+        });
+        const record = redactedAt === null ? plan.redaction : null;
+
+        let extractionsRemoved = 0;
+        let chunksRemoved = 0;
+        let namesRemoved = 0;
+        let metadataRemoved = 0;
+        let failuresResolved = 0;
+        if (record !== null) {
+          const occurredAt = instant(record.occurredAt, 'redactions.occurred_at');
+          // The mark and the pointer together: the trigger of 0002 lets
+          // `redacted_at` go from null to a value once while the marker is up.
+          // The pointer has to be cleared before the generation rows go, or the
+          // foreign key from `files.current_extraction_id` would refuse the
+          // delete — and clearing it is this masking's job anyway (AD-24).
+          await sql`
+            update files set redacted_at = ${occurredAt}, current_extraction_id = null
+             where id = ${input.fileId}
+          `.execute(held);
+          // Every piece of every generation of this file, open one included.
+          // `document_chunks_delete_rule` of 0008 does not come into it: the
+          // redaction marker is up for this whole transaction, which is exactly
+          // the case the rule exempts. What does decide the order is the
+          // foreign key — the pieces go before the generation rows they point
+          // at.
+          //
+          // The open generation keeps its row: the worker holding it is told
+          // `FILE_REDACTED` and its own `finishExtraction` closes it
+          // `redacted`, where deleting the row would make that worker record
+          // `EXTRACTION_NOT_FOUND` instead.
+          chunksRemoved = (await sql`
+            delete from document_chunks
+             where extraction_id in (select id from document_extractions
+                                      where file_id = ${input.fileId})
+            returning id
+          `.execute(held)).rows.length;
+          extractionsRemoved = (await sql`
+            delete from document_extractions
+             where file_id = ${input.fileId} and finished_at is not null returning id
+          `.execute(held)).rows.length;
+          // The FTS index follows by the triggers of 0002, in this transaction.
+          namesRemoved = (await sql`
+            delete from file_names where file_id = ${input.fileId} returning id
+          `.execute(held)).rows.length;
+          metadataRemoved = (await sql`
+            delete from file_metadata where file_id = ${input.fileId} returning id
+          `.execute(held)).rows.length;
+          await sql`
+            insert into redactions (id, message_id, tool_note_id, file_id, start, "end", kind,
+                                    content_hash, occurred_at, pattern_version)
+                 values (${record.id}, null, null, ${record.fileId}, ${record.start}, ${record.end},
+                         ${record.kind}, ${record.contentHash}, ${occurredAt}, ${record.patternVersion})
+          `.execute(held);
+          // The reading failures of this file are settled by the masking: the
+          // bytes are gone on purpose, so nothing is left to retry (Design Notes).
+          failuresResolved = (await sql`
+            update failures set resolved_at = ${occurredAt}
+             where target_kind = ${FILE_REDACTION_RESOLVES.targetKind}
+               and target_id = ${input.fileId}
+               and stage = ${FILE_REDACTION_RESOLVES.stage}
+               and resolved_at is null
+            returning id
+          `.execute(held)).rows.length;
+        }
+
+        // Asked for either way: a masked file with a Brain copy still on the
+        // disk is what a second call repairs, and the open-row key makes asking
+        // twice one row (AD-21).
+        for (const work of plan.work) await ensureWork(held, work);
+
+        const shared = (await sql<{ n: number }>`
+          select count(distinct message_id) as n from message_attachments where file_id = ${input.fileId}
+        `.execute(held)).rows[0];
+        return {
+          ok: true,
+          fileId: input.fileId,
+          contentHash: file.contentHash,
+          messages: Number(shared?.n ?? 0),
+          alreadyRedacted: redactedAt !== null,
+          extractionsRemoved,
+          chunksRemoved,
+          namesRemoved,
+          metadataRemoved,
+          blobDeletesQueued: plan.work.length,
+          failuresResolved,
+        };
+      }, { redact: true });
+      if (!written.ok) return written;
+      if (written.value.ok) {
+        // As in `redactMessage`: the text is out of the main file, and a busy
+        // or failed checkpoint here cannot undo a committed masking.
+        await sql`pragma wal_checkpoint(TRUNCATE)`.execute(connection.db).catch(() => {});
+      }
+      return written.value;
     },
     async linkAttachments(input) {
       const opened = connect();

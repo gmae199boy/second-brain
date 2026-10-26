@@ -38,8 +38,8 @@ import { withWrite } from '../src/write.js';
  * The two things only a real database can be held to are what is here. The
  * pieces land in the keyword index of 0002, which is what makes a document
  * findable at all and which the in-memory fake has nothing like. And a redacted
- * file is neither queued nor opened — the column is this schema's, and the fake
- * has no file redaction at all (port contract).
+ * file is neither queued nor opened against the real `redacted_at` column and
+ * the triggers around it.
  */
 
 const NOW = new Date('2026-03-04T05:06:07.000Z');
@@ -342,8 +342,8 @@ describe('SQLite에서 버전이 오르면 다시 읽고 읽을 수 없는 것�
     const report = await drain(subject);
 
     expect(report).toMatchObject({ claimed: 0, stopped: 'empty' });
-    // Only an adapter with the column can be held to this one: the in-memory
-    // fake has no file redaction and always answers zero (port contract).
+    // A pointer left naming a reading of a masked file, which `redactFile`
+    // never leaves behind: this is the count's defensive side (Design Notes).
     expect(report.reextract).toEqual({ redacted: 1, sourceUnreachable: 0 });
     expect(await subject.store.listExtractions(subject.fileId)).toEqual(before);
   });

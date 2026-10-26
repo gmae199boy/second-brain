@@ -165,8 +165,15 @@ export function sqliteSessionStore(connect: SqliteConnect): SessionStore {
             and from_at <= ${message.occurred_at} and to_at >= ${message.occurred_at} returning id`.execute(held);
           chunksRemoved = removed.rows.length;
         }
+        // In the same transaction as the masking, because it is one answer
+        // about one instant: an attachment somebody masks a moment later must
+        // not change what this call reported (port contract).
+        const unredacted = (await sql<{ n: number }>`select count(*) as n
+          from message_attachments a join files f on f.id = a.file_id
+         where a.message_id = ${message.id} and a.status = 'stored' and f.redacted_at is null`.execute(held)).rows[0];
         return { ok: true, sessionId: message.session_id, bodySpans: plan.bodySpans,
-          toolNoteSpans: plan.toolNoteSpans, toolNotesChanged: plan.toolNotes.length, chunksRemoved };
+          toolNoteSpans: plan.toolNoteSpans, toolNotesChanged: plan.toolNotes.length, chunksRemoved,
+          unredactedAttachments: Number(unredacted?.n ?? 0) };
       }, { redact: true });
       if (!written.ok) return written;
       if (written.value.ok) {

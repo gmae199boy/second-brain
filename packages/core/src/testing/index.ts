@@ -143,3 +143,4 @@ export { memoryFileStore } from './fakes/file-store.js';
 export { fileStoreContract } from './contracts/file-store.js';
 export { attachmentStoreContract, type AttachmentStoreSubject } from './contracts/attachment-store.js';
 export { extractionStoreContract, type ExtractionStoreSubject } from './contracts/extraction-store.js';
+export { fileRedactionContract, type FileRedactionSubject } from './contracts/file-redaction.js';

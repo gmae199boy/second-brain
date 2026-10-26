@@ -10,6 +10,7 @@ import {
 } from './files/extract-work.js';
 import type { FileStore } from './ports/file-store.js';
 import { formatSessionToken, parseSessionToken } from './domain/session-token.js';
+import { redactFile, type FilesRedactInput, type FilesRedactResult } from './files/redact.js';
 import { redactMessage, type MessagesRedactInput, type MessagesRedactResult } from './messages/redact.js';
 import { SESSION_IDENTITY_KIND, sessionIdentityHandler } from './capture/session-identity-work.js';
 import {
@@ -191,8 +192,24 @@ export interface BrainMessages {
   redact(input: MessagesRedactInput): Promise<MessagesRedactResult>;
 }
 
+export interface BrainFiles {
+  /**
+   * Take one stored file's content out of the brain: Brain's copy of the bytes,
+   * the text read out of it, the searchable name index and the metadata read
+   * off the bytes (AD-11, AD-23). The attachment's own record of the name it
+   * was carried under, and the `external` location of the user's original, stay
+   * as provenance — `message_attachments` is immutable (0008).
+   *
+   * It is by content, so it removes the file from every message that shares it,
+   * and it is gated: the call without consent reads how many messages that is
+   * and says so (`files/redact.ts`).
+   */
+  redact(input: FilesRedactInput): Promise<FilesRedactResult>;
+}
+
 export interface Brain {
   messages: BrainMessages;
+  files: BrainFiles;
   doctor: BrainDoctor;
   sessions: BrainSessions;
   failures: BrainFailures;
@@ -334,6 +351,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
 
   return {
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
+    files: { redact: (input) => redactFile({ store, clock, idGen }, input) },
     doctor: {
       run: () =>
         runDoctor(store, {

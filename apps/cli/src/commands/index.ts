@@ -1,3 +1,4 @@
+import { filesRedactCommand } from './files-redact.js';
 import { messagesRedactCommand } from './messages-redact.js';
 import { connectors } from '../connectors/index.js';
 import type { CommandSpec } from '../dispatch.js';
@@ -30,6 +31,7 @@ import { setupRun } from './setup-run.js';
 export const commands: readonly CommandSpec[] = [
   doctorRun,
   messagesRedactCommand,
+  filesRedactCommand,
   failuresListCommand,
   failuresRetryCommand,
   // A function, not the list: `guide schema` describes the registry it is in,

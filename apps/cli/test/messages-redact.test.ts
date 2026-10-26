@@ -88,7 +88,8 @@ describe('brain messages redact', () => {
     expect(result.code, result.stderr + result.stdout).toBe(0);
     expect(result.stdout).not.toContain(secret);
     expect(JSON.parse(result.stdout).data).toEqual({ message_id: f.message, body_spans: 2,
-      tool_note_spans: 2, tool_notes_changed: 1, chunks_removed: 0, pattern_version: null });
+      tool_note_spans: 2, tool_notes_changed: 1, chunks_removed: 0, pattern_version: null,
+      unredacted_attachments: 0 });
     const db = new DatabaseSync(join(f.path, 'brain.db'));
     try {
       expect(db.prepare('select body from messages').get()).toEqual({ body: '[REDACTED:db_password] [REDACTED:db_password]' });

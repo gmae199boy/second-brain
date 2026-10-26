@@ -56,7 +56,16 @@ export const WARNING_CODES = [
    * said: a single typo must not reset the keys nothing asks about (AD-18).
    */
   'CONFIG_VALUE_RESET',
-  /** An attachment was stored without the masking it should have had (AD-23). */
+  /**
+   * A message was masked and an attachment stored on it was not: the file's own
+   * copy, extracted text and names are still there, unmasked (마스킹 B, AD-23).
+   *
+   * Attachments are kept as the original bytes and masked only where text
+   * leaves Brain, so taking a secret out of a message says nothing about the
+   * file that message carried. `brain files redact <file>` is what removes
+   * that one, and it is a separate verb because masking a file is by content:
+   * it removes the file from every message that shares it.
+   */
   'ATTACHMENT_NOT_REDACTED',
   /** A file this brain only points at could not be read where it lives. */
   'FILE_SOURCE_UNREACHABLE',
@@ -102,7 +111,8 @@ export const WARNING_CODE_MEANINGS: Readonly<Record<WarningCode, string>> = {
     '트랜스크립트의 일부 줄을 읽을 수 없어서 건너뛰고 나머지를 수집했습니다',
   CONFIG_UNKNOWN_KEY: '설정 파일에 이 버전이 모르는 키가 있고, 어떤 키를 무시했는지 말합니다',
   CONFIG_VALUE_RESET: '설정 값 하나를 쓸 수 없어서 그 키만 기본값으로 다시 썼습니다',
-  ATTACHMENT_NOT_REDACTED: '첨부가 받아야 할 마스킹 없이 저장되었습니다',
+  ATTACHMENT_NOT_REDACTED:
+    '메시지는 가렸고 그 메시지에 가리지 않은 첨부 파일이 남아 있습니다 — 첨부는 `brain files redact`로 따로 가립니다',
   FILE_SOURCE_UNREACHABLE: '이 brain이 가리키기만 하는 파일을 그 자리에서 읽을 수 없었습니다',
   DAEMON_UNAVAILABLE: 'daemon이 설정되어 있고 닿지 못해서, 이 명령은 직접 돌았습니다',
   PLUGIN_NOT_INSTALLED: '이 brain이 기대하는 하네스 플러그인이 설치되어 있지 않습니다',
@@ -210,6 +220,15 @@ const CODES = {
   REDACT_TEXT_NOT_FOUND: {
     exit: 1, meaning: '가릴 글자를 찾지 못했습니다', retryable: false,
     hint: '가릴 글자와 메시지 id를 확인하세요',
+  },
+  /**
+   * No stored file answers to the id or the content hash this call named
+   * (`files.redact`). It is 1 and not 2 for the reason `MESSAGE_NOT_FOUND` is:
+   * the command ran, reached the database, and found nothing there.
+   */
+  FILE_NOT_FOUND: {
+    exit: 1, meaning: '지정한 파일이 없습니다', retryable: false,
+    hint: '파일 id나 `sha256:` 내용 해시를 확인하세요',
   },
   /** Another connection held the write lock for longer than the budget (AD-7). */
   DB_LOCKED: {

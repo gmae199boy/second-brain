@@ -7,6 +7,7 @@ import type {
 } from '../domain/document.js';
 import type { FileLocation } from '../domain/file.js';
 import type { RedactionCurrent, RedactionPlan, RedactionRefusal } from '../domain/redact-plan.js';
+import type { Redaction } from '../domain/redaction.js';
 import type { Failure } from '../domain/failure.js';
 import type { IngestBatch } from '../domain/ingest-batch.js';
 import type { Message } from '../domain/message.js';
@@ -231,7 +232,26 @@ export interface RedactMessageInput {
   plan(current: RedactionCurrent): RedactionPlan | RedactionRefusal;
 }
 export type RedactMessageResult =
-  | { ok: true; sessionId: string; bodySpans: number; toolNoteSpans: number; toolNotesChanged: number; chunksRemoved: number }
+  | {
+      ok: true;
+      sessionId: string;
+      bodySpans: number;
+      toolNoteSpans: number;
+      toolNotesChanged: number;
+      chunksRemoved: number;
+      /**
+       * How many attachments of this message are stored files nobody has
+       * masked: `status = 'stored'` and the file's `redacted_at` still null,
+       * counted in the same transaction as the masking.
+       *
+       * It is counted here and not by the caller because it is one answer about
+       * one instant: a count read afterwards could be about a file somebody
+       * masked in between. Above zero, the caller says
+       * `ATTACHMENT_NOT_REDACTED` — taking a secret out of a message says
+       * nothing about the bytes that message carried (마스킹 B).
+       */
+      unredactedAttachments: number;
+    }
   | { ok: false; code: 'REDACT_TEXT_NOT_FOUND' | 'MESSAGE_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 export type ListIdentityCandidatesResult =
@@ -858,6 +878,99 @@ export type MarkFileLocationDeletedResult =
       message: string;
     };
 
+/**
+ * Which file a caller means: the row id, or the content hash a person can work
+ * out from the original bytes with `shasum -a 256` (`files.redact`).
+ *
+ * Two spellings because masking a file is by content: the hash is the honest
+ * name for it, and the id is what a row of a report carries.
+ */
+export type FileRef = { fileId: string } | { contentHash: string };
+
+/**
+ * One file and how many messages share it, as a lock-free read.
+ *
+ * It is one read and not two because it answers one question — "what would
+ * masking this file take away from whom" — and a confirmation message built
+ * from two reads could name a count that was already stale.
+ */
+export type ReadFileSharingResult =
+  | {
+      ok: true;
+      file: { id: string; contentHash: string; redactedAt: Date | null };
+      /** Distinct `message_attachments.message_id` rows pointing at this file. */
+      messages: number;
+    }
+  | { ok: false; code: 'FILE_NOT_FOUND' | 'DB_UNAVAILABLE'; message: string };
+
+/**
+ * Which of the given content hashes belong to a file somebody has masked, as a
+ * lock-free read.
+ *
+ * It exists for the collection path: the file store is content addressed, so
+ * the same bytes collected again would write the blob a masking deleted back to
+ * the very locator whose row says the bytes are gone (`sessions/ingest.ts`). An
+ * empty list of hashes is an empty answer and opens nothing.
+ */
+export type ListRedactedContentHashesResult =
+  | { ok: true; hashes: readonly string[] }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
+/** What one file's masking is planned against, inside the write transaction. */
+export interface RedactFileCurrent {
+  file: { id: string; contentHash: string; redactedAt: Date | null };
+  /** Every place this file's bytes are or were, as the rows say (AD-23). */
+  locations: readonly FileLocationRow[];
+}
+
+/**
+ * What a masking of one file comes to: the record to write, or `null` for a
+ * file that is already masked, and the work to open.
+ *
+ * The work is opened either way. A file that was masked and still has a Brain
+ * copy on the disk — an item that was never worked, a deletion that failed — is
+ * repaired by asking again, and `addWork` is find-or-create on the open-row key
+ * so asking twice costs one row (AD-21).
+ */
+export interface RedactFilePlan {
+  redaction: Redaction | null;
+  work: readonly AddWorkInput[];
+}
+
+export interface RedactFileInput {
+  fileId: string;
+  /** Synchronous pure callback, run inside the write transaction. */
+  plan(current: RedactFileCurrent): RedactFilePlan;
+}
+
+/**
+ * What one file's masking removed, and what it left to do.
+ *
+ * `alreadyRedacted` is the ordinary second answer and not a failure: the file's
+ * text was taken away by the first call, and this one has done the only thing
+ * left — put whatever Brain copies are still on the disk back on the queue.
+ * Every count is then zero.
+ */
+export type RedactFileResult =
+  | {
+      ok: true;
+      fileId: string;
+      contentHash: string;
+      /** How many messages shared this file's content (`readFileSharing`). */
+      messages: number;
+      alreadyRedacted: boolean;
+      /** Closed extraction generations removed. An open one keeps its row. */
+      extractionsRemoved: number;
+      chunksRemoved: number;
+      namesRemoved: number;
+      metadataRemoved: number;
+      /** `blob_delete` items this call put on the queue, Brain's copies only. */
+      blobDeletesQueued: number;
+      /** Open `document_extract` failure rows this masking settled. */
+      failuresResolved: number;
+    }
+  | { ok: false; code: 'FILE_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+
 export interface AttachmentStore {
   listMissingFileNames(input: { limit: number }): Promise<ListMissingFileNamesResult>;
   writeFileNames(input: { names: readonly FileName[] }): Promise<WriteFileNamesResult>;
@@ -872,6 +985,33 @@ export interface AttachmentStore {
   markFileLocationDeleted(
     input: MarkFileLocationDeletedInput,
   ): Promise<MarkFileLocationDeletedResult>;
+  /** One file and how many messages share it. A read, so it takes no lock (AD-7). */
+  readFileSharing(ref: FileRef): Promise<ReadFileSharingResult>;
+  /** Which of these content hashes belong to a masked file. Also a read (AD-7). */
+  listRedactedContentHashes(
+    hashes: readonly string[],
+  ): Promise<ListRedactedContentHashesResult>;
+  /**
+   * Mask one file: take away Brain's stored copy, its extracted text, its names
+   * and its metadata, record that it happened, and queue the deletion of the
+   * bytes (`files/redact.ts`, AD-11, AD-23).
+   *
+   * One transaction. Two things about the order inside it are contract, and
+   * both are referential and not trigger-driven: the file's pointer is cleared
+   * with the mask, before the generation rows it may name are deleted, and a
+   * generation's pieces go before the generation itself. (The chunk-delete rule
+   * of 0008 does *not* decide any of it — it exempts a masking outright.)
+   *
+   * An open generation keeps its row and loses its pieces — the worker holding
+   * it is told `FILE_REDACTED` and its own `finishExtraction` closes it
+   * `redacted`, where deleting the row would make that worker record a failure
+   * about a generation nobody has.
+   *
+   * The bytes themselves are never deleted in here: a filesystem call under the
+   * write lock is the thing AD-7 exists to prevent, so what goes in is a
+   * `blob_delete` item and the drain does the deleting (AD-23).
+   */
+  redactFile(input: RedactFileInput): Promise<RedactFileResult>;
 }
 
 /**
@@ -997,9 +1137,8 @@ export interface FinishExtractionInput {
  * `extraction.status` is how a caller tells the two `current: false` successes
  * apart. A reading that succeeded but was overtaken by a newer attempt is closed
  * `ok`; a reading of a file somebody redacted while it ran is closed `redacted`,
- * because its text may not be kept and the pointer may not name it. Only an
- * adapter whose database carries `files.redacted_at` can answer `redacted` — the
- * in-memory fake has no file redaction, so its successes are always `ok`.
+ * because its text may not be kept and the pointer may not name it. Every
+ * adapter answers that way, the in-memory fake included (`redactFile`).
  */
 export type FinishExtractionResult =
   | { ok: true; extraction: DocumentExtraction; current: boolean }
@@ -1161,9 +1300,7 @@ export interface ExtractionStore {
    * its answer must not overwrite the newer reading's (AD-24).
    *
    * An `ok` on a file that was redacted while the reading ran is closed with
-   * status `redacted` and `current: false`: the pieces go, the pointer stays. An
-   * adapter with no file redaction, such as the in-memory fake, never answers
-   * that way.
+   * status `redacted` and `current: false`: the pieces go, the pointer stays.
    */
   finishExtraction(input: FinishExtractionInput): Promise<FinishExtractionResult>;
   /**
@@ -1192,10 +1329,6 @@ export interface ExtractionStore {
    * extractors than `extractorVersion`, `id` ascending and at most `limit` of
    * them, with the ones that are behind and unreadable counted instead
    * (`ListFilesWithStaleExtractionResult`). A read, so it takes no lock (AD-7).
-   *
-   * An adapter with no file redaction, such as the in-memory fake, always
-   * answers `redacted: 0`: the column is the database's, exactly as it is for
-   * `readFileExtractionState`.
    */
   listFilesWithStaleExtraction(input: {
     extractorVersion: string;

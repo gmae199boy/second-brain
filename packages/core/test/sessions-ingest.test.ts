@@ -1,5 +1,6 @@
 import { memoryFileStore } from '../src/testing/fakes/file-store.js';
 import { describe, expect, it } from 'vitest';
+import { contentHashOfBytes } from '../src/domain/file.js';
 import { transcriptChanges } from '../src/capture/scan.js';
 import type { ParserCursor } from '../src/domain/session.js';
 import { formatSessionToken } from '../src/domain/session-token.js';
@@ -1507,6 +1508,68 @@ describe('첨부 수집', () => {
     expect((await ingestSession(legacy.deps,{session:TOKEN,transcriptPath:PATH})).ok).toBe(true);
     const first = legacy.store.snapshot().messages[0]!;
     expect(await legacy.store.listMessageAttachments(first.id)).toMatchObject({ok:true,attachments:[{ordinal:0,status:'stored'}]});
+  });
+  // PNG magic bytes take the extension branch of `brainLocator` and plain ones
+  // do not: the locator the ingest has to invent for a masked hash is wrong in
+  // a different way on each side, and a wrong one is a *second* live `brain`
+  // location row for the same file whose blob nothing will ever delete.
+  it.each([['png 머리글', bytes], ['그냥 바이트', [5, 6, 7]]])(
+    '가린 내용의 블롭은 다시 쓰지 않고 첨부 행은 그대로 만든다 (%s)',
+    async (_name, raw) => {
+      const sameBytes = Uint8Array.from(raw);
+      const { deps, store } = await kit({ content: JSON.stringify({ messages: [1, 2].map(i => ({
+        harnessMessageId: `image-${String(i)}`, role: 'user', body: '',
+        occurredAt: '2026-01-02T03:04:05.000Z', attachments: [{ bytes: raw }] })) }) });
+      const hash = contentHashOfBytes(sameBytes);
+      let puts = 0;
+      const files = deps.files;
+      deps.files = { ...files, async put(b) { puts++; return files.put(b); } };
+      const reads: string[][] = [];
+      deps.store = { ...deps.store, async listRedactedContentHashes(hashes) {
+        reads.push([...hashes]);
+        return { ok: true, hashes: [hash] };
+      } };
+      expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+      // One read for the whole turn, and no blob written for the masked content.
+      expect(reads).toEqual([[hash]]);
+      expect(puts).toBe(0);
+      // The attachment rows are made as always: the message really did carry it,
+      // and the row points at the masked file (Design Notes).
+      const messages = store.snapshot().messages;
+      const rows = await Promise.all(messages.map(m => store.listMessageAttachments(m.id)));
+      expect(rows.map(r => r.ok && r.attachments.map(a => a.status))).toEqual([['stored'], ['stored']]);
+      expect(rows.every(r => r.ok && r.attachments[0]?.file?.contentHash === hash)).toBe(true);
+      // And the place it points at is exactly the one the file store would have
+      // answered with, so a later collection of the same bytes meets the row
+      // that is already there rather than adding a second one.
+      const stored = await memoryFileStore().put(sameBytes);
+      if (!stored.ok) throw new Error('표본 파일 저장 실패');
+      expect(rows.map(r => r.ok && r.attachments[0]?.file?.locations))
+        .toEqual([[stored.location], [stored.location]]);
+    },
+  );
+  it('가린 해시를 읽지 못하면 지금처럼 저장한다 (남은 위험)', async () => {
+    const { deps } = await kit({ content });
+    let puts = 0;
+    const files = deps.files;
+    deps.files = { ...files, async put(b) { puts++; return files.put(b); } };
+    deps.store = { ...deps.store, async listRedactedContentHashes() {
+      return { ok: false, code: 'DB_UNAVAILABLE', message: '닿지 못했습니다' };
+    } };
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    expect(puts).toBe(1);
+  });
+  it('바이트 없는 첨부뿐이면 가린 해시를 묻지도 않는다', async () => {
+    const empty = JSON.stringify({ messages: [{ harnessMessageId: 'none', role: 'user', body: '빈 첨부',
+      occurredAt: '2026-01-02T03:04:05.000Z', attachments: [{ sourceRef: 'gone' }] }] });
+    const { deps } = await kit({ content: empty });
+    let reads = 0;
+    deps.store = { ...deps.store, async listRedactedContentHashes() {
+      reads++;
+      return { ok: true, hashes: [] };
+    } };
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    expect(reads).toBe(0);
   });
   it('파일 저장 실패는 메시지와 이력과 spool을 쓰지 않는다', async () => {
     const {deps,store,spool}=await kit({content});

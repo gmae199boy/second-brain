@@ -33,7 +33,7 @@ export function planRedaction(
     return { refused: 'REDACT_TEXT_NOT_FOUND' };
   }
   const records = (spans: readonly SecretSpan[], messageId: string | null, toolNoteId: string | null): Redaction[] =>
-    spans.map((span) => ({ id: dependencies.newId(), messageId, toolNoteId,
+    spans.map((span) => ({ id: dependencies.newId(), messageId, toolNoteId, fileId: null,
       start: span.start, end: span.end, kind: span.kind, contentHash: span.removed,
       occurredAt: dependencies.now(), patternVersion: request.mode === 'detected' ? SECRET_PATTERN_VERSION : null }));
   return {
