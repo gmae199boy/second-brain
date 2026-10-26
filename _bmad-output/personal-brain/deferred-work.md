@@ -97,7 +97,7 @@
 | 비정상 종료로 남은 `.open` 회수 (2.10) | 해결됨(2.12, 2026-10-19). `claim`이 할 일이다: 이름의 pid가 살아 있지 않고 mtime이 `SPOOL_CLAIM_STALE_MS`보다 오래된 `.open`은 `spool/failed/`로 옮기고 재주입하지 않는다(쓴 쪽이 이미 실패로 답한 쓰기다, Decision 6) |
 | 업그레이드 경로 correct-course: 마이그레이션 완료 뒤 전환·실패 시 재시도·마이그레이션 승인 (2.10) | AD-19·20을 바꾸는 입력. bootstrap 2.5·shim·`setup upgrade`(epic 5)에 걸리므로 correct-course로 먼저 본다(2026-10-19 사용자) |
 | spool `failure` 레코드 재주입 handler (2.11) | 해결됨(2.12, 2026-10-19). `createBrain`의 spool handler 표에 `failure` 항목: payload 그대로 `recordFailure`, id는 레코드 id, `closeWork` 없음 |
-| 데몬 켜짐 예외: 기회적 drain 끄기 (2.11) | epic-daemon(epic 9, 소켓 handshake가 생길 때) |
+| 데몬 켜짐 예외: 기회적 drain 끄기 (2.11) | epic-daemon(epic 9, V1. 데몬 생존은 heartbeat로 본다, 2026-10-26) |
 | 같은 실패 키의 `occurred_at`·`message` 갱신 여부 (2.11) | 해결됨(2.11, 2026-10-19 사용자) |
 | 2.14: `SECOND_BRAIN_CAPTURE` 스위치를 없애고 트랜스크립트 폴더를 기본으로 켠다 (2.12) | 해결됨(2.14, 2026-10-21). 폴더 수집은 기본이며 플러그인 수집 hook을 함께 연결했다 |
 | 옛 handback(`handbackReportText` 없음)의 본문 출처 (19) | 해결됨(22, 2026-10-21). 읽는다: `origin.body`의 첫 줄이 편집기 머리글과 정확히 같고 그 뒤 비지 않은 줄이 모두 두 칸 들여쓰기일 때만, 앞 두 칸을 떼고 trim한 것이 본문이다(한 줄이라도 어긋나면 메시지 아님). 실측(2026-10-21, 메인 transcript 250개): 옛 238건·새 152건 모두 그 모양이고, 둘 다 가진 152건에서 이 규칙의 결과가 `handbackReportText.trim()`과 152/152 같다. 이 Mac에서 보고가 162 → 396으로 는다 |

@@ -1,4 +1,5 @@
 # epic 10 첨부 원본과 문서 추출 — 표 순서 = 만드는 순서. id는 영구.
+next_id = 15
 
 [[entry]]
 id = 1
@@ -40,7 +41,7 @@ references = ["_bmad-output/personal-brain/deferred-work.md, I67", "_bmad-output
 id = 3
 type = "story"
 title = "FileStore 완성과 계약 테스트"
-description = "2의 fake·계약 harness를 넓혀 로컬 FileStore를 AD-23 계약대로 마친다: Core 계약 테스트(fake와 로컬 구현이 함께 통과)로 `brain` 소유이면서 설정 루트 안인 위치만 쓰고 지움, 루트 탈출·심볼릭 링크 거부, 남은 임시 파일, 권한 0700/0600, 같은 바이트의 멱등 `put`, 위치→`url`, 그리고 11(고아 정리)이 쓸 루트 안 블롭 목록·크기 읽기를 두고, 사용자 원본을 가리키는 `external` 위치의 locator 표현(절대 경로를 저장하지 않는 규칙과 함께)을 정해 4가 쓰게 한다."
+description = "2의 fake·계약 harness를 넓혀 로컬 FileStore를 AD-23 계약대로 마친다(가볍게, 2026-10-26): Core 계약 테스트(fake와 로컬 구현이 함께 통과)로 `brain` 소유이면서 설정 루트 안인 위치만 쓰고 지움, 루트 탈출·심볼릭 링크 거부, 남은 임시 파일, 권한 0700/0600, 같은 바이트의 멱등 `put`, 위치→`url`을 두고(고아 정리용 블롭 목록·크기 읽기는 V1 뒤), 사용자 원본을 가리키는 `external` 위치의 locator 표현(절대 경로를 저장하지 않는 규칙과 함께)을 정해 4가 쓰게 한다."
 verify = "`fileStoreContract`를 fake와 로컬 구현이 통과하고, 루트 밖 경로·`external` 위치·심볼릭 링크로 쓰거나 지우려 하면 거부되며 대상 파일은 그대로이고, 블롭 디렉터리가 0700·파일이 0600이다."
 covers = ["E10-1"]
 after = [2]
@@ -63,7 +64,7 @@ references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/archite
 id = 5
 type = "story"
 title = "이미 수집한 세션의 첨부 채우기"
-description = "1의 다시 읽기 경로와 2·4의 parser·수집으로, 이 에픽 전에 수집된 세션 가운데 transcript가 디스크에 남은 것의 첨부를 기존 메시지에 멱등으로 채우고(기존 메시지·도구 메모는 중복되지 않고, 이전 parser가 버린 이미지 전용 메시지는 첫 다시 읽기에서 살아남; 새 Store 능력은 만들지 않고 1·2·4가 만든 경로만 씀), transcript가 이미 사라져 채울 수 없는 세션 수를 doctor 또는 drain 결과에 보이며, 이 기계의 DB 사본에서 실측해 계획에 남긴다."
+description = "새 코드 없이(가볍게, 2026-10-26) 1의 다시 읽기 경로와 2·4의 parser·수집으로 drain 재수집을 한 번 돌려, 이 에픽 전에 수집된 세션 가운데 transcript가 디스크에 남은 것의 첨부를 기존 메시지에 멱등으로 채우고(기존 메시지·도구 메모는 중복되지 않고, 이전 parser가 버린 이미지 전용 메시지는 첫 다시 읽기에서 살아남), 이 기계의 DB 사본에서 채운 수와 transcript가 사라져 채울 수 없는 세션 수를 실측해 계획에 남긴다. doctor·drain 결과에 새 항목은 더하지 않는다."
 verify = "에픽 전 상태의 DB와 남은 transcript를 합성한 픽스처에 drain을 돌리면 붙여 넣은 이미지와 @파일이 모두 `message_attachments`에 채워지고 이미지 전용 메시지가 살아나며 두 번째 실행에서는 메시지·도구 메모·첨부 건수가 모두 같고, 이 기계의 DB 사본 실측(남은 표본과 사라진 transcript 수를 나눠)을 계획에 남긴다."
 covers = ["E10-3"]
 after = [1, 4]
@@ -75,8 +76,8 @@ references = ["_bmad-output/personal-brain/epic-capture/epic-capture-research.md
 id = 7
 type = "story"
 title = "chunk_locator 코덱과 문서 조각 자료형"
-description = "Core에 `chunk_locator` 정규형 코덱(type이 첫 키, 고정 키 순서, null 생략, 공백 없음, 텍스트는 코드 포인트 범위; pdf·docx·text·time·sheet 다섯 종류의 자료형)과 `page` 사본 규칙(pdf가 아니면 null, TS에서 undefined와 null 구분), 문서 조각 설정(`index_config_id`, `IndexConfigKind`에 문서 조각) 자료형을 두고 코덱이 낸 정규형과 `page` 사본이 0004 DB 제약을 통과하고 종류별 필수 키·고정 키 순서의 추가 검증은 Core가 맡음을 테스트하며, 코덱·자료형·`page` 비교 규칙과 그 공개 export만 만들고(Store·fake Store·handler·CLI 조립은 14와 각 소비자가 맡음) 14의 추출 세대 Store와 8의 추출기가 이것을 쓴다."
-verify = "같은 locator를 다른 키 순서·null 칸으로 만들어도 같은 문자열이 되고, 코덱이 낸 모든 종류의 locator와 `page` 조합을 0004 스키마의 `document_chunks`에 넣으면 받아들여지며, pdf가 아닌 locator에 `page`를 주거나 키가 빠진 locator는 코덱이 거부한다."
+description = "Core에 `chunk_locator` 정규형 코덱(type이 첫 키, 고정 키 순서, null 생략, 공백 없음, 텍스트는 코드 포인트 범위; V1은 text·pdf·docx 세 종류의 자료형만, time·sheet는 소비자가 생길 때(2026-10-26))과 `page` 사본 규칙(pdf가 아니면 null, TS에서 undefined와 null 구분), 문서 조각 설정(`index_config_id`, `IndexConfigKind`에 문서 조각) 자료형을 두고 코덱이 낸 정규형과 `page` 사본이 0004 DB 제약을 통과하고 종류별 필수 키·고정 키 순서의 추가 검증은 Core가 맡음을 테스트하며, 코덱·자료형·`page` 비교 규칙과 그 공개 export만 만들고(Store·fake Store·handler·CLI 조립은 14와 각 소비자가 맡음) 14의 추출 세대 Store와 8의 추출기가 이것을 쓴다."
+verify = "같은 locator를 다른 키 순서·null 칸으로 만들어도 같은 문자열이 되고, 코덱이 낸 세 종류(text·pdf·docx)의 locator와 `page` 조합을 0004 스키마의 `document_chunks`에 넣으면 받아들여지며, pdf가 아닌 locator에 `page`를 주거나 키가 빠진 locator는 코덱이 거부한다."
 covers = ["E10-4"]
 after = [2, "2.6"]
 hitl = false
@@ -99,7 +100,7 @@ references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/archite
 id = 8
 type = "story"
 title = "추출 일감과 txt·md 추출기"
-description = "첨부가 저장되면 `document_extract` 일감을 넣고 drain handler가 트랜잭션 밖에서 FileStore로 바이트를 읽어 내용으로 형식을 판정하고 txt·md를 7의 locator로 조각 내어 14의 Store로 쓰며, `extractor_version` 상수, 형식별 추출기 등록 자리(9의 EXIF와 epic-drive의 PDF·docx가 얹힘), 영구 오류(지원하지 않는 형식·손상·`too_large`, 첫 실패에서 닫음)와 일시 오류(읽기 위치에 잠시 닿지 못함) 분류, 원본에 닿을 수 없다고 판정하면 14의 `source_unreachable_at`을 기록하고 기존 성공 세대·조각을 보존하며 새 추출 예약을 막는 규칙, `failures retry`의 대상 종류 `file`, 가린 파일(`redacted_at`)은 추출하지 않는 가드(12가 검증)를 둔다; 추출 텍스트는 원문으로 저장하고 출력 경로는 만들지 않는다."
+description = "첨부가 저장되면 `document_extract` 일감을 넣고 drain handler가 트랜잭션 밖에서 FileStore로 바이트를 읽어 내용으로 형식을 판정하고 txt·md를 7의 locator로 조각 내어 14의 Store로 쓰며, `extractor_version` 상수, 형식별 추출기 등록 자리(epic-recall-and-mirror 4.1의 EXIF(옛 10.9)와 epic-drive의 PDF·docx가 얹힘), 영구 오류(지원하지 않는 형식·손상·`too_large`, 첫 실패에서 닫음)와 일시 오류(읽기 위치에 잠시 닿지 못함) 분류, 원본에 닿을 수 없다고 판정하면 14의 `source_unreachable_at`을 기록하고 기존 성공 세대·조각을 보존하며 새 추출 예약을 막는 규칙, `failures retry`의 대상 종류 `file`, 가린 파일(`redacted_at`)은 추출하지 않는 가드(12가 검증)를 둔다; 추출 텍스트는 원문으로 저장하고 출력 경로는 만들지 않는다."
 verify = "txt·md 첨부를 수집하고 drain을 돌리면 `document_extractions`에 `ok` 세대와 `chunk_locator`가 있는 조각이 생겨 FTS로 찾을 수 있고, 확장자를 바꾼 바이너리는 `unsupported`로 첫 실패에 닫히며, 읽기 port가 일시 실패를 돌려주게 한 파일은 `failed`(`failed_stage = read`)로 남았다가 읽기를 되살린 뒤 `failures retry`로 새 시도가 성공한다."
 covers = ["E10-4", "E10-5"]
 after = [2, 14, "2.11", "2.12"]
@@ -107,35 +108,24 @@ hitl = false
 risk = "medium"
 
 [[entry]]
-id = 9
-type = "story"
-title = "이미지 EXIF와 촬영 일시"
-description = "8의 추출기 등록 자리에 이미지 메타데이터 추출을 더해, EXIF를 믿지 않는 입력으로 다루며(크기 상한, 파싱 오류는 영구 오류) `file_metadata`에 EXIF 키와 촬영 일시 세 칸(`captured_at_local` 원문, 시간대를 알 때만 `captured_at` 정규형, `captured_at_source`)을 남기고, 시간대를 모르면 지어내지 않으며, 가린 파일은 메타데이터를 만들지 않는 가드(12가 검증)를 둔다; 라이브러리를 들이면 `extractor_version`에 그 버전을 넣는다."
-verify = "시간대가 있는 EXIF·없는 EXIF·EXIF 없는 이미지·깨진 EXIF 픽스처를 추출하면 각각 세 칸이 맞게 채워지거나 비고, 깨진 것은 첫 실패에서 닫히며, 시간대가 없을 때 `captured_at`이 비어 있다."
-covers = ["E10-5"]
-after = [8]
-hitl = false
-risk = "low"
-
-[[entry]]
 id = 10
 type = "story"
-title = "files reindex"
-description = "Core `files.reindex`와 CLI `brain files reindex`(명령 메타 7칸, 쓰기, 대상은 파일 id 또는 전체)를 만들어 8의 `document_extract` 일감을 새 `attempt`로 넣고, 가린 파일(`redacted_at`)과 원본에 닿을 수 없는 파일(`source_unreachable_at`, 결과에 `FILE_SOURCE_UNREACHABLE`)은 건너뛰고 그 수를 알리며, 12가 이 건너뛰기를 검증한다."
-verify = "`brain files reindex <id>` 뒤 drain을 돌리면 그 파일의 `attempt`가 하나 오르고 성공 시 포인터가 새 세대로 바뀌며, 가린 파일은 건너뛰고 건너뛴 수가 엔벨로프에 나오며, `brain guide schema files reindex`가 메타를 낸다."
+title = "다시 추출 경로"
+description = "새 명령 `files reindex`를 만들지 않고(가볍게, 2026-10-26) 기존 `failures retry`가 파일 추출 실패(대상 종류 file)를 8의 `document_extract` 일감 새 `attempt`로 다시 넣고, 추출기의 `extractor_version`이 오르면 drain이 그 추출기의 성공 파일을 다시 넣으며, 가린 파일(`redacted_at`)과 원본에 닿을 수 없는 파일(`source_unreachable_at`, 결과에 `FILE_SOURCE_UNREACHABLE`)은 건너뛰고 그 수를 알리고, 12가 이 건너뛰기를 검증한다."
+verify = "추출이 실패한 파일에 `brain failures retry` 뒤 drain을 돌리면 그 파일의 `attempt`가 하나 오르고 성공 시 포인터가 새 세대로 바뀌며, `extractor_version`을 올린 픽스처에서 drain이 해당 파일을 한 번 다시 넣고, 가린 파일은 건너뛰고 건너뛴 수가 엔벨로프에 나온다."
 covers = ["E10-5"]
-after = [8, "2.3"]
+after = [8, "2.12"]
 hitl = false
 risk = "low"
 
 [[entry]]
 id = 11
 type = "story"
-title = "고아 블롭 정리와 블롭 삭제 일감"
-description = "3의 블롭 목록 읽기로 루트 안에 있으나 위치 행이 없고 유예(기본 24시간, Core 상수)가 지난 블롭을 drain 일감이 지우고, Brain 위치의 블롭 하나를 지우는 일감(멱등, 지운 뒤 `deleted_at`)을 두어 12의 파일 가리기가 그대로 쓰게 하며, doctor에 고아 블롭 건수와 바이트 점검을 더한다."
-verify = "위치 행 없는 블롭을 유예 전과 후에 두고 drain을 돌리면 유예가 지난 것만 지워지고 `external` 위치와 루트 밖 파일은 그대로이며, doctor가 지우기 전 건수·바이트를 보이고, 블롭 삭제 일감을 두 번 돌려도 오류가 없다."
+title = "블롭 삭제 일감"
+description = "Brain 위치의 블롭 하나를 지우는 drain 일감(멱등, 지운 뒤 `deleted_at`)을 두어 12의 파일 가리기와 epic 8의 Drive 이전이 그대로 쓰게 한다. 고아 블롭 자동 순회(유예 24시간)와 doctor 건수·바이트 점검은 V1 뒤(가볍게, 2026-10-26)."
+verify = "Brain 위치의 블롭 삭제 일감을 두 번 돌려도 오류가 없고 `deleted_at`이 한 번 채워지며, `external` 위치와 루트 밖 파일을 가리키는 일감은 거부되고 대상 파일은 그대로다."
 covers = ["E10-6"]
-after = [3, 8, 9, 10, "2.11"]
+after = [3, "2.11"]
 hitl = false
 risk = "medium"
 
@@ -143,10 +133,10 @@ risk = "medium"
 id = 12
 type = "story"
 title = "파일 가리기와 첨부 미가림 경고"
-description = "Core `Redaction`에 `fileId`와 범위 null을 더하고(I75), Core `files.redact`와 CLI `brain files redact`(확인 게이트, 내용 단위라 같은 파일을 공유하는 메시지 수를 확인 전에 보임)가 한 가리기 트랜잭션에서 `redacted_at`, 추출 세대·조각·FTS, `file_names`·이름 FTS·`file_metadata` 삭제, `redactions` 기록, 11의 블롭 삭제 일감을 묶고, 4·8·9·10이 둔 이름·추출·메타데이터 생성 가드가 가린 파일을 건너뛰는지 검증하며, `messages redact`가 그 메시지에 가리지 않은 첨부가 있으면 `ATTACHMENT_NOT_REDACTED`를 내고 그 코드 설명을 마스킹 B에 맞춘다."
-verify = "추출된 문서를 `brain files redact --yes`로 가리면 조각·이름·메타데이터가 FTS 어디에서도 찾히지 않고 drain 뒤 Brain 위치의 블롭이 지워지며 `external` 원본은 그대로이고, `files reindex`가 그 파일을 건너뛰며, `--yes` 없이는 exit 3이고, 첨부가 있는 메시지를 `messages redact`하면 `ATTACHMENT_NOT_REDACTED` 경고가 나온다."
+description = "Core `Redaction`에 `fileId`와 범위 null을 더하고(I75), Core `files.redact`와 CLI `brain files redact`(확인 게이트, 내용 단위라 같은 파일을 공유하는 메시지 수를 확인 전에 보임)가 한 가리기 트랜잭션에서 `redacted_at`, 추출 세대·조각·FTS, `file_names`·이름 FTS·`file_metadata` 삭제, `redactions` 기록, 11의 블롭 삭제 일감을 묶고, 4·8·10이 둔 이름·추출 생성 가드가(메타데이터 생성 가드는 epic-recall-and-mirror 4.1(옛 10.9)이 이 규칙을 따라 스스로 둔다, 2026-10-26) 가린 파일을 건너뛰는지 검증하며, `messages redact`가 그 메시지에 가리지 않은 첨부가 있으면 `ATTACHMENT_NOT_REDACTED`를 내고 그 코드 설명을 마스킹 B에 맞춘다."
+verify = "추출된 문서를 `brain files redact --yes`로 가리면 조각·이름·메타데이터가 FTS 어디에서도 찾히지 않고 drain 뒤 Brain 위치의 블롭이 지워지며 `external` 원본은 그대로이고, 다시 추출 경로(10)가 그 파일을 건너뛰며, `--yes` 없이는 exit 3이고, 첨부가 있는 메시지를 `messages redact`하면 `ATTACHMENT_NOT_REDACTED` 경고가 나온다."
 covers = ["E10-7"]
-after = [4, 8, 9, 10, 11, "2.1", "2.13", "2.17"]
+after = [4, 8, 10, 11, "2.1", "2.13", "2.17"]
 hitl = false
 risk = "high"
 references = ["_bmad-output/personal-brain/deferred-work.md, I75", "_bmad-output/personal-brain/epic-capture/story-messages-redact-plan.md, Implementation Notes (P34)"]
@@ -158,6 +148,6 @@ title = "Refactor sweep"
 description = "에픽 동안 미룬 정리만 한다; 범위는 시작할 때 각 플랜과 미룬 리뷰 지적에서 정한다."
 verify = "전체 테스트와 패키지 의존 경계 검사가 통과하고, hook 경로(`sessions ingest`)의 시작 지연을 재서 플랜에 남기며, 에픽 Done when 1~5를 다시 돌려 모두 통과한다."
 covers = ["E10-1", "E10-2", "E10-3", "E10-4", "E10-5", "E10-6", "E10-7", "E10-8"]
-after = [1, 2, 6, 3, 4, 5, 7, 14, 8, 9, 10, 11, 12]
+after = [1, 2, 6, 3, 4, 5, 7, 14, 8, 10, 11, 12]
 hitl = false
 risk = "low"

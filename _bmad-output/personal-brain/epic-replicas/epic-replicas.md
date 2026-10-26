@@ -3,7 +3,7 @@ type: epic
 title: "복제 대상과 원본 이전"
 parent: personal-brain
 covers: [CAP-11, CAP-12]
-after: ["epic-operations", "epic-daemon"]
+after: ["epic-operations", "epic-daemon", "epic-drive"]
 assignee: ""
 risk: medium
 ---
@@ -33,7 +33,7 @@ Postgres나 Drive를 붙여도 원본은 하나로 남고, 복제 대상이 늦�
 2. 복제 대상의 실패가 원본 쓰기를 막지 않는다.
 3. `move-store` 뒤 테이블별 건수·해시가 같고, 옛 `brain.db`는 읽기 전용으로 남는다.
 4. doctor가 대상별 지연을 보인다.
-5. 데몬이 켜진 상태와 꺼진 상태 둘 다에서 1~4가 통과한다(AD-27. 복제 커서 따라잡기는 drain의 일감이라 launchd든 데몬이든 같은 경로다).
+5. (삭제, 2026-10-26: 데몬이 기본 런타임이라 켜짐·꺼짐 양쪽 검증을 두지 않는다. 복제 커서 따라잡기는 drain의 일감이고 데몬이 돈다.)
 
 ## Boundaries
 
@@ -50,11 +50,13 @@ AD-10·11·22. 원본은 로컬 SQLite이고, 복제 대상의 읽기·검색은
 
 ## Notes
 
-- Decision(2026-10-14): V1(epic 1·2·10·3·4·5) 다음에 한다. 원본 이전은 CLI가 하고 스킬은 그 위에 얹는다(사용자).
+- Decision(2026-10-14): V1(epic 1·2·10·3·4·5) 다음에 한다(2026-10-26: V1은 1·2·9·10·5·8로 바뀌었고 이 에픽은 여전히 V1 다음). 원본 이전은 CLI가 하고 스킬은 그 위에 얹는다(사용자).
 - Waits on epic-operations because: 내보내기 형식과 운영 명령이 복제·이전의 검증 기준이다.
-- Waits on epic-daemon because: Done when의 데몬 켜짐·꺼짐 두 상태 검증, `setup run`·doctor·설정 코덱의 선택 단계(2026-10-16, `../change-users-and-review-gaps/` D2).
+- Waits on epic-daemon because: 데몬 런타임(커서 따라잡기 일감을 돈다), `setup run`·doctor·설정 코덱의 선택 단계(2026-10-16 D2, 2026-10-26 양쪽 검증 삭제).
 - Note(2026-10-16, `../change-users-and-review-gaps/`, 인셉션 입력): D5 가리기는 복제 대상에도 전파한다. Postgres는 같은 가리기 함수로 하고, `tool_notes` trigger deferred 항목과 함께 정한다. Drive의 기록 복제 파일은 평소 append-only이고, 가리기 때만 그 메시지가 든 파일을 다시 쓰고 옛 파일을 지운다. 끝날 때까지 doctor `warn`(spine AD-10·11·22).
 - Note(2026-10-16, 인셉션 입력): 복제 대상 오류에 분류 코드를 붙인다. Postgres 연결 실패·Drive 429·5xx는 일시 오류이고, 인증 거부·권한 없음은 영구 오류다. 복제 실패는 원본 쓰기를 막지 않는다(spine AD-10·21).
 - Note(2026-10-16): 복제 일감 실패의 다시 하기는 `failures retry`에 대상 종류를 더해서 한다(2.12가 명령을 만든다, spine AD-5).
 - Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 복제 payload는 출력 코덱이다. 가린 텍스트를 보내고 패턴 버전을 적으며, 버전이 오르면 D5(`../change-users-and-review-gaps/`)의 복제 가리기 일감과 같은 경로로 다시 가린다. `setup move-store`는 복제본이 아니라 원본에서 복사해 원문을 잃지 않는다. Postgres는 0005(`redactions.tool_note_id`, `failed_stage` trigger, `projects.identity_key`)만큼 더 갈라진다(deferred Triage).
 - Carry(2026-10-22, epic 2 회고): Postgres 스키마는 SQLite 0004·0005뿐 아니라 0006(메시지 `seq` 삭제, chunk 시각 범위)과 0007(`sessions.tag_source`·`first_cwd`)도 따라잡아야 한다(`deferred-work.md` I74).
+- Decision(2026-10-26, `../change-v1-capture-and-drive/`, 사용자): V1 뒤(backlog). Done when 5(데몬 켜짐·꺼짐 양쪽 검증) 삭제.
+- Note(2026-10-26, 트리 검증 제안, 인셉션 입력): epic 5의 V1 완료는 로컬 백업뿐이고 전체 내보내기 형식은 V1 뒤다. 이 에픽 인셉션에서 복제·이전 검증에 전체 내보내기가 필요한지, 로컬 백업 계약이면 되는지 정한다.

@@ -3,7 +3,7 @@ type: epic
 title: "조회와 미러"
 parent: personal-brain
 covers: [CAP-4, CAP-5, CAP-6, CAP-7, CAP-13, CAP-14]
-after: ["epic-capture", "epic-log-and-context", "epic-attachments"]
+after: ["epic-capture", "epic-log-and-context", "epic-drive"]
 assignee: ""
 risk: medium
 ---
@@ -12,12 +12,12 @@ risk: medium
 
 ## Description
 
-조각 생성(drain), 키워드 검색(FTS5 trigram, 질의는 Core 함수 하나가 구절로 감쌈), 문서 조각·파일 이름·경로·EXIF 촬영 일시 검색(`recall docs`, `files show`·`files url`), 종류별 결과 계약, `brain recall time/logs/chunks/tools/expand`, `brain sessions list/read`, 결과 계약(출처·근접 정렬·8,000자), 세션별 Markdown 미러와 `mirror rebuild`, 조각 색인을 다시 만드는 `index rebuild`(키워드 구성), `recall` 직전 증분 수집(epic-capture의 세션 토큰 수집을 부른다. `log append`의 선수집은 epic-log-and-context)을 만든다.
+조각 생성(drain), 키워드 검색(FTS5 trigram, 질의는 Core 함수 하나가 구절로 감쌈), EXIF 촬영 일시 필터(문서 조각·파일 이름·경로 검색과 `recall docs`·`files show`·`files url`은 epic-drive의 E8-6이 먼저 만든다, 2026-10-26), 종류별 결과 계약, `brain recall time/logs/chunks/tools/expand`, `brain sessions list/read`, 결과 계약(출처·근접 정렬·8,000자), 세션별 Markdown 미러와 `mirror rebuild`, 조각 색인을 다시 만드는 `index rebuild`(키워드 구성), `recall` 직전 증분 수집(epic-capture의 세션 토큰 수집을 부른다. `log append`의 선수집은 epic-log-and-context)을 만든다.
 
 2026-10-15 epic-capture 인셉션으로 정한 것:
 - 근접 정렬은 같은 워크트리 → 프로젝트 → 전체다. 워크스페이스는 slice 1에서 쓰지 않는다.
 - `messages redact` 연쇄 중 가린 메시지의 조각·미러 재생성 일감은 이 에픽이 붙인다. epic-capture는 행 삭제까지 한다(AD-11).
-- 문서 추출 세대·조각과 `file_names`는 epic-attachments가 만든다. 이 에픽은 그것을 검색한다.
+- 문서 추출 세대·조각과 `file_names`는 epic-attachments가 만들고, 문서 검색 경로는 epic-drive(E8-6)가 만든다. 이 에픽은 그것을 쓰고 넓힌다(2026-10-26).
 
 2026-10-15 변경(추가안 B, `../change-surface-plugin-daemon/`)으로 더한 것: 결과 계약 보강 — 잘림은 낮은 순위 행부터 통째로, 1위는 남기고 `meta.omitted{count, reason}`·`meta.next{ns, verb, args}`를 붙인다(AD-15). 검색을 수행하지 못한 것(오류 `SEARCH_FAILED`)과 0건(`ok`, `data: []`, `meta.hint`에 다음 행동)과 미설치(exit 2)를 구분한다. `has_more`는 limit+1로 판정하고 0건도 `count`를 낸다. 문서 결과의 위치는 `chunk_locator`다. 3자 미만 LIKE 폴백에 `ESCAPE` 명시, `EXPLAIN QUERY PLAN` 인덱스 회귀 테스트, 미러 파일명의 `<project>` 정리(제어문자·`<>:"/\|?*`→`_`, 대소문자 충돌은 ` (2)`). 원천: `inputs/weknora-patterns.md` §1.3.
 
@@ -29,7 +29,9 @@ risk: medium
 
 ## Requirements
 
-인셉션 때 채운다. spec의 CAP-4, CAP-5, CAP-6, CAP-7, CAP-13, CAP-14(문서 검색 부분)와 그것이 인용하는 PRD FR·spine AD가 원천이다.
+인셉션 때 채운다. spec의 CAP-4, CAP-5, CAP-6, CAP-7, CAP-13, CAP-14(촬영 일시 필터 부분. 문서 검색은 epic-drive E8-6, 2026-10-26)와 그것이 인용하는 PRD FR·spine AD가 원천이다.
+
+- E4-1 (CAP-14, 촬영 일시 부분): 이미지 EXIF와 촬영 일시 세 칸(`captured_at_local`, 시간대를 알 때만 `captured_at`, `captured_at_source`), 그리고 그것으로 거르는 촬영 일시 필터(Done when 7). epic 10의 E10-5에서 옮겨 왔다(티켓 1, 옛 10.9, 2026-10-26). (FR-28, AD-24)
 
 ## Done when
 
@@ -39,7 +41,7 @@ risk: medium
 4. 한 번의 결과가 8,000자를 넘으면 낮은 순위 행부터 통째로 빠지고 1위는 남으며, `RESULT_TRUNCATED`와 함께 `meta.omitted.count`와 다음에 실행할 `meta.next`가 붙는다. 검색이 실패한 것(`SEARCH_FAILED`)과 0건이 응답에서 구분된다.
 5. 미러를 지우고 `mirror rebuild`로 다시 만들면 같은 내용이고, 미러를 고쳐도 DB는 변하지 않으며, 가린 세션의 미러에는 가린 값이 없다.
 6. `index rebuild`로 조각을 비우고 다시 만들어도 원문·로그·출처가 변하지 않고, 미색인 세션은 `UNINDEXED`로 표시된다. 조회 지연(SM-7)을 실측해 기록하고, doctor가 색인 설정과 실패 색인을 보인다.
-7. 문서 본문의 단어, 폴더 이름, 촬영 일시로 문서·사진이 찾히고, 결과에 원본 URL이 붙으며, 미색인 파일은 표시된다. 공백 든 질의와 `a-b`·`AND`·`"` 같은 질의가 오류나 조용한 0건 없이 처리된다.
+7. (2026-10-26: 문서 본문·폴더 이름·파일 이름 검색과 원본 URL·미색인 표시·질의 처리는 epic 8의 E8-6으로 옮겼다. 이 에픽은 그 위에 촬영 일시 필터를 더한다(EXIF, 이 에픽의 1 — 옛 10.9).) 문서 본문의 단어, 폴더 이름, 촬영 일시로 문서·사진이 찾히고, 결과에 원본 URL이 붙으며, 미색인 파일은 표시된다. 공백 든 질의와 `a-b`·`AND`·`"` 같은 질의가 오류나 조용한 0건 없이 처리된다.
 8. `recall chunks --count`·`logs --count`·`docs --count`가 질의·꼬리표·기간 필터 그대로 세션 수(문서는 파일 수)·행 수·월별 건수를 내고, 0건도 0으로 내며, 응답 `meta`에 쓴 구간이 되울리고, `RESULT_TRUNCATED`가 붙지 않는다(2026-10-20).
 
 ## Boundaries
@@ -69,4 +71,5 @@ AD-13·14(로그 없는 세션의 첫 요청 문장, FR-9 표시)·15·16·23·2
 - Carry(2026-10-22, epic 2 회고, 인셉션 입력):
   - 0006은 옛 chunk의 seq 범위를 시각 범위로 바꾸므로, 같은 시각에 걸친 서로 다른 chunk 둘이 있으면 UNIQUE에 걸린다(회고 C5, `packages/sqlite/migrations/0006_drop_message_seq.sql:140-151`). 지금은 chunk를 쓰는 코드가 없어 문제가 없다. chunk writer를 만들 때 같은 시각 범위의 규칙을 정한다.
   - 세션·메시지를 읽어 내보내는 새 읽기는 `sessionForOutput`을 거친다(I95) — 도구 메모 대상 전용 가리기 규칙은 일반 엔벨로프 가리기만으로는 걸리지 않는다.
-- Carry(2026-10-22, epic-attachments 인셉션, 사용자 결정): 추출한 문서 텍스트(`document_chunks.body`)와 파일 이름을 내보내는 출력 경로(문서 검색 결과·발췌, `files show`)는 이 에픽이 만들고, 출력 코덱으로 가린다(마스킹 B). epic-attachments는 원문 저장까지만 하고 문서 본문 출력 경로를 만들지 않는다. 출력 코덱 계약 테스트의 probe에 문서 조각을 더한다(`packages/core/src/output/codecs.ts`). 원본에 닿을 수 없는 파일(`source_unreachable_at`)과 포인터가 없는 실패·미지원 파일을 결과에서 어떻게 보일지도 여기서 정한다.
+- Carry(2026-10-22, epic-attachments 인셉션, 사용자 결정): 추출한 문서 텍스트(`document_chunks.body`)와 파일 이름을 내보내는 출력 경로(문서 검색 결과·발췌, `files show`)는 이 에픽이 만들고, 출력 코덱으로 가린다(마스킹 B). epic-attachments는 원문 저장까지만 하고 문서 본문 출력 경로를 만들지 않는다. 출력 코덱 계약 테스트의 probe에 문서 조각을 더한다(`packages/core/src/output/codecs.ts`). 원본에 닿을 수 없는 파일(`source_unreachable_at`)과 포인터가 없는 실패·미지원 파일을 결과에서 어떻게 보일지도 여기서 정한다. → 2026-10-26: 이 출력 경로와 probe는 epic-drive(E8-6)가 만든다.
+- Decision(2026-10-26, `../change-v1-capture-and-drive/`, 사용자): V1 뒤(backlog). 문서 검색 부분(Done when 7의 대부분)은 epic 8(E8-6)로 옮겼고, 이 에픽은 epic 8을 기다린다.

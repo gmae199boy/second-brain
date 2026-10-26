@@ -3,8 +3,8 @@ name: 'Personal Brain V1 slice 1'
 type: architecture-spine
 purpose: build-substrate
 altitude: feature
-paradigm: 'hexagonal (ports & adapters), 단명 CLI 런타임(데몬은 선택, epic 9)'
-scope: 'slice 1 — 세션 수집, 작업 로그, 조회, 시작 맥락, 설치·운영. 개인용, 기계 한 대, 수집 경로는 Claude Code 하나(Harness 중립 구조). 설치·hook 진입점은 Claude Code 플러그인'
+paradigm: 'hexagonal (ports & adapters), 단명 CLI + 상주 데몬 하나(epic 9, 2026-10-26)'
+scope: 'slice 1 — V1은 세션 수집, 첨부·Google Drive 파일 수집과 문서 찾기, 상주 데몬, 설치·로컬 백업(2026-10-26). 작업 로그·조회·시작 맥락은 V1 다음. 개인용, 기계 한 대, 수집 경로는 Claude Code 하나(Harness 중립 구조). 설치·hook 진입점은 Claude Code 플러그인'
 status: final
 created: '2026-10-08'
 updated: '2026-10-20'
@@ -26,7 +26,7 @@ companions: []
 
 ## Design Paradigm
 
-**Hexagonal (ports & adapters).** Core는 use case와 port만 정의하고 제품 이름을 모른다. adapter가 port를 구현하고, Runtime(CLI)이 명시적으로 조립한다. slice 1에 상주 프로세스는 없다. 모든 실행은 짧게 떴다 사라지는 `brain` 프로세스이고, 같은 세션에 여러 프로세스가 동시에 뜨는 것을 전제한다. 데몬(AD-27, epic 9)은 같은 빌드의 선택 런타임이고, 데몬이 없을 때의 동작이 기준이다.
+**Hexagonal (ports & adapters).** Core는 use case와 port만 정의하고 제품 이름을 모른다. adapter가 port를 구현하고, Runtime(CLI)이 명시적으로 조립한다. 상주 프로세스는 데몬 하나다(AD-25·27, epic 9). 데몬은 같은 빌드에서 Core를 직접 부르며 drain 반복·파일 감시·(다음 조각의) 예약 작업을 맡는다. hook과 명령은 짧게 떴다 사라지는 `brain` 프로세스이고, 같은 세션에 여러 프로세스가 동시에 뜨는 것을 전제한다. 데몬이 멈춰도 hook·명령은 동작한다(2026-10-26).
 
 | 층 | 위치 | 아는 것 |
 | --- | --- | --- |
@@ -102,7 +102,7 @@ flowchart LR
 
 - **Binds:** FR-23, FR-24
 - **Prevents:** 진입점마다 동작이 갈리는 것, 데몬·MCP 도입 시 재작성
-- **Rule:** CLI 명령에는 인자 해석과 출력 형식 변환 외의 로직이 없다. SDK 메서드 `<ns>.<verb>`는 CLI `brain <ns> <verb>`, MCP 도구 `<ns>_<verb>`(AD-28)와 같은 입출력 형태를 1:1로 갖는다. 출력은 `--json`(에이전트용)과 텍스트(사람용) 두 가지다. slice 1은 CLI만 내고(MCP·데몬은 epic 9), 표면은 아래 표로 고정한다. 이름공간은 명령이 다루는 대상이다. 대상이 없는 모음 이름공간(예전의 `admin`)은 두지 않는다(2026-10-16 사용자).
+- **Rule:** CLI 명령에는 인자 해석과 출력 형식 변환 외의 로직이 없다. SDK 메서드 `<ns>.<verb>`는 CLI `brain <ns> <verb>`, MCP 도구 `<ns>_<verb>`(AD-28)와 같은 입출력 형태를 1:1로 갖는다. 출력은 `--json`(에이전트용)과 텍스트(사람용) 두 가지다. slice 1은 CLI만 내고(데몬은 epic 9, MCP는 V1 뒤, 2026-10-26), 표면은 아래 표로 고정한다. 이름공간은 명령이 다루는 대상이다. 대상이 없는 모음 이름공간(예전의 `admin`)은 두지 않는다(2026-10-16 사용자).
   - **표면 중립.** `args`는 SDK 입력 객체(JSON)이고 CLI 플래그는 그 키의 kebab-case다. 확인 게이트는 SDK가 소유한다: 동의가 필요한 verb는 입력 `confirm: true`가 없으면 `CONFIRMATION_REQUIRED`를 돌려주고, CLI `--yes`는 `confirm: true`로 바뀐다. 다음 단계·재시도는 SDK가 `{ns, verb, args}`로 돌려주고(`error.retry`는 같은 verb에 `confirm: true`를 더한 입력, `meta.next`는 다른 verb), CLI만 거기에 `retry_argv`를 덧붙이며, MCP는 도구 호출로, hook은 `systemMessage`로 바꾼다. 어느 표면도 다른 표면의 표현을 만들지 않는다. 엔벨로프 코덱은 Core에 하나이고 모든 표면이 쓴다.
   - 모든 명령은 메타(`used_for`, `required`, `examples`, `output`, `risk(read | write | destructive)`, `hook(no | yes | only)`, `dryRun`)를 선언하고, `guide schema`·`--help`·MCP 스키마는 그 메타 하나에서 생성한다(Conventions). `hook: only`인 verb(`context.show`, `log.remind`)는 hook 경로 전용이라 MCP 도구·소켓 verb로 생성하지 않는다(AD-28, 2026-10-20). 상주 명령(`daemon run`, `mcp serve`)은 stdout에 엔벨로프를 내지 않는다(전송이 출력이다).
 
@@ -112,7 +112,8 @@ flowchart LR
 | `sessions` | `ingest`, `list`, `read` | 수집(세션 토큰만으로도), 목록(로그 없는 세션 포함), 넓히기(메시지·도구 메모) (1~6, 9, 15). `assign-workspace`는 예약(워크스페이스는 slice 1에서 쓰지 않음, 2026-10-15) |
 | `log` | `append`, `list`, `edit`, `set-state`, `set-scope`, `remind` | 적기, 조회(종류·꼬리표·기간), 고치기, 끄기·켜기, 규칙 적용 범위, Stop 점검(`hook: only`, 읽기. 로그 없는 세션에 한 번 묻는다, AD-17) (7, 8, 19~22) |
 | `recall` | `time`, `logs`, `chunks`, `docs`, `tools`, `expand` | 시간 조회, 대분류, 소분류, 문서 조각·이름 검색, 도구 메모 검색, 앞뒤 조각 (12~16, 28) |
-| `files` | `show`, `url`, `redact`, `reindex` | 파일 정보·위치, 원본 URL, 첨부 가리기, 재추출 (27, 28, 26) |
+| `files` | `show`, `url`, `redact` | 파일 정보·위치, 원본 URL, 첨부 가리기 (27, 28, 26). `reindex`는 만들지 않는다: 다시 추출은 `failures retry`와 추출기 버전 상승이 한다(2026-10-26) |
+| `sources` | `sync` 외 연결 동사는 epic 8 인셉션에서 | Drive 폴더 동기화 일감을 지금 만들어 돌림 (27, 28, epic 8, 2026-10-26) |
 | `messages` | `redact` | 비밀 가리기 (AD-11) |
 | `failures` | `list`, `retry` | 실패 조회(대상 종류로 거름), 다시 하기(대상 종류에 맞는 일감을 새로 만듦) (5, NFR-2) |
 | `queue` | `drain` | 밀린 일 처리 (5, AD-7, AD-21) |
@@ -124,7 +125,9 @@ flowchart LR
 | `guide` | `show`, `schema`, `exit-codes` | 안내문 전문, 명령 메타, 종료 코드 (24, AD-17) |
 | `setup` | `run`, `connect`, `upgrade`, `uninstall`, `move-store` | 설치·재설정, Harness 연결, 업그레이드, 제거 (AD-19, AD-20) |
 | `mcp` | `serve` | MCP stdio 서버 (AD-28, epic 9) |
-| `daemon` | `run`, `start`, `status`, `stop` | 상주 런타임 (AD-27, epic 9) |
+| `daemon` | `run`, `start`, `status`, `stop` | 상주 런타임 (AD-25·27, epic 9) |
+
+V1 명령(2026-10-26, `../change-v1-capture-and-drive/`): `sessions ingest`, `files show·url·redact`, `recall docs`, `messages redact`, `failures list·retry`, `queue drain`, `doctor run`, `backup export·import`(로컬 백업·복구 범위), `guide`, `setup run·connect·upgrade`, `daemon`, `sources`. 나머지 행(`context`, `log`, `recall`의 나머지, `sessions list·read`, `stats`, `index`, `mirror`, `setup uninstall·move-store`, `mcp`)은 V1 뒤다.
 
 ### AD-6 — 수명 주기 매핑
 
@@ -161,7 +164,7 @@ sequenceDiagram
   - 쓰기 트랜잭션 안에서는 파일·네트워크 I/O를 하지 않고, 어떤 쓰기 트랜잭션도 2초를 넘겨 잠금을 쥐지 않는다(긴 일은 일감으로 쪼갠다).
   - `busy_timeout`은 호출 경로별 Core 상수다(턴 수집 3초, 동기 hook 경로 `context.show`·`log.remind` 1초, 사람이 부른 명령 10초, drain 10초). 시간 초과는 실패가 아니라 spool로 간다(AD-9). `journal_mode=WAL`은 파일 속성이라 DB를 만드는 설치기·마이그레이션이 한 번 건다. 연결마다 거는 것은 `busy_timeout`, `foreign_keys=ON`, `recursive_triggers=ON`이고, 이 설정은 adapter의 연결 함수 한 곳에만 있다.
   - 밀린 일(실패한 수집, transcript 폴더 스캔, 조각·색인 생성, 규칙 인용 대조, spool 재주입, 미러 갱신)은 SDK의 `queue.drain()` 하나가 처리한다. 호출자는 시작 hook(async)과 `brain doctor run`이다.
-  - drain은 동시 실행을 전제하고, 일감은 `work_items`(AD-21)에서 짧은 쓰기 트랜잭션으로 청구한 뒤 트랜잭션 밖에서 처리한다. 모든 백그라운드 작업은 멱등이다. hook이 없는 Harness를 위해 사람이 부른 명령은 끝에 짧은 시간 예산으로 drain을 한 번 기회적으로 돈다. 예외: 동기 hook(`context show`, `log remind`)과 hook 경로의 명령은 돌지 않고(AD-6), 데몬이 살아 있으면(소켓 handshake가 응답하면. 설정 `[daemon] enabled`가 기준이 아니다) 어떤 명령도 돌지 않으며(AD-27), 기회적 drain은 읽기로 할 일이 있는지 본 뒤에만 쓰기 잠금을 잡는다.
+  - drain은 동시 실행을 전제하고, 일감은 `work_items`(AD-21)에서 짧은 쓰기 트랜잭션으로 청구한 뒤 트랜잭션 밖에서 처리한다. 모든 백그라운드 작업은 멱등이다. hook이 없는 Harness를 위해 사람이 부른 명령은 끝에 짧은 시간 예산으로 drain을 한 번 기회적으로 돈다. 예외: 동기 hook(`context show`, `log remind`)과 hook 경로의 명령은 돌지 않고(AD-6), 데몬이 살아 있으면(heartbeat가 간격 안이면, 2026-10-26. 소켓 handshake 기준은 소켓과 함께 다음 조각) 어떤 명령도 돌지 않으며(AD-27), 기회적 drain은 읽기로 할 일이 있는지 본 뒤에만 쓰기 잠금을 잡는다.
 
 ### AD-8 — ID와 멱등 키
 
@@ -245,7 +248,7 @@ sequenceDiagram
   - 발생 시각(`occurred_at`)은 사건이 일어난 프로세스가 `Clock` port로 한 번 정한다. DB에 들어간 시각은 `recorded_at`으로 따로 둔다.
   - 시작 맥락에는 오늘 날짜와 시간대(설정, 기본 `Asia/Seoul`) 한 줄이 들어간다. 모든 `--json` 응답은 `now`와, 받은 범위를 되울린다.
 
-### AD-14 — 작업 로그의 작성자, 대화 연결, 규칙 상태
+### AD-14 — 작업 로그의 작성자, 대화 연결, 규칙 상태 [V1 뒤, epic 3]
 
 - **Binds:** FR-7, FR-8, FR-9, FR-19
 - **Prevents:** 자동 경로가 로그를 써서 SM-4가 오염되는 것, 로그가 엉뚱한 대화에 붙는 것, 다시 쓴 규칙이 켜지거나 내가 끈 규칙이 되살아나는 것
@@ -275,7 +278,7 @@ sequenceDiagram
   - 한 번의 결과는 기본 5건, 총 8,000자 이하다. 넘치면 낮은 순위 행부터 통째로 빼되 1위는 남기고, 경고 `RESULT_TRUNCATED`와 함께 `meta.omitted{count, reason}`·`meta.next{ns, verb, args}`를 붙인다. 행 안을 자르는 것은 최후 수단이다. `has_more`는 limit+1로 판정하고 0건도 `count`를 낸다. `--count`(`chunks`·`logs`·`docs`)는 같은 필터로 집계만 `data`로 돌려준다: `chunks`·`logs`는 `{sessions, rows, by_month}`, `docs`는 `{files, rows, by_month}`이고 `by_month`는 기간 필터 안의 달만(AD-13의 구간 함수). 그 응답의 `meta.count`는 1, `has_more`는 false이고 `RESULT_TRUNCATED`는 붙지 않는다. 회귀 러너(`tooling/eval`)의 결과 파일은 식별자·질의·점수만 담고 본문을 쓰지 않는다(2026-10-20).
   - 검색을 수행하지 못한 것(오류 `SEARCH_FAILED`: FTS 오류·DB 잠금 초과)과 0건(`ok`, `data: []`, `meta.hint`에 다음 행동)은 구분한다. 미설치·미초기화는 exit 2 코드(`CONFIG_MISSING`·`DB_UNAVAILABLE`)로 드러나며, 어느 경우도 "기록이 없다"로 읽히게 두지 않는다(NFR-2).
 
-### AD-16 — Markdown 미러는 DB에서 파일로만 간다
+### AD-16 — Markdown 미러는 DB에서 파일로만 간다 [V1 뒤, epic 4]
 
 - **Binds:** FR-15, FR-24, NFR-6, NFR-9
 - **Prevents:** 미러가 두 번째 원본이 되는 것, 증분 쓰기와 재생성이 같은 파일에서 부딪치는 것
@@ -284,7 +287,7 @@ sequenceDiagram
   - 쓰기는 항상 전체 교체(임시 파일 → rename)다. DB 쓰기 잠금 밖에서, 읽기 스냅샷으로 내용을 만든 뒤 쓴다(AD-7). 같은 세션의 미러 쓰기는 미러 일감(AD-21) 하나로 직렬화된다. 증분 갱신과 `mirror.rebuild`는 같은 함수를 쓴다. 실패는 실패 기록에 남는다.
   - 미러를 읽어 DB에 쓰는 경로는 없다. 경로는 설정 한 줄(기본 `~/.second_brain/mirror/`)이고, Brain은 그 폴더가 동기화 폴더인지 모른다.
 
-### AD-17 — 시작 맥락: 규율의 원본, 크기, 기록
+### AD-17 — 시작 맥락: 규율의 원본, 크기, 기록 [V1 뒤, epic 3]
 
 - **Binds:** FR-7, FR-14, FR-17, FR-18, FR-19, NFR-2
 - **Prevents:** Harness마다 규율이나 규칙 사본이 갈라지는 것, 주입이 조용히 실패하는 것, 토크나이저에 의존하는 것
@@ -301,7 +304,7 @@ sequenceDiagram
 - **Binds:** FR-25, NFR-6
 - **Prevents:** 키가 공개 저장소로 들어오는 것, 설정을 읽는 곳이 흩어지는 것, 모르는 설정이 조용히 기본값으로 떨어지는 것
 - **Rule:**
-  - 설정은 `~/.second_brain/config.toml`(`schema_version` 포함), 키는 `~/.second_brain/.env`에 둔다. 설정 파일에는 키 값이 아니라 환경 변수 이름만 적는다. 원본 위치는 `[store] path`, 미러 위치는 `[mirror] path`, 데몬 사용 여부는 `[daemon] enabled`(기본 false. 키와 주기 Label 선택은 epic 5가, 데몬 동작은 epic 9가 맡는다)다. 자동 업데이트 여부는 `[update] auto`(기본 true. 설치기가 TTY에서 묻는다, AD-19·27, 2026-10-16)다. Stop 점검 여부는 `[discipline] stop_remind`(기본 false. 설치기는 묻지 않는다. epic 3, AD-17, 2026-10-20)다. 복제 대상은 epic 7에서 `[[replicas]]` 목록(Postgres URL은 환경 변수 이름으로)으로 더한다. 설치 기록(`<home>/installed.json`)과 런타임 상태(`<home>/run/`)는 설정이 아니라 사실이고 코덱을 거치지 않는다(AD-19, Conventions).
+  - 설정은 `~/.second_brain/config.toml`(`schema_version` 포함), 키는 `~/.second_brain/.env`에 둔다. 설정 파일에는 키 값이 아니라 환경 변수 이름만 적는다. 원본 위치는 `[store] path`, 미러 위치는 `[mirror] path`, 데몬은 설치되면 늘 켠다(설정 키 없음. 임시 정지는 `daemon stop`, AD-25·27, 2026-10-26). 자동 업데이트 여부는 `[update] auto`(기본 true. 설치기가 TTY에서 묻는다, AD-19·27, 2026-10-16)다. Stop 점검 여부는 `[discipline] stop_remind`(기본 false. 설치기는 묻지 않는다. epic 3, AD-17, 2026-10-20)다. 복제 대상은 epic 7에서 `[[replicas]]` 목록(Postgres URL은 환경 변수 이름으로)으로 더한다. 설치 기록(`<home>/installed.json`)과 런타임 상태(`<home>/run/`)는 설정이 아니라 사실이고 코덱을 거치지 않는다(AD-19, Conventions).
   - 읽기·쓰기는 Runtime의 설정 코덱 하나만 한다(설치기 포함). 모르는 키는 경고하고, Core에는 값으로 넘긴다.
 
 ### AD-19 — 설치 진입점, 플러그인, Harness 연결
@@ -327,9 +330,9 @@ sequenceDiagram
 - **Rule:**
   - DB는 `schema_version`을 가진다. **마이그레이션은 `setup run`과 `setup upgrade`만 실행**한다.
   - 런타임 명령은 시작할 때 버전을 확인한다. 다르면 DB에 쓰지 않고 spool로 보내며, 경고 `SCHEMA_MISMATCH`와 함께 doctor에 올린다.
-  - `setup upgrade`는 코드 갱신 → 빌드 → 마이그레이션 → shim 재작성(플러그인 없는 Harness만 hook 재등록) → LaunchAgent 일치(AD-25) → 데몬이 있으면 재시작(AD-27) → doctor → 완료 기록(AD-19) 순서다. 플러그인 hook이 시작하는 ff+build도 같은 함수를 쓴다(AD-19).
+  - `setup upgrade`는 코드 갱신 → 빌드 → 마이그레이션 → shim 재작성(플러그인 없는 Harness만 hook 재등록) → 데몬 LaunchAgent 일치(AD-25) → 데몬 재시작(AD-27) → doctor → 완료 기록(AD-19) 순서다. 플러그인 hook이 시작하는 ff+build도 같은 함수를 쓴다(AD-19).
   - 백업은 `backup.export`다. 내보내기 위치는 설정이고, doctor는 마지막 내보내기가 설정한 기간(기본 7일)보다 오래되면 경고한다.
-  - `setup uninstall`은 Brain 표식이 붙은 hook, shim, LaunchAgent 두 Label(주기·데몬), `<home>/run/`(소켓·pid·heartbeat·`stop-remind/`), `<home>/log/`, `installed.json`을 지운다. 플러그인은 사용자가 `claude plugin uninstall`로 지운다(안내만). 원본 DB 파일(`brain.db`)과 데이터 폴더(`files/`, spool, 미러)는 별도의 명시적 확인을 받아야 지운다.
+  - `setup uninstall`은 Brain 표식이 붙은 hook, shim, 데몬 LaunchAgent(AD-25), `<home>/run/`(pid·heartbeat·`stop-remind/`, 소켓은 V1 뒤), `<home>/log/`, `installed.json`을 지운다. 플러그인은 사용자가 `claude plugin uninstall`로 지운다(안내만). 원본 DB 파일(`brain.db`)과 데이터 폴더(`files/`, spool, 미러)는 별도의 명시적 확인을 받아야 지운다.
 
 ### AD-21 — 밀린 일은 `work_items` 하나에 쌓는다
 
@@ -361,9 +364,9 @@ sequenceDiagram
 - **Rule:**
   - 파일은 내용(`files`, `content_hash`는 `sha256:<소문자 hex>`)과 위치(`file_locations`)로 나눈다. 위치는 저장소 종류, locator, **소유(`brain | external`)**다. 같은 내용이 Brain 사본과 사용자 원본으로 동시에 있는 것이 정상이다(내용 행 하나, 위치 둘). 소유는 내용이 아니라 위치의 속성이다.
   - Brain 위치의 locator는 내용의 순수 함수다(`<h0-2>/<h2-4>/<hex><확장자>`, 임시 파일 → rename). 그래서 넣기는 멱등이다. 절대 경로와 URL은 저장하지 않고 위치로부터 그때 만든다.
-  - `FileStore` port(넣기, 가져오기, 확인, 위치→URL, 지우기)는 **`brain` 소유이면서 설정된 루트 안의 위치에만** 쓰고 지운다. 그 밖의 위치에 대한 쓰기·지우기는 port가 거부하고, 계약 테스트가 고정한다. slice 1은 로컬 구현만 낸다. 루트는 `[files] path`(기본 `~/.second_brain/files/`, 동기화 폴더 금지, 권한 0700/0600)다.
+  - `FileStore` port(넣기, 가져오기, 확인, 위치→URL, 지우기)는 **`brain` 소유이면서 설정된 루트 안의 위치에만** 쓰고 지운다. 그 밖의 위치에 대한 쓰기·지우기는 port가 거부하고, 계약 테스트가 고정한다. V1은 로컬 구현(epic 10)과 Drive 구현(epic 8)을 낸다(2026-10-26). 루트는 `[files] path`(기본 `~/.second_brain/files/`, 동기화 폴더 금지, 권한 0700/0600)다.
   - `files.home`은 `brain` 위치 하나를 가리킨다. 원본 이전은 넣기 → 저장소 해시(`remote_checksum`) 또는 되읽기로 검증 → **같은 쓰기 트랜잭션에서 검증 시각 기록과 `home` 전환** → 옛 위치 삭제는 별도 일감이다. 이전은 양방향(로컬 ↔ Drive)이고, 검증 없이 지우는 경로는 없다.
-  - 첨부는 파일을 먼저 저장소에 넣고(트랜잭션 밖) 그 뒤 행을 쓴다(AD-7). 루트 안에 있으나 위치 행이 없고 유예(기본 24시간)가 지난 블롭은 drain의 고아 정리 일감이 지우고, doctor가 건수·바이트를 보인다. 첨부 바이트는 spool에 넣지 않는다(spool 한 줄은 64KB 이하, 첨부는 메타데이터 한 줄만).
+  - 첨부는 파일을 먼저 저장소에 넣고(트랜잭션 밖) 그 뒤 행을 쓴다(AD-7). 루트 안에 있으나 위치 행이 없고 유예(기본 24시간)가 지난 블롭은 drain의 고아 정리 일감이 지우고, doctor가 건수·바이트를 보인다(V1 뒤, 2026-10-26. V1은 Brain 위치 블롭 하나를 지우는 멱등 일감만 둔다). 첨부 바이트는 spool에 넣지 않는다(spool 한 줄은 64KB 이하, 첨부는 메타데이터 한 줄만).
   - `message_attachments`의 키는 `(message_id, ordinal)`이다. parser는 첨부의 자리와 출처만 내고, 내용(`file_id`)과 상태(`stored | missing_at_ingest`)는 수집이 한 번 채운다.
   - **가리기**: 원문 불변의 두 번째 예외는 `files.redact`다. 한 트랜잭션에서 `redacted_at`, 그 내용의 추출 세대·조각·FTS 삭제, 그 내용의 `file_names`(와 이름 FTS)·`file_metadata` 삭제, `redactions` 기록, 모든 `brain` 위치에 블롭 삭제 일감을 남긴다. 이름·메타데이터 재생성은 가린 파일을 건너뛴다(2026-10-16). 가리기는 내용 단위다. 가린 파일은 다시 추출하지 않는다. 추출한 문서 텍스트는 원문으로 저장하고 나갈 때 같은 함수로 가린다(AD-11). 파일 바이트는 가리지 않는다(`files.redact`가 그 길이다). `messages.redact`는 가리지 않은 첨부가 남아 있으면 경고 `ATTACHMENT_NOT_REDACTED`를 낸다.
 
@@ -373,21 +376,25 @@ sequenceDiagram
 - **Prevents:** 추출 실패가 조용히 빠지는 것, 두 세대의 조각이 함께 검색되는 것, 복구 한 번에 문서 검색이 사라지는 것, 수집이 추출을 기다리는 것
 - **Rule:**
   - 추출은 drain의 일감(AD-21)이다. 형식은 확장자가 아니라 내용으로 판정한다.
-  - 추출 한 번은 `document_extractions` 한 행(파일, `extractor_version`, 파일당 단조 증가하는 `attempt`(Store가 삽입 트랜잭션 안에서 `max+1`로 배정, `(file_id, attempt)` UNIQUE), 상태 `ok | failed | unsupported | too_large | redacted`, 실패하면 `failed_stage(read | extract | chunk | index)`)이고, 조각(`document_chunks`)은 그 행에 속한다. `failed`가 되는 쓰기는 `failed_stage`를 가져야 하고 trigger가 강제한다(0005, 그 이전 행은 예외, 2026-10-19). 조각마다 `chunk_locator`(JSON; `type ∈ {pdf, docx, text, time, sheet}` 뒤에 종류별 필드: pdf 쪽·영역 `page`·`bbox` / docx 블록 `block` / text 글자 범위 `start`·`end`(코드 포인트, Conventions) / time 밀리초 `start_ms`·`end_ms` / sheet `sheet`·`row_start`·`row_end`)를 둔다. 정규형은 Core 코덱 하나가 만든다(`type` 첫 키, 정해진 키 순서, null 생략, 공백 없음). 기존 `page` 컬럼은 `chunk_locator.page`의 읽기 전용 사본(인덱스·정렬용)이고 같은 트랜잭션에서 채운다. 진실 출처는 `chunk_locator`다. pdf가 아니면 `page`는 null이다. 두 값이 다르면(null 포함 비교) Store가 쓰기를 거부한다. `files.current_extraction_id`가 검색에 쓰이는 단 하나의 세대다. 재추출은 새 세대를 만든 뒤 같은 트랜잭션에서 포인터를 바꾸고 옛 세대와 FTS 행을 지운다. 포인터 전환은 현재 세대보다 `attempt`가 큰 세대만 할 수 있다(늦게 끝난 옛 시도가 덮어쓰지 못한다). 실패하면 포인터는 그대로이고, 그 세대가 남긴 조각·FTS는 실패를 기록하는 쓰기(또는 뒤따르는 정리 일감)가 지운다. 청구가 만료된 추출 일감의 열린 세대(`finished_at` null)는 다음 청구가 `failed`(`failed_stage`는 마지막 단계)로 닫은 뒤 새 `attempt`를 만든다. 열린 세대를 건너뛰는 것은 그 세대의 일감 청구가 살아 있을 때뿐이다(AD-21, 2026-10-16). 조각과 FTS 쓰기는 배치(예: 200조각)로 나눠 AD-7의 2초를 지킨다.
+  - 추출 한 번은 `document_extractions` 한 행(파일, `extractor_version`, 파일당 단조 증가하는 `attempt`(Store가 삽입 트랜잭션 안에서 `max+1`로 배정, `(file_id, attempt)` UNIQUE), 상태 `ok | failed | unsupported | too_large | redacted`, 실패하면 `failed_stage(read | extract | chunk | index)`)이고, 조각(`document_chunks`)은 그 행에 속한다. `failed`가 되는 쓰기는 `failed_stage`를 가져야 하고 trigger가 강제한다(0005, 그 이전 행은 예외, 2026-10-19). 조각마다 `chunk_locator`(JSON; `type ∈ {pdf, docx, text, time, sheet}`(V1 구현은 pdf·docx·text 세 종류, time·sheet는 소비자가 생길 때, 2026-10-26) 뒤에 종류별 필드: pdf 쪽·영역 `page`·`bbox` / docx 블록 `block` / text 글자 범위 `start`·`end`(코드 포인트, Conventions) / time 밀리초 `start_ms`·`end_ms` / sheet `sheet`·`row_start`·`row_end`)를 둔다. 정규형은 Core 코덱 하나가 만든다(`type` 첫 키, 정해진 키 순서, null 생략, 공백 없음). 기존 `page` 컬럼은 `chunk_locator.page`의 읽기 전용 사본(인덱스·정렬용)이고 같은 트랜잭션에서 채운다. 진실 출처는 `chunk_locator`다. pdf가 아니면 `page`는 null이다. 두 값이 다르면(null 포함 비교) Store가 쓰기를 거부한다. `files.current_extraction_id`가 검색에 쓰이는 단 하나의 세대다. 재추출은 새 세대를 만든 뒤 같은 트랜잭션에서 포인터를 바꾸고 옛 세대와 FTS 행을 지운다. 포인터 전환은 현재 세대보다 `attempt`가 큰 세대만 할 수 있다(늦게 끝난 옛 시도가 덮어쓰지 못한다). 실패하면 포인터는 그대로이고, 그 세대가 남긴 조각·FTS는 실패를 기록하는 쓰기(또는 뒤따르는 정리 일감)가 지운다. 청구가 만료된 추출 일감의 열린 세대(`finished_at` null)는 다음 청구가 `failed`(`failed_stage`는 마지막 단계)로 닫은 뒤 새 `attempt`를 만든다. 열린 세대를 건너뛰는 것은 그 세대의 일감 청구가 살아 있을 때뿐이다(AD-21, 2026-10-16). 조각과 FTS 쓰기는 배치(예: 200조각)로 나눠 AD-7의 2초를 지킨다.
   - `extractor_version`은 사용한 라이브러리 버전을 담은 Core 상수다(예: `doc/1+pdfjs-6.4.299+mammoth-1.13.0`). 라이브러리만 올리고 상수를 그대로 두는 변경은 하지 않는다.
   - 원본이 DB 밖에 있으므로 추출 세대와 조각은 내보내기·복구에 **포함한다**(다시 만드는 파생물이 아니다). 원본에 접근할 수 없는 파일(복구 직후, 연동 해제)은 `files.source_unreachable_at`으로 표시하고 기존 조각은 계속 검색된다. 결과에 경고 `FILE_SOURCE_UNREACHABLE`를 붙이고 재추출 일감은 만들지 않는다.
-  - 이름·경로는 내용과 별도로 색인한다: 위치의 경로와 첨부의 표시 이름을 모은 `file_names`(파생)가 색인 대상이다. 이미지는 `file_metadata`에 EXIF를 남긴다. 촬영 일시는 시간대가 없으므로 `captured_at_local`(원문), `captured_at`(시간대를 알 때만 AD-13 정규형), `captured_at_source`를 둔다. EXIF는 신뢰할 수 없는 입력이다.
+  - 이름·경로는 내용과 별도로 색인한다: 위치의 경로와 첨부의 표시 이름을 모은 `file_names`(파생)가 색인 대상이다. 이미지는 `file_metadata`에 EXIF를 남긴다(V1 뒤, epic 4의 1, 2026-10-26. V1의 사진은 폴더·파일 이름으로 찾는다). 촬영 일시는 시간대가 없으므로 `captured_at_local`(원문), `captured_at`(시간대를 알 때만 AD-13 정규형), `captured_at_source`를 둔다. EXIF는 신뢰할 수 없는 입력이다.
 
-### AD-25 — 주기 실행은 launchd가 단명 CLI를 부른다
+### AD-25 — launchd는 데몬을 띄우고 다시 띄우기만 한다
 
 - **Binds:** NFR-2, NFR-3
-- **Prevents:** 주기 작업 때문에 상주 프로세스를 강제하는 것, 주기 실행 둘(launchd와 데몬)이 겹치는 것, 일감이 다음 세션 시작까지 밀리는 것, 주기 실행이 멈췄는데 아무도 모르는 것
+- **Prevents:** 상주 실행 주체가 둘이 되는 것(주기 LaunchAgent와 데몬), 로그인 뒤 데몬이 없는 것, 데몬이 죽었는데 아무도 모르는 것
 - **Rule:**
-  - 설치기가 고정 Label(`<reverse-dns>.second-brain.drain`)의 LaunchAgent 하나를 등록한다. 같은 Label이면 다시 등록하지 않는다(Brain 표식과 같은 멱등). shim을 통해 기본 5분마다 `brain queue drain`을 부르고(epic 8의 Drive 동기화는 drain의 일감 종류로 들어가 launchd·데몬 어느 쪽이든 같은 경로로 돈다), 한 번의 실행은 시간 예산(기본 60초) 안에서 끝낸다. `setup uninstall`이 지운다.
-  - drain은 마지막 실행 시각을 `<home>/run/last-drain`(파일 mtime)에 남기고, doctor는 그것이 간격의 3배보다 오래되면 경고한다.
-  - 주기 실행의 주인은 설정 `[daemon] enabled` 한 줄이다(AD-18). `setup run`·`setup upgrade`(플러그인 bootstrap이 부르는 것도 같은 함수)는 "없으면 더하기"가 아니라 두 Label(주기 `…drain`, 데몬 `…daemon`)의 적재 상태를 설정과 일치시킨다. `enabled=false`면 주기 Label만, `true`면 데몬 Label만 올라간다. 둘 다 `queue.drain` 하나를 부른다. `daemon stop`은 임시 정지이고 주기 Label을 되살리지 않으며 doctor가 `warn`이다. `daemon start`가 데몬 Label을 다시 올린다. 정지된 동안은 데몬이 살아 있지 않으므로 CLI의 기회적 drain과 SessionStart hook의 drain이 돈다(AD-7, 2026-10-16). 데몬이 꺼져 있을 때의 동작은 이 AD와 AD-6·7·9 그대로다.
+  - 설치기(`setup run`, 플러그인 bootstrap이 부르는 같은 함수)가 고정 Label(`<reverse-dns>.second-brain.daemon`)의 LaunchAgent 하나를 `RunAtLoad`·`KeepAlive`로 등록한다. 실행 대상은 shim을 거친 `brain daemon run`이다. 같은 Label이면 다시 등록하지 않는다(Brain 표식과 같은 멱등). `setup uninstall`이 지운다.
+  - 주기 실행용 LaunchAgent는 두지 않는다. 주기 작업(drain, Drive 동기화 `source_sync`, 다음 조각의 예약 작업)은 데몬 안에서 돈다(AD-27).
+  - 데몬이 멈춘 동안은 CLI의 기회적 drain과 SessionStart hook의 drain이 밀린 일을 처리한다(AD-7).
+  - doctor는 데몬 heartbeat가 간격의 3배보다 오래되면 경고한다.
+  - (2026-10-26, `../change-v1-capture-and-drive/`. 이전 규칙의 주기 Label `…drain`, 두 Label 전환, `[daemon] enabled`, `last-drain`은 없앴다. 이전 규칙은 `change-surface-plugin-daemon/`과 `change-users-and-review-gaps/` D3에 있다.)
 
-### AD-26 — 소켓 규약: 데몬과 클라이언트는 CLI와 같은 말을 쓴다
+### AD-26 — 소켓 규약: 데몬과 클라이언트는 CLI와 같은 말을 쓴다 [V1 뒤]
+
+V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSION_MISMATCH`는 다음 조각이다(2026-10-26). 아래는 그때의 규칙이다.
 
 - **Binds:** FR-23, FR-24, NFR-3
 - **Prevents:** 소켓 표면이 CLI와 다른 입출력을 갖는 것, 옛 빌드의 데몬이 새 빌드의 요청을 조용히 처리하는 것, 소켓이 다른 사용자에게 열리는 것
@@ -396,18 +403,22 @@ sequenceDiagram
   - 연결의 첫 메시지는 handshake `{build: <commit>, schema_version}`(AD-19의 빌드 신원)다. 다르면 데몬은 `VERSION_MISMATCH`로 답한다. 자기 빌드가 `installed.json`의 `commit`과 다를 때(데몬이 낡았을 때)만 정상 종료하고 KeepAlive가 새 빌드로 다시 띄운다(AD-27). 클라이언트가 낡았으면 데몬은 살아 있다(2026-10-16). 클라이언트는 프로세스 안 경로로 처리한 뒤 경고 `DAEMON_UNAVAILABLE`을 붙인다(오류가 아니다). 소켓이 없거나 응답하지 않을 때도 같다.
   - 프레이밍(연결당 1요청 또는 JSON Lines)은 epic 9 인셉션에서 정한다.
 
-### AD-27 — 데몬은 같은 빌드의 선택 런타임이다
+### AD-27 — 데몬은 같은 빌드의 상주 런타임이다
 
 - **Binds:** FR-23, NFR-2, NFR-3, NFR-7
 - **Prevents:** 데몬 전용 코드 경로가 생겨 CLI와 갈라지는 것, 데몬이 죽었을 때 수집이 멈추는 것, 인스턴스 둘이 같은 DB를 두고 drain을 겹치는 것, 업그레이드 뒤 옛 데몬이 남는 것
 - **Rule:**
-  - 데몬은 `brain daemon run`(같은 빌드·같은 shim)이고 SDK만 부른다. Core는 그대로다(FR-23). 단일 인스턴스 잠금은 `<home>/run/daemon.pid`(설치 잠금과 같은 규칙: 원자적 생성, pid 생존, 상한 시간)이고, 잠금을 잡은 뒤 남은 소켓 파일을 unlink하고 새로 연다. SIGTERM 정상 종료. 로그는 `<home>/log/daemon.log`이고 크기 기준 회전(기본 1MB×5)이다. heartbeat는 `<home>/run/heartbeat`(파일 mtime, 기본 30초)다. LaunchAgent는 KeepAlive 별도 Label(`<reverse-dns>.second-brain.daemon`)이다. 재시작 주체는 KeepAlive다: 데몬은 자기 빌드가 낡았음을 알거나(AD-26) `setup upgrade`·`daemon stop`의 요청을 받으면 정상 종료하고, KeepAlive가 새 빌드로 다시 띄운다(`stop`은 KeepAlive를 먼저 내린다)(AD-20).
-  - **자동 업데이트**(2026-10-16 사용자): `[update] auto`가 true이면 데몬은 플러그인의 `app-ref`가 설치본보다 앞선 것을 보면(사용자가 플러그인을 갱신한 뒤) 설치 잠금 안에서 `setup upgrade`와 같은 함수를 돌리고, 끝나면 스스로 종료해 KeepAlive가 새 빌드로 띄운다. 기준은 `app-ref`뿐이고 최신 main을 당기지 않는다(AD-19). false면 하지 않고 doctor `warn`(`UPDATE_AVAILABLE`)이다. 데몬이 꺼져 있으면 SessionStart bootstrap이 같은 규칙으로 한다. 둘이 겹쳐도 설치 잠금이 하나만 돌린다.
-  - 데몬은 drain 루프(AD-21)와 transcript 폴더 watcher(hook 없는 수집 보완)를 돈다. 데몬이 살아 있으면 CLI의 기회적 drain은 꺼진다(AD-7). DB에 쓸 수 없으면 같은 spool 형식을 쓰되 구간마다 파일을 닫는다(AD-9).
-  - hook 클라이언트(shim → `bin.js`)는 소켓이 있으면 거기로 보내고, 없거나 `VERSION_MISMATCH`면 지금처럼 프로세스 안에서 처리한다. **데몬이 꺼져 있어도 모든 명령·hook·launchd 경로가 동작한다**(AD-6·7·9·25가 기준 경로). epic 2·10·3·4·5의 테스트는 데몬 없이 통과해야 한다.
-  - doctor는 데몬 생존·소켓 응답·버전 일치·마지막 heartbeat를 보이고, 켜져 있어야 하는데 죽어 있으면 `warn`이다.
+  - 데몬은 `brain daemon run`(같은 빌드·같은 shim)이고 프로세스 안에서 Core(`createBrain`, scan, drain)를 직접 부른다. CLI를 다시 띄우지 않는다. Core는 그대로다(FR-23). launchd가 로그인 때 띄우고 죽으면 다시 띄운다(AD-25).
+  - 단일 인스턴스 잠금은 `<home>/run/daemon.pid`(설치 잠금과 같은 규칙: 원자적 생성, pid 생존, 상한 시간)다. SIGTERM 정상 종료. 로그는 `<home>/log/daemon.log`이고 크기 기준 회전(기본 1MB×5)이다. heartbeat는 `<home>/run/heartbeat`(파일 mtime, 기본 30초)다.
+  - 데몬은 drain 반복(AD-21)과 로컬 파일 감시(transcript 폴더, Brain이 맡은 파일 위치)를 돈다. 데몬이 살아 있으면(heartbeat 기준) CLI의 기회적 drain은 돌지 않는다(AD-7). DB에 쓸 수 없으면 같은 spool 형식을 쓰되 구간마다 파일을 닫는다(AD-9).
+  - 예약 작업이 붙을 자리: 데몬은 시각이 된 일감을 `work_items`에 넣는 틱 하나를 둔다. 사용자 스케줄러(등록·목록·삭제)는 다음 조각이다.
+  - 업그레이드: `setup upgrade`가 데몬을 재시작하고 KeepAlive가 새 빌드로 다시 띄운다(AD-20). 데몬 스스로의 자동 업데이트는 다음 조각이고, 그동안은 SessionStart bootstrap이 `[update] auto` 규칙으로 갱신한다(AD-19).
+  - hook은 V1에서 소켓을 쓰지 않고 프로세스 안에서 처리한다(AD-26은 V1 뒤). **데몬이 멈춰도 모든 명령·hook이 동작한다**(AD-6·7·9가 기준 경로). epic 2·10·5·8의 테스트는 데몬 없이도 통과해야 한다.
+  - `daemon stop`은 임시 정지(KeepAlive를 먼저 내림)이고 doctor `warn`이다. `daemon start`가 데몬 Label을 다시 올린다.
+  - doctor는 데몬 생존과 마지막 heartbeat를 보이고, 죽어 있으면 `warn`이다.
+  - (2026-10-26, `../change-v1-capture-and-drive/`. 이전에는 선택 런타임이었고 소켓·handshake·데몬 자동 업데이트를 함께 정했다.)
 
-### AD-28 — MCP 표면은 명령 메타에서 생성한다
+### AD-28 — MCP 표면은 명령 메타에서 생성한다 [V1 뒤]
 
 - **Binds:** FR-23, FR-24
 - **Prevents:** MCP 도구가 CLI와 다른 이름·입출력을 갖는 것, 세션 귀속 없는 쓰기, 도구 스키마를 손으로 베끼는 것
@@ -497,7 +508,7 @@ erDiagram
 | 명령 메타 | 모든 CommandSpec은 `used_for`, `required`, `examples`, `output`, `risk(read \| write \| destructive)`, `hook`, `dryRun`을 선언한다. `guide schema`·`--help`·MCP 스키마는 이 메타 하나에서 생성한다. 누락은 테스트 실패 |
 | hint·retry 문체 | 마침표 없음, 명령은 백틱(영어 문장이면 소문자로 시작). hint가 비면 코드별 기본 문구 표에서 채운다. `retry.args`에는 실제로 바꾼 인자만, 비밀값 제외. 어차피 실패할 명령 대신 진짜 첫 단계를 가리킨다. 오타일 수 있는 상황에 파괴적 hint 금지 |
 | doctor 상태 | `ok \| warn \| fail \| skip`(`skip`은 `detail`에 사유). `fail`만 exit 1. `summary`에 passed·warned·failed·skipped 건수 |
-| 설치·런타임 기록 | `apps/cli/dist/build.json` `{commit, schema_version}`(빌드가 씀), `<home>/installed.json`(bootstrap·`setup run`이 완료 검증 뒤 마지막에 임시 파일→rename), `<home>/run/`(`daemon.pid`, `brain.sock`, `heartbeat`, `last-drain`, `last-hook-<harness>` — 파일 mtime이 시각 — `stop-remind/<harness>-<id>` 표식(`log.remind`가 차단 뒤에 만들고, drain이 30일 지난 것을 지우며, `setup uninstall`이 폴더째 지운다, AD-17) — 그리고 `plugin.json`: 마지막 SessionStart가 본 `{plugin_root, app_ref, seen_at, last_bootstrap?{at, result, step?, log}}`를 bootstrap이 임시 파일→rename으로 쓰고 값이 바뀔 때만 쓴다. doctor `plugin` 점검이 `installed.json.plugin_root`보다 이것을 앞세운다 — 플러그인 캐시는 버전마다 폴더가 다르므로 완료 기록의 폴더는 "마지막으로 설치한 폴더"일 뿐이다. 2.5 사람 확인 1), `<home>/log/`(크기 회전). 설정 코덱을 거치지 않는다(AD-18, AD-19, AD-27) |
+| 설치·런타임 기록 | `apps/cli/dist/build.json` `{commit, schema_version}`(빌드가 씀), `<home>/installed.json`(bootstrap·`setup run`이 완료 검증 뒤 마지막에 임시 파일→rename), `<home>/run/`(`daemon.pid`, `brain.sock`(V1 뒤, AD-26), `heartbeat`, `last-hook-<harness>` — 파일 mtime이 시각 — `stop-remind/<harness>-<id>` 표식(`log.remind`가 차단 뒤에 만들고, drain이 30일 지난 것을 지우며, `setup uninstall`이 폴더째 지운다, AD-17) — 그리고 `plugin.json`: 마지막 SessionStart가 본 `{plugin_root, app_ref, seen_at, last_bootstrap?{at, result, step?, log}}`를 bootstrap이 임시 파일→rename으로 쓰고 값이 바뀔 때만 쓴다. doctor `plugin` 점검이 `installed.json.plugin_root`보다 이것을 앞세운다 — 플러그인 캐시는 버전마다 폴더가 다르므로 완료 기록의 폴더는 "마지막으로 설치한 폴더"일 뿐이다. 2.5 사람 확인 1), `<home>/log/`(크기 회전). 설정 코덱을 거치지 않는다(AD-18, AD-19, AD-27) |
 | hook 응답 | connector adapter 소유(AD-4). 10,000자 이하. hook 경로는 항상 exit 0으로 끝낸다. 턴을 이어 가게 하는 길은 `log.remind`의 top-level `decision: block` 하나뿐이고(AD-17), Stop의 exit 2는 쓰지 않는다 |
 | 오류 | Core는 예상된 실패를 코드가 있는 값으로 돌려주고, 예외는 버그에만 쓴다. 실패는 `failures`에, DB에 쓸 수 없으면 spool에 남긴다. stderr만으로 끝내지 않는다 |
 | 내보내기 (NFR-9) | 한 스냅샷 트랜잭션 안에서 테이블당 JSON Lines 하나 + `manifest.json`(스키마 버전, 테이블별 건수, 시각, 비밀 패턴 버전). 복구는 의존 순서대로 insert하고(`files.home_location_id`↔`file_locations.file_id` 순환은 포인터를 비운 채 `files`를 넣고, 위치를 넣은 뒤 포인터를 채운다. BEFORE INSERT 포인터 trigger 때문에 `defer_foreign_keys`만으로는 안 된다. `users`도 내보낸다), 원본이 같은 DB 안에 있는 파생물(`chunks`, FTS, `embeddings`, `file_names`, 미러)만 다시 만든다. 문서 추출 세대·조각은 내보내고 복구한다. `manifest.json`에 파일 본체 포함 범위(`none | brain_owned`)를 적는다. 본문은 AD-11대로 가린 텍스트다. 그래서 되살린 Brain의 비밀은 가린 채 돌아온다(2026-10-19) |
@@ -551,7 +562,8 @@ flowchart TB
     agent["에이전트"] -- "brain log / recall" --> brain
     brain -- "[store] path" --> db[("brain.db<br/>SQLite, WAL")]
     brain --> spool["~/.second_brain/spool"]
-    brain -. "epic 9: 소켓 (있으면)" .-> daemon["brain daemon run<br/>(선택, 같은 빌드)"]
+    launchd["launchd<br/>(KeepAlive)"] -. "로그인 때 실행·재시작" .-> daemon["brain daemon run<br/>(상주, 같은 빌드, Core 직접 호출)"]
+    daemon -. "drain·파일 감시" .-> tr
     daemon -.-> db
     brain --> mirror["~/.second_brain/mirror<br/>(경로 설정 가능)"]
     brain --> exp["내보내기 위치<br/>(설정)"]
@@ -575,7 +587,7 @@ flowchart TB
 | 규칙·결정·선호 (FR-19~22) | core `log` + sqlite trigger | AD-11, AD-12, AD-14 |
 | 지표 (SM-4a·5·C1·C3·7, PRD §8-8) | core `stats`(단서 목록·`isUserTurn`·recall 판정 함수) + sqlite 집계 | AD-5, AD-13, AD-17 |
 | SDK·도구·설정 (FR-23~25) | second_brain, apps/cli, 설치기 | AD-1, AD-2, AD-3, AD-5, AD-18, AD-19, AD-20 |
-| 표면: 플러그인·MCP·데몬 (FR-24, FR-25) | `plugin/`, apps/cli `mcp`·`daemon`(epic 9) | AD-5, AD-17, AD-19, AD-26, AD-27, AD-28 |
+| 표면: 플러그인·데몬 (FR-24, FR-25), MCP(V1 뒤) | `plugin/`, apps/cli `daemon`(epic 9), `mcp`(V1 뒤) | AD-5, AD-17, AD-19, AD-25, AD-27, AD-26·28(V1 뒤) |
 | 원문 불변·가리기 (NFR-1, FR-26) | sqlite trigger, `messages.redact`, Core 출력 코덱(엔벨로프·hook·미러·내보내기·복제·임베딩 요청) | AD-11 |
 | 조용한 실패 금지 (NFR-2) | `warnings[]`, `failures`, spool, `context_injections`, doctor | AD-7, AD-9, AD-15, AD-17, AD-20, Conventions |
 | Harness 비차단 (NFR-3) | async hook, exit 0, import 부작용 없음 | AD-3, AD-6 |
@@ -588,8 +600,8 @@ flowchart TB
 | 항목 | 미루는 이유 / 다시 볼 때 |
 | --- | --- |
 | MCP 도구 | 해소(2026-10-15): epic 9, AD-28. 세션 ID는 쓰기 verb의 `session` 인자로 받는다 |
-| 데몬·파일 watcher | 해소(2026-10-15): epic 9, AD-26·27. 데몬 없이도 동작하는 것이 기준이고, Telegram·원격 기계 수집·승인 대기는 그 뒤의 조각 |
-| 소켓 프레이밍, watcher 지연 목표, 데몬의 세션 안 짧은 핸들(`L12`·`M34` 같은 별칭 — AD-8대로 내부 UUID가 아니라 데몬이 harness 세션별로 매기는 별칭) | epic 9 인셉션에서 정한다. hook 환경의 PATH와 `pnpm --ignore-scripts`는 2026-10-15 epic 2 인셉션에서 풀었다(hook은 런처가 node를 찾고, 설치는 `--ignore-scripts`) |
+| 데몬·파일 watcher | 해소(2026-10-26): 데몬은 V1의 상주 런타임(AD-25·27, epic 9). 소켓·handshake·데몬 자동 업데이트는 다음 조각이고, Telegram·원격 기계 수집·승인 대기는 그 뒤의 조각 |
+| 소켓 프레이밍과 짧은 핸들은 소켓 경로와 함께 다음 조각(2026-10-26). watcher 지연 목표, 데몬의 세션 안 짧은 핸들(`L12`·`M34` 같은 별칭 — AD-8대로 내부 UUID가 아니라 데몬이 harness 세션별로 매기는 별칭) | epic 9 인셉션에서 정한다. hook 환경의 PATH와 `pnpm --ignore-scripts`는 2026-10-15 epic 2 인셉션에서 풀었다(hook은 런처가 node를 찾고, 설치는 `--ignore-scripts`) |
 | Codex 등 다른 Harness | 다음 조각. AD-4의 계약(parser 필수, hook 선택)만으로 추가한다. 2026-10-15 사용자: 당분간 Claude Code만. Codex 플러그인은 있으나 hook이 실험 기능(`[features] hooks`, 옛 이름 `codex_hooks`)이고 hook 항목의 신뢰 해시로 바뀐 항목을 조용히 건너뛴다(비공식 확인) — shim 내용 갱신이 해시에 걸리는지 확인 필요. 2026-10-20 사용자: 수집 주체는 상관없고 Core가 급하다 → slice 1 밖. 다시 볼 때는 수집 전용으로 작게 — parser + 폴더 등록(AD-4의 connector 계약 그대로)만, hook·`setup connect`·시작 맥락 없음. Codex rollout JSONL의 `type`은 12종(`session_meta`, `response_item`, `event_msg`, `compacted`, `turn_context`, `inter_agent_communication`(+`_metadata`), `token_usage_record`, `world_state`, `retained_context`, `security_risk_score`, `realtime_item`)이고 이 Mac의 `~/.codex/sessions`(2026-10-20, 252개)에는 8종이 보인다. parser의 실제 일은 `compacted`·`turn_context`·`inter_agent_communication*`이다. 규모 시험(2026-10-08)은 125개를 읽었다 |
 | 웹 채팅(ChatGPT·Claude.ai) 내보내기 parser | slice 2. AD-4대로 parser 하나. `harness_session_id`는 대화 uuid, cwd 없음(꼬리표 없음), 도구 메모 없음. 핵심 고통(코딩 작업 기억)과 거리가 있어 뒤로(2026-10-20) |
 | 용어 대응표(한↔영·약칭을 질의 함수가 OR 구절로 넓힘) | SM-3 실사용 채점에서 한영 교차 문항이 떨어질 때. 떨어진 문항이 약칭·용어 때문이면 이것을 먼저(싸고 결정적), 뜻 때문이면 임베딩 켜기를 먼저 본다. 규모 시험(2026-10-08)은 한영 교차 4문항을 grep + 질의 바꾸기로 다 풀었다(2026-10-20) |
@@ -599,7 +611,9 @@ flowchart TB
 | sqlite-vec 유지보수 정지 | epic 6 착수 때 다시 본다. 대안은 FTS만 유지하거나 다른 벡터 확장 |
 | 꼬리표의 권위 출처, `failures.fingerprint` 정의 | 해소(2026-10-15, epic 2 인셉션): 꼬리표는 세션을 시작한 폴더(`startCwd`, 없으면 cwd를 가진 첫 메시지의 폴더, AD-12, 사용자 결정 B 2026-10-22). fingerprint는 Core 함수 하나가 (stage, 안정된 입력 식별자, 오류 분류 코드)로 만든다(`epic-capture` Notes) |
 | 기계 교체·원본 이전 | 지금은 `backup.export`→`import`(빈 DB에만). 기존 DB에 합치는 가져오기(들어오는 "나"를 받는 쪽 "나"로, 2026-10-16)는 epic 5에서 정한다. 복제 대상의 승격은 epic 7에서 정한다 |
-| Drive 연동 (epic 8) | OAuth, Drive `FileStore` 구현, 첨부 원본 이전, 기존 Drive 문서 색인(목록 → export·임시 다운로드 → 추출 → 삭제, Mac에 동기화하지 않음), changes 동기화, 연동 해제(Drive에 둔 채 연결만 끊음), DB 스냅샷의 Drive 보관과 새 기계 복구, 로컬 캐시 상한. 외부 소스 테이블은 그때 더한다 |
+| Drive 연동 (epic 8) | 해소(2026-10-26): V1. 외부 source 메타 테이블(source, remote file id, 이름, 부모 경로, 원격 버전, 연결된 content id)은 epic 8이 새 마이그레이션으로 더한다. DB 스냅샷 보관·새 기계 복구·로컬 캐시 상한은 다음 조각. 처음 범위: OAuth, Drive `FileStore` 구현, 첨부 원본 이전, 기존 Drive 문서 색인(목록 → export·임시 다운로드 → 추출 → 삭제, Mac에 동기화하지 않음), changes 동기화, 연동 해제(Drive에 둔 채 연결만 끊음), DB 스냅샷의 Drive 보관과 새 기계 복구, 로컬 캐시 상한. 외부 소스 테이블은 그때 더한다 |
+| 사용자 스케줄러 | V1 다음의 첫 상주 기능. 데몬의 예약 틱(AD-27) 위에 등록·목록·삭제를 얹는다. 범위는 그때 spec에 CAP으로 더한다(2026-10-26) |
+| 작업 로그·시작 맥락·규칙(AD-14·17), 미러(AD-16), 소켓(AD-26), MCP(AD-28) | V1 다음(2026-10-26, `../change-v1-capture-and-drive/`). epic 3·4·9의 나머지 |
 | `/brain:migration`, `/brain:db-migration` 스킬 | CLI 명령(`setup move-store`, 스냅샷 업로드·복구)이 생긴 뒤 감싼다 |
 | OCR, HWP, Google Docs 외 형식, 좌표의 장소 이름 변환 | 실사용에서 놓치는 문서가 쌓일 때 |
 | 복제 대상 (Postgres, Drive 파일)과 대상별 지연 표시 | epic 7(epic 5 다음). AD-10의 원본·복제 규칙 안에서 `[[replicas]]`, 커서 따라잡기, doctor 지연을 정한다. 남겨 둔 `packages/postgres`와 설치기의 Docker 흐름을 다시 쓴다 |

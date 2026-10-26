@@ -1,0 +1,12 @@
+# epic 4 조회와 미러 — 표 순서 = 만드는 순서. id는 영구. 인셉션 전이며, 1은 epic 10에서 옮겨 온 항목이다(2026-10-26).
+
+[[entry]]
+id = 1
+type = "story"
+title = "이미지 EXIF와 촬영 일시"
+description = "(epic 10의 10.9에서 옮겨 옴, 2026-10-26) 10.8의 추출기 등록 자리에 이미지 메타데이터 추출을 더해, EXIF를 믿지 않는 입력으로 다루며(크기 상한, 파싱 오류는 영구 오류) `file_metadata`에 EXIF 키와 촬영 일시 세 칸(`captured_at_local` 원문, 시간대를 알 때만 `captured_at` 정규형, `captured_at_source`)을 남기고, 시간대를 모르면 지어내지 않으며, 가린 파일은 메타데이터를 만들지 않는 가드(10.12의 가리기 규칙을 따름)를 둔다; 라이브러리를 들이면 `extractor_version`에 그 버전을 넣는다."
+verify = "시간대가 있는 EXIF·없는 EXIF·EXIF 없는 이미지·깨진 EXIF 픽스처를 추출하면 각각 세 칸이 맞게 채워지거나 비고, 깨진 것은 첫 실패에서 닫히며, 시간대가 없을 때 `captured_at`이 비어 있다."
+covers = ["E4-1"]
+after = ["10.8"]
+hitl = false
+risk = "low"

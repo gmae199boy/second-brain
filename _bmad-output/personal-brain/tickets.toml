@@ -1,4 +1,4 @@
-# Personal Brain V1 slice 1 — 에픽 순서(표 순서 = 만드는 순서). V1 = 1·2·10·3·4·5, 그 뒤 9(데몬·MCP)·7·8, 임베딩 6은 맨 뒤.
+# Personal Brain V1 slice 1 — 에픽 순서(표 순서 = 만드는 순서). V1 = 1·2·9(가벼운 데몬)·10(축소)·5(로컬 백업)·8(Drive, 문서·폴더명 검색 포함). 그 뒤 3·4·7, 임베딩 6은 맨 뒤(2026-10-26, change-v1-capture-and-drive).
 
 [[epic]]
 id = 1
@@ -10,57 +10,57 @@ covers = ["CAP-10", "CAP-11", "CAP-14"]
 id = 2
 slug = "epic-capture"
 title = "세션 수집과 비밀 가리기"
-covers = ["CAP-1", "CAP-2", "CAP-10", "CAP-11", "CAP-14"]
+covers = ["CAP-1", "CAP-2", "CAP-3", "CAP-4", "CAP-10", "CAP-11", "CAP-14"]
 after = [{ epic = 1, needs = "SQLite store와 원본 스키마(Table Contract, 파일·첨부·추출·work_items 포함), [files] path 루트, withWrite, CLI 뼈대, 설치기의 Harness 연결 단계" }]
+
+[[epic]]
+id = 9
+slug = "epic-daemon"
+title = "데몬(상주 런타임)"
+covers = ["CAP-10", "CAP-11"]
+after = [{ epic = 2, needs = "명령 메타(brain guide schema), 설치 흐름(setup run·setup upgrade, 플러그인 bootstrap이 부르는 같은 함수), doctor 틀, drain·scan과 spool, 플러그인 뼈대. LaunchAgent 등록·제거는 이 에픽이 직접 만든다(2026-10-26)" }]
 
 [[epic]]
 id = 10
 slug = "epic-attachments"
 title = "첨부 원본과 문서 추출"
-covers = ["CAP-14", "CAP-2"]
+covers = ["CAP-14", "CAP-2", "CAP-1"]
 after = [{ epic = 2, needs = "0004 스키마(2.6), parser와 수집 경로, 일감 대기열과 drain, Core 마스킹 함수, 확인 게이트" }]
-
-[[epic]]
-id = 3
-slug = "epic-log-and-context"
-title = "작업 로그와 시작 맥락"
-covers = ["CAP-3", "CAP-8", "CAP-9"]
-after = [{ epic = 2, needs = "수집된 메시지(로그의 앞뒤 메시지를 시각으로 읽기, 규칙 인용 대조), 세션 토큰 수집(`log append`의 선수집), spool, drain" }, { epic = 10, needs = "병렬로 만들되 순서로 묶는 셋(2026-10-23): 10.2가 정하는 Store·handler·spool record 조립 방식(3.4), 10.6의 마이그레이션 0008 뒤의 0009(3.5), 10.1이 고친 `sessions.ingest`(3.6의 선수집), 10.4 뒤의 최종 parser로 하는 Stop 발화 수 확인(3.12)" }]
-
-[[epic]]
-id = 4
-slug = "epic-recall-and-mirror"
-title = "조회와 미러"
-covers = ["CAP-4", "CAP-5", "CAP-6", "CAP-7", "CAP-13", "CAP-14"]
-after = [{ epic = 2, needs = "메시지와 도구 메모" }, { epic = 3, needs = "작업 로그(대분류 검색)" }, { epic = 10, needs = "문서 추출 세대·조각과 file_names(문서 검색의 대상)" }]
 
 [[epic]]
 id = 5
 slug = "epic-operations"
 title = "운영: 내보내기·복구, 업그레이드, 제거"
 covers = ["CAP-12", "CAP-11"]
-after = [{ epic = 4, needs = "모든 테이블이 있어야 내보내기가 전체를 덮음" }, { epic = 10, needs = "문서 추출 세대·조각·파일 메타데이터와 FileStore(내보내기의 파일 범위)" }]
+after = [{ epic = 10, needs = "파일·문서 추출 세대와 FileStore(로컬 백업의 파일 범위). V1은 로컬 백업·복구 확인과 스키마 가드만(2026-10-26)" }]
 
 [[epic]]
-id = 9
-slug = "epic-daemon"
-title = "데몬과 MCP 표면"
-covers = ["CAP-10", "CAP-11"]
-after = [{ epic = 5, needs = "LaunchAgent·upgrade·uninstall 흐름과 doctor 틀" }, { epic = 2, needs = "명령 메타(brain guide schema)와 플러그인 뼈대(.mcp.json 등록 자리)" }]
+id = 8
+slug = "epic-drive"
+title = "Google Drive 연동"
+covers = ["CAP-14", "CAP-6", "CAP-7", "CAP-12"]
+after = [{ epic = 10, needs = "FileStore port와 로컬 구현, 첨부 원본 저장, 추출 세대 Store와 추출 일감, chunk_locator" }, { epic = 9, needs = "데몬 런타임: 주기 동기화(source_sync)와 파일 감시(2026-10-26)" }, { epic = 5, needs = "첨부 원본을 Drive로 옮기기 전의 로컬 백업(2026-10-26)" }]
+
+[[epic]]
+id = 3
+slug = "epic-log-and-context"
+title = "작업 로그와 시작 맥락"
+covers = ["CAP-3", "CAP-8", "CAP-9", "CAP-10"]
+after = [{ epic = 2, needs = "수집된 메시지(로그의 앞뒤 메시지를 시각으로 읽기, 규칙 인용 대조), 세션 토큰 수집(`log append`의 선수집), spool, drain. epic 10과의 엮음 넷(2026-10-23)은 착수 때 다시 본다" }, { epic = 10, needs = "10.2가 정하는 Store·handler·spool record 조립 방식(3.4), 10.6의 마이그레이션 0008 뒤의 다음 번호(3.5), 10.1이 고친 `sessions.ingest`(3.6의 선수집), 10.4 뒤의 최종 parser로 하는 Stop 발화 수 확인(3.12)" }, { epic = 8, needs = "V1 완료 뒤 착수(2026-10-26, 에픽 전체 대기)" }]
+
+[[epic]]
+id = 4
+slug = "epic-recall-and-mirror"
+title = "조회와 미러"
+covers = ["CAP-4", "CAP-5", "CAP-6", "CAP-7", "CAP-13", "CAP-14"]
+after = [{ epic = 2, needs = "메시지와 도구 메모" }, { epic = 3, needs = "작업 로그(대분류 검색)" }, { epic = 8, needs = "문서 검색 경로(E8-6)와 문서 추출 세대·조각·file_names(2026-10-26)" }, { epic = 10, needs = "추출기 등록 자리(10.8): EXIF 추출기(4.1, 옛 10.9)가 그 위에 얹힌다" }]
 
 [[epic]]
 id = 7
 slug = "epic-replicas"
 title = "복제 대상과 원본 이전"
 covers = ["CAP-11", "CAP-12"]
-after = [{ epic = 5, needs = "내보내기 형식과 운영 명령(복제·이전의 검증 기준)" }, { epic = 9, needs = "데몬 런타임(Done when의 데몬 켜짐·꺼짐 두 상태 검증), setup run·doctor·설정 코덱의 선택 단계" }]
-
-[[epic]]
-id = 8
-slug = "epic-drive"
-title = "Google Drive 연동"
-covers = ["CAP-14", "CAP-12"]
-after = [{ epic = 10, needs = "FileStore port와 로컬 구현, 첨부 원본 저장, 추출 일감" }, { epic = 4, needs = "문서 검색 경로" }, { epic = 5, needs = "스냅샷 형식과 launchd 주기 실행" }, { epic = 9, needs = "데몬 런타임(Done when의 데몬 켜짐·꺼짐 두 상태 검증)" }]
+after = [{ epic = 5, needs = "내보내기 형식과 운영 명령(복제·이전의 검증 기준)" }, { epic = 9, needs = "데몬 런타임(커서 따라잡기 일감), setup run·doctor·설정 코덱의 선택 단계" }, { epic = 8, needs = "V1 완료 뒤 착수(2026-10-26, 에픽 전체 대기)" }]
 
 [[epic]]
 id = 6

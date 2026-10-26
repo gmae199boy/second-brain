@@ -2,7 +2,7 @@
 type: epic
 title: "세션 수집과 비밀 가리기"
 parent: personal-brain
-covers: [CAP-1, CAP-2, CAP-10, CAP-11, CAP-14]
+covers: [CAP-1, CAP-2, CAP-3, CAP-4, CAP-10, CAP-11, CAP-14]
 after: ["epic-foundation-and-install"]
 assignee: ""
 status: done

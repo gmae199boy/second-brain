@@ -2,8 +2,8 @@
 type: epic
 title: "작업 로그와 시작 맥락"
 parent: personal-brain
-covers: [CAP-3, CAP-8, CAP-9]
-after: ["epic-capture"]
+covers: [CAP-3, CAP-8, CAP-9, CAP-10]
+after: ["epic-capture", "epic-drive"]
 assignee: ""
 risk: high
 ---
@@ -31,8 +31,8 @@ risk: high
 - E3-5 (CAP-8): 규율 안내 — 기록·인용·질의 규율의 Core 상수 하나(B1~B7, C3~C6), `brain guide show` 전문, 시작 맥락의 요약, 그 상수에서 생성해 커밋하는 플러그인 스킬(`/brain:*`)과 parity 테스트(생성물 = 커밋본, `tested_against`, 코드블록의 명령·flag 실존). (AD-17)
 - E3-6 (CAP-8, CAP-3): Stop 기록 점검 — `brain log remind`(`hook: only`, 읽기 전용), 네 조건(`stop_hook_active` false, transcript로 센 사용자 발화 ≥ 상수, DB와 spool 어디에도 이 세션의 로그 없음, 표식 파일 없음), 모르면 묻지 않음, 출력 뒤에만 표식, `[discipline] stop_remind`(기본 false, 설치기는 묻지 않음, 꺼져 있으면 DB를 열지 않음), Stop 동기 줄(`timeout` 5초), `kind='stop'` 시도 기록, 30일 지난 표식 정리, 플러그인으로 설치한 상태의 검증. (AD-6·17·28; change-discipline-and-metrics D1~D3)
 - E3-7 (CAP-8, CAP-9): doctor — 대조되지 않은 규칙 인용, 규칙 크기 경고(넘으면 `fail`), 세션 수 대비 시작 주입 시도 수. (FR-25, AD-17)
-- E3-8 (스키마): 마이그레이션 0009(에픽 10의 0008 뒤) — `context_injections.kind`(`start | stop`)·`elapsed_ms`, `log_entry_edits`·`context_injections` 행 불변과 `log_entries`의 불변 칸(`kind`·`session_id`·`occurred_at`·`author_model`) trigger(I60). Postgres는 epic 7. (Table Contract, AD-17; deferred-work I60)
-- E3-9 (경계): 패키지 경계 시험이 package.json만이 아니라 실제 소스 import·상대 경로 우회·Core의 Node API까지 본다(회고 A2). harness 등록부를 Core 조립에 주입한다(I155).
+- E3-8 (CAP-3·8·9 스키마): 마이그레이션 0009(에픽 10의 0008 뒤) — `context_injections.kind`(`start | stop`)·`elapsed_ms`, `log_entry_edits`·`context_injections` 행 불변과 `log_entries`의 불변 칸(`kind`·`session_id`·`occurred_at`·`author_model`) trigger(I60). Postgres는 epic 7. (Table Contract, AD-17; deferred-work I60)
+- E3-9 (CAP-10 경계): 패키지 경계 시험이 package.json만이 아니라 실제 소스 import·상대 경로 우회·Core의 Node API까지 본다(회고 A2). harness 등록부를 Core 조립에 주입한다(I155).
 
 ## Done when
 
@@ -95,3 +95,5 @@ AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, contex
 - Decision(2026-10-23, 인셉션 집합 점검, 사용자): Stop 점검의 사용자 발화 수에는 이미지·@파일만 붙인 사람 메시지도 한 번으로 센다(에픽 10의 10.2·10.4가 이런 메시지를 살린다). spike(3)는 지금 parser로 재고 그 버전을 기록하며, Stop 스토리(12)는 10.4 뒤의 최종 parser로 다시 확인한다.
 - Decision(2026-10-23, 인셉션 집합 점검, 사용자): 시작 맥락 스토리를 9(맥락 만들기와 크기 설정)와 14(주입 시도 기록 경로)로, Stop 스토리를 12(Stop 점검 동작)와 15(플러그인 배포와 설치 상태 확인, 사람)로 나눈다. tracer(4)와 `log append`(6)는 나누지 않는다 — 4는 얇게 관통하는 것이 목적이고 6은 한 명령의 완성이다.
 - Note(2026-10-23, 인셉션 집합 점검): 각 스토리의 계획은 verify를 다시 돌릴 수 있게 실행 명령·픽스처 준비·판정 위치를 남긴다.
+- Decision(2026-10-26, `../change-v1-capture-and-drive/`, 사용자): V1 뒤(backlog, 삭제 아님). 15개 티켓은 그대로 두고 3.13 Refactor sweep만 drop. epic 10과의 병렬 엮음 넷(2026-10-23)은 착수 때 다시 본다. 마이그레이션 0009 번호는 epic 8의 외부 source 메타 마이그레이션이 먼저 쓸 수 있으므로 착수 때 다음 번호를 쓴다.
+- Dropped(2026-10-26, `../change-v1-capture-and-drive/`, 사용자): 13 Refactor sweep. 에픽 재개 때 확인된 결함만 기능 스토리에 흡수한다.

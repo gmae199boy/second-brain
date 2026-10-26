@@ -3,7 +3,7 @@ type: epic
 title: "운영: 내보내기·복구, 업그레이드, 제거"
 parent: personal-brain
 covers: [CAP-12, CAP-11]
-after: ["epic-recall-and-mirror", "epic-attachments"]
+after: ["epic-attachments"]
 assignee: ""
 risk: medium
 ---
@@ -13,6 +13,8 @@ risk: medium
 ## Description
 
 `backup export/import`(스냅샷, manifest), 백업 경고, `setup upgrade`(코드 갱신·마이그레이션·hook 재등록), `setup uninstall`을 만든다. 내보내기·복구가 먼저다.
+
+**V1 범위(2026-10-26, `../change-v1-capture-and-drive/`):** 로컬 백업(DB와 Brain 소유 파일)과 새 DB 파일로의 복구 확인, 스키마 가드·`setup upgrade`만 한다. 전체 내보내기 형식·`import`, 내보내기 경과 경고, `stats show`, 완전 제거는 V1 뒤다. 아래 2026-10-14·10-15의 LaunchAgent 주기 실행·`[daemon] enabled`는 없앴다(launchd는 데몬을 띄우는 데만 쓰고 epic 9가 맡는다).
 
 2026-10-14 변경으로 더한 것: `setup run` 흐름에 LaunchAgent 등록 단계 추가(고정 Label, 5분 간격 `brain queue drain`, 60초 예산, doctor의 마지막 주기 실행 경고, AD-25). 내보내기는 문서 추출 세대·조각과 파일 메타데이터를 포함하고 `manifest.json`에 파일 본체 범위를 적는다.
 
@@ -30,12 +32,12 @@ risk: medium
 
 ## Done when
 
-1. 내보낸 뒤 새 DB 파일에 복구하면 메시지·작업 로그·파일·문서 추출 세대 수가 같고 Brain이 보관한 원본 파일을 다시 열 수 있으며(2026-10-16), 같은 DB 안에 원본이 있는 파생 테이블은 다시 만들어지며, 원본 파일이 없는 문서는 `source_unreachable`로 계속 검색된다(`FILE_SOURCE_UNREACHABLE`).
-2. 마지막 내보내기가 설정한 기간보다 오래되면 doctor가 경고한다.
+1. (V1: 로컬 백업에서 새 DB 파일로 되살리면 메시지·파일·문서 추출 세대 수가 같고 Brain이 보관한 원본 파일을 다시 열 수 있으며, 백업 중에도 hook 수집은 막히지 않는다. 아래 전체 문장은 V1 뒤.) 내보낸 뒤 새 DB 파일에 복구하면 메시지·작업 로그·파일·문서 추출 세대 수가 같고 Brain이 보관한 원본 파일을 다시 열 수 있으며(2026-10-16), 같은 DB 안에 원본이 있는 파생 테이블은 다시 만들어지며, 원본 파일이 없는 문서는 `source_unreachable`로 계속 검색된다(`FILE_SOURCE_UNREACHABLE`).
+2. 마지막 내보내기가 설정한 기간보다 오래되면 doctor가 경고한다. (V1 뒤)
 3. 스키마가 다른 코드로 런타임 명령을 실행하면 DB에 쓰지 않고 `SCHEMA_MISMATCH`와 spool로 간다. `setup upgrade` 후 정상이 된다.
-4. `setup uninstall` 후 Brain 표식이 붙은 hook, shim, LaunchAgent(두 Label), `<home>/run/`, `<home>/log/`, `installed.json`이 없고, 데이터는 별도 확인 없이는 남는다. 데이터 삭제 확인 대상은 `brain.db`(`-wal`·`-shm` 포함), `files/`, spool, 미러다.
-5. 설치 뒤 `[daemon] enabled=false`면 주기 LaunchAgent 하나만 등록되어 drain을 돌리고, `setup run`을 반복해도 하나이며, `<home>/run/last-drain`이 간격의 3배보다 오래되면 doctor가 경고한다. 겹친 주기 실행 두 개가 같은 일감을 두 번 처리하지 않는다.
-6. `stats show --from <날짜> --to <날짜>`가 그 기간의 SM-4a(전체·적격)·SM-5·SM-C1·SM-C3·§8-8 대리 지표를 `--json`과 텍스트로 내고, 로그가 하나도 없는 기간은 0이며, 잴 수 없는 지표는 null과 경고이고, `import` 세션은 기본에 들어오고 `--exclude-import`로 빠지며, 같은 수를 SQL로 직접 세면 같다(2026-10-20).
+4. (V1 뒤. 데몬 Label 삭제는 epic 9 Done when 4가 맡는다) `setup uninstall` 후 Brain 표식이 붙은 hook, shim, 데몬 LaunchAgent, `<home>/run/`, `<home>/log/`, `installed.json`이 없고, 데이터는 별도 확인 없이는 남는다. 데이터 삭제 확인 대상은 `brain.db`(`-wal`·`-shm` 포함), `files/`, spool, 미러다.
+5. (삭제, 2026-10-26: 주기 LaunchAgent는 두지 않는다. 데몬과 기회적 drain이 겹쳐도 같은 일감을 두 번 처리하지 않는 것은 AD-7·21의 청구 규칙과 epic 9가 지킨다.)
+6. (V1 뒤) `stats show --from <날짜> --to <날짜>`가 그 기간의 SM-4a(전체·적격)·SM-5·SM-C1·SM-C3·§8-8 대리 지표를 `--json`과 텍스트로 내고, 로그가 하나도 없는 기간은 0이며, 잴 수 없는 지표는 null과 경고이고, `import` 세션은 기본에 들어오고 `--exclude-import`로 빠지며, 같은 수를 SQL로 직접 세면 같다(2026-10-20).
 
 ## Boundaries
 
@@ -62,3 +64,4 @@ AD-8·12·18·19·20·24·25, Conventions(내보내기, 설치·런타임 기록
 - Note(2026-10-20, `../change-discipline-and-metrics/`, 인셉션 입력): D4. 이니셔티브 Done when 2의 2주 실측이 이 명령으로 주 단위 비교가 된다(첫 주 `stop_remind` 꺼짐, 둘째 주 켜짐).
 - Note(2026-10-20, spine 리뷰): `stats show`의 SM-4a는 전체 세션과 적격 세션(발화 ≥ 상수) 두 모집단으로 낸다. `import` 세션 제외는 기본이 아니라 옵션(`--exclude-import`) — 폴더 스캔이 처음 만든 세션도 `import`라 기본 제외하면 hook을 놓친 실사용 세션이 빠진다. 잴 수 없는 지표는 0이 아니라 null + 경고(예: transcript 폴더 없음 → SM-5). 'Stop 점검 뒤 로그가 생긴 비율'의 분모는 `context_injections(kind='stop', ok=1)`이고 API 오류로 끝난 턴(`StopFailure`, 점검 없음)은 들어오지 않는다. `brain recall`이 불렸다는 판정은 Core 함수 하나(도구 메모 대상 앞머리, MCP 이름 포함). `context_injections.elapsed_ms`는 Brain 내부 처리 시간이다(SM-7 내부값).
 - Carry(2026-10-22, epic 2 회고): `messages redact`는 외부 WAL 읽기가 열려 있으면 checkpoint 실패를 삼키고 성공을 돌려줘 WAL에 옛 바이트가 남는다(`packages/sqlite/src/sessions.ts:170-175`, `deferred-work.md` I91). 읽기가 끝난 뒤 다시 정리하고 doctor가 보이는 경로를 둔다.
+- Decision(2026-10-26, `../change-v1-capture-and-drive/`, 사용자): V1은 로컬 백업·복구 확인과 스키마 가드·`setup upgrade`만(Done when 1의 V1 문장, 3). epic 8이 첨부 원본을 Drive로 옮기기 전에 이 백업이 있어야 하므로 epic 8 앞이다. epic 4를 기다리지 않는다. Done when 2·4·6과 전체 내보내기는 V1 뒤, 5는 삭제. launchd 주기 실행(2026-10-14 Decision)은 없앴다.
