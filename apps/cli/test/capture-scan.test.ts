@@ -323,6 +323,127 @@ describe('brain queue drain and the transcript folder', () => {
     expect(envelopeOf<DrainData>(second).data).toMatchObject({ enqueued: 0 });
   });
 
+  it('에픽 전에 수집한 세션의 이미지·@파일을 drain 한 번으로 채우고 다시 돌려도 건수가 같다', async () => {
+    const { home, configDir } = await installed();
+    const userHome = await scratch('brain-user-home-');
+    const note = join(userHome, 'project', 'note.md');
+    await mkdir(dirname(note), { recursive: true });
+    await writeFile(note, 'changed on disk', 'utf8');
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQcEj4DwADBAHAgChw2gAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png.toString('base64') } };
+    const sessionId = 'session-aaaa';
+    const line = (uuid: string, parentUuid: string, at: string, rest: Record<string, unknown>): Record<string, unknown> =>
+      ({ uuid, parentUuid, sessionId, isSidechain: false, cwd: '/demo/repo', timestamp: `2026-01-02T04:00:0${at}.000Z`, ...rest });
+    // 완전한 transcript: 붙여 넣은 이미지가 든 메시지, 이미지뿐인 메시지, 첫 메시지에 사슬로 붙은 @파일.
+    const added = [
+      line('pasted-text', 'none', '0', { type: 'user', imagePasteIds: [1], message: { role: 'user', content: [{ type: 'text', text: '그림과 파일' }, image] } }),
+      line('pasted-file', 'pasted-text', '1', { type: 'attachment', attachment: { type: 'file', filename: note, displayPath: 'project/note.md', content: { type: 'text', file: { filePath: note, content: 'at attachment time', numLines: 1, startLine: 1, totalLines: 1 } } } }),
+      line('pasted-only', 'pasted-file', '2', { type: 'user', imagePasteIds: [2], message: { role: 'user', content: [image] } }),
+    ];
+    // parser v4가 본 것과 같은 결과를 내는 transcript: 사용자 이미지 블록과 @파일 줄이 없다.
+    const stripped = added
+      .filter((entry) => entry['type'] !== 'attachment')
+      .map((entry) => {
+        const message = entry['message'] as { role: string; content: { type: string }[] };
+        return { ...entry, message: { ...message, content: message.content.filter((block) => block.type !== 'image') } };
+      });
+    const file = await transcript(configDir, { project: '-demo-a', sessionId });
+    const base = await readFile(file, 'utf8');
+    const jsonl = (entries: unknown[]) => base + entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n';
+    const env = { ...environment({ home, configDir }), HOME: userHome };
+    const path = databaseIn(home);
+
+    await writeFile(file, jsonl(stripped), 'utf8');
+    expect((await spawned(['queue', 'drain', '--json'], env)).code).toBe(0);
+    const before = rowCounts(path);
+    expect(before['message_attachments']).toBe(0);
+    expect(before['tool_notes']).toBeGreaterThan(0);
+    const current = rows(path, 'sessions')[0]?.['parser_version'];
+
+    // 에픽 전 상태: 옛 parser 버전, 내역 크기는 지금 파일과 같다(버전 차이로만 다시 읽힌다).
+    await writeFile(file, jsonl(added), 'utf8');
+    const size = Buffer.byteLength(await readFile(file, 'utf8'));
+    const oldVersion = () => {
+      const db = new DatabaseSync(path);
+      try {
+        db.prepare("update sessions set parser_version = '4'").run();
+        db.prepare('update transcript_files set size_bytes = ?').run(size);
+      } finally {
+        db.close();
+      }
+    };
+    oldVersion();
+
+    const first = await spawned(['queue', 'drain', '--json'], env);
+    expect(first.code, first.stderr).toBe(0);
+    expect(envelopeOf<DrainData>(first).data).toMatchObject({ enqueued: 1, reread_missing: 0, failed: 0 });
+    expect(rows(path, 'sessions')[0]?.['parser_version']).toBe(current);
+    const filled = rowCounts(path);
+    expect(filled['messages']).toBe((before['messages'] ?? 0) + 1);
+    expect(filled['tool_notes']).toBe(before['tool_notes']);
+    expect(filled['files']).toBe(2);
+    expect(filled['file_names']).toBe(0);
+    const db = new DatabaseSync(path, { readOnly: true });
+    try {
+      const attached = db
+        .prepare(
+          `select m.harness_message_id as message, m.body, a.ordinal, a.source_kind, a.status, f.content_hash
+             from message_attachments a join messages m on m.id = a.message_id
+             left join files f on f.id = a.file_id
+            order by m.harness_message_id, a.ordinal`,
+        )
+        .all() as { message: string; body: string; ordinal: number; source_kind: string; status: string; content_hash: string }[];
+      expect(attached.map(({ message, ordinal, source_kind, status }) => ({ message, ordinal, source_kind, status }))).toEqual([
+        { message: 'pasted-only', ordinal: 0, source_kind: 'image', status: 'stored' },
+        { message: 'pasted-text', ordinal: 0, source_kind: 'image', status: 'stored' },
+        { message: 'pasted-text', ordinal: 1, source_kind: 'file', status: 'stored' },
+      ]);
+      expect(attached[0]?.body).toBe('');
+      expect(attached[0]?.content_hash).toBe(attached[1]?.content_hash);
+      expect(db.prepare("select locator from file_locations where ownership = 'external'").all()).toEqual([
+        { locator: '~/project/note.md' },
+      ]);
+      const blob = db
+        .prepare(
+          `select l.locator from message_attachments a join files f on f.id = a.file_id
+             join file_locations l on l.id = f.home_location_id where a.source_kind = 'file'`,
+        )
+        .get() as { locator: string };
+      expect(await readFile(join(home, 'files', blob.locator), 'utf8')).toBe('at attachment time');
+    } finally {
+      db.close();
+    }
+    const blobs = async () =>
+      (await readdir(join(home, 'files'), { recursive: true, withFileTypes: true })).filter((entry) => entry.isFile()).length;
+    const blobCount = await blobs();
+    expect(blobCount).toBe(2);
+
+    const kept = ['messages', 'tool_notes', 'message_attachments', 'files', 'file_locations'];
+    const second = await spawned(['queue', 'drain', '--json'], env);
+    expect(envelopeOf<DrainData>(second).data).toMatchObject({ enqueued: 0, reread_missing: 0 });
+    const settled = rowCounts(path);
+    for (const table of kept) expect(settled[table], table).toBe(filled[table]);
+    // 이름 채우기는 대기열 앞 단계라, 첫 drain이 쓴 첨부의 이름은 다음 drain이 채운다(10.4).
+    expect(rows(path, 'file_names').map((row) => row['text']).sort()).toEqual(['note.md', '~/project/note.md']);
+    const third = await spawned(['queue', 'drain', '--json'], env);
+    expect(envelopeOf<DrainData>(third).data).toMatchObject({ enqueued: 0 });
+    expect(rowCounts(path)).toEqual(settled);
+
+    // 버전을 다시 돌려 강제로 다시 읽어도 메시지·도구 메모·첨부·파일은 그대로다.
+    oldVersion();
+    const again = await spawned(['queue', 'drain', '--json'], env);
+    expect(envelopeOf<DrainData>(again).data).toMatchObject({ enqueued: 1, failed: 0 });
+    const reread = rowCounts(path);
+    for (const table of ['messages', 'tool_notes', 'message_attachments', 'files', 'file_locations', 'file_names']) {
+      expect(reread[table], table).toBe(settled[table]);
+    }
+    expect(await blobs()).toBe(blobCount);
+    expect(await readFile(note, 'utf8')).toBe('changed on disk');
+  }, 30_000);
+
   it('reads only what grew, and leaves a file it may not read alone', async () => {
     const { home, configDir } = await installed();
     const grows = await transcript(configDir, {

@@ -172,3 +172,11 @@ epic 2 회고(`tickets/epic-capture/epic-capture-retrospective.md`, Findings 2�
 | orca 워커 세션의 코디네이터 지시 | epic 3 인셉션에서 B안 여부를 사용자가 정한다(같은 Carry) |
 | 실명 경로가 남은 백업 브랜치 | 해결됨 — 2026-10-22 사용자 확인 뒤 로컬 브랜치를 지웠다(원격에는 없었다) |
 | 대상 없음 — 사용자 결정 대기 | `tooling/dev/auto-build.sh` 커밋을 이력에서 뺄지, 저장소 밖 무인 루프의 commit 대기, TTY에서 `messages redact` 대화형 확인, `brain --version`의 의미, 개발 DB의 옛 `start_source` 다시 채우기, Amex 4-6-5 카드 형식 |
+
+### DW-1: 같은 drain의 대기열이 쓴 첨부의 file_names·이름 FTS가 다음 drain에야 채워진다(이름 단계가 대기열 처리 앞에 있음).
+origin: spec-deferred ddc660412bf9
+location: packages/core/src/brain.ts drain (fillFileNames → drainQueue)
+source_spec: `tickets/epic-attachments/tickets/story-untitled-5-plan.md`
+severity: medium
+reason: packages/core/src/brain.ts drain이 fillFileNames를 drainQueue보다 먼저 부른다. 10.5 CLI 시험에서 첫 drain 뒤 file_names 0, 둘째 drain 뒤 2. hook이 알리지 않아 폴더 스캔으로 들어온 세션의 @파일 이름은 한 drain 늦게 검색된다. 10.4 AC("수집을 마친 설치에서 drain하면 file_names에 있다")는 앞선 실행이 첨부를 쓴 경우에만 성립한다. 데몬이 drain을 반복하면 영향은 작다. 고친다면 이름 단계를 대기열 뒤로 옮기거나 한 번 더 부른다.
+status: open
