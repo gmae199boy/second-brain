@@ -103,6 +103,7 @@ export type {
   ListExtractionChunksResult,
   ListExtractionsResult,
   ListFilesAwaitingExtractionResult,
+  ListFilesWithStaleExtractionResult,
   ReadFileExtractionStateResult,
   SetFileSourceUnreachableInput,
   SetFileSourceUnreachableResult,

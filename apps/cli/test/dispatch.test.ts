@@ -1329,6 +1329,7 @@ describe('the dispatcher and the lock budget', () => {
         async setFileSourceUnreachable() { return unavailable; },
         async readFileExtractionState() { return unavailable; },
         async listFilesAwaitingExtraction() { return unavailable; },
+        async listFilesWithStaleExtraction() { return unavailable; },
         async listExtractions() { return unavailable; },
         async listExtractionChunks() { return unavailable; },
         async checkHealth() {

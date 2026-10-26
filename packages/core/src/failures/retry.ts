@@ -1,7 +1,8 @@
 import { FAILURE_RETRY_KINDS, FAILURE_RETRY_STAGES } from '../capture/session-ingest-work.js';
+import { DOCUMENT_EXTRACT_KIND } from '../files/extract-work.js';
 import type { Clock } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
-import type { WorkStore } from '../ports/store.js';
+import type { ExtractionStore, WorkStore } from '../ports/store.js';
 
 /**
  * `failures.retry`: ask for one more go at everything that is still failing
@@ -39,6 +40,18 @@ export interface FailuresRetryData {
   alreadyOpen: number;
   /** Targets this build has no kind of retry work for, by kind. */
   skipped: readonly FailuresRetrySkipped[];
+  /**
+   * Files whose reading failed and which have been redacted since, so there are
+   * no bytes to read again (AD-11).
+   *
+   * These two are counted here rather than queued because the handler would
+   * close such an item without doing anything, and the failure row would stay
+   * exactly as it was — a retry that looked like it worked and changed nothing.
+   * Saying how many is the honest answer (AD-24).
+   */
+  redacted: number;
+  /** The same, for files whose original cannot be reached any more. */
+  sourceUnreachable: number;
 }
 
 export type FailuresRetryResult =
@@ -46,7 +59,12 @@ export type FailuresRetryResult =
   | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 export interface FailuresRetryDependencies {
-  store: Pick<WorkStore, 'listFailures' | 'addWork'>;
+  store: Pick<WorkStore, 'listFailures' | 'addWork'> &
+    /**
+     * One lock-free read per failing file, to tell a retry worth asking for
+     * from one that cannot go anywhere (`redacted`, `sourceUnreachable`).
+     */
+    Pick<ExtractionStore, 'readFileExtractionState'>;
   clock: Clock;
   /** Mints the id of each new queue row (AD-8). */
   idGen: IdGen;
@@ -63,6 +81,12 @@ export interface FailuresRetryDependencies {
  * things to whoever ran the command: a target that already had an open item is
  * work that was going to happen, and a target that got a new row is work this
  * command asked for.
+ *
+ * A failing file is asked about first. A redacted file and a file whose original
+ * is out of reach get no item and are counted instead: the handler would close
+ * such an item without doing anything and the failure row would stay exactly as
+ * it was, so queueing it is a retry that looks like it worked and changes
+ * nothing (AD-24, `files/extract-work.ts`).
  */
 export async function retryFailures(
   dependencies: FailuresRetryDependencies,
@@ -78,6 +102,8 @@ export async function retryFailures(
 
   let added = 0;
   let alreadyOpen = 0;
+  let redacted = 0;
+  let sourceUnreachable = 0;
   const skipped = new Map<string, number>();
   const seen = new Set<string>();
 
@@ -94,6 +120,27 @@ export async function retryFailures(
     if (kind === undefined) {
       skipped.set(failure.targetKind, (skipped.get(failure.targetKind) ?? 0) + 1);
       continue;
+    }
+
+    if (kind === DOCUMENT_EXTRACT_KIND && failure.targetKind === 'file') {
+      // A read and not a write, so a target that is going nowhere costs this
+      // command no lock at all (AD-7). A file that is not there any more is
+      // queued exactly as before: the handler closes that item as done, which
+      // is how work about something that no longer exists ends
+      // (`files/extract-work.ts`). Only a database that could not answer stops
+      // the command, under its own code.
+      const state = await store.readFileExtractionState(failure.targetId);
+      if (!state.ok) {
+        if (state.code === 'DB_UNAVAILABLE') {
+          return { ok: false, code: state.code, message: state.message };
+        }
+      } else if (state.redactedAt !== null) {
+        redacted += 1;
+        continue;
+      } else if (state.sourceUnreachableAt !== null) {
+        sourceUnreachable += 1;
+        continue;
+      }
     }
 
     const now = clock.now();
@@ -117,5 +164,7 @@ export async function retryFailures(
     added,
     alreadyOpen,
     skipped: [...skipped.entries()].map(([targetKind, count]) => ({ targetKind, count })),
+    redacted,
+    sourceUnreachable,
   };
 }

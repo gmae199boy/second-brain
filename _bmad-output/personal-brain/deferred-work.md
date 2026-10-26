@@ -180,3 +180,11 @@ source_spec: `tickets/epic-attachments/tickets/story-untitled-5-plan.md`
 severity: medium
 reason: packages/core/src/brain.ts drain이 fillFileNames를 drainQueue보다 먼저 부른다. 10.5 CLI 시험에서 첫 drain 뒤 file_names 0, 둘째 drain 뒤 2. hook이 알리지 않아 폴더 스캔으로 들어온 세션의 @파일 이름은 한 drain 늦게 검색된다. 10.4 AC("수집을 마친 설치에서 drain하면 file_names에 있다")는 앞선 실행이 첨부를 쓴 경우에만 성립한다. 데몬이 drain을 반복하면 영향은 작다. 고친다면 이름 단계를 대기열 뒤로 옮기거나 한 번 더 부른다.
 status: open
+
+### DW-2: `brain failures list`와 `brain failures retry`가 `--target-kind`를 조용히 무시한다.
+origin: spec-deferred 7f3153ffb546
+location: apps/cli/src/commands/failures-list.ts:71, apps/cli/src/commands/failures-retry.ts:56
+source_spec: `tickets/epic-attachments/tickets/story-untitled-10-plan.md`
+severity: medium
+reason: 두 명령이 `context.options['target-kind']`를 읽지만 dispatcher는 commander의 `command.opts()`를 넘기고, commander는 플래그 이름을 `targetKind`로 바꾼다(`setup-run.ts`는 바르게 camelCase로 읽음). 구현 에이전트가 `brain failures list --target-kind file --json`이 `session` 행도 돌려주는 것을 확인했다. 기존 시험은 픽스처마다 거른 종류의 실패만 있어 잡지 못한다. 이 스토리 전부터 있던 결함이고, 고침은 두 파일의 키를 `targetKind`로 바꾸고 섞인 픽스처 시험을 더하는 것이다.
+status: open

@@ -994,6 +994,36 @@ export type ListFilesAwaitingExtractionResult =
   | { ok: true; fileIds: readonly string[] }
   | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
 
+/**
+ * The files a newer extractor would read differently, oldest id first, and the
+ * ones that are behind and cannot be read at all.
+ *
+ * "Behind" is two questions and not one. The generation the file's pointer
+ * names has to be a successful reading — `unsupported` and `too_large` are
+ * answers a version bump does not change, and a `failed` current pointer does
+ * not exist — stamped with some other version than the one asked about. And the
+ * file must have *no* generation of the asked-for version at all, whatever it
+ * says: a re-reading that failed permanently would otherwise be queued again on
+ * every drain for ever, and asking once more is `failures retry`'s to do.
+ *
+ * `fileIds` is the part of that set a reading could actually be opened for, so
+ * a redacted file, a file whose original is out of reach and a file Brain kept
+ * no copy of are left out here rather than by the caller — the same division
+ * `listFilesAwaitingExtraction` makes. The two counts are what the caller
+ * reports instead: how many files are behind and redacted, and how many are
+ * behind, not redacted, and out of reach. Both are the whole count and not the
+ * part `limit` would have shown, because they answer "what is this drain not
+ * doing", which a bound must not change (AD-24).
+ */
+export type ListFilesWithStaleExtractionResult =
+  | {
+      ok: true;
+      fileIds: readonly string[];
+      redacted: number;
+      sourceUnreachable: number;
+    }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
 export type ListExtractionsResult =
   | { ok: true; extractions: readonly DocumentExtraction[] }
   | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
@@ -1081,6 +1111,20 @@ export interface ExtractionStore {
   listFilesAwaitingExtraction(input: {
     limit: number;
   }): Promise<ListFilesAwaitingExtractionResult>;
+  /**
+   * The files whose current successful reading was made by another generation of
+   * extractors than `extractorVersion`, `id` ascending and at most `limit` of
+   * them, with the ones that are behind and unreadable counted instead
+   * (`ListFilesWithStaleExtractionResult`). A read, so it takes no lock (AD-7).
+   *
+   * An adapter with no file redaction, such as the in-memory fake, always
+   * answers `redacted: 0`: the column is the database's, exactly as it is for
+   * `readFileExtractionState`.
+   */
+  listFilesWithStaleExtraction(input: {
+    extractorVersion: string;
+    limit: number;
+  }): Promise<ListFilesWithStaleExtractionResult>;
   /** Every generation of one file, `attempt` ascending. A read (AD-7). */
   listExtractions(fileId: string): Promise<ListExtractionsResult>;
   /**

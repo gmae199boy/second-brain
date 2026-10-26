@@ -18,6 +18,7 @@ import {
   type ListExtractionChunksResult,
   type ListExtractionsResult,
   type ListFilesAwaitingExtractionResult,
+  type ListFilesWithStaleExtractionResult,
   type ReadFileExtractionStateResult,
   type SetFileSourceUnreachableInput,
   type SetFileSourceUnreachableResult,
@@ -89,6 +90,39 @@ interface ChunkRow {
  */
 const EXTRACTION_COLUMNS = sql`id, file_id, extractor_version, attempt, media_type, status,
                                started_at, finished_at, error, failed_stage, index_config_id`;
+
+/**
+ * The `from` and `where` of "this file's stored reading is not the one this
+ * build would make", for the two statements of
+ * `listFilesWithStaleExtraction`.
+ *
+ * It is one fragment because the ids and the counts have to be about the same
+ * set: a predicate that drifted in one of them would be a report contradicting
+ * itself — files queued that the counts say were skipped, or the other way
+ * round. It ends *inside* the `where`, so a caller adds its own `and …`.
+ *
+ * Both halves matter. The current pointer has to name a successful reading of
+ * some other version, because `unsupported` and `too_large` are answers a
+ * version bump does not change and only a success ever becomes current
+ * (AD-24). And no generation of the asked-for version may exist at all,
+ * whatever it says: without that, a re-reading that fails permanently is
+ * queued again on every drain for ever.
+ */
+function behindPredicate(extractorVersion: string): ReturnType<typeof sql> {
+  return sql`
+      from files f
+     where exists (
+             select 1 from document_extractions c
+              where c.id = f.current_extraction_id
+                and c.status = 'ok'
+                and c.extractor_version <> ${extractorVersion}
+           )
+       and not exists (
+             select 1 from document_extractions e
+              where e.file_id = f.id and e.extractor_version = ${extractorVersion}
+           )
+  `;
+}
 
 /**
  * What a generation closed by a later `beginExtraction` says about itself.
@@ -491,6 +525,55 @@ export function sqliteExtractionStore(connect: SqliteConnect): ExtractionStore {
           ok: false,
           code: 'DB_UNAVAILABLE',
           message: `추출을 기다리는 파일을 읽을 수 없습니다: ${describe(error)}`,
+        };
+      }
+    },
+
+    async listFilesWithStaleExtraction({
+      extractorVersion,
+      limit,
+    }: {
+      extractorVersion: string;
+      limit: number;
+    }): Promise<ListFilesWithStaleExtractionResult> {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const { db } = opened.connection;
+        // Two reads of the same predicate and no lock, for the same reason the
+        // list above takes none: the drain asks before it takes any write lock
+        // (AD-7). They are two statements and not one because the counts are
+        // over the whole set and the ids are bounded by `limit` — one statement
+        // would have had to read every behind file into memory to count them.
+        const behind = behindPredicate(extractorVersion);
+        const rows = await sql<{ id: string }>`
+          select f.id ${behind}
+             and f.home_location_id is not null
+             and f.redacted_at is null
+             and f.source_unreachable_at is null
+           order by f.id limit ${limit}
+        `.execute(db);
+        const counted = (
+          await sql<{ redacted: number; unreachable: number }>`
+            select
+              coalesce(sum(case when f.redacted_at is not null then 1 else 0 end), 0) as redacted,
+              coalesce(sum(case when f.redacted_at is null
+                             and f.source_unreachable_at is not null then 1 else 0 end), 0)
+                as unreachable
+            ${behind}
+          `.execute(db)
+        ).rows[0];
+        return {
+          ok: true,
+          fileIds: rows.rows.map((row) => row.id),
+          redacted: Number(counted?.redacted ?? 0),
+          sourceUnreachable: Number(counted?.unreachable ?? 0),
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'DB_UNAVAILABLE',
+          message: `추출기 버전이 뒤처진 파일을 읽을 수 없습니다: ${describe(error)}`,
         };
       }
     },

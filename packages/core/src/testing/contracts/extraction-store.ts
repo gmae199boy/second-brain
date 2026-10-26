@@ -8,6 +8,7 @@ import type {
   AttachmentStore,
   ExtractionChunkInput,
   ExtractionClaim,
+  ExtractionOutcome,
   ExtractionStore,
   SessionStore,
   UserStore,
@@ -906,6 +907,139 @@ export function extractionStoreContract(): ContractCase<ExtractionStoreSubject>[
             '표시 해제',
           );
           assertEqual(await awaiting(), [second.fileId], '다시 닿으면 돌아온다');
+        }),
+    ),
+
+    contractCase(
+      '뒤처진 목록은 옛 버전으로 성공한 파일만 내고 닿을 수 없는 것은 센다',
+      async (make) =>
+        withSubject(make, async (store) => {
+          const ids = sequenceIdGen({ start: 3800, timestampMs: 1770000000000 });
+          const stored = await storedFiles(store, ids, [
+            Uint8Array.of(1, 1, 1),
+            Uint8Array.of(2, 2, 2),
+            Uint8Array.of(3, 3, 3),
+            Uint8Array.of(4, 4, 4),
+            Uint8Array.of(5, 5, 5),
+          ]);
+          const [first, second, retried, unreadable, current] = stored;
+          if (
+            first === undefined ||
+            second === undefined ||
+            retried === undefined ||
+            unreadable === undefined ||
+            current === undefined
+          ) {
+            fail('파일이 다섯 만들어지지 않았습니다');
+          }
+
+          // One claim per file, kept so a second reading of the same file can
+          // use it: the claim is the worker's, and a file gets another
+          // generation without getting another queue row.
+          const claims = new Map<string, ExtractionClaim>();
+          const reading = async (
+            fileId: string,
+            extractorVersion: string,
+            outcome: ExtractionOutcome,
+          ): Promise<void> => {
+            let claim = claims.get(fileId);
+            if (claim === undefined) {
+              claim = await takeClaim(store, {
+                fileId,
+                workItemId: ids.next(),
+                now: T0,
+                claimedBy: `drain-${String(claims.size)}`,
+              });
+              claims.set(fileId, claim);
+            }
+            const begun = await store.beginExtraction({
+              id: ids.next(),
+              fileId,
+              extractorVersion,
+              startedAt: at(1),
+              claim,
+            });
+            assertOk(begun, '세대');
+            assertOk(
+              await store.finishExtraction({
+                extractionId: begun.extraction.id,
+                finishedAt: at(2),
+                outcome,
+              }),
+              '세대 닫기',
+            );
+          };
+          const ok: ExtractionOutcome = {
+            status: 'ok',
+            mediaType: 'text/plain',
+            indexConfigId: null,
+          };
+
+          // Two files whose current reading an older generation of extractors
+          // made, which is the whole of what this list is for.
+          await reading(first.fileId, 'text-1', ok);
+          await reading(second.fileId, 'text-1', ok);
+          // A third that was already asked once and could not be read: the
+          // generation of the asked-for version is there, and that is what
+          // keeps it out — otherwise every drain would queue it again.
+          await reading(retried.fileId, 'text-1', ok);
+          await reading(retried.fileId, 'text-2', {
+            status: 'failed',
+            failedStage: 'extract',
+            error: '다시 읽기가 실패했습니다',
+            mediaType: null,
+          });
+          // A fourth whose only reading answered `unsupported`: no pointer, so
+          // nothing to be behind. A newer extractor reaching it is another
+          // story's (Design Notes).
+          await reading(unreadable.fileId, 'text-1', {
+            status: 'unsupported',
+            error: '읽을 추출기가 없습니다',
+            mediaType: null,
+          });
+          // And a fifth this build already read, which is the ordinary state.
+          await reading(current.fileId, 'text-2', ok);
+
+          const behind = async (limit = 10) => {
+            const read = await store.listFilesWithStaleExtraction({
+              extractorVersion: 'text-2',
+              limit,
+            });
+            assertOk(read, '뒤처진 파일');
+            return read;
+          };
+
+          const all = await behind();
+          assertEqual(all.fileIds, [first.fileId, second.fileId], '옛 버전으로 성공한 파일만');
+          assertEqual(all.redacted, 0, '가린 파일은 없다');
+          assertEqual(all.sourceUnreachable, 0, '닿을 수 없는 파일은 없다');
+          assertEqual((await behind(1)).fileIds, [first.fileId], '상한만큼만');
+
+          // A file whose original went out of reach is left out of the ids and
+          // counted instead, and the count is the whole count rather than the
+          // part `limit` would have shown: it answers what this drain is *not*
+          // doing, which a bound must not change (port contract).
+          assertEqual(
+            await store.setFileSourceUnreachable({ fileId: second.fileId, unreachableAt: at(3) }),
+            { ok: true },
+            '원본 표시',
+          );
+          const marked = await behind();
+          assertEqual(marked.fileIds, [first.fileId], '닿을 수 없는 파일은 빠진다');
+          assertEqual(marked.sourceUnreachable, 1, '닿을 수 없는 파일 수');
+          assertEqual(marked.redacted, 0, '가리기는 어댑터의 몫');
+          assertEqual((await behind(1)).sourceUnreachable, 1, '상한과 무관한 전체 수');
+
+          assertEqual(
+            await store.setFileSourceUnreachable({ fileId: second.fileId, unreachableAt: null }),
+            { ok: true },
+            '표시 해제',
+          );
+          assertEqual(
+            (await behind()).fileIds,
+            [first.fileId, second.fileId],
+            '다시 닿으면 돌아온다',
+          );
         }),
     ),
   ];

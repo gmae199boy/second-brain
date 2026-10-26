@@ -31,6 +31,10 @@ export interface QueueDrainData {
   enqueued: number;
   /** Sessions an older parser read whose transcript is gone, so not re-read. */
   reread_missing: number;
+  /** Files a newer extractor would read differently that are redacted (AD-11). */
+  reextract_redacted: number;
+  /** The same, for files whose original cannot be reached any more (AD-24). */
+  reextract_unreachable: number;
   claimed: number;
   completed: number;
   retried: number;
@@ -54,7 +58,7 @@ export const queueDrainCommand: CommandSpec<QueueDrainData> = {
   required: [],
   examples: ['brain queue drain', 'brain queue drain --budget 60 --json'],
   output:
-    '되넣음·실패로 옮김·새 일감·다시 못 읽음 건수(`replayed`, `spool_failed`, `enqueued`, `reread_missing`), 청구·완료·다시 시도·실패·돌려줌·놓침·spool 건수(`claimed`, `completed`, `retried`, `failed`, `released`, `lost`, `spooled`)와 멈춘 이유 `stopped`',
+    '되넣음·실패로 옮김·새 일감·다시 못 읽음 건수(`replayed`, `spool_failed`, `enqueued`, `reread_missing`), 다시 추출을 건너뛴 가린 파일·원본 불가 파일 건수(`reextract_redacted`, `reextract_unreachable`), 청구·완료·다시 시도·실패·돌려줌·놓침·spool 건수(`claimed`, `completed`, `retried`, `failed`, `released`, `lost`, `spooled`)와 멈춘 이유 `stopped`',
   risk: 'write',
   hook: false,
   dryRun: false,
@@ -87,11 +91,20 @@ export const queueDrainCommand: CommandSpec<QueueDrainData> = {
 
     return {
       ok: true as const,
+      // A file that is behind and out of reach is nothing this command can fix
+      // and nothing anything else will queue, so the result is degraded and
+      // says so under its own code (NFR-2, AD-24). A redacted one is not: there
+      // are no bytes to read on purpose, which is the system working.
+      ...(report.reextractUnreachable > 0
+        ? { warnings: ['FILE_SOURCE_UNREACHABLE'] as const }
+        : {}),
       data: {
         replayed: report.replayed,
         spool_failed: report.spoolFailed,
         enqueued: report.enqueued,
         reread_missing: report.rereadMissing,
+        reextract_redacted: report.reextractRedacted,
+        reextract_unreachable: report.reextractUnreachable,
         claimed: report.claimed,
         completed: report.completed,
         retried: report.retried,
@@ -125,6 +138,8 @@ function counts(report: BrainDrainReport): string {
   return (
     `되넣음 ${String(report.replayed)}건, 실패로 옮김 ${String(report.spoolFailed)}건, ` +
     `새 일감 ${String(report.enqueued)}건, 다시 못 읽음 ${String(report.rereadMissing)}건, ` +
+    `다시 추출 건너뜀 가림 ${String(report.reextractRedacted)}건, ` +
+    `다시 추출 건너뜀 원본 불가 ${String(report.reextractUnreachable)}건, ` +
     `청구 ${String(report.claimed)}건, 완료 ${String(report.completed)}건, ` +
     `다시 시도 ${String(report.retried)}건, 실패 ${String(report.failed)}건, ` +
     `돌려줌 ${String(report.released)}건, 놓침 ${String(report.lost)}건, ` +

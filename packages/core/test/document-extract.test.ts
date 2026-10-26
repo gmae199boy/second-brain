@@ -584,3 +584,179 @@ describe('조각 설정', () => {
     expect(state).toMatchObject({ ok: true, contentHash: contentHashOfBytes(utf8Bytes(NOTE)) });
   });
 });
+
+describe('추출기 버전이 오르면 drain이 한 번 더 읽는다', () => {
+  /**
+   * One drain whose handler stamps another version than this build's, which is
+   * how a case makes the generation an older build would have left behind.
+   *
+   * Only the handler is swapped: the queueing step reads the build's own
+   * version, which is the thing being tested.
+   */
+  async function readAt(
+    subject: Kit,
+    extractorVersion: string,
+    extractors?: readonly DocumentExtractor[],
+  ) {
+    return drain(subject, {
+      [DOCUMENT_EXTRACT_KIND]: documentExtractHandler({
+        store: subject.store,
+        files: subject.files,
+        clock: subject.clock,
+        idGen: subject.idGen,
+        extractorVersion,
+        ...(extractors === undefined ? {} : { extractors }),
+      }),
+    });
+  }
+
+  it('옛 버전으로 성공한 파일을 다시 넣고 그 다음 drain은 가만히 둔다', async () => {
+    const subject = await kit();
+    expect(await readAt(subject, 'doc/0')).toMatchObject({ claimed: 1, completed: 1 });
+    expect((await generations(subject))[0]).toMatchObject({
+      attempt: 1,
+      status: 'ok',
+      extractorVersion: 'doc/0',
+    });
+
+    const report = await drain(subject);
+
+    expect(report).toMatchObject({
+      claimed: 1,
+      completed: 1,
+      failed: 0,
+      reextractRedacted: 0,
+      reextractUnreachable: 0,
+    });
+    // The successful replacement took the older generation and its pieces with
+    // it, so the file has one reading and it is this build's (AD-24).
+    const rows = await generations(subject);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      attempt: 2,
+      status: 'ok',
+      extractorVersion: DOCUMENT_EXTRACTOR_VERSION,
+      indexConfigId: DOCUMENT_CHUNK_INDEX_CONFIG_ID,
+    });
+    const state = await subject.store.readFileExtractionState(subject.fileId);
+    expect(state).toMatchObject({ ok: true, currentExtractionId: rows[0]?.id });
+    expect((await currentChunks(subject))[0]).toMatchObject({ ordinal: 0, body: NOTE });
+    expect(fileFailures(subject)).toEqual([]);
+
+    // And once more: the generation of this version is what keeps the file out
+    // of the read, so there is no third item and no third attempt.
+    const items = extractItems(subject);
+    expect(await drain(subject)).toMatchObject({ claimed: 0, stopped: 'empty' });
+    expect(extractItems(subject)).toEqual(items);
+    expect(await generations(subject)).toEqual(rows);
+  });
+
+  it('빌드 버전으로 한 번 실패했으면 다시 넣지 않는다', async () => {
+    const subject = await kit();
+    expect(await readAt(subject, 'doc/0')).toMatchObject({ claimed: 1, completed: 1 });
+    const broken: DocumentExtractor = {
+      name: 'broken',
+      detect: () => 'text/broken',
+      extract: async () => ({ ok: false, message: '시험용 추출기가 멈췄습니다' }),
+    };
+    expect(await readAt(subject, DOCUMENT_EXTRACTOR_VERSION, [broken])).toMatchObject({
+      claimed: 1,
+      failed: 1,
+    });
+
+    // The failed reading left the older pointer and its pieces where they were,
+    // so search keeps answering from the last reading that worked.
+    const rows = await generations(subject);
+    const succeeded = rows.find((row) => row.status === 'ok');
+    expect(succeeded).toMatchObject({ extractorVersion: 'doc/0' });
+    const state = await subject.store.readFileExtractionState(subject.fileId);
+    expect(state).toMatchObject({ ok: true, currentExtractionId: succeeded?.id });
+    const chunks = await currentChunks(subject);
+
+    // And the drain after that leaves it alone: a re-reading that fails for
+    // ever must not be queued every five minutes, and asking once more is
+    // `brain failures retry`'s (Design Notes).
+    const report = await drain(subject);
+
+    expect(report).toMatchObject({
+      claimed: 0,
+      stopped: 'empty',
+      reextractRedacted: 0,
+      reextractUnreachable: 0,
+    });
+    expect(await generations(subject)).toEqual(rows);
+    expect(await currentChunks(subject)).toEqual(chunks);
+  });
+
+  it('원본에 닿을 수 없는 뒤처진 파일은 넣지 않고 세어서 보고한다', async () => {
+    const subject = await kit();
+    expect(await readAt(subject, 'doc/0')).toMatchObject({ claimed: 1, completed: 1 });
+    const rows = await generations(subject);
+    const chunks = await currentChunks(subject);
+    expect(
+      await subject.store.setFileSourceUnreachable({
+        fileId: subject.fileId,
+        unreachableAt: subject.clock.now(),
+      }),
+    ).toEqual({ ok: true });
+
+    const report = await drain(subject);
+
+    expect(report).toMatchObject({
+      claimed: 0,
+      stopped: 'empty',
+      reextractUnreachable: 1,
+      reextractRedacted: 0,
+    });
+    // Nothing moved: the pieces of the last reading that worked and the pointer
+    // naming them are exactly as they were (AD-24).
+    expect(await generations(subject)).toEqual(rows);
+    expect(await currentChunks(subject)).toEqual(chunks);
+    // And it is reported on every drain while the mark is there, because the
+    // state is still true.
+    expect(await drain(subject)).toMatchObject({ reextractUnreachable: 1 });
+  });
+
+  it('성공하지 않은 세대뿐인 파일은 넣지도 세지도 않는다', async () => {
+    const subject = await kit();
+    // An empty registry, so nothing recognises the bytes: the one generation
+    // says `unsupported` and the pointer stays empty, which is a file with
+    // nothing to be behind. Reaching those is epic 4's (Design Notes).
+    expect(await readAt(subject, 'doc/0', [])).toMatchObject({ claimed: 1, completed: 1 });
+    const rows = await generations(subject);
+    expect(rows[0]).toMatchObject({ status: 'unsupported', extractorVersion: 'doc/0' });
+
+    const report = await drain(subject);
+
+    expect(report).toMatchObject({
+      claimed: 0,
+      stopped: 'empty',
+      reextractRedacted: 0,
+      reextractUnreachable: 0,
+    });
+    expect(await generations(subject)).toEqual(rows);
+  });
+
+  it('뒤처진 파일을 읽지 못하면 아무것도 세지 않고 기다리는 파일은 그대로 넣는다', async () => {
+    // The two reads are separate questions, so the one that could not be
+    // answered costs the step only its own half: a file nobody has read is
+    // still queued, and nothing is claimed to have been skipped.
+    const subject = await kit();
+    const report = await enqueueDocumentExtractions(
+      {
+        store: {
+          ...subject.store,
+          async listFilesWithStaleExtraction() {
+            return { ok: false, code: 'DB_UNAVAILABLE', message: '파일을 열 수 없습니다' };
+          },
+        },
+        clock: subject.clock,
+        idGen: subject.idGen,
+      },
+      { deadline: subject.clock.now().getTime() + DRAIN_BUDGET_MS.command },
+    );
+
+    expect(report).toEqual({ redacted: 0, sourceUnreachable: 0 });
+    expect(extractItems(subject)).toHaveLength(1);
+  });
+});

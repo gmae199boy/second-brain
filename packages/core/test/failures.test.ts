@@ -3,7 +3,10 @@ import { SESSION_INGEST_KIND } from '../src/capture/session-ingest-work.js';
 import { FAILURES_LIST_LIMIT, listFailures } from '../src/failures/list.js';
 import { retryFailures } from '../src/failures/retry.js';
 import { DOCUMENT_EXTRACT_KIND } from '../src/files/extract-work.js';
-import type { RecordFailureInput } from '../src/ports/store.js';
+import type {
+  ReadFileExtractionStateResult,
+  RecordFailureInput,
+} from '../src/ports/store.js';
 import { fixedClock } from '../src/testing/fakes/clock.js';
 import { sequenceIdGen } from '../src/testing/fakes/id-gen.js';
 import { memoryStore, type MemoryStore } from '../src/testing/fakes/store.js';
@@ -39,6 +42,32 @@ async function holding(...inputs: readonly RecordFailureInput[]): Promise<Memory
     expect(await store.recordFailure(input)).toMatchObject({ ok: true });
   }
   return store;
+}
+
+/**
+ * One file's extraction state, with only the two columns a retry asks about
+ * worth setting.
+ *
+ * Everything else is filler: `retryFailures` reads `redactedAt` and
+ * `sourceUnreachableAt` and nothing else, and a case that built a real file row
+ * for each of them would be proving something about the ingest.
+ */
+function extractionState(
+  fileId: string,
+  marks: { redactedAt?: Date; sourceUnreachableAt?: Date },
+): ReadFileExtractionStateResult {
+  return {
+    ok: true,
+    fileId,
+    contentHash: 'sha256:demo',
+    sizeBytes: 3,
+    home: { storeKind: 'local', ownership: 'brain', locator: 'files/demo' },
+    redactedAt: marks.redactedAt ?? null,
+    sourceUnreachableAt: marks.sourceUnreachableAt ?? null,
+    currentExtractionId: null,
+    openExtraction: null,
+    lastAttempt: 1,
+  };
 }
 
 function retryDependencies(store: MemoryStore): {
@@ -245,10 +274,15 @@ describe('failures.retry', () => {
       }),
     );
 
+    // The store has no row for this file, so the state read says
+    // `FILE_NOT_FOUND` — and that is queued exactly as before: the handler
+    // closes work about something that no longer exists as done.
     expect(await retryFailures(retryDependencies(store))).toMatchObject({
       ok: true,
       added: 1,
       skipped: [],
+      redacted: 0,
+      sourceUnreachable: 0,
     });
     expect(store.snapshot().workItems[0]).toMatchObject({
       kind: DOCUMENT_EXTRACT_KIND,
@@ -300,6 +334,82 @@ describe('failures.retry', () => {
     const result = await retryFailures(retryDependencies(store), { targetKind: 'session' });
 
     expect(result).toMatchObject({ ok: true, added: 1, skipped: [] });
+  });
+
+  it('가려서·원본에 닿을 수 없어 다시 읽을 수 없는 파일은 세고 넣지 않는다', async () => {
+    const store = await holding(
+      failure({
+        id: '01940000-0000-7000-8000-0000000000e1',
+        targetKind: 'file',
+        stage: DOCUMENT_EXTRACT_KIND,
+        targetId: 'file-redacted',
+        fingerprint: 'sha256:six',
+      }),
+      failure({
+        id: '01940000-0000-7000-8000-0000000000e2',
+        targetKind: 'file',
+        stage: DOCUMENT_EXTRACT_KIND,
+        targetId: 'file-unreachable',
+        fingerprint: 'sha256:seven',
+      }),
+      failure({
+        id: '01940000-0000-7000-8000-0000000000e3',
+        targetKind: 'file',
+        stage: DOCUMENT_EXTRACT_KIND,
+        targetId: 'file-readable',
+        fingerprint: 'sha256:eight',
+      }),
+    );
+    // The three states are answered here rather than built: the fake has no
+    // file redaction at all, and what this case is about is the one read this
+    // verb makes before it queues anything (port contract).
+    const states: MemoryStore = {
+      ...store,
+      async readFileExtractionState(fileId) {
+        return extractionState(fileId, {
+          ...(fileId === 'file-redacted' ? { redactedAt: NOW } : {}),
+          ...(fileId === 'file-unreachable' ? { sourceUnreachableAt: NOW } : {}),
+        });
+      },
+    };
+
+    const result = await retryFailures(retryDependencies(states));
+
+    expect(result).toMatchObject({
+      ok: true,
+      added: 1,
+      alreadyOpen: 0,
+      redacted: 1,
+      sourceUnreachable: 1,
+      skipped: [],
+    });
+    // Only the one that could be read got an item: the other two would have
+    // been closed without doing anything, leaving the failure rows untouched.
+    expect(states.snapshot().workItems.map((item) => item.targetId)).toEqual(['file-readable']);
+  });
+
+  it('파일의 상태를 읽을 수 없으면 그 코드로 멈춘다', async () => {
+    const store = await holding(
+      failure({
+        id: '01940000-0000-7000-8000-0000000000e4',
+        targetKind: 'file',
+        stage: DOCUMENT_EXTRACT_KIND,
+        targetId: 'file-unknown',
+        fingerprint: 'sha256:nine',
+      }),
+    );
+    const unreadable: MemoryStore = {
+      ...store,
+      async readFileExtractionState() {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: '파일을 열 수 없습니다' };
+      },
+    };
+
+    expect(await retryFailures(retryDependencies(unreadable))).toMatchObject({
+      ok: false,
+      code: 'DB_UNAVAILABLE',
+    });
+    expect(unreadable.snapshot().workItems).toEqual([]);
   });
 
   it('stops at a database that would not take the write', async () => {

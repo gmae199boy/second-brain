@@ -26,6 +26,10 @@ export interface FailuresRetryData {
   already_open: number;
   /** Target kinds this build has no retry work for, with their counts. */
   skipped: readonly { target_kind: string; count: number }[];
+  /** Failing files that have been redacted since, so there is nothing to read. */
+  redacted: number;
+  /** Failing files whose original cannot be reached any more (AD-24). */
+  source_unreachable: number;
 }
 
 export const failuresRetryCommand: CommandSpec<FailuresRetryData> = {
@@ -36,7 +40,7 @@ export const failuresRetryCommand: CommandSpec<FailuresRetryData> = {
   required: [],
   examples: ['brain failures retry', 'brain failures retry --target-kind session --json'],
   output:
-    '새로 넣은 일감 수 `added`, 이미 열려 있던 수 `already_open`, 다시 할 방법이 없어 건너뛴 대상 종류와 건수 `skipped`',
+    '새로 넣은 일감 수 `added`, 이미 열려 있던 수 `already_open`, 다시 할 방법이 없어 건너뛴 대상 종류와 건수 `skipped`, 가려서·원본에 닿을 수 없어 건너뛴 파일 수 `redacted`·`source_unreachable`',
   risk: 'write',
   hook: false,
   dryRun: false,
@@ -59,6 +63,13 @@ export const failuresRetryCommand: CommandSpec<FailuresRetryData> = {
 
     return {
       ok: true as const,
+      // A file whose original is out of reach is a retry that cannot go
+      // anywhere, however often it is asked for, so the result is degraded and
+      // names the code for it (NFR-2, AD-24). A redacted file is not: there are
+      // no bytes to read on purpose.
+      ...(result.sourceUnreachable > 0
+        ? { warnings: ['FILE_SOURCE_UNREACHABLE'] as const }
+        : {}),
       data: {
         added: result.added,
         already_open: result.alreadyOpen,
@@ -66,8 +77,14 @@ export const failuresRetryCommand: CommandSpec<FailuresRetryData> = {
           target_kind: entry.targetKind,
           count: entry.count,
         })),
+        redacted: result.redacted,
+        source_unreachable: result.sourceUnreachable,
       },
-      text: [line(result.added, result.alreadyOpen), ...skippedLines(result.skipped)],
+      text: [
+        line(result.added, result.alreadyOpen),
+        ...skippedLines(result.skipped),
+        ...unreadableLines(result.redacted, result.sourceUnreachable),
+      ],
     };
   },
 };
@@ -92,6 +109,25 @@ function skippedLines(skipped: readonly FailuresRetrySkipped[]): readonly string
     (entry) =>
       `${entry.targetKind} 대상 ${String(entry.count)}건은 이 빌드가 다시 할 방법이 없어 건너뜁니다.`,
   );
+}
+
+/**
+ * The files nothing was asked for, a line each and only when there were any.
+ *
+ * A line rather than a clause for the same reason `skippedLines` is one: the
+ * answer is "this one cannot be read again", which is a different sentence from
+ * how much work was queued. And nothing at all when both are zero, because the
+ * ordinary retry must stay one line.
+ */
+function unreadableLines(redacted: number, sourceUnreachable: number): readonly string[] {
+  const lines: string[] = [];
+  if (redacted > 0) {
+    lines.push(`가린 파일 ${String(redacted)}건은 읽을 바이트가 없어 건너뜁니다.`);
+  }
+  if (sourceUnreachable > 0) {
+    lines.push(`원본에 닿을 수 없는 파일 ${String(sourceUnreachable)}건은 건너뜁니다.`);
+  }
+  return lines;
 }
 
 /** One option as a non-empty string, or `undefined` for a flag nobody gave. */

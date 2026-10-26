@@ -90,8 +90,10 @@ export const DOCUMENT_EXTRACTORS: readonly DocumentExtractor[] = [textExtractor]
  *
  * It goes up whenever an extractor or a library underneath one changes what it
  * would produce from the same bytes, because that is the question the column
- * answers: whether a stored reading is one this build would have made. Putting
- * the files whose version is behind back on the queue is a later story's — this
- * build only records it.
+ * answers: whether a stored reading is one this build would have made. Raising
+ * it is also the whole of how a re-reading is asked for: the drain's queueing
+ * step reads the files whose current successful generation says another version
+ * and puts each one back on the queue, once
+ * (`files/extract-work.ts`, `listFilesWithStaleExtraction`).
  */
 export const DOCUMENT_EXTRACTOR_VERSION = 'doc/1';

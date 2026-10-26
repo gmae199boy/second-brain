@@ -125,6 +125,10 @@ describe('brain queue drain', () => {
       spool_failed: 0,
       enqueued: 0,
       reread_missing: 0,
+      // Nothing is behind this build's extractor version, so nothing was
+      // skipped for want of bytes to read (AD-24).
+      reextract_redacted: 0,
+      reextract_unreachable: 0,
       claimed: 0,
       completed: 0,
       retried: 0,
@@ -150,6 +154,8 @@ describe('brain queue drain', () => {
     expect(lines[0]).toContain('실패로 옮김 0건');
     expect(lines[0]).toContain('새 일감 0건');
     expect(lines[0]).toContain('다시 못 읽음 0건');
+    expect(lines[0]).toContain('다시 추출 건너뜀 가림 0건');
+    expect(lines[0]).toContain('다시 추출 건너뜀 원본 불가 0건');
     expect(lines[0]).toContain('청구 0건');
     expect(lines[0]).toContain('할 일이 없습니다');
     // Clause by clause, not line by line: a count with no Korean beside it is

@@ -59,9 +59,12 @@ export const FILE_SOURCE_UNREACHABLE = 'FILE_SOURCE_UNREACHABLE';
 export const FILE_CONTENT_MISMATCH = 'FILE_CONTENT_MISMATCH';
 export const EXTRACTION_FAILED = 'EXTRACTION_FAILED';
 
-/** What the queueing step needs: one read, the open items, and the queue. */
+/** What the queueing step needs: two reads, the open items, and the queue. */
 export interface EnqueueDocumentExtractionsDependencies {
-  store: Pick<ExtractionStore, 'listFilesAwaitingExtraction'> &
+  store: Pick<
+    ExtractionStore,
+    'listFilesAwaitingExtraction' | 'listFilesWithStaleExtraction'
+  > &
     Pick<WorkStore, 'listOpenWorkTargets' | 'addWork'>;
   clock: Clock;
   idGen: IdGen;
@@ -74,21 +77,50 @@ export interface EnqueueDocumentExtractionsOptions {
    * the identity step and the folder scan do with the same number (AD-7).
    */
   deadline: number;
+  /**
+   * Which generation of extractors counts as current, for the second read.
+   * Defaults to this build's, and is an option for the same reason the
+   * handler's is: a test that wants to be a different build.
+   */
+  extractorVersion?: string;
 }
 
 /**
- * How many files one drain run may read in one go. The same bound the name
- * filling uses (`files/file-names.ts`): a backlog of ten thousand attachments
- * is not read into memory to queue the first few.
+ * The files this step met and left alone, which is the one thing about it a
+ * person has to be told.
  *
- * It is a bound on the read and not on the budget — five hundred write
- * transactions would be far past two seconds — so what keeps an opportunistic
- * run short is the deadline the loop checks, not this.
+ * Everything else it does is queue rows, and the loop's own counters say
+ * whether anything happened. A file that is behind and cannot be read is
+ * different: nothing will ever queue it, so a drain that said nothing would
+ * leave the person with an attachment that is quietly never re-read (AD-24).
+ *
+ * Both are whole counts and not what `limit` showed, and both are zero when the
+ * read behind them failed — a read that could not be answered knows nothing
+ * about what it would have skipped.
+ */
+export interface EnqueueDocumentExtractionsReport {
+  /** Files that are behind and redacted, so there are no bytes to read again. */
+  redacted: number;
+  /** Files that are behind and whose original cannot be reached any more. */
+  sourceUnreachable: number;
+}
+
+/**
+ * How many files *each* of the two reads may answer with. The same bound the
+ * name filling uses (`files/file-names.ts`): a backlog of ten thousand
+ * attachments is not read into memory to queue the first few.
+ *
+ * It is per read and not per run, so one run may hold a thousand ids and try a
+ * thousand `addWork` calls. That is deliberate: it is a bound on the read and
+ * not on the budget — a thousand write transactions would be far past two
+ * seconds — so what keeps an opportunistic run short is the deadline the loop
+ * checks before each write, not this.
  */
 const ENQUEUE_LIMIT = 500;
 
 /**
- * Put one `document_extract` item on the queue per file nothing has read yet.
+ * Put one `document_extract` item on the queue per file nothing has read yet,
+ * and per file a newer generation of extractors would read differently.
  *
  * This is what "an attachment that was stored gets extracted" means, and it is
  * a step of the drain rather than part of the ingest transaction: the same place
@@ -96,34 +128,67 @@ const ENQUEUE_LIMIT = 500;
  * collected before this story existed (Design Notes). A hook never drains
  * (AD-6), so either way the reading happens on the next drain.
  *
- * Nothing in here is reported and nothing in here fails the run. A read that
- * could not be answered and a queue that would not take a row are both "there
- * is nothing to queue right now", and the next drain asks again — exactly how
- * `fillFileNames` treats the same two cases. Running out of time is a third
- * one: the files left over are still the files nothing has read, so the next
- * drain's own read finds them.
+ * The second read is the re-reading path, and it is the same step and not a new
+ * command on purpose: raising `DOCUMENT_EXTRACTOR_VERSION` is how a build says
+ * the stored readings are not the ones it would make, and nobody should have to
+ * remember to ask. It is one go per file and not a loop — the store only
+ * answers files with no generation of this version at all — so a re-reading
+ * that fails permanently is `failures retry`'s from then on (Design Notes).
+ *
+ * The new files come first because they have no text at all, where a file that
+ * is behind has the last reading that worked: in a run that runs out of
+ * budget, the file with nothing is the one worth the write.
+ *
+ * Nothing in here fails the run. A read that could not be answered and a queue
+ * that would not take a row are both "there is nothing to queue right now", and
+ * the next drain asks again — exactly how `fillFileNames` treats the same two
+ * cases. Running out of time is a third one: the files left over are still the
+ * files that are waiting or behind, so the next drain's own reads find them.
  */
 export async function enqueueDocumentExtractions(
   { store, clock, idGen }: EnqueueDocumentExtractionsDependencies,
-  { deadline }: EnqueueDocumentExtractionsOptions,
-): Promise<void> {
+  {
+    deadline,
+    extractorVersion = DOCUMENT_EXTRACTOR_VERSION,
+  }: EnqueueDocumentExtractionsOptions,
+): Promise<EnqueueDocumentExtractionsReport> {
+  const nothing: EnqueueDocumentExtractionsReport = { redacted: 0, sourceUnreachable: 0 };
+
   const awaiting = await store.listFilesAwaitingExtraction({ limit: ENQUEUE_LIMIT });
-  if (!awaiting.ok || awaiting.fileIds.length === 0) return;
+  const behind = await store.listFilesWithStaleExtraction({
+    extractorVersion,
+    limit: ENQUEUE_LIMIT,
+  });
+  // Both reads are lock-free, so a failed one costs the run nothing but its own
+  // half of the work: a database that could not answer the second question is
+  // still allowed to queue the files the first one found.
+  const skipped: EnqueueDocumentExtractionsReport = behind.ok
+    ? { redacted: behind.redacted, sourceUnreachable: behind.sourceUnreachable }
+    : nothing;
+  const queueable = [
+    ...(awaiting.ok ? awaiting.fileIds : []),
+    ...(behind.ok ? behind.fileIds : []),
+  ];
+  if (queueable.length === 0) return skipped;
 
   // The open-row key of `work_items` would have collapsed a duplicate anyway,
   // at the cost of a write lock for each one. This is the lock-free read that
   // spends none (AD-7, AD-21).
   const open = await store.listOpenWorkTargets({ kind: DOCUMENT_EXTRACT_KIND });
-  if (!open.ok) return;
+  if (!open.ok) return skipped;
   const held = new Set(
     open.targets.filter((target) => target.targetKind === 'file').map((target) => target.targetId),
   );
 
-  for (const fileId of awaiting.fileIds) {
+  for (const fileId of queueable) {
     // Before each write and not after it, so a run whose budget is gone takes
     // no further lock: the queue row is cheap and the write transaction is not.
     if (clock.now().getTime() >= deadline) break;
     if (held.has(fileId)) continue;
+    // The two reads answer disjoint questions — no generation at all against a
+    // current successful one — but the set is what this loop goes by, so a file
+    // it queued is a file it does not queue twice.
+    held.add(fileId);
     const now = clock.now();
     const added = await store.addWork({
       id: idGen.next(),
@@ -136,6 +201,8 @@ export async function enqueueDocumentExtractions(
     // A database that will not take this row will not take the next one either.
     if (!added.ok) break;
   }
+
+  return skipped;
 }
 
 export interface DocumentExtractWorkDependencies {

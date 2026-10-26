@@ -30,6 +30,7 @@ import type {
   ListExtractionChunksResult,
   ListExtractionsResult,
   ListFilesAwaitingExtractionResult,
+  ListFilesWithStaleExtractionResult,
   ReadFileExtractionStateResult,
   SetFileSourceUnreachableInput,
   SetFileSourceUnreachableResult,
@@ -891,6 +892,43 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         .sort((left, right) => left.localeCompare(right))
         .slice(0, limit);
       return { ok: true, fileIds };
+    },
+
+    async listFilesWithStaleExtraction({
+      extractorVersion,
+      limit,
+    }: {
+      extractorVersion: string;
+      limit: number;
+    }): Promise<ListFilesWithStaleExtractionResult> {
+      // The pointer names a successful reading of some other version, and no
+      // generation of the asked-for version exists at all — the second half is
+      // what keeps a re-reading that failed from being queued every drain
+      // (port contract).
+      const behind = [...fileRows.values()].filter((file) => {
+        const pointer = currentExtractions.get(file.id);
+        if (pointer === undefined) return false;
+        const current = extractions.find((extraction) => extraction.id === pointer);
+        if (current === undefined || current.status !== 'ok') return false;
+        if (current.extractorVersion === extractorVersion) return false;
+        return !extractions.some(
+          (extraction) =>
+            extraction.fileId === file.id && extraction.extractorVersion === extractorVersion,
+        );
+      });
+      const fileIds = behind
+        .filter((file) => file.home !== null && !sourceUnreachableAt.has(file.id))
+        .map((file) => file.id)
+        .sort((left, right) => left.localeCompare(right))
+        .slice(0, limit);
+      return {
+        ok: true,
+        fileIds,
+        // This fake has no file redaction, so that count is always zero and the
+        // adapters answer it beside their own column (port contract).
+        redacted: 0,
+        sourceUnreachable: behind.filter((file) => sourceUnreachableAt.has(file.id)).length,
+      };
     },
 
     async listExtractions(fileId: string): Promise<ListExtractionsResult> {

@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { sql } from 'kysely';
 import {
+  DOCUMENT_EXTRACTOR_VERSION,
   DOCUMENT_EXTRACT_KIND,
   DRAIN_BUDGET_MS,
   documentExtractHandler,
@@ -124,22 +125,33 @@ async function kit(bytes = Buffer.from(NOTE, 'utf8')): Promise<Kit> {
 /**
  * The two halves of one drain run, with nothing else in the way: queue what is
  * waiting, then work the queue with the one handler this story adds.
+ *
+ * `extractorVersion` goes to both halves at once, because what a build is is
+ * one version: a case that gave the queueing step one and the handler another
+ * would be a build that disagrees with itself. Given, it is how a case makes
+ * the generation an older build would have left behind.
+ *
+ * The answer carries the queueing step's own counts under `reextract`, which
+ * are the files it met and could not queue at all (`files/extract-work.ts`).
  */
-async function drain(subject: Kit) {
+async function drain(subject: Kit, options: { extractorVersion?: string } = {}) {
   const { store, files, clock, idGen } = subject;
-  await enqueueDocumentExtractions(
+  const version =
+    options.extractorVersion === undefined ? {} : { extractorVersion: options.extractorVersion };
+  const reextract = await enqueueDocumentExtractions(
     { store, clock, idGen },
-    { deadline: clock.now().getTime() + DRAIN_BUDGET_MS.command },
+    { deadline: clock.now().getTime() + DRAIN_BUDGET_MS.command, ...version },
   );
-  return drainQueue(
+  const queue = await drainQueue(
     { store, spool: memorySpool(), clock, idGen },
     {
       budgetMs: DRAIN_BUDGET_MS.command,
       handlers: {
-        [DOCUMENT_EXTRACT_KIND]: documentExtractHandler({ store, files, clock, idGen }),
+        [DOCUMENT_EXTRACT_KIND]: documentExtractHandler({ store, files, clock, idGen, ...version }),
       },
     },
   );
+  return { ...queue, reextract };
 }
 
 async function onConnection<T>(path: string, use: (database: DatabaseSync) => T): Promise<T> {
@@ -252,5 +264,111 @@ describe('SQLite에서 drain이 텍스트 첨부를 조각으로 만든다', () 
     expect(await ftsMatches(subject.path, 'needlebody')).toBe(0);
     const failures = await subject.store.listFailures({ targetKind: 'file' });
     expect(failures).toMatchObject({ ok: true, failures: [] });
+  });
+});
+
+describe('SQLite에서 버전이 오르면 다시 읽고 읽을 수 없는 것은 센다', () => {
+  it('새 세대의 조각이 fts로 찾히고 옛 세대와 그 조각은 사라진다', async () => {
+    const subject = await kit();
+    // The reading an older build left behind, which is the state this path is
+    // about: a successful generation stamped with another version.
+    expect(await drain(subject, { extractorVersion: 'doc/0' })).toMatchObject({
+      claimed: 1,
+      completed: 1,
+    });
+    expect(await ftsMatches(subject.path, 'needlebody')).toBe(1);
+
+    const report = await drain(subject);
+
+    expect(report).toMatchObject({ claimed: 1, completed: 1, failed: 0 });
+    expect(report.reextract).toEqual({ redacted: 0, sourceUnreachable: 0 });
+    const rows = await subject.store.listExtractions(subject.fileId);
+    expect(rows).toMatchObject({ ok: true });
+    if (!rows.ok) return;
+    // The replacement closed itself, moved the pointer and then took the older
+    // generation's pieces and row away, so the keyword index holds the new
+    // reading's text exactly once (AD-24).
+    expect(rows.extractions).toHaveLength(1);
+    expect(rows.extractions[0]).toMatchObject({
+      attempt: 2,
+      status: 'ok',
+      extractorVersion: DOCUMENT_EXTRACTOR_VERSION,
+    });
+    const state = await subject.store.readFileExtractionState(subject.fileId);
+    expect(state).toMatchObject({ ok: true, currentExtractionId: rows.extractions[0]?.id });
+    expect(await ftsMatches(subject.path, 'needlebody')).toBe(1);
+    expect(
+      await onConnection(
+        subject.path,
+        (database) =>
+          (database.prepare('select count(*) as n from document_chunks').get() as { n: number }).n,
+      ),
+    ).toBe(1);
+
+    // And the drain after that has nothing to do: the generation of this
+    // version is what keeps the file out of the read.
+    const third = await drain(subject);
+    expect(third).toMatchObject({ claimed: 0, stopped: 'empty' });
+    expect(third.reextract).toEqual({ redacted: 0, sourceUnreachable: 0 });
+    expect(await ftsMatches(subject.path, 'needlebody')).toBe(1);
+  });
+
+  it('뒤처진 파일이 가려졌으면 넣지 않고 redacted로 센다', async () => {
+    const subject = await kit();
+    expect(await drain(subject, { extractorVersion: 'doc/0' })).toMatchObject({
+      claimed: 1,
+      completed: 1,
+    });
+    const before = await subject.store.listExtractions(subject.fileId);
+
+    // The redaction transaction of AD-11, which is the only thing allowed to
+    // fill `redacted_at`, on a connection of its own: the marker the triggers
+    // consult belongs to the connection that raised it.
+    const connection = openConnection(subject.path);
+    try {
+      expect(
+        await withWrite(
+          connection,
+          async (db) => {
+            await sql`update files set redacted_at = ${'2026-01-01T00:00:00.000Z'} where id = ${subject.fileId}`.execute(db);
+          },
+          { redact: true },
+        ),
+      ).toMatchObject({ ok: true });
+    } finally {
+      await connection.close();
+    }
+
+    const report = await drain(subject);
+
+    expect(report).toMatchObject({ claimed: 0, stopped: 'empty' });
+    // Only an adapter with the column can be held to this one: the in-memory
+    // fake has no file redaction and always answers zero (port contract).
+    expect(report.reextract).toEqual({ redacted: 1, sourceUnreachable: 0 });
+    expect(await subject.store.listExtractions(subject.fileId)).toEqual(before);
+  });
+
+  it('뒤처진 파일의 원본에 닿을 수 없으면 넣지 않고 세어서 조각을 그대로 둔다', async () => {
+    const subject = await kit();
+    expect(await drain(subject, { extractorVersion: 'doc/0' })).toMatchObject({
+      claimed: 1,
+      completed: 1,
+    });
+    const before = await subject.store.listExtractions(subject.fileId);
+    expect(
+      await subject.store.setFileSourceUnreachable({
+        fileId: subject.fileId,
+        unreachableAt: NOW,
+      }),
+    ).toEqual({ ok: true });
+
+    const report = await drain(subject);
+
+    expect(report).toMatchObject({ claimed: 0, stopped: 'empty' });
+    expect(report.reextract).toEqual({ redacted: 0, sourceUnreachable: 1 });
+    // The pieces of the last reading that worked keep answering searches, which
+    // is the whole reason the mark touches that column and nothing else.
+    expect(await subject.store.listExtractions(subject.fileId)).toEqual(before);
+    expect(await ftsMatches(subject.path, 'needlebody')).toBe(1);
   });
 });

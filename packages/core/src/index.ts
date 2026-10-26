@@ -189,6 +189,7 @@ export {
   type DocumentExtractWorkDependencies,
   type EnqueueDocumentExtractionsDependencies,
   type EnqueueDocumentExtractionsOptions,
+  type EnqueueDocumentExtractionsReport,
 } from './files/extract-work.js';
 export {
   DOCUMENT_EXTRACTORS,

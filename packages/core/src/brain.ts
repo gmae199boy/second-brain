@@ -168,6 +168,17 @@ export interface BrainDrainReport extends DrainQueueReport {
    * disk, so the scan could not queue them to be read again (`capture/scan.ts`).
    */
   rereadMissing: number;
+  /**
+   * Files a newer extractor would read differently that are redacted, so there
+   * are no bytes left to read: counted rather than queued (`files/extract-work.ts`).
+   */
+  reextractRedacted: number;
+  /**
+   * The same, for files whose original cannot be reached any more. A drain that
+   * said nothing about these would leave a person with an attachment that is
+   * quietly never re-read, so the command turns this one into a warning (AD-24).
+   */
+  reextractUnreachable: number;
 }
 
 export interface BrainQueue {
@@ -414,6 +425,8 @@ async function drain(
       spoolFailed: replay.failed,
       enqueued: 0,
       rereadMissing: 0,
+      reextractRedacted: 0,
+      reextractUnreachable: 0,
     };
   }
 
@@ -437,11 +450,12 @@ async function drain(
   // from: nothing before the loop stores a file, so an attachment this run's
   // `session_ingest` collects is queued and read by the *next* drain. What this
   // step catches is every file already stored — the ones story 5 filled in
-  // included (Design Notes). Neither step reports anything: what they produce
-  // is queue rows and name rows, and the loop's own counters are what say
-  // whether anything happened (`files/extract-work.ts`).
+  // included (Design Notes). What it produces is queue rows, and the loop's own
+  // counters say whether anything happened; the two numbers it does report are
+  // the files it met and could not queue at all (`files/extract-work.ts`).
+  let reextract = { redacted: 0, sourceUnreachable: 0 };
   if (clock.now().getTime() < deadline) {
-    await enqueueDocumentExtractions({ store, clock, idGen }, { deadline });
+    reextract = await enqueueDocumentExtractions({ store, clock, idGen }, { deadline });
   }
 
   const queue = await drainQueue(
@@ -458,6 +472,8 @@ async function drain(
     spoolFailed: replay.failed,
     enqueued: scan.enqueued,
     rereadMissing: queue.stopped === 'unwritable' ? 0 : scan.rereadMissing,
+    reextractRedacted: queue.stopped === 'unwritable' ? 0 : reextract.redacted,
+    reextractUnreachable: queue.stopped === 'unwritable' ? 0 : reextract.sourceUnreachable,
   };
 }
 

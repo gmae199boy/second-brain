@@ -64,6 +64,7 @@ export function failedConfigStore(message: string): Store & SchemaStore {
     async setFileSourceUnreachable() { return unavailable; },
     async readFileExtractionState() { return unavailable; },
     async listFilesAwaitingExtraction() { return unavailable; },
+    async listFilesWithStaleExtraction() { return unavailable; },
     async listExtractions() { return unavailable; },
     async listExtractionChunks() { return unavailable; },
     async ingest() {

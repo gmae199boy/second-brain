@@ -237,6 +237,8 @@ describe('brain.queue.drain', () => {
         'enqueued',
         'failed',
         'lost',
+        'reextractRedacted',
+        'reextractUnreachable',
         'released',
         'replayed',
         'rereadMissing',

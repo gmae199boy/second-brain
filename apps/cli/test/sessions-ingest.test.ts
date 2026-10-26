@@ -321,6 +321,173 @@ function databaseIn(home: string): string {
   return join(home, 'brain.db');
 }
 
+/** `queue drain`'s envelope, with the fields the re-reading path reads. */
+interface DrainEnvelope {
+  ok: boolean;
+  warnings: string[];
+  data?: { reextract_redacted: number; reextract_unreachable: number };
+}
+
+/** `failures retry`'s, likewise. */
+interface RetryEnvelope {
+  ok: boolean;
+  warnings: string[];
+  data?: {
+    added: number;
+    already_open: number;
+    redacted: number;
+    source_unreachable: number;
+    skipped: { target_kind: string; count: number }[];
+  };
+}
+
+/** Every generation of every file, with whether the file's pointer names it. */
+function generationsOf(path: string): Record<string, unknown>[] {
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    return database
+      .prepare(
+        `select e.attempt, e.status, e.extractor_version,
+                case when f.current_extraction_id is e.id then 1 else 0 end as current
+           from document_extractions e join files f on f.id = e.file_id
+          order by e.attempt`,
+      )
+      .all() as Record<string, unknown>[];
+  } finally {
+    database.close();
+  }
+}
+
+/** How many pieces the keyword index of 0002 finds for one needle. */
+function chunkMatches(path: string, needle: string): number {
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    return (
+      database
+        .prepare(
+          'select count(*) as n from document_chunks_fts where document_chunks_fts match ?',
+        )
+        .get(`"${needle}"`) as { n: number }
+    ).n;
+  } finally {
+    database.close();
+  }
+}
+
+/**
+ * Make the one stored file's current reading the one an older build left
+ * behind: successful, holding the same pieces, stamped with another version.
+ *
+ * It is a new row and not an edit because a closed generation is immutable down
+ * to its version (0008) — which is also why this is the honest shape: an older
+ * build wrote its own generation, the pointer named it, and the row it replaced
+ * went with the replacement.
+ */
+function stampExtractorVersion(path: string, version: string): void {
+  const database = new DatabaseSync(path);
+  try {
+    // The immutability rule of `files` consults the redaction marker, so the
+    // connection has to answer for it — `0`, because nothing here is a
+    // redaction (`sqlite/src/connect.ts`).
+    database.function('brain_redact_allowed', () => 0);
+    const current = database
+      .prepare(
+        `select e.id, e.file_id, e.attempt, e.media_type, e.started_at, e.finished_at,
+                e.index_config_id
+           from document_extractions e join files f on f.current_extraction_id = e.id`,
+      )
+      .get() as {
+      id: string;
+      file_id: string;
+      attempt: number;
+      media_type: string | null;
+      started_at: string;
+      finished_at: string;
+      index_config_id: string | null;
+    };
+    const next = `019a0000-0000-7000-8000-00000000e${String(current.attempt).padStart(3, '0')}`;
+    database
+      .prepare(
+        `insert into document_extractions
+           (id, file_id, extractor_version, attempt, media_type, status,
+            started_at, finished_at, error, failed_stage, index_config_id)
+         values (?, ?, ?, ?, ?, 'ok', ?, ?, null, null, ?)`,
+      )
+      .run(
+        next,
+        current.file_id,
+        version,
+        current.attempt + 1,
+        current.media_type,
+        current.started_at,
+        current.finished_at,
+        current.index_config_id,
+      );
+    // The pieces move before the old row goes, because a chunk delete would
+    // need a redaction in progress and there is none (0008).
+    database
+      .prepare('update document_chunks set extraction_id = ? where extraction_id = ?')
+      .run(next, current.id);
+    database
+      .prepare('update files set current_extraction_id = ? where id = ?')
+      .run(next, current.file_id);
+    database.prepare('delete from document_extractions where id = ?').run(current.id);
+  } finally {
+    database.close();
+  }
+}
+
+/** The mark that says this file's original cannot be reached any more (AD-24). */
+function markSourceUnreachable(path: string): void {
+  const database = new DatabaseSync(path);
+  try {
+    database.function('brain_redact_allowed', () => 0);
+    database
+      .prepare('update files set source_unreachable_at = ?')
+      .run('2026-01-02T03:04:05.000Z');
+  } finally {
+    database.close();
+  }
+}
+
+/** One unresolved reading failure on the stored file, as the handler leaves it. */
+function recordExtractFailure(path: string): void {
+  const database = new DatabaseSync(path);
+  try {
+    const file = database.prepare('select id from files').get() as { id: string };
+    database
+      .prepare(
+        `insert into failures (id, target_kind, target_id, stage, fingerprint, harness,
+                               session_id, code, message, occurred_at, resolved_at,
+                               first_occurred_at, occurrences)
+         values (?, 'file', ?, 'document_extract', 'sha256:reextract', null, null,
+                 'FILE_SOURCE_UNREACHABLE', '원본을 읽을 수 없습니다', ?, null, ?, 1)`,
+      )
+      .run(
+        '019a0000-0000-7000-8000-00000000f001',
+        file.id,
+        '2026-01-02T03:04:05.000Z',
+        '2026-01-02T03:04:05.000Z',
+      );
+  } finally {
+    database.close();
+  }
+}
+
+/** Whether the one recorded failure has been marked resolved. */
+function failureResolvedAt(path: string): string | null {
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    return (
+      database.prepare('select resolved_at from failures').get() as {
+        resolved_at: string | null;
+      }
+    ).resolved_at;
+  } finally {
+    database.close();
+  }
+}
+
 /** The parser version the one stored session records. */
 function storedParserVersion(path: string): string | null {
   const database = new DatabaseSync(path, { readOnly: true });
@@ -2536,6 +2703,107 @@ describe('brain sessions ingest claude-code when the database will not take the 
     // three files out of the queueing step's read.
     expect((await runBrain(['queue', 'drain', '--json'], home, '', { HOME: sourceHome })).code).toBe(0);
     expect(read(databaseIn(home))).toEqual(after);
+  }, 30_000);
+
+  it('추출기 버전이 뒤처진 파일을 drain이 한 번 다시 읽고, 닿을 수 없으면 경고로 센다', async () => {
+    const home = await installedHome();
+    const sourceHome = join(home, 'source-home');
+    const project = join(sourceHome, 'project');
+    await mkdir(project, { recursive: true });
+    const note = join(project, 'note.txt');
+    const noteText = 'reextractneedle 첫 줄입니다.\n';
+    await writeFile(note, noteText);
+    const content = { type: 'text', file: { content: noteText, numLines: 1, startLine: 1, totalLines: 1 } };
+    const lines: unknown[] = [
+      // `cwd` on the lines, so the session is tagged from it and the identity
+      // step has no candidate: what this case asks about is one file, and a
+      // retry that also had a session to ask for would not say so (AD-12).
+      { type: 'user', uuid: 'reextract-user', cwd: project, timestamp: '2026-10-26T00:00:00.000Z', message: { content: [{ type: 'text', text: '파일 읽기' }] } },
+      { type: 'attachment', uuid: 'reextract-0', parentUuid: 'reextract-user', cwd: project, attachment: { type: 'file', filename: note, content } },
+    ];
+    const transcript = join(home, 'reextract.jsonl');
+    await writeFile(transcript, lines.map((line) => JSON.stringify(line)).join('\n') + '\n');
+    const db = databaseIn(home);
+    const drain = async (): Promise<DrainEnvelope> => {
+      const run = await runBrain(['queue', 'drain', '--json'], home, '', { HOME: sourceHome });
+      expect(run.code, run.stdout + run.stderr).toBe(0);
+      return JSON.parse(run.stdout) as DrainEnvelope;
+    };
+
+    expect((await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, stopPayload(transcript), { HOME: sourceHome })).code).toBe(0);
+    await drain();
+    expect(generationsOf(db)).toEqual([
+      { attempt: 1, status: 'ok', extractor_version: 'doc/1', current: 1 },
+    ]);
+    expect(chunkMatches(db, 'reextractneedle')).toBe(1);
+
+    // The reading an older build would have left behind. The columns of a
+    // closed generation are immutable (0008), so it is a row of its own that
+    // the pieces and the pointer move to.
+    stampExtractorVersion(db, 'doc/0');
+    expect(generationsOf(db)).toEqual([
+      { attempt: 2, status: 'ok', extractor_version: 'doc/0', current: 1 },
+    ]);
+
+    const first = await drain();
+
+    expect(first.warnings).toEqual([]);
+    expect(first.data).toMatchObject({ reextract_redacted: 0, reextract_unreachable: 0 });
+    // One attempt higher, this build's version, and the pointer naming it: the
+    // older generation went with the replacement that earned the pointer.
+    expect(generationsOf(db)).toEqual([
+      { attempt: 3, status: 'ok', extractor_version: 'doc/1', current: 1 },
+    ]);
+    expect(chunkMatches(db, 'reextractneedle')).toBe(1);
+
+    // And the drain after that: the generation of this version is what keeps
+    // the file out of the read, so nothing is attempted again.
+    const second = await drain();
+    expect(second.data).toMatchObject({ reextract_redacted: 0, reextract_unreachable: 0 });
+    expect(generationsOf(db)).toEqual([
+      { attempt: 3, status: 'ok', extractor_version: 'doc/1', current: 1 },
+    ]);
+
+    // Behind again, and this time the original cannot be reached: nothing is
+    // queued, the pieces and the pointer stay, and the result says so under the
+    // code for it (AD-24, NFR-2).
+    stampExtractorVersion(db, 'doc/0');
+    markSourceUnreachable(db);
+
+    const unreachable = await drain();
+
+    expect(unreachable.warnings).toEqual(['FILE_SOURCE_UNREACHABLE']);
+    expect(unreachable.data).toMatchObject({ reextract_unreachable: 1, reextract_redacted: 0 });
+    expect(generationsOf(db)).toEqual([
+      { attempt: 4, status: 'ok', extractor_version: 'doc/0', current: 1 },
+    ]);
+    expect(chunkMatches(db, 'reextractneedle')).toBe(1);
+
+    // A recorded reading failure on that same file, which is what a person runs
+    // `failures retry` about. Asking is counted rather than queued: the handler
+    // would close such an item without doing anything and the row would stay.
+    recordExtractFailure(db);
+
+    const retried = await runBrain(['failures', 'retry', '--json'], home, '', {
+      HOME: sourceHome,
+    });
+
+    expect(retried.code, retried.stdout + retried.stderr).toBe(0);
+    const retryEnvelope = JSON.parse(retried.stdout) as RetryEnvelope;
+    expect(retryEnvelope.warnings).toEqual(['FILE_SOURCE_UNREACHABLE']);
+    expect(retryEnvelope.data).toMatchObject({
+      added: 0,
+      already_open: 0,
+      redacted: 0,
+      source_unreachable: 1,
+      skipped: [],
+    });
+    // The opportunistic drain at the end of that command had nothing to work,
+    // and the attempt count is what says so.
+    expect(generationsOf(db)).toEqual([
+      { attempt: 4, status: 'ok', extractor_version: 'doc/0', current: 1 },
+    ]);
+    expect(failureResolvedAt(db)).toBe(null);
   }, 30_000);
 
   it('이미지 원본은 한 번 남고 이미지뿐인 메시지와 재수집과 잠금 뒤 재주입도 같은 연결을 만든다', async () => {
