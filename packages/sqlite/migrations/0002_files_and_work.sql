@@ -521,10 +521,11 @@ drop table index_configs;
 -- key order, any extra key, any stray whitespace is refused at the door instead
 -- of quietly becoming a second row with the same meaning.
 --
--- Core's `IndexConfigKind` is still `'chunk' | 'embedding'`: the type is for the
--- code that reads these rows, and the code that reads a `document_chunk` row is
--- epic 4's. The database is deliberately the wider of the two -- the row has to
--- exist before anything can read it -- and the type grows when a reader does.
+-- Core's `IndexConfigKind` now includes `document_chunk` as well (story 10.7,
+-- which also added `DocumentChunkParams` for this kind's pair of parameters).
+-- It did not when this migration was written: the database is deliberately the
+-- wider of the two -- the row has to exist before anything can read it -- and
+-- the type grew with the codec its readers (stories 10.14 and 10.8) will use.
 create table index_configs (
   id text primary key,
   kind text not null,

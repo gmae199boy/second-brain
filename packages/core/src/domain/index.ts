@@ -23,8 +23,35 @@ export type { Message, MessageRole } from './message.js';
 export type { User } from './user.js';
 export { TOOL_NOTE_TARGET_LIMIT, type ToolNote } from './tool-note.js';
 export type { LogEntry, LogEntryEdit, LogEntryKind, RuleState } from './log-entry.js';
-export type { ChunkParams, IndexConfig, IndexConfigKind } from './index-config.js';
+export type {
+  ChunkParams,
+  ConversationIndexConfig,
+  DocumentChunkIndexConfig,
+  DocumentChunkParams,
+  IndexConfig,
+  IndexConfigKind,
+} from './index-config.js';
 export type { Chunk } from './chunk.js';
+export {
+  CHUNK_LOCATOR_TYPES,
+  chunkLocatorPage,
+  chunkPageMatches,
+  decodeChunkLocator,
+  encodeChunkLocator,
+  type ChunkLocator,
+  type ChunkLocatorType,
+  type DecodeChunkLocatorResult,
+  type DocxChunkLocator,
+  type EncodeChunkLocatorResult,
+  type PdfChunkLocator,
+  type TextChunkLocator,
+} from './chunk-locator.js';
+export type {
+  DocumentChunk,
+  DocumentExtraction,
+  DocumentExtractionFailedStage,
+  DocumentExtractionStatus,
+} from './document.js';
 export type { Embedding, EmbeddingTargetKind } from './embedding.js';
 export type { Redaction } from './redaction.js';
 export {
