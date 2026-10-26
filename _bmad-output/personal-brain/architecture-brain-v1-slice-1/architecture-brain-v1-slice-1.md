@@ -363,7 +363,7 @@ sequenceDiagram
 - **Prevents:** 사용자의 기존 파일을 Brain이 옮기거나 지우는 것, 원본 위치가 바뀔 때 기록을 다시 써야 하는 것, 검증 전에 마지막 사본을 지우는 것, 고아 파일이 쌓이는 것
 - **Rule:**
   - 파일은 내용(`files`, `content_hash`는 `sha256:<소문자 hex>`)과 위치(`file_locations`)로 나눈다. 위치는 저장소 종류, locator, **소유(`brain | external`)**다. 같은 내용이 Brain 사본과 사용자 원본으로 동시에 있는 것이 정상이다(내용 행 하나, 위치 둘). 소유는 내용이 아니라 위치의 속성이다.
-  - Brain 위치의 locator는 내용의 순수 함수다(`<h0-2>/<h2-4>/<hex><확장자>`, 임시 파일 → rename). 그래서 넣기는 멱등이다. 절대 경로와 URL은 저장하지 않고 위치로부터 그때 만든다.
+  - Brain 위치의 locator는 내용의 순수 함수다(`<h0-2>/<h2-4>/<hex><확장자>`, 임시 파일 → rename). 그래서 넣기는 멱등이다. 절대 경로와 URL은 저장하지 않고 위치로부터 그때 만든다. `external` 로컬 위치의 locator는 홈 기준 `~/` 상대 경로이며, 홈 밖 파일은 external 위치를 남기지 않는다.
   - `FileStore` port(넣기, 가져오기, 확인, 위치→URL, 지우기)는 **`brain` 소유이면서 설정된 루트 안의 위치에만** 쓰고 지운다. 그 밖의 위치에 대한 쓰기·지우기는 port가 거부하고, 계약 테스트가 고정한다. V1은 로컬 구현(epic 10)과 Drive 구현(epic 8)을 낸다(2026-10-26). 루트는 `[files] path`(기본 `~/.second_brain/files/`, 동기화 폴더 금지, 권한 0700/0600)다.
   - `files.home`은 `brain` 위치 하나를 가리킨다. 원본 이전은 넣기 → 저장소 해시(`remote_checksum`) 또는 되읽기로 검증 → **같은 쓰기 트랜잭션에서 검증 시각 기록과 `home` 전환** → 옛 위치 삭제는 별도 일감이다. 이전은 양방향(로컬 ↔ Drive)이고, 검증 없이 지우는 경로는 없다.
   - 첨부는 파일을 먼저 저장소에 넣고(트랜잭션 밖) 그 뒤 행을 쓴다(AD-7). 루트 안에 있으나 위치 행이 없고 유예(기본 24시간)가 지난 블롭은 drain의 고아 정리 일감이 지우고, doctor가 건수·바이트를 보인다(V1 뒤, 2026-10-26. V1은 Brain 위치 블롭 하나를 지우는 멱등 일감만 둔다). 첨부 바이트는 spool에 넣지 않는다(spool 한 줄은 64KB 이하, 첨부는 메타데이터 한 줄만).
@@ -450,7 +450,7 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `failures` | `(target_kind, target_id, stage, fingerprint)`. 대상 키는 `work_items`와 같다. 세션 수집 실패는 `session`/세션 토큰(`harness:harness_session_id`, 세션 행이 없어도 됨). `harness`·`session_id`는 정보 칸이고 비어 있을 수 있음(2026-10-16) | 모든 경로(실패 기록 함수 하나) | `resolved_at`은 drain이 채움. 같은 키를 다시 만나면 실패 기록 함수가 그 행을 다시 열고(`resolved_at = null`) `occurred_at`(마지막으로 난 때)·`message`를 바꾸며, 0005부터 `first_occurred_at`은 그대로 두고 `occurrences`를 1 올린다(2026-10-19 사용자) |
 | `transcript_files` | `(harness, path)` | drain(폴더 스캔)과 성공한 모든 `sessions.ingest`(hook 경로 포함, 2026-10-19 story 12 Decision 2) | 크기·fingerprint·커서 단조. 단 `cursorReset`인 parse는 줄어든 크기도 쓴다(compact) |
 | `files` | `content_hash` | 첨부 수집(epic 10), 소스 동기화(epic 8) | 내용 불변. `home`, `current_extraction_id`, `redacted_at`(`files.redact`), `source_unreachable_at`(복구·연동 해제)만 바뀜 |
-| `file_locations` | `(file_id, store_kind, locator)` | 파일 저장·이전 함수, 소스 동기화 | `ownership` 불변. 검증 시각·삭제 시각만 채움 |
+| `file_locations` | `(file_id, store_kind, locator)` | 파일 저장·이전 함수, 소스 동기화 | `ownership` 불변. 검증 시각·삭제 시각만 채움. `external` 로컬 위치의 locator는 홈 기준 `~/` 상대 경로이며, 홈 밖 파일은 external 위치를 남기지 않는다. |
 | `message_attachments` | `(message_id, ordinal)` | `sessions.ingest` | 자리·출처 불변, 삭제 거부. `file_id`·상태는 수집이 한 번 채움. `missing_at_ingest`도 확정 기록(0008) |
 | `document_extractions` | `id`, `(file_id, attempt)`. `attempt`는 Store가 삽입 트랜잭션에서 `max+1` 배정. 파일당 진행 중(`finished_at` null) 세대는 하나 | drain(추출) | 열린 세대만 `finished_at`·`status`·`error`·`failed_stage`·`media_type`·`index_config_id`를 닫으며 채움, 닫힌 뒤 불변(0008). 내보내기에 포함 |
 | `document_chunks` | `(extraction_id, ordinal)`. 조각마다 `chunk_locator`(JSON, Core 정규형), `page`는 그 사본 | drain(추출) | 실패 세대 정리·세대 교체(포인터 이동 뒤)·가리기로만 지움(0008). 내보내기에 포함 |

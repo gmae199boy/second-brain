@@ -1,4 +1,4 @@
-import { brainLocator, contentHashOfBytes, isBrainLocator, type FileLocation } from '../../domain/file.js';
+import { brainLocator, contentHashOfBytes, externalLocator, isBrainLocator, type FileLocation } from '../../domain/file.js';
 import type { FileStore } from '../../ports/file-store.js';
 import { assertEqual, assertOk, assertTrue } from '../assert.js';
 import { contractCase, withSubject, type ContractCase } from '../contract.js';
@@ -21,9 +21,16 @@ export function fileStoreContract(): ContractCase<FileStore>[] {
     assertEqual(put.sizeBytes, bytes.length, '바이트 크기');
     assertEqual(put.location, { storeKind: 'local', ownership: 'brain', locator: brainLocator(put.contentHash.slice(7), bytes) }, '파일 위치');
     assertTrue(isBrainLocator(put.location.locator), 'locator 문법');
-    const again = await store.put(bytes);
-    assertOk(again, '다시 저장');
-    assertEqual(again.location, put.location, '같은 내용의 위치');
+    for (let repeat = 0; repeat < 2; repeat++) {
+      const again = await store.put(bytes);
+      assertOk(again, '다시 저장');
+      assertEqual(again.location, put.location, '같은 내용의 위치');
+      assertEqual(again.contentHash, put.contentHash, '같은 내용의 해시');
+      assertEqual(again.sizeBytes, put.sizeBytes, '같은 내용의 크기');
+      const got = await store.get(again.location);
+      assertOk(got, '다시 저장한 원본 읽기');
+      assertEqual(Array.from(got.bytes), Array.from(bytes), '다시 저장한 바이트');
+    }
     const got = await store.get(put.location);
     assertOk(got, '원본 읽기');
     assertEqual(Array.from(got.bytes), Array.from(bytes), '원본 바이트');
@@ -31,6 +38,7 @@ export function fileStoreContract(): ContractCase<FileStore>[] {
     const url = await store.url(put.location);
     assertOk(url, 'URL');
     assertTrue(url.url.length > 0, 'URL 비어 있지 않음');
+    assertEqual(await store.url(put.location), url, '같은 위치의 URL');
     assertEqual(await store.delete(put.location), { ok: true, deleted: true }, '첫 삭제');
     assertEqual(await store.delete(put.location), { ok: true, deleted: false }, '다시 삭제');
     assertEqual(await store.exists(put.location), { ok: true, exists: false }, '없는 파일');
@@ -39,14 +47,22 @@ export function fileStoreContract(): ContractCase<FileStore>[] {
   })), contractCase('저장소 밖 위치는 모든 읽기와 삭제에서 거부한다', async make => withSubject(make, async store => {
     const put = await store.put(Uint8Array.of(1));
     assertOk(put, '저장');
+    const external = externalLocator('/h/u/a.md', '/h/u');
+    assertTrue(external !== null, 'external locator 생성');
     const invalid: FileLocation[] = [
       { ...put.location, ownership: 'external' }, { ...put.location, storeKind: 'drive' },
       { ...put.location, locator: '../outside' }, { ...put.location, locator: 'invalid' }, { ...put.location, locator: put.location.locator + '\n' },
+      { ...put.location, ownership: 'external', locator: external! },
+      { ...put.location, locator: external! },
+      { ...put.location, locator: '/tmp/outside' },
     ];
     for (const l of invalid) for (const op of [store.get, store.delete, store.exists, store.url]) {
       const result = await op(l);
       assertTrue(!result.ok && result.code === 'LOCATION_REFUSED', '위치 거부');
     }
     assertEqual(await store.exists(put.location), { ok: true, exists: true }, '원본 보존');
+    const got = await store.get(put.location);
+    assertOk(got, '거부 후 원본 읽기');
+    assertEqual(Array.from(got.bytes), [1], '거부 후 원본 바이트 보존');
   }))];
 }
