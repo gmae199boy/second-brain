@@ -1,7 +1,7 @@
 import type { IngestAttachment } from '../../domain/ingest-batch.js';
 import { brainLocator, contentHashOfBytes } from '../../domain/file.js';
 import type { AttachmentStore, SessionStore, UserStore } from '../../ports/store.js';
-import { assertEqual, assertOk, assertTrue } from '../assert.js';
+import { assertEqual, assertNotOk, assertOk, assertTrue } from '../assert.js';
 import { contractCase, withSubject, type ContractCase } from '../contract.js';
 import { sampleEnsureSessionInput, sampleIngestBatch, sampleSelfUserInput, sampleSessionKey } from '../fixtures.js';
 import { sequenceIdGen } from '../fakes/id-gen.js';
@@ -92,5 +92,65 @@ export function attachmentStoreContract(): ContractCase<AttachmentStoreSubject>[
     assertOk(await store.ingest({ ...batch, attachments: [a] }), '메시지와 같은 트랜잭션');
     const linked = await store.listMessageAttachments(batch.messages[0]!.id); assertOk(linked, '읽기');
     assertEqual(linked.attachments.length, 1, '첨부 저장');
+  })), contractCase('위치 행은 id로 읽히고 삭제 표시는 한 번만 채워진다', async make => withSubject(make, async store => {
+    const batch = sampleIngestBatch();
+    const ids = sequenceIdGen({ start: 3000, timestampMs: 1760000000000 });
+    assertOk(await store.ensureSelfUser(sampleSelfUserInput()), '주인');
+    assertOk(await store.ensureSession(sampleEnsureSessionInput()), '세션');
+    const bytes = Uint8Array.of(7, 8, 9);
+    const hash = contentHashOfBytes(bytes);
+    const brainId = ids.next();
+    const externalId = ids.next();
+    const upperId = ids.next();
+    const fileId = ids.next();
+    const file = { id: fileId, contentHash: hash, sizeBytes: bytes.length };
+    const brain = { id: brainId, storeKind: 'local' as const, ownership: 'brain' as const, locator: brainLocator(hash.slice(7), bytes) };
+    const base = { harnessMessageId: batch.messages[0]!.harnessMessageId, sourceKind: 'file', sourceRef: 'location-row', displayName: 'note.md' };
+    // Two originals of the same content, under names that differ only in case:
+    // `order by locator` is BINARY on a `text` column, so `~/Project/b` comes
+    // before `~/project/a` and a locale-aware sort would answer the other way.
+    const attachments: IngestAttachment[] = [
+      { ...base, id: ids.next(), ordinal: 0,
+        file: { ...file, location: brain, external: { id: externalId, storeKind: 'local', ownership: 'external', locator: '~/project/a' } } },
+      { ...base, id: ids.next(), ordinal: 1,
+        file: { ...file, location: brain, external: { id: upperId, storeKind: 'local', ownership: 'external', locator: '~/Project/b' } } },
+    ];
+    assertOk(await store.ingest({ ...batch, attachments }), '수집');
+
+    // The ids the ingest was given, in `ownership` then `locator` order: Brain's
+    // own copy first, which is the only one a deletion may ever touch.
+    const listed = await store.listFileLocations(fileId);
+    assertOk(listed, '위치 목록');
+    assertEqual(listed.locations.map(l => l.id), [brainId, upperId, externalId], '위치 id와 순서');
+    assertEqual(listed.locations.map(l => l.ownership), ['brain', 'external', 'external'], '소유');
+    assertEqual(listed.locations.slice(1).map(l => l.locator), ['~/Project/b', '~/project/a'], '대소문자 섞인 순서');
+    assertEqual(listed.locations.map(l => l.deletedAt), [null, null, null], '아직 안 지움');
+    assertEqual(listed.locations.map(l => l.fileId), [fileId, fileId, fileId], '같은 파일');
+    assertEqual(await store.listFileLocations('no-such-file'), { ok: true, locations: [] }, '없는 파일은 빈 목록');
+
+    const read = await store.readFileLocation(brainId);
+    assertOk(read, '위치 읽기');
+    assertEqual(read.location, listed.locations[0], '목록과 같은 행');
+
+    const first = new Date('2026-03-04T05:06:07.000Z');
+    assertEqual(await store.markFileLocationDeleted({ id: brainId, deletedAt: first }), { ok: true, deletedAt: first, marked: true }, '첫 표시');
+    // The one-way fill of 0002: a second call is an ordinary answer and leaves
+    // the first instant exactly where it was.
+    assertEqual(await store.markFileLocationDeleted({ id: brainId, deletedAt: new Date('2026-03-05T05:06:07.000Z') }), { ok: true, deletedAt: first, marked: false }, '두 번째 표시');
+    const again = await store.readFileLocation(brainId);
+    assertOk(again, '표시 뒤 읽기');
+    assertEqual(again.location.deletedAt, first, '첫 값 유지');
+    const sibling = await store.readFileLocation(externalId);
+    assertOk(sibling, '다른 위치 읽기');
+    assertEqual(sibling.location.deletedAt, null, '옆 위치는 그대로');
+
+    // Rows of `file_locations` are never deleted, so an id nothing answers to
+    // was never a place: both verbs say so rather than inventing one.
+    const absent = await store.readFileLocation('no-such-location');
+    assertNotOk(absent, '없는 위치 읽기');
+    assertEqual(absent.code, 'FILE_LOCATION_NOT_FOUND', '읽기 코드');
+    const marked = await store.markFileLocationDeleted({ id: 'no-such-location', deletedAt: first });
+    assertNotOk(marked, '없는 위치 표시');
+    assertEqual(marked.code, 'FILE_LOCATION_NOT_FOUND', '표시 코드');
   }))];
 }

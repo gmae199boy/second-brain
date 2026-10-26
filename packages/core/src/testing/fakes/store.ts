@@ -44,6 +44,7 @@ import type {
   EnsureSelfUserResult,
   EnsureSessionInput,
   EnsureSessionResult,
+  FileLocationRow,
   FindSessionResult,
   EnsureCheckoutInput,
   FillSessionTagsInput,
@@ -184,6 +185,17 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const transcriptFiles = new Map<string, TranscriptFile>();
   const attachmentRows = new Map<string, MessageAttachment[]>();
   const fileRows = new Map<string, NonNullable<MessageAttachment['file']>>();
+  /**
+   * The `file_locations` rows, which `MessageAttachment.file.locations` cannot
+   * hold: that shape is where a file's bytes *are*, and this is the row — the id
+   * a piece of work names, and the instant that says the bytes have gone.
+   *
+   * A list and not a map, because two keys matter: the id the reads ask by and
+   * `(fileId, storeKind, locator)`, which decides whether a second ingest of the
+   * same place is a new row. It is not — the first id stays, exactly as the
+   * `on conflict (file_id, store_kind, locator) do nothing` of the adapter does.
+   */
+  const fileLocationRows: FileLocationRow[] = [];
   function link(rows: readonly IngestAttachment[], held: readonly Message[]): number {
     let linked = 0;
     for (const a of rows) {
@@ -202,6 +214,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
           if (location === null || file.locations.some(l => l.storeKind === location.storeKind && l.locator === location.locator)) continue;
           const { storeKind, locator, ownership } = location;
           file.locations = [...file.locations, { storeKind, locator, ownership }].sort((a,b) => a.ownership.localeCompare(b.ownership) || a.locator.localeCompare(b.locator));
+          fileLocationRows.push({ id: location.id, fileId: file.id, storeKind, locator, ownership, deletedAt: null });
           if (file.home === null && ownership === 'brain') file.home = { storeKind, locator, ownership };
         }
       }
@@ -512,6 +525,30 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     },
     async listFileNames(fileId) {
       return { ok: true, names: fileNames.filter(n => n.fileId === fileId).map(n => ({ ...n })) };
+    },
+    async readFileLocation(id) {
+      const row = fileLocationRows.find(l => l.id === id);
+      if (row === undefined) return { ok: false, code: 'FILE_LOCATION_NOT_FOUND', message: '파일 위치가 없습니다' };
+      return { ok: true, location: { ...row } };
+    },
+    async listFileLocations(fileId) {
+      // Code-unit order and not `localeCompare`, because `order by ownership,
+      // locator` on a `text` column is BINARY in SQLite: a locale that sorts
+      // `~/Project/b` before `~/project/a` would make the fake and the adapter
+      // answer differently, and the contract case pins exactly that pair.
+      const by = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+      return { ok: true, locations: fileLocationRows.filter(l => l.fileId === fileId)
+        .sort((a,b) => by(a.ownership, b.ownership) || by(a.locator, b.locator))
+        .map(l => ({ ...l })) };
+    },
+    async markFileLocationDeleted({ id, deletedAt }) {
+      const row = fileLocationRows.find(l => l.id === id);
+      if (row === undefined) return { ok: false, code: 'FILE_LOCATION_NOT_FOUND', message: '파일 위치가 없습니다' };
+      // The one-way fill of 0002: the first call writes it and every later one
+      // hands back what the row already says.
+      if (row.deletedAt !== null) return { ok: true, deletedAt: row.deletedAt, marked: false };
+      row.deletedAt = deletedAt;
+      return { ok: true, deletedAt, marked: true };
     },
     async listMessageAttachments(messageId) {
       return { ok: true, attachments: (attachmentRows.get(messageId) ?? []).slice().sort((a,b) => a.ordinal - b.ordinal).map(a => ({ ...a, file: a.file === null ? null : { ...a.file, locations: a.file.locations.map(l => ({ ...l })), home: a.file.home === null ? null : { ...a.file.home } } })) };

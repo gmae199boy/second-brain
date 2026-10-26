@@ -2,6 +2,7 @@ import type { AttachmentLinkSpoolPayload } from './domain/spool-record.js';
 import type { IngestAttachment } from './domain/ingest-batch.js';
 import type { SourceFileReader } from './ports/source-file.js';
 import { fillFileNames } from './files/file-names.js';
+import { BLOB_DELETE_KIND, blobDeleteHandler } from './files/blob-delete-work.js';
 import {
   DOCUMENT_EXTRACT_KIND,
   documentExtractHandler,
@@ -251,6 +252,10 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     // and the ports it needs — the store, the file store, the clock, the ids —
     // are exactly the ones this brain was assembled from (`files/extract-work.ts`).
     [DOCUMENT_EXTRACT_KIND]: documentExtractHandler({ store, files, clock, idGen }),
+    // And the same again for deleting one of them: the ports it needs are the
+    // store, the file store and the clock, and what it does — empty one place
+    // and record that it is empty — is a use case (`files/blob-delete-work.ts`).
+    [BLOB_DELETE_KIND]: blobDeleteHandler({ store, files, clock }),
   };
   const handlers: WorkHandlers = { ...coreHandlers, ...workHandlers };
 

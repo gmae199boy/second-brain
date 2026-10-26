@@ -790,12 +790,88 @@ export interface FileName extends MissingFileName { id: string }
 export type ListMissingFileNamesResult = { ok: true; names: readonly MissingFileName[] } | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
 export type ListFileNamesResult = { ok: true; names: readonly FileName[] } | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
 export type WriteFileNamesResult = { ok: true; inserted: number } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+
+/**
+ * One `file_locations` row as a place in its own right, with the id (AD-23).
+ *
+ * `MessageAttachment.file.locations` says where a file's bytes are, which is
+ * what a reader of a conversation wants. This is the row: the id, because a
+ * piece of work about one place has to name it, and `deletedAt`, because a
+ * place whose bytes are gone is still a record that they were once there.
+ */
+export interface FileLocationRow {
+  id: string;
+  fileId: string;
+  storeKind: 'local' | 'drive';
+  locator: string;
+  ownership: 'brain' | 'external';
+  /** When the bytes at this place were deleted, filled in once (0002). */
+  deletedAt: Date | null;
+}
+
+/**
+ * One place by its id, as a lock-free read.
+ *
+ * `FILE_LOCATION_NOT_FOUND` and not `null`, because `file_locations` rows are
+ * never deleted (0002): an id nothing answers to is a caller that made one up,
+ * and the handler records that rather than treating it as ordinary.
+ */
+export type ReadFileLocationResult =
+  | { ok: true; location: FileLocationRow }
+  | { ok: false; code: 'FILE_LOCATION_NOT_FOUND' | 'DB_UNAVAILABLE'; message: string };
+
+/**
+ * Every place one file's bytes are or were, by `ownership` then `locator` —
+ * Brain's own copy first, which is the one that may be deleted.
+ *
+ * A file nothing knows about answers with an empty list rather than a code: the
+ * question is "where is this", and "nowhere" is an answer to it.
+ */
+export type ListFileLocationsResult =
+  | { ok: true; locations: readonly FileLocationRow[] }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
+export interface MarkFileLocationDeletedInput {
+  id: string;
+  /** When the bytes went, read once from `Clock` (AD-13). */
+  deletedAt: Date;
+}
+
+/**
+ * The instant the row now carries, and whether this call is the one that put it
+ * there.
+ *
+ * It is a one-way fill, as the trigger of 0002 has it: the first call writes the
+ * instant and answers `marked: true`, and every later one leaves it alone and
+ * hands back the stored value with `marked: false`. Overwriting it would let a
+ * second piece of work claim a deletion the first one did, and the record of
+ * when the bytes actually went is the only thing an orphan sweep can go by.
+ *
+ * `ownership` is deliberately not looked at: refusing a user's own file is the
+ * handler's decision and not the store's, so the store stays a store.
+ */
+export type MarkFileLocationDeletedResult =
+  | { ok: true; deletedAt: Date; marked: boolean }
+  | {
+      ok: false;
+      code: 'FILE_LOCATION_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED';
+      message: string;
+    };
+
 export interface AttachmentStore {
   listMissingFileNames(input: { limit: number }): Promise<ListMissingFileNamesResult>;
   writeFileNames(input: { names: readonly FileName[] }): Promise<WriteFileNamesResult>;
   listFileNames(fileId: string): Promise<ListFileNamesResult>;
   linkAttachments(input: LinkAttachmentsInput): Promise<LinkAttachmentsResult>;
   listMessageAttachments(messageId: string): Promise<ListMessageAttachmentsResult>;
+  /** One place by its id. A read, so it takes no lock (AD-7). */
+  readFileLocation(id: string): Promise<ReadFileLocationResult>;
+  /** Every place one file's bytes are or were. Also a read (AD-7). */
+  listFileLocations(fileId: string): Promise<ListFileLocationsResult>;
+  /** Record that the bytes at one place are gone, once (`files/blob-delete-work.ts`). */
+  markFileLocationDeleted(
+    input: MarkFileLocationDeletedInput,
+  ): Promise<MarkFileLocationDeletedResult>;
 }
 
 /**

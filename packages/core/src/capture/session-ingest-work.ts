@@ -1,4 +1,5 @@
 import { parseSessionToken } from '../domain/session-token.js';
+import { BLOB_DELETE_KIND } from '../files/blob-delete-work.js';
 import { DOCUMENT_EXTRACT_KIND } from '../files/extract-work.js';
 import type { Clock } from '../ports/clock.js';
 import type { SessionStore, WorkStore } from '../ports/store.js';
@@ -33,6 +34,7 @@ export const FAILURE_RETRY_STAGES: Readonly<Record<string, string>> = {
   session_ingest: SESSION_INGEST_KIND,
   session_identity: 'session_identity',
   document_extract: DOCUMENT_EXTRACT_KIND,
+  blob_delete: BLOB_DELETE_KIND,
 };
 export const FAILURE_RETRY_KINDS: Readonly<Record<string, string>> = {
   session: SESSION_INGEST_KIND,

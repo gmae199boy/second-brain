@@ -178,6 +178,18 @@ export {
   type WriteExtractionChunksInput,
 } from './files/extraction-chunks.js';
 
+/** Deleting the bytes at one place: the kind, the helper that queues it, the worker. */
+export {
+  BLOB_DELETE_KIND,
+  FILE_LOCATION_NOT_FOUND,
+  FILE_LOCATION_TARGET_KIND,
+  LOCATION_REFUSED,
+  blobDeleteHandler,
+  blobDeleteWork,
+  type BlobDeleteWorkDependencies,
+  type BlobDeleteWorkInput,
+} from './files/blob-delete-work.js';
+
 /** Reading one stored file into pieces: the kind, the worker, the step before it. */
 export {
   DOCUMENT_EXTRACT_KIND,

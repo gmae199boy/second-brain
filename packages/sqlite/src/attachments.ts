@@ -1,4 +1,4 @@
-import type { AttachmentStore, IngestAttachment, MessageAttachment, FileName, MissingFileName } from '@second-brain/core';
+import type { AttachmentStore, FileLocationRow, IngestAttachment, MessageAttachment, FileName, MissingFileName } from '@second-brain/core';
 import { sql, type Kysely } from 'kysely';
 import type { SqliteSchema } from './driver.js';
 import { describe, type SqliteConnect } from './connect.js';
@@ -30,6 +30,20 @@ export async function writeAttachments(db: Kysely<SqliteSchema>, attachments: re
     linked += result.rows.length;
   }
   return linked;
+}
+
+/** One `file_locations` row as the port spells it; the instant is an ISO string. */
+interface FileLocationColumns {
+  id: string;
+  fileId: string;
+  storeKind: 'local' | 'drive';
+  locator: string;
+  ownership: 'brain' | 'external';
+  deletedAt: string | null;
+}
+
+function fileLocationRow(row: FileLocationColumns): FileLocationRow {
+  return { ...row, deletedAt: row.deletedAt === null ? null : new Date(row.deletedAt) };
 }
 
 export function sqliteAttachmentStore(connect: SqliteConnect): AttachmentStore {
@@ -75,6 +89,50 @@ export function sqliteAttachmentStore(connect: SqliteConnect): AttachmentStore {
         const result = await sql<FileName>`select id, file_id as "fileId", name_source as "nameSource", text from file_names where file_id = ${fileId} order by name_source, text`.execute(opened.connection.db);
         return { ok: true, names: result.rows };
       } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 이름을 읽을 수 없습니다: ${describe(error)}` }; }
+    },
+    async readFileLocation(id) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const result = await sql<FileLocationColumns>`select id, file_id as "fileId", store_kind as "storeKind", locator, ownership, deleted_at as "deletedAt" from file_locations where id = ${id}`.execute(opened.connection.db);
+        const row = result.rows[0];
+        if (row === undefined) return { ok: false, code: 'FILE_LOCATION_NOT_FOUND', message: '파일 위치가 없습니다' };
+        return { ok: true, location: fileLocationRow(row) };
+      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 위치를 읽을 수 없습니다: ${describe(error)}` }; }
+    },
+    async listFileLocations(fileId) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const result = await sql<FileLocationColumns>`select id, file_id as "fileId", store_kind as "storeKind", locator, ownership, deleted_at as "deletedAt" from file_locations where file_id = ${fileId} order by ownership, locator`.execute(opened.connection.db);
+        return { ok: true, locations: result.rows.map(fileLocationRow) };
+      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 위치를 읽을 수 없습니다: ${describe(error)}` }; }
+    },
+    async markFileLocationDeleted({ id, deletedAt }) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      // `withWrite` re-throws anything that is not a lock it could not take, so
+      // the throw is turned into a code here: a handler that let it escape would
+      // be classified as a bug in this build and spend an attempt, where what
+      // the caller needs is the item released (AD-9, AD-21).
+      let result;
+      try {
+        result = await withWrite(opened.connection, async db => {
+          // The `and deleted_at is null` is the one-way fill of 0002 said in SQL
+          // rather than left to the trigger: the trigger aborts the statement, and
+          // a second piece of work about the same place is an ordinary answer.
+          const filled = await sql`update file_locations set deleted_at = ${deletedAt.toISOString()} where id = ${id} and deleted_at is null returning id`.execute(db);
+          const read = (await sql<{ deletedAt: string | null }>`select deleted_at as "deletedAt" from file_locations where id = ${id}`.execute(db)).rows[0];
+          if (read === undefined) return { ok: false as const, code: 'FILE_LOCATION_NOT_FOUND' as const, message: '파일 위치가 없습니다' };
+          // Read back and not assumed: the stored instant is what the row says,
+          // and on the second call that is the first call's value.
+          if (read.deletedAt === null) return { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: '파일 위치의 삭제 시각을 쓰지 못했습니다' };
+          return { ok: true as const, deletedAt: new Date(read.deletedAt), marked: filled.rows.length > 0 };
+        });
+      } catch (error) {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 위치를 표시할 수 없습니다: ${describe(error)}` };
+      }
+      return result.ok ? result.value : result;
     },
     async linkAttachments(input) {
       const opened = connect();

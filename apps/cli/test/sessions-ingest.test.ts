@@ -17,6 +17,7 @@ import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import {
+  blobDeleteWork,
   decodeSpoolLine,
   isoWithOffset,
   type SessionIngestSpoolRecord,
@@ -3114,4 +3115,206 @@ describe('duplicate plugin diagnosis through the CLI', () => {
     expect(run.code).toBe(0);
     expect((JSON.parse(run.stdout) as Envelope).warnings).toContain('PLUGIN_DUPLICATE');
   });
+});
+
+/**
+ * `blob_delete` end to end: one place is emptied by a drain, and a place this
+ * build may not touch is refused with the bytes left exactly where they are
+ * (AD-23, `packages/core/src/files/blob-delete-work.ts`).
+ *
+ * The items are written straight into `work_items`, because nothing in this
+ * build puts one there yet: hiding a file and the move to Drive are what will,
+ * and until they exist the queue row is the whole of the input. The shape of
+ * that row still comes from `blobDeleteWork`, so a test that passes cannot be
+ * passing on strings of its own.
+ */
+describe('blob_delete through the CLI', () => {
+  /** A one-pixel PNG, pasted into the conversation and attached from a file. */
+  const PASTED = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQcEj4DwADBAHAgChw2gAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const NOTE_TEXT = 'blobdelete 본문 첫 줄입니다.\n';
+
+  /** One `file_locations` row as this test reads it back. */
+  interface LocationRow {
+    id: string;
+    store_kind: string;
+    locator: string;
+    ownership: string;
+    deleted_at: string | null;
+  }
+
+  function locations(home: string): LocationRow[] {
+    const db = new DatabaseSync(databaseIn(home), { readOnly: true });
+    try {
+      return db
+        .prepare('select id, store_kind, locator, ownership, deleted_at from file_locations order by ownership, locator')
+        .all() as unknown as LocationRow[];
+    } finally {
+      db.close();
+    }
+  }
+
+  function locationById(home: string, id: string): LocationRow {
+    const row = locations(home).find((location) => location.id === id);
+    if (row === undefined) throw new Error(`위치 ${id}가 없습니다`);
+    return row;
+  }
+
+  /** Everything `brain failures list` shows, whatever it is about. */
+  async function allFailures(home: string, sourceHome: string) {
+    const listed = await runBrain(['failures', 'list', '--json'], home, '', { HOME: sourceHome });
+    expect(listed.code, listed.stderr).toBe(0);
+    const envelope = JSON.parse(listed.stdout) as {
+      data?: { failures: { target_kind: string; target_id: string; stage: string; code: string }[] };
+    };
+    return envelope.data?.failures ?? [];
+  }
+
+  /** The deletion failures alone, by place. */
+  async function blobFailures(home: string, sourceHome: string) {
+    return (await allFailures(home, sourceHome)).filter((failure) => failure.stage === 'blob_delete');
+  }
+
+  /** Put one `blob_delete` item on the queue, the way 10.12 and epic 8 will. */
+  function queueBlobDelete(home: string, id: string, locationId: string): void {
+    const work = blobDeleteWork({ id, locationId, at: new Date('2026-10-26T00:00:00.000Z') });
+    const db = new DatabaseSync(databaseIn(home));
+    try {
+      db.prepare(`insert into work_items(id, kind, target_kind, target_id, created_at, attempts, next_attempt_at)
+        values (?, ?, ?, ?, ?, 0, ?)`).run(
+          work.id, work.kind, work.targetKind, work.targetId,
+          work.createdAt.toISOString(), work.nextAttemptAt.toISOString());
+    } finally {
+      db.close();
+    }
+  }
+
+  /**
+   * A home with one ingested session that left three places: Brain's copy of a
+   * pasted image, Brain's copy of an attached note, and the note's own path
+   * under the user's home.
+   *
+   * The drain at the end is the settling run — the stored files are read into
+   * pieces there — so every drain a case runs afterwards is about the deletion.
+   */
+  async function ingested() {
+    const home = await installedHome();
+    const sourceHome = join(home, 'source-home');
+    const project = join(sourceHome, 'project');
+    await mkdir(project, { recursive: true });
+    const note = join(project, 'note.md');
+    await writeFile(note, NOTE_TEXT);
+    const lines: unknown[] = [
+      {
+        type: 'user', uuid: 'blob-user', cwd: project, timestamp: '2026-10-26T00:00:00.000Z',
+        message: { content: [
+          { type: 'text', text: '그림을 붙여 넣었습니다' },
+          { type: 'image', source: { type: 'base64', data: PASTED.toString('base64') } },
+        ] },
+      },
+      {
+        type: 'attachment', uuid: 'blob-0', parentUuid: 'blob-user', cwd: project,
+        attachment: { type: 'file', filename: note, content: { type: 'text', file: { content: NOTE_TEXT, numLines: 1, startLine: 1, totalLines: 1 } } },
+      },
+    ];
+    const transcript = join(home, 'blob-delete.jsonl');
+    await writeFile(transcript, lines.map((line) => JSON.stringify(line)).join('\n') + '\n');
+    const environment = { HOME: sourceHome };
+    expect((await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, stopPayload(transcript), environment)).code).toBe(0);
+    expect((await runBrain(['queue', 'drain', '--json'], home, '', environment)).code).toBe(0);
+    // Nothing at all, and not only nothing about a deletion: a settling run
+    // whose extraction failed would otherwise go unnoticed, and the cases below
+    // read `failures list` as if it were empty to start with.
+    expect(await allFailures(home, sourceHome)).toEqual([]);
+    return { home, sourceHome, environment, note };
+  }
+
+  it('drain이 brain 위치의 블롭을 지우고 두 번째 일감은 첫 표시를 그대로 둔다', async () => {
+    const { home, sourceHome, environment } = await ingested();
+    // The pasted image: Brain's own copy and the only place it has, so the
+    // deletion is not hiding anything behind another copy.
+    const pasted = locations(home).find(
+      (location) => location.ownership === 'brain' && location.locator.endsWith('.png'),
+    );
+    expect(pasted).toBeDefined();
+    if (pasted === undefined) return;
+    const blob = join(home, 'files', pasted.locator);
+    expect(existsSync(blob)).toBe(true);
+
+    queueBlobDelete(home, '01940000-0000-7000-8000-000000000b01', pasted.id);
+    const first = await runBrain(['queue', 'drain', '--json'], home, '', environment);
+    expect(first.code, first.stderr).toBe(0);
+    expect(existsSync(blob)).toBe(false);
+    const marked = locationById(home, pasted.id).deleted_at;
+    expect(marked).not.toBeNull();
+
+    // A second item about the same place, with nothing at the locator: the end
+    // state the criterion names — no blob, the first drain's instant, and no
+    // record of either run.
+    queueBlobDelete(home, '01940000-0000-7000-8000-000000000b02', pasted.id);
+    const second = await runBrain(['queue', 'drain', '--json'], home, '', environment);
+    expect(second.code, second.stderr).toBe(0);
+    expect(existsSync(blob)).toBe(false);
+    expect(locationById(home, pasted.id).deleted_at).toBe(marked);
+    expect(await blobFailures(home, sourceHome)).toEqual([]);
+
+    // And a third, with a blob back at that locator: the store is content
+    // addressed, so the same bytes collected again revive it, and an item about
+    // a place that was emptied once may not delete that new blob (Design Notes).
+    await mkdir(dirname(blob), { recursive: true });
+    await writeFile(blob, PASTED);
+    queueBlobDelete(home, '01940000-0000-7000-8000-000000000b03', pasted.id);
+    const third = await runBrain(['queue', 'drain', '--json'], home, '', environment);
+    expect(third.code, third.stderr).toBe(0);
+    expect(await readFile(blob)).toEqual(PASTED);
+    expect(locationById(home, pasted.id).deleted_at).toBe(marked);
+    expect(await blobFailures(home, sourceHome)).toEqual([]);
+  }, 30_000);
+
+  it('external 위치와 루트 밖 링크를 가리키는 brain 위치는 둘 다 거부로 기록한다', async () => {
+    const { home, sourceHome, environment, note } = await ingested();
+    const external = locations(home).find((location) => location.ownership === 'external');
+    expect(external).toBeDefined();
+    if (external === undefined) return;
+
+    // A blob path that is a link out of the files root. Nothing in this build
+    // writes such a place, which is why it is written here: what the port
+    // refuses is the only thing standing between a drain and a file outside the
+    // root (`apps/cli/src/runtime/file-store.ts`).
+    const outside = join(await temporary.create('brain-blob-outside-'), 'outside.txt');
+    await writeFile(outside, 'outside text');
+    const hex = `abcd${'ef'.repeat(30)}`;
+    const linked = `ab/cd/${hex}`;
+    await mkdir(join(home, 'files', 'ab', 'cd'), { recursive: true });
+    await symlink(outside, join(home, 'files', linked));
+    const linkedId = '01940000-0000-7000-8000-000000000b10';
+    const db = new DatabaseSync(databaseIn(home));
+    try {
+      const fileId = db.prepare('select file_id from file_locations where id = ?').get(external.id)?.['file_id'];
+      db.prepare(`insert into file_locations(id, file_id, store_kind, locator, ownership, first_seen_at)
+        values (?, ?, 'local', ?, 'brain', '2026-10-26T00:00:00.000Z')`).run(linkedId, fileId as string, linked);
+    } finally {
+      db.close();
+    }
+
+    queueBlobDelete(home, '01940000-0000-7000-8000-000000000b11', external.id);
+    queueBlobDelete(home, '01940000-0000-7000-8000-000000000b12', linkedId);
+    const run = await runBrain(['queue', 'drain', '--json'], home, '', environment);
+    expect(run.code, run.stderr).toBe(0);
+
+    // Both target files are exactly as they were, and neither place is marked.
+    expect(existsSync(note)).toBe(true);
+    expect(await readFile(note, 'utf8')).toBe(NOTE_TEXT);
+    expect(existsSync(outside)).toBe(true);
+    expect(await readFile(outside, 'utf8')).toBe('outside text');
+    expect(locationById(home, external.id).deleted_at).toBeNull();
+    expect(locationById(home, linkedId).deleted_at).toBeNull();
+
+    const failures = await blobFailures(home, sourceHome);
+    expect(failures.map((failure) => failure.code)).toEqual(['LOCATION_REFUSED', 'LOCATION_REFUSED']);
+    expect(failures.map((failure) => failure.target_kind)).toEqual(['file_location', 'file_location']);
+    expect(failures.map((failure) => failure.target_id).sort()).toEqual([external.id, linkedId].sort());
+  }, 30_000);
 });

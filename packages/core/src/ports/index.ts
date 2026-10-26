@@ -87,6 +87,15 @@ export type { AttachmentStore, MessageAttachment, LinkAttachmentsInput, LinkAtta
 export type { SourceFileReader } from './source-file.js';
 export type { MissingFileName, FileName, ListMissingFileNamesResult, ListFileNamesResult, WriteFileNamesResult } from './store.js';
 
+// One `file_locations` row, for the work that empties one of them (AD-23).
+export type {
+  FileLocationRow,
+  ListFileLocationsResult,
+  MarkFileLocationDeletedInput,
+  MarkFileLocationDeletedResult,
+  ReadFileLocationResult,
+} from './store.js';
+
 // The extraction capability of AD-24: one reading of one file, in pieces.
 export type {
   AppendExtractionChunksInput,
