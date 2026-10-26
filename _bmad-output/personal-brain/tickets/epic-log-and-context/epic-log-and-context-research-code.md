@@ -2,7 +2,7 @@
 
 조사일: 2026-10-23. 기준 커밋: `69b3b7b`. 대상은 `packages/`, `apps/`, `plugin/`의 현재 코드이며, 테스트 파일은 구현 선례를 읽는 데만 사용했다. 테스트·빌드는 실행하지 않았다. 저장소 루트에 `.codegraph/`가 없어 CodeGraph는 사용하지 않았다. 이 보고서 이외의 파일은 수정하지 않았다.
 
-범위 원천: `epic-log-and-context.md:15`의 로그·규칙·맥락, `:19`의 Stop 점검, `:31`의 완료 조건, `:66`의 Carry. 아래 경로는 모두 저장소 상대 경로다. '없음'은 이 범위의 소스·등록부를 확인한 결과이며, 계획상 확장 위치와 충돌 등급은 **추정**이다. 에픽 10은 아직 구현이 아니라 `epic-attachments/tickets.toml`의 계획과 `epic-attachments-research-code.md:102`의 §9를 대조했다(두 파일의 상위 경로는 `_bmad-output/personal-brain/`).
+범위 원천: `epic-log-and-context.md:15`의 로그·규칙·맥락, `:19`의 Stop 점검, `:31`의 완료 조건, `:66`의 Carry. 아래 경로는 모두 저장소 상대 경로다. '없음'은 이 범위의 소스·등록부를 확인한 결과이며, 계획상 확장 위치와 충돌 등급은 **추정**이다. 에픽 10은 아직 구현이 아니라 `tickets/epic-attachments/tickets/tickets.toml`의 계획과 `epic-attachments-research-code.md:102`의 §9를 대조했다(두 파일의 상위 경로는 `_bmad-output/personal-brain/`).
 
 ## 1. 스키마 — 일부
 
@@ -18,7 +18,7 @@
 
 0001~0007에서 `log_entry_edits`·`context_injections`의 UPDATE/DELETE 불변 trigger는 없고, 로그 id/kind/session/occurred_at 등의 불변성도 도메인 주석만으로 강제되지 않는다(위 DDL 및 전체 마이그레이션의 trigger 정의 대조). I60은 실제 남은 일이다. pending 출처 메시지를 별도로 지정·보존하는 칸도 현재 로그 DDL에 없다.
 
-현재 코드의 기대 SQLite schema version은 **7**(`packages/sqlite/src/migrate.ts:20`), 마지막 파일은 `0007_session_tag_source.sql`이다. 현재 트리만 보면 다음 번호는 **0008**이나, 에픽 10.6이 0008/version 8을 예약했다(`_bmad-output/personal-brain/epic-attachments/tickets.toml:28`). **추정 제안: 에픽 3은 10.6 뒤의 0009/version 9**로 kind·elapsed_ms 및 합의한 불변 trigger를 묶는다. 최종 번호는 병합 시 다시 확인한다. 마이그레이션은 번호순·파일별 쓰기 트랜잭션이고 버전도 함께 기록한다(`packages/sqlite/src/migrate.ts:149`, `:169`). 기존 0001을 고치는 방식은 쓰지 않는다.
+현재 코드의 기대 SQLite schema version은 **7**(`packages/sqlite/src/migrate.ts:20`), 마지막 파일은 `0007_session_tag_source.sql`이다. 현재 트리만 보면 다음 번호는 **0008**이나, 에픽 10.6이 0008/version 8을 예약했다(`_bmad-output/personal-brain/tickets/epic-attachments/tickets/tickets.toml:28`). **추정 제안: 에픽 3은 10.6 뒤의 0009/version 9**로 kind·elapsed_ms 및 합의한 불변 trigger를 묶는다. 최종 번호는 병합 시 다시 확인한다. 마이그레이션은 번호순·파일별 쓰기 트랜잭션이고 버전도 함께 기록한다(`packages/sqlite/src/migrate.ts:149`, `:169`). 기존 0001을 고치는 방식은 쓰지 않는다.
 
 ## 2. Core 도메인·port·수집 재사용 — 일부
 

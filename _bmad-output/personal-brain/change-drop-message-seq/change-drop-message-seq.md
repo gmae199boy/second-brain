@@ -15,7 +15,7 @@ trigger: "epic-capture story 21 (수집 경로 보강) 리뷰"
 
 **문제.** `messages.seq`가 두 가지 일을 맡고 있다. 하나는 메시지의 주소이고(조각 범위·로그 연결·복제), 다른 하나는 읽는 순서다. 둘은 서로 다른 것을 요구한다. 주소는 바뀌면 안 되고, 순서는 늦게 들어온 메시지가 제자리로 가야 한다. parser 버전이 올라 대화 중간의 메시지가 나중 배치로 들어오면, 그 메시지는 `max(seq)+1`을 받아 대화 끝에 놓인다(2.7 follow-up 리뷰 #10).
 
-**발견 경위.** 2026-10-20에 story 21의 무인 빌드가 #10을 "대화 순서 읽기 = `occurred_at`, 같으면 `seq`"(같은 날 사용자 결정)로 구현했다. 리뷰는 이것이 연구 실측과 충돌한다고 지적했다. `epic-capture/epic-capture-research.md` '시각'에는 "앞 줄보다 시각이 이른 줄이 흔하다. 파일 524개 중 521개"라고 적혀 있다. 빌드는 이를 intent gap으로 보고 멈췄다(story 21 `blocked`, 시도한 변경은 patch로 보존).
+**발견 경위.** 2026-10-20에 story 21의 무인 빌드가 #10을 "대화 순서 읽기 = `occurred_at`, 같으면 `seq`"(같은 날 사용자 결정)로 구현했다. 리뷰는 이것이 연구 실측과 충돌한다고 지적했다. `tickets/epic-capture/epic-capture-research.md` '시각'에는 "앞 줄보다 시각이 이른 줄이 흔하다. 파일 524개 중 521개"라고 적혀 있다. 빌드는 이를 intent gap으로 보고 멈췄다(story 21 `blocked`, 시도한 변경은 patch로 보존).
 
 **증거.** 같은 날 다시 쟀다. 대상은 이 Mac의 transcript 228개이고, 현재 parser(v3)로 읽어 **parser가 남기는 메시지만** 셌다.
 
@@ -89,7 +89,7 @@ trigger: "epic-capture story 21 (수집 경로 보강) 리뷰"
 
 ## 4. Detailed Change Proposals
 
-### 4.1 Stories (`epic-capture/tickets.toml`, `bmad-ticket`으로 적용)
+### 4.1 Stories (`tickets/epic-capture/tickets/tickets.toml`, `bmad-ticket`으로 적용)
 
 **새 스토리 24** — 파일에서 21 앞에 둔다.
 
@@ -104,7 +104,7 @@ covers = ["E2-5", "E2-11"]
 after = [18]
 hitl = false
 risk = "high"
-references = ["_bmad-output/personal-brain/change-drop-message-seq/change-drop-message-seq.md, §1·§4", "_bmad-output/personal-brain/epic-capture/story-0005-plan.md, 재생성 방식"]
+references = ["_bmad-output/personal-brain/change-drop-message-seq/change-drop-message-seq.md, §1·§4", "_bmad-output/personal-brain/tickets/epic-capture/tickets/story-0005-plan.md, 재생성 방식"]
 ```
 
 **Story 21** — description
@@ -123,7 +123,7 @@ OLD:
 NEW:
 > reset 읽기 둘이 겹쳐도 커서가 뒤로 가지 않고, startup으로
 
-after: `[18]` → `[24]`. references에 더한다: `"_bmad-output/personal-brain/epic-capture/story-start-source-transcript-plan-attempt-1.patch, 시도한 변경(정렬 부분 제외하고 재사용)"`.
+after: `[18]` → `[24]`. references에 더한다: `"_bmad-output/personal-brain/tickets/epic-capture/tickets/story-start-source-transcript-plan-attempt-1.patch, 시도한 변경(정렬 부분 제외하고 재사용)"`.
 
 title: "수집 경로 보강: 커서 경고·대화 순서·start_source·큰 transcript" → "수집 경로 보강: 커서 경고·start_source·큰 transcript"
 
@@ -133,7 +133,7 @@ title: "수집 경로 보강: 커서 경고·대화 순서·start_source·큰 tr
 
 ### 4.2 Epic 문서
 
-**`epic-capture/epic-capture.md`**
+**`tickets/epic-capture/epic-capture.md`**
 
 - Description(17행)
   - OLD: "`seq`는 원본 Store가 배정(AD-4·8),"
@@ -158,17 +158,17 @@ title: "수집 경로 보강: 커서 경고·대화 순서·start_source·큰 tr
 - Notes에 더한다:
   - "Decision(2026-10-20, 사용자, `../change-drop-message-seq/`): 메시지 번호 `seq`를 지운다. 대화 순서는 `occurred_at` 하나이고 같은 시각의 순서는 정하지 않는다. 대신할 칸·키는 만들지 않는다. 같은 날의 '읽기는 `occurred_at`, 같으면 `seq`' 결정을 대체한다. 근거: parser가 남기는 메시지 6,818쌍에서 시각 역전 0, 같은 밀리초 0(연구 문서의 524개 중 521개는 버리는 줄까지 센 수). 24가 0006과 Store를 맡고 21 앞에 선다. 21은 #10(읽기 정렬)을 24에 넘긴다."
 
-**`epic-log-and-context/epic-log-and-context.md`** — Done when 3
+**`tickets/epic-log-and-context/epic-log-and-context.md`** — Done when 3
 
 - OLD: "둘 다 근거 메시지 위치(`anchor_seq`)를 가진다."
 - NEW: "둘 다 자기 시각(`occurred_at`)으로 대화 속 자리를 가진다(메시지 연결은 저장하지 않는다, 2026-10-20)."
 
-**`epic-recall-and-mirror/epic-recall-and-mirror.md`** — Notes D7
+**`tickets/epic-recall-and-mirror/epic-recall-and-mirror.md`** — Notes D7
 
 - OLD: "seq가 가장 낮은 user 메시지에서 꺼낸다."
 - NEW: "`occurred_at`이 가장 이른 user 메시지에서 꺼낸다."
 
-**`epic-replicas/epic-replicas.md`** — Done when 1
+**`tickets/epic-replicas/epic-replicas.md`** — Done when 1
 
 - OLD: "원본과 같은 값(ID·`seq`·시각)으로 되읽힌다."
 - NEW: "원본과 같은 값(ID·시각)으로 되읽힌다."
@@ -245,7 +245,7 @@ PRD 본문은 바꾸지 않는다.
 
 ### 4.5 사실 문서
 
-**`epic-capture/epic-capture-research.md` '시각'(97행 뒤)에 더한다:**
+**`tickets/epic-capture/epic-capture-research.md` '시각'(97행 뒤)에 더한다:**
 > - 2026-10-20 다시 잼: 위 수는 파일의 모든 줄을 센 것이다. 현재 parser(v3)가 남기는 메시지만 보면 transcript 228개, 붙어 있는 쌍 6,818개에서 시각 역전 0, 같은 밀리초 0이다. 시각이 거꾸로 간 줄은 parser가 버리는 줄이다. 그래서 대화 순서는 `occurred_at`이다(`../change-drop-message-seq/`).
 
 README·parser 주석·deferred-work의 Postgres 항목은 코드 동작을 설명하므로 스토리 24가 고친다.

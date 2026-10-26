@@ -11,7 +11,7 @@ covers = ["E10-3"]
 after = ["2.12", "2.14"]
 hitl = false
 risk = "high"
-references = ["_bmad-output/personal-brain/epic-capture/epic-capture-retrospective.md, Findings 3 (C2·C3·C4), Action items 1", "_bmad-output/personal-brain/deferred-work.md, I104, P19", "_bmad-output/personal-brain/epic-capture/story-spool-plan.md, Review Triage Log 2026-10-19"]
+references = ["_bmad-output/personal-brain/tickets/epic-capture/epic-capture-retrospective.md, Findings 3 (C2·C3·C4), Action items 1", "_bmad-output/personal-brain/deferred-work.md, I104, P19", "_bmad-output/personal-brain/tickets/epic-capture/tickets/story-spool-plan.md, Review Triage Log 2026-10-19"]
 
 [[entry]]
 id = 2
@@ -23,7 +23,7 @@ covers = ["E10-1", "E10-2"]
 after = [1, "2.6", "2.23"]
 hitl = true
 risk = "high"
-references = ["_bmad-output/personal-brain/epic-capture/epic-capture-research.md, §4", "_bmad-output/personal-brain/epic-attachments/epic-attachments-research-code.md, §2, §3, §9"]
+references = ["_bmad-output/personal-brain/tickets/epic-capture/epic-capture-research.md, §4", "_bmad-output/personal-brain/tickets/epic-attachments/epic-attachments-research-code.md, §2, §3, §9"]
 
 [[entry]]
 id = 6
@@ -35,7 +35,7 @@ covers = ["E10-8"]
 after = [2, "2.18"]
 hitl = false
 risk = "medium"
-references = ["_bmad-output/personal-brain/deferred-work.md, I67", "_bmad-output/personal-brain/epic-attachments/epic-attachments-research-sources.md, §2, §3"]
+references = ["_bmad-output/personal-brain/deferred-work.md, I67", "_bmad-output/personal-brain/tickets/epic-attachments/epic-attachments-research-sources.md, §2, §3"]
 
 [[entry]]
 id = 3
@@ -70,7 +70,7 @@ covers = ["E10-3"]
 after = [1, 4]
 hitl = false
 risk = "medium"
-references = ["_bmad-output/personal-brain/epic-capture/epic-capture-research.md, §4"]
+references = ["_bmad-output/personal-brain/tickets/epic-capture/epic-capture-research.md, §4"]
 
 [[entry]]
 id = 7
@@ -139,7 +139,7 @@ covers = ["E10-7"]
 after = [4, 8, 10, 11, "2.1", "2.13", "2.17"]
 hitl = false
 risk = "high"
-references = ["_bmad-output/personal-brain/deferred-work.md, I75", "_bmad-output/personal-brain/epic-capture/story-messages-redact-plan.md, Implementation Notes (P34)"]
+references = ["_bmad-output/personal-brain/deferred-work.md, I75", "_bmad-output/personal-brain/tickets/epic-capture/tickets/story-messages-redact-plan.md, Implementation Notes (P34)"]
 
 [[entry]]
 id = 13

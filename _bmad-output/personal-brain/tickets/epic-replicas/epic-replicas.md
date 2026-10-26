@@ -14,7 +14,7 @@ risk: medium
 
 로컬 SQLite 원본을 그대로 두고, 사용자가 고른 복제 대상(Postgres, Drive의 기계별 append-only 파일)이 원본을 따라오게 한다. 남겨 둔 `packages/postgres`와 설치기의 Docker 흐름을 다시 쓴다. 사용자가 원하면 `brain setup move-store --to postgres`로 원본을 검증된 방식으로 옮긴다. 나중에 `/brain:migration` 스킬이 이 명령을 감싼다.
 
-2026-10-15 변경(추가안 B, `../change-surface-plugin-daemon/`)으로 더한 것: SQLite↔Postgres 스키마 동등성 테스트(한쪽이 더한 테이블·컬럼을 다른 쪽에서 `pragma_table_info`·`information_schema`로 확인), SQLite 마이그레이션 헤더의 `-- Mirrors postgres NNNN`, 번호 중복 감지 테스트. 첫 대상은 0003의 `users`·`sessions.user_id` FK와 0004의 `chunk_locator`·`pattern_version`·`attempt`·`failed_stage`·`source_unreachable_at`·`messages.git_branch`·drain 청구 인덱스와(2026-10-16 번호 변경) 기존 deferred(`index_configs` 갈라짐, `tool_notes` 가리기 trigger). 원천: `inputs/weknora-patterns.md` §1.6.
+2026-10-15 변경(추가안 B, `../../change-surface-plugin-daemon/`)으로 더한 것: SQLite↔Postgres 스키마 동등성 테스트(한쪽이 더한 테이블·컬럼을 다른 쪽에서 `pragma_table_info`·`information_schema`로 확인), SQLite 마이그레이션 헤더의 `-- Mirrors postgres NNNN`, 번호 중복 감지 테스트. 첫 대상은 0003의 `users`·`sessions.user_id` FK와 0004의 `chunk_locator`·`pattern_version`·`attempt`·`failed_stage`·`source_unreachable_at`·`messages.git_branch`·drain 청구 인덱스와(2026-10-16 번호 변경) 기존 deferred(`index_configs` 갈라짐, `tool_notes` 가리기 trigger). 원천: `inputs/weknora-patterns.md` §1.6.
 
 ## Outcome
 
@@ -53,10 +53,10 @@ AD-10·11·22. 원본은 로컬 SQLite이고, 복제 대상의 읽기·검색은
 - Decision(2026-10-14): V1(epic 1·2·10·3·4·5) 다음에 한다(2026-10-26: V1은 1·2·9·10·5·8로 바뀌었고 이 에픽은 여전히 V1 다음). 원본 이전은 CLI가 하고 스킬은 그 위에 얹는다(사용자).
 - Waits on epic-operations because: 내보내기 형식과 운영 명령이 복제·이전의 검증 기준이다.
 - Waits on epic-daemon because: 데몬 런타임(커서 따라잡기 일감을 돈다), `setup run`·doctor·설정 코덱의 선택 단계(2026-10-16 D2, 2026-10-26 양쪽 검증 삭제).
-- Note(2026-10-16, `../change-users-and-review-gaps/`, 인셉션 입력): D5 가리기는 복제 대상에도 전파한다. Postgres는 같은 가리기 함수로 하고, `tool_notes` trigger deferred 항목과 함께 정한다. Drive의 기록 복제 파일은 평소 append-only이고, 가리기 때만 그 메시지가 든 파일을 다시 쓰고 옛 파일을 지운다. 끝날 때까지 doctor `warn`(spine AD-10·11·22).
+- Note(2026-10-16, `../../change-users-and-review-gaps/`, 인셉션 입력): D5 가리기는 복제 대상에도 전파한다. Postgres는 같은 가리기 함수로 하고, `tool_notes` trigger deferred 항목과 함께 정한다. Drive의 기록 복제 파일은 평소 append-only이고, 가리기 때만 그 메시지가 든 파일을 다시 쓰고 옛 파일을 지운다. 끝날 때까지 doctor `warn`(spine AD-10·11·22).
 - Note(2026-10-16, 인셉션 입력): 복제 대상 오류에 분류 코드를 붙인다. Postgres 연결 실패·Drive 429·5xx는 일시 오류이고, 인증 거부·권한 없음은 영구 오류다. 복제 실패는 원본 쓰기를 막지 않는다(spine AD-10·21).
 - Note(2026-10-16): 복제 일감 실패의 다시 하기는 `failures retry`에 대상 종류를 더해서 한다(2.12가 명령을 만든다, spine AD-5).
-- Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 복제 payload는 출력 코덱이다. 가린 텍스트를 보내고 패턴 버전을 적으며, 버전이 오르면 D5(`../change-users-and-review-gaps/`)의 복제 가리기 일감과 같은 경로로 다시 가린다. `setup move-store`는 복제본이 아니라 원본에서 복사해 원문을 잃지 않는다. Postgres는 0005(`redactions.tool_note_id`, `failed_stage` trigger, `projects.identity_key`)만큼 더 갈라진다(deferred Triage).
+- Note(2026-10-19, `../../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 복제 payload는 출력 코덱이다. 가린 텍스트를 보내고 패턴 버전을 적으며, 버전이 오르면 D5(`../../change-users-and-review-gaps/`)의 복제 가리기 일감과 같은 경로로 다시 가린다. `setup move-store`는 복제본이 아니라 원본에서 복사해 원문을 잃지 않는다. Postgres는 0005(`redactions.tool_note_id`, `failed_stage` trigger, `projects.identity_key`)만큼 더 갈라진다(deferred Triage).
 - Carry(2026-10-22, epic 2 회고): Postgres 스키마는 SQLite 0004·0005뿐 아니라 0006(메시지 `seq` 삭제, chunk 시각 범위)과 0007(`sessions.tag_source`·`first_cwd`)도 따라잡아야 한다(`deferred-work.md` I74).
-- Decision(2026-10-26, `../change-v1-capture-and-drive/`, 사용자): V1 뒤(backlog). Done when 5(데몬 켜짐·꺼짐 양쪽 검증) 삭제.
+- Decision(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): V1 뒤(backlog). Done when 5(데몬 켜짐·꺼짐 양쪽 검증) 삭제.
 - Note(2026-10-26, 트리 검증 제안, 인셉션 입력): epic 5의 V1 완료는 로컬 백업뿐이고 전체 내보내기 형식은 V1 뒤다. 이 에픽 인셉션에서 복제·이전 검증에 전체 내보내기가 필요한지, 로컬 백업 계약이면 되는지 정한다.

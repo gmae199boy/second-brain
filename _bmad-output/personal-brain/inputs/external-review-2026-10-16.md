@@ -11,7 +11,7 @@
   - `ARCH` = `architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md`
   - `M1` = `packages/sqlite/migrations/0001_initial.sql`
   - `M2` = `packages/sqlite/migrations/0002_files_and_work.sql`
-  - `E2T` = `epic-capture/tickets.toml`
+  - `E2T` = `tickets/epic-capture/tickets/tickets.toml`
   - 나머지는 initiative 폴더 기준 상대 경로다.
 
 ## 함께 반영할 결정 (2026-10-16, story 2.2 계획 중 사용자 결정)
@@ -31,7 +31,7 @@
   - PRD §6.2의 "세션에 사용자 칸" 문구
   - Conventions 오류 코드 `USER_MISSING`(exit 2)
   - story 2.6 티켓 문구
-- 계획: `epic-capture/story-tracer-stop-hook-brain-db-plan.md`(draft)
+- 계획: `tickets/epic-capture/tickets/story-tracer-stop-hook-brain-db-plan.md`(draft)
 
 ## 1. 맡은 곳이 없는 빈틈
 
@@ -76,7 +76,7 @@
 | T8 | `second_brain`의 postgres 재export로 생기는 시작 지연 | 회고 G2(+8.7ms)와 Action 9 → 2.15(E2T:173-174). |
 | T9 | 미러 파일명 정제(C9) | epic 4(epic-recall-and-mirror:22). spine AD-16(ARCH:256) 문구가 뒤처져 있다. 부수 사항: " (2)" 충돌 접미사는 AD-16의 "순수 함수"와 어울리지 않는다. |
 | P1 | README "질문 두 개" 뒤에 임베딩 질문이 나오는 모순 | 2.4(E2T:43). 코드는 세 번째 질문을 한다(install/flow.ts:387). |
-| S14 | `redactions` 위치 기준 | story 1.3에서 "가리기 직전 본문 기준"으로 정했다(M1:227-232, core `domain/redaction.ts:12`, epic-foundation-and-install/story-trigger-plan.md:103). AD-11은 다시 적지 않는다. 리뷰의 "모호하다"는 틀렸다. |
+| S14 | `redactions` 위치 기준 | story 1.3에서 "가리기 직전 본문 기준"으로 정했다(M1:227-232, core `domain/redaction.ts:12`, tickets/epic-foundation-and-install/tickets/story-trigger-plan.md:103). AD-11은 다시 적지 않는다. 리뷰의 "모호하다"는 틀렸다. |
 
 ## 4. 틀린 것
 

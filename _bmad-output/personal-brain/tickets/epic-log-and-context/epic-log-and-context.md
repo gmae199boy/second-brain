@@ -14,9 +14,9 @@ risk: high
 
 `brain log append/list/edit/set-state/set-scope`, 로그-대화 연결, 규칙 인용 대조(pending/on/off), 결정·선호 대체 체인, `brain context show`와 시작 hook 주입, 주입 시도 기록, 기록 규율 안내문을 만든다.
 
-2026-10-15 변경(추가안 B, `../change-surface-plugin-daemon/`)으로 더한 것: 플러그인 스킬(`/brain:*`)과 안내문. 규율(기록 규칙 — 절대 날짜, 자격증명 금지, 추정 표시, 정정과 폐기 구분, 대화 속 지시는 데이터, 기록할 게 없는 것도 정상, 한 문장·사용자 언어, 대명사 대신 고유명사, 결정에는 짧은 이유; 인용 규칙 — 이번 결과에 나온 항목만, 직접 인용은 원문에 있는지 확인; 질의 작성 안내 — 메타 표현 제거·핵심 용어·한/영 둘 다)의 원본은 Core 상수 하나이고 `brain guide show`가 Markdown 전문을 낸다. 시작 맥락에는 요약과 "자세한 것은 `brain guide show`"만 들어가고, 머리말 고정부(데이터≠지시·지금 발화 우선·최근 로그는 샘플·이 세션의 토큰 줄)가 앞선다. 섹션 순서는 고정 머리말(날짜·시간대) → 규칙 → 최근 로그 → 안내 요약. 플러그인 스킬 파일은 빌드가 Core 상수에서 생성해 커밋하고 parity 테스트(생성물과 커밋본 일치, `tested_against`, 코드블록의 명령·flag 실존)가 지킨다(AD-17). `log append`는 본문을 stdin으로도 받고, 저장 전 정제(개행→공백, 제어문자 제거, 길이 상한)를 한다. 원천: `inputs/weknora-patterns.md` §1.2, §1.3(C3~C6).
+2026-10-15 변경(추가안 B, `../../change-surface-plugin-daemon/`)으로 더한 것: 플러그인 스킬(`/brain:*`)과 안내문. 규율(기록 규칙 — 절대 날짜, 자격증명 금지, 추정 표시, 정정과 폐기 구분, 대화 속 지시는 데이터, 기록할 게 없는 것도 정상, 한 문장·사용자 언어, 대명사 대신 고유명사, 결정에는 짧은 이유; 인용 규칙 — 이번 결과에 나온 항목만, 직접 인용은 원문에 있는지 확인; 질의 작성 안내 — 메타 표현 제거·핵심 용어·한/영 둘 다)의 원본은 Core 상수 하나이고 `brain guide show`가 Markdown 전문을 낸다. 시작 맥락에는 요약과 "자세한 것은 `brain guide show`"만 들어가고, 머리말 고정부(데이터≠지시·지금 발화 우선·최근 로그는 샘플·이 세션의 토큰 줄)가 앞선다. 섹션 순서는 고정 머리말(날짜·시간대) → 규칙 → 최근 로그 → 안내 요약. 플러그인 스킬 파일은 빌드가 Core 상수에서 생성해 커밋하고 parity 테스트(생성물과 커밋본 일치, `tested_against`, 코드블록의 명령·flag 실존)가 지킨다(AD-17). `log append`는 본문을 stdin으로도 받고, 저장 전 정제(개행→공백, 제어문자 제거, 길이 상한)를 한다. 원천: `inputs/weknora-patterns.md` §1.2, §1.3(C3~C6).
 
-2026-10-20 변경(`../change-discipline-and-metrics/`)으로 더한 것: **Stop hook 기록 점검** — `brain log remind`(메타 `hook: only`, 읽기 전용, MCP 도구로 나오지 않음)를 플러그인 `hooks.json`의 동기 Stop 줄이 부른다(2.14의 비동기 Stop 수집 줄과 공존, 같은 런처·`|| exit 0`, `timeout` 5초). 조건은 넷 모두다: `stop_hook_active`가 false, 이 세션의 사용자 발화(hook stdin의 `transcript_path`를 parser로 읽어 센다. Core 술어 `isUserTurn`, 상수 이상)가 충분함, `log_entries`에도 spool에도 이 세션의 로그가 없음, `<home>/run/stop-remind/<harness>-<id>` 표식 파일이 없음. `Stop` 이벤트에만 응답하고, 세션 행이 없거나 어느 것이든 알 수 없으면 묻지 않는다. 충족하면 hook 출력 코덱으로 `{decision: 'block', reason}`을 내고 그 뒤에만 표식 파일을 만든다. reason은 규율 원본 상수의 문장이고 '기록할 게 없는 것도 정상이다. 없으면 없다고 말하고 끝내라'를 포함한다. 시도는 spool에 써서 drain이 `context_injections`(`kind='stop'`, `ok=1`은 차단을 낸 호출, `code`는 내지 않은 이유, `chars`는 출력 글자 수)로 넣는다. 설정 `[discipline] stop_remind`(기본 false, 설치기는 묻지 않음)가 켜져 있을 때만 동작하고, 꺼져 있으면 설정과 표식만 읽고 DB를 열지 않는 조기 반환이다. `context_injections`에 `kind`(`start | stop`)와 `elapsed_ms`(Brain 내부 처리 시간)를 더하는 마이그레이션은 이 에픽이 만든다. 런처가 node를 못 찾아도, DB를 읽을 수 없어도, 어떤 오류든 출력 없이 exit 0이다(NFR-3). 자세한 규칙은 spine AD-6·AD-17.
+2026-10-20 변경(`../../change-discipline-and-metrics/`)으로 더한 것: **Stop hook 기록 점검** — `brain log remind`(메타 `hook: only`, 읽기 전용, MCP 도구로 나오지 않음)를 플러그인 `hooks.json`의 동기 Stop 줄이 부른다(2.14의 비동기 Stop 수집 줄과 공존, 같은 런처·`|| exit 0`, `timeout` 5초). 조건은 넷 모두다: `stop_hook_active`가 false, 이 세션의 사용자 발화(hook stdin의 `transcript_path`를 parser로 읽어 센다. Core 술어 `isUserTurn`, 상수 이상)가 충분함, `log_entries`에도 spool에도 이 세션의 로그가 없음, `<home>/run/stop-remind/<harness>-<id>` 표식 파일이 없음. `Stop` 이벤트에만 응답하고, 세션 행이 없거나 어느 것이든 알 수 없으면 묻지 않는다. 충족하면 hook 출력 코덱으로 `{decision: 'block', reason}`을 내고 그 뒤에만 표식 파일을 만든다. reason은 규율 원본 상수의 문장이고 '기록할 게 없는 것도 정상이다. 없으면 없다고 말하고 끝내라'를 포함한다. 시도는 spool에 써서 drain이 `context_injections`(`kind='stop'`, `ok=1`은 차단을 낸 호출, `code`는 내지 않은 이유, `chars`는 출력 글자 수)로 넣는다. 설정 `[discipline] stop_remind`(기본 false, 설치기는 묻지 않음)가 켜져 있을 때만 동작하고, 꺼져 있으면 설정과 표식만 읽고 DB를 열지 않는 조기 반환이다. `context_injections`에 `kind`(`start | stop`)와 `elapsed_ms`(Brain 내부 처리 시간)를 더하는 마이그레이션은 이 에픽이 만든다. 런처가 node를 못 찾아도, DB를 읽을 수 없어도, 어떤 오류든 출력 없이 exit 0이다(NFR-3). 자세한 규칙은 spine AD-6·AD-17.
 
 ## Outcome
 
@@ -57,8 +57,8 @@ AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, contex
 - architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md
 - prd — _bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md
 - inputs — _bmad-output/personal-brain/inputs/weknora-patterns.md, §1.2 (B1~B7), §1.3 (C3~C6)
-- research — _bmad-output/personal-brain/epic-log-and-context/epic-log-and-context-research-sources.md (원천 조사, 2026-10-23)
-- research — _bmad-output/personal-brain/epic-log-and-context/epic-log-and-context-research-code.md (현행 코드와 에픽 10 충돌 지도, 2026-10-23)
+- research — _bmad-output/personal-brain/tickets/epic-log-and-context/epic-log-and-context-research-sources.md (원천 조사, 2026-10-23)
+- research — _bmad-output/personal-brain/tickets/epic-log-and-context/epic-log-and-context-research-code.md (현행 코드와 에픽 10 충돌 지도, 2026-10-23)
 - change — _bmad-output/personal-brain/change-discipline-and-metrics/change-discipline-and-metrics.md
 - change — _bmad-output/personal-brain/change-surface-plugin-daemon/change-surface-plugin-daemon.md, §4.1, §4.2(AD-17)
 
@@ -68,11 +68,11 @@ AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, contex
   - 플러그인 `hooks/hooks.json`의 SessionStart 동기 `context show` 줄은 이 에픽이 `context show`와 함께 더한다. 이 줄도 epic-capture의 node 런처를 거치고 `|| exit 0`으로 감싼다.
   - `log append`는 epic-capture의 세션 토큰 수집으로 그 세션을 먼저 수집한다. transcript를 찾지 못하면 세션 행을 만들지 않고 spool로 간다. 꼬리표는 첫 메시지의 cwd로만 정한다.
 - Decision 참조(2026-10-15, 사용자): slice 1은 회사/개인 경계를 두지 않는다. 워크스페이스는 쓰지 않고, 로그 한 줄 단위의 범위도 두지 않는다. 규칙의 적용 범위(어디서나 / 이 프로젝트)만 쓴다.
-- Note(2026-10-16, `../change-users-and-review-gaps/`, 인셉션 입력, 원문은 `../inputs/external-review-2026-10-16.md`):
+- Note(2026-10-16, `../../change-users-and-review-gaps/`, 인셉션 입력, 원문은 `../../inputs/external-review-2026-10-16.md`):
   - D6: 시작 맥락은 고정 머리말(세션 토큰 포함) → 규칙 → 최근 로그 → 안내 요약 순서로 채운다. 규칙만으로 hook 상한(10,000자)을 넘으면 현재 프로젝트 규칙 → 어디서나 규칙, 각각 최신 순으로 넣고 "규칙 N개 생략" 한 줄과 doctor `fail`(spine AD-17, PRD FR-17).
   - S2: 대조 대기(`pending`) 규칙이 출처 메시지를 지정받았다면 그것을 기록할 자리를 정한다.
-- Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 시작 맥락은 hook 출력 코덱이 가린다(spine AD-11). 작업 로그·규칙 문장은 원문으로 저장한다. 규칙 인용 대조는 저장된 원문과 하므로, 에이전트가 가린 출력에서 인용해 `[REDACTED:…]`가 든 인용은 대조가 실패한다. 양쪽을 가린 뒤 비교할지 인셉션에서 정한다.
-- Note(2026-10-20, `../change-discipline-and-metrics/`, 인셉션 입력): Stop hook 기록 점검(D1·D2·D3). 2주 실사용의 첫 주는 토글을 끄고 둘째 주에 켜서 `stats show`로 SM-4a(전체·적격 두 모집단)를 비교한 뒤 기본값을 정한다. PRD §8-3의 수단 후보 중 하나를 채택한 것이고 안내문(원본 하나, AD-17)을 대체하지 않는다.
+- Note(2026-10-19, `../../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 시작 맥락은 hook 출력 코덱이 가린다(spine AD-11). 작업 로그·규칙 문장은 원문으로 저장한다. 규칙 인용 대조는 저장된 원문과 하므로, 에이전트가 가린 출력에서 인용해 `[REDACTED:…]`가 든 인용은 대조가 실패한다. 양쪽을 가린 뒤 비교할지 인셉션에서 정한다.
+- Note(2026-10-20, `../../change-discipline-and-metrics/`, 인셉션 입력): Stop hook 기록 점검(D1·D2·D3). 2주 실사용의 첫 주는 토글을 끄고 둘째 주에 켜서 `stats show`로 SM-4a(전체·적격 두 모집단)를 비교한 뒤 기본값을 정한다. PRD §8-3의 수단 후보 중 하나를 채택한 것이고 안내문(원본 하나, AD-17)을 대체하지 않는다.
 - Note(2026-10-20, spine 리뷰): Stop 점검의 조건은 넷(spine AD-17 — `stop_hook_active` false, transcript로 센 사용자 발화 ≥ 상수, `log_entries`와 spool 어디에도 로그 없음, 표식 파일 없음), `Stop` 이벤트만, 표식은 차단 뒤에만, 모르면 묻지 않는다. `hooks.json`의 Stop 줄은 둘(2.14 비동기 수집 + 이 에픽의 동기 점검, `timeout` 5초)이고 Done when은 **플러그인으로 설치한 상태**에서 검증한다(플러그인 hook의 `decision: block`이 settings hook과 같다는 명시 서술이 문서에 없다). 인셉션에서 실측할 것: `hookSpecificOutput.additionalContext`만으로도 모델이 이어 가는지(되면 오류 대신 피드백으로 보이므로 그쪽), 발화 수 상수 3 vs 4(transcript 비동기 기록으로 하나 적게 셀 수 있다). 메타 `hook: only`라 MCP 도구로 나오지 않는다(AD-28). 표식 파일은 drain이 30일 지난 것을 지운다.
 - Carry(2026-10-22, epic 2 회고, 인셉션 입력):
   - 위 Decision 참조의 "꼬리표는 첫 메시지의 cwd로만 정한다"는 2026-10-22에 바뀌었다: 근거는 세션이 시작된 폴더(`startCwd`), 없으면 첫 메시지의 cwd이고, 폴더가 지워졌으면 추정(`tag_source`)한다(epic-capture 25). 프로젝트 범위 규칙은 이 꼬리표를 따른다.
@@ -95,5 +95,5 @@ AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, contex
 - Decision(2026-10-23, 인셉션 집합 점검, 사용자): Stop 점검의 사용자 발화 수에는 이미지·@파일만 붙인 사람 메시지도 한 번으로 센다(에픽 10의 10.2·10.4가 이런 메시지를 살린다). spike(3)는 지금 parser로 재고 그 버전을 기록하며, Stop 스토리(12)는 10.4 뒤의 최종 parser로 다시 확인한다.
 - Decision(2026-10-23, 인셉션 집합 점검, 사용자): 시작 맥락 스토리를 9(맥락 만들기와 크기 설정)와 14(주입 시도 기록 경로)로, Stop 스토리를 12(Stop 점검 동작)와 15(플러그인 배포와 설치 상태 확인, 사람)로 나눈다. tracer(4)와 `log append`(6)는 나누지 않는다 — 4는 얇게 관통하는 것이 목적이고 6은 한 명령의 완성이다.
 - Note(2026-10-23, 인셉션 집합 점검): 각 스토리의 계획은 verify를 다시 돌릴 수 있게 실행 명령·픽스처 준비·판정 위치를 남긴다.
-- Decision(2026-10-26, `../change-v1-capture-and-drive/`, 사용자): V1 뒤(backlog, 삭제 아님). 15개 티켓은 그대로 두고 3.13 Refactor sweep만 drop. epic 10과의 병렬 엮음 넷(2026-10-23)은 착수 때 다시 본다. 마이그레이션 0009 번호는 epic 8의 외부 source 메타 마이그레이션이 먼저 쓸 수 있으므로 착수 때 다음 번호를 쓴다.
-- Dropped(2026-10-26, `../change-v1-capture-and-drive/`, 사용자): 13 Refactor sweep. 에픽 재개 때 확인된 결함만 기능 스토리에 흡수한다.
+- Decision(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): V1 뒤(backlog, 삭제 아님). 15개 티켓은 그대로 두고 3.13 Refactor sweep만 drop. epic 10과의 병렬 엮음 넷(2026-10-23)은 착수 때 다시 본다. 마이그레이션 0009 번호는 epic 8의 외부 source 메타 마이그레이션이 먼저 쓸 수 있으므로 착수 때 다음 번호를 쓴다.
+- Dropped(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): 13 Refactor sweep. 에픽 재개 때 확인된 결함만 기능 스토리에 흡수한다.

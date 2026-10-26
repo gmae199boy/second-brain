@@ -6,10 +6,10 @@
 
 - `기준`: `~/.claude/skills/bmad-ticket/references/validate-checks.md`의 Ticket(5~10행), Set(12~20행), Dependencies(33~40행)를 직접 읽었다.
 - `초안`: `_bmad-output/personal-brain/epic-log-and-context/tickets-draft.toml`
-- `에픽`: `_bmad-output/personal-brain/epic-log-and-context/epic-log-and-context.md`
-- `코드 조사`: `_bmad-output/personal-brain/epic-log-and-context/epic-log-and-context-research-code.md`
-- `원천 조사`: `_bmad-output/personal-brain/epic-log-and-context/epic-log-and-context-research-sources.md`
-- `10 초안`: `_bmad-output/personal-brain/epic-attachments/tickets.toml`
+- `에픽`: `_bmad-output/personal-brain/tickets/epic-log-and-context/epic-log-and-context.md`
+- `코드 조사`: `_bmad-output/personal-brain/tickets/epic-log-and-context/epic-log-and-context-research-code.md`
+- `원천 조사`: `_bmad-output/personal-brain/tickets/epic-log-and-context/epic-log-and-context-research-sources.md`
+- `10 초안`: `_bmad-output/personal-brain/tickets/epic-attachments/tickets/tickets.toml`
 - `spine`: `_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md`
 
 자식 파일·완료 작업·refined 항목 없음, workflow.checks 비어 있음이라는 입력을 적용했다. 에픽 Notes의 2026-10-23 Decision을 우선하며, 공용 목록의 삽입·합성 충돌을 이유로 에픽 10 전체를 기다리게 하지 않는다. 구현 전 충돌 가능성·크기 평가는 **추정**으로 표시한다.

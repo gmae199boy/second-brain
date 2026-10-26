@@ -62,7 +62,7 @@ warnings: [oversized]
 - `plugin/bin/session-start.sh:154` -- `exec node bootstrap.mjs --yes --ref <sha> --plugin-root "$ROOT"`. node를 못 찾을 때의 `systemMessage`도 여기서 낸다(사람 확인 4).
 - `apps/cli/src/doctor/checks.ts` -- `pluginCheck`(243-312): `readInstalled(home)` → `readAppRef(record.plugin_root)`. 기록 파일을 먼저 읽어 root를 고른다. `readAppRef`·`readInstalled`는 `apps/cli/src/install/installed.ts`(94, 232).
 - 테스트: `tooling/bootstrap/test/bootstrap.test.ts`(hook 모드 951 "auto off이면 아무 말 없음", 967), `tooling/bootstrap/test/hook.test.ts`, `tooling/bootstrap/test/plugin.test.ts`(사본 동기화), `apps/cli/test/doctor-checks.test.ts`(plugin 점검).
-- 문서: `README.md` `### Claude Code 플러그인으로`(12~), spine `architecture-brain-v1-slice-1.md:478`(Conventions '설치·런타임 기록'), `epic-capture/epic-capture.md:131`(Assumption).
+- 문서: `README.md` `### Claude Code 플러그인으로`(12~), spine `architecture-brain-v1-slice-1.md:478`(Conventions '설치·런타임 기록'), `tickets/epic-capture/epic-capture.md:131`(Assumption).
 
 ## Tasks & Acceptance
 

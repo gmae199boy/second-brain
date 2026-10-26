@@ -163,7 +163,7 @@ deferred: []
 **Commands:**
 - `pnpm build && pnpm exec vitest run --project claude-code --project core --project sqlite --project cli` -- expected: 모두 통과 — **통과**
 - `pnpm test` -- expected: build·typecheck·vitest 전체 통과(postgres는 Docker가 없으면 건너뜀을 기록) -- **통과(64 파일, 2,127 사례). Postgres 저장소 테스트는 이 저장소에 아직 없다(`packages/postgres/src`에 세션 저장소가 없음)**
-- `git grep -nE "/Users/" -- packages apps _bmad-output/personal-brain/epic-capture/story-parser-v4-plan.md` -- expected: 새로 넣은 절대 경로 없음 -- **없음(README의 `/Users/me` 예시만 그대로)**
+- `git grep -nE "/Users/" -- packages apps _bmad-output/personal-brain/tickets/epic-capture/tickets/story-parser-v4-plan.md` -- expected: 새로 넣은 절대 경로 없음 -- **없음(README의 `/Users/me` 예시만 그대로)**
 - 30 MB 사례(`apps/cli/test/sessions-ingest.test.ts`, Stop hook 예산 5초) -- **통과**
 
 **매트릭스 행별 사례(모두 `pnpm test`에서 통과).**

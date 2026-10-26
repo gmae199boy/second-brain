@@ -61,9 +61,9 @@ AD-11·15·23·24·27. 사용자의 외부 파일은 옮기거나 지우지 않�
 - Waits on epic-attachments because: `FileStore` port와 로컬 구현, 첨부 저장, 추출 일감(2026-10-15 epic-capture에서 나뉨).
 - Waits on epic-operations because: 첨부 원본을 Drive로 옮기기 전의 로컬 백업(2026-10-26).
 - Waits on epic-daemon because: 주기 동기화(`source_sync`)와 파일 감시를 데몬이 돈다(2026-10-26. 이전 이유였던 데몬 켜짐·꺼짐 두 상태 검증은 삭제).
-- Note(2026-10-16, `../change-users-and-review-gaps/`, 인셉션 입력): D5 가리기 이전의 DB 스냅샷은 새 스냅샷이 검증된 뒤 지운다(spine AD-11). Drive 기록 복제 파일의 다시 쓰기는 epic-replicas 몫이다.
+- Note(2026-10-16, `../../change-users-and-review-gaps/`, 인셉션 입력): D5 가리기 이전의 DB 스냅샷은 새 스냅샷이 검증된 뒤 지운다(spine AD-11). Drive 기록 복제 파일의 다시 쓰기는 epic-replicas 몫이다.
 - Note(2026-10-16, 인셉션 입력): Drive API 오류에 분류 코드를 붙인다. 429·5xx·네트워크는 일시 오류이고 `Retry-After`를 따른다. 403·404·삭제됨은 영구 오류다(spine AD-21 재시도 분류).
 - Note(2026-10-16): Drive 일감 실패의 다시 하기는 `failures retry`에 대상 종류를 더해서 한다(2.12가 명령을 만든다, spine AD-5).
-- Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. Drive로 올리는 DB 스냅샷도 나가는 길이다. 가린 사본을 만들어 올리고, 그것으로 되살린 Brain의 비밀은 가린 채 돌아온다(D6). 첨부 원본 바이트는 가리지 않는다(`files.redact`가 그 길).
+- Note(2026-10-19, `../../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. Drive로 올리는 DB 스냅샷도 나가는 길이다. 가린 사본을 만들어 올리고, 그것으로 되살린 Brain의 비밀은 가린 채 돌아온다(D6). 첨부 원본 바이트는 가리지 않는다(`files.redact`가 그 길).
 - Decision(2026-10-22, epic-attachments 인셉션, 사용자): PDF·docx 추출기가 epic-attachments에서 이 에픽으로 왔다(E8-5). 한 달 실측에서 사용자가 대화에 붙인 PDF·문서는 0건이고 첫 실사용은 기존 Drive 문서 색인이다. 추출 틀은 epic-attachments가 만든다.
-- Decision(2026-10-26, `../change-v1-capture-and-drive/`, 사용자): Drive는 V1이다. 순서는 데몬(9) → 첨부·추출(10, 축소) → 로컬 백업(5) → 이 에픽. 문서·폴더명 검색(E8-6)을 epic 4에서 옮겨 왔다. 스냅샷·새 Mac 복구(E8-4)와 로컬 캐시 상한은 V1 뒤. 촬영 일시 검색은 EXIF(epic-recall-and-mirror 1, 옛 10.9)와 함께 V1 뒤.
+- Decision(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): Drive는 V1이다. 순서는 데몬(9) → 첨부·추출(10, 축소) → 로컬 백업(5) → 이 에픽. 문서·폴더명 검색(E8-6)을 epic 4에서 옮겨 왔다. 스냅샷·새 Mac 복구(E8-4)와 로컬 캐시 상한은 V1 뒤. 촬영 일시 검색은 EXIF(epic-recall-and-mirror 1, 옛 10.9)와 함께 V1 뒤.

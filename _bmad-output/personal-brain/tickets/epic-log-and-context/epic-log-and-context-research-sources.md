@@ -2,7 +2,7 @@
 
 조사일: 2026-10-23. 스토리 인셉션 입력이며 구현 결정서는 아니다. 지정된 원천과 현재 SQLite 마이그레이션을 읽기 전용으로 대조했다. 코드·기존 문서·티켓은 바꾸지 않았다.
 
-경로 표기: 아래 `P/`는 저장소 상대 경로 `_bmad-output/personal-brain/`의 약칭이다. `SPEC`은 `P/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md`, `PRD`는 `P/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md`, `spine`은 `P/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md`, `에픽`은 `P/epic-log-and-context/epic-log-and-context.md`다. 표의 출처는 이 경로와 해당 절을 함께 뜻한다. 원천에 없는 설계 제안은 **추정**으로 구분한다.
+경로 표기: 아래 `P/`는 저장소 상대 경로 `_bmad-output/personal-brain/`의 약칭이다. `SPEC`은 `P/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md`, `PRD`는 `P/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md`, `spine`은 `P/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md`, `에픽`은 `P/tickets/epic-log-and-context/epic-log-and-context.md`다. 표의 출처는 이 경로와 해당 절을 함께 뜻한다. 원천에 없는 설계 제안은 **추정**으로 구분한다.
 
 ## 1. 요구사항 목록과 원천별 추적
 
@@ -60,7 +60,7 @@ SPEC 머리의 계약에 따라 CAP·PRD·spine이 구현 계약이고, 서로 �
 | D6·S2 | 머리말·토큰을 보존한 상한 처리와 규칙 생략 안내를 구현한다. 출처가 지정된 pending 규칙의 메시지 식별 정보를 남길 자리는 인셉션에서 정한다. | `P/change-users-and-review-gaps/change-users-and-review-gaps.md` §3 D6, §4.1 이후 에픽 Notes S2 |
 | 마스킹 B | 가린 출력의 인용은 원문 대조에 실패할 수 있다. 양쪽을 가려 비교할지는 미결이며 임의로 동일시하지 않는다. | `P/change-masking-b-and-review-fixes/change-masking-b-and-review-fixes.md` §4.1 이후 에픽 Notes; 에픽 Notes |
 | I60 | `log_entry_edits`·`context_injections` 불변 trigger를 정한다. | `P/deferred-work.md` Triage 2026-10-16; 에픽 Carry |
-| I50/A16 | `TRANSCRIPT_UNREADABLE`·`SESSION_NOT_FOUND`의 공용 코드(exit/retryable/hint) 등록 여부를 정한다. 지금 exit 1·hint 없음이라는 회고 관찰을 넘겨받는다. | `P/deferred-work.md` 해당 summary·Triage 2026-10-22; `P/epic-capture/epic-capture-retrospective.md` §4 A16 |
+| I50/A16 | `TRANSCRIPT_UNREADABLE`·`SESSION_NOT_FOUND`의 공용 코드(exit/retryable/hint) 등록 여부를 정한다. 지금 exit 1·hint 없음이라는 회고 관찰을 넘겨받는다. | `P/deferred-work.md` 해당 summary·Triage 2026-10-22; `P/tickets/epic-capture/epic-capture-retrospective.md` §4 A16 |
 | I94 | 도구 메모 target 잘림을 길이로 추정하는 대신 명시 칸을 다음 마이그레이션에 둘지 정한다. 현 판정은 UTF-16 길이 ≥상한−1이라 정상 꼬리도 가릴 수 있다. | `P/deferred-work.md` “잘린 꼬리 규칙이 자름을 길이로 추정함”; 에픽 Carry |
 | I155/A2 | harness 등록부를 Core 조립에 주입하는 seam과 실제 소스 import·상대경로 우회·Core Node API까지 보는 경계 검증을 넘겨받는다. | `P/deferred-work.md` “dispatch가 Core에 모듈 harness 등록부”; 회고 §4 A2·Action 6 |
 | I105/N5 | 워커 지시를 사람 발화로 세는 현재 한계를 인셉션에서 판단한다. 첫 user 머리말로 워커 세션을 표시하는 B안은 미결이고 ORCA 환경변수만으로 판정할 수 없다. | `P/deferred-work.md` Triage의 워커 세션 항목; 회고 새 항목 N5·Action 6 |

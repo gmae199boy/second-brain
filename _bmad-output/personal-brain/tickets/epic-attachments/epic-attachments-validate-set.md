@@ -10,9 +10,9 @@
 | --- | --- |
 | 기준 | `~/.claude/skills/bmad-ticket/references/validate-checks.md` — 직접 읽은 `Ticket`(:5), `Set`(:12), `Dependencies`(:33)만 적용 |
 | 초안 | `_bmad-output/personal-brain/epic-attachments/tickets-draft.toml` |
-| 에픽 | `_bmad-output/personal-brain/epic-attachments/epic-attachments.md` |
-| 코드 조사 | `_bmad-output/personal-brain/epic-attachments/epic-attachments-research-code.md` |
-| 원천 조사 | `_bmad-output/personal-brain/epic-attachments/epic-attachments-research-sources.md` |
+| 에픽 | `_bmad-output/personal-brain/tickets/epic-attachments/epic-attachments.md` |
+| 코드 조사 | `_bmad-output/personal-brain/tickets/epic-attachments/epic-attachments-research-code.md` |
+| 원천 조사 | `_bmad-output/personal-brain/tickets/epic-attachments/epic-attachments-research-sources.md` |
 | spine | `_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md` |
 | PRD | `_bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md` |
 | spec | `_bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md` |

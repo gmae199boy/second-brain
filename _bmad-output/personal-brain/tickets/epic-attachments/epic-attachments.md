@@ -58,11 +58,11 @@ AD-7·9·11·21·23·24, Table Contract(files, file_locations, message_attachmen
 - architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-23, AD-24
 - prd — _bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md, FR-26, FR-27, FR-28
 - inputs — _bmad-output/personal-brain/inputs/weknora-patterns.md, §1.1 (A1, A10)
-- research — _bmad-output/personal-brain/epic-capture/epic-capture-research.md, §4
-- research — _bmad-output/personal-brain/epic-attachments/epic-attachments-research-sources.md (원천 조사, 2026-10-22)
-- research — _bmad-output/personal-brain/epic-attachments/epic-attachments-research-code.md (현행 코드 조사, 2026-10-22)
-- retrospective — _bmad-output/personal-brain/epic-capture/epic-capture-retrospective.md, Findings 2·3 (C2·C3·C4)
-- split from — _bmad-output/personal-brain/epic-capture/epic-capture.md, Notes (2026-10-15)
+- research — _bmad-output/personal-brain/tickets/epic-capture/epic-capture-research.md, §4
+- research — _bmad-output/personal-brain/tickets/epic-attachments/epic-attachments-research-sources.md (원천 조사, 2026-10-22)
+- research — _bmad-output/personal-brain/tickets/epic-attachments/epic-attachments-research-code.md (현행 코드 조사, 2026-10-22)
+- retrospective — _bmad-output/personal-brain/tickets/epic-capture/epic-capture-retrospective.md, Findings 2·3 (C2·C3·C4)
+- split from — _bmad-output/personal-brain/tickets/epic-capture/epic-capture.md, Notes (2026-10-15)
 
 ## Notes
 
@@ -70,20 +70,20 @@ AD-7·9·11·21·23·24, Table Contract(files, file_locations, message_attachmen
 - Waits on epic-capture because: 0004 스키마(2.6), parser와 수집 경로, 일감 대기열과 drain, Core 마스킹 함수, 확인 게이트.
 - Open question: 한 달 실측에서 사용자가 붙인 것은 붙여 넣은 이미지 11건과 @파일 5건뿐이고 PDF·문서 블록은 0건이었다(`../epic-capture/epic-capture-research.md` §4). PDF·docx 추출기의 첫 실사용은 epic-drive(기존 Drive 문서 색인)일 수 있다. 추출기를 이 에픽에 둘지 epic-drive로 옮길지 인셉션에서 정한다. → 2026-10-22 Decision: epic-drive로 옮김.
 - Open question: epic-capture만으로 수집된 세션의 첨부는 수집 때 채워지지 않았다. 이 에픽이 디스크에 남은 transcript(기본 30일)를 다시 읽어 `message_attachments`를 채우는 방법을 인셉션에서 정한다. → 2026-10-22 Decision: 닫힌 세션 다시 읽기 경로(E10-3)로 채운다.
-- Open question: `message_attachments`·`document_extractions` 등 0002 테이블의 변경 거부 trigger를 둘지 정한다(`../deferred-work.md` story-untitled-12-plan 항목). → 2026-10-22 Decision: 둔다(마이그레이션 0008, E10-8).
-- Note(2026-10-16, `../change-users-and-review-gaps/`, 인셉션 입력, 원문은 `../inputs/external-review-2026-10-16.md`):
+- Open question: `message_attachments`·`document_extractions` 등 0002 테이블의 변경 거부 trigger를 둘지 정한다(`../../deferred-work.md` story-untitled-12-plan 항목). → 2026-10-22 Decision: 둔다(마이그레이션 0008, E10-8).
+- Note(2026-10-16, `../../change-users-and-review-gaps/`, 인셉션 입력, 원문은 `../../inputs/external-review-2026-10-16.md`):
   - S9: 청구가 만료된 추출 일감의 열린 세대(`finished_at` null)는 다음 청구가 `failed`로 닫고 새 `attempt`를 만든다(spine AD-24).
   - S10: 실패한 세대의 조각·FTS는 그 실패를 기록하는 쓰기(또는 정리 일감)가 지운다.
   - S13: `files.redact` 연쇄에 `file_names`·이름 FTS·`file_metadata` 삭제를 넣고, 재생성은 가린 파일을 건너뛴다(spine AD-23).
   - S12: pdf가 아니면 `page`는 null이다. Store 비교는 null까지 같아야 하고, TS에서 undefined와 null을 구분한다.
 - Note(2026-10-16, 인셉션 입력): 추출 오류에 분류 코드를 붙인다. 지원하지 않는 형식·손상·암호화 파일은 영구 오류(첫 실패에서 기록하고 닫음), 원본에 잠시 접근하지 못한 것은 일시 오류다(spine AD-21 재시도 분류).
 - Note(2026-10-16): 추출 실패의 다시 하기는 `failures retry`에 대상 종류 `file`을 더해서 한다(2.12가 명령을 만든다, spine AD-5).
-- Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 추출한 문서 텍스트는 원문으로 저장하고 나갈 때 가린다(spine AD-23). `failed`가 되는 추출 세대는 `failed_stage`가 있어야 하고 0005(epic-capture 18)의 trigger가 강제한다.
+- Note(2026-10-19, `../../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 추출한 문서 텍스트는 원문으로 저장하고 나갈 때 가린다(spine AD-23). `failed`가 되는 추출 세대는 `failed_stage`가 있어야 하고 0005(epic-capture 18)의 trigger가 강제한다.
 - Carry(2026-10-22, epic 2 회고, 인셉션 입력):
   - **parser 버전이 올라도 이미 닫힌 세션은 다시 읽지 않는다**(회고 C2, `deferred-work.md` I104). 스캔은 크기만 비교하고(`packages/core/src/capture/scan.ts:41-49`), 버전이 다를 때의 전체 다시 읽기(`packages/core/src/sessions/ingest.ts:283-288`)는 수집이 불릴 때만 돈다. 첨부 backfill도 이미 수집한 세션을 다시 읽어야 하므로 같은 경로로 푼다. **다음 parser 버전 업 전에** 있어야 한다 — 없으면 새 parser가 살리는 메시지·도구 메모와 결과가 늦게 온 `Agent`·`Task` 메모(C3)가 transcript 보관 기간(30일) 뒤 영영 빠진다.
   - hook의 정상 수집이 그 세션의 이전 `session_ingest` 실패를 해소하지 않는다(회고 C4, `packages/core/src/brain.ts:285` vs `:246-251`). 위 작업과 같은 스토리에서 고친다.
   - Core `Redaction`에 파일 대상 표현(`fileId`)이 없다(I75, `packages/core/src/domain/redaction.ts`). 파일 가리기 전에 필요하다.
-  - 줄어든 transcript가 스캔마다 다시 큐에 들어갈 수 있다(P19, `../epic-capture/story-spool-plan.md:208`). 다시 읽기 정책과 함께 정한다.
+  - 줄어든 transcript가 스캔마다 다시 큐에 들어갈 수 있다(P19, `../epic-capture/tickets/story-spool-plan.md:208`). 다시 읽기 정책과 함께 정한다.
 - Decision(2026-10-22, 인셉션, 사용자): PDF·docx 추출기는 epic-drive로 옮긴다. 한 달 실측에서 사용자가 붙인 PDF·문서는 0건이고 첫 실사용은 기존 Drive 문서 색인이다. 이 에픽은 추출 틀, txt·md, 이미지 EXIF를 맡는다. FR-28의 PDF·docx 부분은 epic-drive E8-5로 간다.
 - Decision(2026-10-22, 인셉션, 사용자): 첫 스토리는 tracer가 아니라 닫힌 세션 다시 읽기(E10-3, 회고 C2·C4, P19)다. 첨부 parser가 parser 버전을 올리므로, 그보다 먼저 크기가 같은 닫힌 세션도 다시 읽혀야 새 parser가 살리는 메시지·도구 메모·첨부가 transcript 보관 기간(30일) 뒤 빠지지 않는다. tracer는 둘째다.
 - Decision(2026-10-22, 인셉션, 사용자): I67 변경 규칙 trigger를 이번에 넣는다(마이그레이션 0008, E10-8). 실패 세대의 조각 정리와 파일 가리기의 삭제를 허용하는 규칙으로 쓴다.
@@ -96,7 +96,7 @@ AD-7·9·11·21·23·24, Table Contract(files, file_locations, message_attachmen
 - Source conflict: spine AD-15 — 파일 경로 텍스트를 `files`에서 찾는다 vs AD-24·Table Contract — `file_names`와 이름 FTS. `file_names`를 따르고 AD-15를 고친다.
 - Source conflict: `packages/core/src/codes.ts`의 `ATTACHMENT_NOT_REDACTED` 설명 — "첨부가 받아야 할 마스킹 없이 저장"(마스킹 B 이전) vs AD-23 — `messages redact`가 가리지 않은 첨부를 알리는 경고. E10-7이 설명을 맞춘다.
 - Note(2026-10-22, 인셉션): 빌드 계획에서 정할 것(원천 조사 §4.2) — @파일 첨부의 `source_kind`·`source_ref`와 `external` 위치의 locator 표현(절대 경로를 저장하지 않는 규칙과 함께), 붙인 뒤 원본이 바뀐 경우 transcript 내용과 디스크 바이트 중 무엇을 원본으로 삼을지, `too_large` 상한, 손상·암호화·지원하지 않는 형식의 상태와 오류 코드, 삭제 뒤 `attempt` 최댓값 보존, EXIF 입력의 크기·파싱 오류 처리. 각 스토리가 자기 계획에서 정하고 사용자에게 묻는다.
-- Decision(2026-10-26, `../change-v1-capture-and-drive/`, 사용자): V1에서 이 에픽은 데몬(epic 9) 다음, 로컬 백업(epic 5)·Drive(epic 8) 앞이다. 남은 11개 가운데 10.4·10.14·10.8·10.12는 그대로, 10.3·10.5·10.7·10.10·10.11은 가볍게(티켓 description), 10.9 EXIF는 epic 4로 옮김(4.1), 10.13 Refactor sweep은 drop.
-- Dropped(2026-10-26, `../change-v1-capture-and-drive/`, 사용자): 13 Refactor sweep. 확인된 결함은 해당 스토리에 흡수하고, 마지막 통합 확인은 epic 8의 실계정 확인이 맡는다.
-- Moved(2026-10-26, `../change-v1-capture-and-drive/`, 사용자): 9 EXIF·촬영 일시는 V1 뒤라 epic 4(epic-recall-and-mirror)의 1로 옮겼다(그 에픽의 촬영 일시 필터와 함께 만든다). id 9는 다시 쓰지 않는다(`next_id = 15`).
+- Decision(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): V1에서 이 에픽은 데몬(epic 9) 다음, 로컬 백업(epic 5)·Drive(epic 8) 앞이다. 남은 11개 가운데 10.4·10.14·10.8·10.12는 그대로, 10.3·10.5·10.7·10.10·10.11은 가볍게(티켓 description), 10.9 EXIF는 epic 4로 옮김(4.1), 10.13 Refactor sweep은 drop.
+- Dropped(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): 13 Refactor sweep. 확인된 결함은 해당 스토리에 흡수하고, 마지막 통합 확인은 epic 8의 실계정 확인이 맡는다.
+- Moved(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): 9 EXIF·촬영 일시는 V1 뒤라 epic 4(epic-recall-and-mirror)의 1로 옮겼다(그 에픽의 촬영 일시 필터와 함께 만든다). id 9는 다시 쓰지 않는다(`next_id = 15`).
 - Note(2026-10-26, 세트 검증 제안, 빌드 입력): 10.10 verify에 원본 접근 불가 파일(`source_unreachable_at`)에 retry·버전 상승 drain을 돌려도 새 attempt가 생기지 않고 기존 조각·포인터가 남으며 `FILE_SOURCE_UNREACHABLE`과 건수가 보이는 사례, 정상 파일의 두 번째 drain에 추가 attempt가 없는 사례를 더한다(AD-24). 10.12 verify에서는 가린 뒤 4의 이름 채우기와 8의 대기 추출을 다시 돌려 이름·FTS·조각이 되살아나지 않는지 본다. 10.11은 4·14·8·10과 경로가 없으므로, 계획에서 handler·Store 능력 파일과 공통 등록부(`packages/core/src/brain.ts`의 handler 등록, `packages/core/src/ports/store.ts`의 Store 합성) 편집 소유자를 정한다.

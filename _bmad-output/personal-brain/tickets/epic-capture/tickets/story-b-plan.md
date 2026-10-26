@@ -14,7 +14,7 @@ lenses_ran: [quick]
 review_loop_iteration: 0
 followup_review_recommended: false
 context:
-  - '{project-root}/_bmad-output/personal-brain/epic-capture/story-untitled-9-plan.md'
+  - '{project-root}/_bmad-output/personal-brain/tickets/epic-capture/tickets/story-untitled-9-plan.md'
   - '{project-root}/_bmad-output/personal-brain/change-masking-b-and-review-fixes/change-masking-b-and-review-fixes.md'
 warnings: [oversized]
 deferred: []

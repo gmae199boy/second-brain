@@ -109,9 +109,9 @@ headless: false
 
 | # | 발견 | 출처 | 처분 |
 | --- | --- | --- | --- |
-| B1 ✔ | 이니셔티브의 Decision이 아직 "서브에이전트는 최종 보고만 수집한다"이다. 에픽·spec·PRD·architecture·parser v4는 보고를 넣지 않는다(2026-10-21 Decision) | `initiative-personal-brain.md:79` vs `epic-capture/epic-capture.md:160`, `packages/claude-code/src/parser.ts:675` | 스펙 맞춤 제안(Action 4) |
+| B1 ✔ | 이니셔티브의 Decision이 아직 "서브에이전트는 최종 보고만 수집한다"이다. 에픽·spec·PRD·architecture·parser v4는 보고를 넣지 않는다(2026-10-21 Decision) | `initiative-personal-brain.md:79` vs `tickets/epic-capture/epic-capture.md:160`, `packages/claude-code/src/parser.ts:675` | 스펙 맞춤 제안(Action 4) |
 | B2 | E2-6과 관련 티켓 설명은 꼬리표 근거를 "cwd가 있는 첫 **메시지**의 cwd"라고 하지만, 2.25(`d7fa300`, 사용자 결정 B)부터 근거는 "세션이 시작된 폴더(`startCwd`: 서브에이전트가 아닌 첫 cwd 줄, 첨부 줄 포함), 없으면 첫 메시지 cwd"다. architecture와 README는 이미 맞췄다 | `epic-capture.md:45,156`, `tickets.toml`의 22·20·25 설명 vs `packages/claude-code/src/parser.ts:886-899`, `packages/core/src/sessions/ingest.ts:409` | 스펙 맞춤 제안(Action 4) |
-| B3 | epic 1 E1-5에 "`[files] path`는 묻지 않고 기본값을 기록"이 없다(이전 회고 Action 7 미완) | `epic-foundation-and-install/epic-foundation-and-install.md:28` vs `apps/cli/src/install/flow.ts:410-413` | 스펙 맞춤 제안(Action 4) |
+| B3 | epic 1 E1-5에 "`[files] path`는 묻지 않고 기본값을 기록"이 없다(이전 회고 Action 7 미완) | `tickets/epic-foundation-and-install/epic-foundation-and-install.md:28` vs `apps/cli/src/install/flow.ts:410-413` | 스펙 맞춤 제안(Action 4) |
 | B4 | 2.15 플랜은 Done when 3의 근거로 "capture-scan이 자식을 죽이고 스캔으로 회복"을 들지만 그 시험이 죽이는 것은 DB 잠금을 잡은 프로세스다. 수집 프로세스를 마지막 턴 도중 죽인 뒤 회복하는 자동 시험은 없다 | `story-refactor-sweep-plan.md:122` vs `apps/cli/test/capture-scan.test.ts:689-707` | 그대로 받아들임(기록만). 동작 확인 E가 transcript를 쓴 프로세스를 SIGKILL한 뒤 스캔으로 4개 메시지를 회복함을 따로 봤다 |
 | B5 | Done when 4의 "DB 어디에도 남지 않는다"는 외부 WAL 읽기가 열려 있으면 커밋은 성공해도 WAL에 옛 바이트가 잠깐 남는다. README에는 이 예외가 있다 | `epic-capture.md:58`, `README.md:315-316`, `packages/sqlite/test/redact.test.ts:122`; 미룬 항목 I91 | 미룸 → epic-operations(WAL 정리 경로). 에픽 문구는 그대로 둔다 |
 
@@ -159,7 +159,7 @@ headless: false
 | Action 5 — 흐름 결과·실패 계약을 먼저 한 스토리로, 인셉션 | 착지 | `epic-capture.md:97`이 이 Action을 근거로 4를 5 앞에 뒀다. `story-untitled-4-plan.md:24-43` |
 | Action 6 — 테스트·빌드 인프라 low 지적은 거절하지 말고 sweep으로, 사용자(`bmad-customize`) | 증거 없음 | 채택·기각 기록을 찾지 못했다. 2.15가 테스트 공백을 메운 것은 결과이지 리뷰 기준 변경의 증거가 아니다 |
 | Action 7 — E1-5 `[files] path` 문구 또는 질문(F10), 사용자 | 부분 착지 | 구현·README(`README.md:120`)·2.4 플랜(:41)은 "묻지 않음". E1-5 문구는 그대로(B3) |
-| Action 8 — epic 1 entry 3에 Superseded, `bmad-ticket` | 착지 | `epic-foundation-and-install/tickets.toml:27-36` |
+| Action 8 — epic 1 entry 3에 Superseded, `bmad-ticket` | 착지 | `tickets/epic-foundation-and-install/tickets/tickets.toml:27-36` |
 | Action 9 — G2·G4 리팩터, epic 2 sweep | 착지 | 2.15 `65fa3f1`. `packages/second_brain/src/postgres.ts:1`, `packages/core/src/error-text.ts`, `apps/cli/test/temp-home.ts`, `import-side-effects.test.ts:220`. 의미가 다른 변형은 의도적으로 남김 |
 | Open Q1 — F9 shim의 `SECOND_BRAIN_HOME` 우선 | 결정·착지 | `epic-capture.md:109`, `apps/cli/src/doctor/checks.ts:247-254`, `apps/cli/test/shim.test.ts:347` |
 | Open Q2 — F11 설치 동의 단계 | 결정·착지 | `epic-capture.md:111`, `install-flow.test.ts:1202,1226,1240` |

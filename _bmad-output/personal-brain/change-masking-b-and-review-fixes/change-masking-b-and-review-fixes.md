@@ -9,10 +9,10 @@ mode: batch
 trigger: '2026-10-18 사용자 결정(마스킹 B: 저장은 원문, 나갈 때 가림)과 2.6·2.7·2.8·2.9 결정 검토의 수정 지시("우려대로 고친다")'
 inputs:
   - ../inputs/masking-b-and-review-fixes.md
-  - ../epic-capture/story-untitled-9-plan.md
-  - ../epic-capture/story-transcript-parser-plan.md
-  - ../epic-capture/story-untitled-8-plan.md
-  - ../epic-capture/story-0004-plan.md
+  - ../tickets/epic-capture/tickets/story-untitled-9-plan.md
+  - ../tickets/epic-capture/tickets/story-transcript-parser-plan.md
+  - ../tickets/epic-capture/tickets/story-untitled-8-plan.md
+  - ../tickets/epic-capture/tickets/story-0004-plan.md
 ---
 
 # Sprint Change Proposal — 마스킹 B와 결정 검토 수정

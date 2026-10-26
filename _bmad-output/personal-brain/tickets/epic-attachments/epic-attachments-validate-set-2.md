@@ -9,10 +9,10 @@
 | 약칭 | 저장소 상대 경로 |
 | --- | --- |
 | 초안 | `_bmad-output/personal-brain/epic-attachments/tickets-draft.toml` |
-| 에픽 | `_bmad-output/personal-brain/epic-attachments/epic-attachments.md` |
-| 이전 보고서 | `_bmad-output/personal-brain/epic-attachments/epic-attachments-validate-set.md` |
-| 코드 조사 | `_bmad-output/personal-brain/epic-attachments/epic-attachments-research-code.md` |
-| 원천 조사 | `_bmad-output/personal-brain/epic-attachments/epic-attachments-research-sources.md` |
+| 에픽 | `_bmad-output/personal-brain/tickets/epic-attachments/epic-attachments.md` |
+| 이전 보고서 | `_bmad-output/personal-brain/tickets/epic-attachments/epic-attachments-validate-set.md` |
+| 코드 조사 | `_bmad-output/personal-brain/tickets/epic-attachments/epic-attachments-research-code.md` |
+| 원천 조사 | `_bmad-output/personal-brain/tickets/epic-attachments/epic-attachments-research-sources.md` |
 | spine | `_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md` |
 
 ## 이전 지적별 판정

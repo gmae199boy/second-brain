@@ -61,7 +61,7 @@ deferred: []
 
 ## Code Map
 
-- `_bmad-output/personal-brain/epic-capture/story-start-source-transcript-plan-attempt-1.patch` -- 출발점. `git apply -3`이 11개 파일은 깨끗이, `packages/core/src/ports/store.ts`·`packages/core/src/testing/contracts/session-store.ts`·`packages/core/src/testing/fakes/store.ts`·`packages/sqlite/src/sessions.ts`·`README.md`(3-way)는 충돌로 붙는다. 충돌은 24가 바꾼 정렬·커서 비교 자리다. 충돌 해소 규칙: 24의 현재 코드(정렬, `occurred_at` 비교)를 남기고 patch의 cursorBase·start_source·예외 부분만 얹는다. attempt-1 plan의 Implementation Notes와 Design Notes(`cursorMove` → `{ move, to }`)가 patch의 의도다.
+- `_bmad-output/personal-brain/tickets/epic-capture/tickets/story-start-source-transcript-plan-attempt-1.patch` -- 출발점. `git apply -3`이 11개 파일은 깨끗이, `packages/core/src/ports/store.ts`·`packages/core/src/testing/contracts/session-store.ts`·`packages/core/src/testing/fakes/store.ts`·`packages/sqlite/src/sessions.ts`·`README.md`(3-way)는 충돌로 붙는다. 충돌은 24가 바꾼 정렬·커서 비교 자리다. 충돌 해소 규칙: 24의 현재 코드(정렬, `occurred_at` 비교)를 남기고 patch의 cursorBase·start_source·예외 부분만 얹는다. attempt-1 plan의 Implementation Notes와 Design Notes(`cursorMove` → `{ move, to }`)가 patch의 의도다.
 - `packages/sqlite/src/sessions.ts` -- `ensureSession`의 `toSession` try(191), `start_source` update(297)에 `and start_source is null`, 302 커서 쓰기와 `cursorMayMove`(508, 지금은 `occurred_at` 비교) → patch의 `cursorMove`/`storedCursor`/`sameCursor`, 단 전진 비교는 `occurred_at` 그대로. `readSession`의 `order by`(372·389)는 손대지 않는다.
 - `packages/core/src/testing/fakes/store.ts` -- `nextCursor`(699, `occurredAt` 비교)에 reset·`cursorBase`·지우기 규칙. 352 `startSource`는 `session.startSource ?? batch.tracking.startSource`로. 정렬(334 부근)은 그대로.
 - `packages/core/src/ports/store.ts` -- `ingest` 계약 문구에 reset 이동 조건·커서 지우기·첫 `startSource`. 24의 시각 순서 문구는 유지.
@@ -75,7 +75,7 @@ deferred: []
 ## Tasks & Acceptance
 
 **Execution:**
-- [x] `_bmad-output/personal-brain/epic-capture/story-start-source-transcript-plan-attempt-1.patch` -- `git apply -3`으로 얹고 충돌 네 곳을 Code Map 규칙으로 푼다 -- 검증된 변경을 재사용한다.
+- [x] `_bmad-output/personal-brain/tickets/epic-capture/tickets/story-start-source-transcript-plan-attempt-1.patch` -- `git apply -3`으로 얹고 충돌 네 곳을 Code Map 규칙으로 푼다 -- 검증된 변경을 재사용한다.
 - [x] `packages/sqlite/src/sessions.ts`, `packages/core/src/testing/fakes/store.ts`, `packages/core/src/ports/store.ts` -- 커서 규칙을 `occurred_at` 전진 비교 위에 얹는다 -- 두 Store가 같은 규칙.
 - [x] `packages/core/src/testing/contracts/session-store.ts`, `packages/core/test/contracts.test.ts` -- 가져올 사례·변이만 남기고, 변이 둘이 각각 계약에 걸리는지 확인한다.
 - [x] `apps/cli/test/sessions-ingest.test.ts` -- 30 MB 생성기에 task-notification 줄을 더하고, 이 스토리 전 parser(baseline)와 새 parser의 두 번째 수집 시간을 재서 Implementation Notes에 적는다.

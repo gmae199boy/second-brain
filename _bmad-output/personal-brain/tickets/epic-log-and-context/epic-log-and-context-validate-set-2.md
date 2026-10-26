@@ -8,12 +8,12 @@
 
 - 기준: `~/.claude/skills/bmad-ticket/references/validate-checks.md`를 직접 열어 **Ticket 7~10행, Set 16~20행, Dependencies 37~40행**을 적용했다. Tree·Closure는 이번 범위가 아니다.
 - `초안`: `_bmad-output/personal-brain/epic-log-and-context/tickets-draft.toml`
-- `에픽`: `_bmad-output/personal-brain/epic-log-and-context/epic-log-and-context.md`
-- `이전`: `_bmad-output/personal-brain/epic-log-and-context/epic-log-and-context-validate-set.md`
-- `원천 조사`: `_bmad-output/personal-brain/epic-log-and-context/epic-log-and-context-research-sources.md`
-- `코드 조사`: `_bmad-output/personal-brain/epic-log-and-context/epic-log-and-context-research-code.md`
-- `10 분해`: `_bmad-output/personal-brain/epic-attachments/tickets.toml`
-- `2 분해`: `_bmad-output/personal-brain/epic-capture/tickets.toml`
+- `에픽`: `_bmad-output/personal-brain/tickets/epic-log-and-context/epic-log-and-context.md`
+- `이전`: `_bmad-output/personal-brain/tickets/epic-log-and-context/epic-log-and-context-validate-set.md`
+- `원천 조사`: `_bmad-output/personal-brain/tickets/epic-log-and-context/epic-log-and-context-research-sources.md`
+- `코드 조사`: `_bmad-output/personal-brain/tickets/epic-log-and-context/epic-log-and-context-research-code.md`
+- `10 분해`: `_bmad-output/personal-brain/tickets/epic-attachments/tickets/tickets.toml`
+- `2 분해`: `_bmad-output/personal-brain/tickets/epic-capture/tickets/tickets.toml`
 - `spine`: `_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md`
 
 줄 번호는 이번에 읽은 수정본 기준이다. 자식 티켓·완료 작업·refined 없음, workflow.checks 비어 있음이라는 입력을 적용했다. 에픽 84~96행의 결정을 우선한다. 공용 합성 목록은 병합으로 해결하며, 이미지·@파일만 붙인 사람 메시지도 발화로 센다. 4·6을 유지하고 9/14·12/15를 나누기로 한 결정을 재개방하지 않는다. 구현 위험에 관한 해석은 **추정**으로 표시했다.

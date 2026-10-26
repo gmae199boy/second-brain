@@ -17,7 +17,7 @@ context: []
 warnings: [multiple-goals, oversized]
 deferred: []
 blocked_at: "2026-10-20"
-blocked_reason: "intent gap: 대화 순서 읽기를 occurred_at으로 정렬하라는 결정(2026-10-20)이 연구 실측(transcript 524개 중 521개에 시각이 거꾸로 가는 줄, 최대 약 10.5시간)과 충돌한다. 정렬 방식을 사용자가 다시 정해야 한다. 시도한 변경은 epic-capture/story-start-source-transcript-plan-attempt-1.patch"
+blocked_reason: "intent gap: 대화 순서 읽기를 occurred_at으로 정렬하라는 결정(2026-10-20)이 연구 실측(transcript 524개 중 521개에 시각이 거꾸로 가는 줄, 최대 약 10.5시간)과 충돌한다. 정렬 방식을 사용자가 다시 정해야 한다. 시도한 변경은 tickets/epic-capture/tickets/story-start-source-transcript-plan-attempt-1.patch"
 ---
 
 <intent-contract>
@@ -164,7 +164,7 @@ has no row"가 외래 키 위반을 **예외로** 요구하고, 그건 Core가 �
 ### 2026-10-20 — Review pass
 - verdicts: 5 findings — high 1, medium 0, low 4, false 0, maybe-false 0
 - findings:
-  - `[high]` `[intent_gap]` `readSession`의 `order by occurred_at, seq`(`packages/sqlite/src/sessions.ts`, 가짜 store 같음)가 거의 모든 세션의 대화 순서를 뒤집는다 — 확인함: `epic-capture/epic-capture-research.md` '시각'이 "앞 줄보다 시각이 이른 줄이 흔하다. 파일 524개 중 521개, 최대 약 10.5시간. 그래서 시각으로 정렬하지 않는다"고 적고, `parser.ts` 주석도 같다. 커밋된 `full-session.jsonl`의 assistant 줄(09:59:00Z)이 앞 줄(10:00:09Z)보다 이르다. README 298행 "순서는 시계가 아니라 파일에서 옵니다"와 새 문단이 맞서는 것도 같은 뿌리다. 고치려면 intent의 "대화 순서 = `occurred_at`, 같으면 `seq`"(2026-10-20 사용자 결정)를 바꿔야 하므로 intent_gap. 시도한 변경은 `story-start-source-transcript-plan-attempt-1.patch`에 저장하고 코드를 되돌렸다.
+  - `[high]` `[intent_gap]` `readSession`의 `order by occurred_at, seq`(`packages/sqlite/src/sessions.ts`, 가짜 store 같음)가 거의 모든 세션의 대화 순서를 뒤집는다 — 확인함: `tickets/epic-capture/epic-capture-research.md` '시각'이 "앞 줄보다 시각이 이른 줄이 흔하다. 파일 524개 중 521개, 최대 약 10.5시간. 그래서 시각으로 정렬하지 않는다"고 적고, `parser.ts` 주석도 같다. 커밋된 `full-session.jsonl`의 assistant 줄(09:59:00Z)이 앞 줄(10:00:09Z)보다 이르다. README 298행 "순서는 시계가 아니라 파일에서 옵니다"와 새 문단이 맞서는 것도 같은 뿌리다. 고치려면 intent의 "대화 순서 = `occurred_at`, 같으면 `seq`"(2026-10-20 사용자 결정)를 바꿔야 하므로 intent_gap. 시도한 변경은 `story-start-source-transcript-plan-attempt-1.patch`에 저장하고 코드를 되돌렸다.
   - `[low]` `[intent_gap]` 같은 시각이 겹치면 `seq` 동점 처리가 "파일 순서"가 아니다(늦게 온 메시지가 같은 밀리초의 다음 메시지 뒤에 놓임) — 확인함: 배치를 넘으면 `seq`는 들어온 순서다. 위와 같은 뿌리(시각 정렬 설계)라 같은 경로.
   - `[low]` `[reject]` 옛 마지막 값 규칙으로 이미 쓴 `start_source`는 새 규칙(`start_source is null`일 때만 씀)과 고정된 parser 버전 때문에 고쳐지지 않는다 — 사실이지만 실제 수집은 14에서야 켜지므로(epic Notes 2026-10-16) 이 값을 가진 DB는 개발용 tracer뿐이다. 고치려면 backfill 경로가 새로 필요해 단순 수정이 아니다. 같은 질문이 남아 있다면 14 전에 정하면 된다.
   - `[low]` `[patch]` 30 MB 시간 테스트가 #20 회귀를 막지 못한다(옛 parser 142 ms, 새 parser 129 ms, task-notification 줄이 없어 제곱 비용 경로를 지나지 않음) — 확인함: Implementation Notes의 측정. 생성 fixture에 task-notification 줄을 많이 넣으면 되는 직접 수정이지만, intent_gap 때문에 이번 패스에서는 적용하지 않았다(moot). 다음 실행에서 patch와 함께 반영할 것.
@@ -212,4 +212,4 @@ Blocking condition: intent gap — 대화 순서 읽기의 정렬 방식
 
 ## Superseded
 
-2026-10-20: `../change-drop-message-seq/`로 메시지 번호를 지우기로 해서 이 plan은 기록으로 남긴다. 스토리 21은 새 plan으로 다시 빌드하고, 위 patch는 정렬 부분을 빼고 재사용한다. 리뷰 1번 지적(시각 정렬이 순서를 뒤집음)은 parser가 남기는 메시지만 다시 잰 결과(시각 역전 0, 같은 밀리초 0)로 실제 데이터에서는 일어나지 않는다고 판단했다.
+2026-10-20: `../../../change-drop-message-seq/`로 메시지 번호를 지우기로 해서 이 plan은 기록으로 남긴다. 스토리 21은 새 plan으로 다시 빌드하고, 위 patch는 정렬 부분을 빼고 재사용한다. 리뷰 1번 지적(시각 정렬이 순서를 뒤집음)은 parser가 남기는 메시지만 다시 잰 결과(시각 역전 0, 같은 밀리초 0)로 실제 데이터에서는 일어나지 않는다고 판단했다.

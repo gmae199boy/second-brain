@@ -54,7 +54,7 @@ AD-1·2·3·5·10·11(trigger)·18·19·20(schema_version), Table Contract, Conv
 - Decision: 설치 진입점은 의존성 없는 빌드된 단일 파일이 저장소를 ~/.second_brain/app에 받아 빌드한 뒤 설치기에 넘긴다. 루트 package.json에 의존성·prepare 없음. pnpm은 고정하지 않는다: 루트 `engines.pnpm`은 `">=12"`뿐이고, 진입 파일이 major 12 미만이면 `npm install -g pnpm@latest`를 묻는다(corepack에 기대지 않음). epic 5의 setup upgrade도 같은 경로(2026-10-08, pnpm 고정은 2026-10-13에 풀었다 — `packageManager` 고정이 남으면 최신 pnpm도 고정 버전으로 전환하려다 ENOEXEC로 죽는다).
 - Decision: spool은 epic 2. 이 에픽의 스키마 불일치는 쓰기 거부 + SCHEMA_MISMATCH까지(2026-10-08).
 - Decision: 임베딩 질문은 epic 6 전까지 '아직 지원 안 함'으로 답한다(2026-10-08).
-- Decision(2026-10-14): 원본은 로컬 SQLite 파일이고 Postgres·Drive는 복제 대상(epic 7). `packages/postgres`와 설치기의 Docker 흐름은 남기고 연결만 끊는다(`../change-local-sqlite-primary/`).
+- Decision(2026-10-14): 원본은 로컬 SQLite 파일이고 Postgres·Drive는 복제 대상(epic 7). `packages/postgres`와 설치기의 Docker 흐름은 남기고 연결만 끊는다(`../../change-local-sqlite-primary/`).
 - Decision(2026-10-14): 파일·첨부·추출·work_items 스키마는 epic 1(story 12)이 만들고, 동작은 epic 2·4가 만든다.
 - Decision(2026-10-14): epic 1의 SQLite adapter는 HealthStore·SchemaStore까지다. SQLite `SessionStore`(ensure·ingest·readSession)와 그 계약 사례는 epic 2가 통과시킨다.
 - Decision(2026-10-14): 8(doctor)은 10~13 뒤에 둔다. 점검 대상이 store로 바뀌므로. 11(대화·로그)과 12(파일·일감)는 한 세션에 맞추려고 나눴다.

@@ -6,7 +6,7 @@
   - `https://code.claude.com/docs/en/hooks.md` — 273,449자. offset 0 / 100,000 / 200,000 세 번 읽었다. Stop 이벤트의 입력·출력 스키마와 decision control은 **offset 100,000 구간**에 있고, `Configuration`의 병렬 실행·timeout 기본값은 0~100,000 구간, `StopFailure`·`TeammateIdle`과 async 제약은 200,000 이후 구간에 있다.
   - `https://code.claude.com/docs/en/plugins-reference.md` — 플러그인 `hooks`/`hooks/hooks.json` 병합 규칙
   - `https://raw.githubusercontent.com/openai/codex/main/codex-rs/history/src/lib.rs` (`enum RolloutItem`), 같은 리포 `codex-rs/history/src/rollout_payload.rs` (`RolloutItemWire`, `#[serde(tag = "type", rename_all = "snake_case")]`)
-  - 리포 내부: `_bmad-output/personal-brain/epic-capture/epic-capture-research.md` §1 (2026-10-15 실측), `plugin/hooks/hooks.json`
+  - 리포 내부: `_bmad-output/personal-brain/tickets/epic-capture/epic-capture-research.md` §1 (2026-10-15 실측), `plugin/hooks/hooks.json`
   - 이 기계 실측: `claude --version` → **2.1.304**, `codex-cli 0.163.0`, `~/.codex/sessions`의 `.jsonl` 252개 `type` 집계
 
 ---

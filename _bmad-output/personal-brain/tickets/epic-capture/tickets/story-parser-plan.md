@@ -174,7 +174,7 @@ deferred:
 **Commands:**
 - `pnpm build && pnpm exec vitest run --project claude-code --project core --project cli` -- expected: 모두 통과
 - `pnpm test` -- expected: build·typecheck·vitest 전체 통과(postgres는 Docker가 없으면 건너뜀을 기록)
-- `git grep -nE "/Users/" -- packages apps _bmad-output/personal-brain/epic-capture/story-parser-plan.md` -- expected: 새로 넣은 절대 경로 없음
+- `git grep -nE "/Users/" -- packages apps _bmad-output/personal-brain/tickets/epic-capture/tickets/story-parser-plan.md` -- expected: 새로 넣은 절대 경로 없음
 
 ## Auto Run Result
 

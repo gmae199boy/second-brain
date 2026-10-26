@@ -10,7 +10,7 @@ covers = ["E3-9"]
 after = []
 hitl = false
 risk = "low"
-references = ["_bmad-output/personal-brain/epic-capture/epic-capture-retrospective.md, Action items (A2)"]
+references = ["_bmad-output/personal-brain/tickets/epic-capture/epic-capture-retrospective.md, Action items (A2)"]
 
 [[entry]]
 id = 2
@@ -46,7 +46,7 @@ covers = ["E3-1", "E3-4", "E3-9"]
 after = [1, "10.2", "2.10", "2.14"]
 hitl = true
 risk = "high"
-references = ["_bmad-output/personal-brain/epic-log-and-context/epic-log-and-context-research-code.md, §5, §6, §10"]
+references = ["_bmad-output/personal-brain/tickets/epic-log-and-context/epic-log-and-context-research-code.md, §5, §6, §10"]
 
 [[entry]]
 id = 5

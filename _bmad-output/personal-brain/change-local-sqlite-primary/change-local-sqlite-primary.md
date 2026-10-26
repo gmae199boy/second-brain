@@ -91,7 +91,7 @@ trigger: '사용자 결정(2026-10-14), story 1.7 완료 직후 대화'
 
 ## 4. Detailed Change Proposals
 
-### 4.1 Stories (epic-foundation-and-install/tickets.toml)
+### 4.1 Stories (tickets/epic-foundation-and-install/tickets/tickets.toml)
 
 **새 story 10 — SQLite store adapter** (after = [3], risk high)
 - description: `packages/sqlite`에 `node:sqlite` 기반 Store·SessionStore·SchemaStore 구현을 만든다.

@@ -19,9 +19,9 @@ risk: medium
 - `messages redact` 연쇄 중 가린 메시지의 조각·미러 재생성 일감은 이 에픽이 붙인다. epic-capture는 행 삭제까지 한다(AD-11).
 - 문서 추출 세대·조각과 `file_names`는 epic-attachments가 만들고, 문서 검색 경로는 epic-drive(E8-6)가 만든다. 이 에픽은 그것을 쓰고 넓힌다(2026-10-26).
 
-2026-10-15 변경(추가안 B, `../change-surface-plugin-daemon/`)으로 더한 것: 결과 계약 보강 — 잘림은 낮은 순위 행부터 통째로, 1위는 남기고 `meta.omitted{count, reason}`·`meta.next{ns, verb, args}`를 붙인다(AD-15). 검색을 수행하지 못한 것(오류 `SEARCH_FAILED`)과 0건(`ok`, `data: []`, `meta.hint`에 다음 행동)과 미설치(exit 2)를 구분한다. `has_more`는 limit+1로 판정하고 0건도 `count`를 낸다. 문서 결과의 위치는 `chunk_locator`다. 3자 미만 LIKE 폴백에 `ESCAPE` 명시, `EXPLAIN QUERY PLAN` 인덱스 회귀 테스트, 미러 파일명의 `<project>` 정리(제어문자·`<>:"/\|?*`→`_`, 대소문자 충돌은 ` (2)`). 원천: `inputs/weknora-patterns.md` §1.3.
+2026-10-15 변경(추가안 B, `../../change-surface-plugin-daemon/`)으로 더한 것: 결과 계약 보강 — 잘림은 낮은 순위 행부터 통째로, 1위는 남기고 `meta.omitted{count, reason}`·`meta.next{ns, verb, args}`를 붙인다(AD-15). 검색을 수행하지 못한 것(오류 `SEARCH_FAILED`)과 0건(`ok`, `data: []`, `meta.hint`에 다음 행동)과 미설치(exit 2)를 구분한다. `has_more`는 limit+1로 판정하고 0건도 `count`를 낸다. 문서 결과의 위치는 `chunk_locator`다. 3자 미만 LIKE 폴백에 `ESCAPE` 명시, `EXPLAIN QUERY PLAN` 인덱스 회귀 테스트, 미러 파일명의 `<project>` 정리(제어문자·`<>:"/\|?*`→`_`, 대소문자 충돌은 ` (2)`). 원천: `inputs/weknora-patterns.md` §1.3.
 
-2026-10-20 변경(`../change-discipline-and-metrics/`)으로 더한 것: `recall chunks|logs|docs --count`(같은 필터로 집계만 `data`로 — `chunks`·`logs`는 `{sessions, rows, by_month}`, `docs`는 `{files, rows, by_month}`, `by_month`는 기간 안의 달만이고 날짜 인자는 AD-13의 구간 함수(날짜 + 설정 시간대 → 반열린 UTC)를 거쳐 `meta`에 되울린다. `meta.count`는 1, `has_more`는 false, `RESULT_TRUNCATED` 없음, 8,000자 상한 밖, spine AD-15)와 **검색 회귀 러너** `tooling/eval`(SDK 읽기 전용, 문항 파일은 `~/.second_brain/eval/questions.toml`, 결과는 `~/.second_brain/eval/results/`에 식별자·질의·점수만, 저장소에는 러너와 중립 fixture만). 러너가 재는 것은 고정 질의의 적중률(hit@k)이고 SM-3이 아니다.
+2026-10-20 변경(`../../change-discipline-and-metrics/`)으로 더한 것: `recall chunks|logs|docs --count`(같은 필터로 집계만 `data`로 — `chunks`·`logs`는 `{sessions, rows, by_month}`, `docs`는 `{files, rows, by_month}`, `by_month`는 기간 안의 달만이고 날짜 인자는 AD-13의 구간 함수(날짜 + 설정 시간대 → 반열린 UTC)를 거쳐 `meta`에 되울린다. `meta.count`는 1, `has_more`는 false, `RESULT_TRUNCATED` 없음, 8,000자 상한 밖, spine AD-15)와 **검색 회귀 러너** `tooling/eval`(SDK 읽기 전용, 문항 파일은 `~/.second_brain/eval/questions.toml`, 결과는 `~/.second_brain/eval/results/`에 식별자·질의·점수만, 저장소에는 러너와 중립 fixture만). 러너가 재는 것은 고정 질의의 적중률(hit@k)이고 SM-3이 아니다.
 
 ## Outcome
 
@@ -61,15 +61,15 @@ AD-13·14(로그 없는 세션의 첫 요청 문장, FR-9 표시)·15·16·23·2
 ## Notes
 
 - Waits on epic-attachments because: 문서 추출 세대·조각과 `file_names`가 문서 검색의 대상이다(2026-10-15 epic-capture에서 나뉨).
-- Note(2026-10-16, `../change-users-and-review-gaps/`, 인셉션 입력, 원문은 `../inputs/external-review-2026-10-16.md`):
+- Note(2026-10-16, `../../change-users-and-review-gaps/`, 인셉션 입력, 원문은 `../../inputs/external-review-2026-10-16.md`):
   - T4: 문서 조각의 앞뒤를 읽는 길이 없다(`recall expand`가 `document_chunk`도 받거나 `files`의 동사).
   - D7: 로그 없는 세션의 첫 요청 문장은 `occurred_at`이 가장 이른 user 메시지에서 꺼낸다. 저장하지 않는다(spine AD-14).
   - T9: 미러 파일명 정제(C9)는 spine AD-16에 들어갔다. " (2)" 충돌 접미사가 AD-16의 "순수 함수"와 어울리게 정한다.
-- Note(2026-10-19, `../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 조회 결과·넓히기·세션 읽기는 엔벨로프 코덱이 가린다(D1). 조각·FTS는 원문 위이고, 비밀 값으로 찾으면 행은 나오되 값은 가려진다(D2). 미러 렌더러는 출력 코덱으로 등록한다. 미러는 (DB 상태, 패턴 버전)의 순수 함수이고 frontmatter에 버전을 적으며, 버전이 오르면 모든 세션의 미러 재생성 일감을 만든다(D3, spine AD-16).
-- Note(2026-10-20, `../change-discipline-and-metrics/`, 인셉션 입력): D5·D6. 러너의 문항 파일 형식(verb·query·expect·k)은 인셉션에서 정한다. 대분류 먼저(PRD §8-5)와 조각 직접 검색의 비교도 같은 러너로 잰다.
+- Note(2026-10-19, `../../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 조회 결과·넓히기·세션 읽기는 엔벨로프 코덱이 가린다(D1). 조각·FTS는 원문 위이고, 비밀 값으로 찾으면 행은 나오되 값은 가려진다(D2). 미러 렌더러는 출력 코덱으로 등록한다. 미러는 (DB 상태, 패턴 버전)의 순수 함수이고 frontmatter에 버전을 적으며, 버전이 오르면 모든 세션의 미러 재생성 일감을 만든다(D3, spine AD-16).
+- Note(2026-10-20, `../../change-discipline-and-metrics/`, 인셉션 입력): D5·D6. 러너의 문항 파일 형식(verb·query·expect·k)은 인셉션에서 정한다. 대분류 먼저(PRD §8-5)와 조각 직접 검색의 비교도 같은 러너로 잰다.
 - Note(2026-10-20, spine 리뷰): `--count`는 `chunks`·`logs`가 `{sessions, rows, by_month}`, `docs`가 `{files, rows, by_month}`, `by_month`는 기간 안의 달만이고 AD-13의 구간 함수(날짜+설정 시간대 → 반열린 UTC)를 쓰며 `meta`에 구간을 되울린다. 회귀 러너 결과 파일은 식별자·질의·점수만(본문 없음).
 - Carry(2026-10-22, epic 2 회고, 인셉션 입력):
   - 0006은 옛 chunk의 seq 범위를 시각 범위로 바꾸므로, 같은 시각에 걸친 서로 다른 chunk 둘이 있으면 UNIQUE에 걸린다(회고 C5, `packages/sqlite/migrations/0006_drop_message_seq.sql:140-151`). 지금은 chunk를 쓰는 코드가 없어 문제가 없다. chunk writer를 만들 때 같은 시각 범위의 규칙을 정한다.
   - 세션·메시지를 읽어 내보내는 새 읽기는 `sessionForOutput`을 거친다(I95) — 도구 메모 대상 전용 가리기 규칙은 일반 엔벨로프 가리기만으로는 걸리지 않는다.
 - Carry(2026-10-22, epic-attachments 인셉션, 사용자 결정): 추출한 문서 텍스트(`document_chunks.body`)와 파일 이름을 내보내는 출력 경로(문서 검색 결과·발췌, `files show`)는 이 에픽이 만들고, 출력 코덱으로 가린다(마스킹 B). epic-attachments는 원문 저장까지만 하고 문서 본문 출력 경로를 만들지 않는다. 출력 코덱 계약 테스트의 probe에 문서 조각을 더한다(`packages/core/src/output/codecs.ts`). 원본에 닿을 수 없는 파일(`source_unreachable_at`)과 포인터가 없는 실패·미지원 파일을 결과에서 어떻게 보일지도 여기서 정한다. → 2026-10-26: 이 출력 경로와 probe는 epic-drive(E8-6)가 만든다.
-- Decision(2026-10-26, `../change-v1-capture-and-drive/`, 사용자): V1 뒤(backlog). 문서 검색 부분(Done when 7의 대부분)은 epic 8(E8-6)로 옮겼고, 이 에픽은 epic 8을 기다린다.
+- Decision(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): V1 뒤(backlog). 문서 검색 부분(Done when 7의 대부분)은 epic 8(E8-6)로 옮겼고, 이 에픽은 epic 8을 기다린다.

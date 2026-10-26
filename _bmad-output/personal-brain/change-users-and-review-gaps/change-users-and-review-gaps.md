@@ -9,7 +9,7 @@ mode: batch
 trigger: 'story 2.2 계획 중 사용자 결정(users 테이블), Gemini 외부 리뷰의 저장소 대조 결과(2026-10-16)'
 inputs:
   - ../inputs/external-review-2026-10-16.md
-  - ../epic-capture/story-tracer-stop-hook-brain-db-plan.md
+  - ../tickets/epic-capture/tickets/story-tracer-stop-hook-brain-db-plan.md
 ---
 
 # Sprint Change Proposal — 사용자 테이블과 외부 리뷰 빈틈

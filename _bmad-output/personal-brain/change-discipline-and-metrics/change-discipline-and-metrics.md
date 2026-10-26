@@ -9,7 +9,7 @@ mode: batch
 trigger: '2026-10-20 설계 대화 — 벤더 채팅 메모리(ChatGPT·Claude·Gemini)·graphify와 비교한 뒤 보강 제안 7개를 검증. 4개 채택, 1개 Deferred(조건부), 2개 보류'
 inputs:
   - ../prd-brain-v1-slice-1/addendum.md
-  - ../epic-capture/epic-capture-research.md
+  - ../tickets/epic-capture/epic-capture-research.md
   - ../architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md
 ---
 

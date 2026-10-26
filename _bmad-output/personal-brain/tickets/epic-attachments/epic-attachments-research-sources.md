@@ -4,18 +4,18 @@
 
 | 약칭 | 출처 경로 |
 | --- | --- |
-| 에픽 | `_bmad-output/personal-brain/epic-attachments/epic-attachments.md` |
+| 에픽 | `_bmad-output/personal-brain/tickets/epic-attachments/epic-attachments.md` |
 | spec | `_bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md` |
 | PRD | `_bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md` |
 | spine | `_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md` |
 | 패턴 | `_bmad-output/personal-brain/inputs/weknora-patterns.md` |
-| 수집 연구 | `_bmad-output/personal-brain/epic-capture/epic-capture-research.md` |
-| 수집 에픽 | `_bmad-output/personal-brain/epic-capture/epic-capture.md` |
+| 수집 연구 | `_bmad-output/personal-brain/tickets/epic-capture/epic-capture-research.md` |
+| 수집 에픽 | `_bmad-output/personal-brain/tickets/epic-capture/epic-capture.md` |
 | 미룸 | `_bmad-output/personal-brain/deferred-work.md` |
-| 회고 | `_bmad-output/personal-brain/epic-capture/epic-capture-retrospective.md` |
-| 초기 스키마 계획 | `_bmad-output/personal-brain/epic-foundation-and-install/story-untitled-12-plan.md` |
-| 0004 계획 | `_bmad-output/personal-brain/epic-capture/story-0004-plan.md` |
-| 0005 계획 | `_bmad-output/personal-brain/epic-capture/story-0005-plan.md` |
+| 회고 | `_bmad-output/personal-brain/tickets/epic-capture/epic-capture-retrospective.md` |
+| 초기 스키마 계획 | `_bmad-output/personal-brain/tickets/epic-foundation-and-install/tickets/story-untitled-12-plan.md` |
+| 0004 계획 | `_bmad-output/personal-brain/tickets/epic-capture/tickets/story-0004-plan.md` |
+| 0005 계획 | `_bmad-output/personal-brain/tickets/epic-capture/tickets/story-0005-plan.md` |
 
 우선순위: spec 서두는 CAP을 기준으로 삼되 PRD의 검증 결과와 spine의 구현 불변식을 함께 따르며, spine과 다르면 spine을 우선한다고 명시한다. 과거 계획의 당시 상태와 이후 결정은 구분했다. 아래 ‘충돌 후보’와 ‘추정’은 새 결정을 뜻하지 않는다.
 
@@ -56,7 +56,7 @@ NFR-7(조회 지연)·NFR-8(꼬리표)은 PRD §5의 공통 규칙이지만 이 
 - 회고 §Findings 3 C2/I104: 크기만 비교하는 스캔 때문에 닫힌 세션이 parser 버전 변경 때 다시 읽히지 않는다. 첨부 backfill과 같은 경로로 풀고 **다음 parser 버전 업 전** 완료해야 한다. C3의 늦게 온 Agent·Task 결과 메모도 전체 다시 읽기에 의존한다.
 - 회고 §Findings 3 C4·Action items 1: hook 수집 성공도 해당 세션의 이전 `session_ingest` 실패를 해소하게 한다. C2 스토리에 묶고 회귀 시험 하나를 둔다는 결정이며, 따로 할지 묻는 열린 질문이 아니다.
 - 미룸 §Triage 2026-10-16 I75 및 회고 §Findings 2: Core `Redaction.fileId`와 nullable `start`/`end`가 필요하다. 파일 대상 DB 자리는 0004로 해결했으므로 다시 만드는 작업으로 잡지 않는다.
-- 회고 §Findings 2·Action items 5: I67 변경 규칙, P19 줄어든 transcript 반복 enqueue, P34 가리기 뒤 파생물 연쇄를 함께 인셉션에 넣는다. P34 근거는 `_bmad-output/personal-brain/epic-capture/story-messages-redact-plan.md` §Implementation Notes·남은 위험이다. 그중 첨부 연쇄가 이 에픽 몫이다.
+- 회고 §Findings 2·Action items 5: I67 변경 규칙, P19 줄어든 transcript 반복 enqueue, P34 가리기 뒤 파생물 연쇄를 함께 인셉션에 넣는다. P34 근거는 `_bmad-output/personal-brain/tickets/epic-capture/tickets/story-messages-redact-plan.md` §Implementation Notes·남은 위험이다. 그중 첨부 연쇄가 이 에픽 몫이다.
 
 ## 2. Table Contract 요약 — 일곱 테이블
 
@@ -105,7 +105,7 @@ spine §Table Contract는 모든 칼럼을 고정하지 않고 키·작성자·�
 1. PDF·docx 추출기를 이 에픽에서 구현할지 epic-drive로 옮길지? 에픽 Notes의 표본은 이미지 11건·@파일 5건이며 PDF/document 0건이다. 이동은 아직 결정되지 않았다.
 2. 기존 수집 세션의 첨부를 디스크에 남은 transcript에서 어떤 일감·버전·완료 표식으로 backfill할지? 기본 30일 뒤 사라질 수 있으므로 I104/C2 전체 다시 읽기와 함께 정한다. 다음 parser 버전 업 전 완료라는 기한도 티켓 description·verify에 넣는다.
 3. `message_attachments`·`document_extractions` 등 0002 테이블의 변경 규칙을 DB trigger로 강제할지(I67, 초기 스키마 계획의 미룸)? 실패 세대 청소·파일 가리기 예외를 먼저 포함해야 한다.
-4. Carry의 P19: cursor reset 없이 줄어든 transcript가 매 스캔 다시 큐에 들어가는 경우를 어떤 내역·재읽기 정책으로 끝낼지? 수집 연구 §4에서는 compact도 append라고 실측했지만, 회고가 이 에픽에서 정책을 정하도록 넘겼다. 근거: `_bmad-output/personal-brain/epic-capture/story-spool-plan.md` §Review Triage Log의 2026-10-19 low/reject.
+4. Carry의 P19: cursor reset 없이 줄어든 transcript가 매 스캔 다시 큐에 들어가는 경우를 어떤 내역·재읽기 정책으로 끝낼지? 수집 연구 §4에서는 compact도 append라고 실측했지만, 회고가 이 에픽에서 정책을 정하도록 넘겼다. 근거: `_bmad-output/personal-brain/tickets/epic-capture/tickets/story-spool-plan.md` §Review Triage Log의 2026-10-19 low/reject.
 
 Notes·Carry의 S9/S10/S12/S13, 마스킹 B, 영구/일시 오류 분류, file 대상 failures retry, C4 묶음, I75 표현 보강은 열린 선택지가 아니라 이미 지켜야 하는 인셉션 입력이다.
 
