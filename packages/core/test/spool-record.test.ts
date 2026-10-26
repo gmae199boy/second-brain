@@ -345,9 +345,10 @@ describe('the retry instant of a spool line', () => {
 });
 
 describe('첨부 연결 spool', () => {
-  const record: SpoolRecord = { ...sampleSpoolRecord(), kind: 'attachment_link', payload: {
+  const record = { ...sampleSpoolRecord(), kind: 'attachment_link' as const, payload: {
+    status: 'stored' as const, externalLocator: null,
     session: 'demo:session-0001', harnessMessageId: 'm1', ordinal: 0, sourceKind: 'image', sourceRef: '42', displayName: null,
-    contentHash: 'sha256:' + 'a'.repeat(64), sizeBytes: 12, storeKind: 'local', ownership: 'brain', locator: `aa/aa/${'a'.repeat(64)}.png`,
+    contentHash: 'sha256:' + 'a'.repeat(64), sizeBytes: 12, storeKind: 'local' as const, ownership: 'brain' as const, locator: `aa/aa/${'a'.repeat(64)}.png`,
   } };
   it('바이트 없는 메타데이터만 왕복하고 64KiB 초과는 거부한다', () => {
     const line = encoded(record); const decoded = decodeSpoolLine(line);
@@ -361,6 +362,32 @@ describe('첨부 연결 spool', () => {
       expect(encodeSpoolLine(invalid).ok).toBe(false);
       const raw = JSON.parse(encoded(record)) as {payload:Record<string,unknown>}; for (const [key,value] of Object.entries(patch)) raw.payload[key.replace(/[A-Z]/g, letter => '_' + letter.toLowerCase())]=value;
       expect(decodeSpoolLine(JSON.stringify(raw)).ok).toBe(false);
+    }
+  });
+});
+
+describe('@파일 spool 상태', () => {
+  const record = { ...sampleSpoolRecord(), kind: 'attachment_link' as const, payload: {
+    session: 'demo:session-0001', harnessMessageId: 'm', ordinal: 1, sourceKind: 'file', sourceRef: 'a', displayName: 'note.md',
+    status: 'missing_at_ingest' as const, contentHash: null, sizeBytes: null, storeKind: null, locator: null, ownership: null, externalLocator: null,
+  } };
+  it('missing을 왕복하고 모든 파일 칸이 null이어야 한다', () => {
+    expect(decodeSpoolLine(encoded(record))).toMatchObject({ ok: true, record });
+    for (const patch of [{ contentHash: 'sha256:' + 'a'.repeat(64) }, { sizeBytes: 0 }, { storeKind: 'local' }, { locator: 'path' }, { ownership: 'brain' }, { externalLocator: '~/note.md' }, { status: 'unknown' }]) {
+      expect(encodeSpoolLine({ ...record, payload: { ...record.payload, ...patch } } as SpoolRecord).ok).toBe(false);
+      const raw = JSON.parse(encoded(record)) as { payload: Record<string, unknown> };
+      for (const [key, value] of Object.entries(patch)) raw.payload[key.replace(/[A-Z]/g, c => '_' + c.toLowerCase())] = value;
+      expect(decodeSpoolLine(JSON.stringify(raw)).ok).toBe(false);
+    }
+  });
+  it('옛 stored 줄을 읽고 external에는 홈 기준 경로만 받는다', () => {
+    const stored = { ...record, payload: { ...record.payload, status: 'stored' as const, contentHash: 'sha256:' + 'a'.repeat(64), sizeBytes: 1, storeKind: 'local' as const, ownership: 'brain' as const, locator: `aa/aa/${'a'.repeat(64)}`, externalLocator: '~/project/note.md' } };
+    expect(decodeSpoolLine(encoded(stored))).toMatchObject({ ok: true, record: stored });
+    const raw = JSON.parse(encoded(stored)) as { payload: Record<string, unknown> };
+    delete raw.payload.status; delete raw.payload.external_locator;
+    expect(decodeSpoolLine(JSON.stringify(raw))).toMatchObject({ ok: true, record: { payload: { status: 'stored', externalLocator: null } } });
+    for (const externalLocator of ['../note.md', '/tmp/note.md', '~/../note.md']) {
+      expect(encodeSpoolLine({ ...stored, payload: { ...stored.payload, externalLocator } }).ok).toBe(false);
     }
   });
 });

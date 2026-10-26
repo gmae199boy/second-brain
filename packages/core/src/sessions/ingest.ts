@@ -1,10 +1,12 @@
-import { contentHashOfBytes } from '../domain/file.js';
+import type { SourceFileReader } from '../ports/source-file.js';
+import { contentHashOfBytes, externalLocator } from '../domain/file.js';
 import type { FileStore } from '../ports/file-store.js';
 import type {
   IngestBatch,
   IngestAttachment,
   IngestMessage,
   IngestToolNote,
+  ParsedAttachment,
 } from '../domain/ingest-batch.js';
 import { normalizeRemoteIdentity, projectIdentityKey } from '../domain/project-identity.js';
 import type { ParserCursor, Session, SessionIngestSource, TagSource } from '../domain/session.js';
@@ -21,6 +23,7 @@ import type { Parser } from '../ports/parser.js';
 import type { Checkout, InspectResult, RepositoryInspector } from '../ports/repository.js';
 import type { Spool } from '../ports/spool.js';
 import type {
+  AttachmentStore,
   EnsureCheckoutInput,
   IngestCounts,
   SessionStore,
@@ -63,6 +66,8 @@ export interface IngestSessionInput {
 
 /** What the caller of one ingest decides, beyond the input itself. */
 export interface IngestSessionOptions {
+  /** Already captured spool outcomes take precedence over a later disk read. */
+  attachmentOverrides?: readonly IngestAttachment[];
   /**
    * Whether a database that will not take a write goes to the spool (AD-9).
    *
@@ -118,9 +123,14 @@ export type IngestSessionResult =
       message: string;
     };
 
+/** Maximum disk fallback read, before any database transaction. */
+export const MAX_SOURCE_FILE_BYTES = 32 * 1024 * 1024;
+
 /** Everything the use case is given, all of it a port (AD-1). */
 export interface IngestSessionDependencies {
-  store: SessionStore & UserStore & TranscriptFileStore;
+  sources?: SourceFileReader;
+  userHome?: string | null;
+  store: SessionStore & UserStore & TranscriptFileStore & Pick<AttachmentStore, 'listMessageAttachments'>;
   /** Original attachment bytes, written before the database transaction. */
   files: FileStore;
   /**
@@ -211,6 +221,8 @@ export async function ingestSession(
   const {
     store,
     files,
+    sources,
+    userHome = null,
     spool,
     clock,
     idGen,
@@ -295,6 +307,9 @@ export async function ingestSession(
   // behind for good. Re-reading inserts nothing that is already stored (AD-8).
   const parsed = parser.parse(read.content, cursorFor(stored, parser.version));
   if (!parsed.ok) return parsed;
+  // Only override messages this read can write. Other links keep their own replay/retry.
+  const parsedMessageIds = new Set(parsed.messages.map(message => message.harnessMessageId));
+  const attachmentOverrides = (options.attachmentOverrides ?? []).filter(a => parsedMessageIds.has(a.harnessMessageId));
 
   /**
    * What this read saw, written to `transcript_files` so the next folder scan
@@ -332,7 +347,7 @@ export async function ingestSession(
    * hook of a session's first seconds.
    */
   const nothingToStore =
-    parsed.attachments.length === 0 && parsed.messages.length === 0 && (stored === null || parsed.toolNotes.length === 0);
+    attachmentOverrides.length === 0 && parsed.attachments.length === 0 && parsed.messages.length === 0 && (stored === null || parsed.toolNotes.length === 0);
   /**
    * The read found the front of the transcript changed, and there is a stored
    * session to tell about it. That is reported even when the read then found no
@@ -381,19 +396,42 @@ export async function ingestSession(
     };
   }
 
-  const attachments: IngestAttachment[] = [];
+  const attachments: IngestAttachment[] = [...attachmentOverrides];
   const saved = new Map<string, Extract<Awaited<ReturnType<FileStore['put']>>, { ok: true }>>();
+  const existing = await existingAttachmentPositions(store, input.session, stored !== null ? parsed.attachments : []);
   for (const a of parsed.attachments) {
-    const hash = contentHashOfBytes(a.bytes);
+    if (attachmentOverrides.some(saved => saved.harnessMessageId === a.harnessMessageId && saved.ordinal === a.ordinal)) continue;
+    // A place that is already filled is final (0008): reading the source again
+    // could only leave a blob no row points at.
+    if (existing.has(`${a.harnessMessageId}:${String(a.ordinal)}`)) continue;
+    let bytes = a.bytes;
+    if (bytes === null && a.sourcePath !== null && a.sourceCheck !== null && sources !== undefined) {
+      const source = await sources.read(a.sourcePath, MAX_SOURCE_FILE_BYTES);
+      if (source.ok && source.bytes.length <= MAX_SOURCE_FILE_BYTES) {
+        const check = a.sourceCheck;
+        const matches = 'sizeBytes' in check ? source.bytes.length === check.sizeBytes
+          : source.bytes.reduce((count, byte) => count + (byte === 0x0a ? 1 : 0), 1) === check.lineCount;
+        if (matches) bytes = source.bytes;
+      }
+    }
+    const base = { id: idGen.next(), harnessMessageId: a.harnessMessageId, ordinal: a.ordinal,
+      sourceKind: a.sourceKind, sourceRef: a.sourceRef, displayName: a.displayName };
+    if (bytes === null) {
+      attachments.push({ ...base, file: null });
+      continue;
+    }
+    const hash = contentHashOfBytes(bytes);
     let put = saved.get(hash);
     if (put === undefined) {
-      const result = await files.put(a.bytes);
+      const result = await files.put(bytes);
       if (!result.ok) return result;
       put = result;
       saved.set(hash, put);
     }
-    attachments.push({ id: idGen.next(), harnessMessageId: a.harnessMessageId, ordinal: a.ordinal, sourceKind: a.sourceKind, sourceRef: a.sourceRef, displayName: a.displayName,
-      file: { id: idGen.next(), contentHash: put.contentHash, sizeBytes: put.sizeBytes, location: { ...put.location, id: idGen.next() } } });
+    const locator = a.sourcePath === null || userHome === null ? null : externalLocator(a.sourcePath, userHome);
+    attachments.push({ ...base, file: { id: idGen.next(), contentHash: put.contentHash, sizeBytes: put.sizeBytes,
+      location: { ...put.location, id: idGen.next() },
+      external: locator === null ? null : { id: idGen.next(), storeKind: 'local', ownership: 'external', locator } } });
   }
   afterParse.attachments = attachments;
   const owner = await store.readSelfUser();
@@ -711,4 +749,36 @@ function firstOccurredAt(messages: readonly IngestMessage[]): Date {
     throw new TypeError('a session cannot be created from a batch with no messages');
   }
   return first.occurredAt;
+}
+
+/**
+ * The attachment places already stored for the messages whose attachments need
+ * the source file read again, as `harnessMessageId:ordinal`.
+ *
+ * Only asked when a disk read is coming: bytes the transcript carries hash to
+ * the same blob every time, so putting them twice writes nothing, but a source
+ * file may have changed since its place was filled. A read that fails asks
+ * nothing of the caller — the write behind it skips filled places anyway.
+ */
+async function existingAttachmentPositions(
+  store: Pick<SessionStore, 'readSession'> & Pick<AttachmentStore, 'listMessageAttachments'>,
+  session: SessionToken,
+  attachments: readonly ParsedAttachment[],
+): Promise<ReadonlySet<string>> {
+  const positions = new Set<string>();
+  const wanted = new Set(attachments.filter((a) => a.bytes === null).map((a) => a.harnessMessageId));
+  if (wanted.size === 0) return positions;
+  try {
+    const read = await store.readSession(session);
+    if (!read.ok) return positions;
+    for (const message of read.messages) {
+      if (!wanted.has(message.harnessMessageId)) continue;
+      const listed = await store.listMessageAttachments(message.id);
+      if (!listed.ok) continue;
+      for (const row of listed.attachments) positions.add(`${message.harnessMessageId}:${String(row.ordinal)}`);
+    }
+  } catch {
+    // Same as a coded failure: the place check is a saving, not a guard.
+  }
+  return positions;
 }

@@ -167,22 +167,27 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       if (message === undefined) throw new Error('첨부 메시지가 없습니다');
       const existing = attachmentRows.get(message.id) ?? [];
       if (existing.some(row => row.ordinal === a.ordinal)) continue;
-      let file = fileRows.get(a.file.contentHash);
-      if (file === undefined) {
-        const { storeKind, locator, ownership } = a.file.location;
-        file = { id: a.file.id, contentHash: a.file.contentHash, sizeBytes: a.file.sizeBytes, home: ownership === 'brain' ? { storeKind, locator, ownership } : null };
-        fileRows.set(a.file.contentHash, file);
+      let file: MessageAttachment['file'] = null;
+      if (a.file !== null) {
+        file = fileRows.get(a.file.contentHash) ?? null;
+        if (file === null) {
+          file = { id: a.file.id, contentHash: a.file.contentHash, sizeBytes: a.file.sizeBytes, home: null, locations: [] };
+          fileRows.set(a.file.contentHash, file);
+        }
+        for (const location of [a.file.location, a.file.external]) {
+          if (location === null || file.locations.some(l => l.storeKind === location.storeKind && l.locator === location.locator)) continue;
+          const { storeKind, locator, ownership } = location;
+          file.locations = [...file.locations, { storeKind, locator, ownership }].sort((a,b) => a.ownership.localeCompare(b.ownership) || a.locator.localeCompare(b.locator));
+          if (file.home === null && ownership === 'brain') file.home = { storeKind, locator, ownership };
+        }
       }
-      if (file.home === null && a.file.location.ownership === 'brain') {
-        const { storeKind, locator, ownership } = a.file.location;
-        file.home = { storeKind, locator, ownership };
-      }
-      existing.push({ id: a.id, ordinal: a.ordinal, sourceKind: a.sourceKind, sourceRef: a.sourceRef, displayName: a.displayName, status: 'stored', file });
+      existing.push({ id: a.id, ordinal: a.ordinal, sourceKind: a.sourceKind, sourceRef: a.sourceRef, displayName: a.displayName, status: file === null ? 'missing_at_ingest' : 'stored', file });
       attachmentRows.set(message.id, existing);
       linked++;
     }
     return linked;
   }
+  const fileNames: import('../../ports/store.js').FileName[] = [];
   let closes = 0;
 
   /** The open row for one piece of work, or undefined (`work_items_open_key_idx`). */
@@ -399,8 +404,34 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       return { ok: true, session: existing === undefined ? null : { ...existing } };
     },
 
+    async listMissingFileNames({ limit }) {
+      const names: import('../../ports/store.js').MissingFileName[] = [];
+      const add = (fileId: string, nameSource: 'attachment_name' | 'location_path', text: string) => {
+        if (![...fileNames, ...names].some(n => n.fileId === fileId && n.nameSource === nameSource && n.text === text)) names.push({ fileId, nameSource, text });
+      };
+      for (const rows of attachmentRows.values()) for (const a of rows) {
+        if (a.file === null) continue;
+        if (a.displayName !== null) add(a.file.id, 'attachment_name', a.displayName);
+      }
+      for (const file of fileRows.values()) for (const l of file.locations) {
+        if (l.storeKind === 'local' && l.ownership === 'external') add(file.id, 'location_path', l.locator);
+      }
+      return { ok: true, names: names.slice(0, limit) };
+    },
+    async writeFileNames({ names }) {
+      let inserted = 0;
+      for (const name of names) {
+        if (fileNames.some(n => n.fileId === name.fileId && n.nameSource === name.nameSource && n.text === name.text)) continue;
+        fileNames.push({ ...name });
+        inserted++;
+      }
+      return { ok: true, inserted };
+    },
+    async listFileNames(fileId) {
+      return { ok: true, names: fileNames.filter(n => n.fileId === fileId).map(n => ({ ...n })) };
+    },
     async listMessageAttachments(messageId) {
-      return { ok: true, attachments: (attachmentRows.get(messageId) ?? []).slice().sort((a,b) => a.ordinal - b.ordinal).map(a => ({ ...a, file: a.file === null ? null : { ...a.file, home: a.file.home === null ? null : { ...a.file.home } } })) };
+      return { ok: true, attachments: (attachmentRows.get(messageId) ?? []).slice().sort((a,b) => a.ordinal - b.ordinal).map(a => ({ ...a, file: a.file === null ? null : { ...a.file, locations: a.file.locations.map(l => ({ ...l })), home: a.file.home === null ? null : { ...a.file.home } } })) };
     },
     async linkAttachments(input) {
       const token = formatSessionToken(input.key);

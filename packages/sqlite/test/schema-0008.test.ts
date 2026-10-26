@@ -139,7 +139,7 @@ describe('0008 attachment and extraction change rules', () => {
   it('keeps the 10.2 attachment write path idempotent on schema 8', async () => {
     const attachments = [{
       id: 'retry', harnessMessageId: 'm', ordinal: 9, sourceKind: 'path', sourceRef: '/demo/new', displayName: 'new',
-      file: { id: 'new-file', contentHash: 'sha256:' + 'a'.repeat(64), sizeBytes: 2,
+      file: { external: null, id: 'new-file', contentHash: 'sha256:' + 'a'.repeat(64), sizeBytes: 2,
         location: { id: 'new-location', storeKind: 'local' as const, locator: '/demo/new', ownership: 'brain' as const } },
     }];
     const write = () => withWrite(connection, held => writeAttachments(held, attachments, new Map([['m', 'm']]), AT));

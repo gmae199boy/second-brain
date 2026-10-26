@@ -1,3 +1,4 @@
+import { fileSourceReader } from './runtime/source-file.js';
 import { join } from 'node:path';
 import { localFileStore } from './runtime/file-store.js';
 import { Command, CommanderError } from 'commander';
@@ -569,6 +570,8 @@ async function execute(
     store,
     spool,
     files: localFileStore({ root: config.ok ? config.config.filesPath : join(home, 'files') }),
+    sources: fileSourceReader(),
+    userHome: env['HOME']?.startsWith('/') === true ? env['HOME'] : null,
     schemaVersion: SQLITE_SCHEMA_VERSION,
     clock,
     idGen,

@@ -334,7 +334,7 @@ it('메시지보다 먼저 온 첨부 연결은 시도를 쓰고 나중에 메�
   await brain.sessions.ingest({session:TOKEN,transcriptPath:PATH});
   const session=store.snapshot().sessions[0]!;
   const target=store.snapshot().messages[0]!;
-  const record = { ...sampleSpoolRecord(), kind:'attachment_link' as const, payload:{session:TOKEN,harnessMessageId:'later-image',ordinal:0,sourceKind:'image',sourceRef:null,displayName:null,contentHash:'sha256:'+'a'.repeat(64),sizeBytes:1,storeKind:'local' as const,ownership:'brain' as const,locator:`aa/aa/${'a'.repeat(64)}`} };
+  const record = { ...sampleSpoolRecord(), kind:'attachment_link' as const, payload:{status:'stored' as const,externalLocator:null,session:TOKEN,harnessMessageId:'later-image',ordinal:0,sourceKind:'image',sourceRef:null,displayName:null,contentHash:'sha256:'+'a'.repeat(64),sizeBytes:1,storeKind:'local' as const,ownership:'brain' as const,locator:`aa/aa/${'a'.repeat(64)}`} };
   expect(await spool.append([record])).toMatchObject({ok:true});
   expect(await brain.queue.drain({budgetMs:DRAIN_BUDGET_MS.command})).toMatchObject({replayed:0,spoolFailed:0});
   expect(spool.records()[0]?.attempts).toBe(1);
@@ -347,4 +347,79 @@ it('메시지보다 먼저 온 첨부 연결은 시도를 쓰고 나중에 메�
   await spool.append([{...record,id:'01940000-0000-7000-8000-00000000fffe'}]);
   expect(await brain.queue.drain({budgetMs:DRAIN_BUDGET_MS.command})).toMatchObject({replayed:1});
   expect(await store.listMessageAttachments(message.id)).toMatchObject({ok:true,attachments:[{status:'stored',file:{contentHash:record.payload.contentHash}}]});
+});
+
+it('첨부 이름은 drain이 한 번 채우고 실패하면 다음 drain에 다시 시도한다', async () => {
+  const original = memoryStore();
+  let fail = true;
+  let writes = 0;
+  const store = { ...original, async writeFileNames(input: Parameters<typeof original.writeFileNames>[0]) {
+    writes++;
+    if (fail) return { ok: false as const, code: 'DB_LOCKED' as const, message: '잠김' };
+    return original.writeFileNames(input);
+  } };
+  const { brain } = await kit({ store, withFolder: false });
+  await brain.sessions.ingest({ session: TOKEN, transcriptPath: PATH });
+  const message = original.snapshot().messages[0]!;
+  const session = original.snapshot().sessions[0]!;
+  await original.linkAttachments({ key: session, linkedAt: NOW, attachments: [{
+    id: 'attachment', harnessMessageId: message.harnessMessageId, ordinal: 0, sourceKind: 'file', sourceRef: 'a', displayName: 'note.md',
+    file: { id: 'file', contentHash: 'sha256:' + 'a'.repeat(64), sizeBytes: 1,
+      location: { id: 'home', storeKind: 'local', ownership: 'brain', locator: `aa/aa/${'a'.repeat(64)}` },
+      external: { id: 'external', storeKind: 'local', ownership: 'external', locator: '~/project/note.md' } },
+  }] });
+  await brain.queue.drain({ budgetMs: 0 });
+  expect(writes).toBe(0);
+  expect(await brain.queue.drain({ budgetMs: 10_000 })).toMatchObject({ stopped: 'empty' });
+  expect(await original.listFileNames('file')).toEqual({ ok: true, names: [] });
+  fail = false;
+  await brain.queue.drain({ budgetMs: 10_000 });
+  const names = await original.listFileNames('file');
+  expect(names.ok && names.names.map(n => n.text).sort()).toEqual(['note.md', '~/project/note.md']);
+  await brain.queue.drain({ budgetMs: 10_000 });
+  expect(writes).toBe(2);
+});
+
+it('missing과 external을 spool 메타데이터만으로 재주입한다', async () => {
+  const { brain, store, spool } = await kit({ withFolder: false });
+  await brain.sessions.ingest({ session: TOKEN, transcriptPath: PATH });
+  const message = store.snapshot().messages[0]!;
+  const base = { session: TOKEN, harnessMessageId: message.harnessMessageId, sourceKind: 'file', sourceRef: 'attachment', displayName: 'note.md' };
+  await spool.append([
+    { ...sampleSpoolRecord(), id: 'missing', kind: 'attachment_link', payload: { ...base, ordinal: 0, status: 'missing_at_ingest', contentHash: null, sizeBytes: null, storeKind: null, locator: null, ownership: null, externalLocator: null } },
+    { ...sampleSpoolRecord(), id: 'stored', kind: 'attachment_link', payload: { ...base, ordinal: 1, status: 'stored', contentHash: 'sha256:' + 'a'.repeat(64), sizeBytes: 1, storeKind: 'local', ownership: 'brain', locator: `aa/aa/${'a'.repeat(64)}`, externalLocator: '~/project/note.md' } },
+  ]);
+  expect(await brain.queue.drain({ budgetMs: 10_000 })).toMatchObject({ replayed: 2 });
+  const rows = await store.listMessageAttachments(message.id);
+  expect(rows).toMatchObject({ ok: true, attachments: [{ ordinal: 0, status: 'missing_at_ingest', file: null }, { ordinal: 1, status: 'stored', file: { locations: [{ ownership: 'brain' }, { ownership: 'external', locator: '~/project/note.md' }] } }] });
+});
+
+it('spool 대기 중 원본이 사라지거나 생겨도 처음 캡처한 stored·missing을 유지한다', async () => {
+  const store = memoryStore();
+  await store.ensureSelfUser(sampleSelfUserInput());
+  const spool = memorySpool();
+  let locked = true;
+  let available = true;
+  let sourceReads = 0;
+  const content = JSON.stringify({ messages: [{ harnessMessageId: 'm', role: 'user', body: '파일', occurredAt: NOW.toISOString(), attachments: [
+    { sourcePath: '/tmp/brain-source/first.pdf', sourceCheck: { sizeBytes: 1 }, displayName: 'first.pdf' },
+    { sourcePath: '/tmp/brain-source/second.pdf', sourceCheck: { sizeBytes: 2 }, displayName: 'second.pdf' },
+  ] }] });
+  const brain = createBrain({
+    store: { ...store, async readSchemaVersion() { return { ok: true, version: { version: 8, appliedAt: NOW } }; },
+      async ingest(batch) { return locked ? { ok: false, code: 'DB_LOCKED', message: '잠김' } : store.ingest(batch); } },
+    files: memoryFileStore(), spool, schemaVersion: 8, clock: fixedClock(NOW), idGen: sequenceIdGen({ timestampMs: NOW.getTime() }),
+    parsers: [memoryParser()], transcripts: memoryTranscriptReader({ files: { [PATH]: content } }), repositories: memoryRepositories(), machine: 'machine',
+    userHome: '/tmp/brain-source', sources: { async read() { sourceReads++; return { ok: true, bytes: available ? Uint8Array.of(1) : Uint8Array.of(1, 2) }; } },
+  });
+  expect(await brain.sessions.ingest({ session: TOKEN, transcriptPath: PATH })).toMatchObject({ ok: true, spooled: true });
+  expect(sourceReads).toBe(2);
+  locked = false; available = false;
+  expect(await brain.queue.drain({ budgetMs: 10_000 })).toMatchObject({ replayed: 3 });
+  expect(sourceReads).toBe(2);
+  const message = store.snapshot().messages[0]!;
+  expect(await store.listMessageAttachments(message.id)).toMatchObject({ ok: true, attachments: [
+    { ordinal: 0, status: 'stored', file: { sizeBytes: 1, locations: [{ ownership: 'brain' }, { locator: '~/first.pdf' }] } },
+    { ordinal: 1, status: 'missing_at_ingest', file: null },
+  ] });
 });

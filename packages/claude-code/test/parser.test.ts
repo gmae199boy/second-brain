@@ -548,7 +548,7 @@ describe('the Claude Code parser', () => {
     // calls in front of the first message, counts the lines it walked past, and
     // drops orca's own prompt headings — so a session stored by `3` is read
     // again from the front under the new rules (AD-4).
-    expect(parser.version).toBe('5');
+    expect(parser.version).toBe('6');
   });
 
   it('keeps the two turns and nothing else the editor wrote', () => {
@@ -1652,7 +1652,7 @@ describe('세션을 시작한 폴더', () => {
     expect(tail.cursorReset).toBe(false);
     expect(tail.messages).toHaveLength(1);
     expect(tail.startCwd).toBe('/demo/gone');
-    expect(tail.parserVersion).toBe('5');
+    expect(tail.parserVersion).toBe('6');
   });
 
   it('메시지만 cwd를 가지면 첫 메시지의 값을 쓰고 없으면 null이다', () => {
@@ -1691,8 +1691,8 @@ describe('붙여 넣은 이미지', () => {
     expect(result.attachments).toHaveLength(1);
     const attachment = result.attachments[0]!;
     expect(attachment.harnessMessageId).toBe('large-image');
-    expect(attachment.bytes.length).toBe(bytes.length);
-    expect(Buffer.from(attachment.bytes).equals(bytes)).toBe(true);
+    expect(attachment.bytes!.length).toBe(bytes.length);
+    expect(Buffer.from(attachment.bytes!).equals(bytes)).toBe(true);
   });
   it('도구 결과와 비인간·메타·요약·sidechain·assistant와 잘못된 이미지는 첨부를 내지 않는다', () => {
     const content = [
@@ -1706,5 +1706,80 @@ describe('붙여 넣은 이미지', () => {
     ].join('\n');
     const result = claudeCodeParser().parse(content); expect(result.ok).toBe(true); if (!result.ok) return;
     expect(result.messages).toEqual([]); expect(result.attachments).toEqual([]);
+  });
+});
+
+describe('@파일 첨부 사슬', () => {
+  const path = new URL('note.md', 'file:///tmp/brain-parser-fixture/').pathname;
+  const text = { type: 'text', file: { filePath: path, content: 'alpha\nbeta', numLines: 2, startLine: 1, totalLines: 2 } };
+  const user = (uuid: string, fields = {}) => ({ type: 'user', uuid, timestamp: '2026-10-26T00:00:00.000Z', message: { content: '@note.md 읽기' }, ...fields });
+  const attached = (uuid: string, parentUuid: string, content: unknown = text, fields = {}, extra = {}) => ({ type: 'attachment', uuid, parentUuid, attachment: { type: 'file', filename: path, content, ...fields }, ...extra });
+  const parse = (lines: unknown[]) => claudeCodeParser().parse(lines.map(line => JSON.stringify(line)).join('\n') + '\n');
+
+  it('붙인 이미지 뒤에 파일을 번호 매기며 다른 종류의 첨부도 사슬을 잇는다', () => {
+    const image = { type: 'image', source: { type: 'base64', data: 'AQID' } };
+    const result = parse([
+      user('u', { message: { content: [{ type: 'text', text: '읽기' }, image] } }),
+      attached('a1', 'u'), attached('a2', 'a1', {}, { type: 'environment' }),
+      attached('a3', 'a2'), attached('a3', 'a2'),
+    ]);
+    expect(result.ok).toBe(true); if (!result.ok) return;
+    expect(result.parserVersion).toBe('6');
+    expect(result.attachments.map(a => [a.ordinal, a.sourceKind, a.sourceRef])).toEqual([[0, 'image', null], [1, 'file', 'a1'], [2, 'file', 'a3']]);
+    expect(result.attachments[1]).toMatchObject({ displayName: 'note.md', bytes: new Uint8Array(Buffer.from('alpha\nbeta')), sourcePath: path });
+    expect(result.droppedLines).toMatchObject({ not_conversation: 3, duplicate: 1 });
+  });
+
+  it('전체 텍스트와 크기가 맞는 base64만 바이트를 내고 나머지는 확인값을 낸다', () => {
+    const cases = [
+      attached('full', 'u'),
+      attached('truncated', 'full', text, { truncated: true }),
+      attached('partial', 'truncated', { ...text, file: { ...text.file, startLine: 2 } }),
+      attached('image', 'partial', { type: 'image', file: { base64: 'AQID', originalSize: 3 } }),
+      attached('pdf', 'image', { type: 'pdf', file: { base64: '', originalSize: 10 } }),
+      attached('bad64', 'pdf', { type: 'image', file: { base64: '?', originalSize: 3 } }),
+      attached('mismatch', 'bad64', { type: 'image', file: { base64: 'AQID', originalSize: 4 } }),
+      attached('unknown', 'mismatch', { type: 'unknown', file: {} }),
+      attached('bad', 'unknown', { type: 'text', file: { content: 1 } }),
+    ];
+    const result = parse([user('u'), ...cases]);
+    expect(result.ok).toBe(true); if (!result.ok) return;
+    expect(result.attachments).toHaveLength(8);
+    expect(result.attachments.map(a => a.bytes === null)).toEqual([false, true, true, false, true, true, true, true]);
+    expect(result.attachments[1]?.sourceCheck).toEqual({ lineCount: 2 });
+    expect(result.attachments[4]?.sourceCheck).toEqual({ sizeBytes: 10 });
+    expect(result.attachments[7]?.sourceCheck).toBeNull();
+    expect(result.attachments[3]?.bytes).toEqual(Uint8Array.of(1, 2, 3));
+  });
+
+  it('요약·meta·sidechain·도구 결과와 커서 앞 메시지의 파일을 내지 않는다', () => {
+    const parser = claudeCodeParser();
+    const prefix = [user('old'), attached('old-file', 'old')];
+    const lines = [...prefix, user('cursor'),
+      user('compact', { isCompactSummary: true }), attached('c', 'compact'), attached('cc', 'c'),
+      user('meta', { isMeta: true }), attached('m', 'meta'),
+      user('side', { isSidechain: true }), attached('s', 'side'),
+      user('tool', { message: { content: [{ type: 'tool_result', content: 'result' }] } }), attached('t', 'tool'),
+      attached('directory', 'cursor', text, { type: 'directory' }),
+      attached('edit', 'directory', text, { type: 'edited_text_file' }),
+      attached('reference', 'edit', text, { type: 'compact_file_reference' }),
+      attached('side-file', 'cursor', text, {}, { isSidechain: true }),
+      attached('late-old', 'old-file'),
+    ];
+    const content = lines.map(line => JSON.stringify(line)).join('\n') + '\n';
+    const whole = parser.parse(content);
+    expect(whole.ok).toBe(true); if (!whole.ok) return;
+    const tail = parser.parse(content, whole.cursor);
+    expect(tail.ok).toBe(true); if (!tail.ok) return;
+    expect(tail.attachments).toEqual([]);
+    expect(whole.attachments.map(a => a.sourceRef)).toEqual(['old-file', 'late-old']);
+  });
+
+  it('대형 base64도 선형 검사로 읽고 잘못된 파일 모양은 던지지 않는다', () => {
+    const bytes = Buffer.alloc(2_000_000, 90);
+    const result = parse([user('u'), attached('big', 'u', { type: 'image', file: { base64: bytes.toString('base64'), originalSize: bytes.length } }), attached('bad', 'big', null)]);
+    expect(result.ok).toBe(true); if (!result.ok) return;
+    expect(result.attachments).toHaveLength(1);
+    expect(result.attachments[0]?.bytes).toEqual(new Uint8Array(bytes));
   });
 });

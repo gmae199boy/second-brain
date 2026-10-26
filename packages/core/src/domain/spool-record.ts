@@ -1,3 +1,4 @@
+import { isExternalLocator } from './file.js';
 import { errorLine } from '../error-text.js';
 import { formatInstant, parseInstant } from '../instant.js';
 import type { SessionToken } from './session-token.js';
@@ -292,7 +293,7 @@ function encodePayload(
       const p = checked.value;
       return { ok: true, value: { session: p.session, harness_message_id: p.harnessMessageId, ordinal: p.ordinal,
         source_kind: p.sourceKind, source_ref: p.sourceRef, display_name: p.displayName,
-        content_hash: p.contentHash, size_bytes: p.sizeBytes, store_kind: p.storeKind, locator: p.locator, ownership: p.ownership } };
+        content_hash: p.contentHash, size_bytes: p.sizeBytes, store_kind: p.storeKind, locator: p.locator, ownership: p.ownership, status: p.status, external_locator: p.externalLocator } };
     }
     case 'session_ingest':
       return {
@@ -423,7 +424,7 @@ export function decodeSpoolLine(line: string): DecodeSpoolLineResult {
   if (kind === 'attachment_link') {
     const decoded = decodeAttachmentPayload({ session: payload['session'], harnessMessageId: payload['harness_message_id'], ordinal: payload['ordinal'],
       sourceKind: payload['source_kind'], sourceRef: payload['source_ref'], displayName: payload['display_name'], contentHash: payload['content_hash'],
-      sizeBytes: payload['size_bytes'], storeKind: payload['store_kind'], locator: payload['locator'], ownership: payload['ownership'] });
+      sizeBytes: payload['size_bytes'], storeKind: payload['store_kind'], locator: payload['locator'], ownership: payload['ownership'], status: payload['status'], externalLocator: payload['external_locator'] });
     if (!decoded.ok) return decoded;
     return { ok: true, record: { schemaVersion: SPOOL_RECORD_VERSION, id, kind, occurredAt: instant.value, attempts, ...retry, payload: decoded.value } };
   }
@@ -562,30 +563,40 @@ function describe(value: unknown): string {
   return String(value);
 }
 
-export interface AttachmentLinkSpoolPayload {
+interface AttachmentLinkSpoolBase {
   session: SessionToken;
   harnessMessageId: string;
   ordinal: number;
   sourceKind: string;
   sourceRef: string | null;
   displayName: string | null;
-  contentHash: string;
-  sizeBytes: number;
-  storeKind: 'local' | 'drive';
-  locator: string;
-  ownership: 'brain' | 'external';
 }
+export type AttachmentLinkSpoolPayload = AttachmentLinkSpoolBase & (
+  | { status: 'stored'; contentHash: string; sizeBytes: number; storeKind: 'local' | 'drive'; locator: string; ownership: 'brain' | 'external'; externalLocator: string | null }
+  | { status: 'missing_at_ingest'; contentHash: null; sizeBytes: null; storeKind: null; locator: null; ownership: null; externalLocator: null }
+);
+
 export interface AttachmentLinkSpoolRecord extends SpoolRecordBase {
   kind: 'attachment_link';
   payload: AttachmentLinkSpoolPayload;
 }
 function decodeAttachmentPayload(p: Record<string, unknown>): { ok: true; value: AttachmentLinkSpoolPayload } | { ok: false; message: string } {
-  for (const key of ['session','harnessMessageId','sourceKind','contentHash','locator']) {
+  const value = { ...p, status: p['status'] === undefined ? 'stored' : p['status'], externalLocator: p['externalLocator'] ?? null };
+  for (const key of ['session', 'harnessMessageId', 'sourceKind']) {
     if (typeof p[key] !== 'string' || p[key] === '') return { ok: false, message: '첨부 연결의 문자열이 비었습니다' };
   }
-  if ((p['contentHash'] as string).length !== 71 || !/^sha256:[0-9a-f]{64}$/.test(p['contentHash'] as string)) return { ok: false, message: '첨부 해시가 올바르지 않습니다' };
-  for (const key of ['ordinal','sizeBytes']) if (!Number.isSafeInteger(p[key]) || (p[key] as number) < 0) return { ok: false, message: '첨부 정수가 올바르지 않습니다' };
-  for (const key of ['sourceRef','displayName']) if (p[key] !== null && (typeof p[key] !== 'string' || p[key] === '')) return { ok: false, message: '첨부 문자열이 올바르지 않습니다' };
-  if ((p['storeKind'] !== 'local' && p['storeKind'] !== 'drive') || (p['ownership'] !== 'brain' && p['ownership'] !== 'external')) return { ok: false, message: '첨부 위치가 올바르지 않습니다' };
-  return { ok: true, value: p as unknown as AttachmentLinkSpoolPayload };
+  if (!Number.isSafeInteger(p['ordinal']) || (p['ordinal'] as number) < 0) return { ok: false, message: '첨부 정수가 올바르지 않습니다' };
+  for (const key of ['sourceRef', 'displayName']) if (p[key] !== null && (typeof p[key] !== 'string' || p[key] === '')) return { ok: false, message: '첨부 문자열이 올바르지 않습니다' };
+  if (value.status === 'missing_at_ingest') {
+    for (const key of ['contentHash', 'sizeBytes', 'storeKind', 'locator', 'ownership', 'externalLocator']) {
+      if (value[key as keyof typeof value] !== null) return { ok: false, message: '빠진 첨부에 파일 위치가 있습니다' };
+    }
+  } else if (value.status === 'stored') {
+    if (typeof p['contentHash'] !== 'string' || p['contentHash'].length !== 71 || !/^sha256:[0-9a-f]{64}$/.test(p['contentHash'])) return { ok: false, message: '첨부 해시가 올바르지 않습니다' };
+    if (!Number.isSafeInteger(p['sizeBytes']) || (p['sizeBytes'] as number) < 0) return { ok: false, message: '첨부 정수가 올바르지 않습니다' };
+    if (typeof p['locator'] !== 'string' || p['locator'] === '' ||
+        (p['storeKind'] !== 'local' && p['storeKind'] !== 'drive') || (p['ownership'] !== 'brain' && p['ownership'] !== 'external')) return { ok: false, message: '첨부 위치가 올바르지 않습니다' };
+    if (value.externalLocator !== null && (typeof value.externalLocator !== 'string' || !isExternalLocator(value.externalLocator))) return { ok: false, message: '첨부 원본 위치가 올바르지 않습니다' };
+  } else return { ok: false, message: '첨부 상태가 올바르지 않습니다' };
+  return { ok: true, value: value as unknown as AttachmentLinkSpoolPayload };
 }

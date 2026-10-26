@@ -83,3 +83,6 @@ export type {
 } from './spool.js';
 export * from './file-store.js';
 export type { AttachmentStore, MessageAttachment, LinkAttachmentsInput, LinkAttachmentsResult, ListMessageAttachmentsResult } from './store.js';
+
+export type { SourceFileReader } from './source-file.js';
+export type { MissingFileName, FileName, ListMissingFileNamesResult, ListFileNamesResult, WriteFileNamesResult } from './store.js';

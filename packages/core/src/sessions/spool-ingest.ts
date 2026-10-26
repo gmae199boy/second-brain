@@ -97,7 +97,9 @@ export async function spoolSessionIngest(
   for (const a of read?.attachments ?? []) {
     const link: SpoolRecord = { schemaVersion: SPOOL_RECORD_VERSION, id: idGen.next(), kind: 'attachment_link', occurredAt: record.occurredAt,
       payload: { session: input.session, harnessMessageId: a.harnessMessageId, ordinal: a.ordinal, sourceKind: a.sourceKind, sourceRef: a.sourceRef, displayName: a.displayName,
-        contentHash: a.file.contentHash, sizeBytes: a.file.sizeBytes, storeKind: a.file.location.storeKind, locator: a.file.location.locator, ownership: a.file.location.ownership } };
+        ...(a.file === null
+          ? { status: 'missing_at_ingest' as const, externalLocator: null, contentHash: null, sizeBytes: null, storeKind: null, locator: null, ownership: null }
+          : { status: 'stored' as const, externalLocator: a.file.external?.locator ?? null, contentHash: a.file.contentHash, sizeBytes: a.file.sizeBytes, storeKind: a.file.location.storeKind, locator: a.file.location.locator, ownership: a.file.location.ownership }) } };
     if (encodeSpoolLine(link).ok) records.push(link);
   }
   const appended = await spool.append(records);

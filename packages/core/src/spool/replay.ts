@@ -62,7 +62,7 @@ export type SpoolReplayHandlerResult =
   | { ok: false; code?: string; message: string };
 
 /** What a unit does with one of its own records. */
-export type SpoolReplayHandler = (record: SpoolRecord) => Promise<SpoolReplayHandlerResult>;
+export type SpoolReplayHandler = (record: SpoolRecord, context: { records: readonly SpoolRecord[] }) => Promise<SpoolReplayHandlerResult>;
 
 /**
  * The handlers by kind, as a partial map: a build that has no handler for a
@@ -288,10 +288,12 @@ async function replayFile(
     if (keepDueAt === undefined || due.getTime() < keepDueAt.getTime()) keepDueAt = due;
   };
 
+  const decodedLines = lines.map(line => decodeSpoolLine(line));
+  const records = decodedLines.flatMap(result => result.ok ? [result.record] : []);
   for (const [index, line] of lines.entries()) {
     const where = `${String(index + 1)}번째 줄`;
 
-    const decoded = decodeSpoolLine(line);
+    const decoded = decodedLines[index]!;
     if (!decoded.ok) {
       // Nothing to retry and nothing to count against: there is no record here.
       failed.push(line);
@@ -318,7 +320,7 @@ async function replayFile(
       };
     }
 
-    const handled = await handler(record);
+    const handled = await handler(record, { records });
     if (handled.ok) {
       replayed += 1;
       continue;

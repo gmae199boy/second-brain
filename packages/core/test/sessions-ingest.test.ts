@@ -1541,3 +1541,83 @@ for (const phase of ['readSelfUser','ensureSession','ingest'] as const) {
     expect(spool.files()).toHaveLength(1); expect(spool.records().map(r=>r.kind)).toEqual(['session_ingest','attachment_link']);
   });
 }
+
+describe('@파일 원본 선택', () => {
+  const sourcePath = '/tmp/brain-ingest-source/note.md';
+  const contentFor = (attachments: unknown[]) => JSON.stringify({ messages: [{ harnessMessageId: 'source', role: 'user', body: '읽기', occurredAt: '2026-10-26T00:00:00.000Z', attachments }] });
+  it('transcript 바이트를 우선하고 줄 수·크기가 맞는 fallback만 저장한다', async () => {
+    const attachments = [
+      { bytes: [65], sourcePath },
+      { bytes: null, sourcePath, sourceCheck: { lineCount: 2 } },
+      { bytes: null, sourcePath, sourceCheck: { sizeBytes: 3 } },
+      { bytes: null, sourcePath, sourceCheck: { lineCount: 3 } },
+      { bytes: null, sourcePath, sourceCheck: null },
+      { bytes: [66], sourcePath: '/tmp/outside/note.md' },
+    ];
+    const { deps, store } = await kit({ content: contentFor(attachments) });
+    const reads: number[] = [];
+    deps.userHome = '/tmp/brain-ingest-source';
+    deps.sources = { async read(_path, maxBytes) { reads.push(maxBytes); return { ok: true, bytes: Uint8Array.of(97, 10, 98) }; } };
+    expect(await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).toMatchObject({ ok: true });
+    expect(reads).toEqual([32 * 1024 * 1024, 32 * 1024 * 1024, 32 * 1024 * 1024]);
+    const result = await store.listMessageAttachments(store.snapshot().messages[0]!.id);
+    expect(result.ok).toBe(true); if (!result.ok) return;
+    expect(result.attachments.map(a => a.status)).toEqual(['stored', 'stored', 'stored', 'missing_at_ingest', 'missing_at_ingest', 'stored']);
+    expect(result.attachments[1]?.file?.id).toBe(result.attachments[2]?.file?.id);
+    expect(result.attachments[0]?.file?.locations).toContainEqual({ storeKind: 'local', ownership: 'external', locator: '~/note.md' });
+    expect(result.attachments[5]?.file?.locations).toHaveLength(1);
+    const file = result.attachments[0]!.file!;
+    expect(await deps.files.get(file.home!)).toEqual({ ok: true, bytes: Uint8Array.of(65) });
+  });
+  it('옛 parser 버전으로 저장된 메시지에도 다시 읽기가 @파일 첨부를 잇는다', async () => {
+    // The earlier version stored the message and knew nothing of the @file.
+    const legacy = await kit({ content: contentFor([]) });
+    expect((await ingestSession(legacy.deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    const message = legacy.store.snapshot().messages[0]!;
+    expect(await legacy.store.listMessageAttachments(message.id)).toEqual({ ok: true, attachments: [] });
+    legacy.deps.transcripts = memoryTranscriptReader({ files: { [PATH]: contentFor([
+      { bytes: null, sourcePath, sourceCheck: { sizeBytes: 1 }, sourceKind: 'file', sourceRef: 'row', displayName: 'note.md' },
+    ]) } });
+    legacy.deps.parsers = [memoryParser({ version: '2' })];
+    legacy.deps.userHome = '/tmp/brain-ingest-source';
+    legacy.deps.sources = { async read() { return { ok: true, bytes: Uint8Array.of(65) }; } };
+    expect((await ingestSession(legacy.deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    expect(legacy.store.snapshot().messages).toHaveLength(1);
+    expect(await legacy.store.listMessageAttachments(message.id)).toMatchObject({ ok: true, attachments: [{
+      ordinal: 0, sourceKind: 'file', status: 'stored',
+      file: { locations: [{ ownership: 'brain' }, { ownership: 'external', locator: '~/note.md' }] },
+    }] });
+  });
+  it.each([
+    ['사라졌다 같은 크기로 다시 생긴 원본', null, Uint8Array.of(65)],
+    ['같은 크기의 다른 내용으로 바뀐 원본', Uint8Array.of(65), Uint8Array.of(66)],
+  ] as const)('다시 읽어도 이미 채운 자리는 원본을 다시 읽거나 넣지 않는다: %s', async (_name, first, second) => {
+    const { deps, store } = await kit({ content: contentFor([{ bytes: null, sourcePath, sourceCheck: { sizeBytes: 1 }, displayName: 'note.md' }]) });
+    let source: Uint8Array | null = first;
+    let reads = 0; let puts = 0;
+    deps.userHome = '/tmp/brain-ingest-source';
+    deps.sources = { async read() { reads++; return source === null ? { ok: false, message: '없음' } : { ok: true, bytes: source }; } };
+    const files = deps.files;
+    deps.files = { ...files, async put(bytes) { puts++; return files.put(bytes); } };
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    const message = store.snapshot().messages[0]!;
+    const before = await store.listMessageAttachments(message.id);
+    const putsBefore = puts; const readsBefore = reads;
+    source = second;
+    // A new parser version reads the whole transcript again, message and all.
+    deps.parsers = [memoryParser({ version: '2' })];
+    expect((await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).ok).toBe(true);
+    expect(puts).toBe(putsBefore);
+    expect(reads).toBe(readsBefore);
+    expect(await store.listMessageAttachments(message.id)).toEqual(before);
+  });
+  it.each(['absent', 'failed', 'oversize'])('원본 읽기 %s면 missing이며 spool도 상태를 보존한다', async failure => {
+    const { deps, spool } = await kit({ content: contentFor([{ bytes: null, sourcePath, sourceCheck: { sizeBytes: 1 }, displayName: 'note.md' }]) });
+    if (failure !== 'absent') deps.sources = { async read() { return failure === 'failed' ? { ok: false, message: '읽기 실패' } : { ok: true, bytes: new Uint8Array(32 * 1024 * 1024 + 1) }; } };
+    deps.store = { ...deps.store, async ingest() { return { ok: false, code: 'DB_LOCKED', message: '잠김' }; } };
+    expect(await ingestSession(deps, { session: TOKEN, transcriptPath: PATH })).toMatchObject({ ok: true, spooled: true });
+    const record = spool.records().find(r => r.kind === 'attachment_link');
+    expect(record?.payload).toMatchObject({ status: 'missing_at_ingest', contentHash: null, sizeBytes: null, storeKind: null, locator: null, ownership: null, externalLocator: null });
+    expect(JSON.stringify(record)).not.toContain(sourcePath);
+  });
+});

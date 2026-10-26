@@ -64,7 +64,7 @@ export const CLAUDE_CODE_HARNESS = 'claude-code';
  * the versions differ — so nothing an older version stored is touched and the
  * rows it never wrote arrive behind them (AD-4, AD-11).
  */
-export const CLAUDE_CODE_PARSER_VERSION = '5';
+export const CLAUDE_CODE_PARSER_VERSION = '6';
 
 /** The six markers a tool's own output starts a user line with (Boundaries). */
 const TOOL_OUTPUT_MARKERS = [
@@ -323,6 +323,9 @@ export function claudeCodeParser(): Parser {
       let anyJson = false;
       /** The uuid of every line already read, so a repeated one is skipped. */
       const seen = new Set<string>();
+      // Only users retained by this parse seed a chain; any attachment kind can continue it.
+      const attachmentRoots = new Map<string, string>();
+      const attachmentOrdinals = new Map<string, number>();
       /** `tool_use` blocks in file order, resolved once the file is read. */
       const pending: PendingNote[] = [];
       /** Calls read before the first message, waiting for it to arrive. */
@@ -400,6 +403,21 @@ export function claudeCodeParser(): Parser {
           seen.add(uuid);
         }
 
+        if (entry['type'] === 'attachment' && uuid !== undefined &&
+            entry['isSidechain'] !== true && entry['isMeta'] !== true && entry['isCompactSummary'] !== true) {
+          const parent = asString(entry['parentUuid']);
+          const root = parent === undefined ? undefined : attachmentRoots.get(parent);
+          if (root !== undefined) {
+            attachmentRoots.set(uuid, root);
+            const ordinal = attachmentOrdinals.get(root) ?? 0;
+            const attachment = readFileAttachment(entry, root, uuid, ordinal);
+            if (attachment !== null) {
+              attachments.push(attachment);
+              attachmentOrdinals.set(root, ordinal + 1);
+            }
+          }
+        }
+
         // Before the message, because one line can be both: the result of a
         // call and a turn of the conversation.
         readOutcomes(entry, outcomes);
@@ -414,7 +432,12 @@ export function claudeCodeParser(): Parser {
           }
         } else {
           messages.push(read);
-          if (read.role === 'user') attachments.push(...readAttachments(entry, read.harnessMessageId));
+          if (read.role === 'user') {
+            const pasted = readAttachments(entry, read.harnessMessageId);
+            attachments.push(...pasted);
+            attachmentRoots.set(read.harnessMessageId, read.harnessMessageId);
+            attachmentOrdinals.set(read.harnessMessageId, pasted.length);
+          }
           lastMessageId = read.harnessMessageId;
           fingerprintEnd = lineStart + line.length;
           // The calls that were waiting for a message to hang on: this one, at
@@ -1092,16 +1115,55 @@ function readAttachments(entry: Record<string, unknown>, harnessMessageId: strin
     const source = asRecord(item?.['source']);
     if (item?.['type'] !== 'image' || source?.['type'] !== 'base64' || typeof source['data'] !== 'string') continue;
     const data = source['data'];
-    const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
-    const unpadded = padding === 0 ? data : data.slice(0, -padding);
-    // A character-class scan keeps validation stack use independent of image size.
-    if (/[^A-Za-z0-9+/]/.test(unpadded) || unpadded.length % 4 === 1 ||
-        (padding > 0 && data.length % 4 !== 0)) continue;
-    const decoded = Buffer.from(data, 'base64');
-    if (decoded.length > 0) bytes.push(new Uint8Array(decoded));
+    const decoded = decodeBase64(data);
+    if (decoded !== null) bytes.push(decoded);
   }
   const ids = entry['imagePasteIds'];
   return bytes.map((data, ordinal) => ({ harnessMessageId, ordinal, sourceKind: 'image',
     sourceRef: Array.isArray(ids) && ids.length === bytes.length && (typeof ids[ordinal] === 'number' || typeof ids[ordinal] === 'string') ? String(ids[ordinal]) : null,
-    displayName: null, bytes: data }));
+    displayName: null, bytes: data, sourcePath: null, sourceCheck: null }));
+}
+
+/** Character-class validation is linear even for large images. */
+function decodeBase64(data: unknown): Uint8Array | null {
+  if (typeof data !== 'string' || data === '') return null;
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+  const unpadded = padding === 0 ? data : data.slice(0, -padding);
+  if (/[^A-Za-z0-9+/]/.test(unpadded) || unpadded.length % 4 === 1 ||
+      (padding > 0 && data.length % 4 !== 0)) return null;
+  const decoded = Buffer.from(data, 'base64');
+  return decoded.length > 0 ? new Uint8Array(decoded) : null;
+}
+
+function readFileAttachment(entry: Record<string, unknown>, harnessMessageId: string, sourceRef: string, ordinal: number): ParsedAttachment | null {
+  const attachment = asRecord(entry['attachment']);
+  if (attachment?.['type'] !== 'file') return null;
+  const filename = asString(attachment['filename']);
+  const content = asRecord(attachment['content']);
+  const file = asRecord(content?.['file']);
+  if (filename === undefined || file === undefined) return null;
+  const sourcePath = filename.startsWith('/') ? filename : null;
+  const displayName = filename.split('/').at(-1) || null;
+  let bytes: Uint8Array | null = null;
+  let sourceCheck: ParsedAttachment['sourceCheck'] = null;
+  const integer = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
+  if (content?.['type'] === 'text') {
+    const total = file['totalLines'];
+    const num = file['numLines'];
+    if (!integer(total) || !integer(num) || !integer(file['startLine']) || typeof file['content'] !== 'string') return null;
+    sourceCheck = { lineCount: total };
+    if (attachment['truncated'] !== true && file['startLine'] === 1 && num === total) {
+      bytes = new Uint8Array(Buffer.from(file['content'], 'utf8'));
+    }
+  } else {
+    const size = file['originalSize'];
+    if (integer(size)) {
+      sourceCheck = { sizeBytes: size };
+      const decoded = decodeBase64(file['base64']);
+      if (decoded !== null && decoded.length === size) bytes = decoded;
+    }
+  }
+  // Missing bytes require an absolute source path; malformed rows are ignored.
+  if (bytes === null && sourcePath === null) return null;
+  return { harnessMessageId, ordinal, sourceKind: 'file', sourceRef, displayName, bytes, sourcePath, sourceCheck };
 }

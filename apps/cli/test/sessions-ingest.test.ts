@@ -1414,7 +1414,7 @@ describe('brain sessions ingest claude-code and a report handed back', () => {
       } finally {
         database.close();
       }
-      expect(storedParserVersion(databaseIn(home))).toBe('5');
+      expect(storedParserVersion(databaseIn(home))).toBe('6');
     },
   );
 
@@ -2384,6 +2384,87 @@ describe('brain sessions ingest claude-code when the database will not take the 
       });
     };
   }
+
+  it('@파일은 시점 내용과 홈 상대 원본 위치를 남기고 잠금 재주입도 같은 행을 만든다', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQcEj4DwADBAHAgChw2gAAAABJRU5ErkJggg==', 'base64');
+    const pdf = Buffer.from('%PDF-neutral');
+    const args = ['sessions', 'ingest', 'claude-code', '--json'];
+    async function fixture(home: string) {
+      const sourceHome = join(home, 'source-home');
+      const project = join(sourceHome, 'project');
+      await mkdir(project, { recursive: true });
+      const outside = join(await temporary.create('brain-outside-'), 'outside.txt');
+      const note = join(project, 'note.md'); const pic = join(project, 'pic.png');
+      const doc = join(project, 'doc.pdf'); const long = join(project, 'long.txt');
+      await writeFile(note, 'changed on disk'); await writeFile(pic, png); await writeFile(doc, pdf);
+      await writeFile(long, 'one\ntwo\nthree'); await writeFile(outside, 'outside text');
+      const text = (content: string, totalLines = 1) => ({ type: 'text', file: { content, numLines: 1, startLine: 1, totalLines } });
+      const paths = [note, pic, doc, long, outside];
+      const contents = [text('at attachment time'), { type: 'image', file: { base64: png.toString('base64'), originalSize: png.length } }, { type: 'pdf', file: { base64: '', originalSize: pdf.length } }, text('one', 3), text('outside text')];
+      const lines: unknown[] = [{ type: 'user', uuid: 'attached-user', timestamp: '2026-10-26T00:00:00.000Z', message: { content: [{ type: 'text', text: '파일 읽기' }, { type: 'image', source: { type: 'base64', data: png.toString('base64') } }] } }];
+      for (let i = 0; i < paths.length; i++) lines.push({ type: 'attachment', uuid: `attachment-${i}`, parentUuid: i === 0 ? 'attached-user' : `attachment-${i - 1}`, attachment: { type: 'file', filename: paths[i], content: contents[i], ...(i === 3 ? { truncated: true } : {}) } });
+      await rm(long);
+      const transcript = join(home, 'at-files.jsonl'); await writeFile(transcript, lines.map(line => JSON.stringify(line)).join('\n') + '\n');
+      const remaining = [note, pic, doc, outside];
+      const originals = await Promise.all(remaining.map(async path => ({ path, bytes: await readFile(path), mtime: (await stat(path)).mtimeMs })));
+      return { sourceHome, payload: stopPayload(transcript), originals };
+    }
+    async function verify(home: string, source: Awaited<ReturnType<typeof fixture>>) {
+      const db = new DatabaseSync(databaseIn(home), { readOnly: true });
+      try {
+        const attachments = db.prepare('select a.ordinal, a.source_kind, a.source_ref, a.display_name, a.status, f.content_hash, l.locator from message_attachments a left join files f on f.id=a.file_id left join file_locations l on l.id=f.home_location_id order by a.ordinal').all() as { ordinal: number; status: string; content_hash: string | null; locator: string | null }[];
+        expect(attachments.map(a => a.ordinal)).toEqual([0, 1, 2, 3, 4, 5]);
+        expect(attachments.map(a => a.status)).toEqual(['stored', 'stored', 'stored', 'stored', 'missing_at_ingest', 'stored']);
+        expect(attachments[0]?.content_hash).toBe(attachments[2]?.content_hash);
+        expect(db.prepare('select count(*) as n from files').get()?.n).toBe(4);
+        expect(db.prepare("select locator from file_locations where ownership='external' order by locator").all()).toEqual([{ locator: '~/project/doc.pdf' }, { locator: '~/project/note.md' }, { locator: '~/project/pic.png' }]);
+        expect(db.prepare('select count(*) as n from file_locations').get()?.n).toBe(7);
+        expect(await readFile(join(home, 'files', attachments[1]!.locator!), 'utf8')).toBe('at attachment time');
+        expect(await readFile(join(home, 'files', attachments[3]!.locator!))).toEqual(pdf);
+        for (const original of source.originals) {
+          expect(await readFile(original.path)).toEqual(original.bytes);
+          expect((await stat(original.path)).mtimeMs).toBe(original.mtime);
+        }
+        return attachments;
+      } finally { db.close(); }
+    }
+    async function drainAndNames(home: string, sourceHome: string) {
+      expect((await runBrain(['queue', 'drain', '--json'], home, '', { HOME: sourceHome })).code).toBe(0);
+      const db = new DatabaseSync(databaseIn(home), { readOnly: true });
+      try {
+        const names = db.prepare('select name_source, text from file_names order by name_source, text').all();
+        expect(names).toHaveLength(7);
+        for (const name of ['note.md', 'pic.png']) {
+          expect(db.prepare('select count(*) as n from file_names_fts where file_names_fts match ?').get(`"${name}"`)?.n).toBe(2);
+          expect(db.prepare('select count(*) as n from file_names_fts where file_names_fts match ?').get(`"~/project/${name}"`)?.n).toBe(1);
+        }
+        return names;
+      } finally { db.close(); }
+    }
+    const direct = await installedHome(); const directSource = await fixture(direct);
+    expect((await runBrain(args, direct, directSource.payload, { HOME: directSource.sourceHome })).code).toBe(0);
+    const expected = await verify(direct, directSource);
+    const names = await drainAndNames(direct, directSource.sourceHome);
+    expect((await runBrain(args, direct, directSource.payload, { HOME: directSource.sourceHome })).code).toBe(0);
+    expect(await verify(direct, directSource)).toEqual(expected);
+    expect(await drainAndNames(direct, directSource.sourceHome)).toEqual(names);
+    const locked = await installedHome(); const lockedSource = await fixture(locked);
+    const release = await holdTheLock(locked, 20_000);
+    try {
+      const run = await runBrain(args, locked, lockedSource.payload, { HOME: lockedSource.sourceHome });
+      expect(run.code).toBe(0); expect(JSON.parse(run.stdout)).toMatchObject({ warnings: ['SPOOLED'], data: { spooled: true } });
+      const pending = (await readdir(spoolPath(locked))).filter(name => name.endsWith('.jsonl'));
+      expect(pending).toHaveLength(1);
+      const text = await readFile(join(spoolPath(locked), pending[0]!), 'utf8');
+      const records = text.trim().split('\n').map(line => JSON.parse(line) as { kind: string; payload: { status?: string } });
+      expect(records.map(r => r.kind)).toEqual(['session_ingest', ...Array<string>(6).fill('attachment_link')]);
+      expect(records.filter(r => r.payload.status === 'missing_at_ingest')).toHaveLength(1);
+      expect(text).not.toContain(lockedSource.sourceHome);
+    } finally { await release(); }
+    expect(await drainAndNames(locked, lockedSource.sourceHome)).toEqual(names);
+    expect(await verify(locked, lockedSource)).toEqual(expected);
+    expect((await readdir(spoolPath(locked))).filter(name => name.endsWith('.jsonl'))).toEqual([]);
+  }, 30_000);
 
   it('이미지 원본은 한 번 남고 이미지뿐인 메시지와 재수집과 잠금 뒤 재주입도 같은 연결을 만든다', async () => {
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQcEj4DwADBAHAgChw2gAAAABJRU5ErkJggg==', 'base64');

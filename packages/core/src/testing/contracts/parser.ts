@@ -65,7 +65,7 @@ export function parserContract(): ContractCase<ParserSubject>[] {
           const key = `${a.harnessMessageId}:${a.ordinal}`;
           assertTrue(!positions.has(key), '첨부 자리 중복'); positions.add(key);
           assertTrue(Number.isInteger(a.ordinal) && a.ordinal >= 0, '첨부 자리');
-          assertTrue(a.bytes.length > 0, '원본 바이트');
+          assertTrue(a.bytes !== null || a.sourcePath !== null, '원본 바이트가 없으면 원본 경로');
         }
       }
     })),

@@ -53,6 +53,9 @@ export function failedConfigStore(message: string): Store & SchemaStore {
     async findSession() {
       return unavailable;
     },
+    async listMissingFileNames() { return unavailable; },
+    async writeFileNames() { return unavailable; },
+    async listFileNames() { return unavailable; },
     async linkAttachments() { return unavailable; },
     async listMessageAttachments() { return unavailable; },
     async ingest() {

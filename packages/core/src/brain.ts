@@ -1,3 +1,7 @@
+import type { AttachmentLinkSpoolPayload } from './domain/spool-record.js';
+import type { IngestAttachment } from './domain/ingest-batch.js';
+import type { SourceFileReader } from './ports/source-file.js';
+import { fillFileNames } from './files/file-names.js';
 import type { FileStore } from './ports/file-store.js';
 import { formatSessionToken, parseSessionToken } from './domain/session-token.js';
 import { redactMessage, type MessagesRedactInput, type MessagesRedactResult } from './messages/redact.js';
@@ -42,6 +46,8 @@ import {
 import { replaySpool, type SpoolReplayHandlers } from './spool/replay.js';
 
 export interface BrainDependencies {
+  sources?: SourceFileReader;
+  userHome?: string | null;
   /**
    * The persistence port, plus the schema-version capability `doctor.run`
    * asks for. It is the whole `Store` now that a verb writes conversation
@@ -185,6 +191,8 @@ export function createBrain(dependencies: BrainDependencies): Brain {
   const {
     store,
     files,
+    sources,
+    userHome,
     spool,
     schemaVersion,
     clock,
@@ -201,6 +209,8 @@ export function createBrain(dependencies: BrainDependencies): Brain {
   const ingestDependencies = {
     store,
     files,
+    ...(sources === undefined ? {} : { sources }),
+    ...(userHome === undefined ? {} : { userHome }),
     spool,
     clock,
     idGen,
@@ -232,8 +242,17 @@ export function createBrain(dependencies: BrainDependencies): Brain {
    * straight through. A refusal comes back as the database's own code, which is
    * what makes the replay put the file back and stop (`spool/replay.ts`).
    */
+  const attachmentFromSpool = (p: AttachmentLinkSpoolPayload): IngestAttachment => ({
+    id: idGen.next(), harnessMessageId: p.harnessMessageId, ordinal: p.ordinal,
+    sourceKind: p.sourceKind, sourceRef: p.sourceRef, displayName: p.displayName,
+    file: p.status === 'missing_at_ingest' ? null : {
+      id: idGen.next(), contentHash: p.contentHash, sizeBytes: p.sizeBytes,
+      location: { id: idGen.next(), storeKind: p.storeKind, locator: p.locator, ownership: p.ownership },
+      external: p.externalLocator === null ? null : { id: idGen.next(), storeKind: 'local', ownership: 'external', locator: p.externalLocator },
+    },
+  });
   const spoolHandlers: SpoolReplayHandlers = {
-    session_ingest: async (record) => {
+    session_ingest: async (record, context) => {
       if (record.kind !== 'session_ingest') return { ok: true };
       const result = await ingestSession(
         ingestDependencies,
@@ -247,7 +266,9 @@ export function createBrain(dependencies: BrainDependencies): Brain {
           // Contract).
           source: 'live',
         },
-        { spoolOnUnwritable: false },
+        { spoolOnUnwritable: false, attachmentOverrides: context.records.flatMap(link =>
+          link.kind === 'attachment_link' && link.payload.session === record.payload.session
+            ? [attachmentFromSpool(link.payload)] : []) },
       );
       if (!result.ok) return { ok: false, code: result.code, message: result.message };
       // The session went in, so whatever was recorded about collecting it is
@@ -266,10 +287,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
       const p = record.payload;
       const token = parseSessionToken(p.session);
       if (!token.ok) return { ok: false, code: 'USAGE', message: token.message };
-      return store.linkAttachments({ key: token.key, linkedAt: record.occurredAt, attachments: [{
-        id: idGen.next(), harnessMessageId: p.harnessMessageId, ordinal: p.ordinal, sourceKind: p.sourceKind, sourceRef: p.sourceRef, displayName: p.displayName,
-        file: { id: idGen.next(), contentHash: p.contentHash, sizeBytes: p.sizeBytes, location: { id: idGen.next(), storeKind: p.storeKind, locator: p.locator, ownership: p.ownership } },
-      }] });
+      return store.linkAttachments({ key: token.key, linkedAt: record.occurredAt, attachments: [attachmentFromSpool(p)] });
     },
     failure: async (record) => {
       if (record.kind !== 'failure') return { ok: true };
@@ -403,6 +421,8 @@ async function drain(
       if (!added.ok) break;
     }
   }
+
+  if (clock.now().getTime() < deadline) await fillFileNames({ store, idGen });
 
   const queue = await drainQueue(
     { store, spool, clock, idGen },

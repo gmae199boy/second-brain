@@ -196,9 +196,11 @@ export interface ParsedAttachment {
   sourceKind: string;
   sourceRef: string | null;
   displayName: string | null;
-  bytes: Uint8Array;
+  bytes: Uint8Array | null;
+  sourcePath: string | null;
+  sourceCheck: { sizeBytes: number } | { lineCount: number } | null;
 }
-export interface IngestAttachment extends Omit<ParsedAttachment, 'bytes'> {
+export interface IngestAttachment extends Omit<ParsedAttachment, 'bytes' | 'sourcePath' | 'sourceCheck'> {
   id: string;
-  file: { id: string; contentHash: string; sizeBytes: number; location: FileLocation & { id: string } };
+  file: { id: string; contentHash: string; sizeBytes: number; location: FileLocation & { id: string }; external: (FileLocation & { id: string }) | null } | null;
 }

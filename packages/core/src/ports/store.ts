@@ -770,12 +770,24 @@ export interface MessageAttachment {
   sourceRef: string | null;
   displayName: string | null;
   status: 'stored' | 'missing_at_ingest' | null;
-  file: { id: string; contentHash: string; sizeBytes: number; home: FileLocation | null } | null;
+  file: { id: string; contentHash: string; sizeBytes: number; home: FileLocation | null; locations: readonly FileLocation[] } | null;
 }
 export interface LinkAttachmentsInput { key: SessionKey; attachments: readonly IngestAttachment[]; linkedAt: Date }
 export type LinkAttachmentsResult = { ok: true; linked: number } | { ok: false; code: 'SESSION_NOT_FOUND' | 'MESSAGE_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export type ListMessageAttachmentsResult = { ok: true; attachments: readonly MessageAttachment[] } | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+export interface MissingFileName {
+  fileId: string;
+  nameSource: 'attachment_name' | 'location_path';
+  text: string;
+}
+export interface FileName extends MissingFileName { id: string }
+export type ListMissingFileNamesResult = { ok: true; names: readonly MissingFileName[] } | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+export type ListFileNamesResult = { ok: true; names: readonly FileName[] } | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+export type WriteFileNamesResult = { ok: true; inserted: number } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface AttachmentStore {
+  listMissingFileNames(input: { limit: number }): Promise<ListMissingFileNamesResult>;
+  writeFileNames(input: { names: readonly FileName[] }): Promise<WriteFileNamesResult>;
+  listFileNames(fileId: string): Promise<ListFileNamesResult>;
   linkAttachments(input: LinkAttachmentsInput): Promise<LinkAttachmentsResult>;
   listMessageAttachments(messageId: string): Promise<ListMessageAttachmentsResult>;
 }

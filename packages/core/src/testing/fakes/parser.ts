@@ -104,8 +104,8 @@ export function memoryParser(options: MemoryParserOptions = {}): Parser {
         if (Array.isArray(record['attachments'])) {
           for (const [ordinal, attachment] of record['attachments'].entries()) {
             const a = asRecord(attachment);
-            if (a === undefined || !Array.isArray(a['bytes']) || a['bytes'].length === 0) continue;
-            attachments.push({ harnessMessageId, ordinal, bytes: Uint8Array.from(a['bytes'] as number[]), sourceKind: asString(a['sourceKind']) ?? 'image', sourceRef: asString(a['sourceRef']) ?? null, displayName: asString(a['displayName']) ?? null });
+            if (a === undefined || (!Array.isArray(a['bytes']) && typeof a['sourcePath'] !== 'string')) continue;
+            attachments.push({ harnessMessageId, ordinal, bytes: Array.isArray(a['bytes']) ? Uint8Array.from(a['bytes'] as number[]) : null, sourcePath: asString(a['sourcePath']) ?? null, sourceCheck: (asRecord(a['sourceCheck']) as ParsedAttachment['sourceCheck']) ?? null, sourceKind: asString(a['sourceKind']) ?? 'image', sourceRef: asString(a['sourceRef']) ?? null, displayName: asString(a['displayName']) ?? null });
           }
         }
         const calls = record['toolCalls'];

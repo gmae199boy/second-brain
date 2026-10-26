@@ -1,3 +1,4 @@
+import { withWrite } from '../src/write.js';
 import { attachmentStoreContract } from '@second-brain/core/testing';
 import { projectIdentityKey } from '@second-brain/core';
 import { PROJECT_IDENTITY_KEY_SQL } from '../src/project-keys.js';
@@ -760,4 +761,39 @@ it('첨부 테이블을 읽을 수 없으면 예외 대신 DB_UNAVAILABLE을 돌
   } finally {
     await store.close();
   }
+});
+
+it('이름 후보 읽기 뒤 가린 파일도 쓰기에서 건너뛰고 이름 FTS는 멱등으로 채운다', async () => {
+  const path = await migratedPath();
+  const store = sqliteStore({ path });
+  const opened = openSqlite({ path, busyTimeoutMs: 3000 });
+  if (!opened.ok) throw new Error('DB 열기 실패');
+  const db = opened.connection.database;
+  try {
+    const batch = sampleIngestBatch();
+    await store.ensureSelfUser(sampleSelfUserInput());
+    await store.ensureSession(sampleEnsureSessionInput());
+    await store.ingest({ ...batch, attachments: [1, 2].map(i => ({
+      id: `attachment-${i}`, harnessMessageId: batch.messages[0]!.harnessMessageId, ordinal: i,
+      sourceKind: 'file', sourceRef: `row-${i}`, displayName: i === 1 ? 'note.md' : 'hidden.md',
+      file: { id: `file-${i}`, contentHash: 'sha256:' + String(i).repeat(64), sizeBytes: 1,
+        location: { id: `home-${i}`, storeKind: 'local', ownership: 'brain', locator: `brain-${i}` },
+        external: { id: `external-${i}`, storeKind: 'local', ownership: 'external', locator: `~/project/${i === 1 ? 'note.md' : 'hidden.md'}` } },
+    })) });
+    const candidates = await store.listMissingFileNames({ limit: 500 });
+    expect(candidates.ok).toBe(true); if (!candidates.ok) return;
+    expect(candidates.names).toHaveLength(4);
+    const limited = await store.listMissingFileNames({ limit: 1 });
+    expect(limited.ok && limited.names.length).toBe(1);
+    expect(await withWrite(opened.connection, async () => {
+      db.prepare('update files set redacted_at = ? where id = ?').run('2026-10-26T00:00:00.000Z', 'file-2');
+    }, { redact: true })).toMatchObject({ ok: true });
+    const names = candidates.names.map((n, i) => ({ ...n, id: `name-${i}` }));
+    expect(await store.writeFileNames({ names })).toEqual({ ok: true, inserted: 2 });
+    expect(await store.writeFileNames({ names })).toEqual({ ok: true, inserted: 0 });
+    expect(await store.listFileNames('file-2')).toEqual({ ok: true, names: [] });
+    expect(await store.listMissingFileNames({ limit: 500 })).toEqual({ ok: true, names: [] });
+    expect(db.prepare('select count(*) as count from file_names_fts where file_names_fts match ?').get('"note.md"')?.count).toBe(2);
+    expect(db.prepare('select count(*) as count from file_names_fts where file_names_fts match ?').get('"~/project/note.md"')?.count).toBe(1);
+  } finally { opened.connection.database.close(); await store.close(); }
 });

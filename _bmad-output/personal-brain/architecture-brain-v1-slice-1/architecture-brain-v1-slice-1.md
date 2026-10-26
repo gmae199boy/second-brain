@@ -365,6 +365,7 @@ sequenceDiagram
   - 파일은 내용(`files`, `content_hash`는 `sha256:<소문자 hex>`)과 위치(`file_locations`)로 나눈다. 위치는 저장소 종류, locator, **소유(`brain | external`)**다. 같은 내용이 Brain 사본과 사용자 원본으로 동시에 있는 것이 정상이다(내용 행 하나, 위치 둘). 소유는 내용이 아니라 위치의 속성이다.
   - Brain 위치의 locator는 내용의 순수 함수다(`<h0-2>/<h2-4>/<hex><확장자>`, 임시 파일 → rename). 그래서 넣기는 멱등이다. 절대 경로와 URL은 저장하지 않고 위치로부터 그때 만든다. `external` 로컬 위치의 locator는 홈 기준 `~/` 상대 경로이며, 홈 밖 파일은 external 위치를 남기지 않는다.
   - `FileStore` port(넣기, 가져오기, 확인, 위치→URL, 지우기)는 **`brain` 소유이면서 설정된 루트 안의 위치에만** 쓰고 지운다. 그 밖의 위치에 대한 쓰기·지우기는 port가 거부하고, 계약 테스트가 고정한다. V1은 로컬 구현(epic 10)과 Drive 구현(epic 8)을 낸다(2026-10-26). 루트는 `[files] path`(기본 `~/.second_brain/files/`, 동기화 폴더 금지, 권한 0700/0600)다.
+  - `@`파일의 원본은 붙인 시점의 내용이다: transcript의 전체 바이트를 우선하고, 없으면 읽기 전용으로 읽은 디스크 파일의 줄 수·바이트 수가 기록과 같을 때만 저장하며, 얻지 못하면 `missing_at_ingest`로 남긴다.
   - `files.home`은 `brain` 위치 하나를 가리킨다. 원본 이전은 넣기 → 저장소 해시(`remote_checksum`) 또는 되읽기로 검증 → **같은 쓰기 트랜잭션에서 검증 시각 기록과 `home` 전환** → 옛 위치 삭제는 별도 일감이다. 이전은 양방향(로컬 ↔ Drive)이고, 검증 없이 지우는 경로는 없다.
   - 첨부는 파일을 먼저 저장소에 넣고(트랜잭션 밖) 그 뒤 행을 쓴다(AD-7). 루트 안에 있으나 위치 행이 없고 유예(기본 24시간)가 지난 블롭은 drain의 고아 정리 일감이 지우고, doctor가 건수·바이트를 보인다(V1 뒤, 2026-10-26. V1은 Brain 위치 블롭 하나를 지우는 멱등 일감만 둔다). 첨부 바이트는 spool에 넣지 않는다(spool 한 줄은 64KB 이하, 첨부는 메타데이터 한 줄만).
   - `message_attachments`의 키는 `(message_id, ordinal)`이다. parser는 첨부의 자리와 출처만 내고, 내용(`file_id`)과 상태(`stored | missing_at_ingest`)는 수집이 한 번 채운다.

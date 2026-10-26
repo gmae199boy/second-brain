@@ -140,6 +140,7 @@ export {
 } from './queue/drain.js';
 export {
   ingestSession,
+  MAX_SOURCE_FILE_BYTES,
   type IngestSessionData,
   type IngestSessionDependencies,
   type IngestSessionInput,
