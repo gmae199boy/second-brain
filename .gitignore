@@ -97,3 +97,6 @@ _bmad/render/
 .claude/settings.json
 .claude/skills/bmad-build-auto
 .claude/skills/bmad-review
+.codex/hooks.json
+.agents/skills/bmad-build-auto
+.agents/skills/bmad-review
