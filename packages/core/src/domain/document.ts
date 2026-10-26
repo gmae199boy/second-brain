@@ -1,4 +1,5 @@
 import type { ChunkLocator } from './chunk-locator.js';
+import type { DocumentChunkParams } from './index-config.js';
 
 /**
  * One reading of one file, in pieces (AD-24): the two rows the extraction story
@@ -32,6 +33,38 @@ export type DocumentExtractionFailedStage = 'read' | 'extract' | 'chunk' | 'inde
  * into batches by `writeExtractionChunks`, not taken whole.
  */
 export const DOCUMENT_CHUNK_BATCH_MAX = 200;
+
+/**
+ * The largest file this build reads, in bytes: eight mebibytes.
+ *
+ * It is a bound on the work and not on the storage. Extracting a text document
+ * spreads it out as an array of code points to cut it on character boundaries,
+ * which costs several times the file's own size in memory, and the whole of it
+ * happens inside one claim. A file over this is closed `too_large` without its
+ * bytes ever being read, which is why the bound is checked against the size the
+ * ingest recorded rather than against what came back.
+ *
+ * One number for every format, because this build has one extractor. A limit
+ * per format is what a PDF will want — its cost is pages and not bytes — and
+ * that is the day to split this (Design Notes).
+ */
+export const DOCUMENT_EXTRACT_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The document chunking rules this build cuts with, the same pair migration
+ * 0002 seeded `DOCUMENT_CHUNK_INDEX_CONFIG_ID` with.
+ *
+ * They are here as well as in the row because nothing reads the row: there is
+ * no store verb for `index_configs`, and a reading that succeeded records which
+ * generation cut its pieces by naming that id (`index-config.ts`). So the
+ * constant is what cuts and the id is what is recorded, and the two are kept in
+ * step by hand — the day they are not is the day a new generation is minted,
+ * which is a new row and a new id either way.
+ */
+export const DOCUMENT_CHUNK_PARAMS: DocumentChunkParams = {
+  targetChars: 1200,
+  overlapChars: 120,
+};
 
 /** One reading of one file (AD-24). */
 export interface DocumentExtraction {

@@ -1,4 +1,5 @@
 import { parseSessionToken } from '../domain/session-token.js';
+import { DOCUMENT_EXTRACT_KIND } from '../files/extract-work.js';
 import type { Clock } from '../ports/clock.js';
 import type { SessionStore, WorkStore } from '../ports/store.js';
 import type { WorkHandler, WorkHandlerResult } from '../queue/drain.js';
@@ -31,9 +32,11 @@ export const SESSION_INGEST_KIND = 'session_ingest';
 export const FAILURE_RETRY_STAGES: Readonly<Record<string, string>> = {
   session_ingest: SESSION_INGEST_KIND,
   session_identity: 'session_identity',
+  document_extract: DOCUMENT_EXTRACT_KIND,
 };
 export const FAILURE_RETRY_KINDS: Readonly<Record<string, string>> = {
   session: SESSION_INGEST_KIND,
+  file: DOCUMENT_EXTRACT_KIND,
 };
 
 export interface SessionIngestWorkDependencies {

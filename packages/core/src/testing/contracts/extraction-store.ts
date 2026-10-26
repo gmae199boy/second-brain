@@ -1,8 +1,9 @@
 import type { IngestAttachment } from '../../domain/ingest-batch.js';
-import { brainLocator, contentHashOfBytes } from '../../domain/file.js';
+import { brainLocator, contentHashOfBytes, type FileLocation } from '../../domain/file.js';
 import { DOCUMENT_CHUNK_BATCH_MAX } from '../../domain/document.js';
 import { DOCUMENT_CHUNK_INDEX_CONFIG_ID } from '../../domain/index-config.js';
 import { workKindPolicy } from '../../domain/work-item.js';
+import { DOCUMENT_EXTRACT_KIND } from '../../files/extract-work.js';
 import type {
   AttachmentStore,
   ExtractionChunkInput,
@@ -41,14 +42,13 @@ export type ExtractionStoreSubject = ExtractionStore &
   WorkStore;
 
 /**
- * The kind the extraction claim is taken under.
+ * The kind the extraction claim is taken under — the handler's own name, now
+ * that there is a handler (`files/extract-work.ts`).
  *
- * It is spelled here rather than imported because the handler that owns the name
- * is a later story's: what these cases need is a kind whose open row is keyed on
- * one file, and the claim window every kind without an entry of its own gets
- * (`workKindPolicy`).
+ * What these cases need of it is what every kind without a policy entry gets: an
+ * open row keyed on one file, and that kind's claim window (`workKindPolicy`).
  */
-const EXTRACT_KIND = 'document_extract';
+const EXTRACT_KIND = DOCUMENT_EXTRACT_KIND;
 
 /** The claim window of that kind, which is how a case makes a claim expire. */
 const CLAIM_FOR_MS = workKindPolicy(EXTRACT_KIND).claimForMs;
@@ -60,50 +60,83 @@ function at(offsetMs: number): Date {
   return new Date(T0.getTime() + offsetMs);
 }
 
+/** The bytes the one stored file of most of these cases is made of. */
+const STORED_BYTES = Uint8Array.of(7, 8, 9);
+
+/** One stored file, as the columns an extraction worker reads before it reads. */
+interface StoredFile {
+  fileId: string;
+  bytes: Uint8Array;
+  contentHash: string;
+  /** Brain's own copy, which is where `readFileExtractionState.home` points. */
+  home: FileLocation;
+}
+
 /**
- * One stored file, made the way a real one is: a session, a message and an
- * attachment whose bytes Brain kept. The id of the `files` row is what comes
- * back, because that is the whole of what an extraction needs.
+ * One stored file per byte string, made the way a real one is: a session, a
+ * message, and one attachment each whose bytes Brain kept.
+ *
+ * They go in as one ingest and on one message, because what the cases need is
+ * several `files` rows and the attachment path is the only thing that makes
+ * them. The order of the answer is the order of the input, so a caller can tell
+ * its own files apart — and the ids rise with the sequence, which is also the
+ * order `listFilesAwaitingExtraction` promises.
  */
-async function storedFile(
+async function storedFiles(
   store: ExtractionStoreSubject,
   ids: { next(): string },
-): Promise<string> {
+  byteStrings: readonly Uint8Array[],
+): Promise<readonly StoredFile[]> {
   assertOk(await store.ensureSelfUser(sampleSelfUserInput()), '주인');
   assertOk(await store.ensureSession(sampleEnsureSessionInput()), '세션');
   const batch = sampleIngestBatch();
   const message = batch.messages[0];
   if (message === undefined) fail('표본 묶음에 메시지가 없습니다');
-  const bytes = Uint8Array.of(7, 8, 9);
-  const hash = contentHashOfBytes(bytes);
-  const attachments: IngestAttachment[] = [
-    {
+  const attachments: IngestAttachment[] = byteStrings.map((bytes, ordinal) => {
+    const hash = contentHashOfBytes(bytes);
+    return {
       id: ids.next(),
       harnessMessageId: message.harnessMessageId,
-      ordinal: 0,
+      ordinal,
       sourceKind: 'file',
-      sourceRef: '~/notes/report.md',
-      displayName: 'report.md',
+      sourceRef: `~/notes/report-${String(ordinal)}.md`,
+      displayName: `report-${String(ordinal)}.md`,
       file: {
         id: ids.next(),
         contentHash: hash,
         sizeBytes: bytes.length,
         location: {
           id: ids.next(),
-          storeKind: 'local',
-          ownership: 'brain',
+          storeKind: 'local' as const,
+          ownership: 'brain' as const,
           locator: brainLocator(hash.slice(7), bytes),
         },
         external: null,
       },
-    },
-  ];
+    };
+  });
   assertOk(await store.ingest({ ...batch, attachments }), '첨부 수집');
   const rows = await store.listMessageAttachments(message.id);
   assertOk(rows, '첨부 읽기');
-  const file = rows.attachments[0]?.file ?? null;
-  if (file === null) fail('첨부가 파일 행을 만들지 않았습니다');
-  return file.id;
+  return byteStrings.map((bytes, ordinal) => {
+    const file = rows.attachments.find((row) => row.ordinal === ordinal)?.file ?? null;
+    if (file === null) fail(`${String(ordinal)}번째 첨부가 파일 행을 만들지 않았습니다`);
+    if (file.home === null) fail(`${String(ordinal)}번째 첨부에 brain 위치가 없습니다`);
+    return { fileId: file.id, bytes, contentHash: file.contentHash, home: file.home };
+  });
+}
+
+/**
+ * The id of one stored file, which is the whole of what most of these cases
+ * need of it.
+ */
+async function storedFile(
+  store: ExtractionStoreSubject,
+  ids: { next(): string },
+): Promise<string> {
+  const [file] = await storedFiles(store, ids, [STORED_BYTES]);
+  if (file === undefined) fail('파일이 만들어지지 않았습니다');
+  return file.fileId;
 }
 
 /**
@@ -792,6 +825,87 @@ export function extractionStoreContract(): ContractCase<ExtractionStoreSubject>[
           assertEqual(await store.listExtractions(unknownFileId), { ok: true, extractions: [] }, '모르는 파일의 세대 목록');
           assertEqual(await store.listExtractionChunks(unknownExtractionId), { ok: true, chunks: [] }, '모르는 세대의 조각 목록');
           assertEqual(await store.listExtractions(fileId), { ok: true, extractions: [] }, '아직 읽지 않은 파일');
+        }),
+    ),
+
+    contractCase(
+      '파일의 추출 상태는 해시·크기·brain 위치를 함께 낸다',
+      async (make) =>
+        withSubject(make, async (store) => {
+          const ids = sequenceIdGen({ start: 3600, timestampMs: 1770000000000 });
+          const [file] = await storedFiles(store, ids, [STORED_BYTES]);
+          if (file === undefined) fail('파일이 만들어지지 않았습니다');
+
+          // The three columns a worker needs before it reads anything: which
+          // bytes these are meant to be, how many of them there are, and where
+          // Brain's own copy is. One read, because a worker that asked twice
+          // could be told about a file that changed in between (port contract).
+          const state = await store.readFileExtractionState(file.fileId);
+          assertOk(state, '파일 상태');
+          assertEqual(state.contentHash, file.contentHash, '수집 때의 해시');
+          assertEqual(state.sizeBytes, file.bytes.length, '수집 때의 크기');
+          assertEqual(state.home, file.home, 'brain 위치');
+        }),
+    ),
+
+    contractCase(
+      '추출을 기다리는 목록은 세대가 없고 닿을 수 있는 파일만 낸다',
+      async (make) =>
+        withSubject(make, async (store) => {
+          const ids = sequenceIdGen({ start: 3700, timestampMs: 1770000000000 });
+          const stored = await storedFiles(store, ids, [STORED_BYTES, Uint8Array.of(1, 2, 3)]);
+          const [first, second] = stored;
+          if (first === undefined || second === undefined) fail('파일이 둘 만들어지지 않았습니다');
+          const awaiting = async (limit = 10): Promise<readonly string[]> => {
+            const read = await store.listFilesAwaitingExtraction({ limit });
+            assertOk(read, '기다리는 파일');
+            return read.fileIds;
+          };
+
+          // Both files, `id` ascending, and the bound is a bound.
+          assertEqual(await awaiting(), [first.fileId, second.fileId], '아직 아무도 읽지 않았다');
+          assertEqual(await awaiting(1), [first.fileId], '상한만큼만');
+
+          // An open generation is a generation: the file is out of the list from
+          // the moment a reading starts, which is what keeps the next drain from
+          // queueing the same file again (`files/extract-work.ts`).
+          const claim = await takeClaim(store, {
+            fileId: first.fileId, workItemId: ids.next(), now: T0, claimedBy: 'drain-a',
+          });
+          const begun = await store.beginExtraction({
+            id: ids.next(), fileId: first.fileId, extractorVersion: 'text-1', startedAt: at(1), claim,
+          });
+          assertOk(begun, '세대');
+          assertEqual(await awaiting(), [second.fileId], '읽기 시작한 파일은 빠진다');
+
+          // And a closed one is too, whatever it answered: a file whose only
+          // reading says `unsupported` has been read, and asking again would be
+          // the same work every drain for ever (Design Notes).
+          assertOk(
+            await store.finishExtraction({
+              extractionId: begun.extraction.id,
+              finishedAt: at(2),
+              outcome: { status: 'unsupported', error: '읽지 않는 형식입니다', mediaType: null },
+            }),
+            'unsupported 닫기',
+          );
+          assertEqual(await awaiting(), [second.fileId], '읽기를 마친 파일도 빠진다');
+
+          // A file whose original went out of reach is left out as well, and
+          // comes back the moment the mark is cleared: the mark is a state of
+          // the bytes and says nothing about the content (AD-24).
+          assertEqual(
+            await store.setFileSourceUnreachable({ fileId: second.fileId, unreachableAt: at(3) }),
+            { ok: true },
+            '원본 표시',
+          );
+          assertEqual(await awaiting(), [], '닿을 수 없는 파일은 빠진다');
+          assertEqual(
+            await store.setFileSourceUnreachable({ fileId: second.fileId, unreachableAt: null }),
+            { ok: true },
+            '표시 해제',
+          );
+          assertEqual(await awaiting(), [second.fileId], '다시 닿으면 돌아온다');
         }),
     ),
   ];

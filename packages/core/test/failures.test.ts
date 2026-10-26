@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SESSION_INGEST_KIND } from '../src/capture/session-ingest-work.js';
 import { FAILURES_LIST_LIMIT, listFailures } from '../src/failures/list.js';
 import { retryFailures } from '../src/failures/retry.js';
+import { DOCUMENT_EXTRACT_KIND } from '../src/files/extract-work.js';
 import type { RecordFailureInput } from '../src/ports/store.js';
 import { fixedClock } from '../src/testing/fakes/clock.js';
 import { sequenceIdGen } from '../src/testing/fakes/id-gen.js';
@@ -204,19 +205,21 @@ describe('failures.retry', () => {
   });
 
   it('skips a kind of target nothing in this build can retry, and says how many', async () => {
+    // `message` rather than `session` or `file`: those two have a kind of work
+    // each, and this case is about the one thing the table cannot answer.
     const store = await holding(
       failure({
         id: '01940000-0000-7000-8000-0000000000d7',
-        targetKind: 'file',
+        targetKind: 'message',
         stage: 'unknown_stage',
-        targetId: 'sha256:demo',
+        targetId: 'message-one',
         fingerprint: 'sha256:three',
       }),
       failure({
         id: '01940000-0000-7000-8000-0000000000d8',
-        targetKind: 'file',
+        targetKind: 'message',
         stage: 'unknown_stage',
-        targetId: 'sha256:other',
+        targetId: 'message-two',
         fingerprint: 'sha256:four',
       }),
     );
@@ -226,9 +229,32 @@ describe('failures.retry', () => {
     expect(result).toMatchObject({
       ok: true,
       added: 0,
-      skipped: [{ targetKind: 'file', count: 2 }],
+      skipped: [{ targetKind: 'message', count: 2 }],
     });
     expect(store.snapshot().workItems).toEqual([]);
+  });
+
+  it('asks for a file whose extraction failed to be read again', async () => {
+    const store = await holding(
+      failure({
+        id: '01940000-0000-7000-8000-0000000000d9',
+        targetKind: 'file',
+        stage: DOCUMENT_EXTRACT_KIND,
+        targetId: '01940000-0000-7000-8000-00000000f001',
+        fingerprint: 'sha256:five',
+      }),
+    );
+
+    expect(await retryFailures(retryDependencies(store))).toMatchObject({
+      ok: true,
+      added: 1,
+      skipped: [],
+    });
+    expect(store.snapshot().workItems[0]).toMatchObject({
+      kind: DOCUMENT_EXTRACT_KIND,
+      targetKind: 'file',
+      targetId: '01940000-0000-7000-8000-00000000f001',
+    });
   });
 
   it.each(['toString', '__proto__'])('treats prototype property %s as an unknown stage', async (stage) => {

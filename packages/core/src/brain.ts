@@ -2,6 +2,11 @@ import type { AttachmentLinkSpoolPayload } from './domain/spool-record.js';
 import type { IngestAttachment } from './domain/ingest-batch.js';
 import type { SourceFileReader } from './ports/source-file.js';
 import { fillFileNames } from './files/file-names.js';
+import {
+  DOCUMENT_EXTRACT_KIND,
+  documentExtractHandler,
+  enqueueDocumentExtractions,
+} from './files/extract-work.js';
 import type { FileStore } from './ports/file-store.js';
 import { formatSessionToken, parseSessionToken } from './domain/session-token.js';
 import { redactMessage, type MessagesRedactInput, type MessagesRedactResult } from './messages/redact.js';
@@ -231,6 +236,10 @@ export function createBrain(dependencies: BrainDependencies): Brain {
       store,
       clock,
     }),
+    // Core's own for the same reason: reading a stored attachment is a use case,
+    // and the ports it needs — the store, the file store, the clock, the ids —
+    // are exactly the ones this brain was assembled from (`files/extract-work.ts`).
+    [DOCUMENT_EXTRACT_KIND]: documentExtractHandler({ store, files, clock, idGen }),
   };
   const handlers: WorkHandlers = { ...coreHandlers, ...workHandlers };
 
@@ -423,6 +432,17 @@ async function drain(
   }
 
   if (clock.now().getTime() < deadline) await fillFileNames({ store, idGen });
+
+  // After the names and before the loop, which is where the files it finds come
+  // from: nothing before the loop stores a file, so an attachment this run's
+  // `session_ingest` collects is queued and read by the *next* drain. What this
+  // step catches is every file already stored — the ones story 5 filled in
+  // included (Design Notes). Neither step reports anything: what they produce
+  // is queue rows and name rows, and the loop's own counters are what say
+  // whether anything happened (`files/extract-work.ts`).
+  if (clock.now().getTime() < deadline) {
+    await enqueueDocumentExtractions({ store, clock, idGen }, { deadline });
+  }
 
   const queue = await drainQueue(
     { store, spool, clock, idGen },

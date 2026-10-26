@@ -323,7 +323,12 @@ brain messages redact <message> --detected --yes --json
 내용이 없으면 원본 파일의 줄 수나 바이트 수가 붙인 시점과 같을 때만 읽고, 원본을
 얻지 못하면 첨부는 `missing_at_ingest`로 남습니다. 홈 아래 파일의 원래 자리는
 `~/` 경로로 기록하며, 사용자 파일을 옮기거나 바꾸지 않습니다.
-`brain queue drain`은 첨부의 파일 이름과 원래 경로를 이름 색인에 채웁니다.
+`brain queue drain`은 첨부의 파일 이름과 원래 경로를 이름 색인에 채웁니다. 같은
+실행이 붙인 텍스트 문서(txt·md)를 조각으로 잘라 본문으로도 찾을 수 있게 합니다.
+형식은 이름이 아니라 내용으로 가릅니다 — 이름만 `.txt`인 그림은 조각이 생기지
+않고 "읽지 않는 형식"으로 남으며 실패로 기록하지도 않습니다. 8 MiB를 넘는 파일은
+읽지 않습니다. 원본 바이트가 사라졌거나 수집 때와 달라졌으면 실패로 남고, 마지막에
+성공한 조각은 그대로 남아 계속 찾힙니다.
 
 메시지에는 번호가 없습니다. 메시지를 가리키는 것은 하네스가 준
 `(session_id, harness_message_id)` 하나뿐이어서, 앞부분이 다시 쓰인
@@ -423,10 +428,11 @@ brain queue drain [--budget <seconds>]
    JSON에는 정수 `reread_missing`, 텍스트에는 `다시 못 읽음 N건`으로 나옵니다.
 3. **대기열 처리.** 위 규칙대로 남은 예산 안에서 일감을 청구하고 처리합니다.
 
-이 빌드의 일감은 `session_ingest`(세션 다시 수집)와 `session_identity`(비어 있는
-프로젝트·워크트리 꼬리표 확인)입니다. 스캔이 찾은 세션은 같은 실행에서 수집되므로, 새로 설치한
+이 빌드의 일감은 `session_ingest`(세션 다시 수집), `session_identity`(비어 있는
+프로젝트·워크트리 꼬리표 확인), `document_extract`(붙인 문서를 조각으로 만들기)
+입니다. 스캔이 찾은 세션은 같은 실행에서 수집되므로, 새로 설치한
 brain에서 `brain queue drain` 한 번이 디스크에 남은 세션을 모두 거둡니다
-(`ingest_source`는 `import`입니다). 조각·색인 만들기와 미러 갱신은 뒤 에픽에서
+(`ingest_source`는 `import`입니다). 대화 조각·색인 만들기와 미러 갱신은 뒤 에픽에서
 종류를 하나씩 더합니다. 종류를 모르는 일감은 청구하지 않습니다 — 새 빌드가 넣은
 일감을 옛 빌드가 지우지 않게 하려고요.
 
@@ -485,8 +491,9 @@ brain failures retry [--target-kind <kind>]
 똑같이 보입니다. 텍스트 줄에는 `횟수 N`으로 들어갑니다.
 
 `failures retry`는 미해결 실패의 **일감 종류와 대상마다** 일감을 하나 넣습니다.
-단계가 `session_ingest`·`session_identity`이면 그 종류를 다시 하고, 모르는 단계는
-대상 종류 표를 따릅니다(세션 → `session_ingest`). 둘 다 표에 없는 종류는 건너뛰고
+단계가 `session_ingest`·`session_identity`·`document_extract`이면 그 종류를 다시
+하고, 모르는 단계는 대상 종류 표를 따릅니다(세션 → `session_ingest`, 파일 →
+`document_extract`). 둘 다 표에 없는 종류는 건너뛰고
 `skipped`로 몇 건이었는지 알려 줍니다 — 아무도 처리하지 않을 일감을 넣는 것보다
 그렇게 말하는 편이 낫습니다.
 

@@ -953,6 +953,20 @@ export type SetFileSourceUnreachableResult =
  */
 export interface FileExtractionState {
   fileId: string;
+  /**
+   * The hash the ingest recorded of these bytes, so the worker can tell the
+   * file it is about from whatever is at the location now (AD-23).
+   */
+  contentHash: string;
+  /** How many bytes the ingest saw, which is what the size bound is read from. */
+  sizeBytes: number;
+  /**
+   * Where Brain's own copy is, or `null` for a file it never kept — an
+   * attachment that was already missing when it was collected, or one whose
+   * only location belongs to somebody else. A reading needs bytes, so a `null`
+   * here is a file whose original cannot be reached.
+   */
+  home: FileLocation | null;
   redactedAt: Date | null;
   sourceUnreachableAt: Date | null;
   currentExtractionId: string | null;
@@ -964,6 +978,21 @@ export interface FileExtractionState {
 export type ReadFileExtractionStateResult =
   | ({ ok: true } & FileExtractionState)
   | { ok: false; code: 'FILE_NOT_FOUND' | 'DB_UNAVAILABLE'; message: string };
+
+/**
+ * The files nothing has read yet, oldest id first — the queue's input, not its
+ * state.
+ *
+ * "Nothing has read yet" is `document_extractions` holding no row for the file
+ * at all, which is a stronger question than "no successful reading": a file
+ * whose only generation is `unsupported` or `too_large` has been read, and
+ * answered, so queueing it again would be the same work for ever. The row of a
+ * failed reading is swept away by the next success (AD-24), and until then it is
+ * what keeps a file whose bytes are gone out of this list.
+ */
+export type ListFilesAwaitingExtractionResult =
+  | { ok: true; fileIds: readonly string[] }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
 
 export type ListExtractionsResult =
   | { ok: true; extractions: readonly DocumentExtraction[] }
@@ -1040,6 +1069,18 @@ export interface ExtractionStore {
   ): Promise<SetFileSourceUnreachableResult>;
   /** One file's extraction state. A read, so it takes no lock (AD-7). */
   readFileExtractionState(fileId: string): Promise<ReadFileExtractionStateResult>;
+  /**
+   * The files that have bytes to read and no generation yet, `id` ascending and
+   * at most `limit` of them. A read, so it takes no lock (AD-7).
+   *
+   * A redacted file and a file whose original is out of reach are left out
+   * here rather than by the caller: both are states the database carries, and a
+   * drain that queued them would open a reading that `beginExtraction` refuses
+   * or a handler closes without doing anything.
+   */
+  listFilesAwaitingExtraction(input: {
+    limit: number;
+  }): Promise<ListFilesAwaitingExtractionResult>;
   /** Every generation of one file, `attempt` ascending. A read (AD-7). */
   listExtractions(fileId: string): Promise<ListExtractionsResult>;
   /**

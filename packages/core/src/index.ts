@@ -177,3 +177,31 @@ export {
   type HeldExtractionChunks,
   type WriteExtractionChunksInput,
 } from './files/extraction-chunks.js';
+
+/** Reading one stored file into pieces: the kind, the worker, the step before it. */
+export {
+  DOCUMENT_EXTRACT_KIND,
+  EXTRACTION_FAILED,
+  FILE_CONTENT_MISMATCH,
+  FILE_SOURCE_UNREACHABLE,
+  documentExtractHandler,
+  enqueueDocumentExtractions,
+  type DocumentExtractWorkDependencies,
+  type EnqueueDocumentExtractionsDependencies,
+  type EnqueueDocumentExtractionsOptions,
+} from './files/extract-work.js';
+export {
+  DOCUMENT_EXTRACTORS,
+  DOCUMENT_EXTRACTOR_VERSION,
+  textExtractor,
+  type DocumentExtractResult,
+  type DocumentExtractor,
+  type DocumentExtractorPiece,
+} from './files/extractors.js';
+export {
+  TEXT_MEDIA_TYPE,
+  chunkDocumentText,
+  decodeUtf8Text,
+  type DecodeUtf8TextResult,
+  type DocumentTextPiece,
+} from './files/text-extractor.js';

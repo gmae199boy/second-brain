@@ -17,6 +17,7 @@ import {
   type FinishExtractionResult,
   type ListExtractionChunksResult,
   type ListExtractionsResult,
+  type ListFilesAwaitingExtractionResult,
   type ReadFileExtractionStateResult,
   type SetFileSourceUnreachableInput,
   type SetFileSourceUnreachableResult,
@@ -396,14 +397,26 @@ export function sqliteExtractionStore(connect: SqliteConnect): ExtractionStore {
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
         const { db } = opened.connection;
+        // `file_locations` is joined in rather than read after, because the home
+        // location is part of one answer: a worker that got the state and then
+        // the location could be told about a file whose home arrived in
+        // between, and the port says this is one lock-free read (AD-7).
         const file = (
           await sql<{
+            content_hash: string;
+            size_bytes: number;
+            store_kind: 'local' | 'drive' | null;
+            locator: string | null;
+            ownership: 'brain' | 'external' | null;
             redacted_at: string | null;
             source_unreachable_at: string | null;
             current_extraction_id: string | null;
           }>`
-            select redacted_at, source_unreachable_at, current_extraction_id
-              from files where id = ${fileId}
+            select f.content_hash, f.size_bytes,
+                   l.store_kind, l.locator, l.ownership,
+                   f.redacted_at, f.source_unreachable_at, f.current_extraction_id
+              from files f left join file_locations l on l.id = f.home_location_id
+             where f.id = ${fileId}
           `.execute(db)
         ).rows[0];
         if (file === undefined) {
@@ -423,6 +436,12 @@ export function sqliteExtractionStore(connect: SqliteConnect): ExtractionStore {
         return {
           ok: true,
           fileId,
+          contentHash: file.content_hash,
+          sizeBytes: file.size_bytes,
+          home:
+            file.store_kind === null || file.locator === null || file.ownership === null
+              ? null
+              : { storeKind: file.store_kind, locator: file.locator, ownership: file.ownership },
           redactedAt: file.redacted_at === null ? null : at(file.redacted_at, 'files.redacted_at'),
           sourceUnreachableAt:
             file.source_unreachable_at === null
@@ -437,6 +456,41 @@ export function sqliteExtractionStore(connect: SqliteConnect): ExtractionStore {
           ok: false,
           code: 'DB_UNAVAILABLE',
           message: `파일의 추출 상태를 읽을 수 없습니다: ${describe(error)}`,
+        };
+      }
+    },
+
+    async listFilesAwaitingExtraction({
+      limit,
+    }: {
+      limit: number;
+    }): Promise<ListFilesAwaitingExtractionResult> {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        // A lock-free read, shaped like `listMissingFileNames`: the drain asks
+        // this before it takes any write lock, and a brain with nothing new
+        // attached must not queue behind whatever is writing (AD-7).
+        //
+        // `not exists` and not "no successful generation": a file whose only
+        // reading answered `unsupported` or `too_large` has been read, and
+        // asking again would be the same work every drain for ever. The row of
+        // a reading that failed is swept away by the next success (AD-24), and
+        // until then it is what keeps the file out of here.
+        const rows = await sql<{ id: string }>`
+          select f.id from files f
+           where f.home_location_id is not null
+             and f.redacted_at is null
+             and f.source_unreachable_at is null
+             and not exists (select 1 from document_extractions e where e.file_id = f.id)
+           order by f.id limit ${limit}
+        `.execute(opened.connection.db);
+        return { ok: true, fileIds: rows.rows.map((row) => row.id) };
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'DB_UNAVAILABLE',
+          message: `추출을 기다리는 파일을 읽을 수 없습니다: ${describe(error)}`,
         };
       }
     },

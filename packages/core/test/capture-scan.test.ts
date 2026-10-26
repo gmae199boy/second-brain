@@ -6,6 +6,7 @@ import {
   sessionIngestHandler,
 } from '../src/capture/session-ingest-work.js';
 import { failureFingerprint } from '../src/domain/failure.js';
+import { DOCUMENT_EXTRACT_KIND } from '../src/files/extract-work.js';
 import type { TranscriptFile } from '../src/domain/transcript-file.js';
 import type { WorkItem } from '../src/domain/work-item.js';
 import type { TranscriptListing } from '../src/ports/transcript.js';
@@ -509,10 +510,13 @@ describe('the session_ingest handler', () => {
 });
 
 describe('FAILURE_RETRY_KINDS', () => {
-  it('maps a session to collecting it again, and knows nothing else yet', () => {
+  it('maps a session to collecting it again and a file to reading it again', () => {
     // A target kind that is not in here is reported as skipped rather than
     // guessed at: an item of a kind no handler claims would sit in the backlog
     // for ever (Boundaries).
-    expect(FAILURE_RETRY_KINDS).toEqual({ session: SESSION_INGEST_KIND });
+    expect(FAILURE_RETRY_KINDS).toEqual({
+      session: SESSION_INGEST_KIND,
+      file: DOCUMENT_EXTRACT_KIND,
+    });
   });
 });

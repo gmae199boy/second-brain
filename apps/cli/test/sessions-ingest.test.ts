@@ -2466,6 +2466,78 @@ describe('brain sessions ingest claude-code when the database will not take the 
     expect((await readdir(spoolPath(locked))).filter(name => name.endsWith('.jsonl'))).toEqual([]);
   }, 30_000);
 
+  it('drain은 붙인 텍스트 문서를 조각으로 만들고 이름만 txt인 그림은 unsupported로 닫는다', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQcEj4DwADBAHAgChw2gAAAABJRU5ErkJggg==', 'base64');
+    const home = await installedHome();
+    const sourceHome = join(home, 'source-home');
+    const project = join(sourceHome, 'project');
+    await mkdir(project, { recursive: true });
+    const note = join(project, 'note.md');
+    const plain = join(project, 'plain.txt');
+    // A PNG under a name that says text, which is the whole point: the format
+    // is decided from the bytes and the name is never consulted.
+    const trap = join(project, 'trap.txt');
+    const noteText = '# 제목\n\nneedlebody 첫 줄입니다.\n';
+    const plainText = 'plainneedle 둘째 문서입니다.\n';
+    await writeFile(note, noteText);
+    await writeFile(plain, plainText);
+    await writeFile(trap, png);
+    const text = (content: string) => ({ type: 'text', file: { content, numLines: 1, startLine: 1, totalLines: 1 } });
+    const lines: unknown[] = [
+      { type: 'user', uuid: 'extract-user', timestamp: '2026-10-26T00:00:00.000Z', message: { content: [{ type: 'text', text: '파일 읽기' }] } },
+      { type: 'attachment', uuid: 'extract-0', parentUuid: 'extract-user', attachment: { type: 'file', filename: note, content: text(noteText) } },
+      { type: 'attachment', uuid: 'extract-1', parentUuid: 'extract-0', attachment: { type: 'file', filename: plain, content: text(plainText) } },
+      { type: 'attachment', uuid: 'extract-2', parentUuid: 'extract-1', attachment: { type: 'file', filename: trap, content: { type: 'image', file: { base64: png.toString('base64'), originalSize: png.length } } } },
+    ];
+    const transcript = join(home, 'extract-files.jsonl');
+    await writeFile(transcript, lines.map(line => JSON.stringify(line)).join('\n') + '\n');
+
+    expect((await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, stopPayload(transcript), { HOME: sourceHome })).code).toBe(0);
+    expect((await runBrain(['queue', 'drain', '--json'], home, '', { HOME: sourceHome })).code).toBe(0);
+
+    function read(path: string) {
+      const db = new DatabaseSync(path, { readOnly: true });
+      try {
+        const generations = db.prepare(`select n.text as name, e.status, e.media_type, e.extractor_version, e.index_config_id, e.attempt,
+            case when f.current_extraction_id is e.id then 1 else 0 end as current
+          from document_extractions e join files f on f.id = e.file_id
+          join file_names n on n.file_id = f.id and n.name_source = 'attachment_name'
+          order by n.text`).all() as Record<string, unknown>[];
+        const chunks = db.prepare('select body, chunk_locator, page from document_chunks order by ordinal').all() as { body: string; chunk_locator: string; page: number | null }[];
+        const found = (needle: string) => (db.prepare('select count(*) as n from document_chunks_fts where document_chunks_fts match ?').get(`"${needle}"`) as { n: number }).n;
+        return {
+          generations,
+          chunks,
+          needles: { needlebody: found('needlebody'), plainneedle: found('plainneedle') },
+          // Scoped to the file: this transcript lives outside the harness
+          // folder, so `session_identity` records one of its own and that is
+          // not what this case is about.
+          failures: db.prepare("select stage, code from failures where target_kind = 'file'").all(),
+        };
+      } finally { db.close(); }
+    }
+
+    const after = read(databaseIn(home));
+    expect(after.failures).toEqual([]);
+    expect(after.generations).toEqual([
+      { name: 'note.md', status: 'ok', media_type: 'text/plain', extractor_version: 'doc/1', index_config_id: '019a0000-0000-7000-8000-000000000002', attempt: 1, current: 1 },
+      { name: 'plain.txt', status: 'ok', media_type: 'text/plain', extractor_version: 'doc/1', index_config_id: '019a0000-0000-7000-8000-000000000002', attempt: 1, current: 1 },
+      // The trap: read, answered, and no failure row for it (Design Notes).
+      { name: 'trap.txt', status: 'unsupported', media_type: null, extractor_version: 'doc/1', index_config_id: null, attempt: 1, current: 0 },
+    ]);
+    expect(after.chunks.map(chunk => chunk.body).sort()).toEqual([noteText, plainText].sort());
+    for (const chunk of after.chunks) {
+      expect(chunk.page).toBe(null);
+      expect(JSON.parse(chunk.chunk_locator)).toMatchObject({ type: 'text', start: 0 });
+    }
+    expect(after.needles).toEqual({ needlebody: 1, plainneedle: 1 });
+
+    // A second drain finds nothing to do: the generation rows are what keep the
+    // three files out of the queueing step's read.
+    expect((await runBrain(['queue', 'drain', '--json'], home, '', { HOME: sourceHome })).code).toBe(0);
+    expect(read(databaseIn(home))).toEqual(after);
+  }, 30_000);
+
   it('이미지 원본은 한 번 남고 이미지뿐인 메시지와 재수집과 잠금 뒤 재주입도 같은 연결을 만든다', async () => {
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQcEj4DwADBAHAgChw2gAAAABJRU5ErkJggg==', 'base64');
     const image = {type:'image',source:{type:'base64',media_type:'image/png',data:png.toString('base64')}};

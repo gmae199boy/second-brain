@@ -29,6 +29,7 @@ import type {
   FinishExtractionResult,
   ListExtractionChunksResult,
   ListExtractionsResult,
+  ListFilesAwaitingExtractionResult,
   ReadFileExtractionStateResult,
   SetFileSourceUnreachableInput,
   SetFileSourceUnreachableResult,
@@ -846,13 +847,17 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     },
 
     async readFileExtractionState(fileId: string): Promise<ReadFileExtractionStateResult> {
-      if (fileById(fileId) === undefined) {
+      const file = fileById(fileId);
+      if (file === undefined) {
         return { ok: false, code: 'FILE_NOT_FOUND', message: '파일이 없습니다' };
       }
       const open = openExtraction(fileId);
       return {
         ok: true,
         fileId,
+        contentHash: file.contentHash,
+        sizeBytes: file.sizeBytes,
+        home: file.home === null ? null : { ...file.home },
         // This fake has no file redaction (port contract).
         redactedAt: null,
         sourceUnreachableAt: sourceUnreachableAt.get(fileId) ?? null,
@@ -865,6 +870,27 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
             .map((extraction) => extraction.attempt),
         ),
       };
+    },
+
+    async listFilesAwaitingExtraction({
+      limit,
+    }: {
+      limit: number;
+    }): Promise<ListFilesAwaitingExtractionResult> {
+      // Bytes to read, in reach, and no generation of any outcome: the queue's
+      // input of `files/extract-work.ts`. This fake has no file redaction, so
+      // that half of the question is the adapters' (port contract).
+      const fileIds = [...fileRows.values()]
+        .filter(
+          (file) =>
+            file.home !== null &&
+            !sourceUnreachableAt.has(file.id) &&
+            !extractions.some((extraction) => extraction.fileId === file.id),
+        )
+        .map((file) => file.id)
+        .sort((left, right) => left.localeCompare(right))
+        .slice(0, limit);
+      return { ok: true, fileIds };
     },
 
     async listExtractions(fileId: string): Promise<ListExtractionsResult> {

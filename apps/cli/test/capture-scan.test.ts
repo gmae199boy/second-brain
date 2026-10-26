@@ -269,10 +269,31 @@ describe('brain queue drain and the transcript folder', () => {
     );
 
     expect(second.code).toBe(0);
-    expect(envelopeOf<DrainData>(second).data).toMatchObject({ enqueued: 0, claimed: 0 });
-    // Every table holds exactly what it held: a second drain over the same
-    // folder adds nothing (AD-8).
-    expect(rowCounts(path)).toEqual(after);
+    // No session to collect. What it does claim is the attachment the first run
+    // stored: the step that queues a reading comes before the loop, so a file
+    // created inside the loop is read by the next drain (Design Notes).
+    expect(envelopeOf<DrainData>(second).data).toMatchObject({
+      enqueued: 0,
+      claimed: 1,
+      completed: 1,
+      failed: 0,
+    });
+    // Every conversation table holds exactly what it held: a second drain over
+    // the same folder adds no session, message or history row (AD-8).
+    const settled = rowCounts(path);
+    for (const table of ['sessions', 'messages', 'tool_notes', 'transcript_files', 'failures']) {
+      expect(settled[table], table).toBe(after[table]);
+    }
+
+    const third = await spawned(
+      ['queue', 'drain', '--json'],
+      environment({ home, configDir }),
+    );
+
+    expect(third.code).toBe(0);
+    expect(envelopeOf<DrainData>(third).data).toMatchObject({ enqueued: 0, claimed: 0 });
+    // And now every table, extraction included: the file has been answered.
+    expect(rowCounts(path)).toEqual(settled);
   });
 
   it('크기가 같은 구버전 세션을 한 번만 다시 읽고 사라진 파일은 센다', async () => {
@@ -479,8 +500,10 @@ describe('brain queue drain and the transcript folder', () => {
       expect(second.code).toBe(0);
       const data = envelopeOf<DrainData>(second).data;
       // Two changed files: the one that grew and the new one. The unreadable
-      // one is the same size as the row says, so it is never opened.
-      expect(data).toMatchObject({ enqueued: 2, claimed: 2 });
+      // one is the same size as the row says, so it is never opened. The third
+      // claim is the attachment the first run stored, which this run reads
+      // because the step that queues a reading comes before the loop.
+      expect(data).toMatchObject({ enqueued: 2, claimed: 3, completed: 3 });
       expect(rowCounts(path)['sessions']).toBe(3);
       expect(rowCounts(path)['messages']).toBeGreaterThan(firstCounts['messages'] ?? 0);
       // Its history row did not move either: nothing read it.
@@ -799,8 +822,9 @@ describe('brain failures list and retry in text mode', () => {
 
   it('reports a target kind nothing can retry as skipped', async () => {
     const { home, configDir } = await installed();
-    // A failure about something that is not a session: there is no kind of
-    // work for it in this build, so it is counted and left alone.
+    // A failure about something that is neither a session nor a file: those two
+    // have a kind of work each, and a message has none in this build, so it is
+    // counted and left alone.
     const database = new DatabaseSync(databaseIn(home));
     try {
       database
@@ -808,7 +832,7 @@ describe('brain failures list and retry in text mode', () => {
           `insert into failures (id, target_kind, target_id, stage, fingerprint, harness,
                                  session_id, code, message, occurred_at,
                                  first_occurred_at, occurrences)
-           values (?, 'file', 'sha256:demo', 'extract', 'sha256:one', null, null,
+           values (?, 'message', 'message-one', 'extract', 'sha256:one', null, null,
                    'DEMO_FAILED', '안 됩니다', '2026-03-04T05:06:07.000Z',
                    '2026-03-04T05:06:07.000Z', 1)`,
         )
@@ -825,7 +849,7 @@ describe('brain failures list and retry in text mode', () => {
     expect(run.code).toBe(0);
     expect(envelopeOf<RetryData>(run).data).toMatchObject({
       added: 0,
-      skipped: [{ target_kind: 'file', count: 1 }],
+      skipped: [{ target_kind: 'message', count: 1 }],
     });
   });
 });

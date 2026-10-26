@@ -47,7 +47,11 @@ export {
   type PdfChunkLocator,
   type TextChunkLocator,
 } from './chunk-locator.js';
-export { DOCUMENT_CHUNK_BATCH_MAX } from './document.js';
+export {
+  DOCUMENT_CHUNK_BATCH_MAX,
+  DOCUMENT_CHUNK_PARAMS,
+  DOCUMENT_EXTRACT_MAX_BYTES,
+} from './document.js';
 export type {
   DocumentChunk,
   DocumentExtraction,
