@@ -23,6 +23,7 @@ export type { Message, MessageRole } from './message.js';
 export type { User } from './user.js';
 export { TOOL_NOTE_TARGET_LIMIT, type ToolNote } from './tool-note.js';
 export type { LogEntry, LogEntryEdit, LogEntryKind, RuleState } from './log-entry.js';
+export { DOCUMENT_CHUNK_INDEX_CONFIG_ID } from './index-config.js';
 export type {
   ChunkParams,
   ConversationIndexConfig,
@@ -46,6 +47,7 @@ export {
   type PdfChunkLocator,
   type TextChunkLocator,
 } from './chunk-locator.js';
+export { DOCUMENT_CHUNK_BATCH_MAX } from './document.js';
 export type {
   DocumentChunk,
   DocumentExtraction,

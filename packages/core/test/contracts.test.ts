@@ -1,4 +1,4 @@
-import { attachmentStoreContract, fileStoreContract, memoryFileStore } from '../src/testing/index.js';
+import { attachmentStoreContract, extractionStoreContract, fileStoreContract, memoryFileStore } from '../src/testing/index.js';
 import { describe, expect, it } from 'vitest';
 import {
   formatSessionToken,
@@ -57,6 +57,8 @@ import {
   type SessionStoreSubject,
   type SubjectFactory,
 } from '../src/testing/index.js';
+
+import { DOCUMENT_CHUNK_BATCH_MAX } from '../src/domain/document.js';
 
 const INSTANT = new Date('2026-01-02T03:04:05.000Z');
 
@@ -1402,4 +1404,62 @@ describe('꼬리표 근거 계약의 음성 가짜', () => {
 describe('파일과 첨부 계약', () => {
   for (const c of fileStoreContract()) it(c.name, () => c.run(async () => memoryFileStore()));
   for (const c of attachmentStoreContract()) it(c.name, () => c.run(async () => memoryStore()));
+});
+
+describe('추출 세대 계약', () => {
+  for (const c of extractionStoreContract()) it(c.name, () => c.run(async () => memoryStore()));
+});
+
+describe('추출 세대 계약의 음성 가짜', () => {
+  it('포인터를 실패한 세대로도 옮기는 가짜를 거부한다', async () => {
+    const failures = await failedCases(extractionStoreContract(), async () => {
+      const store = memoryStore();
+      return {
+        ...store,
+        async finishExtraction(input) {
+          const result = await store.finishExtraction(input);
+          // The pointer moves whatever the outcome was, which is the one rule
+          // `document_extractions` exists to keep.
+          return result.ok ? { ...result, current: true } : result;
+        },
+      };
+    });
+    expect(failures).toContain('영구 실패는 포인터를 건드리지 않고 원본 접근 불가 표시는 그 칸만 쓴다');
+  });
+
+  it('만료된 청구의 열린 세대를 그대로 두는 가짜를 거부한다', async () => {
+    const failures = await failedCases(extractionStoreContract(), async () => {
+      const store = memoryStore();
+      return {
+        ...store,
+        async beginExtraction(input) {
+          const state = await store.readFileExtractionState(input.fileId);
+          // The open generation of an expired claim is left where it is, so two
+          // readings of one file are open at once.
+          if (state.ok && state.openExtraction !== null) {
+            return { ok: false as const, code: 'CLAIM_LOST' as const, message: '열린 세대가 있습니다' };
+          }
+          return store.beginExtraction(input);
+        },
+      };
+    });
+    expect(failures).toContain('만료된 청구의 열린 세대는 다음 청구의 begin이 닫고 늦은 쓰기는 거부된다');
+  });
+
+  it('조각 배치의 상한을 세지 않는 가짜를 거부한다', async () => {
+    const failures = await failedCases(extractionStoreContract(), async () => {
+      const store = memoryStore();
+      return {
+        ...store,
+        async appendExtractionChunks(input) {
+          // The bound is the only thing that keeps one write short (AD-7).
+          return store.appendExtractionChunks({
+            ...input,
+            chunks: input.chunks.slice(0, DOCUMENT_CHUNK_BATCH_MAX),
+          });
+        },
+      };
+    });
+    expect(failures).toContain('조각 배치는 크기와 위치가 모두 맞아야 한 줄이라도 들어간다');
+  });
 });

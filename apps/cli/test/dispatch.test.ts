@@ -1323,6 +1323,13 @@ describe('the dispatcher and the lock budget', () => {
         async listFileNames() { return unavailable; },
         async linkAttachments() { return unavailable; },
         async listMessageAttachments() { return unavailable; },
+        async beginExtraction() { return unavailable; },
+        async appendExtractionChunks() { return unavailable; },
+        async finishExtraction() { return unavailable; },
+        async setFileSourceUnreachable() { return unavailable; },
+        async readFileExtractionState() { return unavailable; },
+        async listExtractions() { return unavailable; },
+        async listExtractionChunks() { return unavailable; },
         async checkHealth() {
           return unavailable;
         },

@@ -13,3 +13,4 @@ export { clockContract } from './clock.js';
 export { idGenContract } from './id-gen.js';
 export { fileStoreContract } from './file-store.js';
 export { attachmentStoreContract, type AttachmentStoreSubject } from './attachment-store.js';
+export { extractionStoreContract, type ExtractionStoreSubject } from './extraction-store.js';

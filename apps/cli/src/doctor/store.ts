@@ -12,8 +12,8 @@ import type { SchemaStore, Store } from 'second_brain';
  * created — a doctor that made a database would report a brain nobody
  * installed (AD-20).
  *
- * It answers the session, identity, queue and transcript-history capabilities
- * too, with the same code. Two of those `doctor run` does ask for — the
+ * It answers the session, identity, queue, transcript-history and extraction
+ * capabilities too, with the same code. Two of those `doctor run` does ask for — the
  * `failures` and `transcripts` checks read `listFailures` and
  * `listTranscriptFiles` — and they are never reached here only because
  * `checkHealth` fails first and `runDoctor` skips both (`doctor/doctor.ts`).
@@ -58,6 +58,13 @@ export function failedConfigStore(message: string): Store & SchemaStore {
     async listFileNames() { return unavailable; },
     async linkAttachments() { return unavailable; },
     async listMessageAttachments() { return unavailable; },
+    async beginExtraction() { return unavailable; },
+    async appendExtractionChunks() { return unavailable; },
+    async finishExtraction() { return unavailable; },
+    async setFileSourceUnreachable() { return unavailable; },
+    async readFileExtractionState() { return unavailable; },
+    async listExtractions() { return unavailable; },
+    async listExtractionChunks() { return unavailable; },
     async ingest() {
       return unavailable;
     },

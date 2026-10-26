@@ -86,3 +86,23 @@ export type { AttachmentStore, MessageAttachment, LinkAttachmentsInput, LinkAtta
 
 export type { SourceFileReader } from './source-file.js';
 export type { MissingFileName, FileName, ListMissingFileNamesResult, ListFileNamesResult, WriteFileNamesResult } from './store.js';
+
+// The extraction capability of AD-24: one reading of one file, in pieces.
+export type {
+  AppendExtractionChunksInput,
+  AppendExtractionChunksResult,
+  BeginExtractionInput,
+  BeginExtractionResult,
+  ExtractionChunkInput,
+  ExtractionClaim,
+  ExtractionOutcome,
+  ExtractionStore,
+  FileExtractionState,
+  FinishExtractionInput,
+  FinishExtractionResult,
+  ListExtractionChunksResult,
+  ListExtractionsResult,
+  ReadFileExtractionStateResult,
+  SetFileSourceUnreachableInput,
+  SetFileSourceUnreachableResult,
+} from './store.js';

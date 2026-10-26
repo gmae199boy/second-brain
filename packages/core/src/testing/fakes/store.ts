@@ -12,6 +12,8 @@ import {
   type SessionToken,
 } from '../../domain/session-token.js';
 import type { ToolNote } from '../../domain/tool-note.js';
+import type { DocumentChunk, DocumentExtraction, DocumentExtractionFailedStage } from '../../domain/document.js';
+import { checkExtractionChunkBatch } from '../../files/extraction-chunks.js';
 import type { User } from '../../domain/user.js';
 import type { Failure } from '../../domain/failure.js';
 import type { TranscriptFile } from '../../domain/transcript-file.js';
@@ -19,6 +21,17 @@ import { workKindPolicy, type WorkItem } from '../../domain/work-item.js';
 import type {
   RedactMessageInput,
   RedactMessageResult,
+  AppendExtractionChunksInput,
+  AppendExtractionChunksResult,
+  BeginExtractionInput,
+  BeginExtractionResult,
+  FinishExtractionInput,
+  FinishExtractionResult,
+  ListExtractionChunksResult,
+  ListExtractionsResult,
+  ReadFileExtractionStateResult,
+  SetFileSourceUnreachableInput,
+  SetFileSourceUnreachableResult,
   AddWorkInput,
   AddWorkResult,
   ClaimWorkInput,
@@ -108,6 +121,15 @@ interface StoredToolNote extends ToolNote {
   callId: string | null;
 }
 
+/**
+ * What a generation closed by a later `beginExtraction` says about itself.
+ *
+ * The same sentence as the SQLite adapter's, and it names the new begin rather
+ * than an expired claim: closing the leftovers is what every begin does, and the
+ * usual reason there are leftovers — a claim that ran out — is not the only one.
+ */
+const STALE_EXTRACTION_ERROR = '새 begin이 열려 있던 이 세대를 닫았습니다';
+
 /** Whether two notes name the same place in the conversation. */
 function samePlace(
   left: { harnessMessageId: string; ordinal: number },
@@ -188,7 +210,66 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     return linked;
   }
   const fileNames: import('../../ports/store.js').FileName[] = [];
+  /**
+   * The extraction rows of AD-24: every generation in the order it was opened,
+   * its pieces keyed by the generation, and the two `files` columns this
+   * capability writes — the pointer and the unreachable mark.
+   *
+   * A list for the generations and not a map, for the reason the queue is a
+   * list: the key that matters is `(file, attempt)` and the one the reads ask
+   * about is the file, so a map keyed on either would lose the other.
+   */
+  const extractions: DocumentExtraction[] = [];
+  const documentChunks = new Map<string, DocumentChunk[]>();
+  const currentExtractions = new Map<string, string>();
+  const sourceUnreachableAt = new Map<string, Date>();
   let closes = 0;
+
+  /** One `files` row by id. The fake keys them by content hash, as ingest does. */
+  function fileById(fileId: string): NonNullable<MessageAttachment['file']> | undefined {
+    return [...fileRows.values()].find((file) => file.id === fileId);
+  }
+
+  function extractionById(id: string): DocumentExtraction | undefined {
+    return extractions.find((extraction) => extraction.id === id);
+  }
+
+  /** The generation still running, of which a file has at most one (0004). */
+  function openExtraction(fileId: string): DocumentExtraction | undefined {
+    return extractions.find(
+      (extraction) => extraction.fileId === fileId && extraction.finishedAt === null,
+    );
+  }
+
+  function chunksOf(extractionId: string): DocumentChunk[] {
+    return documentChunks.get(extractionId) ?? [];
+  }
+
+  /**
+   * How far a generation that a new `beginExtraction` closes had got, guessed
+   * from the one thing it can have stored: pieces mean it was indexing them, and
+   * no pieces mean it never got that far. No column records the stage in
+   * progress and nothing writes `media_type` before the generation is closed, so
+   * the guess is two-way — the estimate AD-24 settles for rather than a stage
+   * invented out of nothing (Design Notes).
+   */
+  function staleStage(extraction: DocumentExtraction): DocumentExtractionFailedStage {
+    return chunksOf(extraction.id).length > 0 ? 'index' : 'read';
+  }
+
+  /** Whether this claim still holds this file's extraction work (port contract). */
+  function holdsExtractionClaim(input: BeginExtractionInput): boolean {
+    const item = workItems.find((row) => row.id === input.claim.workItemId);
+    return (
+      item !== undefined &&
+      item.completedAt === null &&
+      item.targetKind === 'file' &&
+      item.targetId === input.fileId &&
+      item.claimedBy === input.claim.claimedBy &&
+      item.claimExpiresAt !== null &&
+      item.claimExpiresAt.getTime() > input.startedAt.getTime()
+    );
+  }
 
   /** The open row for one piece of work, or undefined (`work_items_open_key_idx`). */
   function openWork(kind: string, targetKind: string, targetId: string): WorkItem | undefined {
@@ -607,6 +688,201 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         session: { ...session },
         messages: [...(messages.get(token) ?? [])],
         toolNotes: sessionToolNotes.map(plainToolNote),
+      };
+    },
+
+    async beginExtraction(input: BeginExtractionInput): Promise<BeginExtractionResult> {
+      if (fileById(input.fileId) === undefined) {
+        return { ok: false, code: 'FILE_NOT_FOUND', message: '파일이 없습니다' };
+      }
+      // No `FILE_REDACTED` here: this fake has no file redaction, so
+      // `redactedAt` is always null and that case belongs to the adapters whose
+      // database carries the column (port contract).
+      if (!holdsExtractionClaim(input)) {
+        return { ok: false, code: 'CLAIM_LOST', message: '추출 청구가 더 이상 이 호출자의 것이 아닙니다' };
+      }
+
+      // A file has one open generation at a time, so any generation still open
+      // here is closed before the new one opens (AD-24). Usually it belongs to a
+      // claim that expired; a caller beginning twice under its own live claim
+      // gets the same treatment, which is why the sentence names the new begin
+      // and not the expiry.
+      let closedStale: DocumentExtraction | null = null;
+      const stale = openExtraction(input.fileId);
+      if (stale !== undefined) {
+        stale.status = 'failed';
+        stale.finishedAt = input.startedAt;
+        stale.error = STALE_EXTRACTION_ERROR;
+        // Read before the pieces go, because the pieces are what it is read from.
+        stale.failedStage = staleStage(stale);
+        documentChunks.set(stale.id, []);
+        closedStale = { ...stale };
+      }
+
+      const attempt =
+        Math.max(
+          0,
+          ...extractions
+            .filter((extraction) => extraction.fileId === input.fileId)
+            .map((extraction) => extraction.attempt),
+        ) + 1;
+      const extraction: DocumentExtraction = {
+        id: input.id,
+        fileId: input.fileId,
+        extractorVersion: input.extractorVersion,
+        attempt,
+        mediaType: null,
+        status: null,
+        startedAt: input.startedAt,
+        finishedAt: null,
+        error: null,
+        failedStage: null,
+        indexConfigId: null,
+      };
+      extractions.push(extraction);
+      documentChunks.set(extraction.id, []);
+      return { ok: true, extraction: { ...extraction }, closedStale };
+    },
+
+    async appendExtractionChunks(
+      input: AppendExtractionChunksInput,
+    ): Promise<AppendExtractionChunksResult> {
+      const extraction = extractionById(input.extractionId);
+      if (extraction === undefined) {
+        return { ok: false, code: 'EXTRACTION_NOT_FOUND', message: '추출 세대가 없습니다' };
+      }
+      if (extraction.finishedAt !== null) {
+        return { ok: false, code: 'EXTRACTION_CLOSED', message: '추출 세대가 이미 닫혔습니다' };
+      }
+      // `FILE_REDACTED` is the adapters': see `beginExtraction`.
+      const held = chunksOf(input.extractionId);
+      const checked = checkExtractionChunkBatch(input.chunks, {
+        ordinals: new Set(held.map((chunk) => chunk.ordinal)),
+        ids: new Set(held.map((chunk) => chunk.id)),
+      });
+      if (!checked.ok) return checked;
+      // `document_chunks.id` is unique across every generation, so an id that
+      // belongs to another one is the caller reusing an id, which a real adapter
+      // throws on. The fake throws too rather than keeping two rows with one id.
+      for (const chunk of checked.chunks) {
+        for (const [otherId, rows] of documentChunks) {
+          if (otherId === input.extractionId) continue;
+          if (rows.some((row) => row.id === chunk.id)) {
+            throw new Error(`조각 id가 다른 세대에 이미 있습니다: ${chunk.id}`);
+          }
+        }
+      }
+      documentChunks.set(input.extractionId, [
+        ...held,
+        ...checked.chunks.map((chunk) => ({
+          id: chunk.id,
+          extractionId: input.extractionId,
+          ordinal: chunk.ordinal,
+          page: chunk.page,
+          body: chunk.body,
+          chunkLocator: chunk.locator,
+        })),
+      ]);
+      return { ok: true, appended: checked.chunks.length };
+    },
+
+    async finishExtraction(input: FinishExtractionInput): Promise<FinishExtractionResult> {
+      const extraction = extractionById(input.extractionId);
+      if (extraction === undefined) {
+        return { ok: false, code: 'EXTRACTION_NOT_FOUND', message: '추출 세대가 없습니다' };
+      }
+      if (extraction.finishedAt !== null) {
+        // A late answer from an attempt whose claim is long gone. Nothing moves.
+        return { ok: false, code: 'EXTRACTION_CLOSED', message: '추출 세대가 이미 닫혔습니다' };
+      }
+
+      const { outcome } = input;
+      const pointer = currentExtractions.get(extraction.fileId) ?? null;
+      const currentAttempt = pointer === null ? 0 : (extractionById(pointer)?.attempt ?? 0);
+      // The pointer may only move forward, so a successful reading replaces the
+      // current one only when its own attempt is the higher of the two. A
+      // redacted file never gets here in this fake (`beginExtraction`).
+      const replaces = outcome.status === 'ok' && extraction.attempt > currentAttempt;
+
+      extraction.finishedAt = input.finishedAt;
+      extraction.status = outcome.status;
+      extraction.mediaType = outcome.mediaType;
+      extraction.error = outcome.status === 'ok' ? null : outcome.error;
+      extraction.failedStage = outcome.status === 'failed' ? outcome.failedStage : null;
+      // Only on the reading that took over: a generation whose pieces are about
+      // to be deleted has no chunking generation left to name.
+      extraction.indexConfigId =
+        outcome.status === 'ok' && replaces ? outcome.indexConfigId : null;
+
+      if (replaces) {
+        // Closed, then the pointer, then the older generations: the order the
+        // triggers of 0008 can see (port contract).
+        currentExtractions.set(extraction.fileId, extraction.id);
+        const older = extractions.filter(
+          (row) =>
+            row.fileId === extraction.fileId && row.id !== extraction.id && row.finishedAt !== null,
+        );
+        for (const row of older) {
+          documentChunks.delete(row.id);
+          extractions.splice(extractions.indexOf(row), 1);
+        }
+      } else {
+        // A reading that did not take over leaves no text behind, whatever it
+        // had written before it stopped.
+        documentChunks.set(extraction.id, []);
+      }
+      return { ok: true, extraction: { ...extraction }, current: replaces };
+    },
+
+    async setFileSourceUnreachable(
+      input: SetFileSourceUnreachableInput,
+    ): Promise<SetFileSourceUnreachableResult> {
+      if (fileById(input.fileId) === undefined) {
+        return { ok: false, code: 'FILE_NOT_FOUND', message: '파일이 없습니다' };
+      }
+      if (input.unreachableAt === null) sourceUnreachableAt.delete(input.fileId);
+      else sourceUnreachableAt.set(input.fileId, input.unreachableAt);
+      return { ok: true };
+    },
+
+    async readFileExtractionState(fileId: string): Promise<ReadFileExtractionStateResult> {
+      if (fileById(fileId) === undefined) {
+        return { ok: false, code: 'FILE_NOT_FOUND', message: '파일이 없습니다' };
+      }
+      const open = openExtraction(fileId);
+      return {
+        ok: true,
+        fileId,
+        // This fake has no file redaction (port contract).
+        redactedAt: null,
+        sourceUnreachableAt: sourceUnreachableAt.get(fileId) ?? null,
+        currentExtractionId: currentExtractions.get(fileId) ?? null,
+        openExtraction: open === undefined ? null : { ...open },
+        lastAttempt: Math.max(
+          0,
+          ...extractions
+            .filter((extraction) => extraction.fileId === fileId)
+            .map((extraction) => extraction.attempt),
+        ),
+      };
+    },
+
+    async listExtractions(fileId: string): Promise<ListExtractionsResult> {
+      return {
+        ok: true,
+        extractions: extractions
+          .filter((extraction) => extraction.fileId === fileId)
+          .sort((left, right) => left.attempt - right.attempt)
+          .map((extraction) => ({ ...extraction })),
+      };
+    },
+
+    async listExtractionChunks(extractionId: string): Promise<ListExtractionChunksResult> {
+      return {
+        ok: true,
+        chunks: [...chunksOf(extractionId)]
+          .sort((left, right) => left.ordinal - right.ordinal)
+          .map((chunk) => ({ ...chunk })),
       };
     },
 

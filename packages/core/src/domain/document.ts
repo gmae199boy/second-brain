@@ -21,6 +21,18 @@ export type DocumentExtractionStatus = 'ok' | 'failed' | 'unsupported' | 'too_la
  */
 export type DocumentExtractionFailedStage = 'read' | 'extract' | 'chunk' | 'index';
 
+/**
+ * How many pieces one `appendExtractionChunks` call may carry (AD-24의 예).
+ *
+ * One call is one write transaction, so this is the bound on how long any
+ * caller can hold the single writer: two hundred pieces of a couple of thousand
+ * characters each is the measured shape of the two-second rule, and a store that
+ * enforces it is the only thing that keeps a careless caller from queueing every
+ * other write behind one enormous batch (AD-7). A list longer than this is cut
+ * into batches by `writeExtractionChunks`, not taken whole.
+ */
+export const DOCUMENT_CHUNK_BATCH_MAX = 200;
+
 /** One reading of one file (AD-24). */
 export interface DocumentExtraction {
   /** UUIDv7 minted by whoever creates the row (AD-8). */

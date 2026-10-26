@@ -66,3 +66,15 @@ export interface DocumentChunkIndexConfig {
  * kind, so the type is the union and not a widening of both.
  */
 export type IndexConfig = ConversationIndexConfig | DocumentChunkIndexConfig;
+
+/**
+ * The `document_chunk` row migration 0002 seeds, by id.
+ *
+ * It is a constant and not a lookup because the id is written into the
+ * migration: a reading that succeeded records which chunking generation cut its
+ * pieces (`document_extractions.index_config_id`), and asking the database for
+ * "the document_chunk config" would be a query whose answer is ambiguous the day
+ * a second one exists. Whoever needs another generation names it, and this stays
+ * the one 0002 put there.
+ */
+export const DOCUMENT_CHUNK_INDEX_CONFIG_ID = '019a0000-0000-7000-8000-000000000002';

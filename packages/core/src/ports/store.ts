@@ -1,4 +1,10 @@
 import type { IngestAttachment } from '../domain/ingest-batch.js';
+import type { ChunkLocator } from '../domain/chunk-locator.js';
+import type {
+  DocumentChunk,
+  DocumentExtraction,
+  DocumentExtractionFailedStage,
+} from '../domain/document.js';
 import type { FileLocation } from '../domain/file.js';
 import type { RedactionCurrent, RedactionPlan, RedactionRefusal } from '../domain/redact-plan.js';
 import type { Failure } from '../domain/failure.js';
@@ -737,7 +743,7 @@ export type Store = HealthStore &
   SessionStore &
   UserStore &
   WorkStore &
-  TranscriptFileStore & AttachmentStore;
+  TranscriptFileStore & AttachmentStore & ExtractionStore;
 
 /**
  * Result of reading the single `schema_version` row. `version: null` means the
@@ -790,4 +796,255 @@ export interface AttachmentStore {
   listFileNames(fileId: string): Promise<ListFileNamesResult>;
   linkAttachments(input: LinkAttachmentsInput): Promise<LinkAttachmentsResult>;
   listMessageAttachments(messageId: string): Promise<ListMessageAttachmentsResult>;
+}
+
+/**
+ * Which claim a reading of a file is opened under (AD-21, AD-24).
+ *
+ * It is checked by `beginExtraction` and by nothing else. The open-row key of
+ * `work_items` is `(kind, target)`, so one file has at most one extraction claim
+ * at a time: the caller holding it is the only live reader of that file, and any
+ * open generation it finds belongs to a claim that has expired. A late write
+ * from that expired worker is stopped by the generation being closed
+ * (`EXTRACTION_CLOSED`) rather than by a second claim check (Design Notes).
+ */
+export interface ExtractionClaim {
+  /** The `work_items` row this reading is being done for. */
+  workItemId: string;
+  /** The `claimedBy` of the drain run that holds it. */
+  claimedBy: string;
+}
+
+/** What opening one reading of one file needs (AD-24). */
+export interface BeginExtractionInput {
+  /** The id to give the new `document_extractions` row. The caller mints it (AD-8). */
+  id: string;
+  fileId: string;
+  extractorVersion: string;
+  /** When this reading began, read once from `Clock` (AD-13). */
+  startedAt: Date;
+  claim: ExtractionClaim;
+}
+
+/**
+ * The generation this call opened, and the one it had to close first.
+ *
+ * `closedStale` is the open generation of an expired claim, closed `failed` in
+ * the same transaction with its pieces removed — the "next claim closes it" rule
+ * of AD-24. It is `null` on the ordinary call, which is most of them.
+ */
+export type BeginExtractionResult =
+  | { ok: true; extraction: DocumentExtraction; closedStale: DocumentExtraction | null }
+  | {
+      ok: false;
+      code: 'FILE_NOT_FOUND' | 'FILE_REDACTED' | 'CLAIM_LOST' | 'DB_UNAVAILABLE' | 'DB_LOCKED';
+      message: string;
+    };
+
+/** One piece of a reading, as its writer hands it over (AD-24). */
+export interface ExtractionChunkInput {
+  /** UUIDv7 minted by the caller (AD-8). */
+  id: string;
+  /** Key together with the generation; a non-negative safe integer. */
+  ordinal: number;
+  body: string;
+  chunkLocator: ChunkLocator;
+  /**
+   * The `page` copy of the locator: a PDF's page and `null` for every other
+   * kind. It is carried rather than derived so that a caller which read the
+   * column wrong is refused instead of corrected — `chunkPageMatches` compares
+   * with `===`, which makes a missing field a different answer from `null`.
+   */
+  page: number | null;
+}
+
+export interface AppendExtractionChunksInput {
+  extractionId: string;
+  /** One batch, one transaction: `1..DOCUMENT_CHUNK_BATCH_MAX` pieces. */
+  chunks: readonly ExtractionChunkInput[];
+}
+
+/**
+ * How many pieces went in, or why none did.
+ *
+ * Every refusal leaves the batch entirely unwritten, including `CHUNK_INVALID`:
+ * a generation holding the first half of a batch would be a reading nobody can
+ * tell from a complete one.
+ */
+export type AppendExtractionChunksResult =
+  | { ok: true; appended: number }
+  | {
+      ok: false;
+      code:
+        | 'EXTRACTION_NOT_FOUND'
+        | 'EXTRACTION_CLOSED'
+        | 'FILE_REDACTED'
+        | 'CHUNK_BATCH_TOO_LARGE'
+        | 'CHUNK_INVALID'
+        | 'DB_UNAVAILABLE'
+        | 'DB_LOCKED';
+      message: string;
+    };
+
+/**
+ * How a reading ended, as the closing call carries it.
+ *
+ * `ok` is the only outcome that knows what the bytes were, which is why its
+ * `mediaType` is not nullable: a reading that produced text read the file. The
+ * other three may have stopped before they found out.
+ */
+export type ExtractionOutcome =
+  | { status: 'ok'; mediaType: string; indexConfigId: string | null }
+  | {
+      status: 'failed';
+      failedStage: DocumentExtractionFailedStage;
+      error: string;
+      mediaType: string | null;
+    }
+  | { status: 'unsupported' | 'too_large'; error: string; mediaType: string | null };
+
+export interface FinishExtractionInput {
+  extractionId: string;
+  /** When it stopped, read once from `Clock` (AD-13). */
+  finishedAt: Date;
+  outcome: ExtractionOutcome;
+}
+
+/**
+ * The closed generation, and whether the file's pointer now names it.
+ *
+ * `current: false` is the ordinary answer for every outcome but a successful
+ * reading that was also the newest attempt: a failure leaves the pointer where
+ * it was, so search keeps answering from the last generation that worked
+ * (AD-24).
+ *
+ * `extraction.status` is how a caller tells the two `current: false` successes
+ * apart. A reading that succeeded but was overtaken by a newer attempt is closed
+ * `ok`; a reading of a file somebody redacted while it ran is closed `redacted`,
+ * because its text may not be kept and the pointer may not name it. Only an
+ * adapter whose database carries `files.redacted_at` can answer `redacted` — the
+ * in-memory fake has no file redaction, so its successes are always `ok`.
+ */
+export type FinishExtractionResult =
+  | { ok: true; extraction: DocumentExtraction; current: boolean }
+  | {
+      ok: false;
+      code: 'EXTRACTION_NOT_FOUND' | 'EXTRACTION_CLOSED' | 'DB_UNAVAILABLE' | 'DB_LOCKED';
+      message: string;
+    };
+
+export interface SetFileSourceUnreachableInput {
+  fileId: string;
+  /** When the bytes went out of reach, or `null` to clear the mark. */
+  unreachableAt: Date | null;
+}
+
+export type SetFileSourceUnreachableResult =
+  | { ok: true }
+  | { ok: false; code: 'FILE_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+
+/**
+ * Everything the extraction worker needs to know about one file before it reads
+ * it, as one lock-free read.
+ *
+ * `lastAttempt` is the highest `attempt` the file has, and `0` for a file no
+ * reading has touched — so the next generation is always `lastAttempt + 1`,
+ * with nothing to reconcile (migration 0004).
+ */
+export interface FileExtractionState {
+  fileId: string;
+  redactedAt: Date | null;
+  sourceUnreachableAt: Date | null;
+  currentExtractionId: string | null;
+  /** The generation still running, or `null`. At most one per file (0004). */
+  openExtraction: DocumentExtraction | null;
+  lastAttempt: number;
+}
+
+export type ReadFileExtractionStateResult =
+  | ({ ok: true } & FileExtractionState)
+  | { ok: false; code: 'FILE_NOT_FOUND' | 'DB_UNAVAILABLE'; message: string };
+
+export type ListExtractionsResult =
+  | { ok: true; extractions: readonly DocumentExtraction[] }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
+export type ListExtractionChunksResult =
+  | { ok: true; chunks: readonly DocumentChunk[] }
+  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+
+/**
+ * The extraction capability: opening a reading of a file, writing its pieces,
+ * closing it, and moving the file's pointer (AD-24).
+ *
+ * Four writes and three reads. Each write is one `BEGIN IMMEDIATE`, and the
+ * batch bound on `appendExtractionChunks` is what keeps any of them short
+ * (AD-7). Nothing in here mints an id or reads a clock: both arrive in the
+ * input, as they do everywhere else in this port (AD-8, AD-13).
+ *
+ * The order the writes touch rows in is part of the contract, because the
+ * triggers of 0008 can see it: a successful replacement closes the generation,
+ * *then* moves the pointer, *then* removes the older generations' pieces —
+ * removing them first would be a delete from a generation that is still current,
+ * which `document_chunks_delete_rule` refuses. A reading that did not succeed
+ * closes and then removes its own pieces, for the same reason. Removing text by
+ * raising the redaction marker is not this capability's business and never
+ * happens here (AD-11).
+ */
+export interface ExtractionStore {
+  /**
+   * Open a reading of one file, closing the leftovers of an expired claim first.
+   *
+   * The whole call is one transaction, and the claim is checked inside it: a
+   * caller whose claim is gone changes nothing and is told `CLAIM_LOST`. A file
+   * that has been redacted never gets a new generation (`FILE_REDACTED`), which
+   * is half of why `attempt` cannot go backwards — the other half is that the
+   * only generations this capability ever deletes have a lower `attempt` than
+   * the new current one.
+   */
+  beginExtraction(input: BeginExtractionInput): Promise<BeginExtractionResult>;
+  /**
+   * Append one bounded batch of pieces in one transaction.
+   *
+   * A locator the codec refuses, a `page` that does not go with it, an `ordinal`
+   * that is not a non-negative safe integer, and an `ordinal` or an `id` this
+   * generation already holds or the batch repeats are all `CHUNK_INVALID`, and
+   * none of them writes a row. The id is in that list because
+   * `document_chunks.id` is unique across every generation, and a store that
+   * left it to the database would throw where another would quietly store a
+   * second row with the same id. The canonical text of the locator is what is
+   * stored, so there is one spelling of one position (`chunk-locator.ts`).
+   */
+  appendExtractionChunks(
+    input: AppendExtractionChunksInput,
+  ): Promise<AppendExtractionChunksResult>;
+  /**
+   * Close one reading, and move the file's pointer when it earned it.
+   *
+   * A generation that is already closed is `EXTRACTION_CLOSED` and changes
+   * nothing: that is an attempt whose claim expired long ago answering late, and
+   * its answer must not overwrite the newer reading's (AD-24).
+   *
+   * An `ok` on a file that was redacted while the reading ran is closed with
+   * status `redacted` and `current: false`: the pieces go, the pointer stays. An
+   * adapter with no file redaction, such as the in-memory fake, never answers
+   * that way.
+   */
+  finishExtraction(input: FinishExtractionInput): Promise<FinishExtractionResult>;
+  /**
+   * Mark or unmark a file whose bytes cannot be reached. Touches that column and
+   * nothing else: the pieces already extracted keep answering searches (AD-24).
+   */
+  setFileSourceUnreachable(
+    input: SetFileSourceUnreachableInput,
+  ): Promise<SetFileSourceUnreachableResult>;
+  /** One file's extraction state. A read, so it takes no lock (AD-7). */
+  readFileExtractionState(fileId: string): Promise<ReadFileExtractionStateResult>;
+  /** Every generation of one file, `attempt` ascending. A read (AD-7). */
+  listExtractions(fileId: string): Promise<ListExtractionsResult>;
+  /**
+   * One generation's pieces, `ordinal` ascending, with the locator decoded. A
+   * row written before migration 0004 carries `null`, which says "unknown".
+   */
+  listExtractionChunks(extractionId: string): Promise<ListExtractionChunksResult>;
 }
