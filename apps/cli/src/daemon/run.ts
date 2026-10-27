@@ -106,7 +106,6 @@ export type RunDaemonResult =
 
 export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonResult> {
   const { home, env, clock, idGen, signal } = options;
-  const log = daemonLog(home, clock);
 
   // Before the lock, so a folder nothing was installed into leaves no pid file
   // behind: a daemon that cannot find its database is not a daemon that holds
@@ -124,10 +123,11 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
     ...(options.bootAt === undefined ? {} : { bootAt: options.bootAt }),
   });
   if (!lock.ok) {
-    await log.write(lock.message);
+    await daemonLog(home, clock, { rotate: false }).write(lock.message);
     return { ok: false, code: 'DAEMON_RUNNING', message: lock.message, exit: 1 };
   }
 
+  const log = daemonLog(home, clock);
   const heartbeat = await startHeartbeat({
     home,
     clock,
@@ -205,13 +205,13 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
     watcher.close();
     // Watchers and their batch timer close first. Then the heartbeat timer,
     // because a beat written after the lock is
-    // gone would be a heartbeat with no owner; the lock second, so no second
-    // daemon can start while this one is still finishing; the line last, so
-    // the log's last word about this run is that it ended cleanly. The
+    // gone would be a heartbeat with no owner; the stop line next, while this
+    // daemon still holds the right to rotate; the lock last, so no second
+    // daemon can start while this one is still finishing. The
     // heartbeat file itself stays — story 9.3 shows the last one.
     await heartbeat.stop();
-    await lock.release();
     await log.write(`데몬을 멈췄습니다 — pid ${String(lock.pid)}`);
+    await lock.release();
   }
 
   return { ok: true };

@@ -19,10 +19,12 @@ import {
   RUN_FOLDER,
   configFilePath,
   daemonLogPath,
+  daemonLogRotatedPath,
   daemonPidPath,
   heartbeatPath,
 } from '../src/config/paths.js';
 import { readDaemonLock } from '../src/daemon/lock.js';
+import { DAEMON_LOG_MAX_BYTES } from '../src/daemon/log.js';
 import { startHeartbeat } from '../src/daemon/heartbeat.js';
 import {
   DAEMON_DRAIN_BUDGET_MS,
@@ -548,6 +550,31 @@ describe('runDaemon, with its timers wound down', () => {
     }).finished;
 
     expect(second).toMatchObject({ ok: false, code: 'DAEMON_RUNNING', exit: 1 });
+    await daemon.stop();
+  });
+
+  it('appends a refused start without rotating an oversized log', async () => {
+    const home = await homeFor({ migrated: true });
+    const firstRound = gate();
+    const daemon = startDaemon({
+      home, env: environment(home), clock: systemClock, idGen: uuidV7IdGen(),
+      createStore: (options) => {
+        firstRound.release();
+        return sqliteStore(options);
+      },
+    });
+    // A round opens its store only after watcher.retry() has awaited startup logging.
+    await firstRound.promise;
+    const previous = `${'가'.repeat(DAEMON_LOG_MAX_BYTES)}\n`;
+    await writeFile(daemonLogPath(home), previous);
+    const second = await startDaemon({
+      home, env: environment(home), clock: systemClock, idGen: uuidV7IdGen(),
+      isAlive: () => true,
+    }).finished;
+    expect(second).toMatchObject({ ok: false, code: 'DAEMON_RUNNING', exit: 1 });
+    expect(await readFile(daemonLogPath(home), 'utf8')).toMatch(/^가+\n.*데몬/u);
+    expect((await readFile(daemonLogPath(home), 'utf8')).startsWith(previous)).toBe(true);
+    expect(existsSync(daemonLogRotatedPath(home, 1))).toBe(false);
     await daemon.stop();
   });
 

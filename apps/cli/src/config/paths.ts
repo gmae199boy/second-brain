@@ -164,3 +164,8 @@ export function heartbeatPath(home: string): string {
 export function daemonLogPath(home: string): string {
   return join(home, LOG_FOLDER, DAEMON_LOG_FILE);
 }
+
+/** A retained daemon log, numbered from newest (1) to oldest. */
+export function daemonLogRotatedPath(home: string, n: number): string {
+  return `${daemonLogPath(home)}.${n}`;
+}
