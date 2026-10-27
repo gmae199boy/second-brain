@@ -23,12 +23,12 @@ Personal Brain V1 slice 1. Claude Code 세션을 자동으로 수집하고, 대�
 1. 빈 Mac에서 설치기 한 번으로 설치되고, 이후 Claude Code 세션이 손대지 않아도 빠짐없이 수집된다(SM-5 = 0). 설치하면 데몬이 로그인 때 뜨고, 죽으면 다시 뜬다(2026-10-26).
 2. 고른 Drive 폴더의 문서(txt·md·텍스트 PDF·docx)와 사진이 Mac에 동기화되지 않은 채 본문 단어와 폴더·파일 이름으로 찾아지고, 결과의 원본 링크가 열린다. 대화에 붙인 파일도 같은 방식으로 찾아지고 원본이 열린다(2026-10-26. 이전의 2주 실사용 지표 SM-1·SM-2·SM-4는 V1 다음).
 3. 문서 찾기 문항(사용자가 고른 실제 문서·사진 10건)의 7건 이상이 키워드 검색과 질의 바꾸기로 찾아진다. SM-3 전체 채점표는 epic 4와 함께 다음에 잰다(2026-10-26).
-4. 로컬 백업에서 새 DB 파일로 되살리면 메시지·파일·문서 추출 세대 수가 같고, Brain이 보관한 원본 파일을 다시 열 수 있다. 첨부 원본을 Drive로 옮기기 전에 이 백업이 있다(2026-10-26. 전체 내보내기·`import`는 V1 다음).
+4. 로컬 백업에서 새 DB 파일로 되살리면 메시지·파일·문서 추출 세대 수가 같고, Brain이 보관한 원본 파일을 다시 열 수 있다. 첨부 원본을 Drive로 옮기기 전에 이 백업이 있다(2026-10-26. 전체 내보내기·`import`는 V1 다음). → 2026-10-27: 이 항목 전체가 epic 5와 함께 V1 다음. V1에서는 Drive로 옮긴 원본의 Mac 사본을 보관 기간이 지난 뒤에만 지운다(epic-drive).
 5. 실사용 기간 동안 Brain의 LLM 호출은 0이고, 조용한 실패가 없다(점검에 드러나지 않은 실패 0). 데몬이 멈춘 것도 doctor에 보인다(2026-10-26).
 
 ## Boundaries
 
-spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡는다. spec Non-goals를 따른다(팀 공유, Claude Code 외 Harness 수집 제외. 데몬은 V1의 기본 상주 런타임이고(epic 9, 가볍게), MCP는 V1 뒤다). 첫 시연 경로: 고른 Drive 폴더의 문서를 본문 단어로 찾아 원본 링크를 연다(epic 9 → 10 → 5 → 8). 작업 로그·시작 맥락(epic 3)·조회·미러(epic 4 나머지)·복제(epic 7)·임베딩(epic 6)은 V1 뒤다 (2026-10-26, `change-v1-capture-and-drive/`).
+spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡는다. spec Non-goals를 따른다(팀 공유, Claude Code 외 Harness 수집 제외. 데몬은 V1의 기본 상주 런타임이고(epic 9, 가볍게), MCP는 V1 뒤다). 첫 시연 경로: 고른 Drive 폴더의 문서를 본문 단어로 찾아 원본 링크를 연다(epic 9 → 10 → 8, 2026-10-27. epic 5는 V1 다음). 작업 로그·시작 맥락(epic 3)·조회·미러(epic 4 나머지)·복제(epic 7)·임베딩(epic 6)은 V1 뒤다 (2026-10-26, `change-v1-capture-and-drive/`).
 
 - Touch point: Claude Code 플러그인 체계(marketplace·`/plugin install`·hook 계약·`.mcp.json`) — hook·설치 진입점; owner: epic-capture(hook·bootstrap·node 런처), epic-log-and-context(skills, SessionStart 동기 `context show` hook 줄), epic-daemon(`.mcp.json`·래퍼, AD-28). `plugin/` 폴더 자체는 에픽이 만드는 코드다
 - Touch point: LaunchAgent KeepAlive(데몬 실행·재시작만) — 데몬; owner: epic-daemon. UNIX 소켓은 V1 뒤(2026-10-26)
@@ -85,3 +85,5 @@ spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡
 - Decision(2026-10-26, `change-v1-capture-and-drive/`, 사용자): V1은 대화 수집 + 파일·Drive 수집이다. 순서는 1·2 → 9(가벼운 데몬) → 10(축소) → 5(로컬 백업) → 8(Drive, 문서·폴더명 검색 포함). epic 3·7·6과 4·5의 나머지는 V1 뒤(backlog, 삭제 아님). 데몬은 기본 상주 런타임이고 launchd는 데몬을 띄우고 다시 띄우는 데만 쓴다. 5분 주기 drain LaunchAgent, 두 Label 전환(`[daemon] enabled`), 데몬 켜짐·꺼짐 양쪽 검증은 없앤다. 사용자 스케줄러(배치·예약을 등록하면 그 시각에 실행)는 두 기능 다음의 첫 상주 기능이다.
 - Decision(2026-10-26, 진행 방식, 사용자): 에픽 사전 조사는 새 불확실성만 한 편. validate-set은 한 번(고위험 항목만 재검증). plan은 목적·쓰기 경계·재사용 API·완료 조건·위험만. 리뷰는 원본 삭제·마이그레이션·파서·인증·기존 데이터 변경 스토리에만 하고 단순 연결·문서 작업은 생략. 플러그인 배포(app-ref·version)는 기능 묶음마다. Postgres 테스트는 Postgres 코드나 공용 Store 계약을 바꿀 때만. build·typecheck, 마이그레이션·멱등·잠금·삭제 경계 테스트, 마지막 실계정 확인은 유지한다.
 - Note(2026-10-26, 트리 검증 제안): V1 에픽(9·10·5·8)은 인셉션 때 Done when에 "기능 묶음이 플러그인 배포(app-ref·version)로 이 Mac의 설치본에 들어가 동작한다"는 확인을 붙인다. V1 뒤 에픽(3·4·7·6)에는 상태 칸이 없고, 순서와 에픽 전체 대기(`after`에 epic-drive)로 미룬 것을 나타낸다.
+- Decision(2026-10-27, 사용자): epic 5(운영: 로컬 백업·스키마 가드·`setup upgrade`)를 V1 뒤로 미룬다. V1 순서는 1·2 → 9 → 10 → 8. 쓰면서 확인하고 버그로 고칠 일이고, 백업이 맡던 안전장치는 Drive로 옮긴 원본의 보관 기간(epic-drive E8-1)이 대신한다. Done when 4는 V1 다음.
+- Decision(2026-10-27, 사용자): DB가 단일 원천이므로 PC를 옮겨도 따라가야 하는 사용자 설정은 DB에 둔다. `config.toml`은 기계마다 다른 값, `.env`는 비밀. 첫 대상은 epic-drive의 원본 보관 기간과 `brain config get/set`(E8-7). spine AD-19는 `bmad-architecture`로 고친다.

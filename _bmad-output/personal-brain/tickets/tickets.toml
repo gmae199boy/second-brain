@@ -28,18 +28,18 @@ covers = ["CAP-14", "CAP-2", "CAP-1"]
 after = [{ epic = 2, needs = "0004 스키마(2.6), parser와 수집 경로, 일감 대기열과 drain, Core 마스킹 함수, 확인 게이트" }]
 
 [[epic]]
-id = 5
-slug = "epic-operations"
-title = "운영: 내보내기·복구, 업그레이드, 제거"
-covers = ["CAP-12", "CAP-11"]
-after = [{ epic = 10, needs = "파일·문서 추출 세대와 FileStore(로컬 백업의 파일 범위). V1은 로컬 백업·복구 확인과 스키마 가드만(2026-10-26)" }]
-
-[[epic]]
 id = 8
 slug = "epic-drive"
 title = "Google Drive 연동"
 covers = ["CAP-14", "CAP-6", "CAP-7", "CAP-12"]
-after = [{ epic = 10, needs = "FileStore port와 로컬 구현, 첨부 원본 저장, 추출 세대 Store와 추출 일감, chunk_locator" }, { epic = 9, needs = "데몬 런타임: 주기 동기화(source_sync)와 파일 감시(2026-10-26)" }, { epic = 5, needs = "첨부 원본을 Drive로 옮기기 전의 로컬 백업(2026-10-26)" }]
+after = [{ epic = 10, needs = "FileStore port와 로컬 구현, 첨부 원본 저장, 추출 세대 Store와 추출 일감, chunk_locator" }, { epic = 9, needs = "데몬 런타임: 주기 동기화(source_sync)와 파일 감시(2026-10-26)" }]
+
+[[epic]]
+id = 5
+slug = "epic-operations"
+title = "운영: 내보내기·복구, 업그레이드, 제거"
+covers = ["CAP-12", "CAP-11"]
+after = [{ epic = 10, needs = "파일·문서 추출 세대와 FileStore(로컬 백업의 파일 범위)" }, { epic = 8, needs = "V1 완료 뒤 착수(2026-10-27, 에픽 전체 대기)" }]
 
 [[epic]]
 id = 3

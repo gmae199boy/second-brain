@@ -3,7 +3,7 @@ type: epic
 title: "Google Drive 연동"
 parent: personal-brain
 covers: [CAP-14, CAP-6, CAP-7, CAP-12]
-after: ["epic-attachments", "epic-daemon", "epic-operations"]
+after: ["epic-attachments", "epic-daemon"]
 assignee: ""
 risk: high
 ---
@@ -25,12 +25,14 @@ Drive API로 Drive를 직접 다룬다. Drive는 5TB이고 Mac은 512GB라서 Ma
 
 ## Requirements
 
-- E8-1 (CAP-14, 원본 이전 부분): OAuth(데스크톱 앱), Drive `FileStore` 구현(epic-attachments의 계약 테스트 통과), 첨부 원본 이전. 로컬 캐시 상한은 V1 뒤(2026-10-26). (AD-18·23)
+- E8-1 (CAP-14, 원본 이전 부분): OAuth(데스크톱 앱), Drive `FileStore` 구현(epic-attachments의 계약 테스트 통과), 첨부 원본 이전. 옮긴 원본의 Mac 사본은 사용자 설정 보관 기간(`drive.keep_local_days`, 기본 30일, 0이면 검증 직후)이 지난 뒤에 블롭 삭제 일감으로 지운다(2026-10-27). 로컬 캐시 상한은 V1 뒤(2026-10-26). (AD-18·23)
 - E8-2 (CAP-14, 외부 문서 색인 부분): 감시 폴더 목록, 외부 소스 테이블(새 마이그레이션: source, remote file id, 이름, 부모 경로, 원격 버전, 연결된 content id(내려받기 전 null), changes 토큰), 문서만 추출, 사진·큰 파일은 메타데이터와 이름만, 원본 삭제 시 `source_unreachable`. 기존 `files`(내용 해시 식별)에 내려받지 않은 파일을 넣지 않는다(2026-10-26). (AD-23·24·27)
 - E8-3 (CAP-14): 연동 해제. 검색은 계속되고 원본은 접근 불가로 표시하며, Drive 사본은 지우지 않는다.
 - E8-4 (CAP-12, Drive 스냅샷 부분): DB 스냅샷의 Drive 업로드와 새 기계 복구. **V1 뒤(2026-10-26).**
 - E8-5 (CAP-14, 형식별 추출 부분): PDF(텍스트 PDF, 조각 locator의 쪽과 `page` 사본)·docx(블록) 추출기. epic-attachments의 추출 일감·형식 판정·`extractor_version` 위에 얹는다(2026-10-22, epic-attachments 인셉션에서 옮겨 옴). (FR-28, AD-24)
 - E8-6 (CAP-14·6·7, 문서 찾기 부분, epic-recall-and-mirror에서 옮겨 옴, 2026-10-26): 대화 첨부와 Drive 문서·사진을 문서 본문 단어·폴더 이름·파일 이름으로 찾고, 결과에 원본 링크(로컬 경로 또는 Drive 링크)와 위치(쪽·글자 범위)가 붙으며, 미색인 파일은 표시된다. 공백 든 질의와 `a-b`·`AND`·`"` 같은 질의가 오류나 조용한 0건 없이 처리된다. 출력은 Core 출력 코덱(마스킹)을 거친다. (FR-28, AD-11·15)
+
+- E8-7 (CAP-11, 2026-10-27): 사용자 설정 — PC를 옮겨도 따라가야 하는 사용자 선택값을 DB의 `settings` 테이블(새 마이그레이션, epic-daemon 0009 다음 번호)에 두고, `brain config get/set`이 키마다 정해진 자리에 읽고 쓴다: 기계마다 다른 값(경로, node, `[update] auto`)은 `config.toml`, 사용자 선택값은 DB, 비밀(Drive 로그인 토큰 등)은 `.env`. 첫 사용자 설정 키는 `drive.keep_local_days`. 플러그인 슬래시 명령은 epic 3의 플러그인 스킬 작업에서 이 명령을 감싼다.
 
 ## Done when
 
@@ -39,7 +41,7 @@ Drive API로 Drive를 직접 다룬다. Drive는 5TB이고 Mac은 512GB라서 Ma
 3. Drive에서 바뀐 문서가 데몬의 다음 동기화 주기에서 반영된다.
 4. 연동 해제 뒤에도 검색되고, 원본은 접근 불가로 표시된다.
 5. 대화에 붙인 파일도 본문·이름으로 찾아지고 원본이 열린다(E8-6).
-6. 첨부 원본을 Drive로 옮기기 전에 epic 5의 로컬 백업이 있다.
+6. Drive로 옮긴 첨부 원본의 Mac 사본은 설정한 보관 기간이 지난 뒤에만 지워지고, 그 기간은 `brain config set`으로 바꾸면 DB에 남아 DB와 함께 옮겨진다(2026-10-27. 이전의 "옮기기 전에 epic 5의 로컬 백업이 있다"는 epic 5와 함께 V1 뒤).
 
 (2026-10-26: 이전 Done when 5 "새 Mac에서 Drive 스냅샷으로 복구하면 건수가 같다"는 V1 뒤, 6 "데몬 켜짐·꺼짐 둘 다에서 통과"는 삭제했다.)
 
@@ -59,7 +61,7 @@ AD-11·15·23·24·27. 사용자의 외부 파일은 옮기거나 지우지 않�
 
 - Decision(2026-10-14): Drive 데스크톱 동기화가 아니라 API를 쓴다(5TB vs 512GB). 연동 해제는 Drive에 둔 채 끊는다(b). 연동하면 첨부의 원본(SoT)이 Drive로 옮겨 간다(사용자).
 - Waits on epic-attachments because: `FileStore` port와 로컬 구현, 첨부 저장, 추출 일감(2026-10-15 epic-capture에서 나뉨).
-- Waits on epic-operations because: 첨부 원본을 Drive로 옮기기 전의 로컬 백업(2026-10-26).
+- (삭제 2026-10-27) Waits on epic-operations because: 첨부 원본을 Drive로 옮기기 전의 로컬 백업 — epic-operations를 V1 뒤로 미뤘다.
 - Waits on epic-daemon because: 주기 동기화(`source_sync`)와 파일 감시를 데몬이 돈다(2026-10-26. 이전 이유였던 데몬 켜짐·꺼짐 두 상태 검증은 삭제).
 - Note(2026-10-16, `../../change-users-and-review-gaps/`, 인셉션 입력): D5 가리기 이전의 DB 스냅샷은 새 스냅샷이 검증된 뒤 지운다(spine AD-11). Drive 기록 복제 파일의 다시 쓰기는 epic-replicas 몫이다.
 - Note(2026-10-16, 인셉션 입력): Drive API 오류에 분류 코드를 붙인다. 429·5xx·네트워크는 일시 오류이고 `Retry-After`를 따른다. 403·404·삭제됨은 영구 오류다(spine AD-21 재시도 분류).
@@ -68,3 +70,6 @@ AD-11·15·23·24·27. 사용자의 외부 파일은 옮기거나 지우지 않�
 - Decision(2026-10-22, epic-attachments 인셉션, 사용자): PDF·docx 추출기가 epic-attachments에서 이 에픽으로 왔다(E8-5). 한 달 실측에서 사용자가 대화에 붙인 PDF·문서는 0건이고 첫 실사용은 기존 Drive 문서 색인이다. 추출 틀은 epic-attachments가 만든다.
 - Decision(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): Drive는 V1이다. 순서는 데몬(9) → 첨부·추출(10, 축소) → 로컬 백업(5) → 이 에픽. 문서·폴더명 검색(E8-6)을 epic 4에서 옮겨 왔다. 스냅샷·새 Mac 복구(E8-4)와 로컬 캐시 상한은 V1 뒤. 촬영 일시 검색은 EXIF(epic-recall-and-mirror 1, 옛 10.9)와 함께 V1 뒤.
 - Note(2026-10-27, epic-daemon 쪼개기): 인셉션 때 Done when에 "데몬 없이도 이 에픽의 테스트가 통과한다"를 이어받는다(epic-daemon Done when 1). epic-daemon은 `[files] path`를 감시하지 않으므로, Drive 쪽에 감시가 필요하면 이 에픽이 더한다. 마이그레이션은 epic-daemon의 0009 다음 번호를 쓴다.
+- Decision(2026-10-27, 사용자): epic-operations(로컬 백업·스키마 가드·`setup upgrade`)를 V1 뒤로 미룬다 — 쓰면서 확인하고 버그로 고칠 일이고, 자동 업데이트가 `setup upgrade`를 대신하며, 스키마 불일치 거부는 epic 1·2가 이미 했다. 백업이 맡던 안전장치는 이 에픽의 원본 보관 기간(E8-1, Done when 6)이 대신한다. 지금 Brain이 보관한 첨부 원본은 3개이고 기록(SQLite)은 Drive로 옮기지 않는다.
+- Decision(2026-10-27, 사용자): 사용자 설정은 DB가 원천이다(PC를 바꿔도 DB와 함께 옮겨짐). `config.toml`은 기계마다 다른 값만, 비밀은 `.env`. `brain config get/set`을 이 에픽에 둔다(E8-7). 시간대처럼 이미 `config.toml`에 있는 사용자 선택값을 DB로 옮기는 일은 나중에 정한다.
+- Source conflict: spine AD-19 / Conventions(설정은 `config.toml`, 런타임 상태는 설정 코덱 밖) — E8-7은 사용자 설정을 DB `settings` 테이블에 둔다. `bmad-architecture`로 AD-19를 고친다(2026-10-27).
