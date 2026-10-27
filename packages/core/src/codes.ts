@@ -312,6 +312,26 @@ const CODES = {
     retryable: false,
     hint: '이 명령을 낸 빌드로 daemon을 다시 시작하세요',
   },
+  /**
+   * A daemon is already running for this configuration folder, so this one did
+   * not start (epic 9, story 9.1).
+   *
+   * It is 1 and not 2: everything needed to run was there, and the answer is
+   * that the work is already in somebody else's hands. There is no age at
+   * which a living owner is taken over — the install lock reclaims after thirty
+   * minutes, and a daemon is meant to hold its lock for weeks, so that rule
+   * here would end in two daemons over one database (`daemon/lock.ts`).
+   *
+   * `retryable: false`, and the hint says so in words: running it again would
+   * meet the same living daemon, which is not a failure to work around but the
+   * system already working.
+   */
+  DAEMON_RUNNING: {
+    exit: 1,
+    meaning: '이 설정 폴더의 daemon이 이미 떠 있습니다',
+    retryable: false,
+    hint: '이미 떠 있는 daemon이 일을 맡고 있으니 다시 띄우지 마세요 — 멈추려면 그 `pid`에 SIGTERM을 보내세요',
+  },
   /** The verb needs a session and the invocation named none (AD-8). */
   SESSION_REQUIRED: {
     exit: 2,

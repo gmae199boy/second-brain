@@ -515,8 +515,15 @@ function basename(path: string): string {
   return at < 0 ? path : path.slice(at + 1);
 }
 
-/** Whether a process is still there. EPERM is a process this user may not signal. */
-function systemIsAlive(pid: number): boolean {
+/**
+ * Whether a process is still there. EPERM is a process this user may not signal.
+ *
+ * Exported because the daemon lock asks the same question of the pid in
+ * `run/daemon.pid` (`daemon/lock.ts`), and two answers to "is that process
+ * alive" would be two rules: one of them would call a daemon this user may not
+ * signal dead, and reclaim a lock that is still held.
+ */
+export function systemIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;

@@ -91,6 +91,7 @@ describe('the error codes', () => {
       SETUP_CANCELLED: 1,
       SEARCH_FAILED: 1,
       VERSION_MISMATCH: 1,
+      DAEMON_RUNNING: 1,
       CONFIRMATION_REQUIRED: 3,
     });
   });

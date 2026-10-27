@@ -1,8 +1,4 @@
-import { fileSourceReader } from './runtime/source-file.js';
-import { join } from 'node:path';
-import { localFileStore } from './runtime/file-store.js';
 import { Command, CommanderError } from 'commander';
-import { hostname } from 'node:os';
 import {
   BUSY_TIMEOUT_MS,
   DRAIN_BUDGET_MS,
@@ -22,24 +18,19 @@ import {
   type IngestSessionInput,
   type IngestSessionResult,
   type SchemaStore,
-  type Spool,
   type SpoolCause,
   type SqliteStoreOptions,
   type Store,
   type WarningCode,
   type WorkHandlers,
 } from 'second_brain';
+import { brainDependencies } from './assembly.js';
 import { readConfig, type BrainConfig } from './config/codec.js';
-import { configHome, spoolPath } from './config/paths.js';
-import { runtimeChecks } from './doctor/checks.js';
+import { configHome } from './config/paths.js';
 import { failedConfigStore } from './doctor/store.js';
-import { harnessParsers, harnesses, transcriptFolders } from './harnesses.js';
-import { gitRepositoryInspector } from './runtime/git.js';
 import { uuidV7IdGen } from './runtime/id-gen.js';
-import { fileSpool } from './runtime/spool.js';
 import { recordHookArrival } from './runtime/hook-arrival.js';
 import { readStdin } from './runtime/stdin.js';
-import { fileTranscriptReader } from './runtime/transcript.js';
 import {
   JSON_FLAG,
   argumentName,
@@ -268,6 +259,18 @@ export interface CommandSpecBase extends CommandMeta {
    * `context.args` in this order, and a missing required one is a `USAGE`.
    */
   arguments?: readonly string[];
+  /**
+   * Set to `false` for a command whose standard output is not an envelope, and
+   * is nothing at all: `brain daemon run` is a process that stays, not a call
+   * that answers, and a caller that read its stdout would be waiting for a line
+   * that never comes — under `--json` as much as without it.
+   *
+   * It changes the printing and nothing else. A failure still goes to stderr as
+   * `CODE: message` with its hint under it, the way text mode prints one, and
+   * the exit code is still the code table's. Every other command leaves this
+   * unset and keeps the envelope it has always had.
+   */
+  envelope?: false;
 }
 
 /** A command that talks to the brain, which is nearly all of them. */
@@ -419,8 +422,11 @@ export async function dispatch(
   const json = argv.includes(JSON_FLAG);
   // Which command this is has to be known before anything can go wrong, since
   // a hook command swallows every failure — bad arguments and a missing
-  // configuration included.
-  const hook = findSpec(registry, argv)?.hook === true;
+  // configuration included, and a command with no envelope must write nothing
+  // to stdout whatever went wrong with it.
+  const chosen = findSpec(registry, argv);
+  const hook = chosen?.hook === true;
+  const silent = chosen?.envelope === false;
 
   let outcome: Outcome;
   try {
@@ -449,7 +455,19 @@ export async function dispatch(
   }
 
   if (outcome.envelope !== null) {
-    if (json) {
+    if (silent) {
+      // Nothing on stdout, `--json` included: there is no envelope to write.
+      // A failure still has to be readable, so it goes out as text mode's own
+      // two lines — the sentence and the hint under it — because the caller of
+      // a daemon that would not start is a person or a launchd log.
+      if (failure !== undefined) {
+        stderr(`${encodeTextLine(`${failure.code}: ${failure.message}`)}\n`);
+        if (failure.hint !== undefined && failure.hint !== '') {
+          stderr(`  ${encodeTextLine(failure.hint)}\n`);
+        }
+      }
+      for (const line of outcome.warningLines) stderr(`${encodeTextLine(line)}\n`);
+    } else if (json) {
       stdout(`${JSON.stringify(outcome.envelope)}\n`);
     } else {
       for (const line of outcome.text) stdout(`${encodeTextLine(line)}\n`);
@@ -558,40 +576,23 @@ async function execute(
     // No `config.message` in here: the `config` check carries it, and the same
     // sentence printed twice in one report reads as two problems.
     : failedConfigStore('설정을 읽을 수 없어서 데이터베이스 위치를 알 수 없습니다');
-  // Under `home` and not under a configured path: a write that could not reach
-  // the database has to have somewhere to go even when the configuration is
-  // the thing that is broken, and `home` is known from the environment alone
-  // (AD-9, AD-18). Building this opens nothing — the folder is made by the
-  // first `append` that needs it (AD-3).
-  const spool = fileSpool({ folder: spoolPath(home), clock });
   // Held as a value rather than spelled inline, because the opportunistic drain
-  // below builds a second brain from the same ports over a store of its own.
-  const dependencies = {
+  // below builds a second brain from the same ports over a store of its own —
+  // and because the daemon assembles its own rounds from the same function
+  // (`assembly.ts`), which is what keeps the two from drifting apart.
+  const dependencies = brainDependencies({
+    home,
+    env,
+    config,
     store,
-    spool,
-    files: localFileStore({ root: config.ok ? config.config.filesPath : join(home, 'files') }),
-    sources: fileSourceReader(),
-    userHome: env['HOME']?.startsWith('/') === true ? env['HOME'] : null,
-    schemaVersion: SQLITE_SCHEMA_VERSION,
     clock,
     idGen,
-    // Parsers and connectors come from the same harness registry.
-    parsers: harnessParsers(harnesses),
-    transcripts: fileTranscriptReader(),
-    // Every registered harness folder is scanned by default.
-    transcriptFolders: transcriptFolders(env),
-    // Asking git what the first message's folder is, for the project and
-    // worktree tags of a session this run may create (AD-12).
-    repositories: gitRepositoryInspector(),
-    // Recorded on every session this machine ingests (AD-12). The host name,
-    // because it is the one name a person reading a report would recognise.
-    machine: hostname(),
-    // One list, for the dispatcher and the installer both: see `doctor/checks`.
-    checks: runtimeChecks({ home, config }),
-    // Kinds beyond Core's own, which `createBrain` merges in. Empty for every
-    // real invocation of this build (AD-21).
     workHandlers,
-  };
+  });
+  // One spool per invocation, taken off the assembly rather than built again:
+  // the spool branch below writes a mark with no brain in its hands (AD-9), and
+  // two `fileSpool` values over one folder would mint the same file name twice.
+  const spool = dependencies.spool;
   const brain = createBrain(dependencies);
   try {
     if (spec.writes === true) {

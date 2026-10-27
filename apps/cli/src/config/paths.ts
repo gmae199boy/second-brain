@@ -71,6 +71,26 @@ export const LOG_FOLDER = 'log';
 export const BOOTSTRAP_LOG_FILE = 'bootstrap.log';
 
 /**
+ * The daemon's single-instance lock, under `RUN_FOLDER`: one JSON line naming
+ * the pid that holds it, the boot it was taken in, and when.
+ *
+ * A file and not a folder, unlike `LOCK_FOLDER`: this lock is never reclaimed
+ * on age, only on the owner being gone, so what matters is reading the owner
+ * rather than the moment the lock was taken (`daemon/lock.ts`).
+ */
+export const DAEMON_PID_FILE = 'daemon.pid';
+
+/**
+ * The daemon's liveness mark, under `RUN_FOLDER`: one ISO instant, rewritten
+ * every `DAEMON_HEARTBEAT_MS`. The mtime is the record; the line is there so a
+ * person reading the file sees the same instant (story 9.3 reads it).
+ */
+export const HEARTBEAT_FILE = 'heartbeat';
+
+/** The daemon's log, under `LOG_FOLDER`: one line per thing worth knowing. */
+export const DAEMON_LOG_FILE = 'daemon.log';
+
+/**
  * The configuration folder for this run. Read from the environment when asked,
  * never at import time (AD-3), so a test can point one child process somewhere
  * else without touching the real folder.
@@ -124,4 +144,23 @@ export function bootstrapLogPath(home: string): string {
 /** Last accepted hook payload for one registered harness. */
 export function lastHookPath(home: string, harness: string): string {
   return join(home, RUN_FOLDER, `last-hook-${harness}`);
+}
+
+/**
+ * The daemon lock of this configuration folder. One daemon per folder, which is
+ * what makes a second `brain daemon run` a `DAEMON_RUNNING` rather than a
+ * second drain loop over the same database.
+ */
+export function daemonPidPath(home: string): string {
+  return join(home, RUN_FOLDER, DAEMON_PID_FILE);
+}
+
+/** The daemon heartbeat of this configuration folder. */
+export function heartbeatPath(home: string): string {
+  return join(home, RUN_FOLDER, HEARTBEAT_FILE);
+}
+
+/** The daemon log of this configuration folder. */
+export function daemonLogPath(home: string): string {
+  return join(home, LOG_FOLDER, DAEMON_LOG_FILE);
 }

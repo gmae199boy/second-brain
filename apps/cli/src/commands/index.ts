@@ -3,6 +3,7 @@ import { messagesRedactCommand } from './messages-redact.js';
 import { connectors } from '../connectors/index.js';
 import type { CommandSpec } from '../dispatch.js';
 import { harnesses } from '../harnesses.js';
+import { daemonRunCommand } from './daemon-run.js';
 import { doctorRun } from './doctor-run.js';
 import { failuresListCommand } from './failures-list.js';
 import { failuresRetryCommand } from './failures-retry.js';
@@ -39,6 +40,7 @@ export const commands: readonly CommandSpec[] = [
   guideSchemaCommand(() => commands),
   guideExitCodes,
   guideShowCommand,
+  daemonRunCommand,
   queueDrainCommand,
   sessionsIngestCommand(harnesses),
   setupRun,

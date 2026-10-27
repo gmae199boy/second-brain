@@ -1,0 +1,113 @@
+# Project override for bmad-build-auto (2026-10-27): claude orchestrates and codex
+# does every subagent job — implementation and each review lens — as a fresh
+# codex CLI session (gpt-6.1-sol, medium) via _bmad/custom/bmad-build-auto-codex.sh.
+
+[workflow]
+
+# Implementation always goes to codex; claude never implements inline.
+route = "full"
+
+persistent_facts = [
+  """
+In this project every "subagent" this workflow mentions is a fresh codex CLI session started from the project root with `bash _bmad/custom/bmad-build-auto-codex.sh` (gpt-6.1-sol, medium effort). Never use the host's own subagent or Agent tool. Run each such Bash call in the foreground with the longest timeout the tool allows, never in the background; launching several at once means several Bash calls in one message. The script prints `codex-thread: <id>` first: that id is the subagent's name or id for re-engagement.""",
+  """
+You orchestrate and codex writes the code: do not edit source or test files yourself (plan, spec and ticket files stay yours). Where a step says to finish unfinished work or apply patches yourself, send that work to the implementation session instead with `bash _bmad/custom/bmad-build-auto-codex.sh resume <thread-id>`, the message on stdin through a quoted heredoc. If codex fails twice in a row on the same job, HALT with status `blocked` and blocking condition `codex unavailable`.""",
+]
+
+implementation_handoff = """
+Run this from the project root with one foreground Bash call (the longest timeout the tool allows, never backgrounded). It starts a fresh codex implementation session and returns when codex finishes:
+
+bash _bmad/custom/bmad-build-auto-codex.sh impl <<'BMAD_CODEX_PROMPT'
+Read {plan_file} fully and implement it — the plan is the sole source of truth. Load every file listed in its frontmatter `context:` before you start.
+
+When done, report what you changed, how you verified it, and anything left incomplete or risky.
+BMAD_CODEX_PROMPT
+
+Keep the `codex-thread:` id it prints. Step 04 re-engages this same session with `bash _bmad/custom/bmad-build-auto-codex.sh resume <thread-id>`, the message on stdin the same way.
+"""
+
+[[workflow.quick_lenses]]
+id = "quick"
+name = "Quick"
+instruction = """
+Run this from the project root with one foreground Bash call (the longest timeout the tool allows, never backgrounded). It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
+
+bash _bmad/custom/bmad-build-auto-codex.sh review <<'BMAD_CODEX_PROMPT'
+Read `{plan_file}` — the plan holding the acceptance criteria and intent — and the files its frontmatter `context:` lists. Read the agent instruction files (`AGENTS.md`, `CLAUDE.md`, or equivalents) at the repository root and in the directories the diff touches; those are the rules. Then read the unified diff at `{diff_file}` — it is the change under review.
+
+Report unmet acceptance criteria, broken rules, and bugs. Each finding: the location, what goes wrong, and evidence checked against the surrounding code. Output a Markdown list of findings only — no severity, priority, or ranking.
+
+Review by inspection only. Do not modify code, run builds or tests, or invoke quality gates. Do not invoke any skill, and do not spawn subagents of your own — you are the reviewer. Return your findings as text in your final message; do not route them through any findings-reporting tool the host may offer.
+BMAD_CODEX_PROMPT
+"""
+
+[[workflow.thorough_lenses]]
+id = "blind-hunter"
+name = "Blind Hunter"
+instruction = """
+Run this from the project root with one foreground Bash call (the longest timeout the tool allows, never backgrounded). It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
+
+bash _bmad/custom/bmad-build-auto-codex.sh review <<'BMAD_CODEX_PROMPT'
+Conduct a review of CONTENT.
+Look for what's missing, not only what's wrong.
+Compute your finding floor N from the diff file's size: N = min(floor(sqrt(kB) + 1), 10), where kB is the file's size in kilobytes. State the arithmetic in one line, then find at least N issues to fix or improve.
+Output a Markdown list of findings only — no severity, priority, or ranking.
+If the content is empty, stop and say so.
+If you have zero findings, re-check and keep thinking; do not stop with an empty list.
+
+CONTENT: the unified diff at `{diff_file}`. Read that file — it is the content under review.
+
+Review by inspection only. Do not modify code, run builds or tests, or invoke quality gates. Do not invoke any skill, and do not spawn subagents of your own — you are the reviewer. Return your findings as text in your final message; do not route them through any findings-reporting tool the host may offer.
+BMAD_CODEX_PROMPT
+"""
+
+[[workflow.thorough_lenses]]
+id = "edge-case-hunter"
+name = "Edge Case Hunter"
+instruction = """
+Run this from the project root with one foreground Bash call (the longest timeout the tool allows, never backgrounded). It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
+
+bash _bmad/custom/bmad-build-auto-codex.sh review <<'BMAD_CODEX_PROMPT'
+Read `{skill-root}/review-prompts/edge-case-hunter.md` completely and follow it as your review instructions.
+
+claims_file (leave unread until your instructions call for it): {claims_file}
+
+Review content: the unified diff at `{diff_file}`. Read that file — it is the content under review.
+
+Review by inspection only. Do not modify code, run builds or tests, or invoke quality gates. Do not invoke any skill, and do not spawn subagents of your own — you are the reviewer. If the instruction file is unreadable, report that exact failure and stop. Return your findings as text in your final message; do not route them through any findings-reporting tool the host may offer.
+BMAD_CODEX_PROMPT
+"""
+
+[[workflow.thorough_lenses]]
+id = "verification-gap"
+name = "Verification Gap Reviewer"
+instruction = """
+Run this from the project root with one foreground Bash call (the longest timeout the tool allows, never backgrounded). It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
+
+bash _bmad/custom/bmad-build-auto-codex.sh review <<'BMAD_CODEX_PROMPT'
+Read `{skill-root}/review-prompts/verification-gap.md` completely and follow it as your review instructions.
+
+Review content: the unified diff at `{diff_file}`. Read that file — it is the content under review.
+
+Review by inspection only. Do not modify code, run builds or tests, or invoke quality gates. Do not invoke any skill, and do not spawn subagents of your own — you are the reviewer. If the instruction file is unreadable, report that exact failure and stop. Return your findings as text in your final message; do not route them through any findings-reporting tool the host may offer.
+BMAD_CODEX_PROMPT
+"""
+
+[[workflow.thorough_lenses]]
+id = "intent-alignment"
+name = "Intent Alignment Auditor"
+instruction = """
+Run this from the project root with one foreground Bash call (the longest timeout the tool allows, never backgrounded). It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
+
+bash _bmad/custom/bmad-build-auto-codex.sh review <<'BMAD_CODEX_PROMPT'
+You are an intent-alignment auditor. You have no other context about how this change was produced. Here is the verbatim intent this work started from:
+
+{verbatim_intent}
+
+The diff is the unified diff at `{diff_file}`. Read that file — it is the change under review.
+
+Your task is strictly descriptive — do not prescribe additional work. Report: (1) the defensible readings of the intent, enumerated; (2) which reading this diff implements; (3) where the readings and the diff diverge — specifically, which surface the intent's expectations live at versus which surface the diff's changes and its tests exercise.
+
+Review by inspection only. Do not modify code, run builds or tests, or invoke quality gates. Do not invoke any skill, and do not spawn subagents of your own — you are the reviewer. Return your findings as text in your final message; do not route them through any findings-reporting tool the host may offer.
+BMAD_CODEX_PROMPT
+"""

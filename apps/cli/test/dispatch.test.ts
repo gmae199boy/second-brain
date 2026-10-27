@@ -289,6 +289,22 @@ const registry = [
   },
   {
     ns: 'fake',
+    verb: 'no-envelope',
+    ...meta('fake', 'no-envelope', 'a command whose output is not an envelope'),
+    standalone: true,
+    envelope: false,
+    run: async () => ({ ok: true, data: { ran: true }, text: ['this line has nowhere to go'] }),
+  },
+  {
+    ns: 'fake',
+    verb: 'no-envelope-fails',
+    ...meta('fake', 'no-envelope-fails', 'the same, and it could not run'),
+    standalone: true,
+    envelope: false,
+    run: async () => ({ ok: false, code: 'DB_LOCKED', message: 'database is locked' }),
+  },
+  {
+    ns: 'fake',
     verb: 'diagnostic',
     ...meta('fake', 'diagnostic', 'a command that runs without a configuration, as doctor does'),
     diagnostic: true,
@@ -713,6 +729,73 @@ describe('the dispatcher and a standalone command', () => {
     // value kept: the argument it named is the fact worth carrying over.
     expect(envelope.error?.message).toContain('반드시 주어야 하는 인자가 빠졌습니다');
     expect(envelope.error?.message).toContain("'name'");
+  });
+});
+
+/**
+ * `envelope: false`: a command that is a process rather than a call, and so has
+ * no answer to put on standard output. `brain daemon run` is the one of them.
+ *
+ * The rule is the same in both output modes, which is the half worth testing:
+ * `--json` must not produce an envelope either, because a caller waiting for
+ * one from a process designed never to return would wait for ever.
+ */
+describe('the dispatcher and a command with no envelope', () => {
+  it.each([['--json'], []])('writes nothing to stdout on success, with %j', async (...flags) => {
+    const run = await runDispatch(['fake', 'no-envelope', ...flags], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect(run.code).toBe(0);
+    // Neither the envelope nor the text lines the command offered: there is
+    // nowhere for either to go.
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toBe('');
+  });
+
+  it.each([['--json'], []])('reports a failure on stderr and in the exit code, with %j', async (...flags) => {
+    const run = await runDispatch(['fake', 'no-envelope-fails', ...flags], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    // The exit code is still the code table's: `DB_LOCKED` is 1.
+    expect(run.code).toBe(1);
+    expect(run.stdout).toBe('');
+    const lines = run.stderr.trimEnd().split('\n');
+    // The two lines text mode prints: the sentence, and the hint under it.
+    expect(lines[0]).toBe('DB_LOCKED: database is locked');
+    expect(lines[1]).toMatch(/^ {2}\S/);
+  });
+
+  it('reports a USAGE on stderr rather than as an envelope', async () => {
+    const run = await runDispatch(['fake', 'no-envelope', '--nonsense', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect(run.code).toBe(2);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toContain('USAGE');
+  });
+
+  it('still prints its help, which commander writes itself', async () => {
+    const run = await runDispatch(['fake', 'no-envelope', '--help'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect(run.code).toBe(0);
+    expect(run.stdout).toContain('no-envelope');
+  });
+
+  it('leaves every other command writing its envelope as before', async () => {
+    const silent = await runDispatch(['fake', 'no-envelope', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+    const ordinary = await runDispatch(['fake', 'standalone', 'thing', '--json'], {
+      [HOME_ENV]: '/nonexistent/home',
+    });
+
+    expect(silent.stdout).toBe('');
+    expect((JSON.parse(ordinary.stdout) as Envelope).ok).toBe(true);
   });
 });
 
