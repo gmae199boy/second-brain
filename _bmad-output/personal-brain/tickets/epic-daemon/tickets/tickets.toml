@@ -23,7 +23,6 @@ covers = ["E9-5"]
 after = [1, "2.4", "2.5"]
 hitl = false
 risk = "high"
-plan_checkpoint = true
 references = ["_bmad-output/personal-brain/tickets/epic-daemon/epic-daemon-research-code.md, §3, §4"]
 
 [[entry]]
@@ -58,7 +57,6 @@ covers = ["E9-4"]
 after = [1, 4]
 hitl = false
 risk = "high"
-plan_checkpoint = true
 
 [[entry]]
 id = 6
