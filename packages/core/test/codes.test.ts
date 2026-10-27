@@ -20,7 +20,7 @@ import { assertKoreanProse, englishSentences } from '../src/testing/language.js'
  * reading an envelope can tell which.
  */
 describe('the warning codes', () => {
-  it('holds the twenty codes of the Conventions table, in its order', () => {
+  it('holds the warning codes of the Conventions table, in its order', () => {
     expect([...WARNING_CODES]).toEqual([
       'SPOOLED',
       'DB_UNAVAILABLE',
@@ -38,6 +38,7 @@ describe('the warning codes', () => {
       'FILE_SOURCE_UNREACHABLE',
       'DAEMON_UNAVAILABLE',
       'DAEMON_NOT_REGISTERED',
+      'DAEMON_NOT_RESTARTED',
       'PLUGIN_NOT_INSTALLED',
       'PLUGIN_BEHIND',
       'PLUGIN_DUPLICATE',
@@ -93,6 +94,8 @@ describe('the error codes', () => {
       SEARCH_FAILED: 1,
       VERSION_MISMATCH: 1,
       DAEMON_RUNNING: 1,
+      DAEMON_NOT_INSTALLED: 2,
+      DAEMON_CONTROL_FAILED: 1,
       CONFIRMATION_REQUIRED: 3,
     });
   });

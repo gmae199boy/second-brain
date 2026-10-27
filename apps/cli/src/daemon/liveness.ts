@@ -10,8 +10,8 @@ export const DAEMON_ALIVE_MS = 3 * DAEMON_HEARTBEAT_MS;
 
 export type DaemonDeadReason = 'no-lock' | 'pid-dead' | 'no-heartbeat' | 'future-heartbeat' | 'stale-heartbeat';
 export type DaemonLiveness =
-  | { alive: true; pid: number; heartbeatAt: Date }
-  | { alive: false; reason: DaemonDeadReason; pid: number | null; heartbeatAt: Date | null };
+  | { alive: true; pid: number; heartbeatAt: Date; commit: string | null }
+  | { alive: false; reason: DaemonDeadReason; pid: number | null; heartbeatAt: Date | null; commit: string | null };
 
 /** Read-only and conservative: unreadable files mean no daemon to rely on. */
 export async function daemonLiveness(options: {
@@ -24,7 +24,7 @@ export async function daemonLiveness(options: {
   const heartbeatAt = await stat(heartbeatPath(options.home))
     .then((info) => new Date(Math.floor(info.mtimeMs))).catch(() => null);
   const dead = (reason: DaemonDeadReason): DaemonLiveness => ({
-    alive: false, reason, pid: owner?.pid ?? null, heartbeatAt,
+    alive: false, reason, pid: owner?.pid ?? null, heartbeatAt, commit: owner?.commit ?? null,
   });
   if (owner === undefined) return dead('no-lock');
   try {
@@ -34,7 +34,7 @@ export async function daemonLiveness(options: {
     const age = options.clock.now().getTime() - heartbeatAt.getTime();
     if (age < 0) return dead('future-heartbeat');
     if (age > DAEMON_ALIVE_MS || !Number.isFinite(age)) return dead('stale-heartbeat');
-    return { alive: true, pid: owner.pid, heartbeatAt };
+    return { alive: true, pid: owner.pid, heartbeatAt, commit: owner.commit };
   } catch {
     return dead('pid-dead');
   }

@@ -73,6 +73,7 @@ export const WARNING_CODES = [
   'DAEMON_UNAVAILABLE',
   /** launchd registration failed; commands and hooks still run without it. */
   'DAEMON_NOT_REGISTERED',
+  'DAEMON_NOT_RESTARTED',
   /** The harness plugin this brain expects is not installed. */
   'PLUGIN_NOT_INSTALLED',
   /** The installed plugin is older than the build answering this command. */
@@ -117,6 +118,7 @@ export const WARNING_CODE_MEANINGS: Readonly<Record<WarningCode, string>> = {
     '메시지는 가렸고 그 메시지에 가리지 않은 첨부 파일이 남아 있습니다 — 첨부는 `brain files redact`로 따로 가립니다',
   FILE_SOURCE_UNREACHABLE: '이 brain이 가리키기만 하는 파일을 그 자리에서 읽을 수 없었습니다',
   DAEMON_UNAVAILABLE: 'daemon이 설정되어 있고 닿지 못해서, 이 명령은 직접 돌았습니다',
+  DAEMON_NOT_RESTARTED: '데몬을 새 빌드로 다시 띄우지 못해 옛 빌드가 계속 돌 수 있습니다',
   DAEMON_NOT_REGISTERED: '데몬을 launchd에 등록하지 못했고, 명령과 hook은 데몬 없이 그대로 실행됩니다',
   PLUGIN_NOT_INSTALLED: '이 brain이 기대하는 하네스 플러그인이 설치되어 있지 않습니다',
   PLUGIN_BEHIND: '설치된 플러그인이 이 명령에 답하는 빌드보다 오래되었습니다',
@@ -329,6 +331,18 @@ const CODES = {
    * meet the same living daemon, which is not a failure to work around but the
    * system already working.
    */
+  DAEMON_NOT_INSTALLED: {
+    exit: 2,
+    meaning: '데몬 plist가 없어 다시 올릴 Label이 없습니다',
+    retryable: false,
+    hint: '`brain setup run`으로 데몬을 등록하세요',
+  },
+  DAEMON_CONTROL_FAILED: {
+    exit: 1,
+    meaning: 'launchctl 호출이 실패했거나 데몬이 기다리는 동안 멈추지 않았습니다',
+    retryable: true,
+    hint: '`brain daemon status`로 상태를 확인하고 같은 명령을 다시 실행하세요',
+  },
   DAEMON_RUNNING: {
     exit: 1,
     meaning: '이 설정 폴더의 daemon이 이미 떠 있습니다',

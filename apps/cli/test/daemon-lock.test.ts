@@ -66,13 +66,14 @@ describe('taking the daemon lock where there is none', () => {
 
     expect(lock.ok).toBe(true);
     const read = await readDaemonLock(at);
-    expect(read).toEqual({ pid: 4242, bootAt: BOOT, startedAt: NOW });
+    expect(read).toEqual({ pid: 4242, bootAt: BOOT, startedAt: NOW, commit: null });
     // One line of JSON, written whole: a reader must never meet half of it,
     // which is why the file is linked into place rather than written in place.
     const text = await readFile(daemonPidPath(at), 'utf8');
     expect(text.trimEnd().split('\n')).toHaveLength(1);
     expect(JSON.parse(text)).toEqual({
       pid: 4242,
+      commit: null,
       boot_at: BOOT.toISOString(),
       started_at: NOW.toISOString(),
     });
@@ -243,5 +244,21 @@ describe('releasing the daemon lock', () => {
     const at = await home();
 
     await expect(releaseDaemonLock(at, 4242)).resolves.toBeUndefined();
+  });
+});
+
+describe('daemon build identity', () => {
+  it('writes the build on initial take and reclaim', async () => {
+    const at = await home();
+    const commit = 'b'.repeat(40);
+    await acquireDaemonLock({ home: at, clock, pid: 4242, commit, isAlive: noneAlive, bootAt });
+    expect((await readDaemonLock(at))?.commit).toBe(commit);
+    await acquireDaemonLock({ home: at, clock, pid: 5252, commit: 'c'.repeat(40), isAlive: noneAlive, bootAt });
+    expect((await readDaemonLock(at))?.commit).toBe('c'.repeat(40));
+  });
+  it.each([undefined, null, '', 'abcd', 'g'.repeat(40), 42])('accepts old or malformed commit %s as unknown', async (commit) => {
+    const at = await home();
+    await plant(at, { ...owner(4242), commit });
+    expect((await readDaemonLock(at))?.commit).toBe(null);
   });
 });

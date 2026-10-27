@@ -34,7 +34,7 @@ describe('daemon liveness', () => {
   });
   it.each([89_000, 90_000])('is alive at age %i', async (age) => {
     const home = await state(age);
-    expect(await inspect(home)).toEqual({ alive: true, pid: process.pid, heartbeatAt: new Date(now.getTime() - age) });
+    expect(await inspect(home)).toEqual({ alive: true, commit: null, pid: process.pid, heartbeatAt: new Date(now.getTime() - age) });
   });
   it.each([[91_000, 'stale-heartbeat'], [-1000, 'future-heartbeat'], [null, 'no-heartbeat']] as const)('rejects age %s as %s', async (age, reason) => {
     expect(await inspect(await state(age))).toMatchObject({ alive: false, reason, pid: process.pid });
@@ -43,7 +43,7 @@ describe('daemon liveness', () => {
     const home = await state();
     const at = new Date(Math.floor((await stat(join(home, 'run', 'heartbeat'))).mtimeMs));
     await rm(join(home, 'run', 'daemon.pid'));
-    expect(await inspect(home)).toEqual({ alive: false, reason: 'no-lock', pid: null, heartbeatAt: at });
+    expect(await inspect(home)).toEqual({ alive: false, commit: null, reason: 'no-lock', pid: null, heartbeatAt: at });
     await writeFile(join(home, 'run', 'daemon.pid'), '{broken');
     expect(await inspect(home)).toMatchObject({ alive: false, reason: 'no-lock', heartbeatAt: at });
   });
@@ -57,7 +57,7 @@ describe('daemon liveness', () => {
     expect(await inspect(home, () => { throw new Error('probe'); })).toMatchObject({ alive: false, reason: 'pid-dead' });
     await rm(join(home, 'run'), { recursive: true });
     await writeFile(join(home, 'run'), 'not a directory');
-    expect(await inspect(home)).toEqual({ alive: false, reason: 'no-lock', pid: null, heartbeatAt: null });
+    expect(await inspect(home)).toEqual({ alive: false, commit: null, reason: 'no-lock', pid: null, heartbeatAt: null });
   });
 });
 
@@ -82,4 +82,12 @@ describe('doctor daemon check', () => {
     expect(stale?.code).toBeUndefined();
     expect(stale?.detail).toContain(isoWithOffset(new Date(now.getTime() - 91_000)));
   });
+});
+
+it('carries the lock build in both living and dead status', async () => {
+  const home = await state();
+  const commit = 'b'.repeat(40);
+  await writeFile(join(home, 'run', 'daemon.pid'), JSON.stringify({ pid: process.pid, boot_at: boot.toISOString(), started_at: now.toISOString(), commit }));
+  expect(await inspect(home)).toMatchObject({ alive: true, commit });
+  expect(await inspect(home, () => false)).toMatchObject({ alive: false, commit });
 });

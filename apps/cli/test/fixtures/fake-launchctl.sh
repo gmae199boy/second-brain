@@ -24,6 +24,11 @@ case "$1" in
     [ -f "$FAKE_LAUNCHCTL_DIR/loaded/$label" ] && exit 5
     touch "$FAKE_LAUNCHCTL_DIR/loaded/$label"
     exit 0 ;;
+  kill)
+    label=${3##*/}
+    [ -f "$FAKE_LAUNCHCTL_DIR/loaded/$label" ] && exit 0
+    echo '가짜 launchctl에 올라 있는 Label이 없습니다' >&2
+    exit 3 ;;
   bootout)
     label=${2##*/}
     [ -f "$FAKE_LAUNCHCTL_DIR/loaded/$label" ] || exit 3

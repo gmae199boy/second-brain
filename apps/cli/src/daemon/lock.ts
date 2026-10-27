@@ -34,11 +34,12 @@ import { systemIsAlive } from '../runtime/spool.js';
  * concurrent runs (AD-7).
  */
 
-/** The three fields of the lock file, as the JSON line spells them. */
+/** The lock file fields, as the JSON line spells them. */
 interface LockDocument {
   pid: number;
   boot_at: string;
   started_at: string;
+  commit: string | null;
 }
 
 /** The owner of a lock, as `readDaemonLock` reports it. */
@@ -48,6 +49,7 @@ export interface DaemonLockOwner {
   bootAt: Date;
   /** When the owner took the lock. */
   startedAt: Date;
+  commit: string | null;
 }
 
 /**
@@ -61,6 +63,7 @@ export interface DaemonLockOptions {
   clock: Clock;
   /** The pid to write. Defaults to this process's. */
   pid?: number;
+  commit?: string | null;
   /**
    * Whether a pid is a living process. The default is the one `systemIsAlive`
    * rule the spool uses; a test hands in its own, because arranging a pid that
@@ -122,7 +125,7 @@ export async function acquireDaemonLock(options: DaemonLockOptions): Promise<Dae
   const bootAt = options.bootAt ?? (() => new Date(clock.now().getTime() - uptime() * 1000));
   const target = daemonPidPath(home);
 
-  const taken = await take(target, pid, clock, bootAt());
+  const taken = await take(target, pid, clock, bootAt(), options.commit ?? null);
   if (taken) return held(home, pid);
 
   const owner = await readOwner(target);
@@ -143,7 +146,7 @@ export async function acquireDaemonLock(options: DaemonLockOptions): Promise<Dae
   // One more attempt, and one only: a second competitor that got in between the
   // reclaim and this line is a living owner, which is exactly what must not be
   // taken over.
-  if (await take(target, pid, clock, bootAt())) return held(home, pid);
+  if (await take(target, pid, clock, bootAt(), options.commit ?? null)) return held(home, pid);
   return refused((await readOwner(target))?.pid ?? null);
 }
 
@@ -196,12 +199,13 @@ export async function releaseDaemonLock(home: string, pid: number): Promise<void
  * to is not a lock somebody else holds, and reporting it as one would tell the
  * person to look for a daemon that does not exist.
  */
-async function take(target: string, pid: number, clock: Clock, boot: Date): Promise<boolean> {
+async function take(target: string, pid: number, clock: Clock, boot: Date, commit: string | null): Promise<boolean> {
   const temporary = `${target}.${String(pid)}.tmp`;
   const document: LockDocument = {
     pid,
     boot_at: boot.toISOString(),
     started_at: clock.now().toISOString(),
+    commit,
   };
   try {
     await mkdir(dirname(target), { recursive: true, mode: 0o700 });
@@ -277,12 +281,12 @@ async function readOwner(path: string): Promise<DaemonLockOwner | undefined> {
   }
   if (typeof document !== 'object' || document === null) return undefined;
 
-  const { pid, boot_at: bootAt, started_at: startedAt } = document as Partial<LockDocument>;
+  const { pid, boot_at: bootAt, started_at: startedAt, commit } = document as Partial<LockDocument>;
   if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return undefined;
   const boot = instant(bootAt);
   const started = instant(startedAt);
   if (boot === undefined || started === undefined) return undefined;
-  return { pid, bootAt: boot, startedAt: started };
+  return { pid, bootAt: boot, startedAt: started, commit: typeof commit === 'string' && /^[0-9a-f]{40}$/i.test(commit) ? commit : null };
 }
 
 function instant(value: unknown): Date | undefined {

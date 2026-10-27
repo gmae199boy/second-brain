@@ -612,17 +612,20 @@ exit 0으로 끝납니다. heartbeat 파일은 남깁니다. 예산을 10초로 
 설치하면 launchd에 Label `io.github.gmae199boy.second-brain.daemon` 하나를 등록합니다.
 plist는 `~/Library/LaunchAgents/io.github.gmae199boy.second-brain.daemon.plist`에 쓰며,
 `RunAtLoad`와 `KeepAlive`가 켜져 로그인 때 뜨고 종료되면 다시 뜹니다.
-다시 설치해도 이미 올라 있는 Label을 다시 띄우지 않습니다. shim 경로가 바뀌면
-plist만 고치고 새 내용은 다음 로그인이나 Label을 내린 뒤 다시 등록할 때 읽습니다.
-프로세스만 다시 뜨면 기존 실행 인자를 유지합니다.
+같은 빌드로 다시 설치하면 올라 있는 Label을 그대로 둡니다. 이전 완료 기록과 다른
+빌드를 설치하면 올라 있는 데몬에 SIGTERM을 보내 새 빌드로 다시 띄웁니다. plist가
+바뀌었으면 Label을 내리고 다시 등록합니다. 실패하면 `DAEMON_NOT_RESTARTED` 경고를
+내고 설치를 마칩니다. `brain daemon status`의 `commit`에서 데몬의 빌드를 확인하세요.
 등록 실패는 `DAEMON_NOT_REGISTERED` 경고로 알리고 설치를 마칩니다. 명령과 hook은
 데몬 없이 그대로 실행됩니다. macOS 밖에서는 등록을 건너뜁니다.
 
 launchd가 관리하는 데몬은 `KeepAlive` 때문에 `SIGTERM`·`SIGINT`나 어떤 종료 뒤에도
 다시 뜹니다. 관리 중인 데몬이 도는 동안 수동으로 `brain daemon run`을 실행하면
-`DAEMON_RUNNING`으로 끝납니다. 다음 로그인까지 멈춰 두려면
-`launchctl bootout gui/$(id -u)/io.github.gmae199boy.second-brain.daemon`을 실행하세요.
-plist는 남아 있어 다음 로그인 때 다시 뜹니다. 그 전에 다시 등록하려면 `brain setup run`을 실행하세요.
+`DAEMON_RUNNING`으로 끝납니다. `brain daemon stop`은 Label부터 내리고 잠금 주인에게
+SIGTERM을 보내 정상 종료를 기다립니다. plist는 남아 있어 다음 로그인 때 다시 뜹니다.
+그 전에는 `brain daemon start`나 `brain setup run`으로 다시 올릴 수 있습니다.
+`brain daemon start`를 반복해도 이미 올라 있는 Label은 다시 등록하지 않습니다.
+멈춘 동안은 일반 명령의 기회적 drain이 밀린 일을 처리하고 doctor의 `daemon`은 `warn`입니다.
 
 ## 실패 보기와 다시 하기
 
@@ -793,6 +796,8 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `SETUP_CANCELLED` | 1 | 사람이 설치를 진행하지 않겠다고 답했습니다 |
 | `SEARCH_FAILED` | 1 | 검색 자체가 실패해서 보고할 결과가 없습니다 |
 | `VERSION_MISMATCH` | 1 | daemon이 이 명령을 낸 빌드와 다른 빌드로 돌고 있습니다 |
+| `DAEMON_NOT_INSTALLED` | 2 | 데몬 plist가 없어 다시 올릴 Label이 없습니다 |
+| `DAEMON_CONTROL_FAILED` | 1 | launchctl 호출이 실패했거나 데몬이 기다리는 동안 멈추지 않았습니다 |
 | `DAEMON_RUNNING` | 1 | 이 설정 폴더의 daemon이 이미 떠 있습니다 |
 | `SESSION_REQUIRED` | 2 | 이 동사는 세션이 필요한데 아무것도 주어지지 않았습니다 |
 | `USER_MISSING` | 2 | 이 데이터베이스에 주인 행이 없어서 세션을 누구에게도 붙일 수 없습니다 |
@@ -821,6 +826,7 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `FILE_SOURCE_UNREACHABLE` | 이 brain이 가리키기만 하는 파일을 그 자리에서 읽을 수 없었습니다 |
 | `DAEMON_UNAVAILABLE` | daemon이 설정되어 있고 닿지 못해서, 이 명령은 직접 돌았습니다 |
 | `DAEMON_NOT_REGISTERED` | 데몬을 launchd에 등록하지 못했고, 명령과 hook은 데몬 없이 그대로 실행됩니다 |
+| `DAEMON_NOT_RESTARTED` | 데몬을 새 빌드로 다시 띄우지 못해 옛 빌드가 계속 돌 수 있습니다 |
 | `PLUGIN_NOT_INSTALLED` | 이 brain이 기대하는 하네스 플러그인이 설치되어 있지 않습니다 |
 | `PLUGIN_BEHIND` | 설치된 플러그인이 이 명령에 답하는 빌드보다 오래되었습니다 |
 | `PLUGIN_DUPLICATE` | 플러그인이 두 벌 이상 설치되어 hook이 두 번 돌 수 있습니다 |

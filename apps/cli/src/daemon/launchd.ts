@@ -41,6 +41,7 @@ export interface Launchctl {
   isLoaded(label: string): Promise<boolean>;
   bootstrap(plistPath: string): Promise<LaunchctlResult>;
   bootout(label: string): Promise<LaunchctlResult>;
+  kill(label: string, signal: string): Promise<LaunchctlResult>;
 }
 
 const execute = promisify(execFile);
@@ -66,6 +67,7 @@ export function systemLaunchctl({ env, uid }: {
     async isLoaded(label) { return (await run(['print', `${domain}/${label}`])).ok; },
     bootstrap: (path) => run(['bootstrap', domain, path]),
     bootout: (label) => run(['bootout', `${domain}/${label}`]),
+    kill: (label, signal) => run(['kill', signal, `${domain}/${label}`]),
   };
 }
 

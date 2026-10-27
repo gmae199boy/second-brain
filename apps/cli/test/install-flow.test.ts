@@ -449,7 +449,7 @@ function harness(options: HarnessOptions = {}): Harness {
       },
     },
     installed,
-    daemon: { register: async () => options.daemonResult ?? {
+    daemon: { restart: async () => ({ ok: true as const, method: 'signal' as const }), register: async () => options.daemonResult ?? {
       label: DAEMON_LABEL, plist_path: null, status: 'unsupported', plist_changed: false,
     } },
     connectors: options.connectors ?? [],
@@ -1871,7 +1871,52 @@ describe('daemon registration in the shared installer', () => {
     if (status === 'failed') expect(kit.output()).toContain('등록을 거절했습니다');
     expect(kit.installed.wrote).toHaveLength(1);
     if (result.ok) expect(result.report.daemon).toEqual({
-      label: DAEMON_LABEL, plist_path: '/tmp/daemon.plist', status, plist_changed: true,
+      label: DAEMON_LABEL, plist_path: '/tmp/daemon.plist', status, plist_changed: true, restarted: false,
     });
+  });
+});
+
+describe('daemon restart after upgrades', () => {
+  it.each([
+    ['loaded', true, false, true], ['loaded', true, true, false],
+    ['loaded', false, false, false], ['registered', true, false, false],
+    ['unsupported', true, false, false], ['failed', true, false, false],
+  ] as const)('restarts only an upgraded loaded job: %s previous=%s same=%s', async (status, previous, same, expected) => {
+    const kit = harness({ isTTY: false, daemonResult: {
+      label: DAEMON_LABEL, plist_path: '/tmp/daemon.plist', status, plist_changed: false,
+    }, ...(previous ? { recordedInstalled: {
+      commit: same ? BUILD_COMMIT : 'b'.repeat(40), schema_version: 6, node: PINNED_NODE,
+      plugin_root: null, installed_at: '2026-10-17T00:00:00Z',
+    } } : {}) });
+    const calls: boolean[] = [];
+    kit.deps.daemon.restart = async (changed, env) => {
+      expect(env).toBe(ENV); calls.push(changed); return { ok: true, method: 'signal' };
+    };
+    const result = await resultOf(['--yes'], kit);
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual(expected ? [false] : []);
+    if (result.ok) expect(result.report.daemon.restarted).toBe(expected);
+  });
+  it('records completion even when restart fails, after checking the prior build', async () => {
+    const kit = harness({ isTTY: false, daemonResult: {
+      label: DAEMON_LABEL, plist_path: '/tmp/daemon.plist', status: 'loaded', plist_changed: true,
+    }, recordedInstalled: { commit: 'b'.repeat(40), schema_version: 6, node: PINNED_NODE,
+      plugin_root: null, installed_at: '2026-10-17T00:00:00Z' } });
+    const order: string[] = [];
+    for (const key of ['read', 'build', 'write'] as const) {
+      const original = kit.deps.installed[key];
+      // Record order while retaining each dependency's actual behavior.
+      if (key === 'read') kit.deps.installed.read = async (home) => { order.push(key); return (original as typeof kit.deps.installed.read)(home); };
+      if (key === 'build') kit.deps.installed.build = async () => { order.push(key); return (original as typeof kit.deps.installed.build)(); };
+      if (key === 'write') kit.deps.installed.write = async (home, facts) => { order.push(key); return (original as typeof kit.deps.installed.write)(home, facts); };
+    }
+    const register = kit.deps.daemon.register;
+    kit.deps.daemon.register = async (shim, env) => { order.push('register'); return register(shim, env); };
+    kit.deps.daemon.restart = async (changed) => { expect(changed).toBe(true); order.push('restart'); return { ok: false, message: '재시작 실패' }; };
+    const result = await resultOf(['--yes'], kit);
+    expect(installExit(result)).toBe(0); expect(result.warnings).toContain('DAEMON_NOT_RESTARTED');
+    expect(kit.installed.wrote).toHaveLength(1);
+    expect(order).toEqual(['read', 'build', 'register', 'restart', 'write']);
+    if (result.ok) expect(result.report.daemon.restarted).toBe(false);
   });
 });

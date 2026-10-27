@@ -29,6 +29,10 @@ async function world() {
   let failure: LaunchctlResult = { ok: true };
   const launchctl: Launchctl = {
     uid: 501,
+    async kill(label, signal) {
+      calls.push(`kill ${signal} ${label}`);
+      return loaded ? failure : { ok: false, message: '가짜 launchctl에 올라 있는 Label이 없습니다' };
+    },
     async isLoaded(label) { calls.push(`print ${label}`); return loaded; },
     async bootstrap(path) { calls.push(`bootstrap ${path}`); if (failure.ok) loaded = true; return failure; },
     async bootout(label) { calls.push(`bootout ${label}`); if (failure.ok) loaded = false; return failure; },
@@ -198,4 +202,24 @@ describe.skipIf(process.platform !== 'darwin')('built setup run launchd surface'
     expect(result.data.daemon.status).toBe('failed');
     expect(JSON.parse(await readFile(join(kit.home, 'installed.json'), 'utf8'))).toBeDefined();
   });
+});
+
+it('sends restart signals through the adapter and rejects unloaded labels', async () => {
+  const kit = await world();
+  const adapter = systemLaunchctl({ env: kit.env, uid: 501 });
+  expect(await adapter.kill(DAEMON_LABEL, 'SIGTERM')).toMatchObject({ ok: false });
+  await mkdir(join(kit.env.FAKE_LAUNCHCTL_DIR, 'loaded'), { recursive: true });
+  await writeFile(join(kit.env.FAKE_LAUNCHCTL_DIR, 'loaded', DAEMON_LABEL), '');
+  expect(await adapter.kill(DAEMON_LABEL, 'SIGTERM')).toEqual({ ok: true });
+  const calls = (await readFile(join(kit.env.FAKE_LAUNCHCTL_DIR, 'calls'), 'utf8')).trim().split('\n');
+  expect(calls).toEqual([`kill SIGTERM gui/501/${DAEMON_LABEL}`, `kill SIGTERM gui/501/${DAEMON_LABEL}`]);
+});
+
+it('makes the memory signal fake reject unloaded labels and preserve loaded failures', async () => {
+  const kit = await world();
+  expect(await kit.launchctl.kill(DAEMON_LABEL, 'SIGTERM')).toEqual({ ok: false, message: '가짜 launchctl에 올라 있는 Label이 없습니다' });
+  await kit.launchctl.bootstrap(daemonPlistPath(kit.env));
+  expect(await kit.launchctl.kill(DAEMON_LABEL, 'SIGTERM')).toEqual({ ok: true });
+  kit.fail();
+  expect(await kit.launchctl.kill(DAEMON_LABEL, 'SIGTERM')).toEqual({ ok: false, message: '등록을 거절했습니다' });
 });

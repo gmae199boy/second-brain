@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
   copyFileSync,
   cpSync,
@@ -49,6 +49,7 @@ const SLOW = 900_000;
 
 let root: string;
 let bare: string;
+let work: string;
 let home: string;
 let plugin: string;
 let snapshotCommit: string;
@@ -68,7 +69,7 @@ beforeAll(() => {
   mkdirSync(join(configDir, 'projects', '-demo'), { recursive: true });
   copyFileSync(join(repoRoot, 'packages/claude-code/test/fixtures/two-turns.jsonl'), join(configDir, 'projects', '-demo', 'first-session.jsonl'));
 
-  const work = join(root, 'work');
+  work = join(root, 'work');
   snapshot(work);
 
   git(['init', '-q', '-b', 'main', work]);
@@ -233,6 +234,41 @@ describe('the plugin SessionStart hook', () => {
     },
     SLOW,
   );
+  it('restarts a loaded daemon once after updating the plugin ref and exposes the new build', async () => {
+    git(['-C', work, '-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--allow-empty', '-q', '-m', 'upgrade']);
+    git(['-C', work, 'push', '-q', bare, 'main']);
+    snapshotCommit = git(['-C', work, 'rev-parse', 'HEAD']).trim();
+    writeFileSync(join(plugin, 'app-ref'), `${snapshotCommit}\n`, 'utf8');
+    const run = hook('SessionStart');
+    expect(run.status).toBe(0);
+    expect(installed().commit).toBe(snapshotCommit);
+    if (process.platform !== 'darwin') return;
+    const label = 'io.github.gmae199boy.second-brain.daemon';
+    const calls = readFileSync(join(root, 'launchctl', 'calls'), 'utf8').split('\n');
+    expect(calls.filter((line) => line === `kill SIGTERM gui/${String(process.getuid?.())}/${label}`)).toHaveLength(1);
+    expect(calls.filter((line) => line.startsWith('bootstrap '))).toHaveLength(1);
+    const plist = readFileSync(join(root, 'launch-agents', `${label}.plist`), 'utf8');
+    const argumentsXml = plist.match(/<array>(.*?)<\/array>/s)?.[1] ?? '';
+    const args = [...argumentsXml.matchAll(/<string>(.*?)<\/string>/g)].map((match) => (match[1] ?? '').replaceAll('&amp;', '&').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&#13;', '\r'));
+    const env = { ...process.env, SECOND_BRAIN_HOME: home, CLAUDE_CONFIG_DIR: configDir,
+      SECOND_BRAIN_LAUNCHCTL: join(repoRoot, 'apps/cli/test/fixtures/fake-launchctl.sh'),
+      SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'), FAKE_LAUNCHCTL_DIR: join(root, 'launchctl') };
+    const daemon = spawn(args[0]!, args.slice(1), { env, stdio: 'ignore' });
+    const closed = new Promise<void>((resolve, reject) => { daemon.on('close', () => resolve()); daemon.on('error', reject); });
+    try {
+      const deadline = Date.now() + 20_000;
+      let status: { alive: boolean; commit: string | null } = { alive: false, commit: null };
+      do {
+        const checked = spawnSync(join(home, 'bin', 'brain'), ['daemon', 'status', '--json'], { env, encoding: 'utf8' });
+        expect(checked.status).toBe(0);
+        status = JSON.parse(checked.stdout).data as typeof status;
+        if (status.alive) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } while (Date.now() < deadline);
+      expect(status.alive).toBe(true); expect(status.commit).toBe(installed().commit);
+    } finally { daemon.kill('SIGTERM'); await closed; }
+  }, SLOW);
+
   it('collects a Stop payload, records its arrival, and ignores a transcript with no conversation', () => {
     const transcript = join(root, 'stop-transcript.jsonl');
     copyFileSync(join(repoRoot, 'packages/claude-code/test/fixtures/two-turns.jsonl'), transcript);

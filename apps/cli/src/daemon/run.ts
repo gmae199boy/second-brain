@@ -16,6 +16,7 @@ import {
 } from 'second_brain';
 import { brainDependencies } from '../assembly.js';
 import { readConfig, type ReadConfigResult } from '../config/codec.js';
+import { readBuildIdentity } from '../install/installed.js';
 import { acquireDaemonLock } from './lock.js';
 import { daemonLog } from './log.js';
 import { startHeartbeat } from './heartbeat.js';
@@ -116,6 +117,7 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
   }
 
   const lock = await acquireDaemonLock({
+    commit: (await readBuildIdentity())?.commit ?? null,
     home,
     clock,
     ...(options.isAlive === undefined ? {} : { isAlive: options.isAlive }),

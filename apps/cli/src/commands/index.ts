@@ -3,6 +3,8 @@ import { messagesRedactCommand } from './messages-redact.js';
 import { connectors } from '../connectors/index.js';
 import type { CommandSpec } from '../dispatch.js';
 import { harnesses } from '../harnesses.js';
+import { daemonStopCommand } from './daemon-stop.js';
+import { daemonStartCommand } from './daemon-start.js';
 import { daemonStatusCommand } from './daemon-status.js';
 import { daemonRunCommand } from './daemon-run.js';
 import { doctorRun } from './doctor-run.js';
@@ -43,6 +45,8 @@ export const commands: readonly CommandSpec[] = [
   guideShowCommand,
   daemonRunCommand,
   daemonStatusCommand,
+  daemonStopCommand,
+  daemonStartCommand,
   queueDrainCommand,
   sessionsIngestCommand(harnesses),
   setupRun,

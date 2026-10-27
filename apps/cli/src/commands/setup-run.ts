@@ -57,7 +57,7 @@ export const setupRun: CommandSpec<SetupRunData> = {
     'brain setup run --store-path /Volumes/notes/brain.db --yes',
   ],
   output:
-    '설치 보고: `home`, `config_path`, `store`, `owner`, `files`, `mirror_path`, `shim`, `daemon`, `harnesses`, `checks`, `summary`, `update`, `installed`',
+    '설치 보고: `home`, `config_path`, `store`, `owner`, `files`, `mirror_path`, `shim`, `daemon`(재시작 여부 `restarted` 포함), `harnesses`, `checks`, `summary`, `update`, `installed`',
   risk: 'write',
   hook: false,
   dryRun: false,

@@ -75,7 +75,7 @@ export interface InstallReport {
   /** Recorded, not created: the folder itself is epic 4's. */
   mirror_path: string;
   shim: { path: string; changed: boolean };
-  daemon: Omit<DaemonRegistration, 'message'>;
+  daemon: Omit<DaemonRegistration, 'message'> & { restarted: boolean };
   /** The harnesses this run registered the shim with. */
   harnesses: readonly { harness: string; target: string; changed: boolean }[];
   checks: readonly DoctorCheck[];
@@ -273,7 +273,10 @@ export interface InstallDeps {
   files: InstallFiles;
   shim: InstallShim;
   installed: InstallInstalled;
-  daemon: { register(shim: string, env: NodeJS.ProcessEnv): Promise<DaemonRegistration> };
+  daemon: {
+    register(shim: string, env: NodeJS.ProcessEnv): Promise<DaemonRegistration>;
+    restart(plistChanged: boolean, env: NodeJS.ProcessEnv): Promise<{ ok: true; method: 'signal' | 'reload' } | { ok: false; message: string }>;
+  };
   /** Every harness this build can connect to. Empty until epic 2. */
   connectors: readonly Connector[];
 }
@@ -585,8 +588,11 @@ export async function runInstall(
     });
   }
 
+  const previous = await deps.installed.read(home);
+  const build = await deps.installed.build();
   const registration = await deps.daemon.register(shim.path, env);
-  const { message: daemonMessage, ...daemon } = registration;
+  const { message: daemonMessage, ...registered } = registration;
+  const daemon = { ...registered, restarted: false };
   switch (daemon.status) {
     case 'registered':
       deps.log('데몬을 launchd에 등록했습니다');
@@ -605,13 +611,21 @@ export async function runInstall(
       break;
   }
 
+  if (daemon.status === 'loaded' && previous !== undefined && previous.commit !== (build?.commit ?? null)) {
+    const restarted = await deps.daemon.restart(daemon.plist_changed, env);
+    daemon.restarted = restarted.ok;
+    if (restarted.ok) deps.log('데몬을 새 빌드로 다시 띄웠습니다');
+    else {
+      warnings.push('DAEMON_NOT_RESTARTED');
+      deps.log(`데몬을 다시 띄우지 못했습니다. 데몬을 새 빌드로 다시 띄우지 못해 옛 빌드가 계속 돌 수 있습니다. ${restarted.message}`);
+    }
+  }
+
   // Only now, and only here: `installed.json` means "this install finished and
   // answered", so it is written after the proof and never before it. A plugin's
   // `SessionStart` compares the commit it carries against this record, and a
   // record written for an install that does not run would stop every future
   // session from repairing it.
-  const build = await deps.installed.build();
-  const previous = await deps.installed.read(home);
   const installed = await deps.installed.write(home, {
     commit: build?.commit ?? null,
     // The build's version when there is one; otherwise the version the file
