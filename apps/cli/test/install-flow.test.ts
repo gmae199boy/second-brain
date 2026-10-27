@@ -1,3 +1,4 @@
+import { DAEMON_LABEL, type DaemonRegistration } from '../src/daemon/launchd.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -304,6 +305,7 @@ interface Harness {
 }
 
 interface HarnessOptions {
+  daemonResult?: DaemonRegistration;
   answers?: Answers;
   /** Replaces the answers every path ends with, for a test about them. */
   tail?: Answers;
@@ -447,6 +449,9 @@ function harness(options: HarnessOptions = {}): Harness {
       },
     },
     installed,
+    daemon: { register: async () => options.daemonResult ?? {
+      label: DAEMON_LABEL, plist_path: null, status: 'unsupported', plist_changed: false,
+    } },
     connectors: options.connectors ?? [],
   };
 
@@ -1827,5 +1832,46 @@ describe('installer plugin connections', () => {
     expect(result.ok).toBe(true);
     expect('warnings' in result && result.warnings).toEqual([]);
     expect(kit.output()).toContain('Claude Code는 /plugins/recorded의 플러그인으로 연결되어 있습니다');
+  });
+});
+
+
+describe('daemon registration in the shared installer', () => {
+  it('registers the verified shim with the supplied environment before recording completion', async () => {
+    const kit = harness({ isTTY: false });
+    const order: string[] = [];
+    const { verify, write } = kit.deps.installed;
+    kit.deps.installed.verify = async (home) => { order.push('verify'); return verify(home); };
+    kit.deps.installed.write = async (home, facts) => { order.push('write'); return write(home, facts); };
+    kit.deps.daemon.register = async (shim, env) => {
+      order.push('daemon');
+      expect(shim).toBe(shimPath(HOME));
+      expect(env).toBe(ENV);
+      return { label: DAEMON_LABEL, plist_path: null, status: 'unsupported', plist_changed: false };
+    };
+    expect((await resultOf(['--yes'], kit)).ok).toBe(true);
+    expect(order).toEqual(['verify', 'daemon', 'write']);
+  });
+
+  it('never registers a shim whose verification failed', async () => {
+    const kit = harness({ isTTY: false, verifyFails: '확인 실패' });
+    kit.deps.daemon.register = async () => { throw new Error('must not register'); };
+    expect((await resultOf(['--yes'], kit)).ok).toBe(false);
+    expect(kit.installed.wrote).toHaveLength(0);
+  });
+
+  it.each(['registered', 'loaded', 'failed'] as const)('reports %s and keeps registration failure nonfatal', async (status) => {
+    const kit = harness({ isTTY: false, daemonResult: {
+      label: DAEMON_LABEL, plist_path: '/tmp/daemon.plist', status, plist_changed: true,
+      ...(status === 'failed' ? { message: '등록을 거절했습니다' } : {}),
+    } });
+    const result = await resultOf(['--yes'], kit);
+    expect(installExit(result)).toBe(0);
+    expect(result.warnings).toEqual(status === 'failed' ? ['DAEMON_NOT_REGISTERED'] : []);
+    if (status === 'failed') expect(kit.output()).toContain('등록을 거절했습니다');
+    expect(kit.installed.wrote).toHaveLength(1);
+    if (result.ok) expect(result.report.daemon).toEqual({
+      label: DAEMON_LABEL, plist_path: '/tmp/daemon.plist', status, plist_changed: true,
+    });
   });
 });

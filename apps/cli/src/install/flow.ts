@@ -12,6 +12,7 @@ import {
   type SqliteProjectKeyCollision,
   type WarningCode,
 } from 'second_brain';
+import { daemonPlistPath, type DaemonRegistration } from '../daemon/launchd.js';
 import { installedPluginRoot, connectionLines } from '../connectors/plugin.js';
 import { formatCheck } from '../commands/doctor-run.js';
 import type { SelfUserResult } from './store.js';
@@ -74,6 +75,7 @@ export interface InstallReport {
   /** Recorded, not created: the folder itself is epic 4's. */
   mirror_path: string;
   shim: { path: string; changed: boolean };
+  daemon: Omit<DaemonRegistration, 'message'>;
   /** The harnesses this run registered the shim with. */
   harnesses: readonly { harness: string; target: string; changed: boolean }[];
   checks: readonly DoctorCheck[];
@@ -271,6 +273,7 @@ export interface InstallDeps {
   files: InstallFiles;
   shim: InstallShim;
   installed: InstallInstalled;
+  daemon: { register(shim: string, env: NodeJS.ProcessEnv): Promise<DaemonRegistration> };
   /** Every harness this build can connect to. Empty until epic 2. */
   connectors: readonly Connector[];
 }
@@ -418,6 +421,7 @@ export async function runInstall(
   // offering.
   const agreed = await askToProceed(
     { home, storePath: store.path, filesPath, mirrorPath: mirror.path },
+    env,
     flags,
     deps,
   );
@@ -581,6 +585,26 @@ export async function runInstall(
     });
   }
 
+  const registration = await deps.daemon.register(shim.path, env);
+  const { message: daemonMessage, ...daemon } = registration;
+  switch (daemon.status) {
+    case 'registered':
+      deps.log('데몬을 launchd에 등록했습니다');
+      break;
+    case 'loaded':
+      deps.log(daemon.plist_changed
+        ? '데몬이 이미 올라 있습니다. 새 plist는 다음 로그인이나 Label을 내린 뒤 다시 등록할 때 읽습니다. 프로세스만 다시 뜨면 기존 실행 인자를 유지합니다'
+        : '데몬이 이미 올라 있습니다');
+      break;
+    case 'unsupported':
+      deps.log('이 운영체제에는 launchd가 없어 데몬 등록을 건너뜁니다');
+      break;
+    case 'failed':
+      warnings.push('DAEMON_NOT_REGISTERED');
+      deps.log(`데몬을 등록하지 못했습니다. ${daemonMessage ?? ''}`);
+      break;
+  }
+
   // Only now, and only here: `installed.json` means "this install finished and
   // answered", so it is written after the proof and never before it. A plugin's
   // `SessionStart` compares the commit it carries against this record, and a
@@ -609,6 +633,7 @@ export async function runInstall(
       files: { path: filesRoot.path, created: filesRoot.created },
       mirror_path: mirror.path,
       shim: { path: shim.path, changed: shim.changed },
+      daemon,
       harnesses: connected.connected,
       checks: report.checks,
       summary: report.summary,
@@ -660,6 +685,7 @@ interface Settled {
  */
 async function askToProceed(
   settled: Settled,
+  env: NodeJS.ProcessEnv,
   flags: InstallFlags,
   deps: InstallDeps,
 ): Promise<boolean> {
@@ -676,6 +702,7 @@ async function askToProceed(
   );
   deps.log(`  파일 저장소 루트 ${settled.filesPath} (mode 0700)`);
   deps.log(`  하네스 hook이 부를 shim ${shimPath(settled.home)} (mode 0755)`);
+  deps.log(`  로그인 때 데몬을 띄울 plist ${daemonPlistPath(env)} (mode 0644)`);
   // The mirror is recorded and not created, so it is not on the list of what
   // this run writes (epic 4).
   deps.log(`  미러 경로 ${settled.mirrorPath}는 적어 두기만 하고 폴더는 만들지 않습니다`);

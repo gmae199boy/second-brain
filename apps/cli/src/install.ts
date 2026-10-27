@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { cancel, confirm, isCancel, multiselect, text, type Option } from '@clack/prompts';
 import { encodeTextLine } from 'second_brain';
 import { readConfigForSetup, writeConfig } from './config/codec.js';
+import { registerDaemon, systemLaunchctl } from './daemon/launchd.js';
 import { configHome } from './config/paths.js';
 import { connectors } from './connectors/index.js';
 import {
@@ -189,6 +190,12 @@ export function systemInstallDeps(): InstallDeps {
       build: readBuildIdentity,
       read: readInstalled,
       write: (home: string, facts: InstalledFacts) => writeInstalled(home, facts),
+    },
+    daemon: {
+      register: (shim, env) => registerDaemon({
+        shim, env, platform: process.platform,
+        launchctl: systemLaunchctl({ env, uid: process.getuid?.() }),
+      }),
     },
     connectors: connectors(process.env),
   };

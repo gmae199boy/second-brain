@@ -104,6 +104,8 @@ pnpm이 12보다 오래되었으면 최신 pnpm 설치를 제안하고, 클론�
 | --- | --- | --- |
 | `SECOND_BRAIN_HOME` | `~/.second_brain` | 설정과 클론이 들어가는 곳 |
 | `SECOND_BRAIN_REPO` | `https://github.com/gmae199boy/second-brain.git` | 클론할 저장소. 포크나 시험용 |
+| `SECOND_BRAIN_LAUNCHCTL` | `/bin/launchctl` | launchctl 실행 파일. 시험용 |
+| `SECOND_BRAIN_LAUNCH_AGENTS` | `~/Library/LaunchAgents` | 데몬 plist를 쓸 폴더. 시험용 |
 | `SECOND_BRAIN_NODE_DIRS` | `/opt/homebrew/bin:/usr/local/bin` | node를 찾아볼 고정 폴더들. 시험용 |
 
 설치할 데이터베이스 서버도, 띄울 Docker도 없습니다. 원본은 SQLite 파일 하나에
@@ -575,7 +577,20 @@ exit 0으로 끝납니다. heartbeat 파일은 남깁니다. 예산을 10초로 
 중인 일감은 시간 제한 없이 기다리므로, 이 시간을 넘기면 강제 종료될 수 있습니다.
 그때 남은 청구는 10분 lease가 만료되면 대기열로 돌아갑니다.
 
-launchd 등록은 아직 없습니다. 지금은 사람이 직접 띄웁니다.
+설치하면 launchd에 Label `io.github.gmae199boy.second-brain.daemon` 하나를 등록합니다.
+plist는 `~/Library/LaunchAgents/io.github.gmae199boy.second-brain.daemon.plist`에 쓰며,
+`RunAtLoad`와 `KeepAlive`가 켜져 로그인 때 뜨고 종료되면 다시 뜹니다.
+다시 설치해도 이미 올라 있는 Label을 다시 띄우지 않습니다. shim 경로가 바뀌면
+plist만 고치고 새 내용은 다음 로그인이나 Label을 내린 뒤 다시 등록할 때 읽습니다.
+프로세스만 다시 뜨면 기존 실행 인자를 유지합니다.
+등록 실패는 `DAEMON_NOT_REGISTERED` 경고로 알리고 설치를 마칩니다. 명령과 hook은
+데몬 없이 그대로 실행됩니다. macOS 밖에서는 등록을 건너뜁니다.
+
+launchd가 관리하는 데몬은 `KeepAlive` 때문에 `SIGTERM`·`SIGINT`나 어떤 종료 뒤에도
+다시 뜹니다. 관리 중인 데몬이 도는 동안 수동으로 `brain daemon run`을 실행하면
+`DAEMON_RUNNING`으로 끝납니다. 다음 로그인까지 멈춰 두려면
+`launchctl bootout gui/$(id -u)/io.github.gmae199boy.second-brain.daemon`을 실행하세요.
+plist는 남아 있어 다음 로그인 때 다시 뜹니다. 그 전에 다시 등록하려면 `brain setup run`을 실행하세요.
 
 ## 실패 보기와 다시 하기
 
@@ -773,6 +788,7 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `ATTACHMENT_NOT_REDACTED` | 메시지는 가렸고 그 메시지에 가리지 않은 첨부 파일이 남아 있습니다 — 첨부는 `brain files redact`로 따로 가립니다 |
 | `FILE_SOURCE_UNREACHABLE` | 이 brain이 가리키기만 하는 파일을 그 자리에서 읽을 수 없었습니다 |
 | `DAEMON_UNAVAILABLE` | daemon이 설정되어 있고 닿지 못해서, 이 명령은 직접 돌았습니다 |
+| `DAEMON_NOT_REGISTERED` | 데몬을 launchd에 등록하지 못했고, 명령과 hook은 데몬 없이 그대로 실행됩니다 |
 | `PLUGIN_NOT_INSTALLED` | 이 brain이 기대하는 하네스 플러그인이 설치되어 있지 않습니다 |
 | `PLUGIN_BEHIND` | 설치된 플러그인이 이 명령에 답하는 빌드보다 오래되었습니다 |
 | `PLUGIN_DUPLICATE` | 플러그인이 두 벌 이상 설치되어 hook이 두 번 돌 수 있습니다 |

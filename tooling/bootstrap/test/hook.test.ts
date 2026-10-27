@@ -144,6 +144,9 @@ function hook(event: string, input = ''): { status: number | null; stdout: strin
     encoding: 'utf8',
     env: {
       ...process.env,
+      SECOND_BRAIN_LAUNCHCTL: join(repoRoot, 'apps/cli/test/fixtures/fake-launchctl.sh'),
+      SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'),
+      FAKE_LAUNCHCTL_DIR: join(root, 'launchctl'),
       SECOND_BRAIN_HOME: home,
       SECOND_BRAIN_REPO: `file://${bare}`,
       CLAUDE_PLUGIN_ROOT: plugin,

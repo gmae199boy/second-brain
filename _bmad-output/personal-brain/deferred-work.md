@@ -188,3 +188,11 @@ source_spec: `tickets/epic-attachments/tickets/story-untitled-10-plan.md`
 severity: medium
 reason: 두 명령이 `context.options['target-kind']`를 읽지만 dispatcher는 commander의 `command.opts()`를 넘기고, commander는 플래그 이름을 `targetKind`로 바꾼다(`setup-run.ts`는 바르게 camelCase로 읽음). 구현 에이전트가 `brain failures list --target-kind file --json`이 `session` 행도 돌려주는 것을 확인했다. 기존 시험은 픽스처마다 거른 종류의 실패만 있어 잡지 못한다. 이 스토리 전부터 있던 결함이고, 고침은 두 파일의 키를 `targetKind`로 바꾸고 섞인 픽스처 시험을 더하는 것이다.
 status: open
+
+### DW-3: A launchctl executable that ignores SIGTERM may outlive the adapter timeout.
+origin: spec-deferred e47c1e1266c7
+location: apps/cli/src/daemon/launchd.ts:56
+source_spec: `tickets/epic-daemon/tickets/story-launchd-label-plan.md`
+severity: medium
+reason: Inspection: execFile uses timeout 10000 with its default SIGTERM and waits for process exit. The regression fake uses exec sleep, which terminates normally. No evidence establishes that the system launchctl ignores SIGTERM; settle by reproducing with a signal-resistant executable and deciding whether hard-kill escalation is warranted for the system adapter. (declared severity: medium (unverified))
+status: open

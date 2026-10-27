@@ -71,6 +71,8 @@ export const WARNING_CODES = [
   'FILE_SOURCE_UNREACHABLE',
   /** The daemon was configured and could not be reached, so this ran direct. */
   'DAEMON_UNAVAILABLE',
+  /** launchd registration failed; commands and hooks still run without it. */
+  'DAEMON_NOT_REGISTERED',
   /** The harness plugin this brain expects is not installed. */
   'PLUGIN_NOT_INSTALLED',
   /** The installed plugin is older than the build answering this command. */
@@ -115,6 +117,7 @@ export const WARNING_CODE_MEANINGS: Readonly<Record<WarningCode, string>> = {
     '메시지는 가렸고 그 메시지에 가리지 않은 첨부 파일이 남아 있습니다 — 첨부는 `brain files redact`로 따로 가립니다',
   FILE_SOURCE_UNREACHABLE: '이 brain이 가리키기만 하는 파일을 그 자리에서 읽을 수 없었습니다',
   DAEMON_UNAVAILABLE: 'daemon이 설정되어 있고 닿지 못해서, 이 명령은 직접 돌았습니다',
+  DAEMON_NOT_REGISTERED: '데몬을 launchd에 등록하지 못했고, 명령과 hook은 데몬 없이 그대로 실행됩니다',
   PLUGIN_NOT_INSTALLED: '이 brain이 기대하는 하네스 플러그인이 설치되어 있지 않습니다',
   PLUGIN_BEHIND: '설치된 플러그인이 이 명령에 답하는 빌드보다 오래되었습니다',
   PLUGIN_DUPLICATE: '플러그인이 두 벌 이상 설치되어 hook이 두 번 돌 수 있습니다',
