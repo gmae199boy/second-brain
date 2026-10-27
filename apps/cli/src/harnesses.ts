@@ -3,6 +3,7 @@ import {
   type Connector,
   claudeCodeParser,
   claudeCodeTranscriptFolder,
+  claudeCodeProjectsFolder,
   readClaudeCodeHookInput,
   type HookInputReader,
   type Parser,
@@ -24,6 +25,7 @@ export interface Harness {
    * `CLAUDE_CONFIG_DIR` — and reading environments is the Runtime's job (AD-1).
    */
   transcriptFolder(env: NodeJS.ProcessEnv): TranscriptFolder;
+  watchFolder(env: NodeJS.ProcessEnv): string;
 }
 
 export const harnesses: readonly Harness[] = [
@@ -32,6 +34,7 @@ export const harnesses: readonly Harness[] = [
     connector: (env) => claudeCodeConnector({ configDir: claudeConfigDir(env) }),
     readHookInput: readClaudeCodeHookInput,
     transcriptFolder: (env) => claudeCodeTranscriptFolder({ configDir: claudeConfigDir(env) }),
+    watchFolder: (env) => claudeCodeProjectsFolder({ configDir: claudeConfigDir(env) }),
   },
 ];
 
@@ -63,4 +66,12 @@ export function transcriptFolders(
 function claudeConfigDir(env: NodeJS.ProcessEnv): string | undefined {
   const configured = env[CLAUDE_CONFIG_DIR_ENV];
   return configured === undefined || configured === '' ? undefined : configured;
+}
+
+/** Every registered harness root, independently of configured file sources. */
+export function watchFolders(
+  env: NodeJS.ProcessEnv,
+  registry: readonly Harness[] = harnesses,
+): readonly string[] {
+  return registry.map((harness) => harness.watchFolder(env));
 }

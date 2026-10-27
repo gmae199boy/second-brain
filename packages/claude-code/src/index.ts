@@ -6,6 +6,7 @@ export {
 export { readClaudeCodeHookInput } from './hook.js';
 export {
   claudeCodeTranscriptFolder,
+  claudeCodeProjectsFolder,
   type ClaudeCodeTranscriptFolderOptions,
 } from './transcript-folder.js';
 

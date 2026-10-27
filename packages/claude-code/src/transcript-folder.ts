@@ -49,6 +49,11 @@ const PROJECTS = 'projects';
 /** The extension of a transcript, which the session id is the rest of. */
 const TRANSCRIPT_SUFFIX = '.jsonl';
 
+/** The projects root shared by transcript listing and Runtime watching. */
+export function claudeCodeProjectsFolder(options: ClaudeCodeTranscriptFolderOptions = {}): string {
+  return join(options.configDir ?? join(homedir(), '.claude'), PROJECTS);
+}
+
 /**
  * The folder for one configuration directory.
  *
@@ -59,8 +64,7 @@ const TRANSCRIPT_SUFFIX = '.jsonl';
 export function claudeCodeTranscriptFolder(
   options: ClaudeCodeTranscriptFolderOptions = {},
 ): TranscriptFolder {
-  const configDir = options.configDir ?? join(homedir(), '.claude');
-  const projects = join(configDir, PROJECTS);
+  const projects = claudeCodeProjectsFolder(options);
 
   return {
     harness: CLAUDE_CODE_HARNESS,

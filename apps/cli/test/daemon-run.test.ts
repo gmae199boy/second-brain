@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, watch as fsWatch, type WatchListener } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -606,6 +606,104 @@ describe('brain daemon run, as a process', () => {
       heartbeatMs: 40, drainBudgetMs: 200, drainPauseMs: 20, workHandlers,
     }, unblock);
   }
+
+  it('collects five writes in one watch batch while the idle pause is long, then closes watchers', async () => {
+    const { home, configDir } = await installed();
+    await mkdir(join(configDir, 'projects', '-demo-a'), { recursive: true });
+    const opened = vi.fn(sqliteStore);
+    const closed = vi.fn();
+    const daemon = startDaemon({
+      home, env: environment(home, configDir), clock: systemClock, idGen: uuidV7IdGen(),
+      drainPauseMs: 60_000, watchBatchMs: 500, createStore: opened,
+      watch: (folder, options, listener) => {
+        const watcher = fsWatch(folder, options, listener);
+        watcher.on('close', closed);
+        return watcher;
+      },
+    });
+    await waitFor('첫 회차', () => opened.mock.calls.length === 1);
+    await delay(100);
+    for (let index = 0; index < 5; index += 1) {
+      await transcript(configDir, 'batched-session');
+      await delay(40);
+    }
+    await waitFor('감시 수집', () => sessionCount(home) === 1, 5_000);
+    await delay(650);
+    expect(opened).toHaveBeenCalledTimes(2);
+    expect(await daemon.stop()).toEqual({ ok: true });
+    await waitFor('감시 닫기', () => closed.mock.calls.length === 1);
+  });
+
+  it('retains several batches closed during a drain as one immediate following round', async () => {
+    const { home, configDir } = await installed();
+    const checking = gate();
+    const opened = vi.fn(sqliteStore);
+    let change!: WatchListener<string>;
+    const daemon = startDaemon({
+      home, env: environment(home, configDir), clock: systemClock, idGen: uuidV7IdGen(),
+      drainPauseMs: 60_000, watchBatchMs: 30,
+      watch: (folder, options, listener) => {
+        change = listener;
+        // Watch an existing temporary folder while controlling its callbacks.
+        return fsWatch(configDir, options, () => {});
+      },
+      createStore: (options) => {
+        const store = opened(options);
+        if (opened.mock.calls.length === 1) {
+          const read = store.readSchemaVersion.bind(store);
+          store.readSchemaVersion = async () => { await checking.promise; return read(); };
+        }
+        return store;
+      },
+    }, checking.release);
+    await waitFor('진행 중 회차', () => opened.mock.calls.length === 1);
+    change('change', 'first.jsonl');
+    await delay(60);
+    change('change', 'second.jsonl');
+    await delay(60);
+    expect(opened).toHaveBeenCalledOnce();
+    checking.release();
+    await waitFor('묶음 뒤 회차', () => opened.mock.calls.length === 2, 2_000);
+    await delay(150);
+    expect(opened).toHaveBeenCalledTimes(2);
+    await daemon.stop();
+  });
+
+  it('retries a missing watch root each round and collects after recovery', async () => {
+    const { home, configDir } = await installed();
+    const daemon = startDaemon({
+      home, env: environment(home, configDir), clock: systemClock, idGen: uuidV7IdGen(),
+      drainPauseMs: 40, watchBatchMs: 30,
+    });
+    await waitFor('감시 실패 줄', async () => existsSync(daemonLogPath(home)) &&
+      (await readFile(daemonLogPath(home), 'utf8')).includes('파일 감시를 시작하거나'));
+    await delay(150);
+    expect((await readFile(daemonLogPath(home), 'utf8')).match(/파일 감시를 시작하거나/g)).toHaveLength(1);
+    await transcript(configDir, 'recovered-watch');
+    await waitFor('복구 수집', () => sessionCount(home) === 1);
+    await waitFor('감시 복구 줄', async () =>
+      (await readFile(daemonLogPath(home), 'utf8')).includes('파일 감시를 시작했습니다'));
+    await daemon.stop();
+  });
+
+  it('collects hook-free writes within ten seconds and catches offline writes on restart', async () => {
+    const { home, configDir } = await installed();
+    await mkdir(join(configDir, 'projects', '-demo-a'), { recursive: true });
+    const daemon = spawned(['daemon', 'run'], environment(home, configDir));
+    await waitFor('감시 시작', async () => existsSync(daemonLogPath(home)) &&
+      (await readFile(daemonLogPath(home), 'utf8')).includes('파일 감시를 시작했습니다'));
+    // Let the initial round finish so this transcript must wake the idle loop.
+    await delay(250);
+    await transcript(configDir, 'watch-process');
+    await waitFor('프로세스 감시 수집', () => sessionCount(home) === 1, 9_500);
+    daemon.child.kill('SIGTERM');
+    expect((await daemon.ended).code).toBe(0);
+    await transcript(configDir, 'offline-process');
+    const restarted = spawned(['daemon', 'run'], environment(home, configDir));
+    await waitFor('재기동 수집', () => sessionCount(home) === 2, 5_000);
+    restarted.child.kill('SIGTERM');
+    expect((await restarted.ended).code).toBe(0);
+  }, 20_000);
 
   it('uses a newly configured migrated database for subsequent rounds', async () => {
     const { home, configDir } = await installed();

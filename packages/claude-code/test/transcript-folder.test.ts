@@ -1,9 +1,10 @@
 import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import * as os from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CLAUDE_CODE_HARNESS } from '../src/parser.js';
-import { claudeCodeTranscriptFolder } from '../src/transcript-folder.js';
+import { claudeCodeProjectsFolder, claudeCodeTranscriptFolder } from '../src/transcript-folder.js';
 
 /**
  * The folder adapter against real directories: which files it reports as
@@ -13,9 +14,15 @@ import { claudeCodeTranscriptFolder } from '../src/transcript-folder.js';
  * temporary configuration folder and hands the path in (Boundaries).
  */
 
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, homedir: vi.fn(actual.homedir) };
+});
+
 const directories: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
   );
@@ -42,6 +49,21 @@ async function transcript(
 }
 
 describe('claudeCodeTranscriptFolder', () => {
+  it('shares its projects root for explicit configuration and a temporary default home', async () => {
+    const home = await scratch();
+    vi.mocked(os.homedir).mockReturnValue(home);
+    expect(claudeCodeProjectsFolder({})).toBe(join(home, '.claude', 'projects'));
+    const configDir = await scratch();
+    expect(claudeCodeProjectsFolder({ configDir })).toBe(join(configDir, 'projects'));
+    await transcript(configDir, '-demo', 'explicit');
+    await transcript(join(home, '.claude'), '-demo', 'default');
+    expect(await claudeCodeTranscriptFolder({ configDir }).list()).toMatchObject({
+      ok: true, files: [{ path: join(claudeCodeProjectsFolder({ configDir }), '-demo', 'explicit.jsonl') }],
+    });
+    expect(await claudeCodeTranscriptFolder().list()).toMatchObject({
+      ok: true, files: [{ path: join(claudeCodeProjectsFolder({}), '-demo', 'default.jsonl') }],
+    });
+  });
   it('reports one session per transcript, with its size and its instant', async () => {
     const configDir = await scratch();
     const first = await transcript(configDir, '-demo-a', 'session-a', 'a'.repeat(10));

@@ -19,6 +19,8 @@ import { readConfig, type ReadConfigResult } from '../config/codec.js';
 import { acquireDaemonLock } from './lock.js';
 import { daemonLog } from './log.js';
 import { startHeartbeat } from './heartbeat.js';
+import { watchFolders } from '../harnesses.js';
+import { startTranscriptWatch, type TranscriptWatchFunction } from './watch.js';
 import type { CreateStore } from '../dispatch.js';
 
 /**
@@ -59,8 +61,8 @@ export const DAEMON_DRAIN_BUDGET_MS = 10_000;
  * an exception. A round that stopped on `budget` had more work in hand and is
  * followed by the next one at once.
  *
- * Ten seconds is the idle polling pause, which story 9.4's file watcher
- * shortens. Active work may extend a newly written transcript's latency.
+ * Watch batches wake this pause early; ten-second periodic scans backstop
+ * missed events or failed watchers. Active work may extend transcript latency.
  */
 export const DAEMON_DRAIN_PAUSE_MS = 10_000;
 
@@ -78,6 +80,10 @@ export interface RunDaemonOptions {
   drainBudgetMs?: number;
   /** Defaults to `DAEMON_DRAIN_PAUSE_MS`. */
   drainPauseMs?: number;
+  /** Defaults to the two-second fixed watch window. */
+  watchBatchMs?: number;
+  /** Filesystem watch seam for failure and lifecycle tests. */
+  watch?: TranscriptWatchFunction;
   /** Defaults to `sqliteStore`, which is what every real daemon uses. */
   createStore?: CreateStore;
   /** Kinds beyond Core's own. Empty for every real invocation (AD-21). */
@@ -135,8 +141,21 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
   // rather than every ten seconds. A round that worked clears it, which is what
   // makes the next occurrence worth a line again.
   let said: string | undefined;
+  let pendingBatch = false;
+  let wake: (() => void) | undefined;
+  const watcher = startTranscriptWatch({
+    folders: watchFolders(env),
+    log,
+    ...(options.watchBatchMs === undefined ? {} : { batchMs: options.watchBatchMs }),
+    ...(options.watch === undefined ? {} : { watch: options.watch }),
+    onBatch() {
+      pendingBatch = true;
+      wake?.();
+    },
+  });
 
   try {
+    await watcher.retry();
     while (!signal.aborted) {
       const config = await readConfig(home);
       if (signal.aborted) break;
@@ -165,10 +184,18 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
 
       // An abort during the drain must not be followed by a pause.
       if (signal.aborted) break;
-      if (round.pause) await pause(options.drainPauseMs ?? DAEMON_DRAIN_PAUSE_MS, signal);
+      await watcher.retry();
+      if (signal.aborted) break;
+      if (round.pause && !pendingBatch) {
+        await pause(options.drainPauseMs ?? DAEMON_DRAIN_PAUSE_MS, signal, (done) => { wake = done; });
+        wake = undefined;
+      }
+      pendingBatch = false;
     }
   } finally {
-    // In this order: the timer first, because a beat written after the lock is
+    watcher.close();
+    // Watchers and their batch timer close first. Then the heartbeat timer,
+    // because a beat written after the lock is
     // gone would be a heartbeat with no owner; the lock second, so no second
     // daemon can start while this one is still finishing; the line last, so
     // the log's last word about this run is that it ended cleanly. The
@@ -301,12 +328,12 @@ function counts(report: BrainDrainReport): string {
 }
 
 /**
- * Wait, or wake at once when the abort comes. The listener is removed either
+ * Wait, or wake at once on an abort or a watch batch. The listener is removed either
  * way: a process that runs for weeks adds one of these every ten seconds, and
  * a signal with thousands of listeners on it is a leak that ends in a warning
  * nobody can act on.
  */
-function pause(ms: number, signal: AbortSignal): Promise<void> {
+function pause(ms: number, signal: AbortSignal, subscribe: (wake: () => void) => void): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise<void>((resolve) => {
     const done = (): void => {
@@ -316,5 +343,6 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
     };
     const timer = setTimeout(done, ms);
     signal.addEventListener('abort', done, { once: true });
+    subscribe(done);
   });
 }
