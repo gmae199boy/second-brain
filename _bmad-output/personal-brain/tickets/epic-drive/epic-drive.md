@@ -67,3 +67,4 @@ AD-11·15·23·24·27. 사용자의 외부 파일은 옮기거나 지우지 않�
 - Note(2026-10-19, `../../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. Drive로 올리는 DB 스냅샷도 나가는 길이다. 가린 사본을 만들어 올리고, 그것으로 되살린 Brain의 비밀은 가린 채 돌아온다(D6). 첨부 원본 바이트는 가리지 않는다(`files.redact`가 그 길).
 - Decision(2026-10-22, epic-attachments 인셉션, 사용자): PDF·docx 추출기가 epic-attachments에서 이 에픽으로 왔다(E8-5). 한 달 실측에서 사용자가 대화에 붙인 PDF·문서는 0건이고 첫 실사용은 기존 Drive 문서 색인이다. 추출 틀은 epic-attachments가 만든다.
 - Decision(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): Drive는 V1이다. 순서는 데몬(9) → 첨부·추출(10, 축소) → 로컬 백업(5) → 이 에픽. 문서·폴더명 검색(E8-6)을 epic 4에서 옮겨 왔다. 스냅샷·새 Mac 복구(E8-4)와 로컬 캐시 상한은 V1 뒤. 촬영 일시 검색은 EXIF(epic-recall-and-mirror 1, 옛 10.9)와 함께 V1 뒤.
+- Note(2026-10-27, epic-daemon 쪼개기): 인셉션 때 Done when에 "데몬 없이도 이 에픽의 테스트가 통과한다"를 이어받는다(epic-daemon Done when 1). epic-daemon은 `[files] path`를 감시하지 않으므로, Drive 쪽에 감시가 필요하면 이 에픽이 더한다. 마이그레이션은 epic-daemon의 0009 다음 번호를 쓴다.
