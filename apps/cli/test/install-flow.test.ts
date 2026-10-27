@@ -1,7 +1,9 @@
+import * as liveness from '../src/daemon/liveness.js';
+import type { DaemonDeadReason } from '../src/daemon/liveness.js';
 import { DAEMON_LABEL, type DaemonRegistration } from '../src/daemon/launchd.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   Connector,
   DoctorReport,
@@ -38,6 +40,8 @@ import type {
 } from '../src/install/installed.js';
 import { shimPath } from '../src/install/shim.js';
 import { assertKoreanLine } from './language.js';
+
+afterEach(() => vi.restoreAllMocks());
 
 /**
  * The whole installer flow against fakes: no terminal, no filesystem, no
@@ -449,7 +453,7 @@ function harness(options: HarnessOptions = {}): Harness {
       },
     },
     installed,
-    daemon: { restart: async () => ({ ok: true as const, method: 'signal' as const }), register: async () => options.daemonResult ?? {
+    daemon: { restart: async () => ({ ok: true as const, method: 'signal' as const, pid: 42, commit: BUILD_COMMIT }), register: async () => options.daemonResult ?? {
       label: DAEMON_LABEL, plist_path: null, status: 'unsupported', plist_changed: false,
     } },
     connectors: options.connectors ?? [],
@@ -1878,30 +1882,52 @@ describe('daemon registration in the shared installer', () => {
 
 describe('daemon restart after upgrades', () => {
   it.each([
-    ['loaded', true, false, true], ['loaded', true, true, false],
-    ['loaded', false, false, false], ['registered', true, false, false],
-    ['unsupported', true, false, false], ['failed', true, false, false],
-  ] as const)('restarts only an upgraded loaded job: %s previous=%s same=%s', async (status, previous, same, expected) => {
+    ['loaded', true, 'b'.repeat(40), true],
+    ['loaded', true, BUILD_COMMIT, false],
+    ['loaded', true, null, true],
+    ['loaded', false, null, false],
+    ['loaded', false, 'b'.repeat(40), false],
+    ['loaded', false, 'b'.repeat(40), true, 'stale-heartbeat'],
+    ['loaded', false, 'b'.repeat(40), true, 'no-heartbeat'],
+    ['loaded', false, 'b'.repeat(40), true, 'future-heartbeat'],
+    ['loaded', false, null, false, 'no-lock'],
+    ['registered', true, 'b'.repeat(40), false],
+    ['unsupported', true, 'b'.repeat(40), false],
+    ['failed', true, 'b'.repeat(40), false],
+  ] as const)('compares the resident build: %s alive=%s commit=%s restart=%s reason=%s', async (status, alive, runningCommit, expected, reason: DaemonDeadReason = 'pid-dead') => {
     const kit = harness({ isTTY: false, daemonResult: {
       label: DAEMON_LABEL, plist_path: '/tmp/daemon.plist', status, plist_changed: false,
-    }, ...(previous ? { recordedInstalled: {
-      commit: same ? BUILD_COMMIT : 'b'.repeat(40), schema_version: 6, node: PINNED_NODE,
-      plugin_root: null, installed_at: '2026-10-17T00:00:00Z',
-    } } : {}) });
+    } });
+    vi.spyOn(liveness, 'daemonLiveness').mockResolvedValue(alive
+      ? { alive: true, pid: 42, heartbeatAt: new Date(), commit: runningCommit }
+      : { alive: false, reason, pid: reason === 'no-lock' ? null : 42,
+        heartbeatAt: reason === 'stale-heartbeat' ? new Date(Date.now() - 120_000)
+          : reason === 'future-heartbeat' ? new Date(Date.now() + 120_000) : null, commit: runningCommit });
     const calls: boolean[] = [];
-    kit.deps.daemon.restart = async (changed, env) => {
-      expect(env).toBe(ENV); calls.push(changed); return { ok: true, method: 'signal' };
+    kit.deps.daemon.restart = async (changed, commit, env) => {
+      expect(commit).toBe(BUILD_COMMIT); expect(env).toBe(ENV); calls.push(changed);
+      return { ok: true, method: 'signal', pid: 42, commit: BUILD_COMMIT };
     };
     const result = await resultOf(['--yes'], kit);
     expect(result.ok).toBe(true);
     expect(calls).toEqual(expected ? [false] : []);
     if (result.ok) expect(result.report.daemon.restarted).toBe(expected);
   });
-  it('records completion even when restart fails, after checking the prior build', async () => {
+  it('skips restart when the installed build cannot name its commit', async () => {
+    const kit = harness({ isTTY: false, daemonResult: {
+      label: DAEMON_LABEL, plist_path: '/tmp/daemon.plist', status: 'loaded', plist_changed: false,
+    } });
+    kit.deps.installed.build = async () => undefined;
+    const restart = vi.fn(kit.deps.daemon.restart); kit.deps.daemon.restart = restart;
+    expect((await resultOf(['--yes'], kit)).ok).toBe(true);
+    expect(restart).not.toHaveBeenCalled();
+  });
+  it('retries despite an already-current completion record and records restart failure', async () => {
     const kit = harness({ isTTY: false, daemonResult: {
       label: DAEMON_LABEL, plist_path: '/tmp/daemon.plist', status: 'loaded', plist_changed: true,
-    }, recordedInstalled: { commit: 'b'.repeat(40), schema_version: 6, node: PINNED_NODE,
+    }, recordedInstalled: { commit: BUILD_COMMIT, schema_version: 6, node: PINNED_NODE,
       plugin_root: null, installed_at: '2026-10-17T00:00:00Z' } });
+    vi.spyOn(liveness, 'daemonLiveness').mockResolvedValue({ alive: true, pid: 42, heartbeatAt: new Date(), commit: 'b'.repeat(40) });
     const order: string[] = [];
     for (const key of ['read', 'build', 'write'] as const) {
       const original = kit.deps.installed[key];

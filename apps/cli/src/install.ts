@@ -193,8 +193,8 @@ export function systemInstallDeps(): InstallDeps {
       write: (home: string, facts: InstalledFacts) => writeInstalled(home, facts),
     },
     daemon: {
-      restart: (plistChanged, env) => restartDaemon({
-        plistChanged, env, platform: process.platform,
+      restart: (plistChanged, expectCommit, env) => restartDaemon({
+        plistChanged, expectCommit, env, home: configHome(env), clock: { now: () => new Date() }, platform: process.platform,
         launchctl: systemLaunchctl({ env, uid: process.getuid?.() }),
       }),
       register: (shim, env) => registerDaemon({

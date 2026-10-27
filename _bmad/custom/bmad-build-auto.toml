@@ -12,6 +12,9 @@ persistent_facts = [
 In this project every "subagent" this workflow mentions is a fresh codex CLI session started from the project root with `bash _bmad/custom/bmad-build-auto-codex.sh` (gpt-6.1-sol, medium effort). Never use the host's own subagent or Agent tool. Run each such Bash call in the foreground with the longest timeout the tool allows, never in the background; launching several at once means several Bash calls in one message. The script prints `codex-thread: <id>` first: that id is the subagent's name or id for re-engagement.""",
   """
 You orchestrate and codex writes the code: do not edit source or test files yourself (plan, spec and ticket files stay yours). Where a step says to finish unfinished work or apply patches yourself, send that work to the implementation session instead with `bash _bmad/custom/bmad-build-auto-codex.sh resume <thread-id>`, the message on stdin through a quoted heredoc. If codex fails twice in a row on the same job, HALT with status `blocked` and blocking condition `codex unavailable`.""",
+  """
+Write every prose line you author in Korean (한국어): plan sections you fill in, `## Implementation Notes`, `## Review Triage Log` entries, `## Auto Run Result`, blocked and escalation reasons, and the final summary. Keep code identifiers, file paths, commands, error codes, frontmatter keys and values, and quoted source text exactly as they are. When you brief codex, ask it to write its report in Korean the same way.
+""",
 ]
 
 implementation_handoff = """

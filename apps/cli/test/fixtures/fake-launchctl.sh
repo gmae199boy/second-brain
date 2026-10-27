@@ -32,6 +32,10 @@ case "$1" in
   bootout)
     label=${2##*/}
     [ -f "$FAKE_LAUNCHCTL_DIR/loaded/$label" ] || exit 3
+    # An explicit test-only pid file models launchd delivering SIGTERM on bootout.
+    if [ -n "${FAKE_LAUNCHCTL_PID_FILE:-}" ] && [ -f "$FAKE_LAUNCHCTL_PID_FILE" ]; then
+      kill -TERM "$(cat "$FAKE_LAUNCHCTL_PID_FILE")"
+    fi
     rm "$FAKE_LAUNCHCTL_DIR/loaded/$label"
     exit 0 ;;
 esac

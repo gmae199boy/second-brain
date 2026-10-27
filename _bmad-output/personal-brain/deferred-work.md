@@ -196,3 +196,23 @@ source_spec: `tickets/epic-daemon/tickets/story-launchd-label-plan.md`
 severity: medium
 reason: Inspection: execFile uses timeout 10000 with its default SIGTERM and waits for process exit. The regression fake uses exec sleep, which terminates normally. No evidence establishes that the system launchctl ignores SIGTERM; settle by reproducing with a signal-resistant executable and deciding whether hard-kill escalation is warranted for the system adapter. (declared severity: medium (unverified))
 status: open
+
+- source_plan: `_bmad-output/personal-brain/tickets/epic-daemon/tickets/story-daemon-stopstart-plan.md`
+  summary: Same-ref SessionStart skips installer-based retry after a daemon restart failure.
+  evidence: bootstrap.ts returns when installed.commit equals the plugin ref, including after warning-only restart failure writes the new commit. Explicit setup run retries correctly; bootstrap product changes are forbidden by this plan, so automatic recovery requires a follow-up.
+
+### DW-4: 데몬 재시작이 실패한 뒤 같은 ref의 SessionStart는 설치기를 부르지 않아 재시도하지 않는다.
+origin: spec-deferred fb3060c7dca4
+location: tooling/bootstrap/src/bootstrap.ts:389
+source_spec: `tickets/epic-daemon/tickets/story-daemon-stopstart-plan.md`
+severity: medium
+reason: tooling/bootstrap/src/bootstrap.ts:389-390의 fast path는 installed.commit이 plugin ref와 같으면 설치기 전에 0으로 끝난다. 재시작 실패에도 설치는 계약대로 새 commit으로 installed.json을 쓰므로, 다음 재시도는 `brain setup run`이나 새 plugin ref의 bootstrap 때만 일어난다. 이 plan의 Never가 tooling/bootstrap 제품 코드 변경을 막으므로 자동 회복은 후속 작업이다(README와 deferred-work.md에 기록).
+status: open
+
+### DW-5: plist 재적재가 bootout에서 실패한 뒤 다시 설치하면 디스크 변경 표식이 사라져 기존 실행 인자를 재적재하지 못할 수 있다.
+origin: spec-deferred 214eb4453cd5
+location: apps/cli/src/daemon/launchd.ts:139; apps/cli/src/daemon/control.ts:87
+source_spec: `tickets/epic-daemon/tickets/story-daemon-stopstart-plan.md`
+severity: medium
+reason: registerDaemon은 실행 중 Label을 확인하기 전에 새 plist를 저장하고, 다음 호출은 같은 파일이면 plist_changed를 false로 돌려준다. 첫 bootout이 실패하면 다음 설치의 restartDaemon은 SIGTERM 경로를 택해 launchd에 남은 옛 인자를 유지한다. 검토 기준 revision의 registerDaemon과 restartDaemon에도 같은 쓰기·분기 순서가 있어 이번 변경 전부터 있던 문제다. 로드된 plist와 디스크의 차이를 보존하는 후속 설계가 필요하며, 기존 deferred-work 항목은 변경하지 않았다.
+status: open

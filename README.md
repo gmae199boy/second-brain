@@ -612,20 +612,26 @@ exit 0으로 끝납니다. heartbeat 파일은 남깁니다. 예산을 10초로 
 설치하면 launchd에 Label `io.github.gmae199boy.second-brain.daemon` 하나를 등록합니다.
 plist는 `~/Library/LaunchAgents/io.github.gmae199boy.second-brain.daemon.plist`에 쓰며,
 `RunAtLoad`와 `KeepAlive`가 켜져 로그인 때 뜨고 종료되면 다시 뜹니다.
-같은 빌드로 다시 설치하면 올라 있는 Label을 그대로 둡니다. 이전 완료 기록과 다른
-빌드를 설치하면 올라 있는 데몬에 SIGTERM을 보내 새 빌드로 다시 띄웁니다. plist가
+같은 빌드로 다시 설치하면 올라 있는 Label을 그대로 둡니다. 돌고 있는 데몬의 빌드가
+설치된 빌드와 다르면 `launchctl kill`로 SIGTERM을 보내고 15초 안에 새 빌드 데몬이
+뜬 것을 확인합니다. plist가
 바뀌었으면 Label을 내리고 다시 등록합니다. 실패하면 `DAEMON_NOT_RESTARTED` 경고를
-내고 설치를 마칩니다. `brain daemon status`의 `commit`에서 데몬의 빌드를 확인하세요.
+내고 설치를 마치며 다음 설치·세션 시작 때 설치기가 실행되면 다시 시도합니다.
+같은 ref의 SessionStart는 설치기를 건너뛰므로 재시도하지 않습니다. 이때는
+`brain setup run`을 실행해 다시 시도하세요.
+`brain daemon status`의 `commit`에서 데몬의 빌드를 확인하세요.
 등록 실패는 `DAEMON_NOT_REGISTERED` 경고로 알리고 설치를 마칩니다. 명령과 hook은
 데몬 없이 그대로 실행됩니다. macOS 밖에서는 등록을 건너뜁니다.
 
 launchd가 관리하는 데몬은 `KeepAlive` 때문에 `SIGTERM`·`SIGINT`나 어떤 종료 뒤에도
 다시 뜹니다. 관리 중인 데몬이 도는 동안 수동으로 `brain daemon run`을 실행하면
-`DAEMON_RUNNING`으로 끝납니다. `brain daemon stop`은 Label부터 내리고 잠금 주인에게
-SIGTERM을 보내 정상 종료를 기다립니다. plist는 남아 있어 다음 로그인 때 다시 뜹니다.
+`DAEMON_RUNNING`으로 끝납니다. `brain daemon stop`은 Label을 내리면 launchd가 보내는
+SIGTERM으로 정상 종료를 기다리며 직접 pid에 신호하지 않습니다. plist는 남아 있어 다음 로그인 때 다시 뜹니다.
 그 전에는 `brain daemon start`나 `brain setup run`으로 다시 올릴 수 있습니다.
 `brain daemon start`를 반복해도 이미 올라 있는 Label은 다시 등록하지 않습니다.
-멈춘 동안은 일반 명령의 기회적 drain이 밀린 일을 처리하고 doctor의 `daemon`은 `warn`입니다.
+stop 자체는 drain하지 않고 데몬이 다시 뜰 때 첫 drain이 밀린 일을 처리합니다.
+멈춘 동안은 다른 명령의 기회적 drain과 SessionStart drain이 받치고 doctor의 `daemon`은 `warn`입니다.
+launchd 밖에서 손으로 띄운 데몬은 그 터미널에서 멈추세요.
 
 ## 실패 보기와 다시 하기
 

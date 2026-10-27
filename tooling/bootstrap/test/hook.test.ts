@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { tmpdir } from 'node:os';
+import { tmpdir, uptime } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -235,6 +235,13 @@ describe('the plugin SessionStart hook', () => {
     SLOW,
   );
   it('restarts a loaded daemon once after updating the plugin ref and exposes the new build', async () => {
+    // The split lifecycle test represents a resident old build using this live
+    // test process. The fake records restart delivery; real transition is 9.8.
+    mkdirSync(join(home, 'run'), { recursive: true });
+    writeFileSync(join(home, 'run', 'daemon.pid'), JSON.stringify({ pid: process.pid,
+      boot_at: new Date(Date.now() - uptime() * 1000).toISOString(),
+      started_at: new Date().toISOString(), commit: installed().commit }));
+    writeFileSync(join(home, 'run', 'heartbeat'), '');
     git(['-C', work, '-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--allow-empty', '-q', '-m', 'upgrade']);
     git(['-C', work, 'push', '-q', bare, 'main']);
     snapshotCommit = git(['-C', work, 'rev-parse', 'HEAD']).trim();
@@ -242,7 +249,11 @@ describe('the plugin SessionStart hook', () => {
     const run = hook('SessionStart');
     expect(run.status).toBe(0);
     expect(installed().commit).toBe(snapshotCommit);
-    if (process.platform !== 'darwin') return;
+    if (process.platform !== 'darwin') { rmSync(join(home, 'run', 'daemon.pid')); return; }
+    expect(log()).toContain('데몬을 다시 띄우지 못했습니다.');
+    expect(log()).toContain('기다리는 동안 새 빌드 데몬을 확인하지 못했습니다');
+    // The installer logs the DAEMON_NOT_RESTARTED explanation without a code or prefix.
+    expect(log()).toContain('데몬을 새 빌드로 다시 띄우지 못해 옛 빌드가 계속 돌 수 있습니다.');
     const label = 'io.github.gmae199boy.second-brain.daemon';
     const calls = readFileSync(join(root, 'launchctl', 'calls'), 'utf8').split('\n');
     expect(calls.filter((line) => line === `kill SIGTERM gui/${String(process.getuid?.())}/${label}`)).toHaveLength(1);
@@ -253,6 +264,7 @@ describe('the plugin SessionStart hook', () => {
     const env = { ...process.env, SECOND_BRAIN_HOME: home, CLAUDE_CONFIG_DIR: configDir,
       SECOND_BRAIN_LAUNCHCTL: join(repoRoot, 'apps/cli/test/fixtures/fake-launchctl.sh'),
       SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'), FAKE_LAUNCHCTL_DIR: join(root, 'launchctl') };
+    rmSync(join(home, 'run', 'daemon.pid'));
     const daemon = spawn(args[0]!, args.slice(1), { env, stdio: 'ignore' });
     const closed = new Promise<void>((resolve, reject) => { daemon.on('close', () => resolve()); daemon.on('error', reject); });
     try {

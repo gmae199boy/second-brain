@@ -12,6 +12,8 @@ import {
   type SqliteProjectKeyCollision,
   type WarningCode,
 } from 'second_brain';
+import { daemonLiveness } from '../daemon/liveness.js';
+import type { DaemonRestartResult } from '../daemon/control.js';
 import { daemonPlistPath, type DaemonRegistration } from '../daemon/launchd.js';
 import { installedPluginRoot, connectionLines } from '../connectors/plugin.js';
 import { formatCheck } from '../commands/doctor-run.js';
@@ -275,7 +277,7 @@ export interface InstallDeps {
   installed: InstallInstalled;
   daemon: {
     register(shim: string, env: NodeJS.ProcessEnv): Promise<DaemonRegistration>;
-    restart(plistChanged: boolean, env: NodeJS.ProcessEnv): Promise<{ ok: true; method: 'signal' | 'reload' } | { ok: false; message: string }>;
+    restart(plistChanged: boolean, expectCommit: string, env: NodeJS.ProcessEnv): Promise<DaemonRestartResult>;
   };
   /** Every harness this build can connect to. Empty until epic 2. */
   connectors: readonly Connector[];
@@ -611,8 +613,12 @@ export async function runInstall(
       break;
   }
 
-  if (daemon.status === 'loaded' && previous !== undefined && previous.commit !== (build?.commit ?? null)) {
-    const restarted = await deps.daemon.restart(daemon.plist_changed, env);
+  const running = daemon.status === 'loaded' && build?.commit != null
+    ? await daemonLiveness({ home, clock: { now: () => new Date() } }) : null;
+  // Heartbeat health does not change whether the old process needs a restart.
+  const ownerAlive = running !== null && (running.alive || (running.reason !== 'no-lock' && running.reason !== 'pid-dead'));
+  if (ownerAlive && build?.commit != null && running.commit !== build.commit) {
+    const restarted = await deps.daemon.restart(daemon.plist_changed, build.commit, env);
     daemon.restarted = restarted.ok;
     if (restarted.ok) deps.log('데몬을 새 빌드로 다시 띄웠습니다');
     else {

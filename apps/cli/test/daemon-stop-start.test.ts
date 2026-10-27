@@ -26,14 +26,16 @@ function run(args: string[], env: NodeJS.ProcessEnv, script = bin): Promise<{ co
     child.on('error', reject); child.on('close', (code) => resolve({ code, stdout, stderr }));
   });
 }
-it('stops the resident owner, falls back to command drain, and starts the installed Label once', async () => {
+it.skipIf(process.platform !== 'darwin')('stops the resident owner, falls back to command drain, and starts the installed Label once', async () => {
   const home = await temporary.create('brain-stop-start-');
   const config = join(home, 'claude');
   const fake = join(home, 'launchctl');
   const env = { ...withoutHarnessFolders(process.env), SECOND_BRAIN_HOME: home,
-    CLAUDE_CONFIG_DIR: config, SECOND_BRAIN_LAUNCH_AGENTS: join(home, 'agents'), FAKE_LAUNCHCTL_DIR: fake };
+    CLAUDE_CONFIG_DIR: config, SECOND_BRAIN_LAUNCH_AGENTS: join(home, 'agents'), FAKE_LAUNCHCTL_DIR: fake, FAKE_LAUNCHCTL_PID_FILE: join(home, 'managed-pid') };
   expect((await run(['--yes'], env, installer)).code).toBe(0);
-  daemon = spawn(process.execPath, [bin, 'daemon', 'run'], { env, stdio: 'ignore' });
+  // Keep pending command transcripts outside this daemon's watch folders so
+  // the assertion isolates stop's drain behavior from the background watcher.
+  daemon = spawn(process.execPath, [bin, 'daemon', 'run'], { env: { ...env, CLAUDE_CONFIG_DIR: join(home, 'daemon-claude') }, stdio: 'ignore' });
   const closed = once(daemon, 'close');
   const deadline = Date.now() + 10_000;
   let status;
@@ -46,21 +48,24 @@ it('stops the resident owner, falls back to command drain, and starts the instal
   expect(status.commit).toBe(JSON.parse(await readFile(new URL('../dist/build.json', import.meta.url), 'utf8')).commit);
   await mkdir(join(fake, 'loaded'), { recursive: true });
   await writeFile(join(fake, 'loaded', DAEMON_LABEL), '');
-  const stopped = await run(['daemon', 'stop', '--json'], env);
-  expect(stopped.code, stopped.stderr).toBe(0);
-  expect(JSON.parse(stopped.stdout).data).toEqual({ unloaded: process.platform === 'darwin', signalled_pid: daemon.pid, alive: false });
-  await closed;
-  expect(existsSync(join(home, 'run', 'daemon.pid'))).toBe(false);
-  expect(JSON.parse((await run(['daemon', 'status', '--json'], env)).stdout).data.alive).toBe(false);
-  const doctor = await run(['doctor', 'run', '--json'], env);
-  expect(doctor.code).toBe(0);
-  expect(JSON.parse(doctor.stdout).data.checks.find((c: { id: string }) => c.id === 'daemon').status).toBe('warn');
   const project = join(config, 'projects', '-demo');
   await mkdir(project, { recursive: true });
   await writeFile(join(project, '4f1e7a90-1c2b-4d3e-8f55-000000000000.jsonl'), await readFile(new URL('../../../packages/claude-code/test/fixtures/two-turns.jsonl', import.meta.url)));
+  await writeFile(join(home, 'managed-pid'), String(daemon.pid));
+  const stopped = await run(['daemon', 'stop', '--json'], env);
+  expect(stopped.code, stopped.stderr).toBe(0);
+  expect(JSON.parse(stopped.stdout).data).toEqual({ unloaded: process.platform === 'darwin', owner_pid: null, alive: false });
+  await closed;
+  expect(existsSync(join(home, 'run', 'daemon.pid'))).toBe(false);
+  expect(JSON.parse((await run(['daemon', 'status', '--json'], env)).stdout).data.alive).toBe(false);
+  const beforeDrain = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
+  try { expect((beforeDrain.prepare('select count(*) as n from sessions').get() as { n: number }).n).toBe(0); } finally { beforeDrain.close(); }
   expect((await run(['failures', 'list', '--json'], env)).code).toBe(0);
   const db = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
   try { expect((db.prepare('select count(*) as n from sessions').get() as { n: number }).n).toBe(1); } finally { db.close(); }
+  const doctor = await run(['doctor', 'run', '--json'], env);
+  expect(doctor.code).toBe(0);
+  expect(JSON.parse(doctor.stdout).data.checks.find((c: { id: string }) => c.id === 'daemon').status).toBe('warn');
   if (process.platform === 'darwin') {
     const callsBefore = (await readFile(join(fake, 'calls'), 'utf8')).split('\n').filter((line) => line.startsWith('bootstrap'));
     expect(JSON.parse((await run(['daemon', 'start', '--json'], env)).stdout).data.status).toBe('started');
