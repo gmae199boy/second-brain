@@ -522,8 +522,10 @@ fingerprint는 (단계, 대상, 분류 코드)의 해시입니다 — 오류 문
 8192바이트 이하로 자릅니다. payload는 남기지 않습니다. 실패 기록 자체를
 데이터베이스가 받지 못하면 그 내용이 spool로 가고 그 실행은 멈춥니다.
 
-hook이 아닌 명령은 **끝에서 한 번 더** 짧게(2초) 이것을 돕니다. hook 없는
-하네스에서는 사람이 부른 명령의 끝이 밀린 일을 처리할 유일한 순간이기 때문입니다.
+hook이 아닌 명령은 **끝에서 한 번 더** 짧게(2초) 이것을 돕니다.
+살아 있는 pid 잠금 주인과 90초 이내의 미래가 아닌 heartbeat가 있으면 데몬에
+맡기고 이 기회적 drain을 건너뜁니다. 데몬도 hook도 없는 하네스에서는 사람이
+부른 명령의 끝이 밀린 일을 처리할 유일한 순간이기 때문입니다.
 명령이 성공했고 스키마 버전이 맞을 때만 돌고, 결과도 종료 코드도 바꾸지
 않습니다. `queue drain` 자신은 이것을 끕니다.
 
@@ -531,6 +533,7 @@ hook이 아닌 명령은 **끝에서 한 번 더** 짧게(2초) 이것을 돕니
 
 ```sh
 brain daemon run
+brain daemon status [--json]
 ```
 
 상주해서 밀린 일을 되풀이해 처리하는 하나뿐인 명령입니다. 다른 명령은 답하고
@@ -549,6 +552,16 @@ brain daemon run
 않습니다. 영원히 돌아오지 않을 프로세스의 엔벨로프를 기다리는 호출자는 영원히
 기다리게 되기 때문입니다. 뜨지 못한 까닭만 stderr에 `CODE: message`와 hint 줄로
 나오고, 종료 코드는 코드 표의 것입니다.
+
+`brain daemon status`는 설정이나 DB 없이 데몬 파일만 읽어 생존 여부를 보입니다.
+잠금 주인이 현재 부팅의 살아 있는 pid이고 heartbeat mtime이 지금부터 90초
+이내(정확히 90초 포함)여야 살아 있습니다. 미래 시각이나 읽을 수 없는 파일은
+죽은 것으로 봅니다. `doctor run`의 `daemon` 점검도 같은 판단을 씁니다.
+
+텍스트는 생존 여부·pid·마지막 heartbeat 또는 죽은 까닭 한 줄입니다.
+`--json`의 데이터는 `alive`, `pid`, `heartbeat_at`(시간대 오프셋 포함), `reason`이고,
+살아 있으면 `reason`은 `null`입니다. 죽은 까닭은 `no-lock`, `pid-dead`,
+`no-heartbeat`, `future-heartbeat`, `stale-heartbeat` 중 하나이며, 살든 죽든 exit 0입니다.
 
 기록은 세 파일입니다.
 
@@ -625,8 +638,8 @@ brain failures retry [--target-kind <kind>]
 `FILE_SOURCE_UNREACHABLE`이 붙습니다.
 
 실패 행은 이 명령이 바꾸지 않습니다. 해결 표시를 채우는 것은 그 일감이 실제로
-성공하는 일입니다. 명령 끝의 기회적 drain이 곧바로 그 일감을 처리하므로, 보통
-`failures retry` 한 번으로 목록이 비워집니다.
+성공하는 일입니다. 데몬이 살아 있으면 데몬이 그 일감을 처리하고, 그렇지 않으면
+명령 끝의 기회적 drain이 곧바로 처리하므로 보통 `failures retry` 한 번으로 목록이 비워집니다.
 
 ## 다시 설정하기, 하네스 연결하기
 
@@ -992,6 +1005,7 @@ env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" doctor run
 | `node-version` | 명령을 실행한 node도 그 버전 이상인지 |
 | `plugin` | 완료 기록(`installed.json`)과 플러그인의 `app-ref`와 지금 도는 빌드(`build.json`)의 관계. 기록이 없으면 `ok`, 플러그인에서 설치한 것이 아니면 `ok`, 셋이 같으면 `ok`. 플러그인이 더 오래되었으면 `warn PLUGIN_BEHIND`, 더 새롭고 `[update] auto`가 켜져 있으면 `ok`("다음 세션에서 갱신합니다"), 더 새롭고 꺼져 있으면 `warn UPDATE_AVAILABLE`. app-ref를 못 읽거나, 빌드가 기록과 다르거나, 관계를 알 수 없으면 코드 없는 `warn` |
 | `spool` | 데이터베이스에 못 들어간 쓰기가 몇 건 기다리는지와 그중 가장 오래된 시각, 그리고 `failed/`로 옮긴 줄이 몇 건인지. 둘 다 0건이면 `ok`, 하나라도 있으면 `warn SPOOLED`. 기다리는 것이 있다는 것은 망가졌다는 뜻이 아니라 아직 안 들어갔다는 뜻입니다 — 폴더가 없으면 0건이고, 읽을 수 없으면 `fail` |
+| `daemon` | pid 잠금 주인과 heartbeat로 생존을 판단합니다. 살아 있으면 `ok`와 pid·마지막 시각, 없거나 멈췄으면 코드 없는 `warn`과 까닭·남아 있는 마지막 시각을 보입니다 |
 
 모든 점검은 넷 중 하나로 끝납니다. `ok`, `warn` — 실행했지만 아무것도 확정하지
 못했다는 뜻으로, 통과도 문제도 아닙니다 — `fail`, 그리고 `skip`은 어느 점검이
@@ -999,10 +1013,10 @@ env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" doctor run
 줄은 그 수입니다.
 
 ```text
-요약: 통과 12, 경고 1, 실패 0, 건너뜀 1
+요약: 통과 15, 경고 2, 실패 0, 건너뜀 0
 ```
 
-`--json`에서는 `data.summary`에 있으므로, 열 줄을 더해 가며 그중 하나뿐인
+`--json`에서는 `data.summary`에 있으므로, 열 줄을 더해 가며 그중
 `warn`을 찾을 필요가 없습니다.
 
 `fail`만 명령을 실패시킵니다. exit 0은 아무것도 실패하지 않았다는 뜻, 1은 무언가

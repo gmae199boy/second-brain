@@ -1,3 +1,4 @@
+import { daemonLiveness } from './daemon/liveness.js';
 import { Command, CommanderError } from 'commander';
 import {
   BUSY_TIMEOUT_MS,
@@ -650,7 +651,8 @@ async function execute(
     // worked at all. Nothing about it reaches the envelope or the exit code —
     // the command has already answered, and a drain that changed that answer
     // would make every command's result depend on somebody else's backlog.
-    if (shouldDrain(spec, config.ok, outcome) && config.ok) {
+    if (shouldDrain(spec, config.ok, outcome) && config.ok &&
+      !(await daemonLiveness({ home, clock })).alive) {
       await drainOpportunistically(
         { ...dependencies, createStore, storePath: config.config.storePath },
         stderr,

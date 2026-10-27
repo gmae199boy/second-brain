@@ -39,6 +39,7 @@ const ALL_CHECKS = [
   'plugin',
       'last-hook',
   'spool',
+  'daemon',
 ];
 
 /**
@@ -327,7 +328,7 @@ describe('prepareFilesRoot', () => {
 });
 
 describe('doctorAt', () => {
-  it('reports every check as ok against a home the installer just finished', async () => {
+  it('reports installed checks and warns before daemon registration', async () => {
     const home = await scratch();
     const path = join(home, 'brain.db');
     await prepareStore(path);
@@ -339,12 +340,12 @@ describe('doctorAt', () => {
     const report = await doctorAt(home, path);
 
     expect(report.checks.map((check) => check.id)).toEqual(ALL_CHECKS);
-    // Everything but `transcripts`: the install does not turn the folders on,
-    // so that one is a `skip` saying so (Boundaries, Decision 1 2026-10-19).
+    // Transcript folders are not enabled here, and daemon registration follows doctor.
     const failed = report.checks.filter(
-      (check) => check.status !== 'ok' && check.id !== 'transcripts',
+      (check) => check.status !== 'ok' && check.id !== 'transcripts' && check.id !== 'daemon',
     );
     expect(failed, JSON.stringify(failed)).toEqual([]);
+    expect(report.checks.find((check) => check.id === 'daemon')).toMatchObject({ status: 'warn' });
     expect(report.checks.find((check) => check.id === 'transcripts')?.status).toBe('skip');
   });
 
@@ -375,6 +376,7 @@ describe('doctorAt', () => {
       'plugin',
       'last-hook',
       'spool',
+      'daemon',
     ]);
     // The counts are the report's own, so they cannot disagree with it.
     expect(report.summary.failed).toBe(
@@ -403,6 +405,7 @@ describe('doctorAt', () => {
       'plugin',
       'last-hook',
       'spool',
+      'daemon',
     ]);
 
     const home = await scratch();

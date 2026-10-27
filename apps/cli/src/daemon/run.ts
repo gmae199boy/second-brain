@@ -1,3 +1,4 @@
+import { DAEMON_HEARTBEAT_MS } from './liveness.js';
 import {
   BUSY_TIMEOUT_MS,
   SQLITE_SCHEMA_VERSION,
@@ -42,7 +43,7 @@ import type { CreateStore } from '../dispatch.js';
  * file is not a write loop of its own, short enough that story 9.3 can call a
  * daemon stalled without waiting minutes to say so.
  */
-export const DAEMON_HEARTBEAT_MS = 30_000;
+export { DAEMON_HEARTBEAT_MS } from './liveness.js';
 
 /**
  * How long one drain may keep claiming work. Ten seconds keeps a normal

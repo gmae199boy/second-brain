@@ -1,3 +1,4 @@
+import { daemonLiveness, daemonDeadReason } from '../daemon/liveness.js';
 import { execFile as execFileCallback } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, readFile, stat } from 'node:fs/promises';
@@ -5,6 +6,7 @@ import { promisify } from 'node:util';
 import {
   isoWithOffset,
   prereqFailed,
+  type Clock,
   type DoctorCheck,
   type DoctorCheckSource,
   type Spool,
@@ -62,6 +64,7 @@ export type NodeRun = { ok: true; stdout: string } | { ok: false; message: strin
 export type RunNode = (path: string) => Promise<NodeRun>;
 
 export interface RuntimeChecksOptions {
+  clock?: Clock;
   harnessNames?: readonly string[];
   /** The configuration folder these checks are about. */
   home: string;
@@ -135,6 +138,13 @@ export function runtimeChecks(options: RuntimeChecksOptions): readonly DoctorChe
     { id: 'plugin', run: async () => pluginCheck(home, await config(), runGit) },
     { id: 'last-hook', run: async () => lastHookCheck(home, options.harnessNames ?? harnesses.map((h) => h.parser.harness)) },
     { id: 'spool', run: async () => spoolCheck(spool) },
+    { id: 'daemon', run: async () => {
+      const state = await daemonLiveness({ home, clock: options.clock ?? systemClock });
+      const heartbeat = state.heartbeatAt === null ? '' : `, 마지막 heartbeat ${isoWithOffset(state.heartbeatAt)}`;
+      return state.alive
+        ? { id: 'daemon', status: 'ok', detail: `데몬이 살아 있습니다, 주인 pid ${String(state.pid)}${heartbeat}` }
+        : { id: 'daemon', status: 'warn', detail: `데몬이 살아 있지 않습니다: ${daemonDeadReason(state.reason)}${heartbeat}` };
+    } },
   ];
 }
 

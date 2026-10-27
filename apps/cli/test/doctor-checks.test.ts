@@ -83,7 +83,7 @@ beforeAll(() => {
 });
 
 describe('runtimeChecks', () => {
-  it('registers the six machine checks, in the order they are reported', () => {
+  it('registers the machine checks, in the order they are reported', () => {
     expect(runtimeChecks({ home: '/nowhere' }).map((source) => source.id)).toEqual([
       'config',
       'shim',
@@ -92,16 +92,18 @@ describe('runtimeChecks', () => {
       'plugin',
       'last-hook',
       'spool',
+      'daemon',
     ]);
   });
 
-  it('reports every check as ok for a home a finished install left behind', async () => {
+  it('reports healthy installed checks and warns about the absent daemon', async () => {
     const home = await installedHome();
 
     const checks = await report({ home, runNode: nodeSaying(NODE_FLOOR) });
 
-    const failed = [...checks.values()].filter((check) => check.status !== 'ok');
+    const failed = [...checks.values()].filter((check) => check.status !== 'ok' && check.id !== 'daemon');
     expect(failed, JSON.stringify(failed)).toEqual([]);
+    expect(checks.get('daemon')).toMatchObject({ status: 'warn' });
     expect(checks.get('config')?.detail).toBe(configFilePath(home));
     expect(checks.get('shim')?.detail).toBe(shimPath(home));
   });

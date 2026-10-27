@@ -63,10 +63,11 @@ const CHECKS = [
   'plugin',
   'last-hook',
   'spool',
+  'daemon',
 ];
 
 /** The machine checks alone: what is still reported when there is no database. */
-const MACHINE_CHECKS = ['config', 'shim', 'node-path', 'node-version', 'plugin', 'last-hook', 'spool'];
+const MACHINE_CHECKS = ['config', 'shim', 'node-path', 'node-version', 'plugin', 'last-hook', 'spool', 'daemon'];
 
 /**
  * What a report says about a database nobody can reach: `db` and the schema
@@ -180,7 +181,7 @@ describe('brain doctor run', () => {
     }
   });
 
-  it('reports every check as ok against the local database', async () => {
+  it('reports healthy local checks and warns about the absent daemon', async () => {
     const home = await configuredHome();
     const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
 
@@ -195,9 +196,10 @@ describe('brain doctor run', () => {
     const checks = envelope.data?.checks ?? [];
     expect(checks.map((check) => check.id)).toEqual(CHECKS);
     const failed = checks.filter(
-      (check) => check.status !== 'ok',
+      (check) => check.status !== 'ok' && check.id !== 'daemon',
     );
     expect(failed, JSON.stringify(failed)).toEqual([]);
+    expect(byId(envelope).get('daemon')).toMatchObject({ status: 'warn' });
     expect(byId(envelope).get('transcripts')?.status).toBe('ok');
     // The SQLite version, then what each probe and each machine check found.
     expect(checks[0]?.detail).toMatch(/^\d+\./);
@@ -213,11 +215,10 @@ describe('brain doctor run', () => {
     const registered = runtimeChecks({ home }).map((source) => source.id);
     expect(checks.slice(-registered.length).map((check) => check.id)).toEqual(registered);
     expect(registered).toEqual(MACHINE_CHECKS);
-    // Everything passed but the folders nobody asked for, and the counts add
-    // up to the whole report.
+    // All checks passed except the absent daemon, and the counts add up.
     expect(envelope.data?.summary).toEqual({
-      passed: CHECKS.length,
-      warned: 0,
+      passed: CHECKS.length - 1,
+      warned: 1,
       failed: 0,
       skipped: 0,
     });
@@ -231,13 +232,13 @@ describe('brain doctor run', () => {
     const lines = run.stdout.trimEnd().split('\n');
     expect(lines).toHaveLength(CHECKS.length + 1);
     for (const [index, id] of CHECKS.entries()) {
-      const status = 'ok';
+      const status = id === 'daemon' ? 'warn' : 'ok';
       expect(lines[index]).toMatch(new RegExp(`^${id}: ${status}`));
     }
     // Last, so the line that says whether to read the rest is the one left on
     // screen (Conventions: passed, warned, failed, skipped).
     expect(lines.at(-1)).toBe(
-      `요약: 통과 ${String(CHECKS.length)}, 경고 0, 실패 0, 건너뜀 0`,
+      `요약: 통과 ${String(CHECKS.length - 1)}, 경고 1, 실패 0, 건너뜀 0`,
     );
   });
 
@@ -272,7 +273,7 @@ describe('brain doctor run', () => {
     expect((envelope.data?.checks ?? []).map((check) => check.id)).toEqual(CHECKS);
     expect(
       (envelope.data?.checks ?? []).every(
-        (check) => check.status === 'ok',
+        (check) => check.status === (check.id === 'daemon' ? 'warn' : 'ok'),
       ),
     ).toBe(true);
   });
@@ -373,7 +374,7 @@ describe('brain doctor run', () => {
       expect(found.get('db')).toMatchObject({ status: 'ok' });
 
       const summary = envelope.data?.summary;
-      expect(summary).toEqual({ passed: CHECKS.length - 1, warned: 1, failed: 0, skipped: 0 });
+      expect(summary).toEqual({ passed: CHECKS.length - 2, warned: 2, failed: 0, skipped: 0 });
       // The counts and the lines cannot disagree about one report.
       expect(
         (summary?.passed ?? 0) + (summary?.warned ?? 0) + (summary?.skipped ?? 0),
@@ -397,7 +398,7 @@ describe('brain doctor run', () => {
       expect(run.code).toBe(0);
       expect(run.stdout).toContain('writable: warn');
       expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
-        `요약: 통과 ${String(CHECKS.length - 1)}, 경고 1, 실패 0, 건너뜀 0`,
+        `요약: 통과 ${String(CHECKS.length - 2)}, 경고 2, 실패 0, 건너뜀 0`,
       );
     } finally {
       holder.exec('rollback');
@@ -465,8 +466,8 @@ describe('brain doctor run', () => {
     // them here — the schema version and the two capture checks, all of which
     // a store would have answered (`runDoctor`).
     expect(envelope.data?.summary).toEqual({
-      passed: MACHINE_CHECKS.length,
-      warned: 0,
+      passed: MACHINE_CHECKS.length - 1,
+      warned: 1,
       failed: 1,
       skipped: 4,
     });
@@ -494,8 +495,8 @@ describe('brain doctor run', () => {
     // The store knew nothing about any of this and said so anyway.
     expect(found.get('db')).toMatchObject({ status: 'ok' });
     expect(envelope.data?.summary).toEqual({
-      passed: CHECKS.length - 2,
-      warned: 0,
+      passed: CHECKS.length - 3,
+      warned: 1,
       failed: 1,
       // The missing shim leaves node-path without a node to inspect.
       skipped: 1,
@@ -595,7 +596,7 @@ describe('brain doctor run without a configuration it can read', () => {
     // the summary is the last line.
     expect(run.stdout).toContain('spool: ok 0건');
     expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
-      '요약: 통과 4, 경고 0, 실패 3, 건너뜀 5',
+      '요약: 통과 4, 경고 1, 실패 3, 건너뜀 5',
     );
     // Not an error envelope, so nothing goes to stderr but the warning line.
     expect(run.stderr).not.toContain('CONFIG_MISSING');

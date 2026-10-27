@@ -75,6 +75,15 @@ export interface DaemonLockOptions {
   bootAt?: () => Date;
 }
 
+/** The shared previous-boot and process-existence rule for a lock owner. */
+export function ownerIsAlive(
+  owner: DaemonLockOwner,
+  options: { isAlive?: (pid: number) => boolean; bootAt: () => Date },
+): boolean {
+  return owner.bootAt.getTime() >= options.bootAt().getTime() - BOOT_SLACK_MS &&
+    (options.isAlive ?? systemIsAlive)(owner.pid);
+}
+
 export type DaemonLockResult =
   | {
       ok: true;
@@ -123,8 +132,7 @@ export async function acquireDaemonLock(options: DaemonLockOptions): Promise<Dae
   // everything else falls through to the reclaim.
   if (
     owner !== undefined &&
-    owner.bootAt.getTime() >= bootAt().getTime() - BOOT_SLACK_MS &&
-    isAlive(owner.pid)
+    ownerIsAlive(owner, { isAlive, bootAt })
   ) {
     return refused(owner.pid);
   }

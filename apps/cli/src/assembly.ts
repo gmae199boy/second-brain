@@ -91,7 +91,7 @@ export function brainDependencies(assembly: BrainAssembly): BrainDependencies {
     // because it is the one name a person reading a report would recognise.
     machine: hostname(),
     // One list, for the dispatcher and the installer both: see `doctor/checks`.
-    checks: runtimeChecks({ home, config }),
+    checks: runtimeChecks({ home, config, clock }),
     // Kinds beyond Core's own, which `createBrain` merges in. Empty for every
     // real invocation of this build (AD-21).
     workHandlers,

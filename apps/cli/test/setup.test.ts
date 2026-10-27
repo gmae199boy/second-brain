@@ -691,8 +691,9 @@ describe('brain setup run against the local SQLite source', () => {
       'plugin',
       'last-hook',
       'spool',
+      'daemon',
     ]);
-    const failed = (envelope.data?.checks ?? []).filter((check) => check.status !== 'ok');
+    const failed = (envelope.data?.checks ?? []).filter((check) => check.status !== 'ok' && check.id !== 'daemon');
     expect(failed, JSON.stringify(failed)).toEqual([]);
   });
 
@@ -723,6 +724,7 @@ describe('brain setup run against the local SQLite source', () => {
       'plugin',
       'last-hook',
       'spool',
+      'daemon',
     ]);
     expect(envelope.data?.checks?.[1]).toEqual({
       id: 'schema-version',
