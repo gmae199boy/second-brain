@@ -26,19 +26,25 @@ Mac에 로그인하면 Brain이 늘 떠 있어, 수집·Drive 동기화·(다음
 
 ## Requirements
 
-인셉션 때 채운다. 원천: spine AD-25·AD-27(2026-10-26 판)과 AD-7·9·20·21의 데몬 조항. AD-26·28은 V1 뒤.
+- E9-1 (CAP-10·11): 상주 프로세스 — `brain daemon run`이 같은 빌드에서 Core(`createBrain`, scan, drain)를 직접 부르고 stdout 엔벨로프를 내지 않는다. `<home>/run/daemon.pid`로 한 번에 하나만 뜨며, 살아 있는 pid의 잠금은 나이와 상관없이 빼앗지 않고 죽은 pid의 잠금만 회수한다. SIGTERM에 정상 종료하고 끝나면 pid를 지운다. 로그는 `<home>/log/daemon.log`(1MB×5 회전), heartbeat는 `<home>/run/heartbeat` mtime 30초. (AD-5·19·27)
+- E9-2 (CAP-11): 생존 판단과 폴백 — heartbeat mtime이 90초(간격의 3배) 안이면 살아 있다는 판단 함수 하나를 기회적 drain 생략과 doctor가 함께 쓴다. 살아 있으면 명령의 기회적 drain을 건너뛰고, 죽었거나 멈췄으면 기회적 drain과 SessionStart drain이 받친다. 데몬이 없어도 모든 명령·hook이 동작한다. (AD-7·25)
+- E9-3 (CAP-11): drain과 파일 감시 — 데몬이 drain을 반복하고, Claude transcript 폴더(connector가 찾는 폴더, 기본 `~/.claude/projects`)와 `[files] path`를 감시해 변경을 2초 모은 뒤 기존 scan 경로로 넘긴다. 기동할 때 scan을 한 번 돌려 꺼져 있던 동안의 변경을 메운다. Stop hook 없이 저장된 transcript는 10초 안에 수집된다. DB에 못 쓰면 spool로 남긴다. (AD-9·21·23·27)
+- E9-4 (CAP-11): 예약 틱 — 마이그레이션 0009가 예약 테이블(일감 종류·대상·다음 시각·마지막 실행 시각)을 만든다. 틱은 시각이 된 예약의 일감을 `work_items`에 넣고 마지막 실행 시각을 같은 트랜잭션에서 갱신한다. 데몬이 꺼져 있던 동안 지난 예약은 다음 기동 때 한 번만 들어간다. 사용자가 예약을 등록·조회·삭제하는 명령은 만들지 않는다(다음 조각). (AD-21·27, Table Contract)
+- E9-5 (CAP-11): launchd 등록 — 공용 설치 함수(`setup run`, 플러그인 bootstrap)가 Label `io.github.gmae199boy.second-brain.daemon`의 plist(`~/Library/LaunchAgents/`, `RunAtLoad`·`KeepAlive`, shim으로 `brain daemon run`)를 `launchctl bootstrap gui/<uid>`로 하나만 등록하고, 다시 실행해도 하나다. launchctl 호출은 감싼 adapter를 거쳐 테스트에서 가짜로 바꾼다. (AD-25)
+- E9-6 (CAP-11): 운영 — `daemon stop`(KeepAlive부터 내려 임시 정지)·`daemon start`(Label 다시 적재)·`daemon status`(생존·pid·마지막 heartbeat). 설치·갱신 흐름(플러그인 bootstrap 갱신, `setup upgrade`)이 끝날 때 데몬을 새 빌드로 다시 띄운다. 최소 `setup uninstall`이 데몬 흔적(Label·plist·pid·heartbeat·로그)만 지운다. doctor가 생존과 마지막 heartbeat를 보이고, 죽었거나 멈췄으면 `warn`이다. (AD-5·20·27)
 
 ## Done when
 
 1. 데몬을 멈춰도 모든 명령·hook이 동작하고, 밀린 일은 기회적 drain이 처리한다(epic 2·10·5·8의 테스트가 데몬 없이도 통과).
-2. 데몬이 떠 있으면 Stop hook 없이 저장된 transcript가 N초(인셉션에서 정함) 안에 수집된다.
-3. `setup upgrade` 뒤 데몬이 새 빌드로 다시 뜨고, 데몬 프로세스를 죽이면 launchd가 다시 띄운다.
+2. 데몬이 떠 있으면 Stop hook 없이 저장된 transcript가 10초 안에 수집된다(2026-10-27).
+3. 설치·갱신 흐름(`setup upgrade`, 플러그인 bootstrap 갱신) 뒤 데몬이 새 빌드로 다시 뜨고, 데몬 프로세스를 죽이면 launchd가 다시 띄운다.
 4. 설치 뒤 데몬 Label 하나만 있고 `setup run`을 반복해도 하나다. doctor가 데몬 생존·heartbeat를 보이고 죽어 있으면 `warn`이다. `daemon stop` 뒤에는 기회적 drain이 돌고 `daemon start`가 데몬을 다시 올린다. `setup uninstall` 뒤 Label·pid·heartbeat·로그가 남지 않는다.
 5. 데몬 안의 예약 틱이 시각이 된 일감 하나를 `work_items`에 넣고 drain이 처리한다(테스트용 일감으로 검증). 데몬이 꺼져 있던 동안 지난 시각의 일감은 다음 기동 때 한 번만 들어간다.
+6. 이 에픽의 기능 묶음이 플러그인 배포(`plugin/app-ref`·`version`)로 이 Mac의 설치본에 들어가, 로그인 뒤 데몬이 떠 있고 heartbeat가 갱신되며 Stop hook 없이 저장된 transcript가 수집된다(2026-10-27).
 
 ## Boundaries
 
-AD-5·6·7·9·20·21·25·27. Core는 그대로다(FR-23: Core는 서버·프로세스를 소유하지 않는다 — 데몬은 Runtime). 사용자 스케줄러의 등록·목록·삭제, Telegram·원격 기계 수집·승인 대기는 이 에픽 밖(다음 조각). MCP(AD-28)와 소켓(AD-26, `DAEMON_UNAVAILABLE`·`SESSION_REQUIRED`·`VERSION_MISMATCH`)은 V1 뒤. watcher 지연 목표는 인셉션에서 정한다(spine Deferred).
+AD-5·6·7·9·20·21·25·27. Core는 그대로다(FR-23: Core는 서버·프로세스를 소유하지 않는다 — 데몬은 Runtime). 사용자 스케줄러의 등록·목록·삭제, Telegram·원격 기계 수집·승인 대기는 이 에픽 밖(다음 조각). MCP(AD-28)와 소켓(AD-26, `DAEMON_UNAVAILABLE`·`SESSION_REQUIRED`·`VERSION_MISMATCH`)은 V1 뒤. 전체 `setup uninstall`(hook·shim·`installed.json` 정리, 데이터 삭제 확인)은 V1 뒤 epic-operations이고, 이 에픽은 데몬 흔적만 지운다(2026-10-27). 백업·마이그레이션 단계는 epic-operations가 설치·갱신 흐름에 보탠다.
 
 ## References
 
@@ -47,12 +53,15 @@ AD-5·6·7·9·20·21·25·27. Core는 그대로다(FR-23: Core는 서버·프�
 - architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-5, AD-25, AD-26, AD-27, AD-28, Conventions(설치·런타임 기록), Deferred
 - inputs — _bmad-output/personal-brain/inputs/weknora-patterns.md, §2
 - change — _bmad-output/personal-brain/change-surface-plugin-daemon/change-surface-plugin-daemon.md, §4.1, §6
+- change — _bmad-output/personal-brain/change-v1-capture-and-drive/change-v1-capture-and-drive.md, §4.1, §4.6
+- research — _bmad-output/personal-brain/tickets/epic-daemon/epic-daemon-research-sources.md
+- research — _bmad-output/personal-brain/tickets/epic-daemon/epic-daemon-research-code.md
 
 ## Notes
 
 - Decision(2026-10-15): 데몬을 Deferred에서 에픽으로. 순서는 epic 5 다음, 7 앞(사용자). MCP는 데몬 없이 stdio로 먼저. 데몬은 `brain daemon run` 하위 명령(같은 빌드·shim). 데몬 없이도 전부 동작하는 것이 기준.
 - Waits on epic-capture because: 명령 메타(`brain guide schema`), 설치 흐름(`setup run`·`setup upgrade`), doctor 틀, 플러그인 뼈대.
-- Unknown(인셉션에서): 소켓 프레이밍, watcher 지연 목표 N초, hook 클라이언트 소켓 경로의 실측 이득(SM-7), 세션 안 짧은 핸들의 필요성.
+- Unknown(V1 뒤로): 소켓 프레이밍, hook 클라이언트 소켓 경로의 실측 이득(SM-7), 세션 안 짧은 핸들의 필요성. watcher 지연 N초는 2026-10-27에 정했다.
 - Note(2026-10-16, `../../change-users-and-review-gaps/`, 인셉션 입력, 원문은 `../../inputs/external-review-2026-10-16.md`):
   - D3: "데몬이 켜져 있다"는 살아 있는 소켓(handshake 응답)으로 판단한다. 설정 `[daemon] enabled`가 기준이 아니다. `daemon start`가 데몬 Label을 다시 올린다(spine AD-5·7·25·27).
   - D4: handshake 버전이 다르면 데몬은 `VERSION_MISMATCH`로 답하고, 자기 빌드가 `installed.json`의 `commit`과 다를 때만 종료한다(spine AD-26).
@@ -60,3 +69,19 @@ AD-5·6·7·9·20·21·25·27. Core는 그대로다(FR-23: Core는 서버·프�
 - Note(2026-10-19, `../../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 소켓·MCP 응답은 같은 엔벨로프 코덱을 쓰므로 따로 가리지 않는다(spine AD-11).
 - Decision(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): 데몬은 V1의 기본 상주 런타임이고 Drive(epic 8)보다 먼저다. 사용자가 등록한 배치·예약 작업을 그 시각에 실행하고, Drive 주기 수집과 로컬 파일 감시를 맡는다. launchd는 데몬을 띄우고 다시 띄우는 데만 쓴다. 주기 LaunchAgent·두 Label 전환·`[daemon] enabled`는 없앴다. 데몬은 CLI가 아니라 Core를 직접 부른다. MCP·소켓·데몬 자동 업데이트는 V1 뒤. 아래 2026-10-16의 D3·D4와 자동 업데이트 Note는 소켓 경로와 함께 다음 조각에서 다시 본다.
 - Note(2026-10-26, 트리 검증 제안, 인셉션 입력): `setup upgrade`의 공용 흐름은 epic 1·2가 만든 설치 흐름이고, 이 에픽은 데몬 재시작 단계만 더한다. epic 5는 그 흐름에 마이그레이션·백업을 보강한다. 이 에픽과 epic 10·5 사이에는 선행 경로가 없지만 Core 조립(`createBrain`), scan·drain, doctor, `setup upgrade`를 함께 건드리므로, 인셉션에서 공용 연결부의 첫 소유자를 정하고 필요하면 leaf `after`를 둔다. 표 순서대로 직렬로 만들면 충돌은 생기지 않는다.
+- Decision(2026-10-27, 다듬기, 사용자): 열린 항목 아홉을 추천대로 정했다.
+  - 감시 지연 N = 10초. 변경을 2초 모아 기존 scan 경로로 넘기고, 기동할 때 scan을 한 번 돌린다.
+  - 감시 대상은 Claude transcript 폴더와 `[files] path` 둘. 감시 이벤트는 직접 수집하지 않고 scan으로 넘긴다.
+  - 예약은 새 테이블 하나(마이그레이션 0009)에 두고, 일감 넣기와 마지막 실행 갱신을 한 트랜잭션으로 묶는다. epic 9가 epic 8보다 먼저라 0009를 쓰고, epic 8의 source 메타 마이그레이션은 그다음 번호다. epic 3은 착수 때 번호를 다시 정한다(epic-log-and-context Notes 2026-10-26).
+  - 생존은 heartbeat 90초(간격의 3배) 안. 판단 함수 하나를 drain 생략과 doctor가 함께 쓴다.
+  - pid 잠금은 죽은 pid만 회수한다. 설치 잠금의 30분 회수 규칙은 가져오지 않는다(정상 상주 데몬의 잠금을 빼앗아 둘이 뜨기 때문).
+  - Label `io.github.gmae199boy.second-brain.daemon`, plist는 `~/Library/LaunchAgents/`, `launchctl bootstrap gui/<uid>`. 자동 테스트는 launchctl adapter의 가짜로, 이 Mac의 재기동·멱등·제거 실증은 hitl 스토리 하나로 한다.
+  - V1 `setup uninstall`은 데몬 흔적만 지운다. 전체 제거는 V1 뒤.
+  - 공용 연결부(Core 조립, 설치·갱신 흐름의 재시작 단계)의 첫 소유자는 이 에픽이다. 표 순서대로 직렬로 만들므로 epic 10·5와 leaf `after`는 두지 않는다.
+  - Done when 6(플러그인 배포로 이 Mac 설치본에서 동작)을 더했다(이니셔티브 Note 2026-10-26).
+  - drain·틱 간격, 종료 순서, 잠금 파일 형식 같은 상수는 각 스토리가 정한다.
+- Source conflict: spine AD-7(L167)은 데몬 생존을 "heartbeat 간격 안"으로, AD-25(L393)의 doctor는 "간격 3배 초과"로 다르게 적는다 — 이 에픽은 90초 하나로 맞춘다(2026-10-27).
+- Source conflict: spine AD-5(L130)는 `setup uninstall` 전체를 V1 뒤로 두지만 이 에픽 Done when 4는 데몬 정리를 요구한다 — change-v1 §4.6(L327–335)대로 데몬 흔적만 V1 최소 경로로 둔다(2026-10-27).
+- Source conflict: change-v1 L346은 마이그레이션 0009를 epic 8이 먼저 쓴다고 적는다 — epic 9가 0009를 쓰고 epic 8은 다음 번호(2026-10-27).
+- Source conflict: spine Deferred(L603)의 MCP "해소: epic 9"와 L605의 짧은 핸들 "인셉션"은 2026-10-26의 V1 뒤 결정이 우선한다.
+- Note(2026-10-27, 코드 조사): launchd·plist·파일 감시·heartbeat·로그 회전 코드는 아직 없다. spool은 append마다 파일을 닫으므로(`apps/cli/src/runtime/spool.ts`) spine AD-9의 "데몬은 60초 또는 1,000줄마다 닫는다"는 이미 지켜진다. `work_items`의 시각 칸은 `next_attempt_at`이고 `source_sync` 종류는 없다(epic-drive가 더한다).
