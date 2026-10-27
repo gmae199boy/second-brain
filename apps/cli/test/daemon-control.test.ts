@@ -1,10 +1,11 @@
-import { mkdir, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, utimes, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { uptime } from 'node:os';
 import { join } from 'node:path';
 import * as timers from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as liveness from '../src/daemon/liveness.js';
-import { startDaemon, stopDaemon, restartDaemon } from '../src/daemon/control.js';
+import { startDaemon, stopDaemon, restartDaemon, uninstallDaemon } from '../src/daemon/control.js';
 import { DAEMON_LABEL, daemonPlistPath, type Launchctl, type LaunchctlResult } from '../src/daemon/launchd.js';
 import { tempHomes } from './temp-home.js';
 
@@ -183,5 +184,88 @@ describe('daemon control', () => {
     kit.calls.length = 0; kit.fail();
     expect(await restartDaemon({ ...kit.options, plistChanged: true, expectCommit: commit })).toEqual({ ok: false, message: '실패' });
     expect(kit.calls).toEqual(['bootout']);
+  });
+});
+
+
+describe('daemon uninstall', () => {
+  async function traces(kit: Awaited<ReturnType<typeof world>>) {
+    await kit.plist(); await kit.owner();
+    const home = kit.options.home;
+    await mkdir(join(home, 'log')); await mkdir(join(home, 'spool'));
+    const removed = ['run/daemon.pid', 'run/heartbeat', 'log/daemon.log',
+      ...Array.from({ length: 5 }, (_, i) => `log/daemon.log.${i + 1}`)].map((p) => join(home, p));
+    for (const path of removed.slice(1)) await writeFile(path, 'trace');
+    const kept = ['log/bootstrap.log', 'run/plugin.json', 'run/last-hook-claude-code', 'spool/item', 'log/daemon.log.6'];
+    for (const path of kept) await writeFile(join(home, path), 'keep');
+    return { removed, kept: kept.map((p) => join(home, p)), plist: daemonPlistPath(kit.options.env) };
+  }
+  it('unregisters before waiting and deletes only daemon traces after the last owner exits', async () => {
+    const kit = await world(); const files = await traces(kit);
+    let checks = 0;
+    vi.spyOn(timers, 'setTimeout').mockImplementation(async () => {
+      expect(kit.calls).toEqual(['print', 'bootout']);
+      expect(existsSync(files.plist)).toBe(false);
+      for (const path of files.removed) expect(existsSync(path)).toBe(true);
+      await writeFile(join(kit.options.home, 'log/daemon.log'), 'shutdown');
+    });
+    const signal = vi.spyOn(process, 'kill');
+    expect(await uninstallDaemon({ ...kit.options, isAlive: () => ++checks < 2 })).toEqual({
+      label: DAEMON_LABEL, plist_path: files.plist, unloaded: true, plist_removed: true, removed: files.removed,
+    });
+    for (const path of [...files.removed, files.plist]) expect(existsSync(path)).toBe(false);
+    for (const path of files.kept) expect(await readFile(path, 'utf8')).toBe('keep');
+    expect(signal).not.toHaveBeenCalled();
+    expect(await uninstallDaemon(kit.options)).toMatchObject({ unloaded: false, plist_removed: false, removed: [] });
+    expect(kit.calls).toEqual(['print', 'bootout', 'print']);
+  });
+  it('succeeds with no registration or traces', async () => {
+    const kit = await world(false);
+    expect(await uninstallDaemon(kit.options)).toEqual({ label: DAEMON_LABEL,
+      plist_path: daemonPlistPath(kit.options.env), unloaded: false, plist_removed: false, removed: [] });
+    expect(kit.calls).toEqual(['print']);
+  });
+  it.each(['dead', 'old-boot'] as const)('removes a %s lock and heartbeat', async (state) => {
+    const kit = await world(false); const files = await traces(kit);
+    if (state === 'old-boot') await kit.owner(new Date(0));
+    expect(await uninstallDaemon({ ...kit.options, isAlive: () => state !== 'dead' })).toMatchObject({ removed: files.removed });
+  });
+  it('preserves every trace after bootout fails', async () => {
+    const kit = await world(); const files = await traces(kit); kit.fail();
+    const alive = vi.fn();
+    await expect(uninstallDaemon({ ...kit.options, isAlive: alive })).rejects.toMatchObject({ code: 'DAEMON_CONTROL_FAILED' });
+    for (const path of [...files.removed, files.plist]) expect(existsSync(path)).toBe(true);
+    expect(alive).not.toHaveBeenCalled();
+  });
+  it('preserves run and log files when plist removal fails', async () => {
+    const kit = await world(false); const files = await traces(kit);
+    const { unlink } = await import('node:fs/promises');
+    await unlink(files.plist); await mkdir(files.plist);
+    await expect(uninstallDaemon(kit.options)).rejects.toMatchObject({ code: 'DAEMON_CONTROL_FAILED' });
+    for (const path of files.removed) expect(existsSync(path)).toBe(true);
+  });
+  it('keeps a live manual owner and its logs until the user stops it', async () => {
+    const kit = await world(false); const files = await traces(kit);
+    await expect(uninstallDaemon({ ...kit.options, isAlive: () => true, waitMs: 0 })).rejects.toMatchObject({
+      code: 'DAEMON_CONTROL_FAILED', hint: 'pid 4242: launchd 밖에서 띄운 데몬은 그 터미널에서 멈추세요',
+    });
+    expect(existsSync(files.plist)).toBe(false);
+    for (const path of files.removed) expect(existsSync(path)).toBe(true);
+    expect(await uninstallDaemon({ ...kit.options, isAlive: () => false })).toMatchObject({ removed: files.removed });
+    expect(kit.calls).toEqual(['print', 'print']);
+  });
+  it.each(['linux', 'no-uid'] as const)('waits and cleans without launchctl for %s', async (host) => {
+    const kit = await world(); const files = await traces(kit);
+    const options = host === 'linux' ? { ...kit.options, platform: 'linux' as const }
+      : { ...kit.options, launchctl: { ...kit.options.launchctl, uid: undefined } };
+    await expect(uninstallDaemon({ ...options, isAlive: () => true, waitMs: 0 })).rejects.toMatchObject({ code: 'DAEMON_CONTROL_FAILED' });
+    for (const path of files.removed) expect(existsSync(path)).toBe(true);
+    expect(await uninstallDaemon({ ...options, isAlive: () => false })).toMatchObject({ unloaded: false, plist_removed: false, removed: files.removed });
+    expect(kit.calls).toEqual([]);
+  });
+  it('reports non-ENOENT cleanup errors', async () => {
+    const kit = await world(false);
+    await mkdir(join(kit.options.home, 'run', 'heartbeat'), { recursive: true });
+    await expect(uninstallDaemon(kit.options)).rejects.toMatchObject({ code: 'DAEMON_CONTROL_FAILED' });
   });
 });

@@ -30,6 +30,10 @@ case "$1" in
     echo '가짜 launchctl에 올라 있는 Label이 없습니다' >&2
     exit 3 ;;
   bootout)
+    if [ "${FAKE_LAUNCHCTL_FAIL:-}" = bootout ]; then
+      echo '가짜 launchctl이 bootout을 거절했습니다' >&2
+      exit 5
+    fi
     label=${2##*/}
     [ -f "$FAKE_LAUNCHCTL_DIR/loaded/$label" ] || exit 3
     # An explicit test-only pid file models launchd delivering SIGTERM on bootout.

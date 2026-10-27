@@ -635,6 +635,14 @@ stop 자체는 drain하지 않고 데몬이 다시 뜰 때 첫 drain이 밀린 �
 멈춘 동안은 다른 명령의 기회적 drain과 SessionStart drain이 받치고 doctor의 `daemon`은 `warn`입니다.
 launchd 밖에서 손으로 띄운 데몬은 그 터미널에서 멈추세요.
 
+`brain setup uninstall [--json]`은 Label을 내리고 plist를 지운 뒤 데몬 종료를
+기다려 `run/daemon.pid`, `run/heartbeat`, `log/daemon.log`와 회전본 `.1`…`.5`를
+지웁니다. 없는 파일은 건너뛰므로 반복해도 안전합니다. 설정이나 DB를 열지 않으며
+DB·`files/`·설정·hook·shim·`installed.json`·spool·mirror와 나머지 로그는 남깁니다.
+다음 `brain setup run`이나 플러그인 갱신으로 설치기가 실행되면 다시 등록됩니다.
+launchd 밖에서 띄운 데몬이 살아 있으면 종료를 기다린 뒤 `DAEMON_CONTROL_FAILED`로
+실패하며 pid·heartbeat·로그를 남깁니다. 그 터미널에서 멈춘 다음 다시 실행하세요.
+
 ## 실패 보기와 다시 하기
 
 ```sh

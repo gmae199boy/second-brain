@@ -1,11 +1,13 @@
-import { access } from 'node:fs/promises';
+import { access, unlink } from 'node:fs/promises';
 import { uptime } from 'node:os';
 import { setTimeout as pause } from 'node:timers/promises';
 import type { Clock } from 'second_brain';
 import { systemIsAlive } from '../runtime/spool.js';
+import { daemonPidPath, heartbeatPath, daemonLogPath, daemonLogRotatedPath } from '../config/paths.js';
+import { DAEMON_LOG_KEEP } from './log.js';
 import { daemonLiveness } from './liveness.js';
 import { ownerIsAlive, readDaemonLock } from './lock.js';
-import { DAEMON_LABEL, daemonPlistPath, type Launchctl, type LaunchctlResult } from './launchd.js';
+import { DAEMON_LABEL, daemonPlistPath, unregisterDaemon, type Launchctl, type LaunchctlResult } from './launchd.js';
 
 export const DAEMON_STOP_WAIT_MS = 20_000;
 export const DAEMON_RESTART_WAIT_MS = 15_000;
@@ -41,6 +43,10 @@ export async function stopDaemon(options: Options & {
     checked(await launchctl.bootout(DAEMON_LABEL));
     unloaded = true;
   }
+  return waitForOwner(options, unloaded);
+}
+
+async function waitForOwner(options: Parameters<typeof stopDaemon>[0], unloaded: boolean): Promise<DaemonStopData> {
   const bootAt = options.bootAt ?? (() => new Date(options.clock.now().getTime() - uptime() * 1000));
   const isAlive = options.isAlive ?? systemIsAlive;
   const deadline = Date.now() + (options.waitMs ?? DAEMON_STOP_WAIT_MS);
@@ -55,6 +61,33 @@ export async function stopDaemon(options: Options & {
       `pid ${owner!.pid}: launchd 밖에서 띄운 데몬은 그 터미널에서 멈추세요`, data);
     await pause(Math.min(200, remaining));
   }
+}
+
+export interface DaemonUninstallData {
+  label: string;
+  plist_path: string;
+  unloaded: boolean;
+  plist_removed: boolean;
+  removed: string[];
+}
+
+export async function uninstallDaemon(options: Parameters<typeof stopDaemon>[0]): Promise<DaemonUninstallData> {
+  const registration = await unregisterDaemon(options);
+  if (!registration.ok) throw new DaemonControlError('DAEMON_CONTROL_FAILED', registration.message);
+  await waitForOwner(options, registration.booted_out);
+  const removed: string[] = [];
+  const paths = [daemonPidPath(options.home), heartbeatPath(options.home), daemonLogPath(options.home),
+    ...Array.from({ length: DAEMON_LOG_KEEP }, (_, i) => daemonLogRotatedPath(options.home, i + 1))];
+  for (const path of paths) {
+    try { await unlink(path); removed.push(path); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw new DaemonControlError('DAEMON_CONTROL_FAILED', `데몬 흔적을 지우지 못했습니다: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+  return { label: DAEMON_LABEL, plist_path: daemonPlistPath(options.env), unloaded: registration.booted_out,
+    plist_removed: registration.plist_removed, removed };
 }
 
 export async function startDaemon({ env, launchctl, platform }: Options): Promise<DaemonStartData> {

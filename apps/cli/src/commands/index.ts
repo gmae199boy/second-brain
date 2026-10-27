@@ -16,6 +16,7 @@ import { guideShowCommand } from './guide-show.js';
 import { queueDrainCommand } from './queue-drain.js';
 import { sessionsIngestCommand } from './sessions-ingest.js';
 import { setupConnectCommand } from './setup-connect.js';
+import { setupUninstallCommand } from './setup-uninstall.js';
 import { setupRun } from './setup-run.js';
 
 /**
@@ -50,5 +51,6 @@ export const commands: readonly CommandSpec[] = [
   queueDrainCommand,
   sessionsIngestCommand(harnesses),
   setupRun,
+  setupUninstallCommand,
   setupConnectCommand(connectors),
 ];
