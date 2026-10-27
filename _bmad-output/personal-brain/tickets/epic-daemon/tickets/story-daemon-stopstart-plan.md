@@ -111,13 +111,18 @@ deferred: []
 - 갱신 판단의 이전 기록·빌드 읽기는 등록 앞으로 옮겼고, 등록 뒤 재시작을 끝낸 다음 같은 값으로 완료 기록을 쓴다. 같은 빌드·첫 설치·방금 등록한 Label은 재시작하지 않는다.
 - daemon 잠금의 commit은 새로 잡기와 회수 뒤 잡기 양쪽에 기록한다. 옛 잠금·잘못된 commit은 null이며 status의 생존 결과와 무관하게 전달한다.
 - bootstrap 제품 코드·생성된 런처·plugin app-ref/version은 변경하지 않았다. 새 bootstrap 시험만 임시 저장소에 빈 commit을 만들고 임시 플러그인의 ref를 바꾼다.
+- Implementation session's own self-check (not this workflow's review), moved here by the orchestrator:
+  - medium / defer — `launchd.ts`의 기존 `isLoaded`는 모든 print 실패를 false로 바꾼다. stop은 계획대로 이 공용 boolean 계약을 사용하므로 probe 오류 때 Label이 남은 채 SIGTERM을 보낼 수 있다. 등록·해제도 쓰던 adapter의 기존 구분 한계이며 별도 후속 작업으로 기록했다.
+  - medium / patch — `daemon-launchd.test.ts`의 메모리 kill 가짜가 loaded 상태를 보지 않아 미등록 Label에도 성공했다. shell 가짜와 같이 loaded가 거짓이면 실패하도록 직접 수정했다.
 
 ## Plan Change Log
 
 ## Review Triage Log
 
-- medium / defer — `launchd.ts`의 기존 `isLoaded`는 모든 print 실패를 false로 바꾼다. stop은 계획대로 이 공용 boolean 계약을 사용하므로 probe 오류 때 Label이 남은 채 SIGTERM을 보낼 수 있다. 등록·해제도 쓰던 adapter의 기존 구분 한계이며 별도 후속 작업으로 기록했다.
-- medium / patch — `daemon-launchd.test.ts`의 메모리 kill 가짜가 loaded 상태를 보지 않아 미등록 Label에도 성공했다. shell 가짜와 같이 loaded가 거짓이면 실패하도록 직접 수정했다.
+### 2026-10-27 — Review pass
+- verdicts: 1 findings — high 0, medium 0, low 1, false 0, maybe-false 0
+- findings:
+  - `[low]` `reject` (quick) `stopDaemon` treats a failed `launchctl print` probe as an absent Label, skips `bootout`, signals the owner, and can report success while `KeepAlive` restarts it — real: `systemLaunchctl.isLoaded` (`apps/cli/src/daemon/launchd.ts:67`) maps every non-zero `print` to false and `control.ts:38` follows it. But on macOS the GUI-domain `print` answers 0 or 113 in practice; the remaining failures are a missing `/bin/launchctl` or a 10-second stall, unlikely in everyday use. The fix needs a tri-state probe in the shared adapter (new branch and public surface, against 9.2's `0이 아니면 거짓` contract), more than a direct correction. Same root cause as 9.2's rejected low rows; kept as a residual risk below.
 
 ## Design Notes
 
@@ -145,3 +150,14 @@ deferred: []
 - 남은 구현 항목 없음. 실제 launchd KeepAlive 재기동 실증은 계약대로 9.8 범위다.
 
 - 리뷰 수정 뒤 최종 통합 검증: `pnpm build && pnpm typecheck` 통과; bootstrap 포함 가용 8개 프로젝트 96 파일 / 2765 시험 통과. 메모리 launchctl kill의 미등록 Label 실패 규칙을 수정하고 회귀 시험을 추가했다. 기존 print 오류 구분 한계 1건을 후속 작업으로 기록했다.
+
+## Auto Run Result
+
+Status: built. Ticket completion belongs to the orchestrator; no tickets.py mark was run. No operator actions are owed by this ticket (real-Mac launchd proof is ticket 9.8).
+
+- Summary: `brain daemon stop` unloads the Label first and then sends SIGTERM to the lock owner, waiting up to 20 seconds; `brain daemon start` re-bootstraps the existing plist once; the shared installer restarts a loaded daemon once when the previous `installed.json` names a different build (SIGTERM via `launchctl kill`, or bootout+bootstrap when the plist changed), with `DAEMON_NOT_RESTARTED` as a warning on failure. The daemon writes its build commit into the pid lock and `daemon status` shows it, so a restarted daemon can be checked against `installed.json`.
+- Files: `apps/cli/src/daemon/control.ts` (stop/start/restart); `daemon/launchd.ts` (`kill` in the adapter); `daemon/lock.ts`, `daemon/run.ts`, `daemon/liveness.ts`, `commands/daemon-status.ts` (build commit in the lock and status); `commands/daemon-stop.ts`, `commands/daemon-start.ts`, `commands/index.ts` (commands); `install/flow.ts`, `install.ts`, `commands/setup-run.ts` (restart step after registration, report `restarted`); `packages/core/src/codes.ts` and its test (`DAEMON_NOT_INSTALLED`, `DAEMON_CONTROL_FAILED`, `DAEMON_NOT_RESTARTED`); `README.md` (데몬 section, code tables); tests `daemon-control`, `daemon-stop-start` (new), `daemon-launchd`, `daemon-liveness`, `daemon-lock`, `install-flow`, fake launchctl `kill`, and `tooling/bootstrap/test/hook.test.ts` (plugin ref update → one restart call, plist-launched daemon reports the new commit). Bootstrap product code, `plugin/app-ref` and plugin version unchanged.
+- Review: quick lens, 1 finding — 0 patched, 0 deferred, 1 rejected (low; reason in the triage log). The implementation session had also appended an entry to `_bmad-output/personal-brain/deferred-work.md` on its own; the orchestrator reverted that ledger edit, since the finding was triaged here and rejected.
+- Follow-up review recommended: false (no patched entries).
+- Verification: orchestrator ran `pnpm build` and `pnpm typecheck` (pass) and all available projects (core, sqlite, claude-code, second_brain, cli, bootstrap, test-db, modelstudio): 96 files, 2,764 of 2,765 passed. The one failure was `apps/cli/test/daemon-run.test.ts` reading the database read-only while the daemon wrote (`database is locked`); that file is not touched by this change, and three reruns of it gave 1 failure (a different case in the same file) then 34/34 twice — an intermittent pre-existing race in the test helper. The implementation session's own full run passed 2,765/2,765. Every I/O matrix row has a passing covering test (unit rows in `daemon-control.test.ts`, `daemon-lock.test.ts`, `install-flow.test.ts`; surface rows in `daemon-stop-start.test.ts` and the bootstrap hook update test). PostgreSQL omitted (Docker unavailable). Real `~/Library/LaunchAgents` daemon plist absent before and after; `launchctl print gui/<uid>/<Label>` returned 113.
+- Residual risks: a failing `launchctl print` probe makes `daemon stop` skip `bootout` (rejected low above; shared with 9.2's `unregisterDaemon`). The `DAEMON_RUNNING` JSDoc in `packages/core/src/codes.ts` now sits above the new `DAEMON_NOT_INSTALLED` entry (cosmetic). `daemon-run.test.ts` has an intermittent read-while-writing lock failure. Restart via `launchctl kill SIGTERM` relies on `KeepAlive` and launchd throttling; real launchd behaviour is verified in 9.8.

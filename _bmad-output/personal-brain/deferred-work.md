@@ -196,7 +196,3 @@ source_spec: `tickets/epic-daemon/tickets/story-launchd-label-plan.md`
 severity: medium
 reason: Inspection: execFile uses timeout 10000 with its default SIGTERM and waits for process exit. The regression fake uses exec sleep, which terminates normally. No evidence establishes that the system launchctl ignores SIGTERM; settle by reproducing with a signal-resistant executable and deciding whether hard-kill escalation is warranted for the system adapter. (declared severity: medium (unverified))
 status: open
-
-- source_plan: `tickets/epic-daemon/tickets/story-daemon-stopstart-plan.md`
-  summary: Distinguish absent launchd Labels from failed launchctl print probes in the shared adapter.
-  evidence: Existing systemLaunchctl.isLoaded returns false for every print failure, including permissions or executable errors. stopDaemon follows that boolean contract and can signal an owner while its managed Label remains loaded, allowing KeepAlive to restart it. Registration and unregistration share the same pre-existing probe behavior; resolving it requires a shared adapter error contract.
