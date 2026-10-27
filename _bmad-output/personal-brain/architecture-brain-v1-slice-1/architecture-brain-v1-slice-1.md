@@ -458,6 +458,7 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `file_names` | `(file_id, name_source, text)` | drain | 파생, 다시 만들 수 있음. 가린 파일에는 쓰지 않음(0008) |
 | `file_metadata` | `(file_id, key)` | drain(추출) | 파생. 가린 파일에는 쓰지 않음(0008) |
 | `work_items` | 미완료 행의 `(kind, target_kind, target_id)` | 일감을 만드는 경로(수집·가리기·로그), drain | 청구·시도·완료 컬럼만 drain이 바꿈. 완료 행은 정리할 수 있음 |
+| `schedules` | `id`(UUIDv7). `(kind, target_kind, target_id)` 중복은 막지 않는다 — 발화가 넣는 일감은 `work_items`의 미완료 키가 합친다 | 생성: 다음 조각의 사용자 스케줄러(0009 조각은 Store verb와 시험만). 발화: 데몬의 예약 틱(AD-27, epic 9 9.5) | `kind`·대상·`interval_seconds`·`created_at`는 틱이 바꾸지 않음. 틱은 `next_run_at`이 읽은 값 그대로일 때만(compare-and-set) 일감 넣기와 같은 트랜잭션에서 `last_run_at`=발화 시각, `next_run_at`=발화 시각 + 간격(한 번짜리는 null = 끝남)으로 바꿈. 반복 예약의 `next_run_at`은 null이 될 수 없음(0009, 2026-10-27) |
 | `schema_version` | 단일 행 | `setup run`, `setup upgrade` | 마이그레이션만 |
 
 ```mermaid

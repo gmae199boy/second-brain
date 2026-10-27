@@ -152,7 +152,7 @@ async function versionFourPath(): Promise<string> {
 /** A fresh file brought up to the version this package ships. */
 async function migratedPath(): Promise<string> {
   const path = join(await scratch(), 'brain.db');
-  expect(await runSqliteMigrations({ path })).toMatchObject({ ok: true, to: 8 });
+  expect(await runSqliteMigrations({ path })).toMatchObject({ ok: true, to: 9 });
   return path;
 }
 
@@ -286,8 +286,8 @@ describe('the upgrade from version 4 to version 6', () => {
     expect(await runSqliteMigrations({ path })).toEqual({
       ok: true,
       from: 4,
-      to: 8,
-      applied: ['0005_identity_and_records.sql', '0006_drop_message_seq.sql', '0007_session_tag_source.sql', '0008_attachment_rules.sql'],
+      to: 9,
+      applied: ['0005_identity_and_records.sql', '0006_drop_message_seq.sql', '0007_session_tag_source.sql', '0008_attachment_rules.sql', '0009_schedules.sql'],
     });
 
     connection = open(path);
@@ -368,7 +368,7 @@ describe('the upgrade from version 4 to version 6', () => {
 
   it('applies nothing the second time', async () => {
     const path = await migratedPath();
-    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 8, to: 8, applied: [] });
+    expect(await runSqliteMigrations({ path })).toEqual({ ok: true, from: 9, to: 9, applied: [] });
   });
 
   it('reaches exactly the version the folder holds', async () => {
@@ -376,7 +376,7 @@ describe('the upgrade from version 4 to version 6', () => {
       .map((name) => /^(\d{4})_.+\.sql$/.exec(name))
       .filter((match): match is RegExpExecArray => match !== null)
       .map((match) => Number(match[1]));
-    expect(Math.max(...numbered)).toBe(8);
+    expect(Math.max(...numbered)).toBe(9);
   });
 });
 
@@ -899,8 +899,8 @@ describe('a version 4 database whose projects collide', () => {
     expect(await runSqliteMigrations({ path, mergeProjectKeyCollisions: true })).toEqual({
       ok: true,
       from: 4,
-      to: 8,
-      applied: ['0005_identity_and_records.sql', '0006_drop_message_seq.sql', '0007_session_tag_source.sql', '0008_attachment_rules.sql'],
+      to: 9,
+      applied: ['0005_identity_and_records.sql', '0006_drop_message_seq.sql', '0007_session_tag_source.sql', '0008_attachment_rules.sql', '0009_schedules.sql'],
     });
 
     const after = open(path);
@@ -955,7 +955,7 @@ describe('a version 4 database whose projects collide', () => {
     const path = await collided();
     expect(await runSqliteMigrations({ path, mergeProjectKeyCollisions: true })).toMatchObject({
       ok: true,
-      to: 8,
+      to: 9,
     });
 
     // The key is `unique` from here on, so a colliding pair cannot be in it.
@@ -1015,7 +1015,7 @@ describe('a version 4 database whose projects collide', () => {
     // With it, every group collapses to one row and nothing else moves.
     expect(await runSqliteMigrations({ path, mergeProjectKeyCollisions: true })).toMatchObject({
       ok: true,
-      to: 8,
+      to: 9,
     });
     // The survivors, each with the key the *migration file* computed for it.
     // A count would not do: if the file's `case` folded fewer hosts than

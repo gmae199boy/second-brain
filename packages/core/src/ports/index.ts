@@ -128,3 +128,4 @@ export type {
   RedactFilePlan,
   RedactFileResult,
 } from './store.js';
+export type { ScheduleStore, AddScheduleInput, AddScheduleResult, ListDueSchedulesResult, FireScheduleInput, FireScheduleResult, ScheduleStoreFailure } from './store.js';

@@ -17,7 +17,7 @@ import { withWrite } from './write.js';
  * `SCHEMA_VERSION` of its own: the two databases are migrated apart and nothing
  * says their numbers move together (AD-22).
  */
-export const SQLITE_SCHEMA_VERSION = 8;
+export const SQLITE_SCHEMA_VERSION = 9;
 
 /**
  * The migrations this package ships. One level up from this module, which is

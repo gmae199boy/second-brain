@@ -66,7 +66,7 @@ async function migratedPath(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'brain-sqlite-locator-'));
   directories.push(directory);
   const path = join(directory, 'brain.db');
-  expect(await runSqliteMigrations({ path })).toMatchObject({ ok: true, to: 8 });
+  expect(await runSqliteMigrations({ path })).toMatchObject({ ok: true, to: 9 });
   return path;
 }
 

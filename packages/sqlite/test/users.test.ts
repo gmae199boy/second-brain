@@ -155,7 +155,7 @@ describe('the SQLite identity store', () => {
     expect(await runSqliteMigrations({ path })).toEqual({
       ok: true,
       from: 2,
-      to: 8,
+      to: 9,
       applied: [
         '0003_users.sql',
         '0004_capture_columns.sql',
@@ -163,6 +163,7 @@ describe('the SQLite identity store', () => {
         '0006_drop_message_seq.sql',
       '0007_session_tag_source.sql',
       '0008_attachment_rules.sql',
+      '0009_schedules.sql',
       ],
     });
 

@@ -126,3 +126,5 @@ export type {
 export { planRedaction, type RedactionCurrent, type RedactionRequest, type RedactionPlan, type RedactionRefusal } from './redact-plan.js';
 export * from './file.js';
 export type { AttachmentLinkSpoolPayload, AttachmentLinkSpoolRecord } from './spool-record.js';
+
+export type { Schedule } from './schedule.js';

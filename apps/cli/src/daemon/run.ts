@@ -141,6 +141,7 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
   // rather than every ten seconds. A round that worked clears it, which is what
   // makes the next occurrence worth a line again.
   let said: string | undefined;
+  let tickSaid: string | undefined;
   let pendingBatch = false;
   let wake: (() => void) | undefined;
   const watcher = startTranscriptWatch({
@@ -180,6 +181,12 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
         said = round.problem.key;
         await log.write(round.problem.message);
       }
+      if (round.tickRan && round.tickProblem === undefined) tickSaid = undefined;
+      else if (round.tickProblem !== undefined && round.tickProblem.key !== tickSaid) {
+        tickSaid = round.tickProblem.key;
+        await log.write(round.tickProblem.message);
+      }
+      if (round.tickCounts !== undefined) await log.write(round.tickCounts);
       if (round.counts !== undefined) await log.write(round.counts);
 
       // An abort during the drain must not be followed by a pause.
@@ -210,6 +217,9 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
 
 /** What one round of the loop did, and what it has to say about it. */
 interface Round {
+  tickRan?: boolean;
+  tickProblem?: { key: string; message: string };
+  tickCounts?: string;
   /** Whether to wait before the next round. `false` only after `budget`. */
   pause: boolean;
   /** A state worth one log line, with the key that tells it from the last. */
@@ -247,6 +257,7 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
   const { home, env, clock, idGen, storePath, config, createStore, workHandlers, budgetMs, signal } =
     options;
   let store: (Store & SchemaStore) | undefined;
+  let tickState: Pick<Round, 'tickRan' | 'tickProblem' | 'tickCounts'> = {};
   try {
     store = createStore({ path: storePath, busyTimeoutMs: BUSY_TIMEOUT_MS.command });
     // Every round, not once at startup: a database that was repaired or
@@ -261,16 +272,25 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
     const brain = createBrain(
       brainDependencies({ home, env, config, store, clock, idGen, workHandlers }),
     );
+    const tick = await brain.schedules.tick();
+    tickState = {
+      tickRan: true,
+      ...(!tick.ok ? { tickProblem: { key: tick.code, message: `예약 틱 실패 (${tick.code}): ${tick.message}` } } : {}),
+      ...(tick.fired > 0 ? { tickCounts: `예약 ${String(tick.fired)}건 발화, 새 일감 ${String(tick.enqueued)}건` } : {}),
+    };
+    if (signal.aborted) return { ...tickState, pause: false };
     const report = await brain.queue.drain({ budgetMs });
     if (report.stopped === 'unwritable') {
       const key = report.code ?? 'DB_UNAVAILABLE';
       return {
+        ...tickState,
         pause: true,
         problem: { key, message: '데이터베이스에 쓸 수 없어서 이번 회차를 멈췄습니다.' },
         ...(worked(report) ? { counts: counts(report) } : {}),
       };
     }
     return {
+      ...tickState,
       pause: report.stopped !== 'budget',
       ...(worked(report) ? { counts: counts(report) } : {}),
     };
@@ -280,6 +300,7 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
     // in the log every ten seconds for one broken handler.
     return {
       pause: true,
+      ...tickState,
       problem: { key: 'DRAIN_THREW', message: `밀린 일 처리 중 오류: ${errorLine(error)}` },
     };
   } finally {

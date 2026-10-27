@@ -232,3 +232,6 @@ export {
   type DecodeUtf8TextResult,
   type DocumentTextPiece,
 } from './files/text-extractor.js';
+
+export * from './queue/schedule-tick.js';
+export * from './queue/schedule-probe-work.js';

@@ -1,3 +1,4 @@
+import { scheduleStoreContract } from '../src/testing/contracts/schedule-store.js';
 import { attachmentStoreContract, extractionStoreContract, fileRedactionContract, fileStoreContract, memoryFileStore } from '../src/testing/index.js';
 import { describe, expect, it } from 'vitest';
 import {
@@ -1466,4 +1467,8 @@ describe('추출 세대 계약의 음성 가짜', () => {
     });
     expect(failures).toContain('조각 배치는 크기와 위치가 모두 맞아야 한 줄이라도 들어간다');
   });
+});
+
+describe('schedule contract against memory', () => {
+  for (const c of scheduleStoreContract()) it(c.name, () => c.run(async () => memoryStore()));
 });

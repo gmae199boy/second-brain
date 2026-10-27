@@ -16,8 +16,10 @@ import {
  * (AD-1).
  */
 
-/** The database type: this adapter writes SQL by hand, so Kysely knows no tables. */
-export type SqliteSchema = Record<string, never>;
+/** The schedule row type; other adapter tables are queried with raw SQL. */
+export interface SqliteSchema {
+  schedules: import('./schedules.js').ScheduleRow;
+}
 
 export interface DriverOptions {
   /**

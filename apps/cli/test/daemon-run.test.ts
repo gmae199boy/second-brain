@@ -176,6 +176,82 @@ describe('runDaemon, with its timers wound down', () => {
     });
   }
 
+  it('ticks future schedules on a later round and ends one-shots', async () => {
+    const home = await homeFor({ migrated: true });
+    const path = join(home, 'brain.db');
+    let at = new Date('2026-02-03T04:05:06.000Z');
+    const due = new Date(at.getTime() + 60000);
+    const store = sqliteStore({ path });
+    await store.addSchedule({ id: 'once', kind: 'schedule_probe', targetKind: 'probe', targetId: 'once',
+      intervalSeconds: null, nextRunAt: due, lastRunAt: null, createdAt: at });
+    await store.close();
+    let rounds = 0;
+    const daemon = startDaemon({ home, env: environment(home), clock: { now: () => new Date(at) },
+      idGen: uuidV7IdGen(), drainPauseMs: 20, heartbeatMs: 40,
+      createStore: options => { rounds++; return sqliteStore(options); } });
+    await waitFor('시각 전 회차', () => rounds >= 2);
+    const db = new DatabaseSync(path);
+    try {
+      expect(db.prepare('select * from work_items').all()).toHaveLength(0);
+      at = new Date(due.getTime() + 1000);
+      await waitFor('예약 처리', () => !!db.prepare('select id from work_items where completed_at is not null').get());
+      const firedRound = rounds;
+      at = new Date(at.getTime() + 500000);
+      await waitFor('발화 뒤 여러 회차', () => rounds >= firedRound + 3);
+      expect(db.prepare('select * from work_items').all()).toHaveLength(1);
+      expect(db.prepare('select next_run_at from schedules').get()).toEqual({ next_run_at: null });
+    } finally { db.close(); await daemon.stop(); }
+  });
+
+  it('rolls back failing ticks, logs once, keeps draining and recovers one missed recurrence', async () => {
+    const home = await homeFor({ migrated: true });
+    const path = join(home, 'brain.db');
+    const at = new Date('2026-02-03T04:05:06.000Z');
+    const due = new Date(at.getTime() - 185000);
+    const store = sqliteStore({ path });
+    await store.addSchedule({ id: 'repeat', kind: 'schedule_probe', targetKind: 'probe', targetId: 'repeat',
+      intervalSeconds: 60, nextRunAt: due, lastRunAt: null, createdAt: due });
+    await store.addWork({ id: 'independent', kind: 'schedule_probe', targetKind: 'probe', targetId: 'other',
+      createdAt: at, nextAttemptAt: at });
+    await store.close();
+    const db = new DatabaseSync(path);
+    db.exec("create trigger reject_tick before update on schedules begin select raise(abort, 'refused'); end");
+    let rounds = 0;
+    const daemon = startDaemon({ home, env: environment(home), clock: { now: () => new Date(at) },
+      idGen: uuidV7IdGen(), drainPauseMs: 20, heartbeatMs: 40,
+      createStore: options => { rounds++; return sqliteStore(options); } });
+    try {
+      await waitFor('실패 회차 반복', () => rounds >= 4);
+      expect(db.prepare("select * from work_items where target_id='repeat'").all()).toHaveLength(0);
+      expect(db.prepare('select next_run_at,last_run_at from schedules').get()).toEqual({ next_run_at: due.toISOString(), last_run_at: null });
+      expect(db.prepare("select completed_at from work_items where id='independent'").get()).toEqual({ completed_at: at.toISOString() });
+      const logs = await readFile(daemonLogPath(home), 'utf8');
+      expect(logs.match(/예약 틱 실패/g)).toHaveLength(1);
+      expect(logs).toContain('DB_UNAVAILABLE');
+      // A skipped tick (schema mismatch) must not reset the tick failure state.
+      db.exec('update schema_version set version = 8');
+      const mismatched = rounds;
+      await waitFor('스키마 불일치 회차', () => rounds >= mismatched + 2);
+      db.exec('update schema_version set version = 9');
+      const restored = rounds;
+      await waitFor('스키마 복구 뒤 실패 회차', () => rounds >= restored + 2);
+      expect((await readFile(daemonLogPath(home), 'utf8')).match(/예약 틱 실패/g)).toHaveLength(1);
+      db.exec('drop trigger reject_tick');
+      await waitFor('복구 후 예약 처리', () => !!db.prepare("select id from work_items where target_id='repeat' and completed_at is not null").get());
+      const recovered = rounds;
+      await waitFor('복구 뒤 회차', () => rounds >= recovered + 2);
+      expect(db.prepare("select * from work_items where target_id='repeat'").all()).toHaveLength(1);
+      expect(db.prepare('select next_run_at,last_run_at from schedules').get()).toEqual({
+        next_run_at: new Date(at.getTime() + 60000).toISOString(), last_run_at: at.toISOString() });
+      expect(await readFile(daemonLogPath(home), 'utf8')).toContain('예약 1건 발화, 새 일감 1건');
+      db.prepare('update schedules set next_run_at = ?').run(at.toISOString());
+      db.exec("create trigger reject_tick before update on schedules begin select raise(abort, 'refused'); end");
+      await waitFor('새 예약 실패 기록', async () =>
+        ((await readFile(daemonLogPath(home), 'utf8')).match(/예약 틱 실패/g) ?? []).length === 2);
+
+    } finally { db.close(); await daemon.stop(); }
+  });
+
   it('declares the constants the plan fixed, in milliseconds', () => {
     // Thirty seconds, and ten for the budget so a normal stop finishes inside
     // launchd's default `ExitTimeOut` of twenty (Boundaries).
@@ -237,6 +313,45 @@ describe('runDaemon, with its timers wound down', () => {
     expect(createBrain).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledOnce();
     expect(existsSync(daemonPidPath(home))).toBe(false);
+  });
+
+  it('keeps tick logs but does not drain when aborted during a schedule firing', async () => {
+    const home = await homeFor({ migrated: true });
+    const store = sqliteStore({ path: join(home, 'brain.db') });
+    const at = new Date('2026-02-03T04:05:06.000Z');
+    expect((await store.addSchedule({ id: 'abort-tick', kind: 'schedule_probe', targetKind: 'probe',
+      targetId: 'abort-tick', intervalSeconds: null, nextRunAt: at, lastRunAt: null, createdAt: at })).ok).toBe(true);
+    const controller = new AbortController();
+    const fireSchedule = store.fireSchedule.bind(store);
+    vi.spyOn(store, 'fireSchedule').mockImplementation(async input => {
+      const result = await fireSchedule(input);
+      controller.abort();
+      return result;
+    });
+    const claim = vi.spyOn(store, 'claimWork');
+    const close = vi.spyOn(store, 'close');
+    const drain = vi.fn();
+    vi.mocked(createBrain).mockImplementation(dependencies => {
+      const brain = actualCreateBrain(dependencies);
+      brain.queue.drain = drain;
+      return brain;
+    });
+    const finished = runDaemon({ home, env: environment(home), clock: { now: () => new Date(at) },
+      idGen: uuidV7IdGen(), signal: controller.signal, heartbeatMs: 40, createStore: () => store });
+    daemonCleanups.push(async () => { controller.abort(); await finished; });
+
+    expect(await finished).toEqual({ ok: true });
+    expect(store.fireSchedule).toHaveBeenCalledOnce();
+    expect(drain).not.toHaveBeenCalled();
+    expect(claim).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+    expect(await readFile(daemonLogPath(home), 'utf8')).toContain('예약 1건 발화, 새 일감 1건');
+    expect(existsSync(daemonPidPath(home))).toBe(false);
+    const db = new DatabaseSync(join(home, 'brain.db'));
+    try {
+      expect(db.prepare('select attempts, completed_at from work_items').all())
+        .toEqual([{ attempts: 0, completed_at: null }]);
+    } finally { db.close(); }
   });
 
   it.each(['budget', 'empty', 'unwritable'] as const)(
@@ -606,6 +721,28 @@ describe('brain daemon run, as a process', () => {
       heartbeatMs: 40, drainBudgetMs: 200, drainPauseMs: 20, workHandlers,
     }, unblock);
   }
+
+  it('fires one missed recurring probe in an installed process and doctor reports schema 9', async () => {
+    const { home, configDir } = await installed();
+    const path = join(home, 'brain.db');
+    const db = new DatabaseSync(path);
+    const due = new Date(Date.now() - 185000).toISOString();
+    db.prepare('insert into schedules values (?,?,?,?,?,?,?,?)')
+      .run('process-repeat', 'schedule_probe', 'probe', 'process-repeat', 60, due, null, due);
+    const daemon = spawned(['daemon', 'run'], environment(home, configDir));
+    try {
+      await waitFor('설치본 예약 처리', () => !!db.prepare("select id from work_items where kind='schedule_probe' and completed_at is not null").get());
+      expect(db.prepare("select * from work_items where kind='schedule_probe'").all()).toHaveLength(1);
+      const schedule = db.prepare('select next_run_at,last_run_at from schedules').get() as { next_run_at: string; last_run_at: string };
+      expect(new Date(schedule.next_run_at).getTime() - new Date(schedule.last_run_at).getTime()).toBe(60000);
+      const doctor = await ran(['doctor', 'run', '--json'], environment(home, configDir));
+      const report = JSON.parse(doctor.stdout);
+      expect(JSON.stringify(report)).toContain('schema-version');
+      const schema = report.data.checks.find((check: { id: string }) => check.id === 'schema-version');
+      expect(schema).toMatchObject({ status: 'ok' });
+      expect(JSON.stringify(schema)).toContain('9');
+    } finally { db.close(); daemon.child.kill('SIGTERM'); await daemon.ended; }
+  });
 
   it('collects five writes in one watch batch while the idle pause is long, then closes watchers', async () => {
     const { home, configDir } = await installed();

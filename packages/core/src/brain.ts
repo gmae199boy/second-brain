@@ -1,3 +1,5 @@
+import { tickSchedules, type ScheduleTickResult } from './queue/schedule-tick.js';
+import { SCHEDULE_PROBE_KIND, scheduleProbeHandler } from './queue/schedule-probe-work.js';
 import type { AttachmentLinkSpoolPayload } from './domain/spool-record.js';
 import type { IngestAttachment } from './domain/ingest-batch.js';
 import type { SourceFileReader } from './ports/source-file.js';
@@ -214,6 +216,7 @@ export interface Brain {
   sessions: BrainSessions;
   failures: BrainFailures;
   queue: BrainQueue;
+  schedules: { tick(): Promise<ScheduleTickResult> };
   close(): Promise<void>;
 }
 
@@ -259,6 +262,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
   // because what it does is a use case and the ports it needs are the ones this
   // brain was assembled from (`capture/session-ingest-work.ts`).
   const coreHandlers: WorkHandlers = {
+    [SCHEDULE_PROBE_KIND]: scheduleProbeHandler,
     [SESSION_IDENTITY_KIND]: sessionIdentityHandler(ingestDependencies),
     [SESSION_INGEST_KIND]: sessionIngestHandler({
       ingest: (input, options) => ingestSession(ingestDependencies, input, options),
@@ -385,6 +389,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
       list: (input) => listFailures({ store }, input),
       retry: (input) => retryFailures({ store, clock, idGen }, input),
     },
+    schedules: { tick: () => tickSchedules({ store, clock, idGen }) },
     queue: {
       drain: (input) =>
         drain(

@@ -20,6 +20,7 @@ import { sqliteExtractionStore } from './extractions.js';
 import { sqliteSessionStore } from './sessions.js';
 import { sqliteTranscriptFileStore } from './transcript-files.js';
 import { sqliteUserStore } from './users.js';
+import { sqliteScheduleStore } from './schedules.js';
 import { sqliteWorkStore } from './work.js';
 
 export interface SqliteStoreOptions {
@@ -85,6 +86,7 @@ export function sqliteStore(options: SqliteStoreOptions): Store & SchemaStore {
     ...sqliteExtractionStore(connect),
     ...sqliteUserStore(connect),
     ...sqliteWorkStore(connect),
+    ...sqliteScheduleStore(connect),
     ...sqliteTranscriptFileStore(connect),
 
     async checkHealth(): Promise<StoreHealth> {

@@ -94,7 +94,7 @@ async function migratedPath(): Promise<string> {
   expect(applied).toEqual({
     ok: true,
     from: 0,
-    to: 8,
+    to: 9,
     applied: [
       '0001_initial.sql',
       '0002_files_and_work.sql',
@@ -104,6 +104,7 @@ async function migratedPath(): Promise<string> {
       '0006_drop_message_seq.sql',
       '0007_session_tag_source.sql',
       '0008_attachment_rules.sql',
+      '0009_schedules.sql',
     ],
   });
   return path;
@@ -366,7 +367,7 @@ describe('the upgrade from 0001 through 0006', () => {
     expect(await runSqliteMigrations({ path })).toEqual({
       ok: true,
       from: 1,
-      to: 8,
+      to: 9,
       applied: [
         '0002_files_and_work.sql',
         '0003_users.sql',
@@ -375,6 +376,7 @@ describe('the upgrade from 0001 through 0006', () => {
         '0006_drop_message_seq.sql',
       '0007_session_tag_source.sql',
       '0008_attachment_rules.sql',
+      '0009_schedules.sql',
       ],
     });
 

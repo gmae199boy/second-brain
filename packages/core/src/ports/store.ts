@@ -763,6 +763,7 @@ export type Store = HealthStore &
   SessionStore &
   UserStore &
   WorkStore &
+  ScheduleStore &
   TranscriptFileStore & AttachmentStore & ExtractionStore;
 
 /**
@@ -1342,3 +1343,22 @@ export interface ExtractionStore {
    */
   listExtractionChunks(extractionId: string): Promise<ListExtractionChunksResult>;
 }
+
+/** Schedule persistence; recurrence rules belong to Core's tick. */
+export interface ScheduleStore {
+  addSchedule(input: AddScheduleInput): Promise<AddScheduleResult>;
+  listDueSchedules(query: { now: Date; limit: number }): Promise<ListDueSchedulesResult>;
+  fireSchedule(input: FireScheduleInput): Promise<FireScheduleResult>;
+}
+export type AddScheduleInput = import('../domain/schedule.js').Schedule;
+export type ScheduleStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+export type AddScheduleResult = { ok: true; schedule: import('../domain/schedule.js').Schedule } | ScheduleStoreFailure;
+export type ListDueSchedulesResult = { ok: true; schedules: readonly import('../domain/schedule.js').Schedule[] } | ScheduleStoreFailure;
+export interface FireScheduleInput {
+  scheduleId: string;
+  expectedNextRunAt: Date;
+  nextRunAt: Date | null;
+  work: AddWorkInput;
+  now: Date;
+}
+export type FireScheduleResult = { ok: true; fired: true; created: boolean } | { ok: true; fired: false } | ScheduleStoreFailure;

@@ -1,3 +1,4 @@
+import { formatInstant } from '../../instant.js';
 import type { IngestAttachment } from '../../domain/ingest-batch.js';
 import type { MessageAttachment } from '../../ports/store.js';
 import type { IngestBatch } from '../../domain/ingest-batch.js';
@@ -180,6 +181,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
    * done — and a map keyed on a partial key would lose the completed rows the
    * contract asks about.
    */
+  const schedules = new Map<string, import('../../domain/schedule.js').Schedule>();
   const workItems: WorkItem[] = [];
   const failures: Failure[] = [];
   /** Keyed by `(harness, path)`, the idempotency key of the Table Contract. */
@@ -389,6 +391,32 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   }
 
   return {
+    async addSchedule(input) {
+      if (schedules.has(input.id) || (input.intervalSeconds !== null &&
+        (!Number.isInteger(input.intervalSeconds) || input.intervalSeconds <= 0 || input.nextRunAt === null)) ||
+        [input.createdAt, input.nextRunAt, input.lastRunAt].some(at => at !== null && !formatInstant(at).ok))
+        return { ok: false, code: 'DB_UNAVAILABLE', message: '잘못된 예약입니다' };
+      schedules.set(input.id, cloneSchedule(input));
+      return { ok: true, schedule: cloneSchedule(input) };
+    },
+    async listDueSchedules({ now, limit }) {
+      return { ok: true, schedules: [...schedules.values()]
+        .filter(row => row.nextRunAt !== null && row.nextRunAt <= now)
+        .sort((a, b) => a.nextRunAt!.getTime() - b.nextRunAt!.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        .slice(0, limit).map(row => cloneSchedule(row)) };
+    },
+    async fireSchedule(input) {
+      const row = schedules.get(input.scheduleId);
+      if (!row || row.nextRunAt?.getTime() !== input.expectedNextRunAt.getTime()) return { ok: true, fired: false };
+      if ((row.intervalSeconds !== null && input.nextRunAt === null) ||
+        [input.now, input.nextRunAt, input.work.createdAt, input.work.nextAttemptAt].some(at => at !== null && !formatInstant(at).ok))
+        return { ok: false, code: 'DB_UNAVAILABLE', message: '잘못된 예약 발화입니다' };
+      const work = addWork(input.work);
+      if (!work.ok) return work;
+      row.lastRunAt = new Date(input.now);
+      row.nextRunAt = input.nextRunAt === null ? null : new Date(input.nextRunAt);
+      return { ok: true, fired: true, created: work.created };
+    },
     async checkHealth(): Promise<StoreHealth> {
       return health;
     },
@@ -1402,4 +1430,9 @@ function sameCursor(left: Session['cursor'], right: Session['cursor']): boolean 
     left.lastHarnessMessageId === right.lastHarnessMessageId &&
     left.fingerprint === right.fingerprint
   );
+}
+
+function cloneSchedule(row: import('../../domain/schedule.js').Schedule): import('../../domain/schedule.js').Schedule {
+  return { ...row, createdAt: new Date(row.createdAt), nextRunAt: row.nextRunAt === null ? null : new Date(row.nextRunAt),
+    lastRunAt: row.lastRunAt === null ? null : new Date(row.lastRunAt) };
 }

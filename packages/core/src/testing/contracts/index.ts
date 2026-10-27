@@ -15,3 +15,4 @@ export { fileStoreContract } from './file-store.js';
 export { attachmentStoreContract, type AttachmentStoreSubject } from './attachment-store.js';
 export { extractionStoreContract, type ExtractionStoreSubject } from './extraction-store.js';
 export { fileRedactionContract, type FileRedactionSubject } from './file-redaction.js';
+export { scheduleStoreContract } from './schedule-store.js';

@@ -56,7 +56,7 @@ describe('0008 attachment and extraction change rules', () => {
     `);
     const before = TABLES.map(table => db().prepare(`select * from ${table} order by id`).all());
     expect(await runSqliteMigrations({ path })).toEqual({
-      ok: true, from: 7, to: 8, applied: ['0008_attachment_rules.sql'],
+      ok: true, from: 7, to: 9, applied: ['0008_attachment_rules.sql', '0009_schedules.sql'],
     });
     expect(TABLES.map(table => db().prepare(`select * from ${table} order by id`).all())).toEqual(before);
     expect(db().prepare('pragma foreign_key_check').all()).toEqual([]);
