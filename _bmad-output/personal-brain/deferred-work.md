@@ -195,7 +195,9 @@ location: apps/cli/src/daemon/launchd.ts:56
 source_spec: `tickets/epic-daemon/tickets/story-launchd-label-plan.md`
 severity: medium
 reason: Inspection: execFile uses timeout 10000 with its default SIGTERM and waits for process exit. The regression fake uses exec sleep, which terminates normally. No evidence establishes that the system launchctl ignores SIGTERM; settle by reproducing with a signal-resistant executable and deciding whether hard-kill escalation is warranted for the system adapter. (declared severity: medium (unverified))
-status: open
+status: done 2026-10-27
+resolution: resolved by story 9.7
+resolution-undo: d5a5f19984dcf332c326980fc78d7f82053a9cd5279368c23d623904d9b8f02a 2026-10-27 7374617475733a206f70656e
 
 - source_plan: `_bmad-output/personal-brain/tickets/epic-daemon/tickets/story-daemon-stopstart-plan.md`
   summary: Same-ref SessionStart skips installer-based retry after a daemon restart failure.

@@ -1,7 +1,9 @@
 import { fileURLToPath } from 'node:url';
 import { mkdtempSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { afterAll } from 'vitest';
 
 /**
  * Keeping the tests out of the developer's own harness folders.
@@ -22,6 +24,11 @@ export const EMPTY_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'brain-no-harness-'))
 
 const EMPTY_LAUNCH_AGENTS = mkdtempSync(join(tmpdir(), 'brain-launch-agents-'));
 const FAKE_LAUNCHCTL_DIR = mkdtempSync(join(tmpdir(), 'brain-launchctl-'));
+
+afterAll(async () => {
+  await Promise.all([EMPTY_CONFIG_DIR, EMPTY_LAUNCH_AGENTS, FAKE_LAUNCHCTL_DIR]
+    .map((path) => rm(path, { recursive: true, force: true })));
+});
 
 /** Where Claude Code keeps its configuration, when the environment says. */
 const CLAUDE_CONFIG_DIR_ENV = 'CLAUDE_CONFIG_DIR';

@@ -54,7 +54,7 @@ export function systemLaunchctl({ env, uid }: {
   const domain = `gui/${String(uid)}`;
   const run = async (args: string[]): Promise<LaunchctlResult> => {
     try {
-      await execute(executable, args, { env, timeout: 10_000 });
+      await execute(executable, args, { env, timeout: 10_000, killSignal: 'SIGKILL' });
       return { ok: true };
     } catch (error) {
       const failure = error as Error & { stderr?: string };

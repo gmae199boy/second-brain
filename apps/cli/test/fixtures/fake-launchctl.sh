@@ -3,6 +3,7 @@ set -eu
 mkdir -p "$FAKE_LAUNCHCTL_DIR/loaded"
 printf '%s\n' "$*" >> "$FAKE_LAUNCHCTL_DIR/calls"
 if [ "${FAKE_LAUNCHCTL_HANG:-}" = "$1" ]; then
+  trap '' TERM
   exec sleep 30
 fi
 case "$1" in

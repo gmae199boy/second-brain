@@ -717,7 +717,7 @@ describe('brain daemon run, as a process', () => {
 
   function sessionCount(home: string, path = join(home, 'brain.db')): number {
     if (!existsSync(path)) return 0;
-    const database = new DatabaseSync(path, { readOnly: true });
+    const database = new DatabaseSync(path, { readOnly: true, timeout: 5_000 });
     try {
       return (database.prepare('select count(*) as n from sessions').get() as { n: number }).n;
     } finally {

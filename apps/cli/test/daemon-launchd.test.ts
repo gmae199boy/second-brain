@@ -152,13 +152,14 @@ describe('daemon launchd registration', () => {
     });
   });
 
-  it('times out a stalled launchctl before its sleep ends', async () => {
+  it('times out a stalled launchctl that ignores SIGTERM before its sleep ends', async () => {
     const kit = await world();
     const path = join(kit.home, `${DAEMON_LABEL}.plist`);
     await writeFile(path, renderDaemonPlist(shimPath(kit.home)));
     const adapter = systemLaunchctl({
       env: { ...kit.env, FAKE_LAUNCHCTL_HANG: 'bootstrap' }, uid: 501,
     });
+    // The fake ignores SIGTERM even after exec, so only a forced kill bounds this call.
     const started = performance.now();
     expect(await adapter.bootstrap(path)).toMatchObject({ ok: false });
     expect(performance.now() - started).toBeLessThan(15_000);
