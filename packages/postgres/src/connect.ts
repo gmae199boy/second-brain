@@ -1,3 +1,4 @@
+import { BUSY_TIMEOUT_MS, type BusyTimeoutPath } from '@second-brain/core';
 import pg from 'pg';
 import type { Pool } from 'pg';
 
@@ -17,6 +18,7 @@ export const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
 
 /** `createPool` input: a connection plus how long one query may take. */
 export interface CreatePoolOptions extends ConnectionOptions {
+  path?: BusyTimeoutPath;
   /**
    * Server statement budget, extended past lockTimeoutMs when necessary.
    * The client deadline adds a grace period for the server error to arrive.
@@ -36,12 +38,14 @@ export interface CreatePoolOptions extends ConnectionOptions {
  * budget — hence `query_timeout` as well as `connectionTimeoutMillis`.
  */
 export function createPool(options: CreatePoolOptions): Pool {
-  const {
-    databaseUrl,
-    connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS,
-    lockTimeoutMs = connectTimeoutMs,
-    queryTimeoutMs = lockTimeoutMs + 1000,
-  } = options;
+  const budget = options.path === undefined ? undefined : BUSY_TIMEOUT_MS[options.path];
+  const databaseUrl = options.databaseUrl;
+  const connectTimeoutMs = options.connectTimeoutMs ?? budget ?? DEFAULT_CONNECT_TIMEOUT_MS;
+  const lockTimeoutMs = options.lockTimeoutMs ?? budget ?? connectTimeoutMs;
+  const queryTimeoutMs = options.queryTimeoutMs ?? (budget === undefined ? lockTimeoutMs + 1000 : budget + 1000);
+  const applicationName = options.applicationName ?? (options.path === undefined ? 'second-brain' : {
+    turn: 'second-brain-hook', command: 'second-brain-command', drain: 'second-brain-drain',
+  }[options.path]);
 
   // Let PostgreSQL report 55P03 before statement cancellation, and let either
   // server error arrive before the client abandons the response. Zero retains
@@ -55,7 +59,7 @@ export function createPool(options: CreatePoolOptions): Pool {
     query_timeout: clientTimeoutMs,
     max: 1,
     options: `-c lock_timeout=${lockTimeoutMs} -c statement_timeout=${statementTimeoutMs} -c timezone=UTC`,
-    application_name: options.applicationName ?? 'second-brain',
+    application_name: applicationName,
     types: { getTypeParser(oid, format) {
       // Port timestamps are canonical strings; never mutate pg's process globals.
       if (oid === 1184 && format !== 'binary') return (value: string) => new Date(value).toISOString();

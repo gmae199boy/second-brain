@@ -25,7 +25,7 @@ import { sql, type Kysely } from 'kysely';
 import { databaseFailure, describe, type PgConnect } from './connect.js';
 import type { PgSchema } from './connect.js';
 import { pgText, originalText } from './text.js';
-import { ensureWork } from './ingest-work.js';
+import { ensureWork } from './work.js';
 import { writeAttachments } from './attachments.js';
 import { withWrite, type WriteResult } from './write.js';
 

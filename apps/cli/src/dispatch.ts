@@ -573,7 +573,7 @@ async function execute(
     const databaseUrl = await resolveStoreUrl(home, config.config.storeUrlEnv, env).catch(() => undefined);
     // An empty URL is an unavailable source; do not let pg fall back to PGHOST or local defaults.
     const store = pg.postgresStore({ databaseUrl: databaseUrl ?? 'postgresql://invalid@127.0.0.1:1/unavailable',
-      connectTimeoutMs: BUSY_TIMEOUT_MS.turn, lockTimeoutMs: BUSY_TIMEOUT_MS.turn, queryTimeoutMs: BUSY_TIMEOUT_MS.turn + 1000, applicationName: 'second-brain-hook' });
+      path: 'turn' });
     const dependencies = brainDependencies({ home, env, config, store, clock, idGen, workHandlers, schemaVersion: pg.CORE_SCHEMA_VERSION });
     try {
       const schema = await checkSchema(store, pg.CORE_SCHEMA_VERSION);
