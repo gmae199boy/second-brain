@@ -74,7 +74,7 @@ slug = "epic-garmin-runtime"
 title = "Garmin connector: 인증·수집·정제"
 description = "Garmin 확장이 별도 Garmin 설치 없이 데몬의 감독 아래 인증·수집·raw·정규화·digest·그래프를 끝까지 돌고, 결과를 garmin schema와 core 건강 계약 표·파일 등록 요청으로 내며, 이전된 기록 위에 새 기록이 이어진다."
 covers = ["R2", "R11"]
-after = [{ epic = 12, needs = "계정 키 직렬화, 긴 수집의 임대 갱신·attempt token, 현지 시각 예약(manifest의 기본 수집 예약)" }, { epic = 13, needs = "확장 설치·활성화, manifest와 설정 snapshot, `brain_ext_garmin` role과 확장 마이그레이션 적용" }, { epic = 14, needs = "Garmin 확장 뼈대·스키마, core 건강 계약 표와 그 의미 계약(AD-32), `file_requests`, 이전된 기존 기록(새 수집이 그 위에 이어진다)" }]
+after = [{ epic = 12, needs = "계정 키 직렬화, 긴 수집의 임대 갱신·attempt token, 현지 시각 예약(manifest의 기본 수집 예약)" }, { epic = 13, needs = "확장 설치·활성화, manifest와 설정 snapshot, `brain_ext_garmin` role과 확장 마이그레이션 적용" }, { epic = 14, needs = "Garmin 확장 뼈대·스키마, core 건강 계약 표와 그 의미 계약(AD-32), `file_requests`, 이전된 기존 기록(새 수집이 그 위에 이어진다)" }, { epic = 15, needs = "채널 발신 요청과 의미 키 UNIQUE(수집 사건 알림, 2026-10-28)" }]
 
 [[epic]]
 id = 18
@@ -97,28 +97,28 @@ id = 8
 slug = "epic-drive"
 title = "Google Drive 연동"
 covers = ["CAP-14", "CAP-6", "CAP-7", "CAP-12"]
-after = [{ epic = 10, needs = "FileStore port와 로컬 구현, 첨부 원본 저장, 추출 세대 Store와 추출 일감, chunk_locator" }, { epic = 9, needs = "데몬 런타임: 주기 동기화(source_sync)와 파일 감시(2026-10-26)" }, { epic = 11, needs = "PostgreSQL Store와 마이그레이션 실행기, 사용자 설정 DB와 brain config(E8-7을 옮겨 감, 2026-10-28)" }, { epic = 17, needs = "공통 텍스트 검색·원문 읽기 경로와 결과 계약(E8-6이 문서 대상을 더한다, 2026-10-28)" }]
+after = [{ epic = 10, needs = "FileStore port와 로컬 구현, 첨부 원본 저장, 추출 세대 Store와 추출 일감, chunk_locator" }, { epic = 9, needs = "데몬 런타임: 주기 동기화(source_sync)와 파일 감시(2026-10-26)" }, { epic = 11, needs = "PostgreSQL Store와 마이그레이션 실행기, 사용자 설정 DB와 brain config(E8-7을 옮겨 감, 2026-10-28)" }, { epic = 17, needs = "공통 텍스트 검색·원문 읽기 경로와 결과 계약(E8-6이 문서 대상을 더한다, 2026-10-28)" }, { epic = 12, needs = "작업 runtime의 예약 등록·목록(동기화 주기), 취소·진행 이벤트(긴 sync·업로드), 보류 그룹(2026-10-28, epic 8 정제)" }]
 
 [[epic]]
 id = 5
 slug = "epic-operations"
 title = "운영: 내보내기·복구, 업그레이드, 제거"
 covers = ["CAP-12", "CAP-11"]
-after = [{ epic = 10, needs = "파일·문서 추출 세대와 FileStore(로컬 백업의 파일 범위)" }, { epic = 8, needs = "V1 완료 뒤 착수(2026-10-27, 에픽 전체 대기)" }, { epic = 11, needs = "PostgreSQL 컨테이너·볼륨과 스키마(백업·복구 대상, 2026-10-28)" }]
+after = [{ epic = 10, needs = "파일·문서 추출 세대와 FileStore(로컬 백업의 파일 범위)" }, { epic = 8, needs = "V1 완료 뒤 착수(2026-10-27, 에픽 전체 대기)" }, { epic = 11, needs = "PostgreSQL 컨테이너·볼륨과 스키마(백업·복구 대상, 2026-10-28)" }, { epic = 13, needs = "확장 registry·설치 경로·확장 role(백업 범위와 복구 때 확장 재설치, 2026-10-28 epic 5 정제)" }, { epic = 9, needs = "데몬 재시작·플러그인 bootstrap 갱신(9.6)과 최소 setup uninstall(9.10) — 공통 갱신 함수와 완전 제거가 그 위에 선다(2026-10-28 epic 5 정제)" }]
 
 [[epic]]
 id = 3
 slug = "epic-log-and-context"
 title = "작업 로그와 시작 맥락"
 covers = ["CAP-3", "CAP-8", "CAP-9", "CAP-10"]
-after = [{ epic = 2, needs = "수집된 메시지(로그의 앞뒤 메시지를 시각으로 읽기, 규칙 인용 대조), 세션 토큰 수집(`log append`의 선수집), spool, drain. epic 10과의 엮음 넷(2026-10-23)은 착수 때 다시 본다" }, { epic = 10, needs = "10.2가 정하는 Store·handler·spool record 조립 방식(3.4), 10.6의 마이그레이션 0008 뒤의 다음 번호(3.5), 10.1이 고친 `sessions.ingest`(3.6의 선수집), 10.4 뒤의 최종 parser로 하는 Stop 발화 수 확인(3.12)" }, { epic = 8, needs = "V1 완료 뒤 착수(2026-10-26, 에픽 전체 대기)" }, { epic = 11, needs = "PostgreSQL 마이그레이션 실행기의 다음 번호(3.5), PostgreSQL Store·handler·spool 조립(3.4). 위 epic 10 항목의 SQLite 번호·조립 방식을 대신한다(2026-10-28)" }]
+after = [{ epic = 2, needs = "수집된 메시지(로그의 앞뒤 메시지를 시각으로 읽기, 규칙 인용 대조), 세션 토큰 수집(`log append`의 선수집), spool, drain. epic 10과의 엮음 넷(2026-10-23)은 착수 때 다시 본다" }, { epic = 10, needs = "10.2가 정하는 Store·handler·spool record 조립 방식(3.4), 10.6의 마이그레이션 0008 뒤의 다음 번호(3.5), 10.1이 고친 `sessions.ingest`(3.6의 선수집), 10.4 뒤의 최종 parser로 하는 Stop 발화 수 확인(3.12)" }, { epic = 8, needs = "V1 완료 뒤 착수(2026-10-26, 에픽 전체 대기)" }, { epic = 11, needs = "PostgreSQL 마이그레이션 실행기의 다음 번호(3.5), PostgreSQL Store·handler·spool 조립(3.4). 위 epic 10 항목의 SQLite 번호·조립 방식을 대신한다(2026-10-28)" }, { epic = 12, needs = "core 일감 계약과 결과 분류(3.7의 rule_recheck, 3.12의 표식 정리, 2026-10-28 재쪼개기)" }, { epic = 13, needs = "플러그인 스킬의 정적·행동 시험 방식(3.11, 13.7)" }, { epic = 17, needs = "recall 스킬과 그 시험 방식(3.11), recall·sessions read 명령(3.16의 대리 지표)" }, { epic = 5, needs = "마지막 코드 스토리(5.8) 뒤의 공유 파일(명령 등록부·설정 코덱·doctor) — 같은 레인의 순서" }]
 
 [[epic]]
 id = 4
 slug = "epic-recall-and-mirror"
 title = "조회와 미러"
 covers = ["CAP-4", "CAP-5", "CAP-6", "CAP-7", "CAP-13", "CAP-14"]
-after = [{ epic = 2, needs = "메시지와 도구 메모" }, { epic = 3, needs = "작업 로그(대분류 검색)" }, { epic = 8, needs = "문서 검색 경로(E8-6)와 문서 추출 세대·조각·file_names(2026-10-26)" }, { epic = 10, needs = "추출기 등록 자리(10.8): EXIF 추출기(4.1, 옛 10.9)가 그 위에 얹힌다" }, { epic = 17, needs = "공통 텍스트 검색과 대화 조각·도구 메모 검색·넓히기, 결과 계약(2026-10-28 epic 17로 옮김)" }]
+after = [{ epic = 2, needs = "메시지와 도구 메모" }, { epic = 3, needs = "작업 로그(대분류 검색)" }, { epic = 8, needs = "문서 검색 경로(E8-6)와 문서 추출 세대·조각·file_names(2026-10-26)" }, { epic = 10, needs = "추출기 등록 자리(10.8): EXIF 추출기(4.1, 옛 10.9)가 그 위에 얹힌다" }, { epic = 17, needs = "공통 텍스트 검색과 대화 조각·도구 메모 검색·넓히기, 결과 계약(2026-10-28 epic 17로 옮김)" }, { epic = 12, needs = "같은 키 직렬화와 일감 계약(세션 미러 일감, 2026-10-28 epic 4 정제)" }]
 
 [[epic]]
 id = 7

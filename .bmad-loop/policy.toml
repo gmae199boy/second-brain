@@ -1,7 +1,7 @@
 # bmad-loop orchestration policy. All keys optional; defaults shown.
 
 [gates]
-mode = "per-epic"            # none | per-epic | per-story-spec-approval
+mode = "none"                # none | per-epic | per-story-spec-approval (2026-10-28: was per-epic; run through epic boundaries unattended)
 retrospective = "notify"     # never | notify | auto — auto runs a headless /bmad-retrospective -H session at each epic boundary and for a finished last epic at run end ([adapter.retro]) and commits its doc + board
 
 [limits]

@@ -1,0 +1,97 @@
+# epic 14 기존 Garmin 데이터·분석 이전 — 표 순서 = 만드는 순서. id는 영구.
+# 한 레인: core 마이그레이션·계약 표 Store·조립·garmin 마이그레이션·importer·CLI 등록부를 모든 스토리가 함께 고친다(코드 조사 8절).
+
+[[entry]]
+id = 1
+type = "story"
+title = "Tracer: 설치된 Garmin 확장이 합성 raw 한 건과 legacy 리포트 한 건을 넣으면 core에서 건강 값·raw view·분석 원문이 읽힌다"
+description = "가장 얇은 길로 층을 잇는다. `extensions/garmin/`에 `pyproject.toml`(Python pin 3.14.10, 의존은 `psycopg[binary]` 3뿐)·`uv.lock`·`.python-version`·manifest v1(`import` 일감 `supervised`, 연결 확인, garmin DDL 위치, raw view. 인증·수집 예약은 비움)을 두고, epic 13의 `brain ext install garmin`으로 격리된 Brain 홈에 frozen 설치한다. garmin 마이그레이션 0001(소유자 `garmin`)은 raw 보존 표(받은 그대로의 TEXT, scope·library_version·fetched/checked)와 importer 최소 상태(dataset, batch, mapping)를 두고, `garmin.raw_records` view(`key` = `<scope>/<원래 key>`)를 낸다. 새 core 마이그레이션(epic 15 뒤 다음 번호)은 세 계약 표의 최소 칸을 둔다: 건강 측정(일 값 한 지표, 논리 키·보관 키 최소형, \"현재\" view 최소형), `analyses`(legacy 키·dataset·batch·nullable 모델/시각과 누락 flag·파일 요청 관계), `file_requests`(출처+요청 키 UNIQUE, 예상 해시·크기·미디어 타입)와 core 인계(미인계 요청 → 일감 생성·인계 표식을 한 트랜잭션에, FileStore 넣기, 결과 view `request_id → file_id`). 세 표 모두 `brain_ext_garmin`용 RLS(자기 출처 INSERT만, UPDATE·DELETE 없음)와 12.3의 attempt 확인 trigger를 붙인다. importer(Python, 표준 `sqlite3` read-only URI)는 감독자가 ABI v1로 띄우고, 합성 schema 15 snapshot의 raw 한 건과 legacy Markdown 한 건을 넣는다. 처리된 파일은 기존 문서 추출 일감에 들어간다. 시험 기반도 1이 만들고 2~8이 다시 쓴다: 합성 snapshot 생성기(schema 10·15), 합성 legacy 문서, 격리된 PG와 Brain 홈, 정리 도구. 각 plan은 실행 명령, 사전 조건, 관찰값, 정리 명령을 적는다. 받는 것: 11.4의 PG FileStore·추출 세대, 12.1의 감독자·ABI v1, 12.3의 attempt 확인 함수, 13.2의 manifest v1, 13.3의 Python frozen 설치, 13.4의 확장 role, epic 15까지의 core 마이그레이션 번호와 조립. 실제 시그니처는 epic 15가 끝난 HEAD에서 확인한다. plan 상한은 schema 15 raw 한 건, 일 지표 하나, Markdown 하나, 정상 파일 인계 하나다(전체 catalog·현재 선택은 2, schema별 전수 reader와 수동 CLI는 3, 전체 보존 mapping·재개는 4, 파일 실패 행렬·전수 분석은 5). 그래도 한 세션을 넘으면 비필수 완성(설치 상태 표시 다듬기 등)을 이름 붙인 다음 스토리로 나누고, Python 확장 → PG garmin schema → core 계약 표(RLS·attempt) → core 인계 → FileStore → core 읽기와 원문 보존·비발신은 1에 남긴다. 추가 확인: macOS arm64에서 frozen 설치한 driver가 import되고, PG에 접속해 UTF-8·epoch ms·NULL을 왕복한다."
+verify = "통합 시험(PG, 실제 Python 확장 프로세스, 데몬 감독자. 시험 이름과 실행 명령은 plan에 적는다)에서 격리 홈에 `brain ext install garmin`이 끝나고, 감독자가 import 일감을 돌린 뒤 core 쪽 읽기로 합성 일 값 한 건(정규 단위, 출처·dataset 포함), `garmin.raw_records`의 한 행(body가 합성 원문과 바이트까지 같고 key가 `<scope>/<원래 key>`), `analyses` 한 행이 가리키는 파일의 원문(해시 일치)이 읽히며, 같은 일감을 다시 돌려도 모든 표의 행 수가 같고, `brain_ext_garmin`으로 다른 출처 행 INSERT·UPDATE·DELETE는 거부되며, 회수된 attempt token의 INSERT는 거부되고, 채널 발신 요청과 `channel_send` 일감이 0이다."
+covers = ["E14-1", "E14-2", "E14-3", "E14-4", "E14-5", "E14-6"]
+after = ["15.6", "11.4", "12.3", "13.3", "13.4"]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-garmin-import/epic-garmin-import-research-code.md, §1, §4, §7, §8, 스토리 후보 T1"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "건강 의미와 현재 view: 같은 fixture에 TS와 Python이 같은 판정을 내고, 다른 값의 동률은 ambiguity로 집계에서 빠진다"
+description = "1의 최소형을 계약으로 끝낸다(E14-4). 버전 있는 지표 catalog(지표 식별자, 정규 단위, 값 타입, NULL 의미, 허용 집계)를 core 마이그레이션의 데이터로 두고, 옛 daily_metric·샘플·activity 열과 SQL 주석에서 Garmin 지표를 옮긴다. 초·m·g·bpm·점수·분류형을 구별하고, day_summary의 분 → 초 같은 변환은 명시한다. 논리 측정 키(출처·계정·지표·운동 identity·현지 날짜 또는 순간·시간대, 날짜형/순간형 배타)와 보관 키(+ dataset·이전 출처·정규화 버전·관측 revision), NULL 안전 UNIQUE를 둔다. 관측 revision은 원문 해시로 식별하고 같은 dataset 안 `fetched_at`으로 순서를 정한다. 정규화 버전은 정수로 비교한다. 권위 선택 기록(규칙 버전, dataset 순서, 적용 범위, 선택·미선택 provenance)과 \"현재\" view를 끝낸다: dataset 순서 → 관측 revision → 지원 정규화 버전, 같은 값 동률은 하나, 다른 값은 ambiguity로 돌려 기본 집계에서 뺀다. 계정 미확인 행도 ambiguity다. 문자열·JSON 값은 숫자 집계에서 뺀다. 공유 fixture(입력 행 → 기대 현재 값·ambiguity·허용 집계)를 core의 TS 판정과 Garmin Python publisher가 함께 통과한다. epic 16·17·18이 이 계약을 소비하므로 공개 이름과 의미를 저장소의 계약 문서(경로는 plan에 적는다)에 남긴다."
+verify = "공유 fixture 시험(TS와 Python 양쪽. 시험 이름과 실행 명령은 plan에 적는다)이 같은 기대 판정으로 통과하고, PG 시험에서 같은 입력을 다시 넣어도 행이 늘지 않으며(NULL 키 포함), 같은 논리 키에 두 dataset의 다른 값이 있으면 규칙 순서가 앞인 dataset 값이 현재이고, 같은 dataset·같은 `fetched_at`·다른 해시는 ambiguity로 돌아와 기본 합계·평균에서 빠지며, 정규화 버전 1과 2가 함께 있으면 2가 현재이고 1은 보관되며, 계정 미확인 행은 현재 값이 아니고, 허용되지 않은 집계(예: 분류형의 평균)는 정해진 오류다."
+covers = ["E14-4"]
+after = [1]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-garmin-import/epic-garmin-import-research-code.md, §1(단위·NULL 근거), §4, 스토리 후보 T3"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "보존 reader와 preflight: brain ext run garmin import-preflight가 대상에 쓰지 않고 지원 버전·예상 건수·충돌·계정 대응을 보고한다"
+description = "표준 `sqlite3` read-only reader가 schema 10·15(16 표가 있으면 그것도)의 모든 표·열·원래 키를 읽고, 원본에서 migration·normalize를 부르지 않는다. 지원하지 않는 schema는 정해진 오류다. dataset 등록(capture 식별, 목록 fingerprint, private manifest의 source 분류에서 온 역할)과 계정 대응(raw 본문의 Garmin 사용자 profile id를 dataset마다 모으고, 한 값이 아니거나 없으면 미확인)을 만든다. preflight는 E14-7의 목록을 private 상세 보고서(Brain 홈의 확장 데이터 아래)와 공개 집계 출력으로 낸다. 키 겹침·충돌은 코드 조사 3절 Q1~Q4의 정의(공통 비키 열의 NULL 안전 비교, raw 본문은 따로)를 따르고, 권위 규칙 v1(선택지 A)의 미선택 수를 낸다. 대상 준비 확인은 core·garmin 마이그레이션, manifest·ABI 버전, role, attempt 함수를 본다. 공용 수동 실행 명령 `brain ext run <name> <job> [--target …]`(CommandSpec·명령 메타·SDK 1:1, 출력 코덱 통과)을 만든다: manifest가 수동 실행을 허락한 일감만 epic 12의 작업 계약으로 넣고, 같은 대상의 열린 일감과 합치며, 확장 끄기 보류를 우회하지 않는다. manifest v1에 수동 실행 표시가 없으면 13.2의 schema 버전 규칙대로 호환되게 더한다. core 코드에 Garmin 이름을 넣지 않는다. 합성 fixture: 1의 생성기에 다섯 후보 모양(겹침, 본문 충돌, metadata 충돌, 한쪽에만 있는 표, 단독 키, 계정 불일치)을 더한다."
+verify = "시험(시험 이름과 실행 명령은 plan에 적는다)에서 합성 다섯 후보에 `brain ext run garmin import-preflight`를 돌리면 표별 예상 건수와 겹침·충돌·단독 키 수가 fixture의 기대값과 같고, 권위 규칙 v1의 미선택 수가 0이며, 계정이 하나로 모이지 않는 dataset은 미확인으로 보고되고, schema 9 snapshot은 정해진 오류이며, 실행 전후로 원본 snapshot 파일 해시가 같고 대상 PG의 garmin·core 계약 표 행 수가 같으며, 공개 출력에 해시 값과 합성 원문 문자열이 없고, manifest가 수동 실행을 허락하지 않은 일감과 꺼진 확장의 일감은 정해진 오류로 거부된다."
+covers = ["E14-7", "E14-9", "E14-13"]
+after = [2]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/tickets/epic-garmin-import/epic-garmin-import-research-code.md, §2, §3(Q1~Q4 정의), §5(preflight 재료), 스토리 후보 T2"]
+
+[[entry]]
+id = 4
+type = "story"
+title = "반입과 재개: 같은 batch를 다시 돌려도 늘지 않고, 중간에 죽여도 checkpoint부터 이어지며, 다른 값은 충돌로 남는다"
+description = "importer가 모든 DB 표를 옮긴다: garmin 보존 표(옛 0001~0016의 표·키·NULL·단위, 0012에서 지워진 activity_recovery 포함), dataset-local 정수 id(run·auth_event·fetch_error·delivery)의 UUID mapping(`fetch_error → run`은 같은 dataset 안), core 건강 행(2의 catalog로 mapping, 옛 정규화 버전 그대로), 권위 선택 기록 규칙 v1(선택지 A: D2 → D1 → D4 → D5 → D3, 역할은 3의 dataset 등록에서), legacy 알림·전송 이력. legacy 이력은 15.3이 만든 legacy 표에 출처(dataset, 원래 표, 원래 키, batch)와 함께 넣고 같은 Garmin 봇·채팅 conversation에 잇는다. gate를 발신 성공으로 바꾸지 않고, 발신 요청·인계 일감을 만들지 않는다(15.3의 합성 입력 모양을 받는다). 식별자는 `(dataset_id, source_table, original_key)`이고 batch는 그 일부가 아니다. 작은 트랜잭션(2초 안)마다 데이터·mapping·checkpoint를 함께 확정한다. 같은 키·같은 원문 해시는 건너뛰고, 같은 키·다른 값은 충돌 행으로 남긴다(`ON CONFLICT DO NOTHING`으로 숨기지 않는다). 소스 fingerprint·버전이 바뀌면 checkpoint 재사용을 거부한다. 외부 수집·모델·발신 경로를 열지 않는다."
+verify = "시험(시험 이름과 실행 명령은 plan에 적는다)에서 합성 다섯 후보를 반입하면 garmin 보존 표의 표별 건수·자연키가 원본과 같고 raw body가 바이트까지 같으며, 같은 batch를 다시 돌리면 모든 표의 행 수가 같고, 표 하나의 중간에서 프로세스를 죽인 뒤 다시 돌리면 checkpoint부터 이어 최종 행 수가 한 번에 돈 것과 같으며, 같은 dataset·같은 키의 원문을 바꾼 snapshot은 checkpoint 재사용이 거부되고 충돌로 보고되고, 다른 dataset의 같은 정수 id는 서로 다른 UUID이며, 보관본에만 있는 BB 샘플이 보존되고 \"현재\" view에 나오며, 합성 notification·delivery가 15.3 legacy 표에 한 번 들어가 새 발신과 같은 conversation id로 되읽히고, 채널 발신 요청·`channel_send` 일감·가짜 Telegram POST가 0이다."
+covers = ["E14-2", "E14-8", "E14-9", "E14-10"]
+after = [3, "15.3"]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-garmin-import/epic-garmin-import-research-code.md, §1, §3(선택지 A), §5(importer 계약 재료), §6(legacy 칸 대응), 스토리 후보 T4"]
+
+[[entry]]
+id = 5
+type = "story"
+title = "파일과 기존 분석: 리포트·facts·그래프가 파일 등록 요청으로 core 파일이 되고, 어느 단계에서 죽어도 같은 요청으로 수렴한다"
+description = "capture 파일 분류(E14-11)와 각 대상을 만든다. 리포트·facts는 `analyses` 행(안정 artifact key, 확인 가능한 날짜·출처, 모델·생성 시각이 없으면 NULL과 누락 flag)과 파일 요청이 되고, PNG·입력 JSON은 파일 요청과 분석과의 파일 관계가 된다. 로그는 비밀 검사를 통과한 것만 넣고, 설정과 비밀 검사에 걸린 파일은 제외 사유를 남긴다. schema 16 `evaluation` 행이 있으면 그대로 옮긴다(합성 fixture로 검증). `file_requests` 인계를 끝낸다: 요청 직후·인계 중·파일 저장 뒤 결과 확정 전 crash의 수렴, 해시 불일치 실패, 공개 결과 view의 상태(pending·processing·completed·failed, 재개 가능), 생산자의 바이트 보존(Brain 홈의 확장 staging, 상대 locator)과 확인 뒤 core 정리, 처리된 파일의 문서 추출 일감. body·profile·inbox는 없음/비어 있음을 구분해 보고하고, 있으면 측정일·필드별 mtime·원본 관계를 남긴다."
+verify = "시험(시험 이름과 실행 명령은 plan에 적는다)에서 합성 capture(리포트 Markdown·facts JSON·PNG·입력 JSON·로그·TOML)를 반입하면 리포트·facts마다 `analyses` 한 행과 원문 해시가 같은 core 파일이 있고, 모델·생성 시각이 없는 문서는 NULL과 누락 flag이며 파일 mtime이 생성 시각에 쓰이지 않고, PNG·입력 JSON은 분석과 파일 관계로 이어지며, TOML과 시험 비밀 문자열이 든 로그는 제외 사유와 함께 빠지고, 요청 INSERT 직후·인계 트랜잭션 중간·FileStore 저장 뒤 결과 확정 전에 각각 프로세스를 죽였다 다시 띄우면 요청마다 파일 하나로 수렴하며, 예상 해시가 다른 요청은 `failed`이고 파일이 생기지 않고, 완료된 요청의 staging 바이트가 정리되며, Markdown 파일의 추출 세대와 조각이 생긴다. 합성 evaluation 행은 본문·JSON·model·created_at이 그대로다."
+covers = ["E14-5", "E14-6", "E14-11"]
+after = [4]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-garmin-import/epic-garmin-import-research-code.md, §2(파일 대분류), §4(analyses·file_requests 후보), 스토리 후보 T5"]
+
+[[entry]]
+id = 6
+type = "story"
+title = "검증 보고서: brain ext run garmin import-verify가 출처별 건수·자연키·해시·관계·미해결 충돌을 비교해 보이고, 공개 집계에는 개인 값이 없다"
+description = "E14-12를 만든다. 원본 snapshot을 다시 읽어 source→target을 전수 비교한다: 표별 건수와 자연키 집합 차이, raw TEXT 해시 동등성, NULL 개수·단위·수치 동등성, FK·dataset-local id mapping, 분석 본문·JSON·누락 flag, 전체 파일 해시·크기·관계·요청 결과, 미선택 충돌과 제외 사유, 같은 batch 재실행·중단 재개·비발신 결과. private 상세 보고서(Brain 홈의 확장 데이터 아래)와 공개 집계 출력(해시 값·원문·계정·개인 날짜·건강값 없음)을 나눈다. 공개 집계는 허용된 칸(건수, 충돌·제외 사유 수, 단계별 성공/실패 상태)만 투영하는 함수 하나로 만들고, 8이 plan에 붙이는 증거도 이 투영만 쓴다. 차이가 있으면 결과는 실패다. 원본 snapshot의 파일 해시가 반입 전과 같은지도 본다. 없던 revision·evaluation을 만든 것으로 보고하지 않는다."
+verify = "시험(시험 이름과 실행 명령은 plan에 적는다)에서 합성 capture 반입 뒤 `brain ext run garmin import-verify`가 모든 항목 일치로 끝나고, 대상 행 하나를 시험용으로 바꾸거나 core 파일 하나의 위치를 지운 경우 각각 해당 항목이 불일치로 보고되고 결과가 실패이며, 합성 fixture에 넣은 개인 날짜·계정 id·건강값 표식과 해시 패턴·합성 원문 문자열이 공개 출력과 plan용 투영 어디에도 없으며, 미선택 충돌 수와 제외 사유가 fixture 기대값과 같다."
+covers = ["E14-12"]
+after = [5]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/tickets/epic-garmin-import/epic-garmin-import-research-code.md, §5(검증 보고서), §9, 스토리 후보 T4·T7"]
+
+[[entry]]
+id = 7
+type = "story"
+title = "Refactor sweep"
+description = "1~6이 미룬 정리만 한다. 범위는 착수 때 각 plan의 미룬 항목과 리뷰 지적에서 정한다. 다른 스토리에서 밀려난 기능은 새 스토리로 뺀다."
+verify = "착수 때 정한 정리 목록의 항목이 모두 처리되고, 빌드·typecheck·TS 기본 suite와 Python 확장 suite(따로 부르는 두 실행 명령을 plan에 적는다)가 PG에서 통과한다."
+covers = []
+after = [1, 2, 3, 4, 5, 6]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 8
+type = "story"
+title = "이 Mac에서 실제 반입: 플러그인 배포로 설치한 Garmin 확장이 새 capture를 규칙 A로 반입하고 검증 보고서가 모두 일치한다"
+description = "기능 묶음을 플러그인 배포(`plugin/app-ref`를 앞선 커밋으로, `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올림)로 이 Mac의 설치본에 넣고 에이전트가 진행한다(2026-10-28 위임, `hitl = false`). 순서: 설치본에서 `brain ext install garmin` → 반입 직전 새 일관 capture를 Brain 홈의 확장 데이터 아래에 만든다(옛 DB는 read-only URI의 SQLite backup API, 파일은 복사 전후 해시 비교, private manifest 갱신. 옛 writer는 멈추지 않는다) → 옛 `LATEST` capture와의 목록·건수 차이를 기록 → `import-preflight` → 규칙 v1(선택지 A)과 계정 대응 확인 → 작은 batch로 `import` → `import-verify`. 공개 집계(건수·충돌 수·제외 사유 수. 해시·원문·계정·개인 날짜 없음)는 plan에, private 상세는 Brain 홈에 둔다. 실패·미선택 충돌·파일 요청 대기는 성공으로 기록하지 않는다. 계정이 미확인이거나 verify가 불일치면 원인을 plan에 남기고 버그 스토리로 고친 뒤 같은 batch로 다시 돈다. 원격 push가 있어야만 하는 단계는 `operator_actions`에 남긴다. plan에는 다시 돌릴 때의 절차(같은 batch 재개)를 적는다."
+verify = "에이전트가 이 Mac에서 위 순서를 한 번 돌린다. plan에는 6의 공개 투영(건수, 충돌·제외 사유 수, 단계별 성공/실패 상태)과 값 없는 성공 여부만 남기고, doctor·조회의 원시 출력, 오류 상세, capture 경로, private 보고서는 Brain 홈에만 둔다. verify가 모두 일치하고, 반입 뒤 새 capture의 파일 해시가 반입 전과 같으며(private 보고서에서 확인, plan에는 일치 여부만), 옛 원본에는 read-only로만 접근했고, 채널 발신 요청·`channel_send` 일감이 0이며, `garmin.raw_records`와 \"현재\" view의 읽기가 성공하고(plan에는 값 없이 성공 여부만), 저장소의 git status와 커밋 diff에 capture·보고서 파일이 없다."
+covers = ["E14-1", "E14-9", "E14-12"]
+after = [7]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-garmin-import/epic-garmin-import-research-code.md, §9(실제 반입 전제 1~5), 스토리 후보 T7"]

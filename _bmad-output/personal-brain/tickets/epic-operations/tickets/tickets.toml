@@ -1,0 +1,109 @@
+# epic 5 운영: 내보내기·복구, 업그레이드, 제거 — 표 순서 = 만드는 순서. id는 영구.
+# 한 레인: backup 모듈·manifest·PG 관리 port·설치 flow·bootstrap·명령 등록부·설정 코덱·doctor를 스토리들이 함께 고친다(코드 조사 8절).
+
+[[entry]]
+id = 1
+type = "story"
+title = "Tracer: 메시지 하나와 블롭 하나가 백업 묶음이 되고, 격리된 새 홈에 복구해도 건수·해시가 같고 블롭이 열린다"
+description = "가장 얇은 길로 백업·복구를 잇는다. `brain backup create`: compose 서비스 안의 `pg_dump -Fc`(Brain DB 전체)와 `pg_dumpall --globals-only --no-role-passwords`를 private 임시 파일로 받고, Brain 소유 로컬 블롭을 정규 locator로 복사하며, `.env`·`config.toml`을 넣고, manifest(형식 버전, backup id, 앱 commit, PG 버전, owner별 schema 버전, 테이블별 건수·정규형 sha256, 구성 파일 sha256·크기, 파일 범위, 비밀 포함 여부, `SECRET_PATTERN_VERSION`)를 쓴 뒤 검증하고 `<home>/backups/<backup-id>/`로 rename 발행한다. `brain backup restore <id> --target <새 홈>`: 운영 홈이면 거부하고, 새 compose project·volume·port에 role → `.env` 비밀번호 → archive의 pre-data·data·post-data 순으로 복원하며 블롭을 새 `[files] path`에 놓고 해시를 검증한다. `brain backup list|verify`도 최소형을 둔다. 시험 기반도 1이 만들고 2~9가 다시 쓴다: 격리 홈·DB·compose project 두 벌(원본·복구 대상), 합성 fixture, 정리 도구. 각 plan은 실행 명령, 사전 조건, 관찰값, 정리 명령을 적는다. 받는 것: 11.8의 compose 자원 이름 파생·관리 접속, 11의 마이그레이션 버전 표. 실제 이름은 epic 8이 끝난 HEAD에서 확인한다. plan 상한은 메시지 하나, 블롭 하나, 확장 없음이다."
+verify = "통합 시험(격리 PG 두 벌. 시험 이름과 실행 명령은 plan에 적는다)에서 합성 메시지 하나와 첨부 블롭 하나가 있는 홈에서 `brain backup create`가 묶음 하나를 발행하고 `brain backup verify`가 모든 해시 일치를 보이며, `brain backup restore --target <격리 홈>`이 새 compose project에 복원해 메시지·첨부·`files`·`file_locations`의 건수와 정규형 해시가 manifest와 같고 복원된 홈에서 그 블롭이 열려 해시가 같으며, 운영 홈을 `--target`으로 주면 거부되고, 운영 DB URL·절대 파일 경로·발신 대기 행이 든 합성 fixture를 복구하면 대상 홈의 URL·경로만 쓰이고 대기 행은 보존되되 drain·외부 호출이 0이며, archive 한 바이트를 바꾼 묶음은 verify와 restore가 실패하며 복구 대상에 완료 표식이 생기지 않는다."
+covers = ["E5-1", "E5-3"]
+after = ["8.7", "11.8"]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-operations/epic-operations-research-code.md, §2, §3, 스토리 후보 tracer"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "snapshot과 블롭 완전성: 백업 중에도 수집이 막히지 않고, 백업이 필요한 블롭은 지워지지 않으며, 빠진 블롭이 있으면 백업이 완료되지 않는다"
+description = "E5-2를 만든다. 관리 연결에서 export snapshot을 잡고 `pg_dump --snapshot`과 건수·해시 reader가 같은 snapshot을 쓴다. 블롭 목록은 그 snapshot에서 정한다. 백업 pin(DB에 남기는 진행 중 백업 표식)이 있는 동안 블롭 삭제 handler(가리기·Drive 이전 뒤 로컬 삭제·blob_delete)는 그 블롭의 삭제를 보류하고 백업이 끝나거나 실패해 pin이 풀리면 이어 간다. 블롭이 없거나 해시가 다르면 그 백업은 완료가 아니고 manifest에 이유를 남긴다. 임시 묶음 → 검증 → manifest 완성 → rename 순서이고, 중간에 죽으면 다음 실행이 자기 임시 묶음과 풀리지 않은 pin을 정리한다. 백업은 사용자 쓰기 트랜잭션이나 설치 잠금을 잡지 않는다. 마이그레이션(DDL)과 백업이 겹치면 백업이 기다리거나 정해진 오류로 끝난다. DB 장애 때 hook은 기존 spool을 쓴다."
+verify = "시험(시험 이름과 실행 명령은 plan에 적는다)에서 백업 dump가 도는 동안 합성 세션 수집이 계속 확정되고(수집 지연이 정한 한도 안), 백업 manifest의 건수가 snapshot 시점과 같으며 그 뒤 들어온 메시지는 묶음에 없고, 백업 중 snapshot에 있던 블롭을 가리기로 지우려 하면 백업이 끝날 때까지 블롭이 남았다가 끝난 뒤 지워지며, 블롭 하나를 미리 지워 두면 백업이 완료되지 않고 이유가 남고, 블롭 복사 중에 프로세스를 죽인 뒤 다시 돌리면 임시 묶음과 pin이 정리되고 새 백업이 완료되며, 마이그레이션 잠금과 겹치면 정해진 결과로 끝난다."
+covers = ["E5-2"]
+after = [1]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-operations/epic-operations-research-code.md, §2(일관성·블롭 경합), 스토리 후보 snapshot·블롭 완전성"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "확장·role·설정 복구: Garmin 확장이 있는 홈을 복구해도 role·RLS·owner 버전이 그대로이고 확장이 다시 설치된다"
+description = "E5-3을 끝낸다. 백업 범위에 설치된 확장 schema(`garmin`)·registry 상태·owner별 버전과 체크섬·확장 패키지와 잠금 식별자(manifest·lock·Python patch)를 넣는다. 복구: globals에서 setup 소유자·`brain_app`·`brain_ext_<name>` role과 멤버십을 만들고 `.env`의 비밀번호를 설정한 뒤 archive를 원래 owner·ACL로 복원한다(`--no-owner`·`--no-acl`로 성공시키지 않는다). 확장은 manifest 식별자로 epic 13의 설치 경로를 거쳐 다시 설치하고 `.venv`를 복사하지 않는다. owner별 버전 표를 코드와 대조하고 덮어쓰지 않으며 필요할 때만 공통 실행기로 core → 확장 마이그레이션을 적용한다. Drive로 옮긴 원본(`remote_only`)과 external 원본은 `source_unreachable`로 보이고 기존 조각이 검색된다. E5-3의 나머지 전체 복구 확인(작업 로그·`file_metadata`·추출 attempt와 현재 포인터·위치 포인터·`brain_app` 접속·원본 열기·검색 경고)을 공통 확인기로 만들어 9가 다시 쓴다. 복원한 설정의 재바인딩과 자동 재개 금지(예약·drain·외부 변경과 발신)를 완성한다. Garmin tokenstore는 묶음에 없으므로 복구 뒤 로그인이 필요하다는 상태가 doctor에 보인다. 확장이 없는 백업·복구는 Python·uv를 찾지 않는다."
+verify = "시험(시험 이름과 실행 명령은 plan에 적는다)에서 `testext`와 합성 Garmin 확장 schema가 설치된 홈을 백업해 격리 홈에 복구하면 `brain_ext_testext`가 non-superuser·NOBYPASSRLS이고 자기 출처 행만 INSERT하며, core 계약 표의 owner가 확장 role과 다르고, 불변 표의 UPDATE·DELETE·TRUNCATE가 거부되며, owner별 버전 표가 원본과 같고 두 번째 복구 확인에서 마이그레이션이 다시 적용되지 않고, 확장이 manifest 식별자로 다시 설치돼 `brain ext status`가 원본과 같으며, `remote_only` 원본 문서가 `source_unreachable`로 검색되고, 확장이 없는 홈의 백업·복구에서 Python 실행 기록이 없으며, 공통 복구 확인기가 작업 로그·`file_metadata`·서로 다른 추출 attempt와 현재 포인터·위치 포인터의 건수·해시·관계, `brain_app` 접속, 실제 원본 열기, external·`remote_only`의 검색 경고를 모두 확인하고, 복구 검증 동안 예약 발화·drain·가짜 Drive·Telegram 서버로 가는 호출이 0이다."
+covers = ["E5-1", "E5-3"]
+after = [2, "13.9"]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-operations/epic-operations-research-code.md, §2(role·확장·config), §3, 스토리 후보 확장·권한·설정 복구"]
+
+[[entry]]
+id = 4
+type = "story"
+title = "공통 갱신과 스키마 가드: setup upgrade와 플러그인 갱신이 같은 순서로 돌고, 어느 단계가 실패해도 완료 기록이 전진하지 않는다"
+description = "E5-4를 만든다. bootstrap의 ref 검증·설치 잠금·build와 설치기의 마이그레이션·shim·검증·완료 흐름을 공통 갱신 함수로 묶는다: 코드 갱신 → build → core·설치 확장 마이그레이션 → shim 재작성·표식 hook 재등록 → 데몬 Label 일치·재시작(새 commit의 pid 확인) → doctor → `installed.json` 완료 기록(마지막). 대상 ref는 플러그인 app-ref 또는 `setup upgrade`의 인자다. 데몬이 없는 환경에서도 끝난다. `plugin/bootstrap.mjs` 복사본과 parity를 지킨다. 런타임 명령의 스키마 가드를 core와 설치된 확장의 owner별 기대 버전 비교로 바꾸고, 다르면 DB에 쓰지 않고 `SCHEMA_MISMATCH`(수집은 spool)다. 이월 DW-4·5(`installed.json.commit = ref`만 보고 재시작 실패를 넘김)를 고친다."
+verify = "시험(시험 이름과 실행 명령은 plan에 적는다)에서 직전 앱 버전의 마이그레이션 fixture에 메시지·작업 로그·첨부·추출 세대·확장 확인 행을 넣고 `setup upgrade`를 돌리면 원문·건수·키가 같고 일반 UPDATE·DELETE·TRUNCATE가 거부되며 정식 redact는 되고, 두 번째 upgrade는 아무것도 바꾸지 않으며, 파일 하나 적용 뒤 실패·체크섬 변경·확장 하나 실패·doctor 실패·데몬 재시작 실패에서 `installed.json`이 전진하지 않고 다음 bootstrap이 다시 시도하며, 데몬이 없는 fixture에서도 끝나고, 확장 owner 버전이 다른 코드로 쓰기 명령을 부르면 `SCHEMA_MISMATCH`이고 수집은 spool로 가며, bootstrap 경로와 `setup upgrade` 경로의 단계 기록이 같다."
+covers = ["E5-4"]
+after = [3, "9.6"]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/tickets/epic-operations/epic-operations-research-code.md, §1, §4, 스토리 후보 공통 갱신+직접 upgrade"]
+
+[[entry]]
+id = 5
+type = "story"
+title = "백업 경고: 마지막 백업이 오래되거나 가리기 전에 뜬 백업이 남아 있으면 doctor가 알린다"
+description = "E5-5를 만든다. 백업 catalog(성공한 backup id·완료 시각·manifest 위치·redaction 기준점, `<home>`의 private 파일)를 두고, doctor가 마지막 성공 백업이 `backup.warn_days`(DB 사용자 설정, 기본 7, 양의 정수)보다 오래면 `warn`이다. 백업이 하나도 없으면 안내다. 그 백업의 redaction 기준점 뒤에 가리기가 있으면 가리기 전에 뜬 백업들을 id로 알리고 지우거나 새로 뜨라고 안내하며, catalog가 그 묶음 파일의 존재를 확인해 지워지면 경고를 푼다. 실패·임시 묶음은 경과 계산에 쓰지 않는다. 출력은 비밀 값과 경로 외 개인 정보를 내지 않는다."
+verify = "시험(가짜 clock. 시험 이름과 실행 명령은 plan에 적는다)에서 백업 뒤 7일 하루 전에는 경고가 없고 지나면 `warn`이며, 실패한 백업은 경과를 갱신하지 않고, `backup.warn_days = 0`·음수는 거부되며, 백업 뒤 메시지를 가리면 doctor가 그 백업 id를 알리고 묶음을 지우면 경고가 풀리며, 새 백업을 떠도 옛 백업이 남아 있으면 경고가 남는다."
+covers = ["E5-5"]
+after = [4]
+hitl = false
+risk = "low"
+references = ["_bmad-output/personal-brain/tickets/epic-operations/epic-operations-research-code.md, §6, 스토리 후보 백업 doctor"]
+
+[[entry]]
+id = 6
+type = "story"
+title = "가린 내보내기: brain export의 JSONL에는 비밀이 가려져 있고, 원문 백업 바이트는 바뀌지 않는다"
+description = "E5-6을 만든다. `brain export`가 한 읽기 snapshot에서 모든 표를 읽어 테이블별 JSONL과 manifest(형식 버전, schema 버전, 내보내기 시각, 테이블별 건수, `SECRET_PATTERN_VERSION`, 블롭 범위 `none | brain_owned`)를 임시 디렉터리 → rename으로 쓴다. 텍스트 칸은 출력 코덱으로 가리고, 내보내기 writer를 출력 코덱 등록부에 넣는다(등록하지 않으면 계약 시험이 실패). U+0000 짝 칸이 있는 칸은 논리 원문으로 복원한 뒤 가리고, `bytea` 원문 짝 칸은 JSONL에 넣지 않는다. `brain_owned` 범위면 Brain 소유 블롭을 같이 넣는다(파일 바이트는 가리지 않음). 원문 백업(`backup create`) 바이트에는 코덱을 걸지 않는다. 사용자에게 보이는 결과·경로·오류만 출력 코덱을 거친다. 가린 JSONL을 되살리는 import와 기존 DB 합치기(D0)는 backlog다."
+verify = "시험(시험 이름과 실행 명령은 plan에 적는다)에서 합성 비밀이 든 메시지·도구 메모가 있는 홈의 `brain export`가 테이블별 JSONL과 manifest를 내고 JSONL 어디에도 시험 비밀 문자열이 없으며 `[REDACTED:<kind>]`가 있고, U+0000과 시험 비밀이 함께 든 메시지의 JSONL을 역직렬화하고 hex·base64 칸을 디코딩해도 비밀이 복원되지 않으며, 내보내는 동안 합성 세션 수집을 계속 넣어도 manifest 건수와 JSONL 행·관계가 snapshot 시점과 같으며, 같은 홈의 `backup create` archive에는 원문이 그대로이고, 출력 코덱 계약 시험이 내보내기 writer를 포함하며, `brain_owned` 범위에서 블롭 해시가 원본과 같다."
+covers = ["E5-6"]
+after = [5]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/tickets/epic-operations/epic-operations-research-code.md, §2(가린 논리 내보내기), 스토리 후보 가린 논리 export/import"]
+
+[[entry]]
+id = 7
+type = "story"
+title = "완전 제거: setup uninstall --all이 Brain 흔적을 지우고, 데이터는 확인한 뒤에만 지운다"
+description = "E5-7을 만든다. `setup uninstall --all`이 Brain 표식이 붙은 hook만(사용자 hook은 그대로), shim, `<home>/run/`, `<home>/log/`, `installed.json`, 데몬 Label(9.10의 함수)을 지우고 컨테이너를 멈춘다(11.8, volume 보존). `--delete-data`면 PG volume·`files/`·spool·미러·확장 설치·백업 묶음을 실제 경로와 크기로 보이고 대화형 확인 뒤에만 지운다. 비대화형에서 확인이 없으면 exit 3이다. 다른 Brain 홈의 자원(compose project·volume·Label)은 건드리지 않는다. 외부 원본·Drive 파일·Garmin tokenstore·`.env`는 지우지 않고 남는다는 것을 안내한다. 플러그인 제거(`claude plugin uninstall`)는 안내만 한다. 다시 돌리면 아무것도 하지 않는다."
+verify = "시험(격리 홈 두 개, fake launchctl. 시험 이름과 실행 명령은 plan에 적는다)에서 `setup uninstall --all` 뒤 Brain 표식 hook·shim·`run/`·`log/`·`installed.json`·데몬 Label이 없고 사용자 hook과 데이터(volume·`files/`·spool)는 남으며 컨테이너가 멈춰 있고, `--delete-data`를 비대화형으로 주면 exit 3이고 아무것도 지워지지 않으며, 확인을 주면 보인 목록만 지워지고 다른 홈의 compose project·volume은 그대로이며, `.env`·tokenstore 경로가 남고, 두 번째 실행은 아무것도 바꾸지 않는다."
+covers = ["E5-7"]
+after = [6, "9.10", "11.8"]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/tickets/epic-operations/epic-operations-research-code.md, §5, 스토리 후보 완전 제거"]
+
+[[entry]]
+id = 8
+type = "story"
+title = "Refactor sweep"
+description = "1~7이 미룬 정리만 한다. 범위는 착수 때 각 plan의 미룬 항목과 리뷰 지적에서 정한다. 다른 스토리에서 밀려난 기능은 새 스토리로 뺀다."
+verify = "착수 때 정한 정리 목록의 항목이 모두 처리되고 빌드·typecheck·전체 테스트가 PG에서 통과한다. 데몬 없이도 이 에픽의 시험이 통과한다(epic 9 Done when 1의 이어받기)."
+covers = []
+after = [1, 2, 3, 4, 5, 6, 7]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 9
+type = "story"
+title = "이 Mac에서 확인: 운영 설치본의 백업 한 번을 격리된 새 홈에 복구해 같음을 확인하고, 갱신이 설치본에서 돈다"
+description = "기능 묶음을 플러그인 배포(`plugin/app-ref`를 앞선 커밋으로, `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올림)로 이 Mac의 설치본에 넣고 에이전트가 진행한다(2026-10-28 위임, `hitl = false`, 비파괴). 순서: 설치본의 갱신이 공통 갱신 함수로 끝나는지와 doctor 확인 → 운영 홈에서 `brain backup create` 한 번(그동안 수집이 계속되는지 확인) → `brain backup verify` → 그 묶음을 격리된 새 홈(별도 compose project·volume·port·Label)에 `restore`하고 3의 공통 복구 확인기로 건수·해시·블롭 열기·role·확장 상태를 비교(재바인딩된 URL·경로가 격리 홈만 가리키고, 예약·drain·외부 발신이 자동으로 재개되지 않음을 확인) → 격리 홈을 정리(`setup uninstall --all --delete-data`를 격리 홈에서만) → doctor의 백업 경고 확인. 운영 DB를 덮거나 운영 volume을 지우지 않는다. plan에는 공개 투영(단계별 성공/실패, 건수, 일치 여부)만 남기고 메시지 본문·비밀·파일 이름은 쓰지 않는다. 백업 묶음은 운영 홈의 `backups/`에 남는다. 원격 push가 있어야만 하는 단계는 `operator_actions`다."
+verify = "에이전트가 이 Mac에서 위 순서를 한 번 돌리고 결과를 plan에 남긴다(공개 투영만). 설치본 갱신과 doctor가 정상이고, 운영 백업이 완료돼 verify가 일치하며, 격리 홈 복구의 건수·해시·블롭 열기·role·확장 상태가 원본과 같고, 백업 중 수집이 막히지 않았으며, 격리 홈 정리 뒤 운영 홈의 컨테이너·volume·데이터가 그대로다."
+covers = ["E5-1", "E5-3", "E5-4"]
+after = [8]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/tickets/epic-operations/epic-operations-research-code.md, §9(이 Mac 확인)"]

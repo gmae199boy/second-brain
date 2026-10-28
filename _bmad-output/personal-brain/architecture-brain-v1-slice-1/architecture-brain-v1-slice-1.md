@@ -125,7 +125,7 @@ flowchart LR
 | `queue` | `drain` | 밀린 일 처리 (5, AD-7, AD-21) |
 | `doctor` | `run` | 점검 (25, NFR-2) |
 | `stats` | `show` | 기계가 셀 수 있는 지표(SM-4a·5·C1·C3·7, PRD §8-8 대리 지표). 기간 필터는 AD-13의 구간 함수, 기본은 기간만 거르고 `import` 세션 제외는 옵션. 잴 수 없는 지표는 0이 아니라 null + 경고 (SM, epic 5) |
-| `backup` | `export`, `import` | 내보내기·복구 (NFR-9) |
+| `backup` | `create`, `list`, `verify`, `restore` | 원문 백업과 새 홈 복구 (NFR-9, epic 5, 2026-10-28). 가린 논리 내보내기는 별도 `export` |
 | `index` | `rebuild` | 재색인 (11) |
 | `mirror` | `rebuild` | 미러 재생성 (AD-16) |
 | `guide` | `show`, `schema`, `exit-codes` | 안내문 전문, 명령 메타, 종료 코드 (24, AD-17) |
@@ -141,7 +141,7 @@ V1 명령: `sessions ingest·list·read`, `recall chunks·tools·expand`(epic 17
 - **Binds:** FR-1, FR-5, FR-7, FR-8, FR-10, FR-17, FR-18, NFR-3, NFR-7
 - **Prevents:** 비정상 종료 세션 유실, Harness가 수집을 기다리는 것, 정확성이 종료 hook에 의존하는 것
 - **Rule:** 아래 매핑을 따른다.
-  - 동기 경로(시작 hook)에는 네트워크 호출이 없고, **쓰기 트랜잭션도 없다**(읽기 전용). 세션 행은 같은 세션의 첫 수집(`sessions.ingest`)이 만들고, 주입 시도 기록은 spool에 써서 drain이 넣는다. 쓰기 잠금 대기(AD-7)가 시작 맥락을 막지 않게 하기 위해서다. 동기 Stop 점검(`log.remind`, AD-17)도 같은 규칙이다: 읽기, spool, `<home>/run/` 표식 파일만. `log.remind`는 설정과 표식 파일만 읽고 끝나는 조기 반환 경로를 가지며(토글이 꺼진 기본 설치에서는 DB를 열지 않는다), 전체 시간 상한은 Core 상수이고 플러그인 `hooks.json`의 그 줄은 `timeout` 5초다 — command hook 기본 600초가 세션 종료를 막지 않게(2026-10-20).
+  - 동기 경로(시작 hook)에는 외부 네트워크 호출이 없고, **쓰기 트랜잭션도 없다**(읽기 전용). 로컬 PostgreSQL 접속은 읽기만 하고 epic 11이 정한 접속·쿼리 시간 상한 안에서만 한다(여러 SELECT는 READ ONLY 트랜잭션). 컨테이너 시작·마이그레이션·drain·모델 호출은 hook에서 하지 않는다(2026-10-28, epic 3 재쪼개기). 세션 행은 같은 세션의 첫 수집(`sessions.ingest`)이 만들고, 주입 시도 기록은 spool에 써서 drain이 넣는다. 쓰기 잠금 대기(AD-7)가 시작 맥락을 막지 않게 하기 위해서다. 동기 Stop 점검(`log.remind`, AD-17)도 같은 규칙이다: 읽기, spool, `<home>/run/` 표식 파일만. `log.remind`는 설정과 표식 파일만 읽고 끝나는 조기 반환 경로를 가지며(토글이 꺼진 기본 설치에서는 DB를 열지 않는다), 전체 시간 상한은 Core 상수이고 플러그인 `hooks.json`의 그 줄은 `timeout` 5초다 — command hook 기본 600초가 세션 종료를 막지 않게(2026-10-20).
   - **정확성은 `SessionEnd`에 의존하지 않는다.** 종료 hook은 최선 노력이고, 놓친 일은 drain이 한다.
   - 선수집은 `log.append`·`list`·`edit`·`set-state`·`set-scope`와 `recall.*`에만 적용한다: connector가 transcript를 찾을 수 있으면 그 세션을 먼저 증분 수집한다. hook 경로 verb(`context.show`, `log.remind`)는 선수집하지 않는다(쓰기 트랜잭션 금지, 2026-10-20).
 
@@ -219,6 +219,8 @@ sequenceDiagram
 - **Prevents:** 코드 실수로 원문이 바뀌는 것, 비밀이 Brain 밖으로 나가는 것, 패턴의 과잉 가림이 저장된 원문을 되돌릴 수 없게 망가뜨리는 것, 나가는 길 하나가 가리기를 잊는 것, 작업 로그의 현재 문장 위치가 단위마다 달라지는 것
 - **Rule:**
   - **나갈 때 가리기**(마스킹 B, 2026-10-18 사용자): 수집은 본문과 도구 메모 대상을 Harness가 준 그대로 저장한다(추출한 문서 텍스트도 같다, AD-23). 알려진 비밀 패턴(API 키, 토큰, 개인 키, `password=` 류)은 Brain 밖으로 나갈 때 `[REDACTED:<kind>]`로 바뀐다. 패턴 목록과 가리기 함수는 Core에 하나만 두고 버전(`SECRET_PATTERN_VERSION`)을 가진다. 나가는 길은 Core의 **출력 코덱**이고 모두 그 함수를 부른다: 엔벨로프 코덱(CLI·MCP·소켓이 공유, `data`·`error`·`warnings`·`meta`의 문자열), hook 출력 코덱(시작 맥락, Stop 점검의 `reason`), 미러 렌더러(AD-16), 내보내기 writer, 임베딩·재순위 요청(AD-15), 분석 모델 입력·도구 응답, 채널 발신 텍스트(AD-35). 도구 메모 대상만 쓰는 규칙(셸 `NAME=value`)은 도구 메모를 돌려주는 읽기 결과가 그 칸에만 먼저 걸고, 코덱은 모든 문자열에 본문 규칙을 건다(가린 표시는 다시 잡히지 않아 두 번 걸려도 같다, 2026-10-19 사용자). Store와 adapter는 원문을 돌려주고, 출력 코덱을 거치지 않고 Brain 밖으로 텍스트를 내는 경로는 없다. 출력 가리기는 `redactions`를 남기지 않는다.
+  - **U+0000 저장**(2026-10-28, epic 11 11.1 escalation을 추천으로 해소): PostgreSQL `text`는 U+0000을 받지 않는다(SQLSTATE 22021). transcript에서 온 텍스트를 넣는 모든 `text` 칸(최소 `messages.body`, 그 밖에 수집 경로가 transcript 문자열을 넣는 칸)은 Store의 쓰기 코덱 하나를 거친다. `text` 칸에는 U+0000을 U+FFFD로 바꾼 값을 넣고, 검색·색인·표시는 이 값을 쓴다. 같은 행의 nullable `bytea` 짝 칸(예: `body_raw`)에는 원래 문자열의 UTF-8 바이트를 넣는다. U+0000이 없으면 짝 칸은 NULL이다. 읽기는 짝 칸이 있으면 그 바이트를 원문으로 돌려주므로 Core가 보는 값은 원래 문자열과 바이트 단위로 같다. 입력은 거부하지 않는다(거부하면 메시지가 빠져 SM-5를 깬다). 짝 칸은 그 `text` 칸을 만드는 마이그레이션에 함께 둔다. 나갈 때는 출력 코덱이 텍스트 모드에서 `\u0000`으로, JSON에서 원래 escape로 낸다. `jsonb`도 문자열 안의 U+0000을 거부하므로(escape해도 같다) 같은 경계에서 다룬다: transcript 원문은 `text`와 nullable `bytea` 보존 경로에 두고, `jsonb`는 U+0000을 U+FFFD로 바꾼 파생 투영으로만 저장한다. 원문 읽기는 파생 `jsonb`로 대신하지 않는다. JSON 칸을 만드는 마이그레이션은 이 경로를 명시한다.
+  - **U+0000과 저장본 가리기**: `messages.redact`는 짝 칸을 우선 복원한 논리 원문 위에서 위치·해시·치환을 계산하고, 같은 트랜잭션에서 치환 결과를 U+0000 쓰기 코덱으로 다시 나누어 `text`와 짝 칸을 함께 갱신한다. 치환 뒤 U+0000이 없으면 짝 칸은 NULL이 되고, 지우기 전 바이트를 남기지 않는다. 본문과 도구 메모 대상에 같은 규칙을 쓴다.
   - 남아 있는 출력(미러 파일)은 쓴 패턴 버전을 적는다. 버전이 오르면 미러 재생성 일감을 만든다. 내보내기는 manifest에 버전을 적고, 이미 쓴 내보내기 파일은 건드리지 않는다.
   - DB 볼륨에는 비밀이 원문으로 있다. 볼륨이 OrbStack 안에 있고 포트가 `127.0.0.1`에만 열리는 것(AD-34)이 그것을 지킨다. 저장본에서도 지우려면 `messages.redact`를 쓴다.
   - `messages`와 `tool_notes`는 UPDATE·DELETE를 거부하는 DB trigger를 가진다. **유일한 예외는 `messages.redact`**다. 사람이 요청해 저장본에서 지우는 가리기다. 입력은 지울 글자 그대로이거나 `detected`(지금 패턴이 그 메시지에서 찾는 구간 전부, `redactions.pattern_version`에 그 버전)다. 이 함수는 본문 일부나 전체를 `[REDACTED:<kind>]`로 바꾸고, 같은 트랜잭션에서 `redactions`에 위치·종류·지운 내용의 해시만 남긴다(지운 내용은 보존하지 않는다). trigger는 redact 표시가 있을 때만 통과시킨다. 표시는 트랜잭션 로컬 GUC `brain.redacting`이고, Store adapter의 redact 함수 한 곳이 같은 트랜잭션 안에서 세우고 지운다. trigger는 plpgsql이다(`packages/postgres/migrations/0001_initial.sql`의 방식).
@@ -281,8 +283,9 @@ sequenceDiagram
     - 차원은 설정 시점에 고정한다(예: 1024). 벡터 저장소는 epic 6 인셉션에서 정한다(pgvector는 필수가 아니다, C2).
     - 사용 중인 색인 설정은 DB에 기록하고, 설정 파일과 다르면 경고 `INDEX_CONFIG_MISMATCH`를 낸다.
     - 모델·차원 변경은 `index.rebuild`가 새 테이블을 만든 뒤 교체한다. 교체 전까지는 옛 테이블로 검색한다.
+  - 키워드 조각의 `index.rebuild`(epic 4, 2026-10-28)도 같은 방식이다: 활성 설정과 요청 설정을 따로 두고, 새 `index_config_id` 세대를 모든 세션에 다 만든 뒤 활성 포인터를 한 트랜잭션에서 바꾼다. 완성 전에는 옛 설정만 검색한다. 그동안 들어온 증분 조각 생성과 가리기 뒤 재생성은 두 설정 모두에 반영된 뒤에만 전환하고, 동시에 요청된 rebuild는 완성된 세대 하나만 활성이 되며 오래된 완료가 되돌리지 않는다. 중간에 멈추면 이어 간다.
     - 재순위가 실패하면 벡터 순위를 그대로 돌려주고 경고 `RERANK_FAILED`를 낸다.
-  - **결과 계약**: 결과는 종류(`conversation | log | document`)로 갈라지는 출처를 붙인다. 대화·로그는 `session` 토큰, `harness`, 날짜, 꼬리표, `from_at`·`to_at`(대화는 조각의 첫·끝 메시지 시각, 로그는 그 줄의 시각), `chunk_id` 또는 `log_entry_id`이고, 이것이 `recall.expand`·`sessions.read`의 입력이다. 문서는 `file_id`, 표시 이름, 조각 위치(`chunk_locator`: `type ∈ {pdf, docx, text, time, sheet}`와 종류별 필드 `page`·`bbox` / `block` / `start`·`end` / `start_ms`·`end_ms` / `sheet`·`row_start`·`row_end`, AD-24), 그때 만든 URL, 첨부라면 그 세션·메시지 id이고, `files.show`의 입력이다. 문서는 첨부된 세션의 근접 단계를 물려받는다.
+  - **결과 계약**: 결과는 종류(`conversation | log | document`)로 갈라지는 출처를 붙인다. 대화·로그는 `session` 토큰, `harness`, 날짜, 꼬리표, `from_at`·`to_at`(대화는 조각의 첫·끝 메시지 시각, 로그는 그 줄의 시각), `chunk_id` 또는 `log_entry_id`이고, 이것이 `recall.expand`·`sessions.read`의 입력이다. 문서는 `file_id`, 표시 이름, 조각 위치(`chunk_locator`: `type ∈ {pdf, docx, text, time, sheet}`와 종류별 필드 `page`·`bbox` / `block` / `start`·`end` / `start_ms`·`end_ms` / `sheet`·`row_start`·`row_end`, AD-24), 그때 만든 URL, 첨부라면 그 세션·메시지 id이고, `files.show`의 입력이다. 문서는 첨부된 세션의 근접 단계를 물려받는다. 내려받지 않은 외부 소스 항목(Drive 사진·큰 파일 등)은 이름으로만 찾아지는 `document` 결과이고, `file_id`·`chunk_locator`가 없으며(지어내지 않음) 대신 `source_file_id`·색인 상태(`photo | too_large | unsupported | pending | failed`)·접근 상태·source 전용 원본 URL을 싣는다. `files.show`는 `source_file_id`를 받으면 그 상태와 원본 URL을 돌려준다. `source_files.content_id`가 가리키는 파일에 `redacted_at`이 있으면 source 이름 검색과 `files.show(source_file_id)`도 그 표시 이름·경로·원본 URL을 돌려주지 않고, source 메타데이터 갱신·재연결·재추출이 이 제외를 우회하지 않는다. 내용 해시를 아직 모르는(`content_id` null) 항목을 가린 내용으로 추정하지 않는다(2026-10-28, epic 8).
   - 정렬은 근접 단계(같은 워크트리 → 프로젝트 → 전체. 워크스페이스 단계는 워크스페이스를 쓰게 될 때 더한다) 다음 관련도 순이다.
   - 한 번의 결과는 기본 5건, 총 8,000자 이하다. 넘치면 낮은 순위 행부터 통째로 빼되 1위는 남기고, 경고 `RESULT_TRUNCATED`와 함께 `meta.omitted{count, reason}`·`meta.next{ns, verb, args}`를 붙인다. 행 안을 자르는 것은 최후 수단이다. `has_more`는 limit+1로 판정하고 0건도 `count`를 낸다. `--count`(`chunks`·`logs`·`docs`)는 같은 필터로 집계만 `data`로 돌려준다: `chunks`·`logs`는 `{sessions, rows, by_month}`, `docs`는 `{files, rows, by_month}`이고 `by_month`는 기간 필터 안의 달만(AD-13의 구간 함수). 그 응답의 `meta.count`는 1, `has_more`는 false이고 `RESULT_TRUNCATED`는 붙지 않는다. 회귀 러너(`tooling/eval`)의 결과 파일은 식별자·질의·점수만 담고 본문을 쓰지 않는다(2026-10-20).
   - 검색을 수행하지 못한 것(오류 `SEARCH_FAILED`: 질의 오류·DB 잠금 초과)과 0건(`ok`, `data: []`, `meta.hint`에 다음 행동)은 구분한다. 미설치·미초기화는 exit 2 코드(`CONFIG_MISSING`·`DB_UNAVAILABLE`)로 드러나며, 어느 경우도 "기록이 없다"로 읽히게 두지 않는다(NFR-2).
@@ -315,7 +318,7 @@ sequenceDiagram
 - **Rule:**
   - **기계 값**은 `~/.second_brain/config.toml`(`schema_version` 포함)에만 둔다: 저장소 접속 `[store] url_env`(기본 `BRAIN_DATABASE_URL`, AD-10), 경로(`[mirror] path`, `[files] path`), 자동 업데이트 `[update] auto`(기본 true. 설치기가 TTY에서 묻는다, AD-19·27, 2026-10-16). Stop 점검 여부 `[discipline] stop_remind`(기본 false, 설치기는 묻지 않는다, epic 3, AD-17)는 DB를 열지 않는 조기 반환(AD-6)이 읽으므로 여기 남는다. 데몬은 설치되면 늘 켠다(설정 키 없음. 임시 정지는 `daemon stop`, AD-25·27, 2026-10-26).
   - **사용자 설정**은 DB `brain.settings`(key, value, updated_at)에 두고 `brain config get/set`이 읽고 쓴다. 키는 설정 코덱이 정의한다. 시간대 `timezone`(기본 `Asia/Seoul`)은 `config.toml`에서 여기로 옮긴다. 다음 키는 `drive.keep_local_days`(epic 8)다. 확장의 키는 `<ext>.*` 이름공간이고 manifest가 선언한다(AD-29). [ADOPTED]
-  - **비밀**(비밀번호가 든 DB URL, 토큰)은 `~/.second_brain/.env`에만 둔다. 설정 파일에는 값이 아니라 환경 변수 이름만 적는다.
+  - **비밀**(비밀번호가 든 DB URL, 토큰)은 `~/.second_brain/.env`에만 둔다. 설정 파일에는 값이 아니라 환경 변수 이름만 적는다. 예외는 외부 라이브러리가 스스로 관리하는 세션 파일 하나다: Garmin tokenstore(기본 `~/.garmin-pipeline/tokens`, 폴더 0700·파일 0600)는 그 자리에 두고, 설정 snapshot에는 경로(`garmin.tokenstore`)만 담으며, 내용은 라이브러리의 login/dump만 읽고 쓴다(2026-10-28, epic 16). 그 밖의 비밀을 이 방식으로 두지 않는다.
   - 설치 기록(`<home>/installed.json`)과 런타임 상태(`<home>/run/`)는 설정이 아니라 사실이고 코덱을 거치지 않는다(AD-19, Conventions).
   - 읽기·쓰기는 Runtime의 설정 코덱 하나만 한다(설치기 포함). 모르는 키는 경고하고, Core에는 값으로 넘긴다.
 
@@ -341,11 +344,11 @@ sequenceDiagram
 - **Binds:** FR-25, NFR-2, NFR-9, R3
 - **Prevents:** 코드와 스키마 버전이 어긋난 채 조용히 쓰는 것, 기억이 기계와 함께 사라지는 것, 흔적이 남는 제거, 제거가 DB 볼륨까지 지우는 것
 - **Rule:**
-  - 스키마 버전은 소유자별로 `brain.schema_migrations(owner, version, name, checksum, applied_at)`에 있다(singleton `schema_version`을 대체, AD-31). **마이그레이션은 `setup run`, 플러그인 bootstrap의 갱신 경로, 확장 설치·갱신만 실행**한다.
+  - 스키마 버전은 소유자별로 `brain.schema_migrations(owner, version, name, checksum, applied_at)`에 있다(singleton `schema_version`을 대체, AD-31). **마이그레이션은 `setup run`, 플러그인 bootstrap의 갱신 경로와 `setup upgrade`(같은 공통 갱신 함수), 확장 설치·갱신, 새 홈으로의 `backup restore`만 실행**하고 모두 공통 실행기 하나를 부른다(2026-10-28, epic 5).
   - 런타임 명령은 시작할 때 소유자별 기대 버전(core와 설치된 각 확장)을 확인한다. 다르면 DB에 쓰지 않고 spool로 보내며, 경고 `SCHEMA_MISMATCH`와 함께 doctor에 올린다.
-  - `setup upgrade`는 아직 없다(epic 5). 갱신 순서는 코드 갱신 → 빌드 → 마이그레이션 → shim 재작성(플러그인 없는 Harness만 hook 재등록) → 데몬 LaunchAgent 일치(AD-25) → 데몬 재시작(AD-27) → doctor → 완료 기록(AD-19)이고, 플러그인 hook이 시작하는 ff+build가 이 함수를 쓴다(AD-19). `setup upgrade`도 같은 함수를 쓴다.
-  - 백업은 V1 뒤 epic 5다. 백업은 가리지 않은 원문이다(2026-10-28 사용자, U2). 묶음은 `pg_dump` custom 형식(brain과 설치된 확장 schema 전부), `pg_dumpall --globals-only`(role), FileStore 블롭 폴더, manifest(owner별 schema 버전·테이블별 건수·해시)다 [ASSUMPTION: 추천안, 사용자가 바꿀 수 있음]. 백업에 JSON(L)을 쓰지 않는다. Brain 없이 읽는 가린 JSONL 내보내기(CAP-12, Conventions)는 백업과 다른 산출물이다. 백업 위치 설정과 doctor의 오래된 백업 경고(기본 7일)도 epic 5다.
-  - `setup uninstall`은 Brain 표식이 붙은 hook, shim, 데몬 LaunchAgent(AD-25), `<home>/run/`(pid·heartbeat·`stop-remind/`, 소켓은 V1 뒤), `<home>/log/`, `installed.json`을 지우고 DB 컨테이너를 내린다. 플러그인은 사용자가 `claude plugin uninstall`로 지운다(안내만). DB 볼륨(AD-34)과 데이터 폴더(`files/`, spool, 미러, `extensions/`)는 별도의 명시적 확인을 받아야 지운다.
+  - `setup upgrade`는 epic 5가 만든다. 갱신 순서는 코드 갱신 → 빌드 → 마이그레이션 → shim 재작성(플러그인 없는 Harness만 hook 재등록) → 데몬 LaunchAgent 일치(AD-25) → 데몬 재시작(AD-27) → doctor → 완료 기록(AD-19)이고, 플러그인 hook이 시작하는 ff+build가 이 함수를 쓴다(AD-19). `setup upgrade`도 같은 함수를 쓴다.
+  - 백업은 V1 뒤 epic 5다. 백업은 가리지 않은 원문이다(2026-10-28 사용자, U2). 묶음(`brain backup create`, `<home>/backups/<id>/`, 0700/0600, 임시 → 검증 → rename 발행)은 compose 서비스 안 PG client로 뜬 `pg_dump` custom 형식(brain과 설치된 확장 schema 전부), `pg_dumpall --globals-only --no-role-passwords`(role, 비밀번호는 복구 때 묶음의 `.env`에서 다시 설정), Brain 소유 로컬 블롭(Drive로 옮긴 원본은 `remote_only`, external은 `external`로 manifest에만), `.env`·`config.toml`(원문, 비밀 포함 여부를 manifest에 적음), manifest(owner별 schema 버전·테이블별 건수·정규형 해시·구성 파일 해시·redaction 기준점)다(2026-10-28 epic 5, 이전 ASSUMPTION을 대신함). dump와 건수·해시 reader는 같은 export snapshot을 쓰고 백업 동안 블롭 삭제는 pin으로 보류한다. 복구(`brain backup restore`)는 새 Brain 홈(새 compose project·volume·port·Label)으로만 하고, 복원한 설정의 접속 URL·로컬 경로를 대상 값으로 다시 바인딩하며, 복구 검증 동안 예약·일감 drain·외부 발신을 자동으로 재개하지 않는다. Garmin tokenstore는 백업하지 않는다. 기존 DB에 합치는 가져오기(D0)와 가린 JSONL의 되살리기는 V1 뒤 backlog다. 백업에 JSON(L)을 쓰지 않는다. Brain 없이 읽는 가린 JSONL 내보내기(CAP-12, Conventions)는 백업과 다른 산출물이다. 백업 위치 설정과 doctor의 오래된 백업 경고(기본 7일)도 epic 5다.
+  - `setup uninstall --all`은 Brain 표식이 붙은 hook, shim, 데몬 LaunchAgent(AD-25), `<home>/run/`(pid·heartbeat·`stop-remind/`, 소켓은 V1 뒤), `<home>/log/`, `installed.json`을 지우고 DB 컨테이너를 내린다. 플러그인은 사용자가 `claude plugin uninstall`로 지운다(안내만). DB 볼륨(AD-34)과 데이터 폴더(`files/`, spool, 미러, `extensions/`, `backups/`)는 `--delete-data`와 별도의 명시적 확인을 받아야 지운다(비대화형에서 확인이 없으면 exit 3). `.env`·외부 원본·Drive 파일·Garmin tokenstore는 지우지 않는다(2026-10-28, epic 5).
 
 ### AD-21 — 밀린 일은 `work_items` 하나에 쌓는다
 
@@ -379,10 +382,10 @@ sequenceDiagram
 - **Prevents:** 사용자의 기존 파일을 Brain이 옮기거나 지우는 것, 원본 위치가 바뀔 때 기록을 다시 써야 하는 것, 검증 전에 마지막 사본을 지우는 것, 고아 파일이 쌓이는 것, 확장이 FileStore 규칙을 다른 언어로 다시 구현하는 것
 - **Rule:**
   - 파일은 내용(`files`, `content_hash`는 `sha256:<소문자 hex>`)과 위치(`file_locations`)로 나눈다. 위치는 저장소 종류, locator, **소유(`brain | external`)**다. 같은 내용이 Brain 사본과 사용자 원본으로 동시에 있는 것이 정상이다(내용 행 하나, 위치 둘). 소유는 내용이 아니라 위치의 속성이다.
-  - Brain 위치의 locator는 내용의 순수 함수다(`<h0-2>/<h2-4>/<hex><확장자>`, 임시 파일 → rename). 그래서 넣기는 멱등이다. 절대 경로와 URL은 저장하지 않고 위치로부터 그때 만든다. `external` 로컬 위치의 locator는 홈 기준 `~/` 상대 경로이며, 홈 밖 파일은 external 위치를 남기지 않는다.
+  - Brain 위치의 locator는 내용의 순수 함수다(로컬은 `<h0-2>/<h2-4>/<hex><확장자>`, 임시 파일 → rename. Drive는 Brain 루트 폴더 안의 `<hex><확장자>`이고 remote file id는 locator가 아니라 `drive_uploads` 매핑에 둔다, 2026-10-28 epic 8). Drive FileStore의 넣기·가져오기·확인·URL·지우기는 모두 `(root_folder_id, content_hash)`의 `drive_uploads` 매핑 하나로 remote id를 해석하고, 이름 검색 결과로 매핑을 대신하지 않는다. 매핑의 생성·재개·확정은 이전 일감과 Drive put이 공유하는 저장 함수 하나가 소유하며, 같은 키의 동시 put도 확정 remote id 하나로 수렴한다. 그래서 넣기는 멱등이다. 절대 경로와 URL은 저장하지 않고 위치로부터 그때 만든다. `external` 로컬 위치의 locator는 홈 기준 `~/` 상대 경로이며, 홈 밖 파일은 external 위치를 남기지 않는다.
   - `FileStore` port(넣기, 가져오기, 확인, 위치→URL, 지우기)는 **`brain` 소유이면서 설정된 루트 안의 위치에만** 쓰고 지운다. 그 밖의 위치에 대한 쓰기·지우기는 port가 거부하고, 계약 테스트가 고정한다. V1은 로컬 구현(epic 10)과 Drive 구현(epic 8)을 낸다(2026-10-26). 루트는 `[files] path`(기본 `~/.second_brain/files/`, 동기화 폴더 금지, 권한 0700/0600)다.
   - `@`파일의 원본은 붙인 시점의 내용이다: transcript의 전체 바이트를 우선하고, 없으면 읽기 전용으로 읽은 디스크 파일의 줄 수·바이트 수가 기록과 같을 때만 저장하며, 얻지 못하면 `missing_at_ingest`로 남긴다.
-  - `files.home`은 `brain` 위치 하나를 가리킨다. 원본 이전은 넣기 → 저장소 해시(`remote_checksum`) 또는 되읽기로 검증 → **같은 쓰기 트랜잭션에서 검증 시각 기록과 `home` 전환** → 옛 위치 삭제는 별도 일감이다. Drive로 옮긴 로컬 원본은 DB 설정 `drive.keep_local_days` 보관 기간까지 지난 뒤에만 지운다(epic 8). 이전은 양방향(로컬 ↔ Drive)이고, 검증 없이 지우는 경로는 없다.
+  - `files.home`은 `brain` 위치 하나를 가리킨다. 외부 소스(Drive 감시 폴더 등)에서 임시로 내려받아 추출한 내용은 `brain` 위치를 만들지 않으며(`files` 행과 추출 세대만, 원본은 `source_files`가 가리킴), 원본 삭제·접근 상실은 그 source 항목에 남기고 같은 내용의 다른 정상 원본까지 `source_unreachable`로 바꾸지 않는다(2026-10-28, epic 8). 원본 이전은 넣기 → 저장소 해시(`remote_checksum`) 또는 되읽기로 검증 → **같은 쓰기 트랜잭션에서 검증 시각 기록과 `home` 전환** → 옛 위치 삭제는 별도 일감이다. Drive로 옮긴 로컬 원본은 DB 설정 `drive.keep_local_days` 보관 기간까지 지난 뒤에만 지운다(epic 8). 이전은 양방향(로컬 ↔ Drive)이고, 검증 없이 지우는 경로는 없다.
   - 첨부는 파일을 먼저 저장소에 넣고(트랜잭션 밖) 그 뒤 행을 쓴다(AD-7). 루트 안에 있으나 위치 행이 없고 유예(기본 24시간)가 지난 블롭은 drain의 고아 정리 일감이 지우고, doctor가 건수·바이트를 보인다(V1 뒤, 2026-10-26. V1은 Brain 위치 블롭 하나를 지우는 멱등 일감만 둔다). 첨부 바이트는 spool에 넣지 않는다(spool 한 줄은 64KB 이하, 첨부는 메타데이터 한 줄만).
   - `message_attachments`의 키는 `(message_id, ordinal)`이다. parser는 첨부의 자리와 출처만 내고, 내용(`file_id`)과 상태(`stored | missing_at_ingest`)는 수집이 한 번 채운다.
   - **확장의 파일**은 파일 등록 요청 행(`file_requests`)으로만 들어온다. 확장이 요청 행을 넣으면 core 일감이 FileStore로 넣는다. 확장은 블롭과 `files` 행을 쓰지 않는다(AD-30). [ADOPTED]
@@ -397,7 +400,7 @@ sequenceDiagram
   - 추출은 drain의 일감(AD-21)이다. 형식은 확장자가 아니라 내용으로 판정한다.
   - 추출 한 번은 `document_extractions` 한 행(파일, `extractor_version`, 파일당 단조 증가하는 `attempt`(Store가 삽입 트랜잭션 안에서 `max+1`로 배정, `(file_id, attempt)` UNIQUE), 상태 `ok | failed | unsupported | too_large | redacted`, 실패하면 `failed_stage(read | extract | chunk | index)`)이고, 조각(`document_chunks`)은 그 행에 속한다. `failed`가 되는 쓰기는 `failed_stage`를 가져야 하고 trigger가 강제한다(0005, 그 이전 행은 예외, 2026-10-19). 조각마다 `chunk_locator`(JSON; `type ∈ {pdf, docx, text, time, sheet}`(V1 구현은 pdf·docx·text 세 종류, time·sheet는 소비자가 생길 때, 2026-10-26) 뒤에 종류별 필드: pdf 쪽·영역 `page`·`bbox` / docx 블록 `block` / text 글자 범위 `start`·`end`(코드 포인트, Conventions) / time 밀리초 `start_ms`·`end_ms` / sheet `sheet`·`row_start`·`row_end`)를 둔다. 정규형은 Core 코덱 하나가 만든다(`type` 첫 키, 정해진 키 순서, null 생략, 공백 없음). 기존 `page` 컬럼은 `chunk_locator.page`의 읽기 전용 사본(인덱스·정렬용)이고 같은 트랜잭션에서 채운다. 진실 출처는 `chunk_locator`다. pdf가 아니면 `page`는 null이다. 두 값이 다르면(null 포함 비교) Store가 쓰기를 거부한다. `files.current_extraction_id`가 검색에 쓰이는 단 하나의 세대다. 재추출은 새 세대를 만든 뒤 같은 트랜잭션에서 포인터를 바꾸고 옛 세대를 지운다. 포인터 전환은 현재 세대보다 `attempt`가 큰 세대만 할 수 있다(늦게 끝난 옛 시도가 덮어쓰지 못한다). 실패하면 포인터는 그대로이고, 그 세대가 남긴 조각은 실패를 기록하는 쓰기(또는 뒤따르는 정리 일감)가 지운다. 청구가 만료된 추출 일감의 열린 세대(`finished_at` null)는 다음 청구가 `failed`(`failed_stage`는 마지막 단계)로 닫은 뒤 새 `attempt`를 만든다. 열린 세대를 건너뛰는 것은 그 세대의 일감 청구가 살아 있을 때뿐이다(AD-21, 2026-10-16). 조각 쓰기는 배치(예: 200조각)로 나눠 AD-7의 2초를 지킨다.
   - `extractor_version`은 사용한 라이브러리 버전을 담은 Core 상수다(예: `doc/1+pdfjs-6.4.299+mammoth-1.13.0`). 라이브러리만 올리고 상수를 그대로 두는 변경은 하지 않는다.
-  - 원본이 DB 밖에 있으므로 추출 세대와 조각은 내보내기·복구에 **포함한다**(다시 만드는 파생물이 아니다). 원본에 접근할 수 없는 파일(복구 직후, 연동 해제)은 `files.source_unreachable_at`으로 표시하고 기존 조각은 계속 검색된다. 결과에 경고 `FILE_SOURCE_UNREACHABLE`를 붙이고 재추출 일감은 만들지 않는다.
+  - 원본이 DB 밖에 있으므로 추출 세대와 조각은 내보내기·복구에 **포함한다**(다시 만드는 파생물이 아니다). 원본에 접근할 수 없는 파일(복구 직후, 연동 해제)은 `files.source_unreachable_at`으로 표시하고 기존 조각은 계속 검색된다. 결과에 경고 `FILE_SOURCE_UNREACHABLE`를 붙이고 재추출 일감은 만들지 않는다. 외부 소스 항목(`source_files`)의 원본 삭제·접근 상실은 그 항목의 접근 불가 시각에 남기고, 그 항목에서 온 결과(본문 조각이든 이름 전용이든)에 같은 경고를 붙이며 재추출하지 않는다. 외부 source의 접근 불가와 이 경고는 해당 `source_files` 출처를 기준으로 판정하며, 다른 정상 source나 검증된 `brain` 위치의 읽기·재추출을 막지 않는다. `files.source_unreachable_at`은 그 내용에 사용할 수 있는 원본이 하나도 없을 때만 쓰고, 정상 원본이 돌아오면 해제한다. 기존 추출 조각은 계속 검색한다(2026-10-28, epic 8).
   - 이름·경로는 내용과 별도로 색인한다: 위치의 경로와 첨부의 표시 이름을 모은 `file_names`(파생)가 색인 대상이다. 이미지는 `file_metadata`에 EXIF를 남긴다(V1 뒤, epic 4의 1, 2026-10-26. V1의 사진은 폴더·파일 이름으로 찾는다). 촬영 일시는 시간대가 없으므로 `captured_at_local`(원문), `captured_at`(시간대를 알 때만 AD-13 정규형), `captured_at_source`를 둔다. EXIF는 신뢰할 수 없는 입력이다.
 
 ### AD-25 — launchd는 데몬을 띄우고 다시 띄우기만 한다
@@ -467,7 +470,7 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
 - **Rule:**
   - database는 하나다. core schema는 `brain`이고, 확장마다 자기 schema(`garmin`)를 갖는다. 확장 → core FK는 허용하고, core → 확장 FK는 금지한다.
   - 확장은 자기 schema에 자유롭게 쓴다. core에는 공개 계약 표에만 쓴다: 건강 측정·요약, legacy 이전 분석(`analyses`), 채널 발신 요청과 legacy 채널 이력, 파일 등록 요청(`file_requests`). 쓰는 role은 자기 `brain_ext_<name>`이고 INSERT만 한다. row-level security로 출처가 자기인 행만 쓸 수 있고, UPDATE·DELETE는 없다. 그 밖의 core 표에는 권한이 없다. raw와 정제는 한 트랜잭션에 쓸 수 있다.
-  - 확장은 고정 모양의 읽기 전용 view `<ext>.raw_records`(source, account, key, endpoint, fetched_at, checked_at, 받은 그대로의 text인 body)를 낸다. core는 확장 데이터를 이 view로만 읽는다.
+  - 확장은 고정 모양의 읽기 전용 view `<ext>.raw_records`(source, account, key, endpoint, fetched_at, checked_at, 받은 그대로의 text인 body)를 낸다. core는 확장 데이터를 이 view로만 읽는다. `key`는 확장이 정하는 안정 정규형이고 view 안에서 `(source, account, key, endpoint)`가 하나의 원본을 가리킨다. Garmin은 `<scope>/<원래 key>`다(2026-10-28, epic 14).
   - 확장 role은 계약 표 owner와 분리한 non-superuser·NOBYPASSRLS이며 RLS WITH CHECK 출처 정책은 변경 가능한 GUC가 아니라 DB role에 결합한다.
   - role은 셋이다: 마이그레이션 소유자(setup), `brain_app`(TS 런타임), `brain_ext_<name>`(자기 schema 전부, core 계약 표 INSERT, core 공개 view SELECT). 감독자는 확장의 DB URL을 자식 프로세스의 환경 변수로 넘기고 argv에는 넣지 않는다(AD-33).
   - core가 요청→`work_items` 인계를 단독 소유한다. 미인계 요청을 다시 발견하고 요청 ID 대상의 멱등 일감 생성·인계 표식을 같은 트랜잭션에 확정한다. 요청 INSERT 뒤 crash해도 복구하며 legacy 채널 이력은 인계하지 않는다. `file_requests` 계약은 epic 14가 최초 사용 전에 소유한다: 출처+안정된 요청 키, 내구성 인계 경로, 예상 해시·크기·미디어 타입, 공개 결과 view의 `request_id → file_id/실패`와 상태·재개 규칙. core가 해시 검증·파일 관계 확정을 완료할 때까지 생산자는 바이트를 보존하며 확인 뒤 core가 정리한다.
@@ -489,7 +492,7 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
 - **Prevents:** 이전·수집·조회가 다른 갱신 규칙을 쓰는 것, 기존 값을 덮어쓰는 것(R7), 빠진 metadata를 추정값으로 채우는 것
 - **Rule:**
   - core 건강 행은 불변이다. 논리 측정 키(출처·계정·지표·운동 identity·현지 날짜/순간·시간대)와 보관 키를 구분한다. 보관 키는 논리 키 + 데이터셋/이전 출처 + 정규화 버전 + 관측 revision(원천의 안정된 revision 또는 원문 해시)이다. 같은 입력 재처리는 멱등이고 수정된 관측은 같은 정규화 버전이어도 새 행이다.
-  - “현재” view는 명시적으로 승인된 authoritative dataset/출처 안의 관측 revision과 정규화 버전을 적용한다. 기록 시각으로 데이터셋 권위를 추정하지 않는다. 미선택 충돌은 ambiguity로 반환하고 기본 집계에서 제외한다. epic 14가 revision 순서·정규화 버전 비교·동률 처리와 소스 선택 기록을 계약으로 고정하며 epic 16·17·18이 소비한다. C6 기준 소스·충돌 정책 사용자 선택 전 실제 Garmin 반입/publish는 금지다(AD-36).
+  - “현재” view는 권위 선택 기록(규칙 버전, dataset 순서, 적용 범위, 선택·미선택 provenance)의 dataset 순서 → 관측 revision → 지원 정규화 버전 순으로 고른다. 기록 시각으로 데이터셋 권위를 추정하지 않는다. 관측 revision은 원문 해시로 식별하고 같은 dataset 안에서 원천 수신 시각(`fetched_at`)으로 순서를 정한다. 정규화 버전은 정수로 비교한다. 규칙 순서로 고른 값이 현재이고, 고르지 않은 후보는 보관만 된다. 규칙으로 고를 수 없는 충돌(같은 순위 안의 다른 값, 같은 시각·다른 해시, 계정 미확인)만 ambiguity로 반환하고 기본 집계에서 제외한다. 같은 값의 동률은 하나로 보인다. epic 14가 이 계약을 고정하며(규칙 v1은 C6 선택지 A, AD-36) epic 16·17·18이 소비한다. 새 수집 출처를 앞에 둔 새 규칙 버전은 epic 16이 쓴다(2026-10-28).
   - epic 14가 지표 식별자·정규 단위·값 타입·NULL 의미·계정 identity·날짜/순간 배타 조건·운동 identity·metric별 허용 집계를 정의하고 TS/Python이 같은 fixture를 통과한다. NULL 키는 DB에서 동등하게 처리해 재삽입 중복을 막는다. epic 17의 구조화 수치 조회 port는 기간·지표·운동·집계 조건을 받고 코드가 합계/평균을 계산하며 독립 계산 fixture로 검증한다(R15).
   - legacy 출처·원래 값은 보존한다. `analyses`는 불변이고 재생성은 새 행이다. 빠진 metadata는 명시적 null/flag로 두고 추정하지 않는다(C5).
 
@@ -529,8 +532,9 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
   - 평가 순서(day → 7d → 30d → all)는 일감 의존으로 표현한다.
   - 발신은 채널 발신 요청을 거친다(epic 15).
   - digest와 그래프는 확장이 만들고(AD-29), 정제 행과 파일 등록 요청으로 들어온다.
-  - `analyses` 최소 계약·DDL은 처음 쓰는 epic 14가 이전 전에 정한다. legacy 원래 키·dataset, nullable 모델/시각과 누락 flag, 파일 요청/파일 관계, 새 분석 revision을 포함하며 epic 18(core 건강 분석)은 호환 확장한다. 분석 그래프는 입력 snapshot/cutoff·건강 revision·소스 권위·시간대를 고정해 공유하고 선행 analysis ID를 남긴다. scope마다 검증·저장을 즉시 확정한 뒤 다음 일감을 풀며 후속 평가·그래프·발신 실패가 성공을 롤백하지 않는다. 재시작은 저장된 성공부터 잇는다. 모델 실행 adapter는 이 Mac의 Codex 로그인 환경을 사용하고 Runtime이 Core 실행 port에 조립한다.
-  - 발신은 생산 결과의 안정된 식별자+채널 대화 식별자+목적/개정의 의미 키로 UNIQUE 중복 억제한다(요청 UUID와 별도). epic 15가 원자적인 최초 시도 gate를 발신 전에 저장하고 실제 결과·불명 상태를 분리한다. 일반 retry는 gate를 우회하지 않고 불명 결과를 성공으로 추정하거나 무조건 재전송하지 않는다. 불명 재시도 세부는 Deferred다. 사용자·스레드·선제 메시지를 같은 대화로 잇는 출처/외부 식별자·provenance를 core 채널이 소유한다. Telegram adapter는 Core 채널 port 구현이고 Runtime이 조립한다. 모델 입력·도구 응답·발신 텍스트는 출력 코덱 등록부·비밀 fixture를 통과하며 원본 파일 바이트 보존과 구분한다.
+  - `analyses` 최소 계약·DDL은 처음 쓰는 epic 14가 이전 전에 정한다. legacy 원래 키·dataset, nullable 모델/시각과 누락 flag, 파일 요청/파일 관계, 새 분석 revision을 포함하며 epic 18(core 건강 분석)은 호환 확장한다. 분석 그래프는 입력 snapshot/cutoff·건강 revision·소스 권위·시간대를 고정해 공유하고 선행 analysis ID를 남긴다. scope마다 검증·저장을 즉시 확정한 뒤 다음 일감을 풀며 후속 평가·그래프·발신 실패가 성공을 롤백하지 않는다. 재시작은 저장된 성공부터 잇는다.
+  - 분석 에이전트(모델 CLI adapter 이름)·모델·effort는 사용자 설정(DB 설정, AD-18)이다(2026-10-28 사용자, epic 18). 기본값은 옛 Garmin과 같다: Codex, 모델은 CLI 기본, effort high, 호출 timeout 20분. adapter는 Codex와 Claude Code 둘이고 각각 Core 실행 port 구현이며, Runtime이 설정에 맞는 것을 조립한다. 두 adapter는 같은 출력 schema 검증과 그룹 정리·reap(AD-33)을 지나고, 토큰을 프로세스 ABI v1의 `usage` 칸에 채운다. 실행은 그 CLI의 이 Mac 로그인 환경을 쓴다. 설정한 CLI가 없거나 로그인되지 않았으면 그 일감은 다시 하지 않는 오류로 `failures`에 남고 doctor가 보인다.
+  - 발신은 생산 결과의 안정된 식별자+채널 대화 식별자+목적/개정의 의미 키로 UNIQUE 중복 억제한다(요청 UUID와 별도). epic 15가 원자적인 최초 시도 gate를 발신 전에 저장하고 실제 결과·불명 상태를 분리한다. 일반 retry는 gate를 우회하지 않고 불명 결과를 성공으로 추정하지 않는다. 불명 결과는 같은 요청의 새 attempt로 지수 간격 재시도하고 10번 실패하면 `failures`에 남긴다(2026-10-28 사용자, epic 15. 중복 가능성을 받아들임). 사용자·스레드·선제 메시지를 같은 대화로 잇는 출처/외부 식별자·provenance를 core 채널이 소유한다. Telegram adapter는 Core 채널 port 구현이고 Runtime이 조립한다. 모델 입력·도구 응답·발신 텍스트는 출력 코덱 등록부·비밀 fixture를 통과하며 원본 파일 바이트 보존과 구분한다.
 
 ### AD-36 — Garmin 이전은 검증한 출처와 배치로만 확정한다
 
@@ -538,8 +542,8 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
 - **Prevents:** source-local ID 충돌, 조용한 충돌 손실, 재개 중 중복, 기존 분석을 재생성으로 대체하는 것
 - **Rule:**
   - epic 14 importer가 dataset/table/원래 key → 대상 UUID mapping, import batch/version·checkpoint를 영속 소유한다. 작은 트랜잭션마다 데이터·mapping·진행을 함께 확정하고 동일 batch 재개를 지원한다(AD-8).
-  - preflight는 대상 호환성·소스 지원 버전·예상 변경·충돌을 보고한다. private `data/absorption-prep/LATEST`와 manifest의 전체 inventory·해시를 다시 확인하고 schema10/15 원형 snapshot을 읽기 전용으로 보존한다. 관찰 DB 5개·파일 349개는 당시 수치이며 현재 목록의 대체가 아니다. writer 정지 또는 증분 재캡처/재검증 뒤 publish한다. 원본 업그레이드·재분석으로 이전을 대신하지 않는다.
-  - C6 기준 소스·겹치는 자연키 충돌 정책은 사용자가 고르기 전 실제 반입/publish하지 않는다. 미선택 후보도 원형/출처를 보존한다. 건수·자연키·NULL/단위·원문/파일 해시·FK mapping·분석 본문·artifact 관계를 전수 비교하고 재실행/실패 재개·비발신을 검증한 보고서 뒤 완료한다.
+  - preflight는 대상 호환성·소스 지원 버전·예상 변경·충돌을 보고한다. schema10/15 원형 snapshot을 읽기 전용으로 보존한다. 관찰 DB 5개·파일 349개는 당시 수치이며 현재 목록의 대체가 아니다. 실제 반입은 옛 writer를 멈추지 않고, 반입 직전에 만든 새 일관 capture(DB는 읽기 전용 URI의 SQLite backup API, 파일은 복사 전후 해시 비교, private manifest 갱신)를 기준으로 한다. 옛 `LATEST` capture와의 목록·건수 차이는 보고서에 남긴다. capture 뒤 옛 writer의 변경과 옛 예약 중지는 epic 16의 전환이다(2026-10-28, epic 14). 원본 업그레이드·재분석으로 이전을 대신하지 않는다.
+  - C6 기준 소스·겹치는 자연키 충돌 정책은 2026-10-28 사용자 위임으로 정했다: epic 14의 선택지 A(운영 → 개발 → 보관본 순, dataset 역할은 private manifest의 source 분류)가 권위 기록 규칙 v1이다. 계정 identity는 raw 본문의 Garmin 사용자 profile id로 dataset마다 확인하고, 모이지 않으면 계정 미확인으로 보존한다. 미선택 후보도 원형/출처를 보존한다. 건수·자연키·NULL/단위·원문/파일 해시·FK mapping·분석 본문·artifact 관계를 전수 비교하고 재실행/실패 재개·비발신을 검증한 보고서 뒤 완료한다. Garmin 이전의 공개 명령 출력·보고서·plan에는 건수, 충돌·제외 사유 수, 단계별 상태와 값 없는 성공 여부만 둔다. 해시 값·원문·계정·개인 날짜·건강값·capture 경로·오류 상세·doctor/조회의 원시 출력은 Brain 홈의 확장 데이터 아래 private 보고서에만 두고, 공개 실패 원인은 개인 값을 뺀 분류만 쓴다.
   - 최소 provenance는 `../prep-garmin-absorption/migration-contract.md`의 대상별 보존/검증 표다. epic 14·16은 raw scope/library_version·normalize 상태/오류/history_start/원본 연결은 확장 schema, 모델/평가 시각/입력 근거는 core 분석, body 필드 mtime/원본·artifact 연결은 측정·파일 메타에 보존하고 위치 대응표를 낸다. 공개 raw view 필드는 AD-30이며 내부 provenance를 모두 노출한다는 뜻은 아니다. 없는 metadata·소스에 없던 과거 이력은 만들지 않는다.
 
 ## Table Contract
@@ -553,18 +557,21 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `worktrees` | `(project_id, path)` | `sessions.ensure` | `removed_at`만 drain이 채움 |
 | `workspaces` | `name` | 예약(slice 1은 쓰지 않음, 2026-10-15) | — |
 | `sessions` | `(harness, harness_session_id)` | 생성: `sessions.ensure`. 갱신: `sessions.ingest`. `tag_source`·`first_cwd`: 수집·`fillSessionTags` | `tag_source`·`first_cwd`는 null → 값만, 출처의 null 여부는 project와 같음(0007). 불변: 키, `user_id`(→ `users.id`), `machine`, `started_at`, 꼬리표(비어 있으면 `session_identity` 일감이 한 번 채울 수 있음, AD-12), `ingest_source(live\|import)`. 단조: `ended_at`, `parser_version`, `ingested_at`, 커서(`last_harness_message_id`, fingerprint) — 단 처음부터 읽은 배치는 기준이 같을 때 뒤로 옮기거나 지울 수 있다(AD-4). 한 번만 씀(처음 값): `start_source(startup\|resume\|clear\|compact\|fork)` — null인 행에만 쓰고 덮어쓰지 않는다. 예약: `workspace_id`(slice 1은 쓰지 않음), `continued_from_session_id`(slice 1은 채우지 않음) |
-| `messages` | `(session_id, harness_message_id)`. 순서는 `occurred_at`(번호 없음) | `sessions.ingest` | 불변(예외: `messages.redact`). `occurred_at`은 원래 발화 시각 |
+| `messages` | `(session_id, harness_message_id)`. 순서는 `occurred_at`(번호 없음) | `sessions.ingest` | 불변(예외: `messages.redact`). `occurred_at`은 원래 발화 시각. `body`의 U+0000은 U+FFFD로 넣고 원래 바이트는 nullable `bytea` 짝 칸에 둔다(AD-11 U+0000 저장, 2026-10-28). transcript 텍스트를 넣는 다른 칸(`tool_notes` 포함)도 같다 |
 | `tool_notes` | `(session_id, call_id)`가 있으면 그것, 없으면 `(session_id, harness_message_id, ordinal)` | `sessions.ingest` | 불변. `call_id`는 harness가 그 호출에 준 id(Claude Code는 `tool_use.id`, 0005)이고 버전이 올라 메모 자리가 바뀌어도 같은 호출을 알아보는 열쇠다. `call_id`가 없는 옛 행은 자리로만 알아보므로, parser는 메모마다 "이전 버전이 같은 호출을 저장했을 수 있는 자리"(`earlierPositions`)를 함께 내고 Store는 그 자리에 `call_id`가 null인 행이 있으면 넣지 않는다 — 상위 집합이어도 안전하다(그 자리에 행이 없으면 맞지 않는다). `ordinal`은 음수일 수 있고 "그 메시지 줄 앞에서 한 호출"을 뜻하며 내용의 첫 메시지에만 있다 |
 | `log_entries` | `id`(작성 프로세스가 정한 UUIDv7) | 생성: `log.append`. 문장: `log.edit`. 상태·범위: `log.set-state`, `log.set-scope`. `pending→on`: drain·`log.append` | `kind`, `session_id`, `occurred_at`, `author_model` 불변 |
 | `log_entry_edits` | `id` | `log.edit` | 불변 |
-| `chunks` | `(session_id, index_config_id, from_at, to_at)` | drain | 파생, 다시 만들 수 있음 |
+| `chunks` | `(session_id, index_config_id, from_at, to_at, part)`. `part`는 같은 `(session_id, index_config_id, from_at, to_at)` 안에서 유일한 비음수 정수다: 분할 없는 단일 조각은 0, 분할 조각은 1부터 연속 배정하고 메시지마다 초기화하지 않는다. 같은 `occurred_at` 메시지 묶음은 일반 메시지 경계 분할에서 한 단위로 취급한다. 단, 2,400자를 넘는 메시지의 내부 분할은 이 금지의 예외이고, 생긴 조각은 실제 메시지 시각을 유지하며 `part`로 구별한다. 같은 시각 입력의 정규 나열·코드 포인트 분할·번호 배정은 Core chunker 하나가 정하고 증분 생성과 redact 재생성이 공유한다(같은 시각 메시지에 대화상 선후를 부여하지 않는다). 규칙과 버전은 `index_configs.chunk_params`에 기록한다(2026-10-28, epic 17) | drain | 파생, 다시 만들 수 있음 |
 | `embeddings` | `(target_kind, target_id, index_config_id)` | drain | 파생 |
-| `index_configs` | `(kind, model, dimensions, chunk_params)` | `setup run`, `index.rebuild` | 불변 |
+| `index_configs` | `(kind, model, dimensions, chunk_params)` | `setup run`, `index.rebuild` | 불변. 종류별 활성·요청 설정 포인터는 `index.rebuild`만 바꾼다(완성 뒤 원자 전환, AD-15, 2026-10-28 epic 4) |
 | `redactions` | `id`. 대상은 `message_id`·`file_id`·`tool_note_id` 중 하나 | `messages.redact`(본문과 도구 메모 대상. `detected`면 `pattern_version` 기록), `files.redact`. 수집·추출은 쓰지 않는다(마스킹 B, AD-11) | 불변 |
 | `context_injections` | `id` | `context.show`·`log.remind`가 spool에 쓰고 drain이 넣음(`kind`: `start` \| `stop`, 칸의 뜻은 AD-17) | 불변 |
 | `failures` | `(target_kind, target_id, stage, fingerprint)`. 대상 키는 `work_items`와 같다. 세션 수집 실패는 `session`/세션 토큰(`harness:harness_session_id`, 세션 행이 없어도 됨). `harness`·`session_id`는 정보 칸이고 비어 있을 수 있음(2026-10-16) | 모든 경로(실패 기록 함수 하나) | `resolved_at`은 drain이 채움. 같은 키를 다시 만나면 실패 기록 함수가 그 행을 다시 열고(`resolved_at = null`) `occurred_at`(마지막으로 난 때)·`message`를 바꾸며, 0005부터 `first_occurred_at`은 그대로 두고 `occurrences`를 1 올린다(2026-10-19 사용자) |
 | `transcript_files` | `(harness, path)` | drain(폴더 스캔)과 성공한 모든 `sessions.ingest`(hook 경로 포함, 2026-10-19 story 12 Decision 2) | 크기·fingerprint·커서 단조. 단 `cursorReset`인 parse는 줄어든 크기도 쓴다(compact) |
 | `files` | `content_hash` | 첨부 수집(epic 10), 소스 동기화(epic 8) | 내용 불변. `home`, `current_extraction_id`, `redacted_at`(`files.redact`), `source_unreachable_at`(복구·연동 해제)만 바뀜 |
+| `sources` | `id`. 종류·계정마다 하나, changes cursor는 계정마다 하나 | `brain sources connect`·`add`·`remove`·`disconnect`, 동기화 일감(cursor) | 종류·계정 불변. 상태·cursor·연결 세대만 바뀜. epic 8 |
+| `source_files` | `(source_id, remote_file_id)` | 동기화 일감(`source_sync`) | 이름·부모 경로·원격 버전·`content_id`(내려받기 전 null)·접근 불가 시각·색인 상태만 바뀜. `files`에 가짜 해시를 넣지 않는다. epic 8 |
+| `drive_uploads` | `(root_folder_id, content_hash)` | 원본 이전 일감과 Drive put이 공유하는 저장 함수 하나 | remote file id·업로드 상태·resumable session(비공개)·검증 결과만 채움. 확정 뒤 불변. epic 8 |
 | `file_locations` | `(file_id, store_kind, locator)` | 파일 저장·이전 함수, 소스 동기화 | `ownership` 불변. 검증 시각·삭제 시각만 채움. `external` 로컬 위치의 locator는 홈 기준 `~/` 상대 경로이며, 홈 밖 파일은 external 위치를 남기지 않는다. |
 | `message_attachments` | `(message_id, ordinal)` | `sessions.ingest` | 자리·출처 불변, 삭제 거부. `file_id`·상태는 수집이 한 번 채움. `missing_at_ingest`도 확정 기록(0008) |
 | `document_extractions` | `id`, `(file_id, attempt)`. `attempt`는 Store가 삽입 트랜잭션에서 `max+1` 배정. 파일당 진행 중(`finished_at` null) 세대는 하나 | drain(추출) | 열린 세대만 `finished_at`·`status`·`error`·`failed_stage`·`media_type`·`index_config_id`를 닫으며 채움, 닫힌 뒤 불변(0008). 내보내기에 포함 |
@@ -622,7 +629,7 @@ erDiagram
 | --- | --- |
 | 이름 | DB 테이블·컬럼은 `snake_case` 복수형이고, SQL에서는 schema로 한정해 쓴다(`brain.sessions`, `garmin.…`). TS 타입은 `PascalCase`, 함수·필드는 `camelCase`. SDK `<ns>.<verb>` ↔ CLI `brain <ns> <verb>` ↔ MCP `<ns>_<verb>` |
 | ID | UUIDv7, 쓰는 쪽이 만든다(AD-22). DB에서는 `uuid`, JSON에서는 정규 소문자 문자열. 프로세스 경계를 넘는 세션 토큰은 `harness:harness_session_id` |
-| DB 타입 | 절대 시각은 `timestamptz`, 현지 날짜가 뜻인 값은 `date` + IANA 시간대 칸(AD-13). 외부에서 받은 JSON 원문은 받은 그대로 `text`에 둔다 — `jsonb` 재직렬화로 대체하지 않고, 거르기용 `jsonb` 사본은 둘 수 있다. 내부의 구조 값은 `jsonb` |
+| DB 타입 | 절대 시각은 `timestamptz`, 현지 날짜가 뜻인 값은 `date` + IANA 시간대 칸(AD-13). 외부에서 받은 JSON 원문은 받은 그대로 `text`에 둔다 — `jsonb` 재직렬화로 대체하지 않고, 거르기용 `jsonb` 사본은 둘 수 있다(U+0000은 U+FFFD로 바꾼 파생 투영, AD-11). 내부의 구조 값은 `jsonb` |
 | DB role | 마이그레이션 소유자(setup), `brain_app`(TS 런타임), `brain_ext_<name>`(확장). 권한은 AD-30 |
 | 시각 | DB는 `timestamptz`(UTC, 밀리초). Store port 값·spool·내보내기는 정규형 `YYYY-MM-DDTHH:MM:SS.sssZ`(AD-13). 오프셋을 포함한 ISO-8601은 CLI `--json` 응답에만 쓴다. 사람용 출력만 사용자 설정 `timezone`으로 표시 |
 | 텍스트 | 저장 본문은 Harness가 준 그대로(사람이 요청한 저장본 가리기 제외). Brain 밖으로 나가는 텍스트는 Core 출력 코덱의 가리기를 거친다(AD-11). 비교·대조는 NFC 정규화 후. 위치는 코드 포인트 `[start, end)` |
@@ -635,7 +642,7 @@ erDiagram
 | 설치·런타임 기록 | `apps/cli/dist/build.json` `{commit, schema_version}`(빌드가 씀), `<home>/installed.json`(bootstrap·`setup run`이 완료 검증 뒤 마지막에 임시 파일→rename), `<home>/run/`(`daemon.pid`, `brain.sock`(V1 뒤, AD-26), `heartbeat`, `last-hook-<harness>` — 파일 mtime이 시각 — `stop-remind/<harness>-<id>` 표식(`log.remind`가 차단 뒤에 만들고, drain이 30일 지난 것을 지우며, `setup uninstall`이 폴더째 지운다, AD-17) — 그리고 `plugin.json`: 마지막 SessionStart가 본 `{plugin_root, app_ref, seen_at, last_bootstrap?{at, result, step?, log}}`를 bootstrap이 임시 파일→rename으로 쓰고 값이 바뀔 때만 쓴다. doctor `plugin` 점검이 `installed.json.plugin_root`보다 이것을 앞세운다 — 플러그인 캐시는 버전마다 폴더가 다르므로 완료 기록의 폴더는 "마지막으로 설치한 폴더"일 뿐이다. 2.5 사람 확인 1), `<home>/log/`(크기 회전). 설정 코덱을 거치지 않는다(AD-18, AD-19, AD-27) |
 | hook 응답 | connector adapter 소유(AD-4). 10,000자 이하. hook 경로는 항상 exit 0으로 끝낸다. 턴을 이어 가게 하는 길은 `log.remind`의 top-level `decision: block` 하나뿐이고(AD-17), Stop의 exit 2는 쓰지 않는다 |
 | 오류 | Core는 예상된 실패를 코드가 있는 값으로 돌려주고, 예외는 버그에만 쓴다. 실패는 `failures`에, DB에 쓸 수 없으면 spool에 남긴다. stderr만으로 끝내지 않는다 |
-| 내보내기 (NFR-9, epic 5. 백업이 아니라 사람이 읽는 가린 산출물이다. 백업은 AD-20) | 기존 가린 논리 내보내기 계약: 한 스냅샷 트랜잭션 안에서 테이블당 JSON Lines 하나 + `manifest.json`(스키마 버전, 테이블별 건수, 시각, 비밀 패턴 버전). 복구는 의존 순서대로 insert하고(`files.home_location_id`↔`file_locations.file_id` 순환은 포인터를 비운 채 `files`를 넣고, 위치를 넣은 뒤 포인터를 채운다. `users`도 내보낸다), 원본이 같은 DB 안에 있는 파생물(`chunks`, `embeddings`, `file_names`, 미러)만 다시 만든다. 문서 추출 세대·조각은 내보내고 복구한다. `manifest.json`에 파일 본체 포함 범위(`none | brain_owned`)를 적는다. 본문은 AD-11대로 가린 텍스트다. 이것은 원문 dump와 같은 산출물일 수 없다. 명령별 형식·brain/확장 schema·role 재생성·파일/설정 범위는 U2 결정 후 epic 5가 고정한다. 그 전 제품 백업은 없고 볼륨/기계 손실 복구를 보장하지 않는다 |
+| 내보내기 (NFR-9, epic 5. 백업이 아니라 사람이 읽는 가린 산출물이다. 백업은 AD-20) | 가린 논리 내보내기(`brain export`, 2026-10-28 epic 5): 한 스냅샷 트랜잭션 안에서 테이블당 JSON Lines 하나 + `manifest.json`(스키마 버전, 테이블별 건수, 시각, 비밀 패턴 버전). 이 JSONL에서 되살리는 복구는 V1 뒤 backlog이고, 그때의 순서 계약은 다음과 같다: 복구는 의존 순서대로 insert하고(`files.home_location_id`↔`file_locations.file_id` 순환은 포인터를 비운 채 `files`를 넣고, 위치를 넣은 뒤 포인터를 채운다. `users`도 내보낸다), 원본이 같은 DB 안에 있는 파생물(`chunks`, `embeddings`, `file_names`, 미러)만 다시 만든다. 문서 추출 세대·조각은 내보내고 복구한다. `manifest.json`에 파일 본체 포함 범위(`none | brain_owned`)를 적는다. 본문은 AD-11대로 가린 텍스트다. U+0000 짝 칸이 있는 칸은 논리 원문으로 복원한 뒤 가려서 내보내고, 저장 표현의 `bytea` 원문 짝 칸은 직렬화하지 않는다(2026-10-28, epic 5). 이것은 원문 dump와 같은 산출물일 수 없다. 제품 백업과 복구는 AD-20의 원문 백업(`brain backup`)이다 |
 | 마이그레이션 | 소유자별 SQL 파일(core는 `packages/postgres/migrations/`, 확장은 자기 패키지의 `migrations/`), 소유자 안에서 연속 순번 접두사, 앞으로만. 실행기는 하나다(AD-31). plpgsql trigger·DB 확장(`pg_trgm`)·인덱스도 SQL로. 불변 trigger와 `redactions`·가리기 함수는 core baseline 0001에 함께 들어간다 |
 | 테스트 | port마다 계약 테스트 묶음 하나, 모든 adapter가 통과. 저장소는 실제 PostgreSQL(테스트 compose의 `postgres:18`, 테스트 전용 데이터베이스)로 통합 테스트하고 mock하지 않는다. parser는 회사 내용을 지운 실제 transcript fixture로 테스트한다 |
 | 공개 저장소 위생 | 저장소에는 회사 이름·내용·실제 대화를 넣지 않는다. 예시와 fixture는 중립 이름을 쓴다 |
@@ -653,7 +660,7 @@ erDiagram
 | Kysely | 0.29.7 (저장소 0.29.6). 트랜잭션은 AD-7의 `withWrite` |
 | OrbStack | 사용자가 설치하는 선행 조건, 고정하지 않는다 |
 | commander (CLI) | 15.0.0 |
-| 문서 추출 | `pdfjs-dist` 6.4.299, `mammoth` 1.13.0, `file-type` 22.2.0, `exif-reader` 2.0.3 (2026-10-15 npm 확인. 버전은 `extractor_version`에 들어간다, AD-24) |
+| 문서 추출 | `pdfjs-dist` 6.4.299, `mammoth` 1.13.0, `file-type` 22.2.0, `exifr`(`reviveValues: false`로 날짜·offset 원문 보존, epic 4.1에서 확인. `exif-reader` 2.0.3은 날짜를 Date로 바꾸고 원문 보존 옵션이 없어, 원래 태그 문자열을 얻는 별도 경로·태그 매핑·컨테이너 지원을 입증한 경우에만 대안) (2026-10-15 npm 확인, 2026-10-28 epic 4 결정. 구현 때 버전 고정. 버전은 `extractor_version`에 들어간다, AD-24) |
 | @clack/prompts (설치기) | 1.8.1 |
 | smol-toml (설정) | 1.9.1 |
 | uuid (v7) | 14.0.2 (설치본. 최신 14.0.3, 2026-10-15) |
@@ -661,7 +668,7 @@ erDiagram
 | 임베딩·재순위 (선택) | Model Studio `qwen3.7-text-embedding`(1024) / `qwen3-rerank`. 벡터 저장소는 epic 6 인셉션에서 정한다 |
 | Python (Garmin 확장) | `>=3.12` (기존 Garmin 배포 3.14.8은 관찰 기록. 새 배포 pin·doctor 보안 기준은 3.14.10, `.python-version`) |
 | uv (Garmin 확장) | 고정하지 않는다. 의존성은 확장의 `uv.lock`이 고정한다 |
-| psycopg (Garmin 확장) | 3.3.6, 신규 설치는 `psycopg[binary]`로 host libpq 선행 설치를 피한다. 실제 lock·macOS arm64/Python import·접속 검증은 epic 13·14 |
+| psycopg (Garmin 확장) | 3.3.6, 신규 설치는 `psycopg[binary]`로 host libpq 선행 설치를 피한다. 실제 lock·macOS arm64/Python import·접속 검증은 14.1, 옛 수집 의존을 더한 lock의 arm64 설치는 epic 16(2026-10-28) |
 | garminconnect, curl-cffi, jsonschema, matplotlib, requests (Garmin 확장) | 확장의 `uv.lock`이 고정한다 |
 
 검색 질의(`lower(col) LIKE lower(pattern)`)는 Core가 정한 검색 함수 하나를 adapter가 Kysely의 `sql` 템플릿으로 쓴다(AD-15).
@@ -771,9 +778,9 @@ flowchart TB
 | `pg_bigm`으로 검색 색인 바꾸기 | owner epic 17. SM-7 지연 미달 때 이미지·expression GIN 교체를 검증한다. LIKE 질의·정규화·collation 유지(AD-15) |
 | 임대 갱신 세부, 정체 판정, 놓친 예약 처리 | epic 12 인셉션. 불변식(감독자만 청구, 경과 시간만으로 죽이거나 중복 실행하지 않음)은 AD-21·33에 있다 |
 | 채널 정체성(사용자 답변·스레드·선제 메시지 연결)의 모양 | epic 15 인셉션(R13) |
-| 건강 계약 표의 정확한 모양 | epic 14 다듬기. 키·불변·버전 규칙은 AD-32 |
-| 분석 에이전트의 프롬프트와 출력 schema | epic 18 인셉션 |
-| 백업 묶음의 세부(복원 순서·manifest 칸·위치)와 복구 | epic 5. 틀은 AD-20(원문 `pg_dump`·globals·블롭·manifest) |
+| 건강 계약 표의 정확한 모양 | 부분 해소(2026-10-28, epic 14 정제): 키·관측 revision·정규화 버전·현재 view·권위 기록·ambiguity는 AD-32와 epic 14 Decision. 컬럼 DDL과 지표 catalog의 실제 목록은 14.1·14.2 코드가 정한다 |
+| 분석 에이전트의 프롬프트와 출력 schema | 해소(2026-10-28, epic 18 Notes): 옛 Garmin `report`의 프롬프트·JSON schema를 v1로 그대로 쓴다. 바꾸는 일은 실사용 뒤 새 revision |
+| 백업 묶음의 세부(복원 순서·manifest 칸·위치)와 복구 | 해소(2026-10-28, epic 5 정제): AD-20에 묶음·위치·복구 대상·재바인딩을 적었다. 기존 DB에 합치는 가져오기(D0)와 가린 JSONL 되살리기는 V1 뒤 backlog |
 | PostgreSQL 19로 올리기 | 19 GA(2026-11-19 예정) 뒤 별도 결정. 그때까지 `postgres:18` |
 | 공개 plugin marketplace, 임의 서드파티 확장 코드 실행 | 범위 밖(이니셔티브 Boundaries, 2026-10-28) |
 | Keychain 등 키 저장소 | `.env`로 시작. 설정 코덱 한 곳만 바꾸면 된다(AD-18) |
@@ -783,8 +790,8 @@ flowchart TB
 | 모델 호출 횟수·비용 제한/표시 | owner epic 12. 인셉션에서 설정·doctor 필요 여부 결정 |
 | chunk_locator text/jsonb | owner epic 11. 인셉션에서 AD-24 정규형 보존 검증과 함께 결정 |
 | 비활성화의 진행 작업 종료 방식 | owner epic 12·13. registry/취소 ABI 구현 전에 상태 보고·종료 정책 확정(AD-29·33) |
-| 불명 발신 재시도 정책 | owner epic 15. 최초 시도 gate 구현 전에 외부 API 중복 보호·결과 조회 가능성을 확인해 확정(AD-35) |
-| Garmin lock·설치 재현성 | owner epic 13·14. 실제 legacy uv.lock/.python-version 경로·해시를 기록하고 패치 pin/binary 설치의 macOS arm64 import·DB 접속 검증 때 |
-| C6 기준 소스·충돌 정책 | owner epic 14. 실제 반입 직전에 사용자가 고른다(2026-10-28 사용자: 그 전에 확인). 그때까지 모든 후보를 별도 출처로 보존하고 반입하지 않는다(AD-36) |
+| 불명 발신 재시도 정책 | 해소(2026-10-28 사용자, epic 15): 불명도 지수 간격으로 다시 보내고 10번 실패하면 `failures`·doctor, resend로 다시 연다(AD-35) |
+| Garmin lock·설치 재현성 | 나눔(2026-10-28): epic 14.1이 pin 3.14.10 + `psycopg[binary]` 3의 frozen 설치·macOS arm64 import·DB 접속을 닫는다. 옛 의존(garminconnect·curl-cffi·matplotlib 등)의 arm64 설치 확인은 그것을 더하는 epic 16 |
+| C6 기준 소스·충돌 정책 | 해소(2026-10-28 사용자 위임): epic 14 선택지 A가 권위 기록 규칙 v1이고 에이전트가 반입한다(AD-32·36). 미선택 후보는 모두 별도 출처로 보존한다 |
 | 가리기 전에 뜬 백업의 안내·정리 | epic 5. doctor가 그 백업을 알리고 지우기·새로 뜨기를 안내하는 경로(AD-11, AD-20). 범위 결정은 2026-10-28 사용자(U1) |
-| 신규 공통 CLI namespace/verb | owner epic 12(예약)·13(확장 설치/상태/비활성화)·17(건강 질의). 각 구현 전 CommandSpec/SDK 1:1로 확정; 채널/모델 adapter 조립은 AD-35 |
+| 신규 공통 CLI namespace/verb | owner epic 12(예약: `brain schedules`·`brain queue`)·13(확장 설치/상태/비활성화: `brain ext install|list|status|enable|disable`)·14(확장 수동 실행: `brain ext run <name> <job>`)·15(`brain channels`)·17(건강 질의). 각 구현 전 CommandSpec/SDK 1:1로 확정; 채널/모델 adapter 조립은 AD-35 |

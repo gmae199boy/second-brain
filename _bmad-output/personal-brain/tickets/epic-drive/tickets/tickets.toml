@@ -1,0 +1,97 @@
+# epic 8 Google Drive 연동 — 표 순서 = 만드는 순서. id는 영구.
+# 한 레인: FileStore·Store port·PG 마이그레이션·조립·설정 코덱·명령 등록부·epic 17의 검색 경로를 모든 스토리가 함께 고친다(코드 조사 8절).
+
+[[entry]]
+id = 1
+type = "story"
+title = "Tracer: 첨부 원본 하나가 가짜 Drive로 옮겨져 검증된 뒤 home이 바뀌고, 로컬 사본이 지워져도 원문이 읽힌다"
+description = "가장 얇은 길로 원본 이전 층을 잇는다. FileStore 계약을 backend 중립 의미 계약(왕복·같은 내용 같은 위치·URL 안정·없는 파일·삭제 멱등·루트 밖과 external 거부)과 로컬 전용 시험으로 나누고, `put`의 반환 위치 타입을 일반화한다. Drive FileStore adapter(Brain 루트 폴더 안에서만 쓰고 지움, locator는 `<hex><확장자>`)와 `(루트, content_hash) → remote id` 매핑·업로드 상태 표(다음 core 마이그레이션)를 둔다. adapter의 모든 연산은 이 매핑 하나로 remote id를 찾고(이름 검색 금지), 매핑 저장 함수는 이전 일감과 put이 공유한다. 이전 use case: 업로드 → 검증(`sha256Checksum` → `md5Checksum` → 되읽기) → 한 트랜잭션에서 원격 위치 등록·`verified_at`·`home` 전환·로컬 삭제 일감 예약(due = 검증 시각 + `drive.keep_local_days`, 예상 이전 home과 가리지 않음을 CAS로 확인). 삭제 handler는 지우기 직전 원격 사본을 다시 확인한다. 가짜 Drive 서버(주입 가능한 base URL과 Clock: 업로드·조회·내려받기·삭제)와 격리된 PG·Brain 홈을 1이 만들고 2~8이 다시 쓴다. 각 plan은 실행 명령, 사전 조건, 관찰값, 정리 명령을 적는다. 설정 키 `drive.keep_local_days`(기본 30, 0 허용, 음수·정수 아님 거부)의 등록·검증·DB 읽기 최소형은 1이 만든다(나머지 `drive.*`는 3). 받는 것: 11.4의 PG FileStore·첨부·추출 Store, 11.6의 설정 port, 17.1의 `files show`. 실제 시그니처는 epic 17이 끝난 HEAD에서 확인한다. plan 상한은 작은 txt 하나, 단순 업로드, 보관 0일과 30일 두 경우다."
+verify = "통합 시험(PG, 가짜 Drive 서버. 시험 이름과 실행 명령은 plan에 적는다)에서 합성 txt 첨부 하나를 이전하면 가짜 서버의 Brain 루트 폴더에 파일 하나가 생기고, `files.home`이 Drive 위치이며 `verified_at`이 같은 트랜잭션에서 채워지고, 보관 0일이면 로컬 사본이 지워지고 30일이면 가짜 clock으로 30일이 지나기 전에는 남으며, 이전 뒤 `brain files show`가 Drive 위치에서 원문을 읽고, 같은 파일을 다시 이전해도 원격 파일이 하나이며, 가짜 서버가 checksum을 틀리게 주면 home이 바뀌지 않고, 삭제 직전 원격 사본을 지우면 로컬 사본이 남으며, Brain 루트 밖 파일 id로 지우기를 부르면 거부되고, backend 중립 계약 suite가 로컬과 Drive adapter 모두에서 통과한다."
+covers = ["E8-1"]
+after = ["17.6", "11.6", "10.13", "9.7"]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-drive/epic-drive-research-code.md, §1, §2, 스토리 후보 T1·T2"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "외부 폴더 색인: 고른 Drive 폴더의 txt·md·Google Docs가 Mac에 남지 않은 채 본문으로 찾아지고, 사진은 이름으로 찾아진다"
+description = "E8-2를 만든다. `sources`·`source_files` 표(다음 core 마이그레이션)와 Store port·fake·계약을 둔다. `source_sync` 일감: 첫 목록 전에 changes start token을 받아 두고, 감시 폴더의 하위 경로를 구성해 목록을 만들며, 문서는 MIME·크기로 골라 Google Docs는 `text/plain` export(10MB 상한, 넘으면 `too_large`), 일반 파일은 임시 다운로드(0700/0600, finally 삭제, 시작 때 자기 잔여 임시 파일 정리)로 바이트를 얻어 형식 판정·해시 → 같은 추출 세대 writer로 확정 → 임시 삭제한다. 외부 파일을 brain home으로 만들지 않는다(source 전용 바이트 reader를 추출 일감에 주입). 사진·큰 파일은 내려받지 않고 `source_files` 이름과 부모 경로만 남긴다. 검색: epic 17의 `document` 결과에 `file_id` nullable·`source_file_id`·색인 상태를 더하고, `source_files` 이름 branch를 같은 질의 함수로 찾는다. Drive 링크는 source 전용 resolver가 remote id로 만든다. 가짜 Drive 서버에 목록(여러 페이지)·export·내려받기를 더한다. 가짜 서버로 돌릴 수 있는 `brain sources sync`의 CommandSpec·SDK·명령 메타 최소형을 2가 만든다(나머지 `sources` 명령과 OAuth는 3). spine 갱신(2026-10-28)대로 이름 전용 결과를 `brain files show`에 주면 색인 상태·접근 상태·Drive 링크를 돌려준다."
+verify = "시험(가짜 Drive 서버. 시험 이름과 실행 명령은 plan에 적는다)에서 감시 폴더에 txt·md·Google Docs·사진·60MB 파일을 두고 `brain sources sync`를 돌리면 txt·md·Docs 본문의 한국어 두 글자가 `brain recall docs`로 찾아지고 결과에 Drive 링크가 붙으며, 사진과 60MB 파일은 내려받기 요청이 0이고 이름으로 찾아지며 결과에 색인 상태(`photo`·`too_large`)가 있고, 동기화 뒤 임시 디렉터리와 FileStore 루트에 그 파일들의 바이트가 없으며, 목록이 세 페이지여도 모두 들어오고, 같은 sync를 다시 돌려도 행이 늘지 않으며, 원격에서 파일을 지우고 다시 돌리면 그 항목이 `source_unreachable`이고 기존 조각은 남으며, 사진 결과의 출처를 `brain files show`에 주면 `photo` 상태와 Drive 링크가 나오고 file_id·locator를 지어내지 않으며, 한 source 항목만 접근 불가이고 같은 내용의 다른 정상 원본이 있으면 그 내용의 `files.source_unreachable_at`이 비어 있고 경고는 접근 불가 원본 링크에만 붙는다."
+covers = ["E8-2", "E8-6"]
+after = [1]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-drive/epic-drive-research-code.md, §3, §6, 스토리 후보 T4"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "OAuth·설정·연동 해제: brain sources connect drive로 연결하고, disconnect하면 Drive 사본은 그대로 둔 채 검색은 계속된다"
+description = "E8-1의 OAuth와 E8-3을 만든다. `brain sources connect drive`가 데스크톱 loopback(임시 포트, 일회용, timeout) + PKCE S256 + state로 동의 URL을 내고 code를 받아 refresh token을 `.env`(`BRAIN_DRIVE_CLIENT_ID`·`BRAIN_DRIVE_CLIENT_SECRET`·`BRAIN_DRIVE_REFRESH_TOKEN`, 설정 코덱이 0600으로 씀)에 둔다. access token은 저장하지 않고 실행마다 refresh한다. scope는 `drive.readonly`와 `drive.file`이다. connect 때 Brain 루트 폴더를 만들고 id를 `drive.root_folder_id`에 둔다. 설정 키 `drive.watch_folders`·`drive.sync_interval_minutes`(기본 30)를 설정 코덱에 등록하고(`drive.keep_local_days`는 1이 등록했다), 설정 변경 뒤 처리할 확장 지점(설정 키 변경 이벤트 계약, 기본은 아무것도 하지 않음)을 두고, 동기화 예약을 epic 12의 예약으로 등록한다. `brain sources add|list|remove|sync|disconnect`(CommandSpec·명령 메타·SDK 1:1, 출력 코덱 통과, 토큰 값은 어디에도 출력하지 않음). 오류 분류: `invalid_grant`는 재동의 필요(다시 하지 않는 오류, doctor), 401은 refresh 한 번 뒤에도 실패하면 로그인 필요, 429·5xx·네트워크는 일시 오류(`Retry-After` 존중). 연동 해제: 예약 중지·새 청구 금지·진행 일감의 늦은 확정 차단(source 세대 확인) → 연결 상태 변경·`.env`의 Drive 토큰 삭제 → 원본 접근 불가 표시, 아직 돌지 않은 로컬 사본 삭제 일감 취소, Drive delete 호출 0. OAuth 동의 화면의 refresh token 수명(Testing 상태 7일 만료 여부)을 공식 문서로 확인해 사람 몫 안내를 맞춘다."
+verify = "시험(가짜 OAuth·Drive 서버. 시험 이름과 실행 명령은 plan에 적는다)에서 `brain sources connect drive`가 PKCE challenge와 state가 든 URL을 내고, 가짜 동의 뒤 `.env`에 refresh token이 0600으로 남고 access token은 파일 어디에도 없으며, state가 틀린 callback은 거부되고, `invalid_grant`면 doctor가 재동의 필요를 보이고 일감이 다시 돌지 않으며, 429는 `Retry-After` 뒤에만 다시 하고, `drive.keep_local_days = -1`은 거부되며 바꾼 값이 컨테이너를 다시 만들어도 남고, 동기화 중에 `brain sources disconnect`하면 진행 일감의 확정이 거부되고 예약이 멈추며 `.env`에서 Drive 토큰이 지워지고 가짜 서버의 delete 요청이 0이며 기존 문서가 여전히 검색되고 원본이 접근 불가로 표시되며 대기 중이던 로컬 삭제 일감이 취소되고, 어떤 명령 출력과 로그에도 시험 토큰 문자열이 없다."
+covers = ["E8-1", "E8-3"]
+after = [2, "12.9"]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/tickets/epic-drive/epic-drive-research-code.md, §4, §7, 스토리 후보 T3"]
+
+[[entry]]
+id = 4
+type = "story"
+title = "PDF·docx 추출: 텍스트 PDF는 쪽과 함께, docx는 문단 블록과 함께 조각이 되고, 예전에 unsupported로 닫힌 파일도 다시 읽힌다"
+description = "E8-5와 epic 10의 Carry를 만든다. PDF는 pdfjs-dist의 텍스트 경로(canvas 없음)로 쪽별 텍스트를 얻고 locator는 `pdf`(page, bbox는 안정적으로 계산할 수 있을 때만), `page` 사본을 채운다. docx는 OOXML 구조를 확인한 뒤 mammoth 원시 텍스트와 문단 번호로 `docx`(block) locator를 만든다. 형식 판정은 바이트(magic·ZIP 내부 구조)로 하고 text fallback보다 앞에 둔다. 라이브러리 import는 runtime adapter에 두고 Core는 DocumentExtractor로 주입받는다(조립까지 연결). 상한: PDF 50MiB·2,000쪽·추출 500만 자, docx 압축 50MiB·해제 200MiB·추출 500만 자, 넘으면 `too_large`. 이미지 PDF는 텍스트 없음 상태다. `extractor_version`을 올리고, 새 세대가 성공하기 전에는 이전 포인터를 유지한다. Carry: 새 추출기가 읽게 된 형식의 과거 `unsupported` 파일을 바이트 형식 판정으로 다시 골라 추출기 버전마다 한 번 다시 넣는 Store 능력(fake·계약 포함)을 둔다. lock에 두 라이브러리를 더하고 라이선스를 확인한다."
+verify = "시험(시험 이름과 실행 명령은 plan에 적는다)에서 합성 3쪽 텍스트 PDF의 조각이 쪽 locator와 `page` 사본(1·2·3)을 갖고, 합성 docx의 조각이 문단 block locator를 가지며, 확장자를 바꾼 PDF·docx도 바이트로 판정되고, 51MiB PDF와 ZIP 폭탄 docx가 `too_large`이며, 이미지만 있는 PDF는 텍스트 없음 상태이고, 추출기 버전을 올리기 전 `unsupported`로 닫힌 PDF·docx 첨부가 Carry로 한 번 다시 들어가 조각이 생기며 같은 버전에서 다시 돌려도 두 번 들어가지 않고, 새 세대가 실패하면 이전 세대 포인터가 그대로다."
+covers = ["E8-5"]
+after = [3]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/tickets/epic-drive/epic-drive-research-code.md, §5, 스토리 후보 T5"]
+
+[[entry]]
+id = 5
+type = "story"
+title = "증분 동기화와 중단 재개: Drive에서 바뀐 문서가 다음 주기에 반영되고, 업로드·목록·삭제가 어디서 끊겨도 중복이나 이른 삭제가 없다"
+description = "E8-1·E8-2의 실패 경계를 끝낸다. changes 증분: 페이지마다 변경 적용과 다음 cursor를 한 트랜잭션에 확정하고, 마지막 페이지의 newStartPageToken으로 전진한다. rename·move(감시 폴더 밖으로)·삭제·권한 상실은 하위 경로와 이름을 다시 계산하고 해당 항목을 접근 불가로 둔다. 원격 버전이 바뀌면 새 내용 해시로 새 content를 잇고 기존 행을 고치지 않는다. cursor가 거부되면 전체 재목록이고, 재목록 성공 전에는 기존 항목을 접근 불가로 바꾸지 않는다. 같은 source의 수동·예약 sync는 열린 일감과 합쳐진다. 원본 이전: 5MiB 넘는 파일은 resumable 업로드(session URI·remote id·확인 offset을 일감 상태에 남기고 재시도 때 서버 진행을 조회), 응답 유실 뒤 같은 해시의 원격 파일을 확인해 중복 create를 막는다. 보관 경계: `drive.keep_local_days`가 바뀌면 이전 삭제 일감의 due를 다시 계산해 깨우는 기능과 그 기능을 3의 설정 변경 확장 지점에 연결하는 일(`brain config set`이 실제로 부르게 함)과, 삭제 handler가 실행 때 현재 설정으로 due를 다시 확인하는 것을 둘 다 둔다(설정보다 일찍 지우지 않음, 연동 해제로 취소된 일감은 되살리지 않음). resumable session URI·OAuth code·verifier·client secret·외부 오류 원문은 queue·doctor·로그·plan에 내보내지 않는다. 긴 sync·업로드는 epic 12의 취소·진행 이벤트에 반응한다. 가짜 서버에 resumable·changes·308·응답 유실·cursor 거부를 더한다."
+verify = "시험(가짜 Drive 서버, 가짜 clock. 시험 이름과 실행 명령은 plan에 적는다)에서 원격 문서를 고친 뒤 다음 예약 주기의 sync가 새 본문을 검색되게 하고 이전 내용 해시 행은 그대로이며, 폴더 이름 변경과 감시 폴더 밖 이동이 경로·접근 상태에 반영되고, changes 둘째 페이지를 적용한 직후 죽이고 다시 돌리면 남은 페이지만 적용되며, cursor를 거부하면 전체 재목록이 끝나기 전에 접근 불가 표시가 생기지 않고, 20MiB 업로드를 절반에서 끊고 다시 돌리면 그 offset부터 이어 원격 파일이 하나이며, 업로드 완료 응답을 잃어도 원격 파일이 하나이고, 보관 30일 중 15일째에 설정을 10일로 바꾸면 원래 due(30일) 전에 그 일감이 청구 가능해져 그 시점에 지워지고 40일로 바꾸면 40일까지 남으며, 두 설정 변경이 동시에 와도 나중 값 하나로 수렴하고, 해제로 취소된 삭제가 설정 변경으로 되살아나지 않으며, 파일 이름·본문·토큰·session URI·오류에 넣은 합성 표식이 queue list·doctor·로그 어디에도 없고, 동기화 중 취소하면 다음 페이지 전에 멈춘다."
+covers = ["E8-1", "E8-2"]
+after = [4]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-drive/epic-drive-research-code.md, §1(업로드), §2, §3(changes), 스토리 후보 T6"]
+
+[[entry]]
+id = 6
+type = "story"
+title = "문서 찾기 통합: 대화 첨부와 Drive 문서·사진이 본문·이름으로 한 번씩 찾아지고, 미색인 파일은 사유와 함께 드러난다"
+description = "E8-6을 끝낸다. epic 17의 질의 함수·`document` 결과·`files show` 위에 첨부 문서 본문, Drive 문서 본문, `file_names`(첨부 표시 이름·external 위치 경로)와 `source_files`(Drive 파일·폴더 이름) 대상을 한 검색으로 묶는다. 같은 내용이 첨부와 Drive 양쪽에 있으면 결과를 내용·source 정체성으로 한 번만 낸다. 결과에는 원본 링크(로컬 경로 또는 Drive 링크)·위치(쪽·글자 범위)·색인 상태(`photo`·`too_large`·`unsupported`·`pending`·`failed`)가 붙고, `source_unreachable`은 미색인과 다른 상태다. Drive rename·move 때 옛 파생 이름을 지우고 다시 만들며 가린 파일은 건너뛴다. 공백·`a-b`·`AND`·따옴표·`%`·`_`·역슬래시가 오류나 조용한 0건 없이 처리된다. 출력 코덱 계약의 문서 probe를 Drive 이름·링크·색인 상태까지 넓힌다(17의 probe를 넓히고 새 가리기 함수를 만들지 않는다)."
+verify = "시험(가짜 Drive 서버. 시험 이름과 실행 명령은 plan에 적는다)에서 같은 PDF가 대화 첨부와 Drive 양쪽에 있으면 본문 검색 결과가 하나이고 두 원본 링크를 함께 보이며, 첨부 PDF 본문의 단어가 쪽 위치와 함께 찾아지고, Drive 사진이 폴더 이름으로 찾아지며 색인 상태가 `photo`이고, Drive에서 이름을 바꾼 뒤 sync하면 새 이름으로 찾아지고 옛 이름으로는 안 찾아지며, 가린 첨부의 이름이 다시 나오지 않으며, 가린 내용에 연결된 Drive 항목(`content_id`가 그 파일)의 이름·경로·링크도 source 이름 검색과 `files show`에 나오지 않고, 질의 특수문자 일곱 경우가 모두 오류 없이 전수 LIKE 결과와 같으며, 문서 probe가 Drive 이름·링크에 넣은 시험 비밀 문자열을 가린다."
+covers = ["E8-6"]
+after = [5]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/tickets/epic-drive/epic-drive-research-code.md, §6, 스토리 후보 T7"]
+
+[[entry]]
+id = 7
+type = "story"
+title = "Refactor sweep"
+description = "1~6이 미룬 정리만 한다. 범위는 착수 때 각 plan의 미룬 항목과 리뷰 지적에서 정한다. 다른 스토리에서 밀려난 기능은 새 스토리로 뺀다."
+verify = "착수 때 정한 정리 목록의 항목이 모두 처리되고 빌드·typecheck·전체 테스트가 PG에서 통과한다. 데몬 없이도 이 에픽의 시험이 통과한다(epic 9 Done when 1의 이어받기)."
+covers = []
+after = [1, 2, 3, 4, 5, 6]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 8
+type = "story"
+title = "이 Mac에서 확인: 설치본에서 Drive를 연결해 첨부 원본을 옮기고 고른 폴더의 문서를 찾는다"
+description = "기능 묶음을 플러그인 배포(`plugin/app-ref`를 앞선 커밋으로, `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올림)로 이 Mac의 설치본에 넣고 에이전트가 진행한다(2026-10-28 위임, `hitl = false`). 에이전트가 먼저 하는 것: 격리 홈에서 가짜 서버 suite, 설치본의 `brain sources` 명령·doctor·설정 키 확인, 사람 몫 안내 작성(Google Cloud에서 데스크톱 OAuth client 만들기, 동의 화면 상태, 테스트 사용자, 두 키를 `.env`에 넣는 법). 사람 단계: OAuth client와 동의. 이 단계가 아직이면 필요한 것과 재개 절차(`brain sources connect drive` → `bmad-loop confirm`)를 `operator_actions`에 남기고 그 단계만 `awaiting-operator`다(성공으로 기록하지 않고 run은 계속). 동의가 되어 있으면: Brain 루트 폴더 생성, 첨부 원본 하나를 보관 기간 설정대로 이전(로컬 삭제는 기간 뒤), 감시 폴더 하나를 더해 sync, 그 폴더의 문서 하나를 본문으로 찾고 Drive 링크로 원문 확인, 재시작 뒤 상태 유지. plan에는 공개 투영(단계별 성공/실패, 건수)만 남기고 실제 파일 이름·본문·토큰은 쓰지 않는다. 원격 push가 있어야만 하는 단계는 `operator_actions`다."
+verify = "에이전트가 이 Mac에서 위 순서를 한 번 돌리고 결과를 plan에 남긴다(공개 투영만). 격리 홈 suite가 통과하고 설치본 명령·doctor가 정상이다. 동의가 되어 있으면 첨부 원본 이전과 폴더 문서 검색·Drive 링크 원문 확인이 성공한다. 동의가 아직이면 `operator_actions`를 남기고 8은 `awaiting-operator`다(성공으로 기록하지 않음)."
+covers = ["E8-1", "E8-2", "E8-6"]
+after = [7]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/tickets/epic-drive/epic-drive-research-code.md, §9(이 Mac에서 에이전트와 사람의 몫)"]
