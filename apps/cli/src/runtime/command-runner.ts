@@ -2,16 +2,16 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { homeResources } from '../config/resources.js';
-export interface CommandRequest { command: string; args: readonly string[]; env: NodeJS.ProcessEnv; timeoutMs: number }
+export interface CommandRequest { command: string; args: readonly string[]; env: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal }
 export type CommandResult = { ok: true; stdout: string; stderr: string } | { ok: false; stdout: string; stderr: string; message: string; code?: string };
 export type CommandRunner = (request: CommandRequest) => Promise<CommandResult>;
 const execute = promisify(execFile);
 export const systemCommandRunner: CommandRunner = async request => {
   try { const result = await execute(request.command, [...request.args], {
-    env: request.env, timeout: request.timeoutMs, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
+    signal: request.signal, env: request.env, timeout: request.timeoutMs, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
   }); return { ok: true, ...result }; }
-  catch (error) { const failure = error as Error & { stdout?: string; stderr?: string; code?: string };
-    return { ok: false, stdout: failure.stdout ?? '', stderr: failure.stderr ?? '', message: failure.message, ...(typeof failure.code === 'string' ? { code: failure.code } : {}) }; }
+  catch (error) { const failure = error as Error & { stdout?: string; stderr?: string; code?: string | number };
+    return { ok: false, stdout: failure.stdout ?? '', stderr: failure.stderr ?? '', message: failure.message, ...(typeof failure.code === 'string' || typeof failure.code === 'number' ? { code: String(failure.code) } : {}) }; }
 };
 export function composeArgs(home: string, args: readonly string[]): string[] {
   return ['compose', '-p', homeResources(home).project, '--env-file', join(home, '.env'), '-f', join(home, 'postgres', 'compose.yaml'), ...args];

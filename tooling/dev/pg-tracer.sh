@@ -82,10 +82,10 @@ try {
     try {
       const migrations = (await client.query('select owner,version,checksum from brain.schema_migrations')).rows;
       assert(migrations.some(m=>m.owner==='core' && m.version===1 && /^[a-f0-9]{64}$/.test(m.checksum)));
-      const sessions=(await client.query('select id,workspace_id,started_at,ingested_at from brain.sessions order by id')).rows;
+      const sessions=(await client.query("select id,workspace_id,started_at,ingested_at from brain.sessions where harness_session_id='pg-tracer' order by id")).rows;
       assert.equal(sessions.length,1); assert.equal(sessions[0].workspace_id,null);
-      const messages=(await client.query('select id,occurred_at,body from brain.messages order by id')).rows;
-      const notes=(await client.query('select id,target from brain.tool_notes order by id')).rows;
+      const messages=(await client.query("select id,occurred_at,body from brain.messages where session_id in (select id from brain.sessions where harness_session_id='pg-tracer') order by id")).rows;
+      const notes=(await client.query("select id,target from brain.tool_notes where session_id in (select id from brain.sessions where harness_session_id='pg-tracer') order by id")).rows;
       assert(messages.length>0); assert(notes.length>0); return {sessions,messages,notes};
     } finally { await client.end(); }
   }
@@ -98,7 +98,7 @@ try {
   assert(!/^[ \t]*timezone[ \t]*=/m.test(await readFile(join(home,'config.toml'),'utf8')));
   assert.deepEqual((await cli(['config','get','timezone','--json'])).data,settingBefore);
   console.log('시간대 설정: 컨테이너 재생성·setup 재실행 뒤 값과 수정 시각 보존');
-  // 데몬은 티켓 9 전까지 SQLite를 써서 spool을 SQLite로 되넣는다
+  // 수동 복구 drain과 데몬의 자동 컨테이너 재연결을 각각 검증합니다.
   const stopped = await cli(['daemon','stop','--json']); assert.equal(stopped.ok,true);
   await compose(['stop']);
   const offlinePayload = JSON.stringify({ session_id:'pg-tracer-offline', transcript_path:resolve('packages/claude-code/test/fixtures/two-turns.jsonl'), hook_event_name:'Stop' });
@@ -119,6 +119,28 @@ try {
   } finally { await recovered.end(); }
   assert(!(await readdir(join(home,'spool'))).some(n=>n.endsWith('.jsonl')||n.endsWith('.claiming')));
   console.log('PG 복구 drain: 중단 중 세션·메시지 저장, spool 비움 확인');
+  await compose(['stop']);
+  const daemonPayload = JSON.stringify({ session_id:'pg-tracer-daemon', transcript_path:resolve('packages/claude-code/test/fixtures/two-turns.jsonl'), hook_event_name:'Stop' });
+  assert.equal((await cli(['sessions','ingest','claude-code','--json'],daemonPayload)).data.spooled,true);
+  assert.equal((await cli(['daemon','start','--json'])).ok,true);
+  try {
+    const deadline = Date.now() + 120000;
+    let recovered = false;
+    while (Date.now() < deadline) {
+      const client = new pg.Client({connectionString:await resolveStoreUrl(home,'BRAIN_DATABASE_URL',env),connectionTimeoutMillis:1000});
+      try {
+        await client.connect();
+        const found = await client.query("select id from brain.sessions where harness_session_id='pg-tracer-daemon'");
+        const pending = (await readdir(join(home,'spool'))).some(n=>n.endsWith('.jsonl')||n.endsWith('.claiming'));
+        const log = await readFile(join(home,'log','daemon.log'),'utf8');
+        if (found.rows.length===1 && !pending && log.includes('데이터베이스에 닿지 않아 컨테이너를 다시 띄웁니다')) { recovered = true; break; }
+      } catch { /* 컨테이너와 데몬이 복구하는 동안 다시 확인합니다. */ }
+      finally { await client.end().catch(()=>{}); }
+      await new Promise(resolve=>setTimeout(resolve,500));
+    }
+    assert(recovered,'120초 안에 데몬이 컨테이너를 다시 띄우고 spool을 PG에 넣어야 합니다');
+    console.log('데몬 재연결: 멈춘 컨테이너 자동 시작, 중단 중 hook 세션 PG 저장 및 spool 비움 확인');
+  } finally { assert.equal((await cli(['daemon','stop','--json'])).ok,true); }
   assert.deepEqual(await defaults(),beforeDefaults);
   console.log(`기본 홈 자원 변화 없음: ${JSON.stringify(beforeDefaults)}`);
 } finally {

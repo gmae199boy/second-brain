@@ -12,6 +12,7 @@ import {
   sqliteStore,
   type BrainDrainReport,
 } from 'second_brain';
+import * as brainStore from '../src/runtime/brain-store.js';
 import * as configCodec from '../src/config/codec.js';
 import { writeConfig } from '../src/config/codec.js';
 import {
@@ -1108,4 +1109,245 @@ describe('brain daemon run, as a process', () => {
     expect(run.code).toBe(0);
     expect((JSON.parse(run.stdout) as { ok: boolean }).ok).toBe(true);
   });
+});
+
+describe('PostgreSQL daemon reconnect', () => {
+  async function pgHome(compose = true) {
+    const home = await temporary.create('brain-daemon-reconnect-');
+    await writeFile(join(home, 'config.toml'), 'schema_version=1\n[store]\nurl_env="BRAIN_DATABASE_URL"\n');
+    if (compose) {
+      await mkdir(join(home, 'postgres'));
+      await writeFile(join(home, 'postgres', 'compose.yaml'), '# test placeholder\n');
+    }
+    return home;
+  }
+  function options(home: string) {
+    return { home, env: { ...environment(home), BRAIN_DATABASE_URL: 'postgresql://unused@127.0.0.1:1/brain' },
+      clock: systemClock, idGen: uuidV7IdGen(), drainPauseMs: 15,
+      reconnectBackoffMs: { initial: 80, max: 160 } };
+  }
+  it('backs off despite frequent wake-ups and suppresses repeated compose failures', async () => {
+    const home = await pgHome();
+    const calls: number[] = [];
+    let wake: WatchListener<string> | undefined;
+    const runner: NonNullable<RunDaemonOptions['runner']> = async request => {
+      calls.push(Date.now());
+      expect(request.args.slice(-2)).toEqual(['up', '-d']);
+      expect(request.signal).toBeDefined();
+      return { ok: false, code: calls.length < 3 ? 'ENOENT' : 'OTHER', stdout: '', stderr: '', message: 'failure' };
+    };
+    const configDir = join(home, 'claude'); await mkdir(configDir);
+    const reads = vi.spyOn(configCodec, 'readConfig');
+    const daemon = startDaemon({ ...options(home), env: { ...options(home).env, CLAUDE_CONFIG_DIR: configDir },
+      runner, watchBatchMs: 2, watch: (_folder, _options, listener) => { wake = listener; return { on() { return this; }, close() {} } as unknown as ReturnType<typeof fsWatch>; } });
+    const timer = setInterval(() => wake?.('change', 'transcript.jsonl'), 4);
+    try {
+      await waitFor('네 번째 compose 시도', () => calls.length >= 4);
+      expect(calls[1]! - calls[0]!).toBeGreaterThanOrEqual(80);
+      expect(calls[2]! - calls[1]!).toBeGreaterThanOrEqual(160);
+      expect(calls[3]! - calls[2]!).toBeGreaterThanOrEqual(160);
+      expect(calls[3]! - calls[2]!).toBeLessThan(300);
+      expect(reads.mock.calls.length).toBeGreaterThan(calls.length);
+    } finally { clearInterval(timer); await daemon.stop(); }
+    const log = await readFile(daemonLogPath(home), 'utf8');
+    expect(log.match(/컨테이너를 다시 띄웁니다/g)).toHaveLength(1);
+    expect(log.match(/오류 코드 ENOENT/g)).toHaveLength(1);
+    expect(log.match(/오류 코드 OTHER/g)).toHaveLength(1);
+    assertKoreanLines(log, { label: 'daemon reconnect' });
+  });
+  it('reports a missing compose file once without running docker', async () => {
+    const home = await pgHome(false); const runner = vi.fn();
+    const daemon = startDaemon({ ...options(home), runner });
+    await waitFor('설정 파일 없음 안내', async () => (await readFile(daemonLogPath(home), 'utf8').catch(() => '')).includes('설정 파일'));
+    await delay(300); await daemon.stop();
+    expect(runner).not.toHaveBeenCalled();
+    expect((await readFile(daemonLogPath(home), 'utf8')).match(/설정 파일/g)).toHaveLength(1);
+  });
+  it('uses initial backoff for the first actual calls after the compose file returns', async () => {
+    const home = await pgHome(false);
+    const initial = 120;
+    const calls: number[] = [];
+    const reads = vi.spyOn(configCodec, 'readConfig');
+    const daemon = startDaemon({ ...options(home), drainPauseMs: 1000,
+      reconnectBackoffMs: { initial, max: 960 }, runner: async () => {
+        calls.push(Date.now());
+        return { ok: true, stdout: '', stderr: '' };
+      } });
+    try {
+      await waitFor('설정 파일 없음 안내', async () =>
+        (await readFile(daemonLogPath(home), 'utf8').catch(() => '')).includes('설정 파일'));
+      const before = reads.mock.calls.length;
+      await delay(initial * 4 + 30);
+      // Missing files are rechecked at the initial interval, without spinning.
+      expect(reads.mock.calls.length - before).toBeGreaterThanOrEqual(4);
+      expect(reads.mock.calls.length - before).toBeLessThanOrEqual(6);
+      expect(calls).toHaveLength(0);
+      await mkdir(join(home, 'postgres'));
+      await writeFile(join(home, 'postgres', 'compose.yaml'), '# restored fixture\n');
+      await waitFor('복구 뒤 세 번째 compose 시도', () => calls.length >= 3);
+      expect(calls[1]! - calls[0]!).toBeGreaterThanOrEqual(initial);
+      expect(calls[1]! - calls[0]!).toBeLessThan(initial * 2);
+      expect(calls[2]! - calls[1]!).toBeGreaterThanOrEqual(initial * 2);
+      expect(calls[2]! - calls[1]!).toBeLessThan(initial * 3);
+    } finally { await daemon.stop(); }
+    const log = await readFile(daemonLogPath(home), 'utf8');
+    expect(log.match(/설정 파일/g)).toHaveLength(1);
+    expect(log.match(/컨테이너를 다시 띄웁니다/g)).toHaveLength(1);
+  });
+  it('cancels an active compose and exits independently of the drain budget', async () => {
+    const home = await pgHome(); let entered = false; let cancelled = false;
+    const daemon = startDaemon({ ...options(home), drainBudgetMs: 60_000,
+      runner: request => new Promise(resolve => {
+        entered = true;
+        request.signal!.addEventListener('abort', () => { cancelled = true;
+          resolve({ ok: false, code: 'ABORT_ERR', stdout: '', stderr: '', message: 'cancelled' });
+        }, { once: true });
+      }) });
+    await waitFor('compose 진입', () => entered);
+    const before = Date.now(); expect(await daemon.stop()).toEqual({ ok: true });
+    expect(Date.now() - before).toBeLessThan(1000); expect(cancelled).toBe(true);
+    expect(await readFile(daemonLogPath(home), 'utf8')).not.toContain('ABORT_ERR');
+  });
+  it('never calls compose for a SQLite home', async () => {
+    const home = await temporary.create('brain-daemon-sqlite-');
+    await writeConfig(home, { storePath: join(home, 'brain.db') });
+    const runner = vi.fn(); const daemon = startDaemon({ ...options(home), runner });
+    await delay(100); await daemon.stop(); expect(runner).not.toHaveBeenCalled();
+  });
+  it.each(['DB_LOCKED', 'SCHEMA_MISMATCH', 'DRAIN_THREW', 'CONFIG_INVALID'] as const)('does not restart for %s', async code => {
+    const home = await pgHome(); const runner = vi.fn();
+    if (code === 'CONFIG_INVALID') await writeFile(join(home, 'config.toml'), 'broken = [');
+    else {
+      vi.spyOn(brainStore, 'openBrainStore').mockImplementation(async () => {
+        const store = sqliteStore({ path: ':memory:' });
+        vi.spyOn(store, 'readSchemaVersions').mockImplementation(async () => {
+          if (code === 'DRAIN_THREW') throw new Error('시험 오류');
+          if (code === 'SCHEMA_MISMATCH') return { ok: true as const, versions: { core: { version: 999, appliedAt: new Date() } } };
+          return { ok: false as const, code, message: '시험 오류' };
+        });
+        return { kind: 'postgres', store, expected: { core: SQLITE_SCHEMA_VERSION }, adapterProbeIds: [] } as unknown as brainStore.BrainStore;
+      });
+    }
+    const daemon = startDaemon({ ...options(home), runner });
+    await delay(150); await daemon.stop(); expect(runner).not.toHaveBeenCalled();
+  });
+  it('resets the backoff after schema recovery', async () => {
+    const home = await pgHome(); let unavailable = true;
+    const report: BrainDrainReport = { stopped: 'empty', claimed: 0, completed: 0, retried: 0, failed: 0,
+      released: 0, lost: 0, spooled: 0, replayed: 0, spoolFailed: 0, enqueued: 0,
+      rereadMissing: 0, reextractRedacted: 0, reextractUnreachable: 0 };
+    vi.spyOn(brainStore, 'openBrainStore').mockImplementation(async () => {
+      const store = sqliteStore({ path: ':memory:' });
+      vi.spyOn(store, 'readSchemaVersions').mockImplementation(async () => unavailable
+        ? { ok: false as const, code: 'DB_UNAVAILABLE', message: '시험 연결 끊김' }
+        : { ok: true as const, versions: { core: { version: SQLITE_SCHEMA_VERSION, appliedAt: new Date() } } });
+      return { kind: 'postgres', store, expected: { core: SQLITE_SCHEMA_VERSION }, adapterProbeIds: [] } as unknown as brainStore.BrainStore;
+    });
+    vi.mocked(createBrain).mockImplementation(dependencies => {
+      const brain = actualCreateBrain(dependencies);
+      brain.schedules.tick = async () => ({ ok: true, fired: 0, enqueued: 0 });
+      brain.queue.drain = async () => unavailable ? { ...report, stopped: 'unwritable', code: 'DB_UNAVAILABLE' } : report;
+      return brain;
+    });
+    const calls: number[] = []; const daemon = startDaemon({ ...options(home),
+      reconnectBackoffMs: { initial: 100, max: 1000 }, runner: async () => {
+        calls.push(Date.now()); return { ok: true, stdout: '', stderr: '' };
+      } });
+    await waitFor('두 번째 시도', () => calls.length === 2);
+    unavailable = false;
+    await waitFor('복구 안내', async () => (await readFile(daemonLogPath(home), 'utf8')).includes('다시 닿았습니다'));
+    unavailable = true; const lostAt = Date.now();
+    await waitFor('새 구간 첫 시도', () => calls.length === 3);
+    expect(calls[2]! - lostAt).toBeLessThan(150);
+    await waitFor('새 구간 두 번째 시도', () => calls.length === 4);
+    expect(calls[3]! - calls[2]!).toBeGreaterThanOrEqual(100);
+    expect(calls[3]! - calls[2]!).toBeLessThan(200);
+    await daemon.stop();
+    const log = await readFile(daemonLogPath(home), 'utf8');
+    expect(log.match(/컨테이너를 다시 띄웁니다/g)).toHaveLength(2);
+    expect(log.match(/다시 닿았습니다/g)).toHaveLength(1);
+  });
+
+
+  it('starts a new recovery interval immediately when schema recovers but drain is unavailable', async () => {
+    const home = await pgHome();
+    const base = Date.now(); let now = base;
+    const calls: number[] = [];
+    const controller = new AbortController();
+    vi.spyOn(brainStore, 'openBrainStore').mockImplementation(async () => {
+      const store = sqliteStore({ path: ':memory:' });
+      vi.spyOn(store, 'readSchemaVersions').mockImplementation(async () => {
+        // Build up a 400ms next retry deadline, then reach PG at 300ms.
+        now = base + (calls.length === 1 ? 100 : calls.length >= 2 ? 300 : 0);
+        return calls.length < 3
+          ? { ok: false as const, code: 'DB_UNAVAILABLE', message: '시험 연결 끊김' }
+          : { ok: true as const, versions: { core: { version: SQLITE_SCHEMA_VERSION, appliedAt: new Date() } } };
+      });
+      return { kind: 'postgres', store, expected: { core: SQLITE_SCHEMA_VERSION }, adapterProbeIds: [] } as unknown as brainStore.BrainStore;
+    });
+    const drain = vi.fn(async (): Promise<BrainDrainReport> => ({
+      stopped: 'unwritable', code: 'DB_UNAVAILABLE', claimed: 0, completed: 0, retried: 0, failed: 0,
+      released: 0, lost: 0, spooled: 0, replayed: 0, spoolFailed: 0, enqueued: 0,
+      rereadMissing: 0, reextractRedacted: 0, reextractUnreachable: 0,
+    }));
+    vi.mocked(createBrain).mockImplementation(dependencies => {
+      const brain = actualCreateBrain(dependencies);
+      brain.schedules.tick = async () => ({ ok: true, fired: 0, enqueued: 0 });
+      brain.queue.drain = drain;
+      return brain;
+    });
+    const finished = runDaemon({ ...options(home), signal: controller.signal,
+      clock: { now: () => new Date(now) }, drainPauseMs: 1,
+      reconnectBackoffMs: { initial: 100, max: 1000 }, runner: async () => {
+        calls.push(now);
+        if (calls.length === 4) controller.abort();
+        return { ok: true, stdout: '', stderr: '' };
+      } });
+    daemonCleanups.push(async () => { controller.abort(); await finished; });
+    await waitFor('복구 직후 즉시 compose 호출', () => calls.length === 4, 1000);
+    expect(await finished).toEqual({ ok: true });
+    expect(calls).toEqual([base, base + 100, base + 300, base + 300]);
+    expect(drain).toHaveBeenCalledOnce();
+    const log = await readFile(daemonLogPath(home), 'utf8');
+    expect(log.match(/데이터베이스에 다시 닿았습니다/g)).toHaveLength(1);
+    expect(log.match(/컨테이너를 다시 띄웁니다/g)).toHaveLength(2);
+  });
+
+  it.each(['invalid', 'sqlite'] as const)('keeps the normal pause after reconnecting config becomes %s', async transition => {
+    const home = await pgHome();
+    let now = Date.now();
+    const runner = vi.fn(async () => ({ ok: true as const, stdout: '', stderr: '' }));
+    const reads = vi.spyOn(configCodec, 'readConfig');
+    const daemon = startDaemon({ ...options(home), clock: { now: () => new Date(now) },
+      drainPauseMs: 40, reconnectBackoffMs: { initial: 20, max: 20 }, runner });
+    await waitFor('첫 재연결 시도', () => runner.mock.calls.length === 1);
+    if (transition === 'invalid') await writeFile(join(home, 'config.toml'), 'broken = [');
+    else await writeConfig(home, { storePath: join(home, 'brain.db') });
+    now += 1000;
+    await waitFor('바뀐 설정 회차', async () => {
+      const results = await Promise.all(reads.mock.results.map(result => result.value));
+      return results.some(result => !result.ok || result.config.storeUrlEnv === undefined);
+    });
+    const before = reads.mock.calls.length;
+    await delay(160);
+    expect(reads.mock.calls.length - before).toBeLessThanOrEqual(5);
+    expect(runner).toHaveBeenCalledOnce();
+    await daemon.stop();
+  });
+  it.each(['missing', 'empty', 'unreadable-env'] as const)('does not restart when the selected URL is %s', async state => {
+    const home = await pgHome(); const env: NodeJS.ProcessEnv = { ...options(home).env };
+    delete env.BRAIN_DATABASE_URL;
+    if (state === 'empty') {
+      env.BRAIN_DATABASE_URL = '  ';
+      await writeFile(join(home, '.env'), 'BRAIN_DATABASE_URL=postgresql://unused@127.0.0.1:1/brain');
+    }
+    if (state === 'unreadable-env') await mkdir(join(home, '.env'));
+    const runner = vi.fn();
+    const reads = vi.spyOn(configCodec, 'readConfig');
+    const daemon = startDaemon({ ...options(home), env, runner });
+    await waitFor('URL 오류 뒤 반복 회차', () => reads.mock.calls.length >= 4);
+    await daemon.stop();
+    expect(runner).not.toHaveBeenCalled();
+  });
+
 });

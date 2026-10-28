@@ -1,7 +1,7 @@
+import { access } from 'node:fs/promises';
+import { join } from 'node:path';
 import { DAEMON_HEARTBEAT_MS } from './liveness.js';
 import {
-  BUSY_TIMEOUT_MS,
-  SQLITE_SCHEMA_VERSION,
   checkSchema,
   createBrain,
   errorLine,
@@ -15,13 +15,15 @@ import {
   type WorkHandlers,
 } from 'second_brain';
 import { brainDependencies } from '../assembly.js';
-import { readConfig, type ReadConfigResult } from '../config/codec.js';
+import { readConfig, resolveStoreUrl, type ReadConfigResult } from '../config/codec.js';
 import { readBuildIdentity } from '../install/installed.js';
 import { acquireDaemonLock } from './lock.js';
 import { daemonLog } from './log.js';
 import { startHeartbeat } from './heartbeat.js';
 import { watchFolders } from '../harnesses.js';
 import { startTranscriptWatch, type TranscriptWatchFunction } from './watch.js';
+import { openBrainStore } from '../runtime/brain-store.js';
+import { composeArgs, commandEnv, systemCommandRunner, type CommandRunner } from '../runtime/command-runner.js';
 import type { CreateStore } from '../dispatch.js';
 
 /**
@@ -67,6 +69,11 @@ export const DAEMON_DRAIN_BUDGET_MS = 10_000;
  */
 export const DAEMON_DRAIN_PAUSE_MS = 10_000;
 
+/** Delay after successive container restart attempts, capped at five minutes. */
+export const DAEMON_RECONNECT_BACKOFF_MS = { initial: 10_000, max: 300_000 };
+/** A compose start must finish within one minute and remains abortable. */
+export const DAEMON_COMPOSE_UP_TIMEOUT_MS = 60_000;
+
 export interface RunDaemonOptions {
   /** The configuration folder this daemon is the daemon of (AD-18). */
   home: string;
@@ -85,8 +92,10 @@ export interface RunDaemonOptions {
   watchBatchMs?: number;
   /** Filesystem watch seam for failure and lifecycle tests. */
   watch?: TranscriptWatchFunction;
-  /** Defaults to `sqliteStore`, which is what every real daemon uses. */
+  /** SQLite 홈의 Store 생성. Defaults to `sqliteStore`. */
   createStore?: CreateStore;
+  runner?: CommandRunner;
+  reconnectBackoffMs?: { initial: number; max: number };
   /** Kinds beyond Core's own. Empty for every real invocation (AD-21). */
   workHandlers?: WorkHandlers;
   /** Lock seams, for the rows of the matrix a test cannot arrange otherwise. */
@@ -144,6 +153,9 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
   // makes the next occurrence worth a line again.
   let said: string | undefined;
   let tickSaid: string | undefined;
+  let recovery: { attempt: number; nextAt: number; failureCode?: string; missing?: boolean } | undefined;
+  const backoff = options.reconnectBackoffMs ?? DAEMON_RECONNECT_BACKOFF_MS;
+  const runner = options.runner ?? systemCommandRunner;
   let pendingBatch = false;
   let wake: (() => void) | undefined;
   const watcher = startTranscriptWatch({
@@ -169,13 +181,42 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
             clock,
             idGen,
             signal,
-            storePath: config.config.storePath,
             config,
             createStore: options.createStore ?? sqliteStore,
             workHandlers: options.workHandlers ?? {},
             budgetMs: options.drainBudgetMs ?? DAEMON_DRAIN_BUDGET_MS,
           })
         : { pause: true, problem: { key: config.code, message: config.message } };
+
+      if (round.reached && recovery !== undefined) {
+        recovery = undefined;
+        await log.write('데이터베이스에 다시 닿았습니다');
+      }
+      if (!signal.aborted && round.unreachable && clock.now().getTime() >= (recovery?.nextAt ?? 0)) {
+        if (recovery === undefined) {
+          recovery = { attempt: 0, nextAt: 0 };
+          await log.write('데이터베이스에 닿지 않아 컨테이너를 다시 띄웁니다 — 간격을 두고 재시도합니다');
+        }
+        const composeExists = await access(join(home, 'postgres', 'compose.yaml')).then(() => true, () => false);
+        if (signal.aborted) break;
+        if (!composeExists) {
+          if (!recovery.missing) await log.write('데이터베이스 컨테이너 설정 파일 postgres/compose.yaml이 없어 다시 띄울 수 없습니다');
+          recovery.missing = true;
+        } else {
+          const result = await runner({ command: 'docker', args: composeArgs(home, ['up', '-d']),
+            env: commandEnv(env), timeoutMs: DAEMON_COMPOSE_UP_TIMEOUT_MS, signal });
+          if (signal.aborted) break;
+          recovery.attempt += 1;
+          if (!result.ok) {
+            const code = result.code ?? 'unknown';
+            if (code !== recovery.failureCode) await log.write(`데이터베이스 컨테이너 시작 실패 — 오류 코드 ${code}`);
+            recovery.failureCode = code;
+          }
+        }
+        recovery.nextAt = clock.now().getTime() + (composeExists
+          ? Math.min(backoff.initial * 2 ** (recovery.attempt - 1), backoff.max)
+          : backoff.initial);
+      }
 
       if (round.problem === undefined) {
         said = undefined;
@@ -196,7 +237,10 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
       await watcher.retry();
       if (signal.aborted) break;
       if (round.pause && !pendingBatch) {
-        await pause(options.drainPauseMs ?? DAEMON_DRAIN_PAUSE_MS, signal, (done) => { wake = done; });
+        const regularPause = options.drainPauseMs ?? DAEMON_DRAIN_PAUSE_MS;
+        const pauseMs = recovery === undefined || !round.unreachable ? regularPause
+          : Math.min(regularPause, Math.max(0, recovery.nextAt - clock.now().getTime()));
+        await pause(pauseMs, signal, (done) => { wake = done; });
         wake = undefined;
       }
       pendingBatch = false;
@@ -219,6 +263,8 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
 
 /** What one round of the loop did, and what it has to say about it. */
 interface Round {
+  unreachable?: true;
+  reached?: true;
   tickRan?: boolean;
   tickProblem?: { key: string; message: string };
   tickCounts?: string;
@@ -235,7 +281,6 @@ interface RoundOptions {
   env: NodeJS.ProcessEnv;
   clock: Clock;
   idGen: IdGen;
-  storePath: string;
   config: ReadConfigResult;
   createStore: CreateStore;
   workHandlers: WorkHandlers;
@@ -256,23 +301,30 @@ interface RoundOptions {
  * a spool of its own would be a second queue for the same writes.
  */
 async function drainOnce(options: RoundOptions): Promise<Round> {
-  const { home, env, clock, idGen, storePath, config, createStore, workHandlers, budgetMs, signal } =
+  const { home, env, clock, idGen, config, createStore, workHandlers, budgetMs, signal } =
     options;
   let store: (Store & SchemaStore) | undefined;
   let tickState: Pick<Round, 'tickRan' | 'tickProblem' | 'tickCounts'> = {};
+  let reached: Pick<Round, 'reached'> = {};
   try {
-    store = createStore({ path: storePath, busyTimeoutMs: BUSY_TIMEOUT_MS.command });
+    // The factory represents URL resolution failures with an unavailable store.
+    // Only a resolved URL authorizes trying to start the configured container.
+    const reconnectEligible = config.ok && config.config.storeUrlEnv !== undefined
+      && Boolean(await resolveStoreUrl(home, config.config.storeUrlEnv, env).catch(() => undefined));
+    const opened = await openBrainStore({ home, env, config, path: 'drain', createSqliteStore: createStore });
+    store = opened.store;
     // Every round, not once at startup: a database that was repaired or
     // migrated while this process ran is one the next round may write to, and
     // one that was replaced by another version is one it may not (AD-20).
-    const schema = await checkSchema(store, { core: SQLITE_SCHEMA_VERSION });
+    const schema = await checkSchema(store, opened.expected);
+    if (opened.kind === 'postgres' && (schema.ok || schema.code !== 'DB_UNAVAILABLE')) reached = { reached: true };
     if (signal.aborted) return { pause: false };
     if (!schema.ok) {
-      return { pause: true, problem: { key: schema.code, message: schema.message } };
+      return { ...reached, ...(opened.kind === 'postgres' && reconnectEligible && schema.code === 'DB_UNAVAILABLE' ? { unreachable: true as const } : {}), pause: true, problem: { key: schema.code, message: opened.kind === 'postgres' ? `데이터베이스 확인 실패: ${schema.message}` : schema.message } };
     }
 
     const brain = createBrain(
-      brainDependencies({ home, env, config, schemaVersions: { core: SQLITE_SCHEMA_VERSION }, store, clock, idGen, workHandlers }),
+      brainDependencies({ home, env, config, schemaVersions: opened.expected, store, clock, idGen, workHandlers }),
     );
     const tick = await brain.schedules.tick();
     tickState = {
@@ -284,8 +336,11 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
     const report = await brain.queue.drain({ budgetMs });
     if (report.stopped === 'unwritable') {
       const key = report.code ?? 'DB_UNAVAILABLE';
+      const unavailable = opened.kind === 'postgres' && reconnectEligible && report.code === 'DB_UNAVAILABLE';
       return {
         ...tickState,
+        ...reached,
+        ...(unavailable ? { unreachable: true as const } : {}),
         pause: true,
         problem: { key, message: '데이터베이스에 쓸 수 없어서 이번 회차를 멈췄습니다.' },
         ...(worked(report) ? { counts: counts(report) } : {}),
@@ -293,6 +348,7 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
     }
     return {
       ...tickState,
+      ...reached,
       pause: report.stopped !== 'budget',
       ...(worked(report) ? { counts: counts(report) } : {}),
     };
@@ -303,6 +359,7 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
     return {
       pause: true,
       ...tickState,
+      ...reached,
       problem: { key: 'DRAIN_THREW', message: `밀린 일 처리 중 오류: ${errorLine(error)}` },
     };
   } finally {
