@@ -1,11 +1,18 @@
 import {
-  FILE_REDACTION_RESOLVES,
+  formatInstant,
+  parseInstant,
+  type FileLocationRow,
+  type FileName,
+  type FileRef,
+  type MissingFileName,
+  type ReadFileSharingResult,
   type AttachmentStore,
   type IngestAttachment,
   type ListRedactedContentHashesResult,
   type MessageAttachment,
 } from '@second-brain/core';
 import { sql, type Kysely } from 'kysely';
+import { withWrite } from './write.js';
 import { pgText, originalText } from './text.js';
 import type { PgSchema } from './connect.js';
 import { databaseFailure, describe, type PgConnect } from './connect.js';
@@ -38,8 +45,174 @@ export async function writeAttachments(db: Kysely<PgSchema>, attachments: readon
   return linked;
 }
 
-export function postgresAttachmentStore(connect: PgConnect): Pick<AttachmentStore, 'listMessageAttachments' | 'listRedactedContentHashes'> {
+/** One `file_locations` row as the port spells it; the instant is an ISO string. */
+interface FileLocationColumns {
+  id: string;
+  fileId: string;
+  storeKind: 'local' | 'drive';
+  locator: string;
+  ownership: 'brain' | 'external';
+  deletedAt: string | null;
+}
+
+function fileLocationRow(row: FileLocationColumns): FileLocationRow {
+  return { ...row, deletedAt: row.deletedAt === null ? null : new Date(row.deletedAt) };
+}
+
+/** An instant as the column holds it. A caller's bad instant is a bug (AD-13). */
+function instant(value: Date, column: string): string {
+  const formatted = formatInstant(value);
+  if (!formatted.ok) throw new TypeError(`${column} cannot hold this instant: ${formatted.message}`);
+  return formatted.value;
+}
+
+/** The other direction. A row holding anything else was not written by us. */
+function at(value: string, column: string): Date {
+  const parsed = parseInstant(value);
+  if (!parsed.ok) throw new Error(`${column}을 읽을 수 없습니다: ${parsed.message}`);
+  return parsed.value;
+}
+
+/** The `where` that picks one file by id or by content hash (`FileRef`). */
+function fileWhere(ref: FileRef, alias: string): ReturnType<typeof sql> {
+  const column = sql.ref(`${alias}.${'fileId' in ref ? 'id' : 'content_hash'}`);
+  return sql`${column} = ${'fileId' in ref ? ref.fileId : ref.contentHash}`;
+}
+
+export function postgresAttachmentStore(connect: PgConnect): Omit<AttachmentStore, 'redactFile'> {
   return {
+    async listMissingFileNames({ limit }) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        // Sort the original UTF-8 bytes: bytea also preserves the NUL that
+        // PostgreSQL text cannot hold. Other text keys use SQLite's binary order.
+        const result = await sql<MissingFileName & { text_raw: Buffer | null }>`
+          select c.file_id as "fileId", c.name_source as "nameSource", c.text, c.text_raw from (
+            select a.file_id, 'attachment_name' as name_source, a.display_name as text, a.display_name_raw as text_raw
+            from brain.message_attachments a join brain.files f on f.id = a.file_id
+            where f.redacted_at is null and a.display_name is not null
+            union
+            select l.file_id, 'location_path', l.locator, null::bytea
+            from brain.file_locations l join brain.files f on f.id = l.file_id
+            where f.redacted_at is null and l.store_kind = 'local' and l.ownership = 'external'
+          ) c where not exists (select 1 from brain.file_names n where n.file_id = c.file_id and n.name_source = c.name_source and n.text is not distinct from c.text and n.text_raw is not distinct from c.text_raw)
+          order by c.file_id, c.name_source collate "C", coalesce(c.text_raw, convert_to(c.text, 'UTF8')) limit ${limit}
+        `.execute(opened.connection.db);
+        return { ok: true, names: result.rows.map(originalText).map(({ text_raw: _raw, ...row }) => row) };
+      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 이름을 읽을 수 없습니다: ${describe(error)}` }; }
+    },
+    async writeFileNames({ names }) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      const result = await withWrite(opened.connection, async db => {
+        let inserted = 0;
+        for (const n of names) {
+          const encoded = pgText(n.text);
+          const added = await sql`insert into brain.file_names (id, file_id, name_source, text, text_raw)
+            select ${n.id}, id, ${n.nameSource}, ${encoded.text}, ${encoded.raw} from brain.files where id = ${n.fileId} and redacted_at is null
+            on conflict (file_id, name_source, text, text_raw) do nothing returning id`.execute(db);
+          inserted += added.rows.length;
+        }
+        return { ok: true as const, inserted };
+      });
+      return result.ok ? result.value : result;
+    },
+    async listFileNames(fileId) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const result = await sql<FileName & { text_raw: Buffer | null }>`select id, file_id as "fileId", name_source as "nameSource", text, text_raw from brain.file_names where file_id::text = ${fileId} order by name_source collate "C", coalesce(text_raw, convert_to(text, 'UTF8'))`.execute(opened.connection.db);
+        return { ok: true, names: result.rows.map(originalText).map(({ text_raw: _raw, ...row }) => row) };
+      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 이름을 읽을 수 없습니다: ${describe(error)}` }; }
+    },
+    async readFileLocation(id) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const result = await sql<FileLocationColumns>`select id, file_id as "fileId", store_kind as "storeKind", locator, ownership, deleted_at as "deletedAt" from brain.file_locations where id::text = ${id}`.execute(opened.connection.db);
+        const row = result.rows[0];
+        if (row === undefined) return { ok: false, code: 'FILE_LOCATION_NOT_FOUND', message: '파일 위치가 없습니다' };
+        return { ok: true, location: fileLocationRow(row) };
+      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 위치를 읽을 수 없습니다: ${describe(error)}` }; }
+    },
+    async listFileLocations(fileId) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const result = await sql<FileLocationColumns>`select id, file_id as "fileId", store_kind as "storeKind", locator, ownership, deleted_at as "deletedAt" from brain.file_locations where file_id::text = ${fileId} order by ownership collate "C", locator collate "C"`.execute(opened.connection.db);
+        return { ok: true, locations: result.rows.map(fileLocationRow) };
+      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 위치를 읽을 수 없습니다: ${describe(error)}` }; }
+    },
+    async markFileLocationDeleted({ id, deletedAt }) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      // Validate before opening the write transaction, including repeated marks.
+      let result;
+      try {
+        const checked = instant(deletedAt, 'file_locations.deleted_at');
+        result = await withWrite(opened.connection, async db => {
+          // The `and deleted_at is null` is the one-way fill of 0002 said in SQL
+          // rather than left to the trigger: the trigger aborts the statement, and
+          // a second piece of work about the same place is an ordinary answer.
+          const filled = await sql`update brain.file_locations set deleted_at = ${checked} where id::text = ${id} and deleted_at is null returning id`.execute(db);
+          const read = (await sql<{ deletedAt: string | null }>`select deleted_at as "deletedAt" from brain.file_locations where id::text = ${id}`.execute(db)).rows[0];
+          if (read === undefined) return { ok: false as const, code: 'FILE_LOCATION_NOT_FOUND' as const, message: '파일 위치가 없습니다' };
+          // Read back and not assumed: the stored instant is what the row says,
+          // and on the second call that is the first call's value.
+          if (read.deletedAt === null) return { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: '파일 위치의 삭제 시각을 쓰지 못했습니다' };
+          return { ok: true as const, deletedAt: new Date(read.deletedAt), marked: filled.rows.length > 0 };
+        });
+      } catch (error) {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 위치를 표시할 수 없습니다: ${describe(error)}` };
+      }
+      return result.ok ? result.value : result;
+    },
+    async readFileSharing(ref: FileRef): Promise<ReadFileSharingResult> {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        // One statement, because the port says this is one read: the count a
+        // confirmation message is built from must be the count as of the same
+        // instant as the row, and two statements could straddle a write.
+        // `count(distinct message_id)` and not attachment rows — the same file
+        // attached twice to one message is one conversation that loses it.
+        const row = (await sql<{ id: string; contentHash: string; redactedAt: string | null; messages: number }>`
+          select f.id, f.content_hash as "contentHash", f.redacted_at as "redactedAt",
+                 (select count(distinct a.message_id) from brain.message_attachments a
+                   where a.file_id = f.id) as messages
+            from brain.files f where ${fileWhere(ref, 'f')}
+        `.execute(opened.connection.db)).rows[0];
+        if (row === undefined) return { ok: false, code: 'FILE_NOT_FOUND', message: '지정한 파일이 없습니다' };
+        return {
+          ok: true,
+          file: {
+            id: row.id,
+            contentHash: row.contentHash,
+            redactedAt: row.redactedAt === null ? null : at(row.redactedAt, 'files.redacted_at'),
+          },
+          messages: Number(row.messages),
+        };
+      } catch (error) {
+        return { ok: false, code: 'DB_UNAVAILABLE', message: `파일을 읽을 수 없습니다: ${describe(error)}` };
+      }
+    },
+    async linkAttachments(input) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      let linkedAt: string;
+      try { linkedAt = instant(input.linkedAt, 'files.first_seen_at'); }
+      catch (error) { return databaseFailure(error); }
+      const result = await withWrite(opened.connection, async db => {
+        const session = (await sql<{id: string}>`select id from brain.sessions where harness = ${input.key.harness} and harness_session_id = ${input.key.harnessSessionId}`.execute(db)).rows[0];
+        if (session === undefined) return { ok: false as const, code: 'SESSION_NOT_FOUND' as const, message: '세션이 없습니다' };
+        const rows = await sql<{id: string; harness_message_id: string}>`select id, harness_message_id, harness_message_id_raw from brain.messages where session_id = ${session.id}`.execute(db);
+        const messages = new Map(rows.rows.map(originalText).map(r => [r.harness_message_id, r.id]));
+        if (input.attachments.some(a => !messages.has(a.harnessMessageId))) return { ok: false as const, code: 'MESSAGE_NOT_FOUND' as const, message: '메시지가 없습니다' };
+        return { ok: true as const, linked: await writeAttachments(db, input.attachments, messages, linkedAt) };
+      }, `${input.key.harness}:${input.key.harnessSessionId}`);
+      return result.ok ? result.value : result;
+    },
     async listRedactedContentHashes(hashes): Promise<ListRedactedContentHashesResult> {
       // No hashes is no question, and the collection path asks this on every
       // turn: a turn with no attachment must not open the database for it.

@@ -336,8 +336,9 @@ create table brain.file_names (
   file_id uuid not null references brain.files(id),
   name_source text not null,
   "text" text not null,
-  unique(file_id, name_source, "text"),
-  constraint file_names_name_source_check check (name_source in ('location_path', 'attachment_name'))
+  unique nulls not distinct(file_id, name_source, "text", text_raw),
+  constraint file_names_name_source_check check (name_source in ('location_path', 'attachment_name')),
+  text_raw bytea
 );
 create table brain.file_metadata (
   id uuid primary key,

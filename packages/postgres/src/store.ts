@@ -1,21 +1,22 @@
-import type { HealthStore, SchemaStore, SessionIngestStore, SessionStore, TranscriptFileStore, WorkStore, ScheduleStore, UserStore } from '@second-brain/core';
+import type { AttachmentStore, ExtractionStore, HealthStore, SchemaStore, SessionIngestStore, SessionStore, TranscriptFileStore, WorkStore, ScheduleStore, UserStore } from '@second-brain/core';
 import { Kysely, PostgresDialect, sql } from 'kysely';
 import { createPool, databaseFailure, describe, type CreatePoolOptions, type PgSchema, type PgConnect } from './connect.js';
 import { postgresSessionStore } from './sessions.js';
 import { postgresUserStore } from './users.js';
 import { postgresTranscriptFileStore } from './transcript-files.js';
 import { postgresAttachmentStore } from './attachments.js';
+import { postgresExtractionStore } from './extractions.js';
 import { postgresWorkStore } from './work.js';
 import { postgresScheduleStore } from './schedules.js';
 export type PostgresStoreOptions = CreatePoolOptions;
 export type PostgresIngestStore = SessionIngestStore & UserStore & HealthStore & SchemaStore;
-export type PostgresStore = PostgresIngestStore & Omit<SessionStore, 'redactMessage'> & TranscriptFileStore & WorkStore & ScheduleStore;
+export type PostgresStore = PostgresIngestStore & Omit<SessionStore, 'redactMessage'> & TranscriptFileStore & WorkStore & ScheduleStore & Omit<AttachmentStore, 'redactFile'> & ExtractionStore;
 export function postgresStore(options: PostgresStoreOptions): PostgresStore {
   const pool = createPool(options);
   const db = new Kysely<PgSchema>({ dialect: new PostgresDialect({ pool }) });
   const connect: PgConnect = () => ({ ok: true, connection: { db } });
   return {
-    ...postgresWorkStore(connect), ...postgresScheduleStore(connect), ...postgresSessionStore(connect), ...postgresUserStore(connect),
+    ...postgresExtractionStore(connect), ...postgresWorkStore(connect), ...postgresScheduleStore(connect), ...postgresSessionStore(connect), ...postgresUserStore(connect),
     ...postgresTranscriptFileStore(connect), ...postgresAttachmentStore(connect),
     async checkHealth() {
       try {

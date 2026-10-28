@@ -5,7 +5,7 @@ import { assertEqual, assertNotOk, assertOk, assertTrue } from '../assert.js';
 import { contractCase, withSubject, type ContractCase } from '../contract.js';
 import { sampleEnsureSessionInput, sampleIngestBatch, sampleSelfUserInput, sampleSessionKey } from '../fixtures.js';
 import { sequenceIdGen } from '../fakes/id-gen.js';
-export type AttachmentStoreSubject = AttachmentStore & SessionStore & UserStore;
+export type AttachmentStoreSubject = Omit<AttachmentStore, 'redactFile'> & Omit<SessionStore, 'redactMessage'> & UserStore;
 export function attachmentStoreContract(): ContractCase<AttachmentStoreSubject>[] {
   return [contractCase('빠진 원본과 external 위치와 파생 이름은 멱등으로 보존한다', async make => withSubject(make, async store => {
     const batch = sampleIngestBatch();
