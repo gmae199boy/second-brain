@@ -121,8 +121,8 @@ cleanup_session_on_finish = true  # kill the run's tmux session when it finishes
 name = "codex"
 # model = "gpt-5-codex"
 # stop_without_result_nudges = 5     # e.g. a multi-turn review needs more nudges than dev
-# [adapter.triage]
-# model = "opus"
+[adapter.triage]
+name = "codex"                       # claude directs the dev session; codex does the rest (2026-10-28)
 # [adapter.retro]                    # gates.retrospective = "auto" sessions
 # model = "opus"
 # With an opencode-http base, effort tunes reasoning per stage (opencode-http
