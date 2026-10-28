@@ -92,6 +92,9 @@ graphify-out/
 _bmad/render/
 .bmad-loop/runs/
 .bmad-loop/cache/
+# policy.toml is tracked on purpose; the line only stops `bmad-loop init` from
+# appending it again. Ignoring a tracked file does not untrack it.
+.bmad-loop/policy.toml
 # bmad-loop hooks: bmad-loop only accepts its own absolute path here, which
 # carries the home folder. Recreate them on each machine with `bmad-loop init`
 # (it registers claude and codex, the CLIs .bmad-loop/policy.toml names).
