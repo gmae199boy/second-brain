@@ -84,6 +84,14 @@
 | 2026-10-28 | epic 3 · 시작 맥락 크기 | DB 설정 `context.max_chars`·`timezone`, `stop_remind`만 config.toml. 가린 최종 문자열의 코드 포인트로 셈 | 조사 5절 |
 | 2026-10-28 | epic 3 · Spike·체크리스트 | 3(Stop 실측)·4·15를 에이전트가 격리 홈과 `claude -p`로(`hitl = false`). 방해 정도의 체감은 사람 몫 | 위임, 12.12 선례 |
 | 2026-10-28 | epic 3 · 순서 | 1·2 → 4 → 5 → 6 → 7 → 8 → 9 → 14 → 10 → 11 → 3 → 12 → 16 → 17 → 15, 4는 5.8을 기다림 | 같은 파일(조사 8절) |
+| 2026-10-28 | epic 4 · 범위 | SQLite 전제(FTS5·LIKE 폴백·QUERY PLAN)를 17의 질의 함수와 EXPLAIN 기록으로 대신, 남는 것은 시간 조회·logs·count·러너·미러·가리기와 미러·index rebuild·EXIF | V1 뒤 에픽도 같은 방식(사용자) |
+| 2026-10-28 | epic 4 · 미러 이름 | ` (2)` 충돌 번호는 DB에서(대소문자를 접은 경로, 세션 시작 시각·id 순), 위치는 기계 값 `[mirror] path` | 다시 만들어도 같은 이름 |
+| 2026-10-28 | epic 4 · 가리기와 미러 | redact 트랜잭션이 미러 일감을 넣고, 확정 직후 미러 파일을 지움(실패면 경고·doctor warn) | AD-11 U1 즉시성 |
+| 2026-10-28 | epic 4 · index rebuild | 새 설정 세대를 다 만든 뒤 활성 포인터 전환(섞이지 않음, 이어 가기) | 중간에 검색이 비지 않음 |
+| 2026-10-28 | epic 4 · count | 기간을 주면 그 안의 모든 달(0 포함), docs `files`는 file_id와 `source_file_id`를 따로 셈 | 조사 6절 |
+| 2026-10-28 | epic 4 · 러너 | TOML `[[question]]`(id·verb·query·expect·k), any-hit hit@k, 결과는 식별자·질의·점수만, 실제 문항은 `~/.second_brain/eval/` | SM-3는 사람 몫 |
+| 2026-10-28 | epic 4 · EXIF | exifr(안 되면 exif-reader), 메타데이터만 있는 추출 성공, 시간대 추정 금지, Carry는 epic 8 방식 | 조사 8절 |
+| 2026-10-28 | epic 4 · 순서 | entry 1(EXIF) id 유지, 2(시간 조회 tracer) → 3 → 4 → 5 → 6 → 7 → 8 → 1 → 9(sweep) → 10(이 Mac), 2는 3.17을 기다림 | 같은 파일(조사 9절) |
 
 ## 사람 몫
 
@@ -97,5 +105,6 @@
 | epic 18 | 분석 결과의 품질을 판단한다(에이전트는 형식·저장·순서만 검증) | 18 완료 뒤 |
 | epic 17 | (선택) 17.7의 실제 질문 10건 판정을 다시 본다 | 17 완료 뒤 |
 | epic 3 | (선택) Stop 점검이 실사용에서 방해가 되는지 판단하고, 기본값(`stop_remind = false`)을 바꿀지 정한다 | 3 완료 뒤 |
+| epic 4 | SM-3 채점표(addendum §8)로 실제 질문의 답변을 채점한다(러너의 hit@k는 이를 대신하지 않음) | 4 완료 뒤 |
 | epic 16·18 | Codex·Garmin 로그인이 만료됐을 때만 재로그인한다 | 해당 스토리가 `awaiting-operator`일 때 |
 | epic 8 · 8.8 | Google Cloud에서 데스크톱 OAuth client를 만들고(동의 화면은 In production 권장, 8.3이 확인), client id·secret을 `.env`에 넣은 뒤 `brain sources connect drive`로 동의한다 | 8.8이 `awaiting-operator`일 때 |

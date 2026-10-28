@@ -283,6 +283,7 @@ sequenceDiagram
     - 차원은 설정 시점에 고정한다(예: 1024). 벡터 저장소는 epic 6 인셉션에서 정한다(pgvector는 필수가 아니다, C2).
     - 사용 중인 색인 설정은 DB에 기록하고, 설정 파일과 다르면 경고 `INDEX_CONFIG_MISMATCH`를 낸다.
     - 모델·차원 변경은 `index.rebuild`가 새 테이블을 만든 뒤 교체한다. 교체 전까지는 옛 테이블로 검색한다.
+  - 키워드 조각의 `index.rebuild`(epic 4, 2026-10-28)도 같은 방식이다: 활성 설정과 요청 설정을 따로 두고, 새 `index_config_id` 세대를 모든 세션에 다 만든 뒤 활성 포인터를 한 트랜잭션에서 바꾼다. 완성 전에는 옛 설정만 검색한다. 그동안 들어온 증분 조각 생성과 가리기 뒤 재생성은 두 설정 모두에 반영된 뒤에만 전환하고, 동시에 요청된 rebuild는 완성된 세대 하나만 활성이 되며 오래된 완료가 되돌리지 않는다. 중간에 멈추면 이어 간다.
     - 재순위가 실패하면 벡터 순위를 그대로 돌려주고 경고 `RERANK_FAILED`를 낸다.
   - **결과 계약**: 결과는 종류(`conversation | log | document`)로 갈라지는 출처를 붙인다. 대화·로그는 `session` 토큰, `harness`, 날짜, 꼬리표, `from_at`·`to_at`(대화는 조각의 첫·끝 메시지 시각, 로그는 그 줄의 시각), `chunk_id` 또는 `log_entry_id`이고, 이것이 `recall.expand`·`sessions.read`의 입력이다. 문서는 `file_id`, 표시 이름, 조각 위치(`chunk_locator`: `type ∈ {pdf, docx, text, time, sheet}`와 종류별 필드 `page`·`bbox` / `block` / `start`·`end` / `start_ms`·`end_ms` / `sheet`·`row_start`·`row_end`, AD-24), 그때 만든 URL, 첨부라면 그 세션·메시지 id이고, `files.show`의 입력이다. 문서는 첨부된 세션의 근접 단계를 물려받는다. 내려받지 않은 외부 소스 항목(Drive 사진·큰 파일 등)은 이름으로만 찾아지는 `document` 결과이고, `file_id`·`chunk_locator`가 없으며(지어내지 않음) 대신 `source_file_id`·색인 상태(`photo | too_large | unsupported | pending | failed`)·접근 상태·source 전용 원본 URL을 싣는다. `files.show`는 `source_file_id`를 받으면 그 상태와 원본 URL을 돌려준다. `source_files.content_id`가 가리키는 파일에 `redacted_at`이 있으면 source 이름 검색과 `files.show(source_file_id)`도 그 표시 이름·경로·원본 URL을 돌려주지 않고, source 메타데이터 갱신·재연결·재추출이 이 제외를 우회하지 않는다. 내용 해시를 아직 모르는(`content_id` null) 항목을 가린 내용으로 추정하지 않는다(2026-10-28, epic 8).
   - 정렬은 근접 단계(같은 워크트리 → 프로젝트 → 전체. 워크스페이스 단계는 워크스페이스를 쓰게 될 때 더한다) 다음 관련도 순이다.
@@ -562,7 +563,7 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `log_entry_edits` | `id` | `log.edit` | 불변 |
 | `chunks` | `(session_id, index_config_id, from_at, to_at, part)`. `part`는 같은 `(session_id, index_config_id, from_at, to_at)` 안에서 유일한 비음수 정수다: 분할 없는 단일 조각은 0, 분할 조각은 1부터 연속 배정하고 메시지마다 초기화하지 않는다. 같은 `occurred_at` 메시지 묶음은 일반 메시지 경계 분할에서 한 단위로 취급한다. 단, 2,400자를 넘는 메시지의 내부 분할은 이 금지의 예외이고, 생긴 조각은 실제 메시지 시각을 유지하며 `part`로 구별한다. 같은 시각 입력의 정규 나열·코드 포인트 분할·번호 배정은 Core chunker 하나가 정하고 증분 생성과 redact 재생성이 공유한다(같은 시각 메시지에 대화상 선후를 부여하지 않는다). 규칙과 버전은 `index_configs.chunk_params`에 기록한다(2026-10-28, epic 17) | drain | 파생, 다시 만들 수 있음 |
 | `embeddings` | `(target_kind, target_id, index_config_id)` | drain | 파생 |
-| `index_configs` | `(kind, model, dimensions, chunk_params)` | `setup run`, `index.rebuild` | 불변 |
+| `index_configs` | `(kind, model, dimensions, chunk_params)` | `setup run`, `index.rebuild` | 불변. 종류별 활성·요청 설정 포인터는 `index.rebuild`만 바꾼다(완성 뒤 원자 전환, AD-15, 2026-10-28 epic 4) |
 | `redactions` | `id`. 대상은 `message_id`·`file_id`·`tool_note_id` 중 하나 | `messages.redact`(본문과 도구 메모 대상. `detected`면 `pattern_version` 기록), `files.redact`. 수집·추출은 쓰지 않는다(마스킹 B, AD-11) | 불변 |
 | `context_injections` | `id` | `context.show`·`log.remind`가 spool에 쓰고 drain이 넣음(`kind`: `start` \| `stop`, 칸의 뜻은 AD-17) | 불변 |
 | `failures` | `(target_kind, target_id, stage, fingerprint)`. 대상 키는 `work_items`와 같다. 세션 수집 실패는 `session`/세션 토큰(`harness:harness_session_id`, 세션 행이 없어도 됨). `harness`·`session_id`는 정보 칸이고 비어 있을 수 있음(2026-10-16) | 모든 경로(실패 기록 함수 하나) | `resolved_at`은 drain이 채움. 같은 키를 다시 만나면 실패 기록 함수가 그 행을 다시 열고(`resolved_at = null`) `occurred_at`(마지막으로 난 때)·`message`를 바꾸며, 0005부터 `first_occurred_at`은 그대로 두고 `occurrences`를 1 올린다(2026-10-19 사용자) |
@@ -659,7 +660,7 @@ erDiagram
 | Kysely | 0.29.7 (저장소 0.29.6). 트랜잭션은 AD-7의 `withWrite` |
 | OrbStack | 사용자가 설치하는 선행 조건, 고정하지 않는다 |
 | commander (CLI) | 15.0.0 |
-| 문서 추출 | `pdfjs-dist` 6.4.299, `mammoth` 1.13.0, `file-type` 22.2.0, `exif-reader` 2.0.3 (2026-10-15 npm 확인. 버전은 `extractor_version`에 들어간다, AD-24) |
+| 문서 추출 | `pdfjs-dist` 6.4.299, `mammoth` 1.13.0, `file-type` 22.2.0, `exifr`(`reviveValues: false`로 날짜·offset 원문 보존, epic 4.1에서 확인. `exif-reader` 2.0.3은 날짜를 Date로 바꾸고 원문 보존 옵션이 없어, 원래 태그 문자열을 얻는 별도 경로·태그 매핑·컨테이너 지원을 입증한 경우에만 대안) (2026-10-15 npm 확인, 2026-10-28 epic 4 결정. 구현 때 버전 고정. 버전은 `extractor_version`에 들어간다, AD-24) |
 | @clack/prompts (설치기) | 1.8.1 |
 | smol-toml (설정) | 1.9.1 |
 | uuid (v7) | 14.0.2 (설치본. 최신 14.0.3, 2026-10-15) |

@@ -118,7 +118,7 @@ id = 4
 slug = "epic-recall-and-mirror"
 title = "조회와 미러"
 covers = ["CAP-4", "CAP-5", "CAP-6", "CAP-7", "CAP-13", "CAP-14"]
-after = [{ epic = 2, needs = "메시지와 도구 메모" }, { epic = 3, needs = "작업 로그(대분류 검색)" }, { epic = 8, needs = "문서 검색 경로(E8-6)와 문서 추출 세대·조각·file_names(2026-10-26)" }, { epic = 10, needs = "추출기 등록 자리(10.8): EXIF 추출기(4.1, 옛 10.9)가 그 위에 얹힌다" }, { epic = 17, needs = "공통 텍스트 검색과 대화 조각·도구 메모 검색·넓히기, 결과 계약(2026-10-28 epic 17로 옮김)" }]
+after = [{ epic = 2, needs = "메시지와 도구 메모" }, { epic = 3, needs = "작업 로그(대분류 검색)" }, { epic = 8, needs = "문서 검색 경로(E8-6)와 문서 추출 세대·조각·file_names(2026-10-26)" }, { epic = 10, needs = "추출기 등록 자리(10.8): EXIF 추출기(4.1, 옛 10.9)가 그 위에 얹힌다" }, { epic = 17, needs = "공통 텍스트 검색과 대화 조각·도구 메모 검색·넓히기, 결과 계약(2026-10-28 epic 17로 옮김)" }, { epic = 12, needs = "같은 키 직렬화와 일감 계약(세션 미러 일감, 2026-10-28 epic 4 정제)" }]
 
 [[epic]]
 id = 7
