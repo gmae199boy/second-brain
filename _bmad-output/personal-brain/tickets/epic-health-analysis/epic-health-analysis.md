@@ -63,3 +63,4 @@ Garmin 사용자가 예약된 시각에 day·7d·30d·all 평가를 받고, 성�
 - Decision(2026-10-28, 사용자): Garmin 확장을 끄면 Garmin 데이터를 읽는 분석 예약도 멈추고, 진행 중인 평가는 감독자 취소로 끊으며, 대기 일감은 보류했다가 다시 켜면 이어서 돈다. 이미 저장한 평가와 이전된 분석은 남고 검색된다(epic-jobs-and-scheduler Notes 같은 날). 이전의 Open question을 대신한다.
 - Decision(2026-10-28): 기본 분석 예약은 옛 Garmin 값인 11:30이다. 리포트 실패 알림(옛 `REPORT_FAILED`)도 채널 발신 요청으로 옮긴다.
 - Assumption(2026-10-28): 여러 날을 놓친 뒤 깨어나면 수집이 끝난 최신 날짜만 평가하고, 빠진 날의 day 평가를 소급해 만들지 않는다(옛 report의 동작으로 짐작). 정제 때 옛 코드로 확인한다.
+- Handoff(2026-10-28, epic 12 세트 검증 F4): Garmin을 끄면 분석도 멈추게 연결하는 일은 이 에픽의 몫이다. 분석 일감과 예약을 넣을 때 epic 12의 보류 그룹 `extension:garmin`을 붙인다(12.10). 평가 순서는 12.6의 의존 use case로, 모델 일감의 정체 창 25분은 12.5로, 토큰은 12.4의 `usage` 칸으로 운반한다. 옛 Garmin `report.py`의 `_usage`는 `codex exec --json`의 `turn.completed`에서 토큰을 읽는다(epic 12 코드 조사 6절). adapter는 그 방식을 이어받는다.

@@ -56,3 +56,4 @@ Garmin을 쓰지 않는 사용자는 아무것도 더 설치하지 않는다. �
 - Decision(2026-10-28, spine AD-29·30·33·34): TS↔Python 포트는 manifest·DB 계약·프로세스 규약이고, 확장 패키지는 `<home>/extensions/<name>/`(spine [ASSUMPTION])에 둔다. 이전의 Open question을 대신한다.
 - Decision(2026-10-28, 사용자): 확장을 끄면 진행 중인 그 확장의 일감은 감독자 취소로 끊고, 대기 일감은 `extension_disabled`로 보류했다가 다시 켜면 이어서 돈다. 그 확장의 데이터를 읽는 core 분석 예약도 멈춘다. registry가 이 상태를 공개 상태 view로 낸다(epic-jobs-and-scheduler Notes 같은 날). 이전의 Open question을 대신한다.
 - Decision(2026-10-28): 새 확장 CLI는 AD-5의 `<ns> <verb>` 모양이다. 안은 `brain ext install|status|enable|disable <name>`이고, install 스킬은 이 명령을 부른다. 정제 때 CommandSpec과 SDK를 1:1로 확정한다(spine Deferred "신규 공통 CLI namespace/verb").
+- Handoff(2026-10-28, epic 12 세트 검증 F4): 확장 끄기에서는 registry가 epic 12의 보류 그룹 계약(12.10)을 부른다. 확장의 `<ext>.*` 일감은 자동으로 `extension:<ext>` 그룹이다. 예약 등록은 12.9의 SDK를 쓴다. 연결 확인은 12.1의 감독자와 12.4의 ABI v1 fixture(core 패키지 배포본)를 쓴다. 테스트 확장은 probe worker `process_probe`(12.1)를 바탕으로 한다.
