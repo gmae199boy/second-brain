@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import type { ProcessLauncher } from 'second_brain';
+import { PROCESS_ABI_MAX_LINE_BYTES, type ProcessLauncher } from 'second_brain';
 
 export const systemProcessLauncher: ProcessLauncher = {
   async start(spec) {
@@ -8,16 +8,27 @@ export const systemProcessLauncher: ProcessLauncher = {
       function buffer(stream: typeof child.stdout) {
         stream.setEncoding('utf8');
         const queue: string[] = [];
+        let queuedBytes = 0;
         let ended = false;
         let error: Error | undefined;
         let wake: (() => void) | undefined;
-        stream.on('data', (chunk: string) => { queue.push(chunk); wake?.(); });
+        stream.on('data', (chunk: string) => {
+          queue.push(chunk); queuedBytes += Buffer.byteLength(chunk, 'utf8');
+          // One incoming chunk may cross the bound; pause before accepting more.
+          if (queuedBytes >= PROCESS_ABI_MAX_LINE_BYTES) stream.pause();
+          wake?.();
+        });
         const close = () => { ended = true; wake?.(); };
         stream.once('end', close); stream.once('close', close);
         stream.once('error', value => { error = value; close(); });
         const output: AsyncIterable<string> = { async *[Symbol.asyncIterator]() {
           while (!ended || queue.length) {
-            if (queue.length) yield queue.shift()!;
+            if (queue.length) {
+              const chunk = queue.shift()!;
+              queuedBytes -= Buffer.byteLength(chunk, 'utf8');
+              if (!ended && queuedBytes < PROCESS_ABI_MAX_LINE_BYTES / 2) stream.resume();
+              yield chunk;
+            }
             else await new Promise<void>(resolve => { wake = resolve; });
           }
           if (error) throw error;

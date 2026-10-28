@@ -3,7 +3,7 @@ title: '프로세스 ABI v1 완성: 같은 fixture에 TS 코덱이 기대 판정
 type: 'feature'
 ticket: '4'
 created: '2026-10-29'
-status: 'built'
+status: built
 baseline_revision: bb9b7f06c8dfe43bba57d8b4c073b01f5cc60495
 route: 'full'
 route_source: 'pinned'
@@ -109,12 +109,20 @@ deferred: []
 
 ## Implementation Notes
 
+- 구현 세션(codex)이 `e4f8950`으로 커밋했다. 구현 세부와 검증 결과는 아래 Verification의 "구현 검증 결과"에 있다. 아래 Review Triage Log의 첫 두 행(머리글 없음)은 구현 세션이 커밋 전에 스스로 돌린 검토의 기록이다.
+- 리뷰 패치: `apps/cli/src/runtime/process-group.ts`의 `buffer()`가 대기열이 `PROCESS_ABI_MAX_LINE_BYTES`(64 KiB)에 이르면 `stream.pause()`, 그 절반 아래로 줄면 `stream.resume()`한다. `apps/cli/test/process-group.test.ts`에 소비가 늦는 동안 16 MiB를 쓰려는 실제 자식이 막히고, 소비 재개 뒤 `ABI_LINE_TOO_LONG`으로 끝나는 시험을 더했다.
+
 ## Plan Change Log
 
 ## Review Triage Log
 
 - `[medium]` `[patch]` (quick) `process-group.ts`의 stderr 대기열은 감독자가 OS·DB 조회를 기다리는 동안 소비되지 않아 무한히 늘 수 있다. `supervisor.ts`에서 시작 직후 stderr 읽기를 시작하여 조회 지연과 관계없이 16 KiB tail로 소비한다.
 - `[medium]` `[patch]` (quick) `unknown` 정산은 `readingStopped`를 먼저 켜고 stderr 읽기를 기다리지 않아 대기열의 진단 꼬리를 잃을 수 있다. 판정 순서는 유지하고 출력 닫기 뒤 이미 받은 stderr를 모두 소비한 후 snapshot을 남긴다.
+
+### 2026-10-29 — Review pass
+- verdicts: 1 findings — high 0, medium 1, low 0, false 0, maybe-false 0
+- findings:
+  - `[medium]` `[patch]` (quick) `apps/cli/src/runtime/process-group.ts:14`의 stdout 대기열에 상한·역압력이 없어, 감독자가 신원 조회·`recordSupervisedProcess`·`renewSupervisedLease`를 기다리는 동안 줄바꿈 없이 계속 쓰는 자식의 출력이 데몬 메모리에 쌓이고 `ABI_LINE_TOO_LONG` 판정이 늦어진다 — 확인: `packages/core/src/queue/supervisor.ts`에서 stdout 읽기(`read`)는 신원 조회와 기록 뒤에 시작되고 갱신 await 동안 멈춘다. 조치: adapter `buffer()`가 64 KiB에서 `pause()`, 32 KiB 미만에서 `resume()`하고, 실제 자식 16 MiB 시험을 더했다. 이후 `pnpm test` 117파일·2,935개 통과.
 
 ## Design Notes
 
@@ -139,3 +147,31 @@ deferred: []
 - `process-group.test.ts`가 실제 Node 자식의 원문 출력, `ABI_LINE_TRUNCATED`와 가린 stderr·재시도 예약, probe의 환경 오류 계약을 검증했다. `work-store.test.ts`가 PostgreSQL 상세 저장·usage null과 CHECK 위반 SQLSTATE `23514`를 검증했다.
 - quick 검토 2건을 모두 수정했다. stderr 소비를 OS/DB 조회 이전에 시작하며 unknown 정산 전에 이미 받은 stderr를 모두 읽는다. 지연·unknown 회귀 시험도 최종 전체 시험에 포함했다. 보류 항목과 계획 범위의 미완료는 없다.
 - `error_retryable`은 기록만 하며 모든 failed의 기존 재시도 정책은 유지한다. 운영 설치·배포는 수행하지 않았다.
+
+## Auto Run Result
+
+상태: `built`. ticket 12.4를 구현하고 quick 검토를 마쳤다. 사람만 할 수 있는 작업은 없다. `tickets.py mark`는 실행하지 않았고 최종 완료 판정은 오케스트레이터가 한다.
+
+**구현 요약:** 프로세스 ABI v1을 완성했다. 이벤트 네 종(`progress`·`heartbeat`·`result`(선택 `usage`)·`error`(`code`·`retryable`)), 환경 변수 계약(`BRAIN_RUN_GENERATION`, 선택 계정·현지 날짜 범위), 65536바이트 줄 상한·잘린 줄·중복 최종·모르는 버전 규칙, exit code와 최종 이벤트의 판정 순서를 schema 두 개·한국어 규약·기대 판정이 붙은 fixture 세 개로 두고 core 패키지에 실었다. 손으로 쓴 TS 코덱(이벤트·환경 변수 decoder, 줄 나누기, 실행 판정기)이 모든 fixture 판정과 같다. 감독자는 그 판정기로 attempt를 `failed`+오류 코드로 확정하고, 새 마이그레이션 `0005`의 칸에 `usage`·`elapsed_ms`·가린 stderr(끝 4096바이트)를 남긴다. 새 오류 코드 11개를 `codes.ts`와 README 표에 더했다. core 스키마 버전은 5다.
+
+**변경 파일:**
+- `packages/core/schemas/process-abi/v1/{event.schema.json,env.schema.json,README.md}` — 이벤트·환경 변수 schema와 판정 규약.
+- `packages/core/fixtures/process-abi/v1/{events,env,runs}.json` — 기대 판정 fixture(31·21·42 case). `cases.json` 제거.
+- `packages/core/src/process-abi/codec.ts` — decoder, framing, 실행 판정기, stderr 꼬리·가림.
+- `packages/core/src/queue/supervisor.ts` — 판정기 사용, 오류 코드·usage·걸린 시간·stderr 기록, stderr 조기 소비.
+- `packages/core/src/ports/{process,store}.ts`, `domain/work-item.ts`, `testing/fakes/{process,store}.ts` — 원문 stdout·stderr port, attempt 상세 입력·스냅샷.
+- `packages/core/src/codes.ts`, `README.md` — 오류 코드 11개.
+- `packages/postgres/migrations/0005_attempt_outcome_detail.sql`, `src/migrate.ts`, `src/work.ts` — attempt 칸·check, 버전 5, finish·settle 쓰기.
+- `apps/cli/src/runtime/process-group.ts` — readline 대신 원문 조각, 64 KiB 역압력.
+- `apps/cli/src/daemon/supervisor.ts`, `apps/cli/src/workers/process-probe.ts` — `BRAIN_RUN_GENERATION`, probe의 env 검사와 `ABI_ENV_INVALID` error 이벤트.
+- 시험: `packages/core/test/{process-abi,supervisor-abi,codes}.test.ts`, `apps/cli/test/process-group.test.ts`, `apps/cli/test/fixtures/process-worker.mjs`, `packages/postgres/test/work-store.test.ts`, 버전 고정 시험들(4→5).
+
+**시험 이름과 실행 명령(fixture 판정):** `packages/core/test/process-abi.test.ts`의 `every event fixture gets its expected verdict`, `every env fixture gets its expected verdict`, `every run fixture gets its expected verdict`, `the core package tarball ships the ABI schemas and fixtures`. 명령은 `pnpm build && pnpm exec vitest run --project core test/process-abi.test.ts`.
+
+**리뷰 결과:** quick 렌즈 1건 — medium 1(patch). adapter stdout 대기열의 역압력 부재를 고쳤다(위 triage). deferred 0, 기각 0. 구현 세션이 커밋 전에 스스로 고친 medium 2건(stderr 조기 소비, unknown 정산 전 stderr 소비)도 Review Triage Log에 있다.
+
+**후속 리뷰 권고:** `false`. 이번 검토 패치는 medium 1건(high 0)이고, 이름 붙일 미검증 위험이 없다.
+
+**검증:** `pnpm test` 두 번(패치 전 117파일·2,934개, 패치 뒤 117파일·2,935개) 모두 build·typecheck·전체 vitest 통과. verbose 실행으로 `process-abi`(10)·`supervisor-abi`(12)·`process-group`(12→13)·PG `work-store`의 attempt 상세 시험 두 개가 돌고 통과했음을 확인했다. I/O 행렬 16행 모두 fixture·감독자·실제 자식·PG 시험이 덮는다.
+
+**남은 위험:** 감독자 재시도 정책은 아직 `error_retryable`·오류 코드 표의 `retryable`을 쓰지 않는다(모든 `failed`가 다시 시도, AD-21 분류는 다른 스토리). 범위 환경 변수는 날짜 순서를 검사하지 않는다(schema로 나타낼 수 있는 규칙만). fixture case 이름 일부에 Python 표기(`None`, dict repr)가 남아 있으나 판정에는 영향이 없다.

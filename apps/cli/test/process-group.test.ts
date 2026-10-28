@@ -98,6 +98,45 @@ it('preserves raw unterminated stdout and stderr fragments from a real child', a
   expect(await Promise.all([collect(started.handle.stdout), collect(started.handle.stderr)])).toEqual(['{"abi":1', 'diagnostic\nlast']);
   expect(await started.handle.exited).toEqual({ code: 0, signal: null });
 });
+it('backpressures a multi-MiB child while stdout consumption is delayed, then rejects its oversized line', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'brain-output-backpressure-'));
+  const checkpoint = join(directory, 'written.bytes');
+  const totalBytes = 16 * 1024 * 1024;
+  const source = `const fs = require('node:fs'); let written = 0;
+    setTimeout(() => fs.writeFileSync(process.env.CHECKPOINT, String(written)), 300);
+    (async () => {
+      const chunk = Buffer.alloc(32768, 'x');
+      while (written < ${totalBytes}) {
+        await new Promise(resolve => process.stdout.write(chunk, resolve));
+        written += chunk.length;
+      }
+    })();`;
+  const store = memoryStore(), createdAt = new Date(), idGen = sequenceIdGen({ timestampMs: createdAt.getTime() });
+  const controller = new AbortController();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await store.addWork({ id: idGen.next(), kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt, nextAttemptAt: createdAt });
+  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, clock: systemClock, timer: systemTimer, idGen,
+    launcher: systemProcessLauncher, inspector: { ...systemProcessInspector,
+      async bootTime() { await gate; return systemProcessInspector.bootTime(); },
+    }, signal: controller.signal, pollMs: 10, cancelPollMs: 10, cancelGraceMs: 30, groupConfirmMs: 100,
+    launches: { process_probe: () => ({ command: process.execPath, args: ['-e', source], env: { CHECKPOINT: checkpoint } }) },
+  });
+  try {
+    let written = 0;
+    await expect.poll(async () => {
+      written = await readFile(checkpoint, 'utf8').then(Number).catch(() => 0);
+      return written;
+    }, { timeout: 3000 }).toBeGreaterThan(0);
+    // The child has had time to write, but its pipe blocks before all 16 MiB
+    // can enter the adapter while identity inspection holds the consumer back.
+    expect(written).toBeLessThan(totalBytes);
+    expect(store.snapshot().workAttempts[0]!.outcome).toBeNull();
+    release();
+    await expect.poll(() => store.snapshot().workAttempts[0]?.outcome, { timeout: 3000 }).toBe('failed');
+    expect(store.snapshot().workAttempts[0]).toMatchObject({ errorCode: 'ABI_LINE_TOO_LONG', errorRetryable: false });
+  } finally { release(); controller.abort(); await running; await rm(directory, { recursive: true, force: true }); }
+});
 it('records ABI_LINE_TRUNCATED and masked stderr from a real supervised child', async () => {
   const store = memoryStore(), createdAt = new Date(), idGen = sequenceIdGen({ timestampMs: createdAt.getTime() }), controller = new AbortController();
   const id = idGen.next();
