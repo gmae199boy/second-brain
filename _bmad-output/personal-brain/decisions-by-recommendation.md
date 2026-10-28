@@ -23,6 +23,7 @@
 | 2026-10-28 | epic 15 · 묶음 | 재시작 때 `sent` 항목은 건너뜀, 4096 넘는 텍스트는 나누지 않고 `too_large` | 옛 동작 |
 | 2026-10-28 | epic 15 · 순서 | 1~5 한 줄, 15.1은 13.9를 기다림. epic 11~13 쪽에 인계 문장을 더하지 않음(명시적 예외) | 같은 파일, 선례 |
 | 2026-10-28 | epic 11 · 11.1 escalation(U+0000) | transcript 텍스트의 U+0000: `text` 칸에는 U+FFFD로 바꾼 값(검색·표시), nullable `bytea` 짝 칸에 원래 UTF-8 바이트(있을 때만). 읽기는 원문을 돌려준다. 입력은 거부하지 않는다. main의 epic 11 Notes와 11.1 plan에 기록, `resolve --no-interactive`로 재개 | AD-11 원문 보존, SM-5 = 0 |
+| 2026-10-29 | epic 11 · 11.13 | 이 Mac 확인을 에이전트가 로컬 설치본으로 하고 증거를 plan에 남긴다(`hitl = false`). DB 끄기 단계 뒤 다시 켜고 drain을 마친다. run은 이 hitl에서 멈췄고, 계획 병합과 함께 풀어 재기동 | 2026-10-28 위임, 12.12와 같은 방식 |
 | 2026-10-28 | epic 14 · C6 기준 소스 | 선택지 A: 운영(D2) 기준, 없는 키는 D1 → D4 → D5 → D3 순으로 보완, 미선택 값은 모두 보관, 정수 id 이력은 dataset별 | D1·D2는 겹치는 키가 모두 같고, 충돌은 보관본 D4·D5와만 있음(조사 3절) |
 | 2026-10-28 | epic 6 · 임베딩 | (사용자 결정) 나중에 확장으로 만든다. 무인 파이프라인에서 뺀다 | 사용자 |
 | 2026-10-28 | epic 14 · Python 의존 | PG driver `psycopg[binary]` 3(sync)만 더하고 pin 3.14.10(spine Stack의 새 배포 pin) 위에서 다시 잠근다. 옛 의존(garminconnect 등)과 그 arm64 설치 확인은 epic 16 | importer는 표준 `sqlite3`와 driver만 쓴다(조사 7절) |
