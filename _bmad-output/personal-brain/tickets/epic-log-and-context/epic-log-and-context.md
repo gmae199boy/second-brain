@@ -100,3 +100,4 @@ AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, contex
 - Note(2026-10-28, `../../prep-garmin-absorption/`, 인셉션 입력): 저장소가 PostgreSQL 하나로 바뀌었다. E3-8의 "마이그레이션 0009"와 "Postgres는 epic 7"은 SQLite 전제다. 인셉션 때 epic-postgres-primary의 마이그레이션 실행기에서 다음 번호를 쓰고, trigger는 PostgreSQL로 만든다. 계획된 엔트리의 Store·handler·spool 조립 방식도 그 에픽의 PostgreSQL Store를 따른다.
 - Note(2026-10-28, 트리 검증, 인셉션 입력): 계획된 14개 엔트리는 SQLite를 전제한다(3.5 "마이그레이션 0009"는 이미 `0009_schedules.sql`이다). 인셉션 때 다시 쪼개고(re-slice) set 검증을 다시 돈다. `plugin/skills/`의 첫 스킬은 epic-extensions의 공통 install 스킬이므로, 3.11의 스킬 생성·parity는 그 위에 얹는다.
 - Waits on epic-postgres-primary because: 마이그레이션 실행기의 다음 번호(3.5)와 PostgreSQL Store·handler·spool 조립(3.4)을 쓴다.
+- Decision(2026-10-28, 사용자): V1 뒤 에픽(5·3·4·6)은 V1이 끝난 뒤 같은 방식(결정 묶음 → 정제 → 루프)으로 만든다. 이 에픽의 스토리는 SQLite를 전제로 쪼갰으므로, 착수 때 PostgreSQL(epic 11)과 공통 작업 runtime(epic 12) 위에서 다시 쪼갠다. 지금의 `tickets.toml`은 그때 입력으로만 쓴다.
