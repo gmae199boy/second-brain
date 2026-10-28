@@ -83,3 +83,4 @@ AD-11·15·23·24·27. 사용자의 외부 파일은 옮기거나 지우지 않�
   - spine AD-19의 설정 충돌은 PostgreSQL 아키텍처 갱신에서 함께 고친다.
 - Waits on epic-postgres-primary because: PostgreSQL Store와 마이그레이션 실행기, 사용자 설정 DB와 `brain config`(E8-7)가 필요하다.
 - Waits on epic-search-and-health-query because: 공통 텍스트 검색 경로와 결과 계약 위에 문서 대상(E8-6)을 더한다.
+- Carry(2026-10-28, epic-attachments 닫기): 지금 붙인 PDF·docx는 추출기가 없어 `unsupported`로 닫힌다. 추출기 버전이 올라가도 `unsupported`·`too_large`는 다시 넣지 않는 규칙이라(`listFilesWithStaleExtraction`), E8-5가 PDF·docx 추출기를 더할 때 새 추출기가 읽을 수 있게 된 형식의 `unsupported` 파일을 다시 넣는 경로를 함께 만든다. 형식별 크기 상한도 E8-5가 정한다(텍스트의 흘려 읽기는 backlog `story-large-attachments-streamed`).

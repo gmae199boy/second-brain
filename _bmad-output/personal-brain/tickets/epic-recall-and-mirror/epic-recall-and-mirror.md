@@ -79,3 +79,4 @@ AD-13·14(로그 없는 세션의 첫 요청 문장, FR-9 표시)·15·16·23·2
   - 위 Description의 FTS5 trigram·`EXPLAIN QUERY PLAN`·LIKE 폴백은 SQLite 전제이므로 인셉션 때 PostgreSQL 기준으로 다시 쓴다.
   - CAP-6·7을 17과 나눠 가지며, 정확한 경계는 인셉션 때 정한다.
 - Waits on epic-search-and-health-query because: 공통 텍스트 검색과 대화 조각·도구 메모 검색·넓히기, 결과 계약 위에 이 에픽의 조회를 얹는다.
+- Carry(2026-10-28, epic-attachments 닫기): 이미지는 지금 `unsupported`로 닫혀, 추출기 버전이 올라가도 다시 읽히지 않는다. 4.1(EXIF)이 이미 닫힌 이미지를 다시 넣는 경로를 함께 만든다.

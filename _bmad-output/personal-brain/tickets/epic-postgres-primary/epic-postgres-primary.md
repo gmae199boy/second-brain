@@ -80,7 +80,7 @@ risk: high
 ## Notes
 
 - Waits on epic-daemon because: setup run·플러그인 bootstrap 갱신·doctor·데몬 재시작 흐름과 플러그인 배포 경로가 있어야 PostgreSQL 설치·점검 단계를 더할 수 있다.
-- Waits on epic-attachments because: SQLite 0008(첨부·추출 변경 규칙 trigger)과 FileStore·추출 세대 Store 계약이 PostgreSQL로 옮길 마지막 SQLite 스키마다. 10.1·10.2·10.3·10.4·10.6은 리뷰 중이다.
+- Waits on epic-attachments because: SQLite 0008(첨부·추출 변경 규칙 trigger)과 FileStore·추출 세대 Store 계약이 PostgreSQL로 옮길 마지막 SQLite 스키마다. 10.1·10.2·10.3·10.4·10.6도 완료로 닫았고, 에픽은 열린 항목을 남긴 채 닫혔다(2026-10-28, `epic-attachments-closure.md`).
 - Decision(2026-10-28, 사용자): 기존 `brain.db`는 옮기지 않는다. 빈 PostgreSQL에 설치하고 transcript를 다시 가져오며, 전환 뒤 SQLite 경로를 지운다.
 - Decision(2026-10-28): epic-drive의 E8-7(사용자 설정 DB와 `brain config get/set`)을 이 에픽으로 옮겼다. 확장 설정(R4)도 같은 계약을 쓴다.
 - Decision(2026-10-28, spine 갱신): 정제 전에 아키텍처가 정하기로 한 스키마·잠금 질문은 spine이 답했다. 이전의 Open question을 대신한다.

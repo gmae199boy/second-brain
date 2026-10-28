@@ -6,6 +6,7 @@ covers: [CAP-14, CAP-2, CAP-1]
 after: ["epic-capture"]
 assignee: ""
 risk: medium
+status: done
 ---
 
 # 첨부 원본과 문서 추출
@@ -101,3 +102,10 @@ AD-7·9·11·21·23·24, Table Contract(files, file_locations, message_attachmen
 - Moved(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): 9 EXIF·촬영 일시는 V1 뒤라 epic 4(epic-recall-and-mirror)의 1로 옮겼다(그 에픽의 촬영 일시 필터와 함께 만든다). id 9는 다시 쓰지 않는다(`next_id = 15`).
 - Note(2026-10-26, 세트 검증 제안, 빌드 입력): 10.10 verify에 원본 접근 불가 파일(`source_unreachable_at`)에 retry·버전 상승 drain을 돌려도 새 attempt가 생기지 않고 기존 조각·포인터가 남으며 `FILE_SOURCE_UNREACHABLE`과 건수가 보이는 사례, 정상 파일의 두 번째 drain에 추가 attempt가 없는 사례를 더한다(AD-24). 10.12 verify에서는 가린 뒤 4의 이름 채우기와 8의 대기 추출을 다시 돌려 이름·FTS·조각이 되살아나지 않는지 본다. 10.11은 4·14·8·10과 경로가 없으므로, 계획에서 handler·Store 능력 파일과 공통 등록부(`packages/core/src/brain.ts`의 handler 등록, `packages/core/src/ports/store.ts`의 Store 합성) 편집 소유자를 정한다.
 - Note(2026-10-28, `../../prep-garmin-absorption/`): 저장소가 PostgreSQL 하나로 바뀐다. 이 에픽이 만든 SQLite 0008 trigger·FileStore·추출 세대 Store는 되돌리지 않는다. epic-postgres-primary가 PostgreSQL로 옮기고 같은 계약 테스트로 확인한다. 리뷰 중인 스토리는 그대로 진행한다.
+- Decision(2026-10-28, 닫기, 사용자): 에픽을 닫는다. 10.1·10.2·10.3·10.4·10.6을 완료로 닫은 뒤 닫기 점검(`epic-attachments-closure.md`)을 돌렸다. 판정은 "아직 닫지 말 것"이었고, 13항목 중 충족 10·일부 3·미충족 0, 구현 커밋 12개가 모두 배포 ref(0.1.8)에 들어 있다. 사용자는 열린 항목을 남긴 채 닫고, 나중에 이상이 보이면 버그로 고친다고 정했다. 열린 항목은 다음과 같다.
+  - O1·O2: 10.2의 실제 이미지 붙여 넣기 확인과 10.4의 @파일 수동 확인은 돌지 않았다. 다만 이 Mac의 DB 사본에서 실제 붙여 넣은 이미지 4건이 저장된 것은 확인됐다(10.5 실측).
+  - O8: 뺀 sweep의 통합 확인을 epic 8이 받는다는 기록이 없다. PG 위의 통합 확인은 epic 11의 이 Mac 확인(11.13)이 한다.
+  - O3: 10.2 base64 경계의 후속 리뷰 권고가 남아 있다.
+  - O4·O5: deferred-work의 DW-1(이름 색인이 drain 한 번 늦음)과 DW-2(`failures --target-kind` 무시)가 남아 있다.
+  - O6: `unsupported`·`too_large`는 `failures`에 남기지 않는다. 원본은 보관되고 본문 추출만 하지 않은 상태라 실패가 아니기 때문이다. spine AD-21과의 차이는 다음 spine 수정 때 예외로 적는다. 새 추출기가 생기면 다시 넣는 경로는 epic-drive(E8-5)와 epic-recall-and-mirror(4.1)에 인계했고, 상한을 늘리고 흘려 읽는 일은 backlog `story-large-attachments-streamed`다(사용자, 나중 작업).
+  - O7: 가리기와 수집이 겹칠 때의 잔여 위험은 epic 11.5(PG 가리기)에서 다시 본다.
