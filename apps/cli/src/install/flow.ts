@@ -461,9 +461,11 @@ export async function runInstall(
   try {
     if (deps.importTranscripts === undefined) throw new Error('transcript 가져오기 단계가 없습니다');
     postgres.import = await deps.importTranscripts(home, env);
-    deps.log(postgres.import.stopped === 'unwritable' || postgres.import.failed > 0 || postgres.import.spoolFailed > 0
-      ? '경고: transcript 가져오기에 실패한 일감이 있습니다. 남은 일감은 이후 drain이 이어서 처리합니다'
-      : '디스크의 transcript를 가져왔습니다. 남은 일감은 이후 drain이 이어서 처리합니다');
+    deps.log(postgres.import.scanStopped !== undefined
+      ? `경고: ${postgres.import.scanStopped}. 남은 일감은 이후 drain이 이어서 처리합니다`
+      : postgres.import.stopped === 'unwritable' || postgres.import.failed > 0 || postgres.import.spoolFailed > 0
+        ? '경고: transcript 가져오기에 실패한 일감이 있습니다. 남은 일감은 이후 drain이 이어서 처리합니다'
+        : '디스크의 transcript를 가져왔습니다. 남은 일감은 이후 drain이 이어서 처리합니다');
   } catch (error) { deps.log(`경고: transcript를 가져오지 못했습니다. 남은 일감은 이후 drain이 이어서 처리합니다. ${error instanceof Error ? error.message : String(error)}`); }
 
   // The shim before the harnesses, because connecting one means registering

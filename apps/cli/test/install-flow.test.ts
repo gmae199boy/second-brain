@@ -25,6 +25,48 @@ function harness() {
   return { deps, order, lines, run: (args: string[] = ['--yes']) => runInstallFlow(args, env, deps) };
 }
 describe('PG installer flow', () => {
+  it('reports successful transcript import without an import warning when the scan and queue succeed', async () => {
+    const kit = harness();
+    kit.deps.importTranscripts = async () => ({ claimed: 0, completed: 0, retried: 0, failed: 0, released: 0, lost: 0,
+      spooled: 0, stopped: 'empty', replayed: 0, spoolFailed: 0, enqueued: 0,
+      rereadMissing: 0, reextractRedacted: 0, reextractUnreachable: 0 });
+
+    expect(await kit.run()).toMatchObject({ ok: true });
+
+    expect(kit.lines).toContain('디스크의 transcript를 가져왔습니다. 남은 일감은 이후 drain이 이어서 처리합니다');
+    expect(kit.lines.filter(line => line.startsWith('경고:') && line.includes('transcript'))).toEqual([]);
+  });
+
+  it('keeps the transcript import failure warning when the queue is unwritable without a scan failure', async () => {
+    const kit = harness();
+    kit.deps.importTranscripts = async () => ({ claimed: 0, completed: 0, retried: 0, failed: 0, released: 0, lost: 0,
+      spooled: 0, stopped: 'unwritable', replayed: 0, spoolFailed: 0, enqueued: 0,
+      rereadMissing: 0, reextractRedacted: 0, reextractUnreachable: 0 });
+
+    expect(await kit.run()).toMatchObject({ ok: true });
+
+    expect(kit.lines).toContain('경고: transcript 가져오기에 실패한 일감이 있습니다. 남은 일감은 이후 drain이 이어서 처리합니다');
+  });
+
+  it.each([0, 1])('warns with the scan failure and completes installation (failed work: %s)', async failed => {
+    const kit = harness();
+    const scanStopped = '"demo" 트랜스크립트 폴더를 읽을 수 없습니다: 접근 권한이 없습니다';
+    kit.deps.importTranscripts = async () => ({ claimed: 0, completed: 0, retried: 0, failed, released: 0, lost: 0,
+      spooled: 0, stopped: 'empty', replayed: 0, spoolFailed: 0, enqueued: 0,
+      rereadMissing: 0, reextractRedacted: 0, reextractUnreachable: 0, scanStopped });
+
+    const result = await kit.run();
+
+    expect(result).toMatchObject({ ok: true });
+    expect(installExit(result)).toBe(0);
+    expect(kit.lines.filter(line => line.startsWith('경고:'))).toEqual([
+      `경고: ${scanStopped}. 남은 일감은 이후 drain이 이어서 처리합니다`,
+    ]);
+    expect(kit.lines.join('\n')).not.toContain('디스크의 transcript를 가져왔습니다');
+    expect(kit.deps.postgresDoctor).toHaveBeenCalledOnce();
+    expect(kit.deps.installed.write).toHaveBeenCalledOnce();
+  });
+
   it.each(['get', 'set'] as const)('propagates setup settings %s failures before writing config', async operation => {
     const kit = harness();
     kit.deps.settings!.get = vi.fn(async () => operation === 'get'

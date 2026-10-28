@@ -1,4 +1,5 @@
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { errorLine, isTimeZone, TIMEZONE_SETTING, type WarningCode } from 'second_brain';
@@ -584,15 +585,10 @@ export async function writeConfig(
       `# Personal Brain 설정. 키 값은 여기가 아니라 .env에 있습니다.\n${document}\n`,
       'utf8',
     );
-    // The mode is set at creation, so a secret is never briefly world-readable.
-    await writeFile(
+    await writeEnv(
       envPath,
       `# brain이 쓴 파일입니다. 키 값은 config.toml이 아니라 여기에 있고, 저장소에는 들어가지 않습니다.\n${lines.join('\n')}\n`,
-      { encoding: 'utf8', mode: 0o600 },
     );
-    // `writeFile`'s mode only applies to a file it creates, so tighten an
-    // existing one too.
-    await chmod(envPath, 0o600);
   } catch (error) {
     return {
       ok: false,
@@ -763,8 +759,20 @@ export async function postgresSecrets(home: string, port: number, urlEnv: string
     const quoted = quote(value); if (quoted === undefined) throw new Error(`${key}: .env로 쓸 수 없습니다`);
     return `${key}=${quoted}`;
   }).join('\n') + '\n';
-  // Tighten an existing file before rewriting secrets.
-  await chmod(envFilePath(home), 0o600).catch(error => { if (error.code !== 'ENOENT') throw error; });
-  await writeFile(envFilePath(home), text, { mode: 0o600 });
+  await writeEnv(envFilePath(home), text);
   return { adminUrl: `postgresql://postgres:${encodeURIComponent(values['BRAIN_POSTGRES_PASSWORD'])}@127.0.0.1:${port}/postgres`, appPassword: values['BRAIN_APP_PASSWORD'] };
+}
+
+/** Replace secrets only after the complete private file is ready on the same filesystem. */
+async function writeEnv(path: string, content: string): Promise<void> {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    await chmod(temporary, 0o600);
+    await rename(temporary, path);
+  } finally {
+    await unlink(temporary).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    });
+  }
 }

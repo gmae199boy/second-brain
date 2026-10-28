@@ -10,7 +10,7 @@ afterEach(async () => { await Promise.all(databases.splice(0).map(db => db.drop(
 const id = (n: number) => `01940000-0000-7000-8000-${String(n).padStart(12, '0')}`;
 async function world() {
   const db = await database(); databases.push(db);
-  const store = postgresStore({ databaseUrl: db.appUrl, lockTimeoutMs: 40 });
+  const store = postgresStore({ databaseUrl: db.appUrl });
   expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
   return { db, store };
 }
@@ -147,7 +147,9 @@ it('distinguishes NUL and replacement-character call IDs across batches and dedu
 });
 
 it('preserves a work INSERT lock SQLSTATE and rolls session creation back', async () => {
-  const { db, store } = await world();
+  const { db, store: setupStore } = await world();
+  await setupStore.close();
+  const store = postgresStore({ databaseUrl: db.appUrl, lockTimeoutMs: 40 });
   const blocker = new pg.Client({ connectionString: db.url }); await blocker.connect();
   try {
     await blocker.query('begin');

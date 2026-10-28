@@ -167,6 +167,8 @@ export interface BrainQueueDrainInput {
  * `brain queue drain` wants the spool, the folders and the queue in one line.
  */
 export interface BrainDrainReport extends DrainQueueReport {
+  /** Why the transcript scan stopped short, when the queue remained writable. */
+  scanStopped?: string;
   /** Spool records the replay put back into the database (AD-9). */
   replayed: number;
   /** Spool lines moved aside because nobody will try them again (AD-9). */
@@ -509,6 +511,7 @@ async function drain(
     replayed: replay.replayed,
     spoolFailed: replay.failed,
     enqueued: scan.enqueued,
+    ...(queue.stopped !== 'unwritable' && scan.stopped !== undefined ? { scanStopped: scan.stopped } : {}),
     rereadMissing: queue.stopped === 'unwritable' ? 0 : scan.rereadMissing,
     reextractRedacted: queue.stopped === 'unwritable' ? 0 : reextract.redacted,
     reextractUnreachable: queue.stopped === 'unwritable' ? 0 : reextract.sourceUnreachable,

@@ -42,13 +42,14 @@ interface Kit {
  * recorded — which is the least a collection needs (AD-12).
  */
 async function kit(
-  options: { withFolder?: boolean; store?: MemoryStore; spool?: MemorySpool; parser?: ReturnType<typeof memoryParser> } = {},
+  options: { withFolder?: boolean; listFailure?: string; store?: MemoryStore; spool?: MemorySpool; parser?: ReturnType<typeof memoryParser> } = {},
 ): Promise<Kit> {
   const store = options.store ?? memoryStore();
   expect(await store.ensureSelfUser(sampleSelfUserInput())).toMatchObject({ ok: true });
   const spool = options.spool ?? memorySpool();
   const folder = memoryTranscriptFolder({
     harness: 'demo',
+    ...(options.listFailure === undefined ? {} : { listFailure: options.listFailure }),
     files: [
       {
         harnessSessionId: 'session-0001',
@@ -82,6 +83,24 @@ async function kit(
 }
 
 describe('brain.queue.drain', () => {
+  it('reports a transcript folder read failure when the queue remains writable', async () => {
+    const { brain } = await kit({ listFailure: '접근 권한이 없습니다' });
+    expect(await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command })).toMatchObject({
+      stopped: 'empty', scanStopped: '"demo" 트랜스크립트 폴더를 읽을 수 없습니다: 접근 권한이 없습니다',
+    });
+  });
+
+  it('omits a scan failure when the queue later becomes unwritable', async () => {
+    const { brain, store } = await kit({ listFailure: '접근 권한이 없습니다' });
+    await store.addWork({ id: '01940000-0000-7000-8000-0000000000c1', kind: 'probe',
+      targetKind: 'session', targetId: TOKEN, createdAt: NOW, nextAttemptAt: NOW });
+    const report = await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command, handlers: {
+      probe: async () => ({ ok: false, code: 'DB_UNAVAILABLE', message: '쓸 수 없습니다' }),
+    } });
+    expect(report).toMatchObject({ stopped: 'unwritable' });
+    expect(report).not.toHaveProperty('scanStopped');
+  });
+
   it('scans the folders and collects what it found in the same run', async () => {
     // Which is what makes one `brain queue drain` on a fresh install collect
     // everything on the disk (SM-5): the scan comes before the queue loop, so
@@ -99,6 +118,7 @@ describe('brain.queue.drain', () => {
       failed: 0,
       stopped: 'empty',
     });
+    expect(report).not.toHaveProperty('scanStopped');
     const sessions = store.snapshot().sessions;
     expect(sessions).toHaveLength(1);
     // A session a folder scan found is an import, however many live turns
@@ -221,6 +241,7 @@ describe('brain.queue.drain', () => {
     });
     // The folder was never listed: the run ended at the replay.
     expect(folder.lists()).toBe(0);
+    expect(report).not.toHaveProperty('scanStopped');
   });
 
   it('puts every count of one run in one answer', async () => {

@@ -1,11 +1,15 @@
-import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_STORE_URL_ENV, DEFAULT_UPDATE_AUTO, KNOWN_KEYS, postgresSecrets, readConfig, readConfigForSetup, resolveStoreUrl, writeConfig } from '../src/config/codec.js';
 import { HOME_ENV, configFilePath, configHome, envFilePath } from '../src/config/paths.js';
 import { tempHomes } from './temp-home.js';
+vi.mock('node:fs/promises', async original => {
+  const actual = await original<typeof import('node:fs/promises')>();
+  return { ...actual, writeFile: vi.fn(actual.writeFile), rename: vi.fn(actual.rename) };
+});
 const temporary = tempHomes();
-afterEach(() => temporary.cleanup());
+afterEach(async () => { vi.mocked(writeFile).mockRestore(); vi.mocked(rename).mockRestore(); await temporary.cleanup(); });
 async function given(config?: string, env?: string) {
   const home = await temporary.create('brain-config-');
   if (config !== undefined) await writeFile(join(home, 'config.toml'), config);
@@ -27,6 +31,46 @@ describe('configHome', () => {
 });
 
 describe('PG configuration', () => {
+  it.each(['writeConfig', 'postgresSecrets'] as const)('atomically replaces an existing .env at 0600 through %s', async writer => {
+    const home = await given('schema_version=1', 'KEEP="original"\n');
+    const path = envFilePath(home);
+    await chmod(path, 0o644);
+    const before = await stat(path);
+
+    if (writer === 'writeConfig') expect(await writeConfig(home, {})).toEqual({ ok: true });
+    else expect(await postgresSecrets(home, 23456, DEFAULT_STORE_URL_ENV)).toMatchObject({ appPassword: expect.any(String) });
+
+    const after = await stat(path);
+    expect(after.ino).not.toBe(before.ino);
+    expect(after.mode & 0o777).toBe(0o600);
+    expect(await readFile(path, 'utf8')).toContain('KEEP="original"');
+    expect((await readdir(home)).sort()).toEqual(['.env', 'config.toml']);
+  });
+
+  it.each([
+    ['writeConfig', 'write'], ['writeConfig', 'rename'],
+    ['postgresSecrets', 'write'], ['postgresSecrets', 'rename'],
+  ] as const)('preserves the original .env and cleans temporary files when %s fails during %s', async (writer, stage) => {
+    const home = await given('schema_version=1', 'KEEP="original"\n');
+    const path = envFilePath(home);
+    const before = await readFile(path);
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    if (stage === 'rename') vi.mocked(rename).mockRejectedValueOnce(new Error('rename failed'));
+    else vi.mocked(writeFile).mockImplementation(async (target, content, options) => {
+      if (String(target).startsWith(`${path}.`)) {
+        await actual.writeFile(target, 'partial', options);
+        throw new Error('write failed');
+      }
+      return actual.writeFile(target, content, options);
+    });
+
+    if (writer === 'writeConfig') expect(await writeConfig(home, {})).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+    else await expect(postgresSecrets(home, 23456, DEFAULT_STORE_URL_ENV)).rejects.toThrow(`${stage} failed`);
+
+    expect(await readFile(path)).toEqual(before);
+    expect((await readdir(home)).sort()).toEqual(['.env', 'config.toml']);
+  });
+
   it.each([
     ['""', ''],
     ['"NOT-A-NAME"', 'NOT-A-NAME'],
