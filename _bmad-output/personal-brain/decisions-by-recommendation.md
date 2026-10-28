@@ -34,6 +34,41 @@
 | 2026-10-28 | epic 14 · 보고서 위치 | private 상세는 Brain 홈 확장 데이터 아래, 공개 집계만 출력·plan에(해시·원문·계정·개인 날짜 없음) | 공개 저장소 |
 | 2026-10-28 | epic 14 · 실제 반입 | 옛 writer를 멈추지 않고, 반입 직전 에이전트가 새 일관 capture(backup API, 해시 비교)를 Brain 홈에 만든다. 14.8은 `hitl = false` | 조사 9절 전제, 위임 |
 | 2026-10-28 | epic 14 · 순서 | 1~8 한 줄, 14.1은 15.6을 기다림. tracer 1 → 건강 의미 2 → preflight 3 → 반입 4 → 파일 5 → 검증 6 → sweep 7 → 실제 반입 8 | 같은 파일(조사 8절), 15.1 선례 |
+| 2026-10-28 | epic 16 · 계정 보호 | 인증 실패·MFA는 재인증 성공까지, 429·403은 다음 현지 날짜의 탐색 호출 성공까지 외부 호출 0. 이틀 연속 차단은 `brain ext run garmin release-block`으로만 해제. 상태는 garmin schema에 | 옛 동작(날짜가 지나면 해제)이 Done when 2와 어긋남(조사 2절) |
+| 2026-10-28 | epic 16 · tokenstore | 라이브러리 관리 세션 파일이라 `.env` 밖에 둔다(`garmin.tokenstore` 경로만 snapshot). spine AD-18에 예외로 적음 | 옛 tokenstore 재사용 위임 |
+| 2026-10-28 | epic 16 · 일감 | `collect`(증분 정규화·publish 포함)·`normalize`(rebuild·재개)·`artifacts`(body·digest·그래프)·`release-block` | raw만 남고 publish가 빠지는 틈을 줄임 |
+| 2026-10-28 | epic 16 · 동등성 | 합성 fixture만 옛 archive 코드에 한 번 넣어 기대 JSON을 고정(opt-in 스크립트), 새 코드는 그 JSON과 비교 | 순환 검증 회피(조사 8절) |
+| 2026-10-28 | epic 16 · digest | digest 일 값은 core 건강 요약 행. catalog에 없는 지표는 호환 core 마이그레이션으로 더함 | epic 18 입력이 core 계약만 읽음(AD-35) |
+| 2026-10-28 | epic 16 · 전환 | 공통 예약 전에 옛 collect LaunchAgent를 내림(plist 보존). 옛 report는 스스로 수집할 때만 함께 내리고 아니면 epic 18이 내림. capture 뒤 날짜는 새 수집이 채움 | 두 수집기 동시 호출은 차단 위험 |
+| 2026-10-28 | epic 16 · 순서 | 1~9 한 줄, 16.1은 14.7을 기다림. tracer → 계정 보호 → 수집 → 정규화·권위 v2 → body·digest → 그래프 → 알림 → sweep → 전환 | 같은 파일(조사 10절), 앞 에픽 선례 |
+| 2026-10-28 | epic 18 · 입력 snapshot | 분석 그래프마다 snapshot 하나를 바이트로 남김. cutoff는 기다린 수집 결과의 값. digest는 다시 계산하지 않고 epic 16 `artifacts`의 digest JSON 파일을 읽음 | 옛 기간별 snapshot이 서로 달랐음(조사 2절) |
+| 2026-10-28 | epic 18 · 평가 순서 | 엄격한 의존: 실패 scope는 재시도, 끝내 실패하면 뒤 scope는 `dependency_failed`, `REPORT_FAILED` 발신 | 옛 report는 실패 뒤에도 다음 scope를 돌려 7d가 오늘 day 없이 요약됨 |
+| 2026-10-28 | epic 18 · 설정 키 | `analysis.agent`·`analysis.model`(NULL=CLI 기본, 인자 생략)·`analysis.effort`·`analysis.timeout_minutes`·`analysis.profile_path` | 사용자 Decision의 기본값 그대로 |
+| 2026-10-28 | epic 18 · 리포트 파일 | core 분석 일감이 FileStore에 직접 넣고 파일 관계 행을 더함(`file_requests` 안 씀) | core가 생산자(조사 5절 선택지 A) |
+| 2026-10-28 | epic 18 · 체성분 intake | 사진 → 측정 JSON은 이 에픽의 core 모델 일감, 결과 JSON은 epic 16이 읽는 inbox 자리에 씀 | 모델 호출은 core 일감(AD-33·35) |
+| 2026-10-28 | epic 18 · Claude Code adapter | `claude -p … --model … --effort … --output-format json`, usage는 결과 `usage`. 두 adapter 모두 core가 같은 schema로 재검증 | spine currency 리뷰가 공식 문서로 확인 |
+| 2026-10-28 | epic 18 · 묶음 | 앨범은 그래프 역할 metadata로 가름. 의미 키 생산 결과 = 분석 묶음 id, `REPORT_FAILED`는 날짜당 한 번 | 옛 묶음엔 중복 방지 gate 없음 |
+| 2026-10-28 | epic 18 · 전환 | 18.9가 새 11:30 예약을 켤 때 옛 report LaunchAgent를 내림(plist 보존) | 옛·새 평가 동시 실행 방지 |
+| 2026-10-28 | epic 18 · 순서 | 1~9 한 줄, 18.1은 16.8을 기다림. tracer → snapshot 동등성 → 네 scope → 두 adapter → intake → 묶음 → 예약·끄기 → sweep → 전환 | 같은 파일(조사 8절) |
+| 2026-10-28 | epic 17 · 조각 키 | `chunks` 키에 결정적 분할 번호 `part`를 더함(나누지 않은 조각 0). 같은 시각 메시지 묶음은 경계에서 쪼개지 않음. spine Table Contract에 반영함 | 긴 메시지 분할 조각이 같은 시각 범위라 키 충돌(epic 4 이월 메모) |
+| 2026-10-28 | epic 17 · 명령 | `brain recall chunks|tools|docs|expand`, `brain sessions read`, `brain files show`, `brain health query`. 공통 `recall search`는 없음 | AD-5 표, 출처 중립 이름(AD-29) |
+| 2026-10-28 | epic 17 · 확장 상태 | `meta.extensions`에 `{source, installed, enabled, searchable, work_state}` | `data`를 감싸면 0건 `data: []` 계약과 어긋남 |
+| 2026-10-28 | epic 17 · 넓히기·원문 | `recall expand`는 출처의 session·시각 구간으로 메시지를 읽음, `files show`는 `file_id`+`chunk_locator`로 현재 세대를 읽고 세대 교체를 알림 | 조각 재생성 뒤에도 같은 원문 |
+| 2026-10-28 | epic 17 · 평균 | 분모는 비NULL·비ambiguity 유효 숫자 수, 값이 없으면 `value = null`과 개수 0 | 실제 0과 구분 |
+| 2026-10-28 | epic 17 · 스킬 | 얇은 `plugin/skills/recall/SKILL.md` | R14의 에이전트 호출 경로 |
+| 2026-10-28 | epic 17 · 실제 질문 | 이 Mac 설치본에서 에이전트가 실제 기억으로 질문 10개를 만들고, 문항·기대 결과·기준을 private에 먼저 고정한 뒤 판정(공개 plan엔 문항 id·유형·성공 여부만) | spine AD-15의 10건 중 7건, 위임 |
+| 2026-10-28 | epic 17 · 순서 | 1~7 한 줄, epic 18과는 `after`로 잇지 않음(데이터 의존 없음, 만드는 순서상 18이 먼저) | 같은 파일(조사 8절) |
+| 2026-10-28 | epic 18 · 체성분 intake 시점 | `body_intake`는 자기 예약(기본 10:45, 수집 전)과 수동 실행. 그날 artifacts가 새 JSON을 읽음 | 순환 의존 없이 사진 → JSON → 병합(세트 검증 S1) |
+| 2026-10-28 | epic 18 · 모델 접근 | cwd=scratch, CLI sandbox·도구 허용 목록, 로그인 자료 외 홈 파일 미전달, env 허용 목록, 원 출력은 private scratch에서 검증 뒤 삭제 | 세트 검증 F2 |
+| 2026-10-28 | epic 8 · Drive locator | locator는 내용 순수 함수(`<hex><확장자>`), `(루트, content_hash) → remote id`와 업로드 상태는 별도 표 | Drive 이름은 유일하지 않음, AD-23 순수 함수 |
+| 2026-10-28 | epic 8 · 검증 | `sha256Checksum` → `md5Checksum`(로컬 MD5와) → 되읽기 SHA-256. 5MiB 넘으면 resumable | 공식 필드가 파일 종류마다 다름(조사 1절) |
+| 2026-10-28 | epic 8 · 이전 확정 | 원격 위치·`verified_at`·`home` 전환·삭제 예약을 CAS로 한 트랜잭션. 삭제 handler는 현재 설정으로 due 재계산, 지우기 직전 원격 재확인 | 마지막 사본 보존 |
+| 2026-10-28 | epic 8 · OAuth | scope `drive.readonly`+`drive.file`, `.env`에 client id·secret·refresh token, access token은 저장 안 함, loopback+PKCE | `drive.file`로는 기존 폴더 못 읽음 |
+| 2026-10-28 | epic 8 · 명령·설정 | `brain sources connect drive|add|list|remove|sync|disconnect`, `drive.root_folder_id`·`drive.watch_folders`·`drive.sync_interval_minutes`(30)·`drive.keep_local_days`(30) | 출처 중립 이름공간 |
+| 2026-10-28 | epic 8 · 외부 소스 | `sources`(계정마다 changes cursor)·`source_files`(content id nullable). 사진·큰 파일은 이름만, 결과는 `file_id` nullable·색인 상태 | `files`에 가짜 해시를 넣지 않음 |
+| 2026-10-28 | epic 8 · 추출기 | Google Docs는 text export, PDF는 pdfjs-dist 텍스트 경로, docx는 mammoth. 상한 PDF 50MiB·2,000쪽, docx 압축 50MiB·해제 200MiB, 추출 500만 자. Carry는 바이트 판정으로 버전마다 한 번 | 조사 5절 |
+| 2026-10-28 | epic 8 · 연동 해제 | 예약 중지·늦은 확정 차단·토큰 삭제·접근 불가 표시, 대기 중 로컬 삭제는 취소, Drive delete 0 | 해제 뒤 로컬이 유일한 접근 가능 사본 |
+| 2026-10-28 | epic 8 · 순서 | 1~8 한 줄, 8.1은 17.6을 기다림. tracer(원본 이전) → 외부 폴더 색인 → OAuth·해제 → PDF·docx → 증분·재개 → 문서 찾기 통합 → sweep → 이 Mac | 같은 파일(조사 8절) |
 
 ## 사람 몫
 
@@ -45,4 +80,6 @@
 | epic 15 · 15.7 | 이 Mac에서 옛 봇 token·chat id를 찾지 못했을 때만 `.env`에 `BRAIN_TELEGRAM_BOT_TOKEN`·`BRAIN_TELEGRAM_CHAT_ID`를 넣는다 | 15.7이 `awaiting-operator`일 때 |
 | epic 16 | 옛 Garmin tokenstore가 만료돼 MFA가 필요할 때만 로그인한다 | 16의 실계정 스토리가 `awaiting-operator`일 때 |
 | epic 18 | 분석 결과의 품질을 판단한다(에이전트는 형식·저장·순서만 검증) | 18 완료 뒤 |
-| epic 8 | Google Drive OAuth 동의 | epic 8의 실계정 스토리가 `awaiting-operator`일 때 |
+| epic 17 | (선택) 17.7의 실제 질문 10건 판정을 다시 본다 | 17 완료 뒤 |
+| epic 16·18 | Codex·Garmin 로그인이 만료됐을 때만 재로그인한다 | 해당 스토리가 `awaiting-operator`일 때 |
+| epic 8 · 8.8 | Google Cloud에서 데스크톱 OAuth client를 만들고(동의 화면은 In production 권장, 8.3이 확인), client id·secret을 `.env`에 넣은 뒤 `brain sources connect drive`로 동의한다 | 8.8이 `awaiting-operator`일 때 |

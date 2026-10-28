@@ -97,7 +97,7 @@ id = 8
 slug = "epic-drive"
 title = "Google Drive 연동"
 covers = ["CAP-14", "CAP-6", "CAP-7", "CAP-12"]
-after = [{ epic = 10, needs = "FileStore port와 로컬 구현, 첨부 원본 저장, 추출 세대 Store와 추출 일감, chunk_locator" }, { epic = 9, needs = "데몬 런타임: 주기 동기화(source_sync)와 파일 감시(2026-10-26)" }, { epic = 11, needs = "PostgreSQL Store와 마이그레이션 실행기, 사용자 설정 DB와 brain config(E8-7을 옮겨 감, 2026-10-28)" }, { epic = 17, needs = "공통 텍스트 검색·원문 읽기 경로와 결과 계약(E8-6이 문서 대상을 더한다, 2026-10-28)" }]
+after = [{ epic = 10, needs = "FileStore port와 로컬 구현, 첨부 원본 저장, 추출 세대 Store와 추출 일감, chunk_locator" }, { epic = 9, needs = "데몬 런타임: 주기 동기화(source_sync)와 파일 감시(2026-10-26)" }, { epic = 11, needs = "PostgreSQL Store와 마이그레이션 실행기, 사용자 설정 DB와 brain config(E8-7을 옮겨 감, 2026-10-28)" }, { epic = 17, needs = "공통 텍스트 검색·원문 읽기 경로와 결과 계약(E8-6이 문서 대상을 더한다, 2026-10-28)" }, { epic = 12, needs = "작업 runtime의 예약 등록·목록(동기화 주기), 취소·진행 이벤트(긴 sync·업로드), 보류 그룹(2026-10-28, epic 8 정제)" }]
 
 [[epic]]
 id = 5
