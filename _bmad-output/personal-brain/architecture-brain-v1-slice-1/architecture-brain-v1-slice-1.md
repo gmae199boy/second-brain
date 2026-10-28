@@ -219,6 +219,8 @@ sequenceDiagram
 - **Prevents:** 코드 실수로 원문이 바뀌는 것, 비밀이 Brain 밖으로 나가는 것, 패턴의 과잉 가림이 저장된 원문을 되돌릴 수 없게 망가뜨리는 것, 나가는 길 하나가 가리기를 잊는 것, 작업 로그의 현재 문장 위치가 단위마다 달라지는 것
 - **Rule:**
   - **나갈 때 가리기**(마스킹 B, 2026-10-18 사용자): 수집은 본문과 도구 메모 대상을 Harness가 준 그대로 저장한다(추출한 문서 텍스트도 같다, AD-23). 알려진 비밀 패턴(API 키, 토큰, 개인 키, `password=` 류)은 Brain 밖으로 나갈 때 `[REDACTED:<kind>]`로 바뀐다. 패턴 목록과 가리기 함수는 Core에 하나만 두고 버전(`SECRET_PATTERN_VERSION`)을 가진다. 나가는 길은 Core의 **출력 코덱**이고 모두 그 함수를 부른다: 엔벨로프 코덱(CLI·MCP·소켓이 공유, `data`·`error`·`warnings`·`meta`의 문자열), hook 출력 코덱(시작 맥락, Stop 점검의 `reason`), 미러 렌더러(AD-16), 내보내기 writer, 임베딩·재순위 요청(AD-15), 분석 모델 입력·도구 응답, 채널 발신 텍스트(AD-35). 도구 메모 대상만 쓰는 규칙(셸 `NAME=value`)은 도구 메모를 돌려주는 읽기 결과가 그 칸에만 먼저 걸고, 코덱은 모든 문자열에 본문 규칙을 건다(가린 표시는 다시 잡히지 않아 두 번 걸려도 같다, 2026-10-19 사용자). Store와 adapter는 원문을 돌려주고, 출력 코덱을 거치지 않고 Brain 밖으로 텍스트를 내는 경로는 없다. 출력 가리기는 `redactions`를 남기지 않는다.
+  - **U+0000 저장**(2026-10-28, epic 11 11.1 escalation을 추천으로 해소): PostgreSQL `text`는 U+0000을 받지 않는다(SQLSTATE 22021). transcript에서 온 텍스트를 넣는 모든 `text` 칸(최소 `messages.body`, 그 밖에 수집 경로가 transcript 문자열을 넣는 칸)은 Store의 쓰기 코덱 하나를 거친다. `text` 칸에는 U+0000을 U+FFFD로 바꾼 값을 넣고, 검색·색인·표시는 이 값을 쓴다. 같은 행의 nullable `bytea` 짝 칸(예: `body_raw`)에는 원래 문자열의 UTF-8 바이트를 넣는다. U+0000이 없으면 짝 칸은 NULL이다. 읽기는 짝 칸이 있으면 그 바이트를 원문으로 돌려주므로 Core가 보는 값은 원래 문자열과 바이트 단위로 같다. 입력은 거부하지 않는다(거부하면 메시지가 빠져 SM-5를 깬다). 짝 칸은 그 `text` 칸을 만드는 마이그레이션에 함께 둔다. 나갈 때는 출력 코덱이 텍스트 모드에서 `\u0000`으로, JSON에서 원래 escape로 낸다. `jsonb`도 문자열 안의 U+0000을 거부하므로(escape해도 같다) 같은 경계에서 다룬다: transcript 원문은 `text`와 nullable `bytea` 보존 경로에 두고, `jsonb`는 U+0000을 U+FFFD로 바꾼 파생 투영으로만 저장한다. 원문 읽기는 파생 `jsonb`로 대신하지 않는다. JSON 칸을 만드는 마이그레이션은 이 경로를 명시한다.
+  - **U+0000과 저장본 가리기**: `messages.redact`는 짝 칸을 우선 복원한 논리 원문 위에서 위치·해시·치환을 계산하고, 같은 트랜잭션에서 치환 결과를 U+0000 쓰기 코덱으로 다시 나누어 `text`와 짝 칸을 함께 갱신한다. 치환 뒤 U+0000이 없으면 짝 칸은 NULL이 되고, 지우기 전 바이트를 남기지 않는다. 본문과 도구 메모 대상에 같은 규칙을 쓴다.
   - 남아 있는 출력(미러 파일)은 쓴 패턴 버전을 적는다. 버전이 오르면 미러 재생성 일감을 만든다. 내보내기는 manifest에 버전을 적고, 이미 쓴 내보내기 파일은 건드리지 않는다.
   - DB 볼륨에는 비밀이 원문으로 있다. 볼륨이 OrbStack 안에 있고 포트가 `127.0.0.1`에만 열리는 것(AD-34)이 그것을 지킨다. 저장본에서도 지우려면 `messages.redact`를 쓴다.
   - `messages`와 `tool_notes`는 UPDATE·DELETE를 거부하는 DB trigger를 가진다. **유일한 예외는 `messages.redact`**다. 사람이 요청해 저장본에서 지우는 가리기다. 입력은 지울 글자 그대로이거나 `detected`(지금 패턴이 그 메시지에서 찾는 구간 전부, `redactions.pattern_version`에 그 버전)다. 이 함수는 본문 일부나 전체를 `[REDACTED:<kind>]`로 바꾸고, 같은 트랜잭션에서 `redactions`에 위치·종류·지운 내용의 해시만 남긴다(지운 내용은 보존하지 않는다). trigger는 redact 표시가 있을 때만 통과시킨다. 표시는 트랜잭션 로컬 GUC `brain.redacting`이고, Store adapter의 redact 함수 한 곳이 같은 트랜잭션 안에서 세우고 지운다. trigger는 plpgsql이다(`packages/postgres/migrations/0001_initial.sql`의 방식).
@@ -467,7 +469,7 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
 - **Rule:**
   - database는 하나다. core schema는 `brain`이고, 확장마다 자기 schema(`garmin`)를 갖는다. 확장 → core FK는 허용하고, core → 확장 FK는 금지한다.
   - 확장은 자기 schema에 자유롭게 쓴다. core에는 공개 계약 표에만 쓴다: 건강 측정·요약, legacy 이전 분석(`analyses`), 채널 발신 요청과 legacy 채널 이력, 파일 등록 요청(`file_requests`). 쓰는 role은 자기 `brain_ext_<name>`이고 INSERT만 한다. row-level security로 출처가 자기인 행만 쓸 수 있고, UPDATE·DELETE는 없다. 그 밖의 core 표에는 권한이 없다. raw와 정제는 한 트랜잭션에 쓸 수 있다.
-  - 확장은 고정 모양의 읽기 전용 view `<ext>.raw_records`(source, account, key, endpoint, fetched_at, checked_at, 받은 그대로의 text인 body)를 낸다. core는 확장 데이터를 이 view로만 읽는다.
+  - 확장은 고정 모양의 읽기 전용 view `<ext>.raw_records`(source, account, key, endpoint, fetched_at, checked_at, 받은 그대로의 text인 body)를 낸다. core는 확장 데이터를 이 view로만 읽는다. `key`는 확장이 정하는 안정 정규형이고 view 안에서 `(source, account, key, endpoint)`가 하나의 원본을 가리킨다. Garmin은 `<scope>/<원래 key>`다(2026-10-28, epic 14).
   - 확장 role은 계약 표 owner와 분리한 non-superuser·NOBYPASSRLS이며 RLS WITH CHECK 출처 정책은 변경 가능한 GUC가 아니라 DB role에 결합한다.
   - role은 셋이다: 마이그레이션 소유자(setup), `brain_app`(TS 런타임), `brain_ext_<name>`(자기 schema 전부, core 계약 표 INSERT, core 공개 view SELECT). 감독자는 확장의 DB URL을 자식 프로세스의 환경 변수로 넘기고 argv에는 넣지 않는다(AD-33).
   - core가 요청→`work_items` 인계를 단독 소유한다. 미인계 요청을 다시 발견하고 요청 ID 대상의 멱등 일감 생성·인계 표식을 같은 트랜잭션에 확정한다. 요청 INSERT 뒤 crash해도 복구하며 legacy 채널 이력은 인계하지 않는다. `file_requests` 계약은 epic 14가 최초 사용 전에 소유한다: 출처+안정된 요청 키, 내구성 인계 경로, 예상 해시·크기·미디어 타입, 공개 결과 view의 `request_id → file_id/실패`와 상태·재개 규칙. core가 해시 검증·파일 관계 확정을 완료할 때까지 생산자는 바이트를 보존하며 확인 뒤 core가 정리한다.
@@ -489,7 +491,7 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
 - **Prevents:** 이전·수집·조회가 다른 갱신 규칙을 쓰는 것, 기존 값을 덮어쓰는 것(R7), 빠진 metadata를 추정값으로 채우는 것
 - **Rule:**
   - core 건강 행은 불변이다. 논리 측정 키(출처·계정·지표·운동 identity·현지 날짜/순간·시간대)와 보관 키를 구분한다. 보관 키는 논리 키 + 데이터셋/이전 출처 + 정규화 버전 + 관측 revision(원천의 안정된 revision 또는 원문 해시)이다. 같은 입력 재처리는 멱등이고 수정된 관측은 같은 정규화 버전이어도 새 행이다.
-  - “현재” view는 명시적으로 승인된 authoritative dataset/출처 안의 관측 revision과 정규화 버전을 적용한다. 기록 시각으로 데이터셋 권위를 추정하지 않는다. 미선택 충돌은 ambiguity로 반환하고 기본 집계에서 제외한다. epic 14가 revision 순서·정규화 버전 비교·동률 처리와 소스 선택 기록을 계약으로 고정하며 epic 16·17·18이 소비한다. C6 기준 소스·충돌 정책 사용자 선택 전 실제 Garmin 반입/publish는 금지다(AD-36).
+  - “현재” view는 권위 선택 기록(규칙 버전, dataset 순서, 적용 범위, 선택·미선택 provenance)의 dataset 순서 → 관측 revision → 지원 정규화 버전 순으로 고른다. 기록 시각으로 데이터셋 권위를 추정하지 않는다. 관측 revision은 원문 해시로 식별하고 같은 dataset 안에서 원천 수신 시각(`fetched_at`)으로 순서를 정한다. 정규화 버전은 정수로 비교한다. 규칙 순서로 고른 값이 현재이고, 고르지 않은 후보는 보관만 된다. 규칙으로 고를 수 없는 충돌(같은 순위 안의 다른 값, 같은 시각·다른 해시, 계정 미확인)만 ambiguity로 반환하고 기본 집계에서 제외한다. 같은 값의 동률은 하나로 보인다. epic 14가 이 계약을 고정하며(규칙 v1은 C6 선택지 A, AD-36) epic 16·17·18이 소비한다. 새 수집 출처를 앞에 둔 새 규칙 버전은 epic 16이 쓴다(2026-10-28).
   - epic 14가 지표 식별자·정규 단위·값 타입·NULL 의미·계정 identity·날짜/순간 배타 조건·운동 identity·metric별 허용 집계를 정의하고 TS/Python이 같은 fixture를 통과한다. NULL 키는 DB에서 동등하게 처리해 재삽입 중복을 막는다. epic 17의 구조화 수치 조회 port는 기간·지표·운동·집계 조건을 받고 코드가 합계/평균을 계산하며 독립 계산 fixture로 검증한다(R15).
   - legacy 출처·원래 값은 보존한다. `analyses`는 불변이고 재생성은 새 행이다. 빠진 metadata는 명시적 null/flag로 두고 추정하지 않는다(C5).
 
@@ -529,8 +531,9 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
   - 평가 순서(day → 7d → 30d → all)는 일감 의존으로 표현한다.
   - 발신은 채널 발신 요청을 거친다(epic 15).
   - digest와 그래프는 확장이 만들고(AD-29), 정제 행과 파일 등록 요청으로 들어온다.
-  - `analyses` 최소 계약·DDL은 처음 쓰는 epic 14가 이전 전에 정한다. legacy 원래 키·dataset, nullable 모델/시각과 누락 flag, 파일 요청/파일 관계, 새 분석 revision을 포함하며 epic 18(core 건강 분석)은 호환 확장한다. 분석 그래프는 입력 snapshot/cutoff·건강 revision·소스 권위·시간대를 고정해 공유하고 선행 analysis ID를 남긴다. scope마다 검증·저장을 즉시 확정한 뒤 다음 일감을 풀며 후속 평가·그래프·발신 실패가 성공을 롤백하지 않는다. 재시작은 저장된 성공부터 잇는다. 모델 실행 adapter는 이 Mac의 Codex 로그인 환경을 사용하고 Runtime이 Core 실행 port에 조립한다.
-  - 발신은 생산 결과의 안정된 식별자+채널 대화 식별자+목적/개정의 의미 키로 UNIQUE 중복 억제한다(요청 UUID와 별도). epic 15가 원자적인 최초 시도 gate를 발신 전에 저장하고 실제 결과·불명 상태를 분리한다. 일반 retry는 gate를 우회하지 않고 불명 결과를 성공으로 추정하거나 무조건 재전송하지 않는다. 불명 재시도 세부는 Deferred다. 사용자·스레드·선제 메시지를 같은 대화로 잇는 출처/외부 식별자·provenance를 core 채널이 소유한다. Telegram adapter는 Core 채널 port 구현이고 Runtime이 조립한다. 모델 입력·도구 응답·발신 텍스트는 출력 코덱 등록부·비밀 fixture를 통과하며 원본 파일 바이트 보존과 구분한다.
+  - `analyses` 최소 계약·DDL은 처음 쓰는 epic 14가 이전 전에 정한다. legacy 원래 키·dataset, nullable 모델/시각과 누락 flag, 파일 요청/파일 관계, 새 분석 revision을 포함하며 epic 18(core 건강 분석)은 호환 확장한다. 분석 그래프는 입력 snapshot/cutoff·건강 revision·소스 권위·시간대를 고정해 공유하고 선행 analysis ID를 남긴다. scope마다 검증·저장을 즉시 확정한 뒤 다음 일감을 풀며 후속 평가·그래프·발신 실패가 성공을 롤백하지 않는다. 재시작은 저장된 성공부터 잇는다.
+  - 분석 에이전트(모델 CLI adapter 이름)·모델·effort는 사용자 설정(DB 설정, AD-18)이다(2026-10-28 사용자, epic 18). 기본값은 옛 Garmin과 같다: Codex, 모델은 CLI 기본, effort high, 호출 timeout 20분. adapter는 Codex와 Claude Code 둘이고 각각 Core 실행 port 구현이며, Runtime이 설정에 맞는 것을 조립한다. 두 adapter는 같은 출력 schema 검증과 그룹 정리·reap(AD-33)을 지나고, 토큰을 프로세스 ABI v1의 `usage` 칸에 채운다. 실행은 그 CLI의 이 Mac 로그인 환경을 쓴다. 설정한 CLI가 없거나 로그인되지 않았으면 그 일감은 다시 하지 않는 오류로 `failures`에 남고 doctor가 보인다.
+  - 발신은 생산 결과의 안정된 식별자+채널 대화 식별자+목적/개정의 의미 키로 UNIQUE 중복 억제한다(요청 UUID와 별도). epic 15가 원자적인 최초 시도 gate를 발신 전에 저장하고 실제 결과·불명 상태를 분리한다. 일반 retry는 gate를 우회하지 않고 불명 결과를 성공으로 추정하지 않는다. 불명 결과는 같은 요청의 새 attempt로 지수 간격 재시도하고 10번 실패하면 `failures`에 남긴다(2026-10-28 사용자, epic 15. 중복 가능성을 받아들임). 사용자·스레드·선제 메시지를 같은 대화로 잇는 출처/외부 식별자·provenance를 core 채널이 소유한다. Telegram adapter는 Core 채널 port 구현이고 Runtime이 조립한다. 모델 입력·도구 응답·발신 텍스트는 출력 코덱 등록부·비밀 fixture를 통과하며 원본 파일 바이트 보존과 구분한다.
 
 ### AD-36 — Garmin 이전은 검증한 출처와 배치로만 확정한다
 
@@ -538,8 +541,8 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
 - **Prevents:** source-local ID 충돌, 조용한 충돌 손실, 재개 중 중복, 기존 분석을 재생성으로 대체하는 것
 - **Rule:**
   - epic 14 importer가 dataset/table/원래 key → 대상 UUID mapping, import batch/version·checkpoint를 영속 소유한다. 작은 트랜잭션마다 데이터·mapping·진행을 함께 확정하고 동일 batch 재개를 지원한다(AD-8).
-  - preflight는 대상 호환성·소스 지원 버전·예상 변경·충돌을 보고한다. private `data/absorption-prep/LATEST`와 manifest의 전체 inventory·해시를 다시 확인하고 schema10/15 원형 snapshot을 읽기 전용으로 보존한다. 관찰 DB 5개·파일 349개는 당시 수치이며 현재 목록의 대체가 아니다. writer 정지 또는 증분 재캡처/재검증 뒤 publish한다. 원본 업그레이드·재분석으로 이전을 대신하지 않는다.
-  - C6 기준 소스·겹치는 자연키 충돌 정책은 사용자가 고르기 전 실제 반입/publish하지 않는다. 미선택 후보도 원형/출처를 보존한다. 건수·자연키·NULL/단위·원문/파일 해시·FK mapping·분석 본문·artifact 관계를 전수 비교하고 재실행/실패 재개·비발신을 검증한 보고서 뒤 완료한다.
+  - preflight는 대상 호환성·소스 지원 버전·예상 변경·충돌을 보고한다. schema10/15 원형 snapshot을 읽기 전용으로 보존한다. 관찰 DB 5개·파일 349개는 당시 수치이며 현재 목록의 대체가 아니다. 실제 반입은 옛 writer를 멈추지 않고, 반입 직전에 만든 새 일관 capture(DB는 읽기 전용 URI의 SQLite backup API, 파일은 복사 전후 해시 비교, private manifest 갱신)를 기준으로 한다. 옛 `LATEST` capture와의 목록·건수 차이는 보고서에 남긴다. capture 뒤 옛 writer의 변경과 옛 예약 중지는 epic 16의 전환이다(2026-10-28, epic 14). 원본 업그레이드·재분석으로 이전을 대신하지 않는다.
+  - C6 기준 소스·겹치는 자연키 충돌 정책은 2026-10-28 사용자 위임으로 정했다: epic 14의 선택지 A(운영 → 개발 → 보관본 순, dataset 역할은 private manifest의 source 분류)가 권위 기록 규칙 v1이다. 계정 identity는 raw 본문의 Garmin 사용자 profile id로 dataset마다 확인하고, 모이지 않으면 계정 미확인으로 보존한다. 미선택 후보도 원형/출처를 보존한다. 건수·자연키·NULL/단위·원문/파일 해시·FK mapping·분석 본문·artifact 관계를 전수 비교하고 재실행/실패 재개·비발신을 검증한 보고서 뒤 완료한다. Garmin 이전의 공개 명령 출력·보고서·plan에는 건수, 충돌·제외 사유 수, 단계별 상태와 값 없는 성공 여부만 둔다. 해시 값·원문·계정·개인 날짜·건강값·capture 경로·오류 상세·doctor/조회의 원시 출력은 Brain 홈의 확장 데이터 아래 private 보고서에만 두고, 공개 실패 원인은 개인 값을 뺀 분류만 쓴다.
   - 최소 provenance는 `../prep-garmin-absorption/migration-contract.md`의 대상별 보존/검증 표다. epic 14·16은 raw scope/library_version·normalize 상태/오류/history_start/원본 연결은 확장 schema, 모델/평가 시각/입력 근거는 core 분석, body 필드 mtime/원본·artifact 연결은 측정·파일 메타에 보존하고 위치 대응표를 낸다. 공개 raw view 필드는 AD-30이며 내부 provenance를 모두 노출한다는 뜻은 아니다. 없는 metadata·소스에 없던 과거 이력은 만들지 않는다.
 
 ## Table Contract
@@ -553,7 +556,7 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `worktrees` | `(project_id, path)` | `sessions.ensure` | `removed_at`만 drain이 채움 |
 | `workspaces` | `name` | 예약(slice 1은 쓰지 않음, 2026-10-15) | — |
 | `sessions` | `(harness, harness_session_id)` | 생성: `sessions.ensure`. 갱신: `sessions.ingest`. `tag_source`·`first_cwd`: 수집·`fillSessionTags` | `tag_source`·`first_cwd`는 null → 값만, 출처의 null 여부는 project와 같음(0007). 불변: 키, `user_id`(→ `users.id`), `machine`, `started_at`, 꼬리표(비어 있으면 `session_identity` 일감이 한 번 채울 수 있음, AD-12), `ingest_source(live\|import)`. 단조: `ended_at`, `parser_version`, `ingested_at`, 커서(`last_harness_message_id`, fingerprint) — 단 처음부터 읽은 배치는 기준이 같을 때 뒤로 옮기거나 지울 수 있다(AD-4). 한 번만 씀(처음 값): `start_source(startup\|resume\|clear\|compact\|fork)` — null인 행에만 쓰고 덮어쓰지 않는다. 예약: `workspace_id`(slice 1은 쓰지 않음), `continued_from_session_id`(slice 1은 채우지 않음) |
-| `messages` | `(session_id, harness_message_id)`. 순서는 `occurred_at`(번호 없음) | `sessions.ingest` | 불변(예외: `messages.redact`). `occurred_at`은 원래 발화 시각 |
+| `messages` | `(session_id, harness_message_id)`. 순서는 `occurred_at`(번호 없음) | `sessions.ingest` | 불변(예외: `messages.redact`). `occurred_at`은 원래 발화 시각. `body`의 U+0000은 U+FFFD로 넣고 원래 바이트는 nullable `bytea` 짝 칸에 둔다(AD-11 U+0000 저장, 2026-10-28). transcript 텍스트를 넣는 다른 칸(`tool_notes` 포함)도 같다 |
 | `tool_notes` | `(session_id, call_id)`가 있으면 그것, 없으면 `(session_id, harness_message_id, ordinal)` | `sessions.ingest` | 불변. `call_id`는 harness가 그 호출에 준 id(Claude Code는 `tool_use.id`, 0005)이고 버전이 올라 메모 자리가 바뀌어도 같은 호출을 알아보는 열쇠다. `call_id`가 없는 옛 행은 자리로만 알아보므로, parser는 메모마다 "이전 버전이 같은 호출을 저장했을 수 있는 자리"(`earlierPositions`)를 함께 내고 Store는 그 자리에 `call_id`가 null인 행이 있으면 넣지 않는다 — 상위 집합이어도 안전하다(그 자리에 행이 없으면 맞지 않는다). `ordinal`은 음수일 수 있고 "그 메시지 줄 앞에서 한 호출"을 뜻하며 내용의 첫 메시지에만 있다 |
 | `log_entries` | `id`(작성 프로세스가 정한 UUIDv7) | 생성: `log.append`. 문장: `log.edit`. 상태·범위: `log.set-state`, `log.set-scope`. `pending→on`: drain·`log.append` | `kind`, `session_id`, `occurred_at`, `author_model` 불변 |
 | `log_entry_edits` | `id` | `log.edit` | 불변 |
@@ -622,7 +625,7 @@ erDiagram
 | --- | --- |
 | 이름 | DB 테이블·컬럼은 `snake_case` 복수형이고, SQL에서는 schema로 한정해 쓴다(`brain.sessions`, `garmin.…`). TS 타입은 `PascalCase`, 함수·필드는 `camelCase`. SDK `<ns>.<verb>` ↔ CLI `brain <ns> <verb>` ↔ MCP `<ns>_<verb>` |
 | ID | UUIDv7, 쓰는 쪽이 만든다(AD-22). DB에서는 `uuid`, JSON에서는 정규 소문자 문자열. 프로세스 경계를 넘는 세션 토큰은 `harness:harness_session_id` |
-| DB 타입 | 절대 시각은 `timestamptz`, 현지 날짜가 뜻인 값은 `date` + IANA 시간대 칸(AD-13). 외부에서 받은 JSON 원문은 받은 그대로 `text`에 둔다 — `jsonb` 재직렬화로 대체하지 않고, 거르기용 `jsonb` 사본은 둘 수 있다. 내부의 구조 값은 `jsonb` |
+| DB 타입 | 절대 시각은 `timestamptz`, 현지 날짜가 뜻인 값은 `date` + IANA 시간대 칸(AD-13). 외부에서 받은 JSON 원문은 받은 그대로 `text`에 둔다 — `jsonb` 재직렬화로 대체하지 않고, 거르기용 `jsonb` 사본은 둘 수 있다(U+0000은 U+FFFD로 바꾼 파생 투영, AD-11). 내부의 구조 값은 `jsonb` |
 | DB role | 마이그레이션 소유자(setup), `brain_app`(TS 런타임), `brain_ext_<name>`(확장). 권한은 AD-30 |
 | 시각 | DB는 `timestamptz`(UTC, 밀리초). Store port 값·spool·내보내기는 정규형 `YYYY-MM-DDTHH:MM:SS.sssZ`(AD-13). 오프셋을 포함한 ISO-8601은 CLI `--json` 응답에만 쓴다. 사람용 출력만 사용자 설정 `timezone`으로 표시 |
 | 텍스트 | 저장 본문은 Harness가 준 그대로(사람이 요청한 저장본 가리기 제외). Brain 밖으로 나가는 텍스트는 Core 출력 코덱의 가리기를 거친다(AD-11). 비교·대조는 NFC 정규화 후. 위치는 코드 포인트 `[start, end)` |
@@ -661,7 +664,7 @@ erDiagram
 | 임베딩·재순위 (선택) | Model Studio `qwen3.7-text-embedding`(1024) / `qwen3-rerank`. 벡터 저장소는 epic 6 인셉션에서 정한다 |
 | Python (Garmin 확장) | `>=3.12` (기존 Garmin 배포 3.14.8은 관찰 기록. 새 배포 pin·doctor 보안 기준은 3.14.10, `.python-version`) |
 | uv (Garmin 확장) | 고정하지 않는다. 의존성은 확장의 `uv.lock`이 고정한다 |
-| psycopg (Garmin 확장) | 3.3.6, 신규 설치는 `psycopg[binary]`로 host libpq 선행 설치를 피한다. 실제 lock·macOS arm64/Python import·접속 검증은 epic 13·14 |
+| psycopg (Garmin 확장) | 3.3.6, 신규 설치는 `psycopg[binary]`로 host libpq 선행 설치를 피한다. 실제 lock·macOS arm64/Python import·접속 검증은 14.1, 옛 수집 의존을 더한 lock의 arm64 설치는 epic 16(2026-10-28) |
 | garminconnect, curl-cffi, jsonschema, matplotlib, requests (Garmin 확장) | 확장의 `uv.lock`이 고정한다 |
 
 검색 질의(`lower(col) LIKE lower(pattern)`)는 Core가 정한 검색 함수 하나를 adapter가 Kysely의 `sql` 템플릿으로 쓴다(AD-15).
@@ -771,8 +774,8 @@ flowchart TB
 | `pg_bigm`으로 검색 색인 바꾸기 | owner epic 17. SM-7 지연 미달 때 이미지·expression GIN 교체를 검증한다. LIKE 질의·정규화·collation 유지(AD-15) |
 | 임대 갱신 세부, 정체 판정, 놓친 예약 처리 | epic 12 인셉션. 불변식(감독자만 청구, 경과 시간만으로 죽이거나 중복 실행하지 않음)은 AD-21·33에 있다 |
 | 채널 정체성(사용자 답변·스레드·선제 메시지 연결)의 모양 | epic 15 인셉션(R13) |
-| 건강 계약 표의 정확한 모양 | epic 14 다듬기. 키·불변·버전 규칙은 AD-32 |
-| 분석 에이전트의 프롬프트와 출력 schema | epic 18 인셉션 |
+| 건강 계약 표의 정확한 모양 | 부분 해소(2026-10-28, epic 14 정제): 키·관측 revision·정규화 버전·현재 view·권위 기록·ambiguity는 AD-32와 epic 14 Decision. 컬럼 DDL과 지표 catalog의 실제 목록은 14.1·14.2 코드가 정한다 |
+| 분석 에이전트의 프롬프트와 출력 schema | 해소(2026-10-28, epic 18 Notes): 옛 Garmin `report`의 프롬프트·JSON schema를 v1로 그대로 쓴다. 바꾸는 일은 실사용 뒤 새 revision |
 | 백업 묶음의 세부(복원 순서·manifest 칸·위치)와 복구 | epic 5. 틀은 AD-20(원문 `pg_dump`·globals·블롭·manifest) |
 | PostgreSQL 19로 올리기 | 19 GA(2026-11-19 예정) 뒤 별도 결정. 그때까지 `postgres:18` |
 | 공개 plugin marketplace, 임의 서드파티 확장 코드 실행 | 범위 밖(이니셔티브 Boundaries, 2026-10-28) |
@@ -783,8 +786,8 @@ flowchart TB
 | 모델 호출 횟수·비용 제한/표시 | owner epic 12. 인셉션에서 설정·doctor 필요 여부 결정 |
 | chunk_locator text/jsonb | owner epic 11. 인셉션에서 AD-24 정규형 보존 검증과 함께 결정 |
 | 비활성화의 진행 작업 종료 방식 | owner epic 12·13. registry/취소 ABI 구현 전에 상태 보고·종료 정책 확정(AD-29·33) |
-| 불명 발신 재시도 정책 | owner epic 15. 최초 시도 gate 구현 전에 외부 API 중복 보호·결과 조회 가능성을 확인해 확정(AD-35) |
-| Garmin lock·설치 재현성 | owner epic 13·14. 실제 legacy uv.lock/.python-version 경로·해시를 기록하고 패치 pin/binary 설치의 macOS arm64 import·DB 접속 검증 때 |
-| C6 기준 소스·충돌 정책 | owner epic 14. 실제 반입 직전에 사용자가 고른다(2026-10-28 사용자: 그 전에 확인). 그때까지 모든 후보를 별도 출처로 보존하고 반입하지 않는다(AD-36) |
+| 불명 발신 재시도 정책 | 해소(2026-10-28 사용자, epic 15): 불명도 지수 간격으로 다시 보내고 10번 실패하면 `failures`·doctor, resend로 다시 연다(AD-35) |
+| Garmin lock·설치 재현성 | 나눔(2026-10-28): epic 14.1이 pin 3.14.10 + `psycopg[binary]` 3의 frozen 설치·macOS arm64 import·DB 접속을 닫는다. 옛 의존(garminconnect·curl-cffi·matplotlib 등)의 arm64 설치 확인은 그것을 더하는 epic 16 |
+| C6 기준 소스·충돌 정책 | 해소(2026-10-28 사용자 위임): epic 14 선택지 A가 권위 기록 규칙 v1이고 에이전트가 반입한다(AD-32·36). 미선택 후보는 모두 별도 출처로 보존한다 |
 | 가리기 전에 뜬 백업의 안내·정리 | epic 5. doctor가 그 백업을 알리고 지우기·새로 뜨기를 안내하는 경로(AD-11, AD-20). 범위 결정은 2026-10-28 사용자(U1) |
-| 신규 공통 CLI namespace/verb | owner epic 12(예약)·13(확장 설치/상태/비활성화)·17(건강 질의). 각 구현 전 CommandSpec/SDK 1:1로 확정; 채널/모델 adapter 조립은 AD-35 |
+| 신규 공통 CLI namespace/verb | owner epic 12(예약: `brain schedules`·`brain queue`)·13(확장 설치/상태/비활성화: `brain ext install|list|status|enable|disable`)·14(확장 수동 실행: `brain ext run <name> <job>`)·15(`brain channels`)·17(건강 질의). 각 구현 전 CommandSpec/SDK 1:1로 확정; 채널/모델 adapter 조립은 AD-35 |
