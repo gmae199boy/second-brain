@@ -7,7 +7,9 @@ export async function prepareDatabase(options: PrepareDatabaseOptions): Promise<
   if (!/^[a-z][a-z0-9_]*$/.test(name)) return { ok: false, code: 'DB_UNAVAILABLE', message: '잘못된 데이터베이스 이름입니다' };
   // Advisory locks are database-scoped; all cluster role changes use postgres.
   const adminUrl = new URL(options.databaseUrl); adminUrl.pathname = '/postgres';
-  const pool = createPool({ ...options, databaseUrl: adminUrl.toString() });
+  // Setup may queue behind another preparation. Runtime lock/query budgets
+  // must not cancel administrative work; the connection deadline still applies.
+  const pool = createPool({ ...options, databaseUrl: adminUrl.toString(), lockTimeoutMs: 0, queryTimeoutMs: 0 });
   try {
     const client = await pool.connect();
     try {
@@ -27,7 +29,7 @@ export async function prepareDatabase(options: PrepareDatabaseOptions): Promise<
   } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) }; }
   finally { await pool.end().catch(() => {}); }
   const url = new URL(options.databaseUrl); url.pathname = `/${name}`;
-  const target = createPool({ ...options, databaseUrl: url.toString() });
+  const target = createPool({ ...options, databaseUrl: url.toString(), lockTimeoutMs: 0, queryTimeoutMs: 0 });
   try {
     await target.query(`create extension if not exists pg_trgm;
       create schema if not exists brain authorization brain_owner;
