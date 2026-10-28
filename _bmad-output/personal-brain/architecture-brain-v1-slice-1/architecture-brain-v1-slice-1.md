@@ -125,7 +125,7 @@ flowchart LR
 | `queue` | `drain` | 밀린 일 처리 (5, AD-7, AD-21) |
 | `doctor` | `run` | 점검 (25, NFR-2) |
 | `stats` | `show` | 기계가 셀 수 있는 지표(SM-4a·5·C1·C3·7, PRD §8-8 대리 지표). 기간 필터는 AD-13의 구간 함수, 기본은 기간만 거르고 `import` 세션 제외는 옵션. 잴 수 없는 지표는 0이 아니라 null + 경고 (SM, epic 5) |
-| `backup` | `export`, `import` | 내보내기·복구 (NFR-9) |
+| `backup` | `create`, `list`, `verify`, `restore` | 원문 백업과 새 홈 복구 (NFR-9, epic 5, 2026-10-28). 가린 논리 내보내기는 별도 `export` |
 | `index` | `rebuild` | 재색인 (11) |
 | `mirror` | `rebuild` | 미러 재생성 (AD-16) |
 | `guide` | `show`, `schema`, `exit-codes` | 안내문 전문, 명령 메타, 종료 코드 (24, AD-17) |
@@ -141,7 +141,7 @@ V1 명령: `sessions ingest·list·read`, `recall chunks·tools·expand`(epic 17
 - **Binds:** FR-1, FR-5, FR-7, FR-8, FR-10, FR-17, FR-18, NFR-3, NFR-7
 - **Prevents:** 비정상 종료 세션 유실, Harness가 수집을 기다리는 것, 정확성이 종료 hook에 의존하는 것
 - **Rule:** 아래 매핑을 따른다.
-  - 동기 경로(시작 hook)에는 네트워크 호출이 없고, **쓰기 트랜잭션도 없다**(읽기 전용). 세션 행은 같은 세션의 첫 수집(`sessions.ingest`)이 만들고, 주입 시도 기록은 spool에 써서 drain이 넣는다. 쓰기 잠금 대기(AD-7)가 시작 맥락을 막지 않게 하기 위해서다. 동기 Stop 점검(`log.remind`, AD-17)도 같은 규칙이다: 읽기, spool, `<home>/run/` 표식 파일만. `log.remind`는 설정과 표식 파일만 읽고 끝나는 조기 반환 경로를 가지며(토글이 꺼진 기본 설치에서는 DB를 열지 않는다), 전체 시간 상한은 Core 상수이고 플러그인 `hooks.json`의 그 줄은 `timeout` 5초다 — command hook 기본 600초가 세션 종료를 막지 않게(2026-10-20).
+  - 동기 경로(시작 hook)에는 외부 네트워크 호출이 없고, **쓰기 트랜잭션도 없다**(읽기 전용). 로컬 PostgreSQL 접속은 읽기만 하고 epic 11이 정한 접속·쿼리 시간 상한 안에서만 한다(여러 SELECT는 READ ONLY 트랜잭션). 컨테이너 시작·마이그레이션·drain·모델 호출은 hook에서 하지 않는다(2026-10-28, epic 3 재쪼개기). 세션 행은 같은 세션의 첫 수집(`sessions.ingest`)이 만들고, 주입 시도 기록은 spool에 써서 drain이 넣는다. 쓰기 잠금 대기(AD-7)가 시작 맥락을 막지 않게 하기 위해서다. 동기 Stop 점검(`log.remind`, AD-17)도 같은 규칙이다: 읽기, spool, `<home>/run/` 표식 파일만. `log.remind`는 설정과 표식 파일만 읽고 끝나는 조기 반환 경로를 가지며(토글이 꺼진 기본 설치에서는 DB를 열지 않는다), 전체 시간 상한은 Core 상수이고 플러그인 `hooks.json`의 그 줄은 `timeout` 5초다 — command hook 기본 600초가 세션 종료를 막지 않게(2026-10-20).
   - **정확성은 `SessionEnd`에 의존하지 않는다.** 종료 hook은 최선 노력이고, 놓친 일은 drain이 한다.
   - 선수집은 `log.append`·`list`·`edit`·`set-state`·`set-scope`와 `recall.*`에만 적용한다: connector가 transcript를 찾을 수 있으면 그 세션을 먼저 증분 수집한다. hook 경로 verb(`context.show`, `log.remind`)는 선수집하지 않는다(쓰기 트랜잭션 금지, 2026-10-20).
 
@@ -343,11 +343,11 @@ sequenceDiagram
 - **Binds:** FR-25, NFR-2, NFR-9, R3
 - **Prevents:** 코드와 스키마 버전이 어긋난 채 조용히 쓰는 것, 기억이 기계와 함께 사라지는 것, 흔적이 남는 제거, 제거가 DB 볼륨까지 지우는 것
 - **Rule:**
-  - 스키마 버전은 소유자별로 `brain.schema_migrations(owner, version, name, checksum, applied_at)`에 있다(singleton `schema_version`을 대체, AD-31). **마이그레이션은 `setup run`, 플러그인 bootstrap의 갱신 경로, 확장 설치·갱신만 실행**한다.
+  - 스키마 버전은 소유자별로 `brain.schema_migrations(owner, version, name, checksum, applied_at)`에 있다(singleton `schema_version`을 대체, AD-31). **마이그레이션은 `setup run`, 플러그인 bootstrap의 갱신 경로와 `setup upgrade`(같은 공통 갱신 함수), 확장 설치·갱신, 새 홈으로의 `backup restore`만 실행**하고 모두 공통 실행기 하나를 부른다(2026-10-28, epic 5).
   - 런타임 명령은 시작할 때 소유자별 기대 버전(core와 설치된 각 확장)을 확인한다. 다르면 DB에 쓰지 않고 spool로 보내며, 경고 `SCHEMA_MISMATCH`와 함께 doctor에 올린다.
-  - `setup upgrade`는 아직 없다(epic 5). 갱신 순서는 코드 갱신 → 빌드 → 마이그레이션 → shim 재작성(플러그인 없는 Harness만 hook 재등록) → 데몬 LaunchAgent 일치(AD-25) → 데몬 재시작(AD-27) → doctor → 완료 기록(AD-19)이고, 플러그인 hook이 시작하는 ff+build가 이 함수를 쓴다(AD-19). `setup upgrade`도 같은 함수를 쓴다.
-  - 백업은 V1 뒤 epic 5다. 백업은 가리지 않은 원문이다(2026-10-28 사용자, U2). 묶음은 `pg_dump` custom 형식(brain과 설치된 확장 schema 전부), `pg_dumpall --globals-only`(role), FileStore 블롭 폴더, manifest(owner별 schema 버전·테이블별 건수·해시)다 [ASSUMPTION: 추천안, 사용자가 바꿀 수 있음]. 백업에 JSON(L)을 쓰지 않는다. Brain 없이 읽는 가린 JSONL 내보내기(CAP-12, Conventions)는 백업과 다른 산출물이다. 백업 위치 설정과 doctor의 오래된 백업 경고(기본 7일)도 epic 5다.
-  - `setup uninstall`은 Brain 표식이 붙은 hook, shim, 데몬 LaunchAgent(AD-25), `<home>/run/`(pid·heartbeat·`stop-remind/`, 소켓은 V1 뒤), `<home>/log/`, `installed.json`을 지우고 DB 컨테이너를 내린다. 플러그인은 사용자가 `claude plugin uninstall`로 지운다(안내만). DB 볼륨(AD-34)과 데이터 폴더(`files/`, spool, 미러, `extensions/`)는 별도의 명시적 확인을 받아야 지운다.
+  - `setup upgrade`는 epic 5가 만든다. 갱신 순서는 코드 갱신 → 빌드 → 마이그레이션 → shim 재작성(플러그인 없는 Harness만 hook 재등록) → 데몬 LaunchAgent 일치(AD-25) → 데몬 재시작(AD-27) → doctor → 완료 기록(AD-19)이고, 플러그인 hook이 시작하는 ff+build가 이 함수를 쓴다(AD-19). `setup upgrade`도 같은 함수를 쓴다.
+  - 백업은 V1 뒤 epic 5다. 백업은 가리지 않은 원문이다(2026-10-28 사용자, U2). 묶음(`brain backup create`, `<home>/backups/<id>/`, 0700/0600, 임시 → 검증 → rename 발행)은 compose 서비스 안 PG client로 뜬 `pg_dump` custom 형식(brain과 설치된 확장 schema 전부), `pg_dumpall --globals-only --no-role-passwords`(role, 비밀번호는 복구 때 묶음의 `.env`에서 다시 설정), Brain 소유 로컬 블롭(Drive로 옮긴 원본은 `remote_only`, external은 `external`로 manifest에만), `.env`·`config.toml`(원문, 비밀 포함 여부를 manifest에 적음), manifest(owner별 schema 버전·테이블별 건수·정규형 해시·구성 파일 해시·redaction 기준점)다(2026-10-28 epic 5, 이전 ASSUMPTION을 대신함). dump와 건수·해시 reader는 같은 export snapshot을 쓰고 백업 동안 블롭 삭제는 pin으로 보류한다. 복구(`brain backup restore`)는 새 Brain 홈(새 compose project·volume·port·Label)으로만 하고, 복원한 설정의 접속 URL·로컬 경로를 대상 값으로 다시 바인딩하며, 복구 검증 동안 예약·일감 drain·외부 발신을 자동으로 재개하지 않는다. Garmin tokenstore는 백업하지 않는다. 기존 DB에 합치는 가져오기(D0)와 가린 JSONL의 되살리기는 V1 뒤 backlog다. 백업에 JSON(L)을 쓰지 않는다. Brain 없이 읽는 가린 JSONL 내보내기(CAP-12, Conventions)는 백업과 다른 산출물이다. 백업 위치 설정과 doctor의 오래된 백업 경고(기본 7일)도 epic 5다.
+  - `setup uninstall --all`은 Brain 표식이 붙은 hook, shim, 데몬 LaunchAgent(AD-25), `<home>/run/`(pid·heartbeat·`stop-remind/`, 소켓은 V1 뒤), `<home>/log/`, `installed.json`을 지우고 DB 컨테이너를 내린다. 플러그인은 사용자가 `claude plugin uninstall`로 지운다(안내만). DB 볼륨(AD-34)과 데이터 폴더(`files/`, spool, 미러, `extensions/`, `backups/`)는 `--delete-data`와 별도의 명시적 확인을 받아야 지운다(비대화형에서 확인이 없으면 exit 3). `.env`·외부 원본·Drive 파일·Garmin tokenstore는 지우지 않는다(2026-10-28, epic 5).
 
 ### AD-21 — 밀린 일은 `work_items` 하나에 쌓는다
 
@@ -641,7 +641,7 @@ erDiagram
 | 설치·런타임 기록 | `apps/cli/dist/build.json` `{commit, schema_version}`(빌드가 씀), `<home>/installed.json`(bootstrap·`setup run`이 완료 검증 뒤 마지막에 임시 파일→rename), `<home>/run/`(`daemon.pid`, `brain.sock`(V1 뒤, AD-26), `heartbeat`, `last-hook-<harness>` — 파일 mtime이 시각 — `stop-remind/<harness>-<id>` 표식(`log.remind`가 차단 뒤에 만들고, drain이 30일 지난 것을 지우며, `setup uninstall`이 폴더째 지운다, AD-17) — 그리고 `plugin.json`: 마지막 SessionStart가 본 `{plugin_root, app_ref, seen_at, last_bootstrap?{at, result, step?, log}}`를 bootstrap이 임시 파일→rename으로 쓰고 값이 바뀔 때만 쓴다. doctor `plugin` 점검이 `installed.json.plugin_root`보다 이것을 앞세운다 — 플러그인 캐시는 버전마다 폴더가 다르므로 완료 기록의 폴더는 "마지막으로 설치한 폴더"일 뿐이다. 2.5 사람 확인 1), `<home>/log/`(크기 회전). 설정 코덱을 거치지 않는다(AD-18, AD-19, AD-27) |
 | hook 응답 | connector adapter 소유(AD-4). 10,000자 이하. hook 경로는 항상 exit 0으로 끝낸다. 턴을 이어 가게 하는 길은 `log.remind`의 top-level `decision: block` 하나뿐이고(AD-17), Stop의 exit 2는 쓰지 않는다 |
 | 오류 | Core는 예상된 실패를 코드가 있는 값으로 돌려주고, 예외는 버그에만 쓴다. 실패는 `failures`에, DB에 쓸 수 없으면 spool에 남긴다. stderr만으로 끝내지 않는다 |
-| 내보내기 (NFR-9, epic 5. 백업이 아니라 사람이 읽는 가린 산출물이다. 백업은 AD-20) | 기존 가린 논리 내보내기 계약: 한 스냅샷 트랜잭션 안에서 테이블당 JSON Lines 하나 + `manifest.json`(스키마 버전, 테이블별 건수, 시각, 비밀 패턴 버전). 복구는 의존 순서대로 insert하고(`files.home_location_id`↔`file_locations.file_id` 순환은 포인터를 비운 채 `files`를 넣고, 위치를 넣은 뒤 포인터를 채운다. `users`도 내보낸다), 원본이 같은 DB 안에 있는 파생물(`chunks`, `embeddings`, `file_names`, 미러)만 다시 만든다. 문서 추출 세대·조각은 내보내고 복구한다. `manifest.json`에 파일 본체 포함 범위(`none | brain_owned`)를 적는다. 본문은 AD-11대로 가린 텍스트다. 이것은 원문 dump와 같은 산출물일 수 없다. 명령별 형식·brain/확장 schema·role 재생성·파일/설정 범위는 U2 결정 후 epic 5가 고정한다. 그 전 제품 백업은 없고 볼륨/기계 손실 복구를 보장하지 않는다 |
+| 내보내기 (NFR-9, epic 5. 백업이 아니라 사람이 읽는 가린 산출물이다. 백업은 AD-20) | 가린 논리 내보내기(`brain export`, 2026-10-28 epic 5): 한 스냅샷 트랜잭션 안에서 테이블당 JSON Lines 하나 + `manifest.json`(스키마 버전, 테이블별 건수, 시각, 비밀 패턴 버전). 이 JSONL에서 되살리는 복구는 V1 뒤 backlog이고, 그때의 순서 계약은 다음과 같다: 복구는 의존 순서대로 insert하고(`files.home_location_id`↔`file_locations.file_id` 순환은 포인터를 비운 채 `files`를 넣고, 위치를 넣은 뒤 포인터를 채운다. `users`도 내보낸다), 원본이 같은 DB 안에 있는 파생물(`chunks`, `embeddings`, `file_names`, 미러)만 다시 만든다. 문서 추출 세대·조각은 내보내고 복구한다. `manifest.json`에 파일 본체 포함 범위(`none | brain_owned`)를 적는다. 본문은 AD-11대로 가린 텍스트다. U+0000 짝 칸이 있는 칸은 논리 원문으로 복원한 뒤 가려서 내보내고, 저장 표현의 `bytea` 원문 짝 칸은 직렬화하지 않는다(2026-10-28, epic 5). 이것은 원문 dump와 같은 산출물일 수 없다. 제품 백업과 복구는 AD-20의 원문 백업(`brain backup`)이다 |
 | 마이그레이션 | 소유자별 SQL 파일(core는 `packages/postgres/migrations/`, 확장은 자기 패키지의 `migrations/`), 소유자 안에서 연속 순번 접두사, 앞으로만. 실행기는 하나다(AD-31). plpgsql trigger·DB 확장(`pg_trgm`)·인덱스도 SQL로. 불변 trigger와 `redactions`·가리기 함수는 core baseline 0001에 함께 들어간다 |
 | 테스트 | port마다 계약 테스트 묶음 하나, 모든 adapter가 통과. 저장소는 실제 PostgreSQL(테스트 compose의 `postgres:18`, 테스트 전용 데이터베이스)로 통합 테스트하고 mock하지 않는다. parser는 회사 내용을 지운 실제 transcript fixture로 테스트한다 |
 | 공개 저장소 위생 | 저장소에는 회사 이름·내용·실제 대화를 넣지 않는다. 예시와 fixture는 중립 이름을 쓴다 |
@@ -779,7 +779,7 @@ flowchart TB
 | 채널 정체성(사용자 답변·스레드·선제 메시지 연결)의 모양 | epic 15 인셉션(R13) |
 | 건강 계약 표의 정확한 모양 | 부분 해소(2026-10-28, epic 14 정제): 키·관측 revision·정규화 버전·현재 view·권위 기록·ambiguity는 AD-32와 epic 14 Decision. 컬럼 DDL과 지표 catalog의 실제 목록은 14.1·14.2 코드가 정한다 |
 | 분석 에이전트의 프롬프트와 출력 schema | 해소(2026-10-28, epic 18 Notes): 옛 Garmin `report`의 프롬프트·JSON schema를 v1로 그대로 쓴다. 바꾸는 일은 실사용 뒤 새 revision |
-| 백업 묶음의 세부(복원 순서·manifest 칸·위치)와 복구 | epic 5. 틀은 AD-20(원문 `pg_dump`·globals·블롭·manifest) |
+| 백업 묶음의 세부(복원 순서·manifest 칸·위치)와 복구 | 해소(2026-10-28, epic 5 정제): AD-20에 묶음·위치·복구 대상·재바인딩을 적었다. 기존 DB에 합치는 가져오기(D0)와 가린 JSONL 되살리기는 V1 뒤 backlog |
 | PostgreSQL 19로 올리기 | 19 GA(2026-11-19 예정) 뒤 별도 결정. 그때까지 `postgres:18` |
 | 공개 plugin marketplace, 임의 서드파티 확장 코드 실행 | 범위 밖(이니셔티브 Boundaries, 2026-10-28) |
 | Keychain 등 키 저장소 | `.env`로 시작. 설정 코덱 한 곳만 바꾸면 된다(AD-18) |

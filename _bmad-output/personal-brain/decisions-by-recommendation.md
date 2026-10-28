@@ -69,6 +69,21 @@
 | 2026-10-28 | epic 8 · 추출기 | Google Docs는 text export, PDF는 pdfjs-dist 텍스트 경로, docx는 mammoth. 상한 PDF 50MiB·2,000쪽, docx 압축 50MiB·해제 200MiB, 추출 500만 자. Carry는 바이트 판정으로 버전마다 한 번 | 조사 5절 |
 | 2026-10-28 | epic 8 · 연동 해제 | 예약 중지·늦은 확정 차단·토큰 삭제·접근 불가 표시, 대기 중 로컬 삭제는 취소, Drive delete 0 | 해제 뒤 로컬이 유일한 접근 가능 사본 |
 | 2026-10-28 | epic 8 · 순서 | 1~8 한 줄, 8.1은 17.6을 기다림. tracer(원본 이전) → 외부 폴더 색인 → OAuth·해제 → PDF·docx → 증분·재개 → 문서 찾기 통합 → sweep → 이 Mac | 같은 파일(조사 8절) |
+| 2026-10-28 | epic 5 · stats show | epic 3의 마지막 기능 스토리로 옮김 | 입력(`context_injections.kind`·`elapsed_ms`)을 epic 3이 만듦 |
+| 2026-10-28 | epic 5 · 백업 형식 | compose 안 `pg_dump -Fc` + `pg_dumpall --globals-only --no-role-passwords` + Brain 소유 로컬 블롭 + `.env`·`config.toml` + manifest, `<home>/backups/<id>/`(0700) | AD-20 원문 백업, 서버와 같은 client |
+| 2026-10-28 | epic 5 · 일관성 | export snapshot을 dump와 해시 reader가 공유, 백업 pin으로 블롭 삭제 보류, 빠진 블롭이면 미완료 | DB snapshot은 파일 snapshot이 아님(조사 2절) |
+| 2026-10-28 | epic 5 · 복구 | 새 Brain 홈(새 compose project·volume)으로만, role 비밀번호는 `.env`에서, Garmin tokenstore는 백업 안 함(재로그인). D0 합치기·가린 JSONL import는 backlog | 운영 DB 덮어쓰기 위험 |
+| 2026-10-28 | epic 5 · 명령·설정 | `brain backup create|list|verify|restore`, `brain export`, `setup upgrade`, `setup uninstall --all [--delete-data]`, `backup.warn_days`(7), 자동 예약·정리 없음 | AD-20 |
+| 2026-10-28 | epic 5 · 갱신 순서 | 공통 갱신 함수에서 doctor를 데몬 재시작 뒤로, 완료 기록은 마지막 | 지금 설치기 순서가 AD-20과 어긋남(조사 0절) |
+| 2026-10-28 | epic 5 · 순서 | 1~9 한 줄, 5.1은 8.7을 기다림. tracer(백업 왕복) → snapshot·블롭 → 확장·role 복구 → 공통 갱신 → 경고 → 가린 내보내기 → 완전 제거 → sweep → 이 Mac(비파괴) | 같은 파일(조사 8절) |
+| 2026-10-28 | epic 3 · 재쪼개기 | 기존 id 유지, SQLite 전제 제거, 13은 dropped 유지, 16 = stats show(epic 5에서), 17 = 새 Refactor sweep, 교차 after를 epic 11·12·13·17 entry로 다시 고정 | V1 뒤 에픽도 같은 방식(사용자) |
+| 2026-10-28 | epic 3 · 인용 증거 | 불변 표 `rule_quote_evidence`(원래 바이트 포함), 대조는 messages 짝 칸으로 복원한 원문에서 원래 좌표 → NFC | AD-11 U+0000, AD-14 |
+| 2026-10-28 | epic 3 · 재대조 | core 일감 `rule_recheck`(세션 단위, 수집 트랜잭션에서 멱등), `pending`만 CAS로 올림, 대조 실패는 일감 실패 아님 | `off` 자동 부활 금지 |
+| 2026-10-28 | epic 3 · 주입 기록 | spool → drain 재생 handler가 `context_injections`에 넣음, 세션 없는 시도는 7일 대기 뒤 버림(10회 실패와 별개) | 두 큐 소유권을 새로 만들지 않음 |
+| 2026-10-28 | epic 3 · hook PG | hook은 로컬 PG 읽기만(11.7 시간 상한, READ ONLY), 쓰기·마이그레이션·drain·컨테이너 시작 없음. spine AD-6 문구를 이 뜻으로 | AD-6과 PG 로컬 TCP의 긴장(조사 3절) |
+| 2026-10-28 | epic 3 · 시작 맥락 크기 | DB 설정 `context.max_chars`·`timezone`, `stop_remind`만 config.toml. 가린 최종 문자열의 코드 포인트로 셈 | 조사 5절 |
+| 2026-10-28 | epic 3 · Spike·체크리스트 | 3(Stop 실측)·4·15를 에이전트가 격리 홈과 `claude -p`로(`hitl = false`). 방해 정도의 체감은 사람 몫 | 위임, 12.12 선례 |
+| 2026-10-28 | epic 3 · 순서 | 1·2 → 4 → 5 → 6 → 7 → 8 → 9 → 14 → 10 → 11 → 3 → 12 → 16 → 17 → 15, 4는 5.8을 기다림 | 같은 파일(조사 8절) |
 
 ## 사람 몫
 
@@ -81,5 +96,6 @@
 | epic 16 | 옛 Garmin tokenstore가 만료돼 MFA가 필요할 때만 로그인한다 | 16의 실계정 스토리가 `awaiting-operator`일 때 |
 | epic 18 | 분석 결과의 품질을 판단한다(에이전트는 형식·저장·순서만 검증) | 18 완료 뒤 |
 | epic 17 | (선택) 17.7의 실제 질문 10건 판정을 다시 본다 | 17 완료 뒤 |
+| epic 3 | (선택) Stop 점검이 실사용에서 방해가 되는지 판단하고, 기본값(`stop_remind = false`)을 바꿀지 정한다 | 3 완료 뒤 |
 | epic 16·18 | Codex·Garmin 로그인이 만료됐을 때만 재로그인한다 | 해당 스토리가 `awaiting-operator`일 때 |
 | epic 8 · 8.8 | Google Cloud에서 데스크톱 OAuth client를 만들고(동의 화면은 In production 권장, 8.3이 확인), client id·secret을 `.env`에 넣은 뒤 `brain sources connect drive`로 동의한다 | 8.8이 `awaiting-operator`일 때 |
