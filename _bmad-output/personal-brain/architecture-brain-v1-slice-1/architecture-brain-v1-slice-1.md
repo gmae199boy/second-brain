@@ -4,7 +4,7 @@ type: architecture-spine
 purpose: build-substrate
 altitude: feature
 paradigm: 'hexagonal (ports & adapters), 단명 CLI + 상주 데몬 하나(epic 9, 2026-10-26). 저장소는 PostgreSQL 하나(OrbStack Docker), 선택 확장은 별도 프로세스(2026-10-28)'
-scope: 'slice 1 — V1은 세션 수집, 첨부·Google Drive 파일 수집과 문서 찾기, 상주 데몬, 설치(로컬 백업은 V1 뒤, epic 5). 작업 로그·시간 조회·시작 맥락은 V1 다음. 대화 검색·원문 읽기는 V1 epic 17. 개인용, 기계 한 대, 수집 경로는 Claude Code 하나(Harness 중립 구조). 설치·hook 진입점은 Claude Code 플러그인. 2026-10-28: 저장소는 OrbStack Docker의 PostgreSQL 하나이고, 그 위에 공통 작업·스케줄러, 확장 설치, 공통 채널, 텍스트 검색과 선택 설치형 Garmin 확장(별도 프로세스)을 둔다(epic 11~17)'
+scope: 'slice 1 — V1은 세션 수집, 첨부·Google Drive 파일 수집과 문서 찾기, 상주 데몬, 설치(로컬 백업은 V1 뒤, epic 5). 작업 로그·시간 조회·시작 맥락은 V1 다음. 대화 검색·원문 읽기는 V1 epic 17. 개인용, 기계 한 대, 수집 경로는 Claude Code 하나(Harness 중립 구조). 설치·hook 진입점은 Claude Code 플러그인. 2026-10-28: 저장소는 OrbStack Docker의 PostgreSQL 하나이고, 그 위에 공통 작업·스케줄러, 확장 설치, 공통 채널, 텍스트 검색과 선택 설치형 Garmin 확장(별도 프로세스)을 둔다(epic 11~18)'
 status: final
 created: '2026-10-08'
 updated: '2026-10-28'
@@ -458,7 +458,7 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
   - 의존은 확장 → core뿐이다. core는 manifest가 선언한 명령을 부르는 것 말고는 확장 로직을 import하지도 부르지도 않는다. 확장을 더해도 core 코드는 바뀌지 않는다. AD-4의 connector 계약과 같은 모양이다.
   - 확장을 설치하지 않은 Brain은 확장 런타임(Garmin은 Python·uv)을 설치하지도 읽지도 않는다.
   - core 확장 registry(epic 13)가 설치·활성 상태의 유일한 작성자이고 공개 상태 view를 낸다. 검색·doctor·install 스킬은 이 상태를 읽는다. 비활성화는 예약 발화·새 청구를 막고, 대기/진행 작업의 중단 상태를 기록한다. 기존 schema·데이터·분석은 보존하고 검색 가능 여부와 비활성 상태를 응답에 명시한다. 진행 작업 종료 방식은 epic 12·13 인셉션에서 정한다.
-  - epic 16은 기존 raw/normalize/digest 수치·입력 필터·report-input fixture와 실패 경계, 인증/계정 보호의 보존을 검증한다(R11). 새 PG 계약은 exact raw text·NULL/단위·중복/재개·FK mapping·평가 비삭제·lease/cancel·계정 차단을 포함한다.
+  - epic 16(Garmin connector)은 기존 raw/normalize/digest 수치와 실패 경계, 인증/계정 보호의 보존을, epic 18(core 건강 분석)은 입력 필터·report-input fixture의 보존을 검증한다(R11). 새 PG 계약은 exact raw text·NULL/단위·중복/재개·FK mapping·평가 비삭제·lease/cancel·계정 차단을 포함한다.
 
 ### AD-30 — schema 경계와 DB 계약 [ADOPTED]
 
@@ -489,7 +489,7 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
 - **Prevents:** 이전·수집·조회가 다른 갱신 규칙을 쓰는 것, 기존 값을 덮어쓰는 것(R7), 빠진 metadata를 추정값으로 채우는 것
 - **Rule:**
   - core 건강 행은 불변이다. 논리 측정 키(출처·계정·지표·운동 identity·현지 날짜/순간·시간대)와 보관 키를 구분한다. 보관 키는 논리 키 + 데이터셋/이전 출처 + 정규화 버전 + 관측 revision(원천의 안정된 revision 또는 원문 해시)이다. 같은 입력 재처리는 멱등이고 수정된 관측은 같은 정규화 버전이어도 새 행이다.
-  - “현재” view는 명시적으로 승인된 authoritative dataset/출처 안의 관측 revision과 정규화 버전을 적용한다. 기록 시각으로 데이터셋 권위를 추정하지 않는다. 미선택 충돌은 ambiguity로 반환하고 기본 집계에서 제외한다. epic 14가 revision 순서·정규화 버전 비교·동률 처리와 소스 선택 기록을 계약으로 고정하며 epic 16·17이 소비한다. C6 기준 소스·충돌 정책 사용자 선택 전 실제 Garmin 반입/publish는 금지다(AD-36).
+  - “현재” view는 명시적으로 승인된 authoritative dataset/출처 안의 관측 revision과 정규화 버전을 적용한다. 기록 시각으로 데이터셋 권위를 추정하지 않는다. 미선택 충돌은 ambiguity로 반환하고 기본 집계에서 제외한다. epic 14가 revision 순서·정규화 버전 비교·동률 처리와 소스 선택 기록을 계약으로 고정하며 epic 16·17·18이 소비한다. C6 기준 소스·충돌 정책 사용자 선택 전 실제 Garmin 반입/publish는 금지다(AD-36).
   - epic 14가 지표 식별자·정규 단위·값 타입·NULL 의미·계정 identity·날짜/순간 배타 조건·운동 identity·metric별 허용 집계를 정의하고 TS/Python이 같은 fixture를 통과한다. NULL 키는 DB에서 동등하게 처리해 재삽입 중복을 막는다. epic 17의 구조화 수치 조회 port는 기간·지표·운동·집계 조건을 받고 코드가 합계/평균을 계산하며 독립 계산 fixture로 검증한다(R15).
   - legacy 출처·원래 값은 보존한다. `analyses`는 불변이고 재생성은 새 행이다. 빠진 metadata는 명시적 null/flag로 두고 추정하지 않는다(C5).
 
@@ -505,7 +505,7 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
   - 긴 일감은 경과 시간만으로 죽이거나 중복 실행하지 않는다(S6. 정체 기준은 epic 12).
   - 모델 호출(분석 에이전트, 확장 일감)은 일감 안에서만 한다. hook과 동기 명령 경로에서는 부르지 않는다.
   - epic 12는 청구마다 attempt/lease token을 발급한다. 자식은 이를 운반하고 core 계약 INSERT와 결과 확정은 DB가 현재 attempt와 대조해 오래된 쓰기를 거부한다(직접 INSERT에도 적용, AD-30). 감독자는 시작 때 이전 incarnation의 그룹을 PID 재사용과 구별할 시작 신원으로 대조·정리한 뒤 회수한다. 종료를 확인할 수 없으면 불명 상태로 남겨 재실행하지 않는다. 감독자 강제 종료→자식 생존→재시작을 계약 검증한다.
-  - manifest·프로세스 ABI는 epic 13 소유의 버전 있는 JSON Schema다. account·target·시간 범위·설정·실행 세대 입력, 이벤트 discriminator·필수 필드·오류 코드, 최종 이벤트/exit code 우선순위, 비정상 EOF·알 수 없는 버전·stderr 처리를 정의하고 TS/Python fixture를 공유한다. Runtime 설정 코덱이 manifest 타입·기본값·비밀 참조를 검증한 설정 snapshot을 실행 시작에 전달한다(인증도 같다). 확장은 settings/config.toml/.env를 직접 읽지 않고 비밀은 argv·로그·stdout에 내지 않는다. 그룹 정리·reap은 core 모델 CLI와 모든 하위 프로세스의 취소·호출 실패에도 적용한다.
+  - manifest·프로세스 ABI는 버전 있는 JSON Schema다. 프로세스 ABI v1은 감독자를 처음 만드는 epic 12 소유다: account·target·시간 범위·실행 세대·attempt token 입력, 이벤트 discriminator·필수 필드·오류 코드, 최종 이벤트/exit code 우선순위, 비정상 EOF·알 수 없는 버전·stderr 처리. manifest와 설정 입력·설정 snapshot은 epic 13 소유이고 ABI 버전에 묶인다. TS/Python이 같은 fixture를 공유한다. Runtime 설정 코덱이 manifest 타입·기본값·비밀 참조를 검증한 설정 snapshot을 실행 시작에 전달한다(인증도 같다). 확장은 settings/config.toml/.env를 직접 읽지 않고 비밀은 argv·로그·stdout에 내지 않는다. 그룹 정리·reap은 core 모델 CLI와 모든 하위 프로세스의 취소·호출 실패에도 적용한다.
 
 ### AD-34 — 컨테이너 수명 [ADOPTED]
 
@@ -529,7 +529,7 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
   - 평가 순서(day → 7d → 30d → all)는 일감 의존으로 표현한다.
   - 발신은 채널 발신 요청을 거친다(epic 15).
   - digest와 그래프는 확장이 만들고(AD-29), 정제 행과 파일 등록 요청으로 들어온다.
-  - `analyses` 최소 계약·DDL은 처음 쓰는 epic 14가 이전 전에 정한다. legacy 원래 키·dataset, nullable 모델/시각과 누락 flag, 파일 요청/파일 관계, 새 분석 revision을 포함하며 epic 16은 호환 확장한다. 분석 그래프는 입력 snapshot/cutoff·건강 revision·소스 권위·시간대를 고정해 공유하고 선행 analysis ID를 남긴다. scope마다 검증·저장을 즉시 확정한 뒤 다음 일감을 풀며 후속 평가·그래프·발신 실패가 성공을 롤백하지 않는다. 재시작은 저장된 성공부터 잇는다. 모델 실행 adapter는 이 Mac의 Codex 로그인 환경을 사용하고 Runtime이 Core 실행 port에 조립한다.
+  - `analyses` 최소 계약·DDL은 처음 쓰는 epic 14가 이전 전에 정한다. legacy 원래 키·dataset, nullable 모델/시각과 누락 flag, 파일 요청/파일 관계, 새 분석 revision을 포함하며 epic 18(core 건강 분석)은 호환 확장한다. 분석 그래프는 입력 snapshot/cutoff·건강 revision·소스 권위·시간대를 고정해 공유하고 선행 analysis ID를 남긴다. scope마다 검증·저장을 즉시 확정한 뒤 다음 일감을 풀며 후속 평가·그래프·발신 실패가 성공을 롤백하지 않는다. 재시작은 저장된 성공부터 잇는다. 모델 실행 adapter는 이 Mac의 Codex 로그인 환경을 사용하고 Runtime이 Core 실행 port에 조립한다.
   - 발신은 생산 결과의 안정된 식별자+채널 대화 식별자+목적/개정의 의미 키로 UNIQUE 중복 억제한다(요청 UUID와 별도). epic 15가 원자적인 최초 시도 gate를 발신 전에 저장하고 실제 결과·불명 상태를 분리한다. 일반 retry는 gate를 우회하지 않고 불명 결과를 성공으로 추정하거나 무조건 재전송하지 않는다. 불명 재시도 세부는 Deferred다. 사용자·스레드·선제 메시지를 같은 대화로 잇는 출처/외부 식별자·provenance를 core 채널이 소유한다. Telegram adapter는 Core 채널 port 구현이고 Runtime이 조립한다. 모델 입력·도구 응답·발신 텍스트는 출력 코덱 등록부·비밀 fixture를 통과하며 원본 파일 바이트 보존과 구분한다.
 
 ### AD-36 — Garmin 이전은 검증한 출처와 배치로만 확정한다
@@ -576,7 +576,7 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `schema_migrations` | `(owner, version)` | 마이그레이션 실행기 하나(setup, 플러그인 bootstrap 갱신, 확장 설치·갱신, AD-20·31). 모양은 epic 11 | 불변. 마이그레이션만 쓴다 |
 | `settings` | `key`(설정 코덱이 정의, 확장 키는 `<ext>.*`) | `brain config get/set`(설정 코덱, AD-18), setup(`timezone`). 모양은 epic 11 | `value`·`updated_at`만 바뀜 |
 | 건강 측정·요약 (core 계약 표) | 논리 키 + 관측 revision + 정규화 버전 + 데이터셋·이전 출처(AD-32) | 확장(`brain_ext_<name>`, INSERT만, 자기 출처 행만, AD-30). 모양은 epic 14 | 불변. 새 버전·새 이전은 새 행. 조회는 승인 dataset의 관측 revision·정규화 버전을 적용한 "현재" view(AD-32) |
-| `analyses` | epic 14가 최소 계약·DDL을 정하고 epic 16이 호환 확장한다(AD-35). legacy 키·dataset·revision 포함 | core 분석 일감(AD-35). legacy 이전은 확장(INSERT만, AD-30) | 불변. 다시 만들기는 새 행 |
+| `analyses` | epic 14가 최소 계약·DDL을 정하고 epic 18이 호환 확장한다(AD-35). legacy 키·dataset·revision 포함 | core 분석 일감(AD-35). legacy 이전은 확장(INSERT만, AD-30) | 불변. 다시 만들기는 새 행 |
 | 채널 발신 요청·이력 | epic 15가 정한다 | 발신 요청: core 일감, 확장(INSERT만, AD-30). 이력: core 채널. legacy Garmin 이력: 확장 이전(epic 14) | 이력 불변. legacy 행은 legacy로 표시하고 보내지 않는다 |
 | `file_requests` | epic 14 소유: 출처+안정된 요청 키(AD-30) | 확장(INSERT만, 자기 출처 행만, AD-30). 처리는 core 일감이 FileStore로(AD-23) | 확장 쪽은 불변. 처리 기록은 core가 쓴다 |
 
@@ -684,7 +684,7 @@ second-brain/
   .claude-plugin/  # marketplace.json: 같은 저장소의 ./plugin을 가리킨다
   compose.test.yaml # 테스트 전용 PostgreSQL(공식 postgres:18, 포트 54329, 볼륨 없음)
   tooling/
-    eval/          # 검색 회귀 러너(SDK 읽기 전용). 문항·결과는 ~/.second_brain/eval/ (AD-15, epic 17; 시간·로그 확장은 epic 4)
+    eval/          # 범용 검색 회귀 러너(SDK 읽기 전용, epic 4). 문항·결과는 ~/.second_brain/eval/ (AD-15). epic 17은 자기 회귀 문항을 테스트 fixture로 검증한다
 ```
 
 `packages/sqlite`는 PostgreSQL 전환 뒤 지운다(AD-10).
@@ -715,7 +715,7 @@ flowchart TB
 
 ## Capability → Architecture Map
 
-빌드 순서: 11 → 12 → 13 → 15 → 14 → 16 → 17 → 8 → V1 뒤(5·3·4·6). tracer는 hook 수집(11) → 테스트 확장 install(13) → 기존 분석 한 건 이전(14) → 원문 조회(17)다. Drive·임베딩은 Garmin 흡수의 선행 조건이 아니다.
+빌드 순서: 11 → 12 → 13 → 15 → 14 → 16 → 18 → 17 → 8 → V1 뒤(5·3·4·6). tracer는 hook 수집(11) → 테스트 확장 install(13) → 기존 분석 한 건 이전(14) → 원문 조회(17)다. Drive·임베딩은 Garmin 흡수의 선행 조건이 아니다.
 
 | Capability / Area | Lives in | Governed by |
 | --- | --- | --- |
@@ -734,7 +734,7 @@ flowchart TB
 | 확장 (R1, R2, R16, R17) | `extensions/<name>/`, manifest, `<home>/extensions/`, 확장 schema·role. epic 13 | AD-29, AD-30, AD-31, AD-33, AD-34 |
 | 채널 (R12, R13) | core 채널 발신 요청·이력, 채널 adapter(Telegram). epic 15 | AD-30, AD-35, Table Contract |
 | 건강 데이터·이전 (R5~R7, R11, R15) | Garmin 확장(raw·정규화·digest·그래프) → core 건강 계약 표, `<ext>.raw_records`. epic 14·16·17 | AD-29, AD-30, AD-32, AD-13 |
-| 분석 (R10, R12) | core 분석 일감(모델 CLI), `analyses`, 리포트 파일. epic 16 | AD-23, AD-32, AD-33, AD-35 |
+| 분석 (R10, R12) | core 분석 일감(모델 CLI), `analyses`, 리포트 파일. epic 18 | AD-23, AD-32, AD-33, AD-35 |
 | 원문 불변·가리기 (NFR-1, FR-26) | plpgsql trigger, `brain.redacting` GUC, `messages.redact`, 테이블 정리 일감, Core 출력 코덱(엔벨로프·hook·미러·내보내기·임베딩·모델 입력·채널 발신) | AD-11 |
 | 조용한 실패 금지 (NFR-2) | `warnings[]`, `failures`, spool, `context_injections`, doctor | AD-7, AD-9, AD-15, AD-17, AD-20, Conventions |
 | Harness 비차단 (NFR-3) | async hook, exit 0, import 부작용 없음, hook·명령은 컨테이너를 띄우지 않음 | AD-3, AD-6, AD-34 |
@@ -764,7 +764,7 @@ flowchart TB
 | OCR, HWP, Google Docs 외 형식, 좌표의 장소 이름 변환 | 실사용에서 놓치는 문서가 쌓일 때 |
 | 팀 공유 (원문 포함) | 개인 사용을 먼저 검증한 뒤. 팀 저장소 선택(공유 드라이브 동기화 폴더 / 공유 DB / 회사 git)과 단계적 도입은 그때 정한다. AD-12의 remote 정체성·`users` 테이블과 AD-11의 마스킹이 그 준비다 |
 | BMad memlog 연계, 플러그인 스킬 이상의 기록 보강 수단 | 플러그인·스킬은 AD-17·19로 확정(epic 2·3). 그 이상은 SM-4(로그가 실제로 적히는가) 결과를 본 뒤. 어떤 수단도 AD-17(원본 하나)을 넘지 않는다 |
-| 임베딩 기본 켜기 | 실사용 채점(SM-3)에서 키워드 검색과 질의 바꾸기로 "왜"나 한영 교차 질문을 놓칠 때. 판단의 숫자는 epic 17의 회귀 러너 결과(2026-10-20) |
+| 임베딩 기본 켜기 | 실사용 채점(SM-3)에서 키워드 검색과 질의 바꾸기로 "왜"나 한영 교차 질문을 놓칠 때. 판단의 숫자는 회귀 러너(epic 4)와 epic 17의 회귀 문항 결과(2026-10-20) |
 | parser 버그로 저장된 메시지의 교정 | 원문 불변과 충돌. 필요해지면 세션 단위 수집 세대 교체를 별도 결정으로 |
 | 이어받은 세션 자동 연결, Execution 분리 | `continued_from_session_id`·`start_source` 자리만 둔다. 한 작업에 Harness 둘이 올 때 |
 | 과거 세션 가져오기, LLM 세션 요약 | 설치 때 디스크에 남은 Claude Code transcript는 epic 2가 한 번 가져온다(`import`, 2026-10-15). 그 밖의 과거 세션 가져오기와 LLM 세션 요약은 PRD §6.2·§8-1 그대로 |
@@ -772,7 +772,7 @@ flowchart TB
 | 임대 갱신 세부, 정체 판정, 놓친 예약 처리 | epic 12 인셉션. 불변식(감독자만 청구, 경과 시간만으로 죽이거나 중복 실행하지 않음)은 AD-21·33에 있다 |
 | 채널 정체성(사용자 답변·스레드·선제 메시지 연결)의 모양 | epic 15 인셉션(R13) |
 | 건강 계약 표의 정확한 모양 | epic 14 다듬기. 키·불변·버전 규칙은 AD-32 |
-| 분석 에이전트의 프롬프트와 출력 schema | epic 16 인셉션 |
+| 분석 에이전트의 프롬프트와 출력 schema | epic 18 인셉션 |
 | 백업 묶음의 세부(복원 순서·manifest 칸·위치)와 복구 | epic 5. 틀은 AD-20(원문 `pg_dump`·globals·블롭·manifest) |
 | PostgreSQL 19로 올리기 | 19 GA(2026-11-19 예정) 뒤 별도 결정. 그때까지 `postgres:18` |
 | 공개 plugin marketplace, 임의 서드파티 확장 코드 실행 | 범위 밖(이니셔티브 Boundaries, 2026-10-28) |

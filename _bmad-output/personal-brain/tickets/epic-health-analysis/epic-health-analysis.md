@@ -57,5 +57,5 @@ Garmin 사용자가 예약된 시각에 day·7d·30d·all 평가를 받고, 성�
 - Waits on epic-channels because: 결과 묶음을 채널 발신 요청(의미 키 UNIQUE, 최초 시도 gate)으로 보낸다.
 - Waits on epic-garmin-runtime because: 새 수집이 넣는 정제 행(digest)과 그래프 파일 등록 요청이 새 날짜의 분석 입력과 결과 묶음의 그래프다.
 - Decision(2026-10-28, 사용자): 옛 epic 16(Garmin 수집·분석)에서 나눈 에픽이다. spine AD-35(분석은 core 일감)를 따른다. R11 중 입력 필터(report-input)를 맡는다.
-- Open question: 분석 에이전트의 프롬프트와 출력 schema는? 인셉션 때 정한다(spine Deferred, 지금은 "epic 16 인셉션"으로 적혀 있다).
+- Open question: 분석 에이전트의 프롬프트와 출력 schema는? 인셉션 때 정한다(spine Deferred, owner 이 에픽).
 - Open question: 확장을 비활성화하면 분석 예약도 멈추나? R16과 함께 인셉션 때 정한다.

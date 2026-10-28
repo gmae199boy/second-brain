@@ -177,12 +177,11 @@ Garmin 흡수의 범위 밖(2026-10-28)은 다음과 같다. 이것들은 흡수
   - epic 15: 채널 발신 요청·이력 표. epic 14는 legacy 이력을 넣기만 한다.
   - epic 18은 `analyses`를 호환 확장하고, epic 16·17·18은 건강 계약 표를 소비한다.
   - 같은 원칙으로 프로세스 ABI v1은 감독자를 처음 만드는 epic 12가 만들고, manifest JSON Schema와 설정 snapshot은 epic 13이 만든다.
-- Source conflict(2026-10-28, 재분할): spine이 분할 전 에픽 번호를 쓴다. `bmad-architecture`로 고친다.
+- Source conflict(2026-10-28, 재분할) → 해소(2026-10-28, `bmad-architecture` update): spine이 분할 전 에픽 번호를 쓰던 아래 줄을 고쳤다. AD ID는 그대로다.
   - 분석 쪽 "epic 16"은 이제 epic 18이다: AD-29의 report-input fixture, AD-35의 `analyses` 호환 확장, Table Contract `analyses` 행, Capability Map "분석" 행, Deferred "분석 에이전트의 프롬프트와 출력 schema".
   - AD-33의 "manifest·프로세스 ABI는 epic 13 소유"는 프로세스 ABI v1이 epic 12, manifest가 epic 13이다.
   - frontmatter scope의 "epic 11~17"과 Capability Map 앞의 빌드 순서에 18이 없다. 순서는 11 → 12 → 13 → 15 → 14 → 16 → 18 → 17 → 8이다.
   - Structural Seed의 `tooling/eval`과 Deferred "임베딩 기본 켜기"는 회귀 러너를 epic 17의 것으로 적는다. 사용자 결정(2026-10-28, epic-recall-and-mirror Notes)으로 범용 러너는 epic 4에 남고, epic 17은 자기 회귀 문항을 테스트 fixture로 검증한다.
-  - 그때까지는 이 파일과 에픽 파일이 우선한다.
 - Decision(2026-10-28, 트리 검증 A1): epic 17과 18 사이에는 `after`를 두지 않는다. 데이터로는 서로 기다리지 않는다. 둘 다 core 마이그레이션 번호, 출력 코덱 등록부, 명령 메타를 고칠 수 있다. 이것은 Dependencies 규칙의 명시적 예외다. epic 3과 10을 나란히 만든 선례(2026-10-23)를 따른다.
   - 표 순서(18 → 17)대로 만들면 충돌이 없다.
   - 나란히 만들면 뒤에 합치는 쪽이 번호와 목록을 맞춘다. AD-31 실행기가 같은 owner 안의 번호 중복을 거부한다.

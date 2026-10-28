@@ -57,4 +57,4 @@ Brain의 작업 runtime을 긴 작업과 예약에 맞게 넓힌다. 범위는 �
 - Open question: 놓친 현지 시각 예약과 진행 정체를 판단하는 단계별 기준은? 정제 때 정한다.
 - Open question: 모델 호출의 횟수·비용을 설정이나 doctor로 제한·표시할지? 정제 때 정한다.
 - Open question: 확장을 비활성화할 때 진행 중인 작업을 어떻게 끝내나? epic-extensions와 함께 취소 ABI를 만들기 전에 정한다(spine Deferred).
-- Decision(2026-10-28): 프로세스 ABI v1은 감독자를 처음 만드는 이 에픽이 만든다. spine AD-33은 epic 13 소유라고 적었지만, 13은 이 에픽 뒤라 감독자가 쓸 규약이 없게 된다. manifest JSON Schema와 설정 snapshot은 13에 남는다. spine 고침은 이니셔티브 Notes의 Source conflict에 있다.
+- Decision(2026-10-28): 프로세스 ABI v1은 감독자를 처음 만드는 이 에픽이 만든다. 13은 이 에픽 뒤라 13 소유면 감독자가 쓸 규약이 없다. manifest JSON Schema와 설정 snapshot은 13에 남는다. spine AD-33도 이렇게 고쳤다(2026-10-28).
