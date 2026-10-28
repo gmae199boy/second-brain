@@ -3,8 +3,8 @@ title: '프로세스 ABI v1 완성: 같은 fixture에 TS 코덱이 기대 판정
 type: 'feature'
 ticket: '4'
 created: '2026-10-29'
-status: blocked
-baseline_revision: bb9b7f06c8dfe43bba57d8b4c073b01f5cc60495
+status: built
+baseline_revision: 541365e705cbe670d24386c084ba32b1d072fef1
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
@@ -18,8 +18,6 @@ context:
   - '{project-root}/_bmad-output/personal-brain/tickets/epic-jobs-and-scheduler/tickets/story-attempt-token-db-plan.md'
 warnings: [oversized]
 deferred: []
-blocked_at: "2026-10-29"
-blocked_reason: "intent gap: stderr를 먼저 16 KiB로 자른 뒤 가리라는 intent-contract의 고정 규칙이 PEM 개인 키 비노출 요구와 충돌한다. 시작 표식이 잘린 후 키 본문이 attempt.stderr에 남는 합성 재현을 확인했다. 경계 전후 비밀 블록의 가림 상태를 보존하도록 계약을 바꿀지 결정이 필요하다."
 ---
 
 <intent-contract>
@@ -188,15 +186,13 @@ blocked_reason: "intent gap: stderr를 먼저 16 KiB로 자른 뒤 가리라는 
 - `error_retryable`은 기록만 하며 모든 failed의 기존 재시도 정책은 유지한다. 운영 설치·배포는 수행하지 않았다.
 
 
-## Auto Run Result
 
-상태: `blocked`. thorough 후속 검토에서 `intent gap`을 발견하여 build-auto HALT로 인계한다. `done`으로 표시하지 않았고 `tickets.py mark`는 HALT의 blocked 처리에서 한 번만 실행했다.
+## 2026-10-29 — stderr 계약 후속 구현
 
-- 차단 이유: 읽기 전용 `<intent-contract>`는 stderr를 끝 16 KiB로 자른 다음 `maskSecrets`로 가리도록 고정한다. 이 순서는 PEM 시작 표식이 버려진 뒤 남은 키 본문을 식별하지 못한다. 비밀을 그대로 남기지 말라는 티켓 요구와 충돌한다. 경계 전후 비밀 블록의 가림 상태를 보존하도록 계약을 바꿀지 결정이 필요하다.
-- 재현: 실제 자격 증명 없이 합성 PEM 본문 85줄과 TOKEN= 뒤 합성 14500자를 입력했다. 최종 보관 값 1902바이트에서 TOKEN은 가려졌지만 PEM 본문은 남았다. 빌드된 createAbiStderr로 직접 재현했으며 실제 비밀을 출력·저장하지 않았다.
-- 시도 diff: `story-abi-v1-fixture-ts-plan.patch`. baseline은 `bb9b7f06c8dfe43bba57d8b4c073b01f5cc60495`, 검토 시 HEAD는 `cca021cb2830cc1f06a0db0f2cdc4e5d2b64f1e0`이다. 기존 구현은 이전 커밋에 있고 이번 실행은 소스·시험을 수정하지 않아 되돌릴 이번 실행의 코드 변경이 없다. 기존 커밋을 보존했다.
-- 변경 파일: 이 계획의 리뷰 설정·렌즈·새 triage·HALT 결과와 시도 diff뿐이다. 실행 전부터 있던 기존 결과 요약 삭제를 덮어쓰지 않고 현재 인계 결과를 새로 기록했다. 기존 deferred-work 항목·상태·해결 기록은 바꾸지 않았다.
-- 검토: blind-hunter·edge-case-hunter·verification-gap·intent-alignment 네 렌즈를 실행했다. 28개 관찰의 판정·근거를 Review Triage Log에 각각 기록했다. intent_gap 때문에 수정·신규 보류 반영은 수행하지 않았다. 패치 적용 0, 원장 변경 0이며 차단 사유 해소 뒤 추가 검토가 필요하다.
-- 검증: `pnpm test`의 빌드·타입 검사는 통과했다. 전체 117파일 중 116파일, 2935개 중 2934개 시험이 통과했다. 기존 `postgres/test/commit-unknown.test.ts`의 `replays linkAttachments after the commit reply is lost and ends with the rows of one write`가 30000ms 제한으로 실패했다. 이어 `pnpm exec vitest run --project postgres test/commit-unknown.test.ts`를 단독 재실행하여 1파일·3개 시험이 모두 통과했다. 전체 실행을 완전 통과로 보고하지 않는다.
-- 추가 확인: 실제 Node 자식의 JSON 문자열 안 잘못된 UTF-8 바이트 0xff가 adapter에서 U+FFFD로 치환되며 exit 0을 반환했다. 단순 역압력·출력 닫기 재현 두 건은 result를 보존하여 출력 유실 주장은 미확정으로 기록했다.
-- 남은 위험: PEM 키 본문 유출은 확인되었고 고치지 않았다. UTF-8 거부·출력 판정 지연과 시험 공백도 위 판정에 남아 있다. 운영 설치·배포·push·완료 처리는 수행하지 않았다.
+- `createAbiStderr`가 줄마다 먼저 가린 뒤 16 KiB 꼬리를 보관한다. PEM BEGIN/END 상태는 조각과 줄 사이에 유지하며, END 없는 블록도 EOF까지 본문을 남기지 않는다. 65536 UTF-8 바이트를 넘는 줄은 즉시 버리고 생략 표식으로 바꾼다. 최종 저장은 코드 포인트 경계에서 끝 4096바이트다.
+- ABI README의 stderr 절을 같은 계약으로 갱신했다. 순수 코덱과 감독자에 PEM 85줄 + 긴 TOKEN, 미종결 PEM, 70000바이트 줄, 여러 조각 크기와 Unicode 경계의 회귀 시험 14개를 추가했다. 기존 schema·fixture·마이그레이션·재시도와 취소 판정은 유지한다.
+- 독립 quick inspection에서 새 지적은 없었다. END 빈 label 허용과 시험 tuple 정리 후에도 추가 inspection에서 새 지적은 없었다. 기존 thorough triage는 보존했다.
+- 구현 검증: `pnpm test`의 build·typecheck와 117파일·2949개 시험 통과. 마지막 정리 뒤 build·typecheck와 core 집중 5파일·254개 시험도 통과했다. `git diff --check` 통과.
+- 이번 stderr 변경의 미완료는 없다. 기존 triage의 잘못된 UTF-8 치환 수용, 신원/DB 조회·임대 갱신 중 stdout 판정 지연, launcher 시작 이전부터 재는 elapsed 시작점은 남아 있다. 기존 deferred-work 원장은 수정하지 않았다. 운영 설치·배포는 수행하지 않았다.
+
+- 최종 상태 재검증: `pnpm test` 재실행도 build·typecheck와 117파일·2949개 시험 전부 통과했다(51.65초).

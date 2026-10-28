@@ -59,3 +59,46 @@ it('normalizes NUL stderr before applying the byte cap for PostgreSQL text', () 
   const stderr = createAbiStderr(); stderr.feed('before\u0000after'); expect(stderr.value()).toBe('before\ufffdafter');
   const bounded = createAbiStderr(); bounded.feed('\u0000'.repeat(2000)); expect(Buffer.byteLength(bounded.value()!)).toBeLessThanOrEqual(4096);
 });
+
+const pemBody = Array.from({ length: 85 }, (_, i) => `SyntheticPemBody${i}_` + 'Q'.repeat(64)).join('\n');
+it.each([1, 7, 1024, 100000])('masks PEM before retaining stderr at chunk size %i', size => {
+  const raw = 'header\n-----BEGIN RSA PRIVATE KEY-----\n' + pemBody + '\n-----END RSA PRIVATE KEY-----\nTOKEN=' + 'a'.repeat(14500) + '\n';
+  const stderr = createAbiStderr();
+  for (let i = 0; i < raw.length; i += size) stderr.feed(raw.slice(i, i + size));
+  expect(stderr.value()).toBe('header\n[REDACTED:private_key]\nTOKEN=[REDACTED:password]\n');
+  expect(Buffer.byteLength(stderr.value()!)).toBeLessThanOrEqual(4096);
+});
+it('suppresses an unterminated PEM through EOF and masks the BEGIN line as a whole', () => {
+  const stderr = createAbiStderr();
+  stderr.feed('before\nprefix -----BEGIN PRIVATE KEY----- suffix\n' + pemBody);
+  expect(stderr.value()).toBe('before\n[REDACTED:private_key]\n');
+});
+it('drops oversized stderr lines and resumes masking at the next newline', () => {
+  const stderr = createAbiStderr();
+  stderr.feed('TOKEN=' + 'x'.repeat(70000));
+  expect(stderr.value()).toBe('[stderr 줄 생략: 상한 초과]');
+  stderr.feed('more-secret\nTOKEN=another-secret');
+  expect(stderr.value()).toBe('[stderr 줄 생략: 상한 초과]\nTOKEN=[REDACTED:password]');
+});
+it('keeps PEM state across oversized discarded lines, including their END marker', () => {
+  const stderr = createAbiStderr();
+  stderr.feed('-----BEGIN PRIVATE KEY-----\n' + 'X'.repeat(70000) + '-----END PRIVATE KEY-----\nafter\n');
+  expect(stderr.value()).toBe('[REDACTED:private_key]\nafter\n');
+});
+it.each([1, 5, 100000])('counts multibyte stderr lines in UTF-8 bytes at chunk size %i', size => {
+  for (const [raw, expected] of [
+    ['한'.repeat(21845) + 'a', null],
+    ['한'.repeat(21845) + 'ab', '[stderr 줄 생략: 상한 초과]'],
+    ['😀'.repeat(16384) + 'a', '[stderr 줄 생략: 상한 초과]'],
+  ] as const) {
+    const stderr = createAbiStderr();
+    for (let i = 0; i < raw.length; i += size) stderr.feed(raw.slice(i, i + size));
+    // An allowed line larger than the 16 KiB tail is discarded whole.
+    expect(stderr.value()).toBe(expected);
+  }
+});
+it('masks a long assignment before the final 4096-byte tail boundary', () => {
+  const stderr = createAbiStderr();
+  stderr.feed('TOKEN=' + 'z'.repeat(20000));
+  expect(stderr.value()).toBe('TOKEN=[REDACTED:password]');
+});

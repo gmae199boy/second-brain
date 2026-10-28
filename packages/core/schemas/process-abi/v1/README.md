@@ -13,7 +13,7 @@ stdout은 UTF-8 JSON Lines다. 한 줄은 JSON 객체 하나이며 줄바꿈 `\n
 
 환경 변수는 env.schema.json에 정한다. 나머지 환경 변수는 허용한다. BRAIN_RUN_GENERATION은 청구 뒤 attempts다. 선택 계정과 현지 날짜 범위는 값이 생기면 채운다. 날짜는 YYYY-MM-DD이며 양쪽을 함께 주고 포함 범위로 해석한다. schema는 날짜 순서를 비교하지 않는다.
 
-stderr는 끝 16 KiB만 보관하고 잘린 첫 줄을 버린다. 비밀 패턴을 body 규칙으로 가린 다음 코드 포인트 경계에서 끝 4096 UTF-8 바이트를 attempt에 남긴다. 비었으면 null이다. 모든 결과에 stderr와 자식 시작부터 exit(또는 정산)까지의 elapsed_ms를 남긴다. 이전 incarnation 회수에서는 elapsed_ms가 null이다.
+stderr는 들어오는 줄마다 먼저 가린다. PEM 개인 키 BEGIN 표식이 있는 줄부터 END 표식이 있는 줄까지는 `[REDACTED:private_key]` 한 줄로 바꾸며, END가 없으면 EOF까지 본문을 버린다. 나머지 줄은 `maskSecrets(line, 'body')`로 가린다. 줄바꿈을 제외한 한 줄이 65536 UTF-8 바이트를 넘으면 즉시 내용을 버리고 `[stderr 줄 생략: 상한 초과]` 한 줄로 바꾼다. EOF의 줄바꿈 없는 조각도 한 줄로 처리한다. 가린 줄들의 끝 16 KiB만 보관하고 잘린 첫 줄은 버린 다음, 코드 포인트 경계에서 끝 4096 UTF-8 바이트를 attempt에 남긴다. 비었으면 null이다. 모든 결과에 stderr와 자식 시작부터 exit(또는 정산)까지의 elapsed_ms를 남긴다. 이전 incarnation 회수에서는 elapsed_ms가 null이다.
 
 fixture 파일은 core 패키지의 fixtures/process-abi/v1에 있다.
 
