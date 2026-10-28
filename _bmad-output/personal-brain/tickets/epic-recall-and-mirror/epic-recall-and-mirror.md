@@ -71,7 +71,7 @@ AD-13·14(로그 없는 세션의 첫 요청 문장, FR-9 표시)·15·16·23·2
 - Carry(2026-10-22, epic 2 회고, 인셉션 입력):
   - 0006은 옛 chunk의 seq 범위를 시각 범위로 바꾸므로, 같은 시각에 걸친 서로 다른 chunk 둘이 있으면 UNIQUE에 걸린다(회고 C5, `packages/sqlite/migrations/0006_drop_message_seq.sql:140-151`). 지금은 chunk를 쓰는 코드가 없어 문제가 없다. chunk writer를 만들 때 같은 시각 범위의 규칙을 정한다.
   - 세션·메시지를 읽어 내보내는 새 읽기는 `sessionForOutput`을 거친다(I95) — 도구 메모 대상 전용 가리기 규칙은 일반 엔벨로프 가리기만으로는 걸리지 않는다.
-- Carry(2026-10-22, epic-attachments 인셉션, 사용자 결정): 추출한 문서 텍스트(`document_chunks.body`)와 파일 이름을 내보내는 출력 경로(문서 검색 결과·발췌, `files show`)는 이 에픽이 만들고, 출력 코덱으로 가린다(마스킹 B). epic-attachments는 원문 저장까지만 하고 문서 본문 출력 경로를 만들지 않는다. 출력 코덱 계약 테스트의 probe에 문서 조각을 더한다(`packages/core/src/output/codecs.ts`). 원본에 닿을 수 없는 파일(`source_unreachable_at`)과 포인터가 없는 실패·미지원 파일을 결과에서 어떻게 보일지도 여기서 정한다. → 2026-10-26: 이 출력 경로와 probe는 epic-drive(E8-6)가 만든다.
+- Carry(2026-10-22, epic-attachments 인셉션, 사용자 결정): 추출한 문서 텍스트(`document_chunks.body`)와 파일 이름을 내보내는 출력 경로(문서 검색 결과·발췌, `files show`)는 이 에픽이 만들고, 출력 코덱으로 가린다(마스킹 B). epic-attachments는 원문 저장까지만 하고 문서 본문 출력 경로를 만들지 않는다. 출력 코덱 계약 테스트의 probe에 문서 조각을 더한다(`packages/core/src/output/codecs.ts`). 원본에 닿을 수 없는 파일(`source_unreachable_at`)과 포인터가 없는 실패·미지원 파일을 결과에서 어떻게 보일지도 여기서 정한다. → 2026-10-26: 이 출력 경로와 probe는 epic-drive(E8-6)가 만든다. → 2026-10-28: epic 17이 분석 리포트 파일로 먼저 만들고, E8-6이 첨부·Drive 대상으로 넓힌다.
 - Decision(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): V1 뒤(backlog). 문서 검색 부분(Done when 7의 대부분)은 epic 8(E8-6)로 옮겼고, 이 에픽은 epic 8을 기다린다.
 - Decision(2026-10-28, `../../prep-garmin-absorption/`, 사용자): 대화 검색(CAP-6·7의 대화 조각·도구 메모 내용 검색과 넓히기, 결과 계약, `recall expand`·`sessions read`)은 epic-search-and-health-query(17)가 PostgreSQL 위에서 먼저 만든다. 이 에픽에 남는 것은 그 경로 위의 다음 일들이다.
   - 시간 조회(CAP-5)와 작업 로그 대분류 검색(CAP-6의 로그 부분)

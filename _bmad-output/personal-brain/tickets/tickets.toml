@@ -1,4 +1,4 @@
-# Personal Brain — 에픽 순서(표 순서 = 만드는 순서). 완료: 1·2·9, 리뷰 중: 10. 2026-10-28(prep-garmin-absorption): PostgreSQL 단일 주 저장소(11) → 공통 작업·스케줄러(12) → 확장 설치(13) → 채널(15) → Garmin 이전(14) → Garmin 수집·분석(16) → 공통 검색·건강 조회(17) → Drive(8) → V1 뒤 5·3·4, 임베딩 6은 맨 뒤. 복제 7은 drop.
+# Personal Brain — 에픽 순서(표 순서 = 만드는 순서). 완료: 1·2·9, 리뷰 중: 10. 2026-10-28(prep-garmin-absorption): PostgreSQL 단일 주 저장소(11) → 공통 작업·스케줄러(12) → 확장 설치(13) → 채널(15) → Garmin 이전(14) → Garmin connector(16) → core 건강 분석(18) → 공통 검색·건강 조회(17) → Drive(8) → V1 뒤 5·3·4, 임베딩 6은 맨 뒤. 복제 7은 drop. 2026-10-28(spine 갱신): 옛 16(Garmin 수집·분석)을 connector(16)와 core 건강 분석(18)으로 나눴다.
 # 이전 머리말(2026-10-26, change-v1-capture-and-drive): V1 = 1·2·9(가벼운 데몬)·10(축소)·5(로컬 백업)·8(Drive, 문서·폴더명 검색 포함). 그 뒤 3·4·7, 임베딩 6은 맨 뒤.
 
 [[epic]]
@@ -40,7 +40,7 @@ after = [{ epic = 9, needs = "setup run·플러그인 bootstrap 갱신(ff+build)
 id = 12
 slug = "epic-jobs-and-scheduler"
 title = "공통 작업 runtime과 스케줄러"
-description = "긴 작업이 소유권을 갱신하며 도는 동안 독립 작업이 병렬로 처리되고, 의존·같은 키 직렬·취소·작업자 사망이 구분되며, 현지 시각 예약이 공통 스케줄러로 한 번씩 돈다."
+description = "긴 작업이 소유권을 갱신하며 도는 동안 독립 작업이 병렬로 처리되고, 의존·같은 키 직렬·취소·작업자 사망이 구분되며, 데몬 감독자가 자식 프로세스 일감을 프로세스 ABI v1과 attempt token으로 돌리고, 현지 시각 예약이 공통 스케줄러로 한 번씩 돈다."
 covers = ["R8", "R9", "R10"]
 after = [{ epic = 11, needs = "PostgreSQL의 work_items·schedules 테이블과 잠금·트랜잭션 규칙, 사용자 설정 DB의 시간대(epic 11이 config.toml에서 옮김)" }]
 
@@ -48,41 +48,49 @@ after = [{ epic = 11, needs = "PostgreSQL의 work_items·schedules 테이블과 
 id = 13
 slug = "epic-extensions"
 title = "확장 설치와 install 스킬"
-description = "Garmin 미설치 Brain은 Python 없이 동작하고, 공통 install 스킬과 설치 CLI로 확장을 설치·로그인·예약 등록·비활성화하며, 단계별 실제 결과가 보고된다."
+description = "Garmin 미설치 Brain은 Python 없이 동작하고, 공통 install 스킬과 설치 CLI로 확장을 설치·로그인·예약 등록·비활성화하며, 확장 registry가 설치·활성 상태의 유일한 작성자로 공개 상태 view를 내고, 단계별 실제 결과가 보고된다."
 covers = ["R1", "R16", "R17"]
-after = [{ epic = 11, needs = "단일 마이그레이션 실행기의 확장 DDL 자리, 사용자·확장 설정 DB, PostgreSQL 위 설치 흐름" }, { epic = 12, needs = "공통 스케줄러의 예약 등록 API(install 스킬의 예약 단계)" }]
+after = [{ epic = 11, needs = "단일 마이그레이션 실행기의 확장 DDL 자리, 사용자·확장 설정 DB, PostgreSQL 위 설치 흐름" }, { epic = 12, needs = "공통 스케줄러의 예약 등록 API(install 스킬의 예약 단계), 감독자와 프로세스 ABI v1(테스트 확장의 연결 확인 명령을 자식 프로세스로 부른다, AD-33)" }]
 
 [[epic]]
 id = 15
 slug = "epic-channels"
 title = "공통 채널과 Telegram 발신"
-description = "Brain의 어떤 기능이든 core 채널 계약으로 Telegram에 메시지를 보내고, 보낸 것·실패한 것·재시도가 기록되며, 이전된 옛 발신 이력을 출처와 함께 받아도 다시 보내지 않고, 이후 답장·스레드를 같은 대화에 이을 식별자가 정해져 있다."
+description = "Brain의 어떤 기능이든 core 채널 발신 요청(이 에픽이 만드는 계약 표)으로 Telegram에 메시지를 보내고, 보낸 것·실패한 것·재시도가 기록되며, 같은 결과는 의미 키로 한 번만 나가고, 이전된 옛 발신 이력을 출처와 함께 받아도 다시 보내지 않으며, 이후 답장·스레드를 같은 대화에 이을 식별자가 정해져 있다."
 covers = ["R13"]
-after = [{ epic = 11, needs = "PostgreSQL 공통 스키마(채널·대화·발신 이력 테이블 자리)와 비밀 저장(.env) 계약" }, { epic = 12, needs = "작업 계약(발신 일감의 재시도·중복 방지)" }]
+after = [{ epic = 11, needs = "PostgreSQL 공통 스키마(채널·대화·발신 이력 테이블 자리)와 비밀 저장(.env) 계약" }, { epic = 12, needs = "작업 계약(발신 일감의 재시도·중복 방지)" }, { epic = 13, needs = "확장 role(`brain_ext_<name>`)과 출처 결합 규칙 — 확장이 발신 요청·legacy 이력을 INSERT만 하는 RLS 정책의 바탕(AD-30)" }]
 
 [[epic]]
 id = 14
 slug = "epic-garmin-import"
 title = "기존 Garmin 데이터·분석 이전"
-description = "Garmin 확장 뼈대(pyproject·uv.lock·manifest)와 확장 스키마가 PostgreSQL에 있고, 기존 Garmin DB 후보와 리포트·facts·이미지가 덮이거나 지어낸 것 없이 출처와 함께 이전되며, 검증 보고서가 출처별 동등성과 미해결 충돌을 보인다."
+description = "Garmin 확장 뼈대(pyproject·uv.lock·manifest)와 확장 스키마가 PostgreSQL에 있고, 이 에픽이 처음 쓰는 core 계약 표(건강 측정·요약과 \"현재\" view, `analyses` 최소 계약, `file_requests`와 core 인계 일감)를 만들며, 기존 Garmin DB 후보와 리포트·facts·이미지가 덮이거나 지어낸 것 없이 출처와 함께 이전되고, 검증 보고서가 출처별 동등성과 미해결 충돌을 보인다."
 covers = ["R5", "R6", "R7"]
-after = [{ epic = 11, needs = "PostgreSQL 공통 스키마(core 문서·출처·사용자)와 마이그레이션 실행기" }, { epic = 13, needs = "확장 패키지 위치·Python 런타임·확장 DDL 등록(이 에픽이 Garmin 확장 뼈대와 스키마를 그 위에 처음 만든다)" }, { epic = 15, needs = "core 채널 발신 이력(이전한 Garmin 알림·전송 이력이 출처와 함께 들어간다, 2026-10-28)" }]
+after = [{ epic = 11, needs = "PostgreSQL 공통 스키마(core 문서·출처·사용자)와 마이그레이션 실행기, PostgreSQL의 FileStore·추출 세대(파일 등록 요청의 처리)" }, { epic = 12, needs = "importer가 감독되는 확장 일감으로 돌며 받는 임대 갱신과 attempt token(계약 표 INSERT의 오래된 쓰기 거부, AD-33)" }, { epic = 13, needs = "확장 패키지 위치·Python 런타임·확장 DDL 등록(이 에픽이 Garmin 확장 뼈대와 스키마를 그 위에 처음 만든다)" }, { epic = 15, needs = "core 채널 발신 이력(이전한 Garmin 알림·전송 이력이 출처와 함께 들어간다, 2026-10-28)" }]
 
 [[epic]]
 id = 16
 slug = "epic-garmin-runtime"
-title = "Garmin 수집·분석"
-description = "Garmin 사용자가 별도 Garmin 설치 없이 Brain에서 수집·정규화·평가·그래프를 받고, 이전된 기록 위에 새 기록이 이어지며, 평가 성공과 발신 성공이 따로 남는다."
-covers = ["R2", "R11", "R12"]
-after = [{ epic = 12, needs = "작업 의존성(day→7d→30d→all), 계정 키 직렬화, 긴 평가의 소유권 갱신, 현지 시각 예약" }, { epic = 13, needs = "확장 설치·활성화, TS↔Python 실행·저장·설정 포트" }, { epic = 14, needs = "Garmin 확장 뼈대·스키마와 이전된 기존 기록(이 에픽은 그 뼈대에 수집·분석 runtime을 더하고, 새 수집이 이전된 기록 위에 이어진다)" }, { epic = 15, needs = "공통 채널 계약과 Telegram 발신 adapter(결과 발신)" }]
+title = "Garmin connector: 인증·수집·정제"
+description = "Garmin 확장이 별도 Garmin 설치 없이 데몬의 감독 아래 인증·수집·raw·정규화·digest·그래프를 끝까지 돌고, 결과를 garmin schema와 core 건강 계약 표·파일 등록 요청으로 내며, 이전된 기록 위에 새 기록이 이어진다."
+covers = ["R2", "R11"]
+after = [{ epic = 12, needs = "계정 키 직렬화, 긴 수집의 임대 갱신·attempt token, 현지 시각 예약(manifest의 기본 수집 예약)" }, { epic = 13, needs = "확장 설치·활성화, manifest와 설정 snapshot, `brain_ext_garmin` role과 확장 마이그레이션 적용" }, { epic = 14, needs = "Garmin 확장 뼈대·스키마, core 건강 계약 표와 그 의미 계약(AD-32), `file_requests`, 이전된 기존 기록(새 수집이 그 위에 이어진다)" }]
+
+[[epic]]
+id = 18
+slug = "epic-health-analysis"
+title = "core 건강 분석"
+description = "예약된 core 일감이 분석 에이전트(이 Mac의 Codex 로그인)를 띄워 core 건강 데이터로 day→7d→30d→all 평가를 순서대로 만들고, 검증한 출력을 `analyses`와 리포트 파일로 바로 보존하며, 결과 묶음을 채널 발신 요청으로 보내고, 발신 실패가 성공한 평가를 지우지 않는다."
+covers = ["R2", "R10", "R11", "R12"]
+after = [{ epic = 12, needs = "일감 의존(day→7d→30d→all), 모델을 부르는 일감의 감독(자식 프로세스 그룹·취소·reap), 긴 평가의 임대 갱신, 현지 시각 예약" }, { epic = 14, needs = "`analyses` 최소 계약·DDL(이 에픽이 호환 확장한다)과 이전된 기존 분석(선행 analysis·재시작 지점), 건강 계약 표의 \"현재\" view" }, { epic = 15, needs = "채널 발신 요청의 의미 키 UNIQUE와 최초 시도 gate(결과 묶음 발신)" }, { epic = 16, needs = "새 수집이 넣는 정제 행(digest)과 그래프 파일 등록 요청 — 새 날짜의 분석 입력과 결과 묶음의 그래프" }]
 
 [[epic]]
 id = 17
 slug = "epic-search-and-health-query"
 title = "텍스트·원문·건강 수치 조회"
-description = "대화 조각이 만들어지고, 에이전트가 공통 텍스트 검색과 원문 읽기로 대화·리포트·분석을 날짜·출처와 함께 찾으며, 건강 수치를 기간·지표·집계 조건으로 정확히 조회하고, 꺼진 확장의 자료는 검색 응답에 상태로 드러난다."
+description = "대화 조각이 만들어지고, 에이전트가 공통 텍스트 검색과 원문 읽기로 대화와 분석 리포트 파일(문서 조각)을 날짜·출처와 함께 찾으며, 건강 수치를 core 계약 표에서 기간·지표·집계 조건으로 정확히 조회하고, 꺼진 확장의 자료는 검색 응답에 상태로 드러난다."
 covers = ["R14", "R15", "R16", "CAP-4", "CAP-6", "CAP-7"]
-after = [{ epic = 11, needs = "PostgreSQL의 전문 색인(조각·도구 메모)과 메시지·도구 메모 스키마" }, { epic = 14, needs = "Garmin 확장 스키마(정규화 테이블의 단위·현지 날짜)와 이전된 리포트·분석" }]
+after = [{ epic = 11, needs = "PostgreSQL의 전문 색인(조각·도구 메모·문서 조각, pg_trgm expression GIN)과 메시지·도구 메모 스키마, chunk_locator 저장형" }, { epic = 13, needs = "확장 registry의 공개 상태 view(검색 응답의 미설치·비활성 상태, AD-29)" }, { epic = 14, needs = "core 건강 계약 표의 \"현재\" view와 그 의미 계약(단위·NULL·현지 날짜·허용 집계, AD-32), `analyses`와 이전된 리포트 파일" }]
 
 [[epic]]
 id = 8

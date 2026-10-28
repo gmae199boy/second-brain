@@ -79,6 +79,7 @@ AD-11·15·23·24·27. 사용자의 외부 파일은 옮기거나 지우지 않�
   - 외부 소스 테이블(E8-2) 마이그레이션은 epic 11의 마이그레이션 실행기에서 다음 번호를 쓴다. "epic-daemon 0009 다음"은 SQLite 번호였다.
   - E8-7은 epic 11로 옮겼다. Done when 6은 그 명령을 쓴다.
   - E8-6은 epic 17의 공통 텍스트 검색·원문 읽기 경로와 결과 계약에 첨부·Drive 문서 대상을 더한다. 검색 경로를 따로 만들지 않는다.
+  - 2026-10-28(재분할 트리 검증 F3): 문서 결과 종류, `files show`, 문서 조각의 출력 코덱 probe는 epic 17이 분석 리포트 파일로 먼저 만든다. E8-6은 거기에 첨부·Drive 문서·파일·폴더 이름 대상과 Drive URL을 더한다.
   - spine AD-19의 설정 충돌은 PostgreSQL 아키텍처 갱신에서 함께 고친다.
 - Waits on epic-postgres-primary because: PostgreSQL Store와 마이그레이션 실행기, 사용자 설정 DB와 `brain config`(E8-7)가 필요하다.
 - Waits on epic-search-and-health-query because: 공통 텍스트 검색 경로와 결과 계약 위에 문서 대상(E8-6)을 더한다.

@@ -64,7 +64,7 @@ Personal Brain V1 slice 1. Claude Code 세션을 자동으로 수집하고, 대�
 
 ## Boundaries
 
-spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡는다. spec Non-goals를 따른다(팀 공유, Claude Code 외 Harness 수집 제외. 데몬은 V1의 기본 상주 런타임이고(epic 9, 가볍게), MCP는 V1 뒤다). 첫 시연 경로: 고른 Drive 폴더의 문서를 본문 단어로 찾아 원본 링크를 연다(epic 9 → 10 → 8, 2026-10-27. epic 5는 V1 다음). 작업 로그·시작 맥락(epic 3)·조회·미러(epic 4 나머지)·복제(epic 7)·임베딩(epic 6)은 V1 뒤다 (2026-10-26, `change-v1-capture-and-drive/`). → 2026-10-28: 복제(epic 7)는 drop. 순서는 PostgreSQL(11) → 공통 기반·Garmin(12~17) → Drive(8)다.
+spec의 기능 단위로 에픽을 나누고, 바탕 공사는 첫 에픽이 맡는다. spec Non-goals를 따른다(팀 공유, Claude Code 외 Harness 수집 제외. 데몬은 V1의 기본 상주 런타임이고(epic 9, 가볍게), MCP는 V1 뒤다). 첫 시연 경로: 고른 Drive 폴더의 문서를 본문 단어로 찾아 원본 링크를 연다(epic 9 → 10 → 8, 2026-10-27. epic 5는 V1 다음). 작업 로그·시작 맥락(epic 3)·조회·미러(epic 4 나머지)·복제(epic 7)·임베딩(epic 6)은 V1 뒤다 (2026-10-26, `change-v1-capture-and-drive/`). → 2026-10-28: 복제(epic 7)는 drop. 순서는 PostgreSQL(11) → 공통 기반·Garmin(12~18) → Drive(8)다.
 
 Garmin 흡수의 범위 밖(2026-10-28)은 다음과 같다. 이것들은 흡수 범위를 자동으로 넓히지 않는다.
 - Slack·Telegram 양방향 에이전트 대화의 완전한 출시. 채널 계약과 초기 발신 편입만 범위 안이다.
@@ -78,7 +78,7 @@ Garmin 흡수의 범위 밖(2026-10-28)은 다음과 같다. 이것들은 흡수
 - Touch point: PostgreSQL 18(OrbStack Docker, 영속 볼륨) — 단일 주 저장소; owner: epic-postgres-primary (2026-10-28. 이전의 SQLite `node:sqlite` 원본 파일(owner epic-foundation-and-install)은 전환 뒤 지우고, Docker·Postgres 복제 대상(epic-replicas)은 drop)
 - Touch point: uv·Python ≥3.12(확장 잠금 파일) — 확장 런타임; owner: epic-extensions (2026-10-28)
 - Touch point: Garmin Connect(`garminconnect`·`curl-cffi`) — 건강 원본 수집과 사용자 로그인; owner: epic-garmin-runtime (2026-10-28)
-- Touch point: Codex CLI(이 Mac의 로그인) — Garmin 평가의 모델 호출; owner: epic-garmin-runtime (2026-10-28)
+- Touch point: Codex CLI(이 Mac의 로그인) — 건강 평가의 모델 호출(분석 에이전트, AD-35); owner: epic-health-analysis (2026-10-28. 옛 owner epic-garmin-runtime에서 분할로 옮김)
 - Touch point: Telegram Bot API — 첫 채널 발신; owner: epic-channels (2026-10-28)
 - Touch point: Garmin 저장소의 private capture(`data/absorption-prep/LATEST`: SQLite DB 5개, 파일 349개, `manifest.private.json`) — 기존 Garmin 데이터 이전의 원천, 읽기 전용; owner: epic-garmin-import (2026-10-28)
 - Touch point: Google Drive API — 첨부 원본 저장소·외부 문서; owner: epic-drive
@@ -153,14 +153,14 @@ Garmin 흡수의 범위 밖(2026-10-28)은 다음과 같다. 이것들은 흡수
   - Drive E8-6은 같은 경로에 문서 대상을 더하고, epic 4는 그 위에 시간 조회·로그·미러·EXIF를 더한다.
 - Decision(2026-10-28, 사용자): 공통 채널 계약과 Telegram 발신은 별도 에픽(15)으로 Garmin 런타임(16) 앞에 둔다.
 - Decision(2026-10-28): 사용자 설정 DB와 `brain config get/set`(epic-drive E8-7)을 epic 11로 옮긴다. 확장 설정(R4)과 같은 계약이고, Drive가 Garmin 뒤로 갔기 때문이다.
-- Source conflict(2026-10-28): spine이 C1·R3·R18·C4와 다르다. `bmad-architecture`로 고친다.
-  - 어긋나는 곳: AD-7(`withWrite`·`BEGIN IMMEDIATE`·`busy_timeout`), AD-10(SQLite 원본), AD-18(`[[replicas]]`), AD-20, AD-22(복제 대상), Stack(`node:sqlite`·FTS5 trigram·"Postgres 복제 대상"), Design Paradigm 표, Structural Seed, Table Contract의 SQLite trigger.
-  - 함께 정할 것: 공통·확장 schema 경계, 단일 마이그레이션 소유, 한국어 텍스트 검색, 잠금·트랜잭션, TS↔Python 포트.
-  - 마이그레이션 id는 서로 의존하지 않는 에픽(예: 14의 확장 DDL과 15의 core 채널 테이블)이 따로 더해도 부딪히지 않게 정한다.
-  - 구형 Garmin Markdown·facts·PNG를 core 파일·문서 모델에 둘지, Garmin 평가 테이블에 둘지 정한다(epic 14·16·17).
-  - 2026-10-27의 AD-19 설정 충돌(epic-drive Notes)도 같이 고친다.
+- Source conflict(2026-10-28) → 해소(2026-10-28, spine 갱신 commit 3160072): spine이 C1·R3·R18·C4와 다르던 곳을 `bmad-architecture`로 고쳤다.
+  - 어긋나던 곳: AD-7·10·18·20·22, Stack, Design Paradigm 표, Structural Seed, Table Contract가 PostgreSQL 하나와 plpgsql trigger로 바뀌었다. AD-10은 SQLite 원본·복제 모델을 없앴다.
+  - 함께 정할 것: 공통·확장 schema 경계는 AD-30, 단일 마이그레이션 소유와 소유자별 번호는 AD-31(14의 확장 DDL과 15의 core 채널 표가 부딪히지 않는다), 한국어 텍스트 검색은 AD-15(pg_trgm expression GIN), 잠금·트랜잭션은 AD-7, TS↔Python 포트는 AD-29·33, 컨테이너 수명은 AD-34가 정했다.
+  - 구형 Garmin Markdown·facts·PNG는 core 파일로 등록하고 `analyses`가 가리킨다(AD-23·35).
+  - 2026-10-27의 AD-19 설정 충돌은 AD-18(사용자 설정은 DB `brain.settings`)이 정했다.
+  - 새로 더한 AD: AD-29(확장은 connector), AD-30(schema 경계와 DB 계약), AD-31(마이그레이션 소유와 번호), AD-32(정제 데이터는 버전별로), AD-33(확장 작업 감독), AD-34(컨테이너 수명), AD-35(분석은 core 일감), AD-36(Garmin 이전은 검증한 출처와 배치로만).
+  - 남은 미룬 일은 spine Deferred에 owner 에픽과 함께 있다(예: chunk_locator text/jsonb는 epic 11, 정체·놓친 예약·모델 호출 비용은 epic 12).
 - Source conflict(2026-10-28): PRD §9 Constraints("로컬 SQLite 파일 하나다… 서버나 Docker가 필요 없다")는 C1과 다르고, NFR-5는 위 LLM 결정과 다르다. 이 파일과 spec이 우선한다. PRD 본문은 `bmad-prd`로 고칠 수 있다.
-- Open question: TS↔Python 실행·저장 포트, schema·테이블 이름, 마이그레이션 버전 추적 형식은? 아키텍처가 정하고, epic 11·13·14가 기다린다.
 - Open question: 놓친 현지 시각 예약과 진행 정체를 판단하는 단계별 기준은? epic 12 인셉션 때 정한다.
 - Open question: 스케줄러·확장이 부르는 모델 호출의 횟수·비용을 설정이나 doctor로 제한·표시할지? epic 12 인셉션 때 정한다.
 - Open question: 개발/운영 Garmin DB 중 기준 소스는 무엇이고, 겹치는 자연키의 충돌은 어떻게 고르나? epic 14가 실제 반입하기 전에 사용자가 정한다(C6).
@@ -169,3 +169,20 @@ Garmin 흡수의 범위 밖(2026-10-28)은 다음과 같다. 이것들은 흡수
 - Decision(2026-10-28, 사용자): 이전한 Garmin 알림·전송 이력은 core 채널 이력에 둔다. 그래서 epic 15(채널)를 epic 14(이전) 앞으로 옮겼다. 순서는 11 → 12 → 13 → 15 → 14 → 16 → 17이다.
 - Decision(2026-10-28, 사용자): OrbStack은 사용자가 먼저 설치하는 선행 조건이다. 설치기와 doctor는 OrbStack이 없거나 꺼져 있으면 안내하고 멈춘다.
 - Decision(2026-10-28, 사용자): 준비 폴더(`prep-garmin-absorption/`)는 Garmin 소스 archive까지 포함해 커밋한다.
+- Decision(2026-10-28, 사용자, spine 갱신 뒤 재분할): 옛 epic 16(Garmin 수집·분석)을 둘로 나눈다. 순서는 11 → 12 → 13 → 15 → 14 → 16 → 18 → 17이다.
+  - epic 16 `epic-garmin-runtime`은 Garmin connector다(AD-29): 인증, 수집, raw, 정규화, digest, 그래프를 돌고 core 건강 계약 표와 파일 등록 요청에 쓴다. R2·R11을 맡는다.
+  - epic 18 `epic-health-analysis`는 core 건강 분석이다(AD-35): 스케줄러가 분석 에이전트를 띄우고, day→7d→30d→all 평가와 리포트를 `analyses`와 리포트 파일로 저장하고, 결과 묶음을 채널로 보낸다. R2·R10·R11(입력 필터)·R12를 맡는다.
+- Decision(2026-10-28, 사용자): core 계약 표는 처음 쓰는 에픽이 만든다.
+  - epic 14: 건강 측정·요약 표와 "현재" view(AD-32), `analyses` 최소 계약·DDL, `file_requests`와 core 인계 일감.
+  - epic 15: 채널 발신 요청·이력 표. epic 14는 legacy 이력을 넣기만 한다.
+  - epic 18은 `analyses`를 호환 확장하고, epic 16·17·18은 건강 계약 표를 소비한다.
+  - 같은 원칙으로 프로세스 ABI v1은 감독자를 처음 만드는 epic 12가 만들고, manifest JSON Schema와 설정 snapshot은 epic 13이 만든다.
+- Source conflict(2026-10-28, 재분할): spine이 분할 전 에픽 번호를 쓴다. `bmad-architecture`로 고친다.
+  - 분석 쪽 "epic 16"은 이제 epic 18이다: AD-29의 report-input fixture, AD-35의 `analyses` 호환 확장, Table Contract `analyses` 행, Capability Map "분석" 행, Deferred "분석 에이전트의 프롬프트와 출력 schema".
+  - AD-33의 "manifest·프로세스 ABI는 epic 13 소유"는 프로세스 ABI v1이 epic 12, manifest가 epic 13이다.
+  - frontmatter scope의 "epic 11~17"과 Capability Map 앞의 빌드 순서에 18이 없다. 순서는 11 → 12 → 13 → 15 → 14 → 16 → 18 → 17 → 8이다.
+  - Structural Seed의 `tooling/eval`과 Deferred "임베딩 기본 켜기"는 회귀 러너를 epic 17의 것으로 적는다. 사용자 결정(2026-10-28, epic-recall-and-mirror Notes)으로 범용 러너는 epic 4에 남고, epic 17은 자기 회귀 문항을 테스트 fixture로 검증한다.
+  - 그때까지는 이 파일과 에픽 파일이 우선한다.
+- Decision(2026-10-28, 트리 검증 A1): epic 17과 18 사이에는 `after`를 두지 않는다. 데이터로는 서로 기다리지 않는다. 둘 다 core 마이그레이션 번호, 출력 코덱 등록부, 명령 메타를 고칠 수 있다. 이것은 Dependencies 규칙의 명시적 예외다. epic 3과 10을 나란히 만든 선례(2026-10-23)를 따른다.
+  - 표 순서(18 → 17)대로 만들면 충돌이 없다.
+  - 나란히 만들면 뒤에 합치는 쪽이 번호와 목록을 맞춘다. AD-31 실행기가 같은 owner 안의 번호 중복을 거부한다.

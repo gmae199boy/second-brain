@@ -1,0 +1,61 @@
+---
+type: epic
+title: "core 건강 분석"
+parent: personal-brain
+covers: [R2, R10, R11, R12]
+after: ["epic-jobs-and-scheduler", "epic-garmin-import", "epic-channels", "epic-garmin-runtime"]
+refined: false
+risk: high
+---
+
+# core 건강 분석
+
+## Description
+
+건강 평가를 core 일감으로 만든다(AD-35). 예약된 core 일감이 분석 에이전트(모델 CLI, 이 Mac의 Codex 로그인)를 띄우고, 에이전트는 core 데이터만 읽는다(건강 계약 표, 필요할 때 `<ext>.raw_records`). 범위는 다음과 같다.
+- 입력 snapshot: Garmin `report_input`의 snapshot·cutoff·scrub 의미를 core 계약 표 위로 옮긴다. 입력 snapshot·cutoff, 건강 revision, 소스 권위, 시간대를 고정해 분석 그래프 안에서 공유한다.
+- 평가: day → 7d → 30d → all을 일감 의존으로 표현한다. 각 scope는 출력 schema 검증을 거친 뒤 바로 `analyses`와 리포트 파일(FileStore, AD-23)로 확정되고, 선행 analysis ID를 남긴다. 재시작은 저장된 성공부터 잇는다.
+- `analyses`: epic-garmin-import가 만든 최소 계약·DDL을 호환 확장한다. 이전된 기존 분석을 덮거나 재분석으로 대체하지 않는다(R7).
+- 결과 묶음: 평가와 epic-garmin-runtime이 만든 그래프 파일을 묶어 채널 발신 요청으로 보낸다. 후속 평가·그래프·발신 실패가 성공한 평가를 되돌리지 않는다.
+- 모델 실행 adapter는 Runtime이 Core 실행 port에 조립한다. 모델 CLI와 하위 프로세스는 취소·실패 때 그룹 정리·reap한다(AD-33). 모델 입력·도구 응답은 출력 코덱으로 가린다(AD-11).
+
+Garmin의 `report`·JSON schemas·skills와 report-codex 테스트가 출발점이다(2026-10-28, 이니셔티브 R2·R10·R11·R12, 옛 epic 16에서 분할).
+
+## Outcome
+
+Garmin 사용자가 예약된 시각에 day·7d·30d·all 평가를 받고, 성공한 평가는 발신 결과와 상관없이 남는다(이니셔티브 Done when 8의 분석 부분).
+
+## Done when
+
+1. 같은 합성 fixture에서 입력 snapshot(입력 필터·report-input)이 기존 구현과 같다.
+2. day → 7d → 30d → all이 순서대로 돌고 각 성공이 바로 보존된다. 중간에 죽이거나 취소한 뒤 다시 돌리면 저장된 성공부터 잇고, 이전된 기존 분석은 그대로다.
+3. 긴 평가 중에도 대화 수집이 진행되고, 모델 CLI가 멈추거나 취소되면 프로세스 그룹이 정리된다(fake 모델 CLI).
+4. 발신 실패는 평가를 지우지 않고, 같은 결과 묶음은 한 번만 나간다.
+5. 공통 스케줄러 예약으로 수집 뒤 평가가 돈다. 실계정 평가 한 번과 모델 품질은 사람이 확인한다(fake 모델 E2E만으로 품질을 주장하지 않는다, E6).
+6. 기능 묶음이 플러그인 배포로 이 Mac의 설치본에 들어가 동작한다.
+
+## Boundaries
+
+다음은 이 에픽 밖이다.
+- 인증·수집·정규화·digest·그래프는 epic-garmin-runtime이다.
+- `analyses` 최소 계약과 건강 계약 표는 epic-garmin-import, 채널 계약과 Telegram adapter는 epic-channels다.
+- 분석 검색과 건강 수치 조회는 epic-search-and-health-query다.
+- Must not change: 모델은 일감 안에서만 부르고 hook·동기 명령 경로에서는 부르지 않는다(AD-33). 외부 호출 동안 DB 쓰기 트랜잭션을 잡지 않는다. 이전된 기존 분석을 덮지 않는다(R7).
+
+## References
+
+- parent — _bmad-output/personal-brain/initiative-personal-brain.md, Requirements R2, R10, R11, R12, Constraints C4, C5
+- architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-11, AD-23, AD-32, AD-33, AD-35, Table Contract(`analyses`, 채널 발신 요청·이력)
+- design — _bmad-output/personal-brain/prep-garmin-absorption/integration-boundaries.md, "가져갈 코드와 교체할 경계"(report_input·report 행), "작업 그래프와 병렬성"
+- inputs — _bmad-output/personal-brain/prep-garmin-absorption/inputs/research/garmin-runtime.md, "분석·중단·전송"
+- source — _bmad-output/personal-brain/prep-garmin-absorption/accepted-intent.md, S5·S11·S12·E6
+
+## Notes
+
+- Waits on epic-jobs-and-scheduler because: 일감 의존, 모델을 부르는 일감의 감독(자식 프로세스 그룹·취소·reap), 긴 평가의 임대 갱신, 현지 시각 예약을 쓴다.
+- Waits on epic-garmin-import because: `analyses` 최소 계약·DDL을 호환 확장하고, 이전된 기존 분석이 선행 analysis와 재시작 지점이며, 건강 계약 표의 "현재" view를 읽는다.
+- Waits on epic-channels because: 결과 묶음을 채널 발신 요청(의미 키 UNIQUE, 최초 시도 gate)으로 보낸다.
+- Waits on epic-garmin-runtime because: 새 수집이 넣는 정제 행(digest)과 그래프 파일 등록 요청이 새 날짜의 분석 입력과 결과 묶음의 그래프다.
+- Decision(2026-10-28, 사용자): 옛 epic 16(Garmin 수집·분석)에서 나눈 에픽이다. spine AD-35(분석은 core 일감)를 따른다. R11 중 입력 필터(report-input)를 맡는다.
+- Open question: 분석 에이전트의 프롬프트와 출력 schema는? 인셉션 때 정한다(spine Deferred, 지금은 "epic 16 인셉션"으로 적혀 있다).
+- Open question: 확장을 비활성화하면 분석 예약도 멈추나? R16과 함께 인셉션 때 정한다.

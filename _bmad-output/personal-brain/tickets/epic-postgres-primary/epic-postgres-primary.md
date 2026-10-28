@@ -49,7 +49,7 @@ risk: high
 ## References
 
 - parent — _bmad-output/personal-brain/initiative-personal-brain.md, Requirements R3, R4, R18, Constraints C1
-- architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-7·9·10·18·20·21·22, Stack, Table Contract (2026-10-28 PostgreSQL로 고칠 대상)
+- architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-7·9·10·15·18·20·21·22·24·30·31·34, Stack, Table Contract (2026-10-28 spine 갱신으로 PostgreSQL 기준)
 - design — _bmad-output/personal-brain/prep-garmin-absorption/integration-boundaries.md, "단일 DB 경계"
 - source — _bmad-output/personal-brain/prep-garmin-absorption/accepted-intent.md, S2·S4·E1·E5
 - epic — _bmad-output/personal-brain/tickets/epic-drive/epic-drive.md, E8-7(옮겨 옴)
@@ -60,11 +60,12 @@ risk: high
 - Waits on epic-attachments because: SQLite 0008(첨부·추출 변경 규칙 trigger)과 FileStore·추출 세대 Store 계약이 PostgreSQL로 옮길 마지막 SQLite 스키마다. 10.1·10.2·10.3·10.4·10.6은 리뷰 중이다.
 - Decision(2026-10-28, 사용자): 기존 `brain.db`는 옮기지 않는다. 빈 PostgreSQL에 설치하고 transcript를 다시 가져오며, 전환 뒤 SQLite 경로를 지운다.
 - Decision(2026-10-28): epic-drive의 E8-7(사용자 설정 DB와 `brain config get/set`, 첫 키 `drive.keep_local_days`)을 이 에픽으로 옮겼다. 확장 설정(R4)도 같은 계약을 쓴다.
-- Open question: 스키마·잠금 방식을 아키텍처가 정한다(`bmad-architecture`, 정제 전). 정할 것:
-  - SQLite FTS5 trigram을 대신할 한국어 텍스트 색인
-  - `withWrite`·`BEGIN IMMEDIATE`·`busy_timeout`의 PostgreSQL 대응
-  - 불변 trigger
-  - 컨테이너 이미지(지금 테스트는 `pgvector/pgvector:pg18`)와 로그인 때 컨테이너를 누가 띄우는지(OrbStack·restart 정책, 데몬과의 관계)
-  - 공통·확장 schema 경계와 마이그레이션 버전 추적
+- Decision(2026-10-28, spine 갱신): 정제 전에 아키텍처가 정하기로 한 스키마·잠금 질문은 spine이 답했다. 이전의 Open question을 대신한다.
+  - 한국어 텍스트 색인: `lower(col) LIKE`와 pg_trgm expression GIN(AD-15)
+  - 잠금·트랜잭션: AD-7
+  - 불변 규칙: plpgsql trigger, core baseline 0001에 함께 넣는다(Table Contract, Conventions)
+  - 컨테이너: 공식 `postgres:18`, named volume, `restart: unless-stopped`, 로그인 때는 OrbStack이 띄우고 닿지 않으면 데몬이 다시 띄운다(AD-27·34)
+  - schema 경계와 마이그레이션: core schema `brain`, `brain.schema_migrations(owner, version, …)`, 실행기 하나, PG 0001부터 다시 끊는다(AD-30·31)
+- Open question: `document_chunks.chunk_locator`를 text로 둘까 jsonb로 둘까? AD-24 정규형 보존 검증과 함께 정제 때 정한다(spine Deferred, owner 이 에픽).
 - Decision(2026-10-28, 사용자): 시간대를 `config.toml`에서 사용자 설정 DB로 옮긴다. 예약(epic 12)과 현지 날짜 질의(epic 17)가 이 값을 쓴다. epic-drive의 2026-10-27 "나중에 정한다"를 대신한다.
 - Decision(2026-10-28, 사용자): OrbStack은 사용자가 설치하는 선행 조건이다. 설치기는 OrbStack을 설치하지 않고, 없거나 꺼져 있으면 안내하고 멈춘다.
