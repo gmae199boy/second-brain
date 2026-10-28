@@ -101,6 +101,7 @@
 | 에픽 · 스토리 | 할 일 | 언제 |
 |---|---|---|
 | 전체 | 원격 push(`plan/epics-12-on` 병합분과 플러그인 배포 커밋). 원격 마켓플레이스가 새 `version`을 받는다 | 원할 때. 로컬 설치본 확인은 에이전트가 이미 함 |
+| epic 11 · 11.13 | `git push origin main`으로 플러그인 0.1.9 배포 커밋(`726a651`, `app-ref` = `7c7a086`)까지 올린 뒤 `bmad-loop confirm 11.13`. 이 Mac 확인 목록은 에이전트가 모두 통과시켰다(plan `story-mac-pg-plan.md`) | 원할 때. 11.13만 `awaiting-operator`이고 run은 계속 |
 | epic 15 · 15.7 | 이 Mac에서 옛 봇 token·chat id를 찾지 못했을 때만 `.env`에 `BRAIN_TELEGRAM_BOT_TOKEN`·`BRAIN_TELEGRAM_CHAT_ID`를 넣는다 | 15.7이 `awaiting-operator`일 때 |
 | epic 16 | 옛 Garmin tokenstore가 만료돼 MFA가 필요할 때만 로그인한다 | 16의 실계정 스토리가 `awaiting-operator`일 때 |
 | epic 18 | 분석 결과의 품질을 판단한다(에이전트는 형식·저장·순서만 검증) | 18 완료 뒤 |
