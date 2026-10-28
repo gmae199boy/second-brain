@@ -51,6 +51,8 @@ Brain의 어떤 기능이든 같은 채널 계약으로 메시지를 보내고, 
 - Waits on epic-postgres-primary because: 채널·대화·발신 이력 테이블이 들어갈 공통 스키마와 비밀 저장 계약이 필요하다.
 - Waits on epic-jobs-and-scheduler because: 발신 일감의 재시도와 중복 방지를 작업 계약 위에 만든다.
 - Waits on epic-extensions because: 확장 role(`brain_ext_<name>`)과 출처 결합 규칙이 있어야 확장이 발신 요청·legacy 이력을 INSERT만 하는 RLS 정책을 둔다.
-- Open question: 불명 발신의 재시도 정책은? 최초 시도 gate를 만들기 전에 Telegram API의 중복 보호와 결과 조회 가능성을 확인해 정한다(spine Deferred, owner 이 에픽).
+- Decision(2026-10-28, 사용자): 불명 발신(요청은 나갔는데 결과를 모름)도 지수 간격(AD-21)으로 다시 보낸다. 10번 실패하면 `failures`에 남기고 doctor에 보이며, 사람이 resend 명령으로 다시 보낸다. 같은 메시지가 두 번 갈 수 있다는 점을 받아들였다. 확실한 실패(요청이 나가지 않은 네트워크 오류, 429, 5xx)도 같은 경로다. 의미 키 UNIQUE와 최초 시도 gate는 그대로라, 새 요청이 같은 결과를 다시 보내지는 않는다. 정제 때 Telegram Bot API에 중복 방지 키와 보낸 메시지 조회가 정말 없는지 다시 확인한다. 이전의 Open question과 spine Deferred "불명 발신 재시도 정책"(owner 이 에픽)을 대신한다.
+- Decision(2026-10-28, 사용자): 발신 상태 보기와 resend를 Brain 플러그인의 스킬로도 낸다. 사용자가 에이전트에게 "못 간 알림 다시 보내 줘"라고 하면 에이전트가 이 스킬로 CLI를 불러 보낸다. 임의 메시지를 보내는 명령은 이 결정에 들어 있지 않다(양방향·선제 메시지는 범위 밖, 이니셔티브 Boundaries).
+- Decision(2026-10-28): Telegram은 옛 Garmin 봇과 채팅을 그대로 쓴다. 이전된 옛 이력과 새 발신이 같은 대화가 된다. bot token과 chat id를 `.env`에 넣는 것은 사람이 한다(hitl).
 - Decision(2026-10-28, 사용자): 채널은 Garmin 런타임 안이 아니라 별도 에픽으로 그 앞에 둔다.
 - Decision(2026-10-28, 사용자): 이전한 Garmin 알림·전송 이력은 Garmin 스키마가 아니라 core 채널 이력에 둔다. 그래서 이 에픽을 epic-garmin-import 앞으로 옮겼다.

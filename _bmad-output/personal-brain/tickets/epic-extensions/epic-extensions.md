@@ -54,4 +54,5 @@ Garmin을 쓰지 않는 사용자는 아무것도 더 설치하지 않는다. �
 - Waits on epic-postgres-primary because: 확장 DDL을 받을 마이그레이션 실행기, 사용자·확장 설정 DB, PostgreSQL 위 설치 흐름이 필요하다.
 - Waits on epic-jobs-and-scheduler because: install 스킬의 예약 단계가 공통 스케줄러의 등록 API를 부르고, 연결 확인이 감독자와 프로세스 ABI v1로 테스트 확장의 명령을 자식 프로세스로 부른다.
 - Decision(2026-10-28, spine AD-29·30·33·34): TS↔Python 포트는 manifest·DB 계약·프로세스 규약이고, 확장 패키지는 `<home>/extensions/<name>/`(spine [ASSUMPTION])에 둔다. 이전의 Open question을 대신한다.
-- Open question: 비활성화할 때 진행 중인 작업을 어떻게 끝내나? registry와 취소 ABI를 만들기 전에 epic 12와 함께 정한다(spine Deferred).
+- Decision(2026-10-28, 사용자): 확장을 끄면 진행 중인 그 확장의 일감은 감독자 취소로 끊고, 대기 일감은 `extension_disabled`로 보류했다가 다시 켜면 이어서 돈다. 그 확장의 데이터를 읽는 core 분석 예약도 멈춘다. registry가 이 상태를 공개 상태 view로 낸다(epic-jobs-and-scheduler Notes 같은 날). 이전의 Open question을 대신한다.
+- Decision(2026-10-28): 새 확장 CLI는 AD-5의 `<ns> <verb>` 모양이다. 안은 `brain ext install|status|enable|disable <name>`이고, install 스킬은 이 명령을 부른다. 정제 때 CommandSpec과 SDK를 1:1로 확정한다(spine Deferred "신규 공통 CLI namespace/verb").

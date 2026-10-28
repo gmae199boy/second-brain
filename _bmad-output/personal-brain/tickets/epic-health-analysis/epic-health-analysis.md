@@ -57,5 +57,9 @@ Garmin 사용자가 예약된 시각에 day·7d·30d·all 평가를 받고, 성�
 - Waits on epic-channels because: 결과 묶음을 채널 발신 요청(의미 키 UNIQUE, 최초 시도 gate)으로 보낸다.
 - Waits on epic-garmin-runtime because: 새 수집이 넣는 정제 행(digest)과 그래프 파일 등록 요청이 새 날짜의 분석 입력과 결과 묶음의 그래프다.
 - Decision(2026-10-28, 사용자): 옛 epic 16(Garmin 수집·분석)에서 나눈 에픽이다. spine AD-35(분석은 core 일감)를 따른다. R11 중 입력 필터(report-input)를 맡는다.
-- Open question: 분석 에이전트의 프롬프트와 출력 schema는? 인셉션 때 정한다(spine Deferred, owner 이 에픽).
-- Open question: 확장을 비활성화하면 분석 예약도 멈추나? R16과 함께 인셉션 때 정한다.
+- Decision(2026-10-28): 분석 에이전트의 프롬프트와 출력 schema는 옛 Garmin `report`의 프롬프트·JSON schema를 v1로 그대로 쓴다(S11 재사용). 바꾸는 일은 실사용 뒤 새 revision으로 한다. 이전의 Open question과 spine Deferred "분석 에이전트의 프롬프트와 출력 schema"를 대신한다.
+- Decision(2026-10-28, 사용자): 분석 에이전트와 모델은 사용자가 바꿀 수 있다. 사용자 설정(DB, AD-18)에 에이전트(모델 CLI adapter 이름), 모델, effort를 둔다. 기본값은 옛 Garmin과 같다(Codex, 모델은 CLI 기본, effort high, 호출 timeout 20분). 이 에픽은 Codex adapter와 Claude Code adapter를 만들고, 둘 다 같은 출력 schema 검증과 그룹 정리·reap을 지난다. adapter는 토큰 사용량을 프로세스 ABI v1의 `usage` 칸에 채운다(epic-jobs-and-scheduler Notes 같은 날).
+- Source conflict(2026-10-28): spine AD-35의 "모델 실행 adapter는 이 Mac의 Codex 로그인 환경을 사용"은 위 결정과 다르다. 설정에서 고른 모델 CLI의 로그인 환경으로 넓힌다. 이 에픽 정제 전에 `bmad-architecture`로 고친다.
+- Decision(2026-10-28, 사용자): Garmin 확장을 끄면 Garmin 데이터를 읽는 분석 예약도 멈추고, 진행 중인 평가는 감독자 취소로 끊으며, 대기 일감은 보류했다가 다시 켜면 이어서 돈다. 이미 저장한 평가와 이전된 분석은 남고 검색된다(epic-jobs-and-scheduler Notes 같은 날). 이전의 Open question을 대신한다.
+- Decision(2026-10-28): 기본 분석 예약은 옛 Garmin 값인 11:30이다. 리포트 실패 알림(옛 `REPORT_FAILED`)도 채널 발신 요청으로 옮긴다.
+- Assumption(2026-10-28): 여러 날을 놓친 뒤 깨어나면 수집이 끝난 최신 날짜만 평가하고, 빠진 날의 day 평가를 소급해 만들지 않는다(옛 report의 동작으로 짐작). 정제 때 옛 코드로 확인한다.

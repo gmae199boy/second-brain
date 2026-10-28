@@ -74,7 +74,7 @@ slug = "epic-garmin-runtime"
 title = "Garmin connector: 인증·수집·정제"
 description = "Garmin 확장이 별도 Garmin 설치 없이 데몬의 감독 아래 인증·수집·raw·정규화·digest·그래프를 끝까지 돌고, 결과를 garmin schema와 core 건강 계약 표·파일 등록 요청으로 내며, 이전된 기록 위에 새 기록이 이어진다."
 covers = ["R2", "R11"]
-after = [{ epic = 12, needs = "계정 키 직렬화, 긴 수집의 임대 갱신·attempt token, 현지 시각 예약(manifest의 기본 수집 예약)" }, { epic = 13, needs = "확장 설치·활성화, manifest와 설정 snapshot, `brain_ext_garmin` role과 확장 마이그레이션 적용" }, { epic = 14, needs = "Garmin 확장 뼈대·스키마, core 건강 계약 표와 그 의미 계약(AD-32), `file_requests`, 이전된 기존 기록(새 수집이 그 위에 이어진다)" }]
+after = [{ epic = 12, needs = "계정 키 직렬화, 긴 수집의 임대 갱신·attempt token, 현지 시각 예약(manifest의 기본 수집 예약)" }, { epic = 13, needs = "확장 설치·활성화, manifest와 설정 snapshot, `brain_ext_garmin` role과 확장 마이그레이션 적용" }, { epic = 14, needs = "Garmin 확장 뼈대·스키마, core 건강 계약 표와 그 의미 계약(AD-32), `file_requests`, 이전된 기존 기록(새 수집이 그 위에 이어진다)" }, { epic = 15, needs = "채널 발신 요청과 의미 키 UNIQUE(수집 사건 알림, 2026-10-28)" }]
 
 [[epic]]
 id = 18

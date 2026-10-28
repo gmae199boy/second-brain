@@ -54,7 +54,9 @@ Brain의 작업 runtime을 긴 작업과 예약에 맞게 넓힌다. 범위는 �
 ## Notes
 
 - Waits on epic-postgres-primary because: PostgreSQL의 `work_items`·`schedules`와 잠금·트랜잭션 규칙, 시간대 설정이 있어야 한다.
-- Open question: 놓친 현지 시각 예약과 진행 정체를 판단하는 단계별 기준은? 정제 때 정한다.
-- Open question: 모델 호출의 횟수·비용을 설정이나 doctor로 제한·표시할지? 정제 때 정한다.
-- Open question: 확장을 비활성화할 때 진행 중인 작업을 어떻게 끝내나? epic-extensions와 함께 취소 ABI를 만들기 전에 정한다(spine Deferred).
+- Decision(2026-10-28, 사용자): 놓친 예약. Mac이 잠들었거나 꺼져 있어 예약 시각을 놓쳤으면, 깨어난 뒤 놓친 날짜(하루든 여러 날이든)에 성공한 실행이 없을 때만 돌린다. 여러 날을 놓쳐도 한 번 돌고, 그 한 번이 빠진 날짜를 처리한다(Garmin 수집은 coverage로 빠진 날짜를 채운다). 그날 이미 성공한 실행이 있으면 돌지 않는다. 이전의 Open question(놓친 예약 기준)을 대신한다.
+- Decision(2026-10-28): 정체 판정. heartbeat만으로는 진행이 아니다(AD-21·33). 진행 이벤트가 일감 종류별 창(manifest가 선언, 기본 15분. 모델 일감은 호출 timeout 20분 + 5분) 동안 없으면 `stalled`로 기록한다. 감독자가 프로세스 그룹을 정리한 뒤 일시 오류로 다시 시도하고, doctor에 보인다. 이전의 Open question(정체 기준)을 대신한다.
+- Decision(2026-10-28, 사용자): 모델 호출 표시. 모델을 부른 일감의 토큰 사용량과 걸린 시간을 doctor와 작업 목록에 보인다. 호출 횟수는 보이지 않고 상한은 두지 않는다. 프로세스 ABI v1의 결과 이벤트에 선택 칸 `usage`(입력·캐시·출력 토큰)를 두고, 일감 행이 그것을 남긴다. 값을 채우는 모델 adapter는 epic-health-analysis다. 이전의 Open question(호출 횟수·비용)과 spine Deferred "모델 호출 횟수·비용 제한/표시"를 대신한다.
+- Decision(2026-10-28, 사용자): 확장을 끄면 진행 중인 그 확장의 일감은 감독자 취소(그룹 SIGTERM → 유예 → SIGKILL → reap)로 끊는다. 대기 일감은 `extension_disabled`로 보류하고, 다시 켜면 이어서 돈다. 그 확장의 데이터를 읽는 core 분석 예약도 멈춘다(epic-health-analysis). 데이터와 기존 분석은 남고 검색된다. 이전의 Open question과 spine Deferred "비활성화의 진행 작업 종료 방식"(owner 12·13)을 대신한다.
+- Decision(2026-10-28): 새 예약 CLI는 AD-5의 `<ns> <verb>` 모양이다. 안은 `brain schedules add|list|remove`이고, 정제 때 CommandSpec과 SDK를 1:1로 확정한다(spine Deferred "신규 공통 CLI namespace/verb").
 - Decision(2026-10-28): 프로세스 ABI v1은 감독자를 처음 만드는 이 에픽이 만든다. 13은 이 에픽 뒤라 13 소유면 감독자가 쓸 규약이 없다. manifest JSON Schema와 설정 snapshot은 13에 남는다. spine AD-33도 이렇게 고쳤다(2026-10-28).

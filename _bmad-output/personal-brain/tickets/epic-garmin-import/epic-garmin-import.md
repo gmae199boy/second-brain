@@ -62,8 +62,8 @@ Garmin 확장 뼈대와 스키마를 PostgreSQL에 만들고 기존 Garmin 데�
 - Waits on epic-postgres-primary because: core 문서·출처·사용자 테이블과 마이그레이션 실행기가 있어야 한다.
 - Waits on epic-jobs-and-scheduler because: importer가 감독되는 확장 일감으로 돌며 임대 갱신과 attempt token을 받는다. 계약 표 INSERT는 DB가 현재 attempt와 대조한다(AD-33).
 - Waits on epic-extensions because: Garmin 스키마를 확장 DDL로 선언·등록하고, 확장 패키지 위치와 Python 런타임을 쓴다.
-- Assumption(2026-10-28): Garmin SQLite snapshot은 Brain의 `node:sqlite`가 아니라 확장의 Python `sqlite3`로 읽는다. 그래서 epic 11이 Brain의 SQLite 경로를 지워도 이전이 가능하다. 아키텍처에서 확인한다.
+- Decision(2026-10-28): Garmin SQLite snapshot은 Brain의 `node:sqlite`가 아니라 확장의 Python `sqlite3`로 읽기 전용으로 읽는다. 그래서 epic 11이 Brain의 SQLite 경로를 지워도 이전이 가능하다. spine AD-29(확장은 별도 프로세스, 언어 무관)와 AD-36(원형 snapshot을 읽기 전용으로 보존)과 맞다. 이전의 Assumption을 대신한다.
 - Decision(2026-10-28, spine AD-23·35): 구형 Markdown·facts·PNG는 파일 등록 요청으로 core 파일이 되고 문서 추출·조각 색인을 탄다. `analyses` 행이 그 파일을 가리킨다. 이전의 Open question을 대신한다.
 - Decision(2026-10-28, 사용자): core 계약 표는 처음 쓰는 에픽이 만든다. 이 에픽이 건강 측정·요약 표와 "현재" view, `analyses` 최소 계약, `file_requests`와 그 인계 일감을 만든다. epic 18이 `analyses`를 호환 확장하고, epic 16·17·18이 건강 계약 표를 소비한다. 채널 발신 요청·이력 표는 epic 15가 만든다.
-- Open question: 개발/운영 DB 중 기준 소스는 무엇이고, 겹치는 자연키의 충돌은 어떻게 고르나? 실제 반입 전에 사용자가 정한다(C6).
+- Open question: 개발/운영 DB 중 기준 소스는 무엇이고, 겹치는 자연키의 충돌은 어떻게 고르나? 실제 반입 전에 사용자가 정한다(C6). 2026-10-28 결정 묶음에서도 묻지 않았다. preflight 보고서를 본 뒤 실제 반입 직전에 정한다(사람 확인 스토리).
 - Waits on epic-channels because: 옛 Garmin 알림·전송 이력이 core 채널 발신 이력에 들어간다(2026-10-28, 사용자).

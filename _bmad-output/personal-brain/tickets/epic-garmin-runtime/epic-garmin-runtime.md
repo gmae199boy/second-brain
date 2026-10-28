@@ -3,7 +3,7 @@ type: epic
 title: "Garmin connector: 인증·수집·정제"
 parent: personal-brain
 covers: [R2, R11]
-after: ["epic-jobs-and-scheduler", "epic-extensions", "epic-garmin-import"]
+after: ["epic-jobs-and-scheduler", "epic-extensions", "epic-garmin-import", "epic-channels"]
 refined: false
 risk: high
 ---
@@ -56,4 +56,7 @@ Garmin 사용자가 별도 Garmin 설치 없이 Brain에서 수집과 정제를 
 - Waits on epic-garmin-import because: 그 에픽이 만든 확장 뼈대·스키마, core 건강 계약 표, `file_requests` 위에 수집을 더하고, 이전된 기존 기록 위에서 새 수집이 이어진다.
 - Decision(2026-10-28, 사용자): 옛 epic 16(Garmin 수집·분석)을 둘로 나눈다. 이 에픽은 connector(인증·수집·raw·정규화·digest·그래프)이고, 평가는 epic-health-analysis(18)다. spine AD-29(connector)와 AD-35(분석은 core 일감)를 따른다.
 - Decision(2026-10-28): R11은 나눠 맡는다. 이 에픽은 인증·계정 보호와 raw·정규화·수치 계약을, epic-health-analysis는 입력 필터(report-input snapshot)를 맡는다.
-- Decision(2026-10-28): epic-channels를 기다리지 않는다. 결과 묶음 발신은 epic-health-analysis로 갔다. 수집 쪽 사건 알림(인증 필요·계정 차단)을 채널로 보내게 되면, 쪼갤 때 epic-channels를 `after`에 다시 선언한다.
+- Decision(2026-10-28): epic-channels를 기다리지 않는다. 결과 묶음 발신은 epic-health-analysis로 갔다. 수집 쪽 사건 알림(인증 필요·계정 차단)을 채널로 보내게 되면, 쪼갤 때 epic-channels를 `after`에 다시 선언한다. → 2026-10-28 바뀜(아래).
+- Decision(2026-10-28): 수집 사건 알림을 옮긴다. 옛 Garmin은 인증 실패·rate limit·403 차단·정규화 실패·반복 부분 수집·오류를 (현지 날짜, 사건)마다 한 번 Telegram으로 보냈다(`errors.NotifyEvent`, `ports.TelegramNotifier` @ 7fb33dd). 같은 사건을 같은 의미 키로 채널 발신 요청에 넣는다. 그래서 epic-channels를 `after`에 다시 선언했다(만드는 순서상 15가 이미 앞이다). 리포트 실패 알림은 epic-health-analysis다.
+- Decision(2026-10-28): manifest의 기본 수집 예약은 옛 Garmin 값 그대로다. 수집 11:00, 재시도 11:15, 시간대는 사용자 설정 DB의 값이다(옛 `config.py` `_DEFAULTS` @ 7fb33dd). 놓친 예약은 epic-jobs-and-scheduler의 결정(깨어난 뒤 빠진 날짜가 있을 때만 한 번)을 따른다.
+- Waits on epic-channels because: 수집 사건 알림을 채널 발신 요청(의미 키 UNIQUE)으로 보낸다(2026-10-28).

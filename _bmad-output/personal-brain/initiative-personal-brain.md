@@ -161,8 +161,7 @@ Garmin 흡수의 범위 밖(2026-10-28)은 다음과 같다. 이것들은 흡수
   - 새로 더한 AD: AD-29(확장은 connector), AD-30(schema 경계와 DB 계약), AD-31(마이그레이션 소유와 번호), AD-32(정제 데이터는 버전별로), AD-33(확장 작업 감독), AD-34(컨테이너 수명), AD-35(분석은 core 일감), AD-36(Garmin 이전은 검증한 출처와 배치로만).
   - 남은 미룬 일은 spine Deferred에 owner 에픽과 함께 있다(예: chunk_locator text/jsonb는 epic 11, 정체·놓친 예약·모델 호출 비용은 epic 12).
 - Source conflict(2026-10-28): PRD §9 Constraints("로컬 SQLite 파일 하나다… 서버나 Docker가 필요 없다")는 C1과 다르고, NFR-5는 위 LLM 결정과 다르다. 이 파일과 spec이 우선한다. PRD 본문은 `bmad-prd`로 고칠 수 있다.
-- Open question: 놓친 현지 시각 예약과 진행 정체를 판단하는 단계별 기준은? epic 12 인셉션 때 정한다.
-- Open question: 스케줄러·확장이 부르는 모델 호출의 횟수·비용을 설정이나 doctor로 제한·표시할지? epic 12 인셉션 때 정한다.
+- Decision(2026-10-28, 사용자, 결정 묶음): 남은 에픽의 사용자 결정을 한 번에 받아 각 에픽 Notes에 적었다. 놓친 예약(깨어난 뒤 빠진 날짜가 있을 때만 한 번)·정체 판정·모델 호출 표시(토큰과 걸린 시간만, 상한 없음)는 epic 12, 확장 끄기(진행 취소, 대기 보류)는 12·13·18, 불명 발신(지수 간격 10번 뒤 doctor와 resend 스킬)은 15, 분석 에이전트·모델을 사용자 설정으로 바꾸기는 18, 수집 사건 알림은 16이다. 위 두 Open question(놓친 예약·정체, 모델 호출 비용)을 대신한다. C6은 그대로 epic 14의 실제 반입 직전에 정한다.
 - Open question: 개발/운영 Garmin DB 중 기준 소스는 무엇이고, 겹치는 자연키의 충돌은 어떻게 고르나? epic 14가 실제 반입하기 전에 사용자가 정한다(C6).
 - Decision(2026-10-28, 트리 검증): 이니셔티브 `covers`에는 S id를 더하지 않는다. 템플릿상 이니셔티브의 `covers`는 쓰지 않는 칸이고 CAP 목록은 예전 값이다. S·E id는 Requirements 줄에 있다.
 - Decision(2026-10-28, 사용자): 시간대를 `config.toml`에서 사용자 설정 DB로 옮긴다(epic 11). 예약과 현지 날짜 질의가 이 값을 쓴다.
