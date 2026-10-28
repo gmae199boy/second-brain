@@ -533,9 +533,8 @@ async function lockOpenSupervisedWork(held: Kysely<PgSchema>, input: { id: strin
     and current_attempt_token = ${input.attemptToken} for update`.execute(held);
   const item = found.rows[0];
   if (!item) return null;
-  const attempt = await sql`select token from brain.work_attempts where token = ${input.attemptToken}
-    and outcome is null`.execute(held);
-  return attempt.rows.length ? item : null;
+  const attempt = await sql<{ current: boolean }>`select brain.attempt_is_current(${input.id}, ${input.attemptToken}) as current`.execute(held);
+  return attempt.rows[0]?.current ? item : null;
 }
 
 async function finish(

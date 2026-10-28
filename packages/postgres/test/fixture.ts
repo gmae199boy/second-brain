@@ -15,7 +15,7 @@ export async function database(migrate = true): Promise<TestDatabase> {
 export async function subject() {
   const db = await database();
   const store = postgresStore({ databaseUrl: db.appUrl });
-  return { ...store,
+  return { ...store, db,
     async readWorkItem(id: string) {
       const client = new pg.Client({ connectionString: db.appUrl });
       await client.connect();
