@@ -3,7 +3,7 @@ type: epic
 title: "공통 채널과 Telegram 발신"
 parent: personal-brain
 covers: [R13]
-after: ["epic-postgres-primary", "epic-jobs-and-scheduler", "epic-extensions"]
+after: []
 refined: false
 risk: medium
 ---

@@ -5,7 +5,7 @@ parent: personal-brain
 covers: [R8, R9, R10]
 sources: [_bmad-output/personal-brain/initiative-personal-brain.md, _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md]
 companions: [_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, _bmad-output/personal-brain/tickets/epic-jobs-and-scheduler/epic-jobs-and-scheduler-research-code.md]
-after: ["epic-postgres-primary"]
+after: []
 refined: true
 risk: high
 ---

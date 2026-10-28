@@ -3,7 +3,7 @@ type: epic
 title: "Garmin connector: 인증·수집·정제"
 parent: personal-brain
 covers: [R2, R11]
-after: ["epic-jobs-and-scheduler", "epic-extensions", "epic-garmin-import", "epic-channels"]
+after: []
 refined: false
 risk: high
 ---

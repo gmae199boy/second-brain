@@ -3,7 +3,7 @@ type: epic
 title: "기존 Garmin 데이터·분석 이전"
 parent: personal-brain
 covers: [R5, R6, R7]
-after: ["epic-postgres-primary", "epic-jobs-and-scheduler", "epic-extensions", "epic-channels"]
+after: []
 refined: false
 risk: high
 ---

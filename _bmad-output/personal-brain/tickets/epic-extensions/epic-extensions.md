@@ -3,7 +3,7 @@ type: epic
 title: "확장 설치와 install 스킬"
 parent: personal-brain
 covers: [R1, R16, R17]
-after: ["epic-postgres-primary", "epic-jobs-and-scheduler"]
+after: []
 refined: false
 risk: high
 ---

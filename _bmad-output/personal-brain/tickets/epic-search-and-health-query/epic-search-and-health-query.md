@@ -3,7 +3,7 @@ type: epic
 title: "텍스트·원문·건강 수치 조회"
 parent: personal-brain
 covers: [R14, R15, R16, CAP-4, CAP-6, CAP-7]
-after: ["epic-postgres-primary", "epic-extensions", "epic-garmin-import"]
+after: []
 refined: false
 risk: medium
 ---

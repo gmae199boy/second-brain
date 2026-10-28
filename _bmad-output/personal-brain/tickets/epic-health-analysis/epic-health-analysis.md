@@ -3,7 +3,7 @@ type: epic
 title: "core 건강 분석"
 parent: personal-brain
 covers: [R2, R10, R11, R12]
-after: ["epic-jobs-and-scheduler", "epic-garmin-import", "epic-channels", "epic-garmin-runtime"]
+after: []
 refined: false
 risk: high
 ---

@@ -3,7 +3,7 @@ type: epic
 title: "Google Drive 연동"
 parent: personal-brain
 covers: [CAP-14, CAP-6, CAP-7, CAP-12]
-after: ["epic-attachments", "epic-daemon", "epic-postgres-primary", "epic-search-and-health-query"]
+after: []
 assignee: ""
 risk: high
 ---
