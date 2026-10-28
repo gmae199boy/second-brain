@@ -146,4 +146,4 @@ export { extractionStoreContract, type ExtractionStoreSubject } from './contract
 export { fileRedactionContract, type FileRedactionSubject } from './contracts/file-redaction.js';
 export { scheduleStoreContract } from './contracts/schedule-store.js';
 
-export { sessionIngestContract, type SessionIngestSubject } from './contracts/session-store.js';
+export { sessionIngestContract, sessionMetadataContract, sessionRedactionContract, type SessionIngestSubject, type SessionMetadataSubject, type SessionRedactionSubject } from './contracts/session-store.js';

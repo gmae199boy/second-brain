@@ -1,13 +1,13 @@
 import { checkSchema } from '@second-brain/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import pg from 'pg';
-import { schemaStoreContract, storeContract, sessionIngestContract, userStoreContract, sampleEnsureSessionInput, sampleSelfUserInput, sampleIngestBatch, sampleSessionToken, sampleTranscriptFileInput } from '@second-brain/core/testing';
+import { schemaStoreContract, storeContract, sessionIngestContract, userStoreContract, sampleEnsureSessionInput, sampleSelfUserInput, sampleIngestBatch, sampleSessionToken, sampleTranscriptFileInput, sampleCheckoutInput, sampleSessionKey, sessionMetadataContract, transcriptFileStoreContract } from '@second-brain/core/testing';
 import { postgresStore } from '../src/index.js';
 import { database, subject } from './fixture.js';
 import type { TestDatabase } from '@second-brain/test-db';
 const databases: TestDatabase[] = [];
 afterEach(async () => { await Promise.all(databases.splice(0).map(db => db.drop())); });
-for (const [name, cases] of [['ingest', sessionIngestContract()], ['user', userStoreContract()], ['health', storeContract()], ['schema', schemaStoreContract()]] as const) {
+for (const [name, cases] of [['ingest', sessionIngestContract()], ['session metadata', sessionMetadataContract()], ['transcript', transcriptFileStoreContract()], ['user', userStoreContract()], ['health', storeContract()], ['schema', schemaStoreContract()]] as const) {
   describe(name, () => { for (const test of cases) it(test.name, () => test.run(subject)); });
 }
 it('serializes simultaneous collection and preserves ids, timestamps and null workspace', async () => {
@@ -166,4 +166,106 @@ it('persists identity work only when ensureSession creates the session', async (
       claim_expires_at: null, claimed_by: null, last_error: null, completed_at: null,
     }]);
   } finally { await store.close(); }
+});
+
+it('round trips first cwd and transcript cursors with NUL and preserves the first evidence', async () => {
+  const db = await database(); databases.push(db);
+  const store = postgresStore({ databaseUrl: db.appUrl });
+  try {
+    expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
+    expect((await store.ensureSession(sampleEnsureSessionInput())).ok).toBe(true);
+    const firstCwd = 'cwd-a\u0000b';
+    const filled = await store.fillSessionTags({ key: sampleSessionKey, firstCwd,
+      checkout: sampleCheckoutInput(), tagSource: 'cwd' });
+    expect(filled).toMatchObject({ ok: true, filled: true, session: { firstCwd } });
+    expect(await store.fillSessionTags({ key: sampleSessionKey, firstCwd: 'changed', checkout: null, tagSource: null }))
+      .toMatchObject({ ok: true, filled: false, session: { firstCwd, tagSource: 'cwd' } });
+    expect(await store.findSession(sampleSessionKey)).toMatchObject({ ok: true, session: { firstCwd } });
+    const rows = await db.rows<{ first_cwd: string; first_cwd_raw: Buffer }>('select first_cwd, first_cwd_raw from brain.sessions');
+    expect(rows).toEqual([{ first_cwd: 'cwd-a\ufffdb', first_cwd_raw: Buffer.from(firstCwd) }]);
+    const cursor = { lastHarnessMessageId: 'cursor-a\u0000b', fingerprint: 'sha256:' + 'a'.repeat(64) };
+    expect((await store.recordTranscriptFile(sampleTranscriptFileInput({ cursor }))).ok).toBe(true);
+    expect(await store.listTranscriptFiles({ harness: sampleTranscriptFileInput().harness }))
+      .toMatchObject({ ok: true, files: [{ cursor }] });
+  } finally { await store.close(); }
+});
+
+it('orders stale session ids and transcript paths by bytes across case and Korean text', async () => {
+  const db = await database(); databases.push(db);
+  const store = postgresStore({ databaseUrl: db.appUrl });
+  const names = ['한글', 'a', '가', 'Z', 'A', 'z'];
+  try {
+    expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
+    for (const [i, name] of names.entries()) {
+      const id = `01940000-0000-7000-8000-${String(9000 + i).padStart(12, '0')}`;
+      expect((await store.ensureSession(sampleEnsureSessionInput({ id,
+        key: { harness: 'demo', harnessSessionId: name } }))).ok).toBe(true);
+      expect((await store.recordTranscriptFile(sampleTranscriptFileInput({ id, path: name }))).ok).toBe(true);
+    }
+    const sorted = [...names].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+    expect(await store.listStaleSessions({ harness: 'demo', parserVersion: 'current' }))
+      .toEqual({ ok: true, sessions: sorted.map(harnessSessionId => ({ harnessSessionId })) });
+    const files = await store.listTranscriptFiles({ harness: sampleTranscriptFileInput().harness });
+    expect(files.ok && files.files.map(file => file.path)).toEqual(sorted);
+  } finally { await store.close(); }
+});
+
+it('excludes completed identity work from open targets but still excludes its session from candidates', async () => {
+  const db = await database(); databases.push(db);
+  const store = postgresStore({ databaseUrl: db.appUrl });
+  try {
+    await store.ensureSelfUser(sampleSelfUserInput());
+    const now = new Date('2026-10-28T00:00:00.000Z');
+    const work = { id: '01940000-0000-7000-8000-000000000810', kind: 'session_identity',
+      targetKind: 'session', targetId: sampleSessionToken, createdAt: now, nextAttemptAt: now };
+    expect((await store.ensureSession(sampleEnsureSessionInput({ identityWork: work }))).ok).toBe(true);
+    expect(await store.listOpenWorkTargets({ kind: 'other' })).toEqual({ ok: true, targets: [] });
+    await db.query("update brain.work_items set completed_at='2026-10-28T01:00:00.000Z'");
+    expect(await store.listOpenWorkTargets({ kind: work.kind })).toEqual({ ok: true, targets: [] });
+    expect(await store.listIdentityCandidates()).toEqual({ ok: true, sessions: [] });
+  } finally { await store.close(); }
+});
+
+it('returns DB_UNAVAILABLE values from every added verb when the database is unreachable', async () => {
+  const store = postgresStore({ databaseUrl: 'postgresql://brain_app:unused@127.0.0.1:1/unavailable', connectTimeoutMs: 100 });
+  try {
+    const results = await Promise.all([
+      store.listStaleSessions({ harness: 'demo', parserVersion: 'current' }), store.listIdentityCandidates(),
+      store.countUntaggedSessions(), store.fillSessionTags({ key: sampleSessionKey, checkout: null, firstCwd: null, tagSource: null }),
+      store.listTranscriptFiles({ harness: 'demo' }), store.listOpenWorkTargets({ kind: 'session_identity' }),
+    ]);
+    for (const result of results) expect(result).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+  } finally { await store.close(); }
+});
+
+it('fillSessionTags uses the same session advisory lock as ingest', async () => {
+  const db = await database(); databases.push(db);
+  const store = postgresStore({ databaseUrl: db.appUrl, lockTimeoutMs: 50 });
+  const blocker = new pg.Client({ connectionString: db.url });
+  await blocker.connect();
+  try {
+    await store.ensureSelfUser(sampleSelfUserInput()); await store.ensureSession(sampleEnsureSessionInput());
+    await blocker.query('begin');
+    await blocker.query('select pg_advisory_xact_lock(hashtextextended($1,0))', [sampleSessionToken]);
+    expect(await store.fillSessionTags({ key: sampleSessionKey, checkout: sampleCheckoutInput(), firstCwd: 'new', tagSource: 'cwd' }))
+      .toMatchObject({ ok: false, code: 'DB_LOCKED' });
+    expect(await store.findSession(sampleSessionKey)).toMatchObject({ ok: true, session: { firstCwd: null, projectId: null } });
+  } finally { await blocker.query('rollback'); await blocker.end(); await store.close(); }
+});
+
+it.each(['brain.sessions', 'brain.transcript_files', 'brain.work_items'])('maps read lock failures on %s to DB_UNAVAILABLE without changing the port', async table => {
+  const db = await database(); databases.push(db);
+  const store = postgresStore({ databaseUrl: db.appUrl, lockTimeoutMs: 40, queryTimeoutMs: 1000 });
+  const blocker = new pg.Client({ connectionString: db.url }); await blocker.connect();
+  try {
+    await blocker.query('begin');
+    await blocker.query(`lock table ${table} in access exclusive mode`);
+    const reads = table === 'brain.sessions' ? [
+      () => store.listStaleSessions({ harness: 'demo', parserVersion: 'current' }),
+      () => store.listIdentityCandidates(), () => store.countUntaggedSessions(),
+    ] : table === 'brain.transcript_files' ? [
+      () => store.listTranscriptFiles({ harness: 'demo' }),
+    ] : [() => store.listOpenWorkTargets({ kind: 'session_identity' })];
+    for (const read of reads) expect(await read()).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+  } finally { await blocker.query('rollback'); await blocker.end(); await store.close(); }
 });

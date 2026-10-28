@@ -1,4 +1,4 @@
-import type { SessionIngestStore } from '@second-brain/core';
+import type { SessionStore, FillSessionTagsResult } from '@second-brain/core';
 import {
   formatInstant,
   parseInstant,
@@ -133,8 +133,65 @@ interface ToolNoteRow {
  * string comparison *is* the chronological one and no parsing is needed to
  * sort or to compare.
  */
-export function postgresSessionStore(connect: PgConnect): Pick<SessionIngestStore, 'ensureSession' | 'findSession' | 'ingest' | 'readSession'> {
+export function postgresSessionStore(connect: PgConnect): Omit<SessionStore, 'redactMessage'> {
   return {
+    async listStaleSessions(query) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const read = await sql<{ harness_session_id: string }>`
+          select harness_session_id from brain.sessions
+           where harness = ${query.harness} and parser_version is distinct from ${query.parserVersion}
+           order by harness_session_id collate "C"`.execute(opened.connection.db);
+        return { ok: true, sessions: read.rows.map(row => ({ harnessSessionId: row.harness_session_id })) };
+      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) }; }
+    },
+    async listIdentityCandidates() {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const read = await sql<SessionRow>`select s.* from brain.sessions s
+          where s.project_id is null and s.first_cwd is null
+            and not exists (select 1 from brain.work_items w where w.kind = 'session_identity'
+              and w.target_kind = 'session' and w.target_id = s.harness || ':' || s.harness_session_id)
+          order by s.id`.execute(opened.connection.db);
+        return { ok: true, sessions: read.rows.map(row => toSession(originalText(row))) };
+      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) }; }
+    },
+    async countUntaggedSessions() {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const read = await sql<{ count: string }>`select count(*) as count from brain.sessions
+          where project_id is null`.execute(opened.connection.db);
+        return { ok: true, count: Number(read.rows[0]?.count ?? 0) };
+      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) }; }
+    },
+    async fillSessionTags(input) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      const written = await withWrite(opened.connection, async (held): Promise<FillSessionTagsResult> => {
+        const stored = await readSessionRow(held, input.key);
+        if (stored === null) return { ok: false, code: 'SESSION_NOT_FOUND', message: '세션을 찾을 수 없습니다' };
+        if (stored.first_cwd === null) {
+          const cwd = pgText(input.firstCwd);
+          await sql`update brain.sessions set first_cwd = ${cwd.text}, first_cwd_raw = ${cwd.raw}
+            where id = ${stored.id}`.execute(held);
+          stored.first_cwd = input.firstCwd;
+        }
+        if (input.checkout === null || stored.project_id !== null || stored.worktree_id !== null) {
+          return { ok: true, filled: false, session: toSession(stored) };
+        }
+        const tags = await ensureCheckout(held, input.checkout);
+        await sql`update brain.sessions set project_id = ${tags.projectId}, worktree_id = ${tags.worktreeId},
+          tag_source = ${input.tagSource} where id = ${stored.id}
+          and project_id is null and worktree_id is null`.execute(held);
+        const row = await readSessionRow(held, input.key);
+        if (row === null) throw new UnsettledEnsure('꼬리표를 채운 세션을 읽을 수 없습니다');
+        return { ok: true, filled: true, session: toSession(row) };
+      }, `${input.key.harness}:${input.key.harnessSessionId}`);
+      return written.ok ? written.value : written;
+    },
     async ensureSession(input: EnsureSessionInput): Promise<EnsureSessionResult> {
       const opened = connect();
       if (!opened.ok) {

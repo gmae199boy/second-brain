@@ -1,18 +1,20 @@
-import type { HealthStore, SchemaStore, SessionIngestStore, UserStore } from '@second-brain/core';
+import type { HealthStore, SchemaStore, SessionIngestStore, SessionStore, TranscriptFileStore, WorkStore, UserStore } from '@second-brain/core';
 import { Kysely, PostgresDialect, sql } from 'kysely';
 import { createPool, databaseFailure, describe, type CreatePoolOptions, type PgSchema, type PgConnect } from './connect.js';
 import { postgresSessionStore } from './sessions.js';
 import { postgresUserStore } from './users.js';
 import { postgresTranscriptFileStore } from './transcript-files.js';
 import { postgresAttachmentStore } from './attachments.js';
+import { postgresOpenWorkStore } from './ingest-work.js';
 export type PostgresStoreOptions = CreatePoolOptions;
 export type PostgresIngestStore = SessionIngestStore & UserStore & HealthStore & SchemaStore;
-export function postgresStore(options: PostgresStoreOptions): PostgresIngestStore {
+export type PostgresStore = PostgresIngestStore & Omit<SessionStore, 'redactMessage'> & TranscriptFileStore & Pick<WorkStore, 'listOpenWorkTargets'>;
+export function postgresStore(options: PostgresStoreOptions): PostgresStore {
   const pool = createPool(options);
   const db = new Kysely<PgSchema>({ dialect: new PostgresDialect({ pool }) });
   const connect: PgConnect = () => ({ ok: true, connection: { db } });
   return {
-    ...postgresSessionStore(connect), ...postgresUserStore(connect),
+    ...postgresOpenWorkStore(connect), ...postgresSessionStore(connect), ...postgresUserStore(connect),
     ...postgresTranscriptFileStore(connect), ...postgresAttachmentStore(connect),
     async checkHealth() {
       try {

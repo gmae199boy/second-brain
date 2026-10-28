@@ -34,8 +34,17 @@ interface TranscriptFileRow {
  * is compared against what is stored and two statements outside a transaction
  * could be interleaved by another hook.
  */
-export function postgresTranscriptFileStore(connect: PgConnect): Pick<TranscriptFileStore, 'recordTranscriptFile'> {
+export function postgresTranscriptFileStore(connect: PgConnect): TranscriptFileStore {
   return {
+    async listTranscriptFiles(query) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const read = await sql<TranscriptFileRow>`select * from brain.transcript_files
+          where harness = ${query.harness} order by path collate "C"`.execute(opened.connection.db);
+        return { ok: true, files: read.rows.map(row => toTranscriptFile(originalText(row))) };
+      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) }; }
+    },
     async recordTranscriptFile(
       input: RecordTranscriptFileInput,
     ): Promise<RecordTranscriptFileResult> {
