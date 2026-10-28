@@ -3,8 +3,8 @@ title: 'Tracer: 감독자가 probe 자식을 600초 넘게 돌리는 동안 대�
 type: 'feature'
 ticket: '1'
 created: '2026-10-29'
-status: 'built'
-baseline_revision: '726a651dc3d521bdda248ed6e6c065bd8f252507'
+status: done
+baseline_revision: d88398cec0d4e7d00a72d349edbe6605e08e8eda
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
@@ -156,6 +156,44 @@ deferred:
   - `[false]` `[reject]` (intent-alignment) schema와 코덱을 validator로 대조하지 않음 — epic Decision이 TS 검증기 의존을 금하고 fixture 판정 일치로 대조하게 정했다. Python `jsonschema` 대조는 epic 13.
   - `[false]` `[reject]` (intent-alignment) plan에 시험 이름·실행 명령이 없을 수 있음 — plan `## Verification`에 시험 파일과 명령이 있다.
 
+### 2026-10-29 — Review pass
+
+재무장(rearm) 뒤 재실행. baseline `d88398c`가 이미 구현을 담고 있어, 이번 diff는 구현 세션이 더한 시험 1건과 plan 변경뿐이다.
+
+- verdicts: 11 findings — high 0, medium 1, low 5, false 5, maybe-false 0
+- findings:
+  - `[low]` `[patch]` (blind-hunter) 새 1500ms probe 시험이 실제 실행 시간을 확인하지 않아, 즉시 끝나는 worker도 통과한다 — `apps/cli/test/daemon-supervisor.test.ts`에 attempt의 `finished_at - started_at >= 1500`(하한만) 단언을 더했다.
+  - `[low]` `[reject]` (blind-hunter) `finally`에서 `await running`이 reject하면 `fixture.close()`·`rm()`이 생략된다 — 시험이 이미 실패한 경로에서만 생기고, 옆 기존 시험과 같은 정리 패턴이다. 고치려면 중첩 `try/finally`로 구조를 더해야 한다.
+  - `[low]` `[reject]` (blind-hunter) `Auto Run Result` 삭제로 "stdout 스트림 오류 시 자식 그룹 잔존" 위험 기록이 사라졌다 — 삭제는 오케스트레이터의 재무장이 한 일이고, 고치는 길이 이 plan 편집이다. 위험은 Review Triage Log의 첫 pass 행(스토리 2)에 남아 있고, 이번 Auto Run Result의 남은 위험에도 다시 적는다.
+  - `[low]` `[reject]` (edge-case-hunter) `supervisorFixture(home)`이 실패하면 `try` 밖이라 임시 home이 남는다 — 시험 준비 실패 때만 생기는 임시 폴더 잔존이고, 기존 시험들과 같은 패턴이다. 구조를 더해야 고친다.
+  - `[low]` `[reject]` (edge-case-hunter) `running`·`fixture.close()` reject 시 이후 정리가 생략된다 — blind-hunter 둘째 지적과 같은 원인. 같은 이유로 reject.
+  - `[false]` `[reject]` (intent-alignment) 추가 시험이 probe 한 건 완료만 보고 동시 수집을 넣지 않는다 — 동시 처리는 바로 옆 기존 시험 `completes core work while a real probe runs…`가 4000ms probe 실행 중(attempt 미확정) core 일감 완료로 확인하고, 이번 실행에서 통과했다.
+  - `[false]` `[reject]` (intent-alignment) 1500ms 시험은 임대 만료 경계를 넘지 않는다 — ticket verify가 700초는 가짜 시계·가짜 프로세스 시험, 실제 자식은 "짧은 probe"로 나눴고, 700초 시험(`packages/core/test/supervisor.test.ts:71`)이 통과했다.
+  - `[medium]` `[patch]` (intent-alignment) `carried` 700초 시험의 `session_ingest`는 stub handler이고 실제 데몬 동시 시험은 `schedule_probe`를 쓴다 — 첫 pass의 "동시 수집이 stub handler의 큐 완료로만 확인됨" 행과 같은 지점·같은 주장이고, 코드는 그 행이 적은 대로(데몬 표면 `schedule_probe` 시험) 있다. 다시 patch하지 않는다.
+  - `[false]` `[reject]` (intent-alignment) 추가 시험은 token 해제만 보고 옛 token `lost`는 확인하지 않는다 — `lost`는 fake·PG 계약 case(`packages/core/src/testing/contracts/work-store.ts:37`)와 `packages/core/test/supervisor.test.ts:109`가 확인하고 둘 다 통과했다.
+  - `[false]` `[reject]` (intent-alignment) `brain queue drain`의 `process_probe` 미청구를 이번 diff가 보강하지 않는다 — 기존 `apps/cli/test/daemon-supervisor.test.ts`의 `queue drain leaves due supervised work untouched without a daemon`이 실제 CLI로 확인하고 통과했다.
+  - `[false]` `[reject]` (intent-alignment) 등록부·마이그레이션·ABI·port·감독자 실행 코드 변경이 diff에 없다 — 구현은 baseline 이전 커밋 `83bbf2d`·`93e424e`에 있고, 재무장이 baseline을 그 뒤로 옮겼다. 전체 시험이 그 구현을 돌려 통과했다.
+
+### 2026-10-29 — Review pass
+
+후속 thorough 검토. baseline은 `d88398cec0d4e7d00a72d349edbe6605e08e8eda`이며, 기존 구현과 앞선 리뷰 수정을 담은 현재 HEAD는 `35d916eaaac4abcd491fa35e583615a0ec7314cc`다. 검토 diff는 1500ms probe 시험과 plan 변경이다. 검증 공백 렌즈는 추가 지적이 없었다. 기존 판정과 같은 주장에는 `carried`를 붙였고 다시 수정하거나 deferred에 등록하지 않았다.
+
+- verdicts: 13 findings — high 0, medium 2, low 6, false 5, maybe-false 0
+- findings:
+  - `[low]` `[reject]` (blind-hunter) attempt 시간 하한이 자식 자체의 실행 시간을 직접 측정하지 않는다 — 청구와 완료 사이에는 spawn·DB 처리 시간도 포함되므로 측정 한계는 맞다. 출하 worker는 자체적으로 1000ms와 남은 500ms를 기다리며, 즉시 끝나는 회귀와 1500ms 이상의 외부 지연이 겹쳐야 잘못 통과한다. 일상에서 만나기 어려운 시험 공백에 별도 launcher 계측 구조를 더해야 하므로 기각한다.
+  - `[false]` `[reject]` (blind-hunter) 진행 시각을 종료 때만 채우는 회귀도 통과한다 — 새 시험만 보면 존재 단언이지만, 같은 파일의 `completes core work while a real probe runs…`는 `last_progress_at`을 관측한 뒤에도 attempt의 `finished_at`·`outcome`과 일감의 `completed_at`이 null임을 확인한다. 종료 때만 채우는 회귀는 이 기존 시험을 통과하지 못한다.
+  - `[low]` `[reject]` (blind-hunter) 실패한 `running`·`fixture.close()` 뒤 정리가 생략된다 — carried: 이전 pass의 같은 위치·주장이고 정리 코드는 그대로다. 시험 실패 경로에 한정되며 중첩 정리 구조를 더해야 한다는 기존 기각 판정을 유지한다.
+  - `[low]` `[reject]` (blind-hunter) Auto Run Result 삭제로 잔존 위험을 다시 적었다는 기록과 문서가 어긋난다 — carried: 이전 pass에서 같은 삭제·위험 기록을 검토했고, 해법이 plan 편집인 지적이라 기각했다. 이번 실행의 결과와 남은 위험은 아래에 기록한다.
+  - `[low]` `[reject]` (edge-case-hunter) `supervisorFixture(home)` 실패 시 임시 home이 남는다 — carried: 이전 pass와 같은 위치·주장이며 준비 실패가 try 밖인 코드도 같다. 드문 시험 준비 실패에 정리 구조를 더해야 한다는 기존 판정을 유지한다.
+  - `[low]` `[reject]` (edge-case-hunter) `running`·`fixture.close()` reject 시 후속 정리를 생략한다 — carried: 위 blind-hunter 정리 지적과 같은 원인이고 이전 pass에서도 기각했다. 재수정하지 않는다.
+  - `[medium]` `[patch]` (intent-alignment) 실제 데몬 동시 시험은 대화 수집 대신 `schedule_probe`를 확인한다 — carried: 앞선 두 pass가 기록한 같은 위치·주장이고 실제 시험도 그 기록대로다. 기존 patch 판정을 유지하되 workflow의 반복 지적 규칙에 따라 이번 실행에서 다시 수정하거나 보류 등록하지 않는다.
+  - `[medium]` `[patch]` (intent-alignment) 700초 시험의 `session_ingest`가 stub이라 실제 수집 결과를 확인하지 않는다 — carried: 바로 앞 지적과 같은 원인이며 이전 pass가 같은 stub과 `schedule_probe` 조합을 명시했다. 기존 판정을 유지하고 재수정하지 않는다. 실제 수집 결과까지 관측하지 않는 한계는 남은 위험에 명시한다.
+  - `[false]` `[reject]` (intent-alignment) 새 시험에서 700초 갱신과 두 번째 감독자 경쟁을 확인하지 않는다 — carried: 이전 판정대로 ticket verify는 가짜 시간 시험과 짧은 실제 자식 시험을 나눈다. 기존 700초 시험이 갱신 및 경쟁 청구 null을 확인하며 전체 시험에 포함되어 통과했다.
+  - `[false]` `[reject]` (intent-alignment) 새 시험에서 옛 token의 `lost`를 확인하지 않는다 — carried: 옛 token 갱신·확정과 행 불변은 fake·PG 계약 및 별도 stale-token 시험이 담당하고 이번 전체 실행에서 통과했다.
+  - `[false]` `[reject]` (intent-alignment) 새 시험에서 CLI drain의 supervised 미청구를 확인하지 않는다 — carried: 같은 파일의 `queue drain leaves due supervised work untouched without a daemon`이 실제 CLI로 확인하고 이번 실행에서도 통과했다.
+  - `[false]` `[reject]` (intent-alignment) 등록부·마이그레이션·ABI·감독자 실행 변경이 diff에 없다 — carried: 구현은 baseline보다 앞선 `83bbf2d5427d608a2625fc7ee94e3e7e0661dd89`와 `93e424ea40b04fc84a7acef21c5b8ccca0781d66`에 있다. 이번 후속 diff에 다시 없어도 구현 누락을 뜻하지 않으며 전체 시험이 현재 구현을 실행했다.
+  - `[low]` `[reject]` (intent-alignment) 1500ms 단언은 자식 수명이 아니라 attempt 수명을 잰다 — blind-hunter 첫 지적과 같은 측정 한계다. 실제 worker의 대기 구현을 확인했고, 드문 외부 지연과 회귀의 조합을 위한 계측 추가는 하지 않는다.
+
 ## Design Notes
 
 - 갱신 간격 60초(<< 임대 600초)라 갱신이 한두 번 실패해도 만료되지 않는다. 매 progress마다 쓰지 않아 DB 쓰기가 적다. 진행이 멈춘 자식은 이 스토리에서 만료 뒤 재청구될 수 있다. 정체 판정·incarnation 복구가 그 구멍을 2·5에서 막는다.
@@ -173,36 +211,24 @@ deferred:
 
 **실행 결과 (2026-10-29):** `pnpm test` 통과 — build·typecheck, 시험 파일 111개, 시험 2,745개. `git diff --check` 통과. 가짜 시간 700초·token CAS(fake/PG)·실패 종료·abort·실제 프로세스 그룹·격리 PG 데몬 probe·데몬 없는 drain 시험을 포함한다. 계획 범위 내 미완료 없음.
 
+**재검증 (2026-10-29):** 기존 구현을 계획과 대조하고 `apps/cli/test/daemon-supervisor.test.ts`에 AC 3의 정확한 1500ms probe 시험을 추가했다. 실제 데몬에서 완료·단일 `succeeded` attempt·진행 및 종료 시각·현재 token 해제를 확인한다. core 지정 4파일 246개, postgres 지정 4파일 146개, cli 지정 4파일과 `install.test.ts` 77개가 통과했다. 첫 전체 실행은 설치 시험의 DB 준비 중 연결 시간 초과 1건으로 실패했고, 해당 시험을 포함한 별도 실행과 전체 재실행은 통과했다. 최종 `pnpm test`: build·typecheck 및 111파일 2,750개 통과. 기존 deferred 3건은 그대로 후속 스토리 범위다.
+
 ## Auto Run Result
 
 Status: built
 
-**요약:** 실행 분류 등록부(`workExecutionClass`, `process_probe`만 `supervised`)와 PG 마이그레이션 0002(`work_items.execution_class`·`current_attempt_token`, `brain.work_attempts`)를 두고, WorkStore에 `claimSupervisedWork`·`renewSupervisedLease`·`finishSupervisedWork`(attempt token CAS)를 더했다. 모든 core 청구는 DB 조건과 `brain.queue.drain` handler 필터 둘 다로 `supervised` 일감을 뺀다. 데몬은 회차 루프와 따로 도는 감독자(자기 Store 하나)를 띄워 출하 probe 자식을 ABI v1 정상 경로(`progress` → `result`)로 돌리고, 60초 간격으로 임대를 갱신하며, 현재 token으로만 결과를 확정한다.
+**요약:** ticket 12.1의 기존 구현을 후속 thorough 렌즈 네 개로 검토하고 전체 시험으로 재검증했다. 새 소스·시험 수정은 없으며 검토 판정과 결과만 이 plan에 추가했다. 티켓 완료 처리는 오케스트레이터에 남겼고 `tickets.py mark`는 실행하지 않았다.
 
-**바꾼 파일:**
-- `packages/postgres/migrations/0002_supervised_attempts.sql` — 실행 분류·현재 attempt 칸과 attempt 이력 표.
-- `packages/postgres/src/migrate.ts` — `CORE_SCHEMA_VERSION = 2`.
-- `packages/postgres/src/work.ts` — supervised 세 verb, core predicate에 `execution_class = 'core'`, `ensureWork`가 분류를 채움.
-- `packages/core/src/domain/work-item.ts` — 등록부·감독자 상수·`WorkAttempt`, 재시도 대기 주석 정정.
-- `packages/core/src/ports/store.ts`·`ports/clock.ts`·`ports/process.ts`·`ports/index.ts` — 새 verb, `Timer`, `ProcessLauncher` port.
-- `packages/core/src/process-abi/codec.ts`, `packages/core/schemas/process-abi/v1/event.schema.json`, `packages/core/fixtures/process-abi/v1/cases.json`, `packages/core/package.json` — ABI v1 첫 판(schema·fixture·손으로 쓴 코덱, 배포 파일).
-- `packages/core/src/queue/supervisor.ts` — `runSupervisor`.
-- `packages/core/src/brain.ts` — drain에서 supervised handler 제외.
-- `packages/core/src/testing/fakes/{store,clock,process}.ts`, `testing/contracts/work-store.ts`, `testing/index.ts` — fake verb, `manualTime`, `fakeProcessLauncher`, 계약 case.
-- `apps/cli/src/runtime/process-group.ts`, `runtime/clock.ts` — Node 프로세스 그룹 launcher, 실제 `Timer`.
-- `apps/cli/src/workers/process-probe.ts` — 출하 probe worker.
-- `apps/cli/src/daemon/supervisor.ts`, `daemon/run.ts` — 데몬 감독자 조립과 seam.
-- `apps/cli/src/doctor/store.ts`, `runtime/brain-store.ts` — 새 verb의 불가 Store, 기대 버전 2.
-- 시험: `packages/core/test/{supervisor,process-abi,brain-drain}.test.ts`, `packages/postgres/test/{work-store,migrate}.test.ts`, `apps/cli/test/{process-group,daemon-supervisor}.test.ts`, `apps/cli/test/supervisor-fixture.ts`, `apps/cli/test/fixtures/process-worker.mjs`, 그리고 버전 1·표 목록을 고정하던 기존 시험 갱신.
+**변경 파일:** 이 plan — 후속 리뷰 13건의 개별 판정·근거, 검증 결과, 후속 리뷰 권고 및 남은 위험 기록. baseline 이후의 검토 대상에는 이미 커밋된 `apps/cli/test/daemon-supervisor.test.ts`의 실제 1500ms probe 시험도 포함된다.
 
-**리뷰 결과(thorough, 렌즈 4개, 24건):** patch 5건(갱신 성공 시 문제 상태 해제, v1→v2 업그레이드 시험, launcher 시작 실패 시험, 갱신 간격 시험, 데몬에서 probe가 도는 동안 core 일감 완료 시험). deferred 3건(정체 무기한 대기 → 스토리 5, 시도 상한 없는 재예약 → 스토리 4·5, 재청구 때 이전 attempt 미종결 → 스토리 2). reject 16건(각 이유는 Review Triage Log): `lost` 갱신 뒤 계속 실행, 줄 순회 예외 시 자식 잔존(2건), 설정·URL 한 번만 읽음(2건), 중복 result, 긴 줄, abort 직후 시작, attempt 실패 이유 칸, 그리고 false 6건(두 번째 감독자 루프, 700초 시험 token 교체, 등록부 명시, validator 대조, plan 시험 이름, attempt 칸).
+**리뷰 결과:** 실제 적용 patch 0건(high 0, medium 0, low 0), 새 deferred 0건. 기존 patch 판정의 반복 지적 2건은 같은 수집 검증 한계를 말하며 `carried`로 유지했다. 기각 11건은 시간 측정 한계 2건(드문 조합에 별도 계측 필요), 진행 시각 1건(기존 실행 중 관측 시험이 반증), 실패 경로 정리 3건(기존 기각 유지), plan 위험 기록 1건(plan 편집 지적), 계층별 검증·구현 위치 4건(기존 시험과 baseline 이전 구현이 반증)이다. 상세 근거는 이번 Review Triage Log의 각 행에 있다. 기존 deferred 목록 3건과 deferred-work ledger는 변경하지 않았다.
 
-**후속 리뷰 권고:** `false`. 이번 pass에서 patch한 항목은 medium 2건(업그레이드 시험, 데몬 동시 처리 시험)·low 3건이고 high는 0건이다. medium 2건은 모두 시험 보강이며 보강한 시험이 통과해, 이름 붙일 만한 미검증 위험이 남지 않았다.
+**후속 리뷰 권고:** `false`. 이번 실행에서 적용한 high·medium patch가 없으며 새 검증 공백 렌즈의 지적도 없다.
 
-**검증:** 구현 뒤와 patch 뒤 두 번 plan Verification을 실행했다. patch 뒤 `pnpm test` — build·typecheck·시험 파일 111개, 시험 2,749개 통과. `pnpm exec vitest run --project cli test/daemon-supervisor.test.ts` 2개 통과. I/O 행렬 6행 모두 실행된 시험이 덮는다.
+**검증:** `pnpm test` 성공 — build·typecheck, 시험 파일 111개 및 시험 2,750개 통과. 가짜 시간 700초 임대 갱신·경쟁 청구 차단, fake/PG token CAS, 실제 Node 프로세스 그룹, 실제 PG 데몬 probe 및 데몬 없는 CLI drain 시험을 포함한다. 소스·시험 수정이 없어 전체 검증을 추가 반복하지 않았다.
 
 **남은 위험:**
-- 진행이 멈춘 자식은 정체 판정이 없어 감독자를 붙잡고, 임대 만료 뒤에는 재청구될 수 있다(스토리 2·5).
-- 감독자는 시작 때 연 Store와 DB URL을 계속 쓴다. 실행 중 `.env`가 바뀌면 데몬을 다시 띄워야 반영된다.
-- stdout 스트림 오류처럼 드문 예외 경로에서는 자식 그룹을 정리하지 않고 감독자 루프가 다음 회차로 넘어간다(그룹 정리 강화는 스토리 2).
-- 구현 세션이 plan frontmatter를 스스로 `built`로 바꿨던 일이 있어 오케스트레이터가 바로잡았다(Implementation Notes).
+- 실제 대화 수집 결과의 동시 관측은 없다. 700초 시험은 `session_ingest` stub의 큐 완료를, 실제 데몬 시험은 `schedule_probe` 완료를 관측한다. 기존 반복 지적 판정에 따라 이 한계를 기록하고 재수정하지 않았다.
+- 진행을 멈춘 자식 대기, 실패 시도 상한 부재, 이전 attempt 미종료는 기존 deferred 3건의 후속 범위이며 상태를 바꾸지 않았다.
+- stdout 스트림 오류의 자식 그룹 정리와 실행 중 DB URL 변경 반영은 기존 리뷰에 남은 한계다.
+- 1500ms 하한은 자식만의 실행 시간이 아니라 청구부터 결과 확정까지의 시간이다.
