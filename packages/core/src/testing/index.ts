@@ -145,3 +145,5 @@ export { attachmentStoreContract, type AttachmentStoreSubject } from './contract
 export { extractionStoreContract, type ExtractionStoreSubject } from './contracts/extraction-store.js';
 export { fileRedactionContract, type FileRedactionSubject } from './contracts/file-redaction.js';
 export { scheduleStoreContract } from './contracts/schedule-store.js';
+
+export { sessionIngestContract, type SessionIngestSubject } from './contracts/session-store.js';

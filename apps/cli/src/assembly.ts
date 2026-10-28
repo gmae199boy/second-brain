@@ -6,6 +6,7 @@ import {
   type Clock,
   type IdGen,
   type SchemaStore,
+  type SessionIngestStore,
   type Store,
   type WorkHandlers,
 } from 'second_brain';
@@ -35,7 +36,7 @@ import { fileTranscriptReader } from './runtime/transcript.js';
  * Stories 9.4 and 9.5 extend this function and the daemon loop rather than
  * adding a third assembly.
  */
-export interface BrainAssembly {
+export interface BrainAssembly<S = Store & SchemaStore> {
   /** The configuration folder this brain belongs to (AD-18). */
   home: string;
   /** This invocation's environment, which is where the harness folders are. */
@@ -48,7 +49,8 @@ export interface BrainAssembly {
    */
   config: ReadConfigResult;
   /** Already open, at the lock budget the caller chose (AD-7). */
-  store: Store & SchemaStore;
+  store: S;
+  schemaVersion?: number;
   clock: Clock;
   idGen: IdGen;
   /** Kinds beyond Core's own. Empty for every real invocation (AD-21). */
@@ -63,7 +65,7 @@ export interface BrainAssembly {
  * (AD-9): it is one spool per invocation, so two `fileSpool` calls over the
  * same folder would be two serial counters minting the same file name.
  */
-export function brainDependencies(assembly: BrainAssembly): BrainDependencies {
+export function brainDependencies<S extends SessionIngestStore>(assembly: BrainAssembly<S>) {
   const { home, env, config, store, clock, idGen, workHandlers } = assembly;
   return {
     store,
@@ -76,7 +78,7 @@ export function brainDependencies(assembly: BrainAssembly): BrainDependencies {
     files: localFileStore({ root: config.ok ? config.config.filesPath : join(home, 'files') }),
     sources: fileSourceReader(),
     userHome: env['HOME']?.startsWith('/') === true ? env['HOME'] : null,
-    schemaVersion: SQLITE_SCHEMA_VERSION,
+    schemaVersion: assembly.schemaVersion ?? SQLITE_SCHEMA_VERSION,
     clock,
     idGen,
     // Parsers and connectors come from the same harness registry.

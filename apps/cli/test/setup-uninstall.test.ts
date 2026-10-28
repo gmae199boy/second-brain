@@ -6,7 +6,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
-import { DAEMON_LABEL, daemonPlistPath } from '../src/daemon/launchd.js';
+import { daemonLabel, daemonPlistPath } from '../src/daemon/launchd.js';
 import { withoutHarnessFolders } from './environment.js';
 import { tempHomes } from './temp-home.js';
 
@@ -55,7 +55,7 @@ it.skipIf(process.platform !== 'darwin')('uninstalls only daemon traces, waits f
   } while (Date.now() < deadline);
   expect(alive).toBe(true);
   await mkdir(join(fake, 'loaded'), { recursive: true });
-  await writeFile(join(fake, 'loaded', DAEMON_LABEL), '');
+  await writeFile(join(fake, 'loaded', daemonLabel(env)), '');
   await writeFile(join(home, 'managed-pid'), String(daemon.pid));
   await writeFile(join(home, 'log', 'daemon.log.1'), 'old log');
   await mkdir(join(home, 'files'), { recursive: true });
@@ -66,14 +66,14 @@ it.skipIf(process.platform !== 'darwin')('uninstalls only daemon traces, waits f
   const traces = ['run/daemon.pid', 'run/heartbeat', 'log/daemon.log', 'log/daemon.log.1'].map((path) => join(home, path));
   const result = await run(['setup', 'uninstall', '--json'], env);
   expect(result.code, result.stderr).toBe(0);
-  expect(JSON.parse(result.stdout).data).toMatchObject({ label: DAEMON_LABEL, plist_path: daemonPlistPath(env), unloaded: true, plist_removed: true });
+  expect(JSON.parse(result.stdout).data).toMatchObject({ label: daemonLabel(env), plist_path: daemonPlistPath(env), unloaded: true, plist_removed: true });
   await closed;
   expect(daemon.exitCode).toBe(0);
   for (const path of [...traces, daemonPlistPath(env)]) expect(existsSync(path)).toBe(false);
   expect(await Promise.all(retained.map((path) => digest(join(home, path))))).toEqual(before);
   expect(await readdir(join(home, 'files'), { recursive: true })).toEqual(files);
   const bootouts = async () => (await readFile(join(fake, 'calls'), 'utf8')).split('\n').filter((line) => line.startsWith('bootout'));
-  expect(await bootouts()).toEqual([`bootout gui/${String(process.getuid?.())}/${DAEMON_LABEL}`]);
+  expect(await bootouts()).toEqual([`bootout gui/${String(process.getuid?.())}/${daemonLabel(env)}`]);
   const second = await run(['setup', 'uninstall', '--json'], env);
   expect(second.code, second.stderr).toBe(0);
   expect(JSON.parse(second.stdout).data).toMatchObject({ unloaded: false, plist_removed: false, removed: [] });

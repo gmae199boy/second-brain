@@ -1,3 +1,4 @@
+import type { PostgresInstallResult, PostgresInstallReport } from './postgres.js';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import {
@@ -62,6 +63,7 @@ export type InstallExitCode = 0 | 1 | 2 | 3;
  * ran the moment a sentence is reworded.
  */
 export interface InstallReport {
+  postgres?: PostgresInstallReport;
   /** The configuration folder this install belongs to. */
   home: string;
   config_path: string;
@@ -272,6 +274,7 @@ export interface InstallDeps {
   log(line: string): void;
   config: InstallConfigIo;
   store: InstallStore;
+  postgres?: (home: string, urlEnv: string, env: NodeJS.ProcessEnv) => Promise<PostgresInstallResult>;
   files: InstallFiles;
   shim: InstallShim;
   installed: InstallInstalled;
@@ -523,6 +526,14 @@ export async function runInstall(
       : `이미 ${owner.name}의 것입니다`,
   );
 
+  let postgres: PostgresInstallReport | undefined;
+  if (recorded?.storeUrlEnv !== undefined) {
+    if (deps.postgres === undefined) return fail({ code: 'DB_UNAVAILABLE', message: 'PostgreSQL 설치 단계가 없습니다', exit: 1 });
+    const pg = await deps.postgres(home, recorded.storeUrlEnv, env);
+    if (!pg.ok) return fail({ code: pg.code, message: pg.message, exit: 1 });
+    postgres = pg.report;
+    deps.log(`PostgreSQL ${postgres.project}: 스키마 ${postgres.schema_version}, 적용 ${postgres.applied.length}건`);
+  }
   const filesRoot = await deps.files.prepare(filesPath);
   if (!filesRoot.ok) {
     return fail({ code: filesRoot.code, message: filesRoot.message, exit: 1 });
@@ -648,6 +659,7 @@ export async function runInstall(
     report: {
       home,
       config_path: configFilePath(home),
+      ...(postgres === undefined ? {} : { postgres }),
       store: { path: store.path, schema_version: migrated.to, applied: migrated.applied },
       owner: { name: owner.name, created: owner.created },
       files: { path: filesRoot.path, created: filesRoot.created },
@@ -748,6 +760,7 @@ function settings(
   const extra = recorded?.extra;
   return {
     timezone: recorded?.timezone,
+    storeUrlEnv: recorded?.storeUrlEnv,
     storePath,
     filesPath,
     mirrorPath,

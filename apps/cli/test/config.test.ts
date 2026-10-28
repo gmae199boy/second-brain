@@ -11,6 +11,7 @@ import {
   defaultStorePath,
   readConfig,
   readConfigForSetup,
+  postgresSecrets,
   writeConfig,
 } from '../src/config/codec.js';
 import { HOME_ENV, configFilePath, configHome, envFilePath } from '../src/config/paths.js';
@@ -683,3 +684,19 @@ describe('[update] auto', () => {
     expect(result.ok && result.warnings).toEqual([]);
   });
 });
+
+
+it.each(['""', '"NOT-A-NAME"', '42', '[]', '{ nested = "value" }', '"BRAIN_APP_PASSWORD"', '"BRAIN_POSTGRES_PASSWORD"'])(
+  'rejects invalid or reserved PG selectors consistently without changing files: %s',
+  async selector => {
+    const config = `${VALID_CONFIG}[store]\nurl_env = ${selector}\n`;
+    const home = await given({ config, env: 'KEEP="original"\n' });
+    expect(await readConfig(home)).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+    expect(await readConfigForSetup(home)).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+    const value: unknown = selector.startsWith('"') ? JSON.parse(selector) : 42;
+    expect(await writeConfig(home, { storeUrlEnv: value as string })).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+    await expect(postgresSecrets(home, 23456, value as string)).rejects.toThrow('store.url_env');
+    expect(await readFile(configFilePath(home), 'utf8')).toBe(config);
+    expect(await readFile(envFilePath(home), 'utf8')).toBe('KEEP="original"\n');
+  },
+);

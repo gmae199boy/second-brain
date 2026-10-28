@@ -44,7 +44,7 @@ const GUIDANCE = [
   'The Postgres integration tests use a real database on purpose: they are never mocked or skipped.',
   '',
   'Start Docker and run the tests again — they bring the test database up and down on their own —',
-  'or point the variable at a Postgres of your own that has pgvector installed:',
+  'or point the variable at a PostgreSQL 18 of your own:',
   '',
   // Deliberately not the compose URL: that is the database that could not be
   // started, so copying it would only fail again on the same port.

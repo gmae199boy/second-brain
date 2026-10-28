@@ -81,3 +81,8 @@ describe('checkSchema', () => {
 
 // The warning and error codes have their own file now that they live in
 // `src/codes.ts`: see `test/codes.test.ts`.
+
+
+it('preserves DB_LOCKED from the schema store',async()=>{
+  expect(await checkSchema(memorySchemaStore({result:{ok:false,code:'DB_LOCKED',message:'lock timeout'}}),1)).toEqual({ok:false,code:'DB_LOCKED',message:'lock timeout'});
+});

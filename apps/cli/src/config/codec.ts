@@ -30,6 +30,7 @@ export const KNOWN_KEYS = [
   'schema_version',
   'timezone',
   'store.path',
+  'store.url_env',
   'files.path',
   'mirror.path',
   'update.auto',
@@ -87,6 +88,7 @@ export interface BrainConfig {
   timezone: string;
   /** Absolute path of the source database file. Opened, never created (AD-20). */
   storePath: string;
+  storeUrlEnv?: string;
   /** Absolute path of the file store's root. Nothing here creates it (epic 2). */
   filesPath: string;
   /** Absolute path of the mirror folder. Nothing here creates it (epic 4). */
@@ -203,6 +205,9 @@ export async function readConfig(home: string): Promise<ReadConfigResult> {
     };
   }
 
+  const storeUrlEnv = isTable(document.store) ? document.store.url_env : undefined;
+  const selectorError = storeUrlEnvError(storeUrlEnv);
+  if (selectorError !== undefined) return { ok: false, code: 'CONFIG_INVALID', message: selectorError };
   const storePath = readPath(configPath, fields, 'store.path', defaultStorePath(home));
   if (!storePath.ok) return storePath.failure;
   const filesPath = readPath(configPath, fields, 'files.path', defaultFilesPath(home));
@@ -223,6 +228,7 @@ export async function readConfig(home: string): Promise<ReadConfigResult> {
     ok: true,
     config: {
       schemaVersion,
+      ...(storeUrlEnv === undefined ? {} : { storeUrlEnv: storeUrlEnv as string }),
       timezone,
       storePath: storePath.path,
       filesPath: filesPath.path,
@@ -284,6 +290,7 @@ export interface SetupConfig {
   timezone?: string;
   /** Absolute. A re-run offers it as the default and must never reset it. */
   storePath?: string;
+  storeUrlEnv?: string;
   /** Absolute. Nothing asks for it, so a re-run can only keep it. */
   filesPath?: string;
   /** Absolute. A re-run offers it as the default and must never reset it. */
@@ -317,8 +324,9 @@ export type ReadSetupConfigResult =
  * It answers `CONFIG_INVALID` only for the three things that make the whole
  * document unusable — it cannot be read, it is not TOML, it is not a table —
  * and for a `schema_version` that is an integer other than this version's,
- * which may well be a newer layout this build would mangle. Everything else is
- * repaired in place: the key is dropped, a `CONFIG_VALUE_RESET` warning names
+ * which may well be a newer layout this build would mangle. An invalid
+ * store.url_env also fails: dropping it would select a different database.
+ * Everything else is repaired in place: the key is dropped, a `CONFIG_VALUE_RESET` warning names
  * it and what will be written instead, and the install carries on with the
  * other values intact.
  *
@@ -383,6 +391,10 @@ export async function readConfigForSetup(home: string): Promise<ReadSetupConfigR
   }
 
   const recorded: SetupConfig = { extra: unknownKeys(fields) };
+  const storeUrlEnv = isTable(document.store) ? document.store.url_env : undefined;
+  const selectorError = storeUrlEnvError(storeUrlEnv);
+  if (selectorError !== undefined) return { ok: false, code: 'CONFIG_INVALID', message: selectorError };
+  if (storeUrlEnv !== undefined) recorded.storeUrlEnv = storeUrlEnv as string;
 
   const timezone = fields.get('timezone');
   if (timezone !== undefined) {
@@ -486,6 +498,7 @@ export interface WriteConfigInput {
   timezone?: string;
   /** Absolute. Left out means `defaultStorePath(home)`, as reading does. */
   storePath?: string;
+  storeUrlEnv?: string;
   /** Absolute. Left out means `defaultFilesPath(home)`, as reading does. */
   filesPath?: string;
   /** Absolute. Left out means `defaultMirrorPath(home)`, as reading does. */
@@ -516,6 +529,8 @@ export async function writeConfig(
   home: string,
   input: WriteConfigInput,
 ): Promise<WriteConfigResult> {
+  const selectorError = storeUrlEnvError(input.storeUrlEnv);
+  if (selectorError !== undefined) return { ok: false, code: 'CONFIG_INVALID', message: selectorError };
   const timezone = input.timezone ?? DEFAULT_TIMEZONE;
   const storePath = input.storePath ?? defaultStorePath(home);
   const filesPath = input.filesPath ?? defaultFilesPath(home);
@@ -563,7 +578,7 @@ export async function writeConfig(
         {
           schema_version: CONFIG_SCHEMA_VERSION,
           timezone,
-          store: { path: storePath },
+          store: { path: storePath, ...(input.storeUrlEnv === undefined ? {} : { url_env: input.storeUrlEnv }) },
           files: { path: filesPath },
           mirror: { path: mirrorPath },
           update: { auto: input.updateAuto ?? DEFAULT_UPDATE_AUTO },
@@ -751,4 +766,42 @@ function kindOf(value: unknown): string {
   // TOML has no other kind of value, so this is a document `smol-toml` would
   // not have produced; name it rather than print the JavaScript type's name.
   return `알 수 없는 종류의 값 ${String(value)}`;
+}
+
+function storeUrlEnvError(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    return 'store.url_env는 환경 변수 이름이어야 합니다';
+  }
+  if (value === 'BRAIN_APP_PASSWORD' || value === 'BRAIN_POSTGRES_PASSWORD') {
+    return 'store.url_env에 PostgreSQL 비밀번호용 환경 변수 이름을 사용할 수 없습니다';
+  }
+  return undefined;
+}
+
+/** Resolve secrets only when called: the process environment takes precedence, even when empty. */
+export async function resolveStoreUrl(home: string, name: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {
+  if (env[name] !== undefined) return env[name]?.trim() || undefined;
+  try { return parseEnv(await readFile(envFilePath(home), 'utf8'))[name]?.trim() || undefined; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
+}
+export async function postgresSecrets(home: string, port: number, urlEnv: string): Promise<{ adminUrl: string; appPassword: string }> {
+  const selectorError = storeUrlEnvError(urlEnv);
+  if (selectorError !== undefined) throw new Error(selectorError);
+  const { randomBytes } = await import('node:crypto');
+  let values: Record<string, string> = {};
+  try { values = Object.fromEntries(Object.entries(parseEnv(await readFile(envFilePath(home), 'utf8'))).filter((entry): entry is [string, string] => entry[1] !== undefined)); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  values['BRAIN_POSTGRES_PASSWORD'] ??= randomBytes(24).toString('hex');
+  values['BRAIN_APP_PASSWORD'] ??= randomBytes(24).toString('hex');
+  values[urlEnv] = `postgresql://brain_app:${encodeURIComponent(values['BRAIN_APP_PASSWORD'])}@127.0.0.1:${port}/brain`;
+  await mkdir(home, { recursive: true, mode: 0o700 });
+  const text = Object.entries(values).sort(([a],[b]) => a.localeCompare(b)).map(([key,value]) => {
+    const quoted = quote(value); if (quoted === undefined) throw new Error(`${key}: .env로 쓸 수 없습니다`);
+    return `${key}=${quoted}`;
+  }).join('\n') + '\n';
+  // Tighten an existing file before rewriting secrets.
+  await chmod(envFilePath(home), 0o600).catch(error => { if (error.code !== 'ENOENT') throw error; });
+  await writeFile(envFilePath(home), text, { mode: 0o600 });
+  return { adminUrl: `postgresql://postgres:${encodeURIComponent(values['BRAIN_POSTGRES_PASSWORD'])}@127.0.0.1:${port}/postgres`, appPassword: values['BRAIN_APP_PASSWORD'] };
 }

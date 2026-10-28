@@ -71,8 +71,8 @@ export function assertReadSchemaVersion(result: ReadSchemaVersionResult): void {
     return;
   }
 
-  if (result.code !== 'DB_UNAVAILABLE') {
-    fail(`an unreachable store must answer with DB_UNAVAILABLE, got ${result.code}`);
+  if (result.code !== 'DB_UNAVAILABLE' && result.code !== 'DB_LOCKED') {
+    fail(`an unreachable store must answer with DB_UNAVAILABLE or DB_LOCKED, got ${result.code}`);
   }
   assertNonEmptyString(result.message, 'a failed schema read must say why');
 }

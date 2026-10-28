@@ -1,3 +1,4 @@
+import type { SessionIngestStore } from '../ports/store.js';
 import type { SourceFileReader } from '../ports/source-file.js';
 import { brainLocator, contentHashOfBytes, externalLocator } from '../domain/file.js';
 import type { FileStore } from '../ports/file-store.js';
@@ -130,10 +131,7 @@ export const MAX_SOURCE_FILE_BYTES = 32 * 1024 * 1024;
 export interface IngestSessionDependencies {
   sources?: SourceFileReader;
   userHome?: string | null;
-  store: SessionStore &
-    UserStore &
-    TranscriptFileStore &
-    Pick<AttachmentStore, 'listMessageAttachments' | 'listRedactedContentHashes'>;
+  store: SessionIngestStore;
   /** Original attachment bytes, written before the database transaction. */
   files: FileStore;
   /**

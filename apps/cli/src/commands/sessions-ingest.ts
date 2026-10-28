@@ -4,11 +4,13 @@ import {
   type IngestSessionInput,
   type IngestSessionResult,
   type WarningCode,
+  type IngestBrain,
 } from 'second_brain';
 import type {
   CommandContextBase,
+  CommandContext,
   CommandFailure,
-  CommandSpec,
+  IngestCommandSpec,
   SpoolCommandContext,
 } from '../dispatch.js';
 import type { Harness } from '../harnesses.js';
@@ -68,7 +70,18 @@ export interface SessionsIngestData {
 
 export function sessionsIngestCommand(
   registry: readonly Harness[],
-): CommandSpec<SessionsIngestData> {
+): IngestCommandSpec<SessionsIngestData> {
+  const run = async (context: Omit<CommandContext, 'brain'> & { brain: IngestBrain }) => {
+      const payload = await readPayload(registry, context);
+      if (!payload.ok) return payload;
+
+      const result = await context.brain.sessions.ingest(payload.input);
+      if (!result.ok) {
+        return { ok: false as const, code: result.code, message: result.message };
+      }
+
+      return answer(result);
+    };
   return {
     ns: 'sessions',
     verb: 'ingest',
@@ -86,17 +99,8 @@ export function sessionsIngestCommand(
     writes: true,
     arguments: ['<harness>'],
 
-    async run(context) {
-      const payload = await readPayload(registry, context);
-      if (!payload.ok) return payload;
-
-      const result = await context.brain.sessions.ingest(payload.input);
-      if (!result.ok) {
-        return { ok: false as const, code: result.code, message: result.message };
-      }
-
-      return answer(result);
-    },
+    run,
+    runIngest: run,
 
     async spool(context: SpoolCommandContext) {
       const payload = await readPayload(registry, context);

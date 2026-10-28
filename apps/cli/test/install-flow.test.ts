@@ -1946,3 +1946,22 @@ describe('daemon restart after upgrades', () => {
     if (result.ok) expect(result.report.daemon.restarted).toBe(false);
   });
 });
+
+it('runs the configured PG stage after SQLite owner and preserves its config and report', async () => {
+  const kit=harness({recorded:true,isTTY:false});
+  const read=kit.deps.config.read;kit.deps.config.read=async home=>{const result=await read(home);return result.ok?{...result,recorded:{...result.recorded,extra:result.recorded?.extra ?? {},storeUrlEnv:'BRAIN_DATABASE_URL'}}:result;};
+  kit.deps.postgres=async(home,key)=>{
+    expect(home).toBe(HOME);expect(key).toBe('BRAIN_DATABASE_URL');
+    expect(kit.store.owned).toEqual([STORE]);
+    return {ok:true,report:{project:'second-brain-example',volume:'second-brain-pg-example',port:24567,schema_version:1,applied:['0001_initial.sql'],owner_created:true}};
+  };
+  const result=await resultOf(['--yes'],kit);expect(result.ok).toBe(true);
+  if(result.ok)expect(result.report.postgres?.schema_version).toBe(1);
+  expect(kit.written[0]?.storeUrlEnv).toBe('BRAIN_DATABASE_URL');expect(kit.installed.wrote).toHaveLength(1);
+});
+it('stops without installed.json when the configured PG stage fails',async()=>{
+  const kit=harness({recorded:true,isTTY:false});const read=kit.deps.config.read;
+  kit.deps.config.read=async home=>{const result=await read(home);return result.ok?{...result,recorded:{...result.recorded,extra:result.recorded?.extra ?? {},storeUrlEnv:'BRAIN_DATABASE_URL'}}:result;};
+  kit.deps.postgres=async()=>({ok:false,code:'DB_UNAVAILABLE',message:'OrbStack을 켜세요: compose failed'});
+  const result=await resultOf(['--yes'],kit);expect(installExit(result)).toBe(1);expect(kit.installed.wrote).toEqual([]);expect(kit.shimmed).toEqual([]);
+});

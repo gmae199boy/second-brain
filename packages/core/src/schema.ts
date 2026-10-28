@@ -15,7 +15,7 @@ export type SchemaCheck =
       found: number | null;
       expected: number;
     }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /**
  * Compare the stored schema version with the one this code was built for
@@ -29,7 +29,7 @@ export type SchemaCheck =
 export async function checkSchema(store: SchemaStore, expected: number): Promise<SchemaCheck> {
   const stored = await store.readSchemaVersion();
   if (!stored.ok) {
-    return { ok: false, code: 'DB_UNAVAILABLE', message: stored.message };
+    return { ok: false, code: stored.code, message: stored.message };
   }
 
   const found = stored.version?.version ?? null;

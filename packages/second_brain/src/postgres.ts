@@ -1,2 +1,2 @@
-// Replication adapter: opt in without loading pg on the local CLI path.
+// Collection adapter: opt in without loading pg on the SQLite CLI path.
 export * from '@second-brain/postgres';

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it } from 'vitest';
-import { DAEMON_LABEL, daemonPlistPath } from '../src/daemon/launchd.js';
+import { daemonLabel, daemonPlistPath } from '../src/daemon/launchd.js';
 import { withoutHarnessFolders } from './environment.js';
 import { tempHomes } from './temp-home.js';
 const temporary = tempHomes();
@@ -47,7 +47,7 @@ it.skipIf(process.platform !== 'darwin')('stops the resident owner, falls back t
   expect(status.alive).toBe(true);
   expect(status.commit).toBe(JSON.parse(await readFile(new URL('../dist/build.json', import.meta.url), 'utf8')).commit);
   await mkdir(join(fake, 'loaded'), { recursive: true });
-  await writeFile(join(fake, 'loaded', DAEMON_LABEL), '');
+  await writeFile(join(fake, 'loaded', daemonLabel(env)), '');
   const project = join(config, 'projects', '-demo');
   await mkdir(project, { recursive: true });
   await writeFile(join(project, '4f1e7a90-1c2b-4d3e-8f55-000000000000.jsonl'), await readFile(new URL('../../../packages/claude-code/test/fixtures/two-turns.jsonl', import.meta.url)));
@@ -71,7 +71,7 @@ it.skipIf(process.platform !== 'darwin')('stops the resident owner, falls back t
     expect(JSON.parse((await run(['daemon', 'start', '--json'], env)).stdout).data.status).toBe('started');
     expect(JSON.parse((await run(['daemon', 'start', '--json'], env)).stdout).data.status).toBe('already-loaded');
     const calls = await readFile(join(fake, 'calls'), 'utf8');
-    expect(calls).toContain(`bootout gui/${String(process.getuid?.())}/${DAEMON_LABEL}`);
+    expect(calls).toContain(`bootout gui/${String(process.getuid?.())}/${daemonLabel(env)}`);
     expect(calls.split('\n').filter((line) => line.startsWith('bootstrap'))).toHaveLength(callsBefore.length + 1);
     expect(calls).toContain(`bootstrap gui/${String(process.getuid?.())} ${daemonPlistPath(env)}`);
     const missing = await run(['daemon', 'start', '--json'], { ...env, SECOND_BRAIN_LAUNCH_AGENTS: join(home, 'missing') });

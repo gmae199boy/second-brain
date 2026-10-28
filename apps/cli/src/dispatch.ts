@@ -6,9 +6,12 @@ import {
   SQLITE_SCHEMA_VERSION,
   checkSchema,
   createBrain,
+  createIngestBrain,
+  type IngestBrain,
   encodeHookLine,
   encodeTextLine,
   errorLine,
+  isWarningCode,
   spoolSessionIngest,
   sqliteStore,
   type Brain,
@@ -26,7 +29,7 @@ import {
   type WorkHandlers,
 } from 'second_brain';
 import { brainDependencies } from './assembly.js';
-import { readConfig, type BrainConfig } from './config/codec.js';
+import { resolveStoreUrl, readConfig, type BrainConfig } from './config/codec.js';
 import { configHome } from './config/paths.js';
 import { failedConfigStore } from './doctor/store.js';
 import { uuidV7IdGen } from './runtime/id-gen.js';
@@ -115,10 +118,10 @@ export interface CommandContext extends CommandContextBase {
  */
 export interface SpoolCommandContext extends CommandContextBase {
   /**
-   * Why the guard refused. Both are warning codes as well, so the envelope
-   * names them in `warnings[]` beside `SPOOLED` (Conventions).
+   * Why the guard refused. The spool keeps this cause; shared warning codes
+   * also appear beside `SPOOLED` in the envelope (Conventions).
    */
-  cause: 'SCHEMA_MISMATCH' | 'DB_UNAVAILABLE';
+  cause: 'SCHEMA_MISMATCH' | 'DB_UNAVAILABLE' | 'DB_LOCKED';
   /** What the guard said, for a branch that wants to pass it on. */
   message: string;
   /**
@@ -277,6 +280,7 @@ export interface CommandSpecBase extends CommandMeta {
 /** A command that talks to the brain, which is nearly all of them. */
 export interface DatabaseCommandSpec<T = unknown> extends CommandSpecBase {
   standalone?: false;
+  runIngest?: (context: Omit<CommandContext, 'brain'> & { brain: IngestBrain }) => Promise<CommandOutcome<T>>;
   /**
    * This command writes to the database, so the dispatcher compares the stored
    * schema version with `SQLITE_SCHEMA_VERSION` first and does not call `run`
@@ -335,6 +339,9 @@ export interface StandaloneCommandSpec<T = unknown> extends CommandSpecBase {
 }
 
 /** A command, as the registry holds it. */
+export type IngestCommandSpec<T = unknown> = DatabaseCommandSpec<T> & {
+  runIngest: (context: Omit<CommandContext, 'brain'> & { brain: IngestBrain }) => Promise<CommandOutcome<T>>;
+};
 export type CommandSpec<T = unknown> = DatabaseCommandSpec<T> | StandaloneCommandSpec<T>;
 
 /**
@@ -561,6 +568,26 @@ async function execute(
     ? config.warnings.map((warning) => `경고: ${warning.message}`)
     : [];
 
+  if (spec.runIngest !== undefined && config.ok && config.config.storeUrlEnv !== undefined) {
+    const pg = await import('second_brain/postgres');
+    const databaseUrl = await resolveStoreUrl(home, config.config.storeUrlEnv, env).catch(() => undefined);
+    // An empty URL is an unavailable source; do not let pg fall back to PGHOST or local defaults.
+    const store = pg.postgresStore({ databaseUrl: databaseUrl ?? 'postgresql://invalid@127.0.0.1:1/unavailable',
+      connectTimeoutMs: BUSY_TIMEOUT_MS.turn, lockTimeoutMs: BUSY_TIMEOUT_MS.turn, queryTimeoutMs: BUSY_TIMEOUT_MS.turn + 1000, applicationName: 'second-brain-hook' });
+    const dependencies = brainDependencies({ home, env, config, store, clock, idGen, workHandlers, schemaVersion: pg.CORE_SCHEMA_VERSION });
+    try {
+      const schema = await checkSchema(store, pg.CORE_SCHEMA_VERSION);
+      if (!schema.ok) {
+        if (spec.spool !== undefined) return finish(rendering, await spec.spool({ clock, options, args, stdin, recordHookArrival,
+          cause: schema.code, message: schema.message,
+          spoolIngest: (input, cause) => spoolSessionIngest({ spool: dependencies.spool, clock, idGen }, input, cause),
+        }), warningCodes, warningLines);
+        return failed(rendering, { code: schema.code, message: schema.message }, warningCodes, warningLines);
+      }
+      return finish(rendering, await spec.runIngest({ brain: createIngestBrain(dependencies), config: config.config, clock, options, args, stdin, recordHookArrival }), warningCodes, warningLines);
+    } finally { await store.close(); }
+  }
+
   // The file is opened, never created: a runtime command that made an empty
   // database would report a healthy brain to somebody who has not installed one
   // (AD-20). A hook on the critical path of a turn gets the shorter lock budget,
@@ -628,7 +655,7 @@ async function execute(
         return failed(
           rendering,
           { code: schema.code, message: schema.message },
-          [...warningCodes, schema.code],
+          [...warningCodes, ...(isWarningCode(schema.code) ? [schema.code] : [])],
           warningLines,
         );
       }
@@ -686,7 +713,7 @@ async function execute(
  * built.
  */
 function shouldDrain(
-  spec: DatabaseCommandSpec,
+  spec: DatabaseCommandSpec | IngestCommandSpec,
   hasConfig: boolean,
   outcome: CommandOutcome<unknown>,
 ): boolean {

@@ -196,7 +196,7 @@ export type ReadSessionResult =
   | ({ ok: true } & SessionContents)
   | {
       ok: false;
-      code: 'SESSION_NOT_FOUND' | 'DB_UNAVAILABLE';
+      code: 'SESSION_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED';
       message: string;
     };
 
@@ -207,7 +207,7 @@ export type ReadSessionResult =
  */
 export type FindSessionResult =
   | { ok: true; session: Session | null }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 export interface FillSessionTagsInput {
   key: SessionKey;
@@ -385,7 +385,7 @@ export type EnsureSelfUserResult =
  */
 export type ReadSelfUserResult =
   | { ok: true; user: User | null }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /**
  * The identity capability: who this brain belongs to. It is a capability of
@@ -774,7 +774,7 @@ export type Store = HealthStore &
  */
 export type ReadSchemaVersionResult =
   | { ok: true; version: SchemaVersion | null }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /**
  * The schema-version capability of the persistence port. A capability of its
@@ -801,7 +801,7 @@ export interface MessageAttachment {
 }
 export interface LinkAttachmentsInput { key: SessionKey; attachments: readonly IngestAttachment[]; linkedAt: Date }
 export type LinkAttachmentsResult = { ok: true; linked: number } | { ok: false; code: 'SESSION_NOT_FOUND' | 'MESSAGE_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
-export type ListMessageAttachmentsResult = { ok: true; attachments: readonly MessageAttachment[] } | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+export type ListMessageAttachmentsResult = { ok: true; attachments: readonly MessageAttachment[] } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface MissingFileName {
   fileId: string;
   nameSource: 'attachment_name' | 'location_path';
@@ -915,7 +915,7 @@ export type ReadFileSharingResult =
  */
 export type ListRedactedContentHashesResult =
   | { ok: true; hashes: readonly string[] }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /** What one file's masking is planned against, inside the write transaction. */
 export interface RedactFileCurrent {
@@ -1362,3 +1362,9 @@ export interface FireScheduleInput {
   now: Date;
 }
 export type FireScheduleResult = { ok: true; fired: true; created: boolean } | { ok: true; fired: false } | ScheduleStoreFailure;
+
+/** Persistence used by one session collection, without queue or query capabilities. */
+export type SessionIngestStore = Pick<SessionStore, 'findSession' | 'ensureSession' | 'ingest' | 'readSession'>
+  & Pick<UserStore, 'readSelfUser'>
+  & Pick<TranscriptFileStore, 'recordTranscriptFile'>
+  & Pick<AttachmentStore, 'listMessageAttachments' | 'listRedactedContentHashes'>;

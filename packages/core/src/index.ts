@@ -235,3 +235,6 @@ export {
 
 export * from './queue/schedule-tick.js';
 export * from './queue/schedule-probe-work.js';
+
+export { createIngestBrain, type IngestBrain } from './brain.js';
+export type { SessionIngestStore } from './ports/store.js';

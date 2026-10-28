@@ -49,6 +49,7 @@ import {
 } from './queue/drain.js';
 import {
   ingestSession,
+  type IngestSessionDependencies,
   type IngestSessionInput,
   type IngestSessionResult,
 } from './sessions/ingest.js';
@@ -368,7 +369,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     },
     sessions: {
       ingest: async (input) => {
-        const result = await ingestSession(ingestDependencies, input);
+        const result = await createIngestBrain(ingestDependencies).sessions.ingest(input);
         if (result.ok && !result.spooled) {
           try {
             const failures = await store.listFailures({ targetKind: 'session', stage: SESSION_INGEST_KIND });
@@ -515,3 +516,8 @@ const EMPTY_QUEUE_REPORT = {
   lost: 0,
   spooled: 0,
 } as const;
+
+export type IngestBrain = { sessions: BrainSessions };
+export function createIngestBrain(dependencies: IngestSessionDependencies): IngestBrain {
+  return { sessions: { ingest: input => ingestSession(dependencies, input) } };
+}

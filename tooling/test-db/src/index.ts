@@ -21,14 +21,11 @@ export {
  * and `apps/cli`. It lives outside the six architecture packages on purpose:
  * it is tooling, not part of the shipped surface.
  */
-export interface TestDatabaseOptions {
-  /** Install the vector extension in the new database. Defaults to `true`. */
-  installVector?: boolean;
-}
-
 export interface TestDatabase {
-  /** Connection URL of the freshly created, vector-enabled database. */
+  /** Connection URL of the freshly created, isolated database. */
   url: string;
+  /** Runtime role URL; call setup preparation before using it. */
+  appUrl: string;
   /** Run one statement against this database, for arranging state a test needs. */
   query(text: string): Promise<void>;
   /**
@@ -73,11 +70,9 @@ export function requireAdminDatabaseUrl(): string {
 }
 
 /**
- * Create a throwaway `brain_test_<random>` database, with the vector extension
- * installed unless asked otherwise, and hand back its URL plus the way to drop it.
+ * Create a throwaway `brain_test_<random>` database,  and hand back its URL plus the way to drop it.
  */
-export async function createTestDatabase(options: TestDatabaseOptions = {}): Promise<TestDatabase> {
-  const { installVector = true } = options;
+export async function createTestDatabase(): Promise<TestDatabase> {
   const adminUrl = requireAdminDatabaseUrl();
   const name = `brain_test_${randomBytes(6).toString('hex')}`;
 
@@ -86,19 +81,11 @@ export async function createTestDatabase(options: TestDatabaseOptions = {}): Pro
   });
 
   const url = replaceDatabase(adminUrl, name);
-  if (installVector) {
-    const client = new pg.Client({ connectionString: url });
-    await client.connect();
-    try {
-      await client.query('create extension if not exists vector');
-    } finally {
-      await client.end();
-    }
-  }
 
   let dropped = false;
   return {
     url,
+    appUrl: (() => { const app = new URL(url); app.username = 'brain_app'; app.password = 'brain-test-app'; return app.toString(); })(),
     async query(text) {
       const client = new pg.Client({ connectionString: url });
       await client.connect();

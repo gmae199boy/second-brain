@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
   copyFileSync,
@@ -254,7 +255,7 @@ describe('the plugin SessionStart hook', () => {
     expect(log()).toContain('기다리는 동안 새 빌드 데몬을 확인하지 못했습니다');
     // The installer logs the DAEMON_NOT_RESTARTED explanation without a code or prefix.
     expect(log()).toContain('데몬을 새 빌드로 다시 띄우지 못해 옛 빌드가 계속 돌 수 있습니다.');
-    const label = 'io.github.gmae199boy.second-brain.daemon';
+    const label = `io.github.gmae199boy.second-brain.daemon.${createHash('sha256').update(home).digest('hex').slice(0,12)}`;
     const calls = readFileSync(join(root, 'launchctl', 'calls'), 'utf8').split('\n');
     expect(calls.filter((line) => line === `kill SIGTERM gui/${String(process.getuid?.())}/${label}`)).toHaveLength(1);
     expect(calls.filter((line) => line.startsWith('bootstrap '))).toHaveLength(1);

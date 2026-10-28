@@ -6,23 +6,27 @@ export interface ConnectionOptions {
   /** Postgres connection URL. */
   databaseUrl: string;
   /**
-   * Budget for connecting, and for each query unless the caller sets
-   * `queryTimeoutMs`, before giving up.
+   * Budget for connecting; also the default lock wait budget. Statement and
+   * client query deadlines follow it with grace periods.
    */
   connectTimeoutMs?: number;
 }
 
-/** Default budget for a connect, and for a query when nothing overrides it. */
+/** Default budget for connecting and waiting on a database lock. */
 export const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
 
 /** `createPool` input: a connection plus how long one query may take. */
 export interface CreatePoolOptions extends ConnectionOptions {
   /**
-   * Per-query budget. Defaults to `connectTimeoutMs`; `0` means no limit, for
+   * Server statement budget, extended past lockTimeoutMs when necessary.
+   * The client deadline adds a grace period for the server error to arrive.
+   * Defaults to one second past `connectTimeoutMs`; `0` means no limit, for
    * callers whose queries may legitimately block (a migration waiting on the
    * advisory lock) or run long (a statement that builds an index).
    */
   queryTimeoutMs?: number;
+  lockTimeoutMs?: number;
+  applicationName?: string;
 }
 
 /**
@@ -35,14 +39,29 @@ export function createPool(options: CreatePoolOptions): Pool {
   const {
     databaseUrl,
     connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS,
-    queryTimeoutMs = connectTimeoutMs,
+    lockTimeoutMs = connectTimeoutMs,
+    queryTimeoutMs = lockTimeoutMs + 1000,
   } = options;
+
+  // Let PostgreSQL report 55P03 before statement cancellation, and let either
+  // server error arrive before the client abandons the response. Zero retains
+  // the migration runner's unlimited statement/client deadline.
+  const statementTimeoutMs = queryTimeoutMs === 0 ? 0 : Math.max(queryTimeoutMs, lockTimeoutMs + 1000);
+  const clientTimeoutMs = statementTimeoutMs === 0 ? 0 : statementTimeoutMs + 1000;
 
   const pool = new pg.Pool({
     connectionString: databaseUrl,
     connectionTimeoutMillis: connectTimeoutMs,
-    query_timeout: queryTimeoutMs,
+    query_timeout: clientTimeoutMs,
     max: 1,
+    options: `-c lock_timeout=${lockTimeoutMs} -c statement_timeout=${statementTimeoutMs} -c timezone=UTC`,
+    application_name: options.applicationName ?? 'second-brain',
+    types: { getTypeParser(oid, format) {
+      // Port timestamps are canonical strings; never mutate pg's process globals.
+      if (oid === 1184 && format !== 'binary') return (value: string) => new Date(value).toISOString();
+      if (oid === 20 && format !== 'binary') return Number;
+      return pg.types.getTypeParser(oid, format);
+    } },
   });
   // An idle client that dies must not take the process down with it.
   pool.on('error', () => {});
@@ -71,4 +90,14 @@ export function describe(error: unknown): string {
 
 function innerMessage(inner: unknown): string {
   return inner instanceof Error ? inner.message : String(inner);
+}
+
+/** Raw SQL only; no adapter-owned model is exposed across the port. */
+export type PgSchema = Record<string, never>;
+export interface PgConnection { db: import('kysely').Kysely<PgSchema> }
+export type PgConnect = () => { ok: true; connection: PgConnection } | { ok: false; message: string };
+
+export function databaseFailure(error: unknown): { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string } {
+  const code = (error as { code?: string } | null)?.code;
+  return { ok: false, code: code === '55P03' || code === '40P01' ? 'DB_LOCKED' : 'DB_UNAVAILABLE', message: describe(error) };
 }

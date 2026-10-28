@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { installPostgres } from './install/postgres.js';
 import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { cancel, confirm, isCancel, multiselect, text, type Option } from '@clack/prompts';
@@ -151,6 +152,7 @@ export class Cancelled extends Error {
 /** The real world, in one place, so the tests can replace all of it. */
 export function systemInstallDeps(): InstallDeps {
   return {
+    postgres: (home, urlEnv, env) => installPostgres({ home, urlEnv, env, clock: { now: () => new Date() } }),
     prompts: clackPrompts(),
     // Both ends have to be a terminal: a question needs an answer and a place
     // to be read. Anything else counts as not interactive at all.
