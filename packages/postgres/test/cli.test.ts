@@ -114,3 +114,68 @@ it('refuses settings commands in a SQLite home and preserves schema mismatch err
   expect(result.code).toBe(2);
   expect(JSON.parse(result.stdout)).toMatchObject({ ok:false,error:{code:'CONFIG_INVALID',message:expect.stringContaining('PostgreSQL')} });
 });
+
+it('spools the built hook within the turn connect budget when the database never answers', async () => {
+  const { createServer } = await import('node:net');
+  const { CONNECT_TIMEOUT_MS } = await import('@second-brain/core');
+  const sockets = new Set<import('node:net').Socket>();
+  const listener = createServer(socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
+  await new Promise<void>(resolve => listener.listen(0, '127.0.0.1', resolve));
+  const address = listener.address();
+  if (address === null || typeof address === 'string') throw new Error('no listener port');
+  try {
+    const kit = await world();
+    const started = Date.now();
+    const result = await kit.hook({ BRAIN_DATABASE_URL: `postgresql://unused@127.0.0.1:${address.port}/unavailable` });
+    expect(Date.now() - started).toBeLessThan(CONNECT_TIMEOUT_MS.turn + 3000);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, data: { spooled: true }, warnings: expect.arrayContaining(['SPOOLED', 'DB_UNAVAILABLE']) });
+    expect((await readdir(join(kit.home, 'spool'))).filter(n => n.endsWith('.jsonl'))).toHaveLength(1);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>(resolve => listener.close(() => resolve()));
+  }
+});
+
+it('drains the spooled hook into PG once the database is back', async () => {
+  const kit = await world();
+  expect(JSON.parse((await kit.hook({ BRAIN_DATABASE_URL: 'postgresql://unused@127.0.0.1:1/unavailable' })).stdout).data.spooled).toBe(true);
+  const drained = await run(['queue', 'drain', '--json'], kit.env);
+  expect(drained.code, drained.stdout + drained.stderr).toBe(0);
+  expect(JSON.parse(drained.stdout).ok).toBe(true);
+  expect(await kit.db.rows("select harness_session_id from brain.sessions")).toEqual([{ harness_session_id: 'pg-hook' }]);
+  expect((await kit.db.rows('select * from brain.messages')).length).toBeGreaterThan(0);
+  expect((await readdir(join(kit.home, 'spool'))).filter(n => n.endsWith('.jsonl') || n.endsWith('.claiming'))).toEqual([]);
+  const sqlite = new DatabaseSync(join(kit.home, 'brain.db'), { readOnly: true });
+  try { expect(sqlite.prepare('select count(*) as n from sessions').get()).toEqual({ n: 0 }); } finally { sqlite.close(); }
+});
+
+it('opportunistically drains the spooled hook into PG after failures list', async () => {
+  const kit = await world();
+  expect(JSON.parse((await kit.hook({ BRAIN_DATABASE_URL: 'postgresql://unused@127.0.0.1:1/unavailable' })).stdout).data.spooled).toBe(true);
+  const drained = await run(['failures', 'list', '--json'], kit.env);
+  expect(drained.code, drained.stdout + drained.stderr).toBe(0);
+  expect(JSON.parse(drained.stdout).ok).toBe(true);
+  expect(await kit.db.rows("select harness_session_id from brain.sessions")).toEqual([{ harness_session_id: 'pg-hook' }]);
+  expect((await kit.db.rows('select * from brain.messages')).length).toBeGreaterThan(0);
+  expect((await readdir(join(kit.home, 'spool'))).filter(n => n.endsWith('.jsonl') || n.endsWith('.claiming'))).toEqual([]);
+  const sqlite = new DatabaseSync(join(kit.home, 'brain.db'), { readOnly: true });
+  try { expect(sqlite.prepare('select count(*) as n from sessions').get()).toEqual({ n: 0 }); } finally { sqlite.close(); }
+});
+
+it('answers commands with DB_UNAVAILABLE without the brain schema and SCHEMA_MISMATCH on another core version', async () => {
+  const kit = await world();
+  await kit.db.query("insert into brain.schema_migrations(owner,version,name,checksum,applied_at) values ('garmin',99,'extension','a','2026-01-01T00:00:00Z')");
+  expect((await run(['queue','drain','--json'], kit.env)).code).toBe(0);
+  await kit.db.query("update brain.schema_migrations set version=2 where owner='core'");
+  const mismatch = await run(['queue','drain','--json'], kit.env);
+  expect(mismatch.code).toBe(1);
+  expect(JSON.parse(mismatch.stdout)).toMatchObject({ ok: false, error: { code: 'SCHEMA_MISMATCH', message: expect.stringContaining('core') } });
+  expect(JSON.parse(mismatch.stdout).error.message).toMatch(/2.*1/);
+  await kit.db.query('drop schema brain cascade');
+  for (const args of [['queue','drain'], ['failures','list']]) {
+    const result = await run([...args, '--json'], kit.env);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, error: { code: 'DB_UNAVAILABLE' } });
+  }
+});

@@ -388,7 +388,7 @@ describe('failures.retry', () => {
     expect(states.snapshot().workItems.map((item) => item.targetId)).toEqual(['file-readable']);
   });
 
-  it('파일의 상태를 읽을 수 없으면 그 코드로 멈춘다', async () => {
+  it.each(['DB_UNAVAILABLE', 'DB_LOCKED'] as const)('파일의 상태를 읽을 수 없으면 %s로 멈춘다', async code => {
     const store = await holding(
       failure({
         id: '01940000-0000-7000-8000-0000000000e4',
@@ -401,13 +401,13 @@ describe('failures.retry', () => {
     const unreadable: MemoryStore = {
       ...store,
       async readFileExtractionState() {
-        return { ok: false, code: 'DB_UNAVAILABLE', message: '파일을 열 수 없습니다' };
+        return { ok: false, code, message: '파일을 열 수 없습니다' };
       },
     };
 
     expect(await retryFailures(retryDependencies(unreadable))).toMatchObject({
       ok: false,
-      code: 'DB_UNAVAILABLE',
+      code,
     });
     expect(unreadable.snapshot().workItems).toEqual([]);
   });

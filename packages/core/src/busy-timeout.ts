@@ -19,3 +19,10 @@ export const BUSY_TIMEOUT_MS = {
 
 /** The calling paths that have a budget of their own. */
 export type BusyTimeoutPath = keyof typeof BUSY_TIMEOUT_MS;
+
+/** Connection deadlines belong to the calling path, independently of lock waits. */
+export const CONNECT_TIMEOUT_MS = {
+  turn: 1000,
+  command: 5000,
+  drain: 5000,
+} as const;

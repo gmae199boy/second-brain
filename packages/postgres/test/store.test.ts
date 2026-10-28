@@ -1,7 +1,7 @@
 import { checkSchema } from '@second-brain/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import pg from 'pg';
-import { sessionRedactionContract, fileRedactionContract, schemaStoreContract, storeContract, sessionIngestContract, userStoreContract, sampleEnsureSessionInput, sampleSelfUserInput, sampleIngestBatch, sampleSessionToken, sampleTranscriptFileInput, sampleCheckoutInput, sampleSessionKey, sessionMetadataContract, transcriptFileStoreContract } from '@second-brain/core/testing';
+import { sessionRedactionContract, fileRedactionContract, schemaStoreContract, storeContract, sessionIngestContract, userStoreContract, sampleEnsureSessionInput, sampleSchemaVersions, sampleSelfUserInput, sampleIngestBatch, sampleSessionToken, sampleTranscriptFileInput, sampleCheckoutInput, sampleSessionKey, sessionMetadataContract, transcriptFileStoreContract } from '@second-brain/core/testing';
 import { postgresStore } from '../src/index.js';
 import { database, subject } from './fixture.js';
 import type { TestDatabase } from '@second-brain/test-db';
@@ -44,7 +44,7 @@ it('rejects invalid workspace FK and returns unavailable for a missing schema', 
   const db = await database(); databases.push(db);
   await expect(db.query("insert into brain.projects(id,remote_identity,identity_key,workspace_id) values ('00000000-0000-7000-8000-000000000001','a','a','00000000-0000-7000-8000-000000000002')")).rejects.toThrow();
   await db.query('drop schema brain cascade'); const store = postgresStore({ databaseUrl: db.appUrl });
-  try { expect(await store.readSchemaVersion()).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' }); expect(await store.findSession(sampleEnsureSessionInput().key)).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' }); }
+  try { expect(await store.readSchemaVersions()).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' }); expect(await store.findSession(sampleEnsureSessionInput().key)).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' }); }
   finally { await store.close(); }
 });
 it.each([{ connectTimeoutMs: 200 }, { connectTimeoutMs: 200, lockTimeoutMs: 200, queryTimeoutMs: 200 }])('classifies a session advisory lock timeout before other deadlines: %j', async timeouts => {
@@ -70,7 +70,7 @@ it.each(['brain.sessions','brain.users','brain.message_attachments','brain.files
       'brain.users':()=>store.readSelfUser(),
       'brain.message_attachments':()=>store.listMessageAttachments(sampleEnsureSessionInput().id),
       'brain.files':()=>store.listRedactedContentHashes(['sha256:'+ 'a'.repeat(64)]),
-      'brain.schema_migrations':()=>checkSchema(store,1),
+      'brain.schema_migrations':()=>checkSchema(store,{ core: 1 }),
     };
     expect(await reads[table]!()).toMatchObject({ok:false,code:'DB_LOCKED'});
   } finally {await blocker.query('rollback');await blocker.end();await store.close();}
@@ -253,7 +253,7 @@ it('fillSessionTags uses the same session advisory lock as ingest', async () => 
   } finally { await blocker.query('rollback'); await blocker.end(); await store.close(); }
 });
 
-it.each(['brain.sessions', 'brain.transcript_files', 'brain.work_items'])('maps read lock failures on %s to DB_UNAVAILABLE without changing the port', async table => {
+it.each(['brain.sessions', 'brain.transcript_files', 'brain.work_items', 'brain.failures'])('maps read lock failures on %s to DB_LOCKED', async table => {
   const db = await database(); databases.push(db);
   const store = postgresStore({ databaseUrl: db.appUrl, lockTimeoutMs: 40, queryTimeoutMs: 1000 });
   const blocker = new pg.Client({ connectionString: db.url }); await blocker.connect();
@@ -265,7 +265,31 @@ it.each(['brain.sessions', 'brain.transcript_files', 'brain.work_items'])('maps 
       () => store.listIdentityCandidates(), () => store.countUntaggedSessions(),
     ] : table === 'brain.transcript_files' ? [
       () => store.listTranscriptFiles({ harness: 'demo' }),
+    ] : table === 'brain.failures' ? [
+      () => store.listFailures({ includeResolved: false }),
     ] : [() => store.listOpenWorkTargets({ kind: 'session_identity' })];
-    for (const read of reads) expect(await read()).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+    for (const read of reads) expect(await read()).toMatchObject({ ok: false, code: 'DB_LOCKED' });
   } finally { await blocker.query('rollback'); await blocker.end(); await store.close(); }
+});
+
+it('reads the highest migration version for every owner', async () => {
+  const db = await database(); databases.push(db);
+  await db.query("insert into brain.schema_migrations(owner,version,name,checksum,applied_at) values ('garmin',1,'first','a','2026-01-03T00:00:00Z'),('garmin',3,'third','b','2026-01-02T00:00:00Z')");
+  const store = postgresStore({ databaseUrl: db.appUrl });
+  try {
+    const versions = await store.readSchemaVersions();
+    expect(versions.ok && Object.keys(versions.versions)).toEqual(['core', 'garmin']);
+    expect(versions).toMatchObject({ ok: true, versions: { core: { version: 1 }, garmin: { version: 3, appliedAt: new Date('2026-01-02T00:00:00Z') } } });
+    expect(await checkSchema(store, { core: 1, garmin: 3 })).toMatchObject({ ok: true });
+    expect(await checkSchema(store, { core: 1 })).toMatchObject({ ok: true });
+  } finally { await store.close(); }
+});
+
+describe('schema owner maxima contract', () => {
+  for (const test of schemaStoreContract(sampleSchemaVersions())) it(test.name, () => test.run(async () => {
+    const db = await database();
+    await db.query("insert into brain.schema_migrations(owner,version,name,checksum,applied_at) values ('garmin',1,'first','a','2026-01-01T00:00:00Z'),('garmin',3,'third','b','2026-01-02T00:00:00Z')");
+    const store = postgresStore({ databaseUrl: db.appUrl });
+    return { ...store, async close() { await store.close(); await db.drop(); } };
+  }));
 });

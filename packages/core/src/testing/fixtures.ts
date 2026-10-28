@@ -356,3 +356,8 @@ export function sampleIngestBatch(
     toolNotes,
   };
 }
+
+/** A core baseline plus an extension with several applied migrations. */
+export function sampleSchemaVersions(): import('../schema.js').SchemaVersions {
+  return { core: 1, garmin: 3 };
+}

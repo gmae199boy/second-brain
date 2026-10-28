@@ -374,10 +374,10 @@ describe('the migration this package ships', () => {
     const path = await migratedPath();
     const store = sqliteStore({ path });
     try {
-      const stored = await store.readSchemaVersion();
+      const stored = await store.readSchemaVersions();
       expect(stored.ok).toBe(true);
       if (!stored.ok) return;
-      expect(stored.version?.version).toBe(SQLITE_SCHEMA_VERSION);
+      expect(stored.versions['core']?.version).toBe(SQLITE_SCHEMA_VERSION);
 
       const health = await store.checkHealth();
       expect(health.ok).toBe(true);

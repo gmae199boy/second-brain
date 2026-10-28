@@ -139,6 +139,22 @@ it('returns DB_LOCKED when an extraction write outlasts lock_timeout, then appli
   expect(await store.finishExtraction(finish())).toMatchObject({ ok: true, current: true });
   expect(await store.finishExtraction(finish())).toMatchObject({ ok: false, code: 'EXTRACTION_CLOSED' });
 });
+it.each(['readFileSharing', 'readFileExtractionState'] as const)('returns DB_LOCKED from %s on a table lock and reads normally after release', async verb => {
+  const { db, store } = await fixture({ lockTimeoutMs: 40, queryTimeoutMs: 1000 });
+  const read = () => verb === 'readFileSharing'
+    ? store.readFileSharing({ fileId: id(1) })
+    : store.readFileExtractionState(id(1));
+  const before = await read();
+  expect(before).toMatchObject({ ok: true });
+  const held = new pg.Client({ connectionString: db.url }); await held.connect();
+  cleanup.push(() => held.end());
+  await held.query('begin');
+  try {
+    await held.query('lock table brain.files in access exclusive mode');
+    expect(await read()).toMatchObject({ ok: false, code: 'DB_LOCKED' });
+  } finally { await held.query('rollback'); }
+  expect(await read()).toEqual(before);
+});
 it('answers DB_UNAVAILABLE from attachment and extraction verbs when the brain schema is missing', async () => {
   const { db, store, begin } = await fixture(); await db.query('drop schema brain cascade');
   const results = await Promise.all([

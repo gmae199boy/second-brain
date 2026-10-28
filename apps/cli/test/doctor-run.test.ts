@@ -206,7 +206,7 @@ describe('brain doctor run', () => {
     expect(checks[0]?.detail).toMatch(/^\d+\./);
     const found = byId(envelope);
     expect(found.get('wal')?.detail).toBe('wal');
-    expect(found.get('schema-version')?.detail).toBe(String(SQLITE_SCHEMA_VERSION));
+    expect(found.get('schema-version')?.detail).toBe(`\`core\`: ${SQLITE_SCHEMA_VERSION}`);
     expect(found.get('config')?.detail).toBe(configFilePath(home));
     expect(found.get('shim')?.detail).toBe(shimPath(home));
     expect(found.get('node-version')?.detail).toContain(process.versions.node);

@@ -35,7 +35,7 @@ async function fixture(body = `${control} ${secret} next`, options = {}, externa
   const moving = { now: () => currentTime };
   const drain = () => drainQueue({ store, spool: memorySpool(), clock: moving, idGen: ids },
     { budgetMs: 5000, handlers: { [TABLE_CLEANUP_KIND]: tableCleanupHandler({ maintenance }) } });
-  const doctor = async () => (await runDoctor(store, { store, clock: moving, schemaVersion: 1 })).checks.find(c => c.id === 'redaction_cleanup');
+  const doctor = async () => (await runDoctor(store, { store, clock: moving, schemaVersions: { core: 1 } })).checks.find(c => c.id === 'redaction_cleanup');
   const advance = () => { currentTime = new Date(currentTime.getTime() + 3_600_000); };
   return { db, store, ids, batch, messageId, plan, redact, maintenance, drain, doctor, advance, moving };
 }

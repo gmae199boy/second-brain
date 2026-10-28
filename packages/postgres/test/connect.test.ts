@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { CONNECT_TIMEOUT_MS } from '@second-brain/core';
 import { createPool } from '../src/connect.js';
 
 it.each([
@@ -21,7 +22,7 @@ const profiles = [
 it.each(profiles)('sets the %s path pool options', async (path, budget, applicationName) => {
   const pool = createPool({ databaseUrl: 'postgresql://localhost/unused', path });
   try {
-    expect(pool.options.connectionTimeoutMillis).toBe(budget);
+    expect(pool.options.connectionTimeoutMillis).toBe(CONNECT_TIMEOUT_MS[path]);
     expect(pool.options.query_timeout).toBe(budget + 2000);
     expect(pool.options.options).toBe(`-c lock_timeout=${budget} -c statement_timeout=${budget + 1000} -c timezone=UTC`);
     expect(pool.options.application_name).toBe(applicationName);

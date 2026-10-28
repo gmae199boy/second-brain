@@ -246,3 +246,6 @@ export type { SettingsStore, SettingRecord, SettingsStoreFailure } from './ports
 
 export * from './settings/index.js';
 export { createSettingsBrain, type SettingsBrain } from './brain.js';
+
+export { CONNECT_TIMEOUT_MS } from './busy-timeout.js';
+export { CORE_SCHEMA_OWNER, type SchemaVersions } from './schema.js';

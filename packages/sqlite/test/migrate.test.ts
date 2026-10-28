@@ -116,10 +116,10 @@ describe('runSqliteMigrations on a file whose statements are refused', () => {
 
     const store = sqliteStore({ path });
     try {
-      const stored = await store.readSchemaVersion();
+      const stored = await store.readSchemaVersions();
       expect(stored.ok).toBe(true);
       if (!stored.ok) return;
-      expect(stored.version?.version).toBe(1);
+      expect(stored.versions['core']?.version).toBe(1);
     } finally {
       await store.close();
     }

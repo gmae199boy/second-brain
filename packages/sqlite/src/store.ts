@@ -1,7 +1,7 @@
 import {
   BUSY_TIMEOUT_MS,
   parseInstant,
-  type ReadSchemaVersionResult,
+  type ReadSchemaVersionsResult,
   type SchemaStore,
   type Store,
   type StoreHealth,
@@ -130,7 +130,7 @@ export function sqliteStore(options: SqliteStoreOptions): Store & SchemaStore {
       }
     },
 
-    async readSchemaVersion(): Promise<ReadSchemaVersionResult> {
+    async readSchemaVersions(): Promise<ReadSchemaVersionsResult> {
       const opened = connect();
       if (!opened.ok) {
         return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
@@ -145,7 +145,7 @@ export function sqliteStore(options: SqliteStoreOptions): Store & SchemaStore {
       } catch (error) {
         if (isMissingTable(error)) {
           // An empty database: the table arrives with the first migration.
-          return { ok: true, version: null };
+          return { ok: true, versions: {} };
         }
         return {
           ok: false,
@@ -158,7 +158,7 @@ export function sqliteStore(options: SqliteStoreOptions): Store & SchemaStore {
       if (row === undefined) {
         // The table is there but empty: a migration that created it and died
         // before recording a version. Still "no version yet".
-        return { ok: true, version: null };
+        return { ok: true, versions: {} };
       }
 
       // Instants are text here (AD-13), and only the canonical spelling counts:
@@ -173,7 +173,7 @@ export function sqliteStore(options: SqliteStoreOptions): Store & SchemaStore {
         };
       }
 
-      return { ok: true, version: { version: row.version, appliedAt: appliedAt.value } };
+      return { ok: true, versions: { core: { version: row.version, appliedAt: appliedAt.value } } };
     },
 
     async close(): Promise<void> {

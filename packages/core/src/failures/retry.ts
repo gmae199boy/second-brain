@@ -131,7 +131,7 @@ export async function retryFailures(
       // the command, under its own code.
       const state = await store.readFileExtractionState(failure.targetId);
       if (!state.ok) {
-        if (state.code === 'DB_UNAVAILABLE') {
+        if (state.code === 'DB_UNAVAILABLE' || state.code === 'DB_LOCKED') {
           return { ok: false, code: state.code, message: state.message };
         }
       } else if (state.redactedAt !== null) {

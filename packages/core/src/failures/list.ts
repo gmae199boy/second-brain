@@ -36,7 +36,7 @@ export interface FailuresListData {
 
 export type FailuresListResult =
   | ({ ok: true } & FailuresListData)
-  | { ok: false; code: 'USAGE' | 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'USAGE' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 export interface FailuresListDependencies {
   store: Pick<WorkStore, 'listFailures'>;

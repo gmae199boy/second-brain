@@ -476,9 +476,7 @@ export function postgresExtractionStore(connect: PgConnect): ExtractionStore {
         };
       } catch (error) {
         return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: `파일의 추출 상태를 읽을 수 없습니다: ${describe(error)}`,
+          ...databaseFailure(error), message: `파일의 추출 상태를 읽을 수 없습니다: ${describe(error)}`,
         };
       }
     },
@@ -511,9 +509,7 @@ export function postgresExtractionStore(connect: PgConnect): ExtractionStore {
         return { ok: true, fileIds: rows.rows.map((row) => row.id) };
       } catch (error) {
         return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: `추출을 기다리는 파일을 읽을 수 없습니다: ${describe(error)}`,
+          ...databaseFailure(error), message: `추출을 기다리는 파일을 읽을 수 없습니다: ${describe(error)}`,
         };
       }
     },
@@ -560,9 +556,7 @@ export function postgresExtractionStore(connect: PgConnect): ExtractionStore {
         };
       } catch (error) {
         return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: `추출기 버전이 뒤처진 파일을 읽을 수 없습니다: ${describe(error)}`,
+          ...databaseFailure(error), message: `추출기 버전이 뒤처진 파일을 읽을 수 없습니다: ${describe(error)}`,
         };
       }
     },
@@ -578,9 +572,7 @@ export function postgresExtractionStore(connect: PgConnect): ExtractionStore {
         return { ok: true, extractions: rows.rows.map(toExtraction) };
       } catch (error) {
         return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: `추출 세대를 읽을 수 없습니다: ${describe(error)}`,
+          ...databaseFailure(error), message: `추출 세대를 읽을 수 없습니다: ${describe(error)}`,
         };
       }
     },
@@ -596,9 +588,7 @@ export function postgresExtractionStore(connect: PgConnect): ExtractionStore {
         return { ok: true, chunks: rows.rows.map(toChunk) };
       } catch (error) {
         return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: `추출 조각을 읽을 수 없습니다: ${describe(error)}`,
+          ...databaseFailure(error), message: `추출 조각을 읽을 수 없습니다: ${describe(error)}`,
         };
       }
     },

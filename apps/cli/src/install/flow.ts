@@ -677,6 +677,7 @@ export async function runInstall(
     // The build's version when there is one; otherwise the version the file
     // actually ends at, which this run has just measured.
     schema_version: build?.schema_version ?? migrated.to,
+    ...(build?.schema_versions === undefined ? {} : { schema_versions: build.schema_versions }),
     node: shim.node,
     plugin_root: flags.pluginRoot ?? previous?.plugin_root ?? null,
   });

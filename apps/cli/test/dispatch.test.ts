@@ -1427,7 +1427,7 @@ describe('the dispatcher and the lock budget', () => {
         async checkHealth() {
           return unavailable;
         },
-        async readSchemaVersion() {
+        async readSchemaVersions() {
           return unavailable;
         },
         async ensureSelfUser() {

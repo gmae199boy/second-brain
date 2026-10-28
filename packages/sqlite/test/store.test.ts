@@ -85,7 +85,7 @@ describe('sqliteStore against a path that holds no file', () => {
       expect(health.code).toBe('DB_UNAVAILABLE');
       expect(health.message.length).toBeGreaterThan(0);
 
-      const stored = await store.readSchemaVersion();
+      const stored = await store.readSchemaVersions();
       expect(stored).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
 
       // Not the database, not its write-ahead log, not its shared-memory file.
@@ -148,7 +148,7 @@ describe('sqliteStore against an empty database', () => {
     const store = sqliteStore({ path: await emptyDatabase() });
 
     try {
-      expect(await store.readSchemaVersion()).toEqual({ ok: true, version: null });
+      expect(await store.readSchemaVersions()).toEqual({ ok: true, versions: {} });
     } finally {
       await store.close();
     }
@@ -312,13 +312,13 @@ describe('sqliteStore against a migrated database', () => {
 
     const store = sqliteStore({ path });
     try {
-      const stored = await store.readSchemaVersion();
+      const stored = await store.readSchemaVersions();
 
       expect(stored.ok).toBe(true);
       if (!stored.ok) return;
-      expect(stored.version?.version).toBe(2);
-      expect(stored.version?.appliedAt).toBeInstanceOf(Date);
-      expect(Number.isNaN(stored.version?.appliedAt.getTime() ?? Number.NaN)).toBe(false);
+      expect(stored.versions['core']?.version).toBe(2);
+      expect(stored.versions['core']?.appliedAt).toBeInstanceOf(Date);
+      expect(Number.isNaN(stored.versions['core']?.appliedAt.getTime() ?? Number.NaN)).toBe(false);
     } finally {
       await store.close();
     }
@@ -335,7 +335,7 @@ describe('sqliteStore against a migrated database', () => {
 
     const store = sqliteStore({ path });
     try {
-      const stored = await store.readSchemaVersion();
+      const stored = await store.readSchemaVersions();
 
       expect(stored.ok).toBe(false);
       if (stored.ok) return;

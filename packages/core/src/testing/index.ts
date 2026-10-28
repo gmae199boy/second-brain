@@ -31,7 +31,7 @@ export {
   type SubjectFactory,
 } from './contract.js';
 export {
-  assertReadSchemaVersion,
+  assertReadSchemaVersions,
   assertStoreHealth,
   clockContract,
   connectorContract,
@@ -115,6 +115,7 @@ export {
   sampleIngestBatch,
   sampleProjectId,
   sampleSelfUserInput,
+  sampleSchemaVersions,
   sampleSessionId,
   sampleSessionKey,
   sampleSessionToken,

@@ -4,7 +4,7 @@ import { createBrain, type BrainDependencies } from '../src/brain.js';
 import { runDoctor, type DoctorCheck, type DoctorCheckSource } from '../src/doctor/doctor.js';
 import type {
   HealthStore,
-  ReadSchemaVersionResult,
+  ReadSchemaVersionsResult,
   SchemaStore,
   StoreHealth,
   StoreProbe,
@@ -41,7 +41,7 @@ interface FakeStore extends HealthStore, SchemaStore {
  */
 function fakeStore(
   health: StoreHealth,
-  schema: { version?: number | null; result?: ReadSchemaVersionResult } = {},
+  schema: { version?: number | null; result?: ReadSchemaVersionsResult } = {},
 ): FakeStore {
   const schemaStore = memorySchemaStore(
     schema.result !== undefined
@@ -51,7 +51,7 @@ function fakeStore(
   let closes = 0;
   return {
     checkHealth: async () => health,
-    readSchemaVersion: () => schemaStore.readSchemaVersion(),
+    readSchemaVersions: () => schemaStore.readSchemaVersions(),
     close: async () => {
       closes += 1;
     },
@@ -74,7 +74,7 @@ function source(check: DoctorCheck): DoctorCheckSource {
  * whose capture switch is off reports (Boundaries).
  */
 const OPTIONS = {
-  schemaVersion: CURRENT,
+  schemaVersions: { core: CURRENT },
   store: memoryStore(),
   clock: fixedClock(new Date('2026-03-04T05:06:07.000Z')),
 };
@@ -89,7 +89,7 @@ describe('runDoctor', () => {
     expect(report.checks).toEqual([
       { id: 'db', status: 'ok', detail: '18.1' },
       { id: 'vector', status: 'ok', detail: '0.8.7' },
-      { id: 'schema-version', status: 'ok', detail: '2' },
+      { id: 'schema-version', status: 'ok', detail: '`core`: 2' },
       // Nothing is failing, and there is no folder to compare against, which
       // is what a build with its capture switch off reports (Boundaries).
       { id: 'failures', status: 'ok', detail: '0건' },
@@ -187,7 +187,7 @@ describe('runDoctor', () => {
       { id: 'wal', status: 'ok', detail: 'wal' },
       { id: 'fts5-trigram', status: 'fail', detail: 'no such tokenizer' },
       { id: 'foreign-keys', status: 'ok' },
-      { id: 'schema-version', status: 'ok', detail: '2' },
+      { id: 'schema-version', status: 'ok', detail: '`core`: 2' },
       { id: 'failures', status: 'ok', detail: '0건' },
       { id: 'untagged', status: 'ok', detail: '0건' },
       { id: 'transcripts', status: 'skip', detail: '트랜스크립트 폴더 수집이 꺼져 있습니다' },
@@ -215,7 +215,7 @@ describe('runDoctor', () => {
 
 describe('runDoctor and the schema version', () => {
   it('fails with SCHEMA_MISMATCH and names both versions when they differ', async () => {
-    const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, schemaVersion: 7 });
+    const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, schemaVersions: { core: 7 } });
 
     const schema = report.checks.find((check) => check.id === 'schema-version');
     expect(schema).toMatchObject({ status: 'fail', code: 'SCHEMA_MISMATCH' });
@@ -378,7 +378,7 @@ describe('the summary of a report', () => {
  * they are the in-memory fakes and nothing here says anything about them: what
  * these two tests are about is that the report is wired to the store.
  */
-function otherDependencies(): Omit<BrainDependencies, 'store' | 'schemaVersion' | 'checks'> {
+function otherDependencies(): Omit<BrainDependencies, 'store' | 'schemaVersions' | 'checks'> {
   const instant = new Date('2026-01-02T03:04:05.000Z');
   return {
     clock: fixedClock(instant),
@@ -402,7 +402,7 @@ describe('createBrain', () => {
     const store = fakeStore(healthy({ id: 'vector', ok: true, detail: '0.8.7' }));
     const brain = createBrain({
       store: brainStore(store),
-      schemaVersion: CURRENT,
+      schemaVersions: { core: CURRENT },
       checks: [source({ id: 'shim', status: 'ok' })],
       ...otherDependencies(),
     });
@@ -425,7 +425,7 @@ describe('createBrain', () => {
   it('registers nothing when no check was handed in', async () => {
     const brain = createBrain({
       store: brainStore(fakeStore(healthy())),
-      schemaVersion: CURRENT,
+      schemaVersions: { core: CURRENT },
       ...otherDependencies(),
     });
 

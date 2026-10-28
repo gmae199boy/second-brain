@@ -1,3 +1,4 @@
+import type { SchemaVersions } from '../schema.js';
 import { transcriptChanges } from '../capture/scan.js';
 import {
   TRANSCRIPT_DEADLINE_WARN_DAYS,
@@ -101,7 +102,7 @@ export type DoctorReadStore = Pick<WorkStore, 'listFailures'> &
 
 export interface DoctorOptions {
   /** Schema version this build was made for, for the `schema-version` check. */
-  schemaVersion: number;
+  schemaVersions: SchemaVersions;
   /**
    * The same store, under the capabilities the `failures` and `transcripts`
    * checks read. It is a second field rather than a wider first parameter
@@ -161,7 +162,7 @@ export async function runDoctor(
   } else {
     checks.push({ id: 'db', status: 'ok', detail: health.serverVersion });
     checks.push(...health.source.probes.map(probeCheck));
-    checks.push(await schemaCheck(store, options.schemaVersion));
+    checks.push(await schemaCheck(store, options.schemaVersions));
     checks.push(await failuresCheck(options.store));
     const untagged = await options.store.countUntaggedSessions();
     checks.push(untagged.ok
@@ -215,10 +216,10 @@ function probeStatus(probe: StoreProbe): DoctorCheckStatus {
  * `SCHEMA_MISMATCH`, which is a shared warning code, so the CLI puts it in
  * `warnings[]` as well.
  */
-async function schemaCheck(store: SchemaStore, expected: number): Promise<DoctorCheck> {
+async function schemaCheck(store: SchemaStore, expected: SchemaVersions): Promise<DoctorCheck> {
   const schema = await checkSchema(store, expected);
   if (schema.ok) {
-    return { id: 'schema-version', status: 'ok', detail: String(schema.version) };
+    return { id: 'schema-version', status: 'ok', detail: Object.entries(schema.versions).map(([owner, version]) => `\`${owner}\`: ${version.version}`).join(', ') };
   }
   return { id: 'schema-version', status: 'fail', code: schema.code, detail: schema.message };
 }

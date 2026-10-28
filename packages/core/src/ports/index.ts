@@ -28,7 +28,7 @@ export type {
   ListOpenWorkTargetsResult,
   ListTranscriptFilesQuery,
   ListTranscriptFilesResult,
-  ReadSchemaVersionResult,
+  ReadSchemaVersionsResult,
   ReadSelfUserResult,
   ReadSessionResult,
   RedactMessageInput,

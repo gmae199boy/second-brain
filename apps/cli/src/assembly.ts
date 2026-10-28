@@ -1,7 +1,7 @@
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import {
-  SQLITE_SCHEMA_VERSION,
+  type SchemaVersions,
   type BrainDependencies,
   type Clock,
   type IdGen,
@@ -50,7 +50,7 @@ export interface BrainAssembly<S = Store & SchemaStore> {
   config: ReadConfigResult;
   /** Already open, at the lock budget the caller chose (AD-7). */
   store: S;
-  schemaVersion?: number;
+  schemaVersions: SchemaVersions;
   clock: Clock;
   idGen: IdGen;
   /** Kinds beyond Core's own. Empty for every real invocation (AD-21). */
@@ -78,7 +78,7 @@ export function brainDependencies<S extends SessionIngestStore>(assembly: BrainA
     files: localFileStore({ root: config.ok ? config.config.filesPath : join(home, 'files') }),
     sources: fileSourceReader(),
     userHome: env['HOME']?.startsWith('/') === true ? env['HOME'] : null,
-    schemaVersion: assembly.schemaVersion ?? SQLITE_SCHEMA_VERSION,
+    schemaVersions: assembly.schemaVersions,
     clock,
     idGen,
     // Parsers and connectors come from the same harness registry.

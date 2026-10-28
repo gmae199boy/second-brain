@@ -133,7 +133,7 @@ export function postgresAttachmentStore(connect: PgConnect): AttachmentStore {
           order by c.file_id, c.name_source collate "C", coalesce(c.text_raw, convert_to(c.text, 'UTF8')) limit ${limit}
         `.execute(opened.connection.db);
         return { ok: true, names: result.rows.map(originalText).map(({ text_raw: _raw, ...row }) => row) };
-      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 이름을 읽을 수 없습니다: ${describe(error)}` }; }
+      } catch (error) { return { ...databaseFailure(error), message: `파일 이름을 읽을 수 없습니다: ${describe(error)}` }; }
     },
     async writeFileNames({ names }) {
       const opened = connect();
@@ -157,7 +157,7 @@ export function postgresAttachmentStore(connect: PgConnect): AttachmentStore {
       try {
         const result = await sql<FileName & { text_raw: Buffer | null }>`select id, file_id as "fileId", name_source as "nameSource", text, text_raw from brain.file_names where file_id::text = ${fileId} order by name_source collate "C", coalesce(text_raw, convert_to(text, 'UTF8'))`.execute(opened.connection.db);
         return { ok: true, names: result.rows.map(originalText).map(({ text_raw: _raw, ...row }) => row) };
-      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 이름을 읽을 수 없습니다: ${describe(error)}` }; }
+      } catch (error) { return { ...databaseFailure(error), message: `파일 이름을 읽을 수 없습니다: ${describe(error)}` }; }
     },
     async readFileLocation(id) {
       const opened = connect();
@@ -167,7 +167,7 @@ export function postgresAttachmentStore(connect: PgConnect): AttachmentStore {
         const row = result.rows[0];
         if (row === undefined) return { ok: false, code: 'FILE_LOCATION_NOT_FOUND', message: '파일 위치가 없습니다' };
         return { ok: true, location: fileLocationRow(row) };
-      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 위치를 읽을 수 없습니다: ${describe(error)}` }; }
+      } catch (error) { return { ...databaseFailure(error), message: `파일 위치를 읽을 수 없습니다: ${describe(error)}` }; }
     },
     async listFileLocations(fileId) {
       const opened = connect();
@@ -175,7 +175,7 @@ export function postgresAttachmentStore(connect: PgConnect): AttachmentStore {
       try {
         const result = await sql<FileLocationColumns>`select id, file_id as "fileId", store_kind as "storeKind", locator, ownership, deleted_at as "deletedAt" from brain.file_locations where file_id::text = ${fileId} order by ownership collate "C", locator collate "C"`.execute(opened.connection.db);
         return { ok: true, locations: result.rows.map(fileLocationRow) };
-      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 위치를 읽을 수 없습니다: ${describe(error)}` }; }
+      } catch (error) { return { ...databaseFailure(error), message: `파일 위치를 읽을 수 없습니다: ${describe(error)}` }; }
     },
     async markFileLocationDeleted({ id, deletedAt }) {
       const opened = connect();
@@ -197,7 +197,7 @@ export function postgresAttachmentStore(connect: PgConnect): AttachmentStore {
           return { ok: true as const, deletedAt: new Date(read.deletedAt), marked: filled.rows.length > 0 };
         });
       } catch (error) {
-        return { ok: false, code: 'DB_UNAVAILABLE', message: `파일 위치를 표시할 수 없습니다: ${describe(error)}` };
+        return { ...databaseFailure(error), message: `파일 위치를 표시할 수 없습니다: ${describe(error)}` };
       }
       return result.ok ? result.value : result;
     },
@@ -227,7 +227,7 @@ export function postgresAttachmentStore(connect: PgConnect): AttachmentStore {
           messages: Number(row.messages),
         };
       } catch (error) {
-        return { ok: false, code: 'DB_UNAVAILABLE', message: `파일을 읽을 수 없습니다: ${describe(error)}` };
+        return { ...databaseFailure(error), message: `파일을 읽을 수 없습니다: ${describe(error)}` };
       }
     },
     async linkAttachments(input) {

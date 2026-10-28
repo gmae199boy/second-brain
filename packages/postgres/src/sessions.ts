@@ -177,7 +177,7 @@ export function postgresSessionStore(connect: PgConnect): SessionStore {
            where harness = ${query.harness} and parser_version is distinct from ${query.parserVersion}
            order by harness_session_id collate "C"`.execute(opened.connection.db);
         return { ok: true, sessions: read.rows.map(row => ({ harnessSessionId: row.harness_session_id })) };
-      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) }; }
+      } catch (error) { return { ...databaseFailure(error), message: describe(error) }; }
     },
     async listIdentityCandidates() {
       const opened = connect();
@@ -189,7 +189,7 @@ export function postgresSessionStore(connect: PgConnect): SessionStore {
               and w.target_kind = 'session' and w.target_id = s.harness || ':' || s.harness_session_id)
           order by s.id`.execute(opened.connection.db);
         return { ok: true, sessions: read.rows.map(row => toSession(originalText(row))) };
-      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) }; }
+      } catch (error) { return { ...databaseFailure(error), message: describe(error) }; }
     },
     async countUntaggedSessions() {
       const opened = connect();
@@ -198,7 +198,7 @@ export function postgresSessionStore(connect: PgConnect): SessionStore {
         const read = await sql<{ count: string }>`select count(*) as count from brain.sessions
           where project_id is null`.execute(opened.connection.db);
         return { ok: true, count: Number(read.rows[0]?.count ?? 0) };
-      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) }; }
+      } catch (error) { return { ...databaseFailure(error), message: describe(error) }; }
     },
     async fillSessionTags(input) {
       const opened = connect();

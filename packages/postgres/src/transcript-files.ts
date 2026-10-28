@@ -43,7 +43,7 @@ export function postgresTranscriptFileStore(connect: PgConnect): TranscriptFileS
         const read = await sql<TranscriptFileRow>`select * from brain.transcript_files
           where harness = ${query.harness} order by path collate "C"`.execute(opened.connection.db);
         return { ok: true, files: read.rows.map(row => toTranscriptFile(originalText(row))) };
-      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) }; }
+      } catch (error) { return { ...databaseFailure(error), message: describe(error) }; }
     },
     async recordTranscriptFile(
       input: RecordTranscriptFileInput,

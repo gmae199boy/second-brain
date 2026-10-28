@@ -63,13 +63,13 @@ async function kit(
     // fake answers it beside the memory store rather than having one of its own.
     store: {
       ...store,
-      async readSchemaVersion() {
-        return { ok: true, version: { version: 6, appliedAt: NOW } };
+      async readSchemaVersions() {
+        return { ok: true, versions: { core: { version: 6, appliedAt: NOW } } };
       },
     },
     spool,
     files: memoryFileStore(),
-    schemaVersion: 6,
+    schemaVersions: { core: 6 },
     clock: fixedClock(NOW),
     idGen: sequenceIdGen({ timestampMs: NOW.getTime() }),
     parsers: [options.parser ?? memoryParser()],
@@ -408,9 +408,9 @@ it('spool 대기 중 원본이 사라지거나 생겨도 처음 캡처한 stored
     { sourcePath: '/tmp/brain-source/second.pdf', sourceCheck: { sizeBytes: 2 }, displayName: 'second.pdf' },
   ] }] });
   const brain = createBrain({
-    store: { ...store, async readSchemaVersion() { return { ok: true, version: { version: 8, appliedAt: NOW } }; },
+    store: { ...store, async readSchemaVersions() { return { ok: true, versions: { core: { version: 8, appliedAt: NOW } } }; },
       async ingest(batch) { return locked ? { ok: false, code: 'DB_LOCKED', message: '잠김' } : store.ingest(batch); } },
-    files: memoryFileStore(), spool, schemaVersion: 8, clock: fixedClock(NOW), idGen: sequenceIdGen({ timestampMs: NOW.getTime() }),
+    files: memoryFileStore(), spool, schemaVersions: { core: 8 }, clock: fixedClock(NOW), idGen: sequenceIdGen({ timestampMs: NOW.getTime() }),
     parsers: [memoryParser()], transcripts: memoryTranscriptReader({ files: { [PATH]: content } }), repositories: memoryRepositories(), machine: 'machine',
     userHome: '/tmp/brain-source', sources: { async read() { sourceReads++; return { ok: true, bytes: available ? Uint8Array.of(1) : Uint8Array.of(1, 2) }; } },
   });

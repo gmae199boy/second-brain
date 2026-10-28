@@ -71,7 +71,7 @@ export type StoreHealth =
     }
   | {
       ok: false;
-      code: 'DB_UNAVAILABLE';
+      code: 'DB_UNAVAILABLE' | 'DB_LOCKED';
       message: string;
     };
 
@@ -256,10 +256,10 @@ export type RedactMessageResult =
 
 export type ListIdentityCandidatesResult =
   | { ok: true; sessions: readonly Session[] }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export type CountUntaggedSessionsResult =
   | { ok: true; count: number }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 export interface ListStaleSessionsQuery {
   harness: string;
@@ -267,7 +267,7 @@ export interface ListStaleSessionsQuery {
 }
 export type ListStaleSessionsResult =
   | { ok: true; sessions: readonly { harnessSessionId: string }[] }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 export interface SessionStore {
   /**
@@ -449,12 +449,12 @@ export interface DueWorkQuery {
  *
  * It exists so that a drain with nothing to do never takes the write lock
  * (AD-7): the opportunistic run at the end of every command would otherwise
- * queue behind whatever is writing, for nothing. Only `DB_UNAVAILABLE`, because
- * a read does not wait for the writer.
+ * queue behind whatever is writing, for nothing. Reads can still wait on a
+ * PostgreSQL table lock, so lock failures retain `DB_LOCKED`.
  */
 export type HasDueWorkResult =
   | { ok: true; due: boolean }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 export interface ClaimWorkInput extends DueWorkQuery {
   /** The id of this drain run. Every finishing verb is checked against it. */
@@ -562,11 +562,11 @@ export interface WorkTarget {
  * somebody has already queued: a scan that enqueued them again would add
  * nothing — `addWork` is find-or-create — but it would take the write lock to
  * find that out, every drain, for every session waiting in the backlog (Design
- * Notes). Only `DB_UNAVAILABLE`, because a read does not wait for the writer.
+ * Notes). PostgreSQL table-lock failures retain `DB_LOCKED`.
  */
 export type ListOpenWorkTargetsResult =
   | { ok: true; targets: readonly WorkTarget[] }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /** Which failures to read back. Every field narrows; all of them are optional. */
 export interface ListFailuresQuery {
@@ -594,7 +594,7 @@ export interface ListFailuresQuery {
  */
 export type ListFailuresResult =
   | { ok: true; failures: readonly Failure[] }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /** Which failures one piece of work that finally went through has settled. */
 export interface ResolveFailuresInput {
@@ -688,7 +688,7 @@ export interface ListTranscriptFilesQuery {
 
 export type ListTranscriptFilesResult =
   | { ok: true; files: readonly TranscriptFile[] }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /** What one successful read of a transcript leaves behind (Table Contract). */
 export interface RecordTranscriptFileInput {
@@ -767,13 +767,12 @@ export type Store = HealthStore &
   TranscriptFileStore & AttachmentStore & ExtractionStore;
 
 /**
- * Result of reading the single `schema_version` row. `version: null` means the
- * database answered but holds no version yet — an empty database, since the row
- * and its table arrive with the first migration. Unreachable is a value too, so
+ * Result of reading the highest applied version of each schema owner. An empty
+ * map means the database answered but holds no version yet. Unreachable is a value too, so
  * the write guard never has to catch (Conventions).
  */
-export type ReadSchemaVersionResult =
-  | { ok: true; version: SchemaVersion | null }
+export type ReadSchemaVersionsResult =
+  | { ok: true; versions: Readonly<Record<string, SchemaVersion>> }
   | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /**
@@ -784,8 +783,8 @@ export type ReadSchemaVersionResult =
  * the shape of the health probe every adapter already passes (AD-10).
  */
 export interface SchemaStore {
-  /** Read the stored version. Never throws: an unreachable store is `ok: false`. */
-  readSchemaVersion(): Promise<ReadSchemaVersionResult>;
+  /** Read each owner’s highest applied version. Never throws on database failures. */
+  readSchemaVersions(): Promise<ReadSchemaVersionsResult>;
   /** Release every resource the store holds. */
   close(): Promise<void>;
 }
@@ -808,8 +807,8 @@ export interface MissingFileName {
   text: string;
 }
 export interface FileName extends MissingFileName { id: string }
-export type ListMissingFileNamesResult = { ok: true; names: readonly MissingFileName[] } | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
-export type ListFileNamesResult = { ok: true; names: readonly FileName[] } | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+export type ListMissingFileNamesResult = { ok: true; names: readonly MissingFileName[] } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+export type ListFileNamesResult = { ok: true; names: readonly FileName[] } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export type WriteFileNamesResult = { ok: true; inserted: number } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /**
@@ -839,7 +838,7 @@ export interface FileLocationRow {
  */
 export type ReadFileLocationResult =
   | { ok: true; location: FileLocationRow }
-  | { ok: false; code: 'FILE_LOCATION_NOT_FOUND' | 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'FILE_LOCATION_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /**
  * Every place one file's bytes are or were, by `ownership` then `locator` —
@@ -850,7 +849,7 @@ export type ReadFileLocationResult =
  */
 export type ListFileLocationsResult =
   | { ok: true; locations: readonly FileLocationRow[] }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 export interface MarkFileLocationDeletedInput {
   id: string;
@@ -902,7 +901,7 @@ export type ReadFileSharingResult =
       /** Distinct `message_attachments.message_id` rows pointing at this file. */
       messages: number;
     }
-  | { ok: false; code: 'FILE_NOT_FOUND' | 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'FILE_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /**
  * Which of the given content hashes belong to a file somebody has masked, as a
@@ -1194,7 +1193,7 @@ export interface FileExtractionState {
 
 export type ReadFileExtractionStateResult =
   | ({ ok: true } & FileExtractionState)
-  | { ok: false; code: 'FILE_NOT_FOUND' | 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'FILE_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /**
  * The files nothing has read yet, oldest id first — the queue's input, not its
@@ -1209,7 +1208,7 @@ export type ReadFileExtractionStateResult =
  */
 export type ListFilesAwaitingExtractionResult =
   | { ok: true; fileIds: readonly string[] }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /**
  * The files a newer extractor would read differently, oldest id first, and the
@@ -1239,15 +1238,15 @@ export type ListFilesWithStaleExtractionResult =
       redacted: number;
       sourceUnreachable: number;
     }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 export type ListExtractionsResult =
   | { ok: true; extractions: readonly DocumentExtraction[] }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 export type ListExtractionChunksResult =
   | { ok: true; chunks: readonly DocumentChunk[] }
-  | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /**
  * The extraction capability: opening a reading of a file, writing its pieces,

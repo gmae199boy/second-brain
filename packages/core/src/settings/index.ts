@@ -1,3 +1,4 @@
+import type { SchemaVersions } from '../schema.js';
 import type { Clock } from '../ports/clock.js';
 import type { SettingsStore, SchemaStore } from '../ports/store.js';
 import { checkSchema } from '../schema.js';
@@ -35,7 +36,7 @@ export type SettingResult = ({ ok: true } & SettingValue) | { ok: false; code: '
 export interface SettingsDependencies {
   store: SettingsStore & SchemaStore;
   /** Current schema version supplied by the adapter. */
-  schemaVersion: number;
+  schemaVersions: SchemaVersions;
   clock: Clock;
   settingDefinitions?: readonly SettingDefinition[];
 }
@@ -43,7 +44,7 @@ function invalid(message: string): SettingResult { return { ok: false, code: 'CO
 export async function getSetting(deps: SettingsDependencies, input: { key: string }): Promise<SettingResult> {
   const definition = settingDefinitions(deps.settingDefinitions).get(input.key);
   if (definition === undefined) return invalid(`모르는 사용자 설정 키입니다: ${input.key}`);
-  const schema = await checkSchema(deps.store, deps.schemaVersion);
+  const schema = await checkSchema(deps.store, deps.schemaVersions);
   if (!schema.ok) return schema;
   const read = await deps.store.getSetting(input);
   if (!read.ok) return read;
@@ -57,7 +58,7 @@ export async function setSetting(deps: SettingsDependencies, input: { key: strin
   if (definition === undefined) return invalid(`모르는 사용자 설정 키입니다: ${input.key}`);
   const parsed = definition.normalize(input.value);
   if (!parsed.ok) return invalid(parsed.message);
-  const schema = await checkSchema(deps.store, deps.schemaVersion);
+  const schema = await checkSchema(deps.store, deps.schemaVersions);
   if (!schema.ok) return schema;
   const updatedAt = deps.clock.now();
   const written = await deps.store.setSetting({ key: input.key, value: parsed.value, updatedAt });

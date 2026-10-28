@@ -297,7 +297,7 @@ export async function doctorAt(
   const store = sqliteStore({ path });
   try {
     return await runDoctor(store, {
-      schemaVersion: SQLITE_SCHEMA_VERSION,
+      schemaVersions: { core: SQLITE_SCHEMA_VERSION },
       // The caller supplies registered folders for its environment. Direct
       // callers can omit them to run only the store and runtime checks.
       store,

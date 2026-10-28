@@ -293,13 +293,13 @@ describe('runDaemon, with its timers wound down', () => {
   it('closes the store without draining when aborted during the schema check', async () => {
     const home = await homeFor({ migrated: true });
     const store = sqliteStore({ path: join(home, 'brain.db') });
-    const readSchemaVersion = store.readSchemaVersion.bind(store);
+    const readSchemaVersions = store.readSchemaVersions.bind(store);
     const checking = gate();
     let entered = false;
-    vi.spyOn(store, 'readSchemaVersion').mockImplementation(async () => {
+    vi.spyOn(store, 'readSchemaVersions').mockImplementation(async () => {
       entered = true;
       await checking.promise;
-      return readSchemaVersion();
+      return readSchemaVersions();
     });
     const close = vi.spyOn(store, 'close');
     const daemon = startDaemon({
@@ -814,8 +814,8 @@ describe('brain daemon run, as a process', () => {
       createStore: (options) => {
         const store = opened(options);
         if (opened.mock.calls.length === 1) {
-          const read = store.readSchemaVersion.bind(store);
-          store.readSchemaVersion = async () => { await checking.promise; return read(); };
+          const read = store.readSchemaVersions.bind(store);
+          store.readSchemaVersions = async () => { await checking.promise; return read(); };
         }
         return store;
       },

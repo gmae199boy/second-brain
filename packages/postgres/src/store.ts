@@ -33,13 +33,13 @@ export function postgresStore(options: PostgresStoreOptions): PostgresStore {
           probes: [{ id: 'pg_trgm', ok: trgm.rows[0]?.similarity === 1, detail: 'pg_trgm' },
             { id: 'redaction_cleanup', ok: true, warn: pending.length > 0, detail: pending.length > 0 ? `저장본 정리가 남은 표: ${pending.join(', ')}` : '저장본 정리가 끝났습니다' }],
         } };
-      } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) }; }
+      } catch (error) { return { ...databaseFailure(error), message: describe(error) }; }
     },
-    async readSchemaVersion() {
+    async readSchemaVersions() {
       try {
-        const read = await sql<{ version: number; applied_at: string }>`select version, applied_at from brain.schema_migrations where owner='core' order by version desc limit 1`.execute(db);
-        const row = read.rows[0];
-        return { ok: true, version: row === undefined ? null : { version: row.version, appliedAt: new Date(row.applied_at) } };
+        const read = await sql<{ owner: string; version: number; applied_at: string }>`select distinct on (owner) owner, version, applied_at from brain.schema_migrations order by owner, version desc`.execute(db);
+        return { ok: true, versions: Object.fromEntries(read.rows.map(row =>
+          [row.owner, { version: row.version, appliedAt: new Date(row.applied_at) }])) };
       } catch (error) { return databaseFailure(error); }
     },
     async close() { await db.destroy(); },

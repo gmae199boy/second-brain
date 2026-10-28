@@ -95,9 +95,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         written = await withWrite(opened.connection, (held) => ensureWork(held, input));
       } catch (error) {
         return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: `일감을 넣을 수 없습니다: ${describe(error)}`,
+          ...databaseFailure(error), message: `일감을 넣을 수 없습니다: ${describe(error)}`,
         };
       }
       if (!written.ok) return written;
@@ -125,9 +123,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         return { ok: true, due: found.rows.length > 0 };
       } catch (error) {
         return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: `할 일이 있는지 볼 수 없습니다: ${describe(error)}`,
+          ...databaseFailure(error), message: `할 일이 있는지 볼 수 없습니다: ${describe(error)}`,
         };
       }
     },
@@ -168,9 +164,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         });
       } catch (error) {
         return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: `일감을 청구할 수 없습니다: ${describe(error)}`,
+          ...databaseFailure(error), message: `일감을 청구할 수 없습니다: ${describe(error)}`,
         };
       }
       if (!written.ok) return written;
@@ -274,9 +268,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         });
       } catch (error) {
         return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: `실패를 기록할 수 없습니다: ${describe(error)}`,
+          ...databaseFailure(error), message: `실패를 기록할 수 없습니다: ${describe(error)}`,
         };
       }
       if (!written.ok) return written;
@@ -314,9 +306,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         };
       } catch (error) {
         return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: `열린 일감을 읽을 수 없습니다: ${describe(error)}`,
+          ...databaseFailure(error), message: `열린 일감을 읽을 수 없습니다: ${describe(error)}`,
         };
       }
     },
@@ -345,9 +335,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         return { ok: true, failures: found.rows.map(toFailure) };
       } catch (error) {
         return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: `실패를 읽을 수 없습니다: ${describe(error)}`,
+          ...databaseFailure(error), message: `실패를 읽을 수 없습니다: ${describe(error)}`,
         };
       }
     },
@@ -372,9 +360,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         );
       } catch (error) {
         return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: `실패를 해결로 표시할 수 없습니다: ${describe(error)}`,
+          ...databaseFailure(error), message: `실패를 해결로 표시할 수 없습니다: ${describe(error)}`,
         };
       }
       if (!written.ok) return written;

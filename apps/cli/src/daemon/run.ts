@@ -265,14 +265,14 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
     // Every round, not once at startup: a database that was repaired or
     // migrated while this process ran is one the next round may write to, and
     // one that was replaced by another version is one it may not (AD-20).
-    const schema = await checkSchema(store, SQLITE_SCHEMA_VERSION);
+    const schema = await checkSchema(store, { core: SQLITE_SCHEMA_VERSION });
     if (signal.aborted) return { pause: false };
     if (!schema.ok) {
       return { pause: true, problem: { key: schema.code, message: schema.message } };
     }
 
     const brain = createBrain(
-      brainDependencies({ home, env, config, store, clock, idGen, workHandlers }),
+      brainDependencies({ home, env, config, schemaVersions: { core: SQLITE_SCHEMA_VERSION }, store, clock, idGen, workHandlers }),
     );
     const tick = await brain.schedules.tick();
     tickState = {

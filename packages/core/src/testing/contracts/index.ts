@@ -3,7 +3,7 @@ export { sessionStoreContract, sessionMetadataContract, sessionRedactionContract
 export { userStoreContract } from './user-store.js';
 export { workStoreContract } from './work-store.js';
 export { transcriptFileStoreContract } from './transcript-file-store.js';
-export { assertReadSchemaVersion, schemaStoreContract } from './schema-store.js';
+export { assertReadSchemaVersions, schemaStoreContract } from './schema-store.js';
 export { parserContract, type ParserPair, type ParserSubject } from './parser.js';
 export { connectorContract, type ConnectorSubject } from './connector.js';
 export { embedderContract } from './embedder.js';

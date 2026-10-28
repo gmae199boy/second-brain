@@ -86,8 +86,8 @@ export function assertStoreHealth(health: StoreHealth): void {
     return;
   }
 
-  if (health.code !== 'DB_UNAVAILABLE') {
-    fail(`an unreachable store must answer with DB_UNAVAILABLE, got ${health.code}`);
+  if (health.code !== 'DB_UNAVAILABLE' && health.code !== 'DB_LOCKED') {
+    fail(`an unreachable store must answer with DB_UNAVAILABLE or DB_LOCKED, got ${health.code}`);
   }
   assertNonEmptyString(health.message, 'a failed health probe must say why');
 }

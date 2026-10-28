@@ -5,6 +5,7 @@ set -eu
 cd "$(dirname "$0")/../.."
 exec node --input-type=module - "$@" <<'JS'
 import assert from 'node:assert/strict';
+import { CONNECT_TIMEOUT_MS } from './packages/core/dist/index.js';
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -95,11 +96,27 @@ try {
   assert(!/^[ \t]*timezone[ \t]*=/m.test(await readFile(join(home,'config.toml'),'utf8')));
   assert.deepEqual((await cli(['config','get','timezone','--json'])).data,settingBefore);
   console.log('시간대 설정: 컨테이너 재생성·setup 재실행 뒤 값과 수정 시각 보존');
+  // 데몬은 티켓 9 전까지 SQLite를 써서 spool을 SQLite로 되넣는다
+  const stopped = await cli(['daemon','stop','--json']); assert.equal(stopped.ok,true);
   await compose(['stop']);
-  const offline = await cli(['sessions','ingest','claude-code','--json'],payload);
+  const offlinePayload = JSON.stringify({ session_id:'pg-tracer-offline', transcript_path:resolve('packages/claude-code/test/fixtures/two-turns.jsonl'), hook_event_name:'Stop' });
+  const offlineStarted = Date.now();
+  const offline = await cli(['sessions','ingest','claude-code','--json'],offlinePayload);
+  assert(Date.now() - offlineStarted < CONNECT_TIMEOUT_MS.turn + 3000);
   assert.equal(offline.data.spooled,true); assert(offline.warnings.includes('SPOOLED'));
   assert((await readdir(join(home,'spool'))).some(n=>n.endsWith('.jsonl')));
-  console.log('PG 중단 hook: exit 0, SPOOLED 및 spool 파일 확인');
+  console.log('PG 중단 hook: 연결 시간 한도 안에 exit 0, SPOOLED 및 spool 파일 확인');
+  await compose(['up','-d','--wait']);
+  const drained = await cli(['queue','drain','--json']); assert.equal(drained.ok,true);
+  const recovered = new pg.Client({connectionString:await resolveStoreUrl(home,'BRAIN_DATABASE_URL',env)}); await recovered.connect();
+  try {
+    const sessions = await recovered.query("select id from brain.sessions where harness='claude-code' and harness_session_id='pg-tracer-offline'");
+    assert.equal(sessions.rows.length,1);
+    const messages = await recovered.query('select id from brain.messages where session_id=$1',[sessions.rows[0].id]);
+    assert(messages.rows.length>0);
+  } finally { await recovered.end(); }
+  assert(!(await readdir(join(home,'spool'))).some(n=>n.endsWith('.jsonl')||n.endsWith('.claiming')));
+  console.log('PG 복구 drain: 중단 중 세션·메시지 저장, spool 비움 확인');
   assert.deepEqual(await defaults(),beforeDefaults);
   console.log(`기본 홈 자원 변화 없음: ${JSON.stringify(beforeDefaults)}`);
 } finally {

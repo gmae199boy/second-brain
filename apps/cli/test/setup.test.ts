@@ -865,7 +865,7 @@ describe('brain setup run on a database whose projects collide', () => {
     const checks = (JSON.parse(doctor.stdout) as Envelope).data?.checks ?? [];
     expect(checks.find((check) => check.id === 'schema-version')).toMatchObject({
       status: 'ok',
-      detail: '9',
+      detail: '`core`: 9',
     });
   });
 
@@ -996,7 +996,7 @@ describe('brain setup run on a version 5 database', () => {
     const checks = (JSON.parse(doctor.stdout) as Envelope).data?.checks ?? [];
     expect(checks.find((check) => check.id === 'schema-version')).toMatchObject({
       status: 'ok',
-      detail: '9',
+      detail: '`core`: 9',
     });
 
     // Every row came back, under its own id and body, and in the order it was
@@ -1084,6 +1084,7 @@ describe('brain setup run and the completion record', () => {
     ) as { commit: string | null; schema_version: number };
     expect(record.commit).toBe(build.commit);
     expect(record.schema_version).toBe(build.schema_version);
+    expect((record as { schema_versions?: unknown }).schema_versions).toEqual({ core: 1 });
     // The node the shim was pinned to, which is the node a hook will run.
     expect(record.node).toBe(parseShim(await readFile(shimPath(home), 'utf8'))?.node);
     // Nothing started this install from a plugin folder.

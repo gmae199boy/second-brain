@@ -595,9 +595,9 @@ describe('the sinks outside the dispatcher, one at a time', () => {
         // this command does not write, so nothing asks it for the version.
         return {
           ...memoryStore(),
-          readSchemaVersion: async () => ({
+          readSchemaVersions: async () => ({
             ok: true as const,
-            version: { version: SQLITE_SCHEMA_VERSION, appliedAt: new Date(0) },
+            versions: { core: { version: SQLITE_SCHEMA_VERSION, appliedAt: new Date(0) } },
           }),
         };
       }

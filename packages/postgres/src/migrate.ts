@@ -79,3 +79,5 @@ export async function runMigrations(options: RunMigrationsOptions): Promise<Migr
   } catch (error) { return { ok: false, code: 'MIGRATION_FAILED', file: attempting, message: describe(error) }; }
   finally { client.release(); await pool.end().catch(() => {}); }
 }
+
+export const EXPECTED_SCHEMA_VERSIONS = { core: CORE_SCHEMA_VERSION } as const;

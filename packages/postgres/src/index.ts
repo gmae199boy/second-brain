@@ -4,3 +4,5 @@ export { prepareDatabase, type PrepareDatabaseOptions, type PrepareDatabaseResul
 export { postgresTableMaintenance } from './maintenance.js';
 
 export { postgresSettingsStore } from './settings.js';
+
+export { EXPECTED_SCHEMA_VERSIONS } from './migrate.js';

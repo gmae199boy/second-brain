@@ -258,3 +258,11 @@ source_spec: `tickets/epic-postgres-primary/tickets/story-doctor-plan.md`
 severity: medium
 reason: maintenance.ts는 copy_table_data routine과 detail 첫 숫자를 읽고, 해석 불가 시 TABLE_CLEANUP_FAILED로 닫지 않는다. 공식 PG18 시험 환경의 전체 검증은 통과했다. 다른 로캘에서 숫자의 위치가 실제 바뀌는지와 정리 role이 사용할 수 있는 메시지 환경 고정 방법을 확인해야 한다. 잘못된 성공 판정은 하지 않는다. (declared severity: medium (unverified))
 status: open
+
+### DW-11: PG 런타임 경로에 저장본 정리 handler(`tableCleanupHandler`)와 정리 role 접속이 아직 조립되지 않아, PG 홈의 drain이 `table_cleanup` 일감을 청구하지 않고 doctor가 정리 `warn`을 계속 보인다.
+origin: spec-deferred bd1846c4c576
+location: apps/cli/src/runtime/brain-store.ts
+source_spec: `tickets/epic-postgres-primary/tickets/story-db-hook-spool-db-plan.md`
+severity: medium
+reason: `git grep` 결과 `apps/cli/src`에 `tableCleanupHandler`·`postgresTableMaintenance`·maintenance 접속 사용처가 없다. 티켓 5 plan(story-doctor-plan.md)의 인계는 런타임 조립이 handler를 등록하고 `postgresTableMaintenance`에 정리 URL을 주며, 설치(티켓 8)가 `prepareDatabase`에 `maintenancePassword`를 넘기고 `.env`에 정리 role 접속을 쓰라고 했다. 정리 URL을 담을 설정 키·`.env` 항목이 아직 없으므로(설치는 티켓 8) 이 변경만으로는 연결할 값이 없다. 이 변경 전에도 PG 홈에는 PG drain이 없어 정리가 돌지 않았으므로 기존 공백이다. 티켓 8이 정리 role 접속을 쓸 때 store factory(`apps/cli/src/runtime/brain-store.ts`)의 PG 분기와 데몬(티켓 9)이 이 handler를 함께 등록해야 한다.
+status: open

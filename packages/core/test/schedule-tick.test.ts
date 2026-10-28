@@ -66,7 +66,7 @@ describe('schedule tick', () => {
   it('enqueues and completes a new occurrence after previous work completes', async () => {
     const k = kit(); await k.store.addSchedule(schedule());
     const brain = createBrain({ store: { ...k.store, ...memorySchemaStore({ version: 9 }) },
-      files: memoryFileStore(), spool: memorySpool(), clock: k.clock, idGen: k.idGen, schemaVersion: 9,
+      files: memoryFileStore(), spool: memorySpool(), clock: k.clock, idGen: k.idGen, schemaVersions: { core: 9 },
       parsers: [], transcripts: memoryTranscriptReader(), repositories: memoryRepositories(), machine: 'test' });
     expect(await brain.schedules.tick()).toEqual({ ok: true, fired: 1, enqueued: 1 });
     expect(await brain.queue.drain({ budgetMs: 1000 })).toMatchObject({ completed: 1 });
@@ -87,7 +87,7 @@ describe('schedule tick', () => {
   it('brain tick then drain completes the Core probe handler', async () => {
     const k = kit(); await k.store.addSchedule(schedule({ intervalSeconds: null }));
     const brain = createBrain({ store: { ...k.store, ...memorySchemaStore({ version: 9 }) },
-      files: memoryFileStore(), spool: memorySpool(), clock: k.clock, idGen: k.idGen, schemaVersion: 9,
+      files: memoryFileStore(), spool: memorySpool(), clock: k.clock, idGen: k.idGen, schemaVersions: { core: 9 },
       parsers: [], transcripts: memoryTranscriptReader(), repositories: memoryRepositories(), machine: 'test' });
     expect(await brain.schedules.tick()).toEqual({ ok: true, fired: 1, enqueued: 1 });
     expect(await brain.queue.drain({ budgetMs: 1000 })).toMatchObject({ completed: 1 });

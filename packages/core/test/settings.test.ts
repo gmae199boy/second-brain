@@ -7,7 +7,7 @@ const at = new Date('2026-10-28T01:02:03.456Z');
 function kit(schemaVersion = 1) {
   const store = { ...memorySettingsStore(), ...memorySchemaStore({ version: schemaVersion }) };
   const now = vi.fn(() => at);
-  return { store, now, brain: createSettingsBrain({ store, clock: { now }, schemaVersion }) };
+  return { store, now, brain: createSettingsBrain({ store, clock: { now }, schemaVersions: { core: schemaVersion } }) };
 }
 describe('settings', () => {
   it.each([1, 2])('uses adapter schema version %s for default reads, writes and persisted reads', async schemaVersion => {
@@ -30,7 +30,7 @@ describe('settings', () => {
   });
   it.each(['DB_LOCKED', 'DB_UNAVAILABLE', 'SCHEMA_MISMATCH'] as const)('propagates %s without writing', async code => {
     const store = { ...memorySettingsStore(), ...memorySchemaStore(code === 'SCHEMA_MISMATCH' ? { version: 2 } : { result: { ok: false, code, message: 'probe' } }) };
-    const brain = createSettingsBrain({ store, clock: { now: () => at }, schemaVersion: 1 });
+    const brain = createSettingsBrain({ store, clock: { now: () => at }, schemaVersions: { core: 1 } });
     expect(await brain.config.get({ key: 'timezone' })).toMatchObject({ ok: false, code });
     expect(await brain.config.set({ key: 'timezone', value: 'Asia/Seoul' })).toMatchObject({ ok: false, code });
     expect(await store.getSetting({ key: 'timezone' })).toEqual({ ok: true, setting: null });
@@ -39,7 +39,7 @@ describe('settings', () => {
     const definition: SettingDefinition = { key: 'probe.name', defaultValue: '안녕', normalize: value => ({ ok: true, value: value.trim() }) };
     const schemaVersion = 1;
     const store = { ...memorySettingsStore(), ...memorySchemaStore({ version: schemaVersion }) };
-    const brain = createSettingsBrain({ store, clock: { now: () => at }, schemaVersion, settingDefinitions: [definition] });
+    const brain = createSettingsBrain({ store, clock: { now: () => at }, schemaVersions: { core: schemaVersion }, settingDefinitions: [definition] });
     expect(await brain.config.get({ key: 'probe.name' })).toMatchObject({ value: '안녕', source: 'default' });
     expect(await brain.config.set({ key: 'probe.name', value: ' 값 ' })).toMatchObject({ value: '값', source: 'db' });
     for (const key of ['timezone', 'bare', '.name', 'probe.', 'probe..name']) expect(() => settingDefinitions([{ ...definition, key }])).toThrow();

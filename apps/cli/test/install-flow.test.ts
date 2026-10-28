@@ -375,7 +375,7 @@ function fakeInstalled(options: HarnessOptions): Installed {
     async build() {
       return 'build' in options
         ? options.build
-        : { commit: BUILD_COMMIT, schema_version: 6 };
+        : { commit: BUILD_COMMIT, schema_version: 6, schema_versions: { core: 1 } };
     },
     async read() {
       return options.recordedInstalled;
@@ -1684,6 +1684,7 @@ describe('the installer flow, proving itself and recording it', () => {
       {
         commit: BUILD_COMMIT,
         schema_version: 6,
+        schema_versions: { core: 1 },
         node: PINNED_NODE,
         // Nothing named a plugin folder and nothing was recorded before.
         plugin_root: null,

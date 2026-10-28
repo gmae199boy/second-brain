@@ -32,7 +32,7 @@ export function failedConfigStore(message: string): Store & SchemaStore {
     async checkHealth() {
       return unavailable;
     },
-    async readSchemaVersion() {
+    async readSchemaVersions() {
       return unavailable;
     },
     async ensureSelfUser() {

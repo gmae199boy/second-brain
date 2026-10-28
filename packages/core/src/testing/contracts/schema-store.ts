@@ -1,4 +1,5 @@
-import type { ReadSchemaVersionResult, SchemaStore } from '../../ports/store.js';
+import type { SchemaVersions } from '../../schema.js';
+import type { ReadSchemaVersionsResult, SchemaStore } from '../../ports/store.js';
 import {
   assertEqual,
   assertInteger,
@@ -16,22 +17,22 @@ import { contractCase, withSubject, type ContractCase } from '../contract.js';
  * shape. Reading the version must also change nothing, since a read command
  * that happens to ask must stay a read.
  */
-export function schemaStoreContract(): ContractCase<SchemaStore>[] {
+export function schemaStoreContract(highestVersions?: SchemaVersions): ContractCase<SchemaStore>[] {
   return [
     contractCase<SchemaStore>(
-      'readSchemaVersion answers with a well formed value instead of throwing',
+      'readSchemaVersions answers with a well formed value instead of throwing',
       async (make) => {
         await withSubject(make, async (store) => {
-          assertReadSchemaVersion(await store.readSchemaVersion());
+          assertReadSchemaVersions(await store.readSchemaVersions());
         });
       },
     ),
 
-    contractCase<SchemaStore>('readSchemaVersion can be asked twice', async (make) => {
+    contractCase<SchemaStore>('readSchemaVersions can be asked twice', async (make) => {
       await withSubject(make, async (store) => {
-        const first = await store.readSchemaVersion();
-        const second = await store.readSchemaVersion();
-        assertReadSchemaVersion(second);
+        const first = await store.readSchemaVersions();
+        const second = await store.readSchemaVersions();
+        assertReadSchemaVersions(second);
         assertEqual(
           second.ok,
           first.ok,
@@ -39,13 +40,26 @@ export function schemaStoreContract(): ContractCase<SchemaStore>[] {
         );
         if (first.ok && second.ok) {
           assertEqual(
-            second.version?.version ?? null,
-            first.version?.version ?? null,
+            JSON.stringify(Object.entries(second.versions).sort(([a], [b]) => a.localeCompare(b))),
+            JSON.stringify(Object.entries(first.versions).sort(([a], [b]) => a.localeCompare(b))),
             'reading the schema version twice gave two different versions',
           );
         }
       });
     }),
+
+    ...(highestVersions === undefined ? [] : [
+      contractCase<SchemaStore>('readSchemaVersions reports each owner’s highest applied version', async make => {
+        await withSubject(make, async store => {
+          const read = await store.readSchemaVersions();
+          assertTrue(read.ok, 'the seeded schema must be readable');
+          if (!read.ok) return;
+          for (const [owner, highest] of Object.entries(highestVersions)) {
+            assertEqual(read.versions[owner]?.version, highest, `highest version for ${owner}`);
+          }
+        });
+      }),
+    ]),
 
     contractCase<SchemaStore>('close releases the store', async (make) => {
       const store = await make();
@@ -54,20 +68,16 @@ export function schemaStoreContract(): ContractCase<SchemaStore>[] {
   ];
 }
 
-/** The shape `ReadSchemaVersionResult` promises, whichever branch comes back. */
-export function assertReadSchemaVersion(result: ReadSchemaVersionResult): void {
+/** The shape `ReadSchemaVersionsResult` promises, whichever branch comes back. */
+export function assertReadSchemaVersions(result: ReadSchemaVersionsResult): void {
   if (result.ok) {
-    if (result.version === null) return;
-    assertTrue(
-      typeof result.version === 'object',
-      'a stored schema version must be an object or null',
-    );
-    assertInteger(result.version.version, 'a stored schema version must be an integer');
-    assertTrue(
-      result.version.version > 0,
-      `a stored schema version must be positive, got ${String(result.version.version)}`,
-    );
-    assertValidDate(result.version.appliedAt, 'a stored schema version must say when it was applied');
+    assertTrue(typeof result.versions === 'object' && result.versions !== null, 'schema versions must be a map');
+    for (const [owner, version] of Object.entries(result.versions)) {
+      assertNonEmptyString(owner, 'schema owner must have a name');
+      assertInteger(version.version, 'the highest stored owner version must be an integer');
+      assertTrue(version.version > 0, 'the highest stored owner version must be positive');
+      assertValidDate(version.appliedAt, 'an owner version must say when it was applied');
+    }
     return;
   }
 

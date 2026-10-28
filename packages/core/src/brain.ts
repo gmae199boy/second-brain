@@ -1,3 +1,4 @@
+import type { SchemaVersions } from './schema.js';
 import { getSetting, setSetting, settingDefinitions } from './settings/index.js';
 import { tickSchedules, type ScheduleTickResult } from './queue/schedule-tick.js';
 import { SCHEDULE_PROBE_KIND, scheduleProbeHandler } from './queue/schedule-probe-work.js';
@@ -81,7 +82,7 @@ export interface BrainDependencies {
    * the adapter it built, because which schema is current is the adapter's
    * fact, not Core's.
    */
-  schemaVersion: number;
+  schemaVersions: SchemaVersions;
   /** The one clock. Every stored instant is read from it once (AD-13). */
   clock: Clock;
   /** Record ids. UUIDv7, minted by this side, never by the database (AD-8). */
@@ -233,7 +234,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     sources,
     userHome,
     spool,
-    schemaVersion,
+    schemaVersions,
     clock,
     idGen,
     parsers,
@@ -361,7 +362,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     doctor: {
       run: () =>
         runDoctor(store, {
-          schemaVersion,
+          schemaVersions,
           store,
           clock,
           folders: transcriptFolders,

@@ -1,4 +1,4 @@
-import { BUSY_TIMEOUT_MS, type BusyTimeoutPath } from '@second-brain/core';
+import { CONNECT_TIMEOUT_MS, BUSY_TIMEOUT_MS, type BusyTimeoutPath } from '@second-brain/core';
 import pg from 'pg';
 import type { Pool } from 'pg';
 
@@ -40,7 +40,7 @@ export interface CreatePoolOptions extends ConnectionOptions {
 export function createPool(options: CreatePoolOptions): Pool {
   const budget = options.path === undefined ? undefined : BUSY_TIMEOUT_MS[options.path];
   const databaseUrl = options.databaseUrl;
-  const connectTimeoutMs = options.connectTimeoutMs ?? budget ?? DEFAULT_CONNECT_TIMEOUT_MS;
+  const connectTimeoutMs = options.connectTimeoutMs ?? (options.path === undefined ? undefined : CONNECT_TIMEOUT_MS[options.path]) ?? DEFAULT_CONNECT_TIMEOUT_MS;
   const lockTimeoutMs = options.lockTimeoutMs ?? budget ?? connectTimeoutMs;
   const queryTimeoutMs = options.queryTimeoutMs ?? (budget === undefined ? lockTimeoutMs + 1000 : budget + 1000);
   const applicationName = options.applicationName ?? (options.path === undefined ? 'second-brain' : {
@@ -69,6 +69,9 @@ export function createPool(options: CreatePoolOptions): Pool {
   });
   // An idle client that dies must not take the process down with it.
   pool.on('error', () => {});
+  // A checked-out client can emit a second socket error after its query rejects.
+  // Query failures still propagate to databaseFailure; the event must not crash a hook.
+  pool.on('connect', client => { client.on('error', () => {}); });
   return pool;
 }
 

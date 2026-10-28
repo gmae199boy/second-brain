@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { SQLITE_SCHEMA_VERSION } from 'second_brain';
+import { EXPECTED_SCHEMA_VERSIONS } from 'second_brain/postgres';
 
 /**
  * `dist/build.json`: which commit this build was made from, and which store
@@ -41,6 +42,6 @@ function commit() {
 
 writeFileSync(
   fileURLToPath(new URL('../dist/build.json', import.meta.url)),
-  `${JSON.stringify({ commit: commit(), schema_version: SQLITE_SCHEMA_VERSION }, undefined, 2)}\n`,
+  `${JSON.stringify({ commit: commit(), schema_version: SQLITE_SCHEMA_VERSION, schema_versions: EXPECTED_SCHEMA_VERSIONS }, undefined, 2)}\n`,
   'utf8',
 );
