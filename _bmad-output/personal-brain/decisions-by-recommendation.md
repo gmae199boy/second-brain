@@ -17,3 +17,8 @@
 | 2026-10-28 | epic 13 · 순서 | 1~8 한 줄, 13.1은 12.11(epic 12 sweep)을 기다림 | 같은 파일을 고침(조사 8절), 11→12 선례 |
 | 2026-10-28 | epic 13 · 설치본 확인 | testext·가짜 로그인은 격리된 Brain 홈에서만 켜지는 시험용 resolver·harness로. 13.10은 격리 홈에서 확인하고, 운영 설치본은 버전·스킬 발견만 확인 | 세트 검증 F1 |
 | 2026-10-28 | epic 13 · risk | 스토리별 risk와 이유 표를 에픽 Notes에 | 세트 검증 F5 |
+| 2026-10-28 | epic 15 · 실행 분류 | `channel_send`는 `supervised`(core Node worker, ABI v1). hook·기회적 drain은 발신하지 않음 | hook이 Harness를 막지 않게 |
+| 2026-10-28 | epic 15 · 비밀 키 | `.env`의 `BRAIN_TELEGRAM_BOT_TOKEN`·`BRAIN_TELEGRAM_CHAT_ID`. 옛 `telegram.json`을 찾으면 옮김. 기본 tokenstore에는 없었음 | 코드 조사 7절 |
+| 2026-10-28 | epic 15 · 결과 분류 | `sent`·`definite_failed`(요청 전 실패)·`unknown`(요청 뒤 응답 유실) | 옛 `network` 합침을 나눔 |
+| 2026-10-28 | epic 15 · 묶음 | 재시작 때 `sent` 항목은 건너뜀, 4096 넘는 텍스트는 나누지 않고 `too_large` | 옛 동작 |
+| 2026-10-28 | epic 15 · 순서 | 1~5 한 줄, 15.1은 13.9를 기다림. epic 11~13 쪽에 인계 문장을 더하지 않음(명시적 예외) | 같은 파일, 선례 |

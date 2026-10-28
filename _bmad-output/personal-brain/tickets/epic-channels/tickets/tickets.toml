@@ -1,0 +1,84 @@
+# epic 15 공통 채널과 Telegram 발신 — 표 순서 = 만드는 순서. id는 영구.
+# 한 레인: 채널 Store·core 마이그레이션·조립·출력 코덱·CLI 등록부를 모든 스토리가 함께 고친다(코드 조사 8절).
+
+[[entry]]
+id = 1
+type = "story"
+title = "Tracer: 테스트 생산자의 요청 한 건이 가짜 Telegram 서버에 한 번 나가고 sent로 남는다"
+description = "가장 얇은 길로 층을 잇는다. 새 core 마이그레이션(epic 13 뒤 다음 번호)으로 channel·conversation·발신 요청(의미 키 UNIQUE, NULL 안전 정규형)·인계 표식·gate·attempt 결과 표의 최소 칸을 두고, 채널 Store port·fake·계약 suite를 만든다. core 인계 use case가 미인계 요청을 찾아 일감 생성과 인계 표식을 한 트랜잭션에 확정한다. `channel_send`는 실행 분류 `supervised`이고 core가 내보내는 Node worker가 ABI v1로 돈다(12.1의 감독자). worker는 gate를 짧은 트랜잭션에서 저장한 뒤 트랜잭션 밖에서 Telegram adapter(sendMessage만)를 부르고 결과를 현재 attempt token으로 확정한다. 비밀은 11.6 뒤의 설정 코덱이 `.env`의 `BRAIN_TELEGRAM_BOT_TOKEN`·`BRAIN_TELEGRAM_CHAT_ID`에서 읽고, 나가는 텍스트는 새 출력 코덱 항목으로 가린다. 시험 기반도 1이 만들고 2~5가 다시 쓴다: 격리된 PG와 Brain 홈, 로컬 가짜 Telegram 서버(응답·지연·끊김·429를 제어), 테스트 생산자, 정리 도구. 각 plan은 실행 명령, 사전 조건, 관찰값, 정리 명령을 적고, 기본 suite와 따로 부르는 행동 평가(5의 스킬)를 나눈다. epic 11~13에서 받는 것: 11.6의 설정 코덱, 12.1의 감독자·실행 분류·ABI v1, 13.9까지의 조립. 실제 시그니처는 epic 13이 끝난 HEAD에서 확인한다. 새 발신의 identity·provenance는 1이 끝낸다: 비밀 아닌 봇 참조, 외부 대화 참조, 선택 thread, 생산자 출처, 응답에 있으면 외부 message id. 불명·재시도는 2, legacy·같은 conversation 연결·RLS는 3, 묶음은 4, 명령·스킬은 5다. plan은 요청 하나, 일반 conversation 하나, sendMessage 하나, 정상 ABI 결과 하나에 필요한 것만 적는다. epic 11~13 완료 HEAD를 읽고도 한 세션을 넘으면 비필수 완성을 이름 붙인 다음 스토리로 나누고, PG → 감독자 → Node worker → HTTP → token 결과 확정과 가리기는 1에 남긴다. 추가 확인: 같은 의미 키 요청 둘을 동시에 넣어도 gate 승자가 하나이고, HTTP 호출 동안 DB 트랜잭션을 잡지 않는다."
+verify = "통합 시험(PG, 실제 Node worker, 로컬 가짜 Telegram 서버. 시험 이름과 실행 명령은 plan에 적는다)에서 테스트 생산자가 요청 한 건을 넣으면 데몬 감독자가 `channel_send`를 돌려 가짜 서버가 sendMessage 하나를 받고 요청 결과가 `sent`이며, 같은 의미 키로 다시 넣어도 POST는 하나이고, 같은 의미 키 요청 둘을 동시에 넣어도 POST가 하나이며, 가짜 서버가 받은 본문에 시험 비밀 문자열이 가려져 있고, 요청의 channel·conversation·생산자 출처와 응답의 message id를 되읽을 수 있으며, `brain queue drain`(기회적 drain)은 발신하지 않는다."
+covers = ["E15-1", "E15-2", "E15-3", "E15-4"]
+after = ["13.9", "11.6", "12.1"]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-channels/epic-channels-research-code.md, §1, §3, §4, §9, 스토리 후보 T1"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "불명과 재시도: 응답을 잃은 발신은 unknown으로 다시 보내고, 10번 실패하면 doctor에 보인다"
+description = "attempt 결과를 `sent`·`definite_failed`(이유 코드)·`unknown`으로 나눈다. 요청 전 연결 실패는 `definite_failed`(network_before_send), 요청 뒤 응답 유실·깨진 응답·2xx인데 ok가 아님은 `unknown`이다. 확실한 일시 실패와 `unknown`은 지수 간격으로 다시 보내고(AD-21), 429는 `retry_after` 이상 기다린다. 10번 실패하면 `failures`에 남기고 doctor에 보인다. 영구 오류(429가 아닌 4xx, 설정 없음)는 첫 실패에서 `failures`로 간다. 재시도는 같은 요청의 새 attempt이고 gate를 다시 만들지 않는다. 발신 실패는 생산자 결과를 건드리지 않는다. 결과 확정 직전 crash도 시험한다. 1의 가짜 서버로 각 경우를 만든다."
+verify = "1의 가짜 서버 시험(시험 이름과 실행 명령은 plan에 적는다)에서 접수 뒤 연결을 끊으면 결과가 `unknown`이고 다음 간격에 다시 보내 `sent`가 되며, 요청 전 연결 거부는 `definite_failed`(network_before_send)로 다시 보내고, 429는 `retry_after` 전에 다시 보내지 않으며, 10번 실패하면 `failures`에 남고 doctor가 그 요청을 보이고, 400은 첫 실패에서 `failures`이며, 서버가 접수한 직후 worker를 죽이고 다시 띄우면 결과가 `unknown`으로 남아 다시 보내지고, 결과 확정 직전에 죽여도 같은 요청으로 이어지며, 모든 경우 테스트 생산자의 결과 행과 해시가 그대로다. 대기는 12.1의 가짜 clock으로 앞당긴다."
+covers = ["E15-5"]
+after = [1]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-channels/epic-channels-research-code.md, §1(옛 gate·network 합침), §2, §9, 스토리 후보 T3"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "legacy 이력과 확장 쓰기: 옛 알림·전송 이력은 출처와 함께 들어가도 나가지 않고, 확장은 INSERT만 한다"
+description = "옛 Garmin `notification`(최초 시도 gate: local_date, event, detail, at)과 `delivery`(원래 id, local_date, kind, event, ok, reason, at)를 받는 legacy 표를 출처(dataset, 원래 표, 원래 키, import batch)와 함께 만든다. 없는 외부 id·본문은 비워 두고 누락을 표시한다. legacy 행은 같은 Garmin 봇·채팅의 conversation(1이 만든 것)에 이어진다. 그래서 옛 이력과 새 발신이 한 대화로 보인다. legacy 행은 인계 대상에서 구조적으로 빠지고, resend 적격성에서 빠지는 표식을 갖는다. CLI의 resend 거부와 그 관찰은 5가 완성한다. 요청 표와 legacy 표에 확장 role(13.4)용 RLS(출처를 role에 결합한 WITH CHECK, UPDATE·DELETE 없음)와 12.3의 attempt 확인 trigger를 붙인다. 요청 INSERT 뒤 crash와 인계 트랜잭션 경계 crash에서 같은 요청으로 수렴하는지 시험한다. epic 14가 이 표에 옛 이력을 넣는다(합성 fixture로 그 입력 모양을 고정한다)."
+verify = "PG 시험(시험 이름과 실행 명령은 plan에 적는다)에서 `brain_ext_testext`로 자기 출처의 요청·legacy 행 INSERT는 되고 다른 출처 행·UPDATE·DELETE는 거부되며, 회수된 attempt token의 INSERT는 trigger가 거부하고, 합성 legacy batch를 두 번 넣어도 행이 한 번이고 가짜 Telegram 서버 POST와 `channel_send` 일감이 0이며, 요청 INSERT 직후 프로세스를 죽인 뒤 다시 띄우면 그 요청이 한 번 인계되고, legacy 행과 새 요청이 같은 conversation id로 되읽힌다. 추가 확인: 다른 dataset의 같은 원래 키는 둘 다 남고, 같은 dataset·같은 키의 원문이 다르면 조용히 버리지 않고 충돌로 드러나며, 인계 트랜잭션 중간에 죽여도 같은 요청으로 수렴한다."
+covers = ["E15-1", "E15-2", "E15-7"]
+after = [2, "13.4", "12.3"]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-channels/epic-channels-research-code.md, §4(인계·확장 INSERT), §5(legacy 칸), 스토리 후보 T2"]
+
+[[entry]]
+id = 4
+type = "story"
+title = "결과 묶음: 요약 → 앨범 → 전문이 순서대로 나가고, 다시 시작하면 보내지 않은 항목만 보낸다"
+description = "묶음 요청(요약 텍스트, 앨범 여럿, 전문 문서)과 항목별 결과를 둔다. adapter에 sendPhoto(1장)·sendMediaGroup(2~10장)·sendDocument(multipart)를 더한다. 크기 상한(텍스트 UTF-16 4096, 사진 10MiB, 문서 50MiB)을 넘으면 그 항목은 `too_large` 영구 오류다. 캡션·텍스트는 출력 코덱으로 가린다. 다시 시작하면 `sent`가 확인된 항목은 건너뛰고 `unknown`·실패 항목만 보낸다. 파일은 core 파일(FileStore)에서 읽는다. 묶음을 만드는 생산자는 epic 18이다. 이 에픽은 시험 생산자로 검증한다."
+verify = "1의 가짜 서버 시험(시험 이름과 실행 명령은 plan에 적는다)에서 묶음 하나가 요약 → 앨범 → 전문 순서로 나가고, 둘째 앨범에서 연결을 끊은 뒤 다시 돌리면 요약·첫 앨범은 다시 나가지 않고 둘째 앨범부터 나가며, 4097자 텍스트는 `too_large`로 닫히며, 사진 한 장은 sendPhoto로, 10MiB 사진·50MiB 문서·앨범 10장은 경계값대로 처리되고, 가짜 서버가 받은 캡션에 시험 비밀 문자열이 가려져 있다."
+covers = ["E15-4", "E15-6"]
+after = [3]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/tickets/epic-channels/epic-channels-research-code.md, §1(옛 묶음 순서), §2(크기 상한), 스토리 후보 T4"]
+
+[[entry]]
+id = 5
+type = "story"
+title = "명령과 resend 스킬: brain channels status로 보고 resend로 못 간 것만 다시 연다"
+description = "`brain channels list|status|resend <request-id>`(CommandSpec·명령 메타·SDK 1:1, 출력 코덱 통과)를 만든다. status는 `sent`·`definite_failed`·`unknown`·`failures`·legacy를 구분하고, 비밀 값을 보이지 않는다. resend는 실패·불명·`failures`로 닫힌 요청만 같은 요청의 새 attempt로 다시 열고, `sent`·legacy(3이 남긴 적격성 표식)·진행 중 요청은 정해진 오류로 거부한다. 성공하면 그 `failures` 항목을 해소한다. 플러그인 스킬 `plugin/skills/channels/SKILL.md`가 `brain guide schema channels` → status → resend → status 순서로 실제 결과를 보고한다. 13.7의 정적 검사와 가짜 CLI 행동 시험 방식으로 검증한다(case: 못 간 알림 다시 보내기, 이미 보낸 것, legacy, 명령 없음)."
+verify = "CLI 시험(시험 이름과 실행 명령은 plan에 적는다)에서 `unknown` 요청의 `brain channels resend`가 새 attempt를 열어 `sent`가 되고 `failures`가 해소되며, `sent`·legacy·진행 중 요청의 resend는 정해진 오류 코드로 거부되고, status 출력에 비밀 문자열이 없으며, 스킬 정적 검사와 네 case 행동 시험이 통과한다."
+covers = ["E15-8"]
+after = [4, "13.7"]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/tickets/epic-channels/epic-channels-research-code.md, §6, 스토리 후보 T5"]
+
+[[entry]]
+id = 6
+type = "story"
+title = "Refactor sweep"
+description = "1~5가 미룬 정리만 한다. 범위는 착수 때 각 plan의 미룬 항목과 리뷰 지적에서 정한다. 다른 스토리에서 밀려난 기능은 새 스토리로 뺀다."
+verify = "착수 때 정한 정리 목록의 항목이 모두 처리되고 빌드·typecheck·전체 테스트가 PG에서 통과한다."
+covers = []
+after = [1, 2, 3, 4, 5]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 7
+type = "story"
+title = "이 Mac에서 확인: 플러그인 배포로 채널이 설치본에서 돌고, 옛 봇으로 실제 한 번 나간다"
+description = "기능 묶음을 플러그인 배포(`plugin/app-ref`를 앞선 커밋으로, `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올림)로 이 Mac의 설치본에 넣고 에이전트가 확인한다(2026-10-28 위임: 로컬 설치본으로 확인하고, 원격 push가 있어야만 하는 단계는 `operator_actions`에 남긴다). 실계정: 이 Mac의 옛 Garmin 설정 위치(옛 tokenstore의 `telegram.json`, 옛 config의 tokenstore 경로)에서 `bot_token`·`chat_id`를 찾으면 Brain `.env`의 `BRAIN_TELEGRAM_BOT_TOKEN`·`BRAIN_TELEGRAM_CHAT_ID`로 옮기고(값은 출력·기록하지 않음), 확인용 메시지 한 건을 옛 채팅으로 보내 `brain channels status`가 `sent`와 message id를 보이는지 본다. 로컬 설치·status·resend·doctor·스킬 발견은 에이전트가 먼저 확인한다. 설정을 찾지 못하면 필요한 두 키와 재개 절차(`.env`에 두 값을 넣고 확인용 발신을 다시 한 뒤 `bmad-loop confirm`)를 `operator_actions`에 남기고 7은 `awaiting-operator`로 둔다. 실발신 성공으로 기록하지 않고, run은 계속한다. 원격 push가 있어야만 하는 배포 단계도 같은 방식으로 끝난 것과 남은 것을 나눈다. plan에는 다시 돌릴 때의 정리 절차(확인용 요청 지우기)를 적는다."
+verify = "에이전트가 이 Mac에서 위 확인 목록을 한 번 돌리고 결과(명령 출력, doctor 출력)를 plan에 남긴다. 실계정 발신이 성공했으면 status의 `sent`와 message id를 남기고 7을 끝낸다. 설정이 없으면 `operator_actions`를 남기고 7은 `awaiting-operator`다(성공으로 기록하지 않는다)."
+covers = ["E15-1", "E15-4", "E15-8"]
+after = [6]
+hitl = false
+risk = "medium"
