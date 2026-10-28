@@ -154,6 +154,7 @@ create table brain.files (
   size_bytes integer not null,
   first_seen_at timestamptz not null,
   home_location_id uuid,
+  current_extraction_id uuid,
   redacted_at timestamptz, source_unreachable_at timestamptz,
   constraint files_size_bytes_check check (size_bytes >= 0)
 );
@@ -224,6 +225,150 @@ create unique index work_items_open_key_idx on brain.work_items(kind, target_kin
 create index work_items_due_idx on brain.work_items(attempts, id, next_attempt_at) where completed_at is null;
 create index messages_session_occurred_idx on brain.messages(session_id, occurred_at);
 create index tool_notes_target_idx on brain.tool_notes using gin (lower(target) public.gin_trgm_ops);
+
+-- Remaining core tables, matching the final SQLite schema without FTS internals.
+create table brain.log_entries (
+  id uuid primary key,
+  kind text not null,
+  session_id uuid not null references brain.sessions(id),
+  occurred_at timestamptz not null,
+  recorded_at timestamptz not null,
+  author_model text,
+  "text" text not null,
+  rule_state text,
+  apply_project_id uuid references brain.projects(id),
+  supersedes_id uuid references brain.log_entries(id),
+  constraint log_entries_kind_check check (kind in ('progress', 'decision', 'rule', 'preference')),
+  constraint log_entries_rule_state_check check ((kind = 'rule') = (rule_state is not null)),
+  constraint log_entries_rule_state_values_check check (rule_state is null or rule_state in ('pending', 'on', 'off'))
+);
+create table brain.log_entry_edits (
+  id uuid primary key,
+  log_entry_id uuid not null references brain.log_entries(id),
+  previous_text text not null,
+  edited_at timestamptz not null
+);
+create table brain.index_configs (
+  id uuid primary key,
+  kind text not null,
+  model text,
+  dimensions integer,
+  chunk_params jsonb not null,
+  constraint index_configs_kind_check check (kind in ('chunk', 'embedding', 'document_chunk')),
+  constraint index_configs_chunk_params_check check (
+    jsonb_typeof(chunk_params) = 'object'
+    and case when kind = 'document_chunk' then
+      chunk_params ?& array['targetChars', 'overlapChars']
+      and chunk_params - array['targetChars', 'overlapChars'] = '{}'::jsonb
+      and jsonb_typeof(chunk_params->'targetChars') = 'number'
+      and jsonb_typeof(chunk_params->'overlapChars') = 'number'
+    else
+      chunk_params ?& array['targetChars', 'overlapMessages', 'splitMessagesOverChars']
+      and chunk_params - array['targetChars', 'overlapMessages', 'splitMessagesOverChars'] = '{}'::jsonb
+      and jsonb_typeof(chunk_params->'targetChars') = 'number'
+      and jsonb_typeof(chunk_params->'overlapMessages') = 'number'
+      and jsonb_typeof(chunk_params->'splitMessagesOverChars') = 'number'
+    end
+  )
+);
+create unique index index_configs_key_idx on brain.index_configs(kind, model, dimensions, chunk_params) nulls not distinct;
+insert into brain.index_configs(id, kind, model, dimensions, chunk_params) values
+  ('019a0000-0000-7000-8000-000000000001', 'chunk', null, null, '{"targetChars":1200,"overlapMessages":1,"splitMessagesOverChars":2400}'),
+  ('019a0000-0000-7000-8000-000000000002', 'document_chunk', null, null, '{"targetChars":1200,"overlapChars":120}');
+create table brain.chunks (
+  id uuid primary key,
+  session_id uuid not null references brain.sessions(id),
+  index_config_id uuid not null references brain.index_configs(id),
+  from_at timestamptz not null,
+  to_at timestamptz not null,
+  body text not null,
+  unique(session_id, index_config_id, from_at, to_at),
+  constraint chunks_range_check check (from_at <= to_at)
+);
+create table brain.context_injections (
+  id uuid primary key,
+  session_id uuid not null references brain.sessions(id),
+  attempted_at timestamptz not null,
+  ok integer not null,
+  code text,
+  chars integer not null,
+  constraint context_injections_ok_check check (ok in (0, 1))
+);
+create table brain.document_extractions (
+  id uuid primary key,
+  file_id uuid not null references brain.files(id),
+  extractor_version text not null,
+  attempt integer not null,
+  media_type text,
+  status text,
+  started_at timestamptz not null,
+  finished_at timestamptz,
+  error text,
+  failed_stage text,
+  index_config_id uuid references brain.index_configs(id),
+  unique(file_id, attempt),
+  constraint document_extractions_attempt_check check (attempt >= 1),
+  constraint document_extractions_status_check check (status is null or status in ('ok', 'failed', 'unsupported', 'too_large', 'redacted')),
+  constraint document_extractions_finished_check check ((finished_at is null) = (status is null)),
+  constraint document_extractions_failed_stage_check check (
+    (status is not distinct from 'failed') = (failed_stage is not null)
+    and (failed_stage is null or failed_stage in ('read', 'extract', 'chunk', 'index')))
+);
+create unique index document_extractions_running_idx on brain.document_extractions(file_id) where finished_at is null;
+alter table brain.files add foreign key (current_extraction_id) references brain.document_extractions(id);
+create table brain.document_chunks (
+  id uuid primary key,
+  extraction_id uuid not null references brain.document_extractions(id),
+  ordinal integer not null,
+  page integer,
+  body text not null,
+  chunk_locator text not null,
+  unique(extraction_id, ordinal),
+  constraint document_chunks_locator_check check (case when pg_input_is_valid(chunk_locator, 'jsonb') then
+    coalesce(jsonb_typeof(chunk_locator::jsonb) = 'object'
+      and chunk_locator::jsonb->>'type' in ('pdf', 'docx', 'text', 'time', 'sheet')
+      and to_jsonb(page) is not distinct from
+        (case when chunk_locator::jsonb->>'type' = 'pdf' then chunk_locator::jsonb->'page' end), false)
+    else false end)
+);
+create table brain.file_names (
+  id uuid primary key,
+  file_id uuid not null references brain.files(id),
+  name_source text not null,
+  "text" text not null,
+  unique(file_id, name_source, "text"),
+  constraint file_names_name_source_check check (name_source in ('location_path', 'attachment_name'))
+);
+create table brain.file_metadata (
+  id uuid primary key,
+  file_id uuid not null references brain.files(id),
+  key text not null,
+  value text not null,
+  unique(file_id, key),
+  constraint file_metadata_captured_at_check check (key <> 'captured_at' or value ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$')
+);
+create table brain.schedules (
+  id uuid primary key,
+  kind text not null,
+  target_kind text not null,
+  target_id text not null,
+  interval_seconds integer,
+  next_run_at timestamptz,
+  last_run_at timestamptz,
+  created_at timestamptz not null,
+  check (interval_seconds is null or interval_seconds > 0),
+  check (interval_seconds is null or next_run_at is not null)
+);
+create index schedules_due_idx on brain.schedules(next_run_at) where next_run_at is not null;
+create table brain.settings (
+  key text primary key,
+  value text not null,
+  updated_at timestamptz not null
+);
+create index chunks_body_idx on brain.chunks using gin (lower(body) public.gin_trgm_ops);
+create index log_entries_text_idx on brain.log_entries using gin (lower("text") public.gin_trgm_ops);
+create index document_chunks_body_idx on brain.document_chunks using gin (lower(body) public.gin_trgm_ops);
+create index file_names_text_idx on brain.file_names using gin (lower("text") public.gin_trgm_ops);
 
 create function brain.tool_notes_immutable_delete_fn() returns trigger language plpgsql as $$
 begin
@@ -411,6 +556,94 @@ revoke insert, update, delete on brain.schema_migrations from brain_app;
 
 -- A custom GUC is caller-settable: keep the redaction column outside runtime DML.
 revoke update on brain.files from brain_app;
-grant update (home_location_id, source_unreachable_at) on brain.files to brain_app;
+grant update (home_location_id, source_unreachable_at, current_extraction_id) on brain.files to brain_app;
 revoke insert on brain.files from brain_app;
 grant insert (id, content_hash, size_bytes, first_seen_at) on brain.files to brain_app;
+
+create function brain.files_extraction_check_fn() returns trigger language plpgsql as $$
+begin
+  if coalesce((new.current_extraction_id is not null and not exists (select 1 from brain.document_extractions where id = new.current_extraction_id and file_id = new.id)), true) then raise exception 'files_extraction_check: invariant refused'; end if;
+  return new;
+end $$;
+create trigger files_extraction_check before update of current_extraction_id on brain.files for each row execute function brain.files_extraction_check_fn();
+
+create function brain.files_extraction_check_insert_fn() returns trigger language plpgsql as $$
+begin
+  if coalesce((new.current_extraction_id is not null and not exists (select 1 from brain.document_extractions where id = new.current_extraction_id and file_id = new.id)), true) then raise exception 'files_extraction_check_insert: invariant refused'; end if;
+  return new;
+end $$;
+create trigger files_extraction_check_insert before insert on brain.files for each row execute function brain.files_extraction_check_insert_fn();
+
+create function brain.document_extractions_immutable_update_fn() returns trigger language plpgsql as $$
+begin
+  if coalesce((new.id is distinct from old.id
+    or new.file_id is distinct from old.file_id
+    or new.extractor_version is distinct from old.extractor_version
+    or new.attempt is distinct from old.attempt
+    or new.started_at is distinct from old.started_at
+    or (old.finished_at is not null and (new.media_type is distinct from old.media_type or new.status is distinct from old.status or new.finished_at is distinct from old.finished_at or new.error is distinct from old.error or new.failed_stage is distinct from old.failed_stage or new.index_config_id is distinct from old.index_config_id))), true) then raise exception 'document_extractions_immutable_update: invariant refused'; end if;
+  return new;
+end $$;
+create trigger document_extractions_immutable_update before update on brain.document_extractions for each row execute function brain.document_extractions_immutable_update_fn();
+
+create function brain.document_chunks_delete_rule_fn() returns trigger language plpgsql as $$
+declare
+  extraction_finished_at timestamptz;
+  file_current_extraction_id uuid;
+begin
+  if current_setting('brain.redacting', true) is distinct from 'on' then
+    select e.finished_at, f.current_extraction_id
+      into extraction_finished_at, file_current_extraction_id
+      from brain.document_extractions e join brain.files f on f.id = e.file_id
+      where e.id = old.extraction_id for share of f;
+    if found and (extraction_finished_at is null or file_current_extraction_id = old.extraction_id) then
+      raise exception 'document_chunks_delete_rule: invariant refused';
+    end if;
+  end if;
+  return old;
+end $$;
+create trigger document_chunks_delete_rule before delete on brain.document_chunks for each row execute function brain.document_chunks_delete_rule_fn();
+
+create function brain.file_names_redacted_insert_fn() returns trigger language plpgsql as $$
+declare target_redacted_at timestamptz;
+begin
+  -- Lock unredacted targets too, serializing derived writes with redaction.
+  select redacted_at into target_redacted_at from brain.files where id = new.file_id for share;
+  if target_redacted_at is not null then raise exception 'file_names_redacted_insert: invariant refused'; end if;
+  return new;
+end $$;
+create trigger file_names_redacted_insert before insert on brain.file_names for each row execute function brain.file_names_redacted_insert_fn();
+
+create function brain.file_names_redacted_update_fn() returns trigger language plpgsql as $$
+declare target_redacted_at timestamptz;
+begin
+  -- Lock unredacted targets too, serializing derived writes with redaction.
+  select redacted_at into target_redacted_at from brain.files where id = new.file_id for share;
+  if target_redacted_at is not null then raise exception 'file_names_redacted_update: invariant refused'; end if;
+  return new;
+end $$;
+create trigger file_names_redacted_update before update on brain.file_names for each row execute function brain.file_names_redacted_update_fn();
+
+create function brain.file_metadata_redacted_insert_fn() returns trigger language plpgsql as $$
+declare target_redacted_at timestamptz;
+begin
+  -- Lock unredacted targets too, serializing derived writes with redaction.
+  select redacted_at into target_redacted_at from brain.files where id = new.file_id for share;
+  if target_redacted_at is not null then raise exception 'file_metadata_redacted_insert: invariant refused'; end if;
+  return new;
+end $$;
+create trigger file_metadata_redacted_insert before insert on brain.file_metadata for each row execute function brain.file_metadata_redacted_insert_fn();
+
+create function brain.file_metadata_redacted_update_fn() returns trigger language plpgsql as $$
+declare target_redacted_at timestamptz;
+begin
+  -- Lock unredacted targets too, serializing derived writes with redaction.
+  select redacted_at into target_redacted_at from brain.files where id = new.file_id for share;
+  if target_redacted_at is not null then raise exception 'file_metadata_redacted_update: invariant refused'; end if;
+  return new;
+end $$;
+create trigger file_metadata_redacted_update before update on brain.file_metadata for each row execute function brain.file_metadata_redacted_update_fn();
+
+create trigger document_extractions_no_truncate before truncate on brain.document_extractions for each statement execute function brain.refuse_truncate();
+
+create trigger document_chunks_no_truncate before truncate on brain.document_chunks for each statement execute function brain.refuse_truncate();

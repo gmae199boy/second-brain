@@ -226,3 +226,11 @@ source_spec: `tickets/epic-postgres-primary/tickets/story-tracer-pg-hook-plan.md
 severity: medium
 reason: `postgresSecrets`(apps/cli/src/config/codec.ts)와 기존 `writeConfig`의 `.env` 쓰기가 모두 `writeFile`로 제자리 truncate 후 쓴다. setup은 매번 두 곳에서 `.env`를 다시 쓰므로 한쪽만 임시 파일+rename으로 바꿔서는 위험이 남는다. 비밀번호를 잃으면 기존 볼륨에 접속할 수 없어 `.env` 복원이나 볼륨 삭제가 필요하다.
 status: open
+
+### DW-7: `brain.redacting` GUC를 brain_app이 세우면 document_chunks 삭제 규칙(열린·현재 세대 보호)을 건너뛸 수 있다.
+origin: spec-deferred 4cab66f5de9f
+location: packages/postgres/migrations/0001_initial.sql (brain.document_chunks_delete_rule_fn)
+source_spec: `tickets/epic-postgres-primary/tickets/story-baseline-0001-core-pg-plan.md`
+severity: medium
+reason: 0001의 document_chunks_delete_rule_fn은 current_setting('brain.redacting', true) = 'on'이면 검사를 건너뛴다. 사용자 정의 GUC는 어떤 세션이든 set으로 세울 수 있고, brain_app은 document_chunks DELETE 권한을 가진다(세대 교체에 필요). 가리기 권한 경계와 제한된 정리 경로는 E11-6(티켓 5) 범위다.
+status: open
