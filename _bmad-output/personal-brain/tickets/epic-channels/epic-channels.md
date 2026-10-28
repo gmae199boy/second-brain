@@ -56,3 +56,4 @@ Brain의 어떤 기능이든 같은 채널 계약으로 메시지를 보내고, 
 - Decision(2026-10-28): Telegram은 옛 Garmin 봇과 채팅을 그대로 쓴다. 이전된 옛 이력과 새 발신이 같은 대화가 된다. bot token과 chat id를 `.env`에 넣는 것은 사람이 한다(hitl).
 - Decision(2026-10-28, 사용자): 채널은 Garmin 런타임 안이 아니라 별도 에픽으로 그 앞에 둔다.
 - Decision(2026-10-28, 사용자): 이전한 Garmin 알림·전송 이력은 Garmin 스키마가 아니라 core 채널 이력에 둔다. 그래서 이 에픽을 epic-garmin-import 앞으로 옮겼다.
+- Decision(2026-10-28, 추천으로 정함, 사용자 위임): 옛 Garmin 봇 token과 chat id가 이 Mac에 있으면 에이전트가 Brain `.env`로 옮겨 쓰고 실계정 발신 한 번을 확인한다. 없으면 그 스토리만 `awaiting-operator`로 두고 run은 계속한다.

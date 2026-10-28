@@ -65,5 +65,5 @@ Garmin 확장 뼈대와 스키마를 PostgreSQL에 만들고 기존 Garmin 데�
 - Decision(2026-10-28): Garmin SQLite snapshot은 Brain의 `node:sqlite`가 아니라 확장의 Python `sqlite3`로 읽기 전용으로 읽는다. 그래서 epic 11이 Brain의 SQLite 경로를 지워도 이전이 가능하다. spine AD-29(확장은 별도 프로세스, 언어 무관)와 AD-36(원형 snapshot을 읽기 전용으로 보존)과 맞다. 이전의 Assumption을 대신한다.
 - Decision(2026-10-28, spine AD-23·35): 구형 Markdown·facts·PNG는 파일 등록 요청으로 core 파일이 되고 문서 추출·조각 색인을 탄다. `analyses` 행이 그 파일을 가리킨다. 이전의 Open question을 대신한다.
 - Decision(2026-10-28, 사용자): core 계약 표는 처음 쓰는 에픽이 만든다. 이 에픽이 건강 측정·요약 표와 "현재" view, `analyses` 최소 계약, `file_requests`와 그 인계 일감을 만든다. epic 18이 `analyses`를 호환 확장하고, epic 16·17·18이 건강 계약 표를 소비한다. 채널 발신 요청·이력 표는 epic 15가 만든다.
-- Open question: 개발/운영 DB 중 기준 소스는 무엇이고, 겹치는 자연키의 충돌은 어떻게 고르나? 실제 반입 전에 사용자가 정한다(C6). 2026-10-28 결정 묶음에서도 묻지 않았다. preflight 보고서를 본 뒤 실제 반입 직전에 정한다(사람 확인 스토리).
+- Open question: 개발/운영 DB 중 기준 소스는 무엇이고, 겹치는 자연키의 충돌은 어떻게 고르나? 실제 반입 전에 사용자가 정한다(C6). 2026-10-28 결정 묶음에서도 묻지 않았다. preflight 보고서를 본 뒤 실제 반입 직전에 정한다(사람 확인 스토리). → 2026-10-28 사용자가 추천 규칙에 위임했다. 이 에픽을 쪼갤 때 preflight 증거로 추천 규칙을 정해 Decision으로 남기고, 실제 반입은 에이전트 스토리(`hitl = false`)로 한다. 미선택 후보도 원형과 출처를 보존한다(AD-36).
 - Waits on epic-channels because: 옛 Garmin 알림·전송 이력이 core 채널 발신 이력에 들어간다(2026-10-28, 사용자).

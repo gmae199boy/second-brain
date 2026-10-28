@@ -60,3 +60,4 @@ Garmin 사용자가 별도 Garmin 설치 없이 Brain에서 수집과 정제를 
 - Decision(2026-10-28): 수집 사건 알림을 옮긴다. 옛 Garmin은 인증 실패·rate limit·403 차단·정규화 실패·반복 부분 수집·오류를 (현지 날짜, 사건)마다 한 번 Telegram으로 보냈다(`errors.NotifyEvent`, `ports.TelegramNotifier` @ 7fb33dd). 같은 사건을 같은 의미 키로 채널 발신 요청에 넣는다. 그래서 epic-channels를 `after`에 다시 선언했다(만드는 순서상 15가 이미 앞이다). 리포트 실패 알림은 epic-health-analysis다.
 - Decision(2026-10-28): manifest의 기본 수집 예약은 옛 Garmin 값 그대로다. 수집 11:00, 재시도 11:15, 시간대는 사용자 설정 DB의 값이다(옛 `config.py` `_DEFAULTS` @ 7fb33dd). 놓친 예약은 epic-jobs-and-scheduler의 결정(깨어난 뒤 빠진 날짜가 있을 때만 한 번)을 따른다.
 - Waits on epic-channels because: 수집 사건 알림을 채널 발신 요청(의미 키 UNIQUE)으로 보낸다(2026-10-28).
+- Decision(2026-10-28, 추천으로 정함, 사용자 위임): 실계정 확인은 옛 Garmin tokenstore(기본 `~/.garmin-pipeline/tokens`)가 유효하면 에이전트가 그것으로 로그인해 수집 한 번을 돌린다. MFA가 필요하면 그 스토리만 `awaiting-operator`로 두고 run은 계속한다. 차단·MFA 뒤에는 외부 호출을 하지 않는다(R11).

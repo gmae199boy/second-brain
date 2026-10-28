@@ -4,7 +4,7 @@ title: "어떤 에이전트로 일해도 이어지는 나의 작업·건강 기�
 parent: none
 covers: [CAP-1, CAP-2, CAP-3, CAP-4, CAP-5, CAP-6, CAP-7, CAP-8, CAP-9, CAP-10, CAP-11, CAP-12, CAP-13, CAP-14]
 sources: [_bmad-output/personal-brain/prep-garmin-absorption/accepted-intent.md, _bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md]
-companions: [_bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md, _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, _bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md, _bmad-output/personal-brain/prep-garmin-absorption/integration-boundaries.md, _bmad-output/personal-brain/prep-garmin-absorption/migration-contract.md]
+companions: [_bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md, _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, _bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md, _bmad-output/personal-brain/prep-garmin-absorption/integration-boundaries.md, _bmad-output/personal-brain/prep-garmin-absorption/migration-contract.md, _bmad-output/personal-brain/decisions-by-recommendation.md]
 after: []
 assignee: ""
 risk: high
@@ -162,7 +162,7 @@ Garmin 흡수의 범위 밖(2026-10-28)은 다음과 같다. 이것들은 흡수
   - 남은 미룬 일은 spine Deferred에 owner 에픽과 함께 있다(예: chunk_locator text/jsonb는 epic 11, 정체·놓친 예약·모델 호출 비용은 epic 12).
 - Source conflict(2026-10-28): PRD §9 Constraints("로컬 SQLite 파일 하나다… 서버나 Docker가 필요 없다")는 C1과 다르고, NFR-5는 위 LLM 결정과 다르다. 이 파일과 spec이 우선한다. PRD 본문은 `bmad-prd`로 고칠 수 있다.
 - Decision(2026-10-28, 사용자, 결정 묶음): 남은 에픽의 사용자 결정을 한 번에 받아 각 에픽 Notes에 적었다. 놓친 예약(깨어난 뒤 빠진 날짜가 있을 때만 한 번)·정체 판정·모델 호출 표시(토큰과 걸린 시간만, 상한 없음)는 epic 12, 확장 끄기(진행 취소, 대기 보류)는 12·13·18, 불명 발신(지수 간격 10번 뒤 doctor와 resend 스킬)은 15, 분석 에이전트·모델을 사용자 설정으로 바꾸기는 18, 수집 사건 알림은 16이다. 위 두 Open question(놓친 예약·정체, 모델 호출 비용)을 대신한다. C6은 그대로 epic 14의 실제 반입 직전에 정한다.
-- Open question: 개발/운영 Garmin DB 중 기준 소스는 무엇이고, 겹치는 자연키의 충돌은 어떻게 고르나? epic 14가 실제 반입하기 전에 사용자가 정한다(C6).
+- Open question: 개발/운영 Garmin DB 중 기준 소스는 무엇이고, 겹치는 자연키의 충돌은 어떻게 고르나? epic 14가 실제 반입하기 전에 사용자가 정한다(C6). → 2026-10-28 사용자가 추천 규칙에 위임했다(아래 Decision). 규칙은 epic 14를 쪼갤 때 preflight 증거로 정한다.
 - Decision(2026-10-28, 트리 검증): 이니셔티브 `covers`에는 S id를 더하지 않는다. 템플릿상 이니셔티브의 `covers`는 쓰지 않는 칸이고 CAP 목록은 예전 값이다. S·E id는 Requirements 줄에 있다.
 - Decision(2026-10-28, 사용자): 시간대를 `config.toml`에서 사용자 설정 DB로 옮긴다(epic 11). 예약과 현지 날짜 질의가 이 값을 쓴다.
 - Decision(2026-10-28, 사용자): 이전한 Garmin 알림·전송 이력은 core 채널 이력에 둔다. 그래서 epic 15(채널)를 epic 14(이전) 앞으로 옮겼다. 순서는 11 → 12 → 13 → 15 → 14 → 16 → 17이다.
@@ -185,3 +185,9 @@ Garmin 흡수의 범위 밖(2026-10-28)은 다음과 같다. 이것들은 흡수
   - 표 순서(18 → 17)대로 만들면 충돌이 없다.
   - 나란히 만들면 뒤에 합치는 쪽이 번호와 목록을 맞춘다. AD-31 실행기가 같은 owner 안의 번호 중복을 거부한다.
 - Decision(2026-10-28, 사용자: 사람이 없을 때 최대한 많이 만들기): 남은 V1 에픽(12·13·15·14·16·18·17·8) 파일의 에픽 전체 gate(`after:`)를 없앴다. 에픽 상태는 닫기 때 사람이 `done`으로 쓰므로, 전체 gate가 있으면 각 에픽 끝의 이 Mac 확인(hitl)과 닫기가 끝날 때까지 다음 에픽이 시작되지 않는다. 앞 에픽에서 필요한 것은 이 파일 `tickets.toml`의 에픽 `after`(needs)로 선언해 두고, 스토리를 쪼갤 때 entry의 교차 에픽 `after`(`<epic>.<entry>`)로 고정한다. 그래서 루프는 앞 에픽의 코드 스토리가 끝나면 다음 에픽으로 넘어간다. 이 Mac 확인과 닫기는 막지 않는 사람 일로 모아서 한다. 이 Mac 확인에서 나온 문제는 버그 스토리로 고친다. V1 뒤 에픽(5·3·4·7·6)의 전체 gate는 그대로 둔다.
+- Decision(2026-10-28, 사용자: 사람 개입 없이 끝까지): 남은 V1 에픽(12·13·15·14·16·18·17·8)을 쪼갤 때와 루프가 만들 때, 사람이 정할 일은 추천안으로 정하고 `Decision(날짜, 추천으로 정함)`으로 그 티켓 Notes에 적는다. 모든 추천 결정은 `decisions-by-recommendation.md`에 한 줄씩 모은다. hitl은 다음과 같이 다룬다.
+  - 이 Mac 확인(설치·명령·doctor 출력)과 로컬 플러그인 배포(app-ref·version)는 에이전트가 하고 증거를 plan에 남긴다(`hitl = false`). 원격 push가 있어야만 하는 배포는 하지 않고 `operator_actions`에 남긴다.
+  - C6: 기준 소스와 충돌 처리는 추천 규칙으로 정하고, 에이전트가 실제 반입을 한다. 원본 snapshot은 읽기만 하므로 되돌릴 수 있다. 사용자가 이것을 위임했으므로 C6과 AD-36의 "사용자가 고르기 전 반입 금지"는 이 위임으로 채운다.
+  - 이 Mac에 이미 있는 옛 Garmin 토큰과 Telegram 봇 설정은 Brain으로 옮겨 쓴다.
+  - 사람만 할 수 있는 일(Drive OAuth 동의, 토큰이 만료됐을 때의 Garmin MFA, 모델 분석 품질 판단, 원격 push)은 스토리를 `awaiting-operator`로 두어 run을 막지 않고, 목록으로 남긴다.
+  - 루프 설정 `gates.mode`는 `none`으로 바꿨다. 에픽 경계에서 멈추지 않는다(`.bmad-loop/policy.toml`, 계획과 함께 main에 들어간다).
