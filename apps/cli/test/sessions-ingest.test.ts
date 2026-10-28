@@ -2077,8 +2077,8 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
     const before = (await tags(databaseIn(home)));
     const db = new PgTestClient(databaseIn(home));
     try {
-      (await db.prepare(`insert into work_items(id, kind, target_kind, target_id, created_at, attempts, next_attempt_at)
-        values ($1, 'session_identity', 'session', $2, $3, 0, $4)`).run(
+      (await db.prepare(`insert into work_items(id, execution_class, kind, target_kind, target_id, created_at, attempts, next_attempt_at)
+        values ($1, 'core', 'session_identity', 'session', $2, $3, 0, $4)`).run(
           '01940000-0000-7000-8000-000000000810', `claude-code:${sessionIdFor(1)}`,
           '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'));
     } finally { (await db.close()); }
@@ -2849,7 +2849,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
     const transcript = await transcriptIn(home);
     const database = new PgTestClient(databaseIn(home));
     try {
-      (await database.exec('update brain.schema_migrations set version = 2'));
+      (await database.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
     } finally {
       (await database.close());
     }
@@ -2916,7 +2916,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
     const transcript = await transcriptIn(home);
     const database = new PgTestClient(databaseIn(home));
     try {
-      (await database.exec('update brain.schema_migrations set version = 2'));
+      (await database.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
     } finally {
       (await database.close());
     }
@@ -2939,7 +2939,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
     const transcript = await transcriptIn(home);
     const database = new PgTestClient(databaseIn(home));
     try {
-      (await database.exec('update brain.schema_migrations set version = 2'));
+      (await database.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
     } finally {
       (await database.close());
     }
@@ -3049,7 +3049,7 @@ describe('hook arrival evidence', () => {
     const transcript = await transcriptIn(home);
     if (spooled) {
       const db = new PgTestClient(databaseIn(home));
-      try { (await db.exec('update brain.schema_migrations set version = 2')); } finally { (await db.close()); }
+      try { (await db.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)')); } finally { (await db.close()); }
     }
     const run = await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, stopPayload(transcript), { SECOND_BRAIN_PLUGIN_ROOT: '/demo/plugin' });
     expect(run.code).toBe(0);
@@ -3150,8 +3150,8 @@ describe('blob_delete through the CLI', () => {
     const work = blobDeleteWork({ id, locationId, at: new Date('2026-10-26T00:00:00.000Z') });
     const db = new PgTestClient(databaseIn(home));
     try {
-      (await db.prepare(`insert into work_items(id, kind, target_kind, target_id, created_at, attempts, next_attempt_at)
-        values ($1, $2, $3, $4, $5, 0, $6)`).run(
+      (await db.prepare(`insert into work_items(id, execution_class, kind, target_kind, target_id, created_at, attempts, next_attempt_at)
+        values ($1, 'core', $2, $3, $4, $5, 0, $6)`).run(
           work.id, work.kind, work.targetKind, work.targetId,
           work.createdAt.toISOString(), work.nextAttemptAt.toISOString()));
     } finally {

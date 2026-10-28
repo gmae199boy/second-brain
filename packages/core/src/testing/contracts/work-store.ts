@@ -1,4 +1,5 @@
 import { workKindPolicy } from '../../domain/work-item.js';
+import type { WorkItem } from '../../domain/work-item.js';
 import type { WorkStore } from '../../ports/store.js';
 import { assertEqual, assertOk, assertTrue } from '../assert.js';
 import { contractCase, withSubject, type ContractCase } from '../contract.js';
@@ -28,12 +29,127 @@ import {
  * expiry of a claim depend on the machine rather than on the instant the drain
  * decided (AD-13).
  */
-export function workStoreContract(): ContractCase<WorkStore>[] {
+export function workStoreContract(readItem: (store: WorkStore, id: string) => Promise<Pick<WorkItem, 'outcome' | 'completedAt' | 'currentAttemptToken' | 'nextAttemptAt' | 'lastError'> | null>): ContractCase<WorkStore>[] {
   const NOW = new Date('2026-02-03T04:05:06.000Z');
   const LATER = new Date('2026-02-03T05:05:06.000Z');
   const KINDS = ['demo_work'];
 
   return [
+    contractCase<WorkStore>('cancel closes unclaimed and core-claimed work and distinguishes missing and closed', async make => {
+      await withSubject(make, async store => {
+        const work = sampleWorkInput(); await store.addWork(work);
+        const claimed = await store.claimWork({ now: NOW, claimedBy: sampleWorkItemId, kinds: [work.kind] }); assertOk(claimed, 'claim');
+        const cancelled = await store.requestWorkCancel({ id: work.id, now: NOW }); assertOk(cancelled, 'cancel'); assertEqual(cancelled.state, 'cancelled', 'cancelled');
+        const late = await store.completeWork({ id: work.id, claimedBy: sampleWorkItemId, now: LATER }); assertOk(late, 'complete'); assertEqual(late.outcome, 'lost', 'core claim lost');
+        const closed = await store.requestWorkCancel({ id: work.id, now: LATER }); assertOk(closed, 'closed'); assertEqual(closed.state, 'already_closed', 'already closed');
+        const missing = await store.requestWorkCancel({ id: lastWorkItemId, now: NOW }); assertOk(missing, 'missing'); assertEqual(missing.state, 'not_found', 'not found');
+        const waiting = sampleWorkInput({ id: otherWorkItemId, targetId: 'waiting' }); await store.addWork(waiting);
+        const direct = await store.requestWorkCancel({ id: waiting.id, now: NOW }); assertOk(direct, 'waiting'); assertEqual(direct.state, 'cancelled', 'waiting cancelled');
+      });
+    }),
+    ...(['died', 'cancelled', 'unknown', 'requested'] as const).map(mode => contractCase<WorkStore>(`settles supervised ${mode} with token CAS and process identity`, async make => {
+      await withSubject(make, async store => {
+        const work = sampleWorkInput({ kind: 'process_probe' }); await store.addWork(work);
+        await store.claimSupervisedWork({ now: NOW, claimedBy: sampleWorkItemId, kinds: ['process_probe'], attemptToken: otherWorkItemId });
+        const process = { id: work.id, attemptToken: otherWorkItemId, pid: 123, pgid: 123, osBootAt: NOW, osStartedAt: NOW };
+        const stale = await store.recordSupervisedProcess({ ...process, attemptToken: lastWorkItemId }); assertOk(stale, 'stale'); assertEqual(stale.outcome, 'lost', 'stale process');
+        const recorded = await store.recordSupervisedProcess(process); assertOk(recorded, 'process'); assertEqual(recorded.outcome, 'done', 'recorded');
+        if (mode === 'requested') {
+          const request = await store.requestWorkCancel({ id: work.id, now: NOW }); assertOk(request, 'request'); assertEqual(request.state, 'requested', 'requested');
+          await store.requestWorkCancel({ id: work.id, now: LATER });
+        }
+        const open = await store.listOpenSupervisedAttempts(); assertOk(open, 'open'); assertEqual(open.attempts.length, 1, 'one attempt');
+        assertEqual(open.attempts[0]!.pid, 123, 'pid'); assertEqual(open.attempts[0]!.incarnation, sampleWorkItemId, 'incarnation');
+        assertEqual(open.attempts[0]!.cancelRequested, mode === 'requested', 'request flag');
+        const settled = await store.settleSupervisedAttempt({ id: work.id, attemptToken: otherWorkItemId, now: LATER, outcome: mode === 'requested' ? 'died' : mode }); assertOk(settled, 'settle'); assertEqual(settled.outcome, 'done', 'settled');
+        const none = await store.listOpenSupervisedAttempts(); assertOk(none, 'none'); assertEqual(none.attempts.length, 0, 'closed or unknown omitted');
+        if (mode !== 'requested') {
+          const read = await store.addWork(work); assertOk(read, 'read');
+          assertEqual(read.item.attempts, mode === 'cancelled' ? 0 : 1, 'attempt count');
+          assertEqual(read.item.currentAttemptToken, mode === 'unknown' ? otherWorkItemId : null, 'token');
+          assertEqual(read.item.nextAttemptAt.getTime(), mode === 'died' ? LATER.getTime() : NOW.getTime(), 'next attempt');
+          if (mode === 'unknown') {
+            const before = await readItem(store, work.id);
+            for (const late of [
+              await store.renewSupervisedLease({ id: work.id, attemptToken: otherWorkItemId, now: LATER, progressAt: LATER }),
+              await store.finishSupervisedWork({ id: work.id, attemptToken: otherWorkItemId, now: LATER, outcome: 'succeeded' }),
+              await store.settleSupervisedAttempt({ id: work.id, attemptToken: otherWorkItemId, now: LATER, outcome: 'died' }),
+              await store.recordSupervisedProcess({ ...process, pid: 999, pgid: 999 }),
+            ]) {
+              assertOk(late, 'finished attempt write'); assertEqual(late.outcome, 'lost', 'unknown token cannot write');
+            }
+            assertEqual(JSON.stringify(await readItem(store, work.id)), JSON.stringify(before), 'unknown item unchanged');
+            const blocked = await store.claimSupervisedWork({ now: new Date(LATER.getTime() + 600000), claimedBy: sampleWorkItemId, kinds: ['process_probe'], attemptToken: lastWorkItemId }); assertOk(blocked, 'blocked'); assertEqual(blocked.item, null, 'unknown blocks claim');
+            const request = await store.requestWorkCancel({ id: work.id, now: LATER }); assertOk(request, 'unknown cancel'); assertEqual(request.state, 'requested', 'unknown request only');
+          }
+        } else {
+          const closed = await store.requestWorkCancel({ id: work.id, now: LATER }); assertOk(closed, 'closed'); assertEqual(closed.state, 'already_closed', 'request closed');
+        }
+        const old = await store.settleSupervisedAttempt({ id: work.id, attemptToken: lastWorkItemId, now: LATER, outcome: 'died' }); assertOk(old, 'old'); assertEqual(old.outcome, 'lost', 'stale settle');
+      });
+    })),
+    ...(['succeeded', 'failed'] as const).map(outcome => contractCase<WorkStore>(`cancellation race with ${outcome} closes supervised work`, async make => {
+      await withSubject(make, async store => {
+        const work = sampleWorkInput({ kind: 'process_probe' }); await store.addWork(work);
+        await store.claimSupervisedWork({ now: NOW, claimedBy: sampleWorkItemId, kinds: ['process_probe'], attemptToken: otherWorkItemId });
+        await store.requestWorkCancel({ id: work.id, now: NOW });
+        const done = await store.finishSupervisedWork({ id: work.id, attemptToken: otherWorkItemId, now: LATER, outcome, nextAttemptAt: LATER, lastError: '실행 실패' }); assertOk(done, 'done');
+        assertEqual(done.outcome, 'done', 'finish');
+        const item = await readItem(store, work.id);
+        assertTrue(item !== null, 'finished item exists');
+        assertEqual(item!.outcome, outcome === 'succeeded' ? 'succeeded' : 'cancelled', 'work outcome');
+        assertEqual(item!.completedAt?.getTime(), LATER.getTime(), 'completion time');
+        assertEqual(item!.currentAttemptToken, null, 'finished token cleared');
+        if (outcome === 'failed') {
+          assertEqual(item!.nextAttemptAt.getTime(), LATER.getTime(), 'failed race retry time');
+          assertEqual(item!.lastError, '실행 실패', 'failed race error');
+        }
+        const closed = await store.requestWorkCancel({ id: work.id, now: LATER }); assertOk(closed, 'closed'); assertEqual(closed.state, 'already_closed', 'closed race');
+      });
+    })),
+    contractCase<WorkStore>('supervised lease renewal and token CAS isolate core claims and old attempts', async (make) => {
+      await withSubject(make, async (store) => {
+        const work = sampleWorkInput({ kind: 'process_probe' });
+        const added = await store.addWork(work); assertOk(added, 'add');
+        assertEqual(added.item.executionClass, 'supervised', 'registry');
+        const query = { now: NOW, kinds: ['process_probe'], claimedBy: sampleWorkItemId };
+        const due = await store.hasDueWork(query); assertOk(due, 'due'); assertEqual(due.due, false, 'core due excludes supervised');
+        const core = await store.claimWork(query); assertOk(core, 'core'); assertEqual(core.item, null, 'core claim');
+        const a = await store.claimSupervisedWork({ ...query, attemptToken: otherWorkItemId });
+        assertOk(a, 'claim A'); assertTrue(a.item !== null, 'item A');
+        assertEqual(a.attemptToken, otherWorkItemId, 'token A');
+        const renewedAt = new Date(NOW.getTime() + 590_000);
+        const renewed = await store.renewSupervisedLease({ id: work.id, attemptToken: otherWorkItemId, now: renewedAt, progressAt: renewedAt });
+        assertOk(renewed, 'renew'); assertEqual(renewed.outcome, 'done', 'renew done');
+        const early = await store.claimSupervisedWork({ ...query, now: new Date(NOW.getTime() + 650_000), attemptToken: lastWorkItemId });
+        assertOk(early, 'early'); assertEqual(early.item, null, 'renewed lease held');
+        const later = new Date(NOW.getTime() + 1_200_000);
+        const blocked = await store.claimSupervisedWork({ ...query, now: later, attemptToken: lastWorkItemId });
+        assertOk(blocked, 'blocked'); assertEqual(blocked.item, null, 'current token prevents expired reclaim');
+        await store.settleSupervisedAttempt({ id: work.id, attemptToken: otherWorkItemId, now: later, outcome: 'died' });
+        const b = await store.claimSupervisedWork({ ...query, now: later, attemptToken: lastWorkItemId });
+        assertOk(b, 'claim B'); assertTrue(b.item !== null, 'item B');
+        const before = await store.addWork(work); assertOk(before, 'before');
+        for (const stale of [await store.renewSupervisedLease({ id: work.id, attemptToken: otherWorkItemId, now: later, progressAt: later }), await store.finishSupervisedWork({ id: work.id, attemptToken: otherWorkItemId, now: later, outcome: 'succeeded' })]) {
+          assertOk(stale, 'stale'); assertEqual(stale.outcome, 'lost', 'stale token');
+        }
+        const after = await store.addWork(work); assertOk(after, 'after');
+        assertEqual(JSON.stringify(after.item), JSON.stringify(before.item), 'stale writes changed item');
+        const finished = await store.finishSupervisedWork({ id: work.id, attemptToken: lastWorkItemId, now: later, outcome: 'succeeded' });
+        assertOk(finished, 'finish'); assertEqual(finished.outcome, 'done', 'current token');
+      });
+    }),
+    contractCase<WorkStore>('failed supervised work releases its claim and schedules the retry', async (make) => {
+      await withSubject(make, async (store) => {
+        const work = sampleWorkInput({ kind: 'process_probe' }); await store.addWork(work);
+        const claimed = await store.claimSupervisedWork({ now: NOW, kinds: ['process_probe'], claimedBy: sampleWorkItemId, attemptToken: otherWorkItemId }); assertOk(claimed, 'claim');
+        const finish = await store.finishSupervisedWork({ id: work.id, attemptToken: otherWorkItemId, now: NOW, outcome: 'failed', nextAttemptAt: LATER, lastError: '다시 시도합니다' }); assertOk(finish, 'finish');
+        assertEqual(finish.outcome, 'done', 'done');
+        const read = await store.addWork(work); assertOk(read, 'read');
+        assertEqual(read.item.claimedBy, null, 'claim cleared'); assertEqual(read.item.currentAttemptToken, null, 'token cleared');
+        assertEqual(read.item.nextAttemptAt.getTime(), LATER.getTime(), 'retry time'); assertEqual(read.item.lastError, '다시 시도합니다', 'error');
+      });
+    }),
     contractCase<WorkStore>('addWork is find-or-create on the open key', async (make) => {
       await withSubject(make, async (store) => {
         const first = await store.addWork(sampleWorkInput());

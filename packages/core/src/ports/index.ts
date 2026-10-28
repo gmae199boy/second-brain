@@ -131,3 +131,9 @@ export type {
 export type { ScheduleStore, AddScheduleInput, AddScheduleResult, ListDueSchedulesResult, FireScheduleInput, FireScheduleResult, ScheduleStoreFailure } from './store.js';
 
 export type { SettingsStore, SettingRecord, SettingsStoreFailure } from './store.js';
+
+export type { ClaimSupervisedWorkInput, ClaimSupervisedWorkResult, RenewSupervisedLeaseInput, FinishSupervisedWorkInput } from './store.js';
+export type { Timer } from './clock.js';
+export * from './process.js';
+
+export type { WorkCancelState, RequestWorkCancelResult, RecordSupervisedProcessInput, OpenSupervisedAttempt, ListOpenSupervisedAttemptsResult, SettleSupervisedAttemptInput } from './store.js';

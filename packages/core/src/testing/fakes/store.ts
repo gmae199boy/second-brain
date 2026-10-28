@@ -19,7 +19,7 @@ import { FILE_REDACTION_RESOLVES } from '../../files/redact.js';
 import type { User } from '../../domain/user.js';
 import type { Failure } from '../../domain/failure.js';
 import type { TranscriptFile } from '../../domain/transcript-file.js';
-import { workKindPolicy, type WorkItem } from '../../domain/work-item.js';
+import { workExecutionClass, workKindPolicy, type WorkAttempt, type WorkItem } from '../../domain/work-item.js';
 import type {
   RedactMessageInput,
   RedactMessageResult,
@@ -103,6 +103,7 @@ export interface MemoryStoreSnapshot {
   redactions: readonly Redaction[];
   /** The queue, in the order rows were added (AD-21). */
   workItems: readonly WorkItem[];
+  workAttempts: readonly WorkAttempt[];
   /** One row per `(target, stage, fingerprint)`, in the order first seen. */
   failures: readonly Failure[];
   /** One row per `(harness, path)`, in the order they were first recorded. */
@@ -183,6 +184,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
    */
   const schedules = new Map<string, import('../../domain/schedule.js').Schedule>();
   const workItems: WorkItem[] = [];
+  const workAttempts: WorkAttempt[] = [];
   const failures: Failure[] = [];
   /** Keyed by `(harness, path)`, the idempotency key of the Table Contract. */
   const transcriptFiles = new Map<string, TranscriptFile>();
@@ -375,6 +377,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     const item: WorkItem = {
       id: input.id,
       kind: input.kind,
+      executionClass: workExecutionClass(input.kind),
+      currentAttemptToken: null,
       targetKind: input.targetKind,
       targetId: input.targetId,
       createdAt: input.createdAt,
@@ -385,6 +389,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       claimedBy: null,
       lastError: null,
       completedAt: null,
+      outcome: null, cancelRequestedAt: null,
     };
     workItems.push(item);
     return { ok: true, created: true, item: { ...item } };
@@ -1145,6 +1150,89 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       return { ok: true, item: { ...next } };
     },
 
+    async requestWorkCancel(input) {
+      const item = workItems.find(i => i.id === input.id);
+      if (!item) return { ok: true, state: 'not_found' };
+      if (item.completedAt !== null) return { ok: true, state: 'already_closed' };
+      item.cancelRequestedAt ??= input.now;
+      if (item.currentAttemptToken !== null) return { ok: true, state: 'requested' };
+      item.completedAt = input.now; item.outcome = 'cancelled'; unclaim(item);
+      return { ok: true, state: 'cancelled' };
+    },
+    async recordSupervisedProcess(input) {
+      const item = workItems.find(i => i.id === input.id && i.currentAttemptToken === input.attemptToken);
+      if (!item) return { ok: true, outcome: 'lost' };
+      const attempt = workAttempts.find(a => a.token === input.attemptToken)!;
+      if (attempt.outcome !== null) return { ok: true, outcome: 'lost' };
+      Object.assign(attempt, { pid: input.pid, pgid: input.pgid, osBootAt: input.osBootAt, osStartedAt: input.osStartedAt });
+      return { ok: true, outcome: 'done' };
+    },
+    async listOpenSupervisedAttempts() {
+      return { ok: true, attempts: workAttempts.flatMap(a => {
+        const item = workItems.find(i => i.currentAttemptToken === a.token);
+        return !item || a.outcome !== null ? [] : [{ token: a.token, workItemId: item.id, kind: item.kind, attempts: item.attempts,
+          incarnation: a.incarnation, pid: a.pid, pgid: a.pgid, osBootAt: a.osBootAt, osStartedAt: a.osStartedAt,
+          cancelRequested: item.cancelRequestedAt !== null }];
+      }) };
+    },
+    async settleSupervisedAttempt(input) {
+      const item = workItems.find(i => i.id === input.id && i.currentAttemptToken === input.attemptToken);
+      if (!item) return { ok: true, outcome: 'lost' };
+      const attempt = workAttempts.find(a => a.token === input.attemptToken)!;
+      if (attempt.outcome !== null) return { ok: true, outcome: 'lost' };
+      attempt.outcome = input.outcome === 'unknown' ? 'unknown' : item.cancelRequestedAt !== null ? 'cancelled' : input.outcome;
+      attempt.finishedAt = input.now;
+      attempt.elapsedMs = input.elapsedMs ?? null; attempt.stderr = input.stderr ?? null;
+      if (input.outcome === 'unknown') return { ok: true, outcome: 'done' };
+      if (item.cancelRequestedAt !== null) { item.completedAt = input.now; item.outcome = 'cancelled'; }
+      else if (input.outcome === 'died') item.nextAttemptAt = input.now;
+      else item.attempts = Math.max(0, item.attempts - 1);
+      item.currentAttemptToken = null; unclaim(item);
+      return { ok: true, outcome: 'done' };
+    },
+    async claimSupervisedWork(input) {
+      const [item] = candidates(workItems.filter(i => i.currentAttemptToken === null && i.cancelRequestedAt === null), input, 'supervised');
+      if (!item) return { ok: true, item: null, attemptToken: null };
+      if (workAttempts.some((a) => a.token === input.attemptToken)) return { ok: false, code: 'DB_UNAVAILABLE', message: '이미 쓰인 시도 토큰입니다' };
+      item.attempts += 1;
+      item.claimedAt = input.now;
+      item.claimExpiresAt = new Date(input.now.getTime() + workKindPolicy(item.kind).claimForMs);
+      item.claimedBy = input.claimedBy;
+      item.currentAttemptToken = input.attemptToken;
+      workAttempts.push({ errorCode: null, errorRetryable: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, elapsedMs: null, stderr: null, incarnation: input.claimedBy, pid: null, pgid: null, osBootAt: null, osStartedAt: null, token: input.attemptToken, workItemId: item.id, startedAt: input.now, lastProgressAt: null, renewedAt: null, finishedAt: null, outcome: null });
+      return { ok: true, item: { ...item }, attemptToken: input.attemptToken };
+    },
+    async renewSupervisedLease(input) {
+      const item = workItems.find((i) => i.id === input.id && i.currentAttemptToken === input.attemptToken);
+      if (!item) return { ok: true, outcome: 'lost' };
+      const attempt = workAttempts.find((a) => a.token === input.attemptToken)!;
+      if (attempt.outcome !== null) return { ok: true, outcome: 'lost' };
+      item.claimExpiresAt = new Date(input.now.getTime() + workKindPolicy(item.kind).claimForMs);
+      attempt.lastProgressAt = input.progressAt;
+      attempt.renewedAt = input.now;
+      return { ok: true, outcome: 'done' };
+    },
+    async finishSupervisedWork(input) {
+      const item = workItems.find((i) => i.id === input.id && i.currentAttemptToken === input.attemptToken);
+      if (!item) return { ok: true, outcome: 'lost' };
+      const attempt = workAttempts.find((a) => a.token === input.attemptToken)!;
+      if (attempt.outcome !== null) return { ok: true, outcome: 'lost' };
+      attempt.finishedAt = input.now;
+      attempt.outcome = input.outcome;
+      attempt.elapsedMs = input.elapsedMs ?? null; attempt.stderr = input.stderr ?? null;
+      attempt.errorCode = input.errorCode ?? null; attempt.errorRetryable = input.errorRetryable ?? null;
+      attempt.inputTokens = input.usage?.inputTokens ?? null; attempt.cachedInputTokens = input.usage?.cachedInputTokens ?? null; attempt.outputTokens = input.usage?.outputTokens ?? null;
+      if (input.outcome === 'succeeded') { item.completedAt = input.now; item.outcome = 'succeeded'; }
+      else if (item.cancelRequestedAt !== null) { item.completedAt = input.now; item.outcome = 'cancelled'; }
+      if (input.outcome === 'failed') {
+        item.nextAttemptAt = input.nextAttemptAt ?? input.now;
+        item.lastError = input.lastError ?? null;
+      }
+      item.currentAttemptToken = null;
+      unclaim(item);
+      return { ok: true, outcome: 'done' };
+    },
+
     async completeWork(input: CompleteWorkInput): Promise<FinishWorkResult> {
       const item = claimed(input);
       if (item === null) return { ok: true, outcome: 'lost' };
@@ -1327,6 +1415,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         messages: [...messages.values()].flat(),
         toolNotes: [...toolNotes.values()].flat().map(plainToolNote),
         redactions: [...[...redactions.values()].flat(), ...fileRedactions],
+        workAttempts: workAttempts.map((attempt) => ({ ...attempt })),
         workItems: workItems.map((item) => ({ ...item })),
         failures: failures.map((failure) => ({ ...failure })),
         transcriptFiles: [...transcriptFiles.values()].map((file) => ({ ...file })),
@@ -1345,11 +1434,12 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
  * over from a worker that was killed. A kind nobody handles is left alone rather
  * than claimed or closed (Decision 4, 2026-10-19).
  */
-function candidates(items: readonly WorkItem[], query: DueWorkQuery): WorkItem[] {
+function candidates(items: readonly WorkItem[], query: DueWorkQuery, executionClass = 'core'): WorkItem[] {
   const kinds = new Set(query.kinds);
   return items
     .filter(
       (item) =>
+        item.executionClass === executionClass &&
         item.completedAt === null &&
         item.nextAttemptAt.getTime() <= query.now.getTime() &&
         (item.claimExpiresAt === null || item.claimExpiresAt.getTime() <= query.now.getTime()) &&

@@ -74,6 +74,18 @@ describe('the error codes', () => {
     );
 
     expect(exits).toEqual({
+      ABI_LINE_INVALID: 1,
+      ABI_VERSION_UNKNOWN: 1,
+      ABI_LINE_TOO_LONG: 1,
+      ABI_LINE_TRUNCATED: 1,
+      ABI_DUPLICATE_FINAL: 1,
+      ABI_EXIT_AFTER_RESULT: 1,
+      ABI_NO_RESULT: 1,
+      ABI_EXIT_FAILED: 1,
+      ABI_OUTPUT_UNREADABLE: 1,
+      PROCESS_START_FAILED: 1,
+      ABI_ENV_INVALID: 1,
+
       USAGE: 2,
       CONFIG_MISSING: 2,
       CONFIG_INVALID: 2,
@@ -82,6 +94,7 @@ describe('the error codes', () => {
       SESSION_REQUIRED: 2,
       USER_MISSING: 2,
       DB_LOCKED: 1,
+      WORK_NOT_FOUND: 1,
       MESSAGE_NOT_FOUND: 1,
       REDACT_TEXT_NOT_FOUND: 1,
       FILE_NOT_FOUND: 1,

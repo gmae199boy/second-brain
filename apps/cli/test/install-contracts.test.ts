@@ -985,7 +985,7 @@ describe('the installer flow, proving itself and recording it', () => {
     const kit = harness({
       recordedInstalled: {
         commit: 'f'.repeat(40),
-        schema_version: 4,
+        schema_version: 5,
         node: PINNED_NODE,
         plugin_root: '/plugins/second-brain',
         installed_at: '2026-10-17T00:00:00.000Z',

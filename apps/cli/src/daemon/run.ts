@@ -1,3 +1,4 @@
+import { startDaemonSupervisor, type DaemonSupervisorOptions } from './supervisor.js';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DAEMON_HEARTBEAT_MS } from './liveness.js';
@@ -75,6 +76,7 @@ export const DAEMON_COMPOSE_UP_TIMEOUT_MS = 60_000;
 
 export interface RunDaemonOptions {
   /** The configuration folder this daemon is the daemon of (AD-18). */
+  supervisor?: DaemonSupervisorOptions;
   home: string;
   env: NodeJS.ProcessEnv;
   clock: Clock;
@@ -150,6 +152,7 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
   // What the last round complained about, so a problem that lasts is said once
   // rather than every ten seconds. A round that worked clears it, which is what
   // makes the next occurrence worth a line again.
+  const supervisor = startDaemonSupervisor(options, config, log);
   let said: string | undefined;
   let tickSaid: string | undefined;
   let recovery: { attempt: number; nextAt: number; failureCode?: string; missing?: boolean } | undefined;
@@ -246,6 +249,7 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
     }
   } finally {
     watcher.close();
+    await supervisor.stop();
     // Watchers and their batch timer close first. Then the heartbeat timer,
     // because a beat written after the lock is
     // gone would be a heartbeat with no owner; the stop line next, while this

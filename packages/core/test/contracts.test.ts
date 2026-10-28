@@ -113,8 +113,11 @@ describe('the identity contract against the memory store', () => {
   }
 });
 
+const readMemoryWorkItem = async (store: WorkStore, id: string) =>
+  (store as ReturnType<typeof memoryStore>).snapshot().workItems.find(item => item.id === id) ?? null;
+
 describe('the queue contract against the memory store', () => {
-  for (const testCase of workStoreContract()) {
+  for (const testCase of workStoreContract(readMemoryWorkItem)) {
     it(testCase.name, async () => {
       await testCase.run(async () => memoryStore());
     });
@@ -557,7 +560,7 @@ describe('the contracts catch a wrong store', () => {
       };
     };
 
-    expect(await failedCases(workStoreContract(), make)).toContain(
+    expect(await failedCases(workStoreContract(readMemoryWorkItem), make)).toContain(
       'claimWork raises attempts inside the claim',
     );
   });
@@ -583,7 +586,7 @@ describe('the contracts catch a wrong store', () => {
       };
     };
 
-    expect(await failedCases(workStoreContract(), make)).toContain(
+    expect(await failedCases(workStoreContract(readMemoryWorkItem), make)).toContain(
       "finishing with somebody else's claim is lost",
     );
   });

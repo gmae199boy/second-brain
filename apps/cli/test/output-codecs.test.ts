@@ -72,6 +72,8 @@ const HARNESS_SESSION = '4f1e7a90-1c2b-4d3e-8f55-000000000000';
  *     `text` codec row below.
  */
 const SINKS: Readonly<Record<string, readonly string[]>> = {
+  // Internal ABI events contain only validated duration and static text, no stored data.
+  'apps/cli/src/workers/process-probe.ts': [],
   // The entry point's last sink: an exception out of the dispatcher, stack and
   // all, through `crashLines`.
   'apps/cli/src/bin.ts': ['text'],

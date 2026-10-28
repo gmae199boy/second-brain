@@ -7,3 +7,5 @@ export interface Clock {
   /** The absolute instant right now, set once per event (AD-13). */
   now(): Date;
 }
+
+export interface Timer { sleep(ms: number, signal: AbortSignal): Promise<void> }

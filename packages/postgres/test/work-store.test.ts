@@ -14,7 +14,7 @@ import { workStoreContract, scheduleStoreContract, sequenceIdGen } from '@second
 import { postgresStore } from '../src/index.js';
 import { database, subject, clock } from './fixture.js';
 
-for (const [name, cases] of [['work-store contract', workStoreContract()], ['schedule-store contract', scheduleStoreContract()]] as const) {
+for (const [name, cases] of [['work-store contract', workStoreContract((store, id) => (store as Awaited<ReturnType<typeof subject>>).readWorkItem(id))], ['schedule-store contract', scheduleStoreContract()]] as const) {
   describe(name, () => { for (const test of cases) it(test.name, () => test.run(subject)); });
 }
 const id = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, '0')}`;
@@ -322,3 +322,122 @@ it('hands every item to exactly one of two draining processes', async () => {
     for (const row of rows) { expect(row.completed_at).not.toBeNull(); expect(row.claimed_by).toBeNull(); expect(row.attempts).toBe(1); }
   } finally { await Promise.all(children.map(child => child.stop())); }
 }, DRAIN_BUDGET_MS + 20_000);
+
+it('stale token renewal and finish preserve the item and every attempt row', async () => {
+  const { db, store } = await fixture();
+  const probe = { ...work(), kind: 'process_probe' };
+  await store.addWork(probe);
+  const query = { now, claimedBy: id(99), kinds: ['process_probe'] };
+  expect(await store.claimSupervisedWork({ ...query, attemptToken: id(201) })).toMatchObject({ ok: true, attemptToken: id(201) });
+  const later = new Date(now.getTime() + 600001);
+  await store.settleSupervisedAttempt({ id: probe.id, attemptToken: id(201), now: later, outcome: 'died' });
+  expect(await store.claimSupervisedWork({ ...query, now: later, attemptToken: id(202) })).toMatchObject({ ok: true, attemptToken: id(202) });
+  const snapshot = async () => ({ items: await db.rows('select * from brain.work_items order by id'), attempts: await db.rows('select * from brain.work_attempts order by token') });
+  const before = await snapshot();
+  expect(await store.renewSupervisedLease({ id: probe.id, attemptToken: id(201), now: later, progressAt: later })).toEqual({ ok: true, outcome: 'lost' });
+  expect(await store.finishSupervisedWork({ id: probe.id, attemptToken: id(201), now: later, outcome: 'succeeded' })).toEqual({ ok: true, outcome: 'lost' });
+  expect(await snapshot()).toEqual(before);
+  expect(await store.finishSupervisedWork({ id: probe.id, attemptToken: id(202), now: later, outcome: 'succeeded' })).toEqual({ ok: true, outcome: 'done' });
+});
+
+describe.each(['finish succeeded', 'finish failed', 'settle died', 'settle cancelled', 'settle unknown'] as const)('cancel races with %s', action => {
+  it.each(['cancel', 'terminal'] as const)('serializes separate connections when %s holds the row lock first', async first => {
+    const { db, store, blocker } = await fixture();
+    const probe = { ...work(), kind: 'process_probe' }; const token = id(201);
+    await store.addWork(probe);
+    expect(await store.claimSupervisedWork({ now, claimedBy: id(99), kinds: ['process_probe'], attemptToken: token }))
+      .toMatchObject({ ok: true, attemptToken: token });
+
+    let release!: () => void; let locked!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const acquired = new Promise<void>(resolve => { locked = resolve; });
+    let paused = false; const selects = new Set<unknown>();
+    // Pause the first real transaction immediately after SELECT FOR UPDATE.
+    const barrier: KyselyPlugin = {
+      transformQuery({ node, queryId }) {
+        if (!paused && node.kind === 'RawNode' && node.sqlFragments.join('').includes('select * from brain.work_items')
+          && node.sqlFragments.join('').includes('for update')) selects.add(queryId);
+        return node;
+      },
+      async transformResult({ result, queryId }) {
+        if (selects.delete(queryId) && !paused) { paused = true; locked(); await gate; }
+        return result;
+      },
+    };
+    const connection = (name: string, plugins: KyselyPlugin[] = []) => {
+      const db = new Kysely<PgSchema>({ dialect: new PostgresDialect({ pool: createPool({ databaseUrl: fixtureUrl, applicationName: name }) }), plugins });
+      cleanup.push(() => db.destroy());
+      return postgresWorkStore(() => ({ ok: true, connection: { db } }));
+    };
+    const fixtureUrl = db.appUrl;
+    const leading = connection('brain-cancel-race-first', [barrier]);
+    const trailing = connection('brain-cancel-race-second');
+    const cancel = (s: typeof leading) => s.requestWorkCancel({ id: probe.id, now: next });
+    const terminal = (s: typeof leading) => {
+      const input = { id: probe.id, attemptToken: token, now: next };
+      if (action === 'finish succeeded' || action === 'finish failed') return s.finishSupervisedWork({
+        ...input, outcome: action === 'finish succeeded' ? 'succeeded' : 'failed', nextAttemptAt: next, lastError: '실행 실패',
+      });
+      return s.settleSupervisedAttempt({ ...input, outcome: action === 'settle died' ? 'died' : action === 'settle cancelled' ? 'cancelled' : 'unknown' });
+    };
+    const leadingCall = first === 'cancel' ? cancel(leading) : terminal(leading);
+    let trailingCall: ReturnType<typeof cancel> | ReturnType<typeof terminal> | undefined;
+    try {
+      await acquired;
+      trailingCall = first === 'cancel' ? terminal(trailing) : cancel(trailing);
+      // Observe PostgreSQL's actual lock wait before releasing the barrier;
+      // elapsed time alone is not evidence that the calls overlapped.
+      await expect.poll(async () => {
+        const result = await blocker.query(`select cardinality(pg_blocking_pids(pid)) > 0 as blocked
+          from pg_stat_activity where datname = current_database() and application_name = $1`, ['brain-cancel-race-second']);
+        return result.rows[0]?.blocked;
+      }, { timeout: 2000 }).toBe(true);
+      release();
+      const [a, b] = await Promise.all([leadingCall, trailingCall]);
+      const cancelResult = first === 'cancel' ? a : b;
+      const terminalResult = first === 'cancel' ? b : a;
+      expect(terminalResult).toEqual({ ok: true, outcome: 'done' });
+      expect(cancelResult).toEqual({ ok: true, state: first === 'cancel' || action === 'settle unknown' ? 'requested'
+        : action === 'finish succeeded' ? 'already_closed' : 'cancelled' });
+      const unknown = action === 'settle unknown';
+      expect(await db.rows('select outcome, completed_at, current_attempt_token, claimed_by, attempts from brain.work_items')).toEqual([{
+        outcome: unknown ? null : action === 'finish succeeded' ? 'succeeded' : 'cancelled',
+        completed_at: unknown ? null : next, current_attempt_token: unknown ? token : null,
+        claimed_by: unknown ? id(99) : null, attempts: action === 'settle cancelled' && first === 'terminal' ? 0 : 1,
+      }]);
+      expect(await db.rows('select token, outcome, finished_at from brain.work_attempts')).toEqual([{
+        token, outcome: action === 'finish succeeded' ? 'succeeded' : action === 'finish failed' ? 'failed'
+          : unknown ? 'unknown' : action === 'settle died' && first === 'terminal' ? 'died' : 'cancelled', finished_at: next,
+      }]);
+    } finally { release(); await Promise.allSettled([leadingCall, trailingCall]); }
+  });
+});
+
+it('persists supervised outcome details, absent usage, and settlement measurements', async () => {
+  const { db, store } = await fixture();
+  const start = async (n: number) => {
+    await store.addWork({ ...work(n), kind: 'process_probe' });
+    expect(await store.claimSupervisedWork({ now, claimedBy: id(99), kinds: ['process_probe'], attemptToken: id(n + 200) })).toMatchObject({ ok: true, item: { id: id(n) } });
+    return { id: id(n), attemptToken: id(n + 200), now: next };
+  };
+  const failed = await start(1);
+  expect(await store.finishSupervisedWork({ ...failed, outcome: 'failed', errorCode: 'GARMIN_AUTH', errorRetryable: false, nextAttemptAt: next,
+    usage: { inputTokens: 10, cachedInputTokens: 2, outputTokens: 5 }, elapsedMs: 123, stderr: 'masked diagnostic' })).toEqual({ ok: true, outcome: 'done' });
+  expect(await db.rows(`select error_code,error_retryable,input_tokens,cached_input_tokens,output_tokens,elapsed_ms,stderr from brain.work_attempts where token=\'${failed.attemptToken}\'`))
+    .toEqual([{ error_code: 'GARMIN_AUTH', error_retryable: false, input_tokens: '10', cached_input_tokens: '2', output_tokens: '5', elapsed_ms: '123', stderr: 'masked diagnostic' }]);
+  const succeeded = await start(2);
+  expect(await store.finishSupervisedWork({ ...succeeded, outcome: 'succeeded', elapsedMs: 10 })).toEqual({ ok: true, outcome: 'done' });
+  expect(await db.rows(`select input_tokens,cached_input_tokens,output_tokens,error_code,error_retryable,stderr from brain.work_attempts where token=\'${succeeded.attemptToken}\'`))
+    .toEqual([{ input_tokens: null, cached_input_tokens: null, output_tokens: null, error_code: null, error_retryable: null, stderr: null }]);
+  const settled = await start(3);
+  expect(await store.settleSupervisedAttempt({ ...settled, outcome: 'cancelled', elapsedMs: 456, stderr: 'settled diagnostic' })).toEqual({ ok: true, outcome: 'done' });
+  expect(await db.rows(`select elapsed_ms,stderr from brain.work_attempts where token=\'${settled.attemptToken}\'`)).toEqual([{ elapsed_ms: '456', stderr: 'settled diagnostic' }]);
+});
+it('rejects partial or negative usage, negative elapsed time, and errors on successful attempts', async () => {
+  const { db, store } = await fixture();
+  await store.addWork({ ...work(), kind: 'process_probe' });
+  await store.claimSupervisedWork({ now, claimedBy: id(99), kinds: ['process_probe'], attemptToken: id(201) });
+  for (const expression of ["input_tokens=1", "input_tokens=-1,cached_input_tokens=0,output_tokens=0", "elapsed_ms=-1", "outcome='succeeded',error_code='BAD'", "error_code='BAD'", 'error_retryable=false']) {
+    await expect(db.query(`update brain.work_attempts set ${expression} where token='${id(201)}'`)).rejects.toMatchObject({ code: '23514' });
+  }
+});

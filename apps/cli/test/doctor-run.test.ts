@@ -66,7 +66,7 @@ describe('PG doctor', () => {
   });
   it('reports owner-specific schema mismatch', async () => {
     const kit = await world(); const db = new PgTestClient(pgDatabaseUrl(kit.home));
-    try { await db.exec("update schema_migrations set version=2 where owner='core'"); const result = await kit.run(); expect(result.code).toBe(1); expect(JSON.parse(result.stdout).data.checks).toContainEqual(expect.objectContaining({ id: 'schema-version', status: 'fail' })); }
+    try { await db.exec("update schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)"); const result = await kit.run(); expect(result.code).toBe(1); expect(JSON.parse(result.stdout).data.checks).toContainEqual(expect.objectContaining({ id: 'schema-version', status: 'fail' })); }
     finally { await db.close(); }
   });
   it('skips DB checks when the fake OrbStack prerequisite fails and never calls compose', async () => {

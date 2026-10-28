@@ -291,7 +291,7 @@ function item(id: string, locationId: string) {
     claimedAt: NOW,
     claimExpiresAt: new Date(NOW.getTime() + 600_000),
     claimedBy: 'claim-0001',
-    lastError: null,
+    executionClass: 'core' as const, currentAttemptToken: null, outcome: null, cancelRequestedAt: null, lastError: null,
     completedAt: null,
   };
 }

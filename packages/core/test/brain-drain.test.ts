@@ -83,6 +83,15 @@ async function kit(
 }
 
 describe('brain.queue.drain', () => {
+  it('excludes supervised handlers even when supplied per drain', async () => {
+    const { brain, store } = await kit({ withFolder: false });
+    await store.addWork({ id: '01940000-0000-7000-8000-0000000000c1', kind: 'process_probe', targetKind: 'probe', targetId: '1500', createdAt: NOW, nextAttemptAt: NOW });
+    let called = false;
+    await brain.queue.drain({ budgetMs: 1000, handlers: { process_probe: async () => { called = true; return { ok: true }; } } });
+    expect(called).toBe(false);
+    expect(store.snapshot().workItems[0]).toMatchObject({ attempts: 0, claimedBy: null });
+  });
+
   it('reports a transcript folder read failure when the queue remains writable', async () => {
     const { brain } = await kit({ listFailure: '접근 권한이 없습니다' });
     expect(await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command })).toMatchObject({
