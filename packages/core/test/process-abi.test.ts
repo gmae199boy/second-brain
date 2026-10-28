@@ -102,3 +102,12 @@ it('masks a long assignment before the final 4096-byte tail boundary', () => {
   stderr.feed('TOKEN=' + 'z'.repeat(20000));
   expect(stderr.value()).toBe('TOKEN=[REDACTED:password]');
 });
+it('feeds 64 KiB of newlines into a full stderr tail in under one second', () => {
+  const stderr = createAbiStderr();
+  stderr.feed('x'.repeat(16383) + '\n');
+  const raw = '\n'.repeat(65536);
+  const started = performance.now();
+  stderr.feed(raw);
+  expect(performance.now() - started).toBeLessThan(1000);
+  expect(stderr.value()).toBe('\n'.repeat(4096));
+});
