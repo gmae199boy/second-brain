@@ -280,3 +280,27 @@ reason: packages/core/src/brain.ts의 drain은 scanTranscripts의 stopped를 읽
 status: done 2026-10-29
 resolution: resolved by story 11.12
 resolution-undo: ed93e549625a7eb425918047f9b6462924aec19fe9f0cb52f17a47b41c511025 2026-10-29 7374617475733a206f70656e
+
+### DW-13: 진행 출력을 멈춘 채 살아 있는 자식을 감독자가 무기한 기다려, 그 동안 다른 supervised 일감을 청구하지 못한다.
+origin: spec-deferred bbe84886e9ee
+location: packages/core/src/queue/supervisor.ts:58
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-tracer-probe-600-plan.md`
+severity: medium
+reason: packages/core/src/queue/supervisor.ts의 `for await (const line of handle.lines)`에는 마지막 progress 기준 제한 시간이 없다. 정체 판정(종류별 창 15/25분, 그룹 정리 뒤 일시 오류 재시도)은 epic 12 스토리 5의 범위다.
+status: open
+
+### DW-14: supervised 일감이 몇 번 실패해도 failures 기록 없이 계속 재예약된다(MAX_WORK_ATTEMPTS 미적용).
+origin: spec-deferred fb3d73f1e55a
+location: packages/core/src/queue/supervisor.ts:80
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-tracer-probe-600-plan.md`
+severity: medium
+reason: `finishSupervisedWork`의 `failed`는 plan대로 failures 행 없는 임시 재시도다. 10회 상한과 기록은 스토리 4·5가 이 verb를 넓혀 처리한다.
+status: open
+
+### DW-15: 만료 뒤 재청구할 때 이전 attempt 행의 finished_at·outcome이 비어 있는 채 남는다.
+origin: spec-deferred a825e9019974
+location: packages/postgres/src/work.ts:192
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-tracer-probe-600-plan.md`
+severity: medium
+reason: `claimSupervisedWork`(PG·fake)는 새 attempt만 만들고 이전 token의 행을 닫지 않는다. 데몬 시작 때 이전 incarnation의 열린 attempt를 대조해 `died`·`unknown`으로 회수하는 일은 스토리 2의 범위다.
+status: open
