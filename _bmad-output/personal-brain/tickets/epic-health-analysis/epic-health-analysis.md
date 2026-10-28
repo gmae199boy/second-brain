@@ -64,3 +64,4 @@ Garmin 사용자가 예약된 시각에 day·7d·30d·all 평가를 받고, 성�
 - Decision(2026-10-28): 기본 분석 예약은 옛 Garmin 값인 11:30이다. 리포트 실패 알림(옛 `REPORT_FAILED`)도 채널 발신 요청으로 옮긴다.
 - Assumption(2026-10-28): 여러 날을 놓친 뒤 깨어나면 수집이 끝난 최신 날짜만 평가하고, 빠진 날의 day 평가를 소급해 만들지 않는다(옛 report의 동작으로 짐작). 정제 때 옛 코드로 확인한다.
 - Handoff(2026-10-28, epic 12 세트 검증 F4): Garmin을 끄면 분석도 멈추게 연결하는 일은 이 에픽의 몫이다. 분석 일감과 예약을 넣을 때 epic 12의 보류 그룹 `extension:garmin`을 붙인다(12.10). 평가 순서는 12.6의 의존 use case로, 모델 일감의 정체 창 25분은 12.5로, 토큰은 12.4의 `usage` 칸으로 운반한다. 옛 Garmin `report.py`의 `_usage`는 `codex exec --json`의 `turn.completed`에서 토큰을 읽는다(epic 12 코드 조사 6절). adapter는 그 방식을 이어받는다.
+- Handoff(2026-10-28, epic 14 세트 검증 F2): epic 14에서 받는 것. 입력 snapshot은 14.2의 계약 문서·공유 fixture와 "현재" view를 읽고 ambiguity를 입력에서 뺀다. `analyses`는 14.1·14.5가 만든 최소형(legacy 키·dataset·batch·nullable 모델/시각과 누락 flag·파일 요청 관계·core가 확정하는 파일 관계)을 호환 확장하고, 이전된 분석 행을 바꾸지 않는다. 리포트 파일은 같은 파일 관계로 잇는다. 쪼갤 때 이 entry들로 교차 `after`를 고정한다.

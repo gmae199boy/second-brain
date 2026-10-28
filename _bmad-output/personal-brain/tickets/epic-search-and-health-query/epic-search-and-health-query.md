@@ -59,3 +59,4 @@ Drive E8-6과 epic-recall-and-mirror는 이 검색 경로를 쓴다(2026-10-28, 
 - Decision(2026-10-28, 트리 검증): epic-garmin-runtime을 기다리지 않는다. 수치 질의는 이전된 정규화 테이블을 읽고, 새 평가 결과는 같은 스키마에 쌓인다. 어떤 스토리가 그 에픽이 편입한 Python 계산(digest)을 쓰게 되면, 쪼갤 때 그 에픽을 `after`에 다시 선언한다.
 - Decision(2026-10-28, 사용자): 대화 검색(CAP-6·7의 대화 조각·도구 메모·넓히기)을 epic-recall-and-mirror에서 가져온다. 검색을 두 번 만들지 않는다.
 - Decision(2026-10-28): epic-health-analysis(18)도 기다리지 않는다. 새 평가는 epic 14가 만든 `analyses`와 리포트 파일로 쌓이므로 검색 경로가 같다. 18과는 `after` 경로가 없으니, 나란히 만들면 core 마이그레이션 번호(AD-31 실행기가 중복을 거부한다)와 출력 코덱 등록부·명령 메타에서 뒤에 합치는 쪽이 맞춘다.
+- Handoff(2026-10-28, epic 14 세트 검증 F2): epic 14에서 받는 것. 수치 조회는 14.2의 계약 문서·공유 fixture(지표 catalog, 정규 단위, NULL 의미, 허용 집계, "현재" view)를 읽고, ambiguity(같은 순위의 다른 값, 계정 미확인)는 기본 집계에서 빼고 응답에 상태로 돌려준다. 리포트 파일 검색은 14.5가 만든 `analyses`의 파일 관계와 core 파일의 추출 세대를 쓴다. 쪼갤 때 이 entry들로 교차 `after`를 고정한다.
