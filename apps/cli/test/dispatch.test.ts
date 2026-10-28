@@ -458,7 +458,7 @@ describe('the dispatcher', () => {
 
   it('refuses a write and never calls run when the version does not match', async () => {
     const path = await migratedDatabase();
-    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version = 5 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'); await db.close();
+    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'); await db.close();
     const home = await homeFor(path);
 
     const run = await runDispatch(['fake', 'write', '--json'], { [HOME_ENV]: home });
@@ -513,7 +513,7 @@ describe('the dispatcher', () => {
 
   it('calls the spool branch instead of run when the version does not match', async () => {
     const path = await migratedDatabase();
-    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version = 5 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'); await db.close();
+    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'); await db.close();
     const home = await homeFor(path);
 
     const run = await runDispatch(['fake', 'write-spool', '--json'], { [HOME_ENV]: home });
@@ -612,7 +612,7 @@ describe('the dispatcher on a hook path', () => {
 
   it('exits 0 with one line on stderr when the schema version blocks the write', async () => {
     const path = await migratedDatabase();
-    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version = 5 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'); await db.close();
+    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'); await db.close();
     const home = await homeFor(path);
 
     const run = await runDispatch(['fake', 'hook-write', '--json'], { [HOME_ENV]: home });
@@ -1347,7 +1347,7 @@ describe('the dispatcher and the drain at the end of a command', () => {
     (await seedWork(path, ITEM));
     const database = new PgTestClient(path);
     try {
-      (await database.exec('update brain.schema_migrations set version = 5 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
+      (await database.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
     } finally {
       (await database.close());
     }

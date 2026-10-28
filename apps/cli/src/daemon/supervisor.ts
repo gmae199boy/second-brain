@@ -30,7 +30,7 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
         launches: { process_probe: (item, token) => url ? ({ command: options.supervisor?.probeWorker?.command ?? process.execPath,
           args: options.supervisor?.probeWorker?.args ?? [fileURLToPath(new URL('../../dist/workers/process-probe.js', import.meta.url))],
           env: { ...options.supervisor?.probeWorker?.env, [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: url, [PROCESS_ABI_ENV.workId]: item.id,
-            [PROCESS_ABI_ENV.attemptToken]: token, [PROCESS_ABI_ENV.workKind]: item.kind,
+            [PROCESS_ABI_ENV.runGeneration]: String(item.attempts), [PROCESS_ABI_ENV.attemptToken]: token, [PROCESS_ABI_ENV.workKind]: item.kind,
             [PROCESS_ABI_ENV.targetKind]: item.targetKind, [PROCESS_ABI_ENV.targetId]: item.targetId },
         }) : null },
       });

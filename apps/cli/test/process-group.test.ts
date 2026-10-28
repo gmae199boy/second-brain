@@ -6,14 +6,14 @@ const worker = fileURLToPath(new URL('./fixtures/process-worker.mjs', import.met
 it('preserves line order and reports the leader exit code', async () => {
   const started = await systemProcessLauncher.start({ command: process.execPath, args: [worker], env: { FAKE_WORKER_PLAN: JSON.stringify({ lines: ['one', 'two', 'three'], code: 7 }) } });
   expect(started.ok).toBe(true); if (!started.ok) return;
-  const lines = []; for await (const line of started.handle.lines) lines.push(line);
-  expect(lines).toEqual(['one', 'two', 'three']); expect(await started.handle.exited).toEqual({ code: 7, signal: null });
+  const lines = []; for await (const line of started.handle.stdout) lines.push(line);
+  expect(lines.join('')).toBe('one\ntwo\nthree\n'); expect(await started.handle.exited).toEqual({ code: 7, signal: null });
 });
 it('kills the whole detached group including its grandchild and waits for leader exit', async () => {
   const started = await systemProcessLauncher.start({ command: process.execPath, args: [worker], env: { FAKE_WORKER_PLAN: '{"grandchild":true}' } });
   expect(started.ok).toBe(true); if (!started.ok) return;
   try {
-    const line = await started.handle.lines[Symbol.asyncIterator]().next();
+    const line = await started.handle.stdout[Symbol.asyncIterator]().next();
     const pid = JSON.parse(line.value).grandchild;
     started.handle.signalGroup('SIGKILL');
     expect(await started.handle.exited).toEqual({ code: null, signal: 'SIGKILL' });
@@ -33,8 +33,8 @@ it('retains a short worker result emitted before output iteration and explicit p
   await started.handle.exited;
   expect(started.handle.leaderExited).toBe(true);
   started.handle.closeOutput();
-  const lines = []; for await (const line of started.handle.lines) lines.push(line);
-  expect(lines).toEqual([result]);
+  const lines = []; for await (const line of started.handle.stdout) lines.push(line);
+  expect(lines.join('')).toBe(result + '\n');
 });
 
 // Exercise inherited OS pipes with the supervisor, rather than substituting EOF
@@ -89,4 +89,42 @@ it.each([false, true])('bounds inherited-pipe waits after leader reaping (escape
     if (descendant !== undefined) { try { process.kill(descendant, 'SIGKILL'); } catch {} }
     handle?.closeOutput(); await rm(directory, { recursive: true, force: true });
   }
+});
+
+it('preserves raw unterminated stdout and stderr fragments from a real child', async () => {
+  const started = await systemProcessLauncher.start({ command: process.execPath, args: [worker], env: { FAKE_WORKER_PLAN: JSON.stringify({ raw: '{"abi":1', stderr: 'diagnostic\nlast' }) } });
+  expect(started.ok).toBe(true); if (!started.ok) return;
+  const collect = async (stream: AsyncIterable<string>) => { let text = ''; for await (const chunk of stream) text += chunk; return text; };
+  expect(await Promise.all([collect(started.handle.stdout), collect(started.handle.stderr)])).toEqual(['{"abi":1', 'diagnostic\nlast']);
+  expect(await started.handle.exited).toEqual({ code: 0, signal: null });
+});
+it('records ABI_LINE_TRUNCATED and masked stderr from a real supervised child', async () => {
+  const store = memoryStore(), createdAt = new Date(), idGen = sequenceIdGen({ timestampMs: createdAt.getTime() }), controller = new AbortController();
+  const id = idGen.next();
+  await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt, nextAttemptAt: createdAt });
+  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, clock: systemClock, timer: systemTimer, idGen,
+    launcher: systemProcessLauncher, inspector: systemProcessInspector, signal: controller.signal, pollMs: 10, cancelPollMs: 10, cancelGraceMs: 30, groupConfirmMs: 100,
+    launches: { process_probe: () => ({ command: process.execPath, args: [worker], env: { FAKE_WORKER_PLAN: JSON.stringify({ raw: '{"abi":1,"type":"res', stderr: 'x'.repeat(20000) + '\nTOKEN=secret-value\n' }) } }) } });
+  try {
+    await expect.poll(() => store.snapshot().workAttempts[0]?.outcome, { timeout: 3000 }).toBe('failed');
+    const attempt = store.snapshot().workAttempts[0]!;
+    expect(attempt).toMatchObject({ errorCode: 'ABI_LINE_TRUNCATED', errorRetryable: true, elapsedMs: expect.any(Number) });
+    expect(attempt.stderr).not.toBeNull(); expect(attempt.stderr).not.toContain('secret-value');
+    expect(Buffer.byteLength(attempt.stderr!)).toBeLessThanOrEqual(4096);
+    expect(store.snapshot().workItems[0]!.lastError).toContain('ABI_LINE_TRUNCATED');
+    expect(store.snapshot().workItems[0]!.nextAttemptAt.getTime()).toBeGreaterThan(createdAt.getTime());
+  } finally { controller.abort(); await running; }
+});
+it.each(['missing', 'uppercase UUID', 'unpaired range', 'valid'])('probe validates %s environment and emits the ABI error contract', async mode => {
+  const env: Record<string, string> = { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain',
+    BRAIN_WORK_ID: '019a0000-0000-7000-8000-000000000001', BRAIN_ATTEMPT_TOKEN: '019a0000-0000-7000-8000-000000000002',
+    BRAIN_WORK_KIND: 'process_probe', BRAIN_TARGET_KIND: 'probe', BRAIN_TARGET_ID: '0', BRAIN_RUN_GENERATION: '1' };
+  if (mode === 'missing') delete env.BRAIN_RUN_GENERATION;
+  if (mode === 'uppercase UUID') env.BRAIN_WORK_ID = env.BRAIN_WORK_ID!.toUpperCase();
+  if (mode === 'unpaired range') env.BRAIN_RANGE_FROM = '2026-01-01';
+  const started = await systemProcessLauncher.start({ command: process.execPath, args: [fileURLToPath(new URL('../dist/workers/process-probe.js', import.meta.url))], env });
+  expect(started.ok).toBe(true); if (!started.ok) return;
+  let stdout = ''; for await (const chunk of started.handle.stdout) stdout += chunk;
+  expect(JSON.parse(stdout)).toMatchObject(mode === 'valid' ? { abi: 1, type: 'result' } : { abi: 1, type: 'error', code: 'ABI_ENV_INVALID', retryable: false });
+  expect(await started.handle.exited).toEqual({ code: mode === 'valid' ? 0 : 2, signal: null });
 });

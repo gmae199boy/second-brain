@@ -1,0 +1,180 @@
+[
+  {
+    "name": "progress",
+    "line": "{\"abi\": 1, \"type\": \"progress\"}",
+    "expect": "valid"
+  },
+  {
+    "name": "heartbeat",
+    "line": "{\"abi\": 1, \"type\": \"heartbeat\"}",
+    "expect": "valid"
+  },
+  {
+    "name": "result",
+    "line": "{\"abi\": 1, \"type\": \"result\"}",
+    "expect": "valid"
+  },
+  {
+    "name": "worker error",
+    "line": "{\"abi\": 1, \"type\": \"error\", \"code\": \"GARMIN_AUTH\", \"retryable\": false}",
+    "expect": "valid"
+  },
+  {
+    "name": "usage",
+    "line": "{\"abi\": 1, \"type\": \"result\", \"usage\": {\"input_tokens\": 10, \"cached_input_tokens\": 2, \"output_tokens\": 5}}",
+    "expect": "valid"
+  },
+  {
+    "name": "zero usage",
+    "line": "{\"abi\": 1, \"type\": \"result\", \"usage\": {\"input_tokens\": 0, \"cached_input_tokens\": 0, \"output_tokens\": 0}}",
+    "expect": "valid"
+  },
+  {
+    "name": "max usage",
+    "line": "{\"abi\": 1, \"type\": \"result\", \"usage\": {\"input_tokens\": 9007199254740991, \"cached_input_tokens\": 0, \"output_tokens\": 0}}",
+    "expect": "valid"
+  },
+  {
+    "name": "integer 1.0",
+    "line": "{\"abi\":1,\"type\":\"result\",\"usage\":{\"input_tokens\":1.0,\"cached_input_tokens\":0,\"output_tokens\":0}}",
+    "expect": "valid"
+  },
+  {
+    "name": "bad json",
+    "line": "{",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "null",
+    "line": "null",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "array",
+    "line": "[]",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "missing abi",
+    "line": "{\"type\": \"result\"}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "unknown field",
+    "line": "{\"abi\": 1, \"type\": \"result\", \"other\": 1}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "unknown type",
+    "line": "{\"abi\": 1, \"type\": \"other\"}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "bad message",
+    "line": "{\"abi\": 1, \"type\": \"progress\", \"message\": null}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "heartbeat field",
+    "line": "{\"abi\": 1, \"type\": \"heartbeat\", \"message\": \"\"}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "missing error code",
+    "line": "{\"abi\": 1, \"type\": \"error\", \"retryable\": false}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "lowercase code",
+    "line": "{\"abi\": 1, \"type\": \"error\", \"code\": \"bad\", \"retryable\": false}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "missing retryable",
+    "line": "{\"abi\": 1, \"type\": \"error\", \"code\": \"BAD\"}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "string retryable",
+    "line": "{\"abi\": 1, \"type\": \"error\", \"code\": \"BAD\", \"retryable\": \"false\"}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "unknown version 2",
+    "line": "{\"abi\": 2, \"type\": \"result\"}",
+    "expect": "invalid",
+    "code": "ABI_VERSION_UNKNOWN"
+  },
+  {
+    "name": "unknown version 1",
+    "line": "{\"abi\": \"1\", \"type\": \"result\"}",
+    "expect": "invalid",
+    "code": "ABI_VERSION_UNKNOWN"
+  },
+  {
+    "name": "unknown version None",
+    "line": "{\"abi\": null, \"type\": \"result\"}",
+    "expect": "invalid",
+    "code": "ABI_VERSION_UNKNOWN"
+  },
+  {
+    "name": "invalid usage -1",
+    "line": "{\"abi\": 1, \"type\": \"result\", \"usage\": {\"input_tokens\": -1, \"cached_input_tokens\": 0, \"output_tokens\": 0}}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "invalid usage 1",
+    "line": "{\"abi\": 1, \"type\": \"result\", \"usage\": {\"input_tokens\": \"1\", \"cached_input_tokens\": 0, \"output_tokens\": 0}}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "invalid usage 1.1",
+    "line": "{\"abi\": 1, \"type\": \"result\", \"usage\": {\"input_tokens\": 1.1, \"cached_input_tokens\": 0, \"output_tokens\": 0}}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "invalid usage 9007199254740992",
+    "line": "{\"abi\": 1, \"type\": \"result\", \"usage\": {\"input_tokens\": 9007199254740992, \"cached_input_tokens\": 0, \"output_tokens\": 0}}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "invalid usage None",
+    "line": "{\"abi\": 1, \"type\": \"result\", \"usage\": {\"input_tokens\": null, \"cached_input_tokens\": 0, \"output_tokens\": 0}}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "usage keys {}",
+    "line": "{\"abi\": 1, \"type\": \"result\", \"usage\": {}}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "usage keys {'input_tokens': 0, 'cached_input_tokens': 0}",
+    "line": "{\"abi\": 1, \"type\": \"result\", \"usage\": {\"input_tokens\": 0, \"cached_input_tokens\": 0}}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  },
+  {
+    "name": "usage keys {'input_tokens': 0, 'cached_input_tokens': 0, 'output_tokens': 0, 'extra': 0}",
+    "line": "{\"abi\": 1, \"type\": \"result\", \"usage\": {\"input_tokens\": 0, \"cached_input_tokens\": 0, \"output_tokens\": 0, \"extra\": 0}}",
+    "expect": "invalid",
+    "code": "ABI_LINE_INVALID"
+  }
+]

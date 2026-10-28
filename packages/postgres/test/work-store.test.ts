@@ -412,3 +412,32 @@ describe.each(['finish succeeded', 'finish failed', 'settle died', 'settle cance
     } finally { release(); await Promise.allSettled([leadingCall, trailingCall]); }
   });
 });
+
+it('persists supervised outcome details, absent usage, and settlement measurements', async () => {
+  const { db, store } = await fixture();
+  const start = async (n: number) => {
+    await store.addWork({ ...work(n), kind: 'process_probe' });
+    expect(await store.claimSupervisedWork({ now, claimedBy: id(99), kinds: ['process_probe'], attemptToken: id(n + 200) })).toMatchObject({ ok: true, item: { id: id(n) } });
+    return { id: id(n), attemptToken: id(n + 200), now: next };
+  };
+  const failed = await start(1);
+  expect(await store.finishSupervisedWork({ ...failed, outcome: 'failed', errorCode: 'GARMIN_AUTH', errorRetryable: false, nextAttemptAt: next,
+    usage: { inputTokens: 10, cachedInputTokens: 2, outputTokens: 5 }, elapsedMs: 123, stderr: 'masked diagnostic' })).toEqual({ ok: true, outcome: 'done' });
+  expect(await db.rows(`select error_code,error_retryable,input_tokens,cached_input_tokens,output_tokens,elapsed_ms,stderr from brain.work_attempts where token=\'${failed.attemptToken}\'`))
+    .toEqual([{ error_code: 'GARMIN_AUTH', error_retryable: false, input_tokens: '10', cached_input_tokens: '2', output_tokens: '5', elapsed_ms: '123', stderr: 'masked diagnostic' }]);
+  const succeeded = await start(2);
+  expect(await store.finishSupervisedWork({ ...succeeded, outcome: 'succeeded', elapsedMs: 10 })).toEqual({ ok: true, outcome: 'done' });
+  expect(await db.rows(`select input_tokens,cached_input_tokens,output_tokens,error_code,error_retryable,stderr from brain.work_attempts where token=\'${succeeded.attemptToken}\'`))
+    .toEqual([{ input_tokens: null, cached_input_tokens: null, output_tokens: null, error_code: null, error_retryable: null, stderr: null }]);
+  const settled = await start(3);
+  expect(await store.settleSupervisedAttempt({ ...settled, outcome: 'cancelled', elapsedMs: 456, stderr: 'settled diagnostic' })).toEqual({ ok: true, outcome: 'done' });
+  expect(await db.rows(`select elapsed_ms,stderr from brain.work_attempts where token=\'${settled.attemptToken}\'`)).toEqual([{ elapsed_ms: '456', stderr: 'settled diagnostic' }]);
+});
+it('rejects partial or negative usage, negative elapsed time, and errors on successful attempts', async () => {
+  const { db, store } = await fixture();
+  await store.addWork({ ...work(), kind: 'process_probe' });
+  await store.claimSupervisedWork({ now, claimedBy: id(99), kinds: ['process_probe'], attemptToken: id(201) });
+  for (const expression of ["input_tokens=1", "input_tokens=-1,cached_input_tokens=0,output_tokens=0", "elapsed_ms=-1", "outcome='succeeded',error_code='BAD'", "error_code='BAD'", 'error_retryable=false']) {
+    await expect(db.query(`update brain.work_attempts set ${expression} where token='${id(201)}'`)).rejects.toMatchObject({ code: '23514' });
+  }
+});

@@ -1182,6 +1182,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       if (attempt.outcome !== null) return { ok: true, outcome: 'lost' };
       attempt.outcome = input.outcome === 'unknown' ? 'unknown' : item.cancelRequestedAt !== null ? 'cancelled' : input.outcome;
       attempt.finishedAt = input.now;
+      attempt.elapsedMs = input.elapsedMs ?? null; attempt.stderr = input.stderr ?? null;
       if (input.outcome === 'unknown') return { ok: true, outcome: 'done' };
       if (item.cancelRequestedAt !== null) { item.completedAt = input.now; item.outcome = 'cancelled'; }
       else if (input.outcome === 'died') item.nextAttemptAt = input.now;
@@ -1198,7 +1199,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       item.claimExpiresAt = new Date(input.now.getTime() + workKindPolicy(item.kind).claimForMs);
       item.claimedBy = input.claimedBy;
       item.currentAttemptToken = input.attemptToken;
-      workAttempts.push({ incarnation: input.claimedBy, pid: null, pgid: null, osBootAt: null, osStartedAt: null, token: input.attemptToken, workItemId: item.id, startedAt: input.now, lastProgressAt: null, renewedAt: null, finishedAt: null, outcome: null });
+      workAttempts.push({ errorCode: null, errorRetryable: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, elapsedMs: null, stderr: null, incarnation: input.claimedBy, pid: null, pgid: null, osBootAt: null, osStartedAt: null, token: input.attemptToken, workItemId: item.id, startedAt: input.now, lastProgressAt: null, renewedAt: null, finishedAt: null, outcome: null });
       return { ok: true, item: { ...item }, attemptToken: input.attemptToken };
     },
     async renewSupervisedLease(input) {
@@ -1218,6 +1219,9 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       if (attempt.outcome !== null) return { ok: true, outcome: 'lost' };
       attempt.finishedAt = input.now;
       attempt.outcome = input.outcome;
+      attempt.elapsedMs = input.elapsedMs ?? null; attempt.stderr = input.stderr ?? null;
+      attempt.errorCode = input.errorCode ?? null; attempt.errorRetryable = input.errorRetryable ?? null;
+      attempt.inputTokens = input.usage?.inputTokens ?? null; attempt.cachedInputTokens = input.usage?.cachedInputTokens ?? null; attempt.outputTokens = input.usage?.outputTokens ?? null;
       if (input.outcome === 'succeeded') { item.completedAt = input.now; item.outcome = 'succeeded'; }
       else if (item.cancelRequestedAt !== null) { item.completedAt = input.now; item.outcome = 'cancelled'; }
       if (input.outcome === 'failed') {

@@ -778,6 +778,17 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 
 | 코드 | exit | 뜻 |
 | --- | --- | --- |
+| `ABI_LINE_INVALID` | 1 | 프로세스 출력 줄이 ABI 형식과 다릅니다 |
+| `ABI_VERSION_UNKNOWN` | 1 | 지원하지 않는 프로세스 ABI 버전입니다 |
+| `ABI_LINE_TOO_LONG` | 1 | 프로세스 출력 줄이 바이트 상한을 넘었습니다 |
+| `ABI_LINE_TRUNCATED` | 1 | 프로세스 출력의 마지막 줄이 잘렸습니다 |
+| `ABI_DUPLICATE_FINAL` | 1 | 프로세스가 최종 이벤트를 두 번 보냈습니다 |
+| `ABI_EXIT_AFTER_RESULT` | 1 | 결과를 보낸 프로세스가 비정상 종료했습니다 |
+| `ABI_NO_RESULT` | 1 | 프로세스가 최종 이벤트 없이 정상 종료했습니다 |
+| `ABI_EXIT_FAILED` | 1 | 프로세스가 최종 이벤트 없이 비정상 종료했습니다 |
+| `ABI_OUTPUT_UNREADABLE` | 1 | 프로세스 출력을 읽지 못했습니다 |
+| `PROCESS_START_FAILED` | 1 | 자식 프로세스를 시작하지 못했습니다 |
+| `ABI_ENV_INVALID` | 1 | 프로세스 환경 변수가 ABI 형식과 다릅니다 |
 | `USAGE` | 2 | 명령을 잘못 불렀습니다 — 모르는 동사, 잘못된 플래그, 쓸 수 없는 인자 |
 | `CONFIG_MISSING` | 2 | 이 폴더에 설정 파일이 없습니다 — 설치가 여기서 돈 적이 없습니다 |
 | `CONFIG_INVALID` | 2 | 설정은 있고, 그 값 하나를 읽거나 쓸 수 없습니다 |
@@ -803,6 +814,7 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `SESSION_REQUIRED` | 2 | 이 동사는 세션이 필요한데 아무것도 주어지지 않았습니다 |
 | `USER_MISSING` | 2 | 이 데이터베이스에 주인 행이 없어서 세션을 누구에게도 붙일 수 없습니다 |
 | `CONFIRMATION_REQUIRED` | 3 | 사람의 동의가 필요한 동사인데 아무도 동의하지 않았습니다 |
+
 
 ### 경고 코드
 

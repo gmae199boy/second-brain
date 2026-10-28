@@ -229,7 +229,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         if (!item) return 0;
         const now = instant(input.now, 'work_attempts.finished_at');
         const outcome = input.outcome === 'unknown' ? 'unknown' : item.cancel_requested_at !== null ? 'cancelled' : input.outcome;
-        await sql`update brain.work_attempts set outcome = ${outcome}, finished_at = ${now} where token = ${input.attemptToken}`.execute(held);
+        await sql`update brain.work_attempts set outcome = ${outcome}, finished_at = ${now}, elapsed_ms = ${input.elapsedMs ?? null}, stderr = ${input.stderr ?? null} where token = ${input.attemptToken}`.execute(held);
         if (input.outcome === 'unknown') return 1;
         await sql`update brain.work_items set current_attempt_token = null, claimed_at = null, claim_expires_at = null, claimed_by = null,
           completed_at = case when cancel_requested_at is not null then ${now}::timestamptz else completed_at end,
@@ -290,7 +290,10 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
           last_error = case when ${input.outcome} = 'failed' then ${input.lastError === undefined ? null : encodedFailure(input.lastError)} else last_error end
           where id = ${input.id} and current_attempt_token = ${input.attemptToken}`.execute(held);
         if (changesOf(changed) === 0) return 0;
-        await sql`update brain.work_attempts set finished_at = ${now}, outcome = ${input.outcome}
+        await sql`update brain.work_attempts set finished_at = ${now}, outcome = ${input.outcome},
+          error_code = ${input.errorCode ?? null}, error_retryable = ${input.errorRetryable ?? null},
+          input_tokens = ${input.usage?.inputTokens ?? null}, cached_input_tokens = ${input.usage?.cachedInputTokens ?? null}, output_tokens = ${input.usage?.outputTokens ?? null},
+          elapsed_ms = ${input.elapsedMs ?? null}, stderr = ${input.stderr ?? null}
           where token = ${input.attemptToken}`.execute(held);
         return 1;
       });

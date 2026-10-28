@@ -23,5 +23,8 @@ if (plan.pidFile || plan.progressEveryMs || plan.ignoreTerm) {
     if (typeof entry === 'object') { await setTimeout(entry.delayMs ?? 0); console.log(entry.line); }
     else console.log(entry);
   }
+  if (plan.raw !== undefined) process.stdout.write(plan.raw);
+  if (plan.stderr !== undefined) process.stderr.write(plan.stderr);
+  if (plan.signal) process.kill(process.pid, plan.signal);
   process.exitCode = plan.code ?? 0;
 }

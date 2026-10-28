@@ -514,6 +514,8 @@ export interface RenewSupervisedLeaseInput {
 export interface FinishSupervisedWorkInput {
   id: string; attemptToken: string; now: Date; outcome: 'succeeded' | 'failed';
   nextAttemptAt?: Date; lastError?: string;
+  elapsedMs?: number; usage?: { inputTokens: number; cachedInputTokens: number; outputTokens: number };
+  errorCode?: string; errorRetryable?: boolean; stderr?: string | null;
 }
 
 export type WorkCancelState = 'cancelled' | 'requested' | 'already_closed' | 'not_found';
@@ -529,6 +531,7 @@ export interface OpenSupervisedAttempt {
 export type ListOpenSupervisedAttemptsResult = { ok: true; attempts: OpenSupervisedAttempt[] } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface SettleSupervisedAttemptInput {
   id: string; attemptToken: string; now: Date; outcome: 'cancelled' | 'died' | 'unknown';
+  elapsedMs?: number; stderr?: string | null;
 }
 
 /** What the one failure-recording function writes (AD-21, Table Contract). */

@@ -2,11 +2,12 @@ export interface ProcessSpec { command: string; args: readonly string[]; env: Re
 export interface ProcessExit { code: number | null; signal: string | null }
 export interface ProcessHandle {
   pid: number;
-  lines: AsyncIterable<string>;
+  stdout: AsyncIterable<string>;
+  stderr: AsyncIterable<string>;
   /** The leader's exit/reaping, independent of descendant-held stdio. */
   exited: Promise<ProcessExit>;
   readonly leaderExited: boolean;
-  /** Stop waiting for pipe EOF while preserving already queued lines. */
+  /** Stop waiting for pipe EOF while preserving already queued chunks. */
   closeOutput(): void;
   signalGroup(signal: 'SIGKILL' | 'SIGTERM'): void;
 }

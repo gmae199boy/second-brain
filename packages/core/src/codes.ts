@@ -173,6 +173,18 @@ export interface ErrorCodeSpec {
 }
 
 const CODES = {
+  ABI_LINE_INVALID: { exit: 1, retryable: false, meaning: '프로세스 출력 줄이 ABI 형식과 다릅니다', hint: '작업자의 JSON 이벤트 형식을 고치세요' },
+  ABI_VERSION_UNKNOWN: { exit: 1, retryable: false, meaning: '지원하지 않는 프로세스 ABI 버전입니다', hint: '작업자가 ABI 버전 1을 쓰도록 고치세요' },
+  ABI_LINE_TOO_LONG: { exit: 1, retryable: false, meaning: '프로세스 출력 줄이 바이트 상한을 넘었습니다', hint: '출력 줄을 65536바이트 이하로 줄이세요' },
+  ABI_LINE_TRUNCATED: { exit: 1, retryable: true, meaning: '프로세스 출력의 마지막 줄이 잘렸습니다', hint: '작업자가 줄바꿈까지 출력하는지 확인하고 다시 실행하세요' },
+  ABI_DUPLICATE_FINAL: { exit: 1, retryable: false, meaning: '프로세스가 최종 이벤트를 두 번 보냈습니다', hint: '최종 이벤트를 한 번만 보내도록 고치세요' },
+  ABI_EXIT_AFTER_RESULT: { exit: 1, retryable: false, meaning: '결과를 보낸 프로세스가 비정상 종료했습니다', hint: '결과 이후 종료 경로를 확인하세요' },
+  ABI_NO_RESULT: { exit: 1, retryable: false, meaning: '프로세스가 최종 이벤트 없이 정상 종료했습니다', hint: '종료 전에 최종 이벤트를 보내세요' },
+  ABI_EXIT_FAILED: { exit: 1, retryable: true, meaning: '프로세스가 최종 이벤트 없이 비정상 종료했습니다', hint: '작업자 로그를 확인하고 다시 실행하세요' },
+  ABI_OUTPUT_UNREADABLE: { exit: 1, retryable: true, meaning: '프로세스 출력을 읽지 못했습니다', hint: '출력 파이프를 확인하고 다시 실행하세요' },
+  PROCESS_START_FAILED: { exit: 1, retryable: true, meaning: '자식 프로세스를 시작하지 못했습니다', hint: '실행 명세와 실행 파일을 확인하고 다시 실행하세요' },
+  ABI_ENV_INVALID: { exit: 1, retryable: false, meaning: '프로세스 환경 변수가 ABI 형식과 다릅니다', hint: '필수 환경 변수와 값의 형식을 고치세요' },
+
   /** The command was invoked wrongly: unknown verb, bad flag, bad argument. */
   USAGE: {
     exit: 2,

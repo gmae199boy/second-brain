@@ -1,11 +1,13 @@
 import type { ProcessExit, ProcessHandle, ProcessLauncher, ProcessSpec } from '../../ports/process.js';
-export interface FakeProcess extends ProcessHandle { push(line: string): void; exit(code?: number | null, signal?: string | null): void; signals: string[]; ended: boolean; ignoreTerm: boolean }
+export interface FakeProcess extends ProcessHandle { push(line: string): void; write(raw: string): void; writeStderr(text: string): void; exit(code?: number | null, signal?: string | null): void; signals: string[]; ended: boolean; ignoreTerm: boolean }
 export function fakeProcessLauncher(): ProcessLauncher & { processes: FakeProcess[]; specs: ProcessSpec[] } {
   const processes: FakeProcess[] = [];
   const specs: ProcessSpec[] = [];
   return { processes, specs, async start(spec) {
     specs.push(spec);
     const queue: string[] = [];
+    const errors: string[] = [];
+    let wakeError: (() => void) | undefined;
     let ended = false;
     let wake: (() => void) | undefined;
     let finish!: (exit: ProcessExit) => void;
@@ -13,15 +15,18 @@ export function fakeProcessLauncher(): ProcessLauncher & { processes: FakeProces
     const handle: FakeProcess = {
       pid: processes.length + 100, signals: [], exited, ended: false, ignoreTerm: false,
       get leaderExited() { return handle.ended; },
-      closeOutput() { ended = true; wake?.(); },
-      lines: { async *[Symbol.asyncIterator]() {
+      closeOutput() { ended = true; wake?.(); wakeError?.(); },
+      stdout: { async *[Symbol.asyncIterator]() {
         while (!ended || queue.length > 0) {
           if (queue.length > 0) yield queue.shift()!;
           else await new Promise<void>((resolve) => { wake = resolve; });
         }
       } },
-      push(line) { if (handle.ended) throw new Error('종료된 프로세스입니다'); if (ended) return; queue.push(line); wake?.(); },
-      exit(code = 0, signal = null) { ended = true; handle.ended = true; finish({ code, signal }); wake?.(); },
+      stderr: { async *[Symbol.asyncIterator]() { while (!ended || errors.length) { if (errors.length) yield errors.shift()!; else await new Promise<void>(resolve => { wakeError = resolve; }); } } },
+      push(line) { handle.write(line + '\n'); },
+      writeStderr(text) { if (!ended) { errors.push(text); wakeError?.(); } },
+      write(line) { if (handle.ended) throw new Error('종료된 프로세스입니다'); if (ended) return; queue.push(line); wake?.(); },
+      exit(code = 0, signal = null) { ended = true; handle.ended = true; finish({ code, signal }); wake?.(); wakeError?.(); },
       signalGroup(signal) { handle.signals.push(signal); if (signal !== 'SIGTERM' || !handle.ignoreTerm) handle.exit(null, signal); },
     };
     processes.push(handle);

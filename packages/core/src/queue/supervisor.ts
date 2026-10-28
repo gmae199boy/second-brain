@@ -4,7 +4,7 @@ import type { Clock, Timer } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
 import type { ProcessInspector, ProcessLauncher, ProcessSpec } from '../ports/process.js';
 import type { FinishWorkResult, SchemaStore, WorkStore } from '../ports/store.js';
-import { decodeAbiLine } from '../process-abi/codec.js';
+import { createAbiRun, createAbiStderr, type AbiRunVerdict } from '../process-abi/codec.js';
 import { checkSchema, type SchemaVersions } from '../schema.js';
 import { cleanProcessGroup, inspectGroup, type GroupIdentity } from './process-cleanup.js';
 export interface SupervisorOptions {
@@ -54,14 +54,29 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
   }
   async function execute(item: WorkItem, token: string): Promise<void> {
     let failed: string | undefined;
-    let result = false;
+    const run = createAbiRun(), stderr = createAbiStderr();
+    const startedAt = clock.now().getTime();
+    let endedAt: number | undefined;
+    let verdict: AbiRunVerdict;
+    let exit = { code: null as number | null, signal: null as string | null };
     let stopped = false;
-    const spec = launches[item.kind]?.(item, token) ?? null;
-    const started = spec === null ? { ok: false as const, message: '일감 실행 명세가 없습니다' } : await launcher.start(spec);
-    if (!started.ok) failed = started.message;
+    let started: Awaited<ReturnType<ProcessLauncher['start']>>;
+    try {
+      const spec = launches[item.kind]?.(item, token) ?? null;
+      started = spec === null ? { ok: false, message: '일감 실행 명세가 없습니다' } : await launcher.start(spec);
+    } catch { started = { ok: false, message: '자식 프로세스를 시작할 수 없습니다' }; }
+    if (!started.ok) { run.fail('PROCESS_START_FAILED', started.message); failed = started.message; }
     else {
       const handle = started.handle;
-      const exited = handle.exited;
+      const exited = handle.exited.then(value => { endedAt = clock.now().getTime(); return value; });
+      let stopResolve!: () => void;
+      const stop = new Promise<void>(resolve => { stopResolve = resolve; });
+      // Consume stderr while identity/database work is pending so the adapter
+      // cannot accumulate an unbounded diagnostic queue behind these awaits.
+      const readStderr = (async () => {
+        try { for await (const chunk of handle.stderr) stderr.feed(chunk); }
+        catch { run.fail('ABI_OUTPUT_UNREADABLE', '자식 프로세스 출력을 읽을 수 없습니다'); failed = '출력 읽기 실패'; stopResolve(); }
+      })();
       const [boot, start] = await Promise.all([inspector.bootTime(), inspector.startedAt(handle.pid)]);
       const identity: GroupIdentity = { pgid: handle.pid, osBootAt: boot.state === 'found' ? boot.value : null,
         osStartedAt: start.state === 'found' ? start.value : null };
@@ -70,8 +85,6 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
         osBootAt: identity.osBootAt, osStartedAt: identity.osStartedAt });
       if (!recorded.ok) await problem(`감독자 프로세스 기록 실패 (${recorded.code})`);
       const watch = new AbortController();
-      let stopResolve!: () => void;
-      const stop = new Promise<void>(resolve => { stopResolve = resolve; });
       const abort = (): void => { stopped = true; stopResolve(); };
       signal.addEventListener('abort', abort, { once: true });
       if (signal.aborted) abort();
@@ -89,12 +102,11 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
       let pendingRenewal: ReturnType<WorkStore['renewSupervisedLease']> | undefined;
       const read = (async () => {
         try {
-          for await (const line of handle.lines) {
+          for await (const chunk of handle.stdout) {
             if (readingStopped) break;
-            const decoded = decodeAbiLine(line);
-            if (!decoded.ok) { failed = decoded.reason; stopResolve(); break; }
-            if (decoded.event.type === 'result') result = true;
-            else {
+            const progress = run.feed(chunk);
+            if (run.violation) { failed = run.violation.reason; stopResolve(); break; }
+            for (const _event of progress) {
               const now = clock.now();
               if (now.getTime() - lastRenewed >= (options.renewEveryMs ?? SUPERVISOR_RENEW_EVERY_MS)) {
                 pendingRenewal = store.renewSupervisedLease({ id: item.id, attemptToken: token, now, progressAt: now });
@@ -106,7 +118,8 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
               }
             }
           }
-        } catch { failed = '자식 프로세스 출력을 읽을 수 없습니다'; stopResolve(); }
+          if (!readingStopped) { run.end(); if (run.violation) { failed = run.violation.reason; stopResolve(); } }
+        } catch { run.fail('ABI_OUTPUT_UNREADABLE', '자식 프로세스 출력을 읽을 수 없습니다'); failed = '출력 읽기 실패'; stopResolve(); }
       })();
       try {
         await Promise.race([exited, stop]);
@@ -116,33 +129,37 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
         if (cleaned === 'unknown') {
           readingStopped = true;
           await pendingRenewal;
-          const input = { id: item.id, attemptToken: token, now: clock.now(), outcome: 'unknown' as const };
+          handle.closeOutput();
+          await readStderr;
+          const input = { id: item.id, attemptToken: token, now: clock.now(), outcome: 'unknown' as const, elapsedMs: Math.max(0, (endedAt ?? clock.now().getTime()) - startedAt), stderr: stderr.value() };
           pendingSettlement = () => store.settleSupervisedAttempt(input);
           await retrySettlement();
           return;
         }
-        const exit = await exited;
+        exit = await exited;
         // Drain buffered ABI lines, but inherited pipes can outlive both the
         // leader and its original group. Closing them releases the iterator.
         const outputWait = new AbortController();
-        try { await Promise.race([read, timer.sleep(options.groupConfirmMs ?? SUPERVISOR_GROUP_CONFIRM_MS, outputWait.signal)]); }
+        try { await Promise.race([Promise.all([read, readStderr]), timer.sleep(options.groupConfirmMs ?? SUPERVISOR_GROUP_CONFIRM_MS, outputWait.signal)]); }
         finally { outputWait.abort(); handle.closeOutput(); }
-        await read;
-        if (exit.code !== 0 || exit.signal !== null) failed ??= '자식 프로세스가 정상 종료하지 않았습니다';
-        if (!result) failed ??= '자식 프로세스가 결과 없이 종료했습니다';
+        await Promise.all([read, readStderr]);
       } finally {
         readingStopped = true; handle.closeOutput();
         watch.abort(); await poll; signal.removeEventListener('abort', abort);
       }
     }
+    verdict = run.verdict(exit);
+    failed = verdict.outcome === 'failed' ? verdict.code : undefined;
+    const detail = { elapsedMs: Math.max(0, (endedAt ?? clock.now().getTime()) - startedAt), stderr: stderr.value() };
     const now = clock.now();
     // A valid result and exit zero win a cancellation race. Shutdown returns unfinished work.
     if (signal.aborted || (stopped && failed !== undefined)) {
-      const input = { id: item.id, attemptToken: token, now, outcome: 'cancelled' as const };
+      const input = { id: item.id, attemptToken: token, now, outcome: 'cancelled' as const, ...detail };
       pendingSettlement = () => store.settleSupervisedAttempt(input);
     } else {
-      const input = { id: item.id, attemptToken: token, now, outcome: failed === undefined ? 'succeeded' as const : 'failed' as const,
-        ...(failed === undefined ? {} : { nextAttemptAt: new Date(now.getTime() + retryDelayMs(item.attempts)), lastError: failureText(failed) }) };
+      const input = { id: item.id, attemptToken: token, now, outcome: verdict.outcome, ...detail,
+        ...(verdict.usage === null ? {} : { usage: { inputTokens: verdict.usage.input_tokens, cachedInputTokens: verdict.usage.cached_input_tokens, outputTokens: verdict.usage.output_tokens } }),
+        ...(failed === undefined ? {} : { nextAttemptAt: new Date(now.getTime() + retryDelayMs(item.attempts)), lastError: failureText(`자식 프로세스 실행 실패 (${verdict.code}): ${verdict.message ?? '정상 결과를 받지 못했습니다'}`), errorCode: verdict.code!, errorRetryable: verdict.retryable! }) };
       pendingSettlement = () => store.finishSupervisedWork(input);
     }
     await retrySettlement();
