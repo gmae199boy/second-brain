@@ -117,13 +117,93 @@ function tailUtf8(text: string, limit: number): string {
   }
   return text.slice(start);
 }
+/** Mask complete lines before retaining a bounded diagnostic tail. */
 export function createAbiStderr() {
-  let text = '', cut = false;
+  let line = '', bytes = 0, pendingHigh = '';
+  type MaskedLine = { text: string; bytes: number; next: MaskedLine | null };
+  let first: MaskedLine | null = null, last: MaskedLine | null = null, retainedBytes = 0;
+  let oversized = false, inPem = false, pemLine = false, beganPem = false;
+  // Marker recognition stays bounded even on discarded, oversized lines. The
+  // label may be arbitrarily long; only its suffix and closing dashes matter.
+  let markerPrefix = '', markerKind: 'BEGIN' | 'END' | undefined;
+  let labelTail = '', dashes = 0;
+  const append = (masked: string): void => {
+    if (!masked) return;
+    const entry: MaskedLine = { text: masked, bytes: utf8Bytes(masked).length, next: null };
+    if (last) last.next = entry;
+    else first = entry;
+    last = entry;
+    retainedBytes += entry.bytes;
+    while (first && retainedBytes > PROCESS_ABI_STDERR_BUFFER_BYTES) {
+      retainedBytes -= first.bytes;
+      first = first.next;
+    }
+    if (!first) last = null;
+  };
+  const maskedLine = (newline: boolean): string => {
+    const ending = newline ? '\n' : '';
+    if (pemLine) return beganPem ? '[REDACTED:private_key]' + ending : '';
+    if (oversized) return '[stderr 줄 생략: 상한 초과]' + ending;
+    return maskSecrets(line, 'body').text + ending;
+  };
+  const marker = (cp: string): void => {
+    if (markerKind !== undefined) {
+      if (/[A-Z0-9 ]/.test(cp) && dashes === 0) labelTail = (labelTail + cp).slice(-32);
+      else if (cp === '-') {
+        if (++dashes === 5) {
+          if (markerKind === 'BEGIN' && /PRIVATE KEY(?: BLOCK)?$/.test(labelTail)) {
+            if (!inPem) beganPem = true;
+            inPem = true; pemLine = true;
+          } else if (markerKind === 'END') inPem = false;
+          markerKind = undefined;
+        }
+      } else markerKind = undefined;
+    }
+    markerPrefix = (markerPrefix + cp).slice(-11);
+    if (markerPrefix.endsWith('-----BEGIN ')) { markerKind = 'BEGIN'; labelTail = ''; dashes = 0; }
+    else if (markerPrefix.endsWith('-----END ')) { markerKind = 'END'; labelTail = ''; dashes = 0; }
+  };
+  const consume = (raw: string): void => {
+    for (const original of raw) {
+      const cp = original === '\u0000' ? '\ufffd' : original;
+      if (cp === '\n') {
+        append(maskedLine(true));
+        line = ''; bytes = 0; oversized = false; beganPem = false; pemLine = inPem;
+        markerPrefix = ''; markerKind = undefined;
+        continue;
+      }
+      marker(cp);
+      if (!oversized) {
+        bytes += utf8Bytes(cp).length;
+        if (bytes > PROCESS_ABI_MAX_LINE_BYTES) { oversized = true; line = ''; }
+        else line += cp;
+      }
+    }
+  };
   return {
-    feed(raw: string) { const combined = text + raw.replaceAll('\u0000', '\ufffd'); const tail = tailUtf8(combined, PROCESS_ABI_STDERR_BUFFER_BYTES); if (tail.length < combined.length) cut = combined.charAt(combined.length - tail.length - 1) !== '\n'; text = tail; },
+    feed(raw: string) {
+      raw = pendingHigh + raw; pendingHigh = '';
+      if (raw.length && /[\uD800-\uDBFF]/.test(raw.charAt(raw.length - 1))) { pendingHigh = raw.slice(-1); raw = raw.slice(0, -1); }
+      consume(raw);
+    },
     value(): string | null {
-      const complete = cut ? (text.includes('\n') ? text.slice(text.indexOf('\n') + 1) : '') : text;
-      return tailUtf8(maskSecrets(complete, 'body').text, PROCESS_ABI_STDERR_MAX_BYTES) || null;
+      // value is read at EOF/settlement. Keep snapshots non-destructive for
+      // callers that inspect a diagnostic while more output can still arrive.
+      let masked = maskedLine(false);
+      if (pendingHigh && !pemLine && !oversized) {
+        masked = bytes + 3 > PROCESS_ABI_MAX_LINE_BYTES ? '[stderr 줄 생략: 상한 초과]' : maskSecrets(line + pendingHigh, 'body').text;
+      }
+      if (!(line || oversized || beganPem || pendingHigh)) masked = '';
+      let size = retainedBytes + utf8Bytes(masked).length, start = first;
+      while (start && size > PROCESS_ABI_STDERR_BUFFER_BYTES) {
+        size -= start.bytes;
+        start = start.next;
+      }
+      if (size > PROCESS_ABI_STDERR_BUFFER_BYTES) return null;
+      const pieces: string[] = [];
+      for (let entry = start; entry; entry = entry.next) pieces.push(entry.text);
+      pieces.push(masked);
+      return tailUtf8(pieces.join(''), PROCESS_ABI_STDERR_MAX_BYTES) || null;
     },
   };
 }

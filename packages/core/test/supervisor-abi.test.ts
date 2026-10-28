@@ -177,3 +177,20 @@ it('drains queued stderr before unknown settlement and retains the full masked t
     expect(store.snapshot().workItems[0]!.currentAttemptToken).toBe(attempt.token);
   } finally { controller.abort(); await running; }
 });
+
+it.each(['closed PEM', 'unterminated PEM', 'oversized line'])('persists masked stderr for %s', async mode => {
+  const k = await kit();
+  try {
+    const child = k.launcher.processes[0]!;
+    const body = ('SyntheticPemBody_' + 'Q'.repeat(64) + '\n').repeat(85);
+    const raw = mode === 'oversized line' ? 'TOKEN=' + 'x'.repeat(70000) :
+      '-----BEGIN RSA PRIVATE KEY-----\n' + body + (mode === 'closed PEM' ? '-----END RSA PRIVATE KEY-----\nTOKEN=' + 'a'.repeat(14500) + '\n' : 'last-secret-fragment');
+    for (let i = 0; i < raw.length; i += 97) child.writeStderr(raw.slice(i, i + 97));
+    child.push('{"abi":1,"type":"result"}'); child.exit(); await flush();
+    await expect.poll(() => k.store.snapshot().workAttempts[0]!.outcome).toBe('succeeded');
+    const attempt = k.store.snapshot().workAttempts[0]!;
+    expect(attempt.stderr).toBe(mode === 'closed PEM' ? '[REDACTED:private_key]\nTOKEN=[REDACTED:password]\n' :
+      mode === 'unterminated PEM' ? '[REDACTED:private_key]\n' : '[stderr 줄 생략: 상한 초과]');
+    expect(Buffer.byteLength(attempt.stderr!)).toBeLessThanOrEqual(4096);
+  } finally { await k.stop(); }
+});
