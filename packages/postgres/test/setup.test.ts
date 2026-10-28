@@ -3,6 +3,10 @@ import pg from 'pg';
 import { setTimeout } from 'node:timers/promises';
 import { database } from './fixture.js';
 import { prepareDatabase } from '../src/index.js';
+it('returns a failure value for an invalid database URL', async () => {
+  await expect(prepareDatabase({ databaseUrl: 'not a URL', appPassword: 'brain-test-app' }))
+    .resolves.toMatchObject({ ok: false, code: 'DB_UNAVAILABLE', message: expect.stringContaining('Invalid URL') });
+});
 it('prepares role and schema idempotently and keeps owner separate from runtime', async () => {
   const db = await database(false);
   try {

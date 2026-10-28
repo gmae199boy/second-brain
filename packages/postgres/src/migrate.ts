@@ -30,8 +30,12 @@ export async function runMigrations(options: RunMigrationsOptions): Promise<Migr
       }
       if (names.length === 0) throw new Error(`${owner.owner}: 마이그레이션 파일이 없습니다`);
     }
+    if (options.owners === undefined) {
+      const highest = Math.max(0, ...files.map(file => file.version));
+      if (highest !== CORE_SCHEMA_VERSION) throw new Error(`core: 마이그레이션 버전 ${highest}이 CORE_SCHEMA_VERSION ${CORE_SCHEMA_VERSION}과 다릅니다`);
+    }
   } catch (error) { return { ok: false, code: 'MIGRATION_FAILED', message: describe(error) }; }
-  const pool = createPool({ ...options, queryTimeoutMs: 0 });
+  const pool = createPool({ ...options, lockTimeoutMs: 0, queryTimeoutMs: 0 });
   let client;
   try { client = await pool.connect(); }
   catch (error) { await pool.end(); return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) }; }

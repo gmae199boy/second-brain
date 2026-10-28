@@ -5,8 +5,11 @@ export type PrepareDatabaseResult = { ok: true; databaseUrl: string } | { ok: fa
 export async function prepareDatabase(options: PrepareDatabaseOptions): Promise<PrepareDatabaseResult> {
   const name = options.databaseName ?? 'brain';
   if (!/^[a-z][a-z0-9_]*$/.test(name)) return { ok: false, code: 'DB_UNAVAILABLE', message: '잘못된 데이터베이스 이름입니다' };
+  let url: URL;
+  try { url = new URL(options.databaseUrl); }
+  catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) }; }
   // Advisory locks are database-scoped; all cluster role changes use postgres.
-  const adminUrl = new URL(options.databaseUrl); adminUrl.pathname = '/postgres';
+  const adminUrl = new URL(url); adminUrl.pathname = '/postgres';
   // Setup may queue behind another preparation. Runtime lock/query budgets
   // must not cancel administrative work; the connection deadline still applies.
   const pool = createPool({ ...options, databaseUrl: adminUrl.toString(), lockTimeoutMs: 0, queryTimeoutMs: 0 });
@@ -28,7 +31,7 @@ export async function prepareDatabase(options: PrepareDatabaseOptions): Promise<
     } finally { client.release(); }
   } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) }; }
   finally { await pool.end().catch(() => {}); }
-  const url = new URL(options.databaseUrl); url.pathname = `/${name}`;
+  url.pathname = `/${name}`;
   const target = createPool({ ...options, databaseUrl: url.toString(), lockTimeoutMs: 0, queryTimeoutMs: 0 });
   try {
     await target.query(`create extension if not exists pg_trgm;

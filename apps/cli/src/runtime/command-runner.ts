@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
+import { homeResources } from '../config/resources.js';
 export interface CommandRequest { command: string; args: readonly string[]; env: NodeJS.ProcessEnv; timeoutMs: number }
 export type CommandResult = { ok: true; stdout: string; stderr: string } | { ok: false; stdout: string; stderr: string; message: string };
 export type CommandRunner = (request: CommandRequest) => Promise<CommandResult>;
@@ -13,7 +14,7 @@ export const systemCommandRunner: CommandRunner = async request => {
     return { ok: false, stdout: failure.stdout ?? '', stderr: failure.stderr ?? '', message: failure.message }; }
 };
 export function composeArgs(home: string, args: readonly string[]): string[] {
-  return ['compose', '--env-file', join(home, '.env'), '-f', join(home, 'postgres', 'compose.yaml'), ...args];
+  return ['compose', '-p', homeResources(home).project, '--env-file', join(home, '.env'), '-f', join(home, 'postgres', 'compose.yaml'), ...args];
 }
 export function fakeCommandRunner(results: readonly CommandResult[]): { runner: CommandRunner; calls: CommandRequest[] } {
   const calls: CommandRequest[] = [];

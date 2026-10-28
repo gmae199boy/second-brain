@@ -1,7 +1,7 @@
 import { checkSchema } from '@second-brain/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import pg from 'pg';
-import { schemaStoreContract, storeContract, sessionIngestContract, userStoreContract, sampleEnsureSessionInput, sampleSelfUserInput, sampleIngestBatch, sampleSessionToken } from '@second-brain/core/testing';
+import { schemaStoreContract, storeContract, sessionIngestContract, userStoreContract, sampleEnsureSessionInput, sampleSelfUserInput, sampleIngestBatch, sampleSessionToken, sampleTranscriptFileInput } from '@second-brain/core/testing';
 import { postgresStore } from '../src/index.js';
 import { database, subject } from './fixture.js';
 import type { TestDatabase } from '@second-brain/test-db';
@@ -105,4 +105,65 @@ it('writes attachment metadata under the restricted runtime column grants and re
     expect(listed).toMatchObject({ok:true,attachments:[{id:attachment.id,status:'stored',file:{id:attachment.file.id,home:{locator:'cc/cc/fixture.txt'}}}]});
     expect(await db.rows('select count(*)::int as n from brain.message_attachments')).toEqual([{n:1}]);
   } finally {await store.close();}
+});
+
+it('returns only requested redacted hashes through brain_app', async () => {
+  const db = await database(); databases.push(db);
+  const hashes = ['a', 'b', 'c'].map(letter => 'sha256:' + letter.repeat(64));
+  for (const [index, hash] of hashes.entries()) {
+    await db.query(`insert into brain.files(id,content_hash,size_bytes,first_seen_at,redacted_at)
+      values ('01940000-0000-7000-8000-00000000090${index}','${hash}',0,'2026-10-28T00:00:00.000Z',${index === 1 ? 'null' : "'2026-10-28T01:00:00.000Z'"})`);
+  }
+  const store = postgresStore({ databaseUrl: db.appUrl });
+  try {
+    expect(await store.listRedactedContentHashes([hashes[0]!, hashes[1]!, 'sha256:' + 'd'.repeat(64)]))
+      .toEqual({ ok: true, hashes: [hashes[0]] });
+  } finally { await store.close(); }
+});
+
+it('keeps newer transcript history when an older smaller read finishes late', async () => {
+  const db = await database(); databases.push(db);
+  const store = postgresStore({ databaseUrl: db.appUrl });
+  try {
+    const first = sampleTranscriptFileInput();
+    const expected = { id: first.id, harness: first.harness, path: first.path,
+      sizeBytes: first.sizeBytes, fingerprint: first.fingerprint, cursor: first.cursor, scannedAt: first.scannedAt };
+    expect(await store.recordTranscriptFile(first)).toEqual({ ok: true, file: expected });
+    const grown = sampleTranscriptFileInput({ id: '01940000-0000-7000-8000-000000000901', sizeBytes: 2048,
+      fingerprint: 'sha256:' + 'c'.repeat(64), cursor: { lastHarnessMessageId: 'm4', fingerprint: 'sha256:' + 'd'.repeat(64) },
+      scannedAt: new Date('2026-02-03T05:05:06.000Z') });
+    const newer = { ...expected, sizeBytes: grown.sizeBytes, fingerprint: grown.fingerprint,
+      cursor: grown.cursor, scannedAt: grown.scannedAt };
+    expect(await store.recordTranscriptFile(grown)).toEqual({ ok: true, file: newer });
+    for (const scannedAt of [first.scannedAt, grown.scannedAt]) {
+      expect(await store.recordTranscriptFile(sampleTranscriptFileInput({ sizeBytes: 512,
+        fingerprint: 'sha256:' + 'e'.repeat(64), cursor: null, scannedAt })))
+        .toEqual({ ok: true, file: newer });
+    }
+    expect(await db.rows('select * from brain.transcript_files')).toEqual([{
+      id: first.id, harness: first.harness, path: first.path, size_bytes: grown.sizeBytes,
+      fingerprint: grown.fingerprint, last_harness_message_id: grown.cursor!.lastHarnessMessageId,
+      cursor_fingerprint: grown.cursor!.fingerprint, scanned_at: grown.scannedAt,
+    }]);
+  } finally { await store.close(); }
+});
+
+it('persists identity work only when ensureSession creates the session', async () => {
+  const db = await database(); databases.push(db);
+  const store = postgresStore({ databaseUrl: db.appUrl });
+  try {
+    expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
+    const at = new Date('2026-01-02T03:06:00.000Z');
+    const work = { id: '01940000-0000-7000-8000-000000000810', kind: 'session_identity',
+      targetKind: 'session', targetId: sampleSessionToken, createdAt: at, nextAttemptAt: at };
+    expect(await store.ensureSession(sampleEnsureSessionInput({ identityWork: work }))).toMatchObject({ ok: true, created: true });
+    expect(await store.ensureSession(sampleEnsureSessionInput({ identityWork: { ...work,
+      id: '01940000-0000-7000-8000-000000000811', targetId: 'demo:late' } })))
+      .toMatchObject({ ok: true, created: false });
+    expect(await db.rows('select * from brain.work_items')).toEqual([{
+      id: work.id, kind: work.kind, target_kind: work.targetKind, target_id: work.targetId,
+      created_at: at, attempts: 0, next_attempt_at: at, claimed_at: null,
+      claim_expires_at: null, claimed_by: null, last_error: null, completed_at: null,
+    }]);
+  } finally { await store.close(); }
 });

@@ -1,6 +1,8 @@
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import pg from 'pg';
+import { setTimeout } from 'node:timers/promises';
 import { afterEach, expect, it } from 'vitest';
 import type { TestDatabase } from '@second-brain/test-db';
 import { runMigrations } from '../src/index.js';
@@ -25,6 +27,20 @@ it('applies each file only once under simultaneous runners', async () => {
   expect(results.every(r => r.ok)).toBe(true);
   expect(results.flatMap(r => r.ok ? r.applied : []).length).toBe(1);
 });
+it('waits more than five seconds for another migration runner', async () => {
+  const db = await fresh();
+  const blocker = new pg.Client({ connectionString: db.url });
+  await blocker.connect();
+  let pending: ReturnType<typeof runMigrations> | undefined;
+  try {
+    await blocker.query('begin');
+    await blocker.query('select pg_advisory_xact_lock($1)', [4919270911]);
+    pending = runMigrations({ databaseUrl: db.url, clock });
+    await setTimeout(6200);
+    await blocker.query('commit');
+    expect(await pending).toMatchObject({ ok: true, from: 0, to: 1, applied: ['0001_initial.sql'] });
+  } finally { await blocker.end(); await pending; }
+});
 it.each([['0001_a.sql','0001_b.sql'], ['0001_a.sql','0003_c.sql'], ['0002_b.sql']])('rejects duplicate or missing sequence before applying %j', async (...names) => {
   const db = await fresh(); const source = await owner(names);
   expect(await runMigrations({ databaseUrl: db.url, clock, owners: [source] })).toMatchObject({ ok: false, code: 'MIGRATION_FAILED' });
@@ -37,6 +53,11 @@ it('supports another owner and refuses changed checksums before any pending file
   await writeFile(join(source.directory,'0002_b.sql'),'create table brain.should_not_exist(id int);');
   expect(await runMigrations(options)).toMatchObject({ ok: false, code: 'MIGRATION_FAILED' });
   expect((await db.rows("select to_regclass('brain.should_not_exist') as name"))[0]).toEqual({ name: null });
+});
+it('allows an explicitly supplied core folder to have its own highest version', async () => {
+  const db = await fresh(); const source = await owner(['0001_a.sql', '0002_b.sql']);
+  expect(await runMigrations({ databaseUrl: db.url, clock, owners: [{ ...source, owner: 'core' }] }))
+    .toMatchObject({ ok: true, to: 2, applied: ['0001_a.sql', '0002_b.sql'] });
 });
 it('rejects a gap in an applied owner history', async () => {
   const db = await fresh(); const source = await owner(['0001_a.sql','0002_b.sql']); const options = { databaseUrl: db.url, clock, owners: [source] };

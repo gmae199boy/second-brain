@@ -8,17 +8,24 @@ baseline_revision: 25eaf7b7c1e2f68dcb73e1a993f1a794dba49987
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
-review: 'quick'
+review: 'thorough'
 review_source: 'pinned'
-lenses_ran: ['quick']
+lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']
 review_loop_iteration: 0
-followup_review_recommended: false
+followup_review_recommended: true
 context:
   - '{project-root}/_bmad-output/personal-brain/tickets/epic-postgres-primary/epic-postgres-primary.md'
   - '{project-root}/_bmad-output/personal-brain/tickets/epic-postgres-primary/epic-postgres-primary-research-code.md'
   - '{project-root}/_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md'
 warnings: ['oversized']
-deferred: []
+deferred:
+  - summary: >-
+      `.env` 쓰기가 원자적이지 않아 쓰는 도중 끊기면 PostgreSQL 볼륨 비밀번호를 잃을 수 있다.
+    evidence: |-
+      `postgresSecrets`(apps/cli/src/config/codec.ts)와 기존 `writeConfig`의 `.env` 쓰기가 모두 `writeFile`로 제자리 truncate 후 쓴다. setup은 매번 두 곳에서 `.env`를 다시 쓰므로 한쪽만 임시 파일+rename으로 바꿔서는 위험이 남는다. 비밀번호를 잃으면 기존 볼륨에 접속할 수 없어 `.env` 복원이나 볼륨 삭제가 필요하다.
+    location: >-
+      apps/cli/src/config/codec.ts
+    severity: medium
 ---
 
 <intent-contract>
@@ -120,6 +127,7 @@ deferred: []
 - 실제 관통(2026-10-28): `sh tooling/dev/pg-tracer.sh --delete-volume`이 성공했다. 임시 홈에서 setup 2회(비밀번호 재사용·두 번째 적용 0건), hook 수집·재전송, named volume을 유지한 컨테이너 재생성 전후 ID·시각·본문 일치, PG 중단 시 exit 0·SPOOLED·spool 파일을 확인했다. 기본 홈 project·volume·54320 listener는 관통 전후 모두 없었다. uninstall 뒤 컨테이너·임시 LaunchAgent·명시한 볼륨·임시 홈을 정리했다. 테스트 fixture는 `postgres:18`이고 기존 실행 주체의 컨테이너는 유지했다. `git diff --check`도 통과했다.
 
 - 최종 검증(2026-10-28): quick 검토의 3건을 모두 수정했다. 잘못되거나 비밀번호 키와 겹치는 `store.url_env`는 runtime·setup·writer·secret 생성에서 동일하게 거부하고 파일을 보존한다. lock → statement → client timeout 순서를 보장해 기본 연결도 잠금 초과를 `DB_LOCKED`로 돌려준다. 추가 회귀 시험 후 `npx --yes pnpm@12 test`로 build·typecheck 및 105개 파일 / 2,894개 테스트가 모두 통과했다(68.00초). `sh tooling/dev/pg-tracer.sh --delete-volume`도 다시 통과했고, 기본 project·volume·54320 listener는 모두 생성되지 않았다. 임시 자원은 정리했다. 이 스토리 안의 미완료 및 검토 이월은 없다.
+- 오케스트레이터 검증(2026-10-28, dev-2): 구현 세션 커밋은 `5ca5da058addd5037cb5006d8198ae6bff409140`(구현)과 `247b28b9b7fbf205152e85ea48943de8129dfbee`(관리용 잠금 대기)다. 첫 재검증에서 전체 `pnpm test` 6회 중 1회 `packages/postgres/test/setup.test.ts`가 실패했다. 원인은 `prepareDatabase`가 런타임 기본 예산(lock_timeout 5000ms)으로 열려 병렬 테스트 파일들의 `pg_advisory_lock` 대기가 그 예산에 걸린 것이고, 관리용 연결 두 곳의 잠금·질의 대기 제한을 풀고(접속 제한은 유지) 실패 메시지를 단언에 넣어 고쳤다. 구현 세션이 그 수정용으로 따로 만든 `_bmad-output/personal-brain/plan-pg-setup-lock-wait.md`는 이 티켓 밖의 부수 계획이라 요지를 여기 옮기고 지웠다. 수정 후 `pnpm test`(corepack pnpm 12.15.0)가 105개 파일·2,896개 테스트 모두 통과했고, `sh tooling/dev/pg-tracer.sh`(볼륨 보존 기본값)도 통과했다: setup 2회(비밀번호 재사용·적용 0건), 수집 후 `workspace_id` null 세션 1행과 메시지·도구 메모, `compose down`→`up -d --wait` 전후 diff 없음, PG 중단 hook exit 0·`SPOOLED`·spool 파일, 기본 홈 자원 `{"project":false,"volume":false,"listener":false}` 전후 동일. 관통이 남긴 임시 홈 볼륨(`second-brain-pg-0fb93a35bbc4`, `second-brain-pg-0699cd92d016`)은 확인 뒤 지웠다. `docker compose ls -a`에는 테스트용 `second-brain-test`만 남았다.
 
 ## Plan Change Log
 
@@ -130,6 +138,35 @@ deferred: []
 - medium / patch — `packages/postgres/src/connect.ts`: equal lock, statement, and client timeouts race; the latter two map to `DB_UNAVAILABLE` instead of the required `DB_LOCKED`. Order the deadlines so the server lock error reaches the caller first.
 
 - Resolution — 위 3건은 공통 selector 검증과 timeout 순서 수정으로 해결했으며 설정 파일 보존·실제 잠금 분류 회귀 및 최종 전체 검증이 통과했다.
+
+### 2026-10-28 — Review pass
+- verdicts: 25 findings — high 0, medium 7, low 13, false 5, maybe-false 0
+- findings:
+  - `[low]` `[patch]` blind: `composeArgs`에 `-p`가 없어 상속된 `COMPOSE_PROJECT_NAME`이 compose 파일의 `name:`을 덮는다 — Compose 우선순위상 `-p` > 환경변수 > top-level `name`이고 runner는 프로세스 env를 넘긴다. `apps/cli/src/runtime/command-runner.ts`에 `-p <homeResources(home).project>`를 넣고 argv 테스트를 고쳤다.
+  - `[low]` `[reject]` blind: `resolve(home)`이 symlink 별칭을 정규화하지 않아 같은 홈이 다른 자원 이름을 얻는다 — 같은 홈을 서로 다른 symlink 경로로 setup하는 일은 드물고, 고치려면 아직 없는 홈에 대한 realpath 대체 분기가 필요하다.
+  - `[low]` `[reject]` blind: 예전 사용자 지정 홈의 접미사 없는 launchd 등록을 옮기지 않는다 — 예전 코드에서 개발 홈 등록은 운영 Label이 이미 올라 있으면 `loaded`로 끝나 실제로 남은 등록이 드물고, 옮기려면 plist의 shim을 읽어 판정하는 새 로직이 든다.
+  - `[medium]` `[defer]` blind: `.env`를 제자리에서 잘라 다시 쓰므로 쓰기 도중 끊기면 볼륨 비밀번호를 잃는다 — 실제 위험이지만 기존 `writeConfig`의 `.env` 쓰기도 같은 비원자 방식이고 setup마다 다시 쓰므로 `postgresSecrets`만 고쳐서는 위험이 남는다. `deferred`에 기록했다.
+  - `[low]` `[patch]` blind: `??=`가 빈 비밀번호 값을 유지해 `ALTER ROLE ... PASSWORD ''`에 닿는다 — `apps/cli/src/config/codec.ts`를 `||=`로 바꿔 빈 값도 새로 만들게 하고 비밀값 테스트에 넣었다.
+  - `[low]` `[reject]` blind: setup이 프로세스 환경의 URL override를 무시하고 로컬 DB만 준비해 hook과 다른 DB를 볼 수 있다 — 런타임의 env→`.env` 우선순위는 계획의 설계이고, override를 export한 것은 운영자의 선택이다. 일상 사용에서 만나기 어렵고 고치려면 분기가 더 든다.
+  - `[low]` `[reject]` blind: 이미 있는 `brain_app`·`brain_owner` role의 속성·멤버십을 확인하지 않는다 — 제품 클러스터는 setup이 만든 전용 컨테이너라 다른 정의의 role이 먼저 있을 일이 드물고, 고치려면 검사 단계가 늘어난다.
+  - `[low]` `[reject]` blind: 대상 DB의 확장·schema·원장 준비가 advisory lock 밖에서 돌아 같은 DB를 동시에 준비하면 카탈로그 충돌이 날 수 있다 — 같은 홈에서 setup을 동시에 두 번 돌릴 때만 생기고, 고치려면 대상 연결에 잠금을 더 잡아야 한다.
+  - `[medium]` `[patch]` blind: `runMigrations`가 `queryTimeoutMs: 0`만 주고 `lock_timeout`은 기본 5000ms로 남아 다른 실행기 뒤에서 5초 넘게 기다리면 `MIGRATION_FAILED`가 된다 — `setup.ts`에서 방금 고친 flaky와 같은 원인이다. `packages/postgres/src/migrate.ts`에 `lockTimeoutMs: 0`을 넣고 5초 넘게 advisory lock을 잡은 동안 기다렸다 성공하는 테스트를 더했다.
+  - `[low]` `[patch]` blind: `prepareDatabase`의 `new URL`이 try 밖이라 잘못된 URL이 값이 아닌 예외가 된다 — `packages/postgres/src/setup.ts`에서 파싱을 guard 안으로 옮기고 잘못된 URL 테스트를 더했다.
+  - `[low]` `[reject]` edge: 첫 setup 두 개가 동시에 `.env`를 읽으면 볼륨과 다른 비밀번호가 남을 수 있다 — setup의 동시 실행은 SQLite 경로에서도 직렬화되지 않은 기존 성질이고 드물다. 고치려면 홈 잠금이 새로 든다.
+  - `[low]` `[reject]` edge: 대상 DB 준비가 cluster advisory lock 해제 뒤에 돈다 — blind의 같은 지적과 같은 원인이며 같은 이유로 기각한다.
+  - `[medium]` `[patch]` edge: 마이그레이션 advisory lock 대기가 기본 5초 `lock_timeout`에 걸린다 — blind의 같은 지적과 같은 원인이며 같은 패치(`lockTimeoutMs: 0`과 대기 테스트)로 고쳤다.
+  - `[low]` `[reject]` edge: 이미 있는 `brain_app`이 superuser거나 `brain_owner` 멤버면 제한을 우회한다 — blind의 role 속성 지적과 같은 원인이며 같은 이유로 기각한다.
+  - `[low]` `[reject]` edge: 외부 테스트 클러스터를 쓰면 fixture가 cluster 전체의 `brain_app` 비밀번호를 바꾼다 — 테스트 URL을 실제 `brain_app`이 있는 클러스터로 돌린 경우에만 생기고, 그 경우에도 다음 setup이 `.env`의 값으로 되돌린다.
+  - `[medium]` `[patch]` edge: 기본 core 폴더가 `CORE_SCHEMA_VERSION`에 묶이지 않아 상수를 안 올린 파일이 깨끗한 setup으로 보고되고 모든 hook이 `SCHEMA_MISMATCH`로 spool된다 — SQLite에는 같은 guard가 있다(`packages/sqlite/src/migrate.ts:290`). `packages/postgres/src/migrate.ts`에서 기본 소유자일 때 접속 전에 최고 번호를 상수와 비교해 `MIGRATION_FAILED`로 거부하고 테스트(`packages/postgres/test/migrate-files.test.ts`)를 더했다.
+  - `[medium]` `[patch]` verification-gap: PG `listRedactedContentHashes`의 성공 결과가 검증되지 않는다 — `packages/postgres/test/store.test.ts`에 `redacted_at`을 섞어 심고 `brain_app`으로 요청한 가려진 hash만 정확히 돌아오는지 보는 테스트를 더했다.
+  - `[medium]` `[patch]` verification-gap: PG `recordTranscriptFile` 이력 저장이 검증되지 않는다 — 같은 파일에 기록·전진·더 오래되고 작은 읽기를 넣고 반환값과 `brain.transcript_files` 행이 새 값을 지키는지 보는 테스트를 더했다.
+  - `[medium]` `[patch]` verification-gap: PG `ensureSession`의 `identityWork` 저장이 검증되지 않는다 — 생성 시 그 work가 `brain.work_items`에 정확히 남고 반복 호출이 새 work를 더하지 않는지 보는 테스트를 더했다.
+  - `[false]` `[reject]` intent: 자동 테스트는 PG setup→수집 연속 경로를 가짜로 나눠 시험한다 — 연속 경로는 계획의 Verification인 `sh tooling/dev/pg-tracer.sh`가 실제 setup·hook·PG 조회로 돌리고 이번 실행에서 통과했다.
+  - `[false]` `[reject]` intent: 컨테이너 재생성 뒤 보존은 관통 스크립트에만 있다 — 감사자 스스로 누락이 아니라고 적었고, 그 스크립트가 named volume을 유지한 `down`→`up -d --wait` 전후 비교를 이번 실행에서 통과했다.
+  - `[low]` `[reject]` intent: `url_env` 해석이 setup과 런타임에서 다른 DB를 가리킬 수 있다 — blind의 env override 지적과 같은 원인이며 같은 이유로 기각한다.
+  - `[false]` `[reject]` intent: 실제 host 앱이 hook을 쏘지 않고 합성 Stop payload를 넣는다 — 의도는 "hook payload로 `brain sessions ingest`를 돌리면"이고 테스트와 관통은 빌드된 CLI에 그 payload를 넣는다.
+  - `[false]` `[reject]` intent: 기본 홈 자원 단언이 "부재"가 아니라 "변화 없음"이다 — 관통 전 상태가 `{"project":false,"volume":false,"listener":false}`였으므로 변화 없음이 곧 부재다.
+  - `[false]` `[reject]` intent: 수집 계약을 `sessionIngestContract()`로 떼어 PG에서 돌림 — 감사자가 의도와 일치한다고 적은 행으로, 결함 주장이 없다.
 
 ## Design Notes
 
@@ -148,3 +185,23 @@ deferred: []
 **Manual checks (if no CLI):**
 - 스크립트 출력과 `docker volume ls`를 Implementation Notes에 요약(절대 홈 경로는 `~/…`로)
 
+## Auto Run Result
+
+- 상태: `built` (오케스트레이터 검증 대기, `done` 표시는 하지 않았다)
+- 요약: `[store] url_env`가 기록된 Brain 홈에서 `brain setup run`이 홈별 Compose(`postgres:18`, 접미사 project·named volume·`127.0.0.1` 포트)와 0600 `.env` 비밀번호를 만들고, `brain_owner`·`brain_app`·`brain` schema를 준비한 뒤 소유자별 실행기로 baseline 0001(수집 14표·FK·불변 trigger·TRUNCATE 방어)을 적용하고 PG "나" 행을 만든다. `brain sessions ingest`는 그 홈에서 수집 capability만 가진 PG Store(`withWrite`, 세션 토큰 `pg_advisory_xact_lock`)로 쓰고, 연결 거부·schema 없음·버전 불일치·잠금 초과는 기존 spool로 간다. Core 수집 use case·CLI 조립은 `SessionIngestStore`·`createIngestBrain`으로 좁혔고 SQLite 기본 경로는 그대로다. 테스트 Compose·`@second-brain/test-db`는 `postgres:18`·role·schema 기준이 되었고 vector 탐침은 빠졌다. LaunchAgent Label도 홈에서 파생한다.
+- 바뀐 파일:
+  - `apps/cli/src/config/resources.ts` — 홈→project·volume·port·Label 파생(기본 홈은 기존 이름).
+  - `apps/cli/src/runtime/command-runner.ts` — 비동기 execFile runner, 가짜 runner, `-p`·`--env-file`·`-f`를 붙이는 compose 인자 조립.
+  - `apps/cli/src/install/postgres.ts`, `install/flow.ts`, `install.ts` — setup의 PG 단계와 실패 안내, 보고의 `postgres` 항목.
+  - `apps/cli/src/config/codec.ts` — `store.url_env` 읽기·쓰기·검증, 런타임 URL 해석(env→`.env`), PG 비밀값 생성·재사용.
+  - `apps/cli/src/dispatch.ts`, `assembly.ts`, `commands/sessions-ingest.ts` — url_env 홈의 수집만 PG로, 실패는 spool.
+  - `apps/cli/src/daemon/launchd.ts`, `daemon/control.ts` — 홈의 Label 사용.
+  - `packages/core/src/{ports/store,brain,index,schema}.ts`, `sessions/ingest.ts`, `testing/contracts/{session-store,schema-store}.ts`, `testing/index.ts` — 수집 capability 타입, 수집 전용 Brain, `sessionIngestContract()` 분리, `DB_LOCKED` 전달.
+  - `packages/postgres/migrations/0001_initial.sql` — `brain` schema baseline 재작성.
+  - `packages/postgres/src/{connect,write,migrate,setup,store,sessions,users,transcript-files,attachments,ingest-work,index}.ts` — 연결 설정, `withWrite`, 실행기, 관리용 준비, 수집 verb.
+  - `packages/postgres/test/*`, `apps/cli/test/*`, `tooling/test-db/**`, `compose.test.yaml`, `packages/second_brain/**`, `tooling/bootstrap/test/hook.test.ts` — 새 기준의 테스트와 fixture.
+  - `tooling/dev/pg-tracer.sh` — 임시 홈 실제 관통 스크립트.
+- 리뷰 결과(thorough, 렌즈 4개, 25건): 패치 8개 항목(medium 5: 마이그레이션 잠금 대기, core 버전 guard, PG 가린 hash·전사 이력·identity work 테스트 3종 / low 3: compose `-p`, 빈 비밀번호 재생성, 잘못된 URL 값 반환). 이월 1건(medium: `.env` 비원자 쓰기). 기각 16건 — low 11건(symlink 홈 별칭, 예전 launchd Label 이전, env override와 setup 대상 불일치 ×2, 기존 role 속성 ×2, 대상 DB 준비 직렬화 ×2, 동시 첫 setup 비밀값, 외부 테스트 클러스터 비밀번호; 모두 일상 사용에서 드물고 고치려면 분기·잠금·검사가 더 든다)과 false 5건(연속 경로·재생성 보존은 관통 스크립트가 통과, 합성 hook payload는 의도와 같음, 자원 "변화 없음"은 사전 부재로 곧 부재, 계약 분리는 일치 보고).
+- 재검토 권고: `true` — 첫 패스에서 medium 5건을 패치했다(high 0, medium 5, low 3). 이름 붙인 미검증 위험: 이번 패치로 새로 생긴 PG 성공 경로 테스트 3종과 마이그레이션 잠금 대기 테스트는 이번 실행에서 한 번 통과했을 뿐이고, 잠금 대기 해제(`lockTimeoutMs: 0`)가 실제 setup 재실행·동시 실행에서 무한 대기로 바뀌지 않는지는 독립 렌즈가 다시 보지 않았다.
+- 검증: `pnpm test`(corepack pnpm 12.15.0 shim) 106개 파일·2,904개 테스트 통과(build·typecheck 포함). `sh tooling/dev/pg-tracer.sh` 통과 — setup 2회(비밀번호 재사용·적용 0건), 수집·재전송, `compose down`→`up -d --wait` 전후 ID·시각·본문 동일, PG 중단 hook exit 0·`SPOOLED`·spool 파일, 기본 홈 project·volume·54320 listener 관통 전후 없음. 관통이 남긴 임시 볼륨은 지웠다. I/O 매트릭스 12행 모두 실행·통과한 테스트로 덮였다.
+- 남은 위험: `.env` 비원자 쓰기(이월). 이 셸에는 `pnpm` 실행 파일이 없어 corepack shim으로 돌렸다. 전체 스위트가 무거운 병렬 부하일 때의 다른 타이밍 flaky는 구현 세션이 SQLite 데몬 시험 시간초과 1회를 보고했으나 이번 두 번의 전체 실행에서는 재현되지 않았다. 앞선 시도의 미검증 구현을 `refs/attempt-preserve-dirty/20261028-161541-2d13-25eaf7b7-0`에서 되살려 이어 썼다.

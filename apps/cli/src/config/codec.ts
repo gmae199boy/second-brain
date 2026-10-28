@@ -792,8 +792,8 @@ export async function postgresSecrets(home: string, port: number, urlEnv: string
   let values: Record<string, string> = {};
   try { values = Object.fromEntries(Object.entries(parseEnv(await readFile(envFilePath(home), 'utf8'))).filter((entry): entry is [string, string] => entry[1] !== undefined)); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  values['BRAIN_POSTGRES_PASSWORD'] ??= randomBytes(24).toString('hex');
-  values['BRAIN_APP_PASSWORD'] ??= randomBytes(24).toString('hex');
+  values['BRAIN_POSTGRES_PASSWORD'] ||= randomBytes(24).toString('hex');
+  values['BRAIN_APP_PASSWORD'] ||= randomBytes(24).toString('hex');
   values[urlEnv] = `postgresql://brain_app:${encodeURIComponent(values['BRAIN_APP_PASSWORD'])}@127.0.0.1:${port}/brain`;
   await mkdir(home, { recursive: true, mode: 0o700 });
   const text = Object.entries(values).sort(([a],[b]) => a.localeCompare(b)).map(([key,value]) => {

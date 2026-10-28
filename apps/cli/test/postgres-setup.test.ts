@@ -36,14 +36,22 @@ it('preserves url_env across setup and resolves process env before the private f
   expect(await resolveStoreUrl(home,'CUSTOM_DATABASE_URL',{})).toContain('postgresql://brain_app:');
   expect(await resolveStoreUrl(home,'CUSTOM_DATABASE_URL',{CUSTOM_DATABASE_URL:'postgresql://override'})).toBe('postgresql://override');
   expect(await resolveStoreUrl(home,'CUSTOM_DATABASE_URL',{CUSTOM_DATABASE_URL:''})).toBeUndefined();
+  await writeFile(join(home,'.env'),'BRAIN_POSTGRES_PASSWORD=\nBRAIN_APP_PASSWORD=\n');
+  const regenerated=await postgresSecrets(home,homeResources(home).port,'CUSTOM_DATABASE_URL');
+  expect(new URL(regenerated.adminUrl).password).toMatch(/^[a-f0-9]{48}$/);
+  expect(regenerated.appPassword).toMatch(/^[a-f0-9]{48}$/);
+  expect(new URL((await resolveStoreUrl(home,'CUSTOM_DATABASE_URL',{}))!).password).toBe(regenerated.appPassword);
+  expect(await postgresSecrets(home,homeResources(home).port,'CUSTOM_DATABASE_URL')).toEqual(regenerated);
 });
 it('runs Compose through shared argv, prepares and migrates before seeding the owner',async()=>{
   const home=await fresh();const fake=fakeCommandRunner([{ok:true,stdout:'healthy',stderr:''}]);
   pg.prepareDatabase.mockResolvedValue({ok:true,databaseUrl:'postgresql://postgres:private@localhost/brain'});
   pg.runMigrations.mockResolvedValue({ok:true,to:1,applied:['0001_initial.sql']});pg.ensureSelfUser.mockResolvedValue({ok:true,created:true});
-  const result=await installPostgres({home,urlEnv:'BRAIN_DATABASE_URL',env:{},clock,runner:fake.runner});
+  const result=await installPostgres({home,urlEnv:'BRAIN_DATABASE_URL',env:{COMPOSE_PROJECT_NAME:'another-home'},clock,runner:fake.runner});
   expect(result).toMatchObject({ok:true,report:{...homeResources(home),schema_version:1,owner_created:true}});
-  expect(fake.calls[0]?.args).toEqual(composeArgs(home,['up','-d','--wait']));expect(fake.calls[0]?.command).toBe('docker');
+  const expected=['compose','-p',homeResources(home).project,'--env-file',join(home,'.env'),'-f',join(home,'postgres','compose.yaml'),'up','-d','--wait'];
+  expect(composeArgs(home,['up','-d','--wait'])).toEqual(expected);
+  expect(fake.calls[0]?.args).toEqual(expected);expect(fake.calls[0]?.command).toBe('docker');
   expect(pg.prepareDatabase.mock.invocationCallOrder[0]).toBeLessThan(pg.runMigrations.mock.invocationCallOrder[0]!);
   expect(pg.runMigrations.mock.invocationCallOrder[0]).toBeLessThan(pg.ensureSelfUser.mock.invocationCallOrder[0]!);expect(pg.close).toHaveBeenCalledOnce();
 });
