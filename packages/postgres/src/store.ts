@@ -10,7 +10,7 @@ import { postgresWorkStore } from './work.js';
 import { postgresScheduleStore } from './schedules.js';
 export type PostgresStoreOptions = CreatePoolOptions;
 export type PostgresIngestStore = SessionIngestStore & UserStore & HealthStore & SchemaStore;
-export type PostgresStore = PostgresIngestStore & Omit<SessionStore, 'redactMessage'> & TranscriptFileStore & WorkStore & ScheduleStore & Omit<AttachmentStore, 'redactFile'> & ExtractionStore;
+export type PostgresStore = PostgresIngestStore & SessionStore & TranscriptFileStore & WorkStore & ScheduleStore & AttachmentStore & ExtractionStore;
 export function postgresStore(options: PostgresStoreOptions): PostgresStore {
   const pool = createPool(options);
   const db = new Kysely<PgSchema>({ dialect: new PostgresDialect({ pool }) });
@@ -22,10 +22,15 @@ export function postgresStore(options: PostgresStoreOptions): PostgresStore {
       try {
         const version = await sql<{ version: string }>`select current_setting('server_version') as version`.execute(db);
         const trgm = await sql<{ similarity: number }>`select public.similarity('brain','brain') as similarity`.execute(db);
+        const cleanup = await sql<{ target_id: string }>`select target_id from brain.work_items
+          where kind='table_cleanup' and completed_at is null
+          union select target_id from brain.failures where stage='table_cleanup' and resolved_at is null`.execute(db);
+        const pending = cleanup.rows.map(row => row.target_id).sort();
         const url = new URL(options.databaseUrl);
         return { ok: true, serverVersion: version.rows[0]!.version, source: {
           location: `${url.hostname}:${url.port}${url.pathname}`,
-          probes: [{ id: 'pg_trgm', ok: trgm.rows[0]?.similarity === 1, detail: 'pg_trgm' }],
+          probes: [{ id: 'pg_trgm', ok: trgm.rows[0]?.similarity === 1, detail: 'pg_trgm' },
+            { id: 'redaction_cleanup', ok: true, warn: pending.length > 0, detail: pending.length > 0 ? `저장본 정리가 남은 표: ${pending.join(', ')}` : '저장본 정리가 끝났습니다' }],
         } };
       } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) }; }
     },

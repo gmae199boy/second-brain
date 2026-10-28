@@ -234,3 +234,27 @@ source_spec: `tickets/epic-postgres-primary/tickets/story-baseline-0001-core-pg-
 severity: medium
 reason: 0001의 document_chunks_delete_rule_fn은 current_setting('brain.redacting', true) = 'on'이면 검사를 건너뛴다. 사용자 정의 GUC는 어떤 세션이든 set으로 세울 수 있고, brain_app은 document_chunks DELETE 권한을 가진다(세대 교체에 필요). 가리기 권한 경계와 제한된 정리 경로는 E11-6(티켓 5) 범위다.
 status: open
+
+### DW-8: 10분보다 오래 걸리는 정리는 공통 청구 만료 때문에 다른 drain이 재청구하여 잠금 대기와 시도를 누적할 수 있다.
+origin: spec-deferred f3872a017235
+location: packages/core/src/domain/work-item.ts; packages/postgres/src/maintenance.ts
+source_spec: `tickets/epic-postgres-primary/tickets/story-doctor-plan.md`
+severity: medium
+reason: 기존 DEFAULT_WORK_POLICY.claimForMs는 600000이고 정리 adapter는 statement_timeout이 없다. 청구 갱신은 에픽 Boundaries가 epic-jobs-and-scheduler로 정한 기존 공통 큐 과제다. 이번 변경에서는 만료한 작업의 실패 해소를 CAS 완료로 옮겨 안전성을 보강하며, 장시간 청구 갱신 자체는 추가하지 않는다.
+status: open
+
+### DW-9: brain_app의 기존 공통 큐 DML 권한으로 정리 일감을 직접 삭제·완료하면 doctor 추적을 무력화할 수 있다.
+origin: spec-deferred 0104946666cf
+location: packages/postgres/src/setup.ts; packages/postgres/src/work.ts; packages/postgres/migrations/0001_initial.sql
+source_spec: `tickets/epic-postgres-primary/tickets/story-doctor-plan.md`
+severity: medium
+reason: 공통 큐는 기존부터 brain_app에 직접 쓰기를 허용하고 completeWork도 호출자에게 열려 있다. 정리 함수는 정상 가리기의 열린 일감과 청구 무효화를 보장하지만 큐 자격 증명을 가진 임의 SQL 사용자를 별도 적대 주체로 격리하지 않는다. 이를 막으려면 공통 큐 권한과 완료 경계를 함께 재설계해야 한다. 이번 실행은 기존 ledger 항목을 변경하지 않는다.
+status: open
+
+### DW-10: 지원 환경과 다른 lc_messages에서 VACUUM VERBOSE 완료 detail의 숫자 형식이 달라지면 정리를 완료하지 못할 가능성이 있다.
+origin: spec-deferred 106d24b38539
+location: packages/postgres/src/maintenance.ts:17
+source_spec: `tickets/epic-postgres-primary/tickets/story-doctor-plan.md`
+severity: medium
+reason: maintenance.ts는 copy_table_data routine과 detail 첫 숫자를 읽고, 해석 불가 시 TABLE_CLEANUP_FAILED로 닫지 않는다. 공식 PG18 시험 환경의 전체 검증은 통과했다. 다른 로캘에서 숫자의 위치가 실제 바뀌는지와 정리 role이 사용할 수 있는 메시지 환경 고정 방법을 확인해야 한다. 잘못된 성공 판정은 하지 않는다. (declared severity: medium (unverified))
+status: open

@@ -9,7 +9,7 @@ import { Kysely, PostgresDialect, type KyselyPlugin } from 'kysely';
 import { createPool, type PgSchema } from '../src/connect.js';
 import { postgresWorkStore } from '../src/work.js';
 import { afterEach, describe, expect, it } from 'vitest';
-import { tickSchedules, failureText, FAILURE_MESSAGE_MAX_BYTES, truncateUtf8 } from '@second-brain/core';
+import { tickSchedules, failureText, FAILURE_MESSAGE_MAX_BYTES, truncateUtf8, retryFailures } from '@second-brain/core';
 import { workStoreContract, scheduleStoreContract, sequenceIdGen } from '@second-brain/core/testing';
 import { postgresStore } from '../src/index.js';
 import { database, subject, clock } from './fixture.js';
@@ -36,6 +36,55 @@ async function lock(blocker: pg.Client, table: string, rowId: string) {
   await blocker.query('begin');
   await blocker.query(`select id from brain.${table} where id = $1 for update`, [rowId]);
 }
+
+it('preserves an existing cleanup claim through addWork and retryFailures', async () => {
+  const { db, store } = await fixture();
+  const input = { ...work(), kind: 'table_cleanup', targetKind: 'table', targetId: 'messages' };
+  expect(await store.addWork(input)).toMatchObject({ ok: true, created: true });
+  expect(await store.recordFailure({ id: id(10), targetKind: 'table', targetId: 'messages', stage: 'table_cleanup',
+    fingerprint: 'old', harness: null, sessionId: null, code: 'TABLE_CLEANUP_FAILED', message: 'failed', occurredAt: now }))
+    .toMatchObject({ ok: true, outcome: 'recorded' });
+  expect(await store.claimWork({ now, kinds: ['table_cleanup'], claimedBy: 'worker' })).toMatchObject({ ok: true, item: { id: input.id } });
+  const before = await db.rows('select * from brain.work_items');
+  expect(await store.addWork({ ...input, id: id(2) })).toMatchObject({ ok: true, created: false, item: { claimedBy: 'worker' } });
+  expect(await db.rows('select * from brain.work_items')).toEqual(before);
+  expect(await retryFailures({ store, clock, idGen: sequenceIdGen({ timestampMs: now.getTime(), start: 100 }) }))
+    .toMatchObject({ ok: true, added: 0, alreadyOpen: 1, skipped: [] });
+  expect(await db.rows('select * from brain.work_items')).toEqual(before);
+});
+
+it('settles cleanup failures atomically only when completeWork wins its claim', async () => {
+  const { db, store } = await fixture();
+  const input = { ...work(), kind: 'table_cleanup', targetKind: 'table', targetId: 'messages' };
+  await store.addWork(input);
+  for (const [n, targetKind, targetId, stage] of [
+    [10, 'table', 'messages', 'table_cleanup'], [11, 'table', 'messages', 'table_cleanup'],
+    [12, 'table', 'chunks', 'table_cleanup'], [13, 'table', 'messages', 'other_stage'],
+    [14, 'table', 'messages', 'table_cleanup'], [15, 'other', 'messages', 'table_cleanup'],
+  ] as const) {
+    expect(await store.recordFailure({ id: id(n), targetKind, targetId, stage, fingerprint: `cause-${n}`,
+      harness: null, sessionId: null, code: 'error', message: 'failed', occurredAt: now })).toMatchObject({ ok: true });
+  }
+  await db.query(`update brain.failures set resolved_at='${now.toISOString()}' where id='${id(14)}'`);
+  await store.claimWork({ now, kinds: ['table_cleanup'], claimedBy: 'worker' });
+  const failures = await db.rows('select * from brain.failures order by id');
+  const items = await db.rows('select * from brain.work_items');
+  expect(await store.completeWork({ id: input.id, claimedBy: 'stale', now: next })).toEqual({ ok: true, outcome: 'lost' });
+  expect(await db.rows('select * from brain.failures order by id')).toEqual(failures);
+  expect(await db.rows('select * from brain.work_items')).toEqual(items);
+  await db.query(`create function brain.refuse_cleanup_resolution() returns trigger language plpgsql as $$
+    begin raise exception 'test resolution refused'; end $$;
+    create trigger refuse_cleanup_resolution before update on brain.failures
+      for each row execute function brain.refuse_cleanup_resolution()`);
+  expect(await store.completeWork({ id: input.id, claimedBy: 'worker', now: next })).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+  expect(await db.rows('select * from brain.failures order by id')).toEqual(failures);
+  expect(await db.rows('select * from brain.work_items')).toEqual(items);
+  await db.query('drop trigger refuse_cleanup_resolution on brain.failures');
+  expect(await store.completeWork({ id: input.id, claimedBy: 'worker', now: next })).toEqual({ ok: true, outcome: 'done' });
+  expect(await db.rows('select * from brain.failures order by id')).toEqual(failures.map(row =>
+    [id(10), id(11)].includes(row.id as string) ? { ...row, resolved_at: next } : row));
+  expect(await db.rows('select completed_at, claimed_by from brain.work_items')).toEqual([{ completed_at: next, claimed_by: null }]);
+});
 
 it('retries find-or-create when a drain completes the conflicting row before read-back', async () => {
   const { db, store } = await fixture();

@@ -1,13 +1,13 @@
 import { checkSchema } from '@second-brain/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import pg from 'pg';
-import { schemaStoreContract, storeContract, sessionIngestContract, userStoreContract, sampleEnsureSessionInput, sampleSelfUserInput, sampleIngestBatch, sampleSessionToken, sampleTranscriptFileInput, sampleCheckoutInput, sampleSessionKey, sessionMetadataContract, transcriptFileStoreContract } from '@second-brain/core/testing';
+import { sessionRedactionContract, fileRedactionContract, schemaStoreContract, storeContract, sessionIngestContract, userStoreContract, sampleEnsureSessionInput, sampleSelfUserInput, sampleIngestBatch, sampleSessionToken, sampleTranscriptFileInput, sampleCheckoutInput, sampleSessionKey, sessionMetadataContract, transcriptFileStoreContract } from '@second-brain/core/testing';
 import { postgresStore } from '../src/index.js';
 import { database, subject } from './fixture.js';
 import type { TestDatabase } from '@second-brain/test-db';
 const databases: TestDatabase[] = [];
 afterEach(async () => { await Promise.all(databases.splice(0).map(db => db.drop())); });
-for (const [name, cases] of [['ingest', sessionIngestContract()], ['session metadata', sessionMetadataContract()], ['transcript', transcriptFileStoreContract()], ['user', userStoreContract()], ['health', storeContract()], ['schema', schemaStoreContract()]] as const) {
+for (const [name, cases] of [['session redaction', sessionRedactionContract()], ['file redaction', fileRedactionContract()], ['ingest', sessionIngestContract()], ['session metadata', sessionMetadataContract()], ['transcript', transcriptFileStoreContract()], ['user', userStoreContract()], ['health', storeContract()], ['schema', schemaStoreContract()]] as const) {
   describe(name, () => { for (const test of cases) it(test.name, () => test.run(subject)); });
 }
 it('serializes simultaneous collection and preserves ids, timestamps and null workspace', async () => {

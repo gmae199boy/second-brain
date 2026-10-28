@@ -10,6 +10,7 @@ import {
   type IngestBatch,
   type IngestResult,
   type Message,
+  type RedactMessageResult,
   type ParserCursor,
   type ReadSessionResult,
   type Session,
@@ -133,8 +134,40 @@ interface ToolNoteRow {
  * string comparison *is* the chronological one and no parsing is needed to
  * sort or to compare.
  */
-export function postgresSessionStore(connect: PgConnect): Omit<SessionStore, 'redactMessage'> {
+export function postgresSessionStore(connect: PgConnect): SessionStore {
   return {
+    async redactMessage(input) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const owner = (await sql<{ harness: string; harness_session_id: string }>`
+          select s.harness,s.harness_session_id from brain.messages m join brain.sessions s on s.id=m.session_id
+          where m.id=${input.messageId}`.execute(opened.connection.db)).rows[0];
+        if (owner === undefined) return { ok: false, code: 'MESSAGE_NOT_FOUND', message: '지정한 메시지가 없습니다' };
+        const written = await withWrite(opened.connection, async (held): Promise<RedactMessageResult> => {
+          const row = (await sql<MessageRow>`select * from brain.messages where id=${input.messageId}`.execute(held)).rows[0];
+          if (row === undefined) return { ok: false, code: 'MESSAGE_NOT_FOUND', message: '지정한 메시지가 없습니다' };
+          const notes = await sql<ToolNoteRow>`select * from brain.tool_notes where session_id=${row.session_id}
+            and harness_message_id=${row.harness_message_id}
+            and harness_message_id_raw is not distinct from ${(row as MessageRow & { harness_message_id_raw: Buffer | null }).harness_message_id_raw}`.execute(held);
+          const plan = input.plan({ message: toMessage(originalText(row)), toolNotes: notes.rows.map(originalText).map(toToolNote) });
+          if ('refused' in plan) return { ok: false, code: plan.refused, message: '가릴 글자를 찾지 못했습니다' };
+          const body = pgText(plan.body);
+          const payload = { ...plan, body: body.text, bodyRaw: body.raw?.toString('hex') ?? null,
+            toolNotes: plan.toolNotes.map(note => {
+              const target = pgText(note.target);
+              return { id: note.id, target: target.text, targetRaw: target.raw?.toString('hex') ?? null };
+            }) };
+          for (const work of plan.cleanup) await ensureWork(held, work);
+          const removed = (await sql<{ n: number }>`select brain.redact_message(${row.id}::uuid, ${JSON.stringify(payload)}::jsonb) as n`.execute(held)).rows[0]!.n;
+          const remaining = (await sql<{ n: number }>`select count(*) as n from brain.message_attachments a
+            join brain.files f on f.id=a.file_id where a.message_id=${row.id} and a.status='stored' and f.redacted_at is null`.execute(held)).rows[0]!.n;
+          return { ok: true, sessionId: row.session_id, bodySpans: plan.bodySpans, toolNoteSpans: plan.toolNoteSpans,
+            toolNotesChanged: plan.toolNotes.length, chunksRemoved: removed, unredactedAttachments: Number(remaining) };
+        }, `${owner.harness}:${owner.harness_session_id}`);
+        return written.ok ? written.value : written;
+      } catch (error) { return databaseFailure(error); }
+    },
     async listStaleSessions(query) {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };

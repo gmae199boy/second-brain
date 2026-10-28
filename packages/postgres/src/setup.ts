@@ -1,5 +1,5 @@
 import { createPool, describe, type ConnectionOptions } from './connect.js';
-export interface PrepareDatabaseOptions extends ConnectionOptions { appPassword: string; databaseName?: string }
+export interface PrepareDatabaseOptions extends ConnectionOptions { appPassword: string; maintenancePassword?: string; databaseName?: string }
 export type PrepareDatabaseResult = { ok: true; databaseUrl: string } | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
 /** Administrative preparation only. Runtime never imports or calls this path. */
 export async function prepareDatabase(options: PrepareDatabaseOptions): Promise<PrepareDatabaseResult> {
@@ -21,10 +21,16 @@ export async function prepareDatabase(options: PrepareDatabaseOptions): Promise<
       try {
         await client.query(`do $$ begin
           if not exists(select from pg_roles where rolname='brain_owner') then create role brain_owner nologin; end if;
+          if not exists(select from pg_roles where rolname='brain_maintenance') then create role brain_maintenance nologin; end if;
           if not exists(select from pg_roles where rolname='brain_app') then create role brain_app login; end if;
         end $$`);
         const password = options.appPassword.replaceAll("'", "''");
         await client.query(`alter role brain_app password '${password}'`);
+        await client.query('grant pg_checkpoint to brain_maintenance');
+        if (options.maintenancePassword !== undefined) {
+          const maintenancePassword = options.maintenancePassword.replaceAll("'", "''");
+          await client.query(`alter role brain_maintenance login password '${maintenancePassword}'`);
+        }
         const exists = await client.query('select 1 from pg_database where datname=$1', [name]);
         if (exists.rows.length === 0) await client.query(`create database "${name}" owner brain_owner`);
       } finally { await client.query('select pg_advisory_unlock($1)', [4919270912]); }
@@ -37,7 +43,7 @@ export async function prepareDatabase(options: PrepareDatabaseOptions): Promise<
     await target.query(`create extension if not exists pg_trgm;
       create schema if not exists brain authorization brain_owner;
       revoke create on schema public from public;
-      grant usage on schema brain to brain_app;
+      grant usage on schema brain to brain_app, brain_maintenance;
       set role brain_owner;
       create table if not exists brain.schema_migrations (
         owner text not null, version integer not null check(version > 0), name text not null,

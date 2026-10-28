@@ -1,5 +1,6 @@
 import {
   formatInstant,
+  FILE_REDACTION_RESOLVES,
   parseInstant,
   type FileLocationRow,
   type FileName,
@@ -10,8 +11,10 @@ import {
   type IngestAttachment,
   type ListRedactedContentHashesResult,
   type MessageAttachment,
+  type RedactFileResult,
 } from '@second-brain/core';
 import { sql, type Kysely } from 'kysely';
+import { ensureWork } from './work.js';
 import { withWrite } from './write.js';
 import { pgText, originalText } from './text.js';
 import type { PgSchema } from './connect.js';
@@ -79,8 +82,38 @@ function fileWhere(ref: FileRef, alias: string): ReturnType<typeof sql> {
   return sql`${column} = ${'fileId' in ref ? ref.fileId : ref.contentHash}`;
 }
 
-export function postgresAttachmentStore(connect: PgConnect): Omit<AttachmentStore, 'redactFile'> {
+export function postgresAttachmentStore(connect: PgConnect): AttachmentStore {
   return {
+    async redactFile(input) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      const written = await withWrite(opened.connection, async (held): Promise<RedactFileResult> => {
+        const file = (await sql<{ id: string; contentHash: string; redactedAt: string | null }>`
+          select id,content_hash as "contentHash",redacted_at as "redactedAt" from brain.files
+          where id=${input.fileId} for no key update`.execute(held)).rows[0];
+        if (file === undefined) return { ok: false, code: 'FILE_NOT_FOUND', message: '지정한 파일이 없습니다' };
+        const locations = (await sql<FileLocationColumns>`select id,file_id as "fileId",store_kind as "storeKind",
+          locator,ownership,deleted_at as "deletedAt" from brain.file_locations where file_id=${file.id}
+          order by ownership,locator`.execute(held)).rows.map(fileLocationRow);
+        const plan = input.plan({ file: { ...file, redactedAt: file.redactedAt === null ? null : at(file.redactedAt, 'files.redacted_at') }, locations });
+        for (const work of [...plan.work, ...plan.cleanup]) await ensureWork(held, work);
+        let counts = { extractionsRemoved: 0, chunksRemoved: 0, namesRemoved: 0, metadataRemoved: 0, failuresResolved: 0 };
+        if (file.redactedAt === null && plan.redaction !== null) {
+          counts = (await sql<{ counts: typeof counts }>`select brain.redact_file(${file.id}::uuid,
+            ${JSON.stringify(plan.redaction)}::jsonb) as counts`.execute(held)).rows[0]!.counts;
+          counts.failuresResolved = (await sql`update brain.failures
+            set resolved_at=${instant(plan.redaction.occurredAt, 'failures.resolved_at')}
+            where target_kind=${FILE_REDACTION_RESOLVES.targetKind} and target_id=${file.id}
+              and stage=${FILE_REDACTION_RESOLVES.stage} and resolved_at is null returning id`.execute(held)).rows.length;
+        }
+        const shared = (await sql<{ n: number }>`select count(distinct message_id) as n from brain.message_attachments
+          where file_id=${file.id}`.execute(held)).rows[0]!.n;
+        return { ok: true, fileId: file.id, contentHash: file.contentHash, messages: Number(shared),
+          alreadyRedacted: file.redactedAt !== null, ...counts, blobDeletesQueued: plan.work.length };
+      });
+      return written.ok ? written.value : written;
+    },
+
     async listMissingFileNames({ limit }) {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };

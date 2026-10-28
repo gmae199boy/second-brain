@@ -26,6 +26,7 @@ export interface TestDatabase {
   url: string;
   /** Runtime role URL; call setup preparation before using it. */
   appUrl: string;
+  maintenanceUrl: string;
   /** Run one statement against this database, for arranging state a test needs. */
   query(text: string): Promise<void>;
   /**
@@ -86,6 +87,7 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   return {
     url,
     appUrl: (() => { const app = new URL(url); app.username = 'brain_app'; app.password = 'brain-test-app'; return app.toString(); })(),
+    maintenanceUrl: (() => { const maintenance = new URL(url); maintenance.username = 'brain_maintenance'; maintenance.password = 'brain-test-maintenance'; return maintenance.toString(); })(),
     async query(text) {
       const client = new pg.Client({ connectionString: url });
       await client.connect();

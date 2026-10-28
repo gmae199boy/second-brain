@@ -238,3 +238,6 @@ export * from './queue/schedule-probe-work.js';
 
 export { createIngestBrain, type IngestBrain } from './brain.js';
 export type { SessionIngestStore } from './ports/store.js';
+
+export * from './maintenance/table-cleanup-work.js';
+export type { TableMaintenance } from './ports/table-maintenance.js';

@@ -1,5 +1,7 @@
 import {
   formatInstant,
+  TABLE_CLEANUP_KIND,
+  TABLE_TARGET_KIND,
   FAILURE_MESSAGE_MAX_BYTES,
   truncateUtf8,
   parseInstant,
@@ -179,14 +181,23 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
     async completeWork(input: CompleteWorkInput): Promise<FinishWorkResult> {
       return finish(connect, async (held) => {
         const now = instant(input.now, 'work_items.completed_at');
-        return changesOf(
-          await sql`
-            update brain.work_items
-               set completed_at = ${now},
-                   claimed_at = null, claim_expires_at = null, claimed_by = null
-             where id = ${input.id} and claimed_by = ${input.claimedBy}
-          `.execute(held),
-        );
+        const completed = await sql<{ kind: string; target_kind: string; target_id: string }>`
+          update brain.work_items
+             set completed_at = ${now},
+                 claimed_at = null, claim_expires_at = null, claimed_by = null
+           where id = ${input.id} and claimed_by = ${input.claimedBy} and completed_at is null
+           returning kind, target_kind, target_id
+        `.execute(held);
+        const row = completed.rows[0];
+        if (row === undefined) return 0;
+        if (row.kind === TABLE_CLEANUP_KIND && row.target_kind === TABLE_TARGET_KIND) {
+          // Only the winning claim can settle failures, in the same transaction
+          // as completion. A refused failure update leaves this work open.
+          await sql`update brain.failures set resolved_at = ${now}
+            where target_kind = ${row.target_kind} and target_id = ${row.target_id}
+              and stage = ${TABLE_CLEANUP_KIND} and resolved_at is null`.execute(held);
+        }
+        return 1;
       });
     },
 
@@ -435,6 +446,7 @@ async function readOpenWork(
       from brain.work_items
      where kind = ${key.kind} and target_kind = ${key.targetKind}
        and target_id = ${key.targetId} and completed_at is null
+       for update
   `.execute(held);
   return found.rows[0] ?? null;
 }

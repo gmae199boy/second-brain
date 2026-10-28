@@ -934,6 +934,7 @@ export interface RedactFileCurrent {
  * so asking twice costs one row (AD-21).
  */
 export interface RedactFilePlan {
+  cleanup: AddWorkInput[];
   redaction: Redaction | null;
   work: readonly AddWorkInput[];
 }

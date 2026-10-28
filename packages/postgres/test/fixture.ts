@@ -3,7 +3,7 @@ import { prepareDatabase, runMigrations, postgresStore } from '../src/index.js';
 export const clock = { now: () => new Date('2026-10-28T01:02:03.456Z') };
 export async function database(migrate = true): Promise<TestDatabase> {
   const db = await createTestDatabase();
-  const prepared = await prepareDatabase({ databaseUrl: db.url, appPassword: 'brain-test-app', databaseName: new URL(db.url).pathname.slice(1) });
+  const prepared = await prepareDatabase({ databaseUrl: db.url, appPassword: 'brain-test-app', maintenancePassword: 'brain-test-maintenance', databaseName: new URL(db.url).pathname.slice(1) });
   if (!prepared.ok) { await db.drop(); throw new Error(prepared.message); }
   if (migrate) {
     const result = await runMigrations({ databaseUrl: db.url, clock });

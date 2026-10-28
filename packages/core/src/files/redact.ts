@@ -1,3 +1,4 @@
+import { tableCleanupWork } from '../maintenance/table-cleanup-work.js';
 import { requireConfirmation, type Failure } from '../envelope.js';
 import type { Clock } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
@@ -203,7 +204,7 @@ export function planFileRedaction(
         location.deletedAt === null,
     )
     .map((location) => blobDeleteWork({ id: idGen.next(), locationId: location.id, at: now }));
-  if (current.file.redactedAt !== null) return { redaction: null, work };
+  if (current.file.redactedAt !== null) return { redaction: null, work, cleanup: [] };
   return {
     redaction: {
       id: idGen.next(),
@@ -219,6 +220,8 @@ export function planFileRedaction(
       // No pattern found this: a person asked for it by name (AD-11).
       patternVersion: null,
     },
+    cleanup: (['document_chunks', 'document_extractions', 'file_names', 'file_metadata'] as const)
+      .map(table => tableCleanupWork({ id: idGen.next(), table, at: now })),
     work,
   };
 }
