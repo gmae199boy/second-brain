@@ -1,3 +1,4 @@
+import { postgresStore, CORE_SCHEMA_VERSION, type PostgresStoreOptions } from 'second_brain/postgres';
 import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import {
@@ -14,7 +15,8 @@ import {
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { DatabaseSync } from 'node:sqlite';
+import { PgTestClient } from './pg-client.js';
+import { preparePgHome, pgDatabaseUrl, pgAppUrl, runPgCommand } from './pg-home.js';
 import { fileURLToPath } from 'node:url';
 import {
   blobDeleteWork,
@@ -145,6 +147,7 @@ function childEnvironment(home: string): NodeJS.ProcessEnv {
 
 /** The built `brain`, with `stdin` piped in rather than ignored. */
 function runBrain(args: readonly string[], home: string, stdin: string, environment: NodeJS.ProcessEnv = {}): Promise<Run> {
+  if (args[0] === 'doctor') return runPgCommand(args, { ...childEnvironment(home), ...environment });
   const child = spawn(process.execPath, [binPath, ...args], {
     cwd: repoRoot,
     env: { ...childEnvironment(home), ...environment },
@@ -170,24 +173,7 @@ function runBrain(args: readonly string[], home: string, stdin: string, environm
 /** An installed brain: a configuration folder, a migrated database, an owner. */
 async function installedHome(): Promise<string> {
   const home = await temporary.create('brain-ingest-');
-  const install = await new Promise<Run>((resolve, reject) => {
-    const child = spawn(process.execPath, [installPath, '--yes'], {
-      cwd: repoRoot,
-      env: childEnvironment(home),
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-  });
-  expect(install.code, install.stdout + install.stderr).toBe(0);
+  await preparePgHome(home);
   return home;
 }
 
@@ -232,25 +218,23 @@ function stopPayload(transcriptPath: string, sessionId = HARNESS_SESSION): strin
 }
 
 /** Every user table and how many rows it holds, read without writing. */
-function rowCounts(path: string): Record<string, number> {
-  const database = new DatabaseSync(path, { readOnly: true });
+async function rowCounts(path: string): Promise<Record<string, number>> {
+  const database = new PgTestClient(path);
   try {
-    const tables = database
+    const tables = (await database
       .prepare(
-        `select name from sqlite_master
-          where type = 'table' and name not like 'sqlite_%'
-          order by name`,
+        `select tablename as name from pg_tables where schemaname = 'brain' order by tablename`,
       )
-      .all() as { name: string }[];
+      .all()) as { name: string }[];
     const counts: Record<string, number> = {};
     for (const { name } of tables) {
       counts[name] = (
-        database.prepare(`select count(*) as rows from "${name}"`).get() as { rows: number }
+        (await database.prepare(`select count(*) as rows from "${name}"`).get()) as { rows: number }
       ).rows;
     }
     return counts;
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
@@ -258,23 +242,21 @@ function rowCounts(path: string): Record<string, number> {
  * Every row of every user table, for a test that has to say "this string is
  * nowhere in the database" rather than "not in the column I thought of".
  */
-function rowDump(path: string): Record<string, unknown[]> {
-  const database = new DatabaseSync(path, { readOnly: true });
+async function rowDump(path: string): Promise<Record<string, unknown[]>> {
+  const database = new PgTestClient(path);
   try {
-    const tables = database
+    const tables = (await database
       .prepare(
-        `select name from sqlite_master
-          where type = 'table' and name not like 'sqlite_%'
-          order by name`,
+        `select tablename as name from pg_tables where schemaname = 'brain' order by tablename`,
       )
-      .all() as { name: string }[];
+      .all()) as { name: string }[];
     const rows: Record<string, unknown[]> = {};
     for (const { name } of tables) {
-      rows[name] = database.prepare(`select * from "${name}"`).all();
+      rows[name] = (await database.prepare(`select * from "${name}"`).all());
     }
     return rows;
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
@@ -282,27 +264,27 @@ function rowDump(path: string): Record<string, unknown[]> {
  * The conversation as it is stored, in conversation order — which since
  * migration 0006 is `occurred_at` and there is no number to read.
  */
-function storedMessages(path: string): { role: string; body: string }[] {
-  const database = new DatabaseSync(path, { readOnly: true });
+async function storedMessages(path: string): Promise<{ role: string; body: string }[]> {
+  const database = new PgTestClient(path);
   try {
-    return database
+    return (await database
       .prepare('select role, body from messages order by occurred_at')
-      .all() as {
+      .all()) as {
       role: string;
       body: string;
     }[];
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
 /** Every tool note, in the order a reader walks the conversation. */
-function storedToolNotes(
+async function storedToolNotes(
   path: string,
-): { tool: string; target: string; ok: number }[] {
-  const database = new DatabaseSync(path, { readOnly: true });
+): Promise<{ tool: string; target: string; ok: number }[]> {
+  const database = new PgTestClient(path);
   try {
-    return database
+    return (await database
       .prepare(
         `select n.tool, n.target, n.ok
            from tool_notes n
@@ -312,9 +294,9 @@ function storedToolNotes(
           order by m.occurred_at is null, m.occurred_at, n.harness_message_id,
                    n.ordinal`,
       )
-      .all() as { tool: string; target: string; ok: number }[];
+      .all()) as { tool: string; target: string; ok: number }[];
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
@@ -343,35 +325,35 @@ interface RetryEnvelope {
 }
 
 /** Every generation of every file, with whether the file's pointer names it. */
-function generationsOf(path: string): Record<string, unknown>[] {
-  const database = new DatabaseSync(path, { readOnly: true });
+async function generationsOf(path: string): Promise<Record<string, unknown>[]> {
+  const database = new PgTestClient(path);
   try {
-    return database
+    return (await database
       .prepare(
         `select e.attempt, e.status, e.extractor_version,
-                case when f.current_extraction_id is e.id then 1 else 0 end as current
+                case when f.current_extraction_id = e.id then 1 else 0 end as current
            from document_extractions e join files f on f.id = e.file_id
           order by e.attempt`,
       )
-      .all() as Record<string, unknown>[];
+      .all()) as Record<string, unknown>[];
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
 /** How many pieces the keyword index of 0002 finds for one needle. */
-function chunkMatches(path: string, needle: string): number {
-  const database = new DatabaseSync(path, { readOnly: true });
+async function chunkMatches(path: string, needle: string): Promise<number> {
+  const database = new PgTestClient(path);
   try {
     return (
-      database
+      (await database
         .prepare(
-          'select count(*) as n from document_chunks_fts where document_chunks_fts match ?',
+          "select count(*) as n from document_chunks where lower(body) LIKE '%' || lower($1) || '%'",
         )
-        .get(`"${needle}"`) as { n: number }
+        .get(`${needle}`)) as { n: number }
     ).n;
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
@@ -384,20 +366,19 @@ function chunkMatches(path: string, needle: string): number {
  * build wrote its own generation, the pointer named it, and the row it replaced
  * went with the replacement.
  */
-function stampExtractorVersion(path: string, version: string): void {
-  const database = new DatabaseSync(path);
+async function stampExtractorVersion(path: string, version: string): Promise<void> {
+  const database = new PgTestClient(path);
   try {
     // The immutability rule of `files` consults the redaction marker, so the
     // connection has to answer for it — `0`, because nothing here is a
     // redaction (`sqlite/src/connect.ts`).
-    database.function('brain_redact_allowed', () => 0);
-    const current = database
+    const current = (await database
       .prepare(
         `select e.id, e.file_id, e.attempt, e.media_type, e.started_at, e.finished_at,
                 e.index_config_id
            from document_extractions e join files f on f.current_extraction_id = e.id`,
       )
-      .get() as {
+      .get()) as {
       id: string;
       file_id: string;
       attempt: number;
@@ -407,12 +388,9 @@ function stampExtractorVersion(path: string, version: string): void {
       index_config_id: string | null;
     };
     const next = `019a0000-0000-7000-8000-00000000e${String(current.attempt).padStart(3, '0')}`;
-    database
+    (await database
       .prepare(
-        `insert into document_extractions
-           (id, file_id, extractor_version, attempt, media_type, status,
-            started_at, finished_at, error, failed_stage, index_config_id)
-         values (?, ?, ?, ?, ?, 'ok', ?, ?, null, null, ?)`,
+        "insert into document_extractions\n           (id, file_id, extractor_version, attempt, media_type, status,\n            started_at, finished_at, error, failed_stage, index_config_id)\n         values ($1, $2, $3, $4, $5, 'ok', $6, $7, null, null, $8)",
       )
       .run(
         next,
@@ -423,83 +401,78 @@ function stampExtractorVersion(path: string, version: string): void {
         current.started_at,
         current.finished_at,
         current.index_config_id,
-      );
+      ));
     // The pieces move before the old row goes, because a chunk delete would
     // need a redaction in progress and there is none (0008).
-    database
-      .prepare('update document_chunks set extraction_id = ? where extraction_id = ?')
-      .run(next, current.id);
-    database
-      .prepare('update files set current_extraction_id = ? where id = ?')
-      .run(next, current.file_id);
-    database.prepare('delete from document_extractions where id = ?').run(current.id);
+    (await database
+      .prepare('update document_chunks set extraction_id = $1 where extraction_id = $2')
+      .run(next, current.id));
+    (await database
+      .prepare('update files set current_extraction_id = $1 where id = $2')
+      .run(next, current.file_id));
+    (await database.prepare('delete from document_extractions where id = $1').run(current.id));
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
 /** The mark that says this file's original cannot be reached any more (AD-24). */
-function markSourceUnreachable(path: string): void {
-  const database = new DatabaseSync(path);
+async function markSourceUnreachable(path: string): Promise<void> {
+  const database = new PgTestClient(path);
   try {
-    database.function('brain_redact_allowed', () => 0);
-    database
-      .prepare('update files set source_unreachable_at = ?')
-      .run('2026-01-02T03:04:05.000Z');
+    (await database
+      .prepare('update files set source_unreachable_at = $1')
+      .run('2026-01-02T03:04:05.000Z'));
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
 /** One unresolved reading failure on the stored file, as the handler leaves it. */
-function recordExtractFailure(path: string): void {
-  const database = new DatabaseSync(path);
+async function recordExtractFailure(path: string): Promise<void> {
+  const database = new PgTestClient(path);
   try {
-    const file = database.prepare('select id from files').get() as { id: string };
-    database
+    const file = (await database.prepare('select id from files').get()) as { id: string };
+    (await database
       .prepare(
-        `insert into failures (id, target_kind, target_id, stage, fingerprint, harness,
-                               session_id, code, message, occurred_at, resolved_at,
-                               first_occurred_at, occurrences)
-         values (?, 'file', ?, 'document_extract', 'sha256:reextract', null, null,
-                 'FILE_SOURCE_UNREACHABLE', '원본을 읽을 수 없습니다', ?, null, ?, 1)`,
+        "insert into failures (id, target_kind, target_id, stage, fingerprint, harness,\n                               session_id, code, message, occurred_at, resolved_at,\n                               first_occurred_at, occurrences)\n         values ($1, 'file', $2, 'document_extract', 'sha256:reextract', null, null,\n                 'FILE_SOURCE_UNREACHABLE', '원본을 읽을 수 없습니다', $3, null, $4, 1)",
       )
       .run(
         '019a0000-0000-7000-8000-00000000f001',
         file.id,
         '2026-01-02T03:04:05.000Z',
         '2026-01-02T03:04:05.000Z',
-      );
+      ));
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
 /** Whether the one recorded failure has been marked resolved. */
-function failureResolvedAt(path: string): string | null {
-  const database = new DatabaseSync(path, { readOnly: true });
+async function failureResolvedAt(path: string): Promise<string | null> {
+  const database = new PgTestClient(path);
   try {
     return (
-      database.prepare('select resolved_at from failures').get() as {
+      (await database.prepare('select resolved_at from failures').get()) as {
         resolved_at: string | null;
       }
     ).resolved_at;
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
 /** The parser version the one stored session records. */
-function storedParserVersion(path: string): string | null {
-  const database = new DatabaseSync(path, { readOnly: true });
+async function storedParserVersion(path: string): Promise<string | null> {
+  const database = new PgTestClient(path);
   try {
     return (
-      database.prepare('select parser_version from sessions').get() as {
+      (await database.prepare('select parser_version from sessions').get()) as {
         parser_version: string | null;
       }
     ).parser_version;
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
@@ -559,20 +532,15 @@ async function seedParserV3State(home: string, fixture: string): Promise<ParserV
   const first = kept.messages[0];
   if (first === undefined) throw new Error(`${fixture} has no version-3 messages to plant`);
 
-  const database = new DatabaseSync(databaseIn(home));
+  const database = new PgTestClient(databaseIn(home));
   try {
-    const owner = database.prepare('select id from users where is_self = 1').get() as {
+    const owner = (await database.prepare('select id from users where is_self = 1').get()) as {
       id: string;
     };
     const sessionId = seededRowId(300);
-    database
+    (await database
       .prepare(
-        `insert into sessions (id, harness, harness_session_id, user_id, machine,
-                               started_at, ingest_source, last_harness_message_id,
-                               cursor_fingerprint, parser_version, ingested_at,
-                               start_source)
-              values (?, 'claude-code', ?, ?, 'demo-machine', ?, 'live', ?, ?, ?, ?,
-                      'startup')`,
+        "insert into sessions (id, harness, harness_session_id, user_id, machine,\n                               started_at, ingest_source, last_harness_message_id,\n                               cursor_fingerprint, parser_version, ingested_at,\n                               start_source)\n              values ($1, 'claude-code', $2, $3, 'demo-machine', $4, 'live', $5, $6, $7, $8,\n                      'startup')",
       )
       .run(
         sessionId,
@@ -583,14 +551,14 @@ async function seedParserV3State(home: string, fixture: string): Promise<ParserV
         kept.cursor?.fingerprint ?? null,
         state.parserVersion,
         first.occurredAt,
-      );
+      ));
     const message = database.prepare(
       `insert into messages (id, session_id, harness_message_id, role, model, body,
                              occurred_at, git_branch, is_subagent_report)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
     );
     for (const [at, kind] of kept.messages.entries()) {
-      message.run(
+      (await message.run(
         seededRowId(200 + at),
         sessionId,
         kind.harnessMessageId,
@@ -600,17 +568,17 @@ async function seedParserV3State(home: string, fixture: string): Promise<ParserV
         kind.occurredAt,
         kind.gitBranch,
         kind.isSubagentReport ? 1 : 0,
-      );
+      ));
     }
     // No `call_id`: version 3 did not write one, which is the whole of why a
     // position has to be enough to recognise a call by.
     const note = database.prepare(
       `insert into tool_notes (id, session_id, harness_message_id, ordinal, tool,
                                target, ok, call_id)
-            values (?, ?, ?, ?, ?, ?, ?, null)`,
+            values ($1, $2, $3, $4, $5, $6, $7, null)`,
     );
     for (const [at, kind] of kept.toolNotes.entries()) {
-      note.run(
+      (await note.run(
         seededRowId(400 + at),
         sessionId,
         kind.harnessMessageId,
@@ -618,10 +586,10 @@ async function seedParserV3State(home: string, fixture: string): Promise<ParserV
         kind.tool,
         kind.target,
         kind.ok ? 1 : 0,
-      );
+      ));
     }
   } finally {
-    database.close();
+    (await database.close());
   }
   return kept;
 }
@@ -660,30 +628,30 @@ async function provenanceTranscriptIn(
 }
 
 /** The cursor the one stored session holds, both halves of it. */
-function storedCursor(
+async function storedCursor(
   path: string,
-): { last_harness_message_id: string | null; cursor_fingerprint: string | null } {
-  const database = new DatabaseSync(path, { readOnly: true });
+): Promise<{ last_harness_message_id: string | null; cursor_fingerprint: string | null }> {
+  const database = new PgTestClient(path);
   try {
-    return database
+    return (await database
       .prepare('select last_harness_message_id, cursor_fingerprint from sessions')
-      .get() as { last_harness_message_id: string | null; cursor_fingerprint: string | null };
+      .get()) as { last_harness_message_id: string | null; cursor_fingerprint: string | null };
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
 /** Why the harness started the one stored session, as the row holds it. */
-function startSourceIn(path: string): string | null {
-  const database = new DatabaseSync(path, { readOnly: true });
+async function startSourceIn(path: string): Promise<string | null> {
+  const database = new PgTestClient(path);
   try {
     return (
-      database.prepare('select start_source from sessions').get() as {
+      (await database.prepare('select start_source from sessions').get()) as {
         start_source: string | null;
       }
     ).start_source;
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
@@ -691,12 +659,12 @@ function startSourceIn(path: string): string | null {
  * A `started_at` the column's `glob` check accepts and no calendar has, which
  * is the shape of a row a human edited (follow-up review #19).
  */
-function setStartedAt(path: string, value: string): void {
-  const database = new DatabaseSync(path);
+async function setStartedAt(path: string, value: string): Promise<void> {
+  const database = new PgTestClient(path);
   try {
-    database.prepare('update sessions set started_at = ?').run(value);
+    (await database.prepare('update sessions set started_at = $1').run(value));
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
@@ -914,7 +882,7 @@ describe('brain sessions ingest claude-code', () => {
     expect(envelope.warnings).toEqual([]);
 
     const path = databaseIn(home);
-    expect(storedMessages(path)).toEqual([
+    expect((await storedMessages(path))).toEqual([
       { role: 'user', body: 'Where did we leave the import notes?' },
       {
         role: 'assistant',
@@ -924,21 +892,21 @@ describe('brain sessions ingest claude-code', () => {
       { role: 'assistant', body: "Written down, with today's date." },
     ]);
     // One session, attributed to the owner the install recorded (AD-12).
-    const database = new DatabaseSync(path, { readOnly: true });
+    const database = new PgTestClient(path);
     try {
       expect(
-        database
+        (await database
           .prepare(
             `select s.harness, s.ingest_source, s.machine is not null as has_machine,
                     u.is_self
                from sessions s join users u on u.id = s.user_id`,
           )
-          .all(),
+          .all()),
       ).toEqual([
-        { harness: 'claude-code', ingest_source: 'live', has_machine: 1, is_self: 1 },
+        { harness: 'claude-code', ingest_source: 'live', has_machine: true, is_self: 1 },
       ]);
     } finally {
-      database.close();
+      (await database.close());
     }
   });
 
@@ -964,7 +932,7 @@ describe('brain sessions ingest claude-code', () => {
     expect(
       (await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code,
     ).toBe(0);
-    const before = rowCounts(databaseIn(home));
+    const before = (await rowCounts(databaseIn(home)));
 
     const again = await runBrain(
       ['sessions', 'ingest', 'claude-code', '--json'],
@@ -978,7 +946,7 @@ describe('brain sessions ingest claude-code', () => {
       created: false,
       inserted: { messages: 0, toolNotes: 0 },
     });
-    expect(rowCounts(databaseIn(home))).toEqual(before);
+    expect((await rowCounts(databaseIn(home)))).toEqual(before);
   });
 
   it('inserts each message once when two processes ingest at the same moment', async () => {
@@ -1002,20 +970,20 @@ describe('brain sessions ingest claude-code', () => {
     // Between them they inserted the conversation exactly once, however the
     // two happened to interleave.
     expect(inserted).toBe(4);
-    expect(storedMessages(databaseIn(home)).map((message) => message.role)).toEqual([
+    expect((await storedMessages(databaseIn(home))).map((message) => message.role)).toEqual([
       'user',
       'assistant',
       'user',
       'assistant',
     ]);
-    expect(rowCounts(databaseIn(home))['sessions']).toBe(1);
+    expect((await rowCounts(databaseIn(home)))['sessions']).toBe(1);
 
     // Every table, not only the messages: the overlap leaves exactly what one
     // ingest of the same transcript leaves.
     const once = await installedHome();
     const single = stopPayload(await transcriptIn(once));
     expect((await runBrain(['sessions', 'ingest', 'claude-code'], once, single)).code).toBe(0);
-    expect(rowCounts(databaseIn(home))).toEqual(rowCounts(databaseIn(once)));
+    expect((await rowCounts(databaseIn(home)))).toEqual((await rowCounts(databaseIn(once))));
   });
 
   it('appends only what grew when the transcript has one more turn', async () => {
@@ -1046,7 +1014,7 @@ describe('brain sessions ingest claude-code', () => {
       created: false,
       inserted: { messages: 1, toolNotes: 0 },
     });
-    const stored = storedMessages(databaseIn(home));
+    const stored = (await storedMessages(databaseIn(home)));
     expect(stored).toHaveLength(5);
     // The turn that grew the file was uttered last, so it is read last.
     expect(stored.at(-1)?.body).toBe('One more thing.');
@@ -1057,7 +1025,7 @@ describe('brain sessions ingest claude-code', () => {
     const transcript = await transcriptIn(home);
     const payload = stopPayload(transcript);
     expect((await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code).toBe(0);
-    const before = storedMessages(databaseIn(home));
+    const before = (await storedMessages(databaseIn(home)));
 
     // What a compact or a fork does to the front of a transcript.
     const grown = `${JSON.stringify({
@@ -1078,7 +1046,7 @@ describe('brain sessions ingest claude-code', () => {
     expect((JSON.parse(again.stdout) as Envelope).data).toMatchObject({
       inserted: { messages: 1, toolNotes: 0 },
     });
-    const after = storedMessages(databaseIn(home));
+    const after = (await storedMessages(databaseIn(home)));
     // The newcomer was uttered at 03:03, before everything stored, so that is
     // where it is read — and the rows behind it are untouched and still in the
     // same order (migration 0006).
@@ -1104,7 +1072,7 @@ describe('brain sessions ingest claude-code', () => {
       created: false,
       inserted: { messages: 0, toolNotes: 0 },
     });
-    expect(rowCounts(databaseIn(home))['sessions']).toBe(0);
+    expect((await rowCounts(databaseIn(home)))['sessions']).toBe(0);
   });
 });
 
@@ -1127,7 +1095,7 @@ describe('brain sessions ingest claude-code on a whole session', () => {
       created: true,
       inserted: { messages: 4, toolNotes: 3 },
     });
-    const half = storedMessages(databaseIn(home));
+    const half = (await storedMessages(databaseIn(home)));
 
     await sessionTranscriptIn(home);
     const second = await runBrain(
@@ -1145,12 +1113,12 @@ describe('brain sessions ingest claude-code on a whole session', () => {
       // the first one stopped at.
       inserted: { messages: 4, toolNotes: 1 },
     });
-    const whole = storedMessages(databaseIn(home));
+    const whole = (await storedMessages(databaseIn(home)));
     expect(whole).toHaveLength(8);
     // Everything the rest of the file added was uttered after everything the
     // first read stored, so the front of the conversation is unchanged.
     expect(whole.slice(0, half.length)).toEqual(half);
-    expect(storedToolNotes(databaseIn(home))).toEqual([
+    expect((await storedToolNotes(databaseIn(home)))).toEqual([
       { tool: 'Read', target: 'notes/import.md', ok: 1 },
       { tool: 'Bash', target: 'wc -l notes/import.md', ok: 0 },
       { tool: 'Agent', target: 'Summarise the notes folder', ok: 1 },
@@ -1182,7 +1150,7 @@ describe('brain sessions ingest claude-code on a whole session', () => {
     // Not one body and not one place moved: everything the reset read saw
     // again is already stored, and ingest is idempotent on the harness id
     // (AD-8).
-    expect(storedMessages(databaseIn(home))).toEqual(whole);
+    expect((await storedMessages(databaseIn(home)))).toEqual(whole);
     // The line the reset read with different words is still the one that was
     // stored: a message cannot be corrected, only added to (AD-11).
     expect(whole.map((message) => message.body)).toContain(
@@ -1205,8 +1173,8 @@ describe('brain sessions ingest claude-code on a whole session', () => {
     ).toBe(0);
 
     const text = [
-      ...storedMessages(databaseIn(home)).map((message) => message.body),
-      ...storedToolNotes(databaseIn(home)).map((note) => `${note.tool} ${note.target}`),
+      ...(await storedMessages(databaseIn(home))).map((message) => message.body),
+      ...(await storedToolNotes(databaseIn(home))).map((note) => `${note.tool} ${note.target}`),
     ].join('\n');
     expect(await readFile(transcript, 'utf8')).toContain(TOOL_OUTPUT);
     expect(text).not.toContain(TOOL_OUTPUT);
@@ -1224,47 +1192,47 @@ describe('brain sessions ingest claude-code on a whole session', () => {
         .code,
     ).toBe(0);
 
-    const database = new DatabaseSync(databaseIn(home), { readOnly: true });
+    const database = new PgTestClient(databaseIn(home));
     try {
       // Not one row, and the column is still there: rows parser 2 and 3 wrote
       // are immutable and still say `1`, so a reader can tell them apart
       // (story 23, epic 2 Decision 2026-10-21).
       expect(
-        database
+        (await database
           .prepare(`select count(*) as rows from messages where is_subagent_report = 1`)
-          .get(),
+          .get()),
       ).toEqual({ rows: 0 });
       // Neither the report the first run handed through its own result, nor the
       // one the second run's notification carried, nor the subagent's own turns.
       expect(
-        database
+        (await database
           .prepare(`select count(*) as rows from messages where body like '%folder holds four%'`)
-          .get(),
+          .get()),
       ).toEqual({ rows: 0 });
       expect(
-        database
+        (await database
           .prepare(`select count(*) as rows from messages where body like '%still resolves%'`)
-          .get(),
+          .get()),
       ).toEqual({ rows: 0 });
       expect(
-        database
+        (await database
           .prepare(`select count(*) as rows from messages where body like '%read every file%'`)
-          .get(),
+          .get()),
       ).toEqual({ rows: 0 });
       // The `Agent` calls are still notes: that a run was delegated is a fact
       // about the turn.
       expect(
-        database.prepare(`select count(*) as rows from tool_notes where tool = 'Agent'`).get(),
+        (await database.prepare(`select count(*) as rows from tool_notes where tool = 'Agent'`).get()),
       ).toEqual({ rows: 2 });
       // And the session learned why the harness started it, from the *first*
       // `SessionStart` attachment in the file: the `compact` further down is
       // what happened to the session afterwards, not why it began (follow-up
       // review #18).
-      expect(database.prepare('select start_source from sessions').get()).toEqual({
+      expect((await database.prepare('select start_source from sessions').get())).toEqual({
         start_source: 'startup',
       });
     } finally {
-      database.close();
+      (await database.close());
     }
   });
 
@@ -1275,7 +1243,7 @@ describe('brain sessions ingest claude-code on a whole session', () => {
     expect(
       (await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code,
     ).toBe(0);
-    const before = storedMessages(databaseIn(home));
+    const before = (await storedMessages(databaseIn(home)));
     expect(before.length).toBeGreaterThan(0);
 
     // The same path, with no conversation in it any more. The cursor cannot be
@@ -1300,8 +1268,8 @@ describe('brain sessions ingest claude-code on a whole session', () => {
     });
     // Nothing stored moved, and the cursor is gone rather than left naming a
     // message of the file that was.
-    expect(storedMessages(databaseIn(home))).toEqual(before);
-    expect(storedCursor(databaseIn(home))).toEqual({
+    expect((await storedMessages(databaseIn(home)))).toEqual(before);
+    expect((await storedCursor(databaseIn(home)))).toEqual({
       last_harness_message_id: null,
       cursor_fingerprint: null,
     });
@@ -1333,7 +1301,7 @@ describe('brain sessions ingest claude-code on a whole session', () => {
     expect(
       (await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code,
     ).toBe(0);
-    expect(startSourceIn(databaseIn(home))).toBeNull();
+    expect((await startSourceIn(databaseIn(home)))).toBeNull();
 
     // Reopened: the editor's attachment lands in the same file, behind what is
     // already stored, so the session learns why it was started after the fact.
@@ -1353,7 +1321,7 @@ describe('brain sessions ingest claude-code on a whole session', () => {
     );
     expect(second.code).toBe(0);
     expect((JSON.parse(second.stdout) as Envelope).warnings).toEqual([]);
-    expect(startSourceIn(databaseIn(home))).toBe('resume');
+    expect((await startSourceIn(databaseIn(home)))).toBe('resume');
 
     // And then the front of the file is rewritten with a `startup` in front of
     // it, which is what a fork into the same path looks like. The read answers
@@ -1375,36 +1343,16 @@ describe('brain sessions ingest claude-code on a whole session', () => {
     );
     expect(third.code).toBe(0);
     expect((JSON.parse(third.stdout) as Envelope).warnings).toEqual(['CURSOR_RESET']);
-    expect(startSourceIn(databaseIn(home))).toBe('resume');
+    expect((await startSourceIn(databaseIn(home)))).toBe('resume');
   });
 
-  it('ends with a code and no stack when a session row holds an impossible instant', async () => {
+  it('rejects an impossible timestamp before it can corrupt a session', async () => {
     const home = await installedHome();
     const transcript = await sessionTranscriptIn(home);
-    const payload = stopPayload(transcript);
-    expect(
-      (await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code,
-    ).toBe(0);
-
-    // A row a human edited. The column's own `glob` check is happy with it —
-    // four digits, two, two — and there is no such date, so the row is only
-    // wrong on the way back out (follow-up review #19).
-    setStartedAt(databaseIn(home), '2026-13-45T00:00:00.000Z');
-
-    const run = await runBrain(
-      ['sessions', 'ingest', 'claude-code', '--json'],
-      home,
-      payload,
-    );
-
-    // A coded answer and not a stack: from the hook's side a row it cannot read
-    // is a database it cannot reach, so the turn goes to the spool (AD-9).
-    expect(run.stderr).toBe('');
-    expect(run.code).toBe(0);
-    const envelope = JSON.parse(run.stdout) as Envelope;
-    expect(envelope.ok).toBe(true);
-    expect(envelope.warnings).toEqual(['SPOOLED', 'DB_UNAVAILABLE']);
-    expect(envelope.data).toMatchObject({ spooled: true });
+    expect((await runBrain(['sessions', 'ingest', 'claude-code'], home, stopPayload(transcript))).code).toBe(0);
+    const before = await rowDump(databaseIn(home));
+    await expect(setStartedAt(databaseIn(home), '2026-13-45T00:00:00.000Z')).rejects.toThrow();
+    expect(await rowDump(databaseIn(home))).toEqual(before);
   });
 
   it(
@@ -1432,7 +1380,7 @@ describe('brain sessions ingest claude-code on a whole session', () => {
         created: true,
         inserted: { messages: 2, toolNotes: 0 },
       });
-      expect(storedMessages(databaseIn(home)).map((message) => message.body)).toEqual([
+      expect((await storedMessages(databaseIn(home))).map((message) => message.body)).toEqual([
         'Index every file under notes/.',
         'That is all of them.',
       ]);
@@ -1500,23 +1448,23 @@ describe('brain sessions ingest claude-code and a report handed back', () => {
     // run was delegated is a fact about the turn.
     expect(envelope.data?.inserted).toEqual({ messages: 2, toolNotes: 2 });
 
-    const database = new DatabaseSync(databaseIn(home), { readOnly: true });
+    const database = new PgTestClient(databaseIn(home));
     try {
       // The column stays and no row uses it: the rows parser 2 and 3 wrote are
       // immutable and still say `1`, so a reader can tell them apart (AD-4).
       expect(
-        database
+        (await database
           .prepare('select count(*) as rows from messages where is_subagent_report = 1')
-          .get(),
+          .get()),
       ).toEqual({ rows: 0 });
     } finally {
-      database.close();
+      (await database.close());
     }
 
     // Nowhere in the database, rather than nowhere in a column somebody thought
     // of: the two reports themselves, the editor's framing, and the sentence it
     // left where the two results would be.
-    const dump = JSON.stringify(rowDump(databaseIn(home)));
+    const dump = JSON.stringify((await rowDump(databaseIn(home))));
     expect(await readFile(transcript, 'utf8')).toContain(FRAME);
     for (const report of HANDBACK_REPORTS) expect(dump).not.toContain(report);
     expect(dump).not.toContain(FRAME);
@@ -1562,27 +1510,27 @@ describe('brain sessions ingest claude-code and a report handed back', () => {
 
       // One row per call that gets a note, which is what version 3 left: not
       // one call is stored twice, under two positions nobody could tell apart.
-      const database = new DatabaseSync(databaseIn(home), { readOnly: true });
+      const database = new PgTestClient(databaseIn(home));
       try {
-        expect(database.prepare('select count(*) as rows from tool_notes').get()).toEqual({
+        expect((await database.prepare('select count(*) as rows from tool_notes').get())).toEqual({
           rows: calls,
         });
         expect(seeded.toolNotes).toHaveLength(calls);
         // And every stored row is still the one version 3 wrote, call id and
         // all: a note cannot be corrected, only added (AD-11).
         expect(
-          database
+          (await database
             .prepare('select id, call_id from tool_notes order by id')
-            .all(),
+            .all()),
         ).toEqual(
           seeded.toolNotes
             .map((_note, at) => ({ id: seededRowId(400 + at), call_id: null }))
             .sort((left, right) => (left.id < right.id ? -1 : 1)),
         );
       } finally {
-        database.close();
+        (await database.close());
       }
-      expect(storedParserVersion(databaseIn(home))).toBe('6');
+      expect((await storedParserVersion(databaseIn(home)))).toBe('6');
     },
   );
 
@@ -1601,18 +1549,18 @@ describe('brain sessions ingest claude-code and a report handed back', () => {
         .code,
     ).toBe(0);
 
-    const database = new DatabaseSync(databaseIn(home), { readOnly: true });
+    const database = new PgTestClient(databaseIn(home));
     try {
       expect(
-        database
+        (await database
           .prepare('select count(*) as rows from messages where is_subagent_report = 1')
-          .get(),
+          .get()),
       ).toEqual({ rows: 2 });
-      expect(database.prepare('select count(*) as rows from messages').get()).toEqual({
+      expect((await database.prepare('select count(*) as rows from messages').get())).toEqual({
         rows: seeded.messages.length,
       });
     } finally {
-      database.close();
+      (await database.close());
     }
   });
 });
@@ -1647,20 +1595,20 @@ describe('brain sessions ingest claude-code and where a report came from', () =>
     // call. Every report the fixture carries is gone.
     expect(envelope.data?.inserted).toEqual({ messages: 3, toolNotes: 1 });
 
-    const database = new DatabaseSync(databaseIn(home), { readOnly: true });
+    const database = new PgTestClient(databaseIn(home));
     try {
       expect(
-        database
+        (await database
           .prepare('select count(*) as rows from messages where is_subagent_report = 1')
-          .get(),
+          .get()),
       ).toEqual({ rows: 0 });
     } finally {
-      database.close();
+      (await database.close());
     }
 
     // Nowhere in the database, rather than nowhere in a column somebody
     // thought of.
-    const dump = JSON.stringify(rowDump(databaseIn(home)));
+    const dump = JSON.stringify((await rowDump(databaseIn(home))));
     expect(await readFile(transcript, 'utf8')).toContain(FRAME);
     for (const report of PROVENANCE_REPORTS) expect(dump).not.toContain(report);
     expect(dump).not.toContain(FRAME);
@@ -1703,7 +1651,7 @@ describe('brain sessions ingest claude-code on the lines it did not keep', () =>
     expect(envelope.warnings).toEqual(['TRANSCRIPT_LINES_SKIPPED']);
     expect(envelope.data?.droppedLines?.['unreadable']).toBe(2);
     expect(envelope.data?.inserted).toEqual({ messages: 4, toolNotes: 1 });
-    expect(storedMessages(databaseIn(home))).toHaveLength(4);
+    expect((await storedMessages(databaseIn(home)))).toHaveLength(4);
   });
 
   it('drops a user line that opens with one of orca orchestration headings', async () => {
@@ -1737,7 +1685,7 @@ describe('brain sessions ingest claude-code on the lines it did not keep', () =>
     // so nothing on the line says otherwise: the words are the coordinator's.
     // The same words inside a sentence are a message like any other.
     expect(envelope.data?.droppedLines?.['orca_header']).toBe(3);
-    expect(storedMessages(databaseIn(home))).toEqual([
+    expect((await storedMessages(databaseIn(home)))).toEqual([
       { role: 'user', body: 'I think you are working inside Orca, are you not?' },
     ]);
   });
@@ -1807,13 +1755,13 @@ describe('brain sessions ingest claude-code stores the secrets it reads, unmaske
     expect(envelope.data?.inserted).toEqual({ messages: 2, toolNotes: 2 });
 
     const path = databaseIn(home);
-    expect(storedMessages(path).map((message) => message.body)).toEqual(
+    expect((await storedMessages(path)).map((message) => message.body)).toEqual(
       await fixtureBodies(transcript),
     );
-    expect(storedToolNotes(path).map((note) => note.target)).toEqual([...FIXTURE_TOOL_TARGETS]);
+    expect((await storedToolNotes(path)).map((note) => note.target)).toEqual([...FIXTURE_TOOL_TARGETS]);
     // Character for character, which is what "no marker anywhere" says in one
     // line: a masked body would carry one.
-    expect(JSON.stringify(rowDump(path))).not.toContain('[REDACTED:');
+    expect(JSON.stringify((await rowDump(path)))).not.toContain('[REDACTED:');
   });
 
   it('keeps every pasted secret in the database, and writes no redaction row', async () => {
@@ -1827,8 +1775,8 @@ describe('brain sessions ingest claude-code stores the secrets it reads, unmaske
 
     const path = databaseIn(home);
     const stored = [
-      ...storedMessages(path).map((message) => message.body),
-      ...storedToolNotes(path).map((note) => `${note.tool} ${note.target}`),
+      ...(await storedMessages(path)).map((message) => message.body),
+      ...(await storedToolNotes(path)).map((note) => `${note.tool} ${note.target}`),
     ].join('\n');
     const file = await readFile(transcript, 'utf8');
     for (const secret of SECRETS) {
@@ -1837,7 +1785,7 @@ describe('brain sessions ingest claude-code stores the secrets it reads, unmaske
     }
     // The one table that could hold a trace of a masking stays empty until
     // somebody runs `messages redact` (story 2.13).
-    expect(rowCounts(path)['redactions']).toBe(0);
+    expect((await rowCounts(path))['redactions']).toBe(0);
   });
 
   it('stores the tool note target the parser cut, key and all', async () => {
@@ -1852,7 +1800,7 @@ describe('brain sessions ingest claude-code stores the secrets it reads, unmaske
         .code,
     ).toBe(0);
 
-    const targets = storedToolNotes(databaseIn(home)).map((note) => note.target);
+    const targets = (await storedToolNotes(databaseIn(home))).map((note) => note.target);
     expect(targets).toEqual([...FIXTURE_TOOL_TARGETS]);
     expect(targets[1]).toHaveLength(500);
     expect(targets[1]?.endsWith(TRUNCATED_HALF_KEY)).toBe(true);
@@ -1870,7 +1818,7 @@ describe('brain sessions ingest claude-code stores the secrets it reads, unmaske
         .code,
     ).toBe(0);
 
-    const bodies = storedMessages(databaseIn(home))
+    const bodies = (await storedMessages(databaseIn(home)))
       .map((message) => message.body)
       .join('\n');
     for (const kept of KEPT_IN_FIXTURE) {
@@ -1883,7 +1831,7 @@ describe('brain sessions ingest claude-code stores the secrets it reads, unmaske
     const transcript = await secretsTranscriptIn(home);
     const payload = stopPayload(transcript);
     expect((await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code).toBe(0);
-    const before = rowCounts(databaseIn(home));
+    const before = (await rowCounts(databaseIn(home)));
 
     const again = await runBrain(
       ['sessions', 'ingest', 'claude-code', '--json'],
@@ -1897,7 +1845,7 @@ describe('brain sessions ingest claude-code stores the secrets it reads, unmaske
       toolNotes: 0,
     });
     // Every table, not only the two this story touches.
-    expect(rowCounts(databaseIn(home))).toEqual(before);
+    expect((await rowCounts(databaseIn(home)))).toEqual(before);
     expect(before['redactions']).toBe(0);
   });
 });
@@ -1948,21 +1896,21 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
   }
 
   /** Every project, worktree and session tag, read without writing. */
-  function tags(path: string): {
+  async function tags(path: string): Promise<{
     projects: { remote_identity: string }[];
     worktrees: { path: string; removed_at: string | null }[];
     sessions: { harness_session_id: string; identity: string | null; path: string | null }[];
-  } {
-    const database = new DatabaseSync(path, { readOnly: true });
+  }> {
+    const database = new PgTestClient(path);
     try {
       return {
-        projects: database
+        projects: (await database
           .prepare('select remote_identity from projects order by remote_identity')
-          .all() as { remote_identity: string }[],
-        worktrees: database
+          .all()) as { remote_identity: string }[],
+        worktrees: (await database
           .prepare('select path, removed_at from worktrees order by path')
-          .all() as { path: string; removed_at: string | null }[],
-        sessions: database
+          .all()) as { path: string; removed_at: string | null }[],
+        sessions: (await database
           .prepare(
             `select s.harness_session_id, p.remote_identity as identity, w.path as path
                from sessions s
@@ -1970,14 +1918,14 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
                left join worktrees w on w.id = s.worktree_id
               order by s.harness_session_id`,
           )
-          .all() as {
+          .all()) as {
           harness_session_id: string;
           identity: string | null;
           path: string | null;
         }[],
       };
     } finally {
-      database.close();
+      (await database.close());
     }
   }
 
@@ -2007,15 +1955,15 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
         stopPayload(transcript, sessionIdFor(ordinal)));
       expect(run.code, run.stderr).toBe(0);
     }
-    const db = new DatabaseSync(databaseIn(home), { readOnly: true });
+    const db = new PgTestClient(databaseIn(home));
     try {
-      const rows = db.prepare('select project_id,tag_source,first_cwd from sessions order by harness_session_id').all();
+      const rows = (await db.prepare('select project_id,tag_source,first_cwd from sessions order by harness_session_id').all());
       expect(rows[0]?.['tag_source']).toBe('cwd');
       expect(rows[1]?.['first_cwd']).toBe(gone);
       expect(rows[1]?.['tag_source']).toBe(mode === 'ambiguous' ? null : mode === 'start-folder' ? 'sibling' : mode);
       expect(rows[1]?.['project_id']).toBe(mode === 'ambiguous' ? null : rows[0]?.['project_id']);
-      if (mode !== 'ambiguous') expect(db.prepare('select path from worktrees where path=?').get(gone)).toEqual({ path: gone });
-    } finally { db.close(); }
+      if (mode !== 'ambiguous') expect((await db.prepare('select path from worktrees where path=$1').get(gone))).toEqual({ path: gone });
+    } finally { (await db.close()); }
   });
 
   it('drain은 과거 세션을 한 번 다시 판단하고 doctor는 꼬리표 없는 수를 보인다', async () => {
@@ -2026,32 +1974,32 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
     const folder = join(config, 'projects', 'demo-repo');
     await mkdir(folder, { recursive: true });
     await copyFile(transcript, join(folder, `${sessionIdFor(1)}.jsonl`));
-    const db = new DatabaseSync(databaseIn(home));
+    const db = new PgTestClient(databaseIn(home));
     try {
-      const user = db.prepare('select id from users where is_self=1').get()?.['id'];
-      db.prepare(`insert into sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source)
-        values(?, 'claude-code', ?, ?, 'demo-machine', '2026-01-01T00:00:00.000Z', 'import')`)
-        .run('01940000-0000-7000-8000-000000000991', sessionIdFor(1), user as string);
-    } finally { db.close(); }
+      const user = (await db.prepare('select id from users where is_self=1').get())?.['id'];
+      (await db.prepare(`insert into sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source)
+        values($1, 'claude-code', $2, $3, 'demo-machine', '2026-01-01T00:00:00.000Z', 'import')`)
+        .run('01940000-0000-7000-8000-000000000991', sessionIdFor(1), user as string));
+    } finally { (await db.close()); }
     const environment = { CLAUDE_CONFIG_DIR: config };
     const first = await runBrain(['queue', 'drain', '--json'], home, '', environment);
     expect(first.code, first.stderr).toBe(0);
-    let read = new DatabaseSync(databaseIn(home), { readOnly: true });
+    let read = new PgTestClient(databaseIn(home));
     try {
-      expect(read.prepare('select first_cwd,tag_source from sessions').get()).toEqual({ first_cwd: cwd, tag_source: 'cwd' });
-      expect(read.prepare("select count(*) n from work_items where kind='session_identity'").get()?.['n']).toBe(1);
-    } finally { read.close(); }
+      expect((await read.prepare('select first_cwd,tag_source from sessions').get())).toEqual({ first_cwd: cwd, tag_source: 'cwd' });
+      expect((await read.prepare("select count(*) n from work_items where kind='session_identity'").get())?.['n']).toBe(1);
+    } finally { (await read.close()); }
     const second = await runBrain(['queue', 'drain', '--json'], home, '', environment);
     expect(second.code, second.stderr).toBe(0);
     expect(JSON.parse(second.stdout)).toMatchObject({ ok: true, data: { claimed: 0 } });
-    read = new DatabaseSync(databaseIn(home));
+    read = new PgTestClient(databaseIn(home));
     try {
-      const user = read.prepare('select id from users where is_self=1').get()?.['id'];
-      for (let ordinal = 1; ordinal <= 2; ordinal++) read.prepare(`insert into sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source,first_cwd)
-        values(?, 'demo', ?, ?, 'demo-machine', '2026-01-01T00:00:00.000Z', 'import', '/demo/outside')`)
-        .run(`01940000-0000-7000-8000-00000000099${ordinal + 1}`, `outside-${ordinal}`, user as string);
-      expect(read.prepare("select count(*) n from work_items where kind='session_identity'").get()?.['n']).toBe(1);
-    } finally { read.close(); }
+      const user = (await read.prepare('select id from users where is_self=1').get())?.['id'];
+      for (let ordinal = 1; ordinal <= 2; ordinal++) (await read.prepare(`insert into sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source,first_cwd)
+        values($1, 'demo', $2, $3, 'demo-machine', '2026-01-01T00:00:00.000Z', 'import', '/demo/outside')`)
+        .run(`01940000-0000-7000-8000-00000000099${ordinal + 1}`, `outside-${ordinal}`, user as string));
+      expect((await read.prepare("select count(*) n from work_items where kind='session_identity'").get())?.['n']).toBe(1);
+    } finally { (await read.close()); }
     const doctor = await runBrain(['doctor', 'run', '--json'], home, '', environment);
     expect(JSON.parse(doctor.stdout).data.checks).toContainEqual({ id: 'untagged', status: 'ok', detail: '2건' });
   });
@@ -2070,16 +2018,16 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
         stopPayload(transcript, sessionIdFor(ordinal + 1)));
       expect(ran.code, ran.stderr).toBe(0);
     }
-    const db = new DatabaseSync(databaseIn(home), { readOnly: true });
+    const db = new PgTestClient(databaseIn(home));
     try {
-      const projects = db.prepare('select remote_identity, identity_key from projects order by remote_identity').all();
+      const projects = (await db.prepare('select remote_identity, identity_key from projects order by remote_identity').all());
       expect(projects).toHaveLength(count);
       if (count === 1) {
         expect(projects[0]).toEqual({ remote_identity: `${host}/Brain-Owner/Notes`, identity_key: `${host}/brain-owner/notes` });
-        const sessions = db.prepare('select distinct project_id from sessions').all();
+        const sessions = (await db.prepare('select distinct project_id from sessions').all());
         expect(sessions).toHaveLength(1);
       }
-    } finally { db.close(); }
+    } finally { (await db.close()); }
   });
 
   it('defers unknown identity without git and restores tags through queue drain', async () => {
@@ -2094,13 +2042,13 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
     for (const run of await Promise.all([1, 2].map(() => runBrain(
       ['sessions', 'ingest', 'claude-code', '--json'], home, payload, { PATH: bin },
     )))) expect(run.code, run.stderr).toBe(0);
-    let db = new DatabaseSync(databaseIn(home), { readOnly: true });
+    let db = new PgTestClient(databaseIn(home));
     try {
-      expect(db.prepare('select project_id, worktree_id from sessions').all())
+      expect((await db.prepare('select project_id, worktree_id from sessions').all()))
         .toEqual([{ project_id: null, worktree_id: null }]);
-      expect(db.prepare('select kind, completed_at from work_items').all())
+      expect((await db.prepare('select kind, completed_at from work_items').all()))
         .toEqual([{ kind: 'session_identity', completed_at: null }]);
-    } finally { db.close(); }
+    } finally { (await db.close()); }
     const config = join(home, 'claude-config');
     const folder = join(config, 'projects', 'demo-repo');
     await mkdir(folder, { recursive: true });
@@ -2109,14 +2057,14 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
       CLAUDE_CONFIG_DIR: config,
     });
     expect(ran.code, ran.stderr).toBe(0);
-    const stored = tags(databaseIn(home));
+    const stored = (await tags(databaseIn(home)));
     expect(stored.sessions).toEqual([{
       harness_session_id: sessionIdFor(1), identity: 'github.com/brain-owner/notes', path: cwd,
     }]);
-    db = new DatabaseSync(databaseIn(home), { readOnly: true });
+    db = new PgTestClient(databaseIn(home));
     try {
-      expect(db.prepare("select completed_at from work_items where kind = 'session_identity'").get()?.['completed_at']).not.toBeNull();
-    } finally { db.close(); }
+      expect((await db.prepare("select completed_at from work_items where kind = 'session_identity'").get())?.['completed_at']).not.toBeNull();
+    } finally { (await db.close()); }
     const failures = await runBrain(['failures', 'list', '--json'], home, '');
     expect(JSON.parse(failures.stdout)).toMatchObject({ ok: true, data: { failures: [] } });
   });
@@ -2127,20 +2075,20 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
     const transcript = await transcriptForFolder(home, cwd);
     expect((await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home,
       stopPayload(transcript, sessionIdFor(1)))).code).toBe(0);
-    const before = tags(databaseIn(home));
-    const db = new DatabaseSync(databaseIn(home));
+    const before = (await tags(databaseIn(home)));
+    const db = new PgTestClient(databaseIn(home));
     try {
-      db.prepare(`insert into work_items(id, kind, target_kind, target_id, created_at, attempts, next_attempt_at)
-        values (?, 'session_identity', 'session', ?, ?, 0, ?)`).run(
+      (await db.prepare(`insert into work_items(id, kind, target_kind, target_id, created_at, attempts, next_attempt_at)
+        values ($1, 'session_identity', 'session', $2, $3, 0, $4)`).run(
           '01940000-0000-7000-8000-000000000810', `claude-code:${sessionIdFor(1)}`,
-          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
-    } finally { db.close(); }
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'));
+    } finally { (await db.close()); }
     expect((await runBrain(['queue', 'drain', '--json'], home, '')).code).toBe(0);
-    expect(tags(databaseIn(home))).toEqual(before);
-    const read = new DatabaseSync(databaseIn(home), { readOnly: true });
+    expect((await tags(databaseIn(home)))).toEqual(before);
+    const read = new PgTestClient(databaseIn(home));
     try {
-      expect(read.prepare("select completed_at from work_items where kind = 'session_identity'").get()?.['completed_at']).not.toBeNull();
-    } finally { read.close(); }
+      expect((await read.prepare("select completed_at from work_items where kind = 'session_identity'").get())?.['completed_at']).not.toBeNull();
+    } finally { (await read.close()); }
   });
 
   it('puts two worktrees of one clone under one project', async () => {
@@ -2160,7 +2108,7 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
       expect(ran.code).toBe(0);
     }
 
-    const stored = tags(databaseIn(home));
+    const stored = (await tags(databaseIn(home)));
     // One identity, two folders, and the two sessions on different worktrees
     // of the same project (AD-12).
     expect(stored.projects).toEqual([{ remote_identity: 'demo.example/brain-owner/notes' }]);
@@ -2198,7 +2146,7 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
 
     expect(ran.stderr, ran.stderr).toBe('');
     expect(ran.code).toBe(0);
-    const stored = tags(databaseIn(home));
+    const stored = (await tags(databaseIn(home)));
     expect(stored.projects).toEqual([{ remote_identity: 'demo.example/brain-owner/notes' }]);
     expect(stored.worktrees).toEqual([{ path: main, removed_at: null }]);
     expect(stored.sessions).toEqual([
@@ -2224,7 +2172,7 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
     ]);
     for (const run of runs) expect(run.code, run.stderr).toBe(0);
 
-    const stored = tags(databaseIn(home));
+    const stored = (await tags(databaseIn(home)));
     expect(stored.projects).toEqual([{ remote_identity: 'demo.example/brain-owner/notes' }]);
     expect(stored.worktrees).toEqual([{ path: main, removed_at: null }]);
     expect(stored.sessions).toEqual([
@@ -2258,11 +2206,11 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
       ).toBe(0);
     }
 
-    const stored = tags(databaseIn(home));
+    const stored = (await tags(databaseIn(home)));
     expect(stored.projects).toEqual([{ remote_identity: 'demo.example/brain-owner/notes' }]);
     // And the token of the https remote reached no column anywhere (NFR-1).
-    const everything = await readFile(databaseIn(home));
-    expect(everything.includes(Buffer.from('s3cr3t-token'))).toBe(false);
+    const everything = JSON.stringify(await rowDump(databaseIn(home)));
+    expect(everything).not.toContain('s3cr3t-token');
   });
 
   it('ingests a session opened outside a repository with no project at all', async () => {
@@ -2286,17 +2234,17 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
       expect((JSON.parse(ran.stdout) as Envelope).data).toMatchObject({ created: true });
     }
 
-    const stored = tags(databaseIn(home));
+    const stored = (await tags(databaseIn(home)));
     expect(stored.projects).toEqual([]);
     expect(stored.worktrees).toEqual([]);
     expect(stored.sessions.map((session) => [session.identity, session.path])).toEqual([
       [null, null],
       [null, null],
     ]);
-    const database = new DatabaseSync(databaseIn(home), { readOnly: true });
+    const database = new PgTestClient(databaseIn(home));
     try {
-      expect(database.prepare('select count(*) as count from work_items').get()).toEqual({ count: 0 });
-    } finally { database.close(); }
+      expect((await database.prepare('select count(*) as count from work_items').get())).toEqual({ count: 0 });
+    } finally { (await database.close()); }
   });
 
   it('leaves the tags alone when the same session is ingested after the repository moved', async () => {
@@ -2305,7 +2253,7 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
     const transcript = await transcriptForFolder(home, path);
     const payload = stopPayload(transcript);
     expect((await runBrain(['sessions', 'ingest', 'claude-code'], home, payload)).code).toBe(0);
-    const before = tags(databaseIn(home));
+    const before = (await tags(databaseIn(home)));
 
     // The remote changed and the folder went: the one thing the tags may never
     // do is follow (AD-12). The transcript still names the old folder.
@@ -2324,7 +2272,7 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
     });
     // Not one row and not one tag moved, and `removed_at` is still empty:
     // marking a folder that is gone is drain's, not this verb's.
-    expect(tags(databaseIn(home))).toEqual(before);
+    expect((await tags(databaseIn(home)))).toEqual(before);
     expect(before.projects).toEqual([{ remote_identity: 'demo.example/brain-owner/notes' }]);
     expect(before.worktrees).toEqual([{ path, removed_at: null }]);
   });
@@ -2341,8 +2289,8 @@ describe('brain sessions ingest on the hook path', () => {
     expect(run.code).toBe(0);
     expect(run.stderr).toContain(code);
     expect(run.stderr.trimEnd().split('\n')).toHaveLength(1);
-    expect(rowCounts(databaseIn(home))['sessions']).toBe(0);
-    expect(rowCounts(databaseIn(home))['messages']).toBe(0);
+    expect((await rowCounts(databaseIn(home)))['sessions']).toBe(0);
+    expect((await rowCounts(databaseIn(home)))['messages']).toBe(0);
   }
 
   it('says TRANSCRIPT_UNREADABLE for a path with no file at it', async () => {
@@ -2422,11 +2370,11 @@ describe('brain sessions ingest on the hook path', () => {
     const transcript = await transcriptIn(home);
     // The one state the install step is there to prevent: a database at the
     // current version whose owner row is gone.
-    const database = new DatabaseSync(databaseIn(home));
+    const database = new PgTestClient(databaseIn(home));
     try {
-      database.exec('delete from users');
+      (await database.exec('delete from users'));
     } finally {
-      database.close();
+      (await database.close());
     }
 
     // `--json` as well, because a hook swallows the envelope too: a failure on
@@ -2529,7 +2477,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
 
   /** A second process holding the one SQLite writer, and when to let go. */
   async function holdTheLock(home: string, holdMs: number): Promise<() => Promise<void>> {
-    const child = spawn(process.execPath, [lockHolderPath, databaseIn(home), String(holdMs)], {
+    const child = spawn(process.execPath, [lockHolderPath, pgDatabaseUrl(home), String(holdMs)], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let output = '';
@@ -2578,15 +2526,15 @@ describe('brain sessions ingest claude-code when the database will not take the 
       return { sourceHome, payload: stopPayload(transcript), originals };
     }
     async function verify(home: string, source: Awaited<ReturnType<typeof fixture>>) {
-      const db = new DatabaseSync(databaseIn(home), { readOnly: true });
+      const db = new PgTestClient(databaseIn(home));
       try {
-        const attachments = db.prepare('select a.ordinal, a.source_kind, a.source_ref, a.display_name, a.status, f.content_hash, l.locator from message_attachments a left join files f on f.id=a.file_id left join file_locations l on l.id=f.home_location_id order by a.ordinal').all() as { ordinal: number; status: string; content_hash: string | null; locator: string | null }[];
+        const attachments = (await db.prepare('select a.ordinal, a.source_kind, a.source_ref, a.display_name, a.status, f.content_hash, l.locator from message_attachments a left join files f on f.id=a.file_id left join file_locations l on l.id=f.home_location_id order by a.ordinal').all()) as { ordinal: number; status: string; content_hash: string | null; locator: string | null }[];
         expect(attachments.map(a => a.ordinal)).toEqual([0, 1, 2, 3, 4, 5]);
         expect(attachments.map(a => a.status)).toEqual(['stored', 'stored', 'stored', 'stored', 'missing_at_ingest', 'stored']);
         expect(attachments[0]?.content_hash).toBe(attachments[2]?.content_hash);
-        expect(db.prepare('select count(*) as n from files').get()?.n).toBe(4);
-        expect(db.prepare("select locator from file_locations where ownership='external' order by locator").all()).toEqual([{ locator: '~/project/doc.pdf' }, { locator: '~/project/note.md' }, { locator: '~/project/pic.png' }]);
-        expect(db.prepare('select count(*) as n from file_locations').get()?.n).toBe(7);
+        expect((await db.prepare('select count(*) as n from files').get())?.n).toBe(4);
+        expect((await db.prepare("select locator from file_locations where ownership='external' order by locator").all())).toEqual([{ locator: '~/project/doc.pdf' }, { locator: '~/project/note.md' }, { locator: '~/project/pic.png' }]);
+        expect((await db.prepare('select count(*) as n from file_locations').get())?.n).toBe(7);
         expect(await readFile(join(home, 'files', attachments[1]!.locator!), 'utf8')).toBe('at attachment time');
         expect(await readFile(join(home, 'files', attachments[3]!.locator!))).toEqual(pdf);
         for (const original of source.originals) {
@@ -2594,20 +2542,20 @@ describe('brain sessions ingest claude-code when the database will not take the 
           expect((await stat(original.path)).mtimeMs).toBe(original.mtime);
         }
         return attachments;
-      } finally { db.close(); }
+      } finally { (await db.close()); }
     }
     async function drainAndNames(home: string, sourceHome: string) {
       expect((await runBrain(['queue', 'drain', '--json'], home, '', { HOME: sourceHome })).code).toBe(0);
-      const db = new DatabaseSync(databaseIn(home), { readOnly: true });
+      const db = new PgTestClient(databaseIn(home));
       try {
-        const names = db.prepare('select name_source, text from file_names order by name_source, text').all();
+        const names = (await db.prepare('select name_source, text from file_names order by name_source, text').all());
         expect(names).toHaveLength(7);
         for (const name of ['note.md', 'pic.png']) {
-          expect(db.prepare('select count(*) as n from file_names_fts where file_names_fts match ?').get(`"${name}"`)?.n).toBe(2);
-          expect(db.prepare('select count(*) as n from file_names_fts where file_names_fts match ?').get(`"~/project/${name}"`)?.n).toBe(1);
+          expect((await db.prepare("select count(*) as n from file_names where lower(text) LIKE '%' || lower($1) || '%'").get(`${name}`))?.n).toBe(2);
+          expect((await db.prepare("select count(*) as n from file_names where lower(text) LIKE '%' || lower($1) || '%'").get(`~/project/${name}`))?.n).toBe(1);
         }
         return names;
-      } finally { db.close(); }
+      } finally { (await db.close()); }
     }
     const direct = await installedHome(); const directSource = await fixture(direct);
     expect((await runBrain(args, direct, directSource.payload, { HOME: directSource.sourceHome })).code).toBe(0);
@@ -2663,29 +2611,29 @@ describe('brain sessions ingest claude-code when the database will not take the 
     expect((await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, stopPayload(transcript), { HOME: sourceHome })).code).toBe(0);
     expect((await runBrain(['queue', 'drain', '--json'], home, '', { HOME: sourceHome })).code).toBe(0);
 
-    function read(path: string) {
-      const db = new DatabaseSync(path, { readOnly: true });
+    async function read(path: string) {
+      const db = new PgTestClient(path);
       try {
-        const generations = db.prepare(`select n.text as name, e.status, e.media_type, e.extractor_version, e.index_config_id, e.attempt,
-            case when f.current_extraction_id is e.id then 1 else 0 end as current
+        const generations = (await db.prepare(`select n.text as name, e.status, e.media_type, e.extractor_version, e.index_config_id, e.attempt,
+            case when f.current_extraction_id = e.id then 1 else 0 end as current
           from document_extractions e join files f on f.id = e.file_id
           join file_names n on n.file_id = f.id and n.name_source = 'attachment_name'
-          order by n.text`).all() as Record<string, unknown>[];
-        const chunks = db.prepare('select body, chunk_locator, page from document_chunks order by ordinal').all() as { body: string; chunk_locator: string; page: number | null }[];
-        const found = (needle: string) => (db.prepare('select count(*) as n from document_chunks_fts where document_chunks_fts match ?').get(`"${needle}"`) as { n: number }).n;
+          order by n.text`).all()) as Record<string, unknown>[];
+        const chunks = (await db.prepare('select body, chunk_locator, page from document_chunks order by ordinal').all()) as { body: string; chunk_locator: string; page: number | null }[];
+        const found = async (needle: string) => ((await db.prepare("select count(*) as n from document_chunks where lower(body) LIKE '%' || lower($1) || '%'").get(`${needle}`)) as { n: number }).n;
         return {
           generations,
           chunks,
-          needles: { needlebody: found('needlebody'), plainneedle: found('plainneedle') },
+          needles: { needlebody: (await found('needlebody')), plainneedle: (await found('plainneedle')) },
           // Scoped to the file: this transcript lives outside the harness
           // folder, so `session_identity` records one of its own and that is
           // not what this case is about.
-          failures: db.prepare("select stage, code from failures where target_kind = 'file'").all(),
+          failures: (await db.prepare("select stage, code from failures where target_kind = 'file'").all()),
         };
-      } finally { db.close(); }
+      } finally { (await db.close()); }
     }
 
-    const after = read(databaseIn(home));
+    const after = (await read(databaseIn(home)));
     expect(after.failures).toEqual([]);
     expect(after.generations).toEqual([
       { name: 'note.md', status: 'ok', media_type: 'text/plain', extractor_version: 'doc/1', index_config_id: '019a0000-0000-7000-8000-000000000002', attempt: 1, current: 1 },
@@ -2703,7 +2651,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
     // A second drain finds nothing to do: the generation rows are what keep the
     // three files out of the queueing step's read.
     expect((await runBrain(['queue', 'drain', '--json'], home, '', { HOME: sourceHome })).code).toBe(0);
-    expect(read(databaseIn(home))).toEqual(after);
+    expect((await read(databaseIn(home)))).toEqual(after);
   }, 30_000);
 
   it('추출기 버전이 뒤처진 파일을 drain이 한 번 다시 읽고, 닿을 수 없으면 경고로 센다', async () => {
@@ -2733,16 +2681,16 @@ describe('brain sessions ingest claude-code when the database will not take the 
 
     expect((await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, stopPayload(transcript), { HOME: sourceHome })).code).toBe(0);
     await drain();
-    expect(generationsOf(db)).toEqual([
+    expect((await generationsOf(db))).toEqual([
       { attempt: 1, status: 'ok', extractor_version: 'doc/1', current: 1 },
     ]);
-    expect(chunkMatches(db, 'reextractneedle')).toBe(1);
+    expect((await chunkMatches(db, 'reextractneedle'))).toBe(1);
 
     // The reading an older build would have left behind. The columns of a
     // closed generation are immutable (0008), so it is a row of its own that
     // the pieces and the pointer move to.
-    stampExtractorVersion(db, 'doc/0');
-    expect(generationsOf(db)).toEqual([
+    (await stampExtractorVersion(db, 'doc/0'));
+    expect((await generationsOf(db))).toEqual([
       { attempt: 2, status: 'ok', extractor_version: 'doc/0', current: 1 },
     ]);
 
@@ -2752,38 +2700,38 @@ describe('brain sessions ingest claude-code when the database will not take the 
     expect(first.data).toMatchObject({ reextract_redacted: 0, reextract_unreachable: 0 });
     // One attempt higher, this build's version, and the pointer naming it: the
     // older generation went with the replacement that earned the pointer.
-    expect(generationsOf(db)).toEqual([
+    expect((await generationsOf(db))).toEqual([
       { attempt: 3, status: 'ok', extractor_version: 'doc/1', current: 1 },
     ]);
-    expect(chunkMatches(db, 'reextractneedle')).toBe(1);
+    expect((await chunkMatches(db, 'reextractneedle'))).toBe(1);
 
     // And the drain after that: the generation of this version is what keeps
     // the file out of the read, so nothing is attempted again.
     const second = await drain();
     expect(second.data).toMatchObject({ reextract_redacted: 0, reextract_unreachable: 0 });
-    expect(generationsOf(db)).toEqual([
+    expect((await generationsOf(db))).toEqual([
       { attempt: 3, status: 'ok', extractor_version: 'doc/1', current: 1 },
     ]);
 
     // Behind again, and this time the original cannot be reached: nothing is
     // queued, the pieces and the pointer stay, and the result says so under the
     // code for it (AD-24, NFR-2).
-    stampExtractorVersion(db, 'doc/0');
-    markSourceUnreachable(db);
+    (await stampExtractorVersion(db, 'doc/0'));
+    (await markSourceUnreachable(db));
 
     const unreachable = await drain();
 
     expect(unreachable.warnings).toEqual(['FILE_SOURCE_UNREACHABLE']);
     expect(unreachable.data).toMatchObject({ reextract_unreachable: 1, reextract_redacted: 0 });
-    expect(generationsOf(db)).toEqual([
+    expect((await generationsOf(db))).toEqual([
       { attempt: 4, status: 'ok', extractor_version: 'doc/0', current: 1 },
     ]);
-    expect(chunkMatches(db, 'reextractneedle')).toBe(1);
+    expect((await chunkMatches(db, 'reextractneedle'))).toBe(1);
 
     // A recorded reading failure on that same file, which is what a person runs
     // `failures retry` about. Asking is counted rather than queued: the handler
     // would close such an item without doing anything and the row would stay.
-    recordExtractFailure(db);
+    (await recordExtractFailure(db));
 
     const retried = await runBrain(['failures', 'retry', '--json'], home, '', {
       HOME: sourceHome,
@@ -2801,10 +2749,10 @@ describe('brain sessions ingest claude-code when the database will not take the 
     });
     // The opportunistic drain at the end of that command had nothing to work,
     // and the attempt count is what says so.
-    expect(generationsOf(db)).toEqual([
+    expect((await generationsOf(db))).toEqual([
       { attempt: 4, status: 'ok', extractor_version: 'doc/0', current: 1 },
     ]);
-    expect(failureResolvedAt(db)).toBe(null);
+    expect((await failureResolvedAt(db))).toBe(null);
   }, 30_000);
 
   it('이미지 원본은 한 번 남고 이미지뿐인 메시지와 재수집과 잠금 뒤 재주입도 같은 연결을 만든다', async () => {
@@ -2817,11 +2765,11 @@ describe('brain sessions ingest claude-code when the database will not take the 
     ].map(x=>JSON.stringify(x)).join('\n')+'\n';
     async function input(home: string) { const path=join(home,'images.jsonl'); await writeFile(path,lines); return stopPayload(path); }
     async function verify(home: string) {
-      const counts=rowCounts(databaseIn(home)); expect(counts['files']).toBe(1); expect(counts['file_locations']).toBe(1); expect(counts['message_attachments']).toBe(2); expect(counts['messages']).toBe(2);
-      const db=new DatabaseSync(databaseIn(home),{readOnly:true});
+      const counts=(await rowCounts(databaseIn(home))); expect(counts['files']).toBe(1); expect(counts['file_locations']).toBe(1); expect(counts['message_attachments']).toBe(2); expect(counts['messages']).toBe(2);
+      const db=new PgTestClient(databaseIn(home));
       try {
-        const rows=db.prepare(`select m.harness_message_id, m.body, a.ordinal, a.source_kind, a.source_ref, a.status, f.content_hash, f.size_bytes, l.store_kind, l.locator, l.ownership
-          from messages m join message_attachments a on a.message_id=m.id join files f on f.id=a.file_id join file_locations l on l.id=f.home_location_id order by m.harness_message_id`).all() as {harness_message_id:string;body:string;ordinal:number;source_kind:string;source_ref:string;status:string;locator:string}[];
+        const rows=(await db.prepare(`select m.harness_message_id, m.body, a.ordinal, a.source_kind, a.source_ref, a.status, f.content_hash, f.size_bytes, l.store_kind, l.locator, l.ownership
+          from messages m join message_attachments a on a.message_id=m.id join files f on f.id=a.file_id join file_locations l on l.id=f.home_location_id order by m.harness_message_id`).all()) as {harness_message_id:string;body:string;ordinal:number;source_kind:string;source_ref:string;status:string;locator:string}[];
         expect(rows).toHaveLength(2); expect(rows[0]?.body).toBe('');
         for(const row of rows) {
           expect(row).toMatchObject({ordinal:0,source_kind:'image',status:'stored',store_kind:'local',ownership:'brain',size_bytes:png.length});
@@ -2830,7 +2778,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
         }
         const files=await readdir(join(home,'files'),{recursive:true,withFileTypes:true}); expect(files.filter(x=>x.isFile())).toHaveLength(1);
         return rows;
-      } finally {db.close();}
+      } finally {(await db.close());}
     }
     const direct=await installedHome(); const directPayload=await input(direct);
     const args=['sessions','ingest','claude-code','--json'];
@@ -2854,7 +2802,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
   it('spools the turn, after waiting out its budget once, while another process holds the lock', async () => {
     const home = await installedHome();
     const transcript = await transcriptIn(home);
-    const before = rowCounts(databaseIn(home));
+    const before = (await rowCounts(databaseIn(home)));
     // Longer than the turn budget, so the lock is still held when the ingest
     // gives up: what is measured is the hook's own three seconds (AD-7).
     const release = await holdTheLock(home, 20_000);
@@ -2885,7 +2833,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
       // file again (story 12).
       expect(JSON.stringify(records)).not.toContain('import notes');
       // Not one row: the one write it tried never went in.
-      expect(rowCounts(databaseIn(home))).toEqual(before);
+      expect((await rowCounts(databaseIn(home)))).toEqual(before);
 
       // The budget once, and not once per store step: a turn that waited three
       // seconds four times would be twelve seconds of somebody's attention
@@ -2900,13 +2848,13 @@ describe('brain sessions ingest claude-code when the database will not take the 
   it('spools the turn, without calling run, when the database is at another version', async () => {
     const home = await installedHome();
     const transcript = await transcriptIn(home);
-    const database = new DatabaseSync(databaseIn(home));
+    const database = new PgTestClient(databaseIn(home));
     try {
-      database.exec('update schema_version set version = 2');
+      (await database.exec('update brain.schema_migrations set version = 2'));
     } finally {
-      database.close();
+      (await database.close());
     }
-    const before = rowCounts(databaseIn(home));
+    const before = (await rowCounts(databaseIn(home)));
 
     const run = await runBrain(
       ['sessions', 'ingest', 'claude-code', '--json'],
@@ -2919,15 +2867,36 @@ describe('brain sessions ingest claude-code when the database will not take the 
     expectSpooledTurn(run, ['SPOOLED', 'SCHEMA_MISMATCH']);
     expect((await spooled(home))[0]?.payload.cause).toBe('SCHEMA_MISMATCH');
     // Every table, not only the three this command writes to.
-    expect(rowCounts(databaseIn(home))).toEqual(before);
+    expect((await rowCounts(databaseIn(home)))).toEqual(before);
   });
 
-  it('spools the turn, and makes no database, when the file has been removed', async () => {
+  it('spools the hook with the default selector when neither process env nor .env supplies a URL', async () => {
+    const home = await temporary.create('brain-ingest-no-url-');
+    await writeFile(join(home, 'config.toml'), 'schema_version=1\n');
+    await writeFile(join(home, '.env'), '');
+    const env = childEnvironment(home);
+    expect(env).not.toHaveProperty('BRAIN_DATABASE_URL');
+    const transcript = await transcriptIn(home);
+
+    const run = await runBrain(
+      ['sessions', 'ingest', 'claude-code', '--json'],
+      home,
+      stopPayload(transcript),
+      env,
+    );
+
+    expectSpooledTurn(run, ['SPOOLED', 'DB_UNAVAILABLE']);
+    const files = (await readdir(spoolPath(home))).filter(name => name.endsWith('.jsonl'));
+    expect(files).toHaveLength(1);
+    expect((await spooled(home))[0]?.payload.cause).toBe('DB_UNAVAILABLE');
+  });
+
+  it('spools the turn without recreating a missing PG schema', async () => {
     const home = await installedHome();
     const transcript = await transcriptIn(home);
-    for (const suffix of ['', '-wal', '-shm']) {
-      await rm(`${databaseIn(home)}${suffix}`, { force: true });
-    }
+    const db = new PgTestClient(home);
+    await db.exec('drop schema brain cascade');
+    await db.close();
 
     const run = await runBrain(
       ['sessions', 'ingest', 'claude-code', '--json'],
@@ -2946,11 +2915,11 @@ describe('brain sessions ingest claude-code when the database will not take the 
   it('says nothing on stdout in text mode when it spools, as when it stores', async () => {
     const home = await installedHome();
     const transcript = await transcriptIn(home);
-    const database = new DatabaseSync(databaseIn(home));
+    const database = new PgTestClient(databaseIn(home));
     try {
-      database.exec('update schema_version set version = 2');
+      (await database.exec('update brain.schema_migrations set version = 2'));
     } finally {
-      database.close();
+      (await database.close());
     }
 
     const run = await runBrain(
@@ -2969,11 +2938,11 @@ describe('brain sessions ingest claude-code when the database will not take the 
   it('reports the original failure, in one line, when the spool cannot be written either', async () => {
     const home = await installedHome();
     const transcript = await transcriptIn(home);
-    const database = new DatabaseSync(databaseIn(home));
+    const database = new PgTestClient(databaseIn(home));
     try {
-      database.exec('update schema_version set version = 2');
+      (await database.exec('update brain.schema_migrations set version = 2'));
     } finally {
-      database.close();
+      (await database.close());
     }
     // A plain file where the spool folder belongs, which is the one state that
     // takes the last place a write could go away.
@@ -2994,7 +2963,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
     // And the message says the fallback failed too, which is the whole reason
     // there is nothing else to report (NFR-2).
     expect(run.stderr).toContain('spool');
-    expect(rowCounts(databaseIn(home))['sessions']).toBe(0);
+    expect((await rowCounts(databaseIn(home)))['sessions']).toBe(0);
   });
 
   it('leaves no spool file behind on an ordinary ingest', async () => {
@@ -3080,8 +3049,8 @@ describe('hook arrival evidence', () => {
     const home = await installedHome();
     const transcript = await transcriptIn(home);
     if (spooled) {
-      const db = new DatabaseSync(databaseIn(home));
-      try { db.exec('update schema_version set version = 2'); } finally { db.close(); }
+      const db = new PgTestClient(databaseIn(home));
+      try { (await db.exec('update brain.schema_migrations set version = 2')); } finally { (await db.close()); }
     }
     const run = await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, stopPayload(transcript), { SECOND_BRAIN_PLUGIN_ROOT: '/demo/plugin' });
     expect(run.code).toBe(0);
@@ -3145,19 +3114,19 @@ describe('blob_delete through the CLI', () => {
     deleted_at: string | null;
   }
 
-  function locations(home: string): LocationRow[] {
-    const db = new DatabaseSync(databaseIn(home), { readOnly: true });
+  async function locations(home: string): Promise<LocationRow[]> {
+    const db = new PgTestClient(databaseIn(home));
     try {
-      return db
+      return (await db
         .prepare('select id, store_kind, locator, ownership, deleted_at from file_locations order by ownership, locator')
-        .all() as unknown as LocationRow[];
+        .all()) as unknown as LocationRow[];
     } finally {
-      db.close();
+      (await db.close());
     }
   }
 
-  function locationById(home: string, id: string): LocationRow {
-    const row = locations(home).find((location) => location.id === id);
+  async function locationById(home: string, id: string): Promise<LocationRow> {
+    const row = (await locations(home)).find((location) => location.id === id);
     if (row === undefined) throw new Error(`위치 ${id}가 없습니다`);
     return row;
   }
@@ -3178,16 +3147,16 @@ describe('blob_delete through the CLI', () => {
   }
 
   /** Put one `blob_delete` item on the queue, the way 10.12 and epic 8 will. */
-  function queueBlobDelete(home: string, id: string, locationId: string): void {
+  async function queueBlobDelete(home: string, id: string, locationId: string): Promise<void> {
     const work = blobDeleteWork({ id, locationId, at: new Date('2026-10-26T00:00:00.000Z') });
-    const db = new DatabaseSync(databaseIn(home));
+    const db = new PgTestClient(databaseIn(home));
     try {
-      db.prepare(`insert into work_items(id, kind, target_kind, target_id, created_at, attempts, next_attempt_at)
-        values (?, ?, ?, ?, ?, 0, ?)`).run(
+      (await db.prepare(`insert into work_items(id, kind, target_kind, target_id, created_at, attempts, next_attempt_at)
+        values ($1, $2, $3, $4, $5, 0, $6)`).run(
           work.id, work.kind, work.targetKind, work.targetId,
-          work.createdAt.toISOString(), work.nextAttemptAt.toISOString());
+          work.createdAt.toISOString(), work.nextAttemptAt.toISOString()));
     } finally {
-      db.close();
+      (await db.close());
     }
   }
 
@@ -3235,7 +3204,7 @@ describe('blob_delete through the CLI', () => {
     const { home, sourceHome, environment } = await ingested();
     // The pasted image: Brain's own copy and the only place it has, so the
     // deletion is not hiding anything behind another copy.
-    const pasted = locations(home).find(
+    const pasted = (await locations(home)).find(
       (location) => location.ownership === 'brain' && location.locator.endsWith('.png'),
     );
     expect(pasted).toBeDefined();
@@ -3243,21 +3212,21 @@ describe('blob_delete through the CLI', () => {
     const blob = join(home, 'files', pasted.locator);
     expect(existsSync(blob)).toBe(true);
 
-    queueBlobDelete(home, '01940000-0000-7000-8000-000000000b01', pasted.id);
+    (await queueBlobDelete(home, '01940000-0000-7000-8000-000000000b01', pasted.id));
     const first = await runBrain(['queue', 'drain', '--json'], home, '', environment);
     expect(first.code, first.stderr).toBe(0);
     expect(existsSync(blob)).toBe(false);
-    const marked = locationById(home, pasted.id).deleted_at;
+    const marked = (await locationById(home, pasted.id)).deleted_at;
     expect(marked).not.toBeNull();
 
     // A second item about the same place, with nothing at the locator: the end
     // state the criterion names — no blob, the first drain's instant, and no
     // record of either run.
-    queueBlobDelete(home, '01940000-0000-7000-8000-000000000b02', pasted.id);
+    (await queueBlobDelete(home, '01940000-0000-7000-8000-000000000b02', pasted.id));
     const second = await runBrain(['queue', 'drain', '--json'], home, '', environment);
     expect(second.code, second.stderr).toBe(0);
     expect(existsSync(blob)).toBe(false);
-    expect(locationById(home, pasted.id).deleted_at).toBe(marked);
+    expect((await locationById(home, pasted.id)).deleted_at).toBe(marked);
     expect(await blobFailures(home, sourceHome)).toEqual([]);
 
     // And a third, with a blob back at that locator: the store is content
@@ -3265,17 +3234,17 @@ describe('blob_delete through the CLI', () => {
     // a place that was emptied once may not delete that new blob (Design Notes).
     await mkdir(dirname(blob), { recursive: true });
     await writeFile(blob, PASTED);
-    queueBlobDelete(home, '01940000-0000-7000-8000-000000000b03', pasted.id);
+    (await queueBlobDelete(home, '01940000-0000-7000-8000-000000000b03', pasted.id));
     const third = await runBrain(['queue', 'drain', '--json'], home, '', environment);
     expect(third.code, third.stderr).toBe(0);
     expect(await readFile(blob)).toEqual(PASTED);
-    expect(locationById(home, pasted.id).deleted_at).toBe(marked);
+    expect((await locationById(home, pasted.id)).deleted_at).toBe(marked);
     expect(await blobFailures(home, sourceHome)).toEqual([]);
   }, 30_000);
 
   it('external 위치와 루트 밖 링크를 가리키는 brain 위치는 둘 다 거부로 기록한다', async () => {
     const { home, sourceHome, environment, note } = await ingested();
-    const external = locations(home).find((location) => location.ownership === 'external');
+    const external = (await locations(home)).find((location) => location.ownership === 'external');
     expect(external).toBeDefined();
     if (external === undefined) return;
 
@@ -3290,17 +3259,17 @@ describe('blob_delete through the CLI', () => {
     await mkdir(join(home, 'files', 'ab', 'cd'), { recursive: true });
     await symlink(outside, join(home, 'files', linked));
     const linkedId = '01940000-0000-7000-8000-000000000b10';
-    const db = new DatabaseSync(databaseIn(home));
+    const db = new PgTestClient(databaseIn(home));
     try {
-      const fileId = db.prepare('select file_id from file_locations where id = ?').get(external.id)?.['file_id'];
-      db.prepare(`insert into file_locations(id, file_id, store_kind, locator, ownership, first_seen_at)
-        values (?, ?, 'local', ?, 'brain', '2026-10-26T00:00:00.000Z')`).run(linkedId, fileId as string, linked);
+      const fileId = (await db.prepare('select file_id from file_locations where id = $1').get(external.id))?.['file_id'];
+      (await db.prepare(`insert into file_locations(id, file_id, store_kind, locator, ownership, first_seen_at)
+        values ($1, $2, 'local', $3, 'brain', '2026-10-26T00:00:00.000Z')`).run(linkedId, fileId as string, linked));
     } finally {
-      db.close();
+      (await db.close());
     }
 
-    queueBlobDelete(home, '01940000-0000-7000-8000-000000000b11', external.id);
-    queueBlobDelete(home, '01940000-0000-7000-8000-000000000b12', linkedId);
+    (await queueBlobDelete(home, '01940000-0000-7000-8000-000000000b11', external.id));
+    (await queueBlobDelete(home, '01940000-0000-7000-8000-000000000b12', linkedId));
     const run = await runBrain(['queue', 'drain', '--json'], home, '', environment);
     expect(run.code, run.stderr).toBe(0);
 
@@ -3309,8 +3278,8 @@ describe('blob_delete through the CLI', () => {
     expect(await readFile(note, 'utf8')).toBe(NOTE_TEXT);
     expect(existsSync(outside)).toBe(true);
     expect(await readFile(outside, 'utf8')).toBe('outside text');
-    expect(locationById(home, external.id).deleted_at).toBeNull();
-    expect(locationById(home, linkedId).deleted_at).toBeNull();
+    expect((await locationById(home, external.id)).deleted_at).toBeNull();
+    expect((await locationById(home, linkedId)).deleted_at).toBeNull();
 
     const failures = await blobFailures(home, sourceHome);
     expect(failures.map((failure) => failure.code)).toEqual(['LOCATION_REFUSED', 'LOCATION_REFUSED']);

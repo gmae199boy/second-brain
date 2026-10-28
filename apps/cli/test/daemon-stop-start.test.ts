@@ -1,10 +1,13 @@
+import { runTestInstaller, runPgCommand } from './pg-home.js';
+import { postgresStore, CORE_SCHEMA_VERSION, type PostgresStoreOptions } from 'second_brain/postgres';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DatabaseSync } from 'node:sqlite';
+import { PgTestClient } from './pg-client.js';
+import { preparePgHome, pgDatabaseUrl, pgAppUrl } from './pg-home.js';
 import { afterEach, expect, it } from 'vitest';
 import { daemonLabel, daemonPlistPath } from '../src/daemon/launchd.js';
 import { withoutHarnessFolders } from './environment.js';
@@ -18,6 +21,7 @@ afterEach(async () => {
 const bin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
 const installer = fileURLToPath(new URL('../dist/install.js', import.meta.url));
 function run(args: string[], env: NodeJS.ProcessEnv, script = bin): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  if (args[0] === 'doctor') return runPgCommand(args, env);
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = '';
@@ -32,7 +36,7 @@ it.skipIf(process.platform !== 'darwin')('stops the resident owner, falls back t
   const fake = join(home, 'launchctl');
   const env = { ...withoutHarnessFolders(process.env), SECOND_BRAIN_HOME: home,
     CLAUDE_CONFIG_DIR: config, SECOND_BRAIN_LAUNCH_AGENTS: join(home, 'agents'), FAKE_LAUNCHCTL_DIR: fake, FAKE_LAUNCHCTL_PID_FILE: join(home, 'managed-pid') };
-  expect((await run(['--yes'], env, installer)).code).toBe(0);
+  expect((await runTestInstaller(home, env)).code).toBe(0);
   // Keep pending command transcripts outside this daemon's watch folders so
   // the assertion isolates stop's drain behavior from the background watcher.
   daemon = spawn(process.execPath, [bin, 'daemon', 'run'], { env: { ...env, CLAUDE_CONFIG_DIR: join(home, 'daemon-claude') }, stdio: 'ignore' });
@@ -58,11 +62,11 @@ it.skipIf(process.platform !== 'darwin')('stops the resident owner, falls back t
   await closed;
   expect(existsSync(join(home, 'run', 'daemon.pid'))).toBe(false);
   expect(JSON.parse((await run(['daemon', 'status', '--json'], env)).stdout).data.alive).toBe(false);
-  const beforeDrain = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
-  try { expect((beforeDrain.prepare('select count(*) as n from sessions').get() as { n: number }).n).toBe(0); } finally { beforeDrain.close(); }
+  const beforeDrain = new PgTestClient(join(home, 'brain.db'));
+  try { expect(((await beforeDrain.prepare('select count(*) as n from sessions').get()) as { n: number }).n).toBe(0); } finally { (await beforeDrain.close()); }
   expect((await run(['failures', 'list', '--json'], env)).code).toBe(0);
-  const db = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
-  try { expect((db.prepare('select count(*) as n from sessions').get() as { n: number }).n).toBe(1); } finally { db.close(); }
+  const db = new PgTestClient(join(home, 'brain.db'));
+  try { expect(((await db.prepare('select count(*) as n from sessions').get()) as { n: number }).n).toBe(1); } finally { (await db.close()); }
   const doctor = await run(['doctor', 'run', '--json'], env);
   expect(doctor.code).toBe(0);
   expect(JSON.parse(doctor.stdout).data.checks.find((c: { id: string }) => c.id === 'daemon').status).toBe('warn');

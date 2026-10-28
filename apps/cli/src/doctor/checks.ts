@@ -134,7 +134,7 @@ export function runtimeChecks(options: RuntimeChecksOptions): readonly DoctorChe
     { id: 'config', run: async () => configCheck(home, await config()) },
     { id: 'config-timezone', run: async () => {
       const read = await config();
-      const stale = read.ok && read.config.storeUrlEnv !== undefined && read.config.fileHasTimezone === true;
+      const stale = read.ok && read.config.fileHasTimezone === true;
       return { id: 'config-timezone', status: stale ? 'warn' : 'ok', detail: stale
         ? 'timezone은 DB에 저장됩니다. config.toml의 timezone은 무시됩니다. brain setup run으로 옮기세요.'
         : '시간대 설정 위치가 올바릅니다' };

@@ -1,8 +1,10 @@
+import { postgresStore, CORE_SCHEMA_VERSION, type PostgresStoreOptions } from 'second_brain/postgres';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { PgTestClient } from './pg-client.js';
+import { preparePgHome, pgDatabaseUrl, pgAppUrl } from './pg-home.js';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { HOME_ENV } from '../src/config/paths.js';
@@ -98,8 +100,7 @@ function spawned(args: readonly string[], home: string, script = binPath): Promi
 /** An installed brain: a configuration folder, a migrated database, an owner. */
 async function installedHome(): Promise<string> {
   const home = await temporary.create('brain-drain-');
-  const install = await spawned(['--yes'], home, installPath);
-  expect(install.code, install.stdout + install.stderr).toBe(0);
+  await preparePgHome(home);
   return home;
 }
 
@@ -192,11 +193,11 @@ describe('brain queue drain', () => {
 
   it('is refused with SCHEMA_MISMATCH and exit 1 on a database at another version', async () => {
     const home = await installedHome();
-    const database = new DatabaseSync(databaseIn(home));
+    const database = new PgTestClient(databaseIn(home));
     try {
-      database.exec('update schema_version set version = 2');
+      (await database.exec('update brain.schema_migrations set version = 2'));
     } finally {
-      database.close();
+      (await database.close());
     }
 
     const run = await spawned(['queue', 'drain', '--json'], home);
@@ -212,9 +213,7 @@ describe('brain queue drain', () => {
 
   it('is refused with DB_UNAVAILABLE and exit 2 when the file is not there', async () => {
     const home = await installedHome();
-    for (const suffix of ['', '-wal', '-shm']) {
-      await rm(`${databaseIn(home)}${suffix}`, { force: true });
-    }
+    const db = new PgTestClient(home); await db.exec('drop schema brain cascade'); await db.close();
 
     const run = await spawned(['queue', 'drain', '--json'], home);
 

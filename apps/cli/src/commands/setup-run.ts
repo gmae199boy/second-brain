@@ -54,16 +54,15 @@ export const setupRun: CommandSpec<SetupRunData> = {
   examples: [
     'brain setup run',
     'brain setup run --yes',
-    'brain setup run --store-path /Volumes/notes/brain.db --yes',
+    'brain setup run --mirror-path /Volumes/notes/mirror --yes',
   ],
   output:
-    '설치 보고: `home`, `config_path`, `store`(SQLite 홈), `postgres`(PG 홈: `compose_started`, `legacy_sqlite_path`, `import` 포함), `owner`, `files`, `mirror_path`, `shim`, `daemon`(재시작 여부 `restarted` 포함), `harnesses`, `checks`, `summary`, `update`, `installed`',
+    '설치 보고: `home`, `config_path`, `postgres`( `compose_started`, `legacy_sqlite_path`, `import` 포함), `owner`, `files`, `mirror_path`, `shim`, `daemon`(재시작 여부 `restarted` 포함), `harnesses`, `checks`, `summary`, `update`, `installed`',
   risk: 'write',
   hook: false,
   dryRun: false,
   standalone: true,
   options: [
-    { flags: '--store-path <path>', description: '데이터베이스 파일의 절대 경로' },
     { flags: '--mirror-path <path>', description: '미러 폴더의 절대 경로' },
     {
       flags: '--plugin-root <path>',
@@ -113,7 +112,6 @@ export const setupRun: CommandSpec<SetupRunData> = {
 export function setupRunFlags(options: Record<string, unknown>): InstallFlags {
   const connect = options['connect'];
   return {
-    storePath: typeof options['storePath'] === 'string' ? options['storePath'] : undefined,
     mirrorPath: typeof options['mirrorPath'] === 'string' ? options['mirrorPath'] : undefined,
     pluginRoot: typeof options['pluginRoot'] === 'string' ? options['pluginRoot'] : undefined,
     connect: Array.isArray(connect)

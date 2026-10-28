@@ -38,14 +38,7 @@ import {
 } from './install/installed.js';
 import { transcriptFolders } from './harnesses.js';
 import { writeShim } from './install/shim.js';
-import {
-  doctorAt,
-  prepareFilesRoot,
-  prepareSelfUser,
-  prepareStore,
-  storeCollisions,
-  storeFileExists,
-} from './install/store.js';
+import { prepareFilesRoot, storeFileExists } from './install/store.js';
 
 /**
  * The installer, as its own entry point. It is deliberately not a command of
@@ -158,11 +151,11 @@ export class Cancelled extends Error {
 }
 
 /** The real world, in one place, so the tests can replace all of it. */
-export function systemInstallDeps(options: { runner?: CommandRunner } = {}): InstallDeps {
+export function systemInstallDeps(options: { runner?: CommandRunner; secrets?: { adminUrl: string; appPassword: string }; databaseName?: string } = {}): InstallDeps {
   const withBrain = async <T>(home: string, env: NodeJS.ProcessEnv, run: (brain: import('second_brain').Brain) => Promise<T>): Promise<T> => {
     const config = await readConfig(home);
-    const opened = await openBrainStore({ home, env, config, path: 'command', createSqliteStore: () => { throw new Error('PG 홈이 필요합니다'); } });
-    try { return await run(createBrain(brainDependencies({ home, env, config, store: opened.store, kind: opened.kind, adapterProbeIds: opened.kind === 'postgres' ? opened.adapterProbeIds : undefined, runner: options.runner, schemaVersions: opened.expected, clock: { now: () => new Date() }, idGen: uuidV7IdGen(), workHandlers: {} }))); }
+    const opened = await openBrainStore({ home, env, config, path: 'command' });
+    try { return await run(createBrain(brainDependencies({ home, env, config, store: opened.store, adapterProbeIds: opened.adapterProbeIds, runner: options.runner, schemaVersions: opened.expected, clock: { now: () => new Date() }, idGen: uuidV7IdGen(), workHandlers: {} }))); }
     finally { await opened.store.close(); }
   };
   return {
@@ -173,7 +166,7 @@ export function systemInstallDeps(options: { runner?: CommandRunner } = {}): Ins
       get: (home, urlEnv, env) => withSettings(home, urlEnv, env, brain => brain.config.get({ key: 'timezone' })),
       set: (home, urlEnv, env, value) => withSettings(home, urlEnv, env, brain => brain.config.set({ key: 'timezone', value })),
     },
-    postgres: (home, urlEnv, env) => installPostgres({ home, urlEnv, env, clock: { now: () => new Date() }, runner: options.runner }),
+    postgres: (home, urlEnv, env) => installPostgres({ home, urlEnv, env, clock: { now: () => new Date() }, runner: options.runner, secrets: options.secrets, databaseName: options.databaseName }),
     prompts: clackPrompts(),
     // Both ends have to be a terminal: a question needs an answer and a place
     // to be read. Anything else counts as not interactive at all.
@@ -191,17 +184,7 @@ export function systemInstallDeps(options: { runner?: CommandRunner } = {}): Ins
       write: writeConfig,
       read: readConfigForSetup,
     },
-    store: {
-      prepare: (path: string, options?: { mergeProjects?: boolean }) =>
-        prepareStore(path, options ?? {}),
-      collisions: (path: string) => storeCollisions(path),
-      exists: (path: string) => storeFileExists(path),
-      self: (path: string) => prepareSelfUser(path),
-      // The same folders a command would look in, so the report the install
-      // ends on is the report `brain doctor run` gives afterwards.
-      doctor: (home: string, path: string) =>
-        doctorAt(home, path, transcriptFolders(process.env)),
-    },
+    legacyFileExists: storeFileExists,
     files: { prepare: prepareFilesRoot },
     // The node running this process, and the entry point beside the shim
     // module: whatever node started the installer is the node the hooks get.

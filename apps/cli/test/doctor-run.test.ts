@@ -1,606 +1,160 @@
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { appendFile, chmod, readdir, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { SQLITE_SCHEMA_VERSION, runSqliteMigrations } from 'second_brain';
-import { writeConfig } from '../src/config/codec.js';
-import { HOME_ENV, configFilePath } from '../src/config/paths.js';
-import { runtimeChecks } from '../src/doctor/checks.js';
-import { shimPath, writeShim } from '../src/install/shim.js';
-import { assertKoreanLine, assertKoreanLines } from './language.js';
-import { withoutHarnessFolders } from './environment.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import { preparePgHome, pgRunner, runPgCommand, pgDatabaseUrl } from './pg-home.js';
+import { PgTestClient } from './pg-client.js';
 import { tempHomes } from './temp-home.js';
-
-const binPath = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
-const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
-
-interface Run {
-  code: number | null;
-  stdout: string;
-  stderr: string;
-}
-
-interface Summary {
-  passed: number;
-  warned: number;
-  failed: number;
-  skipped: number;
-}
-
-interface Envelope {
-  ok: boolean;
-  now: string;
-  data?: {
-    checks: { id: string; status: string; detail?: string; code?: string }[];
-    summary: Summary;
-  };
-  warnings: string[];
-  error?: { code: string; message: string };
-}
-
-/**
- * Every check doctor reports, in order: the store's own first, then the machine
- * ones the runtime registers (story 8). A check added to `doctor/checks.ts`
- * belongs on this list, and nowhere else in this file.
- */
-const CHECKS = [
-  'db',
-  'writable',
-  'wal',
-  'fts5-trigram',
-  'foreign-keys',
-  'schema-version',
-  'failures',
-  'untagged',
-  'transcripts',
-  'config',
-  'config-timezone',
-  'shim',
-  'node-path',
-  'node-version',
-  'plugin',
-  'last-hook',
-  'spool',
-  'daemon',
-];
-
-/** The machine checks alone: what is still reported when there is no database. */
-const MACHINE_CHECKS = ['config', 'config-timezone', 'shim', 'node-path', 'node-version', 'plugin', 'last-hook', 'spool', 'daemon'];
-
-/**
- * What a report says about a database nobody can reach: `db` and the schema
- * version it could not ask for, then the machine half (story 2.1).
- */
-const NO_DATABASE_CHECKS = [
-  'db',
-  'schema-version',
-  'failures',
-  'untagged',
-  'transcripts',
-  ...MACHINE_CHECKS,
-];
-
+import { withoutHarnessFolders } from './environment.js';
+import { dispatch } from '../src/dispatch.js';
+import { commands } from '../src/commands/index.js';
+import { assertKoreanLines } from './language.js';
+import { writeShim } from '../src/install/shim.js';
 const temporary = tempHomes();
-
-/** A folder with no configuration at all. */
-async function emptyHome(): Promise<string> {
-  const home = await temporary.create('brain-doctor-');
-  return home;
-}
-
-/**
- * A configuration folder for one run, with a database beside it at the version
- * this build ships and the shim a finished install leaves. The command reads it
- * through `SECOND_BRAIN_HOME`, so no test touches the real `~/.second_brain`
- * (AD-18).
- */
-async function configuredHome(): Promise<string> {
-  const home = await emptyHome();
-  const migrated = await runSqliteMigrations({ path: join(home, 'brain.db') });
-  expect(migrated.ok).toBe(true);
-  await writeConfig(home, {});
-  // The built entry point, because these tests import `src/`, where
-  // `cliEntryPath()` would name a file that is not there.
-  await writeShim(home, { bin: binPath });
-  return home;
-}
-
-/** The checks of one envelope, by id, so a row names what it cares about. */
-function byId(envelope: Envelope): Map<string, { status: string; detail?: string; code?: string }> {
-  return new Map((envelope.data?.checks ?? []).map((check) => [check.id, check]));
-}
-
-function runBrain(args: string[], env: Record<string, string | undefined>): Promise<Run> {
-  const childEnv: NodeJS.ProcessEnv = withoutHarnessFolders(process.env);
-  delete childEnv[HOME_ENV];
-  for (const [key, value] of Object.entries(env)) {
-    if (value === undefined) delete childEnv[key];
-    else childEnv[key] = value;
-  }
-
-  const child = spawn(process.execPath, [binPath, ...args], {
-    cwd: repoRoot,
-    env: childEnv,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  let stdout = '';
-  let stderr = '';
-  child.stdout.on('data', (chunk: Buffer) => {
-    stdout += chunk.toString();
-  });
-  child.stderr.on('data', (chunk: Buffer) => {
-    stderr += chunk.toString();
-  });
-
-  const finished = new Promise<Run>((resolve, reject) => {
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-  });
-
-  // Every branch of the report goes through here, so the output-language rule
-  // is checked on all of them at once rather than once per `it` (Conventions,
-  // output language 2026-10-16). A branch added below is covered the moment it
-  // runs. After the promise, not inside the `close` handler: a failure there
-  // would be an uncaught exception rather than a failing test.
-  return finished.then((run) => {
-    assertKoreanDoctorOutput(run);
-    return run;
-  });
-}
-
-/**
- * The report, in Korean. Under `--json` the sentences are the checks' details
- * and the envelope's own `message` and `hint`; in text mode they are the lines.
- * The check ids and the status words stay English (Boundaries), which the
- * checker knows about.
- */
-function assertKoreanDoctorOutput(run: Run): void {
-  if (run.stdout.startsWith('{')) {
-    const envelope = JSON.parse(run.stdout) as Envelope;
-    for (const check of envelope.data?.checks ?? []) {
-      assertKoreanLine(check.detail ?? '', { label: `${check.id} detail` });
-    }
-    if (envelope.error !== undefined) {
-      assertKoreanLine(envelope.error.message, { label: `${envelope.error.code} message` });
-    }
-  } else {
-    assertKoreanLines(run.stdout, { label: 'doctor stdout' });
-  }
-  assertKoreanLines(run.stderr, { label: 'doctor stderr' });
-}
-
 afterEach(() => temporary.cleanup());
-
-describe('brain doctor run', () => {
-  beforeAll(() => {
-    if (!existsSync(binPath)) {
-      throw new Error(`${binPath} does not exist. Run \`pnpm build\` before these tests.`);
+async function world() {
+  const home = await temporary.create('brain-doctor-'); await preparePgHome(home);
+  const env = withoutHarnessFolders({ ...process.env, SECOND_BRAIN_HOME: home }); delete env.BRAIN_DATABASE_URL; delete env.DOCKER_HOST;
+  return { home, env, run: (args = ['doctor', 'run', '--json']) => runPgCommand(args, env) };
+}
+describe('PG doctor', () => {
+  it('reports PG checks and no SQLite file checks when the store table is absent', async () => {
+    const kit = await world();
+    await writeFile(join(kit.home, 'config.toml'), 'schema_version=1\n');
+    // world() removes the inherited process URL; the isolated home's .env supplies the test DB.
+    expect(kit.env).not.toHaveProperty('BRAIN_DATABASE_URL');
+    const result = await kit.run();
+    expect(result.code).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.ok).toBe(true);
+    for (const id of ['orbstack', 'container', 'db', 'writable', 'pg_trgm', 'schema-version']) {
+      expect(envelope.data.checks).toContainEqual(expect.objectContaining({ id, status: 'ok' }));
+    }
+    const ids = envelope.data.checks.map((check: { id: string }) => check.id);
+    for (const id of ['db-path', 'db-file', 'store-path', 'wal', 'fts5-trigram', 'foreign-keys']) {
+      expect(ids).not.toContain(id);
     }
   });
 
-  it('reports healthy local checks and warns about the absent daemon', async () => {
-    const home = await configuredHome();
-    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
-
-    expect(run.stderr).toBe('');
-    expect(run.code).toBe(0);
-
-    const envelope = JSON.parse(run.stdout) as Envelope;
-    expect(envelope.ok).toBe(true);
-    expect(envelope.warnings).toEqual([]);
-    expect(envelope.now).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/);
-
-    const checks = envelope.data?.checks ?? [];
-    expect(checks.map((check) => check.id)).toEqual(CHECKS);
-    const failed = checks.filter(
-      (check) => check.status !== 'ok' && check.id !== 'daemon',
-    );
-    expect(failed, JSON.stringify(failed)).toEqual([]);
-    expect(byId(envelope).get('daemon')).toMatchObject({ status: 'warn' });
-    expect(byId(envelope).get('transcripts')?.status).toBe('ok');
-    // The SQLite version, then what each probe and each machine check found.
-    expect(checks[0]?.detail).toMatch(/^\d+\./);
-    const found = byId(envelope);
-    expect(found.get('wal')?.detail).toBe('wal');
-    expect(found.get('schema-version')?.detail).toBe(`\`core\`: ${SQLITE_SCHEMA_VERSION}`);
-    expect(found.get('config')?.detail).toBe(configFilePath(home));
-    expect(found.get('shim')?.detail).toBe(shimPath(home));
-    expect(found.get('node-version')?.detail).toContain(process.versions.node);
-    // The machine half comes from the registry rather than from a second list
-    // written out here: a check added to `doctor/checks.ts` turns up in this
-    // report, and in the installer's, with nothing else touched (story 8).
-    const registered = runtimeChecks({ home }).map((source) => source.id);
-    expect(checks.slice(-registered.length).map((check) => check.id)).toEqual(registered);
-    expect(registered).toEqual(MACHINE_CHECKS);
-    // All checks passed except the absent daemon, and the counts add up.
-    expect(envelope.data?.summary).toEqual({
-      passed: CHECKS.length - 1,
-      warned: 1,
-      failed: 0,
-      skipped: 0,
-    });
+  it('reports PG prerequisites and adapter checks, with no SQLite file checks', async () => {
+    const kit = await world(); const result = await kit.run(); expect(result.code).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    for (const id of ['orbstack', 'container', 'db', 'writable', 'pg_trgm', 'schema-version']) expect(envelope.data.checks).toContainEqual(expect.objectContaining({ id, status: 'ok' }));
+    for (const id of ['wal', 'foreign-keys', 'fts5-trigram']) expect(envelope.data.checks.map((c: { id: string }) => c.id)).not.toContain(id);
+    expect(envelope.data.checks).toContainEqual(expect.objectContaining({ id: 'daemon', status: 'warn' }));
+    expect(envelope.data.summary.failed).toBe(0);
   });
-
-  it('prints one line per check in text mode, then the summary', async () => {
-    const home = await configuredHome();
-    const run = await runBrain(['doctor', 'run'], { [HOME_ENV]: home });
-
-    expect(run.code).toBe(0);
-    const lines = run.stdout.trimEnd().split('\n');
-    expect(lines).toHaveLength(CHECKS.length + 1);
-    for (const [index, id] of CHECKS.entries()) {
-      const status = id === 'daemon' ? 'warn' : 'ok';
-      expect(lines[index]).toMatch(new RegExp(`^${id}: ${status}`));
-    }
-    // Last, so the line that says whether to read the rest is the one left on
-    // screen (Conventions: passed, warned, failed, skipped).
-    expect(lines.at(-1)).toBe(
-      `요약: 통과 ${String(CHECKS.length - 1)}, 경고 1, 실패 0, 건너뜀 0`,
-    );
+  it('prints Korean checks and a summary in text mode', async () => {
+    const result = await (await world()).run(['doctor', 'run']); expect(result.code).toBe(0); assertKoreanLines(result.stdout, { allow: ['Debian', 'pgdg13'] });
   });
-
-  it('reports the same checks through the shim of that install, as a hook would', async () => {
-    const home = await configuredHome();
-
-    // `env -u SECOND_BRAIN_HOME`: the shim carries the folder it belongs to,
-    // which is the whole reason a hook can call it (AD-19).
-    const run = await new Promise<Run>((resolve, reject) => {
-      const child = spawn(shimPath(home), ['doctor', 'run', '--json'], {
-        env: (() => {
-          const childEnv = withoutHarnessFolders(process.env);
-          delete childEnv[HOME_ENV];
-          return childEnv;
-        })(),
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let stdout = '';
-      let stderr = '';
-      child.stdout.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString();
-      });
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString();
-      });
-      child.once('error', reject);
-      child.once('close', (code) => resolve({ code, stdout, stderr }));
-    });
-
-    expect(run.code).toBe(0);
-    const envelope = JSON.parse(run.stdout) as Envelope;
-    expect((envelope.data?.checks ?? []).map((check) => check.id)).toEqual(CHECKS);
-    expect(
-      (envelope.data?.checks ?? []).every(
-        (check) => check.status === (check.id === 'daemon' ? 'warn' : 'ok'),
-      ),
-    ).toBe(true);
+  it('warns on unknown configuration keys without dropping healthy checks', async () => {
+    const kit = await world(); await appendFile(join(kit.home, 'config.toml'), '\n[custom]\ncolour="blue"\n');
+    const result = await kit.run(); expect(result.code).toBe(0); expect(JSON.parse(result.stdout).warnings).toContain('CONFIG_UNKNOWN_KEY');
   });
-
-  it('runs anyway and warns when the configuration holds a key it does not know', async () => {
-    const home = await configuredHome();
-    await appendFile(configFilePath(home), 'colour = "x"\n', 'utf8');
-
-    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
-
-    expect(run.code).toBe(0);
-    const envelope = JSON.parse(run.stdout) as Envelope;
-    expect(envelope.ok).toBe(true);
-    expect(envelope.warnings).toEqual(['CONFIG_UNKNOWN_KEY']);
-    expect(envelope.data?.checks).toHaveLength(CHECKS.length);
+  it('warns on ignored file timezone in every PG home', async () => {
+    const kit = await world(); await writeFile(join(kit.home, 'config.toml'), 'schema_version=1\ntimezone="Europe/Berlin"\n');
+    const result = await kit.run(); expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout).data.checks).toContainEqual(expect.objectContaining({ id: 'config-timezone', status: 'warn' }));
   });
-
-  it('names the unknown key on stderr in text mode', async () => {
-    const home = await configuredHome();
-    await appendFile(configFilePath(home), 'colour = "x"\n', 'utf8');
-
-    const run = await runBrain(['doctor', 'run'], { [HOME_ENV]: home });
-
-    expect(run.code).toBe(0);
-    expect(run.stderr).toContain('colour');
-    expect(run.stdout.trimEnd().split('\n')).toHaveLength(CHECKS.length + 1);
-  });
-
-  it('fails the wal check and exits 1 when the file is not in write-ahead mode', async () => {
-    const home = await configuredHome();
-    const database = new DatabaseSync(join(home, 'brain.db'));
-    database.exec('pragma journal_mode = DELETE');
-    database.close();
-
-    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
-
-    expect(run.code).toBe(1);
-    const envelope = JSON.parse(run.stdout) as Envelope;
-    expect(envelope.ok).toBe(true);
-    expect(envelope.warnings).toEqual([]);
-
-    const found = byId(envelope);
-    expect(found.get('db')).toMatchObject({ status: 'ok' });
-    expect(found.get('wal')).toMatchObject({ status: 'fail' });
-    expect(found.get('wal')?.code).toBeUndefined();
-    expect(found.get('wal')?.detail).toContain('wal이 아니라');
-    // One failing probe is not a failing report: everything else still ran.
-    expect(found.get('writable')).toMatchObject({ status: 'ok' });
-    expect(found.get('node-version')).toMatchObject({ status: 'ok' });
-  });
-
-  it('fails the writable check alone, and exits 1, for a database nobody may write', async () => {
-    const home = await configuredHome();
-    const database = join(home, 'brain.db');
-    await chmod(database, 0o444);
-
-    try {
-      const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
-
-      expect(run.code).toBe(1);
-      const envelope = JSON.parse(run.stdout) as Envelope;
-      expect(envelope.ok).toBe(true);
-
-      const found = byId(envelope);
-      expect(found.get('writable')).toMatchObject({ status: 'fail' });
-      expect(found.get('writable')?.detail).toBeTruthy();
-      // Reading still works, so nothing else may be dragged down with it.
-      expect(found.get('db')).toMatchObject({ status: 'ok' });
-      expect(found.get('wal')).toMatchObject({ status: 'ok' });
-      expect(found.get('schema-version')).toMatchObject({ status: 'ok' });
-    } finally {
-      // Before the folder is removed: a 0444 database and its sidecars are
-      // what `rm -r` cannot always take away.
-      for (const suffix of ['', '-wal', '-shm']) {
-        await chmod(`${database}${suffix}`, 0o600).catch(() => {});
-      }
+  it('reports an unavailable database without creating a local file', async () => {
+    const kit = await world(); kit.env.BRAIN_DATABASE_URL = 'postgresql://unused@127.0.0.1:1/unavailable';
+    const result = await kit.run(); expect(result.code).toBe(1);
+    expect(JSON.parse(result.stdout).data.checks).toContainEqual(expect.objectContaining({ id: 'db', status: 'fail', code: 'DB_UNAVAILABLE' }));
+    for (const name of ['brain.db', 'brain.db-wal', 'brain.db-shm']) {
+      expect(await readdir(kit.home)).not.toContain(name);
     }
   });
-
-  it('warns on writable, and still exits 0, while another connection holds the lock', async () => {
-    const home = await configuredHome();
-    const holder = new DatabaseSync(join(home, 'brain.db'));
-    holder.exec('pragma busy_timeout = 0');
-    holder.exec('begin immediate');
-    holder.exec('create table brain_lock_holder(x)');
-
-    try {
-      const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
-
-      // A brain in use is not a brain that cannot be written to, and it is not
-      // one that proved it can be either: `warn` is the only honest answer,
-      // and only `fail` makes the command exit 1 (Conventions).
-      expect(run.code).toBe(0);
-      const envelope = JSON.parse(run.stdout) as Envelope;
-      const found = byId(envelope);
-      expect(found.get('writable')).toMatchObject({ status: 'warn' });
-      expect(found.get('writable')?.detail).toContain('쓰기 잠금');
-      expect(found.get('db')).toMatchObject({ status: 'ok' });
-
-      const summary = envelope.data?.summary;
-      expect(summary).toEqual({ passed: CHECKS.length - 2, warned: 2, failed: 0, skipped: 0 });
-      // The counts and the lines cannot disagree about one report.
-      expect(
-        (summary?.passed ?? 0) + (summary?.warned ?? 0) + (summary?.skipped ?? 0),
-      ).toBe(envelope.data?.checks.length);
-    } finally {
-      holder.exec('rollback');
-      holder.close();
+  it('reports owner-specific schema mismatch', async () => {
+    const kit = await world(); const db = new PgTestClient(pgDatabaseUrl(kit.home));
+    try { await db.exec("update schema_migrations set version=2 where owner='core'"); const result = await kit.run(); expect(result.code).toBe(1); expect(JSON.parse(result.stdout).data.checks).toContainEqual(expect.objectContaining({ id: 'schema-version', status: 'fail' })); }
+    finally { await db.close(); }
+  });
+  it('skips DB checks when the fake OrbStack prerequisite fails and never calls compose', async () => {
+    const kit = await world(); let stdout = ''; const calls: string[] = [];
+    const code = await dispatch(commands, ['doctor', 'run', '--json'], { env: kit.env, clock: { now: () => new Date() }, stdout: s => { stdout += s; }, runner: async request => { calls.push(request.command); return { ok: true, stdout: 'Stopped', stderr: '' }; } });
+    expect(code).toBe(1); expect(calls).toEqual(['orb']);
+    expect(JSON.parse(stdout).data.checks).toContainEqual({ id: 'db', status: 'skip', detail: '앞선 점검 실패: orbstack' });
+  });
+  it('reports a spool entry and keeps healthy DB checks', async () => {
+    const kit = await world(); await mkdir(join(kit.home, 'spool')); await writeFile(join(kit.home, 'spool', 'invalid.jsonl'), 'invalid\n');
+    const result = await kit.run();
+    expect(result.code).toBe(0);
+    const checks = JSON.parse(result.stdout).data.checks;
+    expect(checks).toContainEqual({ id: 'spool', status: 'warn', code: 'SPOOLED', detail: '1건' });
+    for (const id of ['db', 'writable', 'pg_trgm', 'schema-version']) {
+      expect(checks).toContainEqual(expect.objectContaining({ id, status: 'ok' }));
     }
-  });
-
-  it('prints a warned check and the summary that counts it in text mode', async () => {
-    const home = await configuredHome();
-    const holder = new DatabaseSync(join(home, 'brain.db'));
-    holder.exec('pragma busy_timeout = 0');
-    holder.exec('begin immediate');
-    holder.exec('create table brain_lock_holder(x)');
-
-    try {
-      const run = await runBrain(['doctor', 'run'], { [HOME_ENV]: home });
-
-      expect(run.code).toBe(0);
-      expect(run.stdout).toContain('writable: warn');
-      expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
-        `요약: 통과 ${String(CHECKS.length - 2)}, 경고 2, 실패 0, 건너뜀 0`,
-      );
-    } finally {
-      holder.exec('rollback');
-      holder.close();
-    }
-  });
-
-  it('fails schema-version with SCHEMA_MISMATCH, and warns, when the stored version differs', async () => {
-    const home = await configuredHome();
-    const database = new DatabaseSync(join(home, 'brain.db'));
-    database.exec('update schema_version set version = 1');
-    database.close();
-
-    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
-
-    expect(run.code).toBe(1);
-    const envelope = JSON.parse(run.stdout) as Envelope;
-    expect(envelope.ok).toBe(true);
-    // A shared code, so the degraded result travels in `warnings[]` too.
-    expect(envelope.warnings).toEqual(['SCHEMA_MISMATCH']);
-
-    const found = byId(envelope);
-    expect(found.get('schema-version')).toMatchObject({
-      status: 'fail',
-      code: 'SCHEMA_MISMATCH',
-    });
-    // What the report tells the person to run has to be a command they have:
-    // `setup upgrade` is an epic 5 plan and does not exist yet.
-    expect(found.get('schema-version')?.detail).toContain('setup run');
-    expect(found.get('schema-version')?.detail).not.toContain('setup upgrade');
-  });
-
-  it('reports DB_UNAVAILABLE as a warning, and makes no file, when there is none', async () => {
-    const home = await emptyHome();
-    await writeConfig(home, {});
-    await writeShim(home, { bin: binPath });
-
-    const startedAt = Date.now();
-    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
-    const elapsed = Date.now() - startedAt;
-
-    expect(run.stderr).toBe('');
-    expect(run.code).toBe(1);
-    expect(elapsed).toBeLessThan(5000);
-
-    const envelope = JSON.parse(run.stdout) as Envelope;
-    expect(envelope.ok).toBe(true);
-    expect(envelope.warnings).toEqual(['DB_UNAVAILABLE']);
-
-    const checks = envelope.data?.checks ?? [];
-    expect(checks[0]).toMatchObject({ id: 'db', status: 'fail', code: 'DB_UNAVAILABLE' });
-    expect(checks[0]?.detail).toBeTruthy();
-    // Nothing was probed, so no probe is reported. The schema version says it
-    // was skipped and which check made it pointless, and the machine checks
-    // still ran — most of what a person needs when the database is the thing
-    // that is missing.
-    expect(checks.map((check) => check.id)).toEqual(NO_DATABASE_CHECKS);
-    expect(checks[1]).toEqual({
-      id: 'schema-version',
-      status: 'skip',
-      detail: '앞선 점검 실패: db',
-    });
-    expect(checks.filter((check) => check.status === 'fail')).toHaveLength(1);
-    // A skip is not a pass: the summary counts it as its own thing. Three of
-    // them here — the schema version and the two capture checks, all of which
-    // a store would have answered (`runDoctor`).
-    expect(envelope.data?.summary).toEqual({
-      passed: MACHINE_CHECKS.length - 1,
-      warned: 1,
-      failed: 1,
-      skipped: 4,
-    });
-    // And nothing was created: a doctor that made the database it was looking
-    // for would report a brain nobody installed (AD-20).
-    expect((await readdir(home)).some((entry) => entry.startsWith('brain.db'))).toBe(false);
-  });
-
-  it('fails the shim check, and skips node-path, when the shim was removed', async () => {
-    const home = await configuredHome();
-    await rm(shimPath(home));
-
-    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
-
-    expect(run.code).toBe(1);
-    const envelope = JSON.parse(run.stdout) as Envelope;
-    const found = byId(envelope);
-    expect(found.get('shim')).toMatchObject({ status: 'fail' });
-    // The skip names the check that caused it, in the one phrase every skipped
-    // prerequisite uses, so nobody has to guess which line above is the cause.
-    expect(found.get('node-path')).toMatchObject({
-      status: 'skip',
-      detail: '앞선 점검 실패: shim',
-    });
-    // The store knew nothing about any of this and said so anyway.
-    expect(found.get('db')).toMatchObject({ status: 'ok' });
-    expect(envelope.data?.summary).toEqual({
-      passed: CHECKS.length - 3,
-      warned: 1,
-      failed: 1,
-      // The missing shim leaves node-path without a node to inspect.
-      skipped: 1,
-    });
-  });
-
-  it('fails node-path when the shim names a node that is not there', async () => {
-    const home = await configuredHome();
-    await writeShim(home, { bin: binPath, node: join(home, 'nonexistent', 'node') });
-
-    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
-
-    expect(run.code).toBe(1);
-    const found = byId(JSON.parse(run.stdout) as Envelope);
-    expect(found.get('shim')).toMatchObject({ status: 'ok' });
-    expect(found.get('node-path')).toMatchObject({ status: 'fail' });
-    expect(found.get('node-path')?.detail).toContain('nonexistent');
-    expect(found.get('node-version')).toMatchObject({ status: 'ok' });
   });
 });
 
-/**
- * Doctor is the command a person runs when the install is already broken, so it
- * is the one command that runs without a configuration: `config` fails, `db`
- * fails because nothing says where the database is, and the machine checks
- * answer as usual (Decision 2026-10-14).
- */
 describe('brain doctor run without a configuration it can read', () => {
-  beforeAll(() => {
-    if (!existsSync(binPath)) {
-      throw new Error(`${binPath} does not exist. Run \`pnpm build\` before these tests.`);
-    }
-  });
+  async function emptyHome() {
+    const home = await temporary.create('brain-doctor-no-config-');
+    const env = withoutHarnessFolders({ ...process.env, SECOND_BRAIN_HOME: home });
+    delete env.DOCKER_HOST;
+    return { home, run: (args = ['doctor', 'run', '--json']) => runPgCommand(args, env) };
+  }
 
   it('exits 1, not 2, and reports config and db as failures when there is no file', async () => {
-    const home = await emptyHome();
-    await writeShim(home, { bin: binPath });
+    const kit = await emptyHome();
+    await writeShim(kit.home, { bin: fileURLToPath(new URL('../dist/bin.js', import.meta.url)) });
 
-    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
+    const run = await kit.run();
 
     expect(run.code).toBe(1);
-    const envelope = JSON.parse(run.stdout) as Envelope;
-    // A result, not an error: the command ran and the result is a bad one.
+    const envelope = JSON.parse(run.stdout);
     expect(envelope.ok).toBe(true);
     expect(envelope.error).toBeUndefined();
-
-    const found = byId(envelope);
-    expect(found.get('config')).toMatchObject({ status: 'fail', code: 'CONFIG_MISSING' });
-    expect(found.get('db')).toMatchObject({ status: 'fail', code: 'DB_UNAVAILABLE' });
-    expect(found.get('db')?.detail).toContain('설정을 읽을 수 없어서');
-    expect(found.get('shim')).toMatchObject({ status: 'ok' });
-    expect(found.get('node-path')).toMatchObject({ status: 'ok' });
-    expect(found.get('node-version')).toMatchObject({ status: 'ok' });
-    // No store means no probes, and a schema version nobody could ask for.
-    expect([...found.keys()]).toEqual(NO_DATABASE_CHECKS);
-    expect(found.get('schema-version')).toMatchObject({
-      status: 'skip',
-      detail: '앞선 점검 실패: db',
-    });
+    const checks = envelope.data.checks;
+    expect(checks).toContainEqual(expect.objectContaining({ id: 'config', status: 'fail', code: 'CONFIG_MISSING' }));
+    expect(checks).toContainEqual(expect.objectContaining({ id: 'db', status: 'fail', code: 'DB_UNAVAILABLE', detail: expect.stringContaining('설정을 읽을 수 없어서') }));
+    for (const id of ['orbstack', 'container', 'shim', 'node-path', 'node-version']) {
+      expect(checks).toContainEqual(expect.objectContaining({ id, status: 'ok' }));
+    }
+    expect(checks.map((check: { id: string }) => check.id)).toEqual([
+      'orbstack', 'container', 'db', 'schema-version', 'failures', 'untagged', 'transcripts',
+      'config', 'config-timezone', 'shim', 'node-path', 'node-version', 'plugin', 'last-hook', 'spool', 'daemon',
+    ]);
+    expect(checks).toContainEqual({ id: 'schema-version', status: 'skip', detail: '앞선 점검 실패: db' });
     expect(envelope.warnings).toEqual(['DB_UNAVAILABLE']);
   });
 
   it('reports CONFIG_INVALID the same way for a file it cannot understand', async () => {
-    const home = await emptyHome();
-    await writeShim(home, { bin: binPath });
-    // A relative path, which `readConfig` refuses: it would mean a different
-    // database for every working directory a command is started from.
-    await writeFile(
-      configFilePath(home),
-      'schema_version = 1\n[store]\npath = "relative/brain.db"\n',
-      'utf8',
-    );
+    const kit = await emptyHome();
+    await writeShim(kit.home, { bin: fileURLToPath(new URL('../dist/bin.js', import.meta.url)) });
+    // store.path is retired; a relative files.path still makes the configuration invalid.
+    await writeFile(join(kit.home, 'config.toml'), 'schema_version=1\n[files]\npath="relative/files"\n');
 
-    const run = await runBrain(['doctor', 'run', '--json'], { [HOME_ENV]: home });
+    const run = await kit.run();
 
     expect(run.code).toBe(1);
-    const found = byId(JSON.parse(run.stdout) as Envelope);
-    expect(found.get('config')).toMatchObject({ status: 'fail', code: 'CONFIG_INVALID' });
-    expect(found.get('db')).toMatchObject({ status: 'fail', code: 'DB_UNAVAILABLE' });
-    expect(found.get('shim')).toMatchObject({ status: 'ok' });
+    const envelope = JSON.parse(run.stdout);
+    expect(envelope.ok).toBe(true);
+    expect(envelope.error).toBeUndefined();
+    const checks = envelope.data.checks;
+    expect(checks).toContainEqual(expect.objectContaining({ id: 'config', status: 'fail', code: 'CONFIG_INVALID' }));
+    expect(checks).toContainEqual(expect.objectContaining({ id: 'db', status: 'fail', code: 'DB_UNAVAILABLE' }));
+    for (const id of ['orbstack', 'container', 'shim']) {
+      expect(checks).toContainEqual(expect.objectContaining({ id, status: 'ok' }));
+    }
   });
 
   it('prints the failing checks, and no error line, in text mode', async () => {
-    const home = await emptyHome();
+    const kit = await emptyHome();
 
-    const run = await runBrain(['doctor', 'run'], { [HOME_ENV]: home });
+    const run = await kit.run(['doctor', 'run']);
 
     expect(run.code).toBe(1);
+    expect(run.stdout).toContain('orbstack: ok');
+    expect(run.stdout).toContain('container: ok');
     expect(run.stdout).toContain('config: fail [CONFIG_MISSING]');
     expect(run.stdout).toContain('db: fail [DB_UNAVAILABLE]');
     expect(run.stdout).toContain('shim: fail');
     expect(run.stdout).toContain('schema-version: skip 앞선 점검 실패: db');
     expect(run.stdout).toContain('node-path: skip 앞선 점검 실패: shim');
-    // Three failures, two skips, three passes — `node-version`, `plugin`,
-    // which has nothing to report about a folder nothing installed into, and
-    // `spool`, which has nothing waiting because nothing was ever written:
-    // the summary is the last line.
     expect(run.stdout).toContain('spool: ok 0건');
-    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
-      '요약: 통과 5, 경고 1, 실패 3, 건너뜀 5',
-    );
-    // Not an error envelope, so nothing goes to stderr but the warning line.
+    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe('요약: 통과 7, 경고 1, 실패 3, 건너뜀 5');
     expect(run.stderr).not.toContain('CONFIG_MISSING');
+    assertKoreanLines(run.stdout);
   });
-
 });

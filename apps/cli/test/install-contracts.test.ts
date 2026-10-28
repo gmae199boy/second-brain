@@ -1,0 +1,1225 @@
+
+type FixtureMigrationResult = { ok: true; from: number; to: number; applied: string[] } | { ok: false; code: string; message: string; file: string };
+type FixtureCollision = { identityKey: string; projects: { remoteIdentity: string; sessions: number }[] };
+type SelfUserResult = { ok: true; name: string; created: boolean } | { ok: false; code: string; message: string };
+interface FixtureStore {
+prepare(path: string, options?: { mergeProjects?: boolean }): Promise<FixtureMigrationResult>;
+collisions(path: string): Promise<readonly FixtureCollision[]>;
+exists(path: string): Promise<boolean>;
+self(path: string): Promise<SelfUserResult>;
+doctor(home: string, path: string): Promise<DoctorReport>;
+}
+import * as liveness from '../src/daemon/liveness.js';
+import type { DaemonDeadReason } from '../src/daemon/liveness.js';
+import { DAEMON_LABEL, type DaemonRegistration } from '../src/daemon/launchd.js';
+import { homedir, tmpdir } from 'node:os';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type {
+  Connector,
+  DoctorReport,
+} from 'second_brain';
+
+import { memoryConnector, type MemoryConnector } from 'second_brain/testing';
+import type { ConfigWarning, WriteConfigInput } from '../src/config/codec.js';
+import { readConfigForSetup } from '../src/config/codec.js';
+import { HOME_ENV } from '../src/config/paths.js';
+import {
+  failureLines,
+  installExit,
+  parseFlags,
+  runInstall,
+  runInstallFlow,
+  wasHelped,
+  type Choice,
+  type InstallDeps,
+  type InstallExitCode,
+  type InstallFiles,
+  type InstallFlags,
+  type InstallFlowResult,
+  type InstallPrompts,
+  type InstallInstalled,
+  type InstallResult,
+  type RecordedConfig,
+} from '../src/install/flow.js';
+import type {
+  BuildIdentity,
+  InstalledFacts,
+  InstalledRecord,
+} from '../src/install/installed.js';
+import { shimPath } from '../src/install/shim.js';
+import { assertKoreanLine } from './language.js';
+
+afterEach(() => vi.restoreAllMocks());
+
+/**
+ * The whole installer flow against fakes: no terminal, no filesystem, no
+ * database. Every row of the plan's I/O matrix is one test here, and what is
+ * asserted is which questions were asked, what was written, which paths were
+ * prepared, and the exit code.
+ */
+
+const HOME = '/tmp/brain-install-flow';
+const ENV: NodeJS.ProcessEnv = { [HOME_ENV]: HOME };
+
+/** The three paths a run with nothing recorded and no flag settles on. */
+const STORE = join(HOME, 'brain.db');
+const FILES = join(HOME, 'files');
+const MIRROR = join(HOME, 'mirror');
+
+/**
+ * The harness names these tests register. The flow lists them back — "아는
+ * 하네스: demo." — and a harness name is an identifier, not prose, so the
+ * output-language check is told about them rather than tripping over them.
+ */
+const HARNESS_NAMES = ['demo', 'other', 'absent', 'nope'] as const;
+
+/**
+ * What the codec must be handed every time: all four values, because
+ * `writeConfig` renders both files whole and anything left out goes back to its
+ * default. A run with nothing recorded passes no time zone, which is the one
+ * value that has a default of its own rather than a question.
+ */
+function fresh(storePath = STORE, filesPath = FILES, mirrorPath = MIRROR): WriteConfigInput {
+  return { timezone: undefined, storeUrlEnv: 'BRAIN_DATABASE_URL', filesPath, mirrorPath, updateAuto: true };
+}
+
+/** The same, over a folder that already said something. */
+function kept(
+  timezone = 'Asia/Seoul',
+  storePath = STORE,
+  filesPath = FILES,
+  mirrorPath = MIRROR,
+): WriteConfigInput {
+  return { timezone, storeUrlEnv: 'BRAIN_DATABASE_URL', filesPath, mirrorPath, updateAuto: true };
+}
+
+/**
+ * What a run answers to the questions every path in a terminal now ends with:
+ * Enter for the database file, Enter for the mirror path — both take the
+ * default — no to embeddings, yes to automatic updating, and yes to the screen
+ * that says what the install is about to write. They are appended to whatever a
+ * test queues, so a test that cares about none of them says nothing about them;
+ * the per-kind queues keep the order right either way.
+ */
+const TAIL: Answers = { text: ['', ''], confirm: [false, true, true] };
+
+function answersWith(own: Answers, tail: Answers): Answers {
+  return {
+    confirm: [...(own.confirm ?? []), ...(tail.confirm ?? [])],
+    text: [...(own.text ?? []), ...(tail.text ?? [])],
+    multiselect: [...(own.multiselect ?? []), ...(tail.multiselect ?? [])],
+  };
+}
+
+interface Answers {
+  confirm?: readonly boolean[];
+  text?: readonly string[];
+  /** One answer per `multiselect`: the values that stayed checked. */
+  multiselect?: readonly (readonly string[])[];
+}
+
+interface Prompts extends InstallPrompts {
+  asked: string[];
+  /** The placeholder each `text` question offered, so a default is checkable. */
+  placeholders: string[];
+  /** What each `multiselect` started out with checked. */
+  checked: readonly string[][];
+  /** Each `confirm` question and the answer it offered as its default. */
+  initial: readonly [string, boolean][];
+}
+
+/**
+ * Questions with their answers queued up. Running out throws rather than
+ * blocks, so a flow that asks in a loop fails the test instead of hanging.
+ */
+function fakePrompts(answers: Answers): Prompts {
+  const confirms = [...(answers.confirm ?? [])];
+  const texts = [...(answers.text ?? [])];
+  const multiselects = [...(answers.multiselect ?? [])];
+  const asked: string[] = [];
+  const placeholders: string[] = [];
+  const checked: string[][] = [];
+  const initial: [string, boolean][] = [];
+
+  return {
+    asked,
+    placeholders,
+    checked,
+    initial,
+    async confirm(question: string, offered: boolean): Promise<boolean> {
+      asked.push(question);
+      initial.push([question, offered]);
+      const answer = confirms.shift();
+      if (answer === undefined) throw new Error(`no answer queued for: ${question}`);
+      return answer;
+    },
+    async text(question: string, placeholder: string): Promise<string> {
+      asked.push(question);
+      placeholders.push(placeholder);
+      const answer = texts.shift();
+      if (answer === undefined && question.includes('시간대')) return '';
+      if (answer === undefined) throw new Error(`no answer queued for: ${question}`);
+      return answer;
+    },
+    async multiselect<T extends string>(
+      question: string,
+      _choices: readonly Choice<T>[],
+      initial: readonly T[],
+    ): Promise<readonly T[]> {
+      asked.push(question);
+      checked.push([...initial]);
+      const answer = multiselects.shift();
+      if (answer === undefined) throw new Error(`no answer queued for: ${question}`);
+      return answer as readonly T[];
+    },
+  };
+}
+
+interface StoreWorld {
+  /** What `prepare` answers. A fresh install by default. */
+  prepare?: FixtureMigrationResult;
+  /** What the owner step answers. A first run that recorded it by default. */
+  self?: SelfUserResult;
+  /** Doctor's own verdict on the file. */
+  walFails?: boolean;
+  /** Whether there is already a file at the database path. */
+  exists?: boolean;
+  /**
+   * The projects migration 0005 would fold into one comparison key. None by
+   * default: a database that never split a repository over the case of its
+   * remote is every database but the ones this story is about (AD-12).
+   */
+  collisions?: readonly FixtureCollision[];
+}
+
+interface Store extends FixtureStore {
+  /** Every path prepared, in order. */
+  prepared: string[];
+  /** The options each `prepare` was given, in the same order. */
+  preparedWith: ({ mergeProjects?: boolean } | undefined)[];
+  /** Every path the collision screen was pointed at, in order. */
+  asked: string[];
+  /** Every path the owner step was pointed at, in order. */
+  owned: string[];
+  doctored: string[];
+  /** Every home doctor was pointed at, in order. */
+  doctoredHomes: string[];
+}
+
+function fakeStore(world: StoreWorld = {}): Store {
+  const prepared: string[] = [];
+  const preparedWith: ({ mergeProjects?: boolean } | undefined)[] = [];
+  const asked: string[] = [];
+  const owned: string[] = [];
+  const doctored: string[] = [];
+  const doctoredHomes: string[] = [];
+
+  return {
+    prepared,
+    preparedWith,
+    asked,
+    owned,
+    doctored,
+    doctoredHomes,
+    async exists() {
+      return world.exists ?? false;
+    },
+    async collisions(path) {
+      asked.push(path);
+      return world.collisions ?? [];
+    },
+    async prepare(path, options) {
+      prepared.push(path);
+      preparedWith.push(options);
+      return (
+        world.prepare ?? {
+          ok: true,
+          from: 0,
+          to: 1,
+          applied: [
+            '0001_initial.sql',
+            '0002_files_and_work.sql',
+            '0003_users.sql',
+            '0004_capture_columns.sql',
+            '0005_identity_and_records.sql',
+            '0006_drop_message_seq.sql',
+          ],
+        }
+      );
+    },
+    async self(path) {
+      owned.push(path);
+      return world.self ?? { ok: true, name: 'brain-owner', created: true };
+    },
+    async doctor(home, path): Promise<DoctorReport> {
+      doctoredHomes.push(home);
+      doctored.push(path);
+      const checks: DoctorReport['checks'] = [
+        { id: 'db', status: 'ok', detail: '3.50.4' },
+        { id: 'writable', status: 'ok', detail: '파일이 쓰기를 받아들이고 되돌렸습니다' },
+        world.walFails === true
+          ? { id: 'wal', status: 'fail', detail: 'journal_mode가 wal이 아니라 delete입니다' }
+          : { id: 'wal', status: 'ok', detail: 'wal' },
+        { id: 'fts5-trigram', status: 'ok', detail: 'trigram 토크나이저가 있는 fts5' },
+        { id: 'foreign-keys', status: 'ok', detail: '이 연결에서 적용됩니다' },
+        { id: 'schema-version', status: 'ok', detail: '6' },
+        { id: 'config', status: 'ok', detail: join(home, 'config.toml') },
+        { id: 'shim', status: 'ok', detail: shimPath(home) },
+        { id: 'node-path', status: 'ok', detail: '/usr/bin/node의 node 24.16.0' },
+        { id: 'node-version', status: 'ok', detail: 'node 24.16.0' },
+      ];
+      return {
+        checks,
+        summary: {
+          passed: checks.filter((check) => check.status === 'ok').length,
+          warned: checks.filter((check) => check.status === 'warn').length,
+          failed: checks.filter((check) => check.status === 'fail').length,
+          skipped: checks.filter((check) => check.status === 'skip').length,
+        },
+      };
+    },
+  };
+}
+
+interface Files extends InstallFiles {
+  /** Every root prepared, in order. */
+  prepared: string[];
+}
+
+function fakeFiles(created = true, fails = false): Files {
+  const prepared: string[] = [];
+  return {
+    prepared,
+    async prepare(path) {
+      prepared.push(path);
+      if (fails) {
+        return {
+          ok: false,
+          code: 'FILES_UNAVAILABLE',
+          message: '파일 저장소 루트를 만들 수 없습니다: EEXIST: file already exists',
+        };
+      }
+      return { ok: true, path, created };
+    },
+  };
+}
+
+interface Harness {
+  deps: InstallDeps;
+  prompts: Prompts;
+  store: Store;
+  files: Files;
+  written: WriteConfigInput[];
+  lines: string[];
+  /** Every home the shim was written for, in order. */
+  shimmed: string[];
+  installed: Installed;
+  output(): string;
+}
+
+interface HarnessOptions {
+  daemonResult?: DaemonRegistration;
+  answers?: Answers;
+  /** Replaces the answers every path ends with, for a test about them. */
+  tail?: Answers;
+  store?: StoreWorld;
+  /** Whether the file store's root was made by this run. */
+  filesCreated?: boolean;
+  /** The root cannot be made at all: something else is already in the way. */
+  filesFails?: boolean;
+  isTTY?: boolean;
+  /** The folder already holds a readable configuration. */
+  recorded?: boolean;
+  recordedTimezone?: string;
+  recordedStorePath?: string;
+  recordedFilesPath?: string;
+  recordedMirrorPath?: string;
+  recordedUpdateAuto?: boolean;
+  /** Keys this version does not know, as the codec reads them back. */
+  recordedExtra?: Record<string, unknown>;
+  /** The warnings the codec collected while reading the folder value by value. */
+  readWarnings?: readonly ConfigWarning[];
+  /** The whole file is unusable, so the install must write nothing. */
+  readFails?: string;
+  /** The codec refuses to write, as a value: a `.env` it cannot represent. */
+  writeFails?: string;
+  /** The registry. Empty, like the real one, unless a test fills it. */
+  connectors?: readonly Connector[];
+  /** The shim was already there and says exactly this. */
+  shimCurrent?: boolean;
+  /** Running the shim from outside the process refuses, with this sentence. */
+  verifyFails?: string;
+  /** What `dist/build.json` says. A build with no identity leaves it out. */
+  build?: BuildIdentity;
+  /** What a previous install recorded here. */
+  recordedInstalled?: InstalledRecord;
+}
+
+/** The node the fake shim pins, which is what the record has to carry. */
+const PINNED_NODE = '/opt/homebrew/bin/node';
+
+/** The commit the fake `build.json` names, unless a test says otherwise. */
+const BUILD_COMMIT = 'a'.repeat(40);
+
+interface Installed extends InstallInstalled {
+  /** Every home the completion check ran against, in order. */
+  verified: string[];
+  /** Every record written, in order. */
+  wrote: InstalledFacts[];
+}
+
+function fakeInstalled(options: HarnessOptions): Installed {
+  const verified: string[] = [];
+  const wrote: InstalledFacts[] = [];
+
+  return {
+    verified,
+    wrote,
+    async verify(home) {
+      verified.push(home);
+      return options.verifyFails === undefined
+        ? { ok: true as const }
+        : { ok: false as const, message: options.verifyFails };
+    },
+    async build() {
+      return 'build' in options
+        ? options.build
+        : { commit: BUILD_COMMIT, schema_version: 1, schema_versions: { core: 1 } };
+    },
+    async read() {
+      return options.recordedInstalled;
+    },
+    async write(home, facts) {
+      expect(home).toBe(HOME);
+      wrote.push(facts);
+      return { path: join(home, 'installed.json') };
+    },
+  };
+}
+
+function harness(options: HarnessOptions = {}): Harness {
+  const prompts = fakePrompts(answersWith(options.answers ?? {}, options.tail ?? TAIL));
+  const shimmed: string[] = [];
+  const store = fakeStore(options.store);
+  const files = fakeFiles(options.filesCreated ?? true, options.filesFails ?? false);
+  const installed = fakeInstalled(options);
+  const written: WriteConfigInput[] = [];
+  const lines: string[] = [];
+  const recorded =
+    options.recorded === true ||
+    options.recordedTimezone !== undefined ||
+    options.recordedStorePath !== undefined ||
+    options.recordedFilesPath !== undefined ||
+    options.recordedMirrorPath !== undefined ||
+    options.recordedUpdateAuto !== undefined ||
+    options.recordedExtra !== undefined;
+
+  const deps: InstallDeps = {
+    orbstack: async () => ({ ok: true, detail: '정상입니다' }),
+    postgresDoctor: () => store.doctor(HOME, STORE),
+    legacyFileExists: path => store.exists(path),
+    postgres: async () => {
+      const migrated = await store.prepare(STORE);
+      if (!migrated.ok) return { ok: false, code: migrated.code, message: migrated.message };
+      const owner = await store.self(STORE);
+      if (!owner.ok) return owner;
+      return { ok: true, report: { project: 'second-brain-test', volume: 'test', port: 54329, schema_version: 1, applied: migrated.applied, owner_name: owner.name, owner_created: owner.created, compose_started: true } };
+    },
+    settings: {
+      get: async () => ({ ok: true, key: 'timezone', value: options.recordedTimezone ?? 'Asia/Seoul', source: 'db', updatedAt: new Date() }),
+      set: async (_home, _selector, _env, value) => ({ ok: true, key: 'timezone', value, source: 'db', updatedAt: new Date() }),
+    },
+    importTranscripts: async () => ({ scanned: 0, enqueued: 0, failed: 0, spoolFailed: 0, stopped: 'empty' }) as never,
+    prompts,
+    isTTY: options.isTTY ?? true,
+    log: (line: string): void => {
+      // Every line the flow prints goes through here, so the output-language
+      // rule covers the whole flow at once (Conventions, output language
+      // 2026-10-16) — including the lines a branch below has yet to add. The
+      // `CODE: ` prefix and whatever Node said stay English (Boundaries),
+      // which the checker is told about.
+      // The harness names the flow lists are identifiers, not prose.
+      assertKoreanLine(line, { label: 'flow line', allow: HARNESS_NAMES });
+      lines.push(line);
+    },
+    config: {
+      write: async (home, input) => {
+        expect(home).toBe(HOME);
+        if (options.writeFails !== undefined) {
+          return { ok: false as const, code: 'CONFIG_INVALID' as const, message: options.writeFails };
+        }
+        written.push(input);
+        return { ok: true as const };
+      },
+      read: async () => {
+        if (options.readFails !== undefined) {
+          return { ok: false as const, code: 'CONFIG_INVALID' as const, message: options.readFails };
+        }
+        const held: RecordedConfig | undefined = recorded
+          ? {
+              timezone: options.recordedTimezone ?? 'Asia/Seoul',
+              legacySqlitePath: options.recordedStorePath ?? STORE,
+              filesPath: options.recordedFilesPath ?? FILES,
+              mirrorPath: options.recordedMirrorPath ?? MIRROR,
+              updateAuto: options.recordedUpdateAuto ?? true,
+              extra: options.recordedExtra ?? {},
+            }
+          : undefined;
+        return { ok: true as const, recorded: held, warnings: options.readWarnings ?? [] };
+      },
+    },
+    files,
+    shim: {
+      write: async (home: string): Promise<{ path: string; changed: boolean; node: string }> => {
+        shimmed.push(home);
+        return { path: shimPath(home), changed: options.shimCurrent !== true, node: PINNED_NODE };
+      },
+    },
+    installed,
+    daemon: { restart: async () => ({ ok: true as const, method: 'signal' as const, pid: 42, commit: BUILD_COMMIT }), register: async () => options.daemonResult ?? {
+      label: DAEMON_LABEL, plist_path: null, status: 'unsupported', plist_changed: false,
+    } },
+    connectors: options.connectors ?? [],
+  };
+
+  return {
+    deps,
+    prompts,
+    store,
+    files,
+    written,
+    lines,
+    shimmed,
+    installed,
+    output: () => lines.join('\n'),
+  };
+}
+
+/**
+ * The flow, and then its result rendered the way a door renders it.
+ *
+ * The flow itself no longer prints a `CODE: …` line — the failure is the value
+ * it hands back — so the one renderer both doors use is called here too, which
+ * is what keeps `kit.output()` the whole of what a person would have seen and
+ * the exit code the one `installExit` decides.
+ */
+async function install(
+  argv: readonly string[],
+  kit: Harness,
+): Promise<InstallExitCode> {
+  return rendered(await runInstallFlow(argv, ENV, kit.deps), kit);
+}
+
+/** The same, from flags somebody else parsed, as `brain setup run` comes in. */
+async function installWithFlags(flags: InstallFlags, kit: Harness): Promise<InstallExitCode> {
+  return rendered(await runInstall(flags, ENV, kit.deps), kit);
+}
+
+function rendered(result: InstallFlowResult, kit: Harness): InstallExitCode {
+  if (!result.ok) for (const line of failureLines(result.failure)) kit.deps.log(line);
+  return installExit(result);
+}
+
+/**
+ * The result itself, for a test about the value rather than the lines. The
+ * usage is not one of the shapes under test, so a run that printed it is a
+ * broken test rather than a variant every assertion has to narrow away.
+ */
+async function resultOf(argv: readonly string[], kit: Harness): Promise<InstallResult> {
+  const result = await runInstallFlow(argv, ENV, kit.deps);
+  if (wasHelped(result)) throw new Error(`the flow printed the usage for: ${argv.join(' ')}`);
+  return result;
+}
+
+
+
+describe('the installer flow and the file store', () => {
+  it('prepares the default root, which nothing asks about', async () => {
+    const kit = harness();
+
+    const exit = await install([], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.files.prepared).toEqual([FILES]);
+    expect(kit.prompts.asked).not.toContain('파일을 어디에 둘까요?');
+  });
+
+  it('keeps a recorded root rather than resetting it to the default', async () => {
+    const kit = harness({ recordedFilesPath: '/tmp/notes/files' });
+
+    const exit = await install([], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.written).toEqual([kept('Asia/Seoul', STORE, '/tmp/notes/files')]);
+    expect(kit.files.prepared).toEqual(['/tmp/notes/files']);
+  });
+
+  it('reports a root it could not make in one line, and skips the shim and doctor', async () => {
+    const kit = harness({ filesFails: true });
+
+    const exit = await install([], kit);
+
+    expect(exit).toBe(1);
+    expect(kit.output()).toContain('FILES_UNAVAILABLE: 파일 저장소 루트를 만들 수 없습니다: EEXIST');
+    // The store was already prepared; the shim and doctor are not reached.
+    expect(kit.store.prepared).toEqual([STORE]);
+    expect(kit.shimmed).toEqual([]);
+    expect(kit.store.doctored).toEqual([]);
+  });
+
+  it('says the root was already there rather than claiming it made one', async () => {
+    const kit = harness({ filesCreated: false });
+
+    await install([], kit);
+
+    expect(kit.output()).toContain(`${FILES}는 이미 있습니다 (mode 0700)`);
+    expect(kit.output()).not.toContain(`${FILES}를 만들었습니다`);
+  });
+});
+
+
+describe('the installer flow and a configuration it can only half read', () => {
+  it('keeps every other value, warns, and still succeeds when one is unusable', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'brain-config-repair-'));
+    try {
+      await writeFile(join(directory, 'config.toml'),
+        'schema_version=1\ntimezone="Europe/Berlin"\n[files]\npath="relative/files"\n[mirror]\npath="/tmp/a/mirror"\n');
+      const kit = harness({ isTTY: false, recordedTimezone: 'Europe/Berlin' });
+      // 실제 codec의 복구 결과를 써서 경고를 인위적으로 만들지 않는다.
+      kit.deps.config.read = () => readConfigForSetup(directory);
+
+      const result = await resultOf(['--yes'], kit);
+
+      expect(result).toMatchObject({ ok: true, warnings: ['CONFIG_VALUE_RESET'], report: { timezone: 'Europe/Berlin' } });
+      expect(kit.written).toEqual([kept('Europe/Berlin', STORE, FILES, '/tmp/a/mirror')]);
+      expect(kit.files.prepared).toEqual([FILES]);
+      expect(kit.output()).toContain('경고:');
+      expect(kit.output()).toContain('files.path');
+      expect(kit.output()).not.toContain('store.path');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('writes the keys this version does not know straight back', async () => {
+    const extra = { database: { url_env: 'X' }, store: { extra: 1 } };
+    const kit = harness({
+      isTTY: false,
+      recorded: true,
+      recordedExtra: extra,
+      readWarnings: [
+        {
+          code: 'CONFIG_UNKNOWN_KEY',
+          message: `${HOME}/config.toml: 이 버전이 모르는 키 "database.url_env"가 있습니다. 쓰지는 않고 그대로 둡니다`,
+        },
+      ],
+    });
+
+    const result = await resultOf(['--yes'], kit);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.warnings).toEqual(['CONFIG_UNKNOWN_KEY']);
+    expect(kit.written).toEqual([{ ...kept(), extra }]);
+  });
+
+  it('stops before writing anything when the whole file cannot be read', async () => {
+    const kit = harness({
+      isTTY: false,
+      readFails: `${HOME}/config.toml: schema_version 2는 지원하지 않습니다.`,
+    });
+
+    const exit = await install(['--yes'], kit);
+
+    // 2 and not 1: nothing ran. Overwriting it with this version's defaults
+    // would be the install losing the one copy of what the person chose (F1).
+    expect(exit).toBe(2);
+    expect(kit.output()).toContain('CONFIG_INVALID: ');
+    expect(kit.written).toEqual([]);
+    expect(kit.store.prepared).toEqual([]);
+    expect(kit.shimmed).toEqual([]);
+  });
+
+  it('reports a codec that refuses to write, rather than throwing', async () => {
+    const kit = harness({
+      isTTY: false,
+      writeFails: 'OTHER에 작은따옴표와 큰따옴표가 다 들어 있어서 .env로 나타낼 수 없습니다',
+    });
+
+    const exit = await install(['--yes'], kit);
+
+    // 1, not 2: the store and the owner are already there, so this run did
+    // happen — and the code table's own 2 would say it never started.
+    expect(exit).toBe(1);
+    expect(kit.output()).toContain('CONFIG_INVALID: OTHER');
+    expect(kit.store.prepared).toEqual([STORE]);
+    expect(kit.shimmed).toEqual([]);
+  });
+
+  it('carries the warnings on a failure as well as on a result', async () => {
+    const kit = harness({
+      isTTY: false,
+      readWarnings: [
+        {
+          code: 'CONFIG_UNKNOWN_KEY',
+          message: `${HOME}/config.toml: 이 버전이 모르는 키 "x"가 있습니다. 쓰지는 않고 그대로 둡니다`,
+        },
+      ],
+      store: { self: { ok: false, code: 'DB_UNAVAILABLE', message: '파일이 사라졌습니다' } },
+    });
+
+    const result = await resultOf(['--yes'], kit);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // A code collected before the failure is still a code the caller has to
+    // see (NFR-2).
+    expect(result.warnings).toEqual(['CONFIG_UNKNOWN_KEY']);
+  });
+});
+
+
+describe('the installer flow and the mirror path', () => {
+  it('offers the default and records it when the answer is just Enter', async () => {
+    const kit = harness();
+
+    const exit = await install([], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.placeholders[0]).toBe(MIRROR);
+    expect(kit.output()).toContain(`미러는 ${MIRROR}에 둡니다`);
+  });
+
+  it('records the absolute path the answer named', async () => {
+    const kit = harness({ tail: { text: ['/tmp/notes/brain', ''], confirm: [false, true, true] } });
+
+    const exit = await install([], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.written).toEqual([fresh(STORE, FILES, '/tmp/notes/brain')]);
+  });
+
+  it('expands a leading ~ on the flag, and never asks', async () => {
+    const kit = harness({ tail: { text: [''], confirm: [false, true, true] } });
+
+    const exit = await install(['--mirror-path', '~/notes/brain'], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.asked).toEqual([
+      '임베딩을 켤까요?',
+      '자동 업데이트를 켤까요?',
+      '이대로 진행할까요?',
+      '시간대를 무엇으로 할까요?',
+    ]);
+    expect(kit.written).toEqual([fresh(STORE, FILES, join(homedir(), 'notes/brain'))]);
+  });
+
+  it('exits 2 without writing for a relative flag and no terminal to ask in', async () => {
+    const kit = harness({ isTTY: false });
+
+    const exit = await install(['--mirror-path', 'notes/mirror', '--yes'], kit);
+
+    expect(exit).toBe(2);
+    expect(kit.output()).toContain('CONFIG_INVALID: --mirror-path notes/mirror');
+    expect(kit.written).toEqual([]);
+    expect(kit.store.prepared).toEqual([]);
+  });
+
+  it('keeps a recorded path without asking when there is no terminal', async () => {
+    const kit = harness({ isTTY: false, recordedMirrorPath: '/tmp/notes/brain' });
+
+    const exit = await install(['--yes'], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.asked).toEqual([]);
+    expect(kit.written).toEqual([kept('Asia/Seoul', STORE, FILES, '/tmp/notes/brain')]);
+  });
+});
+
+
+describe('the installer flow and embeddings', () => {
+  it('says they are not supported yet when the answer is yes, and writes nothing about them', async () => {
+    const kit = harness({ tail: { text: ['', ''], confirm: [true, true, true] } });
+
+    const exit = await install([], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.asked).toContain('임베딩을 켤까요?');
+    expect(kit.output()).toContain('아직 지원하지 않으므로');
+    // The same write as a run that said no: there is no key for this yet.
+    expect(kit.written).toEqual([fresh()]);
+  });
+
+  it('asks nothing and says one line when there is no terminal', async () => {
+    const kit = harness({ isTTY: false });
+
+    const exit = await install(['--yes'], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.asked).toEqual([]);
+    expect(kit.output()).toContain('임베딩은 꺼져 있습니다');
+  });
+});
+
+
+describe('the installer flow, the shim and the harnesses', () => {
+  it('writes the shim for this home and says so', async () => {
+    const kit = harness();
+
+    const exit = await install([], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.shimmed).toEqual([HOME]);
+    expect(kit.output()).toContain(`${shimPath(HOME)}을 썼습니다 (mode 0755)`);
+  });
+
+  it('says the shim is current rather than claiming it wrote one', async () => {
+    const kit = harness({ shimCurrent: true });
+
+    await install([], kit);
+
+    expect(kit.output()).toContain(`${shimPath(HOME)}은 이미 최신입니다`);
+    // The consent screen says it will write the shim at 0755; the step itself
+    // must not claim it did when the file already said this.
+    expect(kit.output()).not.toContain(`${shimPath(HOME)}을 썼습니다`);
+  });
+
+  it('says there is no harness to connect when the registry is empty', async () => {
+    const kit = harness();
+
+    const exit = await install([], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.output()).toContain('아직 연결할 하네스가 없습니다 (epic 2)');
+    expect(kit.prompts.checked).toEqual([]);
+  });
+
+  it('offers every detected harness checked, and connects the ones left checked', async () => {
+    const demo = memoryConnector({ harness: 'demo', label: 'Demo' });
+    const other = memoryConnector({ harness: 'other', label: 'Other' });
+    const kit = harness({
+      connectors: [demo, other],
+      tail: { text: ['', ''], confirm: [false, true, true], multiselect: [['demo']] },
+    });
+
+    const exit = await install([], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.checked).toEqual([['demo', 'other']]);
+    expect(demo.marked()).toHaveLength(1);
+    expect(demo.entries()[0]).toContain(shimPath(HOME));
+    expect(other.entries()).toEqual([]);
+    expect(kit.output()).toContain('Demo를 연결했습니다');
+  });
+
+  it('never offers a harness that is not installed here', async () => {
+    const absent = memoryConnector({ harness: 'absent', detected: false });
+    const kit = harness({ connectors: [absent] });
+
+    const exit = await install([], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.checked).toEqual([]);
+    expect(kit.output()).toContain('이 빌드가 아는 하네스가 여기에 설치되어 있지 않습니다');
+    expect(absent.entries()).toEqual([]);
+  });
+
+  it('says it is already connected the second time, writing nothing', async () => {
+    const demo = memoryConnector({ harness: 'demo', label: 'Demo' });
+    const run = async (): Promise<string> => {
+      const kit = harness({
+        connectors: [demo],
+        tail: { text: ['', ''], confirm: [false, true, true], multiselect: [['demo']] },
+      });
+      expect(await install([], kit)).toBe(0);
+      return kit.output();
+    };
+
+    await run();
+    const second = await run();
+
+    expect(second).toContain('Demo가 이미 연결되어 있습니다');
+    expect(demo.marked()).toHaveLength(1);
+  });
+
+  it('connects only what --connect named when there is no terminal', async () => {
+    const demo = memoryConnector({ harness: 'demo' });
+    const other = memoryConnector({ harness: 'other' });
+    const kit = harness({ isTTY: false, connectors: [demo, other] });
+
+    const exit = await install(['--connect', 'demo', '--yes'], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.asked).toEqual([]);
+    expect(demo.marked()).toHaveLength(1);
+    // A harness nobody asked about must not have its configuration written.
+    expect(other.entries()).toEqual([]);
+  });
+
+  it('writes no harness configuration at all without a terminal and without the flag', async () => {
+    const demo = memoryConnector({ harness: 'demo' });
+    const kit = harness({ isTTY: false, connectors: [demo] });
+
+    const exit = await install(['--yes'], kit);
+
+    expect(exit).toBe(0);
+    expect(demo.entries()).toEqual([]);
+    expect(kit.output()).toContain('연결한 하네스가 없습니다');
+  });
+
+  it('takes --connect over the question in a terminal too', async () => {
+    const demo = memoryConnector({ harness: 'demo' });
+    const other = memoryConnector({ harness: 'other' });
+    const kit = harness({ connectors: [demo, other] });
+
+    const exit = await install(['--connect', 'other'], kit);
+
+    expect(exit).toBe(0);
+    expect(kit.prompts.checked).toEqual([]);
+    expect(other.marked()).toHaveLength(1);
+    expect(demo.entries()).toEqual([]);
+  });
+
+  it('exits 2 before touching anything for a harness nobody registered', async () => {
+    const kit = harness({ isTTY: false, connectors: [memoryConnector({ harness: 'demo' })] });
+
+    const exit = await install(['--connect', 'nope', '--yes'], kit);
+
+    expect(exit).toBe(2);
+    expect(kit.output()).toContain('USAGE: nope를 위한 커넥터가 없습니다');
+    expect(kit.output()).toContain('아는 하네스: demo.');
+    expect(kit.written).toEqual([]);
+    expect(kit.shimmed).toEqual([]);
+    expect(kit.store.prepared).toEqual([]);
+    expect(kit.store.doctored).toEqual([]);
+  });
+
+  it('exits 1 when a connector refuses, having finished everything else', async () => {
+    const broken: MemoryConnector = memoryConnector({
+      harness: 'demo',
+      failure: { code: 'HARNESS_UNREADABLE', message: 'settings.json이 JSON이 아닙니다' },
+    });
+    const kit = harness({ isTTY: false, connectors: [broken] });
+
+    const exit = await install(['--connect', 'demo', '--yes'], kit);
+
+    expect(exit).toBe(1);
+    expect(kit.output()).toContain('HARNESS_UNREADABLE: settings.json이 JSON이 아닙니다');
+    // The database half of the install still happened and still counts.
+    expect(kit.store.prepared).toEqual([STORE]);
+    expect(kit.output()).toContain('db: ok');
+  });
+
+  it('keeps connecting the other harnesses after one refuses, and fails with its code', async () => {
+    const broken: MemoryConnector = memoryConnector({
+      harness: 'demo',
+      failure: { code: 'HARNESS_UNREADABLE', message: 'settings.json이 JSON이 아닙니다' },
+    });
+    const other = memoryConnector({ harness: 'other', label: 'Other' });
+    const kit = harness({ isTTY: false, connectors: [broken, other] });
+
+    const result = await resultOf(['--connect', 'demo', '--connect', 'other', '--yes'], kit);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure).toMatchObject({ code: 'HARNESS_UNREADABLE', exit: 1 });
+    expect(installExit(result)).toBe(1);
+    // The second harness was still connected, and doctor still had its say.
+    expect(other.marked()).toHaveLength(1);
+    expect(kit.output()).toContain('Other를 연결했습니다');
+    expect(kit.store.doctored).toHaveLength(1);
+  });
+});
+
+
+/**
+ * The last two steps of AD-19, which are what a plugin's `SessionStart` reads:
+ * proving the installation answers from outside this process, and only then
+ * recording that it did.
+ */
+describe('the installer flow, proving itself and recording it', () => {
+  it('runs the shim after doctor, then writes the record, and reports both', async () => {
+    const kit = harness();
+
+    const result = await resultOf([], kit);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Doctor first: its lines are what a person reads to find out what is
+    // wrong, and a report cut short by a shim that will not start would hide
+    // every check that passed.
+    expect(kit.store.doctored).toHaveLength(1);
+    expect(kit.installed.verified).toEqual([HOME]);
+    expect(kit.installed.wrote).toEqual([
+      {
+        commit: BUILD_COMMIT,
+        schema_version: 1,
+        schema_versions: { core: 1 },
+        node: PINNED_NODE,
+        // Nothing named a plugin folder and nothing was recorded before.
+        plugin_root: null,
+      },
+    ]);
+    expect(result.report.installed).toEqual({
+      path: join(HOME, 'installed.json'),
+      commit: BUILD_COMMIT,
+    });
+  });
+
+  it('records the plugin folder the install was started from', async () => {
+    const kit = harness();
+
+    await installWithFlags(
+      { connect: [], yes: true, help: false, pluginRoot: '/plugins/second-brain' },
+      kit,
+    );
+
+    expect(kit.installed.wrote[0]?.plugin_root).toBe('/plugins/second-brain');
+  });
+
+  it('keeps the plugin folder a previous install recorded when nothing names one', async () => {
+    // `brain setup run` by hand must not turn a plugin install into one the
+    // `plugin` check then says nothing about.
+    const kit = harness({
+      recordedInstalled: {
+        commit: 'f'.repeat(40),
+        schema_version: 4,
+        node: PINNED_NODE,
+        plugin_root: '/plugins/second-brain',
+        installed_at: '2026-10-17T00:00:00.000Z',
+      },
+    });
+
+    await install(['--yes'], kit);
+
+    expect(kit.installed.wrote[0]?.plugin_root).toBe('/plugins/second-brain');
+  });
+
+  it('falls back to the schema version this run measured when there is no build.json', async () => {
+    const kit = harness({ build: undefined });
+
+    const result = await resultOf([], kit);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(kit.installed.wrote[0]).toMatchObject({ commit: null, schema_version: 1 });
+    expect(result.report.installed.commit).toBeNull();
+  });
+
+  it('is SETUP_INCOMPLETE, and writes no record, when the shim will not answer', async () => {
+    const kit = harness({ verifyFails: 'shim이 `ok: true`가 아닌 엔벨로프를 냈습니다' });
+
+    const result = await resultOf([], kit);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure).toMatchObject({ code: 'SETUP_INCOMPLETE', exit: 1 });
+    // The record means "this install finished and answered", so a run that
+    // could not answer must not leave one: a `SessionStart` would otherwise
+    // never try again.
+    expect(kit.installed.wrote).toEqual([]);
+  });
+
+  it('does not reach the record when doctor already failed', async () => {
+    const kit = harness({ store: { walFails: true } });
+
+    const result = await resultOf([], kit);
+
+    expect(result.ok).toBe(false);
+    expect(kit.installed.verified).toEqual([]);
+    expect(kit.installed.wrote).toEqual([]);
+  });
+});
+
+
+describe('the installer flow and automatic updating', () => {
+  it('asks, writes the answer, and reports it', async () => {
+    // The question after embeddings, answered no: the one new value an install
+    // records (AD-19).
+    const kit = harness({ tail: { text: ['', ''], confirm: [false, false, true] } });
+
+    const result = await resultOf([], kit);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(kit.prompts.asked).toContain('자동 업데이트를 켤까요?');
+    expect(kit.written[0]?.updateAuto).toBe(false);
+    expect(result.report.update).toEqual({ auto: false });
+    expect(kit.output()).toContain('자동 업데이트는 꺼져 있습니다');
+  });
+
+  it('offers what the folder already says as the default', async () => {
+    const kit = harness({ recorded: true, recordedUpdateAuto: false });
+
+    await install([], kit);
+
+    // Somebody who turned it off once does not have to turn it off again at
+    // every re-run, which is what a default of `true` here would mean.
+    expect(kit.prompts.initial).toContainEqual(['자동 업데이트를 켤까요?', false]);
+  });
+
+  it('keeps the recorded value without asking when there is no terminal', async () => {
+    const kit = harness({ isTTY: false, recorded: true, recordedUpdateAuto: false });
+
+    const result = await resultOf(['--yes'], kit);
+
+    expect(kit.prompts.asked).toEqual([]);
+    expect(kit.written[0]?.updateAuto).toBe(false);
+    expect(result.ok && result.report.update).toEqual({ auto: false });
+  });
+
+  it('is on for a first install with nothing recorded and nobody to ask', async () => {
+    const kit = harness({ isTTY: false });
+
+    const result = await resultOf(['--yes'], kit);
+
+    expect(kit.written[0]?.updateAuto).toBe(true);
+    expect(result.ok && result.report.update).toEqual({ auto: true });
+  });
+});
+
+
+describe('installer plugin connections', () => {
+  it('includes plugin warnings without failing the install', async () => {
+    const plugin = memoryConnector({ harness: 'claude-code', label: 'Claude Code', hookSource: 'plugin' });
+    const kit = harness({ isTTY: false, connectors: [plugin] });
+    const result = await resultOf(['--connect', 'claude-code', '--yes'], kit);
+    expect(result.ok).toBe(true);
+    expect('warnings' in result && result.warnings).toEqual(['PLUGIN_NOT_INSTALLED']);
+    expect(kit.output()).toContain('Claude Code 플러그인이 설치되어 있지 않습니다');
+  });
+  it('passes the explicit plugin root and explains legacy cleanup', async () => {
+    const plugin = memoryConnector({ harness: 'claude-code', label: 'Claude Code', hookSource: 'plugin' });
+    plugin.addMarkedEntry();
+    const kit = harness({ isTTY: false, connectors: [plugin] });
+    const result = await resultOf(['--connect', 'claude-code', '--plugin-root', '/plugins/current', '--yes'], kit);
+    expect(result.ok).toBe(true);
+    expect('warnings' in result && result.warnings).toEqual([]);
+    expect(plugin.marked()).toEqual([]);
+    expect(kit.output()).toContain('에서 예전 brain hook을 지웠습니다');
+    expect(kit.output()).toContain('Claude Code는 /plugins/current의 플러그인으로 연결되어 있습니다');
+  });
+  it('uses the previous completion record when the plugin flag is absent', async () => {
+    const plugin = memoryConnector({ harness: 'claude-code', label: 'Claude Code', hookSource: 'plugin' });
+    const kit = harness({ isTTY: false, connectors: [plugin], recordedInstalled: {
+      commit: BUILD_COMMIT, schema_version: 1, node: PINNED_NODE,
+      plugin_root: '/plugins/recorded', installed_at: '2026-10-17T00:00:00.000Z',
+    } });
+    const result = await resultOf(['--connect', 'claude-code', '--yes'], kit);
+    expect(result.ok).toBe(true);
+    expect('warnings' in result && result.warnings).toEqual([]);
+    expect(kit.output()).toContain('Claude Code는 /plugins/recorded의 플러그인으로 연결되어 있습니다');
+  });
+});
+
+
+
+describe('daemon registration in the shared installer', () => {
+  it('registers the verified shim with the supplied environment before recording completion', async () => {
+    const kit = harness({ isTTY: false });
+    const order: string[] = [];
+    const { verify, write } = kit.deps.installed;
+    kit.deps.installed.verify = async (home) => { order.push('verify'); return verify(home); };
+    kit.deps.installed.write = async (home, facts) => { order.push('write'); return write(home, facts); };
+    kit.deps.daemon.register = async (shim, env) => {
+      order.push('daemon');
+      expect(shim).toBe(shimPath(HOME));
+      expect(env).toBe(ENV);
+      return { label: DAEMON_LABEL, plist_path: null, status: 'unsupported', plist_changed: false };
+    };
+    expect((await resultOf(['--yes'], kit)).ok).toBe(true);
+    expect(order).toEqual(['verify', 'daemon', 'write']);
+  });
+
+  it('never registers a shim whose verification failed', async () => {
+    const kit = harness({ isTTY: false, verifyFails: '확인 실패' });
+    kit.deps.daemon.register = async () => { throw new Error('must not register'); };
+    expect((await resultOf(['--yes'], kit)).ok).toBe(false);
+    expect(kit.installed.wrote).toHaveLength(0);
+  });
+
+  it.each(['registered', 'loaded', 'failed'] as const)('reports %s and keeps registration failure nonfatal', async (status) => {
+    const kit = harness({ isTTY: false, daemonResult: {
+      label: DAEMON_LABEL, plist_path: '/tmp/daemon.plist', status, plist_changed: true,
+      ...(status === 'failed' ? { message: '등록을 거절했습니다' } : {}),
+    } });
+    const result = await resultOf(['--yes'], kit);
+    expect(installExit(result)).toBe(0);
+    expect(result.warnings).toEqual(status === 'failed' ? ['DAEMON_NOT_REGISTERED'] : []);
+    if (status === 'failed') expect(kit.output()).toContain('등록을 거절했습니다');
+    expect(kit.installed.wrote).toHaveLength(1);
+    if (result.ok) expect(result.report.daemon).toEqual({
+      label: DAEMON_LABEL, plist_path: '/tmp/daemon.plist', status, plist_changed: true, restarted: false,
+    });
+  });
+});
+
+
+describe('daemon restart after upgrades', () => {
+  it.each([
+    ['loaded', true, 'b'.repeat(40), true],
+    ['loaded', true, BUILD_COMMIT, false],
+    ['loaded', true, null, true],
+    ['loaded', false, null, false],
+    ['loaded', false, 'b'.repeat(40), false],
+    ['loaded', false, 'b'.repeat(40), true, 'stale-heartbeat'],
+    ['loaded', false, 'b'.repeat(40), true, 'no-heartbeat'],
+    ['loaded', false, 'b'.repeat(40), true, 'future-heartbeat'],
+    ['loaded', false, null, false, 'no-lock'],
+    ['registered', true, 'b'.repeat(40), false],
+    ['unsupported', true, 'b'.repeat(40), false],
+    ['failed', true, 'b'.repeat(40), false],
+  ] as const)('compares the resident build: %s alive=%s commit=%s restart=%s reason=%s', async (status, alive, runningCommit, expected, reason: DaemonDeadReason = 'pid-dead') => {
+    const kit = harness({ isTTY: false, daemonResult: {
+      label: DAEMON_LABEL, plist_path: '/tmp/daemon.plist', status, plist_changed: false,
+    } });
+    vi.spyOn(liveness, 'daemonLiveness').mockResolvedValue(alive
+      ? { alive: true, pid: 42, heartbeatAt: new Date(), commit: runningCommit }
+      : { alive: false, reason, pid: reason === 'no-lock' ? null : 42,
+        heartbeatAt: reason === 'stale-heartbeat' ? new Date(Date.now() - 120_000)
+          : reason === 'future-heartbeat' ? new Date(Date.now() + 120_000) : null, commit: runningCommit });
+    const calls: boolean[] = [];
+    kit.deps.daemon.restart = async (changed, commit, env) => {
+      expect(commit).toBe(BUILD_COMMIT); expect(env).toBe(ENV); calls.push(changed);
+      return { ok: true, method: 'signal', pid: 42, commit: BUILD_COMMIT };
+    };
+    const result = await resultOf(['--yes'], kit);
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual(expected ? [false] : []);
+    if (result.ok) expect(result.report.daemon.restarted).toBe(expected);
+  });
+  it('skips restart when the installed build cannot name its commit', async () => {
+    const kit = harness({ isTTY: false, daemonResult: {
+      label: DAEMON_LABEL, plist_path: '/tmp/daemon.plist', status: 'loaded', plist_changed: false,
+    } });
+    kit.deps.installed.build = async () => undefined;
+    const restart = vi.fn(kit.deps.daemon.restart); kit.deps.daemon.restart = restart;
+    expect((await resultOf(['--yes'], kit)).ok).toBe(true);
+    expect(restart).not.toHaveBeenCalled();
+  });
+  it('retries despite an already-current completion record and records restart failure', async () => {
+    const kit = harness({ isTTY: false, daemonResult: {
+      label: DAEMON_LABEL, plist_path: '/tmp/daemon.plist', status: 'loaded', plist_changed: true,
+    }, recordedInstalled: { commit: BUILD_COMMIT, schema_version: 1, node: PINNED_NODE,
+      plugin_root: null, installed_at: '2026-10-17T00:00:00Z' } });
+    vi.spyOn(liveness, 'daemonLiveness').mockResolvedValue({ alive: true, pid: 42, heartbeatAt: new Date(), commit: 'b'.repeat(40) });
+    const order: string[] = [];
+    for (const key of ['read', 'build', 'write'] as const) {
+      const original = kit.deps.installed[key];
+      // Record order while retaining each dependency's actual behavior.
+      if (key === 'read') kit.deps.installed.read = async (home) => { order.push(key); return (original as typeof kit.deps.installed.read)(home); };
+      if (key === 'build') kit.deps.installed.build = async () => { order.push(key); return (original as typeof kit.deps.installed.build)(); };
+      if (key === 'write') kit.deps.installed.write = async (home, facts) => { order.push(key); return (original as typeof kit.deps.installed.write)(home, facts); };
+    }
+    const register = kit.deps.daemon.register;
+    kit.deps.daemon.register = async (shim, env) => { order.push('register'); return register(shim, env); };
+    kit.deps.daemon.restart = async (changed) => { expect(changed).toBe(true); order.push('restart'); return { ok: false, message: '재시작 실패' }; };
+    const result = await resultOf(['--yes'], kit);
+    expect(installExit(result)).toBe(0); expect(result.warnings).toContain('DAEMON_NOT_RESTARTED');
+    expect(kit.installed.wrote).toHaveLength(1);
+    expect(order).toEqual(['read', 'build', 'register', 'restart', 'write']);
+    if (result.ok) expect(result.report.daemon.restarted).toBe(false);
+  });
+});

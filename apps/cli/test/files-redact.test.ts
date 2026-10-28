@@ -1,8 +1,10 @@
+import { postgresStore, CORE_SCHEMA_VERSION, type PostgresStoreOptions } from 'second_brain/postgres';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { appendFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { PgTestClient } from './pg-client.js';
+import { preparePgHome, pgDatabaseUrl, pgAppUrl, runPgCommand } from './pg-home.js';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { HOME_ENV } from '../src/config/paths.js';
@@ -80,20 +82,7 @@ function runBrain(
 
 async function installedHome(): Promise<string> {
   const home = await temporary.create('brain-files-redact-');
-  const install = await new Promise<Run>((resolve, reject) => {
-    const child = spawn(process.execPath, [installPath, '--yes'], {
-      cwd: repoRoot,
-      env: childEnvironment(home),
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-  });
-  expect(install.code, install.stdout + install.stderr).toBe(0);
+  await preparePgHome(home);
   return home;
 }
 
@@ -153,42 +142,42 @@ function databaseIn(home: string): string {
 }
 
 /** Everything these cases read back, in one read-only open. */
-function read(home: string) {
-  const db = new DatabaseSync(databaseIn(home), { readOnly: true });
+async function read(home: string) {
+  const db = new PgTestClient(databaseIn(home));
   try {
-    const one = (sql: string, ...values: string[]): Record<string, unknown> | undefined =>
-      db.prepare(sql).get(...values) as Record<string, unknown> | undefined;
-    const count = (sql: string, ...values: string[]): number =>
-      Number((one(sql, ...values) as { n: number } | undefined)?.n ?? -1);
-    const file = one('select id, content_hash, redacted_at, current_extraction_id, home_location_id from files') ?? {};
+    const one = async (sql: string, ...values: string[]): Promise<Record<string, unknown> | undefined> =>
+      (await db.prepare(sql).get(...values)) as Record<string, unknown> | undefined;
+    const count = async (sql: string, ...values: string[]): Promise<number> =>
+      Number(((await one(sql, ...values)) as { n: number } | undefined)?.n ?? -1);
+    const file = (await one('select id, content_hash, redacted_at, current_extraction_id, home_location_id from files')) ?? {};
     return {
       fileId: String(file.id ?? ''),
       contentHash: String(file.content_hash ?? ''),
       redactedAt: file.redacted_at as string | null,
       currentExtraction: file.current_extraction_id as string | null,
-      homeLocator: String((one('select locator from file_locations where ownership = ?', 'brain') ?? {}).locator ?? ''),
-      locationDeletedAt: (one('select deleted_at from file_locations where ownership = ?', 'brain') ?? {}).deleted_at as string | null,
-      files: count('select count(*) as n from files'),
+      homeLocator: String(((await one('select locator from file_locations where ownership = $1', 'brain')) ?? {}).locator ?? ''),
+      locationDeletedAt: ((await one('select deleted_at from file_locations where ownership = $1', 'brain')) ?? {}).deleted_at as string | null,
+      files: (await count('select count(*) as n from files')),
       // A locator the ingest invents wrongly for a masked hash would be a
       // *second* live `brain` place whose blob nothing ever deletes, so the
       // count has to be part of what a re-collection leaves unchanged.
-      locations: count('select count(*) as n from file_locations'),
-      brainLocations: count("select count(*) as n from file_locations where ownership = 'brain'"),
-      names: count('select count(*) as n from file_names'),
-      metadata: count('select count(*) as n from file_metadata'),
-      extractions: count('select count(*) as n from document_extractions'),
-      chunks: count('select count(*) as n from document_chunks'),
-      attachments: count('select count(*) as n from message_attachments'),
-      redactions: db.prepare('select message_id, tool_note_id, file_id, start, "end", kind, content_hash from redactions').all(),
-      chunkMatches: count('select count(*) as n from document_chunks_fts where document_chunks_fts match ?', `"${NEEDLE}"`),
-      nameMatches: count('select count(*) as n from file_names_fts where file_names_fts match ?', `"${DOC_NAME}"`),
-      openExtractWork: count("select count(*) as n from work_items where kind = 'document_extract' and completed_at is null"),
-      blobWork: db.prepare("select target_id, completed_at is null as open from work_items where kind = 'blob_delete'").all(),
-      messages: (db.prepare('select id from messages order by occurred_at, id').all() as { id: string }[]).map((row) => row.id),
-      failures: db.prepare("select stage, code, resolved_at from failures where target_kind = 'file'").all(),
+      locations: (await count('select count(*) as n from file_locations')),
+      brainLocations: (await count("select count(*) as n from file_locations where ownership = 'brain'")),
+      names: (await count('select count(*) as n from file_names')),
+      metadata: (await count('select count(*) as n from file_metadata')),
+      extractions: (await count('select count(*) as n from document_extractions')),
+      chunks: (await count('select count(*) as n from document_chunks')),
+      attachments: (await count('select count(*) as n from message_attachments')),
+      redactions: (await db.prepare('select message_id, tool_note_id, file_id, start, "end", kind, content_hash from redactions').all()),
+      chunkMatches: (await count("select count(*) as n from document_chunks where lower(body) LIKE '%' || lower($1) || '%'", `${NEEDLE}`)),
+      nameMatches: (await count("select count(*) as n from file_names where lower(text) LIKE '%' || lower($1) || '%'", `${DOC_NAME}`)),
+      openExtractWork: (await count("select count(*) as n from work_items where kind = 'document_extract' and completed_at is null")),
+      blobWork: (await db.prepare("select target_id, completed_at is null as open from work_items where kind = 'blob_delete'").all()),
+      messages: ((await db.prepare('select id from messages order by occurred_at, id').all()) as { id: string }[]).map((row) => row.id),
+      failures: (await db.prepare("select stage, code, resolved_at from failures where target_kind = 'file'").all()),
     };
   } finally {
-    db.close();
+    (await db.close());
   }
 }
 
@@ -199,7 +188,7 @@ async function seeded() {
   const environment = { HOME: source.sourceHome };
   expect((await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, source.payload, environment)).code).toBe(0);
   expect((await runBrain(['queue', 'drain', '--json'], home, '', environment)).code).toBe(0);
-  const before = read(home);
+  const before = (await read(home));
   expect(before.files).toBe(1);
   expect(before.attachments).toBe(2);
   expect(before.messages).toHaveLength(2);
@@ -214,7 +203,7 @@ async function seeded() {
 describe('brain files redact', () => {
   it('확인 없이는 공유 메시지 수를 말하고 아무것도 쓰지 않는다', async () => {
     const { home, environment, before } = await seeded();
-    const bytes = await readFile(databaseIn(home));
+    const rows = await read(home);
 
     const gated = await runBrain(['files', 'redact', before.fileId, '--json'], home, '', environment);
     expect(gated.code).toBe(3);
@@ -226,8 +215,8 @@ describe('brain files redact', () => {
     expect(envelope.error.retry_argv).toContain('--yes');
     expect(envelope.error.retry?.args).toEqual({ file: before.fileId, confirm: true });
     // A read of the sharing count is all it did: every row is where it was.
-    expect(read(home)).toEqual(before);
-    expect(await readFile(databaseIn(home))).toEqual(bytes);
+    expect((await read(home))).toEqual(before);
+    expect(await read(home)).toEqual(rows);
 
     const text = await runBrain(['files', 'redact', before.fileId], home, '', environment);
     expect(text.code).toBe(3);
@@ -250,7 +239,7 @@ describe('brain files redact', () => {
     const upper = await runBrain(['files', 'redact', before.fileId.toUpperCase(), '--json'], home, '', environment);
     expect(upper.code, upper.stdout).toBe(3);
     expect((JSON.parse(upper.stdout) as { error: { message: string } }).error.message).toContain('메시지 2개');
-    expect(read(home)).toEqual(before);
+    expect((await read(home))).toEqual(before);
   }, 60_000);
 
   it('가리기와 drain은 조각·이름·블롭을 지우고 사용자 원본은 건드리지 않는다', async () => {
@@ -266,7 +255,7 @@ describe('brain files redact', () => {
     });
     expect(Number(data.names_removed)).toBeGreaterThan(0);
 
-    const afterRedact = read(home);
+    const afterRedact = (await read(home));
     expect(afterRedact.redactedAt).not.toBe(null);
     expect(afterRedact.currentExtraction).toBe(null);
     expect([afterRedact.names, afterRedact.metadata, afterRedact.extractions, afterRedact.chunks]).toEqual([0, 0, 0, 0]);
@@ -278,7 +267,7 @@ describe('brain files redact', () => {
     expect(afterRedact.blobWork).toHaveLength(1);
 
     expect((await runBrain(['queue', 'drain', '--json'], home, '', environment)).code).toBe(0);
-    const afterDrain = read(home);
+    const afterDrain = (await read(home));
     expect(afterDrain.locationDeletedAt).not.toBe(null);
     expect(existsSync(join(home, 'files', before.homeLocator))).toBe(false);
     // Nothing derived came back, and no reading was queued for it.
@@ -297,7 +286,7 @@ describe('brain files redact', () => {
       already_redacted: true, extractions_removed: 0, chunks_removed: 0, names_removed: 0,
       blob_deletes_queued: 0,
     });
-    expect(read(home).redactions).toHaveLength(1);
+    expect((await read(home)).redactions).toHaveLength(1);
 
     // The content hash is the name a person can work out from the original
     // bytes, and it has to do the same thing as the id. A home of its own,
@@ -309,7 +298,7 @@ describe('brain files redact', () => {
     expect(byHash.code, byHash.stdout + byHash.stderr).toBe(0);
     expect((JSON.parse(byHash.stdout) as { data: Record<string, unknown> }).data)
       .toEqual({ ...data, file_id: other.before.fileId });
-    expect(read(other.home).redactedAt).not.toBe(null);
+    expect((await read(other.home)).redactedAt).not.toBe(null);
   }, 90_000);
 
   it('성공 출력은 한국어로 공유 수와 다음 drain을 말한다', async () => {
@@ -347,7 +336,7 @@ describe('brain files redact', () => {
     const retried = await runBrain(['failures', 'retry', '--json'], home, '', environment);
     expect(retried.code, retried.stdout + retried.stderr).toBe(0);
 
-    const after = read(home);
+    const after = (await read(home));
     // The blob is not written back to the locator whose row says it is gone.
     expect(existsSync(join(home, 'files', before.homeLocator))).toBe(false);
     expect(after.files).toBe(1);

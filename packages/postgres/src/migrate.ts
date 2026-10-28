@@ -14,7 +14,9 @@ export interface RunMigrationsOptions extends ConnectionOptions {
 export type MigrationResult = { ok: true; from: number; to: number; applied: string[] }
   | { ok: false; code: 'DB_UNAVAILABLE' | 'MIGRATION_FAILED'; message: string; file?: string };
 const defaultOwners: readonly MigrationOwner[] = [{ owner: 'core', directory: fileURLToPath(new URL('../migrations/', import.meta.url)) }];
-/** Validate the whole package and applied history before the first pending DDL. */
+/** Validate the whole package and applied history before the first pending DDL.
+ * 적용된 baseline은 바꾸지 않는다. 바꿀 것은 0002_*.sql로.
+ */
 export async function runMigrations(options: RunMigrationsOptions): Promise<MigrationResult> {
   let files: { owner: string; name: string; version: number; body: string; checksum: string }[] = [];
   try {

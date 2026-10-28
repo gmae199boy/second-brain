@@ -1,4 +1,4 @@
-import type { SchemaStore, Store } from 'second_brain';
+import type { SchemaStore, SettingsStore, Store } from 'second_brain';
 
 /**
  * The store a `diagnostic` command gets when the configuration could not be
@@ -23,9 +23,11 @@ import type { SchemaStore, Store } from 'second_brain';
  * command never reaches any of them — it does not run without a configuration
  * (`dispatch.ts`) — and `DB_UNAVAILABLE` is what it would be told if it did.
  */
-export function failedConfigStore(message: string): Store & SchemaStore {
+export function failedConfigStore(message: string): Store & SchemaStore & SettingsStore {
   const unavailable = { ok: false as const, code: 'DB_UNAVAILABLE' as const, message };
   return {
+    async getSetting() { return unavailable; },
+    async setSetting() { return unavailable; },
     async addSchedule() { return unavailable; },
     async listDueSchedules() { return unavailable; },
     async fireSchedule() { return unavailable; },

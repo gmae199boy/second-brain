@@ -1,3 +1,4 @@
+import { runTestSetup } from './pg-home.js';
 import { execFile } from 'node:child_process';
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -170,8 +171,7 @@ describe('daemon launchd registration', () => {
 describe.skipIf(process.platform !== 'darwin')('built setup run launchd surface', () => {
   const bin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
   async function setup(env: NodeJS.ProcessEnv) {
-    const result = await execute(process.execPath, [bin, 'setup', 'run', '--yes', '--json'], { env });
-    return JSON.parse(result.stdout) as { ok: boolean; warnings: string[]; data: { daemon: { status: string } } };
+    return await runTestSetup(env.SECOND_BRAIN_HOME!, env) as { ok: boolean; warnings: readonly string[]; data: { daemon: { status: string } } };
   }
   it('installs twice with exactly one Label and one bootstrap', async () => {
     const kit = await world();

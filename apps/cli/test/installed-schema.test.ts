@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { CORE_SCHEMA_VERSION } from 'second_brain/postgres';
 const file = vi.hoisted(() => ({ text: '' }));
 vi.mock('node:fs/promises', async original => ({
   ...await original<typeof import('node:fs/promises')>(),
@@ -6,9 +8,14 @@ vi.mock('node:fs/promises', async original => ({
 }));
 import { readBuildIdentity, readInstalled } from '../src/install/installed.js';
 
-const base = { commit: 'a'.repeat(40), schema_version: 9 };
+const base = { commit: 'a'.repeat(40), schema_version: 1 };
 afterEach(() => { file.text = ''; });
-it('reads both the legacy SQLite version and PostgreSQL owner versions from the build', async () => {
+it('records CORE_SCHEMA_VERSION in the actual built build.json', () => {
+  const build = JSON.parse(readFileSync(new URL('../dist/build.json', import.meta.url), 'utf8'));
+  expect(build.schema_version).toBe(CORE_SCHEMA_VERSION);
+});
+
+it('reads the PG core version and owner versions from the build', async () => {
   file.text = JSON.stringify({ ...base, schema_versions: { core: 1, garmin: 2 } });
   expect(await readBuildIdentity()).toEqual({ ...base, schema_versions: { core: 1, garmin: 2 } });
 });

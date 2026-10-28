@@ -12,7 +12,6 @@ import {
   errorLine,
   isWarningCode,
   spoolSessionIngest,
-  sqliteStore,
   type Brain,
   type BrainDependencies,
   type Clock,
@@ -22,7 +21,6 @@ import {
   type IngestSessionResult,
   type SchemaStore,
   type SpoolCause,
-  type SqliteStoreOptions,
   type Store,
   type WarningCode,
   type WorkHandlers,
@@ -342,11 +340,9 @@ export interface StandaloneCommandSpec<T = unknown> extends CommandSpecBase {
 export type CommandSpec<T = unknown> = DatabaseCommandSpec<T> | StandaloneCommandSpec<T>;
 
 /**
- * How the dispatcher opens the database file. The one implementation is
- * `sqliteStore`; the seam exists so a test can see which lock budget the
- * dispatcher chose for an invocation without opening a file (AD-7).
+ * A test seam for the PostgreSQL connection options selected by dispatch.
  */
-export type CreateStore = (options: SqliteStoreOptions) => Store & SchemaStore;
+export type CreateConnectionStore = NonNullable<import('./runtime/brain-store.js').OpenBrainStoreOptions['createStore']>;
 
 export interface DispatchRuntime {
   runner?: CommandRunner;
@@ -354,8 +350,8 @@ export interface DispatchRuntime {
   env?: NodeJS.ProcessEnv;
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
-  /** Defaults to `sqliteStore`, which is what every real invocation uses. */
-  createStore?: CreateStore;
+  /** Defaults to the PostgreSQL adapter, which is what every real invocation uses. */
+  createStore?: CreateConnectionStore;
   /** Reads the hook payload. Defaults to this process's standard input. */
   stdin?: () => Promise<string>;
   /** Mints row ids. Defaults to UUIDv7, which is what every row carries (AD-8). */
@@ -438,7 +434,7 @@ export async function dispatch(
   try {
     outcome = await execute(registry, argv, { clock, json, positional: [] }, env, {
       runner: runtime.runner,
-      createStore: runtime.createStore ?? sqliteStore,
+      createStore: runtime.createStore,
       stdin: runtime.stdin ?? (() => readStdin()),
       recordHookArrival: (harness) => recordHookArrival(configHome(env), harness, env['SECOND_BRAIN_PLUGIN_ROOT']),
       idGen: runtime.idGen ?? uuidV7IdGen(),
@@ -504,7 +500,7 @@ export async function dispatch(
 /** The parts of the runtime `execute` passes on to a command or to the SDK. */
 interface Wiring {
   runner?: CommandRunner;
-  createStore: CreateStore;
+  createStore: CreateConnectionStore | undefined;
   stdin: () => Promise<string>;
   recordHookArrival: (harness: string) => Promise<void>;
   idGen: IdGen;
@@ -569,11 +565,10 @@ async function execute(
     : [];
 
   const opened = await openBrainStore({ home, env, config,
-    path: spec.hook === true ? 'turn' : 'command', createSqliteStore: createStore });
+    path: spec.hook === true ? 'turn' : 'command', createStore });
   const { store, expected } = opened;
   if (spec.runSettings !== undefined && config.ok) {
     try {
-      if (opened.kind !== 'postgres') return failed(rendering, { code: 'CONFIG_INVALID', message: '사용자 설정은 PostgreSQL 저장소에 둡니다. store.url_env가 있는 홈을 사용하세요.', exit: 2 }, warningCodes, warningLines);
       const schema = await checkSchema(opened.store, expected);
       if (!schema.ok) return failed(rendering, { code: schema.code, message: schema.message }, warningCodes, warningLines);
       return finish(rendering, await spec.runSettings({ brain: createSettingsBrain({ store: opened.store, clock, schemaVersions: expected }), config: config.config, clock, options, args, stdin, recordHookArrival }), warningCodes, warningLines);
@@ -593,8 +588,7 @@ async function execute(
     idGen,
     workHandlers,
     schemaVersions: expected,
-    kind: opened.kind,
-    adapterProbeIds: opened.kind === 'postgres' ? opened.adapterProbeIds : undefined,
+    adapterProbeIds: opened.adapterProbeIds,
     runner: wiring.runner,
   });
   // One spool per invocation, taken off the assembly rather than built again:
@@ -708,7 +702,7 @@ function shouldDrain(
 
 /** What the drain at the end of a command is built from. */
 type OpportunisticDrain = BrainDependencies & {
-  createStore: CreateStore;
+  createStore: CreateConnectionStore | undefined;
   /** Where the database is, from the configuration this invocation read. */
   home: string;
   env: NodeJS.ProcessEnv;
@@ -745,7 +739,7 @@ async function drainOpportunistically(
   const { createStore, home, env, config, ...dependencies } = options;
   let store: (Store & SchemaStore) | undefined;
   try {
-    const opened = await openBrainStore({ home, env, config, path: 'drain', lockTimeoutMs: DRAIN_BUDGET_MS.opportunistic, createSqliteStore: createStore });
+    const opened = await openBrainStore({ home, env, config, path: 'drain', lockTimeoutMs: DRAIN_BUDGET_MS.opportunistic, createStore });
     store = opened.store;
     const expected = opened.expected;
     const schema = await checkSchema(store, expected);

@@ -4,7 +4,6 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it } from 'vitest';
 import type { TestDatabase } from '@second-brain/test-db';
 import { sampleSelfUserInput } from '@second-brain/core/testing';
@@ -25,11 +24,9 @@ async function world(){
   const env:NodeJS.ProcessEnv={...process.env,SECOND_BRAIN_HOME:home,CLAUDE_CONFIG_DIR:join(home,'claude'),SECOND_BRAIN_LAUNCH_AGENTS:join(home,'agents'),SECOND_BRAIN_LAUNCHCTL:fakeLaunchctl,FAKE_LAUNCHCTL_DIR:join(home,'launchctl')};
   delete env.BRAIN_DATABASE_URL;
   await mkdir(join(home,'claude'),{recursive:true});
-  const installed=await run(['setup','run','--yes','--json'],env);expect(installed.code,installed.stdout+installed.stderr).toBe(0);
   const db=await database();databases.push(db);const store=postgresStore({databaseUrl:db.appUrl});
   try{expect((await store.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);}finally{await store.close();}
-  // setup above intentionally exercises the unchanged default SQLite path.
-  const config=await readFile(join(home,'config.toml'),'utf8');await writeFile(join(home,'config.toml'),config.replace('[store]','[store]\nurl_env = "BRAIN_DATABASE_URL"'));
+  await writeFile(join(home,'config.toml'),'schema_version = 1\n[store]\nurl_env = "BRAIN_DATABASE_URL"\n');
   await writeFile(join(home,'.env'),`BRAIN_DATABASE_URL=${db.appUrl}\n`,{mode:0o600});
   const input=JSON.stringify({session_id:'pg-hook',transcript_path:fixture,hook_event_name:'Stop'});
   return {home,env,db,hook:(override:NodeJS.ProcessEnv={})=>run(['sessions','ingest','claude-code','--json'],{...env,...override},input)};
@@ -41,7 +38,6 @@ it('collects through the built hook into PG only, replays idempotently and handl
   const sessions=await kit.db.rows('select workspace_id from brain.sessions');expect(sessions).toEqual([{workspace_id:null}]);
   expect((await kit.db.rows('select * from brain.messages')).length).toBeGreaterThan(0);expect((await kit.db.rows('select * from brain.tool_notes')).length).toBeGreaterThan(0);
   const replay=JSON.parse((await kit.hook()).stdout);expect(replay.data.inserted).toEqual({messages:0,toolNotes:0});
-  const sqlite=new DatabaseSync(join(kit.home,'brain.db'),{readOnly:true});try{expect(sqlite.prepare('select count(*) as n from sessions').get()).toEqual({n:0});}finally{sqlite.close();}
 });
 it.each(['refused','missing-url','missing-schema','version','session-lock','schema-lock'] as const)('spools the built hook on %s and exits zero',async kind=>{
   const kit=await world();let override:NodeJS.ProcessEnv={};
@@ -104,15 +100,15 @@ it('reads defaults, persists normalized config across processes and rejects inva
   }
   expect((await readdir(join(kit.home, 'spool')).catch(() => [])).filter(name => name.endsWith('.jsonl'))).toEqual([]);
 });
-it('refuses settings commands in a SQLite home and preserves schema mismatch errors', async () => {
+it('uses the default selector and preserves schema mismatch errors', async () => {
   const kit = await world();
   await kit.db.query('update brain.schema_migrations set version=2');
   expect(JSON.parse((await run(['config','get','timezone','--json'],kit.env)).stdout)).toMatchObject({ ok:false,error:{code:'SCHEMA_MISMATCH'} });
   const config = await readFile(join(kit.home, 'config.toml'), 'utf8');
   await writeFile(join(kit.home, 'config.toml'), config.replace('url_env = "BRAIN_DATABASE_URL"', ''));
   const result = await run(['config','get','timezone','--json'],kit.env);
-  expect(result.code).toBe(2);
-  expect(JSON.parse(result.stdout)).toMatchObject({ ok:false,error:{code:'CONFIG_INVALID',message:expect.stringContaining('PostgreSQL')} });
+  expect(result.code).toBe(1);
+  expect(JSON.parse(result.stdout)).toMatchObject({ ok:false,error:{code:'SCHEMA_MISMATCH'} });
 });
 
 it('spools the built hook within the turn connect budget when the database never answers', async () => {
@@ -146,8 +142,6 @@ it('drains the spooled hook into PG once the database is back', async () => {
   expect(await kit.db.rows("select harness_session_id from brain.sessions")).toEqual([{ harness_session_id: 'pg-hook' }]);
   expect((await kit.db.rows('select * from brain.messages')).length).toBeGreaterThan(0);
   expect((await readdir(join(kit.home, 'spool'))).filter(n => n.endsWith('.jsonl') || n.endsWith('.claiming'))).toEqual([]);
-  const sqlite = new DatabaseSync(join(kit.home, 'brain.db'), { readOnly: true });
-  try { expect(sqlite.prepare('select count(*) as n from sessions').get()).toEqual({ n: 0 }); } finally { sqlite.close(); }
 });
 
 it('opportunistically drains the spooled hook into PG after failures list', async () => {
@@ -159,8 +153,6 @@ it('opportunistically drains the spooled hook into PG after failures list', asyn
   expect(await kit.db.rows("select harness_session_id from brain.sessions")).toEqual([{ harness_session_id: 'pg-hook' }]);
   expect((await kit.db.rows('select * from brain.messages')).length).toBeGreaterThan(0);
   expect((await readdir(join(kit.home, 'spool'))).filter(n => n.endsWith('.jsonl') || n.endsWith('.claiming'))).toEqual([]);
-  const sqlite = new DatabaseSync(join(kit.home, 'brain.db'), { readOnly: true });
-  try { expect(sqlite.prepare('select count(*) as n from sessions').get()).toEqual({ n: 0 }); } finally { sqlite.close(); }
 });
 
 it('answers commands with DB_UNAVAILABLE without the brain schema and SCHEMA_MISMATCH on another core version', async () => {
@@ -178,4 +170,18 @@ it('answers commands with DB_UNAVAILABLE without the brain schema and SCHEMA_MIS
     expect(result.code).toBe(2);
     expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, error: { code: 'DB_UNAVAILABLE' } });
   }
+});
+
+it('reads and writes PG with the default selector when the store table is absent', async () => {
+  const kit = await world();
+  await writeFile(join(kit.home, 'config.toml'), 'schema_version=1\n');
+  const env = { ...kit.env, BRAIN_DATABASE_URL: kit.db.appUrl };
+  const written = await run(['config', 'set', 'timezone', 'Europe/Berlin', '--json'], env);
+  expect(written.code, written.stderr + written.stdout).toBe(0);
+  expect(await kit.db.rows("select value from brain.settings where key='timezone'"))
+    .toEqual([{ value: 'Europe/Berlin' }]);
+  expect(JSON.parse((await kit.hook(env)).stdout)).toMatchObject({ ok: true, data: { spooled: false } });
+  expect(await kit.db.rows('select harness_session_id from brain.sessions'))
+    .toEqual([{ harness_session_id: 'pg-hook' }]);
+  expect(await readdir(kit.home)).not.toContain('brain.db');
 });

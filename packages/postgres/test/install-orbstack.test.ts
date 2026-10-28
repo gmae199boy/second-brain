@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
-import { runSqliteMigrations } from '../../second_brain/dist/index.js';
 import type { TestDatabase } from '@second-brain/test-db';
 import type { CommandRunner, CommandRequest } from '../../../apps/cli/src/runtime/command-runner.js';
 import { database, clock } from './fixture.js';
@@ -70,16 +69,13 @@ it('skips adapter probes with the container prerequisite when postgres is stoppe
   for (const id of ['db', 'writable', 'pg_trgm', 'redaction_cleanup', 'schema-version', 'failures', 'untagged', 'transcripts']) expect(doctor.data.checks).toContainEqual({ id, status: 'skip', detail: '앞선 점검 실패: container' });
   expect(kit.calls.some(c => c.args.includes('up') || c.args.includes('start'))).toBe(false);
 });
-it('never invokes the OrbStack runner for SQLite doctor and uninstall without compose', async () => {
+it('uses PG prerequisites for a home with no selector and leaves uninstall without compose alone', async () => {
   const kit = await world('running', false);
   await writeFile(join(kit.home, 'config.toml'), 'schema_version=1\n');
-  expect((await runSqliteMigrations({ path: join(kit.home, 'brain.db') })).ok).toBe(true);
   const doctor = await kit.execute(['doctor', 'run']);
-  expect(doctor.data.checks).toContainEqual(expect.objectContaining({ id: 'db', status: 'ok' }));
-  const ids = doctor.data.checks.map((check: { id: string }) => check.id);
-  expect(ids).not.toContain('orbstack');
-  expect(ids).not.toContain('container');
-  expect(kit.calls).toHaveLength(0);
+  expect(doctor.data.checks).toContainEqual(expect.objectContaining({ id: 'orbstack', status: 'ok' }));
+  expect(doctor.data.checks).toContainEqual(expect.objectContaining({ id: 'container', status: 'fail' }));
+  kit.calls.length = 0;
   expect(await kit.execute(['setup', 'uninstall'])).toMatchObject({ ok: true });
   expect(kit.calls).toHaveLength(0);
 });

@@ -27,7 +27,6 @@ const env = { ...process.env, SECOND_BRAIN_HOME: home, SECOND_BRAIN_LAUNCH_AGENT
 delete env.BRAIN_DATABASE_URL;
 await mkdir(env.CLAUDE_CONFIG_DIR, { recursive: true });
 await mkdir(env.SECOND_BRAIN_LAUNCH_AGENTS, { recursive: true });
-await writeFile(join(home,'config.toml'), '[store]\nurl_env = "BRAIN_DATABASE_URL"\n');
 const bin = resolve('apps/cli/dist/bin.js');
 async function command(command, args, timeoutMs = 120000) {
   const result = await systemCommandRunner({ command, args, env, timeoutMs });
@@ -54,7 +53,12 @@ const beforeDefaults = await defaults();
 let started = false;
 try {
   const setup = await cli(['setup','run','--yes','--json']);
-  started = true; assert.equal(setup.ok,true); assert.equal(setup.data.postgres.schema_version,1);
+  started = true;
+  const config = await readFile(join(home,'config.toml'),'utf8');
+  assert.match(config, /url_env = "BRAIN_DATABASE_URL"/);
+  assert(!/store\.path|^path\s*=/m.test(config.split('[files]')[0]));
+  assert.equal(await stat(join(home,'brain.db')).then(()=>true,()=>false),false);
+  assert.equal(setup.ok,true); assert.equal(setup.data.postgres.schema_version,1);
   assert.equal((await stat(join(home,'.env'))).mode & 0o777,0o600);
   assert.equal(setup.data.timezone,'Asia/Seoul');
   const doctor = await cli(['doctor','run','--json']);

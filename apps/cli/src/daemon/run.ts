@@ -5,7 +5,6 @@ import {
   checkSchema,
   createBrain,
   errorLine,
-  sqliteStore,
   type BrainDrainReport,
   type Clock,
   type FailureExit,
@@ -24,7 +23,7 @@ import { watchFolders } from '../harnesses.js';
 import { startTranscriptWatch, type TranscriptWatchFunction } from './watch.js';
 import { openBrainStore } from '../runtime/brain-store.js';
 import { composeArgs, commandEnv, systemCommandRunner, type CommandRunner } from '../runtime/command-runner.js';
-import type { CreateStore } from '../dispatch.js';
+import type { CreateConnectionStore } from '../dispatch.js';
 
 /**
  * The resident loop behind `brain daemon run`: take the lock, keep a heartbeat,
@@ -92,8 +91,8 @@ export interface RunDaemonOptions {
   watchBatchMs?: number;
   /** Filesystem watch seam for failure and lifecycle tests. */
   watch?: TranscriptWatchFunction;
-  /** SQLite 홈의 Store 생성. Defaults to `sqliteStore`. */
-  createStore?: CreateStore;
+  /** PostgreSQL 연결 생성 시험 seam. */
+  createStore?: CreateConnectionStore;
   runner?: CommandRunner;
   reconnectBackoffMs?: { initial: number; max: number };
   /** Kinds beyond Core's own. Empty for every real invocation (AD-21). */
@@ -182,7 +181,7 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
             idGen,
             signal,
             config,
-            createStore: options.createStore ?? sqliteStore,
+            createStore: options.createStore,
             workHandlers: options.workHandlers ?? {},
             budgetMs: options.drainBudgetMs ?? DAEMON_DRAIN_BUDGET_MS,
           })
@@ -282,7 +281,7 @@ interface RoundOptions {
   clock: Clock;
   idGen: IdGen;
   config: ReadConfigResult;
-  createStore: CreateStore;
+  createStore: CreateConnectionStore | undefined;
   workHandlers: WorkHandlers;
   budgetMs: number;
   signal: AbortSignal;
@@ -309,18 +308,17 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
   try {
     // The factory represents URL resolution failures with an unavailable store.
     // Only a resolved URL authorizes trying to start the configured container.
-    const reconnectEligible = config.ok && config.config.storeUrlEnv !== undefined
-      && Boolean(await resolveStoreUrl(home, config.config.storeUrlEnv, env).catch(() => undefined));
-    const opened = await openBrainStore({ home, env, config, path: 'drain', createSqliteStore: createStore });
+    const reconnectEligible = config.ok && Boolean(await resolveStoreUrl(home, config.config.storeUrlEnv, env).catch(() => undefined));
+    const opened = await openBrainStore({ home, env, config, path: 'drain', createStore });
     store = opened.store;
     // Every round, not once at startup: a database that was repaired or
     // migrated while this process ran is one the next round may write to, and
     // one that was replaced by another version is one it may not (AD-20).
     const schema = await checkSchema(store, opened.expected);
-    if (opened.kind === 'postgres' && (schema.ok || schema.code !== 'DB_UNAVAILABLE')) reached = { reached: true };
+    if (schema.ok || schema.code !== 'DB_UNAVAILABLE') reached = { reached: true };
     if (signal.aborted) return { pause: false };
     if (!schema.ok) {
-      return { ...reached, ...(opened.kind === 'postgres' && reconnectEligible && schema.code === 'DB_UNAVAILABLE' ? { unreachable: true as const } : {}), pause: true, problem: { key: schema.code, message: opened.kind === 'postgres' ? `데이터베이스 확인 실패: ${schema.message}` : schema.message } };
+      return { ...reached, ...(reconnectEligible && schema.code === 'DB_UNAVAILABLE' ? { unreachable: true as const } : {}), pause: true, problem: { key: schema.code, message: `데이터베이스 확인 실패: ${schema.message}` } };
     }
 
     const brain = createBrain(
@@ -336,7 +334,7 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
     const report = await brain.queue.drain({ budgetMs });
     if (report.stopped === 'unwritable') {
       const key = report.code ?? 'DB_UNAVAILABLE';
-      const unavailable = opened.kind === 'postgres' && reconnectEligible && report.code === 'DB_UNAVAILABLE';
+      const unavailable = reconnectEligible && report.code === 'DB_UNAVAILABLE';
       return {
         ...tickState,
         ...reached,

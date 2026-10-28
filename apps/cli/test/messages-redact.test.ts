@@ -1,12 +1,14 @@
+import { postgresStore, CORE_SCHEMA_VERSION, type PostgresStoreOptions } from 'second_brain/postgres';
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { sqliteStore } from 'second_brain';
+
 import { sampleEnsureSessionInput, sampleIngestBatch, sampleSelfUserInput } from 'second_brain/testing';
 import { SECRET_PATTERN_VERSION } from 'second_brain';
-import { DatabaseSync } from 'node:sqlite';
+import { PgTestClient } from './pg-client.js';
+import { preparePgHome, pgDatabaseUrl, pgAppUrl } from './pg-home.js';
 import { withoutHarnessFolders } from './environment.js';
 import { assertKoreanLines } from './language.js';
 import { tempHomes } from './temp-home.js';
@@ -34,9 +36,8 @@ function run(home: string, args: string[], script = bin): Promise<{ code: number
 }
 async function seed(body: string, target: string) {
   const path = await home();
-  const installed = await run(path, ['--yes'], install);
-  expect(installed.code, installed.stdout + installed.stderr).toBe(0);
-  const store = sqliteStore({ path: join(path, 'brain.db') });
+  await preparePgHome(path);
+  const store = postgresStore({ databaseUrl: pgAppUrl(join(path, 'brain.db')) });
   // The installer already made the self user; ensure keeps its id.
   const owner = await store.ensureSelfUser(sampleSelfUserInput());
   if (!owner.ok) throw new Error(owner.message);
@@ -81,20 +82,22 @@ describe('brain messages redact', () => {
   it('replaces literal matches with custom kind, reports counts, and returns missing codes', async () => {
     const secret = 'hunter2-x';
     const f = await seed(`${secret} ${secret}`, `${secret} ${secret}`);
-    const before = await readFile(join(f.path, 'brain.db'));
+    const beforeDb = new PgTestClient(f.path);
+    const before = { messages: await beforeDb.prepare('select * from messages order by id').all(), notes: await beforeDb.prepare('select * from tool_notes order by id').all() };
     expect((await run(f.path, ['messages', 'redact', f.message, '--detected', '--json'])).code).toBe(3);
-    expect(await readFile(join(f.path, 'brain.db'))).toEqual(before);
+    expect({ messages: await beforeDb.prepare('select * from messages order by id').all(), notes: await beforeDb.prepare('select * from tool_notes order by id').all() }).toEqual(before);
+    await beforeDb.close();
     const result = await run(f.path, ['messages', 'redact', f.message, '--text', secret, '--kind', 'db_password', '--yes', '--json']);
     expect(result.code, result.stderr + result.stdout).toBe(0);
     expect(result.stdout).not.toContain(secret);
     expect(JSON.parse(result.stdout).data).toEqual({ message_id: f.message, body_spans: 2,
       tool_note_spans: 2, tool_notes_changed: 1, chunks_removed: 0, pattern_version: null,
       unredacted_attachments: 0 });
-    const db = new DatabaseSync(join(f.path, 'brain.db'));
+    const db = new PgTestClient(join(f.path, 'brain.db'));
     try {
-      expect(db.prepare('select body from messages').get()).toEqual({ body: '[REDACTED:db_password] [REDACTED:db_password]' });
-      expect(db.prepare('select count(*) as n from redactions').get()).toEqual({ n: 4 });
-    } finally { db.close(); }
+      expect((await db.prepare('select body from messages').get())).toEqual({ body: '[REDACTED:db_password] [REDACTED:db_password]' });
+      expect((await db.prepare('select count(*) as n from redactions').get())).toEqual({ n: 4 });
+    } finally { (await db.close()); }
     const absent = await run(f.path, ['messages', 'redact', f.message, '--text', secret, '--yes', '--json']);
     expect(absent.code).toBe(1);
     expect(JSON.parse(absent.stdout).error.code).toBe('REDACT_TEXT_NOT_FOUND');
@@ -108,12 +111,12 @@ describe('brain messages redact', () => {
     expect(result.code, result.stderr + result.stdout).toBe(0);
     assertKoreanLines(result.stdout);
     expect(result.stdout).toContain('본문 1곳');
-    const db = new DatabaseSync(join(f.path, 'brain.db'));
+    const db = new PgTestClient(join(f.path, 'brain.db'));
     try {
-      expect(db.prepare('select pattern_version from redactions').all()).toEqual([
+      expect((await db.prepare('select pattern_version from redactions').all())).toEqual([
         { pattern_version: SECRET_PATTERN_VERSION }, { pattern_version: SECRET_PATTERN_VERSION },
       ]);
-    } finally { db.close(); }
+    } finally { (await db.close()); }
     const again = await run(f.path, ['messages', 'redact', f.message, '--detected', '--yes', '--json']);
     expect(again.code).toBe(0);
     expect(JSON.parse(again.stdout).data).toMatchObject({ body_spans: 0, tool_note_spans: 0 });

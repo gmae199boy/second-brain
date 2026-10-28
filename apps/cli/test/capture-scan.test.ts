@@ -1,3 +1,4 @@
+import { postgresStore, CORE_SCHEMA_VERSION, type PostgresStoreOptions } from 'second_brain/postgres';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import {
@@ -13,7 +14,8 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { PgTestClient } from './pg-client.js';
+import { preparePgHome, pgDatabaseUrl, pgAppUrl, runPgCommand, dropPgHome } from './pg-home.js';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { isoWithOffset } from 'second_brain';
@@ -99,7 +101,10 @@ const directories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+    directories.splice(0).map(async (directory) => {
+      await dropPgHome(directory);
+      await rm(directory, { recursive: true, force: true });
+    }),
   );
 });
 
@@ -131,6 +136,7 @@ function environment(options: {
 }
 
 function spawned(args: readonly string[], env: NodeJS.ProcessEnv, script = binPath): Promise<Run> {
+  if (args[0] === 'doctor') return runPgCommand(args, env);
   const child = spawn(process.execPath, [script, ...args], {
     cwd: repoRoot,
     env,
@@ -154,8 +160,7 @@ function spawned(args: readonly string[], env: NodeJS.ProcessEnv, script = binPa
 async function installed(): Promise<{ home: string; configDir: string }> {
   const home = await scratch('brain-capture-');
   const configDir = await scratch('brain-claude-');
-  const install = await spawned(['--yes'], environment({ home, configDir }), installPath);
-  expect(install.code, install.stdout + install.stderr).toBe(0);
+  await preparePgHome(home);
   return { home, configDir };
 }
 
@@ -181,32 +186,32 @@ async function transcript(
 }
 
 /** Every user table and how many rows it holds, read without writing. */
-function rowCounts(path: string): Record<string, number> {
-  const database = new DatabaseSync(path, { readOnly: true });
+async function rowCounts(path: string): Promise<Record<string, number>> {
+  const database = new PgTestClient(path);
   try {
-    const tables = database
+    const tables = (await database
       .prepare(
-        "select name from sqlite_schema where type = 'table' and name not like 'sqlite_%' order by name",
+        "select tablename as name from pg_tables where schemaname = 'brain' order by tablename",
       )
-      .all() as { name: string }[];
+      .all()) as { name: string }[];
     const counts: Record<string, number> = {};
     for (const { name } of tables) {
-      const row = database.prepare(`select count(*) as n from "${name}"`).get() as { n: number };
+      const row = (await database.prepare(`select count(*) as n from "${name}"`).get()) as { n: number };
       counts[name] = row.n;
     }
     return counts;
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
 /** The rows of one table, for the columns a count cannot show. */
-function rows(path: string, table: string): Record<string, unknown>[] {
-  const database = new DatabaseSync(path, { readOnly: true });
+async function rows(path: string, table: string): Promise<Record<string, unknown>[]> {
+  const database = new PgTestClient(path);
   try {
-    return database.prepare(`select * from "${table}"`).all() as Record<string, unknown>[];
+    return (await database.prepare(`select * from "${table}"`).all()) as Record<string, unknown>[];
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
@@ -258,10 +263,10 @@ describe('brain queue drain and the transcript folder', () => {
     const path = databaseIn(home);
     // Two sessions, which is the number of transcript files — the delegated run
     // and the tool result are not sessions (SM-5).
-    expect(rowCounts(path)['sessions']).toBe(2);
-    expect(rows(path, 'sessions').map((row) => row['ingest_source'])).toEqual(['import', 'import']);
-    expect(rowCounts(path)['transcript_files']).toBe(2);
-    const after = rowCounts(path);
+    expect((await rowCounts(path))['sessions']).toBe(2);
+    expect((await rows(path, 'sessions')).map((row) => row['ingest_source'])).toEqual(['import', 'import']);
+    expect((await rowCounts(path))['transcript_files']).toBe(2);
+    const after = (await rowCounts(path));
 
     const second = await spawned(
       ['queue', 'drain', '--json'],
@@ -280,7 +285,7 @@ describe('brain queue drain and the transcript folder', () => {
     });
     // Every conversation table holds exactly what it held: a second drain over
     // the same folder adds no session, message or history row (AD-8).
-    const settled = rowCounts(path);
+    const settled = (await rowCounts(path));
     for (const table of ['sessions', 'messages', 'tool_notes', 'transcript_files', 'failures']) {
       expect(settled[table], table).toBe(after[table]);
     }
@@ -293,7 +298,7 @@ describe('brain queue drain and the transcript folder', () => {
     expect(third.code).toBe(0);
     expect(envelopeOf<DrainData>(third).data).toMatchObject({ enqueued: 0, claimed: 0 });
     // And now every table, extraction included: the file has been answered.
-    expect(rowCounts(path)).toEqual(settled);
+    expect((await rowCounts(path))).toEqual(settled);
   });
 
   it('크기가 같은 구버전 세션을 한 번만 다시 읽고 사라진 파일은 센다', async () => {
@@ -302,23 +307,23 @@ describe('brain queue drain and the transcript folder', () => {
     const env = environment({ home, configDir });
     expect((await spawned(['queue', 'drain', '--json'], env)).code).toBe(0);
     const path = databaseIn(home);
-    const messages = rowCounts(path)['messages'] ?? 0;
-    const current = rows(path, 'sessions')[0]?.['parser_version'];
-    const oldVersion = () => {
-      const db = new DatabaseSync(path);
-      try { db.prepare("update sessions set parser_version = 'old'").run(); } finally { db.close(); }
+    const messages = (await rowCounts(path))['messages'] ?? 0;
+    const current = (await rows(path, 'sessions'))[0]?.['parser_version'];
+    const oldVersion = async () => {
+      const db = new PgTestClient(path);
+      try { (await db.prepare("update sessions set parser_version = 'old'").run()); } finally { (await db.close()); }
     };
-    oldVersion();
+    (await oldVersion());
     const first = await spawned(['queue', 'drain', '--json'], env);
     expect(first.code).toBe(0);
     expect(envelopeOf<DrainData>(first).data).toMatchObject({ enqueued: 1, reread_missing: 0 });
-    expect(rows(path, 'sessions')[0]?.['parser_version']).toBe(current);
-    expect(rowCounts(path)['messages']).toBeGreaterThanOrEqual(messages);
-    const before = { history: rows(path, 'transcript_files'), work: rows(path, 'work_items') };
+    expect((await rows(path, 'sessions'))[0]?.['parser_version']).toBe(current);
+    expect((await rowCounts(path))['messages']).toBeGreaterThanOrEqual(messages);
+    const before = { history: (await rows(path, 'transcript_files')), work: (await rows(path, 'work_items')) };
     const second = await spawned(['queue', 'drain', '--json'], env);
     expect(envelopeOf<DrainData>(second).data).toMatchObject({ enqueued: 0, reread_missing: 0 });
-    expect({ history: rows(path, 'transcript_files'), work: rows(path, 'work_items') }).toEqual(before);
-    oldVersion();
+    expect({ history: (await rows(path, 'transcript_files')), work: (await rows(path, 'work_items')) }).toEqual(before);
+    (await oldVersion());
     await rm(file);
     const missing = await spawned(['queue', 'drain', '--json'], env);
     expect(envelopeOf<DrainData>(missing).data).toMatchObject({ enqueued: 0, reread_missing: 1 });
@@ -379,44 +384,44 @@ describe('brain queue drain and the transcript folder', () => {
 
     await writeFile(file, jsonl(stripped), 'utf8');
     expect((await spawned(['queue', 'drain', '--json'], env)).code).toBe(0);
-    const before = rowCounts(path);
+    const before = (await rowCounts(path));
     expect(before['message_attachments']).toBe(0);
     expect(before['tool_notes']).toBeGreaterThan(0);
-    const current = rows(path, 'sessions')[0]?.['parser_version'];
+    const current = (await rows(path, 'sessions'))[0]?.['parser_version'];
 
     // 에픽 전 상태: 옛 parser 버전, 내역 크기는 지금 파일과 같다(버전 차이로만 다시 읽힌다).
     await writeFile(file, jsonl(added), 'utf8');
     const size = Buffer.byteLength(await readFile(file, 'utf8'));
-    const oldVersion = () => {
-      const db = new DatabaseSync(path);
+    const oldVersion = async () => {
+      const db = new PgTestClient(path);
       try {
-        db.prepare("update sessions set parser_version = '4'").run();
-        db.prepare('update transcript_files set size_bytes = ?').run(size);
+        (await db.prepare("update sessions set parser_version = '4'").run());
+        (await db.prepare('update transcript_files set size_bytes = $1').run(size));
       } finally {
-        db.close();
+        (await db.close());
       }
     };
-    oldVersion();
+    (await oldVersion());
 
     const first = await spawned(['queue', 'drain', '--json'], env);
     expect(first.code, first.stderr).toBe(0);
     expect(envelopeOf<DrainData>(first).data).toMatchObject({ enqueued: 1, reread_missing: 0, failed: 0 });
-    expect(rows(path, 'sessions')[0]?.['parser_version']).toBe(current);
-    const filled = rowCounts(path);
+    expect((await rows(path, 'sessions'))[0]?.['parser_version']).toBe(current);
+    const filled = (await rowCounts(path));
     expect(filled['messages']).toBe((before['messages'] ?? 0) + 1);
     expect(filled['tool_notes']).toBe(before['tool_notes']);
     expect(filled['files']).toBe(2);
     expect(filled['file_names']).toBe(0);
-    const db = new DatabaseSync(path, { readOnly: true });
+    const db = new PgTestClient(path);
     try {
-      const attached = db
+      const attached = (await db
         .prepare(
           `select m.harness_message_id as message, m.body, a.ordinal, a.source_kind, a.status, f.content_hash
              from message_attachments a join messages m on m.id = a.message_id
              left join files f on f.id = a.file_id
             order by m.harness_message_id, a.ordinal`,
         )
-        .all() as { message: string; body: string; ordinal: number; source_kind: string; status: string; content_hash: string }[];
+        .all()) as { message: string; body: string; ordinal: number; source_kind: string; status: string; content_hash: string }[];
       expect(attached.map(({ message, ordinal, source_kind, status }) => ({ message, ordinal, source_kind, status }))).toEqual([
         { message: 'pasted-only', ordinal: 0, source_kind: 'image', status: 'stored' },
         { message: 'pasted-text', ordinal: 0, source_kind: 'image', status: 'stored' },
@@ -424,18 +429,18 @@ describe('brain queue drain and the transcript folder', () => {
       ]);
       expect(attached[0]?.body).toBe('');
       expect(attached[0]?.content_hash).toBe(attached[1]?.content_hash);
-      expect(db.prepare("select locator from file_locations where ownership = 'external'").all()).toEqual([
+      expect((await db.prepare("select locator from file_locations where ownership = 'external'").all())).toEqual([
         { locator: '~/project/note.md' },
       ]);
-      const blob = db
+      const blob = (await db
         .prepare(
           `select l.locator from message_attachments a join files f on f.id = a.file_id
              join file_locations l on l.id = f.home_location_id where a.source_kind = 'file'`,
         )
-        .get() as { locator: string };
+        .get()) as { locator: string };
       expect(await readFile(join(home, 'files', blob.locator), 'utf8')).toBe('at attachment time');
     } finally {
-      db.close();
+      (await db.close());
     }
     const blobs = async () =>
       (await readdir(join(home, 'files'), { recursive: true, withFileTypes: true })).filter((entry) => entry.isFile()).length;
@@ -445,19 +450,19 @@ describe('brain queue drain and the transcript folder', () => {
     const kept = ['messages', 'tool_notes', 'message_attachments', 'files', 'file_locations'];
     const second = await spawned(['queue', 'drain', '--json'], env);
     expect(envelopeOf<DrainData>(second).data).toMatchObject({ enqueued: 0, reread_missing: 0 });
-    const settled = rowCounts(path);
+    const settled = (await rowCounts(path));
     for (const table of kept) expect(settled[table], table).toBe(filled[table]);
     // 이름 채우기는 대기열 앞 단계라, 첫 drain이 쓴 첨부의 이름은 다음 drain이 채운다(10.4).
-    expect(rows(path, 'file_names').map((row) => row['text']).sort()).toEqual(['note.md', '~/project/note.md']);
+    expect((await rows(path, 'file_names')).map((row) => row['text']).sort()).toEqual(['note.md', '~/project/note.md']);
     const third = await spawned(['queue', 'drain', '--json'], env);
     expect(envelopeOf<DrainData>(third).data).toMatchObject({ enqueued: 0 });
-    expect(rowCounts(path)).toEqual(settled);
+    expect((await rowCounts(path))).toEqual(settled);
 
     // 버전을 다시 돌려 강제로 다시 읽어도 메시지·도구 메모·첨부·파일은 그대로다.
-    oldVersion();
+    (await oldVersion());
     const again = await spawned(['queue', 'drain', '--json'], env);
     expect(envelopeOf<DrainData>(again).data).toMatchObject({ enqueued: 1, failed: 0 });
-    const reread = rowCounts(path);
+    const reread = (await rowCounts(path));
     for (const table of ['messages', 'tool_notes', 'message_attachments', 'files', 'file_locations', 'file_names']) {
       expect(reread[table], table).toBe(settled[table]);
     }
@@ -477,8 +482,8 @@ describe('brain queue drain and the transcript folder', () => {
     const capture = environment({ home, configDir });
     expect((await spawned(['queue', 'drain', '--json'], capture)).code).toBe(0);
     const path = databaseIn(home);
-    const firstCounts = rowCounts(path);
-    const scannedAt = rows(path, 'transcript_files').find(
+    const firstCounts = (await rowCounts(path));
+    const scannedAt = (await rows(path, 'transcript_files')).find(
       (row) => row['path'] === closed,
     )?.['scanned_at'];
 
@@ -504,13 +509,13 @@ describe('brain queue drain and the transcript folder', () => {
       // claim is the attachment the first run stored, which this run reads
       // because the step that queues a reading comes before the loop.
       expect(data).toMatchObject({ enqueued: 2, claimed: 3, completed: 3 });
-      expect(rowCounts(path)['sessions']).toBe(3);
-      expect(rowCounts(path)['messages']).toBeGreaterThan(firstCounts['messages'] ?? 0);
+      expect((await rowCounts(path))['sessions']).toBe(3);
+      expect((await rowCounts(path))['messages']).toBeGreaterThan(firstCounts['messages'] ?? 0);
       // Its history row did not move either: nothing read it.
       expect(
-        rows(path, 'transcript_files').find((row) => row['path'] === closed)?.['scanned_at'],
+        (await rows(path, 'transcript_files')).find((row) => row['path'] === closed)?.['scanned_at'],
       ).toBe(scannedAt);
-      expect(rowCounts(path)['failures']).toBe(0);
+      expect((await rowCounts(path))['failures']).toBe(0);
     } finally {
       await chmod(closed, 0o600);
     }
@@ -526,7 +531,7 @@ describe('brain queue drain and the transcript folder', () => {
 
     expect(drained.code).toBe(0);
     expect(envelopeOf<DrainData>(drained).data).toMatchObject({ enqueued: 1, claimed: 1 });
-    expect(rowCounts(databaseIn(home))['sessions']).toBe(1);
+    expect((await rowCounts(databaseIn(home)))['sessions']).toBe(1);
 
     expect(doctored.code).toBe(0);
     const checks = (
@@ -578,7 +583,7 @@ describe('brain sessions ingest with no transcript path', () => {
     });
     const capture = environment({ home, configDir });
     expect((await spawned(['queue', 'drain', '--json'], capture)).code).toBe(0);
-    const before = rowCounts(databaseIn(home))['messages'] ?? 0;
+    const before = (await rowCounts(databaseIn(home)))['messages'] ?? 0;
 
     const rest = (await readFile(FULL_SESSION, 'utf8'))
       .replaceAll(FULL_SESSION_SESSION, 'session-aaaa')
@@ -593,8 +598,8 @@ describe('brain sessions ingest with no transcript path', () => {
     const run = await ingest(capture, JSON.stringify({ session_id: 'session-aaaa' }));
 
     expect(run.code).toBe(0);
-    expect(rowCounts(databaseIn(home))['messages']).toBeGreaterThan(before);
-    expect(rowCounts(databaseIn(home))['sessions']).toBe(1);
+    expect((await rowCounts(databaseIn(home)))['messages']).toBeGreaterThan(before);
+    expect((await rowCounts(databaseIn(home)))['sessions']).toBe(1);
   });
 
   it('finds a transcript from the session id by default', async () => {
@@ -610,7 +615,7 @@ describe('brain sessions ingest with no transcript path', () => {
     expect(run.code).toBe(0);
     expect(run.stderr).toBe('');
     assertKoreanLines(run.stderr, { label: 'stderr' });
-    expect(rowCounts(databaseIn(home))['sessions']).toBe(1);
+    expect((await rowCounts(databaseIn(home)))['sessions']).toBe(1);
   });
 });
 
@@ -645,7 +650,7 @@ describe('a mark the hook left in the spool', () => {
     expect(envelopeOf<DrainData>(drained).data).toMatchObject({ replayed: 1, spool_failed: 0 });
     // A mark written by a hook is about a session happening now, so the row it
     // creates is `live` and not an import (Table Contract).
-    expect(rows(databaseIn(home), 'sessions').map((row) => row['ingest_source'])).toEqual([
+    expect((await rows(databaseIn(home), 'sessions')).map((row) => row['ingest_source'])).toEqual([
       'live',
     ]);
     expect(await spoolFiles(home)).toEqual([]);
@@ -667,7 +672,7 @@ describe('a session the drain could not collect', () => {
       // Recorded on the first failure: a transcript this user cannot read is
       // not fixed by waiting (AD-21).
       expect(envelopeOf<DrainData>(first).data).toMatchObject({ enqueued: 1, failed: 1 });
-      const failures = rows(db, 'failures');
+      const failures = (await rows(db, 'failures'));
       expect(failures).toHaveLength(1);
       expect(failures[0]).toMatchObject({
         target_kind: 'session',
@@ -683,7 +688,7 @@ describe('a session the drain could not collect', () => {
       // would retry a broken transcript for ever (Decision 4, 2026-10-19).
       const second = await spawned(['queue', 'drain', '--json'], capture);
       expect(envelopeOf<DrainData>(second).data).toMatchObject({ enqueued: 0, claimed: 0 });
-      expect(rows(db, 'failures')).toHaveLength(1);
+      expect((await rows(db, 'failures'))).toHaveLength(1);
 
       const listed = await spawned(['failures', 'list', '--json'], capture);
       expect(listed.code).toBe(0);
@@ -718,9 +723,9 @@ describe('a session the drain could not collect', () => {
       already_open: 0,
       skipped: [],
     });
-    expect(rowCounts(db)['sessions']).toBe(1);
+    expect((await rowCounts(db))['sessions']).toBe(1);
     // The row the retry was about is resolved, so the list is empty again.
-    expect(rows(db, 'failures')[0]?.['resolved_at']).not.toBe(null);
+    expect((await rows(db, 'failures'))[0]?.['resolved_at']).not.toBe(null);
     const empty = await spawned(['failures', 'list', '--json'], capture);
     expect(envelopeOf<FailuresData>(empty).data?.failures).toEqual([]);
     const all = await spawned(['failures', 'list', '--all', '--json'], capture);
@@ -739,7 +744,7 @@ describe('a session the drain could not collect', () => {
     expect((await ingest(env, JSON.stringify({ session_id: 'session-aaaa', transcript_path: file }))).code).toBe(0);
     const listed = await spawned(['failures', 'list', '--json'], env);
     expect(envelopeOf<FailuresData>(listed).data?.failures).toEqual([]);
-    expect(rows(databaseIn(home), 'failures')[0]?.['resolved_at']).not.toBe(null);
+    expect((await rows(databaseIn(home), 'failures'))[0]?.['resolved_at']).not.toBe(null);
   });
 
   it('is a warn in doctor while it is unresolved', async () => {
@@ -789,7 +794,7 @@ describe('brain failures list and retry in text mode', () => {
     // Recorded by hand, with a sentence of its own: what this checks is the
     // line this command writes, and a driver's own English message inside
     // `failures.message` is stored text rather than authored prose (AD-11).
-    recordFailureRow(databaseIn(home));
+    (await recordFailureRow(databaseIn(home)));
 
     const run = await spawned(['failures', 'list'], environment({ home, configDir }));
 
@@ -825,20 +830,20 @@ describe('brain failures list and retry in text mode', () => {
     // A failure about something that is neither a session nor a file: those two
     // have a kind of work each, and a message has none in this build, so it is
     // counted and left alone.
-    const database = new DatabaseSync(databaseIn(home));
+    const database = new PgTestClient(databaseIn(home));
     try {
-      database
+      (await database
         .prepare(
           `insert into failures (id, target_kind, target_id, stage, fingerprint, harness,
                                  session_id, code, message, occurred_at,
                                  first_occurred_at, occurrences)
-           values (?, 'message', 'message-one', 'extract', 'sha256:one', null, null,
+           values ($1, 'message', 'message-one', 'extract', 'sha256:one', null, null,
                    'DEMO_FAILED', '안 됩니다', '2026-03-04T05:06:07.000Z',
                    '2026-03-04T05:06:07.000Z', 1)`,
         )
-        .run('01940000-0000-7000-8000-0000000000aa');
+        .run('01940000-0000-7000-8000-0000000000aa'));
     } finally {
-      database.close();
+      (await database.close());
     }
 
     const run = await spawned(
@@ -861,21 +866,21 @@ describe('brain failures list and retry in text mode', () => {
  * this repository wrote: a driver's own English — `EACCES: permission denied` —
  * is stored text and not prose the output-language check is about.
  */
-function recordFailureRow(path: string): void {
-  const database = new DatabaseSync(path);
+async function recordFailureRow(path: string): Promise<void> {
+  const database = new PgTestClient(path);
   try {
-    database
+    (await database
       .prepare(
         `insert into failures (id, target_kind, target_id, stage, fingerprint, harness,
                                session_id, code, message, occurred_at,
                                first_occurred_at, occurrences)
-         values (?, 'session', 'claude-code:session-aaaa', 'session_ingest', 'sha256:one',
+         values ($1, 'session', 'claude-code:session-aaaa', 'session_ingest', 'sha256:one',
                  'claude-code', null, 'TRANSCRIPT_UNREADABLE', '읽을 수 없습니다',
                  '2026-03-04T05:06:07.000Z', '2026-03-04T05:06:07.000Z', 1)`,
       )
-      .run('01940000-0000-7000-8000-0000000000ab');
+      .run('01940000-0000-7000-8000-0000000000ab'));
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
@@ -896,7 +901,7 @@ async function spoolFiles(home: string): Promise<string[]> {
  * blocks the event loop the holder would need to let go (AD-7).
  */
 async function holdTheLock(path: string, holdMs: number): Promise<() => Promise<void>> {
-  const child = spawn(process.execPath, [lockHolderPath, path, String(holdMs)], {
+  const child = spawn(process.execPath, [lockHolderPath, pgDatabaseUrl(path), String(holdMs)], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';

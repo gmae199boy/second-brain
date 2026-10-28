@@ -53,12 +53,12 @@ describe('the argv of a retry', () => {
   });
 
   it('spells a camelCase key as the kebab-case flag with its value', () => {
-    expect(retryArgv(gated({ storePath: '/abs/b.db' }), [], true)).toEqual([
+    expect(retryArgv(gated({ mirrorPath: '/abs/mirror' }), [], true)).toEqual([
       'brain',
       'setup',
       'run',
-      '--store-path',
-      '/abs/b.db',
+      '--mirror-path',
+      '/abs/mirror',
       '--yes',
       '--json',
     ]);

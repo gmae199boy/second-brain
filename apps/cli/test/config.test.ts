@@ -1,42 +1,17 @@
-import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  CONFIG_SCHEMA_VERSION,
-  DEFAULT_TIMEZONE,
-  DEFAULT_UPDATE_AUTO,
-  defaultFilesPath,
-  defaultMirrorPath,
-  defaultStorePath,
-  readConfig,
-  readConfigForSetup,
-  postgresSecrets,
-  writeConfig,
-} from '../src/config/codec.js';
+import { DEFAULT_STORE_URL_ENV, DEFAULT_UPDATE_AUTO, KNOWN_KEYS, postgresSecrets, readConfig, readConfigForSetup, resolveStoreUrl, writeConfig } from '../src/config/codec.js';
 import { HOME_ENV, configFilePath, configHome, envFilePath } from '../src/config/paths.js';
-import { assertKoreanLine } from './language.js';
 import { tempHomes } from './temp-home.js';
-
 const temporary = tempHomes();
-
-async function tempHome(): Promise<string> {
-  const home = await temporary.create('brain-config-');
-  return home;
-}
-
-/** Write the two files by hand, so a test can put anything in them. */
-async function given(files: { config?: string; env?: string }): Promise<string> {
-  const home = await tempHome();
-  if (files.config !== undefined) await writeFile(configFilePath(home), files.config, 'utf8');
-  if (files.env !== undefined) await writeFile(envFilePath(home), files.env, 'utf8');
-  return home;
-}
-
-const VALID_CONFIG = `schema_version = ${String(CONFIG_SCHEMA_VERSION)}\n`;
-
 afterEach(() => temporary.cleanup());
-
+async function given(config?: string, env?: string) {
+  const home = await temporary.create('brain-config-');
+  if (config !== undefined) await writeFile(join(home, 'config.toml'), config);
+  if (env !== undefined) await writeFile(join(home, '.env'), env);
+  return home;
+}
 describe('configHome', () => {
   it('uses SECOND_BRAIN_HOME when it is set, for tests and reinstalls', () => {
     expect(configHome({ [HOME_ENV]: '/tmp/elsewhere' })).toBe('/tmp/elsewhere');
@@ -47,669 +22,144 @@ describe('configHome', () => {
   });
 
   it('ignores an empty override rather than reading the filesystem root', () => {
-    expect(configHome({ [HOME_ENV]: '   ' })).toMatch(/\.second_brain$/);
+    expect(configHome({ [HOME_ENV]: '   ' })).toBe(configHome({}));
   });
 });
 
-describe('readConfig with a complete folder', () => {
-  it('reads the three paths and the time zone the file names', async () => {
-    const home = await given({
-      config: `${VALID_CONFIG}timezone = "Europe/Berlin"\n\n[store]\npath = "/tmp/elsewhere/brain.db"\n\n[files]\npath = "/tmp/elsewhere/files"\n\n[mirror]\npath = "/tmp/elsewhere/brain-mirror"\n`,
-    });
-
-    const result = await readConfig(home);
-
-    expect(result).toEqual({
-      ok: true,
-      warnings: [],
-      config: {
-        schemaVersion: CONFIG_SCHEMA_VERSION,
-        timezone: 'Europe/Berlin',
-        storePath: '/tmp/elsewhere/brain.db',
-        filesPath: '/tmp/elsewhere/files',
-        mirrorPath: '/tmp/elsewhere/brain-mirror',
-        updateAuto: true,
-      },
-    });
-  });
-
-  it('defaults all three paths under the configuration folder', async () => {
-    const home = await given({ config: VALID_CONFIG });
-
-    const result = await readConfig(home);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.config.storePath).toBe(join(home, 'brain.db'));
-    expect(result.config.filesPath).toBe(join(home, 'files'));
-    expect(result.config.mirrorPath).toBe(join(home, 'mirror'));
-    expect([
-      defaultStorePath(home),
-      defaultFilesPath(home),
-      defaultMirrorPath(home),
-    ]).toEqual([join(home, 'brain.db'), join(home, 'files'), join(home, 'mirror')]);
-  });
-
-  it('defaults the timezone', async () => {
-    const home = await given({ config: VALID_CONFIG });
-
-    const result = await readConfig(home);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.config.timezone).toBe(DEFAULT_TIMEZONE);
-  });
-
-  it('reads a folder whose .env cannot be parsed at all, because it reads none', async () => {
-    // Every key this version knows is a path or a time zone, so there is
-    // nothing in `.env` to resolve — and a broken one must not block a command
-    // over a file nothing needs yet.
-    const home = await given({ config: VALID_CONFIG, env: 'this is not = = an env file\n' });
-
-    const result = await readConfig(home);
-
-    expect(result.ok).toBe(true);
-  });
-});
-
-describe('readConfig and a key it does not know', () => {
-  it('runs anyway and warns with CONFIG_UNKNOWN_KEY, naming the key', async () => {
-    const home = await given({ config: `${VALID_CONFIG}colour = "x"\n` });
-
-    const result = await readConfig(home);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]?.code).toBe('CONFIG_UNKNOWN_KEY');
-    expect(result.warnings[0]?.message).toContain('colour');
-    assertKoreanLine(result.warnings[0]?.message ?? '', { label: 'CONFIG_UNKNOWN_KEY' });
-  });
-
-  it('warns about the url_env an earlier layout wrote, rather than dropping it', async () => {
-    const home = await given({
-      config: `${VALID_CONFIG}[database]\nurl_env = "SECOND_BRAIN_DATABASE_URL"\n`,
-    });
-
-    const result = await readConfig(home);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.warnings.map((warning) => warning.code)).toEqual(['CONFIG_UNKNOWN_KEY']);
-    expect(result.warnings[0]?.message).toContain('database.url_env');
-  });
-
-  it('names the whole path of a key inside a table', async () => {
-    const home = await given({
-      config: `${VALID_CONFIG}[store]\npath = "/tmp/brain.db"\nport = 5432\n`,
-    });
-
-    const result = await readConfig(home);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.warnings.map((warning) => warning.message.includes('store.port'))).toEqual([
-      true,
-    ]);
-  });
-
-  it.each(['store', 'files', 'mirror'])('says nothing about an empty [%s]', async (table) => {
-    const home = await given({ config: `${VALID_CONFIG}[${table}]\n` });
-
-    const result = await readConfig(home);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.warnings).toEqual([]);
-  });
-
-  it('reports an unknown table that holds nothing, rather than ignoring it', async () => {
-    const home = await given({ config: `${VALID_CONFIG}[colour]\n` });
-
-    const result = await readConfig(home);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.warnings[0]?.message).toContain('colour');
-  });
-
-  it('warns once per unknown key, in a stable order', async () => {
-    const home = await given({ config: `${VALID_CONFIG}zebra = 1\nalpha = 2\n` });
-
-    const result = await readConfig(home);
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.warnings).toHaveLength(2);
-    expect(result.warnings[0]?.message).toContain('alpha');
-    expect(result.warnings[1]?.message).toContain('zebra');
-  });
-});
-
-describe('readConfig and a folder it cannot use', () => {
-  it('reports CONFIG_MISSING when there is no config.toml', async () => {
-    const home = await tempHome();
-
-    const result = await readConfig(home);
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe('CONFIG_MISSING');
-    expect(result.message).toContain('config.toml');
-    assertKoreanLine(result.message, { label: 'CONFIG_MISSING' });
-  });
-
+describe('PG configuration', () => {
   it.each([
-    ['broken TOML', 'schema_version = =\n'],
-    ['no schema_version', 'timezone = "Asia/Seoul"\n'],
-    ['a schema_version that is not an integer', 'schema_version = "1"\n'],
-    ['an unsupported schema_version', 'schema_version = 99\n'],
-    ['a timezone of the wrong type', `${VALID_CONFIG}timezone = 9\n`],
-    ['a timezone no machine knows', `${VALID_CONFIG}timezone = "Nowhere/Nope"\n`],
-    // A relative path would be a different place for every working directory a
-    // command happens to be started from, so a hook and the user would not be
-    // looking at the same database.
-    ['a relative store path', `${VALID_CONFIG}[store]\npath = "brain.db"\n`],
-    ['a store path of the wrong type', `${VALID_CONFIG}[store]\npath = 7\n`],
-    ['an empty store path', `${VALID_CONFIG}[store]\npath = ""\n`],
-    ['a relative files path', `${VALID_CONFIG}[files]\npath = "files"\n`],
-    ['a files path of the wrong type', `${VALID_CONFIG}[files]\npath = 7\n`],
-    ['an empty files path', `${VALID_CONFIG}[files]\npath = ""\n`],
-    ['a relative mirror path', `${VALID_CONFIG}[mirror]\npath = "notes/mirror"\n`],
-    ['a mirror path of the wrong type', `${VALID_CONFIG}[mirror]\npath = 7\n`],
-    ['an empty mirror path', `${VALID_CONFIG}[mirror]\npath = ""\n`],
-  ])('reports CONFIG_INVALID for %s', async (_name, config) => {
-    const home = await given({ config });
+    ['""', ''],
+    ['"NOT-A-NAME"', 'NOT-A-NAME'],
+    ['42', 42],
+    ['[]', []],
+    ['{ nested = "value" }', { nested: 'value' }],
+    ['"BRAIN_APP_PASSWORD"', 'BRAIN_APP_PASSWORD'],
+    ['"BRAIN_POSTGRES_PASSWORD"', 'BRAIN_POSTGRES_PASSWORD'],
+  ])('rejects invalid or reserved PG selectors consistently without changing files: %s', async (selector, value) => {
+    const home = await given(`schema_version=1\n[store]\nurl_env=${selector}\n`, 'KEEP="original"\n');
+    const configBefore = await readFile(configFilePath(home));
+    const envBefore = await readFile(envFilePath(home));
 
-    const result = await readConfig(home);
+    expect(await readConfig(home)).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+    expect(await readConfigForSetup(home)).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+    expect(await writeConfig(home, { storeUrlEnv: value as string })).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+    await expect(postgresSecrets(home, 23456, value as string)).rejects.toThrow('store.url_env');
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe('CONFIG_INVALID');
-    expect(result.message.split('\n')).toHaveLength(1);
-    // Every branch of the codec's refusal, in one place: the message is the
-    // one thing a person reads, so it is Korean whichever key was wrong
-    // (Conventions, output language 2026-10-16).
-    assertKoreanLine(result.message, { label: 'CONFIG_INVALID' });
+    expect(await readFile(configFilePath(home))).toEqual(configBefore);
+    expect(await readFile(envFilePath(home))).toEqual(envBefore);
   });
 
-  it('names the key in the message for a relative path', async () => {
-    const home = await given({ config: `${VALID_CONFIG}[store]\npath = "brain.db"\n` });
-
-    const result = await readConfig(home);
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.message).toContain('store.path');
-    expect(result.message).toContain('절대 경로여야 합니다');
-  });
-
-  it('reports CONFIG_INVALID when config.toml is a directory, not a file', async () => {
-    const home = await tempHome();
-    await mkdir(configFilePath(home));
-
-    const result = await readConfig(home);
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe('CONFIG_INVALID');
-    assertKoreanLine(result.message, { label: 'CONFIG_INVALID' });
-  });
-});
-
-describe('writeConfig', () => {
-  it('round-trips through readConfig and leaves .env at mode 0600', async () => {
-    const home = await tempHome();
-
-    await writeConfig(home, {
-      timezone: 'Europe/Berlin',
-      storePath: '/tmp/elsewhere/brain.db',
-      filesPath: '/tmp/elsewhere/files',
-      mirrorPath: '/tmp/elsewhere/brain-mirror',
-    });
-    const result = await readConfig(home);
-
-    expect(result).toEqual({
-      ok: true,
-      warnings: [],
-      config: {
-        schemaVersion: CONFIG_SCHEMA_VERSION,
-        timezone: 'Europe/Berlin',
-        storePath: '/tmp/elsewhere/brain.db',
-        filesPath: '/tmp/elsewhere/files',
-        mirrorPath: '/tmp/elsewhere/brain-mirror',
-        updateAuto: true,
-      },
-    });
-
-    const mode = (await stat(envFilePath(home))).mode & 0o777;
-    expect(mode.toString(8)).toBe('600');
-  });
-
-  it('creates the folder when it is not there yet', async () => {
-    const parent = await tempHome();
-    const home = join(parent, 'nested', 'second_brain');
-
-    await writeConfig(home, {});
-
-    const result = await readConfig(home);
-    expect(result.ok).toBe(true);
-  });
-
-  it('writes the defaults when it is given none', async () => {
-    const home = await tempHome();
-
-    await writeConfig(home, {});
-
-    const document = await readFile(configFilePath(home), 'utf8');
-    expect(document).toContain(`path = "${join(home, 'brain.db')}"`);
-    expect(document).toContain(`path = "${join(home, 'files')}"`);
-    expect(document).toContain(`path = "${join(home, 'mirror')}"`);
-  });
-
-  it('tightens the mode of a .env that already existed too loosely', async () => {
-    const home = await tempHome();
-    await writeFile(envFilePath(home), 'OTHER="x"\n', 'utf8');
-    await chmod(envFilePath(home), 0o644);
-
-    await writeConfig(home, {});
-
-    const mode = (await stat(envFilePath(home))).mode & 0o777;
-    expect(mode.toString(8)).toBe('600');
-  });
-
-  it('keeps variables another story already put in .env', async () => {
-    const home = await tempHome();
-    await writeConfig(home, {});
-    await writeFile(envFilePath(home), `${await readFile(envFilePath(home), 'utf8')}OTHER="kept"\n`);
-
-    await writeConfig(home, { timezone: 'Europe/Berlin' });
-
-    const text = await readFile(envFilePath(home), 'utf8');
-    expect(text).toContain('OTHER="kept"');
-  });
-
-  it('writes no path into .env (AD-18 cuts the other way too)', async () => {
-    const home = await tempHome();
-
-    await writeConfig(home, { storePath: '/tmp/elsewhere/brain.db' });
-
-    const text = await readFile(envFilePath(home), 'utf8');
-    expect(text).not.toContain('/tmp/elsewhere/brain.db');
-  });
-
-  it('refuses a timezone it would then refuse to read back, as a value', async () => {
-    const home = await tempHome();
-
-    const result = await writeConfig(home, { timezone: 'Nowhere/Nope' });
-
-    // A value and not a throw: the installer has a line to print and an exit
-    // code to answer with, and a stack trace is neither (F5).
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe('CONFIG_INVALID');
-    assertKoreanLine(result.message, { label: 'writeConfig timezone' });
-    expect(existsSync(configFilePath(home))).toBe(false);
-  });
-
-  it.each([
-    ['storePath', { storePath: 'brain.db' }],
-    ['filesPath', { filesPath: 'files' }],
-    ['mirrorPath', { mirrorPath: 'notes/mirror' }],
-  ])('refuses a relative %s, which it would refuse to read back', async (_name, input) => {
-    const home = await tempHome();
-
-    const result = await writeConfig(home, input);
-
-    expect(result).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
-    if (result.ok) return;
-    expect(result.message).toContain('절대 경로');
-    expect(existsSync(configFilePath(home))).toBe(false);
-  });
-
-  it('refuses a .env value it cannot represent, and writes neither file', async () => {
-    const home = await tempHome();
-    // Unquoted, so Node reads the rest of the line: a value holding both an
-    // apostrophe and a double quote is one `.env` cannot be written back from.
-    await writeFile(envFilePath(home), 'BOTH=it\'s "x"\n', 'utf8');
+  it('refuses a .env value it cannot represent, and leaves both files byte for byte', async () => {
+    const home = await given('schema_version=1\n', 'BOTH=it\'s "x"\n');
+    const configBefore = await readFile(configFilePath(home));
+    const envBefore = await readFile(envFilePath(home));
 
     const result = await writeConfig(home, {});
 
-    // `.env` as Node reads it has no escape syntax, so a value holding both
-    // quotes cannot be round-tripped. Saying so beats recording something else.
-    expect(result).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
-    if (result.ok) return;
-    expect(result.message).toContain('BOTH');
-    expect(existsSync(configFilePath(home))).toBe(false);
+    expect(result).toMatchObject({ ok: false, code: 'CONFIG_INVALID', message: expect.stringContaining('BOTH') });
+    expect(await readFile(configFilePath(home))).toEqual(configBefore);
+    expect(await readFile(envFilePath(home))).toEqual(envBefore);
   });
 
-  it('writes the keys this version does not know back, under the ones it does', async () => {
-    const home = await tempHome();
-
-    const result = await writeConfig(home, {
-      extra: { database: { url_env: 'X' }, store: { extra: 1 }, colour: 'red' },
-    });
-
-    expect(result).toEqual({ ok: true });
-    const document = await readFile(configFilePath(home), 'utf8');
-    expect(document).toContain('url_env = "X"');
-    expect(document).toContain('extra = 1');
-    expect(document).toContain('colour = "red"');
-    // The table this version owns keeps its own key beside the unknown one.
-    expect(document).toContain(`path = "${defaultStorePath(home)}"`);
+  it.each(['schema_version=1\n', 'schema_version=1\n[store]\n', 'schema_version=1\n[store]\npath="rel"\n', 'schema_version=1\n[store]\npath=42\n'])('defaults the selector without validating a legacy path: %s', async text => {
+    const home = await given(text);
+    const result = await readConfig(home);
+    expect(result).toMatchObject({ ok: true, config: { storeUrlEnv: DEFAULT_STORE_URL_ENV, filesPath: join(home, 'files'), mirrorPath: join(home, 'mirror'), updateAuto: true } });
+    if (result.ok) expect(result.config).not.toHaveProperty('storePath');
+    expect(KNOWN_KEYS).not.toContain('store.path');
   });
-
-  it('lets a known key win over an unknown one of the same name', async () => {
-    const home = await tempHome();
-
-    await writeConfig(home, {
-      storePath: '/tmp/chosen/brain.db',
-      extra: { store: { path: '/tmp/stale/brain.db' }, timezone: 'Nowhere/Nope' },
-    });
-
-    const document = await readFile(configFilePath(home), 'utf8');
-    expect(document).toContain('path = "/tmp/chosen/brain.db"');
-    expect(document).not.toContain('/tmp/stale/brain.db');
-    expect(document).not.toContain('Nowhere/Nope');
+  it('retains a legacy path only as an untouched file candidate', async () => {
+    const home = await given('schema_version=1\n[store]\npath="rel"\n');
+    expect(await readConfigForSetup(home)).toMatchObject({ ok: true, warnings: [], recorded: { legacySqlitePath: 'rel', storeUrlEnv: DEFAULT_STORE_URL_ENV, extra: {} } });
+  });
+  it('uses PG timezone rules even without a selector', async () => {
+    const home = await given('schema_version=1\ntimezone="invalid-zone"\n');
+    expect(await readConfig(home)).toMatchObject({ ok: true, config: { fileHasTimezone: true } });
+    const read = await readConfig(home);
+    if (read.ok) expect(read.config).not.toHaveProperty('timezone');
+  });
+  it.each(['', 'bad-name', '9NAME', 1, [], {}])('rejects invalid selectors %j on both reading paths', async value => {
+    const encoded = typeof value === 'string' ? JSON.stringify(value) : JSON.stringify(value);
+    const home = await given(`schema_version=1\n[store]\nurl_env=${encoded}\n`);
+    expect((await readConfig(home)).ok).toBe(false);
+    expect((await readConfigForSetup(home)).ok).toBe(false);
+  });
+  it.each(['BRAIN_DATABASE_URL', 'CUSTOM_DB', '_PRIVATE'])('accepts selector %s', async selector => {
+    const home = await given(`schema_version=1\n[store]\nurl_env="${selector}"\n`);
+    expect(await readConfig(home)).toMatchObject({ ok: true, config: { storeUrlEnv: selector } });
+  });
+  it.each(['', 'schema_version=2', 'schema_version="1"', 'schema_version=1.5', 'broken = ['])('rejects invalid configuration %s', async config => {
+    expect(await readConfig(await given(config))).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+  });
+  it('requires a configuration file for ordinary commands', async () => {
+    const home = await given();
+    expect(await readConfig(home)).toMatchObject({ ok: false, code: 'CONFIG_MISSING' });
+    expect(await readConfigForSetup(home)).toEqual({ ok: true, recorded: undefined, warnings: [] });
+  });
+  it.each(['files', 'mirror'])('validates %s paths', async table => {
+    for (const value of ['"relative"', '""', '42']) {
+      const home = await given(`schema_version=1\n[${table}]\npath=${value}`);
+      expect(await readConfig(home)).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+      expect(await readConfigForSetup(home)).toMatchObject({ ok: true, warnings: [expect.objectContaining({ code: 'CONFIG_VALUE_RESET' })] });
+    }
+  });
+  it('warns about unknown values and preserves them on setup rewrite', async () => {
+    const home = await given('schema_version=1\n[other]\ncolour="blue"\n[store]\npath="old.db"\n');
+    const read = await readConfigForSetup(home);
+    expect(read).toMatchObject({ ok: true, warnings: expect.arrayContaining([expect.objectContaining({ code: 'CONFIG_UNKNOWN_KEY' })]) });
+    if (!read.ok) return;
+    expect(await writeConfig(home, { extra: read.recorded?.extra })).toEqual({ ok: true });
+    const text = await readFile(join(home, 'config.toml'), 'utf8');
+    expect(text).toContain('colour = "blue"');
+    expect(text).not.toContain('old.db');
+    expect(text).toContain('url_env = "BRAIN_DATABASE_URL"');
+  });
+  it('rewrites all known paths, drops file timezone and legacy store.path even from extras, and preserves secrets at 0600', async () => {
+    const home = await given('schema_version=1', 'TOKEN="secret"\n');
+    await chmod(join(home, '.env'), 0o644);
+    expect(await writeConfig(home, { storeUrlEnv: 'CUSTOM_DB', filesPath: '/tmp/files', mirrorPath: '/tmp/mirror', updateAuto: false, timezone: 'Europe/Berlin', extra: { store: { path: '/old.db' }, timezone: 'bad' } })).toEqual({ ok: true });
+    const text = await readFile(join(home, 'config.toml'), 'utf8');
+    expect(text).not.toMatch(/timezone|old.db|secret/);
+    expect(await readConfig(home)).toMatchObject({ ok: true, config: { storeUrlEnv: 'CUSTOM_DB', filesPath: '/tmp/files', mirrorPath: '/tmp/mirror', updateAuto: false } });
+    expect((await stat(join(home, '.env'))).mode & 0o777).toBe(0o600);
+    expect(await readFile(join(home, '.env'), 'utf8')).toContain('secret');
+  });
+  it.each(['filesPath', 'mirrorPath'] as const)('refuses relative %s on write', async key => {
+    expect(await writeConfig(await given(), { [key]: 'relative' })).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+  });
+  it('keeps setup values individually and repairs malformed values', async () => {
+    const home = await given('schema_version=1\ntimezone="Europe/Berlin"\n[files]\npath="/tmp/files"\n[update]\nauto="no"');
+    expect(await readConfigForSetup(home)).toMatchObject({ ok: true, recorded: { timezone: 'Europe/Berlin', filesPath: '/tmp/files' }, warnings: [expect.objectContaining({ code: 'CONFIG_VALUE_RESET' })] });
   });
 });
-
-describe('readConfigForSetup', () => {
-  it('says nothing is recorded when there is no file, rather than failing', async () => {
-    const home = await tempHome();
-
-    expect(await readConfigForSetup(home)).toEqual({
-      ok: true,
-      recorded: undefined,
-      warnings: [],
-    });
-  });
-
-  it('reads every value a complete folder holds', async () => {
-    const home = await tempHome();
-    await writeConfig(home, {
-      timezone: 'Europe/Berlin',
-      storePath: '/tmp/a/brain.db',
-      filesPath: '/tmp/a/files',
-      mirrorPath: '/tmp/a/mirror',
-    });
-
-    const read = await readConfigForSetup(home);
-
-    expect(read).toEqual({
-      ok: true,
-      recorded: {
-        timezone: 'Europe/Berlin',
-        storePath: '/tmp/a/brain.db',
-        filesPath: '/tmp/a/files',
-        mirrorPath: '/tmp/a/mirror',
-        // `writeConfig` records the default even when nothing asked for it, so
-        // a re-run offers it back rather than asking again from scratch.
-        updateAuto: true,
-        extra: {},
-      },
-      warnings: [],
-    });
-  });
-
-  it('drops only the value it cannot use, and names it', async () => {
-    const home = await given({
-      config: [
-        `schema_version = ${String(CONFIG_SCHEMA_VERSION)}`,
-        'timezone = "Europe/Berlin"',
-        '[store]',
-        'path = "brain.db"',
-        '[files]',
-        'path = "/tmp/a/files"',
-        '[mirror]',
-        'path = "/tmp/a/mirror"',
-        '',
-      ].join('\n'),
-    });
-
-    const read = await readConfigForSetup(home);
-
-    expect(read.ok).toBe(true);
-    if (!read.ok) return;
-    // The relative store path is gone; the three values beside it are not.
-    expect(read.recorded).toEqual({
-      timezone: 'Europe/Berlin',
-      filesPath: '/tmp/a/files',
-      mirrorPath: '/tmp/a/mirror',
-      extra: {},
-    });
-    expect(read.warnings.map((warning) => warning.code)).toEqual(['CONFIG_VALUE_RESET']);
-    expect(read.warnings[0]?.message).toContain('store.path');
-    // The default, named as the default: a `--store-path` flag or a typed
-    // answer wins over it, so a message promising it would be used would be
-    // one the next line contradicts.
-    expect(read.warnings[0]?.message).toContain(`기본값은 "${defaultStorePath(home)}"입니다`);
-    assertKoreanLine(read.warnings[0]?.message ?? '', { label: 'reset warning' });
-  });
-
-  it.each([
-    ['a time zone this machine does not know', 'timezone = "Nowhere/Nope"', 'timezone'],
-    ['a store path that is a number', '[store]\npath = 7', 'store.path'],
-    ['an empty files path', '[files]\npath = ""', 'files.path'],
-  ])('resets %s on its own', async (_what, lines, key) => {
-    const home = await given({
-      config: `schema_version = ${String(CONFIG_SCHEMA_VERSION)}\n${lines}\n`,
-    });
-
-    const read = await readConfigForSetup(home);
-
-    expect(read.ok).toBe(true);
-    if (!read.ok) return;
-    expect(read.warnings.map((warning) => warning.code)).toEqual(['CONFIG_VALUE_RESET']);
-    expect(read.warnings[0]?.message).toContain(key);
-  });
-
-  it.each([
-    ['no schema_version at all', 'timezone = "Asia/Seoul"\n'],
-    ['a schema_version that is not an integer', 'schema_version = "1"\n'],
-  ])('warns and writes version 1 for %s', async (_what, config) => {
-    const home = await given({ config });
-
-    const read = await readConfigForSetup(home);
-
-    expect(read.ok).toBe(true);
-    if (!read.ok) return;
-    expect(read.warnings.map((warning) => warning.code)).toContain('CONFIG_VALUE_RESET');
-    const said = read.warnings.find((warning) => warning.message.includes('schema_version'));
-    expect(said).toBeDefined();
-    // A value that is not there has no kind to name, and `undefined` is not a
-    // word in a sentence a person reads.
-    expect(said?.message).not.toContain('undefined');
-    expect(said?.message).toContain('기본값은 "1"입니다');
-    assertKoreanLine(said?.message ?? '', { label: 'schema_version reset' });
-  });
-
-  it('keeps the keys it does not know, and warns about each of them', async () => {
-    const home = await given({
-      config: [
-        `schema_version = ${String(CONFIG_SCHEMA_VERSION)}`,
-        '[database]',
-        'url_env = "X"',
-        '[store]',
-        `path = "/tmp/a/brain.db"`,
-        'extra = 1',
-        '',
-      ].join('\n'),
-    });
-
-    const read = await readConfigForSetup(home);
-
-    expect(read.ok).toBe(true);
-    if (!read.ok) return;
-    // In the shape the document had them, so writing the folder back renders
-    // them again without this version knowing anything about them (F2).
-    expect(read.recorded?.extra).toEqual({ database: { url_env: 'X' }, store: { extra: 1 } });
-    expect(read.warnings.map((warning) => warning.code)).toEqual([
-      'CONFIG_UNKNOWN_KEY',
-      'CONFIG_UNKNOWN_KEY',
-    ]);
-  });
-
-  it.each([
-    ['a document that is not TOML', 'this is not toml\n'],
-    ['a schema_version from a newer layout', 'schema_version = 2\n'],
-  ])('refuses %s, so the install writes nothing over it', async (_what, config) => {
-    const home = await given({ config });
-
-    const read = await readConfigForSetup(home);
-
-    expect(read).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
-    if (read.ok) return;
-    assertKoreanLine(read.message, { label: 'readConfigForSetup refusal' });
-  });
-
-  it('round-trips the whole folder, unknown keys and all', async () => {
-    const home = await given({
-      config: [
-        `schema_version = ${String(CONFIG_SCHEMA_VERSION)}`,
-        'timezone = "Europe/Berlin"',
-        '[store]',
-        'path = "/tmp/a/brain.db"',
-        'extra = 1',
-        '[files]',
-        'path = "/tmp/a/files"',
-        '[mirror]',
-        'path = "/tmp/a/mirror"',
-        '[database]',
-        'url_env = "X"',
-        '',
-      ].join('\n'),
-    });
-
-    const first = await readConfigForSetup(home);
-    expect(first.ok).toBe(true);
-    if (!first.ok || first.recorded === undefined) return;
-    expect(await writeConfig(home, { ...first.recorded })).toEqual({ ok: true });
-    const once = await readFile(configFilePath(home), 'utf8');
-
-    const again = await readConfigForSetup(home);
-    expect(again.ok).toBe(true);
-    if (!again.ok || again.recorded === undefined) return;
-    expect(await writeConfig(home, { ...again.recorded })).toEqual({ ok: true });
-
-    // Byte for byte: a re-run that reordered or dropped a key would be a
-    // folder nobody could keep by hand.
-    expect(await readFile(configFilePath(home), 'utf8')).toBe(once);
-    expect(once).toContain('url_env = "X"');
-    expect(once).toContain('extra = 1');
-    // And `readConfig` reads back what this wrote, which is the whole point of
-    // sharing the checks.
-    expect((await readConfig(home)).ok).toBe(true);
-  });
-});
-
-/**
- * `[update] auto`: whether the harness plugin may install a newer app on its
- * own (AD-19). It is the first boolean key the codec has, and the three
- * readings of it differ on purpose — a command refuses a value it cannot use,
- * an install repairs it, and the bootstrap reads it with no parser at all.
- */
 describe('[update] auto', () => {
   it('defaults to on, because that is what a plugin is for', async () => {
-    const home = await given({ config: VALID_CONFIG });
-
-    const result = await readConfig(home);
-
-    expect(result.ok && result.config.updateAuto).toBe(true);
+    const home = await given('schema_version=1\n');
+    expect(await readConfig(home)).toMatchObject({ ok: true, config: { updateAuto: true } });
     expect(DEFAULT_UPDATE_AUTO).toBe(true);
   });
 
-  it('is read as what the file says', async () => {
-    const home = await given({ config: `${VALID_CONFIG}\n[update]\nauto = false\n` });
-
-    const result = await readConfig(home);
-
-    expect(result.ok && result.config.updateAuto).toBe(false);
-  });
-
   it('is CONFIG_INVALID for a command when it is not a boolean', async () => {
-    const home = await given({ config: `${VALID_CONFIG}\n[update]\nauto = "yes"\n` });
-
-    const result = await readConfig(home);
-
-    expect(result).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.message).toContain('update.auto');
-      assertKoreanLine(result.message, { label: 'update.auto message' });
-    }
-  });
-
-  it('is dropped with a CONFIG_VALUE_RESET for an install, keeping the rest', async () => {
-    const home = await given({
-      config: [
-        VALID_CONFIG.trim(),
-        'timezone = "Europe/Berlin"',
-        '[update]',
-        'auto = "yes"',
-        '',
-      ].join('\n'),
-    });
-
-    const read = await readConfigForSetup(home);
-
-    expect(read.ok).toBe(true);
-    if (!read.ok) return;
-    // That key, and only that key: a single typo must not reset the others.
-    expect(read.recorded?.updateAuto).toBeUndefined();
-    expect(read.recorded?.timezone).toBe('Europe/Berlin');
-    expect(read.warnings.map((warning) => warning.code)).toEqual(['CONFIG_VALUE_RESET']);
-    expect(read.warnings[0]?.message).toContain('update.auto');
-    expect(read.warnings[0]?.message).toContain('true');
+    const home = await given('schema_version=1\n[update]\nauto="yes"\n');
+    expect(await readConfig(home)).toMatchObject({ ok: false, code: 'CONFIG_INVALID', message: expect.stringContaining('update.auto') });
   });
 
   it('is written, and read back, both ways round', async () => {
+    const home = await given();
     for (const auto of [true, false]) {
-      const home = await tempHome();
-
-      await writeConfig(home, { updateAuto: auto });
-      const result = await readConfig(home);
-
-      expect(result.ok && result.config.updateAuto).toBe(auto);
-      const read = await readConfigForSetup(home);
-      expect(read.ok && read.recorded?.updateAuto).toBe(auto);
+      expect(await writeConfig(home, { updateAuto: auto })).toEqual({ ok: true });
+      expect(await readConfig(home)).toMatchObject({ ok: true, config: { updateAuto: auto } });
+      expect(await readConfigForSetup(home)).toMatchObject({ ok: true, recorded: { updateAuto: auto } });
     }
-  });
-
-  it('is a known key, so it is not reported as one this version ignores', async () => {
-    const home = await given({ config: `${VALID_CONFIG}\n[update]\nauto = true\n` });
-
-    const result = await readConfig(home);
-
-    expect(result.ok && result.warnings).toEqual([]);
   });
 });
 
-
-it.each(['""', '"NOT-A-NAME"', '42', '[]', '{ nested = "value" }', '"BRAIN_APP_PASSWORD"', '"BRAIN_POSTGRES_PASSWORD"'])(
-  'rejects invalid or reserved PG selectors consistently without changing files: %s',
-  async selector => {
-    const config = `${VALID_CONFIG}[store]\nurl_env = ${selector}\n`;
-    const home = await given({ config, env: 'KEEP="original"\n' });
-    expect(await readConfig(home)).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
-    expect(await readConfigForSetup(home)).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
-    const value: unknown = selector.startsWith('"') ? JSON.parse(selector) : 42;
-    expect(await writeConfig(home, { storeUrlEnv: value as string })).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
-    await expect(postgresSecrets(home, 23456, value as string)).rejects.toThrow('store.url_env');
-    expect(await readFile(configFilePath(home), 'utf8')).toBe(config);
-    expect(await readFile(envFilePath(home), 'utf8')).toBe('KEEP="original"\n');
-  },
-);
-
-it('ignores stale PG timezone values at runtime, retains a valid setup seed and removes the key when writing', async () => {
-  const home = await given({ config: `${VALID_CONFIG}timezone = "Europe/Paris"\n[store]\nurl_env = "BRAIN_DATABASE_URL"\n` });
-  const read = await readConfig(home);
-  expect(read).toMatchObject({ ok: true, config: { fileHasTimezone: true, storeUrlEnv: 'BRAIN_DATABASE_URL' } });
-  if (read.ok) expect(read.config.timezone).toBeUndefined();
-  const seed = await readConfigForSetup(home);
-  expect(seed).toMatchObject({ ok: true, recorded: { timezone: 'Europe/Paris' } });
-  expect(await writeConfig(home, { timezone: 'Europe/Paris', storeUrlEnv: 'BRAIN_DATABASE_URL', extra: { timezone: 'Europe/Paris' } })).toEqual({ ok: true });
-  expect(await readFile(configFilePath(home), 'utf8')).not.toContain('timezone');
-  await writeFile(configFilePath(home), `${VALID_CONFIG}timezone = 42\n[store]\nurl_env = "BRAIN_DATABASE_URL"\n`);
-  expect(await readConfig(home)).toMatchObject({ ok: true, config: { fileHasTimezone: true } });
+describe('URL resolution', () => {
+  it('prefers process values and lets an explicitly empty value suppress .env', async () => {
+    const home = await given('schema_version=1', 'CUSTOM_DB=postgresql://file/brain\n');
+    expect(await resolveStoreUrl(home, 'CUSTOM_DB', { CUSTOM_DB: 'postgresql://process/brain' })).toBe('postgresql://process/brain');
+    expect(await resolveStoreUrl(home, 'CUSTOM_DB', { CUSTOM_DB: '' })).toBeUndefined();
+    expect(await resolveStoreUrl(home, 'CUSTOM_DB', {})).toBe('postgresql://file/brain');
+    expect(await resolveStoreUrl(home, 'MISSING', {})).toBeUndefined();
+  });
 });

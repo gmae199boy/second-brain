@@ -7,9 +7,8 @@ import { configFilePath, envFilePath } from './paths.js';
 
 /**
  * The one place configuration is read and written, installer included (AD-18).
- * `config.toml` holds no key values: a key value lives in `.env` at mode 0600,
- * and until an epic introduces one there is no key to read — which is why this
- * module writes `.env` and no longer reads it.
+ * `config.toml` holds machine settings; connection secrets live in `.env` at
+ * mode 0600. URL resolution uses process values before the home `.env`.
  *
  * Nothing here runs at import time (AD-3): a command calls `readConfig`, and
  * until it does, no file is touched.
@@ -17,6 +16,8 @@ import { configFilePath, envFilePath } from './paths.js';
 
 /** Version of the configuration file layout this code understands. */
 export const CONFIG_SCHEMA_VERSION = 1;
+
+export const DEFAULT_STORE_URL_ENV = 'BRAIN_DATABASE_URL';
 
 /** Default display time zone. Only human-readable output uses it (Conventions). */
 export const DEFAULT_TIMEZONE = TIMEZONE_SETTING.defaultValue;
@@ -29,14 +30,13 @@ export const DEFAULT_TIMEZONE = TIMEZONE_SETTING.defaultValue;
 export const KNOWN_KEYS = [
   'schema_version',
   'timezone',
-  'store.path',
   'store.url_env',
   'files.path',
   'mirror.path',
   'update.auto',
 ] as const;
 
-/** File name of the default source database, under the configuration folder. */
+/** Retired SQLite filename, used only to identify an untouched legacy file. */
 export const DEFAULT_STORE_FILE = 'brain.db';
 
 /** Folder name of the default file store, under the configuration folder. */
@@ -55,9 +55,8 @@ export const DEFAULT_MIRROR_FOLDER = 'mirror';
 export const DEFAULT_UPDATE_AUTO = true;
 
 /**
- * Where the source database goes when the file does not say. Relative to the
- * configuration folder, so a second install never writes into the first one's
- * database. Nothing here creates the file: that is the installer's (AD-20).
+ * The legacy SQLite candidate when an old configuration names no file.
+ * Nothing opens, moves or creates this path.
  */
 export function defaultStorePath(home: string): string {
   return join(home, DEFAULT_STORE_FILE);
@@ -88,9 +87,10 @@ export interface BrainConfig {
   timezone?: string;
   /** Presence only: a stale PG file value must never become a runtime setting. */
   fileHasTimezone?: boolean;
-  /** Absolute path of the source database file. Opened, never created (AD-20). */
-  storePath: string;
-  storeUrlEnv?: string;
+  /** Environment variable selecting the PostgreSQL runtime URL. */
+  storeUrlEnv: string;
+  /** Retired SQLite file candidate, used only for installation guidance. */
+  legacySqlitePath: string;
   /** Absolute path of the file store's root. Nothing here creates it (epic 2). */
   filesPath: string;
   /** Absolute path of the mirror folder. Nothing here creates it (epic 4). */
@@ -191,16 +191,9 @@ export async function readConfig(home: string): Promise<ReadConfigResult> {
     };
   }
 
-  const storeUrlEnv = isTable(document.store) ? document.store.url_env : undefined;
+  const storeUrlEnv = (isTable(document.store) ? document.store.url_env : undefined) ?? DEFAULT_STORE_URL_ENV;
   const selectorError = storeUrlEnvError(storeUrlEnv);
   if (selectorError !== undefined) return { ok: false, code: 'CONFIG_INVALID', message: selectorError };
-  const timezone = fields.get('timezone') ?? DEFAULT_TIMEZONE;
-  if (storeUrlEnv === undefined && (typeof timezone !== 'string' || !isTimeZone(timezone))) {
-    return { ok: false, code: 'CONFIG_INVALID', message: `${configPath}: timezone은 유효한 IANA 시간대 이름이어야 합니다` };
-  }
-
-  const storePath = readPath(configPath, fields, 'store.path', defaultStorePath(home));
-  if (!storePath.ok) return storePath.failure;
   const filesPath = readPath(configPath, fields, 'files.path', defaultFilesPath(home));
   if (!filesPath.ok) return filesPath.failure;
   const mirrorPath = readPath(configPath, fields, 'mirror.path', defaultMirrorPath(home));
@@ -219,9 +212,9 @@ export async function readConfig(home: string): Promise<ReadConfigResult> {
     ok: true,
     config: {
       schemaVersion,
-      ...(storeUrlEnv === undefined ? {} : { storeUrlEnv: storeUrlEnv as string }),
-      ...(storeUrlEnv === undefined ? { timezone: timezone as string } : { fileHasTimezone: Object.hasOwn(document, 'timezone') }),
-      storePath: storePath.path,
+      storeUrlEnv: storeUrlEnv as string,
+      fileHasTimezone: Object.hasOwn(document, 'timezone'),
+      legacySqlitePath: typeof fields.get('store.path') === 'string' ? fields.get('store.path') as string : defaultStorePath(home),
       filesPath: filesPath.path,
       mirrorPath: mirrorPath.path,
       updateAuto,
@@ -279,8 +272,8 @@ function readPath(
  */
 export interface SetupConfig {
   timezone?: string;
-  /** Absolute. A re-run offers it as the default and must never reset it. */
-  storePath?: string;
+  /** Unvalidated retired value, used only to report a legacy file. */
+  legacySqlitePath?: string;
   storeUrlEnv?: string;
   /** Absolute. Nothing asks for it, so a re-run can only keep it. */
   filesPath?: string;
@@ -381,8 +374,8 @@ export async function readConfigForSetup(home: string): Promise<ReadSetupConfigR
     );
   }
 
-  const recorded: SetupConfig = { extra: unknownKeys(fields) };
-  const storeUrlEnv = isTable(document.store) ? document.store.url_env : undefined;
+  const recorded: SetupConfig = { extra: unknownKeys(fields), legacySqlitePath: typeof fields.get('store.path') === 'string' ? fields.get('store.path') as string : defaultStorePath(home) };
+  const storeUrlEnv = (isTable(document.store) ? document.store.url_env : undefined) ?? DEFAULT_STORE_URL_ENV;
   const selectorError = storeUrlEnvError(storeUrlEnv);
   if (selectorError !== undefined) return { ok: false, code: 'CONFIG_INVALID', message: selectorError };
   if (storeUrlEnv !== undefined) recorded.storeUrlEnv = storeUrlEnv as string;
@@ -397,7 +390,6 @@ export async function readConfigForSetup(home: string): Promise<ReadSetupConfigR
   }
 
   for (const [key, field] of [
-    ['store.path', 'storePath'],
     ['files.path', 'filesPath'],
     ['mirror.path', 'mirrorPath'],
   ] as const) {
@@ -428,8 +420,7 @@ export async function readConfigForSetup(home: string): Promise<ReadSetupConfigR
  * key.
  *
  * It names the default as the default and not as what will be written, because
- * it is not always what is written: a `--store-path` flag or an answer typed
- * into the question wins over it, and a warning that promised the default
+ * it is not always what is written: a flag or an answer typed into the question wins over it, and a warning that promised the default
  * would be used would be a warning the next line contradicts.
  */
 function reset(
@@ -451,8 +442,7 @@ function reset(
 }
 
 /** What this install writes for one path key when the file's value is unusable. */
-function defaultFor(home: string, key: 'store.path' | 'files.path' | 'mirror.path'): string {
-  if (key === 'store.path') return defaultStorePath(home);
+function defaultFor(home: string, key: 'files.path' | 'mirror.path'): string {
   if (key === 'files.path') return defaultFilesPath(home);
   return defaultMirrorPath(home);
 }
@@ -465,6 +455,7 @@ function defaultFor(home: string, key: 'store.path' | 'files.path' | 'mirror.pat
 function unknownKeys(fields: ReadonlyMap<string, unknown>): Record<string, unknown> {
   const extra: Record<string, unknown> = {};
   for (const key of unknownKeyNames(fields)) {
+    if (key === 'store.path') continue;
     const parts = key.split('.');
     const last = parts.pop();
     if (last === undefined) continue;
@@ -487,8 +478,7 @@ function unknownKeys(fields: ReadonlyMap<string, unknown>): Record<string, unkno
 /** What `writeConfig` records. Everything left out keeps its default. */
 export interface WriteConfigInput {
   timezone?: string;
-  /** Absolute. Left out means `defaultStorePath(home)`, as reading does. */
-  storePath?: string;
+  /** Left out means `DEFAULT_STORE_URL_ENV`. */
   storeUrlEnv?: string;
   /** Absolute. Left out means `defaultFilesPath(home)`, as reading does. */
   filesPath?: string;
@@ -522,23 +512,13 @@ export async function writeConfig(
 ): Promise<WriteConfigResult> {
   const selectorError = storeUrlEnvError(input.storeUrlEnv);
   if (selectorError !== undefined) return { ok: false, code: 'CONFIG_INVALID', message: selectorError };
-  const timezone = input.timezone ?? DEFAULT_TIMEZONE;
-  const storePath = input.storePath ?? defaultStorePath(home);
   const filesPath = input.filesPath ?? defaultFilesPath(home);
   const mirrorPath = input.mirrorPath ?? defaultMirrorPath(home);
   // The same checks `readConfig` makes, made here as well: a folder this codec
   // wrote must be one it can read back. A value, not an exception: the
   // installer has a line to print and an exit code to answer with, and a
   // throw from here would reach the terminal as a stack (Conventions).
-  if (input.storeUrlEnv === undefined && !isTimeZone(timezone)) {
-    return {
-      ok: false,
-      code: 'CONFIG_INVALID',
-      message: `timezone "${timezone}"은 이 기계가 아는 시간대가 아닙니다`,
-    };
-  }
   for (const [key, path] of [
-    ['store.path', storePath],
     ['files.path', filesPath],
     ['mirror.path', mirrorPath],
   ] as const) {
@@ -567,15 +547,15 @@ export async function writeConfig(
     const rendered = merged(
         {
           schema_version: CONFIG_SCHEMA_VERSION,
-          ...(input.storeUrlEnv === undefined ? { timezone } : {}),
-          store: { path: storePath, ...(input.storeUrlEnv === undefined ? {} : { url_env: input.storeUrlEnv }) },
+          store: { url_env: input.storeUrlEnv ?? DEFAULT_STORE_URL_ENV },
           files: { path: filesPath },
           mirror: { path: mirrorPath },
           update: { auto: input.updateAuto ?? DEFAULT_UPDATE_AUTO },
         },
         input.extra ?? {},
       );
-    if (input.storeUrlEnv !== undefined) delete rendered.timezone;
+    delete rendered.timezone;
+    if (isTable(rendered.store)) delete rendered.store.path;
     document = stringifyToml(rendered);
     lines = [];
     for (const [name, value] of Object.entries(values)) {
@@ -710,7 +690,8 @@ function unknownKeyNames(fields: ReadonlyMap<string, unknown>): readonly string[
   const isKnown = (key: string): boolean =>
     known.has(key) || KNOWN_KEYS.some((candidate) => candidate.startsWith(`${key}.`));
 
-  return [...fields.keys()].filter((key) => !isKnown(key));
+  // Retired store.path is consumed only as a legacy candidate and never rewritten.
+  return [...fields.keys()].filter((key) => key !== 'store.path' && !isKnown(key));
 }
 
 function unknownKeyWarnings(
