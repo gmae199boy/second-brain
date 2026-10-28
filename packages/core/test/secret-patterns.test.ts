@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import {
   SECRET_PATTERNS,
   SECRET_PATTERN_VERSION,
@@ -31,10 +32,9 @@ function maskedBody(text: string): string {
 }
 
 describe('the pattern list itself', () => {
-  it('is at version 2', () => {
-    // Bumped by 마스킹 B: the value set, the Korean separators and the English
-    // value-shape rules all changed (change D4).
-    expect(SECRET_PATTERN_VERSION).toBe('2');
+  it('is at version 3', () => {
+    // Version 3 anchors URL scheme runs without changing the masked values.
+    expect(SECRET_PATTERN_VERSION).toBe('3');
   });
 
   it('is built the way the masking function needs: global, unicode, with indices', () => {
@@ -286,6 +286,8 @@ describe('the block and URL forms', () => {
   });
 
   it('masks only the password of a URL that carries credentials', () => {
+    expect(maskedBody('1http://u:pw@h')).toBe('1http://u:[REDACTED:url_credentials]@h');
+    expect(maskedBody('x+y.z-w://u:pw@h')).toBe('x+y.z-w://u:[REDACTED:url_credentials]@h');
     expect(maskedBody('https://user:pw123@host.example/x')).toBe(
       'https://user:[REDACTED:url_credentials]@host.example/x',
     );
@@ -522,5 +524,111 @@ describe('masking is a function, and masking a masked text changes nothing', () 
 
   it('answers an empty text with an empty result', () => {
     expect(maskSecrets('', 'body')).toEqual({ text: '', spans: [] });
+  });
+});
+
+describe('bounded masking work for ABI stderr', () => {
+  it.each([
+    ['TOKEN=[REDACTED:password]\n'.repeat(38000), 'TOKEN=[REDACTED:password]\n'.repeat(38000), 0],
+    [('TOKEN=[REDACTED:password] password=secret123\n').repeat(22000),
+      ('TOKEN=[REDACTED:password] password=[REDACTED:password]\n').repeat(22000), 22000],
+    ['token=f( '.repeat(100000), 'token=[REDACTED:password] '.repeat(100000), 100000],
+    ['token=f('.repeat(50000) + 'x' + ')'.repeat(50000),
+      'token=f('.repeat(50000) + 'x' + ')'.repeat(50000), 0],
+  ] as const)('preserves the result for adversarial input %# in under one second', (raw, expected, spans) => {
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(1048576);
+    const started = performance.now();
+    const result = maskSecrets(raw, 'body');
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(result.text).toBe(expected);
+    expect(result.spans).toHaveLength(spans);
+  });
+
+  it.each([
+    ['token=f(token=f(password=secret123)))', 'token=f(token=f(password=[REDACTED:password])))'],
+    ['token=f( token=f( ', 'token=[REDACTED:password] token=[REDACTED:password] '],
+    ['token=f(token=f(x))suffix)', 'token=[REDACTED:password])'],
+    ['token=abc123])}', 'token=[REDACTED:password]])}'],
+    ['token=f(x\n)', 'token=[REDACTED:password]\n)'],
+    ['token=f(token=f(x)))', 'token=f(token=f(x)))'],
+    ['token=[REDACTED:password] password=secret123', 'token=[REDACTED:password] password=[REDACTED:password]'],
+  ])('keeps call, closer and marker semantics for %s', (raw, expected) => {
+    expect(maskedBody(raw)).toBe(expected);
+  });
+
+  it('keeps quoted nested secrets and their original code point span and hash', () => {
+    expect(maskSecrets('😀 token=f(password="a b")', 'body')).toEqual({
+      text: '😀 token=f(password="[REDACTED:password]")',
+      spans: [{ start: 20, end: 23, kind: 'password', removed: contentHash('a b') }],
+    });
+  });
+});
+
+describe('sparse masking indexes', () => {
+  it.each([
+    ['password=9abc(x)', 'password=[REDACTED:password]'],
+    ['password=abc[x]', 'password=[REDACTED:password]'],
+    ['password=abc{x}', 'password=[REDACTED:password]'],
+    ['password=abc<x>', 'password=[REDACTED:password]'],
+    ['password=9abc([<{x}>])]}', 'password=[REDACTED:password]]}'],
+    ['password=9abc(x])}', 'password=[REDACTED:password]}'],
+    ['password=9abc([x)]}', 'password=[REDACTED:password]}'],
+    ['비밀번호=9abc(x) TOKEN=9abc(y)', '비밀번호=[REDACTED:password] TOKEN=[REDACTED:password]'],
+  ])('stops removing mixed closers at a matched bracket in %s', (raw, expected) => {
+    expect(maskedBody(raw)).toBe(expected);
+  });
+
+  it('keeps first, middle and last code point positions and hashes among many candidates', () => {
+    const unit = '😀 TOKEN=[REDACTED:password] token=f(password="a b") 비밀번호=Tiger2024\n';
+    const count = 2000;
+    const result = maskSecrets(unit.repeat(count), 'body');
+    expect(result.text).toBe(unit.replace('"a b"', '"[REDACTED:password]"')
+      .replace('=Tiger2024', '=[REDACTED:password]').repeat(count));
+    expect(result.spans).toHaveLength(count * 2);
+    // Fixed positions in the original unit; Unicode precedes both secrets,
+    // and a refused outer call must still let its inner password be found.
+    for (const repetition of [0, 1000, 1999]) {
+      const offset = repetition * 67;
+      expect(result.spans.slice(repetition * 2, repetition * 2 + 2)).toEqual([
+        { start: offset + 46, end: offset + 49, kind: 'password', removed: contentHash('a b') },
+        { start: offset + 57, end: offset + 66, kind: 'password', removed: contentHash('Tiger2024') },
+      ]);
+    }
+  });
+
+  it('masks an 8 MiB body with one candidate without dense index memory', () => {
+    // Measure the built public implementation in an isolated Node heap. Include
+    // array buffers: the old seven Int32Arrays alone allocated about 224 MiB,
+    // which heapUsed alone cannot see. Do not GC after masking, hiding them.
+    const moduleUrl = new URL('../dist/domain/secret-patterns.js', import.meta.url).href;
+    const script = `
+      import { maskSecrets } from ${JSON.stringify(moduleUrl)};
+      const measurements = [];
+      const ordinary = 'ordinary text '.repeat(Math.ceil(8 * 1024 * 1024 / 14));
+      for (const [prefix, value] of [
+        [ordinary, 'secret123'],
+        [ordinary, '9abc(x)'],
+        ['() '.repeat(Math.ceil(8 * 1024 * 1024 / 3)), '9abc(x)'],
+      ]) {
+        const raw = prefix + 'password=' + value;
+        // Flatten the input before measuring the masking allocations.
+        raw.charCodeAt(raw.length - 1);
+        global.gc();
+        const before = process.memoryUsage();
+        const result = maskSecrets(raw, 'body');
+        const after = process.memoryUsage();
+        measurements.push({
+          bytes: after.heapUsed - before.heapUsed + after.arrayBuffers - before.arrayBuffers,
+          correct: result.text === prefix + 'password=[REDACTED:password]' && result.spans.length === 1,
+        });
+      }
+      process.stdout.write(JSON.stringify(measurements));
+    `;
+    const measurements: { bytes: number; correct: boolean }[] = JSON.parse(execFileSync(process.execPath,
+      ['--expose-gc', '--input-type=module', '-e', script], { encoding: 'utf8', timeout: 15000 }));
+    for (const measured of measurements) {
+      expect(measured.correct).toBe(true);
+      expect(measured.bytes).toBeLessThan(32 * 1024 * 1024);
+    }
   });
 });

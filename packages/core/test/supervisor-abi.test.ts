@@ -108,7 +108,7 @@ it('does not renew for heartbeat or progress after a final event', async () => {
     expect(k.store.snapshot().workAttempts[0]!.renewedAt).toBeNull(); child.exit(); await flush();
   } finally { await k.stop(); }
 });
-it.each(['identity', 'recording'])('consumes bounded stderr while %s is delayed', async delayed => {
+it.each([['identity', 100], ['recording', 100], ['identity', 1100], ['recording', 1100]] as const)('consumes %s-delayed stderr through %i chunks', async (delayed, chunks) => {
   const store = memoryStore(), time = manualTime(now), launcher = fakeProcessLauncher(), inspector = fakeProcessInspector(launcher);
   const controller = new AbortController(), idGen = sequenceIdGen({ timestampMs: now.getTime() });
   let release!: () => void, consumed = 0;
@@ -132,14 +132,16 @@ it.each(['identity', 'recording'])('consumes bounded stderr while %s is delayed'
     } }, launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) } });
   try {
     await flush(); const child = launcher.processes[0]!;
-    for (let i = 0; i < 100; i++) child.writeStderr('x'.repeat(1000) + '\n');
+    for (let i = 0; i < chunks; i++) child.writeStderr('x'.repeat(1000) + '\n');
     child.writeStderr('TOKEN=secret-value\nlast diagnostic\n');
-    await expect.poll(() => consumed).toBe(101);
+    await expect.poll(() => consumed).toBe(chunks + 1);
     expect(store.snapshot().workAttempts[0]!.outcome).toBeNull();
     release(); await flush(); child.push('{"abi":1,"type":"result"}'); child.exit(); await flush();
     const attempt = store.snapshot().workAttempts[0]!;
     expect(attempt.outcome).toBe('succeeded');
-    expect(attempt.stderr).toContain('last diagnostic\n'); expect(attempt.stderr).not.toContain('secret-value');
+    if (chunks === 1100) expect(attempt.stderr).toBe('[stderr 생략: 원문 1 MiB 초과]');
+    else expect(attempt.stderr).toContain('last diagnostic\n');
+    expect(attempt.stderr).not.toContain('secret-value');
     expect(Buffer.byteLength(attempt.stderr!)).toBeLessThanOrEqual(4096);
   } finally { release(); controller.abort(); await running; }
 });
@@ -159,7 +161,7 @@ it('drains queued stderr before unknown settlement and retains the full masked t
         started.handle.closeOutput = () => { closed = true; close(); release(); };
         started.handle.stderr = { async *[Symbol.asyncIterator]() {
           await outputClosed;
-          for (const chunk of ['first diagnostic\n', 'TOKEN=secret-value\n', 'last diagnostic\n']) { consumed++; yield chunk; }
+          for (const chunk of ['first diagnostic\n', 'TOKEN=\n\nsecret-value\n', 'last diagnostic\n-----BEGIN PRIVATE KEY-----\nSyntheticPemBody']) { consumed++; yield chunk; }
         } };
         started.handle.stdout = { async *[Symbol.asyncIterator]() { await outputClosed; } };
         launcher.processes[0]!.exit();
@@ -173,6 +175,8 @@ it('drains queued stderr before unknown settlement and retains the full masked t
     expect(attempt.outcome).toBe('unknown');
     expect(attempt.stderr).toContain('first diagnostic\n'); expect(attempt.stderr).toContain('last diagnostic\n');
     expect(attempt.stderr).not.toContain('secret-value');
+    expect(attempt.stderr).toContain('[REDACTED:private_key]');
+    expect(attempt.stderr).not.toContain('SyntheticPemBody');
     expect(inspector.signals).toEqual([]);
     expect(store.snapshot().workItems[0]!.currentAttemptToken).toBe(attempt.token);
   } finally { controller.abort(); await running; }
@@ -190,7 +194,29 @@ it.each(['closed PEM', 'unterminated PEM', 'oversized line'])('persists masked s
     await expect.poll(() => k.store.snapshot().workAttempts[0]!.outcome).toBe('succeeded');
     const attempt = k.store.snapshot().workAttempts[0]!;
     expect(attempt.stderr).toBe(mode === 'closed PEM' ? '[REDACTED:private_key]\nTOKEN=[REDACTED:password]\n' :
-      mode === 'unterminated PEM' ? '[REDACTED:private_key]\n' : '[stderr 줄 생략: 상한 초과]');
+      mode === 'unterminated PEM' ? '[REDACTED:private_key]' : 'TOKEN=[REDACTED:password]');
     expect(Buffer.byteLength(attempt.stderr!)).toBeLessThanOrEqual(4096);
+  } finally { await k.stop(); }
+});
+
+it.each(['succeeded', 'failed', 'cancelled'])('persists whole-context masked stderr on %s settlement', async outcome => {
+  const k = await kit();
+  try {
+    const child = k.launcher.processes[0]!;
+    for (const chunk of ['TOKEN\n\n=\n\n', 'SyntheticSecret123\n', '-----BEGIN PRIVATE KEY-----\n', 'SyntheticPemBody']) child.writeStderr(chunk);
+    await flush();
+    if (outcome === 'cancelled') await k.stop();
+    else { child.write(outcome === 'failed' ? '{' : '{"abi":1,"type":"result"}\n'); child.exit(); await flush(); }
+    expect(k.store.snapshot().workAttempts[0]).toMatchObject({ outcome, stderr: 'TOKEN\n\n=\n\n[REDACTED:password]\n[REDACTED:private_key]' });
+  } finally { await k.stop(); }
+});
+it.each([1048576, 1048577])('persists the stderr raw cap verdict for %i bytes and continues consuming', async bytes => {
+  const k = await kit();
+  try {
+    const child = k.launcher.processes[0]!;
+    child.writeStderr('x'.repeat(bytes - 18) + '\nTOKEN=secret-end\n');
+    child.push('{"abi":1,"type":"result"}'); child.exit(); await flush();
+    expect(k.store.snapshot().workAttempts[0]).toMatchObject({ outcome: 'succeeded',
+      stderr: bytes === 1048576 ? 'TOKEN=[REDACTED:password]\n' : '[stderr 생략: 원문 1 MiB 초과]' });
   } finally { await k.stop(); }
 });

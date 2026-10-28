@@ -13,7 +13,7 @@ stdout은 UTF-8 JSON Lines다. 한 줄은 JSON 객체 하나이며 줄바꿈 `\n
 
 환경 변수는 env.schema.json에 정한다. 나머지 환경 변수는 허용한다. BRAIN_RUN_GENERATION은 청구 뒤 attempts다. 선택 계정과 현지 날짜 범위는 값이 생기면 채운다. 날짜는 YYYY-MM-DD이며 양쪽을 함께 주고 포함 범위로 해석한다. schema는 날짜 순서를 비교하지 않는다.
 
-stderr는 들어오는 줄마다 먼저 가린다. PEM 개인 키 BEGIN 표식이 있는 줄부터 END 표식이 있는 줄까지는 `[REDACTED:private_key]` 한 줄로 바꾸며, END가 없으면 EOF까지 본문을 버린다. 나머지 줄은 `maskSecrets(line, 'body')`로 가린다. 줄바꿈을 제외한 한 줄이 65536 UTF-8 바이트를 넘으면 즉시 내용을 버리고 `[stderr 줄 생략: 상한 초과]` 한 줄로 바꾼다. EOF의 줄바꿈 없는 조각도 한 줄로 처리한다. 가린 줄들의 끝 16 KiB만 보관하고 잘린 첫 줄은 버린 다음, 코드 포인트 경계에서 끝 4096 UTF-8 바이트를 attempt에 남긴다. 비었으면 null이다. 모든 결과에 stderr와 자식 시작부터 exit(또는 정산)까지의 elapsed_ms를 남긴다. 이전 incarnation 회수에서는 elapsed_ms가 null이다.
+stderr 원문은 UTF-8 바이트로 세며 최대 1 MiB(1048576바이트)까지 그대로 보관한다. 줄로 나누거나 미리 자르지 않는다. 한 바이트라도 넘으면 보관한 원문을 버리고 이후 출력도 계속 소비하되 보관하지 않는다. 이때 저장하는 값은 `[stderr 생략: 원문 1 MiB 초과]`뿐이다. 넘치지 않았으면 EOF(또는 정산 시점)에 `maskSecrets(전체 원문, 'body')`를 한 번 호출한다. 빈 줄을 사이에 둔 키·값과 END 없는 PEM도 전체 문맥에서 가린다. 전체 가림 뒤 NUL을 U+FFFD로 치환하며, 치환 후 최종 바이트 상한을 적용한다. 그 결과의 끝 최대 4096 UTF-8 바이트를 코드 포인트 경계에서 취하며, 시작이 줄 중간이면 그 부분 줄을 버린다. 비었으면 null이다. 중간 값은 저장하지 않는다. 모든 결과에 최종 stderr와 자식 시작부터 exit(또는 정산)까지의 elapsed_ms를 남긴다. 이전 incarnation 회수에서는 elapsed_ms가 null이다. 1 MiB를 넘는 stderr의 진단 내용은 비밀 비노출을 위해 생략된다.
 
 fixture 파일은 core 패키지의 fixtures/process-abi/v1에 있다.
 

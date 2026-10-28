@@ -304,3 +304,35 @@ source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-tracer-probe-600-pla
 severity: medium
 reason: `claimSupervisedWork`(PG·fake)는 새 attempt만 만들고 이전 token의 행을 닫지 않는다. 데몬 시작 때 이전 incarnation의 열린 attempt를 대조해 `died`·`unknown`으로 회수하는 일은 스토리 2의 범위다.
 status: open
+
+### DW-16: 기존 비밀 탐지기는 따옴표 직후 줄바꿈이 있는 영어 keyword 값을 탐지하지 못한다.
+origin: spec-deferred 45bbe096e7a0
+location: packages/core/src/domain/secret-patterns.ts
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-abi-v1-fixture-ts-plan.md`
+severity: high
+reason: TOKEN="\nSyntheticSecret123\n"을 기준 revision ec91837a6e83385ab98b071a2d023ab439e1a019의 maskSecrets와 현재 구현에 넣으면 둘 다 그대로 반환한다. 기존 VALUE·인용 정책의 한계이며 이번 성능 변경의 회귀가 아니다. 지원 형식과 문장 보존 정책을 정한 뒤 별도로 탐지기를 개선해야 한다.
+status: open
+
+### DW-17: 기존 영어 문장 예외는 명시적 keyword 뒤 다음 줄의 여러 단어 비밀번호도 그대로 남긴다.
+origin: spec-deferred e30e78740ca9
+location: packages/core/src/domain/secret-patterns.ts
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-abi-v1-fixture-ts-plan.md`
+severity: high
+reason: password:\ncorrect horse battery staple\n은 기준 revision과 현재 모두 그대로 반환한다. keywordValueLooksLikeSecret가 뒤 단어를 문장으로 판정하는 기존 정책이며 새 전체 문맥 전달이나 색인의 회귀가 아니다. 명시적 대입의 여러 단어 값을 어디까지 탐지할지 별도 정책 검토가 필요하다.
+status: open
+
+### DW-18: 기존 영어 인용 값 처리도 비밀에 포함된 끝 괄호를 가림 밖에 남긴다.
+origin: spec-deferred bee43b0604cb
+location: packages/core/src/domain/secret-patterns.ts
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-abi-v1-fixture-ts-plan.md`
+severity: high
+reason: password="abc)"는 기준 revision과 현재 모두 닫는 괄호를 가림 밖에 남기고, password=")))"는 그대로 반환한다. 기존 trimClosers가 인용 값에도 적용되는 동작이다. 닫힌 인용 값의 괄호 처리 규칙을 별도로 고쳐야 한다.
+status: open
+
+### DW-19: 기존 한국어 keyword 패턴은 따옴표로 둘러싼 값을 탐지하지 못한다.
+origin: spec-deferred 5ee329c705fc
+location: packages/core/src/domain/secret-patterns.ts
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-abi-v1-fixture-ts-plan.md`
+severity: high
+reason: 비밀번호: "SyntheticSecret123"은 기준 revision과 현재 모두 그대로 반환한다. 한국어 패턴에는 영어 open 인용 그룹이 없으며 이번 색인 변경 전부터 존재한 한계다. 한국어 인용 값 지원을 별도로 정의하고 구현해야 한다.
+status: open
