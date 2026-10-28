@@ -317,7 +317,7 @@ sequenceDiagram
 - **Rule:**
   - **기계 값**은 `~/.second_brain/config.toml`(`schema_version` 포함)에만 둔다: 저장소 접속 `[store] url_env`(기본 `BRAIN_DATABASE_URL`, AD-10), 경로(`[mirror] path`, `[files] path`), 자동 업데이트 `[update] auto`(기본 true. 설치기가 TTY에서 묻는다, AD-19·27, 2026-10-16). Stop 점검 여부 `[discipline] stop_remind`(기본 false, 설치기는 묻지 않는다, epic 3, AD-17)는 DB를 열지 않는 조기 반환(AD-6)이 읽으므로 여기 남는다. 데몬은 설치되면 늘 켠다(설정 키 없음. 임시 정지는 `daemon stop`, AD-25·27, 2026-10-26).
   - **사용자 설정**은 DB `brain.settings`(key, value, updated_at)에 두고 `brain config get/set`이 읽고 쓴다. 키는 설정 코덱이 정의한다. 시간대 `timezone`(기본 `Asia/Seoul`)은 `config.toml`에서 여기로 옮긴다. 다음 키는 `drive.keep_local_days`(epic 8)다. 확장의 키는 `<ext>.*` 이름공간이고 manifest가 선언한다(AD-29). [ADOPTED]
-  - **비밀**(비밀번호가 든 DB URL, 토큰)은 `~/.second_brain/.env`에만 둔다. 설정 파일에는 값이 아니라 환경 변수 이름만 적는다.
+  - **비밀**(비밀번호가 든 DB URL, 토큰)은 `~/.second_brain/.env`에만 둔다. 설정 파일에는 값이 아니라 환경 변수 이름만 적는다. 예외는 외부 라이브러리가 스스로 관리하는 세션 파일 하나다: Garmin tokenstore(기본 `~/.garmin-pipeline/tokens`, 폴더 0700·파일 0600)는 그 자리에 두고, 설정 snapshot에는 경로(`garmin.tokenstore`)만 담으며, 내용은 라이브러리의 login/dump만 읽고 쓴다(2026-10-28, epic 16). 그 밖의 비밀을 이 방식으로 두지 않는다.
   - 설치 기록(`<home>/installed.json`)과 런타임 상태(`<home>/run/`)는 설정이 아니라 사실이고 코덱을 거치지 않는다(AD-19, Conventions).
   - 읽기·쓰기는 Runtime의 설정 코덱 하나만 한다(설치기 포함). 모르는 키는 경고하고, Core에는 값으로 넘긴다.
 
@@ -560,7 +560,7 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `tool_notes` | `(session_id, call_id)`가 있으면 그것, 없으면 `(session_id, harness_message_id, ordinal)` | `sessions.ingest` | 불변. `call_id`는 harness가 그 호출에 준 id(Claude Code는 `tool_use.id`, 0005)이고 버전이 올라 메모 자리가 바뀌어도 같은 호출을 알아보는 열쇠다. `call_id`가 없는 옛 행은 자리로만 알아보므로, parser는 메모마다 "이전 버전이 같은 호출을 저장했을 수 있는 자리"(`earlierPositions`)를 함께 내고 Store는 그 자리에 `call_id`가 null인 행이 있으면 넣지 않는다 — 상위 집합이어도 안전하다(그 자리에 행이 없으면 맞지 않는다). `ordinal`은 음수일 수 있고 "그 메시지 줄 앞에서 한 호출"을 뜻하며 내용의 첫 메시지에만 있다 |
 | `log_entries` | `id`(작성 프로세스가 정한 UUIDv7) | 생성: `log.append`. 문장: `log.edit`. 상태·범위: `log.set-state`, `log.set-scope`. `pending→on`: drain·`log.append` | `kind`, `session_id`, `occurred_at`, `author_model` 불변 |
 | `log_entry_edits` | `id` | `log.edit` | 불변 |
-| `chunks` | `(session_id, index_config_id, from_at, to_at)` | drain | 파생, 다시 만들 수 있음 |
+| `chunks` | `(session_id, index_config_id, from_at, to_at, part)`. `part`는 같은 `(session_id, index_config_id, from_at, to_at)` 안에서 유일한 비음수 정수다: 분할 없는 단일 조각은 0, 분할 조각은 1부터 연속 배정하고 메시지마다 초기화하지 않는다. 같은 `occurred_at` 메시지 묶음은 일반 메시지 경계 분할에서 한 단위로 취급한다. 단, 2,400자를 넘는 메시지의 내부 분할은 이 금지의 예외이고, 생긴 조각은 실제 메시지 시각을 유지하며 `part`로 구별한다. 같은 시각 입력의 정규 나열·코드 포인트 분할·번호 배정은 Core chunker 하나가 정하고 증분 생성과 redact 재생성이 공유한다(같은 시각 메시지에 대화상 선후를 부여하지 않는다). 규칙과 버전은 `index_configs.chunk_params`에 기록한다(2026-10-28, epic 17) | drain | 파생, 다시 만들 수 있음 |
 | `embeddings` | `(target_kind, target_id, index_config_id)` | drain | 파생 |
 | `index_configs` | `(kind, model, dimensions, chunk_params)` | `setup run`, `index.rebuild` | 불변 |
 | `redactions` | `id`. 대상은 `message_id`·`file_id`·`tool_note_id` 중 하나 | `messages.redact`(본문과 도구 메모 대상. `detected`면 `pattern_version` 기록), `files.redact`. 수집·추출은 쓰지 않는다(마스킹 B, AD-11) | 불변 |
