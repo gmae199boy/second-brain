@@ -10,10 +10,9 @@
  * a drain needs to work it: how long a claim lasts, how long to wait before the
  * next attempt, and how many attempts there may be at all.
  *
- * There is no kind in here. A kind is a fact about a unit of work — `ingest`,
- * `chunk`, `mirror` — and the unit that knows how to do it is the one that names
- * it: `session_ingest` is named in `capture/session-ingest-work.ts`, beside the
- * handler that does it. What is here is what every kind shares.
+ * Units name their own work kinds. The execution registry below centrally
+ * selects which kinds require a supervised child process; unknown kinds retain
+ * the core drain path.
  */
 
 /**
@@ -31,6 +30,8 @@ export interface WorkItem {
   id: string;
   /** What has to be done. A Core constant of the unit that does it. */
   kind: string;
+  executionClass: WorkExecutionClass;
+  currentAttemptToken: string | null;
   /** Together with `targetId`, what it has to be done to. */
   targetKind: string;
   targetId: string;
@@ -87,7 +88,7 @@ const RETRY_DELAY_CEILING_MS = 3_600_000;
  * `min(1000 · 2^(n−1), one hour)`, where `n` is the attempt that just failed.
  *
  * So the first failure waits a second, the second two, and the eighth is
- * already at the ceiling. An attempt number below one is treated as one: the
+ * 128 seconds. An attempt number below one is treated as one: the
  * only way to get there is a caller doing its own arithmetic on `attempts`, and
  * a negative exponent would mean the first failure waits less than the code
  * says it does.
@@ -148,3 +149,19 @@ export const DRAIN_BUDGET_MS = {
   command: 30_000,
   opportunistic: 2_000,
 } as const;
+
+export type WorkExecutionClass = 'core' | 'supervised';
+export function workExecutionClass(kind: string): WorkExecutionClass {
+  return kind === 'process_probe' ? 'supervised' : 'core';
+}
+export const SUPERVISOR_RENEW_EVERY_MS = 60_000;
+export const SUPERVISOR_POLL_MS = 5_000;
+export interface WorkAttempt {
+  token: string;
+  workItemId: string;
+  startedAt: Date;
+  lastProgressAt: Date | null;
+  renewedAt: Date | null;
+  finishedAt: Date | null;
+  outcome: 'succeeded' | 'failed' | 'stalled' | 'died' | 'cancelled' | 'unknown' | null;
+}

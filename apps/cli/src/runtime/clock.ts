@@ -9,3 +9,14 @@ import type { Clock } from 'second_brain';
 export const systemClock: Clock = {
   now: () => new Date(),
 };
+
+export const systemTimer: import('second_brain').Timer = {
+  sleep(ms, signal) {
+    if (signal.aborted) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = (): void => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); };
+      const timer = setTimeout(done, ms);
+      signal.addEventListener('abort', done, { once: true });
+    });
+  },
+};

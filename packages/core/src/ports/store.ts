@@ -504,6 +504,18 @@ export type FinishWorkResult =
   | { ok: true; outcome: WorkFinishOutcome }
   | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
+export interface ClaimSupervisedWorkInput extends ClaimWorkInput { attemptToken: string }
+export type ClaimSupervisedWorkResult =
+  | { ok: true; item: WorkItem | null; attemptToken: string | null }
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+export interface RenewSupervisedLeaseInput {
+  id: string; attemptToken: string; now: Date; progressAt: Date;
+}
+export interface FinishSupervisedWorkInput {
+  id: string; attemptToken: string; now: Date; outcome: 'succeeded' | 'failed';
+  nextAttemptAt?: Date; lastError?: string;
+}
+
 /** What the one failure-recording function writes (AD-21, Table Contract). */
 export interface RecordFailureInput {
   /** The id to give a new row. The caller mints it (AD-8). */
@@ -628,6 +640,12 @@ export type ResolveFailuresResult =
  * the item together or does neither.
  */
 export interface WorkStore {
+  /** Claim supervised work and insert its caller-supplied attempt token atomically. */
+  claimSupervisedWork(input: ClaimSupervisedWorkInput): Promise<ClaimSupervisedWorkResult>;
+  /** Token CAS: a stale attempt changes neither the item nor its attempt history. */
+  renewSupervisedLease(input: RenewSupervisedLeaseInput): Promise<FinishWorkResult>;
+  /** Finish the current attempt and clear its claim in the same transaction. */
+  finishSupervisedWork(input: FinishSupervisedWorkInput): Promise<FinishWorkResult>;
   /** Put one piece of work on the queue, once (AD-21). */
   addWork(input: AddWorkInput): Promise<AddWorkResult>;
   /** Is anything due? A read, so it never takes the write lock (AD-7). */

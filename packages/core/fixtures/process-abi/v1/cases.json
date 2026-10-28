@@ -1,0 +1,57 @@
+[
+  {
+    "name": "progress",
+    "line": "{\"abi\": 1, \"type\": \"progress\", \"message\": \"\\uc9c4\\ud589\"}",
+    "expect": "valid"
+  },
+  {
+    "name": "result",
+    "line": "{\"abi\": 1, \"type\": \"result\", \"summary\": \"\\uc644\\ub8cc\"}",
+    "expect": "valid"
+  },
+  {
+    "name": "minimal progress",
+    "line": "{\"abi\": 1, \"type\": \"progress\"}",
+    "expect": "valid"
+  },
+  {
+    "name": "minimal result",
+    "line": "{\"abi\": 1, \"type\": \"result\"}",
+    "expect": "valid"
+  },
+  {
+    "name": "version",
+    "line": "{\"abi\": 2, \"type\": \"progress\"}",
+    "expect": "invalid"
+  },
+  {
+    "name": "unknown",
+    "line": "{\"abi\": 1, \"type\": \"heartbeat\"}",
+    "expect": "invalid"
+  },
+  {
+    "name": "extra",
+    "line": "{\"abi\": 1, \"type\": \"result\", \"extra\": 1}",
+    "expect": "invalid"
+  },
+  {
+    "name": "wrong field",
+    "line": "{\"abi\": 1, \"type\": \"progress\", \"summary\": \"x\"}",
+    "expect": "invalid"
+  },
+  {
+    "name": "wrong type",
+    "line": "{\"abi\": 1, \"type\": \"progress\", \"message\": 1}",
+    "expect": "invalid"
+  },
+  {
+    "name": "null",
+    "line": "null",
+    "expect": "invalid"
+  },
+  {
+    "name": "broken JSON",
+    "line": "{",
+    "expect": "invalid"
+  }
+]

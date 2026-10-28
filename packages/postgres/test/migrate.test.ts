@@ -17,15 +17,15 @@ async function owner(names: string[]) {
 }
 it('records checksums and the injected clock and applies nothing on repeat', async () => {
   const db = await fresh(); const options = { databaseUrl: db.url, clock };
-  expect(await runMigrations(options)).toMatchObject({ ok: true, from: 0, to: 1, applied: ['0001_initial.sql'] });
-  expect(await runMigrations(options)).toMatchObject({ ok: true, from: 1, to: 1, applied: [] });
-  expect(await db.rows('select owner,version,length(checksum) as length,applied_at from brain.schema_migrations')).toEqual([{ owner: 'core', version: 1, length: 64, applied_at: clock.now() }]);
+  expect(await runMigrations(options)).toMatchObject({ ok: true, from: 0, to: 2, applied: ['0001_initial.sql', '0002_supervised_attempts.sql'] });
+  expect(await runMigrations(options)).toMatchObject({ ok: true, from: 2, to: 2, applied: [] });
+  expect(await db.rows('select owner,version,length(checksum) as length,applied_at from brain.schema_migrations order by version')).toEqual([1, 2].map(version => ({ owner: 'core', version, length: 64, applied_at: clock.now() })));
 });
 it('applies each file only once under simultaneous runners', async () => {
   const db = await fresh(); const options = { databaseUrl: db.url, clock };
   const results = await Promise.all([runMigrations(options), runMigrations(options)]);
   expect(results.every(r => r.ok)).toBe(true);
-  expect(results.flatMap(r => r.ok ? r.applied : []).length).toBe(1);
+  expect(results.flatMap(r => r.ok ? r.applied : []).length).toBe(2);
 });
 it('waits more than five seconds for another migration runner', async () => {
   const db = await fresh();
@@ -38,7 +38,7 @@ it('waits more than five seconds for another migration runner', async () => {
     pending = runMigrations({ databaseUrl: db.url, clock });
     await setTimeout(6200);
     await blocker.query('commit');
-    expect(await pending).toMatchObject({ ok: true, from: 0, to: 1, applied: ['0001_initial.sql'] });
+    expect(await pending).toMatchObject({ ok: true, from: 0, to: 2, applied: ['0001_initial.sql', '0002_supervised_attempts.sql'] });
   } finally { await blocker.end(); await pending; }
 });
 it.each([['0001_a.sql','0001_b.sql'], ['0001_a.sql','0003_c.sql'], ['0002_b.sql']])('rejects duplicate or missing sequence before applying %j', async (...names) => {

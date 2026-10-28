@@ -129,7 +129,7 @@ function environment(home: string, configDir?: string): NodeJS.ProcessEnv {
 /** Register shutdown before a caller can fail an assertion or a file read. */
 function startDaemon(options: Omit<RunDaemonOptions, 'signal'>, unblock = () => {}) {
   const controller = new AbortController();
-  const finished = runDaemon({ ...options, signal: controller.signal });
+  const finished = runDaemon({ supervisor: { disabled: true }, ...options, signal: controller.signal });
   const stop = async () => {
     controller.abort();
     unblock();
@@ -155,7 +155,7 @@ describe('runDaemon, with its timers wound down', () => {
     if (options.version !== undefined) {
       const database = new PgTestClient(storePath);
       try {
-        (await database.prepare('update brain.schema_migrations set version = $1').run(options.version));
+        (await database.prepare('update brain.schema_migrations set version = $1 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)').run(options.version));
       } finally {
         (await database.close());
       }
@@ -229,10 +229,10 @@ describe('runDaemon, with its timers wound down', () => {
       expect(logs.match(/예약 틱 실패/g)).toHaveLength(1);
       expect(logs).toContain('DB_UNAVAILABLE');
       // A skipped tick (schema mismatch) must not reset the tick failure state.
-      (await db.exec('update brain.schema_migrations set version = 8'));
+      (await db.exec('update brain.schema_migrations set version = 8 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
       const mismatched = rounds;
       await waitFor('스키마 불일치 회차', () => rounds >= mismatched + 2);
-      (await db.exec('update brain.schema_migrations set version = 1'));
+      (await db.exec('update brain.schema_migrations set version = 2 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
       const restored = rounds;
       await waitFor('스키마 복구 뒤 실패 회차', () => rounds >= restored + 2);
       expect((await readFile(daemonLogPath(home), 'utf8')).match(/예약 틱 실패/g)).toHaveLength(1);
@@ -336,7 +336,7 @@ describe('runDaemon, with its timers wound down', () => {
       brain.queue.drain = drain;
       return brain;
     });
-    const finished = runDaemon({ home, env: environment(home), clock: { now: () => new Date(at) },
+    const finished = runDaemon({ supervisor: { disabled: true }, home, env: environment(home), clock: { now: () => new Date(at) },
       idGen: uuidV7IdGen(), signal: controller.signal, heartbeatMs: 40, createStore: () => store });
     daemonCleanups.push(async () => { controller.abort(); await finished; });
 
@@ -764,7 +764,7 @@ describe('brain daemon run, as a process', () => {
       expect(JSON.stringify(report)).toContain('schema-version');
       const schema = report.data.checks.find((check: { id: string }) => check.id === 'schema-version');
       expect(schema).toMatchObject({ status: 'ok' });
-      expect(JSON.stringify(schema)).toContain('1');
+      expect(JSON.stringify(schema)).toContain(String(CORE_SCHEMA_VERSION));
     } finally { (await db.close()); daemon.child.kill('SIGTERM'); await daemon.ended; }
   });
 
@@ -902,7 +902,7 @@ describe('brain daemon run, as a process', () => {
     const { home, configDir } = await installed();
     await transcript(configDir, 'session-recovered');
     const database = new PgTestClient(join(home, 'brain.db'));
-    (await database.prepare('update brain.schema_migrations set version = 2').run());
+    (await database.prepare('update brain.schema_migrations set version = 3 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)').run());
     const daemon = shortDaemon(home, configDir);
     try {
       await waitFor('스키마 불일치', async () =>
@@ -911,7 +911,7 @@ describe('brain daemon run, as a process', () => {
       );
       await delay(100);
       expect((await sessionCount(home))).toBe(0);
-      (await database.prepare('update brain.schema_migrations set version = $1').run(CORE_SCHEMA_VERSION));
+      (await database.prepare('update brain.schema_migrations set version = $1 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)').run(CORE_SCHEMA_VERSION));
       await waitFor('복구 뒤 수집된 세션', async () => (await sessionCount(home)) === 1);
     } finally {
       (await database.close());
@@ -1313,7 +1313,7 @@ describe('PostgreSQL daemon reconnect', () => {
       brain.queue.drain = drain;
       return brain;
     });
-    const finished = runDaemon({ ...options(home), signal: controller.signal,
+    const finished = runDaemon({ supervisor: { disabled: true }, ...options(home), signal: controller.signal,
       clock: { now: () => new Date(now) }, drainPauseMs: 1,
       reconnectBackoffMs: { initial: 100, max: 1000 }, runner: async () => {
         calls.push(now);

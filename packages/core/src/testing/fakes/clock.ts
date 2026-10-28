@@ -20,3 +20,21 @@ export function steppingClock(start: Date, stepMs: number): Clock {
     },
   };
 }
+
+/** Explicit time advancement wakes all elapsed or aborted sleeps. */
+export function manualTime(start: Date): { clock: Clock; timer: import('../../ports/clock.js').Timer; advance(ms: number): void } {
+  let now = start.getTime();
+  const pending = new Set<{ at: number; done(): void }>();
+  return {
+    clock: { now: () => new Date(now) },
+    timer: { sleep(ms, signal) {
+      if (signal.aborted || ms <= 0) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        const entry = { at: now + ms, done() { pending.delete(entry); signal.removeEventListener('abort', entry.done); resolve(); } };
+        pending.add(entry);
+        signal.addEventListener('abort', entry.done, { once: true });
+      });
+    } },
+    advance(ms) { now += ms; for (const entry of [...pending]) if (entry.at <= now) entry.done(); },
+  };
+}

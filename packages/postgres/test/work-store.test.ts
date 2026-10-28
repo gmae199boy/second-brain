@@ -322,3 +322,19 @@ it('hands every item to exactly one of two draining processes', async () => {
     for (const row of rows) { expect(row.completed_at).not.toBeNull(); expect(row.claimed_by).toBeNull(); expect(row.attempts).toBe(1); }
   } finally { await Promise.all(children.map(child => child.stop())); }
 }, DRAIN_BUDGET_MS + 20_000);
+
+it('stale token renewal and finish preserve the item and every attempt row', async () => {
+  const { db, store } = await fixture();
+  const probe = { ...work(), kind: 'process_probe' };
+  await store.addWork(probe);
+  const query = { now, claimedBy: id(99), kinds: ['process_probe'] };
+  expect(await store.claimSupervisedWork({ ...query, attemptToken: id(201) })).toMatchObject({ ok: true, attemptToken: id(201) });
+  const later = new Date(now.getTime() + 600001);
+  expect(await store.claimSupervisedWork({ ...query, now: later, attemptToken: id(202) })).toMatchObject({ ok: true, attemptToken: id(202) });
+  const snapshot = async () => ({ items: await db.rows('select * from brain.work_items order by id'), attempts: await db.rows('select * from brain.work_attempts order by token') });
+  const before = await snapshot();
+  expect(await store.renewSupervisedLease({ id: probe.id, attemptToken: id(201), now: later, progressAt: later })).toEqual({ ok: true, outcome: 'lost' });
+  expect(await store.finishSupervisedWork({ id: probe.id, attemptToken: id(201), now: later, outcome: 'succeeded' })).toEqual({ ok: true, outcome: 'lost' });
+  expect(await snapshot()).toEqual(before);
+  expect(await store.finishSupervisedWork({ id: probe.id, attemptToken: id(202), now: later, outcome: 'succeeded' })).toEqual({ ok: true, outcome: 'done' });
+});

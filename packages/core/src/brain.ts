@@ -1,3 +1,4 @@
+import { workExecutionClass } from './domain/work-item.js';
 import type { SchemaVersions } from './schema.js';
 import { getSetting, setSetting, settingDefinitions } from './settings/index.js';
 import { tickSchedules, type ScheduleTickResult } from './queue/schedule-tick.js';
@@ -408,7 +409,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
           { store, spool, clock, idGen, folders: transcriptFolders, parsers, spoolHandlers },
           {
             budgetMs: input.budgetMs,
-            handlers: input.handlers === undefined ? handlers : { ...handlers, ...input.handlers },
+            handlers: Object.fromEntries(Object.entries({ ...handlers, ...input.handlers }).filter(([kind]) => workExecutionClass(kind) === 'core')),
           },
         ),
     },

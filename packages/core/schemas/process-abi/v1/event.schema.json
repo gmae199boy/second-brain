@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "입력 환경 변수: BRAIN_ABI_VERSION=1, BRAIN_DATABASE_URL, BRAIN_WORK_ID, BRAIN_ATTEMPT_TOKEN, BRAIN_WORK_KIND, BRAIN_TARGET_KIND, BRAIN_TARGET_ID. stdout JSON Lines로 진행 뒤 결과를 내고 exit 0으로 종료합니다.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "abi",
+        "type"
+      ],
+      "properties": {
+        "abi": {
+          "const": 1
+        },
+        "type": {
+          "const": "progress"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "abi",
+        "type"
+      ],
+      "properties": {
+        "abi": {
+          "const": 1
+        },
+        "type": {
+          "const": "result"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

@@ -128,3 +128,4 @@ export * from './file.js';
 export type { AttachmentLinkSpoolPayload, AttachmentLinkSpoolRecord } from './spool-record.js';
 
 export type { Schedule } from './schedule.js';
+export { workExecutionClass, SUPERVISOR_POLL_MS, SUPERVISOR_RENEW_EVERY_MS, type WorkExecutionClass, type WorkAttempt } from './work-item.js';

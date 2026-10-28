@@ -15,7 +15,7 @@ export type BrainStore = { store: Store & SchemaStore & SettingsStore; expected:
 /** Open the primary store lazily; importing the CLI never opens PostgreSQL. */
 export async function openBrainStore(options: OpenBrainStoreOptions): Promise<BrainStore> {
   const { home, env, config, path, lockTimeoutMs } = options;
-  if (!config.ok) return { expected: { core: 1 }, adapterProbeIds: [], store: failedConfigStore('설정을 읽을 수 없어서 데이터베이스 위치를 알 수 없습니다') };
+  if (!config.ok) return { expected: { core: 2 }, adapterProbeIds: [], store: failedConfigStore('설정을 읽을 수 없어서 데이터베이스 위치를 알 수 없습니다') };
   const pg = await import('second_brain/postgres');
   const url = await resolveStoreUrl(home, config.config.storeUrlEnv, env).catch(() => undefined);
   return { expected: pg.EXPECTED_SCHEMA_VERSIONS, adapterProbeIds: pg.POSTGRES_DOCTOR_PROBE_IDS,
