@@ -13,7 +13,7 @@ import { assertKoreanLines } from './language.js';
 import { tempHomes } from './temp-home.js';
 
 /**
- * `brain files redact` end to end: the built binary, a real SQLite file, and a
+ * `brain files redact` end to end: the built binary, a real PostgreSQL database, and a
  * real `@`-attached text document under a temporary home.
  *
  * What only this level can show is the whole of the story: the gate saying how

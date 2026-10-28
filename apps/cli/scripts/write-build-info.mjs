@@ -17,7 +17,7 @@ import { CORE_SCHEMA_VERSION, EXPECTED_SCHEMA_VERSIONS } from 'second_brain/post
  * It runs after `tsc`, from `apps/cli`'s own `build` script, so the file is
  * written into the `dist/` that was just produced. The schema version is
  * imported rather than read out of a migration folder: `pnpm -r build` goes in
- * topological order, so `second_brain` — and the sqlite package behind it — is
+ * topological order, so `second_brain` — and the PostgreSQL entry point behind it — is
  * already built by the time this runs.
  */
 

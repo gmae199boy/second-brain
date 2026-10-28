@@ -27,8 +27,8 @@ import type { WorkItem } from '../domain/work-item.js';
 
 /**
  * One capability an adapter checked on its own source, under a name Core never
- * interprets. A SQLite source answers for WAL, FTS5 and foreign keys; a
- * Postgres one answers for its vector extension. Core only passes the list on,
+ * interprets. PostgreSQL answers with probes such as `writable` and
+ * `pg_trgm`. Core only passes the list on,
  * which is why the probes are a list and not a field per capability: adding a
  * capability to an adapter must not change the shape every adapter implements.
  */
@@ -147,10 +147,9 @@ export interface EnsureSessionInput {
 /**
  * Find-or-create, so a second call with another proposed id changes nothing.
  *
- * `DB_LOCKED` is in here because this is a write: SQLite has one writer per
- * database, so a hook that arrives while another one is committing waits out
- * its budget and then says so (AD-7). Epic 2's spool is what turns that into a
- * retry; until then it is a failure the caller reports.
+ * `DB_LOCKED` is in here because this write can exceed its PostgreSQL lock
+ * wait budget while another transaction holds a conflicting lock (AD-7).
+ * The spool turns that failure into a retry.
  */
 export type EnsureSessionResult =
   | { ok: true; created: boolean; session: Session }

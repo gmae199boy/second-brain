@@ -173,8 +173,8 @@ export interface IngestSessionDependencies {
  *   ensure (session + optional identity work) → ingest → history
  *
  * Reading and parsing come before anything is written, because they are the
- * slow part and a write transaction that waited on a disk would hold the one
- * SQLite writer for as long as the file takes (AD-7). `findSession` comes
+ * slow part and a write transaction that waited on a disk would hold its
+ * PostgreSQL locks for as long as the file takes (AD-7). `findSession` comes
  * before the read because what it brings back is the cursor the parse needs:
  * the message the last read stopped at, so this one can start there instead of
  * at the front of a transcript that only grows (AD-4). It is a read of one row
@@ -205,8 +205,8 @@ export interface IngestSessionDependencies {
  * boundaries, so a mistaken pattern cannot permanently erase source text
  * during capture (AD-11).
  *
- * Every store step can answer "the database will not take this" — the file is
- * not there, or another process held the one SQLite writer for longer than this
+ * Every store step can answer "the database will not take this" — PostgreSQL is
+ * unavailable, or another transaction held a conflicting lock beyond this
  * path's budget — and every one of them then goes to the same place: a mark in
  * the spool and a success carrying `SPOOLED` (AD-9). The first such answer ends
  * the call, so a hook spends its three-second budget once and not four times

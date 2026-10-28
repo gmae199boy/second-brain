@@ -80,15 +80,15 @@ const OPTIONS = {
 };
 
 describe('runDoctor', () => {
-  it('reports db, vector and the schema version as ok when everything is healthy', async () => {
+  it('reports db, pg_trgm and the schema version as ok when everything is healthy', async () => {
     const report = await runDoctor(
-      fakeStore(healthy({ id: 'vector', ok: true, detail: '0.8.7' })),
+      fakeStore(healthy({ id: 'pg_trgm', ok: true, detail: 'pg_trgm' })),
       OPTIONS,
     );
 
     expect(report.checks).toEqual([
       { id: 'db', status: 'ok', detail: '18.1' },
-      { id: 'vector', status: 'ok', detail: '0.8.7' },
+      { id: 'pg_trgm', status: 'ok', detail: 'pg_trgm' },
       { id: 'schema-version', status: 'ok', detail: '`core`: 2' },
       // Nothing is failing, and there is no folder to compare against, which
       // is what a build with its capture switch off reports (Boundaries).
@@ -98,17 +98,17 @@ describe('runDoctor', () => {
     ]);
   });
 
-  it('fails the vector check and names the available version when it is not installed', async () => {
+  it('fails the pg_trgm check and explains when it is not installed', async () => {
     const report = await runDoctor(
       fakeStore(
-        healthy({ id: 'vector', ok: false, detail: 'not installed (available: 0.8.7)' }),
+        healthy({ id: 'pg_trgm', ok: false, detail: 'pg_trgm 확장이 설치되어 있지 않습니다' }),
       ),
       OPTIONS,
     );
 
     expect(report.checks[0]).toEqual({ id: 'db', status: 'ok', detail: '18.1' });
-    expect(report.checks[1]).toMatchObject({ id: 'vector', status: 'fail' });
-    expect(report.checks[1]?.detail).toContain('0.8.7');
+    expect(report.checks[1]).toMatchObject({ id: 'pg_trgm', status: 'fail' });
+    expect(report.checks[1]?.detail).toContain('pg_trgm');
     expect(report.checks[1]?.code).toBeUndefined();
   });
 
@@ -399,7 +399,7 @@ function brainStore(store: FakeStore): BrainDependencies['store'] {
 
 describe('createBrain', () => {
   it('wires doctor to the store, with the schema version and the checks', async () => {
-    const store = fakeStore(healthy({ id: 'vector', ok: true, detail: '0.8.7' }));
+    const store = fakeStore(healthy({ id: 'pg_trgm', ok: true, detail: 'pg_trgm' }));
     const brain = createBrain({
       store: brainStore(store),
       schemaVersions: { core: CURRENT },
@@ -410,7 +410,7 @@ describe('createBrain', () => {
     const report = await brain.doctor.run();
     expect(report.checks.map((check) => check.id)).toEqual([
       'db',
-      'vector',
+      'pg_trgm',
       'schema-version',
       'failures',
       'untagged',

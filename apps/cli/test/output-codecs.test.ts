@@ -28,7 +28,7 @@ import { tempHomes } from './temp-home.js';
  * honest (AD-11, 마스킹 B, change D1).
  *
  * Two halves, and both are needed. The first ingests the secrets fixture
- * through the real binary into a real SQLite file and pushes what was stored
+ * through the real binary into a real PostgreSQL database and pushes what was stored
  * through every registered codec: the database holds the secrets, no codec
  * lets one out, and ordinary code and prose survive the trip. The second walks
  * the source tree for anything that writes to stdout or stderr and refuses a

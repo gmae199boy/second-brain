@@ -28,7 +28,7 @@ import { tempHomes } from './temp-home.js';
 
 /**
  * `brain setup connect` against a fake harness, and `brain setup run` against a
- * real SQLite file through the built `brain`. The connector half runs in
+ * real PostgreSQL database through the built `brain`. The connector half runs in
  * process because the registry is what is being faked; the installer half runs
  * the built entry point, since the point of it is the artifacts on disk — the
  * configuration folder, the database, the files root and the shim — and that

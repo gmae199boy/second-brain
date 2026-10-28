@@ -26,7 +26,7 @@ import { withoutHarnessFolders } from './environment.js';
 import { tempHomes } from './temp-home.js';
 
 /**
- * The dispatcher, against a real SQLite file and a registry that exists only
+ * The dispatcher, against a real PostgreSQL database and a registry that exists only
  * here: fake `writes` and `hook` commands, so the rows of the I/O matrix are
  * checked on the rules themselves rather than on whichever command happens to
  * be implemented. The registry has to be built in the child process, which is

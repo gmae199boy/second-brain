@@ -25,8 +25,8 @@ import { assertKoreanLine, assertKoreanLines } from './language.js';
 
 /**
  * The folder scan, the token-only collection, the spool replay, the failures
- * and doctor — end to end, through the built `brain`, against a real SQLite
- * file and a real transcript folder in temporary directories.
+ * and doctor — end to end, through the built `brain`, against a real PostgreSQL
+ * database and a real transcript folder in temporary directories.
  *
  * Every test here sets `CLAUDE_CONFIG_DIR` to a folder it made itself, and the
  * capture switch only where it means to: nothing may read the machine's own
@@ -625,7 +625,7 @@ describe('a mark the hook left in the spool', () => {
     const path = await transcript(configDir, { project: '-demo-a', sessionId: 'session-aaaa' });
     const capture = environment({ home, configDir });
 
-    // A second process holding the one SQLite writer for longer than the turn
+    // A second process holding a conflicting PostgreSQL lock for longer than the turn
     // budget, so the hook spools rather than waits (AD-7, AD-9).
     const release = await holdTheLock(databaseIn(home), 20_000);
     let marks: string[];
@@ -894,11 +894,10 @@ async function spoolFiles(home: string): Promise<string[]> {
 }
 
 /**
- * A second process holding the one SQLite writer, and when to let go.
+ * A second process holding a conflicting PostgreSQL lock, and when to let go.
  *
- * It has to be another process: two connections inside one would wait on a lock
- * nothing can release, because `node:sqlite` is synchronous and the waiting
- * blocks the event loop the holder would need to let go (AD-7).
+ * A separate process holds the PostgreSQL lock so the built CLI encounters
+ * contention across process boundaries (AD-7).
  */
 async function holdTheLock(path: string, holdMs: number): Promise<() => Promise<void>> {
   const child = spawn(process.execPath, [lockHolderPath, pgDatabaseUrl(path), String(holdMs)], {

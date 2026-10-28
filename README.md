@@ -1,6 +1,6 @@
 # second-brain
 
-Mac 한 대를 위한 개인 두뇌입니다. 원본은 로컬 SQLite 파일 하나에 들어 있고,
+Mac 한 대를 위한 개인 두뇌입니다. 원본은 OrbStack Docker 컨테이너의 PostgreSQL에 들어 있고,
 `brain` CLI는 `second_brain` SDK를 얇게 감싼 껍데기입니다. 이 저장소는 npm에
 올리지 않습니다.
 
@@ -894,8 +894,7 @@ shim과 `plugin/bin/session-start.sh`가 같은 바이트를 담고, 테스트�
 
 ```text
 packages/core/          domain types, use cases, ports -- no runtime dependencies
-packages/sqlite/        the Store port on the local SQLite source -- the originals
-packages/postgres/      the Store port on Postgres + pgvector -- a replica, epic 7
+packages/postgres/      PostgreSQL의 Store port 구현 -- 주 저장소
 packages/claude-code/   Claude Code connector: the transcript parser and hook I/O
 packages/modelstudio/   embeddings and reranking (placeholder)
 packages/second_brain/  the one writing surface: re-exports only
@@ -952,9 +951,7 @@ git config core.hooksPath .githooks
 
 ## 테스트 데이터베이스
 
-`packages/postgres`는 에픽 7의 복제 대상이고, 그 테스트는 목이 아니라 실제
-데이터베이스를 씁니다. 다른 것은 필요 없습니다. CLI와 `packages/sqlite`는 임시
-폴더의 파일을 상대로 돕니다.
+CLI·bootstrap·`packages/postgres` 테스트는 실제 PostgreSQL 테스트 데이터베이스를 씁니다.
 
 Docker만 켜 두면 준비할 것은 없습니다.
 
@@ -968,7 +965,7 @@ Postgres 테스트가 돌기 직전에 `pnpm test`가 한 번 확인합니다. �
 컨테이너는 볼륨을 두지 않으므로, 멈추면 데이터는 사라집니다.
 
 이미 있는 Postgres로 돌리려면 `BRAIN_TEST_DATABASE_URL`을 그것으로 가리키세요.
-변수가 있으면 Docker는 부르지 않습니다. pgvector가 있어야 합니다.
+변수가 있으면 Docker는 부르지 않습니다. `pg_trgm` 확장을 만들 수 있는 PostgreSQL 18이면 됩니다.
 
 ```sh
 export BRAIN_TEST_DATABASE_URL=postgres://<user>:<password>@<host>:<port>/<database>
@@ -977,7 +974,7 @@ pnpm test
 
 Docker도 없고 변수도 없으면, 테스트를 하나도 돌리지 않고 이 둘 중 하나를 하라는
 안내 한 번으로 멈춥니다. Postgres 테스트를 건너뛰거나 목으로 바꾸는 길은
-없습니다. Postgres를 고르지 않은 실행(`vitest run --project sqlite` 등)은 Docker를
+없습니다. Postgres를 고르지 않은 실행(`vitest run --project core` 등)은 Docker를
 부르지 않습니다.
 
 ## 설치 상태 확인

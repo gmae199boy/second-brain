@@ -9,7 +9,7 @@
 # Nothing it touches is yours. The brain goes in a fresh temporary folder, the
 # settings file goes in there too, and `claude --settings <file>` is what makes
 # the editor read it -- your own ~/.claude/settings.json is never opened
-# (Boundaries). Remove the folder and nothing is left behind.
+# (Boundaries). Uninstall its resources before removing the folder.
 #
 # Usage:
 #   sh tooling/dev/tracer-session.sh            # a fresh temporary home
@@ -76,13 +76,20 @@ echo
 echo "그다음 들어간 내용을 보고, 같은 턴을 다시 수집해도 아무것도 바뀌지"
 echo "않는지 확인하세요:"
 echo
-echo "  sqlite3 $home/brain.db \\"
-echo "    'select occurred_at, role, substr(body, 1, 40) from messages order by occurred_at'"
-echo "  sqlite3 $home/brain.db 'select id, name, is_self from users'"
+echo "  database_url=\$(node --input-type=module - '$home' '$repo_root' <<'JS'"
+echo "import { pathToFileURL } from 'node:url';"
+echo "const [home, repo] = process.argv.slice(2);"
+echo "const { resolveStoreUrl } = await import(pathToFileURL(repo + '/apps/cli/dist/config/codec.js'));"
+echo "process.stdout.write(await resolveStoreUrl(home, 'BRAIN_DATABASE_URL', {}));"
+echo "JS"
+echo "  )"
+echo "  psql \"\$database_url\" -c 'select occurred_at, role, substr(body, 1, 40) from brain.messages order by occurred_at'"
+echo "  psql \"\$database_url\" -c 'select id, name, is_self from brain.users'"
 echo
 echo "기대 결과: 대화가 일어난 시각 순서로 있고, users에는 한 행이 있으며,"
 echo "같은 payload를 다시 수집해도 건수가 바뀌지 않습니다."
 echo
-echo "$home 밖은 아무것도 건드리지 않았습니다. 다 쓰면 지우세요:"
+echo "다 쓰면 이 홈의 컨테이너·볼륨을 제거하고 폴더를 지우세요:"
 echo
-echo "  rm -rf $home"
+echo "  SECOND_BRAIN_HOME=\"$home\" node \"$bin\" setup uninstall --delete-volume --yes"
+echo "  rm -rf \"$home\""

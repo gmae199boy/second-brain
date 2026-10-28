@@ -3,7 +3,7 @@
 
 ## brain
 
-Personal Brain (`second-brain`): a local-first memory of agent sessions whose source of truth is a local SQLite file. TypeScript on Node, pnpm workspace. Planning lives in `_bmad-output/personal-brain/`, tickets in its `tickets.toml`.
+Personal Brain (`second-brain`): a local-first memory of agent sessions whose source of truth is PostgreSQL in an OrbStack Docker container. TypeScript on Node, pnpm workspace. Planning lives in `_bmad-output/personal-brain/`, tickets in its `tickets.toml`.
 
 ## Policy
 

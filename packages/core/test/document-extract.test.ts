@@ -48,7 +48,7 @@ import {
  *
  * Two rows of the matrix are deliberately elsewhere: a redacted file, because
  * only an adapter with the column can be held to it
- * (`packages/sqlite/test/document-extract.test.ts`), and the command end to end
+ * (`packages/postgres/test/attachment-extraction.test.ts`), and the command end to end
  * (`apps/cli/test/sessions-ingest.test.ts`).
  */
 

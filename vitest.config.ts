@@ -11,7 +11,7 @@ const roots = ['packages', 'apps', 'tooling'].map((root) => join(import.meta.dir
 
 // A package whose tests need something started first puts it in
 // `test/global-setup.ts`: that file runs once before the project's tests and
-// not at all when the project is not selected, so `--project sqlite` never
+// not at all when the project is not selected, so `--project core` never
 // reaches for Docker. The name is looked for rather than listed here, so a
 // second such package needs no change to this file.
 const projects = roots.flatMap((root) =>

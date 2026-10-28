@@ -13,15 +13,15 @@ import { withoutHarnessFolders } from './environment.js';
 import { tempHomes } from './temp-home.js';
 
 /**
- * `brain queue drain` end to end: the built `brain`, against a real SQLite file
- * in a temporary configuration folder.
+ * `brain queue drain` end to end: the built `brain`, against a real PostgreSQL database
+ * with a temporary configuration folder.
  *
  * It runs the binary rather than the dispatcher in process because what is
  * being checked is the command whole — the flag, the envelope, the exit code,
  * and the write guard in front of it. This build has no kinds of work (AD-21),
  * so a successful run is an empty one; that the loop does something when there
  * is something to do is `packages/core/test/queue-drain.test.ts`'s question and
- * `packages/sqlite/test/work-store.test.ts`'s.
+ * `packages/postgres/test/work-store.test.ts`'s.
  */
 
 const binPath = fileURLToPath(new URL('../dist/bin.js', import.meta.url));

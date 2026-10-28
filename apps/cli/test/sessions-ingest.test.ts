@@ -39,12 +39,12 @@ import { tempHomes } from './temp-home.js';
 
 /**
  * `brain sessions ingest claude-code` end to end: the built `brain`, started
- * with a hook payload on stdin, against a real SQLite file in a temporary
+ * with a hook payload on stdin, against a real PostgreSQL database with a temporary
  * configuration folder.
  *
  * It runs the binary rather than the dispatcher in process because what is
  * being checked is the hook path whole — stdin, the exit code, the empty
- * stdout, and two copies of the process racing for the one SQLite writer. None
+ * stdout, and two copies of the process racing for a conflicting PostgreSQL lock. None
  * of that exists in process.
  */
 
@@ -369,9 +369,8 @@ async function chunkMatches(path: string, needle: string): Promise<number> {
 async function stampExtractorVersion(path: string, version: string): Promise<void> {
   const database = new PgTestClient(path);
   try {
-    // The immutability rule of `files` consults the redaction marker, so the
-    // connection has to answer for it — `0`, because nothing here is a
-    // redaction (`sqlite/src/connect.ts`).
+    // This ordinary extraction update does not enable the transaction-local
+    // PostgreSQL redaction marker (`brain.redacting`).
     const current = (await database
       .prepare(
         `select e.id, e.file_id, e.attempt, e.media_type, e.started_at, e.finished_at,
@@ -954,9 +953,9 @@ describe('brain sessions ingest claude-code', () => {
     const transcript = await transcriptIn(home);
     const payload = stopPayload(transcript);
 
-    // Two copies of the real binary at once. SQLite has one writer per
-    // database, so the later one waits out the turn budget and then commits
-    // nothing new (AD-7).
+    // Two copies of the real binary at once. PostgreSQL serializes ingestion
+    // for this session with its advisory lock, so the later transaction
+    // commits nothing new (AD-7).
     const [first, second] = await Promise.all([
       runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, payload),
       runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, payload),
@@ -1418,7 +1417,7 @@ describe('brain sessions ingest claude-code on a whole session', () => {
 
 /**
  * The report a run hands back with `SubagentHandback`, through the real binary
- * and a real SQLite file (story 19), read for the one thing it now has to
+ * and a real PostgreSQL database (story 19), read for the one thing it now has to
  * prove: that none of it reaches a row.
  *
  * It arrives on a peer line the editor marked `isMeta` and wrapped in framing
@@ -1567,7 +1566,7 @@ describe('brain sessions ingest claude-code and a report handed back', () => {
 
 /**
  * The fixture story 22 built to pin down *which* report was this session's,
- * through the real binary and a real SQLite file — read now for the opposite
+ * through the real binary and a real PostgreSQL database — read now for the opposite
  * rule: none of them is.
  *
  * It is one line per row of that story's matrix, so between its reports, its
@@ -1693,7 +1692,7 @@ describe('brain sessions ingest claude-code on the lines it did not keep', () =>
 
 /**
  * The storage half of the story's matrix, through the real binary and a real
- * SQLite file: everything the fixture's conversation pasted is in the database
+ * PostgreSQL database: everything the fixture's conversation pasted is in the database
  * character for character, and no `redactions` row was written at all.
  *
  * This is 마스킹 B. Capture does not mask, because a stored message is never
@@ -2164,8 +2163,8 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
     const transcript = await transcriptForFolder(home, main, 't0');
     const payload = stopPayload(transcript, sessionIdFor(1));
 
-    // Both processes find no session and inspect the folder; the one SQLite
-    // writer lines them up, and the second finds the row the first made.
+    // Both processes find no session and inspect the folder; the PostgreSQL
+    // session advisory lock serializes them, and the second finds the row.
     const runs = await Promise.all([
       runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, payload),
       runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, payload),
@@ -2408,7 +2407,7 @@ describe('brain sessions ingest on the hook path', () => {
 
 /**
  * The spool rows of the story's matrix, through the real binary and a real
- * SQLite file: a turn whose write the database would not take ends as a
+ * PostgreSQL database: a turn whose write the database would not take ends as a
  * success with a mark in `<home>/spool/`, and nothing reaches the database
  * (AD-9).
  *
@@ -2475,7 +2474,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
     return envelope;
   }
 
-  /** A second process holding the one SQLite writer, and when to let go. */
+  /** A second process holding a conflicting PostgreSQL lock, and when to let go. */
   async function holdTheLock(home: string, holdMs: number): Promise<() => Promise<void>> {
     const child = spawn(process.execPath, [lockHolderPath, pgDatabaseUrl(home), String(holdMs)], {
       stdio: ['ignore', 'pipe', 'pipe'],
