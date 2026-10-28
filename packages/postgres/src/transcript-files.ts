@@ -9,6 +9,7 @@ import {
 import { sql, type Kysely } from 'kysely';
 import { databaseFailure, describe, type PgConnect } from './connect.js';
 import type { PgSchema } from './connect.js';
+import { pgText, originalText } from './text.js';
 import { withWrite } from './write.js';
 
 /** A `transcript_files` row as PostgreSQL hands it back: text instants (0001). */
@@ -60,10 +61,10 @@ export function postgresTranscriptFileStore(connect: PgConnect): Pick<Transcript
           if (existing === null) {
             await sql`
               insert into brain.transcript_files (id, harness, path, size_bytes, fingerprint,
-                                            last_harness_message_id, cursor_fingerprint,
+                                            last_harness_message_id, last_harness_message_id_raw, cursor_fingerprint,
                                             scanned_at)
                    values (${input.id}, ${input.harness}, ${input.path}, ${input.sizeBytes},
-                           ${input.fingerprint}, ${cursorId}, ${cursorFingerprint},
+                           ${input.fingerprint}, ${pgText(cursorId).text}, ${pgText(cursorId).raw}, ${cursorFingerprint},
                            ${scannedAt})
               on conflict (harness, path) do nothing
             `.execute(held);
@@ -83,7 +84,8 @@ export function postgresTranscriptFileStore(connect: PgConnect): Pick<Transcript
             update brain.transcript_files
                set size_bytes = ${input.sizeBytes},
                    fingerprint = ${input.fingerprint},
-                   last_harness_message_id = ${cursorId},
+                   last_harness_message_id = ${pgText(cursorId).text},
+                   last_harness_message_id_raw = ${pgText(cursorId).raw},
                    cursor_fingerprint = ${cursorFingerprint},
                    scanned_at = ${scannedAt}
              where harness = ${input.harness} and path = ${input.path}
@@ -122,12 +124,12 @@ async function readOne(
   path: string,
 ): Promise<TranscriptFileRow | null> {
   const found = await sql<TranscriptFileRow>`
-    select id, harness, path, size_bytes, fingerprint, last_harness_message_id,
+    select id, harness, path, size_bytes, fingerprint, last_harness_message_id, last_harness_message_id_raw,
            cursor_fingerprint, scanned_at
       from brain.transcript_files
      where harness = ${harness} and path = ${path}
   `.execute(held);
-  return found.rows[0] ?? null;
+  return found.rows[0] === undefined ? null : originalText(found.rows[0]);
 }
 
 function toTranscriptFile(row: TranscriptFileRow): TranscriptFile {

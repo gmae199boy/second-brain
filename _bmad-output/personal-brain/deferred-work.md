@@ -218,3 +218,11 @@ source_spec: `tickets/epic-daemon/tickets/story-daemon-stopstart-plan.md`
 severity: medium
 reason: registerDaemon은 실행 중 Label을 확인하기 전에 새 plist를 저장하고, 다음 호출은 같은 파일이면 plist_changed를 false로 돌려준다. 첫 bootout이 실패하면 다음 설치의 restartDaemon은 SIGTERM 경로를 택해 launchd에 남은 옛 인자를 유지한다. 검토 기준 revision의 registerDaemon과 restartDaemon에도 같은 쓰기·분기 순서가 있어 이번 변경 전부터 있던 문제다. 로드된 plist와 디스크의 차이를 보존하는 후속 설계가 필요하며, 기존 deferred-work 항목은 변경하지 않았다.
 status: open
+
+### DW-6: `.env` 쓰기가 원자적이지 않아 쓰는 도중 끊기면 PostgreSQL 볼륨 비밀번호를 잃을 수 있다.
+origin: spec-deferred da8559a6fd7c
+location: apps/cli/src/config/codec.ts
+source_spec: `tickets/epic-postgres-primary/tickets/story-tracer-pg-hook-plan.md`
+severity: medium
+reason: `postgresSecrets`(apps/cli/src/config/codec.ts)와 기존 `writeConfig`의 `.env` 쓰기가 모두 `writeFile`로 제자리 truncate 후 쓴다. setup은 매번 두 곳에서 `.env`를 다시 쓰므로 한쪽만 임시 파일+rename으로 바꿔서는 위험이 남는다. 비밀번호를 잃으면 기존 볼륨에 접속할 수 없어 `.env` 복원이나 볼륨 삭제가 필요하다.
+status: open

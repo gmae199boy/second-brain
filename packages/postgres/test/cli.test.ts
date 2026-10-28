@@ -59,3 +59,23 @@ it.each(['refused','missing-url','missing-schema','version','session-lock','sche
   if(locked){const record=JSON.parse((await readFile(join(kit.home,'spool',files[0]!),'utf8')).trim());expect(record.payload.cause).toBe('DB_LOCKED');}
   } finally {if(blocker){await blocker.query('rollback');await blocker.end();}}
 });
+
+it('collects parser-accepted NUL text through the hook and reads back the original bytes', async () => {
+  const kit = await world();
+  const transcript = join(kit.home, 'nul.jsonl');
+  const body = 'before\u0000after';
+  await writeFile(transcript, JSON.stringify({ type: 'user', uuid: 'nul-message', timestamp: '2026-10-28T00:00:00.000Z',
+    message: { role: 'user', content: body } }) + '\n');
+  const payload = JSON.stringify({ session_id: 'pg-nul', transcript_path: transcript, hook_event_name: 'Stop' });
+  const hook = () => run(['sessions', 'ingest', 'claude-code', '--json'], kit.env, payload);
+  const first = await hook();
+  expect(first.code, first.stderr).toBe(0);
+  expect(JSON.parse(first.stdout)).toMatchObject({ ok: true, data: { spooled: false, inserted: { messages: 1 } } });
+  expect(await kit.db.rows('select body, body_raw from brain.messages'))
+    .toEqual([{ body: 'before\ufffdafter', body_raw: Buffer.from(body) }]);
+  const store = postgresStore({ databaseUrl: kit.db.appUrl });
+  try {
+    expect(await store.readSession('claude-code:pg-nul')).toMatchObject({ ok: true, messages: [{ body }] });
+  } finally { await store.close(); }
+  expect(JSON.parse((await hook()).stdout)).toMatchObject({ ok: true, data: { inserted: { messages: 0, toolNotes: 0 } } });
+});

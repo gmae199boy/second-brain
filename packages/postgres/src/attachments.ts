@@ -6,6 +6,7 @@ import {
   type MessageAttachment,
 } from '@second-brain/core';
 import { sql, type Kysely } from 'kysely';
+import { pgText, originalText } from './text.js';
 import type { PgSchema } from './connect.js';
 import { databaseFailure, describe, type PgConnect } from './connect.js';
 
@@ -31,7 +32,7 @@ export async function writeAttachments(db: Kysely<PgSchema>, attachments: readon
       }
     }
     const status = fileId === null ? 'missing_at_ingest' : 'stored';
-    const result = await sql`insert into brain.message_attachments (id, message_id, ordinal, source_kind, source_ref, display_name, file_id, status) values (${a.id}, ${messageId}, ${a.ordinal}, ${a.sourceKind}, ${a.sourceRef}, ${a.displayName}, ${fileId}, ${status}) on conflict (message_id, ordinal) do nothing returning id`.execute(db);
+    const result = await sql`insert into brain.message_attachments (id, message_id, ordinal, source_kind, source_ref, source_ref_raw, display_name, display_name_raw, file_id, status) values (${a.id}, ${messageId}, ${a.ordinal}, ${a.sourceKind}, ${pgText(a.sourceRef).text}, ${pgText(a.sourceRef).raw}, ${pgText(a.displayName).text}, ${pgText(a.displayName).raw}, ${fileId}, ${status}) on conflict (message_id, ordinal) do nothing returning id`.execute(db);
     linked += result.rows.length;
   }
   return linked;
@@ -60,7 +61,7 @@ export function postgresAttachmentStore(connect: PgConnect): Pick<AttachmentStor
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
         const result = await sql<{id: string; ordinal: number; source_kind: string; source_ref: string | null; display_name: string | null; status: MessageAttachment['status']; file_id: string | null; content_hash: string; size_bytes: number; store_kind: 'local' | 'drive' | null; locator: string; ownership: 'brain' | 'external'}>`
-          select a.id, a.ordinal, a.source_kind, a.source_ref, a.display_name, a.status,
+          select a.id, a.ordinal, a.source_kind, a.source_ref, a.source_ref_raw, a.display_name, a.display_name_raw, a.status,
                  f.id as file_id, f.content_hash, f.size_bytes, l.store_kind, l.locator, l.ownership
             from brain.message_attachments a left join brain.files f on f.id = a.file_id
             left join brain.file_locations l on l.id = f.home_location_id
@@ -68,7 +69,7 @@ export function postgresAttachmentStore(connect: PgConnect): Pick<AttachmentStor
         `.execute(opened.connection.db);
         const fileIds = [...new Set(result.rows.flatMap(r => r.file_id === null ? [] : [r.file_id]))];
         const locations = fileIds.length === 0 ? [] : (await sql<{file_id: string; store_kind: 'local' | 'drive'; locator: string; ownership: 'brain' | 'external'}>`select file_id, store_kind, locator, ownership from brain.file_locations where file_id in (${sql.join(fileIds)}) order by ownership, locator`.execute(opened.connection.db)).rows;
-        return { ok: true, attachments: result.rows.map(r => ({ id: r.id, ordinal: r.ordinal, sourceKind: r.source_kind, sourceRef: r.source_ref, displayName: r.display_name, status: r.status,
+        return { ok: true, attachments: result.rows.map(originalText).map(r => ({ id: r.id, ordinal: r.ordinal, sourceKind: r.source_kind, sourceRef: r.source_ref, displayName: r.display_name, status: r.status,
           file: r.file_id === null ? null : { id: r.file_id, contentHash: r.content_hash, sizeBytes: r.size_bytes, locations: locations.filter(l => l.file_id === r.file_id).map(l => ({ storeKind: l.store_kind, locator: l.locator, ownership: l.ownership })), home: r.store_kind === null ? null : { storeKind: r.store_kind, locator: r.locator, ownership: r.ownership } } })) };
       } catch (error) {
         return { ...databaseFailure(error), message: `첨부를 읽을 수 없습니다: ${describe(error)}` };

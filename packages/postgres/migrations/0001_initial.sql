@@ -1,4 +1,6 @@
 -- Core collection baseline. Setup creates brain and its migration ledger.
+-- Transcript text uses U+FFFD for NUL; nullable *_raw holds the original UTF-8.
+-- Identity keys include raw bytes so U+0000 and literal U+FFFD stay distinct.
 create extension if not exists pg_trgm;
 
 create table brain.workspaces (
@@ -42,11 +44,13 @@ create table brain.sessions (
   ingest_source text not null,
   ended_at timestamptz,
   last_harness_message_id text,
+  last_harness_message_id_raw bytea,
   cursor_fingerprint text,
   parser_version text,
   ingested_at timestamptz,
   start_source text,
   continued_from_session_id uuid references brain.sessions (id), tag_source text, first_cwd text,
+  first_cwd_raw bytea,
   unique (harness, harness_session_id),
   constraint sessions_ingest_source_check
     check (ingest_source in ('live', 'import')),
@@ -61,13 +65,17 @@ create table brain.messages (
   id uuid primary key,
   session_id uuid not null references brain.sessions (id),
   harness_message_id text not null,
+  harness_message_id_raw bytea,
   role text not null,
   model text,
+  model_raw bytea,
   body text not null,
+  body_raw bytea,
   occurred_at timestamptz not null,
   git_branch text,
+  git_branch_raw bytea,
   is_subagent_report integer not null default 0,
-  unique (session_id, harness_message_id),
+  unique nulls not distinct (session_id, harness_message_id, harness_message_id_raw),
   constraint messages_role_check check (role in ('user', 'assistant')),
   constraint messages_is_subagent_report_check check (is_subagent_report in (0, 1))
 );
@@ -76,11 +84,15 @@ create table brain.tool_notes (
   id uuid primary key,
   session_id uuid not null references brain.sessions (id),
   harness_message_id text not null,
+  harness_message_id_raw bytea,
   ordinal integer not null,
   tool text not null,
+  tool_raw bytea,
   target text not null,
+  target_raw bytea,
   ok integer not null, call_id text,
-  unique (session_id, harness_message_id, ordinal),
+  call_id_raw bytea,
+  unique nulls not distinct (session_id, harness_message_id, harness_message_id_raw, ordinal),
   constraint tool_notes_ok_check check (ok in (0, 1))
 );
 
@@ -91,6 +103,7 @@ create table brain.transcript_files (
   size_bytes integer not null,
   fingerprint text not null,
   last_harness_message_id text,
+  last_harness_message_id_raw bytea,
   cursor_fingerprint text,
   scanned_at timestamptz not null,
   unique (harness, path),
@@ -168,7 +181,9 @@ create table brain.message_attachments (
   ordinal integer not null,
   source_kind text not null,
   source_ref text,
+  source_ref_raw bytea,
   display_name text,
+  display_name_raw bytea,
   file_id uuid references brain.files (id),
   status text,
   unique (message_id, ordinal),
@@ -204,7 +219,7 @@ create table brain.redactions (
 alter table brain.files add foreign key (home_location_id) references brain.file_locations(id);
 alter table brain.files add constraint files_content_hash_check check (content_hash ~ '^sha256:[0-9a-f]{64}$');
 create unique index users_self_idx on brain.users(is_self) where is_self = 1;
-create unique index tool_notes_call_id_idx on brain.tool_notes(session_id, call_id) where call_id is not null;
+create unique index tool_notes_call_id_idx on brain.tool_notes(session_id, call_id, call_id_raw) nulls not distinct where call_id is not null;
 create unique index work_items_open_key_idx on brain.work_items(kind, target_kind, target_id) where completed_at is null;
 create index work_items_due_idx on brain.work_items(attempts, id, next_attempt_at) where completed_at is null;
 create index messages_session_occurred_idx on brain.messages(session_id, occurred_at);
@@ -306,10 +321,13 @@ begin
             and new.id is not distinct from old.id
             and new.session_id is not distinct from old.session_id
             and new.harness_message_id is not distinct from old.harness_message_id
+            and new.harness_message_id_raw is not distinct from old.harness_message_id_raw
             and new.ordinal is not distinct from old.ordinal
             and new.tool is not distinct from old.tool
+            and new.tool_raw is not distinct from old.tool_raw
             and new.ok is not distinct from old.ok
-            and new.call_id is not distinct from old.call_id)), true) then raise exception 'tool_notes_immutable_update: invariant refused'; end if;
+            and new.call_id is not distinct from old.call_id
+            and new.call_id_raw is not distinct from old.call_id_raw)), true) then raise exception 'tool_notes_immutable_update: invariant refused'; end if;
   return new;
 end $$;
 create trigger tool_notes_immutable_update before update on brain.tool_notes for each row execute function brain.tool_notes_immutable_update_fn();
@@ -320,10 +338,13 @@ begin
             and new.id is not distinct from old.id
             and new.session_id is not distinct from old.session_id
             and new.harness_message_id is not distinct from old.harness_message_id
+            and new.harness_message_id_raw is not distinct from old.harness_message_id_raw
             and new.role is not distinct from old.role
             and new.model is not distinct from old.model
+            and new.model_raw is not distinct from old.model_raw
             and new.occurred_at is not distinct from old.occurred_at
             and new.git_branch is not distinct from old.git_branch
+            and new.git_branch_raw is not distinct from old.git_branch_raw
             and new.is_subagent_report is not distinct from old.is_subagent_report)), true) then raise exception 'messages_immutable_update: invariant refused'; end if;
   return new;
 end $$;
@@ -349,7 +370,7 @@ begin
   if coalesce(((new.tag_source is not null and new.tag_source not in ('cwd', 'ancestor', 'sibling'))
   or ((new.tag_source is null) != (new.project_id is null))
   or (old.tag_source is not null and new.tag_source is distinct from old.tag_source)
-  or (old.first_cwd is not null and new.first_cwd is distinct from old.first_cwd)), true) then raise exception 'sessions_tag_evidence_update: invariant refused'; end if;
+  or (old.first_cwd is not null and (new.first_cwd is distinct from old.first_cwd or new.first_cwd_raw is distinct from old.first_cwd_raw))), true) then raise exception 'sessions_tag_evidence_update: invariant refused'; end if;
   return new;
 end $$;
 create trigger sessions_tag_evidence_update before update on brain.sessions for each row execute function brain.sessions_tag_evidence_update_fn();
@@ -361,7 +382,9 @@ begin
     or new.ordinal is distinct from old.ordinal
     or new.source_kind is distinct from old.source_kind
     or new.source_ref is distinct from old.source_ref
+    or new.source_ref_raw is distinct from old.source_ref_raw
     or new.display_name is distinct from old.display_name
+    or new.display_name_raw is distinct from old.display_name_raw
     or (old.status is not null
         and (new.file_id is distinct from old.file_id or new.status is distinct from old.status))), true) then raise exception 'message_attachments_immutable_update: invariant refused'; end if;
   return new;

@@ -44,3 +44,26 @@ it.each(['roles', 'schema'] as const)('waits beyond runtime deadlines for admini
     await db.drop();
   }
 });
+
+it('creates a previously absent database owned by brain_owner and supports the app role', async () => {
+  const { randomBytes } = await import('node:crypto');
+  const { requireAdminDatabaseUrl } = await import('@second-brain/test-db');
+  const name = `brain_test_${randomBytes(6).toString('hex')}`;
+  const url = requireAdminDatabaseUrl();
+  const admin = new pg.Client({ connectionString: url }); await admin.connect();
+  try {
+    expect((await admin.query('select 1 from pg_database where datname=$1', [name])).rows).toEqual([]);
+    const prepared = await prepareDatabase({ databaseUrl: url, databaseName: name, appPassword: 'brain-test-app' });
+    expect(prepared).toMatchObject({ ok: true });
+    if (!prepared.ok) return;
+    expect((await admin.query('select datdba::regrole::text as owner from pg_database where datname=$1', [name])).rows)
+      .toEqual([{ owner: 'brain_owner' }]);
+    const appUrl = new URL(prepared.databaseUrl); appUrl.username = 'brain_app'; appUrl.password = 'brain-test-app';
+    const app = new pg.Client({ connectionString: appUrl.toString() }); await app.connect();
+    try {
+      expect((await app.query('select * from brain.schema_migrations')).rows).toEqual([]);
+      await expect(app.query('create table brain.forbidden(id int)')).rejects.toThrow('permission denied');
+    } finally { await app.end(); }
+    expect(await prepareDatabase({ databaseUrl: url, databaseName: name, appPassword: 'brain-test-app' })).toEqual(prepared);
+  } finally { await admin.query(`drop database if exists "${name}" with (force)`); await admin.end(); }
+});

@@ -24,6 +24,7 @@ import {
 import { sql, type Kysely } from 'kysely';
 import { databaseFailure, describe, type PgConnect } from './connect.js';
 import type { PgSchema } from './connect.js';
+import { pgText, originalText } from './text.js';
 import { ensureWork } from './ingest-work.js';
 import { writeAttachments } from './attachments.js';
 import { withWrite, type WriteResult } from './write.js';
@@ -162,11 +163,11 @@ export function postgresSessionStore(connect: PgConnect): Pick<SessionIngestStor
         const inserted = await sql<{ id: string }>`
           insert into brain.sessions (id, harness, harness_session_id, user_id, machine,
                                 started_at, workspace_id, project_id, worktree_id,
-                                ingest_source, start_source, first_cwd, tag_source)
+                                ingest_source, start_source, first_cwd, first_cwd_raw, tag_source)
                values (${input.id}, ${input.key.harness}, ${input.key.harnessSessionId},
                        ${input.userId}, ${input.machine}, ${startedAt},
                        ${input.workspaceId}, ${tags.projectId}, ${tags.worktreeId},
-                       ${input.ingestSource}, ${input.startSource}, ${input.firstCwd}, ${input.tagSource})
+                       ${input.ingestSource}, ${input.startSource}, ${pgText(input.firstCwd).text}, ${pgText(input.firstCwd).raw}, ${input.tagSource})
           on conflict do nothing
             returning id
         `.execute(held);
@@ -181,11 +182,8 @@ export function postgresSessionStore(connect: PgConnect): Pick<SessionIngestStor
           );
         }
         if (inserted.rows.length > 0 && input.identityWork !== null) {
-          try {
-            await ensureWork(held, input.identityWork);
-          } catch (error) {
-            throw new UnsettledEnsure(`정체성 일감을 만들 수 없습니다: ${describe(error)}`);
-          }
+          // Preserve the SQLSTATE for withWrite's DB_LOCKED classification.
+          await ensureWork(held, input.identityWork);
         }
         return { created: inserted.rows.length > 0, row };
       };
@@ -266,9 +264,9 @@ export function postgresSessionStore(connect: PgConnect): Pick<SessionIngestStor
         // of what ingest has to know about the stored conversation — there is
         // no counter to continue from (migration 0006).
         const stored = await sql<{ id: string; harness_message_id: string }>`
-          select id, harness_message_id from brain.messages where session_id = ${session.id}
+          select id, harness_message_id, harness_message_id_raw from brain.messages where session_id = ${session.id}
         `.execute(held);
-        const seen = new Map(stored.rows.map((row) => [row.harness_message_id, row.id]));
+        const seen = new Map(stored.rows.map(originalText).map((row) => [row.harness_message_id, row.id]));
 
         let insertedMessages = 0;
         for (const { message, occurredAt } of pending) {
@@ -278,13 +276,13 @@ export function postgresSessionStore(connect: PgConnect): Pick<SessionIngestStor
           // story 2.8 can tag the session with the first message's one, and no
           // message row keeps it (migration 0004).
           const inserted = await sql<{ id: string }>`
-            insert into brain.messages (id, session_id, harness_message_id, role, model,
-                                  body, occurred_at, git_branch, is_subagent_report)
-                 values (${message.id}, ${session.id}, ${message.harnessMessageId},
-                         ${message.role}, ${message.model}, ${message.body},
-                         ${occurredAt}, ${message.gitBranch},
+            insert into brain.messages (id, session_id, harness_message_id, harness_message_id_raw, role, model, model_raw,
+                                  body, body_raw, occurred_at, git_branch, git_branch_raw, is_subagent_report)
+                 values (${message.id}, ${session.id}, ${pgText(message.harnessMessageId).text}, ${pgText(message.harnessMessageId).raw},
+                         ${message.role}, ${pgText(message.model).text}, ${pgText(message.model).raw}, ${pgText(message.body).text}, ${pgText(message.body).raw},
+                         ${occurredAt}, ${pgText(message.gitBranch).text}, ${pgText(message.gitBranch).raw},
                          ${message.isSubagentReport ? 1 : 0})
-            on conflict (session_id, harness_message_id) do nothing
+            on conflict (session_id, harness_message_id, harness_message_id_raw) do nothing
               returning id
           `.execute(held);
           insertedMessages += inserted.rows.length;
@@ -304,18 +302,18 @@ export function postgresSessionStore(connect: PgConnect): Pick<SessionIngestStor
           ordinal: number;
           call_id: string | null;
         }>`
-          select harness_message_id, ordinal, call_id
+          select harness_message_id, harness_message_id_raw, ordinal, call_id, call_id_raw
             from brain.tool_notes where session_id = ${session.id}
         `.execute(held);
         /** The call ids this session already has a row for. */
         const heldCalls = new Set(
-          heldNotes.rows
+          heldNotes.rows.map(originalText)
             .map((row) => row.call_id)
             .filter((callId): callId is string => callId !== null),
         );
         /** The positions it holds a row with *no* call id at. */
         const heldPlaces = new Set(
-          heldNotes.rows
+          heldNotes.rows.map(originalText)
             .filter((row) => row.call_id === null)
             .map((row) => place(row.harness_message_id, row.ordinal)),
         );
@@ -337,11 +335,11 @@ export function postgresSessionStore(connect: PgConnect): Pick<SessionIngestStor
           // partial unique index on `(session_id, call_id)`. A dropped insert
           // is not counted, because nothing was written.
           const inserted = await sql<{ id: string }>`
-            insert into brain.tool_notes (id, session_id, harness_message_id, ordinal, tool,
-                                    target, ok, call_id)
-                 values (${note.id}, ${session.id}, ${note.harnessMessageId},
-                         ${note.ordinal}, ${note.tool}, ${note.target},
-                         ${note.ok ? 1 : 0}, ${note.callId})
+            insert into brain.tool_notes (id, session_id, harness_message_id, harness_message_id_raw, ordinal, tool, tool_raw,
+                                    target, target_raw, ok, call_id, call_id_raw)
+                 values (${note.id}, ${session.id}, ${pgText(note.harnessMessageId).text}, ${pgText(note.harnessMessageId).raw},
+                         ${note.ordinal}, ${pgText(note.tool).text}, ${pgText(note.tool).raw}, ${pgText(note.target).text}, ${pgText(note.target).raw},
+                         ${note.ok ? 1 : 0}, ${pgText(note.callId).text}, ${pgText(note.callId).raw})
             on conflict do nothing
               returning id
           `.execute(held);
@@ -383,7 +381,8 @@ export function postgresSessionStore(connect: PgConnect): Pick<SessionIngestStor
           // wants both halves or neither.
           await sql`
             update brain.sessions
-               set last_harness_message_id = ${moved.to?.lastHarnessMessageId ?? null},
+               set last_harness_message_id = ${pgText(moved.to?.lastHarnessMessageId ?? null).text},
+                   last_harness_message_id_raw = ${pgText(moved.to?.lastHarnessMessageId ?? null).raw},
                    cursor_fingerprint = ${moved.to?.fingerprint ?? null}
              where id = ${session.id}
           `.execute(held);
@@ -446,8 +445,8 @@ export function postgresSessionStore(connect: PgConnect): Pick<SessionIngestStor
         // sorted. Two messages of one instant come back in whatever order the
         // index holds them, and nothing promises which.
         const messages = await sql<MessageRow>`
-          select id, session_id, harness_message_id, role, model, body, occurred_at,
-                 git_branch, is_subagent_report
+          select id, session_id, harness_message_id, role, model, model_raw, body, body_raw, occurred_at,
+                 harness_message_id_raw, git_branch, git_branch_raw, is_subagent_report
             from brain.messages
            where session_id = ${row.id}
            order by occurred_at
@@ -461,20 +460,21 @@ export function postgresSessionStore(connect: PgConnect): Pick<SessionIngestStor
         // stays undefined (migration 0006). A note whose message is not stored
         // sorts last rather than disappearing.
         const toolNotes = await sql<ToolNoteRow>`
-          select n.id, n.session_id, n.harness_message_id, n.ordinal, n.tool, n.target, n.ok
+          select n.id, n.session_id, n.harness_message_id, n.ordinal, n.tool, n.tool_raw, n.target, n.target_raw, n.harness_message_id_raw, n.ok
             from brain.tool_notes n
             left join brain.messages m
               on m.session_id = n.session_id
              and m.harness_message_id = n.harness_message_id
+             and m.harness_message_id_raw is not distinct from n.harness_message_id_raw
            where n.session_id = ${row.id}
-           order by m.occurred_at is null, m.occurred_at, n.harness_message_id, n.ordinal
+           order by m.occurred_at is null, m.occurred_at, n.harness_message_id, n.harness_message_id_raw, n.ordinal
         `.execute(db);
 
         return {
           ok: true,
           session: toSession(row),
-          messages: messages.rows.map(toMessage),
-          toolNotes: toolNotes.rows.map(toToolNote),
+          messages: messages.rows.map(originalText).map(toMessage),
+          toolNotes: toolNotes.rows.map(originalText).map(toToolNote),
         };
       } catch (error) {
         return {
@@ -602,13 +602,13 @@ async function cursorMove(
   if (was === null) return { move: true, to: cursor };
 
   const instants = await sql<{ harness_message_id: string; occurred_at: string }>`
-    select harness_message_id, occurred_at
+    select harness_message_id, harness_message_id_raw, occurred_at
       from brain.messages
      where session_id = ${session.id}
-       and harness_message_id in (${was}, ${cursor.lastHarnessMessageId})
+       and harness_message_id in (${pgText(was).text}, ${pgText(cursor.lastHarnessMessageId).text})
   `.execute(held);
   const instantOf = (harnessMessageId: string): string | undefined =>
-    instants.rows.find((row) => row.harness_message_id === harnessMessageId)?.occurred_at;
+    instants.rows.map(originalText).find((row) => row.harness_message_id === harnessMessageId)?.occurred_at;
 
   const storedAt = instantOf(was);
   // The stored cursor names a message this session does not hold: nothing to
@@ -645,14 +645,14 @@ async function readSessionRow(
 ): Promise<SessionRow | null> {
   const found = await sql<SessionRow>`
     select id, harness, harness_session_id, user_id, machine, started_at,
-           workspace_id, project_id, worktree_id, first_cwd, tag_source, ingest_source, ended_at,
-           last_harness_message_id, cursor_fingerprint, parser_version,
+           workspace_id, project_id, worktree_id, first_cwd, first_cwd_raw, tag_source, ingest_source, ended_at,
+           last_harness_message_id, last_harness_message_id_raw, cursor_fingerprint, parser_version,
            ingested_at, start_source, continued_from_session_id
       from brain.sessions
      where harness = ${key.harness}
        and harness_session_id = ${key.harnessSessionId}
   `.execute(held);
-  return found.rows[0] ?? null;
+  return found.rows[0] === undefined ? null : originalText(found.rows[0]);
 }
 
 /**

@@ -142,7 +142,7 @@ it('keeps newer transcript history when an older smaller read finishes late', as
     }
     expect(await db.rows('select * from brain.transcript_files')).toEqual([{
       id: first.id, harness: first.harness, path: first.path, size_bytes: grown.sizeBytes,
-      fingerprint: grown.fingerprint, last_harness_message_id: grown.cursor!.lastHarnessMessageId,
+      fingerprint: grown.fingerprint, last_harness_message_id: grown.cursor!.lastHarnessMessageId, last_harness_message_id_raw: null,
       cursor_fingerprint: grown.cursor!.fingerprint, scanned_at: grown.scannedAt,
     }]);
   } finally { await store.close(); }
