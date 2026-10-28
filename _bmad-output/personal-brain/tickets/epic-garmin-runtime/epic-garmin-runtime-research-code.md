@@ -131,6 +131,8 @@ raw는 HTTP 바이트가 아니라 라이브러리가 decode한 객체를 json.d
 
 ## 7. 의존·설치와 macOS arm64
 
+정정(2026-10-28, 세트 검증 S2): 아래의 pin 3.14.8은 옛 archive의 값이다. epic 14가 채택한 새 배포 pin은 spine Stack의 3.14.10이다.
+
 epic 14가 이미 결정한 pin 3.14.8+psycopg[binary] 3(sync)를 전제로 옛 curl-cffi>=0.15, garminconnect>=0.3.17,<0.4, jsonschema>=4.26, matplotlib==3.11.2, requests==2.34.2를 더한다. 이 조사에서는 새 resolve/install을 하지 않았다. 옛 lock 전체를 덮어써 driver를 잃거나 importer가 불필요한 수집 import를 하게 하면 안 된다(`D:28`; `G/pyproject.toml:6`; `T14:8`).
 
 | 잠금의 정적 증거 | 의미·한계 |
