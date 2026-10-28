@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { parseEnv } from 'node:util';
-import { errorLine, type WarningCode } from 'second_brain';
+import { errorLine, isTimeZone, TIMEZONE_SETTING, type WarningCode } from 'second_brain';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { configFilePath, envFilePath } from './paths.js';
 
@@ -19,7 +19,7 @@ import { configFilePath, envFilePath } from './paths.js';
 export const CONFIG_SCHEMA_VERSION = 1;
 
 /** Default display time zone. Only human-readable output uses it (Conventions). */
-export const DEFAULT_TIMEZONE = 'Asia/Seoul';
+export const DEFAULT_TIMEZONE = TIMEZONE_SETTING.defaultValue;
 
 /**
  * The v1 keys, as they are spelled in the file. A story that needs another key
@@ -85,7 +85,9 @@ export interface BrainConfig {
   /** Layout version of the file it came from. Always `CONFIG_SCHEMA_VERSION`. */
   schemaVersion: number;
   /** IANA time zone for human-readable output. */
-  timezone: string;
+  timezone?: string;
+  /** Presence only: a stale PG file value must never become a runtime setting. */
+  fileHasTimezone?: boolean;
   /** Absolute path of the source database file. Opened, never created (AD-20). */
   storePath: string;
   storeUrlEnv?: string;
@@ -189,25 +191,14 @@ export async function readConfig(home: string): Promise<ReadConfigResult> {
     };
   }
 
-  const timezone = fields.get('timezone') ?? DEFAULT_TIMEZONE;
-  if (typeof timezone !== 'string' || timezone === '') {
-    return {
-      ok: false,
-      code: 'CONFIG_INVALID',
-      message: `${configPath}: timezone은 비어 있지 않은 문자열이어야 하는데 ${kindOf(timezone)}입니다`,
-    };
-  }
-  if (!isTimeZone(timezone)) {
-    return {
-      ok: false,
-      code: 'CONFIG_INVALID',
-      message: `${configPath}: timezone "${timezone}"은 이 기계가 아는 시간대가 아닙니다`,
-    };
-  }
-
   const storeUrlEnv = isTable(document.store) ? document.store.url_env : undefined;
   const selectorError = storeUrlEnvError(storeUrlEnv);
   if (selectorError !== undefined) return { ok: false, code: 'CONFIG_INVALID', message: selectorError };
+  const timezone = fields.get('timezone') ?? DEFAULT_TIMEZONE;
+  if (storeUrlEnv === undefined && (typeof timezone !== 'string' || !isTimeZone(timezone))) {
+    return { ok: false, code: 'CONFIG_INVALID', message: `${configPath}: timezone은 유효한 IANA 시간대 이름이어야 합니다` };
+  }
+
   const storePath = readPath(configPath, fields, 'store.path', defaultStorePath(home));
   if (!storePath.ok) return storePath.failure;
   const filesPath = readPath(configPath, fields, 'files.path', defaultFilesPath(home));
@@ -229,7 +220,7 @@ export async function readConfig(home: string): Promise<ReadConfigResult> {
     config: {
       schemaVersion,
       ...(storeUrlEnv === undefined ? {} : { storeUrlEnv: storeUrlEnv as string }),
-      timezone,
+      ...(storeUrlEnv === undefined ? { timezone: timezone as string } : { fileHasTimezone: Object.hasOwn(document, 'timezone') }),
       storePath: storePath.path,
       filesPath: filesPath.path,
       mirrorPath: mirrorPath.path,
@@ -539,7 +530,7 @@ export async function writeConfig(
   // wrote must be one it can read back. A value, not an exception: the
   // installer has a line to print and an exit code to answer with, and a
   // throw from here would reach the terminal as a stack (Conventions).
-  if (!isTimeZone(timezone)) {
+  if (input.storeUrlEnv === undefined && !isTimeZone(timezone)) {
     return {
       ok: false,
       code: 'CONFIG_INVALID',
@@ -573,19 +564,19 @@ export async function writeConfig(
     // Both files are rendered before either is written, so a value `.env`
     // cannot represent fails with nothing written rather than leaving half a
     // folder behind for `readConfig` to call incomplete.
-    document = stringifyToml(
-      merged(
+    const rendered = merged(
         {
           schema_version: CONFIG_SCHEMA_VERSION,
-          timezone,
+          ...(input.storeUrlEnv === undefined ? { timezone } : {}),
           store: { path: storePath, ...(input.storeUrlEnv === undefined ? {} : { url_env: input.storeUrlEnv }) },
           files: { path: filesPath },
           mirror: { path: mirrorPath },
           update: { auto: input.updateAuto ?? DEFAULT_UPDATE_AUTO },
         },
         input.extra ?? {},
-      ),
-    );
+      );
+    if (input.storeUrlEnv !== undefined) delete rendered.timezone;
+    document = stringifyToml(rendered);
     lines = [];
     for (const [name, value] of Object.entries(values)) {
       if (value === undefined) continue;
@@ -744,15 +735,6 @@ function isTable(value: unknown): value is Record<string, unknown> {
   return (
     typeof value === 'object' && value !== null && !Array.isArray(value) && !(value instanceof Date)
   );
-}
-
-function isTimeZone(value: string): boolean {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: value });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function kindOf(value: unknown): string {

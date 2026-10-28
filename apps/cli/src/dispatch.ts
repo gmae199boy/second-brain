@@ -7,6 +7,8 @@ import {
   checkSchema,
   createBrain,
   createIngestBrain,
+  createSettingsBrain,
+  type SettingsBrain,
   type IngestBrain,
   encodeHookLine,
   encodeTextLine,
@@ -275,6 +277,7 @@ export interface CommandSpecBase extends CommandMeta {
    * unset and keeps the envelope it has always had.
    */
   envelope?: false;
+  runSettings?: (context: Omit<CommandContext, 'brain'> & { brain: SettingsBrain }) => Promise<CommandOutcome<unknown>>;
 }
 
 /** A command that talks to the brain, which is nearly all of them. */
@@ -543,7 +546,7 @@ async function execute(
   // Right after the choice and before anything is read, opened or run: a
   // positional argument is an id, and an id that is empty or carries control
   // characters is a broken command line rather than a thing to look up.
-  const unusable = unusableArgument(rendering.positional, args);
+  const unusable = unusableArgument(rendering.positional, spec.runSettings === undefined ? args : args.slice(0, 1));
   if (unusable !== undefined) {
     return failed(rendering, { code: 'USAGE', message: unusable, exit: 2 }, [], []);
   }
@@ -567,6 +570,18 @@ async function execute(
   const warningLines = config.ok
     ? config.warnings.map((warning) => `경고: ${warning.message}`)
     : [];
+
+  if (spec.runSettings !== undefined && config.ok) {
+    if (config.config.storeUrlEnv === undefined) return failed(rendering, { code: 'CONFIG_INVALID', message: '사용자 설정은 PostgreSQL 저장소에 둡니다. store.url_env가 있는 홈을 사용하세요.', exit: 2 }, warningCodes, warningLines);
+    const pg = await import('second_brain/postgres');
+    const databaseUrl = await resolveStoreUrl(home, config.config.storeUrlEnv, env).catch(() => undefined);
+    const store = pg.postgresStore({ databaseUrl: databaseUrl ?? 'postgresql://invalid@127.0.0.1:1/unavailable', path: 'command' });
+    try {
+      const schema = await checkSchema(store, pg.CORE_SCHEMA_VERSION);
+      if (!schema.ok) return failed(rendering, { code: schema.code, message: schema.message }, warningCodes, warningLines);
+      return finish(rendering, await spec.runSettings({ brain: createSettingsBrain({ store, clock, schemaVersion: pg.CORE_SCHEMA_VERSION }), config: config.config, clock, options, args, stdin, recordHookArrival }), warningCodes, warningLines);
+    } finally { await store.close(); }
+  }
 
   if (spec.runIngest !== undefined && config.ok && config.config.storeUrlEnv !== undefined) {
     const pg = await import('second_brain/postgres');

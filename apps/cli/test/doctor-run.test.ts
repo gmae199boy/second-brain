@@ -57,6 +57,7 @@ const CHECKS = [
   'untagged',
   'transcripts',
   'config',
+  'config-timezone',
   'shim',
   'node-path',
   'node-version',
@@ -67,7 +68,7 @@ const CHECKS = [
 ];
 
 /** The machine checks alone: what is still reported when there is no database. */
-const MACHINE_CHECKS = ['config', 'shim', 'node-path', 'node-version', 'plugin', 'last-hook', 'spool', 'daemon'];
+const MACHINE_CHECKS = ['config', 'config-timezone', 'shim', 'node-path', 'node-version', 'plugin', 'last-hook', 'spool', 'daemon'];
 
 /**
  * What a report says about a database nobody can reach: `db` and the schema
@@ -596,7 +597,7 @@ describe('brain doctor run without a configuration it can read', () => {
     // the summary is the last line.
     expect(run.stdout).toContain('spool: ok 0건');
     expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(
-      '요약: 통과 4, 경고 1, 실패 3, 건너뜀 5',
+      '요약: 통과 5, 경고 1, 실패 3, 건너뜀 5',
     );
     // Not an error envelope, so nothing goes to stderr but the warning line.
     expect(run.stderr).not.toContain('CONFIG_MISSING');

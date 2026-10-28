@@ -851,6 +851,8 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 ## 규약과 명령 메타
 
 ```sh
+brain config get <key>               # 사용자 설정 읽기 (PostgreSQL)
+brain config set <key> <value>       # 사용자 설정 바꾸기 (예: timezone America/New_York)
 brain guide schema [<ns> [<verb>]]   # 명령마다 메타 일곱 칸과 인자·옵션
 brain guide exit-codes               # 위의 세 표
 brain guide show                     # CLI 사용 규약 절(Markdown)
@@ -1001,11 +1003,14 @@ Docker도 없고 변수도 없으면, 테스트를 하나도 돌리지 않고 �
 ## 설치 상태 확인
 
 설정은 저장소 밖, `~/.second_brain`(또는 `SECOND_BRAIN_HOME`이 가리키는 폴더)에
-있습니다. `config.toml`은 `schema_version`, 시간대, 절대 경로 셋 — 데이터베이스
+있습니다. PostgreSQL 홈의 시간대는 DB 사용자 설정에 저장하며, `brain config get timezone`과
+`brain config set timezone America/New_York`으로 읽고 바꿉니다. `setup run`은 기존
+파일의 시간대를 DB로 옮기고 파일에서는 뺍니다. 기본값은 `Asia/Seoul`입니다.
+`config.toml`은 `schema_version`, 절대 경로 셋 — 데이터베이스
 파일(`store.path`), 파일 저장소 루트(`files.path`), 미러(`mirror.path`) — 을
 담고, 플러그인이 더 새 앱을 스스로 설치해도 되는지(`update.auto`, 기본 참)를
 담고, 키 값은 담지 않습니다. 이 버전이 모르는 키가 있으면 그대로 남습니다. 키 값은 mode 0600의 `.env`에
-있겠지만 이 버전에는 키가 없습니다. 둘 다 설치기가 씁니다. 손으로 쓸 것은
+있으며 PostgreSQL 접속 비밀도 여기에 둡니다. 둘 다 설치기가 씁니다. 손으로 쓸 것은
 없습니다.
 
 같은 폴더에 설정이 아닌 파일도 셋 있습니다. 완료 기록 `installed.json`(위),

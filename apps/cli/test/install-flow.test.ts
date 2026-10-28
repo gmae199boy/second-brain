@@ -1955,6 +1955,10 @@ it('runs the configured PG stage after SQLite owner and preserves its config and
     expect(kit.store.owned).toEqual([STORE]);
     return {ok:true,report:{project:'second-brain-example',volume:'second-brain-pg-example',port:24567,schema_version:1,applied:['0001_initial.sql'],owner_created:true}};
   };
+  kit.deps.settings={
+    get:async()=>({ok:true,key:'timezone',value:'Asia/Seoul',source:'default',updatedAt:null}),
+    set:async(_home,_key,_env,value)=>({ok:true,key:'timezone',value,source:'db',updatedAt:new Date()}),
+  };
   const result=await resultOf(['--yes'],kit);expect(result.ok).toBe(true);
   if(result.ok)expect(result.report.postgres?.schema_version).toBe(1);
   expect(kit.written[0]?.storeUrlEnv).toBe('BRAIN_DATABASE_URL');expect(kit.installed.wrote).toHaveLength(1);
@@ -1964,4 +1968,63 @@ it('stops without installed.json when the configured PG stage fails',async()=>{
   kit.deps.config.read=async home=>{const result=await read(home);return result.ok?{...result,recorded:{...result.recorded,extra:result.recorded?.extra ?? {},storeUrlEnv:'BRAIN_DATABASE_URL'}}:result;};
   kit.deps.postgres=async()=>({ok:false,code:'DB_UNAVAILABLE',message:'OrbStack을 켜세요: compose failed'});
   const result=await resultOf(['--yes'],kit);expect(installExit(result)).toBe(1);expect(kit.installed.wrote).toEqual([]);expect(kit.shimmed).toEqual([]);
+});
+
+it.each(['seed', 'db', 'default'] as const)('selects the PG timezone from %s and avoids rewriting a DB value', async source => {
+  const kit = harness({ recorded: true, recordedTimezone: source === 'seed' ? 'Europe/Paris' : undefined, isTTY: false });
+  const read = kit.deps.config.read;
+  kit.deps.config.read = async home => {
+    const result = await read(home);
+    return result.ok ? { ...result, recorded: { ...result.recorded, extra: {}, timezone: source === 'seed' ? 'Europe/Paris' : undefined, storeUrlEnv: 'BRAIN_DATABASE_URL' } } : result;
+  };
+  kit.deps.postgres = async () => ({ ok: true, report: { project: 'second-brain-example', volume: 'second-brain-pg-example', port: 24567, schema_version: 1, applied: [], owner_created: false } });
+  const writes: string[] = [];
+  kit.deps.settings = {
+    get: async () => ({ ok: true, key: 'timezone', value: source === 'db' ? 'America/New_York' : 'Asia/Seoul', source: source === 'db' ? 'db' : 'default', updatedAt: null }),
+    set: async (_home, _urlEnv, _env, value) => { writes.push(value); return { ok: true, key: 'timezone', value, source: 'db', updatedAt: new Date() }; },
+  };
+  const result = await resultOf(['--yes'], kit);
+  expect(result.ok).toBe(true);
+  const expected = source === 'seed' ? 'Europe/Paris' : source === 'db' ? 'America/New_York' : 'Asia/Seoul';
+  if (result.ok) expect(result.report.timezone).toBe(expected);
+  expect(writes).toEqual(source === 'db' ? [] : [expected]);
+});
+
+it.each([false, true])('validates TTY timezone answers and stops after repeated invalid input: %s', async exhausted => {
+  const kit = harness({ recorded: true, isTTY: true,
+    answers: { text: ['', '', 'Mars/Base', '+09:00', exhausted ? 'invalid' : 'america/new_york'] } });
+  const read = kit.deps.config.read;
+  kit.deps.config.read = async home => {
+    const result = await read(home);
+    return result.ok ? { ...result, recorded: { ...result.recorded, extra: {}, timezone: 'Europe/Paris', storeUrlEnv: 'BRAIN_DATABASE_URL' } } : result;
+  };
+  kit.deps.postgres = async () => ({ ok: true, report: { project: 'second-brain-example', volume: 'second-brain-pg-example', port: 24567, schema_version: 1, applied: [], owner_created: false } });
+  const writes: string[] = [];
+  kit.deps.settings = {
+    get: async () => ({ ok: true, key: 'timezone', value: 'Asia/Seoul', source: 'default', updatedAt: null }),
+    set: async (_home, _urlEnv, _env, value) => { writes.push(value); return { ok: true, key: 'timezone', value, source: 'db', updatedAt: new Date() }; },
+  };
+  const result = await resultOf(['--yes'], kit);
+  expect(result.ok).toBe(!exhausted);
+  expect(kit.prompts.placeholders.slice(-3)).toEqual(['Europe/Paris', 'Europe/Paris', 'Europe/Paris']);
+  expect(writes).toEqual(exhausted ? [] : ['America/New_York']);
+  if (!result.ok) expect(result.failure.code).toBe('CONFIG_INVALID');
+});
+
+it.each(['get', 'set'] as const)('propagates setup settings %s failures before writing config', async operation => {
+  const kit = harness({ recorded: true, isTTY: false });
+  const read = kit.deps.config.read;
+  kit.deps.config.read = async home => {
+    const result = await read(home);
+    return result.ok ? { ...result, recorded: { ...result.recorded, extra: {}, storeUrlEnv: 'BRAIN_DATABASE_URL' } } : result;
+  };
+  kit.deps.postgres = async () => ({ ok: true, report: { project: 'second-brain-example', volume: 'second-brain-pg-example', port: 24567, schema_version: 1, applied: [], owner_created: false } });
+  kit.deps.settings = {
+    get: async () => operation === 'get' ? { ok: false, code: 'DB_LOCKED', message: '잠금 초과' } : { ok: true, key: 'timezone', value: 'Asia/Seoul', source: 'default', updatedAt: null },
+    set: async () => ({ ok: false, code: 'DB_UNAVAILABLE', message: '연결 실패' }),
+  };
+  const result = await resultOf(['--yes'], kit);
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.failure.code).toBe(operation === 'get' ? 'DB_LOCKED' : 'DB_UNAVAILABLE');
+  expect(kit.written).toEqual([]);
 });

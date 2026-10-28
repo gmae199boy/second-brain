@@ -1,3 +1,4 @@
+import { getSetting, setSetting, settingDefinitions } from './settings/index.js';
 import { tickSchedules, type ScheduleTickResult } from './queue/schedule-tick.js';
 import { SCHEDULE_PROBE_KIND, scheduleProbeHandler } from './queue/schedule-probe-work.js';
 import type { AttachmentLinkSpoolPayload } from './domain/spool-record.js';
@@ -520,4 +521,14 @@ const EMPTY_QUEUE_REPORT = {
 export type IngestBrain = { sessions: BrainSessions };
 export function createIngestBrain(dependencies: IngestSessionDependencies): IngestBrain {
   return { sessions: { ingest: input => ingestSession(dependencies, input) } };
+}
+
+export type SettingsBrain = { config: {
+  get(input: { key: string }): Promise<import('./settings/index.js').SettingResult>;
+  set(input: { key: string; value: string }): Promise<import('./settings/index.js').SettingResult>;
+} };
+export function createSettingsBrain(dependencies: import('./settings/index.js').SettingsDependencies): SettingsBrain {
+  // Validate registrations at assembly time, before any I/O.
+  settingDefinitions(dependencies.settingDefinitions);
+  return { config: { get: input => getSetting(dependencies, input), set: input => setSetting(dependencies, input) } };
 }

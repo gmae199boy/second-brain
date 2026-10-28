@@ -1,3 +1,5 @@
+import { configGetCommand } from './config-get.js';
+import { configSetCommand } from './config-set.js';
 import { filesRedactCommand } from './files-redact.js';
 import { messagesRedactCommand } from './messages-redact.js';
 import { connectors } from '../connectors/index.js';
@@ -35,6 +37,8 @@ import { setupRun } from './setup-run.js';
  */
 export const commands: readonly CommandSpec[] = [
   doctorRun,
+  configGetCommand,
+  configSetCommand,
   messagesRedactCommand,
   filesRedactCommand,
   failuresListCommand,

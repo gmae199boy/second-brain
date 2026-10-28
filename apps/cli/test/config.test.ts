@@ -700,3 +700,16 @@ it.each(['""', '"NOT-A-NAME"', '42', '[]', '{ nested = "value" }', '"BRAIN_APP_P
     expect(await readFile(envFilePath(home), 'utf8')).toBe('KEEP="original"\n');
   },
 );
+
+it('ignores stale PG timezone values at runtime, retains a valid setup seed and removes the key when writing', async () => {
+  const home = await given({ config: `${VALID_CONFIG}timezone = "Europe/Paris"\n[store]\nurl_env = "BRAIN_DATABASE_URL"\n` });
+  const read = await readConfig(home);
+  expect(read).toMatchObject({ ok: true, config: { fileHasTimezone: true, storeUrlEnv: 'BRAIN_DATABASE_URL' } });
+  if (read.ok) expect(read.config.timezone).toBeUndefined();
+  const seed = await readConfigForSetup(home);
+  expect(seed).toMatchObject({ ok: true, recorded: { timezone: 'Europe/Paris' } });
+  expect(await writeConfig(home, { timezone: 'Europe/Paris', storeUrlEnv: 'BRAIN_DATABASE_URL', extra: { timezone: 'Europe/Paris' } })).toEqual({ ok: true });
+  expect(await readFile(configFilePath(home), 'utf8')).not.toContain('timezone');
+  await writeFile(configFilePath(home), `${VALID_CONFIG}timezone = 42\n[store]\nurl_env = "BRAIN_DATABASE_URL"\n`);
+  expect(await readConfig(home)).toMatchObject({ ok: true, config: { fileHasTimezone: true } });
+});

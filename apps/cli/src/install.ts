@@ -3,7 +3,9 @@ import { installPostgres } from './install/postgres.js';
 import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { cancel, confirm, isCancel, multiselect, text, type Option } from '@clack/prompts';
-import { encodeTextLine } from 'second_brain';
+import { createSettingsBrain, encodeTextLine } from 'second_brain';
+import { CORE_SCHEMA_VERSION, postgresStore } from 'second_brain/postgres';
+import { resolveStoreUrl } from './config/codec.js';
 import { readConfigForSetup, writeConfig } from './config/codec.js';
 import { restartDaemon } from './daemon/control.js';
 import { registerDaemon, systemLaunchctl } from './daemon/launchd.js';
@@ -152,6 +154,10 @@ export class Cancelled extends Error {
 /** The real world, in one place, so the tests can replace all of it. */
 export function systemInstallDeps(): InstallDeps {
   return {
+    settings: {
+      get: (home, urlEnv, env) => withSettings(home, urlEnv, env, brain => brain.config.get({ key: 'timezone' })),
+      set: (home, urlEnv, env, value) => withSettings(home, urlEnv, env, brain => brain.config.set({ key: 'timezone', value })),
+    },
     postgres: (home, urlEnv, env) => installPostgres({ home, urlEnv, env, clock: { now: () => new Date() } }),
     prompts: clackPrompts(),
     // Both ends have to be a terminal: a question needs an answer and a place
@@ -274,4 +280,12 @@ function invokedDirectly(here: string): boolean {
 
 if (invokedDirectly(import.meta.url)) {
   process.exitCode = await runInstaller();
+}
+
+async function withSettings(home: string, urlEnv: string, env: NodeJS.ProcessEnv,
+  run: (brain: import('second_brain').SettingsBrain) => Promise<import('second_brain').SettingResult>): Promise<import('second_brain').SettingResult> {
+  const databaseUrl = await resolveStoreUrl(home, urlEnv, env).catch(() => undefined);
+  const store = postgresStore({ databaseUrl: databaseUrl ?? 'postgresql://invalid@127.0.0.1:1/unavailable', path: 'command' });
+  try { return await run(createSettingsBrain({ store, clock: { now: () => new Date() }, schemaVersion: CORE_SCHEMA_VERSION })); }
+  finally { await store.close(); }
 }

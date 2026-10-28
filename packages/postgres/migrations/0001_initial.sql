@@ -832,3 +832,15 @@ grant execute on function brain.redact_file(uuid,jsonb) to brain_app;
 
 grant maintain on brain.messages, brain.tool_notes, brain.chunks, brain.document_chunks,
   brain.document_extractions, brain.file_names, brain.file_metadata to brain_maintenance;
+
+create function brain.settings_immutable_update_fn() returns trigger language plpgsql as $$
+begin
+  if new.key is distinct from old.key then raise exception 'settings_immutable_update: invariant refused'; end if;
+  return new;
+end $$;
+create trigger settings_immutable_update before update on brain.settings for each row execute function brain.settings_immutable_update_fn();
+create function brain.settings_immutable_delete_fn() returns trigger language plpgsql as $$
+begin
+  raise exception 'settings_immutable_delete: invariant refused';
+end $$;
+create trigger settings_immutable_delete before delete on brain.settings for each row execute function brain.settings_immutable_delete_fn();

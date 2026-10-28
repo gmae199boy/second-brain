@@ -33,6 +33,7 @@ const ALL_CHECKS = [
   'untagged',
   'transcripts',
   'config',
+  'config-timezone',
   'shim',
   'node-path',
   'node-version',
@@ -370,6 +371,7 @@ describe('doctorAt', () => {
       'untagged',
       'transcripts',
       'config',
+      'config-timezone',
       'shim',
       'node-path',
       'node-version',
@@ -399,6 +401,7 @@ describe('doctorAt', () => {
     const registered = runtimeChecks({ home: '/nowhere' }).map((source) => source.id);
     expect(registered).toEqual([
       'config',
+      'config-timezone',
       'shim',
       'node-path',
       'node-version',

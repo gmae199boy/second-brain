@@ -3,6 +3,8 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import {
   errorCodeSpec,
+  TIMEZONE_SETTING,
+  type SettingResult,
   requireConfirmation,
   type Connector,
   type DoctorCheck,
@@ -64,6 +66,7 @@ export type InstallExitCode = 0 | 1 | 2 | 3;
  */
 export interface InstallReport {
   postgres?: PostgresInstallReport;
+  timezone: string;
   /** The configuration folder this install belongs to. */
   home: string;
   config_path: string;
@@ -275,6 +278,10 @@ export interface InstallDeps {
   config: InstallConfigIo;
   store: InstallStore;
   postgres?: (home: string, urlEnv: string, env: NodeJS.ProcessEnv) => Promise<PostgresInstallResult>;
+  settings?: {
+    get(home: string, urlEnv: string, env: NodeJS.ProcessEnv): Promise<SettingResult>;
+    set(home: string, urlEnv: string, env: NodeJS.ProcessEnv, value: string): Promise<SettingResult>;
+  };
   files: InstallFiles;
   shim: InstallShim;
   installed: InstallInstalled;
@@ -534,6 +541,28 @@ export async function runInstall(
     postgres = pg.report;
     deps.log(`PostgreSQL ${postgres.project}: 스키마 ${postgres.schema_version}, 적용 ${postgres.applied.length}건`);
   }
+  let timezone = recorded?.timezone ?? TIMEZONE_SETTING.defaultValue;
+  if (recorded?.storeUrlEnv !== undefined) {
+    if (deps.settings === undefined) return fail({ code: 'DB_UNAVAILABLE', message: 'PostgreSQL 설정 단계가 없습니다', exit: 1 });
+    const current = await deps.settings.get(home, recorded.storeUrlEnv, env);
+    if (!current.ok) return fail({ code: current.code, message: current.message });
+    const fallback = current.source === 'db' ? current.value : timezone;
+    let selected: string | undefined;
+    for (let attempt = 1; attempt <= PATH_ATTEMPTS; attempt += 1) {
+      const typed = deps.isTTY ? (await deps.prompts.text('시간대를 무엇으로 할까요?', fallback)).trim() : '';
+      const checked = TIMEZONE_SETTING.normalize(typed === '' ? fallback : typed);
+      if (checked.ok) { selected = checked.value; break; }
+      deps.log(checked.message);
+      if (!deps.isTTY) break;
+    }
+    if (selected === undefined) return fail({ code: 'CONFIG_INVALID', message: '유효한 IANA 시간대를 선택하지 못했습니다', exit: 2 });
+    timezone = selected;
+    if (current.source !== 'db' || current.value !== timezone) {
+      const written = await deps.settings.set(home, recorded.storeUrlEnv, env, timezone);
+      if (!written.ok) return fail({ code: written.code, message: written.message });
+    }
+    deps.log(`시간대: ${timezone} (DB)`);
+  }
   const filesRoot = await deps.files.prepare(filesPath);
   if (!filesRoot.ok) {
     return fail({ code: filesRoot.code, message: filesRoot.message, exit: 1 });
@@ -659,6 +688,7 @@ export async function runInstall(
     report: {
       home,
       config_path: configFilePath(home),
+      timezone,
       ...(postgres === undefined ? {} : { postgres }),
       store: { path: store.path, schema_version: migrated.to, applied: migrated.applied },
       owner: { name: owner.name, created: owner.created },

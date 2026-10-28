@@ -1369,3 +1369,11 @@ export type SessionIngestStore = Pick<SessionStore, 'findSession' | 'ensureSessi
   & Pick<UserStore, 'readSelfUser'>
   & Pick<TranscriptFileStore, 'recordTranscriptFile'>
   & Pick<AttachmentStore, 'listMessageAttachments' | 'listRedactedContentHashes'>;
+
+/** User settings are a separate capability until the PostgreSQL runtime switch. */
+export interface SettingRecord { key: string; value: string; updatedAt: Date }
+export type SettingsStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+export interface SettingsStore {
+  getSetting(input: { key: string }): Promise<{ ok: true; setting: SettingRecord | null } | SettingsStoreFailure>;
+  setSetting(input: SettingRecord): Promise<{ ok: true } | SettingsStoreFailure>;
+}

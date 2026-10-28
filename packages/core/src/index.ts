@@ -241,3 +241,8 @@ export type { SessionIngestStore } from './ports/store.js';
 
 export * from './maintenance/table-cleanup-work.js';
 export type { TableMaintenance } from './ports/table-maintenance.js';
+
+export type { SettingsStore, SettingRecord, SettingsStoreFailure } from './ports/store.js';
+
+export * from './settings/index.js';
+export { createSettingsBrain, type SettingsBrain } from './brain.js';

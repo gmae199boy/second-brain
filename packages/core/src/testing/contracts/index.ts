@@ -16,3 +16,5 @@ export { attachmentStoreContract, type AttachmentStoreSubject } from './attachme
 export { extractionStoreContract, type ExtractionStoreSubject } from './extraction-store.js';
 export { fileRedactionContract, type FileRedactionSubject } from './file-redaction.js';
 export { scheduleStoreContract } from './schedule-store.js';
+
+export { settingsStoreContract } from './settings-store.js';

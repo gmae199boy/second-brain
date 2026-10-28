@@ -79,3 +79,38 @@ it('collects parser-accepted NUL text through the hook and reads back the origin
   } finally { await store.close(); }
   expect(JSON.parse((await hook()).stdout)).toMatchObject({ ok: true, data: { inserted: { messages: 0, toolNotes: 0 } } });
 });
+
+it('reads defaults, persists normalized config across processes and rejects invalid changes without spool', async () => {
+  const kit = await world();
+  const config = (args: string[], env = kit.env) => run(['config', ...args, '--json'], env);
+  const first = await config(['get', 'timezone']);
+  expect(first.code, first.stderr).toBe(0);
+  expect(JSON.parse(first.stdout)).toMatchObject({ ok: true, data: { key: 'timezone', value: 'Asia/Seoul', source: 'default', updated_at: null } });
+  const written = await config(['set', 'timezone', 'america/new_york']);
+  expect(written.code, written.stderr).toBe(0);
+  const value = JSON.parse(written.stdout).data;
+  expect(value).toMatchObject({ key: 'timezone', value: 'America/New_York', source: 'db', updated_at: expect.any(String) });
+  expect(JSON.parse((await config(['get', 'timezone'])).stdout).data).toEqual(value);
+  const before = await kit.db.rows('select * from brain.settings');
+  for (const args of [['set','timezone','Mars/Base'], ['set','timezone','+09:00'], ['set','timezone',''], ['get','nope'], ['set','garmin.x','1']]) {
+    const result = await config(args);
+    expect(result.code, result.stderr).toBe(2);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, error: { code: 'CONFIG_INVALID' } });
+  }
+  expect(await kit.db.rows('select * from brain.settings')).toEqual(before);
+  for (const verb of ['get', 'set']) {
+    const result = await config([verb, 'timezone', ...(verb === 'set' ? ['Asia/Seoul'] : [])], { ...kit.env, BRAIN_DATABASE_URL: 'postgresql://unused@127.0.0.1:1/brain' });
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, error: { code: 'DB_UNAVAILABLE' } });
+  }
+  expect((await readdir(join(kit.home, 'spool')).catch(() => [])).filter(name => name.endsWith('.jsonl'))).toEqual([]);
+});
+it('refuses settings commands in a SQLite home and preserves schema mismatch errors', async () => {
+  const kit = await world();
+  await kit.db.query('update brain.schema_migrations set version=2');
+  expect(JSON.parse((await run(['config','get','timezone','--json'],kit.env)).stdout)).toMatchObject({ ok:false,error:{code:'SCHEMA_MISMATCH'} });
+  const config = await readFile(join(kit.home, 'config.toml'), 'utf8');
+  await writeFile(join(kit.home, 'config.toml'), config.replace('url_env = "BRAIN_DATABASE_URL"', ''));
+  const result = await run(['config','get','timezone','--json'],kit.env);
+  expect(result.code).toBe(2);
+  expect(JSON.parse(result.stdout)).toMatchObject({ ok:false,error:{code:'CONFIG_INVALID',message:expect.stringContaining('PostgreSQL')} });
+});

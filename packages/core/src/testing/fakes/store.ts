@@ -1436,3 +1436,12 @@ function cloneSchedule(row: import('../../domain/schedule.js').Schedule): import
   return { ...row, createdAt: new Date(row.createdAt), nextRunAt: row.nextRunAt === null ? null : new Date(row.nextRunAt),
     lastRunAt: row.lastRunAt === null ? null : new Date(row.lastRunAt) };
 }
+
+/** Independent fake: the SQLite Store contract does not acquire settings. */
+export function memorySettingsStore(): import('../../ports/store.js').SettingsStore {
+  const settings = new Map<string, import('../../ports/store.js').SettingRecord>();
+  return {
+    async getSetting({ key }) { return { ok: true, setting: settings.has(key) ? { ...settings.get(key)!, updatedAt: new Date(settings.get(key)!.updatedAt.getTime()) } : null }; },
+    async setSetting(input) { settings.set(input.key, { ...input, updatedAt: new Date(input.updatedAt.getTime()) }); return { ok: true }; },
+  };
+}

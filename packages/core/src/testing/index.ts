@@ -147,3 +147,6 @@ export { fileRedactionContract, type FileRedactionSubject } from './contracts/fi
 export { scheduleStoreContract } from './contracts/schedule-store.js';
 
 export { sessionIngestContract, sessionMetadataContract, sessionRedactionContract, type SessionIngestSubject, type SessionMetadataSubject, type SessionRedactionSubject } from './contracts/session-store.js';
+
+export { settingsStoreContract } from './contracts/settings-store.js';
+export { memorySettingsStore } from './fakes/store.js';
