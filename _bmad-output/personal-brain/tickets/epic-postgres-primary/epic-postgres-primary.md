@@ -97,3 +97,9 @@ risk: high
 - Decision(2026-10-28, 스토리 계획): `packages/postgres`의 0001·Store 조립과 CLI 조립을 여러 스토리가 함께 고치므로 1·14·2~7은 한 줄로 만든다(6이 5를, 7이 6을 기다리는 것은 공유 코드 때문이다). 7이 hook·명령·데몬이 함께 쓰는 PG 조립과 소유자별 기대 버전을 만들고(세트 검증 S2), 8(설치·doctor)과 9(데몬)는 그 위에서 나란히 갈 수 있다. 둘이 쓰는 외부 명령 runner는 1이 만든다. 10은 SQLite 선택을 없애는 마감이다. baseline 0001은 2에서 모양을 갖추고 10에서 checksum을 고정한다. 그 전에는 개발 DB를 다시 만든다.
 - Decision(2026-10-28, 스토리 계획): 스토리는 14개로 보통 범위(8~12)를 넘지만 에픽을 나누지 않는다. 런타임 전환 전까지 SQLite가 기본값이라 중간에 운영으로 내보낼 묶음이 없고, 나누면 앞 에픽이 배포 없이 끝난다. Refactor sweep(12) 뒤에 이 Mac 확인(13)을 둔다(epic-daemon 선례).
 - Decision(2026-10-28, 정제, 사용자 이의 없음): 자원 이름은 Brain 홈에서 파생하고 기본 홈이 아니면 접미사를 붙인다. role과 비밀번호는 setup이 `.env`에 쓴다. 런타임 전환과 SQLite 삭제는 별도 스토리다. 전환 뒤 Store 시험은 모두 PG에서 돌아, 2026-10-26의 "Postgres 테스트는 해당 시에만" 결정을 대체한다. hook 경로의 연결 시간 한도는 Core 상수다. 옛 `brain.db`는 지우지 않는다. 데몬 재연결은 이 에픽 범위다.
+- Decision(2026-10-28, 사용자): 11.1의 사람 단계(이 Mac의 OrbStack 확인)를 착수 전에 끝냈다. 그래서 11.1의 hitl을 풀었다. probe 결과는 다음과 같고, 8이 판별에 쓴다.
+  - `/Applications/OrbStack.app`이 있고, `orb`·`orbctl` CLI가 `/usr/local/bin`에 있다. `orb version`은 2.2.5.
+  - `docker context show`는 `orbstack`이고, 엔드포인트는 `unix://~/.orbstack/run/docker.sock`이다. `default` context는 `/var/run/docker.sock`을 가리킨다.
+  - 꺼져 있으면 `orb status`가 `Stopped`이고 소켓 파일이 없어 `docker version`이 연결 실패(no such file)로 끝난다. 켜면 `orb status`가 `Running`이고 Docker 엔진은 29.8.2 linux/arm64다.
+  - Docker Desktop과 가르는 근거: context 이름 `orbstack`과 `orb status`. `docker info` 성공만으로는 OrbStack이라고 볼 수 없다.
+- Decision(2026-10-28, 사용자): 이 에픽은 루프로 무인 실행한다. epic-daemon처럼 `plan_checkpoint`·`done_checkpoint`는 두지 않는다. 루프는 hitl인 11.13(이 Mac 확인)과 에픽 닫기에서만 멈춘다. 루프가 도는 동안 OrbStack은 켜져 있어야 한다.
