@@ -3,14 +3,14 @@ title: '프로세스 ABI v1 완성: 같은 fixture에 TS 코덱이 기대 판정
 type: 'feature'
 ticket: '4'
 created: '2026-10-29'
-status: built
+status: blocked
 baseline_revision: bb9b7f06c8dfe43bba57d8b4c073b01f5cc60495
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
-review: 'quick'
+review: 'thorough'
 review_source: 'pinned'
-lenses_ran: [quick]
+lenses_ran: [blind-hunter, edge-case-hunter, verification-gap, intent-alignment]
 review_loop_iteration: 0
 followup_review_recommended: false
 context:
@@ -18,6 +18,8 @@ context:
   - '{project-root}/_bmad-output/personal-brain/tickets/epic-jobs-and-scheduler/tickets/story-attempt-token-db-plan.md'
 warnings: [oversized]
 deferred: []
+blocked_at: "2026-10-29"
+blocked_reason: "intent gap: stderr를 먼저 16 KiB로 자른 뒤 가리라는 intent-contract의 고정 규칙이 PEM 개인 키 비노출 요구와 충돌한다. 시작 표식이 잘린 후 키 본문이 attempt.stderr에 남는 합성 재현을 확인했다. 경계 전후 비밀 블록의 가림 상태를 보존하도록 계약을 바꿀지 결정이 필요하다."
 ---
 
 <intent-contract>
@@ -38,7 +40,7 @@ deferred: []
 - 감독자가 붙이는 그 밖의 코드: 실행 명세 없음·시작 실패 `PROCESS_START_FAILED`, 출력 읽기 예외 `ABI_OUTPUT_UNREADABLE`. probe worker는 환경 변수가 틀리면 `{"abi":1,"type":"error","code":"ABI_ENV_INVALID","retryable":false}`를 내고 exit 2.
 - 새 코드 11개(`ABI_LINE_INVALID`·`ABI_VERSION_UNKNOWN`·`ABI_LINE_TOO_LONG`·`ABI_LINE_TRUNCATED`·`ABI_DUPLICATE_FINAL`·`ABI_EXIT_AFTER_RESULT`·`ABI_NO_RESULT`·`ABI_EXIT_FAILED`·`ABI_OUTPUT_UNREADABLE`·`PROCESS_START_FAILED`·`ABI_ENV_INVALID`)는 `codes.ts` `CODES`에 exit 1, 한국어 meaning·hint와 함께 넣는다. `retryable`: `ABI_LINE_TRUNCATED`·`ABI_EXIT_FAILED`·`ABI_OUTPUT_UNREADABLE`·`PROCESS_START_FAILED`는 true, 나머지 false. README 오류 코드 표도 맞춘다(교차 시험이 있다). worker 자신의 `error.code`는 표에 없어도 그대로 남긴다.
 - 환경 변수(schema `env.schema.json`, 나머지 변수는 허용): 필수 `BRAIN_ABI_VERSION`(`"1"`), `BRAIN_DATABASE_URL`(`postgres://`·`postgresql://`로 시작), `BRAIN_WORK_ID`·`BRAIN_ATTEMPT_TOKEN`(소문자 UUID), `BRAIN_WORK_KIND`·`BRAIN_TARGET_KIND`·`BRAIN_TARGET_ID`(빈 문자열 아님), `BRAIN_RUN_GENERATION`(실행 세대 = 청구 뒤 `attempts`, `^[1-9][0-9]{0,8}$`). 선택 `BRAIN_ACCOUNT`(빈 문자열 아님), `BRAIN_RANGE_FROM`·`BRAIN_RANGE_TO`(현지 날짜 `YYYY-MM-DD`, 포함 범위, 둘 다 있거나 둘 다 없음 — `dependentRequired`). schema로 나타낼 수 있는 규칙만 둔다(순서 비교 없음). 감독자는 `BRAIN_RUN_GENERATION`을 더해 넘기고, 계정·범위는 값을 가진 일감이 생길 때 채운다.
-- stderr: 감독자가 읽어 끝 16 KiB만 들고 있다가(잘린 첫 줄은 버림) `maskSecrets(…, 'body')`로 가린 뒤 끝 4096 UTF-8 바이트(코드 포인트 경계)만 attempt `stderr`에 남긴다. 비었으면 null. 모든 결과의 attempt에 남긴다.
+- stderr(2026-10-29 escalation 해소로 고침, 가린 다음 자른다): 감독자는 stderr를 줄 단위로 읽으면서 들어오는 대로 가린다. ① PEM 개인 키 블록 상태를 줄 사이에 이어 간다: `-----BEGIN … PRIVATE KEY…-----` 표식이 있는 줄부터 `-----END …-----` 표식이 있는 줄까지(END가 없으면 EOF까지)를 `maskSecrets`가 PEM에 쓰는 것과 같은 가림 표식 한 줄로 바꾸고, 블록 안의 줄은 내보내지 않는다. ② 그 밖의 줄은 한 줄씩 `maskSecrets(line, 'body')`로 가린다. ③ 한 줄 상한은 65536 UTF-8 바이트(stdout과 같음)다. 넘는 줄은 그 즉시 내용을 버리고(메모리에 쌓지 않음) `[stderr 줄 생략: 상한 초과]` 한 줄로 바꾼다. EOF에 `\n` 없이 남은 조각도 한 줄로 가린다. ④ 가린 줄들의 끝 16 KiB만 들고 있다가(잘린 첫 줄은 버림) 끝 4096 UTF-8 바이트(코드 포인트 경계)만 attempt `stderr`에 남긴다. 그래서 16 KiB·4096바이트 경계가 비밀 블록 중간을 지나도 가림 표식 앞뒤에 비밀 본문이 남지 않는다. 비었으면 null. 모든 결과의 attempt에 남긴다.
 - 걸린 시간 `elapsed_ms` = 감독자 clock으로 자식 시작~exit(또는 정산 시점). 확정·취소 정산 모두 남기고, 이전 incarnation 회수 정산은 null.
 - `0005_attempt_outcome_detail.sql`: `work_attempts`에 `error_code text`, `error_retryable boolean`, `input_tokens`·`cached_input_tokens`·`output_tokens bigint`, `elapsed_ms bigint`, `stderr text`. check: 토큰 셋은 모두 null이거나 모두 0 이상, `elapsed_ms >= 0`, `error_code`는 `outcome = 'failed'`일 때만, `error_retryable`은 `error_code`가 있을 때만. `CORE_SCHEMA_VERSION = 5`. 0001~0004는 고치지 않는다. AD-22(기본값·`now()` 없음).
 - schema·fixture는 `packages/core/schemas/process-abi/v1/`·`packages/core/fixtures/process-abi/v1/`에 있고 `files`로 배포된다. 이전 `cases.json`은 `events.json`으로 바꾼다(12.1의 `heartbeat` invalid 판정은 이제 valid).
@@ -67,6 +69,9 @@ deferred: []
 | 중복 최종 | result 두 번 / result 뒤 error | `ABI_DUPLICATE_FINAL` | — |
 | 최종 뒤 progress | result → progress, exit 0 | `succeeded` | — |
 | stderr | 비밀 패턴 포함 20 KiB stderr | attempt `stderr` 가려짐, ≤4096바이트 | — |
+| stderr PEM 경계 | 합성 PEM 개인 키 85줄 뒤 `TOKEN=` + 14500자(BEGIN 표식이 끝 16 KiB 밖) | 남은 값에 PEM 본문 줄·TOKEN 값이 없고 가림 표식만 있음, ≤4096바이트 | — |
+| stderr PEM END 없음 | BEGIN 표식 뒤 본문만 이어지다 EOF | BEGIN부터 끝까지 가림 표식 한 줄 | — |
+| stderr 긴 줄 | `\n` 없는 70000바이트 줄 | `[stderr 줄 생략: 상한 초과]`, 메모리에 쌓지 않음 | — |
 | 시작 실패 | 명세 없음·spawn 실패 | `failed` `PROCESS_START_FAILED` | — |
 | env | 필수 하나 없음, UUID 대문자, 범위 한쪽만 | probe가 `ABI_ENV_INVALID` error, exit 2 | — |
 
@@ -124,6 +129,40 @@ deferred: []
 - findings:
   - `[medium]` `[patch]` (quick) `apps/cli/src/runtime/process-group.ts:14`의 stdout 대기열에 상한·역압력이 없어, 감독자가 신원 조회·`recordSupervisedProcess`·`renewSupervisedLease`를 기다리는 동안 줄바꿈 없이 계속 쓰는 자식의 출력이 데몬 메모리에 쌓이고 `ABI_LINE_TOO_LONG` 판정이 늦어진다 — 확인: `packages/core/src/queue/supervisor.ts`에서 stdout 읽기(`read`)는 신원 조회와 기록 뒤에 시작되고 갱신 await 동안 멈춘다. 조치: adapter `buffer()`가 64 KiB에서 `pause()`, 32 KiB 미만에서 `resume()`하고, 실제 자식 16 MiB 시험을 더했다. 이후 `pnpm test` 117파일·2,935개 통과.
 
+### 2026-10-29 — Review pass
+- verdicts: 28 findings — high 1, medium 15, low 2, false 7, maybe-false 3
+- findings:
+  - `[medium]` `[bad_plan]` blind-hunter 1: 잘못된 UTF-8 수용 — 실제 자식의 JSON 문자열 안 0xff가 adapter setEncoding에서 U+FFFD로 치환되어 exit 0을 반환했다. codec은 그 result를 정상으로 읽는다. UTF-8 계약을 강제하지 않는다.
+  - `[medium]` `[bad_plan]` blind-hunter 2: 지연 중 framing 판정 — supervisor.ts의 stdout 읽기는 신원 조회·프로세스 기록 뒤 시작하고 임대 갱신도 await한다. 역압력은 메모리만 제한하며 이미 도착한 긴 줄·깨진 줄의 판정 지연을 없애지 않는다. 기존 quick의 무한 대기열 주장과 다르다.
+  - `[medium]` `[defer]` blind-hunter 3: 기본 schema 버전 3 — checkSchema의 정확한 버전 비교 때문에 기본값은 버전 5를 거부한다. baseline에도 있던 문제이고 실제 CLI는 opened.expected를 전달하여 영향이 없다. intent_gap 우선으로 신규 deferred 항목 처리는 하지 않았다.
+  - `[high]` `[intent_gap]` blind-hunter 4: 잘린 PEM 본문 유출 — createAbiStderr는 16384바이트로 자른 후 시작 표식 없는 본문을 maskSecrets에 넘긴다. 합성 PEM 85줄 뒤 TOKEN=와 14500자 값을 붙이면 최종 1902바이트에 PEM 본문이 남고 TOKEN만 가려진다. intent-contract의 고정 순서가 비밀 비노출 요구와 충돌한다. 시도 diff는 story-abi-v1-fixture-ts-plan.patch에 보존했다.
+  - `[maybe-false]` `[defer]` blind-hunter 5: 취소·unknown에서 usage 손실 — finish에만 usage가 있고 settle에는 없음을 확인했다. result usage 보존 요구가 취소·불명에도 적용되는지는 기존 취소 판정 유지 제약과 함께 계약을 확인해야 한다. 사실일 경우 medium이다. intent_gap 우선으로 보류 목록을 바꾸지 않았다.
+  - `[low]` `[reject]` blind-hunter 6: fake와 PG CHECK 불일치 — memoryStore는 잘못된 숫자를 허용하지만 감독자는 decoder가 검증한 비음수 토큰과 Math.max(0, elapsed)를 전달한다. 일상 호출의 불일치 경로는 확인되지 않았고 fake에 검증 분기를 추가하는 복잡도에 비해 효과가 작아 기각한다.
+  - `[medium]` `[bad_plan]` blind-hunter 7: schema 의미 동등성 검증 — process-abi.test.ts는 종류와 env.required만 비교한다. usage.maximum·additionalProperties·dependentRequired가 달라져도 fixture 판정 시험은 배포 schema를 읽지 않아 통과한다. epic 13 소비 계약의 회귀를 놓친다.
+  - `[medium]` `[bad_plan]` blind-hunter 8: 다중 바이트 상한 fixture — runs.json의 상한은 ASCII이고 Unicode 사례는 짧다. 다중 바이트·조각 경계에서 65536바이트 허용과 65537바이트 거부를 검증하지 않는다.
+  - `[medium]` `[bad_plan]` blind-hunter 9: 출력 예외 그룹 정리 시험 — supervisor-abi.test.ts의 stdout 예외는 base launcher 자식을 다른 kit inspector로 관찰하고 수동 exit시킨다. 살아 있는 자식의 stdout·stderr 예외에서 자동 그룹 정리는 검증하지 않는다.
+  - `[medium]` `[bad_plan]` blind-hunter 10: worker retryable와 signal — worker error 실행 fixture는 false이고 signal이 없다. worker true 보존과 error가 signal보다 우선하는 분기의 회귀를 놓친다.
+  - `[maybe-false]` `[defer]` edge-case-hunter 1: Readable 내부 result 유실 — closeOutput은 queue만 보존하고 stream.read 없이 destroy한다. 실제 65536바이트 뒤 지연된 result·exit 0 재현은 result를 보존했고 Node 내부 flushStdio의 exit 뒤 resume도 확인했다. 더 많은 청크와 갱신 지연이 겹친 감독자 재현이 필요하다. 사실일 경우 medium이며 intent_gap 우선으로 보류 목록은 바꾸지 않았다.
+  - `[medium]` `[bad_plan]` edge-case-hunter 2: 잘못된 UTF-8 치환 — blind-hunter 1과 같은 원인이다. 실제 0xff가 U+FFFD로 바뀌었고 fatal decoding이 없다.
+  - `[medium]` `[bad_plan]` verification-gap 1: UTF-8 바이트 경계 시험 — 사전 검증된 공백이다. ASCII 상한과 짧은 Unicode 사례만으로 summary 한글 22000자를 문자 수로 잘못 계산하는 회귀를 잡지 못한다.
+  - `[medium]` `[bad_plan]` verification-gap 2: stderr 읽기 예외 시험 — 사전 검증된 공백이다. stdout 예외만 발생시켜 정상 result·exit 0과 stderr iterator 예외가 겹칠 때 ABI_OUTPUT_UNREADABLE·retryable=true 저장을 검증하지 않는다.
+  - `[medium]` `[bad_plan]` verification-gap 3: worker true 보존 시험 — 사전 검증된 공백이다. worker fixture는 false뿐이라 그 분기가 항상 false를 반환하는 회귀를 놓친다. 프로토콜 자체 오류 true는 별도 경로다.
+  - `[false]` `[reject]` intent-alignment 1: 공유 fixture 판정 — 모든 events·env·runs case를 TS 시험이 순회하고 run은 여러 조각 크기로 검사한다. 보고서도 이 인수 조건의 직접 충족을 확인했으므로 결함이 아니다.
+  - `[medium]` `[bad_plan]` intent-alignment 2: schema와 TS 의미 동등성 — blind-hunter 7과 같은 검증 공백이다. Python 구현은 후속 에픽이지만 현재 배포 schema 제약의 회귀는 이 티켓의 소비 계약에 영향을 준다.
+  - `[false]` `[reject]` intent-alignment 3: 전 행렬의 실제 자식→PG 관통 시험 — verify는 감독자 시험과 저장 결과를 요구하며 모든 사례에 실제 자식과 PG를 동시에 쓰라고 요구하지 않는다. fake 감독자 행렬·실제 프로세스 시험·PG 저장 계약 시험으로 명시 조건을 확인한다.
+  - `[maybe-false]` `[defer]` intent-alignment 4: 취소·불명 usage 범위 — blind-hunter 5와 같은 계약 확인 사항이다. 사실일 경우 medium이며 해당 정산의 usage 요구 확인이 필요하다. intent_gap 우선으로 보류 목록을 바꾸지 않았다.
+  - `[false]` `[reject]` intent-alignment 5: 공통 stderr fixture 부재 — 원문은 stderr 사례를 모두 언어 공통 fixture에 넣으라고 요구하지 않는다. TS 순수 코드·감독자·실제 자식 시험에서 확인하며 Python은 작업자다. 실제 PEM 결함은 별도 high 행으로 채택했다.
+  - `[false]` `[reject]` intent-alignment 6: tarball 설치·Python 소비 부재 — npm pack --dry-run --json 파일 목록으로 이 티켓의 배포 파일 포함 여부를 직접 확인한다. Python 소비는 epic 13이며 설치 관통 시험까지 요구하지 않는다.
+  - `[low]` `[patch]` intent-alignment 7: elapsed 시작점 — startedAt은 명세 생성·launcher.start 이전이라 자식 시작 전 대기도 포함된다. 계획의 자식 시작부터 측정한다는 문장보다 넓다. intent_gap 우선으로 패치는 적용하지 않았다.
+  - `[false]` `[reject]` intent-alignment 8: 안전한 정수 상한 — schema와 decoder가 같은 상한을 쓰며 최대·초과 fixture도 있다. JS의 정확한 정수 범위를 정한 것으로 결함을 입증하지 않는다.
+  - `[false]` `[reject]` intent-alignment 9: 날짜 순서 검사 부재 — 계획은 schema로 나타낼 수 있는 형식·동시 존재만 검사한다고 명시한다. 원문도 날짜 비교 동작을 요구하지 않으며 역순 허용 fixture는 기록된 계약과 같다.
+  - `[false]` `[reject]` intent-alignment 10: account·range 전달 부재 — 현재 process_probe에 account·range 값이 없고 schema·decoder에는 선택 계약이 있다. 값 없는 probe에 값을 만들어 전달하라는 요구는 없다.
+  - `[medium]` `[bad_plan]` intent-alignment 11: worker true fixture 부재 — verification-gap 3과 같은 검증 공백이다. 프로토콜 오류 true와 worker 분류 true는 별도 경로다.
+  - `[medium]` `[bad_plan]` intent-alignment 12: UTF-8 거부 부재 — blind-hunter 1 및 edge-case-hunter 2와 같은 원인이다. 실제 0xff를 치환하며 정상 JSON result로 읽는다.
+  - `[medium]` `[bad_plan]` intent-alignment 13: 지연 중 즉시 판정 부재 — blind-hunter 2와 같은 원인이다. 실제 adapter 시험은 지연 중 역압력과 소비 재개 후 실패만 확인하며 신원·DB 지연 중 즉시 판정하지 않는다.
+
+- 네 렌즈가 모두 반환한 뒤 판정했다. 같은 원인은 묶되 모든 관찰을 개별 행으로 보존했다. intent_gap이 우선하므로 bad_plan·patch·defer 후속 처리는 수행하지 않았다. 기존 deferred-work 원장과 기존 triage 행을 수정하지 않았다.
+
 ## Design Notes
 
 - 판정을 core 순수 코드(줄 나누기 + 판정기)에 둔 이유: 같은 fixture(`runs.json`)를 감독자와 같은 코드로 돌려 갈라짐을 막는다. adapter는 원문 조각만 낸다.
@@ -148,30 +187,16 @@ deferred: []
 - quick 검토 2건을 모두 수정했다. stderr 소비를 OS/DB 조회 이전에 시작하며 unknown 정산 전에 이미 받은 stderr를 모두 읽는다. 지연·unknown 회귀 시험도 최종 전체 시험에 포함했다. 보류 항목과 계획 범위의 미완료는 없다.
 - `error_retryable`은 기록만 하며 모든 failed의 기존 재시도 정책은 유지한다. 운영 설치·배포는 수행하지 않았다.
 
+
 ## Auto Run Result
 
-상태: `built`. ticket 12.4를 구현하고 quick 검토를 마쳤다. 사람만 할 수 있는 작업은 없다. `tickets.py mark`는 실행하지 않았고 최종 완료 판정은 오케스트레이터가 한다.
+상태: `blocked`. thorough 후속 검토에서 `intent gap`을 발견하여 build-auto HALT로 인계한다. `done`으로 표시하지 않았고 `tickets.py mark`는 HALT의 blocked 처리에서 한 번만 실행했다.
 
-**구현 요약:** 프로세스 ABI v1을 완성했다. 이벤트 네 종(`progress`·`heartbeat`·`result`(선택 `usage`)·`error`(`code`·`retryable`)), 환경 변수 계약(`BRAIN_RUN_GENERATION`, 선택 계정·현지 날짜 범위), 65536바이트 줄 상한·잘린 줄·중복 최종·모르는 버전 규칙, exit code와 최종 이벤트의 판정 순서를 schema 두 개·한국어 규약·기대 판정이 붙은 fixture 세 개로 두고 core 패키지에 실었다. 손으로 쓴 TS 코덱(이벤트·환경 변수 decoder, 줄 나누기, 실행 판정기)이 모든 fixture 판정과 같다. 감독자는 그 판정기로 attempt를 `failed`+오류 코드로 확정하고, 새 마이그레이션 `0005`의 칸에 `usage`·`elapsed_ms`·가린 stderr(끝 4096바이트)를 남긴다. 새 오류 코드 11개를 `codes.ts`와 README 표에 더했다. core 스키마 버전은 5다.
-
-**변경 파일:**
-- `packages/core/schemas/process-abi/v1/{event.schema.json,env.schema.json,README.md}` — 이벤트·환경 변수 schema와 판정 규약.
-- `packages/core/fixtures/process-abi/v1/{events,env,runs}.json` — 기대 판정 fixture(31·21·42 case). `cases.json` 제거.
-- `packages/core/src/process-abi/codec.ts` — decoder, framing, 실행 판정기, stderr 꼬리·가림.
-- `packages/core/src/queue/supervisor.ts` — 판정기 사용, 오류 코드·usage·걸린 시간·stderr 기록, stderr 조기 소비.
-- `packages/core/src/ports/{process,store}.ts`, `domain/work-item.ts`, `testing/fakes/{process,store}.ts` — 원문 stdout·stderr port, attempt 상세 입력·스냅샷.
-- `packages/core/src/codes.ts`, `README.md` — 오류 코드 11개.
-- `packages/postgres/migrations/0005_attempt_outcome_detail.sql`, `src/migrate.ts`, `src/work.ts` — attempt 칸·check, 버전 5, finish·settle 쓰기.
-- `apps/cli/src/runtime/process-group.ts` — readline 대신 원문 조각, 64 KiB 역압력.
-- `apps/cli/src/daemon/supervisor.ts`, `apps/cli/src/workers/process-probe.ts` — `BRAIN_RUN_GENERATION`, probe의 env 검사와 `ABI_ENV_INVALID` error 이벤트.
-- 시험: `packages/core/test/{process-abi,supervisor-abi,codes}.test.ts`, `apps/cli/test/process-group.test.ts`, `apps/cli/test/fixtures/process-worker.mjs`, `packages/postgres/test/work-store.test.ts`, 버전 고정 시험들(4→5).
-
-**시험 이름과 실행 명령(fixture 판정):** `packages/core/test/process-abi.test.ts`의 `every event fixture gets its expected verdict`, `every env fixture gets its expected verdict`, `every run fixture gets its expected verdict`, `the core package tarball ships the ABI schemas and fixtures`. 명령은 `pnpm build && pnpm exec vitest run --project core test/process-abi.test.ts`.
-
-**리뷰 결과:** quick 렌즈 1건 — medium 1(patch). adapter stdout 대기열의 역압력 부재를 고쳤다(위 triage). deferred 0, 기각 0. 구현 세션이 커밋 전에 스스로 고친 medium 2건(stderr 조기 소비, unknown 정산 전 stderr 소비)도 Review Triage Log에 있다.
-
-**후속 리뷰 권고:** `false`. 이번 검토 패치는 medium 1건(high 0)이고, 이름 붙일 미검증 위험이 없다.
-
-**검증:** `pnpm test` 두 번(패치 전 117파일·2,934개, 패치 뒤 117파일·2,935개) 모두 build·typecheck·전체 vitest 통과. verbose 실행으로 `process-abi`(10)·`supervisor-abi`(12)·`process-group`(12→13)·PG `work-store`의 attempt 상세 시험 두 개가 돌고 통과했음을 확인했다. I/O 행렬 16행 모두 fixture·감독자·실제 자식·PG 시험이 덮는다.
-
-**남은 위험:** 감독자 재시도 정책은 아직 `error_retryable`·오류 코드 표의 `retryable`을 쓰지 않는다(모든 `failed`가 다시 시도, AD-21 분류는 다른 스토리). 범위 환경 변수는 날짜 순서를 검사하지 않는다(schema로 나타낼 수 있는 규칙만). fixture case 이름 일부에 Python 표기(`None`, dict repr)가 남아 있으나 판정에는 영향이 없다.
+- 차단 이유: 읽기 전용 `<intent-contract>`는 stderr를 끝 16 KiB로 자른 다음 `maskSecrets`로 가리도록 고정한다. 이 순서는 PEM 시작 표식이 버려진 뒤 남은 키 본문을 식별하지 못한다. 비밀을 그대로 남기지 말라는 티켓 요구와 충돌한다. 경계 전후 비밀 블록의 가림 상태를 보존하도록 계약을 바꿀지 결정이 필요하다.
+- 재현: 실제 자격 증명 없이 합성 PEM 본문 85줄과 TOKEN= 뒤 합성 14500자를 입력했다. 최종 보관 값 1902바이트에서 TOKEN은 가려졌지만 PEM 본문은 남았다. 빌드된 createAbiStderr로 직접 재현했으며 실제 비밀을 출력·저장하지 않았다.
+- 시도 diff: `story-abi-v1-fixture-ts-plan.patch`. baseline은 `bb9b7f06c8dfe43bba57d8b4c073b01f5cc60495`, 검토 시 HEAD는 `cca021cb2830cc1f06a0db0f2cdc4e5d2b64f1e0`이다. 기존 구현은 이전 커밋에 있고 이번 실행은 소스·시험을 수정하지 않아 되돌릴 이번 실행의 코드 변경이 없다. 기존 커밋을 보존했다.
+- 변경 파일: 이 계획의 리뷰 설정·렌즈·새 triage·HALT 결과와 시도 diff뿐이다. 실행 전부터 있던 기존 결과 요약 삭제를 덮어쓰지 않고 현재 인계 결과를 새로 기록했다. 기존 deferred-work 항목·상태·해결 기록은 바꾸지 않았다.
+- 검토: blind-hunter·edge-case-hunter·verification-gap·intent-alignment 네 렌즈를 실행했다. 28개 관찰의 판정·근거를 Review Triage Log에 각각 기록했다. intent_gap 때문에 수정·신규 보류 반영은 수행하지 않았다. 패치 적용 0, 원장 변경 0이며 차단 사유 해소 뒤 추가 검토가 필요하다.
+- 검증: `pnpm test`의 빌드·타입 검사는 통과했다. 전체 117파일 중 116파일, 2935개 중 2934개 시험이 통과했다. 기존 `postgres/test/commit-unknown.test.ts`의 `replays linkAttachments after the commit reply is lost and ends with the rows of one write`가 30000ms 제한으로 실패했다. 이어 `pnpm exec vitest run --project postgres test/commit-unknown.test.ts`를 단독 재실행하여 1파일·3개 시험이 모두 통과했다. 전체 실행을 완전 통과로 보고하지 않는다.
+- 추가 확인: 실제 Node 자식의 JSON 문자열 안 잘못된 UTF-8 바이트 0xff가 adapter에서 U+FFFD로 치환되며 exit 0을 반환했다. 단순 역압력·출력 닫기 재현 두 건은 result를 보존하여 출력 유실 주장은 미확정으로 기록했다.
+- 남은 위험: PEM 키 본문 유출은 확인되었고 고치지 않았다. UTF-8 거부·출력 판정 지연과 시험 공백도 위 판정에 남아 있다. 운영 설치·배포·push·완료 처리는 수행하지 않았다.
