@@ -22,3 +22,4 @@
 | 2026-10-28 | epic 15 · 결과 분류 | `sent`·`definite_failed`(요청 전 실패)·`unknown`(요청 뒤 응답 유실) | 옛 `network` 합침을 나눔 |
 | 2026-10-28 | epic 15 · 묶음 | 재시작 때 `sent` 항목은 건너뜀, 4096 넘는 텍스트는 나누지 않고 `too_large` | 옛 동작 |
 | 2026-10-28 | epic 15 · 순서 | 1~5 한 줄, 15.1은 13.9를 기다림. epic 11~13 쪽에 인계 문장을 더하지 않음(명시적 예외) | 같은 파일, 선례 |
+| 2026-10-28 | epic 11 · 11.1 escalation(U+0000) | transcript 텍스트의 U+0000: `text` 칸에는 U+FFFD로 바꾼 값(검색·표시), nullable `bytea` 짝 칸에 원래 UTF-8 바이트(있을 때만). 읽기는 원문을 돌려준다. 입력은 거부하지 않는다. main의 epic 11 Notes와 11.1 plan에 기록, `resolve --no-interactive`로 재개 | AD-11 원문 보존, SM-5 = 0 |
