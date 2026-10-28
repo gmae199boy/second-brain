@@ -92,11 +92,8 @@ graphify-out/
 _bmad/render/
 .bmad-loop/runs/
 .bmad-loop/cache/
-.bmad-loop/policy.toml
-# bmad-loop local wiring (hooks and links carry home-folder paths)
+# bmad-loop hooks: bmad-loop only accepts its own absolute path here, which
+# carries the home folder. Recreate them on each machine with `bmad-loop init`
+# (it registers claude and codex, the CLIs .bmad-loop/policy.toml names).
 .claude/settings.json
-.claude/skills/bmad-build-auto
-.claude/skills/bmad-review
 .codex/hooks.json
-.agents/skills/bmad-build-auto
-.agents/skills/bmad-review
