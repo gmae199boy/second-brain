@@ -25,6 +25,7 @@
 | 2026-10-28 | epic 11 · 11.1 escalation(U+0000) | transcript 텍스트의 U+0000: `text` 칸에는 U+FFFD로 바꾼 값(검색·표시), nullable `bytea` 짝 칸에 원래 UTF-8 바이트(있을 때만). 읽기는 원문을 돌려준다. 입력은 거부하지 않는다. main의 epic 11 Notes와 11.1 plan에 기록, `resolve --no-interactive`로 재개 | AD-11 원문 보존, SM-5 = 0 |
 | 2026-10-29 | epic 11 · 11.13 | 이 Mac 확인을 에이전트가 로컬 설치본으로 하고 증거를 plan에 남긴다(`hitl = false`). DB 끄기 단계 뒤 다시 켜고 drain을 마친다. run은 이 hitl에서 멈췄고, 계획 병합과 함께 풀어 재기동 | 2026-10-28 위임, 12.12와 같은 방식 |
 | 2026-10-29 | epic 12 · 12.4 escalation(stderr 가림) | ABI v1 stderr는 줄 단위로 가린 다음 자른다. PEM 블록 상태를 줄 사이에 이어 가고(END 없으면 EOF까지), 한 줄 상한 65536바이트, 그 뒤 16 KiB → 4096바이트. plan intent-contract·행렬과 epic 12 Notes에 기록, `resolve --no-interactive`로 재개 | E12-5 비밀 비노출, 리뷰의 합성 PEM 재현 |
+| 2026-10-29 | epic 12 · 12.4 두 번째 escalation(stderr 가림) | 위 줄 규칙을 대체: stderr 원문을 1 MiB까지 보관 → `maskSecrets` 전체 한 번 → 끝 4096바이트. 1 MiB 초과면 원문 없이 고정 안내문만. Codex 검증 `12-4-stderr-rule-check.md` | 줄별 가림이 줄로 갈린 비밀을 남김, 잘린 원문 덜어내기에 반례 |
 | 2026-10-28 | epic 14 · C6 기준 소스 | 선택지 A: 운영(D2) 기준, 없는 키는 D1 → D4 → D5 → D3 순으로 보완, 미선택 값은 모두 보관, 정수 id 이력은 dataset별 | D1·D2는 겹치는 키가 모두 같고, 충돌은 보관본 D4·D5와만 있음(조사 3절) |
 | 2026-10-28 | epic 6 · 임베딩 | (사용자 결정) 나중에 확장으로 만든다. 무인 파이프라인에서 뺀다 | 사용자 |
 | 2026-10-28 | epic 14 · Python 의존 | PG driver `psycopg[binary]` 3(sync)만 더하고 pin 3.14.10(spine Stack의 새 배포 pin) 위에서 다시 잠근다. 옛 의존(garminconnect 등)과 그 arm64 설치 확인은 epic 16 | importer는 표준 `sqlite3`와 driver만 쓴다(조사 7절) |
