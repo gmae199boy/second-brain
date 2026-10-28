@@ -8,11 +8,11 @@ baseline_revision: 541365e705cbe670d24386c084ba32b1d072fef1
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
-review: 'thorough'
+review: 'quick'
 review_source: 'pinned'
-lenses_ran: [blind-hunter, edge-case-hunter, verification-gap, intent-alignment]
+lenses_ran: [quick]
 review_loop_iteration: 0
-followup_review_recommended: false
+followup_review_recommended: true
 context:
   - '{project-root}/_bmad-output/personal-brain/tickets/epic-jobs-and-scheduler/epic-jobs-and-scheduler.md'
   - '{project-root}/_bmad-output/personal-brain/tickets/epic-jobs-and-scheduler/tickets/story-attempt-token-db-plan.md'
@@ -161,6 +161,11 @@ deferred: []
 
 - 네 렌즈가 모두 반환한 뒤 판정했다. 같은 원인은 묶되 모든 관찰을 개별 행으로 보존했다. intent_gap이 우선하므로 bad_plan·patch·defer 후속 처리는 수행하지 않았다. 기존 deferred-work 원장과 기존 triage 행을 수정하지 않았다.
 
+### 2026-10-29 — Review pass
+- verdicts: 1 findings — high 1, medium 0, low 0, false 0, maybe-false 0
+- findings:
+  - `[high]` `[patch]` (quick) `packages/core/src/process-abi/codec.ts`의 `createAbiStderr` `append()`가 줄바꿈마다 보관 중인 16 KiB 꼬리 전체를 `tailUtf8()`로 다시 훑고 코드 포인트마다 `utf8Bytes()` 배열을 할당하여, 감독자가 `feed`를 동기 호출하는 동안 데몬 이벤트 루프(stdout 판정·임대 갱신·취소)가 막힌다 — 확인: 빌드된 `dist/process-abi/codec.js`로 꼬리가 찬 상태에서 `'\n'.repeat(65536)` 조각 하나가 50077ms, 80바이트 줄 64 KiB가 628ms 걸렸다(이전 구현은 조각마다 한 번만 계산). 조치: 구현 세션이 `a385a76`에서 가린 줄을 바이트 길이와 함께 연결 리스트로 보관하고 합계가 `PROCESS_ABI_STDERR_BUFFER_BYTES`를 넘으면 앞쪽 줄만 통째로 버리게 바꿨다(잘린 첫 줄 버림·끝 4096바이트 코드 포인트 경계 유지). 1초 미만 회귀 시험을 더했고, 같은 측정이 7ms·10ms로 줄었다.
+
 ## Design Notes
 
 - 판정을 core 순수 코드(줄 나누기 + 판정기)에 둔 이유: 같은 fixture(`runs.json`)를 감독자와 같은 코드로 돌려 갈라짐을 막는다. adapter는 원문 조각만 낸다.
@@ -196,3 +201,24 @@ deferred: []
 - 이번 stderr 변경의 미완료는 없다. 기존 triage의 잘못된 UTF-8 치환 수용, 신원/DB 조회·임대 갱신 중 stdout 판정 지연, launcher 시작 이전부터 재는 elapsed 시작점은 남아 있다. 기존 deferred-work 원장은 수정하지 않았다. 운영 설치·배포는 수행하지 않았다.
 
 - 최종 상태 재검증: `pnpm test` 재실행도 build·typecheck와 117파일·2949개 시험 전부 통과했다(51.65초).
+
+## Auto Run Result
+
+상태: `built`. 티켓 완료(`done`) 표시는 오케스트레이터 몫이라 하지 않았고 `tickets.py mark`는 실행하지 않았다.
+
+- 구현 요약: 해소된 escalation에 따라 고친 stderr 계약을 반영했다. `createAbiStderr`가 stderr를 줄 단위로 먼저 가린다(PEM 개인 키 블록 상태를 조각·줄 사이에 이어 가며 BEGIN~END, END가 없으면 EOF까지를 `[REDACTED:private_key]` 한 줄로 바꿈, 그 밖의 줄은 `maskSecrets(line, 'body')`). 65536 UTF-8 바이트를 넘는 줄은 즉시 버리고 `[stderr 줄 생략: 상한 초과]`로 바꾼다. 가린 줄의 끝 16 KiB만 보관하고 끝 4096바이트를 attempt `stderr`에 남긴다. 이전 thorough 검토의 high(잘린 PEM 본문 유출)가 이것으로 해소됐다.
+- 커밋: `26147833b831678564ad0626babd8eb3b300e4ad`(stderr 계약 구현), `a385a76b6ec1c969c80a4097d7eefcaa0a48823a`(리뷰 패치: 줄 단위 꼬리 보관), 그리고 이 계획 파일 커밋.
+- 변경 파일:
+  - `packages/core/src/process-abi/codec.ts` — 줄별 선가림, PEM 상태 기계, 긴 줄 폐기, 줄 단위 16 KiB 꼬리 큐.
+  - `packages/core/schemas/process-abi/v1/README.md` — stderr 절을 새 계약으로 갱신.
+  - `packages/core/test/process-abi.test.ts` — PEM 85줄+긴 `TOKEN=`(여러 조각 크기), 미종결 PEM, 70000바이트 줄, 긴 줄 안의 END 표식, 다중 바이트 상한, 64 KiB 줄바꿈 성능 회귀 시험.
+  - `packages/core/test/supervisor-abi.test.ts` — 감독자 경유로 닫힌 PEM·미종결 PEM·긴 줄의 attempt `stderr` 저장 시험.
+  - 이 계획 파일 — 상태·리뷰 설정·triage·결과.
+- 리뷰: quick 렌즈 1개, 지적 1건. 패치 적용 1건(`high` 1: 줄마다 꼬리 재계산으로 이벤트 루프가 최대 50초 막힘 → 줄 단위 큐로 수정). 보류 0건, 기각 0건.
+- 후속 리뷰 권장: `true`. 이번 패스에서 `high` 1건을 패치했다(패치 수: high 1, medium 0, low 0). 남은 미검증 위험: 새 연결 리스트 꼬리 보관과 `value()`의 비파괴 스냅샷 계산이 이전 문자열 방식과 경계(16 KiB를 넘는 마지막 줄, `pendingHigh`가 남은 EOF, PEM 표식 줄이 꼬리 맨 앞에서 잘리는 경우)에서 같은 결과를 내는지는 기존 시험 기대값으로만 확인했고 독립 검토를 거치지 않았다.
+- 검증:
+  - 패치 전 `pnpm test`: build·typecheck와 117파일·2,949개 시험 통과.
+  - 패치 후 `pnpm test` 첫 실행: 116파일 통과, 1개 시험 실패(실패한 시험 이름은 남기지 못했다). 곧바로 `pnpm exec vitest run` 재실행에서 실패 없음, 다시 `pnpm test`에서 build·typecheck와 117파일·2,950개 시험 전부 통과. 이전 실행 기록의 `postgres/test/commit-unknown.test.ts` 30000ms 시간 초과와 같은 불안정 시험으로 보이나 확인하지 못했다.
+  - 행렬 감사: 행렬의 모든 행이 실행된 시험으로 덮인다(실행 행은 `runs.json` 전부를 `supervisor-abi.test.ts`가 감독자로 돌림, stderr 세 행은 새 시험, 시작 실패·env는 `supervisor-abi.test.ts`·`process-group.test.ts`).
+  - 성능 측정: 꼬리가 찬 상태에서 64 KiB 줄바꿈 조각 `feed` 50077ms → 7ms, 80바이트 줄 64 KiB 628ms → 10ms.
+- 남은 위험: 이전 thorough triage의 `bad_plan` 행들(잘못된 UTF-8의 U+FFFD 치환 수용, 신원·DB 조회 중 stdout 판정 지연, 시험 공백들)과 `elapsed_ms` 시작점 문제는 이번 실행 범위가 아니어서 그대로 남아 있다. 운영 설치·배포·push는 하지 않았다.
