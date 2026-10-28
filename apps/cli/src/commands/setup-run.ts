@@ -57,7 +57,7 @@ export const setupRun: CommandSpec<SetupRunData> = {
     'brain setup run --store-path /Volumes/notes/brain.db --yes',
   ],
   output:
-    '설치 보고: `home`, `config_path`, `store`, `owner`, `files`, `mirror_path`, `shim`, `daemon`(재시작 여부 `restarted` 포함), `harnesses`, `checks`, `summary`, `update`, `installed`',
+    '설치 보고: `home`, `config_path`, `store`(SQLite 홈), `postgres`(PG 홈: `compose_started`, `legacy_sqlite_path`, `import` 포함), `owner`, `files`, `mirror_path`, `shim`, `daemon`(재시작 여부 `restarted` 포함), `harnesses`, `checks`, `summary`, `update`, `installed`',
   risk: 'write',
   hook: false,
   dryRun: false,
@@ -84,7 +84,7 @@ export const setupRun: CommandSpec<SetupRunData> = {
     // turn above all — would otherwise load all of it to not use it (AD-3, AD-6).
     const { runInstallerWithFlags, systemInstallDeps } = await import('../install.js');
 
-    const deps = systemInstallDeps();
+    const deps = systemInstallDeps({ runner: context.runner });
     const result = await runInstallerWithFlags(setupRunFlags(context.options), context.env, {
       ...deps,
       log,

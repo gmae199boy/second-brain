@@ -1,9 +1,15 @@
 #!/usr/bin/env node
+import type { CommandRunner } from './runtime/command-runner.js';
+import { probeOrbStack } from './runtime/orbstack.js';
+import { brainDependencies } from './assembly.js';
+import { openBrainStore } from './runtime/brain-store.js';
+import { uuidV7IdGen } from './runtime/id-gen.js';
+import { readConfig } from './config/codec.js';
 import { installPostgres } from './install/postgres.js';
 import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { cancel, confirm, isCancel, multiselect, text, type Option } from '@clack/prompts';
-import { createSettingsBrain, encodeTextLine } from 'second_brain';
+import { createBrain, DRAIN_BUDGET_MS, createSettingsBrain, encodeTextLine } from 'second_brain';
 import { CORE_SCHEMA_VERSION, postgresStore } from 'second_brain/postgres';
 import { resolveStoreUrl } from './config/codec.js';
 import { readConfigForSetup, writeConfig } from './config/codec.js';
@@ -152,13 +158,22 @@ export class Cancelled extends Error {
 }
 
 /** The real world, in one place, so the tests can replace all of it. */
-export function systemInstallDeps(): InstallDeps {
+export function systemInstallDeps(options: { runner?: CommandRunner } = {}): InstallDeps {
+  const withBrain = async <T>(home: string, env: NodeJS.ProcessEnv, run: (brain: import('second_brain').Brain) => Promise<T>): Promise<T> => {
+    const config = await readConfig(home);
+    const opened = await openBrainStore({ home, env, config, path: 'command', createSqliteStore: () => { throw new Error('PG 홈이 필요합니다'); } });
+    try { return await run(createBrain(brainDependencies({ home, env, config, store: opened.store, kind: opened.kind, adapterProbeIds: opened.kind === 'postgres' ? opened.adapterProbeIds : undefined, runner: options.runner, schemaVersions: opened.expected, clock: { now: () => new Date() }, idGen: uuidV7IdGen(), workHandlers: {} }))); }
+    finally { await opened.store.close(); }
+  };
   return {
+    orbstack: env => probeOrbStack({ env, runner: options.runner }),
+    postgresDoctor: (home, env) => withBrain(home, env, brain => brain.doctor.run()),
+    importTranscripts: (home, env) => withBrain(home, env, brain => brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command })),
     settings: {
       get: (home, urlEnv, env) => withSettings(home, urlEnv, env, brain => brain.config.get({ key: 'timezone' })),
       set: (home, urlEnv, env, value) => withSettings(home, urlEnv, env, brain => brain.config.set({ key: 'timezone', value })),
     },
-    postgres: (home, urlEnv, env) => installPostgres({ home, urlEnv, env, clock: { now: () => new Date() } }),
+    postgres: (home, urlEnv, env) => installPostgres({ home, urlEnv, env, clock: { now: () => new Date() }, runner: options.runner }),
     prompts: clackPrompts(),
     // Both ends have to be a terminal: a question needs an answer and a place
     // to be read. Anything else counts as not interactive at all.

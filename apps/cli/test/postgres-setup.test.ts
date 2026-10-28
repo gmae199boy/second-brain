@@ -44,27 +44,27 @@ it('preserves url_env across setup and resolves process env before the private f
   expect(await postgresSecrets(home,homeResources(home).port,'CUSTOM_DATABASE_URL')).toEqual(regenerated);
 });
 it('runs Compose through shared argv, prepares and migrates before seeding the owner',async()=>{
-  const home=await fresh();const fake=fakeCommandRunner([{ok:true,stdout:'healthy',stderr:''}]);
+  const home=await fresh();const fake=fakeCommandRunner([{ok:false,stdout:'',stderr:'no such volume',message:'missing'}, {ok:true,stdout:'',stderr:''}, {ok:true,stdout:'healthy',stderr:''}]);
   pg.prepareDatabase.mockResolvedValue({ok:true,databaseUrl:'postgresql://postgres:private@localhost/brain'});
-  pg.runMigrations.mockResolvedValue({ok:true,to:1,applied:['0001_initial.sql']});pg.ensureSelfUser.mockResolvedValue({ok:true,created:true});
+  pg.runMigrations.mockResolvedValue({ok:true,to:1,applied:['0001_initial.sql']});pg.ensureSelfUser.mockResolvedValue({ok:true,created:true,user:{name:'주인'}});
   const result=await installPostgres({home,urlEnv:'BRAIN_DATABASE_URL',env:{COMPOSE_PROJECT_NAME:'another-home'},clock,runner:fake.runner});
   expect(result).toMatchObject({ok:true,report:{...homeResources(home),schema_version:1,owner_created:true}});
   const expected=['compose','-p',homeResources(home).project,'--env-file',join(home,'.env'),'-f',join(home,'postgres','compose.yaml'),'up','-d','--wait'];
   expect(composeArgs(home,['up','-d','--wait'])).toEqual(expected);
-  expect(fake.calls[0]?.args).toEqual(expected);expect(fake.calls[0]?.command).toBe('docker');
+  expect(fake.calls[2]?.args).toEqual(expected);expect(fake.calls[2]?.command).toBe('docker');
   expect(pg.prepareDatabase.mock.invocationCallOrder[0]).toBeLessThan(pg.runMigrations.mock.invocationCallOrder[0]!);
   expect(pg.runMigrations.mock.invocationCallOrder[0]).toBeLessThan(pg.ensureSelfUser.mock.invocationCallOrder[0]!);expect(pg.close).toHaveBeenCalledOnce();
 });
 it('reports Compose tail and OrbStack guidance without preparing the database',async()=>{
-  const home=await fresh();const fake=fakeCommandRunner([{ok:false,stdout:'',stderr:'x'.repeat(3000)+'daemon offline',message:'failed'}]);
+  const home=await fresh();const fake=fakeCommandRunner([{ok:false,stdout:'',stderr:'no such volume',message:'missing'}, {ok:true,stdout:'',stderr:''}, {ok:false,stdout:'',stderr:'x'.repeat(3000)+'daemon offline',message:'failed'}]);
   const result=await installPostgres({home,urlEnv:'BRAIN_DATABASE_URL',env:{},clock,runner:fake.runner});
   expect(result).toMatchObject({ok:false,code:'DB_UNAVAILABLE'});if(result.ok)return;
-  expect(result.message).toContain('OrbStack');expect(result.message).toContain('daemon offline');expect(result.message.length).toBeLessThan(2300);expect(pg.prepareDatabase).not.toHaveBeenCalled();expect(fake.calls).toHaveLength(1);
+  expect(result.message).toContain('OrbStack');expect(result.message).toContain('daemon offline');expect(result.message.length).toBeLessThan(2300);expect(pg.prepareDatabase).not.toHaveBeenCalled();expect(fake.calls).toHaveLength(3);
 });
 it('guides lost-secret recovery without removing the existing volume',async()=>{
-  const home=await fresh();const fake=fakeCommandRunner([{ok:true,stdout:'healthy',stderr:''}]);pg.prepareDatabase.mockResolvedValue({ok:false,code:'DB_UNAVAILABLE',message:'password authentication failed'});
+  const home=await fresh();const fake=fakeCommandRunner([{ok:false,stdout:'',stderr:'no such volume',message:'missing'}, {ok:true,stdout:'',stderr:''}, {ok:true,stdout:'healthy',stderr:''}]);pg.prepareDatabase.mockResolvedValue({ok:false,code:'DB_UNAVAILABLE',message:'password authentication failed'});
   const result=await installPostgres({home,urlEnv:'BRAIN_DATABASE_URL',env:{},clock,runner:fake.runner});
-  expect(result).toMatchObject({ok:false});if(result.ok)return;expect(result.message).toContain('.env');expect(result.message).toContain('볼륨을 명시적으로');expect(fake.calls).toHaveLength(1);expect(pg.runMigrations).not.toHaveBeenCalled();
+  expect(result).toMatchObject({ok:false});if(result.ok)return;expect(result.message).toContain('.env');expect(result.message).toContain('볼륨을 명시적으로');expect(fake.calls).toHaveLength(3);expect(pg.runMigrations).not.toHaveBeenCalled();
 });
 it('bounds an asynchronous command and returns an execution failure as a value',async()=>{
   const result=await systemCommandRunner({command:process.execPath,args:['-e','setTimeout(()=>{},10000)'],env:process.env,timeoutMs:50});expect(result.ok).toBe(false);

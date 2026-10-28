@@ -11,7 +11,7 @@ export interface OpenBrainStoreOptions {
   createSqliteStore: (options: SqliteStoreOptions) => Store & SchemaStore;
 }
 export type BrainStore =
-  | { kind: 'postgres'; store: Store & SchemaStore & SettingsStore; expected: SchemaVersions }
+  | { kind: 'postgres'; store: Store & SchemaStore & SettingsStore; expected: SchemaVersions; adapterProbeIds: readonly string[] }
   | { kind: 'sqlite'; store: Store & SchemaStore; expected: SchemaVersions };
 
 /** Select the configured adapter once, without loading PostgreSQL for SQLite homes. */
@@ -20,7 +20,7 @@ export async function openBrainStore(options: OpenBrainStoreOptions): Promise<Br
   if (config.ok && config.config.storeUrlEnv !== undefined) {
     const pg = await import('second_brain/postgres');
     const url = await resolveStoreUrl(home, config.config.storeUrlEnv, env).catch(() => undefined);
-    return { kind: 'postgres', expected: pg.EXPECTED_SCHEMA_VERSIONS,
+    return { kind: 'postgres', expected: pg.EXPECTED_SCHEMA_VERSIONS, adapterProbeIds: pg.POSTGRES_DOCTOR_PROBE_IDS,
       store: pg.postgresStore({ databaseUrl: url || 'postgresql://invalid@127.0.0.1:1/unavailable', path,
         ...(lockTimeoutMs === undefined ? {} : { lockTimeoutMs }) }) };
   }

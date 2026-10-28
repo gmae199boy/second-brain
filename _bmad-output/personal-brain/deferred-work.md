@@ -266,3 +266,11 @@ source_spec: `tickets/epic-postgres-primary/tickets/story-db-hook-spool-db-plan.
 severity: medium
 reason: `git grep` 결과 `apps/cli/src`에 `tableCleanupHandler`·`postgresTableMaintenance`·maintenance 접속 사용처가 없다. 티켓 5 plan(story-doctor-plan.md)의 인계는 런타임 조립이 handler를 등록하고 `postgresTableMaintenance`에 정리 URL을 주며, 설치(티켓 8)가 `prepareDatabase`에 `maintenancePassword`를 넘기고 `.env`에 정리 role 접속을 쓰라고 했다. 정리 URL을 담을 설정 키·`.env` 항목이 아직 없으므로(설치는 티켓 8) 이 변경만으로는 연결할 값이 없다. 이 변경 전에도 PG 홈에는 PG drain이 없어 정리가 돌지 않았으므로 기존 공백이다. 티켓 8이 정리 role 접속을 쓸 때 store factory(`apps/cli/src/runtime/brain-store.ts`)의 PG 분기와 데몬(티켓 9)이 이 handler를 함께 등록해야 한다.
 status: open
+
+### DW-12: 기존 Core drain이 transcript scan 실패 이유를 보고에서 버려 설치가 성공 안내를 보일 수 있다.
+origin: spec-deferred 2e8eeb96eb31
+location: packages/core/src/brain.ts:471
+source_spec: `tickets/epic-postgres-primary/tickets/story-doctor-orbstack-plan.md`
+severity: medium
+reason: packages/core/src/brain.ts의 drain은 scanTranscripts의 stopped를 읽지 않고 scan.enqueued와 rereadMissing만 반환한다. 폴더 읽기 실패는 scan에서 stopped로 반환하므로 설치의 기존 BrainDrainReport로는 이를 구별할 수 없다. 이 보고 누락은 baseline 이전 Core에도 있으며 이번 변경은 해당 함수를 재사용한다. 보고 계약과 기존 queue 소비자를 함께 보완할 후속 작업이다. 기존 deferred-work ledger는 변경하지 않았다.
+status: open

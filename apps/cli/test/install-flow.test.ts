@@ -406,6 +406,8 @@ function harness(options: HarnessOptions = {}): Harness {
     options.recordedExtra !== undefined;
 
   const deps: InstallDeps = {
+    orbstack: async () => ({ ok: true, detail: '정상입니다' }),
+    postgresDoctor: async () => ({ checks: [], summary: { passed: 0, warned: 0, failed: 0, skipped: 0 } }),
     prompts,
     isTTY: options.isTTY ?? true,
     log: (line: string): void => {
@@ -507,6 +509,18 @@ async function resultOf(argv: readonly string[], kit: Harness): Promise<InstallR
   if (wasHelped(result)) throw new Error(`the flow printed the usage for: ${argv.join(' ')}`);
   return result;
 }
+
+it('does not probe OrbStack when installing a SQLite home', async () => {
+  const kit = harness({ recorded: true, isTTY: false });
+  const probe = vi.fn<NonNullable<InstallDeps['orbstack']>>(async () => {
+    throw new Error('SQLite 홈에서 OrbStack을 확인하면 안 됩니다');
+  });
+  kit.deps.orbstack = probe;
+  expect((await resultOf(['--yes'], kit)).ok).toBe(true);
+  expect(probe).not.toHaveBeenCalled();
+  expect(kit.store.prepared).toEqual([STORE]);
+  expect(kit.store.doctored).toEqual([STORE]);
+});
 
 describe('the installer flow on an empty folder', () => {
   it('asks the two path questions, writes everything, and ends on a green doctor', async () => {
@@ -1948,13 +1962,13 @@ describe('daemon restart after upgrades', () => {
   });
 });
 
-it('runs the configured PG stage after SQLite owner and preserves its config and report', async () => {
+it('runs the configured PG stage without SQLite preparation and preserves its config and report', async () => {
   const kit=harness({recorded:true,isTTY:false});
   const read=kit.deps.config.read;kit.deps.config.read=async home=>{const result=await read(home);return result.ok?{...result,recorded:{...result.recorded,extra:result.recorded?.extra ?? {},storeUrlEnv:'BRAIN_DATABASE_URL'}}:result;};
   kit.deps.postgres=async(home,key)=>{
     expect(home).toBe(HOME);expect(key).toBe('BRAIN_DATABASE_URL');
-    expect(kit.store.owned).toEqual([STORE]);
-    return {ok:true,report:{project:'second-brain-example',volume:'second-brain-pg-example',port:24567,schema_version:1,applied:['0001_initial.sql'],owner_created:true}};
+    expect(kit.store.owned).toEqual([]);
+    return {ok:true,report:{project:'second-brain-example',volume:'second-brain-pg-example',port:24567,schema_version:1,applied:['0001_initial.sql'],owner_created:true,owner_name:'주인',compose_started:true}};
   };
   kit.deps.settings={
     get:async()=>({ok:true,key:'timezone',value:'Asia/Seoul',source:'default',updatedAt:null}),
@@ -1968,7 +1982,7 @@ it('stops without installed.json when the configured PG stage fails',async()=>{
   const kit=harness({recorded:true,isTTY:false});const read=kit.deps.config.read;
   kit.deps.config.read=async home=>{const result=await read(home);return result.ok?{...result,recorded:{...result.recorded,extra:result.recorded?.extra ?? {},storeUrlEnv:'BRAIN_DATABASE_URL'}}:result;};
   kit.deps.postgres=async()=>({ok:false,code:'DB_UNAVAILABLE',message:'OrbStack을 켜세요: compose failed'});
-  const result=await resultOf(['--yes'],kit);expect(installExit(result)).toBe(1);expect(kit.installed.wrote).toEqual([]);expect(kit.shimmed).toEqual([]);
+  const result=await resultOf(['--yes'],kit);expect(installExit(result)).toBe(2);expect(kit.installed.wrote).toEqual([]);expect(kit.shimmed).toEqual([]);
 });
 
 it.each(['seed', 'db', 'default'] as const)('selects the PG timezone from %s and avoids rewriting a DB value', async source => {
@@ -1978,7 +1992,7 @@ it.each(['seed', 'db', 'default'] as const)('selects the PG timezone from %s and
     const result = await read(home);
     return result.ok ? { ...result, recorded: { ...result.recorded, extra: {}, timezone: source === 'seed' ? 'Europe/Paris' : undefined, storeUrlEnv: 'BRAIN_DATABASE_URL' } } : result;
   };
-  kit.deps.postgres = async () => ({ ok: true, report: { project: 'second-brain-example', volume: 'second-brain-pg-example', port: 24567, schema_version: 1, applied: [], owner_created: false } });
+  kit.deps.postgres = async () => ({ ok: true, report: { project: 'second-brain-example', volume: 'second-brain-pg-example', port: 24567, schema_version: 1, applied: [], owner_created: false, owner_name: '주인', compose_started: false } });
   const writes: string[] = [];
   kit.deps.settings = {
     get: async () => ({ ok: true, key: 'timezone', value: source === 'db' ? 'America/New_York' : 'Asia/Seoul', source: source === 'db' ? 'db' : 'default', updatedAt: null }),
@@ -1993,13 +2007,13 @@ it.each(['seed', 'db', 'default'] as const)('selects the PG timezone from %s and
 
 it.each([false, true])('validates TTY timezone answers and stops after repeated invalid input: %s', async exhausted => {
   const kit = harness({ recorded: true, isTTY: true,
-    answers: { text: ['', '', 'Mars/Base', '+09:00', exhausted ? 'invalid' : 'america/new_york'] } });
+    answers: { text: ['', 'Mars/Base', '+09:00', exhausted ? 'invalid' : 'america/new_york'] } });
   const read = kit.deps.config.read;
   kit.deps.config.read = async home => {
     const result = await read(home);
     return result.ok ? { ...result, recorded: { ...result.recorded, extra: {}, timezone: 'Europe/Paris', storeUrlEnv: 'BRAIN_DATABASE_URL' } } : result;
   };
-  kit.deps.postgres = async () => ({ ok: true, report: { project: 'second-brain-example', volume: 'second-brain-pg-example', port: 24567, schema_version: 1, applied: [], owner_created: false } });
+  kit.deps.postgres = async () => ({ ok: true, report: { project: 'second-brain-example', volume: 'second-brain-pg-example', port: 24567, schema_version: 1, applied: [], owner_created: false, owner_name: '주인', compose_started: false } });
   const writes: string[] = [];
   kit.deps.settings = {
     get: async () => ({ ok: true, key: 'timezone', value: 'Asia/Seoul', source: 'default', updatedAt: null }),
@@ -2019,7 +2033,7 @@ it.each(['get', 'set'] as const)('propagates setup settings %s failures before w
     const result = await read(home);
     return result.ok ? { ...result, recorded: { ...result.recorded, extra: {}, storeUrlEnv: 'BRAIN_DATABASE_URL' } } : result;
   };
-  kit.deps.postgres = async () => ({ ok: true, report: { project: 'second-brain-example', volume: 'second-brain-pg-example', port: 24567, schema_version: 1, applied: [], owner_created: false } });
+  kit.deps.postgres = async () => ({ ok: true, report: { project: 'second-brain-example', volume: 'second-brain-pg-example', port: 24567, schema_version: 1, applied: [], owner_created: false, owner_name: '주인', compose_started: false } });
   kit.deps.settings = {
     get: async () => operation === 'get' ? { ok: false, code: 'DB_LOCKED', message: '잠금 초과' } : { ok: true, key: 'timezone', value: 'Asia/Seoul', source: 'default', updatedAt: null },
     set: async () => ({ ok: false, code: 'DB_UNAVAILABLE', message: '연결 실패' }),
@@ -2028,4 +2042,61 @@ it.each(['get', 'set'] as const)('propagates setup settings %s failures before w
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.failure.code).toBe(operation === 'get' ? 'DB_LOCKED' : 'DB_UNAVAILABLE');
   expect(kit.written).toEqual([]);
+});
+
+it('rejects a PG store path before questions and never prepares SQLite', async () => {
+  const kit = harness({ recorded: true, isTTY: true }); const read = kit.deps.config.read;
+  kit.deps.config.read = async home => { const result = await read(home); return result.ok ? { ...result, recorded: { ...result.recorded, extra: {}, storeUrlEnv: 'BRAIN_DATABASE_URL' } } : result; };
+  const result = await resultOf(['--store-path', '/tmp/legacy.db', '--yes'], kit);
+  expect(result).toMatchObject({ ok: false, failure: { code: 'USAGE', exit: 2 } });
+  expect(kit.prompts.asked).toEqual([]); expect(kit.written).toEqual([]); expect(kit.store.owned).toEqual([]);
+});
+it('fails the PG prerequisite before questions or writes', async () => {
+  const kit = harness({ recorded: true, isTTY: true }); const read = kit.deps.config.read;
+  kit.deps.config.read = async home => { const result = await read(home); return result.ok ? { ...result, recorded: { ...result.recorded, extra: {}, storeUrlEnv: 'BRAIN_DATABASE_URL' } } : result; };
+  kit.deps.orbstack = async () => ({ ok: false, reason: 'stopped', message: 'OrbStack이 꺼져 있습니다', hint: '`orb start`를 실행하세요' });
+  const result = await resultOf([], kit);
+  expect(result).toMatchObject({ ok: false, failure: { code: 'ORBSTACK_UNAVAILABLE', exit: 2 } });
+  expect(kit.prompts.asked).toEqual([]); expect(kit.written).toEqual([]); expect(kit.shimmed).toEqual([]); expect(kit.installed.wrote).toEqual([]);
+});
+
+
+it('warns when transcript replay fails even though the queue stops normally without failures', async () => {
+  const kit = harness({ recorded: true, isTTY: false });
+  const read = kit.deps.config.read;
+  kit.deps.config.read = async home => {
+    const result = await read(home);
+    return result.ok ? { ...result, recorded: { ...result.recorded, extra: {}, storeUrlEnv: 'BRAIN_DATABASE_URL' } } : result;
+  };
+  kit.deps.postgres = async () => ({ ok: true, report: { project: 'second-brain-example', volume: 'second-brain-pg-example', port: 24567, schema_version: 1, applied: [], owner_created: false, owner_name: '주인', compose_started: false } });
+  kit.deps.settings = {
+    get: async () => ({ ok: true, key: 'timezone', value: 'Asia/Seoul', source: 'db', updatedAt: null }),
+    set: async () => { throw new Error('이미 기록된 시간대입니다'); },
+  };
+  const imported = { claimed: 0, completed: 0, retried: 0, failed: 0, released: 0, lost: 0, spooled: 0, stopped: 'empty' as const, replayed: 0, spoolFailed: 1, enqueued: 0, rereadMissing: 0, reextractRedacted: 0, reextractUnreachable: 0 };
+  kit.deps.importTranscripts = async () => imported;
+
+  const result = await resultOf(['--yes'], kit);
+
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.report.postgres?.import).toEqual(imported);
+  expect(kit.output()).toContain('경고: transcript 가져오기에 실패한 일감이 있습니다. 남은 일감은 이후 drain이 이어서 처리합니다');
+  expect(kit.output()).not.toContain('디스크의 transcript를 가져왔습니다');
+});
+
+it.each([new Error('폴더 읽기 실패'), '폴더 읽기 실패 값'])('includes the transcript import exception in its warning: %s', async error => {
+  const kit = harness({ recorded: true, isTTY: false });
+  const read = kit.deps.config.read;
+  kit.deps.config.read = async home => {
+    const result = await read(home);
+    return result.ok ? { ...result, recorded: { ...result.recorded, extra: {}, storeUrlEnv: 'BRAIN_DATABASE_URL' } } : result;
+  };
+  kit.deps.postgres = async () => ({ ok: true, report: { project: 'second-brain-example', volume: 'second-brain-pg-example', port: 24567, schema_version: 1, applied: [], owner_created: false, owner_name: '주인', compose_started: false } });
+  kit.deps.settings = {
+    get: async () => ({ ok: true, key: 'timezone', value: 'Asia/Seoul', source: 'db', updatedAt: null }),
+    set: async () => { throw new Error('이미 기록된 시간대입니다'); },
+  };
+  kit.deps.importTranscripts = async () => { throw error; };
+  expect((await resultOf(['--yes'], kit)).ok).toBe(true);
+  expect(kit.output()).toContain(`경고: transcript를 가져오지 못했습니다. 남은 일감은 이후 drain이 이어서 처리합니다. ${error instanceof Error ? error.message : String(error)}`);
 });

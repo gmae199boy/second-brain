@@ -12,6 +12,9 @@ import { postgresScheduleStore } from './schedules.js';
 export type PostgresStoreOptions = CreatePoolOptions;
 export type PostgresIngestStore = SessionIngestStore & UserStore & HealthStore & SchemaStore;
 export type PostgresStore = PostgresIngestStore & SettingsStore & SessionStore & TranscriptFileStore & WorkStore & ScheduleStore & AttachmentStore & ExtractionStore;
+/** Ordered adapter probes shared by health checks and doctor assembly. */
+export const POSTGRES_DOCTOR_PROBE_IDS = ['writable', 'pg_trgm', 'redaction_cleanup'] as const;
+const [writableProbeId, trgmProbeId, cleanupProbeId] = POSTGRES_DOCTOR_PROBE_IDS;
 export function postgresStore(options: PostgresStoreOptions): PostgresStore {
   const pool = createPool(options);
   const db = new Kysely<PgSchema>({ dialect: new PostgresDialect({ pool }) });
@@ -22,6 +25,25 @@ export function postgresStore(options: PostgresStoreOptions): PostgresStore {
     async checkHealth() {
       try {
         const version = await sql<{ version: string }>`select current_setting('server_version') as version`.execute(db);
+        let writable: import('@second-brain/core').StoreProbe;
+        const client = await pool.connect();
+        try {
+          await client.query('begin');
+          await client.query("insert into brain.settings(key,value,updated_at) values ('doctor.writable', 'probe', '2000-01-01T00:00:00Z') on conflict(key) do update set value=excluded.value");
+          writable = { id: writableProbeId, ok: true, detail: '쓰기 확인 뒤 되돌렸습니다' };
+        } catch (error) {
+          const code = (error as { code?: string }).code;
+          if (!['55P03', '42501', '25006'].includes(code ?? '')) throw error;
+          const locked = code === '55P03';
+          writable = { id: writableProbeId, ok: locked, ...(locked ? { warn: true } : {}), detail: locked ? '잠금 대기 한도를 넘겨 쓰기를 확인하지 못했습니다' : '읽기 전용이거나 쓰기 권한이 없습니다' };
+        } finally {
+          try { await client.query('rollback'); }
+          catch (error) {
+            client.release(error instanceof Error ? error : new Error(String(error)));
+            throw error;
+          }
+          client.release();
+        }
         const trgm = await sql<{ similarity: number }>`select public.similarity('brain','brain') as similarity`.execute(db);
         const cleanup = await sql<{ target_id: string }>`select target_id from brain.work_items
           where kind='table_cleanup' and completed_at is null
@@ -30,8 +52,8 @@ export function postgresStore(options: PostgresStoreOptions): PostgresStore {
         const url = new URL(options.databaseUrl);
         return { ok: true, serverVersion: version.rows[0]!.version, source: {
           location: `${url.hostname}:${url.port}${url.pathname}`,
-          probes: [{ id: 'pg_trgm', ok: trgm.rows[0]?.similarity === 1, detail: 'pg_trgm' },
-            { id: 'redaction_cleanup', ok: true, warn: pending.length > 0, detail: pending.length > 0 ? `저장본 정리가 남은 표: ${pending.join(', ')}` : '저장본 정리가 끝났습니다' }],
+          probes: [writable, { id: trgmProbeId, ok: trgm.rows[0]?.similarity === 1, detail: 'pg_trgm' },
+            { id: cleanupProbeId, ok: true, warn: pending.length > 0, detail: pending.length > 0 ? `저장본 정리가 남은 표: ${pending.join(', ')}` : '저장본 정리가 끝났습니다' }],
         } };
       } catch (error) { return { ...databaseFailure(error), message: describe(error) }; }
     },

@@ -1,3 +1,4 @@
+import type { CommandRunner } from './runtime/command-runner.js';
 import { daemonLiveness } from './daemon/liveness.js';
 import { Command, CommanderError } from 'commander';
 import {
@@ -137,6 +138,7 @@ export interface SpoolCommandContext extends CommandContextBase {
  * writes a harness file and never touches the database.
  */
 export interface StandaloneCommandContext extends CommandContextBase {
+  runner?: CommandRunner;
   env: NodeJS.ProcessEnv;
 }
 
@@ -347,6 +349,7 @@ export type CommandSpec<T = unknown> = DatabaseCommandSpec<T> | StandaloneComman
 export type CreateStore = (options: SqliteStoreOptions) => Store & SchemaStore;
 
 export interface DispatchRuntime {
+  runner?: CommandRunner;
   clock: Clock;
   env?: NodeJS.ProcessEnv;
   stdout?: (text: string) => void;
@@ -434,6 +437,7 @@ export async function dispatch(
   let outcome: Outcome;
   try {
     outcome = await execute(registry, argv, { clock, json, positional: [] }, env, {
+      runner: runtime.runner,
       createStore: runtime.createStore ?? sqliteStore,
       stdin: runtime.stdin ?? (() => readStdin()),
       recordHookArrival: (harness) => recordHookArrival(configHome(env), harness, env['SECOND_BRAIN_PLUGIN_ROOT']),
@@ -499,6 +503,7 @@ export async function dispatch(
 
 /** The parts of the runtime `execute` passes on to a command or to the SDK. */
 interface Wiring {
+  runner?: CommandRunner;
   createStore: CreateStore;
   stdin: () => Promise<string>;
   recordHookArrival: (harness: string) => Promise<void>;
@@ -546,7 +551,7 @@ async function execute(
   // Before the configuration, because this command may be the one that writes
   // it, and before the store, because it has no database to reach.
   if (spec.standalone === true) {
-    return finish(rendering, await spec.run({ env, clock, options, args, stdin, recordHookArrival }), [], []);
+    return finish(rendering, await spec.run({ env, clock, options, args, stdin, recordHookArrival, ...(wiring.runner === undefined ? {} : { runner: wiring.runner }) }), [], []);
   }
 
   const preflight = spec.preflight?.({ clock, options, args, stdin, recordHookArrival });
@@ -588,6 +593,9 @@ async function execute(
     idGen,
     workHandlers,
     schemaVersions: expected,
+    kind: opened.kind,
+    adapterProbeIds: opened.kind === 'postgres' ? opened.adapterProbeIds : undefined,
+    runner: wiring.runner,
   });
   // One spool per invocation, taken off the assembly rather than built again:
   // the spool branch below writes a mark with no brain in its hands (AD-9), and

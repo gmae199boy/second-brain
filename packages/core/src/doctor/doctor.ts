@@ -101,6 +101,9 @@ export type DoctorReadStore = Pick<WorkStore, 'listFailures'> &
   Pick<import('../ports/store.js').SessionStore, 'countUntaggedSessions'>;
 
 export interface DoctorOptions {
+  prerequisites?: readonly DoctorCheckSource[];
+  /** Adapter probes to mark skipped only when a prerequisite fails (AD-10). */
+  adapterProbeIds?: readonly string[];
   /** Schema version this build was made for, for the `schema-version` check. */
   schemaVersions: SchemaVersions;
   /**
@@ -150,6 +153,17 @@ export async function runDoctor(
 ): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
 
+  let failedPrerequisite: string | undefined;
+  for (const source of options.prerequisites ?? []) {
+    const check = failedPrerequisite === undefined ? await registered(source) : { id: source.id, status: 'skip' as const, detail: prereqFailed(failedPrerequisite) };
+    checks.push(check);
+    if (check.status === 'fail' && failedPrerequisite === undefined) failedPrerequisite = check.id;
+  }
+  if (failedPrerequisite !== undefined) {
+    for (const id of ['db', ...(options.adapterProbeIds ?? []), 'schema-version', 'failures', 'untagged', 'transcripts']) checks.push({ id, status: 'skip', detail: prereqFailed(failedPrerequisite) });
+    for (const source of options.checks ?? []) checks.push(await registered(source));
+    return { checks, summary: summarise(checks) };
+  }
   const health = await store.checkHealth();
   if (!health.ok) {
     checks.push({ id: 'db', status: 'fail', code: health.code, detail: health.message });

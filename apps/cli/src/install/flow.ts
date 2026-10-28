@@ -1,3 +1,5 @@
+import type { OrbStackResult } from '../runtime/orbstack.js';
+import { homeResources } from '../config/resources.js';
 import type { PostgresInstallResult, PostgresInstallReport } from './postgres.js';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
@@ -70,7 +72,7 @@ export interface InstallReport {
   /** The configuration folder this install belongs to. */
   home: string;
   config_path: string;
-  store: {
+  store?: {
     path: string;
     /** The version the file ends at. */
     schema_version: number;
@@ -277,6 +279,9 @@ export interface InstallDeps {
   log(line: string): void;
   config: InstallConfigIo;
   store: InstallStore;
+  orbstack?: (env: NodeJS.ProcessEnv) => Promise<OrbStackResult>;
+  postgresDoctor?: (home: string, env: NodeJS.ProcessEnv) => Promise<DoctorReport>;
+  importTranscripts?: (home: string, env: NodeJS.ProcessEnv) => Promise<import('second_brain').BrainDrainReport>;
   postgres?: (home: string, urlEnv: string, env: NodeJS.ProcessEnv) => Promise<PostgresInstallResult>;
   settings?: {
     get(home: string, urlEnv: string, env: NodeJS.ProcessEnv): Promise<SettingResult>;
@@ -403,14 +408,21 @@ export async function runInstall(
   const read = await deps.config.read(home);
   if (!read.ok) return fail({ code: read.code, message: read.message, exit: 2 });
   const recorded = read.recorded;
+  const isPostgres = recorded?.storeUrlEnv !== undefined;
+  if (isPostgres) {
+    if (flags.storePath !== undefined) return fail({ code: 'USAGE', message: 'PG 홈에서는 --store-path를 사용할 수 없습니다', exit: 2 });
+    if (deps.orbstack === undefined) return fail({ code: 'ORBSTACK_UNAVAILABLE', message: 'OrbStack 확인 단계가 없습니다', exit: 2 });
+    const orb = await deps.orbstack(env);
+    if (!orb.ok) return fail({ code: 'ORBSTACK_UNAVAILABLE', message: orb.message, hint: orb.hint, exit: 2 });
+  }
   for (const warning of read.warnings) {
     warnings.push(warning.code);
     deps.log(`경고: ${warning.message}`);
   }
 
-  const store = await chooseStorePath(flags, home, recorded, deps);
+  const store = isPostgres ? { ok: true as const, path: recorded?.storePath ?? defaultStorePath(home) } : await chooseStorePath(flags, home, recorded, deps);
   if (!store.ok) return fail(store.failure);
-  deps.log(`데이터베이스 파일은 ${store.path}입니다`);
+  if (!isPostgres) deps.log(`데이터베이스 파일은 ${store.path}입니다`);
   // Nothing is moved and nothing is removed (Boundaries): a re-run pointed
   // somewhere else makes a second database, and saying so is all that is owed.
   if (recorded?.storePath !== undefined && recorded.storePath !== store.path) {
@@ -435,7 +447,7 @@ export async function runInstall(
   // person who says no here loses nothing, which is the only kind of no worth
   // offering.
   const agreed = await askToProceed(
-    { home, storePath: store.path, filesPath, mirrorPath: mirror.path },
+    { home, storePath: store.path, filesPath, mirrorPath: mirror.path, isPostgres },
     env,
     flags,
     deps,
@@ -458,7 +470,7 @@ export async function runInstall(
   //
   // After `askToProceed` and before `prepare`: it is the last question, and it
   // is only worth asking once everything else is agreed.
-  const collisions = await deps.store.collisions(store.path);
+  const collisions = isPostgres ? [] : await deps.store.collisions(store.path);
   if (collisions.length > 0) {
     for (const group of collisions) {
       const kept = group.projects[0];
@@ -492,7 +504,7 @@ export async function runInstall(
   // The store, the owner and the file store's root before the configuration:
   // what is recorded has to be a place this run has actually managed to use,
   // or one bad `--store-path` would overwrite the path that worked (F3).
-  const migrated = await deps.store.prepare(
+  const migrated = isPostgres ? { ok: true as const, to: 0, applied: [] as readonly string[] } : await deps.store.prepare(
     store.path,
     collisions.length > 0 ? { mergeProjects: true } : {},
   );
@@ -511,7 +523,7 @@ export async function runInstall(
       exit: 1,
     });
   }
-  deps.log(
+  if (!isPostgres) deps.log(
     migrated.applied.length === 0
       ? `스키마는 이미 버전 ${String(migrated.to)}입니다`
       : `${migrated.applied.join(', ')}을 적용했고, 스키마 버전은 ${String(migrated.to)}입니다`,
@@ -525,9 +537,9 @@ export async function runInstall(
   // Straight after the migrations, because the `users` table arrives with one,
   // and before anything else, because every session this brain ingests points
   // at this row (AD-12).
-  const owner = await deps.store.self(store.path);
+  const owner = isPostgres ? { ok: true as const, name: '', created: false } : await deps.store.self(store.path);
   if (!owner.ok) return fail({ code: owner.code, message: owner.message, exit: 1 });
-  deps.log(
+  if (!isPostgres) deps.log(
     owner.created
       ? `이 brain은 ${owner.name}의 것입니다`
       : `이미 ${owner.name}의 것입니다`,
@@ -537,8 +549,11 @@ export async function runInstall(
   if (recorded?.storeUrlEnv !== undefined) {
     if (deps.postgres === undefined) return fail({ code: 'DB_UNAVAILABLE', message: 'PostgreSQL 설치 단계가 없습니다', exit: 1 });
     const pg = await deps.postgres(home, recorded.storeUrlEnv, env);
-    if (!pg.ok) return fail({ code: pg.code, message: pg.message, exit: 1 });
+    if (!pg.ok) return fail({ code: pg.code, message: pg.message });
     postgres = pg.report;
+    postgres.legacy_sqlite_path = await deps.store.exists(store.path) ? store.path : null;
+    if (postgres.legacy_sqlite_path !== null) deps.log(`옛 SQLite 파일 ${store.path}는 지우지 않았고 더 쓰지 않습니다`);
+    owner.name = postgres.owner_name; owner.created = postgres.owner_created;
     deps.log(`PostgreSQL ${postgres.project}: 스키마 ${postgres.schema_version}, 적용 ${postgres.applied.length}건`);
   }
   let timezone = recorded?.timezone ?? TIMEZONE_SETTING.defaultValue;
@@ -587,6 +602,17 @@ export async function runInstall(
   // value, and the one the codec tightens. `config.toml` holds no secret.
   deps.log(`${configFilePath(home)}과 ${envFilePath(home)}를 썼습니다 (.env는 mode 0600)`);
 
+  if (postgres !== undefined) {
+    postgres.import = null;
+    try {
+      if (deps.importTranscripts === undefined) throw new Error('transcript 가져오기 단계가 없습니다');
+      postgres.import = await deps.importTranscripts(home, env);
+      deps.log(postgres.import.stopped === 'unwritable' || postgres.import.failed > 0 || postgres.import.spoolFailed > 0
+        ? '경고: transcript 가져오기에 실패한 일감이 있습니다. 남은 일감은 이후 drain이 이어서 처리합니다'
+        : '디스크의 transcript를 가져왔습니다. 남은 일감은 이후 drain이 이어서 처리합니다');
+    } catch (error) { deps.log(`경고: transcript를 가져오지 못했습니다. 남은 일감은 이후 drain이 이어서 처리합니다. ${error instanceof Error ? error.message : String(error)}`); }
+  }
+
   // The shim before the harnesses, because connecting one means registering
   // this exact path with it.
   const shim = await deps.shim.write(home);
@@ -598,7 +624,8 @@ export async function runInstall(
   // its ten lines are what a person reads to find out what is wrong, and
   // skipping them because a harness file could not be written would hide the
   // half of the install that worked.
-  const report = await deps.store.doctor(home, store.path);
+  if (isPostgres && deps.postgresDoctor === undefined) return fail({ code: 'DB_UNAVAILABLE', message: 'PostgreSQL 점검 단계가 없습니다', exit: 1 });
+  const report = isPostgres ? await deps.postgresDoctor!(home, env) : await deps.store.doctor(home, store.path);
   for (const check of report.checks) deps.log(formatCheck(check));
 
   // A connector's own code wins, because it is the more specific thing that
@@ -676,7 +703,7 @@ export async function runInstall(
     commit: build?.commit ?? null,
     // The build's version when there is one; otherwise the version the file
     // actually ends at, which this run has just measured.
-    schema_version: build?.schema_version ?? migrated.to,
+    schema_version: build?.schema_version ?? postgres?.schema_version ?? migrated.to,
     ...(build?.schema_versions === undefined ? {} : { schema_versions: build.schema_versions }),
     node: shim.node,
     plugin_root: flags.pluginRoot ?? previous?.plugin_root ?? null,
@@ -691,7 +718,7 @@ export async function runInstall(
       config_path: configFilePath(home),
       timezone,
       ...(postgres === undefined ? {} : { postgres }),
-      store: { path: store.path, schema_version: migrated.to, applied: migrated.applied },
+      ...(isPostgres ? {} : { store: { path: store.path, schema_version: migrated.to, applied: migrated.applied } }),
       owner: { name: owner.name, created: owner.created },
       files: { path: filesRoot.path, created: filesRoot.created },
       mirror_path: mirror.path,
@@ -732,6 +759,7 @@ function givenArgs(flags: InstallFlags): Record<string, unknown> {
 interface Settled {
   home: string;
   storePath: string;
+  isPostgres?: boolean;
   filesPath: string;
   mirrorPath: string;
 }
@@ -758,7 +786,10 @@ async function askToProceed(
   deps.log(
     `  설정 파일 ${configFilePath(settled.home)}과 ${envFilePath(settled.home)} (.env는 mode 0600)`,
   );
-  deps.log(
+  if (settled.isPostgres) {
+    const resources = homeResources(settled.home);
+    deps.log(`  PostgreSQL compose 파일 ${join(settled.home, 'postgres', 'compose.yaml')}, project ${resources.project}, 볼륨 ${resources.volume}, 포트 ${resources.port}`);
+  } else deps.log(
     (await deps.store.exists(settled.storePath))
       ? `  이미 있는 데이터베이스 ${settled.storePath}를 마이그레이션합니다`
       : `  데이터베이스 ${settled.storePath}를 새로 만듭니다 (mode 0600)`,

@@ -1,3 +1,5 @@
+import { postgresPrerequisites } from './runtime/orbstack.js';
+import type { CommandRunner } from './runtime/command-runner.js';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -37,6 +39,10 @@ import { fileTranscriptReader } from './runtime/transcript.js';
  * adding a third assembly.
  */
 export interface BrainAssembly<S = Store & SchemaStore> {
+  runner?: CommandRunner;
+  kind?: 'postgres' | 'sqlite';
+  /** Supplied by the selected adapter's factory without eagerly loading it. */
+  adapterProbeIds?: readonly string[];
   /** The configuration folder this brain belongs to (AD-18). */
   home: string;
   /** This invocation's environment, which is where the harness folders are. */
@@ -69,6 +75,10 @@ export function brainDependencies<S extends SessionIngestStore>(assembly: BrainA
   const { home, env, config, store, clock, idGen, workHandlers } = assembly;
   return {
     store,
+    ...(assembly.kind === 'postgres' ? {
+      prerequisites: postgresPrerequisites({ home, env, runner: assembly.runner }),
+      adapterProbeIds: assembly.adapterProbeIds,
+    } : {}),
     // Under `home` and not under a configured path: a write that could not
     // reach the database has to have somewhere to go even when the
     // configuration is the thing that is broken, and `home` is known from the

@@ -57,13 +57,15 @@ try {
   started = true; assert.equal(setup.ok,true); assert.equal(setup.data.postgres.schema_version,1);
   assert.equal((await stat(join(home,'.env'))).mode & 0o777,0o600);
   assert.equal(setup.data.timezone,'Asia/Seoul');
+  const doctor = await cli(['doctor','run','--json']);
+  for (const id of ['orbstack','container','db','writable','pg_trgm','schema-version']) assert(doctor.data.checks.some(check=>check.id===id && check.status==='ok'), id);
   const setting = await cli(['config','set','timezone','America/New_York','--json']);
   assert.equal(setting.data.value,'America/New_York');
   const settingBefore = (await cli(['config','get','timezone','--json'])).data;
   assert.equal(settingBefore.source,'db');
   const secrets = await readFile(join(home,'.env'),'utf8');
   const again = await cli(['setup','run','--yes','--json']);
-  assert.deepEqual(again.data.postgres.applied,[]); assert.equal(again.data.postgres.owner_created,false);
+  assert.equal(again.data.postgres.compose_started,false); assert.deepEqual(again.data.postgres.applied,[]); assert.equal(again.data.postgres.owner_created,false);
   assert.equal(await readFile(join(home,'.env'),'utf8'),secrets);
   assert.equal(again.data.timezone,'America/New_York');
   assert(!/^[ \t]*timezone[ \t]*=/m.test(await readFile(join(home,'config.toml'),'utf8')));

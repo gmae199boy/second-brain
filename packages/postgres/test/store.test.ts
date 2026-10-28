@@ -2,7 +2,7 @@ import { checkSchema } from '@second-brain/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { sessionRedactionContract, fileRedactionContract, schemaStoreContract, storeContract, sessionIngestContract, userStoreContract, sampleEnsureSessionInput, sampleSchemaVersions, sampleSelfUserInput, sampleIngestBatch, sampleSessionToken, sampleTranscriptFileInput, sampleCheckoutInput, sampleSessionKey, sessionMetadataContract, transcriptFileStoreContract } from '@second-brain/core/testing';
-import { postgresStore } from '../src/index.js';
+import { postgresStore, POSTGRES_DOCTOR_PROBE_IDS } from '../src/index.js';
 import { database, subject } from './fixture.js';
 import type { TestDatabase } from '@second-brain/test-db';
 const databases: TestDatabase[] = [];
@@ -292,4 +292,46 @@ describe('schema owner maxima contract', () => {
     const store = postgresStore({ databaseUrl: db.appUrl });
     return { ...store, async close() { await store.close(); await db.drop(); } };
   }));
+});
+
+it('checks writable as brain_app and rolls back every probe row', async () => {
+  const db = await database(); databases.push(db);
+  const store = postgresStore({ databaseUrl: db.appUrl });
+  try {
+    const health = await store.checkHealth();
+    expect(health).toMatchObject({ ok: true, source: { probes: expect.arrayContaining([{ id: 'writable', ok: true, detail: expect.any(String) }]) } });
+    if (health.ok) expect(health.source.probes.map(probe => probe.id)).toEqual(POSTGRES_DOCTOR_PROBE_IDS);
+    expect(await db.rows("select * from brain.settings where key='doctor.writable'")).toEqual([]);
+  } finally { await store.close(); }
+});
+it('warns when the writable probe exceeds its lock budget and still rolls back', async () => {
+  const db = await database(); databases.push(db);
+  const blocker = new pg.Client({ connectionString: db.url }); await blocker.connect();
+  const store = postgresStore({ databaseUrl: db.appUrl, lockTimeoutMs: 40, queryTimeoutMs: 1000 });
+  try {
+    await blocker.query('begin');
+    await blocker.query("insert into brain.settings(key,value,updated_at) values ('doctor.writable','locked','2000-01-01Z')");
+    expect(await store.checkHealth()).toMatchObject({ ok: true, source: { probes: expect.arrayContaining([{ id: 'writable', ok: true, warn: true, detail: expect.any(String) }]) } });
+  } finally { await blocker.query('rollback'); await blocker.end(); await store.close(); }
+  expect(await db.rows("select * from brain.settings where key='doctor.writable'")).toEqual([]);
+});
+it.each(['read-only', 'permission-denied'])('reports a failed writable probe without warning for %s and keeps the other probes', async mode => {
+  const db = await database(); databases.push(db);
+  const url = new URL(db.appUrl);
+  if (mode === 'read-only') url.searchParams.set('options', '-c default_transaction_read_only=on');
+  else await db.query('revoke insert, update on brain.settings from brain_app');
+  const store = postgresStore({ databaseUrl: url.toString() });
+  try {
+    const health = await store.checkHealth();
+    expect(health.ok).toBe(true);
+    if (!health.ok) return;
+    expect(health.source.probes.map(probe => probe.id)).toEqual(POSTGRES_DOCTOR_PROBE_IDS);
+    const writable = health.source.probes.find(probe => probe.id === 'writable');
+    expect(writable).toMatchObject({ ok: false });
+    expect(writable).not.toHaveProperty('warn');
+    expect(health.source.probes.filter(probe => probe.id !== 'writable')).toEqual([
+      { id: 'pg_trgm', ok: true, detail: 'pg_trgm' },
+      { id: 'redaction_cleanup', ok: true, warn: false, detail: '저장본 정리가 끝났습니다' },
+    ]);
+  } finally { await store.close(); }
 });

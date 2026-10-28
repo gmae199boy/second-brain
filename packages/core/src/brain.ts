@@ -114,6 +114,9 @@ export interface BrainDependencies {
    * from whoever does.
    */
   checks?: readonly DoctorCheckSource[];
+  prerequisites?: readonly DoctorCheckSource[];
+  /** Adapter probe IDs supplied by the assembly for failed prerequisites. */
+  adapterProbeIds?: readonly string[];
   /**
    * What this build's drain can do beyond the kinds Core owns itself (AD-21).
    *
@@ -243,6 +246,8 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     repositories,
     machine,
     checks,
+    prerequisites,
+    adapterProbeIds,
     workHandlers,
   } = dependencies;
 
@@ -367,6 +372,8 @@ export function createBrain(dependencies: BrainDependencies): Brain {
           clock,
           folders: transcriptFolders,
           checks,
+          prerequisites,
+          adapterProbeIds,
         }),
     },
     sessions: {

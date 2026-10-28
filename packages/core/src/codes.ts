@@ -211,6 +211,7 @@ const CODES = {
    * The database could not be reached. The Conventions table puts it at 2
    * because a brain with no database could not run the command at all.
    */
+  ORBSTACK_UNAVAILABLE: { exit: 2, retryable: false, meaning: 'OrbStack을 사용할 수 없습니다', hint: 'OrbStack 설치와 실행 상태를 확인하세요' },
   DB_UNAVAILABLE: {
     exit: 2,
     meaning: '데이터베이스에 닿지 못했습니다',

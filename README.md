@@ -798,6 +798,7 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `USAGE` | 2 | 명령을 잘못 불렀습니다 — 모르는 동사, 잘못된 플래그, 쓸 수 없는 인자 |
 | `CONFIG_MISSING` | 2 | 이 폴더에 설정 파일이 없습니다 — 설치가 여기서 돈 적이 없습니다 |
 | `CONFIG_INVALID` | 2 | 설정은 있고, 그 값 하나를 읽거나 쓸 수 없습니다 |
+| `ORBSTACK_UNAVAILABLE` | 2 | OrbStack을 사용할 수 없습니다 |
 | `DB_UNAVAILABLE` | 2 | 데이터베이스에 닿지 못했습니다 |
 | `MESSAGE_NOT_FOUND` | 1 | 지정한 메시지가 없습니다 |
 | `REDACT_TEXT_NOT_FOUND` | 1 | 가릴 글자를 찾지 못했습니다 |
@@ -1087,3 +1088,13 @@ env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" doctor run
 점검은 평소처럼 보고됩니다. 설정이 필요한 명령은 같은 폴더에서 exit 2로
 끝납니다. 설정을 아예 읽지 않는 명령 — `guide` 셋과 `setup run`·`setup connect`
 — 는 그 폴더에서도 평소처럼 돕니다.
+
+PG 홈(`store.url_env` 설정)의 설치는 OrbStack 실행 상태와 Docker context를 먼저
+확인합니다. OrbStack이 없으면 `brew install --cask orbstack` 또는
+https://orbstack.dev 에서 설치하고, 꺼져 있으면 `orb start`로 켜세요.
+`docker context use orbstack`을 선택하고 `DOCKER_HOST`는 해제하세요.
+설치는 정상 컨테이너를 재사용하고 디스크의 transcript를 가져옵니다. 옛 SQLite
+파일은 그대로 남기며 더 쓰지 않습니다. doctor는 OrbStack과 컨테이너부터 검사하고
+선행 검사가 실패하면 DB 검사를 건너뜁니다. 조회 명령은 컨테이너를 띄우지 않습니다.
+`setup uninstall`은 컨테이너를 내리고 볼륨을 남깁니다. 볼륨까지 지우려면
+`setup uninstall --delete-volume --yes`로 동의하세요.
