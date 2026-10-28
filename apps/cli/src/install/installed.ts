@@ -1,3 +1,4 @@
+import type { SchemaVersions } from 'second_brain';
 import { execFile as execFileCallback } from 'node:child_process';
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -26,6 +27,7 @@ export interface BuildIdentity {
   commit: string | null;
   /** The store schema version this build was made for. */
   schema_version: number;
+  schema_versions: SchemaVersions;
 }
 
 /** What an install decided, without the time it decided it. */
@@ -33,6 +35,7 @@ export interface InstalledFacts {
   /** The commit the installed build came from, from `build.json`. */
   commit: string | null;
   schema_version: number;
+  schema_versions?: SchemaVersions;
   /** The node the shim was pinned to — the one a harness hook will run. */
   node: string;
   /** The plugin folder this install came from, or `null` when it did not. */
@@ -81,10 +84,11 @@ export async function readBuildIdentity(): Promise<BuildIdentity | undefined> {
   }
   if (typeof document !== 'object' || document === null) return undefined;
 
-  const { commit, schema_version: schemaVersion } = document as Record<string, unknown>;
+  const { commit, schema_version: schemaVersion, schema_versions: schemaVersions } = document as Record<string, unknown>;
   if (!(commit === null || isCommit(commit))) return undefined;
   if (typeof schemaVersion !== 'number' || !Number.isInteger(schemaVersion)) return undefined;
-  return { commit, schema_version: schemaVersion };
+  if (!isSchemaVersions(schemaVersions)) return undefined;
+  return { commit, schema_version: schemaVersion, schema_versions: schemaVersions };
 }
 
 /**
@@ -108,6 +112,8 @@ export async function readInstalled(home: string): Promise<InstalledRecord | und
   const record = document as Record<string, unknown>;
   const { commit, node, plugin_root: pluginRoot, installed_at: installedAt } = record;
   const schemaVersion = record['schema_version'];
+  const schemaVersions = record['schema_versions'];
+  if (schemaVersions !== undefined && !isSchemaVersions(schemaVersions)) return undefined;
   if (!(commit === null || isCommit(commit))) return undefined;
   if (typeof schemaVersion !== 'number' || !Number.isInteger(schemaVersion)) return undefined;
   if (typeof node !== 'string' || node === '') return undefined;
@@ -119,6 +125,7 @@ export async function readInstalled(home: string): Promise<InstalledRecord | und
   return {
     commit,
     schema_version: schemaVersion,
+    ...(schemaVersions === undefined ? {} : { schema_versions: schemaVersions as SchemaVersions }),
     node,
     plugin_root: pluginRoot,
     installed_at: installedAt,
@@ -353,4 +360,9 @@ async function readText(path: string): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+function isSchemaVersions(value: unknown): value is SchemaVersions {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    && Object.entries(value).every(([owner, version]) => owner.length > 0 && typeof version === 'number' && Number.isInteger(version));
 }

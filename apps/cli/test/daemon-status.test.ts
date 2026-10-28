@@ -1,8 +1,11 @@
+import { runTestInstaller, runPgCommand } from './pg-home.js';
+import { postgresStore, CORE_SCHEMA_VERSION, type PostgresStoreOptions } from 'second_brain/postgres';
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
 import { uptime } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { PgTestClient } from './pg-client.js';
+import { preparePgHome, pgDatabaseUrl, pgAppUrl } from './pg-home.js';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { HOME_ENV } from '../src/config/paths.js';
@@ -16,6 +19,7 @@ const bin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
 const installer = fileURLToPath(new URL('../dist/install.js', import.meta.url));
 const fixture = fileURLToPath(new URL('../../../packages/claude-code/test/fixtures/two-turns.jsonl', import.meta.url));
 function run(args: string[], env: NodeJS.ProcessEnv, script = bin): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  if (args[0] === 'doctor') return runPgCommand(args, env);
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = '';
@@ -33,16 +37,16 @@ async function environment() {
   delete env['BRAIN_TEST_DATABASE_URL'];
   return { home, configDir, env };
 }
-function sessions(home: string): number {
-  const db = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
-  try { return (db.prepare('select count(*) as n from sessions').get() as { n: number }).n; }
-  finally { db.close(); }
+async function sessions(home: string): Promise<number> {
+  const db = new PgTestClient(join(home, 'brain.db'));
+  try { return ((await db.prepare('select count(*) as n from sessions').get()) as { n: number }).n; }
+  finally { (await db.close()); }
 }
 
 describe('daemon status and command drain fallback', () => {
   it.each([[89_000, true, null], [91_000, false, 'stale-heartbeat'], [null, false, 'no-heartbeat']] as const)('agrees across surfaces for heartbeat age %s', async (age, alive, reason) => {
     const { home, configDir, env } = await environment();
-    const install = await run(['--yes'], env, installer);
+    const install = await runTestInstaller(home, env);
     expect(install.code, install.stdout + install.stderr).toBe(0);
     const project = join(configDir, 'projects', '-tmp-status');
     await mkdir(project, { recursive: true });
@@ -63,7 +67,7 @@ describe('daemon status and command drain fallback', () => {
     let refreshing = Promise.resolve();
     // Keep every alive surface near the 89-second boundary, even during slow probes.
     const refreshTimer = alive ? setInterval(() => {
-      refreshing = refreshing.then(() => recordHeartbeat(new Date(Date.now() - 89_000)));
+      refreshing = refreshing.then(async () => (await recordHeartbeat(new Date(Date.now() - 89_000))));
       // Surface filesystem failures below while avoiding an unhandled timer rejection.
       void refreshing.catch(() => undefined);
     }, 50) : undefined;
@@ -71,7 +75,7 @@ describe('daemon status and command drain fallback', () => {
       const listed = await run(['failures', 'list', '--json'], env);
       expect(listed.code, listed.stderr).toBe(0);
       expect(listed.stderr).toBe('');
-      expect(sessions(home)).toBe(alive ? 0 : 1);
+      expect((await sessions(home))).toBe(alive ? 0 : 1);
       const doctor = await run(['doctor', 'run', '--json'], env);
       expect(doctor.code, doctor.stderr).toBe(0);
       const check = JSON.parse(doctor.stdout).data.checks.find((entry: { id: string }) => entry.id === 'daemon');
@@ -92,7 +96,7 @@ describe('daemon status and command drain fallback', () => {
       if (alive) {
         // Explicit drain remains available even while the daemon is alive.
         expect((await run(['queue', 'drain', '--json'], env)).code).toBe(0);
-        expect(sessions(home)).toBe(1);
+        expect((await sessions(home))).toBe(1);
       }
     } finally {
       clearInterval(refreshTimer);

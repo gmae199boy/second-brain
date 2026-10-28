@@ -4,7 +4,7 @@ import { createBrain, type BrainDependencies } from '../src/brain.js';
 import { runDoctor, type DoctorCheck, type DoctorCheckSource } from '../src/doctor/doctor.js';
 import type {
   HealthStore,
-  ReadSchemaVersionResult,
+  ReadSchemaVersionsResult,
   SchemaStore,
   StoreHealth,
   StoreProbe,
@@ -41,7 +41,7 @@ interface FakeStore extends HealthStore, SchemaStore {
  */
 function fakeStore(
   health: StoreHealth,
-  schema: { version?: number | null; result?: ReadSchemaVersionResult } = {},
+  schema: { version?: number | null; result?: ReadSchemaVersionsResult } = {},
 ): FakeStore {
   const schemaStore = memorySchemaStore(
     schema.result !== undefined
@@ -51,7 +51,7 @@ function fakeStore(
   let closes = 0;
   return {
     checkHealth: async () => health,
-    readSchemaVersion: () => schemaStore.readSchemaVersion(),
+    readSchemaVersions: () => schemaStore.readSchemaVersions(),
     close: async () => {
       closes += 1;
     },
@@ -74,22 +74,22 @@ function source(check: DoctorCheck): DoctorCheckSource {
  * whose capture switch is off reports (Boundaries).
  */
 const OPTIONS = {
-  schemaVersion: CURRENT,
+  schemaVersions: { core: CURRENT },
   store: memoryStore(),
   clock: fixedClock(new Date('2026-03-04T05:06:07.000Z')),
 };
 
 describe('runDoctor', () => {
-  it('reports db, vector and the schema version as ok when everything is healthy', async () => {
+  it('reports db, pg_trgm and the schema version as ok when everything is healthy', async () => {
     const report = await runDoctor(
-      fakeStore(healthy({ id: 'vector', ok: true, detail: '0.8.7' })),
+      fakeStore(healthy({ id: 'pg_trgm', ok: true, detail: 'pg_trgm' })),
       OPTIONS,
     );
 
     expect(report.checks).toEqual([
       { id: 'db', status: 'ok', detail: '18.1' },
-      { id: 'vector', status: 'ok', detail: '0.8.7' },
-      { id: 'schema-version', status: 'ok', detail: '2' },
+      { id: 'pg_trgm', status: 'ok', detail: 'pg_trgm' },
+      { id: 'schema-version', status: 'ok', detail: '`core`: 2' },
       // Nothing is failing, and there is no folder to compare against, which
       // is what a build with its capture switch off reports (Boundaries).
       { id: 'failures', status: 'ok', detail: '0건' },
@@ -98,17 +98,17 @@ describe('runDoctor', () => {
     ]);
   });
 
-  it('fails the vector check and names the available version when it is not installed', async () => {
+  it('fails the pg_trgm check and explains when it is not installed', async () => {
     const report = await runDoctor(
       fakeStore(
-        healthy({ id: 'vector', ok: false, detail: 'not installed (available: 0.8.7)' }),
+        healthy({ id: 'pg_trgm', ok: false, detail: 'pg_trgm 확장이 설치되어 있지 않습니다' }),
       ),
       OPTIONS,
     );
 
     expect(report.checks[0]).toEqual({ id: 'db', status: 'ok', detail: '18.1' });
-    expect(report.checks[1]).toMatchObject({ id: 'vector', status: 'fail' });
-    expect(report.checks[1]?.detail).toContain('0.8.7');
+    expect(report.checks[1]).toMatchObject({ id: 'pg_trgm', status: 'fail' });
+    expect(report.checks[1]?.detail).toContain('pg_trgm');
     expect(report.checks[1]?.code).toBeUndefined();
   });
 
@@ -187,7 +187,7 @@ describe('runDoctor', () => {
       { id: 'wal', status: 'ok', detail: 'wal' },
       { id: 'fts5-trigram', status: 'fail', detail: 'no such tokenizer' },
       { id: 'foreign-keys', status: 'ok' },
-      { id: 'schema-version', status: 'ok', detail: '2' },
+      { id: 'schema-version', status: 'ok', detail: '`core`: 2' },
       { id: 'failures', status: 'ok', detail: '0건' },
       { id: 'untagged', status: 'ok', detail: '0건' },
       { id: 'transcripts', status: 'skip', detail: '트랜스크립트 폴더 수집이 꺼져 있습니다' },
@@ -215,7 +215,7 @@ describe('runDoctor', () => {
 
 describe('runDoctor and the schema version', () => {
   it('fails with SCHEMA_MISMATCH and names both versions when they differ', async () => {
-    const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, schemaVersion: 7 });
+    const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, schemaVersions: { core: 7 } });
 
     const schema = report.checks.find((check) => check.id === 'schema-version');
     expect(schema).toMatchObject({ status: 'fail', code: 'SCHEMA_MISMATCH' });
@@ -378,7 +378,7 @@ describe('the summary of a report', () => {
  * they are the in-memory fakes and nothing here says anything about them: what
  * these two tests are about is that the report is wired to the store.
  */
-function otherDependencies(): Omit<BrainDependencies, 'store' | 'schemaVersion' | 'checks'> {
+function otherDependencies(): Omit<BrainDependencies, 'store' | 'schemaVersions' | 'checks'> {
   const instant = new Date('2026-01-02T03:04:05.000Z');
   return {
     clock: fixedClock(instant),
@@ -399,10 +399,10 @@ function brainStore(store: FakeStore): BrainDependencies['store'] {
 
 describe('createBrain', () => {
   it('wires doctor to the store, with the schema version and the checks', async () => {
-    const store = fakeStore(healthy({ id: 'vector', ok: true, detail: '0.8.7' }));
+    const store = fakeStore(healthy({ id: 'pg_trgm', ok: true, detail: 'pg_trgm' }));
     const brain = createBrain({
       store: brainStore(store),
-      schemaVersion: CURRENT,
+      schemaVersions: { core: CURRENT },
       checks: [source({ id: 'shim', status: 'ok' })],
       ...otherDependencies(),
     });
@@ -410,7 +410,7 @@ describe('createBrain', () => {
     const report = await brain.doctor.run();
     expect(report.checks.map((check) => check.id)).toEqual([
       'db',
-      'vector',
+      'pg_trgm',
       'schema-version',
       'failures',
       'untagged',
@@ -425,7 +425,7 @@ describe('createBrain', () => {
   it('registers nothing when no check was handed in', async () => {
     const brain = createBrain({
       store: brainStore(fakeStore(healthy())),
-      schemaVersion: CURRENT,
+      schemaVersions: { core: CURRENT },
       ...otherDependencies(),
     });
 
@@ -456,4 +456,47 @@ describe('꼬리표 없는 세션 진단', () => {
     expect(report.checks).toContainEqual({ id: 'untagged', status: 'fail',
       code: 'DB_UNAVAILABLE', detail: '세션 수를 읽을 수 없습니다' });
   });
+});
+
+const adapterProbeIds = ['adapter-write', 'adapter-search', 'adapter-cleanup'];
+it.each(['orbstack', 'container'])('skips dependent checks after the first failed prerequisite %s without touching the database', async failedId => {
+  const called: string[] = [];
+  const store = fakeStore(healthy());
+  store.checkHealth = async () => { throw new Error('DB must not be called'); };
+  const prerequisite = (id: string): DoctorCheckSource => ({ id, run: async () => { called.push(id); return { id, status: id === failedId ? 'fail' : 'ok' }; } });
+  const report = await runDoctor(store, { ...OPTIONS, adapterProbeIds, prerequisites: [prerequisite('orbstack'), prerequisite('container')], checks: [{ id: 'runtime', run: async () => { called.push('runtime'); return { id: 'runtime', status: 'ok' }; } }] });
+  expect(called).toEqual(failedId === 'orbstack' ? ['orbstack', 'runtime'] : ['orbstack', 'container', 'runtime']);
+  for (const id of ['db', ...adapterProbeIds, 'schema-version', 'failures', 'untagged', 'transcripts']) expect(report.checks).toContainEqual({ id, status: 'skip', detail: `앞선 점검 실패: ${failedId}` });
+  expect(report.checks.map(check => check.id)).toEqual(['orbstack', 'container', 'db', ...adapterProbeIds, 'schema-version', 'failures', 'untagged', 'transcripts', 'runtime']);
+});
+it('does not invent probe rows when a prerequisite fails without declared adapter probes', async () => {
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, prerequisites: [source({ id: 'environment', status: 'fail' })] });
+  expect(report.checks.map(check => check.id)).toEqual(['environment', 'db', 'schema-version', 'failures', 'untagged', 'transcripts']);
+});
+it('omits declared adapter probes when prerequisites pass but the database is unavailable', async () => {
+  const report = await runDoctor(fakeStore({ ok: false, code: 'DB_UNAVAILABLE', message: '연결 실패' }), {
+    ...OPTIONS, adapterProbeIds, prerequisites: [source({ id: 'environment', status: 'ok' })],
+  });
+  expect(report.checks.map(check => check.id)).toEqual(['environment', 'db', 'schema-version', 'failures', 'untagged', 'transcripts']);
+  expect(report.checks[1]).toMatchObject({ id: 'db', status: 'fail', code: 'DB_UNAVAILABLE' });
+  for (const check of report.checks.slice(2)) expect(check).toMatchObject({ status: 'skip', detail: '앞선 점검 실패: db' });
+});
+it('passes prerequisite adapter probe IDs through createBrain to doctor', async () => {
+  const store = fakeStore(healthy());
+  store.checkHealth = async () => { throw new Error('DB must not be called'); };
+  const brain = createBrain({
+    ...otherDependencies(), store: brainStore(store), schemaVersions: { core: CURRENT }, adapterProbeIds,
+    prerequisites: [source({ id: 'environment', status: 'fail' })],
+  });
+  try {
+    const report = await brain.doctor.run();
+    for (const id of adapterProbeIds) expect(report.checks).toContainEqual({ id, status: 'skip', detail: '앞선 점검 실패: environment' });
+  } finally { await brain.close(); }
+});
+it('runs healthy prerequisites before health and adapter probes', async () => {
+  const called: string[] = [];
+  const store = fakeStore(healthy({ id: 'writable', ok: true }));
+  store.checkHealth = async () => { called.push('db'); return healthy({ id: 'writable', ok: true }); };
+  const report = await runDoctor(store, { ...OPTIONS, prerequisites: [{ id: 'orbstack', run: async () => { called.push('orbstack'); return { id: 'orbstack', status: 'ok' }; } }] });
+  expect(called).toEqual(['orbstack', 'db']); expect(report.checks.slice(0, 3).map(c => c.id)).toEqual(['orbstack', 'db', 'writable']);
 });

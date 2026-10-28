@@ -1,16 +1,17 @@
+import type { CommandRunner } from './runtime/command-runner.js';
 import { daemonLiveness } from './daemon/liveness.js';
 import { Command, CommanderError } from 'commander';
 import {
-  BUSY_TIMEOUT_MS,
   DRAIN_BUDGET_MS,
-  SQLITE_SCHEMA_VERSION,
   checkSchema,
   createBrain,
+  createSettingsBrain,
+  type SettingsBrain,
   encodeHookLine,
   encodeTextLine,
   errorLine,
+  isWarningCode,
   spoolSessionIngest,
-  sqliteStore,
   type Brain,
   type BrainDependencies,
   type Clock,
@@ -20,7 +21,6 @@ import {
   type IngestSessionResult,
   type SchemaStore,
   type SpoolCause,
-  type SqliteStoreOptions,
   type Store,
   type WarningCode,
   type WorkHandlers,
@@ -28,7 +28,7 @@ import {
 import { brainDependencies } from './assembly.js';
 import { readConfig, type BrainConfig } from './config/codec.js';
 import { configHome } from './config/paths.js';
-import { failedConfigStore } from './doctor/store.js';
+import { openBrainStore } from './runtime/brain-store.js';
 import { uuidV7IdGen } from './runtime/id-gen.js';
 import { recordHookArrival } from './runtime/hook-arrival.js';
 import { readStdin } from './runtime/stdin.js';
@@ -115,10 +115,10 @@ export interface CommandContext extends CommandContextBase {
  */
 export interface SpoolCommandContext extends CommandContextBase {
   /**
-   * Why the guard refused. Both are warning codes as well, so the envelope
-   * names them in `warnings[]` beside `SPOOLED` (Conventions).
+   * Why the guard refused. The spool keeps this cause; shared warning codes
+   * also appear beside `SPOOLED` in the envelope (Conventions).
    */
-  cause: 'SCHEMA_MISMATCH' | 'DB_UNAVAILABLE';
+  cause: 'SCHEMA_MISMATCH' | 'DB_UNAVAILABLE' | 'DB_LOCKED';
   /** What the guard said, for a branch that wants to pass it on. */
   message: string;
   /**
@@ -136,6 +136,7 @@ export interface SpoolCommandContext extends CommandContextBase {
  * writes a harness file and never touches the database.
  */
 export interface StandaloneCommandContext extends CommandContextBase {
+  runner?: CommandRunner;
   env: NodeJS.ProcessEnv;
 }
 
@@ -272,6 +273,7 @@ export interface CommandSpecBase extends CommandMeta {
    * unset and keeps the envelope it has always had.
    */
   envelope?: false;
+  runSettings?: (context: Omit<CommandContext, 'brain'> & { brain: SettingsBrain }) => Promise<CommandOutcome<unknown>>;
 }
 
 /** A command that talks to the brain, which is nearly all of them. */
@@ -279,7 +281,7 @@ export interface DatabaseCommandSpec<T = unknown> extends CommandSpecBase {
   standalone?: false;
   /**
    * This command writes to the database, so the dispatcher compares the stored
-   * schema version with `SQLITE_SCHEMA_VERSION` first and does not call `run`
+   * owner versions with the store factory's expected versions first and does not call `run`
    * on a mismatch (AD-20). Read commands leave this unset and are never
    * blocked.
    */
@@ -338,19 +340,18 @@ export interface StandaloneCommandSpec<T = unknown> extends CommandSpecBase {
 export type CommandSpec<T = unknown> = DatabaseCommandSpec<T> | StandaloneCommandSpec<T>;
 
 /**
- * How the dispatcher opens the database file. The one implementation is
- * `sqliteStore`; the seam exists so a test can see which lock budget the
- * dispatcher chose for an invocation without opening a file (AD-7).
+ * A test seam for the PostgreSQL connection options selected by dispatch.
  */
-export type CreateStore = (options: SqliteStoreOptions) => Store & SchemaStore;
+export type CreateConnectionStore = NonNullable<import('./runtime/brain-store.js').OpenBrainStoreOptions['createStore']>;
 
 export interface DispatchRuntime {
+  runner?: CommandRunner;
   clock: Clock;
   env?: NodeJS.ProcessEnv;
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
-  /** Defaults to `sqliteStore`, which is what every real invocation uses. */
-  createStore?: CreateStore;
+  /** Defaults to the PostgreSQL adapter, which is what every real invocation uses. */
+  createStore?: CreateConnectionStore;
   /** Reads the hook payload. Defaults to this process's standard input. */
   stdin?: () => Promise<string>;
   /** Mints row ids. Defaults to UUIDv7, which is what every row carries (AD-8). */
@@ -432,7 +433,8 @@ export async function dispatch(
   let outcome: Outcome;
   try {
     outcome = await execute(registry, argv, { clock, json, positional: [] }, env, {
-      createStore: runtime.createStore ?? sqliteStore,
+      runner: runtime.runner,
+      createStore: runtime.createStore,
       stdin: runtime.stdin ?? (() => readStdin()),
       recordHookArrival: (harness) => recordHookArrival(configHome(env), harness, env['SECOND_BRAIN_PLUGIN_ROOT']),
       idGen: runtime.idGen ?? uuidV7IdGen(),
@@ -497,7 +499,8 @@ export async function dispatch(
 
 /** The parts of the runtime `execute` passes on to a command or to the SDK. */
 interface Wiring {
-  createStore: CreateStore;
+  runner?: CommandRunner;
+  createStore: CreateConnectionStore | undefined;
   stdin: () => Promise<string>;
   recordHookArrival: (harness: string) => Promise<void>;
   idGen: IdGen;
@@ -536,7 +539,7 @@ async function execute(
   // Right after the choice and before anything is read, opened or run: a
   // positional argument is an id, and an id that is empty or carries control
   // characters is a broken command line rather than a thing to look up.
-  const unusable = unusableArgument(rendering.positional, args);
+  const unusable = unusableArgument(rendering.positional, spec.runSettings === undefined ? args : args.slice(0, 1));
   if (unusable !== undefined) {
     return failed(rendering, { code: 'USAGE', message: unusable, exit: 2 }, [], []);
   }
@@ -544,7 +547,7 @@ async function execute(
   // Before the configuration, because this command may be the one that writes
   // it, and before the store, because it has no database to reach.
   if (spec.standalone === true) {
-    return finish(rendering, await spec.run({ env, clock, options, args, stdin, recordHookArrival }), [], []);
+    return finish(rendering, await spec.run({ env, clock, options, args, stdin, recordHookArrival, ...(wiring.runner === undefined ? {} : { runner: wiring.runner }) }), [], []);
   }
 
   const preflight = spec.preflight?.({ clock, options, args, stdin, recordHookArrival });
@@ -561,22 +564,17 @@ async function execute(
     ? config.warnings.map((warning) => `경고: ${warning.message}`)
     : [];
 
-  // The file is opened, never created: a runtime command that made an empty
-  // database would report a healthy brain to somebody who has not installed one
-  // (AD-20). A hook on the critical path of a turn gets the shorter lock budget,
-  // because the person is waiting on it (AD-7).
-  //
-  // Without a configuration there is no path to open, so a `diagnostic` command
-  // gets a store that says exactly that: the report then carries the machine
-  // checks as well, which is the point of running at all (Decision 2026-10-14).
-  const store = config.ok
-    ? createStore({
-        path: config.config.storePath,
-        busyTimeoutMs: spec.hook === true ? BUSY_TIMEOUT_MS.turn : BUSY_TIMEOUT_MS.command,
-      })
-    // No `config.message` in here: the `config` check carries it, and the same
-    // sentence printed twice in one report reads as two problems.
-    : failedConfigStore('설정을 읽을 수 없어서 데이터베이스 위치를 알 수 없습니다');
+  const opened = await openBrainStore({ home, env, config,
+    path: spec.hook === true ? 'turn' : 'command', createStore });
+  const { store, expected } = opened;
+  if (spec.runSettings !== undefined && config.ok) {
+    try {
+      const schema = await checkSchema(opened.store, expected);
+      if (!schema.ok) return failed(rendering, { code: schema.code, message: schema.message }, warningCodes, warningLines);
+      return finish(rendering, await spec.runSettings({ brain: createSettingsBrain({ store: opened.store, clock, schemaVersions: expected }), config: config.config, clock, options, args, stdin, recordHookArrival }), warningCodes, warningLines);
+    } finally { await store.close(); }
+  }
+
   // Held as a value rather than spelled inline, because the opportunistic drain
   // below builds a second brain from the same ports over a store of its own —
   // and because the daemon assembles its own rounds from the same function
@@ -589,6 +587,9 @@ async function execute(
     clock,
     idGen,
     workHandlers,
+    schemaVersions: expected,
+    adapterProbeIds: opened.adapterProbeIds,
+    runner: wiring.runner,
   });
   // One spool per invocation, taken off the assembly rather than built again:
   // the spool branch below writes a mark with no brain in its hands (AD-9), and
@@ -600,7 +601,7 @@ async function execute(
       // The write guard of AD-20, in the one place that cannot be skipped by
       // forgetting it: `run` is not called at all when the database is at
       // another version, so no code path of this build can write into one.
-      const schema = await checkSchema(store, SQLITE_SCHEMA_VERSION);
+      const schema = await checkSchema(store, expected);
       if (!schema.ok) {
         // A command whose write can wait writes the mark instead, with no
         // brain and no store in its hands (AD-9). The codes of that outcome
@@ -628,7 +629,7 @@ async function execute(
         return failed(
           rendering,
           { code: schema.code, message: schema.message },
-          [...warningCodes, schema.code],
+          [...warningCodes, ...(isWarningCode(schema.code) ? [schema.code] : [])],
           warningLines,
         );
       }
@@ -654,7 +655,7 @@ async function execute(
     if (shouldDrain(spec, config.ok, outcome) && config.ok &&
       !(await daemonLiveness({ home, clock })).alive) {
       await drainOpportunistically(
-        { ...dependencies, createStore, storePath: config.config.storePath },
+        { ...dependencies, createStore, home, env, config },
         stderr,
       );
     }
@@ -701,9 +702,11 @@ function shouldDrain(
 
 /** What the drain at the end of a command is built from. */
 type OpportunisticDrain = BrainDependencies & {
-  createStore: CreateStore;
+  createStore: CreateConnectionStore | undefined;
   /** Where the database is, from the configuration this invocation read. */
-  storePath: string;
+  home: string;
+  env: NodeJS.ProcessEnv;
+  config: import('./config/codec.js').ReadConfigResult;
 };
 
 /**
@@ -733,13 +736,15 @@ async function drainOpportunistically(
   options: OpportunisticDrain,
   stderr: (text: string) => void,
 ): Promise<void> {
-  const { createStore, storePath, ...dependencies } = options;
+  const { createStore, home, env, config, ...dependencies } = options;
   let store: (Store & SchemaStore) | undefined;
   try {
-    store = createStore({ path: storePath, busyTimeoutMs: DRAIN_BUDGET_MS.opportunistic });
-    const schema = await checkSchema(store, SQLITE_SCHEMA_VERSION);
+    const opened = await openBrainStore({ home, env, config, path: 'drain', lockTimeoutMs: DRAIN_BUDGET_MS.opportunistic, createStore });
+    store = opened.store;
+    const expected = opened.expected;
+    const schema = await checkSchema(store, expected);
     if (!schema.ok) return;
-    const brain = createBrain({ ...dependencies, store });
+    const brain = createBrain({ ...dependencies, store, schemaVersions: expected });
     await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.opportunistic });
   } catch (error) {
     stderr(`${encodeTextLine(`brain: 밀린 일 처리 중 오류: ${errorLine(error)}`)}\n`);

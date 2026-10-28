@@ -1,3 +1,5 @@
+import type { AddWorkInput } from '../ports/store.js';
+import { tableCleanupWork, type CleanupTable } from '../maintenance/table-cleanup-work.js';
 import type { Message } from './message.js';
 import type { ToolNote } from './tool-note.js';
 import type { Redaction } from './redaction.js';
@@ -10,6 +12,7 @@ export interface RedactionCurrent {
 }
 export type RedactionRequest = { mode: 'text'; text: string; kind: string } | { mode: 'detected' };
 export interface RedactionPlan {
+  cleanup: AddWorkInput[];
   body: string;
   toolNotes: { id: string; target: string }[];
   redactions: Redaction[];
@@ -42,6 +45,10 @@ export function planRedaction(
       .map(({ note, masked }) => ({ id: note.id, target: masked.text })),
     redactions: [...records(body.spans, current.message.id, null),
       ...notes.flatMap(({ note, masked }) => records(masked.spans, null, note.id))],
+    cleanup: ([...(body.spans.length > 0 ? ['messages' as const] : []),
+      ...(toolNoteSpans > 0 ? ['tool_notes' as const] : []),
+      ...(body.spans.length + toolNoteSpans > 0 ? ['chunks' as const] : [])] satisfies CleanupTable[])
+      .map(table => tableCleanupWork({ id: dependencies.newId(), table, at: dependencies.now() })),
     bodySpans: body.spans.length, toolNoteSpans,
   };
 }

@@ -6,7 +6,7 @@ import * as timers from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as liveness from '../src/daemon/liveness.js';
 import { startDaemon, stopDaemon, restartDaemon, uninstallDaemon } from '../src/daemon/control.js';
-import { DAEMON_LABEL, daemonPlistPath, type Launchctl, type LaunchctlResult } from '../src/daemon/launchd.js';
+import { daemonLabel, daemonPlistPath, type Launchctl, type LaunchctlResult } from '../src/daemon/launchd.js';
 import { tempHomes } from './temp-home.js';
 
 vi.mock('node:timers/promises', async (importOriginal) => ({
@@ -17,7 +17,7 @@ const temporary = tempHomes();
 afterEach(async () => { vi.restoreAllMocks(); await temporary.cleanup(); });
 async function world(loaded = true) {
   const home = await temporary.create('brain-control-');
-  const env = { SECOND_BRAIN_LAUNCH_AGENTS: join(home, 'agents') };
+  const env = { SECOND_BRAIN_HOME: home, SECOND_BRAIN_LAUNCH_AGENTS: join(home, 'agents') };
   const calls: string[] = [];
   let failure: LaunchctlResult = { ok: true };
   const launchctl: Launchctl = {
@@ -130,7 +130,7 @@ describe('daemon control', () => {
     const kit = await world(); const probe = observed();
     probe.mockResolvedValueOnce({ alive: true, pid: 4242, commit: 'a'.repeat(40), heartbeatAt: new Date() });
     expect(await restartDaemon({ ...kit.options, plistChanged: false, expectCommit: commit })).toEqual({ ok: true, method: 'signal', pid: 4243, commit });
-    expect(kit.calls).toEqual([`kill SIGTERM ${DAEMON_LABEL}`]);
+    expect(kit.calls).toEqual([`kill SIGTERM ${daemonLabel(kit.options.env)}`]);
     expect(await restartDaemon({ ...kit.options, plistChanged: true, expectCommit: commit })).toEqual({ ok: true, method: 'reload', pid: 4243, commit });
     expect(kit.calls.slice(1)).toEqual(['bootout', 'bootstrap']);
   });
@@ -156,7 +156,7 @@ describe('daemon control', () => {
       ok: true, method: 'signal', pid: process.pid, commit,
     });
     expect(pause).toHaveBeenCalledExactlyOnceWith(200);
-    expect(kit.calls).toEqual([`kill SIGTERM ${DAEMON_LABEL}`]);
+    expect(kit.calls).toEqual([`kill SIGTERM ${daemonLabel(kit.options.env)}`]);
   });
   it('passes failed kill diagnostics through without polling', async () => {
     const kit = await world(); kit.fail(); const probe = observed();
@@ -211,7 +211,7 @@ describe('daemon uninstall', () => {
     });
     const signal = vi.spyOn(process, 'kill');
     expect(await uninstallDaemon({ ...kit.options, isAlive: () => ++checks < 2 })).toEqual({
-      label: DAEMON_LABEL, plist_path: files.plist, unloaded: true, plist_removed: true, removed: files.removed,
+      label: daemonLabel(kit.options.env), plist_path: files.plist, unloaded: true, plist_removed: true, removed: files.removed,
     });
     for (const path of [...files.removed, files.plist]) expect(existsSync(path)).toBe(false);
     for (const path of files.kept) expect(await readFile(path, 'utf8')).toBe('keep');
@@ -221,7 +221,7 @@ describe('daemon uninstall', () => {
   });
   it('succeeds with no registration or traces', async () => {
     const kit = await world(false);
-    expect(await uninstallDaemon(kit.options)).toEqual({ label: DAEMON_LABEL,
+    expect(await uninstallDaemon(kit.options)).toEqual({ label: daemonLabel(kit.options.env),
       plist_path: daemonPlistPath(kit.options.env), unloaded: false, plist_removed: false, removed: [] });
     expect(kit.calls).toEqual(['print']);
   });

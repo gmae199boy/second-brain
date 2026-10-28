@@ -86,6 +86,7 @@ describe('runtimeChecks', () => {
   it('registers the machine checks, in the order they are reported', () => {
     expect(runtimeChecks({ home: '/nowhere' }).map((source) => source.id)).toEqual([
       'config',
+      'config-timezone',
       'shim',
       'node-path',
       'node-version',
@@ -982,4 +983,15 @@ describe('last-hook check', () => {
     await writeFile(join(home, 'installed.json'), JSON.stringify({ commit: 'a'.repeat(40), schema_version: 6, node: process.execPath, plugin_root: '/installed/plugin', installed_at: new Date().toISOString() }));
     expect(await hookCheck(home)).toMatchObject({ status: 'warn', code: 'PLUGIN_DUPLICATE', detail: expect.stringContaining('/installed/plugin') });
   });
+});
+
+it('warns only when a PG home still has timezone in its file', async () => {
+  const home = await tempHome();
+  const check = () => runtimeChecks({ home }).find(source => source.id === 'config-timezone')!.run();
+  await writeFile(configFilePath(home), 'schema_version = 1\ntimezone = 42\n[store]\nurl_env = "BRAIN_DATABASE_URL"\n');
+  expect(await check()).toMatchObject({ status: 'warn', detail: expect.stringContaining('DB') });
+  await writeConfig(home, { storeUrlEnv: 'BRAIN_DATABASE_URL' });
+  expect(await check()).toMatchObject({ status: 'ok' });
+  await writeConfig(home, { timezone: 'Europe/Paris' });
+  expect(await check()).toMatchObject({ status: 'ok' });
 });

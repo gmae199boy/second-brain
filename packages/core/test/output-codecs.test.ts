@@ -356,3 +356,11 @@ describe('the hook and text encoders', () => {
     expect(encodeTextLine('password: hunter2x')).toBe('password: [REDACTED:password]');
   });
 });
+
+it('renders NUL visibly in text while JSON preserves its original escape', async () => {
+  const { encodeTextLine, encodeHookOutput } = await import('../src/output/codecs.js');
+  const original = 'before\u0000after';
+  expect(encodeTextLine(original)).toBe('before\\u0000after');
+  expect(encodeHookLine(original)).toBe('before\\u0000after');
+  expect(JSON.parse(encodeHookOutput({ body: original }))).toEqual({ body: original });
+});

@@ -61,12 +61,12 @@ export function encodeHookOutput(output: unknown): string {
 
 /** One line of a hook's stderr — the only thing a hook may say (AD-6). */
 export function encodeHookLine(text: string): string {
-  return maskOutputText(text);
+  return maskOutputText(text).replaceAll('\u0000', '\\u0000');
 }
 
 /** One line of ordinary human-readable stdout or stderr. */
 export function encodeTextLine(line: string): string {
-  return maskOutputText(line);
+  return maskOutputText(line).replaceAll('\u0000', '\\u0000');
 }
 
 export const OUTPUT_CODECS: readonly OutputCodec[] = [

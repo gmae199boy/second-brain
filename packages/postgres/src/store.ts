@@ -1,175 +1,69 @@
-import type {
-  HealthStore,
-  ReadSchemaVersionResult,
-  SchemaStore,
-  StoreHealth,
-} from '@second-brain/core';
+import { postgresSettingsStore } from './settings.js';
+import type { SettingsStore, AttachmentStore, ExtractionStore, HealthStore, SchemaStore, SessionIngestStore, SessionStore, TranscriptFileStore, WorkStore, ScheduleStore, UserStore } from '@second-brain/core';
 import { Kysely, PostgresDialect, sql } from 'kysely';
-import { createPool, describe, type CreatePoolOptions } from './connect.js';
-
-/**
- * Options of the store factory; the connection half is shared (AD-3). The
- * per-query budget is part of it, because the caller — not this adapter — knows
- * whether its queries answer at once or legitimately run long.
- */
+import { createPool, databaseFailure, describe, type CreatePoolOptions, type PgSchema, type PgConnect } from './connect.js';
+import { postgresSessionStore } from './sessions.js';
+import { postgresUserStore } from './users.js';
+import { postgresTranscriptFileStore } from './transcript-files.js';
+import { postgresAttachmentStore } from './attachments.js';
+import { postgresExtractionStore } from './extractions.js';
+import { postgresWorkStore } from './work.js';
+import { postgresScheduleStore } from './schedules.js';
 export type PostgresStoreOptions = CreatePoolOptions;
-
-/** Shape of the version row the health probe reads. */
-interface VersionRow {
-  server_version: string;
-}
-
-interface VectorRow {
-  installed: string | null;
-  available: string | null;
-}
-
-interface SchemaVersionRow {
-  version: number;
-  applied_at: Date;
-}
-
-/**
- * `undefined_table`. An empty database has no `schema_version`, because the
- * table arrives with the first migration, and that is a version of `null`
- * rather than an unreachable database.
- */
-const UNDEFINED_TABLE = '42P01';
-
-/**
- * Build a Postgres-backed `HealthStore`. The pool and the Kysely instance are
- * created here, inside the factory, so importing this module connects to
- * nothing (AD-3).
- *
- * It implements the health and schema-version capabilities: the session tables
- * arrive with the first migration, and the day this adapter implements
- * `SessionStore` too the return type widens to `Store` and the session contract
- * runs against it. No stub methods in the meantime (AD-10).
- */
-export function postgresStore(options: PostgresStoreOptions): HealthStore & SchemaStore {
+export type PostgresIngestStore = SessionIngestStore & UserStore & HealthStore & SchemaStore;
+export type PostgresStore = PostgresIngestStore & SettingsStore & SessionStore & TranscriptFileStore & WorkStore & ScheduleStore & AttachmentStore & ExtractionStore;
+/** Ordered adapter probes shared by health checks and doctor assembly. */
+export const POSTGRES_DOCTOR_PROBE_IDS = ['writable', 'pg_trgm', 'redaction_cleanup'] as const;
+const [writableProbeId, trgmProbeId, cleanupProbeId] = POSTGRES_DOCTOR_PROBE_IDS;
+export function postgresStore(options: PostgresStoreOptions): PostgresStore {
   const pool = createPool(options);
-
-  const db = new Kysely<Record<string, never>>({
-    dialect: new PostgresDialect({ pool }),
-  });
-
+  const db = new Kysely<PgSchema>({ dialect: new PostgresDialect({ pool }) });
+  const connect: PgConnect = () => ({ ok: true, connection: { db } });
   return {
-    async checkHealth(): Promise<StoreHealth> {
+    ...postgresSettingsStore(connect), ...postgresExtractionStore(connect), ...postgresWorkStore(connect), ...postgresScheduleStore(connect), ...postgresSessionStore(connect), ...postgresUserStore(connect),
+    ...postgresTranscriptFileStore(connect), ...postgresAttachmentStore(connect),
+    async checkHealth() {
       try {
-        const version = await sql<VersionRow>`
-          select current_setting('server_version') as server_version
-        `.execute(db);
-        const vector = await sql<VectorRow>`
-          select (select extversion
-                    from pg_extension
-                   where extname = 'vector') as installed,
-                 (select default_version
-                    from pg_available_extensions
-                   where name = 'vector') as available
-        `.execute(db);
-
-        const versionRow = version.rows[0];
-        const vectorRow = vector.rows[0];
-        if (versionRow === undefined || vectorRow === undefined) {
-          return {
-            ok: false,
-            code: 'DB_UNAVAILABLE',
-            message: 'the server answered the health probe with no rows',
-          };
+        const version = await sql<{ version: string }>`select current_setting('server_version') as version`.execute(db);
+        let writable: import('@second-brain/core').StoreProbe;
+        const client = await pool.connect();
+        try {
+          await client.query('begin');
+          await client.query("insert into brain.settings(key,value,updated_at) values ('doctor.writable', 'probe', '2000-01-01T00:00:00Z') on conflict(key) do update set value=excluded.value");
+          writable = { id: writableProbeId, ok: true, detail: '쓰기 확인 뒤 되돌렸습니다' };
+        } catch (error) {
+          const code = (error as { code?: string }).code;
+          if (!['55P03', '42501', '25006'].includes(code ?? '')) throw error;
+          const locked = code === '55P03';
+          writable = { id: writableProbeId, ok: locked, ...(locked ? { warn: true } : {}), detail: locked ? '잠금 대기 한도를 넘겨 쓰기를 확인하지 못했습니다' : '읽기 전용이거나 쓰기 권한이 없습니다' };
+        } finally {
+          try { await client.query('rollback'); }
+          catch (error) {
+            client.release(error instanceof Error ? error : new Error(String(error)));
+            throw error;
+          }
+          client.release();
         }
-
-        return {
-          ok: true,
-          serverVersion: versionRow.server_version,
-          source: {
-            location: locationOf(options.databaseUrl),
-            probes: [
-              {
-                id: 'vector',
-                ok: vectorRow.installed !== null,
-                detail: vectorDetail(vectorRow),
-              },
-            ],
-          },
-        };
-      } catch (error) {
-        return {
-          ok: false,
-          code: 'DB_UNAVAILABLE',
-          message: describe(error),
-        };
-      }
+        const trgm = await sql<{ similarity: number }>`select public.similarity('brain','brain') as similarity`.execute(db);
+        const cleanup = await sql<{ target_id: string }>`select target_id from brain.work_items
+          where kind='table_cleanup' and completed_at is null
+          union select target_id from brain.failures where stage='table_cleanup' and resolved_at is null`.execute(db);
+        const pending = cleanup.rows.map(row => row.target_id).sort();
+        const url = new URL(options.databaseUrl);
+        return { ok: true, serverVersion: version.rows[0]!.version, source: {
+          location: `${url.hostname}:${url.port}${url.pathname}`,
+          probes: [writable, { id: trgmProbeId, ok: trgm.rows[0]?.similarity === 1, detail: 'pg_trgm' },
+            { id: cleanupProbeId, ok: true, warn: pending.length > 0, detail: pending.length > 0 ? `저장본 정리가 남은 표: ${pending.join(', ')}` : '저장본 정리가 끝났습니다' }],
+        } };
+      } catch (error) { return { ...databaseFailure(error), message: describe(error) }; }
     },
-
-    async readSchemaVersion(): Promise<ReadSchemaVersionResult> {
+    async readSchemaVersions() {
       try {
-        const stored = await sql<SchemaVersionRow>`
-          select version, applied_at from schema_version
-        `.execute(db);
-
-        const row = stored.rows[0];
-        if (row === undefined) {
-          // The table is there but empty: a migration that created it and died
-          // before recording a version. Still "no version yet".
-          return { ok: true, version: null };
-        }
-        return {
-          ok: true,
-          version: { version: row.version, appliedAt: row.applied_at },
-        };
-      } catch (error) {
-        if (sqlState(error) === UNDEFINED_TABLE) {
-          return { ok: true, version: null };
-        }
-        return { ok: false, code: 'DB_UNAVAILABLE', message: describe(error) };
-      }
+        const read = await sql<{ owner: string; version: number; applied_at: string }>`select distinct on (owner) owner, version, applied_at from brain.schema_migrations order by owner, version desc`.execute(db);
+        return { ok: true, versions: Object.fromEntries(read.rows.map(row =>
+          [row.owner, { version: row.version, appliedAt: new Date(row.applied_at) }])) };
+      } catch (error) { return databaseFailure(error); }
     },
-
-    async close(): Promise<void> {
-      await db.destroy();
-    },
+    async close() { await db.destroy(); },
   };
-}
-
-/**
- * What the vector probe says it found. The wording is the one `doctor run`
- * has always printed, because the probe now carries the sentence that used to
- * be composed in Core — and the line a person reads must not change just
- * because the shape behind it did.
- */
-function vectorDetail(vector: VectorRow): string {
-  if (vector.installed !== null) return vector.installed;
-  return vector.available !== null
-    ? `not installed (available: ${vector.available})`
-    : 'not installed (not available on this server)';
-}
-
-/**
- * Where this source lives, for a human reading a report: host, port and
- * database. Built by hand from the parsed URL rather than by printing it,
- * because the URL carries the password and `location` is printed.
- */
-function locationOf(databaseUrl: string): string {
-  let url: URL;
-  try {
-    url = new URL(databaseUrl);
-  } catch {
-    return 'postgres';
-  }
-
-  const host = url.port === '' ? url.hostname : `${url.hostname}:${url.port}`;
-  const database = url.pathname.replace(/^\//, '');
-  if (host === '') return database === '' ? 'postgres' : database;
-  return database === '' ? host : `${host}/${database}`;
-}
-
-/**
- * The five-character SQLSTATE `pg` puts on a server-side error, or `undefined`
- * when the failure never reached the server. Kysely wraps nothing here, so the
- * code sits on the error itself.
- */
-function sqlState(error: unknown): string | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const code: unknown = (error as { code?: unknown }).code;
-  return typeof code === 'string' ? code : undefined;
 }

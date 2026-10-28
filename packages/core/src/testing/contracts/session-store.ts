@@ -6,7 +6,7 @@ import type {
 } from '../../domain/ingest-batch.js';
 import type { Message } from '../../domain/message.js';
 import type { Session } from '../../domain/session.js';
-import type { SessionStore, UserStore, WorkStore } from '../../ports/store.js';
+import type { SessionStore, SessionIngestStore, UserStore, WorkStore } from '../../ports/store.js';
 import {
   assertEqual,
   assertNotOk,
@@ -36,135 +36,13 @@ import {
  */
 export type SessionStoreSubject = SessionStore & UserStore & Pick<WorkStore, "listOpenWorkTargets">;
 
-/**
- * The session capability: find-or-create, an idempotent batch write, and a read
- * by session token. Every case gets a fresh, empty subject.
- *
- * A message carries no number of its own (migration 0006), so the cases hold
- * every store to the two rules that replaced one: a message is identified by
- * `(session, harness message id)`, and it is read back in the order it was
- * uttered. The fixture's four messages are 2026-01-02T03:04:05, 03:04:07,
- * 03:05:01 and 03:05:20, so a case can carry them in any order it likes and
- * still know which order they come back in.
- */
-export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
+export type SessionMetadataSubject = Omit<SessionStore, 'redactMessage'> & UserStore & Pick<WorkStore, 'listOpenWorkTargets'>;
+export type SessionRedactionSubject = Pick<SessionStore, 'ensureSession' | 'ingest' | 'readSession' | 'redactMessage'> & UserStore;
+
+export type SessionIngestSubject = Pick<SessionStore, 'ensureSession' | 'findSession' | 'ingest' | 'readSession'> & UserStore;
+export function sessionIngestContract(): ContractCase<SessionIngestSubject>[] {
   return [
-    contractCase<SessionStoreSubject>('다시 읽을 세션은 null과 다른 버전을 포함하고 다른 하네스를 제외한다',
-      async (make) => withSubject(make, async (store) => {
-        await owner(store);
-        assertOk(await store.ensureSession(sampleEnsureSessionInput()), '세션 생성');
-        let read = await store.listStaleSessions({ harness: sampleSessionKey.harness, parserVersion: 'current' });
-        assertOk(read, '목록 읽기');
-        assertEqual(read.sessions.length, 1, 'null 버전 포함');
-        assertEqual(read.sessions[0]?.harnessSessionId, sampleSessionKey.harnessSessionId, '세션 식별자');
-        assertOk(await store.ingest({ ...sampleIngestBatch(), tracking: { ...sampleIngestBatch().tracking, parserVersion: 'current' } }), '버전 기록');
-        read = await store.listStaleSessions({ harness: sampleSessionKey.harness, parserVersion: 'current' });
-        assertOk(read, '같은 버전 조회');
-        assertEqual(read.sessions.length, 0, '현재 버전 제외');
-        read = await store.listStaleSessions({ harness: sampleSessionKey.harness, parserVersion: 'next' });
-        assertOk(read, '다른 버전 조회');
-        assertEqual(read.sessions.length, 1, '다른 버전 포함');
-        read = await store.listStaleSessions({ harness: 'another-harness', parserVersion: 'next' });
-        assertOk(read, '다른 하네스 조회');
-        assertEqual(read.sessions.length, 0, '다른 하네스 제외');
-      })),
-    contractCase<SessionStoreSubject>(
-      'tag evidence is preserved and identity candidates exclude known evidence and prior work',
-      async (make) => withSubject(make, async (store) => {
-        await owner(store);
-        const first = await store.ensureSession(sampleEnsureSessionInput({
-          checkout: sampleCheckoutInput(), firstCwd: '/demo/first', tagSource: 'ancestor',
-        }));
-        assertOk(first, '세션 생성 실패');
-        assertEqual(first.session.firstCwd, '/demo/first', '첫 cwd 누락');
-        assertEqual(first.session.tagSource, 'ancestor', '출처 누락');
-        const repeated = await store.fillSessionTags({ key: sampleSessionKey, checkout: null,
-          firstCwd: '/demo/changed', tagSource: null });
-        assertOk(repeated, '근거 보존 실패');
-        assertEqual(repeated.session.firstCwd, '/demo/first', '첫 cwd 변경');
-        assertEqual(repeated.session.tagSource, 'ancestor', '출처 변경');
-        const key = { ...sampleSessionKey, harnessSessionId: 'empty-evidence' };
-        assertOk(await store.ensureSession(sampleEnsureSessionInput({ id: otherSessionId, key })), '빈 세션 생성');
-        let candidates = await store.listIdentityCandidates();
-        assertOk(candidates, '목록 읽기');
-        assertEqual(candidates.sessions.length, 1, '재판단 대상 수');
-        const filled = await store.fillSessionTags({ key, checkout: null, tagSource: null, firstCwd: '/demo/outside' });
-        assertOk(filled, '근거 채우기');
-        assertTrue(!filled.filled, '꼬리표 없는 근거가 꼬리표로 집계됨');
-        assertEqual(filled.session.firstCwd, '/demo/outside', '근거 누락');
-        candidates = await store.listIdentityCandidates();
-        assertOk(candidates, '목록 재읽기');
-        assertEqual(candidates.sessions.length, 0, '근거 있는 세션 재판단');
-        const count = await store.countUntaggedSessions();
-        assertOk(count, '꼬리표 없는 수');
-        assertEqual(count.count, 1, '꼬리표 없는 수 오류');
-        const workKey = { ...sampleSessionKey, harnessSessionId: 'prior-work' };
-        assertOk(await store.ensureSession(sampleEnsureSessionInput({
-          id: '01940000-0000-7000-8000-000000000991', key: workKey,
-          identityWork: { id: '01940000-0000-7000-8000-000000000992',
-            kind: 'session_identity', targetKind: 'session', targetId: 'demo:prior-work',
-            createdAt: new Date('2026-01-01T00:00:00.000Z'), nextAttemptAt: new Date('2026-01-01T00:00:00.000Z') },
-        })), '일감 있는 세션');
-        candidates = await store.listIdentityCandidates();
-        assertOk(candidates, '일감 제외 읽기');
-        assertEqual(candidates.sessions.length, 0, '이미 일감 있는 세션 재판단');
-      }),
-    ),
-    contractCase<SessionStoreSubject>(
-      'redaction changes body and notes atomically, refuses missing text, and survives ingest replay',
-      async (make) => withSubject(make, async (store) => {
-        await owner(store);
-        assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensure');
-        const original = sampleIngestBatch();
-        const message = original.messages[0]!;
-        const note = original.toolNotes[0]!;
-        const batch = { ...original, messages: [{ ...message, body: 'hunter2-x hunter2-x keep-this' }],
-          toolNotes: [{ ...note, harnessMessageId: message.harnessMessageId, target: 'hunter2-x hunter2-x keep-this' }] };
-        assertOk(await store.ingest(batch), 'ingest');
-        let sequence = 100;
-        const redact = (text: string, messageId = message.id) => store.redactMessage({ messageId,
-          plan: (current) => {
-            const plan = planRedaction(current, { mode: 'text', text, kind: 'manual' }, {
-              now: () => new Date('2026-10-21T00:00:00.000Z'), newId: () => `01940000-0000-7000-8000-${String(sequence++).padStart(12, '0')}` });
-            if (!('refused' in plan)) {
-              for (const record of plan.redactions) {
-                assertTrue(record.messageId === current.message.id && record.toolNoteId === null
-                  || record.messageId === null && current.toolNotes.some((row) => row.id === record.toolNoteId), 'record points to a missing target');
-              }
-            }
-            return plan;
-          } });
-        const missing = await redact('absent');
-        assertNotOk(missing, 'missing text succeeded');
-        assertEqual(missing.code, 'REDACT_TEXT_NOT_FOUND', 'missing text code');
-        const unknown = await redact('hunter2-x', '01940000-0000-7000-8000-999999999999');
-        assertNotOk(unknown, 'unknown message succeeded');
-        assertEqual(unknown.code, 'MESSAGE_NOT_FOUND', 'unknown message code');
-        const before = await store.readSession(sampleSessionToken);
-        assertOk(before, 'read original');
-        assertEqual(before.messages[0]?.body, batch.messages[0]?.body, 'refusal changed body');
-        const result = await redact('hunter2-x');
-        assertOk(result, 'redact');
-        assertEqual(result.bodySpans, 2, 'body count');
-        assertEqual(result.toolNoteSpans, 2, 'note count');
-        assertEqual(result.toolNotesChanged, 1, 'changed note count');
-        const first = await store.readSession(sampleSessionToken);
-        assertOk(first, 'first read');
-        assertEqual(first.messages[0]?.body, '[REDACTED:manual] [REDACTED:manual] keep-this', 'body replacement');
-        assertEqual(first.toolNotes[0]?.target, first.messages[0]?.body, 'note replacement');
-        assertOk(await redact('keep-this'), 'second redaction');
-        const second = await store.readSession(sampleSessionToken);
-        assertOk(second, 'second read');
-        const replay = await store.ingest(batch);
-        assertOk(replay, 'replay');
-        assertEqual(replay.inserted.messages + replay.inserted.toolNotes, 0, 'replay inserts');
-        const after = await store.readSession(sampleSessionToken);
-        assertOk(after, 'read replay');
-        assertEqual(after.messages[0]?.body, second.messages[0]?.body, 'replay revived body');
-        assertEqual(after.toolNotes[0]?.target, second.toolNotes[0]?.target, 'replay revived target');
-      }),
-    ),
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'project lookup uses the supplied identity key across display identities',
       async (make) => withSubject(make, async (store) => {
         await owner(store);
@@ -181,48 +59,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
         assertEqual(second.session.projectId, first.session.projectId, 'comparison key split the project');
       }),
     ),
-    contractCase<SessionStoreSubject>(
-      'identity work opens only when ensureSession creates a session',
-      async (make) => withSubject(make, async (store) => {
-        await owner(store);
-        const now = new Date('2026-01-02T03:06:00.000Z');
-        const work = { id: '01940000-0000-7000-8000-000000000810', kind: 'session_identity',
-          targetKind: 'session', targetId: sampleSessionToken, createdAt: now, nextAttemptAt: now };
-        assertOk(await store.ensureSession(sampleEnsureSessionInput({ identityWork: work })), 'ensure failed');
-        assertOk(await store.ensureSession(sampleEnsureSessionInput({ identityWork: { ...work, targetId: 'demo:late' } })), 'repeat failed');
-        const open = await store.listOpenWorkTargets({ kind: 'session_identity' });
-        assertOk(open, 'work lookup failed');
-        assertEqual(open.targets, [{ targetKind: 'session', targetId: sampleSessionToken }], 'work must be atomic and creation-only');
-      }),
-    ),
-    contractCase<SessionStoreSubject>(
-      'fillSessionTags fills empty tags once and creates nothing for tagged sessions',
-      async (make) => withSubject(make, async (store) => {
-        await owner(store);
-        assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensure failed');
-        const first = await store.fillSessionTags({ firstCwd: '/demo/repo', tagSource: 'cwd', key: sampleSessionKey, checkout: sampleCheckoutInput() });
-        assertOk(first, 'fill failed');
-        assertTrue(first.filled, 'empty tags were not filled');
-        const unused = sampleCheckoutInput({ projectId: otherProjectId, worktreeId: otherWorktreeId,
-          remoteIdentity: 'demo.example/brain-owner/other', worktreePath: '/demo/other' });
-        const repeat = await store.fillSessionTags({ firstCwd: '/demo/repo', tagSource: 'cwd', key: sampleSessionKey, checkout: unused });
-        assertOk(repeat, 'repeat failed');
-        assertTrue(!repeat.filled, 'existing tags were overwritten');
-        assertEqual(repeat.session.projectId, first.session.projectId, 'project changed');
-        const next = await store.ensureSession(sampleEnsureSessionInput({
-          id: otherSessionId, key: { ...sampleSessionKey, harnessSessionId: 'other' },
-          checkout: sampleCheckoutInput({ projectId: '01940000-0000-7000-8000-000000000899', worktreeId: '01940000-0000-7000-8000-000000000898', remoteIdentity: unused.remoteIdentity }),
-        }));
-        assertOk(next, 'next ensure failed');
-        assertEqual(next.session.projectId, '01940000-0000-7000-8000-000000000899', 'fill created an unreferenced project');
-        const absent = await store.fillSessionTags({ firstCwd: '/demo/repo', tagSource: 'cwd',
-          key: { ...sampleSessionKey, harnessSessionId: 'absent' }, checkout: sampleCheckoutInput(),
-        });
-        assertNotOk(absent, 'missing session succeeded');
-        assertEqual(absent.code, 'SESSION_NOT_FOUND', 'missing session code changed');
-      }),
-    ),
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'ensureSession creates the row once and keeps the first id',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -259,7 +96,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'ensureSession keeps the key, the tags and the immutable columns',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -325,7 +162,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'ensureSession tags a new session with the project and worktree of its checkout',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -363,7 +200,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'a second session of the same repository joins the project it already has',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -419,7 +256,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'a checkout handed to a session that already exists creates nothing',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -461,7 +298,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'a session created without a checkout has no project and no worktree',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -490,7 +327,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'ingest adds nothing the second time the same batch arrives',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -548,7 +385,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'ingest counts messages and tool notes, and nothing else',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -571,7 +408,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'ingest stores the whole batch and reads it back in conversation order',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -630,7 +467,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'a batch that carries on from the last one inserts only what is new',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -667,7 +504,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'a batch whose front changed leaves the stored rows alone and is read first',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -717,7 +554,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'a message uttered in the middle of a stored conversation is read in its place',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -771,7 +608,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'ingest advances the cursor and records the parser version',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -801,7 +638,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'ingest keeps the branch and the subagent-report mark of every message',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -844,7 +681,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'ingest records the start source the batch carried and never overwrites it',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -906,7 +743,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'the cursor does not go backwards unless the parse was reset',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -956,7 +793,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'the cursor is compared by when the messages were uttered, not by when they arrived',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -1012,7 +849,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'two reset batches from one base leave the cursor where the longer read put it',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -1053,7 +890,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'findSession answers with the row alone, or null for a key nobody stored',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -1094,7 +931,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'ingest warns with CURSOR_RESET when the parser read from the start',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -1113,7 +950,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'a reset batch with no message warns and clears the cursor',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -1165,7 +1002,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'a call the session already holds is not stored at a second position',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -1212,7 +1049,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'a note at a position an older version used is recognised by that position',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -1259,7 +1096,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'a note whose earlier positions name no stored row is a new call',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -1302,7 +1139,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'ingest reports an unknown session as a value',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -1318,7 +1155,7 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
 
-    contractCase<SessionStoreSubject>(
+    contractCase<SessionIngestSubject>(
       'readSession reports an unknown token as a value',
       async (make) => {
         await withSubject(make, async (store) => {
@@ -1336,6 +1173,181 @@ export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
       },
     ),
   ];
+}
+
+/** Session evidence and tags, independent of the stored-text redaction capability. */
+export function sessionMetadataContract(): ContractCase<SessionMetadataSubject>[] {
+  return [
+    contractCase<SessionMetadataSubject>('다시 읽을 세션은 null과 다른 버전을 포함하고 다른 하네스를 제외한다',
+      async (make) => withSubject(make, async (store) => {
+        await owner(store);
+        assertOk(await store.ensureSession(sampleEnsureSessionInput()), '세션 생성');
+        let read = await store.listStaleSessions({ harness: sampleSessionKey.harness, parserVersion: 'current' });
+        assertOk(read, '목록 읽기');
+        assertEqual(read.sessions.length, 1, 'null 버전 포함');
+        assertEqual(read.sessions[0]?.harnessSessionId, sampleSessionKey.harnessSessionId, '세션 식별자');
+        assertOk(await store.ingest({ ...sampleIngestBatch(), tracking: { ...sampleIngestBatch().tracking, parserVersion: 'current' } }), '버전 기록');
+        read = await store.listStaleSessions({ harness: sampleSessionKey.harness, parserVersion: 'current' });
+        assertOk(read, '같은 버전 조회');
+        assertEqual(read.sessions.length, 0, '현재 버전 제외');
+        read = await store.listStaleSessions({ harness: sampleSessionKey.harness, parserVersion: 'next' });
+        assertOk(read, '다른 버전 조회');
+        assertEqual(read.sessions.length, 1, '다른 버전 포함');
+        read = await store.listStaleSessions({ harness: 'another-harness', parserVersion: 'next' });
+        assertOk(read, '다른 하네스 조회');
+        assertEqual(read.sessions.length, 0, '다른 하네스 제외');
+      })),
+    contractCase<SessionMetadataSubject>(
+      'tag evidence is preserved and identity candidates exclude known evidence and prior work',
+      async (make) => withSubject(make, async (store) => {
+        await owner(store);
+        const first = await store.ensureSession(sampleEnsureSessionInput({
+          checkout: sampleCheckoutInput(), firstCwd: '/demo/first', tagSource: 'ancestor',
+        }));
+        assertOk(first, '세션 생성 실패');
+        assertEqual(first.session.firstCwd, '/demo/first', '첫 cwd 누락');
+        assertEqual(first.session.tagSource, 'ancestor', '출처 누락');
+        const repeated = await store.fillSessionTags({ key: sampleSessionKey, checkout: null,
+          firstCwd: '/demo/changed', tagSource: null });
+        assertOk(repeated, '근거 보존 실패');
+        assertEqual(repeated.session.firstCwd, '/demo/first', '첫 cwd 변경');
+        assertEqual(repeated.session.tagSource, 'ancestor', '출처 변경');
+        const key = { ...sampleSessionKey, harnessSessionId: 'empty-evidence' };
+        assertOk(await store.ensureSession(sampleEnsureSessionInput({ id: otherSessionId, key })), '빈 세션 생성');
+        let candidates = await store.listIdentityCandidates();
+        assertOk(candidates, '목록 읽기');
+        assertEqual(candidates.sessions.length, 1, '재판단 대상 수');
+        const filled = await store.fillSessionTags({ key, checkout: null, tagSource: null, firstCwd: '/demo/outside' });
+        assertOk(filled, '근거 채우기');
+        assertTrue(!filled.filled, '꼬리표 없는 근거가 꼬리표로 집계됨');
+        assertEqual(filled.session.firstCwd, '/demo/outside', '근거 누락');
+        candidates = await store.listIdentityCandidates();
+        assertOk(candidates, '목록 재읽기');
+        assertEqual(candidates.sessions.length, 0, '근거 있는 세션 재판단');
+        const count = await store.countUntaggedSessions();
+        assertOk(count, '꼬리표 없는 수');
+        assertEqual(count.count, 1, '꼬리표 없는 수 오류');
+        const workKey = { ...sampleSessionKey, harnessSessionId: 'prior-work' };
+        assertOk(await store.ensureSession(sampleEnsureSessionInput({
+          id: '01940000-0000-7000-8000-000000000991', key: workKey,
+          identityWork: { id: '01940000-0000-7000-8000-000000000992',
+            kind: 'session_identity', targetKind: 'session', targetId: 'demo:prior-work',
+            createdAt: new Date('2026-01-01T00:00:00.000Z'), nextAttemptAt: new Date('2026-01-01T00:00:00.000Z') },
+        })), '일감 있는 세션');
+        candidates = await store.listIdentityCandidates();
+        assertOk(candidates, '일감 제외 읽기');
+        assertEqual(candidates.sessions.length, 0, '이미 일감 있는 세션 재판단');
+      }),
+    ),
+    contractCase<SessionMetadataSubject>(
+      'identity work opens only when ensureSession creates a session',
+      async (make) => withSubject(make, async (store) => {
+        await owner(store);
+        const now = new Date('2026-01-02T03:06:00.000Z');
+        const work = { id: '01940000-0000-7000-8000-000000000810', kind: 'session_identity',
+          targetKind: 'session', targetId: sampleSessionToken, createdAt: now, nextAttemptAt: now };
+        assertOk(await store.ensureSession(sampleEnsureSessionInput({ identityWork: work })), 'ensure failed');
+        assertOk(await store.ensureSession(sampleEnsureSessionInput({ identityWork: { ...work, targetId: 'demo:late' } })), 'repeat failed');
+        const open = await store.listOpenWorkTargets({ kind: 'session_identity' });
+        assertOk(open, 'work lookup failed');
+        assertEqual(open.targets, [{ targetKind: 'session', targetId: sampleSessionToken }], 'work must be atomic and creation-only');
+      }),
+    ),
+    contractCase<SessionMetadataSubject>(
+      'fillSessionTags fills empty tags once and creates nothing for tagged sessions',
+      async (make) => withSubject(make, async (store) => {
+        await owner(store);
+        assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensure failed');
+        const first = await store.fillSessionTags({ firstCwd: '/demo/repo', tagSource: 'cwd', key: sampleSessionKey, checkout: sampleCheckoutInput() });
+        assertOk(first, 'fill failed');
+        assertTrue(first.filled, 'empty tags were not filled');
+        const unused = sampleCheckoutInput({ projectId: otherProjectId, worktreeId: otherWorktreeId,
+          remoteIdentity: 'demo.example/brain-owner/other', worktreePath: '/demo/other' });
+        const repeat = await store.fillSessionTags({ firstCwd: '/demo/repo', tagSource: 'cwd', key: sampleSessionKey, checkout: unused });
+        assertOk(repeat, 'repeat failed');
+        assertTrue(!repeat.filled, 'existing tags were overwritten');
+        assertEqual(repeat.session.projectId, first.session.projectId, 'project changed');
+        const next = await store.ensureSession(sampleEnsureSessionInput({
+          id: otherSessionId, key: { ...sampleSessionKey, harnessSessionId: 'other' },
+          checkout: sampleCheckoutInput({ projectId: '01940000-0000-7000-8000-000000000899', worktreeId: '01940000-0000-7000-8000-000000000898', remoteIdentity: unused.remoteIdentity }),
+        }));
+        assertOk(next, 'next ensure failed');
+        assertEqual(next.session.projectId, '01940000-0000-7000-8000-000000000899', 'fill created an unreferenced project');
+        const absent = await store.fillSessionTags({ firstCwd: '/demo/repo', tagSource: 'cwd',
+          key: { ...sampleSessionKey, harnessSessionId: 'absent' }, checkout: sampleCheckoutInput(),
+        });
+        assertNotOk(absent, 'missing session succeeded');
+        assertEqual(absent.code, 'SESSION_NOT_FOUND', 'missing session code changed');
+      }),
+    ),
+  ];
+}
+
+/** Stored-text redaction, composed into the full contract for capable adapters. */
+export function sessionRedactionContract(): ContractCase<SessionRedactionSubject>[] {
+  return [
+    contractCase<SessionRedactionSubject>(
+      'redaction changes body and notes atomically, refuses missing text, and survives ingest replay',
+      async (make) => withSubject(make, async (store) => {
+        await owner(store);
+        assertOk(await store.ensureSession(sampleEnsureSessionInput()), 'ensure');
+        const original = sampleIngestBatch();
+        const message = original.messages[0]!;
+        const note = original.toolNotes[0]!;
+        const batch = { ...original, messages: [{ ...message, body: 'hunter2-x hunter2-x keep-this' }],
+          toolNotes: [{ ...note, harnessMessageId: message.harnessMessageId, target: 'hunter2-x hunter2-x keep-this' }] };
+        assertOk(await store.ingest(batch), 'ingest');
+        let sequence = 100;
+        const redact = (text: string, messageId = message.id) => store.redactMessage({ messageId,
+          plan: (current) => {
+            const plan = planRedaction(current, { mode: 'text', text, kind: 'manual' }, {
+              now: () => new Date('2026-10-21T00:00:00.000Z'), newId: () => `01940000-0000-7000-8000-${String(sequence++).padStart(12, '0')}` });
+            if (!('refused' in plan)) {
+              for (const record of plan.redactions) {
+                assertTrue(record.messageId === current.message.id && record.toolNoteId === null
+                  || record.messageId === null && current.toolNotes.some((row) => row.id === record.toolNoteId), 'record points to a missing target');
+              }
+            }
+            return plan;
+          } });
+        const missing = await redact('absent');
+        assertNotOk(missing, 'missing text succeeded');
+        assertEqual(missing.code, 'REDACT_TEXT_NOT_FOUND', 'missing text code');
+        const unknown = await redact('hunter2-x', '01940000-0000-7000-8000-999999999999');
+        assertNotOk(unknown, 'unknown message succeeded');
+        assertEqual(unknown.code, 'MESSAGE_NOT_FOUND', 'unknown message code');
+        const before = await store.readSession(sampleSessionToken);
+        assertOk(before, 'read original');
+        assertEqual(before.messages[0]?.body, batch.messages[0]?.body, 'refusal changed body');
+        const result = await redact('hunter2-x');
+        assertOk(result, 'redact');
+        assertEqual(result.bodySpans, 2, 'body count');
+        assertEqual(result.toolNoteSpans, 2, 'note count');
+        assertEqual(result.toolNotesChanged, 1, 'changed note count');
+        const first = await store.readSession(sampleSessionToken);
+        assertOk(first, 'first read');
+        assertEqual(first.messages[0]?.body, '[REDACTED:manual] [REDACTED:manual] keep-this', 'body replacement');
+        assertEqual(first.toolNotes[0]?.target, first.messages[0]?.body, 'note replacement');
+        assertOk(await redact('keep-this'), 'second redaction');
+        const second = await store.readSession(sampleSessionToken);
+        assertOk(second, 'second read');
+        const replay = await store.ingest(batch);
+        assertOk(replay, 'replay');
+        assertEqual(replay.inserted.messages + replay.inserted.toolNotes, 0, 'replay inserts');
+        const after = await store.readSession(sampleSessionToken);
+        assertOk(after, 'read replay');
+        assertEqual(after.messages[0]?.body, second.messages[0]?.body, 'replay revived body');
+        assertEqual(after.toolNotes[0]?.target, second.toolNotes[0]?.target, 'replay revived target');
+      }),
+    ),
+  ];
+}
+
+/** The complete session contract, preserving the original case order. */
+export function sessionStoreContract(): ContractCase<SessionStoreSubject>[] {
+  const metadata = sessionMetadataContract();
+  const cases = [...metadata.slice(0, 2), ...sessionRedactionContract(), ...metadata.slice(2), ...sessionIngestContract()];
+  return cases.map(test => contractCase<SessionStoreSubject>(test.name, make => test.run(make)));
 }
 
 /**

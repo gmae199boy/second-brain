@@ -218,3 +218,65 @@ source_spec: `tickets/epic-daemon/tickets/story-daemon-stopstart-plan.md`
 severity: medium
 reason: registerDaemon은 실행 중 Label을 확인하기 전에 새 plist를 저장하고, 다음 호출은 같은 파일이면 plist_changed를 false로 돌려준다. 첫 bootout이 실패하면 다음 설치의 restartDaemon은 SIGTERM 경로를 택해 launchd에 남은 옛 인자를 유지한다. 검토 기준 revision의 registerDaemon과 restartDaemon에도 같은 쓰기·분기 순서가 있어 이번 변경 전부터 있던 문제다. 로드된 plist와 디스크의 차이를 보존하는 후속 설계가 필요하며, 기존 deferred-work 항목은 변경하지 않았다.
 status: open
+
+### DW-6: `.env` 쓰기가 원자적이지 않아 쓰는 도중 끊기면 PostgreSQL 볼륨 비밀번호를 잃을 수 있다.
+origin: spec-deferred da8559a6fd7c
+location: apps/cli/src/config/codec.ts
+source_spec: `tickets/epic-postgres-primary/tickets/story-tracer-pg-hook-plan.md`
+severity: medium
+reason: `postgresSecrets`(apps/cli/src/config/codec.ts)와 기존 `writeConfig`의 `.env` 쓰기가 모두 `writeFile`로 제자리 truncate 후 쓴다. setup은 매번 두 곳에서 `.env`를 다시 쓰므로 한쪽만 임시 파일+rename으로 바꿔서는 위험이 남는다. 비밀번호를 잃으면 기존 볼륨에 접속할 수 없어 `.env` 복원이나 볼륨 삭제가 필요하다.
+status: done 2026-10-29
+resolution: resolved by story 11.12
+resolution-undo: ed93e549625a7eb425918047f9b6462924aec19fe9f0cb52f17a47b41c511025 2026-10-29 7374617475733a206f70656e
+
+### DW-7: `brain.redacting` GUC를 brain_app이 세우면 document_chunks 삭제 규칙(열린·현재 세대 보호)을 건너뛸 수 있다.
+origin: spec-deferred 4cab66f5de9f
+location: packages/postgres/migrations/0001_initial.sql (brain.document_chunks_delete_rule_fn)
+source_spec: `tickets/epic-postgres-primary/tickets/story-baseline-0001-core-pg-plan.md`
+severity: medium
+reason: 0001의 document_chunks_delete_rule_fn은 current_setting('brain.redacting', true) = 'on'이면 검사를 건너뛴다. 사용자 정의 GUC는 어떤 세션이든 set으로 세울 수 있고, brain_app은 document_chunks DELETE 권한을 가진다(세대 교체에 필요). 가리기 권한 경계와 제한된 정리 경로는 E11-6(티켓 5) 범위다.
+status: done 2026-10-29
+resolution: resolved by story 11.12
+resolution-undo: ed93e549625a7eb425918047f9b6462924aec19fe9f0cb52f17a47b41c511025 2026-10-29 7374617475733a206f70656e
+
+### DW-8: 10분보다 오래 걸리는 정리는 공통 청구 만료 때문에 다른 drain이 재청구하여 잠금 대기와 시도를 누적할 수 있다.
+origin: spec-deferred f3872a017235
+location: packages/core/src/domain/work-item.ts; packages/postgres/src/maintenance.ts
+source_spec: `tickets/epic-postgres-primary/tickets/story-doctor-plan.md`
+severity: medium
+reason: 기존 DEFAULT_WORK_POLICY.claimForMs는 600000이고 정리 adapter는 statement_timeout이 없다. 청구 갱신은 에픽 Boundaries가 epic-jobs-and-scheduler로 정한 기존 공통 큐 과제다. 이번 변경에서는 만료한 작업의 실패 해소를 CAS 완료로 옮겨 안전성을 보강하며, 장시간 청구 갱신 자체는 추가하지 않는다.
+status: open
+
+### DW-9: brain_app의 기존 공통 큐 DML 권한으로 정리 일감을 직접 삭제·완료하면 doctor 추적을 무력화할 수 있다.
+origin: spec-deferred 0104946666cf
+location: packages/postgres/src/setup.ts; packages/postgres/src/work.ts; packages/postgres/migrations/0001_initial.sql
+source_spec: `tickets/epic-postgres-primary/tickets/story-doctor-plan.md`
+severity: medium
+reason: 공통 큐는 기존부터 brain_app에 직접 쓰기를 허용하고 completeWork도 호출자에게 열려 있다. 정리 함수는 정상 가리기의 열린 일감과 청구 무효화를 보장하지만 큐 자격 증명을 가진 임의 SQL 사용자를 별도 적대 주체로 격리하지 않는다. 이를 막으려면 공통 큐 권한과 완료 경계를 함께 재설계해야 한다. 이번 실행은 기존 ledger 항목을 변경하지 않는다.
+status: open
+
+### DW-10: 지원 환경과 다른 lc_messages에서 VACUUM VERBOSE 완료 detail의 숫자 형식이 달라지면 정리를 완료하지 못할 가능성이 있다.
+origin: spec-deferred 106d24b38539
+location: packages/postgres/src/maintenance.ts:17
+source_spec: `tickets/epic-postgres-primary/tickets/story-doctor-plan.md`
+severity: medium
+reason: maintenance.ts는 copy_table_data routine과 detail 첫 숫자를 읽고, 해석 불가 시 TABLE_CLEANUP_FAILED로 닫지 않는다. 공식 PG18 시험 환경의 전체 검증은 통과했다. 다른 로캘에서 숫자의 위치가 실제 바뀌는지와 정리 role이 사용할 수 있는 메시지 환경 고정 방법을 확인해야 한다. 잘못된 성공 판정은 하지 않는다. (declared severity: medium (unverified))
+status: open
+
+### DW-11: PG 런타임 경로에 저장본 정리 handler(`tableCleanupHandler`)와 정리 role 접속이 아직 조립되지 않아, PG 홈의 drain이 `table_cleanup` 일감을 청구하지 않고 doctor가 정리 `warn`을 계속 보인다.
+origin: spec-deferred bd1846c4c576
+location: apps/cli/src/runtime/brain-store.ts
+source_spec: `tickets/epic-postgres-primary/tickets/story-db-hook-spool-db-plan.md`
+severity: medium
+reason: `git grep` 결과 `apps/cli/src`에 `tableCleanupHandler`·`postgresTableMaintenance`·maintenance 접속 사용처가 없다. 티켓 5 plan(story-doctor-plan.md)의 인계는 런타임 조립이 handler를 등록하고 `postgresTableMaintenance`에 정리 URL을 주며, 설치(티켓 8)가 `prepareDatabase`에 `maintenancePassword`를 넘기고 `.env`에 정리 role 접속을 쓰라고 했다. 정리 URL을 담을 설정 키·`.env` 항목이 아직 없으므로(설치는 티켓 8) 이 변경만으로는 연결할 값이 없다. 이 변경 전에도 PG 홈에는 PG drain이 없어 정리가 돌지 않았으므로 기존 공백이다. 티켓 8이 정리 role 접속을 쓸 때 store factory(`apps/cli/src/runtime/brain-store.ts`)의 PG 분기와 데몬(티켓 9)이 이 handler를 함께 등록해야 한다.
+status: open
+
+### DW-12: 기존 Core drain이 transcript scan 실패 이유를 보고에서 버려 설치가 성공 안내를 보일 수 있다.
+origin: spec-deferred 2e8eeb96eb31
+location: packages/core/src/brain.ts:471
+source_spec: `tickets/epic-postgres-primary/tickets/story-doctor-orbstack-plan.md`
+severity: medium
+reason: packages/core/src/brain.ts의 drain은 scanTranscripts의 stopped를 읽지 않고 scan.enqueued와 rereadMissing만 반환한다. 폴더 읽기 실패는 scan에서 stopped로 반환하므로 설치의 기존 BrainDrainReport로는 이를 구별할 수 없다. 이 보고 누락은 baseline 이전 Core에도 있으며 이번 변경은 해당 함수를 재사용한다. 보고 계약과 기존 queue 소비자를 함께 보완할 후속 작업이다. 기존 deferred-work ledger는 변경하지 않았다.
+status: done 2026-10-29
+resolution: resolved by story 11.12
+resolution-undo: ed93e549625a7eb425918047f9b6462924aec19fe9f0cb52f17a47b41c511025 2026-10-29 7374617475733a206f70656e

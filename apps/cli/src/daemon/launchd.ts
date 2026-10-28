@@ -1,3 +1,5 @@
+import { homeResources, DEFAULT_DAEMON_LABEL } from '../config/resources.js';
+import { configHome } from '../config/paths.js';
 import { execFile } from 'node:child_process';
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -5,26 +7,27 @@ import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 
-export const DAEMON_LABEL = 'io.github.gmae199boy.second-brain.daemon';
+export const DAEMON_LABEL = DEFAULT_DAEMON_LABEL;
+export function daemonLabel(env: NodeJS.ProcessEnv): string { return homeResources(configHome(env)).label; }
 
 export function launchAgentsPath(env: NodeJS.ProcessEnv): string {
   return env['SECOND_BRAIN_LAUNCH_AGENTS'] || join(homedir(), 'Library', 'LaunchAgents');
 }
 
 export function daemonPlistPath(env: NodeJS.ProcessEnv): string {
-  return join(launchAgentsPath(env), `${DAEMON_LABEL}.plist`);
+  return join(launchAgentsPath(env), `${daemonLabel(env)}.plist`);
 }
 
 function xml(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\r', '&#13;');
 }
 
-export function renderDaemonPlist(shim: string): string {
+export function renderDaemonPlist(shim: string, label: string = DAEMON_LABEL): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>${DAEMON_LABEL}</string>
+  <key>Label</key><string>${label}</string>
   <key>ProgramArguments</key>
   <array><string>${xml(shim)}</string><string>daemon</string><string>run</string></array>
   <key>RunAtLoad</key><true/>
@@ -116,13 +119,13 @@ export async function registerDaemon({ shim, env, launchctl, platform }: DaemonO
   shim: string;
 }): Promise<DaemonRegistration> {
   const result: DaemonRegistration = {
-    label: DAEMON_LABEL, plist_path: null, status: 'unsupported', plist_changed: false,
+    label: daemonLabel(env), plist_path: null, status: 'unsupported', plist_changed: false,
   };
   if (platform !== 'darwin' || launchctl.uid === undefined) return result;
   result.plist_path = daemonPlistPath(env);
   try {
-    result.plist_changed = await writePlist(result.plist_path, renderDaemonPlist(shim));
-    if (await launchctl.isLoaded(DAEMON_LABEL)) return { ...result, status: 'loaded' };
+    result.plist_changed = await writePlist(result.plist_path, renderDaemonPlist(shim, daemonLabel(env)));
+    if (await launchctl.isLoaded(daemonLabel(env))) return { ...result, status: 'loaded' };
     const bootstrapped = await launchctl.bootstrap(result.plist_path);
     return bootstrapped.ok
       ? { ...result, status: 'registered' }
@@ -140,8 +143,8 @@ export async function unregisterDaemon({ env, launchctl, platform }: DaemonOptio
     return { ok: true, booted_out, plist_removed: false };
   }
   try {
-    if (await launchctl.isLoaded(DAEMON_LABEL)) {
-      const result = await launchctl.bootout(DAEMON_LABEL);
+    if (await launchctl.isLoaded(daemonLabel(env))) {
+      const result = await launchctl.bootout(daemonLabel(env));
       if (!result.ok) return result;
       booted_out = true;
     }

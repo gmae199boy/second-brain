@@ -1,2 +1,2 @@
-// Replication adapter: opt in without loading pg on the local CLI path.
+// PostgreSQL adapter: load pg only through this explicit entry point.
 export * from '@second-brain/postgres';

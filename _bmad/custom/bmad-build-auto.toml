@@ -9,16 +9,16 @@ route = "full"
 
 persistent_facts = [
   """
-In this project every "subagent" this workflow mentions is a fresh codex CLI session started from the project root with `bash _bmad/custom/bmad-build-auto-codex.sh` (gpt-6.1-sol, medium effort). Never use the host's own subagent or Agent tool. Run each such Bash call in the foreground with the longest timeout the tool allows, never in the background; launching several at once means several Bash calls in one message. The script prints `codex-thread: <id>` first: that id is the subagent's name or id for re-engagement.""",
+In this project every "subagent" this workflow mentions is a fresh codex CLI session started from the project root with `bash _bmad/custom/bmad-build-auto-codex.sh` (gpt-6.1-sol, medium effort). Never use the host's own subagent or Agent tool. The script itself starts codex detached under `nohup` and waits on it up to 8 minutes per call, so never wrap it in `nohup`, `&` or the tool's background mode: run each such Bash call in the foreground with a 600000 ms timeout. When the output ends with `codex-pending: <job>`, codex is still working: run `bash _bmad/custom/bmad-build-auto-codex.sh wait <job>` the same way, in the same turn, until it prints codex's report — that is still one synchronous subagent call, not a failure. Launching several at once means several Bash calls in one message, then a `wait` for each pending job. The script prints `codex-thread: <id>`: that id is the subagent's name or id for re-engagement.""",
   """
-You orchestrate and codex writes the code: do not edit source or test files yourself (plan, spec and ticket files stay yours). Where a step says to finish unfinished work or apply patches yourself, send that work to the implementation session instead with `bash _bmad/custom/bmad-build-auto-codex.sh resume <thread-id>`, the message on stdin through a quoted heredoc. If codex fails twice in a row on the same job, HALT with status `blocked` and blocking condition `codex unavailable`.""",
+You orchestrate and codex writes the code: do not edit source or test files yourself (plan, spec and ticket files stay yours). Where a step says to finish unfinished work or apply patches yourself, send that work to the implementation session instead with `bash _bmad/custom/bmad-build-auto-codex.sh resume <thread-id>`, the message on stdin through a quoted heredoc. When a codex turn stops because the model is at capacity or a usage limit hit, the script pauses and has the same session continue where it stopped, several times; do not retry those yourself. Exit status 75 means the model stayed unavailable through those retries: HALT with status `blocked` and blocking condition `codex unavailable`. For any other failure, HALT the same way if codex fails twice in a row on the same job.""",
   """
 Write every prose line you author in Korean (한국어): plan sections you fill in, `## Implementation Notes`, `## Review Triage Log` entries, `## Auto Run Result`, blocked and escalation reasons, and the final summary. Keep code identifiers, file paths, commands, error codes, frontmatter keys and values, and quoted source text exactly as they are. When you brief codex, ask it to write its report in Korean the same way.
 """,
 ]
 
 implementation_handoff = """
-Run this from the project root with one foreground Bash call (the longest timeout the tool allows, never backgrounded). It starts a fresh codex implementation session and returns when codex finishes:
+Run this from the project root as one foreground Bash call with a 600000 ms timeout, then `wait` on any `codex-pending` job as the persistent facts describe. It starts a fresh codex implementation session and returns codex's report when it finishes:
 
 bash _bmad/custom/bmad-build-auto-codex.sh impl <<'BMAD_CODEX_PROMPT'
 Read {plan_file} fully and implement it — the plan is the sole source of truth. Load every file listed in its frontmatter `context:` before you start.
@@ -33,7 +33,7 @@ Keep the `codex-thread:` id it prints. Step 04 re-engages this same session with
 id = "quick"
 name = "Quick"
 instruction = """
-Run this from the project root with one foreground Bash call (the longest timeout the tool allows, never backgrounded). It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
+Run this from the project root as one foreground Bash call with a 600000 ms timeout, then `wait` on any `codex-pending` job as the persistent facts describe. It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
 
 bash _bmad/custom/bmad-build-auto-codex.sh review <<'BMAD_CODEX_PROMPT'
 Read `{plan_file}` — the plan holding the acceptance criteria and intent — and the files its frontmatter `context:` lists. Read the agent instruction files (`AGENTS.md`, `CLAUDE.md`, or equivalents) at the repository root and in the directories the diff touches; those are the rules. Then read the unified diff at `{diff_file}` — it is the change under review.
@@ -48,7 +48,7 @@ BMAD_CODEX_PROMPT
 id = "blind-hunter"
 name = "Blind Hunter"
 instruction = """
-Run this from the project root with one foreground Bash call (the longest timeout the tool allows, never backgrounded). It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
+Run this from the project root as one foreground Bash call with a 600000 ms timeout, then `wait` on any `codex-pending` job as the persistent facts describe. It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
 
 bash _bmad/custom/bmad-build-auto-codex.sh review <<'BMAD_CODEX_PROMPT'
 Conduct a review of CONTENT.
@@ -68,7 +68,7 @@ BMAD_CODEX_PROMPT
 id = "edge-case-hunter"
 name = "Edge Case Hunter"
 instruction = """
-Run this from the project root with one foreground Bash call (the longest timeout the tool allows, never backgrounded). It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
+Run this from the project root as one foreground Bash call with a 600000 ms timeout, then `wait` on any `codex-pending` job as the persistent facts describe. It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
 
 bash _bmad/custom/bmad-build-auto-codex.sh review <<'BMAD_CODEX_PROMPT'
 Read `{skill-root}/review-prompts/edge-case-hunter.md` completely and follow it as your review instructions.
@@ -85,7 +85,7 @@ BMAD_CODEX_PROMPT
 id = "verification-gap"
 name = "Verification Gap Reviewer"
 instruction = """
-Run this from the project root with one foreground Bash call (the longest timeout the tool allows, never backgrounded). It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
+Run this from the project root as one foreground Bash call with a 600000 ms timeout, then `wait` on any `codex-pending` job as the persistent facts describe. It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
 
 bash _bmad/custom/bmad-build-auto-codex.sh review <<'BMAD_CODEX_PROMPT'
 Read `{skill-root}/review-prompts/verification-gap.md` completely and follow it as your review instructions.
@@ -100,7 +100,7 @@ BMAD_CODEX_PROMPT
 id = "intent-alignment"
 name = "Intent Alignment Auditor"
 instruction = """
-Run this from the project root with one foreground Bash call (the longest timeout the tool allows, never backgrounded). It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
+Run this from the project root as one foreground Bash call with a 600000 ms timeout, then `wait` on any `codex-pending` job as the persistent facts describe. It starts a fresh read-only codex reviewer and returns its findings when codex finishes:
 
 bash _bmad/custom/bmad-build-auto-codex.sh review <<'BMAD_CODEX_PROMPT'
 You are an intent-alignment auditor. You have no other context about how this change was produced. Here is the verbatim intent this work started from:

@@ -1,6 +1,6 @@
 # second-brain
 
-Mac 한 대를 위한 개인 두뇌입니다. 원본은 로컬 SQLite 파일 하나에 들어 있고,
+Mac 한 대를 위한 개인 두뇌입니다. 원본은 OrbStack Docker 컨테이너의 PostgreSQL에 들어 있고,
 `brain` CLI는 `second_brain` SDK를 얇게 감싼 껍데기입니다. 이 저장소는 npm에
 올리지 않습니다.
 
@@ -51,13 +51,13 @@ node를 직접 찾습니다. shim에 박힌 node → `nvm`의 24.16.0 이상 중
 
 ```json
 {
-  "plugin_root": "/Users/me/.claude/plugins/cache/second-brain/second-brain/0.1.2",
+  "plugin_root": "~/.claude/plugins/cache/second-brain/second-brain/0.1.2",
   "app_ref": "10a09d2ef60fcf3b607f8562192c2ea8a59d3981",
   "seen_at": "2026-10-18T02:12:27.381Z",
   "last_bootstrap": {
     "at": "2026-10-18T02:13:04.902Z",
     "result": "installed",
-    "log": "/Users/me/.second_brain/log/bootstrap.log"
+    "log": "~/.second_brain/log/bootstrap.log"
   }
 }
 ```
@@ -108,13 +108,10 @@ pnpm이 12보다 오래되었으면 최신 pnpm 설치를 제안하고, 클론�
 | `SECOND_BRAIN_LAUNCH_AGENTS` | `~/Library/LaunchAgents` | 데몬 plist를 쓸 폴더. 시험용 |
 | `SECOND_BRAIN_NODE_DIRS` | `/opt/homebrew/bin:/usr/local/bin` | node를 찾아볼 고정 폴더들. 시험용 |
 
-설치할 데이터베이스 서버도, 띄울 Docker도 없습니다. 원본은 SQLite 파일 하나에
-삽니다. 설치기가 값을 묻는 것은 둘뿐입니다.
+설치 전에 OrbStack이 실행 중이어야 합니다. 설치기는 홈별 PostgreSQL 컨테이너를
+만들고, 미러 경로와 시간대 등의 설정을 묻습니다.
 
-- **데이터베이스 파일을 어디에 둘지.** 절대 경로면 무엇이든 되고, 기본값은
-  `~/.second_brain/brain.db`입니다. 마이그레이션 전에 파일을 mode 0600으로
-  만들므로 파일도, 그 write-ahead log도 다른 사람이 읽을 수 없습니다. 만들어야
-  했던 상위 폴더는 0700으로 만듭니다.
+- **PostgreSQL을 어디에 둘지.** 홈에서 분리된 compose project와 영속 볼륨을 만들고, 접속 URL은 `.env`에 기록합니다. 선택자는 `store.url_env`이며 기본값은 `BRAIN_DATABASE_URL`입니다.
 - **미러 폴더를 어디에 둘지.** 절대 경로면 무엇이든 되고, 기본값은
   `~/.second_brain/mirror`입니다. 아직 그 폴더를 만드는 것은 없습니다.
 
@@ -132,35 +129,20 @@ pnpm이 12보다 오래되었으면 최신 pnpm 설치를 제안하고, 클론�
 run`이 `UPDATE_AVAILABLE` 경고로 알려 줍니다.
 
 마지막으로, 아직 아무것도 쓰지 않은 자리에서 쓸 것을 다 보여 주고 한 번
-묻습니다. 설정 두 파일, 데이터베이스 파일(새로 만드는지 있는 파일을
-마이그레이션하는지), 파일 저장소 루트, shim의 경로입니다. 여기서 아니요라고
+묻습니다. 설정 두 파일, PostgreSQL compose project·볼륨·포트, 파일 저장소 루트,
+shim의 경로입니다. 여기서 아니요라고
 답하면 — 또는 그 앞의 어느 질문에서 Ctrl-C를 누르면 — 한 바이트도 쓰지 않고
 `SETUP_CANCELLED`로 끝납니다. 뒤 질문에서 누른 Ctrl-C는 그 자리에서 멈추므로,
 그때까지 밟은 단계는 그대로 남습니다. `--yes`는 이 질문을 건너뜁니다 — 경로
 질문은 그대로 묻습니다. 하네스를 연결할지는 뒤에서 따로 묻습니다.
 
-그 동의 바로 뒤에, 하나 더 묻는 경우가 있습니다. 마이그레이션 0005가 프로젝트
-비교 키를 UNIQUE로 만드는데, remote의 **대소문자만 다른** 프로젝트로 갈라진
-데이터베이스는 그 키가 하나로 겹칩니다(GitHub·Bitbucket은 소유자와 저장소
-이름을 대소문자 없이 봅니다). 그래서 설치는 겹치는 묶음마다 그 묶음의
-`remote_identity`를 하나씩 세션 수와 함께, 그리고 남을 쪽을 보여 주고 합칠지
-묻습니다(한 묶음에 셋 이상일 수도 있습니다). 합치면 지는 쪽의
-워크트리·세션·로그가 남는 쪽으로 옮겨지고(같은 경로의 워크트리는 하나로
-합쳐집니다) 지는 프로젝트 행이 사라집니다 — 세션은 하나도 잃지 않습니다.
-아니요라고 답하면 `SETUP_CANCELLED`(exit 1)이고 데이터베이스는 **한 바이트도**
-바뀌지 않습니다: 0005를 적용하지 않았으므로 스키마 버전도 그대로입니다.
-합치기와 0005는 한 트랜잭션이라 함께 되거나 함께 안 됩니다. `--yes`는 "미리 준
-모든 동의"이므로 이 물음에도 동의가 되고(플러그인의 비대화형 bootstrap도
-마찬가지입니다) 묶음은 그래도 다 찍힙니다. 겹침이 없으면 묻지 않습니다.
-
-동의한 다음에는 데이터베이스 파일을 만들어 마이그레이션하고, 이 brain의 주인을
-기록하고, 파일 저장소 루트를 mode 0700으로 만들고, **그다음에** 설정을 씁니다.
-이 순서인 이유는 설정에 적히는 경로가 이 실행이 실제로 쓸 수 있다고 확인한
-경로여야 하기 때문입니다. 셋 중 하나라도 실패하면 `config.toml`과 `.env`는 한
-바이트도 바뀌지 않습니다. 그다음 shim을 쓰고(아래), 찾은 하네스를 연결할지 물은
-뒤, `brain doctor run`과 같은 점검으로 마칩니다. exit 0이면 모든 점검이
-통과했다는 뜻입니다. 점검에 `fail`이 하나라도 있으면 `SETUP_INCOMPLETE`이고,
-그래도 doctor는 끝까지 돌고 그 줄을 다 찍습니다.
+동의한 다음에는 PostgreSQL role·schema와 마이그레이션을 준비하고, 이 brain의 주인을
+기록하고, 시간대를 DB에 저장합니다. 파일 저장소 루트를 mode 0700으로 만든 뒤
+설정을 쓰고, 디스크의 transcript를 가져옵니다. 그다음 shim과 하네스를 준비하고
+`brain doctor run`과 같은 점검으로 마칩니다. `fail`이 있으면 `SETUP_INCOMPLETE`이고
+완료 기록을 쓰지 않습니다. 옛 SQLite 파일은 지우거나 옮기지 않고 더 쓰지 않는다고 안내합니다.
+새 PG에는 디스크의 transcript만 다시 가져오며, 옛 `brain.db`의 저장본 가리기·꼬리표 등은 옮겨지지 않습니다.
+transcript에서 다시 들어온 내용 중 이전에 가렸던 내용은 새 PG에서도 다시 가려야 합니다.
 
 마지막 단계는 이 프로세스 밖에서 설치를 확인하는 것입니다. `<home>/bin/brain
 guide schema --json`을 실제로 실행해서 exit 0과 `ok: true` 엔벨로프를 받아야
@@ -173,15 +155,16 @@ guide schema --json`을 실제로 실행해서 exit 0과 `ok: true` 엔벨로프
 ```json
 {
   "commit": "10a09d2ef60fcf3b607f8562192c2ea8a59d3981",
-  "schema_version": 7,
+  "schema_version": 1,
+  "schema_versions": {"core": 1},
   "node": "/opt/homebrew/bin/node",
-  "plugin_root": "/Users/me/.claude/plugins/cache/second-brain/second-brain/0.1.0",
+  "plugin_root": "~/.claude/plugins/cache/second-brain/second-brain/0.1.0",
   "installed_at": "2026-10-17T15:11:42.113Z"
 }
 ```
 
-`commit`과 `schema_version`은 `apps/cli/dist/build.json`에서 옵니다. 그 파일은
-`apps/cli`의 빌드가 `tsc` 뒤에 쓰는 `{commit, schema_version}`이고, `commit`은
+`commit`은 `apps/cli/dist/build.json`에서 오고, `schema_version`은 설치가 확인한 PG core
+버전입니다. 빌드 기록은 `tsc` 뒤에 쓰는 `{commit, schema_version, schema_versions}`이고, `commit`은
 `git rev-parse HEAD`(git이 없으면 `null`)입니다. `dist/`는 git에 들어가지 않으므로
 "이 `dist/`가 어느 소스에서 왔는가"에 답할 수 있는 것은 이 파일뿐입니다.
 `node`는 shim에 고정한 node 경로이고, `plugin_root`는 `--plugin-root`가 가리킨
@@ -191,15 +174,11 @@ guide schema --json`을 실제로 실행해서 exit 0과 `ok: true` 엔벨로프
 않습니다(AD-18). 설정은 사람이 고르고 고칠 수 있는 것이고, 이것들은 이 기계가 한
 일입니다. 읽을 수 없으면 고치지 않고 "모른다"로 답합니다.
 
-데이터베이스 파일로 가리킨 자리에 SQLite 데이터베이스가 아닌 파일이 있으면
-`DB_UNAVAILABLE`로 거절합니다. 첫 16바이트를 보고 판정하며, 그 전에는 mode도
-내용도 건드리지 않고 write-ahead log도 옆에 만들지 않습니다. 0바이트 파일은 새
-데이터베이스로 봅니다.
+다시 실행하면 같은 PostgreSQL 컨테이너·볼륨을 재사용하고, 적용된 마이그레이션과
+주인·시간대 값을 보존합니다. shim과 하네스 항목도 이미 맞으면 건드리지 않습니다.
+연결 선택자가 없는 기존 설정도 기본 `BRAIN_DATABASE_URL`을 사용합니다. 옛 `store.path`는
+검증하지 않고 SQLite 파일 안내 후보로만 읽으며, 설정을 다시 쓸 때는 뺍니다.
 
-다시 실행해도 바뀌는 것은 없습니다. 기록된 경로를 기본값으로 내놓고, 파일이 이미 가진 마이그레이션은 적용하지 않고, 마이그레이션이
-쓴 index config 행을 그대로 두고, 주인을 그대로 두고, shim과 하네스 항목이 이미
-맞게 적혀 있으면 건드리지 않습니다. 다른 데이터베이스 파일을 가리키면 새로
-만듭니다. 옛 파일은 있던 자리에 그대로 있고, 설치는 그렇다고 한 줄로 말합니다.
 
 물어볼 터미널이 없는 곳 — 스크립트나 CI — 에서는 `--yes`가 동의이고 나머지는
 플래그로 말합니다. `--yes`가 없으면 설치는 아무것도 쓰기 전에 멈추고 exit 3,
@@ -208,7 +187,6 @@ guide schema --json`을 실제로 실행해서 exit 0과 `ok: true` 엔벨로프
 
 ```sh
 node apps/cli/dist/install.js --yes
-node apps/cli/dist/install.js --store-path /Volumes/notes/brain.db --yes
 ```
 
 터미널이 없으면 아무것도 묻지 않으므로 각 경로는 기록된 값(없으면 기본값)을
@@ -216,7 +194,6 @@ node apps/cli/dist/install.js --store-path /Volumes/notes/brain.db --yes
 
 | 플래그 | 하는 일 |
 | --- | --- |
-| `--store-path <경로>` | 데이터베이스 파일의 절대 경로 |
 | `--mirror-path <경로>` | 미러 폴더의 절대 경로 |
 | `--plugin-root <경로>` | 이 설치를 시작한 플러그인 폴더의 절대 경로. 완료 기록에 적힙니다 |
 | `--connect <하네스>` | 이 하네스를 연결합니다. 여럿이면 되풀이하세요 |
@@ -226,7 +203,7 @@ node apps/cli/dist/install.js --store-path /Volumes/notes/brain.db --yes
 
 설정은 값마다 따로 읽습니다. 값 하나를 쓸 수 없으면 그 키만 버리고 기본값을
 쓰면서 `CONFIG_VALUE_RESET` 경고를 냅니다 — 어떤 키였고, 무엇이 적혀 있었고,
-대신 무엇을 쓰는지 말합니다. 나머지 값은 그대로 남습니다. `store.path` 오타
+대신 무엇을 쓰는지 말합니다. 나머지 값은 그대로 남습니다. `files.path` 오타
 하나로 당신이 고른 시간대와 파일 저장소 루트와 미러까지 기본값으로 돌아가지
 않습니다. `schema_version`이 없거나 정수가 아니면 같은 경고를 내고 1로 씁니다.
 
@@ -684,7 +661,7 @@ brain failures retry [--target-kind <kind>]
 설치기는 명령이기도 하므로 클론에서 다시 실행할 것은 없습니다.
 
 ```sh
-brain setup run [--store-path <path>] [--mirror-path <path>] \
+brain setup run [--mirror-path <path>] \
                 [--connect <harness>]… [--yes]
 brain setup connect <harness>
 ```
@@ -700,15 +677,17 @@ brain setup connect <harness>
   "ok": true,
   "warnings": [],
   "data": {
-    "home": "/Users/me/.second_brain",
-    "config_path": "/Users/me/.second_brain/config.toml",
-    "store": { "path": "/Users/me/.second_brain/brain.db", "schema_version": 7, "applied": [] },
+    "home": "~/.second_brain",
+    "config_path": "~/.second_brain/config.toml",
+    "postgres": { "project": "second-brain", "volume": "second-brain-pg", "port": 54320,
+      "schema_version": 1, "applied": [], "compose_started": false, "legacy_sqlite_path": null },
+    "timezone": "Asia/Seoul",
     "owner": { "name": "me", "created": false },
-    "files": { "path": "/Users/me/.second_brain/files", "created": false },
-    "mirror_path": "/Users/me/.second_brain/mirror",
-    "shim": { "path": "/Users/me/.second_brain/bin/brain", "changed": false },
+    "files": { "path": "~/.second_brain/files", "created": false },
+    "mirror_path": "~/.second_brain/mirror",
+    "shim": { "path": "~/.second_brain/bin/brain", "changed": false },
     "harnesses": [],
-    "checks": [{ "id": "db", "status": "ok", "detail": "3.50.4" }],
+    "checks": [{ "id": "db", "status": "ok", "detail": "18.6" }],
     "summary": { "passed": 10, "warned": 0, "failed": 0, "skipped": 0 }
   }
 }
@@ -798,6 +777,7 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `USAGE` | 2 | 명령을 잘못 불렀습니다 — 모르는 동사, 잘못된 플래그, 쓸 수 없는 인자 |
 | `CONFIG_MISSING` | 2 | 이 폴더에 설정 파일이 없습니다 — 설치가 여기서 돈 적이 없습니다 |
 | `CONFIG_INVALID` | 2 | 설정은 있고, 그 값 하나를 읽거나 쓸 수 없습니다 |
+| `ORBSTACK_UNAVAILABLE` | 2 | OrbStack을 사용할 수 없습니다 |
 | `DB_UNAVAILABLE` | 2 | 데이터베이스에 닿지 못했습니다 |
 | `MESSAGE_NOT_FOUND` | 1 | 지정한 메시지가 없습니다 |
 | `REDACT_TEXT_NOT_FOUND` | 1 | 가릴 글자를 찾지 못했습니다 |
@@ -851,6 +831,8 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 ## 규약과 명령 메타
 
 ```sh
+brain config get <key>               # 사용자 설정 읽기 (PostgreSQL)
+brain config set <key> <value>       # 사용자 설정 바꾸기 (예: timezone America/New_York)
 brain guide schema [<ns> [<verb>]]   # 명령마다 메타 일곱 칸과 인자·옵션
 brain guide exit-codes               # 위의 세 표
 brain guide show                     # CLI 사용 규약 절(Markdown)
@@ -877,9 +859,9 @@ brain guide show                     # CLI 사용 규약 절(Markdown)
 ```sh
 #!/bin/sh
 # Written by second-brain. `brain setup run` rewrites it.
-SECOND_BRAIN_HOME=${SECOND_BRAIN_HOME:-'/Users/me/.second_brain'}; export SECOND_BRAIN_HOME
+SECOND_BRAIN_HOME=${SECOND_BRAIN_HOME:-"$HOME/.second_brain"}; export SECOND_BRAIN_HOME
 NODE='/opt/homebrew/bin/node'
-BIN='/Users/me/.second_brain/app/apps/cli/dist/bin.js'
+BIN="$SECOND_BRAIN_HOME/app/apps/cli/dist/bin.js"
 # …node를 찾는 sh 함수들…
 if [ ! -x "$NODE" ]; then
   if brain_find_node; then
@@ -912,8 +894,7 @@ shim과 `plugin/bin/session-start.sh`가 같은 바이트를 담고, 테스트�
 
 ```text
 packages/core/          domain types, use cases, ports -- no runtime dependencies
-packages/sqlite/        the Store port on the local SQLite source -- the originals
-packages/postgres/      the Store port on Postgres + pgvector -- a replica, epic 7
+packages/postgres/      PostgreSQL의 Store port 구현 -- 주 저장소
 packages/claude-code/   Claude Code connector: the transcript parser and hook I/O
 packages/modelstudio/   embeddings and reranking (placeholder)
 packages/second_brain/  the one writing surface: re-exports only
@@ -970,9 +951,7 @@ git config core.hooksPath .githooks
 
 ## 테스트 데이터베이스
 
-`packages/postgres`는 에픽 7의 복제 대상이고, 그 테스트는 목이 아니라 실제
-데이터베이스를 씁니다. 다른 것은 필요 없습니다. CLI와 `packages/sqlite`는 임시
-폴더의 파일을 상대로 돕니다.
+CLI·bootstrap·`packages/postgres` 테스트는 실제 PostgreSQL 테스트 데이터베이스를 씁니다.
 
 Docker만 켜 두면 준비할 것은 없습니다.
 
@@ -986,7 +965,7 @@ Postgres 테스트가 돌기 직전에 `pnpm test`가 한 번 확인합니다. �
 컨테이너는 볼륨을 두지 않으므로, 멈추면 데이터는 사라집니다.
 
 이미 있는 Postgres로 돌리려면 `BRAIN_TEST_DATABASE_URL`을 그것으로 가리키세요.
-변수가 있으면 Docker는 부르지 않습니다. pgvector가 있어야 합니다.
+변수가 있으면 Docker는 부르지 않습니다. `pg_trgm` 확장을 만들 수 있는 PostgreSQL 18이면 됩니다.
 
 ```sh
 export BRAIN_TEST_DATABASE_URL=postgres://<user>:<password>@<host>:<port>/<database>
@@ -995,17 +974,20 @@ pnpm test
 
 Docker도 없고 변수도 없으면, 테스트를 하나도 돌리지 않고 이 둘 중 하나를 하라는
 안내 한 번으로 멈춥니다. Postgres 테스트를 건너뛰거나 목으로 바꾸는 길은
-없습니다. Postgres를 고르지 않은 실행(`vitest run --project sqlite` 등)은 Docker를
+없습니다. Postgres를 고르지 않은 실행(`vitest run --project core` 등)은 Docker를
 부르지 않습니다.
 
 ## 설치 상태 확인
 
 설정은 저장소 밖, `~/.second_brain`(또는 `SECOND_BRAIN_HOME`이 가리키는 폴더)에
-있습니다. `config.toml`은 `schema_version`, 시간대, 절대 경로 셋 — 데이터베이스
-파일(`store.path`), 파일 저장소 루트(`files.path`), 미러(`mirror.path`) — 을
+있습니다. PostgreSQL 홈의 시간대는 DB 사용자 설정에 저장하며, `brain config get timezone`과
+`brain config set timezone America/New_York`으로 읽고 바꿉니다. `setup run`은 기존
+파일의 시간대를 DB로 옮기고 파일에서는 뺍니다. 기본값은 `Asia/Seoul`입니다.
+`config.toml`은 `schema_version`,
+PostgreSQL 연결 선택자(`store.url_env`, 기본 `BRAIN_DATABASE_URL`), 파일 저장소 루트(`files.path`), 미러(`mirror.path`) — 을
 담고, 플러그인이 더 새 앱을 스스로 설치해도 되는지(`update.auto`, 기본 참)를
 담고, 키 값은 담지 않습니다. 이 버전이 모르는 키가 있으면 그대로 남습니다. 키 값은 mode 0600의 `.env`에
-있겠지만 이 버전에는 키가 없습니다. 둘 다 설치기가 씁니다. 손으로 쓸 것은
+있으며 PostgreSQL 접속 비밀도 여기에 둡니다. 둘 다 설치기가 씁니다. 손으로 쓸 것은
 없습니다.
 
 같은 폴더에 설정이 아닌 파일도 셋 있습니다. 완료 기록 `installed.json`(위),
@@ -1031,11 +1013,12 @@ env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" doctor run
 
 | 점검 | 말하는 것 |
 |-------|--------------|
-| `db` | 원본이 응답했는지, 그리고 어느 SQLite 버전인지 |
-| `writable` | 이 프로세스가 정말 쓸 수 있었는지. 트랜잭션을 열고 테이블을 만들고 전부 롤백하므로 남는 것은 없습니다. 데이터베이스 파일은 mode 0444에서도 열리기 때문에 따로 묻습니다. 아무도 기다리지 않습니다 — 다른 프로세스가 쓰고 있는 brain은 `warn`으로 답하고 확인하지 못했다고 말합니다 |
-| `wal` | 파일이 write-ahead 모드인지. 읽는 쪽과 쓰는 쪽이 파일을 함께 쓰게 해 주는 것이 그것입니다 |
-| `fts5-trigram` | 이 Node의 SQLite가 FTS5와 `trigram` 토크나이저로 빌드되었는지. 행을 색인하고 찾아보아 증명합니다 |
-| `foreign-keys` | 이 연결에서 적용되는지 |
+| `orbstack` | OrbStack·Docker context·Compose가 준비되었는지 |
+| `container` | 이 홈의 PostgreSQL 컨테이너가 실행 중이고 healthy인지 |
+| `db` | PostgreSQL 접속 결과와 서버 버전 |
+| `writable` | 쓰기 확인 트랜잭션을 실행하고 되돌릴 수 있는지. 잠금 대기는 `warn` |
+| `pg_trgm` | 검색에 쓰는 확장과 인덱스를 사용할 수 있는지 |
+| `redaction_cleanup` | 가린 저장본의 정리 일감이 남아 있는지 |
 | `schema-version` | 저장된 버전이 이 빌드가 만들어진 그 버전인지. 어긋나면 `SCHEMA_MISMATCH`이고, 마이그레이션하는 것은 `brain setup run`입니다. `db`가 실패했으면 물을 것이 없으므로 `skip` |
 | `untagged` | 꼬리표 없는 세션 수. 레포 밖 세션도 정상이므로 항상 `ok`이며 `N건`을 보입니다. 읽기 실패는 `fail`, DB 실패는 `skip` |
 | `failures` | 아직 해결되지 않은 실패가 몇 건인지, 대상 종류별로. 0건이면 `ok`, 있으면 `warn`(코드 없음) — 기록이 남았다는 것은 망가졌다는 뜻이 아니라 멈췄다고 말했다는 뜻입니다. `brain failures retry`가 다시 부탁합니다. `db`가 실패했으면 `skip` |
@@ -1064,21 +1047,23 @@ env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" doctor run
 실패했다는 뜻, 2는 명령을 아예 실행할 수 없었다는 뜻입니다. 고치는 일은 하지
 않습니다. doctor는 알려 주고, 고치는 것은 `setup run`입니다.
 
-`writable`이 실패하면 `brain.db`와 함께 `brain.db-wal`과 `brain.db-shm`도
-고치세요. SQLite는 사이드카에 데이터베이스 파일의 권한을 그대로 주므로, 한때
-읽기 전용이었던 데이터베이스는 자기 mode를 바로잡아도 사이드카가 그대로인 동안
-이 점검에서 계속 실패합니다.
-
-런타임 명령은 데이터베이스 파일을 열기만 하고 만들지 않습니다. 그래서 없는
-`brain.db`는 빈 파일로 슬쩍 대체되지 않고 `DB_UNAVAILABLE`로 보고됩니다 — 그리고
-데이터베이스에 닿을 수 없으면 그 탐침에 대해 할 말이 없으므로, 그 줄들은
-짐작되는 대신 아예 없습니다. 스키마 버전은 그래도 자기 줄을 받습니다. `db`를
-이유로 든 `skip`으로요. "확인하지 않았다"와 "확인했고 괜찮다"는 다른 답이고,
-줄을 빼 버리면 없는 것으로부터 어느 쪽인지 알아내야 합니다.
+데이터베이스에 닿지 못하면 `DB_UNAVAILABLE`로 보고하며, 런타임 명령은 DB나 schema를
+만들지 않습니다. OrbStack이나 컨테이너 선행 점검이 실패하면 DB 점검은 그 이유를
+담은 `skip`으로 나옵니다. 컨테이너를 준비하거나 복구하려면 `setup run`을 실행하세요.
 
 `doctor run`은 망가진 설정에 대해 **보고하는** 유일한 명령입니다. 설치가 이미
 망가졌을 때 실행하는 명령이기 때문입니다. 없거나 읽을 수 없는 `config.toml`은
-실패한 `config` 점검과 exit 1이 되고, `db`는 경로가 없어서 실패하고, shim과 node
+실패한 `config` 점검과 exit 1이 되고, `db`는 접속 설정이 없어서 실패하고, shim과 node
 점검은 평소처럼 보고됩니다. 설정이 필요한 명령은 같은 폴더에서 exit 2로
 끝납니다. 설정을 아예 읽지 않는 명령 — `guide` 셋과 `setup run`·`setup connect`
 — 는 그 폴더에서도 평소처럼 돕니다.
+
+모든 홈의 설치는 OrbStack 실행 상태와 Docker context를 먼저
+확인합니다. OrbStack이 없으면 `brew install --cask orbstack` 또는
+https://orbstack.dev 에서 설치하고, 꺼져 있으면 `orb start`로 켜세요.
+`docker context use orbstack`을 선택하고 `DOCKER_HOST`는 해제하세요.
+설치는 정상 컨테이너를 재사용하고 디스크의 transcript를 가져옵니다. 옛 SQLite
+파일은 그대로 남기며 더 쓰지 않습니다. doctor는 OrbStack과 컨테이너부터 검사하고
+선행 검사가 실패하면 DB 검사를 건너뜁니다. 조회 명령은 컨테이너를 띄우지 않습니다.
+`setup uninstall`은 컨테이너를 내리고 볼륨을 남깁니다. 볼륨까지 지우려면
+`setup uninstall --delete-volume --yes`로 동의하세요.

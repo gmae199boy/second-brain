@@ -48,7 +48,7 @@ import {
  *
  * Two rows of the matrix are deliberately elsewhere: a redacted file, because
  * only an adapter with the column can be held to it
- * (`packages/sqlite/test/document-extract.test.ts`), and the command end to end
+ * (`packages/postgres/test/attachment-extraction.test.ts`), and the command end to end
  * (`apps/cli/test/sessions-ingest.test.ts`).
  */
 
@@ -176,15 +176,15 @@ async function kit(options: KitOptions = {}): Promise<Kit> {
 
   const withSchema: Store & SchemaStore = {
     ...store,
-    async readSchemaVersion() {
-      return { ok: true, version: { version: 8, appliedAt: NOW } };
+    async readSchemaVersions() {
+      return { ok: true, versions: { core: { version: 8, appliedAt: NOW } } };
     },
   };
   const dependencies: BrainDependencies = {
     store: options.wrap === undefined ? withSchema : options.wrap(withSchema),
     spool: memorySpool(),
     files,
-    schemaVersion: 8,
+    schemaVersions: { core: 8 },
     clock,
     idGen,
     parsers: [memoryParser()],

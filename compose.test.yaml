@@ -1,25 +1,16 @@
-# Test-only Postgres. No volumes: the data dies with the container.
-configs:
-  install-vector:
-    # The image ships pgvector but installs it in no database, so do it once at
-    # first start. That makes `brain doctor run` green against this container.
-    content: |
-      create extension if not exists vector;
-
+# 테스트 전용 PostgreSQL. tmpfs만 사용합니다.
+name: second-brain-test
 services:
   postgres:
-    image: pgvector/pgvector:pg18
+    image: postgres:18
     environment:
       POSTGRES_PASSWORD: postgres
     ports:
-      - "54329:5432"
+      - "127.0.0.1:54329:5432"
     # The image declares VOLUME /var/lib/postgresql; masking it with a tmpfs
     # keeps `compose down` from leaving an anonymous volume behind.
     tmpfs:
       - /var/lib/postgresql
-    configs:
-      - source: install-vector
-        target: /docker-entrypoint-initdb.d/10-install-vector.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 2s

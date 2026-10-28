@@ -7,8 +7,9 @@ import {
 } from 'second_brain';
 import type {
   CommandContextBase,
+  CommandContext,
   CommandFailure,
-  CommandSpec,
+  DatabaseCommandSpec,
   SpoolCommandContext,
 } from '../dispatch.js';
 import type { Harness } from '../harnesses.js';
@@ -68,7 +69,18 @@ export interface SessionsIngestData {
 
 export function sessionsIngestCommand(
   registry: readonly Harness[],
-): CommandSpec<SessionsIngestData> {
+): DatabaseCommandSpec<SessionsIngestData> {
+  const run = async (context: CommandContext) => {
+      const payload = await readPayload(registry, context);
+      if (!payload.ok) return payload;
+
+      const result = await context.brain.sessions.ingest(payload.input);
+      if (!result.ok) {
+        return { ok: false as const, code: result.code, message: result.message };
+      }
+
+      return answer(result);
+    };
   return {
     ns: 'sessions',
     verb: 'ingest',
@@ -86,17 +98,7 @@ export function sessionsIngestCommand(
     writes: true,
     arguments: ['<harness>'],
 
-    async run(context) {
-      const payload = await readPayload(registry, context);
-      if (!payload.ok) return payload;
-
-      const result = await context.brain.sessions.ingest(payload.input);
-      if (!result.ok) {
-        return { ok: false as const, code: result.code, message: result.message };
-      }
-
-      return answer(result);
-    },
+    run,
 
     async spool(context: SpoolCommandContext) {
       const payload = await readPayload(registry, context);

@@ -231,15 +231,15 @@ async function kit(options: KitOptions = {}): Promise<Kit> {
 
   const withSchema: Store & SchemaStore = {
     ...store,
-    async readSchemaVersion() {
-      return { ok: true, version: { version: 8, appliedAt: NOW } };
+    async readSchemaVersions() {
+      return { ok: true, versions: { core: { version: 8, appliedAt: NOW } } };
     },
   };
   const dependencies: BrainDependencies = {
     store: options.wrap === undefined ? withSchema : options.wrap(withSchema),
     spool: memorySpool(),
     files,
-    schemaVersion: 8,
+    schemaVersions: { core: 8 },
     clock,
     idGen,
     parsers: [memoryParser()],

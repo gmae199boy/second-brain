@@ -11,6 +11,9 @@
   },
   "devDependencies": {
     "@types/node": "24.19.1",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "@second-brain/test-db": "workspace:*",
+    "pg": "8.23.1",
+    "@types/pg": "8.23.1"
   }
 }

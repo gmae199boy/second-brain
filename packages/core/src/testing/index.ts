@@ -31,7 +31,7 @@ export {
   type SubjectFactory,
 } from './contract.js';
 export {
-  assertReadSchemaVersion,
+  assertReadSchemaVersions,
   assertStoreHealth,
   clockContract,
   connectorContract,
@@ -115,6 +115,7 @@ export {
   sampleIngestBatch,
   sampleProjectId,
   sampleSelfUserInput,
+  sampleSchemaVersions,
   sampleSessionId,
   sampleSessionKey,
   sampleSessionToken,
@@ -145,3 +146,8 @@ export { attachmentStoreContract, type AttachmentStoreSubject } from './contract
 export { extractionStoreContract, type ExtractionStoreSubject } from './contracts/extraction-store.js';
 export { fileRedactionContract, type FileRedactionSubject } from './contracts/file-redaction.js';
 export { scheduleStoreContract } from './contracts/schedule-store.js';
+
+export { sessionIngestContract, sessionMetadataContract, sessionRedactionContract, type SessionIngestSubject, type SessionMetadataSubject, type SessionRedactionSubject } from './contracts/session-store.js';
+
+export { settingsStoreContract } from './contracts/settings-store.js';
+export { memorySettingsStore } from './fakes/store.js';

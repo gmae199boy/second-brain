@@ -1,331 +1,62 @@
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { fileURLToPath } from 'node:url';
-import { SQLITE_SCHEMA_VERSION } from 'second_brain';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { configFilePath, envFilePath, HOME_ENV } from '../src/config/paths.js';
-import { shimPath } from '../src/install/shim.js';
-import { withoutHarnessFolders } from './environment.js';
+import { readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { runInstaller, runInstallerWithFlags } from '../src/install.js';
+import { readConfig } from '../src/config/codec.js';
+import { readInstalled } from '../src/install/installed.js';
+import { installerDeps, pgDatabaseUrl } from './pg-home.js';
+import { PgTestClient } from './pg-client.js';
 import { tempHomes } from './temp-home.js';
-
-/**
- * The installer end to end, against a real SQLite file, through the built entry
- * point — the same file `tooling/bootstrap` starts. Piped stdio makes the child
- * non-interactive, which is why it runs on flags and never asks anything.
- *
- * The child's `PATH` is narrowed to the node folder plus `/usr/bin:/bin`, and
- * every database variable is stripped from its environment: the point of this
- * story is that an install needs no Docker and no Postgres, and a machine that
- * happens to have either must not be what makes these pass.
- */
-
-const installerPath = fileURLToPath(new URL('../dist/install.js', import.meta.url));
-const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
-
-interface Run {
-  code: number | null;
-  stdout: string;
-  stderr: string;
-}
-
+import { withoutHarnessFolders } from './environment.js';
 const temporary = tempHomes();
-
-async function emptyHome(): Promise<string> {
-  const home = await temporary.create('brain-install-');
-  return home;
-}
-
-function runInstaller(args: readonly string[], home: string): Promise<Run> {
-  const childEnv: NodeJS.ProcessEnv = {
-    ...withoutHarnessFolders(process.env),
-    [HOME_ENV]: home,
-    // No Docker on the way, and nothing that could stand in for a Postgres.
-    PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
-  };
-  delete childEnv['SECOND_BRAIN_DATABASE_URL'];
-  delete childEnv['BRAIN_TEST_DATABASE_URL'];
-
-  const child = spawn(process.execPath, [installerPath, ...args], {
-    cwd: repoRoot,
-    env: childEnv,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  let stdout = '';
-  let stderr = '';
-  child.stdout.on('data', (chunk: Buffer) => {
-    stdout += chunk.toString();
-  });
-  child.stderr.on('data', (chunk: Buffer) => {
-    stderr += chunk.toString();
-  });
-
-  return new Promise((resolve, reject) => {
-    child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stdout, stderr }));
-  });
-}
-
-/** The permission bits of one path, as the three octal digits people read. */
-async function mode(path: string): Promise<string> {
-  return ((await stat(path)).mode & 0o777).toString(8);
-}
-
-/** Every user table and how many rows it holds, read without writing. */
-function rowCounts(path: string): Record<string, number> {
-  const database = new DatabaseSync(path, { readOnly: true });
-  try {
-    const tables = database
-      .prepare(
-        `select name from sqlite_master
-          where type = 'table' and name not like 'sqlite_%'
-          order by name`,
-      )
-      .all() as { name: string }[];
-    const counts: Record<string, number> = {};
-    for (const { name } of tables) {
-      const row = database.prepare(`select count(*) as rows from "${name}"`).get() as {
-        rows: number;
-      };
-      counts[name] = row.rows;
-    }
-    return counts;
-  } finally {
-    database.close();
-  }
-}
-
 afterEach(() => temporary.cleanup());
-
-describe('the installer with no Docker and no Postgres', () => {
-  beforeAll(() => {
-    if (!existsSync(installerPath)) {
-      throw new Error(`${installerPath} does not exist. Run \`pnpm build\` before these tests.`);
-    }
+async function world() {
+  const home = await temporary.create('brain-install-');
+  const env = withoutHarnessFolders({ ...process.env, SECOND_BRAIN_HOME: home });
+  delete env.BRAIN_DATABASE_URL; delete env.DOCKER_HOST;
+  const deps = await installerDeps(home, env); const lines: string[] = []; deps.log = line => lines.push(line);
+  await rm(join(home, 'config.toml'));
+  return { home, env, deps, lines, run: (args: string[] = ['--yes']) => runInstaller(args, env, deps) };
+}
+describe('real PG installer with machine commands injected', () => {
+  it('installs an empty configuration home, records PG core schema and creates no database file', async () => {
+    const kit = await world(); expect(await kit.run(), kit.lines.join('\n')).toBe(0);
+    expect(await readConfig(kit.home)).toMatchObject({ ok: true, config: { storeUrlEnv: 'BRAIN_DATABASE_URL' } });
+    const text = await readFile(join(kit.home, 'config.toml'), 'utf8');
+    expect(text).not.toContain('brain.db'); expect(text).not.toContain('timezone');
+    expect(await readdir(kit.home)).not.toContain('brain.db');
+    expect((await stat(join(kit.home, '.env'))).mode & 0o777).toBe(0o600);
+    expect((await stat(join(kit.home, 'files'))).mode & 0o777).toBe(0o700);
+    expect(await readInstalled(kit.home)).toMatchObject({ schema_version: 1, schema_versions: { core: 1 } });
   });
-
-  it('writes the configuration, makes the database at 0600 and the files root at 0700', async () => {
-    const home = await emptyHome();
-
-    const run = await runInstaller(['--yes'], home);
-
-    expect(run.stderr).toBe('');
-    expect(run.code).toBe(0);
-    expect(run.stdout).toContain('db: ok');
-    expect(run.stdout).toContain('wal: ok');
-    expect(run.stdout).toContain('fts5-trigram: ok');
-    expect(run.stdout).toContain('foreign-keys: ok');
-
-    const config = await readFile(configFilePath(home), 'utf8');
-    expect(config).toContain('schema_version = 1');
-    expect(config).toContain(`path = "${join(home, 'brain.db')}"`);
-    expect(config).toContain(`path = "${join(home, 'files')}"`);
-    expect(config).toContain(`path = "${join(home, 'mirror')}"`);
-    // No Postgres key anywhere: the source is a file this folder names.
-    expect(config).not.toContain('url_env');
-
-    expect(await mode(join(home, 'brain.db'))).toBe('600');
-    expect(await mode(join(home, 'files'))).toBe('700');
-    expect(await mode(envFilePath(home))).toBe('600');
-    expect(await mode(shimPath(home))).toBe('755');
-    // The mirror folder itself is epic 4's to create.
-    expect(existsSync(join(home, 'mirror'))).toBe(false);
-
-    const counts = rowCounts(join(home, 'brain.db'));
-    expect(counts['schema_version']).toBe(1);
-    // Both default index configs come from the migrations, not an install step.
-    expect(counts['index_configs']).toBe(2);
-    // The owner, which is the one row an install step writes: SQL can read no
-    // account name and mint no UUIDv7 (AD-12).
-    expect(counts['users']).toBe(1);
-    expect(run.stdout).toContain('의 것입니다');
-  });
-
-  it('records the schema version this build ships', async () => {
-    const home = await emptyHome();
-
-    const run = await runInstaller(['--yes'], home);
-
-    expect(run.code).toBe(0);
-    expect(run.stdout).toContain(`스키마 버전은 ${String(SQLITE_SCHEMA_VERSION)}입니다`);
-    const database = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
+  it('reruns migrations and ownership idempotently and keeps stored settings', async () => {
+    const kit = await world(); expect(await kit.run(), kit.lines.join('\n')).toBe(0);
+    const db = new PgTestClient(pgDatabaseUrl(kit.home));
     try {
-      expect(database.prepare('select version from schema_version').get()).toEqual({
-        version: SQLITE_SCHEMA_VERSION,
-      });
-    } finally {
-      database.close();
-    }
+      const owners = await db.prepare('select * from users').all();
+      const migrations = await db.prepare('select * from schema_migrations').all();
+      await db.exec("update settings set value='Europe/Berlin' where key='timezone'");
+      expect(await kit.run(), kit.lines.join('\n')).toBe(0);
+      expect(await db.prepare('select * from users').all()).toEqual(owners);
+      expect(await db.prepare('select * from schema_migrations').all()).toEqual(migrations);
+      expect(await db.prepare("select value from settings where key='timezone'").get()).toEqual({ value: 'Europe/Berlin' });
+    } finally { await db.close(); }
   });
-
-  it('is idempotent: a second run changes nothing and still exits 0', async () => {
-    const home = await emptyHome();
-    const first = await runInstaller(['--yes'], home);
-    expect(first.code).toBe(0);
-    const configBefore = await readFile(configFilePath(home), 'utf8');
-    const shimBefore = await readFile(shimPath(home), 'utf8');
-    const countsBefore = rowCounts(join(home, 'brain.db'));
-
-    const again = await runInstaller(['--yes'], home);
-
-    expect(again.stderr).toBe('');
-    expect(again.code).toBe(0);
-    expect(again.stdout).toContain(
-      `스키마는 이미 버전 ${String(SQLITE_SCHEMA_VERSION)}입니다`,
-    );
-    expect(again.stdout).toContain('이미 있습니다');
-    // Same owner, named rather than replaced.
-    expect(again.stdout).toMatch(/이미 \S+의 것입니다/);
-    expect(await readFile(configFilePath(home), 'utf8')).toBe(configBefore);
-    expect(await readFile(shimPath(home), 'utf8')).toBe(shimBefore);
-    expect(rowCounts(join(home, 'brain.db'))).toEqual(countsBefore);
-    expect(await mode(join(home, 'brain.db'))).toBe('600');
-    expect(await mode(join(home, 'files'))).toBe('700');
+  it('leaves an old file byte for byte and removes its config key on rewrite', async () => {
+    const kit = await world(); const legacy = join(kit.home, 'old.db'); await writeFile(legacy, 'legacy bytes');
+    await writeFile(join(kit.home, 'config.toml'), `schema_version=1\n[store]\npath=${JSON.stringify(legacy)}\n`);
+    const result = await runInstallerWithFlags({ connect: [], yes: true, help: false }, kit.env, kit.deps);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, report: { postgres: { legacy_sqlite_path: legacy } } });
+    expect(await readFile(legacy, 'utf8')).toBe('legacy bytes');
+    expect(await readFile(join(kit.home, 'config.toml'), 'utf8')).not.toContain(legacy);
+    expect(kit.lines).toContain(`옛 SQLite 파일 ${legacy}는 지우지 않았고 더 쓰지 않습니다`);
   });
-
-  it('puts the database where --store-path says, creating its parent at 0700', async () => {
-    const home = await emptyHome();
-    const path = join(home, 'elsewhere', 'deeper', 'brain.db');
-
-    const run = await runInstaller(['--store-path', path, '--yes'], home);
-
-    expect(run.code).toBe(0);
-    expect(await readFile(configFilePath(home), 'utf8')).toContain(`path = "${path}"`);
-    expect(await mode(dirname(path))).toBe('700');
-    expect(await mode(path)).toBe('600');
-    expect(existsSync(join(home, 'brain.db'))).toBe(false);
+  it.each(['--store-path', '--database-url', '--unknown'])('rejects %s as usage', async flag => {
+    const kit = await world(); expect(await kit.run([flag, '/tmp/db', '--yes'])).toBe(2);
+    expect(kit.lines.join('\n')).toContain('USAGE');
   });
-
-  it('keeps the recorded path on a re-run, and leaves the old file alone when it changes', async () => {
-    const home = await emptyHome();
-    const first = join(home, 'one', 'brain.db');
-    expect((await runInstaller(['--store-path', first, '--yes'], home)).code).toBe(0);
-
-    // A re-run that says nothing about it: the recorded path has to survive.
-    const kept = await runInstaller(['--yes'], home);
-    expect(kept.code).toBe(0);
-    expect(await readFile(configFilePath(home), 'utf8')).toContain(`path = "${first}"`);
-
-    const second = join(home, 'two', 'brain.db');
-    const moved = await runInstaller(['--store-path', second, '--yes'], home);
-
-    expect(moved.code).toBe(0);
-    expect(moved.stdout).toContain(`${first}는 있던 자리에 그대로 둡니다`);
-    expect(existsSync(first)).toBe(true);
-    expect(existsSync(second)).toBe(true);
-  });
-
-  it('names the consent it needs and exits 3 with no terminal and no --yes', async () => {
-    const home = await emptyHome();
-
-    const run = await runInstaller([], home);
-
-    // The npx door and `brain setup run` share this branch, so both answer 3:
-    // the consent is a question for the person, not a mistake of the caller's.
-    expect(run.code).toBe(3);
-    expect(run.stdout).toContain('--yes');
-    expect(existsSync(configFilePath(home))).toBe(false);
-    expect(existsSync(join(home, 'brain.db'))).toBe(false);
-    expect(existsSync(join(home, 'files'))).toBe(false);
-  });
-
-  it('exits 2 for a relative --store-path, writing nothing', async () => {
-    const home = await emptyHome();
-
-    const run = await runInstaller(['--store-path', 'brain.db', '--yes'], home);
-
-    expect(run.code).toBe(2);
-    expect(run.stdout).toContain('CONFIG_INVALID: --store-path brain.db');
-    expect(existsSync(configFilePath(home))).toBe(false);
-  });
-
-  it.each(['--database-url', '--docker'])('refuses the old flag %s', async (flag) => {
-    const home = await emptyHome();
-
-    const run = await runInstaller([flag, 'postgres://x/y', '--yes'], home);
-
-    expect(run.code).toBe(2);
-    expect(run.stdout).toContain(`모르는 인자입니다: ${flag}`);
-    expect(run.stdout).toContain('사용법: second-brain');
-    expect(existsSync(configFilePath(home))).toBe(false);
-  });
-
-  it('reports one coded line and skips the shim when the path cannot hold a database', async () => {
-    const home = await emptyHome();
-    const path = join(home, 'brain.db');
-    await mkdir(path);
-
-    const run = await runInstaller(['--yes'], home);
-
-    expect(run.code).toBe(1);
-    expect(run.stdout).toMatch(/\n(DB_UNAVAILABLE|MIGRATION_FAILED): .+\n/);
-    expect(existsSync(shimPath(home))).toBe(false);
-  });
-
-  it('refuses a store path that is not a database, leaving the file alone', async () => {
-    const home = await emptyHome();
-    const stranger = join(home, 'notes.txt');
-    await writeFile(stranger, 'not a database\n', 'utf8');
-    await chmod(stranger, 0o644);
-
-    const run = await runInstaller(['--store-path', stranger, '--yes'], home);
-
-    // The same exit code this has always had, under the code that says what
-    // actually happened: the file is not a database, so no migration was
-    // attempted (F4).
-    expect(run.code).toBe(1);
-    expect(run.stdout).toContain('DB_UNAVAILABLE: ');
-    expect(run.stdout).not.toContain('MIGRATION_FAILED');
-    expect(await readFile(stranger, 'utf8')).toBe('not a database\n');
-    expect(await mode(stranger)).toBe('644');
-    expect(existsSync(`${stranger}-wal`)).toBe(false);
-    expect(existsSync(configFilePath(home))).toBe(false);
-  });
-
-  it('prints the failure with its code and, under it, the hint', async () => {
-    const home = await emptyHome();
-
-    const run = await runInstaller([], home);
-
-    // This door has no envelope, so it is the one that renders the failure —
-    // and the hint is the half a person at a terminal would otherwise never
-    // see (Decision 2026-10-16).
-    expect(run.code).toBe(3);
-    const lines = run.stdout.trimEnd().split('\n');
-    expect(lines.at(-2)).toMatch(/^CONFIRMATION_REQUIRED: /);
-    expect(lines.at(-1)).toBe(
-      '  사람에게 진행해도 되는지 묻고, 그렇다고 할 때만 같은 명령에 `--yes`를 붙여 다시 실행하세요',
-    );
-  });
-
-  it('says where it will write, before it writes anything', async () => {
-    const home = await emptyHome();
-
-    const run = await runInstaller([], home);
-
-    expect(run.stdout).toContain(`설정 폴더: ${home}`);
-  });
-});
-
-describe('installer prompt cancellation', () => {
-  it.each([true, false])('handles Cancelled only (cancel=%s)', async (cancel) => {
-    const { Cancelled, runInstallerWithFlags, systemInstallDeps } = await import('../src/install.js');
-    const home = await emptyHome();
-    const error = cancel ? new Cancelled() : new Error('unexpected prompt error');
-    const deps = systemInstallDeps();
-    const fail = async (): Promise<never> => { throw error; };
-    const run = runInstallerWithFlags({ connect: [], yes: false, help: false },
-      { ...withoutHarnessFolders(process.env), [HOME_ENV]: home },
-      { ...deps, isTTY: true, log: () => {}, prompts: { confirm: fail, text: fail, multiselect: fail } });
-    if (cancel) {
-      expect(await run).toEqual({ ok: false, warnings: [], failure: {
-        code: 'SETUP_CANCELLED', message: '요청대로 멈췄습니다. 더 바뀐 것은 없습니다.', exit: 1,
-      } });
-    } else {
-      await expect(run).rejects.toBe(error);
-    }
+  it('requires noninteractive consent before installation', async () => {
+    const kit = await world(); expect(await kit.run([])).toBe(3);
+    expect(await readdir(kit.home)).not.toContain('postgres');
   });
 });

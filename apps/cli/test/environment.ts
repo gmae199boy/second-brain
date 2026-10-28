@@ -33,7 +33,7 @@ afterAll(async () => {
 /** Where Claude Code keeps its configuration, when the environment says. */
 const CLAUDE_CONFIG_DIR_ENV = 'CLAUDE_CONFIG_DIR';
 
-/** Isolate all CLI invocations from real user transcripts. */
+/** Isolate CLI fixtures from real transcripts and inherited primary database URLs. */
 export function withoutHarnessFolders(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const isolated: NodeJS.ProcessEnv = {
     ...env,
@@ -42,5 +42,7 @@ export function withoutHarnessFolders(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv
     SECOND_BRAIN_LAUNCH_AGENTS: EMPTY_LAUNCH_AGENTS,
     FAKE_LAUNCHCTL_DIR,
   };
+  // Fixture .env files own the URL. Apply intentional fault overrides after this helper.
+  delete isolated.BRAIN_DATABASE_URL;
   return isolated;
 }

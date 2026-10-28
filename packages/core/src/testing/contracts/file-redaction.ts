@@ -197,6 +197,7 @@ const NO_SPANS = (current: { message: { body: string } }) => ({
   body: current.message.body,
   toolNotes: [],
   redactions: [],
+  cleanup: [],
   bodySpans: 0,
   toolNoteSpans: 0,
 });

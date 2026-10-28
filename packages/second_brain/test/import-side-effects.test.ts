@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { runSqliteMigrations } from 'second_brain';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -29,7 +28,7 @@ async function configuredHome(databaseUrl: string): Promise<string> {
   const home = await mkdtemp(join(tmpdir(), 'brain-import-'));
   homes.push(home);
   await writeFile(join(home, 'config.toml'), 'schema_version = 1\n', 'utf8');
-  await writeFile(join(home, '.env'), `SECOND_BRAIN_DATABASE_URL="${databaseUrl}"\n`, 'utf8');
+  await writeFile(join(home, '.env'), `BRAIN_DATABASE_URL="${databaseUrl}"\n`, 'utf8');
   return home;
 }
 
@@ -39,7 +38,7 @@ async function configuredHome(databaseUrl: string): Promise<string> {
  * bundle, so `import("second_brain")` resolves the same way a consumer's would.
  */
 describe('importing second_brain has no side effects', () => {
-  it('opens no connection even with a configuration folder pointing at a live listener', async () => {
+  it.each(['second_brain', 'cli'])('%s module import opens no connection with a live listener configured', async entry => {
     const connections: Socket[] = [];
     const server = createServer((socket) => {
       connections.push(socket);
@@ -59,7 +58,7 @@ describe('importing second_brain has no side effects', () => {
     });
 
     try {
-      const result = await run(port, await configuredHome(`postgres://postgres:postgres@127.0.0.1:${port}/postgres`));
+      const result = await run(port, await configuredHome(`postgres://postgres:postgres@127.0.0.1:${port}/postgres`), entry);
       expect(result.stderr).toBe('');
       expect(result.code).toBe(0);
       expect(result.stdout.trim()).toBe('imported');
@@ -69,126 +68,22 @@ describe('importing second_brain has no side effects', () => {
     }
   });
 
-  /**
-   * The local source is a file, not a socket, so the Postgres test above says
-   * nothing about it: a `DatabaseSync` opened at import time would show up as
-   * an open file descriptor and as nothing else. So this one looks at the file
-   * descriptors the child holds.
-   *
-   * The control is the point of the test. "The database is not in `lsof`" is
-   * worth nothing on its own — a path spelled slightly differently would also
-   * not be in there — so a second child opens the very same file through
-   * `sqliteStore` and has to be found. One assertion proves the behaviour, the
-   * other proves the assertion can fail.
-   */
-  it('holds the database file open only once something asks the store a question', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'brain-import-sqlite-'));
-    homes.push(home);
-    const path = join(home, 'brain.db');
-    expect((await runSqliteMigrations({ path })).ok).toBe(true);
-    // As `lsof` spells it: on a Mac the temporary folder is reached through a
-    // symlink, and a comparison against the unresolved path would pass by
-    // accident.
-    const real = realpathSync(path);
 
-    const imported = await held(home, 'await import("second_brain");');
-    expect(imported).not.toContain(real);
-
-    const asked = await held(
-      home,
-      `const { sqliteStore } = await import("second_brain");
-       const store = sqliteStore({ path: ${JSON.stringify(path)} });
-       const health = await store.checkHealth();
-       if (!health.ok) throw new Error(health.message);`,
-    );
-    expect(asked).toContain(real);
-  });
 });
-
-/**
- * The open files of a child that ran `body` and is now waiting. It waits rather
- * than exits because a process that has finished holds nothing open.
- */
-async function held(home: string, body: string): Promise<string> {
-  const script = [
-    body,
-    'console.log("ready");',
-    // Wait for the parent, which is looking at this process's open files.
-    'process.stdin.resume();',
-    'process.stdin.once("data", () => { process.exit(0); });',
-  ].join('\n');
-
-  const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
-    cwd: join(repoRoot, 'apps', 'cli'),
-    env: { ...process.env, SECOND_BRAIN_HOME: home },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  children.push(child);
-
-  let stderr = '';
-  child.stderr.on('data', (chunk: Buffer) => {
-    stderr += chunk.toString();
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`the child never became ready: ${stderr}`));
-    }, 20_000);
-    child.once('error', reject);
-    child.once('close', () => {
-      clearTimeout(timer);
-      reject(new Error(`the child exited before it was ready: ${stderr}`));
-    });
-    child.stdout.on('data', (chunk: Buffer) => {
-      if (chunk.toString().includes('ready')) {
-        clearTimeout(timer);
-        resolve();
-      }
-    });
-  });
-
-  const open = await lsof(child.pid ?? 0);
-  child.stdin.write('go\n');
-  expect(stderr).toBe('');
-  // Proof the reading itself works: whatever else it found, it found the
-  // process's own executable.
-  expect(open).not.toBe('');
-  return open;
-}
-
-/** The open files of one process, as text. */
-async function lsof(pid: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    // `-F n` would be terser, but the plain listing is what a person debugging
-    // a failure here would run by hand.
-    execFile('lsof', ['-p', String(pid)], (error, stdout) => {
-      // `lsof` exits non-zero when it could not ask about every file
-      // descriptor, which is the normal case for a process it does not own, so
-      // the output is what counts and an empty one is the only failure.
-      if (stdout !== '') {
-        resolve(stdout);
-        return;
-      }
-      reject(
-        new Error(
-          `lsof produced nothing for pid ${String(pid)}: ${error === null ? 'no error' : error.message}`,
-        ),
-      );
-    });
-  });
-}
 
 function run(
   port: number,
   home: string,
+  entry: string,
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const script = 'await import("second_brain"); console.log("imported");';
+  const module = entry === 'cli' ? join(repoRoot, 'apps/cli/dist/dispatch.js') : 'second_brain';
+  const script = `await import(${JSON.stringify(module)}); console.log("imported");`;
   const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
     cwd: join(repoRoot, 'apps', 'cli'),
     env: {
       ...process.env,
       SECOND_BRAIN_HOME: home,
-      SECOND_BRAIN_DATABASE_URL: `postgres://postgres:postgres@127.0.0.1:${port}/postgres`,
+      BRAIN_DATABASE_URL: `postgres://postgres:postgres@127.0.0.1:${port}/postgres`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -217,9 +112,12 @@ describe('Postgres is an explicit bundle subpath', () => {
     }
   `;
 
-  it.each(['root', 'help', 'hook'])('%s does not load pg', async (entry) => {
+  it.each(['root', 'help', 'hook preflight'])('%s does not load pg', async (entry) => {
     const home = await configuredHome('postgres://unused');
-    const body = entry === 'root' ? 'await import("second_brain");' : `
+    const body = entry === 'root' ? 'await import("second_brain");' : entry === 'hook preflight' ? `
+      const { dispatch } = await import(${JSON.stringify(join(repoRoot, 'apps/cli/dist/dispatch.js'))});
+      await dispatch([{ ns: 'fake', verb: 'hook', usedFor: '시험 hook', required: [], examples: ['brain fake hook'], output: '시험 결과', risk: 'write', hook: true, dryRun: false, preflight: () => ({ code: 'USAGE', message: '잘못된 hook입니다' }), run: async () => { throw new Error('unexpected run'); } }], ['fake', 'hook'], { clock: { now: () => new Date() }, stdout: () => {}, stderr: () => {} });
+    ` : `
       process.argv = [process.execPath, ${JSON.stringify(join(repoRoot, 'apps/cli/dist/bin.js'))},
         ...( ${JSON.stringify(entry)} === 'help' ? ['--help'] : ['sessions', 'ingest', 'claude-code'])];
       await import(${JSON.stringify(join(repoRoot, 'apps/cli/dist/bin.js'))});
@@ -247,4 +145,13 @@ describe('Postgres is an explicit bundle subpath', () => {
       cwd: join(repoRoot, 'apps/cli'), stdio: 'pipe',
     });
   });
+});
+
+it('spools a normal hook and exits zero when the default URL is unavailable', async () => {
+  const home = await configuredHome('postgresql://unused@127.0.0.1:1/unavailable');
+  const payload = { session_id: 'import-no-db', hook_event_name: 'Stop', transcript_path: join(repoRoot, 'packages/claude-code/test/fixtures/two-turns.jsonl') };
+  const result = execFileSync(process.execPath, [join(repoRoot, 'apps/cli/dist/bin.js'), 'sessions', 'ingest', 'claude-code', '--json'], {
+    cwd: join(repoRoot, 'apps/cli'), env: { ...process.env, SECOND_BRAIN_HOME: home, BRAIN_DATABASE_URL: '' }, input: JSON.stringify(payload), encoding: 'utf8',
+  });
+  expect(JSON.parse(result)).toMatchObject({ ok: true, data: { spooled: true } });
 });

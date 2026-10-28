@@ -2,7 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { SQLITE_SCHEMA_VERSION } from 'second_brain';
+import { CORE_SCHEMA_VERSION, EXPECTED_SCHEMA_VERSIONS } from 'second_brain/postgres';
 
 /**
  * `dist/build.json`: which commit this build was made from, and which store
@@ -17,7 +17,7 @@ import { SQLITE_SCHEMA_VERSION } from 'second_brain';
  * It runs after `tsc`, from `apps/cli`'s own `build` script, so the file is
  * written into the `dist/` that was just produced. The schema version is
  * imported rather than read out of a migration folder: `pnpm -r build` goes in
- * topological order, so `second_brain` — and the sqlite package behind it — is
+ * topological order, so `second_brain` — and the PostgreSQL entry point behind it — is
  * already built by the time this runs.
  */
 
@@ -41,6 +41,6 @@ function commit() {
 
 writeFileSync(
   fileURLToPath(new URL('../dist/build.json', import.meta.url)),
-  `${JSON.stringify({ commit: commit(), schema_version: SQLITE_SCHEMA_VERSION }, undefined, 2)}\n`,
+  `${JSON.stringify({ commit: commit(), schema_version: CORE_SCHEMA_VERSION, schema_versions: EXPECTED_SCHEMA_VERSIONS }, undefined, 2)}\n`,
   'utf8',
 );

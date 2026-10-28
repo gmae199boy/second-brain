@@ -108,7 +108,7 @@ export function argumentName(declared: string): string {
   return bare.replace(/-([a-z0-9])/g, (_match, character: string) => character.toUpperCase());
 }
 
-/** `storePath` as `store-path`, which is how every flag of this CLI is spelled. */
+/** `mirrorPath` as `mirror-path`, which is how every flag of this CLI is spelled. */
 function kebabCase(key: string): string {
   return key.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`);
 }

@@ -1,5 +1,5 @@
 import type { SchemaVersion } from '../../domain/schema-version.js';
-import type { ReadSchemaVersionResult, SchemaStore } from '../../ports/store.js';
+import type { ReadSchemaVersionsResult, SchemaStore } from '../../ports/store.js';
 
 /** 2026-01-01T00:00:00Z, so the default `appliedAt` is reproducible. */
 const DEFAULT_APPLIED_AT = new Date('2026-01-01T00:00:00.000Z');
@@ -10,12 +10,13 @@ export interface MemorySchemaStoreOptions {
    * which is what an unmigrated database looks like. Defaults to `1`.
    */
   version?: number | null;
+  versions?: Readonly<Record<string, SchemaVersion>>;
   /** When that version was applied. Defaults to a fixed instant. */
   appliedAt?: Date;
   /**
    * Answer with this instead, for the unreachable case. Overrides `version`.
    */
-  result?: ReadSchemaVersionResult;
+  result?: ReadSchemaVersionsResult;
 }
 
 export interface MemorySchemaStore extends SchemaStore {
@@ -35,22 +36,20 @@ export function memorySchemaStore(options: MemorySchemaStoreOptions = {}): Memor
 
   const stored: SchemaVersion | null =
     version === null ? null : { version, appliedAt: new Date(appliedAt.getTime()) };
-  const answer: ReadSchemaVersionResult = result ?? { ok: true, version: stored };
+  const answer: ReadSchemaVersionsResult = result ?? { ok: true, versions: options.versions ?? (stored === null ? {} : { core: stored }) };
 
   let closes = 0;
   let reads = 0;
 
   return {
-    async readSchemaVersion(): Promise<ReadSchemaVersionResult> {
+    async readSchemaVersions(): Promise<ReadSchemaVersionsResult> {
       reads += 1;
       // A fresh value every call, so a caller cannot move the fake's state.
       if (!answer.ok) return { ...answer };
       return {
         ok: true,
-        version:
-          answer.version === null
-            ? null
-            : { version: answer.version.version, appliedAt: new Date(answer.version.appliedAt) },
+        versions: Object.fromEntries(Object.entries(answer.versions).map(([owner, value]) =>
+          [owner, { version: value.version, appliedAt: new Date(value.appliedAt) }])),
       };
     },
 

@@ -77,7 +77,7 @@ import type {
 const DEFAULT_HEALTH: StoreHealth = {
   ok: true,
   serverVersion: '18.1',
-  source: { location: 'memory', probes: [{ id: 'vector', ok: true, detail: '0.8.7' }] },
+  source: { location: 'memory', probes: [{ id: 'pg_trgm', ok: true, detail: 'pg_trgm' }] },
 };
 
 export interface MemoryStoreOptions {
@@ -129,7 +129,7 @@ interface StoredToolNote extends ToolNote {
 /**
  * What a generation closed by a later `beginExtraction` says about itself.
  *
- * The same sentence as the SQLite adapter's, and it names the new begin rather
+ * The same sentence as the PostgreSQL adapter's, and it names the new begin rather
  * than an expired claim: closing the leftovers is what every begin does, and the
  * usual reason there are leftovers — a claim that ran out — is not the only one.
  */
@@ -780,10 +780,10 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
 
       // Conversation order, held on the stored list so every `readSession`
       // hands it back the way a real adapter's `order by occurred_at` does
-      // (migration 0006). `sort` is stable, which is this fake's answer to two
+      // (the PostgreSQL baseline). `sort` is stable, which is this fake's answer to two
       // messages of one instant: it keeps the order they went in, and promises
       // nothing about it — a case that depended on it would be a case the
-      // SQLite store is free to fail.
+      // PostgreSQL store is free to fail.
       storedMessages.sort(
         (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
       );
@@ -1435,4 +1435,13 @@ function sameCursor(left: Session['cursor'], right: Session['cursor']): boolean 
 function cloneSchedule(row: import('../../domain/schedule.js').Schedule): import('../../domain/schedule.js').Schedule {
   return { ...row, createdAt: new Date(row.createdAt), nextRunAt: row.nextRunAt === null ? null : new Date(row.nextRunAt),
     lastRunAt: row.lastRunAt === null ? null : new Date(row.lastRunAt) };
+}
+
+/** Independent fake: settings remain a separate Store capability. */
+export function memorySettingsStore(): import('../../ports/store.js').SettingsStore {
+  const settings = new Map<string, import('../../ports/store.js').SettingRecord>();
+  return {
+    async getSetting({ key }) { return { ok: true, setting: settings.has(key) ? { ...settings.get(key)!, updatedAt: new Date(settings.get(key)!.updatedAt.getTime()) } : null }; },
+    async setSetting(input) { settings.set(input.key, { ...input, updatedAt: new Date(input.updatedAt.getTime()) }); return { ok: true }; },
+  };
 }

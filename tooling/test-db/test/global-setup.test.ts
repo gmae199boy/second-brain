@@ -127,7 +127,7 @@ describe('prepareTestDatabase', () => {
 
     const message = messageOf(prepare);
     expect(message).toMatch(/Docker is not available/);
-    expect(message).toMatch(/pgvector/);
+    expect(message).toMatch(/PostgreSQL 18/);
     // The example is a placeholder, not the container that just failed to start.
     expect(message).toContain('postgres://<user>:<password>@<host>:<port>/<database>');
     expect(message).not.toContain(DEFAULT_TEST_DATABASE_URL);
@@ -146,7 +146,7 @@ describe('prepareTestDatabase', () => {
     expect(message).toMatch(/port 54329 is already allocated/);
     expect(message).toMatch(/left in place/);
     expect(message).toContain(DOWN);
-    expect(message).toMatch(/pgvector/);
+    expect(message).toMatch(/PostgreSQL 18/);
     // The leftovers stay for inspection: nothing is torn down here.
     expect(calls).toEqual(['docker info', PS, UP]);
     expect(env[TEST_DATABASE_URL_ENV]).toBeUndefined();

@@ -235,3 +235,17 @@ export {
 
 export * from './queue/schedule-tick.js';
 export * from './queue/schedule-probe-work.js';
+
+export { createIngestBrain, type IngestBrain } from './brain.js';
+export type { SessionIngestStore } from './ports/store.js';
+
+export * from './maintenance/table-cleanup-work.js';
+export type { TableMaintenance } from './ports/table-maintenance.js';
+
+export type { SettingsStore, SettingRecord, SettingsStoreFailure } from './ports/store.js';
+
+export * from './settings/index.js';
+export { createSettingsBrain, type SettingsBrain } from './brain.js';
+
+export { CONNECT_TIMEOUT_MS } from './busy-timeout.js';
+export { CORE_SCHEMA_OWNER, type SchemaVersions } from './schema.js';

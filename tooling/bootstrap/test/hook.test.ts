@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
   copyFileSync,
@@ -13,7 +14,8 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
+import pg from 'pg';
+import { parseEnv } from 'node:util';
 import { tmpdir, uptime } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -99,8 +101,19 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  if (home !== undefined && existsSync(join(home, 'postgres', 'compose.yaml'))) {
+    const result = spawnSync('docker', ['compose', '--env-file', join(home, '.env'), '-f', join(home, 'postgres', 'compose.yaml'), 'down', '-v'], { encoding: 'utf8', timeout: 120_000 });
+    if (result.status !== 0) throw new Error(`시험 PostgreSQL 정리에 실패했습니다: ${result.stderr}`);
+  }
   if (root !== undefined) rmSync(root, { recursive: true, force: true });
 });
+async function homeDatabase() {
+  const env = parseEnv(readFileSync(join(home, '.env'), 'utf8'));
+  const client = new pg.Client({ connectionString: env.BRAIN_DATABASE_URL });
+  await client.connect();
+  return client;
+}
+
 
 /** The log the bootstrap appends to, or `''` when it has never written one. */
 function log(): string {
@@ -135,6 +148,13 @@ function runRecord(): PluginRun {
   return JSON.parse(readFileSync(runRecordPath(), 'utf8')) as PluginRun;
 }
 
+/** The temporary home owns its URL, including when the shell exports an empty value. */
+function isolatedEnvironment(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.BRAIN_DATABASE_URL;
+  return env;
+}
+
 function hook(event: string, input = ''): { status: number | null; stdout: string; stderr: string } {
   const hooks = JSON.parse(readFileSync(join(plugin, 'hooks/hooks.json'), 'utf8')) as { hooks: { [event: string]: { hooks: { command: string }[] }[] } };
   const command = hooks.hooks[event]?.[0]?.hooks[0]?.command;
@@ -144,7 +164,7 @@ function hook(event: string, input = ''): { status: number | null; stdout: strin
     cwd: root,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...isolatedEnvironment(),
       SECOND_BRAIN_LAUNCHCTL: join(repoRoot, 'apps/cli/test/fixtures/fake-launchctl.sh'),
       SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'),
       FAKE_LAUNCHCTL_DIR: join(root, 'launchctl'),
@@ -163,7 +183,7 @@ function hook(event: string, input = ''): { status: number | null; stdout: strin
 describe('the plugin SessionStart hook', () => {
   it(
     'clones, builds, installs, and records the commit the plugin asked for',
-    () => {
+    async () => {
       const run = hook('SessionStart');
 
       expect(run.status).toBe(0);
@@ -172,16 +192,16 @@ describe('the plugin SessionStart hook', () => {
       const lines = run.stdout.split('\n').filter((line) => line !== '');
       expect(lines).toHaveLength(1);
       const said = JSON.parse(lines[0] ?? '') as { systemMessage?: string };
-      expect(said.systemMessage).toContain(snapshotCommit.slice(0, 7));
+      expect(said.systemMessage, log()).toContain(snapshotCommit.slice(0, 7));
 
       const record = installed();
       expect(record.commit).toBe(snapshotCommit);
       expect(record.plugin_root).toBe(plugin);
       expect(record.schema_version).toBeGreaterThan(0);
-      const db = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
+      const db = await homeDatabase();
       try {
-        expect(db.prepare('select ingest_source from sessions where harness_session_id = ?').get('first-session')).toMatchObject({ ingest_source: 'import' });
-      } finally { db.close(); }
+        expect((await db.query('select ingest_source from brain.sessions where harness_session_id = $1', ['first-session'])).rows[0]).toMatchObject({ ingest_source: 'import' });
+      } finally { await db.end(); }
 
       // The node the shim was pinned to, which is the node a hook will run.
       expect(record.node).toBe(
@@ -254,14 +274,14 @@ describe('the plugin SessionStart hook', () => {
     expect(log()).toContain('기다리는 동안 새 빌드 데몬을 확인하지 못했습니다');
     // The installer logs the DAEMON_NOT_RESTARTED explanation without a code or prefix.
     expect(log()).toContain('데몬을 새 빌드로 다시 띄우지 못해 옛 빌드가 계속 돌 수 있습니다.');
-    const label = 'io.github.gmae199boy.second-brain.daemon';
+    const label = `io.github.gmae199boy.second-brain.daemon.${createHash('sha256').update(home).digest('hex').slice(0,12)}`;
     const calls = readFileSync(join(root, 'launchctl', 'calls'), 'utf8').split('\n');
     expect(calls.filter((line) => line === `kill SIGTERM gui/${String(process.getuid?.())}/${label}`)).toHaveLength(1);
     expect(calls.filter((line) => line.startsWith('bootstrap '))).toHaveLength(1);
     const plist = readFileSync(join(root, 'launch-agents', `${label}.plist`), 'utf8');
     const argumentsXml = plist.match(/<array>(.*?)<\/array>/s)?.[1] ?? '';
     const args = [...argumentsXml.matchAll(/<string>(.*?)<\/string>/g)].map((match) => (match[1] ?? '').replaceAll('&amp;', '&').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&#13;', '\r'));
-    const env = { ...process.env, SECOND_BRAIN_HOME: home, CLAUDE_CONFIG_DIR: configDir,
+    const env = { ...isolatedEnvironment(), SECOND_BRAIN_HOME: home, CLAUDE_CONFIG_DIR: configDir,
       SECOND_BRAIN_LAUNCHCTL: join(repoRoot, 'apps/cli/test/fixtures/fake-launchctl.sh'),
       SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'), FAKE_LAUNCHCTL_DIR: join(root, 'launchctl') };
     rmSync(join(home, 'run', 'daemon.pid'));
@@ -281,7 +301,7 @@ describe('the plugin SessionStart hook', () => {
     } finally { daemon.kill('SIGTERM'); await closed; }
   }, SLOW);
 
-  it('collects a Stop payload, records its arrival, and ignores a transcript with no conversation', () => {
+  it('collects a Stop payload, records its arrival, and ignores a transcript with no conversation', async () => {
     const transcript = join(root, 'stop-transcript.jsonl');
     copyFileSync(join(repoRoot, 'packages/claude-code/test/fixtures/two-turns.jsonl'), transcript);
     const run = hook('Stop', JSON.stringify({ session_id: 'stop-session', transcript_path: transcript }));
@@ -289,7 +309,7 @@ describe('the plugin SessionStart hook', () => {
     expect(run.stdout).toBe('');
     expect(run.stderr).toBe('');
     expect(readFileSync(join(home, 'run', 'last-hook-claude-code'), 'utf8')).toBe(`${plugin}\n`);
-    const doctor = spawnSync(join(home, 'bin', 'brain'), ['doctor', 'run', '--json'], { encoding: 'utf8', env: { ...process.env, SECOND_BRAIN_HOME: home, CLAUDE_CONFIG_DIR: configDir } });
+    const doctor = spawnSync(join(home, 'bin', 'brain'), ['doctor', 'run', '--json'], { encoding: 'utf8', env: { ...isolatedEnvironment(), SECOND_BRAIN_HOME: home, CLAUDE_CONFIG_DIR: configDir } });
     expect(doctor.status).toBe(0);
     const report = JSON.parse(doctor.stdout) as { data: { checks: { id: string; status: string; detail: string }[] } };
     expect(report.data.checks.find((check) => check.id === 'last-hook')).toMatchObject({ status: 'ok', detail: expect.stringMatching(/claude-code: \d{4}-/) });
@@ -297,12 +317,12 @@ describe('the plugin SessionStart hook', () => {
     const empty = join(root, 'empty-transcript.jsonl');
     writeFileSync(empty, JSON.stringify({ type: 'system', subtype: 'init', sessionId: 'empty-session', timestamp: new Date().toISOString() }) + '\n');
     expect(hook('Stop', JSON.stringify({ session_id: 'empty-session', transcript_path: empty })).status).toBe(0);
-    const db = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
+    const db = await homeDatabase();
     try {
-      const session = db.prepare('select id from sessions where harness_session_id = ?').get('stop-session') as { id: string };
-      expect(db.prepare('select count(*) as n from messages where session_id = ?').get(session.id)).toMatchObject({ n: 4 });
-      expect(db.prepare('select id from sessions where harness_session_id = ?').get('empty-session')).toBeUndefined();
-    } finally { db.close(); }
+      const session = (await db.query('select id from brain.sessions where harness_session_id = $1', ['stop-session'])).rows[0] as { id: string };
+      expect((await db.query('select count(*)::int as n from brain.messages where session_id = $1', [session.id])).rows[0]).toMatchObject({ n: 4 });
+      expect((await db.query('select id from brain.sessions where harness_session_id = $1', ['empty-session'])).rows[0]).toBeUndefined();
+    } finally { await db.end(); }
   }, SLOW);
 
 });

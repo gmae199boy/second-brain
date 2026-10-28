@@ -28,9 +28,9 @@ async function kit(content = memoryTranscript) {
     path: PATH, harnessSessionId: sampleSessionKey.harnessSessionId, sizeBytes: content.length, modifiedAt: clock.now(),
   }] });
   const deps = {
-    store: { ...store, async readSchemaVersion() { return { ok: true as const, version: null }; } },
+    store: { ...store, async readSchemaVersions() { return { ok: true as const, versions: {} }; } },
     files: memoryFileStore(), spool: memorySpool(), parsers: [memoryParser()], repositories, transcripts,
-    transcriptFolders: [folder], clock, idGen, schemaVersion: 6, machine: 'demo-machine',
+    transcriptFolders: [folder], clock, idGen, schemaVersions: { core: 6 }, machine: 'demo-machine',
   };
   const brain = createBrain(deps);
   const add = () => store.addWork({

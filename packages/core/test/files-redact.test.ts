@@ -175,6 +175,7 @@ describe('planFileRedaction', () => {
       kind: BLOB_DELETE_KIND, targetKind: FILE_LOCATION_TARGET_KIND,
       createdAt: NOW, nextAttemptAt: NOW,
     });
+    expect(plan.cleanup.map(work => work.targetId)).toEqual(['document_chunks','document_extractions','file_names','file_metadata']);
     expect(plan.redaction).toMatchObject({
       messageId: null, toolNoteId: null, fileId: FILE_ID,
       start: null, end: null, kind: FILE_REDACTION_KIND,
@@ -191,6 +192,7 @@ describe('planFileRedaction', () => {
       { clock: fixedClock(NOW), idGen: ids },
     );
     expect(plan.redaction).toBe(null);
+    expect(plan.cleanup).toEqual([]);
     expect(plan.work.map((work) => work.targetId)).toEqual(['loc-brain']);
   });
 

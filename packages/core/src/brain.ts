@@ -1,3 +1,5 @@
+import type { SchemaVersions } from './schema.js';
+import { getSetting, setSetting, settingDefinitions } from './settings/index.js';
 import { tickSchedules, type ScheduleTickResult } from './queue/schedule-tick.js';
 import { SCHEDULE_PROBE_KIND, scheduleProbeHandler } from './queue/schedule-probe-work.js';
 import type { AttachmentLinkSpoolPayload } from './domain/spool-record.js';
@@ -49,6 +51,7 @@ import {
 } from './queue/drain.js';
 import {
   ingestSession,
+  type IngestSessionDependencies,
   type IngestSessionInput,
   type IngestSessionResult,
 } from './sessions/ingest.js';
@@ -79,7 +82,7 @@ export interface BrainDependencies {
    * the adapter it built, because which schema is current is the adapter's
    * fact, not Core's.
    */
-  schemaVersion: number;
+  schemaVersions: SchemaVersions;
   /** The one clock. Every stored instant is read from it once (AD-13). */
   clock: Clock;
   /** Record ids. UUIDv7, minted by this side, never by the database (AD-8). */
@@ -111,6 +114,9 @@ export interface BrainDependencies {
    * from whoever does.
    */
   checks?: readonly DoctorCheckSource[];
+  prerequisites?: readonly DoctorCheckSource[];
+  /** Adapter probe IDs supplied by the assembly for failed prerequisites. */
+  adapterProbeIds?: readonly string[];
   /**
    * What this build's drain can do beyond the kinds Core owns itself (AD-21).
    *
@@ -161,6 +167,8 @@ export interface BrainQueueDrainInput {
  * `brain queue drain` wants the spool, the folders and the queue in one line.
  */
 export interface BrainDrainReport extends DrainQueueReport {
+  /** Why the transcript scan stopped short, when the queue remained writable. */
+  scanStopped?: string;
   /** Spool records the replay put back into the database (AD-9). */
   replayed: number;
   /** Spool lines moved aside because nobody will try them again (AD-9). */
@@ -231,7 +239,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     sources,
     userHome,
     spool,
-    schemaVersion,
+    schemaVersions,
     clock,
     idGen,
     parsers,
@@ -240,6 +248,8 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     repositories,
     machine,
     checks,
+    prerequisites,
+    adapterProbeIds,
     workHandlers,
   } = dependencies;
 
@@ -359,16 +369,18 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     doctor: {
       run: () =>
         runDoctor(store, {
-          schemaVersion,
+          schemaVersions,
           store,
           clock,
           folders: transcriptFolders,
           checks,
+          prerequisites,
+          adapterProbeIds,
         }),
     },
     sessions: {
       ingest: async (input) => {
-        const result = await ingestSession(ingestDependencies, input);
+        const result = await createIngestBrain(ingestDependencies).sessions.ingest(input);
         if (result.ok && !result.spooled) {
           try {
             const failures = await store.listFailures({ targetKind: 'session', stage: SESSION_INGEST_KIND });
@@ -499,6 +511,7 @@ async function drain(
     replayed: replay.replayed,
     spoolFailed: replay.failed,
     enqueued: scan.enqueued,
+    ...(queue.stopped !== 'unwritable' && scan.stopped !== undefined ? { scanStopped: scan.stopped } : {}),
     rereadMissing: queue.stopped === 'unwritable' ? 0 : scan.rereadMissing,
     reextractRedacted: queue.stopped === 'unwritable' ? 0 : reextract.redacted,
     reextractUnreachable: queue.stopped === 'unwritable' ? 0 : reextract.sourceUnreachable,
@@ -515,3 +528,18 @@ const EMPTY_QUEUE_REPORT = {
   lost: 0,
   spooled: 0,
 } as const;
+
+export type IngestBrain = { sessions: BrainSessions };
+export function createIngestBrain(dependencies: IngestSessionDependencies): IngestBrain {
+  return { sessions: { ingest: input => ingestSession(dependencies, input) } };
+}
+
+export type SettingsBrain = { config: {
+  get(input: { key: string }): Promise<import('./settings/index.js').SettingResult>;
+  set(input: { key: string; value: string }): Promise<import('./settings/index.js').SettingResult>;
+} };
+export function createSettingsBrain(dependencies: import('./settings/index.js').SettingsDependencies): SettingsBrain {
+  // Validate registrations at assembly time, before any I/O.
+  settingDefinitions(dependencies.settingDefinitions);
+  return { config: { get: input => getSetting(dependencies, input), set: input => setSetting(dependencies, input) } };
+}

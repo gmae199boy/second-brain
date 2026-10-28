@@ -1,15 +1,18 @@
+import type { OrbStackResult } from '../runtime/orbstack.js';
+import { homeResources } from '../config/resources.js';
+import type { PostgresInstallResult, PostgresInstallReport } from './postgres.js';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import {
   errorCodeSpec,
+  TIMEZONE_SETTING,
+  type SettingResult,
   requireConfirmation,
   type Connector,
   type DoctorCheck,
   type DoctorReport,
   type DoctorSummary,
   type Failure,
-  type SqliteMigrationResult,
-  type SqliteProjectKeyCollision,
   type WarningCode,
 } from 'second_brain';
 import { daemonLiveness } from '../daemon/liveness.js';
@@ -17,9 +20,9 @@ import type { DaemonRestartResult } from '../daemon/control.js';
 import { daemonPlistPath, type DaemonRegistration } from '../daemon/launchd.js';
 import { installedPluginRoot, connectionLines } from '../connectors/plugin.js';
 import { formatCheck } from '../commands/doctor-run.js';
-import type { SelfUserResult } from './store.js';
 import {
   DEFAULT_UPDATE_AUTO,
+  DEFAULT_STORE_URL_ENV,
   defaultFilesPath,
   defaultMirrorPath,
   defaultStorePath,
@@ -39,9 +42,8 @@ import { shimPath } from './shim.js';
  * flow rather than a second one.
  *
  * The order is AD-19's, whole: the harnesses named, consent, what the folder
- * already says, the database file's place, the mirror path, embeddings, the
- * configuration, the database file and its migrations, the file store's root,
- * the shim, the harnesses, doctor.
+ * already says, OrbStack, mirror path, embeddings, PostgreSQL preparation,
+ * timezone, files, configuration, transcript import, shim, harnesses and doctor.
  */
 
 /**
@@ -62,16 +64,11 @@ export type InstallExitCode = 0 | 1 | 2 | 3;
  * ran the moment a sentence is reworded.
  */
 export interface InstallReport {
+  postgres: PostgresInstallReport;
+  timezone: string;
   /** The configuration folder this install belongs to. */
   home: string;
   config_path: string;
-  store: {
-    path: string;
-    /** The version the file ends at. */
-    schema_version: number;
-    /** The migration files this run applied. Empty on a re-run. */
-    applied: readonly string[];
-  };
   owner: { name: string; created: boolean };
   files: { path: string; created: boolean };
   /** Recorded, not created: the folder itself is epic 4's. */
@@ -196,40 +193,6 @@ export interface InstallConfigIo {
   read(home: string): Promise<ReadSetupConfigResult>;
 }
 
-/** The source database: made at the right mode, migrated, then reported on. */
-export interface InstallStore {
-  /** Create the file at 0600 if it is not there, then migrate it (AD-20). */
-  prepare(path: string, options?: { mergeProjects?: boolean }): Promise<SqliteMigrationResult>;
-  /**
-   * The projects migration 0005 would fold into one comparison key (AD-12).
-   *
-   * Read-only, and it creates nothing: a path with no database at it answers
-   * with no groups. The flow asks before it writes anything, because folding
-   * two projects into one deletes rows and nothing may do that unasked.
-   */
-  collisions(path: string): Promise<readonly SqliteProjectKeyCollision[]>;
-  /**
-   * Whether there is already a file here. Only the screen that asks for
-   * consent uses it: "a new database" and "the database already there" are
-   * different promises, and the person agreeing is owed the right one.
-   */
-  exists(path: string): Promise<boolean>;
-  /**
-   * Record who this brain belongs to, if nobody is yet (AD-12). It is a step
-   * of its own and not part of `prepare`, because a migration can do neither
-   * half of it: SQL cannot read an operating system user name and cannot mint
-   * a UUIDv7. An owner already recorded is left exactly as it is.
-   */
-  self(path: string): Promise<SelfUserResult>;
-  /**
-   * The same checks `brain doctor run` runs: the store ones against this
-   * file, the machine ones against the home being installed. Both, because an
-   * install whose shim or node is wrong is an install that works until the
-   * first harness turn.
-   */
-  doctor(home: string, path: string): Promise<DoctorReport>;
-}
-
 /** The file store's root. Blob writes themselves are epic 2's. */
 export interface InstallFiles {
   /** Make the root at 0700, or say why it could not. Never throws. */
@@ -271,7 +234,15 @@ export interface InstallDeps {
   isTTY: boolean;
   log(line: string): void;
   config: InstallConfigIo;
-  store: InstallStore;
+  legacyFileExists(path: string): Promise<boolean>;
+  orbstack?: (env: NodeJS.ProcessEnv) => Promise<OrbStackResult>;
+  postgresDoctor?: (home: string, env: NodeJS.ProcessEnv) => Promise<DoctorReport>;
+  importTranscripts?: (home: string, env: NodeJS.ProcessEnv) => Promise<import('second_brain').BrainDrainReport>;
+  postgres?: (home: string, urlEnv: string, env: NodeJS.ProcessEnv) => Promise<PostgresInstallResult>;
+  settings?: {
+    get(home: string, urlEnv: string, env: NodeJS.ProcessEnv): Promise<SettingResult>;
+    set(home: string, urlEnv: string, env: NodeJS.ProcessEnv, value: string): Promise<SettingResult>;
+  };
   files: InstallFiles;
   shim: InstallShim;
   installed: InstallInstalled;
@@ -285,8 +256,6 @@ export interface InstallDeps {
 
 /** The flags a non-interactive run needs, since it cannot be asked anything. */
 export interface InstallFlags {
-  /** Where the database file goes. `~` is expanded; a relative path is refused. */
-  storePath?: string;
   /** Where the mirror goes. `~` is expanded; a relative path is refused. */
   mirrorPath?: string;
   /** Harnesses to connect, by name. The only consent there is without a TTY. */
@@ -393,20 +362,16 @@ export async function runInstall(
   const read = await deps.config.read(home);
   if (!read.ok) return fail({ code: read.code, message: read.message, exit: 2 });
   const recorded = read.recorded;
+  const urlEnv = recorded?.storeUrlEnv ?? DEFAULT_STORE_URL_ENV;
+  if (deps.orbstack === undefined) return fail({ code: 'ORBSTACK_UNAVAILABLE', message: 'OrbStack 확인 단계가 없습니다', exit: 2 });
+  const orb = await deps.orbstack(env);
+  if (!orb.ok) return fail({ code: 'ORBSTACK_UNAVAILABLE', message: orb.message, hint: orb.hint, exit: 2 });
   for (const warning of read.warnings) {
     warnings.push(warning.code);
     deps.log(`경고: ${warning.message}`);
   }
 
-  const store = await chooseStorePath(flags, home, recorded, deps);
-  if (!store.ok) return fail(store.failure);
-  deps.log(`데이터베이스 파일은 ${store.path}입니다`);
-  // Nothing is moved and nothing is removed (Boundaries): a re-run pointed
-  // somewhere else makes a second database, and saying so is all that is owed.
-  if (recorded?.storePath !== undefined && recorded.storePath !== store.path) {
-    deps.log(`${recorded.storePath}는 있던 자리에 그대로 둡니다. 아무것도 옮기지 않았습니다.`);
-  }
-
+  const legacyPath = recorded?.legacySqlitePath ?? defaultStorePath(home);
   const mirror = await chooseMirrorPath(flags, home, recorded, deps);
   if (!mirror.ok) return fail(mirror.failure);
   deps.log(`미러는 ${mirror.path}에 둡니다`);
@@ -425,7 +390,7 @@ export async function runInstall(
   // person who says no here loses nothing, which is the only kind of no worth
   // offering.
   const agreed = await askToProceed(
-    { home, storePath: store.path, filesPath, mirrorPath: mirror.path },
+    { home, filesPath, mirrorPath: mirror.path },
     env,
     flags,
     deps,
@@ -438,91 +403,36 @@ export async function runInstall(
     });
   }
 
-  // The one thing this install may have to destroy, asked for on its own
-  // (AD-12). Migration 0005 makes the project comparison key `unique`, and a
-  // database that split one repository into two projects over nothing but the
-  // case of its remote has two rows that become one key. Folding them deletes
-  // a row and moves its sessions, which no migration may decide by itself — so
-  // the groups are shown, the question is asked, and a no leaves the database
-  // exactly as it is, at the version it was.
-  //
-  // After `askToProceed` and before `prepare`: it is the last question, and it
-  // is only worth asking once everything else is agreed.
-  const collisions = await deps.store.collisions(store.path);
-  if (collisions.length > 0) {
-    for (const group of collisions) {
-      const kept = group.projects[0];
-      deps.log(
-        `비교 키 ${group.identityKey}로 겹치는 프로젝트가 ` +
-          `${String(group.projects.length)}개 있습니다:`,
-      );
-      for (const project of group.projects) {
-        deps.log(`  ${project.remoteIdentity} (세션 ${String(project.sessions)}건)`);
-      }
-      if (kept !== undefined) deps.log(`  남는 쪽은 ${kept.remoteIdentity}입니다`);
+  if (deps.postgres === undefined) return fail({ code: 'DB_UNAVAILABLE', message: 'PostgreSQL 설치 단계가 없습니다', exit: 1 });
+  const pg = await deps.postgres(home, urlEnv, env);
+  if (!pg.ok) return fail({ code: pg.code, message: pg.message });
+  const postgres = pg.report;
+  postgres.legacy_sqlite_path = await deps.legacyFileExists(legacyPath) ? legacyPath : null;
+  if (postgres.legacy_sqlite_path !== null) deps.log(`옛 SQLite 파일 ${legacyPath}는 지우지 않았고 더 쓰지 않습니다`);
+  const owner = { name: postgres.owner_name, created: postgres.owner_created };
+  deps.log(`PostgreSQL ${postgres.project}: 스키마 ${postgres.schema_version}, 적용 ${postgres.applied.length}건`);
+  let timezone = recorded?.timezone ?? TIMEZONE_SETTING.defaultValue;
+  {
+    if (deps.settings === undefined) return fail({ code: 'DB_UNAVAILABLE', message: 'PostgreSQL 설정 단계가 없습니다', exit: 1 });
+    const current = await deps.settings.get(home, urlEnv, env);
+    if (!current.ok) return fail({ code: current.code, message: current.message });
+    const fallback = current.source === 'db' ? current.value : timezone;
+    let selected: string | undefined;
+    for (let attempt = 1; attempt <= PATH_ATTEMPTS; attempt += 1) {
+      const typed = deps.isTTY ? (await deps.prompts.text('시간대를 무엇으로 할까요?', fallback)).trim() : '';
+      const checked = TIMEZONE_SETTING.normalize(typed === '' ? fallback : typed);
+      if (checked.ok) { selected = checked.value; break; }
+      deps.log(checked.message);
+      if (!deps.isTTY) break;
     }
-    // `--yes` is every consent given in advance, which is what it means
-    // everywhere else in this flow — including the plugin's non-interactive
-    // bootstrap (README).
-    const agreedToMerge =
-      flags.yes ||
-      (await deps.prompts.confirm(
-        `겹치는 프로젝트 ${String(collisions.length)}묶음을 하나로 합칠까요?`,
-        true,
-      ));
-    if (!agreedToMerge) {
-      return fail({
-        code: 'SETUP_CANCELLED',
-        message: '프로젝트를 합치지 않기로 했습니다. 데이터베이스는 바꾸지 않았습니다.',
-        exit: 1,
-      });
+    if (selected === undefined) return fail({ code: 'CONFIG_INVALID', message: '유효한 IANA 시간대를 선택하지 못했습니다', exit: 2 });
+    timezone = selected;
+    if (current.source !== 'db' || current.value !== timezone) {
+      const written = await deps.settings.set(home, urlEnv, env, timezone);
+      if (!written.ok) return fail({ code: written.code, message: written.message });
     }
+    deps.log(`시간대: ${timezone} (DB)`);
   }
-
-  // The store, the owner and the file store's root before the configuration:
-  // what is recorded has to be a place this run has actually managed to use,
-  // or one bad `--store-path` would overwrite the path that worked (F3).
-  const migrated = await deps.store.prepare(
-    store.path,
-    collisions.length > 0 ? { mergeProjects: true } : {},
-  );
-  if (!migrated.ok) {
-    return fail({
-      code: migrated.code,
-      // Only when there is a file to name: a target that is not a database at
-      // all is refused before the first migration is in hand, and "the
-      // migration the database refused is ." says less than nothing.
-      message:
-        migrated.code === 'MIGRATION_FAILED' && migrated.file !== ''
-          ? `${migrated.message} 데이터베이스가 거부한 마이그레이션은 ${migrated.file}입니다.`
-          : migrated.message,
-      // Named rather than left to the table, which puts `DB_UNAVAILABLE` at 2:
-      // this install ran and this step failed, which has always been a 1.
-      exit: 1,
-    });
-  }
-  deps.log(
-    migrated.applied.length === 0
-      ? `스키마는 이미 버전 ${String(migrated.to)}입니다`
-      : `${migrated.applied.join(', ')}을 적용했고, 스키마 버전은 ${String(migrated.to)}입니다`,
-  );
-  // Said after the fact, not before: the merge happened inside the migration's
-  // own transaction, so this line is the one place that can say it took.
-  if (collisions.length > 0) {
-    deps.log(`겹치는 프로젝트 ${String(collisions.length)}묶음을 하나로 합쳤습니다`);
-  }
-
-  // Straight after the migrations, because the `users` table arrives with one,
-  // and before anything else, because every session this brain ingests points
-  // at this row (AD-12).
-  const owner = await deps.store.self(store.path);
-  if (!owner.ok) return fail({ code: owner.code, message: owner.message, exit: 1 });
-  deps.log(
-    owner.created
-      ? `이 brain은 ${owner.name}의 것입니다`
-      : `이미 ${owner.name}의 것입니다`,
-  );
-
   const filesRoot = await deps.files.prepare(filesPath);
   if (!filesRoot.ok) {
     return fail({ code: filesRoot.code, message: filesRoot.message, exit: 1 });
@@ -538,7 +448,7 @@ export async function runInstall(
   // (epic 4) — so it is recorded as chosen.
   const written = await deps.config.write(
     home,
-    settings(recorded, store.path, filesPath, mirror.path, updateAuto),
+    settings(recorded, filesPath, mirror.path, updateAuto),
   );
   if (!written.ok) {
     return fail({ code: written.code, message: written.message, exit: 1 });
@@ -546,6 +456,17 @@ export async function runInstall(
   // Only `.env` is named at 0600: it is the one of the two that holds a key
   // value, and the one the codec tightens. `config.toml` holds no secret.
   deps.log(`${configFilePath(home)}과 ${envFilePath(home)}를 썼습니다 (.env는 mode 0600)`);
+
+  postgres.import = null;
+  try {
+    if (deps.importTranscripts === undefined) throw new Error('transcript 가져오기 단계가 없습니다');
+    postgres.import = await deps.importTranscripts(home, env);
+    deps.log(postgres.import.scanStopped !== undefined
+      ? `경고: ${postgres.import.scanStopped}. 남은 일감은 이후 drain이 이어서 처리합니다`
+      : postgres.import.stopped === 'unwritable' || postgres.import.failed > 0 || postgres.import.spoolFailed > 0
+        ? '경고: transcript 가져오기에 실패한 일감이 있습니다. 남은 일감은 이후 drain이 이어서 처리합니다'
+        : '디스크의 transcript를 가져왔습니다. 남은 일감은 이후 drain이 이어서 처리합니다');
+  } catch (error) { deps.log(`경고: transcript를 가져오지 못했습니다. 남은 일감은 이후 drain이 이어서 처리합니다. ${error instanceof Error ? error.message : String(error)}`); }
 
   // The shim before the harnesses, because connecting one means registering
   // this exact path with it.
@@ -558,7 +479,8 @@ export async function runInstall(
   // its ten lines are what a person reads to find out what is wrong, and
   // skipping them because a harness file could not be written would hide the
   // half of the install that worked.
-  const report = await deps.store.doctor(home, store.path);
+  if (deps.postgresDoctor === undefined) return fail({ code: 'DB_UNAVAILABLE', message: 'PostgreSQL 점검 단계가 없습니다', exit: 1 });
+  const report = await deps.postgresDoctor(home, env);
   for (const check of report.checks) deps.log(formatCheck(check));
 
   // A connector's own code wins, because it is the more specific thing that
@@ -634,9 +556,9 @@ export async function runInstall(
   // session from repairing it.
   const installed = await deps.installed.write(home, {
     commit: build?.commit ?? null,
-    // The build's version when there is one; otherwise the version the file
-    // actually ends at, which this run has just measured.
-    schema_version: build?.schema_version ?? migrated.to,
+    // Record the PG core version this installation actually measured.
+    schema_version: postgres.schema_version,
+    ...(build?.schema_versions === undefined ? {} : { schema_versions: build.schema_versions }),
     node: shim.node,
     plugin_root: flags.pluginRoot ?? previous?.plugin_root ?? null,
   });
@@ -648,7 +570,8 @@ export async function runInstall(
     report: {
       home,
       config_path: configFilePath(home),
-      store: { path: store.path, schema_version: migrated.to, applied: migrated.applied },
+      timezone,
+      postgres,
       owner: { name: owner.name, created: owner.created },
       files: { path: filesRoot.path, created: filesRoot.created },
       mirror_path: mirror.path,
@@ -678,17 +601,15 @@ const NO_TERMINAL = '터미널이 아니어서 아무것도 물을 수 없습니
  */
 function givenArgs(flags: InstallFlags): Record<string, unknown> {
   const args: Record<string, unknown> = {};
-  if (flags.storePath !== undefined) args['storePath'] = flags.storePath;
   if (flags.mirrorPath !== undefined) args['mirrorPath'] = flags.mirrorPath;
   if (flags.pluginRoot !== undefined) args['pluginRoot'] = flags.pluginRoot;
   if (flags.connect.length > 0) args['connect'] = [...flags.connect];
   return args;
 }
 
-/** The four places this install has settled on, for the screen that asks. */
+/** The filesystem locations shown before installation writes. */
 interface Settled {
   home: string;
-  storePath: string;
   filesPath: string;
   mirrorPath: string;
 }
@@ -715,11 +636,8 @@ async function askToProceed(
   deps.log(
     `  설정 파일 ${configFilePath(settled.home)}과 ${envFilePath(settled.home)} (.env는 mode 0600)`,
   );
-  deps.log(
-    (await deps.store.exists(settled.storePath))
-      ? `  이미 있는 데이터베이스 ${settled.storePath}를 마이그레이션합니다`
-      : `  데이터베이스 ${settled.storePath}를 새로 만듭니다 (mode 0600)`,
-  );
+  const resources = homeResources(settled.home);
+  deps.log(`  PostgreSQL compose 파일 ${join(settled.home, 'postgres', 'compose.yaml')}, project ${resources.project}, 볼륨 ${resources.volume}, 포트 ${resources.port}`);
   deps.log(`  파일 저장소 루트 ${settled.filesPath} (mode 0700)`);
   deps.log(`  하네스 hook이 부를 shim ${shimPath(settled.home)} (mode 0755)`);
   deps.log(`  로그인 때 데몬을 띄울 plist ${daemonPlistPath(env)} (mode 0644)`);
@@ -740,7 +658,6 @@ async function askToProceed(
  */
 function settings(
   recorded: RecordedConfig | undefined,
-  storePath: string,
   filesPath: string,
   mirrorPath: string,
   updateAuto: boolean,
@@ -748,7 +665,7 @@ function settings(
   const extra = recorded?.extra;
   return {
     timezone: recorded?.timezone,
-    storePath,
+    storeUrlEnv: recorded?.storeUrlEnv ?? DEFAULT_STORE_URL_ENV,
     filesPath,
     mirrorPath,
     updateAuto,
@@ -758,28 +675,6 @@ function settings(
 
 /** Chosen path, or why this run could not settle on one. */
 type ChosenPath = { ok: true; path: string } | { ok: false; failure: Failure };
-
-/**
- * Where this install's database file goes. Nothing here creates it: the file is
- * made at mode 0600 further down the flow, by `store.prepare` (AD-20).
- */
-async function chooseStorePath(
-  flags: InstallFlags,
-  home: string,
-  recorded: RecordedConfig | undefined,
-  deps: InstallDeps,
-): Promise<ChosenPath> {
-  return choosePath(
-    {
-      flag: flags.storePath,
-      flagName: '--store-path',
-      question: '데이터베이스 파일을 어디에 둘까요?',
-      fallback: recorded?.storePath ?? defaultStorePath(home),
-      what: '데이터베이스 파일',
-    },
-    deps,
-  );
-}
 
 /** Where this install's mirror goes. Nothing here creates the folder (epic 4). */
 async function chooseMirrorPath(
@@ -1035,15 +930,6 @@ export function parseFlags(argv: readonly string[]): ParsedFlags {
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     switch (argument) {
-      case '--store-path': {
-        const value = argv[index + 1];
-        if (value === undefined || value.startsWith('-')) {
-          return { ok: false, message: '--store-path 뒤에는 경로가 와야 합니다.' };
-        }
-        flags.storePath = value;
-        index += 1;
-        continue;
-      }
       case '--mirror-path': {
         const value = argv[index + 1];
         if (value === undefined || value.startsWith('-')) {
@@ -1098,9 +984,8 @@ export function parseFlags(argv: readonly string[]): ParsedFlags {
 
 export function usage(): readonly string[] {
   return [
-    '사용법: second-brain [--store-path <경로>] [--mirror-path <경로>]',
+    '사용법: second-brain [--mirror-path <경로>]',
     '                     [--plugin-root <경로>] [--connect <하네스>]… [--yes]',
-    '  --store-path <경로>   데이터베이스 파일의 절대 경로',
     '  --mirror-path <경로>  미러 폴더의 절대 경로',
     '  --plugin-root <경로>  이 설치를 시작한 플러그인 폴더의 절대 경로',
     '  --connect <하네스>    이 하네스를 연결합니다. 여럿이면 되풀이하세요',

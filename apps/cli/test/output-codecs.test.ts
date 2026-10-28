@@ -1,16 +1,18 @@
+import { postgresStore, CORE_SCHEMA_VERSION, type PostgresStoreOptions } from 'second_brain/postgres';
 import { spawn } from 'node:child_process';
 import { copyFile, readFile } from 'node:fs/promises';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { PgTestClient } from './pg-client.js';
+import { preparePgHome, pgDatabaseUrl, pgAppUrl } from './pg-home.js';
 import { fileURLToPath } from 'node:url';
-import { OUTPUT_CODECS, SQLITE_SCHEMA_VERSION, type OutputProbe } from 'second_brain';
-import { memoryStore } from 'second_brain/testing';
+import { OUTPUT_CODECS, type OutputProbe } from 'second_brain';
+import { memorySettingsStore, memoryStore } from 'second_brain/testing';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { setupRunLog } from '../src/commands/setup-run.js';
 import { writeConfig } from '../src/config/codec.js';
 import { HOME_ENV } from '../src/config/paths.js';
-import { crashLines, dispatch, type CommandSpec, type CreateStore } from '../src/dispatch.js';
+import { crashLines, dispatch, type CommandSpec, type CreateConnectionStore } from '../src/dispatch.js';
 import { systemClock } from '../src/runtime/clock.js';
 import { withoutHarnessFolders } from './environment.js';
 import {
@@ -26,7 +28,7 @@ import { tempHomes } from './temp-home.js';
  * honest (AD-11, 마스킹 B, change D1).
  *
  * Two halves, and both are needed. The first ingests the secrets fixture
- * through the real binary into a real SQLite file and pushes what was stored
+ * through the real binary into a real PostgreSQL database and pushes what was stored
  * through every registered codec: the database holds the secrets, no codec
  * lets one out, and ordinary code and prose survive the trip. The second walks
  * the source tree for anything that writes to stdout or stderr and refuses a
@@ -130,8 +132,7 @@ function run(script: string, args: readonly string[], home: string, stdin: strin
 /** An installed brain with the secrets fixture already in it. */
 async function brainWithSecrets(): Promise<string> {
   const home = await temporary.create('brain-codec-');
-  const install = await run(installPath, ['--yes'], home, '');
-  expect(install.code, install.stdout + install.stderr).toBe(0);
+  await preparePgHome(home);
 
   const transcript = join(home, 'secrets.jsonl');
   await copyFile(SECRETS_FIXTURE, transcript);
@@ -157,20 +158,20 @@ async function brainWithSecrets(): Promise<string> {
  * `sessionForOutput` — so the probe hands over the stored text and checks what
  * comes out the other end.
  */
-function probeFrom(home: string): OutputProbe {
-  const database = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
+async function probeFrom(home: string): Promise<OutputProbe> {
+  const database = new PgTestClient(join(home, 'brain.db'));
   try {
     const bodies = (
-      database.prepare('select body from messages order by occurred_at').all() as {
+      (await database.prepare('select body from messages order by occurred_at').all()) as {
         body: string;
       }[]
     ).map((row) => row.body);
-    const toolNotes = database
+    const toolNotes = (await database
       .prepare('select tool, target from tool_notes order by ordinal')
-      .all() as { tool: string; target: string }[];
+      .all()) as { tool: string; target: string }[];
     return { texts: bodies, toolNotes };
   } finally {
-    database.close();
+    (await database.close());
   }
 }
 
@@ -187,7 +188,7 @@ describe('every registered output codec, on a session that was stored whole', ()
 
   it('lets no secret of the stored session out of any codec', async () => {
     const home = await brainWithSecrets();
-    const probe = probeFrom(home);
+    const probe = (await probeFrom(home));
     // The probe is what a read would answer with, so a probe with nothing in
     // it would make every expectation below pass for the wrong reason.
     expect(probe.texts.length).toBeGreaterThan(1);
@@ -212,7 +213,7 @@ describe('every registered output codec, on a session that was stored whole', ()
 
   it('leaves ordinary code, prose and identifiers in every codec', async () => {
     const home = await brainWithSecrets();
-    const probe = probeFrom(home);
+    const probe = (await probeFrom(home));
 
     for (const codec of OUTPUT_CODECS) {
       for (const kept of KEPT_IN_FIXTURE) {
@@ -245,12 +246,12 @@ describe('every registered output codec, on a session that was stored whole', ()
   it('keeps the secrets in the database, which is the other half of the rule', async () => {
     const home = await brainWithSecrets();
 
-    const stored = probeFrom(home);
-    const database = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
+    const stored = (await probeFrom(home));
+    const database = new PgTestClient(join(home, 'brain.db'));
     const raw = (
-      database.prepare('select body from messages').all() as { body: string }[]
+      (await database.prepare('select body from messages').all()) as { body: string }[]
     ).map((row) => row.body);
-    database.close();
+    (await database.close());
 
     for (const secret of ['sk-AAAAAAAAAAAAAAAAAAAA', 'Tiger2024', 'Pa!ss2024']) {
       expect(raw.join('\n'), `${secret} is not in the stored conversation`).toContain(secret);
@@ -585,19 +586,19 @@ describe('the sinks outside the dispatcher, one at a time', () => {
     // gets a working store and the drain's own `createStore` throws, so the
     // line under test is the `catch` of `drainOpportunistically`.
     const home = await temporary.create('brain-drain-');
-    await writeConfig(home, { storePath: join(home, 'brain.db') });
+    await writeConfig(home, {});
 
     let opened = 0;
-    const createStore: CreateStore = () => {
+    const createStore: CreateConnectionStore = () => {
       opened += 1;
       if (opened === 1) {
         // The command's own store. The in-memory fake is not a `SchemaStore`;
         // this command does not write, so nothing asks it for the version.
         return {
-          ...memoryStore(),
-          readSchemaVersion: async () => ({
+          ...memoryStore(), ...memorySettingsStore(),
+          readSchemaVersions: async () => ({
             ok: true as const,
-            version: { version: SQLITE_SCHEMA_VERSION, appliedAt: new Date(0) },
+            versions: { core: { version: CORE_SCHEMA_VERSION, appliedAt: new Date(0) } },
           }),
         };
       }

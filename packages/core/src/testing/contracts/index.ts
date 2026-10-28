@@ -1,9 +1,9 @@
 export { assertStoreHealth, storeContract } from './store.js';
-export { sessionStoreContract, type SessionStoreSubject } from './session-store.js';
+export { sessionStoreContract, sessionMetadataContract, sessionRedactionContract, type SessionStoreSubject, type SessionMetadataSubject, type SessionRedactionSubject } from './session-store.js';
 export { userStoreContract } from './user-store.js';
 export { workStoreContract } from './work-store.js';
 export { transcriptFileStoreContract } from './transcript-file-store.js';
-export { assertReadSchemaVersion, schemaStoreContract } from './schema-store.js';
+export { assertReadSchemaVersions, schemaStoreContract } from './schema-store.js';
 export { parserContract, type ParserPair, type ParserSubject } from './parser.js';
 export { connectorContract, type ConnectorSubject } from './connector.js';
 export { embedderContract } from './embedder.js';
@@ -16,3 +16,5 @@ export { attachmentStoreContract, type AttachmentStoreSubject } from './attachme
 export { extractionStoreContract, type ExtractionStoreSubject } from './extraction-store.js';
 export { fileRedactionContract, type FileRedactionSubject } from './file-redaction.js';
 export { scheduleStoreContract } from './schedule-store.js';
+
+export { settingsStoreContract } from './settings-store.js';

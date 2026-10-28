@@ -1,3 +1,4 @@
+import { runTestSetup } from './pg-home.js';
 import { execFile } from 'node:child_process';
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -5,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  DAEMON_LABEL, daemonPlistPath, registerDaemon, renderDaemonPlist, systemLaunchctl,
+  daemonLabel, daemonPlistPath, registerDaemon, renderDaemonPlist, systemLaunchctl,
   unregisterDaemon, type Launchctl, type LaunchctlResult,
 } from '../src/daemon/launchd.js';
 import { shimPath } from '../src/install/shim.js';
@@ -47,9 +48,9 @@ async function world() {
 describe('daemon launchd registration', () => {
   it('renders only the four keys, escapes XML and is a valid plist on macOS', async () => {
     const kit = await world();
-    const plist = renderDaemonPlist('/tmp/a&b<c>\r/bin/brain');
+    const plist = renderDaemonPlist('/tmp/a&b<c>\r/bin/brain', daemonLabel(kit.env));
     expect(plist.match(/<key>/g)).toHaveLength(4);
-    expect(plist).toContain('<key>Label</key><string>' + DAEMON_LABEL + '</string>');
+    expect(plist).toContain('<key>Label</key><string>' + daemonLabel(kit.env) + '</string>');
     expect(plist).toContain('<array><string>/tmp/a&amp;b&lt;c&gt;&#13;/bin/brain</string><string>daemon</string><string>run</string></array>');
     expect(plist).toContain('<key>RunAtLoad</key><true/>');
     expect(plist).toContain('<key>KeepAlive</key><true/>');
@@ -83,18 +84,18 @@ describe('daemon launchd registration', () => {
     const kit = await world();
     const loadedDir = join(kit.env.FAKE_LAUNCHCTL_DIR, 'loaded');
     await mkdir(loadedDir, { recursive: true });
-    await writeFile(join(loadedDir, 'io.github.gmae199boy.second-brain.daemon'), '');
+    await writeFile(join(loadedDir, daemonLabel(kit.env)), '');
     const result = await registerDaemon({
       ...kit.options, launchctl: systemLaunchctl({ env: kit.env, uid: 501 }),
     });
-    const path = join(kit.env.SECOND_BRAIN_LAUNCH_AGENTS, 'io.github.gmae199boy.second-brain.daemon.plist');
+    const path = join(kit.env.SECOND_BRAIN_LAUNCH_AGENTS, `${daemonLabel(kit.env)}.plist`);
     expect(result).toMatchObject({
-      status: 'loaded', label: 'io.github.gmae199boy.second-brain.daemon', plist_path: path,
+      status: 'loaded', label: daemonLabel(kit.env), plist_path: path,
     });
-    expect(await readdir(kit.env.SECOND_BRAIN_LAUNCH_AGENTS)).toEqual(['io.github.gmae199boy.second-brain.daemon.plist']);
-    expect(await readFile(path, 'utf8')).toContain('<key>Label</key><string>io.github.gmae199boy.second-brain.daemon</string>');
-    expect(await readFile(join(kit.env.FAKE_LAUNCHCTL_DIR, 'calls'), 'utf8')).toBe('print gui/501/io.github.gmae199boy.second-brain.daemon\n');
-    expect(await readdir(loadedDir)).toEqual(['io.github.gmae199boy.second-brain.daemon']);
+    expect(await readdir(kit.env.SECOND_BRAIN_LAUNCH_AGENTS)).toEqual([`${daemonLabel(kit.env)}.plist`]);
+    expect(await readFile(path, 'utf8')).toContain(`<key>Label</key><string>${daemonLabel(kit.env)}</string>`);
+    expect(await readFile(join(kit.env.FAKE_LAUNCHCTL_DIR, 'calls'), 'utf8')).toBe(`print gui/501/${daemonLabel(kit.env)}\n`);
+    expect(await readdir(loadedDir)).toEqual([daemonLabel(kit.env)]);
   });
 
   it.each(['linux', 'missing uid'] as const)('skips all I/O for %s', async (kind) => {
@@ -119,7 +120,7 @@ describe('daemon launchd registration', () => {
     await registerDaemon(kit.options);
     kit.fail();
     expect(await unregisterDaemon(kit.options)).toEqual({ ok: false, message: '등록을 거절했습니다' });
-    expect(await readFile(daemonPlistPath(kit.env), 'utf8')).toContain(DAEMON_LABEL);
+    expect(await readFile(daemonPlistPath(kit.env), 'utf8')).toContain(daemonLabel(kit.env));
     const fresh = await world();
     await registerDaemon(fresh.options);
     expect(await unregisterDaemon(fresh.options)).toEqual({ ok: true, booted_out: true, plist_removed: true });
@@ -133,18 +134,18 @@ describe('daemon launchd registration', () => {
     const kit = await world();
     const adapter = systemLaunchctl({ env: kit.env, uid: 501 });
     await mkdir(kit.env.SECOND_BRAIN_LAUNCH_AGENTS, { recursive: true });
-    await writeFile(daemonPlistPath(kit.env), renderDaemonPlist(shimPath(kit.home)));
-    expect(await adapter.isLoaded(DAEMON_LABEL)).toBe(false);
+    await writeFile(daemonPlistPath(kit.env), renderDaemonPlist(shimPath(kit.home), daemonLabel(kit.env)));
+    expect(await adapter.isLoaded(daemonLabel(kit.env))).toBe(false);
     expect(await adapter.bootstrap(daemonPlistPath(kit.env))).toEqual({ ok: true });
-    expect(await adapter.isLoaded(DAEMON_LABEL)).toBe(true);
-    expect(await adapter.bootout(DAEMON_LABEL)).toEqual({ ok: true });
+    expect(await adapter.isLoaded(daemonLabel(kit.env))).toBe(true);
+    expect(await adapter.bootout(daemonLabel(kit.env))).toEqual({ ok: true });
     expect((await readFile(join(kit.env.FAKE_LAUNCHCTL_DIR, 'calls'), 'utf8')).trim().split('\n')).toEqual([
-      `print gui/501/${DAEMON_LABEL}`, `bootstrap gui/501 ${daemonPlistPath(kit.env)}`,
-      `print gui/501/${DAEMON_LABEL}`, `bootout gui/501/${DAEMON_LABEL}`,
+      `print gui/501/${daemonLabel(kit.env)}`, `bootstrap gui/501 ${daemonPlistPath(kit.env)}`,
+      `print gui/501/${daemonLabel(kit.env)}`, `bootout gui/501/${daemonLabel(kit.env)}`,
     ]);
     const absent = systemLaunchctl({ env: { SECOND_BRAIN_LAUNCHCTL: join(kit.home, 'absent') }, uid: 501 });
     expect(await absent.bootstrap('x')).toMatchObject({ ok: false });
-    expect(await absent.isLoaded(DAEMON_LABEL)).toBe(false);
+    expect(await absent.isLoaded(daemonLabel(kit.env))).toBe(false);
     const rejected = systemLaunchctl({ env: { ...kit.env, FAKE_LAUNCHCTL_FAIL: 'bootstrap' }, uid: 501 });
     expect(await rejected.bootstrap(daemonPlistPath(kit.env))).toMatchObject({ ok: false, message: expect.stringContaining('bootstrap을 거절했습니다') });
     expect(await adapter.bootstrap(join(kit.home, 'missing.plist'))).toMatchObject({
@@ -154,8 +155,8 @@ describe('daemon launchd registration', () => {
 
   it('times out a stalled launchctl that ignores SIGTERM before its sleep ends', async () => {
     const kit = await world();
-    const path = join(kit.home, `${DAEMON_LABEL}.plist`);
-    await writeFile(path, renderDaemonPlist(shimPath(kit.home)));
+    const path = join(kit.home, `${daemonLabel(kit.env)}.plist`);
+    await writeFile(path, renderDaemonPlist(shimPath(kit.home), daemonLabel(kit.env)));
     const adapter = systemLaunchctl({
       env: { ...kit.env, FAKE_LAUNCHCTL_HANG: 'bootstrap' }, uid: 501,
     });
@@ -170,15 +171,14 @@ describe('daemon launchd registration', () => {
 describe.skipIf(process.platform !== 'darwin')('built setup run launchd surface', () => {
   const bin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
   async function setup(env: NodeJS.ProcessEnv) {
-    const result = await execute(process.execPath, [bin, 'setup', 'run', '--yes', '--json'], { env });
-    return JSON.parse(result.stdout) as { ok: boolean; warnings: string[]; data: { daemon: { status: string } } };
+    return await runTestSetup(env.SECOND_BRAIN_HOME!, env) as { ok: boolean; warnings: readonly string[]; data: { daemon: { status: string } } };
   }
   it('installs twice with exactly one Label and one bootstrap', async () => {
     const kit = await world();
     expect((await setup(kit.env)).data.daemon.status).toBe('registered');
     expect((await setup(kit.env)).data.daemon.status).toBe('loaded');
-    expect(await readdir(kit.env.SECOND_BRAIN_LAUNCH_AGENTS)).toEqual([`${DAEMON_LABEL}.plist`]);
-    expect(await readFile(daemonPlistPath(kit.env), 'utf8')).toBe(renderDaemonPlist(shimPath(kit.home)));
+    expect(await readdir(kit.env.SECOND_BRAIN_LAUNCH_AGENTS)).toEqual([`${daemonLabel(kit.env)}.plist`]);
+    expect(await readFile(daemonPlistPath(kit.env), 'utf8')).toBe(renderDaemonPlist(shimPath(kit.home), daemonLabel(kit.env)));
     const calls = await readFile(join(kit.env.FAKE_LAUNCHCTL_DIR, 'calls'), 'utf8');
     expect(calls.split('\n').filter((call) => call.startsWith('bootstrap '))).toEqual([
       `bootstrap gui/${String(process.getuid?.())} ${daemonPlistPath(kit.env)}`,
@@ -208,19 +208,19 @@ describe.skipIf(process.platform !== 'darwin')('built setup run launchd surface'
 it('sends restart signals through the adapter and rejects unloaded labels', async () => {
   const kit = await world();
   const adapter = systemLaunchctl({ env: kit.env, uid: 501 });
-  expect(await adapter.kill(DAEMON_LABEL, 'SIGTERM')).toMatchObject({ ok: false });
+  expect(await adapter.kill(daemonLabel(kit.env), 'SIGTERM')).toMatchObject({ ok: false });
   await mkdir(join(kit.env.FAKE_LAUNCHCTL_DIR, 'loaded'), { recursive: true });
-  await writeFile(join(kit.env.FAKE_LAUNCHCTL_DIR, 'loaded', DAEMON_LABEL), '');
-  expect(await adapter.kill(DAEMON_LABEL, 'SIGTERM')).toEqual({ ok: true });
+  await writeFile(join(kit.env.FAKE_LAUNCHCTL_DIR, 'loaded', daemonLabel(kit.env)), '');
+  expect(await adapter.kill(daemonLabel(kit.env), 'SIGTERM')).toEqual({ ok: true });
   const calls = (await readFile(join(kit.env.FAKE_LAUNCHCTL_DIR, 'calls'), 'utf8')).trim().split('\n');
-  expect(calls).toEqual([`kill SIGTERM gui/501/${DAEMON_LABEL}`, `kill SIGTERM gui/501/${DAEMON_LABEL}`]);
+  expect(calls).toEqual([`kill SIGTERM gui/501/${daemonLabel(kit.env)}`, `kill SIGTERM gui/501/${daemonLabel(kit.env)}`]);
 });
 
 it('makes the memory signal fake reject unloaded labels and preserve loaded failures', async () => {
   const kit = await world();
-  expect(await kit.launchctl.kill(DAEMON_LABEL, 'SIGTERM')).toEqual({ ok: false, message: '가짜 launchctl에 올라 있는 Label이 없습니다' });
+  expect(await kit.launchctl.kill(daemonLabel(kit.env), 'SIGTERM')).toEqual({ ok: false, message: '가짜 launchctl에 올라 있는 Label이 없습니다' });
   await kit.launchctl.bootstrap(daemonPlistPath(kit.env));
-  expect(await kit.launchctl.kill(DAEMON_LABEL, 'SIGTERM')).toEqual({ ok: true });
+  expect(await kit.launchctl.kill(daemonLabel(kit.env), 'SIGTERM')).toEqual({ ok: true });
   kit.fail();
-  expect(await kit.launchctl.kill(DAEMON_LABEL, 'SIGTERM')).toEqual({ ok: false, message: '등록을 거절했습니다' });
+  expect(await kit.launchctl.kill(daemonLabel(kit.env), 'SIGTERM')).toEqual({ ok: false, message: '등록을 거절했습니다' });
 });

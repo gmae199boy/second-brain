@@ -1,8 +1,17 @@
 #!/usr/bin/env node
+import type { CommandRunner } from './runtime/command-runner.js';
+import { probeOrbStack } from './runtime/orbstack.js';
+import { brainDependencies } from './assembly.js';
+import { openBrainStore } from './runtime/brain-store.js';
+import { uuidV7IdGen } from './runtime/id-gen.js';
+import { readConfig } from './config/codec.js';
+import { installPostgres } from './install/postgres.js';
 import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { cancel, confirm, isCancel, multiselect, text, type Option } from '@clack/prompts';
-import { encodeTextLine } from 'second_brain';
+import { createBrain, DRAIN_BUDGET_MS, createSettingsBrain, encodeTextLine } from 'second_brain';
+import { CORE_SCHEMA_VERSION, postgresStore } from 'second_brain/postgres';
+import { resolveStoreUrl } from './config/codec.js';
 import { readConfigForSetup, writeConfig } from './config/codec.js';
 import { restartDaemon } from './daemon/control.js';
 import { registerDaemon, systemLaunchctl } from './daemon/launchd.js';
@@ -29,14 +38,7 @@ import {
 } from './install/installed.js';
 import { transcriptFolders } from './harnesses.js';
 import { writeShim } from './install/shim.js';
-import {
-  doctorAt,
-  prepareFilesRoot,
-  prepareSelfUser,
-  prepareStore,
-  storeCollisions,
-  storeFileExists,
-} from './install/store.js';
+import { prepareFilesRoot, storeFileExists } from './install/store.js';
 
 /**
  * The installer, as its own entry point. It is deliberately not a command of
@@ -149,8 +151,22 @@ export class Cancelled extends Error {
 }
 
 /** The real world, in one place, so the tests can replace all of it. */
-export function systemInstallDeps(): InstallDeps {
+export function systemInstallDeps(options: { runner?: CommandRunner; secrets?: { adminUrl: string; appPassword: string }; databaseName?: string } = {}): InstallDeps {
+  const withBrain = async <T>(home: string, env: NodeJS.ProcessEnv, run: (brain: import('second_brain').Brain) => Promise<T>): Promise<T> => {
+    const config = await readConfig(home);
+    const opened = await openBrainStore({ home, env, config, path: 'command' });
+    try { return await run(createBrain(brainDependencies({ home, env, config, store: opened.store, adapterProbeIds: opened.adapterProbeIds, runner: options.runner, schemaVersions: opened.expected, clock: { now: () => new Date() }, idGen: uuidV7IdGen(), workHandlers: {} }))); }
+    finally { await opened.store.close(); }
+  };
   return {
+    orbstack: env => probeOrbStack({ env, runner: options.runner }),
+    postgresDoctor: (home, env) => withBrain(home, env, brain => brain.doctor.run()),
+    importTranscripts: (home, env) => withBrain(home, env, brain => brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command })),
+    settings: {
+      get: (home, urlEnv, env) => withSettings(home, urlEnv, env, brain => brain.config.get({ key: 'timezone' })),
+      set: (home, urlEnv, env, value) => withSettings(home, urlEnv, env, brain => brain.config.set({ key: 'timezone', value })),
+    },
+    postgres: (home, urlEnv, env) => installPostgres({ home, urlEnv, env, clock: { now: () => new Date() }, runner: options.runner, secrets: options.secrets, databaseName: options.databaseName }),
     prompts: clackPrompts(),
     // Both ends have to be a terminal: a question needs an answer and a place
     // to be read. Anything else counts as not interactive at all.
@@ -168,17 +184,7 @@ export function systemInstallDeps(): InstallDeps {
       write: writeConfig,
       read: readConfigForSetup,
     },
-    store: {
-      prepare: (path: string, options?: { mergeProjects?: boolean }) =>
-        prepareStore(path, options ?? {}),
-      collisions: (path: string) => storeCollisions(path),
-      exists: (path: string) => storeFileExists(path),
-      self: (path: string) => prepareSelfUser(path),
-      // The same folders a command would look in, so the report the install
-      // ends on is the report `brain doctor run` gives afterwards.
-      doctor: (home: string, path: string) =>
-        doctorAt(home, path, transcriptFolders(process.env)),
-    },
+    legacyFileExists: storeFileExists,
     files: { prepare: prepareFilesRoot },
     // The node running this process, and the entry point beside the shim
     // module: whatever node started the installer is the node the hooks get.
@@ -272,4 +278,12 @@ function invokedDirectly(here: string): boolean {
 
 if (invokedDirectly(import.meta.url)) {
   process.exitCode = await runInstaller();
+}
+
+async function withSettings(home: string, urlEnv: string, env: NodeJS.ProcessEnv,
+  run: (brain: import('second_brain').SettingsBrain) => Promise<import('second_brain').SettingResult>): Promise<import('second_brain').SettingResult> {
+  const databaseUrl = await resolveStoreUrl(home, urlEnv, env).catch(() => undefined);
+  const store = postgresStore({ databaseUrl: databaseUrl ?? 'postgresql://invalid@127.0.0.1:1/unavailable', path: 'command' });
+  try { return await run(createSettingsBrain({ store, clock: { now: () => new Date() }, schemaVersions: { core: CORE_SCHEMA_VERSION } })); }
+  finally { await store.close(); }
 }

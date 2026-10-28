@@ -8,11 +8,11 @@ describe('setup run installer flags', () => {
     [{ connect: ['claude-code', 'demo', 'claude-code'] }, ['claude-code', 'demo', 'claude-code']],
     [{ connect: ['claude-code', 1, null] }, ['claude-code']],
   ])('maps connect from %j', (options, connect) => {
-    expect(setupRunFlags(options)).toEqual({ storePath: undefined, mirrorPath: undefined,
+    expect(setupRunFlags(options)).toEqual({ mirrorPath: undefined,
       pluginRoot: undefined, connect, yes: false, help: false });
   });
   it('keeps the other installer options', () => {
-    expect(setupRunFlags({ storePath: '/db', mirrorPath: '/mirror', pluginRoot: '/plugin', yes: true }))
-      .toEqual({ storePath: '/db', mirrorPath: '/mirror', pluginRoot: '/plugin', connect: [], yes: true, help: false });
+    expect(setupRunFlags({ mirrorPath: '/mirror', pluginRoot: '/plugin', yes: true }))
+      .toEqual({ mirrorPath: '/mirror', pluginRoot: '/plugin', connect: [], yes: true, help: false });
   });
 });

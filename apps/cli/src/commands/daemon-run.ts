@@ -65,6 +65,7 @@ export const daemonRunCommand: CommandSpec<DaemonRunData> = {
         // function a test can drive with ids of its own.
         idGen: uuidV7IdGen(),
         signal: controller.signal,
+        ...(context.runner === undefined ? {} : { runner: context.runner }),
       });
 
       if (result.ok) return { ok: true as const, data: null };

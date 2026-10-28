@@ -1,16 +1,16 @@
+import { postgresStore, CORE_SCHEMA_VERSION, type PostgresStoreOptions } from 'second_brain/postgres';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { PgTestClient } from './pg-client.js';
+import { preparePgHome, pgDatabaseUrl, pgAppUrl } from './pg-home.js';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   BUSY_TIMEOUT_MS,
   DRAIN_BUDGET_MS,
-  runSqliteMigrations,
   type SchemaStore,
-  type SqliteStoreOptions,
   type Store,
 } from 'second_brain';
 import { writeConfig } from '../src/config/codec.js';
@@ -19,14 +19,14 @@ import {
   dispatch,
   type CommandMeta,
   type CommandSpec,
-  type CreateStore,
+  type CreateConnectionStore,
 } from '../src/dispatch.js';
 import { systemClock } from '../src/runtime/clock.js';
 import { withoutHarnessFolders } from './environment.js';
 import { tempHomes } from './temp-home.js';
 
 /**
- * The dispatcher, against a real SQLite file and a registry that exists only
+ * The dispatcher, against a real PostgreSQL database and a registry that exists only
  * here: fake `writes` and `hook` commands, so the rows of the I/O matrix are
  * checked on the rules themselves rather than on whichever command happens to
  * be implemented. The registry has to be built in the child process, which is
@@ -341,7 +341,7 @@ function runDispatch(args: string[], env: Record<string, string | undefined>): P
     `  },`,
     `};`,
     // With `node -e`, `process.argv[1]` is already the first user argument.
-    'process.exitCode = await dispatch(registry, process.argv.slice(1), { clock: systemClock, workHandlers });',
+    `process.exitCode = await dispatch(registry, process.argv.slice(1), { clock: systemClock, workHandlers, runner: async request => ({ ok: true, stdout: request.command === 'orb' ? 'Running' : request.args[0] === 'context' ? 'orbstack' : request.args[0] === 'ps' ? JSON.stringify({ Labels: 'com.docker.compose.service=postgres', State: 'running', Status: 'Up (healthy)' }) : '29', stderr: '' }) });`,
   ].join('\n');
 
   const childEnv: NodeJS.ProcessEnv = withoutHarnessFolders(process.env);
@@ -382,16 +382,16 @@ async function scratch(): Promise<string> {
 /** A configuration folder naming `storePath`. */
 async function homeFor(storePath: string): Promise<string> {
   const home = await scratch();
-  await writeConfig(home, { storePath });
+  await writeConfig(home, {});
+  await writeFile(join(home, '.env'), `BRAIN_DATABASE_URL=${pgAppUrl(storePath)}\n`);
   return home;
 }
 
 /** A database file at the version this build ships. */
 async function migratedDatabase(): Promise<string> {
-  const path = join(await scratch(), 'brain.db');
-  const migrated = await runSqliteMigrations({ path });
-  expect(migrated.ok).toBe(true);
-  return path;
+  const home = await scratch();
+  await preparePgHome(home, false);
+  return pgDatabaseUrl(home);
 }
 
 /**
@@ -400,11 +400,10 @@ async function migratedDatabase(): Promise<string> {
  * migration runner is otherwise allowed to (AD-20).
  */
 async function emptyDatabase(): Promise<string> {
-  const path = join(await scratch(), 'brain.db');
-  const database = new DatabaseSync(path);
-  database.exec('pragma journal_mode = WAL');
-  database.close();
-  return path;
+  const home = await scratch();
+  const db = await preparePgHome(home, false);
+  await db.query('drop schema brain cascade');
+  return db.url;
 }
 
 /** A path with no file at it, which is `DB_UNAVAILABLE` every time. */
@@ -458,7 +457,9 @@ describe('the dispatcher', () => {
   });
 
   it('refuses a write and never calls run when the version does not match', async () => {
-    const home = await homeFor(await emptyDatabase());
+    const path = await migratedDatabase();
+    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version=2'); await db.close();
+    const home = await homeFor(path);
 
     const run = await runDispatch(['fake', 'write', '--json'], { [HOME_ENV]: home });
 
@@ -473,9 +474,9 @@ describe('the dispatcher', () => {
 
   it('refuses a write and never calls run when the database is at another version', async () => {
     const path = await migratedDatabase();
-    const ahead = new DatabaseSync(path);
-    ahead.exec('update schema_version set version = version + 1');
-    ahead.close();
+    const ahead = new PgTestClient(path);
+    (await ahead.exec('update brain.schema_migrations set version = version + 1'));
+    (await ahead.close());
     const home = await homeFor(path);
 
     const run = await runDispatch(['fake', 'write', '--json'], { [HOME_ENV]: home });
@@ -511,7 +512,9 @@ describe('the dispatcher', () => {
   });
 
   it('calls the spool branch instead of run when the version does not match', async () => {
-    const home = await homeFor(await emptyDatabase());
+    const path = await migratedDatabase();
+    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version=2'); await db.close();
+    const home = await homeFor(path);
 
     const run = await runDispatch(['fake', 'write-spool', '--json'], { [HOME_ENV]: home });
 
@@ -608,7 +611,9 @@ describe('the dispatcher on a hook path', () => {
   });
 
   it('exits 0 with one line on stderr when the schema version blocks the write', async () => {
-    const home = await homeFor(await emptyDatabase());
+    const path = await migratedDatabase();
+    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version=2'); await db.close();
+    const home = await homeFor(path);
 
     const run = await runDispatch(['fake', 'hook-write', '--json'], { [HOME_ENV]: home });
 
@@ -669,7 +674,7 @@ describe('the dispatcher and a standalone command', () => {
       // No brain and no config, and `stdin` is a function it never called:
       // a standalone command that does not read a hook payload must not wait
       // on a pipe nobody is writing to.
-      keys: ['args', 'clock', 'env', 'options', 'recordHookArrival', 'stdin'],
+      keys: ['args', 'clock', 'env', 'options', 'recordHookArrival', 'runner', 'stdin'],
     });
   });
 
@@ -1131,7 +1136,7 @@ describe('the dispatcher and an unusable configuration', () => {
     expect((JSON.parse(run.stdout) as Envelope).error?.code).toBe('CONFIG_INVALID');
   });
 
-  it('exits 2 with CONFIG_INVALID for a relative store path, running no command', async () => {
+  it('ignores relative legacy paths and reports an unavailable PG URL', async () => {
     const home = await scratch();
     await writeFile(
       join(home, 'config.toml'),
@@ -1144,8 +1149,7 @@ describe('the dispatcher and an unusable configuration', () => {
     expect(run.code).toBe(2);
     expect(run.stdout).not.toContain('RAN');
     const envelope = JSON.parse(run.stdout) as Envelope;
-    expect(envelope.error?.code).toBe('CONFIG_INVALID');
-    expect(envelope.error?.message).toContain('store.path');
+    expect(envelope.error?.code).toBe('DB_UNAVAILABLE');
   });
 
   it('runs a diagnostic command anyway, with no config and an unavailable store', async () => {
@@ -1163,7 +1167,7 @@ describe('the dispatcher and an unusable configuration', () => {
     const data = envelope.data as { config: unknown; checks: string[] };
     expect(data.config).toBeNull();
     // `db` says the configuration is why, and the machine checks ran too.
-    expect(data.checks[0]).toBe('db:fail');
+    expect(data.checks).toContain('db:fail');
     expect(data.checks).toContain('config:fail');
     expect(data.checks).toContain('node-version:ok');
     // Turning a check's code into a warning is the command's own doing, and
@@ -1191,32 +1195,30 @@ describe('the dispatcher and an unusable configuration', () => {
  */
 describe('the dispatcher and the drain at the end of a command', () => {
   /** One item of `demo_work`, due now, as a drain would find it. */
-  function seedWork(path: string, id: string): void {
-    const database = new DatabaseSync(path);
+  async function seedWork(path: string, id: string): Promise<void> {
+    const database = new PgTestClient(path);
     try {
       const now = new Date().toISOString();
-      database
+      (await database
         .prepare(
-          `insert into work_items (id, kind, target_kind, target_id, created_at,
-                                   attempts, next_attempt_at)
-                values (?, 'demo_work', 'session', ?, ?, 0, ?)`,
+          "insert into work_items (id, kind, target_kind, target_id, created_at,\n                                   attempts, next_attempt_at)\n                values ($1, 'demo_work', 'session', $2, $3, 0, $4)",
         )
-        .run(id, `demo:${id}`, now, now);
+        .run(id, `demo:${id}`, now, now));
     } finally {
-      database.close();
+      (await database.close());
     }
   }
 
   /** Whether the one item is closed, and by whom nothing is holding it. */
-  function closed(path: string, id: string): boolean {
-    const database = new DatabaseSync(path, { readOnly: true });
+  async function closed(path: string, id: string): Promise<boolean> {
+    const database = new PgTestClient(path);
     try {
-      const row = database.prepare('select completed_at from work_items where id = ?').get(id) as
+      const row = (await database.prepare('select completed_at from work_items where id = $1').get(id)) as
         | { completed_at: string | null }
         | undefined;
       return row?.completed_at !== null && row?.completed_at !== undefined;
     } finally {
-      database.close();
+      (await database.close());
     }
   }
 
@@ -1226,7 +1228,7 @@ describe('the dispatcher and the drain at the end of a command', () => {
     const path = await migratedDatabase();
     const home = await homeFor(path);
     const log = join(await scratch(), 'handled.log');
-    seedWork(path, ITEM);
+    (await seedWork(path, ITEM));
 
     const run = await runDispatch(['fake', 'read', '--json'], {
       [HOME_ENV]: home,
@@ -1243,13 +1245,13 @@ describe('the dispatcher and the drain at the end of a command', () => {
     expect(run.stderr).toBe('');
 
     expect(await readFile(log, 'utf8')).toBe(`${ITEM}\n`);
-    expect(closed(path, ITEM)).toBe(true);
+    expect((await closed(path, ITEM))).toBe(true);
   });
 
   it('answers exactly what it answers without a drain', async () => {
     const withDrain = await (async () => {
       const path = await migratedDatabase();
-      seedWork(path, ITEM);
+      (await seedWork(path, ITEM));
       return runDispatch(['fake', 'read', '--json'], {
         [HOME_ENV]: await homeFor(path),
         DRAIN_LOG: join(await scratch(), 'handled.log'),
@@ -1270,7 +1272,7 @@ describe('the dispatcher and the drain at the end of a command', () => {
     const path = await migratedDatabase();
     const home = await homeFor(path);
     const log = join(await scratch(), 'handled.log');
-    seedWork(path, ITEM);
+    (await seedWork(path, ITEM));
 
     const run = await runDispatch(['fake', 'hook-read', '--json'], {
       [HOME_ENV]: home,
@@ -1281,14 +1283,14 @@ describe('the dispatcher and the drain at the end of a command', () => {
     // them (AD-6, AD-7).
     expect(run.code).toBe(0);
     expect(existsSync(log)).toBe(false);
-    expect(closed(path, ITEM)).toBe(false);
+    expect((await closed(path, ITEM))).toBe(false);
   });
 
   it('does not run after a command that failed', async () => {
     const path = await migratedDatabase();
     const home = await homeFor(path);
     const log = join(await scratch(), 'handled.log');
-    seedWork(path, ITEM);
+    (await seedWork(path, ITEM));
 
     const run = await runDispatch(['fake', 'read-fails', '--json'], {
       [HOME_ENV]: home,
@@ -1299,14 +1301,14 @@ describe('the dispatcher and the drain at the end of a command', () => {
     // drain right after it would be a second write into the same problem.
     expect(run.code).toBe(1);
     expect(existsSync(log)).toBe(false);
-    expect(closed(path, ITEM)).toBe(false);
+    expect((await closed(path, ITEM))).toBe(false);
   });
 
   it('does not run after a command whose own result is a failure', async () => {
     const path = await migratedDatabase();
     const home = await homeFor(path);
     const log = join(await scratch(), 'handled.log');
-    seedWork(path, ITEM);
+    (await seedWork(path, ITEM));
 
     // `ok: true, failed: true` is exactly what `doctor run` answers when a
     // check fails: the command ran, and its answer is that this brain is
@@ -1319,14 +1321,14 @@ describe('the dispatcher and the drain at the end of a command', () => {
     expect(run.code).toBe(1);
     expect((JSON.parse(run.stdout) as Envelope).ok).toBe(true);
     expect(existsSync(log)).toBe(false);
-    expect(closed(path, ITEM)).toBe(false);
+    expect((await closed(path, ITEM))).toBe(false);
   });
 
   it('does not run after a command that turned it off', async () => {
     const path = await migratedDatabase();
     const home = await homeFor(path);
     const log = join(await scratch(), 'handled.log');
-    seedWork(path, ITEM);
+    (await seedWork(path, ITEM));
 
     const run = await runDispatch(['fake', 'no-drain', '--json'], {
       [HOME_ENV]: home,
@@ -1335,19 +1337,19 @@ describe('the dispatcher and the drain at the end of a command', () => {
 
     expect(run.code).toBe(0);
     expect(existsSync(log)).toBe(false);
-    expect(closed(path, ITEM)).toBe(false);
+    expect((await closed(path, ITEM))).toBe(false);
   });
 
   it('does not run on a database at another schema version', async () => {
     const path = await migratedDatabase();
     const home = await homeFor(path);
     const log = join(await scratch(), 'handled.log');
-    seedWork(path, ITEM);
-    const database = new DatabaseSync(path);
+    (await seedWork(path, ITEM));
+    const database = new PgTestClient(path);
     try {
-      database.exec('update schema_version set version = 2');
+      (await database.exec('update brain.schema_migrations set version = 2'));
     } finally {
-      database.close();
+      (await database.close());
     }
 
     // A read is not guarded, so the command itself succeeds — and the drain
@@ -1360,7 +1362,7 @@ describe('the dispatcher and the drain at the end of a command', () => {
     expect(run.code).toBe(0);
     expect((JSON.parse(run.stdout) as Envelope).ok).toBe(true);
     expect(existsSync(log)).toBe(false);
-    expect(closed(path, ITEM)).toBe(false);
+    expect((await closed(path, ITEM))).toBe(false);
   });
 
   it('does not run without a configuration, and creates nothing', async () => {
@@ -1388,9 +1390,9 @@ describe('the dispatcher and the drain at the end of a command', () => {
  */
 describe('the dispatcher and the lock budget', () => {
   /** A store that opens no file and remembers how it was asked for. */
-  function recorder(): { calls: SqliteStoreOptions[]; createStore: CreateStore } {
-    const calls: SqliteStoreOptions[] = [];
-    const createStore: CreateStore = (options) => {
+  function recorder(): { calls: PostgresStoreOptions[]; createStore: CreateConnectionStore } {
+    const calls: PostgresStoreOptions[] = [];
+    const createStore: CreateConnectionStore = (options) => {
       calls.push(options);
       const unavailable = {
         ok: false as const,
@@ -1427,7 +1429,7 @@ describe('the dispatcher and the lock budget', () => {
         async checkHealth() {
           return unavailable;
         },
-        async readSchemaVersion() {
+        async readSchemaVersions() {
           return unavailable;
         },
         async ensureSelfUser() {
@@ -1497,7 +1499,7 @@ describe('the dispatcher and the lock budget', () => {
           // Nothing was ever opened.
         },
       };
-      return store;
+      return { ...store, async getSetting() { return unavailable; }, async setSetting() { return unavailable; } };
     };
     return { calls, createStore };
   }
@@ -1535,7 +1537,7 @@ describe('the dispatcher and the lock budget', () => {
   async function run(
     argv: readonly string[],
     home: string,
-  ): Promise<{ exit: number; calls: SqliteStoreOptions[] }> {
+  ): Promise<{ exit: number; calls: PostgresStoreOptions[] }> {
     const { calls, createStore } = recorder();
     const exit = await dispatch(registry, argv, {
       clock: systemClock,
@@ -1556,7 +1558,7 @@ describe('the dispatcher and the lock budget', () => {
     // so asserting it would assert nothing.
     const { calls } = await run(['fake', 'hook-read', '--json'], home);
 
-    expect(calls).toEqual([{ path, busyTimeoutMs: BUSY_TIMEOUT_MS.turn }]);
+    expect(calls).toEqual([{ databaseUrl: pgAppUrl(path), path: 'turn' }]);
   });
 
   it('gives any other command the command budget, and the drain behind it its own', async () => {
@@ -1567,12 +1569,12 @@ describe('the dispatcher and the lock budget', () => {
 
     expect(exit).toBe(0);
     expect(calls).toEqual([
-      { path, busyTimeoutMs: BUSY_TIMEOUT_MS.command },
+      { databaseUrl: pgAppUrl(path), path: 'command' },
       // The drain at the end of a successful command opens a connection of its
       // own, and the reason is the budget: the command's store waits ten
       // seconds for the write lock, and the drain may only spend two. Its own
       // store waits its own budget and no longer (AD-7).
-      { path, busyTimeoutMs: DRAIN_BUDGET_MS.opportunistic },
+      { databaseUrl: pgAppUrl(path), path: 'drain', lockTimeoutMs: DRAIN_BUDGET_MS.opportunistic },
     ]);
   });
 

@@ -1,3 +1,4 @@
+import type { SchemaVersions } from '../schema.js';
 import { transcriptChanges } from '../capture/scan.js';
 import {
   TRANSCRIPT_DEADLINE_WARN_DAYS,
@@ -100,8 +101,11 @@ export type DoctorReadStore = Pick<WorkStore, 'listFailures'> &
   Pick<import('../ports/store.js').SessionStore, 'countUntaggedSessions'>;
 
 export interface DoctorOptions {
+  prerequisites?: readonly DoctorCheckSource[];
+  /** Adapter probes to mark skipped only when a prerequisite fails (AD-10). */
+  adapterProbeIds?: readonly string[];
   /** Schema version this build was made for, for the `schema-version` check. */
-  schemaVersion: number;
+  schemaVersions: SchemaVersions;
   /**
    * The same store, under the capabilities the `failures` and `transcripts`
    * checks read. It is a second field rather than a wider first parameter
@@ -149,6 +153,17 @@ export async function runDoctor(
 ): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
 
+  let failedPrerequisite: string | undefined;
+  for (const source of options.prerequisites ?? []) {
+    const check = failedPrerequisite === undefined ? await registered(source) : { id: source.id, status: 'skip' as const, detail: prereqFailed(failedPrerequisite) };
+    checks.push(check);
+    if (check.status === 'fail' && failedPrerequisite === undefined) failedPrerequisite = check.id;
+  }
+  if (failedPrerequisite !== undefined) {
+    for (const id of ['db', ...(options.adapterProbeIds ?? []), 'schema-version', 'failures', 'untagged', 'transcripts']) checks.push({ id, status: 'skip', detail: prereqFailed(failedPrerequisite) });
+    for (const source of options.checks ?? []) checks.push(await registered(source));
+    return { checks, summary: summarise(checks) };
+  }
   const health = await store.checkHealth();
   if (!health.ok) {
     checks.push({ id: 'db', status: 'fail', code: health.code, detail: health.message });
@@ -161,7 +176,7 @@ export async function runDoctor(
   } else {
     checks.push({ id: 'db', status: 'ok', detail: health.serverVersion });
     checks.push(...health.source.probes.map(probeCheck));
-    checks.push(await schemaCheck(store, options.schemaVersion));
+    checks.push(await schemaCheck(store, options.schemaVersions));
     checks.push(await failuresCheck(options.store));
     const untagged = await options.store.countUntaggedSessions();
     checks.push(untagged.ok
@@ -215,10 +230,10 @@ function probeStatus(probe: StoreProbe): DoctorCheckStatus {
  * `SCHEMA_MISMATCH`, which is a shared warning code, so the CLI puts it in
  * `warnings[]` as well.
  */
-async function schemaCheck(store: SchemaStore, expected: number): Promise<DoctorCheck> {
+async function schemaCheck(store: SchemaStore, expected: SchemaVersions): Promise<DoctorCheck> {
   const schema = await checkSchema(store, expected);
   if (schema.ok) {
-    return { id: 'schema-version', status: 'ok', detail: String(schema.version) };
+    return { id: 'schema-version', status: 'ok', detail: Object.entries(schema.versions).map(([owner, version]) => `\`${owner}\`: ${version.version}`).join(', ') };
   }
   return { id: 'schema-version', status: 'fail', code: schema.code, detail: schema.message };
 }

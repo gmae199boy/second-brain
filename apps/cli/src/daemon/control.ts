@@ -7,7 +7,7 @@ import { daemonPidPath, heartbeatPath, daemonLogPath, daemonLogRotatedPath } fro
 import { DAEMON_LOG_KEEP } from './log.js';
 import { daemonLiveness } from './liveness.js';
 import { ownerIsAlive, readDaemonLock } from './lock.js';
-import { DAEMON_LABEL, daemonPlistPath, unregisterDaemon, type Launchctl, type LaunchctlResult } from './launchd.js';
+import { daemonLabel, daemonPlistPath, unregisterDaemon, type Launchctl, type LaunchctlResult } from './launchd.js';
 
 export const DAEMON_STOP_WAIT_MS = 20_000;
 export const DAEMON_RESTART_WAIT_MS = 15_000;
@@ -39,8 +39,8 @@ export async function stopDaemon(options: Options & {
 }): Promise<DaemonStopData> {
   const { launchctl, platform } = options;
   let unloaded = false;
-  if (platform === 'darwin' && launchctl.uid !== undefined && await launchctl.isLoaded(DAEMON_LABEL)) {
-    checked(await launchctl.bootout(DAEMON_LABEL));
+  if (platform === 'darwin' && launchctl.uid !== undefined && await launchctl.isLoaded(daemonLabel(options.env))) {
+    checked(await launchctl.bootout(daemonLabel(options.env)));
     unloaded = true;
   }
   return waitForOwner(options, unloaded);
@@ -86,11 +86,12 @@ export async function uninstallDaemon(options: Parameters<typeof stopDaemon>[0])
       }
     }
   }
-  return { label: DAEMON_LABEL, plist_path: daemonPlistPath(options.env), unloaded: registration.booted_out,
+  return { label: daemonLabel(options.env), plist_path: daemonPlistPath(options.env), unloaded: registration.booted_out,
     plist_removed: registration.plist_removed, removed };
 }
 
-export async function startDaemon({ env, launchctl, platform }: Options): Promise<DaemonStartData> {
+export async function startDaemon(options: Options): Promise<DaemonStartData> {
+  const { env, launchctl, platform } = options;
   if (platform !== 'darwin' || launchctl.uid === undefined) return { status: 'unsupported', plist_path: null };
   const path = daemonPlistPath(env);
   try { await access(path); }
@@ -100,7 +101,7 @@ export async function startDaemon({ env, launchctl, platform }: Options): Promis
     }
     throw new DaemonControlError('DAEMON_CONTROL_FAILED', '데몬 plist를 읽지 못했습니다');
   }
-  if (await launchctl.isLoaded(DAEMON_LABEL)) return { status: 'already-loaded', plist_path: path };
+  if (await launchctl.isLoaded(daemonLabel(options.env))) return { status: 'already-loaded', plist_path: path };
   checked(await launchctl.bootstrap(path));
   return { status: 'started', plist_path: path };
 }
@@ -119,10 +120,10 @@ export async function restartDaemon(options: Options & {
   const { env, launchctl, platform, plistChanged, expectCommit } = options;
   if (platform !== 'darwin' || launchctl.uid === undefined) return { ok: false, message: '이 운영체제에는 launchd가 없습니다' };
   if (!plistChanged) {
-    const result = await launchctl.kill(DAEMON_LABEL, 'SIGTERM');
+    const result = await launchctl.kill(daemonLabel(options.env), 'SIGTERM');
     if (!result.ok) return result;
   } else {
-    const unloaded = await launchctl.bootout(DAEMON_LABEL);
+    const unloaded = await launchctl.bootout(daemonLabel(options.env));
     if (!unloaded.ok) return unloaded;
     let result = await launchctl.bootstrap(daemonPlistPath(env));
     for (let retry = 0; !result.ok && retry < 2; retry++) {

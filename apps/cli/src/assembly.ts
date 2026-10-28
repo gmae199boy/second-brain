@@ -1,11 +1,14 @@
+import { postgresPrerequisites } from './runtime/orbstack.js';
+import type { CommandRunner } from './runtime/command-runner.js';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import {
-  SQLITE_SCHEMA_VERSION,
+  type SchemaVersions,
   type BrainDependencies,
   type Clock,
   type IdGen,
   type SchemaStore,
+  type SessionIngestStore,
   type Store,
   type WorkHandlers,
 } from 'second_brain';
@@ -35,7 +38,10 @@ import { fileTranscriptReader } from './runtime/transcript.js';
  * Stories 9.4 and 9.5 extend this function and the daemon loop rather than
  * adding a third assembly.
  */
-export interface BrainAssembly {
+export interface BrainAssembly<S = Store & SchemaStore> {
+  runner?: CommandRunner;
+  /** Supplied by the selected adapter's factory without eagerly loading it. */
+  adapterProbeIds?: readonly string[];
   /** The configuration folder this brain belongs to (AD-18). */
   home: string;
   /** This invocation's environment, which is where the harness folders are. */
@@ -48,7 +54,8 @@ export interface BrainAssembly {
    */
   config: ReadConfigResult;
   /** Already open, at the lock budget the caller chose (AD-7). */
-  store: Store & SchemaStore;
+  store: S;
+  schemaVersions: SchemaVersions;
   clock: Clock;
   idGen: IdGen;
   /** Kinds beyond Core's own. Empty for every real invocation (AD-21). */
@@ -63,10 +70,12 @@ export interface BrainAssembly {
  * (AD-9): it is one spool per invocation, so two `fileSpool` calls over the
  * same folder would be two serial counters minting the same file name.
  */
-export function brainDependencies(assembly: BrainAssembly): BrainDependencies {
+export function brainDependencies<S extends SessionIngestStore>(assembly: BrainAssembly<S>) {
   const { home, env, config, store, clock, idGen, workHandlers } = assembly;
   return {
     store,
+    prerequisites: postgresPrerequisites({ home, env, runner: assembly.runner }),
+    adapterProbeIds: assembly.adapterProbeIds,
     // Under `home` and not under a configured path: a write that could not
     // reach the database has to have somewhere to go even when the
     // configuration is the thing that is broken, and `home` is known from the
@@ -76,7 +85,7 @@ export function brainDependencies(assembly: BrainAssembly): BrainDependencies {
     files: localFileStore({ root: config.ok ? config.config.filesPath : join(home, 'files') }),
     sources: fileSourceReader(),
     userHome: env['HOME']?.startsWith('/') === true ? env['HOME'] : null,
-    schemaVersion: SQLITE_SCHEMA_VERSION,
+    schemaVersions: assembly.schemaVersions,
     clock,
     idGen,
     // Parsers and connectors come from the same harness registry.

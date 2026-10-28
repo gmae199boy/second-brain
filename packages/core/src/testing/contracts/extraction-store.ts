@@ -39,8 +39,8 @@ import { sequenceIdGen } from '../fakes/id-gen.js';
  * then meets, the `redacted` it closes with — live in `file-redaction.ts`.
  */
 export type ExtractionStoreSubject = ExtractionStore &
-  AttachmentStore &
-  SessionStore &
+  Omit<AttachmentStore, 'redactFile'> &
+  Omit<SessionStore, 'redactMessage'> &
   UserStore &
   WorkStore;
 

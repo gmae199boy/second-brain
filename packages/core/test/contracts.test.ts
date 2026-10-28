@@ -895,22 +895,39 @@ describe('the contracts catch a wrong store', () => {
 });
 
 describe('the contracts catch a wrong schema store', () => {
+  it('accepts equal schema maps returned in a different owner order', async () => {
+    const make = async (): Promise<SchemaStore> => {
+      let reverse = false;
+      const row = { version: 1, appliedAt: new Date('2026-01-01T00:00:00Z') };
+      return {
+        async readSchemaVersions() {
+          reverse = !reverse;
+          return { ok: true, versions: Object.fromEntries(
+            (reverse ? ['core', 'garmin'] : ['garmin', 'core']).map(owner => [owner, row]),
+          ) };
+        },
+        async close() {},
+      };
+    };
+    expect(await failedCases(schemaStoreContract(), make)).toEqual([]);
+  });
+
   it('catches a store that throws when the version row is missing', async () => {
     const make = async (): Promise<SchemaStore> => {
       const inner = memorySchemaStore({ version: null });
       return {
         ...inner,
-        async readSchemaVersion() {
-          const result = await inner.readSchemaVersion();
+        async readSchemaVersions() {
+          const result = await inner.readSchemaVersions();
           // An empty database is a value, not an exception (Conventions).
-          if (result.ok && result.version === null) throw new Error('no schema_version row');
+          if (result.ok && Object.keys(result.versions).length === 0) throw new Error('no schema_version row');
           return result;
         },
       };
     };
 
     expect(await failedCases(schemaStoreContract(), make)).toContain(
-      'readSchemaVersion answers with a well formed value instead of throwing',
+      'readSchemaVersions answers with a well formed value instead of throwing',
     );
   });
 
@@ -919,19 +936,19 @@ describe('the contracts catch a wrong schema store', () => {
       const inner = memorySchemaStore();
       return {
         ...inner,
-        async readSchemaVersion() {
-          const result = await inner.readSchemaVersion();
-          if (!result.ok || result.version === null) return result;
+        async readSchemaVersions() {
+          const result = await inner.readSchemaVersions();
+          if (!result.ok || result.versions['core'] === undefined) return result;
           return {
             ok: true,
-            version: { version: result.version.version, appliedAt: new Date(Number.NaN) },
+            versions: { core: { version: result.versions['core']!.version, appliedAt: new Date(Number.NaN) } },
           };
         },
       };
     };
 
     expect(await failedCases(schemaStoreContract(), make)).toContain(
-      'readSchemaVersion answers with a well formed value instead of throwing',
+      'readSchemaVersions answers with a well formed value instead of throwing',
     );
   });
 });

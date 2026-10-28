@@ -19,6 +19,8 @@ function literal(body: string, text: string) {
 describe('redaction planner', () => {
   it('records code point positions and only hashes of the removed text', () => {
     const result = literal('a🙂 hunter2-x b hunter2-x', 'hunter2-x');
+    expect(result.cleanup.map(work => [work.kind,work.targetKind,work.targetId])).toEqual([
+      ['table_cleanup','table','messages'],['table_cleanup','table','chunks']]);
     expect(result.body).toBe('a🙂 [REDACTED:manual] b [REDACTED:manual]');
     expect(result.redactions.map(({ start, end, contentHash: hash }) => [start, end, hash]))
       .toEqual([[3, 12, contentHash('hunter2-x')], [15, 24, contentHash('hunter2-x')]]);
@@ -47,9 +49,10 @@ describe('redaction planner', () => {
     expect(result.body).toBe(maskSecrets(body, 'body').text);
     expect(result.toolNotes[0]?.target).toBe(maskSecrets(target, 'tool_target').text);
     expect(result.toolNotes[0]?.target).toContain('trailing-token');
+    expect(result.cleanup.map(work => work.targetId)).toEqual(['messages','tool_notes','chunks']);
     expect(result.redactions.every((row) => row.patternVersion === SECRET_PATTERN_VERSION)).toBe(true);
     expect(result.redactions.some((row) => row.messageId === null && row.toolNoteId !== null)).toBe(true);
-    expect(planRedaction(current('ordinary text'), { mode: 'detected' }, dependencies)).toMatchObject({ bodySpans: 0, toolNoteSpans: 0, redactions: [], toolNotes: [] });
+    expect(planRedaction(current('ordinary text'), { mode: 'detected' }, dependencies)).toMatchObject({ bodySpans: 0, toolNoteSpans: 0, redactions: [], toolNotes: [], cleanup: [] });
   });
 });
 

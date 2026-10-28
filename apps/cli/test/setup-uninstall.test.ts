@@ -1,3 +1,5 @@
+import { PgTestClient } from './pg-client.js';
+import { runTestInstaller, runPgCommand } from './pg-home.js';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
@@ -6,7 +8,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
-import { DAEMON_LABEL, daemonPlistPath } from '../src/daemon/launchd.js';
+import { daemonLabel, daemonPlistPath } from '../src/daemon/launchd.js';
 import { withoutHarnessFolders } from './environment.js';
 import { tempHomes } from './temp-home.js';
 
@@ -22,6 +24,7 @@ afterEach(async () => {
 const bin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
 const installer = fileURLToPath(new URL('../dist/install.js', import.meta.url));
 function run(args: string[], env: NodeJS.ProcessEnv, script = bin): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  if (args[0] === 'doctor' || (args[0] === 'setup' && args[1] === 'uninstall')) return runPgCommand(args, env);
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = '';
@@ -36,14 +39,24 @@ async function installed() {
   const env = { ...withoutHarnessFolders(process.env), SECOND_BRAIN_HOME: home,
     CLAUDE_CONFIG_DIR: join(home, 'claude'), SECOND_BRAIN_LAUNCH_AGENTS: join(home, 'agents'),
     FAKE_LAUNCHCTL_DIR: fake, FAKE_LAUNCHCTL_PID_FILE: join(home, 'managed-pid') };
-  const result = await run(['--yes'], env, installer);
+  const result = await runTestInstaller(home, env);
   expect(result.code, result.stderr).toBe(0);
   return { home, fake, env };
 }
 const digest = async (path: string) => createHash('sha256').update(await readFile(path)).digest('hex');
 
+async function savedRows(home: string) {
+  const db = new PgTestClient(home);
+  try { return {
+    users: await db.prepare('select * from users order by id').all(),
+    settings: await db.prepare('select * from settings order by key').all(),
+    sessions: await db.prepare('select * from sessions order by id').all(),
+  }; } finally { await db.close(); }
+}
+
 it.skipIf(process.platform !== 'darwin')('uninstalls only daemon traces, waits for shutdown, and is idempotent', async () => {
   const { home, fake, env } = await installed();
+  const dataBefore = await savedRows(home);
   daemon = spawn(process.execPath, [bin, 'daemon', 'run'], { env, stdio: 'ignore' });
   const closed = once(daemon, 'close');
   const deadline = Date.now() + 10_000;
@@ -55,31 +68,33 @@ it.skipIf(process.platform !== 'darwin')('uninstalls only daemon traces, waits f
   } while (Date.now() < deadline);
   expect(alive).toBe(true);
   await mkdir(join(fake, 'loaded'), { recursive: true });
-  await writeFile(join(fake, 'loaded', DAEMON_LABEL), '');
+  await writeFile(join(fake, 'loaded', daemonLabel(env)), '');
   await writeFile(join(home, 'managed-pid'), String(daemon.pid));
   await writeFile(join(home, 'log', 'daemon.log.1'), 'old log');
   await mkdir(join(home, 'files'), { recursive: true });
   await writeFile(join(home, 'files', 'sample.txt'), 'user data');
-  const retained = ['brain.db', 'installed.json', 'bin/brain', 'config.toml', 'files/sample.txt'];
+  const retained = ['.env', 'installed.json', 'bin/brain', 'config.toml', 'files/sample.txt'];
   const before = await Promise.all(retained.map((path) => digest(join(home, path))));
   const files = await readdir(join(home, 'files'), { recursive: true });
   const traces = ['run/daemon.pid', 'run/heartbeat', 'log/daemon.log', 'log/daemon.log.1'].map((path) => join(home, path));
   const result = await run(['setup', 'uninstall', '--json'], env);
   expect(result.code, result.stderr).toBe(0);
-  expect(JSON.parse(result.stdout).data).toMatchObject({ label: DAEMON_LABEL, plist_path: daemonPlistPath(env), unloaded: true, plist_removed: true });
+  expect(JSON.parse(result.stdout).data).toMatchObject({ label: daemonLabel(env), plist_path: daemonPlistPath(env), unloaded: true, plist_removed: true });
   await closed;
   expect(daemon.exitCode).toBe(0);
   for (const path of [...traces, daemonPlistPath(env)]) expect(existsSync(path)).toBe(false);
   expect(await Promise.all(retained.map((path) => digest(join(home, path))))).toEqual(before);
+  expect(await savedRows(home)).toEqual(dataBefore);
   expect(await readdir(join(home, 'files'), { recursive: true })).toEqual(files);
   const bootouts = async () => (await readFile(join(fake, 'calls'), 'utf8')).split('\n').filter((line) => line.startsWith('bootout'));
-  expect(await bootouts()).toEqual([`bootout gui/${String(process.getuid?.())}/${DAEMON_LABEL}`]);
+  expect(await bootouts()).toEqual([`bootout gui/${String(process.getuid?.())}/${daemonLabel(env)}`]);
   const second = await run(['setup', 'uninstall', '--json'], env);
   expect(second.code, second.stderr).toBe(0);
   expect(JSON.parse(second.stdout).data).toMatchObject({ unloaded: false, plist_removed: false, removed: [] });
   expect(await bootouts()).toHaveLength(1);
   for (const path of [...traces, daemonPlistPath(env)]) expect(existsSync(path)).toBe(false);
   expect(await Promise.all(retained.map((path) => digest(join(home, path))))).toEqual(before);
+  expect(await savedRows(home)).toEqual(dataBefore);
   expect(await readdir(join(home, 'files'), { recursive: true })).toEqual(files);
 }, 30_000);
 

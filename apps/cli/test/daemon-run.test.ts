@@ -1,17 +1,17 @@
+import { postgresStore, CORE_SCHEMA_VERSION, type PostgresStoreOptions } from 'second_brain/postgres';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, watch as fsWatch, type WatchListener } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { PgTestClient } from './pg-client.js';
+import { preparePgHome, pgDatabaseUrl, pgAppUrl, runPgCommand } from './pg-home.js';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   createBrain,
-  runSqliteMigrations,
-  SQLITE_SCHEMA_VERSION,
-  sqliteStore,
   type BrainDrainReport,
 } from 'second_brain';
+import * as brainStore from '../src/runtime/brain-store.js';
 import * as configCodec from '../src/config/codec.js';
 import { writeConfig } from '../src/config/codec.js';
 import {
@@ -73,7 +73,7 @@ const daemonCleanups: (() => Promise<unknown>)[] = [];
 const children: ChildProcess[] = [];
 
 afterEach(async () => {
-  const stopped = await Promise.allSettled(daemonCleanups.splice(0).map((stop) => stop()));
+  const stopped = await Promise.allSettled(daemonCleanups.splice(0).map(async (stop) => (await stop())));
   vi.restoreAllMocks();
   vi.mocked(createBrain).mockReset();
   for (const child of children.splice(0)) {
@@ -149,17 +149,15 @@ describe('runDaemon, with its timers wound down', () => {
   /** A configuration folder naming a database, which may or may not be there. */
   async function homeFor(options: { migrated: boolean; version?: number }): Promise<string> {
     const home = await temporary.create('brain-daemon-');
-    const storePath = join(home, 'brain.db');
-    await writeConfig(home, { storePath });
-    if (!options.migrated) return home;
-    const migrated = await runSqliteMigrations({ path: storePath });
-    expect(migrated.ok).toBe(true);
+    await preparePgHome(home);
+    const storePath = pgDatabaseUrl(home);
+    if (!options.migrated) { const db = new PgTestClient(storePath); await db.exec('drop schema brain cascade'); await db.close(); return home; }
     if (options.version !== undefined) {
-      const database = new DatabaseSync(storePath);
+      const database = new PgTestClient(storePath);
       try {
-        database.prepare('update schema_version set version = ?').run(options.version);
+        (await database.prepare('update brain.schema_migrations set version = $1').run(options.version));
       } finally {
-        database.close();
+        (await database.close());
       }
     }
     return home;
@@ -183,26 +181,26 @@ describe('runDaemon, with its timers wound down', () => {
     const path = join(home, 'brain.db');
     let at = new Date('2026-02-03T04:05:06.000Z');
     const due = new Date(at.getTime() + 60000);
-    const store = sqliteStore({ path });
-    await store.addSchedule({ id: 'once', kind: 'schedule_probe', targetKind: 'probe', targetId: 'once',
+    const store = postgresStore({ databaseUrl: pgAppUrl(path) });
+    await store.addSchedule({ id: '01940000-0000-7000-8000-000000000001', kind: 'schedule_probe', targetKind: 'probe', targetId: '01940000-0000-7000-8000-000000000001',
       intervalSeconds: null, nextRunAt: due, lastRunAt: null, createdAt: at });
     await store.close();
     let rounds = 0;
     const daemon = startDaemon({ home, env: environment(home), clock: { now: () => new Date(at) },
       idGen: uuidV7IdGen(), drainPauseMs: 20, heartbeatMs: 40,
-      createStore: options => { rounds++; return sqliteStore(options); } });
+      createStore: options => { rounds++; return postgresStore(options); } });
     await waitFor('시각 전 회차', () => rounds >= 2);
-    const db = new DatabaseSync(path);
+    const db = new PgTestClient(path);
     try {
-      expect(db.prepare('select * from work_items').all()).toHaveLength(0);
+      expect((await db.prepare('select * from work_items').all())).toHaveLength(0);
       at = new Date(due.getTime() + 1000);
-      await waitFor('예약 처리', () => !!db.prepare('select id from work_items where completed_at is not null').get());
+      await waitFor('예약 처리', async () => !!(await db.prepare('select id from work_items where completed_at is not null').get()));
       const firedRound = rounds;
       at = new Date(at.getTime() + 500000);
       await waitFor('발화 뒤 여러 회차', () => rounds >= firedRound + 3);
-      expect(db.prepare('select * from work_items').all()).toHaveLength(1);
-      expect(db.prepare('select next_run_at from schedules').get()).toEqual({ next_run_at: null });
-    } finally { db.close(); await daemon.stop(); }
+      expect((await db.prepare('select * from work_items').all())).toHaveLength(1);
+      expect((await db.prepare('select next_run_at from schedules').get())).toEqual({ next_run_at: null });
+    } finally { (await db.close()); await daemon.stop(); }
   });
 
   it('rolls back failing ticks, logs once, keeps draining and recovers one missed recurrence', async () => {
@@ -210,48 +208,48 @@ describe('runDaemon, with its timers wound down', () => {
     const path = join(home, 'brain.db');
     const at = new Date('2026-02-03T04:05:06.000Z');
     const due = new Date(at.getTime() - 185000);
-    const store = sqliteStore({ path });
-    await store.addSchedule({ id: 'repeat', kind: 'schedule_probe', targetKind: 'probe', targetId: 'repeat',
+    const store = postgresStore({ databaseUrl: pgAppUrl(path) });
+    await store.addSchedule({ id: '01940000-0000-7000-8000-000000000002', kind: 'schedule_probe', targetKind: 'probe', targetId: '01940000-0000-7000-8000-000000000002',
       intervalSeconds: 60, nextRunAt: due, lastRunAt: null, createdAt: due });
-    await store.addWork({ id: 'independent', kind: 'schedule_probe', targetKind: 'probe', targetId: 'other',
+    await store.addWork({ id: '01940000-0000-7000-8000-000000000003', kind: 'schedule_probe', targetKind: 'probe', targetId: 'other',
       createdAt: at, nextAttemptAt: at });
     await store.close();
-    const db = new DatabaseSync(path);
-    db.exec("create trigger reject_tick before update on schedules begin select raise(abort, 'refused'); end");
+    const db = new PgTestClient(path);
+    (await db.exec("create or replace function brain.reject_tick() returns trigger language plpgsql as $$ begin raise exception 'refused'; end $$; create trigger reject_tick before update on brain.schedules for each row execute function brain.reject_tick()"));
     let rounds = 0;
     const daemon = startDaemon({ home, env: environment(home), clock: { now: () => new Date(at) },
       idGen: uuidV7IdGen(), drainPauseMs: 20, heartbeatMs: 40,
-      createStore: options => { rounds++; return sqliteStore(options); } });
+      createStore: options => { rounds++; return postgresStore(options); } });
     try {
       await waitFor('실패 회차 반복', () => rounds >= 4);
-      expect(db.prepare("select * from work_items where target_id='repeat'").all()).toHaveLength(0);
-      expect(db.prepare('select next_run_at,last_run_at from schedules').get()).toEqual({ next_run_at: due.toISOString(), last_run_at: null });
-      expect(db.prepare("select completed_at from work_items where id='independent'").get()).toEqual({ completed_at: at.toISOString() });
+      expect((await db.prepare("select * from work_items where target_id='01940000-0000-7000-8000-000000000002'").all())).toHaveLength(0);
+      expect((await db.prepare('select next_run_at,last_run_at from schedules').get())).toEqual({ next_run_at: due.toISOString(), last_run_at: null });
+      expect((await db.prepare("select completed_at from work_items where id='01940000-0000-7000-8000-000000000003'").get())).toEqual({ completed_at: at.toISOString() });
       const logs = await readFile(daemonLogPath(home), 'utf8');
       expect(logs.match(/예약 틱 실패/g)).toHaveLength(1);
       expect(logs).toContain('DB_UNAVAILABLE');
       // A skipped tick (schema mismatch) must not reset the tick failure state.
-      db.exec('update schema_version set version = 8');
+      (await db.exec('update brain.schema_migrations set version = 8'));
       const mismatched = rounds;
       await waitFor('스키마 불일치 회차', () => rounds >= mismatched + 2);
-      db.exec('update schema_version set version = 9');
+      (await db.exec('update brain.schema_migrations set version = 1'));
       const restored = rounds;
       await waitFor('스키마 복구 뒤 실패 회차', () => rounds >= restored + 2);
       expect((await readFile(daemonLogPath(home), 'utf8')).match(/예약 틱 실패/g)).toHaveLength(1);
-      db.exec('drop trigger reject_tick');
-      await waitFor('복구 후 예약 처리', () => !!db.prepare("select id from work_items where target_id='repeat' and completed_at is not null").get());
+      (await db.exec('drop trigger reject_tick on brain.schedules'));
+      await waitFor('복구 후 예약 처리', async () => !!(await db.prepare("select id from work_items where target_id='01940000-0000-7000-8000-000000000002' and completed_at is not null").get()));
       const recovered = rounds;
       await waitFor('복구 뒤 회차', () => rounds >= recovered + 2);
-      expect(db.prepare("select * from work_items where target_id='repeat'").all()).toHaveLength(1);
-      expect(db.prepare('select next_run_at,last_run_at from schedules').get()).toEqual({
+      expect((await db.prepare("select * from work_items where target_id='01940000-0000-7000-8000-000000000002'").all())).toHaveLength(1);
+      expect((await db.prepare('select next_run_at,last_run_at from schedules').get())).toEqual({
         next_run_at: new Date(at.getTime() + 60000).toISOString(), last_run_at: at.toISOString() });
       expect(await readFile(daemonLogPath(home), 'utf8')).toContain('예약 1건 발화, 새 일감 1건');
-      db.prepare('update schedules set next_run_at = ?').run(at.toISOString());
-      db.exec("create trigger reject_tick before update on schedules begin select raise(abort, 'refused'); end");
+      (await db.prepare('update schedules set next_run_at = $1').run(at.toISOString()));
+      (await db.exec("create or replace function brain.reject_tick() returns trigger language plpgsql as $$ begin raise exception 'refused'; end $$; create trigger reject_tick before update on brain.schedules for each row execute function brain.reject_tick()"));
       await waitFor('새 예약 실패 기록', async () =>
         ((await readFile(daemonLogPath(home), 'utf8')).match(/예약 틱 실패/g) ?? []).length === 2);
 
-    } finally { db.close(); await daemon.stop(); }
+    } finally { (await db.close()); await daemon.stop(); }
   });
 
   it('declares the constants the plan fixed, in milliseconds', () => {
@@ -274,7 +272,7 @@ describe('runDaemon, with its timers wound down', () => {
         await reading.promise;
         return config;
       });
-    const createStore = vi.fn(sqliteStore);
+    const createStore = vi.fn(postgresStore);
     const daemon = startDaemon({
       home, env: environment(home), clock: systemClock, idGen: uuidV7IdGen(),
       heartbeatMs: 40, createStore,
@@ -292,14 +290,14 @@ describe('runDaemon, with its timers wound down', () => {
 
   it('closes the store without draining when aborted during the schema check', async () => {
     const home = await homeFor({ migrated: true });
-    const store = sqliteStore({ path: join(home, 'brain.db') });
-    const readSchemaVersion = store.readSchemaVersion.bind(store);
+    const store = postgresStore({ databaseUrl: pgAppUrl(join(home, 'brain.db')) });
+    const readSchemaVersions = store.readSchemaVersions.bind(store);
     const checking = gate();
     let entered = false;
-    vi.spyOn(store, 'readSchemaVersion').mockImplementation(async () => {
+    vi.spyOn(store, 'readSchemaVersions').mockImplementation(async () => {
       entered = true;
       await checking.promise;
-      return readSchemaVersion();
+      return readSchemaVersions();
     });
     const close = vi.spyOn(store, 'close');
     const daemon = startDaemon({
@@ -319,10 +317,10 @@ describe('runDaemon, with its timers wound down', () => {
 
   it('keeps tick logs but does not drain when aborted during a schedule firing', async () => {
     const home = await homeFor({ migrated: true });
-    const store = sqliteStore({ path: join(home, 'brain.db') });
+    const store = postgresStore({ databaseUrl: pgAppUrl(join(home, 'brain.db')) });
     const at = new Date('2026-02-03T04:05:06.000Z');
-    expect((await store.addSchedule({ id: 'abort-tick', kind: 'schedule_probe', targetKind: 'probe',
-      targetId: 'abort-tick', intervalSeconds: null, nextRunAt: at, lastRunAt: null, createdAt: at })).ok).toBe(true);
+    expect((await store.addSchedule({ id: '01940000-0000-7000-8000-000000000004', kind: 'schedule_probe', targetKind: 'probe',
+      targetId: '01940000-0000-7000-8000-000000000004', intervalSeconds: null, nextRunAt: at, lastRunAt: null, createdAt: at })).ok).toBe(true);
     const controller = new AbortController();
     const fireSchedule = store.fireSchedule.bind(store);
     vi.spyOn(store, 'fireSchedule').mockImplementation(async input => {
@@ -349,11 +347,11 @@ describe('runDaemon, with its timers wound down', () => {
     expect(close).toHaveBeenCalledOnce();
     expect(await readFile(daemonLogPath(home), 'utf8')).toContain('예약 1건 발화, 새 일감 1건');
     expect(existsSync(daemonPidPath(home))).toBe(false);
-    const db = new DatabaseSync(join(home, 'brain.db'));
+    const db = new PgTestClient(join(home, 'brain.db'));
     try {
-      expect(db.prepare('select attempts, completed_at from work_items').all())
+      expect((await db.prepare('select attempts, completed_at from work_items').all()))
         .toEqual([{ attempts: 0, completed_at: null }]);
-    } finally { db.close(); }
+    } finally { (await db.close()); }
   });
 
   it.each(['budget', 'empty', 'unwritable'] as const)(
@@ -474,7 +472,7 @@ describe('runDaemon, with its timers wound down', () => {
 
     expect(result.ok).toBe(true);
     const lines = (await readFile(daemonLogPath(home), 'utf8')).trimEnd().split('\n');
-    expect(lines.filter((line) => line.includes('데이터베이스'))).toHaveLength(1);
+    expect(lines.filter((line) => line.includes('데이터베이스 확인 실패'))).toHaveLength(1);
     // A runtime process opens the file and never creates it (AD-20).
     expect(existsSync(join(home, 'brain.db'))).toBe(false);
   });
@@ -560,7 +558,7 @@ describe('runDaemon, with its timers wound down', () => {
       home, env: environment(home), clock: systemClock, idGen: uuidV7IdGen(),
       createStore: (options) => {
         firstRound.release();
-        return sqliteStore(options);
+        return postgresStore(options);
       },
     });
     // A round opens its store only after watcher.retry() has awaited startup logging.
@@ -694,7 +692,8 @@ describe('brain daemon run, as a process', () => {
   }
 
   function ran(args: readonly string[], env: NodeJS.ProcessEnv, script = binPath) {
-    const run = spawned(args, env, script);
+    if (args[0] === 'doctor') return runPgCommand(args, env);
+  const run = spawned(args, env, script);
     return run.ended.then(({ code }) => ({ code, stdout: run.stdout(), stderr: run.stderr() }));
   }
 
@@ -702,8 +701,7 @@ describe('brain daemon run, as a process', () => {
   async function installed(): Promise<{ home: string; configDir: string }> {
     const home = await temporary.create('brain-daemon-run-');
     const configDir = await temporary.create('brain-daemon-claude-');
-    const install = await ran(['--yes'], environment(home, configDir), installPath);
-    expect(install.code, install.stdout + install.stderr).toBe(0);
+    await preparePgHome(home);
     return { home, configDir };
   }
 
@@ -715,13 +713,12 @@ describe('brain daemon run, as a process', () => {
     await writeFile(join(folder, `${sessionId}.jsonl`), text, 'utf8');
   }
 
-  function sessionCount(home: string, path = join(home, 'brain.db')): number {
-    if (!existsSync(path)) return 0;
-    const database = new DatabaseSync(path, { readOnly: true, timeout: 5_000 });
+  async function sessionCount(home: string, path = join(home, 'brain.db')): Promise<number> {
+    const database = new PgTestClient(path);
     try {
-      return (database.prepare('select count(*) as n from sessions').get() as { n: number }).n;
+      return ((await database.prepare('select count(*) as n from sessions').get()) as { n: number }).n;
     } finally {
-      database.close();
+      (await database.close());
     }
   }
 
@@ -749,32 +746,32 @@ describe('brain daemon run, as a process', () => {
     }, unblock);
   }
 
-  it('fires one missed recurring probe in an installed process and doctor reports schema 9', async () => {
+  it('fires one missed recurring probe in an installed process and doctor reports PG core schema', async () => {
     const { home, configDir } = await installed();
     const path = join(home, 'brain.db');
-    const db = new DatabaseSync(path);
+    const db = new PgTestClient(path);
     const due = new Date(Date.now() - 185000).toISOString();
-    db.prepare('insert into schedules values (?,?,?,?,?,?,?,?)')
-      .run('process-repeat', 'schedule_probe', 'probe', 'process-repeat', 60, due, null, due);
+    (await db.prepare('insert into schedules values ($1,$2,$3,$4,$5,$6,$7,$8)')
+      .run('01940000-0000-7000-8000-000000000005', 'schedule_probe', 'probe', '01940000-0000-7000-8000-000000000005', 60, due, null, due));
     const daemon = spawned(['daemon', 'run'], environment(home, configDir));
     try {
-      await waitFor('설치본 예약 처리', () => !!db.prepare("select id from work_items where kind='schedule_probe' and completed_at is not null").get());
-      expect(db.prepare("select * from work_items where kind='schedule_probe'").all()).toHaveLength(1);
-      const schedule = db.prepare('select next_run_at,last_run_at from schedules').get() as { next_run_at: string; last_run_at: string };
+      await waitFor('설치본 예약 처리', async () => !!(await db.prepare("select id from work_items where kind='schedule_probe' and completed_at is not null").get()));
+      expect((await db.prepare("select * from work_items where kind='schedule_probe'").all())).toHaveLength(1);
+      const schedule = (await db.prepare('select next_run_at,last_run_at from schedules').get()) as { next_run_at: string; last_run_at: string };
       expect(new Date(schedule.next_run_at).getTime() - new Date(schedule.last_run_at).getTime()).toBe(60000);
       const doctor = await ran(['doctor', 'run', '--json'], environment(home, configDir));
       const report = JSON.parse(doctor.stdout);
       expect(JSON.stringify(report)).toContain('schema-version');
       const schema = report.data.checks.find((check: { id: string }) => check.id === 'schema-version');
       expect(schema).toMatchObject({ status: 'ok' });
-      expect(JSON.stringify(schema)).toContain('9');
-    } finally { db.close(); daemon.child.kill('SIGTERM'); await daemon.ended; }
+      expect(JSON.stringify(schema)).toContain('1');
+    } finally { (await db.close()); daemon.child.kill('SIGTERM'); await daemon.ended; }
   });
 
   it('collects five writes in one watch batch while the idle pause is long, then closes watchers', async () => {
     const { home, configDir } = await installed();
     await mkdir(join(configDir, 'projects', '-demo-a'), { recursive: true });
-    const opened = vi.fn(sqliteStore);
+    const opened = vi.fn(postgresStore);
     const closed = vi.fn();
     const daemon = startDaemon({
       home, env: environment(home, configDir), clock: systemClock, idGen: uuidV7IdGen(),
@@ -791,7 +788,7 @@ describe('brain daemon run, as a process', () => {
       await transcript(configDir, 'batched-session');
       await delay(40);
     }
-    await waitFor('감시 수집', () => sessionCount(home) === 1, 5_000);
+    await waitFor('감시 수집', async () => (await sessionCount(home)) === 1, 5_000);
     await delay(650);
     expect(opened).toHaveBeenCalledTimes(2);
     expect(await daemon.stop()).toEqual({ ok: true });
@@ -801,7 +798,7 @@ describe('brain daemon run, as a process', () => {
   it('retains several batches closed during a drain as one immediate following round', async () => {
     const { home, configDir } = await installed();
     const checking = gate();
-    const opened = vi.fn(sqliteStore);
+    const opened = vi.fn(postgresStore);
     let change!: WatchListener<string>;
     const daemon = startDaemon({
       home, env: environment(home, configDir), clock: systemClock, idGen: uuidV7IdGen(),
@@ -814,8 +811,8 @@ describe('brain daemon run, as a process', () => {
       createStore: (options) => {
         const store = opened(options);
         if (opened.mock.calls.length === 1) {
-          const read = store.readSchemaVersion.bind(store);
-          store.readSchemaVersion = async () => { await checking.promise; return read(); };
+          const read = store.readSchemaVersions.bind(store);
+          store.readSchemaVersions = async () => { await checking.promise; return read(); };
         }
         return store;
       },
@@ -844,7 +841,7 @@ describe('brain daemon run, as a process', () => {
     await delay(150);
     expect((await readFile(daemonLogPath(home), 'utf8')).match(/파일 감시를 시작하거나/g)).toHaveLength(1);
     await transcript(configDir, 'recovered-watch');
-    await waitFor('복구 수집', () => sessionCount(home) === 1);
+    await waitFor('복구 수집', async () => (await sessionCount(home)) === 1);
     await waitFor('감시 복구 줄', async () =>
       (await readFile(daemonLogPath(home), 'utf8')).includes('파일 감시를 시작했습니다'));
     await daemon.stop();
@@ -859,52 +856,53 @@ describe('brain daemon run, as a process', () => {
     // Let the initial round finish so this transcript must wake the idle loop.
     await delay(250);
     await transcript(configDir, 'watch-process');
-    await waitFor('프로세스 감시 수집', () => sessionCount(home) === 1, 9_500);
+    await waitFor('프로세스 감시 수집', async () => (await sessionCount(home)) === 1, 9_500);
     daemon.child.kill('SIGTERM');
     expect((await daemon.ended).code).toBe(0);
     await transcript(configDir, 'offline-process');
     const restarted = spawned(['daemon', 'run'], environment(home, configDir));
-    await waitFor('재기동 수집', () => sessionCount(home) === 2, 5_000);
+    await waitFor('재기동 수집', async () => (await sessionCount(home)) === 2, 5_000);
     restarted.child.kill('SIGTERM');
     expect((await restarted.ended).code).toBe(0);
   }, 20_000);
 
   it('uses a newly configured migrated database for subsequent rounds', async () => {
     const { home, configDir } = await installed();
-    const oldPath = join(home, 'brain.db');
+    const oldPath = pgDatabaseUrl(home);
     const { home: newHome } = await installed();
-    const newPath = join(newHome, 'brain.db');
+    const newPath = pgDatabaseUrl(newHome);
     const opened: string[] = [];
     const daemon = startDaemon({
       home, env: environment(home, configDir), clock: systemClock, idGen: uuidV7IdGen(),
       heartbeatMs: 40, drainBudgetMs: 200, drainPauseMs: 20,
       createStore: (options) => {
-        opened.push(options.path);
-        return sqliteStore(options);
+        opened.push(options.databaseUrl!);
+        return postgresStore(options);
       },
     });
 
-    await waitFor('이전 데이터베이스 회차', () => opened.includes(oldPath));
-    expect((await writeConfig(home, { storePath: newPath })).ok).toBe(true);
-    await waitFor('새 데이터베이스 회차', () => opened.includes(newPath));
+    await waitFor('이전 데이터베이스 회차', () => opened.includes(pgAppUrl(oldPath)));
+    expect((await writeConfig(home, { storeUrlEnv: 'SWITCHED_DATABASE_URL' })).ok).toBe(true);
+    await writeFile(join(home, '.env'), `SWITCHED_DATABASE_URL=${pgAppUrl(newPath)}\n`);
+    await waitFor('새 데이터베이스 회차', () => opened.includes(pgAppUrl(newPath)));
     await transcript(configDir, 'session-switched');
-    await waitFor('새 데이터베이스 수집', () => sessionCount(home, newPath) === 1);
+    await waitFor('새 데이터베이스 수집', async () => (await sessionCount(home, newPath)) === 1);
     expect(await daemon.stop()).toEqual({ ok: true });
-    expect(sessionCount(home, oldPath)).toBe(0);
-    const database = new DatabaseSync(newPath, { readOnly: true });
+    expect((await sessionCount(home, oldPath))).toBe(0);
+    const database = new PgTestClient(newPath);
     try {
-      expect(database.prepare('select harness, harness_session_id from sessions').all())
+      expect((await database.prepare('select harness, harness_session_id from sessions').all()))
         .toEqual([{ harness: 'claude-code', harness_session_id: 'session-switched' }]);
     } finally {
-      database.close();
+      (await database.close());
     }
   });
 
   it('recovers from a schema mismatch and ingests without restarting', async () => {
     const { home, configDir } = await installed();
     await transcript(configDir, 'session-recovered');
-    const database = new DatabaseSync(join(home, 'brain.db'));
-    database.prepare('update schema_version set version = 2').run();
+    const database = new PgTestClient(join(home, 'brain.db'));
+    (await database.prepare('update brain.schema_migrations set version = 2').run());
     const daemon = shortDaemon(home, configDir);
     try {
       await waitFor('스키마 불일치', async () =>
@@ -912,11 +910,11 @@ describe('brain daemon run, as a process', () => {
         (await readFile(daemonLogPath(home), 'utf8')).includes('스키마'),
       );
       await delay(100);
-      expect(sessionCount(home)).toBe(0);
-      database.prepare('update schema_version set version = ?').run(SQLITE_SCHEMA_VERSION);
-      await waitFor('복구 뒤 수집된 세션', () => sessionCount(home) === 1);
+      expect((await sessionCount(home))).toBe(0);
+      (await database.prepare('update brain.schema_migrations set version = $1').run(CORE_SCHEMA_VERSION));
+      await waitFor('복구 뒤 수집된 세션', async () => (await sessionCount(home)) === 1);
     } finally {
-      database.close();
+      (await database.close());
       daemon.controller.abort();
       expect(await daemon.finished).toEqual({ ok: true });
     }
@@ -925,10 +923,10 @@ describe('brain daemon run, as a process', () => {
 
   it('waits for an active handler on abort before releasing the lock', async () => {
     const { home, configDir } = await installed();
-    const store = sqliteStore({ path: join(home, 'brain.db') });
+    const store = postgresStore({ databaseUrl: pgAppUrl(join(home, 'brain.db')) });
     try {
       expect((await store.addWork({
-        id: 'blocked-work', kind: 'test_blocked', targetKind: 'test', targetId: 'blocked',
+        id: '01940000-0000-7000-8000-000000000006', kind: 'test_blocked', targetKind: 'test', targetId: 'blocked',
         createdAt: new Date(), nextAttemptAt: new Date(),
       })).ok).toBe(true);
     } finally {
@@ -969,12 +967,12 @@ describe('brain daemon run, as a process', () => {
       daemon.controller.abort();
       expect(await daemon.finished).toEqual({ ok: true });
     }
-    const database = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
+    const database = new PgTestClient(join(home, 'brain.db'));
     try {
-      expect(database.prepare('select completed_at from work_items where id = ?')
-        .get('blocked-work')).toEqual({ completed_at: expect.any(String) });
+      expect((await database.prepare('select completed_at from work_items where id = $1')
+        .get('01940000-0000-7000-8000-000000000006'))).toEqual({ completed_at: expect.any(String) });
     } finally {
-      database.close();
+      (await database.close());
     }
     expect(existsSync(daemonPidPath(home))).toBe(false);
     expect(await readFile(daemonLogPath(home), 'utf8')).toContain('완료 1건');
@@ -994,20 +992,20 @@ describe('brain daemon run, as a process', () => {
       existsSync(daemonLogPath(home)) &&
       (await readFile(daemonLogPath(home), 'utf8')).includes('데몬을 시작했습니다'),
     );
-    await waitFor('수집된 세션', () => sessionCount(home) === 1);
+    await waitFor('수집된 세션', async () => (await sessionCount(home)) === 1);
 
     daemon.child.kill('SIGTERM');
     const { code } = await daemon.ended;
 
     // Exit 0, the lock gone, the heartbeat left, and a stop line in the log.
     expect(code).toBe(0);
-    const database = new DatabaseSync(join(home, 'brain.db'), { readOnly: true });
+    const database = new PgTestClient(join(home, 'brain.db'));
     try {
-      expect(database.prepare(
-        "select completed_at from work_items where kind = 'session_ingest' and target_id = ?",
-      ).get('claude-code:session-aaaa')).toEqual({ completed_at: expect.any(String) });
+      expect((await database.prepare(
+        "select completed_at from work_items where kind = 'session_ingest' and target_id = $1",
+      ).get('claude-code:session-aaaa'))).toEqual({ completed_at: expect.any(String) });
     } finally {
-      database.close();
+      (await database.close());
     }
     expect(existsSync(daemonPidPath(home))).toBe(false);
     expect(existsSync(heartbeatPath(home))).toBe(true);
@@ -1108,4 +1106,264 @@ describe('brain daemon run, as a process', () => {
     expect(run.code).toBe(0);
     expect((JSON.parse(run.stdout) as { ok: boolean }).ok).toBe(true);
   });
+});
+
+describe('PostgreSQL daemon reconnect', () => {
+  async function pgHome(compose = true) {
+    const home = await temporary.create('brain-daemon-reconnect-');
+    await writeFile(join(home, 'config.toml'), 'schema_version=1\n[store]\nurl_env="BRAIN_DATABASE_URL"\n');
+    if (compose) {
+      await mkdir(join(home, 'postgres'));
+      await writeFile(join(home, 'postgres', 'compose.yaml'), '# test placeholder\n');
+    }
+    return home;
+  }
+  function options(home: string) {
+    return { home, env: { ...environment(home), BRAIN_DATABASE_URL: 'postgresql://unused@127.0.0.1:1/brain' },
+      clock: systemClock, idGen: uuidV7IdGen(), drainPauseMs: 15,
+      reconnectBackoffMs: { initial: 80, max: 160 } };
+  }
+  it('backs off despite frequent wake-ups and suppresses repeated compose failures', async () => {
+    const home = await pgHome();
+    const calls: number[] = [];
+    let wake: WatchListener<string> | undefined;
+    const runner: NonNullable<RunDaemonOptions['runner']> = async request => {
+      calls.push(Date.now());
+      expect(request.args.slice(-2)).toEqual(['up', '-d']);
+      expect(request.signal).toBeDefined();
+      return { ok: false, code: calls.length < 3 ? 'ENOENT' : 'OTHER', stdout: '', stderr: '', message: 'failure' };
+    };
+    const configDir = join(home, 'claude'); await mkdir(configDir);
+    const reads = vi.spyOn(configCodec, 'readConfig');
+    const daemon = startDaemon({ ...options(home), env: { ...options(home).env, CLAUDE_CONFIG_DIR: configDir },
+      runner, watchBatchMs: 2, watch: (_folder, _options, listener) => { wake = listener; return { on() { return this; }, close() {} } as unknown as ReturnType<typeof fsWatch>; } });
+    const timer = setInterval(() => wake?.('change', 'transcript.jsonl'), 4);
+    try {
+      await waitFor('네 번째 compose 시도', () => calls.length >= 4);
+      expect(calls[1]! - calls[0]!).toBeGreaterThanOrEqual(80);
+      expect(calls[2]! - calls[1]!).toBeGreaterThanOrEqual(160);
+      expect(calls[3]! - calls[2]!).toBeGreaterThanOrEqual(160);
+      expect(calls[3]! - calls[2]!).toBeLessThan(300);
+      expect(reads.mock.calls.length).toBeGreaterThan(calls.length);
+    } finally { clearInterval(timer); await daemon.stop(); }
+    const log = await readFile(daemonLogPath(home), 'utf8');
+    expect(log.match(/컨테이너를 다시 띄웁니다/g)).toHaveLength(1);
+    expect(log.match(/오류 코드 ENOENT/g)).toHaveLength(1);
+    expect(log.match(/오류 코드 OTHER/g)).toHaveLength(1);
+    assertKoreanLines(log, { label: 'daemon reconnect' });
+  });
+  it('reports a missing compose file once without running docker', async () => {
+    const home = await pgHome(false); const runner = vi.fn();
+    const daemon = startDaemon({ ...options(home), runner });
+    await waitFor('설정 파일 없음 안내', async () => (await readFile(daemonLogPath(home), 'utf8').catch(() => '')).includes('설정 파일'));
+    await delay(300); await daemon.stop();
+    expect(runner).not.toHaveBeenCalled();
+    expect((await readFile(daemonLogPath(home), 'utf8')).match(/설정 파일/g)).toHaveLength(1);
+  });
+  it('uses initial backoff for the first actual calls after the compose file returns', async () => {
+    const home = await pgHome(false);
+    const initial = 120;
+    const calls: number[] = [];
+    const reads = vi.spyOn(configCodec, 'readConfig');
+    const daemon = startDaemon({ ...options(home), drainPauseMs: 1000,
+      reconnectBackoffMs: { initial, max: 960 }, runner: async () => {
+        calls.push(Date.now());
+        return { ok: true, stdout: '', stderr: '' };
+      } });
+    try {
+      await waitFor('설정 파일 없음 안내', async () =>
+        (await readFile(daemonLogPath(home), 'utf8').catch(() => '')).includes('설정 파일'));
+      const before = reads.mock.calls.length;
+      await delay(initial * 4 + 30);
+      // Missing files are rechecked at the initial interval, without spinning.
+      expect(reads.mock.calls.length - before).toBeGreaterThanOrEqual(4);
+      expect(reads.mock.calls.length - before).toBeLessThanOrEqual(6);
+      expect(calls).toHaveLength(0);
+      await mkdir(join(home, 'postgres'));
+      await writeFile(join(home, 'postgres', 'compose.yaml'), '# restored fixture\n');
+      await waitFor('복구 뒤 세 번째 compose 시도', () => calls.length >= 3);
+      expect(calls[1]! - calls[0]!).toBeGreaterThanOrEqual(initial);
+      expect(calls[1]! - calls[0]!).toBeLessThan(initial * 2);
+      expect(calls[2]! - calls[1]!).toBeGreaterThanOrEqual(initial * 2);
+      expect(calls[2]! - calls[1]!).toBeLessThan(initial * 3);
+    } finally { await daemon.stop(); }
+    const log = await readFile(daemonLogPath(home), 'utf8');
+    expect(log.match(/설정 파일/g)).toHaveLength(1);
+    expect(log.match(/컨테이너를 다시 띄웁니다/g)).toHaveLength(1);
+  });
+  it('cancels an active compose and exits independently of the drain budget', async () => {
+    const home = await pgHome(); let entered = false; let cancelled = false;
+    const daemon = startDaemon({ ...options(home), drainBudgetMs: 60_000,
+      runner: request => new Promise(resolve => {
+        entered = true;
+        request.signal!.addEventListener('abort', () => { cancelled = true;
+          resolve({ ok: false, code: 'ABORT_ERR', stdout: '', stderr: '', message: 'cancelled' });
+        }, { once: true });
+      }) });
+    await waitFor('compose 진입', () => entered);
+    const before = Date.now(); expect(await daemon.stop()).toEqual({ ok: true });
+    expect(Date.now() - before).toBeLessThan(1000); expect(cancelled).toBe(true);
+    expect(await readFile(daemonLogPath(home), 'utf8')).not.toContain('ABORT_ERR');
+  });
+  it('never calls compose when the default URL cannot be resolved', async () => {
+    const home = await temporary.create('brain-daemon-sqlite-');
+    await writeConfig(home, {});
+    const runner = vi.fn(); const daemon = startDaemon({ ...options(home), runner });
+    await delay(100); await daemon.stop(); expect(runner).not.toHaveBeenCalled();
+  });
+  it('never starts compose with the default selector when neither process env nor .env supplies a URL', async () => {
+    const home = await temporary.create('brain-daemon-no-url-');
+    await writeFile(join(home, 'config.toml'), 'schema_version=1\n');
+    await writeFile(join(home, '.env'), '');
+    // A compose file is present so missing configuration cannot suppress an up call.
+    await mkdir(join(home, 'postgres'));
+    await writeFile(join(home, 'postgres', 'compose.yaml'), '# test placeholder\n');
+    const env = environment(home);
+    expect(env).not.toHaveProperty('BRAIN_DATABASE_URL');
+    const runner = vi.fn<NonNullable<RunDaemonOptions['runner']>>(async () => ({ ok: true, stdout: '', stderr: '' }));
+    const reads = vi.spyOn(configCodec, 'readConfig');
+    const daemon = startDaemon({ ...options(home), env, runner });
+    try {
+      await waitFor('URL 없는 데몬 회차 완료', async () =>
+        reads.mock.calls.length >= 3 &&
+        (await readFile(daemonLogPath(home), 'utf8')).includes('데이터베이스 확인 실패'));
+    } finally { await daemon.stop(); }
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it.each(['DB_LOCKED', 'SCHEMA_MISMATCH', 'DRAIN_THREW', 'CONFIG_INVALID'] as const)('does not restart for %s', async code => {
+    const home = await pgHome(); const runner = vi.fn();
+    if (code === 'CONFIG_INVALID') await writeFile(join(home, 'config.toml'), 'broken = [');
+    else {
+      vi.spyOn(brainStore, 'openBrainStore').mockImplementation(async () => {
+        const store = postgresStore({ databaseUrl: pgAppUrl(':memory:') });
+        vi.spyOn(store, 'readSchemaVersions').mockImplementation(async () => {
+          if (code === 'DRAIN_THREW') throw new Error('시험 오류');
+          if (code === 'SCHEMA_MISMATCH') return { ok: true as const, versions: { core: { version: 999, appliedAt: new Date() } } };
+          return { ok: false as const, code, message: '시험 오류' };
+        });
+        return { kind: 'postgres', store, expected: { core: CORE_SCHEMA_VERSION }, adapterProbeIds: [] } as unknown as brainStore.BrainStore;
+      });
+    }
+    const daemon = startDaemon({ ...options(home), runner });
+    await delay(150); await daemon.stop(); expect(runner).not.toHaveBeenCalled();
+  });
+  it('resets the backoff after schema recovery', async () => {
+    const home = await pgHome(); let unavailable = true;
+    const report: BrainDrainReport = { stopped: 'empty', claimed: 0, completed: 0, retried: 0, failed: 0,
+      released: 0, lost: 0, spooled: 0, replayed: 0, spoolFailed: 0, enqueued: 0,
+      rereadMissing: 0, reextractRedacted: 0, reextractUnreachable: 0 };
+    vi.spyOn(brainStore, 'openBrainStore').mockImplementation(async () => {
+      const store = postgresStore({ databaseUrl: pgAppUrl(':memory:') });
+      vi.spyOn(store, 'readSchemaVersions').mockImplementation(async () => unavailable
+        ? { ok: false as const, code: 'DB_UNAVAILABLE', message: '시험 연결 끊김' }
+        : { ok: true as const, versions: { core: { version: CORE_SCHEMA_VERSION, appliedAt: new Date() } } });
+      return { kind: 'postgres', store, expected: { core: CORE_SCHEMA_VERSION }, adapterProbeIds: [] } as unknown as brainStore.BrainStore;
+    });
+    vi.mocked(createBrain).mockImplementation(dependencies => {
+      const brain = actualCreateBrain(dependencies);
+      brain.schedules.tick = async () => ({ ok: true, fired: 0, enqueued: 0 });
+      brain.queue.drain = async () => unavailable ? { ...report, stopped: 'unwritable', code: 'DB_UNAVAILABLE' } : report;
+      return brain;
+    });
+    const calls: number[] = []; const daemon = startDaemon({ ...options(home),
+      reconnectBackoffMs: { initial: 100, max: 1000 }, runner: async () => {
+        calls.push(Date.now()); return { ok: true, stdout: '', stderr: '' };
+      } });
+    await waitFor('두 번째 시도', () => calls.length === 2);
+    unavailable = false;
+    await waitFor('복구 안내', async () => (await readFile(daemonLogPath(home), 'utf8')).includes('다시 닿았습니다'));
+    unavailable = true; const lostAt = Date.now();
+    await waitFor('새 구간 첫 시도', () => calls.length === 3);
+    expect(calls[2]! - lostAt).toBeLessThan(150);
+    await waitFor('새 구간 두 번째 시도', () => calls.length === 4);
+    expect(calls[3]! - calls[2]!).toBeGreaterThanOrEqual(100);
+    expect(calls[3]! - calls[2]!).toBeLessThan(200);
+    await daemon.stop();
+    const log = await readFile(daemonLogPath(home), 'utf8');
+    expect(log.match(/컨테이너를 다시 띄웁니다/g)).toHaveLength(2);
+    expect(log.match(/다시 닿았습니다/g)).toHaveLength(1);
+  });
+
+
+  it('starts a new recovery interval immediately when schema recovers but drain is unavailable', async () => {
+    const home = await pgHome();
+    const base = Date.now(); let now = base;
+    const calls: number[] = [];
+    const controller = new AbortController();
+    vi.spyOn(brainStore, 'openBrainStore').mockImplementation(async () => {
+      const store = postgresStore({ databaseUrl: pgAppUrl(':memory:') });
+      vi.spyOn(store, 'readSchemaVersions').mockImplementation(async () => {
+        // Build up a 400ms next retry deadline, then reach PG at 300ms.
+        now = base + (calls.length === 1 ? 100 : calls.length >= 2 ? 300 : 0);
+        return calls.length < 3
+          ? { ok: false as const, code: 'DB_UNAVAILABLE', message: '시험 연결 끊김' }
+          : { ok: true as const, versions: { core: { version: CORE_SCHEMA_VERSION, appliedAt: new Date() } } };
+      });
+      return { kind: 'postgres', store, expected: { core: CORE_SCHEMA_VERSION }, adapterProbeIds: [] } as unknown as brainStore.BrainStore;
+    });
+    const drain = vi.fn(async (): Promise<BrainDrainReport> => ({
+      stopped: 'unwritable', code: 'DB_UNAVAILABLE', claimed: 0, completed: 0, retried: 0, failed: 0,
+      released: 0, lost: 0, spooled: 0, replayed: 0, spoolFailed: 0, enqueued: 0,
+      rereadMissing: 0, reextractRedacted: 0, reextractUnreachable: 0,
+    }));
+    vi.mocked(createBrain).mockImplementation(dependencies => {
+      const brain = actualCreateBrain(dependencies);
+      brain.schedules.tick = async () => ({ ok: true, fired: 0, enqueued: 0 });
+      brain.queue.drain = drain;
+      return brain;
+    });
+    const finished = runDaemon({ ...options(home), signal: controller.signal,
+      clock: { now: () => new Date(now) }, drainPauseMs: 1,
+      reconnectBackoffMs: { initial: 100, max: 1000 }, runner: async () => {
+        calls.push(now);
+        if (calls.length === 4) controller.abort();
+        return { ok: true, stdout: '', stderr: '' };
+      } });
+    daemonCleanups.push(async () => { controller.abort(); await finished; });
+    await waitFor('복구 직후 즉시 compose 호출', () => calls.length === 4, 1000);
+    expect(await finished).toEqual({ ok: true });
+    expect(calls).toEqual([base, base + 100, base + 300, base + 300]);
+    expect(drain).toHaveBeenCalledOnce();
+    const log = await readFile(daemonLogPath(home), 'utf8');
+    expect(log.match(/데이터베이스에 다시 닿았습니다/g)).toHaveLength(1);
+    expect(log.match(/컨테이너를 다시 띄웁니다/g)).toHaveLength(2);
+  });
+
+  it.each(['invalid', 'missing-url'] as const)('keeps the normal pause after reconnecting config becomes %s', async transition => {
+    const home = await pgHome();
+    let now = Date.now();
+    const runner = vi.fn(async () => ({ ok: true as const, stdout: '', stderr: '' }));
+    const reads = vi.spyOn(configCodec, 'readConfig');
+    const daemonOptions = options(home);
+    const priorReads = reads.mock.calls.length;
+    const daemon = startDaemon({ ...daemonOptions, clock: { now: () => new Date(now) },
+      drainPauseMs: 40, reconnectBackoffMs: { initial: 20, max: 20 }, runner });
+    await waitFor('첫 재연결 시도', () => runner.mock.calls.length === 1);
+    if (transition === 'invalid') await writeFile(join(home, 'config.toml'), 'broken = [');
+    else { await writeConfig(home, {}); daemonOptions.env.BRAIN_DATABASE_URL = ''; }
+    now += 1000;
+    await waitFor('바뀐 설정 회차', () => reads.mock.calls.length > priorReads + 2);
+    const before = reads.mock.calls.length;
+    await delay(160);
+    expect(reads.mock.calls.length - before).toBeLessThanOrEqual(5);
+    expect(runner).toHaveBeenCalledOnce();
+    await daemon.stop();
+  });
+  it.each(['missing', 'empty', 'unreadable-env'] as const)('does not restart when the selected URL is %s', async state => {
+    const home = await pgHome(); const env: NodeJS.ProcessEnv = { ...options(home).env };
+    delete env.BRAIN_DATABASE_URL;
+    if (state === 'empty') {
+      env.BRAIN_DATABASE_URL = '  ';
+      await writeFile(join(home, '.env'), 'BRAIN_DATABASE_URL=postgresql://unused@127.0.0.1:1/brain');
+    }
+    if (state === 'unreadable-env') await mkdir(join(home, '.env'));
+    const runner = vi.fn();
+    const reads = vi.spyOn(configCodec, 'readConfig');
+    const daemon = startDaemon({ ...options(home), env, runner });
+    await waitFor('URL 오류 뒤 반복 회차', () => reads.mock.calls.length >= 4);
+    await daemon.stop();
+    expect(runner).not.toHaveBeenCalled();
+  });
+
 });
