@@ -7,21 +7,67 @@ import { memorySpool } from '../src/testing/fakes/spool.js';
 import { memoryStore } from '../src/testing/fakes/store.js';
 import { sequenceIdGen } from '../src/testing/fakes/id-gen.js';
 import { memorySchemaStore } from '../src/testing/fakes/schema-store.js';
+import type { ProcessLauncher } from '../src/ports/process.js';
 const now = new Date('2026-10-29T00:00:00Z');
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
-async function kit() {
+async function kit(options: { launcher?: ProcessLauncher; configureStore?: (store: ReturnType<typeof memoryStore>) => void; log?: (message: string) => void } = {}) {
   const store = memoryStore();
+  options.configureStore?.(store);
   const time = manualTime(now);
   const launcher = fakeProcessLauncher();
   const controller = new AbortController();
   const idGen = sequenceIdGen({ timestampMs: now.getTime() });
   const id = idGen.next();
   await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: '700000', createdAt: now, nextAttemptAt: now });
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 2 }) }, ...time, launcher, idGen,
+  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 2 }) }, ...time, launcher: options.launcher ?? launcher, idGen,
+    ...(options.log === undefined ? {} : { log: options.log }),
     launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) }, signal: controller.signal });
   await flush();
   return { store, time, launcher, controller, idGen, id, running };
 }
+it('fails and releases a claim when the launcher cannot start the child', async () => {
+  const k = await kit({ launcher: { async start() { return { ok: false, message: '자식을 시작할 수 없습니다' }; } } });
+  try {
+    expect(k.store.snapshot().workAttempts[0]).toMatchObject({ outcome: 'failed', finishedAt: now });
+    expect(k.store.snapshot().workItems[0]).toMatchObject({
+      claimedAt: null, claimedBy: null, claimExpiresAt: null, currentAttemptToken: null,
+      completedAt: null, nextAttemptAt: new Date(now.getTime() + 1000),
+    });
+  } finally { k.controller.abort(); await k.running; }
+});
+it('renews on first progress and throttles further renewal until 60 seconds', async () => {
+  const k = await kit();
+  const progress = async () => { k.launcher.processes[0]!.push('{"abi":1,"type":"progress"}'); await flush(); };
+  try {
+    await progress();
+    expect(k.store.snapshot().workAttempts[0]?.renewedAt).toEqual(now);
+    expect(k.store.snapshot().workItems[0]?.claimExpiresAt).toEqual(new Date(now.getTime() + 600_000));
+    k.time.advance(59_000); await progress();
+    expect(k.store.snapshot().workAttempts[0]?.renewedAt).toEqual(now);
+    expect(k.store.snapshot().workItems[0]?.claimExpiresAt).toEqual(new Date(now.getTime() + 600_000));
+    k.time.advance(1000); await progress();
+    expect(k.store.snapshot().workAttempts[0]?.renewedAt).toEqual(new Date(now.getTime() + 60_000));
+    expect(k.store.snapshot().workItems[0]?.claimExpiresAt).toEqual(new Date(now.getTime() + 660_000));
+  } finally { k.controller.abort(); await k.running; }
+});
+it('logs a recurring renewal failure again after a successful renewal', async () => {
+  const logs: string[] = [];
+  const k = await kit({ log: message => { logs.push(message); }, configureStore(store) {
+    const renew = store.renewSupervisedLease.bind(store);
+    let calls = 0;
+    store.renewSupervisedLease = async input => {
+      calls++;
+      return calls === 2 ? renew(input) : { ok: false, code: 'DB_UNAVAILABLE', message: '연결 실패' };
+    };
+  } });
+  try {
+    for (const elapsed of [0, 1000, 60_000, 1000]) {
+      k.time.advance(elapsed);
+      k.launcher.processes[0]!.push('{"abi":1,"type":"progress"}'); await flush();
+    }
+    expect(logs).toEqual(['감독자 임대 갱신 실패 (DB_UNAVAILABLE)', '감독자 임대 갱신 실패 (DB_UNAVAILABLE)']);
+  } finally { k.controller.abort(); await k.running; }
+});
 it('renews 700 seconds of progress while core ingestion drains and competing claims stay empty', async () => {
   const k = await kit();
   const checks = new Set([0, 300, 590, 650, 699]);

@@ -1,11 +1,11 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pg from 'pg';
 import { setTimeout } from 'node:timers/promises';
 import { afterEach, expect, it } from 'vitest';
 import type { TestDatabase } from '@second-brain/test-db';
-import { runMigrations } from '../src/index.js';
+import { postgresStore, runMigrations } from '../src/index.js';
 import { clock, database } from './fixture.js';
 const databases: TestDatabase[] = []; const folders: string[] = [];
 afterEach(async () => { await Promise.all([...databases.splice(0).map(db => db.drop()), ...folders.splice(0).map(f => rm(f, { recursive: true, force: true }))]); });
@@ -20,6 +20,25 @@ it('records checksums and the injected clock and applies nothing on repeat', asy
   expect(await runMigrations(options)).toMatchObject({ ok: true, from: 0, to: 2, applied: ['0001_initial.sql', '0002_supervised_attempts.sql'] });
   expect(await runMigrations(options)).toMatchObject({ ok: true, from: 2, to: 2, applied: [] });
   expect(await db.rows('select owner,version,length(checksum) as length,applied_at from brain.schema_migrations order by version')).toEqual([1, 2].map(version => ({ owner: 'core', version, length: 64, applied_at: clock.now() })));
+});
+it('backfills existing v1 work as core and keeps it claimable after upgrading to v2', async () => {
+  const db = await fresh();
+  const directory = await mkdtemp(join(tmpdir(), 'brain-migrations-v1-')); folders.push(directory);
+  await copyFile(new URL('../migrations/0001_initial.sql', import.meta.url), join(directory, '0001_initial.sql'));
+  expect(await runMigrations({ databaseUrl: db.url, clock, owners: [{ owner: 'core', directory }] }))
+    .toMatchObject({ ok: true, to: 1, applied: ['0001_initial.sql'] });
+  const id = '01940000-0000-7000-8000-000000000001';
+  await db.query(`insert into brain.work_items (id, kind, target_kind, target_id, created_at, attempts, next_attempt_at)
+    values ('${id}', 'upgrade_probe', 'probe', 'existing', '2026-01-01T00:00:00Z', 0, '2026-01-01T00:00:00Z')`);
+  expect(await runMigrations({ databaseUrl: db.url, clock }))
+    .toMatchObject({ ok: true, from: 1, to: 2, applied: ['0002_supervised_attempts.sql'] });
+  expect(await db.rows('select execution_class, current_attempt_token from brain.work_items'))
+    .toEqual([{ execution_class: 'core', current_attempt_token: null }]);
+  const store = postgresStore({ databaseUrl: db.appUrl });
+  try {
+    expect(await store.claimWork({ now: clock.now(), claimedBy: id, kinds: ['upgrade_probe'] }))
+      .toMatchObject({ ok: true, item: { id, executionClass: 'core', currentAttemptToken: null, attempts: 1 } });
+  } finally { await store.close(); }
 });
 it('applies each file only once under simultaneous runners', async () => {
   const db = await fresh(); const options = { databaseUrl: db.url, clock };

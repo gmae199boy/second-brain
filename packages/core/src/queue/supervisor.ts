@@ -66,7 +66,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
                       const renewed = await store.renewSupervisedLease({ id: item.id, attemptToken: token, now, progressAt: now });
                       if (!renewed.ok) await problem(`감독자 임대 갱신 실패 (${renewed.code})`);
                       else if (renewed.outcome === 'lost') await problem('감독자가 일감의 시도 토큰을 잃었습니다');
-                      else lastRenewed = now.getTime();
+                      else { lastRenewed = now.getTime(); await problem(); }
                     }
                   }
                 }

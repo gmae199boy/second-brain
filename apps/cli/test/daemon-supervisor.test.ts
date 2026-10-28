@@ -9,15 +9,27 @@ import { uuidV7IdGen } from '../src/runtime/id-gen.js';
 import { withoutHarnessFolders } from './environment.js';
 import { runPgCommand } from './pg-home.js';
 import { HOME_ENV } from '../src/config/paths.js';
-it('runs a real probe under the daemon and stores its successful attempt and progress', async () => {
+import { postgresStore } from 'second_brain/postgres';
+it('completes core work while a real probe runs, then stores its successful attempt and progress', async () => {
   const home = await mkdtemp(join(tmpdir(), 'brain-supervisor-'));
   const fixture = await supervisorFixture(home);
   const controller = new AbortController();
   let running: ReturnType<typeof runDaemon> | undefined;
   try {
-    const id = await fixture.enqueueProbe();
+    const id = await fixture.enqueueProbe(4000);
     running = runDaemon({ home, env: { ...withoutHarnessFolders(process.env), ...fixture.env }, clock: systemClock, idGen: uuidV7IdGen(),
       signal: controller.signal, drainPauseMs: 25, heartbeatMs: 100, supervisor: { pollMs: 25 } });
+    await expect.poll(async () => (await fixture.attempts(id))[0]?.last_progress_at, { timeout: 15000 }).toBeTruthy();
+    const coreId = uuidV7IdGen().next();
+    const now = new Date();
+    const store = postgresStore({ databaseUrl: fixture.db.appUrl });
+    try {
+      expect(await store.addWork({ id: coreId, kind: 'schedule_probe', targetKind: 'probe', targetId: coreId, createdAt: now, nextAttemptAt: now }))
+        .toMatchObject({ ok: true, item: { executionClass: 'core' } });
+    } finally { await store.close(); }
+    await expect.poll(async () => (await fixture.item(coreId))?.completed_at, { timeout: 2000 }).toBeTruthy();
+    expect(await fixture.attempts(id)).toMatchObject([{ finished_at: null, outcome: null }]);
+    expect((await fixture.item(id))?.completed_at).toBeNull();
     await expect.poll(async () => (await fixture.item(id))?.completed_at, { timeout: 15000 }).toBeTruthy();
     const attempts = await fixture.attempts(id);
     expect(attempts).toHaveLength(1);
