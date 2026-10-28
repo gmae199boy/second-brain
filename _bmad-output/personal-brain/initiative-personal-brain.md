@@ -191,3 +191,4 @@ Garmin 흡수의 범위 밖(2026-10-28)은 다음과 같다. 이것들은 흡수
   - 이 Mac에 이미 있는 옛 Garmin 토큰과 Telegram 봇 설정은 Brain으로 옮겨 쓴다.
   - 사람만 할 수 있는 일(Drive OAuth 동의, 토큰이 만료됐을 때의 Garmin MFA, 모델 분석 품질 판단, 원격 push)은 스토리를 `awaiting-operator`로 두어 run을 막지 않고, 목록으로 남긴다.
   - 루프 설정 `gates.mode`는 `none`으로 바꿨다. 에픽 경계에서 멈추지 않는다(`.bmad-loop/policy.toml`, 계획과 함께 main에 들어간다).
+- Decision(2026-10-28, 사용자): 임베딩 선택 색인은 나중에 확장(extension)으로 만든다. 지금은 구현하지 않고, 남은 에픽을 이어 만드는 무인 파이프라인(V1과 V1 뒤 5·3·4)에서 뺀다. 착수할 때 확장 계약(AD-29·30·33, epic 13) 위에서 다시 정의한다. 이 에픽 파일과 `tickets.toml`의 자리는 그때의 입력으로 남긴다.
