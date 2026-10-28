@@ -411,6 +411,8 @@ spool은 프로세스마다 새 파일(JSON Lines)이고, 다 쓴 뒤 이름을 
 
 ## 밀린 일 처리
 
+`brain queue cancel <id>`로 대기 일감을 취소하거나 실행 중인 일감의 취소를 요청합니다. 실행 중이면 감독자가 그룹에 SIGTERM을 보내고 5초 유예 뒤 SIGKILL로 정리합니다. 종료를 확인할 수 없는 시도는 `unknown`으로 남고 다시 청구되지 않습니다. `unknown`에 대한 취소 요청은 자동 정리를 다시 시작하지 않습니다. 데몬은 시작 때 이전 시도를 OS 시작 신원으로 대조합니다.
+
 ```sh
 brain queue drain [--budget <seconds>]
 ```
@@ -507,6 +509,8 @@ hook이 아닌 명령은 **끝에서 한 번 더** 짧게(2초) 이것을 돕니
 않습니다. `queue drain` 자신은 이것을 끕니다.
 
 ## 데몬
+
+종료할 때 감독자는 실행 중인 자식 그룹을 SIGTERM → 5초 유예 → SIGKILL로 정리하고 일감을 돌려줍니다. 이미 취소를 요청한 일감은 취소로 닫습니다.
 
 ```sh
 brain daemon run
@@ -779,6 +783,7 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `CONFIG_INVALID` | 2 | 설정은 있고, 그 값 하나를 읽거나 쓸 수 없습니다 |
 | `ORBSTACK_UNAVAILABLE` | 2 | OrbStack을 사용할 수 없습니다 |
 | `DB_UNAVAILABLE` | 2 | 데이터베이스에 닿지 못했습니다 |
+| `WORK_NOT_FOUND` | 1 | 지정한 일감이 없습니다 |
 | `MESSAGE_NOT_FOUND` | 1 | 지정한 메시지가 없습니다 |
 | `REDACT_TEXT_NOT_FOUND` | 1 | 가릴 글자를 찾지 못했습니다 |
 | `FILE_NOT_FOUND` | 1 | 지정한 파일이 없습니다 |

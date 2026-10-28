@@ -194,7 +194,9 @@ export interface BrainDrainReport extends DrainQueueReport {
   reextractUnreachable: number;
 }
 
+export type BrainQueueCancelResult = { ok: true; id: string; state: 'cancelled' | 'requested' | 'already_closed' } | { ok: false; code: 'WORK_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface BrainQueue {
+  cancel(input: { id: string }): Promise<BrainQueueCancelResult>;
   /** Work the backlog within a time budget, and report what happened (AD-21). */
   drain(input: BrainQueueDrainInput): Promise<BrainDrainReport>;
 }
@@ -404,6 +406,12 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     },
     schedules: { tick: () => tickSchedules({ store, clock, idGen }) },
     queue: {
+      async cancel(input) {
+        const result = await store.requestWorkCancel({ id: input.id, now: clock.now() });
+        if (!result.ok) return result;
+        if (result.state === 'not_found') return { ok: false, code: 'WORK_NOT_FOUND', message: '지정한 일감이 없습니다' };
+        return { ok: true, id: input.id, state: result.state };
+      },
       drain: (input) =>
         drain(
           { store, spool, clock, idGen, folders: transcriptFolders, parsers, spoolHandlers },

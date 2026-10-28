@@ -251,3 +251,5 @@ export { CONNECT_TIMEOUT_MS } from './busy-timeout.js';
 export { CORE_SCHEMA_OWNER, type SchemaVersions } from './schema.js';
 export * from './process-abi/codec.js';
 export * from './queue/supervisor.js';
+
+export type { BrainQueueCancelResult } from './brain.js';

@@ -195,7 +195,7 @@ describe('brain queue drain', () => {
     const home = await installedHome();
     const database = new PgTestClient(databaseIn(home));
     try {
-      (await database.exec('update brain.schema_migrations set version = 3 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
+      (await database.exec('update brain.schema_migrations set version = 4 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
     } finally {
       (await database.close());
     }

@@ -152,4 +152,4 @@ export { sessionIngestContract, sessionMetadataContract, sessionRedactionContrac
 export { settingsStoreContract } from './contracts/settings-store.js';
 export { memorySettingsStore } from './fakes/store.js';
 export { manualTime } from './fakes/clock.js';
-export { fakeProcessLauncher, type FakeProcess } from './fakes/process.js';
+export { fakeProcessLauncher, fakeProcessInspector, type FakeProcess } from './fakes/process.js';

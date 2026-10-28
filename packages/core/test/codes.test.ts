@@ -82,6 +82,7 @@ describe('the error codes', () => {
       SESSION_REQUIRED: 2,
       USER_MISSING: 2,
       DB_LOCKED: 1,
+      WORK_NOT_FOUND: 1,
       MESSAGE_NOT_FOUND: 1,
       REDACT_TEXT_NOT_FOUND: 1,
       FILE_NOT_FOUND: 1,

@@ -218,6 +218,10 @@ const CODES = {
     retryable: false,
     hint: '`brain doctor run`으로 데이터베이스 상태를 확인하세요',
   },
+  /** No stored work item has the requested id. */
+  WORK_NOT_FOUND: {
+    exit: 1, meaning: '지정한 일감이 없습니다', retryable: false, hint: '일감 id를 확인하세요',
+  },
   /** No stored message has the requested id. */
   MESSAGE_NOT_FOUND: {
     exit: 1, meaning: '지정한 메시지가 없습니다', retryable: false,

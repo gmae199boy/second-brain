@@ -6,7 +6,7 @@ const now = new Date('2026-10-28T01:02:03.456Z');
 const item: WorkItem = {
   ...tableCleanupWork({ id: 'cleanup', table: 'messages', at: now }),
   attempts: 1, claimedAt: now, claimExpiresAt: now, claimedBy: 'worker',
-  executionClass: 'core' as const, currentAttemptToken: null, lastError: null, completedAt: null,
+  executionClass: 'core' as const, currentAttemptToken: null, outcome: null, cancelRequestedAt: null, lastError: null, completedAt: null,
 };
 
 it.each([

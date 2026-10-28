@@ -47,6 +47,8 @@ export interface WorkItem {
   /** The last failure's message, already masked and cut (`failureText`). */
   lastError: string | null;
   completedAt: Date | null;
+  outcome: 'succeeded' | 'failed' | 'cancelled' | 'dependency_failed' | null;
+  cancelRequestedAt: Date | null;
 }
 
 /**
@@ -156,7 +158,15 @@ export function workExecutionClass(kind: string): WorkExecutionClass {
 }
 export const SUPERVISOR_RENEW_EVERY_MS = 60_000;
 export const SUPERVISOR_POLL_MS = 5_000;
+export const SUPERVISOR_CANCEL_GRACE_MS = 5_000;
+export const SUPERVISOR_CANCEL_POLL_MS = 1_000;
+export const SUPERVISOR_GROUP_CONFIRM_MS = 2_000;
 export interface WorkAttempt {
+  incarnation: string | null;
+  pid: number | null;
+  pgid: number | null;
+  osBootAt: Date | null;
+  osStartedAt: Date | null;
   token: string;
   workItemId: string;
   startedAt: Date;

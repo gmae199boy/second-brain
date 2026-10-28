@@ -516,6 +516,21 @@ export interface FinishSupervisedWorkInput {
   nextAttemptAt?: Date; lastError?: string;
 }
 
+export type WorkCancelState = 'cancelled' | 'requested' | 'already_closed' | 'not_found';
+export type RequestWorkCancelResult = { ok: true; state: WorkCancelState } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+export interface RecordSupervisedProcessInput {
+  id: string; attemptToken: string; pid: number; pgid: number; osBootAt: Date | null; osStartedAt: Date | null;
+}
+export interface OpenSupervisedAttempt {
+  token: string; workItemId: string; kind: string; attempts: number;
+  incarnation: string | null; pid: number | null; pgid: number | null;
+  osBootAt: Date | null; osStartedAt: Date | null; cancelRequested: boolean;
+}
+export type ListOpenSupervisedAttemptsResult = { ok: true; attempts: OpenSupervisedAttempt[] } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+export interface SettleSupervisedAttemptInput {
+  id: string; attemptToken: string; now: Date; outcome: 'cancelled' | 'died' | 'unknown';
+}
+
 /** What the one failure-recording function writes (AD-21, Table Contract). */
 export interface RecordFailureInput {
   /** The id to give a new row. The caller mints it (AD-8). */
@@ -640,6 +655,10 @@ export type ResolveFailuresResult =
  * the item together or does neither.
  */
 export interface WorkStore {
+  requestWorkCancel(input: { id: string; now: Date }): Promise<RequestWorkCancelResult>;
+  recordSupervisedProcess(input: RecordSupervisedProcessInput): Promise<FinishWorkResult>;
+  listOpenSupervisedAttempts(): Promise<ListOpenSupervisedAttemptsResult>;
+  settleSupervisedAttempt(input: SettleSupervisedAttemptInput): Promise<FinishWorkResult>;
   /** Claim supervised work and insert its caller-supplied attempt token atomically. */
   claimSupervisedWork(input: ClaimSupervisedWorkInput): Promise<ClaimSupervisedWorkResult>;
   /** Token CAS: a stale attempt changes neither the item nor its attempt history. */

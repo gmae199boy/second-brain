@@ -287,3 +287,15 @@ it.each([
     await writer.end();
   }
 });
+it('constrains work outcomes and positive process identifiers without generated identity defaults', async () => {
+  await query(`insert into brain.work_items (id,kind,target_kind,target_id,created_at,attempts,next_attempt_at,execution_class)
+    values ('${id('cancel-work')}','process_probe','probe','test','${AT}',0,'${AT}','supervised')`);
+  await query(`insert into brain.work_attempts (token,work_item_id,started_at) values ('${id('cancel-attempt')}','${id('cancel-work')}','${AT}')`);
+  for (const column of ['pid', 'pgid']) for (const invalid of [0, -1]) await refused(`update brain.work_attempts set ${column}=${invalid}`, { code: '23514' });
+  await refused("update brain.work_items set outcome='alien'", { code: '23514' });
+  await refused("update brain.work_items set outcome='cancelled'", { code: '23514' });
+  for (const outcome of ['succeeded', 'failed', 'cancelled', 'dependency_failed']) await query(`update brain.work_items set completed_at='${AT}',outcome='${outcome}'`);
+  expect((await query(`select column_default from information_schema.columns where table_schema='brain' and
+    ((table_name='work_attempts' and column_name in ('incarnation','pid','pgid','os_boot_at','os_started_at')) or
+     (table_name='work_items' and column_name in ('outcome','cancel_requested_at')))`)).rows).toEqual(Array.from({ length: 7 }, () => ({ column_default: null })));
+});
