@@ -1,0 +1,636 @@
+{
+  "format_version": 1,
+  "prepared_on": "2026-10-27",
+  "garmin": {
+    "repository": null,
+    "repository_note": "No origin remote configured locally; pinned source archive is self-contained",
+    "local_repository": "~/github/garmin",
+    "commit": "7fb33dd1661ad25cd73e14ed63abe0a87151f62e",
+    "code_schema_version": 16,
+    "normalization_version": 8
+  },
+  "target": {
+    "repository": "https://github.com/gmae199boy/second-brain",
+    "local_repository": "~/github/second-brain",
+    "commit": "22390f56cdb1e939d74209f152c6b7d2a51a9f96",
+    "package_path": "_bmad-output/personal-brain/prep-garmin-absorption"
+  },
+  "archive": {
+    "path": "inputs/garmin-source.tar.gz",
+    "sha256": "02cbaf47a5cca4a799fe42aa7d2eb988860b4395fd1ff9649439fffb87f56b25",
+    "bytes": 633616,
+    "prefix": "garmin-source/",
+    "files": [
+      {
+        "path": ".python-version",
+        "bytes": 7,
+        "sha256": "5abd4dc1efa09469b88916c8e4e027a8c266a9b6d06f43ac9da3e30cd00b4ab5",
+        "git_blob": "9b8fe2fbb8568ac60fa11a56ed0e7c3334fd23b0"
+      },
+      {
+        "path": "README.md",
+        "bytes": 154146,
+        "sha256": "acefe7f651b0944b260ab41c3ca974cfeb0bd9d29b378dfb8a363f4496c59448",
+        "git_blob": "b89a817d4bbf1cceb4d0f8d96973adcab7ba28a5"
+      },
+      {
+        "path": "config.runtime.example.toml",
+        "bytes": 1161,
+        "sha256": "9e983394bb8ec2c101bcdbaa359b0da2e55faee8a8d00c3ad6c42d2c331c386f",
+        "git_blob": "6efd5daf8300194867c87c8d1f13fdd2eef78b34"
+      },
+      {
+        "path": "config.toml",
+        "bytes": 791,
+        "sha256": "597acd1586c71ecdcac0dd7b35c588dc3c67a65614f00ffc38a0ad4d14b102cb",
+        "git_blob": "e67880c407d27057ab3e15e59d84e0db80e77845"
+      },
+      {
+        "path": "pyproject.toml",
+        "bytes": 25908,
+        "sha256": "3feb04967c411d9a1a43b9f8af15d50f2ce3912ba63a8a16fff5a7422dea55b0",
+        "git_blob": "8e9e3271040cca2db452b729244476f118d5869c"
+      },
+      {
+        "path": "scripts/build_exercise_labels.py",
+        "bytes": 3729,
+        "sha256": "f1ff6e61b95a74ea4885d686f9347812f7422f88e4d060cfd4abe7cd0f65be9f",
+        "git_blob": "90773e28960f6c541fed7acf71bdbced7cd11881"
+      },
+      {
+        "path": "scripts/deploy.sh",
+        "bytes": 4515,
+        "sha256": "c2144470c8eb382df50a02cefea8745b81ab090ac869d249a827f90414ee7901",
+        "git_blob": "07f35699067404903442d9f46826173e4c9e9dc4"
+      },
+      {
+        "path": "skill/garmin-body-intake/SKILL.md",
+        "bytes": 5180,
+        "sha256": "7be0d7edd776d8a28edc78b281fcaa3ef3a453032eb3a76e4615a80742c68de7",
+        "git_blob": "c6c30d5c1c5afff542ccc46853f93f88861f6a61"
+      },
+      {
+        "path": "skill/garmin-daily-analysis/SKILL.md",
+        "bytes": 22005,
+        "sha256": "98a0b852fef27b21c5ab8422eb5423c2488e12e6896441b29bdfb38fbf0880c8",
+        "git_blob": "c25005f966a3879649fe223081cc7a90929cc6e1"
+      },
+      {
+        "path": "skill/garmin-period-review/SKILL.md",
+        "bytes": 2712,
+        "sha256": "fe624a4fe9b3b06ea2aac2b8b87fcfedbf27c00f5fa38f3fe18a78f75cbd20bc",
+        "git_blob": "bbd71e42d52ebe6bd2d1e7c28ce19c91fa508085"
+      },
+      {
+        "path": "src/garmin_pipeline/__init__.py",
+        "bytes": 120,
+        "sha256": "7ce3b8ff6d3133b408fb7d3091c176e068a05e7d3a714d53a84040b28c2af7f9",
+        "git_blob": "26640639524a03679a979d4be8110c1ab8f9d9e4"
+      },
+      {
+        "path": "src/garmin_pipeline/auth.py",
+        "bytes": 14864,
+        "sha256": "fb712c1f25fd7938fcccd41ed2af1f130071cca2b0848cd322ff58e6190bb76e",
+        "git_blob": "9ea91f7697fd0db60e254e74c40d0e3fdf0c7526"
+      },
+      {
+        "path": "src/garmin_pipeline/body.py",
+        "bytes": 16278,
+        "sha256": "2c588144d4afc67c6ee89cc5e97fb4101b351f16918a7b63dd5b77ecffe348a0",
+        "git_blob": "4614403b9af7098feaeac26f80f8a92e8e20baa8"
+      },
+      {
+        "path": "src/garmin_pipeline/capture.py",
+        "bytes": 10693,
+        "sha256": "53d2c3a556182c1cf486b7f26aeee79cce0742ac998ca7bc271645a1956481d5",
+        "git_blob": "0d0791f5470c3cc52bbee9be7d3a7cc50e8af21e"
+      },
+      {
+        "path": "src/garmin_pipeline/charts.py",
+        "bytes": 32933,
+        "sha256": "54383d5575f21f013b46e7800a3f7f95ceed3cb712e02993c2bfedeb9856f9ae",
+        "git_blob": "bae102cf8fd1734cf04bd9c854ed46f71b40ba89"
+      },
+      {
+        "path": "src/garmin_pipeline/cli.py",
+        "bytes": 31071,
+        "sha256": "b418be40d82577fb23eb81980f8c73ce35563102e7bc60bbf9da3f3059d077ad",
+        "git_blob": "f508a916cf60e18dacd6bbb4ffa3c4c16aa94db0"
+      },
+      {
+        "path": "src/garmin_pipeline/collect.py",
+        "bytes": 35432,
+        "sha256": "cf3b64378fe84e164a1928d115f7e40948d721cca39e29671dc501e263f8cf62",
+        "git_blob": "3bc56f402a2c2748cab263f204cfce4c81fdd03f"
+      },
+      {
+        "path": "src/garmin_pipeline/config.py",
+        "bytes": 12779,
+        "sha256": "e5cf0c37bd25207f94973db6b47a19e6f9be05bb9dd7ad9b30f404058769372a",
+        "git_blob": "666a9a785e3b8c7644b4af33e2dde94b83ba64bc"
+      },
+      {
+        "path": "src/garmin_pipeline/coverage.py",
+        "bytes": 13796,
+        "sha256": "ab4cdcc08ef7caa804c6f24646fc379021196bb3412af551125d2dfcae9a710d",
+        "git_blob": "5b6d78c53af8f4f454768420aed06635eb471149"
+      },
+      {
+        "path": "src/garmin_pipeline/dates.py",
+        "bytes": 4341,
+        "sha256": "ac2774fa96ccef2018765913a31a6a545e57b70790f222b185d38c4774949e92",
+        "git_blob": "506e9d8480af8ef54224d2c90ed91b5a8481fd27"
+      },
+      {
+        "path": "src/garmin_pipeline/digest.py",
+        "bytes": 52176,
+        "sha256": "1157877d355dbf054dc65a79273e8a379f9b5ccffa74baf9952ffd514929f355",
+        "git_blob": "6646b1c6ff0c93d542f0cf1bab08e4ec51fee17f"
+      },
+      {
+        "path": "src/garmin_pipeline/errors.py",
+        "bytes": 4770,
+        "sha256": "263fae97a8da1afaa9eb18ccc761c68a7a2e187174b4d967d9159edc81815d8e",
+        "git_blob": "7c3f35d83983a38f8282af90a6968d86e9310776"
+      },
+      {
+        "path": "src/garmin_pipeline/garmin/__init__.py",
+        "bytes": 34680,
+        "sha256": "8a229376d6eda280f1af574fc60ec4f37bc823fa62553960c3ff80c99f17abcd",
+        "git_blob": "a5c4471b2c19ce67770c95dc798f934efd4c06f1"
+      },
+      {
+        "path": "src/garmin_pipeline/labels/exercise_types_ko.json",
+        "bytes": 147444,
+        "sha256": "2ba81d36beac2fa4ecee76183f20eed4477cd42180a1b2a44b06cd383c5ad999",
+        "git_blob": "d9be205e51878b024709e84bd38f074635762546"
+      },
+      {
+        "path": "src/garmin_pipeline/normalize/__init__.py",
+        "bytes": 27919,
+        "sha256": "0e7be7ba964ded7cae96acdd0b00936475752bc6f4740fe01a8a07fc74ac5068",
+        "git_blob": "3cea684a7303ec417d7078da8725feabe1b53e2d"
+      },
+      {
+        "path": "src/garmin_pipeline/normalize/activity.py",
+        "bytes": 15918,
+        "sha256": "d9dbe7ee1c8d364b001f158f190e6649288bb396fd94b9e290df4fc8d3c5b3b4",
+        "git_blob": "3657311f2279e596392207b6278a67b7e65f4897"
+      },
+      {
+        "path": "src/garmin_pipeline/normalize/daily.py",
+        "bytes": 28148,
+        "sha256": "a7e46f16128be5e1d50b687b6297ab90e9ac66e98e91d8733f3c1d0717f2cc79",
+        "git_blob": "d2856d6a4e540886ae1fe828061ba4036abb85d2"
+      },
+      {
+        "path": "src/garmin_pipeline/ports.py",
+        "bytes": 10149,
+        "sha256": "1981ec8ca8c5c67014d7242f45c67414a5dbedd4eeaead3f5580bb1ad066fb17",
+        "git_blob": "126ce433e616d3b9859a9eab97d56b0e1f28bba6"
+      },
+      {
+        "path": "src/garmin_pipeline/rawparse.py",
+        "bytes": 6620,
+        "sha256": "01ce4170c1f6f520798588806396110fa32e660ddf9ff8d847a608fad6eb938d",
+        "git_blob": "51c13411f8d3ea6cfb29ca684d396d2efe6eb5bb"
+      },
+      {
+        "path": "src/garmin_pipeline/report.py",
+        "bytes": 40657,
+        "sha256": "d5cca7f7976e6ec6a483e4edf2d35a5a3deee5c8ce2a61f0f38d79117a1b47b8",
+        "git_blob": "198321db5eea00d242e53bc1810ba2823cecaa14"
+      },
+      {
+        "path": "src/garmin_pipeline/report_input.py",
+        "bytes": 19891,
+        "sha256": "189361fbf03e39a31c7f1d91954138ec4deceda146a05d6a6cf31374c7978fde",
+        "git_blob": "237d70300af7126a4231067635a683ba3718f884"
+      },
+      {
+        "path": "src/garmin_pipeline/schedule.py",
+        "bytes": 12853,
+        "sha256": "93f9dd0e19744da8abe0f213d515bd145cc9f054c2bef2f948ab0c59eaee706a",
+        "git_blob": "526cd5cef052ca74b62e09fb2a01fe5ac9f39d6e"
+      },
+      {
+        "path": "src/garmin_pipeline/schemas/body.schema.json",
+        "bytes": 4172,
+        "sha256": "8608b5d9b6120715561239a76cfc6bf4af026cd82738e66b0474808fcf9b26df",
+        "git_blob": "23f97630d187be8dd1e4517d82e82aa4fe24c4b8"
+      },
+      {
+        "path": "src/garmin_pipeline/schemas/body_intake_output.schema.json",
+        "bytes": 335,
+        "sha256": "772057c99679744d960d9b975c02677b6918c49d0c748b7add9ee0cf844f9a95",
+        "git_blob": "1aefd43b348a4d19f53def1a312973308f14bb12"
+      },
+      {
+        "path": "src/garmin_pipeline/schemas/daily_analysis_output.schema.json",
+        "bytes": 753,
+        "sha256": "85e22c6c5d2909309c926bd0326a07ff084c341fa89aecb3f2bbbbc4a32b7532",
+        "git_blob": "27598d697febc7478e7ed9b423b78c6ff3e4ddf2"
+      },
+      {
+        "path": "src/garmin_pipeline/schemas/period_review_output.schema.json",
+        "bytes": 753,
+        "sha256": "85e22c6c5d2909309c926bd0326a07ff084c341fa89aecb3f2bbbbc4a32b7532",
+        "git_blob": "27598d697febc7478e7ed9b423b78c6ff3e4ddf2"
+      },
+      {
+        "path": "src/garmin_pipeline/store/__init__.py",
+        "bytes": 19420,
+        "sha256": "29686a434b32f88a234ecd1481797c04f030af2b7b8adee622c956cc575ce401",
+        "git_blob": "1666909b0a5d16af696e46370fef04439c999d8f"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0001_auth_event.sql",
+        "bytes": 329,
+        "sha256": "db76682a9ff3f006ed115eb0efa4b8cffe2c28fa3e97fd38e7afb95e3fca360f",
+        "git_blob": "52cbcb319f830ce147effcd5360c47013ed109bd"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0002_raw_response.sql",
+        "bytes": 801,
+        "sha256": "e8962b4b7b86fcb8c038175fb343437b072971ab58d1dde1a361fa5c5d0419a7",
+        "git_blob": "f7fe782652fad49d84ab812bb9e0669eda6693ec"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0003_run_fetch_error.sql",
+        "bytes": 1655,
+        "sha256": "f3db5dda15f2b484ce16446f00be91f49ea95253bfe59c7a95e4d079d2be9c36",
+        "git_blob": "14e9f3f293a655e2005c7b3403794867a6620061"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0004_meta.sql",
+        "bytes": 347,
+        "sha256": "8c84aa48a8c51ea16b02fb17b08bb3b7d9c86d9e5dde6c4de6c55dac1507f1dd",
+        "git_blob": "4e5ff0a24bc0a8c417fb468bfdff0f0b7110c1fc"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0005_notification.sql",
+        "bytes": 799,
+        "sha256": "a72cac6c541bc9ceaee90069809ae75e8d8e41f608bf3ea3816e9ae2de73f9fe",
+        "git_blob": "d59e63e863fd5597e820ba95d2d61c4e00224682"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0006_normalize.sql",
+        "bytes": 2690,
+        "sha256": "2b5f525384784e878c9732a634837d5279ca42b7575bafb732c2bdf71b13f409",
+        "git_blob": "05e1bc3c5a8d2c74501c27680faf7620d11b5394"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0007_sleep_stress_body_battery.sql",
+        "bytes": 3280,
+        "sha256": "fc77aad9e8e0619d922ebebc6898dda49af9fbb3e007fbf34d0f659a88f158e9",
+        "git_blob": "6feb78b80ceece7ad381d76b83f13085c5695ae2"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0008_hr_sample.sql",
+        "bytes": 1085,
+        "sha256": "84ccda3c74b38803e7db26b5257cf5918a5e4eb69bd60962b6c5a2eb169e2c6d",
+        "git_blob": "3f980c6eeea6beaf87c54b9df0f7314184bf8efc"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0009_activity.sql",
+        "bytes": 2884,
+        "sha256": "7afb8f647ff5d16956416c5584a957fd966b7ae62515c7f9ba4570f1dabd7f8f",
+        "git_blob": "9c3a45e700bd17bde0000ec68cde550c952e2e09"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0010_activity_recovery.sql",
+        "bytes": 2262,
+        "sha256": "d705cfcbe69f411abcef779325bc628252a17d78e115cdd5940792951b3d5b48",
+        "git_blob": "49aa8242a2862099551644b22be6185408a4f9ef"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0011_exercise_set.sql",
+        "bytes": 1647,
+        "sha256": "c3ed9205b1b87e7c1ea20bd07972b4eea13bdfc938b8c90587dcb5eef28d7724",
+        "git_blob": "60bfb442f75a121610b41d2f42902af7954de84e"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0012_drop_activity_recovery.sql",
+        "bytes": 508,
+        "sha256": "e19dec4680b10336d4355b81265471c7983c91c408b98a10d2adbd29b996e1e1",
+        "git_blob": "b88dcb4679bf8ea384eb599ae19424a087f9e6cc"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0013_activity_body_battery.sql",
+        "bytes": 573,
+        "sha256": "c693302603052728239150163e03ee36e159f80f48a29f25fc6a7982eeb0af93",
+        "git_blob": "0c4168c3144834d1e3de97d193f9919ce15e5825"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0014_zone_bounds_stress_bb.sql",
+        "bytes": 1441,
+        "sha256": "cc1cf61a003148d86658fc053ffa59518a2114e33bfc347c0c644b9a6ed9fc51",
+        "git_blob": "8876ad05bc287c54ab642f0cbec4edb2c3ee8a2e"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0015_delivery.sql",
+        "bytes": 761,
+        "sha256": "f872a842595f25d734b2aee734579db8a28870b048bddcc4e72a2e942e9db8d8",
+        "git_blob": "9ed6603f604bed0cd167e0fb5a58e5c6ef533839"
+      },
+      {
+        "path": "src/garmin_pipeline/store/migrations/0016_day_values_evaluation.sql",
+        "bytes": 1436,
+        "sha256": "e607c8b4ae8d50113fd26eeb230712c3ab22e0c82ab47f04aea104e9a9e34fcc",
+        "git_blob": "c6f6f519e6dec9a9e3397b1bf4a04318320a07f3"
+      },
+      {
+        "path": "src/garmin_pipeline/telegram.py",
+        "bytes": 6659,
+        "sha256": "6aaef0a82cb3e9416de3bd661256a7f50172032b66a3631b219e74975d8d0c2b",
+        "git_blob": "3603cf8f92f586d9ddeffc78991354c4e1939074"
+      },
+      {
+        "path": "tests/chart_db.py",
+        "bytes": 18739,
+        "sha256": "3d5d5a7467ed31e0f68e17b4341dcc4c853ac96bba3f7c7aa8839d4f199b3da4",
+        "git_blob": "d9be446b0369bcb52c61e5a4a7ad3b17f821710c"
+      },
+      {
+        "path": "tests/conftest.py",
+        "bytes": 3098,
+        "sha256": "9fc8dfb5f7f804a9788e858af60629a924f91e28947b530a35870d426247d49b",
+        "git_blob": "4309d71409e29612eb0579a73a51bffbcc35e14c"
+      },
+      {
+        "path": "tests/fixtures/body/measurement.json",
+        "bytes": 216,
+        "sha256": "7e3a127fbdcb99822a345ce95f85612dee77ecd4757af46e1e5c174f82a35e3c",
+        "git_blob": "d50802c1f636cf4fd7a98d7a1a2dedaff29602c3"
+      },
+      {
+        "path": "tests/fixtures/daily_weigh_ins/2026-10-14.json",
+        "bytes": 517,
+        "sha256": "ebcd407da6e1a5a11522e44fcee7db24c0abc40107d853c704f53815b66cd392",
+        "git_blob": "cbbdf84ab6b48d5f533bb9dadc50cbeaacbaad17"
+      },
+      {
+        "path": "tests/fixtures/daily_weigh_ins/2026-10-15.json",
+        "bytes": 107,
+        "sha256": "814b18d51c3032cee3d39222a3adc6833c0c9829485df37674e8032ceb755cf2",
+        "git_blob": "7259b783a81aa31b051d563d0c4980796a937d4b"
+      },
+      {
+        "path": "tests/fixtures/inbody/inbody-synthetic.md",
+        "bytes": 304,
+        "sha256": "814e559f3bb95dceb937da907af705545af342f1a0f72113cb4db805218b1f8b",
+        "git_blob": "48f7ce6f7003915f5320a99b52074f4916a75e36"
+      },
+      {
+        "path": "tests/fixtures/inbody/inbody-synthetic.png",
+        "bytes": 87710,
+        "sha256": "ef86ea19a23fbdab92fb2117755f0832c08e7911292b2dcfb70d83ae25619394",
+        "git_blob": "3d4fe0875ce61e255f82c250be2eef6e8c278c4a"
+      },
+      {
+        "path": "tests/fixtures/inbody/make_inbody_png.swift",
+        "bytes": 2304,
+        "sha256": "02016666295b113de9d6bc553706c389d63bf27c09adaccac1ee52b0cb1576cc",
+        "git_blob": "9da3038421960dbc54e36028dae2d09a63d725b4"
+      },
+      {
+        "path": "tests/fixtures/lifestyle_logging_data/2026-10-14.json",
+        "bytes": 764,
+        "sha256": "b4656a560f1b8576c29ac56ccd7746d28abe1e4b2f3f2134b952bf61d55a65b1",
+        "git_blob": "5765cd97954abc325bb8050f0de862e3e8ce219c"
+      },
+      {
+        "path": "tests/fixtures/lifestyle_logging_data/2026-10-15.json",
+        "bytes": 763,
+        "sha256": "301a7d4a08d987051e9815e915bec9ef7b3a0eea76b41dea6015b74e16c4eae6",
+        "git_blob": "168609bcc67f5152e1ddb79fad453c2f30054747"
+      },
+      {
+        "path": "tests/garmin_fakes.py",
+        "bytes": 17052,
+        "sha256": "d767862dbc550558cf835bb2d1881a675c84bab7f4691fa6b9b0ef9aa8f89de4",
+        "git_blob": "26e26008f0b2b0e6523a29b9d03b204997857a6f"
+      },
+      {
+        "path": "tests/schema_version.py",
+        "bytes": 343,
+        "sha256": "0857316948528389cdd5f29429703b080fd46b3257a651f691eba48fcaa1a55c",
+        "git_blob": "f9865814db3d92fd2f75e4a3fca92d3986cbd750"
+      },
+      {
+        "path": "tests/test_acceptance_report.py",
+        "bytes": 3706,
+        "sha256": "7d993d4166e28f73e99181a547afe2d429021d4b49215ae82b140bb069f6dfc0",
+        "git_blob": "5c5035a8d32b7078a3c7f9c4da2a09f12d23589b"
+      },
+      {
+        "path": "tests/test_auth.py",
+        "bytes": 26712,
+        "sha256": "9ca1855942998c67724c20c9924900ee22039ce1f981421878cd3cff0a725d63",
+        "git_blob": "ed88a7fe07bb78898c067f4ed63af13131ef5d00"
+      },
+      {
+        "path": "tests/test_body.py",
+        "bytes": 32754,
+        "sha256": "e0d58f65abca0595a8bb216692fd58599a170016b67bd7739fbc8d8869723a2a",
+        "git_blob": "b456f0cf74707bbb47320105fc243d51f177226b"
+      },
+      {
+        "path": "tests/test_build_exercise_labels.py",
+        "bytes": 4519,
+        "sha256": "d14690989a089f53f8bc3beada92bd7054d52ef11015868514098e1c744c27b9",
+        "git_blob": "6e3770f6c6ea20f06cc1a6a2e041ef443df3359c"
+      },
+      {
+        "path": "tests/test_capture.py",
+        "bytes": 30665,
+        "sha256": "807bddb939e6a9456cad57ae6b46a537941f362c667355d0cab4f91320b20c1f",
+        "git_blob": "a7816da238b6c9147795686550e0185990d6af81"
+      },
+      {
+        "path": "tests/test_charts.py",
+        "bytes": 40055,
+        "sha256": "420c75d764774e85e0fd5d6a8e9934b68057e56fa69579e92f38d1dc6a492e5c",
+        "git_blob": "c54a2cde6eb8b31aea6e657435972398434c4655"
+      },
+      {
+        "path": "tests/test_cli_logging.py",
+        "bytes": 13096,
+        "sha256": "0781e500ae2c278b7978da5a4613ce4308f5290e2cff3cac978496988b545506",
+        "git_blob": "8bdbb2fb25728ba53c59f379c0fc0db178afde75"
+      },
+      {
+        "path": "tests/test_collect.py",
+        "bytes": 111572,
+        "sha256": "0e9afd82f1a99775f5de82b5d51fe7461b71c521c8ed0a6faab9fe3b57f72bfb",
+        "git_blob": "d6361ad2aa9e8fffbd505aea158e39cea033499f"
+      },
+      {
+        "path": "tests/test_config.py",
+        "bytes": 18038,
+        "sha256": "d4fff2c2bc45635dc3c3649752a6c8c9ad87e96c793d70e0c17c2dc28251c917",
+        "git_blob": "2c4a4aaf8fae4a0d761c54952fbc9d8d4ae4ba4a"
+      },
+      {
+        "path": "tests/test_coverage.py",
+        "bytes": 38126,
+        "sha256": "351980b3c85eb9589e6b86e667bde6d3afc7ec96628686163cf25235b58dccef",
+        "git_blob": "aaa3a69a80810f06854c30ecad06c665f36e4f51"
+      },
+      {
+        "path": "tests/test_dates.py",
+        "bytes": 9639,
+        "sha256": "54f00f57261e3e637fa55e5df9270f35e2cc91db59cfd0386c6a3d582a25abd2",
+        "git_blob": "d4d8cf42de649feff7715d83eb15110c32cce06d"
+      },
+      {
+        "path": "tests/test_deploy.py",
+        "bytes": 16655,
+        "sha256": "f4834de4c7a38296b744fba0a20d6cccc7395e0784b7c266bcf0ef79dee99086",
+        "git_blob": "04f6f094f6d42405db5b2f2511d989544a63239f"
+      },
+      {
+        "path": "tests/test_digest.py",
+        "bytes": 15693,
+        "sha256": "2ffd2f68c5257d9cb03c823b884f42a89c74bc8dbdeb759388ee4d14eb2d96fb",
+        "git_blob": "e18a795eb7a790f6ebcd3da75ea44578ddb7a319"
+      },
+      {
+        "path": "tests/test_errors.py",
+        "bytes": 2879,
+        "sha256": "944ff03e00ba12eea66d3a14a1c9e52544002bb5bc64fbf049a85b85857c287e",
+        "git_blob": "88abaf7f6cf76c123cf73844601885a9af30b04b"
+      },
+      {
+        "path": "tests/test_garmin.py",
+        "bytes": 88773,
+        "sha256": "9e003331d348b193fb5d67bc37ba823196ae7b7b6e3d0640dc839b9f554bc157",
+        "git_blob": "eb7481a98789edbdaa8c5394062bb4c5d45a8442"
+      },
+      {
+        "path": "tests/test_import_contracts.py",
+        "bytes": 56329,
+        "sha256": "f53a756e65775c56861d2300d624b58ab8b4257d94b917c796d0ce102c57e0e0",
+        "git_blob": "b63020d9d3c3a40f89ef5b83b08e77cbc753efb1"
+      },
+      {
+        "path": "tests/test_normalize.py",
+        "bytes": 201477,
+        "sha256": "e1710857afb82ebff5e569fbed79916f83276f195f6e27b7d5ca35fa7accdf9e",
+        "git_blob": "b892d94f0fc47363801bcbcca634e86d0d7b65c7"
+      },
+      {
+        "path": "tests/test_operations_guide.py",
+        "bytes": 28169,
+        "sha256": "6c1651ee57ead8edb66a0555802d1503d6f9366ea614222e0dff5ebe23849360",
+        "git_blob": "a8e89bded62a0a195e1d6271279d003ffafaef70"
+      },
+      {
+        "path": "tests/test_ports.py",
+        "bytes": 9478,
+        "sha256": "37f4b57559e47e7d709348c47eca684f96f0da53ec2121fc92bf0b71b103e3a2",
+        "git_blob": "3e37fc53234e1d029a65f4390c11174f63d909ae"
+      },
+      {
+        "path": "tests/test_raw_response.py",
+        "bytes": 10147,
+        "sha256": "73967e0d67b003304ac11d8142ec0f97c98c4e5bfc836086ff1c5ffdab7a2181",
+        "git_blob": "ce8e9fe6d930f39f0feebdbb90b46545dec8ddc0"
+      },
+      {
+        "path": "tests/test_rawparse.py",
+        "bytes": 10488,
+        "sha256": "5b8a4dd7f64cde5694d33408d72609109d70e0a83d2f54e80e3bf0076088b1a1",
+        "git_blob": "ee4154f8e355d9ebfba6c5db801cc96b9ec2cb54"
+      },
+      {
+        "path": "tests/test_report.py",
+        "bytes": 46304,
+        "sha256": "d6394bd826a1fc65be06d29e61fcbae677c5c3997daeaafe6ae45114eec53578",
+        "git_blob": "5a650f568b74ba7f3ad29a2243a5b5a71d7bc0d1"
+      },
+      {
+        "path": "tests/test_report_codex.py",
+        "bytes": 25620,
+        "sha256": "c89e4b226530df5beb45da090e9966f4de5c6c0ef55242ec2bced2425e780856",
+        "git_blob": "0f2579197988f74bee85dec5d38b9a0d8195a41f"
+      },
+      {
+        "path": "tests/test_report_input.py",
+        "bytes": 13981,
+        "sha256": "b381efca974b646e509fbf197c115a5c827d790df09c5397aa816d70054f75c8",
+        "git_blob": "cccce5cde5bf20cb4bf1e9b33939ef832e68cd1a"
+      },
+      {
+        "path": "tests/test_schedule.py",
+        "bytes": 28481,
+        "sha256": "fdd9133c4ffadbde257134314e68ef8a2be611e95a22853f303c6934acf5333c",
+        "git_blob": "3ffa59448b6a80bc28802cbd6c458d2f6bf3d379"
+      },
+      {
+        "path": "tests/test_skeleton.py",
+        "bytes": 26399,
+        "sha256": "c4d522a4d48966ec4112086ee03a7132f24069fd67bb653177c98fec863d984d",
+        "git_blob": "2a2d35d453e84c1e7032e6313ae478873b01d26c"
+      },
+      {
+        "path": "tests/test_skill.py",
+        "bytes": 4401,
+        "sha256": "1221876b5c5636fc38578c000faaef90ff03f37f9675396cd5d724619f05eb2b",
+        "git_blob": "7556cfcc5daff6b40a8ead92c2c3b69451eb6351"
+      },
+      {
+        "path": "tests/test_smoke.py",
+        "bytes": 22641,
+        "sha256": "ba3c582ddcdf71de21e524a874e3da3858110087c5197eeb9bc6447a31535cdd",
+        "git_blob": "6bc639ac219d7da10086eef360094a88a4878e69"
+      },
+      {
+        "path": "tests/test_store.py",
+        "bytes": 35248,
+        "sha256": "dc1d27a576995df253cdb8accfda7ee473004915fea2e559f309596740d59953",
+        "git_blob": "02b200ceeff608aa1cc536b93ca8bfe81ce6369d"
+      },
+      {
+        "path": "tests/test_sync.py",
+        "bytes": 12369,
+        "sha256": "f2f0feb376ed9c56f245bfa6f0d4f80c2b7e30a4d372ea52b1b226dd3a643aa9",
+        "git_blob": "1be4e3e5164720361e3c9ea2ec6d556a485f509b"
+      },
+      {
+        "path": "tests/test_telegram.py",
+        "bytes": 24749,
+        "sha256": "6e477e436f437bd953d5bcfa1d3aae327a77256f7768a206ce480eee0fd9d603",
+        "git_blob": "1f2133c8fd8c63debbfa7bee0fd9ef0471cd8933"
+      },
+      {
+        "path": "tests/test_weight_lifestyle.py",
+        "bytes": 12019,
+        "sha256": "3595f01c153cc8c957d9d3006653a2958e0a47cb7b0c95924eb0a2d57b004ae9",
+        "git_blob": "1e862a5908f0318fc427bec72b33d40cba921398"
+      },
+      {
+        "path": "uv.lock",
+        "bytes": 285839,
+        "sha256": "f6086359c28526ef50bfdc4a890fc3d752642792a82a21ff96c210001f1fb3ca",
+        "git_blob": "70389fa80c085f8a287387b7a5ffb054e9bdf9f9"
+      }
+    ]
+  },
+  "included": "Tracked code, skills, tests/synthetic fixtures, dependency files, public default configs, deployment reference, README only",
+  "excluded": [
+    "runtime/",
+    "data/",
+    "reports/",
+    "inbox/",
+    "tests/fixtures/garmin/",
+    ".venv/",
+    "credentials/tokenstore",
+    ".env",
+    "personal profile and runtime config",
+    "BMAD runtime/agent configuration"
+  ],
+  "private_capture_locator": "~/github/garmin/data/absorption-prep/LATEST",
+  "private_data_in_archive": false,
+  "readiness": "preparation only; no product integration, actual import, deployment or container startup"
+}

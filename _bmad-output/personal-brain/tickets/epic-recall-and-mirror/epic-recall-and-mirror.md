@@ -3,7 +3,7 @@ type: epic
 title: "조회와 미러"
 parent: personal-brain
 covers: [CAP-4, CAP-5, CAP-6, CAP-7, CAP-13, CAP-14]
-after: ["epic-capture", "epic-log-and-context", "epic-drive"]
+after: ["epic-capture", "epic-attachments", "epic-log-and-context", "epic-drive", "epic-search-and-health-query"]
 assignee: ""
 risk: medium
 ---
@@ -12,7 +12,7 @@ risk: medium
 
 ## Description
 
-조각 생성(drain), 키워드 검색(FTS5 trigram, 질의는 Core 함수 하나가 구절로 감쌈), EXIF 촬영 일시 필터(문서 조각·파일 이름·경로 검색과 `recall docs`·`files show`·`files url`은 epic-drive의 E8-6이 먼저 만든다, 2026-10-26), 종류별 결과 계약, `brain recall time/logs/chunks/tools/expand`, `brain sessions list/read`, 결과 계약(출처·근접 정렬·8,000자), 세션별 Markdown 미러와 `mirror rebuild`, 조각 색인을 다시 만드는 `index rebuild`(키워드 구성), `recall` 직전 증분 수집(epic-capture의 세션 토큰 수집을 부른다. `log append`의 선수집은 epic-log-and-context)을 만든다.
+(→ 2026-10-28: 대화 조각 생성·키워드 검색·결과 계약·`recall chunks/tools/expand`·`sessions read`는 epic-search-and-health-query로 옮겼다. 아래 Notes 2026-10-28) 조각 생성(drain), 키워드 검색(FTS5 trigram, 질의는 Core 함수 하나가 구절로 감쌈), EXIF 촬영 일시 필터(문서 조각·파일 이름·경로 검색과 `recall docs`·`files show`·`files url`은 epic-drive의 E8-6이 먼저 만든다, 2026-10-26), 종류별 결과 계약, `brain recall time/logs/chunks/tools/expand`, `brain sessions list/read`, 결과 계약(출처·근접 정렬·8,000자), 세션별 Markdown 미러와 `mirror rebuild`, 조각 색인을 다시 만드는 `index rebuild`(키워드 구성), `recall` 직전 증분 수집(epic-capture의 세션 토큰 수집을 부른다. `log append`의 선수집은 epic-log-and-context)을 만든다.
 
 2026-10-15 epic-capture 인셉션으로 정한 것:
 - 근접 정렬은 같은 워크트리 → 프로젝트 → 전체다. 워크스페이스는 slice 1에서 쓰지 않는다.
@@ -37,8 +37,8 @@ risk: medium
 
 1. "어제·지난주·특정 날짜" 시간 조회가 프로젝트를 가리지 않고 시간순으로 나오고, 기록이 없는 기간은 빈 결과다.
 2. SM-3 채점표(addendum §8)는 사람이 채점해 `~/.second_brain/eval/`에 기록하고, 회귀 러너가 같은 폴더의 문항 파일로 고정 질의의 적중률(hit@k)을 재어 날짜별 결과를 남기며, 랭킹·조각 규칙·`index rebuild`를 바꾼 뒤 같은 문항으로 다시 재면 떨어진 문항이 보인다(2026-10-20).
-3. 모든 결과의 출처만으로 `recall expand`·`sessions read`가 원문까지 내려간다.
-4. 한 번의 결과가 8,000자를 넘으면 낮은 순위 행부터 통째로 빠지고 1위는 남으며, `RESULT_TRUNCATED`와 함께 `meta.omitted.count`와 다음에 실행할 `meta.next`가 붙는다. 검색이 실패한 것(`SEARCH_FAILED`)과 0건이 응답에서 구분된다.
+3. (→ 2026-10-28 epic-search-and-health-query) 모든 결과의 출처만으로 `recall expand`·`sessions read`가 원문까지 내려간다.
+4. (→ 2026-10-28 epic-search-and-health-query의 결과 계약. 이 에픽의 조회도 같은 계약을 쓴다) 한 번의 결과가 8,000자를 넘으면 낮은 순위 행부터 통째로 빠지고 1위는 남으며, `RESULT_TRUNCATED`와 함께 `meta.omitted.count`와 다음에 실행할 `meta.next`가 붙는다. 검색이 실패한 것(`SEARCH_FAILED`)과 0건이 응답에서 구분된다.
 5. 미러를 지우고 `mirror rebuild`로 다시 만들면 같은 내용이고, 미러를 고쳐도 DB는 변하지 않으며, 가린 세션의 미러에는 가린 값이 없다.
 6. `index rebuild`로 조각을 비우고 다시 만들어도 원문·로그·출처가 변하지 않고, 미색인 세션은 `UNINDEXED`로 표시된다. 조회 지연(SM-7)을 실측해 기록하고, doctor가 색인 설정과 실패 색인을 보인다.
 7. (2026-10-26: 문서 본문·폴더 이름·파일 이름 검색과 원본 URL·미색인 표시·질의 처리는 epic 8의 E8-6으로 옮겼다. 이 에픽은 그 위에 촬영 일시 필터를 더한다(EXIF, 이 에픽의 1 — 옛 10.9).) 문서 본문의 단어, 폴더 이름, 촬영 일시로 문서·사진이 찾히고, 결과에 원본 URL이 붙으며, 미색인 파일은 표시된다. 공백 든 질의와 `a-b`·`AND`·`"` 같은 질의가 오류나 조용한 0건 없이 처리된다.
@@ -73,3 +73,9 @@ AD-13·14(로그 없는 세션의 첫 요청 문장, FR-9 표시)·15·16·23·2
   - 세션·메시지를 읽어 내보내는 새 읽기는 `sessionForOutput`을 거친다(I95) — 도구 메모 대상 전용 가리기 규칙은 일반 엔벨로프 가리기만으로는 걸리지 않는다.
 - Carry(2026-10-22, epic-attachments 인셉션, 사용자 결정): 추출한 문서 텍스트(`document_chunks.body`)와 파일 이름을 내보내는 출력 경로(문서 검색 결과·발췌, `files show`)는 이 에픽이 만들고, 출력 코덱으로 가린다(마스킹 B). epic-attachments는 원문 저장까지만 하고 문서 본문 출력 경로를 만들지 않는다. 출력 코덱 계약 테스트의 probe에 문서 조각을 더한다(`packages/core/src/output/codecs.ts`). 원본에 닿을 수 없는 파일(`source_unreachable_at`)과 포인터가 없는 실패·미지원 파일을 결과에서 어떻게 보일지도 여기서 정한다. → 2026-10-26: 이 출력 경로와 probe는 epic-drive(E8-6)가 만든다.
 - Decision(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): V1 뒤(backlog). 문서 검색 부분(Done when 7의 대부분)은 epic 8(E8-6)로 옮겼고, 이 에픽은 epic 8을 기다린다.
+- Decision(2026-10-28, `../../prep-garmin-absorption/`, 사용자): 대화 검색(CAP-6·7의 대화 조각·도구 메모 내용 검색과 넓히기, 결과 계약, `recall expand`·`sessions read`)은 epic-search-and-health-query(17)가 PostgreSQL 위에서 먼저 만든다. 이 에픽에 남는 것은 그 경로 위의 다음 일들이다.
+  - 시간 조회(CAP-5)와 작업 로그 대분류 검색(CAP-6의 로그 부분)
+  - 미러(CAP-13), EXIF(CAP-14), `--count`, 회귀 러너, `index rebuild`
+  - 위 Description의 FTS5 trigram·`EXPLAIN QUERY PLAN`·LIKE 폴백은 SQLite 전제이므로 인셉션 때 PostgreSQL 기준으로 다시 쓴다.
+  - CAP-6·7을 17과 나눠 가지며, 정확한 경계는 인셉션 때 정한다.
+- Waits on epic-search-and-health-query because: 공통 텍스트 검색과 대화 조각·도구 메모 검색·넓히기, 결과 계약 위에 이 에픽의 조회를 얹는다.

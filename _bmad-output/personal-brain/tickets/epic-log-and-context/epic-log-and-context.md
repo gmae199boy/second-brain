@@ -3,7 +3,7 @@ type: epic
 title: "작업 로그와 시작 맥락"
 parent: personal-brain
 covers: [CAP-3, CAP-8, CAP-9, CAP-10]
-after: ["epic-capture", "epic-drive"]
+after: ["epic-capture", "epic-attachments", "epic-drive", "epic-postgres-primary"]
 assignee: ""
 risk: high
 ---
@@ -97,3 +97,6 @@ AD-6·9·11·12·13·14·17, Table Contract(log_entries, log_entry_edits, contex
 - Note(2026-10-23, 인셉션 집합 점검): 각 스토리의 계획은 verify를 다시 돌릴 수 있게 실행 명령·픽스처 준비·판정 위치를 남긴다.
 - Decision(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): V1 뒤(backlog, 삭제 아님). 15개 티켓은 그대로 두고 3.13 Refactor sweep만 drop. epic 10과의 병렬 엮음 넷(2026-10-23)은 착수 때 다시 본다. 마이그레이션 0009 번호는 epic 8의 외부 source 메타 마이그레이션이 먼저 쓸 수 있으므로 착수 때 다음 번호를 쓴다.
 - Dropped(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): 13 Refactor sweep. 에픽 재개 때 확인된 결함만 기능 스토리에 흡수한다.
+- Note(2026-10-28, `../../prep-garmin-absorption/`, 인셉션 입력): 저장소가 PostgreSQL 하나로 바뀌었다. E3-8의 "마이그레이션 0009"와 "Postgres는 epic 7"은 SQLite 전제다. 인셉션 때 epic-postgres-primary의 마이그레이션 실행기에서 다음 번호를 쓰고, trigger는 PostgreSQL로 만든다. 계획된 엔트리의 Store·handler·spool 조립 방식도 그 에픽의 PostgreSQL Store를 따른다.
+- Note(2026-10-28, 트리 검증, 인셉션 입력): 계획된 14개 엔트리는 SQLite를 전제한다(3.5 "마이그레이션 0009"는 이미 `0009_schedules.sql`이다). 인셉션 때 다시 쪼개고(re-slice) set 검증을 다시 돈다. `plugin/skills/`의 첫 스킬은 epic-extensions의 공통 install 스킬이므로, 3.11의 스킬 생성·parity는 그 위에 얹는다.
+- Waits on epic-postgres-primary because: 마이그레이션 실행기의 다음 번호(3.5)와 PostgreSQL Store·handler·spool 조립(3.4)을 쓴다.

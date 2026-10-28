@@ -37,7 +37,7 @@ risk: medium
 - E10-5 (CAP-14): 형식별 추출 — txt·md 본문 조각과 다시 추출 경로(`failures retry`가 파일 추출 실패를 새 시도로 넣고, 추출기 버전이 오르면 drain이 다시 넣는다). 이미지 EXIF와 촬영 일시 세 칸은 epic 4로 옮겼고(E4-1, 옛 10.9), 별도 `files reindex` 명령은 만들지 않는다(2026-10-26). PDF·docx 추출기는 epic-drive(2026-10-22). (FR-28, AD-24)
 - E10-6 (CAP-14): 블롭 삭제 일감 — Brain 위치의 블롭 하나를 멱등으로 지우는 일감(파일 가리기와 epic 8의 Drive 이전이 쓴다). 고아 블롭 자동 순회(유예 24시간)와 doctor 건수·바이트 점검은 V1 뒤(2026-10-26). (NFR-2, AD-21·23)
 - E10-7 (CAP-2): 파일 가리기 — Core `Redaction`의 `fileId`와 범위 null, `files redact`(확인 게이트)가 한 트랜잭션에서 `redacted_at`, 추출 세대·조각·FTS, `file_names`·이름 FTS·`file_metadata`, `redactions`를 지우거나 쓰고 Brain 위치의 블롭 삭제 일감을 넣으며, 다시 추출·이름·메타데이터 생성은 가린 파일을 건너뛴다. `messages redact`는 가리지 않은 첨부가 있으면 `ATTACHMENT_NOT_REDACTED`를 낸다. (FR-26, NFR-1, AD-11·23; S13, deferred-work I75)
-- E10-8 (CAP-14 스키마): 마이그레이션 0008 — `message_attachments`·`document_extractions`·`document_chunks`의 변경 규칙 trigger(자리·출처 불변, `file_id`·`status`는 한 번 채움, 추출 세대의 허용 전이, 실패 세대 조각 정리와 가리기의 삭제 허용). Postgres는 epic 7. (NFR-1, Table Contract; deferred-work I67)
+- E10-8 (CAP-14 스키마): 마이그레이션 0008 — `message_attachments`·`document_extractions`·`document_chunks`의 변경 규칙 trigger(자리·출처 불변, `file_id`·`status`는 한 번 채움, 추출 세대의 허용 전이, 실패 세대 조각 정리와 가리기의 삭제 허용). Postgres는 epic 7(→ 2026-10-28 epic-postgres-primary가 PostgreSQL로 옮긴다). (NFR-1, Table Contract; deferred-work I67)
 
 ## Done when
 
@@ -100,3 +100,4 @@ AD-7·9·11·21·23·24, Table Contract(files, file_locations, message_attachmen
 - Dropped(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): 13 Refactor sweep. 확인된 결함은 해당 스토리에 흡수하고, 마지막 통합 확인은 epic 8의 실계정 확인이 맡는다.
 - Moved(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): 9 EXIF·촬영 일시는 V1 뒤라 epic 4(epic-recall-and-mirror)의 1로 옮겼다(그 에픽의 촬영 일시 필터와 함께 만든다). id 9는 다시 쓰지 않는다(`next_id = 15`).
 - Note(2026-10-26, 세트 검증 제안, 빌드 입력): 10.10 verify에 원본 접근 불가 파일(`source_unreachable_at`)에 retry·버전 상승 drain을 돌려도 새 attempt가 생기지 않고 기존 조각·포인터가 남으며 `FILE_SOURCE_UNREACHABLE`과 건수가 보이는 사례, 정상 파일의 두 번째 drain에 추가 attempt가 없는 사례를 더한다(AD-24). 10.12 verify에서는 가린 뒤 4의 이름 채우기와 8의 대기 추출을 다시 돌려 이름·FTS·조각이 되살아나지 않는지 본다. 10.11은 4·14·8·10과 경로가 없으므로, 계획에서 handler·Store 능력 파일과 공통 등록부(`packages/core/src/brain.ts`의 handler 등록, `packages/core/src/ports/store.ts`의 Store 합성) 편집 소유자를 정한다.
+- Note(2026-10-28, `../../prep-garmin-absorption/`): 저장소가 PostgreSQL 하나로 바뀐다. 이 에픽이 만든 SQLite 0008 trigger·FileStore·추출 세대 Store는 되돌리지 않는다. epic-postgres-primary가 PostgreSQL로 옮기고 같은 계약 테스트로 확인한다. 리뷰 중인 스토리는 그대로 진행한다.

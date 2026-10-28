@@ -46,3 +46,4 @@ AD-15, Table Contract(embeddings, index_configs). 기본 구성에서는 외부 
 - Decision(2026-10-14): 임베딩은 지금 하지 않는다. 에픽 순서의 맨 뒤로 옮겼다(사용자). 벡터 저장은 pgvector가 아니라 sqlite-vec.
 - Note(2026-10-19, `../../change-masking-b-and-review-fixes/`, 인셉션 입력): 마스킹 B. 임베딩·재순위 요청은 출력 코덱이고 보내는 텍스트는 가린 텍스트다. 색인 행은 원문 조각을 가리킨다(spine AD-11·15).
 - Decision(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): V1 뒤(backlog). 순서는 그대로 맨 뒤.
+- Note(2026-10-28, `../../prep-garmin-absorption/`, 인셉션 입력): 저장소가 PostgreSQL 하나로 바뀌어 2026-10-14의 "pgvector가 아니라 sqlite-vec" 결정의 근거(원본이 SQLite)가 없어졌다. 벡터 저장은 인셉션 때 다시 정한다. pgvector는 Garmin 흡수의 선행 조건이 아니다(이니셔티브 C2).

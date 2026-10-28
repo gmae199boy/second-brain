@@ -6,6 +6,7 @@ covers: [CAP-11, CAP-12]
 after: ["epic-operations", "epic-daemon", "epic-drive"]
 assignee: ""
 risk: medium
+status: dropped
 ---
 
 # 복제 대상과 원본 이전
@@ -60,3 +61,4 @@ AD-10·11·22. 원본은 로컬 SQLite이고, 복제 대상의 읽기·검색은
 - Carry(2026-10-22, epic 2 회고): Postgres 스키마는 SQLite 0004·0005뿐 아니라 0006(메시지 `seq` 삭제, chunk 시각 범위)과 0007(`sessions.tag_source`·`first_cwd`)도 따라잡아야 한다(`deferred-work.md` I74).
 - Decision(2026-10-26, `../../change-v1-capture-and-drive/`, 사용자): V1 뒤(backlog). Done when 5(데몬 켜짐·꺼짐 양쪽 검증) 삭제.
 - Note(2026-10-26, 트리 검증 제안, 인셉션 입력): epic 5의 V1 완료는 로컬 백업뿐이고 전체 내보내기 형식은 V1 뒤다. 이 에픽 인셉션에서 복제·이전 검증에 전체 내보내기가 필요한지, 로컬 백업 계약이면 되는지 정한다.
+- Dropped(2026-10-28, `../../prep-garmin-absorption/`, 사용자): 저장소가 OrbStack Docker의 PostgreSQL 하나로 바뀌어 "SQLite 원본 + 복제 대상" 모델이 없어졌다(이니셔티브 C1). 기존 `brain.db`는 옮기지 않으므로(운영 전) `setup move-store`도 필요 없다. 남겨 둔 `packages/postgres`와 Docker 흐름은 epic-postgres-primary가 다시 쓴다. Drive에 기록 사본을 두는 백업 아이디어는 epic-operations 인셉션의 입력으로 넘긴다. 이 에픽을 기다리는 에픽은 없다.

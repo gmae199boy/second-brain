@@ -3,7 +3,7 @@ type: epic
 title: "운영: 내보내기·복구, 업그레이드, 제거"
 parent: personal-brain
 covers: [CAP-12, CAP-11]
-after: ["epic-attachments", "epic-drive"]
+after: ["epic-attachments", "epic-drive", "epic-postgres-primary"]
 assignee: ""
 risk: medium
 ---
@@ -68,3 +68,6 @@ AD-8·12·18·19·20·24·25, Conventions(내보내기, 설치·런타임 기록
 - Note(2026-10-27, epic-daemon 쪼개기): V1 `setup upgrade` 명령은 이 에픽이 만들고, epic-daemon 9.6이 플러그인 bootstrap 갱신에 붙인 데몬 재시작 단계를 같은 방식으로 부른다. 인셉션 때 Done when에 "데몬 없이도 이 에픽의 테스트가 통과한다"를 이어받는다(epic-daemon Done when 1).
 - Decision(2026-10-27, 사용자): V1 뒤(backlog, 삭제 아님). 로컬 백업·복구 확인, 스키마 가드, `setup upgrade`는 쓰면서 확인하고 버그로 고친다. 자동 업데이트(SessionStart bootstrap)가 `setup upgrade`를 대신하고 스키마 불일치 거부는 epic 1·2가 했다. epic-drive가 이 에픽을 기다리지 않게 하고, 백업이 맡던 안전장치는 epic-drive의 원본 보관 기간이 대신한다. 순서는 epic-drive 뒤, 에픽 전체 대기.
 - Waits on epic-drive because: V1 완료 뒤 착수(2026-10-27). epic-daemon이 넘긴 `setup upgrade` 명령·"데몬 없이 테스트 통과" 이어받기(2026-10-27 Note)는 착수 때 그대로 유효하다.
+- Note(2026-10-28, `../../prep-garmin-absorption/`, 인셉션 입력): 저장소가 PostgreSQL 하나(OrbStack Docker, 영속 볼륨)로 바뀌었다. 로컬 백업·복구·스키마 가드·`setup upgrade`의 "DB 파일·`-wal`·`-shm`" 전제는 PostgreSQL 백업(덤프 또는 볼륨) 기준으로 다시 정한다. drop된 epic 7의 "Drive에 기록 사본" 아이디어를 백업 대상 후보로 본다. 위 Carry I91(WAL checkpoint)은 SQLite를 지우면 대상이 없어진다.
+- Waits on epic-postgres-primary because: 백업·복구 대상이 PostgreSQL 컨테이너·볼륨과 그 스키마다(2026-10-28).
+- Note(2026-10-28, 트리 검증, 인셉션 입력): `stats show`(Done when 6)는 epic 3의 `context_injections.kind`·`elapsed_ms`를 읽는데, 이 에픽이 epic 3보다 앞이다. 인셉션 때 그 스토리를 epic 3 뒤로 보내거나 두 에픽의 순서를 바꾼다.

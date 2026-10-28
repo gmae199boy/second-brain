@@ -1,0 +1,8 @@
+# Personal migration inputs stay outside this shareable preparation package.
+local-private/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.dump
+.env
