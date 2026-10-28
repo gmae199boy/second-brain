@@ -3,7 +3,7 @@ title: '닫힌 세션 다시 읽기와 수집 실패 해소'
 type: 'feature'
 ticket: '1'
 created: '2026-10-23'
-status: 'built'
+status: done
 baseline_revision: '397c1d64d84ce0c31abc54548e411dc5ff4c5462'
 route: 'full'
 route_source: 'auto'

@@ -3,7 +3,7 @@ title: 'Tracer: 붙여 넣은 이미지 한 장이 원본째 남는다'
 type: 'feature'
 ticket: '2'
 created: '2026-10-23'
-status: 'built'
+status: done
 baseline_revision: '80a44e32400583217f744c3aed6eb8d778786a27'
 route: 'full'
 route_source: 'auto'

@@ -3,7 +3,7 @@ title: '마이그레이션 0008: 첨부·추출 변경 규칙 trigger'
 type: 'feature'
 ticket: '6'
 created: '2026-10-23'
-status: 'built'
+status: done
 baseline_revision: 'a87386bb8f601b80adeeee2fa7cede0ef50cbfc0'
 route: 'full'
 route_source: 'auto'

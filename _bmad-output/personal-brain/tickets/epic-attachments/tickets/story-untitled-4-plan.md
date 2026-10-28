@@ -3,7 +3,7 @@ title: '@파일 첨부와 사용자 원본 위치'
 type: 'feature'
 ticket: '4'
 created: '2026-10-26'
-status: 'built'
+status: done
 baseline_revision: '2626a9347629c9628fbbdf3da00099ab60f4f8dd'
 route: 'full'
 route_source: 'auto'

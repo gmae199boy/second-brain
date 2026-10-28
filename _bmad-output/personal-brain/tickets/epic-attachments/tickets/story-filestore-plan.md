@@ -3,7 +3,7 @@ title: 'FileStore 완성과 계약 테스트'
 type: 'feature'
 ticket: '3'
 created: '2026-10-26'
-status: 'built'
+status: done
 baseline_revision: '1cb1b9a65417b87bd61df45c308fd8f53833dff1'
 route: 'full'
 route_source: 'auto'
