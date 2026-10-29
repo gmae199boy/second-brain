@@ -3,7 +3,7 @@ title: '이 Mac에서 확인: 플러그인 배포로 PG 설치본이 동작한�
 type: 'chore'
 ticket: '13'
 created: '2026-10-29'
-status: blocked
+status: done
 baseline_revision: '7c7a086ec858368b9bdc7d565acf09aeefed5891'
 route: 'full'
 route_source: 'pinned'
@@ -18,8 +18,6 @@ warnings: [oversized]
 deferred: []
 operator_actions:
   - "`git push origin main`으로 배포 커밋 `dd49f71`(plugin `app-ref` = `7c7a086`, `version` 0.1.9)과 그 앞의 로컬 커밋들을 원격에 올려, 원격 marketplace가 0.1.9를 내주게 한다."
-blocked_at: "2026-10-29"
-blocked_reason: "awaiting operator: `git push origin main`으로 배포 커밋 `dd49f71`(plugin `app-ref` = `7c7a086`, `version` 0.1.9)과 그 앞의 로컬 커밋들을 원격에 올려, 원격 marketplace가 0.1.9를 내주게 한다."
 ---
 
 <intent-contract>
@@ -174,3 +172,11 @@ Status: awaiting-operator
 - 검증(오케스트레이터 재확인): `installed.json` commit `7c7a086…`, `brain doctor run` 통과 19·실패 0, `docker compose -p second-brain --env-file … ps` healthy, `brain daemon status` 살아 있음(pid 6631), spool 0개, PG 세션 220·메시지 4,305, 임시 홈 접미사 컨테이너·볼륨·LaunchAgent 없음, 배포 커밋이 두 파일만 바꿈.
 - 남은 위험: 원격 push 전에는 원격 marketplace가 0.1.8(SQLite 빌드)을 내준다. 이 Mac의 플러그인은 로컬 marketplace(이 저장소)를 출처로 쓴다. 배포 커밋의 attribution 줄은 구현 세션이 쓴 `Co-Authored-By: Codex`다.
 - 사람 몫(`operator_actions`): 원격 push. 티켓 완료 표시는 오케스트레이터가 한다. push하지 않았다.
+
+## Operator Confirmation
+
+Confirmed 2026-10-29: the external actions this story owed were carried out.
+
+- `git push origin main`으로 배포 커밋 `dd49f71`(plugin `app-ref` = `7c7a086`, `version` 0.1.9)과 그 앞의 로컬 커밋들을 원격에 올려, 원격 marketplace가 0.1.9를 내주게 한다.
+
+_Appended by the bmad-loop orchestrator (`bmad-loop confirm`, #335): a human confirmed these external actions out of band, and the story was advanced from `awaiting-operator` to `done`._
