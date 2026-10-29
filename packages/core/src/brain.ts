@@ -1,6 +1,11 @@
+import { installExtension, type ExtensionRuntime } from './extensions/install.js';
+import { extensionStatus, listExtensions } from './extensions/status.js';
+import { holdWorkGroup, releaseWorkGroup } from './queue/hold-groups.js';
+import { listWork } from './queue/list.js';
 import { workExecutionClass } from './domain/work-item.js';
 import type { SchemaVersions } from './schema.js';
 import { getSetting, setSetting, settingDefinitions } from './settings/index.js';
+import { addDaily, listSchedules, removeSchedule, runSchedule, type AddDailyInput, type AddDailyResult, type RunScheduleResult } from './queue/schedules.js';
 import { tickSchedules, type ScheduleTickResult } from './queue/schedule-tick.js';
 import { SCHEDULE_PROBE_KIND, scheduleProbeHandler } from './queue/schedule-probe-work.js';
 import type { AttachmentLinkSpoolPayload } from './domain/spool-record.js';
@@ -43,7 +48,7 @@ import type { IdGen } from './ports/id-gen.js';
 import type { Parser } from './ports/parser.js';
 import type { RepositoryInspector } from './ports/repository.js';
 import type { Spool } from './ports/spool.js';
-import type { SchemaStore, Store } from './ports/store.js';
+import type { SchemaStore, Store, SettingsStore } from './ports/store.js';
 import type { TranscriptFolder, TranscriptReader } from './ports/transcript.js';
 import {
   drainQueue,
@@ -59,6 +64,7 @@ import {
 import { replaySpool, type SpoolReplayHandlers } from './spool/replay.js';
 
 export interface BrainDependencies {
+  extensions?: ExtensionRuntime;
   sources?: SourceFileReader;
   userHome?: string | null;
   /**
@@ -68,7 +74,7 @@ export interface BrainDependencies {
    * answer `doctor.run`, but it cannot ingest, and the type is where that is
    * decided rather than at the call (AD-10).
    */
-  store: Store & SchemaStore;
+  store: Store & SchemaStore & SettingsStore;
   /** Original attachment bytes, written before the database transaction. */
   files: FileStore;
   /**
@@ -196,6 +202,9 @@ export interface BrainDrainReport extends DrainQueueReport {
 
 export type BrainQueueCancelResult = { ok: true; id: string; state: 'cancelled' | 'requested' | 'already_closed' } | { ok: false; code: 'WORK_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface BrainQueue {
+  hold(input: { group: string }): ReturnType<typeof holdWorkGroup>;
+  release(input: { group: string }): ReturnType<typeof releaseWorkGroup>;
+  list(input?: Parameters<typeof listWork>[1]): ReturnType<typeof listWork>;
   cancel(input: { id: string }): Promise<BrainQueueCancelResult>;
   /** Work the backlog within a time budget, and report what happened (AD-21). */
   drain(input: BrainQueueDrainInput): Promise<BrainDrainReport>;
@@ -220,14 +229,27 @@ export interface BrainFiles {
   redact(input: FilesRedactInput): Promise<FilesRedactResult>;
 }
 
+export interface BrainSchedules {
+  tick(): Promise<ScheduleTickResult>;
+  add(input: AddDailyInput): Promise<AddDailyResult>;
+  list(input?: { limit?: number }): ReturnType<typeof listSchedules>;
+  remove(input: { id: string }): ReturnType<typeof removeSchedule>;
+  run(input: { scheduleId: string }): Promise<RunScheduleResult>;
+}
+export interface BrainExt {
+  install(input: { name: string }): ReturnType<typeof installExtension>;
+  status(input: { name: string }): ReturnType<typeof extensionStatus>;
+  list(): ReturnType<typeof listExtensions>;
+}
 export interface Brain {
+  ext: BrainExt;
   messages: BrainMessages;
   files: BrainFiles;
   doctor: BrainDoctor;
   sessions: BrainSessions;
   failures: BrainFailures;
   queue: BrainQueue;
-  schedules: { tick(): Promise<ScheduleTickResult> };
+  schedules: BrainSchedules;
   close(): Promise<void>;
 }
 
@@ -366,7 +388,9 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     },
   };
 
+  const readTimeZone = () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' });
   return {
+    ext: { install: input => installExtension(dependencies, input), status: input => extensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
     files: { redact: (input) => redactFile({ store, clock, idGen }, input) },
     doctor: {
@@ -404,8 +428,17 @@ export function createBrain(dependencies: BrainDependencies): Brain {
       list: (input) => listFailures({ store }, input),
       retry: (input) => retryFailures({ store, clock, idGen }, input),
     },
-    schedules: { tick: () => tickSchedules({ store, clock, idGen }) },
+    schedules: {
+      tick: () => tickSchedules({ store, clock, idGen, readTimeZone }),
+      list: input => listSchedules({ store }, input),
+      remove: input => removeSchedule({ store }, input),
+      add: input => addDaily({ store, clock, idGen, readTimeZone }, input),
+      run: input => runSchedule({ store, clock, idGen, readTimeZone }, input),
+    },
     queue: {
+      hold: input => holdWorkGroup({ store, clock }, input),
+      release: input => releaseWorkGroup({ store }, input),
+      list: input => listWork({ store, clock }, input),
       async cancel(input) {
         const result = await store.requestWorkCancel({ id: input.id, now: clock.now() });
         if (!result.ok) return result;

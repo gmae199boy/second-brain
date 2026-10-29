@@ -3,23 +3,49 @@ title: '프로세스 ABI v1 완성: 같은 fixture에 TS 코덱이 기대 판정
 type: 'feature'
 ticket: '4'
 created: '2026-10-29'
-status: blocked
-baseline_revision: 541365e705cbe670d24386c084ba32b1d072fef1
+status: done
+baseline_revision: ec91837a6e83385ab98b071a2d023ab439e1a019
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
 review: 'thorough'
 review_source: 'pinned'
 lenses_ran: [blind-hunter, edge-case-hunter, verification-gap, intent-alignment]
-review_loop_iteration: 0
-followup_review_recommended: true
+review_loop_iteration: 2
+followup_review_recommended: false
 context:
   - '{project-root}/_bmad-output/personal-brain/tickets/epic-jobs-and-scheduler/epic-jobs-and-scheduler.md'
   - '{project-root}/_bmad-output/personal-brain/tickets/epic-jobs-and-scheduler/tickets/story-attempt-token-db-plan.md'
 warnings: [oversized]
-deferred: []
-blocked_at: "2026-10-29"
-blocked_reason: "intent gap: 줄별 독립 maskSecrets 계약에서는 TOKEN= 또는 Bearer 뒤 줄바꿈에 이어지는 자격 증명이 평문으로 남는다. 비밀 비노출 요구와 충돌하므로 PEM 외 패턴도 줄 사이 문맥을 보존하도록 계약을 바꿀지 결정이 필요하다. 시도 변경은 tickets/story-abi-v1-fixture-ts-plan.patch에 보존했다."
+deferred:
+  - summary: >-
+      기존 비밀 탐지기는 따옴표 직후 줄바꿈이 있는 영어 keyword 값을 탐지하지 못한다.
+    evidence: |-
+      TOKEN="\nSyntheticSecret123\n"을 기준 revision ec91837a6e83385ab98b071a2d023ab439e1a019의 maskSecrets와 현재 구현에 넣으면 둘 다 그대로 반환한다. 기존 VALUE·인용 정책의 한계이며 이번 성능 변경의 회귀가 아니다. 지원 형식과 문장 보존 정책을 정한 뒤 별도로 탐지기를 개선해야 한다.
+    location: >-
+      packages/core/src/domain/secret-patterns.ts
+    severity: high
+  - summary: >-
+      기존 영어 문장 예외는 명시적 keyword 뒤 다음 줄의 여러 단어 비밀번호도 그대로 남긴다.
+    evidence: |-
+      password:\ncorrect horse battery staple\n은 기준 revision과 현재 모두 그대로 반환한다. keywordValueLooksLikeSecret가 뒤 단어를 문장으로 판정하는 기존 정책이며 새 전체 문맥 전달이나 색인의 회귀가 아니다. 명시적 대입의 여러 단어 값을 어디까지 탐지할지 별도 정책 검토가 필요하다.
+    location: >-
+      packages/core/src/domain/secret-patterns.ts
+    severity: high
+  - summary: >-
+      기존 영어 인용 값 처리도 비밀에 포함된 끝 괄호를 가림 밖에 남긴다.
+    evidence: |-
+      password="abc)"는 기준 revision과 현재 모두 닫는 괄호를 가림 밖에 남기고, password=")))"는 그대로 반환한다. 기존 trimClosers가 인용 값에도 적용되는 동작이다. 닫힌 인용 값의 괄호 처리 규칙을 별도로 고쳐야 한다.
+    location: >-
+      packages/core/src/domain/secret-patterns.ts
+    severity: high
+  - summary: >-
+      기존 한국어 keyword 패턴은 따옴표로 둘러싼 값을 탐지하지 못한다.
+    evidence: |-
+      비밀번호: "SyntheticSecret123"은 기준 revision과 현재 모두 그대로 반환한다. 한국어 패턴에는 영어 open 인용 그룹이 없으며 이번 색인 변경 전부터 존재한 한계다. 한국어 인용 값 지원을 별도로 정의하고 구현해야 한다.
+    location: >-
+      packages/core/src/domain/secret-patterns.ts
+    severity: high
 ---
 
 <intent-contract>
@@ -117,10 +143,31 @@ blocked_reason: "intent gap: 줄별 독립 maskSecrets 계약에서는 TOKEN= �
 
 ## Implementation Notes
 
+- 이번 thorough 복구 구현 세션은 `01a184b9-2e8b-7ea3-a908-90b0982e4900`, 메모리 복구와 최종 직접 패치 세션은 `01a184c2-1860-7972-82d9-90cb76db0b3a`다. 표식 조회·값 구간 재사용·희소 괄호/Unicode 색인으로 반복 처리 비용과 대형 본문 할당을 줄였다. private 색인은 후보 접미부에서만 만들며 더 앞선 후보에서는 다시 만든다. 패턴 버전은 최종 3이다.
+
 - 구현 세션(codex)이 `e4f8950`으로 커밋했다. 구현 세부와 검증 결과는 아래 Verification의 "구현 검증 결과"에 있다. 아래 Review Triage Log의 첫 두 행(머리글 없음)은 구현 세션이 커밋 전에 스스로 돌린 검토의 기록이다.
 - 리뷰 패치: `apps/cli/src/runtime/process-group.ts`의 `buffer()`가 대기열이 `PROCESS_ABI_MAX_LINE_BYTES`(64 KiB)에 이르면 `stream.pause()`, 그 절반 아래로 줄면 `stream.resume()`한다. `apps/cli/test/process-group.test.ts`에 소비가 늦는 동안 16 MiB를 쓰려는 실제 자식이 막히고, 소비 재개 뒤 `ABI_LINE_TOO_LONG`으로 끝나는 시험을 더했다.
 
 ## Plan Change Log
+
+### 2026-10-29 — 동기 가림 비용 복구
+
+- 원인: 전체 문맥 계약을 구현하면서 URL 정규식만 비용을 검증했고, 표식 조회·열린 호출·중첩 호출의 반복 접미부 탐색을 빠뜨렸다. 1 MiB 이내 입력에서도 감독자의 동기 정산이 막힌다.
+- 복구 순서: 소스·시험·출하 ABI README의 이번 기준 커밋 이후 변경만 `ec91837a6e83385ab98b071a2d023ab439e1a019` 상태로 되돌린 뒤 최신 intent-contract 전체 문맥 계약을 다시 도출한다. 계획·티켓·원장·커밋 이력은 되돌리지 않는다. 기존 변경은 `1fe745bcd970e03292f67117b87c5b99a6c19a73`에 보존되어 있다. 원장 항목을 고치거나 상태를 바꾸지 않는다. 계획의 status와 ticket 상태도 바꾸지 않으며 커밋은 조율자가 한다.
+- KEEP: 1 MiB 원문 보관과 초과 즉시 전부 폐기·계속 소비, 전체를 한 번 가리기, 최종 4096바이트와 부분 줄 버림, NUL 후처리, 비파괴 캐시, 줄 사이 비밀·PEM·모든 정산·Unicode·지연 중 소비 시험을 모두 보존한다. URL 정규식의 선형 처리와 기존 value 집합도 보존한다. 기존 deferred 항목과 triage는 수정하지 않는다.
+- `packages/core/src/domain/secret-patterns.ts`: 표식 포함 여부는 정렬 구간 조회로 처리한다. 같은 줄 괄호 짝과 접미부 괄호/closer 정보를 필요에 따라 한 번 계산하여 `isWholeCall`·`trimClosers`가 반복해서 긴 접미부를 훑지 않게 한다. 기존 가림 결과·span·hash·코드 포인트 위치·인용·거부 후보 내부 재탐색 의미를 보존한다. 새 의존이나 공용 API를 더하지 않는다. URL 패턴 변경에 맞춰 `SECRET_PATTERN_VERSION`을 3으로 올리고 고정 시험을 맞춘다.
+- `packages/core/test/process-abi.test.ts`, `packages/core/test/secret-patterns.test.ts`: 기존 성능 시험에 표식 밀집 입력, 닫히지 않은 반복 호출, 닫히는 중첩 호출을 추가한다. 모두 1 MiB 이내 입력에서 가림 결과와 적절한 처리 시간 상한을 확인한다. 작은 입력에서는 기존 의미와 정확한 결과가 같음을 확인한다. UTF-8 2·3바이트 문자로 정확한 1048576바이트와 1바이트 초과를 여러 조각 크기에서 확인한다.
+- `packages/core/schemas/process-abi/v1/README.md`: 전체 가림 뒤 NUL을 U+FFFD로 치환하고 치환 후 최종 바이트 상한을 적용한다고 명시한다.
+- 검증: 아래 Verification 명령 전체와 `git diff --check`. 보고서는 한국어로 작성하고, 소스 외 계획·티켓·원장과 그 상태는 수정하지 않는다. 남은 구현이 있으면 명시한다.
+
+
+### 2026-10-29 — 공용 가림의 메모리 복구
+
+- 원인: 시간 복잡도를 줄인 문자별 dense 배열 일곱 개가 한 후보에도 본문 전체 길이의 28배 메모리를 추가로 쓰며, stderr 밖의 큰 메시지 출력·redaction에는 1 MiB 한도가 없다.
+- 복구: 이전 복구 순서와 같은 기준 소스 상태에서 재도출한다. 기존 계획·티켓·원장과 status·커밋은 보존한다. KEEP은 이전 변경 로그 전부이며, 표식·열린 호출·중첩 호출 성능, version 3, 2·3바이트 경계와 NUL 규약도 유지한다. 첫 구현 세션의 합성 입력 4만 건 문자열·span·hash 동등성 검증도 보존한다.
+- `packages/core/src/domain/secret-patterns.ts`: 단순 keyword 후보는 불필요한 전체 본문 색인을 만들지 않는다. 괄호·값 끝·접미부 색인은 문자별 dense 배열 대신 실제 필요한 구간이나 구문 위치의 희소 색인으로 구현한다. 긴 일반 본문과 한두 비밀 후보의 추가 색인 메모리가 본문 길이의 28배가 되지 않아야 한다. 가림 문자열·위치·hash·코드 포인트와 공용 API는 기존과 같고, 기존 문장 예외와 여러 줄 인용 탐지 정책을 확대하지 않는다. 신규 두 탐지 형식은 기존 코드에도 재현되므로 별도 보류다.
+- `packages/core/test/secret-patterns.test.ts`: 괄호 네 종류의 정상 짝·혼합 접미부와 정상 짝에서 제거 중단의 고정 기대값, Unicode·기존 표식·거부 호출을 섞은 여러 후보의 처음·중간·마지막 span·hash 기대값을 더한다. 8 MiB 일반 본문과 끝의 비밀 한 개에서 가림이 정확하며 불필요한 dense 배열을 할당하지 않음을 적절한 실제 할당 측정으로 검증한다. 기존 적대 입력 성능 시험도 모두 유지한다.
+- 검증은 Verification의 전체 명령과 `git diff --check`다. 구현 보고서는 한국어로 작성한다. 계획·티켓·기존 보류 원장·status를 수정하거나 커밋하지 않는다.
 
 ## Review Triage Log
 
@@ -194,6 +241,76 @@ blocked_reason: "intent gap: 줄별 독립 maskSecrets 계약에서는 TOKEN= �
 
 - 네 렌즈의 결과가 모두 반환된 뒤 판정했다. intent-alignment 표의 여덟 관찰도 빠짐없이 각각 기록했다. intent_gap이 우선하므로 bad_plan·patch·defer 후속 처리를 수행하지 않았다. 기존 원장 항목과 과거 triage는 수정하지 않았다.
 
+### 2026-10-29 — Review pass
+- verdicts: 1 findings — high 1, medium 0, low 0, false 0, maybe-false 0
+- findings:
+  - `[high]` `[patch]` (quick) `packages/core/src/domain/secret-patterns.ts:212`의 `url_credentials` 정규식이 긴 스킴 문자 연속 구간의 모든 위치에서 다시 끝까지 훑어 제곱 시간이 걸린다. 텍스트에 `://`가 한 번이라도 있으면 새 `includes('://')` 건너뛰기(`:367`)도 소용없고, 감독자는 정산 때 `stderr.value()`를 동기 호출하므로 데몬 이벤트 루프가 멈춘다 — 확인: 빌드된 코덱에 `'see http://' + 'a'.repeat(1048000)`을 넣자 `value()`가 150초 안에 끝나지 않았고, 이 패턴 하나가 64 KiB `'a'`+` ://`에서 약 2초였다(다른 body 패턴은 1 MiB 적대 입력에서 모두 200 ms 이하). 이전 계약은 줄당 64 KiB로 잘라 가렸으므로 1 MiB 전체 가림으로 바꾼 이번 변경이 노출시켰다. 조치: 구현 세션이 스킴 시작을 스킴 문자 연속 구간의 처음으로 고정했다(`(?<![A-Za-z0-9+.-])[0-9+.-]*[A-Za-z][A-Za-z0-9+.-]*:\/\/…`). `maskSecrets`는 `value` 그룹 위치만 쓰므로 가리는 값은 같고(`1http://u:pw@h`·`x+y.z-w://u:pw@h` 시험 추가), `includes('://')` 우회는 지웠다. 같은 입력이 11 ms가 되었고, 1 MiB 이하 긴 구간+URL 네 입력의 1초 이내·비밀번호 비노출 시험을 더했다. 이후 `pnpm test` 117파일·2,970개 통과.
+
+
+### 2026-10-29 — Review pass
+- verdicts: 15 findings — high 4, medium 3, low 2, false 6, maybe-false 0
+- findings:
+  - `[high]` `[bad_plan]` blind-hunter 1: 표식 밀집 입력의 제곱 시간 — `skip.some`은 후보마다 표식 전체를 훑는다. 930000바이트 합성 표식 입력의 최종 가림에 1094 ms가 걸렸다. 표식 구간 조회를 선형 또는 로그 시간으로 만들도록 복구 계획에 추가했다.
+  - `[high]` `[bad_plan]` blind-hunter 2: 중첩 호출 재탐색 — 450001바이트 합성 중첩 호출의 `value()`가 8초 안에 끝나지 않았다. `trimClosers`와 `isWholeCall`의 반복 접미부 탐색을 제거하도록 계획을 보완했다.
+  - `[low]` `[reject]` blind-hunter 3: 최종 가림 뒤 원문 참조 유지 — 원문은 1 MiB로 제한되고 감독자 실행의 지역 클로저다. 계약은 비파괴 스냅샷을 허용한다. 일상 결함이 입증되지 않았으며 별도 최종화 API 추가의 복잡도 때문에 기각한다.
+  - `[medium]` `[patch]` blind-hunter 4: 2·3바이트 원문의 상한 시험 공백 — 현재 정확한 1 MiB 시험은 ASCII와 surrogate 조합이며 다른 시험은 작은 입력에서 null만 확인한다. 정확한 상한과 1바이트 초과를 여러 조각 크기로 증명하는 직접 시험을 추가한다. bad_plan 복구에 포함한다.
+  - `[low]` `[patch]` blind-hunter 5: 출하 규약의 NUL 정규화 누락 — 구현은 전체 가림 후 NUL을 U+FFFD로 바꾸어 최종 상한을 적용하지만 ABI README에는 이 순서가 없다. 해당 절에 직접 명시한다. bad_plan 복구에 포함한다.
+  - `[medium]` `[patch]` blind-hunter 6: 패턴 버전 누락 — `SECRET_PATTERN_VERSION`의 문서 계약은 패턴 변경 때마다 버전 증가를 요구하지만 URL 정규식 변경 후에도 2다. 버전과 고정 시험을 함께 올린다. bad_plan 복구에 포함한다.
+  - `[high]` `[bad_plan]` edge-case-hunter 1: 열린 호출 반복의 정산 정지 — `token=f( ` 100000회 입력은 1 MiB 이내이며 value가 8초 안에 끝나지 않는다. 같은 줄의 닫는 괄호 검색을 매 후보마다 반복하는 원인을 복구 계획에 포함했다.
+  - `[high]` `[bad_plan]` edge-case-hunter 2: 표식과 자격 증명 반복의 정산 지연 — blind-hunter 1과 같은 `skip.some` 원인이다. 원문 한도 이내의 입력에서 동기 정산을 1초 이상 막는다. 같은 복구 작업으로 처리한다.
+  - `[medium]` `[patch]` verification-gap 1: UTF-8 2바이트 상한 회귀 검증 — 사전 검증된 공백이며 blind-hunter 4와 같은 원인이다. 2바이트 문자를 1바이트로 잘못 세는 회귀를 검출하도록 직접 경계 시험을 추가한다. bad_plan 복구에 포함한다.
+  - `[false]` `[reject]` intent-alignment 1: 이번 diff의 전체 ABI 증명 범위 — 기존 fixture 순회·배포 파일·감독자·PG 시험이 남아 있고 이번 `pnpm test`에서도 117파일 2970개가 통과했다. 이번 변경에 포함되지 않은 파일만으로 누락은 성립하지 않는다.
+  - `[false]` `[reject]` intent-alignment 2: 긴 진단의 null 정책 — 에픽의 두 번째 escalation 결정은 1 MiB 초과 생략과 부분 줄 버림을 명시한다. 진단을 항상 남겨야 한다는 읽기는 이미 해소된 계약과 다르다.
+  - `[false]` `[reject]` intent-alignment 3: stderr 초과의 성공 허용 — 같은 결정은 초과 진단을 고정 표식으로 바꾸는 정책이며 stdout 프로토콜 실패로 만들지 않는다. 현재 성공 기대값은 이 결정과 일치한다.
+  - `[false]` `[reject]` intent-alignment 4: 공유 stderr fixture 부재 — carried: 기존 동일 판정대로 stderr는 TS 감독자 책임이며 Python 작업자 공유 fixture 대상이라는 요구가 없다. 기존 행과 README가 그 범위를 확인한다.
+  - `[false]` `[reject]` intent-alignment 5: 정산별 1 MiB·실제 자식·PG 시험 범위 — 초과 판정은 동일한 코덱 결과를 모든 정산이 공용 detail로 저장한다. 성공·실패·취소·unknown의 별도 전체 문맥 시험과 기존 저장 시험이 있다. 모든 입력 조합을 모든 저장 경로에 중복 시험하라는 요구는 없다.
+  - `[false]` `[reject]` intent-alignment 6: 공용 URL 패턴 의미 동등성 — 새 표현식은 스킴 문자 연속 구간 처음에서 숫자·기호 접두사를 소비하고 기존 표현식과 같은 첫 알파벳 이후 스킴 및 value 그룹을 찾는다. 값의 집합이 달라진 반례는 없다. 패턴 버전 계약 위반은 별도 blind-hunter 6에서 채택했다.
+
+- 네 렌즈가 모두 반환한 뒤 각 지적을 판정했다. 기존 deferred-work 원장 항목과 기존 deferred 목록 및 과거 triage는 바꾸지 않았다. 사용자 지시에 따라 계획 status는 오케스트레이터 소유로 보존했다.
+
+
+### 2026-10-29 — Review pass
+- verdicts: 14 findings — high 2, medium 3, low 4, false 5, maybe-false 0
+- findings:
+  - `[high]` `[defer]` blind-hunter 1: 따옴표 다음 줄의 비밀 탐지 누락 — 기준 revision의 maskSecrets와 현재 구현 모두 `TOKEN="\nSyntheticSecret123\n"`을 그대로 반환한다. 이번 변경이 만든 회귀는 아니며 새 형식 지원은 기존 탐지 의미 보존 조건과 별개다. 신규 보류 후보로 기록하되 bad_plan 우선으로 deferred 필드 등록은 아직 하지 않았다.
+  - `[high]` `[defer]` blind-hunter 2: 줄을 건넌 여러 단어 값의 문장 예외 — 기준 revision과 현재 모두 `password:\ncorrect horse battery staple\n`을 그대로 반환한다. 기존 영어 문장 보존 정책에서 비롯하며 전체 문맥 전달의 회귀가 아니다. 신규 보류 후보로 기록하되 bad_plan 우선으로 필드 등록은 아직 하지 않았다.
+  - `[medium]` `[bad_plan]` blind-hunter 3: 공용 가림 색인의 메모리 증폭 — `planRedaction`과 output 경로는 stderr 1 MiB 한도를 적용하지 않는다. 8 MiB 일반 본문과 마지막 password 한 개에 새 배열 234970158바이트가 잡히고 RSS가 약 47 MiB에서 307 MiB로 늘었다. 단순 후보의 불필요한 색인 생성을 피하고 문자마다 할당하는 배열을 희소 구간 색인으로 바꾸도록 계획을 보완했다.
+  - `[low]` `[reject]` blind-hunter 4: 성능 시험 중 동기 호출을 timeout으로 중단 불가 — 현재 구현의 호출은 제한 시간 안에 반환하며 기존 성능 시험도 같은 동기 패턴을 쓴다. 향후 무한 루프를 상정한 프로세스 harness 추가는 일상 위험에 비해 복잡도가 커 기각한다.
+  - `[medium]` `[patch]` blind-hunter 5: 새 괄호 순위 알고리즘의 혼합 짝 시험 공백 — 기존 고정 시험은 괄호 호출·JSON 끝 괄호와 unmatched closer 중심이다. 네 종류 정상 짝과 혼합 접미부 중 정상 짝에서 멈춤을 고정 기대값으로 더한다. bad_plan 복구에 포함한다.
+  - `[medium]` `[patch]` blind-hunter 6: 대량 후보 위치·해시 회귀 공백 — 대량 후보 시험은 문자열·span 수를 확인하고 단일 Unicode 후보만 위치·hash를 고정한다. Unicode·표식·거부 호출을 섞은 여러 후보의 처음·중간·마지막 위치·hash를 고정한다. bad_plan 복구에 포함한다.
+  - `[low]` `[reject]` blind-hunter 7: 과거 버전 설명 — 과거 기록의 그대로라는 문장은 당시 quick 패치 기록이고 최신 복구 계획과 코드·시험은 3을 명시한다. 계획 수정만을 요구하므로 기각한다. 최종 결과에 현재 버전을 기록한다.
+  - `[low]` `[reject]` blind-hunter 8: 최종 복구 검증 기록 누락 — 진행 중 리뷰 시점의 계획 기록에 대한 지적이다. 조율자 검증은 이미 build·core 282·CLI 65·PG 167·전체 2989개를 통과했고 Finalize에서 기록한다. 계획 수정만 요구하므로 기각한다.
+  - `[false]` `[reject]` intent-alignment 1: 전체 ABI와 이번 diff 범위 — carried: 기존 fixture·tarball·감독자 시험은 그대로 있고 이번 전체 검증에도 포함된다. 변경 파일 목록으로 누락은 성립하지 않는다.
+  - `[false]` `[reject]` intent-alignment 2: 진단 생략 해석 — carried: 에픽의 두 번째 escalation 결정이 1 MiB 초과 생략·부분 줄 버림을 확정했다.
+  - `[false]` `[reject]` intent-alignment 3: stderr 초과의 성공 허용 — carried: 같은 결정은 진단 정책이며 stdout 실패로 규정하지 않는다.
+  - `[false]` `[reject]` intent-alignment 4: stderr 언어 공통 fixture — carried: 기존 동일 판정과 README대로 TS 감독자 책임이다.
+  - `[false]` `[reject]` intent-alignment 5: 공용 함수·fake 중심 추가 검증 — 실제 자식과 PG의 기존 경계 시험도 실행했고 새 함수 시험이 직접 동작을 검증한다. 모든 조합을 실제 자식→PG 한 시험으로 만들라는 요구는 없다.
+  - `[low]` `[reject]` intent-alignment 6: 최종 코드와 과거 버전 설명 — blind-hunter 7과 같은 기록 관찰이다. 과거 기록은 보존하고 현재 버전은 최종 결과에 남긴다. 계획 수정만의 지적은 기각한다.
+
+- edge-case-hunter는 빈 목록, verification-gap은 추가 공백 없음으로 반환했다. 네 렌즈가 모두 반환한 뒤 판정했다. 기존 원장·보류 항목과 ticket·plan status는 보존했다.
+
+
+### 2026-10-29 — Review pass
+- verdicts: 15 findings — high 5, medium 1, low 2, false 7, maybe-false 0
+- findings:
+  - `[high]` `[defer]` blind-hunter 1: 여러 줄 인용 값 — carried: 직전 동일 관찰대로 기준 구현과 현재 결과가 같다. 새 필드 등록을 보류했던 후보를 이번에 deferred 목록에 신규 등록했다. 기존 원장 항목은 고치지 않았다.
+  - `[high]` `[defer]` blind-hunter 2: 여러 단어 값의 문장 예외 — carried: 기준 구현과 현재의 동일 동작이다. 앞 pass의 미등록 신규 후보를 이번에 등록했다. 기존 항목 상태를 변경하지 않았다.
+  - `[high]` `[defer]` blind-hunter 3: 인용 값의 끝 괄호 누락 — 기준 revision에서도 password="abc)"의 괄호가 남고 password=")))"는 전부 남는다. 새 희소 trim도 같은 결과다. 기존 인용 정책 결함으로 신규 보류했다.
+  - `[high]` `[defer]` blind-hunter 4: 한국어 인용 값 누락 — 기준 revision에서도 비밀번호: "SyntheticSecret123"를 탐지하지 못한다. 현재 결과가 같으므로 기존 패턴 한계로 신규 보류했다.
+  - `[medium]` `[patch]` blind-hunter 5: 관련 없는 앞부분 괄호의 메모리 증폭 — 8 MiB 괄호 본문 뒤 후보 하나에 495192336바이트가 추가 할당됐다. 같은 구현 세션을 재개하여 private 색인을 후보의 원래 시작부터 만들고 더 앞선 후보가 필요할 때만 다시 만들도록 직접 수정했다. 같은 입력의 추가 할당은 8681656바이트, 처리 시간은 49ms였다. 기존 고정 결과·성능 시험과 32 MiB 회귀 상한을 유지했다.
+  - `[low]` `[reject]` blind-hunter 6: 메모리 시험의 최고점 미측정 — 전후 할당 차이가 최고 RSS를 보장하지 않는다는 한계는 맞다. 시험은 알려진 dense 배열 회귀와 실제 8 MiB 입력 세 개의 할당량을 확인한다. 최고점 계측 harness 추가는 일상 결함이 입증되지 않은 상태에서 복잡도를 늘리므로 기각하며 측정 한계를 최종 결과에 명시한다.
+  - `[low]` `[reject]` blind-hunter 7: emoji 밀집 본문의 메모리 시험 부재 — 기존 변환도 입력 길이의 Int32Array를 만들었고 새 구조는 surrogate pair 위치만 보관한다. 큰 emoji 본문의 메모리 상한은 계약에 없으며 회귀가 입증되지 않았다. 별도 메모리 분기·harness를 늘릴 일상 필요가 낮아 기각한다. Unicode 위치·hash는 대량 후보의 고정 기대값으로 검사한다.
+  - `[false]` `[reject]` blind-hunter 8: NUL 순서 직접 시험 공백 — `normalizes NUL stderr before applying the byte cap for PostgreSQL text`는 NUL 치환 문자열과 2000개 NUL의 최종 null을 검사한다. 1 MiB NUL 시험도 있다. 최종 상한을 NUL 치환 이전에 적용하면 2000개 시험의 null 기대값을 충족하지 못한다. NUL을 포함한 VALUE는 NUL·U+FFFD 모두 같은 후보 문자이므로 제시된 비밀 예시는 가림 순서를 구별하는 반례도 아니다.
+  - `[false]` `[reject]` blind-hunter 9: 합성 동등성 생성기 부재 — 4만 건은 구현 시 수행한 비교 검증 기록이다. 재현 가능한 회귀 검증은 이미 고정된 혼합 괄호·대량 후보·Unicode span·hash 및 적대 입력 시험에 있다. 추가 생성기 부재 자체로 이를 우회하는 구체적인 회귀가 입증되지 않았다.
+  - `[false]` `[reject]` intent-alignment 1: 이번 diff의 전체 ABI 범위 — carried: 기존 fixture·tarball·감독자·PG 시험이 남아 있고 최종 전체 실행에도 포함된다.
+  - `[false]` `[reject]` intent-alignment 2: stderr 생략·성공 처리 — carried: 에픽의 두 번째 escalation 결정대로 진단 정책을 구현했다.
+  - `[high]` `[defer]` intent-alignment 3: 모든 표현의 비밀 탐지와 기존 정책 범위 — carried: 여러 줄 인용·여러 단어 값은 위의 기존 탐지 결함 두 항목과 같다. 신규 목록에 같은 원인을 중복 등록하지 않았다.
+  - `[false]` `[reject]` intent-alignment 4: stderr 공유 fixture 부재 — carried: 출하 README와 기존 판정대로 TS 감독자 책임이며 Python 공유 대상은 이벤트·환경·실행 판정이다.
+  - `[false]` `[reject]` intent-alignment 5: 공용 함수까지 넓어진 변경 — 가림 정책·공용 API를 유지하면서 전체 문맥 처리로 드러난 비용을 낮췄다. 새 정책을 추가한다는 변경이 아니며 고정 결과·위치·hash·성능·메모리 시험으로 소비 영향을 확인한다.
+  - `[false]` `[reject]` intent-alignment 6: fake와 실제 자식·PG의 분리 검증 — carried: 함수·전달·OS·저장 경계를 각각 검증하는 방식은 원문 verify를 충족하며 모든 조합의 한 경로 시험을 요구하지 않는다.
+
+- edge-case-hunter는 빈 목록, verification-gap은 추가 공백 없음으로 반환했다. 네 렌즈가 모두 반환한 뒤 분류했고 마지막 직접 패치 뒤 Verification 명령 전체를 다시 실행했다. 신규 deferred 네 건만 계획 목록에 추가했으며 기존 원장과 상태는 그대로다.
+
 ## Design Notes
 
 - 판정을 core 순수 코드(줄 나누기 + 판정기)에 둔 이유: 같은 fixture(`runs.json`)를 감독자와 같은 코드로 돌려 갈라짐을 막는다. adapter는 원문 조각만 낸다.
@@ -230,17 +347,35 @@ blocked_reason: "intent gap: 줄별 독립 maskSecrets 계약에서는 TOKEN= �
 
 - 최종 상태 재검증: `pnpm test` 재실행도 build·typecheck와 117파일·2949개 시험 전부 통과했다(51.65초).
 
+
+
+## 2026-10-29 — stderr 전체 문맥 계약 구현
+
+- 최신 Always의 두 번째 escalation 해소 규칙을 구현했다. `createAbiStderr`는 원문 UTF-8 바이트를 최대 1048576바이트까지 보관하며, 초과 즉시 원문을 버리고 이후 조각도 보관하지 않는다. 최종 값은 `[stderr 생략: 원문 1 MiB 초과]`로 고정된다. stdout framing 상한은 바꾸지 않았다.
+- 넘치지 않은 원문은 `value()`에서 `maskSecrets(전체, 'body')`로 한 번 가리고 결과를 캐시한다. 이후 조각이 오면 캐시를 무효화한다. 코드 포인트 경계에서 끝 4096바이트를 취하고 시작이 줄 중간이면 그 부분 줄을 버리며, 빈 결과는 null이다. PostgreSQL text를 위한 NUL 정규화는 전체 가림 뒤에 적용하며 최종 바이트 상한에 포함한다.
+- ABI README를 최신 규칙으로 맞췄다. 기존 stderr 시험의 줄별 가림·65536바이트 생략 기대값을 대체하고, 여섯 가지 줄 사이 비밀·빈 줄·미종결 PEM·정확한 1 MiB·1바이트 초과·계속 소비·Unicode 조각 경계·부분 줄 버림을 검증했다. 감독자의 성공·실패·취소·unknown 정산과 OS 신원/DB 기록 지연 중 초과 출력 소비를 확인했다.
+- 전체 원문 가림 시험에서 URL scheme이 없는 긴 단어의 기존 URL 정규식 재탐색이 지연되는 것을 확인했다. `maskSecrets`는 `://`가 없으면 매치 불가능한 `url_credentials` 패턴만 건너뛰게 했다. 패턴 정의와 판정 의미는 바꾸지 않았다.
+- 검증: build와 core 집중 6파일·402개 시험 통과. 최종 `pnpm test`의 build·typecheck와 전체 117파일·2966개 시험 통과(51.64초). 실제 Node 자식·probe와 PostgreSQL 상세 저장 및 CHECK 제약 시험도 포함한다. `git diff --check` 통과.
+- 최신 stderr 계약의 미완료는 없다. 1 MiB 초과 시 진단을 잃는 것은 정한 정책이다. 기존 triage에 기록된 잘못된 UTF-8 치환 수용, 신원/DB 조회·임대 갱신 중 stdout 판정 지연, launcher 시작 이전부터 재는 elapsed 시작점은 변경하지 않았다. 재시도·취소·회수·unknown 판정 순서, DB migration 및 기존 deferred-work 원장은 유지했다. 운영 설치·배포·커밋은 수행하지 않았다.
+
+- 리뷰 패치(조율자 기록): 위 "전체 원문 가림" 절의 `://` 건너뛰기 문장은 리뷰 뒤 바뀌었다. `url_credentials` 패턴 정의를 선형 시간 형태로 고쳤고 건너뛰기는 지웠다. 가리는 값 집합은 같아서 `SECRET_PATTERN_VERSION`은 그대로다.
+
 ## Auto Run Result
 
-상태: `blocked`. `bmad-build-auto`의 HALT에서만 `tickets.py mark 12.4 blocked`를 실행했다. 티켓을 `done`으로 표시하지 않았다.
+상태: `built`. 시작 시 계획의 status를 보존했으며 티켓을 done으로 표시하지 않았다. `tickets.py mark`는 실행하지 않았다. 오케스트레이터의 최종 검증과 상태 처리를 기다린다.
 
-- 중단 이유: `intent gap`. `TOKEN=\nSyntheticSecret123\n`, `Bearer\nabcdefghijklmnopqrst\n`, `password:\nhunter2x\n`에서 줄마다 독립적으로 호출하는 `maskSecrets`는 다음 줄 값을 평문으로 반환한다. 전체 원문에 대한 기존 `maskSecrets` 호출은 같은 값을 가린다. 계약이 PEM 이외의 줄에 독립 호출을 명시하므로 구현만 바꿔 해결할 수 없다.
-- 필요한 결정: PEM 이외 비밀 패턴에도 줄 사이 문맥을 보존하도록 계약을 확장할지, 지원하는 비밀 형식의 경계를 별도로 정할지 결정해야 한다. 비밀 비노출 요구를 유지하려면 전자를 권장한다. 연속 빈 줄·EOF·상한 초과에서도 문맥과 비밀 값을 어떻게 폐기할지 함께 확정해야 한다.
-- 검토: `thorough` 네 렌즈 완료. 총 17개 관찰을 개별 판정했다(high 3, medium 4, low 2, false 8, maybe-false 0). high 세 관찰은 줄 사이 자격 증명 노출이라는 한 원인이다. 시험 공백 다섯 관찰은 bad_plan으로 기록했다. 기각 여덟 관찰의 이유는 이번 Review Triage Log에 각각 남겼다. intent_gap 우선으로 패치·보류 등록·계획 재작성은 수행하지 않았다. 기존 deferred-work 원장과 항목은 수정하지 않았다.
-- 보존 및 원복: 기준 revision `541365e705cbe670d24386c084ba32b1d072fef1` 이후의 stderr 구현·규약·시험 변경을 `_bmad-output/personal-brain/tickets/epic-jobs-and-scheduler/tickets/story-abi-v1-fixture-ts-plan.patch`에 보존했다. 구현 세션이 workflow의 intent_gap 절차에 따라 다음 네 파일을 그 revision 내용으로 원복했다. 기존 커밋 기록은 유지했다.
-  - `packages/core/src/process-abi/codec.ts` — stderr 선가림과 연결 리스트 보관 구현을 원복.
-  - `packages/core/schemas/process-abi/v1/README.md` — stderr 규약 변경을 원복.
-  - `packages/core/test/process-abi.test.ts` — 후속 stderr 회귀 시험을 원복.
-  - `packages/core/test/supervisor-abi.test.ts` — 후속 PEM·긴 줄 저장 시험을 원복.
-- 검증: 원복 전 `pnpm test`에서 build·typecheck 및 117파일·2950개 시험이 통과했다(51.46초). 별도 Node 재현으로 위 세 자격 증명 유출을 확인했다. 원복 후 네 파일이 기준 revision과 같음을 확인했다. 전체 시험 결과는 원복 전 검토 대상에 대한 결과이며 원복 후에는 재실행하지 않았다. 계획 EOF 빈 줄은 결과 기록 시 정리했다.
-- 남은 위험: 현재 작업 트리는 의도적으로 stderr 후속 변경 이전 상태다. 원복된 코덱에는 앞선 triage에서 확인한 잘린 PEM 본문 노출 문제가 다시 존재한다. 저장한 patch는 그 수정과 성능 패치를 함께 보존한다. 계약 해소 후 patch를 다시 적용하고 이번 마스킹 결함과 시험 공백을 고쳐 재검토해야 한다. 운영 설치·배포·push·새 커밋은 하지 않았다.
+- 구현 요약: 승인된 전체 문맥 stderr 계약을 유지하며 표식 밀집·열린 호출·중첩 호출의 반복 탐색을 줄였다. 공용 가림의 dense 배열을 희소 구간·구문·surrogate 위치 색인으로 바꾸고, 관련 없는 앞부분은 색인에서 제외했다. `SECRET_PATTERN_VERSION`은 3이다. UTF-8 2·3바이트의 정확한 1 MiB 경계, 혼합 괄호, 대량 후보의 위치·hash, 8 MiB 일반·구조화 본문의 메모리 시험을 추가했고 출하 규약에 NUL 후처리 순서를 명시했다.
+- 기준 revision 이후 바뀐 파일:
+  - `packages/core/src/process-abi/codec.ts` — 1 MiB 원문 보관·전체 한 번 가림·초과 폐기·최종 4096바이트 정책(기존 구현 커밋 포함).
+  - `packages/core/src/domain/secret-patterns.ts` — URL 성능 수정, 표식 조회·희소 구문/위치 색인, 후보 접미부 한정, 패턴 버전 3.
+  - `packages/core/schemas/process-abi/v1/README.md` — 전체 문맥 stderr와 NUL 정규화 규약.
+  - `packages/core/test/process-abi.test.ts` — 전체 문맥·바이트 경계·적대 입력 검증.
+  - `packages/core/test/secret-patterns.test.ts` — 가림 의미·위치·hash·시간·메모리 회귀 검증.
+  - `packages/core/test/supervisor-abi.test.ts` — 정산·초과 출력·조회 지연의 stderr 검증(기존 구현 커밋 포함).
+  - 계획 파일 — 복구 계획, 개별 리뷰 판정, 신규 deferred 및 이번 결과.
+- 검토: thorough 네 렌즈를 세 차례 실행했다. 총 44개 관찰을 개별 판정했고 두 차례 계획 복구 후 마지막 직접 패치 1건(medium)을 적용했다. 최종 pass는 15건(high 5, medium 1, low 2, false 7)이다. 기존 비밀 탐지기의 네 한계를 계획 deferred에 신규 기록했으며 기존 deferred-work 원장 항목·상태는 변경하지 않았다. 전체 기각 25건의 개별 근거는 이번 세 Review pass에 기록했다. 최종 기각은 기존 경계 검증·확정된 정책·입증되지 않은 회귀와 낮은 효과 대비 계측 복잡도에 근거한다.
+- 후속 리뷰 권고: `false`. 후속 pass의 최종 직접 패치 entry는 high 0, medium 1, low 0이다. 사용자 지시대로 ticket과 plan status의 완료 판단은 오케스트레이터 소유다.
+- 최종 패치 후 검증: `pnpm build` 통과. 지정 core 5파일·282개, CLI 2파일·65개, PostgreSQL 4파일·167개 통과. `pnpm test`의 build·typecheck 및 117파일·2999개 시험 통과(51.37초). 전체 실행에는 secret-patterns와 실제 Node 자식·PG 저장 시험도 포함된다. `git diff --check` 통과.
+- 행렬 감사: 정상·usage 없음·0·결과 없음·비정상 exit·worker error·버전·깨진 줄·긴 줄·잘린 줄·중복 최종·최종 뒤 진행은 `every run fixture gets its expected verdict`와 `persists every run fixture verdict and usage and keeps the existing retry policy`가 42개 run case 전부를 확인한다. 긴 줄 즉시 정리와 시작 실패는 감독자 개별 시험, env는 21개 fixture와 실제 probe 시험이 확인한다. stderr 일반·PEM·줄 사이 비밀·미종결 PEM·정확/초과 1 MiB·긴 한 줄은 process-abi 및 supervisor-abi의 개별 시험이 확인한다. 모든 해당 파일이 최종 검증에서 실행·통과했으며 행렬의 누락 행은 없다. 이벤트 fixture 31개도 전부 순회한다.
+- 별도 관찰: 최초 표식 입력 1094ms, 열린/중첩 호출 각각 8초 초과가 복구 후 167ms·358ms·54ms로 줄었다. 8 MiB 구조화 본문의 추가 할당은 495192336바이트에서 8681656바이트로 줄었고 같은 재현이 49ms에 처리됐다. 할당 측정은 호출 전후 heapUsed+arrayBuffers 차이로 최고 RSS나 모든 입력의 최대치를 보장하지 않는다. 합성 4만 건을 두 field에서 기준 구현과 비교한 결과 문자열·span·hash가 같다는 구현 세션 보고도 받았다.
+- 잔여 위험: 새 deferred 네 건은 기준 구현에서도 재현된 기존 탐지 한계다. 원문 1 MiB 초과 때 진단을 잃는 정책, 앞선 triage의 잘못된 UTF-8 치환 수용·신원/DB/갱신 대기 중 stdout 판정 지연·launcher 시작 이전부터 측정하는 elapsed 시작점은 유지했다. 운영 설치·배포·push는 하지 않았다.

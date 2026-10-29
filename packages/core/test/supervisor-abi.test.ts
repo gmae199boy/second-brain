@@ -14,13 +14,13 @@ async function kit(options: { launcher?: ProcessLauncher; spec?: ProcessSpec | n
   const store = memoryStore(), time = manualTime(now), launcher = fakeProcessLauncher(), controller = new AbortController();
   const idGen = sequenceIdGen({ timestampMs: now.getTime() }); const id = idGen.next();
   await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: '10', createdAt: now, nextAttemptAt: now });
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time,
     launcher: options.launcher ?? launcher, inspector: fakeProcessInspector(launcher), idGen, signal: controller.signal,
     launches: { process_probe: () => options.spec === undefined ? { command: 'probe', args: [], env: {} } : options.spec } });
   await flush();
   return { store, time, launcher, controller, running, stop: async () => { controller.abort(); await running; } };
 }
-it('persists every run fixture verdict and usage and keeps the existing retry policy', async () => {
+it('persists every run fixture verdict and usage and applies the work failure policy', async () => {
   const fixtures = JSON.parse(await readFile(PROCESS_ABI_RUN_FIXTURES_URL, 'utf8'));
   for (const fixture of fixtures) {
     const k = await kit();
@@ -30,15 +30,17 @@ it('persists every run fixture verdict and usage and keeps the existing retry po
       for (const part of fixture.stdout) child.write(typeof part === 'string' ? part : part.repeat.repeat(part.count));
       k.time.advance(250); child.exit(fixture.exit.code, fixture.exit.signal); await flush();
       const attempt = k.store.snapshot().workAttempts[0]!;
-      expect(attempt, fixture.name).toMatchObject({ outcome: fixture.expect.outcome, errorCode: fixture.expect.code ?? null,
-        errorRetryable: fixture.expect.retryable ?? null, elapsedMs: 250, stderr: 'diagnostic\n',
+      const died = fixture.expect.code === 'ABI_EXIT_FAILED' && fixture.exit.signal !== null;
+      expect(attempt, fixture.name).toMatchObject({ outcome: died ? 'died' : fixture.expect.outcome, errorCode: died ? null : fixture.expect.code ?? null,
+        errorRetryable: died ? null : fixture.expect.retryable ?? null, elapsedMs: 250, stderr: 'diagnostic\n',
         inputTokens: fixture.expect.usage?.input_tokens ?? null, cachedInputTokens: fixture.expect.usage?.cached_input_tokens ?? null, outputTokens: fixture.expect.usage?.output_tokens ?? null });
       const item = k.store.snapshot().workItems[0]!;
       if (fixture.expect.outcome === 'failed') {
-        expect(item.lastError, fixture.name).toContain(fixture.expect.code);
-        expect(item.nextAttemptAt).toEqual(new Date(now.getTime() + 1250));
+        expect(item.lastError, fixture.name).toContain(died ? 'PROCESS_DIED' : fixture.expect.code);
+        if (fixture.expect.retryable) expect(item.nextAttemptAt).toEqual(new Date(now.getTime() + 900_250));
+        else expect(item).toMatchObject({ completedAt: new Date(now.getTime() + 250), outcome: 'failed' });
       } else expect(item.completedAt).toEqual(new Date(now.getTime() + 250));
-      expect(k.store.snapshot().failures).toEqual([]);
+      expect(k.store.snapshot().failures).toHaveLength(fixture.expect.outcome === 'failed' && !fixture.expect.retryable ? 1 : 0);
     } finally { await k.stop(); }
   }
 });
@@ -64,7 +66,7 @@ it('cleans a still-live child when stdout closes with a truncated line', async (
   } };
   const store = memoryStore(), time = manualTime(now), controller = new AbortController(), idGen = sequenceIdGen({ timestampMs: now.getTime() });
   await store.addWork({ id: idGen.next(), kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt: now, nextAttemptAt: now });
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, launcher, inspector: fakeProcessInspector(base), idGen, signal: controller.signal, launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) } });
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, launcher, inspector: fakeProcessInspector(base), idGen, signal: controller.signal, launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) } });
   try {
     await flush();
     expect(base.processes[0]!.signals).toEqual(['SIGTERM']);
@@ -104,11 +106,12 @@ it('does not renew for heartbeat or progress after a final event', async () => {
   const k = await kit();
   try {
     const child = k.launcher.processes[0]!;
-    child.push('{"abi":1,"type":"heartbeat"}'); child.push('{"abi":1,"type":"result"}'); child.push('{"abi":1,"type":"progress"}'); await flush();
-    expect(k.store.snapshot().workAttempts[0]!.renewedAt).toBeNull(); child.exit(); await flush();
+    child.push('{"abi":1,"type":"result"}'); await flush(); k.time.advance(60_000);
+    child.push('{"abi":1,"type":"heartbeat"}'); child.push('{"abi":1,"type":"progress"}'); await flush();
+    expect(k.store.snapshot().workAttempts[0]!.renewedAt).toEqual(now); child.exit(); await flush();
   } finally { await k.stop(); }
 });
-it.each(['identity', 'recording'])('consumes bounded stderr while %s is delayed', async delayed => {
+it.each([['identity', 100], ['recording', 100], ['identity', 1100], ['recording', 1100]] as const)('consumes %s-delayed stderr through %i chunks', async (delayed, chunks) => {
   const store = memoryStore(), time = manualTime(now), launcher = fakeProcessLauncher(), inspector = fakeProcessInspector(launcher);
   const controller = new AbortController(), idGen = sequenceIdGen({ timestampMs: now.getTime() });
   let release!: () => void, consumed = 0;
@@ -121,7 +124,7 @@ it.each(['identity', 'recording'])('consumes bounded stderr while %s is delayed'
     store.recordSupervisedProcess = async input => { await gate; return record(input); };
   }
   await store.addWork({ id: idGen.next(), kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt: now, nextAttemptAt: now });
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector, idGen, signal: controller.signal,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector, idGen, signal: controller.signal,
     launcher: { async start(spec) {
       const started = await launcher.start(spec);
       if (started.ok) {
@@ -132,14 +135,16 @@ it.each(['identity', 'recording'])('consumes bounded stderr while %s is delayed'
     } }, launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) } });
   try {
     await flush(); const child = launcher.processes[0]!;
-    for (let i = 0; i < 100; i++) child.writeStderr('x'.repeat(1000) + '\n');
+    for (let i = 0; i < chunks; i++) child.writeStderr('x'.repeat(1000) + '\n');
     child.writeStderr('TOKEN=secret-value\nlast diagnostic\n');
-    await expect.poll(() => consumed).toBe(101);
+    await expect.poll(() => consumed).toBe(chunks + 1);
     expect(store.snapshot().workAttempts[0]!.outcome).toBeNull();
     release(); await flush(); child.push('{"abi":1,"type":"result"}'); child.exit(); await flush();
     const attempt = store.snapshot().workAttempts[0]!;
     expect(attempt.outcome).toBe('succeeded');
-    expect(attempt.stderr).toContain('last diagnostic\n'); expect(attempt.stderr).not.toContain('secret-value');
+    if (chunks === 1100) expect(attempt.stderr).toBe('[stderr 생략: 원문 1 MiB 초과]');
+    else expect(attempt.stderr).toContain('last diagnostic\n');
+    expect(attempt.stderr).not.toContain('secret-value');
     expect(Buffer.byteLength(attempt.stderr!)).toBeLessThanOrEqual(4096);
   } finally { release(); controller.abort(); await running; }
 });
@@ -149,7 +154,7 @@ it('drains queued stderr before unknown settlement and retains the full masked t
   inspector.groupMembers = async () => ({ state: 'unknown' });
   await store.addWork({ id: idGen.next(), kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt: now, nextAttemptAt: now });
   let closed = false, consumed = 0;
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector, idGen, signal: controller.signal,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector, idGen, signal: controller.signal,
     launcher: { async start(spec) {
       const started = await launcher.start(spec);
       if (started.ok) {
@@ -159,7 +164,7 @@ it('drains queued stderr before unknown settlement and retains the full masked t
         started.handle.closeOutput = () => { closed = true; close(); release(); };
         started.handle.stderr = { async *[Symbol.asyncIterator]() {
           await outputClosed;
-          for (const chunk of ['first diagnostic\n', 'TOKEN=secret-value\n', 'last diagnostic\n']) { consumed++; yield chunk; }
+          for (const chunk of ['first diagnostic\n', 'TOKEN=\n\nsecret-value\n', 'last diagnostic\n-----BEGIN PRIVATE KEY-----\nSyntheticPemBody']) { consumed++; yield chunk; }
         } };
         started.handle.stdout = { async *[Symbol.asyncIterator]() { await outputClosed; } };
         launcher.processes[0]!.exit();
@@ -173,6 +178,8 @@ it('drains queued stderr before unknown settlement and retains the full masked t
     expect(attempt.outcome).toBe('unknown');
     expect(attempt.stderr).toContain('first diagnostic\n'); expect(attempt.stderr).toContain('last diagnostic\n');
     expect(attempt.stderr).not.toContain('secret-value');
+    expect(attempt.stderr).toContain('[REDACTED:private_key]');
+    expect(attempt.stderr).not.toContain('SyntheticPemBody');
     expect(inspector.signals).toEqual([]);
     expect(store.snapshot().workItems[0]!.currentAttemptToken).toBe(attempt.token);
   } finally { controller.abort(); await running; }
@@ -190,7 +197,29 @@ it.each(['closed PEM', 'unterminated PEM', 'oversized line'])('persists masked s
     await expect.poll(() => k.store.snapshot().workAttempts[0]!.outcome).toBe('succeeded');
     const attempt = k.store.snapshot().workAttempts[0]!;
     expect(attempt.stderr).toBe(mode === 'closed PEM' ? '[REDACTED:private_key]\nTOKEN=[REDACTED:password]\n' :
-      mode === 'unterminated PEM' ? '[REDACTED:private_key]\n' : '[stderr 줄 생략: 상한 초과]');
+      mode === 'unterminated PEM' ? '[REDACTED:private_key]' : 'TOKEN=[REDACTED:password]');
     expect(Buffer.byteLength(attempt.stderr!)).toBeLessThanOrEqual(4096);
+  } finally { await k.stop(); }
+});
+
+it.each(['succeeded', 'failed', 'cancelled'])('persists whole-context masked stderr on %s settlement', async outcome => {
+  const k = await kit();
+  try {
+    const child = k.launcher.processes[0]!;
+    for (const chunk of ['TOKEN\n\n=\n\n', 'SyntheticSecret123\n', '-----BEGIN PRIVATE KEY-----\n', 'SyntheticPemBody']) child.writeStderr(chunk);
+    await flush();
+    if (outcome === 'cancelled') await k.stop();
+    else { child.write(outcome === 'failed' ? '{' : '{"abi":1,"type":"result"}\n'); child.exit(); await flush(); }
+    expect(k.store.snapshot().workAttempts[0]).toMatchObject({ outcome, stderr: 'TOKEN\n\n=\n\n[REDACTED:password]\n[REDACTED:private_key]' });
+  } finally { await k.stop(); }
+});
+it.each([1048576, 1048577])('persists the stderr raw cap verdict for %i bytes and continues consuming', async bytes => {
+  const k = await kit();
+  try {
+    const child = k.launcher.processes[0]!;
+    child.writeStderr('x'.repeat(bytes - 18) + '\nTOKEN=secret-end\n');
+    child.push('{"abi":1,"type":"result"}'); child.exit(); await flush();
+    expect(k.store.snapshot().workAttempts[0]).toMatchObject({ outcome: 'succeeded',
+      stderr: bytes === 1048576 ? 'TOKEN=[REDACTED:password]\n' : '[stderr 생략: 원문 1 MiB 초과]' });
   } finally { await k.stop(); }
 });

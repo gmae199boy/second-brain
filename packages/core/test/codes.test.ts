@@ -74,6 +74,9 @@ describe('the error codes', () => {
     );
 
     expect(exits).toEqual({
+      EXTENSION_NOT_FOUND: 2,
+      EXTENSION_INVALID: 2,
+      EXTENSION_CHECK_FAILED: 1,
       ABI_LINE_INVALID: 1,
       ABI_VERSION_UNKNOWN: 1,
       ABI_LINE_TOO_LONG: 1,
@@ -83,6 +86,8 @@ describe('the error codes', () => {
       ABI_NO_RESULT: 1,
       ABI_EXIT_FAILED: 1,
       ABI_OUTPUT_UNREADABLE: 1,
+      PROCESS_STALLED: 1,
+      PROCESS_DIED: 1,
       PROCESS_START_FAILED: 1,
       ABI_ENV_INVALID: 1,
 
@@ -94,7 +99,11 @@ describe('the error codes', () => {
       SESSION_REQUIRED: 2,
       USER_MISSING: 2,
       DB_LOCKED: 1,
+      SCHEDULE_NOT_FOUND: 1,
+      SCHEDULE_INVALID: 1,
+      SCHEDULE_CONFLICT: 1,
       WORK_NOT_FOUND: 1,
+      WORK_GRAPH_INVALID: 1,
       MESSAGE_NOT_FOUND: 1,
       REDACT_TEXT_NOT_FOUND: 1,
       FILE_NOT_FOUND: 1,

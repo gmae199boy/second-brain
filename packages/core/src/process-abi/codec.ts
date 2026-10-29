@@ -6,7 +6,7 @@ export type ProcessAbiEvent = { abi: 1; type: 'progress'; message?: string } | {
   { abi: 1; type: 'error'; code: string; retryable: boolean; message?: string };
 export const PROCESS_ABI_EVENT_TYPES = ['progress', 'heartbeat', 'result', 'error'] as const;
 export const PROCESS_ABI_MAX_LINE_BYTES = 65536;
-export const PROCESS_ABI_STDERR_BUFFER_BYTES = 16384;
+export const PROCESS_ABI_STDERR_BUFFER_BYTES = 1048576;
 export const PROCESS_ABI_STDERR_MAX_BYTES = 4096;
 export const PROCESS_ABI_SCHEMA_URL = new URL('../../schemas/process-abi/v1/event.schema.json', import.meta.url);
 export const PROCESS_ABI_ENV_SCHEMA_URL = new URL('../../schemas/process-abi/v1/env.schema.json', import.meta.url);
@@ -68,9 +68,9 @@ export function createAbiRun() {
     if (event.type === 'result' || event.type === 'error') {
       if (final) fail('ABI_DUPLICATE_FINAL', '최종 이벤트가 두 번 왔습니다');
       else { final = event; if (event.type === 'result') usage = event.usage ?? null; }
-      return false;
+      return !failure;
     }
-    return !final && event.type === 'progress';
+    return !final;
   };
   const feed = (raw: string): ProcessAbiEvent[] => {
     const progress: ProcessAbiEvent[] = [];
@@ -117,93 +117,44 @@ function tailUtf8(text: string, limit: number): string {
   }
   return text.slice(start);
 }
-/** Mask complete lines before retaining a bounded diagnostic tail. */
+/** Retain at most 1 MiB of raw stderr, then mask the whole context once. */
 export function createAbiStderr() {
-  let line = '', bytes = 0, pendingHigh = '';
-  type MaskedLine = { text: string; bytes: number; next: MaskedLine | null };
-  let first: MaskedLine | null = null, last: MaskedLine | null = null, retainedBytes = 0;
-  let oversized = false, inPem = false, pemLine = false, beganPem = false;
-  // Marker recognition stays bounded even on discarded, oversized lines. The
-  // label may be arbitrarily long; only its suffix and closing dashes matter.
-  let markerPrefix = '', markerKind: 'BEGIN' | 'END' | undefined;
-  let labelTail = '', dashes = 0;
-  const append = (masked: string): void => {
-    if (!masked) return;
-    const entry: MaskedLine = { text: masked, bytes: utf8Bytes(masked).length, next: null };
-    if (last) last.next = entry;
-    else first = entry;
-    last = entry;
-    retainedBytes += entry.bytes;
-    while (first && retainedBytes > PROCESS_ABI_STDERR_BUFFER_BYTES) {
-      retainedBytes -= first.bytes;
-      first = first.next;
-    }
-    if (!first) last = null;
-  };
-  const maskedLine = (newline: boolean): string => {
-    const ending = newline ? '\n' : '';
-    if (pemLine) return beganPem ? '[REDACTED:private_key]' + ending : '';
-    if (oversized) return '[stderr 줄 생략: 상한 초과]' + ending;
-    return maskSecrets(line, 'body').text + ending;
-  };
-  const marker = (cp: string): void => {
-    if (markerKind !== undefined) {
-      if (/[A-Z0-9 ]/.test(cp) && dashes === 0) labelTail = (labelTail + cp).slice(-32);
-      else if (cp === '-') {
-        if (++dashes === 5) {
-          if (markerKind === 'BEGIN' && /PRIVATE KEY(?: BLOCK)?$/.test(labelTail)) {
-            if (!inPem) beganPem = true;
-            inPem = true; pemLine = true;
-          } else if (markerKind === 'END') inPem = false;
-          markerKind = undefined;
-        }
-      } else markerKind = undefined;
-    }
-    markerPrefix = (markerPrefix + cp).slice(-11);
-    if (markerPrefix.endsWith('-----BEGIN ')) { markerKind = 'BEGIN'; labelTail = ''; dashes = 0; }
-    else if (markerPrefix.endsWith('-----END ')) { markerKind = 'END'; labelTail = ''; dashes = 0; }
-  };
-  const consume = (raw: string): void => {
-    for (const original of raw) {
-      const cp = original === '\u0000' ? '\ufffd' : original;
-      if (cp === '\n') {
-        append(maskedLine(true));
-        line = ''; bytes = 0; oversized = false; beganPem = false; pemLine = inPem;
-        markerPrefix = ''; markerKind = undefined;
-        continue;
-      }
-      marker(cp);
-      if (!oversized) {
-        bytes += utf8Bytes(cp).length;
-        if (bytes > PROCESS_ABI_MAX_LINE_BYTES) { oversized = true; line = ''; }
-        else line += cp;
-      }
-    }
-  };
+  let raw = '', bytes = 0, previousHigh = false, overflow = false;
+  let cached: string | null | undefined;
   return {
-    feed(raw: string) {
-      raw = pendingHigh + raw; pendingHigh = '';
-      if (raw.length && /[\uD800-\uDBFF]/.test(raw.charAt(raw.length - 1))) { pendingHigh = raw.slice(-1); raw = raw.slice(0, -1); }
-      consume(raw);
+    feed(chunk: string) {
+      if (overflow || !chunk) return;
+      cached = undefined;
+      // Count without allocating an encoded copy of an arbitrarily large chunk.
+      // A high surrogate costs three bytes until a following low surrogate adds
+      // the fourth byte, including when the pair straddles chunks.
+      for (let i = 0; i < chunk.length; i++) {
+        const unit = chunk.charCodeAt(i);
+        bytes += unit <= 0x7f ? 1 : unit <= 0x7ff ? 2 :
+          previousHigh && unit >= 0xdc00 && unit <= 0xdfff ? 1 : 3;
+        previousHigh = unit >= 0xd800 && unit <= 0xdbff;
+        if (bytes > PROCESS_ABI_STDERR_BUFFER_BYTES) {
+          overflow = true;
+          raw = '';
+          return;
+        }
+      }
+      raw += chunk;
     },
     value(): string | null {
-      // value is read at EOF/settlement. Keep snapshots non-destructive for
-      // callers that inspect a diagnostic while more output can still arrive.
-      let masked = maskedLine(false);
-      if (pendingHigh && !pemLine && !oversized) {
-        masked = bytes + 3 > PROCESS_ABI_MAX_LINE_BYTES ? '[stderr 줄 생략: 상한 초과]' : maskSecrets(line + pendingHigh, 'body').text;
+      if (overflow) return '[stderr 생략: 원문 1 MiB 초과]';
+      if (cached !== undefined) return cached;
+      // PostgreSQL text cannot store NUL. Normalize only after masking the
+      // original context and count the replacement within the final byte cap.
+      const masked = maskSecrets(raw, 'body').text.replaceAll('\u0000', '\ufffd');
+      let tail = tailUtf8(masked, PROCESS_ABI_STDERR_MAX_BYTES);
+      const start = masked.length - tail.length;
+      if (start > 0 && masked[start - 1] !== '\n') {
+        const newline = tail.indexOf('\n');
+        tail = newline === -1 ? '' : tail.slice(newline + 1);
       }
-      if (!(line || oversized || beganPem || pendingHigh)) masked = '';
-      let size = retainedBytes + utf8Bytes(masked).length, start = first;
-      while (start && size > PROCESS_ABI_STDERR_BUFFER_BYTES) {
-        size -= start.bytes;
-        start = start.next;
-      }
-      if (size > PROCESS_ABI_STDERR_BUFFER_BYTES) return null;
-      const pieces: string[] = [];
-      for (let entry = start; entry; entry = entry.next) pieces.push(entry.text);
-      pieces.push(masked);
-      return tailUtf8(pieces.join(''), PROCESS_ABI_STDERR_MAX_BYTES) || null;
+      cached = tail || null;
+      return cached;
     },
   };
 }

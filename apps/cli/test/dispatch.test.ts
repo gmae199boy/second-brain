@@ -458,7 +458,7 @@ describe('the dispatcher', () => {
 
   it('refuses a write and never calls run when the version does not match', async () => {
     const path = await migratedDatabase();
-    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'); await db.close();
+    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version = version + 1 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'); await db.close();
     const home = await homeFor(path);
 
     const run = await runDispatch(['fake', 'write', '--json'], { [HOME_ENV]: home });
@@ -513,7 +513,7 @@ describe('the dispatcher', () => {
 
   it('calls the spool branch instead of run when the version does not match', async () => {
     const path = await migratedDatabase();
-    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'); await db.close();
+    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version = version + 1 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'); await db.close();
     const home = await homeFor(path);
 
     const run = await runDispatch(['fake', 'write-spool', '--json'], { [HOME_ENV]: home });
@@ -612,7 +612,7 @@ describe('the dispatcher on a hook path', () => {
 
   it('exits 0 with one line on stderr when the schema version blocks the write', async () => {
     const path = await migratedDatabase();
-    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'); await db.close();
+    const db = new PgTestClient(path); await db.exec('update brain.schema_migrations set version = version + 1 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'); await db.close();
     const home = await homeFor(path);
 
     const run = await runDispatch(['fake', 'hook-write', '--json'], { [HOME_ENV]: home });
@@ -1347,7 +1347,7 @@ describe('the dispatcher and the drain at the end of a command', () => {
     (await seedWork(path, ITEM));
     const database = new PgTestClient(path);
     try {
-      (await database.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
+      (await database.exec('update brain.schema_migrations set version = version + 1 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
     } finally {
       (await database.close());
     }
@@ -1403,6 +1403,17 @@ describe('the dispatcher and the lock budget', () => {
       // tests are about the lock budget, so every capability answers the same
       // way and none of them is reached.
       const store: Store & SchemaStore = {
+        async recordExtensionInstall() { return unavailable; },
+        async recordExtensionConnection() { return unavailable; },
+        async getExtension() { return unavailable; },
+        async listExtensions() { return unavailable; },
+        async holdWorkGroup() { return unavailable; },
+        async releaseWorkGroup() { return unavailable; },
+        async listWork() { return unavailable; },
+        async readModelWorkUsage() { return unavailable; },
+        async listSchedules() { return unavailable; },
+        async removeSchedule() { return unavailable; },
+        async readWorkAttemptHealth() { return unavailable; },
         async requestWorkCancel() { return unavailable; },
         async recordSupervisedProcess() { return unavailable; },
         async listOpenSupervisedAttempts() { return unavailable; },
@@ -1410,6 +1421,10 @@ describe('the dispatcher and the lock budget', () => {
         async claimSupervisedWork() { return unavailable; },
         async renewSupervisedLease() { return unavailable; },
         async finishSupervisedWork() { return unavailable; },
+        async listDailySchedules() { return unavailable; },
+        async readSchedule() { return unavailable; },
+        async rezoneSchedule() { return unavailable; },
+        async listScheduleSuccesses() { return unavailable; },
         async addSchedule() { return unavailable; },
         async listDueSchedules() { return unavailable; },
         async fireSchedule() { return unavailable; },
@@ -1466,6 +1481,7 @@ describe('the dispatcher and the lock budget', () => {
         async readSession() {
           return unavailable;
         },
+        async addWorkGraph() { return unavailable; },
         async addWork() {
           return unavailable;
         },

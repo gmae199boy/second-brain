@@ -26,6 +26,17 @@ import type { SchemaStore, SettingsStore, Store } from 'second_brain';
 export function failedConfigStore(message: string): Store & SchemaStore & SettingsStore {
   const unavailable = { ok: false as const, code: 'DB_UNAVAILABLE' as const, message };
   return {
+    async recordExtensionInstall() { return unavailable; },
+    async recordExtensionConnection() { return unavailable; },
+    async getExtension() { return unavailable; },
+    async listExtensions() { return unavailable; },
+    async holdWorkGroup() { return unavailable; },
+    async releaseWorkGroup() { return unavailable; },
+    async listSchedules() { return unavailable; },
+    async removeSchedule() { return unavailable; },
+    async listWork() { return unavailable; },
+    async readModelWorkUsage() { return unavailable; },
+    async readWorkAttemptHealth() { return unavailable; },
     async requestWorkCancel() { return unavailable; },
     async recordSupervisedProcess() { return unavailable; },
     async listOpenSupervisedAttempts() { return unavailable; },
@@ -35,7 +46,11 @@ export function failedConfigStore(message: string): Store & SchemaStore & Settin
     async finishSupervisedWork() { return unavailable; },
     async getSetting() { return unavailable; },
     async setSetting() { return unavailable; },
-    async addSchedule() { return unavailable; },
+    async listDailySchedules() { return unavailable; },
+        async readSchedule() { return unavailable; },
+        async rezoneSchedule() { return unavailable; },
+        async listScheduleSuccesses() { return unavailable; },
+        async addSchedule() { return unavailable; },
     async listDueSchedules() { return unavailable; },
     async fireSchedule() { return unavailable; },
     async checkHealth() {
@@ -91,6 +106,7 @@ export function failedConfigStore(message: string): Store & SchemaStore & Settin
     async readSession() {
       return unavailable;
     },
+    async addWorkGraph() { return unavailable; },
     async addWork() {
       return unavailable;
     },

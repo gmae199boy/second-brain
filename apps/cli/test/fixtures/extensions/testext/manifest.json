@@ -1,0 +1,1 @@
+{ "name": "testext", "version": "0.1.0", "core": 1, "abi": 1, "migrations": "migrations", "connection_check": { "runtime": "node", "entry": "bin/check.mjs" } }

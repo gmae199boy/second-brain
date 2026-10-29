@@ -10,11 +10,11 @@ export async function supervisorFixture(home: string) {
   const client = new PgTestClient(db.url);
   return {
     db, env: db.env,
-    async enqueueProbe(durationMs = 1500) {
+    async enqueueProbe(durationMs = 1500, serializationKey?: string | null, holdGroup?: string | null) {
       const id = uuidV7IdGen().next(); const now = new Date();
       const store = postgresStore({ databaseUrl: db.appUrl });
       try {
-        const added = await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: String(durationMs), createdAt: now, nextAttemptAt: now });
+        const added = await store.addWork({ id, serializationKey, holdGroup, kind: 'process_probe', targetKind: 'probe', targetId: String(durationMs), createdAt: now, nextAttemptAt: now });
         if (!added.ok) throw new Error(added.message);
         return added.item.id;
       } finally { await store.close(); }

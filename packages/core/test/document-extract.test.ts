@@ -1,3 +1,4 @@
+import type { SettingsStore } from '../src/ports/store.js';
 import { describe, expect, it } from 'vitest';
 import { createBrain, type Brain, type BrainDependencies } from '../src/brain.js';
 import {
@@ -121,7 +122,7 @@ interface KitOptions {
   /** The size the ingest records, when a case wants it to differ (too_large). */
   sizeBytes?: number;
   /** Wrapped around the memory store, for a store verb that has to refuse. */
-  wrap?: (store: Store & SchemaStore) => Store & SchemaStore;
+  wrap?: (store: Store & SchemaStore & SettingsStore) => Store & SchemaStore & SettingsStore;
 }
 
 /**
@@ -174,7 +175,7 @@ async function kit(options: KitOptions = {}): Promise<Kit> {
   const file = rows.attachments[0]?.file ?? null;
   if (file === null || file.home === null) throw new Error('첨부가 파일 행을 만들지 않았습니다');
 
-  const withSchema: Store & SchemaStore = {
+  const withSchema: Store & SchemaStore & SettingsStore = {
     ...store,
     async readSchemaVersions() {
       return { ok: true, versions: { core: { version: 8, appliedAt: NOW } } };

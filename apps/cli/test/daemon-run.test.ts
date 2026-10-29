@@ -183,7 +183,7 @@ describe('runDaemon, with its timers wound down', () => {
     const due = new Date(at.getTime() + 60000);
     const store = postgresStore({ databaseUrl: pgAppUrl(path) });
     await store.addSchedule({ id: '01940000-0000-7000-8000-000000000001', kind: 'schedule_probe', targetKind: 'probe', targetId: '01940000-0000-7000-8000-000000000001',
-      intervalSeconds: null, nextRunAt: due, lastRunAt: null, createdAt: at });
+      localTime: null, timeZone: null, intervalSeconds: null, nextRunAt: due, lastRunAt: null, createdAt: at });
     await store.close();
     let rounds = 0;
     const daemon = startDaemon({ home, env: environment(home), clock: { now: () => new Date(at) },
@@ -210,7 +210,7 @@ describe('runDaemon, with its timers wound down', () => {
     const due = new Date(at.getTime() - 185000);
     const store = postgresStore({ databaseUrl: pgAppUrl(path) });
     await store.addSchedule({ id: '01940000-0000-7000-8000-000000000002', kind: 'schedule_probe', targetKind: 'probe', targetId: '01940000-0000-7000-8000-000000000002',
-      intervalSeconds: 60, nextRunAt: due, lastRunAt: null, createdAt: due });
+      localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: due, lastRunAt: null, createdAt: due });
     await store.addWork({ id: '01940000-0000-7000-8000-000000000003', kind: 'schedule_probe', targetKind: 'probe', targetId: 'other',
       createdAt: at, nextAttemptAt: at });
     await store.close();
@@ -229,10 +229,10 @@ describe('runDaemon, with its timers wound down', () => {
       expect(logs.match(/예약 틱 실패/g)).toHaveLength(1);
       expect(logs).toContain('DB_UNAVAILABLE');
       // A skipped tick (schema mismatch) must not reset the tick failure state.
-      (await db.exec('update brain.schema_migrations set version = 8 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
+      (await db.exec('update brain.schema_migrations set version = version + 1 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
       const mismatched = rounds;
       await waitFor('스키마 불일치 회차', () => rounds >= mismatched + 2);
-      (await db.exec('update brain.schema_migrations set version = 5 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
+      (await db.exec('update brain.schema_migrations set version = 11 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
       const restored = rounds;
       await waitFor('스키마 복구 뒤 실패 회차', () => rounds >= restored + 2);
       expect((await readFile(daemonLogPath(home), 'utf8')).match(/예약 틱 실패/g)).toHaveLength(1);
@@ -320,7 +320,7 @@ describe('runDaemon, with its timers wound down', () => {
     const store = postgresStore({ databaseUrl: pgAppUrl(join(home, 'brain.db')) });
     const at = new Date('2026-02-03T04:05:06.000Z');
     expect((await store.addSchedule({ id: '01940000-0000-7000-8000-000000000004', kind: 'schedule_probe', targetKind: 'probe',
-      targetId: '01940000-0000-7000-8000-000000000004', intervalSeconds: null, nextRunAt: at, lastRunAt: null, createdAt: at })).ok).toBe(true);
+      targetId: '01940000-0000-7000-8000-000000000004', localTime: null, timeZone: null, intervalSeconds: null, nextRunAt: at, lastRunAt: null, createdAt: at })).ok).toBe(true);
     const controller = new AbortController();
     const fireSchedule = store.fireSchedule.bind(store);
     vi.spyOn(store, 'fireSchedule').mockImplementation(async input => {
@@ -902,7 +902,7 @@ describe('brain daemon run, as a process', () => {
     const { home, configDir } = await installed();
     await transcript(configDir, 'session-recovered');
     const database = new PgTestClient(join(home, 'brain.db'));
-    (await database.prepare('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)').run());
+    (await database.prepare('update brain.schema_migrations set version = version + 1 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)').run());
     const daemon = shortDaemon(home, configDir);
     try {
       await waitFor('스키마 불일치', async () =>

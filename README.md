@@ -481,7 +481,7 @@ doctor의 `transcripts` 점검이 같은 등록부를 씁니다.
 지나 다른 실행이 그 행을 가져갔다면 늦게 온 답은 아무것도 바꾸지 않습니다.
 그래서 두 프로세스가 같은 대기열을 비워도 일감은 정확히 한 번 처리됩니다.
 
-실패는 분류에 따라 다르게 다룹니다.
+core drain의 실패는 분류에 따라 다르게 다룹니다.
 
 - **데이터베이스에 쓸 수 없음**(`DB_UNAVAILABLE`·`DB_LOCKED`·`SCHEMA_MISMATCH`)은
   실패가 아닙니다. 일감을 그대로 돌려주고(시도 횟수도 되돌립니다) 그 실행을
@@ -498,8 +498,14 @@ fingerprint는 (단계, 대상, 분류 코드)의 해시입니다 — 오류 문
 들어가지 않습니다. 그래서 같은 원인이 백 번 나도 행은 하나입니다. 같은 원인이
 다시 나면 그 행이 다시 열리고(해결 표시가 지워지고) 시각과 문장이 방금 것으로
 바뀝니다. 그래서 그 행의 시각은 마지막으로 난 때입니다. 저장되는 오류 문장은 비밀을 가린 뒤
-8192바이트 이하로 자릅니다. payload는 남기지 않습니다. 실패 기록 자체를
+8192바이트 이하로 자릅니다. payload는 남기지 않습니다. core drain의 실패 기록 자체를
 데이터베이스가 받지 못하면 그 내용이 spool로 가고 그 실행은 멈춥니다.
+
+감독 경로는 worker의 `retryable`을 따르며 시도를 소비합니다. `DB_UNAVAILABLE`·`DB_LOCKED`도
+true면 종류의 `transientDelayMs`(기본 15분) 뒤 재시도하고 10번째 시도에서 기록 후 닫으며,
+false면 즉시 기록 후 닫습니다. 정산 DB 실패는 spool 대신 `pendingSettlement`로 재시도합니다.
+heartbeat는 임대만 갱신하며 진행이 아닙니다. 마지막 진행부터 기본 15분, 모델 일감은 25분 동안
+진행이 없으면 감독자가 정체로 보고 프로세스 그룹을 정리합니다.
 
 hook이 아닌 명령은 **끝에서 한 번 더** 짧게(2초) 이것을 돕니다.
 살아 있는 pid 잠금 주인과 90초 이내의 미래가 아닌 heartbeat가 있으면 데몬에
@@ -778,6 +784,9 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 
 | 코드 | exit | 뜻 |
 | --- | --- | --- |
+| `EXTENSION_NOT_FOUND` | 2 | 지정한 확장 패키지가 없습니다 |
+| `EXTENSION_INVALID` | 2 | 확장 패키지의 선언이 올바르지 않습니다 |
+| `EXTENSION_CHECK_FAILED` | 1 | 확장 설치 뒤 연결 확인에 실패했습니다 |
 | `ABI_LINE_INVALID` | 1 | 프로세스 출력 줄이 ABI 형식과 다릅니다 |
 | `ABI_VERSION_UNKNOWN` | 1 | 지원하지 않는 프로세스 ABI 버전입니다 |
 | `ABI_LINE_TOO_LONG` | 1 | 프로세스 출력 줄이 바이트 상한을 넘었습니다 |
@@ -787,6 +796,8 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `ABI_NO_RESULT` | 1 | 프로세스가 최종 이벤트 없이 정상 종료했습니다 |
 | `ABI_EXIT_FAILED` | 1 | 프로세스가 최종 이벤트 없이 비정상 종료했습니다 |
 | `ABI_OUTPUT_UNREADABLE` | 1 | 프로세스 출력을 읽지 못했습니다 |
+| `PROCESS_STALLED` | 1 | 자식 프로세스의 진행이 정체되었습니다 |
+| `PROCESS_DIED` | 1 | 자식 프로세스가 결과 없이 사망했습니다 |
 | `PROCESS_START_FAILED` | 1 | 자식 프로세스를 시작하지 못했습니다 |
 | `ABI_ENV_INVALID` | 1 | 프로세스 환경 변수가 ABI 형식과 다릅니다 |
 | `USAGE` | 2 | 명령을 잘못 불렀습니다 — 모르는 동사, 잘못된 플래그, 쓸 수 없는 인자 |
@@ -794,6 +805,10 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `CONFIG_INVALID` | 2 | 설정은 있고, 그 값 하나를 읽거나 쓸 수 없습니다 |
 | `ORBSTACK_UNAVAILABLE` | 2 | OrbStack을 사용할 수 없습니다 |
 | `DB_UNAVAILABLE` | 2 | 데이터베이스에 닿지 못했습니다 |
+| `WORK_GRAPH_INVALID` | 1 | 일감 의존 그래프가 올바르지 않습니다 |
+| `SCHEDULE_NOT_FOUND` | 1 | 지정한 예약이 없습니다 |
+| `SCHEDULE_INVALID` | 1 | 예약 시각이 잘못되었습니다 |
+| `SCHEDULE_CONFLICT` | 1 | 같은 대상의 매일 예약이 있습니다 |
 | `WORK_NOT_FOUND` | 1 | 지정한 일감이 없습니다 |
 | `MESSAGE_NOT_FOUND` | 1 | 지정한 메시지가 없습니다 |
 | `REDACT_TEXT_NOT_FOUND` | 1 | 가릴 글자를 찾지 못했습니다 |
@@ -1039,6 +1054,7 @@ env -u SECOND_BRAIN_HOME "$SECOND_BRAIN_HOME/bin/brain" doctor run
 | `schema-version` | 저장된 버전이 이 빌드가 만들어진 그 버전인지. 어긋나면 `SCHEMA_MISMATCH`이고, 마이그레이션하는 것은 `brain setup run`입니다. `db`가 실패했으면 물을 것이 없으므로 `skip` |
 | `untagged` | 꼬리표 없는 세션 수. 레포 밖 세션도 정상이므로 항상 `ok`이며 `N건`을 보입니다. 읽기 실패는 `fail`, DB 실패는 `skip` |
 | `failures` | 아직 해결되지 않은 실패가 몇 건인지, 대상 종류별로. 0건이면 `ok`, 있으면 `warn`(코드 없음) — 기록이 남았다는 것은 망가졌다는 뜻이 아니라 멈췄다고 말했다는 뜻입니다. `brain failures retry`가 다시 부탁합니다. `db`가 실패했으면 `skip` |
+| `work-stalled` · `work-died` · `work-unknown` · `work-last-error` | 열린 일감의 마지막 정체·사망·현재 불명·마지막 오류의 건수와 최근 일감을 보입니다. 있으면 `warn`, 없으면 `ok`, DB 또는 선행 점검 실패면 `skip` |
 | `transcripts` | 디스크에 있는데 아직 수집하지 않은 트랜스크립트가 몇 건인지. 그중 하나라도 하네스가 지우는 기한(30일)에서 5일 안으로 들어왔거나 폴더를 읽지 못했으면 `warn`, 그 밖은 `ok`. 폴더를 보지 않는 설정이면 `skip`. `db`가 실패했으면 `skip` |
 | `config` | `config.toml`이 있고 읽을 수 있는지, 그리고 어디에 있는지 |
 | `shim` | `<home>/bin/brain`이 있고, 실행할 수 있고, brain이 썼고, 있는 진입점을 가리키는지 |

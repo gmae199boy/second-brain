@@ -25,13 +25,19 @@
  * holding it still counted once, which is what stops it from being claimed for
  * ever (Decision 1, 2026-10-19).
  */
+export interface ScheduledDates { scheduleId: string | null; from: string; to: string; timeZone: string }
+
 export interface WorkItem {
+  scheduledDates: ScheduledDates | null;
   /** UUIDv7 minted by whoever created the row (AD-8). */
   id: string;
   /** What has to be done. A Core constant of the unit that does it. */
   kind: string;
   executionClass: WorkExecutionClass;
   currentAttemptToken: string | null;
+  /** Shared exclusion key across kinds and claim paths; null means independent. */
+  serializationKey: string | null;
+  holdGroup: string | null;
   /** Together with `targetId`, what it has to be done to. */
   targetKind: string;
   targetId: string;
@@ -153,10 +159,19 @@ export const DRAIN_BUDGET_MS = {
 } as const;
 
 export type WorkExecutionClass = 'core' | 'supervised';
+const WORK_KINDS: Readonly<Record<string, { executionClass: WorkExecutionClass; callsModel: boolean }>> = {
+  process_probe: { executionClass: 'supervised', callsModel: false },
+};
 export function workExecutionClass(kind: string): WorkExecutionClass {
-  return kind === 'process_probe' ? 'supervised' : 'core';
+  return Object.hasOwn(WORK_KINDS, kind) ? WORK_KINDS[kind]!.executionClass : 'core';
+}
+export const SUPERVISOR_STALL_WINDOW_MS = { default: 900_000, model: 1_500_000 } as const;
+export function workStallWindowMs(kind: string): number {
+  return Object.hasOwn(WORK_KINDS, kind) && WORK_KINDS[kind]!.callsModel
+    ? SUPERVISOR_STALL_WINDOW_MS.model : SUPERVISOR_STALL_WINDOW_MS.default;
 }
 export const SUPERVISOR_RENEW_EVERY_MS = 60_000;
+export const SUPERVISOR_CAPACITY = 2;
 export const SUPERVISOR_POLL_MS = 5_000;
 export const SUPERVISOR_CANCEL_GRACE_MS = 5_000;
 export const SUPERVISOR_CANCEL_POLL_MS = 1_000;
@@ -177,4 +192,17 @@ export interface WorkAttempt {
   renewedAt: Date | null;
   finishedAt: Date | null;
   outcome: 'succeeded' | 'failed' | 'stalled' | 'died' | 'cancelled' | 'unknown' | null;
+}
+
+/** One sentence shared by every store when an upstream item closes unsuccessfully. */
+export function dependencyFailedText(id: string, outcome: 'failed' | 'cancelled' | 'dependency_failed'): string {
+  return `선행 일감 ${id}이 ${outcome}로 끝나 이 일감을 실행할 수 없습니다`;
+}
+
+export function modelWorkKinds(): string[] { return Object.keys(WORK_KINDS).filter(kind => WORK_KINDS[kind]!.callsModel); }
+
+/** Extension ownership takes precedence over an explicit group. */
+export function workHoldGroup(kind: string, explicit?: string | null): string | null {
+  const dot = kind.indexOf('.');
+  return dot < 0 ? explicit ?? null : `extension:${kind.slice(0, dot)}`;
 }

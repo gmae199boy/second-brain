@@ -253,3 +253,27 @@ export * from './process-abi/codec.js';
 export * from './queue/supervisor.js';
 
 export type { BrainQueueCancelResult } from './brain.js';
+
+export { SUPERVISOR_CAPACITY, dependencyFailedText } from './domain/work-item.js';
+export * from './queue/work-graph.js';
+
+export * from './local-time.js';
+export * from './queue/schedules.js';
+
+export * from './queue/list.js';
+export { modelWorkKinds } from './domain/work-item.js';
+
+export type { WorkAttempt } from './domain/work-item.js';
+
+export type { BrainSchedules } from './brain.js';
+
+export { workHoldGroup } from './domain/work-item.js';
+export { holdWorkGroup, releaseWorkGroup } from './queue/hold-groups.js';
+
+export type { ExtensionStore, ExtensionRecord, ExtensionStoreFailure } from './ports/store.js';
+
+export { EXTENSION_CORE_VERSION, decodeExtensionManifest, isExtensionName, type ExtensionManifest } from './extensions/manifest.js';
+export { runExtensionCheck } from './extensions/check.js';
+export { installExtension, type ExtensionPackages, type ExtensionMigrator, type ExtensionRuntime } from './extensions/install.js';
+export { extensionStatus, listExtensions } from './extensions/status.js';
+export type { BrainExt } from './brain.js';

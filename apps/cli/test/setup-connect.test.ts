@@ -348,7 +348,7 @@ describe('plugin connections', () => {
     const target = join(config, 'settings.json');
     await writeFile(target, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'old # second-brain' }] }] } }));
     await mkdir(join(home, 'run'));
-    await writeFile(join(home, 'installed.json'), JSON.stringify({ commit: 'a'.repeat(40), schema_version: 6, node: process.execPath, plugin_root: '/installed/plugin', installed_at: new Date().toISOString() }));
+    await writeFile(join(home, 'installed.json'), JSON.stringify({ commit: 'a'.repeat(40), schema_version: 8, node: process.execPath, plugin_root: '/installed/plugin', installed_at: new Date().toISOString() }));
     await writeFile(join(home, 'run', 'plugin.json'), JSON.stringify({ plugin_root: '/current/plugin', app_ref: 'a'.repeat(40), seen_at: new Date().toISOString() }));
     const connector = claudeCodeConnector({ configDir: config });
     const text = await runConnect([connector], ['setup', 'connect', 'claude-code'], home);

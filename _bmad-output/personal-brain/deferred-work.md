@@ -287,7 +287,9 @@ location: packages/core/src/queue/supervisor.ts:58
 source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-tracer-probe-600-plan.md`
 severity: medium
 reason: packages/core/src/queue/supervisor.ts의 `for await (const line of handle.lines)`에는 마지막 progress 기준 제한 시간이 없다. 정체 판정(종류별 창 15/25분, 그룹 정리 뒤 일시 오류 재시도)은 epic 12 스토리 5의 범위다.
-status: open
+status: done 2026-10-29
+resolution: resolved by story 12.11
+resolution-undo: 9820588b669e4f82e216128a1040fd740cd5bee3772bc1e6a593f52e3f8e3b6a 2026-10-29 7374617475733a206f70656e
 
 ### DW-14: supervised 일감이 몇 번 실패해도 failures 기록 없이 계속 재예약된다(MAX_WORK_ATTEMPTS 미적용).
 origin: spec-deferred fb3d73f1e55a
@@ -295,7 +297,9 @@ location: packages/core/src/queue/supervisor.ts:80
 source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-tracer-probe-600-plan.md`
 severity: medium
 reason: `finishSupervisedWork`의 `failed`는 plan대로 failures 행 없는 임시 재시도다. 10회 상한과 기록은 스토리 4·5가 이 verb를 넓혀 처리한다.
-status: open
+status: done 2026-10-29
+resolution: resolved by story 12.11
+resolution-undo: 9820588b669e4f82e216128a1040fd740cd5bee3772bc1e6a593f52e3f8e3b6a 2026-10-29 7374617475733a206f70656e
 
 ### DW-15: 만료 뒤 재청구할 때 이전 attempt 행의 finished_at·outcome이 비어 있는 채 남는다.
 origin: spec-deferred a825e9019974
@@ -303,4 +307,90 @@ location: packages/postgres/src/work.ts:192
 source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-tracer-probe-600-plan.md`
 severity: medium
 reason: `claimSupervisedWork`(PG·fake)는 새 attempt만 만들고 이전 token의 행을 닫지 않는다. 데몬 시작 때 이전 incarnation의 열린 attempt를 대조해 `died`·`unknown`으로 회수하는 일은 스토리 2의 범위다.
+status: done 2026-10-29
+resolution: resolved by story 12.11
+resolution-undo: 9820588b669e4f82e216128a1040fd740cd5bee3772bc1e6a593f52e3f8e3b6a 2026-10-29 7374617475733a206f70656e
+
+### DW-16: 기존 비밀 탐지기는 따옴표 직후 줄바꿈이 있는 영어 keyword 값을 탐지하지 못한다.
+origin: spec-deferred 45bbe096e7a0
+location: packages/core/src/domain/secret-patterns.ts
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-abi-v1-fixture-ts-plan.md`
+severity: high
+reason: TOKEN="\nSyntheticSecret123\n"을 기준 revision ec91837a6e83385ab98b071a2d023ab439e1a019의 maskSecrets와 현재 구현에 넣으면 둘 다 그대로 반환한다. 기존 VALUE·인용 정책의 한계이며 이번 성능 변경의 회귀가 아니다. 지원 형식과 문장 보존 정책을 정한 뒤 별도로 탐지기를 개선해야 한다.
+status: open
+
+### DW-17: 기존 영어 문장 예외는 명시적 keyword 뒤 다음 줄의 여러 단어 비밀번호도 그대로 남긴다.
+origin: spec-deferred e30e78740ca9
+location: packages/core/src/domain/secret-patterns.ts
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-abi-v1-fixture-ts-plan.md`
+severity: high
+reason: password:\ncorrect horse battery staple\n은 기준 revision과 현재 모두 그대로 반환한다. keywordValueLooksLikeSecret가 뒤 단어를 문장으로 판정하는 기존 정책이며 새 전체 문맥 전달이나 색인의 회귀가 아니다. 명시적 대입의 여러 단어 값을 어디까지 탐지할지 별도 정책 검토가 필요하다.
+status: open
+
+### DW-18: 기존 영어 인용 값 처리도 비밀에 포함된 끝 괄호를 가림 밖에 남긴다.
+origin: spec-deferred bee43b0604cb
+location: packages/core/src/domain/secret-patterns.ts
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-abi-v1-fixture-ts-plan.md`
+severity: high
+reason: password="abc)"는 기준 revision과 현재 모두 닫는 괄호를 가림 밖에 남기고, password=")))"는 그대로 반환한다. 기존 trimClosers가 인용 값에도 적용되는 동작이다. 닫힌 인용 값의 괄호 처리 규칙을 별도로 고쳐야 한다.
+status: open
+
+### DW-19: 기존 한국어 keyword 패턴은 따옴표로 둘러싼 값을 탐지하지 못한다.
+origin: spec-deferred 5ee329c705fc
+location: packages/core/src/domain/secret-patterns.ts
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-abi-v1-fixture-ts-plan.md`
+severity: high
+reason: 비밀번호: "SyntheticSecret123"은 기준 revision과 현재 모두 그대로 반환한다. 한국어 패턴에는 영어 open 인용 그룹이 없으며 이번 색인 변경 전부터 존재한 한계다. 한국어 인용 값 지원을 별도로 정의하고 구현해야 한다.
+status: open
+
+### DW-20: 이전 incarnation 회수 정산(`reconcile` → `settleSupervisedAttempt`의 `died`)에는 10회 상한이 없어, 데몬이 죽을 때마다 같은 일감이 `failures`에 남지 않고 계속 다시 청구될 수 있다.
+origin: spec-deferred 5460625d090c
+location: packages/core/src/queue/supervisor.ts reconcile(); packages/postgres/src/work.ts settleSupervisedAttempt
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-doctor-plan.md`
+severity: medium
+reason: `packages/core/src/queue/supervisor.ts` `reconcile()`은 `settleSupervisedAttempt({ outcome: 'died' })`를 부르고, PG·fake 모두 `next_attempt_at = now`로 바로 다시 열며 `attempts`를 보지 않는다. 이 동작은 12.2부터 있었고 이번 변경(plan Never·Design Notes)이 그대로 두었다. 이번 변경은 실행 중 정산(`finishSupervisedWork`)에만 AD-21 10회 상한을 더했다. 회수 경로에도 `MAX_WORK_ATTEMPTS`에서 기록 후 닫기를 적용하려면 settle 입력이나 reconcile 분기를 바꿔야 한다.
+status: done 2026-10-29
+resolution: resolved by story 12.11
+resolution-undo: 9820588b669e4f82e216128a1040fd740cd5bee3772bc1e6a593f52e3f8e3b6a 2026-10-29 7374617475733a206f70656e
+
+### DW-21: 자식을 띄운 뒤 runSupervisor의 execute()가 예외를 던지면 살아 있는 자식이 실행 집합에서 빠져 용량 계산과 종료 정리를 벗어날 수 있다.
+origin: spec-deferred cf3cb70afd04
+location: packages/core/src/queue/supervisor.ts:245
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-untitled-7-plan.md`
+severity: medium
+reason: blind-hunter 1, edge-case-hunter 1·4. 기준 커밋도 같은 예외에서 자식을 추적하지 못했다(메인 루프 catch로 빠짐). 확인하지 못함: problem()(options.log), inspector, Store 호출 중 무엇이 실제로 던질 수 있는지. 그런 경로가 있으면 catch에서 그룹 정리와 token 정산을 마친 뒤 슬롯을 돌려줘야 한다. (declared severity: medium (unverified))
+status: done 2026-10-29
+resolution: resolved by story 12.11
+resolution-undo: 9820588b669e4f82e216128a1040fd740cd5bee3772bc1e6a593f52e3f8e3b6a 2026-10-29 7374617475733a206f70656e
+
+### DW-22: 재설치 마이그레이션이 일부 파일을 커밋한 뒤 실패하면 이전 패키지를 되돌려, 설치 폴더에 이미 ledger에 기록된 마이그레이션 파일이 없게 된다.
+origin: spec-deferred c2125e96bef7
+location: apps/cli/src/runtime/extensions.ts:76
+source_spec: `tickets/epic-extensions/tickets/story-tracer-brain-ext-install-testext-ext-status-connected-plan.md`
+severity: medium
+reason: `runMigrations`는 파일마다 커밋한다. `apps/cli/src/runtime/extensions.ts`의 migrator는 실패 결과면 무조건 backup을 되돌리므로, 0002 성공·0003 실패 때 ledger에는 0002가 있고 설치본에는 없다. 설치된 확장 마이그레이션을 setup이 다시 돌리게 되면(AD-31, setup run의 "설치된 확장" 마이그레이션) checksum·파일 검증이 실패한다. 실패·재개 정책은 13.5(단계 보고와 재개) 소관이다.
+status: open
+
+### DW-23: 마이그레이션 커밋 뒤 `recordExtensionInstall`이 실패하면 패키지와 DDL은 남고 registry에는 설치 사실이 없다.
+origin: spec-deferred ecd8277dac99
+location: packages/core/src/extensions/install.ts:36
+source_spec: `tickets/epic-extensions/tickets/story-tracer-brain-ext-install-testext-ext-status-connected-plan.md`
+severity: medium
+reason: `packages/core/src/extensions/install.ts`는 place → migrate → registry 기록 순서이고, migrator가 성공하면 backup을 지운다. 그 뒤 DB 쓰기가 실패하면 `ext status`는 미설치로 보이지만 `<home>/extensions/<name>/`와 확장 schema는 있다. 다시 돌리면 이어 가지만 단계별 결과 기록과 재개는 13.5 소관이다.
+status: open
+
+### DW-24: 연결 확인 중 CLI가 SIGINT 등으로 끝나면 detached로 뜬 자식 프로세스 그룹이 정리되지 않고 남을 수 있다.
+origin: spec-deferred ef840af28009
+location: packages/core/src/extensions/check.ts:5
+source_spec: `tickets/epic-extensions/tickets/story-tracer-brain-ext-install-testext-ext-status-connected-plan.md`
+severity: medium
+reason: `runExtensionCheck`에는 취소 신호가 없고 실제 launcher는 `detached: true`로 띄운다. 큐 행이 없으므로 감독자 reconcile도 회수하지 않는다. testext는 즉시 끝나 영향이 없지만, 오래 걸리는 실제 확장 확인에서는 고아 그룹이 생긴다. 취소 보고는 13.5 소관이다.
+status: open
+
+### DW-25: 연결 확인 실패 때 자식의 stderr 진단(마스킹·길이 제한된 값)이 버려져 registry에는 ABI 코드와 일반 메시지만 남는다.
+origin: spec-deferred 8d1e36c844a2
+location: packages/core/src/extensions/check.ts:41
+source_spec: `tickets/epic-extensions/tickets/story-tracer-brain-ext-install-testext-ext-status-connected-plan.md`
+severity: low
+reason: `packages/core/src/extensions/check.ts`는 `createAbiStderr()`로 모은 값을 `stderr.value()`로 읽고 버린다. Node 구문 오류처럼 원인이 stderr에만 있는 실패는 `ABI_EXIT_FAILED`만 보인다. 마지막 실패 보고는 13.5, 공개 상태 view는 13.6 소관이다.
 status: open

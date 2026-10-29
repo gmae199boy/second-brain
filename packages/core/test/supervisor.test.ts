@@ -10,7 +10,7 @@ import { memorySchemaStore } from '../src/testing/fakes/schema-store.js';
 import type { ProcessLauncher } from '../src/ports/process.js';
 const now = new Date('2026-10-29T00:00:00Z');
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
-async function kit(options: { launcher?: ProcessLauncher; configureStore?: (store: ReturnType<typeof memoryStore>) => void; log?: (message: string) => void } = {}) {
+async function kit(options: { keys?: (string | null)[]; launcher?: ProcessLauncher; configureStore?: (store: ReturnType<typeof memoryStore>) => void; log?: (message: string) => void } = {}) {
   const store = memoryStore();
   options.configureStore?.(store);
   const time = manualTime(now);
@@ -18,8 +18,9 @@ async function kit(options: { launcher?: ProcessLauncher; configureStore?: (stor
   const controller = new AbortController();
   const idGen = sequenceIdGen({ timestampMs: now.getTime() });
   const id = idGen.next();
-  await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: '700000', createdAt: now, nextAttemptAt: now });
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector: fakeProcessInspector(launcher), launcher: options.launcher ?? launcher, idGen,
+  for (const [index, key] of (options.keys ?? [null]).entries())
+    await store.addWork({ id: index === 0 ? id : idGen.next(), serializationKey: key, kind: 'process_probe', targetKind: 'probe', targetId: String(700000 + index), createdAt: now, nextAttemptAt: now });
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector: fakeProcessInspector(launcher), launcher: options.launcher ?? launcher, idGen,
     ...(options.log === undefined ? {} : { log: options.log }),
     launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) }, signal: controller.signal });
   await flush();
@@ -31,7 +32,7 @@ it('fails and releases a claim when the launcher cannot start the child', async 
     expect(k.store.snapshot().workAttempts[0]).toMatchObject({ outcome: 'failed', finishedAt: now });
     expect(k.store.snapshot().workItems[0]).toMatchObject({
       claimedAt: null, claimedBy: null, claimExpiresAt: null, currentAttemptToken: null,
-      completedAt: null, nextAttemptAt: new Date(now.getTime() + 1000),
+      completedAt: null, nextAttemptAt: new Date(now.getTime() + 900_000),
     });
   } finally { k.controller.abort(); await k.running; }
 });
@@ -52,7 +53,8 @@ it('renews on first progress and throttles further renewal until 60 seconds', as
 });
 it('logs a recurring renewal failure again after a successful renewal', async () => {
   const logs: string[] = [];
-  const k = await kit({ log: message => { logs.push(message); }, configureStore(store) {
+  // Keep capacity full so successful empty claims do not reset the log state.
+  const k = await kit({ keys: ['one', 'two'], log: message => { logs.push(message); }, configureStore(store) {
     const renew = store.renewSupervisedLease.bind(store);
     let calls = 0;
     store.renewSupervisedLease = async input => {
@@ -90,17 +92,17 @@ it('renews 700 seconds of progress while core ingestion drains and competing cla
   expect(k.store.snapshot().workAttempts[0]).toMatchObject({ outcome: 'succeeded', finishedAt: k.time.clock.now() });
   k.controller.abort(); await k.running;
 });
-it.each(['missing result', 'nonzero exit'])('records %s as a retryable failed attempt', async failure => {
+it.each(['missing result', 'nonzero exit'])('records %s as a permanent failed attempt', async failure => {
   const k = await kit();
   const child = k.launcher.processes[0]!;
   if (failure === 'nonzero exit') child.push('{"abi":1,"type":"result"}');
   child.exit(failure === 'nonzero exit' ? 2 : 0); await flush();
   expect(k.store.snapshot().workAttempts[0]?.outcome).toBe('failed');
-  expect(k.store.snapshot().workItems[0]).toMatchObject({ claimedBy: null, completedAt: null, nextAttemptAt: new Date(now.getTime() + 1000) });
-  expect(k.store.snapshot().failures).toEqual([]);
+  expect(k.store.snapshot().workItems[0]).toMatchObject({ claimedBy: null, completedAt: now, outcome: 'failed' });
+  expect(k.store.snapshot().failures).toHaveLength(1);
   k.controller.abort(); await k.running;
 });
-it('cleans a live child after an invalid ABI line and records a retryable failure', async () => {
+it('cleans a live child after an invalid ABI line and records a permanent failure', async () => {
   const k = await kit(); const child = k.launcher.processes[0]!;
   try {
     expect(child.ended).toBe(false);
@@ -110,7 +112,7 @@ it('cleans a live child after an invalid ABI line and records a retryable failur
     expect(k.store.snapshot().workAttempts[0]).toMatchObject({ outcome: 'failed', finishedAt: now });
     expect(k.store.snapshot().workItems[0]).toMatchObject({
       currentAttemptToken: null, claimedBy: null, claimExpiresAt: null,
-      completedAt: null, nextAttemptAt: new Date(now.getTime() + 1000),
+      completedAt: now, outcome: 'failed',
     });
   } finally { k.controller.abort(); await k.running; }
 });
@@ -134,3 +136,193 @@ it('stale token renewal and finish leave both item and complete attempt history 
   expect(store.snapshot()).toEqual(before);
   expect(await store.finishSupervisedWork({ id, attemptToken: b, now: later, outcome: 'succeeded' })).toEqual({ ok: true, outcome: 'done' });
 });
+
+it('runs two keys at capacity and starts a third only when a slot frees', async () => {
+  const k = await kit({ keys: ['one', 'two', 'three'] });
+  try {
+    expect(k.launcher.processes).toHaveLength(2);
+    k.time.advance(5000); await flush();
+    expect(k.launcher.processes).toHaveLength(2);
+    k.launcher.processes[0]!.push('{"abi":1,"type":"result"}'); k.launcher.processes[0]!.exit();
+    await flush(); await flush();
+    expect(k.launcher.processes).toHaveLength(3);
+    expect(k.launcher.processes[1]!.ended).toBe(false);
+    expect(k.store.snapshot().workAttempts.map(a => a.outcome)).toEqual(['succeeded', null, null]);
+  } finally { k.controller.abort(); await k.running; }
+});
+it('same-key supervised work waits although capacity is free', async () => {
+  const k = await kit({ keys: ['account', 'account'] });
+  try {
+    expect(k.launcher.processes).toHaveLength(1);
+    k.time.advance(5000); await flush();
+    expect(k.launcher.processes).toHaveLength(1);
+    k.launcher.processes[0]!.push('{"abi":1,"type":"result"}'); k.launcher.processes[0]!.exit();
+    await flush(); await flush();
+    expect(k.launcher.processes).toHaveLength(2);
+  } finally { k.controller.abort(); await k.running; }
+});
+it('core drain completes while supervised capacity is full', async () => {
+  const k = await kit({ keys: ['one', 'two'] });
+  try {
+    expect(k.launcher.processes).toHaveLength(2);
+    await k.store.addWork({ id: k.idGen.next(), kind: 'session_ingest', targetKind: 'session', targetId: 'core', createdAt: now, nextAttemptAt: now });
+    expect(await drainQueue({ store: k.store, spool: memorySpool(), clock: k.time.clock, idGen: k.idGen }, { budgetMs: 1000, handlers: { session_ingest: async () => ({ ok: true }) } })).toMatchObject({ completed: 1 });
+    expect(k.launcher.processes.every(child => !child.ended)).toBe(true);
+  } finally { k.controller.abort(); await k.running; }
+});
+it('abort cleans and settles every running child', async () => {
+  const k = await kit({ keys: ['one', 'two', 'three'] });
+  expect(k.launcher.processes).toHaveLength(2);
+  k.controller.abort(); await k.running;
+  expect(k.launcher.processes.map(child => child.signals)).toEqual([['SIGTERM'], ['SIGTERM']]);
+  expect(k.store.snapshot().workAttempts.map(a => a.outcome)).toEqual(['cancelled', 'cancelled']);
+  expect(k.store.snapshot().workItems.every(item => item.currentAttemptToken === null && item.claimedBy === null)).toBe(true);
+});
+it('one settlement failure does not stop the other running child', async () => {
+  let failing = true;
+  let first: string | undefined;
+  const k = await kit({ keys: ['one', 'two', 'three'], configureStore(store) {
+    const finish = store.finishSupervisedWork.bind(store);
+    store.finishSupervisedWork = async input => {
+      first ??= input.id;
+      return failing && input.id === first ? { ok: false, code: 'DB_UNAVAILABLE', message: 'temporary' } : finish(input);
+    };
+  } });
+  try {
+    k.launcher.processes[0]!.push('{"abi":1,"type":"result"}'); k.launcher.processes[0]!.exit(); await flush(); await flush();
+    expect(k.launcher.processes).toHaveLength(2);
+    k.launcher.processes[1]!.push('{"abi":1,"type":"result"}'); k.launcher.processes[1]!.exit(); await flush(); await flush();
+    expect(k.store.snapshot().workAttempts.map(a => a.outcome)).toEqual([null, 'succeeded']);
+    expect(k.launcher.processes).toHaveLength(2);
+    k.time.advance(5000); await flush();
+    expect(k.launcher.processes).toHaveLength(2);
+    failing = false; k.time.advance(5000); await flush(); await flush();
+    expect(k.launcher.processes).toHaveLength(3);
+    expect(k.store.snapshot().workAttempts[0]?.outcome).toBe('succeeded');
+  } finally { failing = false; k.controller.abort(); await k.running; }
+});
+
+it('returns after abort even when settlement fails for both running children', async () => {
+  const k = await kit({ keys: ['one', 'two'], configureStore(store) {
+    store.settleSupervisedAttempt = async () => ({ ok: false, code: 'DB_UNAVAILABLE', message: 'offline' });
+  } });
+  const before = k.store.snapshot().workItems.map(item => item.currentAttemptToken);
+  expect(k.launcher.processes).toHaveLength(2);
+  k.controller.abort();
+  await k.running;
+  expect(k.launcher.processes.map(child => child.signals)).toEqual([['SIGTERM'], ['SIGTERM']]);
+  expect(k.store.snapshot().workItems.map(item => item.currentAttemptToken)).toEqual(before);
+  expect(before.every(token => token !== null)).toBe(true);
+  expect(k.store.snapshot().workAttempts).toHaveLength(2);
+  for (const attempt of k.store.snapshot().workAttempts) expect(attempt).toMatchObject({ outcome: null, finishedAt: null });
+});
+it('settles both aborted children on the final retry after each token fails once', async () => {
+  const calls = new Map<string, number>();
+  const k = await kit({ keys: ['one', 'two'], configureStore(store) {
+    const settle = store.settleSupervisedAttempt.bind(store);
+    store.settleSupervisedAttempt = async input => {
+      const count = (calls.get(input.attemptToken) ?? 0) + 1;
+      calls.set(input.attemptToken, count);
+      return count === 1 ? { ok: false, code: 'DB_UNAVAILABLE', message: 'offline' } : settle(input);
+    };
+  } });
+  expect(k.launcher.processes).toHaveLength(2);
+  const tokens = k.store.snapshot().workAttempts.map(attempt => attempt.token);
+  k.controller.abort();
+  await k.running;
+  expect(tokens.map(token => calls.get(token))).toEqual([2, 2]);
+  expect(k.launcher.processes.map(child => child.signals)).toEqual([['SIGTERM'], ['SIGTERM']]);
+  expect(k.store.snapshot().workAttempts).toHaveLength(2);
+  for (const attempt of k.store.snapshot().workAttempts) expect(attempt).toMatchObject({ outcome: 'cancelled', finishedAt: now });
+  for (const item of k.store.snapshot().workItems) expect(item).toMatchObject({
+    currentAttemptToken: null, claimedBy: null, claimedAt: null, claimExpiresAt: null,
+  });
+});
+it('a new incarnation settles failed shutdown attempts and runs waiting work with the same keys', async () => {
+  let failing = true;
+  const k = await kit({ keys: ['one', 'two', 'one', 'two'], configureStore(store) {
+    const settle = store.settleSupervisedAttempt.bind(store);
+    store.settleSupervisedAttempt = async input => failing
+      ? { ok: false, code: 'DB_UNAVAILABLE', message: 'offline' } : settle(input);
+  } });
+  const before = k.store.snapshot();
+  const oldTokens = before.workAttempts.map(attempt => attempt.token);
+  const waitingIds = before.workItems.slice(2).map(item => item.id);
+  expect(k.launcher.processes).toHaveLength(2);
+  k.controller.abort();
+  await k.running;
+  expect(k.launcher.processes.map(child => ({ ended: child.ended, signals: child.signals }))).toEqual([
+    { ended: true, signals: ['SIGTERM'] }, { ended: true, signals: ['SIGTERM'] },
+  ]);
+  expect(k.store.snapshot().workItems.slice(0, 2).map(item => item.currentAttemptToken)).toEqual(oldTokens);
+  expect(k.store.snapshot().workItems.slice(2).map(item => item.currentAttemptToken)).toEqual([null, null]);
+  for (const attempt of k.store.snapshot().workAttempts) expect(attempt).toMatchObject({ outcome: null, finishedAt: null });
+
+  failing = false;
+  const controller = new AbortController();
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...k.store, ...memorySchemaStore({ version: 3 }) }, ...k.time,
+    launcher: k.launcher, inspector: fakeProcessInspector(k.launcher), idGen: k.idGen,
+    launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) }, signal: controller.signal });
+  try {
+    await flush(); await flush();
+    const recovered = k.store.snapshot();
+    expect(recovered.workAttempts).toHaveLength(4);
+    for (const attempt of recovered.workAttempts.slice(0, 2)) expect(attempt).toMatchObject({ outcome: 'died', finishedAt: now });
+    for (const item of recovered.workItems.slice(0, 2)) expect(item).toMatchObject({
+      currentAttemptToken: null, claimedBy: null, claimedAt: null, claimExpiresAt: null,
+    });
+    expect(recovered.workAttempts.slice(2).map(attempt => attempt.workItemId)).toEqual(waitingIds);
+    for (const attempt of recovered.workAttempts.slice(2)) {
+      expect(attempt).toMatchObject({ outcome: null, finishedAt: null });
+      expect(oldTokens).not.toContain(attempt.token);
+      expect(attempt.incarnation).not.toBe(before.workAttempts[0]!.incarnation);
+    }
+    expect(k.launcher.processes).toHaveLength(4);
+    expect(k.launcher.processes.slice(2).every(child => !child.ended)).toBe(true);
+    expect(recovered.workItems.slice(2).map(item => item.serializationKey)).toEqual(['one', 'two']);
+    expect(recovered.workItems.slice(2).map(item => item.currentAttemptToken)).toEqual(recovered.workAttempts.slice(2).map(attempt => attempt.token));
+  } finally { controller.abort(); await running; }
+});
+it('logs a recurring claim error after an empty successful claim', async () => {
+  const logs: string[] = [];
+  let calls = 0;
+  const k = await kit({ keys: [], log: message => { logs.push(message); }, configureStore(store) {
+    store.claimSupervisedWork = async () => ++calls === 2 ? { ok: true, item: null, attemptToken: null }
+      : { ok: false, code: 'DB_UNAVAILABLE', message: 'offline' };
+  } });
+  try {
+    k.time.advance(5000); await flush();
+    k.time.advance(5000); await flush();
+    expect(calls).toBe(3);
+    expect(logs).toEqual(['감독자 청구 실패 (DB_UNAVAILABLE)', '감독자 청구 실패 (DB_UNAVAILABLE)']);
+  } finally { k.controller.abort(); await k.running; }
+});
+
+it.each(['throw', 'reject'] as const)('continues after log callbacks %s and claims later work', async mode => {
+  let logs = 0;
+  const k = await kit({ log: () => {
+    logs++;
+    if (mode === 'throw') throw new Error('log');
+    return Promise.reject(new Error('log'));
+  }, configureStore: store => {
+    store.renewSupervisedLease = async () => ({ ok: false, code: 'DB_UNAVAILABLE', message: 'log this failure' });
+  } });
+  try {
+    const child = k.launcher.processes[0]!;
+    child.push('{"abi":1,"type":"progress"}'); await flush();
+    expect(logs).toBeGreaterThan(0);
+    child.push('{"abi":1,"type":"result"}'); child.exit(); await flush();
+    expect(k.store.snapshot().workItems[0]?.outcome).toBe('succeeded');
+    await k.store.addWork({ id: k.idGen.next(), kind: 'process_probe', targetKind: 'probe', targetId: 'later', createdAt: now, nextAttemptAt: now });
+    k.time.advance(5000); await flush();
+    expect(k.launcher.processes).toHaveLength(2);
+    k.launcher.processes[1]!.push('{"abi":1,"type":"result"}'); k.launcher.processes[1]!.exit(); await flush();
+    expect(k.store.snapshot().workItems.every(item => item.outcome === 'succeeded')).toBe(true);
+  } finally { k.controller.abort(); await k.running; }
+});
+
+const missingSupervisorSchema = (options: Omit<Parameters<typeof runSupervisor>[0], 'schemaVersions'>): void => {
+  // @ts-expect-error schema versions must be selected explicitly by the caller.
+  void runSupervisor(options);
+};
+void missingSupervisorSchema;

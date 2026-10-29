@@ -20,7 +20,7 @@ export async function subject() {
       const client = new pg.Client({ connectionString: db.appUrl });
       await client.connect();
       try {
-        const { rows } = await client.query('select outcome, completed_at as "completedAt", current_attempt_token as "currentAttemptToken", next_attempt_at as "nextAttemptAt", last_error as "lastError" from brain.work_items where id = $1', [id]);
+        const { rows } = await client.query('select serialization_key as "serializationKey", outcome, completed_at as "completedAt", current_attempt_token as "currentAttemptToken", next_attempt_at as "nextAttemptAt", last_error as "lastError" from brain.work_items where id = $1', [id]);
         return rows[0] ?? null;
       } finally { await client.end(); }
     },

@@ -1,3 +1,4 @@
+import { extensionStoreContract } from '../src/testing/index.js';
 import { scheduleStoreContract } from '../src/testing/contracts/schedule-store.js';
 import { attachmentStoreContract, extractionStoreContract, fileRedactionContract, fileStoreContract, memoryFileStore } from '../src/testing/index.js';
 import { describe, expect, it } from 'vitest';
@@ -117,7 +118,10 @@ const readMemoryWorkItem = async (store: WorkStore, id: string) =>
   (store as ReturnType<typeof memoryStore>).snapshot().workItems.find(item => item.id === id) ?? null;
 
 describe('the queue contract against the memory store', () => {
-  for (const testCase of workStoreContract(readMemoryWorkItem)) {
+  for (const testCase of workStoreContract(readMemoryWorkItem, async (store, token) => {
+    const attempt = (store as ReturnType<typeof memoryStore>).snapshot().workAttempts.find(a => a.token === token);
+    return attempt ? { lastProgressAt: attempt.lastProgressAt, renewedAt: attempt.renewedAt } : null;
+  })) {
     it(testCase.name, async () => {
       await testCase.run(async () => memoryStore());
     });
@@ -563,6 +567,37 @@ describe('the contracts catch a wrong store', () => {
     expect(await failedCases(workStoreContract(readMemoryWorkItem), make)).toContain(
       'claimWork raises attempts inside the claim',
     );
+  });
+
+  it('catches a store that ignores serialization keys', async () => {
+    const make = async (): Promise<ReturnType<typeof memoryStore>> => {
+      const inner = memoryStore();
+      const keys = new Map<string, string | null>();
+      const withKey = <T extends { id: string }>(item: T) => ({ ...item, serializationKey: keys.get(item.id) ?? null });
+      // Preserve observable keys, but leave the candidate selector blind to them.
+      return { ...inner,
+        async addWork(input) {
+          const added = await inner.addWork({ ...input, serializationKey: null });
+          if (!added.ok) return added;
+          if (added.created) keys.set(added.item.id, input.serializationKey ?? null);
+          return { ...added, item: withKey(added.item) };
+        },
+        async claimWork(input) {
+          const claimed = await inner.claimWork(input);
+          return claimed.ok && claimed.item ? { ...claimed, item: withKey(claimed.item) } : claimed;
+        },
+        snapshot: () => ({ ...inner.snapshot(), workItems: inner.snapshot().workItems.map(withKey) }),
+      };
+    };
+    expect(await failedCases(workStoreContract(readMemoryWorkItem), make)).toContain('one serialization key is claimed once across kinds and claim paths');
+  });
+
+  it('catches a store that drops prerequisites', async () => {
+    const make = async (): Promise<WorkStore> => {
+      const inner = memoryStore();
+      return { ...inner, addWorkGraph: input => inner.addWorkGraph({ nodes: input.nodes.map(node => ({ ...node, after: [] })) }) };
+    };
+    expect(await failedCases(workStoreContract(readMemoryWorkItem), make)).toContain('dependent waits for its prerequisite to succeed');
   });
 
   it('catches a queue that finishes an item under somebody else\'s claim', async () => {
@@ -1491,4 +1526,30 @@ describe('추출 세대 계약의 음성 가짜', () => {
 
 describe('schedule contract against memory', () => {
   for (const c of scheduleStoreContract()) it(c.name, () => c.run(async () => memoryStore()));
+});
+
+it('catches a store that fires daily schedules over covered dates', async () => {
+  let emittedCoveredDates = false;
+  const failures = await failedCases(scheduleStoreContract(), async () => {
+    const store = memoryStore(); const fire = store.fireSchedule;
+    store.fireSchedule = async input => {
+      // Keep the real timestamp/zone CAS, but enqueue the entire input range
+      // even when the real firing filtered some or all of it as successful.
+      const result = await fire(input);
+      if (!result.ok || !result.fired || !input.localDates) return result;
+      const added = await store.addWork({ ...input.work,
+        scheduledDates: { scheduleId: input.scheduleId, ...input.localDates } });
+      if (!added.ok) return added;
+      if (result.covered) emittedCoveredDates = added.created &&
+        added.item.scheduledDates?.from === input.localDates.from && added.item.scheduledDates?.to === input.localDates.to;
+      return { ok: true, fired: true, created: result.created || added.created, covered: false };
+    };
+    return store;
+  });
+  expect(failures).toContain('a daily firing skips covered dates and enqueues the missing range');
+  expect(emittedCoveredDates).toBe(true);
+});
+
+describe('extension contract against memory', () => {
+  for (const c of extensionStoreContract()) it(c.name, () => c.run(async () => memoryStore()));
 });

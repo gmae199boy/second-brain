@@ -72,3 +72,55 @@ it('queue drain leaves due supervised work untouched without a daemon', async ()
     expect(await fixture.attempts(id)).toEqual([]);
   } finally { await fixture.close(); await rm(home, { recursive: true, force: true }); }
 });
+
+it('runs two keyed probes at once and a third after a slot frees', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'brain-supervisor-capacity-'));
+  const fixture = await supervisorFixture(home);
+  const controller = new AbortController();
+  let running: ReturnType<typeof runDaemon> | undefined;
+  try {
+    const ids = await Promise.all([6000, 6001, 6002].map((duration, index) => fixture.enqueueProbe(duration, `account-${index}`)));
+    running = runDaemon({ home, env: { ...withoutHarnessFolders(process.env), ...fixture.env }, clock: systemClock, idGen: uuidV7IdGen(),
+      signal: controller.signal, drainPauseMs: 25, heartbeatMs: 100, supervisor: { pollMs: 25 } });
+    await expect.poll(async () => {
+      const attempts = (await Promise.all(ids.map(id => fixture.attempts(id)))).flat();
+      return attempts.filter(attempt => attempt.last_progress_at && !attempt.finished_at).length;
+    }, { timeout: 25000, interval: 20 }).toBe(2);
+    const coreId = uuidV7IdGen().next(); const at = new Date();
+    const store = postgresStore({ databaseUrl: fixture.db.appUrl });
+    try {
+      expect(await store.addWork({ id: coreId, kind: 'schedule_probe', targetKind: 'probe', targetId: coreId, createdAt: at, nextAttemptAt: at })).toMatchObject({ ok: true });
+    } finally { await store.close(); }
+    await expect.poll(async () => (await fixture.item(coreId))?.completed_at, { timeout: 4000, interval: 20 }).toBeTruthy();
+    expect((await Promise.all(ids.map(id => fixture.attempts(id)))).flat().filter(attempt => attempt.finished_at === null)).toHaveLength(2);
+    await expect.poll(async () => (await Promise.all(ids.map(id => fixture.item(id)))).every(item => item?.completed_at), { timeout: 25000 }).toBe(true);
+    const attempts = (await Promise.all(ids.map(id => fixture.attempts(id)))).flat();
+    expect(attempts).toHaveLength(3);
+    for (const attempt of attempts) expect(attempt.outcome).toBe('succeeded');
+    const intervals = attempts.map(attempt => ({ start: new Date(attempt.started_at).getTime(), end: new Date(attempt.finished_at).getTime() })).sort((a, b) => a.start - b.start);
+    expect(intervals[1]!.start).toBeLessThan(intervals[0]!.end);
+    expect(intervals[2]!.start).toBeGreaterThanOrEqual(Math.min(intervals[0]!.end, intervals[1]!.end));
+    const events = intervals.flatMap(interval => [{ at: interval.start, change: 1 }, { at: interval.end, change: -1 }]).sort((a, b) => a.at - b.at || a.change - b.change);
+    let open = 0; let maximum = 0;
+    for (const event of events) { open += event.change; maximum = Math.max(maximum, open); }
+    expect(maximum).toBe(2);
+    expect(new Date((await fixture.item(coreId))!.completed_at).getTime()).toBeLessThan(Math.min(intervals[0]!.end, intervals[1]!.end));
+  } finally { controller.abort(); await running; await fixture.close(); await rm(home, { recursive: true, force: true }); }
+});
+it('never overlaps two probes of one key', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'brain-supervisor-serialization-'));
+  const fixture = await supervisorFixture(home);
+  const controller = new AbortController();
+  let running: ReturnType<typeof runDaemon> | undefined;
+  try {
+    const ids = [await fixture.enqueueProbe(6000, 'account'), await fixture.enqueueProbe(6001, 'account')];
+    running = runDaemon({ home, env: { ...withoutHarnessFolders(process.env), ...fixture.env }, clock: systemClock, idGen: uuidV7IdGen(),
+      signal: controller.signal, drainPauseMs: 25, heartbeatMs: 100, supervisor: { pollMs: 25 } });
+    await expect.poll(async () => (await Promise.all(ids.map(id => fixture.item(id)))).every(item => item?.completed_at), { timeout: 25000 }).toBe(true);
+    const attempts = (await Promise.all(ids.map(id => fixture.attempts(id)))).flat();
+    expect(attempts).toHaveLength(2);
+    for (const attempt of attempts) expect(attempt.outcome).toBe('succeeded');
+    attempts.sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime());
+    expect(new Date(attempts[1]!.started_at).getTime()).toBeGreaterThanOrEqual(new Date(attempts[0]!.finished_at).getTime());
+  } finally { controller.abort(); await running; await fixture.close(); await rm(home, { recursive: true, force: true }); }
+});

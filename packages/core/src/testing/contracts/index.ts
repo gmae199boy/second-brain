@@ -18,3 +18,4 @@ export { fileRedactionContract, type FileRedactionSubject } from './file-redacti
 export { scheduleStoreContract } from './schedule-store.js';
 
 export { settingsStoreContract } from './settings-store.js';
+export { extensionStoreContract } from './extension-store.js';

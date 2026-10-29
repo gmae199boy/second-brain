@@ -32,7 +32,7 @@ import { contentHash } from './sha256.js';
  * added, removed or changed, so a record can be found again when the list
  * grows (AD-11, inputs A6).
  */
-export const SECRET_PATTERN_VERSION = '2';
+export const SECRET_PATTERN_VERSION = '3';
 
 /** Where a text came from, which decides which patterns run over it. */
 export type SecretField = 'body' | 'tool_target';
@@ -112,9 +112,6 @@ const VALUE = String.raw`[^\s,;，。、'"\u0060${HANGUL}]+`;
 
 /** Closing brackets, and the opener each one would have to be paired with. */
 const CLOSERS: Readonly<Record<string, string>> = { ')': '(', ']': '[', '}': '{', '>': '<' };
-
-/** Opening brackets, and the closer each one is paired with. */
-const OPENERS: Readonly<Record<string, string>> = { '(': ')', '[': ']', '{': '}', '<': '>' };
 
 /**
  * The group a pattern names for the opening quote it consumed. A pattern that
@@ -209,7 +206,7 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
     // `scheme://user:password@host`: the user name stays, because it is often
     // the only thing that says which service the line was talking about.
     kind: 'url_credentials',
-    expression: /[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s/:@]+:(?<value>[^\s/@]+)@/gdu,
+    expression: /(?<![A-Za-z0-9+.-])[0-9+.-]*[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s/:@]+:(?<value>[^\s/@]+)@/gdu,
     value: ['value'],
     fields: BOTH,
   },
@@ -359,11 +356,38 @@ export function maskSecrets(text: string, field: SecretField): MaskSecretsResult
 
   const skip = markerRanges(text);
   const found: RawSpan[] = [];
+  let syntax: ReturnType<typeof textSyntax> | undefined;
+  let syntaxStart = text.length;
+  const indexed = (start: number) => {
+    if (syntax === undefined || start < syntaxStart) {
+      syntax = textSyntax(text, start);
+      syntaxStart = start;
+    }
+    return syntax;
+  };
+  // Candidates inside a refused call share the same value run. Cache that
+  // interval rather than allocating an endpoint for every character in a body.
+  const valueExpression = new RegExp(VALUE, 'uy');
+  let valueRun = { start: -1, end: -1 };
+  const valueEnd = (start: number): number => {
+    if (start < valueRun.start || start >= valueRun.end) {
+      valueExpression.lastIndex = start;
+      const match = valueExpression.exec(text);
+      valueRun = { start, end: start + (match?.[0].length ?? 0) };
+    }
+    return valueRun.end;
+  };
   for (const pattern of SECRET_PATTERNS) {
     if (!pattern.fields.includes(field)) continue;
     // A fresh expression per call: `lastIndex` is state, and a module-level
     // regex shared between calls would make masking depend on its own history.
-    const expression = new RegExp(pattern.expression.source, pattern.expression.flags);
+    // Keyword candidates can be revisited inside a refused call. Read one
+    // value character, then reuse its value interval: repeatedly matching
+    // the entire nested suffix would itself be quadratic.
+    const source = pattern.trimClosers === true
+      ? pattern.expression.source.replace(VALUE, VALUE.slice(0, -1))
+      : pattern.expression.source;
+    const expression = new RegExp(source, pattern.expression.flags);
     let match: RegExpExecArray | null;
     while ((match = expression.exec(text)) !== null) {
       const matched = match[0] ?? '';
@@ -373,25 +397,31 @@ export function maskSecrets(text: string, field: SecretField): MaskSecretsResult
         expression.lastIndex += 1;
         continue;
       }
-      const raw = spanOf(match, matched, pattern);
+      let raw = spanOf(match, matched, pattern);
       if (raw === null) continue;
+      if (pattern.trimClosers === true) {
+        raw = { start: raw.start, end: valueEnd(raw.start) };
+        expression.lastIndex = raw.end;
+      }
       const groups = match.indices?.groups;
       const opened = groups?.[OPEN_GROUP];
       // A quoted value runs to its closing quote, not to the first space.
       const quoted = opened === undefined ? raw : toClosingQuote(text, raw, text[opened[0]] ?? '');
-      const span = pattern.trimClosers === true ? trimClosers(text, quoted) : quoted;
+      const span = pattern.trimClosers === true && CLOSERS[text[quoted.end - 1] ?? ''] !== undefined
+        ? indexed(raw.start).trimClosers(quoted) : quoted;
       if (span.end <= span.start) continue;
-      if (
-        pattern.accept !== undefined &&
-        !pattern.accept(matched, {
-          value: text.slice(span.start, span.end),
-          quoted: opened !== undefined,
-          after: text.slice(span.end, span.end + AFTER_WINDOW),
-          text,
-          start: span.start,
-          matchedGroup: (name) => groups?.[name] !== undefined,
-        })
-      ) {
+      const context: SecretMatch = {
+        value: text.slice(span.start, span.end),
+        quoted: opened !== undefined,
+        after: text.slice(span.end, span.end + AFTER_WINDOW),
+        text,
+        start: span.start,
+        matchedGroup: (name) => groups?.[name] !== undefined,
+      };
+      const accepted = pattern.accept === keywordValueLooksLikeSecret
+        ? keywordValueLooksLikeSecret(matched, context, indexed)
+        : pattern.accept?.(matched, context) ?? true;
+      if (!accepted) {
         // Carry on *inside* the refused match. `token = decrypt(password=…)` is
         // a call this list leaves alone, and the keyword inside it is a secret
         // this list knows; a scan that resumed past the whole match would never
@@ -405,7 +435,7 @@ export function maskSecrets(text: string, field: SecretField): MaskSecretsResult
       // gives the value `[REDACTED`, which is the marker's own text. A span that
       // merely touches a marker, like a key block running on past one, is still
       // a secret and is masked whole.
-      if (skip.some((range) => range.start <= span.start && span.end <= range.end)) continue;
+      if (insideMarker(skip, span)) continue;
       found.push({ ...span, kind: pattern.kind });
     }
   }
@@ -453,48 +483,126 @@ export function maskSecrets(text: string, field: SecretField): MaskSecretsResult
 }
 
 /**
- * The same span with unmatched closing brackets taken off the end.
+ * Shared bracket counts, trailing closer runs, and same-line call partners.
+ * Built only when a keyword candidate needs them.
+ *
+ * Trimming removes unmatched closing brackets from the end of a span.
  *
  * `{"token": 123}` gives the value `123}`, and the brace belongs to the JSON
  * around it and not to the value. `parse(input)` keeps its bracket, because
  * that one is matched — and that is what lets the call-shape rule below see a
  * call at all.
  */
-function trimClosers(
-  text: string,
-  span: { start: number; end: number },
-): { start: number; end: number } {
-  // Counted once, in one pass, and then walked back. Counting again per
-  // trimmed bracket made this quadratic, and a value of fifty thousand `)` —
-  // which a pasted log can be — took seconds (follow-up review). Taking a
-  // closer off the span is the same as lowering its count by one, which is
-  // what the walk does instead of rescanning.
-  const brackets = new Map<string, { open: number; close: number }>();
-  const countOf = (closer: string): { open: number; close: number } => {
-    const found = brackets.get(closer);
-    if (found !== undefined) return found;
-    const fresh = { open: 0, close: 0 };
-    brackets.set(closer, fresh);
-    return fresh;
-  };
-  for (let at = span.start; at < span.end; at += 1) {
-    const character = text[at] ?? '';
-    if (CLOSERS[character] !== undefined) countOf(character).close += 1;
-    else {
-      const closer = OPENERS[character];
-      if (closer !== undefined) countOf(closer).open += 1;
+function textSyntax(text: string, start: number) {
+  const closers = Object.keys(CLOSERS);
+  const opens = closers.map(() => [] as number[]);
+  const closes = closers.map(() => [] as number[]);
+  const trailing: { start: number; end: number }[] = [];
+  const partners = new Map<number, number>();
+  const stack: number[] = [];
+  // Index only the candidate suffix, preserving original offsets. Leading
+  // syntax cannot affect bracket counts within a value or its call partner.
+  const expression = /[()[\]{}<>\n]/gu;
+  expression.lastIndex = start;
+  let match: RegExpExecArray | null;
+  while ((match = expression.exec(text)) !== null) {
+    const at = match.index;
+    const character = match[0]!;
+    const kind = closers.indexOf(character);
+    if (kind >= 0) {
+      closes[kind]!.push(at);
+      const last = trailing.at(-1);
+      if (last?.end === at) last.end = at + 1;
+      else trailing.push({ start: at, end: at + 1 });
+    } else {
+      const opener = closers.findIndex(closer => CLOSERS[closer] === character);
+      if (opener >= 0) opens[opener]!.push(at);
+    }
+    if (character === '\n') stack.length = 0;
+    else if (character === '(') stack.push(at);
+    else if (character === ')') {
+      const open = stack.pop();
+      if (open !== undefined) partners.set(open, at);
     }
   }
+  return {
+    trimClosers(span: { start: number; end: number }) {
+      // Find the closer run containing the last character, including when a
+      // quoted span ends inside a run that continues past its closing quote.
+      let low = 0, high = trailing.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (trailing[middle]!.end < span.end) low = middle + 1;
+        else high = middle;
+      }
+      const run = trailing[low];
+      if (run === undefined || run.start >= span.end) return span;
+      const first = Math.max(span.start, run.start);
+      let end = first;
+      // Trimming stops at the first closer whose removal would consume a
+      // matched bracket. Locate that position for each kind by rank, rather
+      // than walking the same trailing suffix for every nested candidate.
+      for (let kind = 0; kind < closers.length; kind += 1) {
+        const list = closes[kind]!;
+        const opening = opens[kind]!;
+        const surplus = lowerBound(list, span.end) - lowerBound(list, span.start)
+          - lowerBound(opening, span.end) + lowerBound(opening, span.start);
+        const rank = lowerBound(list, span.end) - Math.max(0, surplus) - 1;
+        const stop = list[rank];
+        if (stop !== undefined && stop >= first) end = Math.max(end, stop + 1);
+      }
+      return { start: span.start, end };
+    },
 
-  let end = span.end;
-  while (end > span.start) {
-    const last = text[end - 1] ?? '';
-    const count = brackets.get(last);
-    if (count === undefined || count.close <= count.open) break;
-    count.close -= 1;
-    end -= 1;
+    /**
+     * Whether the value at `start` is a whole call — `parse(input)` — read off the
+     * text rather than off the value.
+     *
+     * The value stops at the first space or comma, so `compute(a, b)` reaches this
+     * rule as `compute(a`, and a rule that read the value alone called that a
+     * credential and masked the front of a line of code (follow-up review).
+     *
+     * The closing bracket has to end the token, which is what keeps
+     * `token=foo(bar)baz` masked: a credential that happens to open with an
+     * identifier and a bracket is still a credential. And the call has to close on
+     * its own line — an opening bracket whose partner is three lines down is a
+     * block, not a value.
+     */
+    wholeCall(start: number) {
+      let at = start;
+      if (!/[A-Za-z_$]/u.test(text[at] ?? '')) return false;
+      at += 1;
+      while (at < text.length && /[A-Za-z0-9_$]/u.test(text[at] ?? '')) at += 1;
+      if (text[at] !== '(') return false;
+      const close = partners.get(at);
+      if (close === undefined) return false;
+      const next = text[close + 1];
+      return next === undefined || /[\s;,)\]}]/u.test(next);
+    },
+  };
+}
+
+/** First index whose value is at least the target, in a sorted list. */
+function lowerBound(values: readonly number[], target: number): number {
+  let low = 0, high = values.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (values[middle]! < target) low = middle + 1;
+    else high = middle;
   }
-  return { start: span.start, end };
+  return low;
+}
+
+/** Marker ranges are sorted and disjoint; only the preceding one can contain a span. */
+function insideMarker(ranges: readonly { start: number; end: number }[], span: { start: number; end: number }): boolean {
+  let low = 0, high = ranges.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (ranges[middle]!.start <= span.start) low = middle + 1;
+    else high = middle;
+  }
+  const range = ranges[low - 1];
+  return range !== undefined && span.end <= range.end;
 }
 
 /**
@@ -563,9 +671,14 @@ const WORD_AFTER = new RegExp(String.raw`^[ \t]+[A-Za-z${HANGUL}]`, 'u');
  * Getting this wrong costs a masked word in one line of output, never a
  * stored message: capture keeps the original (마스킹 B).
  */
-function keywordValueLooksLikeSecret(_matched: string, context: SecretMatch): boolean {
+function keywordValueLooksLikeSecret(
+  _matched: string, context: SecretMatch, indexed?: (start: number) => ReturnType<typeof textSyntax>,
+): boolean {
   if (context.quoted) return true;
-  if (isWholeCall(context.text, context.start)) return false;
+  // Most values are credentials or placeholders, so avoid building syntax
+  // indexes until the prefix actually has the shape of a call.
+  if (/^[A-Za-z_$][A-Za-z0-9_$]*\(/u.test(context.value)
+    && (indexed?.(context.start) ?? textSyntax(context.text, context.start)).wholeCall(context.start)) return false;
   if (/^\d+$/u.test(context.value)) return false;
   if (PLACEHOLDER_VALUE.test(context.value)) return false;
   if (STARS.test(context.value)) return false;
@@ -597,42 +710,6 @@ function koreanKeywordValueLooksLikeSecret(_matched: string, context: SecretMatc
   if (!context.matchedGroup(BARE_GROUP)) return true;
   if (!/^[A-Za-z]+$/u.test(context.value)) return true;
   return !WORD_AFTER.test(context.after);
-}
-
-/**
- * Whether the value at `start` is a whole call — `parse(input)` — read off the
- * text rather than off the value.
- *
- * The value stops at the first space or comma, so `compute(a, b)` reaches this
- * rule as `compute(a`, and a rule that read the value alone called that a
- * credential and masked the front of a line of code (follow-up review).
- *
- * The closing bracket has to end the token, which is what keeps
- * `token=foo(bar)baz` masked: a credential that happens to open with an
- * identifier and a bracket is still a credential. And the call has to close on
- * its own line — an opening bracket whose partner is three lines down is a
- * block, not a value.
- */
-function isWholeCall(text: string, start: number): boolean {
-  let at = start;
-  if (!/[A-Za-z_$]/u.test(text[at] ?? '')) return false;
-  at += 1;
-  while (at < text.length && /[A-Za-z0-9_$]/u.test(text[at] ?? '')) at += 1;
-  if (text[at] !== '(') return false;
-
-  let depth = 0;
-  for (; at < text.length; at += 1) {
-    const character = text[at];
-    if (character === '\n') return false;
-    if (character === '(') depth += 1;
-    else if (character === ')') {
-      depth -= 1;
-      if (depth > 0) continue;
-      const next = text[at + 1];
-      return next === undefined || /[\s;,)\]}]/u.test(next);
-    }
-  }
-  return false;
 }
 
 /** Where the markers of an earlier masking sit, in UTF-16 units. */
@@ -688,29 +765,17 @@ function codePointIndex(text: string): (at: number) => number {
   // be the one case the test missed.
   if (!hasSurrogate(text)) return (at) => at;
 
-  const table = new Int32Array(text.length + 1);
-  let codePoints = 0;
-  let index = 0;
-  while (index < text.length) {
-    table[index] = codePoints;
+  const lowHalves: number[] = [];
+  for (let index = 0; index + 1 < text.length; index += 1) {
     const code = text.charCodeAt(index);
-    const wide =
-      code >= 0xd800 &&
-      code <= 0xdbff &&
-      index + 1 < text.length &&
-      text.charCodeAt(index + 1) >= 0xdc00 &&
-      text.charCodeAt(index + 1) <= 0xdfff;
-    if (wide) {
-      // The low half of a pair is inside the same code point as the high one.
-      table[index + 1] = codePoints;
-      index += 2;
-    } else {
+    if (code >= 0xd800 && code <= 0xdbff
+      && text.charCodeAt(index + 1) >= 0xdc00 && text.charCodeAt(index + 1) <= 0xdfff) {
+      lowHalves.push(index + 1);
       index += 1;
     }
-    codePoints += 1;
   }
-  table[text.length] = codePoints;
-  return (at) => table[at] ?? codePoints;
+  // The low half itself has the same code point position as the high half.
+  return (at) => at - lowerBound(lowHalves, at + 1);
 }
 
 /** Whether any UTF-16 unit of the text is a surrogate, half of a pair or lone. */

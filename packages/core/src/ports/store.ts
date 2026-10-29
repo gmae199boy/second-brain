@@ -401,6 +401,10 @@ export interface UserStore {
 
 /** What `addWork` needs to put one piece of work on the queue (AD-21). */
 export interface AddWorkInput {
+  scheduledDates?: import('../domain/work-item.js').ScheduledDates;
+  /** New-row exclusion key. An existing open row keeps its original key. */
+  serializationKey?: string | null;
+  holdGroup?: string | null;
   /**
    * The id to give a new row. The caller mints it (AD-8); an open row that is
    * already there keeps the id it has, and the proposal is dropped.
@@ -428,6 +432,15 @@ export interface AddWorkInput {
  */
 export type AddWorkResult =
   | { ok: true; created: boolean; item: WorkItem }
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+
+/** Atomic graph insertion. Only newly created rows receive their prerequisites. */
+export interface AddWorkGraphInput {
+  /** Each prerequisite is an index strictly before its node. */
+  nodes: readonly (AddWorkInput & { after: readonly number[] })[];
+}
+export type AddWorkGraphResult =
+  | { ok: true; items: { created: boolean; item: WorkItem }[] }
   | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 /** What `hasDueWork` and `claimWork` both ask about. */
@@ -509,14 +522,24 @@ export type ClaimSupervisedWorkResult =
   | { ok: true; item: WorkItem | null; attemptToken: string | null }
   | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface RenewSupervisedLeaseInput {
-  id: string; attemptToken: string; now: Date; progressAt: Date;
+  id: string; attemptToken: string; now: Date; progressAt: Date | null;
 }
 export interface FinishSupervisedWorkInput {
-  id: string; attemptToken: string; now: Date; outcome: 'succeeded' | 'failed';
+  id: string; attemptToken: string; now: Date; outcome: 'succeeded' | 'failed' | 'stalled' | 'died';
+  failure?: Pick<RecordFailureInput, 'id' | 'stage' | 'fingerprint' | 'code' | 'message' | 'occurredAt'>;
   nextAttemptAt?: Date; lastError?: string;
   elapsedMs?: number; usage?: { inputTokens: number; cachedInputTokens: number; outputTokens: number };
   errorCode?: string; errorRetryable?: boolean; stderr?: string | null;
 }
+
+export interface WorkAttemptHealthEntry {
+  workItemId: string; kind: string; at: Date;
+  errorCode: string | null; errorRetryable: boolean | null; lastError: string | null;
+}
+export type WorkAttemptHealthKind = 'stalled' | 'died' | 'unknown' | 'failed';
+export type ReadWorkAttemptHealthResult =
+  | { ok: true; health: Record<WorkAttemptHealthKind, { count: number; latest: WorkAttemptHealthEntry | null }> }
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 export type WorkCancelState = 'cancelled' | 'requested' | 'already_closed' | 'not_found';
 export type RequestWorkCancelResult = { ok: true; state: WorkCancelState } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
@@ -524,9 +547,9 @@ export interface RecordSupervisedProcessInput {
   id: string; attemptToken: string; pid: number; pgid: number; osBootAt: Date | null; osStartedAt: Date | null;
 }
 export interface OpenSupervisedAttempt {
-  token: string; workItemId: string; kind: string; attempts: number;
+  token: string; workItemId: string; kind: string; attempts: number; targetKind: string; targetId: string;
   incarnation: string | null; pid: number | null; pgid: number | null;
-  osBootAt: Date | null; osStartedAt: Date | null; cancelRequested: boolean;
+  osBootAt: Date | null; osStartedAt: Date | null; cancelRequested: boolean; held: boolean;
 }
 export type ListOpenSupervisedAttemptsResult = { ok: true; attempts: OpenSupervisedAttempt[] } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface SettleSupervisedAttemptInput {
@@ -657,12 +680,22 @@ export type ResolveFailuresResult =
  * are one transaction: the last attempt of an item writes the record and closes
  * the item together or does neither.
  */
+export interface ModelWorkUsage {
+  inputTokens: number; cachedInputTokens: number; outputTokens: number; elapsedMs: number;
+  latest: { workItemId: string; kind: string; at: Date; elapsedMs: number | null; usage: { inputTokens: number; cachedInputTokens: number; outputTokens: number } | null } | null;
+}
 export interface WorkStore {
+  holdWorkGroup(input: { group: string; now: Date }): Promise<{ ok: true; held: boolean } | ScheduleStoreFailure>;
+  releaseWorkGroup(input: { group: string }): Promise<{ ok: true; released: boolean } | ScheduleStoreFailure>;
+  listWork(input: { includeClosed: boolean; kind?: string; limit: number }): Promise<{ ok: true; entries: { held: boolean; item: WorkItem; latestAttempt: import('../domain/work-item.js').WorkAttempt | null; currentAttempt: import('../domain/work-item.js').WorkAttempt | null }[]; hasMore: boolean } | ScheduleStoreFailure>;
+  readModelWorkUsage(input: { kinds: readonly string[] }): Promise<{ ok: true; usage: ModelWorkUsage } | ScheduleStoreFailure>;
+  readWorkAttemptHealth(): Promise<ReadWorkAttemptHealthResult>;
   requestWorkCancel(input: { id: string; now: Date }): Promise<RequestWorkCancelResult>;
   recordSupervisedProcess(input: RecordSupervisedProcessInput): Promise<FinishWorkResult>;
   listOpenSupervisedAttempts(): Promise<ListOpenSupervisedAttemptsResult>;
   settleSupervisedAttempt(input: SettleSupervisedAttemptInput): Promise<FinishWorkResult>;
   /** Claim supervised work and insert its caller-supplied attempt token atomically. */
+  /** A live claim or retained supervised token holds its key across both claim paths. */
   claimSupervisedWork(input: ClaimSupervisedWorkInput): Promise<ClaimSupervisedWorkResult>;
   /** Token CAS: a stale attempt changes neither the item nor its attempt history. */
   renewSupervisedLease(input: RenewSupervisedLeaseInput): Promise<FinishWorkResult>;
@@ -670,7 +703,10 @@ export interface WorkStore {
   finishSupervisedWork(input: FinishSupervisedWorkInput): Promise<FinishWorkResult>;
   /** Put one piece of work on the queue, once (AD-21). */
   addWork(input: AddWorkInput): Promise<AddWorkResult>;
+  /** Insert a graph atomically, preserving the prerequisites of merged rows. */
+  addWorkGraph(input: AddWorkGraphInput): Promise<AddWorkGraphResult>;
   /** Is anything due? A read, so it never takes the write lock (AD-7). */
+  /** A live claim or retained supervised token holds its key across both claim paths. */
   hasDueWork(query: DueWorkQuery): Promise<HasDueWorkResult>;
   /**
    * Take one due item, least attempted first, and raise its `attempts`.
@@ -681,6 +717,7 @@ export interface WorkStore {
    * the backlog behind it, and the index of 0004 is shaped for exactly that
    * query.
    */
+  /** A live claim or retained supervised token holds its key across both claim paths. */
   claimWork(input: ClaimWorkInput): Promise<ClaimWorkResult>;
   /** Done: stamp `completed_at` and clear the claim (AD-21). */
   completeWork(input: CompleteWorkInput): Promise<FinishWorkResult>;
@@ -798,7 +835,7 @@ export interface TranscriptFileStore {
  * one capability at a time, and the day it implements `SessionStore` it passes
  * the whole `Store` contract (AD-10).
  */
-export type Store = HealthStore &
+export type Store = ExtensionStore & HealthStore &
   SessionStore &
   UserStore &
   WorkStore &
@@ -1385,22 +1422,30 @@ export interface ExtractionStore {
 
 /** Schedule persistence; recurrence rules belong to Core's tick. */
 export interface ScheduleStore {
+  listSchedules(input: { limit: number }): Promise<{ ok: true; schedules: (import('../domain/schedule.js').Schedule & { held: boolean })[]; hasMore: boolean } | ScheduleStoreFailure>;
+  removeSchedule(input: { id: string }): Promise<{ ok: true; removed: boolean } | ScheduleStoreFailure>;
   addSchedule(input: AddScheduleInput): Promise<AddScheduleResult>;
+  listDailySchedules(query: { limit: number }): Promise<ListDueSchedulesResult>;
+  readSchedule(query: { id: string }): Promise<{ ok: true; schedule: import('../domain/schedule.js').Schedule | null } | ScheduleStoreFailure>;
+  rezoneSchedule(input: { id: string; expectedNextRunAt: Date; expectedTimeZone: string; timeZone: string; nextRunAt: Date }): Promise<{ ok: true; updated: boolean } | ScheduleStoreFailure>;
+  listScheduleSuccesses(query: { scheduleId: string }): Promise<{ ok: true; successes: ScheduleSuccess[] } | ScheduleStoreFailure>;
   listDueSchedules(query: { now: Date; limit: number }): Promise<ListDueSchedulesResult>;
   fireSchedule(input: FireScheduleInput): Promise<FireScheduleResult>;
 }
-export type AddScheduleInput = import('../domain/schedule.js').Schedule;
+export type AddScheduleInput = Omit<import('../domain/schedule.js').Schedule, 'holdGroup'> & { holdGroup?: string | null };
 export type ScheduleStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
-export type AddScheduleResult = { ok: true; schedule: import('../domain/schedule.js').Schedule } | ScheduleStoreFailure;
+export interface ScheduleSuccess { localDate: string; timeZone: string; workId: string; recordedAt: Date }
+export type AddScheduleResult = { ok: false; code: 'SCHEDULE_CONFLICT'; message: string } | { ok: true; schedule: import('../domain/schedule.js').Schedule } | ScheduleStoreFailure;
 export type ListDueSchedulesResult = { ok: true; schedules: readonly import('../domain/schedule.js').Schedule[] } | ScheduleStoreFailure;
 export interface FireScheduleInput {
+  localDates?: { from: string; to: string; timeZone: string };
   scheduleId: string;
   expectedNextRunAt: Date;
   nextRunAt: Date | null;
   work: AddWorkInput;
   now: Date;
 }
-export type FireScheduleResult = { ok: true; fired: true; created: boolean } | { ok: true; fired: false } | ScheduleStoreFailure;
+export type FireScheduleResult = { ok: true; fired: true; created: boolean; covered: boolean } | { ok: true; fired: false } | ScheduleStoreFailure;
 
 /** Persistence used by one session collection, without queue or query capabilities. */
 export type SessionIngestStore = Pick<SessionStore, 'findSession' | 'ensureSession' | 'ingest' | 'readSession'>
@@ -1414,4 +1459,18 @@ export type SettingsStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOC
 export interface SettingsStore {
   getSetting(input: { key: string }): Promise<{ ok: true; setting: SettingRecord | null } | SettingsStoreFailure>;
   setSetting(input: SettingRecord): Promise<{ ok: true } | SettingsStoreFailure>;
+}
+
+
+export interface ExtensionRecord {
+  name: string; version: string; installedAt: Date; enabled: boolean; enabledChangedAt: Date;
+  connectionStatus: 'connected' | 'failed' | null; connectionCheckedAt: Date | null;
+  connectionCode: string | null; connectionMessage: string | null;
+}
+export type ExtensionStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+export interface ExtensionStore {
+  recordExtensionInstall(input: { name: string; version: string; now: Date }): Promise<{ ok: true } | ExtensionStoreFailure>;
+  recordExtensionConnection(input: { name: string; status: 'connected' | 'failed'; code: string | null; message: string | null; checkedAt: Date }): Promise<{ ok: true } | ExtensionStoreFailure>;
+  getExtension(name: string): Promise<{ ok: true; extension: ExtensionRecord | null } | ExtensionStoreFailure>;
+  listExtensions(): Promise<{ ok: true; extensions: ExtensionRecord[] } | ExtensionStoreFailure>;
 }

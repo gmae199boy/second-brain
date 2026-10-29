@@ -1,3 +1,5 @@
+import { postgresStore } from 'second_brain/postgres';
+import { sequenceIdGen } from '../../../packages/core/src/testing/fakes/id-gen.js';
 import { appendFile, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,7 +68,7 @@ describe('PG doctor', () => {
   });
   it('reports owner-specific schema mismatch', async () => {
     const kit = await world(); const db = new PgTestClient(pgDatabaseUrl(kit.home));
-    try { await db.exec("update schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)"); const result = await kit.run(); expect(result.code).toBe(1); expect(JSON.parse(result.stdout).data.checks).toContainEqual(expect.objectContaining({ id: 'schema-version', status: 'fail' })); }
+    try { await db.exec("update schema_migrations set version = version + 1 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)"); const result = await kit.run(); expect(result.code).toBe(1); expect(JSON.parse(result.stdout).data.checks).toContainEqual(expect.objectContaining({ id: 'schema-version', status: 'fail' })); }
     finally { await db.close(); }
   });
   it('skips DB checks when the fake OrbStack prerequisite fails and never calls compose', async () => {
@@ -112,7 +114,7 @@ describe('brain doctor run without a configuration it can read', () => {
       expect(checks).toContainEqual(expect.objectContaining({ id, status: 'ok' }));
     }
     expect(checks.map((check: { id: string }) => check.id)).toEqual([
-      'orbstack', 'container', 'db', 'schema-version', 'failures', 'untagged', 'transcripts',
+      'orbstack', 'container', 'db', 'schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage',
       'config', 'config-timezone', 'shim', 'node-path', 'node-version', 'plugin', 'last-hook', 'spool', 'daemon',
     ]);
     expect(checks).toContainEqual({ id: 'schema-version', status: 'skip', detail: '앞선 점검 실패: db' });
@@ -153,8 +155,31 @@ describe('brain doctor run without a configuration it can read', () => {
     expect(run.stdout).toContain('schema-version: skip 앞선 점검 실패: db');
     expect(run.stdout).toContain('node-path: skip 앞선 점검 실패: shim');
     expect(run.stdout).toContain('spool: ok 0건');
-    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe('요약: 통과 7, 경고 1, 실패 3, 건너뜀 5');
+    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe('요약: 통과 7, 경고 1, 실패 3, 건너뜀 10');
     expect(run.stderr).not.toContain('CONFIG_MISSING');
     assertKoreanLines(run.stdout);
   });
+});
+
+it('shows stalled, died, unknown and last error from PostgreSQL in doctor JSON', async () => {
+  const kit = await world(), store = postgresStore({ databaseUrl: pgDatabaseUrl(kit.home) });
+  const now = new Date(), idGen = sequenceIdGen({ timestampMs: now.getTime() });
+  const ids: Record<string, string> = {};
+  try {
+    for (const outcome of ['stalled', 'died', 'unknown', 'failed'] as const) {
+      const id = idGen.next(), token = idGen.next(); ids[outcome] = id;
+      await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: outcome, createdAt: now, nextAttemptAt: now });
+      expect(await store.claimSupervisedWork({ now, claimedBy: idGen.next(), kinds: ['process_probe'], attemptToken: token })).toMatchObject({ ok: true, item: { id } });
+      if (outcome === 'unknown') await store.settleSupervisedAttempt({ id, attemptToken: token, now, outcome });
+      else await store.finishSupervisedWork({ id, attemptToken: token, now, outcome, nextAttemptAt: new Date(now.getTime() + 900_000), lastError: '마지막 오류', ...(outcome === 'failed' ? { errorCode: 'TEMPORARY', errorRetryable: true } : {}) });
+    }
+    const result = await kit.run(); expect(result.code).toBe(0);
+    const checks = JSON.parse(result.stdout).data.checks;
+    for (const outcome of ['stalled', 'died', 'unknown', 'failed']) expect(checks).toContainEqual(expect.objectContaining({
+      id: outcome === 'failed' ? 'work-last-error' : `work-${outcome}`, status: 'warn', detail: expect.stringContaining(ids[outcome]!),
+    }));
+    kit.env.BRAIN_DATABASE_URL = 'postgresql://unused@127.0.0.1:1/unavailable';
+    const unavailable = JSON.parse((await kit.run()).stdout).data.checks;
+    for (const id of ['work-stalled', 'work-died', 'work-unknown', 'work-last-error']) expect(unavailable).toContainEqual({ id, status: 'skip', detail: '앞선 점검 실패: db' });
+  } finally { await store.close(); }
 });

@@ -1,3 +1,4 @@
+import type { SettingsStore } from 'second_brain';
 import type { CommandRunner } from './runtime/command-runner.js';
 import { daemonLiveness } from './daemon/liveness.js';
 import { Command, CommanderError } from 'commander';
@@ -65,6 +66,7 @@ export type ExitCode = 0 | FailureExit;
 
 /** One flag of a command, in commander's own syntax. */
 export interface CommandOption {
+  required?: boolean;
   /** For example `--json` or `--limit <n>`. */
   flags: string;
   description: string;
@@ -737,7 +739,7 @@ async function drainOpportunistically(
   stderr: (text: string) => void,
 ): Promise<void> {
   const { createStore, home, env, config, ...dependencies } = options;
-  let store: (Store & SchemaStore) | undefined;
+  let store: (Store & SchemaStore & SettingsStore) | undefined;
   try {
     const opened = await openBrainStore({ home, env, config, path: 'drain', lockTimeoutMs: DRAIN_BUDGET_MS.opportunistic, createStore });
     store = opened.store;
@@ -907,7 +909,8 @@ function buildProgram(
     const command = quiet(namespace.command(spec.verb).description(spec.usedFor));
     command.option(JSON_FLAG, '기계가 읽는 응답 엔벨로프를 출력합니다');
     for (const option of spec.options ?? []) {
-      command.option(option.flags, option.description);
+      if (option.required) command.requiredOption(option.flags, option.description);
+      else command.option(option.flags, option.description);
     }
     // The rest of the meta, under the flags commander listed: the same seven
     // fields `brain guide schema` answers with, so `--help` and the schema
