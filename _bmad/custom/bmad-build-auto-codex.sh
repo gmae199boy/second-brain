@@ -14,12 +14,14 @@
 # job pauses and tells the same session to continue (a reviewer starts over),
 # up to BMAD_CODEX_RETRIES (6) times; exit status 75 means it gave up. A job
 # nobody has waited on for BMAD_CODEX_ORPHAN_S (900) seconds stops its codex.
-# Model and effort default to gpt-6.1-sol / medium; BMAD_CODEX_MODEL and
+# Implementation (impl, resume) defaults to gpt-6.1-terra / medium and review to
+# gpt-6.1-sol / medium; BMAD_CODEX_IMPL_MODEL, BMAD_CODEX_MODEL and
 # BMAD_CODEX_EFFORT override them.
 set -euo pipefail
 
 self="${BASH_SOURCE[0]}"
 model="${BMAD_CODEX_MODEL:-gpt-6.1-sol}"
+impl_model="${BMAD_CODEX_IMPL_MODEL:-gpt-6.1-terra}"
 effort="${BMAD_CODEX_EFFORT:-medium}"
 wait_s="${BMAD_CODEX_WAIT_S:-480}"
 retries="${BMAD_CODEX_RETRIES:-6}"
@@ -47,7 +49,9 @@ run_job() {
   mode="$(cat "$job/mode")"
   [ -f "$job/thread" ] && thread="$(cat "$job/thread")"
   while :; do
-    local common=(-m "$model" -c "model_reasoning_effort=\"$effort\"" --json -o "$job/last.md")
+    local m="$model"
+    [ "$mode" = review ] || m="$impl_model"
+    local common=(-m "$m" -c "model_reasoning_effort=\"$effort\"" --json -o "$job/last.md")
     case "$mode" in
       impl) cmd=(codex exec "${common[@]}" --dangerously-bypass-approvals-and-sandbox -) ;;
       review) cmd=(codex exec "${common[@]}" -s read-only -) ;;

@@ -98,7 +98,7 @@ thorough_review = "never"    # never | high-risk | always (2026-10-29: always on
 
 [adapter]
 name = "claude"              # claude | codex | gemini | copilot | antigravity | opencode-http (alias: opencode) | <custom .bmad-loop/profiles/*.toml>
-model = "claude-opus-5-5"    # 2026-10-29: the orchestrator; the implementer (sonnet) and reviewer (codex) are scripts in _bmad/custom
+model = "claude-opus-5-5"    # 2026-10-29: the orchestrator; the implementer (codex terra) and reviewer (codex sol) run through _bmad/custom/bmad-build-auto-codex.sh
 effort = ""                  # reasoning effort, free-form (e.g. "high", "max"); empty = provider default.
                              # Sent by opencode-http as the per-prompt `variant`; the tmux CLIs ignore it
 # effort does not reach the tmux CLI, so it is a flag. extra_args replaces the profile's permission flags, so they are
