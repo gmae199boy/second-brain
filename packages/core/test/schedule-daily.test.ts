@@ -10,7 +10,7 @@ function kit(start = '2026-10-01T00:00:00Z') {
     transcripts: memoryTranscriptReader(), repositories: memoryRepositories(), machine: 'test' });
   return { store, brain, time, set: (at: string) => time.advance(new Date(at).getTime() - time.clock.now().getTime()),
     zone: (value: string) => store.setSetting({ key: 'timezone', value, updatedAt: time.clock.now() }),
-    add: (localTime = '11:00') => brain.schedules.addDaily({ kind: 'schedule_probe', targetKind: 'probe', targetId: 'daily', localTime }),
+    add: (localTime = '11:00') => brain.schedules.add({ kind: 'schedule_probe', targetKind: 'probe', targetId: 'daily', localTime }),
     drain: () => brain.queue.drain({ budgetMs: 1000 }) };
 }
 async function added(k: ReturnType<typeof kit>, localTime = '11:00') {

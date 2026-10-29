@@ -197,3 +197,5 @@ export interface WorkAttempt {
 export function dependencyFailedText(id: string, outcome: 'failed' | 'cancelled' | 'dependency_failed'): string {
   return `선행 일감 ${id}이 ${outcome}로 끝나 이 일감을 실행할 수 없습니다`;
 }
+
+export function modelWorkKinds(): string[] { return Object.keys(WORK_KINDS).filter(kind => WORK_KINDS[kind]!.callsModel); }

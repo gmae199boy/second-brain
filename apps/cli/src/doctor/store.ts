@@ -26,6 +26,10 @@ import type { SchemaStore, SettingsStore, Store } from 'second_brain';
 export function failedConfigStore(message: string): Store & SchemaStore & SettingsStore {
   const unavailable = { ok: false as const, code: 'DB_UNAVAILABLE' as const, message };
   return {
+    async listSchedules() { return unavailable; },
+    async removeSchedule() { return unavailable; },
+    async listWork() { return unavailable; },
+    async readModelWorkUsage() { return unavailable; },
     async readWorkAttemptHealth() { return unavailable; },
     async requestWorkCancel() { return unavailable; },
     async recordSupervisedProcess() { return unavailable; },

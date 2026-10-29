@@ -26,7 +26,26 @@ export function scheduleStoreContract(): ContractCase<ScheduleStore & WorkStore>
     localTime: '11:00', timeZone: 'Asia/Seoul', intervalSeconds: null, nextRunAt: now, lastRunAt: null, createdAt: now, ...over });
   const dates = { scheduleId: IDS.a, from: '2026-02-01', to: '2026-02-02', timeZone: 'Asia/Seoul' };
   const work = (over: Partial<import('../../ports/store.js').AddWorkInput> = {}) => ({ id: IDS.workA, kind: 'schedule_probe', targetKind: 'probe', targetId: IDS.a, createdAt: now, nextAttemptAt: now, scheduledDates: dates, ...over });
-  return [contractCase('daily schedules round trip and one daily schedule per target', async make => {
+  return [contractCase('lists schedules in creation order with has_more', async make => {
+    await withSubject(make, async store => {
+      await store.addSchedule(daily({ id: IDS.b, targetId: 'second', createdAt: next }));
+      await store.addSchedule(daily());
+      const page = await store.listSchedules({ limit: 1 }); assertOk(page, 'list');
+      assertEqual(page.schedules.map(s => s.id), [IDS.a], 'oldest first'); assertEqual(page.hasMore, true, 'more');
+      const all = await store.listSchedules({ limit: 10 }); assertOk(all, 'all'); assertEqual(all.hasMore, false, 'no more');
+    });
+  }), contractCase('removing a schedule stops its firing and keeps its open work', async make => {
+    await withSubject(make, async store => {
+      await store.addSchedule(daily()); await store.addWork(work());
+      assertEqual(await store.removeSchedule({ id: IDS.a }), { ok: true, removed: true }, 'removed');
+      const list = await store.listSchedules({ limit: 10 }); assertOk(list, 'list'); assertEqual(list.schedules, [], 'gone');
+      const open = await store.listWork({ includeClosed: false, limit: 10 }); assertOk(open, 'work');
+      assertEqual(open.entries[0]?.item.scheduledDates?.scheduleId, null, 'FK null');
+      assertEqual(await store.fireSchedule({ scheduleId: IDS.a, expectedNextRunAt: now, nextRunAt: next, work: work(), now }), { ok: true, fired: false }, 'no firing');
+    });
+  }), contractCase('remove reports a missing schedule', async make => {
+    await withSubject(make, async store => { assertEqual(await store.removeSchedule({ id: IDS.a }), { ok: true, removed: false }, 'missing'); });
+  }), contractCase('daily schedules round trip and one daily schedule per target', async make => {
     await withSubject(make, async store => {
       const input = daily(); assertOk(await store.addSchedule(input), 'daily add');
       const read = await store.readSchedule({ id: input.id }); assertOk(read, 'read daily'); assertEqual(read.schedule, input, 'round trip');

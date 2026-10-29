@@ -1,3 +1,4 @@
+import { attemptUsage } from '../../queue/list.js';
 import type { SettingsStore, ScheduleSuccess } from '../../ports/store.js';
 import { addLocalDays, isLocalTime } from '../../local-time.js';
 import { formatInstant } from '../../instant.js';
@@ -442,6 +443,31 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
 
   return {
     ...memorySettingsStore(),
+    async listSchedules({ limit }) {
+      const rows = [...schedules.values()].sort((a,b) => a.createdAt.getTime()-b.createdAt.getTime() || a.id.localeCompare(b.id));
+      return { ok: true, schedules: structuredClone(rows.slice(0, limit)), hasMore: rows.length > limit };
+    },
+    async removeSchedule({ id }) {
+      const removed = schedules.delete(id);
+      for (const item of workItems) if (item.scheduledDates?.scheduleId === id) item.scheduledDates.scheduleId = null;
+      for (const [key, row] of scheduleSuccesses) if (row.scheduleId === id) scheduleSuccesses.delete(key);
+      return { ok: true, removed };
+    },
+    async listWork({ includeClosed, kind, limit }) {
+      const rows = workItems.filter(i => (includeClosed || i.completedAt === null) && (kind === undefined || i.kind === kind))
+        .sort((a,b) => b.createdAt.getTime()-a.createdAt.getTime() || b.id.localeCompare(a.id));
+      return { ok: true, entries: structuredClone(rows.slice(0, limit).map(item => ({ item, currentAttempt: workAttempts.find(a => a.workItemId === item.id && a.token === item.currentAttemptToken) ?? null, latestAttempt: workAttempts.filter(a => a.workItemId === item.id)
+        .sort((a,b) => b.startedAt.getTime()-a.startedAt.getTime() || b.token.localeCompare(a.token))[0] ?? null }))), hasMore: rows.length > limit };
+    },
+    async readModelWorkUsage({ kinds }) {
+      const rows = workAttempts.filter(a => workItems.some(i => i.id === a.workItemId && kinds.includes(i.kind)))
+        .sort((a,b) => b.startedAt.getTime()-a.startedAt.getTime() || b.token.localeCompare(a.token));
+      const latest = rows[0];
+      return { ok: true, usage: { inputTokens: rows.reduce((n,a) => n+(a.inputTokens ?? 0),0),
+        cachedInputTokens: rows.reduce((n,a) => n+(a.cachedInputTokens ?? 0),0), outputTokens: rows.reduce((n,a) => n+(a.outputTokens ?? 0),0),
+        elapsedMs: rows.reduce((n,a) => n+(a.elapsedMs ?? 0),0), latest: latest ? { workItemId: latest.workItemId,
+          kind: workItems.find(i => i.id === latest.workItemId)!.kind, at: new Date(latest.startedAt), elapsedMs: latest.elapsedMs, usage: attemptUsage(latest) } : null } };
+    },
     async readSchedule({ id }) { return { ok: true, schedule: schedules.has(id) ? cloneSchedule(schedules.get(id)!) : null }; },
     async listDailySchedules({ limit }) {
       return { ok: true, schedules: [...schedules.values()].filter(row => row.localTime !== null).sort((a, b) => a.id < b.id ? -1 : 1).slice(0, limit).map(cloneSchedule) };

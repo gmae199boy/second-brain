@@ -1,3 +1,4 @@
+import { attemptUsage } from '@second-brain/core';
 import {
   formatInstant,
   dependencyFailedText,
@@ -345,6 +346,33 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         if (!written.ok) return written;
         return { ok: true, item: written.value, attemptToken: written.value === null ? null : input.attemptToken };
       } catch (error) { return { ...databaseFailure(error), message: `감독 일감을 청구할 수 없습니다: ${describe(error)}` }; }
+    },
+    async listWork({ includeClosed, kind, limit }) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const result = await sql<WorkItemRow & { attempt: Record<string, unknown> | null; current_attempt: Record<string, unknown> | null }>`select i.*, i.local_date_from::text, i.local_date_to::text, i.claimed_date_from::text, i.claimed_date_to::text, row_to_json(a) as attempt, row_to_json(c) as current_attempt
+          from brain.work_items i left join lateral (select * from brain.work_attempts a where a.work_item_id = i.id order by started_at desc, token desc limit 1) a on true
+          left join brain.work_attempts c on c.work_item_id = i.id and c.token = i.current_attempt_token
+          where (${includeClosed} or i.completed_at is null) and (${kind ?? null}::text is null or i.kind = ${kind ?? null})
+          order by i.created_at desc, i.id desc limit ${limit + 1}`.execute(opened.connection.db);
+        return { ok: true, entries: result.rows.slice(0, limit).map(row => ({ item: toWorkItem(row), latestAttempt: row.attempt === null ? null : listAttempt(row.attempt), currentAttempt: row.current_attempt === null ? null : listAttempt(row.current_attempt) })), hasMore: result.rows.length > limit };
+      } catch (error) { return databaseFailure(error); }
+    },
+    async readModelWorkUsage({ kinds }) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const sums = await sql<{ input: string; cached: string; output: string; elapsed: string }>`select coalesce(sum(a.input_tokens),0)::text as input,
+          coalesce(sum(a.cached_input_tokens),0)::text as cached, coalesce(sum(a.output_tokens),0)::text as output, coalesce(sum(a.elapsed_ms),0)::text as elapsed
+          from brain.work_attempts a join brain.work_items i on i.id = a.work_item_id where i.kind = any(${[...kinds]}::text[])`.execute(opened.connection.db);
+        const rows = await sql<{ kind: string; attempt: Record<string, unknown> }>`select i.kind, row_to_json(a) as attempt
+          from brain.work_attempts a join brain.work_items i on i.id = a.work_item_id where i.kind = any(${[...kinds]}::text[])
+          order by a.started_at desc, a.token desc limit 1`.execute(opened.connection.db);
+        const sum = sums.rows[0]!; const row = rows.rows[0]; const attempt = row ? listAttempt(row.attempt) : null;
+        return { ok: true, usage: { inputTokens: Number(sum.input), cachedInputTokens: Number(sum.cached), outputTokens: Number(sum.output), elapsedMs: Number(sum.elapsed),
+          latest: attempt && row ? { workItemId: attempt.workItemId, kind: row.kind, at: attempt.startedAt, elapsedMs: attempt.elapsedMs, usage: attemptUsage(attempt) } : null } };
+      } catch (error) { return databaseFailure(error); }
     },
     async readWorkAttemptHealth() {
       const opened = connect();
@@ -778,4 +806,13 @@ async function settleScheduledSuccess(held: Kysely<PgSchema>, id: string, now: s
     where id = ${id} and local_date_from is not null and cancel_requested_at is null
       and (claimed_date_from is null or local_date_from < claimed_date_from or local_date_to > claimed_date_to)`.execute(held);
   await sql`update brain.work_items set claimed_date_from = null, claimed_date_to = null where id = ${id}`.execute(held);
+}
+
+function listAttempt(row: Record<string, unknown>): import('@second-brain/core').WorkAttempt {
+  const converted: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    const name = key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+    converted[name] = value !== null && (key.endsWith('_at')) ? at(new Date(String(value)).toISOString(), `work_attempts.${key}`) : value;
+  }
+  return converted as unknown as import('@second-brain/core').WorkAttempt;
 }

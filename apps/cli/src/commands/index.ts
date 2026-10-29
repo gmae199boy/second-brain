@@ -1,3 +1,8 @@
+import { queueListCommand } from './queue-list.js';
+import { schedulesAddCommand } from './schedules-add.js';
+import { schedulesListCommand } from './schedules-list.js';
+import { schedulesRemoveCommand } from './schedules-remove.js';
+import { schedulesRunCommand } from './schedules-run.js';
 import { configGetCommand } from './config-get.js';
 import { configSetCommand } from './config-set.js';
 import { filesRedactCommand } from './files-redact.js';
@@ -55,6 +60,11 @@ export const commands: readonly CommandSpec[] = [
   daemonStartCommand,
   queueDrainCommand,
   queueCancelCommand,
+  queueListCommand,
+  schedulesAddCommand,
+  schedulesListCommand,
+  schedulesRemoveCommand,
+  schedulesRunCommand,
   sessionsIngestCommand(harnesses),
   setupRun,
   setupUninstallCommand,

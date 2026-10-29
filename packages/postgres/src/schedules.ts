@@ -48,6 +48,22 @@ export function postgresScheduleStore(connect: PgConnect): ScheduleStore {
         return databaseFailure(error);
       }
     },
+    async listSchedules({ limit }) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const result = await sql<ScheduleRow>`select * from brain.schedules order by created_at, id limit ${limit + 1}`.execute(opened.connection.db);
+        return { ok: true, schedules: result.rows.slice(0, limit).map(rowSchedule), hasMore: result.rows.length > limit };
+      } catch (error) { return databaseFailure(error); }
+    },
+    async removeSchedule({ id }) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const result = await withWrite(opened.connection, async held => (await sql`delete from brain.schedules where id = ${id} returning id`.execute(held)).rows.length > 0);
+        return result.ok ? { ok: true, removed: result.value } : result;
+      } catch (error) { return databaseFailure(error); }
+    },
     async readSchedule({ id }) {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };

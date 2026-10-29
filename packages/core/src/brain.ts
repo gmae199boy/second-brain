@@ -1,7 +1,8 @@
+import { listWork } from './queue/list.js';
 import { workExecutionClass } from './domain/work-item.js';
 import type { SchemaVersions } from './schema.js';
 import { getSetting, setSetting, settingDefinitions } from './settings/index.js';
-import { addDaily, runSchedule, type AddDailyInput, type AddDailyResult, type RunScheduleResult } from './queue/schedules.js';
+import { addDaily, listSchedules, removeSchedule, runSchedule, type AddDailyInput, type AddDailyResult, type RunScheduleResult } from './queue/schedules.js';
 import { tickSchedules, type ScheduleTickResult } from './queue/schedule-tick.js';
 import { SCHEDULE_PROBE_KIND, scheduleProbeHandler } from './queue/schedule-probe-work.js';
 import type { AttachmentLinkSpoolPayload } from './domain/spool-record.js';
@@ -197,6 +198,7 @@ export interface BrainDrainReport extends DrainQueueReport {
 
 export type BrainQueueCancelResult = { ok: true; id: string; state: 'cancelled' | 'requested' | 'already_closed' } | { ok: false; code: 'WORK_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface BrainQueue {
+  list(input?: Parameters<typeof listWork>[1]): ReturnType<typeof listWork>;
   cancel(input: { id: string }): Promise<BrainQueueCancelResult>;
   /** Work the backlog within a time budget, and report what happened (AD-21). */
   drain(input: BrainQueueDrainInput): Promise<BrainDrainReport>;
@@ -221,6 +223,13 @@ export interface BrainFiles {
   redact(input: FilesRedactInput): Promise<FilesRedactResult>;
 }
 
+export interface BrainSchedules {
+  tick(): Promise<ScheduleTickResult>;
+  add(input: AddDailyInput): Promise<AddDailyResult>;
+  list(input?: { limit?: number }): ReturnType<typeof listSchedules>;
+  remove(input: { id: string }): ReturnType<typeof removeSchedule>;
+  run(input: { scheduleId: string }): Promise<RunScheduleResult>;
+}
 export interface Brain {
   messages: BrainMessages;
   files: BrainFiles;
@@ -228,7 +237,7 @@ export interface Brain {
   sessions: BrainSessions;
   failures: BrainFailures;
   queue: BrainQueue;
-  schedules: { tick(): Promise<ScheduleTickResult>; addDaily(input: AddDailyInput): Promise<AddDailyResult>; run(input: { scheduleId: string }): Promise<RunScheduleResult> };
+  schedules: BrainSchedules;
   close(): Promise<void>;
 }
 
@@ -367,6 +376,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     },
   };
 
+  const readTimeZone = () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' });
   return {
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
     files: { redact: (input) => redactFile({ store, clock, idGen }, input) },
@@ -406,11 +416,14 @@ export function createBrain(dependencies: BrainDependencies): Brain {
       retry: (input) => retryFailures({ store, clock, idGen }, input),
     },
     schedules: {
-      tick: () => tickSchedules({ store, clock, idGen, readTimeZone: () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' }) }),
-      addDaily: input => addDaily({ store, clock, idGen, readTimeZone: () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' }) }, input),
-      run: input => runSchedule({ store, clock, idGen, readTimeZone: () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' }) }, input),
+      tick: () => tickSchedules({ store, clock, idGen, readTimeZone }),
+      list: input => listSchedules({ store }, input),
+      remove: input => removeSchedule({ store }, input),
+      add: input => addDaily({ store, clock, idGen, readTimeZone }, input),
+      run: input => runSchedule({ store, clock, idGen, readTimeZone }, input),
     },
     queue: {
+      list: input => listWork({ store, clock }, input),
       async cancel(input) {
         const result = await store.requestWorkCancel({ id: input.id, now: clock.now() });
         if (!result.ok) return result;

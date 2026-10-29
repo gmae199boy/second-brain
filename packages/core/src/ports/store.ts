@@ -679,7 +679,13 @@ export type ResolveFailuresResult =
  * are one transaction: the last attempt of an item writes the record and closes
  * the item together or does neither.
  */
+export interface ModelWorkUsage {
+  inputTokens: number; cachedInputTokens: number; outputTokens: number; elapsedMs: number;
+  latest: { workItemId: string; kind: string; at: Date; elapsedMs: number | null; usage: { inputTokens: number; cachedInputTokens: number; outputTokens: number } | null } | null;
+}
 export interface WorkStore {
+  listWork(input: { includeClosed: boolean; kind?: string; limit: number }): Promise<{ ok: true; entries: { item: WorkItem; latestAttempt: import('../domain/work-item.js').WorkAttempt | null; currentAttempt: import('../domain/work-item.js').WorkAttempt | null }[]; hasMore: boolean } | ScheduleStoreFailure>;
+  readModelWorkUsage(input: { kinds: readonly string[] }): Promise<{ ok: true; usage: ModelWorkUsage } | ScheduleStoreFailure>;
   readWorkAttemptHealth(): Promise<ReadWorkAttemptHealthResult>;
   requestWorkCancel(input: { id: string; now: Date }): Promise<RequestWorkCancelResult>;
   recordSupervisedProcess(input: RecordSupervisedProcessInput): Promise<FinishWorkResult>;
@@ -1413,6 +1419,8 @@ export interface ExtractionStore {
 
 /** Schedule persistence; recurrence rules belong to Core's tick. */
 export interface ScheduleStore {
+  listSchedules(input: { limit: number }): Promise<{ ok: true; schedules: AddScheduleInput[]; hasMore: boolean } | ScheduleStoreFailure>;
+  removeSchedule(input: { id: string }): Promise<{ ok: true; removed: boolean } | ScheduleStoreFailure>;
   addSchedule(input: AddScheduleInput): Promise<AddScheduleResult>;
   listDailySchedules(query: { limit: number }): Promise<ListDueSchedulesResult>;
   readSchedule(query: { id: string }): Promise<{ ok: true; schedule: AddScheduleInput | null } | ScheduleStoreFailure>;

@@ -20,8 +20,8 @@ import { sequenceIdGen } from '../src/testing/fakes/id-gen.js';
 
 /** The version these tests call current, so a mismatch is an explicit choice. */
 const CURRENT = 2;
-const workCheckIds = ['work-stalled', 'work-died', 'work-unknown', 'work-last-error'];
-const workChecks = (status: 'ok' | 'skip', detail: string) => workCheckIds.map(id => ({ id, status, detail }));
+const workCheckIds = ['work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage'];
+const workChecks = (status: 'ok' | 'skip', detail: string) => workCheckIds.map(id => ({ id, status, detail: id === 'work-model-usage' && status === 'ok' ? '입력 0 토큰, 캐시 0 토큰, 출력 0 토큰, 걸린 시간 0초' : detail }));
 
 /** A reachable store whose source answered with exactly these probes. */
 function healthy(...probes: StoreProbe[]): StoreHealth {
@@ -354,7 +354,7 @@ describe('the summary of a report', () => {
 
     // db ok, wal ok, writable warn, fts fail, schema ok, failures ok,
     // transcripts skip, shim fail, node skip.
-    expect(report.summary).toEqual({ passed: 9, warned: 1, failed: 2, skipped: 2 });
+    expect(report.summary).toEqual({ passed: 10, warned: 1, failed: 2, skipped: 2 });
     const counted =
       report.summary.passed +
       report.summary.warned +
@@ -369,7 +369,7 @@ describe('the summary of a report', () => {
       OPTIONS,
     );
 
-    expect(report.summary).toEqual({ passed: 0, warned: 0, failed: 1, skipped: 8 });
+    expect(report.summary).toEqual({ passed: 0, warned: 0, failed: 1, skipped: 9 });
   });
 
   it('is all passes for a healthy brain, bar the folders nobody asked for', async () => {
@@ -377,7 +377,7 @@ describe('the summary of a report', () => {
 
     // db, wal, schema-version and failures pass; `transcripts` is a `skip`,
     // because this brain's capture switch is off (Boundaries).
-    expect(report.summary).toEqual({ passed: 9, warned: 0, failed: 0, skipped: 1 });
+    expect(report.summary).toEqual({ passed: 10, warned: 0, failed: 0, skipped: 1 });
   });
 });
 
@@ -529,5 +529,23 @@ it('reports each open work attempt problem as a warning with its latest item', a
 });
 it('fails all work attempt checks with the read failure code', async () => {
   const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store: { ...memoryStore(), async readWorkAttemptHealth() { return { ok: false, code: 'DB_UNAVAILABLE', message: '읽기 실패' }; } } });
-  for (const id of workCheckIds) expect(report.checks).toContainEqual({ id, status: 'fail', code: 'DB_UNAVAILABLE', detail: '읽기 실패' });
+  for (const id of workCheckIds.filter(id => id !== 'work-model-usage')) expect(report.checks).toContainEqual({ id, status: 'fail', code: 'DB_UNAVAILABLE', detail: '읽기 실패' });
+});
+
+it('reports model work tokens and elapsed time without counts', async () => {
+  const store = memoryStore(); const now = OPTIONS.clock.now();
+  for (const [id, inputTokens, cachedInputTokens, outputTokens, elapsedMs] of [['first',10,2,5,1000], ['second',1,0,1,500]] as const) {
+    await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: id, createdAt: now, nextAttemptAt: now });
+    await store.claimSupervisedWork({ kinds: ['process_probe'], claimedBy: 'worker', now, attemptToken: id });
+    await store.finishSupervisedWork({ id, attemptToken: id, now, outcome: 'succeeded', elapsedMs, usage: { inputTokens, cachedInputTokens, outputTokens } });
+  }
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store, modelWorkKinds: ['process_probe'] });
+  const check = report.checks.find(c => c.id === 'work-model-usage');
+  expect(check).toMatchObject({ status: 'ok', detail: expect.stringContaining('입력 11 토큰, 캐시 2 토큰, 출력 6 토큰, 걸린 시간 1.5초') });
+  expect(check?.detail).toContain('최근 종류 process_probe 일감 second'); expect(check?.detail).not.toMatch(/횟수|시도|건/);
+});
+it('fails the model usage check when the store cannot be read', async () => {
+  const store = { ...memoryStore(), async readModelWorkUsage() { return { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: '읽기 실패' }; } };
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store });
+  expect(report.checks).toContainEqual({ id: 'work-model-usage', status: 'fail', code: 'DB_UNAVAILABLE', detail: '읽기 실패' });
 });

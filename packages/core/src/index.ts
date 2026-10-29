@@ -259,3 +259,10 @@ export * from './queue/work-graph.js';
 
 export * from './local-time.js';
 export * from './queue/schedules.js';
+
+export * from './queue/list.js';
+export { modelWorkKinds } from './domain/work-item.js';
+
+export type { WorkAttempt } from './domain/work-item.js';
+
+export type { BrainSchedules } from './brain.js';

@@ -35,6 +35,57 @@ export function workStoreContract(readItem: (store: WorkStore, id: string) => Pr
   const KINDS = ['demo_work'];
 
   return [
+    contractCase('lists open work newest first with the latest attempt', async make => {
+      await withSubject(make, async store => {
+        await store.addWork(sampleWorkInput({ kind: 'process_probe', createdAt: NOW }));
+        await store.claimSupervisedWork({ now: NOW, kinds: ['process_probe'], claimedBy: 'worker', attemptToken: sampleFailureId });
+        await store.settleSupervisedAttempt({ id: sampleWorkItemId, attemptToken: sampleFailureId, now: NOW, outcome: 'died' });
+        await store.claimSupervisedWork({ now: NOW, kinds: ['process_probe'], claimedBy: 'worker', attemptToken: otherFailureId });
+        await store.addWork(sampleWorkInput({ id: otherWorkItemId, targetId: 'other', createdAt: LATER }));
+        const page = await store.listWork({ includeClosed: false, limit: 1 }); assertOk(page, 'page');
+        assertEqual(page.entries[0]?.item.id, otherWorkItemId, 'newest'); assertEqual(page.hasMore, true, 'more');
+        const all = await store.listWork({ includeClosed: false, limit: 10 }); assertOk(all, 'all');
+        assertEqual(all.entries[1]?.latestAttempt?.token, otherFailureId, 'attempt');
+      });
+    }),
+    contractCase('reads the current attempt separately when tied starts sort an older attempt first', async make => {
+      await withSubject(make, async store => {
+        await store.addWork(sampleWorkInput({ kind: 'process_probe', createdAt: NOW }));
+        await store.claimSupervisedWork({ now: NOW, kinds: ['process_probe'], claimedBy: 'worker', attemptToken: otherFailureId });
+        await store.settleSupervisedAttempt({ id: sampleWorkItemId, attemptToken: otherFailureId, now: NOW, outcome: 'died', elapsedMs: 1000 });
+        await store.claimSupervisedWork({ now: NOW, kinds: ['process_probe'], claimedBy: 'worker', attemptToken: sampleFailureId });
+        await store.settleSupervisedAttempt({ id: sampleWorkItemId, attemptToken: sampleFailureId, now: NOW, outcome: 'unknown', elapsedMs: 2000 });
+        const read = await store.listWork({ includeClosed: false, limit: 10 }); assertOk(read, 'list');
+        assertEqual(read.entries[0]?.latestAttempt?.token, otherFailureId, 'latest uses descending token for tied starts');
+        assertEqual(read.entries[0]?.latestAttempt?.outcome, 'died', 'latest display outcome');
+        assertEqual(read.entries[0]?.currentAttempt?.token, sampleFailureId, 'current uses retained token');
+        assertEqual(read.entries[0]?.currentAttempt?.outcome, 'unknown', 'current unknown outcome');
+      });
+    }),
+    contractCase('lists closed work only when asked and filters by kind', async make => {
+      await withSubject(make, async store => {
+        await store.addWork(sampleWorkInput());
+        await store.claimWork({ now: NOW, kinds: KINDS, claimedBy: 'worker' });
+        await store.completeWork({ id: sampleWorkItemId, claimedBy: 'worker', now: NOW });
+        const open = await store.listWork({ includeClosed: false, limit: 10 }); assertOk(open, 'open'); assertEqual(open.entries, [], 'closed hidden');
+        const all = await store.listWork({ includeClosed: true, kind: KINDS[0]!, limit: 10 }); assertOk(all, 'all'); assertEqual(all.entries.length, 1, 'closed included');
+        const other = await store.listWork({ includeClosed: true, kind: 'other', limit: 10 }); assertOk(other, 'other'); assertEqual(other.entries, [], 'kind');
+      });
+    }),
+    contractCase('sums model usage over the given kinds only', async make => {
+      await withSubject(make, async store => {
+        for (const [id, token, usage, elapsedMs] of [[sampleWorkItemId, sampleFailureId, { inputTokens: 10, cachedInputTokens: 2, outputTokens: 5 }, 1000],
+          [otherWorkItemId, otherFailureId, { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 }, 500]] as const) {
+          await store.addWork(sampleWorkInput({ id, kind: 'process_probe', targetId: id }));
+          await store.claimSupervisedWork({ now: NOW, kinds: ['process_probe'], claimedBy: 'worker', attemptToken: token });
+          await store.finishSupervisedWork({ id, attemptToken: token, now: LATER, outcome: 'succeeded', usage, elapsedMs });
+        }
+        const read = await store.readModelWorkUsage({ kinds: ['process_probe'] }); assertOk(read, 'usage');
+        assertEqual([read.usage.inputTokens, read.usage.cachedInputTokens, read.usage.outputTokens, read.usage.elapsedMs], [11,2,6,1500], 'sums');
+        const excluded = await store.readModelWorkUsage({ kinds: [] }); assertOk(excluded, 'excluded');
+        assertEqual(excluded.usage, { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, elapsedMs: 0, latest: null }, 'empty kinds');
+      });
+    }),
     contractCase('one serialization key is claimed once across kinds and claim paths', async make => {
       await withSubject(make, async store => {
         await store.addWork(sampleWorkInput({ serializationKey: 'account' }));

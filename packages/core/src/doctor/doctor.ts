@@ -1,3 +1,4 @@
+import { modelWorkKinds } from '../domain/work-item.js';
 import type { SchemaVersions } from '../schema.js';
 import { transcriptChanges } from '../capture/scan.js';
 import {
@@ -96,11 +97,12 @@ export interface DoctorCheckSource {
  * already wrong, and a check that took the write lock would be the one thing
  * that makes a busy brain look broken (AD-7).
  */
-export type DoctorReadStore = Pick<WorkStore, 'listFailures' | 'readWorkAttemptHealth'> &
+export type DoctorReadStore = Pick<WorkStore, 'listFailures' | 'readWorkAttemptHealth' | 'readModelWorkUsage'> &
   Pick<TranscriptFileStore, 'listTranscriptFiles'> &
   Pick<import('../ports/store.js').SessionStore, 'countUntaggedSessions'>;
 
 export interface DoctorOptions {
+  modelWorkKinds?: readonly string[];
   prerequisites?: readonly DoctorCheckSource[];
   /** Adapter probes to mark skipped only when a prerequisite fails (AD-10). */
   adapterProbeIds?: readonly string[];
@@ -160,7 +162,7 @@ export async function runDoctor(
     if (check.status === 'fail' && failedPrerequisite === undefined) failedPrerequisite = check.id;
   }
   if (failedPrerequisite !== undefined) {
-    for (const id of ['db', ...(options.adapterProbeIds ?? []), 'schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error']) checks.push({ id, status: 'skip', detail: prereqFailed(failedPrerequisite) });
+    for (const id of ['db', ...(options.adapterProbeIds ?? []), 'schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage']) checks.push({ id, status: 'skip', detail: prereqFailed(failedPrerequisite) });
     for (const source of options.checks ?? []) checks.push(await registered(source));
     return { checks, summary: summarise(checks) };
   }
@@ -170,7 +172,7 @@ export async function runDoctor(
     // Everything a store would have answered is skipped under the same reason,
     // so a reader never has to work out from what is missing whether a check
     // was skipped or never existed.
-    for (const id of ['schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error']) {
+    for (const id of ['schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage']) {
       checks.push({ id, status: 'skip', detail: prereqFailed('db') });
     }
   } else {
@@ -184,6 +186,7 @@ export async function runDoctor(
       : { id: 'untagged', status: 'fail', code: untagged.code, detail: untagged.message });
     checks.push(await transcriptsCheck(options));
     checks.push(...await workAttemptChecks(options.store));
+    checks.push(await modelUsageCheck(options));
   }
 
   for (const source of options.checks ?? []) {
@@ -362,4 +365,13 @@ async function registered(source: DoctorCheckSource): Promise<DoctorCheck> {
   } catch (error) {
     return { id: source.id, status: 'fail', detail: `점검이 실패했습니다: ${errorLine(error)}` };
   }
+}
+
+async function modelUsageCheck(options: DoctorOptions): Promise<DoctorCheck> {
+  const read = await options.store.readModelWorkUsage({ kinds: options.modelWorkKinds ?? modelWorkKinds() });
+  if (!read.ok) return { id: 'work-model-usage', status: 'fail', code: read.code, detail: read.message };
+  const u = read.usage;
+  const tokens = (v: { inputTokens: number; cachedInputTokens: number; outputTokens: number }) => `입력 ${v.inputTokens} 토큰, 캐시 ${v.cachedInputTokens} 토큰, 출력 ${v.outputTokens} 토큰`;
+  return { id: 'work-model-usage', status: 'ok', detail: `${tokens(u)}, 걸린 시간 ${u.elapsedMs / 1000}초` +
+    (u.latest === null ? '' : `, 최근 종류 ${u.latest.kind} 일감 ${u.latest.workItemId}, 걸린 시간 ${u.latest.elapsedMs === null ? '없음' : String(u.latest.elapsedMs / 1000) + '초'}, ${u.latest.usage === null ? '토큰 없음' : tokens(u.latest.usage)}`) };
 }

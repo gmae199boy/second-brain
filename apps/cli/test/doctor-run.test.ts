@@ -114,7 +114,7 @@ describe('brain doctor run without a configuration it can read', () => {
       expect(checks).toContainEqual(expect.objectContaining({ id, status: 'ok' }));
     }
     expect(checks.map((check: { id: string }) => check.id)).toEqual([
-      'orbstack', 'container', 'db', 'schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error',
+      'orbstack', 'container', 'db', 'schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage',
       'config', 'config-timezone', 'shim', 'node-path', 'node-version', 'plugin', 'last-hook', 'spool', 'daemon',
     ]);
     expect(checks).toContainEqual({ id: 'schema-version', status: 'skip', detail: '앞선 점검 실패: db' });
@@ -155,7 +155,7 @@ describe('brain doctor run without a configuration it can read', () => {
     expect(run.stdout).toContain('schema-version: skip 앞선 점검 실패: db');
     expect(run.stdout).toContain('node-path: skip 앞선 점검 실패: shim');
     expect(run.stdout).toContain('spool: ok 0건');
-    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe('요약: 통과 7, 경고 1, 실패 3, 건너뜀 9');
+    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe('요약: 통과 7, 경고 1, 실패 3, 건너뜀 10');
     expect(run.stderr).not.toContain('CONFIG_MISSING');
     assertKoreanLines(run.stdout);
   });
