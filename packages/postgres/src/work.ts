@@ -35,6 +35,9 @@ import { withWrite } from './write.js';
 import { pgText } from './text.js';
 
 export interface WorkItemRow {
+  schedule_id: string | null;
+  local_date_from: string | null; local_date_to: string | null; local_time_zone: string | null;
+  claimed_date_from: string | null; claimed_date_to: string | null;
   id: string;
   kind: string;
   execution_class: 'core' | 'supervised';
@@ -83,7 +86,8 @@ export function claimCandidateQuery(query: DueWorkQuery): RawBuilder<WorkItemRow
   const now = instant(query.now, 'work_items.next_attempt_at');
   return sql<WorkItemRow>`
     select id, kind, execution_class, current_attempt_token, serialization_key, target_kind, target_id, created_at, attempts, next_attempt_at,
-           claimed_at, claim_expires_at, claimed_by, last_error, completed_at, outcome, cancel_requested_at
+           claimed_at, claim_expires_at, claimed_by, last_error, completed_at, outcome, cancel_requested_at, schedule_id, local_time_zone,
+           local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text
       from brain.work_items
      where completed_at is null
        and not exists (
@@ -107,14 +111,23 @@ export async function ensureWork(held: Kysely<PgSchema>, input: AddWorkInput) {
   const nextAttemptAt = instant(input.nextAttemptAt, 'work_items.next_attempt_at');
   for (;;) {
     const inserted = await sql<WorkItemRow>`
-      insert into brain.work_items (id, kind, execution_class, serialization_key, target_kind, target_id, created_at, attempts, next_attempt_at)
-      values (${input.id}, ${input.kind}, ${workExecutionClass(input.kind)}, ${input.serializationKey ?? null}, ${input.targetKind}, ${input.targetId}, ${createdAt}, 0, ${nextAttemptAt})
-      on conflict (kind, target_kind, target_id) where completed_at is null do nothing returning *
+      insert into brain.work_items (id, kind, execution_class, serialization_key, target_kind, target_id, created_at, attempts, next_attempt_at, schedule_id, local_date_from, local_date_to, local_time_zone)
+      values (${input.id}, ${input.kind}, ${workExecutionClass(input.kind)}, ${input.serializationKey ?? null}, ${input.targetKind}, ${input.targetId}, ${createdAt}, 0, ${nextAttemptAt}, ${input.scheduledDates?.scheduleId ?? null}, ${input.scheduledDates?.from ?? null}, ${input.scheduledDates?.to ?? null}, ${input.scheduledDates?.timeZone ?? null})
+      on conflict (kind, target_kind, target_id) where completed_at is null do nothing returning *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text
     `.execute(held);
     const row = inserted.rows[0];
     if (row !== undefined) return { created: true, row };
     const existing = await readOpenWork(held, input);
-    if (existing !== null) return { created: false, row: existing };
+    if (existing !== null) {
+      if (!input.scheduledDates) return { created: false, row: existing };
+      const dates = input.scheduledDates;
+      const merged = await sql<WorkItemRow>`update brain.work_items set
+        local_date_from = least(local_date_from, ${dates.from}::date), local_date_to = greatest(local_date_to, ${dates.to}::date),
+        local_time_zone = coalesce(local_time_zone, ${dates.timeZone}), schedule_id = coalesce(schedule_id, ${dates.scheduleId}::uuid)
+        where id = ${existing.id} and completed_at is null
+        returning *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text`.execute(held);
+      if (merged.rows[0]) return { created: false, row: merged.rows[0] };
+    }
     // A drain completed the conflicting row between these statements. At READ
     // COMMITTED the next insert can create its replacement using a fresh snapshot.
   }
@@ -211,7 +224,8 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
                  set attempts = attempts + 1,
                      claimed_at = ${now},
                      claim_expires_at = ${expiresAt},
-                     claimed_by = ${input.claimedBy}
+                     claimed_by = ${input.claimedBy},
+                     claimed_date_from = local_date_from, claimed_date_to = local_date_to
                where id = ${candidate.id}
             `.execute(held);
             return {
@@ -238,7 +252,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
         const written = await withWrite(opened.connection, async held => {
-          const found = await sql<WorkItemRow>`select * from brain.work_items where id = ${input.id} for update`.execute(held);
+          const found = await sql<WorkItemRow>`select *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text from brain.work_items where id = ${input.id} for update`.execute(held);
           const item = found.rows[0];
           if (!item) return 'not_found' as const;
           if (item.completed_at !== null) return 'already_closed' as const;
@@ -304,7 +318,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         const written = await withWrite(opened.connection, async (held) => {
           const now = instant(input.now, 'work_items.claimed_at');
           for (;;) {
-            const found = await sql<WorkItemRow>`select * from brain.work_items
+            const found = await sql<WorkItemRow>`select *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text from brain.work_items
               where execution_class = 'supervised' and completed_at is null
                 and not exists (
                   select 1 from brain.work_dependencies d join brain.work_items p on p.id = d.prerequisite_id
@@ -324,7 +338,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
             const expires = instant(new Date(input.now.getTime() + workKindPolicy(candidate.kind).claimForMs), 'work_items.claim_expires_at');
             const changed = await sql<WorkItemRow>`update brain.work_items set attempts = attempts + 1,
               claimed_at = ${now}, claim_expires_at = ${expires}, claimed_by = ${input.claimedBy},
-              current_attempt_token = ${input.attemptToken} where id = ${candidate.id} returning *`.execute(held);
+              current_attempt_token = ${input.attemptToken}, claimed_date_from = local_date_from, claimed_date_to = local_date_to where id = ${candidate.id} returning *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text`.execute(held);
             return toWorkItem(changed.rows[0]!);
           }
         });
@@ -383,6 +397,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
           last_error = case when ${input.outcome} <> 'succeeded' then ${input.lastError === undefined && failure === undefined ? null : encodedFailure(input.lastError ?? failure!.message)} else last_error end
           where id = ${input.id} and current_attempt_token = ${input.attemptToken}`.execute(held);
         if (changesOf(changed) === 0) return 0;
+        if (input.outcome === 'succeeded') await settleScheduledSuccess(held, input.id, now);
         if (input.outcome !== 'succeeded' && (item.cancel_requested_at !== null || failure !== undefined))
           await closeDependents(held, input.id, item.cancel_requested_at !== null ? 'cancelled' : 'failed', now);
         if (failure !== undefined) {
@@ -413,6 +428,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         `.execute(held);
         const row = completed.rows[0];
         if (row === undefined) return 0;
+        await settleScheduledSuccess(held, input.id, now);
         if (row.kind === TABLE_CLEANUP_KIND && row.target_kind === TABLE_TARGET_KIND) {
           // Only the winning claim can settle failures, in the same transaction
           // as completion. A refused failure update leaves this work open.
@@ -635,7 +651,7 @@ function toFailure(row: FailureRow): FailureRecord {
 
 /** Lock the owner first, then read attempt state in a fresh statement snapshot. */
 async function lockOpenSupervisedWork(held: Kysely<PgSchema>, input: { id: string; attemptToken: string }): Promise<WorkItemRow | null> {
-  const found = await sql<WorkItemRow>`select * from brain.work_items where id = ${input.id}
+  const found = await sql<WorkItemRow>`select *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text from brain.work_items where id = ${input.id}
     and current_attempt_token = ${input.attemptToken} for update`.execute(held);
   const item = found.rows[0];
   if (!item) return null;
@@ -688,7 +704,8 @@ async function readOpenWork(
 ): Promise<WorkItemRow | null> {
   const found = await sql<WorkItemRow>`
     select id, kind, execution_class, current_attempt_token, serialization_key, target_kind, target_id, created_at, attempts, next_attempt_at,
-           claimed_at, claim_expires_at, claimed_by, last_error, completed_at, outcome, cancel_requested_at
+           claimed_at, claim_expires_at, claimed_by, last_error, completed_at, outcome, cancel_requested_at, schedule_id, local_time_zone,
+           local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text
       from brain.work_items
      where kind = ${key.kind} and target_kind = ${key.targetKind}
        and target_id = ${key.targetId} and completed_at is null
@@ -720,6 +737,7 @@ function at(value: string, column: string): Date {
 function toWorkItem(row: WorkItemRow): WorkItem {
   return {
     id: row.id,
+    scheduledDates: row.local_date_from === null ? null : { scheduleId: row.schedule_id, from: row.local_date_from, to: row.local_date_to!, timeZone: row.local_time_zone! },
     kind: row.kind,
     executionClass: row.execution_class,
     currentAttemptToken: row.current_attempt_token,
@@ -746,4 +764,18 @@ function toWorkItem(row: WorkItemRow): WorkItem {
 /** Encoding can expand NUL beyond the already masked sentence’s byte budget. */
 function encodedFailure(message: string): string {
   return truncateUtf8(pgText(message).text!, FAILURE_MESSAGE_MAX_BYTES);
+}
+
+/** Called only by a winning completion, in that completion's transaction. */
+async function settleScheduledSuccess(held: Kysely<PgSchema>, id: string, now: string): Promise<void> {
+  await sql`insert into brain.schedule_successes (schedule_id, local_date, time_zone, work_id, recorded_at)
+    select w.schedule_id, d::date, w.local_time_zone, w.id, ${now}::timestamptz
+    from brain.work_items w cross join lateral generate_series(w.claimed_date_from, w.claimed_date_to, interval '1 day') d
+    where w.id = ${id} and w.schedule_id is not null
+    on conflict (schedule_id, local_date) do nothing`.execute(held);
+  await sql`update brain.work_items set completed_at = null, outcome = null, next_attempt_at = ${now},
+    current_attempt_token = null, claimed_at = null, claim_expires_at = null, claimed_by = null
+    where id = ${id} and local_date_from is not null and cancel_requested_at is null
+      and (claimed_date_from is null or local_date_from < claimed_date_from or local_date_to > claimed_date_to)`.execute(held);
+  await sql`update brain.work_items set claimed_date_from = null, claimed_date_to = null where id = ${id}`.execute(held);
 }

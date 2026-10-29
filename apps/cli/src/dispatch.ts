@@ -1,3 +1,4 @@
+import type { SettingsStore } from 'second_brain';
 import type { CommandRunner } from './runtime/command-runner.js';
 import { daemonLiveness } from './daemon/liveness.js';
 import { Command, CommanderError } from 'commander';
@@ -737,7 +738,7 @@ async function drainOpportunistically(
   stderr: (text: string) => void,
 ): Promise<void> {
   const { createStore, home, env, config, ...dependencies } = options;
-  let store: (Store & SchemaStore) | undefined;
+  let store: (Store & SchemaStore & SettingsStore) | undefined;
   try {
     const opened = await openBrainStore({ home, env, config, path: 'drain', lockTimeoutMs: DRAIN_BUDGET_MS.opportunistic, createStore });
     store = opened.store;

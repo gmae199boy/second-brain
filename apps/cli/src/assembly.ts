@@ -1,3 +1,4 @@
+import type { SettingsStore } from 'second_brain';
 import { postgresPrerequisites } from './runtime/orbstack.js';
 import type { CommandRunner } from './runtime/command-runner.js';
 import { hostname } from 'node:os';
@@ -38,7 +39,7 @@ import { fileTranscriptReader } from './runtime/transcript.js';
  * Stories 9.4 and 9.5 extend this function and the daemon loop rather than
  * adding a third assembly.
  */
-export interface BrainAssembly<S = Store & SchemaStore> {
+export interface BrainAssembly<S = Store & SchemaStore & SettingsStore> {
   runner?: CommandRunner;
   /** Supplied by the selected adapter's factory without eagerly loading it. */
   adapterProbeIds?: readonly string[];

@@ -1,6 +1,7 @@
 import { workExecutionClass } from './domain/work-item.js';
 import type { SchemaVersions } from './schema.js';
 import { getSetting, setSetting, settingDefinitions } from './settings/index.js';
+import { addDaily, runSchedule, type AddDailyInput, type AddDailyResult, type RunScheduleResult } from './queue/schedules.js';
 import { tickSchedules, type ScheduleTickResult } from './queue/schedule-tick.js';
 import { SCHEDULE_PROBE_KIND, scheduleProbeHandler } from './queue/schedule-probe-work.js';
 import type { AttachmentLinkSpoolPayload } from './domain/spool-record.js';
@@ -43,7 +44,7 @@ import type { IdGen } from './ports/id-gen.js';
 import type { Parser } from './ports/parser.js';
 import type { RepositoryInspector } from './ports/repository.js';
 import type { Spool } from './ports/spool.js';
-import type { SchemaStore, Store } from './ports/store.js';
+import type { SchemaStore, Store, SettingsStore } from './ports/store.js';
 import type { TranscriptFolder, TranscriptReader } from './ports/transcript.js';
 import {
   drainQueue,
@@ -68,7 +69,7 @@ export interface BrainDependencies {
    * answer `doctor.run`, but it cannot ingest, and the type is where that is
    * decided rather than at the call (AD-10).
    */
-  store: Store & SchemaStore;
+  store: Store & SchemaStore & SettingsStore;
   /** Original attachment bytes, written before the database transaction. */
   files: FileStore;
   /**
@@ -227,7 +228,7 @@ export interface Brain {
   sessions: BrainSessions;
   failures: BrainFailures;
   queue: BrainQueue;
-  schedules: { tick(): Promise<ScheduleTickResult> };
+  schedules: { tick(): Promise<ScheduleTickResult>; addDaily(input: AddDailyInput): Promise<AddDailyResult>; run(input: { scheduleId: string }): Promise<RunScheduleResult> };
   close(): Promise<void>;
 }
 
@@ -404,7 +405,11 @@ export function createBrain(dependencies: BrainDependencies): Brain {
       list: (input) => listFailures({ store }, input),
       retry: (input) => retryFailures({ store, clock, idGen }, input),
     },
-    schedules: { tick: () => tickSchedules({ store, clock, idGen }) },
+    schedules: {
+      tick: () => tickSchedules({ store, clock, idGen, readTimeZone: () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' }) }),
+      addDaily: input => addDaily({ store, clock, idGen, readTimeZone: () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' }) }, input),
+      run: input => runSchedule({ store, clock, idGen, readTimeZone: () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' }) }, input),
+    },
     queue: {
       async cancel(input) {
         const result = await store.requestWorkCancel({ id: input.id, now: clock.now() });

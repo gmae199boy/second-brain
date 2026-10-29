@@ -1526,3 +1526,25 @@ describe('추출 세대 계약의 음성 가짜', () => {
 describe('schedule contract against memory', () => {
   for (const c of scheduleStoreContract()) it(c.name, () => c.run(async () => memoryStore()));
 });
+
+it('catches a store that fires daily schedules over covered dates', async () => {
+  let emittedCoveredDates = false;
+  const failures = await failedCases(scheduleStoreContract(), async () => {
+    const store = memoryStore(); const fire = store.fireSchedule;
+    store.fireSchedule = async input => {
+      // Keep the real timestamp/zone CAS, but enqueue the entire input range
+      // even when the real firing filtered some or all of it as successful.
+      const result = await fire(input);
+      if (!result.ok || !result.fired || !input.localDates) return result;
+      const added = await store.addWork({ ...input.work,
+        scheduledDates: { scheduleId: input.scheduleId, ...input.localDates } });
+      if (!added.ok) return added;
+      if (result.covered) emittedCoveredDates = added.created &&
+        added.item.scheduledDates?.from === input.localDates.from && added.item.scheduledDates?.to === input.localDates.to;
+      return { ok: true, fired: true, created: result.created || added.created, covered: false };
+    };
+    return store;
+  });
+  expect(failures).toContain('a daily firing skips covered dates and enqueues the missing range');
+  expect(emittedCoveredDates).toBe(true);
+});

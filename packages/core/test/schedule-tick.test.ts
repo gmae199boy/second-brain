@@ -8,13 +8,13 @@ import type { Schedule } from '../src/domain/schedule.js';
 
 const now = new Date('2026-02-03T04:05:06.000Z');
 const schedule = (over: Partial<Schedule> = {}): Schedule => ({ id: 's', kind: SCHEDULE_PROBE_KIND,
-  targetKind: 'probe', targetId: 's', intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now, ...over });
+  targetKind: 'probe', targetId: 's', localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now, ...over });
 function kit() {
   const store = memoryStore(); let at = now; let reads = 0;
   const clock = { now: () => { reads++; return new Date(at); } };
   const idGen = sequenceIdGen({ timestampMs: now.getTime() });
   return { store, clock, idGen, set: (value: Date) => { at = value; }, reads: () => reads,
-    tick: () => tickSchedules({ store, clock, idGen }) };
+    tick: () => tickSchedules({ store, clock, idGen, readTimeZone: async () => ({ ok: true, value: 'Asia/Seoul' }) }) };
 }
 describe('schedule tick', () => {
   it('reads the clock once, waits until due, and collapses three missed periods', async () => {
@@ -93,4 +93,46 @@ describe('schedule tick', () => {
     expect(await brain.queue.drain({ budgetMs: 1000 })).toMatchObject({ completed: 1 });
     expect(k.store.snapshot().workItems[0]?.completedAt).toEqual(now);
   });
+});
+
+it('advances a daily schedule without work when its candidate date range is empty', async () => {
+  const k = kit();
+  await k.store.addSchedule(schedule({ localTime: '23:00', timeZone: 'Asia/Seoul', intervalSeconds: null }));
+  expect(await k.tick()).toEqual({ ok: true, fired: 0, enqueued: 0 });
+  expect(k.store.snapshot().workItems).toHaveLength(0);
+  expect(await k.store.readSchedule({ id: 's' })).toMatchObject({ schedule: { nextRunAt: new Date('2026-02-03T14:00:00Z') } });
+});
+
+it('rezones daily schedules beyond the first 100 before firing in the new timezone', async () => {
+  const k = kit();
+  const createdAt = new Date('2026-02-02T20:00:00Z');
+  const newOccurrence = new Date('2026-02-03T16:00:00Z');
+  for (let n = 0; n < 100; n++) {
+    const id = String(n).padStart(3, '0');
+    await k.store.addSchedule(schedule({ id, targetId: id, intervalSeconds: null,
+      localTime: '23:00', timeZone: 'America/New_York', createdAt,
+      nextRunAt: new Date('2026-02-04T04:00:00Z') }));
+  }
+  await k.store.addSchedule(schedule({ id: '100', targetId: '100', intervalSeconds: null,
+    localTime: '11:00', timeZone: 'Asia/Seoul', createdAt,
+    nextRunAt: new Date('2026-02-03T02:00:00Z') }));
+  const limits: number[] = []; let zoneReads = 0;
+  const listDaily = k.store.listDailySchedules;
+  k.store.listDailySchedules = async query => { limits.push(query.limit); return listDaily(query); };
+  const tick = () => tickSchedules({ store: k.store, clock: k.clock, idGen: k.idGen,
+    readTimeZone: async () => { zoneReads++; return { ok: true, value: 'America/New_York' }; } });
+
+  expect(await tick()).toEqual({ ok: true, fired: 0, enqueued: 0 });
+  expect(limits).toEqual([100, 200]);
+  expect(zoneReads).toBe(1);
+  expect(k.store.snapshot().workItems).toHaveLength(0);
+  expect(await k.store.readSchedule({ id: '100' })).toMatchObject({ schedule: {
+    timeZone: 'America/New_York', nextRunAt: newOccurrence, lastRunAt: null } });
+
+  k.set(newOccurrence);
+  expect(await tick()).toEqual({ ok: true, fired: 1, enqueued: 1 });
+  expect(k.store.snapshot().workItems).toMatchObject([{ targetId: '100', scheduledDates: {
+    from: '2026-02-03', to: '2026-02-03', timeZone: 'America/New_York' } }]);
+  expect(await k.store.readSchedule({ id: '100' })).toMatchObject({ schedule: {
+    nextRunAt: new Date('2026-02-04T16:00:00Z'), lastRunAt: newOccurrence } });
 });

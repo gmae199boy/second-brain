@@ -1,3 +1,4 @@
+import type { SettingsStore } from '../src/ports/store.js';
 import { describe, expect, it } from 'vitest';
 import { createBrain, type Brain, type BrainDependencies } from '../src/brain.js';
 import type { FileLocation } from '../src/domain/file.js';
@@ -103,7 +104,7 @@ interface MarkGate {
   calls: number;
 }
 
-function gatedStore(inner: Store & SchemaStore, gate: MarkGate): Store & SchemaStore {
+function gatedStore(inner: Store & SchemaStore & SettingsStore, gate: MarkGate): Store & SchemaStore & SettingsStore {
   return {
     ...inner,
     async markFileLocationDeleted(input) {
@@ -144,7 +145,7 @@ interface Kit {
 
 interface KitOptions {
   /** Wrapped around the memory store, for a marking that has to refuse. */
-  wrap?: (store: Store & SchemaStore) => Store & SchemaStore;
+  wrap?: (store: Store & SchemaStore & SettingsStore) => Store & SchemaStore & SettingsStore;
   /** Leave the bytes out of the file store, for the "already gone" row. */
   withoutBlob?: boolean;
 }
@@ -229,7 +230,7 @@ async function kit(options: KitOptions = {}): Promise<Kit> {
     [places.brain, places.drive, places.external, places.outside].sort(),
   );
 
-  const withSchema: Store & SchemaStore = {
+  const withSchema: Store & SchemaStore & SettingsStore = {
     ...store,
     async readSchemaVersions() {
       return { ok: true, versions: { core: { version: 8, appliedAt: NOW } } };
@@ -291,7 +292,7 @@ function item(id: string, locationId: string) {
     claimedAt: NOW,
     claimExpiresAt: new Date(NOW.getTime() + 600_000),
     claimedBy: 'claim-0001',
-    serializationKey: null, executionClass: 'core' as const, currentAttemptToken: null, outcome: null, cancelRequestedAt: null, lastError: null,
+    scheduledDates: null, serializationKey: null, executionClass: 'core' as const, currentAttemptToken: null, outcome: null, cancelRequestedAt: null, lastError: null,
     completedAt: null,
   };
 }

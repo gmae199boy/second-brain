@@ -22,12 +22,229 @@ const IDS = {
 export function scheduleStoreContract(): ContractCase<ScheduleStore & WorkStore>[] {
   const now = new Date('2026-02-03T04:05:06.000Z');
   const next = new Date(now.getTime() + 60_000);
-  return [contractCase('due ordering, one-shot completion, lost CAS and existing work', async make => {
+  const daily = (over: Partial<import('../../domain/schedule.js').Schedule> = {}) => ({ id: IDS.a, kind: 'schedule_probe', targetKind: 'probe', targetId: IDS.a,
+    localTime: '11:00', timeZone: 'Asia/Seoul', intervalSeconds: null, nextRunAt: now, lastRunAt: null, createdAt: now, ...over });
+  const dates = { scheduleId: IDS.a, from: '2026-02-01', to: '2026-02-02', timeZone: 'Asia/Seoul' };
+  const work = (over: Partial<import('../../ports/store.js').AddWorkInput> = {}) => ({ id: IDS.workA, kind: 'schedule_probe', targetKind: 'probe', targetId: IDS.a, createdAt: now, nextAttemptAt: now, scheduledDates: dates, ...over });
+  return [contractCase('daily schedules round trip and one daily schedule per target', async make => {
+    await withSubject(make, async store => {
+      const input = daily(); assertOk(await store.addSchedule(input), 'daily add');
+      const read = await store.readSchedule({ id: input.id }); assertOk(read, 'read daily'); assertEqual(read.schedule, input, 'round trip');
+      const list = await store.listDailySchedules({ limit: 100 }); assertOk(list, 'daily list'); assertEqual(list.schedules, [input], 'listed');
+      const duplicate = await store.addSchedule(daily({ id: IDS.b })); assertNotOk(duplicate, 'duplicate rejected');
+      if (!duplicate.ok) assertEqual(duplicate.code, 'SCHEDULE_CONFLICT', 'conflict code');
+      assertOk(await store.addSchedule(daily({ id: IDS.b, localTime: null, timeZone: null, intervalSeconds: 60 })), 'interval can share target');
+      const absent = await store.readSchedule({ id: IDS.future }); assertOk(absent, 'absent read'); assertEqual(absent.schedule, null, 'absent is null');
+    });
+  }), contractCase('a daily firing skips covered dates and enqueues the missing range', async make => {
+    await withSubject(make, async store => {
+      assertOk(await store.addSchedule(daily()), 'daily');
+      assertOk(await store.addWork(work({ scheduledDates: { ...dates, to: dates.from } })), 'manual');
+      const claimed = await store.claimWork({ kinds: ['schedule_probe'], claimedBy: 'worker', now }); assertOk(claimed, 'claim');
+      assertOk(await store.completeWork({ id: IDS.workA, claimedBy: 'worker', now }), 'complete');
+      const covered = await store.fireSchedule({ scheduleId: IDS.a, expectedNextRunAt: now, nextRunAt: next, now,
+        work: work({ id: IDS.workB }), localDates: { from: dates.from, to: dates.from, timeZone: dates.timeZone } });
+      assertOk(covered, 'covered fire'); assertEqual(covered, { ok: true, fired: true, created: false, covered: true }, 'no work for covered date');
+      const fired = await store.fireSchedule({ scheduleId: IDS.a, expectedNextRunAt: next, nextRunAt: new Date(next.getTime() + 60000), now: next,
+        work: work({ id: IDS.workB }), localDates: { ...dates, to: '2026-02-04' } });
+      assertOk(fired, 'missing fire'); assertEqual(fired, { ok: true, fired: true, created: true, covered: false }, 'one missing work');
+      const missing = await store.claimWork({ kinds: ['schedule_probe'], claimedBy: 'worker', now: next }); assertOk(missing, 'claim missing');
+      assertEqual(missing.item?.scheduledDates, { ...dates, from: '2026-02-02', to: '2026-02-04' }, 'only missing extent');
+    });
+  }), contractCase('merging widens the open range and keeps its zone', async make => {
+    await withSubject(make, async store => {
+      assertOk(await store.addSchedule(daily()), 'daily');
+      assertOk(await store.addWork(work({ scheduledDates: { ...dates, scheduleId: null } })), 'first');
+      const merged = await store.addWork(work({ id: IDS.workB, scheduledDates: { ...dates, from: '2026-01-30', to: '2026-02-04', timeZone: 'UTC' } }));
+      assertOk(merged, 'merged'); assertEqual(merged.created, false, 'same work'); assertEqual(merged.item.id, IDS.workA, 'same id');
+      assertEqual(merged.item.scheduledDates, { ...dates, from: '2026-01-30', to: '2026-02-04' }, 'widened range retains zone and fills schedule id');
+    });
+  }), contractCase('success records the claimed dates on both finish paths', async make => {
+    for (const supervised of [false, true]) await withSubject(make, async store => {
+      assertOk(await store.addSchedule(daily()), 'daily');
+      const kind = supervised ? 'process_probe' : 'schedule_probe';
+      assertOk(await store.addWork(work({ kind })), 'work');
+      const claim = supervised ? await store.claimSupervisedWork({ kinds: [kind], claimedBy: 'worker', now, attemptToken: IDS.reservation })
+        : await store.claimWork({ kinds: [kind], claimedBy: 'worker', now });
+      assertOk(claim, 'claim'); assertEqual(claim.item?.id, IDS.workA, 'claimed work');
+      const finished = supervised ? await store.finishSupervisedWork({ id: IDS.workA, attemptToken: IDS.reservation, now: next, outcome: 'succeeded' })
+        : await store.completeWork({ id: IDS.workA, claimedBy: 'worker', now: next });
+      assertOk(finished, 'finished'); assertEqual(finished.outcome, 'done', 'winning finish');
+      const successes = await store.listScheduleSuccesses({ scheduleId: IDS.a }); assertOk(successes, 'successes');
+      assertEqual(successes.successes, ['2026-02-01', '2026-02-02'].map(localDate => ({ localDate, timeZone: dates.timeZone, workId: IDS.workA, recordedAt: next })), 'claimed days recorded');
+    });
+  }), contractCase('a range widened after claim records the claimed part and requeues', async make => {
+    for (const supervised of [false, true]) for (const earlier of [false, true]) await withSubject(make, async store => {
+      assertOk(await store.addSchedule(daily()), 'daily');
+      const kind = supervised ? 'process_probe' : 'schedule_probe';
+      const snapshotDate = earlier ? dates.to : dates.from;
+      assertOk(await store.addWork(work({ kind, scheduledDates: { ...dates, from: snapshotDate, to: snapshotDate } })), 'work');
+      if (supervised) assertOk(await store.claimSupervisedWork({ kinds: [kind], claimedBy: 'worker', now, attemptToken: IDS.reservation }), 'claim');
+      else assertOk(await store.claimWork({ kinds: [kind], claimedBy: 'worker', now }), 'claim');
+      assertOk(await store.addWork(work({ kind, id: IDS.workB })), 'merge');
+      if (supervised) assertOk(await store.finishSupervisedWork({ id: IDS.workA, attemptToken: IDS.reservation, now: next, outcome: 'succeeded' }), 'finish');
+      else assertOk(await store.completeWork({ id: IDS.workA, claimedBy: 'worker', now: next }), 'finish');
+      const first = await store.listScheduleSuccesses({ scheduleId: IDS.a }); assertOk(first, 'first successes');
+      assertEqual(first.successes.map(row => row.localDate), [snapshotDate], 'only snapshot recorded');
+      const again = supervised ? await store.claimSupervisedWork({ kinds: [kind], claimedBy: 'worker2', now: next, attemptToken: IDS.early })
+        : await store.claimWork({ kinds: [kind], claimedBy: 'worker2', now: next });
+      assertOk(again, 'claim again'); assertEqual(again.item?.id, IDS.workA, 'same row returned to queue');
+      assertEqual(again.item?.scheduledDates, dates, 'full widened range retained'); assertEqual(again.item?.outcome, null, 'open outcome');
+      if (supervised) assertOk(await store.finishSupervisedWork({ id: IDS.workA, attemptToken: IDS.early, now: next, outcome: 'succeeded' }), 'finish again');
+      else assertOk(await store.completeWork({ id: IDS.workA, claimedBy: 'worker2', now: next }), 'finish again');
+      const all = await store.listScheduleSuccesses({ scheduleId: IDS.a }); assertOk(all, 'all successes');
+      assertEqual(all.successes.map(row => row.localDate), [dates.from, dates.to], 'both days');
+      assertEqual(all.successes.find(row => row.localDate === snapshotDate), first.successes[0], 'first record unchanged');
+      assertEqual(await store.requestWorkCancel({ id: IDS.workA, now: next }), { ok: true, state: 'already_closed' }, 'final work is closed');
+      assertEqual(await store.listOpenWorkTargets({ kind }), { ok: true, targets: [] }, 'no open work remains');
+    });
+  }), contractCase('dates merged into a dateless claim are recorded only on the next success', async make => {
+    for (const supervised of [false, true]) await withSubject(make, async store => {
+      assertOk(await store.addSchedule(daily()), 'daily');
+      const kind = supervised ? 'process_probe' : 'schedule_probe';
+      assertOk(await store.addWork(work({ kind, scheduledDates: undefined })), 'dateless work');
+      const claim = supervised ? await store.claimSupervisedWork({ kinds: [kind], claimedBy: 'worker', now, attemptToken: IDS.reservation })
+        : await store.claimWork({ kinds: [kind], claimedBy: 'worker', now });
+      assertOk(claim, 'claim'); assertEqual(claim.item?.id, IDS.workA, 'original id');
+      assertEqual(claim.item?.scheduledDates, null, 'dateless snapshot');
+      const merged = await store.addWork(work({ kind, id: IDS.workB }));
+      assertOk(merged, 'merge'); assertEqual(merged.created, false, 'reused work'); assertEqual(merged.item.id, IDS.workA, 'same id');
+      const finish = supervised ? await store.finishSupervisedWork({ id: IDS.workA, attemptToken: IDS.reservation, now: next, outcome: 'succeeded' })
+        : await store.completeWork({ id: IDS.workA, claimedBy: 'worker', now: next });
+      assertEqual(finish, { ok: true, outcome: 'done' }, 'first success');
+      assertEqual(await store.listScheduleSuccesses({ scheduleId: IDS.a }), { ok: true, successes: [] }, 'no dates in first snapshot');
+      const again = supervised ? await store.claimSupervisedWork({ kinds: [kind], claimedBy: 'worker2', now: next, attemptToken: IDS.early })
+        : await store.claimWork({ kinds: [kind], claimedBy: 'worker2', now: next });
+      assertOk(again, 'claim again'); assertEqual(again.item?.id, IDS.workA, 'same row requeued');
+      assertEqual(again.item?.scheduledDates, dates, 'merged dates retained');
+      assertEqual(again.item?.completedAt, null, 'still pending'); assertEqual(again.item?.outcome, null, 'no closed outcome');
+      const finished = supervised ? await store.finishSupervisedWork({ id: IDS.workA, attemptToken: IDS.early, now: next, outcome: 'succeeded' })
+        : await store.completeWork({ id: IDS.workA, claimedBy: 'worker2', now: next });
+      assertEqual(finished, { ok: true, outcome: 'done' }, 'second success');
+      const successes = await store.listScheduleSuccesses({ scheduleId: IDS.a }); assertOk(successes, 'successes');
+      assertEqual(successes.successes, [dates.from, dates.to].map(localDate => ({ localDate, timeZone: dates.timeZone, workId: IDS.workA, recordedAt: next })), 'second snapshot recorded');
+      assertEqual(await store.requestWorkCancel({ id: IDS.workA, now: next }), { ok: true, state: 'already_closed' }, 'finally closed');
+      assertEqual(await store.listOpenWorkTargets({ kind }), { ok: true, targets: [] }, 'no open work');
+    });
+  }), contractCase('core failure, cancellation and dependency failure record no dates', async make => {
+    for (const mode of ['failed', 'cancelled', 'dependency_failed'] as const) await withSubject(make, async store => {
+      assertOk(await store.addSchedule(daily()), 'daily');
+      if (mode === 'dependency_failed') {
+        assertOk(await store.addWorkGraph({ nodes: [
+          { ...work({ id: IDS.workB, targetId: IDS.b, scheduledDates: undefined }), after: [] },
+          { ...work(), after: [0] },
+        ] }), 'dependent date work');
+      } else assertOk(await store.addWork(work()), 'date work');
+      if (mode === 'cancelled') {
+        assertEqual(await store.requestWorkCancel({ id: IDS.workA, now: next }), { ok: true, state: 'cancelled' }, 'direct cancellation');
+      } else {
+        const rootId = mode === 'failed' ? IDS.workA : IDS.workB;
+        const claim = await store.claimWork({ kinds: ['schedule_probe'], claimedBy: 'worker', now });
+        assertOk(claim, 'claim'); assertEqual(claim.item?.id, rootId, 'claimed root');
+        assertEqual(await store.recordFailure({ id: IDS.lost, targetKind: 'probe', targetId: claim.item!.targetId,
+          stage: 'probe', fingerprint: 'probe', harness: null, sessionId: null, code: 'PROBE_FAILED', message: 'failed', occurredAt: next,
+          closeWork: { id: rootId, claimedBy: 'worker', now: next } }), { ok: true, outcome: 'recorded', created: true, failureId: IDS.lost }, 'permanent failure recorded');
+      }
+      assertEqual(await store.requestWorkCancel({ id: IDS.workA, now: next }), { ok: true, state: 'already_closed' }, 'date work is closed');
+      assertEqual(await store.listOpenWorkTargets({ kind: 'schedule_probe' }), { ok: true, targets: [] }, 'no open work');
+      assertEqual(await store.claimWork({ kinds: ['schedule_probe'], claimedBy: 'worker2', now: next }), { ok: true, item: null }, 'closed work cannot be claimed');
+      assertEqual(await store.listScheduleSuccesses({ scheduleId: IDS.a }), { ok: true, successes: [] }, 'no success dates');
+    });
+  }), contractCase('failed work records no success', async make => {
+    await withSubject(make, async store => {
+      assertOk(await store.addSchedule(daily()), 'daily'); assertOk(await store.addWork(work({ kind: 'process_probe' })), 'work');
+      assertOk(await store.claimSupervisedWork({ kinds: ['process_probe'], claimedBy: 'worker', now, attemptToken: IDS.reservation }), 'claim');
+      assertOk(await store.finishSupervisedWork({ id: IDS.workA, attemptToken: IDS.reservation, now, outcome: 'failed', failure: {
+        id: IDS.workB, stage: 'probe', fingerprint: 'probe', code: 'PROBE_FAILED', message: 'failed', occurredAt: now } }), 'fail');
+      const successes = await store.listScheduleSuccesses({ scheduleId: IDS.a }); assertOk(successes, 'successes'); assertEqual(successes.successes, [], 'failure records nothing');
+    });
+  }), contractCase('rezone is a compare-and-set', async make => {
+    await withSubject(make, async store => {
+      assertOk(await store.addSchedule(daily()), 'daily');
+      const update = { id: IDS.a, expectedNextRunAt: now, expectedTimeZone: 'Asia/Seoul', timeZone: 'America/New_York', nextRunAt: next };
+      assertEqual(await store.rezoneSchedule({ ...update, expectedNextRunAt: next }), { ok: true, updated: false }, 'wrong instant loses');
+      assertEqual(await store.rezoneSchedule({ ...update, expectedTimeZone: 'UTC' }), { ok: true, updated: false }, 'wrong zone loses');
+      assertEqual(await store.rezoneSchedule(update), { ok: true, updated: true }, 'matching CAS');
+      assertEqual(await store.rezoneSchedule(update), { ok: true, updated: false }, 'old CAS loses');
+      const read = await store.readSchedule({ id: IDS.a }); assertOk(read, 'read'); assertEqual(read.schedule?.timeZone, update.timeZone, 'new zone');
+    });
+  }), contractCase('a firing with a stale zone loses after a rezone at the same instant', async make => {
+    await withSubject(make, async store => {
+      assertOk(await store.addSchedule(daily()), 'daily');
+      assertEqual(await store.rezoneSchedule({ id: IDS.a, expectedNextRunAt: now, expectedTimeZone: dates.timeZone,
+        timeZone: 'Asia/Tokyo', nextRunAt: now }), { ok: true, updated: true }, 'same instant rezone');
+      const before = await store.readSchedule({ id: IDS.a }); assertOk(before, 'before');
+      const firing = { scheduleId: IDS.a, expectedNextRunAt: now, nextRunAt: next, now, work: work() };
+      assertEqual(await store.fireSchedule({ ...firing, localDates: dates }), { ok: true, fired: false }, 'stale zone loses');
+      assertEqual(await store.readSchedule({ id: IDS.a }), before, 'lost fire leaves schedule unchanged');
+      const targets = await store.listOpenWorkTargets({ kind: 'schedule_probe' }); assertOk(targets, 'targets');
+      assertEqual(targets.targets, [], 'lost fire creates no work');
+      assertEqual(await store.fireSchedule({ ...firing, localDates: { ...dates, timeZone: 'Asia/Tokyo' } }),
+        { ok: true, fired: true, created: true, covered: false }, 'current zone wins');
+    });
+  }), contractCase('success closes a cancelled widened range and records only claimed dates', async make => {
+    await withSubject(make, async store => {
+      assertOk(await store.addSchedule(daily()), 'daily');
+      const input = work({ kind: 'process_probe', scheduledDates: { ...dates, to: dates.from } });
+      assertOk(await store.addWork(input), 'work');
+      const claim = await store.claimSupervisedWork({ kinds: ['process_probe'], claimedBy: 'worker', now, attemptToken: IDS.reservation });
+      assertOk(claim, 'claim'); assertEqual(claim.item?.id, IDS.workA, 'claimed');
+      assertOk(await store.addWork(work({ kind: 'process_probe', id: IDS.workB })), 'widen');
+      assertOk(await store.addWorkGraph({ nodes: [
+        { ...input, after: [] },
+        { ...work({ id: IDS.lost, targetId: IDS.b, scheduledDates: undefined }), after: [0] },
+      ] }), 'dependent work');
+      assertEqual(await store.requestWorkCancel({ id: IDS.workA, now }), { ok: true, state: 'requested' }, 'cancel requested');
+      assertEqual(await store.finishSupervisedWork({ id: IDS.workA, attemptToken: IDS.reservation, now: next, outcome: 'succeeded' }),
+        { ok: true, outcome: 'done' }, 'success wins');
+      const successes = await store.listScheduleSuccesses({ scheduleId: IDS.a }); assertOk(successes, 'successes');
+      assertEqual(successes.successes, [{ localDate: dates.from, timeZone: dates.timeZone, workId: IDS.workA, recordedAt: next }], 'only claimed date recorded');
+      const targets = await store.listOpenWorkTargets({ kind: 'process_probe' }); assertOk(targets, 'targets');
+      assertEqual(targets.targets, [], 'succeeded row is closed');
+      const dependent = await store.claimWork({ kinds: ['schedule_probe'], claimedBy: 'dependent', now: next });
+      assertOk(dependent, 'claim dependent'); assertEqual(dependent.item?.id, IDS.lost, 'closed outcome is succeeded');
+      const again = await store.addWork(work({ kind: 'process_probe', id: IDS.workB })); assertOk(again, 'new work');
+      assertEqual(again.created, true, 'later work does not merge into cancelled row');
+    });
+  }), contractCase('returned work dates cannot mutate stored ranges or claim snapshots', async make => {
+    for (const supervised of [false, true]) await withSubject(make, async store => {
+      assertOk(await store.addSchedule(daily()), 'daily');
+      const kind = supervised ? 'process_probe' : 'schedule_probe';
+      const added = await store.addWork(work({ kind })); assertOk(added, 'added');
+      added.item.scheduledDates!.from = '2026-01-01';
+      const merged = await store.addWork(work({ kind, id: IDS.workB })); assertOk(merged, 'merged');
+      assertEqual(merged.item.scheduledDates, dates, 'added result is independent');
+      merged.item.scheduledDates!.to = '2026-03-01';
+      const claim = supervised ? await store.claimSupervisedWork({ kinds: [kind], claimedBy: 'worker', now, attemptToken: IDS.reservation })
+        : await store.claimWork({ kinds: [kind], claimedBy: 'worker', now });
+      assertOk(claim, 'claim'); assertEqual(claim.item?.scheduledDates, dates, 'merged result is independent');
+      claim.item!.scheduledDates!.to = '2026-04-01';
+      const finished = supervised ? await store.finishSupervisedWork({ id: IDS.workA, attemptToken: IDS.reservation, now: next, outcome: 'succeeded' })
+        : await store.completeWork({ id: IDS.workA, claimedBy: 'worker', now: next });
+      assertOk(finished, 'finished');
+      const targets = await store.listOpenWorkTargets({ kind }); assertOk(targets, 'targets');
+      assertEqual(targets.targets, [], 'claim result mutation does not reopen work');
+      const successes = await store.listScheduleSuccesses({ scheduleId: IDS.a }); assertOk(successes, 'successes');
+      assertEqual(successes.successes.map(row => row.localDate), [dates.from, dates.to], 'original claimed dates recorded');
+    });
+  }), contractCase('success records keep their zone', async make => {
+    await withSubject(make, async store => {
+      assertOk(await store.addSchedule(daily()), 'daily'); assertOk(await store.addWork(work()), 'work');
+      assertOk(await store.claimWork({ kinds: ['schedule_probe'], claimedBy: 'worker', now }), 'claim');
+      assertOk(await store.completeWork({ id: IDS.workA, claimedBy: 'worker', now }), 'finish');
+      const before = await store.listScheduleSuccesses({ scheduleId: IDS.a }); assertOk(before, 'before');
+      assertOk(await store.rezoneSchedule({ id: IDS.a, expectedNextRunAt: now, expectedTimeZone: 'Asia/Seoul', timeZone: 'UTC', nextRunAt: next }), 'rezone');
+      assertOk(await store.addWork(work({ id: IDS.workB, scheduledDates: { ...dates, timeZone: 'UTC' } })), 'manual again');
+      assertOk(await store.claimWork({ kinds: ['schedule_probe'], claimedBy: 'worker', now }), 'claim again');
+      assertOk(await store.completeWork({ id: IDS.workB, claimedBy: 'worker', now: next }), 'finish again');
+      assertEqual(await store.listScheduleSuccesses({ scheduleId: IDS.a }), before, 'first success wins without zone reinterpretation');
+    });
+  }), contractCase('due ordering, one-shot completion, lost CAS and existing work', async make => {
     await withSubject(make, async store => {
       for (const [id, at, intervalSeconds] of [
         [IDS.b, now, 60], [IDS.a, now, null], [IDS.future, next, 60],
       ] as const) assertOk(await store.addSchedule({ id, kind: 'schedule_probe', targetKind: 'probe',
-        targetId: id, intervalSeconds, nextRunAt: at, lastRunAt: null, createdAt: now }), 'add schedule');
+        targetId: id, localTime: null, timeZone: null, intervalSeconds, nextRunAt: at, lastRunAt: null, createdAt: now }), 'add schedule');
       const early = await store.listDueSchedules({ now: new Date(now.getTime() - 1), limit: 100 });
       assertOk(early, 'early read'); assertEqual(early.schedules.length, 0, 'nothing early');
       const due = await store.listDueSchedules({ now, limit: 100 });
@@ -55,7 +272,7 @@ export function scheduleStoreContract(): ContractCase<ScheduleStore & WorkStore>
     await withSubject(make, async store => {
       for (const [id, at] of [[IDS.early, new Date(now.getTime() - 1000)], [IDS.largeTie, now], [IDS.a, now]] as const) {
         assertOk(await store.addSchedule({ id, kind: 'schedule_probe', targetKind: 'probe',
-          targetId: id, intervalSeconds: 60, nextRunAt: at, lastRunAt: null, createdAt: now }), 'add schedule');
+          targetId: id, localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: at, lastRunAt: null, createdAt: now }), 'add schedule');
       }
       const first = await store.listDueSchedules({ now, limit: 1 });
       assertOk(first, 'limited due read');
@@ -68,7 +285,7 @@ export function scheduleStoreContract(): ContractCase<ScheduleStore & WorkStore>
   }), contractCase('preserves a distinct schedule identity, work kind and target', async make => {
     await withSubject(make, async store => {
       const input = { id: IDS.reservation, kind: 'refresh_collection', targetKind: 'collection',
-        targetId: 'collection-42', intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now };
+        targetId: 'collection-42', localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now };
       assertOk(await store.addSchedule(input), 'add distinct target');
       const due = await store.listDueSchedules({ now, limit: 1 });
       assertOk(due, 'read distinct target');
@@ -77,7 +294,7 @@ export function scheduleStoreContract(): ContractCase<ScheduleStore & WorkStore>
   }), contractCase('rejects out-of-range timestamps without changing schedules or work', async make => {
     await withSubject(make, async store => {
       const input = { id: IDS.valid, kind: 'schedule_probe', targetKind: 'probe', targetId: 'target',
-        intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now };
+        localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now };
       assertOk(await store.addSchedule(input), 'add valid schedule');
       const before = await store.listDueSchedules({ now, limit: 100 });
       assertOk(before, 'read before invalid writes');

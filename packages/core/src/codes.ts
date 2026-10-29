@@ -237,6 +237,9 @@ const CODES = {
     hint: '노드 key와 대상의 중복, 선행 key와 순환을 확인하세요',
   },
   /** No stored work item has the requested id. */
+  SCHEDULE_NOT_FOUND: { exit: 1, retryable: false, meaning: '지정한 예약이 없습니다', hint: '예약 id를 확인하세요' },
+  SCHEDULE_INVALID: { exit: 1, retryable: false, meaning: '예약 시각이 잘못되었습니다', hint: 'HH:MM 형식을 사용하세요' },
+  SCHEDULE_CONFLICT: { exit: 1, retryable: false, meaning: '같은 대상의 매일 예약이 있습니다', hint: '기존 예약을 사용하세요' },
   WORK_NOT_FOUND: {
     exit: 1, meaning: '지정한 일감이 없습니다', retryable: false, hint: '일감 id를 확인하세요',
   },

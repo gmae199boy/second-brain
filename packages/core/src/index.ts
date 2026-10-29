@@ -256,3 +256,6 @@ export type { BrainQueueCancelResult } from './brain.js';
 
 export { SUPERVISOR_CAPACITY, dependencyFailedText } from './domain/work-item.js';
 export * from './queue/work-graph.js';
+
+export * from './local-time.js';
+export * from './queue/schedules.js';

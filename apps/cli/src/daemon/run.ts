@@ -1,3 +1,4 @@
+import type { SettingsStore } from 'second_brain';
 import { startDaemonSupervisor, type DaemonSupervisorOptions } from './supervisor.js';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -306,7 +307,7 @@ interface RoundOptions {
 async function drainOnce(options: RoundOptions): Promise<Round> {
   const { home, env, clock, idGen, config, createStore, workHandlers, budgetMs, signal } =
     options;
-  let store: (Store & SchemaStore) | undefined;
+  let store: (Store & SchemaStore & SettingsStore) | undefined;
   let tickState: Pick<Round, 'tickRan' | 'tickProblem' | 'tickCounts'> = {};
   let reached: Pick<Round, 'reached'> = {};
   try {

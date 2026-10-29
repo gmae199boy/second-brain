@@ -24,7 +24,7 @@ const id = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, '0')
 const now = clock.now();
 const next = new Date(now.getTime() + 60_000);
 const work = (n = 1) => ({ id: id(n), kind: 'demo_work', targetKind: 'probe', targetId: `target-${n}`, createdAt: now, nextAttemptAt: now });
-const schedule = { id: id(100), kind: 'demo_work', targetKind: 'probe', targetId: 'target-1', intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now };
+const schedule = { id: id(100), kind: 'demo_work', targetKind: 'probe', targetId: 'target-1', localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now };
 const firing = { scheduleId: schedule.id, expectedNextRunAt: now, nextRunAt: next, now, work: work() };
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -87,6 +87,40 @@ it('settles cleanup failures atomically only when completeWork wins its claim', 
   expect(await db.rows('select * from brain.failures order by id')).toEqual(failures.map(row =>
     [id(10), id(11)].includes(row.id as string) ? { ...row, resolved_at: next } : row));
   expect(await db.rows('select completed_at, claimed_by from brain.work_items')).toEqual([{ completed_at: next, claimed_by: null }]);
+});
+
+it.each(['completeWork', 'finishSupervisedWork'] as const)('%s rolls back completion when scheduled success recording fails', async path => {
+  const { db, store } = await fixture(); const token = id(201);
+  const kind = path === 'completeWork' ? 'demo_work' : 'process_probe';
+  expect(await store.addSchedule({ ...schedule, kind, localTime: '11:00', timeZone: 'Asia/Seoul', intervalSeconds: null }))
+    .toMatchObject({ ok: true });
+  const dates = { scheduleId: schedule.id, from: '2026-02-01', to: '2026-02-02', timeZone: 'Asia/Seoul' };
+  expect(await store.addWork({ ...work(), kind, scheduledDates: dates })).toMatchObject({ ok: true });
+  const claim = path === 'completeWork'
+    ? await store.claimWork({ now, kinds: [kind], claimedBy: 'worker' })
+    : await store.claimSupervisedWork({ now, kinds: [kind], claimedBy: 'worker', attemptToken: token });
+  expect(claim).toMatchObject({ ok: true, item: { id: id(1) } });
+  const before = { items: await db.rows('select * from brain.work_items'), attempts: await db.rows('select * from brain.work_attempts') };
+  const finish = () => path === 'completeWork'
+    ? store.completeWork({ id: id(1), claimedBy: 'worker', now: next })
+    : store.finishSupervisedWork({ id: id(1), attemptToken: token, now: next, outcome: 'succeeded' });
+  await db.query(`create function brain.refuse_schedule_success() returns trigger language plpgsql as $$
+    begin raise exception 'test success recording refused'; end $$;
+    create trigger refuse_schedule_success before insert on brain.schedule_successes
+      for each row execute function brain.refuse_schedule_success()`);
+  expect(await finish()).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+  expect(await db.rows('select * from brain.work_items')).toEqual(before.items);
+  expect(await db.rows('select * from brain.work_attempts')).toEqual(before.attempts);
+  expect(await db.rows('select * from brain.schedule_successes')).toEqual([]);
+  await db.query('drop trigger refuse_schedule_success on brain.schedule_successes');
+  expect(await finish()).toEqual({ ok: true, outcome: 'done' });
+  expect(await finish()).toEqual({ ok: true, outcome: 'lost' });
+  expect(await db.rows('select completed_at,outcome,claimed_at,claim_expires_at,claimed_by,current_attempt_token from brain.work_items'))
+    .toEqual([{ completed_at: next, outcome: 'succeeded', claimed_at: null, claim_expires_at: null, claimed_by: null, current_attempt_token: null }]);
+  expect(await db.rows('select local_date::text,time_zone,work_id,recorded_at from brain.schedule_successes order by local_date'))
+    .toEqual([dates.from, dates.to].map(local_date => ({ local_date, time_zone: dates.timeZone, work_id: id(1), recorded_at: next })));
+  expect(await db.rows('select outcome,finished_at from brain.work_attempts'))
+    .toEqual(path === 'completeWork' ? [] : [{ outcome: 'succeeded', finished_at: next }]);
 });
 
 it('retries find-or-create when a drain completes the conflicting row before read-back', async () => {
@@ -229,7 +263,7 @@ it('returns DB_LOCKED when a firing outlasts lock_timeout, then fires once', asy
   expect(await db.rows('select * from brain.schedules')).toEqual(before);
   expect(await db.rows('select * from brain.work_items')).toEqual([]);
   await blocker.query('rollback');
-  expect(await store.fireSchedule(firing)).toEqual({ ok: true, fired: true, created: true });
+  expect(await store.fireSchedule(firing)).toEqual({ ok: true, fired: true, created: true, covered: false });
   expect(await store.fireSchedule(firing)).toEqual({ ok: true, fired: false });
 });
 it('rolls back a firing whose work insert is refused, then fires once', async () => {
@@ -241,15 +275,15 @@ it('rolls back a firing whose work insert is refused, then fires once', async ()
   expect(await db.rows('select * from brain.schedules')).toEqual(before);
   expect(await db.rows('select * from brain.work_items')).toEqual([]);
   await db.query('drop trigger refuse_work on brain.work_items');
-  expect(await store.fireSchedule(firing)).toEqual({ ok: true, fired: true, created: true });
+  expect(await store.fireSchedule(firing)).toEqual({ ok: true, fired: true, created: true, covered: false });
   expect(await store.fireSchedule(firing)).toEqual({ ok: true, fired: false });
 });
 it('fires a schedule once when two ticks race for it', async () => {
   const { db, store, blocker } = await fixture({ applicationName: 'schedule-race-a' });
   const other = postgresStore({ databaseUrl: db.appUrl, applicationName: 'schedule-race-b' }); cleanup.push(() => other.close());
   await store.addSchedule(schedule); await lock(blocker, 'schedules', schedule.id);
-  const a = tickSchedules({ store, clock, idGen: sequenceIdGen({ timestampMs: now.getTime(), start: 1000 }) });
-  const b = tickSchedules({ store: other, clock, idGen: sequenceIdGen({ timestampMs: now.getTime(), start: 2000 }) });
+  const a = tickSchedules({ store, clock, readTimeZone: async () => ({ ok: true, value: 'Asia/Seoul' }), idGen: sequenceIdGen({ timestampMs: now.getTime(), start: 1000 }) });
+  const b = tickSchedules({ store: other, clock, readTimeZone: async () => ({ ok: true, value: 'Asia/Seoul' }), idGen: sequenceIdGen({ timestampMs: now.getTime(), start: 2000 }) });
   try {
     await expect.poll(async () => {
       const rows = await db.rows<{ count: number }>("select count(*)::int as count from pg_stat_activity where application_name in ('schedule-race-a','schedule-race-b') and wait_event_type = 'Lock'");
@@ -358,7 +392,7 @@ describe.each(['finish succeeded', 'finish failed', 'settle died', 'settle cance
     // Pause the first real transaction immediately after SELECT FOR UPDATE.
     const barrier: KyselyPlugin = {
       transformQuery({ node, queryId }) {
-        if (!paused && node.kind === 'RawNode' && node.sqlFragments.join('').includes('select * from brain.work_items')
+        if (!paused && node.kind === 'RawNode' && node.sqlFragments.join('').includes('from brain.work_items')
           && node.sqlFragments.join('').includes('for update')) selects.add(queryId);
         return node;
       },

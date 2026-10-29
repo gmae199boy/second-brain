@@ -70,7 +70,7 @@ it.each(['brain.sessions','brain.users','brain.message_attachments','brain.files
       'brain.users':()=>store.readSelfUser(),
       'brain.message_attachments':()=>store.listMessageAttachments(sampleEnsureSessionInput().id),
       'brain.files':()=>store.listRedactedContentHashes(['sha256:'+ 'a'.repeat(64)]),
-      'brain.schema_migrations':()=>checkSchema(store,{ core: 8 }),
+      'brain.schema_migrations':()=>checkSchema(store,{ core: 9 }),
     };
     expect(await reads[table]!()).toMatchObject({ok:false,code:'DB_LOCKED'});
   } finally {await blocker.query('rollback');await blocker.end();await store.close();}
@@ -161,7 +161,7 @@ it('persists identity work only when ensureSession creates the session', async (
       id: '01940000-0000-7000-8000-000000000811', targetId: 'demo:late' } })))
       .toMatchObject({ ok: true, created: false });
     expect(await db.rows('select * from brain.work_items')).toEqual([{
-      id: work.id, kind: work.kind, serialization_key: null, execution_class: 'core', current_attempt_token: null, outcome: null, cancel_requested_at: null, target_kind: work.targetKind, target_id: work.targetId,
+      id: work.id, kind: work.kind, schedule_id: null, local_date_from: null, local_date_to: null, local_time_zone: null, claimed_date_from: null, claimed_date_to: null, serialization_key: null, execution_class: 'core', current_attempt_token: null, outcome: null, cancel_requested_at: null, target_kind: work.targetKind, target_id: work.targetId,
       created_at: at, attempts: 0, next_attempt_at: at, claimed_at: null,
       claim_expires_at: null, claimed_by: null, last_error: null, completed_at: null,
     }]);
@@ -279,14 +279,14 @@ it('reads the highest migration version for every owner', async () => {
   try {
     const versions = await store.readSchemaVersions();
     expect(versions.ok && Object.keys(versions.versions)).toEqual(['core', 'garmin']);
-    expect(versions).toMatchObject({ ok: true, versions: { core: { version: 8 }, garmin: { version: 3, appliedAt: new Date('2026-01-02T00:00:00Z') } } });
-    expect(await checkSchema(store, { core: 8, garmin: 3 })).toMatchObject({ ok: true });
-    expect(await checkSchema(store, { core: 8 })).toMatchObject({ ok: true });
+    expect(versions).toMatchObject({ ok: true, versions: { core: { version: 9 }, garmin: { version: 3, appliedAt: new Date('2026-01-02T00:00:00Z') } } });
+    expect(await checkSchema(store, { core: 9, garmin: 3 })).toMatchObject({ ok: true });
+    expect(await checkSchema(store, { core: 9 })).toMatchObject({ ok: true });
   } finally { await store.close(); }
 });
 
 describe('schema owner maxima contract', () => {
-  for (const test of schemaStoreContract({ ...sampleSchemaVersions(), core: 8 })) it(test.name, () => test.run(async () => {
+  for (const test of schemaStoreContract({ ...sampleSchemaVersions(), core: 9 })) it(test.name, () => test.run(async () => {
     const db = await database();
     await db.query("insert into brain.schema_migrations(owner,version,name,checksum,applied_at) values ('garmin',1,'first','a','2026-01-01T00:00:00Z'),('garmin',3,'third','b','2026-01-02T00:00:00Z')");
     const store = postgresStore({ databaseUrl: db.appUrl });

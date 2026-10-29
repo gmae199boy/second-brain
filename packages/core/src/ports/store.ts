@@ -401,6 +401,7 @@ export interface UserStore {
 
 /** What `addWork` needs to put one piece of work on the queue (AD-21). */
 export interface AddWorkInput {
+  scheduledDates?: import('../domain/work-item.js').ScheduledDates;
   /** New-row exclusion key. An existing open row keeps its original key. */
   serializationKey?: string | null;
   /**
@@ -1413,21 +1414,27 @@ export interface ExtractionStore {
 /** Schedule persistence; recurrence rules belong to Core's tick. */
 export interface ScheduleStore {
   addSchedule(input: AddScheduleInput): Promise<AddScheduleResult>;
+  listDailySchedules(query: { limit: number }): Promise<ListDueSchedulesResult>;
+  readSchedule(query: { id: string }): Promise<{ ok: true; schedule: AddScheduleInput | null } | ScheduleStoreFailure>;
+  rezoneSchedule(input: { id: string; expectedNextRunAt: Date; expectedTimeZone: string; timeZone: string; nextRunAt: Date }): Promise<{ ok: true; updated: boolean } | ScheduleStoreFailure>;
+  listScheduleSuccesses(query: { scheduleId: string }): Promise<{ ok: true; successes: ScheduleSuccess[] } | ScheduleStoreFailure>;
   listDueSchedules(query: { now: Date; limit: number }): Promise<ListDueSchedulesResult>;
   fireSchedule(input: FireScheduleInput): Promise<FireScheduleResult>;
 }
 export type AddScheduleInput = import('../domain/schedule.js').Schedule;
 export type ScheduleStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
-export type AddScheduleResult = { ok: true; schedule: import('../domain/schedule.js').Schedule } | ScheduleStoreFailure;
+export interface ScheduleSuccess { localDate: string; timeZone: string; workId: string; recordedAt: Date }
+export type AddScheduleResult = { ok: false; code: 'SCHEDULE_CONFLICT'; message: string } | { ok: true; schedule: import('../domain/schedule.js').Schedule } | ScheduleStoreFailure;
 export type ListDueSchedulesResult = { ok: true; schedules: readonly import('../domain/schedule.js').Schedule[] } | ScheduleStoreFailure;
 export interface FireScheduleInput {
+  localDates?: { from: string; to: string; timeZone: string };
   scheduleId: string;
   expectedNextRunAt: Date;
   nextRunAt: Date | null;
   work: AddWorkInput;
   now: Date;
 }
-export type FireScheduleResult = { ok: true; fired: true; created: boolean } | { ok: true; fired: false } | ScheduleStoreFailure;
+export type FireScheduleResult = { ok: true; fired: true; created: boolean; covered: boolean } | { ok: true; fired: false } | ScheduleStoreFailure;
 
 /** Persistence used by one session collection, without queue or query capabilities. */
 export type SessionIngestStore = Pick<SessionStore, 'findSession' | 'ensureSession' | 'ingest' | 'readSession'>

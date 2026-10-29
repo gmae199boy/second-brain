@@ -1,3 +1,5 @@
+import type { SettingsStore, ScheduleSuccess } from '../../ports/store.js';
+import { addLocalDays, isLocalTime } from '../../local-time.js';
 import { formatInstant } from '../../instant.js';
 import type { IngestAttachment } from '../../domain/ingest-batch.js';
 import type { MessageAttachment } from '../../ports/store.js';
@@ -104,6 +106,7 @@ export interface MemoryStoreSnapshot {
   /** The queue, in the order rows were added (AD-21). */
   workItems: readonly WorkItem[];
   workAttempts: readonly WorkAttempt[];
+  scheduleSuccesses: readonly (ScheduleSuccess & { scheduleId: string })[];
   /** One row per `(target, stage, fingerprint)`, in the order first seen. */
   failures: readonly Failure[];
   /** One row per `(harness, path)`, in the order they were first recorded. */
@@ -111,7 +114,7 @@ export interface MemoryStoreSnapshot {
   closes: number;
 }
 
-export interface MemoryStore extends Store {
+export interface MemoryStore extends Store, SettingsStore {
   snapshot(): MemoryStoreSnapshot;
 }
 
@@ -184,6 +187,24 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
    */
   const schedules = new Map<string, import('../../domain/schedule.js').Schedule>();
   const workItems: WorkItem[] = [];
+  const claimedDates = new Map<string, { from: string; to: string }>();
+  const scheduleSuccesses = new Map<string, ScheduleSuccess & { scheduleId: string }>();
+  function settleSuccess(item: WorkItem, now: Date) {
+    const snapshot = claimedDates.get(item.id);
+    const dates = item.scheduledDates;
+    if (snapshot && dates?.scheduleId) {
+      for (let date = snapshot.from; date <= snapshot.to; date = addLocalDays(date, 1)) {
+        const key = `${dates.scheduleId}/${date}`;
+        if (!scheduleSuccesses.has(key)) scheduleSuccesses.set(key, { scheduleId: dates.scheduleId, localDate: date,
+          timeZone: dates.timeZone, workId: item.id, recordedAt: new Date(now) });
+      }
+    }
+    const widened = item.cancelRequestedAt === null && dates !== null && (!snapshot || dates.from < snapshot.from || dates.to > snapshot.to);
+    item.completedAt = widened ? null : now;
+    item.outcome = widened ? null : 'succeeded';
+    if (widened) item.nextAttemptAt = now;
+    claimedDates.delete(item.id);
+  }
   const workDependencies: { workItemId: string; prerequisiteId: string }[] = [];
   const workAttempts: WorkAttempt[] = [];
   const failures: Failure[] = [];
@@ -371,12 +392,22 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   function addWork(input: AddWorkInput): AddWorkResult {
     const existing = openWork(input.kind, input.targetKind, input.targetId);
     if (existing !== undefined) {
+      if (input.scheduledDates) {
+        if (!existing.scheduledDates) existing.scheduledDates = { ...input.scheduledDates };
+        else {
+          existing.scheduledDates = { ...existing.scheduledDates,
+            from: existing.scheduledDates.from < input.scheduledDates.from ? existing.scheduledDates.from : input.scheduledDates.from,
+            to: existing.scheduledDates.to > input.scheduledDates.to ? existing.scheduledDates.to : input.scheduledDates.to,
+            scheduleId: existing.scheduledDates.scheduleId ?? input.scheduledDates.scheduleId };
+        }
+      }
       // Find-or-create: an open row for this work keeps everything it has,
       // including its own id and its own `next_attempt_at` (AD-21).
-      return { ok: true, created: false, item: { ...existing } };
+      return { ok: true, created: false, item: structuredClone(existing) };
     }
     const item: WorkItem = {
       id: input.id,
+      scheduledDates: input.scheduledDates ? { ...input.scheduledDates } : null,
       kind: input.kind,
       executionClass: workExecutionClass(input.kind),
       currentAttemptToken: null,
@@ -394,7 +425,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       outcome: null, cancelRequestedAt: null,
     };
     workItems.push(item);
-    return { ok: true, created: true, item: { ...item } };
+    return { ok: true, created: true, item: structuredClone(item) };
   }
 
   function closeDependents(rootId: string, outcome: 'failed' | 'cancelled' | 'dependency_failed', now: Date) {
@@ -410,7 +441,26 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   }
 
   return {
+    ...memorySettingsStore(),
+    async readSchedule({ id }) { return { ok: true, schedule: schedules.has(id) ? cloneSchedule(schedules.get(id)!) : null }; },
+    async listDailySchedules({ limit }) {
+      return { ok: true, schedules: [...schedules.values()].filter(row => row.localTime !== null).sort((a, b) => a.id < b.id ? -1 : 1).slice(0, limit).map(cloneSchedule) };
+    },
+    async rezoneSchedule(input) {
+      const row = schedules.get(input.id);
+      if (!row || row.nextRunAt?.getTime() !== input.expectedNextRunAt.getTime() || row.timeZone !== input.expectedTimeZone) return { ok: true, updated: false };
+      row.timeZone = input.timeZone; row.nextRunAt = new Date(input.nextRunAt);
+      return { ok: true, updated: true };
+    },
+    async listScheduleSuccesses({ scheduleId }) {
+      return { ok: true, successes: [...scheduleSuccesses.values()].filter(row => row.scheduleId === scheduleId)
+        .sort((a, b) => a.localDate.localeCompare(b.localDate)).map(({ scheduleId: _, ...row }) => ({ ...row, recordedAt: new Date(row.recordedAt) })) };
+    },
     async addSchedule(input) {
+      if (input.localTime !== null && [...schedules.values()].some(row => row.localTime !== null && row.kind === input.kind && row.targetKind === input.targetKind && row.targetId === input.targetId))
+        return { ok: false, code: 'SCHEDULE_CONFLICT', message: '같은 대상의 매일 예약이 있습니다' };
+      if ((input.localTime === null) !== (input.timeZone === null) || (input.localTime !== null && (!isLocalTime(input.localTime) || input.intervalSeconds !== null || input.nextRunAt === null)))
+        return { ok: false, code: 'DB_UNAVAILABLE', message: '잘못된 예약입니다' };
       if (schedules.has(input.id) || (input.intervalSeconds !== null &&
         (!Number.isInteger(input.intervalSeconds) || input.intervalSeconds <= 0 || input.nextRunAt === null)) ||
         [input.createdAt, input.nextRunAt, input.lastRunAt].some(at => at !== null && !formatInstant(at).ok))
@@ -426,15 +476,27 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     },
     async fireSchedule(input) {
       const row = schedules.get(input.scheduleId);
-      if (!row || row.nextRunAt?.getTime() !== input.expectedNextRunAt.getTime()) return { ok: true, fired: false };
+      if (!row || row.nextRunAt?.getTime() !== input.expectedNextRunAt.getTime() ||
+        row.timeZone !== (input.localDates?.timeZone ?? null)) return { ok: true, fired: false };
       if ((row.intervalSeconds !== null && input.nextRunAt === null) ||
         [input.now, input.nextRunAt, input.work.createdAt, input.work.nextAttemptAt].some(at => at !== null && !formatInstant(at).ok))
         return { ok: false, code: 'DB_UNAVAILABLE', message: '잘못된 예약 발화입니다' };
-      const work = addWork(input.work);
+      let workInput = input.work;
+      if (input.localDates) {
+        const missing: string[] = [];
+        for (let date = input.localDates.from; date <= input.localDates.to; date = addLocalDays(date, 1))
+          if (!scheduleSuccesses.has(`${row.id}/${date}`)) missing.push(date);
+        if (!missing.length) {
+          row.lastRunAt = new Date(input.now); row.nextRunAt = input.nextRunAt === null ? null : new Date(input.nextRunAt);
+          return { ok: true, fired: true, created: false, covered: true };
+        }
+        workInput = { ...input.work, scheduledDates: { scheduleId: row.id, from: missing[0]!, to: missing[missing.length - 1]!, timeZone: input.localDates.timeZone } };
+      }
+      const work = addWork(workInput);
       if (!work.ok) return work;
       row.lastRunAt = new Date(input.now);
       row.nextRunAt = input.nextRunAt === null ? null : new Date(input.nextRunAt);
-      return { ok: true, fired: true, created: work.created };
+      return { ok: true, fired: true, created: work.created, covered: false };
     },
     async checkHealth(): Promise<StoreHealth> {
       return health;
@@ -1173,7 +1235,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       next.claimedAt = input.now;
       next.claimExpiresAt = new Date(input.now.getTime() + workKindPolicy(next.kind).claimForMs);
       next.claimedBy = input.claimedBy;
-      return { ok: true, item: { ...next } };
+      if (next.scheduledDates) claimedDates.set(next.id, { from: next.scheduledDates.from, to: next.scheduledDates.to });
+      return { ok: true, item: structuredClone(next) };
     },
 
     async readWorkAttemptHealth() {
@@ -1243,8 +1306,9 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       item.claimExpiresAt = new Date(input.now.getTime() + workKindPolicy(item.kind).claimForMs);
       item.claimedBy = input.claimedBy;
       item.currentAttemptToken = input.attemptToken;
+      if (item.scheduledDates) claimedDates.set(item.id, { from: item.scheduledDates.from, to: item.scheduledDates.to });
       workAttempts.push({ errorCode: null, errorRetryable: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, elapsedMs: null, stderr: null, incarnation: input.claimedBy, pid: null, pgid: null, osBootAt: null, osStartedAt: null, token: input.attemptToken, workItemId: item.id, startedAt: input.now, lastProgressAt: null, renewedAt: null, finishedAt: null, outcome: null });
-      return { ok: true, item: { ...item }, attemptToken: input.attemptToken };
+      return { ok: true, item: structuredClone(item), attemptToken: input.attemptToken };
     },
     async renewSupervisedLease(input) {
       const item = workItems.find((i) => i.id === input.id && i.currentAttemptToken === input.attemptToken);
@@ -1272,7 +1336,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       attempt.elapsedMs = input.elapsedMs ?? null; attempt.stderr = input.stderr ?? null;
       attempt.errorCode = input.errorCode ?? null; attempt.errorRetryable = input.errorRetryable ?? null;
       attempt.inputTokens = input.usage?.inputTokens ?? null; attempt.cachedInputTokens = input.usage?.cachedInputTokens ?? null; attempt.outputTokens = input.usage?.outputTokens ?? null;
-      if (input.outcome === 'succeeded') { item.completedAt = input.now; item.outcome = 'succeeded'; }
+      if (input.outcome === 'succeeded') { settleSuccess(item, input.now); }
       else if (item.cancelRequestedAt !== null) { item.completedAt = input.now; item.outcome = 'cancelled'; }
       else if (input.failure !== undefined) { item.completedAt = input.now; item.outcome = 'failed'; }
       if (input.outcome !== 'succeeded') {
@@ -1288,7 +1352,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     async completeWork(input: CompleteWorkInput): Promise<FinishWorkResult> {
       const item = claimed(input);
       if (item === null) return { ok: true, outcome: 'lost' };
-      item.completedAt = input.now; item.outcome = 'succeeded';
+      settleSuccess(item, input.now);
       unclaim(item);
       return { ok: true, outcome: 'done' };
     },
@@ -1468,8 +1532,9 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         messages: [...messages.values()].flat(),
         toolNotes: [...toolNotes.values()].flat().map(plainToolNote),
         redactions: [...[...redactions.values()].flat(), ...fileRedactions],
+        scheduleSuccesses: structuredClone([...scheduleSuccesses.values()]),
         workAttempts: workAttempts.map((attempt) => ({ ...attempt })),
-        workItems: workItems.map((item) => ({ ...item })),
+        workItems: workItems.map((item) => structuredClone(item)),
         failures: failures.map((failure) => ({ ...failure })),
         transcriptFiles: [...transcriptFiles.values()].map((file) => ({ ...file })),
         closes,
