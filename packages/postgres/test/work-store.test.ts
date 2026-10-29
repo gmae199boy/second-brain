@@ -9,8 +9,8 @@ import { Kysely, PostgresDialect, type KyselyPlugin } from 'kysely';
 import { createPool, type PgSchema } from '../src/connect.js';
 import { postgresWorkStore } from '../src/work.js';
 import { afterEach, describe, expect, it } from 'vitest';
-import { dependencyFailedText, enqueueWorkGraph, tickSchedules, failureText, FAILURE_MESSAGE_MAX_BYTES, truncateUtf8, retryFailures } from '@second-brain/core';
-import { workStoreContract, scheduleStoreContract, sequenceIdGen } from '@second-brain/core/testing';
+import { dependencyFailedText, enqueueWorkGraph, tickSchedules, failureText, FAILURE_MESSAGE_MAX_BYTES, truncateUtf8, retryFailures, runSupervisor } from '@second-brain/core';
+import { workStoreContract, scheduleStoreContract, sequenceIdGen, manualTime, fakeProcessInspector, fakeProcessLauncher } from '@second-brain/core/testing';
 import { postgresStore } from '../src/index.js';
 import { database, subject, clock } from './fixture.js';
 
@@ -980,4 +980,27 @@ it.each(['', 'k'.repeat(201)])('rejects invalid serialization keys (%s)', async 
   const { db, store } = await fixture();
   expect(await store.addWork({ ...work(), serializationKey })).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
   expect(await db.rows('select id from brain.work_items')).toEqual([]);
+});
+
+
+it('closes a tenth recovered supervised death with one PROCESS_DIED failure', async () => {
+  const { db, store } = await fixture();
+  await store.addWork({ ...work(), kind: 'process_probe' });
+  await store.claimSupervisedWork({ now, claimedBy: 'old', kinds: ['process_probe'], attemptToken: id(101) });
+  await db.query(`update brain.work_items set attempts = 10 where id = '${id(1)}'`);
+  const controller = new AbortController(); const time = manualTime(now);
+  const running = runSupervisor({ store, schemaVersions: { core: 10 }, ...time,
+    inspector: fakeProcessInspector(), launcher: fakeProcessLauncher(),
+    idGen: sequenceIdGen({ timestampMs: now.getTime() }), signal: controller.signal, launches: {} });
+  try {
+    await expect.poll(async () => (await db.rows('select outcome from brain.work_items'))[0]?.outcome).toBe('failed');
+    expect(await db.rows('select outcome from brain.work_attempts')).toMatchObject([{ outcome: 'died' }]);
+    expect(await db.rows('select completed_at, last_error, current_attempt_token from brain.work_items')).toMatchObject([
+      { completed_at: expect.any(Date), last_error: expect.stringContaining('PROCESS_DIED'), current_attempt_token: null },
+    ]);
+    expect(await db.rows('select code, target_kind, target_id, stage from brain.failures')).toEqual([
+      { code: 'PROCESS_DIED', target_kind: 'probe', target_id: 'target-1', stage: 'process_probe' },
+    ]);
+    expect(await store.claimSupervisedWork({ now, claimedBy: 'next', kinds: ['process_probe'], attemptToken: id(102) })).toMatchObject({ ok: true, item: null });
+  } finally { controller.abort(); await running; }
 });

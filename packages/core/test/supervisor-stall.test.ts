@@ -18,7 +18,7 @@ async function kit(options: { attempts?: number; stallWindowMs?: SupervisorOptio
     await store.finishSupervisedWork({ id, attemptToken, now, outcome: 'failed', nextAttemptAt: now });
   }
   options.configure?.(store);
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, launcher, inspector, idGen, signal: controller.signal,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, launcher, inspector, idGen, signal: controller.signal,
     ...(options.stallWindowMs === undefined ? {} : { stallWindowMs: options.stallWindowMs }),
     launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) } });
   await flush();
@@ -253,7 +253,7 @@ it('starts the stall window when the delayed launcher successfully starts the ch
   const idGen = sequenceIdGen({ timestampMs: now.getTime() }); let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   await store.addWork({ id: idGen.next(), kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt: now, nextAttemptAt: now });
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, idGen, signal: controller.signal,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, idGen, signal: controller.signal,
     launcher: { async start(spec) { await gate; return launcher.start(spec); } }, inspector: fakeProcessInspector(launcher),
     launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) } });
   try {

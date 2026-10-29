@@ -10,14 +10,20 @@ types.setTypeParser(1184, value => new Date(value).toISOString());
 export class PgTestClient {
   private client: pg.Client;
   private ready: Promise<unknown>;
+  private queued: Promise<unknown> = Promise.resolve();
   constructor(homeOrUrl: string) {
     this.client = new pg.Client({ connectionString: pgDatabaseUrl(homeOrUrl), options: '-c search_path=brain,public', types });
     this.ready = this.client.connect();
   }
-  async exec(sql: string): Promise<void> { await this.ready; await this.client.query(sql); }
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = this.queued.then(operation);
+    this.queued = pending.then(() => undefined, () => undefined);
+    return pending;
+  }
+  async exec(sql: string): Promise<void> { await this.enqueue(async () => { await this.ready; await this.client.query(sql); }); }
   prepare(sql: string) {
-    const all = async (...values: unknown[]) => { await this.ready; return (await this.client.query(sql, values)).rows; };
+    const all = async (...values: unknown[]) => (await this.enqueue(async () => { await this.ready; return this.client.query(sql, values); })).rows;
     return { all, get: async (...values: unknown[]) => (await all(...values))[0], run: async (...values: unknown[]) => { await all(...values); } };
   }
-  async close(): Promise<void> { await this.ready.catch(() => {}); await this.client.end(); }
+  async close(): Promise<void> { await this.enqueue(async () => { await this.ready.catch(() => {}); await this.client.end(); }); }
 }

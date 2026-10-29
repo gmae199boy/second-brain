@@ -13,7 +13,7 @@ async function kit(configure?: (store: ReturnType<typeof memoryStore>, inspector
   const time = manualTime(now); const idGen = sequenceIdGen({ timestampMs: now.getTime() }); const controller = new AbortController(); const id = idGen.next();
   await store.addWork({ id, holdGroup, kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt: now, nextAttemptAt: now });
   configure?.(store, inspector);
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, launcher, inspector, ...time, idGen,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, launcher, inspector, ...time, idGen,
     signal: controller.signal, cancelGraceMs: 300, cancelPollMs: 100, groupConfirmMs: 200,
     launches: { process_probe: () => ({ command: 'fake', args: [], env: {} }) } });
   await flush(); return { store, launcher, inspector, time, controller, id, running };
@@ -151,7 +151,7 @@ it('does not claim until startup reconciliation can list previous attempts', asy
   store.listOpenSupervisedAttempts = async () => ++reads === 1 ? { ok: false, code: 'DB_UNAVAILABLE', message: '실패' } : list();
   store.claimSupervisedWork = async input => { claims++; return claim(input); };
   const controller = new AbortController(); const time = manualTime(now);
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, launcher: fakeProcessLauncher(), inspector: fakeProcessInspector(),
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, launcher: fakeProcessLauncher(), inspector: fakeProcessInspector(),
     idGen: sequenceIdGen({ timestampMs: now.getTime() }), signal: controller.signal, launches: {}, pollMs: 10 });
   await flush(); expect(claims).toBe(0); time.advance(10); await flush(); expect(claims).toBe(1);
   controller.abort(); await running;
@@ -164,7 +164,7 @@ it.each(['died', 'unknown', 'cancelled'] as const)('settles prior incarnation as
   if (expected === 'cancelled') await store.requestWorkCancel({ id, now });
   const inspector = fakeProcessInspector(); if (expected === 'unknown') inspector.groups.set(123, { state: 'unknown' });
   const controller = new AbortController(); const time = manualTime(now); const launcher = fakeProcessLauncher();
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, launcher, inspector, idGen,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, launcher, inspector, idGen,
     signal: controller.signal, launches: {} });
   await flush(); expect(store.snapshot().workAttempts[0]!.outcome).toBe(expected);
   const item = store.snapshot().workItems[0]!;
@@ -325,4 +325,203 @@ it('allows result and exit zero to win a group hold race', async () => {
     k.launcher.processes[0]!.push('{"abi":1,"type":"result"}'); k.launcher.processes[0]!.exit(); await flush();
     expect(k.store.snapshot().workItems[0]?.outcome).toBe('succeeded');
   } finally { k.controller.abort(); await k.running; }
+});
+
+it.each([
+  { attempts: 10, cancelled: false, held: false, outcome: 'failed' },
+  { attempts: 3, cancelled: false, held: false, outcome: null },
+  { attempts: 10, cancelled: true, held: false, outcome: 'cancelled' },
+  { attempts: 10, cancelled: false, held: true, outcome: null },
+] as const)('recovers $attempts attempts (cancelled: $cancelled, held: $held)', async scenario => {
+  const store = memoryStore(); const idGen = sequenceIdGen({ timestampMs: now.getTime() }); const id = idGen.next();
+  await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: 'recovered', holdGroup: 'recovery', createdAt: now, nextAttemptAt: now });
+  for (let count = 1; count <= scenario.attempts; count++) {
+    const token = idGen.next();
+    await store.claimSupervisedWork({ now, claimedBy: 'old', kinds: ['process_probe'], attemptToken: token });
+    if (count < scenario.attempts) await store.settleSupervisedAttempt({ id, attemptToken: token, now, outcome: 'died' });
+  }
+  if (scenario.cancelled) await store.requestWorkCancel({ id, now });
+  if (scenario.held) await store.holdWorkGroup({ group: 'recovery', now });
+  const controller = new AbortController(); const time = manualTime(now);
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time,
+    launcher: fakeProcessLauncher(), inspector: fakeProcessInspector(), idGen, signal: controller.signal, launches: {} });
+  try {
+    await flush();
+    expect(store.snapshot().workItems[0]).toMatchObject({ outcome: scenario.outcome, currentAttemptToken: null, attempts: scenario.attempts });
+    expect(store.snapshot().workAttempts.at(-1)?.outcome).toBe(scenario.cancelled ? 'cancelled' : 'died');
+    expect(store.snapshot().failures).toHaveLength(scenario.outcome === 'failed' ? 1 : 0);
+    if (scenario.outcome === 'failed') {
+      expect(store.snapshot().workItems[0]?.lastError).toContain('PROCESS_DIED');
+      expect(store.snapshot().failures[0]).toMatchObject({ code: 'PROCESS_DIED', targetKind: 'probe', targetId: 'recovered', stage: 'process_probe' });
+    }
+    const claimed = await store.claimSupervisedWork({ now, claimedBy: 'next', kinds: ['process_probe'], attemptToken: idGen.next() });
+    expect(claimed).toMatchObject({ ok: true, item: scenario.attempts < 10 ? { id } : null });
+  } finally { controller.abort(); await running; }
+});
+
+it.each(['identity', 'record', 'poll', 'renew'] as const)('cleans a child after a thrown %s call and blocks claims until settlement succeeds', async phase => {
+  let allowSettlement = false; let claims = 0; let settlements = 0;
+  const k = await kit((store, inspector) => {
+    const claim = store.claimSupervisedWork.bind(store);
+    store.claimSupervisedWork = async input => { claims++; return claim(input); };
+    const settle = store.settleSupervisedAttempt.bind(store);
+    store.settleSupervisedAttempt = async input => {
+      settlements++;
+      return allowSettlement ? settle(input) : { ok: false, code: 'DB_UNAVAILABLE', message: 'retry' };
+    };
+    if (phase === 'identity') inspector.startedAt = async () => { throw new Error('identity'); };
+    if (phase === 'record') store.recordSupervisedProcess = async () => { throw new Error('record'); };
+    if (phase === 'poll') {
+      const list = store.listOpenSupervisedAttempts.bind(store); let reads = 0;
+      store.listOpenSupervisedAttempts = async () => { if (++reads === 2) throw new Error('poll'); return list(); };
+    }
+    if (phase === 'renew') store.renewSupervisedLease = async () => { throw new Error('renew'); };
+  });
+  const child = k.launcher.processes[0]!;
+  try {
+    if (phase === 'poll') { k.time.advance(100); await flush(); }
+    if (phase === 'renew') { child.push('{"abi":1,"type":"progress"}'); await flush(); }
+    expect(child.ended).toBe(true); expect(child.signals).toEqual(['SIGTERM']);
+    expect(settlements).toBeGreaterThan(0);
+    const before = claims;
+    k.time.advance(5000); await flush(); expect(claims).toBe(before);
+    allowSettlement = true; k.time.advance(5000); await flush();
+    expect(k.store.snapshot().workAttempts[0]).toMatchObject({ outcome: 'died', finishedAt: k.time.clock.now() });
+    expect(claims).toBeGreaterThan(before);
+  } finally { allowSettlement = true; k.controller.abort(); await k.running; }
+});
+
+it('retains the token as unknown when exception cleanup itself throws', async () => {
+  const k = await kit((store, inspector) => {
+    store.recordSupervisedProcess = async () => { throw new Error('record'); };
+    inspector.signalGroup = async () => { throw new Error('cleanup'); };
+  });
+  try {
+    expect(k.store.snapshot().workAttempts[0]?.outcome).toBe('unknown');
+    expect(k.store.snapshot().workItems[0]?.currentAttemptToken).toBeTruthy();
+    expect(k.launcher.processes[0]?.ended).toBe(false);
+  } finally { k.launcher.processes[0]!.exit(); k.controller.abort(); await k.running; }
+});
+
+it('waits for exception cleanup during shutdown', async () => {
+  const k = await kit(store => {
+    const list = store.listOpenSupervisedAttempts.bind(store); let reads = 0;
+    store.listOpenSupervisedAttempts = async () => { if (++reads === 2) throw new Error('poll'); return list(); };
+  });
+  const child = k.launcher.processes[0]!; child.ignoreTerm = true;
+  let finished = false;
+  void k.running.then(() => { finished = true; });
+  k.time.advance(100); await flush();
+  expect(child.signals).toEqual(['SIGTERM']);
+  k.controller.abort(); await flush();
+  expect(finished).toBe(false); expect(child.ended).toBe(false);
+  k.time.advance(300); await flush(); await k.running;
+  expect(child.signals).toEqual(['SIGTERM', 'SIGKILL']);
+  expect(child.ended).toBe(true); expect(finished).toBe(true);
+  expect(k.store.snapshot().workAttempts[0]?.outcome).toBe('died');
+});
+
+it('blocks new claims while one child needs slow exception cleanup and another finishes', async () => {
+  const store = memoryStore(); const launcher = fakeProcessLauncher(); const inspector = fakeProcessInspector(launcher);
+  const time = manualTime(now); const idGen = sequenceIdGen({ timestampMs: now.getTime() }); const controller = new AbortController();
+  const ids = [idGen.next(), idGen.next(), idGen.next()];
+  for (const [index, id] of ids.entries()) await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: String(index), createdAt: now, nextAttemptAt: now });
+  let claims = 0; let allowSettlement = false;
+  const claim = store.claimSupervisedWork.bind(store); const renew = store.renewSupervisedLease.bind(store); const settle = store.settleSupervisedAttempt.bind(store);
+  store.claimSupervisedWork = async input => { claims++; return claim(input); };
+  store.renewSupervisedLease = async input => { if (input.id === ids[0]) throw new Error('renew'); return renew(input); };
+  store.settleSupervisedAttempt = async input => allowSettlement ? settle(input) : { ok: false, code: 'DB_UNAVAILABLE', message: 'retry' };
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time,
+    launcher, inspector, idGen, signal: controller.signal, cancelGraceMs: 300, pollMs: 100,
+    launches: { process_probe: () => ({ command: 'fake', args: [], env: {} }) } });
+  try {
+    await flush(); expect(launcher.processes).toHaveLength(2); expect(claims).toBe(2);
+    const failed = launcher.processes[0]!; const succeeded = launcher.processes[1]!;
+    failed.ignoreTerm = true;
+    failed.push('{"abi":1,"type":"progress"}'); await flush();
+    expect(failed.signals).toEqual(['SIGTERM']); expect(failed.ended).toBe(false);
+    succeeded.push('{"abi":1,"type":"result"}'); succeeded.exit(); await flush();
+    expect(store.snapshot().workItems[1]?.outcome).toBe('succeeded');
+    expect(claims).toBe(2); expect(launcher.processes).toHaveLength(2);
+    time.advance(299); await flush(); expect(claims).toBe(2); expect(failed.ended).toBe(false);
+    time.advance(1); await flush();
+    expect(failed.signals).toEqual(['SIGTERM', 'SIGKILL']); expect(failed.ended).toBe(true);
+    expect(claims).toBe(2); expect(store.snapshot().workAttempts[0]?.outcome).toBe(null);
+    allowSettlement = true; time.advance(100); await flush();
+    expect(store.snapshot().workAttempts[0]?.outcome).toBe('died'); expect(claims).toBeGreaterThan(2);
+    expect(failed.signals).toEqual(['SIGTERM', 'SIGKILL']);
+  } finally { allowSettlement = true; controller.abort(); await running; }
+});
+
+it('rechecks a group hold before retrying a tenth exception death settlement', async () => {
+  const store = memoryStore(); const launcher = fakeProcessLauncher(); const inspector = fakeProcessInspector(launcher);
+  const time = manualTime(now); const idGen = sequenceIdGen({ timestampMs: now.getTime() }); const controller = new AbortController();
+  const id = idGen.next();
+  await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: 'held-retry', holdGroup: 'recovery', createdAt: now, nextAttemptAt: now });
+  for (let count = 0; count < 9; count++) {
+    const token = idGen.next();
+    await store.claimSupervisedWork({ now, claimedBy: 'old', kinds: ['process_probe'], attemptToken: token });
+    await store.settleSupervisedAttempt({ id, attemptToken: token, now, outcome: 'died' });
+  }
+  store.recordSupervisedProcess = async () => { throw new Error('record'); };
+  const finish = store.finishSupervisedWork.bind(store); let finishes = 0; let allowSettlement = false;
+  store.finishSupervisedWork = async input => {
+    finishes++;
+    return allowSettlement ? finish(input) : { ok: false, code: 'DB_UNAVAILABLE', message: 'retry' };
+  };
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time,
+    launcher, inspector, idGen, signal: controller.signal,
+    launches: { process_probe: () => ({ command: 'fake', args: [], env: {} }) } });
+  try {
+    await flush();
+    expect(finishes).toBeGreaterThan(0);
+    const before = finishes;
+    expect(launcher.processes[0]?.ended).toBe(true);
+    expect(store.snapshot().workAttempts.at(-1)?.outcome).toBeNull();
+    await store.holdWorkGroup({ group: 'recovery', now });
+    allowSettlement = true;
+    time.advance(5000); await flush();
+    expect(store.snapshot().workItems[0]).toMatchObject({ attempts: 10, outcome: null, completedAt: null, currentAttemptToken: null });
+    expect(store.snapshot().workAttempts.at(-1)?.outcome).toBe('died');
+    expect(store.snapshot().failures).toEqual([]);
+    expect(finishes).toBe(before);
+    expect(launcher.processes).toHaveLength(1);
+  } finally { controller.abort(); await running; }
+});
+
+it('keeps tenth recovered work open when its group is held during cleanup', async () => {
+  const store = memoryStore(); const idGen = sequenceIdGen({ timestampMs: now.getTime() }); const id = idGen.next();
+  await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: 'held-cleanup', holdGroup: 'recovery', createdAt: now, nextAttemptAt: now });
+  let token = '';
+  for (let count = 1; count <= 10; count++) {
+    token = idGen.next();
+    await store.claimSupervisedWork({ now, claimedBy: 'old', kinds: ['process_probe'], attemptToken: token });
+    if (count < 10) await store.settleSupervisedAttempt({ id, attemptToken: token, now, outcome: 'died' });
+  }
+  await store.recordSupervisedProcess({ id, attemptToken: token, pid: 123, pgid: 123, osBootAt: now, osStartedAt: now });
+  const inspector = fakeProcessInspector();
+  inspector.groups.set(123, { state: 'found', value: [{ pid: 123, pgid: 123, startedAt: now }] });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  inspector.signalGroup = async (pgid, signal) => {
+    inspector.signals.push({ pgid, signal });
+    await gate;
+    inspector.groups.set(pgid, { state: 'none' });
+    return 'sent';
+  };
+  const controller = new AbortController(); const time = manualTime(now);
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time,
+    launcher: fakeProcessLauncher(), inspector, idGen, signal: controller.signal, launches: {} });
+  try {
+    await flush();
+    expect(inspector.signals).toEqual([{ pgid: 123, signal: 'SIGTERM' }]);
+    expect(store.snapshot().workAttempts.at(-1)?.outcome).toBeNull();
+    expect(await store.holdWorkGroup({ group: 'recovery', now })).toMatchObject({ ok: true });
+    release(); await flush();
+    expect(store.snapshot().workAttempts.at(-1)?.outcome).toBe('died');
+    expect(store.snapshot().workItems[0]).toMatchObject({ attempts: 10, outcome: null, completedAt: null, currentAttemptToken: null });
+    expect(store.snapshot().failures).toEqual([]);
+    expect(await store.claimSupervisedWork({ now, claimedBy: 'next', kinds: ['process_probe'], attemptToken: idGen.next() }))
+      .toMatchObject({ ok: true, item: null });
+  } finally { release(); controller.abort(); await running; }
 });

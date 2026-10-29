@@ -447,6 +447,8 @@ export function workStoreContract(readItem: (store: WorkStore, id: string) => Pr
           await store.requestWorkCancel({ id: work.id, now: LATER });
         }
         const open = await store.listOpenSupervisedAttempts(); assertOk(open, 'open'); assertEqual(open.attempts.length, 1, 'one attempt');
+        assertEqual(open.attempts[0]!.targetKind, work.targetKind, 'target kind');
+        assertEqual(open.attempts[0]!.targetId, work.targetId, 'target id');
         assertEqual(open.attempts[0]!.pid, 123, 'pid'); assertEqual(open.attempts[0]!.incarnation, sampleWorkItemId, 'incarnation');
         assertEqual(open.attempts[0]!.cancelRequested, mode === 'requested', 'request flag');
         const settled = await store.settleSupervisedAttempt({ id: work.id, attemptToken: otherWorkItemId, now: LATER, outcome: mode === 'requested' ? 'died' : mode }); assertOk(settled, 'settle'); assertEqual(settled.outcome, 'done', 'settled');

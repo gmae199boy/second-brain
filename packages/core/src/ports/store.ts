@@ -547,7 +547,7 @@ export interface RecordSupervisedProcessInput {
   id: string; attemptToken: string; pid: number; pgid: number; osBootAt: Date | null; osStartedAt: Date | null;
 }
 export interface OpenSupervisedAttempt {
-  token: string; workItemId: string; kind: string; attempts: number;
+  token: string; workItemId: string; kind: string; attempts: number; targetKind: string; targetId: string;
   incarnation: string | null; pid: number | null; pgid: number | null;
   osBootAt: Date | null; osStartedAt: Date | null; cancelRequested: boolean; held: boolean;
 }

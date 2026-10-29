@@ -308,12 +308,12 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
-        const rows = await sql<{ token: string; work_item_id: string; kind: string; attempts: number; incarnation: string | null;
+        const rows = await sql<{ token: string; work_item_id: string; kind: string; attempts: number; target_kind: string; target_id: string; incarnation: string | null;
           pid: number | null; pgid: number | null; os_boot_at: string | null; os_started_at: string | null; cancel_requested: boolean; held: boolean }>`
-          select a.*, w.kind, w.attempts, w.cancel_requested_at is not null as cancel_requested, not (${groupAvailable('w')}) as held
+          select a.*, w.kind, w.attempts, w.target_kind, w.target_id, w.cancel_requested_at is not null as cancel_requested, not (${groupAvailable('w')}) as held
           from brain.work_attempts a join brain.work_items w on w.current_attempt_token = a.token
           where a.outcome is null`.execute(opened.connection.db);
-        return { ok: true, attempts: rows.rows.map(a => ({ token: a.token, workItemId: a.work_item_id, kind: a.kind, attempts: a.attempts,
+        return { ok: true, attempts: rows.rows.map(a => ({ token: a.token, workItemId: a.work_item_id, kind: a.kind, attempts: a.attempts, targetKind: a.target_kind, targetId: a.target_id,
           incarnation: a.incarnation, pid: a.pid, pgid: a.pgid, osBootAt: a.os_boot_at === null ? null : at(a.os_boot_at, 'work_attempts.os_boot_at'),
           osStartedAt: a.os_started_at === null ? null : at(a.os_started_at, 'work_attempts.os_started_at'), held: a.held, cancelRequested: a.cancel_requested })) };
       } catch (error) { return { ...databaseFailure(error), message: `열린 시도를 읽을 수 없습니다: ${describe(error)}` }; }

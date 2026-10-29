@@ -14,7 +14,7 @@ async function kit(options: { launcher?: ProcessLauncher; spec?: ProcessSpec | n
   const store = memoryStore(), time = manualTime(now), launcher = fakeProcessLauncher(), controller = new AbortController();
   const idGen = sequenceIdGen({ timestampMs: now.getTime() }); const id = idGen.next();
   await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: '10', createdAt: now, nextAttemptAt: now });
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time,
     launcher: options.launcher ?? launcher, inspector: fakeProcessInspector(launcher), idGen, signal: controller.signal,
     launches: { process_probe: () => options.spec === undefined ? { command: 'probe', args: [], env: {} } : options.spec } });
   await flush();
@@ -66,7 +66,7 @@ it('cleans a still-live child when stdout closes with a truncated line', async (
   } };
   const store = memoryStore(), time = manualTime(now), controller = new AbortController(), idGen = sequenceIdGen({ timestampMs: now.getTime() });
   await store.addWork({ id: idGen.next(), kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt: now, nextAttemptAt: now });
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, launcher, inspector: fakeProcessInspector(base), idGen, signal: controller.signal, launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) } });
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, launcher, inspector: fakeProcessInspector(base), idGen, signal: controller.signal, launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) } });
   try {
     await flush();
     expect(base.processes[0]!.signals).toEqual(['SIGTERM']);
@@ -124,7 +124,7 @@ it.each([['identity', 100], ['recording', 100], ['identity', 1100], ['recording'
     store.recordSupervisedProcess = async input => { await gate; return record(input); };
   }
   await store.addWork({ id: idGen.next(), kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt: now, nextAttemptAt: now });
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector, idGen, signal: controller.signal,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector, idGen, signal: controller.signal,
     launcher: { async start(spec) {
       const started = await launcher.start(spec);
       if (started.ok) {
@@ -154,7 +154,7 @@ it('drains queued stderr before unknown settlement and retains the full masked t
   inspector.groupMembers = async () => ({ state: 'unknown' });
   await store.addWork({ id: idGen.next(), kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt: now, nextAttemptAt: now });
   let closed = false, consumed = 0;
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector, idGen, signal: controller.signal,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector, idGen, signal: controller.signal,
     launcher: { async start(spec) {
       const started = await launcher.start(spec);
       if (started.ok) {

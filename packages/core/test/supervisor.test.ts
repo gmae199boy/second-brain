@@ -20,7 +20,7 @@ async function kit(options: { keys?: (string | null)[]; launcher?: ProcessLaunch
   const id = idGen.next();
   for (const [index, key] of (options.keys ?? [null]).entries())
     await store.addWork({ id: index === 0 ? id : idGen.next(), serializationKey: key, kind: 'process_probe', targetKind: 'probe', targetId: String(700000 + index), createdAt: now, nextAttemptAt: now });
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector: fakeProcessInspector(launcher), launcher: options.launcher ?? launcher, idGen,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector: fakeProcessInspector(launcher), launcher: options.launcher ?? launcher, idGen,
     ...(options.log === undefined ? {} : { log: options.log }),
     launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) }, signal: controller.signal });
   await flush();
@@ -260,7 +260,7 @@ it('a new incarnation settles failed shutdown attempts and runs waiting work wit
 
   failing = false;
   const controller = new AbortController();
-  const running = runSupervisor({ store: { ...k.store, ...memorySchemaStore({ version: 3 }) }, ...k.time,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...k.store, ...memorySchemaStore({ version: 3 }) }, ...k.time,
     launcher: k.launcher, inspector: fakeProcessInspector(k.launcher), idGen: k.idGen,
     launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) }, signal: controller.signal });
   try {
@@ -297,3 +297,32 @@ it('logs a recurring claim error after an empty successful claim', async () => {
     expect(logs).toEqual(['감독자 청구 실패 (DB_UNAVAILABLE)', '감독자 청구 실패 (DB_UNAVAILABLE)']);
   } finally { k.controller.abort(); await k.running; }
 });
+
+it.each(['throw', 'reject'] as const)('continues after log callbacks %s and claims later work', async mode => {
+  let logs = 0;
+  const k = await kit({ log: () => {
+    logs++;
+    if (mode === 'throw') throw new Error('log');
+    return Promise.reject(new Error('log'));
+  }, configureStore: store => {
+    store.renewSupervisedLease = async () => ({ ok: false, code: 'DB_UNAVAILABLE', message: 'log this failure' });
+  } });
+  try {
+    const child = k.launcher.processes[0]!;
+    child.push('{"abi":1,"type":"progress"}'); await flush();
+    expect(logs).toBeGreaterThan(0);
+    child.push('{"abi":1,"type":"result"}'); child.exit(); await flush();
+    expect(k.store.snapshot().workItems[0]?.outcome).toBe('succeeded');
+    await k.store.addWork({ id: k.idGen.next(), kind: 'process_probe', targetKind: 'probe', targetId: 'later', createdAt: now, nextAttemptAt: now });
+    k.time.advance(5000); await flush();
+    expect(k.launcher.processes).toHaveLength(2);
+    k.launcher.processes[1]!.push('{"abi":1,"type":"result"}'); k.launcher.processes[1]!.exit(); await flush();
+    expect(k.store.snapshot().workItems.every(item => item.outcome === 'succeeded')).toBe(true);
+  } finally { k.controller.abort(); await k.running; }
+});
+
+const missingSupervisorSchema = (options: Omit<Parameters<typeof runSupervisor>[0], 'schemaVersions'>): void => {
+  // @ts-expect-error schema versions must be selected explicitly by the caller.
+  void runSupervisor(options);
+};
+void missingSupervisorSchema;

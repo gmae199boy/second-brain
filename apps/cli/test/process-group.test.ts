@@ -61,7 +61,7 @@ it.each([false, true])('bounds inherited-pipe waits after leader reaping (escape
     child.unref(); fs.writeFileSync(process.env.PID_FILE,String(child.pid));
     process.stdout.write('{"abi":1,"type":"result"}\\n',()=>process.exit(0));`;
   await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt, nextAttemptAt: createdAt });
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, clock: systemClock, timer: systemTimer, idGen,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, clock: systemClock, timer: systemTimer, idGen,
     launcher: { async start(spec) { const launched = await systemProcessLauncher.start(spec); if (launched.ok) handle = launched.handle; return launched; } },
     inspector: {
       ...systemProcessInspector,
@@ -116,7 +116,7 @@ it('backpressures a multi-MiB child while stdout consumption is delayed, then re
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   await store.addWork({ id: idGen.next(), kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt, nextAttemptAt: createdAt });
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, clock: systemClock, timer: systemTimer, idGen,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, clock: systemClock, timer: systemTimer, idGen,
     launcher: systemProcessLauncher, inspector: { ...systemProcessInspector,
       async bootTime() { await gate; return systemProcessInspector.bootTime(); },
     }, signal: controller.signal, pollMs: 10, cancelPollMs: 10, cancelGraceMs: 30, groupConfirmMs: 100,
@@ -141,7 +141,7 @@ it('records ABI_LINE_TRUNCATED and masked stderr from a real supervised child', 
   const store = memoryStore(), createdAt = new Date(), idGen = sequenceIdGen({ timestampMs: createdAt.getTime() }), controller = new AbortController();
   const id = idGen.next();
   await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt, nextAttemptAt: createdAt });
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, clock: systemClock, timer: systemTimer, idGen,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, clock: systemClock, timer: systemTimer, idGen,
     launcher: systemProcessLauncher, inspector: systemProcessInspector, signal: controller.signal, pollMs: 10, cancelPollMs: 10, cancelGraceMs: 30, groupConfirmMs: 100,
     launches: { process_probe: () => ({ command: process.execPath, args: [worker], env: { FAKE_WORKER_PLAN: JSON.stringify({ raw: '{"abi":1,"type":"res', stderr: 'x'.repeat(20000) + '\nTOKEN=secret-value\n' }) } }) } });
   try {
@@ -172,7 +172,7 @@ it('records externally SIGKILLed real children as died and schedules a retry', a
   const store = memoryStore(), createdAt = new Date(), idGen = sequenceIdGen({ timestampMs: createdAt.getTime() }), controller = new AbortController();
   const id = idGen.next(); let handle: ProcessHandle | undefined;
   await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt, nextAttemptAt: createdAt });
-  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, clock: systemClock, timer: systemTimer, idGen,
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, clock: systemClock, timer: systemTimer, idGen,
     launcher: { async start(spec) { const started = await systemProcessLauncher.start(spec); if (started.ok) handle = started.handle; return started; } },
     inspector: systemProcessInspector, signal: controller.signal, pollMs: 10, cancelPollMs: 10, cancelGraceMs: 30, groupConfirmMs: 100,
     launches: { process_probe: () => ({ command: process.execPath, args: ['-e', 'process.stdout.write(JSON.stringify({abi:1,type:"progress"})+"\\n");setInterval(()=>{},1000)'], env: {} }) } });

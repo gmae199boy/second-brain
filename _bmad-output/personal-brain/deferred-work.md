@@ -287,7 +287,9 @@ location: packages/core/src/queue/supervisor.ts:58
 source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-tracer-probe-600-plan.md`
 severity: medium
 reason: packages/core/src/queue/supervisor.ts의 `for await (const line of handle.lines)`에는 마지막 progress 기준 제한 시간이 없다. 정체 판정(종류별 창 15/25분, 그룹 정리 뒤 일시 오류 재시도)은 epic 12 스토리 5의 범위다.
-status: open
+status: done 2026-10-29
+resolution: resolved by story 12.11
+resolution-undo: 9820588b669e4f82e216128a1040fd740cd5bee3772bc1e6a593f52e3f8e3b6a 2026-10-29 7374617475733a206f70656e
 
 ### DW-14: supervised 일감이 몇 번 실패해도 failures 기록 없이 계속 재예약된다(MAX_WORK_ATTEMPTS 미적용).
 origin: spec-deferred fb3d73f1e55a
@@ -295,7 +297,9 @@ location: packages/core/src/queue/supervisor.ts:80
 source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-tracer-probe-600-plan.md`
 severity: medium
 reason: `finishSupervisedWork`의 `failed`는 plan대로 failures 행 없는 임시 재시도다. 10회 상한과 기록은 스토리 4·5가 이 verb를 넓혀 처리한다.
-status: open
+status: done 2026-10-29
+resolution: resolved by story 12.11
+resolution-undo: 9820588b669e4f82e216128a1040fd740cd5bee3772bc1e6a593f52e3f8e3b6a 2026-10-29 7374617475733a206f70656e
 
 ### DW-15: 만료 뒤 재청구할 때 이전 attempt 행의 finished_at·outcome이 비어 있는 채 남는다.
 origin: spec-deferred a825e9019974
@@ -303,7 +307,9 @@ location: packages/postgres/src/work.ts:192
 source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-tracer-probe-600-plan.md`
 severity: medium
 reason: `claimSupervisedWork`(PG·fake)는 새 attempt만 만들고 이전 token의 행을 닫지 않는다. 데몬 시작 때 이전 incarnation의 열린 attempt를 대조해 `died`·`unknown`으로 회수하는 일은 스토리 2의 범위다.
-status: open
+status: done 2026-10-29
+resolution: resolved by story 12.11
+resolution-undo: 9820588b669e4f82e216128a1040fd740cd5bee3772bc1e6a593f52e3f8e3b6a 2026-10-29 7374617475733a206f70656e
 
 ### DW-16: 기존 비밀 탐지기는 따옴표 직후 줄바꿈이 있는 영어 keyword 값을 탐지하지 못한다.
 origin: spec-deferred 45bbe096e7a0
@@ -343,7 +349,9 @@ location: packages/core/src/queue/supervisor.ts reconcile(); packages/postgres/s
 source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-doctor-plan.md`
 severity: medium
 reason: `packages/core/src/queue/supervisor.ts` `reconcile()`은 `settleSupervisedAttempt({ outcome: 'died' })`를 부르고, PG·fake 모두 `next_attempt_at = now`로 바로 다시 열며 `attempts`를 보지 않는다. 이 동작은 12.2부터 있었고 이번 변경(plan Never·Design Notes)이 그대로 두었다. 이번 변경은 실행 중 정산(`finishSupervisedWork`)에만 AD-21 10회 상한을 더했다. 회수 경로에도 `MAX_WORK_ATTEMPTS`에서 기록 후 닫기를 적용하려면 settle 입력이나 reconcile 분기를 바꿔야 한다.
-status: open
+status: done 2026-10-29
+resolution: resolved by story 12.11
+resolution-undo: 9820588b669e4f82e216128a1040fd740cd5bee3772bc1e6a593f52e3f8e3b6a 2026-10-29 7374617475733a206f70656e
 
 ### DW-21: 자식을 띄운 뒤 runSupervisor의 execute()가 예외를 던지면 살아 있는 자식이 실행 집합에서 빠져 용량 계산과 종료 정리를 벗어날 수 있다.
 origin: spec-deferred cf3cb70afd04
@@ -351,4 +359,6 @@ location: packages/core/src/queue/supervisor.ts:245
 source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-untitled-7-plan.md`
 severity: medium
 reason: blind-hunter 1, edge-case-hunter 1·4. 기준 커밋도 같은 예외에서 자식을 추적하지 못했다(메인 루프 catch로 빠짐). 확인하지 못함: problem()(options.log), inspector, Store 호출 중 무엇이 실제로 던질 수 있는지. 그런 경로가 있으면 catch에서 그룹 정리와 token 정산을 마친 뒤 슬롯을 돌려줘야 한다. (declared severity: medium (unverified))
-status: open
+status: done 2026-10-29
+resolution: resolved by story 12.11
+resolution-undo: 9820588b669e4f82e216128a1040fd740cd5bee3772bc1e6a593f52e3f8e3b6a 2026-10-29 7374617475733a206f70656e

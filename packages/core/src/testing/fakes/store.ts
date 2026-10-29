@@ -1323,7 +1323,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     async listOpenSupervisedAttempts() {
       return { ok: true, attempts: workAttempts.flatMap(a => {
         const item = workItems.find(i => i.currentAttemptToken === a.token);
-        return !item || a.outcome !== null ? [] : [{ token: a.token, workItemId: item.id, kind: item.kind, attempts: item.attempts,
+        return !item || a.outcome !== null ? [] : [{ token: a.token, workItemId: item.id, kind: item.kind, attempts: item.attempts, targetKind: item.targetKind, targetId: item.targetId,
           incarnation: a.incarnation, pid: a.pid, pgid: a.pgid, osBootAt: a.osBootAt, osStartedAt: a.osStartedAt,
           held: isHeld(item.holdGroup), cancelRequested: item.cancelRequestedAt !== null }];
       }) };
