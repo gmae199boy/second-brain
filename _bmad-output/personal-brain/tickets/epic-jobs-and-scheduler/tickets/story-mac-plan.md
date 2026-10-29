@@ -3,7 +3,7 @@ title: '이 Mac에서 확인: 플러그인 배포로 긴 작업·취소·현지 
 type: 'chore'
 ticket: '12'
 created: '2026-10-29'
-status: blocked
+status: done
 baseline_revision: 'cdaba2248c6a8ac20ec0dd78bc6a188f24372b8d'
 route: 'full'
 route_source: 'pinned'
@@ -18,8 +18,6 @@ warnings: [oversized]
 deferred: []
 operator_actions:
   - "`git push origin main`으로 배포 커밋 `0c309e8`(plugin `app-ref` = `cdaba22`, `version` 0.1.10)과 그 앞의 로컬 커밋들(epic 11 배포 `dd49f71` 포함)을 원격에 올려, 원격 marketplace가 0.1.10을 내주게 한다."
-blocked_at: "2026-10-29"
-blocked_reason: "awaiting operator: `git push origin main`으로 배포 커밋 `0c309e8`(plugin `app-ref` = `cdaba22`, `version` 0.1.10)과 그 앞의 로컬 커밋들(epic 11 배포 `dd49f71` 포함)을 원격에 올려, 원격 marketplace가 0.1.10을 내주게 한다."
 ---
 
 <intent-contract>
@@ -221,3 +219,11 @@ Status: awaiting-operator
 - 이 Mac에 남은 변경: 설치본 `cdaba22`·core 스키마 10, 플러그인 `second-brain@second-brain` 0.1.10(로컬 marketplace), 확인 중 만든 Claude Code 세션 2건(`claude -p`)이 Brain에 수집됨.
 - 남은 위험: push 전에는 원격 marketplace가 0.1.8(SQLite 빌드)을 내준다. 원격 marketplace 캐시 경로의 설치는 이번에 보지 않았다.
 - 사람 몫(`operator_actions`): 원격 push. 티켓 완료 표시는 오케스트레이터가 한다.
+
+## Operator Confirmation
+
+Confirmed 2026-10-29: the external actions this story owed were carried out.
+
+- `git push origin main`으로 배포 커밋 `0c309e8`(plugin `app-ref` = `cdaba22`, `version` 0.1.10)과 그 앞의 로컬 커밋들(epic 11 배포 `dd49f71` 포함)을 원격에 올려, 원격 marketplace가 0.1.10을 내주게 한다.
+
+_Appended by the bmad-loop orchestrator (`bmad-loop confirm`, #335): a human confirmed these external actions out of band, and the story was advanced from `awaiting-operator` to `done`._
