@@ -2,14 +2,14 @@
 
 [gates]
 mode = "none"                # none | per-epic | per-story-spec-approval (2026-10-28: was per-epic; run through epic boundaries unattended)
-retrospective = "notify"     # never | notify | auto — auto runs a headless /bmad-retrospective -H session at each epic boundary and for a finished last epic at run end ([adapter.retro]) and commits its doc + board
+retrospective = "never"      # 2026-10-29: the coordinator closes epics (R-2) and queues the retro for a person; never | notify | auto — auto runs a headless /bmad-retrospective -H session at each epic boundary and for a finished last epic at run end ([adapter.retro]) and commits its doc + board
 
 [limits]
 max_review_cycles = 3
 max_dev_attempts = 2
 artifact_file_max_mb = 5    # raw-byte cap for each ignored artifact selected for publication
 artifact_payload_max_mb = 10 # raw-byte cap across all selected ignored publication artifacts
-max_followup_reviews = 1     # additional review rounds granted solely because a finalized (status: done) round still recommended a follow-up; once spent, such a round converges + refiles the recommendation instead of burning another cycle. 0 = never honor a pass's own recommendation
+max_followup_reviews = 0     # 2026-10-29: one quick review, no follow-up rounds; additional review rounds granted solely because a finalized (status: done) round still recommended a follow-up; once spent, such a round converges + refiles the recommendation instead of burning another cycle. 0 = never honor a pass's own recommendation
 session_timeout_min = 90
 git_timeout_s = 120          # bound on any single git subprocess; exceeding it pauses/degrades (never crashes the run) — raise on a loaded host or a very large worktree
 teardown_grace_s = 20        # verified teardown: poll a killed session window up to this long, then force-kill its pane pids and re-kill (#157). 0 = single unverified best-effort kill
@@ -29,10 +29,10 @@ session_budget_grace_s = 240 # enforce mode: seconds a tripped session gets to w
 
 [verify]
 # Deterministic gates run by the orchestrator after a clean review, before commit.
-commands = []                # e.g. ["pytest -q", "ruff check ."]
+commands = ["bash _bmad/custom/bmad-loop-verify.sh"]  # 2026-10-29: full `pnpm test`; 75 = environment fault
 command_timeout_min = 30     # per-command wall-clock bound (minutes); a command running past it is killed and fails as an ordinary verify failure
 stream_capture_kb = 256      # per-stream cap (KiB) on the verifier stdout/stderr retained under the run's verify/ directory; the TAIL is kept and the journal records the full byte count plus a truncation flag. 0 = capture nothing (records still land, with null pointers)
-env_fault_rc = 0             # exit status a [verify] command uses to declare an environment fault (pause, attempt not charged) instead of a code failure. 0 = disabled; 75 (EX_TEMPFAIL) is a good choice
+env_fault_rc = 75            # exit status a [verify] command uses to declare an environment fault (pause, attempt not charged) instead of a code failure. 0 = disabled; 75 (EX_TEMPFAIL) is a good choice
 
 [environment]
 # Orchestrator-run health checks (e.g. a local container or database). They run
@@ -51,7 +51,7 @@ file = true                  # ATTENTION file in the run dir
 #                    on the done spec for a fresh review pass) after a dev pass.
 # enabled = false -> skip that session; the dev pass's own inline review
 #                    is the only review and it finalizes the story straight to done.
-enabled = true
+enabled = false              # 2026-10-29: no separate review session; the quick review inside bmad-build-auto is the review
 # trigger (only consulted when enabled = true) decides WHEN that session runs:
 #   "recommended" -> only when the dev pass flags the story with
 #                    `followup_review_recommended: true` (it self-reviews inline
@@ -94,13 +94,16 @@ spec_folder = ""
 #   "never" -> the plan stays at `built` for a human to mark.
 mark_done = "auto"           # auto | never
 # When a ticket gets the thorough review: "high-risk" (its risk is high), "always", "never".
-thorough_review = "high-risk"  # never | high-risk | always
+thorough_review = "never"    # never | high-risk | always (2026-10-29: always one quick review)
 
 [adapter]
 name = "claude"              # claude | codex | gemini | copilot | antigravity | opencode-http (alias: opencode) | <custom .bmad-loop/profiles/*.toml>
-model = ""                   # empty = CLI default model (opencode-http wants "provider/model")
+model = "claude-opus-5-5"    # 2026-10-29: the orchestrator; the implementer (sonnet) and reviewer (codex) are scripts in _bmad/custom
 effort = ""                  # reasoning effort, free-form (e.g. "high", "max"); empty = provider default.
                              # Sent by opencode-http as the per-prompt `variant`; the tmux CLIs ignore it
+# effort does not reach the tmux CLI, so it is a flag. extra_args replaces the profile's permission flags, so they are
+# written again. No Agent tool: sub-work goes through the _bmad/custom scripts. (2026-10-29)
+extra_args = ["--permission-mode", "bypassPermissions", "--effort", "medium", "--disallowedTools", "Agent"]
 cleanup_session_on_finish = true  # kill the run's tmux session when it finishes (false keeps it for inspection)
 # extra_args replaces the profile's default permission-bypass flags when set:
 # extra_args = ["--permission-mode", "bypassPermissions"]

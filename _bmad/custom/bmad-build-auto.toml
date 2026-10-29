@@ -1,32 +1,48 @@
-# Project override for bmad-build-auto (2026-10-27): claude orchestrates and codex
-# does every subagent job — implementation and each review lens — as a fresh
-# codex CLI session (gpt-6.1-sol, medium) via _bmad/custom/bmad-build-auto-codex.sh.
+# Project override for bmad-build-auto — bmad-loop unattended build (2026-10-29).
+#
+# Roles
+#   orchestrator = the bmad-loop dev session: claude opus 5.5, effort medium (.bmad-loop/policy.toml [adapter])
+#   implementer  = a fresh claude sonnet 5.5 (medium) session — _bmad/custom/bmad-build-auto-claude.sh
+#   review lens  = a fresh read-only codex gpt-6.1-sol (medium) session — _bmad/custom/bmad-build-auto-codex.sh
+#   Triage of review findings and the bad_plan loop-back stay with the orchestrator, as the skill defines.
+# Speed
+#   One quick review per ticket. bmad-loop's separate review session is off and follow-up reviews are 0
+#   (.bmad-loop/policy.toml); the thorough lenses below stay defined but the policy never selects them.
 
 [workflow]
 
-# Implementation always goes to codex; claude never implements inline.
+# Implementation always goes to the implementer session; the orchestrator never implements inline.
 route = "full"
+
+# Review is always one quick pass.
+review = "quick"
 
 persistent_facts = [
   """
-In this project every "subagent" this workflow mentions is a fresh codex CLI session started from the project root with `bash _bmad/custom/bmad-build-auto-codex.sh` (gpt-6.1-sol, medium effort). Never use the host's own subagent or Agent tool. The script itself starts codex detached under `nohup` and waits on it up to 8 minutes per call, so never wrap it in `nohup`, `&` or the tool's background mode: run each such Bash call in the foreground with a 600000 ms timeout. When the output ends with `codex-pending: <job>`, codex is still working: run `bash _bmad/custom/bmad-build-auto-codex.sh wait <job>` the same way, in the same turn, until it prints codex's report — that is still one synchronous subagent call, not a failure. Launching several at once means several Bash calls in one message, then a `wait` for each pending job. The script prints `codex-thread: <id>`: that id is the subagent's name or id for re-engagement.""",
+In this project every "subagent" this workflow mentions is a fresh CLI session started from the project root. Implementation is `bash _bmad/custom/bmad-build-auto-claude.sh` (claude sonnet 5.5, medium effort); every review lens is `bash _bmad/custom/bmad-build-auto-codex.sh` (codex gpt-6.1-sol, medium effort). Never use the host's own subagent or Agent tool. Both scripts start their session detached under `nohup` and wait on it for up to 8 minutes per call, so never wrap them in `nohup`, `&` or the tool's background mode: run each such Bash call in the foreground with a 600000 ms timeout. When the output ends with `claude-pending: <folder>` or `codex-pending: <job>`, the session is still working: run `bash <the same script> wait <folder or job>` the same way, in the same turn, until it prints the report — that is still one synchronous subagent call, not a failure. Launching several at once means several Bash calls in one message, then a `wait` for each pending one. The scripts print `claude-session: <id>` and `codex-thread: <id>`: that id is the subagent's name for re-engagement.""",
   """
-You orchestrate and codex writes the code: do not edit source or test files yourself (plan, spec and ticket files stay yours). Where a step says to finish unfinished work or apply patches yourself, send that work to the implementation session instead with `bash _bmad/custom/bmad-build-auto-codex.sh resume <thread-id>`, the message on stdin through a quoted heredoc. When a codex turn stops because the model is at capacity or a usage limit hit, the script pauses and has the same session continue where it stopped, several times; do not retry those yourself. Exit status 75 means the model stayed unavailable through those retries: HALT with status `blocked` and blocking condition `codex unavailable`. For any other failure, HALT the same way if codex fails twice in a row on the same job.""",
+You orchestrate and the implementer writes the code: do not edit source or test files yourself (plan, spec and ticket files stay yours). Where a step says to finish unfinished work or apply patches yourself, send that work to the implementation session instead with `bash _bmad/custom/bmad-build-auto-claude.sh resume <session-id>`, the message on stdin through a quoted heredoc. If the implementer fails twice in a row on the same job for any reason other than a usage limit, HALT with status `blocked` and blocking condition `implementer unavailable`.""",
   """
-Write every prose line you author in Korean (한국어): plan sections you fill in, `## Implementation Notes`, `## Review Triage Log` entries, `## Auto Run Result`, blocked and escalation reasons, and the final summary. Keep code identifiers, file paths, commands, error codes, frontmatter keys and values, and quoted source text exactly as they are. When you brief codex, ask it to write its report in Korean the same way.
+Usage limit: when either script exits with status 75 (`usage-limit:` from the claude script, or codex staying unavailable through its own retries), do not retry and do not work around it (no inline implementation, no other model): HALT at once with status `blocked` and a blocking condition that starts with `usage limit: ` followed by the script's last line. This is a pause, not a human task: the coordinator resumes the run with `bmad-loop resolve` after the limit resets.""",
+  """
+Decision gaps: when the plan, its ticket and epic, and the architecture spine do not answer a small detail, implement the most conservative reading, mark it `[ASSUMPTION]` in a code comment and in the plan, and add one frontmatter `deferred` item `summary: "검토 필요: [ASSUMPTION] …"` — do not stop for it. Still HALT with status `blocked` (reason with the evidence) when the gap touches security, secrets or masking, data loss or migration safety, or contradicts a written decision.""",
+  """
+Branch and remote: this loop works on the checked-out branch, one commit set per ticket; never stop over the branch name, and never push.""",
+  """
+Write every prose line you author in Korean (한국어): plan sections you fill in, `## Implementation Notes`, `## Review Triage Log` entries, `## Auto Run Result`, blocked and escalation reasons, and the final summary. Keep code identifiers, file paths, commands, error codes, frontmatter keys and values, and quoted source text exactly as they are. When you brief a subagent, ask it to write its report in Korean the same way.
 """,
 ]
 
 implementation_handoff = """
-Run this from the project root as one foreground Bash call with a 600000 ms timeout, then `wait` on any `codex-pending` job as the persistent facts describe. It starts a fresh codex implementation session and returns codex's report when it finishes:
+Run this from the project root as one foreground Bash call with a 600000 ms timeout, then `wait` on a `claude-pending` folder as the persistent facts describe. It starts a fresh claude implementation session (sonnet 5.5, medium) and returns its report when it finishes:
 
-bash _bmad/custom/bmad-build-auto-codex.sh impl <<'BMAD_CODEX_PROMPT'
-Read {plan_file} fully and implement it — the plan is the sole source of truth. Load every file listed in its frontmatter `context:` before you start.
+bash _bmad/custom/bmad-build-auto-claude.sh impl <<'BMAD_IMPL_PROMPT'
+Read {plan_file} fully and implement it — the plan is the sole source of truth. Load every file listed in its frontmatter `context:` before you start. Do the work yourself in this session: do not use the Agent tool or any subagent. Do not commit; the orchestrator commits.
 
-When done, report what you changed, how you verified it, and anything left incomplete or risky.
-BMAD_CODEX_PROMPT
+When done, report in Korean what you changed, how you verified it, and anything left incomplete or risky.
+BMAD_IMPL_PROMPT
 
-Keep the `codex-thread:` id it prints. Step 04 re-engages this same session with `bash _bmad/custom/bmad-build-auto-codex.sh resume <thread-id>`, the message on stdin the same way.
+Keep the `claude-session:` id it prints. Step 04 re-engages this same session with `bash _bmad/custom/bmad-build-auto-claude.sh resume <session-id>`, the message on stdin the same way.
 """
 
 [[workflow.quick_lenses]]
@@ -38,7 +54,7 @@ Run this from the project root as one foreground Bash call with a 600000 ms time
 bash _bmad/custom/bmad-build-auto-codex.sh review <<'BMAD_CODEX_PROMPT'
 Read `{plan_file}` — the plan holding the acceptance criteria and intent — and the files its frontmatter `context:` lists. Read the agent instruction files (`AGENTS.md`, `CLAUDE.md`, or equivalents) at the repository root and in the directories the diff touches; those are the rules. Then read the unified diff at `{diff_file}` — it is the change under review.
 
-Report unmet acceptance criteria, broken rules, and bugs. Each finding: the location, what goes wrong, and evidence checked against the surrounding code. Output a Markdown list of findings only — no severity, priority, or ranking.
+Report unmet acceptance criteria, broken rules, and bugs. Each finding: the location, what goes wrong, and evidence checked against the surrounding code. Output a Markdown list of findings only — no severity, priority, or ranking. Write the findings in Korean.
 
 Review by inspection only. Do not modify code, run builds or tests, or invoke quality gates. Do not invoke any skill, and do not spawn subagents of your own — you are the reviewer. Return your findings as text in your final message; do not route them through any findings-reporting tool the host may offer.
 BMAD_CODEX_PROMPT
