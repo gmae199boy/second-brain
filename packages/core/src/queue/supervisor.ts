@@ -116,7 +116,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
           if (watch.signal.aborted) break;
           const open = await store.listOpenSupervisedAttempts();
           if (!open.ok) { await problem(`감독자 취소 요청 조회 실패 (${open.code})`); continue; }
-          if (open.attempts.some(a => a.token === token && a.cancelRequested)) { stopped = true; terminate('cancelled'); break; }
+          if (open.attempts.some(a => a.token === token && (a.cancelRequested || a.held))) { stopped = true; terminate('cancelled'); break; }
         }
       })();
       let lastProgress = childStartedAt;

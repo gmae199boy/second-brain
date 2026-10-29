@@ -22,11 +22,53 @@ const IDS = {
 export function scheduleStoreContract(): ContractCase<ScheduleStore & WorkStore>[] {
   const now = new Date('2026-02-03T04:05:06.000Z');
   const next = new Date(now.getTime() + 60_000);
-  const daily = (over: Partial<import('../../domain/schedule.js').Schedule> = {}) => ({ id: IDS.a, kind: 'schedule_probe', targetKind: 'probe', targetId: IDS.a,
+  const daily = (over: Partial<import('../../domain/schedule.js').Schedule> = {}) => ({ holdGroup: null, id: IDS.a, kind: 'schedule_probe', targetKind: 'probe', targetId: IDS.a,
     localTime: '11:00', timeZone: 'Asia/Seoul', intervalSeconds: null, nextRunAt: now, lastRunAt: null, createdAt: now, ...over });
   const dates = { scheduleId: IDS.a, from: '2026-02-01', to: '2026-02-02', timeZone: 'Asia/Seoul' };
   const work = (over: Partial<import('../../ports/store.js').AddWorkInput> = {}) => ({ id: IDS.workA, kind: 'schedule_probe', targetKind: 'probe', targetId: IDS.a, createdAt: now, nextAttemptAt: now, scheduledDates: dates, ...over });
-  return [contractCase('lists schedules in creation order with has_more', async make => {
+  return [contractCase('validates resolved schedule groups before persisting or checking conflicts', async make => {
+    await withSubject(make, async store => {
+      for (const over of [{ holdGroup: '' }, { holdGroup: 'x'.repeat(201) }, { holdGroup: '😀'.repeat(201) }, { kind: 'x'.repeat(191) + '.daily' }]) {
+        const result = await store.addSchedule(daily(over));
+        assertEqual(result.ok, false, 'invalid resolved group rejected');
+        if (!result.ok) assertEqual(result.code, 'DB_UNAVAILABLE', 'constraint failure');
+      }
+      const empty = await store.listSchedules({ limit: 10 }); assertOk(empty, 'empty'); assertEqual(empty.schedules, [], 'no invalid schedule persisted');
+      const boundary = await store.addSchedule(daily({ holdGroup: '😀'.repeat(200) })); assertOk(boundary, '200 code points accepted');
+      const before = await store.readSchedule({ id: IDS.a });
+      const conflict = await store.addSchedule(daily({ id: IDS.b, holdGroup: '' }));
+      assertEqual(conflict.ok, false, 'invalid conflicting schedule rejected');
+      if (!conflict.ok) assertEqual(conflict.code, 'DB_UNAVAILABLE', 'check precedes conflict');
+      assertEqual(await store.readSchedule({ id: IDS.a }), before, 'existing schedule unchanged');
+      for (const [id, holdGroup] of [[IDS.b, ''], [IDS.future, '😀'.repeat(201)]] as const) {
+        const automatic = await store.addSchedule(daily({ id, targetId: id, kind: 'testext.daily', holdGroup })); assertOk(automatic, 'automatic overrides invalid explicit');
+        assertEqual(automatic.schedule.holdGroup, 'extension:testext', 'resolved automatic group accepted');
+      }
+    });
+  }), contractCase('does not fire a held schedule and fires once after release', async make => {
+    await withSubject(make, async store => {
+      const added = await store.addSchedule(daily({ kind: 'testext.daily', holdGroup: 'other' })); assertOk(added, 'add');
+      assertEqual(added.schedule.holdGroup, 'extension:testext', 'automatic group');
+      await store.holdWorkGroup({ group: 'extension:testext', now });
+      const before = await store.readSchedule({ id: IDS.a });
+      const firing = { scheduleId: IDS.a, expectedNextRunAt: now, nextRunAt: next, now, work: work(), localDates: dates };
+      assertEqual(await store.listDueSchedules({ now: next, limit: 10 }), { ok: true, schedules: [] }, 'due hidden');
+      assertEqual(await store.fireSchedule(firing), { ok: true, fired: false }, 'held CAS');
+      assertEqual(await store.readSchedule({ id: IDS.a }), before, 'schedule unchanged');
+      assertEqual(await store.listWork({ includeClosed: true, limit: 10 }), { ok: true, entries: [], hasMore: false }, 'no work');
+      assertEqual(await store.listScheduleSuccesses({ scheduleId: IDS.a }), { ok: true, successes: [] }, 'no success');
+      await store.releaseWorkGroup({ group: 'extension:testext' });
+      assertEqual(await store.fireSchedule(firing), { ok: true, fired: true, created: true, covered: false }, 'fired once');
+      assertEqual(await store.fireSchedule(firing), { ok: true, fired: false }, 'CAS prevents duplicate');
+      const list = await store.listWork({ includeClosed: false, limit: 10 }); assertOk(list, 'work');
+      assertEqual(list.entries[0]?.item.holdGroup, 'extension:testext', 'firing passes schedule group');
+    });
+  }), contractCase('stores an explicit core schedule group', async make => {
+    await withSubject(make, async store => {
+      const added = await store.addSchedule(daily({ holdGroup: 'extension:testext' })); assertOk(added, 'add');
+      assertEqual(added.schedule.holdGroup, 'extension:testext', 'explicit core group');
+    });
+  }), contractCase('lists schedules in creation order with has_more', async make => {
     await withSubject(make, async store => {
       await store.addSchedule(daily({ id: IDS.b, targetId: 'second', createdAt: next }));
       await store.addSchedule(daily());
@@ -303,7 +345,7 @@ export function scheduleStoreContract(): ContractCase<ScheduleStore & WorkStore>
     });
   }), contractCase('preserves a distinct schedule identity, work kind and target', async make => {
     await withSubject(make, async store => {
-      const input = { id: IDS.reservation, kind: 'refresh_collection', targetKind: 'collection',
+      const input = { holdGroup: null, id: IDS.reservation, kind: 'refresh_collection', targetKind: 'collection',
         targetId: 'collection-42', localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now };
       assertOk(await store.addSchedule(input), 'add distinct target');
       const due = await store.listDueSchedules({ now, limit: 1 });

@@ -404,6 +404,7 @@ export interface AddWorkInput {
   scheduledDates?: import('../domain/work-item.js').ScheduledDates;
   /** New-row exclusion key. An existing open row keeps its original key. */
   serializationKey?: string | null;
+  holdGroup?: string | null;
   /**
    * The id to give a new row. The caller mints it (AD-8); an open row that is
    * already there keeps the id it has, and the proposal is dropped.
@@ -548,7 +549,7 @@ export interface RecordSupervisedProcessInput {
 export interface OpenSupervisedAttempt {
   token: string; workItemId: string; kind: string; attempts: number;
   incarnation: string | null; pid: number | null; pgid: number | null;
-  osBootAt: Date | null; osStartedAt: Date | null; cancelRequested: boolean;
+  osBootAt: Date | null; osStartedAt: Date | null; cancelRequested: boolean; held: boolean;
 }
 export type ListOpenSupervisedAttemptsResult = { ok: true; attempts: OpenSupervisedAttempt[] } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface SettleSupervisedAttemptInput {
@@ -684,7 +685,9 @@ export interface ModelWorkUsage {
   latest: { workItemId: string; kind: string; at: Date; elapsedMs: number | null; usage: { inputTokens: number; cachedInputTokens: number; outputTokens: number } | null } | null;
 }
 export interface WorkStore {
-  listWork(input: { includeClosed: boolean; kind?: string; limit: number }): Promise<{ ok: true; entries: { item: WorkItem; latestAttempt: import('../domain/work-item.js').WorkAttempt | null; currentAttempt: import('../domain/work-item.js').WorkAttempt | null }[]; hasMore: boolean } | ScheduleStoreFailure>;
+  holdWorkGroup(input: { group: string; now: Date }): Promise<{ ok: true; held: boolean } | ScheduleStoreFailure>;
+  releaseWorkGroup(input: { group: string }): Promise<{ ok: true; released: boolean } | ScheduleStoreFailure>;
+  listWork(input: { includeClosed: boolean; kind?: string; limit: number }): Promise<{ ok: true; entries: { held: boolean; item: WorkItem; latestAttempt: import('../domain/work-item.js').WorkAttempt | null; currentAttempt: import('../domain/work-item.js').WorkAttempt | null }[]; hasMore: boolean } | ScheduleStoreFailure>;
   readModelWorkUsage(input: { kinds: readonly string[] }): Promise<{ ok: true; usage: ModelWorkUsage } | ScheduleStoreFailure>;
   readWorkAttemptHealth(): Promise<ReadWorkAttemptHealthResult>;
   requestWorkCancel(input: { id: string; now: Date }): Promise<RequestWorkCancelResult>;
@@ -1419,17 +1422,17 @@ export interface ExtractionStore {
 
 /** Schedule persistence; recurrence rules belong to Core's tick. */
 export interface ScheduleStore {
-  listSchedules(input: { limit: number }): Promise<{ ok: true; schedules: AddScheduleInput[]; hasMore: boolean } | ScheduleStoreFailure>;
+  listSchedules(input: { limit: number }): Promise<{ ok: true; schedules: (import('../domain/schedule.js').Schedule & { held: boolean })[]; hasMore: boolean } | ScheduleStoreFailure>;
   removeSchedule(input: { id: string }): Promise<{ ok: true; removed: boolean } | ScheduleStoreFailure>;
   addSchedule(input: AddScheduleInput): Promise<AddScheduleResult>;
   listDailySchedules(query: { limit: number }): Promise<ListDueSchedulesResult>;
-  readSchedule(query: { id: string }): Promise<{ ok: true; schedule: AddScheduleInput | null } | ScheduleStoreFailure>;
+  readSchedule(query: { id: string }): Promise<{ ok: true; schedule: import('../domain/schedule.js').Schedule | null } | ScheduleStoreFailure>;
   rezoneSchedule(input: { id: string; expectedNextRunAt: Date; expectedTimeZone: string; timeZone: string; nextRunAt: Date }): Promise<{ ok: true; updated: boolean } | ScheduleStoreFailure>;
   listScheduleSuccesses(query: { scheduleId: string }): Promise<{ ok: true; successes: ScheduleSuccess[] } | ScheduleStoreFailure>;
   listDueSchedules(query: { now: Date; limit: number }): Promise<ListDueSchedulesResult>;
   fireSchedule(input: FireScheduleInput): Promise<FireScheduleResult>;
 }
-export type AddScheduleInput = import('../domain/schedule.js').Schedule;
+export type AddScheduleInput = Omit<import('../domain/schedule.js').Schedule, 'holdGroup'> & { holdGroup?: string | null };
 export type ScheduleStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface ScheduleSuccess { localDate: string; timeZone: string; workId: string; recordedAt: Date }
 export type AddScheduleResult = { ok: false; code: 'SCHEDULE_CONFLICT'; message: string } | { ok: true; schedule: import('../domain/schedule.js').Schedule } | ScheduleStoreFailure;

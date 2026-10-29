@@ -6,7 +6,7 @@ import { isLocalTime, localDateOf, nextDailyOccurrence } from '../local-time.js'
 export type TimeZoneFailure = { ok: false; code: 'CONFIG_INVALID' | 'SCHEMA_MISMATCH' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export type ReadTimeZone = () => Promise<{ ok: true; value: string } | TimeZoneFailure>;
 export interface SchedulesDependencies { store: ScheduleStore & WorkStore; clock: Clock; idGen: IdGen; readTimeZone: ReadTimeZone }
-export interface AddDailyInput { kind: string; targetKind: string; targetId: string; localTime: string }
+export interface AddDailyInput { kind: string; targetKind: string; targetId: string; localTime: string; holdGroup?: string | null }
 export type AddDailyResult = Awaited<ReturnType<ScheduleStore['addSchedule']>> | TimeZoneFailure | { ok: false; code: 'SCHEDULE_INVALID'; message: string };
 export async function addDaily(deps: SchedulesDependencies, input: AddDailyInput): Promise<AddDailyResult> {
   if ([input.kind, input.targetKind, input.targetId].some(value => value.trim() === '')) return { ok: false, code: 'SCHEDULE_INVALID', message: '예약 종류와 대상은 비어 있을 수 없습니다' };
@@ -30,7 +30,7 @@ export async function runSchedule(deps: SchedulesDependencies, { scheduleId }: {
     scheduledDates = { scheduleId, from: date, to: date, timeZone: zone.value };
   }
   const work = await deps.store.addWork({ id: deps.idGen.next(), kind: schedule.kind, targetKind: schedule.targetKind,
-    targetId: schedule.targetId, createdAt: now, nextAttemptAt: now, ...(scheduledDates ? { scheduledDates } : {}) });
+    targetId: schedule.targetId, holdGroup: schedule.holdGroup, createdAt: now, nextAttemptAt: now, ...(scheduledDates ? { scheduledDates } : {}) });
   return work.ok ? { ok: true, workId: work.item.id, created: work.created } : work;
 }
 

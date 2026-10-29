@@ -35,6 +35,98 @@ export function workStoreContract(readItem: (store: WorkStore, id: string) => Pr
   const KINDS = ['demo_work'];
 
   return [
+    contractCase('rejects invalid hold group names without persisting them', async make => {
+      await withSubject(make, async store => {
+        for (const group of ['', 'x'.repeat(201), '😀'.repeat(201)]) {
+          const result = await store.holdWorkGroup({ group, now: NOW });
+          assertEqual(result.ok, false, 'invalid group rejected');
+          if (!result.ok) assertEqual(result.code, 'DB_UNAVAILABLE', 'constraint failure');
+          assertEqual(await store.releaseWorkGroup({ group }), { ok: true, released: false }, 'no hold persisted');
+        }
+        const group = '😀'.repeat(200);
+        assertEqual(await store.holdWorkGroup({ group, now: NOW }), { ok: true, held: true }, '200 code points accepted');
+        assertEqual(await store.releaseWorkGroup({ group }), { ok: true, released: true }, 'boundary hold persisted');
+      });
+    }),
+    contractCase('validates resolved work groups before creating or merging rows and graphs', async make => {
+      await withSubject(make, async store => {
+        const invalid = [{ holdGroup: '' }, { holdGroup: 'x'.repeat(201) }, { holdGroup: '😀'.repeat(201) }, { kind: 'x'.repeat(191) + '.job' }];
+        for (const over of invalid) {
+          const result = await store.addWork(sampleWorkInput(over));
+          assertEqual(result.ok, false, 'invalid resolved group rejected');
+          if (!result.ok) assertEqual(result.code, 'DB_UNAVAILABLE', 'constraint failure');
+        }
+        const empty = await store.listWork({ includeClosed: true, limit: 10 }); assertOk(empty, 'empty');
+        assertEqual(empty.entries, [], 'rejected creation writes nothing');
+        const added = await store.addWork(sampleWorkInput({ holdGroup: '😀'.repeat(200) })); assertOk(added, 'boundary');
+        assertEqual(added.item.holdGroup, '😀'.repeat(200), 'counts code points');
+        const before = await store.listWork({ includeClosed: true, limit: 10 });
+        for (const holdGroup of ['', '😀'.repeat(201)]) {
+          const merged = await store.addWork(sampleWorkInput({ id: otherWorkItemId, holdGroup,
+            scheduledDates: { scheduleId: null, from: '2026-02-01', to: '2026-02-02', timeZone: 'UTC' } }));
+          assertEqual(merged.ok, false, 'invalid merge rejected');
+          if (!merged.ok) assertEqual(merged.code, 'DB_UNAVAILABLE', 'merge constraint failure');
+        }
+        const graph = await store.addWorkGraph({ nodes: [
+          { ...sampleWorkInput({ id: otherWorkItemId, targetId: 'valid' }), after: [] },
+          { ...sampleWorkInput({ id: lastWorkItemId, targetId: 'invalid', holdGroup: '' }), after: [] },
+        ] });
+        assertEqual(graph.ok, false, 'invalid graph rejected');
+        if (!graph.ok) assertEqual(graph.code, 'DB_UNAVAILABLE', 'graph constraint failure');
+        assertEqual(await store.listWork({ includeClosed: true, limit: 10 }), before, 'no merge or partial graph persisted');
+        const automatic = await store.addWork(sampleWorkInput({ id: otherWorkItemId, kind: 'testext.job', holdGroup: '' })); assertOk(automatic, 'automatic overrides empty');
+        const merged = await store.addWork(sampleWorkInput({ id: lastWorkItemId, kind: 'testext.job', holdGroup: '😀'.repeat(201) })); assertOk(merged, 'automatic overrides long explicit');
+        assertEqual(merged.item.holdGroup, 'extension:testext', 'resolved group validated');
+      });
+    }),
+    contractCase('stores the automatic extension group and an explicit core group', async make => {
+      await withSubject(make, async store => {
+        const automatic = await store.addWork(sampleWorkInput({ kind: 'testext.job', holdGroup: 'other' })); assertOk(automatic, 'automatic');
+        assertEqual(automatic.item.holdGroup, 'extension:testext', 'extension wins');
+        const core = await store.addWork(sampleWorkInput({ id: otherWorkItemId, holdGroup: 'extension:testext' })); assertOk(core, 'core');
+        assertEqual(core.item.holdGroup, 'extension:testext', 'explicit core group');
+        const merged = await store.addWork(sampleWorkInput({ id: lastWorkItemId, holdGroup: 'different' })); assertOk(merged, 'merged');
+        assertEqual(merged.item.holdGroup, 'extension:testext', 'merge retains group');
+        const graph = await store.addWorkGraph({ nodes: [ { ...sampleWorkInput({ id: lastWorkItemId, kind: 'otherext.graph' }), after: [] } ] }); assertOk(graph, 'graph');
+        assertEqual(graph.items[0]?.item.holdGroup, 'extension:otherext', 'graph group');
+      });
+    }),
+    contractCase('skips held groups on every claim path and resumes on release', async make => {
+      await withSubject(make, async store => {
+        await store.addWork(sampleWorkInput({ holdGroup: 'extension:testext' }));
+        await store.addWork(sampleWorkInput({ id: otherWorkItemId, kind: 'process_probe', holdGroup: 'extension:testext' }));
+        await store.holdWorkGroup({ group: 'extension:testext', now: NOW });
+        assertEqual(await store.hasDueWork({ now: NOW, kinds: KINDS }), { ok: true, due: false }, 'held not due');
+        assertEqual(await store.claimWork({ now: NOW, kinds: KINDS, claimedBy: 'core' }), { ok: true, item: null }, 'core blocked');
+        assertEqual(await store.claimSupervisedWork({ now: NOW, kinds: ['process_probe'], claimedBy: 'supervisor', attemptToken: sampleFailureId }), { ok: true, item: null, attemptToken: null }, 'supervisor blocked');
+        const list = await store.listWork({ includeClosed: false, limit: 10 }); assertOk(list, 'list');
+        assertEqual(list.entries.map(e => e.held), [true, true], 'both held');
+        await store.releaseWorkGroup({ group: 'extension:testext' });
+        const core = await store.claimWork({ now: NOW, kinds: KINDS, claimedBy: 'core' }); assertOk(core, 'core'); assertEqual(core.item?.id, sampleWorkItemId, 'core resumed');
+        const supervised = await store.claimSupervisedWork({ now: NOW, kinds: ['process_probe'], claimedBy: 'supervisor', attemptToken: sampleFailureId }); assertOk(supervised, 'supervisor'); assertEqual(supervised.item?.id, otherWorkItemId, 'supervisor resumed');
+      });
+    }),
+    contractCase('marks open supervised attempts of a held group', async make => {
+      await withSubject(make, async store => {
+        await store.addWork(sampleWorkInput({ kind: 'process_probe', holdGroup: 'extension:testext' }));
+        await store.claimSupervisedWork({ now: NOW, kinds: ['process_probe'], claimedBy: 'supervisor', attemptToken: sampleFailureId });
+        await store.holdWorkGroup({ group: 'extension:testext', now: NOW });
+        const open = await store.listOpenSupervisedAttempts(); assertOk(open, 'open');
+        assertEqual(open.attempts[0]?.held, true, 'held'); assertEqual(open.attempts[0]?.cancelRequested, false, 'not user cancellation');
+        await store.settleSupervisedAttempt({ id: sampleWorkItemId, attemptToken: sampleFailureId, now: NOW, outcome: 'cancelled' });
+        const list = await store.listWork({ includeClosed: false, limit: 10 }); assertOk(list, 'list');
+        assertEqual(list.entries[0]?.item.attempts, 0, 'attempt returned'); assertEqual(list.entries[0]?.item.claimedAt, null, 'claim released');
+        assertEqual(list.entries[0]?.latestAttempt?.outcome, 'cancelled', 'attempt cancelled');
+      });
+    }),
+    contractCase('reports hold and release idempotently', async make => {
+      await withSubject(make, async store => {
+        assertEqual(await store.holdWorkGroup({ group: 'group', now: NOW }), { ok: true, held: true }, 'first hold');
+        assertEqual(await store.holdWorkGroup({ group: 'group', now: LATER }), { ok: true, held: false }, 'second hold');
+        assertEqual(await store.releaseWorkGroup({ group: 'group' }), { ok: true, released: true }, 'first release');
+        assertEqual(await store.releaseWorkGroup({ group: 'group' }), { ok: true, released: false }, 'second release');
+      });
+    }),
     contractCase('lists open work newest first with the latest attempt', async make => {
       await withSubject(make, async store => {
         await store.addWork(sampleWorkInput({ kind: 'process_probe', createdAt: NOW }));

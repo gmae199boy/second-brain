@@ -58,7 +58,7 @@ export async function tickSchedules({ store, clock, idGen, readTimeZone }: {
       scheduleId: schedule.id, expectedNextRunAt: schedule.nextRunAt,
       nextRunAt: schedule.localTime !== null ? nextDailyOccurrence(now, schedule.localTime, schedule.timeZone!) : schedule.intervalSeconds === null ? null : new Date(now.getTime() + schedule.intervalSeconds * 1000),
       work: { id: idGen.next(), kind: schedule.kind, targetKind: schedule.targetKind,
-        targetId: schedule.targetId, createdAt: now, nextAttemptAt: now }, now,
+        targetId: schedule.targetId, holdGroup: schedule.holdGroup, createdAt: now, nextAttemptAt: now }, now,
     });
     if (!result.ok) return { ...result, fired, enqueued };
     if (result.fired) { fired++; if (result.created) enqueued++; }

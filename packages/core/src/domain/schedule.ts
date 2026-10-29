@@ -2,6 +2,7 @@
 export interface Schedule {
   id: string;
   kind: string;
+  holdGroup: string | null;
   targetKind: string;
   targetId: string;
   /** Daily wall time and the zone used to calculate the next instant. */

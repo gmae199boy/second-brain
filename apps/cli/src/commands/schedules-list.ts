@@ -9,8 +9,8 @@ export const schedulesListCommand: CommandSpec = {
     const limit = listLimit(context.options['limit']); if (!limit.ok) return limit;
     const r = await context.brain.schedules.list(limit.value === undefined ? {} : { limit: limit.value }); if (!r.ok) return r;
     const at = (d: Date | null) => d === null ? null : isoWithOffset(d);
-    return { ok: true, data: { schedules: r.schedules.map(s => ({ id: s.id, kind: s.kind, target_kind: s.targetKind, target_id: s.targetId,
+    return { ok: true, data: { schedules: r.schedules.map(s => ({ id: s.id, kind: s.kind, hold_group: s.holdGroup, target_kind: s.targetKind, target_id: s.targetId,
       local_time: s.localTime, time_zone: s.timeZone, interval_seconds: s.intervalSeconds, next_run_at: at(s.nextRunAt), last_run_at: at(s.lastRunAt), created_at: isoWithOffset(s.createdAt) })) },
-      meta: { count: r.count, has_more: r.hasMore }, text: [...r.schedules.map(s => `예약 ${s.id} 종류 ${s.kind} 대상 ${s.targetKind} ${s.targetId}, 시각 ${s.localTime ?? '없음'}`), `예약 ${r.count}건.`] };
+      meta: { count: r.count, has_more: r.hasMore }, text: [...r.schedules.map(s => `예약 ${s.id} 종류 ${s.kind} 대상 ${s.targetKind} ${s.targetId}, 시각 ${s.localTime ?? '없음'}${s.held ? ', 보류 중' : ''}`), `예약 ${r.count}건.`] };
   },
 };

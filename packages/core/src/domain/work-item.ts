@@ -37,6 +37,7 @@ export interface WorkItem {
   currentAttemptToken: string | null;
   /** Shared exclusion key across kinds and claim paths; null means independent. */
   serializationKey: string | null;
+  holdGroup: string | null;
   /** Together with `targetId`, what it has to be done to. */
   targetKind: string;
   targetId: string;
@@ -199,3 +200,9 @@ export function dependencyFailedText(id: string, outcome: 'failed' | 'cancelled'
 }
 
 export function modelWorkKinds(): string[] { return Object.keys(WORK_KINDS).filter(kind => WORK_KINDS[kind]!.callsModel); }
+
+/** Extension ownership takes precedence over an explicit group. */
+export function workHoldGroup(kind: string, explicit?: string | null): string | null {
+  const dot = kind.indexOf('.');
+  return dot < 0 ? explicit ?? null : `extension:${kind.slice(0, dot)}`;
+}

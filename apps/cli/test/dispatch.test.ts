@@ -1403,6 +1403,8 @@ describe('the dispatcher and the lock budget', () => {
       // tests are about the lock budget, so every capability answers the same
       // way and none of them is reached.
       const store: Store & SchemaStore = {
+        async holdWorkGroup() { return unavailable; },
+        async releaseWorkGroup() { return unavailable; },
         async listWork() { return unavailable; },
         async readModelWorkUsage() { return unavailable; },
         async listSchedules() { return unavailable; },

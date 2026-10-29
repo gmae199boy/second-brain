@@ -1,11 +1,11 @@
-import { formatInstant, parseInstant, type Schedule, type ScheduleStore } from '@second-brain/core';
+import { formatInstant, parseInstant, workHoldGroup, type Schedule, type ScheduleStore } from '@second-brain/core';
 import { sql } from 'kysely';
 import { databaseFailure, type PgConnect } from './connect.js';
-import { ensureWork } from './work.js';
+import { ensureWork, groupAvailable } from './work.js';
 import { withWrite } from './write.js';
 
 export interface ScheduleRow {
-  id: string; kind: string; target_kind: string; target_id: string;
+  id: string; kind: string; hold_group: string | null; target_kind: string; target_id: string;
   local_time: string | null; time_zone: string | null;
   interval_seconds: number | null; next_run_at: string | null;
   last_run_at: string | null; created_at: string;
@@ -21,7 +21,7 @@ function at(value: string, column: string): Date {
   return parsed.value;
 }
 function rowSchedule(row: ScheduleRow): Schedule {
-  return { id: row.id, kind: row.kind, targetKind: row.target_kind, targetId: row.target_id,
+  return { id: row.id, kind: row.kind, holdGroup: row.hold_group, targetKind: row.target_kind, targetId: row.target_id,
     localTime: row.local_time, timeZone: row.time_zone, intervalSeconds: row.interval_seconds, nextRunAt: row.next_run_at === null ? null : at(row.next_run_at, 'schedules.next_run_at'),
     lastRunAt: row.last_run_at === null ? null : at(row.last_run_at, 'schedules.last_run_at'), createdAt: at(row.created_at, 'schedules.created_at') };
 }
@@ -33,13 +33,13 @@ export function postgresScheduleStore(connect: PgConnect): ScheduleStore {
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
         const result = await withWrite(opened.connection, async held => {
-          const inserted = await sql`insert into brain.schedules (id, kind, target_kind, target_id, interval_seconds, next_run_at, last_run_at, created_at, local_time, time_zone)
-            values (${input.id}, ${input.kind}, ${input.targetKind}, ${input.targetId}, ${input.intervalSeconds},
+          const inserted = await sql`insert into brain.schedules (id, kind, hold_group, target_kind, target_id, interval_seconds, next_run_at, last_run_at, created_at, local_time, time_zone)
+            values (${input.id}, ${input.kind}, ${workHoldGroup(input.kind, input.holdGroup)}, ${input.targetKind}, ${input.targetId}, ${input.intervalSeconds},
               ${input.nextRunAt === null ? null : instant(input.nextRunAt)},
               ${input.lastRunAt === null ? null : instant(input.lastRunAt)}, ${instant(input.createdAt)}, ${input.localTime}, ${input.timeZone})
             on conflict (kind, target_kind, target_id) where local_time is not null do nothing returning id`.execute(held);
           if (!inserted.rows.length) return null;
-          return structuredClone(input);
+          return { ...structuredClone(input), holdGroup: workHoldGroup(input.kind, input.holdGroup) };
         });
         return result.ok ? result.value === null ? { ok: false, code: 'SCHEDULE_CONFLICT', message: '같은 대상의 매일 예약이 있습니다' } : { ok: true, schedule: result.value } : result;
       } catch (error) {
@@ -52,8 +52,8 @@ export function postgresScheduleStore(connect: PgConnect): ScheduleStore {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
-        const result = await sql<ScheduleRow>`select * from brain.schedules order by created_at, id limit ${limit + 1}`.execute(opened.connection.db);
-        return { ok: true, schedules: result.rows.slice(0, limit).map(rowSchedule), hasMore: result.rows.length > limit };
+        const result = await sql<ScheduleRow & { held: boolean }>`select *, not (${groupAvailable('brain.schedules')}) as held from brain.schedules order by created_at, id limit ${limit + 1}`.execute(opened.connection.db);
+        return { ok: true, schedules: result.rows.slice(0, limit).map(row => ({ ...rowSchedule(row), held: row.held })), hasMore: result.rows.length > limit };
       } catch (error) { return databaseFailure(error); }
     },
     async removeSchedule({ id }) {
@@ -106,7 +106,7 @@ export function postgresScheduleStore(connect: PgConnect): ScheduleStore {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
-        const result = await sql<ScheduleRow>`select * from brain.schedules where next_run_at <= ${instant(now)}
+        const result = await sql<ScheduleRow>`select * from brain.schedules where next_run_at <= ${instant(now)} and ${groupAvailable('brain.schedules')}
           order by next_run_at, id limit ${limit}`.execute(opened.connection.db);
         return { ok: true, schedules: result.rows.map(rowSchedule) };
       } catch (error) { return databaseFailure(error); }
@@ -121,18 +121,18 @@ export function postgresScheduleStore(connect: PgConnect): ScheduleStore {
           const next = input.nextRunAt === null ? null : instant(input.nextRunAt);
           // Validate work even when the compare-and-set would lose.
           instant(input.work.createdAt); instant(input.work.nextAttemptAt);
-          const updated = await sql`update brain.schedules set last_run_at = ${now}, next_run_at = ${next}
-            where id = ${input.scheduleId} and next_run_at = ${expected}
-              and time_zone is not distinct from ${input.localDates?.timeZone ?? null} returning id`.execute(held);
+          const updated = await sql<{ hold_group: string | null }>`update brain.schedules set last_run_at = ${now}, next_run_at = ${next}
+            where id = ${input.scheduleId} and next_run_at = ${expected} and ${groupAvailable('brain.schedules')}
+              and time_zone is not distinct from ${input.localDates?.timeZone ?? null} returning hold_group`.execute(held);
           if (updated.rows.length === 0) return { ok: true, fired: false } as const;
-          let workInput = input.work;
+          let workInput = { ...input.work, holdGroup: updated.rows[0]!.hold_group };
           if (input.localDates) {
             const missing = await sql<{ local_date: string }>`select to_char(d, 'YYYY-MM-DD') as local_date
               from generate_series(${input.localDates.from}::date, ${input.localDates.to}::date, interval '1 day') d
               where not exists (select 1 from brain.schedule_successes s where s.schedule_id = ${input.scheduleId} and s.local_date = d::date)
               order by d`.execute(held);
             if (!missing.rows.length) return { ok: true, fired: true, created: false, covered: true } as const;
-            workInput = { ...input.work, scheduledDates: { scheduleId: input.scheduleId, from: missing.rows[0]!.local_date,
+            workInput = { ...workInput, scheduledDates: { scheduleId: input.scheduleId, from: missing.rows[0]!.local_date,
               to: missing.rows[missing.rows.length - 1]!.local_date, timeZone: input.localDates.timeZone } };
           }
           const work = await ensureWork(held, workInput);

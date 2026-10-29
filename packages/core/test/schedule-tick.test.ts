@@ -7,7 +7,7 @@ import { memoryStore, memorySchemaStore, memorySpool, memoryFileStore, memoryRep
 import type { Schedule } from '../src/domain/schedule.js';
 
 const now = new Date('2026-02-03T04:05:06.000Z');
-const schedule = (over: Partial<Schedule> = {}): Schedule => ({ id: 's', kind: SCHEDULE_PROBE_KIND,
+const schedule = (over: Partial<Schedule> = {}): Schedule => ({ holdGroup: null, id: 's', kind: SCHEDULE_PROBE_KIND,
   targetKind: 'probe', targetId: 's', localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now, ...over });
 function kit() {
   const store = memoryStore(); let at = now; let reads = 0;

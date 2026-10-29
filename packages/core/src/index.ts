@@ -266,3 +266,6 @@ export { modelWorkKinds } from './domain/work-item.js';
 export type { WorkAttempt } from './domain/work-item.js';
 
 export type { BrainSchedules } from './brain.js';
+
+export { workHoldGroup } from './domain/work-item.js';
+export { holdWorkGroup, releaseWorkGroup } from './queue/hold-groups.js';

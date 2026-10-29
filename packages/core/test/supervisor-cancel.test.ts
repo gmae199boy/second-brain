@@ -8,10 +8,10 @@ import { manualTime } from '../src/testing/fakes/clock.js';
 import { sequenceIdGen } from '../src/testing/fakes/id-gen.js';
 const now = new Date('2026-10-29T00:00:00Z');
 const flush = async () => { for (let i = 0; i < 100; i++) await Promise.resolve(); };
-async function kit(configure?: (store: ReturnType<typeof memoryStore>, inspector: ReturnType<typeof fakeProcessInspector>) => void) {
+async function kit(configure?: (store: ReturnType<typeof memoryStore>, inspector: ReturnType<typeof fakeProcessInspector>) => void, holdGroup?: string) {
   const store = memoryStore(); const launcher = fakeProcessLauncher(); const inspector = fakeProcessInspector(launcher);
   const time = manualTime(now); const idGen = sequenceIdGen({ timestampMs: now.getTime() }); const controller = new AbortController(); const id = idGen.next();
-  await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt: now, nextAttemptAt: now });
+  await store.addWork({ id, holdGroup, kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt: now, nextAttemptAt: now });
   configure?.(store, inspector);
   const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, launcher, inspector, ...time, idGen,
     signal: controller.signal, cancelGraceMs: 300, cancelPollMs: 100, groupConfirmMs: 200,
@@ -302,4 +302,27 @@ it.each(['before leader exit', 'during terminal settlement'] as const)('cleans s
   expect(child.signals).toEqual(['SIGTERM', 'SIGKILL']);
   expect(k.store.snapshot().workItems[0]).toMatchObject({ outcome: 'cancelled', currentAttemptToken: null });
   k.controller.abort(); await k.running;
+});
+
+it('cancels a running attempt of a held group without closing the work', async () => {
+  const k = await kit(undefined, 'extension:testext'); const child = k.launcher.processes[0]!; child.ignoreTerm = true;
+  try {
+    await k.store.holdWorkGroup({ group: 'extension:testext', now });
+    k.time.advance(100); await flush(); expect(child.signals).toEqual(['SIGTERM']);
+    k.time.advance(300); await flush(); expect(child.signals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(k.store.snapshot().workAttempts[0]?.outcome).toBe('cancelled');
+    expect(k.store.snapshot().workItems[0]).toMatchObject({ completedAt: null, outcome: null, cancelRequestedAt: null,
+      currentAttemptToken: null, claimedAt: null, claimedBy: null, attempts: 0 });
+    expect(await k.store.claimSupervisedWork({ now: k.time.clock.now(), kinds: ['process_probe'], claimedBy: 'other', attemptToken: 'next' })).toMatchObject({ item: null });
+    await k.store.releaseWorkGroup({ group: 'extension:testext' });
+    expect(await k.store.claimSupervisedWork({ now: k.time.clock.now(), kinds: ['process_probe'], claimedBy: 'other', attemptToken: 'next' })).toMatchObject({ item: { id: k.id } });
+  } finally { k.controller.abort(); await k.running; }
+});
+it('allows result and exit zero to win a group hold race', async () => {
+  const k = await kit(undefined, 'extension:testext');
+  try {
+    await k.store.holdWorkGroup({ group: 'extension:testext', now });
+    k.launcher.processes[0]!.push('{"abi":1,"type":"result"}'); k.launcher.processes[0]!.exit(); await flush();
+    expect(k.store.snapshot().workItems[0]?.outcome).toBe('succeeded');
+  } finally { k.controller.abort(); await k.running; }
 });

@@ -1240,6 +1240,47 @@ export function sessionMetadataContract(): ContractCase<SessionMetadataSubject>[
       }),
     ),
     contractCase<SessionMetadataSubject>(
+      'invalid identity work hold groups leave no session, checkout or work and do not affect existing sessions',
+      async (make) => {
+        for (const holdGroup of ['', 'x'.repeat(201)]) {
+          await withSubject(make, async (store) => {
+            await owner(store);
+            const now = new Date('2026-01-02T03:06:00.000Z');
+            const work = { id: '01940000-0000-7000-8000-000000000810', kind: 'session_identity',
+              targetKind: 'session', targetId: sampleSessionToken, createdAt: now, nextAttemptAt: now };
+            const input = sampleEnsureSessionInput({ checkout: sampleCheckoutInput(),
+              identityWork: { ...work, holdGroup } });
+            const failed = await store.ensureSession(input);
+            assertNotOk(failed, 'invalid hold group was accepted');
+            assertEqual(failed.code, 'DB_UNAVAILABLE', 'invalid hold group failure code');
+            const absent = await store.findSession(input.key);
+            assertOk(absent, 'session lookup failed');
+            assertEqual(absent.session, null, 'failed ensure left a session');
+            const open = await store.listOpenWorkTargets({ kind: work.kind });
+            assertOk(open, 'work lookup failed');
+            assertEqual(open.targets, [], 'failed ensure left identity work');
+
+            // Reuse the identity and path with new ids: either old checkout row
+            // would win the lookup if the failed call had left it behind.
+            const checkout = sampleCheckoutInput({ projectId: otherProjectId, worktreeId: otherWorktreeId });
+            const created = await store.ensureSession({ ...input, checkout, identityWork: work });
+            assertOk(created, 'valid retry failed');
+            assertTrue(created.created, 'failed ensure left the session key occupied');
+            assertEqual([created.session.projectId, created.session.worktreeId],
+              [checkout.projectId, checkout.worktreeId], 'failed ensure left checkout rows');
+            const again = await store.ensureSession(input);
+            assertOk(again, 'existing session validated unused identity work');
+            assertTrue(!again.created, 'existing session was created again');
+            assertEqual(again.session, created.session, 'existing session changed');
+            const after = await store.listOpenWorkTargets({ kind: work.kind });
+            assertOk(after, 'work lookup after retry failed');
+            assertEqual(after.targets, [{ targetKind: work.targetKind, targetId: work.targetId }],
+              'valid retry must create identity work');
+          });
+        }
+      },
+    ),
+    contractCase<SessionMetadataSubject>(
       'identity work opens only when ensureSession creates a session',
       async (make) => withSubject(make, async (store) => {
         await owner(store);

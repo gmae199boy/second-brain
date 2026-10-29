@@ -1,3 +1,4 @@
+import { holdWorkGroup, releaseWorkGroup } from './queue/hold-groups.js';
 import { listWork } from './queue/list.js';
 import { workExecutionClass } from './domain/work-item.js';
 import type { SchemaVersions } from './schema.js';
@@ -198,6 +199,8 @@ export interface BrainDrainReport extends DrainQueueReport {
 
 export type BrainQueueCancelResult = { ok: true; id: string; state: 'cancelled' | 'requested' | 'already_closed' } | { ok: false; code: 'WORK_NOT_FOUND' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface BrainQueue {
+  hold(input: { group: string }): ReturnType<typeof holdWorkGroup>;
+  release(input: { group: string }): ReturnType<typeof releaseWorkGroup>;
   list(input?: Parameters<typeof listWork>[1]): ReturnType<typeof listWork>;
   cancel(input: { id: string }): Promise<BrainQueueCancelResult>;
   /** Work the backlog within a time budget, and report what happened (AD-21). */
@@ -423,6 +426,8 @@ export function createBrain(dependencies: BrainDependencies): Brain {
       run: input => runSchedule({ store, clock, idGen, readTimeZone }, input),
     },
     queue: {
+      hold: input => holdWorkGroup({ store, clock }, input),
+      release: input => releaseWorkGroup({ store }, input),
       list: input => listWork({ store, clock }, input),
       async cancel(input) {
         const result = await store.requestWorkCancel({ id: input.id, now: clock.now() });
