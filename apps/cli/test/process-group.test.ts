@@ -167,3 +167,21 @@ it.each(['missing', 'uppercase UUID', 'unpaired range', 'valid'])('probe validat
   expect(JSON.parse(stdout)).toMatchObject(mode === 'valid' ? { abi: 1, type: 'result' } : { abi: 1, type: 'error', code: 'ABI_ENV_INVALID', retryable: false });
   expect(await started.handle.exited).toEqual({ code: mode === 'valid' ? 0 : 2, signal: null });
 });
+
+it('records externally SIGKILLed real children as died and schedules a retry', async () => {
+  const store = memoryStore(), createdAt = new Date(), idGen = sequenceIdGen({ timestampMs: createdAt.getTime() }), controller = new AbortController();
+  const id = idGen.next(); let handle: ProcessHandle | undefined;
+  await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt, nextAttemptAt: createdAt });
+  const running = runSupervisor({ store: { ...store, ...memorySchemaStore({ version: 3 }) }, clock: systemClock, timer: systemTimer, idGen,
+    launcher: { async start(spec) { const started = await systemProcessLauncher.start(spec); if (started.ok) handle = started.handle; return started; } },
+    inspector: systemProcessInspector, signal: controller.signal, pollMs: 10, cancelPollMs: 10, cancelGraceMs: 30, groupConfirmMs: 100,
+    launches: { process_probe: () => ({ command: process.execPath, args: ['-e', 'process.stdout.write(JSON.stringify({abi:1,type:"progress"})+"\\n");setInterval(()=>{},1000)'], env: {} }) } });
+  try {
+    await expect.poll(() => store.snapshot().workAttempts[0]?.lastProgressAt, { timeout: 3000 }).toBeInstanceOf(Date);
+    process.kill(handle!.pid, 'SIGKILL');
+    await expect.poll(() => store.snapshot().workAttempts[0]?.outcome, { timeout: 3000 }).toBe('died');
+    expect(store.snapshot().workAttempts[0]).toMatchObject({ errorCode: null, errorRetryable: null });
+    expect(store.snapshot().workItems[0]).toMatchObject({ completedAt: null, lastError: expect.stringContaining('PROCESS_DIED') });
+    expect(store.snapshot().workItems[0]!.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(createdAt.getTime() + 900_000);
+  } finally { controller.abort(); await running; handle?.closeOutput(); }
+});

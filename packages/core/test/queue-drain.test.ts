@@ -554,3 +554,12 @@ describe('the drain budgets', () => {
     expect(DRAIN_BUDGET_MS).toEqual({ command: 30_000, opportunistic: 2_000 });
   });
 });
+
+it('core drain success and permanent failure leave different outcomes', async () => {
+  const success = await withItem(), failed = await withItem();
+  await success.drain(async () => ({ ok: true }));
+  await failed.drain(async () => ({ ok: false, code: 'PERMANENT', retryable: false, message: '처리 실패' }));
+  expect(stored(success.store)).toMatchObject({ completedAt: START, outcome: 'succeeded' });
+  expect(stored(failed.store)).toMatchObject({ completedAt: START, outcome: 'failed' });
+  expect(failed.store.snapshot().failures).toHaveLength(1);
+});

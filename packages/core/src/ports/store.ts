@@ -509,14 +509,24 @@ export type ClaimSupervisedWorkResult =
   | { ok: true; item: WorkItem | null; attemptToken: string | null }
   | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface RenewSupervisedLeaseInput {
-  id: string; attemptToken: string; now: Date; progressAt: Date;
+  id: string; attemptToken: string; now: Date; progressAt: Date | null;
 }
 export interface FinishSupervisedWorkInput {
-  id: string; attemptToken: string; now: Date; outcome: 'succeeded' | 'failed';
+  id: string; attemptToken: string; now: Date; outcome: 'succeeded' | 'failed' | 'stalled' | 'died';
+  failure?: Pick<RecordFailureInput, 'id' | 'stage' | 'fingerprint' | 'code' | 'message' | 'occurredAt'>;
   nextAttemptAt?: Date; lastError?: string;
   elapsedMs?: number; usage?: { inputTokens: number; cachedInputTokens: number; outputTokens: number };
   errorCode?: string; errorRetryable?: boolean; stderr?: string | null;
 }
+
+export interface WorkAttemptHealthEntry {
+  workItemId: string; kind: string; at: Date;
+  errorCode: string | null; errorRetryable: boolean | null; lastError: string | null;
+}
+export type WorkAttemptHealthKind = 'stalled' | 'died' | 'unknown' | 'failed';
+export type ReadWorkAttemptHealthResult =
+  | { ok: true; health: Record<WorkAttemptHealthKind, { count: number; latest: WorkAttemptHealthEntry | null }> }
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 export type WorkCancelState = 'cancelled' | 'requested' | 'already_closed' | 'not_found';
 export type RequestWorkCancelResult = { ok: true; state: WorkCancelState } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
@@ -658,6 +668,7 @@ export type ResolveFailuresResult =
  * the item together or does neither.
  */
 export interface WorkStore {
+  readWorkAttemptHealth(): Promise<ReadWorkAttemptHealthResult>;
   requestWorkCancel(input: { id: string; now: Date }): Promise<RequestWorkCancelResult>;
   recordSupervisedProcess(input: RecordSupervisedProcessInput): Promise<FinishWorkResult>;
   listOpenSupervisedAttempts(): Promise<ListOpenSupervisedAttemptsResult>;

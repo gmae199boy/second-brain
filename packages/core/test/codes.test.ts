@@ -83,6 +83,8 @@ describe('the error codes', () => {
       ABI_NO_RESULT: 1,
       ABI_EXIT_FAILED: 1,
       ABI_OUTPUT_UNREADABLE: 1,
+      PROCESS_STALLED: 1,
+      PROCESS_DIED: 1,
       PROCESS_START_FAILED: 1,
       ABI_ENV_INVALID: 1,
 

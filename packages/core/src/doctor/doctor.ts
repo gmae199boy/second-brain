@@ -96,7 +96,7 @@ export interface DoctorCheckSource {
  * already wrong, and a check that took the write lock would be the one thing
  * that makes a busy brain look broken (AD-7).
  */
-export type DoctorReadStore = Pick<WorkStore, 'listFailures'> &
+export type DoctorReadStore = Pick<WorkStore, 'listFailures' | 'readWorkAttemptHealth'> &
   Pick<TranscriptFileStore, 'listTranscriptFiles'> &
   Pick<import('../ports/store.js').SessionStore, 'countUntaggedSessions'>;
 
@@ -160,7 +160,7 @@ export async function runDoctor(
     if (check.status === 'fail' && failedPrerequisite === undefined) failedPrerequisite = check.id;
   }
   if (failedPrerequisite !== undefined) {
-    for (const id of ['db', ...(options.adapterProbeIds ?? []), 'schema-version', 'failures', 'untagged', 'transcripts']) checks.push({ id, status: 'skip', detail: prereqFailed(failedPrerequisite) });
+    for (const id of ['db', ...(options.adapterProbeIds ?? []), 'schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error']) checks.push({ id, status: 'skip', detail: prereqFailed(failedPrerequisite) });
     for (const source of options.checks ?? []) checks.push(await registered(source));
     return { checks, summary: summarise(checks) };
   }
@@ -170,7 +170,7 @@ export async function runDoctor(
     // Everything a store would have answered is skipped under the same reason,
     // so a reader never has to work out from what is missing whether a check
     // was skipped or never existed.
-    for (const id of ['schema-version', 'failures', 'untagged', 'transcripts']) {
+    for (const id of ['schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error']) {
       checks.push({ id, status: 'skip', detail: prereqFailed('db') });
     }
   } else {
@@ -183,6 +183,7 @@ export async function runDoctor(
       ? { id: 'untagged', status: 'ok', detail: `${String(untagged.count)}건` }
       : { id: 'untagged', status: 'fail', code: untagged.code, detail: untagged.message });
     checks.push(await transcriptsCheck(options));
+    checks.push(...await workAttemptChecks(options.store));
   }
 
   for (const source of options.checks ?? []) {
@@ -270,6 +271,18 @@ async function failuresCheck(store: DoctorReadStore): Promise<DoctorCheck> {
     .map(([kind, count]) => `${kind} ${String(count)}건`)
     .join(', ');
   return { id: 'failures', status: 'warn', detail };
+}
+
+async function workAttemptChecks(store: DoctorReadStore): Promise<DoctorCheck[]> {
+  const read = await store.readWorkAttemptHealth();
+  return (['stalled', 'died', 'unknown', 'failed'] as const).map(kind => {
+    const id = kind === 'failed' ? 'work-last-error' : `work-${kind}`;
+    if (!read.ok) return { id, status: 'fail', code: read.code, detail: read.message };
+    const { count, latest } = read.health[kind];
+    const detail = `${String(count)}건` + (latest === null ? '' : `, ${latest.kind} ${latest.workItemId} ${latest.at.toISOString()}` +
+      (kind === 'failed' ? `, ${latest.errorCode ?? '없음'} retryable=${String(latest.errorRetryable)}, ${latest.lastError ?? '없음'}` : ''));
+    return { id, status: count === 0 ? 'ok' : 'warn', detail };
+  });
 }
 
 /**

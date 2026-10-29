@@ -117,7 +117,10 @@ const readMemoryWorkItem = async (store: WorkStore, id: string) =>
   (store as ReturnType<typeof memoryStore>).snapshot().workItems.find(item => item.id === id) ?? null;
 
 describe('the queue contract against the memory store', () => {
-  for (const testCase of workStoreContract(readMemoryWorkItem)) {
+  for (const testCase of workStoreContract(readMemoryWorkItem, async (store, token) => {
+    const attempt = (store as ReturnType<typeof memoryStore>).snapshot().workAttempts.find(a => a.token === token);
+    return attempt ? { lastProgressAt: attempt.lastProgressAt, renewedAt: attempt.renewedAt } : null;
+  })) {
     it(testCase.name, async () => {
       await testCase.run(async () => memoryStore());
     });

@@ -336,3 +336,11 @@ source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-abi-v1-fixture-ts-pl
 severity: high
 reason: 비밀번호: "SyntheticSecret123"은 기준 revision과 현재 모두 그대로 반환한다. 한국어 패턴에는 영어 open 인용 그룹이 없으며 이번 색인 변경 전부터 존재한 한계다. 한국어 인용 값 지원을 별도로 정의하고 구현해야 한다.
 status: open
+
+### DW-20: 이전 incarnation 회수 정산(`reconcile` → `settleSupervisedAttempt`의 `died`)에는 10회 상한이 없어, 데몬이 죽을 때마다 같은 일감이 `failures`에 남지 않고 계속 다시 청구될 수 있다.
+origin: spec-deferred 5460625d090c
+location: packages/core/src/queue/supervisor.ts reconcile(); packages/postgres/src/work.ts settleSupervisedAttempt
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-doctor-plan.md`
+severity: medium
+reason: `packages/core/src/queue/supervisor.ts` `reconcile()`은 `settleSupervisedAttempt({ outcome: 'died' })`를 부르고, PG·fake 모두 `next_attempt_at = now`로 바로 다시 열며 `attempts`를 보지 않는다. 이 동작은 12.2부터 있었고 이번 변경(plan Never·Design Notes)이 그대로 두었다. 이번 변경은 실행 중 정산(`finishSupervisedWork`)에만 AD-21 10회 상한을 더했다. 회수 경로에도 `MAX_WORK_ATTEMPTS`에서 기록 후 닫기를 적용하려면 settle 입력이나 reconcile 분기를 바꿔야 한다.
+status: open

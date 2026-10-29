@@ -967,7 +967,7 @@ describe('last-hook check', () => {
     const home = await installedHome();
     const { recordHookArrival } = await import('../src/runtime/hook-arrival.js');
     await recordHookArrival(home, 'claude-code', '/old/plugin');
-    await writeFile(join(home, 'installed.json'), JSON.stringify({ commit: 'a'.repeat(40), schema_version: 6, node: process.execPath, plugin_root: '/installed/plugin', installed_at: new Date().toISOString() }));
+    await writeFile(join(home, 'installed.json'), JSON.stringify({ commit: 'a'.repeat(40), schema_version: 7, node: process.execPath, plugin_root: '/installed/plugin', installed_at: new Date().toISOString() }));
     await writeFile(pluginRunPath(home), JSON.stringify({ plugin_root: '/current/plugin', app_ref: 'a'.repeat(40), seen_at: new Date().toISOString() }));
     const check = await hookCheck(home);
     expect(check).toMatchObject({ status: 'warn', code: 'PLUGIN_DUPLICATE' });
@@ -980,7 +980,7 @@ describe('last-hook check', () => {
     const home = await installedHome();
     const { recordHookArrival } = await import('../src/runtime/hook-arrival.js');
     await recordHookArrival(home, 'claude-code', '/old/plugin');
-    await writeFile(join(home, 'installed.json'), JSON.stringify({ commit: 'a'.repeat(40), schema_version: 6, node: process.execPath, plugin_root: '/installed/plugin', installed_at: new Date().toISOString() }));
+    await writeFile(join(home, 'installed.json'), JSON.stringify({ commit: 'a'.repeat(40), schema_version: 7, node: process.execPath, plugin_root: '/installed/plugin', installed_at: new Date().toISOString() }));
     expect(await hookCheck(home)).toMatchObject({ status: 'warn', code: 'PLUGIN_DUPLICATE', detail: expect.stringContaining('/installed/plugin') });
   });
 });

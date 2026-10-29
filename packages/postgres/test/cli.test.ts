@@ -48,7 +48,7 @@ it.each(['refused','missing-url','missing-schema','version','session-lock','sche
   if(kind==='refused')override={BRAIN_DATABASE_URL:'postgresql://brain_app:unavailable@127.0.0.1:1/brain'};
   if(kind==='missing-url')override={BRAIN_DATABASE_URL:''};
   if(kind==='missing-schema')await kit.db.query('drop schema brain cascade');
-  if(kind==='version')await kit.db.query('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)');
+  if(kind==='version')await kit.db.query('update brain.schema_migrations set version = 7 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)');
   const result=await kit.hook(override);expect(result.code,result.stderr).toBe(0);const envelope=JSON.parse(result.stdout);
   expect(envelope.ok).toBe(true);expect(envelope.data.spooled).toBe(true);expect(envelope.warnings).toContain('SPOOLED');if(!locked)expect(envelope.warnings).toContain(kind==='version'?'SCHEMA_MISMATCH':'DB_UNAVAILABLE');
   const files=(await readdir(join(kit.home,'spool'))).filter(n=>n.endsWith('.jsonl'));expect(files.length).toBeGreaterThan(0);
@@ -102,7 +102,7 @@ it('reads defaults, persists normalized config across processes and rejects inva
 });
 it('uses the default selector and preserves schema mismatch errors', async () => {
   const kit = await world();
-  await kit.db.query('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)');
+  await kit.db.query('update brain.schema_migrations set version = 7 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)');
   expect(JSON.parse((await run(['config','get','timezone','--json'],kit.env)).stdout)).toMatchObject({ ok:false,error:{code:'SCHEMA_MISMATCH'} });
   const config = await readFile(join(kit.home, 'config.toml'), 'utf8');
   await writeFile(join(kit.home, 'config.toml'), config.replace('url_env = "BRAIN_DATABASE_URL"', ''));
@@ -159,11 +159,11 @@ it('answers commands with DB_UNAVAILABLE without the brain schema and SCHEMA_MIS
   const kit = await world();
   await kit.db.query("insert into brain.schema_migrations(owner,version,name,checksum,applied_at) values ('garmin',99,'extension','a','2026-01-01T00:00:00Z')");
   expect((await run(['queue','drain','--json'], kit.env)).code).toBe(0);
-  await kit.db.query("update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)");
+  await kit.db.query("update brain.schema_migrations set version = 7 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)");
   const mismatch = await run(['queue','drain','--json'], kit.env);
   expect(mismatch.code).toBe(1);
   expect(JSON.parse(mismatch.stdout)).toMatchObject({ ok: false, error: { code: 'SCHEMA_MISMATCH', message: expect.stringContaining('core') } });
-  expect(JSON.parse(mismatch.stdout).error.message).toMatch(/6.*5/);
+  expect(JSON.parse(mismatch.stdout).error.message).toMatch(/7.*6/);
   await kit.db.query('drop schema brain cascade');
   for (const args of [['queue','drain'], ['failures','list']]) {
     const result = await run([...args, '--json'], kit.env);

@@ -294,7 +294,7 @@ it.each(['reclaimed', 'completed'] as const)('refuses begin after a blocked clai
   if (change === 'reclaimed') {
     await owner.query('update brain.work_items set claimed_by=$1 where id=$2', ['other-worker', id(2)]);
   } else {
-    await owner.query('update brain.work_items set completed_at=$1, claimed_by=null, claimed_at=null, claim_expires_at=null where id=$2', [now, id(2)]);
+    await owner.query("update brain.work_items set outcome='succeeded', completed_at=$1, claimed_by=null, claimed_at=null, claim_expires_at=null where id=$2", [now, id(2)]);
   }
   const pending = store.beginExtraction(begin(5));
   try { await waitForLocks(db, ['claim-share-race']); } finally { await owner.query('commit'); }

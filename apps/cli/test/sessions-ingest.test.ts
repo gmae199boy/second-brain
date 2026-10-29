@@ -2849,7 +2849,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
     const transcript = await transcriptIn(home);
     const database = new PgTestClient(databaseIn(home));
     try {
-      (await database.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
+      (await database.exec('update brain.schema_migrations set version = 7 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
     } finally {
       (await database.close());
     }
@@ -2916,7 +2916,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
     const transcript = await transcriptIn(home);
     const database = new PgTestClient(databaseIn(home));
     try {
-      (await database.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
+      (await database.exec('update brain.schema_migrations set version = 7 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
     } finally {
       (await database.close());
     }
@@ -2939,7 +2939,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
     const transcript = await transcriptIn(home);
     const database = new PgTestClient(databaseIn(home));
     try {
-      (await database.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
+      (await database.exec('update brain.schema_migrations set version = 7 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
     } finally {
       (await database.close());
     }
@@ -3049,7 +3049,7 @@ describe('hook arrival evidence', () => {
     const transcript = await transcriptIn(home);
     if (spooled) {
       const db = new PgTestClient(databaseIn(home));
-      try { (await db.exec('update brain.schema_migrations set version = 6 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)')); } finally { (await db.close()); }
+      try { (await db.exec('update brain.schema_migrations set version = 7 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)')); } finally { (await db.close()); }
     }
     const run = await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, stopPayload(transcript), { SECOND_BRAIN_PLUGIN_ROOT: '/demo/plugin' });
     expect(run.code).toBe(0);

@@ -68,9 +68,9 @@ export function createAbiRun() {
     if (event.type === 'result' || event.type === 'error') {
       if (final) fail('ABI_DUPLICATE_FINAL', '최종 이벤트가 두 번 왔습니다');
       else { final = event; if (event.type === 'result') usage = event.usage ?? null; }
-      return false;
+      return !failure;
     }
-    return !final && event.type === 'progress';
+    return !final;
   };
   const feed = (raw: string): ProcessAbiEvent[] => {
     const progress: ProcessAbiEvent[] = [];

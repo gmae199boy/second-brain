@@ -1,5 +1,5 @@
-import { failureText } from '../domain/failure.js';
-import { retryDelayMs, SUPERVISOR_POLL_MS, SUPERVISOR_RENEW_EVERY_MS, SUPERVISOR_CANCEL_GRACE_MS, SUPERVISOR_CANCEL_POLL_MS, SUPERVISOR_GROUP_CONFIRM_MS, workExecutionClass, type WorkItem } from '../domain/work-item.js';
+import { failureFingerprint, failureText } from '../domain/failure.js';
+import { MAX_WORK_ATTEMPTS, workKindPolicy, workStallWindowMs, SUPERVISOR_POLL_MS, SUPERVISOR_RENEW_EVERY_MS, SUPERVISOR_CANCEL_GRACE_MS, SUPERVISOR_CANCEL_POLL_MS, SUPERVISOR_GROUP_CONFIRM_MS, workExecutionClass, type WorkItem } from '../domain/work-item.js';
 import type { Clock, Timer } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
 import type { ProcessInspector, ProcessLauncher, ProcessSpec } from '../ports/process.js';
@@ -12,6 +12,7 @@ export interface SupervisorOptions {
   clock: Clock; timer: Timer; idGen: IdGen;
   launches: Readonly<Record<string, (item: WorkItem, token: string) => ProcessSpec | null>>;
   signal: AbortSignal; log?: (message: string) => void | Promise<void>; schemaVersions?: SchemaVersions;
+  stallWindowMs?: (kind: string) => number;
   pollMs?: number; renewEveryMs?: number; cancelGraceMs?: number; cancelPollMs?: number; groupConfirmMs?: number;
 }
 /** Every database transaction completes before waiting on a child or signal grace. */
@@ -60,6 +61,8 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     let verdict: AbiRunVerdict;
     let exit = { code: null as number | null, signal: null as string | null };
     let stopped = false;
+    let terminationCause: 'exit' | 'cancelled' | 'stalled' | 'protocol' | undefined;
+    let sawFinal = false;
     let started: Awaited<ReturnType<ProcessLauncher['start']>>;
     try {
       const spec = launches[item.kind]?.(item, token) ?? null;
@@ -67,15 +70,20 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     } catch { started = { ok: false, message: '자식 프로세스를 시작할 수 없습니다' }; }
     if (!started.ok) { run.fail('PROCESS_START_FAILED', started.message); failed = started.message; }
     else {
+      const childStartedAt = clock.now().getTime();
       const handle = started.handle;
-      const exited = handle.exited.then(value => { endedAt = clock.now().getTime(); return value; });
       let stopResolve!: () => void;
       const stop = new Promise<void>(resolve => { stopResolve = resolve; });
+      const terminate = (cause: NonNullable<typeof terminationCause>): void => {
+        if (terminationCause !== undefined) return;
+        terminationCause = cause; stopResolve();
+      };
+      const exited = handle.exited.then(value => { endedAt = clock.now().getTime(); terminate('exit'); return value; });
       // Consume stderr while identity/database work is pending so the adapter
       // cannot accumulate an unbounded diagnostic queue behind these awaits.
       const readStderr = (async () => {
         try { for await (const chunk of handle.stderr) stderr.feed(chunk); }
-        catch { run.fail('ABI_OUTPUT_UNREADABLE', '자식 프로세스 출력을 읽을 수 없습니다'); failed = '출력 읽기 실패'; stopResolve(); }
+        catch { run.fail('ABI_OUTPUT_UNREADABLE', '자식 프로세스 출력을 읽을 수 없습니다'); failed = '출력 읽기 실패'; terminate('protocol'); }
       })();
       const [boot, start] = await Promise.all([inspector.bootTime(), inspector.startedAt(handle.pid)]);
       const identity: GroupIdentity = { pgid: handle.pid, osBootAt: boot.state === 'found' ? boot.value : null,
@@ -85,7 +93,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
         osBootAt: identity.osBootAt, osStartedAt: identity.osStartedAt });
       if (!recorded.ok) await problem(`감독자 프로세스 기록 실패 (${recorded.code})`);
       const watch = new AbortController();
-      const abort = (): void => { stopped = true; stopResolve(); };
+      const abort = (): void => { stopped = true; terminate('cancelled'); };
       signal.addEventListener('abort', abort, { once: true });
       if (signal.aborted) abort();
       const poll = (async () => {
@@ -94,10 +102,20 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
           if (watch.signal.aborted) break;
           const open = await store.listOpenSupervisedAttempts();
           if (!open.ok) { await problem(`감독자 취소 요청 조회 실패 (${open.code})`); continue; }
-          if (open.attempts.some(a => a.token === token && a.cancelRequested)) { stopped = true; stopResolve(); break; }
+          if (open.attempts.some(a => a.token === token && a.cancelRequested)) { stopped = true; terminate('cancelled'); break; }
+        }
+      })();
+      let lastProgress = childStartedAt;
+      const stallWindow = (options.stallWindowMs ?? workStallWindowMs)(item.kind);
+      const stall = (async () => {
+        while (!watch.signal.aborted) {
+          await timer.sleep(Math.max(0, lastProgress + stallWindow - clock.now().getTime()), watch.signal);
+          if (watch.signal.aborted || terminationCause !== undefined) break;
+          if (clock.now().getTime() - lastProgress >= stallWindow) { terminate('stalled'); break; }
         }
       })();
       let lastRenewed = -Infinity;
+      let lastProgressPersisted = -Infinity;
       let readingStopped = false;
       let pendingRenewal: ReturnType<WorkStore['renewSupervisedLease']> | undefined;
       const read = (async () => {
@@ -105,21 +123,28 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
           for await (const chunk of handle.stdout) {
             if (readingStopped) break;
             const progress = run.feed(chunk);
-            if (run.violation) { failed = run.violation.reason; stopResolve(); break; }
-            for (const _event of progress) {
+            if (run.violation) { failed = run.violation.reason; terminate('protocol'); break; }
+            for (const event of progress) {
               const now = clock.now();
-              if (now.getTime() - lastRenewed >= (options.renewEveryMs ?? SUPERVISOR_RENEW_EVERY_MS)) {
-                pendingRenewal = store.renewSupervisedLease({ id: item.id, attemptToken: token, now, progressAt: now });
+              if (event.type !== 'heartbeat') lastProgress = now.getTime();
+              if (event.type === 'result' || event.type === 'error') sawFinal = true;
+              const lastWritten = event.type === 'heartbeat' ? lastRenewed : lastProgressPersisted;
+              if (now.getTime() - lastWritten >= (options.renewEveryMs ?? SUPERVISOR_RENEW_EVERY_MS)) {
+                pendingRenewal = store.renewSupervisedLease({ id: item.id, attemptToken: token, now, progressAt: event.type === 'heartbeat' ? null : now });
                 const renewed = await pendingRenewal;
                 pendingRenewal = undefined;
                 if (!renewed.ok) await problem(`감독자 임대 갱신 실패 (${renewed.code})`);
                 else if (renewed.outcome === 'lost') await problem('감독자가 일감의 시도 토큰을 잃었습니다');
-                else { lastRenewed = now.getTime(); await problem(); }
+                else {
+                  lastRenewed = now.getTime();
+                  if (event.type !== 'heartbeat') lastProgressPersisted = now.getTime();
+                  await problem();
+                }
               }
             }
           }
-          if (!readingStopped) { run.end(); if (run.violation) { failed = run.violation.reason; stopResolve(); } }
-        } catch { run.fail('ABI_OUTPUT_UNREADABLE', '자식 프로세스 출력을 읽을 수 없습니다'); failed = '출력 읽기 실패'; stopResolve(); }
+          if (!readingStopped) { run.end(); if (run.violation) { failed = run.violation.reason; terminate('protocol'); } }
+        } catch { run.fail('ABI_OUTPUT_UNREADABLE', '자식 프로세스 출력을 읽을 수 없습니다'); failed = '출력 읽기 실패'; terminate('protocol'); }
       })();
       try {
         await Promise.race([exited, stop]);
@@ -145,7 +170,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
         await Promise.all([read, readStderr]);
       } finally {
         readingStopped = true; handle.closeOutput();
-        watch.abort(); await poll; signal.removeEventListener('abort', abort);
+        watch.abort(); await Promise.all([poll, stall]); signal.removeEventListener('abort', abort);
       }
     }
     verdict = run.verdict(exit);
@@ -157,9 +182,24 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
       const input = { id: item.id, attemptToken: token, now, outcome: 'cancelled' as const, ...detail };
       pendingSettlement = () => store.settleSupervisedAttempt(input);
     } else {
-      const input = { id: item.id, attemptToken: token, now, outcome: verdict.outcome, ...detail,
+      const outcome = verdict.outcome === 'succeeded' ? 'succeeded' as const : terminationCause === 'stalled' && !sawFinal ? 'stalled' as const
+        : terminationCause === 'exit' && !sawFinal && verdict.code === 'ABI_EXIT_FAILED' && exit.signal !== null ? 'died' as const : 'failed' as const;
+      const code = outcome === 'stalled' ? 'PROCESS_STALLED' : outcome === 'died' ? 'PROCESS_DIED' : verdict.code;
+      const retryable = outcome === 'stalled' || outcome === 'died' ? true : verdict.retryable;
+      const lastError = failureText(`자식 프로세스 실행 실패 (${code}): ${verdict.message ?? '정상 결과를 받지 못했습니다'}`);
+      // A supervised attempt already ran. Even spool-cause worker codes follow
+      // the ABI retryable flag and spend an attempt; only core drain releases.
+      const decision = outcome === 'succeeded' ? { decision: 'complete' as const }
+        : retryable === false || item.attempts >= MAX_WORK_ATTEMPTS ? { decision: 'record' as const }
+        : { decision: 'retry' as const, at: new Date(now.getTime() + workKindPolicy(item.kind).transientDelayMs) };
+      const input = { id: item.id, attemptToken: token, now, outcome, ...detail,
         ...(verdict.usage === null ? {} : { usage: { inputTokens: verdict.usage.input_tokens, cachedInputTokens: verdict.usage.cached_input_tokens, outputTokens: verdict.usage.output_tokens } }),
-        ...(failed === undefined ? {} : { nextAttemptAt: new Date(now.getTime() + retryDelayMs(item.attempts)), lastError: failureText(`자식 프로세스 실행 실패 (${verdict.code}): ${verdict.message ?? '정상 결과를 받지 못했습니다'}`), errorCode: verdict.code!, errorRetryable: verdict.retryable! }) };
+        ...(outcome === 'succeeded' ? {} : { lastError }),
+        ...(outcome === 'failed' ? { errorCode: verdict.code!, errorRetryable: verdict.retryable! } : {}),
+        ...(decision.decision === 'retry' ? { nextAttemptAt: decision.at } : {}),
+        ...(decision.decision === 'record' ? { failure: { id: idGen.next(), stage: item.kind,
+          fingerprint: failureFingerprint({ stage: item.kind, input: `${item.targetKind}:${item.targetId}`, code: code! }),
+          code: code!, message: lastError, occurredAt: now } } : {}) };
       pendingSettlement = () => store.finishSupervisedWork(input);
     }
     await retrySettlement();

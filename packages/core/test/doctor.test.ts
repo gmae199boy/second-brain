@@ -20,6 +20,8 @@ import { sequenceIdGen } from '../src/testing/fakes/id-gen.js';
 
 /** The version these tests call current, so a mismatch is an explicit choice. */
 const CURRENT = 2;
+const workCheckIds = ['work-stalled', 'work-died', 'work-unknown', 'work-last-error'];
+const workChecks = (status: 'ok' | 'skip', detail: string) => workCheckIds.map(id => ({ id, status, detail }));
 
 /** A reachable store whose source answered with exactly these probes. */
 function healthy(...probes: StoreProbe[]): StoreHealth {
@@ -95,6 +97,7 @@ describe('runDoctor', () => {
       { id: 'failures', status: 'ok', detail: '0건' },
       { id: 'untagged', status: 'ok', detail: '0건' },
       { id: 'transcripts', status: 'skip', detail: '트랜스크립트 폴더 수집이 꺼져 있습니다' },
+      ...workChecks('ok', '0건'),
     ]);
   });
 
@@ -136,6 +139,7 @@ describe('runDoctor', () => {
       { id: 'failures', status: 'skip', detail: '앞선 점검 실패: db' },
       { id: 'untagged', status: 'skip', detail: '앞선 점검 실패: db' },
       { id: 'transcripts', status: 'skip', detail: '앞선 점검 실패: db' },
+      ...workChecks('skip', '앞선 점검 실패: db'),
     ]);
   });
 
@@ -191,6 +195,7 @@ describe('runDoctor', () => {
       { id: 'failures', status: 'ok', detail: '0건' },
       { id: 'untagged', status: 'ok', detail: '0건' },
       { id: 'transcripts', status: 'skip', detail: '트랜스크립트 폴더 수집이 꺼져 있습니다' },
+      ...workChecks('ok', '0건'),
     ]);
   });
 
@@ -203,6 +208,7 @@ describe('runDoctor', () => {
       'failures',
       'untagged',
       'transcripts',
+      ...workCheckIds,
     ]);
   });
 
@@ -265,6 +271,7 @@ describe('runDoctor and the checks the runtime registers', () => {
       'failures',
       'untagged',
       'transcripts',
+      ...workCheckIds,
       'config',
       'shim',
       'node-path',
@@ -284,6 +291,7 @@ describe('runDoctor and the checks the runtime registers', () => {
       'failures',
       'untagged',
       'transcripts',
+      ...workCheckIds,
       'shim',
     ]);
   });
@@ -346,7 +354,7 @@ describe('the summary of a report', () => {
 
     // db ok, wal ok, writable warn, fts fail, schema ok, failures ok,
     // transcripts skip, shim fail, node skip.
-    expect(report.summary).toEqual({ passed: 5, warned: 1, failed: 2, skipped: 2 });
+    expect(report.summary).toEqual({ passed: 9, warned: 1, failed: 2, skipped: 2 });
     const counted =
       report.summary.passed +
       report.summary.warned +
@@ -361,7 +369,7 @@ describe('the summary of a report', () => {
       OPTIONS,
     );
 
-    expect(report.summary).toEqual({ passed: 0, warned: 0, failed: 1, skipped: 4 });
+    expect(report.summary).toEqual({ passed: 0, warned: 0, failed: 1, skipped: 8 });
   });
 
   it('is all passes for a healthy brain, bar the folders nobody asked for', async () => {
@@ -369,7 +377,7 @@ describe('the summary of a report', () => {
 
     // db, wal, schema-version and failures pass; `transcripts` is a `skip`,
     // because this brain's capture switch is off (Boundaries).
-    expect(report.summary).toEqual({ passed: 5, warned: 0, failed: 0, skipped: 1 });
+    expect(report.summary).toEqual({ passed: 9, warned: 0, failed: 0, skipped: 1 });
   });
 });
 
@@ -415,6 +423,7 @@ describe('createBrain', () => {
       'failures',
       'untagged',
       'transcripts',
+      ...workCheckIds,
       'shim',
     ]);
 
@@ -436,6 +445,7 @@ describe('createBrain', () => {
       'failures',
       'untagged',
       'transcripts',
+      ...workCheckIds,
     ]);
   });
 });
@@ -466,18 +476,18 @@ it.each(['orbstack', 'container'])('skips dependent checks after the first faile
   const prerequisite = (id: string): DoctorCheckSource => ({ id, run: async () => { called.push(id); return { id, status: id === failedId ? 'fail' : 'ok' }; } });
   const report = await runDoctor(store, { ...OPTIONS, adapterProbeIds, prerequisites: [prerequisite('orbstack'), prerequisite('container')], checks: [{ id: 'runtime', run: async () => { called.push('runtime'); return { id: 'runtime', status: 'ok' }; } }] });
   expect(called).toEqual(failedId === 'orbstack' ? ['orbstack', 'runtime'] : ['orbstack', 'container', 'runtime']);
-  for (const id of ['db', ...adapterProbeIds, 'schema-version', 'failures', 'untagged', 'transcripts']) expect(report.checks).toContainEqual({ id, status: 'skip', detail: `앞선 점검 실패: ${failedId}` });
-  expect(report.checks.map(check => check.id)).toEqual(['orbstack', 'container', 'db', ...adapterProbeIds, 'schema-version', 'failures', 'untagged', 'transcripts', 'runtime']);
+  for (const id of ['db', ...adapterProbeIds, 'schema-version', 'failures', 'untagged', 'transcripts', ...workCheckIds]) expect(report.checks).toContainEqual({ id, status: 'skip', detail: `앞선 점검 실패: ${failedId}` });
+  expect(report.checks.map(check => check.id)).toEqual(['orbstack', 'container', 'db', ...adapterProbeIds, 'schema-version', 'failures', 'untagged', 'transcripts', ...workCheckIds, 'runtime']);
 });
 it('does not invent probe rows when a prerequisite fails without declared adapter probes', async () => {
   const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, prerequisites: [source({ id: 'environment', status: 'fail' })] });
-  expect(report.checks.map(check => check.id)).toEqual(['environment', 'db', 'schema-version', 'failures', 'untagged', 'transcripts']);
+  expect(report.checks.map(check => check.id)).toEqual(['environment', 'db', 'schema-version', 'failures', 'untagged', 'transcripts', ...workCheckIds]);
 });
 it('omits declared adapter probes when prerequisites pass but the database is unavailable', async () => {
   const report = await runDoctor(fakeStore({ ok: false, code: 'DB_UNAVAILABLE', message: '연결 실패' }), {
     ...OPTIONS, adapterProbeIds, prerequisites: [source({ id: 'environment', status: 'ok' })],
   });
-  expect(report.checks.map(check => check.id)).toEqual(['environment', 'db', 'schema-version', 'failures', 'untagged', 'transcripts']);
+  expect(report.checks.map(check => check.id)).toEqual(['environment', 'db', 'schema-version', 'failures', 'untagged', 'transcripts', ...workCheckIds]);
   expect(report.checks[1]).toMatchObject({ id: 'db', status: 'fail', code: 'DB_UNAVAILABLE' });
   for (const check of report.checks.slice(2)) expect(check).toMatchObject({ status: 'skip', detail: '앞선 점검 실패: db' });
 });
@@ -499,4 +509,25 @@ it('runs healthy prerequisites before health and adapter probes', async () => {
   store.checkHealth = async () => { called.push('db'); return healthy({ id: 'writable', ok: true }); };
   const report = await runDoctor(store, { ...OPTIONS, prerequisites: [{ id: 'orbstack', run: async () => { called.push('orbstack'); return { id: 'orbstack', status: 'ok' }; } }] });
   expect(called).toEqual(['orbstack', 'db']); expect(report.checks.slice(0, 3).map(c => c.id)).toEqual(['orbstack', 'db', 'writable']);
+});
+
+it('reports each open work attempt problem as a warning with its latest item', async () => {
+  const store = memoryStore(), idGen = sequenceIdGen({ timestampMs: OPTIONS.clock.now().getTime() }), now = OPTIONS.clock.now();
+  for (const outcome of ['stalled', 'died', 'unknown', 'failed'] as const) {
+    const id = idGen.next(), attemptToken = idGen.next();
+    await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: outcome, createdAt: now, nextAttemptAt: now });
+    await store.claimSupervisedWork({ now, claimedBy: idGen.next(), kinds: ['process_probe'], attemptToken });
+    if (outcome === 'unknown') await store.settleSupervisedAttempt({ id, attemptToken, now, outcome });
+    else await store.finishSupervisedWork({ id, attemptToken, now, outcome, nextAttemptAt: new Date(now.getTime() + 900_000), lastError: '마지막 오류', ...(outcome === 'failed' ? { errorCode: 'TEMPORARY', errorRetryable: true } : {}) });
+    const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store });
+    const check = report.checks.find(check => check.id === (outcome === 'failed' ? 'work-last-error' : `work-${outcome}`));
+    expect(check).toMatchObject({ status: 'warn', detail: expect.stringContaining(id) });
+    expect(check!.detail).toContain('1건'); expect(check!.detail).toContain('process_probe'); expect(check!.detail).toContain(now.toISOString());
+    expect(check!.code).toBeUndefined();
+    if (outcome === 'failed') { expect(check!.detail).toContain('TEMPORARY'); expect(check!.detail).toContain('retryable=true'); expect(check!.detail).toContain('마지막 오류'); }
+  }
+});
+it('fails all work attempt checks with the read failure code', async () => {
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store: { ...memoryStore(), async readWorkAttemptHealth() { return { ok: false, code: 'DB_UNAVAILABLE', message: '읽기 실패' }; } } });
+  for (const id of workCheckIds) expect(report.checks).toContainEqual({ id, status: 'fail', code: 'DB_UNAVAILABLE', detail: '읽기 실패' });
 });

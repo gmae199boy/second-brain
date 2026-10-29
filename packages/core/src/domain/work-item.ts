@@ -153,8 +153,16 @@ export const DRAIN_BUDGET_MS = {
 } as const;
 
 export type WorkExecutionClass = 'core' | 'supervised';
+const WORK_KINDS: Readonly<Record<string, { executionClass: WorkExecutionClass; callsModel: boolean }>> = {
+  process_probe: { executionClass: 'supervised', callsModel: false },
+};
 export function workExecutionClass(kind: string): WorkExecutionClass {
-  return kind === 'process_probe' ? 'supervised' : 'core';
+  return Object.hasOwn(WORK_KINDS, kind) ? WORK_KINDS[kind]!.executionClass : 'core';
+}
+export const SUPERVISOR_STALL_WINDOW_MS = { default: 900_000, model: 1_500_000 } as const;
+export function workStallWindowMs(kind: string): number {
+  return Object.hasOwn(WORK_KINDS, kind) && WORK_KINDS[kind]!.callsModel
+    ? SUPERVISOR_STALL_WINDOW_MS.model : SUPERVISOR_STALL_WINDOW_MS.default;
 }
 export const SUPERVISOR_RENEW_EVERY_MS = 60_000;
 export const SUPERVISOR_POLL_MS = 5_000;

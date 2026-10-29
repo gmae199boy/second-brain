@@ -182,6 +182,8 @@ const CODES = {
   ABI_NO_RESULT: { exit: 1, retryable: false, meaning: '프로세스가 최종 이벤트 없이 정상 종료했습니다', hint: '종료 전에 최종 이벤트를 보내세요' },
   ABI_EXIT_FAILED: { exit: 1, retryable: true, meaning: '프로세스가 최종 이벤트 없이 비정상 종료했습니다', hint: '작업자 로그를 확인하고 다시 실행하세요' },
   ABI_OUTPUT_UNREADABLE: { exit: 1, retryable: true, meaning: '프로세스 출력을 읽지 못했습니다', hint: '출력 파이프를 확인하고 다시 실행하세요' },
+  PROCESS_STALLED: { exit: 1, retryable: true, meaning: '자식 프로세스의 진행이 정체되었습니다', hint: '마지막 진행과 작업자 상태를 확인하세요' },
+  PROCESS_DIED: { exit: 1, retryable: true, meaning: '자식 프로세스가 결과 없이 사망했습니다', hint: '작업자 종료 원인을 확인하세요' },
   PROCESS_START_FAILED: { exit: 1, retryable: true, meaning: '자식 프로세스를 시작하지 못했습니다', hint: '실행 명세와 실행 파일을 확인하고 다시 실행하세요' },
   ABI_ENV_INVALID: { exit: 1, retryable: false, meaning: '프로세스 환경 변수가 ABI 형식과 다릅니다', hint: '필수 환경 변수와 값의 형식을 고치세요' },
 

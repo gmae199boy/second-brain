@@ -1150,6 +1150,22 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       return { ok: true, item: { ...next } };
     },
 
+    async readWorkAttemptHealth() {
+      const health: import('../../ports/store.js').ReadWorkAttemptHealthResult & { ok: true } = { ok: true, health: {
+        stalled: { count: 0, latest: null }, died: { count: 0, latest: null }, unknown: { count: 0, latest: null }, failed: { count: 0, latest: null },
+      } };
+      for (const item of workItems.filter(i => i.completedAt === null)) {
+        const attempt = workAttempts.filter(a => a.workItemId === item.id).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime() || b.token.localeCompare(a.token))[0];
+        if (!attempt || !['stalled', 'died', 'unknown', 'failed'].includes(attempt.outcome ?? '')) continue;
+        if (attempt.outcome === 'unknown' && item.currentAttemptToken !== attempt.token) continue;
+        const group = health.health[attempt.outcome as import('../../ports/store.js').WorkAttemptHealthKind];
+        const at = attempt.finishedAt ?? attempt.startedAt;
+        group.count++;
+        if (!group.latest || at > group.latest.at || (at.getTime() === group.latest.at.getTime() && item.id > group.latest.workItemId))
+          group.latest = { workItemId: item.id, kind: item.kind, at, errorCode: attempt.errorCode, errorRetryable: attempt.errorRetryable, lastError: item.lastError };
+      }
+      return health;
+    },
     async requestWorkCancel(input) {
       const item = workItems.find(i => i.id === input.id);
       if (!item) return { ok: true, state: 'not_found' };
@@ -1208,7 +1224,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       const attempt = workAttempts.find((a) => a.token === input.attemptToken)!;
       if (attempt.outcome !== null) return { ok: true, outcome: 'lost' };
       item.claimExpiresAt = new Date(input.now.getTime() + workKindPolicy(item.kind).claimForMs);
-      attempt.lastProgressAt = input.progressAt;
+      if (input.progressAt !== null) attempt.lastProgressAt = input.progressAt;
       attempt.renewedAt = input.now;
       return { ok: true, outcome: 'done' };
     },
@@ -1217,6 +1233,12 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       if (!item) return { ok: true, outcome: 'lost' };
       const attempt = workAttempts.find((a) => a.token === input.attemptToken)!;
       if (attempt.outcome !== null) return { ok: true, outcome: 'lost' };
+      // Record before changing either row: a refused failure write leaves the
+      // attempt and claim available for the supervisor's pending settlement.
+      if (input.outcome !== 'succeeded' && item.cancelRequestedAt === null && input.failure !== undefined) {
+        const recorded = await this.recordFailure({ ...input.failure, targetKind: item.targetKind, targetId: item.targetId, harness: null, sessionId: null });
+        if (!recorded.ok) return recorded;
+      }
       attempt.finishedAt = input.now;
       attempt.outcome = input.outcome;
       attempt.elapsedMs = input.elapsedMs ?? null; attempt.stderr = input.stderr ?? null;
@@ -1224,9 +1246,10 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       attempt.inputTokens = input.usage?.inputTokens ?? null; attempt.cachedInputTokens = input.usage?.cachedInputTokens ?? null; attempt.outputTokens = input.usage?.outputTokens ?? null;
       if (input.outcome === 'succeeded') { item.completedAt = input.now; item.outcome = 'succeeded'; }
       else if (item.cancelRequestedAt !== null) { item.completedAt = input.now; item.outcome = 'cancelled'; }
-      if (input.outcome === 'failed') {
+      else if (input.failure !== undefined) { item.completedAt = input.now; item.outcome = 'failed'; }
+      if (input.outcome !== 'succeeded') {
         item.nextAttemptAt = input.nextAttemptAt ?? input.now;
-        item.lastError = input.lastError ?? null;
+        item.lastError = input.lastError ?? input.failure?.message ?? null;
       }
       item.currentAttemptToken = null;
       unclaim(item);
@@ -1236,7 +1259,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     async completeWork(input: CompleteWorkInput): Promise<FinishWorkResult> {
       const item = claimed(input);
       if (item === null) return { ok: true, outcome: 'lost' };
-      item.completedAt = input.now;
+      item.completedAt = input.now; item.outcome = 'succeeded';
       unclaim(item);
       return { ok: true, outcome: 'done' };
     },
@@ -1312,7 +1335,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       if (input.closeWork !== undefined) {
         const item = claimed(input.closeWork);
         if (item !== null) {
-          item.completedAt = input.closeWork.now;
+          item.completedAt = input.closeWork.now; item.outcome = 'failed';
           item.lastError = input.message;
           unclaim(item);
         }

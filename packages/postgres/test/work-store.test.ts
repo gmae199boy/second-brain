@@ -14,7 +14,10 @@ import { workStoreContract, scheduleStoreContract, sequenceIdGen } from '@second
 import { postgresStore } from '../src/index.js';
 import { database, subject, clock } from './fixture.js';
 
-for (const [name, cases] of [['work-store contract', workStoreContract((store, id) => (store as Awaited<ReturnType<typeof subject>>).readWorkItem(id))], ['schedule-store contract', scheduleStoreContract()]] as const) {
+for (const [name, cases] of [['work-store contract', workStoreContract((store, id) => (store as Awaited<ReturnType<typeof subject>>).readWorkItem(id), async (store, token) => {
+  const rows = await (store as Awaited<ReturnType<typeof subject>>).db.rows<{ lastProgressAt: Date | null; renewedAt: Date | null }>(`select last_progress_at as "lastProgressAt", renewed_at as "renewedAt" from brain.work_attempts where token='${token}'`);
+  return rows[0] ?? null;
+})], ['schedule-store contract', scheduleStoreContract()]] as const) {
   describe(name, () => { for (const test of cases) it(test.name, () => test.run(subject)); });
 }
 const id = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, '0')}`;
@@ -440,4 +443,119 @@ it('rejects partial or negative usage, negative elapsed time, and errors on succ
   for (const expression of ["input_tokens=1", "input_tokens=-1,cached_input_tokens=0,output_tokens=0", "elapsed_ms=-1", "outcome='succeeded',error_code='BAD'", "error_code='BAD'", 'error_retryable=false']) {
     await expect(db.query(`update brain.work_attempts set ${expression} where token='${id(201)}'`)).rejects.toMatchObject({ code: '23514' });
   }
+});
+
+it('requires an outcome on new closed work without backfilling legacy outcomes', async () => {
+  const { db, store } = await fixture(); await store.addWork(work());
+  await expect(db.query(`update brain.work_items set completed_at='${now.toISOString()}' where id='${id(1)}'`)).rejects.toMatchObject({ code: '23514' });
+  expect(await db.rows('select completed_at, outcome from brain.work_items')).toEqual([{ completed_at: null, outcome: null }]);
+  expect(await db.rows("select convalidated from pg_constraint where conname='work_items_closed_outcome' and conrelid='brain.work_items'::regclass")).toEqual([{ convalidated: false }]);
+});
+it('rolls back supervised failure recording and closure together and retries once', async () => {
+  const { db, store } = await fixture(); const token = id(201);
+  await store.addWork({ ...work(), kind: 'process_probe' });
+  await store.claimSupervisedWork({ now, claimedBy: id(99), kinds: ['process_probe'], attemptToken: token });
+  const before = { items: await db.rows('select * from brain.work_items'), attempts: await db.rows('select * from brain.work_attempts') };
+  const input = { id: id(1), attemptToken: token, now: next, outcome: 'stalled' as const, lastError: '정체 PROCESS_STALLED',
+    failure: { id: id(301), stage: 'process_probe', fingerprint: 'cause', code: 'PROCESS_STALLED', message: '정체 PROCESS_STALLED', occurredAt: next } };
+  await db.query("create function brain.refuse_failure() returns trigger language plpgsql as $$ begin raise exception 'refused'; end $$; create trigger refuse_failure before insert on brain.failures for each row execute function brain.refuse_failure()");
+  expect(await store.finishSupervisedWork(input)).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+  expect(await db.rows('select * from brain.work_items')).toEqual(before.items);
+  expect(await db.rows('select * from brain.work_attempts')).toEqual(before.attempts);
+  expect(await db.rows('select * from brain.failures')).toEqual([]);
+  await db.query('drop trigger refuse_failure on brain.failures');
+  expect(await store.finishSupervisedWork(input)).toEqual({ ok: true, outcome: 'done' });
+  expect(await store.finishSupervisedWork(input)).toEqual({ ok: true, outcome: 'lost' });
+  expect(await db.rows('select completed_at,outcome,last_error from brain.work_items')).toEqual([{ completed_at: next, outcome: 'failed', last_error: input.lastError }]);
+  expect(await db.rows('select outcome,error_code from brain.work_attempts')).toEqual([{ outcome: 'stalled', error_code: null }]);
+  expect(await db.rows('select stage,code,harness,session_id,occurrences from brain.failures')).toEqual([{ stage: 'process_probe', code: 'PROCESS_STALLED', harness: null, session_id: null, occurrences: 1 }]);
+});
+it('reopens the same supervised failure preserving its first occurrence and id', async () => {
+  const { store } = await fixture();
+  const later = new Date(next.getTime() + 60_000);
+  for (const [n, occurredAt, message] of [[1, now, '첫 실패'], [2, later, '최신 실패']] as const) {
+    const token = id(200 + n);
+    await store.addWork({ ...work(n), kind: 'process_probe', targetId: 'shared-target', createdAt: occurredAt, nextAttemptAt: occurredAt });
+    expect(await store.claimSupervisedWork({ now: occurredAt, claimedBy: id(99), kinds: ['process_probe'], attemptToken: token }))
+      .toMatchObject({ ok: true, item: { id: id(n) } });
+    expect(await store.finishSupervisedWork({ id: id(n), attemptToken: token, now: occurredAt, outcome: 'failed', errorCode: 'PERMANENT', errorRetryable: false,
+      failure: { id: id(300 + n), stage: 'process_probe', fingerprint: 'same-cause', code: 'PERMANENT', message, occurredAt } }))
+      .toEqual({ ok: true, outcome: 'done' });
+    if (n === 1) {
+      expect(await store.resolveFailures({ targetKind: 'probe', targetId: 'shared-target', stage: 'process_probe', now: next }))
+        .toEqual({ ok: true, resolved: 1 });
+      expect(await store.listFailures({ includeResolved: true })).toMatchObject({ ok: true, failures: [{ id: id(301), resolvedAt: next }] });
+    }
+  }
+  const read = await store.listFailures({ includeResolved: true }); expect(read.ok).toBe(true); if (!read.ok) return;
+  expect(read.failures).toHaveLength(1);
+  expect(read.failures[0]).toMatchObject({ id: id(301), firstOccurredAt: now, occurrences: 2, occurredAt: later, message: '최신 실패', resolvedAt: null });
+});
+it('does not record a supervised terminal failure when cancellation won', async () => {
+  const { db, store } = await fixture(); const token = id(201);
+  await store.addWork({ ...work(), kind: 'process_probe' });
+  await store.claimSupervisedWork({ now, claimedBy: id(99), kinds: ['process_probe'], attemptToken: token });
+  await store.requestWorkCancel({ id: id(1), now });
+  expect(await store.finishSupervisedWork({ id: id(1), attemptToken: token, now: next, outcome: 'failed', lastError: '실패', errorCode: 'PERMANENT', errorRetryable: false,
+    failure: { id: id(301), stage: 'process_probe', fingerprint: 'cause', code: 'PERMANENT', message: '실패', occurredAt: next } })).toEqual({ ok: true, outcome: 'done' });
+  expect(await db.rows('select outcome from brain.work_items')).toEqual([{ outcome: 'cancelled' }]);
+  expect(await db.rows('select * from brain.failures')).toEqual([]);
+});
+it('distinguishes stalled, died, current unknown and last error while ignoring older and closed attempts', async () => {
+  const { db, store } = await fixture();
+  for (const [index, outcome] of ['stalled', 'died', 'unknown', 'failed', 'succeeded'].entries()) {
+    const n = index + 1, token = id(200 + n);
+    await store.addWork({ ...work(n), kind: 'process_probe' });
+    await store.claimSupervisedWork({ now, claimedBy: id(99), kinds: ['process_probe'], attemptToken: token });
+    if (outcome === 'unknown') await store.settleSupervisedAttempt({ id: id(n), attemptToken: token, now: next, outcome });
+    else await store.finishSupervisedWork({ id: id(n), attemptToken: token, now: next, outcome: outcome as 'stalled' | 'died' | 'failed' | 'succeeded', nextAttemptAt: next, lastError: '마지막 오류', ...(outcome === 'failed' ? { errorCode: 'TEMPORARY', errorRetryable: true } : {}) });
+  }
+  const read = await store.readWorkAttemptHealth(); expect(read.ok).toBe(true); if (!read.ok) return;
+  for (const [index, outcome] of (['stalled', 'died', 'unknown', 'failed'] as const).entries()) {
+    expect(read.health[outcome]).toMatchObject({ count: 1, latest: { workItemId: id(index + 1), kind: 'process_probe', at: next } });
+  }
+  expect(read.health.failed.latest).toMatchObject({ errorCode: 'TEMPORARY', errorRetryable: true, lastError: '마지막 오류' });
+  // A later current attempt replaces a previous stalled outcome, even before
+  // it has produced a terminal outcome of its own.
+  await store.claimSupervisedWork({ now: next, claimedBy: id(99), kinds: ['process_probe'], attemptToken: id(601) });
+  const changed = await store.readWorkAttemptHealth(); expect(changed.ok && changed.health.stalled.count).toBe(0);
+  await db.query('drop table brain.work_attempts cascade');
+  expect(await store.readWorkAttemptHealth()).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+});
+it('keeps last progress unchanged across heartbeat renewals', async () => {
+  const { db, store } = await fixture(); const token = id(201);
+  await store.addWork({ ...work(), kind: 'process_probe' });
+  await store.claimSupervisedWork({ now, claimedBy: id(99), kinds: ['process_probe'], attemptToken: token });
+  await store.renewSupervisedLease({ id: id(1), attemptToken: token, now, progressAt: now });
+  await store.renewSupervisedLease({ id: id(1), attemptToken: token, now: next, progressAt: null });
+  expect(await db.rows('select last_progress_at,renewed_at from brain.work_attempts')).toEqual([{ last_progress_at: now, renewed_at: next }]);
+});
+
+it('counts multiple stalled work items and selects the most recently finished one', async () => {
+  const { store } = await fixture();
+  const later = new Date(next.getTime() + 60_000);
+  for (const [n, finishedAt] of [[1, next], [2, later]] as const) {
+    const token = id(200 + n);
+    await store.addWork({ ...work(n), kind: 'process_probe' });
+    expect(await store.claimSupervisedWork({ now, claimedBy: id(99), kinds: ['process_probe'], attemptToken: token }))
+      .toMatchObject({ ok: true, item: { id: id(n) } });
+    expect(await store.finishSupervisedWork({ id: id(n), attemptToken: token, now: finishedAt, outcome: 'stalled', nextAttemptAt: later }))
+      .toEqual({ ok: true, outcome: 'done' });
+  }
+  const read = await store.readWorkAttemptHealth(); expect(read.ok).toBe(true); if (!read.ok) return;
+  expect(read.health.stalled).toMatchObject({ count: 2, latest: { workItemId: id(2), at: later } });
+});
+
+it('core drain success and permanent failure persist different PostgreSQL outcomes', async () => {
+  const { db, store } = await fixture();
+  const { drainQueue } = await import('@second-brain/core');
+  const { memorySpool } = await import('@second-brain/core/testing');
+  await store.addWork(work(1)); await store.addWork(work(2));
+  expect(await drainQueue({ store, clock, spool: memorySpool(), idGen: sequenceIdGen({ timestampMs: now.getTime(), start: 1000 }) }, {
+    budgetMs: 1000, handlers: { demo_work: async item => item.targetId === 'target-1' ? { ok: true } : { ok: false, code: 'PERMANENT', retryable: false, message: '처리 실패' } },
+  })).toMatchObject({ completed: 1, failed: 1 });
+  expect(await db.rows('select outcome,completed_at from brain.work_items order by id')).toEqual([
+    { outcome: 'succeeded', completed_at: now }, { outcome: 'failed', completed_at: now },
+  ]);
+  expect(await db.rows('select code from brain.failures')).toEqual([{ code: 'PERMANENT' }]);
 });

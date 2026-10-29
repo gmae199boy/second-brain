@@ -20,7 +20,7 @@ async function kit(options: { launcher?: ProcessLauncher; spec?: ProcessSpec | n
   await flush();
   return { store, time, launcher, controller, running, stop: async () => { controller.abort(); await running; } };
 }
-it('persists every run fixture verdict and usage and keeps the existing retry policy', async () => {
+it('persists every run fixture verdict and usage and applies the work failure policy', async () => {
   const fixtures = JSON.parse(await readFile(PROCESS_ABI_RUN_FIXTURES_URL, 'utf8'));
   for (const fixture of fixtures) {
     const k = await kit();
@@ -30,15 +30,17 @@ it('persists every run fixture verdict and usage and keeps the existing retry po
       for (const part of fixture.stdout) child.write(typeof part === 'string' ? part : part.repeat.repeat(part.count));
       k.time.advance(250); child.exit(fixture.exit.code, fixture.exit.signal); await flush();
       const attempt = k.store.snapshot().workAttempts[0]!;
-      expect(attempt, fixture.name).toMatchObject({ outcome: fixture.expect.outcome, errorCode: fixture.expect.code ?? null,
-        errorRetryable: fixture.expect.retryable ?? null, elapsedMs: 250, stderr: 'diagnostic\n',
+      const died = fixture.expect.code === 'ABI_EXIT_FAILED' && fixture.exit.signal !== null;
+      expect(attempt, fixture.name).toMatchObject({ outcome: died ? 'died' : fixture.expect.outcome, errorCode: died ? null : fixture.expect.code ?? null,
+        errorRetryable: died ? null : fixture.expect.retryable ?? null, elapsedMs: 250, stderr: 'diagnostic\n',
         inputTokens: fixture.expect.usage?.input_tokens ?? null, cachedInputTokens: fixture.expect.usage?.cached_input_tokens ?? null, outputTokens: fixture.expect.usage?.output_tokens ?? null });
       const item = k.store.snapshot().workItems[0]!;
       if (fixture.expect.outcome === 'failed') {
-        expect(item.lastError, fixture.name).toContain(fixture.expect.code);
-        expect(item.nextAttemptAt).toEqual(new Date(now.getTime() + 1250));
+        expect(item.lastError, fixture.name).toContain(died ? 'PROCESS_DIED' : fixture.expect.code);
+        if (fixture.expect.retryable) expect(item.nextAttemptAt).toEqual(new Date(now.getTime() + 900_250));
+        else expect(item).toMatchObject({ completedAt: new Date(now.getTime() + 250), outcome: 'failed' });
       } else expect(item.completedAt).toEqual(new Date(now.getTime() + 250));
-      expect(k.store.snapshot().failures).toEqual([]);
+      expect(k.store.snapshot().failures).toHaveLength(fixture.expect.outcome === 'failed' && !fixture.expect.retryable ? 1 : 0);
     } finally { await k.stop(); }
   }
 });
@@ -104,8 +106,9 @@ it('does not renew for heartbeat or progress after a final event', async () => {
   const k = await kit();
   try {
     const child = k.launcher.processes[0]!;
-    child.push('{"abi":1,"type":"heartbeat"}'); child.push('{"abi":1,"type":"result"}'); child.push('{"abi":1,"type":"progress"}'); await flush();
-    expect(k.store.snapshot().workAttempts[0]!.renewedAt).toBeNull(); child.exit(); await flush();
+    child.push('{"abi":1,"type":"result"}'); await flush(); k.time.advance(60_000);
+    child.push('{"abi":1,"type":"heartbeat"}'); child.push('{"abi":1,"type":"progress"}'); await flush();
+    expect(k.store.snapshot().workAttempts[0]!.renewedAt).toEqual(now); child.exit(); await flush();
   } finally { await k.stop(); }
 });
 it.each([['identity', 100], ['recording', 100], ['identity', 1100], ['recording', 1100]] as const)('consumes %s-delayed stderr through %i chunks', async (delayed, chunks) => {

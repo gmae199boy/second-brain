@@ -55,6 +55,7 @@ const calls = {
   listFilesWithStaleExtraction: (s) => s.listFilesWithStaleExtraction({ limit: 1, extractorVersion: '1' }),
   listExtractions: (s) => s.listExtractions(id),
   listExtractionChunks: (s) => s.listExtractionChunks(id),
+  readWorkAttemptHealth: (s) => s.readWorkAttemptHealth(),
   requestWorkCancel: s => s.requestWorkCancel({ id, now }),
   recordSupervisedProcess: s => s.recordSupervisedProcess({ id, attemptToken: id, pid: 1, pgid: 1, osBootAt: null, osStartedAt: null }),
   listOpenSupervisedAttempts: s => s.listOpenSupervisedAttempts(),

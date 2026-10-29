@@ -266,30 +266,64 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         return { ok: true, item: written.value, attemptToken: written.value === null ? null : input.attemptToken };
       } catch (error) { return { ...databaseFailure(error), message: `감독 일감을 청구할 수 없습니다: ${describe(error)}` }; }
     },
+    async readWorkAttemptHealth() {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const result = await sql<{ id: string; kind: string; current_attempt_token: string | null; token: string; outcome: string | null; at: string; error_code: string | null; error_retryable: boolean | null; last_error: string | null }>`
+          select * from (
+            select distinct on (i.id) i.id, i.kind, i.current_attempt_token, i.last_error,
+              a.token, a.outcome, coalesce(a.finished_at, a.started_at) as at, a.error_code, a.error_retryable
+            from brain.work_items i join brain.work_attempts a on a.work_item_id = i.id
+            where i.completed_at is null
+            order by i.id, a.started_at desc, a.token desc
+          ) latest where outcome in ('stalled', 'died', 'failed') or (outcome = 'unknown' and current_attempt_token = token)
+          order by at desc, id desc
+        `.execute(opened.connection.db);
+        const health: Extract<Awaited<ReturnType<WorkStore['readWorkAttemptHealth']>>, { ok: true }>['health'] = {
+          stalled: { count: 0, latest: null }, died: { count: 0, latest: null }, unknown: { count: 0, latest: null }, failed: { count: 0, latest: null },
+        };
+        for (const row of result.rows) {
+          const group = health[row.outcome as keyof typeof health];
+          group.count++;
+          group.latest ??= { workItemId: row.id, kind: row.kind, at: at(row.at, 'work_attempts.finished_at'), errorCode: row.error_code, errorRetryable: row.error_retryable, lastError: row.last_error };
+        }
+        return { ok: true, health };
+      } catch (error) { return { ...databaseFailure(error), message: `일감 시도 상태를 읽을 수 없습니다: ${describe(error)}` }; }
+    },
     async renewSupervisedLease(input) {
       return finish(connect, async (held) => {
         const item = await lockOpenSupervisedWork(held, input);
         if (!item) return 0;
         const expires = instant(new Date(input.now.getTime() + workKindPolicy(item.kind).claimForMs), 'work_items.claim_expires_at');
         await sql`update brain.work_items set claim_expires_at = ${expires} where id = ${input.id}`.execute(held);
-        await sql`update brain.work_attempts set last_progress_at = ${instant(input.progressAt, 'work_attempts.last_progress_at')},
+        await sql`update brain.work_attempts set last_progress_at = coalesce(${input.progressAt === null ? null : instant(input.progressAt, 'work_attempts.last_progress_at')}::timestamptz, last_progress_at),
           renewed_at = ${instant(input.now, 'work_attempts.renewed_at')} where token = ${input.attemptToken}`.execute(held);
         return 1;
       });
     },
     async finishSupervisedWork(input) {
       return finish(connect, async (held) => {
-        if (!await lockOpenSupervisedWork(held, input)) return 0;
+        const item = await lockOpenSupervisedWork(held, input);
+        if (!item) return 0;
+        const failure = input.outcome !== 'succeeded' && item.cancel_requested_at === null ? input.failure : undefined;
         const now = instant(input.now, 'work_attempts.finished_at');
         const next = input.nextAttemptAt === undefined ? now : instant(input.nextAttemptAt, 'work_items.next_attempt_at');
         const changed = await sql`update brain.work_items set current_attempt_token = null,
           claimed_at = null, claim_expires_at = null, claimed_by = null,
-          completed_at = case when ${input.outcome} = 'succeeded' or cancel_requested_at is not null then ${now}::timestamptz else null end,
-          outcome = case when ${input.outcome} = 'succeeded' then 'succeeded' when cancel_requested_at is not null then 'cancelled' else null end,
-          next_attempt_at = case when ${input.outcome} = 'failed' then ${next}::timestamptz else next_attempt_at end,
-          last_error = case when ${input.outcome} = 'failed' then ${input.lastError === undefined ? null : encodedFailure(input.lastError)} else last_error end
+          completed_at = case when ${input.outcome} = 'succeeded' or cancel_requested_at is not null or ${failure !== undefined} then ${now}::timestamptz else null end,
+          outcome = case when ${input.outcome} = 'succeeded' then 'succeeded' when cancel_requested_at is not null then 'cancelled' when ${failure !== undefined} then 'failed' else null end,
+          next_attempt_at = case when ${input.outcome} <> 'succeeded' then ${next}::timestamptz else next_attempt_at end,
+          last_error = case when ${input.outcome} <> 'succeeded' then ${input.lastError === undefined && failure === undefined ? null : encodedFailure(input.lastError ?? failure!.message)} else last_error end
           where id = ${input.id} and current_attempt_token = ${input.attemptToken}`.execute(held);
         if (changesOf(changed) === 0) return 0;
+        if (failure !== undefined) {
+          const occurredAt = instant(failure.occurredAt, 'failures.occurred_at');
+          await sql`insert into brain.failures (id, target_kind, target_id, stage, fingerprint, harness, session_id, code, message, occurred_at, first_occurred_at, occurrences)
+            values (${failure.id}, ${item.target_kind}, ${item.target_id}, ${failure.stage}, ${failure.fingerprint}, null, null, ${failure.code}, ${encodedFailure(failure.message)}, ${occurredAt}, ${occurredAt}, 1)
+            on conflict (target_kind, target_id, stage, fingerprint) do update set occurred_at = excluded.occurred_at,
+              message = excluded.message, resolved_at = null, occurrences = brain.failures.occurrences + 1`.execute(held);
+        }
         await sql`update brain.work_attempts set finished_at = ${now}, outcome = ${input.outcome},
           error_code = ${input.errorCode ?? null}, error_retryable = ${input.errorRetryable ?? null},
           input_tokens = ${input.usage?.inputTokens ?? null}, cached_input_tokens = ${input.usage?.cachedInputTokens ?? null}, output_tokens = ${input.usage?.outputTokens ?? null},
@@ -304,7 +338,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         const now = instant(input.now, 'work_items.completed_at');
         const completed = await sql<{ kind: string; target_kind: string; target_id: string }>`
           update brain.work_items
-             set completed_at = ${now},
+             set completed_at = ${now}, outcome = 'succeeded',
                  claimed_at = null, claim_expires_at = null, claimed_by = null
            where id = ${input.id} and claimed_by = ${input.claimedBy} and completed_at is null
            returning kind, target_kind, target_id
@@ -366,7 +400,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
             const closed = changesOf(
               await sql`
                 update brain.work_items
-                   set completed_at = ${closedAt},
+                   set completed_at = ${closedAt}, outcome = 'failed',
                        last_error = ${encodedFailure(input.message)},
                        claimed_at = null, claim_expires_at = null, claimed_by = null
                  where id = ${closing.id} and claimed_by = ${closing.claimedBy}

@@ -31,7 +31,7 @@ it('fails and releases a claim when the launcher cannot start the child', async 
     expect(k.store.snapshot().workAttempts[0]).toMatchObject({ outcome: 'failed', finishedAt: now });
     expect(k.store.snapshot().workItems[0]).toMatchObject({
       claimedAt: null, claimedBy: null, claimExpiresAt: null, currentAttemptToken: null,
-      completedAt: null, nextAttemptAt: new Date(now.getTime() + 1000),
+      completedAt: null, nextAttemptAt: new Date(now.getTime() + 900_000),
     });
   } finally { k.controller.abort(); await k.running; }
 });
@@ -90,17 +90,17 @@ it('renews 700 seconds of progress while core ingestion drains and competing cla
   expect(k.store.snapshot().workAttempts[0]).toMatchObject({ outcome: 'succeeded', finishedAt: k.time.clock.now() });
   k.controller.abort(); await k.running;
 });
-it.each(['missing result', 'nonzero exit'])('records %s as a retryable failed attempt', async failure => {
+it.each(['missing result', 'nonzero exit'])('records %s as a permanent failed attempt', async failure => {
   const k = await kit();
   const child = k.launcher.processes[0]!;
   if (failure === 'nonzero exit') child.push('{"abi":1,"type":"result"}');
   child.exit(failure === 'nonzero exit' ? 2 : 0); await flush();
   expect(k.store.snapshot().workAttempts[0]?.outcome).toBe('failed');
-  expect(k.store.snapshot().workItems[0]).toMatchObject({ claimedBy: null, completedAt: null, nextAttemptAt: new Date(now.getTime() + 1000) });
-  expect(k.store.snapshot().failures).toEqual([]);
+  expect(k.store.snapshot().workItems[0]).toMatchObject({ claimedBy: null, completedAt: now, outcome: 'failed' });
+  expect(k.store.snapshot().failures).toHaveLength(1);
   k.controller.abort(); await k.running;
 });
-it('cleans a live child after an invalid ABI line and records a retryable failure', async () => {
+it('cleans a live child after an invalid ABI line and records a permanent failure', async () => {
   const k = await kit(); const child = k.launcher.processes[0]!;
   try {
     expect(child.ended).toBe(false);
@@ -110,7 +110,7 @@ it('cleans a live child after an invalid ABI line and records a retryable failur
     expect(k.store.snapshot().workAttempts[0]).toMatchObject({ outcome: 'failed', finishedAt: now });
     expect(k.store.snapshot().workItems[0]).toMatchObject({
       currentAttemptToken: null, claimedBy: null, claimExpiresAt: null,
-      completedAt: null, nextAttemptAt: new Date(now.getTime() + 1000),
+      completedAt: now, outcome: 'failed',
     });
   } finally { k.controller.abort(); await k.running; }
 });

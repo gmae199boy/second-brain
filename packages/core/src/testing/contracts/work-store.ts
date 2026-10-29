@@ -29,12 +29,21 @@ import {
  * expiry of a claim depend on the machine rather than on the instant the drain
  * decided (AD-13).
  */
-export function workStoreContract(readItem: (store: WorkStore, id: string) => Promise<Pick<WorkItem, 'outcome' | 'completedAt' | 'currentAttemptToken' | 'nextAttemptAt' | 'lastError'> | null>): ContractCase<WorkStore>[] {
+export function workStoreContract(readItem: (store: WorkStore, id: string) => Promise<Pick<WorkItem, 'outcome' | 'completedAt' | 'currentAttemptToken' | 'nextAttemptAt' | 'lastError'> | null>, readAttempt?: (store: WorkStore, token: string) => Promise<{ lastProgressAt: Date | null; renewedAt: Date | null } | null>): ContractCase<WorkStore>[] {
   const NOW = new Date('2026-02-03T04:05:06.000Z');
   const LATER = new Date('2026-02-03T05:05:06.000Z');
   const KINDS = ['demo_work'];
 
   return [
+    ...(readAttempt === undefined ? [] : [contractCase<WorkStore>('heartbeat renews the lease without moving last progress', async make => {
+      await withSubject(make, async store => {
+        const work = sampleWorkInput({ kind: 'process_probe' }); await store.addWork(work);
+        await store.claimSupervisedWork({ now: NOW, claimedBy: sampleWorkItemId, kinds: ['process_probe'], attemptToken: otherWorkItemId });
+        await store.renewSupervisedLease({ id: work.id, attemptToken: otherWorkItemId, now: NOW, progressAt: NOW });
+        await store.renewSupervisedLease({ id: work.id, attemptToken: otherWorkItemId, now: LATER, progressAt: null });
+        assertEqual(await readAttempt(store, otherWorkItemId), { lastProgressAt: NOW, renewedAt: LATER }, 'heartbeat keeps progress');
+      });
+    })]),
     contractCase<WorkStore>('cancel closes unclaimed and core-claimed work and distinguishes missing and closed', async make => {
       await withSubject(make, async store => {
         const work = sampleWorkInput(); await store.addWork(work);
@@ -88,19 +97,21 @@ export function workStoreContract(readItem: (store: WorkStore, id: string) => Pr
         const old = await store.settleSupervisedAttempt({ id: work.id, attemptToken: lastWorkItemId, now: LATER, outcome: 'died' }); assertOk(old, 'old'); assertEqual(old.outcome, 'lost', 'stale settle');
       });
     })),
-    ...(['succeeded', 'failed'] as const).map(outcome => contractCase<WorkStore>(`cancellation race with ${outcome} closes supervised work`, async make => {
+    ...(['succeeded', 'failed', 'stalled', 'died'] as const).map(outcome => contractCase<WorkStore>(`cancellation race with ${outcome} closes supervised work`, async make => {
       await withSubject(make, async store => {
         const work = sampleWorkInput({ kind: 'process_probe' }); await store.addWork(work);
         await store.claimSupervisedWork({ now: NOW, claimedBy: sampleWorkItemId, kinds: ['process_probe'], attemptToken: otherWorkItemId });
         await store.requestWorkCancel({ id: work.id, now: NOW });
-        const done = await store.finishSupervisedWork({ id: work.id, attemptToken: otherWorkItemId, now: LATER, outcome, nextAttemptAt: LATER, lastError: '실행 실패' }); assertOk(done, 'done');
+        const done = await store.finishSupervisedWork({ id: work.id, attemptToken: otherWorkItemId, now: LATER, outcome, nextAttemptAt: LATER, lastError: '실행 실패',
+          ...(outcome === 'succeeded' ? {} : { failure: { id: sampleFailureId, stage: work.kind, fingerprint: 'cause', code: 'PERMANENT', message: '실행 실패', occurredAt: LATER } }) }); assertOk(done, 'done');
         assertEqual(done.outcome, 'done', 'finish');
+        const failures = await store.listFailures({}); assertOk(failures, 'failures'); assertEqual(failures.failures.length, 0, 'cancel records no failure');
         const item = await readItem(store, work.id);
         assertTrue(item !== null, 'finished item exists');
         assertEqual(item!.outcome, outcome === 'succeeded' ? 'succeeded' : 'cancelled', 'work outcome');
         assertEqual(item!.completedAt?.getTime(), LATER.getTime(), 'completion time');
         assertEqual(item!.currentAttemptToken, null, 'finished token cleared');
-        if (outcome === 'failed') {
+        if (outcome !== 'succeeded') {
           assertEqual(item!.nextAttemptAt.getTime(), LATER.getTime(), 'failed race retry time');
           assertEqual(item!.lastError, '실행 실패', 'failed race error');
         }
@@ -139,17 +150,40 @@ export function workStoreContract(readItem: (store: WorkStore, id: string) => Pr
         assertOk(finished, 'finish'); assertEqual(finished.outcome, 'done', 'current token');
       });
     }),
-    contractCase<WorkStore>('failed supervised work releases its claim and schedules the retry', async (make) => {
+    ...(['failed', 'stalled', 'died'] as const).map(outcome => contractCase<WorkStore>(`${outcome} supervised work releases its claim and schedules the retry`, async (make) => {
       await withSubject(make, async (store) => {
         const work = sampleWorkInput({ kind: 'process_probe' }); await store.addWork(work);
         const claimed = await store.claimSupervisedWork({ now: NOW, kinds: ['process_probe'], claimedBy: sampleWorkItemId, attemptToken: otherWorkItemId }); assertOk(claimed, 'claim');
-        const finish = await store.finishSupervisedWork({ id: work.id, attemptToken: otherWorkItemId, now: NOW, outcome: 'failed', nextAttemptAt: LATER, lastError: '다시 시도합니다' }); assertOk(finish, 'finish');
+        const finish = await store.finishSupervisedWork({ id: work.id, attemptToken: otherWorkItemId, now: NOW, outcome, nextAttemptAt: LATER, lastError: '다시 시도합니다' }); assertOk(finish, 'finish');
         assertEqual(finish.outcome, 'done', 'done');
         const read = await store.addWork(work); assertOk(read, 'read');
         assertEqual(read.item.claimedBy, null, 'claim cleared'); assertEqual(read.item.currentAttemptToken, null, 'token cleared');
         assertEqual(read.item.nextAttemptAt.getTime(), LATER.getTime(), 'retry time'); assertEqual(read.item.lastError, '다시 시도합니다', 'error');
+        const health = await store.readWorkAttemptHealth(); assertOk(health, 'health');
+        assertEqual(health.health[outcome].count, 1, 'health count');
+        assertEqual(health.health[outcome].latest?.workItemId, work.id, 'latest id');
+      });
+    })),
+    contractCase<WorkStore>('core completion has a succeeded outcome', async make => {
+      await withSubject(make, async store => {
+        const work = sampleWorkInput(); await store.addWork(work);
+        await store.claimWork({ now: NOW, claimedBy: 'worker', kinds: KINDS });
+        await store.completeWork({ id: work.id, claimedBy: 'worker', now: LATER });
+        assertEqual((await readItem(store, work.id))?.outcome, 'succeeded', 'completed outcome');
       });
     }),
+    ...(['failed', 'stalled', 'died'] as const).map(outcome => contractCase<WorkStore>(`supervised ${outcome} failure recording closes with failed outcome`, async make => {
+      await withSubject(make, async store => {
+        const work = sampleWorkInput({ kind: 'process_probe' }); await store.addWork(work);
+        await store.claimSupervisedWork({ now: NOW, claimedBy: sampleWorkItemId, kinds: ['process_probe'], attemptToken: otherWorkItemId });
+        await store.finishSupervisedWork({ id: work.id, attemptToken: otherWorkItemId, now: LATER, outcome, lastError: '실패',
+          failure: { id: sampleFailureId, stage: work.kind, fingerprint: 'cause', code: 'PROCESS_STALLED', message: '실패', occurredAt: LATER } });
+        const item = await readItem(store, work.id);
+        assertEqual(item?.outcome, 'failed', 'work outcome'); assertEqual(item?.completedAt, LATER, 'closed at');
+        const failures = await store.listFailures({}); assertOk(failures, 'failures'); assertEqual(failures.failures.length, 1, 'one failure');
+        const health = await store.readWorkAttemptHealth(); assertOk(health, 'health'); assertEqual(health.health[outcome].count, 0, 'closed work omitted');
+      });
+    })),
     contractCase<WorkStore>('addWork is find-or-create on the open key', async (make) => {
       await withSubject(make, async (store) => {
         const first = await store.addWork(sampleWorkInput());
@@ -563,6 +597,7 @@ export function workStoreContract(readItem: (store: WorkStore, id: string) => Pr
         const due = await store.hasDueWork({ now: LATER, kinds: KINDS });
         assertOk(due, 'hasDueWork failed after the item was recorded');
         assertTrue(!due.due, 'recordFailure with closeWork must close the item (AD-21)');
+        assertEqual((await readItem(store, added.item.id))?.outcome, 'failed', 'recorded outcome');
       });
     }),
 
