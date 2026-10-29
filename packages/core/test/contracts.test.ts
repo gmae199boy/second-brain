@@ -1,3 +1,4 @@
+import { extensionStoreContract } from '../src/testing/index.js';
 import { scheduleStoreContract } from '../src/testing/contracts/schedule-store.js';
 import { attachmentStoreContract, extractionStoreContract, fileRedactionContract, fileStoreContract, memoryFileStore } from '../src/testing/index.js';
 import { describe, expect, it } from 'vitest';
@@ -1547,4 +1548,8 @@ it('catches a store that fires daily schedules over covered dates', async () => 
   });
   expect(failures).toContain('a daily firing skips covered dates and enqueues the missing range');
   expect(emittedCoveredDates).toBe(true);
+});
+
+describe('extension contract against memory', () => {
+  for (const c of extensionStoreContract()) it(c.name, () => c.run(async () => memoryStore()));
 });

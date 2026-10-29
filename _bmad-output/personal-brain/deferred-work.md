@@ -362,3 +362,35 @@ reason: blind-hunter 1, edge-case-hunter 1·4. 기준 커밋도 같은 예외에
 status: done 2026-10-29
 resolution: resolved by story 12.11
 resolution-undo: 9820588b669e4f82e216128a1040fd740cd5bee3772bc1e6a593f52e3f8e3b6a 2026-10-29 7374617475733a206f70656e
+
+### DW-22: 재설치 마이그레이션이 일부 파일을 커밋한 뒤 실패하면 이전 패키지를 되돌려, 설치 폴더에 이미 ledger에 기록된 마이그레이션 파일이 없게 된다.
+origin: spec-deferred c2125e96bef7
+location: apps/cli/src/runtime/extensions.ts:76
+source_spec: `tickets/epic-extensions/tickets/story-tracer-brain-ext-install-testext-ext-status-connected-plan.md`
+severity: medium
+reason: `runMigrations`는 파일마다 커밋한다. `apps/cli/src/runtime/extensions.ts`의 migrator는 실패 결과면 무조건 backup을 되돌리므로, 0002 성공·0003 실패 때 ledger에는 0002가 있고 설치본에는 없다. 설치된 확장 마이그레이션을 setup이 다시 돌리게 되면(AD-31, setup run의 "설치된 확장" 마이그레이션) checksum·파일 검증이 실패한다. 실패·재개 정책은 13.5(단계 보고와 재개) 소관이다.
+status: open
+
+### DW-23: 마이그레이션 커밋 뒤 `recordExtensionInstall`이 실패하면 패키지와 DDL은 남고 registry에는 설치 사실이 없다.
+origin: spec-deferred ecd8277dac99
+location: packages/core/src/extensions/install.ts:36
+source_spec: `tickets/epic-extensions/tickets/story-tracer-brain-ext-install-testext-ext-status-connected-plan.md`
+severity: medium
+reason: `packages/core/src/extensions/install.ts`는 place → migrate → registry 기록 순서이고, migrator가 성공하면 backup을 지운다. 그 뒤 DB 쓰기가 실패하면 `ext status`는 미설치로 보이지만 `<home>/extensions/<name>/`와 확장 schema는 있다. 다시 돌리면 이어 가지만 단계별 결과 기록과 재개는 13.5 소관이다.
+status: open
+
+### DW-24: 연결 확인 중 CLI가 SIGINT 등으로 끝나면 detached로 뜬 자식 프로세스 그룹이 정리되지 않고 남을 수 있다.
+origin: spec-deferred ef840af28009
+location: packages/core/src/extensions/check.ts:5
+source_spec: `tickets/epic-extensions/tickets/story-tracer-brain-ext-install-testext-ext-status-connected-plan.md`
+severity: medium
+reason: `runExtensionCheck`에는 취소 신호가 없고 실제 launcher는 `detached: true`로 띄운다. 큐 행이 없으므로 감독자 reconcile도 회수하지 않는다. testext는 즉시 끝나 영향이 없지만, 오래 걸리는 실제 확장 확인에서는 고아 그룹이 생긴다. 취소 보고는 13.5 소관이다.
+status: open
+
+### DW-25: 연결 확인 실패 때 자식의 stderr 진단(마스킹·길이 제한된 값)이 버려져 registry에는 ABI 코드와 일반 메시지만 남는다.
+origin: spec-deferred 8d1e36c844a2
+location: packages/core/src/extensions/check.ts:41
+source_spec: `tickets/epic-extensions/tickets/story-tracer-brain-ext-install-testext-ext-status-connected-plan.md`
+severity: low
+reason: `packages/core/src/extensions/check.ts`는 `createAbiStderr()`로 모은 값을 `stderr.value()`로 읽고 버린다. Node 구문 오류처럼 원인이 stderr에만 있는 실패는 `ABI_EXIT_FAILED`만 보인다. 마지막 실패 보고는 13.5, 공개 상태 view는 13.6 소관이다.
+status: open

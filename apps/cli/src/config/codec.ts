@@ -776,3 +776,12 @@ async function writeEnv(path: string, content: string): Promise<void> {
     });
   }
 }
+
+/** Extension DDL uses the runtime endpoint and the existing private admin password. */
+export async function extensionAdminUrl(home: string, runtimeUrl: string, env: NodeJS.ProcessEnv): Promise<string> {
+  const password = await resolveStoreUrl(home, 'BRAIN_POSTGRES_PASSWORD', env);
+  if (!password) throw new Error('PostgreSQL 관리 비밀번호가 없습니다');
+  const url = new URL(runtimeUrl);
+  url.username = 'postgres'; url.password = password;
+  return url.toString();
+}

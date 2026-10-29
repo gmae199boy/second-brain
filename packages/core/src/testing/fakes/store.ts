@@ -170,6 +170,7 @@ function plainToolNote(note: StoredToolNote): ToolNote {
 export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const { health = DEFAULT_HEALTH } = options;
 
+  const extensions = new Map<string, import('../../ports/store.js').ExtensionRecord>();
   const users = new Map<string, User>();
   // Keyed by the idempotency keys of the Table Contract: a project by its
   // comparison key, a worktree by its project and path.
@@ -450,6 +451,20 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
 
   return {
     ...memorySettingsStore(),
+    async recordExtensionInstall({ name, version, now }) {
+      const existing = extensions.get(name);
+      if (existing) existing.version = version;
+      else extensions.set(name, { name, version, installedAt: new Date(now), enabled: true, enabledChangedAt: new Date(now), connectionStatus: null, connectionCheckedAt: null, connectionCode: null, connectionMessage: null });
+      return { ok: true };
+    },
+    async recordExtensionConnection({ name, status, code, message, checkedAt }) {
+      const row = extensions.get(name);
+      if (!row) return { ok: false, code: 'DB_UNAVAILABLE', message: '설치 기록이 없습니다' };
+      Object.assign(row, { connectionStatus: status, connectionCode: code, connectionMessage: message, connectionCheckedAt: new Date(checkedAt) });
+      return { ok: true };
+    },
+    async getExtension(name) { return { ok: true, extension: structuredClone(extensions.get(name) ?? null) }; },
+    async listExtensions() { return { ok: true, extensions: structuredClone([...extensions.values()].sort((a, b) => a.name < b.name ? -1 : 1)) }; },
     async holdWorkGroup({ group, now }) {
       if (!validHoldGroup(group)) return invalidGroup;
       const held = !heldGroups.has(group);

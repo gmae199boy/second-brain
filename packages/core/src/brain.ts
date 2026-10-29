@@ -1,3 +1,5 @@
+import { installExtension, type ExtensionRuntime } from './extensions/install.js';
+import { extensionStatus, listExtensions } from './extensions/status.js';
 import { holdWorkGroup, releaseWorkGroup } from './queue/hold-groups.js';
 import { listWork } from './queue/list.js';
 import { workExecutionClass } from './domain/work-item.js';
@@ -62,6 +64,7 @@ import {
 import { replaySpool, type SpoolReplayHandlers } from './spool/replay.js';
 
 export interface BrainDependencies {
+  extensions?: ExtensionRuntime;
   sources?: SourceFileReader;
   userHome?: string | null;
   /**
@@ -233,7 +236,13 @@ export interface BrainSchedules {
   remove(input: { id: string }): ReturnType<typeof removeSchedule>;
   run(input: { scheduleId: string }): Promise<RunScheduleResult>;
 }
+export interface BrainExt {
+  install(input: { name: string }): ReturnType<typeof installExtension>;
+  status(input: { name: string }): ReturnType<typeof extensionStatus>;
+  list(): ReturnType<typeof listExtensions>;
+}
 export interface Brain {
+  ext: BrainExt;
   messages: BrainMessages;
   files: BrainFiles;
   doctor: BrainDoctor;
@@ -381,6 +390,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
 
   const readTimeZone = () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' });
   return {
+    ext: { install: input => installExtension(dependencies, input), status: input => extensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
     files: { redact: (input) => redactFile({ store, clock, idGen }, input) },
     doctor: {

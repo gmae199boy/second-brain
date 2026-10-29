@@ -74,6 +74,9 @@ describe('the error codes', () => {
     );
 
     expect(exits).toEqual({
+      EXTENSION_NOT_FOUND: 2,
+      EXTENSION_INVALID: 2,
+      EXTENSION_CHECK_FAILED: 1,
       ABI_LINE_INVALID: 1,
       ABI_VERSION_UNKNOWN: 1,
       ABI_LINE_TOO_LONG: 1,

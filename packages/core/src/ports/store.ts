@@ -835,7 +835,7 @@ export interface TranscriptFileStore {
  * one capability at a time, and the day it implements `SessionStore` it passes
  * the whole `Store` contract (AD-10).
  */
-export type Store = HealthStore &
+export type Store = ExtensionStore & HealthStore &
   SessionStore &
   UserStore &
   WorkStore &
@@ -1459,4 +1459,18 @@ export type SettingsStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOC
 export interface SettingsStore {
   getSetting(input: { key: string }): Promise<{ ok: true; setting: SettingRecord | null } | SettingsStoreFailure>;
   setSetting(input: SettingRecord): Promise<{ ok: true } | SettingsStoreFailure>;
+}
+
+
+export interface ExtensionRecord {
+  name: string; version: string; installedAt: Date; enabled: boolean; enabledChangedAt: Date;
+  connectionStatus: 'connected' | 'failed' | null; connectionCheckedAt: Date | null;
+  connectionCode: string | null; connectionMessage: string | null;
+}
+export type ExtensionStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+export interface ExtensionStore {
+  recordExtensionInstall(input: { name: string; version: string; now: Date }): Promise<{ ok: true } | ExtensionStoreFailure>;
+  recordExtensionConnection(input: { name: string; status: 'connected' | 'failed'; code: string | null; message: string | null; checkedAt: Date }): Promise<{ ok: true } | ExtensionStoreFailure>;
+  getExtension(name: string): Promise<{ ok: true; extension: ExtensionRecord | null } | ExtensionStoreFailure>;
+  listExtensions(): Promise<{ ok: true; extensions: ExtensionRecord[] } | ExtensionStoreFailure>;
 }

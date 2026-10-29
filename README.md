@@ -784,6 +784,9 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 
 | 코드 | exit | 뜻 |
 | --- | --- | --- |
+| `EXTENSION_NOT_FOUND` | 2 | 지정한 확장 패키지가 없습니다 |
+| `EXTENSION_INVALID` | 2 | 확장 패키지의 선언이 올바르지 않습니다 |
+| `EXTENSION_CHECK_FAILED` | 1 | 확장 설치 뒤 연결 확인에 실패했습니다 |
 | `ABI_LINE_INVALID` | 1 | 프로세스 출력 줄이 ABI 형식과 다릅니다 |
 | `ABI_VERSION_UNKNOWN` | 1 | 지원하지 않는 프로세스 ABI 버전입니다 |
 | `ABI_LINE_TOO_LONG` | 1 | 프로세스 출력 줄이 바이트 상한을 넘었습니다 |
