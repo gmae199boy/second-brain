@@ -232,6 +232,10 @@ const CODES = {
     retryable: false,
     hint: '`brain doctor run`으로 데이터베이스 상태를 확인하세요',
   },
+  WORK_GRAPH_INVALID: {
+    exit: 1, meaning: '일감 의존 그래프가 올바르지 않습니다', retryable: false,
+    hint: '노드 key와 대상의 중복, 선행 key와 순환을 확인하세요',
+  },
   /** No stored work item has the requested id. */
   WORK_NOT_FOUND: {
     exit: 1, meaning: '지정한 일감이 없습니다', retryable: false, hint: '일감 id를 확인하세요',

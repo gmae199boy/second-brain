@@ -802,6 +802,7 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `CONFIG_INVALID` | 2 | 설정은 있고, 그 값 하나를 읽거나 쓸 수 없습니다 |
 | `ORBSTACK_UNAVAILABLE` | 2 | OrbStack을 사용할 수 없습니다 |
 | `DB_UNAVAILABLE` | 2 | 데이터베이스에 닿지 못했습니다 |
+| `WORK_GRAPH_INVALID` | 1 | 일감 의존 그래프가 올바르지 않습니다 |
 | `WORK_NOT_FOUND` | 1 | 지정한 일감이 없습니다 |
 | `MESSAGE_NOT_FOUND` | 1 | 지정한 메시지가 없습니다 |
 | `REDACT_TEXT_NOT_FOUND` | 1 | 가릴 글자를 찾지 못했습니다 |

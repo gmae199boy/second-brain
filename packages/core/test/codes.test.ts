@@ -97,6 +97,7 @@ describe('the error codes', () => {
       USER_MISSING: 2,
       DB_LOCKED: 1,
       WORK_NOT_FOUND: 1,
+      WORK_GRAPH_INVALID: 1,
       MESSAGE_NOT_FOUND: 1,
       REDACT_TEXT_NOT_FOUND: 1,
       FILE_NOT_FOUND: 1,

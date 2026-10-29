@@ -568,6 +568,14 @@ describe('the contracts catch a wrong store', () => {
     );
   });
 
+  it('catches a store that drops prerequisites', async () => {
+    const make = async (): Promise<WorkStore> => {
+      const inner = memoryStore();
+      return { ...inner, addWorkGraph: input => inner.addWorkGraph({ nodes: input.nodes.map(node => ({ ...node, after: [] })) }) };
+    };
+    expect(await failedCases(workStoreContract(readMemoryWorkItem), make)).toContain('dependent waits for its prerequisite to succeed');
+  });
+
   it('catches a queue that finishes an item under somebody else\'s claim', async () => {
     const make = async (): Promise<WorkStore> => {
       const inner = memoryStore();

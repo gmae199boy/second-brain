@@ -70,7 +70,7 @@ it.each(['brain.sessions','brain.users','brain.message_attachments','brain.files
       'brain.users':()=>store.readSelfUser(),
       'brain.message_attachments':()=>store.listMessageAttachments(sampleEnsureSessionInput().id),
       'brain.files':()=>store.listRedactedContentHashes(['sha256:'+ 'a'.repeat(64)]),
-      'brain.schema_migrations':()=>checkSchema(store,{ core: 6 }),
+      'brain.schema_migrations':()=>checkSchema(store,{ core: 7 }),
     };
     expect(await reads[table]!()).toMatchObject({ok:false,code:'DB_LOCKED'});
   } finally {await blocker.query('rollback');await blocker.end();await store.close();}
@@ -279,14 +279,14 @@ it('reads the highest migration version for every owner', async () => {
   try {
     const versions = await store.readSchemaVersions();
     expect(versions.ok && Object.keys(versions.versions)).toEqual(['core', 'garmin']);
-    expect(versions).toMatchObject({ ok: true, versions: { core: { version: 6 }, garmin: { version: 3, appliedAt: new Date('2026-01-02T00:00:00Z') } } });
-    expect(await checkSchema(store, { core: 6, garmin: 3 })).toMatchObject({ ok: true });
-    expect(await checkSchema(store, { core: 6 })).toMatchObject({ ok: true });
+    expect(versions).toMatchObject({ ok: true, versions: { core: { version: 7 }, garmin: { version: 3, appliedAt: new Date('2026-01-02T00:00:00Z') } } });
+    expect(await checkSchema(store, { core: 7, garmin: 3 })).toMatchObject({ ok: true });
+    expect(await checkSchema(store, { core: 7 })).toMatchObject({ ok: true });
   } finally { await store.close(); }
 });
 
 describe('schema owner maxima contract', () => {
-  for (const test of schemaStoreContract({ ...sampleSchemaVersions(), core: 6 })) it(test.name, () => test.run(async () => {
+  for (const test of schemaStoreContract({ ...sampleSchemaVersions(), core: 7 })) it(test.name, () => test.run(async () => {
     const db = await database();
     await db.query("insert into brain.schema_migrations(owner,version,name,checksum,applied_at) values ('garmin',1,'first','a','2026-01-01T00:00:00Z'),('garmin',3,'third','b','2026-01-02T00:00:00Z')");
     const store = postgresStore({ databaseUrl: db.appUrl });

@@ -430,6 +430,15 @@ export type AddWorkResult =
   | { ok: true; created: boolean; item: WorkItem }
   | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
+/** Atomic graph insertion. Only newly created rows receive their prerequisites. */
+export interface AddWorkGraphInput {
+  /** Each prerequisite is an index strictly before its node. */
+  nodes: readonly (AddWorkInput & { after: readonly number[] })[];
+}
+export type AddWorkGraphResult =
+  | { ok: true; items: { created: boolean; item: WorkItem }[] }
+  | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+
 /** What `hasDueWork` and `claimWork` both ask about. */
 export interface DueWorkQuery {
   /** The instant "due" is measured against, read once from `Clock` (AD-13). */
@@ -681,6 +690,8 @@ export interface WorkStore {
   finishSupervisedWork(input: FinishSupervisedWorkInput): Promise<FinishWorkResult>;
   /** Put one piece of work on the queue, once (AD-21). */
   addWork(input: AddWorkInput): Promise<AddWorkResult>;
+  /** Insert a graph atomically, preserving the prerequisites of merged rows. */
+  addWorkGraph(input: AddWorkGraphInput): Promise<AddWorkGraphResult>;
   /** Is anything due? A read, so it never takes the write lock (AD-7). */
   hasDueWork(query: DueWorkQuery): Promise<HasDueWorkResult>;
   /**

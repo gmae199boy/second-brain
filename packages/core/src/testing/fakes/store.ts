@@ -19,7 +19,7 @@ import { FILE_REDACTION_RESOLVES } from '../../files/redact.js';
 import type { User } from '../../domain/user.js';
 import type { Failure } from '../../domain/failure.js';
 import type { TranscriptFile } from '../../domain/transcript-file.js';
-import { workExecutionClass, workKindPolicy, type WorkAttempt, type WorkItem } from '../../domain/work-item.js';
+import { dependencyFailedText, workExecutionClass, workKindPolicy, type WorkAttempt, type WorkItem } from '../../domain/work-item.js';
 import type {
   RedactMessageInput,
   RedactMessageResult,
@@ -184,6 +184,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
    */
   const schedules = new Map<string, import('../../domain/schedule.js').Schedule>();
   const workItems: WorkItem[] = [];
+  const workDependencies: { workItemId: string; prerequisiteId: string }[] = [];
   const workAttempts: WorkAttempt[] = [];
   const failures: Failure[] = [];
   /** Keyed by `(harness, path)`, the idempotency key of the Table Contract. */
@@ -393,6 +394,18 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     };
     workItems.push(item);
     return { ok: true, created: true, item: { ...item } };
+  }
+
+  function closeDependents(rootId: string, outcome: 'failed' | 'cancelled' | 'dependency_failed', now: Date) {
+    const closed = new Set([rootId]);
+    for (;;) {
+      const next = workItems.filter(item => item.completedAt === null && workDependencies.some(edge => edge.workItemId === item.id && closed.has(edge.prerequisiteId)));
+      if (next.length === 0) return;
+      for (const item of next) {
+        item.completedAt = now; item.outcome = 'dependency_failed';
+        item.lastError = dependencyFailedText(rootId, outcome); unclaim(item); closed.add(item.id);
+      }
+    }
   }
 
   return {
@@ -1133,12 +1146,24 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       return addWork(input);
     },
 
+    async addWorkGraph({ nodes }) {
+      const items: { created: boolean; item: WorkItem }[] = [];
+      for (const node of nodes) {
+        const result = addWork(node);
+        if (!result.ok) return result;
+        if (result.created) for (const index of new Set(node.after))
+          workDependencies.push({ workItemId: result.item.id, prerequisiteId: items[index]!.item.id });
+        items.push(result);
+      }
+      return { ok: true, items };
+    },
+
     async hasDueWork(query: DueWorkQuery): Promise<HasDueWorkResult> {
-      return { ok: true, due: candidates(workItems, query).length > 0 };
+      return { ok: true, due: candidates(workItems, query, workDependencies).length > 0 };
     },
 
     async claimWork(input: ClaimWorkInput): Promise<ClaimWorkResult> {
-      const [next] = candidates(workItems, input);
+      const [next] = candidates(workItems, input, workDependencies);
       if (next === undefined) return { ok: true, item: null };
 
       // The attempt is raised by the claim and not by the outcome, so an item
@@ -1173,6 +1198,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       item.cancelRequestedAt ??= input.now;
       if (item.currentAttemptToken !== null) return { ok: true, state: 'requested' };
       item.completedAt = input.now; item.outcome = 'cancelled'; unclaim(item);
+      closeDependents(item.id, 'cancelled', input.now);
       return { ok: true, state: 'cancelled' };
     },
     async recordSupervisedProcess(input) {
@@ -1203,11 +1229,12 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       if (item.cancelRequestedAt !== null) { item.completedAt = input.now; item.outcome = 'cancelled'; }
       else if (input.outcome === 'died') item.nextAttemptAt = input.now;
       else item.attempts = Math.max(0, item.attempts - 1);
+      if (item.outcome === 'cancelled') closeDependents(item.id, item.outcome, input.now);
       item.currentAttemptToken = null; unclaim(item);
       return { ok: true, outcome: 'done' };
     },
     async claimSupervisedWork(input) {
-      const [item] = candidates(workItems.filter(i => i.currentAttemptToken === null && i.cancelRequestedAt === null), input, 'supervised');
+      const [item] = candidates(workItems.filter(i => i.currentAttemptToken === null && i.cancelRequestedAt === null), input, workDependencies, 'supervised', workItems);
       if (!item) return { ok: true, item: null, attemptToken: null };
       if (workAttempts.some((a) => a.token === input.attemptToken)) return { ok: false, code: 'DB_UNAVAILABLE', message: '이미 쓰인 시도 토큰입니다' };
       item.attempts += 1;
@@ -1251,6 +1278,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         item.nextAttemptAt = input.nextAttemptAt ?? input.now;
         item.lastError = input.lastError ?? input.failure?.message ?? null;
       }
+      if (item.outcome === 'cancelled' || item.outcome === 'failed') closeDependents(item.id, item.outcome, input.now);
       item.currentAttemptToken = null;
       unclaim(item);
       return { ok: true, outcome: 'done' };
@@ -1337,6 +1365,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         if (item !== null) {
           item.completedAt = input.closeWork.now; item.outcome = 'failed';
           item.lastError = input.message;
+          closeDependents(item.id, 'failed', input.closeWork.now);
           unclaim(item);
         }
       }
@@ -1457,11 +1486,12 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
  * over from a worker that was killed. A kind nobody handles is left alone rather
  * than claimed or closed (Decision 4, 2026-10-19).
  */
-function candidates(items: readonly WorkItem[], query: DueWorkQuery, executionClass = 'core'): WorkItem[] {
+function candidates(items: readonly WorkItem[], query: DueWorkQuery, dependencies: readonly { workItemId: string; prerequisiteId: string }[], executionClass = 'core', allItems = items): WorkItem[] {
   const kinds = new Set(query.kinds);
   return items
     .filter(
       (item) =>
+        dependencies.filter(edge => edge.workItemId === item.id).every(edge => allItems.some(p => p.id === edge.prerequisiteId && p.completedAt !== null && p.outcome === 'succeeded')) &&
         item.executionClass === executionClass &&
         item.completedAt === null &&
         item.nextAttemptAt.getTime() <= query.now.getTime() &&

@@ -3,6 +3,8 @@
 export type {
   ListIdentityCandidatesResult,
   CountUntaggedSessionsResult,
+  AddWorkGraphInput,
+  AddWorkGraphResult,
   AddWorkInput,
   AddWorkResult,
   ClaimWorkInput,

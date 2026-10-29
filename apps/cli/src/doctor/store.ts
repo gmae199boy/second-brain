@@ -92,6 +92,7 @@ export function failedConfigStore(message: string): Store & SchemaStore & Settin
     async readSession() {
       return unavailable;
     },
+    async addWorkGraph() { return unavailable; },
     async addWork() {
       return unavailable;
     },

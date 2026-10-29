@@ -1,5 +1,6 @@
 import {
   formatInstant,
+  dependencyFailedText,
   TABLE_CLEANUP_KIND,
   TABLE_TARGET_KIND,
   FAILURE_MESSAGE_MAX_BYTES,
@@ -60,6 +61,11 @@ export function claimCandidateQuery(query: DueWorkQuery): RawBuilder<WorkItemRow
            claimed_at, claim_expires_at, claimed_by, last_error, completed_at, outcome, cancel_requested_at
       from brain.work_items
      where completed_at is null
+       and not exists (
+         select 1 from brain.work_dependencies d join brain.work_items p on p.id = d.prerequisite_id
+          where d.work_item_id = brain.work_items.id
+            and (p.completed_at is null or p.outcome is distinct from 'succeeded')
+       )
        and execution_class = 'core'
        and next_attempt_at <= ${now}
        and (claim_expires_at is null or claim_expires_at <= ${now})
@@ -114,6 +120,26 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         };
       }
       return { ok: true, created, item: toWorkItem(row) };
+    },
+
+    async addWorkGraph({ nodes }) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const written = await withWrite(opened.connection, async held => {
+          const items: { created: boolean; item: WorkItem }[] = [];
+          for (const node of nodes) {
+            const { created, row } = await ensureWork(held, node);
+            if (created) for (const index of new Set(node.after)) {
+              await sql`insert into brain.work_dependencies (work_item_id, prerequisite_id)
+                values (${row.id}, ${items[index]!.item.id})`.execute(held);
+            }
+            items.push({ created, item: toWorkItem(row) });
+          }
+          return items;
+        });
+        return written.ok ? { ok: true, items: written.value } : written;
+      } catch (error) { return { ...databaseFailure(error), message: `일감 그래프를 넣을 수 없습니다: ${describe(error)}` }; }
     },
 
     async hasDueWork(query: DueWorkQuery): Promise<HasDueWorkResult> {
@@ -194,6 +220,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
           }
           await sql`update brain.work_items set cancel_requested_at = ${now}, completed_at = ${now}, outcome = 'cancelled',
             claimed_at = null, claim_expires_at = null, claimed_by = null where id = ${input.id}`.execute(held);
+          await closeDependents(held, input.id, 'cancelled', now);
           return 'cancelled' as const;
         });
         return written.ok ? { ok: true, state: written.value } : written;
@@ -237,6 +264,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
           attempts = case when cancel_requested_at is null and ${input.outcome} = 'cancelled' then greatest(0, attempts - 1) else attempts end,
           next_attempt_at = case when cancel_requested_at is null and ${input.outcome} = 'died' then ${now}::timestamptz else next_attempt_at end
           where id = ${input.id}`.execute(held);
+        if (item.cancel_requested_at !== null) await closeDependents(held, input.id, 'cancelled', now);
         return 1;
       });
     },
@@ -248,6 +276,11 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
           const now = instant(input.now, 'work_items.claimed_at');
           const found = await sql<WorkItemRow>`select * from brain.work_items
             where execution_class = 'supervised' and completed_at is null
+              and not exists (
+                select 1 from brain.work_dependencies d join brain.work_items p on p.id = d.prerequisite_id
+                 where d.work_item_id = brain.work_items.id
+                   and (p.completed_at is null or p.outcome is distinct from 'succeeded')
+              )
               and current_attempt_token is null and cancel_requested_at is null
               and next_attempt_at <= ${now} and (claim_expires_at is null or claim_expires_at <= ${now})
               and kind = any(${[...input.kinds]}::text[])
@@ -317,6 +350,8 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
           last_error = case when ${input.outcome} <> 'succeeded' then ${input.lastError === undefined && failure === undefined ? null : encodedFailure(input.lastError ?? failure!.message)} else last_error end
           where id = ${input.id} and current_attempt_token = ${input.attemptToken}`.execute(held);
         if (changesOf(changed) === 0) return 0;
+        if (input.outcome !== 'succeeded' && (item.cancel_requested_at !== null || failure !== undefined))
+          await closeDependents(held, input.id, item.cancel_requested_at !== null ? 'cancelled' : 'failed', now);
         if (failure !== undefined) {
           const occurredAt = instant(failure.occurredAt, 'failures.occurred_at');
           await sql`insert into brain.failures (id, target_kind, target_id, stage, fingerprint, harness, session_id, code, message, occurred_at, first_occurred_at, occurrences)
@@ -407,6 +442,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
               `.execute(held),
             );
             if (closed === 0) return null;
+            await closeDependents(held, closing.id, 'failed', closedAt!);
           }
 
           // The claim CAS precedes the failure upsert, so a lost worker writes nothing.
@@ -591,6 +627,26 @@ async function finish(
   }
   if (!written.ok) return written;
   return { ok: true, outcome: written.value > 0 ? 'done' : 'lost' };
+}
+
+/** Explicit propagation shares the winning close's transaction and timestamp. */
+async function closeDependents(held: Kysely<PgSchema>, rootId: string,
+  outcome: 'failed' | 'cancelled' | 'dependency_failed', now: string): Promise<void> {
+  // An inserter can hold a descendant lock while committing another edge.
+  // Refresh the snapshot after each update, traversing even closed ancestors
+  // so newly committed descendants remain reachable on the next pass.
+  for (;;) {
+    const changed = await sql`with recursive dependents(id) as (
+      select work_item_id from brain.work_dependencies where prerequisite_id = ${rootId}
+      union
+      select d.work_item_id from dependents parent
+        join brain.work_dependencies d on d.prerequisite_id = parent.id
+    ) update brain.work_items set completed_at = ${now}, outcome = 'dependency_failed',
+      claimed_at = null, claim_expires_at = null, claimed_by = null,
+      last_error = ${encodedFailure(dependencyFailedText(rootId, outcome))}
+      where id in (select id from dependents) and completed_at is null`.execute(held);
+    if (changesOf(changed) === 0) return;
+  }
 }
 
 async function readOpenWork(

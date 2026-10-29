@@ -9,7 +9,7 @@ import { Kysely, PostgresDialect, type KyselyPlugin } from 'kysely';
 import { createPool, type PgSchema } from '../src/connect.js';
 import { postgresWorkStore } from '../src/work.js';
 import { afterEach, describe, expect, it } from 'vitest';
-import { tickSchedules, failureText, FAILURE_MESSAGE_MAX_BYTES, truncateUtf8, retryFailures } from '@second-brain/core';
+import { dependencyFailedText, enqueueWorkGraph, tickSchedules, failureText, FAILURE_MESSAGE_MAX_BYTES, truncateUtf8, retryFailures } from '@second-brain/core';
 import { workStoreContract, scheduleStoreContract, sequenceIdGen } from '@second-brain/core/testing';
 import { postgresStore } from '../src/index.js';
 import { database, subject, clock } from './fixture.js';
@@ -558,4 +558,148 @@ it('core drain success and permanent failure persist different PostgreSQL outcom
     { outcome: 'succeeded', completed_at: now }, { outcome: 'failed', completed_at: now },
   ]);
   expect(await db.rows('select code from brain.failures')).toEqual([{ code: 'PERMANENT' }]);
+});
+
+it('rolls back a graph when the final insert fails after earlier nodes and an edge', async () => {
+  const { db, store } = await fixture();
+  expect(await store.addWorkGraph({ nodes: [{ ...work(8), after: [] }, { ...work(9), after: [0] }] })).toMatchObject({ ok: true });
+  const before = {
+    items: await db.rows('select * from brain.work_items order by id'),
+    edges: await db.rows('select * from brain.work_dependencies order by work_item_id, prerequisite_id'),
+  };
+  await db.query(`create function brain.refuse_final_node() returns trigger language plpgsql as $$
+    begin
+      if new.id = '${id(3)}' then
+        if (select count(*) from brain.work_items where id in ('${id(1)}', '${id(2)}')) = 2
+          and exists (select 1 from brain.work_dependencies where work_item_id = '${id(2)}' and prerequisite_id = '${id(1)}') then
+          raise exception 'refused final node after prefix';
+        end if;
+        raise exception 'graph prefix missing';
+      end if;
+      return new;
+    end $$;
+    create trigger refuse_final_node before insert on brain.work_items for each row execute function brain.refuse_final_node()`);
+  expect(await store.addWorkGraph({ nodes: [
+    { ...work(1), after: [] }, { ...work(2), after: [0] }, { ...work(3), after: [1] },
+  ] })).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE', message: expect.stringContaining('refused final node after prefix') });
+  expect(await db.rows('select * from brain.work_items order by id')).toEqual(before.items);
+  expect(await db.rows('select * from brain.work_dependencies order by work_item_id, prerequisite_id')).toEqual(before.edges);
+});
+
+it.each([false, true])('rolls back root closure and propagation when a dependent update fails (supervised: %s)', async supervised => {
+  const { db, store } = await fixture(); const token = id(201);
+  expect(await store.addWorkGraph({ nodes: [
+    { ...work(1), kind: supervised ? 'process_probe' : 'demo_work', after: [] },
+    { ...work(2), after: [0] }, { ...work(3), after: [1] },
+  ] })).toMatchObject({ ok: true });
+  if (supervised) expect(await store.claimSupervisedWork({ now, claimedBy: 'worker', kinds: ['process_probe'], attemptToken: token })).toMatchObject({ ok: true, item: { id: id(1) } });
+  else expect(await store.claimWork({ now, claimedBy: 'worker', kinds: ['demo_work'] })).toMatchObject({ ok: true, item: { id: id(1) } });
+  const before = {
+    items: await db.rows('select * from brain.work_items order by id'),
+    attempts: await db.rows('select * from brain.work_attempts order by token'),
+    failures: await db.rows('select * from brain.failures order by id'),
+  };
+  await db.query(`create function brain.refuse_dependent() returns trigger language plpgsql as $$
+    begin
+      if new.id = '${id(3)}' and new.outcome = 'dependency_failed' then
+        if (select outcome from brain.work_items where id = '${id(1)}') = 'failed' then
+          raise exception 'refused dependent after root closure';
+        end if;
+        raise exception 'root closure missing';
+      end if;
+      return new;
+    end $$;
+    create trigger refuse_dependent before update on brain.work_items for each row execute function brain.refuse_dependent()`);
+  const failure = { id: id(301), targetKind: 'probe', targetId: work(1).targetId, stage: supervised ? 'process_probe' : 'demo_work',
+    fingerprint: 'cause', harness: null, sessionId: null, code: 'PERMANENT', message: '처리 실패', occurredAt: next };
+  const close = () => supervised
+    ? store.finishSupervisedWork({ id: id(1), attemptToken: token, now: next, outcome: 'failed', failure })
+    : store.recordFailure({ ...failure, closeWork: { id: id(1), claimedBy: 'worker', now: next } });
+  expect(await close()).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE', message: expect.stringContaining('refused dependent after root closure') });
+  expect(await db.rows('select * from brain.work_items order by id')).toEqual(before.items);
+  expect(await db.rows('select * from brain.work_attempts order by token')).toEqual(before.attempts);
+  expect(await db.rows('select * from brain.failures order by id')).toEqual(before.failures);
+  await db.query('drop trigger refuse_dependent on brain.work_items');
+  expect(await close()).toMatchObject({ ok: true });
+  expect(await db.rows('select outcome, completed_at from brain.work_items order by id')).toEqual([
+    { outcome: 'failed', completed_at: next },
+    { outcome: 'dependency_failed', completed_at: next }, { outcome: 'dependency_failed', completed_at: next },
+  ]);
+  expect(await db.rows('select id from brain.failures')).toEqual([{ id: failure.id }]);
+  expect(await db.rows('select outcome, finished_at from brain.work_attempts')).toEqual(supervised ? [{ outcome: 'failed', finished_at: next }] : []);
+});
+
+it('rejects self edges and references to missing work', async () => {
+  const { db, store } = await fixture(); await store.addWork(work());
+  await expect(db.query(`insert into brain.work_dependencies values ('${id(1)}', '${id(1)}')`)).rejects.toThrow();
+  await expect(db.query(`insert into brain.work_dependencies values ('${id(1)}', '${id(2)}')`)).rejects.toThrow();
+  await expect(db.query(`insert into brain.work_dependencies values ('${id(2)}', '${id(1)}')`)).rejects.toThrow();
+});
+
+it('enqueues a graph through core and unlocks the PG dependent only after success', async () => {
+  const { store } = await fixture();
+  const result = await enqueueWorkGraph({ store, clock, idGen: sequenceIdGen({ timestampMs: now.getTime() }) }, {
+    nodes: [{ key: 'b', kind: 'demo_work', targetKind: 'probe', targetId: 'b', after: ['a'] },
+      { key: 'a', kind: 'demo_work', targetKind: 'probe', targetId: 'a', after: [] }],
+  });
+  expect(result.ok).toBe(true); if (!result.ok) return;
+  expect(await store.claimWork({ now, kinds: ['demo_work'], claimedBy: 'worker' })).toMatchObject({ ok: true, item: { id: result.items.a!.id } });
+  expect(await store.claimWork({ now, kinds: ['demo_work'], claimedBy: 'other' })).toEqual({ ok: true, item: null });
+  await store.completeWork({ id: result.items.a!.id, claimedBy: 'worker', now });
+  expect(await store.claimWork({ now, kinds: ['demo_work'], claimedBy: 'worker' })).toMatchObject({ ok: true, item: { id: result.items.b!.id } });
+});
+
+it('closes a dependent committed while propagation waits for its merged prerequisite lock', async () => {
+  const { db, store, blocker } = await fixture({ applicationName: 'brain-dependency-race-close', lockTimeoutMs: 5000 });
+  await store.addWorkGraph({ nodes: [{ ...work(1), after: [] }, { ...work(2), after: [0] }, { ...work(4), after: [0] }] });
+  await store.requestWorkCancel({ id: id(4), now });
+  const closedBefore = await db.rows(`select * from brain.work_items where id = '${id(4)}'`);
+  await store.claimWork({ now, kinds: ['demo_work'], claimedBy: 'worker' });
+
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let paused = false;
+  const selects = new Set<unknown>();
+  // Stop the real addWorkGraph transaction after it locks existing B, before
+  // inserting C or its edge. The failing transaction must miss C initially.
+  const barrier: KyselyPlugin = {
+    transformQuery({ node, queryId }) {
+      if (node.kind === 'RawNode' && node.sqlFragments.join('').includes('for update')) selects.add(queryId);
+      return node;
+    },
+    async transformResult({ result, queryId }) {
+      if (selects.delete(queryId) && !paused) { paused = true; await gate; }
+      return result;
+    },
+  };
+  const connection = new Kysely<PgSchema>({ dialect: new PostgresDialect({ pool: createPool({
+    databaseUrl: db.appUrl, applicationName: 'brain-dependency-race-graph', lockTimeoutMs: 5000,
+  }) }), plugins: [barrier] });
+  cleanup.push(() => connection.destroy());
+  const graphStore = postgresWorkStore(() => ({ ok: true, connection: { db: connection } }));
+  const graph = graphStore.addWorkGraph({ nodes: [{ ...work(2), id: id(20), after: [] }, { ...work(3), after: [0] }] });
+  let failing: ReturnType<typeof store.recordFailure> | undefined;
+  try {
+    await expect.poll(() => paused, { timeout: 2000 }).toBe(true);
+    failing = store.recordFailure({ id: id(10), targetKind: 'probe', targetId: work(1).targetId, stage: 'demo_work',
+      fingerprint: 'root', harness: null, sessionId: null, code: 'error', message: 'root failure', occurredAt: next,
+      closeWork: { id: id(1), claimedBy: 'worker', now: next } });
+    await expect.poll(async () => {
+      const result = await blocker.query(`select cardinality(pg_blocking_pids(pid)) > 0 as blocked
+        from pg_stat_activity where datname = current_database() and application_name = $1
+          and query like '%with recursive dependents%'`, ['brain-dependency-race-close']);
+      return result.rows[0]?.blocked;
+    }, { timeout: 2000 }).toBe(true);
+    release();
+    expect(await graph).toMatchObject({ ok: true, items: [{ created: false, item: { id: id(2) } }, { created: true, item: { id: id(3) } }] });
+    expect(await failing).toMatchObject({ ok: true, outcome: 'recorded' });
+    expect(await db.rows(`select id, outcome, completed_at, last_error, claimed_by, claimed_at, claim_expires_at
+      from brain.work_items where id in ('${id(1)}', '${id(2)}', '${id(3)}') order by id`)).toEqual([
+      { id: id(1), outcome: 'failed', completed_at: next, last_error: 'root failure', claimed_by: null, claimed_at: null, claim_expires_at: null },
+      ...[2, 3].map(n => ({ id: id(n), outcome: 'dependency_failed', completed_at: next,
+        last_error: dependencyFailedText(id(1), 'failed'), claimed_by: null, claimed_at: null, claim_expires_at: null })),
+    ]);
+    expect(await db.rows(`select * from brain.work_items where id = '${id(4)}'`)).toEqual(closedBefore);
+    expect(await store.hasDueWork({ now: next, kinds: ['demo_work'] })).toEqual({ ok: true, due: false });
+  } finally { release(); await Promise.allSettled([graph, failing]); }
 });

@@ -23,6 +23,7 @@ const calls = {
   countUntaggedSessions: (s) => s.countUntaggedSessions(),
   fillSessionTags: (s) => s.fillSessionTags({ key: sampleSessionKey, checkout: null, firstCwd: null, tagSource: null }),
   redactMessage: (s) => s.redactMessage({ messageId: id, plan: () => { throw new Error('unreachable'); } }),
+  addWorkGraph: (s) => s.addWorkGraph({ nodes: [{ ...sampleWorkInput(), after: [] }] }),
   addWork: (s) => s.addWork(sampleWorkInput()),
   hasDueWork: (s) => s.hasDueWork(due),
   claimWork: (s) => s.claimWork({ ...due, claimedBy: 'worker' }),

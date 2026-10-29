@@ -186,3 +186,8 @@ export interface WorkAttempt {
   finishedAt: Date | null;
   outcome: 'succeeded' | 'failed' | 'stalled' | 'died' | 'cancelled' | 'unknown' | null;
 }
+
+/** One sentence shared by every store when an upstream item closes unsuccessfully. */
+export function dependencyFailedText(id: string, outcome: 'failed' | 'cancelled' | 'dependency_failed'): string {
+  return `선행 일감 ${id}이 ${outcome}로 끝나 이 일감을 실행할 수 없습니다`;
+}
