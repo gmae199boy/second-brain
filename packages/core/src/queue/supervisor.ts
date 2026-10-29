@@ -1,5 +1,5 @@
 import { failureFingerprint, failureText } from '../domain/failure.js';
-import { MAX_WORK_ATTEMPTS, workKindPolicy, workStallWindowMs, SUPERVISOR_POLL_MS, SUPERVISOR_RENEW_EVERY_MS, SUPERVISOR_CANCEL_GRACE_MS, SUPERVISOR_CANCEL_POLL_MS, SUPERVISOR_GROUP_CONFIRM_MS, workExecutionClass, type WorkItem } from '../domain/work-item.js';
+import { MAX_WORK_ATTEMPTS, SUPERVISOR_CAPACITY, workKindPolicy, workStallWindowMs, SUPERVISOR_POLL_MS, SUPERVISOR_RENEW_EVERY_MS, SUPERVISOR_CANCEL_GRACE_MS, SUPERVISOR_CANCEL_POLL_MS, SUPERVISOR_GROUP_CONFIRM_MS, workExecutionClass, type WorkItem } from '../domain/work-item.js';
 import type { Clock, Timer } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
 import type { ProcessInspector, ProcessLauncher, ProcessSpec } from '../ports/process.js';
@@ -21,21 +21,35 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
   const kinds = Object.keys(launches).filter(kind => workExecutionClass(kind) === 'supervised');
   const claimedBy = idGen.next();
   let reconciled = false;
-  let pendingSettlement: (() => Promise<FinishWorkResult>) | undefined;
+  type Execution = { finished?: boolean; pendingSettlement?: () => Promise<FinishWorkResult>; retrying?: Promise<void> };
+  const executions = new Set<Execution>();
+  const running = new Set<Promise<void>>();
   let lastProblem: string | undefined;
   async function problem(message?: string): Promise<void> {
     if (message !== undefined && message !== lastProblem) await options.log?.(message);
     lastProblem = message;
   }
-  async function retrySettlement(): Promise<void> {
-    if (!pendingSettlement) return;
-    const finished = await pendingSettlement();
-    if (!finished.ok) await problem(`감독자 결과 확정 실패 (${finished.code})`);
-    else {
-      pendingSettlement = undefined;
-      if (finished.outcome === 'lost') await problem('감독자가 결과를 확정하기 전에 시도 토큰을 잃었습니다');
-      else await problem();
-    }
+  async function retrySettlement(execution: Execution): Promise<void> {
+    if (execution.retrying) return execution.retrying;
+    if (!execution.pendingSettlement) return;
+    const settle = execution.pendingSettlement;
+    execution.retrying = (async () => {
+      const finished = await settle();
+      if (!finished.ok) await problem(`감독자 결과 확정 실패 (${finished.code})`);
+      else {
+        delete execution.pendingSettlement;
+        if (execution.finished) executions.delete(execution);
+        if (finished.outcome === 'lost') await problem('감독자가 결과를 확정하기 전에 시도 토큰을 잃었습니다');
+        else await problem();
+      }
+    })();
+    try { await execution.retrying; } finally { delete execution.retrying; }
+  }
+  async function retrySettlements(): Promise<void> {
+    await Promise.all([...executions].map(async execution => {
+      try { await retrySettlement(execution); }
+      catch { await problem('감독자 결과 확정 중 오류가 발생했습니다'); }
+    }));
   }
   const cleanup = (identity: GroupIdentity, extra: { handle?: import('../ports/process.js').ProcessHandle } = {}) => cleanProcessGroup({
     inspector, identity, clock, timer, graceMs: options.cancelGraceMs ?? SUPERVISOR_CANCEL_GRACE_MS,
@@ -53,7 +67,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     }
     return true;
   }
-  async function execute(item: WorkItem, token: string): Promise<void> {
+  async function execute(item: WorkItem, token: string, execution: Execution): Promise<void> {
     let failed: string | undefined;
     const run = createAbiRun(), stderr = createAbiStderr();
     const startedAt = clock.now().getTime();
@@ -157,8 +171,8 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
           handle.closeOutput();
           await readStderr;
           const input = { id: item.id, attemptToken: token, now: clock.now(), outcome: 'unknown' as const, elapsedMs: Math.max(0, (endedAt ?? clock.now().getTime()) - startedAt), stderr: stderr.value() };
-          pendingSettlement = () => store.settleSupervisedAttempt(input);
-          await retrySettlement();
+          execution.pendingSettlement = () => store.settleSupervisedAttempt(input);
+          await retrySettlement(execution);
           return;
         }
         exit = await exited;
@@ -180,7 +194,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     // A valid result and exit zero win a cancellation race. Shutdown returns unfinished work.
     if (signal.aborted || (stopped && failed !== undefined)) {
       const input = { id: item.id, attemptToken: token, now, outcome: 'cancelled' as const, ...detail };
-      pendingSettlement = () => store.settleSupervisedAttempt(input);
+      execution.pendingSettlement = () => store.settleSupervisedAttempt(input);
     } else {
       const outcome = verdict.outcome === 'succeeded' ? 'succeeded' as const : terminationCause === 'stalled' && !sawFinal ? 'stalled' as const
         : terminationCause === 'exit' && !sawFinal && verdict.code === 'ABI_EXIT_FAILED' && exit.signal !== null ? 'died' as const : 'failed' as const;
@@ -200,29 +214,45 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
         ...(decision.decision === 'record' ? { failure: { id: idGen.next(), stage: item.kind,
           fingerprint: failureFingerprint({ stage: item.kind, input: `${item.targetKind}:${item.targetId}`, code: code! }),
           code: code!, message: lastError, occurredAt: now } } : {}) };
-      pendingSettlement = () => store.finishSupervisedWork(input);
+      execution.pendingSettlement = () => store.finishSupervisedWork(input);
     }
-    await retrySettlement();
+    await retrySettlement(execution);
+  }
+  async function waitForWork(signal: AbortSignal): Promise<void> {
+    const wait = new AbortController();
+    const abort = () => wait.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) wait.abort();
+    try { await Promise.race([timer.sleep(options.pollMs ?? SUPERVISOR_POLL_MS, wait.signal), ...running]); }
+    finally { wait.abort(); signal.removeEventListener('abort', abort); }
   }
   while (!signal.aborted) {
     try {
       const schema = await checkSchema(store, options.schemaVersions ?? { core: 3 });
       if (!schema.ok) await problem(`감독자 데이터베이스 확인 실패 (${schema.code})`);
       else {
-        await retrySettlement();
-        if (pendingSettlement) {
-          await timer.sleep(options.pollMs ?? SUPERVISOR_POLL_MS, signal);
-          continue;
-        }
+        await retrySettlements();
         if (!reconciled) reconciled = await reconcile();
-        if (reconciled && !signal.aborted) {
+        while (reconciled && !signal.aborted && running.size < SUPERVISOR_CAPACITY &&
+          ![...executions].some(execution => execution.pendingSettlement !== undefined)) {
           const token = idGen.next();
           const claimed = await store.claimSupervisedWork({ now: clock.now(), claimedBy, kinds, attemptToken: token });
-          if (!claimed.ok) await problem(`감독자 청구 실패 (${claimed.code})`);
-          else { await problem(); if (claimed.item !== null) await execute(claimed.item, token); }
+          if (!claimed.ok) { await problem(`감독자 청구 실패 (${claimed.code})`); break; }
+          await problem();
+          if (claimed.item === null) break;
+          const execution: Execution = {};
+          executions.add(execution);
+          const task = execute(claimed.item, token, execution)
+            .catch(async () => { await problem('감독자 실행 중 오류가 발생했습니다'); })
+            .finally(() => { running.delete(task); execution.finished = true; if (!execution.pendingSettlement) executions.delete(execution); });
+          running.add(task);
         }
       }
     } catch { await problem('감독자 실행 중 오류가 발생했습니다'); }
-    if (!signal.aborted) await timer.sleep(options.pollMs ?? SUPERVISOR_POLL_MS, signal);
+    if (!signal.aborted) await waitForWork(signal);
   }
+  // Every child observes abort independently; wait for all group cleanup before returning.
+  await Promise.all([...running]);
+  // Retain failed tokens for the next incarnation's reconcile; shutdown must finish.
+  await retrySettlements();
 }

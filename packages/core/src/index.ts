@@ -254,5 +254,5 @@ export * from './queue/supervisor.js';
 
 export type { BrainQueueCancelResult } from './brain.js';
 
-export { dependencyFailedText } from './domain/work-item.js';
+export { SUPERVISOR_CAPACITY, dependencyFailedText } from './domain/work-item.js';
 export * from './queue/work-graph.js';

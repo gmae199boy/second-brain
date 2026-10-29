@@ -3,6 +3,7 @@ import type { IdGen } from '../ports/id-gen.js';
 import type { AddWorkGraphResult, WorkStore } from '../ports/store.js';
 
 export interface WorkGraphNode {
+  serializationKey?: string | null;
   key: string; kind: string; targetKind: string; targetId: string; after: readonly string[];
 }
 export type EnqueueWorkGraphResult =
@@ -29,7 +30,7 @@ export async function enqueueWorkGraph({ store, clock, idGen }: {
   const now = clock.now();
   const result = await store.addWorkGraph({ nodes: ordered.map(node => ({
     id: idGen.next(), kind: node.kind, targetKind: node.targetKind, targetId: node.targetId,
-    createdAt: now, nextAttemptAt: now, after: node.after.map(key => indices.get(key)!),
+    serializationKey: node.serializationKey, createdAt: now, nextAttemptAt: now, after: node.after.map(key => indices.get(key)!),
   })) });
   if (!result.ok) return result;
   return { ok: true, items: Object.fromEntries(ordered.map((node, index) => [node.key, {

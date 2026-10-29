@@ -560,6 +560,26 @@ it('core drain success and permanent failure persist different PostgreSQL outcom
   expect(await db.rows('select code from brain.failures')).toEqual([{ code: 'PERMANENT' }]);
 });
 
+it('round trips graph serialization keys and preserves them when nodes merge', async () => {
+  const { db, store } = await fixture();
+  expect(await store.addWorkGraph({ nodes: [
+    { ...work(1), serializationKey: 'original', after: [] }, { ...work(2), after: [0] },
+  ] })).toMatchObject({ ok: true, items: [
+    { created: true, item: { id: id(1), serializationKey: 'original' } },
+    { created: true, item: { id: id(2), serializationKey: null } },
+  ] });
+  expect(await store.addWorkGraph({ nodes: [
+    { ...work(1), id: id(3), serializationKey: 'replacement', after: [] },
+    { ...work(2), id: id(4), serializationKey: 'also-replacement', after: [0] },
+  ] })).toMatchObject({ ok: true, items: [
+    { created: false, item: { id: id(1), serializationKey: 'original' } },
+    { created: false, item: { id: id(2), serializationKey: null } },
+  ] });
+  expect(await db.rows('select id,serialization_key from brain.work_items order by id')).toEqual([
+    { id: id(1), serialization_key: 'original' }, { id: id(2), serialization_key: null },
+  ]);
+});
+
 it('rolls back a graph when the final insert fails after earlier nodes and an edge', async () => {
   const { db, store } = await fixture();
   expect(await store.addWorkGraph({ nodes: [{ ...work(8), after: [] }, { ...work(9), after: [0] }] })).toMatchObject({ ok: true });
@@ -702,4 +722,228 @@ it('closes a dependent committed while propagation waits for its merged prerequi
     expect(await db.rows(`select * from brain.work_items where id = '${id(4)}'`)).toEqual(closedBefore);
     expect(await store.hasDueWork({ now: next, kinds: ['demo_work'] })).toEqual({ ok: true, due: false });
   } finally { release(); await Promise.allSettled([graph, failing]); }
+});
+
+it.each([
+  ['core', 'core'], ['core', 'supervised'], ['supervised', 'core'],
+] as const)('claims one serialization key once when two connections race (%s → %s)', async (firstPath, secondPath) => {
+  const { db, store } = await fixture();
+  const firstKind = firstPath === 'core' ? 'demo_work' : 'process_probe';
+  const secondKind = secondPath === 'core' ? 'demo_other' : 'process_probe';
+  await store.addWork({ ...work(1), kind: firstKind, serializationKey: 'shared' });
+  await store.addWork({ ...work(2), kind: secondKind, serializationKey: 'shared' });
+  const selects = new Set<unknown>();
+  let raced = false;
+  const barrier: KyselyPlugin = {
+    transformQuery({ node, queryId }) {
+      if (node.kind === 'RawNode' && node.sqlFragments.join('').includes('for update skip locked')) selects.add(queryId);
+      return node;
+    },
+    async transformResult({ result, queryId }) {
+      if (selects.delete(queryId) && !raced) {
+        raced = true;
+        expect(result.rows).toHaveLength(1);
+        const query = { now, kinds: [secondKind], claimedBy: 'second' };
+        const claimed = secondPath === 'core' ? await store.claimWork(query)
+          : await store.claimSupervisedWork({ ...query, attemptToken: id(101) });
+        expect(claimed).toMatchObject({ ok: true, item: { id: id(2) } });
+      }
+      return result;
+    },
+  };
+  const connection = new Kysely<PgSchema>({ dialect: new PostgresDialect({ pool: createPool({ databaseUrl: db.appUrl }) }), plugins: [barrier] });
+  cleanup.push(() => connection.destroy());
+  const racing = postgresWorkStore(() => ({ ok: true, connection: { db: connection } }));
+  const query = { now, kinds: [firstKind], claimedBy: 'first' };
+  const claimed = firstPath === 'core' ? await racing.claimWork(query)
+    : await racing.claimSupervisedWork({ ...query, attemptToken: id(102) });
+  expect(raced).toBe(true);
+  expect(claimed).toMatchObject({ ok: true, item: null });
+  expect(await db.rows('select id from brain.work_items where claimed_by is not null')).toEqual([{ id: id(2) }]);
+});
+
+// Gates stop after a statement executed, while its transaction still owns locks.
+function claimBarrier(matches: (fragments: string) => boolean) {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let paused = false;
+  const queries = new Set<unknown>();
+  const plugin: KyselyPlugin = {
+    transformQuery({ node, queryId }) {
+      if (node.kind === 'RawNode' && matches(node.sqlFragments.join(''))) queries.add(queryId);
+      return node;
+    },
+    async transformResult({ result, queryId }) {
+      if (queries.delete(queryId) && !paused) { paused = true; await gate; }
+      return result;
+    },
+  };
+  return { plugin, release, paused: () => paused };
+}
+
+it.each(['core', 'supervised'] as const)('releases a discarded key before selecting another candidate (%s)', async path => {
+  const { db, store, blocker } = await fixture();
+  const kind = path === 'core' ? 'demo_work' : 'process_probe';
+  await store.addWork({ ...work(1), kind, serializationKey: 'discarded' });
+  await store.addWork({ ...work(2), kind: 'demo_other', serializationKey: 'discarded' });
+  // A second key proves this is the continuation of the claim loop, not commit.
+  await store.addWork({ ...work(3), kind, serializationKey: 'next' });
+  const selects = new Set<unknown>();
+  let count = 0;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let paused = false;
+  const plugin: KyselyPlugin = {
+    transformQuery({ node, queryId }) {
+      if (node.kind === 'RawNode' && node.sqlFragments.join('').includes('for update skip locked')) selects.add(queryId);
+      return node;
+    },
+    async transformResult({ result, queryId }) {
+      if (selects.delete(queryId)) {
+        if (++count === 1) {
+          expect(result.rows).toMatchObject([{ id: id(1) }]);
+          expect(await store.claimWork({ now, kinds: ['demo_other'], claimedBy: 'holder' }))
+            .toMatchObject({ ok: true, item: { id: id(2) } });
+        } else if (count === 2) {
+          expect(result.rows).toMatchObject([{ id: id(3) }]);
+          paused = true; await gate;
+        }
+      }
+      return result;
+    },
+  };
+  const connection = new Kysely<PgSchema>({ dialect: new PostgresDialect({ pool: createPool({ databaseUrl: db.appUrl }) }), plugins: [plugin] });
+  cleanup.push(() => connection.destroy());
+  const racing = postgresWorkStore(() => ({ ok: true, connection: { db: connection } }));
+  const query = { now, kinds: [kind], claimedBy: 'racing' };
+  const claim = path === 'core' ? racing.claimWork(query) : racing.claimSupervisedWork({ ...query, attemptToken: id(101) });
+  try {
+    await expect.poll(() => paused, { timeout: 3000 }).toBe(true);
+    await blocker.query('begin');
+    const acquired = await blocker.query("select pg_try_advisory_xact_lock(hashtextextended('work-key:discarded', 0)) as acquired");
+    expect(acquired.rows[0]?.acquired).toBe(true);
+    await blocker.query('rollback');
+    release();
+    expect(await claim).toMatchObject({ ok: true, item: { id: id(3) } });
+  } finally { release(); await claim; }
+});
+
+it.each([
+  ['core', 'core'], ['core', 'supervised'], ['supervised', 'core'], ['supervised', 'supervised'],
+] as const)('waits for the key lock before rechecking a concurrent holder (%s → %s)', async (firstPath, secondPath) => {
+  const { db, store, blocker } = await fixture();
+  const firstKind = firstPath === 'core' ? 'demo_work' : 'process_probe';
+  const secondKind = secondPath === 'core' ? 'demo_other' : 'process_probe';
+  await store.addWork({ ...work(1), kind: firstKind, serializationKey: 'shared-wait' });
+  await store.addWork({ ...work(2), kind: secondKind, serializationKey: 'shared-wait' });
+  const firstGate = claimBarrier(text => text.includes('for update skip locked'));
+  const secondGate = claimBarrier(text => text.includes('as available'));
+  const connection = (name: string, plugin: KyselyPlugin) => {
+    const db = new Kysely<PgSchema>({ dialect: new PostgresDialect({ pool: createPool({ databaseUrl: fixtureUrl, applicationName: name }) }), plugins: [plugin] });
+    cleanup.push(() => db.destroy());
+    return postgresWorkStore(() => ({ ok: true, connection: { db } }));
+  };
+  const fixtureUrl = db.appUrl;
+  const first = connection('brain-key-wait-first', firstGate.plugin);
+  const second = connection('brain-key-wait-second', secondGate.plugin);
+  const claim = (s: typeof first, path: 'core' | 'supervised', kind: string, token: string) => {
+    const query = { now, kinds: [kind], claimedBy: token };
+    return path === 'core' ? s.claimWork(query) : s.claimSupervisedWork({ ...query, attemptToken: token });
+  };
+  const firstCall = claim(first, firstPath, firstKind, id(101));
+  let secondCall: ReturnType<typeof claim> | undefined;
+  try {
+    await expect.poll(firstGate.paused, { timeout: 3000 }).toBe(true);
+    secondCall = claim(second, secondPath, secondKind, id(102));
+    await expect.poll(secondGate.paused, { timeout: 3000 }).toBe(true);
+    // The second transaction passed its re-check but has not committed yet.
+    firstGate.release();
+    await expect.poll(async () => {
+      const result = await blocker.query(`select exists (
+        select 1 from pg_locks l join pg_stat_activity a on a.pid = l.pid
+        where a.datname = current_database() and a.application_name = 'brain-key-wait-first'
+          and l.locktype = 'advisory' and l.granted = false
+      ) as waiting`);
+      return result.rows[0]?.waiting;
+    }, { timeout: 3000 }).toBe(true);
+    secondGate.release();
+    expect(await secondCall).toMatchObject({ ok: true, item: { id: id(2) } });
+    expect(await firstCall).toMatchObject({ ok: true, item: null });
+  } finally {
+    firstGate.release(); secondGate.release();
+    await Promise.allSettled([firstCall, secondCall]);
+  }
+});
+
+function keyClaimWorker(databaseUrl: string, path: 'core' | 'supervised') {
+  const script = fileURLToPath(new URL('./fixtures/key-claim-worker.mjs', import.meta.url));
+  const child = spawn(process.execPath, [script], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const lines = createInterface({ input: child.stdout });
+  const queued: string[] = [];
+  let waiting: ((line: string) => void) | undefined;
+  let failed: ((error: Error) => void) | undefined;
+  let stderr = '';
+  child.stderr.setEncoding('utf8').on('data', data => { stderr += String(data); });
+  const timeout = setTimeout(() => child.kill('SIGKILL'), 30_000);
+  const done = new Promise<void>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', code => {
+      clearTimeout(timeout); lines.close();
+      const error = new Error(`key claim worker exited ${String(code)}: ${stderr}`);
+      if (waiting) failed?.(error);
+      if (code !== 0) reject(error); else resolve();
+    });
+  });
+  void done.catch(() => {});
+  lines.on('line', line => { if (waiting) { const resolve = waiting; waiting = undefined; failed = undefined; resolve(line); } else queued.push(line); });
+  const receive = (): Promise<string> => queued.length > 0 ? Promise.resolve(queued.shift()!) : new Promise((resolve, reject) => { waiting = resolve; failed = reject; });
+  child.stdin.on('error', () => {});
+  child.stdin.write(`${JSON.stringify({ databaseUrl, path, now: now.toISOString() })}\n`);
+  return {
+    ready: receive(),
+    async go(): Promise<{ id: string; key: string }[]> { child.stdin.write('go\n'); return JSON.parse(await receive()); },
+    async close() { child.stdin.end(); await done; },
+    async stop() { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await done.catch(() => {}); },
+  };
+}
+it('two processes never hold one serialization key at once', async () => {
+  const { db, store } = await fixture();
+  const children = [keyClaimWorker(db.appUrl, 'core'), keyClaimWorker(db.appUrl, 'supervised')];
+  cleanup.push(() => Promise.all(children.map(child => child.stop())));
+  try {
+    expect(await Promise.all(children.map(child => child.ready))).toEqual(['ready', 'ready']);
+    for (let round = 0; round < 20; round++) {
+      for (const [offset, kind, key] of [
+        [1, 'demo_work', `k_${round}`], [2, 'process_probe', `k_${round}`],
+        [3, 'demo_other', `x_${round}`], [4, 'process_probe', `y_${round}`],
+      ] as const) expect(await store.addWork({ ...work(round * 4 + offset), kind, serializationKey: key })).toMatchObject({ ok: true });
+      const claimed = (await Promise.all(children.map(child => child.go()))).flat();
+      expect(claimed.filter(item => item.key === `k_${round}`)).toHaveLength(1);
+      expect(claimed.filter(item => item.key === `x_${round}`)).toHaveLength(1);
+      expect(claimed.filter(item => item.key === `y_${round}`)).toHaveLength(1);
+      expect(claimed).toHaveLength(3);
+      expect(await db.rows(`select serialization_key from brain.work_items where completed_at is null
+        and (current_attempt_token is not null or (claimed_by is not null and claim_expires_at > '${now.toISOString()}'))
+        group by serialization_key having count(*) > 1`)).toEqual([]);
+    }
+    await Promise.all(children.map(child => child.close()));
+  } finally { await Promise.all(children.map(child => child.stop())); }
+}, 40_000);
+
+it('releasing an unknown attempt token frees its key', async () => {
+  const { db, store } = await fixture();
+  await store.addWork({ ...work(1), kind: 'process_probe', serializationKey: 'shared' });
+  await store.addWork({ ...work(2), serializationKey: 'shared' });
+  expect(await store.claimSupervisedWork({ now, kinds: ['process_probe'], claimedBy: 'supervisor', attemptToken: id(101) })).toMatchObject({ ok: true, item: { id: id(1) } });
+  await store.settleSupervisedAttempt({ id: id(1), attemptToken: id(101), now, outcome: 'unknown' });
+  const afterExpiry = new Date(now.getTime() + 3_600_000);
+  expect(await store.claimWork({ now: afterExpiry, kinds: ['demo_work'], claimedBy: 'core' })).toMatchObject({ ok: true, item: null });
+  await db.query(`update brain.work_items set current_attempt_token = null where id = '${id(1)}'`);
+  expect(await store.claimWork({ now: afterExpiry, kinds: ['demo_work'], claimedBy: 'core' })).toMatchObject({ ok: true, item: { id: id(2) } });
+});
+
+it.each(['', 'k'.repeat(201)])('rejects invalid serialization keys (%s)', async serializationKey => {
+  const { db, store } = await fixture();
+  expect(await store.addWork({ ...work(), serializationKey })).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+  expect(await db.rows('select id from brain.work_items')).toEqual([]);
 });

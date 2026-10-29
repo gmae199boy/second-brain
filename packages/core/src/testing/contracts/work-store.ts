@@ -29,12 +29,107 @@ import {
  * expiry of a claim depend on the machine rather than on the instant the drain
  * decided (AD-13).
  */
-export function workStoreContract(readItem: (store: WorkStore, id: string) => Promise<Pick<WorkItem, 'outcome' | 'completedAt' | 'currentAttemptToken' | 'nextAttemptAt' | 'lastError'> | null>, readAttempt?: (store: WorkStore, token: string) => Promise<{ lastProgressAt: Date | null; renewedAt: Date | null } | null>): ContractCase<WorkStore>[] {
+export function workStoreContract(readItem: (store: WorkStore, id: string) => Promise<Pick<WorkItem, 'serializationKey' | 'outcome' | 'completedAt' | 'currentAttemptToken' | 'nextAttemptAt' | 'lastError'> | null>, readAttempt?: (store: WorkStore, token: string) => Promise<{ lastProgressAt: Date | null; renewedAt: Date | null } | null>): ContractCase<WorkStore>[] {
   const NOW = new Date('2026-02-03T04:05:06.000Z');
   const LATER = new Date('2026-02-03T05:05:06.000Z');
   const KINDS = ['demo_work'];
 
   return [
+    contractCase('one serialization key is claimed once across kinds and claim paths', async make => {
+      await withSubject(make, async store => {
+        await store.addWork(sampleWorkInput({ serializationKey: 'account' }));
+        await store.addWork(sampleWorkInput({ id: otherWorkItemId, kind: 'demo_other', serializationKey: 'account' }));
+        await store.addWork(sampleWorkInput({ id: lastWorkItemId, kind: 'process_probe', serializationKey: 'account' }));
+        const first = await store.claimWork({ now: NOW, kinds: KINDS, claimedBy: 'core' }); assertOk(first, 'claim first');
+        assertEqual(first.item?.serializationKey, 'account', 'key round trip');
+        assertEqual(await store.claimWork({ now: NOW, kinds: ['demo_other'], claimedBy: 'other' }), { ok: true, item: null }, 'same key across kinds');
+        assertEqual(await store.hasDueWork({ now: NOW, kinds: ['demo_other'] }), { ok: true, due: false }, 'blocked is not due');
+        assertEqual(await store.claimSupervisedWork({ now: NOW, kinds: ['process_probe'], claimedBy: 'supervisor', attemptToken: sampleFailureId }), { ok: true, item: null, attemptToken: null }, 'same key across paths');
+        await store.addWork(sampleWorkInput({ id: sampleFailureId, kind: 'demo_other', targetId: 'independent', serializationKey: 'other' }));
+        const independent = await store.claimWork({ now: NOW, kinds: ['demo_other'], claimedBy: 'other' }); assertOk(independent, 'claim independent');
+        assertEqual(independent.item?.id, sampleFailureId, 'different key runs');
+      });
+    }),
+    contractCase('a supervised claim holds its key against core claims', async make => {
+      await withSubject(make, async store => {
+        await store.addWork(sampleWorkInput({ kind: 'process_probe', serializationKey: 'account' }));
+        await store.addWork(sampleWorkInput({ id: otherWorkItemId, serializationKey: 'account' }));
+        const claimed = await store.claimSupervisedWork({ now: NOW, kinds: ['process_probe'], claimedBy: 'supervisor', attemptToken: sampleFailureId }); assertOk(claimed, 'claim supervised');
+        assertEqual(claimed.item?.id, sampleWorkItemId, 'supervised starts');
+        assertEqual(await store.claimWork({ now: NOW, kinds: KINDS, claimedBy: 'core' }), { ok: true, item: null }, 'core waits');
+        assertEqual(await store.hasDueWork({ now: NOW, kinds: KINDS }), { ok: true, due: false }, 'core not due');
+      });
+    }),
+    contractCase('an expired core lease frees its serialization key', async make => {
+      await withSubject(make, async store => {
+        await store.addWork(sampleWorkInput({ serializationKey: 'account' }));
+        await store.addWork(sampleWorkInput({ id: otherWorkItemId, kind: 'demo_other', serializationKey: 'account' }));
+        await store.claimWork({ now: NOW, kinds: KINDS, claimedBy: 'core' });
+        const claimed = await store.claimWork({ now: new Date(NOW.getTime() + workKindPolicy('demo_work').claimForMs), kinds: ['demo_other'], claimedBy: 'other' }); assertOk(claimed, 'claim after expiry');
+        assertEqual(claimed.item?.id, otherWorkItemId, 'expired key available');
+      });
+    }),
+    ...(['complete', 'retry', 'release', 'failure'] as const).map(mode => contractCase<WorkStore>(`core ${mode} frees its serialization key`, async make => {
+      await withSubject(make, async store => {
+        await store.addWork(sampleWorkInput({ serializationKey: 'account' }));
+        await store.addWork(sampleWorkInput({ id: otherWorkItemId, kind: 'demo_other', serializationKey: 'account' }));
+        await store.claimWork({ now: NOW, kinds: KINDS, claimedBy: 'core' });
+        const finish = { id: sampleWorkItemId, claimedBy: 'core' };
+        const result = mode === 'complete' ? await store.completeWork({ ...finish, now: NOW })
+          : mode === 'retry' ? await store.retryWork({ ...finish, nextAttemptAt: LATER, lastError: 'retry' })
+          : mode === 'release' ? await store.releaseWork(finish)
+          : await store.recordFailure(sampleFailureInput({ closeWork: { ...finish, now: NOW } }));
+        assertOk(result, 'finish holder');
+        const claimed = await store.claimWork({ now: NOW, kinds: ['demo_other'], claimedBy: 'other' }); assertOk(claimed, 'claim next');
+        assertEqual(claimed.item?.id, otherWorkItemId, 'key released');
+      });
+    })),
+    ...(['succeeded', 'retry', 'died', 'cancelled'] as const).map(mode => contractCase<WorkStore>(`supervised ${mode} frees its serialization key`, async make => {
+      await withSubject(make, async store => {
+        await store.addWork(sampleWorkInput({ kind: 'process_probe', serializationKey: 'account' }));
+        await store.addWork(sampleWorkInput({ id: otherWorkItemId, serializationKey: 'account' }));
+        await store.claimSupervisedWork({ now: NOW, kinds: ['process_probe'], claimedBy: 'supervisor', attemptToken: sampleFailureId });
+        const finish = { id: sampleWorkItemId, attemptToken: sampleFailureId, now: NOW };
+        const result = mode === 'died' || mode === 'cancelled' ? await store.settleSupervisedAttempt({ ...finish, outcome: mode })
+          : await store.finishSupervisedWork({ ...finish, outcome: mode === 'retry' ? 'failed' : 'succeeded',
+            ...(mode === 'retry' ? { nextAttemptAt: LATER, lastError: 'retry', errorCode: 'TEMP', errorRetryable: true } : {}) });
+        assertOk(result, 'finish holder');
+        const claimed = await store.claimWork({ now: NOW, kinds: KINDS, claimedBy: 'core' }); assertOk(claimed, 'claim next');
+        assertEqual(claimed.item?.id, otherWorkItemId, 'key released');
+      });
+    })),
+    contractCase('an unknown attempt keeps its serialization key', async make => {
+      await withSubject(make, async store => {
+        await store.addWork(sampleWorkInput({ kind: 'process_probe', serializationKey: 'account' }));
+        await store.addWork(sampleWorkInput({ id: otherWorkItemId, serializationKey: 'account' }));
+        await store.addWork(sampleWorkInput({ id: lastWorkItemId, kind: 'process_probe', targetId: 'second', serializationKey: 'account' }));
+        await store.claimSupervisedWork({ now: NOW, kinds: ['process_probe'], claimedBy: 'supervisor', attemptToken: sampleFailureId });
+        await store.settleSupervisedAttempt({ id: sampleWorkItemId, attemptToken: sampleFailureId, now: NOW, outcome: 'unknown' });
+        assertEqual(await store.claimWork({ now: LATER, kinds: KINDS, claimedBy: 'core' }), { ok: true, item: null }, 'unknown holds against core');
+        assertEqual(await store.hasDueWork({ now: LATER, kinds: KINDS }), { ok: true, due: false }, 'unknown not due');
+        assertEqual(await store.claimSupervisedWork({ now: LATER, kinds: ['process_probe'], claimedBy: 'supervisor', attemptToken: otherFailureId }), { ok: true, item: null, attemptToken: null }, 'unknown holds against supervised');
+      });
+    }),
+    contractCase('find-or-create preserves the original serialization key', async make => {
+      await withSubject(make, async store => {
+        await store.addWork(sampleWorkInput({ serializationKey: 'original' }));
+        const merged = await store.addWork(sampleWorkInput({ id: otherWorkItemId, serializationKey: 'replacement' })); assertOk(merged, 'merge');
+        assertEqual(merged.created, false, 'merged existing');
+        assertEqual(merged.item.serializationKey, 'original', 'key preserved');
+        assertEqual((await readItem(store, sampleWorkItemId))?.serializationKey, 'original', 'stored key preserved');
+      });
+    }),
+    contractCase('null serialization keys allow independent live claims', async make => {
+      await withSubject(make, async store => {
+        await store.addWork(sampleWorkInput());
+        await store.addWork(sampleWorkInput({ id: otherWorkItemId, targetId: 'second', serializationKey: null }));
+        for (const id of [sampleWorkItemId, otherWorkItemId]) {
+          const claimed = await store.claimWork({ now: NOW, kinds: KINDS, claimedBy: 'core' }); assertOk(claimed, 'claim independent');
+          assertEqual(claimed.item?.id, id, 'both claimable');
+          assertEqual(claimed.item?.serializationKey, null, 'null default');
+        }
+      });
+    }),
     contractCase('dependent waits for its prerequisite to succeed', async make => {
       await withSubject(make, async store => {
         await store.addWorkGraph({ nodes: [{ ...sampleWorkInput(), after: [] }, { ...sampleWorkInput({ id: otherWorkItemId, targetId: 'dependent' }), after: [0] }] });

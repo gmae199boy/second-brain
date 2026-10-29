@@ -17,9 +17,9 @@ async function owner(names: string[]) {
 }
 it('records checksums and the injected clock and applies nothing on repeat', async () => {
   const db = await fresh(); const options = { databaseUrl: db.url, clock };
-  expect(await runMigrations(options)).toMatchObject({ ok: true, from: 0, to: 7, applied: ['0001_initial.sql', '0002_supervised_attempts.sql', '0003_supervised_cancel.sql', '0004_attempt_fence.sql', '0005_attempt_outcome_detail.sql', '0006_work_outcome_closed.sql', '0007_work_dependencies.sql'] });
-  expect(await runMigrations(options)).toMatchObject({ ok: true, from: 7, to: 7, applied: [] });
-  expect(await db.rows('select owner,version,length(checksum) as length,applied_at from brain.schema_migrations order by version')).toEqual([1, 2, 3, 4, 5, 6, 7].map(version => ({ owner: 'core', version, length: 64, applied_at: clock.now() })));
+  expect(await runMigrations(options)).toMatchObject({ ok: true, from: 0, to: 8, applied: ['0001_initial.sql', '0002_supervised_attempts.sql', '0003_supervised_cancel.sql', '0004_attempt_fence.sql', '0005_attempt_outcome_detail.sql', '0006_work_outcome_closed.sql', '0007_work_dependencies.sql', '0008_work_serialization_key.sql'] });
+  expect(await runMigrations(options)).toMatchObject({ ok: true, from: 8, to: 8, applied: [] });
+  expect(await db.rows('select owner,version,length(checksum) as length,applied_at from brain.schema_migrations order by version')).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map(version => ({ owner: 'core', version, length: 64, applied_at: clock.now() })));
 });
 it('backfills existing v1 work as core and keeps it claimable after upgrading to v2', async () => {
   const db = await fresh();
@@ -31,9 +31,9 @@ it('backfills existing v1 work as core and keeps it claimable after upgrading to
   await db.query(`insert into brain.work_items (id, kind, target_kind, target_id, created_at, attempts, next_attempt_at)
     values ('${id}', 'upgrade_probe', 'probe', 'existing', '2026-01-01T00:00:00Z', 0, '2026-01-01T00:00:00Z')`);
   expect(await runMigrations({ databaseUrl: db.url, clock }))
-    .toMatchObject({ ok: true, from: 1, to: 7, applied: ['0002_supervised_attempts.sql', '0003_supervised_cancel.sql', '0004_attempt_fence.sql', '0005_attempt_outcome_detail.sql', '0006_work_outcome_closed.sql', '0007_work_dependencies.sql'] });
-  expect(await db.rows('select execution_class, current_attempt_token from brain.work_items'))
-    .toEqual([{ execution_class: 'core', current_attempt_token: null }]);
+    .toMatchObject({ ok: true, from: 1, to: 8, applied: ['0002_supervised_attempts.sql', '0003_supervised_cancel.sql', '0004_attempt_fence.sql', '0005_attempt_outcome_detail.sql', '0006_work_outcome_closed.sql', '0007_work_dependencies.sql', '0008_work_serialization_key.sql'] });
+  expect(await db.rows('select execution_class, current_attempt_token, serialization_key from brain.work_items'))
+    .toEqual([{ execution_class: 'core', current_attempt_token: null, serialization_key: null }]);
   const store = postgresStore({ databaseUrl: db.appUrl });
   try {
     expect(await store.claimWork({ now: clock.now(), claimedBy: id, kinds: ['upgrade_probe'] }))
@@ -53,7 +53,7 @@ it('preserves legacy closed work with a null outcome when upgrading v5 to v6', a
   await db.query(`insert into brain.work_items (id,kind,target_kind,target_id,created_at,attempts,next_attempt_at,execution_class,completed_at,outcome)
     values ('${id}','upgrade_probe','probe','legacy-closed','2026-01-01T00:00:00Z',1,'2026-01-01T00:00:00Z','core','${completedAt.toISOString()}',null)`);
   expect(await runMigrations({ databaseUrl: db.url, clock }))
-    .toMatchObject({ ok: true, from: 5, to: 7, applied: ['0006_work_outcome_closed.sql', '0007_work_dependencies.sql'] });
+    .toMatchObject({ ok: true, from: 5, to: 8, applied: ['0006_work_outcome_closed.sql', '0007_work_dependencies.sql', '0008_work_serialization_key.sql'] });
   expect(await db.rows(`select completed_at,outcome from brain.work_items where id='${id}'`))
     .toEqual([{ completed_at: completedAt, outcome: null }]);
 });
@@ -61,7 +61,7 @@ it('applies each file only once under simultaneous runners', async () => {
   const db = await fresh(); const options = { databaseUrl: db.url, clock };
   const results = await Promise.all([runMigrations(options), runMigrations(options)]);
   expect(results.every(r => r.ok)).toBe(true);
-  expect(results.flatMap(r => r.ok ? r.applied : []).length).toBe(7);
+  expect(results.flatMap(r => r.ok ? r.applied : []).length).toBe(8);
 });
 it('waits more than five seconds for another migration runner', async () => {
   const db = await fresh();
@@ -74,7 +74,7 @@ it('waits more than five seconds for another migration runner', async () => {
     pending = runMigrations({ databaseUrl: db.url, clock });
     await setTimeout(6200);
     await blocker.query('commit');
-    expect(await pending).toMatchObject({ ok: true, from: 0, to: 7, applied: ['0001_initial.sql', '0002_supervised_attempts.sql', '0003_supervised_cancel.sql', '0004_attempt_fence.sql', '0005_attempt_outcome_detail.sql', '0006_work_outcome_closed.sql', '0007_work_dependencies.sql'] });
+    expect(await pending).toMatchObject({ ok: true, from: 0, to: 8, applied: ['0001_initial.sql', '0002_supervised_attempts.sql', '0003_supervised_cancel.sql', '0004_attempt_fence.sql', '0005_attempt_outcome_detail.sql', '0006_work_outcome_closed.sql', '0007_work_dependencies.sql', '0008_work_serialization_key.sql'] });
   } finally { await blocker.end(); await pending; }
 });
 it.each([['0001_a.sql','0001_b.sql'], ['0001_a.sql','0003_c.sql'], ['0002_b.sql']])('rejects duplicate or missing sequence before applying %j', async (...names) => {
@@ -118,10 +118,14 @@ it('upgrades v2 attempts, closing only noncurrent open history at its latest rec
     values ('${old}','${workId}','2026-01-01T00:00:00Z','2026-01-01T00:01:00Z','2026-01-01T00:02:00Z'),
     ('${current}','${workId}','2026-01-01T00:03:00Z',null,null)`);
   await db.query(`update brain.work_items set current_attempt_token='${current}',claimed_at='2026-01-01T00:03:00Z',claim_expires_at='2026-01-01T00:13:00Z',claimed_by='prior' where id='${workId}'`);
-  expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 2, to: 7, applied: ['0003_supervised_cancel.sql', '0004_attempt_fence.sql', '0005_attempt_outcome_detail.sql', '0006_work_outcome_closed.sql', '0007_work_dependencies.sql'] });
+  const claimColumns = 'current_attempt_token,claimed_at,claim_expires_at,claimed_by,attempts';
+  const claimBefore = await db.rows(`select ${claimColumns} from brain.work_items`);
+  expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 2, to: 8, applied: ['0003_supervised_cancel.sql', '0004_attempt_fence.sql', '0005_attempt_outcome_detail.sql', '0006_work_outcome_closed.sql', '0007_work_dependencies.sql', '0008_work_serialization_key.sql'] });
   expect(await db.rows('select token,outcome,finished_at,incarnation,pid,pgid,os_boot_at,os_started_at from brain.work_attempts order by token')).toEqual([
     { token: old, outcome: 'died', finished_at: new Date('2026-01-01T00:02:00Z'), incarnation: null, pid: null, pgid: null, os_boot_at: null, os_started_at: null },
     { token: current, outcome: null, finished_at: null, incarnation: null, pid: null, pgid: null, os_boot_at: null, os_started_at: null },
   ]);
   expect(await db.rows('select outcome,cancel_requested_at from brain.work_items')).toEqual([{ outcome: null, cancel_requested_at: null }]);
+  expect(await db.rows(`select ${claimColumns} from brain.work_items`)).toEqual(claimBefore);
+  expect(await db.rows('select serialization_key from brain.work_items')).toEqual([{ serialization_key: null }]);
 });

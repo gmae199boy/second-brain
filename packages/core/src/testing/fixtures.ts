@@ -134,6 +134,7 @@ export function sampleWorkInput(overrides: Partial<AddWorkInput> = {}): AddWorkI
   return {
     id: sampleWorkItemId,
     kind: 'demo_work',
+    serializationKey: null,
     targetKind: 'session',
     targetId: sampleSessionToken,
     createdAt: new Date('2026-02-03T04:05:06.000Z'),

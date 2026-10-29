@@ -568,6 +568,29 @@ describe('the contracts catch a wrong store', () => {
     );
   });
 
+  it('catches a store that ignores serialization keys', async () => {
+    const make = async (): Promise<ReturnType<typeof memoryStore>> => {
+      const inner = memoryStore();
+      const keys = new Map<string, string | null>();
+      const withKey = <T extends { id: string }>(item: T) => ({ ...item, serializationKey: keys.get(item.id) ?? null });
+      // Preserve observable keys, but leave the candidate selector blind to them.
+      return { ...inner,
+        async addWork(input) {
+          const added = await inner.addWork({ ...input, serializationKey: null });
+          if (!added.ok) return added;
+          if (added.created) keys.set(added.item.id, input.serializationKey ?? null);
+          return { ...added, item: withKey(added.item) };
+        },
+        async claimWork(input) {
+          const claimed = await inner.claimWork(input);
+          return claimed.ok && claimed.item ? { ...claimed, item: withKey(claimed.item) } : claimed;
+        },
+        snapshot: () => ({ ...inner.snapshot(), workItems: inner.snapshot().workItems.map(withKey) }),
+      };
+    };
+    expect(await failedCases(workStoreContract(readMemoryWorkItem), make)).toContain('one serialization key is claimed once across kinds and claim paths');
+  });
+
   it('catches a store that drops prerequisites', async () => {
     const make = async (): Promise<WorkStore> => {
       const inner = memoryStore();

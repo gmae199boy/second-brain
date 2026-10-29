@@ -344,3 +344,11 @@ source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-doctor-plan.md`
 severity: medium
 reason: `packages/core/src/queue/supervisor.ts` `reconcile()`은 `settleSupervisedAttempt({ outcome: 'died' })`를 부르고, PG·fake 모두 `next_attempt_at = now`로 바로 다시 열며 `attempts`를 보지 않는다. 이 동작은 12.2부터 있었고 이번 변경(plan Never·Design Notes)이 그대로 두었다. 이번 변경은 실행 중 정산(`finishSupervisedWork`)에만 AD-21 10회 상한을 더했다. 회수 경로에도 `MAX_WORK_ATTEMPTS`에서 기록 후 닫기를 적용하려면 settle 입력이나 reconcile 분기를 바꿔야 한다.
 status: open
+
+### DW-21: 자식을 띄운 뒤 runSupervisor의 execute()가 예외를 던지면 살아 있는 자식이 실행 집합에서 빠져 용량 계산과 종료 정리를 벗어날 수 있다.
+origin: spec-deferred cf3cb70afd04
+location: packages/core/src/queue/supervisor.ts:245
+source_spec: `tickets/epic-jobs-and-scheduler/tickets/story-untitled-7-plan.md`
+severity: medium
+reason: blind-hunter 1, edge-case-hunter 1·4. 기준 커밋도 같은 예외에서 자식을 추적하지 못했다(메인 루프 catch로 빠짐). 확인하지 못함: problem()(options.log), inspector, Store 호출 중 무엇이 실제로 던질 수 있는지. 그런 경로가 있으면 catch에서 그룹 정리와 token 정산을 마친 뒤 슬롯을 돌려줘야 한다. (declared severity: medium (unverified))
+status: open

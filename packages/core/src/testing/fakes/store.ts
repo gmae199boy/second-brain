@@ -380,6 +380,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       kind: input.kind,
       executionClass: workExecutionClass(input.kind),
       currentAttemptToken: null,
+      serializationKey: input.serializationKey ?? null,
       targetKind: input.targetKind,
       targetId: input.targetId,
       createdAt: input.createdAt,
@@ -1492,6 +1493,9 @@ function candidates(items: readonly WorkItem[], query: DueWorkQuery, dependencie
     .filter(
       (item) =>
         dependencies.filter(edge => edge.workItemId === item.id).every(edge => allItems.some(p => p.id === edge.prerequisiteId && p.completedAt !== null && p.outcome === 'succeeded')) &&
+        (item.serializationKey === null || !allItems.some(holder => holder.id !== item.id &&
+          holder.serializationKey === item.serializationKey && holder.completedAt === null &&
+          (holder.currentAttemptToken !== null || (holder.claimedBy !== null && holder.claimExpiresAt !== null && holder.claimExpiresAt > query.now)))) &&
         item.executionClass === executionClass &&
         item.completedAt === null &&
         item.nextAttemptAt.getTime() <= query.now.getTime() &&

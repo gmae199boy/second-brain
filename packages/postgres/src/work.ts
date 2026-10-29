@@ -39,6 +39,7 @@ export interface WorkItemRow {
   kind: string;
   execution_class: 'core' | 'supervised';
   current_attempt_token: string | null;
+  serialization_key: string | null;
   target_kind: string;
   target_id: string;
   created_at: string;
@@ -53,11 +54,35 @@ export interface WorkItemRow {
   cancel_requested_at: string | null;
 }
 
+/** A retained supervised token holds the key even after its lease expires. */
+function keyAvailable(now: string): RawBuilder<boolean> {
+  return sql<boolean>`(brain.work_items.serialization_key is null or not exists (
+    select 1 from brain.work_items h
+    where h.serialization_key = brain.work_items.serialization_key and h.id <> brain.work_items.id
+      and h.completed_at is null
+      and (h.current_attempt_token is not null or (h.claimed_by is not null and h.claim_expires_at > ${now}::timestamptz))
+  ))`;
+}
+
+async function lockAvailableKey(held: Kysely<PgSchema>, row: WorkItemRow, now: string): Promise<boolean> {
+  if (row.serialization_key === null) return true;
+  await sql`savepoint work_key`.execute(held);
+  await sql`select pg_advisory_xact_lock(hashtextextended(${'work-key:' + row.serialization_key}, 0))`.execute(held);
+  // Separate statement is essential: a claimant that waited sees the prior commit.
+  const checked = await sql<{ available: boolean }>`select ${keyAvailable(now)} as available
+    from brain.work_items where id = ${row.id}`.execute(held);
+  const available = checked.rows[0]!.available;
+  // Discarded keys must not stay locked while the claim loop tries another key.
+  if (!available) await sql`rollback to savepoint work_key`.execute(held);
+  await sql`release savepoint work_key`.execute(held);
+  return available;
+}
+
 /** Shared due predicate and order; only the claiming caller adds row locking. */
 export function claimCandidateQuery(query: DueWorkQuery): RawBuilder<WorkItemRow> {
   const now = instant(query.now, 'work_items.next_attempt_at');
   return sql<WorkItemRow>`
-    select id, kind, execution_class, current_attempt_token, target_kind, target_id, created_at, attempts, next_attempt_at,
+    select id, kind, execution_class, current_attempt_token, serialization_key, target_kind, target_id, created_at, attempts, next_attempt_at,
            claimed_at, claim_expires_at, claimed_by, last_error, completed_at, outcome, cancel_requested_at
       from brain.work_items
      where completed_at is null
@@ -66,6 +91,7 @@ export function claimCandidateQuery(query: DueWorkQuery): RawBuilder<WorkItemRow
           where d.work_item_id = brain.work_items.id
             and (p.completed_at is null or p.outcome is distinct from 'succeeded')
        )
+       and ${keyAvailable(now)}
        and execution_class = 'core'
        and next_attempt_at <= ${now}
        and (claim_expires_at is null or claim_expires_at <= ${now})
@@ -81,8 +107,8 @@ export async function ensureWork(held: Kysely<PgSchema>, input: AddWorkInput) {
   const nextAttemptAt = instant(input.nextAttemptAt, 'work_items.next_attempt_at');
   for (;;) {
     const inserted = await sql<WorkItemRow>`
-      insert into brain.work_items (id, kind, execution_class, target_kind, target_id, created_at, attempts, next_attempt_at)
-      values (${input.id}, ${input.kind}, ${workExecutionClass(input.kind)}, ${input.targetKind}, ${input.targetId}, ${createdAt}, 0, ${nextAttemptAt})
+      insert into brain.work_items (id, kind, execution_class, serialization_key, target_kind, target_id, created_at, attempts, next_attempt_at)
+      values (${input.id}, ${input.kind}, ${workExecutionClass(input.kind)}, ${input.serializationKey ?? null}, ${input.targetKind}, ${input.targetId}, ${createdAt}, 0, ${nextAttemptAt})
       on conflict (kind, target_kind, target_id) where completed_at is null do nothing returning *
     `.execute(held);
     const row = inserted.rows[0];
@@ -170,29 +196,32 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
       try {
         written = await withWrite(opened.connection, async (held) => {
           const now = instant(input.now, 'work_items.claimed_at');
-          const found = await sql<WorkItemRow>`${claimCandidateQuery(input)} for update skip locked`.execute(held);
-          const candidate = found.rows[0];
-          if (candidate === undefined) return null;
-          const expiresAt = instant(
-            new Date(input.now.getTime() + workKindPolicy(candidate.kind).claimForMs),
-            'work_items.claim_expires_at',
-          );
+          for (;;) {
+            const found = await sql<WorkItemRow>`${claimCandidateQuery(input)} for update skip locked`.execute(held);
+            const candidate = found.rows[0];
+            if (candidate === undefined) return null;
+            if (!await lockAvailableKey(held, candidate, now)) continue;
+            const expiresAt = instant(
+              new Date(input.now.getTime() + workKindPolicy(candidate.kind).claimForMs),
+              'work_items.claim_expires_at',
+            );
 
-          await sql`
-            update brain.work_items
-               set attempts = attempts + 1,
-                   claimed_at = ${now},
-                   claim_expires_at = ${expiresAt},
-                   claimed_by = ${input.claimedBy}
-             where id = ${candidate.id}
-          `.execute(held);
-          return {
-            ...candidate,
-            attempts: candidate.attempts + 1,
-            claimed_at: now,
-            claim_expires_at: expiresAt,
-            claimed_by: input.claimedBy,
-          };
+            await sql`
+              update brain.work_items
+                 set attempts = attempts + 1,
+                     claimed_at = ${now},
+                     claim_expires_at = ${expiresAt},
+                     claimed_by = ${input.claimedBy}
+               where id = ${candidate.id}
+            `.execute(held);
+            return {
+              ...candidate,
+              attempts: candidate.attempts + 1,
+              claimed_at: now,
+              claim_expires_at: expiresAt,
+              claimed_by: input.claimedBy,
+            };
+          }
         });
       } catch (error) {
         return {
@@ -274,26 +303,30 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
       try {
         const written = await withWrite(opened.connection, async (held) => {
           const now = instant(input.now, 'work_items.claimed_at');
-          const found = await sql<WorkItemRow>`select * from brain.work_items
-            where execution_class = 'supervised' and completed_at is null
-              and not exists (
-                select 1 from brain.work_dependencies d join brain.work_items p on p.id = d.prerequisite_id
-                 where d.work_item_id = brain.work_items.id
-                   and (p.completed_at is null or p.outcome is distinct from 'succeeded')
-              )
-              and current_attempt_token is null and cancel_requested_at is null
-              and next_attempt_at <= ${now} and (claim_expires_at is null or claim_expires_at <= ${now})
-              and kind = any(${[...input.kinds]}::text[])
-            order by attempts, id limit 1 for update skip locked`.execute(held);
-          const candidate = found.rows[0];
-          if (!candidate) return null;
-          await sql`insert into brain.work_attempts (token, work_item_id, started_at, incarnation)
-            values (${input.attemptToken}, ${candidate.id}, ${now}, ${input.claimedBy})`.execute(held);
-          const expires = instant(new Date(input.now.getTime() + workKindPolicy(candidate.kind).claimForMs), 'work_items.claim_expires_at');
-          const changed = await sql<WorkItemRow>`update brain.work_items set attempts = attempts + 1,
-            claimed_at = ${now}, claim_expires_at = ${expires}, claimed_by = ${input.claimedBy},
-            current_attempt_token = ${input.attemptToken} where id = ${candidate.id} returning *`.execute(held);
-          return toWorkItem(changed.rows[0]!);
+          for (;;) {
+            const found = await sql<WorkItemRow>`select * from brain.work_items
+              where execution_class = 'supervised' and completed_at is null
+                and not exists (
+                  select 1 from brain.work_dependencies d join brain.work_items p on p.id = d.prerequisite_id
+                   where d.work_item_id = brain.work_items.id
+                     and (p.completed_at is null or p.outcome is distinct from 'succeeded')
+                )
+                and ${keyAvailable(now)}
+                and current_attempt_token is null and cancel_requested_at is null
+                and next_attempt_at <= ${now} and (claim_expires_at is null or claim_expires_at <= ${now})
+                and kind = any(${[...input.kinds]}::text[])
+              order by attempts, id limit 1 for update skip locked`.execute(held);
+            const candidate = found.rows[0];
+            if (!candidate) return null;
+            if (!await lockAvailableKey(held, candidate, now)) continue;
+            await sql`insert into brain.work_attempts (token, work_item_id, started_at, incarnation)
+              values (${input.attemptToken}, ${candidate.id}, ${now}, ${input.claimedBy})`.execute(held);
+            const expires = instant(new Date(input.now.getTime() + workKindPolicy(candidate.kind).claimForMs), 'work_items.claim_expires_at');
+            const changed = await sql<WorkItemRow>`update brain.work_items set attempts = attempts + 1,
+              claimed_at = ${now}, claim_expires_at = ${expires}, claimed_by = ${input.claimedBy},
+              current_attempt_token = ${input.attemptToken} where id = ${candidate.id} returning *`.execute(held);
+            return toWorkItem(changed.rows[0]!);
+          }
         });
         if (!written.ok) return written;
         return { ok: true, item: written.value, attemptToken: written.value === null ? null : input.attemptToken };
@@ -654,7 +687,7 @@ async function readOpenWork(
   key: { kind: string; targetKind: string; targetId: string },
 ): Promise<WorkItemRow | null> {
   const found = await sql<WorkItemRow>`
-    select id, kind, execution_class, current_attempt_token, target_kind, target_id, created_at, attempts, next_attempt_at,
+    select id, kind, execution_class, current_attempt_token, serialization_key, target_kind, target_id, created_at, attempts, next_attempt_at,
            claimed_at, claim_expires_at, claimed_by, last_error, completed_at, outcome, cancel_requested_at
       from brain.work_items
      where kind = ${key.kind} and target_kind = ${key.targetKind}
@@ -690,6 +723,7 @@ function toWorkItem(row: WorkItemRow): WorkItem {
     kind: row.kind,
     executionClass: row.execution_class,
     currentAttemptToken: row.current_attempt_token,
+    serializationKey: row.serialization_key,
     outcome: row.outcome,
     cancelRequestedAt: row.cancel_requested_at === null ? null : at(row.cancel_requested_at, 'work_items.cancel_requested_at'),
     targetKind: row.target_kind,

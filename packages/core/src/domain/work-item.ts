@@ -32,6 +32,8 @@ export interface WorkItem {
   kind: string;
   executionClass: WorkExecutionClass;
   currentAttemptToken: string | null;
+  /** Shared exclusion key across kinds and claim paths; null means independent. */
+  serializationKey: string | null;
   /** Together with `targetId`, what it has to be done to. */
   targetKind: string;
   targetId: string;
@@ -165,6 +167,7 @@ export function workStallWindowMs(kind: string): number {
     ? SUPERVISOR_STALL_WINDOW_MS.model : SUPERVISOR_STALL_WINDOW_MS.default;
 }
 export const SUPERVISOR_RENEW_EVERY_MS = 60_000;
+export const SUPERVISOR_CAPACITY = 2;
 export const SUPERVISOR_POLL_MS = 5_000;
 export const SUPERVISOR_CANCEL_GRACE_MS = 5_000;
 export const SUPERVISOR_CANCEL_POLL_MS = 1_000;

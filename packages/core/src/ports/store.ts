@@ -401,6 +401,8 @@ export interface UserStore {
 
 /** What `addWork` needs to put one piece of work on the queue (AD-21). */
 export interface AddWorkInput {
+  /** New-row exclusion key. An existing open row keeps its original key. */
+  serializationKey?: string | null;
   /**
    * The id to give a new row. The caller mints it (AD-8); an open row that is
    * already there keeps the id it has, and the proposal is dropped.
@@ -683,6 +685,7 @@ export interface WorkStore {
   listOpenSupervisedAttempts(): Promise<ListOpenSupervisedAttemptsResult>;
   settleSupervisedAttempt(input: SettleSupervisedAttemptInput): Promise<FinishWorkResult>;
   /** Claim supervised work and insert its caller-supplied attempt token atomically. */
+  /** A live claim or retained supervised token holds its key across both claim paths. */
   claimSupervisedWork(input: ClaimSupervisedWorkInput): Promise<ClaimSupervisedWorkResult>;
   /** Token CAS: a stale attempt changes neither the item nor its attempt history. */
   renewSupervisedLease(input: RenewSupervisedLeaseInput): Promise<FinishWorkResult>;
@@ -693,6 +696,7 @@ export interface WorkStore {
   /** Insert a graph atomically, preserving the prerequisites of merged rows. */
   addWorkGraph(input: AddWorkGraphInput): Promise<AddWorkGraphResult>;
   /** Is anything due? A read, so it never takes the write lock (AD-7). */
+  /** A live claim or retained supervised token holds its key across both claim paths. */
   hasDueWork(query: DueWorkQuery): Promise<HasDueWorkResult>;
   /**
    * Take one due item, least attempted first, and raise its `attempts`.
@@ -703,6 +707,7 @@ export interface WorkStore {
    * the backlog behind it, and the index of 0004 is shaped for exactly that
    * query.
    */
+  /** A live claim or retained supervised token holds its key across both claim paths. */
   claimWork(input: ClaimWorkInput): Promise<ClaimWorkResult>;
   /** Done: stamp `completed_at` and clear the claim (AD-21). */
   completeWork(input: CompleteWorkInput): Promise<FinishWorkResult>;

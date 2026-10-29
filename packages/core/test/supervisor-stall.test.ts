@@ -216,35 +216,37 @@ it('heartbeat renews the lease without moving lastProgressAt', async () => {
   } finally { await k.stop(); }
 });
 it('retries a pending permanent failure settlement before claiming more work', async () => {
-  let writes = 0;
+  let failing = true;
   const k = await kit({ configure(store) {
     const finish = store.finishSupervisedWork.bind(store);
-    store.finishSupervisedWork = async input => ++writes === 1 ? { ok: false, code: 'DB_UNAVAILABLE', message: '잠시 실패' } : finish(input);
+    store.finishSupervisedWork = async input => failing ? { ok: false, code: 'DB_UNAVAILABLE', message: '잠시 실패' } : finish(input);
   } });
   try {
     k.child.push('{"abi":1,"type":"error","code":"PERMANENT","retryable":false}'); k.child.exit(1); await flush();
     expect(k.store.snapshot().failures).toHaveLength(0);
+    failing = false;
     k.time.advance(5000); await flush(); expect(k.store.snapshot().failures).toHaveLength(1);
     expect(k.store.snapshot().workItems[0]!.outcome).toBe('failed');
-  } finally { await k.stop(); }
+  } finally { failing = false; await k.stop(); }
 });
 
 it('preserves both rows when failure recording is unavailable and retries the pending settlement', async () => {
-  let calls = 0;
+  let failing = true;
   const k = await kit({ configure(store) {
     const record = store.recordFailure.bind(store);
-    store.recordFailure = async input => ++calls === 1 ? { ok: false, code: 'DB_UNAVAILABLE', message: '기록 실패' } : record(input);
+    store.recordFailure = async input => failing ? { ok: false, code: 'DB_UNAVAILABLE', message: '기록 실패' } : record(input);
   } });
   try {
     k.child.push('{"abi":1,"type":"progress"}'); await flush();
     const before = k.store.snapshot();
     k.child.push('{"abi":1,"type":"error","code":"PERMANENT","retryable":false}'); k.child.exit(1); await flush();
     expect(k.store.snapshot()).toEqual(before);
+    failing = false;
     k.time.advance(5000); await flush();
     expect(k.store.snapshot().failures).toHaveLength(1);
     expect(k.store.snapshot().workItems[0]!.outcome).toBe('failed');
     expect(k.store.snapshot().workAttempts[0]!.outcome).toBe('failed');
-  } finally { await k.stop(); }
+  } finally { failing = false; await k.stop(); }
 });
 it('starts the stall window when the delayed launcher successfully starts the child', async () => {
   const store = memoryStore(), time = manualTime(now), launcher = fakeProcessLauncher(), controller = new AbortController();

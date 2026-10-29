@@ -229,10 +229,10 @@ describe('runDaemon, with its timers wound down', () => {
       expect(logs.match(/예약 틱 실패/g)).toHaveLength(1);
       expect(logs).toContain('DB_UNAVAILABLE');
       // A skipped tick (schema mismatch) must not reset the tick failure state.
-      (await db.exec('update brain.schema_migrations set version = 8 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
+      (await db.exec('update brain.schema_migrations set version = 9 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
       const mismatched = rounds;
       await waitFor('스키마 불일치 회차', () => rounds >= mismatched + 2);
-      (await db.exec('update brain.schema_migrations set version = 7 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
+      (await db.exec('update brain.schema_migrations set version = 8 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)'));
       const restored = rounds;
       await waitFor('스키마 복구 뒤 실패 회차', () => rounds >= restored + 2);
       expect((await readFile(daemonLogPath(home), 'utf8')).match(/예약 틱 실패/g)).toHaveLength(1);
@@ -902,7 +902,7 @@ describe('brain daemon run, as a process', () => {
     const { home, configDir } = await installed();
     await transcript(configDir, 'session-recovered');
     const database = new PgTestClient(join(home, 'brain.db'));
-    (await database.prepare('update brain.schema_migrations set version = 8 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)').run());
+    (await database.prepare('update brain.schema_migrations set version = 9 where owner=$$core$$ and version=(select max(version) from brain.schema_migrations where owner=$$core$$)').run());
     const daemon = shortDaemon(home, configDir);
     try {
       await waitFor('스키마 불일치', async () =>

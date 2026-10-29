@@ -349,7 +349,7 @@ describe('the session_ingest handler', () => {
       claimedAt: NOW,
       claimExpiresAt: new Date(NOW.getTime() + 600_000),
       claimedBy: 'drain',
-      executionClass: 'core' as const, currentAttemptToken: null, outcome: null, cancelRequestedAt: null, lastError: null,
+      serializationKey: null, executionClass: 'core' as const, currentAttemptToken: null, outcome: null, cancelRequestedAt: null, lastError: null,
       completedAt: null,
     };
   }

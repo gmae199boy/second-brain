@@ -40,3 +40,12 @@ it('passes store failures through unchanged', async () => {
   k.store.addWorkGraph = async () => failure;
   expect(await enqueueWorkGraph(k, { nodes: [node('a')] })).toBe(failure);
 });
+
+it('passes serialization keys through graph insertion and preserves a merged key', async () => {
+  const k = kit();
+  await enqueueWorkGraph(k, { nodes: [{ ...node('a'), serializationKey: 'account' }, node('b')] });
+  expect(k.store.snapshot().workItems.map(item => item.serializationKey)).toEqual(['account', null]);
+  const result = await enqueueWorkGraph(k, { nodes: [{ ...node('a'), serializationKey: 'replacement' }] });
+  expect(result).toMatchObject({ ok: true, items: { a: { created: false } } });
+  expect(k.store.snapshot().workItems[0]?.serializationKey).toBe('account');
+});
