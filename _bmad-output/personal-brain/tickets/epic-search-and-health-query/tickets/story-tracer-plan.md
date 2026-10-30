@@ -3,7 +3,7 @@ title: '17.2 대화 조각과 redact 재생성'
 type: 'feature'
 ticket: '2'
 created: '2026-10-30'
-status: blocked
+status: in-progress
 baseline_revision: '520ed113226821afc48b7e7f5fb6f6308e24724f'
 route: 'full'
 route_source: 'pinned'
@@ -17,8 +17,6 @@ context: []
 warnings: [oversized]
 deferred:
   - summary: "검토 필요: [ASSUMPTION] 일반 메시지는 줄바꿈 하나로 결합하며 목표 이상이 되는 시각 묶음까지 포함한 뒤 닫는다."
-blocked_at: "2026-10-30"
-blocked_reason: "finalization left repository dirty: 실행 중 생긴 별도 워크플로 작업의 미커밋 파일 5개가 남아 있으며 티켓 17.2 구현·검증·커밋은 완료했다"
 ---
 
 <intent-contract>
