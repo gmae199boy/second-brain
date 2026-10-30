@@ -84,6 +84,8 @@ deferred:
 
 ## Implementation Notes
 
+- 결정적 검증 복구: 설치·setup의 schema 14 기대값, 데몬 시험의 상대 버전 복구, 수집 drain의 조각 일감 수와 identity 시험의 대상 필터를 수정했다. 지휘자가 `bash _bmad/custom/bmad-loop-verify.sh`를 독립 실행해 빌드·타입 검사와 135파일 3,538개 성공(기존 무관 skip 1개)을 확인했다. 순수 조각기 단독 8개도 성공했다. 행렬의 설정/경계·동시각/긴 본문·반복/증분·두 입력 경합·redact 즉시 삭제/재생성·실패 롤백·NUL·독립 LIKE 대조는 전체 실행에 포함됐으며 해당 시험에 skip은 없다.
+
 - 재개 검증: 기존 구현 커밋 `ed89726b5ade660d2e6c5c5e5d4501a6160a6803`과 기준 커밋 `dbc02b17e7f7296b2eaa69299e5a5025b7fb3c4e`를 보존했다. 이번 구현 워커는 소스 변경 없이 계획 충족을 확인했다. 지휘자가 `pnpm build && pnpm typecheck`, 순수 조각기 8개, Core·PG 전체 69파일 2,085개를 다시 실행해 모두 통과했다. 행렬의 각 행을 조각기 및 conversation-index 시험과 대조했으며 누락·skip은 없다. 현재 기준 이후 diff와 별도로 최초 구현 직전 커밋 `520ed113226821afc48b7e7f5fb6f6308e24724f` 이후 apps/packages diff도 읽어 이미 커밋된 구현을 리뷰 범위에 포함했다.
 
 - 재도출 검증: 긴 메시지 외부 겹침·NUL 검색 투영·잠금 대기 중 만료를 수정했다. 지휘자가 전체 빌드/타입과 순수 조각기 7개, Core+PG 69파일 2,083개 시험을 통과했고 기존 행렬 시험도 모두 실행됐다. 원본 3개 findings에 대한 회귀가 포함된다.
@@ -128,6 +130,11 @@ deferred:
 - verdicts: 0 findings — high 0, medium 0, low 0, false 0, maybe-false 0
 - findings: 없음. 독립 quick 리뷰가 재개 diff와 이미 커밋된 구현 전체를 함께 읽고 수락 기준·규칙·주변 코드를 확인했다. 새 수정·이월·기각은 없다.
 
+### 2026-10-30 — 결정적 검증 복구 리뷰
+
+- verdicts: 0 findings — high 0, medium 0, low 0, false 0, maybe-false 0
+- findings: 없음. 독립 quick 리뷰가 스키마 기대값·대화 조각 일감 개수·identity 필터를 migration·수집·drain·설치 코드와 대조했다. 이번 리뷰의 patch·defer·reject는 모두 0개이며 기존 deferred 1개를 보존한다.
+
 ## Design Notes
 
 긴 메시지 B의 최초 출현은 splitMessagesOverChars 단위로 나누며, 그 내부 part 사이에는 원래 메시지 전체를 겹쳐 복제하지 않는다. A→B의 첫 부분 앞에는 직전 원래 메시지 A(설정이 정한 겹침 수)를 문맥으로 붙이고 실제 fromAt을 유지한다. B→C에는 직전 원래 메시지 B 전체를 겹침 문맥으로 보존하고 C의 새 본문을 붙인다. 이미 겹침 문맥인 B를 다시 새 메시지로 처리해 분할/무한 반복하지 않는다. 조각 길이는 목표이지 상한이 아니므로 겹침 문맥 때문에 2,400자보다 커질 수 있다. B만 있는 5,000자 입력은 여전히 2,400+2,400+200의 part 1..3이다. 동시각 묶음의 일반 경계 불분할과 같은 범위의 part 연속성을 유지한다. A·긴 B·C 및 연속 긴 메시지의 수작업 기대값을 시험한다.
@@ -152,18 +159,20 @@ deferred:
 사전 조건은 Node/pnpm과 OrbStack Docker다. vitest global setup이 compose.test.yaml의 개발 전용 PG를 준비하며 각 시험은 brain_test_* 격리 DB와 임시 Brain 홈을 쓴다. 운영 홈·DB는 사용하지 않는다. 경합 연결 A는 snapshot/확정, B는 ingest/redact를 맡는다. snapshot 완료 barrier 이후 B를 커밋하고 A를 풀어 낡은 확정 거부를 관찰한다. 실제 잠금 시험은 B가 세션 advisory lock 또는 필요한 ACCESS EXCLUSIVE를 잡고 A가 대기하는 것을 관찰하며 timeout을 명시한다(시험 30초, 잠금 시험은 50~500ms 한도). finally에서 barrier를 풀고 ROLLBACK·client.end·store.close·db.drop·임시 홈 삭제를 수행한다. global setup이 자신이 시작한 PG를 종료하며 수동 시작분은 `docker compose -f compose.test.yaml down`으로 정리한다. 실제 사용한 시험 이름·연결·timeout과 결과는 구현 메모에 남긴다.
 
 
+
+## 검증 복구 지시
+
+결정적 검증 `bash _bmad/custom/bmad-loop-verify.sh`가 migration 0014 이후 설치·setup 시험의 오래된 스키마 버전 기대값으로 실패했다. 근거는 `.bmad-loop/runs/20261030-175233-8a92/feedback/17.2-3.md`다. 동결된 intent-contract는 유지하고 이 티켓의 migration으로 영향받는 전체 시험 계약을 점검·수정한다. 기존 Verification 명령과 결정적 검증 전체를 통과해야 한다.
+
 ## Auto Run Result
 
 - status: built
-- 구현: 설정 기반 순수 대화 조각기, 동일 시각·긴 메시지의 part, literal LIKE 질의와 최소 검색 port, 일감 drain, 입력 지문·세션 잠금·청구 만료 확정, 원자적인 ingest/redact 재생성을 제공한다. U+0000은 기존 쓰기 코덱으로 보존한다.
-- 기존 구현은 커밋 `ed89726b5ade660d2e6c5c5e5d4501a6160a6803`에 있다. 이번 재개에서는 소스 수정 없이 구현을 다시 확인하고 검증·독립 리뷰·결과 기록을 마쳤다.
-- 이번 변경 파일: `_bmad-output/personal-brain/tickets/epic-search-and-health-query/tickets/story-tracer-plan.md` — 재개 검증 근거·독립 리뷰·실행 결과를 기록한다.
-- 기존 구현 파일: `packages/core/src/recall/` — 조각 경계·지문·일감·literal 검색 패턴을 제공한다. Core domain/ports/brain/fake/exports와 CLI Store 조립은 capability를 연결한다. `packages/postgres/migrations/0014_conversation_chunks.sql`과 migrate/sessions/store/conversation-index는 part·새 설정 세대·검색·원자적 큐/확정을 연결한다. Core·PG의 대화 fixture/시험과 기존 회귀 기대값은 새 일감을 검증한다.
-- 이번 독립 quick 리뷰는 발견 사항 0건이다. patch 집계는 high 0, medium 0, low 0이며 새 deferred 0건·기각 0건이다. 기존 일반 경계 [ASSUMPTION] 1건을 보존한다. followup_review_recommended: false.
-- 지휘자 검증: `pnpm build && pnpm typecheck` 성공. `pnpm exec vitest run --project core test/conversation-chunker.test.ts` 8개 성공. `pnpm exec vitest run --project core --project postgres` 69파일 2,085개 성공(Core 1,631개, PG 454개). 전체 검증에서 skip은 없다.
-- 행렬 감사: 저장 설정·수작업 경계·동시각·5,000자 part·반복/증분·새 입력/redact snapshot barrier·redact enqueue 실패 롤백·NUL 읽기/검색·독립 LIKE와 실패 구분 항목을 실제 실행된 시험과 대조해 모두 충족했다.
-- 잠금·정리: 기존 Verification 절차의 별도 writer/snapshot 연결, 세션 advisory 및 chunks ACCESS EXCLUSIVE 잠금, 30초 시험 한도와 finally 정리를 그대로 실행했다. 기존에 실행 중인 개발 시험 PG를 이용했고 운영 Brain 자료·홈은 쓰지 않았다.
-- 한계: 공개 Core redact 실패가 spool 의존성을 사용하지 않고 임시 홈 파일이 늘지 않음을 확인한 범위다. 디스크 spool adapter 자체를 실행한 시험은 아니다. 공개 recall 명령·결과 budget은 후속 티켓 범위다.
-- 저장소 밖 HUMAN 전용 수락 작업은 없으므로 awaiting-operator나 operator_actions는 해당하지 않는다. tickets.py mark·티켓 done 표시·push는 수행하지 않으며 완료 판정은 외부 오케스트레이터가 맡는다.
-- Orca 정리: 자기 Run `run_f74f4afc630a`의 구현 `task_91ca14a49dce` / `ctx_62d33250cf61`와 리뷰 `task_eeedc7842615` / `ctx_6f1e87e8bb4f`가 모두 succeeded로 정식 완료됐다. 전체 보고를 수락하고 두 워커를 release했다. worker-list는 released 2, active/reclaimable 0이며 마지막 ack 뒤 mail 0이다. 생존·소유권 미확인 상태는 없고 전용 제어 셸만 마지막에 닫는다.
-- 종료 확인: 이 계획과 검증 결과를 커밋하며 `git diff --cached --check` 및 작업 트리 clean을 확인한다. 티켓 완료 권한은 오케스트레이터에 보존한다.
+- 구현: 기존 대화 조각·검색·경합 보호 구현을 보존하고 migration 0014와 새 조각 일감 때문에 실패하던 CLI 회귀 시험을 복구했다. 동결된 intent-contract는 기존 내용과 동일함을 직접 비교했다.
+- 변경 파일: `apps/cli/test/setup.test.ts`는 setup 응답과 설치 기록의 스키마 14를, `apps/cli/test/install.test.ts`는 설치 기록의 스키마 14를 확인한다. `apps/cli/test/daemon-run.test.ts`는 주입한 버전 변경을 상대적으로 원복한다. `apps/cli/test/capture-scan.test.ts`는 수집 뒤 조각 처리까지 포함한 drain 개수를 확인한다. `apps/cli/test/sessions-ingest.test.ts`는 identity 일감만 검사한다. 이 계획 파일은 검증·리뷰·실행 결과를 기록한다.
+- 검증: 지휘자가 `bash _bmad/custom/bmad-loop-verify.sh`를 독립 실행하여 종료 코드 0, 빌드·타입 검사 및 135파일 3,538개 성공을 확인했다. 기존 무관 skip 1개가 있으며 수락 행렬을 덮는 시험에는 skip이 없다. `pnpm exec vitest run --project core test/conversation-chunker.test.ts`도 8개 성공했다. 전체 실행은 계획의 Core·PG 회귀를 포함한다. `git diff --cached --check`도 성공했다.
+- 행렬: 설정·수작업 경계·동시각·5,000자 분할은 순수 조각기 8개와 PG 저장 시험, 반복·증분은 prefix 보존과 재청구 시험, 입력 경합은 실제 handler snapshot barrier의 추가/가리기 시험, redact는 즉시 삭제·재생성·강제 enqueue 실패 롤백 시험, NUL은 원문 보존/검색 투영 시험, literal 검색은 독립 전수 LIKE와 실패 구분 시험으로 확인했다.
+- 리뷰: 독립 quick findings 0개. 이번 리뷰의 수정 집계 high 0, medium 0, low 0, 추가 이월 0, 기각 0이다. followup_review_recommended: false. 기존 일반 경계 [ASSUMPTION] deferred 1개는 보존했다.
+- 한계: 전체 시험의 기존 skip 1개를 유지한다. 운영 Brain 자료·홈은 사용하지 않았다. 저장소 밖 HUMAN 전용 수락 작업은 없어 operator_actions는 필요하지 않다.
+- 티켓 done 표시·tickets.py mark·push는 실행하지 않았다. 티켓 완료 판정은 오케스트레이터가 자체 검증 뒤 수행한다.
+
+- Orca 정리: 자기 Run `run_8f7210c09053`의 구현·리뷰 Dispatch를 정식 성공 보고와 전문 확인 뒤 모두 release했다. worker-list는 released 2, active/reclaimable 0이며 coordinator mail은 0이다. 미확인 워커나 남은 과업은 없다. 전용 제어 셸만 마지막에 닫는다.

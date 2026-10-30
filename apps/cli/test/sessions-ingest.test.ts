@@ -2045,7 +2045,7 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
     try {
       expect((await db.prepare('select project_id, worktree_id from sessions').all()))
         .toEqual([{ project_id: null, worktree_id: null }]);
-      expect((await db.prepare('select kind, completed_at from work_items').all()))
+      expect((await db.prepare("select kind, completed_at from work_items where kind = 'session_identity'").all()))
         .toEqual([{ kind: 'session_identity', completed_at: null }]);
     } finally { (await db.close()); }
     const config = join(home, 'claude-config');
@@ -2242,7 +2242,7 @@ describe('brain sessions ingest claude-code and the project it tags', () => {
     ]);
     const database = new PgTestClient(databaseIn(home));
     try {
-      expect((await database.prepare('select count(*) as count from work_items').get())).toEqual({ count: 0 });
+      expect((await database.prepare("select count(*) as count from work_items where kind = 'session_identity'").get())).toEqual({ count: 0 });
     } finally { (await database.close()); }
   });
 

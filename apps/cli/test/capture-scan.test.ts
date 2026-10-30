@@ -258,7 +258,7 @@ describe('brain queue drain and the transcript folder', () => {
     expect(first.code, first.stderr).toBe(0);
     const envelope = envelopeOf<DrainData>(first);
     expect(envelope.ok).toBe(true);
-    expect(envelope.data).toMatchObject({ enqueued: 2, claimed: 2, completed: 2, failed: 0 });
+    expect(envelope.data).toMatchObject({ enqueued: 2, claimed: 4, completed: 4, failed: 0 });
 
     const path = databaseIn(home);
     // Two sessions, which is the number of transcript files — the delegated run
@@ -508,7 +508,8 @@ describe('brain queue drain and the transcript folder', () => {
       // one is the same size as the row says, so it is never opened. The third
       // claim is the attachment the first run stored, which this run reads
       // because the step that queues a reading comes before the loop.
-      expect(data).toMatchObject({ enqueued: 2, claimed: 3, completed: 3 });
+      // 변경된 세션의 대화 조각을 만드는 일감 두 개도 처리한다.
+      expect(data).toMatchObject({ enqueued: 2, claimed: 5, completed: 5 });
       expect((await rowCounts(path))['sessions']).toBe(3);
       expect((await rowCounts(path))['messages']).toBeGreaterThan(firstCounts['messages'] ?? 0);
       // Its history row did not move either: nothing read it.
@@ -530,7 +531,7 @@ describe('brain queue drain and the transcript folder', () => {
     const doctored = await spawned(['doctor', 'run', '--json'], off);
 
     expect(drained.code).toBe(0);
-    expect(envelopeOf<DrainData>(drained).data).toMatchObject({ enqueued: 1, claimed: 1 });
+    expect(envelopeOf<DrainData>(drained).data).toMatchObject({ enqueued: 1, claimed: 2 });
     expect((await rowCounts(databaseIn(home)))['sessions']).toBe(1);
 
     expect(doctored.code).toBe(0);
