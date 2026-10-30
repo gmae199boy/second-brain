@@ -1,7 +1,7 @@
 # Project override for bmad-build-auto — bmad-loop unattended build (2026-10-29).
 #
 # Roles
-#   orchestrator = the bmad-loop dev session: claude opus 5.5, effort medium (.bmad-loop/policy.toml [adapter])
+#   orchestrator = the bmad-loop dev session: codex gpt-6.1-sol, effort medium (.bmad-loop/policy.toml [adapter])
 #   implementer  = a fresh codex gpt-6.1-terra (medium) session — _bmad/custom/bmad-build-auto-codex.sh impl
 #   review lens  = a fresh read-only codex gpt-6.1-sol (medium) session — _bmad/custom/bmad-build-auto-codex.sh review
 #   Triage of review findings and the bad_plan loop-back stay with the orchestrator, as the skill defines.
