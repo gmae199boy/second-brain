@@ -46,9 +46,9 @@ describe('deferred session identity', () => {
     const k = await kit();
     expect(await k.brain.sessions.ingest({ session: sampleSessionToken, transcriptPath: PATH })).toMatchObject({ ok: true, created: true });
     expect(k.store.snapshot().sessions[0]).toMatchObject({ projectId: null, worktreeId: null });
-    expect(k.store.snapshot().workItems).toMatchObject([{ kind: 'session_identity', completedAt: null }]);
+    expect(k.store.snapshot().workItems.filter(w => w.kind === 'session_identity')).toMatchObject([{ kind: 'session_identity', completedAt: null }]);
     k.repositories.set(CWD, checkout);
-    expect(await k.brain.queue.drain({ budgetMs: 100 })).toMatchObject({ completed: 1 });
+    expect(await k.brain.queue.drain({ budgetMs: 100 })).toMatchObject({ completed: 2 });
     expect(k.store.snapshot().sessions[0]?.projectId).not.toBeNull();
     expect(k.store.snapshot().workItems[0]?.completedAt).not.toBeNull();
     expect(k.store.snapshot().failures).toEqual([]);
@@ -59,7 +59,7 @@ describe('deferred session identity', () => {
     const k = await kit(content);
     k.repositories.set(CWD, { kind: 'not_repository' });
     expect(await k.brain.sessions.ingest({ session: sampleSessionToken, transcriptPath: PATH })).toMatchObject({ ok: true });
-    expect(k.store.snapshot().workItems).toEqual([]);
+    expect(k.store.snapshot().workItems.filter(w => w.kind === 'session_identity')).toEqual([]);
     if (noCwd) expect(k.repositories.inspects()).toEqual([]);
   });
 
@@ -87,7 +87,7 @@ describe('deferred session identity', () => {
     const results = await Promise.all([1, 2].map(() => k.brain.sessions.ingest({ session: sampleSessionToken, transcriptPath: PATH })));
     expect(results.every((result) => result.ok)).toBe(true);
     expect(k.store.snapshot().sessions).toHaveLength(1);
-    expect(k.store.snapshot().workItems).toHaveLength(1);
+    expect(k.store.snapshot().workItems.filter(w => w.kind === 'session_identity')).toHaveLength(1);
   });
 
   it('closes work for an already tagged session without making checkout rows or reading evidence', async () => {
@@ -141,7 +141,7 @@ describe('deferred session identity', () => {
     const k = await kit();
     await k.store.ensureSession(sampleEnsureSessionInput());
     k.repositories.set(CWD, { kind: 'not_repository' });
-    expect(await k.brain.queue.drain({ budgetMs: 100 })).toMatchObject({ completed: 2 });
+    expect(await k.brain.queue.drain({ budgetMs: 100 })).toMatchObject({ completed: 3 });
     expect(k.store.snapshot().sessions[0]).toMatchObject({ firstCwd: CWD, tagSource: null });
     expect(await k.brain.queue.drain({ budgetMs: 100 })).toMatchObject({ claimed: 0 });
     expect(k.store.snapshot().workItems.filter((item) => item.kind === 'session_identity')).toHaveLength(1);
@@ -153,7 +153,7 @@ describe('deferred session identity', () => {
     k.folder.remove(PATH);
     expect(await k.brain.queue.drain({ budgetMs: 100 })).toMatchObject({ failed: 1 });
     expect(await k.brain.queue.drain({ budgetMs: 100 })).toMatchObject({ claimed: 0 });
-    expect(k.store.snapshot().workItems).toHaveLength(1);
+    expect(k.store.snapshot().workItems.filter(w => w.kind === 'session_identity')).toHaveLength(1);
   });
 
   it('records unreadable transcripts permanently on the first attempt', async () => {

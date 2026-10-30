@@ -381,6 +381,12 @@ export function postgresSessionStore(connect: PgConnect): SessionStore {
           // AD-11). The only writer of that table is `messages.redact`.
         }
 
+        if (insertedMessages > 0) {
+          const workId = (await sql<{ id: string }>`select uuidv7() as id`.execute(held)).rows[0]!.id;
+          await ensureWork(held, { id: workId, kind: 'conversation_chunk', targetKind: 'session', targetId: session.id, createdAt: batch.tracking.ingestedAt, nextAttemptAt: batch.tracking.ingestedAt });
+          await sql`update brain.work_items set claimed_at=null, claim_expires_at=null, claimed_by=null, attempts=0, next_attempt_at=${ingestedAt}::timestamptz
+            where kind='conversation_chunk' and target_kind='session' and target_id=${session.id} and completed_at is null`.execute(held);
+        }
         await writeAttachments(held, batch.attachments, seen, ingestedAt);
 
         // Read once, before any insert, the way the messages above are: which

@@ -245,7 +245,7 @@ describe('drain이 붙인 텍스트 문서를 조각으로 만든다', () => {
 
     const report = await drain(subject);
 
-    expect(report).toMatchObject({ claimed: 1, completed: 1, failed: 0, stopped: 'empty' });
+    expect(report).toMatchObject({ claimed: 2, completed: 2, failed: 0, stopped: 'empty' });
     const [generation] = await generations(subject);
     expect(generation).toMatchObject({
       fileId: subject.fileId,
@@ -277,7 +277,7 @@ describe('drain이 붙인 텍스트 문서를 조각으로 만든다', () => {
     const text = '문서 내용 '.repeat(50_000);
     const subject = await kit({ bytes: utf8Bytes(text) });
 
-    expect(await drain(subject)).toMatchObject({ claimed: 1, completed: 1 });
+    expect(await drain(subject)).toMatchObject({ claimed: 2, completed: 2 });
 
     const rows = await generations(subject);
     expect(rows).toHaveLength(1);
@@ -298,7 +298,7 @@ describe('drain이 붙인 텍스트 문서를 조각으로 만든다', () => {
 
   it('두 번째 drain은 새 일감도 새 시도도 만들지 않는다', async () => {
     const subject = await kit();
-    expect(await drain(subject)).toMatchObject({ claimed: 1, completed: 1 });
+    expect(await drain(subject)).toMatchObject({ claimed: 2, completed: 2 });
     const after = { items: extractItems(subject), rows: await generations(subject) };
     const chunks = await currentChunks(subject);
 
@@ -316,7 +316,7 @@ describe('drain이 붙인 텍스트 문서를 조각으로 만든다', () => {
     const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
     const subject = await kit({ bytes: png });
 
-    expect(await drain(subject)).toMatchObject({ claimed: 1, completed: 1, failed: 0 });
+    expect(await drain(subject)).toMatchObject({ claimed: 2, completed: 2, failed: 0 });
 
     const [generation] = await generations(subject);
     expect(generation).toMatchObject({ status: 'unsupported', mediaType: null, failedStage: null });
@@ -333,7 +333,7 @@ describe('drain이 붙인 텍스트 문서를 조각으로 만든다', () => {
   it('상한을 넘는 크기는 바이트를 읽지도 않고 too_large로 닫는다', async () => {
     const subject = await kit({ sizeBytes: DOCUMENT_EXTRACT_MAX_BYTES + 1 });
 
-    expect(await drain(subject)).toMatchObject({ claimed: 1, completed: 1, failed: 0 });
+    expect(await drain(subject)).toMatchObject({ claimed: 2, completed: 2, failed: 0 });
 
     expect((await generations(subject))[0]).toMatchObject({
       status: 'too_large',
@@ -352,7 +352,7 @@ describe('추출이 실패하는 길', () => {
     subject.gate.fail = 'FILES_UNAVAILABLE';
 
     for (let attempt = 1; attempt < MAX_WORK_ATTEMPTS; attempt += 1) {
-      expect(await drain(subject)).toMatchObject({ claimed: 1, retried: 1, failed: 0 });
+      expect(await drain(subject)).toMatchObject({ claimed: attempt === 1 ? 2 : 1, retried: 1, failed: 0 });
       // Nothing recorded yet: a store that cannot answer right now is somebody
       // else's hiccup, and the record is for the tenth time it happens (AD-21).
       expect(fileFailures(subject)).toEqual([]);
@@ -395,7 +395,7 @@ describe('추출이 실패하는 길', () => {
 
   it('원본이 사라지면 옛 조각을 그대로 두고 닿을 수 없다고 표시한다', async () => {
     const subject = await kit();
-    expect(await drain(subject)).toMatchObject({ claimed: 1, completed: 1 });
+    expect(await drain(subject)).toMatchObject({ claimed: 2, completed: 2 });
     const good = (await generations(subject))[0];
     const chunks = await currentChunks(subject);
     expect(chunks).toHaveLength(1);
@@ -449,7 +449,7 @@ describe('추출이 실패하는 길', () => {
     const subject = await kit();
     subject.gate.substitute = utf8Bytes('다른 내용입니다');
 
-    expect(await drain(subject)).toMatchObject({ claimed: 1, failed: 1, retried: 0 });
+    expect(await drain(subject)).toMatchObject({ claimed: 2, failed: 1, retried: 0 });
 
     expect((await generations(subject))[0]).toMatchObject({
       status: 'failed',
@@ -481,7 +481,7 @@ describe('추출이 실패하는 길', () => {
       }),
     });
 
-    expect(report).toMatchObject({ claimed: 1, failed: 1 });
+    expect(report).toMatchObject({ claimed: 2, failed: 1 });
     expect((await generations(subject))[0]).toMatchObject({
       status: 'failed',
       failedStage: 'extract',
@@ -566,7 +566,7 @@ describe('조각 설정', () => {
   it('빈 텍스트는 조각 없이 ok로 닫힌다', async () => {
     const subject = await kit({ bytes: utf8Bytes('') });
 
-    expect(await drain(subject)).toMatchObject({ claimed: 1, completed: 1 });
+    expect(await drain(subject)).toMatchObject({ claimed: 2, completed: 2 });
 
     expect((await generations(subject))[0]).toMatchObject({
       status: 'ok',
@@ -613,7 +613,7 @@ describe('추출기 버전이 오르면 drain이 한 번 더 읽는다', () => {
 
   it('옛 버전으로 성공한 파일을 다시 넣고 그 다음 drain은 가만히 둔다', async () => {
     const subject = await kit();
-    expect(await readAt(subject, 'doc/0')).toMatchObject({ claimed: 1, completed: 1 });
+    expect(await readAt(subject, 'doc/0')).toMatchObject({ claimed: 2, completed: 2 });
     expect((await generations(subject))[0]).toMatchObject({
       attempt: 1,
       status: 'ok',
@@ -654,7 +654,7 @@ describe('추출기 버전이 오르면 drain이 한 번 더 읽는다', () => {
 
   it('빌드 버전으로 한 번 실패했으면 다시 넣지 않는다', async () => {
     const subject = await kit();
-    expect(await readAt(subject, 'doc/0')).toMatchObject({ claimed: 1, completed: 1 });
+    expect(await readAt(subject, 'doc/0')).toMatchObject({ claimed: 2, completed: 2 });
     const broken: DocumentExtractor = {
       name: 'broken',
       detect: () => 'text/broken',
@@ -691,7 +691,7 @@ describe('추출기 버전이 오르면 drain이 한 번 더 읽는다', () => {
 
   it('원본에 닿을 수 없는 뒤처진 파일은 넣지 않고 세어서 보고한다', async () => {
     const subject = await kit();
-    expect(await readAt(subject, 'doc/0')).toMatchObject({ claimed: 1, completed: 1 });
+    expect(await readAt(subject, 'doc/0')).toMatchObject({ claimed: 2, completed: 2 });
     const rows = await generations(subject);
     const chunks = await currentChunks(subject);
     expect(
@@ -723,7 +723,7 @@ describe('추출기 버전이 오르면 drain이 한 번 더 읽는다', () => {
     // An empty registry, so nothing recognises the bytes: the one generation
     // says `unsupported` and the pointer stays empty, which is a file with
     // nothing to be behind. Reaching those is epic 4's (Design Notes).
-    expect(await readAt(subject, 'doc/0', [])).toMatchObject({ claimed: 1, completed: 1 });
+    expect(await readAt(subject, 'doc/0', [])).toMatchObject({ claimed: 2, completed: 2 });
     const rows = await generations(subject);
     expect(rows[0]).toMatchObject({ status: 'unsupported', extractorVersion: 'doc/0' });
 

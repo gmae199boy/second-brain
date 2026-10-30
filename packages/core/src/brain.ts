@@ -1,3 +1,4 @@
+import { CONVERSATION_CHUNK_KIND, conversationChunkHandler } from './recall/conversation-work.js';
 import { installExtension, type ExtensionRuntime } from './extensions/install.js';
 import { extensionStatus, listExtensions } from './extensions/status.js';
 import { holdWorkGroup, releaseWorkGroup } from './queue/hold-groups.js';
@@ -297,6 +298,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
   // because what it does is a use case and the ports it needs are the ones this
   // brain was assembled from (`capture/session-ingest-work.ts`).
   const coreHandlers: WorkHandlers = {
+    [CONVERSATION_CHUNK_KIND]: conversationChunkHandler({ store, clock, idGen }),
     [SCHEDULE_PROBE_KIND]: scheduleProbeHandler,
     [SESSION_IDENTITY_KIND]: sessionIdentityHandler(ingestDependencies),
     [SESSION_INGEST_KIND]: sessionIngestHandler({

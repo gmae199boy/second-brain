@@ -163,7 +163,7 @@ it('answers commands with DB_UNAVAILABLE without the brain schema and SCHEMA_MIS
   const mismatch = await run(['queue','drain','--json'], kit.env);
   expect(mismatch.code).toBe(1);
   expect(JSON.parse(mismatch.stdout)).toMatchObject({ ok: false, error: { code: 'SCHEMA_MISMATCH', message: expect.stringContaining('core') } });
-  expect(JSON.parse(mismatch.stdout).error.message).toMatch(/14.*13/);
+  expect(JSON.parse(mismatch.stdout).error.message).toMatch(/15.*14/);
   await kit.db.query('drop schema brain cascade');
   for (const args of [['queue','drain'], ['failures','list']]) {
     const result = await run([...args, '--json'], kit.env);

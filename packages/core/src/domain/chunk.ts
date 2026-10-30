@@ -18,6 +18,8 @@ export interface Chunk {
    */
   fromAt: Date;
   toAt: Date;
+  /** 같은 시각 범위의 단일 조각은 0, 여러 조각은 1부터 연속이다. */
+  part: number;
   /** The chunk text, with no header of its own (AD-15). */
   body: string;
 }

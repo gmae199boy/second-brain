@@ -278,3 +278,10 @@ export { installExtension, type ExtensionPackages, type ExtensionMigrator, type 
 export { extensionStatus, listExtensions } from './extensions/status.js';
 export type { BrainExt } from './brain.js';
 export * from './extensions/snapshot.js';
+export * from './recall/conversation-chunker.js';
+export * from './recall/conversation-fingerprint.js';
+export * from './recall/conversation-work.js';
+export * from './recall/text-query.js';
+export type * from './ports/conversation-index-store.js';
+
+export { CONVERSATION_CHUNK_INDEX_CONFIG_ID } from './domain/index-config.js';

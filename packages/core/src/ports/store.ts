@@ -835,7 +835,7 @@ export interface TranscriptFileStore {
  * one capability at a time, and the day it implements `SessionStore` it passes
  * the whole `Store` contract (AD-10).
  */
-export type Store = ExtensionStore & HealthStore &
+export type Store = import('./conversation-index-store.js').ConversationIndexStore & ExtensionStore & HealthStore &
   SessionStore &
   UserStore &
   WorkStore &

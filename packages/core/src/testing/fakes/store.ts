@@ -1,3 +1,4 @@
+import { conversationFingerprint } from '../../recall/conversation-fingerprint.js';
 import { attemptUsage } from '../../queue/list.js';
 import type { SettingsStore, ScheduleSuccess } from '../../ports/store.js';
 import { addLocalDays, isLocalTime } from '../../local-time.js';
@@ -195,6 +196,18 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const isHeld = (group: string | null) => group !== null && heldGroups.has(group);
   const schedules = new Map<string, import('../../domain/schedule.js').Schedule>();
   const workItems: WorkItem[] = [];
+  const conversationChunks: (import('../../recall/conversation-chunker.js').ConversationChunk & { id: string; sessionId: string })[] = [];
+  const conversationConfig = { targetChars: 1200, overlapMessages: 1, splitMessagesOverChars: 2400 };
+  let conversationWorkSequence = 0;
+  function enqueueConversation(sessionId: string, now: Date) {
+    const existing = openWork('conversation_chunk', 'session', sessionId);
+    if (existing) { unclaim(existing); existing.attempts = 0; existing.nextAttemptAt = now; }
+    else addWork({ id: `conversation-work-${++conversationWorkSequence}`, kind: 'conversation_chunk', targetKind: 'session', targetId: sessionId, createdAt: now, nextAttemptAt: now });
+  }
+  function conversationMessages(sessionId: string) {
+    return [...messages.values()].flat().filter(m => m.sessionId === sessionId).map(m => ({ id: m.id, occurredAt: m.occurredAt, body: m.body }));
+  }
+
   const claimedDates = new Map<string, { from: string; to: string }>();
   const scheduleSuccesses = new Map<string, ScheduleSuccess & { scheduleId: string }>();
   function settleSuccess(item: WorkItem, now: Date) {
@@ -453,6 +466,24 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
 
   return {
     ...memorySettingsStore(),
+    async readConversationSnapshot(sessionId) {
+      if (![...sessions.values()].some(s => s.id === sessionId)) return { ok: true, snapshot: null };
+      const rows = conversationMessages(sessionId);
+      return { ok: true, snapshot: { config: conversationConfig, messages: rows, fingerprint: conversationFingerprint(conversationConfig, rows) } };
+    },
+    async commitConversationChunks(input) {
+      const item = workItems.find(w => w.id === input.workId && w.kind === 'conversation_chunk' && w.targetKind === 'session' && w.targetId === input.sessionId && w.claimedBy === input.claimedBy && w.completedAt === null && w.claimExpiresAt !== null && w.claimExpiresAt > input.now);
+      if (!item || conversationFingerprint(conversationConfig, conversationMessages(input.sessionId)) !== input.fingerprint) return { ok: true, committed: false };
+      const old = conversationChunks.filter(c => c.sessionId === input.sessionId);
+      const next = input.chunks.map(c => ({ ...c, sessionId: input.sessionId, id: old.find(o => o.fromAt.getTime() === c.fromAt.getTime() && o.toAt.getTime() === c.toAt.getTime() && o.part === c.part && o.body === c.body)?.id ?? c.id }));
+      for (let i = conversationChunks.length - 1; i >= 0; i--) if (conversationChunks[i]!.sessionId === input.sessionId) conversationChunks.splice(i, 1);
+      conversationChunks.push(...next);
+      return { ok: true, committed: true };
+    },
+    async searchConversationChunks({ pattern }) {
+      const literal = pattern.slice(1, -1).replaceAll('\0', '�').replace(/\\([\\%_])/g, '$1').toLowerCase();
+      return { ok: true, chunks: structuredClone(conversationChunks.filter(c => c.body.replaceAll('\0', '�').toLowerCase().includes(literal))) };
+    },
     async recordExtensionPythonEnvironment({ name, ...environment }) { pythonEnvironments.set(name, structuredClone(environment)); return { ok: true }; },
     async getExtensionPythonEnvironment(name) { return { ok: true, environment: structuredClone(pythonEnvironments.get(name) ?? null) }; },
     async recordExtensionInstall({ name, version, now, workKinds }) {
@@ -649,10 +680,15 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         messages.set(token, rows.map((row) => row.id === message.id ? { ...row, body: plan.body } : row));
         toolNotes.set(token, notes.map((note) => ({ ...note, target: changed.get(note.id) ?? note.target })));
         redactions.set(token, records);
+        let chunksRemoved = 0;
+        if (plan.redactions.length) {
+          for (let i = conversationChunks.length - 1; i >= 0; i--) { const c = conversationChunks[i]!; if (c.sessionId === message.sessionId && c.fromAt <= message.occurredAt && c.toAt >= message.occurredAt) conversationChunks.splice(i, 1), chunksRemoved++; }
+          enqueueConversation(message.sessionId, plan.redactions[0]!.occurredAt);
+        }
         const unredactedAttachments = (attachmentRows.get(message.id) ?? [])
           .filter((row) => row.status === 'stored' && row.file !== null && !fileRedacted(row.file.id)).length;
         return { ok: true, sessionId: message.sessionId, bodySpans: plan.bodySpans,
-          toolNoteSpans: plan.toolNoteSpans, toolNotesChanged: plan.toolNotes.length, chunksRemoved: 0,
+          toolNoteSpans: plan.toolNoteSpans, toolNotesChanged: plan.toolNotes.length, chunksRemoved,
           unredactedAttachments };
       }
       return { ok: false, code: 'MESSAGE_NOT_FOUND', message: '지정한 메시지가 없습니다' };
@@ -935,6 +971,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
       );
       messages.set(token, storedMessages);
+      if (insertedMessages > 0) enqueueConversation(session.id, batch.tracking.ingestedAt);
       toolNotes.set(token, storedToolNotes);
 
       // The cursor, the parser version and the end only move forward, and they

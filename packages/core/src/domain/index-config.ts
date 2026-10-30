@@ -8,6 +8,8 @@ export type IndexConfigKind = 'chunk' | 'embedding' | 'document_chunk';
 
 /** The chunking rules, read from the row rather than from code (AD-15). */
 export interface ChunkParams {
+  /** 세대의 규칙과 경계 정책. 기존 설정은 이 필드가 없다. */
+  rules?: { version: number; order: string; units: string; separator: string; boundary: string; split: string; parts: string };
   /** Target size of a chunk in characters, never tokens. */
   targetChars: number;
   /** How many messages neighbouring chunks share. */
@@ -78,3 +80,6 @@ export type IndexConfig = ConversationIndexConfig | DocumentChunkIndexConfig;
  * the one 0002 put there.
  */
 export const DOCUMENT_CHUNK_INDEX_CONFIG_ID = '019a0000-0000-7000-8000-000000000002';
+
+/** 대화 drain이 사용하는 규칙 세대. */
+export const CONVERSATION_CHUNK_INDEX_CONFIG_ID = '019a0000-0000-7000-8000-000000000003';

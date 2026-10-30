@@ -85,6 +85,9 @@ const calls = {
   fireSchedule: (s) => s.fireSchedule({ scheduleId: id, expectedNextRunAt: now, nextRunAt: null, work: sampleWorkInput(), now }),
   getSettings: (s) => s.getSettings({ keys: ['timezone'] }),
   getSetting: (s) => s.getSetting({ key: 'timezone' }),
+  readConversationSnapshot: s => s.readConversationSnapshot(id),
+  commitConversationChunks: s => s.commitConversationChunks({ sessionId: id, workId: id, claimedBy: id, now, fingerprint: '', chunks: [] }),
+  searchConversationChunks: s => s.searchConversationChunks({ pattern: '%x%' }),
   setSetting: (s) => s.setSetting({ key: 'timezone', value: 'UTC', updatedAt: now }),
 } satisfies Record<Exclude<keyof PostgresStore, 'close'>, (store: PostgresStore) => Promise<unknown>>;
 

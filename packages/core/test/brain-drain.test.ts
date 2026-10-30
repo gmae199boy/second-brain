@@ -122,8 +122,8 @@ describe('brain.queue.drain', () => {
       replayed: 0,
       spoolFailed: 0,
       enqueued: 1,
-      claimed: 1,
-      completed: 1,
+      claimed: 2,
+      completed: 2,
       failed: 0,
       stopped: 'empty',
     });
