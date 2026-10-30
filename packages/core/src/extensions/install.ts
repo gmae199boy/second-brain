@@ -5,6 +5,8 @@ import type { ExtensionStore } from '../ports/store.js';
 import type { ProcessInspector, ProcessLauncher } from '../ports/process.js';
 import { PROCESS_ABI_ENV } from '../process-abi/codec.js';
 import { decodeExtensionManifest, isExtensionName } from './manifest.js';
+import { createExtensionSnapshot } from './snapshot.js';
+import type { SettingsStore } from '../ports/store.js';
 import { runExtensionCheck } from './check.js';
 import { extensionStatus } from './status.js';
 export interface ExtensionPackages {
@@ -17,8 +19,10 @@ export interface ExtensionMigrator {
 export interface ExtensionRuntime {
   packages: ExtensionPackages; migrator: ExtensionMigrator; launcher: ProcessLauncher; inspector: ProcessInspector; timer: Timer;
   databaseUrl(): string | Promise<string>;
+  readSecrets?(): Promise<Readonly<Record<string, string>>>;
+  machineValues?(name: string): Readonly<Record<string, string>>;
 }
-export interface ExtensionDependencies { store: ExtensionStore; clock: Clock; idGen: IdGen; extensions?: ExtensionRuntime }
+export interface ExtensionDependencies { store: ExtensionStore & Partial<SettingsStore>; clock: Clock; idGen: IdGen; extensions?: ExtensionRuntime }
 export async function installExtension(deps: ExtensionDependencies, { name }: { name: string }) {
   if (!isExtensionName(name)) return { ok: false as const, code: 'EXTENSION_NOT_FOUND' as const, message: '확장 이름이 이름 규칙에 맞지 않습니다' };
   const runtime = deps.extensions;
@@ -37,15 +41,36 @@ export async function installExtension(deps: ExtensionDependencies, { name }: { 
   catch { return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장 패키지를 설치 폴더에 복사하지 못했습니다' }; }
   const migrated = await runtime.migrator.apply(name, `${installedDir}/${manifest.migrations}`);
   if (!migrated.ok) return migrated;
-  const recorded = await deps.store.recordExtensionInstall({ name, version: manifest.version, now: deps.clock.now() });
+  const recorded = await deps.store.recordExtensionInstall({ name, version: manifest.version, now: deps.clock.now(), workKinds: [...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : [])].map(work => work.kind) });
   if (!recorded.ok) return recorded;
+  const configFailure = async () => {
+    const message = '확장 설정을 확인하세요';
+    const recordedFailure = await deps.store.recordExtensionConnection({ name, status: 'failed', checkedAt: deps.clock.now(), code: 'EXTENSION_CONFIG_INVALID', message });
+    return recordedFailure.ok ? { ok: false as const, code: 'EXTENSION_CONFIG_INVALID' as const, retryable: false as const, message } : recordedFailure;
+  };
+  const declarations = manifest.settings ?? [];
+  let values: Record<string, string> = {};
+  if (declarations.length) {
+    if (!deps.store.getSettings || !runtime.readSecrets) return configFailure();
+    const read = await deps.store.getSettings({ keys: declarations.map(setting => setting.key) });
+    if (!read.ok) return { ok: false as const, code: read.code, message: '확장 설정을 읽을 수 없습니다' };
+    values = Object.fromEntries(read.settings.map(setting => [setting.key, setting.value]));
+  }
+  let secrets: Readonly<Record<string, string>> = {};
+  try { if (declarations.some(setting => setting.secret)) secrets = await runtime.readSecrets!(); }
+  catch { return configFailure(); }
+  const snapshot = createExtensionSnapshot({ extension: name, stage: 'connect', declarations, settings: values, secrets, machine: runtime.machineValues?.(name) ?? {} });
+  if (!snapshot.ok) return configFailure();
+  let databaseUrl: string;
+  try { databaseUrl = await runtime.databaseUrl(); } catch { return configFailure(); }
   const env = {
-    [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: await runtime.databaseUrl(),
+    [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: databaseUrl,
     [PROCESS_ABI_ENV.workId]: deps.idGen.next(), [PROCESS_ABI_ENV.attemptToken]: deps.idGen.next(),
     [PROCESS_ABI_ENV.workKind]: `${name}.connection_check`, [PROCESS_ABI_ENV.targetKind]: 'extension',
     [PROCESS_ABI_ENV.targetId]: name, [PROCESS_ABI_ENV.runGeneration]: '1',
+    BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized,
   };
-  const verdict = await runExtensionCheck({ ...runtime, clock: deps.clock, spec: { command: manifest.connection_check.runtime, args: [`${installedDir}/${manifest.connection_check.entry}`], env } });
+  const verdict = await runExtensionCheck({ ...runtime, clock: deps.clock, protection: { extension: name, declarations: Object.fromEntries(declarations.map(setting => [setting.key, setting.type])), errorCodes: manifest.error_codes ?? [], required: declarations.filter(setting => setting.required.includes('connect')).map(setting => setting.key), secrets: declarations.filter(setting => setting.secret).map(setting => setting.key) }, spec: { command: manifest.connection_check.runtime, args: [`${installedDir}/${manifest.connection_check.entry}`], env } });
   const connection = await deps.store.recordExtensionConnection({ name, status: verdict.outcome === 'succeeded' ? 'connected' : 'failed', checkedAt: deps.clock.now(), code: verdict.code ?? null, message: verdict.message === undefined ? null : failureText(verdict.message.replaceAll('\u0000', '\ufffd')) });
   if (!connection.ok) return connection;
   const result = await extensionStatus(deps, { name });

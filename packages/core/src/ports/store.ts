@@ -1457,6 +1457,7 @@ export type SessionIngestStore = Pick<SessionStore, 'findSession' | 'ensureSessi
 export interface SettingRecord { key: string; value: string; updatedAt: Date }
 export type SettingsStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface SettingsStore {
+  getSettings(input: { keys: readonly string[] }): Promise<{ ok: true; settings: SettingRecord[] } | SettingsStoreFailure>;
   getSetting(input: { key: string }): Promise<{ ok: true; setting: SettingRecord | null } | SettingsStoreFailure>;
   setSetting(input: SettingRecord): Promise<{ ok: true } | SettingsStoreFailure>;
 }
@@ -1469,7 +1470,7 @@ export interface ExtensionRecord {
 }
 export type ExtensionStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface ExtensionStore {
-  recordExtensionInstall(input: { name: string; version: string; now: Date }): Promise<{ ok: true } | ExtensionStoreFailure>;
+  recordExtensionInstall(input: { name: string; version: string; now: Date; workKinds?: readonly string[] }): Promise<{ ok: true } | ExtensionStoreFailure>;
   recordExtensionConnection(input: { name: string; status: 'connected' | 'failed'; code: string | null; message: string | null; checkedAt: Date }): Promise<{ ok: true } | ExtensionStoreFailure>;
   getExtension(name: string): Promise<{ ok: true; extension: ExtensionRecord | null } | ExtensionStoreFailure>;
   listExtensions(): Promise<{ ok: true; extensions: ExtensionRecord[] } | ExtensionStoreFailure>;

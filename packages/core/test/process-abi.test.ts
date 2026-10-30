@@ -34,7 +34,7 @@ it('keeps schema branches and required environment names aligned with codec cons
 it('the core package tarball ships the ABI schemas and fixtures', () => {
   const packed = JSON.parse(execFileSync('npm', ['pack', '--dry-run', '--json'], { cwd: new URL('..', import.meta.url), encoding: 'utf8' }));
   const files = packed[0].files.map((file: { path: string }) => file.path);
-  for (const path of ['schemas/process-abi/v1/event.schema.json', 'schemas/process-abi/v1/env.schema.json', 'schemas/process-abi/v1/README.md', 'fixtures/process-abi/v1/events.json', 'fixtures/process-abi/v1/env.json', 'fixtures/process-abi/v1/runs.json', 'dist/process-abi/codec.js']) expect(files).toContain(path);
+  for (const path of ['schemas/process-abi/v1/event.schema.json', 'schemas/process-abi/v1/env.schema.json', 'schemas/process-abi/v1/settings-snapshot.schema.json', 'fixtures/process-abi/v1/settings-snapshots.json', 'schemas/process-abi/v1/README.md', 'fixtures/process-abi/v1/events.json', 'fixtures/process-abi/v1/env.json', 'fixtures/process-abi/v1/runs.json', 'dist/process-abi/codec.js', 'schemas/extensions/v1/manifest.schema.json', 'fixtures/extensions/v1/manifests.json', 'fixtures/extensions/v1/check-manifests.py']) expect(files).toContain(path);
   expect(files).not.toContain('fixtures/process-abi/v1/cases.json');
 });
 it('reports an oversized fragment immediately without waiting for EOF', () => {
@@ -202,4 +202,36 @@ it.each([
   expect(value).toBe(expected);
   expect(Buffer.byteLength(value!)).toBeLessThanOrEqual(4096);
   expect(stderr.value()).toBe(value);
+});
+
+import { decodeSettingsSnapshot, PROCESS_ABI_SNAPSHOT_FIXTURES_URL, PROCESS_ABI_SNAPSHOT_MAX_BYTES } from '../src/process-abi/codec.js';
+it('validates snapshot fixtures against declared keys and types', async () => {
+  for (const fixture of await load(PROCESS_ABI_SNAPSHOT_FIXTURES_URL)) {
+    expect(decodeSettingsSnapshot(fixture.snapshot, 'testext', { 'testext.limit': 'number', 'testext.token': 'string' }).ok, fixture.name).toBe(fixture.expect === 'valid');
+  }
+});
+it('counts snapshot size in UTF-8 bytes', () => {
+  const wrap = (value: string) => JSON.stringify({ version: 1, extension: 'testext', values: { 'testext.token': value } });
+  const base = Buffer.byteLength(wrap(''));
+  const declarations = { 'testext.token': 'string' as const };
+  expect(decodeSettingsSnapshot(wrap('x'.repeat(PROCESS_ABI_SNAPSHOT_MAX_BYTES - base)), 'testext', declarations).ok).toBe(true);
+  expect(decodeSettingsSnapshot(wrap('x'.repeat(PROCESS_ABI_SNAPSHOT_MAX_BYTES - base - 2) + '한'), 'testext', declarations).ok).toBe(false);
+});
+it('rejects a non-string snapshot in the ABI environment', async () => {
+  const valid = (await load(PROCESS_ABI_ENV_FIXTURES_URL)).find((f: any) => f.expect === 'valid').env;
+  expect(decodeAbiEnv({ ...valid, BRAIN_SETTINGS_SNAPSHOT: 1 }).ok).toBe(false);
+  expect(decodeAbiEnv({ ...valid, BRAIN_SETTINGS_SNAPSHOT: '' }).ok).toBe(false);
+});
+
+it('checks the snapshot environment string and object schema separately', async () => {
+  const { Ajv2020 } = await import('ajv/dist/2020.js');
+  const schema = await load(new URL('../schemas/process-abi/v1/settings-snapshot.schema.json', import.meta.url));
+  const validate = new Ajv2020({ strict: false }).compile(schema);
+  const fixtures = await load(PROCESS_ABI_SNAPSHOT_FIXTURES_URL);
+  for (const fixture of fixtures) {
+    let parsed: unknown; try { parsed = JSON.parse(fixture.snapshot); } catch { parsed = null; }
+    const structural = validate(parsed);
+    const contract = structural && decodeSettingsSnapshot(fixture.snapshot, 'testext', { 'testext.limit': 'number', 'testext.token': 'string' }).ok;
+    expect(Boolean(contract), fixture.name).toBe(fixture.expect === 'valid');
+  }
 });

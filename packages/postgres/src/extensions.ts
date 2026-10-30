@@ -6,11 +6,13 @@ type Row = { name: string; version: string; installed_at: string; enabled: boole
 const record = (r: Row): ExtensionRecord => ({ name: r.name, version: r.version, installedAt: new Date(r.installed_at), enabled: r.enabled, enabledChangedAt: new Date(r.enabled_changed_at), connectionStatus: r.connection_status, connectionCheckedAt: r.connection_checked_at === null ? null : new Date(r.connection_checked_at), connectionCode: r.connection_code, connectionMessage: r.connection_message });
 export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
   return {
-    async recordExtensionInstall({ name, version, now }) {
+    async recordExtensionInstall({ name, version, now, workKinds }) {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
         const result = await withWrite(opened.connection, async held => {
           await sql`insert into brain.extensions(name, version, installed_at, enabled, enabled_changed_at) values (${name}, ${version}, ${now.toISOString()}, true, ${now.toISOString()}) on conflict(name) do update set version=excluded.version`.execute(held);
+          await sql`delete from brain.extension_work_kinds where extension_name=${name}`.execute(held);
+          for (const kind of workKinds ?? []) await sql`insert into brain.extension_work_kinds(extension_name, kind) values (${name}, ${kind})`.execute(held);
         });
         return result.ok ? { ok: true } : result;
       } catch (error) { return databaseFailure(error); }

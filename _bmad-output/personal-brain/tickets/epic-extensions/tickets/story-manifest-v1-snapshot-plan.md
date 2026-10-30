@@ -3,21 +3,19 @@ title: 'manifest v1과 설정 snapshot'
 type: 'feature'
 ticket: '2'
 created: '2026-10-30'
-status: blocked
-baseline_revision: '3243d52861acf5d62e31e4204446b0d56c584bb8'
+status: done
+baseline_revision: 6a47782ecbefca27a8e8c5bd840d27e28c774d40
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
-review: ''
-review_source: ''
-lenses_ran: []
+review: 'quick'
+review_source: 'pinned'
+lenses_ran: [quick]
 review_loop_iteration: 0
-followup_review_recommended: false
+followup_review_recommended: true
 context: []
 warnings: []
 deferred: []
-blocked_at: "2026-10-30"
-blocked_reason: "intent gap: 티켓이 따르도록 지정한 12.4 ABI v1 schema에 snapshot 전달 칸이 없으며, 비밀 입력의 운반·검증·오류 정책을 확정할 근거가 없다. 보안·비밀에 닿는 결정 공백은 워크플로 규칙에 따라 임의 가정으로 닫을 수 없다."
 ---
 
 <intent-contract>
@@ -63,9 +61,18 @@ manifest v1의 JSON Schema와 공유 판정 fixture를 배포하고, 선언한 �
 
 ## Tasks & Acceptance
 
-위 결정과 원래 티켓 요구를 기준으로 구현자가 작업 목록과 AC를 확정하고 검증한다.
+- [x] `packages/core/src/extensions/manifest.ts`, `packages/core/schemas/extensions/v1/manifest.schema.json`, `packages/core/fixtures/extensions/v1/`: 최소 manifest와 일감·기본 예약·raw view·인증 명령·설정·오류 코드 선언을 검증하고 TS·Python이 공유 fixture를 판정한다. JSON Schema로 표현할 수 없는 선언 간 관계는 각 코덱이 추가 검증한다.
+- [x] `packages/core/src/settings/index.ts`, `apps/cli/src/dispatch.ts`: 설치 manifest에 선언된 설정만 수락하며 비밀 설정은 환경 변수 이름만 저장하고 반환한다.
+- [x] `packages/core/src/extensions/snapshot.ts`, `packages/core/src/process-abi/codec.ts`, `apps/cli/src/runtime/extensions.ts`: 단일 DB 조회, 준비당 한 번의 `.env` 해석 및 기계 tokenstore 경로로 단계별 snapshot을 만들고 16384 UTF-8 바이트와 키·타입·필수 비밀을 검사한다.
+- [x] `packages/postgres/migrations/0012_extension_work_kinds.sql`, `packages/postgres/src/extensions.ts`, `packages/postgres/src/work.ts`, `apps/cli/src/daemon/supervisor.ts`: 설치된 일감·인증 종류만 supervised로 등록하며 실행 중 설치도 발견하고 재시도마다 새 snapshot을 준비한다.
+- [x] `packages/core/src/extensions/check.ts`, `packages/core/src/queue/supervisor.ts`: 연결 확인과 supervised 실행에서 자식 시작 전 snapshot과 소유권·취소·보류를 확인하고 공통 진단 투영을 저장·fingerprint 전에 적용한다. 실행 중 소유권 상실 시 자식을 정리한다.
+- [x] `packages/core/test/process-abi.test.ts`, `packages/core/test/extension-snapshot.test.ts`, `packages/core/test/supervisor.test.ts`, `apps/cli/test/ext-install.test.ts`, `apps/cli/test/process-group.test.ts`: ABI 호환과 크기 경계, 단계별 비밀, 준비 중 취소·보류·소유권 상실, DB 설정 변경 후 재시도 및 실제 자식 진단 누출을 확인한다.
 
 ## Implementation Notes
+
+- 구현 세션 `01a18b21-a740-7392-a4c5-a8ad7bd119db`를 사용했다. 첫 CLI 대기의 실제 프로세스가 종료돼 같은 세션을 재개했으며, 기존 변경을 보존한 채 구현과 검증을 완료했다.
+- 독립 읽기 전용 `quick` 리뷰 세션은 `01a18b41-8ce3-75a2-9897-eeb5423773d5`다. 리뷰 수정도 동일 구현 세션에 맡겼다.
+- 도메인·DNS·API 키 발급·외부 콘솔 등 사람이 저장소 밖에서 수행해야 하는 AC는 없다. 실제 Garmin 인증은 이 티켓의 후속 범위이므로 `awaiting-operator` 대상이 아니다.
 
 - 변경 전 작업 트리는 깨끗했고 git add --refresh가 성공했다.
 - 읽기 전용 독립 CLI 조사 세션 `01a18b15-7b13-7250-b60d-106cf16e202c`가 현재 코드와 선행 tracer를 조사했다. 소스·시험 수정과 시험 실행은 없었다.
@@ -74,6 +81,17 @@ manifest v1의 JSON Schema와 공유 판정 fixture를 배포하고, 선언한 �
 ## Plan Change Log
 
 ## Review Triage Log
+
+### 2026-10-30 — Review pass
+
+- verdicts: 3 findings — high 1, medium 2, low 0, false 0, maybe-false 0
+- findings:
+  - `[medium]` `[patch]` 예약 날짜 범위 누락 — `scheduledDates`가 PostgreSQL 청구 결과에 있으나 확장 launch 환경에 매핑되지 않는 것을 확인했다. 기존 ABI의 `BRAIN_RANGE_FROM`·`BRAIN_RANGE_TO`를 조건부 전달하고 실제 자식이 범위를 확인하도록 수정했다.
+  - `[high]` `[patch]` 재설치 시 tokenstore 삭제 — 기계 경로가 교체되는 패키지 폴더 안에 있고 성공 시 이전 폴더가 삭제됨을 확인했다. 기존 target을 이동하기 전에 tokenstore를 staged 패키지에 복사하며, 정상 재설치와 마이그레이션 실패 후 내용 보존을 시험했다. 공개 경로는 유지했다.
+  - `[medium]` `[patch]` 내부 오류 코드 이름으로 manifest 허용 목록 우회 — 작업자 `error` 이벤트의 코드를 내부 생성 코드와 구분하지 않는 것을 확인했다. ABI 판정의 오류 출처를 추적해 작업자 코드는 manifest 선언만 허용하며 `retryable`을 유지한다. 연결 확인과 감독자 양쪽에 `PROCESS_DIED`·`ABI_EXIT_FAILED` 반례를 추가했다.
+
+- 독립 `quick` 리뷰의 세 지적을 모두 개별 검증했다. 원인은 기존 입력 매핑·교체·진단 투영 경계에서 직접 교정할 수 있어 `patch`로 처리했다. 보류·기각한 지적은 없다.
+- 별도 자체 점검에서 새 README·코드 주석·Python 설명의 한국어 작성 규칙 위반도 바로잡았다. 이는 독립 리뷰의 세 지적 집계에는 포함하지 않는다.
 
 ## Design Notes
 
@@ -91,17 +109,79 @@ manifest v1의 JSON Schema와 공유 판정 fixture를 배포하고, 선언한 �
 
 ## Verification
 
-- 정적 조사만 했다. ABI schema·코덱·프로세스 port·설정 코덱·설치·감독자 조립을 직접 읽고 독립 조사 결과와 대조했다.
-- 제품 소스와 시험을 변경하지 않아 빌드·시험은 실행하지 않았다. 기능 동작이나 AC 충족을 주장하지 않는다.
+- `pnpm build`와 `pnpm typecheck`: 통과.
+- `pnpm exec vitest run packages/core/test/supervisor.test.ts packages/core/test/extensions.test.ts apps/cli/test/ext-install.test.ts`: 99건 통과. 이후 DB 설정 변경과 실제 재시도를 추가한 `pnpm exec vitest run apps/cli/test/ext-install.test.ts`: 14건 통과.
+- `pnpm exec vitest run packages/postgres/test/migrate.test.ts packages/postgres/test/schema.test.ts packages/postgres/test/cli.test.ts packages/postgres/test/work-store.test.ts apps/cli/test/daemon-run.test.ts`: 254건 통과.
+- `uv run --no-project --with jsonschema python packages/core/fixtures/extensions/v1/check-manifests.py`: 공유 manifest fixture 10건 통과. 기본 Node 시험은 Python을 요구하지 않는다.
+- `pnpm test`: 129개 파일, 3464건 통과. 이후 최초 로그인·기계 경로 확인을 추가한 `pnpm exec vitest run apps/cli/test/ext-install.test.ts`: 14건 통과.
+- JSON Schema 단독으로 확장 이름과 선언 키의 일치·중복 키·예약 참조를 표현할 수 없어, 배포 스키마와 언어별 의미 검증을 함께 적용한다. 실제 Garmin 인증, Python 실행 환경과 공개 상태 view 완성은 계약에서 후속 범위다. 악의적 자식의 은닉 채널은 보호 범위가 아니다.
+
+- 오케스트레이터 재검증: `pnpm build`, `pnpm typecheck`, 핵심 시험 99건, PostgreSQL 묶음 254건, Python fixture 10건, 전체 `pnpm test` 129개 파일·3464건이 통과했다. 첫 PostgreSQL 묶음 실행의 잠금 시험 1건은 시간 초과했으나 단독 및 묶음 재실행은 통과했다.
+
+- 리뷰 수정 후 최종 재검증: `pnpm build`, `pnpm typecheck`, 핵심 시험 103건, PostgreSQL 묶음 254건, Python fixture 10건 통과. `pnpm test --retry=1`은 129개 파일·3468건 통과했다.
+- 수정 후 기본 병렬 전체 실행에서 기존 PostgreSQL 연결 종료 시험의 잠금 대기 포착 실패·시간 초과가 관찰됐고, 단일 worker 전체 실행에서는 CLI 시험의 DB 준비 연결이 시간 초과됐다. 각 실패 파일의 단독 재실행은 모두 통과했다. 실패 기록을 보존하고 시험 코드의 시간 제한이나 기대값으로 우회하지 않았다.
+- 기준 리비전과 현재 계획의 `<intent-contract>`가 같은지 확인했고, 수정 전후 diff를 직접 읽었다. `git diff --check`가 통과했다.
 
 ## Auto Run Result
 
-Status: blocked
+Status: built
 
-차단 조건: `intent gap`. 티켓이 따르도록 지정한 12.4 ABI v1 schema에 snapshot 전달 칸이 없으며, 비밀 입력의 운반·검증·오류 정책을 확정할 근거가 없다.
+- manifest v1 schema·TS 코덱·공유 fixture와 선택 Python 판정 진입점을 배포한다. 선언된 확장 설정만 받고 비밀은 참조만 저장·반환한다.
+- 설치된 일감·인증 종류를 supervised로 등록하고 실행마다 DB 설정·기계 경로·비밀 참조를 새 snapshot으로 준비한다. ABI 입력·UTF-8 상한·단계별 필수 설정·시작 전 취소/보류/소유권을 검사하고 진단은 저장 전에 투영한다.
+- 독립 `quick` 리뷰 3건을 모두 수정했다: `high` 1건(tokenstore 보존), `medium` 2건(날짜 범위 전달, 작업자 오류 출처 구분). 보류 0건, 기각 0건이다. 새 설명의 한국어 작성 규칙도 별도로 바로잡았다.
+- `followup_review_recommended: true`: 첫 리뷰에서 `high` 수정 1건과 `medium` 수정 2건이 있었다. 수정된 tokenstore 교체·복구 예외 경계와 작업자/내부 오류 출처 구분은 통합 시험 후 독립 재검토를 아직 받지 않았다.
+- 최종 검증은 빌드·타입 검사, 핵심 103건, PostgreSQL 묶음 254건, Python fixture 10건 및 전체 `pnpm test --retry=1` 3468건 통과다. 기본 전체 실행의 간헐적 DB 연결·대기 실패는 위 Verification에 기록했다.
+- 티켓이나 계획을 `done`으로 표시하지 않았고 `tickets.py mark`를 실행하지 않았다. 사람만 수행 가능한 외부 작업은 없다. 실제 Garmin 인증·Python 실행 환경·공개 상태 view 완성은 후속 범위다.
+- 검토한 변경과 이 계획을 같은 커밋에 기록하며 원격 push는 하지 않는다.
 
-- 현재 코드 직접 조사와 읽기 전용 독립 CLI 조사로 위 공백을 확인했다. 구체적인 파일·재사용점·해결할 질문은 Code Map과 Design Notes에 기록했다.
-- 제품 소스·시험은 수정하지 않았고 구현·빌드·시험·커밋·push를 수행하지 않았다. 이 계획 파일만 추가했다.
-- build-auto HALT 절차에서만 `tickets.py mark 13.2 blocked`를 실행했다. 티켓이나 계획을 done으로 표시하지 않았다.
-- 도메인·DNS·API 키 발급·외부 콘솔 등 저장소 밖 사람의 실행 작업 때문에 멈춘 상황은 아니다. 따라서 awaiting-operator와 operator_actions는 적용하지 않았다.
-- 재개에는 비밀 snapshot의 입력 계약과 누락 비밀·진단 처리 정책을 계획에 확정하는 작업이 필요하다.
+### 변경 파일
+
+- [_bmad-output/personal-brain/tickets/epic-extensions/tickets/story-manifest-v1-snapshot-plan.md](story-manifest-v1-snapshot-plan.md) — 구현·검증·리뷰 분류와 최종 결과를 기록한다.
+- [apps/cli/src/commands/config-get.ts](../../../../../apps/cli/src/commands/config-get.ts) — 확장 키의 선언 검증을 런타임 설정 조립에 위임한다.
+- [apps/cli/src/commands/config-set.ts](../../../../../apps/cli/src/commands/config-set.ts) — 확장 키를 설치 manifest 기반으로 검증한다.
+- [apps/cli/src/daemon/supervisor.ts](../../../../../apps/cli/src/daemon/supervisor.ts) — 설치된 실행 종류를 갱신하고 snapshot과 날짜 범위를 준비한다.
+- [apps/cli/src/dispatch.ts](../../../../../apps/cli/src/dispatch.ts) — 설치 manifest에서 설정 정의를 조립한다.
+- [apps/cli/src/doctor/store.ts](../../../../../apps/cli/src/doctor/store.ts) — 일괄 설정 조회의 실패 store 계약을 맞춘다.
+- [apps/cli/src/runtime/extensions.ts](../../../../../apps/cli/src/runtime/extensions.ts) — 비밀 참조·기계 경로를 제공하고 재설치 tokenstore를 보존한다.
+- [apps/cli/test/daemon-run.test.ts](../../../../../apps/cli/test/daemon-run.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [apps/cli/test/dispatch.test.ts](../../../../../apps/cli/test/dispatch.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [apps/cli/test/ext-install.test.ts](../../../../../apps/cli/test/ext-install.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [apps/cli/test/install.test.ts](../../../../../apps/cli/test/install.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [apps/cli/test/process-group.test.ts](../../../../../apps/cli/test/process-group.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [apps/cli/test/setup.test.ts](../../../../../apps/cli/test/setup.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [package.json](../../../../../package.json) — schema 판정 시험용 Ajv 의존성을 추가한다.
+- [packages/core/fixtures/extensions/v1/check-manifests.py](../../../../../packages/core/fixtures/extensions/v1/check-manifests.py) — 배포용 공유 판정 사례와 언어별 검사 진입점을 제공한다.
+- [packages/core/fixtures/extensions/v1/manifests.json](../../../../../packages/core/fixtures/extensions/v1/manifests.json) — 배포용 공유 판정 사례와 언어별 검사 진입점을 제공한다.
+- [packages/core/fixtures/process-abi/v1/settings-snapshots.json](../../../../../packages/core/fixtures/process-abi/v1/settings-snapshots.json) — 배포용 공유 판정 사례와 언어별 검사 진입점을 제공한다.
+- [packages/core/schemas/extensions/v1/README.md](../../../../../packages/core/schemas/extensions/v1/README.md) — 배포 schema와 소비자가 따를 검증 계약을 정의한다.
+- [packages/core/schemas/extensions/v1/manifest.schema.json](../../../../../packages/core/schemas/extensions/v1/manifest.schema.json) — 배포 schema와 소비자가 따를 검증 계약을 정의한다.
+- [packages/core/schemas/process-abi/v1/README.md](../../../../../packages/core/schemas/process-abi/v1/README.md) — 배포 schema와 소비자가 따를 검증 계약을 정의한다.
+- [packages/core/schemas/process-abi/v1/env.schema.json](../../../../../packages/core/schemas/process-abi/v1/env.schema.json) — 배포 schema와 소비자가 따를 검증 계약을 정의한다.
+- [packages/core/schemas/process-abi/v1/settings-snapshot.schema.json](../../../../../packages/core/schemas/process-abi/v1/settings-snapshot.schema.json) — 배포 schema와 소비자가 따를 검증 계약을 정의한다.
+- [packages/core/src/extensions/check.ts](../../../../../packages/core/src/extensions/check.ts) — 시작 전 snapshot을 검증하고 진단을 안전하게 투영한다.
+- [packages/core/src/extensions/install.ts](../../../../../packages/core/src/extensions/install.ts) — 설정 snapshot으로 연결을 확인하고 실행 종류를 등록한다.
+- [packages/core/src/extensions/manifest.ts](../../../../../packages/core/src/extensions/manifest.ts) — manifest 선언과 필드 간 관계를 검증한다.
+- [packages/core/src/extensions/snapshot.ts](../../../../../packages/core/src/extensions/snapshot.ts) — 단계별 설정·비밀·기계 값을 snapshot으로 만든다.
+- [packages/core/src/index.ts](../../../../../packages/core/src/index.ts) — snapshot 계약을 패키지에서 내보낸다.
+- [packages/core/src/ports/store.ts](../../../../../packages/core/src/ports/store.ts) — 일괄 설정 조회와 확장 실행 종류 등록 계약을 추가한다.
+- [packages/core/src/process-abi/codec.ts](../../../../../packages/core/src/process-abi/codec.ts) — snapshot 입력과 오류 출처를 검증·구분한다.
+- [packages/core/src/queue/supervisor.ts](../../../../../packages/core/src/queue/supervisor.ts) — 비동기 준비와 보호된 실행·정리·진단 투영을 연결한다.
+- [packages/core/src/settings/index.ts](../../../../../packages/core/src/settings/index.ts) — 기본값 없는 선언 설정을 지원한다.
+- [packages/core/src/testing/contracts/settings-store.ts](../../../../../packages/core/src/testing/contracts/settings-store.ts) — 일괄 설정 조회 계약을 검증한다.
+- [packages/core/src/testing/fakes/store.ts](../../../../../packages/core/src/testing/fakes/store.ts) — 설정 조회와 확장 실행 등록의 메모리 구현을 맞춘다.
+- [packages/core/test/extension-snapshot.test.ts](../../../../../packages/core/test/extension-snapshot.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [packages/core/test/extensions.test.ts](../../../../../packages/core/test/extensions.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [packages/core/test/process-abi.test.ts](../../../../../packages/core/test/process-abi.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [packages/core/test/supervisor.test.ts](../../../../../packages/core/test/supervisor.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [packages/postgres/migrations/0012_extension_work_kinds.sql](../../../../../packages/postgres/migrations/0012_extension_work_kinds.sql) — 확장 실행 종류 등록 표를 만든다.
+- [packages/postgres/src/extensions.ts](../../../../../packages/postgres/src/extensions.ts) — 설치와 실행 종류 등록을 같은 트랜잭션에 기록한다.
+- [packages/postgres/src/migrate.ts](../../../../../packages/postgres/src/migrate.ts) — core schema 버전을 12로 올린다.
+- [packages/postgres/src/settings.ts](../../../../../packages/postgres/src/settings.ts) — 설정 값을 단일 SELECT로 조회한다.
+- [packages/postgres/src/work.ts](../../../../../packages/postgres/src/work.ts) — 등록된 확장 일감을 supervised로 저장한다.
+- [packages/postgres/test/cli.test.ts](../../../../../packages/postgres/test/cli.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [packages/postgres/test/migrate.test.ts](../../../../../packages/postgres/test/migrate.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [packages/postgres/test/schema.test.ts](../../../../../packages/postgres/test/schema.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [packages/postgres/test/store.test.ts](../../../../../packages/postgres/test/store.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [packages/postgres/test/unavailable.test.ts](../../../../../packages/postgres/test/unavailable.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [packages/postgres/test/work-store.test.ts](../../../../../packages/postgres/test/work-store.test.ts) — 변경된 계약·실행 경로와 기존 동작의 회귀를 검증한다.
+- [pnpm-lock.yaml](../../../../../pnpm-lock.yaml) — 추가한 시험 의존성을 잠근다.

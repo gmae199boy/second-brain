@@ -1,5 +1,9 @@
 import { fileURLToPath } from 'node:url';
-import { runSupervisor, PROCESS_ABI_ENV, type ProcessInspector, type ProcessLauncher } from 'second_brain';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { parseEnv } from 'node:util';
+import { envFilePath } from '../config/paths.js';
+import { runSupervisor, PROCESS_ABI_ENV, decodeExtensionManifest, createExtensionSnapshot, type SupervisorOptions, type ProcessInspector, type ProcessLauncher } from 'second_brain';
 import { openBrainStore } from '../runtime/brain-store.js';
 import { systemProcessInspector } from '../runtime/process-inspector.js';
 import { systemProcessLauncher } from '../runtime/process-group.js';
@@ -18,7 +22,42 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
     const opened = await openBrainStore({ home: options.home, env: options.env, config, path: 'drain', createStore: options.createStore });
     try {
       const url = config.ok ? await resolveStoreUrl(options.home, config.config.storeUrlEnv, options.env).catch(() => undefined) : undefined;
-      await runSupervisor({ store: opened.store, schemaVersions: opened.expected,
+      const loadProtectedLaunches = async (): Promise<NonNullable<SupervisorOptions['protectedLaunches']>> => {
+      const protectedLaunches: Record<string, NonNullable<SupervisorOptions['protectedLaunches']>[string]> = {};
+      const installed = await opened.store.listExtensions();
+      if (installed.ok) for (const extension of installed.extensions.filter(entry => entry.enabled)) {
+        try {
+          const directory = join(options.home, 'extensions', extension.name);
+          const decoded = decodeExtensionManifest(await readFile(join(directory, 'manifest.json'), 'utf8'));
+          if (!decoded.ok || decoded.manifest.name !== extension.name || decoded.manifest.version !== extension.version) continue;
+          const manifest = decoded.manifest;
+          const declarations = manifest.settings ?? [];
+          for (const work of [...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : [])]) protectedLaunches[work.kind] = {
+            extension: manifest.name, declarations: Object.fromEntries(declarations.map(setting => [setting.key, setting.type])), errorCodes: manifest.error_codes ?? [],
+            required: declarations.filter(setting => setting.required.includes(manifest.auth?.kind === work.kind ? 'auth' : 'work')).map(setting => setting.key),
+            secrets: declarations.filter(setting => setting.secret).map(setting => setting.key),
+            async prepare(item, token) {
+              const read = await opened.store.getSettings({ keys: declarations.map(setting => setting.key) });
+              if (!read.ok) return { ok: false, code: read.code };
+              let secrets: Record<string, string> = {};
+              try {
+                if (declarations.some(setting => setting.secret)) secrets = Object.fromEntries(Object.entries(parseEnv(await readFile(envFilePath(options.home), 'utf8'))).filter((entry): entry is [string, string] => entry[1] !== undefined));
+              } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return { ok: false, code: 'EXTENSION_CONFIG_INVALID' }; }
+              const snapshot = createExtensionSnapshot({ extension: manifest.name, stage: manifest.auth?.kind === work.kind ? 'auth' : 'work', declarations, settings: Object.fromEntries(read.settings.map(setting => [setting.key, setting.value])), secrets, machine: { tokenstore: join(directory, 'tokenstore') } });
+              if (!snapshot.ok || !url) return { ok: false, code: 'EXTENSION_CONFIG_INVALID' };
+              return { ok: true, spec: { command: process.execPath, args: [join(directory, work.entry)], env: {
+                [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: url, [PROCESS_ABI_ENV.workId]: item.id,
+                [PROCESS_ABI_ENV.runGeneration]: String(item.attempts), [PROCESS_ABI_ENV.attemptToken]: token, [PROCESS_ABI_ENV.workKind]: item.kind,
+                [PROCESS_ABI_ENV.targetKind]: item.targetKind, [PROCESS_ABI_ENV.targetId]: item.targetId,
+                ...(item.scheduledDates ? { BRAIN_RANGE_FROM: item.scheduledDates.from, BRAIN_RANGE_TO: item.scheduledDates.to } : {}), BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized,
+              } } };
+            },
+          };
+        } catch { await log.write('설치된 확장의 manifest를 읽을 수 없습니다'); }
+      }
+      return protectedLaunches;
+      };
+      await runSupervisor({ loadProtectedLaunches, store: opened.store, schemaVersions: opened.expected,
         inspector: options.supervisor?.inspector ?? systemProcessInspector,
         ...(options.supervisor?.cancelGraceMs === undefined ? {} : { cancelGraceMs: options.supervisor.cancelGraceMs }),
         ...(options.supervisor?.cancelPollMs === undefined ? {} : { cancelPollMs: options.supervisor.cancelPollMs }),

@@ -20,3 +20,7 @@ fixture 파일은 core 패키지의 fixtures/process-abi/v1에 있다.
 - events.json: `{name, line, expect: 'valid'|'invalid', code?}`. line은 줄바꿈 없는 이벤트다.
 - env.json: `{name, env, expect: 'valid'|'invalid'}`. Python 작업자는 두 파일의 기대값과 JSON Schema 검증 결과를 비교한다.
 - runs.json: `{name, stdout: (string|{repeat,count})[], exit:{code,signal}, expect:{outcome,code?,retryable?,usage}}`. stdout은 줄바꿈을 포함한 원문 조각이며 repeat은 문자열 반복이다. 조각 크기는 판정을 바꾸지 않는다. usage는 없으면 null이다. 이 파일은 감독자 실행 판정 계약이다. stderr 가림은 TS 감독자의 책임이다.
+
+선택 환경 입력 `BRAIN_SETTINGS_SNAPSHOT`은 UTF-8 JSON 문자열이다. snapshot 실행은 값을 반드시 제공하며, 파싱된 객체는 `settings-snapshot.schema.json`을 따른다. 직렬화된 값은 최대 16384 UTF-8 바이트이고 확장 이름 및 키·타입은 신뢰된 manifest와도 대조한다. 보호된 확장 실행의 진단은 자유 문자열을 고정 안내로 대체하고 선언되지 않은 작업자 오류 코드를 고정 코드로 투영한다. 이는 위의 일반 ABI 실행에서 미등록 코드를 보존하는 동작과 다르다.
+
+`fixtures/process-abi/v1/settings-snapshots.json`은 선언 키 `testext.limit`(number), `testext.token`(string)을 기준으로 판정한다.

@@ -1,0 +1,9 @@
+[
+  { "name": "empty", "snapshot": "{\"version\":1,\"extension\":\"testext\",\"values\":{}}", "expect": "valid" },
+  { "name": "typed values", "snapshot": "{\"version\":1,\"extension\":\"testext\",\"values\":{\"testext.limit\":10,\"testext.token\":\"secret\"}}", "expect": "valid" },
+  { "name": "unknown key", "snapshot": "{\"version\":1,\"extension\":\"testext\",\"values\":{\"testext.unknown\":1}}", "expect": "invalid" },
+  { "name": "wrong type", "snapshot": "{\"version\":1,\"extension\":\"testext\",\"values\":{\"testext.limit\":\"10\"}}", "expect": "invalid" },
+  { "name": "wrong version", "snapshot": "{\"version\":2,\"extension\":\"testext\",\"values\":{}}", "expect": "invalid" },
+  { "name": "wrong extension", "snapshot": "{\"version\":1,\"extension\":\"other\",\"values\":{}}", "expect": "invalid" },
+  { "name": "invalid JSON", "snapshot": "{", "expect": "invalid" }
+]

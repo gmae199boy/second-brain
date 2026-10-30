@@ -277,3 +277,4 @@ export { runExtensionCheck } from './extensions/check.js';
 export { installExtension, type ExtensionPackages, type ExtensionMigrator, type ExtensionRuntime } from './extensions/install.js';
 export { extensionStatus, listExtensions } from './extensions/status.js';
 export type { BrainExt } from './brain.js';
+export * from './extensions/snapshot.js';

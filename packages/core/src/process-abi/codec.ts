@@ -9,6 +9,9 @@ export const PROCESS_ABI_MAX_LINE_BYTES = 65536;
 export const PROCESS_ABI_STDERR_BUFFER_BYTES = 1048576;
 export const PROCESS_ABI_STDERR_MAX_BYTES = 4096;
 export const PROCESS_ABI_SCHEMA_URL = new URL('../../schemas/process-abi/v1/event.schema.json', import.meta.url);
+export const PROCESS_ABI_SNAPSHOT_FIXTURES_URL = new URL('../../fixtures/process-abi/v1/settings-snapshots.json', import.meta.url);
+export const PROCESS_ABI_SNAPSHOT_SCHEMA_URL = new URL('../../schemas/process-abi/v1/settings-snapshot.schema.json', import.meta.url);
+export const PROCESS_ABI_SNAPSHOT_MAX_BYTES = 16384;
 export const PROCESS_ABI_ENV_SCHEMA_URL = new URL('../../schemas/process-abi/v1/env.schema.json', import.meta.url);
 export const PROCESS_ABI_FIXTURES_URL = new URL('../../fixtures/process-abi/v1/events.json', import.meta.url);
 export const PROCESS_ABI_ENV_FIXTURES_URL = new URL('../../fixtures/process-abi/v1/env.json', import.meta.url);
@@ -18,7 +21,7 @@ export const PROCESS_ABI_ENV = {
   attemptToken: 'BRAIN_ATTEMPT_TOKEN', workKind: 'BRAIN_WORK_KIND', targetKind: 'BRAIN_TARGET_KIND', targetId: 'BRAIN_TARGET_ID',
   runGeneration: 'BRAIN_RUN_GENERATION',
 } as const;
-export const PROCESS_ABI_OPTIONAL_ENV = { account: 'BRAIN_ACCOUNT', rangeFrom: 'BRAIN_RANGE_FROM', rangeTo: 'BRAIN_RANGE_TO' } as const;
+export const PROCESS_ABI_OPTIONAL_ENV = { account: 'BRAIN_ACCOUNT', rangeFrom: 'BRAIN_RANGE_FROM', rangeTo: 'BRAIN_RANGE_TO', settingsSnapshot: 'BRAIN_SETTINGS_SNAPSHOT' } as const;
 export type AbiFailure = { ok: false; code: string; reason: string };
 const invalid = (reason: string, code = 'ABI_LINE_INVALID'): AbiFailure => ({ ok: false, code, reason });
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
@@ -52,8 +55,26 @@ export function decodeAbiEnv(env: Readonly<Record<string, unknown>>): { ok: true
     /^postgres(?:ql)?:\/\//.test(string('BRAIN_DATABASE_URL')) && uuid.test(string('BRAIN_WORK_ID')) && uuid.test(string('BRAIN_ATTEMPT_TOKEN')) &&
     /^[1-9][0-9]{0,8}$/.test(string('BRAIN_RUN_GENERATION')) &&
     (!Object.hasOwn(env, 'BRAIN_ACCOUNT') || string('BRAIN_ACCOUNT').length > 0) &&
+    (!Object.hasOwn(env, 'BRAIN_SETTINGS_SNAPSHOT') || string('BRAIN_SETTINGS_SNAPSHOT').length > 0) &&
     (from === undefined && to === undefined || typeof from === 'string' && typeof to === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to));
   return valid ? { ok: true } : invalid('프로세스 환경 변수가 올바르지 않습니다', 'ABI_ENV_INVALID');
+}
+export interface SettingsSnapshot { version: 1; extension: string; values: Record<string, string | number | boolean> }
+/** 직렬화된 객체를 ABI 환경 스키마와 별도로 검증한다. */
+export function decodeSettingsSnapshot(raw: unknown, extension: string, declarations: Readonly<Record<string, 'string' | 'number' | 'boolean'>>):
+  { ok: true; snapshot: SettingsSnapshot } | AbiFailure {
+  const bad = () => invalid('확장 설정 snapshot이 올바르지 않습니다', 'EXTENSION_CONFIG_INVALID');
+  if (typeof raw !== 'string' || utf8Bytes(raw).length > PROCESS_ABI_SNAPSHOT_MAX_BYTES) return bad();
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { return bad(); }
+  if (!object(value) || !only(value, ['version', 'extension', 'values']) || value['version'] !== 1 ||
+      value['extension'] !== extension || !/^[a-z][a-z0-9_]{0,30}$/.test(extension) ||
+      /^(core|brain|public|pg_)/.test(extension) || !object(value['values'])) return bad();
+  for (const [key, item] of Object.entries(value['values'])) {
+    if (!key.startsWith(`${extension}.`) || !Object.hasOwn(declarations, key) || typeof item !== declarations[key] ||
+        (typeof item === 'number' && !Number.isFinite(item))) return bad();
+  }
+  return { ok: true, snapshot: value as unknown as SettingsSnapshot };
 }
 export interface AbiRunVerdict { outcome: 'succeeded' | 'failed'; code?: string; retryable?: boolean; usage: ProcessAbiUsage | null; message?: string }
 export function abiRetryable(code: string): boolean { return ['ABI_LINE_TRUNCATED', 'ABI_EXIT_FAILED', 'ABI_OUTPUT_UNREADABLE', 'PROCESS_START_FAILED'].includes(code); }
@@ -94,6 +115,7 @@ export function createAbiRun() {
   return {
     feed, fail,
     get violation() { return failure; },
+    get workerError() { return !failure && final?.type === 'error'; },
     end() { if (pendingHigh && bytes + 3 > PROCESS_ABI_MAX_LINE_BYTES) fail('ABI_LINE_TOO_LONG', '출력 줄이 65536바이트를 넘었습니다'); if (line || pendingHigh) fail('ABI_LINE_TRUNCATED', '출력의 마지막 줄이 잘렸습니다'); },
     verdict(exit: { code: number | null; signal: string | null }): AbiRunVerdict {
       if (failure) return { outcome: 'failed', code: failure.code, retryable: abiRetryable(failure.code), usage, message: failure.reason };

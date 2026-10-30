@@ -5,6 +5,15 @@ import { withWrite } from './write.js';
 
 export function postgresSettingsStore(connect: PgConnect): SettingsStore {
   return {
+    async getSettings({ keys }) {
+      if (keys.length === 0) return { ok: true, settings: [] };
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const read = await sql<{ key: string; value: string; updated_at: string }>`select key, value, updated_at from brain.settings where key = any(${[...keys]}::text[])`.execute(opened.connection.db);
+        return { ok: true, settings: read.rows.map(row => ({ key: row.key, value: row.value, updatedAt: new Date(row.updated_at) })) };
+      } catch (error) { return databaseFailure(error); }
+    },
     async getSetting({ key }) {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };

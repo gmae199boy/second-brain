@@ -1,6 +1,8 @@
 import { cp, mkdir, mkdtemp, readFile, rename, rm, lstat, readdir, chmod, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { parseEnv } from 'node:util';
+import { envFilePath } from '../config/paths.js';
 import { fileURLToPath } from 'node:url';
 import type { Clock, ExtensionRuntime } from 'second_brain';
 import { extensionAdminUrl, resolveStoreUrl, type ReadConfigResult } from '../config/codec.js';
@@ -39,6 +41,11 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
     return url;
   };
   return {
+    async readSecrets() {
+      try { return Object.fromEntries(Object.entries(parseEnv(await readFile(envFilePath(home), 'utf8'))).filter((entry): entry is [string, string] => entry[1] !== undefined)); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}; throw error; }
+    },
+    machineValues: name => ({ tokenstore: join(home, 'extensions', name, 'tokenstore') }),
     databaseUrl, timer: systemTimer, launcher: { start: spec => systemProcessLauncher.start({ ...spec, command: process.execPath }) }, inspector: systemProcessInspector,
     packages: {
       async resolve(name) {
@@ -62,6 +69,16 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
         try {
           const staged = join(stage, name);
           await cp(dir, staged, { recursive: true, errorOnExist: true, force: false });
+          const previousTokenstore = join(target, 'tokenstore');
+          let tokenstore: Awaited<ReturnType<typeof lstat>> | undefined;
+          try { tokenstore = await lstat(previousTokenstore); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+          if (tokenstore) {
+            if (tokenstore.isSymbolicLink()) throw new Error('tokenstore에 심볼릭 링크를 둘 수 없습니다');
+            if (tokenstore.isDirectory()) await checkTree(previousTokenstore);
+            await rm(join(staged, 'tokenstore'), { recursive: true, force: true });
+            await cp(previousTokenstore, join(staged, 'tokenstore'), { recursive: true, errorOnExist: true, force: false });
+          }
           try { await rename(target, backup); moved = true; }
           catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
           try { await rename(staged, target); }

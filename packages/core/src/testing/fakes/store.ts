@@ -170,6 +170,7 @@ function plainToolNote(note: StoredToolNote): ToolNote {
 export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const { health = DEFAULT_HEALTH } = options;
 
+  const extensionWorkKinds = new Map<string, readonly string[]>();
   const extensions = new Map<string, import('../../ports/store.js').ExtensionRecord>();
   const users = new Map<string, User>();
   // Keyed by the idempotency keys of the Table Contract: a project by its
@@ -417,7 +418,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       id: input.id,
       scheduledDates: input.scheduledDates ? { ...input.scheduledDates } : null,
       kind: input.kind,
-      executionClass: workExecutionClass(input.kind),
+      executionClass: [...extensionWorkKinds.values()].some(kinds => kinds.includes(input.kind)) ? 'supervised' : workExecutionClass(input.kind),
       currentAttemptToken: null,
       serializationKey: input.serializationKey ?? null,
       holdGroup,
@@ -451,7 +452,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
 
   return {
     ...memorySettingsStore(),
-    async recordExtensionInstall({ name, version, now }) {
+    async recordExtensionInstall({ name, version, now, workKinds }) {
+      extensionWorkKinds.set(name, workKinds ?? []);
       const existing = extensions.get(name);
       if (existing) existing.version = version;
       else extensions.set(name, { name, version, installedAt: new Date(now), enabled: true, enabledChangedAt: new Date(now), connectionStatus: null, connectionCheckedAt: null, connectionCode: null, connectionMessage: null });
@@ -1715,6 +1717,7 @@ function cloneSchedule(row: import('../../domain/schedule.js').Schedule): import
 export function memorySettingsStore(): import('../../ports/store.js').SettingsStore {
   const settings = new Map<string, import('../../ports/store.js').SettingRecord>();
   return {
+    async getSettings({ keys }) { return { ok: true, settings: keys.flatMap(key => { const row = settings.get(key); return row ? [{ ...row, updatedAt: new Date(row.updatedAt.getTime()) }] : []; }) }; },
     async getSetting({ key }) { return { ok: true, setting: settings.has(key) ? { ...settings.get(key)!, updatedAt: new Date(settings.get(key)!.updatedAt.getTime()) } : null }; },
     async setSetting(input) { settings.set(input.key, { ...input, updatedAt: new Date(input.updatedAt.getTime()) }); return { ok: true }; },
   };

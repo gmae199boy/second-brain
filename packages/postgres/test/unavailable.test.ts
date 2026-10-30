@@ -81,6 +81,7 @@ const calls = {
   listScheduleSuccesses: s => s.listScheduleSuccesses({ scheduleId: id }),
   listDueSchedules: (s) => s.listDueSchedules({ now, limit: 1 }),
   fireSchedule: (s) => s.fireSchedule({ scheduleId: id, expectedNextRunAt: now, nextRunAt: null, work: sampleWorkInput(), now }),
+  getSettings: (s) => s.getSettings({ keys: ['timezone'] }),
   getSetting: (s) => s.getSetting({ key: 'timezone' }),
   setSetting: (s) => s.setSetting({ key: 'timezone', value: 'UTC', updatedAt: now }),
 } satisfies Record<Exclude<keyof PostgresStore, 'close'>, (store: PostgresStore) => Promise<unknown>>;

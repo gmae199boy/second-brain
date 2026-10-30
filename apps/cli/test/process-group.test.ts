@@ -185,3 +185,23 @@ it('records externally SIGKILLed real children as died and schedules a retry', a
     expect(store.snapshot().workItems[0]!.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(createdAt.getTime() + 900_000);
   } finally { controller.abort(); await running; handle?.closeOutput(); }
 });
+
+it('projects real child diagnostics before storing attempts, failures and logs', async () => {
+  const secret = 'SYNTHETIC_VALUE_49';
+  const store = memoryStore(); const now = new Date(); const idGen = sequenceIdGen({ timestampMs: now.getTime() });
+  await store.recordExtensionInstall({ name: 'testext', version: '1', now, workKinds: ['testext.sync'] });
+  const id = idGen.next(); await store.addWork({ id, kind: 'testext.sync', targetKind: 'account', targetId: '1', createdAt: now, nextAttemptAt: now });
+  const controller = new AbortController(); const logs: string[] = []; const args: string[][] = [];
+  const source = `const x=JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT).values['testext.token']; process.stderr.write(x.slice(0,5)); process.stderr.write(x.slice(5)); const line=JSON.stringify({abi:1,type:'error',code:x,retryable:false,message:x+'\\n'}); process.stdout.write(line.slice(0,9)); process.stdout.write(line.slice(9)+'\\n');`;
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, clock: systemClock, timer: systemTimer, idGen, inspector: systemProcessInspector,
+    launcher: { start(spec) { args.push([...spec.args]); return systemProcessLauncher.start(spec); } },
+    launches: {}, protectedLaunches: { 'testext.sync': { extension: 'testext', declarations: { 'testext.token': 'string' }, errorCodes: [], async prepare(item, token) { return { ok: true, spec: { command: process.execPath, args: ['-e', source], env: { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_SETTINGS_SNAPSHOT: JSON.stringify({ version: 1, extension: 'testext', values: { 'testext.token': secret } }) } } }; } } },
+    log: message => { logs.push(message); }, signal: controller.signal, pollMs: 10, cancelPollMs: 10, cancelGraceMs: 30, groupConfirmMs: 100 });
+  try {
+    await expect.poll(() => store.snapshot().workItems[0]?.outcome, { timeout: 5000 }).toBe('failed');
+    const facts = JSON.stringify({ state: store.snapshot(), logs, args });
+    expect(facts).not.toContain(secret);
+    expect(store.snapshot().workAttempts[0]).toMatchObject({ errorCode: 'EXTENSION_WORKER_ERROR', errorRetryable: false, stderr: null });
+    expect(store.snapshot().failures[0]).toMatchObject({ code: 'EXTENSION_WORKER_ERROR' });
+  } finally { controller.abort(); await running; }
+});

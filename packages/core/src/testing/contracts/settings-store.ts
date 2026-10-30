@@ -17,6 +17,9 @@ export function settingsStoreContract(): ContractCase<SettingsStore>[] {
       assertOk(await store.setSetting(other), 'long Korean value');
       assertEqual(await store.getSetting({ key: other.key }), { ok: true, setting: other }, 'long value roundtrip');
       assertEqual(await store.getSetting({ key: first.key }), { ok: true, setting: second }, 'independent keys');
+      const all = await store.getSettings({ keys: [first.key, other.key, 'missing'] });
+      assertOk(all, 'bulk read');
+      if (all.ok) assertEqual(all.settings.sort((a, b) => a.key.localeCompare(b.key)), [other, second], 'bulk read returns the requested existing keys');
     });
   })];
 }

@@ -74,7 +74,7 @@ it('uses a fresh ABI run and rereads installed connected facts; repeat installat
   expect(await extensionStatus(deps, { name: 'testext' })).toEqual(result);
 });
 it.each([
-  { output: '{"abi":1,"type":"error","code":"REFUSED","retryable":false,"message":"연결 거절"}\n', code: 0, expected: 'REFUSED' },
+  { output: '{"abi":1,"type":"error","code":"REFUSED","retryable":false,"message":"연결 거절"}\n', code: 0, expected: 'EXTENSION_WORKER_ERROR' },
   { output: '{"abi":1,"type":"result"}\n', code: 1, expected: 'ABI_EXIT_AFTER_RESULT' },
   { output: '', code: 2, expected: 'ABI_EXIT_FAILED' },
 ])('retains install and activation facts when the check fails: %j', async options => {
@@ -110,17 +110,17 @@ it('masks and normalizes connection errors before persisting failed facts', asyn
     return record(input);
   };
   const result = await installExtension(deps, { name: 'testext' });
-  expect(result).toMatchObject({ ok: false, code: 'EXTENSION_CHECK_FAILED', extension: { connectionStatus: 'failed', connectionCode: 'REFUSED' } });
+  expect(result).toMatchObject({ ok: false, code: 'EXTENSION_CHECK_FAILED', extension: { connectionStatus: 'failed', connectionCode: 'EXTENSION_WORKER_ERROR' } });
   const status = await extensionStatus(deps, { name: 'testext' });
   expect(status.ok).toBe(true);
   if (!status.ok) throw new Error('연결 기록 조회 실패');
-  expect(status.extension?.connectionMessage).toContain('\ufffd');
+  expect(status.extension?.connectionMessage).toBe('확장 실행에 실패했습니다');
   expect(status.extension?.connectionMessage).not.toContain('private-password');
   expect(status.extension?.connectionMessage).not.toContain('\u0000');
 });
-it('keeps absent ABI error messages null', async () => {
+it('uses a fixed message for absent ABI error messages', async () => {
   const { deps } = setup({ output: '{"abi":1,"type":"error","code":"REFUSED","retryable":false}\n' });
-  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_CHECK_FAILED', extension: { connectionMessage: null } });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_CHECK_FAILED', extension: { connectionMessage: '확장 실행에 실패했습니다' } });
 });
 
 it.each(['\u0000', '\u0001', '\t', '\n', '\u001f', '\u007f', '\u0085', '\u009f'])('rejects control characters in versions before any writes: %j', async control => {
@@ -147,4 +147,82 @@ it('records failed connection facts when a successful child group cleanup is unk
   deps.extensions.inspector = inspector;
   expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_CHECK_FAILED' });
   expect(await extensionStatus(deps, { name: 'testext' })).toMatchObject({ ok: true, extension: { enabled: true, connectionStatus: 'failed', connectionCode: 'PROCESS_DIED' } });
+});
+
+it('projects untrusted connection diagnostics before storing them', async () => {
+  const secret = 'SYNTHETIC_SECRET_ABC123';
+  const { deps, fake } = setup({ output: JSON.stringify({ abi: 1, type: 'error', code: secret, retryable: false, message: `escaped ${secret}` }) + '\n' });
+  const result = await installExtension(deps, { name: 'testext' });
+  expect(result).toMatchObject({ ok: false, extension: { connectionCode: 'EXTENSION_WORKER_ERROR', connectionMessage: '확장 실행에 실패했습니다' } });
+  expect(JSON.stringify(result)).not.toContain(secret);
+  expect(JSON.parse(fake.specs[0]!.env['BRAIN_SETTINGS_SNAPSHOT']!)).toEqual({ version: 1, extension: 'testext', values: {} });
+});
+it('rejects a missing protected snapshot before starting the connection child', async () => {
+  const time = manualTime(now), fake = fakeProcessLauncher(), inspector = fakeProcessInspector(fake);
+  const result = await runExtensionCheck({ ...time, launcher: fake, inspector, spec: { command: 'node', args: [], env }, protection: { extension: 'testext', declarations: {}, errorCodes: [] } });
+  expect(result).toMatchObject({ outcome: 'failed', code: 'EXTENSION_CONFIG_INVALID', retryable: false });
+  expect(fake.specs).toEqual([]);
+});
+
+it('rejects a required connection secret without starting a child', async () => {
+  const text = JSON.stringify({ ...manifest, settings: [{ key: 'testext.token', type: 'string', secret: true, required: ['connect'] }] });
+  const { deps, fake } = setup({ text });
+  deps.extensions.readSecrets = async () => ({});
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_CONFIG_INVALID', retryable: false });
+  expect(fake.specs).toEqual([]);
+});
+it('resolves declared connection settings from a single read and does not expose secret values', async () => {
+  const text = JSON.stringify({ ...manifest, settings: [{ key: 'testext.token', type: 'string', secret: true, required: ['connect'] }, { key: 'testext.limit', type: 'number', default: '10', required: ['work'] }], error_codes: ['REFUSED'] });
+  const { deps, fake } = setup({ text });
+  deps.extensions.readSecrets = async () => ({ REF: '  synthetic-secret  ' });
+  await deps.store.setSetting({ key: 'testext.token', value: 'REF', updatedAt: now });
+  const result = await installExtension(deps, { name: 'testext' });
+  expect(result.ok).toBe(true);
+  expect(JSON.parse(fake.specs[0]!.env.BRAIN_SETTINGS_SNAPSHOT!)).toEqual({ version: 1, extension: 'testext', values: { 'testext.token': '  synthetic-secret  ', 'testext.limit': 10 } });
+  expect(JSON.stringify(result)).not.toContain('synthetic-secret');
+  expect(fake.specs[0]!.args.join(' ')).not.toContain('synthetic-secret');
+});
+it.each([
+  [{ key: 'other.token', type: 'string', required: [] }],
+  [{ key: 'testext.token', type: 'number', secret: true, required: [] }],
+  [{ key: 'testext.token', type: 'string', secret: true, default: 'bad-name', required: [] }],
+  [{ key: 'testext.x', type: 'boolean', default: 'yes', required: [] }],
+])('rejects invalid setting declarations %j', settings => {
+  expect(decodeExtensionManifest(JSON.stringify({ ...manifest, settings })).ok).toBe(false);
+});
+
+it('matches the distributed manifest fixture verdicts', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const fixtures = JSON.parse(await readFile(new URL('../fixtures/extensions/v1/manifests.json', import.meta.url), 'utf8'));
+  for (const fixture of fixtures) expect(decodeExtensionManifest(JSON.stringify(fixture.manifest)).ok, fixture.name).toBe(fixture.expect === 'valid');
+});
+
+it('registers only manifest work and auth kinds for supervised enqueue', async () => {
+  const work = { kind: 'testext.sync', execution: 'supervised', runtime: 'node', entry: 'sync.mjs' };
+  const auth = { kind: 'testext.login', execution: 'supervised', runtime: 'node', entry: 'login.mjs' };
+  const { deps } = setup({ text: JSON.stringify({ ...manifest, work: [work], auth, raw_views: ['samples'], default_schedules: [{ kind: work.kind, target_kind: 'account', target_id: 'default', local_time: '09:00' }] }) });
+  expect((await installExtension(deps, { name: 'testext' })).ok).toBe(true);
+  for (const [kind, expected] of [['testext.sync', 'supervised'], ['testext.login', 'supervised'], ['other.job', 'core']] as const) {
+    const result = await deps.store.addWork({ id: deps.idGen.next(), kind, targetKind: 'account', targetId: 'a', createdAt: now, nextAttemptAt: now });
+    expect(result.ok && result.item.executionClass).toBe(expected);
+  }
+});
+
+it('validates distributed manifest fixtures against the JSON schema', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { Ajv2020 } = await import('ajv/dist/2020.js');
+  const schema = JSON.parse(await readFile(new URL('../schemas/extensions/v1/manifest.schema.json', import.meta.url), 'utf8'));
+  const fixtures = JSON.parse(await readFile(new URL('../fixtures/extensions/v1/manifests.json', import.meta.url), 'utf8'));
+  const validate = new Ajv2020({ strict: false }).compile(schema);
+  for (const fixture of fixtures) {
+    const structural = Boolean(validate(fixture.manifest));
+    expect(structural && decodeExtensionManifest(JSON.stringify(fixture.manifest)).ok, fixture.name).toBe(fixture.expect === 'valid');
+    if (fixture.expect === 'valid') expect(structural, fixture.name).toBe(true);
+  }
+});
+
+it.each(['PROCESS_DIED', 'ABI_EXIT_FAILED'] as const)('projects undeclared worker error %s in a connection check', async code => {
+  const { deps } = setup({ output: JSON.stringify({ abi: 1, type: 'error', code, retryable: true }) + '\n' });
+  const verdict = await runExtensionCheck({ ...deps.extensions, clock: deps.clock, spec: { command: 'node', args: [], env: { ...env, BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"testext","values":{}}' } }, protection: { extension: 'testext', declarations: {}, errorCodes: [] } });
+  expect(verdict).toMatchObject({ outcome: 'failed', code: 'EXTENSION_WORKER_ERROR', retryable: true });
 });

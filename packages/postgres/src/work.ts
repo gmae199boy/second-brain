@@ -120,7 +120,7 @@ export async function ensureWork(held: Kysely<PgSchema>, input: AddWorkInput) {
   for (;;) {
     const inserted = await sql<WorkItemRow>`
       insert into brain.work_items (id, kind, execution_class, serialization_key, hold_group, target_kind, target_id, created_at, attempts, next_attempt_at, schedule_id, local_date_from, local_date_to, local_time_zone)
-      values (${input.id}, ${input.kind}, ${workExecutionClass(input.kind)}, ${input.serializationKey ?? null}, ${workHoldGroup(input.kind, input.holdGroup)}, ${input.targetKind}, ${input.targetId}, ${createdAt}, 0, ${nextAttemptAt}, ${input.scheduledDates?.scheduleId ?? null}, ${input.scheduledDates?.from ?? null}, ${input.scheduledDates?.to ?? null}, ${input.scheduledDates?.timeZone ?? null})
+      values (${input.id}, ${input.kind}, (case when exists (select 1 from brain.extension_work_kinds where kind=${input.kind}) then 'supervised' else ${workExecutionClass(input.kind)} end), ${input.serializationKey ?? null}, ${workHoldGroup(input.kind, input.holdGroup)}, ${input.targetKind}, ${input.targetId}, ${createdAt}, 0, ${nextAttemptAt}, ${input.scheduledDates?.scheduleId ?? null}, ${input.scheduledDates?.from ?? null}, ${input.scheduledDates?.to ?? null}, ${input.scheduledDates?.timeZone ?? null})
       on conflict (kind, target_kind, target_id) where completed_at is null do nothing returning *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text
     `.execute(held);
     const row = inserted.rows[0];

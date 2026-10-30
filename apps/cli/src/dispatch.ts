@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { SettingsStore } from 'second_brain';
 import type { CommandRunner } from './runtime/command-runner.js';
 import { daemonLiveness } from './daemon/liveness.js';
@@ -7,6 +9,9 @@ import {
   checkSchema,
   createBrain,
   createSettingsBrain,
+  decodeExtensionManifest,
+  extensionSettingDefinitions,
+  isExtensionName,
   type SettingsBrain,
   encodeHookLine,
   encodeTextLine,
@@ -573,7 +578,22 @@ async function execute(
     try {
       const schema = await checkSchema(opened.store, expected);
       if (!schema.ok) return failed(rendering, { code: schema.code, message: schema.message }, warningCodes, warningLines);
-      return finish(rendering, await spec.runSettings({ brain: createSettingsBrain({ store: opened.store, clock, schemaVersions: expected }), config: config.config, clock, options, args, stdin, recordHookArrival }), warningCodes, warningLines);
+      let definitions: ReturnType<typeof extensionSettingDefinitions> = [];
+      const key = args[0] ?? '', dot = key.indexOf('.');
+      if (dot > 0) {
+        const name = key.slice(0, dot);
+        if (isExtensionName(name)) {
+          const installed = await opened.store.getExtension(name);
+          if (!installed.ok) return failed(rendering, { code: installed.code, message: installed.message }, warningCodes, warningLines);
+          if (installed.extension) {
+            try {
+              const decoded = decodeExtensionManifest(await readFile(join(home, 'extensions', name, 'manifest.json'), 'utf8'));
+              if (decoded.ok && decoded.manifest.name === name) definitions = extensionSettingDefinitions(decoded.manifest.settings ?? []);
+            } catch { /* Missing or unreadable declarations leave the key unregistered. */ }
+          }
+        }
+      }
+      return finish(rendering, await spec.runSettings({ brain: createSettingsBrain({ store: opened.store, clock, schemaVersions: expected, settingDefinitions: definitions }), config: config.config, clock, options, args, stdin, recordHookArrival }), warningCodes, warningLines);
     } finally { await store.close(); }
   }
 

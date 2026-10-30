@@ -63,6 +63,13 @@ it('restores the previous package and registry facts when a reinstall migration 
   const target = join(fixture.home, 'extensions/testext');
   const originalManifest = await readFile(join(target, 'manifest.json'), 'utf8');
   const originalCheck = await readFile(join(target, 'bin/check.mjs'), 'utf8');
+  await mkdir(join(target, 'tokenstore'));
+  await writeFile(join(target, 'tokenstore', 'credentials'), 'existing-token');
+  await mkdir(join(source, 'tokenstore'));
+  await writeFile(join(source, 'tokenstore', 'credentials'), 'package-token');
+  const reinstalled = await fixture.run(['ext', 'install', 'testext', '--json']);
+  expect(reinstalled.code).toBe(0);
+  expect(await readFile(join(target, 'tokenstore', 'credentials'), 'utf8')).toBe('existing-token');
   await writeFile(join(source, 'manifest.json'), originalManifest.replace('0.1.0', '0.2.0'));
   await writeFile(join(source, 'bin/check.mjs'), 'throw new Error("replacement must not remain");\n');
   await writeFile(join(source, 'migrations/0002_refused.sql'), 'select extension_missing_column;\n');
@@ -71,8 +78,9 @@ it('restores the previous package and registry facts when a reinstall migration 
   expect(failed.body.error.code).toBe('MIGRATION_FAILED');
   expect(await readFile(join(target, 'manifest.json'), 'utf8')).toBe(originalManifest);
   expect(await readFile(join(target, 'bin/check.mjs'), 'utf8')).toBe(originalCheck);
+  expect(await readFile(join(target, 'tokenstore', 'credentials'), 'utf8')).toBe('existing-token');
   await expect(access(join(target, 'migrations/0002_refused.sql'))).rejects.toThrow();
-  expect((await fixture.run(['ext', 'status', 'testext', '--json'])).body.data).toEqual(installed.body.data);
+  expect((await fixture.run(['ext', 'status', 'testext', '--json'])).body.data).toEqual(reinstalled.body.data);
   expect(await fixture.ledger('testext')).toEqual([{ owner: 'testext', version: 1 }]);
   expect(await readdir(join(fixture.home, 'extensions'))).toEqual(['testext']);
 });
@@ -92,8 +100,8 @@ it('persists ABI errors containing NUL and credentials as a failed connection', 
   expect(failed.body.error.code).toBe('EXTENSION_CHECK_FAILED');
   const status = await fixture.run(['ext', 'status', 'testext', '--json']);
   expect(status.code, status.stdout + status.stderr).toBe(0);
-  expect(status.body.data).toMatchObject({ installed: true, enabled: true, connection: { status: 'failed', code: 'REFUSED' } });
-  expect(status.body.data.connection.message).toContain('\ufffd');
+  expect(status.body.data).toMatchObject({ installed: true, enabled: true, connection: { status: 'failed', code: 'EXTENSION_WORKER_ERROR' } });
+  expect(status.body.data.connection.message).toBe('확장 실행에 실패했습니다');
   expect(status.body.data.connection.message).not.toContain('private-password');
   expect(status.body.data.connection.message).not.toContain('\u0000');
 });
@@ -177,7 +185,7 @@ it('reruns the connection check on reinstall and preserves the original installa
   const status = await fixture.run(['ext', 'status', 'testext', '--json']);
   expect(status.code, status.stdout + status.stderr).toBe(0);
   expect(status.body.data).toMatchObject({ installed: true, enabled: true, installed_at: installed.body.data.installed_at,
-    connection: { status: 'failed', code: 'REINSTALL_REFUSED' } });
+    connection: { status: 'failed', code: 'EXTENSION_WORKER_ERROR' } });
 });
 it('cleans the initial package and staging directory when the first migration fails', async () => {
   const { cp, mkdir, readdir, writeFile } = await import('node:fs/promises');
@@ -197,4 +205,94 @@ it('cleans the initial package and staging directory when the first migration fa
   expect(await fixture.ledger('testext')).toEqual([]);
   await expect(access(join(fixture.home, 'extensions/testext'))).rejects.toThrow();
   expect(await readdir(join(fixture.home, 'extensions'))).toEqual([]);
+});
+
+it('registers manifest work and auth kinds in PostgreSQL for subsequent enqueue', async () => {
+  const { cp, mkdir, readFile, writeFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const { postgresStore } = await import('second_brain/postgres');
+  const fixture = await extHome(); cleanup.push(fixture.cleanup);
+  const sources = join(fixture.home, 'packages'); await mkdir(sources);
+  const source = join(sources, 'testext');
+  await cp(fileURLToPath(new URL('./fixtures/extensions/testext/', import.meta.url)), source, { recursive: true });
+  const manifest = JSON.parse(await readFile(join(source, 'manifest.json'), 'utf8'));
+  manifest.work = [{ kind: 'testext.sync', execution: 'supervised', runtime: 'node', entry: 'bin/check.mjs' }];
+  manifest.auth = { kind: 'testext.login', execution: 'supervised', runtime: 'node', entry: 'bin/check.mjs' };
+  await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest)); fixture.env.SECOND_BRAIN_TEST_EXTENSIONS = sources;
+  const installed = await fixture.run(['ext', 'install', 'testext', '--json']); expect(installed.code).toBe(0);
+  const store = postgresStore({ databaseUrl: fixture.db.appUrl });
+  try {
+    const now = new Date();
+    for (const [i, kind, expected] of [[1, 'testext.sync', 'supervised'], [2, 'testext.login', 'supervised'], [3, 'other.job', 'core']] as const) {
+      const result = await store.addWork({ id: `00000000-0000-7000-8000-00000000000${i}`, kind, targetKind: 'account', targetId: 'x', createdAt: now, nextAttemptAt: now });
+      expect(result.ok && result.item.executionClass).toBe(expected);
+    }
+  } finally { await store.close(); }
+});
+
+it('resolves a real connection snapshot and keeps arbitrary diagnostics out of registry and status', async () => {
+  const { cp, mkdir, readFile, writeFile, appendFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const fixture = await extHome(); cleanup.push(fixture.cleanup);
+  const sources = join(fixture.home, 'packages'); await mkdir(sources);
+  const source = join(sources, 'testext'); await cp(fileURLToPath(new URL('./fixtures/extensions/testext/', import.meta.url)), source, { recursive: true });
+  const manifest = JSON.parse(await readFile(join(source, 'manifest.json'), 'utf8'));
+  manifest.settings = [{ key: 'testext.token', type: 'string', secret: true, required: ['connect'] }];
+  await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest));
+  await appendFile(join(fixture.home, '.env'), '\nTESTEXT_SECRET=SYNTHETIC_VALUE_49\n');
+  await fixture.db.query("insert into brain.settings(key,value,updated_at) values ('testext.token','TESTEXT_SECRET',now())");
+  await writeFile(join(source, 'bin/check.mjs'), `const v=JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT).values['testext.token']; if(v!=='SYNTHETIC_VALUE_49'||process.argv.join(' ').includes(v)) process.exit(2); process.stderr.write(v.slice(0,4)); process.stderr.write(v.slice(4)); const s=JSON.stringify({abi:1,type:'error',code:v,retryable:false,message:v+'\\n'}); process.stdout.write(s.slice(0,7)); process.stdout.write(s.slice(7)+'\\n');\n`);
+  fixture.env.SECOND_BRAIN_TEST_EXTENSIONS = sources;
+  const result = await fixture.run(['ext', 'install', 'testext', '--json']);
+  const status = await fixture.run(['ext', 'status', 'testext', '--json']);
+  const registry = await fixture.db.rows('select * from brain.extensions');
+  expect(result.code).toBe(1);
+  expect(status.body.data.connection).toMatchObject({ status: 'failed', code: 'EXTENSION_WORKER_ERROR', message: '확장 실행에 실패했습니다' });
+  expect(JSON.stringify({ result, status, registry })).not.toContain('SYNTHETIC_VALUE_49');
+});
+
+it('discovers a newly installed manifest and runs its registered work with a fresh snapshot', async () => {
+  const { cp, mkdir, readFile, writeFile, appendFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const { postgresStore } = await import('second_brain/postgres');
+  const { sequenceIdGen } = await import('second_brain/testing');
+  const { readConfig } = await import('../src/config/codec.js');
+  const { startDaemonSupervisor } = await import('../src/daemon/supervisor.js');
+  const fixture = await extHome(); cleanup.push(fixture.cleanup);
+  const sources = join(fixture.home, 'packages'); await mkdir(sources);
+  const source = join(sources, 'testext'); await cp(fileURLToPath(new URL('./fixtures/extensions/testext/', import.meta.url)), source, { recursive: true });
+  const manifest = JSON.parse(await readFile(join(source, 'manifest.json'), 'utf8'));
+  manifest.work = [{ kind: 'testext.sync', execution: 'supervised', runtime: 'node', entry: 'bin/sync.mjs' }];
+  manifest.error_codes = ['TEMPORARY'];
+  manifest.auth = { kind: 'testext.login', execution: 'supervised', runtime: 'node', entry: 'bin/login.mjs' };
+  manifest.settings = [{ key: 'testext.token', type: 'string', secret: true, required: ['work'] }, { key: 'testext.tokenstore', type: 'string', machine: 'tokenstore', required: ['auth', 'work'] }];
+  await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest));
+  await writeFile(join(source, 'bin/login.mjs'), `const v=JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT).values; if('testext.token' in v || !v['testext.tokenstore'].endsWith('/testext/tokenstore')) process.exit(2); console.log(JSON.stringify({abi:1,type:'result'}));\n`);
+  await writeFile(join(source, 'bin/sync.mjs'), `const x=JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT).values['testext.token']; if(process.argv.join(' ').includes(x) || process.env.BRAIN_RANGE_FROM!=='2026-10-20' || process.env.BRAIN_RANGE_TO!=='2026-10-22') process.exit(2); if(process.env.BRAIN_RUN_GENERATION==='1' && x==='SYNTHETIC_VALUE_49') console.log(JSON.stringify({abi:1,type:'error',code:'TEMPORARY',retryable:true,message:x})); else if(process.env.BRAIN_RUN_GENERATION==='2' && x==='SYNTHETIC_VALUE_50') console.log(JSON.stringify({abi:1,type:'result'})); else process.exit(2);\n`);
+  await appendFile(join(fixture.home, '.env'), '\nTESTEXT_SECRET=SYNTHETIC_VALUE_49\nTESTEXT_NEW=SYNTHETIC_VALUE_50\n');
+  fixture.env.SECOND_BRAIN_TEST_EXTENSIONS = sources;
+  const controller = new AbortController(); const logs: string[] = []; const idGen = sequenceIdGen({ timestampMs: Date.now() });
+  const supervisor = startDaemonSupervisor({ home: fixture.home, env: fixture.env, clock: { now: () => new Date() }, idGen, signal: controller.signal, supervisor: { pollMs: 20, cancelPollMs: 20, cancelGraceMs: 30, groupConfirmMs: 100 } }, await readConfig(fixture.home), { async write(message) { logs.push(message); } });
+  const store = postgresStore({ databaseUrl: fixture.db.appUrl });
+  try {
+    await new Promise(resolve => setTimeout(resolve, 80));
+    expect((await fixture.run(['ext', 'install', 'testext', '--json'])).code).toBe(0);
+    const now = new Date(); const loginId = idGen.next();
+    const login = await store.addWork({ id: loginId, kind: 'testext.login', targetKind: 'account', targetId: 'a', createdAt: now, nextAttemptAt: now });
+    expect(login.ok && login.item.executionClass).toBe('supervised');
+    await expect.poll(async () => (await fixture.db.rows(`select outcome from brain.work_items where id='${loginId}'`))[0]?.outcome, { timeout: 5000 }).toBe('succeeded');
+    expect((await fixture.run(['config', 'set', 'testext.token', 'TESTEXT_SECRET', '--json'])).code).toBe(0);
+    const id = idGen.next();
+    const added = await store.addWork({ id, kind: 'testext.sync', targetKind: 'account', targetId: 'a', createdAt: now, nextAttemptAt: now, scheduledDates: { scheduleId: null, from: '2026-10-20', to: '2026-10-22', timeZone: 'Asia/Seoul' } });
+    expect(added.ok && added.item.executionClass).toBe('supervised');
+    await expect.poll(async () => (await fixture.db.rows(`select outcome from brain.work_attempts where work_item_id='${id}'`))[0]?.outcome, { timeout: 5000 }).toBe('failed');
+    expect((await fixture.run(['config', 'set', 'testext.token', 'TESTEXT_NEW', '--json'])).code).toBe(0);
+    await fixture.db.query(`update brain.work_items set next_attempt_at=now() where id='${id}'`);
+    await expect.poll(async () => (await fixture.db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome, { timeout: 5000 }).toBe('succeeded');
+    const facts = await fixture.db.rows(`select * from brain.work_attempts where work_item_id='${id}'`);
+    const status = await fixture.run(['ext', 'status', 'testext', '--json']);
+    expect(JSON.stringify({ facts, status, logs })).not.toContain('SYNTHETIC_VALUE_49');
+    expect(JSON.stringify({ facts, status, logs })).not.toContain('SYNTHETIC_VALUE_50');
+    expect(facts).toHaveLength(2);
+  } finally { controller.abort(); await supervisor.stop(); await store.close(); }
 });

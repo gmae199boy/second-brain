@@ -1,0 +1,288 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "version",
+    "core",
+    "abi",
+    "migrations",
+    "connection_check"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^(?!(?:core|brain|public|pg_))[a-z][a-z0-9_]{0,30}$"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!\\s*$)[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "core": {
+      "const": 1
+    },
+    "abi": {
+      "const": 1
+    },
+    "migrations": {
+      "$ref": "#/$defs/path"
+    },
+    "connection_check": {
+      "$ref": "#/$defs/command"
+    },
+    "settings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/setting"
+      }
+    },
+    "error_codes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+      }
+    },
+    "work": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "execution",
+          "runtime",
+          "entry"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+          },
+          "execution": {
+            "const": "supervised"
+          },
+          "runtime": {
+            "const": "node"
+          },
+          "entry": {
+            "$ref": "#/$defs/path"
+          }
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "execution",
+        "runtime",
+        "entry"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+        },
+        "execution": {
+          "const": "supervised"
+        },
+        "runtime": {
+          "const": "node"
+        },
+        "entry": {
+          "$ref": "#/$defs/path"
+        }
+      }
+    },
+    "raw_views": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]*$"
+      }
+    },
+    "default_schedules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "target_kind",
+          "target_id",
+          "local_time"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+          },
+          "target_kind": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "target_id": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "local_time": {
+            "type": "string",
+            "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\/$).+$"
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime",
+        "entry"
+      ],
+      "properties": {
+        "runtime": {
+          "const": "node"
+        },
+        "entry": {
+          "$ref": "#/$defs/path"
+        }
+      }
+    },
+    "setting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "type",
+        "required"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_-]*(?:\\.[a-z][a-z0-9_-]*)*$"
+        },
+        "type": {
+          "enum": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "required": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "connect",
+              "auth",
+              "work"
+            ]
+          }
+        },
+        "secret": {
+          "type": "boolean"
+        },
+        "default": {
+          "type": "string"
+        },
+        "machine": {
+          "const": "tokenstore"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "secret": {
+                "const": true
+              }
+            },
+            "required": [
+              "secret"
+            ]
+          },
+          "then": {
+            "properties": {
+              "type": {
+                "const": "string"
+              },
+              "default": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "machine"
+            ]
+          },
+          "then": {
+            "properties": {
+              "type": {
+                "const": "string"
+              },
+              "secret": {
+                "const": false
+              }
+            },
+            "not": {
+              "required": [
+                "default"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "boolean"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "default": {
+                "enum": [
+                  "true",
+                  "false"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "number"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "default": {
+                "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

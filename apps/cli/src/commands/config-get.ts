@@ -10,6 +10,7 @@ export const configGetCommand: CommandSpec = {
   risk: 'read', writes: false, hook: false, dryRun: false, drain: false,
   preflight(context) {
     const definition = settingDefinitions().get(context.args[0] ?? '');
+    if (definition === undefined && (context.args[0] ?? '').includes('.')) return undefined;
     if (definition === undefined) return { ok: false, code: 'CONFIG_INVALID', message: `모르는 사용자 설정 키입니다: ${context.args[0] ?? ''}`, exit: 2 };
     return undefined;
   },

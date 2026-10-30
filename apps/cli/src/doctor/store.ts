@@ -44,6 +44,7 @@ export function failedConfigStore(message: string): Store & SchemaStore & Settin
     async claimSupervisedWork() { return unavailable; },
     async renewSupervisedLease() { return unavailable; },
     async finishSupervisedWork() { return unavailable; },
+    async getSettings() { return unavailable; },
     async getSetting() { return unavailable; },
     async setSetting() { return unavailable; },
     async listDailySchedules() { return unavailable; },

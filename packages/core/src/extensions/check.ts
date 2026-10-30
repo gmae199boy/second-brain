@@ -1,13 +1,15 @@
 import type { Clock, Timer } from '../ports/clock.js';
 import type { ProcessInspector, ProcessLauncher, ProcessSpec } from '../ports/process.js';
-import { createAbiRun, createAbiStderr, decodeAbiEnv, type AbiRunVerdict } from '../process-abi/codec.js';
+import { createAbiRun, createAbiStderr, decodeAbiEnv, decodeSettingsSnapshot, type AbiRunVerdict } from '../process-abi/codec.js';
 import { cleanProcessGroup } from '../queue/process-cleanup.js';
 export async function runExtensionCheck(options: {
-  launcher: ProcessLauncher; inspector: ProcessInspector; clock: Clock; timer: Timer; spec: ProcessSpec; timeoutMs?: number;
+  launcher: ProcessLauncher; inspector: ProcessInspector; clock: Clock; timer: Timer; spec: ProcessSpec; timeoutMs?: number; protection?: { extension: string; declarations: Readonly<Record<string, 'string' | 'number' | 'boolean'>>; errorCodes: readonly string[]; required?: readonly string[]; secrets?: readonly string[] };
 }): Promise<AbiRunVerdict> {
   const run = createAbiRun(), stderr = createAbiStderr();
+  if (options.protection && !Object.hasOwn(options.spec.env, 'BRAIN_SETTINGS_SNAPSHOT')) return { outcome: 'failed', code: 'EXTENSION_CONFIG_INVALID', retryable: false, message: '확장 설정을 확인하세요', usage: null };
   const invalid = decodeAbiEnv(options.spec.env);
-  if (!invalid.ok) return { outcome: 'failed', code: invalid.code, message: invalid.reason, usage: null };
+  if (!invalid.ok) return options.protection ? { outcome: 'failed', code: 'EXTENSION_CONFIG_INVALID', retryable: false, message: '확장 설정을 확인하세요', usage: null } : { outcome: 'failed', code: invalid.code, message: invalid.reason, usage: null };
+  if (options.protection && !validateProtectedSnapshot(options.spec.env['BRAIN_SETTINGS_SNAPSHOT'], options.protection)) return { outcome: 'failed', code: 'EXTENSION_CONFIG_INVALID', retryable: false, message: '확장 설정을 확인하세요', usage: null };
   let started;
   try { started = await options.launcher.start(options.spec); }
   catch { return { outcome: 'failed', code: 'PROCESS_START_FAILED', message: '연결 확인 프로세스를 시작하지 못했습니다', usage: null }; }
@@ -19,7 +21,7 @@ export async function runExtensionCheck(options: {
     try { for await (const chunk of stream) feed(chunk); }
     catch { run.fail('ABI_OUTPUT_UNREADABLE', '연결 확인 출력을 읽지 못했습니다'); }
   };
-  const output = Promise.all([consume(handle.stdout, chunk => run.feed(chunk)), consume(handle.stderr, chunk => stderr.feed(chunk))]);
+  const output = Promise.all([consume(handle.stdout, chunk => run.feed(chunk)), consume(handle.stderr, chunk => { if (!options.protection) stderr.feed(chunk); })]);
   const timeout = new AbortController();
   let exit: { code: number | null; signal: string | null } = { code: null, signal: null };
   try {
@@ -42,6 +44,23 @@ export async function runExtensionCheck(options: {
   run.end();
   // Stderr is bounded and masked by the shared ABI collector; the verdict is
   // determined solely by the protocol and exit, never by a textual summary.
-  stderr.value();
-  return run.verdict(exit);
+  if (!options.protection) stderr.value();
+  const verdict = run.verdict(exit);
+  if (!options.protection || verdict.outcome === 'succeeded') return verdict;
+  return projectProtectedVerdict(verdict, options.protection.errorCodes, run.workerError);
+}
+/** 저장·로그·fingerprint 생성 전에 자식이 작성한 진단을 제거한다. */
+export function projectProtectedVerdict(verdict: AbiRunVerdict, errorCodes: readonly string[], workerError: boolean): AbiRunVerdict {
+  if (verdict.outcome === 'succeeded') return verdict;
+  const code = verdict.code ?? 'EXTENSION_WORKER_ERROR';
+  const safeCode = !workerError || errorCodes.includes(code) ? code : 'EXTENSION_WORKER_ERROR';
+  return { ...verdict, code: safeCode, message: '확장 실행에 실패했습니다' };
+}
+
+export function validateProtectedSnapshot(raw: unknown, protection: { extension: string; declarations: Readonly<Record<string, 'string' | 'number' | 'boolean'>>; required?: readonly string[]; secrets?: readonly string[] }): boolean {
+  const decoded = decodeSettingsSnapshot(raw, protection.extension, protection.declarations);
+  if (!decoded.ok) return false;
+  const values = decoded.snapshot.values;
+  return (protection.required ?? []).every(key => Object.hasOwn(values, key)) &&
+    (protection.secrets ?? []).every(key => !Object.hasOwn(values, key) || typeof values[key] === 'string' && values[key] !== '');
 }

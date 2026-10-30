@@ -1,16 +1,22 @@
+import { projectProtectedVerdict, validateProtectedSnapshot } from '../extensions/check.js';
 import { failureFingerprint, failureText } from '../domain/failure.js';
 import { MAX_WORK_ATTEMPTS, SUPERVISOR_CAPACITY, workKindPolicy, workStallWindowMs, SUPERVISOR_POLL_MS, SUPERVISOR_RENEW_EVERY_MS, SUPERVISOR_CANCEL_GRACE_MS, SUPERVISOR_CANCEL_POLL_MS, SUPERVISOR_GROUP_CONFIRM_MS, workExecutionClass, type WorkItem } from '../domain/work-item.js';
 import type { Clock, Timer } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
 import type { ProcessInspector, ProcessLauncher, ProcessSpec } from '../ports/process.js';
 import type { FinishWorkResult, OpenSupervisedAttempt, SchemaStore, WorkStore } from '../ports/store.js';
-import { createAbiRun, createAbiStderr, type AbiRunVerdict } from '../process-abi/codec.js';
+import { createAbiRun, createAbiStderr, decodeAbiEnv, type AbiRunVerdict } from '../process-abi/codec.js';
 import { checkSchema, type SchemaVersions } from '../schema.js';
 import { cleanProcessGroup, inspectGroup, type GroupIdentity } from './process-cleanup.js';
 export interface SupervisorOptions {
   store: WorkStore & SchemaStore; launcher: ProcessLauncher; inspector: ProcessInspector;
   clock: Clock; timer: Timer; idGen: IdGen;
   launches: Readonly<Record<string, (item: WorkItem, token: string) => ProcessSpec | null>>;
+  protectedLaunches?: Readonly<Record<string, {
+    extension: string; declarations: Readonly<Record<string, 'string' | 'number' | 'boolean'>>; errorCodes: readonly string[]; required?: readonly string[]; secrets?: readonly string[];
+    prepare(item: WorkItem, token: string): Promise<{ ok: true; spec: ProcessSpec } | { ok: false; code: 'EXTENSION_CONFIG_INVALID' | 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
+  }>>;
+  loadProtectedLaunches?: () => Promise<NonNullable<SupervisorOptions['protectedLaunches']>>;
   signal: AbortSignal; log?: (message: string) => void | Promise<void>; schemaVersions: SchemaVersions;
   stallWindowMs?: (kind: string) => number;
   pollMs?: number; renewEveryMs?: number; cancelGraceMs?: number; cancelPollMs?: number; groupConfirmMs?: number;
@@ -18,7 +24,8 @@ export interface SupervisorOptions {
 /** Every database transaction completes before waiting on a child or signal grace. */
 export async function runSupervisor(options: SupervisorOptions): Promise<void> {
   const { store, launcher, inspector, clock, timer, idGen, launches, signal } = options;
-  const kinds = Object.keys(launches).filter(kind => workExecutionClass(kind) === 'supervised');
+  let protectedLaunches = options.protectedLaunches ?? {};
+  let kinds: string[] = [];
   const claimedBy = idGen.next();
   let reconciled = false;
   type Execution = { finished?: boolean; pendingSettlement?: () => Promise<FinishWorkResult>; retrying?: Promise<void> };
@@ -88,6 +95,8 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
   }
   async function execute(item: WorkItem, token: string, execution: Execution): Promise<void> {
     let failed: string | undefined;
+    const protection = protectedLaunches[item.kind];
+    let preparationFailure: { code: string; retryable: boolean } | undefined;
     const run = createAbiRun(), stderr = createAbiStderr();
     const startedAt = clock.now().getTime();
     let endedAt: number | undefined;
@@ -98,9 +107,24 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     let sawFinal = false;
     let started: Awaited<ReturnType<ProcessLauncher['start']>>;
     try {
-      const spec = launches[item.kind]?.(item, token) ?? null;
+      let spec: ProcessSpec | null = null;
+      if (protection) {
+        const prepared = await protection.prepare(item, token);
+        if (!prepared.ok) preparationFailure = { code: prepared.code, retryable: prepared.code !== 'EXTENSION_CONFIG_INVALID' };
+        else if (!Object.hasOwn(prepared.spec.env, 'BRAIN_SETTINGS_SNAPSHOT') || !decodeAbiEnv(prepared.spec.env).ok || !validateProtectedSnapshot(prepared.spec.env['BRAIN_SETTINGS_SNAPSHOT'], protection)) preparationFailure = { code: 'EXTENSION_CONFIG_INVALID', retryable: false };
+        else spec = prepared.spec;
+        {
+          const open = await store.listOpenSupervisedAttempts();
+          if (!open.ok) { preparationFailure = { code: open.code, retryable: true }; spec = null; }
+          else {
+            const attempt = open.attempts.find(a => a.token === token);
+            if (!attempt || attempt.cancelRequested || attempt.held || signal.aborted) { stopped = true; preparationFailure = undefined; spec = null; }
+          }
+        }
+      } else spec = launches[item.kind]?.(item, token) ?? null;
+      if (protection && signal.aborted) { stopped = true; preparationFailure = undefined; spec = null; }
       started = spec === null ? { ok: false, message: '일감 실행 명세가 없습니다' } : await launcher.start(spec);
-    } catch { started = { ok: false, message: '자식 프로세스를 시작할 수 없습니다' }; }
+    } catch { if (protection) preparationFailure = { code: 'EXTENSION_CONFIG_INVALID', retryable: false }; started = { ok: false, message: '자식 프로세스를 시작할 수 없습니다' }; }
     if (!started.ok) { run.fail('PROCESS_START_FAILED', started.message); failed = started.message; }
     else {
       const childStartedAt = clock.now().getTime();
@@ -115,7 +139,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
       // Consume stderr while identity/database work is pending so the adapter
       // cannot accumulate an unbounded diagnostic queue behind these awaits.
       const readStderr = (async () => {
-        try { for await (const chunk of handle.stderr) stderr.feed(chunk); }
+        try { for await (const chunk of handle.stderr) { if (!protection) stderr.feed(chunk); } }
         catch { run.fail('ABI_OUTPUT_UNREADABLE', '자식 프로세스 출력을 읽을 수 없습니다'); failed = '출력 읽기 실패'; terminate('protocol'); }
       })();
       let identity: GroupIdentity = { pgid: handle.pid, osBootAt: null, osStartedAt: null };
@@ -146,7 +170,8 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
             if (watch.signal.aborted) break;
             const open = await store.listOpenSupervisedAttempts();
             if (!open.ok) { await problem(`감독자 취소 요청 조회 실패 (${open.code})`); continue; }
-            if (open.attempts.some(a => a.token === token && (a.cancelRequested || a.held))) { stopped = true; terminate('cancelled'); break; }
+            const current = open.attempts.find(a => a.token === token);
+            if (!current || current.cancelRequested || current.held) { stopped = true; terminate('cancelled'); break; }
           }
         })();
         watchers.push(poll.catch(supervisionFailure));
@@ -183,7 +208,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
                   pendingRenewal = undefined;
                   renewing = false;
                   if (!renewed.ok) await problem(`감독자 임대 갱신 실패 (${renewed.code})`);
-                  else if (renewed.outcome === 'lost') await problem('감독자가 일감의 시도 토큰을 잃었습니다');
+                  else if (renewed.outcome === 'lost') { await problem('감독자가 일감의 시도 토큰을 잃었습니다'); stopped = true; terminate('cancelled'); }
                   else {
                     lastRenewed = now.getTime();
                     if (event.type !== 'heartbeat') lastProgressPersisted = now.getTime();
@@ -254,6 +279,10 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
       }
     }
     verdict = run.verdict(exit);
+    if (preparationFailure) verdict = { outcome: 'failed', ...preparationFailure, usage: null, message: '확장 설정을 확인하세요' };
+    else if (protection && verdict.outcome === 'failed') {
+      verdict = projectProtectedVerdict(verdict, protection.errorCodes, run.workerError);
+    }
     failed = verdict.outcome === 'failed' ? verdict.code : undefined;
     const detail = { elapsedMs: Math.max(0, (endedAt ?? clock.now().getTime()) - startedAt), stderr: stderr.value() };
     const now = clock.now();
@@ -298,6 +327,8 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
       if (!schema.ok) await problem(`감독자 데이터베이스 확인 실패 (${schema.code})`);
       else {
         await retrySettlements();
+        if (options.loadProtectedLaunches) protectedLaunches = await options.loadProtectedLaunches();
+        kinds = [...new Set([...Object.keys(launches).filter(kind => workExecutionClass(kind) === 'supervised'), ...Object.keys(protectedLaunches)])];
         if (!reconciled) reconciled = await reconcile();
         while (reconciled && !signal.aborted && running.size < SUPERVISOR_CAPACITY &&
           ![...executions].some(execution => execution.pendingSettlement !== undefined)) {

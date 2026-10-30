@@ -1,0 +1,253 @@
+[
+  {
+    "name": "minimal",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      }
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "settings",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "settings": [
+        {
+          "key": "testext.token",
+          "type": "string",
+          "secret": true,
+          "required": [
+            "work"
+          ]
+        },
+        {
+          "key": "testext.limit",
+          "type": "number",
+          "default": "10",
+          "required": [
+            "connect"
+          ]
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "wrong abi",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 2,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      }
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "outside path",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "../outside",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      }
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "invalid secret",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "settings": [
+        {
+          "key": "testext.token",
+          "type": "number",
+          "secret": true,
+          "required": []
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "full declarations",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.sync",
+          "execution": "supervised",
+          "runtime": "node",
+          "entry": "bin/sync.mjs"
+        }
+      ],
+      "auth": {
+        "kind": "testext.login",
+        "execution": "supervised",
+        "runtime": "node",
+        "entry": "bin/login.mjs"
+      },
+      "default_schedules": [
+        {
+          "kind": "testext.sync",
+          "target_kind": "account",
+          "target_id": "default",
+          "local_time": "09:30"
+        }
+      ],
+      "raw_views": [
+        "samples"
+      ],
+      "settings": [
+        {
+          "key": "testext.tokenstore",
+          "type": "string",
+          "required": [
+            "auth",
+            "work"
+          ],
+          "machine": "tokenstore"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "invalid schedule time",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "default_schedules": [
+        {
+          "kind": "testext.sync",
+          "target_kind": "account",
+          "target_id": "default",
+          "local_time": "25:00"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "wrong extension setting",
+    "validation": "semantic",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "settings": [
+        {
+          "key": "other.token",
+          "type": "string",
+          "required": []
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "duplicate kind",
+    "validation": "semantic",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.sync",
+          "execution": "supervised",
+          "runtime": "node",
+          "entry": "run.mjs"
+        },
+        {
+          "kind": "testext.sync",
+          "execution": "supervised",
+          "runtime": "node",
+          "entry": "run.mjs"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "invalid boolean default",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "settings": [
+        {
+          "key": "testext.flag",
+          "type": "boolean",
+          "required": [],
+          "default": "yes"
+        }
+      ]
+    },
+    "expect": "invalid"
+  }
+]
