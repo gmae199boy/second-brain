@@ -3,7 +3,7 @@ title: '17.2 대화 조각과 redact 재생성'
 type: 'feature'
 ticket: '2'
 created: '2026-10-30'
-status: 'built'
+status: blocked
 baseline_revision: '520ed113226821afc48b7e7f5fb6f6308e24724f'
 route: 'full'
 route_source: 'pinned'
@@ -17,6 +17,8 @@ context: []
 warnings: [oversized]
 deferred:
   - summary: "검토 필요: [ASSUMPTION] 일반 메시지는 줄바꿈 하나로 결합하며 목표 이상이 되는 시각 묶음까지 포함한 뒤 닫는다."
+blocked_at: "2026-10-30"
+blocked_reason: "finalization left repository dirty: 실행 중 생긴 별도 워크플로 작업의 미커밋 파일 5개가 남아 있으며 티켓 17.2 구현·검증·커밋은 완료했다"
 ---
 
 <intent-contract>
@@ -147,7 +149,7 @@ deferred:
 
 ## Auto Run Result
 
-- Status: built
+- Status: blocked
 - 구현: 설정 기반 대화 조각·분할 part·NUL 원문 보존·멱등 수집 일감·원자적 redact 재생성·입력 지문/청구 소유권/유효기간 확정·최소 literal LIKE 검색 port를 완성했다.
 - 범위: 공개 recall 명령과 결과 budget은 후속 티켓이며 이 티켓은 검색 Store 기반과 대화 조각 writer를 제공한다. 저장소 밖 HUMAN 전용 수락 작업은 없어 operator_actions가 필요하지 않다.
 - 리뷰: 독립 quick 검사 2회를 실행했다. 첫 회 medium 3건은 계획 재도출 1건과 함께 수정 2건으로 반영했고, 두 번째 medium 2건도 작은 수정으로 반영했다. 기각 0건, 새 리뷰 이월 0건이며 기존 일반 경계 [ASSUMPTION] 1건을 deferred에 보존한다.
@@ -198,3 +200,13 @@ deferred:
 ### Orca 정리
 
 - 자기 Run run_b44c973fa3d5의 조사 1·실패 구현 1·성공 구현 1·리뷰 2 Dispatch를 모두 정식 결과 수락 후 release했다. worker-list는 released 5, active/reclaimable 0이며 coordinator mail은 0이다. 실패 구현은 새 Task로 우회하지 않고 같은 Task의 retry-of로 복구했다. 소유권이나 생존 미확인 워커는 없다.
+
+
+### 종료 판정
+
+- status: blocked
+- 차단 조건: finalization left repository dirty. 티켓 구현은 커밋 `ed89726b5ade660d2e6c5c5e5d4501a6160a6803`에 보존됐고 이 티켓의 검토 파일은 모두 커밋돼 있다. 다음 별도 작업 파일 5개 때문에 build-auto의 전체 작업 트리 clean 종료 조건을 충족하지 못했다.
+- 별도 수정: `_bmad/custom/bmad-build-auto.toml`, `_bmad/custom/bmad-orca-workers.md`.
+- 별도 미추적: `_bmad-output/personal-brain/plan-orca-worker-recovery.md`, `_bmad/custom/bmad-orca-control.py`, `_bmad/custom/test_bmad_orca_control.py`.
+- 이 변경은 실행 시작 후 생겼으며 이 티켓의 구현자가 만들지 않았다. 덮어쓰기·제거·커밋·stash하지 않고 보존했다. 기능 실패나 저장소 밖 HUMAN 작업이 차단 원인은 아니다.
+- HALT 절차에서만 tickets.py mark 17.2 blocked를 실행했다. done 표시·push는 하지 않았다. 자기 Orca Run은 워커 released 5, mail 0으로 정리했고 전용 제어 셸만 닫는다.
