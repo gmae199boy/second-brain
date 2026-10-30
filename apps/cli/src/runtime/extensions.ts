@@ -5,7 +5,7 @@ import { parseEnv } from 'node:util';
 import { envFilePath } from '../config/paths.js';
 import { fileURLToPath } from 'node:url';
 import { decodeExtensionManifest, isExtensionName, type Clock, type ExtensionRuntime } from 'second_brain';
-import { extensionAdminUrl, resolveStoreUrl, type ReadConfigResult } from '../config/codec.js';
+import { extensionAdminUrl, resolveStoreUrl, ensureExtensionPassword, extensionDatabaseUrl, type ReadConfigResult } from '../config/codec.js';
 import { prepareExtensionPython } from './extension-python.js';
 import { systemTimer } from './clock.js';
 import { systemProcessLauncher } from './process-group.js';
@@ -76,7 +76,7 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
       catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}; throw error; }
     },
     machineValues: name => ({ tokenstore: join(home, 'extensions', name, 'tokenstore') }),
-    databaseUrl, preparePython: directory => prepareExtensionPython(directory, env), timer: systemTimer, launcher: { start: spec => systemProcessLauncher.start({ ...spec, command: spec.command === 'node' ? process.execPath : spec.command }) }, inspector: systemProcessInspector,
+    databaseUrl: async name => extensionDatabaseUrl(home, name, await databaseUrl()), preparePython: directory => prepareExtensionPython(directory, env), timer: systemTimer, launcher: { start: spec => systemProcessLauncher.start({ ...spec, command: spec.command === 'node' ? process.execPath : spec.command }) }, inspector: systemProcessInspector,
     packages: {
       async rollback(name) {
         const placement = pending.get(name); if (!placement) return;
@@ -131,8 +131,10 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
       async apply(owner, directory) {
         let result: Awaited<ReturnType<ExtensionRuntime['migrator']['apply']>>;
         try {
-          const { runMigrations } = await import('second_brain/postgres');
-          result = await runMigrations({ databaseUrl: await extensionAdminUrl(home, await databaseUrl(), env), clock, owners: [{ owner, directory }] });
+          const { runMigrations, provisionExtension } = await import('second_brain/postgres');
+          const adminUrl = await extensionAdminUrl(home, await databaseUrl(), env);
+          await provisionExtension(adminUrl, owner, () => ensureExtensionPassword(home, owner));
+          result = await runMigrations({ databaseUrl: adminUrl, clock, owners: [{ owner, directory }] });
         } catch { result = { ok: false, code: 'DB_UNAVAILABLE', message: '확장 마이그레이션의 관리 연결을 열지 못했습니다' }; }
         const placement = pending.get(owner);
         if (placement) {

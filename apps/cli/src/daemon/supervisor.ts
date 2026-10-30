@@ -8,7 +8,7 @@ import { openBrainStore } from '../runtime/brain-store.js';
 import { systemProcessInspector } from '../runtime/process-inspector.js';
 import { systemProcessLauncher } from '../runtime/process-group.js';
 import { systemTimer } from '../runtime/clock.js';
-import { resolveStoreUrl } from '../config/codec.js';
+import { resolveStoreUrl, extensionDatabaseUrl } from '../config/codec.js';
 import type { RunDaemonOptions } from './run.js';
 import type { ReadConfigResult } from '../config/codec.js';
 export interface DaemonSupervisorOptions { launcher?: ProcessLauncher; inspector?: ProcessInspector; cancelGraceMs?: number; cancelPollMs?: number; groupConfirmMs?: number; probeWorker?: { command: string; args: readonly string[]; env?: Readonly<Record<string, string>> }; pollMs?: number; renewEveryMs?: number; disabled?: boolean }
@@ -45,8 +45,10 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
               } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return { ok: false, code: 'EXTENSION_CONFIG_INVALID' }; }
               const snapshot = createExtensionSnapshot({ extension: manifest.name, stage: manifest.auth?.kind === work.kind ? 'auth' : 'work', declarations, settings: Object.fromEntries(read.settings.map(setting => [setting.key, setting.value])), secrets, machine: { tokenstore: join(directory, 'tokenstore') } });
               if (!snapshot.ok || !url) return { ok: false, code: 'EXTENSION_CONFIG_INVALID' };
+              let extensionUrl: string;
+              try { extensionUrl = await extensionDatabaseUrl(options.home, manifest.name, url); } catch { return { ok: false, code: 'EXTENSION_CONFIG_INVALID' }; }
               return { ok: true, spec: { command: work.runtime === 'python' ? join(directory, '.venv', 'bin', 'python') : process.execPath, args: [join(directory, work.entry)], env: {
-                [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: url, [PROCESS_ABI_ENV.workId]: item.id,
+                [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: extensionUrl, [PROCESS_ABI_ENV.workId]: item.id,
                 [PROCESS_ABI_ENV.runGeneration]: String(item.attempts), [PROCESS_ABI_ENV.attemptToken]: token, [PROCESS_ABI_ENV.workKind]: item.kind,
                 [PROCESS_ABI_ENV.targetKind]: item.targetKind, [PROCESS_ABI_ENV.targetId]: item.targetId,
                 ...(item.scheduledDates ? { BRAIN_RANGE_FROM: item.scheduledDates.from, BRAIN_RANGE_TO: item.scheduledDates.to } : {}), BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized,

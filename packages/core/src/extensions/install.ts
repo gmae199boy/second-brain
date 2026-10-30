@@ -20,7 +20,7 @@ export interface ExtensionMigrator {
 export interface ExtensionRuntime {
   packages: ExtensionPackages; migrator: ExtensionMigrator; launcher: ProcessLauncher; inspector: ProcessInspector; timer: Timer;
   preparePython?(directory: string): Promise<{ ok: true } | { ok: false; code: 'EXTENSION_PYTHON_PIN_INVALID' | 'EXTENSION_UV_NOT_FOUND' | 'EXTENSION_PYTHON_NOT_FOUND' | 'EXTENSION_PYTHON_SYNC_FAILED' | 'EXTENSION_PYTHON_VERSION_MISMATCH'; message: string }>;
-  databaseUrl(): string | Promise<string>;
+  databaseUrl(name: string): string | Promise<string>;
   readSecrets?(): Promise<Readonly<Record<string, string>>>;
   machineValues?(name: string): Readonly<Record<string, string>>;
 }
@@ -72,7 +72,7 @@ export async function installExtension(deps: ExtensionDependencies, { name }: { 
   const snapshot = createExtensionSnapshot({ extension: name, stage: 'connect', declarations, settings: values, secrets, machine: runtime.machineValues?.(name) ?? {} });
   if (!snapshot.ok) return configFailure();
   let databaseUrl: string;
-  try { databaseUrl = await runtime.databaseUrl(); } catch { return configFailure(); }
+  try { databaseUrl = await runtime.databaseUrl(name); } catch { return configFailure(); }
   const env = {
     [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: databaseUrl,
     [PROCESS_ABI_ENV.workId]: deps.idGen.next(), [PROCESS_ABI_ENV.attemptToken]: deps.idGen.next(),

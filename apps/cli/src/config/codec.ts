@@ -782,6 +782,37 @@ export async function extensionAdminUrl(home: string, runtimeUrl: string, env: N
   const password = await resolveStoreUrl(home, 'BRAIN_POSTGRES_PASSWORD', env);
   if (!password) throw new Error('PostgreSQL 관리 비밀번호가 없습니다');
   const url = new URL(runtimeUrl);
+  url.searchParams.delete('user'); url.searchParams.delete('password');
   url.username = 'postgres'; url.password = password;
+  return url.toString();
+}
+
+function extensionPasswordKey(name: string): string {
+  if (!/^[a-z][a-z0-9_]{0,30}$/.test(name) || /^(core|brain|public|pg_)/.test(name)) throw new Error('잘못된 확장 이름');
+  return `BRAIN_EXT_${name.toUpperCase()}_PASSWORD`;
+}
+/** 클러스터 잠금 안에서 확장 비밀번호를 생성하거나 기존 값을 보존한다. */
+export async function ensureExtensionPassword(home: string, name: string): Promise<string> {
+  const key = extensionPasswordKey(name);
+  let values: Record<string, string> = {};
+  try { values = Object.fromEntries(Object.entries(parseEnv(await readFile(envFilePath(home), 'utf8'))).filter((entry): entry is [string, string] => entry[1] !== undefined)); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  if (!values[key]) {
+    const { randomBytes } = await import('node:crypto');
+    values[key] = randomBytes(24).toString('hex');
+    const lines = Object.entries(values).map(([k, v]) => { const q = quote(v); if (q === undefined) throw new Error('비밀 파일을 쓸 수 없습니다'); return `${k}=${q}`; });
+    await mkdir(home, { recursive: true, mode: 0o700 });
+    await writeEnv(envFilePath(home), lines.join('\n') + '\n');
+  }
+  await chmod(envFilePath(home), 0o600);
+  return values[key];
+}
+export async function extensionDatabaseUrl(home: string, name: string, runtimeUrl: string): Promise<string> {
+  const values = parseEnv(await readFile(envFilePath(home), 'utf8'));
+  const password = values[extensionPasswordKey(name)];
+  if (!password || !/^[a-f0-9]{48}$/.test(password)) throw new Error('확장 자격 증명이 없습니다');
+  const url = new URL(runtimeUrl);
+  url.searchParams.delete('user'); url.searchParams.delete('password');
+  url.username = `brain_ext_${name}`; url.password = password;
   return url.toString();
 }

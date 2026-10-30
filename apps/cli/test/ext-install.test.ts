@@ -14,10 +14,31 @@ it('installs testext through the real CLI, records its owner migration and reads
   await expect(access(join(fixture.home, 'extensions'))).rejects.toThrow();
   const first = await fixture.run(['ext', 'install', 'testext', '--json']);
   expect(first.code, first.stdout + first.stderr).toBe(0);
+  const { readFile, stat } = await import('node:fs/promises');
+  const { parseEnv } = await import('node:util');
+  const secret = parseEnv(await readFile(join(fixture.home, '.env'), 'utf8')).BRAIN_EXT_TESTEXT_PASSWORD;
+  expect(secret).toMatch(/^[a-f0-9]{48}$/);
+  expect((await stat(join(fixture.home, '.env'))).mode & 0o777).toBe(0o600);
+  expect(first.stdout + first.stderr).not.toContain(secret);
+  const { extensionDatabaseUrl, extensionAdminUrl } = await import('../src/config/codec.js');
+  const pg = await import('pg');
+  const override = new URL(fixture.db.appUrl);
+  override.searchParams.set('user', 'brain_app'); override.searchParams.set('password', 'brain-test-app');
+  const extensionUrl = await extensionDatabaseUrl(fixture.home, 'testext', override.toString());
+  const client = new pg.default.Client({ connectionString: extensionUrl });
+  await client.connect();
+  try { expect((await client.query('select current_user as name')).rows).toEqual([{ name: 'brain_ext_testext' }]); }
+  finally { await client.end(); }
+  const adminUrl = new URL(await extensionAdminUrl(fixture.home, override.toString(), fixture.env));
+  expect(adminUrl.searchParams.has('user')).toBe(false);
+  expect(adminUrl.searchParams.has('password')).toBe(false);
   expect(first.body.data).toMatchObject({ name: 'testext', installed: true, enabled: true, version: '0.1.0', connection: { status: 'connected', checked_at: expect.any(String) } });
   await expect(access(join(fixture.home, 'extensions/testext/manifest.json'))).resolves.toBeUndefined();
   expect(await fixture.ledger('testext')).toEqual([{ owner: 'testext', version: 1 }]);
+  const { chmod } = await import('node:fs/promises');
+  await chmod(join(fixture.home, '.env'), 0o644);
   const second = await fixture.run(['ext', 'install', 'testext', '--json']);
+  expect((await stat(join(fixture.home, '.env'))).mode & 0o777).toBe(0o600);
   expect(second.code, second.stdout + second.stderr).toBe(0);
   expect(await fixture.ledger('testext')).toEqual([{ owner: 'testext', version: 1 }]);
   expect(second.body.data.installed_at).toBe(first.body.data.installed_at);
@@ -303,8 +324,8 @@ it('discovers a newly installed manifest and runs its registered work with a fre
   manifest.auth = { kind: 'testext.login', execution: 'supervised', runtime: 'node', entry: 'bin/login.mjs' };
   manifest.settings = [{ key: 'testext.token', type: 'string', secret: true, required: ['work'] }, { key: 'testext.tokenstore', type: 'string', machine: 'tokenstore', required: ['auth', 'work'] }];
   await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest));
-  await writeFile(join(source, 'bin/login.mjs'), `const v=JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT).values; if('testext.token' in v || !v['testext.tokenstore'].endsWith('/testext/tokenstore')) process.exit(2); console.log(JSON.stringify({abi:1,type:'result'}));\n`);
-  await writeFile(join(source, 'bin/sync.mjs'), `const x=JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT).values['testext.token']; if(process.argv.join(' ').includes(x) || process.env.BRAIN_RANGE_FROM!=='2026-10-20' || process.env.BRAIN_RANGE_TO!=='2026-10-22') process.exit(2); if(process.env.BRAIN_RUN_GENERATION==='1' && x==='SYNTHETIC_VALUE_49') console.log(JSON.stringify({abi:1,type:'error',code:'TEMPORARY',retryable:true,message:x})); else if(process.env.BRAIN_RUN_GENERATION==='2' && x==='SYNTHETIC_VALUE_50') console.log(JSON.stringify({abi:1,type:'result'})); else process.exit(2);\n`);
+  await writeFile(join(source, 'bin/login.mjs'), `if(new URL(process.env.BRAIN_DATABASE_URL).username!=='brain_ext_testext' || process.argv.join(' ').includes(new URL(process.env.BRAIN_DATABASE_URL).password)) process.exit(2); const v=JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT).values; if('testext.token' in v || !v['testext.tokenstore'].endsWith('/testext/tokenstore')) process.exit(2); console.log(JSON.stringify({abi:1,type:'result'}));\n`);
+  await writeFile(join(source, 'bin/sync.mjs'), `if(new URL(process.env.BRAIN_DATABASE_URL).username!=='brain_ext_testext' || process.argv.join(' ').includes(new URL(process.env.BRAIN_DATABASE_URL).password)) process.exit(2); const x=JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT).values['testext.token']; if(process.argv.join(' ').includes(x) || process.env.BRAIN_RANGE_FROM!=='2026-10-20' || process.env.BRAIN_RANGE_TO!=='2026-10-22') process.exit(2); if(process.env.BRAIN_RUN_GENERATION==='1' && x==='SYNTHETIC_VALUE_49') console.log(JSON.stringify({abi:1,type:'error',code:'TEMPORARY',retryable:true,message:x})); else if(process.env.BRAIN_RUN_GENERATION==='2' && x==='SYNTHETIC_VALUE_50') console.log(JSON.stringify({abi:1,type:'result'})); else process.exit(2);\n`);
   await appendFile(join(fixture.home, '.env'), '\nTESTEXT_SECRET=SYNTHETIC_VALUE_49\nTESTEXT_NEW=SYNTHETIC_VALUE_50\n');
   fixture.env.SECOND_BRAIN_TEST_EXTENSIONS = sources;
   const controller = new AbortController(); const logs: string[] = []; const idGen = sequenceIdGen({ timestampMs: Date.now() });
@@ -331,4 +352,28 @@ it('discovers a newly installed manifest and runs its registered work with a fre
     expect(JSON.stringify({ facts, status, logs })).not.toContain('SYNTHETIC_VALUE_50');
     expect(facts).toHaveLength(2);
   } finally { controller.abort(); await supervisor.stop(); await store.close(); }
+});
+
+it('preserves both private passwords during simultaneous installs in separate processes', async () => {
+  const { cp, mkdir, readFile, writeFile, stat } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const { parseEnv } = await import('node:util');
+  const fixture = await extHome(); cleanup.push(fixture.cleanup);
+  const sources = join(fixture.home, 'concurrent-packages'); await mkdir(sources);
+  const original = fileURLToPath(new URL('./fixtures/extensions/testext/', import.meta.url));
+  await cp(original, join(sources, 'testext'), { recursive: true });
+  await cp(original, join(sources, 'otherext'), { recursive: true });
+  for (const file of ['manifest.json', 'bin/check.mjs', 'migrations/0001_testext.sql']) {
+    const path = join(sources, 'otherext', file);
+    await writeFile(path, (await readFile(path, 'utf8')).replaceAll('testext', 'otherext'));
+  }
+  fixture.env.SECOND_BRAIN_TEST_EXTENSIONS = sources;
+  const results = await Promise.all([fixture.run(['ext', 'install', 'testext', '--json']), fixture.run(['ext', 'install', 'otherext', '--json'])]);
+  expect(results.map(result => result.code), JSON.stringify(results)).toEqual([0, 0]);
+  const env = parseEnv(await readFile(join(fixture.home, '.env'), 'utf8'));
+  expect(env.BRAIN_EXT_TESTEXT_PASSWORD).toMatch(/^[a-f0-9]{48}$/);
+  expect(env.BRAIN_EXT_OTHEREXT_PASSWORD).toMatch(/^[a-f0-9]{48}$/);
+  expect(env.BRAIN_EXT_TESTEXT_PASSWORD).not.toBe(env.BRAIN_EXT_OTHEREXT_PASSWORD);
+  expect((await stat(join(fixture.home, '.env'))).mode & 0o777).toBe(0o600);
+  for (const result of results) for (const secret of [env.BRAIN_EXT_TESTEXT_PASSWORD!, env.BRAIN_EXT_OTHEREXT_PASSWORD!]) expect(result.stdout + result.stderr).not.toContain(secret);
 });

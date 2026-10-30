@@ -2,6 +2,7 @@
 const env = process.env;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const valid = env.BRAIN_ABI_VERSION === '1' && /^postgres(?:ql)?:\/\//.test(env.BRAIN_DATABASE_URL ?? '') &&
+  new URL(env.BRAIN_DATABASE_URL).username === 'brain_ext_testext' && !process.argv.join(' ').includes(new URL(env.BRAIN_DATABASE_URL).password) &&
   uuid.test(env.BRAIN_WORK_ID ?? '') && uuid.test(env.BRAIN_ATTEMPT_TOKEN ?? '') &&
   env.BRAIN_WORK_KIND === 'testext.connection_check' && env.BRAIN_TARGET_KIND === 'extension' && env.BRAIN_TARGET_ID === 'testext' && env.BRAIN_RUN_GENERATION === '1';
 if (!valid) {

@@ -6,3 +6,4 @@ export { postgresTableMaintenance } from './maintenance.js';
 export { postgresSettingsStore } from './settings.js';
 
 export { EXPECTED_SCHEMA_VERSIONS } from './migrate.js';
+export { provisionExtension } from './extension-provision.js';

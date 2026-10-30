@@ -32,6 +32,13 @@ export async function extHome() {
       if (!/^[a-z][a-z0-9_]*$/.test(owner)) throw new Error('잘못된 소유자');
       return db.rows(`select owner,version from brain.schema_migrations where owner='${owner}' order by version`);
     },
-    async cleanup() { await db.drop(); await homes.cleanup(); },
+    async cleanup() {
+      for (const name of ['testext', 'pyfixture', 'otherext']) {
+        const role = `brain_ext_${name}`;
+        const owned = await db.rows(`select 1 from pg_roles where rolname='${role}' and shobj_description(oid, 'pg_authid')='second-brain extension:' || current_database()`);
+        if (owned.length) await db.query(`drop owned by "${role}"; drop role "${role}"`);
+      }
+      await db.drop(); await homes.cleanup();
+    },
   };
 }
