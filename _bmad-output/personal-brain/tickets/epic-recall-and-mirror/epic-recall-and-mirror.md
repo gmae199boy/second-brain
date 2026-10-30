@@ -113,3 +113,4 @@ AD-13·14(로그 없는 세션의 첫 요청 문장, FR-9 표시)·15·16·23·2
 - Decision(2026-10-28, 세트 검증 S1 채택): 2의 공용 setup 책임에 PG URL·schema·격리 홈 설정과 정리, 가짜 clock·임대 만료 제어, worker의 snapshot·rename·전환 직전 barrier, kill 뒤 종료 확인을 plan 필수 칸으로 둔다. 6은 대소문자 비구분 볼륨의 확인 방법과 임시 폴더 정리를, 8의 SM-7은 warm/cold·샘플 수·질의·자료 수를 함께 남긴다.
 - Decision(2026-10-28, 재검증 F7·spine u7 R1): EXIF 대안 경로를 조였다. exifr는 `reviveValues: false`로 원문을 유지하는지 1에서 원문·offset fixture로 확인한다. exif-reader는 원문 획득 경로를 입증하기 전에는 단순 대체가 아니다.
 - Decision(2026-10-30, 사용자): 에픽마다 두던 Refactor sweep(4.9)을 뺐다(`dropped`). 리뷰가 미룬 기존 결함은 `deferred-work.md` 장부에 남고, 사용자가 원할 때 `bmad-loop sweep`으로 직접 처리한다. 이 Mac 확인(4.10)은 sweep 대신 sweep이 기다리던 스토리들을 기다린다.
+- Decision(2026-10-30, 추천으로 정함): 4.2는 3.17 sweep 대신 실제 LogStore append·최근 읽기(3.4)와 검색 결과 budget·원문 경로(17.3)를 기다린다. 기간 읽기 능력과 시간 조회 명령은 4.2가 직접 만든다. 로그 편집·통계·스킬의 완료는 tracer 선행이 아니다. 시그니처는 착수 시점 main HEAD에서 확인한다.

@@ -108,3 +108,4 @@ Garmin을 쓰지 않는 사용자는 아무것도 더 설치하지 않는다. �
 - Decision(2026-10-30, 사용자): 에픽마다 두던 Refactor sweep(13.9)을 뺐다(`dropped`). 리뷰가 미룬 기존 결함은 `deferred-work.md` 장부에 남고, 사용자가 원할 때 `bmad-loop sweep`으로 직접 처리한다. 이 Mac 확인(13.10)은 sweep 대신 sweep이 기다리던 스토리들을 기다린다.
 
 - Decision(2026-10-30, 추천으로 정함, 13.4 escalation 해소): `brain.extension_status_public_v1`은 이름·활성 의도·연결 상태만 내고 확장 role에는 자기 행만 허용한다. 명시 ACL과 유효 권한·반례 시험을 적용하며 13.6은 v1을 보존하고 풍부한 공개 상태 계약을 완성한다. 근거는 13.4 plan과 registry migration이다.
+- Decision(2026-10-30, 추천으로 정함): 13.4는 Node testext 설치·확장 DDL(13.1)과 attempt 확인(12.3)만 받아 Python 설치(13.3)를 기다리지 않는다. 모든 설치 단계의 결과·재개를 다루는 13.5는 Python 환경 단계를 위해 13.3을 직접 기다린다. Python 없는 기본·갱신 보존(13.8)은 설치·pyfixture(13.3)까지만 필요하고 스킬(13.7)은 필요하지 않다. 앞 에픽 완료 HEAD 대신 착수 시점 main HEAD에서 시그니처를 확인한다.
