@@ -103,3 +103,5 @@ Garmin을 쓰지 않는 사용자는 아무것도 더 설치하지 않는다. �
   - 8 medium: 기본 Brain이 Python을 요구하면 R1이 깨진다. 발견하면 바로 고칠 수 있다.
   - 9 low: 기능을 바꾸지 않는 정리다.
   - 10 medium: 설치본에서만 드러나는 배포 누락을 놓친다.
+
+- Decision(2026-10-30, 추천으로 정함, 13.2 escalation 해소): ABI v1 선택 snapshot 입력과 단계별 비밀 요구·확장 진단 보호를 13.2 plan intent-contract에 확정한다. 독립 Codex가 기존 코드의 누출 반례와 보완 계약을 검증했다.
