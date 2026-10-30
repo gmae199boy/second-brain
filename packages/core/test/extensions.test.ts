@@ -39,7 +39,6 @@ it.each(['Core', '../x', 'core', 'core_extra', 'brainy', 'public', 'pg_ext', 'a'
 it.each([
   { ...manifest, extra: true }, { ...manifest, version: '' }, { ...manifest, core: 2 }, { ...manifest, abi: 2 },
   { ...manifest, migrations: '../migrations' }, { ...manifest, migrations: '/tmp/sql' },
-  { ...manifest, connection_check: { runtime: 'python', entry: 'check.py' } },
   { ...manifest, connection_check: { runtime: 'node', entry: '../check.mjs' } },
   { ...manifest, connection_check: { runtime: 'node', entry: '/check.mjs' } },
   { ...manifest, connection_check: { runtime: 'node', entry: 'bin/check.mjs', extra: true } },
@@ -60,7 +59,7 @@ it('returns not found and does no writes when a package cannot be resolved', asy
 it('reports an unconfigured runtime and returns missing registry facts without writing', async () => {
   const { deps } = setup();
   expect(await installExtension({ store: deps.store, clock: deps.clock, idGen: deps.idGen }, { name: 'testext' })).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
-  expect(await extensionStatus(deps, { name: 'testext' })).toEqual({ ok: true, name: 'testext', extension: null });
+  expect(await extensionStatus(deps, { name: 'testext' })).toEqual({ ok: true, name: 'testext', extension: null, pythonEnvironment: null });
 });
 it('uses a fresh ABI run and rereads installed connected facts; repeat installation keeps its original time', async () => {
   const { deps, fake } = setup();
@@ -225,4 +224,30 @@ it.each(['PROCESS_DIED', 'ABI_EXIT_FAILED'] as const)('projects undeclared worke
   const { deps } = setup({ output: JSON.stringify({ abi: 1, type: 'error', code, retryable: true }) + '\n' });
   const verdict = await runExtensionCheck({ ...deps.extensions, clock: deps.clock, spec: { command: 'node', args: [], env: { ...env, BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"testext","values":{}}' } }, protection: { extension: 'testext', declarations: {}, errorCodes: [] } });
   expect(verdict).toMatchObject({ outcome: 'failed', code: 'EXTENSION_WORKER_ERROR', retryable: true });
+});
+
+it('마이그레이션 전에 Python을 준비하고 실패 시 기존 레지스트리 사실을 보존한다', async () => {
+  const { deps, fake, writes } = setup({ text: JSON.stringify({ ...manifest, connection_check: { runtime: 'python', entry: 'check.py' } }) });
+  await deps.store.recordExtensionInstall({ name: 'testext', version: 'old', now });
+  await deps.store.recordExtensionConnection({ name: 'testext', status: 'connected', checkedAt: now, code: null, message: null });
+  let rolledBack = false;
+  deps.extensions.packages.rollback = async () => { rolledBack = true; };
+  deps.extensions.preparePython = async () => ({ ok: false, code: 'EXTENSION_PYTHON_SYNC_FAILED', message: 'Python 환경을 설치하지 못했습니다' });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_PYTHON_SYNC_FAILED', extension: { version: 'old', connectionStatus: 'connected' }, pythonEnvironment: { status: 'failed', code: 'EXTENSION_PYTHON_SYNC_FAILED' } });
+  expect(rolledBack).toBe(true); expect(writes().migrated).toBe(0); expect(fake.specs).toEqual([]);
+});
+it('Node 명령에는 Python을 준비하지 않는다', async () => {
+  const { deps } = setup();
+  deps.extensions.preparePython = async () => { throw new Error('예상하지 못한 호출'); };
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: true });
+});
+
+it('Python 환경 사실을 기록할 수 없으면 DB 오류를 반환하고 복원한다', async () => {
+  const { deps, fake, writes } = setup({ text: JSON.stringify({ ...manifest, connection_check: { runtime: 'python', entry: 'check.py' } }) });
+  let rolledBack = false;
+  deps.extensions.packages.rollback = async () => { rolledBack = true; };
+  deps.extensions.preparePython = async () => ({ ok: true });
+  deps.store.recordExtensionPythonEnvironment = async () => ({ ok: false, code: 'DB_UNAVAILABLE', message: 'DB 오류' });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+  expect(rolledBack).toBe(true); expect(writes().migrated).toBe(0); expect(fake.specs).toEqual([]);
 });

@@ -394,3 +394,10 @@ source_spec: `tickets/epic-extensions/tickets/story-tracer-brain-ext-install-tes
 severity: low
 reason: `packages/core/src/extensions/check.ts`는 `createAbiStderr()`로 모은 값을 `stderr.value()`로 읽고 버린다. Node 구문 오류처럼 원인이 stderr에만 있는 실패는 `ABI_EXIT_FAILED`만 보인다. 마지막 실패 보고는 13.5, 공개 상태 view는 13.6 소관이다.
 status: open
+
+### DW-26: 검토 필요: [ASSUMPTION] pyfixture의 patch pin은 로컬 사용 가능한 3.12.13이며 Python 자동 다운로드 없이 설치한다.
+origin: spec-deferred 48cf38661d90
+location: n/a
+source_spec: `tickets/epic-extensions/tickets/story-python-pyfixture-uv-sync-frozen-ts-fixture-plan.md`
+reason: 검토 필요: [ASSUMPTION] pyfixture의 patch pin은 로컬 사용 가능한 3.12.13이며 Python 자동 다운로드 없이 설치한다.
+status: open

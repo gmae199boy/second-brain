@@ -5,6 +5,11 @@ export function extensionStoreContract(): ContractCase<ExtensionStore>[] {
   const now = new Date('2026-10-29T00:00:00.000Z'), next = new Date('2026-10-29T01:00:00.000Z');
   return [contractCase('extension registry keeps installation, activation and connection as independent facts', async make => {
     await withSubject(make, async store => {
+      assertEqual(await store.getExtensionPythonEnvironment('testext'), { ok: true, environment: null }, '환경 기록 없음');
+      assertOk(await store.recordExtensionPythonEnvironment({ name: 'testext', status: 'failed', code: 'EXTENSION_UV_NOT_FOUND', checkedAt: now }), '설치 전 환경 실패 기록');
+      assertEqual(await store.getExtensionPythonEnvironment('testext'), { ok: true, environment: { status: 'failed', code: 'EXTENSION_UV_NOT_FOUND', checkedAt: now } }, '환경 실패');
+      assertOk(await store.recordExtensionPythonEnvironment({ name: 'testext', status: 'succeeded', code: null, checkedAt: next }), '환경 성공');
+      assertEqual(await store.getExtensionPythonEnvironment('testext'), { ok: true, environment: { status: 'succeeded', code: null, checkedAt: next } }, '환경 성공이 실패를 대체함');
       assertEqual(await store.getExtension('testext'), { ok: true, extension: null }, 'missing');
       assertEqual(await store.listExtensions(), { ok: true, extensions: [] }, 'empty');
       assertOk(await store.recordExtensionInstall({ name: 'testext', version: '0.1', now }), 'install');

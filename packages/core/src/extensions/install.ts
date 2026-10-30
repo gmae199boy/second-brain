@@ -12,12 +12,14 @@ import { extensionStatus } from './status.js';
 export interface ExtensionPackages {
   resolve(name: string): Promise<{ ok: true; dir: string; manifestText: string } | { ok: false }>;
   place(name: string, dir: string): Promise<string>;
+  rollback?(name: string): Promise<void>;
 }
 export interface ExtensionMigrator {
   apply(owner: string, directory: string): Promise<{ ok: true; from: number; to: number; applied: string[] } | { ok: false; code: 'MIGRATION_FAILED' | 'DB_UNAVAILABLE'; message: string; file?: string }>;
 }
 export interface ExtensionRuntime {
   packages: ExtensionPackages; migrator: ExtensionMigrator; launcher: ProcessLauncher; inspector: ProcessInspector; timer: Timer;
+  preparePython?(directory: string): Promise<{ ok: true } | { ok: false; code: 'EXTENSION_PYTHON_PIN_INVALID' | 'EXTENSION_UV_NOT_FOUND' | 'EXTENSION_PYTHON_NOT_FOUND' | 'EXTENSION_PYTHON_SYNC_FAILED' | 'EXTENSION_PYTHON_VERSION_MISMATCH'; message: string }>;
   databaseUrl(): string | Promise<string>;
   readSecrets?(): Promise<Readonly<Record<string, string>>>;
   machineValues?(name: string): Readonly<Record<string, string>>;
@@ -39,6 +41,14 @@ export async function installExtension(deps: ExtensionDependencies, { name }: { 
   let installedDir: string;
   try { installedDir = await runtime.packages.place(name, source.dir); }
   catch { return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장 패키지를 설치 폴더에 복사하지 못했습니다' }; }
+  const needsPython = [manifest.connection_check, ...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : [])].some(command => command.runtime === 'python');
+  if (needsPython) {
+    const prepared = runtime.preparePython ? await runtime.preparePython(installedDir) : { ok: false as const, code: 'EXTENSION_UV_NOT_FOUND' as const, message: 'uv를 찾을 수 없습니다' };
+    if (!prepared.ok) await runtime.packages.rollback?.(name);
+    const recordedEnvironment = await deps.store.recordExtensionPythonEnvironment({ name, status: prepared.ok ? 'succeeded' : 'failed', code: prepared.ok ? null : prepared.code, checkedAt: deps.clock.now() });
+    if (!recordedEnvironment.ok) { if (prepared.ok) await runtime.packages.rollback?.(name); return recordedEnvironment; }
+    if (!prepared.ok) { const status = await extensionStatus(deps, { name }); return status.ok ? { ...status, ...prepared } : status; }
+  }
   const migrated = await runtime.migrator.apply(name, `${installedDir}/${manifest.migrations}`);
   if (!migrated.ok) return migrated;
   const recorded = await deps.store.recordExtensionInstall({ name, version: manifest.version, now: deps.clock.now(), workKinds: [...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : [])].map(work => work.kind) });
@@ -70,7 +80,7 @@ export async function installExtension(deps: ExtensionDependencies, { name }: { 
     [PROCESS_ABI_ENV.targetId]: name, [PROCESS_ABI_ENV.runGeneration]: '1',
     BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized,
   };
-  const verdict = await runExtensionCheck({ ...runtime, clock: deps.clock, protection: { extension: name, declarations: Object.fromEntries(declarations.map(setting => [setting.key, setting.type])), errorCodes: manifest.error_codes ?? [], required: declarations.filter(setting => setting.required.includes('connect')).map(setting => setting.key), secrets: declarations.filter(setting => setting.secret).map(setting => setting.key) }, spec: { command: manifest.connection_check.runtime, args: [`${installedDir}/${manifest.connection_check.entry}`], env } });
+  const verdict = await runExtensionCheck({ ...runtime, clock: deps.clock, protection: { extension: name, declarations: Object.fromEntries(declarations.map(setting => [setting.key, setting.type])), errorCodes: manifest.error_codes ?? [], required: declarations.filter(setting => setting.required.includes('connect')).map(setting => setting.key), secrets: declarations.filter(setting => setting.secret).map(setting => setting.key) }, spec: { command: manifest.connection_check.runtime === 'python' ? `${installedDir}/.venv/bin/python` : 'node', args: [`${installedDir}/${manifest.connection_check.entry}`], env } });
   const connection = await deps.store.recordExtensionConnection({ name, status: verdict.outcome === 'succeeded' ? 'connected' : 'failed', checkedAt: deps.clock.now(), code: verdict.code ?? null, message: verdict.message === undefined ? null : failureText(verdict.message.replaceAll('\u0000', '\ufffd')) });
   if (!connection.ok) return connection;
   const result = await extensionStatus(deps, { name });

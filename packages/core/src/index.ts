@@ -270,7 +270,7 @@ export type { BrainSchedules } from './brain.js';
 export { workHoldGroup } from './domain/work-item.js';
 export { holdWorkGroup, releaseWorkGroup } from './queue/hold-groups.js';
 
-export type { ExtensionStore, ExtensionRecord, ExtensionStoreFailure } from './ports/store.js';
+export type { ExtensionStore, ExtensionRecord, ExtensionStoreFailure, ExtensionPythonEnvironment } from './ports/store.js';
 
 export { EXTENSION_CORE_VERSION, decodeExtensionManifest, isExtensionName, type ExtensionManifest } from './extensions/manifest.js';
 export { runExtensionCheck } from './extensions/check.js';

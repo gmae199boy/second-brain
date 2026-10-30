@@ -6,6 +6,7 @@ import { envFilePath } from '../config/paths.js';
 import { fileURLToPath } from 'node:url';
 import type { Clock, ExtensionRuntime } from 'second_brain';
 import { extensionAdminUrl, resolveStoreUrl, type ReadConfigResult } from '../config/codec.js';
+import { prepareExtensionPython } from './extension-python.js';
 import { systemTimer } from './clock.js';
 import { systemProcessLauncher } from './process-group.js';
 import { systemProcessInspector } from './process-inspector.js';
@@ -46,8 +47,14 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
       catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}; throw error; }
     },
     machineValues: name => ({ tokenstore: join(home, 'extensions', name, 'tokenstore') }),
-    databaseUrl, timer: systemTimer, launcher: { start: spec => systemProcessLauncher.start({ ...spec, command: process.execPath }) }, inspector: systemProcessInspector,
+    databaseUrl, preparePython: directory => prepareExtensionPython(directory, env), timer: systemTimer, launcher: { start: spec => systemProcessLauncher.start({ ...spec, command: spec.command === 'node' ? process.execPath : spec.command }) }, inspector: systemProcessInspector,
     packages: {
+      async rollback(name) {
+        const placement = pending.get(name); if (!placement) return;
+        await rm(placement.target, { recursive: true, force: true });
+        if (placement.moved) await rename(placement.backup, placement.target);
+        await rm(placement.stage, { recursive: true, force: true }); pending.delete(name);
+      },
       async resolve(name) {
         const test = await testExtensionsFolder(home, env, join(homedir(), '.second_brain'));
         const roots = [fileURLToPath(new URL('../../extensions/', import.meta.url)), ...(test === undefined ? [] : [test])];

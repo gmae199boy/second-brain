@@ -1,0 +1,6 @@
+[project]
+# [ASSUMPTION] 가정: 시험 환경에서 다운로드 없이 사용할 수 있는 Python patch는 3.12.13이다.
+name = "brain-pyfixture"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = ["jsonschema==4.25.1"]

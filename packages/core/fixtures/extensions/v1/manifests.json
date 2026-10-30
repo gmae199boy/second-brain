@@ -249,5 +249,34 @@
       ]
     },
     "expect": "invalid"
+  },
+  {
+    "name": "python commands",
+    "manifest": {
+      "name": "pyfixture",
+      "version": "1",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "python",
+        "entry": "check.py"
+      },
+      "work": [
+        {
+          "kind": "pyfixture.work",
+          "execution": "supervised",
+          "runtime": "python",
+          "entry": "work.py"
+        }
+      ],
+      "auth": {
+        "kind": "pyfixture.auth",
+        "execution": "supervised",
+        "runtime": "python",
+        "entry": "auth.py"
+      }
+    },
+    "expect": "valid"
   }
 ]

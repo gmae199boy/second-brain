@@ -5,11 +5,11 @@ export function isExtensionName(value: string): boolean {
 }
 export interface ExtensionManifest {
   name: string; version: string; core: 1; abi: 1; migrations: string;
-  connection_check: { runtime: 'node'; entry: string };
+  connection_check: { runtime: 'node' | 'python'; entry: string };
   settings?: ExtensionSettingDeclaration[];
   error_codes?: string[];
-  work?: { kind: string; execution: 'supervised'; runtime: 'node'; entry: string }[];
-  auth?: { kind: string; execution: 'supervised'; runtime: 'node'; entry: string };
+  work?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string }[];
+  auth?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string };
   default_schedules?: { kind: string; target_kind: string; target_id: string; local_time: string }[];
   raw_views?: string[];
 }
@@ -21,7 +21,7 @@ export function decodeExtensionManifest(text: string): { ok: true; manifest: Ext
   let v: unknown; try { v = JSON.parse(text); } catch { return invalid; }
   if (!object(v) || !['name', 'version', 'core', 'abi', 'migrations', 'connection_check'].every(k => Object.hasOwn(v, k)) || !Object.keys(v).every(k => ['name', 'version', 'core', 'abi', 'migrations', 'connection_check', 'settings', 'error_codes', 'work', 'auth', 'default_schedules', 'raw_views'].includes(k))) return invalid;
   const check = v['connection_check'];
-  if (typeof v['name'] !== 'string' || !isExtensionName(v['name']) || typeof v['version'] !== 'string' || !v['version'].trim() || /[\u0000-\u001f\u007f-\u009f]/.test(v['version']) || v['core'] !== EXTENSION_CORE_VERSION || v['abi'] !== 1 || !inside(v['migrations']) || !object(check) || !keys(check, ['runtime', 'entry']) || check['runtime'] !== 'node' || !inside(check['entry'])) return invalid;
+  if (typeof v['name'] !== 'string' || !isExtensionName(v['name']) || typeof v['version'] !== 'string' || !v['version'].trim() || /[\u0000-\u001f\u007f-\u009f]/.test(v['version']) || v['core'] !== EXTENSION_CORE_VERSION || v['abi'] !== 1 || !inside(v['migrations']) || !object(check) || !keys(check, ['runtime', 'entry']) || !['node', 'python'].includes(check['runtime'] as string) || !inside(check['entry'])) return invalid;
   if (v['settings'] !== undefined) {
     if (!Array.isArray(v['settings'])) return invalid;
     const seen = new Set<string>();
@@ -44,7 +44,7 @@ export function decodeExtensionManifest(text: string): { ok: true; manifest: Ext
     for (const work of v['work']) {
       if (!object(work) || !keys(work, ['kind', 'execution', 'runtime', 'entry']) || typeof work['kind'] !== 'string' ||
           !work['kind'].startsWith(`${v['name']}.`) || !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(work['kind']) || seen.has(work['kind']) ||
-          work['execution'] !== 'supervised' || work['runtime'] !== 'node' || !inside(work['entry'])) return invalid;
+          work['execution'] !== 'supervised' || !['node', 'python'].includes(work['runtime'] as string) || !inside(work['entry'])) return invalid;
       seen.add(work['kind']);
     }
   }
@@ -52,7 +52,7 @@ export function decodeExtensionManifest(text: string): { ok: true; manifest: Ext
     const auth = v['auth'];
     if (!object(auth) || !keys(auth, ['kind', 'execution', 'runtime', 'entry']) || typeof auth['kind'] !== 'string' ||
         !auth['kind'].startsWith(`${v['name']}.`) || !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(auth['kind']) ||
-        auth['execution'] !== 'supervised' || auth['runtime'] !== 'node' || !inside(auth['entry']) ||
+        auth['execution'] !== 'supervised' || !['node', 'python'].includes(auth['runtime'] as string) || !inside(auth['entry']) ||
         (Array.isArray(v['work']) && v['work'].some(work => object(work) && work['kind'] === auth['kind']))) return invalid;
   }
   if (v['raw_views'] !== undefined && (!Array.isArray(v['raw_views']) || v['raw_views'].some((view: unknown) => typeof view !== 'string' || !/^[a-z][a-z0-9_]*$/.test(view)) || new Set(v['raw_views']).size !== v['raw_views'].length)) return invalid;

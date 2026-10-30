@@ -1,0 +1,1 @@
+{"name":"pyfixture","version":"1.0.0","core":1,"abi":1,"migrations":"migrations","connection_check":{"runtime":"python","entry":"check.py"}}

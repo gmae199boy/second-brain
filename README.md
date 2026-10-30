@@ -786,6 +786,11 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | --- | --- | --- |
 | `EXTENSION_NOT_FOUND` | 2 | 지정한 확장 패키지가 없습니다 |
 | `EXTENSION_INVALID` | 2 | 확장 패키지의 선언이 올바르지 않습니다 |
+| `EXTENSION_PYTHON_PIN_INVALID` | 1 | Python 확장 의존 파일이나 버전 지정이 올바르지 않습니다 |
+| `EXTENSION_UV_NOT_FOUND` | 1 | uv를 찾을 수 없습니다 |
+| `EXTENSION_PYTHON_NOT_FOUND` | 1 | 지정한 Python을 찾을 수 없습니다 |
+| `EXTENSION_PYTHON_SYNC_FAILED` | 1 | Python 환경을 설치하지 못했습니다 |
+| `EXTENSION_PYTHON_VERSION_MISMATCH` | 1 | Python 환경의 버전이 지정한 버전과 다릅니다 |
 | `EXTENSION_CHECK_FAILED` | 1 | 확장 설치 뒤 연결 확인에 실패했습니다 |
 | `ABI_LINE_INVALID` | 1 | 프로세스 출력 줄이 ABI 형식과 다릅니다 |
 | `ABI_VERSION_UNKNOWN` | 1 | 지원하지 않는 프로세스 ABI 버전입니다 |
@@ -1100,3 +1105,5 @@ https://orbstack.dev 에서 설치하고, 꺼져 있으면 `orb start`로 켜세
 선행 검사가 실패하면 DB 검사를 건너뜁니다. 조회 명령은 컨테이너를 띄우지 않습니다.
 `setup uninstall`은 컨테이너를 내리고 볼륨을 남깁니다. 볼륨까지 지우려면
 `setup uninstall --delete-volume --yes`로 동의하세요.
+
+Python 확장 통합 시험은 uv, Python 3.12.13, 시험 PostgreSQL과 잠긴 의존성을 필요로 한다. `pnpm test:python`으로 별도 실행한다.

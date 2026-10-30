@@ -175,6 +175,11 @@ export interface ErrorCodeSpec {
 const CODES = {
   EXTENSION_NOT_FOUND: { exit: 2, retryable: false, meaning: '지정한 확장 패키지가 없습니다', hint: '확장 이름과 제공되는 패키지를 확인하세요' },
   EXTENSION_INVALID: { exit: 2, retryable: false, meaning: '확장 패키지의 선언이 올바르지 않습니다', hint: '확장 manifest와 패키지 경로를 확인하세요' },
+  EXTENSION_PYTHON_PIN_INVALID: { exit: 1, meaning: 'Python 확장 의존 파일이나 버전 지정이 올바르지 않습니다', hint: 'Python 확장 환경을 확인하세요' },
+  EXTENSION_UV_NOT_FOUND: { exit: 1, meaning: 'uv를 찾을 수 없습니다', hint: 'Python 확장 환경을 확인하세요' },
+  EXTENSION_PYTHON_NOT_FOUND: { exit: 1, meaning: '지정한 Python을 찾을 수 없습니다', hint: 'Python 확장 환경을 확인하세요' },
+  EXTENSION_PYTHON_SYNC_FAILED: { exit: 1, meaning: 'Python 환경을 설치하지 못했습니다', hint: 'Python 확장 환경을 확인하세요' },
+  EXTENSION_PYTHON_VERSION_MISMATCH: { exit: 1, meaning: 'Python 환경의 버전이 지정한 버전과 다릅니다', hint: 'Python 확장 환경을 확인하세요' },
   EXTENSION_CHECK_FAILED: { exit: 1, meaning: '확장 설치 뒤 연결 확인에 실패했습니다', hint: '`brain ext status`로 연결 확인 결과를 읽으세요' },
   ABI_LINE_INVALID: { exit: 1, retryable: false, meaning: '프로세스 출력 줄이 ABI 형식과 다릅니다', hint: '작업자의 JSON 이벤트 형식을 고치세요' },
   ABI_VERSION_UNKNOWN: { exit: 1, retryable: false, meaning: '지원하지 않는 프로세스 ABI 버전입니다', hint: '작업자가 ABI 버전 1을 쓰도록 고치세요' },

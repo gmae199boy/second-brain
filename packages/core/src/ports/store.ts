@@ -1469,7 +1469,10 @@ export interface ExtensionRecord {
   connectionCode: string | null; connectionMessage: string | null;
 }
 export type ExtensionStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+export interface ExtensionPythonEnvironment { status: 'succeeded' | 'failed'; code: string | null; checkedAt: Date }
 export interface ExtensionStore {
+  recordExtensionPythonEnvironment(input: { name: string } & ExtensionPythonEnvironment): Promise<{ ok: true } | ExtensionStoreFailure>;
+  getExtensionPythonEnvironment(name: string): Promise<{ ok: true; environment: ExtensionPythonEnvironment | null } | ExtensionStoreFailure>;
   recordExtensionInstall(input: { name: string; version: string; now: Date; workKinds?: readonly string[] }): Promise<{ ok: true } | ExtensionStoreFailure>;
   recordExtensionConnection(input: { name: string; status: 'connected' | 'failed'; code: string | null; message: string | null; checkedAt: Date }): Promise<{ ok: true } | ExtensionStoreFailure>;
   getExtension(name: string): Promise<{ ok: true; extension: ExtensionRecord | null } | ExtensionStoreFailure>;

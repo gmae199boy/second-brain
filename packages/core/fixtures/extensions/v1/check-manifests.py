@@ -38,6 +38,7 @@ def valid(value):
         return False
     return all(schedule['kind'] in kinds for schedule in value.get('default_schedules', []))
 
-for fixture in fixtures:
-    assert valid(fixture['manifest']) == (fixture['expect'] == 'valid'), fixture['name']
-print(f'{len(fixtures)} manifest fixtures passed')
+if __name__ == '__main__':
+    for fixture in fixtures:
+        assert valid(fixture['manifest']) == (fixture['expect'] == 'valid'), fixture['name']
+    print(f'{len(fixtures)} manifest fixtures passed')

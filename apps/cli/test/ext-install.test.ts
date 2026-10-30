@@ -84,6 +84,42 @@ it('restores the previous package and registry facts when a reinstall migration 
   expect(await fixture.ledger('testext')).toEqual([{ owner: 'testext', version: 1 }]);
   expect(await readdir(join(fixture.home, 'extensions'))).toEqual(['testext']);
 });
+it.each([
+  ['invalid', 'EXTENSION_PYTHON_PIN_INVALID'], ['uv', 'EXTENSION_UV_NOT_FOUND'],
+  ['python', 'EXTENSION_PYTHON_NOT_FOUND'], ['sync', 'EXTENSION_PYTHON_SYNC_FAILED'],
+  ['version', 'EXTENSION_PYTHON_VERSION_MISMATCH'],
+])('Python %s 실패 시 이전 패키지와 tokenstore를 복원한다', async (mode, code) => {
+  const { cp, mkdir, readFile, writeFile, readdir } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const fixture = await extHome(); cleanup.push(fixture.cleanup);
+  const sources = join(fixture.home, 'packages'); await mkdir(sources);
+  const source = join(sources, 'testext');
+  await cp(fileURLToPath(new URL('./fixtures/extensions/testext/', import.meta.url)), source, { recursive: true });
+  fixture.env.SECOND_BRAIN_TEST_EXTENSIONS = sources;
+  const installed = await fixture.run(['ext', 'install', 'testext', '--json']);
+  expect(installed.code, installed.stderr).toBe(0);
+  const target = join(fixture.home, 'extensions/testext');
+  const original = await readFile(join(target, 'manifest.json'), 'utf8');
+  await mkdir(join(target, 'tokenstore')); await writeFile(join(target, 'tokenstore/credentials'), 'existing-token');
+  const replacement = JSON.parse(original);
+  replacement.connection_check = { runtime: 'python', entry: 'check.py' };
+  await writeFile(join(source, 'manifest.json'), JSON.stringify(replacement));
+  await writeFile(join(source, '.python-version'), mode === 'invalid' ? '3.12' : '3.12.13');
+  await writeFile(join(source, 'pyproject.toml'), ''); await writeFile(join(source, 'uv.lock'), '');
+  const bin = join(fixture.home, 'fake-bin'); await mkdir(bin);
+  if (mode !== 'uv') await writeFile(join(bin, 'uv'), `#!/bin/sh\ncase "$1" in\n--version) exit 0;;\npython) ${mode === 'python' ? 'echo secret-output >&2; exit 1' : 'echo /local/python; exit 0'};;\nsync) ${mode === 'sync' ? 'echo secret-output >&2; exit 1' : '/bin/mkdir -p .venv/bin; /bin/echo "#!/bin/sh\\necho 3.12.14" > .venv/bin/python; /bin/chmod +x .venv/bin/python; exit 0'};;\nesac\n`, { mode: 0o755 });
+  const environment: NodeJS.ProcessEnv = fixture.env;
+  environment.PATH = bin; environment.SECRET_TEST_VALUE = 'secret-output';
+  const failed = await fixture.run(['ext', 'install', 'testext', '--json']);
+  expect(failed.body.error.code).toBe(code);
+  expect(await readFile(join(target, 'manifest.json'), 'utf8')).toBe(original);
+  expect(await readFile(join(target, 'tokenstore/credentials'), 'utf8')).toBe('existing-token');
+  expect(await readdir(join(fixture.home, 'extensions'))).toEqual(['testext']);
+  const status = await fixture.run(['ext', 'status', 'testext', '--json']);
+  expect(status.body.data).toMatchObject({ installed: true, connection: { status: 'connected' }, python_environment: { status: 'failed', code } });
+  expect(JSON.stringify({ failed, status })).not.toContain('secret-output');
+  const textStatus = await fixture.run(['ext', 'status', 'testext']); expect(textStatus.stdout).toContain(code);
+});
 it('persists ABI errors containing NUL and credentials as a failed connection', async () => {
   const { cp, mkdir, writeFile } = await import('node:fs/promises');
   const { fileURLToPath } = await import('node:url');

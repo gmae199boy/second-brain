@@ -6,6 +6,14 @@ type Row = { name: string; version: string; installed_at: string; enabled: boole
 const record = (r: Row): ExtensionRecord => ({ name: r.name, version: r.version, installedAt: new Date(r.installed_at), enabled: r.enabled, enabledChangedAt: new Date(r.enabled_changed_at), connectionStatus: r.connection_status, connectionCheckedAt: r.connection_checked_at === null ? null : new Date(r.connection_checked_at), connectionCode: r.connection_code, connectionMessage: r.connection_message });
 export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
   return {
+    async recordExtensionPythonEnvironment({ name, status, code, checkedAt }) {
+      const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try { const result = await withWrite(opened.connection, async held => { await sql`insert into brain.extension_python_environment(name, status, code, checked_at) values (${name}, ${status}, ${code}, ${checkedAt.toISOString()}) on conflict(name) do update set status=excluded.status, code=excluded.code, checked_at=excluded.checked_at`.execute(held); }); return result.ok ? { ok: true } : result; } catch (error) { return databaseFailure(error); }
+    },
+    async getExtensionPythonEnvironment(name) {
+      const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try { const result = await sql<{ status: 'succeeded' | 'failed'; code: string | null; checked_at: string }>`select status, code, checked_at from brain.extension_python_environment where name=${name}`.execute(opened.connection.db); const row = result.rows[0]; return { ok: true, environment: row ? { status: row.status, code: row.code, checkedAt: new Date(row.checked_at) } : null }; } catch (error) { return databaseFailure(error); }
+    },
     async recordExtensionInstall({ name, version, now, workKinds }) {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {

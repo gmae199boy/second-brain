@@ -171,6 +171,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const { health = DEFAULT_HEALTH } = options;
 
   const extensionWorkKinds = new Map<string, readonly string[]>();
+  const pythonEnvironments = new Map<string, import('../../ports/store.js').ExtensionPythonEnvironment>();
   const extensions = new Map<string, import('../../ports/store.js').ExtensionRecord>();
   const users = new Map<string, User>();
   // Keyed by the idempotency keys of the Table Contract: a project by its
@@ -452,6 +453,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
 
   return {
     ...memorySettingsStore(),
+    async recordExtensionPythonEnvironment({ name, ...environment }) { pythonEnvironments.set(name, structuredClone(environment)); return { ok: true }; },
+    async getExtensionPythonEnvironment(name) { return { ok: true, environment: structuredClone(pythonEnvironments.get(name) ?? null) }; },
     async recordExtensionInstall({ name, version, now, workKinds }) {
       extensionWorkKinds.set(name, workKinds ?? []);
       const existing = extensions.get(name);
