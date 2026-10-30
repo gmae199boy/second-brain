@@ -59,7 +59,7 @@ blocked_reason: "intent gap: core 공개 view의 SQL 객체·노출 컬럼·허�
 - `apps/cli/src/daemon/supervisor.ts` — work·auth의 보호된 launch 준비와 snapshot을 재사용한다. 현재 확장에도 core store URL을 전달한다.
 - `apps/cli/src/config/codec.ts` — 기존 `.env` 보존·원자적 0600 쓰기와 관리 URL 해석을 재사용할 수 있다.
 - `packages/postgres/src/setup.ts` — cluster 전역 role 변경을 advisory lock으로 직렬화하며 `brain_owner`를 준비한다.
-- `packages/postgres/src/migrate.ts` — `brain_owner` 실행, owner별 연속 번호·checksum·파일별 트랜잭션을 보존한다. 조사 시 core 마지막 번호는 0013이다.
+- `packages/postgres/src/migrate.ts` — `brain_owner` 실행, owner별 연속 번호·checksum·파일별 트랜잭션을 보존한다. 2026-10-30 재확인 시 core 마지막 번호는 0014이며 구현 착수 때 다시 확인한다.
 - `packages/postgres/migrations/0004_attempt_fence.sql` — 현재 PUBLIC EXECUTE인 attempt 확인 함수와 PUBLIC EXECUTE가 회수된 trigger 함수가 있다. 기존 적용 SQL을 바꾸지 않는다.
 - `apps/cli/test/ext-fixture.ts` — 격리 home·PG·실제 CLI·정리 harness다. fixture migration의 schema 생성과 새 provisioning 순서를 조정해야 한다.
 
@@ -101,13 +101,15 @@ blocked_reason: "intent gap: core 공개 view의 SQL 객체·노출 컬럼·허�
 
 - 티켓 13.4와 에픽 E13-5, architecture AD-30은 core 공개 view SELECT를 요구하지만 SQL 객체·노출 컬럼·허용 데이터 범위를 지정하지 않는다.
 - `packages/postgres/migrations/` 전체에서 CREATE VIEW 정의를 찾지 못했다. 기존에 승인된 공개 SQL view를 재사용할 근거가 없다.
-- `epic-extensions-research-code.md`의 §5는 “공개 view가 SQL view인지 SDK projection인지 구체적 모양은 후보”라고 명시한다. 에픽 Notes는 최종 공개 상태 view 생산자를 후속 13.6으로 지정한다.
+- `epic-extensions-research-code.md`의 §6은 “공개 view가 SQL view인지 SDK projection인지 구체적 모양은 후보”라고 명시한다. 에픽 Notes는 최종 공개 상태 view 생산자를 후속 13.6으로 지정한다.
 - 확정할 질문: 13.4에서 확장 role이 SELECT할 core SQL view는 무엇이며 어떤 컬럼·행을 공개하는가? 후속 13.6의 상태 view를 기다리는 권한 등록 계약과 시험 전용 view만 만드는 것이 이번 인수 조건을 충족하는가, 아니면 이번에 실제 공개 view를 신설해야 하는가?
 - 어느 선택이든 공개 데이터 범위 또는 관찰 가능한 인수 결과를 바꾼다. 보안·비밀 관련 gap은 가정으로 메울 수 없다는 build-auto 지침에 따라 구현 전에 HALT한다. 외부 사람 전용 작업이 아니라 저장소 내 보안 계약 미결정이므로 awaiting-operator 대상이 아니다.
 
 ## Auto Run Result
 
-Status: blocked
+2026-10-30 감독자 재확인: 아래는 원래 escalation의 이력이다. 위 계약은 커밋 6dc5964에서 해소되었고 독립 Orca Codex 조사로 현재 코드와 권한 반례를 다시 대조했다. 이력의 blocked 표시는 현재 미해결 스펙을 뜻하지 않는다. 실제 PG 권한 검증은 구현 시 수행한다.
+
+Status: blocked (원래 escalation 이력)
 
 - 차단 사유: intent gap — core 공개 view의 SQL 객체·노출 컬럼·허용 데이터 범위가 미결정이다. 근거와 확정할 질문은 위 미해결 보안 계약에 기록했다.
 - 완료한 작업: 티켓·에픽·관련 아키텍처·선행 계획 확인, 독립 CLI 세션의 읽기 전용 코드 조사, 현재 코드 재확인과 계획 작성이다.
