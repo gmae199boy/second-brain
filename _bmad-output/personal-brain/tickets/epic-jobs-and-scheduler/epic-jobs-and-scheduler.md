@@ -1,5 +1,6 @@
 ---
 type: epic
+status: done
 title: "공통 작업 runtime과 스케줄러"
 parent: personal-brain
 covers: [R8, R9, R10]
@@ -79,6 +80,8 @@ Brain의 작업 runtime을 긴 작업과 예약에 맞게 넓힌다. 범위는 �
 - research — _bmad-output/personal-brain/tickets/epic-jobs-and-scheduler/epic-jobs-and-scheduler-research-code.md (2026-10-28 정적 코드 조사)
 
 ## Notes
+
+- Decision(2026-10-30, 감독자 종료 R-2): E12-1~11과 Done when 1~5를 티켓 결과에 대조했다. 12.12의 원격 배포 확인은 운영자 목록에 남기며 DW-8, DW-16~19는 수동 sweep 대상이다.
 
 - Waits on epic-postgres-primary because: PostgreSQL의 `work_items`·`schedules`와 잠금·트랜잭션 규칙, 시간대 설정이 있어야 한다.
 - Decision(2026-10-28, 사용자): 놓친 예약. Mac이 잠들었거나 꺼져 있어 예약 시각을 놓쳤으면, 깨어난 뒤 놓친 날짜(하루든 여러 날이든)에 성공한 실행이 없을 때만 돌린다. 여러 날을 놓쳐도 한 번 돌고, 그 한 번이 빠진 날짜를 처리한다(Garmin 수집은 coverage로 빠진 날짜를 채운다). 그날 이미 성공한 실행이 있으면 돌지 않는다. 이전의 Open question(놓친 예약 기준)을 대신한다.

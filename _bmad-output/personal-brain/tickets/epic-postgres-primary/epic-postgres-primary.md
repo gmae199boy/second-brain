@@ -1,5 +1,6 @@
 ---
 type: epic
+status: done
 title: "PostgreSQL 단일 주 저장소"
 parent: personal-brain
 covers: [R3, R4, R18]
@@ -78,6 +79,8 @@ risk: high
 - epic — _bmad-output/personal-brain/tickets/epic-drive/epic-drive.md, E8-7(옮겨 옴)
 
 ## Notes
+
+- Decision(2026-10-30, 감독자 종료 R-2): E11-1~10과 Done when 1~6을 티켓 결과에 대조했다. 11.13의 원격 배포 확인은 운영자 목록에 남기며 DW-8~11은 수동 sweep 대상이다.
 
 - Waits on epic-daemon because: setup run·플러그인 bootstrap 갱신·doctor·데몬 재시작 흐름과 플러그인 배포 경로가 있어야 PostgreSQL 설치·점검 단계를 더할 수 있다.
 - Waits on epic-attachments because: SQLite 0008(첨부·추출 변경 규칙 trigger)과 FileStore·추출 세대 Store 계약이 PostgreSQL로 옮길 마지막 SQLite 스키마다. 10.1·10.2·10.3·10.4·10.6도 완료로 닫았고, 에픽은 열린 항목을 남긴 채 닫혔다(2026-10-28, `epic-attachments-closure.md`).
