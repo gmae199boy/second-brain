@@ -91,7 +91,7 @@ title = "이 Mac에서 확인: 설치본에서 Drive를 연결해 첨부 원본�
 description = "기능 묶음을 플러그인 배포(`plugin/app-ref`를 앞선 커밋으로, `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올림)로 이 Mac의 설치본에 넣고 에이전트가 진행한다(2026-10-28 위임, `hitl = false`). 에이전트가 먼저 하는 것: 격리 홈에서 가짜 서버 suite, 설치본의 `brain sources` 명령·doctor·설정 키 확인, 사람 몫 안내 작성(Google Cloud에서 데스크톱 OAuth client 만들기, 동의 화면 상태, 테스트 사용자, 두 키를 `.env`에 넣는 법). 사람 단계: OAuth client와 동의. 이 단계가 아직이면 필요한 것과 재개 절차(`brain sources connect drive` → `bmad-loop confirm`)를 `operator_actions`에 남기고 그 단계만 `awaiting-operator`다(성공으로 기록하지 않고 run은 계속). 동의가 되어 있으면: Brain 루트 폴더 생성, 첨부 원본 하나를 보관 기간 설정대로 이전(로컬 삭제는 기간 뒤), 감시 폴더 하나를 더해 sync, 그 폴더의 문서 하나를 본문으로 찾고 Drive 링크로 원문 확인, 재시작 뒤 상태 유지. plan에는 공개 투영(단계별 성공/실패, 건수)만 남기고 실제 파일 이름·본문·토큰은 쓰지 않는다. 원격 push가 있어야만 하는 단계는 `operator_actions`다."
 verify = "에이전트가 이 Mac에서 위 순서를 한 번 돌리고 결과를 plan에 남긴다(공개 투영만). 격리 홈 suite가 통과하고 설치본 명령·doctor가 정상이다. 동의가 되어 있으면 첨부 원본 이전과 폴더 문서 검색·Drive 링크 원문 확인이 성공한다. 동의가 아직이면 `operator_actions`를 남기고 8은 `awaiting-operator`다(성공으로 기록하지 않음)."
 covers = ["E8-1", "E8-2", "E8-6"]
-after = [7]
+after = [1, 2, 3, 4, 5, 6]
 hitl = false
 risk = "medium"
 references = ["_bmad-output/personal-brain/tickets/epic-drive/epic-drive-research-code.md, §9(이 Mac에서 에이전트와 사람의 몫)"]

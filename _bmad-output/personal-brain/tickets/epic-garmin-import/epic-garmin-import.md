@@ -136,3 +136,4 @@ Garmin 확장 뼈대와 스키마를 PostgreSQL에 만들고 기존 Garmin 데�
   - 8: private 전수 대조 요약과, 공개 plan에 개인 데이터가 없음을 따로 점검한다.
 - Decision(2026-10-28, 세트 검증 F5): 7(Refactor sweep)은 코드 스토리 1~6의 정리를 닫는다. 8의 배포·새 capture·실제 반입은 그 뒤 따로 둔다(epic 15의 15.6·15.7과 같은 예외). 8에서 찾은 기능 문제는 버그 스토리로 고치고, 7로 밀린 기능을 넣지 않는다. 8은 verify를 통과할 때까지 실제 반입 완료로 세지 않는다.
 - Decision(2026-10-28, 세트 검증 S1·S2 채택): 1의 plan 상한을 description에 고정했다(raw 한 건, 일 지표 하나, Markdown 하나, 정상 파일 인계 하나). 각 plan은 실제 PG·Python·데몬 구성 명령, 공유 fixture 경로, kill 지점의 동기화·종료 확인, 재시작·정리 명령을 적는다. 5는 요청 INSERT 뒤, 인계 commit 전, FileStore 저장 뒤 결과 commit 전을 나눈다. 7은 TS 기본 suite와 Python suite의 실행 명령을 따로 남긴다.
+- Decision(2026-10-30, 사용자): 에픽마다 두던 Refactor sweep(14.7)을 뺐다(`dropped`). 리뷰가 미룬 기존 결함은 `deferred-work.md` 장부에 남고, 사용자가 원할 때 `bmad-loop sweep`으로 직접 처리한다. 이 Mac 확인(14.8)은 sweep 대신 sweep이 기다리던 스토리들을 기다린다.

@@ -79,6 +79,6 @@ title = "이 Mac에서 확인: 플러그인 배포로 채널이 설치본에서 
 description = "기능 묶음을 플러그인 배포(`plugin/app-ref`를 앞선 커밋으로, `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올림)로 이 Mac의 설치본에 넣고 에이전트가 확인한다(2026-10-28 위임: 로컬 설치본으로 확인하고, 원격 push가 있어야만 하는 단계는 `operator_actions`에 남긴다). 실계정: 이 Mac의 옛 Garmin 설정 위치(옛 tokenstore의 `telegram.json`, 옛 config의 tokenstore 경로)에서 `bot_token`·`chat_id`를 찾으면 Brain `.env`의 `BRAIN_TELEGRAM_BOT_TOKEN`·`BRAIN_TELEGRAM_CHAT_ID`로 옮기고(값은 출력·기록하지 않음), 확인용 메시지 한 건을 옛 채팅으로 보내 `brain channels status`가 `sent`와 message id를 보이는지 본다. 로컬 설치·status·resend·doctor·스킬 발견은 에이전트가 먼저 확인한다. 설정을 찾지 못하면 필요한 두 키와 재개 절차(`.env`에 두 값을 넣고 확인용 발신을 다시 한 뒤 `bmad-loop confirm`)를 `operator_actions`에 남기고 7은 `awaiting-operator`로 둔다. 실발신 성공으로 기록하지 않고, run은 계속한다. 원격 push가 있어야만 하는 배포 단계도 같은 방식으로 끝난 것과 남은 것을 나눈다. plan에는 다시 돌릴 때의 정리 절차(확인용 요청 지우기)를 적는다."
 verify = "에이전트가 이 Mac에서 위 확인 목록을 한 번 돌리고 결과(명령 출력, doctor 출력)를 plan에 남긴다. 실계정 발신이 성공했으면 status의 `sent`와 message id를 남기고 7을 끝낸다. 설정이 없으면 `operator_actions`를 남기고 7은 `awaiting-operator`다(성공으로 기록하지 않는다)."
 covers = ["E15-1", "E15-4", "E15-8"]
-after = [6]
+after = [1, 2, 3, 4, 5]
 hitl = false
 risk = "medium"

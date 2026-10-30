@@ -103,7 +103,7 @@ title = "이 Mac에서 전환: 옛 Garmin 수집 예약을 내리고 공통 예�
 description = "기능 묶음을 플러그인 배포(`plugin/app-ref`를 앞선 커밋으로, `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올림)로 이 Mac의 설치본에 넣고 에이전트가 진행한다(2026-10-28 위임, `hitl = false`). 순서: 새 쪽 보류 그룹 `extension:garmin`을 보류해 예약 발화·수동 실행·청구를 먼저 막고 진행 attempt가 없음을 확인 → 보류 상태에서 설치본의 Garmin 확장 갱신(lock frozen 재설치, 마이그레이션)과, 갱신이 보류를 풀거나 예약을 발화시키지 않음을 확인(공통 설치 API가 이 조합을 지원하지 않으면 옛 수집 중지를 설치보다 먼저 한다) → 옛 report가 스스로 수집을 부르는지 최종 코드에서 확인 → 옛 `local.garmin-pipeline.collect`(수집을 부르면 report도) LaunchAgent bootout, plist는 복구용으로 남김, 등록 부재와 옛 writer 프로세스 종료 확인(종료가 불명이면 전환을 멈춘다) → 보류 해제와 공통 예약(11:00·11:15) 등록 → 옛 tokenstore로 연결 확인 → `brain ext run garmin collect`로 실수집 한 번 → 결과·건강 행·\"현재\" view 확인. MFA가 필요하면 재인증 절차를 `operator_actions`에 남기고 그 단계만 `awaiting-operator`다(성공으로 기록하지 않음). 계정 보호 상태가 차단이면 호출하지 않고 기다린다. 복구 절차(새 쪽 보류·예약 제거 → 진행 중 새 수집의 종료 확인 → 옛 plist 다시 load, 두 수집기를 동시에 켜지 않음)를 plan에 적는다. plan에는 공개 투영(단계별 성공/실패, 건수)만 남기고 실제 건강값·계정 id·토큰은 쓰지 않는다. 원격 push가 있어야만 하는 단계는 `operator_actions`다."
 verify = "에이전트가 이 Mac에서 위 순서를 한 번 돌리고 결과를 plan에 남긴다(공개 투영만). `launchctl list`에 옛 collect label이 없고, 공통 예약 두 개가 등록돼 있으며, 실수집이 성공했으면 그 일감의 ABI 결과와 새 수집 dataset의 raw·건강 행 건수가 0보다 크고 \"현재\" view 읽기가 성공하며, 옛 수집과 새 수집이 겹친 시간이 없고(보류 중 예약 시각을 넘겨도 청구 0, 종료 확인 성공 여부만 plan에), MFA·차단·미실행·실패는 실수집 성공으로 세지 않는다. MFA가 필요했으면 `operator_actions`를 남기고 9는 `awaiting-operator`다."
 covers = ["E16-1", "E16-8", "E16-9"]
-after = [8, "12.8"]
+after = [1, 2, 3, 4, 5, 6, 7, "12.8"]
 hitl = false
 risk = "high"
 references = ["_bmad-output/personal-brain/tickets/epic-garmin-runtime/epic-garmin-runtime-research-code.md, §9(이 Mac 관찰·전환 순서), 스토리 후보 S7"]

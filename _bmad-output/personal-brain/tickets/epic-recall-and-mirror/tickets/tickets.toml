@@ -116,7 +116,7 @@ title = "이 Mac에서 확인: 설치본에서 시간 조회·로그 검색·미
 description = "기능 묶음을 플러그인 배포(`plugin/app-ref`를 앞선 커밋으로, `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올림)로 이 Mac의 설치본에 넣고 에이전트가 확인한다(2026-10-28 위임, `hitl = false`): `brain recall time|logs`, `--count`, `brain sessions list`, 미러 생성·`mirror rebuild` 동등성, `index rebuild` 전후의 러너 비교(실제 문항은 `~/.second_brain/eval/`에 private으로, 저장소에 넣지 않음), doctor, SM-7 측정, EXIF가 있는 실제 사진 한 장의 촬영 일시 필터, SM-2(시간 조회 90%)를 실행 전 private 기록에 고정한 실제 날짜 질문·기대 기간으로 따로 판정(공개 plan에는 중립 id·성공 여부·점수). plan에는 공개 투영(단계별 성공/실패, 건수, 점수, 중립 문항 id)만 남기고 본문·개인 경로·사진 정보는 쓰지 않는다. SM-3 답변 채점은 사람 몫이다. 원격 push가 있어야만 하는 단계는 `operator_actions`다. 10에서 찾은 기능 문제는 버그 스토리로 고친다."
 verify = "에이전트가 이 Mac에서 위 확인을 한 번 돌리고 결과를 plan에 남긴다(공개 투영만). 각 명령이 설치본에서 정상 응답을 내고, 미러 rebuild 전후가 같으며, rebuild 전후 러너 점수가 기록되고, SM-2 판정(90% 충족 여부)과 SM-7 측정이 남으며, plan에 본문·개인 경로가 없다."
 covers = ["E4-2", "E4-3", "E4-6", "E4-8"]
-after = [9]
+after = [2, 3, 4, 5, 6, 7, 8, 1]
 hitl = false
 risk = "medium"
 

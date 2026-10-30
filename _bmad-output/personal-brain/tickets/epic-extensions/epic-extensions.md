@@ -105,3 +105,4 @@ Garmin을 쓰지 않는 사용자는 아무것도 더 설치하지 않는다. �
   - 10 medium: 설치본에서만 드러나는 배포 누락을 놓친다.
 
 - Decision(2026-10-30, 추천으로 정함, 13.2 escalation 해소): ABI v1 선택 snapshot 입력과 단계별 비밀 요구·확장 진단 보호를 13.2 plan intent-contract에 확정한다. 독립 Codex가 기존 코드의 누출 반례와 보완 계약을 검증했다.
+- Decision(2026-10-30, 사용자): 에픽마다 두던 Refactor sweep(13.9)을 뺐다(`dropped`). 리뷰가 미룬 기존 결함은 `deferred-work.md` 장부에 남고, 사용자가 원할 때 `bmad-loop sweep`으로 직접 처리한다. 이 Mac 확인(13.10)은 sweep 대신 sweep이 기다리던 스토리들을 기다린다.

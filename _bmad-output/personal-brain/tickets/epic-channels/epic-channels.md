@@ -105,3 +105,4 @@ Brain의 어떤 기능이든 같은 채널 계약으로 메시지를 보내고, 
 - Decision(2026-10-28, 세트 검증 F2): 실계정 설정이 없으면 7은 `awaiting-operator`다. `operator_actions`를 남겼다는 사실을 실발신 성공으로 기록하지 않는다. run은 계속한다.
 - Decision(2026-10-28, 세트 검증 F3): 6(Refactor sweep)이 코드 스토리 1~5의 정리를 끝내고, 7의 로컬 배포와 설치본·실계정 확인은 그 뒤에 따로 둔다(epic 11~13 선례). 7에서 찾은 기능 문제는 버그 스토리로 고친다.
 - Decision(2026-10-28, 세트 검증 S1~S3 채택): 1의 plan 크기를 제한하고, 넘치면 비필수 완성을 이름 붙인 다음 스토리로 뺀다. 고위험 1~3에 추가 확인을 고정했다(동시 gate 경쟁, 접수 뒤 worker 종료, dataset 충돌, 인계 중간 종료). 3은 legacy를 resend 적격성에서 빼는 표식을 남기고, CLI 거부는 5가 완성한다.
+- Decision(2026-10-30, 사용자): 에픽마다 두던 Refactor sweep(15.6)을 뺐다(`dropped`). 리뷰가 미룬 기존 결함은 `deferred-work.md` 장부에 남고, 사용자가 원할 때 `bmad-loop sweep`으로 직접 처리한다. 이 Mac 확인(15.7)은 sweep 대신 sweep이 기다리던 스토리들을 기다린다.

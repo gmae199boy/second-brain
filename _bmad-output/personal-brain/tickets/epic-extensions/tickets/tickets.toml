@@ -115,6 +115,6 @@ title = "이 Mac에서 확인: 플러그인 배포로 install 스킬과 확장 �
 description = "기능 묶음을 플러그인 배포(`plugin/app-ref`를 앞선 커밋으로, `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올림)로 이 Mac의 설치본에 넣고 에이전트가 확인한다(2026-10-28 위임: 로컬 설치본으로 확인하고, 원격 push가 있어야만 하는 단계는 하지 않고 `operator_actions`에 남긴다). 먼저 이 Mac의 플러그인 출처가 로컬 marketplace인지 원격 캐시인지 확인한다. testext와 시험용 로그인은 1·5의 시험용 resolver·가짜 로그인 harness로 쓴다. 그래서 확인은 운영 홈이 아니라 격리된 Brain 홈·DB·LaunchAgent Label에서 설치본과 같은 앱·스킬로 한다. 운영 설치본에서는 버전과 스킬 발견만 확인하고, 두 증거를 나눠 남긴다. 확인할 것: 새 Claude Code 세션(`claude -p`)이 install 스킬을 찾고 testext 정상 경로(설치 → 시험용 로그인 → 연결 확인 → 예약 등록)를 단계별 결과와 함께 끝내며, 다시 돌리면 이어 가고, `ext disable`·`enable`이 상태를 바꾸고, 확장이 없는 상태의 doctor가 Python 없이 통과하며, 플러그인 갱신 뒤에도 확장이 남는다. plan에는 다시 돌릴 때 쓸 정리 절차(testext 제거, 확장 schema·role 정리)를 적는다."
 verify = "에이전트가 이 Mac에서 위 확인 목록을 한 번 돌리고 결과(세션 기록 요약, 명령 출력, doctor 출력)를 plan에 남긴다."
 covers = ["E13-9", "E13-10"]
-after = [9]
+after = [1, 2, 3, 4, 5, 6, 7, 8]
 hitl = false
 risk = "medium"

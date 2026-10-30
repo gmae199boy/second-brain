@@ -103,7 +103,7 @@ title = "이 Mac에서 확인: 운영 설치본의 백업 한 번을 격리된 �
 description = "기능 묶음을 플러그인 배포(`plugin/app-ref`를 앞선 커밋으로, `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올림)로 이 Mac의 설치본에 넣고 에이전트가 진행한다(2026-10-28 위임, `hitl = false`, 비파괴). 순서: 설치본의 갱신이 공통 갱신 함수로 끝나는지와 doctor 확인 → 운영 홈에서 `brain backup create` 한 번(그동안 수집이 계속되는지 확인) → `brain backup verify` → 그 묶음을 격리된 새 홈(별도 compose project·volume·port·Label)에 `restore`하고 3의 공통 복구 확인기로 건수·해시·블롭 열기·role·확장 상태를 비교(재바인딩된 URL·경로가 격리 홈만 가리키고, 예약·drain·외부 발신이 자동으로 재개되지 않음을 확인) → 격리 홈을 정리(`setup uninstall --all --delete-data`를 격리 홈에서만) → doctor의 백업 경고 확인. 운영 DB를 덮거나 운영 volume을 지우지 않는다. plan에는 공개 투영(단계별 성공/실패, 건수, 일치 여부)만 남기고 메시지 본문·비밀·파일 이름은 쓰지 않는다. 백업 묶음은 운영 홈의 `backups/`에 남는다. 원격 push가 있어야만 하는 단계는 `operator_actions`다."
 verify = "에이전트가 이 Mac에서 위 순서를 한 번 돌리고 결과를 plan에 남긴다(공개 투영만). 설치본 갱신과 doctor가 정상이고, 운영 백업이 완료돼 verify가 일치하며, 격리 홈 복구의 건수·해시·블롭 열기·role·확장 상태가 원본과 같고, 백업 중 수집이 막히지 않았으며, 격리 홈 정리 뒤 운영 홈의 컨테이너·volume·데이터가 그대로다."
 covers = ["E5-1", "E5-3", "E5-4"]
-after = [8]
+after = [1, 2, 3, 4, 5, 6, 7]
 hitl = false
 risk = "medium"
 references = ["_bmad-output/personal-brain/tickets/epic-operations/epic-operations-research-code.md, §9(이 Mac 확인)"]

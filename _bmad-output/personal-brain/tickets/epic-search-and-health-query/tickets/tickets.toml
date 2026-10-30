@@ -79,7 +79,7 @@ title = "이 Mac에서 확인: 설치본에서 대화·리포트를 찾아 원�
 description = "기능 묶음을 플러그인 배포(`plugin/app-ref`를 앞선 커밋으로, `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올림)로 이 Mac의 설치본에 넣고 에이전트가 확인한다(2026-10-28 위임, `hitl = false`). 순서: 설치본에서 조각 drain이 기존 세션을 따라잡는지 확인 → `brain recall chunks|docs|expand`, `brain sessions read`, `brain files show`, `brain health query`, doctor, recall 스킬 발견을 확인 → 이 Mac의 실제 기억으로 질문 10개(대화 6, 분석 리포트 2, 건강 수치 2)를 만들고, 실행 전에 Brain 홈의 private 검증 기록에 문항, 기대 식별자·수치 oracle, 허용 재질의, 문항별 성공 조건(검색 문항은 결과 5건 안 적중과 출처만으로 원문 읽기, 건강 문항은 독립 계산 일치)을 고정한 뒤 돌린다. 실제 질문 원문·원시 행·명령 출력·오류 상세는 private 기록에만 두고, 공개 plan에는 문항 id, 중립 질문 유형, 공개용 불투명 id, 성공 여부, 값 없는 실패 분류만 둔다. 최초 10건 판정과 버그 수정 뒤 재실행을 구별한다. 7건 미만이거나 설치·doctor·원문·명령 확인이 실패하면 실패 원인(질의·색인·결과 계약·설치)을 분류해 plan에 남기고 버그 스토리로 고친 뒤 다시 확인한다. 원격 push가 있어야만 하는 단계는 `operator_actions`다."
 verify = "에이전트가 이 Mac에서 위 순서를 한 번 돌리고 결과를 plan에 남긴다(공개 투영만). 각 명령이 설치본에서 정상 응답을 내고, 실제 질문 10건 중 7건 이상이 미리 고정한 기준으로 성공하며, plan에 실제 질문 원문·본문·건강값이 없고, 합성 본문·건강값 표식을 넣은 시험 질의와 실패 출력이 공개 증거에 섞이지 않는다."
 covers = ["E17-6", "E17-7"]
-after = [6]
+after = [1, 2, 3, 4, 5]
 hitl = false
 risk = "medium"
 references = ["_bmad-output/personal-brain/tickets/epic-search-and-health-query/epic-search-and-health-query-research-code.md, §9(Done when 4), 스토리 후보 T6"]

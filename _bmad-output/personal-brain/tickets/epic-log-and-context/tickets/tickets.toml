@@ -185,7 +185,7 @@ title = "이 Mac에서 확인: 플러그인 배포로 시작 맥락과 Stop 점�
 description = "11의 생성 스킬·4의 SessionStart 줄·12의 Stop 줄을 담은 앞선 커밋으로 `plugin/app-ref`를 고정하고 `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올려 이 Mac의 플러그인을 갱신한 뒤, 에이전트가 체크리스트를 돌린다(2026-10-28 위임, `hitl = false`): 설치본으로 연 `claude -p` 세션의 시작 맥락(Done when 1·5), 12의 조건별 Stop 체크리스트(Done when 9), 기록 스킬 발견, `brain stats show`, doctor. 실제 개인 발화·로그 원문은 공개 plan에 넣지 않고 private 검증 기록에 두며, 공개에는 중립 case id와 결과만 남긴다(epic 17.7 방식). 원격 push가 있어야만 하는 단계는 `operator_actions`다."
 verify = "갱신된 플러그인으로 연 세션의 시작 맥락에 오늘 날짜·토큰 줄·켜진 규칙이 보이고, 토글을 켜고 발화가 상수 이상인 세션을 로그 없이 멈추면 모델이 한 번 더 일하며 그 이유 문장이 hook 출력에 있고, 로그(DB·spool) 있음·`stop_hook_active` true·표식 있음·세션 없음에서는 아무것도 내지 않고 토글을 끄면 DB에 접속하지 않으며, Stop 줄의 `timeout`이 5초이고, PG를 멈춰 둔 채 멈춰도 세션 종료가 막히지 않으며, drain 뒤 `kind='start'`·`kind='stop'` 행이 남고, plan에 개인 원문이 없다."
 covers = ["E3-5", "E3-6", "E3-10"]
-after = [17]
+after = [1, 2, 3, 4, 5, 6, 7, 8, 9, 14, 10, 11, 12, 16]
 hitl = false
 risk = "medium"
 

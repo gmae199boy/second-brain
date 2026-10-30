@@ -91,7 +91,7 @@ title = "이 Mac에서 실제 반입: 플러그인 배포로 설치한 Garmin �
 description = "기능 묶음을 플러그인 배포(`plugin/app-ref`를 앞선 커밋으로, `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올림)로 이 Mac의 설치본에 넣고 에이전트가 진행한다(2026-10-28 위임, `hitl = false`). 순서: 설치본에서 `brain ext install garmin` → 반입 직전 새 일관 capture를 Brain 홈의 확장 데이터 아래에 만든다(옛 DB는 read-only URI의 SQLite backup API, 파일은 복사 전후 해시 비교, private manifest 갱신. 옛 writer는 멈추지 않는다) → 옛 `LATEST` capture와의 목록·건수 차이를 기록 → `import-preflight` → 규칙 v1(선택지 A)과 계정 대응 확인 → 작은 batch로 `import` → `import-verify`. 공개 집계(건수·충돌 수·제외 사유 수. 해시·원문·계정·개인 날짜 없음)는 plan에, private 상세는 Brain 홈에 둔다. 실패·미선택 충돌·파일 요청 대기는 성공으로 기록하지 않는다. 계정이 미확인이거나 verify가 불일치면 원인을 plan에 남기고 버그 스토리로 고친 뒤 같은 batch로 다시 돈다. 원격 push가 있어야만 하는 단계는 `operator_actions`에 남긴다. plan에는 다시 돌릴 때의 절차(같은 batch 재개)를 적는다."
 verify = "에이전트가 이 Mac에서 위 순서를 한 번 돌린다. plan에는 6의 공개 투영(건수, 충돌·제외 사유 수, 단계별 성공/실패 상태)과 값 없는 성공 여부만 남기고, doctor·조회의 원시 출력, 오류 상세, capture 경로, private 보고서는 Brain 홈에만 둔다. verify가 모두 일치하고, 반입 뒤 새 capture의 파일 해시가 반입 전과 같으며(private 보고서에서 확인, plan에는 일치 여부만), 옛 원본에는 read-only로만 접근했고, 채널 발신 요청·`channel_send` 일감이 0이며, `garmin.raw_records`와 \"현재\" view의 읽기가 성공하고(plan에는 값 없이 성공 여부만), 저장소의 git status와 커밋 diff에 capture·보고서 파일이 없다."
 covers = ["E14-1", "E14-9", "E14-12"]
-after = [7]
+after = [1, 2, 3, 4, 5, 6]
 hitl = false
 risk = "high"
 references = ["_bmad-output/personal-brain/tickets/epic-garmin-import/epic-garmin-import-research-code.md, §9(실제 반입 전제 1~5), 스토리 후보 T7"]
