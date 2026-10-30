@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { envFilePath } from '../config/paths.js';
 import { fileURLToPath } from 'node:url';
-import type { Clock, ExtensionRuntime } from 'second_brain';
+import { decodeExtensionManifest, isExtensionName, type Clock, type ExtensionRuntime } from 'second_brain';
 import { extensionAdminUrl, resolveStoreUrl, type ReadConfigResult } from '../config/codec.js';
 import { prepareExtensionPython } from './extension-python.js';
 import { systemTimer } from './clock.js';
@@ -32,6 +32,35 @@ async function checkTree(folder: string): Promise<void> {
     if (stat.isSymbolicLink()) throw new Error('확장 패키지에 심볼릭 링크를 둘 수 없습니다');
     if (stat.isDirectory()) await checkTree(path);
   }
+}
+/** 등록된 확장의 manifest만 읽고 런타임을 준비하지 않는다. */
+export async function installedExtensionMigrations(home: string, names: readonly string[]): Promise<{ owner: string; directory: string }[]> {
+  const folder = join(home, 'extensions');
+  const owners: { owner: string; directory: string }[] = [];
+  for (const name of [...names].sort()) {
+    if (!isExtensionName(name)) throw new Error(`잘못된 확장 폴더: ${name}`);
+    const directory = join(folder, name);
+    const stat = await lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`잘못된 확장 폴더: ${name}`);
+    const manifestPath = join(directory, 'manifest.json');
+    const manifestStat = await lstat(manifestPath);
+    if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) throw new Error(`확장 manifest가 일반 파일이 아닙니다: ${name}`);
+    const decoded = decodeExtensionManifest(await readFile(manifestPath, 'utf8'));
+    if (!decoded.ok || decoded.manifest.name !== name) throw new Error(`확장 manifest가 올바르지 않습니다: ${name}`);
+    let path = directory;
+    for (const part of decoded.manifest.migrations.split('/')) {
+      path = join(path, part);
+      const item = await lstat(path);
+      if (!item.isDirectory() || item.isSymbolicLink()) throw new Error(`확장 마이그레이션 폴더가 올바르지 않습니다: ${name}`);
+    }
+    for (const file of await readdir(path)) {
+      if (!/^\d{4}_.+\.sql$/.test(file)) continue;
+      const item = await lstat(join(path, file));
+      if (!item.isFile() || item.isSymbolicLink()) throw new Error(`확장 마이그레이션이 일반 파일이 아닙니다: ${name}/${file}`);
+    }
+    owners.push({ owner: name, directory: path });
+  }
+  return owners;
 }
 export function extensionRuntime({ home, env, config, clock }: { home: string; env: NodeJS.ProcessEnv; config: ReadConfigResult; clock: Clock }): ExtensionRuntime {
   const pending = new Map<string, { stage: string; target: string; backup: string; moved: boolean }>();

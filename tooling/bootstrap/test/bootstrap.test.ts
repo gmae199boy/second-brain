@@ -966,6 +966,12 @@ describe('the install lock', () => {
 });
 
 describe('hook mode on a first install', () => {
+  it('bootstrap에서 Python이나 uv를 탐색하거나 실행하지 않는다', async () => {
+    const run = harness({ exists: false, respond: atRef, installerWrites: { [INSTALLED_PATH]: record(REF) } });
+    expect(await main([...HOOK_ARGS], { ...ENV, PATH: '/restricted' }, run.deps)).toBe(0);
+    expect(run.calls.filter(line => /(?:^|[\s/])(python(?:3(?:\.\d+)?)?|uv)(?:\s|$)/i.test(line))).toEqual([]);
+  });
+
   it('runs clone, install, build and the installer, in that order', async () => {
     const run = harness({ exists: false, respond: atRef });
 

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   copyFileSync,
   cpSync,
   existsSync,
@@ -9,6 +10,8 @@ import {
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  renameSync,
+  readdirSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -67,6 +70,18 @@ beforeAll(() => {
   home = join(root, 'home');
   plugin = join(root, 'plugin');
   mkdirSync(home, { recursive: true });
+  const allowed = join(root, 'allowed-tools');
+  mkdirSync(allowed);
+  for (const name of ['git', 'docker', 'sh', 'dirname', 'grep', 'head', 'tr', 'sed', 'cat', 'uname', 'which', 'mkdir', 'touch', 'rm', 'sleep']) {
+    const found = spawnSync('/usr/bin/which', [name], { encoding: 'utf8' });
+    if (found.status !== 0) throw new Error(`시험 명령을 찾을 수 없습니다: ${name}`);
+    symlinkSync(found.stdout.trim(), join(allowed, name));
+  }
+  symlinkSync(process.execPath, join(allowed, 'node'));
+  const pnpm = spawnSync('/usr/bin/which', ['pnpm'], { encoding: 'utf8' }).stdout.trim();
+  const wrapper = join(allowed, 'pnpm');
+  writeFileSync(wrapper, `#!/bin/sh\nPATH='${process.env.PATH}'\nexport PATH\nunset NODE_OPTIONS BRAIN_PROCESS_SPY BRAIN_RESTRICTED_PATH\nexec '${pnpm}' "$@"\n`);
+  chmodSync(wrapper, 0o755);
   configDir = join(root, 'claude-config');
   mkdirSync(join(configDir, 'projects', '-demo'), { recursive: true });
   copyFileSync(join(repoRoot, 'packages/claude-code/test/fixtures/two-turns.jsonl'), join(configDir, 'projects', '-demo', 'first-session.jsonl'));
@@ -107,15 +122,33 @@ afterAll(() => {
   }
   if (root !== undefined) rmSync(root, { recursive: true, force: true });
 });
-async function homeDatabase() {
+async function homeDatabase(admin = false) {
   const env = parseEnv(readFileSync(join(home, '.env'), 'utf8'));
-  const client = new pg.Client({ connectionString: env.BRAIN_DATABASE_URL });
+  const url = new URL(env.BRAIN_DATABASE_URL!);
+  if (admin) { url.username = 'postgres'; url.password = env.BRAIN_POSTGRES_PASSWORD!; }
+  const client = new pg.Client({ connectionString: url.toString() });
   await client.connect();
   return client;
 }
 
 
 /** The log the bootstrap appends to, or `''` when it has never written one. */
+function treeHash(directory: string): string {
+  const hash = createHash('sha256');
+  const walk = (path: string, relative: string) => {
+    const stat = lstatSync(path);
+    hash.update(`${relative}\0${stat.mode & 0o777}\0`);
+    if (stat.isSymbolicLink()) hash.update(`link\0${readlinkSync(path)}\0`);
+    else if (stat.isDirectory()) {
+      hash.update('dir\0');
+      for (const name of readdirSync(path).sort()) walk(join(path, name), `${relative}/${name}`);
+    } else if (stat.isFile()) { hash.update('file\0'); hash.update(readFileSync(path)); }
+    else throw new Error(`지원하지 않는 파일: ${relative}`);
+  };
+  walk(directory, '');
+  return hash.digest('hex');
+}
+
 function log(): string {
   const path = join(home, LOG_FOLDER, BOOTSTRAP_LOG_FILE);
   return existsSync(path) ? readFileSync(path, 'utf8') : '';
@@ -155,7 +188,7 @@ function isolatedEnvironment(): NodeJS.ProcessEnv {
   return env;
 }
 
-function hook(event: string, input = ''): { status: number | null; stdout: string; stderr: string } {
+function hook(event: string, input = '', extraEnv: NodeJS.ProcessEnv = {}): { status: number | null; stdout: string; stderr: string } {
   const hooks = JSON.parse(readFileSync(join(plugin, 'hooks/hooks.json'), 'utf8')) as { hooks: { [event: string]: { hooks: { command: string }[] }[] } };
   const command = hooks.hooks[event]?.[0]?.hooks[0]?.command;
   if (command === undefined) throw new Error(`Missing hook: ${event}`);
@@ -165,6 +198,12 @@ function hook(event: string, input = ''): { status: number | null; stdout: strin
     encoding: 'utf8',
     env: {
       ...isolatedEnvironment(),
+      PATH: join(root, 'allowed-tools'),
+      SECOND_BRAIN_NODE_DIRS: join(root, 'allowed-tools'),
+      NVM_DIR: join(root, 'empty-nvm'),
+      BRAIN_RESTRICTED_PATH: join(root, 'allowed-tools'),
+      BRAIN_PROCESS_SPY: join(root, 'process-spy.log'),
+      NODE_OPTIONS: `--require=${join(repoRoot, 'tooling/bootstrap/test/fixtures/process-spy.cjs')}`,
       SECOND_BRAIN_LAUNCHCTL: join(repoRoot, 'apps/cli/test/fixtures/fake-launchctl.sh'),
       SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'),
       FAKE_LAUNCHCTL_DIR: join(root, 'launchctl'),
@@ -172,6 +211,7 @@ function hook(event: string, input = ''): { status: number | null; stdout: strin
       SECOND_BRAIN_REPO: `file://${bare}`,
       CLAUDE_PLUGIN_ROOT: plugin,
       CLAUDE_CONFIG_DIR: configDir,
+      ...extraEnv,
     },
     maxBuffer: 32 * 1024 * 1024,
   });
@@ -215,6 +255,7 @@ describe('the plugin SessionStart hook', () => {
       // The clone built itself, and the install went all the way through.
       expect(existsSync(join(home, 'app', 'apps', 'cli', 'dist', 'bin.js'))).toBe(true);
       expect(existsSync(join(home, 'config.toml'))).toBe(true);
+      expect(existsSync(join(home, 'extensions'))).toBe(false);
       // The lock is released on every ending there is.
       expect(existsSync(join(home, 'install.lock'))).toBe(false);
       // Everything it did on the way is in the log, not in the model's context.
@@ -309,7 +350,7 @@ describe('the plugin SessionStart hook', () => {
     expect(run.stdout).toBe('');
     expect(run.stderr).toBe('');
     expect(readFileSync(join(home, 'run', 'last-hook-claude-code'), 'utf8')).toBe(`${plugin}\n`);
-    const doctor = spawnSync(join(home, 'bin', 'brain'), ['doctor', 'run', '--json'], { encoding: 'utf8', env: { ...isolatedEnvironment(), SECOND_BRAIN_HOME: home, CLAUDE_CONFIG_DIR: configDir } });
+    const doctor = spawnSync(join(home, 'bin', 'brain'), ['doctor', 'run', '--json'], { encoding: 'utf8', env: { ...isolatedEnvironment(), PATH: join(root, 'allowed-tools'), BRAIN_RESTRICTED_PATH: join(root, 'allowed-tools'), BRAIN_PROCESS_SPY: join(root, 'process-spy.log'), NODE_OPTIONS: `--require=${join(repoRoot, 'tooling/bootstrap/test/fixtures/process-spy.cjs')}`, SECOND_BRAIN_HOME: home, CLAUDE_CONFIG_DIR: configDir } });
     expect(doctor.status).toBe(0);
     const report = JSON.parse(doctor.stdout) as { data: { checks: { id: string; status: string; detail: string }[] } };
     expect(report.data.checks.find((check) => check.id === 'last-hook')).toMatchObject({ status: 'ok', detail: expect.stringMatching(/claude-code: \d{4}-/) });
@@ -322,6 +363,129 @@ describe('the plugin SessionStart hook', () => {
       const session = (await db.query('select id from brain.sessions where harness_session_id = $1', ['stop-session'])).rows[0] as { id: string };
       expect((await db.query('select count(*)::int as n from brain.messages where session_id = $1', [session.id])).rows[0]).toMatchObject({ n: 4 });
       expect((await db.query('select id from brain.sessions where harness_session_id = $1', ['empty-session'])).rows[0]).toBeUndefined();
+    } finally { await db.end(); }
+    const calls = readFileSync(join(root, 'process-spy.log'), 'utf8');
+    expect(calls).toContain('docker');
+    expect(calls).toContain('git');
+    expect(calls).not.toMatch(/(?:^|[\s/'"=])(?:python(?:3(?:\.\d+)?)?|uv)(?:$|[\s/'";])/im);
+    expect(existsSync(join(home, 'extensions'))).toBe(false);
+  }, SLOW);
+
+
+  it('설치된 확장을 갱신할 때 보존하고 새 마이그레이션만 적용한다', async () => {
+    const fixtures = join(root, 'extension-fixtures');
+    cpSync(join(repoRoot, 'apps/cli/test/fixtures/extensions/testext'), join(fixtures, 'testext'), { recursive: true });
+    const sourceManifest = join(fixtures, 'testext/manifest.json');
+    const manifest = JSON.parse(readFileSync(sourceManifest, 'utf8'));
+    manifest.settings = [{ key: 'testext.limit', type: 'number', required: [] }];
+    writeFileSync(sourceManifest, JSON.stringify(manifest));
+    const env = { ...isolatedEnvironment(), SECOND_BRAIN_HOME: home, SECOND_BRAIN_TEST_EXTENSIONS: fixtures };
+    const brain = (...args: string[]) => spawnSync(join(home, 'bin/brain'), args, { env, encoding: 'utf8' });
+    const installedExt = brain('ext', 'install', 'testext', '--json');
+    expect(installedExt.status, installedExt.stdout + installedExt.stderr).toBe(0);
+    mkdirSync(join(home, 'extensions/.install-interrupted'));
+    mkdirSync(join(home, 'extensions/unregistered'));
+    const directory = join(home, 'extensions/testext');
+    const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
+    const manifestHash = hash(join(directory, 'manifest.json'));
+    const ddlHash = hash(join(directory, 'migrations/0001_testext.sql'));
+    expect(brain('config', 'set', 'testext.limit', '42', '--json').status).toBe(0);
+    const setting = JSON.parse(brain('config', 'get', 'testext.limit', '--json').stdout).data;
+    const status = JSON.parse(brain('ext', 'status', 'testext', '--json').stdout).data;
+    const config = readFileSync(join(home, 'config.toml'), 'utf8');
+    const db = await homeDatabase(true);
+    try {
+      await db.query('insert into testext.checks values (42, now())');
+      writeFileSync(join(directory, 'migrations/0002_new.sql'), 'create table testext.new_table (id integer primary key);');
+      const beforeTree = treeHash(directory);
+      const upgrade = () => {
+        git(['-C', work, '-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--allow-empty', '-q', '-m', 'extension upgrade']);
+        git(['-C', work, 'push', '-q', bare, 'main']);
+        snapshotCommit = git(['-C', work, 'rev-parse', 'HEAD']).trim();
+        writeFileSync(join(plugin, 'app-ref'), `${snapshotCommit}\n`);
+        return hook('SessionStart');
+      };
+      const beforeLog = log().length;
+      expect(upgrade().status, log()).toBe(0);
+      expect(log().slice(beforeLog)).toContain('적용 1건');
+      expect(installed().commit).toBe(snapshotCommit);
+      expect(treeHash(directory)).toBe(beforeTree);
+      expect(hash(join(directory, 'manifest.json'))).toBe(manifestHash);
+      expect(hash(join(directory, 'migrations/0001_testext.sql'))).toBe(ddlHash);
+      expect(readFileSync(join(home, 'config.toml'), 'utf8')).toBe(config);
+      expect(JSON.parse(brain('ext', 'status', 'testext', '--json').stdout).data).toEqual(status);
+      expect(JSON.parse(brain('config', 'get', 'testext.limit', '--json').stdout).data).toEqual(setting);
+      expect((await db.query('select id from testext.checks')).rows).toEqual([{ id: 42 }]);
+      const ledger = (await db.query("select version, checksum, applied_at from brain.schema_migrations where owner='testext' order by version")).rows;
+      expect(ledger.map((row: { version: number }) => row.version)).toEqual([1, 2]);
+      expect(upgrade().status, log()).toBe(0);
+      expect((await db.query("select version, checksum, applied_at from brain.schema_migrations where owner='testext' order by version")).rows).toEqual(ledger);
+      const external = join(root, 'external.sql');
+      writeFileSync(external, 'create table testext.external_executed (id integer);');
+      const link = join(directory, 'migrations/0003_external.sql');
+      symlinkSync(external, link);
+      const beforeLink = installed().commit;
+      upgrade();
+      expect(installed().commit).toBe(beforeLink);
+      expect(runRecord().last_bootstrap?.result).toBe('failed');
+      expect((await db.query("select to_regclass('testext.external_executed') as name")).rows).toEqual([{ name: null }]);
+      rmSync(link);
+      const manifestPath = join(directory, 'manifest.json');
+      const savedManifest = join(root, 'saved-manifest.json');
+      renameSync(manifestPath, savedManifest);
+      symlinkSync(savedManifest, manifestPath);
+      expect(hook('SessionStart').status).toBe(0);
+      expect(installed().commit).toBe(beforeLink);
+      expect(runRecord().last_bootstrap?.result).toBe('failed');
+      rmSync(manifestPath);
+      renameSync(savedManifest, manifestPath);
+      writeFileSync(join(directory, 'migrations/0003_bad.sql'), 'invalid sql;');
+      const before = installed().commit;
+      upgrade();
+      expect(installed().commit).toBe(before);
+      expect(runRecord().last_bootstrap?.result).toBe('failed');
+      expect((await db.query("select version from brain.schema_migrations where owner='testext' order by version")).rows).toEqual([{ version: 1 }, { version: 2 }]);
+      rmSync(join(directory, 'migrations/0003_bad.sql'));
+      expect(hook('SessionStart').status, log()).toBe(0);
+      expect(installed().commit).toBe(snapshotCommit);
+    } finally { await db.end(); }
+    expect(readFileSync(join(root, 'process-spy.log'), 'utf8')).not.toMatch(/(?:^|[\s/'"=])(?:python(?:3(?:\.\d+)?)?|uv)(?:$|[\s/'";])/im);
+  }, SLOW);
+
+  it.skipIf(process.env.BRAIN_PYTHON_UPDATE_TEST !== '1')('실제 bootstrap 갱신에서 Python 확장 전체를 보존한다', async () => {
+    const spyDir = join(root, 'spy'); mkdirSync(spyDir);
+    const spyLog = join(root, 'uv-calls');
+    const uv = execFileSync('which', ['uv'], { encoding: 'utf8' }).trim();
+    const wrapper = join(spyDir, 'uv');
+    writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\n' "$*" >> "${spyLog}"\nexec "${uv}" "$@"\n`);
+    chmodSync(wrapper, 0o755);
+    const env = { ...isolatedEnvironment(), SECOND_BRAIN_HOME: home, PATH: `${spyDir}:${process.env.PATH ?? ''}`,
+      SECOND_BRAIN_TEST_EXTENSIONS: join(repoRoot, 'apps/cli/test/fixtures/extensions') };
+    const brain = (...args: string[]) => spawnSync(join(home, 'bin/brain'), args, { env, encoding: 'utf8' });
+    const result = brain('ext', 'install', 'pyfixture', '--json');
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(readFileSync(spyLog, 'utf8')).toContain('sync');
+    writeFileSync(spyLog, '');
+    const directory = join(home, 'extensions/pyfixture');
+    const environment = treeHash(directory);
+    const config = readFileSync(join(home, 'config.toml'), 'utf8');
+    const status = JSON.parse(brain('ext', 'status', 'pyfixture', '--json').stdout).data;
+    const db = await homeDatabase(true);
+    try {
+      await db.query('create schema pyfixture; create table pyfixture.data (id integer); insert into pyfixture.data values (7)');
+      const ledger = (await db.query("select * from brain.schema_migrations where owner='pyfixture'")).rows;
+      git(['-C', work, '-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--allow-empty', '-q', '-m', 'python upgrade']);
+      git(['-C', work, 'push', '-q', bare, 'main']);
+      snapshotCommit = git(['-C', work, 'rev-parse', 'HEAD']).trim();
+      writeFileSync(join(plugin, 'app-ref'), `${snapshotCommit}\n`);
+      expect(hook('SessionStart', '', { PATH: env.PATH, NODE_OPTIONS: '', BRAIN_PROCESS_SPY: '', BRAIN_RESTRICTED_PATH: '' }).status, log()).toBe(0);
+      expect(installed().commit).toBe(snapshotCommit);
+      expect(readFileSync(spyLog, 'utf8')).toBe('');
+      expect(treeHash(directory)).toBe(environment);
+      expect(readFileSync(join(home, 'config.toml'), 'utf8')).toBe(config);
+      expect(JSON.parse(brain('ext', 'status', 'pyfixture', '--json').stdout).data).toEqual(status);
+      expect((await db.query('select id from pyfixture.data')).rows).toEqual([{ id: 7 }]);
+      expect((await db.query("select * from brain.schema_migrations where owner='pyfixture'")).rows).toEqual(ledger);
     } finally { await db.end(); }
   }, SLOW);
 

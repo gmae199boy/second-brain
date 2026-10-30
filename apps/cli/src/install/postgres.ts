@@ -5,6 +5,7 @@ import { v7 } from 'uuid';
 import type { Clock } from 'second_brain';
 import { homeResources } from '../config/resources.js';
 import { postgresSecrets } from '../config/codec.js';
+import { installedExtensionMigrations } from '../runtime/extensions.js';
 import { containerState, volumeOwner } from '../runtime/orbstack.js';
 import { commandEnv, composeArgs, systemCommandRunner, type CommandRunner } from '../runtime/command-runner.js';
 export interface PostgresInstallReport { project: string; volume: string; port: number; schema_version: number; applied: readonly string[]; owner_created: boolean; owner_name: string; compose_started: boolean; legacy_sqlite_path?: string | null; import?: import('second_brain').BrainDrainReport | null }
@@ -62,9 +63,18 @@ export async function installPostgres(options: { home: string; urlEnv: string; e
     if (!migrated.ok) return migrated;
     const store = postgresStore({ databaseUrl: prepared.databaseUrl });
     try {
+      const registered = await store.listExtensions();
+      if (!registered.ok) return registered;
+      const owners = await installedExtensionMigrations(home, registered.extensions.map(extension => extension.name));
+      const applied = [...migrated.applied];
+      if (owners.length > 0) {
+        const extensions = await runMigrations({ databaseUrl: prepared.databaseUrl, clock, owners });
+        if (!extensions.ok) return extensions;
+        applied.push(...extensions.applied);
+      }
       const owner = await store.ensureSelfUser({ id: v7(), name: userInfo().username, createdAt: clock.now() });
       if (!owner.ok) return owner;
-      return { ok: true, report: { ...resources, schema_version: migrated.to, applied: migrated.applied, owner_created: owner.created, owner_name: owner.user.name, compose_started: composeStarted } };
+      return { ok: true, report: { ...resources, schema_version: migrated.to, applied, owner_created: owner.created, owner_name: owner.user.name, compose_started: composeStarted } };
     } finally { await store.close(); }
   } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: `PostgreSQL 설치에 실패했습니다: ${error instanceof Error ? error.message : String(error)}` }; }
 }

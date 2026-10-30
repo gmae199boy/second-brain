@@ -990,7 +990,7 @@ git config core.hooksPath .githooks
 
 CLI·bootstrap·`packages/postgres` 테스트는 실제 PostgreSQL 테스트 데이터베이스를 씁니다.
 
-Docker만 켜 두면 준비할 것은 없습니다.
+Node와 pnpm, Docker 또는 격리 PostgreSQL이 필요합니다. 기본 시험은 Python이나 uv를 요구하지 않습니다. Docker만 켜 두면 데이터베이스는 자동으로 준비합니다.
 
 ```sh
 pnpm test
@@ -1106,4 +1106,4 @@ https://orbstack.dev 에서 설치하고, 꺼져 있으면 `orb start`로 켜세
 `setup uninstall`은 컨테이너를 내리고 볼륨을 남깁니다. 볼륨까지 지우려면
 `setup uninstall --delete-volume --yes`로 동의하세요.
 
-Python 확장 통합 시험은 uv, Python 3.12.13, 시험 PostgreSQL과 잠긴 의존성을 필요로 한다. `pnpm test:python`으로 별도 실행한다.
+Python 확장 통합 시험은 uv, fixture의 `.python-version`에 지정된 로컬 Python, 격리 PostgreSQL과 잠긴 의존성을 필요로 합니다. `pnpm test:python`으로 별도 실행합니다. 시험은 임시 홈과 데이터베이스를 정리하며, 자동으로 시작한 시험 컨테이너도 종료합니다.

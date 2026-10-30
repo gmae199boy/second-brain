@@ -11,7 +11,7 @@ const pg = vi.hoisted(() => ({
 }));
 vi.mock('second_brain/postgres', () => ({
   prepareDatabase: pg.prepareDatabase, runMigrations: pg.runMigrations,
-  postgresStore: () => ({ ensureSelfUser: pg.ensureSelfUser, close: pg.close }),
+  postgresStore: () => ({ listExtensions: async () => ({ ok: true, extensions: [] }), ensureSelfUser: pg.ensureSelfUser, close: pg.close }),
 }));
 const homes: string[] = [];
 afterEach(async () => { vi.resetAllMocks(); await Promise.all(homes.splice(0).map(home=>rm(home,{recursive:true,force:true}))); });
