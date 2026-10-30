@@ -3,8 +3,8 @@ title: '17.2 대화 조각과 redact 재생성'
 type: 'feature'
 ticket: '2'
 created: '2026-10-30'
-status: in-progress
-baseline_revision: '520ed113226821afc48b7e7f5fb6f6308e24724f'
+status: built
+baseline_revision: dbc02b17e7f7296b2eaa69299e5a5025b7fb3c4e
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
@@ -12,7 +12,7 @@ review: 'quick'
 review_source: 'pinned'
 lenses_ran: [quick]
 review_loop_iteration: 1
-followup_review_recommended: true
+followup_review_recommended: false
 context: []
 warnings: [oversized]
 deferred:
@@ -84,6 +84,8 @@ deferred:
 
 ## Implementation Notes
 
+- 재개 검증: 기존 구현 커밋 `ed89726b5ade660d2e6c5c5e5d4501a6160a6803`과 기준 커밋 `dbc02b17e7f7296b2eaa69299e5a5025b7fb3c4e`를 보존했다. 이번 구현 워커는 소스 변경 없이 계획 충족을 확인했다. 지휘자가 `pnpm build && pnpm typecheck`, 순수 조각기 8개, Core·PG 전체 69파일 2,085개를 다시 실행해 모두 통과했다. 행렬의 각 행을 조각기 및 conversation-index 시험과 대조했으며 누락·skip은 없다. 현재 기준 이후 diff와 별도로 최초 구현 직전 커밋 `520ed113226821afc48b7e7f5fb6f6308e24724f` 이후 apps/packages diff도 읽어 이미 커밋된 구현을 리뷰 범위에 포함했다.
+
 - 재도출 검증: 긴 메시지 외부 겹침·NUL 검색 투영·잠금 대기 중 만료를 수정했다. 지휘자가 전체 빌드/타입과 순수 조각기 7개, Core+PG 69파일 2,083개 시험을 통과했고 기존 행렬 시험도 모두 실행됐다. 원본 3개 findings에 대한 회귀가 포함된다.
 
 - 리뷰 재도출 절차: 구현자는 기존 소스 변경을 고유한 /tmp patch로 저장한 뒤 이 티켓의 apps/packages 변경만 baseline으로 되돌린다. 다른 작업의 _bmad 변경·계획·스테이징은 보존한다. KEEP 동작은 저장 patch에서 재구성하되 수정된 설계에 따라 chunker·검색 투영·확정 유효기간을 재도출한다. 이후 전체 검증과 implementation-ready 중간 보고를 보내고 같은 Dispatch에서 대기한다.
@@ -121,6 +123,11 @@ deferred:
   - `[medium]` `[patch]` 긴 묶음 끝의 목표 경계 누락 — 같은 시각 긴 B와 일반 C 뒤 continue가 목표 판정을 건너뛰는 것을 확인했다. 분기 밖의 기존 목표 검사를 공통 적용하고 B 5,000자+C 1,200자+D 다음 시각의 수작업 기대 시험을 추가했다.
   - `[medium]` `[patch]` 첫 검사 뒤 DB 대기에서 만료 — snapshot과 chunks 조회/쓰기 뒤에는 재검사가 없음을 확인했다. 마지막 쓰기 후 경과시간을 반영해 재검사하고 만료 예외로 전체 트랜잭션을 롤백해 committed:false로 답하도록 고쳤다. ACCESS EXCLUSIVE 대기를 관측한 뒤 만료시켜 쓰기 롤백을 증명했다.
 
+### 2026-10-30 — 재개 독립 리뷰
+
+- verdicts: 0 findings — high 0, medium 0, low 0, false 0, maybe-false 0
+- findings: 없음. 독립 quick 리뷰가 재개 diff와 이미 커밋된 구현 전체를 함께 읽고 수락 기준·규칙·주변 코드를 확인했다. 새 수정·이월·기각은 없다.
+
 ## Design Notes
 
 긴 메시지 B의 최초 출현은 splitMessagesOverChars 단위로 나누며, 그 내부 part 사이에는 원래 메시지 전체를 겹쳐 복제하지 않는다. A→B의 첫 부분 앞에는 직전 원래 메시지 A(설정이 정한 겹침 수)를 문맥으로 붙이고 실제 fromAt을 유지한다. B→C에는 직전 원래 메시지 B 전체를 겹침 문맥으로 보존하고 C의 새 본문을 붙인다. 이미 겹침 문맥인 B를 다시 새 메시지로 처리해 분할/무한 반복하지 않는다. 조각 길이는 목표이지 상한이 아니므로 겹침 문맥 때문에 2,400자보다 커질 수 있다. B만 있는 5,000자 입력은 여전히 2,400+2,400+200의 part 1..3이다. 동시각 묶음의 일반 경계 불분할과 같은 범위의 part 연속성을 유지한다. A·긴 B·C 및 연속 긴 메시지의 수작업 기대값을 시험한다.
@@ -147,64 +154,16 @@ deferred:
 
 ## Auto Run Result
 
-- Status: blocked
-- 구현: 설정 기반 대화 조각·분할 part·NUL 원문 보존·멱등 수집 일감·원자적 redact 재생성·입력 지문/청구 소유권/유효기간 확정·최소 literal LIKE 검색 port를 완성했다.
-- 범위: 공개 recall 명령과 결과 budget은 후속 티켓이며 이 티켓은 검색 Store 기반과 대화 조각 writer를 제공한다. 저장소 밖 HUMAN 전용 수락 작업은 없어 operator_actions가 필요하지 않다.
-- 리뷰: 독립 quick 검사 2회를 실행했다. 첫 회 medium 3건은 계획 재도출 1건과 함께 수정 2건으로 반영했고, 두 번째 medium 2건도 작은 수정으로 반영했다. 기각 0건, 새 리뷰 이월 0건이며 기존 일반 경계 [ASSUMPTION] 1건을 deferred에 보존한다.
-- 이번 회 수정 집계: high 0, medium 2, low 0. followup_review_recommended: true. 복합 동시각·긴 메시지 겹침의 part/증분 경계와 최종 DB 쓰기 뒤 만료 롤백은 회귀로 검증했으나 마지막 수정 후 독립 재리뷰를 하지 않았으므로 후속 검토를 권고한다.
-- 지휘자 검증: pnpm build && pnpm typecheck 성공. pnpm exec vitest run --project core test/conversation-chunker.test.ts 8개 성공. pnpm exec vitest run --project core --project postgres 69파일 2,085개 성공(Core 1,631개, PG 454개). git diff --cached --check 성공.
-- 행렬: 저장 설정/수작업 경계·동시각/긴 메시지·재청구/증분·새 메시지/redact barrier·재생성 실패 롤백·NUL 읽기/검색·전수 LIKE 적중 id와 DB 실패 구분 시험이 모두 실행돼 통과했다.
-- 잠금·정리: snapshot handler A와 입력 writer B를 분리한다. 만료 시험은 세션 advisory 또는 chunks ACCESS EXCLUSIVE 보유 연결과 pg_stat_activity 관측 연결을 사용한다. lockTimeoutMs 100 또는 2000, queryTimeoutMs 2000 또는 4000, 시험 한도 30초이며 finally에서 barrier/잠금 해제·연결 종료·격리 DB/홈 삭제를 수행한다.
-- 한계: 공개 Core redact 실패가 spool 의존성을 사용하지 않고 임시 홈 파일이 늘지 않음을 확인했다. 디스크 spool adapter 자체의 실행 시험은 아니다. 운영 Brain 자료나 홈은 검증에 사용하지 않았다.
-- 티켓 done 표시와 push는 하지 않았다. 완료 판정은 외부 오케스트레이터에 남긴다.
-
-### 변경 파일
-
-- `_bmad-output/personal-brain/tickets/epic-search-and-health-query/tickets/story-tracer-plan.md` — 계획·수락 기준·검증·리뷰·실행 결과를 기록한다.
-- `apps/cli/src/doctor/store.ts` — 도메인·Store 계약·fake·조립·공개 타입을 확장한다.
-- `apps/cli/test/dispatch.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/core/src/brain.ts` — 도메인·Store 계약·fake·조립·공개 타입을 확장한다.
-- `packages/core/src/domain/chunk.ts` — 도메인·Store 계약·fake·조립·공개 타입을 확장한다.
-- `packages/core/src/domain/index-config.ts` — 도메인·Store 계약·fake·조립·공개 타입을 확장한다.
-- `packages/core/src/index.ts` — 도메인·Store 계약·fake·조립·공개 타입을 확장한다.
-- `packages/core/src/ports/conversation-index-store.ts` — 도메인·Store 계약·fake·조립·공개 타입을 확장한다.
-- `packages/core/src/ports/store.ts` — 도메인·Store 계약·fake·조립·공개 타입을 확장한다.
-- `packages/core/src/recall/conversation-chunker.ts` — 순수 대화 조각·지문·일감 또는 literal 검색 규칙을 제공한다.
-- `packages/core/src/recall/conversation-fingerprint.ts` — 순수 대화 조각·지문·일감 또는 literal 검색 규칙을 제공한다.
-- `packages/core/src/recall/conversation-work.ts` — 순수 대화 조각·지문·일감 또는 literal 검색 규칙을 제공한다.
-- `packages/core/src/recall/text-query.ts` — 순수 대화 조각·지문·일감 또는 literal 검색 규칙을 제공한다.
-- `packages/core/src/testing/fakes/store.ts` — 도메인·Store 계약·fake·조립·공개 타입을 확장한다.
-- `packages/core/test/brain-drain.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/core/test/conversation-chunker.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/core/test/conversation-fingerprint.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/core/test/conversation-search.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/core/test/document-extract.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/core/test/session-identity-work.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/core/test/text-query.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/postgres/migrations/0014_conversation_chunks.sql` — part 키·원문 짝 칸·새 규칙 세대·원자적 재생성 함수를 추가한다.
-- `packages/postgres/src/conversation-index.ts` — 일관된 snapshot·원자 확정·검색 PG 경계를 구현한다.
-- `packages/postgres/src/migrate.ts` — core schema 버전을 14로 올린다.
-- `packages/postgres/src/sessions.ts` — 수집 트랜잭션에 멱등 조각 일감과 청구 무효화를 연결한다.
-- `packages/postgres/src/store.ts` — 도메인·Store 계약·fake·조립·공개 타입을 확장한다.
-- `packages/postgres/test/cli.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/postgres/test/conversation-fixture.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/postgres/test/conversation-index.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/postgres/test/migrate.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/postgres/test/schema.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/postgres/test/store.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/postgres/test/unavailable.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-- `packages/postgres/test/work-store.test.ts` — 대화 조각·경합·검색 또는 기존 동작의 회귀 검증을 반영한다.
-
-### Orca 정리
-
-- 자기 Run run_b44c973fa3d5의 조사 1·실패 구현 1·성공 구현 1·리뷰 2 Dispatch를 모두 정식 결과 수락 후 release했다. worker-list는 released 5, active/reclaimable 0이며 coordinator mail은 0이다. 실패 구현은 새 Task로 우회하지 않고 같은 Task의 retry-of로 복구했다. 소유권이나 생존 미확인 워커는 없다.
-
-
-### 종료 판정
-
-- status: blocked
-- 차단 조건: finalization left repository dirty. 티켓 구현은 커밋 `ed89726b5ade660d2e6c5c5e5d4501a6160a6803`에 보존됐고 이 티켓의 검토 파일은 모두 커밋돼 있다. 다음 별도 작업 파일 5개 때문에 build-auto의 전체 작업 트리 clean 종료 조건을 충족하지 못했다.
-- 별도 수정: `_bmad/custom/bmad-build-auto.toml`, `_bmad/custom/bmad-orca-workers.md`.
-- 별도 미추적: `_bmad-output/personal-brain/plan-orca-worker-recovery.md`, `_bmad/custom/bmad-orca-control.py`, `_bmad/custom/test_bmad_orca_control.py`.
-- 이 변경은 실행 시작 후 생겼으며 이 티켓의 구현자가 만들지 않았다. 덮어쓰기·제거·커밋·stash하지 않고 보존했다. 기능 실패나 저장소 밖 HUMAN 작업이 차단 원인은 아니다.
-- HALT 절차에서만 tickets.py mark 17.2 blocked를 실행했다. done 표시·push는 하지 않았다. 자기 Orca Run은 워커 released 5, mail 0으로 정리했고 전용 제어 셸만 닫는다.
+- status: built
+- 구현: 설정 기반 순수 대화 조각기, 동일 시각·긴 메시지의 part, literal LIKE 질의와 최소 검색 port, 일감 drain, 입력 지문·세션 잠금·청구 만료 확정, 원자적인 ingest/redact 재생성을 제공한다. U+0000은 기존 쓰기 코덱으로 보존한다.
+- 기존 구현은 커밋 `ed89726b5ade660d2e6c5c5e5d4501a6160a6803`에 있다. 이번 재개에서는 소스 수정 없이 구현을 다시 확인하고 검증·독립 리뷰·결과 기록을 마쳤다.
+- 이번 변경 파일: `_bmad-output/personal-brain/tickets/epic-search-and-health-query/tickets/story-tracer-plan.md` — 재개 검증 근거·독립 리뷰·실행 결과를 기록한다.
+- 기존 구현 파일: `packages/core/src/recall/` — 조각 경계·지문·일감·literal 검색 패턴을 제공한다. Core domain/ports/brain/fake/exports와 CLI Store 조립은 capability를 연결한다. `packages/postgres/migrations/0014_conversation_chunks.sql`과 migrate/sessions/store/conversation-index는 part·새 설정 세대·검색·원자적 큐/확정을 연결한다. Core·PG의 대화 fixture/시험과 기존 회귀 기대값은 새 일감을 검증한다.
+- 이번 독립 quick 리뷰는 발견 사항 0건이다. patch 집계는 high 0, medium 0, low 0이며 새 deferred 0건·기각 0건이다. 기존 일반 경계 [ASSUMPTION] 1건을 보존한다. followup_review_recommended: false.
+- 지휘자 검증: `pnpm build && pnpm typecheck` 성공. `pnpm exec vitest run --project core test/conversation-chunker.test.ts` 8개 성공. `pnpm exec vitest run --project core --project postgres` 69파일 2,085개 성공(Core 1,631개, PG 454개). 전체 검증에서 skip은 없다.
+- 행렬 감사: 저장 설정·수작업 경계·동시각·5,000자 part·반복/증분·새 입력/redact snapshot barrier·redact enqueue 실패 롤백·NUL 읽기/검색·독립 LIKE와 실패 구분 항목을 실제 실행된 시험과 대조해 모두 충족했다.
+- 잠금·정리: 기존 Verification 절차의 별도 writer/snapshot 연결, 세션 advisory 및 chunks ACCESS EXCLUSIVE 잠금, 30초 시험 한도와 finally 정리를 그대로 실행했다. 기존에 실행 중인 개발 시험 PG를 이용했고 운영 Brain 자료·홈은 쓰지 않았다.
+- 한계: 공개 Core redact 실패가 spool 의존성을 사용하지 않고 임시 홈 파일이 늘지 않음을 확인한 범위다. 디스크 spool adapter 자체를 실행한 시험은 아니다. 공개 recall 명령·결과 budget은 후속 티켓 범위다.
+- 저장소 밖 HUMAN 전용 수락 작업은 없으므로 awaiting-operator나 operator_actions는 해당하지 않는다. tickets.py mark·티켓 done 표시·push는 수행하지 않으며 완료 판정은 외부 오케스트레이터가 맡는다.
+- Orca 정리: 자기 Run `run_f74f4afc630a`의 구현 `task_91ca14a49dce` / `ctx_62d33250cf61`와 리뷰 `task_eeedc7842615` / `ctx_6f1e87e8bb4f`가 모두 succeeded로 정식 완료됐다. 전체 보고를 수락하고 두 워커를 release했다. worker-list는 released 2, active/reclaimable 0이며 마지막 ack 뒤 mail 0이다. 생존·소유권 미확인 상태는 없고 전용 제어 셸만 마지막에 닫는다.
+- 종료 확인: 이 계획과 검증 결과를 커밋하며 `git diff --cached --check` 및 작업 트리 clean을 확인한다. 티켓 완료 권한은 오케스트레이터에 보존한다.
