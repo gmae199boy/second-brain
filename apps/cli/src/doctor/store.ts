@@ -26,6 +26,7 @@ import type { SchemaStore, SettingsStore, Store } from 'second_brain';
 export function failedConfigStore(message: string): Store & SchemaStore & SettingsStore {
   const unavailable = { ok: false as const, code: 'DB_UNAVAILABLE' as const, message };
   return {
+    async searchRecall() { return unavailable; },
     async readConversationSnapshot() { return unavailable; },
     async commitConversationChunks() { return unavailable; },
     async searchConversationChunks() { return unavailable; },

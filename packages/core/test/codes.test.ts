@@ -74,6 +74,8 @@ describe('the error codes', () => {
     );
 
     expect(exits).toEqual({
+      INVALID_ARGUMENT: 2,
+      SESSION_NOT_FOUND: 1,
       EXTENSION_NOT_FOUND: 2,
       EXTENSION_INVALID: 2,
       EXTENSION_PYTHON_PIN_INVALID: 1,

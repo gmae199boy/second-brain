@@ -480,6 +480,23 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       conversationChunks.push(...next);
       return { ok: true, committed: true };
     },
+    async searchRecall(input) {
+      const needle = input.query.replaceAll('\0', '�').toLowerCase();
+      const rows: import('../../ports/recall-store.js').RecallRow[] = [];
+      for (const [token, session] of sessions) {
+        const source = { kind: 'conversation' as const, workspace_id: session.workspaceId, tag_source: session.tagSource, session: token, harness: session.harness, started_at: session.startedAt.toISOString(), project_id: session.projectId, worktree_id: session.worktreeId };
+        if (input.kind === 'chunks') for (const chunk of conversationChunks.filter(c => c.sessionId === session.id && c.body.replaceAll('\0', '�').toLowerCase().includes(needle))) rows.push({ ...source, chunk_id: chunk.id, from_at: chunk.fromAt.toISOString(), to_at: chunk.toAt.toISOString(), body: chunk.body });
+        if (input.kind === 'tools') for (const note of toolNotes.get(token) ?? []) {
+          if (!note.target.replaceAll('\0', '�').toLowerCase().includes(needle)) continue;
+          const message = (messages.get(token) ?? []).find(m => m.harnessMessageId === note.harnessMessageId);
+          rows.push({ ...source, tool_note_id: note.id, message_id: message?.id ?? null, tool: note.tool, from_at: message?.occurredAt.toISOString() ?? null, to_at: message?.occurredAt.toISOString() ?? null, body: note.target });
+        }
+      }
+      const tier = (row: import('../../ports/recall-store.js').RecallRow) => input.worktree && input.worktree === row.worktree_id ? 0 : input.project && input.project === row.project_id ? 1 : 2;
+      const matches = (body: string) => body.replaceAll('\0', '�').toLowerCase().split(needle).length - 1;
+      rows.sort((a,b) => tier(a) - tier(b) || matches(b.body) - matches(a.body) || (b.from_at ?? '').localeCompare(a.from_at ?? '') || (a.chunk_id ?? a.tool_note_id ?? '').localeCompare(b.chunk_id ?? b.tool_note_id ?? ''));
+      return { ok: true, rows: rows.slice(0, input.limit) };
+    },
     async searchConversationChunks({ pattern }) {
       const literal = pattern.slice(1, -1).replaceAll('\0', '�').replace(/\\([\\%_])/g, '$1').toLowerCase();
       return { ok: true, chunks: structuredClone(conversationChunks.filter(c => c.body.replaceAll('\0', '�').toLowerCase().includes(literal))) };

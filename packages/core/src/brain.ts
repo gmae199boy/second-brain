@@ -1,3 +1,6 @@
+import { searchRecall, type SearchInput } from './recall/search.js';
+import { expandRecall, type ExpandInput } from './recall/expand.js';
+import { readSessionPage, type ReadInput } from './sessions/read.js';
 import { CONVERSATION_CHUNK_KIND, conversationChunkHandler } from './recall/conversation-work.js';
 import { installExtension, type ExtensionRuntime } from './extensions/install.js';
 import { extensionStatus, listExtensions } from './extensions/status.js';
@@ -143,6 +146,7 @@ export interface BrainDoctor {
 }
 
 export interface BrainSessions {
+  read(input: ReadInput): ReturnType<typeof readSessionPage>;
   /** Read a harness transcript and append what is new (AD-4, AD-14). */
   ingest(input: IngestSessionInput): Promise<IngestSessionResult>;
 }
@@ -243,6 +247,7 @@ export interface BrainExt {
   list(): ReturnType<typeof listExtensions>;
 }
 export interface Brain {
+  recall: { chunks(input: SearchInput): ReturnType<typeof searchRecall>; tools(input: SearchInput): ReturnType<typeof searchRecall>; expand(input: ExpandInput): ReturnType<typeof expandRecall> };
   ext: BrainExt;
   messages: BrainMessages;
   files: BrainFiles;
@@ -392,6 +397,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
 
   const readTimeZone = () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' });
   return {
+    recall: { chunks: input => searchRecall(store, 'chunks', input), tools: input => searchRecall(store, 'tools', input), expand: input => expandRecall(store, input) },
     ext: { install: input => installExtension(dependencies, input), status: input => extensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
     files: { redact: (input) => redactFile({ store, clock, idGen }, input) },
@@ -408,6 +414,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
         }),
     },
     sessions: {
+      read: input => readSessionPage(store, input),
       ingest: async (input) => {
         const result = await createIngestBrain(ingestDependencies).sessions.ingest(input);
         if (result.ok && !result.spooled) {
@@ -573,7 +580,7 @@ const EMPTY_QUEUE_REPORT = {
   spooled: 0,
 } as const;
 
-export type IngestBrain = { sessions: BrainSessions };
+export type IngestBrain = { sessions: Pick<BrainSessions, 'ingest'> };
 export function createIngestBrain(dependencies: IngestSessionDependencies): IngestBrain {
   return { sessions: { ingest: input => ingestSession(dependencies, input) } };
 }

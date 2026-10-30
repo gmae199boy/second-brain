@@ -1,3 +1,4 @@
+import { postgresRecallStore } from './recall.js';
 import { postgresConversationIndexStore } from './conversation-index.js';
 import { postgresExtensionStore } from './extensions.js';
 import type { ExtensionStore } from '@second-brain/core';
@@ -14,7 +15,7 @@ import { postgresWorkStore } from './work.js';
 import { postgresScheduleStore } from './schedules.js';
 export type PostgresStoreOptions = CreatePoolOptions;
 export type PostgresIngestStore = SessionIngestStore & UserStore & HealthStore & SchemaStore;
-export type PostgresStore = import('@second-brain/core').ConversationIndexStore & ExtensionStore & PostgresIngestStore & SettingsStore & SessionStore & TranscriptFileStore & WorkStore & ScheduleStore & AttachmentStore & ExtractionStore;
+export type PostgresStore = import('@second-brain/core').RecallStore & import('@second-brain/core').ConversationIndexStore & ExtensionStore & PostgresIngestStore & SettingsStore & SessionStore & TranscriptFileStore & WorkStore & ScheduleStore & AttachmentStore & ExtractionStore;
 /** Ordered adapter probes shared by health checks and doctor assembly. */
 export const POSTGRES_DOCTOR_PROBE_IDS = ['writable', 'pg_trgm', 'redaction_cleanup'] as const;
 const [writableProbeId, trgmProbeId, cleanupProbeId] = POSTGRES_DOCTOR_PROBE_IDS;
@@ -23,7 +24,7 @@ export function postgresStore(options: PostgresStoreOptions): PostgresStore {
   const db = new Kysely<PgSchema>({ dialect: new PostgresDialect({ pool }) });
   const connect: PgConnect = () => ({ ok: true, connection: { db } });
   return {
-    ...postgresConversationIndexStore(connect), ...postgresExtensionStore(connect), ...postgresSettingsStore(connect), ...postgresExtractionStore(connect), ...postgresWorkStore(connect), ...postgresScheduleStore(connect), ...postgresSessionStore(connect), ...postgresUserStore(connect),
+    ...postgresRecallStore(connect), ...postgresConversationIndexStore(connect), ...postgresExtensionStore(connect), ...postgresSettingsStore(connect), ...postgresExtractionStore(connect), ...postgresWorkStore(connect), ...postgresScheduleStore(connect), ...postgresSessionStore(connect), ...postgresUserStore(connect),
     ...postgresTranscriptFileStore(connect), ...postgresAttachmentStore(connect),
     async checkHealth() {
       try {

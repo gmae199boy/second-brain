@@ -530,6 +530,8 @@ export function postgresSessionStore(connect: PgConnect): SessionStore {
 
       const { db } = opened.connection;
       try {
+        return await db.transaction().execute(async db => {
+        await sql`set transaction isolation level repeatable read read only`.execute(db);
         const row = await readSessionRow(db, parsed.key);
         if (row === null) {
           return { ok: false, code: 'SESSION_NOT_FOUND', message: `${token} 세션이 없습니다` };
@@ -545,7 +547,7 @@ export function postgresSessionStore(connect: PgConnect): SessionStore {
                  harness_message_id_raw, git_branch, git_branch_raw, is_subagent_report
             from brain.messages
            where session_id = ${row.id}
-           order by occurred_at
+           order by occurred_at, id
         `.execute(db);
         // Ordered by its message's instant, then by the message, then by the
         // ordinal inside it, so a reader walking the notes walks the
@@ -572,6 +574,7 @@ export function postgresSessionStore(connect: PgConnect): SessionStore {
           messages: messages.rows.map(originalText).map(toMessage),
           toolNotes: toolNotes.rows.map(originalText).map(toToolNote),
         };
+        });
       } catch (error) {
         return {
           ...databaseFailure(error),

@@ -455,6 +455,28 @@ export async function dispatch(
     return 0;
   }
 
+  // 설정 경고까지 합친 최종 출력은 읽기 네 명령의 상한 안에 있어야 한다.
+  const bounded = selectedCommand(registry, argv);
+  if (outcome.envelope && bounded && ((bounded.ns === 'recall' && ['chunks', 'tools', 'expand'].includes(bounded.verb)) || (bounded.ns === 'sessions' && bounded.verb === 'read'))) {
+    const error = outcome.envelope.error;
+    const textLines = [...outcome.text.map(line => `${encodeTextLine(line)}\n`)];
+    if (error) {
+      textLines.push(`${encodeTextLine(`${error.code}: ${error.message}`)}\n`);
+      if (error.hint) textLines.push(`  ${encodeTextLine(error.hint)}\n`);
+      if (error.retry_argv) {
+        const quoted = error.retry_argv.map(arg => /^[a-zA-Z0-9_./:=@-]+$/u.test(arg) ? arg : "'" + arg.replaceAll("'", "'\\''") + "'").join(' ');
+        textLines.push(`  다시 하려면: ${encodeTextLine(quoted)}\n`);
+      }
+    }
+    textLines.push(...outcome.warningLines.map(line => `${encodeTextLine(line)}\n`));
+    const rendered = json ? `${JSON.stringify(outcome.envelope)}\n` : textLines.join('');
+    if (Array.from(rendered).length > 8000) {
+      const warnings = [...new Set(outcome.envelope.warnings)];
+      const envelope = errorEnvelope(clock, { code: 'INVALID_ARGUMENT', message: '설정 경고를 포함한 결과가 출력 크기 한도를 넘었습니다', hint: '설정 경고를 정리한 뒤 다시 실행하세요' }, warnings);
+      outcome = { envelope, text: [], warningLines: warnings.map(code => `경고: ${code}`), exit: 2 };
+    }
+  }
+
   // Only a command that could not run, or that failed outright, is swallowed. A
   // hook command that ran and came back degraded still has data and warning
   // codes worth printing — it just must not report the failure as an exit code.

@@ -173,6 +173,8 @@ export interface ErrorCodeSpec {
 }
 
 const CODES = {
+  INVALID_ARGUMENT: { exit: 2, retryable: false, meaning: '입력값이 올바르지 않습니다', hint: '입력값의 형식과 범위를 확인하세요' },
+  SESSION_NOT_FOUND: { exit: 1, retryable: false, meaning: '지정한 세션이 없습니다', hint: '세션 토큰을 확인하세요' },
   EXTENSION_NOT_FOUND: { exit: 2, retryable: false, meaning: '지정한 확장 패키지가 없습니다', hint: '확장 이름과 제공되는 패키지를 확인하세요' },
   EXTENSION_INVALID: { exit: 2, retryable: false, meaning: '확장 패키지의 선언이 올바르지 않습니다', hint: '확장 manifest와 패키지 경로를 확인하세요' },
   EXTENSION_PYTHON_PIN_INVALID: { exit: 1, meaning: 'Python 확장 의존 파일이나 버전 지정이 올바르지 않습니다', hint: 'Python 확장 환경을 확인하세요' },

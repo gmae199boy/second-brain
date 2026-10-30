@@ -88,6 +88,7 @@ const calls = {
   readConversationSnapshot: s => s.readConversationSnapshot(id),
   commitConversationChunks: s => s.commitConversationChunks({ sessionId: id, workId: id, claimedBy: id, now, fingerprint: '', chunks: [] }),
   searchConversationChunks: s => s.searchConversationChunks({ pattern: '%x%' }),
+  searchRecall: s => s.searchRecall({ kind: 'chunks', query: 'x', pattern: '%x%', limit: 6 }),
   setSetting: (s) => s.setSetting({ key: 'timezone', value: 'UTC', updatedAt: now }),
 } satisfies Record<Exclude<keyof PostgresStore, 'close'>, (store: PostgresStore) => Promise<unknown>>;
 
@@ -123,7 +124,7 @@ it.each(['refused', 'terminated', 'missing-schema', 'missing-database', 'missing
         }
         expect(terminated, `a pending database operation for ${name}`).toBe(true);
       }
-      expect(await pending, name).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE', message: expect.any(String) });
+      expect(await pending, name).toMatchObject({ ok: false, code: name === 'searchRecall' && kind === 'missing-schema' ? 'SEARCH_FAILED' : 'DB_UNAVAILABLE', message: expect.any(String) });
       await store.close();
     }
   } finally {

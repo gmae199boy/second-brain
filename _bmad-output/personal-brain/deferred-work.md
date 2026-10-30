@@ -408,3 +408,45 @@ location: n/a
 source_spec: `tickets/epic-search-and-health-query/tickets/story-tracer-plan.md`
 reason: 검토 필요: [ASSUMPTION] 일반 메시지는 줄바꿈 하나로 결합하며 목표 이상이 되는 시각 묶음까지 포함한 뒤 닫는다.
 status: open
+
+### DW-28: 검토 필요: [ASSUMPTION] 고아 메모가 나중에 새 메시지에 연결돼 기존 출력 여부를 고정 크기 경계로 판별할 수 없으면 그 메시지의 현재 메모를 재출력하고 hint로 알린다. 누락을 피하며 정적 페이지는 무중복이다.
+origin: spec-deferred 005c05cd4a88
+location: n/a
+source_spec: `tickets/epic-search-and-health-query/tickets/story-8-000-plan.md`
+reason: 검토 필요: [ASSUMPTION] 고아 메모가 나중에 새 메시지에 연결돼 기존 출력 여부를 고정 크기 경계로 판별할 수 없으면 그 메시지의 현재 메모를 재출력하고 hint로 알린다. 누락을 피하며 정적 페이지는 무중복이다.
+status: open
+
+### DW-29: 검토 필요: [ASSUMPTION] 관련도는 literal 일치 횟수 내림차순·동점은 시각/id이며 근접 입력은 명시적 worktree/project 식별자다.
+origin: spec-deferred b65955ce788e
+location: n/a
+source_spec: `tickets/epic-search-and-health-query/tickets/story-8-000-plan.md`
+reason: 검토 필요: [ASSUMPTION] 관련도는 literal 일치 횟수 내림차순·동점은 시각/id이며 근접 입력은 명시적 worktree/project 식별자다.
+status: open
+
+### DW-30: 검토 필요: [ASSUMPTION] budget은 가린 data JSON 코드 포인트 길이로 보수적으로 세고 검색 next는 생략·절단 출처의 sessions read다.
+origin: spec-deferred e5911781d9a9
+location: n/a
+source_spec: `tickets/epic-search-and-health-query/tickets/story-8-000-plan.md`
+reason: 검토 필요: [ASSUMPTION] budget은 가린 data JSON 코드 포인트 길이로 보수적으로 세고 검색 next는 생략·절단 출처의 sessions read다.
+status: open
+
+### DW-31: 검토 필요: [ASSUMPTION] 공개 use case는 전체 봉투/next 공간으로 1,000자를 예약해 data를 7,000자로 제한한다.
+origin: spec-deferred 0ae58613ef61
+location: n/a
+source_spec: `tickets/epic-search-and-health-query/tickets/story-8-000-plan.md`
+reason: 검토 필요: [ASSUMPTION] 공개 use case는 전체 봉투/next 공간으로 1,000자를 예약해 data를 7,000자로 제한한다.
+status: open
+
+### DW-32: 검토 필요: [ASSUMPTION] expand 기본 앞뒤 2개·최대 100개, sessions read 기본 메시지 50개·최대 200개와 안정 커서를 쓴다.
+origin: spec-deferred 09eda78b3336
+location: n/a
+source_spec: `tickets/epic-search-and-health-query/tickets/story-8-000-plan.md`
+reason: 검토 필요: [ASSUMPTION] expand 기본 앞뒤 2개·최대 100개, sessions read 기본 메시지 50개·최대 200개와 안정 커서를 쓴다.
+status: open
+
+### DW-33: 검토 필요: [ASSUMPTION] 페이지 사이 고아 메모 구성원이 바뀌면 현재 고아 목록을 처음부터 재표시하고 hint로 알린다. 메시지 진행은 보존하며 정적 페이지는 무중복이다.
+origin: spec-deferred 37d426c881c7
+location: n/a
+source_spec: `tickets/epic-search-and-health-query/tickets/story-8-000-plan.md`
+reason: 검토 필요: [ASSUMPTION] 페이지 사이 고아 메모 구성원이 바뀌면 현재 고아 목록을 처음부터 재표시하고 hint로 알린다. 메시지 진행은 보존하며 정적 페이지는 무중복이다.
+status: open

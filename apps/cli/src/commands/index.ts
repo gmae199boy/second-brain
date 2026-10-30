@@ -1,3 +1,7 @@
+import { recallChunksCommand } from './recall-chunks.js';
+import { recallToolsCommand } from './recall-tools.js';
+import { recallExpandCommand } from './recall-expand.js';
+import { sessionsReadCommand } from './sessions-read.js';
 import { extInstallCommand } from './ext-install.js';
 import { extListCommand } from './ext-list.js';
 import { extStatusCommand } from './ext-status.js';
@@ -45,6 +49,7 @@ import { setupRun } from './setup-run.js';
  * who runs them, so there is no `admin` (AD-5, Decision 2026-10-16).
  */
 export const commands: readonly CommandSpec[] = [
+  recallChunksCommand, recallToolsCommand, recallExpandCommand, sessionsReadCommand,
   extInstallCommand,
   extListCommand,
   extStatusCommand,

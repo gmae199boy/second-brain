@@ -285,3 +285,8 @@ export * from './recall/text-query.js';
 export type * from './ports/conversation-index-store.js';
 
 export { CONVERSATION_CHUNK_INDEX_CONFIG_ID } from './domain/index-config.js';
+
+export type * from './ports/recall-store.js';
+export * from './recall/search.js';
+export * from './recall/expand.js';
+export * from './sessions/read.js';
