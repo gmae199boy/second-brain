@@ -106,3 +106,5 @@ Garmin을 쓰지 않는 사용자는 아무것도 더 설치하지 않는다. �
 
 - Decision(2026-10-30, 추천으로 정함, 13.2 escalation 해소): ABI v1 선택 snapshot 입력과 단계별 비밀 요구·확장 진단 보호를 13.2 plan intent-contract에 확정한다. 독립 Codex가 기존 코드의 누출 반례와 보완 계약을 검증했다.
 - Decision(2026-10-30, 사용자): 에픽마다 두던 Refactor sweep(13.9)을 뺐다(`dropped`). 리뷰가 미룬 기존 결함은 `deferred-work.md` 장부에 남고, 사용자가 원할 때 `bmad-loop sweep`으로 직접 처리한다. 이 Mac 확인(13.10)은 sweep 대신 sweep이 기다리던 스토리들을 기다린다.
+
+- Decision(2026-10-30, 추천으로 정함, 13.4 escalation 해소): `brain.extension_status_public_v1`은 이름·활성 의도·연결 상태만 내고 확장 role에는 자기 행만 허용한다. 명시 ACL과 유효 권한·반례 시험을 적용하며 13.6은 v1을 보존하고 풍부한 공개 상태 계약을 완성한다. 근거는 13.4 plan과 registry migration이다.
