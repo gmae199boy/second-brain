@@ -401,3 +401,10 @@ location: n/a
 source_spec: `tickets/epic-extensions/tickets/story-python-pyfixture-uv-sync-frozen-ts-fixture-plan.md`
 reason: 검토 필요: [ASSUMPTION] pyfixture의 patch pin은 로컬 사용 가능한 3.12.13이며 Python 자동 다운로드 없이 설치한다.
 status: open
+
+### DW-27: 검토 필요: [ASSUMPTION] 일반 메시지는 줄바꿈 하나로 결합하며 목표 이상이 되는 시각 묶음까지 포함한 뒤 닫는다.
+origin: spec-deferred 93b647b09542
+location: n/a
+source_spec: `tickets/epic-search-and-health-query/tickets/story-tracer-plan.md`
+reason: 검토 필요: [ASSUMPTION] 일반 메시지는 줄바꿈 하나로 결합하며 목표 이상이 되는 시각 묶음까지 포함한 뒤 닫는다.
+status: open
