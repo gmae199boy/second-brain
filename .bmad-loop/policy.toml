@@ -98,7 +98,7 @@ thorough_review = "never"    # never | high-risk | always (2026-10-29: always on
 
 [adapter]
 name = "codex"               # 2026-10-30: codex orchestrates (was claude opus) | claude | codex | gemini | copilot | antigravity | opencode-http (alias: opencode) | <custom .bmad-loop/profiles/*.toml>
-model = "gpt-6.1-sol"        # the orchestrator (2026-10-30); the implementer (codex terra) and reviewer (codex sol) run through _bmad/custom/bmad-build-auto-codex.sh
+model = "gpt-6.1-sol"        # the orchestrator (2026-10-30); the implementer (codex terra) and reviewer (codex sol) use Orca orchestration via _bmad/custom/bmad-build-auto.toml
 effort = ""                  # reasoning effort, free-form (e.g. "high", "max"); empty = provider default.
                              # Sent by opencode-http as the per-prompt `variant`; the tmux CLIs ignore it
 # effort: medium comes from ~/.codex/config.toml (model_reasoning_effort). No extra_args — they would replace the
