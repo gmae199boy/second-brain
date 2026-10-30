@@ -82,6 +82,16 @@ blocked_reason: "implementer unavailable: 같은 Task에서 구현 워커 두 �
 - Given CLI 취소·연결 실패·예약 SDK 부재·데몬 부재·감독자 비활성/실패, when 해당 실제 또는 주입 가능한 외부 경계 시험을 실행하면, then 각각 지정 결과와 registry 사실이 일치하고 미완료 단계를 성공으로 보고하지 않는다.
 - Given 기존 Node/Python·권한·비밀 보호 시험, when 기본 및 선택 Python 검증을 실행하면, then 기존 복원·snapshot·확장 신원·공개 view 계약이 유지된다.
 
+### 자동 재개 실행 순서 (2026-10-31)
+
+2026-10-31 사용자 위임에 따라 구현 미완료를 사람 판단으로 넘기지 않는다. `<intent-contract>`와 모든 수락 조건은 유지하고, 아래 실행 단위마다 같은 활성 구현 Dispatch의 `phase-ready` 보고·검증·checkpoint 뒤 다음 단계를 지시한다. 최초 배정은 1번만 구체적으로 구현하도록 지시한다. 이전 두 failed의 범위는 일부 구현이며 기술적으로 계속할 수 없는 근거가 없었다.
+
+1. 설치 journal의 저장·조회: 다음 core migration, Store port, fake/PG 구현·공통 계약 시험. registry의 기존 사실·공개 v1 ACL을 보존하고 비밀을 저장하지 않는다. 해당 계약 시험으로 단계를 검증한다.
+2. 완료 단계 재개·패키지 보존·프로세스 경합: journal을 실제 install/runtime에 연결하고 DDL checksum 및 기존 교체 복원과 일관성을 보인다. 기존 stash `de3641a`의 두 파일은 참고 증거로 읽되 전체 stash를 적용하지 않으며 필요 변경만 현재 코드와 대조해 구현한다.
+3. 인증 감독: 기존 데몬의 supervised auth를 재사용하고 testext 격리 harness로 login_required → 완료·재실행 중복 방지를 실제 시험한다.
+4. 예약 준비·멱등성과 취소: 실제 감독자 readiness, 기존 예약 SDK, AbortSignal·CLI signal 및 재실행 결과를 연결·시험한다.
+5. SDK·CLI 출력·문서와 전체 인수: 저장된 상태 재조회 출력, 모든 matrix 행·기본 회귀·선택 Python 검증을 마친다. 모든 단계가 충족된 뒤 implementation-ready → 지휘자 Verify·리뷰 → finalize 절차를 따른다. 미검증 항목을 done으로 보고하지 않는다.
+
 ## Implementation Notes
 
 - route는 workflow가 지정한 full이며 단계별 DB·프로세스·CLI 경계를 함께 검증해야 하므로 유지한다. 시작 시 작업 트리는 깨끗하고 git metadata refresh가 성공했다. 선행 13.3·13.4 계획과 현재 코드를 대조했다. 별도 최상위 research-* 폴더는 없다. 읽기 전용 Orca 조사 결과를 Code Map에 반영했다.
