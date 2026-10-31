@@ -3,7 +3,7 @@ title: 'Garmin 합성 raw·legacy 문서의 core tracer'
 type: 'feature'
 ticket: '1'
 created: '2026-10-31'
-status: 'in-review'
+status: ready-for-dev
 baseline_revision: 'aa67551a81383a6b13967a5b724825fefb69636e'
 route: 'full'
 route_source: 'pinned'
