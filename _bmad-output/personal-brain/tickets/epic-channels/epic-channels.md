@@ -77,6 +77,8 @@ Brain의 어떤 기능이든 같은 채널 계약으로 메시지를 보내고, 
 
 ## Notes
 
+- Decision(2026-10-31, 추천으로 정함, 15.2 escalation 해소): 기존 구현과 검증을 보존 ref와 patch로 고정하고 제한된 가역적 기준 준비 뒤 엔진의 restore-patch로 제품 diff를 복원해 리뷰·검증한다. 보안·데이터 계약과 선행 작업을 보존하며 완료 판정은 엔진에 맡긴다.
+
 - Waits on epic-postgres-primary because: 채널·대화·발신 이력 테이블이 들어갈 공통 스키마와 비밀 저장 계약이 필요하다.
 - Waits on epic-jobs-and-scheduler because: 발신 일감의 재시도와 중복 방지를 작업 계약 위에 만든다.
 - Waits on epic-extensions because: 확장 role(`brain_ext_<name>`)과 출처 결합 규칙이 있어야 확장이 발신 요청·legacy 이력을 INSERT만 하는 RLS 정책을 둔다.

@@ -4,6 +4,7 @@
 
 | 날짜 | 어디 | 무엇을 정했나 | 근거 |
 |---|---|---|---|
+| 2026-10-31 | epic 15 · 15.2 escalation | 보존 ref와 소유 경로 patch, 가역적 기준 준비 후 엔진 restore-patch로 복원·리뷰·검증한다 | 기존 구현은 HEAD에 있고 엔진이 자기 계획만 바뀐 재시도를 거부; 전체 검증·기존 구현 보존 |
 | 2026-10-28 | epic 12 · 12.12 | 이 Mac 확인을 에이전트가 로컬 설치본으로 하고 증거를 plan에 남긴다(`hitl = false`). 원격 push가 있어야 하면 `operator_actions`로 남긴다 | 이니셔티브 Notes 2026-10-28 위임 |
 | 2026-10-28 | epic 14 · C6 | 기준 소스와 충돌 처리는 epic 14를 쪼갤 때 preflight 증거로 추천 규칙을 정하고, 반입은 에이전트 스토리로 한다 | 사용자 위임, AD-36 |
 | 2026-10-28 | epic 15 · Telegram | 옛 Garmin 봇 token·chat id가 이 Mac에 있으면 Brain `.env`로 옮겨 쓴다. 없으면 그 스토리만 `awaiting-operator` | 사용자 위임 |
