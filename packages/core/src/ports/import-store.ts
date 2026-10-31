@@ -10,7 +10,16 @@ export interface AnalysisArtifact {
 export interface AnalysisRecord extends Record<string, unknown> {
   artifacts: AnalysisArtifact[];
 }
+export interface VerificationFile {
+  requestId: string; fileId: string | null; expectedHash: string; expectedSize: number; storedHash: string | null; storedSize: number | null; failed: boolean; redacted: boolean; deleted: boolean;
+  location: FileLocation | null;
+}
+export interface ImportVerificationData {
+  tables: Record<string, Record<string, unknown>[]>;
+  files: VerificationFile[];
+}
 export interface ImportStore {
+  readVerification(input: { source: string; workId: string; token: string; now: Date; rawViews: readonly string[] }): Promise<{ ok: true; data: ImportVerificationData } | Failure>;
   readHealth(): Promise<{ ok: true; rows: Record<string, unknown>[] } | Failure>;
   readAnalyses(): Promise<{ ok: true; rows: AnalysisRecord[] } | Failure>;
   readRaw(input: { source: string; rawViews: readonly string[] }): Promise<{ ok: true; extensionEnabled: boolean; rows: Record<string, unknown>[] } | Failure>;

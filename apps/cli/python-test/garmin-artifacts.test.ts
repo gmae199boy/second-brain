@@ -378,6 +378,10 @@ it('같은 inventory 키의 artifact와 대형 evaluation을 원본 표별로 �
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
     const run=async()=>{const result=await fixture.run(['ext','run','garmin','import','--json']); expect(result.code,result.stdout+result.stderr).toBe(0); await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${result.body.data.work_id}'`))[0]?.outcome,{timeout:60000}).toBe('succeeded');};
     await run();
+    await expect.poll(async()=> (await fixture.db.rows('select count(*)::int as n from brain.file_requests q left join brain.file_request_results r on r.request_id=q.id where r.file_id is null'))[0]?.n,{timeout:20000}).toBe(0);
+    const verified = await fixture.run(['ext','run','garmin','import-verify','--json']);
+    expect(verified.code,verified.stdout+verified.stderr).toBe(0);
+    expect(verified.body.data.report.counts).toMatchObject({artifacts:2,excluded_too_large:1,analysis_rows:1});
     const rows=await fixture.db.rows('select original_table,artifact_key,batch,request_id,analysis_id,exclusion_reason from garmin.artifact_inventory order by original_table');
     expect(rows).toHaveLength(2); expect(rows[0]).toMatchObject({original_table:'artifact',artifact_key:key,exclusion_reason:null}); expect(rows[0]!.request_id).toBeTruthy(); expect(rows[1]).toMatchObject({original_table:'evaluation',artifact_key:key,exclusion_reason:'too_large',request_id:null});
     await run(); expect(await fixture.db.rows('select original_table,artifact_key,batch,request_id,analysis_id,exclusion_reason from garmin.artifact_inventory order by original_table')).toEqual(rows);

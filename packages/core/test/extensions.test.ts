@@ -412,3 +412,10 @@ it('설치 잠금 예외를 경로 없는 고정 저장소 오류로 반환한�
   expect(result).toEqual({ ok: false, code: 'DB_UNAVAILABLE', message: '확장 설치 잠금을 확보하지 못했습니다' });
   expect(JSON.stringify(result)).not.toContain('private-path-canary');
 });
+
+it('검증 스냅샷은 일감별 명시적 true만 허용한다', () => {
+  const work = { kind: 'testext.verify', execution: 'supervised', runtime: 'python', entry: 'verify.py' };
+  expect(decodeExtensionManifest(JSON.stringify({ ...manifest, work: [{ ...work, verification_snapshot: true }] })).ok).toBe(true);
+  expect(decodeExtensionManifest(JSON.stringify({ ...manifest, work: [{ ...work, runtime: 'node', verification_snapshot: true }] })).ok).toBe(false);
+  for (const value of [false, 'true', null, 1]) expect(decodeExtensionManifest(JSON.stringify({ ...manifest, work: [{ ...work, verification_snapshot: value }] })).ok).toBe(false);
+});

@@ -57,6 +57,7 @@
           "runtime",
           "entry"
         ],
+        "allOf": [{ "if": { "required": ["verification_snapshot"] }, "then": { "properties": { "runtime": { "const": "python" } } } }],
         "properties": {
           "kind": {
             "type": "string",
@@ -77,6 +78,9 @@
           "manual": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          },
+          "verification_snapshot": {
+            "const": true
           },
           "public_report": {
             "type": "object",

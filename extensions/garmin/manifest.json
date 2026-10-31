@@ -141,7 +141,67 @@
       "runtime": "python",
       "entry": "src/import_verify.py",
       "manual": "import-verify",
-      "required_settings": []
+      "required_settings": [
+        "garmin.capture_manifest"
+      ],
+      "verification_snapshot": true,
+      "public_report": {
+        "counts": [
+          "datasets",
+          "source_tables",
+          "source_rows",
+          "preserved_rows",
+          "health_rows",
+          "raw_rows",
+          "legacy_rows",
+          "analysis_rows",
+          "file_requests",
+          "artifacts",
+          "excluded",
+          "unlinked",
+          "unselected",
+          "unselected_ambiguous",
+          "unselected_account_unconfirmed",
+          "unselected_timezone_unconfirmed",
+          "unselected_dataset_ambiguous",
+          "unselected_dataset_unselected",
+          "unselected_revision_ambiguous",
+          "unselected_version_unsupported",
+          "unselected_value_ambiguous",
+          "excluded_config",
+          "excluded_secret",
+          "excluded_scan_failed",
+          "excluded_too_large",
+          "excluded_unknown",
+          "conflict_entries",
+          "outbound_requests",
+          "outbound_results",
+          "source_conflict_keys",
+          "raw_conflict_keys",
+          "raw_metadata_conflict_keys",
+          "excluded_keys",
+          "unassigned_files",
+          "mismatches"
+        ],
+        "checks": [
+          "source_unchanged",
+          "checkpoints",
+          "schemas",
+          "preserved",
+          "mappings",
+          "raw",
+          "health",
+          "authority",
+          "legacy",
+          "analyses",
+          "files",
+          "relations",
+          "inventory",
+          "provenance",
+          "conflicts",
+          "no_outbound"
+        ]
+      }
     }
   ],
   "raw_views": [

@@ -49,6 +49,19 @@ it('출처와 현재 시도에 결합된 불변 가져오기 계약을 강제한
     await expect(ext.query('select * from brain.analysis_artifacts')).rejects.toMatchObject({code:'42501'});
     await expect(ext.query('update brain.analysis_artifacts set role=role')).rejects.toMatchObject({code:'42501'});
     await expect(admin.query('delete from brain.analysis_artifacts')).rejects.toThrow('불변');
+    const foreignId = randomUUID();
+    await admin.query('alter table brain.health_observations disable trigger user');
+    try { await admin.query("insert into brain.health_observations(id,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,value,unit,local_date,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token) select $1,'foreign_source',dataset,import_batch,original_table,'foreign',account,account_confirmed,metric,value,unit,local_date,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token from brain.health_observations where source=$2 limit 1", [foreignId,name]); }
+    finally { await admin.query('alter table brain.health_observations enable trigger user'); }
+    const verification = await store.imports.readVerification({ source:name, workId:work, token, now, rawViews:['raw_records'] });
+    expect(verification).toMatchObject({ ok:true, data:{ tables:{ health:[{source:name}], analyses:[{id:analysisId}], raw:[{body:'원문'}], requests:[{id:file}] }, files:[{requestId:file,fileId:null}] } });
+    expect(verification.ok && verification.data.tables.health_supported_versions).toEqual([{version:1},{version:2},{version:8}]);
+    expect(verification.ok && verification.data.tables.health).not.toContainEqual(expect.objectContaining({id:foreignId}));
+    await admin.query('alter table brain.health_observations disable trigger user');
+    try { await admin.query('delete from brain.health_observations where id=$1',[foreignId]); }
+    finally { await admin.query('alter table brain.health_observations enable trigger user'); }
+    expect(await store.imports.readVerification({source:name,workId:work,token:randomUUID(),now,rawViews:[]})).toMatchObject({ok:false});
+    expect(await store.imports.readVerification({source:'other',workId:work,token,now,rawViews:[]})).toMatchObject({ok:false});
     const payloadId = randomUUID();
     const payload = analysis.replace('file_request_id,source_work_item_id', 'file_request_id,summary,summary_raw,summary_encoding,source_work_item_id').replace('$4,$5,$6)', "$4,'a�b',$7,'utf-8',$5,$6)");
     await ext.query(payload,[payloadId,name,'payload',file,work,token,Buffer.from([97,0,98])]);
@@ -213,4 +226,35 @@ it('기존 JSON 원문을 인코딩과 서식에 관계없이 논리 값으로 �
     expect((await textCompare('�',Buffer.from([0xff]),'utf-8'))[0]).toBe('invalid');
     expect((await textCompare('�',Buffer.from([0,0xd8]),'utf-16le'))[0]).toBe('invalid');
   } finally { await admin.end(); await db.drop(); }
+});
+
+it('검증 snapshot JSONB를 text wrapper로만 전달하고 SQL NULL을 유지한다', async () => {
+  const db=await database(), name=`x${randomBytes(5).toString('hex')}`, password=randomBytes(24).toString('hex');
+  const admin=new pg.Client({connectionString:db.url}), store=postgresStore({databaseUrl:db.appUrl});
+  try {
+    await admin.connect(); await provisionExtension(db.url,name,password);
+    await admin.query("insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ($1,'1',now(),true,now())",[name]);
+    await admin.query('insert into brain.extension_work_kinds(extension_name,kind) values ($1,$2)',[name,`${name}.verify`]);
+    const work=randomUUID(),token=randomUUID(),now=clock.now();
+    await store.addWork({id:work,kind:`${name}.verify`,targetKind:'extension',targetId:'x',createdAt:now,nextAttemptAt:now});
+    expect(await store.claimSupervisedWork({now,claimedBy:'test',kinds:[`${name}.verify`],attemptToken:token})).toMatchObject({ok:true});
+    const insert=`insert into brain.health_observations(id,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,unit,local_date,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token,value_type,value_json,sub_identity) values ($1,$2,'d','b','test',$3,'a',true,'day_summary.drinks_json','json','2026-01-01','Asia/Seoul',false,'r',now(),1,$4,$5,'json',$6::jsonb,$3)`;
+    const large=randomUUID(),nullId=randomUUID(),shaped=randomUUID();
+    await admin.query(insert,[large,name,'large',work,token,'{"n":9007199254740993,"fraction":0.1000000000000000001}']);
+    await admin.query(insert,[nullId,name,'null',work,token,null]);
+    await admin.query(insert,[shaped,name,'wrapper',work,token,'{"encoding":"jsonb-text-v1","data":"{\\"n\\":5}"}']);
+    const channel=randomUUID(),conversation=randomUUID(),request=randomUUID();
+    await admin.query("insert into brain.channels(id,kind,bot_ref) values ($1,'telegram','synthetic')",[channel]);
+    await admin.query("insert into brain.channel_conversations(id,channel_id,external_ref) values ($1,$2,'synthetic')",[conversation,channel]);
+    await admin.query("insert into brain.channel_requests(id,conversation_id,producer,producer_result_id,purpose,body,created_at,source_work_item_id,source_attempt_token,bundle) values ($1,$2,$3,'synthetic','test','synthetic',now(),$4,$5,$6::jsonb)",[request,conversation,name,work,token,'{"n":9007199254740993,"fraction":0.1000000000000000001}']);
+    const snapshot=await store.imports.readVerification({source:name,workId:work,token,now,rawViews:[]});
+    expect(snapshot.ok).toBe(true); if(!snapshot.ok) throw Error('snapshot');
+    const rows=snapshot.data.tables.health!; const byId=(id:string)=>rows.find(row=>row.id===id)!;
+    expect(byId(nullId).value_json).toBeNull();
+    expect(snapshot.data.tables.channel_requests).toContainEqual(expect.objectContaining({id:request,bundle:expect.objectContaining({encoding:'jsonb-text-v1',data:expect.stringContaining('9007199254740993')})}));
+    expect((snapshot.data.tables.channel_requests![0]!.bundle as {data:string}).data).toContain('0.1000000000000000001');
+    expect(byId(large).value_json).toMatchObject({encoding:'jsonb-text-v1',data:expect.stringContaining('9007199254740993')});
+    expect((byId(large).value_json as {data:string}).data).toContain('0.1000000000000000001');
+    expect(JSON.parse((byId(shaped).value_json as {data:string}).data)).toEqual({encoding:'jsonb-text-v1',data:'{"n":5}'});
+  } finally {await admin.end(); await store.close(); await db.drop();}
 });
