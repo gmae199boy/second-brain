@@ -43,6 +43,43 @@ it('출처와 현재 시도에 결합된 불변 가져오기 계약을 강제한
     expect((await admin.query('select * from brain.health_current_v1')).rowCount).toBe(2);
     const typed = `insert into brain.health_observations(id,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,unit,local_date,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token,value_type,value_text,activity_id,sub_identity) values ($1,$2,'d','b','daily','typed','acct',true,'daily_metric.hrv_status','category','2026-01-01','Asia/Seoul',false,'hash',now(),1,$3,$4,'text','normal','exercise','set')`;
     await ext.query(typed,[randomUUID(),name,work,token]);
+    const copyText = `insert into brain.health_observations(id,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,unit,local_date,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token,value_type,value_text,activity_id,sub_identity,value_text_raw,value_text_encoding) select $1,source,dataset,import_batch,original_table,$2,account,account_confirmed,metric,unit,local_date,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token,value_type,$3,activity_id,'comparison',$4,$5 from brain.health_observations where original_key='typed'`;
+    const logical = 'a\0b😀', display = 'a�b😀';
+    const utf8 = Buffer.from(logical), le = Buffer.from(logical,'utf16le'), be = Buffer.from(logical,'utf16le').swap16();
+    for (const [index,bytes,encoding] of [[1,utf8,'utf-8'],[2,le,'utf-16le'],[3,be,'utf-16be']] as const)
+      await admin.query(copyText,[randomUUID(),`text-${index}`,display,bytes,encoding]);
+    expect((await admin.query("select reason,cardinality(selected_ids) as count from brain.health_resolution_v1 where metric='daily_metric.hrv_status' and sub_identity='comparison'")).rows).toEqual([{reason:null,count:3}]);
+    expect((await admin.query("select value_text_raw from brain.health_observations where original_key like 'text-%' order by original_key")).rows).toEqual([{value_text_raw:utf8},{value_text_raw:le},{value_text_raw:be}]);
+    await admin.query(copyText,[randomUUID(),'text-different',display,null,null]);
+    expect((await admin.query("select reason from brain.health_resolution_v1 where metric='daily_metric.hrv_status' and sub_identity='comparison'")).rows).toEqual([{reason:'value_ambiguous'}]);
+    const rawTyped = typed.replace('value_type,value_text,activity_id,sub_identity)', 'value_type,value_text,activity_id,sub_identity,value_text_raw,value_text_encoding)').replace("'text','normal','exercise','set')", "'text','a�b','exercise','raw-set',$5,'utf-8')").replace("'typed'", "'raw-typed'");
+    await ext.query(rawTyped,[randomUUID(),name,work,token,Buffer.from([97,0,98])]);
+    expect((await admin.query("select value_text,value_text_raw,value_text_encoding from brain.health_observations where original_key='raw-typed'")).rows).toEqual([{value_text:'a�b',value_text_raw:Buffer.from([97,0,98]),value_text_encoding:'utf-8'}]);
+    await expect(ext.query(rawTyped.replace("'utf-8'", 'null').replace("'raw-typed'", "'invalid-pair'"),[randomUUID(),name,work,token,Buffer.from([97,0,98])])).rejects.toMatchObject({code:'23514'});
+    const distinctAccounts = typed.replace('value_type,value_text,activity_id,sub_identity)', 'value_type,value_text,activity_id,sub_identity,account_raw,account_encoding)').replace("'text','normal','exercise','set')", "'text','normal','exercise','identity-set',$5,$6)").replace("'acct'", "'a�b'").replace("'typed'", "'identity'");
+    await ext.query(distinctAccounts,[randomUUID(),name,work,token,Buffer.from([97,0,98]),'utf-8']);
+    await ext.query(distinctAccounts,[randomUUID(),name,work,token,null,null]);
+    expect((await admin.query("select id from brain.health_current_v1 where original_key='identity'")).rowCount).toBe(2);
+    for (const column of ['activity_id','sub_identity']) {
+      const inserted = typed.replace('value_type,value_text,activity_id,sub_identity)', `value_type,value_text,activity_id,sub_identity,${column}_raw,${column}_encoding)`)
+        .replace("'typed'", `'${column}-identity'`)
+        .replace("'text','normal','exercise','set')", column === 'activity_id' ? "'text','normal','a�b','different',$5,$6)" : "'text','normal','different','a�b',$5,$6)");
+      await ext.query(inserted,[randomUUID(),name,work,token,Buffer.from([97,0,98]),'utf-8']);
+      await ext.query(inserted,[randomUUID(),name,work,token,null,null]);
+      expect((await admin.query('select id from brain.health_current_v1 where original_key=$1',[`${column}-identity`])).rowCount).toBe(2);
+    }
+    const jsonBody = '{"a\\u0000b":{"a�b":"\\u0000"},"a�b":2}';
+    const jsonInsert = `insert into brain.health_observations(id,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,unit,local_date,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token,value_type,value_json,value_json_raw,value_json_encoding) values ($1,$2,'d','b','day_summary','json-key','acct',true,'day_summary.drinks_json','json','2026-01-01','Asia/Seoul',false,'hash',now(),1,$3,$4,'json','{}'::jsonb,$5,'utf-8')`;
+    await ext.query(jsonInsert,[randomUUID(),name,work,token,Buffer.from(jsonBody)]);
+    const healthDto=await store.imports.readHealth();
+    expect(healthDto.ok && healthDto.rows).toContainEqual(expect.objectContaining({original_key:'json-key',value_json:{'a\0b':{'a�b':'\0'},'a�b':2}}));
+    if (healthDto.ok) expect(healthDto.rows.every(row=>Object.keys(row).every(k=>!k.endsWith('_raw') && !k.endsWith('_encoding')))).toBe(true);
+    const equivalent = '{ "a�b": 2, "a\\u0000b": {"a�b":"\\u0000"} }';
+    const copyJson = `insert into brain.health_observations(id,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,unit,local_date,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token,value_type,value_json,value_json_raw,value_json_encoding) select $1,source,dataset,import_batch,original_table,$2,account,account_confirmed,metric,unit,local_date,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token,value_type,value_json,$3,'utf-16le' from brain.health_observations where original_key='json-key'`;
+    await admin.query(copyJson,[randomUUID(),'json-equivalent',Buffer.from(equivalent,'utf16le')]);
+    expect((await admin.query("select reason,cardinality(selected_ids) as count from brain.health_resolution_v1 where metric='day_summary.drinks_json'")).rows).toEqual([{reason:null,count:2}]);
+    await admin.query(copyJson,[randomUUID(),'json-different',Buffer.from(equivalent.replace(': 2',': 3'),'utf16le')]);
+    expect((await admin.query("select reason from brain.health_resolution_v1 where metric='day_summary.drinks_json'")).rows).toEqual([{reason:'value_ambiguous'}]);
     expect((await admin.query("select value_type,value_text,activity_id,sub_identity from brain.health_current_v1 where original_key='typed'")).rows).toEqual([{value_type:'text',value_text:'normal',activity_id:'exercise',sub_identity:'set'}]);
     await expect(ext.query("insert into brain.health_authority_rules(id,source,account,revision,datasets) values ($1,$2,'acct',1,array['d'])",[randomUUID(),name])).rejects.toMatchObject({code:'BRS01'});
     for (const table of ['health_observations','file_requests','analyses']) {
@@ -85,4 +122,29 @@ it('출처와 현재 시도에 결합된 불변 가져오기 계약을 강제한
     await admin.query(`drop owned by "${role}"; drop role if exists "${role}"`).catch(() => {});
     await admin.end(); await db.drop();
   }
+});
+
+it('기존 JSON 원문을 인코딩과 서식에 관계없이 논리 값으로 비교한다', async () => {
+  const db = await database(); const admin = new pg.Client({connectionString: db.url});
+  try {
+    await admin.connect();
+    const compare = async (bytes: Buffer, encoding: string) => (await admin.query('select brain.health_json_comparison($1::jsonb,$2,$3) as value', ['{}', bytes, encoding])).rows[0].value;
+    const first = '{"a\\u0000b":{"\\ud800":"\\udfff","pair":"\\ud83d\\ude00"},"x":[1,2]}';
+    const same = '{ "x" : [1.0,2], "a\\u0000b" : {"pair":"😀", "\\ud800":"\\udfff"} }';
+    const expected = await compare(Buffer.from(first), 'utf-8');
+    expect(expected[0]).toBe('json');
+    expect(await compare(Buffer.from(same, 'utf16le'), 'utf-16le')).toEqual(expected);
+    expect(await compare(Buffer.from(same, 'utf16le').swap16(), 'utf-16be')).toEqual(expected);
+    expect(await compare(Buffer.from(first.replace('\\udfff','\\udffe')), 'utf-8')).not.toEqual(expected);
+    expect(await compare(Buffer.from('{"x":"\\\\u0000"}'), 'utf-8')).not.toEqual(await compare(Buffer.from('{"x":"\\u0000"}'), 'utf-8'));
+    expect((await compare(Buffer.from([0, 0xd8]), 'utf-16le'))[0]).toBe('invalid');
+    expect((await compare(Buffer.from([0xff]), 'utf-8'))[0]).toBe('invalid');
+    expect((await compare(Buffer.from('{"x":]'), 'utf-8'))[0]).toBe('invalid');
+    const textCompare = async (display: string, bytes: Buffer | null, encoding: string | null) => (await admin.query('select brain.health_text_comparison($1,$2,$3) as value',[display,bytes,encoding])).rows[0].value;
+    expect(await textCompare('',Buffer.alloc(0),'utf-8')).toEqual(await textCompare('',Buffer.alloc(0),'utf-16be'));
+    expect(await textCompare('�',Buffer.from([0]),'utf-8')).not.toEqual(await textCompare('�',null,null));
+    expect(await textCompare('�',Buffer.from([0]),'utf-8')).not.toEqual(await textCompare('\\u0000',null,null));
+    expect((await textCompare('�',Buffer.from([0xff]),'utf-8'))[0]).toBe('invalid');
+    expect((await textCompare('�',Buffer.from([0,0xd8]),'utf-16le'))[0]).toBe('invalid');
+  } finally { await admin.end(); await db.drop(); }
 });

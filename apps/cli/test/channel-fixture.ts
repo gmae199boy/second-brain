@@ -12,7 +12,7 @@ import { writeConfig } from '../src/config/codec.js';
 import { withoutHarnessFolders } from './environment.js';
 
 /** 각 시험이 소유하는 가짜 서버, 데몬, 데이터베이스와 홈이다. */
-export async function channelFixture(initialMode: 'hold' | 'success' | 'null-id' | 'disconnect' | '429' | '400' | '500' | 'broken' | 'bad-ok' = 'success') {
+export async function channelFixture(initialMode: 'hold' | 'success' | 'null-id' | 'disconnect' | '429' | '400' | '500' | 'broken' | 'bad-ok' = 'success', clockMode: 'fixed' | 'running' = 'fixed') {
   const home = await mkdtemp(join(tmpdir(), 'brain-channel-'));
   const db = await pgHome(home);
   const filesPath = join(home, 'custom-files');
@@ -22,6 +22,8 @@ export async function channelFixture(initialMode: 'hold' | 'success' | 'null-id'
   const store = postgresStore({ databaseUrl: db.appUrl });
   let mode = initialMode;
   let timeMs = Date.now();
+  let offsetMs = 0;
+  const currentTime = () => clockMode === 'running' ? Date.now() + offsetMs : timeMs;
   const barriers: string[] = [];
   const requests: { url: string; body: string; bytes: Buffer; contentType: string }[] = [];
   let disconnectAt: number | undefined;
@@ -59,19 +61,19 @@ export async function channelFixture(initialMode: 'hold' | 'success' | 'null-id'
   await store.ensureChannelConversation({ id: conversationId, channelId, externalRef: 'test-chat', threadRef: '12' });
   const input = { id: ids.next(), conversationId, producer: 'test-producer', producerResultId: producerId, purpose: 'notice', revision: null, text: 'password: secret123456', createdAt: now };
   return {
-    db, store, files, home, input, requests, ids, barriers, endpoint: `http://127.0.0.1:${address.port}`, now: () => new Date(timeMs),
+    db, store, files, home, input, requests, ids, barriers, endpoint: `http://127.0.0.1:${address.port}`, now: () => new Date(currentTime()),
     disconnectOnRequest(number: number) { disconnectAt = number; },
     setMode(value: typeof mode) { mode = value; },
     async offline() { await new Promise<void>(resolve => server.close(() => resolve())); },
     async online() { await new Promise<void>(resolve => server.listen(address.port, '127.0.0.1', resolve)); },
-    advance(ms: number) { timeMs += ms; },
+    advance(ms: number) { timeMs += ms; offsetMs += ms; },
     async producer() { const rows = await db.rows(`select * from brain.messages where id='${producerId}'`); return { rows, hash: createHash('sha256').update(JSON.stringify(rows)).digest('hex') }; },
     async start(configured = true, barrier?: 'before-finish' | 'after-finish') {
       if (controller.signal.aborted) controller = new AbortController();
       timeMs = Math.max(timeMs, Date.now());
       running = runDaemon({ home, env: { ...withoutHarnessFolders(process.env), ...db.env,
         BRAIN_TELEGRAM_BOT_TOKEN: configured ? 'test-token' : '', BRAIN_TELEGRAM_CHAT_ID: configured ? 'test-chat' : '' },
-        clock: { now: () => new Date(timeMs) }, idGen: uuidV7IdGen(), signal: controller.signal, drainPauseMs: 25, heartbeatMs: 100,
+        clock: { now: () => new Date(currentTime()) }, idGen: uuidV7IdGen(), signal: controller.signal, drainPauseMs: 25, heartbeatMs: 100,
         supervisor: { pollMs: 25, ...(barrier ? { channelTestBarrier: barrier } : {}), channelTestEndpoint: `http://127.0.0.1:${address.port}` } });
     },
     async stop() { controller.abort(); await running; running = undefined; },

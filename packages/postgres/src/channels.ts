@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import { databaseFailure, type PgConnect } from './connect.js';
 import { withWrite } from './write.js';
 import { ensureWork } from './work.js';
+import { datasetRef, originalText, projectText } from './original-text.js';
 
 const columns = sql`id, conversation_id as "conversationId", producer, producer_result_id as "producerResultId",
   purpose, revision, body as text, created_at as "createdAt", work_item_id as "workItemId", status,
@@ -11,7 +12,7 @@ function request(row: ChannelRequest): ChannelRequest {
   const { bundle, ...rest } = row;
   return { ...rest, createdAt: new Date(row.createdAt), ...(bundle == null ? {} : { bundle }) };
 }
-function legacyOriginal(r: ChannelLegacyInput): string {
+function legacyOriginal(r: ChannelLegacyInput | ChannelLegacyRecord): string {
   return JSON.stringify(r.type === 'notification' ? [r.localDate, r.event, r.detail, r.at.toISOString()] : [r.originalId, r.localDate, r.kind, r.event, r.ok, r.reason, r.at.toISOString()]);
 }
 export function postgresChannelStore(connect: PgConnect): ChannelStore {
@@ -66,12 +67,16 @@ export function postgresChannelStore(connect: PgConnect): ChannelStore {
       try {
         const opened = connect(); if (!opened.ok) throw Error(opened.message);
         const db = opened.connection.db;
-        const common = sql`${input.id},${input.conversationId},${input.source},${input.dataset},${input.originalTable},${input.originalKey},${input.importBatch}`;
+        const dataset = datasetRef(input.dataset), label = projectText(dataset === input.dataset ? null : input.dataset);
+        const originalKey = datasetRef(input.originalKey), keyLabel = projectText(originalKey === input.originalKey ? null : input.originalKey);
+        const localDate = projectText(input.localDate), event = projectText(input.event);
+        const common = sql`${input.id},${input.conversationId},${input.source},${dataset},${input.originalTable},${originalKey},${input.importBatch}`;
+        const pair = (v: [string | null, Buffer | null, string | null]) => sql`${v[0]},${v[1]},${v[2]}`;
         const result = input.type === 'notification'
-          ? await sql`insert into brain.channel_legacy_notifications (id,conversation_id,source,dataset,original_table,original_key,import_batch,local_date,event,detail,at)
-              values (${common},${input.localDate},${input.event},${input.detail},${input.at.toISOString()}) on conflict (dataset,original_table,original_key) do nothing returning id`.execute(db)
-          : await sql`insert into brain.channel_legacy_deliveries (id,conversation_id,source,dataset,original_table,original_key,import_batch,original_id,local_date,kind,event,ok,reason,at)
-              values (${common},${input.originalId},${input.localDate},${input.kind},${input.event},${input.ok},${input.reason},${input.at.toISOString()}) on conflict (dataset,original_table,original_key) do nothing returning id`.execute(db);
+          ? await sql`insert into brain.channel_legacy_notifications (id,conversation_id,source,dataset,original_table,original_key,import_batch,dataset_label,dataset_label_raw,dataset_label_encoding,original_key_label,original_key_label_raw,original_key_label_encoding,local_date,local_date_raw,local_date_encoding,event,event_raw,event_encoding,detail,detail_raw,detail_encoding,at)
+              values (${common},${pair(label)},${pair(keyLabel)},${pair(localDate)},${pair(event)},${pair(projectText(input.detail))},${input.at.toISOString()}) on conflict (dataset,original_table,original_key) do nothing returning id`.execute(db)
+          : await sql`insert into brain.channel_legacy_deliveries (id,conversation_id,source,dataset,original_table,original_key,import_batch,dataset_label,dataset_label_raw,dataset_label_encoding,original_key_label,original_key_label_raw,original_key_label_encoding,original_id,original_id_raw,original_id_encoding,local_date,local_date_raw,local_date_encoding,kind,kind_raw,kind_encoding,event,event_raw,event_encoding,ok,reason,reason_raw,reason_encoding,at)
+              values (${common},${pair(label)},${pair(keyLabel)},${pair(projectText(input.originalId))},${pair(localDate)},${pair(projectText(input.kind))},${pair(event)},${input.ok},${pair(projectText(input.reason))},${input.at.toISOString()}) on conflict (dataset,original_table,original_key) do nothing returning id`.execute(db);
         const read = await this.readChannelLegacy(input);
         if (!read.ok) return read;
         if (!read.record) throw Error('legacy 조회 실패');
@@ -82,13 +87,21 @@ export function postgresChannelStore(connect: PgConnect): ChannelStore {
     async readChannelLegacy(input) {
       try {
         const opened = connect(); if (!opened.ok) throw Error(opened.message);
-        const common = sql`id,conversation_id as "conversationId",source,dataset,original_table as "originalTable",original_key as "originalKey",import_batch as "importBatch",local_date as "localDate",event,at,external_message_id as "externalMessageId",body,metadata_missing as "metadataMissing",resend_eligible as "resendEligible"`;
-        const where = sql`dataset=${input.dataset} and original_table=${input.originalTable} and original_key=${input.originalKey}`;
+        const common = sql`id,conversation_id as "conversationId",source,dataset,dataset_label,dataset_label_raw,dataset_label_encoding,original_table as "originalTable",original_key as "originalKey",original_key_label,original_key_label_raw,original_key_label_encoding,import_batch as "importBatch",local_date,event,at,external_message_id as "externalMessageId",body,metadata_missing as "metadataMissing",resend_eligible as "resendEligible",local_date_raw,local_date_encoding,event_raw,event_encoding`;
+        const where = sql`dataset=${datasetRef(input.dataset)} and original_table=${input.originalTable} and original_key=${datasetRef(input.originalKey)}`;
         const result = input.type === 'notification'
-          ? await sql<ChannelLegacyRecord>`select ${common},detail from brain.channel_legacy_notifications where ${where}`.execute(opened.connection.db)
-          : await sql<ChannelLegacyRecord>`select ${common},original_id as "originalId",kind,ok,reason from brain.channel_legacy_deliveries where ${where}`.execute(opened.connection.db);
+          ? await sql<Record<string, unknown>>`select ${common},detail,detail_raw,detail_encoding from brain.channel_legacy_notifications where ${where}`.execute(opened.connection.db)
+          : await sql<Record<string, unknown>>`select ${common},original_id,original_id_raw,original_id_encoding,kind,kind_raw,kind_encoding,ok,reason,reason_raw,reason_encoding from brain.channel_legacy_deliveries where ${where}`.execute(opened.connection.db);
         const row = result.rows[0];
-        return { ok: true, record: row ? { ...row, type: input.type, at: new Date(row.at) } as ChannelLegacyRecord : null };
+        if (!row) return { ok: true, record: null };
+        const field = (key: string) => originalText(row[key], row[key + '_raw'], row[key + '_encoding']);
+        const commonDto = { id: row.id, conversationId: row.conversationId, source: row.source, dataset: row.dataset_label == null ? row.dataset : field('dataset_label'),
+          originalTable: row.originalTable, originalKey: row.original_key_label == null ? row.originalKey : field('original_key_label'), importBatch: row.importBatch,
+          localDate: field('local_date'), event: field('event'), at: new Date(row.at as Date),
+          externalMessageId: row.externalMessageId, body: row.body, metadataMissing: row.metadataMissing, resendEligible: row.resendEligible };
+        const record = input.type === 'notification' ? { ...commonDto, type: input.type, detail: field('detail') }
+          : { ...commonDto, type: input.type, originalId: field('original_id'), kind: field('kind'), ok: row.ok, reason: field('reason') };
+        return { ok: true, record: record as ChannelLegacyRecord };
       } catch (error) { return databaseFailure(error); }
     },
     async ensureChannel(input) {

@@ -68,14 +68,24 @@ it('enforces the role, public view and fenced provenance contracts over real con
       create trigger fence before insert on contract_test.results for each row execute function brain.reject_stale_attempt();
       grant usage on schema contract_test to "${roles[0]}"; grant insert on contract_test.results to "${roles[0]}"`);
     const id = randomUUID(), token = randomUUID(), now = clock.now();
-    expect(await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: 'extension', createdAt: now, nextAttemptAt: now })).toMatchObject({ ok: true });
-    expect(await store.claimSupervisedWork({ now, claimedBy: 'test', kinds: ['process_probe'], attemptToken: token })).toMatchObject({ ok: true, attemptToken: token });
+    const workKind = `${names[0]}.import`;
+    await admin.query('insert into brain.extension_work_kinds(extension_name,kind) values ($1,$2)', [names[0],workKind]);
+    expect(await store.addWork({ id, kind: workKind, targetKind: 'probe', targetId: 'extension', createdAt: now, nextAttemptAt: now })).toMatchObject({ ok: true });
+    expect(await store.claimSupervisedWork({ now, claimedBy: 'test', kinds: [workKind], attemptToken: token })).toMatchObject({ ok: true, attemptToken: token });
     const channel = randomUUID(), conversation = randomUUID();
     await admin.query('insert into brain.channels values ($1,$2,$3)', [channel, 'telegram', 'bot']);
     await admin.query('insert into brain.channel_conversations values ($1,$2,$3,null)', [conversation, channel, 'chat']);
     const requestSql = `insert into brain.channel_requests(id,conversation_id,producer,producer_result_id,purpose,body,created_at,source_work_item_id,source_attempt_token) values ($1,$2,$3,$4,'notice','body',now(),$5,$6)`;
     const notificationSql = `insert into brain.channel_legacy_notifications(id,conversation_id,source,dataset,original_table,original_key,import_batch,local_date,event,detail,at,source_work_item_id,source_attempt_token) values ($1,$2,$3,'dataset','notifications',$4,'batch','2026-10-31','event','',now(),$5,$6)`;
     const deliverySql = `insert into brain.channel_legacy_deliveries(id,conversation_id,source,dataset,original_table,original_key,import_batch,original_id,local_date,kind,event,ok,at,source_work_item_id,source_attempt_token) values ($1,$2,$3,'dataset','deliveries',$4,'batch',$4,'2026-10-31','notice','event',true,now(),$5,$6)`;
+    const reconcile = 'select brain.reconcile_import_authority($1,$2,$3,$4,$5,$6,$7,$8,$9) as id';
+    const authorityId=randomUUID(), authorityArgs=[authorityId,names[0],'acct',null,null,['d'],id,token,false];
+    expect((await a.query(reconcile,authorityArgs)).rows).toEqual([{id:authorityId}]);
+    expect((await a.query(reconcile,[randomUUID(),names[0],'acct',null,null,['d'],id,token,false])).rows).toEqual([{id:authorityId}]);
+    await expect(a.query(reconcile,[randomUUID(),names[1],'acct',null,null,['d'],id,token,false])).rejects.toMatchObject({code:'42501'});
+    await expect(a.query(reconcile,[authorityId,names[0],'acct',null,null,['d'],id,randomUUID(),true])).rejects.toMatchObject({code:'BRS01'});
+    await expect(a.query(reconcile,[authorityId,names[0],'acct',null,null,['other'],id,token,true])).rejects.toMatchObject({code:'P0001'});
+    await expect(a.query('select * from brain.health_authority_rules')).rejects.toMatchObject({code:'42501'});
     for (const statement of [requestSql, notificationSql, deliverySql]) {
       await a.query(statement, [randomUUID(), conversation, names[0], randomUUID(), id, token]);
       await expect(a.query(statement, [randomUUID(), conversation, names[1], randomUUID(), id, token])).rejects.toMatchObject({ code: '42501' });
@@ -160,10 +170,13 @@ it('v18의 확장 역할을 v19로 이전하고 최소 권한으로 재설정한
       const store = postgresStore({ databaseUrl: db.appUrl });
       const work = randomUUID(), token = randomUUID(), channel = randomUUID(), conversation = randomUUID();
       try {
+        await admin.query("insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ($1,'1',now(),true,now())",[name]);
+        const workKind = `${name}.import`;
+        await admin.query('insert into brain.extension_work_kinds(extension_name,kind) values ($1,$2)',[name,workKind]);
         expect(await store.ensureChannel({ id: channel, kind: 'telegram', botRef: 'bot' })).toMatchObject({ ok: true });
         expect(await store.ensureChannelConversation({ id: conversation, channelId: channel, externalRef: 'chat', threadRef: null })).toMatchObject({ ok: true });
-        expect(await store.addWork({ id: work, kind: 'process_probe', targetKind: 'probe', targetId: 'test', createdAt: clock.now(), nextAttemptAt: clock.now() })).toMatchObject({ ok: true });
-        expect(await store.claimSupervisedWork({ now: clock.now(), kinds: ['process_probe'], claimedBy: 'test', attemptToken: token })).toMatchObject({ ok: true, item: { id: work } });
+        expect(await store.addWork({ id: work, kind: workKind, targetKind: 'probe', targetId: 'test', createdAt: clock.now(), nextAttemptAt: clock.now() })).toMatchObject({ ok: true });
+        expect(await store.claimSupervisedWork({ now: clock.now(), kinds: [workKind], claimedBy: 'test', attemptToken: token })).toMatchObject({ ok: true, item: { id: work } });
         await ext.query(`insert into brain.channel_legacy_deliveries(id,conversation_id,source,dataset,original_table,original_key,import_batch,original_id,local_date,kind,event,ok,at,source_work_item_id,source_attempt_token) values ($1,$2,$5,'data','deliveries','1','batch','1','2026-10-31','notice',null,true,now(),$3,$4)`, [randomUUID(), conversation, work, token, name]);
         expect(await store.readChannelLegacy({ type: 'delivery', dataset: 'data', originalTable: 'deliveries', originalKey: '1' })).toMatchObject({ ok: true, record: { source: name, event: null, conversationId: conversation } });
       } finally { await store.close(); }

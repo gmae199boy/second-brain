@@ -30,12 +30,13 @@ def account(snapshot):
 
 
 def _index(table):
+    from reader import SQLiteText, InvalidSQLiteText
     keys = table['keys']
     if not keys:
         return None
     result = {}
     for row in table['rows']:
-        key = tuple(row[k] for k in keys)
+        key = tuple(('text', row[k].encoding, row[k].raw) if isinstance(row[k], (SQLiteText, InvalidSQLiteText)) else (type(row[k]).__name__, row[k]) for k in keys)
         if key in result:
             return None
         result[key] = row
@@ -43,10 +44,16 @@ def _index(table):
 
 
 def _different(left, right, columns):
-    return any(left[column] != right[column] for column in columns)
+    from reader import SQLiteText, InvalidSQLiteText
+    def original(value):
+        return ('text', value.encoding, value.raw) if isinstance(value, (SQLiteText, InvalidSQLiteText)) else (type(value), value)
+    return any(original(left[column]) != original(right[column]) for column in columns)
 
 
 def _private_value(value):
+    from reader import InvalidSQLiteText
+    if isinstance(value, InvalidSQLiteText):
+        return {'text_base64': base64.b64encode(value.raw).decode('ascii'), 'encoding': value.encoding}
     if isinstance(value, bytes):
         return {'blob_base64': base64.b64encode(value).decode('ascii')}
     if isinstance(value, dict):
@@ -114,7 +121,7 @@ def analyze(datasets):
                 raw_conflicts += any(rows[0]['raw'] != row['raw'] for row in rows[1:])
                 metadata_conflicts += any(_different(rows[0], row, [c for c in common if c != 'raw']) for row in rows[1:])
         def encode_key(key):
-            return [{'blob_base64': base64.b64encode(v).decode('ascii')} if isinstance(v, bytes) else v for v in key]
+            return [{'type': 'text', 'encoding': part[1], 'base64': base64.b64encode(part[2]).decode('ascii')} if part[0] == 'text' else {'blob_base64': base64.b64encode(part[1]).decode('ascii')} if isinstance(part[1], bytes) else part[1] for part in key]
         selections = []
         for key in sorted(union, key=repr):
             candidates = [role for role in ORDER if indexed[role] is not None and key in indexed[role]]

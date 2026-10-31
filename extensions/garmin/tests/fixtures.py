@@ -5,12 +5,14 @@ import sys
 from pathlib import Path
 
 
-def create(path, version=15):
+def create(path, version=15, encoding='UTF-8'):
     if version not in (10, 15):
         raise ValueError('지원하지 않는 시험 버전')
     import tarfile
     archive = Path(__file__).resolve().parents[3] / '_bmad-output/personal-brain/prep-garmin-absorption/inputs/garmin-source.tar.gz'
     with tarfile.open(archive, 'r:gz') as bundle, sqlite3.connect(path) as conn:
+        if encoding not in ('UTF-8', 'UTF-16le', 'UTF-16be'): raise ValueError('지원하지 않는 시험 인코딩')
+        conn.execute("pragma encoding = '" + encoding + "'")
         migrations = sorted((m for m in bundle.getmembers() if m.name.startswith('garmin-source/src/garmin_pipeline/store/migrations/') and m.name.endswith('.sql') and int(Path(m.name).name[:4]) <= version), key=lambda m: m.name)
         for migration in migrations:
             conn.executescript(bundle.extractfile(migration).read().decode('utf-8'))
@@ -25,12 +27,12 @@ if __name__ == '__main__':
     create(Path(sys.argv[1]), int(sys.argv[2]))
 
 
-def five_candidates(directory, rich=False):
+def five_candidates(directory, rich=False, encoding='UTF-8'):
     """독립적인 작은 충돌 기대값을 가진 다섯 합성 DB를 만든다."""
     result = {}
     for role in ('D1', 'D2', 'D3', 'D4', 'D5'):
         path = directory / (role + '.db')
-        create(path, 15 if role == 'D1' else 10)
+        create(path, 15 if role == 'D1' else 10, encoding if role == 'D1' else 'UTF-8')
         with sqlite3.connect(path) as conn:
             if rich:
                 if role == 'D1': conn.execute('insert into meta values (?,?)', ('nul-text', '한글\x00끝'))

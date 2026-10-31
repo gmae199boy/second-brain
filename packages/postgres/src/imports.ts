@@ -3,10 +3,21 @@ import { sql } from 'kysely';
 import { databaseFailure, type PgConnect } from './connect.js';
 import { withWrite } from './write.js';
 import { ensureWork } from './work.js';
+import { originalJson, originalText } from './original-text.js';
 export function postgresImportStore(connect: PgConnect): ImportStore {
   return {
     async readHealth() {
-      try { const c = connect(); if (!c.ok) throw Error(c.message); return { ok: true, rows: (await sql<Record<string, unknown>>`select * from brain.health_current_v1`.execute(c.connection.db)).rows }; }
+      try { const c = connect(); if (!c.ok) throw Error(c.message);
+        const rows = (await sql<Record<string, unknown>>`select * from brain.health_current_v1`.execute(c.connection.db)).rows;
+        const fields = ['id','source','dataset','import_batch','original_table','original_key','account_confirmed','metric','value','unit','local_date','observed_at','time_zone','time_zone_missing','revision','fetched_at','normalization_version','source_work_item_id','source_attempt_token','value_type','catalog_version'];
+        return { ok: true, rows: rows.map(r => {
+          const dto = Object.fromEntries(fields.map(k => [k, r[k]]));
+          if (r.dataset_label != null) dto.dataset = originalText(r.dataset_label,r.dataset_label_raw,r.dataset_label_encoding);
+          for (const k of ['account','activity_id','sub_identity','value_text']) dto[k] = originalText(r[k],r[k+'_raw'],r[k+'_encoding']);
+          dto.value_json = originalJson(r.value_json,r.value_json_raw,r.value_json_encoding);
+          return dto;
+        }) };
+      }
       catch (error) { return databaseFailure(error); }
     },
     async readAnalyses() {
@@ -14,10 +25,17 @@ export function postgresImportStore(connect: PgConnect): ImportStore {
       catch (error) { return databaseFailure(error); }
     },
     async readRaw(input) {
-      if (!/^[a-z][a-z0-9_]{0,30}$/.test(input.source) || !input.rawViews.includes('raw_records')) return { ok: false, code: 'IMPORT_VIEW_INVALID', message: '선언된 원문 view가 없습니다' };
+      if (!/^[a-z][a-z0-9_]{0,30}$/.test(input.source) || !input.rawViews.some(view => view === 'raw_records' || view === 'raw_records_v2')) return { ok: false, code: 'IMPORT_VIEW_INVALID', message: '선언된 원문 view가 없습니다' };
       try { const c = connect(); if (!c.ok) throw Error(c.message);
         const exists = await sql<{ enabled: boolean }>`select enabled from brain.extensions where name=${input.source}`.execute(c.connection.db);
         if (!exists.rows.length) return { ok: false, code: 'IMPORT_VIEW_INVALID', message: '설치된 확장이 없습니다' };
+        if (input.rawViews.includes('raw_records_v2')) {
+          const rows = (await sql<Record<string, unknown>>`select source,dataset,dataset_raw,dataset_encoding,account,account_raw,account_encoding,scope,scope_raw,scope_encoding,original_key,original_key_raw,original_key_encoding,endpoint,endpoint_raw,endpoint_encoding,fetched_at,checked_at,body,body_raw,body_encoding from ${sql.ref(input.source + '.raw_records_v2')}`.execute(c.connection.db)).rows;
+          return { ok: true, extensionEnabled: exists.rows[0]!.enabled, rows: rows.map(r => {
+            const field = (name: string) => originalText(r[name], r[name + '_raw'], r[name + '_encoding']);
+            return { source: r.source, dataset: field('dataset'), account: field('account'), scope: field('scope'), originalKey: field('original_key'), endpoint: field('endpoint'), fetched_at: r.fetched_at, checked_at: r.checked_at, body: field('body') };
+          }) };
+        }
         return { ok: true, extensionEnabled: exists.rows[0]!.enabled, rows: (await sql<Record<string, unknown>>`select source,account,key,endpoint,fetched_at,checked_at,body from ${sql.ref(input.source + '.raw_records')}`.execute(c.connection.db)).rows };
       } catch (error) { return databaseFailure(error); }
     },

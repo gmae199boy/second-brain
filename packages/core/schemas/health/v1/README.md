@@ -14,6 +14,8 @@
 
 설치된 확장은 읽기 전용 `brain.health_catalog_v1`에서 정본 정의를 읽는다. Garmin tracer는 설치된 `health.py`로 원본 열을 catalog 배율에 따라 변환하고 기존 `steps` 호환 지표를 기록한다.
 
+원문 문자열의 SQL 표현에는 nullable `*_raw` bytea와 `*_encoding` 짝을 사용한다. 계정·운동·보조 identity와 현재/권위 선택은 표시용 치환 문자열 대신 원형 바이트·인코딩을 구별한다. 건강 JSON은 원래 JSON 문자열을 별도로 보존하며 중첩 키를 치환하지 않는다. NUL을 포함하는 파생 JSON의 SQL 표시값은 빈 객체 또는 배열이므로 원문 값으로 해석하지 않는다. 공통 Store가 원문을 복원하고 내부 원문 짝을 제거한 DTO를 제공한다. 디코딩 불능 TEXT는 `invalid-text`, 객체·배열로 해석할 수 없는 JSON은 `invalid-json` 유형으로 원형을 보존한다. SQL 짝 제약만으로 엄격 디코딩과 표시값 일치가 모두 강제되는 것은 아니며 작성·복원 경계에서 검증한다.
+
 ## 소비 및 기록 인터페이스
 
 - `brain.health_catalog_v1(metric, definition)`은 지표 정의의 정본이다. `definition`은 이 디렉터리의 `catalog.json` 항목과 같다. 확장 역할은 읽기만 할 수 있다.

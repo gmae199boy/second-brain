@@ -22,6 +22,10 @@ it('다섯 합성 snapshot의 원형과 키를 보존하고 재실행한다', as
     const ids=uuidV7IdGen(), channel=ids.next(), conversation=ids.next();
     await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot')`);
     await fixture.db.query(`insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
+    await fixture.db.query(`insert into garmin.datasets(dataset,account,account_confirmed) values ('synthetic-D1','12345',true);
+      insert into garmin.import_batches values ('tracer-seed','synthetic-D1',now());
+      insert into garmin.raw_payloads(dataset,batch,account,scope,original_key,endpoint,fetched_at_ms,checked_at_ms,library_version,body)
+      values ('synthetic-D1','tracer-seed','12345','day','2026-01-01','user_summary',1700000000123,1700000000456,'test-1','{"userProfileId": 12345, "한글": null, "order": [2,1]}')`);
     const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl);
     const run = async () => {
       const id=ids.next(), token=ids.next(), now=new Date();
@@ -33,8 +37,11 @@ it('다섯 합성 snapshot의 원형과 키를 보존하고 재실행한다', as
     await expect(run()).rejects.toThrow('IMPORT_INVALID');
     expect(await fixture.db.rows('select count(*)::int as n from garmin.preserved_rows')).toEqual([{n:0}]);
     await fixture.db.query('revoke select on brain.health_observations from brain_ext_garmin');
+    await fixture.db.query('revoke execute on function brain.reconcile_import_authority(uuid,text,text,bytea,text,text[],uuid,uuid,boolean) from brain_ext_garmin');
+    await expect(run()).rejects.toThrow('IMPORT_INVALID');
+    await fixture.db.query('grant execute on function brain.reconcile_import_authority(uuid,text,text,bytea,text,text[],uuid,uuid,boolean) to brain_ext_garmin');
     expect(await run()).toContain('"type": "result"');
-    expect(await fixture.db.rows("select values_json->'value' as v from garmin.preserved_rows where dataset='synthetic-D1' and original_table='meta' and values_json->'key'->>'value'='nul-text'")).toEqual([{v:{type:'text',base64:'7ZWc6riAAOuBnQ=='}}]);
+    expect(await fixture.db.rows("select values_json->'value' as v from garmin.preserved_rows where dataset='synthetic-D1' and original_table='meta' and values_json->'key'->>'base64'='bnVsLXRleHQ='")).toEqual([{v:{type:'text',encoding:'utf-8',base64:'7ZWc6riAAOuBnQ=='}}]);
     const before=await fixture.db.rows('select dataset,original_table,original_key,values_json from garmin.preserved_rows order by dataset,original_table,original_key');
     const expectedCode = `import sys,json,pathlib
 sys.path.insert(0,sys.argv[1]); from reader import read_snapshot
@@ -46,12 +53,31 @@ for role in ('D1','D2','D3','D4','D5'):
    out.append({'dataset':'synthetic-'+role,'original_table':name,'original_key':canonical([encoded(row[k]) for k in table['keys']]),'values_json':{k:encoded(v) for k,v in row.items()}})
 print(json.dumps(out,ensure_ascii=False))`;
     const expected = JSON.parse(execFileSync(python,['-c',expectedCode,join(fixture.home,'extensions/garmin/src'),fixture.home],{encoding:'utf8'}));
-    const normalize = (rows: any[]) => rows.map(row => JSON.stringify([row.dataset,row.original_table,row.original_key,Object.keys(row.values_json).sort().map(k => [k,row.values_json[k]])])).sort();
+    const normalize = (rows: any[]) => rows.map(row => JSON.stringify([row.dataset,row.original_table,row.original_key,Object.keys(row.values_json).sort().map(k => [k,Object.fromEntries(Object.entries(row.values_json[k]).sort(([a],[b]) => a.localeCompare(b)))])])).sort();
     expect(normalize(before)).toEqual(normalize(expected));
     expect((await fixture.db.rows('select distinct original_table from garmin.preserved_rows')).length).toBe(20);
     expect(await fixture.db.rows('select count(*)::int as n from garmin.source_schemas')).toEqual([{n:71}]);
     expect(await fixture.db.rows("select datasets from garmin.authority_provenance where account='12345'")).toEqual([{datasets:['synthetic-D2','synthetic-D1','synthetic-D4']}]);
+    const authority = (await fixture.db.rows("select rule_id from garmin.authority_provenance where account='12345'"))[0]!.rule_id;
+    await fixture.db.query("alter table brain.health_authority_rules disable trigger authority_immutable; delete from brain.health_authority_rules where account='12345'; alter table brain.health_authority_rules enable trigger authority_immutable");
+    expect(await run()).toContain('"type": "result"');
+    expect(await fixture.db.rows("select id from brain.health_authority_rules where account='12345'")).toEqual([{id:authority}]);
+    await fixture.db.query("delete from garmin.authority_provenance where account='12345'");
+    expect(await run()).toContain('"type": "result"');
+    expect(await fixture.db.rows("select rule_id from garmin.authority_provenance where account='12345'")).toEqual([{rule_id:authority}]);
     expect(await fixture.db.rows("select value,activity_id from brain.health_current_v1 where dataset='synthetic-D1' and metric='exercise_set.reps'")).toEqual([{value:5,activity_id:'42'}]);
+    for (const field of ['account','activity_id','sub_identity']) {
+      const priorConflicts = Number((await fixture.db.rows("select count(*)::int as n from garmin.import_conflicts where reason='row_mismatch'"))[0]!.n);
+      await fixture.db.query(`alter table brain.health_observations disable trigger import_immutable; update brain.health_observations set ${field}_raw=convert_to(${field},'UTF8'),${field}_encoding='utf-8',${field}='변조' where dataset='synthetic-D1' and metric='exercise_set.reps'; alter table brain.health_observations enable trigger import_immutable`);
+      await expect(run()).rejects.toThrow('IMPORT_CONFLICT');
+      expect(await fixture.db.rows("select count(*)::int as n from garmin.import_conflicts where reason='row_mismatch'")).toEqual([{n:priorConflicts+1}]);
+      expect(await fixture.db.rows(`select ${field} as value from brain.health_observations where dataset='synthetic-D1' and metric='exercise_set.reps'`)).toEqual([{value:'변조'}]);
+      await fixture.db.query(`alter table brain.health_observations disable trigger import_immutable; update brain.health_observations set ${field}=convert_from(${field}_raw,'UTF8'),${field}_raw=null,${field}_encoding=null where dataset='synthetic-D1' and metric='exercise_set.reps'; alter table brain.health_observations enable trigger import_immutable`);
+    }
+    await fixture.db.query("update garmin.raw_payloads set body='불일치' where dataset='synthetic-D1' and endpoint='user_summary'");
+    await expect(run()).rejects.toThrow('IMPORT_CONFLICT');
+    expect(await fixture.db.rows("select body from garmin.raw_payloads where dataset='synthetic-D1' and endpoint='user_summary'")).toEqual([{body:'불일치'}]);
+    expect((await fixture.db.rows("select id from garmin.import_conflicts where dataset='synthetic-D1' and reason='row_mismatch'")).length).toBeGreaterThan(0);
     expect(await fixture.db.rows("select value,activity_id from brain.health_current_v1 where dataset='synthetic-D1' and metric='activity.duration_s'")).toEqual([{value:60,activity_id:'42'}]);
     expect((await fixture.db.rows("select metric,value from brain.health_current_v1 where dataset='synthetic-D4' and metric like 'body_battery_sample.%'")).length).toBeGreaterThan(0);
     const links=await fixture.db.rows("select c.dataset,c.id,c.run_id,p.dataset as parent_dataset,p.original_table as parent_table from garmin.preserved_rows c join garmin.preserved_rows p on p.id=c.run_id where c.original_table='fetch_error' order by c.dataset");
@@ -61,11 +87,25 @@ print(json.dumps(out,ensure_ascii=False))`;
     expect(await fixture.db.rows('select conversation_id,ok,reason,resend_eligible from brain.channel_legacy_deliveries')).toEqual([{conversation_id:conversation,ok:false,reason:'network',resend_eligible:false}]);
     expect(await fixture.db.rows('select count(*)::int as n from brain.channel_requests')).toEqual([{n:0}]);
     expect(await fixture.db.rows('select count(*)::int as n from garmin.raw_records')).toEqual([{n:9}]);
+    expect(await fixture.db.rows("select batch from garmin.raw_payloads where dataset='synthetic-D1' and endpoint='user_summary'")).toEqual([{batch:'tracer-seed'}]);
     await fixture.db.query('grant select on brain.health_observations to brain_ext_garmin');
     await expect(run()).rejects.toThrow('IMPORT_INVALID');
     await fixture.db.query('revoke select on brain.health_observations from brain_ext_garmin');
+    await fixture.db.query("delete from garmin.preserved_rows where dataset='synthetic-D1' and original_table='meta' and values_json->'key'->>'base64'='bnVsLXRleHQ='");
+    await fixture.db.query("delete from garmin.raw_payloads where dataset='synthetic-D1' and scope='day' and endpoint='user_summary'");
+    await fixture.db.query("update brain.channel_legacy_notifications set detail='다른 원문' where dataset='synthetic-D1'");
+    await expect(run()).rejects.toThrow('IMPORT_CONFLICT');
+    expect(await fixture.db.rows("select detail from brain.channel_legacy_notifications where dataset='synthetic-D1'")).toEqual([{detail:'다른 원문'}]);
+    await fixture.db.query("delete from brain.channel_legacy_notifications where dataset='synthetic-D1'");
+    await fixture.db.query("alter table brain.health_observations disable trigger import_immutable; update brain.health_observations set value=999 where dataset='synthetic-D1' and metric='exercise_set.reps'; alter table brain.health_observations enable trigger import_immutable");
+    await expect(run()).rejects.toThrow('IMPORT_CONFLICT');
+    expect(await fixture.db.rows("select value from brain.health_observations where dataset='synthetic-D1' and metric='exercise_set.reps'")).toEqual([{value:999}]);
+    await fixture.db.query("alter table brain.health_observations disable trigger import_immutable; delete from brain.health_observations where dataset='synthetic-D1' and metric='exercise_set.reps'; alter table brain.health_observations enable trigger import_immutable");
     expect(await run()).toContain('"type": "result"');
     expect(await fixture.db.rows('select dataset,original_table,original_key,values_json from garmin.preserved_rows order by dataset,original_table,original_key')).toEqual(before);
+    expect(await fixture.db.rows('select count(*)::int as n from garmin.raw_records')).toEqual([{n:9}]);
+    expect(await fixture.db.rows('select conversation_id,detail from brain.channel_legacy_notifications')).toEqual([{conversation_id:conversation,detail:'합성'}]);
+    expect(await fixture.db.rows("select value,activity_id from brain.health_current_v1 where dataset='synthetic-D1' and metric='exercise_set.reps'")).toEqual([{value:5,activity_id:'42'}]);
   } finally { await store.close(); await fixture.cleanup(); }
 });
 
@@ -214,6 +254,12 @@ it('checkpoint 중단·재개와 동시 반입 및 입력 변경 충돌을 검�
     await fixture.db.query('update garmin.import_checkpoints set importer_version=999');
     expect(run(await claim()).stdout).toContain('IMPORT_CONFLICT');
     await fixture.db.query('update garmin.import_checkpoints set importer_version=1');
+    expect(run(await claim()).stdout).toContain('IMPORT_CONFLICT');
+    await fixture.db.query('update garmin.import_checkpoints set importer_version=2');
+    await fixture.db.query("update brain.health_catalog_v1 set definition=definition || '{\"synthetic_revision\":true}'::jsonb where metric='daily_metric.steps'");
+    expect(run(await claim()).stdout).toContain('IMPORT_CONFLICT');
+    await fixture.db.query("update brain.health_catalog_v1 set definition=definition - 'synthetic_revision' where metric='daily_metric.steps'");
+    expect(run(await claim()).status).toBe(0);
     const text=await readFile(manifest,'utf8'), value=JSON.parse(text); value.files[0].source='다른 합성 이름'; await writeFile(manifest,JSON.stringify(value));
     expect(run(await claim()).stdout).toContain('IMPORT_CONFLICT'); await writeFile(manifest,text);
     const db=join(fixture.home,'D2.db'), original=await readFile(db);
@@ -249,4 +295,77 @@ it('checkpoint 중단·재개와 동시 반입 및 입력 변경 충돌을 검�
     }
     await store.close(); await fixture.cleanup();
   }
+});
+
+it('NUL 계정과 원문·legacy·건강 TEXT를 공통 DTO로 복원한다', async () => {
+  const { realpath } = await import('node:fs/promises');
+  const { postgresStore } = await import('second_brain/postgres');
+  const { uuidV7IdGen } = await import('../src/runtime/id-gen.js');
+  const { extensionDatabaseUrl } = await import('../src/config/codec.js');
+  const fixture = await extHome(), store = postgresStore({databaseUrl:fixture.db.appUrl});
+  try {
+    expect((await fixture.run(['ext','install','garmin','--json'])).code).toBe(0);
+    const python=join(fixture.home,'extensions/garmin/.venv/bin/python');
+    const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
+    const code=`import sys,pathlib,sqlite3,json
+sys.path.insert(0,sys.argv[1]); from fixtures import five_candidates,capture_manifest
+p=pathlib.Path(sys.argv[2]); items=five_candidates(p,rich=True,encoding='UTF-16le')
+with sqlite3.connect(p/'D1.db') as db:
+ db.execute('pragma ignore_check_constraints=on')
+ db.execute('update raw_response set raw=?',(json.dumps({'userProfileId':'a\\u0000b'}),))
+ db.execute('update notification set event=?,detail=?',('e\\u0000x','d\\u0000x'))
+ db.execute('update daily_metric set hrv_status=?',('h\\u0000x',))
+ db.execute('update daily_metric set sleep_score=?',(json.dumps({'a\\u0000b':{'a�b':'v\\u0000x',chr(0xd800):chr(0xdfff),'pair':'😀'},'a�b':2}),))
+ db.execute('update daily_metric set sleep_s=?',(json.dumps({'escaped':chr(92)+'u0000'}),))
+ db.execute("update daily_metric set stress_avg=cast(x'00d8' as text)")
+ db.execute("update daily_metric set readiness_level=cast(x'00d8' as text)")
+ db.execute("update delivery set reason=cast(x'00d8' as text)")
+ db.execute('insert into raw_response values (?,?,?,?,?,?,?)',('day','2026-01-01','hrv_data',json.dumps({'userProfileId':'a\\u0000b'}),1700000000123,1700000000456,'test'))
+ db.execute('insert into normalize_result values (?,?,?,?,?,?,?)',('day','2026-01-01','hrv_data',1,None,1700000000123,1700000000999))
+ db.execute('insert into raw_response values (?,?,?,?,?,?,?)',('day','2026-01-01','training_readiness',json.dumps({'userProfileId':'a\\u0000b'}),1700000000123,1700000000456,'test'))
+ db.execute('insert into normalize_result values (?,?,?,?,?,?,?)',('day','2026-01-01','training_readiness',1,None,1700000000123,1700000000999))
+ db.execute('insert into raw_response values (?,?,?,?,?,?,?)',('day','2026-01-01','sleep_data',json.dumps({'userProfileId':'a\\u0000b'}),1700000000123,1700000000456,'test'))
+ db.execute('insert into normalize_result values (?,?,?,?,?,?,?)',('day','2026-01-01','sleep_data',1,None,1700000000123,1700000000999))
+ db.execute('insert into raw_response values (?,?,?,?,?,?,?)',('day','2026-01-01','stress_data',json.dumps({'userProfileId':'a\\u0000b'}),1700000000123,1700000000456,'test'))
+ db.execute('insert into normalize_result values (?,?,?,?,?,?,?)',('day','2026-01-01','stress_data',1,None,1700000000123,1700000000999))
+ db.execute('insert into raw_response values (?,?,?,?,?,?,?)',('scope/a','b/c','extra','body\\u0000end',1,1,'test'))
+ db.execute('insert into raw_response values (?,?,?,?,?,?,?)',('scope','a/b/c','extra','body�end',1,1,'test'))
+ db.execute('insert into raw_response values (?,?,?,?,?,?,?)',('scope','escape','extra',r'body\\u0000end',1,1,'test'))
+ db.execute('insert into raw_response values (?,?,?,?,?,?,?)',('scope','empty','extra','',1,1,'test'))
+ db.execute("insert into raw_response values ('invalid','key','extra',cast(x'00d8' as text),1,1,'test')")
+manifest,_=capture_manifest(p,items)
+data=json.loads(manifest.read_text()); data['datasets'][0]['dataset']='synthetic\\u0000D1'; manifest.write_text(json.dumps(data))`;
+    execFileSync(python,['-c',code,fixtures,fixture.home]);
+    const ids=uuidV7IdGen(), channel=ids.next(), conversation=ids.next(), id=ids.next(), token=ids.next(), now=new Date();
+    await fixture.db.query("update brain.health_catalog_v1 set definition=jsonb_set(jsonb_set(definition,'{type}',to_jsonb('json'::text)),'{unit}',to_jsonb('json'::text)) where metric in ('daily_metric.sleep_score','daily_metric.sleep_s','daily_metric.stress_avg')");
+    await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot')`);
+    await fixture.db.query(`insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
+    await store.addWork({id,kind:'garmin.import',targetKind:'import',targetId:id,createdAt:now,nextAttemptAt:now});
+    await store.claimSupervisedWork({now,claimedBy:'test',kinds:['garmin.import'],attemptToken:token});
+    const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl);
+    const manifest=await realpath(join(fixture.home,'manifest.json'));
+    const runImport = () => execFileSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',values:{'garmin.capture_manifest':manifest,'garmin.legacy_conversation_id':conversation}})}});
+    runImport(); runImport();
+    const raw=await store.imports.readRaw({source:'garmin',rawViews:['raw_records','raw_records_v2']});
+    expect(raw.ok && raw.rows).toContainEqual(expect.objectContaining({dataset:'synthetic\0D1',account:'a\0b',scope:'scope/a',originalKey:'b/c',body:'body\0end'}));
+    expect(raw.ok && raw.rows).toContainEqual(expect.objectContaining({dataset:'synthetic\0D1',scope:'scope',originalKey:'a/b/c',body:'body�end'}));
+    expect(raw.ok && raw.rows).toContainEqual(expect.objectContaining({dataset:'synthetic\0D1',scope:'scope',originalKey:'escape',body:'body\\u0000end'}));
+    expect(raw.ok && raw.rows).toContainEqual(expect.objectContaining({dataset:'synthetic\0D1',scope:'scope',originalKey:'empty',body:''}));
+    expect(raw.ok && raw.rows).toContainEqual(expect.objectContaining({dataset:'synthetic\0D1',scope:'invalid',body:{type:'invalid-text',encoding:'utf-16le',base64:'ANg='}}));
+    const key=(await fixture.db.rows("select original_key from brain.channel_legacy_notifications where dataset like '~dataset1:%'"))[0]!.original_key as string;
+    const legacy=await store.readChannelLegacy({type:'notification',dataset:'synthetic\0D1',originalTable:'notification',originalKey:key});
+    expect(legacy).toMatchObject({ok:true,record:{event:'e\0x',detail:'d\0x'}});
+    const deliveryKey=(await fixture.db.rows("select original_key from brain.channel_legacy_deliveries where dataset like '~dataset1:%'"))[0]!.original_key as string;
+    expect(await store.readChannelLegacy({type:'delivery',dataset:'synthetic\0D1',originalTable:'delivery',originalKey:deliveryKey})).toMatchObject({ok:true,record:{reason:{type:'invalid-text',encoding:'utf-16le',base64:'ANg='}}});
+    const health=await store.imports.readHealth();
+    expect(health.ok && health.rows).toContainEqual(expect.objectContaining({dataset:'synthetic\0D1',account:'a\0b',metric:'daily_metric.hrv_status',value_text:'h\0x'}));
+    expect(health.ok && health.rows).toContainEqual(expect.objectContaining({dataset:'synthetic\0D1',metric:'daily_metric.readiness_level',value_text:{type:'invalid-text',encoding:'utf-16le',base64:'ANg='}}));
+    expect(health.ok && health.rows).toContainEqual(expect.objectContaining({dataset:'synthetic\0D1',metric:'daily_metric.sleep_score',value_json:{'a\0b':{'a�b':'v\0x','\ud800':'\udfff',pair:'😀'},'a�b':2}}));
+    expect(health.ok && health.rows).toContainEqual(expect.objectContaining({dataset:'synthetic\0D1',metric:'daily_metric.sleep_s',value_json:{escaped:'\\u0000'}}));
+    expect(health.ok && health.rows).toContainEqual(expect.objectContaining({dataset:'synthetic\0D1',metric:'daily_metric.stress_avg',value_json:{type:'invalid-text',encoding:'utf-16le',base64:'ANg='}}));
+    if (health.ok) expect(health.rows.every(row=>Object.keys(row).every(key=>!key.endsWith('_raw') && !key.endsWith('_encoding')))).toBe(true);
+    const preflightCode = "import sys,json,pathlib; sys.path.insert(0,sys.argv[1]); from preflight import analyze,public_report; p=pathlib.Path(sys.argv[2]); report=analyze({r:p/(r+'.db') for r in ('D1','D2','D3','D4','D5')}); print(json.dumps(public_report(report,{'checks':{},'previous_batches':[]})))";
+    const publicReport = execFileSync(python,['-c',preflightCode,join(fixture.home,'extensions/garmin/src'),fixture.home],{encoding:'utf8'});
+    expect(publicReport).not.toContain('body\\u0000end'); expect(publicReport).not.toContain('synthetic'); expect(publicReport).not.toContain('2026-01-01'); expect(publicReport).not.toContain('ANg=');
+  } finally { await store.close(); await fixture.cleanup(); }
 });

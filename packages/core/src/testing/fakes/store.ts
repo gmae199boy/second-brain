@@ -513,7 +513,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       const key = JSON.stringify([input.type, input.dataset, input.originalTable, input.originalKey]);
       const existing = legacyRecords.get(key);
       if (existing) {
-        const original = (r: import('../../channels/store.js').ChannelLegacyInput) => JSON.stringify(r.type === 'notification' ? [r.localDate, r.event, r.detail, r.at.toISOString()] : [r.originalId, r.localDate, r.kind, r.event, r.ok, r.reason, r.at.toISOString()]);
+        const original = (r: import('../../channels/store.js').ChannelLegacyInput | import('../../channels/store.js').ChannelLegacyRecord) => JSON.stringify(r.type === 'notification' ? [r.localDate, r.event, r.detail, r.at.toISOString()] : [r.originalId, r.localDate, r.kind, r.event, r.ok, r.reason, r.at.toISOString()]);
         if (original(existing) !== original(input)) return { ok: false, code: 'LEGACY_CONFLICT', message: 'legacy 원문 충돌' };
         return { ok: true, created: false, record: structuredClone(existing) };
       }

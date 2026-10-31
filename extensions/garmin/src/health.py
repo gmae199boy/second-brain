@@ -4,6 +4,7 @@ from decimal import Decimal
 import json
 import math
 import re
+from reader import SQLiteText, InvalidSQLiteText
 
 
 def _instant(value):
@@ -88,14 +89,19 @@ def convert(metric, table, column, value):
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
             raise ValueError('HEALTH_INVALID_OBSERVATION')
         return value * mapping['factor']
-    if metric['type'] == 'text' and isinstance(value, str):
+    if metric['type'] == 'text' and isinstance(value, (str, InvalidSQLiteText)):
         return value
     if metric['type'] == 'json':
+        if isinstance(value, InvalidSQLiteText):
+            return value
         if isinstance(value, str):
             try:
-                value = json.loads(value)
-            except ValueError as exc:
-                raise ValueError('HEALTH_INVALID_OBSERVATION') from exc
+                parsed = json.loads(value)
+            except ValueError:
+                return value
+            if not isinstance(parsed, (dict, list)):
+                return value
+            value = parsed
         if isinstance(value, (dict, list)):
             return value
     raise ValueError('HEALTH_INVALID_OBSERVATION')
@@ -138,7 +144,7 @@ def import_candidates(snapshot, catalog, table_name, row):
     if activity is not None and day is None:
         parent = next((r for r in snapshot['tables'].get('activity', {}).get('rows', []) if r.get('activity_id') == activity), None)
         if parent: day = parent.get('day_key')
-    source_key = str(activity) if activity is not None else day
+    source_key = (activity if isinstance(activity, (str, InvalidSQLiteText)) else str(activity)) if activity is not None else day
     scope = 'activity' if activity is not None else 'day'
     raw = [r for r in snapshot['tables'].get('raw_response', {}).get('rows', []) if r['scope'] == scope and r['key'] == source_key]
     normal = snapshot['tables'].get('normalize_result', {}).get('rows', [])
@@ -160,8 +166,8 @@ def import_candidates(snapshot, catalog, table_name, row):
                 yield definition, column, None, reason
                 continue
             source = matched[0]
-            yield definition, column, {'value': convert(definition, table_name, column, row[column]),
-                'revision': hashlib.sha256(source['raw'].encode('utf-8')).hexdigest(),
+            yield definition, column, {'value': convert(definition, table_name, column, row[column]), 'source_value': row[column],
+                'revision': hashlib.sha256(source['raw'].raw if isinstance(source['raw'], (SQLiteText, InvalidSQLiteText)) else source['raw'].encode('utf-8')).hexdigest(),
                 'fetched_at': datetime.fromtimestamp(source['fetched_at'] / 1000, timezone.utc),
                 'version': int(version), 'zone': zone, 'day': day if observed is None else None,
-                'observed': observed, 'activity': str(activity) if activity is not None else None}, None
+                'observed': observed, 'activity': (activity if isinstance(activity, (str, InvalidSQLiteText)) else str(activity)) if activity is not None else None}, None

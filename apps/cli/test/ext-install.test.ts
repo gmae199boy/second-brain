@@ -36,8 +36,9 @@ it('installs testext through the real CLI, records its owner migration and reads
     try {
       expect(await store.ensureChannel({ id: channel, kind: 'telegram', botRef: 'bot' })).toMatchObject({ ok: true });
       expect(await store.ensureChannelConversation({ id: conversation, channelId: channel, externalRef: 'chat', threadRef: null })).toMatchObject({ ok: true });
-      expect(await store.addWork({ id: work, kind: 'process_probe', targetKind: 'probe', targetId: 'test', createdAt: now, nextAttemptAt: now })).toMatchObject({ ok: true });
-      expect(await store.claimSupervisedWork({ now, kinds: ['process_probe'], claimedBy: 'test', attemptToken: token })).toMatchObject({ ok: true, item: { id: work } });
+      await fixture.db.query("insert into brain.extension_work_kinds(extension_name,kind) values ('testext','testext.import')");
+      expect(await store.addWork({ id: work, kind: 'testext.import', targetKind: 'probe', targetId: 'test', createdAt: now, nextAttemptAt: now })).toMatchObject({ ok: true });
+      expect(await store.claimSupervisedWork({ now, kinds: ['testext.import'], claimedBy: 'test', attemptToken: token })).toMatchObject({ ok: true, item: { id: work } });
       const requestSql = `insert into brain.channel_requests(id,conversation_id,producer,producer_result_id,purpose,body,created_at,source_work_item_id,source_attempt_token) values ($1,$2,$3,$4,'notice','body',now(),$5,$6)`;
       const notificationSql = `insert into brain.channel_legacy_notifications(id,conversation_id,source,dataset,original_table,original_key,import_batch,local_date,event,detail,at,source_work_item_id,source_attempt_token) values ($1,$2,$3,'data','notifications',$4,'batch','2026-10-31','event','',now(),$5,$6)`;
       const deliverySql = `insert into brain.channel_legacy_deliveries(id,conversation_id,source,dataset,original_table,original_key,import_batch,original_id,local_date,kind,event,ok,at,source_work_item_id,source_attempt_token) values ($1,$2,$3,'data','deliveries',$4,'batch',$4,'2026-10-31','notice',null,true,now(),$5,$6)`;

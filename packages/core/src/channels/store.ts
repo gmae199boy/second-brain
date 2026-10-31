@@ -12,7 +12,10 @@ export type ChannelLegacyInput = {
   id: string; conversationId: string; source: string; dataset: string; originalTable: string; originalKey: string; importBatch: string;
   localDate: string; at: Date;
 } & ({ type: 'notification'; event: string; detail: string } | { type: 'delivery'; originalId: string; kind: string; event: string | null; ok: boolean; reason: string | null });
-export type ChannelLegacyRecord = ChannelLegacyInput & { externalMessageId: null; body: null; metadataMissing: true; resendEligible: false };
+export type LegacyOriginalText = string | { type: 'invalid-text'; encoding: string; base64: string };
+export type ChannelLegacyRecord = Omit<ChannelLegacyInput, 'localDate' | 'event' | 'detail' | 'originalId' | 'kind' | 'reason' | 'type'> & {
+  localDate: LegacyOriginalText; externalMessageId: null; body: null; metadataMissing: true; resendEligible: false;
+} & ({ type: 'notification'; event: LegacyOriginalText; detail: LegacyOriginalText } | { type: 'delivery'; originalId: LegacyOriginalText; kind: LegacyOriginalText; event: LegacyOriginalText | null; ok: boolean; reason: LegacyOriginalText | null });
 export type ChannelResendCode = 'CHANNEL_REQUEST_NOT_FOUND' | 'CHANNEL_ALREADY_SENT' | 'CHANNEL_LEGACY_NOT_RESENDABLE' | 'CHANNEL_REQUEST_IN_PROGRESS' | 'CHANNEL_NOT_RESENDABLE';
 export interface ChannelPublicStatus {
   id: string; legacy: boolean; createdAt: Date; delivery: 'pending' | 'sent' | 'definite_failed' | 'unknown' | 'legacy';

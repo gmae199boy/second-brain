@@ -33,6 +33,10 @@ it('legacy 중복과 충돌을 보존하고 두 실제 종료 경계 뒤 같은 
       expect(await f.store.insertChannelLegacy({ ...item, event: 'changed' })).toMatchObject({ ok: false, code: 'LEGACY_CONFLICT' });
       expect(await f.store.readChannelLegacy(item)).toMatchObject({ ok: true, record: item });
     }
+    const original = { ...notification, id:f.ids.next(), dataset:'a\0b', originalKey:'k\0x', event:'e\0x', detail:'d\0x' };
+    expect(await f.store.insertChannelLegacy(original)).toMatchObject({ok:true,created:true,record:original});
+    expect(await f.store.insertChannelLegacy({...original,id:f.ids.next()})).toMatchObject({ok:true,created:false,record:original});
+    expect(await f.store.readChannelLegacy(original)).toMatchObject({ok:true,record:original});
     expect(await handoffChannelRequests(f.store, { now: f.now }, f.ids)).toEqual({ ok: true, count: 0 });
     expect(f.requests).toEqual([]);
     expect(await f.db.rows("select id from brain.work_items where kind='channel_send'")).toEqual([]);

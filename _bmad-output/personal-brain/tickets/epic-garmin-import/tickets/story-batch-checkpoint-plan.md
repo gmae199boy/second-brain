@@ -3,23 +3,21 @@ title: '전수 반입과 원자 checkpoint 재개'
 type: 'feature'
 ticket: '4'
 created: '2026-10-31'
-status: blocked
-baseline_revision: '4601a1eb63581d62310781c3a788f75fece48c9a'
+status: done
+baseline_revision: bf521ea0b762cefea22abdf46bc60c00b4e96b8c
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
 review: 'quick'
 review_source: 'pinned'
 lenses_ran: [quick]
-review_loop_iteration: 0
+review_loop_iteration: 1
 followup_review_recommended: false
 context:
   - _bmad-output/personal-brain/tickets/epic-garmin-import/epic-garmin-import.md
   - packages/core/schemas/health/v1/README.md
 warnings: [oversized]
 deferred: []
-blocked_at: "2026-11-01"
-blocked_reason: "intent gap: NUL 포함 SQLite TEXT의 원문 바이트와 legacy 필수 투영을 PostgreSQL text에 그대로 발행할 수 없다. 필수 투영 생략이나 escape 변환은 고정 intent-contract를 위반한다. 시도 패치와 검증 근거는 story-batch-checkpoint-plan.patch 및 현재 계획 Auto Run Result에 보존했다."
 ---
 
 <intent-contract>
@@ -91,6 +89,9 @@ E14-2/E14-3 및 AD-30의 SQL 물리 text/7열 고정은 이 결정으로 확장�
 
 ## Implementation Notes
 
+- 2026-11-01 재개 단계1: SQLite 저장 타입·원래 TEXT 바이트·DB encoding을 읽고 canonical 표현에 포함했다. UTF-8/UTF-16 LE·BE, NULL/빈값/NUL/U+FFFD/escape, 비정상 TEXT 집중 검사 `check_reader_bytes.py`를 지휘자도 실행해 성공했다. downstream 복원·migration·reconciliation과 전체 검증은 다음 단계로 남는다.
+- 2026-11-01 재개 단계2: 후속 Garmin 0003·core 0025와 공통 원문 codec, raw v2·legacy·건강 원문 짝, 재provision·probe 허용목록의 변경을 확인했다. 워커가 격리 PG 108개·기존 tracer 4개 통과를 보고했다. SQL 짝 제약은 NULL 동치·허용 encoding·표시값 존재를 검사하며 엄격 디코딩·표시 일관성의 독립 보장은 아니다. 전체 writer/Core와 identity·reconciliation 검증은 단계3·4에서 수행한다.
+
 - 단계1: 모든 원형 행·열 metadata·UUID/FK·행 단위 checkpoint와 기존 tracer 분기를 구현했다. 구현자 build 및 신규/기존 5개 시험 성공 보고를 확인했고 지휘자 신규 1개 시험도 성공했다. 원천 manifest fingerprint와 source-kind fence·독립 기대값·crash 검증 보완은 다음 단계에서 확인한다.
 
 - 단계2: catalog 관측·권위 INSERT RLS/attempt·legacy 연결·원천 fingerprint/역할·source-kind 검사를 구현했다. 지휘자 집중 PG 시험 성공을 확인했다. 원천 연결 미확인 지표는 미발행 사유를 보존한다. 실제 CLI·감독자·중단/병렬·독립 mapping 전수 기대는 단계3에서 증명한다.
@@ -102,6 +103,8 @@ E14-2/E14-3 및 AD-30의 SQL 물리 text/7열 고정은 이 결정으로 확장�
 ## Plan Change Log
 
 - 독립 Verify 완료: pnpm test는 build/typecheck 포함 165파일 3899통과·기존1skip, pnpm test:python은 5파일18통과·skip 없음이다. check_preflight.py/check_batch_import.py도 통과했다. 행렬 보존/관계/건강은 신규 첫 시험, legacy·공개/불변은 둘째, 재개/경쟁/변경/timeout/stale는 셋째와 권한 PG 시험으로 실행·통과를 대조했다. 원문 tracer 이동은 바이트 불변이며 기존 migration 시험 변경은 새 버전/목록/건수에 한정됨을 확인했다.
+
+- 2026-11-01 실행1 재계획: 리뷰의 JSON 동등성·단독 surrogate 반례 때문에 실행 항목과 기존 행의 읽기 전용 비교 설계를 보완했다. 원문 바이트를 논리 동등성으로 쓰는 상태와 SQL 인코딩 실패로 필수 행을 누락하는 상태를 피한다. KEEP은 기존 커밋·원형·identity·권한·reconciliation·비발신과 채널 시계/기존 assertion·timeout이며 intent-contract를 유지한다.
 
 ## Review Triage Log
 
@@ -120,6 +123,28 @@ E14-2/E14-3 및 AD-30의 SQL 물리 text/7열 고정은 이 결정으로 확장�
   - `[medium]` `[intent_gap]` NUL 포함 TEXT의 raw/legacy 공개 투영과 고정 계약이 양립하지 않는다 — `batch_import.py:150-161`의 PostgreSQL text 대상은 NUL을 받지 않으며 encoded 원형 보존만으로 raw view와 legacy 조회를 충족하지 못한다. health의 미발행 사유만으로 raw/legacy 필수 투영을 생략할 권한은 없다. 구현자의 명시적 질문으로 같은 결론을 대조했고 계약을 임의 축소하지 않는다. 시도한 변경은 `story-batch-checkpoint-plan.patch`에 저장하며 이번 세션의 소스 변경만 되돌린다. 이전 커밋은 보존한다.
   - `[medium]` `[patch]` 기존 tracer raw와 capture 전수 반입의 동일 키 충돌 — `0001_tracer.sql`의 raw PK는 유지되는데 새 importer가 preserved mapping만 조회하므로 기존 raw를 발견하지 못한다. 모든 열을 대조해 동일 값을 재사용하고 차이는 영속 conflict로 처리하는 최소 수정 대상이다. 앞선 intent_gap이 우선하므로 부분 수정은 패치에 보존한 뒤 되돌리며 완료로 주장하지 않는다.
 
+### 2026-11-01 — 재개 Review pass
+- verdicts: 7 findings — high 3, medium 4, low 0, false 0, maybe-false 0
+- findings:
+  - `[medium]` `[patch]` 건강 JSON의 리터럴 escape를 실제 NUL로 오판 — Python 직렬화 문자열의 부분 일치와 TS의 재귀 문자 판정이 다름을 합성 boolean 재현과 writer/Core 코드에서 확인했다. 실제 문자열·중첩 키의 NUL을 재귀 검사하도록 수정하고 writer/Core escape 회귀를 추가했다.
+  - `[medium]` `[patch]` 비정상 TEXT의 건강 JSON writer 경로 단절 — convert는 InvalidSQLiteText를 반환하지만 source_value 분기가 이를 거부해 다음 표시 분기에 도달하지 못한다. 원래 바이트·encoding을 기존 원문 쌍으로 연결하고 비정상 TEXT JSON 반입·복원 회귀를 추가했다.
+  - `[medium]` `[patch]` 건강 identity의 표시값 변조를 reconciliation이 놓침 — raw 기반 검색 후 payload 대조에 account/activity_id/sub_identity 표시값이 없어 성공하고 Core 복원은 실패한다. 기존 대조 tuple에 세 표시값과 원문 쌍을 포함하고 각각의 변조·영속 충돌 회귀를 추가했다.
+  - `[high]` `[patch]` 업그레이드한 tracer의 건강 mapping 해시 변경 — 기존 day_key/steps 두 열 대신 전체 daily_metric 행이 해시에 들어가 동일 snapshot도 이전 mapping과 충돌한다. 기존 두 열 투영과 정상 원문의 논리 UTF-8 해시를 유지했다. UTF-8/UTF-16의 이전 mapping UUID·batch·metadata 재사용과 원문 쌍 보강 회귀를 추가했다.
+  - `[medium]` `[patch]` 건강 JSON escape 오판의 독립 중복 finding — 첫 finding과 같은 직렬화 부분 일치 결함이며 실제 NUL 없는 escape도 빈 SQL JSON으로 저장돼 readHealth 전체가 실패한다. 같은 원인 묶음에서 재귀 NUL 판정으로 수정하고 실제 writer/Core의 리터럴 escape 회귀를 추가했다.
+  - `[high]` `[patch]` 변경된 tracer 쓰기·재조정 경로의 초과권한 검사 누락 — import 분기부터 tracer까지 probe_role 호출이 없고 valid attempt만 검사해 금지 SELECT 역할도 쓰기를 진행한다. 모든 writer의 최소권한 경계를 맞추도록 기존 probe를 staging 및 DB 쓰기 전에 호출하고 신규·재실행의 초과 SELECT 거부 회귀를 추가했다.
+  - `[high]` `[patch]` tracer의 stale 검사 전에 staging 쓰기 — 현재 순서에서 이미 만료된 token도 mkdir/open/write를 수행하며 DB rollback이 파일을 지우지 못한다. 기존 attempt 검사를 staging 이전으로 옮기고 DB 쓰기 전 재검사를 유지했다. stale token에서 새 staging 디렉터리가 생기지 않는 회귀를 추가했다.
+
+### 2026-11-01 — 결정적 검증 복구 Review pass
+- verdicts: 2 findings — high 0, medium 2, low 0, false 0, maybe-false 0
+- findings:
+  - `[medium]` `[bad_plan]` 건강 JSON 표현 차이를 typed 값 차이로 취급 — `0025_original_text.sql`의 value_count는 원문 바이트·인코딩을 포함한다. 동일 논리 키의 서로 다른 보관키는 허용되므로 같은 객체도 공백 차이로 ambiguity가 된다. 실행 계획에 논리 동등성의 독립 비교와 회귀를 명시하고 원문 보존과 비교 표현을 분리하도록 보완한다.
+  - `[medium]` `[bad_plan]` 단독 surrogate JSON escape에서 필수 반입 중단 — Python json.loads 뒤 canonical 문자열의 UTF-8 인코딩 실패를 재현했다. 실행 계획에 SQL이 담지 못하는 JSON 중첩 값·키의 공통 표시/복원 규약과 회귀를 보완한다. 원문은 그대로 보존한다.
+
+### 2026-11-01 — 실행1 재리뷰
+- verdicts: 1 findings — high 0, medium 1, low 0, false 0, maybe-false 0
+- findings:
+  - `[medium]` `[patch]` 문자열의 인코딩 차이를 typed 값 차이로 취급 — 0026의 value_count에 문자열 raw/encoding이 남아 같은 논리 문자열이 ambiguity가 된다. 읽기 전용 코드 단위 비교를 문자열에도 적용했고 UTF-8/UTF-16 LE·BE 수렴, NUL/U+FFFD/escape·비정상 바이트 구별과 저장 원문 불변 회귀를 추가했다.
+
 ## Design Notes
 
 - route는 pinned full이며 데이터 손실 위험 high다. 실제 HEAD 조사로 tracer·legacy·health 계약을 확인했다. 14.3의 정규화 manifest·source 역할·안전 보고·원본 불변 경계를 이어받는다.
@@ -133,6 +158,7 @@ E14-2/E14-3 및 AD-30의 SQL 물리 text/7열 고정은 이 결정으로 확장�
 **Commands:**
 - `pnpm build` — 빌드 성공.
 - `pnpm typecheck` — 타입 검사 성공.
+- `uv run --project extensions/garmin --frozen --python 3.14.10 python extensions/garmin/tests/check_reader_bytes.py` — 원래 TEXT 타입·인코딩·바이트 및 canonical identity 검사 성공.
 - `uv run --project extensions/garmin --frozen --python 3.14.10 python extensions/garmin/tests/check_preflight.py` — reader/preflight 회귀 성공.
 - `uv run --project extensions/garmin --frozen --python 3.14.10 python extensions/garmin/tests/check_batch_import.py` — 추가 순수 mapping/키/hash 행렬 성공.
 - `pnpm exec vitest run --config apps/cli/python-test/vitest.config.ts apps/cli/python-test/garmin-batch-import.test.ts` — 실제 설치·공용 CLI·감독자·PG·kill/restart·병렬·충돌·legacy 비발신 성공.
@@ -168,14 +194,86 @@ E14-2/E14-3 및 AD-30의 SQL 물리 text/7열 고정은 이 결정으로 확장�
 
 - 위 Python 통합 3시험은 전체 suite와 단독 실행 모두 skip 없이 통과했고, 기본 suite의 health-contract/extension-permissions도 실행·통과했다. 기존 skip 1개는 신규 행렬 시험이 아니다.
 
+
+## 재개 검증 — 2026-11-01
+
+단계3·4에서 batch/tracer·Core reader와 Store writer의 원문 복원, 원형 identity, 누락 대상과 권위 기록 재조정, codec/projection/canonical/catalog fingerprint 고정을 구현했다. 새 migration은 Garmin 0003·core 0025이며 기존 적용 migration은 바꾸지 않았다. 공통 raw v2와 건강 복원 계약 문서를 갱신했다. 운영자 외부 작업이 필요한 AC는 없다.
+
+지휘자가 누적 diff를 읽고 격리 환경에서 독립 실행한 결과는 다음과 같다. `bash _bmad/custom/bmad-loop-verify.sh`는 내부 `pnpm test`·build·typecheck를 포함해 166파일 3900통과·기존1skip, `pnpm test:python`은 5파일20통과·skip없음, 별도 `garmin-batch-import.test.ts`는 1파일4통과다. `check_reader_bytes.py`, `check_preflight.py`, `check_batch_import.py`도 각각 성공했다. 원시 로그는 버전 관리 밖 임시 경로에 보관하며 공개 기록에는 집계와 boolean만 남긴다. `git diff --cached --check`도 성공했다.
+
+행렬 감사: 보존·관계·건강 선택은 batch 첫 시험과 health-contract/import-contracts 및 순수 Python 검사, 멱등·경쟁·재개·변경 충돌은 batch 셋째 시험의 실제 SIGKILL 종료 확인·두 프로세스·timeout rollback·version/catalog/WAL 변경 검증, legacy·권한·비발신은 둘째 시험과 extension-permissions 및 channels-legacy에 대응한다. NUL/U+FFFD/escape/빈값·UTF-16·비정상 TEXT·JSON 중첩 키·dataset/slash identity·명시 DTO는 batch 넷째 시험과 reader/original-text 검사에 대응한다. 기존 tracer 동일 원문 재사용·변경 충돌·mapping 존재/대상 누락은 batch 첫 시험과 tracer 신규 시험, 권위 규칙/provenance 각각의 누락 복구는 batch 첫 시험에 대응한다. 모두 이번 지휘자 실행에서 통과했고 신규 skip은 없다. 공개 집계 비노출과 복원 후 가림 순서도 통과했다. 현재 이 Store 조회를 별도로 공개하는 출력 경로가 없다는 범위를 함께 유지한다.
+
+
+
+## 결정적 검증 복구 — 2026-11-01
+
+- 근거: `.bmad-loop/runs/20261030-175233-8a92/feedback/14.4-3.md`의 앨범 0장 실패 처리 결과 대기 시간 초과다. 동결 계약과 baseline을 유지한다.
+- 단계1: 구현자가 채널 시험·fixture와 필요한 처리 경로를 조사하고 실패 원인을 수정한다. 기존 관찰·assertion을 유지하며 단순 timeout 증가·skip으로 숨기지 않는다. 집중 시험 통과와 원인을 phase-ready로 보고한다.
+- 단계2: 지휘자가 누적 diff·행렬·전체 Verification 및 결정적 검증을 확인한다. quick 리뷰와 필요한 수정을 같은 구현자에게 맡긴 뒤 최종 결과를 기록한다.
+
+- 이번 복구 독립 Verify: `bash _bmad/custom/bmad-loop-verify.sh` 성공(빌드·타입 검사 포함, 166파일3900통과·기존1skip), `pnpm test:python` 성공(5파일21통과), 별도 `garmin-batch-import.test.ts` 성공(1파일4통과), 순수 Python 세 검사 성공이다. 기존 행렬과 추가 NUL·인코딩·재조정 시험이 모두 실행됐고 신규 skip은 없다. 동결 계약이 HEAD와 동일함을 확인했다.
+- 구현자 집중 시험은 채널 번들·재시도 38개 통과다. 과거 실패의 직접 원인은 당시 프로세스 상태가 없어 미확정이며, 실제 프로세스 정리에 고정 시계를 쓰면 기한이 진행되지 않는 경로를 수정했다.
+
+## 리뷰 재계획 — 실행 1
+
+- 변경 근거: typed JSON 논리 동등성과 SQL이 표현하지 못하는 JSON escape의 필수 투영을 기존 실행 항목이 구체적으로 검증하지 않았다. intent-contract는 변경하지 않는다.
+- KEEP: 기존 커밋의 원형·identity·권한·reconciliation·비발신 구현과 검증, 이번 채널 흐르는 시계 변경의 의도와 기존 assertion·timeout을 보존한다. 커밋된 소스를 되돌리지 않는다. 이번 미커밋 채널 두 파일 변경은 임시 patch에 보존한 뒤 재도출하여 반영한다.
+- 단계1: `packages/postgres/migrations/`의 새 후속 migration과 `extensions/garmin/src/batch_import.py`, `packages/postgres/src/original-text.ts` 및 필요한 provisioning/role probe·schema version 코드에서 원형 바이트와 typed JSON 비교 표현을 분리한다. 기존 적용 migration은 수정하지 않는다. 같은 논리 객체·배열의 공백·키순서·UTF-8/UTF-16 차이는 현재값 하나로 수렴하고, 다른 중첩 키·값(NUL 포함)은 ambiguity로 남게 한다. 원형·재조정 payload 대조는 바이트를 유지한다. 공개 DTO에는 비교용 내부 표현을 노출하지 않는다. codec 의미가 달라지면 checkpoint fingerprint로 이전 checkpoint 재사용을 거부한다. 기존 checkpoint를 자동 초기화하지 않는다.
+- 단계2: `extensions/garmin/src/batch_import.py`, `packages/postgres/src/original-text.ts` 및 관련 codec에서 단독 surrogate escape가 중첩 값 또는 키에 있는 JSON을 원형으로 보존하고 SQL 표시/복원 규약을 맞춘다. 실제 surrogate 바이트를 UTF-8 문자열로 억지 저장하거나 대체하지 않는다. 기존 NUL/U+FFFD/리터럴 escape·비정상 TEXT의 의미는 유지한다.
+- 단계3: `packages/postgres/test/import-contracts.test.ts`, `packages/postgres/test/original-text.test.ts`, `apps/cli/python-test/garmin-batch-import.test.ts` 및 필요한 순수 Python 검사에서 위 반례를 실제 writer→PG→Core 조회로 검증한다. 같은 typed JSON의 원문 차이와 서로 다른 값을 구별하고 단독 surrogate escape의 중첩 값·키와 정상 surrogate pair를 확인한다. 복구한 채널 두 파일 변경도 재적용한다. 관련 집중 검증 뒤 phase-ready로 보고하고 전체 Verification·결정적 검증·quick 리뷰는 지휘자가 실행한다.
+- 피할 상태: 원문 bytea를 typed 동등성으로 그대로 사용하거나 SQL UTF-8 실패 때문에 필수 행을 누락하는 상태다.
+
+### 기존 특수 JSON의 비교 복구 설계
+
+- 기존 불변 행의 원문/metadata를 backfill하거나 UPDATE할 필요 없이, 새 migration의 읽기 전용 비교 함수를 현재값 view에서 호출하는 방식을 우선한다. 비교 함수는 기존 원문 쌍 또는 기존 JSON 표시값을 받아 같은 논리 비교 표현을 만든다. 공개 DTO는 바꾸지 않는다.
+- SQL에서 NUL·surrogate를 실제 문자열로 디코딩하지 말고, 원본 JSON의 모든 문자열 토큰(객체 키 포함)을 가역적인 ASCII UTF-16 code-unit 표현으로 변환한 뒤 JSONB로 구조·숫자·키순서를 정규화할 수 있다. 모든 문자열에 같은 변환을 적용하여 실제 NUL과 리터럴 escape, 숫자와 문자열, 정상 surrogate pair와 문자 원형의 충돌을 방지한다. JSON escape는 문자 단위로 파싱하여 중복 역슬래시를 구별한다.
+- UTF-16 LE/BE 원문은 엄격히 유효성을 확인하며 디코딩한다. 원래 JSON 문법이 깨지거나 TEXT 자체가 디코딩 불능인 경우는 원문 보존 태그로 구별하며 유효 JSON 객체로 가장하지 않는다. 정상 객체·배열의 의미 비교를 원문 바이트 fallback으로 대체하지 않는다. 신규 writer의 보조 비교 표현만 믿고 기존 행을 놓치지 않는다.
+- 이 설계는 내부 읽기 계산이며 저장된 원문과 불변·권한 경계를 바꾸지 않는다. 기존 특수 JSON 행에도 migration 후 동일 규칙이 적용되는 회귀를 추가한다.
+
+## 실행1 독립 재검증
+
+- `bash _bmad/custom/bmad-loop-verify.sh` 성공: 빌드·타입 검사 포함 166파일3902통과·기존1skip이다. `pnpm test:python`은 5파일21통과, 별도 `garmin-batch-import.test.ts`는 1파일4통과이며 순수 Python 세 검사도 성공했다. 신규 skip은 없다.
+- 추가된 두 회귀는 원문 JSON의 논리 비교와 기존 0025 특수 JSON을 유지하는 0026 업그레이드다. 기존 행렬의 모든 시험이 실행·통과했고 batch 넷째 시험은 중첩 surrogate 키·값과 정상 쌍을 추가로 왕복했다. SQL 비교는 UTF-8/UTF-16 LE·BE, 공백·키순서·숫자 표기와 실제 다른 값을 구별한다.
+- intent-contract는 HEAD와 동일하다. 새 migration만 추가했으며 기존 적용 migration의 소스와 저장된 원형은 바꾸지 않았다.
+
 ## Auto Run Result
 
-Status: blocked
+Status: built
 
-결정적 검증 실패의 복구안은 `unavailable.test.ts`의 실제 종료·오류 검증을 유지한 8개 제한 병렬이며 수정 상태에서 결정적 전체 검증(165파일3899통과·기존1skip), Python 전체(5파일18통과), 단독 batch(3통과), 순수 Python 두 검사를 통과했다. 리뷰가 새 계약 충돌을 확인했으므로 이 결과는 패치의 검증 근거이며 되돌린 최종 트리의 검증 결과로 주장하지 않는다.
+채널 번들 시험에 흐르는 시계를 적용해 실제 자식 프로세스 정리 기한이 진행되도록 복구했다. 재시도 시험의 고정 시계와 기존 assertion·timeout은 유지했다. 기존 반입·재개·mapping·충돌·legacy 비발신 구현도 보존했다.
 
-차단 사유는 `intent gap`: NUL을 포함한 SQLite TEXT를 PostgreSQL text의 raw body와 legacy detail로 바이트 동일하게 발행할 수 없다. 원형은 lossless encoding으로 보존할 수 있지만 필수 공개 투영을 생략하거나 escape로 바꾸는 것은 고정 intent-contract를 바꾼다. 허용된 표현 또는 입력 경계가 계약에 없으므로 임의 변경하지 않았다. 외부 운영자 조치에 해당하지 않는다.
+독립 리뷰에서 확인한 JSON 논리 동등성과 단독 surrogate 반입 문제를 수정했다. 후속 0026은 기존 불변 행을 갱신하지 않고 원문을 읽어 JSON·문자열의 논리 값을 비교한다. UTF-8/UTF-16의 표현 차이는 현재값 하나로 수렴하며 NUL·U+FFFD·리터럴 escape·디코딩 불능 원형은 구별한다. writer/Core는 단독 surrogate 중첩 키·값을 원문 쌍으로 보존·복원하고 checkpoint fingerprint에 새 투영 버전을 포함한다. 동결 intent-contract와 기존 적용 migration은 변경하지 않았다.
 
-시도한 누적 변경은 계획 옆 `story-batch-checkpoint-plan.patch`에 보존한다. 이번 세션의 소스·시험 변경은 되돌리며 기존 커밋을 보존한다. quick 리뷰는 2건(medium 2), intent_gap 1·후속 patch 1이며 적용 완료·defer·reject로 처리한 항목은 없다. 후속 검토는 계약 충돌 해결 후 필요하다. 티켓 done·push는 수행하지 않는다. 워커 최종 보고·해제와 mail 정리 결과는 아래 덧붙인다.
+검토 결과는 medium 3건이다. 첫 두 건은 bad_plan으로 실행 항목을 보완해 수정했고, 재리뷰의 문자열 비교 1건은 patch로 수정했다. 최종 pass의 patch 집계는 high 0·medium 1·low 0이며 deferred 0·rejected 0이다. `followup_review_recommended: false`다. 마지막 문자열 patch는 지휘자의 코드 대조와 전체 실행 검증을 거쳤으며 별도 추가 리뷰는 수행하지 않았다.
 
-정리 결과: 구현자는 계약 차단을 명시한 failed 보고, quick 리뷰어는 검사 완료 succeeded 보고를 수락한 뒤 모두 release했다. 자기 Run의 상태는 구현자 failed/released·리뷰어 completed/released이며 active·reclaimable·미처리 Delivery·다음 페이지가 없다. 세 소스/시험 파일은 HEAD와 동일하고 Python cache는 제거했으며 고정 intent-contract도 HEAD와 동일함을 재확인했다. 이번 세션의 커밋·push·티켓 done은 없다. `tickets.py mark`는 build-auto 자체 HALT에서 blocked 기록에만 사용했다. 여러 줄 제어 입력의 quote 대기는 취소 후 같은 key·payload를 스크립트로 전달해 복구했고, source_changed 관찰 오류를 구현 능력 실패로 세지 않았다. 최종 checkpoint 저장 뒤 자기 전용 제어 셸을 닫는다.
+최종 지휘자 검증은 모두 성공했다.
+
+- `bash _bmad/custom/bmad-loop-verify.sh`와 내부 `pnpm test`: 빌드·타입 검사 포함 166파일3902통과·기존1skip
+- `pnpm test:python`: 5파일21통과·skip없음
+- 별도 `garmin-batch-import.test.ts`: 1파일4통과
+- `check_reader_bytes.py`·`check_preflight.py`·`check_batch_import.py`: 각각 성공
+- 기존 행렬의 전수 보존·관계·건강 선택·중단 재개·경쟁·충돌·권한·비발신 및 원문 복원 시험: 모두 실행·통과, 신규 skip 없음
+- 기존 0025 특수 JSON의 0026 업그레이드: 원문 바이트 불변과 현재값 복구 성공
+- `git diff --check`: 성공
+
+이번 복구에서 변경한 파일은 다음과 같다. 이전 커밋의 검토된 변경은 보존한다.
+
+- `_bmad-output/personal-brain/tickets/epic-garmin-import/tickets/story-batch-checkpoint-plan.md` — 실행 보완·리뷰 판정·검증·종료 결과 기록
+- `apps/cli/python-test/garmin-batch-import.test.ts` — 중첩 surrogate 원문 반입·Core 복원 회귀
+- `apps/cli/test/channel-fixture.ts` — 실제로 흐르는 시험 시계 모드 추가
+- `apps/cli/test/channels-bundle.test.ts` — 실제 프로세스 정리에 흐르는 시계 적용
+- `apps/cli/test/install.test.ts` — core schema 26 설치 기대값 갱신
+- `apps/cli/test/setup.test.ts` — core schema 26 setup 기대값 갱신
+- `extensions/garmin/src/batch_import.py` — surrogate의 원문 투영과 checkpoint fingerprint 갱신
+- `packages/postgres/migrations/0026_health_json_comparison.sql` — 기존 원문을 유지하는 JSON·문자열 논리 비교
+- `packages/postgres/src/migrate.ts` — core schema 26 선언
+- `packages/postgres/src/original-text.ts` — surrogate 원문 쌍의 표시 검증·복원
+- `packages/postgres/test/import-contracts.test.ts` — 논리 수렴·ambiguity·원문 불변·인코딩 구별 회귀
+- `packages/postgres/test/migrate.test.ts` — 기존 0025 원형을 유지하는 0026 업그레이드 회귀
+- `packages/postgres/test/original-text.test.ts` — 중첩 surrogate 키·값 복원 회귀
+- `packages/postgres/test/store.test.ts` — schema 26 Store 기대값 갱신
+- `packages/postgres/test/work-store.test.ts` — schema 26 감독자 기대값 갱신
+
+과거 앨범 timeout의 직접 원인은 당시 프로세스 상태가 기록되지 않아 확정하지 않는다. 고정 시계로 정리 기한이 진행되지 않는 경로를 제거했고 최종 트리의 결정적 검증은 통과했다. 알려진 미해결 차단은 없으며 운영자만 수행할 저장소 밖 AC도 없다. 티켓 done·tickets.py mark·원격 push는 수행하지 않는다. 완료 판정은 오케스트레이터에 남긴다.
+
+정리 결과: 구현자와 독립 리뷰어 두 명의 정식 성공 보고·전문을 수락하고 모두 completed/released로 정리했다. 자기 Run의 활성·reclaimable 워커와 미처리 Delivery·미확인 요청은 없다. 과거 transcript source 변경의 unknown 관측은 정식 완료와 실제 Run 대조로 해소했고 생성 Python cache도 정리했다. 체크포인트에 검증·판정·정리를 보존하고, 커밋과 청결 확인 뒤 정리된 자기 전용 제어 셸만 마지막에 닫는다.

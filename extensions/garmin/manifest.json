@@ -145,7 +145,8 @@
     }
   ],
   "raw_views": [
-    "raw_records"
+    "raw_records",
+    "raw_records_v2"
   ],
   "settings": [
     {
