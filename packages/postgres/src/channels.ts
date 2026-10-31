@@ -15,7 +15,53 @@ function legacyOriginal(r: ChannelLegacyInput): string {
   return JSON.stringify(r.type === 'notification' ? [r.localDate, r.event, r.detail, r.at.toISOString()] : [r.originalId, r.localDate, r.kind, r.event, r.ok, r.reason, r.at.toISOString()]);
 }
 export function postgresChannelStore(connect: PgConnect): ChannelStore {
+  const statuses = async (id?: string) => {
+    const opened = connect(); if (!opened.ok) throw Error(opened.message);
+    const rows = await sql<import('@second-brain/core').ChannelPublicStatus>`
+      select r.id, false as legacy, r.created_at as "createdAt",
+        case when r.status='sent' then 'sent' else coalesce(a.outcome,'pending') end as delivery,
+        case when r.work_item_id is null then 'unhanded' when w.completed_at is null and w.current_attempt_token is not null then 'running' when w.completed_at is null then 'waiting' else 'closed' end as "workState",
+        (select count(*)::int from brain.channel_attempt_results x where x.request_id=r.id) as attempts,
+        case when w.completed_at is null then w.next_attempt_at else null end as "nextAttemptAt",
+        (select count(*)::int from brain.failures f where f.target_kind='channel_request' and f.target_id=r.id::text and f.stage='channel_send' and f.resolved_at is null) as "unresolvedFailures",
+        (r.status <> 'sent' and w.completed_at is not null and (a.outcome in ('unknown','definite_failed') or exists
+          (select 1 from brain.failures f where f.target_kind='channel_request' and f.target_id=r.id::text and f.stage='channel_send' and f.resolved_at is null))) as "resendEligible"
+      from brain.channel_requests r left join brain.work_items w on w.id=r.work_item_id
+      left join lateral (select outcome from brain.channel_attempt_results x where x.request_id=r.id order by x.sequence desc limit 1) a on true
+      where (${id ?? null}::uuid is null or r.id=${id ?? null}::uuid)
+      union all
+      select id,true,at,'legacy','legacy',0,null,0,false from brain.channel_legacy_notifications where (${id ?? null}::uuid is null or id=${id ?? null}::uuid)
+      union all
+      select id,true,at,'legacy','legacy',0,null,0,false from brain.channel_legacy_deliveries where (${id ?? null}::uuid is null or id=${id ?? null}::uuid)
+      order by "createdAt" desc,id`.execute(opened.connection.db);
+    return rows.rows.map(row => ({ ...row, createdAt: new Date(row.createdAt), nextAttemptAt: row.nextAttemptAt ? new Date(row.nextAttemptAt) : null, resendEligible: row.resendEligible ?? false }));
+  };
   return {
+    async listChannelStatuses() { try { return { ok: true, requests: await statuses() }; } catch (error) { return databaseFailure(error); } },
+    async readChannelStatus(id) { try { return { ok: true, request: (await statuses(id))[0] ?? null }; } catch (error) { return databaseFailure(error); } },
+    async resendChannelRequest(input) {
+      const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      const result = await withWrite(opened.connection, async held => {
+        const found = await sql<{status: string; work_item_id: string | null; completed_at: Date | null; outcome: string | null; failed: boolean}>`
+          select r.status,r.work_item_id,w.completed_at,
+            (select a.outcome from brain.channel_attempt_results a where a.request_id=r.id order by a.sequence desc limit 1) as outcome,
+            exists(select 1 from brain.failures f where f.target_kind='channel_request' and f.target_id=r.id::text and f.stage='channel_send' and f.resolved_at is null) as failed
+          from brain.channel_requests r left join brain.work_items w on w.id=r.work_item_id where r.id=${input.requestId} for update of r`.execute(held);
+        const row = found.rows[0];
+        if (!row) {
+          const legacy = await sql`select id from brain.channel_legacy_notifications where id=${input.requestId} union all select id from brain.channel_legacy_deliveries where id=${input.requestId}`.execute(held);
+          return { ok: false as const, code: legacy.rows.length ? 'CHANNEL_LEGACY_NOT_RESENDABLE' as const : 'CHANNEL_REQUEST_NOT_FOUND' as const, message: '요청을 재전송할 수 없습니다' };
+        }
+        if (row.status === 'sent') return { ok: false as const, code: 'CHANNEL_ALREADY_SENT' as const, message: '이미 발신했습니다' };
+        if (!row.work_item_id || !row.completed_at) return { ok: false as const, code: 'CHANNEL_REQUEST_IN_PROGRESS' as const, message: '요청이 진행 중입니다' };
+        if (!row.failed && row.outcome !== 'unknown' && row.outcome !== 'definite_failed') return { ok: false as const, code: 'CHANNEL_NOT_RESENDABLE' as const, message: '재전송할 수 없는 요청입니다' };
+        const work = await ensureWork(held, { id: input.workId, kind: CHANNEL_SEND_KIND, targetKind: CHANNEL_REQUEST_TARGET, targetId: input.requestId, createdAt: input.now, nextAttemptAt: input.now });
+        if (!work.created) return { ok: false as const, code: 'CHANNEL_REQUEST_IN_PROGRESS' as const, message: '요청이 진행 중입니다' };
+        await sql`update brain.channel_requests set work_item_id=${work.row.id} where id=${input.requestId}`.execute(held);
+        return { ok: true as const, workItemId: work.row.id };
+      });
+      return result.ok ? result.value : result;
+    },
     async insertChannelLegacy(input) {
       try {
         const opened = connect(); if (!opened.ok) throw Error(opened.message);

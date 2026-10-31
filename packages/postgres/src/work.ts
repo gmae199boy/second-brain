@@ -461,7 +461,10 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
           last_error = case when ${input.outcome} <> 'succeeded' then ${input.lastError === undefined && failure === undefined ? null : encodedFailure(input.lastError ?? failure!.message)} else last_error end
           where id = ${input.id} and current_attempt_token = ${input.attemptToken}`.execute(held);
         if (changesOf(changed) === 0) return 0;
-        if (input.outcome === 'succeeded') await settleScheduledSuccess(held, input.id, now);
+        if (input.outcome === 'succeeded') {
+          await settleScheduledSuccess(held, input.id, now);
+          if (item.kind === 'channel_send') await sql`update brain.failures set resolved_at=${now} where target_kind=${item.target_kind} and target_id=${item.target_id} and stage='channel_send' and resolved_at is null`.execute(held);
+        }
         if (input.outcome !== 'succeeded' && (item.cancel_requested_at !== null || failure !== undefined))
           await closeDependents(held, input.id, item.cancel_requested_at !== null ? 'cancelled' : 'failed', now);
         if (failure !== undefined) {

@@ -74,6 +74,11 @@ describe('the error codes', () => {
     );
 
     expect(exits).toEqual({
+      CHANNEL_REQUEST_NOT_FOUND: 1,
+      CHANNEL_ALREADY_SENT: 1,
+      CHANNEL_LEGACY_NOT_RESENDABLE: 1,
+      CHANNEL_REQUEST_IN_PROGRESS: 1,
+      CHANNEL_NOT_RESENDABLE: 1,
       INVALID_ARGUMENT: 2,
       SESSION_NOT_FOUND: 1,
       EXTENSION_NOT_FOUND: 2,

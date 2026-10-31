@@ -84,6 +84,7 @@ it('installs the complete catalog, five named unique indexes, five search indexe
   ]);
   expect((await query("select table_name,column_name,column_default,is_identity,is_generated from information_schema.columns where table_schema='brain' and (column_default is not null or is_identity <> 'NO' or is_generated <> 'NEVER') order by table_name,column_name")).rows).toEqual([
     {table_name:'channel_attempt_results',column_name:'outcome',column_default:"'sent'::text",is_identity:'NO',is_generated:'NEVER'},
+    {table_name:'channel_attempt_results',column_name:'sequence',column_default:null,is_identity:'YES',is_generated:'NEVER'},
     {table_name:'channel_legacy_deliveries',column_name:'metadata_missing',column_default:'true',is_identity:'NO',is_generated:'NEVER'},
     {table_name:'channel_legacy_deliveries',column_name:'resend_eligible',column_default:'false',is_identity:'NO',is_generated:'NEVER'},
     {table_name:'channel_legacy_notifications',column_name:'metadata_missing',column_default:'true',is_identity:'NO',is_generated:'NEVER'},
@@ -93,7 +94,7 @@ it('installs the complete catalog, five named unique indexes, five search indexe
     {table_name:'messages',column_name:'is_subagent_report',column_default:'0',is_identity:'NO',is_generated:'NEVER'},
     {table_name:'work_items',column_name:'attempts',column_default:'0',is_identity:'NO',is_generated:'NEVER'},
   ]);
-  expect((await query("select * from pg_class where relnamespace='brain'::regnamespace and relkind='S'")).rows).toEqual([]);
+  expect((await query("select relname from pg_class where relnamespace='brain'::regnamespace and relkind='S'")).rows).toEqual([{ relname: 'channel_attempt_results_sequence_seq' }]);
 });
 
 it('checks locator JSON safely and preserves its exact text bytes', async () => {

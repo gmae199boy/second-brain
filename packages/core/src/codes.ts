@@ -173,6 +173,11 @@ export interface ErrorCodeSpec {
 }
 
 const CODES = {
+  CHANNEL_REQUEST_NOT_FOUND: { exit: 1, retryable: false, meaning: '채널 요청이 없습니다', hint: '요청 ID를 확인하세요' },
+  CHANNEL_ALREADY_SENT: { exit: 1, retryable: false, meaning: '이미 발신한 요청입니다', hint: '상태를 확인하세요' },
+  CHANNEL_LEGACY_NOT_RESENDABLE: { exit: 1, retryable: false, meaning: '옛 이력은 재전송할 수 없습니다', hint: '이력의 상태를 확인하세요' },
+  CHANNEL_REQUEST_IN_PROGRESS: { exit: 1, retryable: false, meaning: '요청이 진행 중입니다', hint: '상태를 다시 확인하세요' },
+  CHANNEL_NOT_RESENDABLE: { exit: 1, retryable: false, meaning: '재전송할 수 없는 요청입니다', hint: '상태를 확인하세요' },
   INVALID_ARGUMENT: { exit: 2, retryable: false, meaning: '입력값이 올바르지 않습니다', hint: '입력값의 형식과 범위를 확인하세요' },
   SESSION_NOT_FOUND: { exit: 1, retryable: false, meaning: '지정한 세션이 없습니다', hint: '세션 토큰을 확인하세요' },
   EXTENSION_NOT_FOUND: { exit: 2, retryable: false, meaning: '지정한 확장 패키지가 없습니다', hint: '확장 이름과 제공되는 패키지를 확인하세요' },

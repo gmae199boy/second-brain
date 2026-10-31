@@ -87,3 +87,19 @@ it('종료가 불확실한 시도는 보존하고 종료 확인 뒤 불명 결�
     expect(await db.rows('select outcome,finished_at from brain.channel_attempt_results')).toEqual([{ outcome: 'unknown', finished_at: now }]);
   } finally { await store.close(); await db.drop(); }
 });
+it('같은 시각의 역순 UUID 시도에서도 마지막 삽입 결과를 읽는다', async () => {
+  const db = await database(); const store = postgresStore({ databaseUrl: db.appUrl }); const now = new Date('2026-10-31T00:00:00Z');
+  try {
+    await store.ensureChannel({ id: id(1), kind: 'telegram', botRef: 'bot' });
+    await store.ensureChannelConversation({ id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
+    await store.createChannelRequest({ id: id(3), conversationId: id(2), producer: 'test', producerResultId: 'result', purpose: 'notice', revision: null, text: 'text', createdAt: now });
+    await store.handoffChannelRequest({ requestId: id(3), workId: id(4), now });
+    for (const [token, outcome] of [[id(9), 'definite_failed'], [id(5), 'unknown']] as const) {
+      await store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'worker', attemptToken: token });
+      const attempt = { requestId: id(3), workItemId: id(4), attemptToken: token, now }; await store.gateChannelAttempt(attempt);
+      await store.finishChannelAttempt({ ...attempt, result: { outcome, code: 'FAIL', retryable: true } });
+      await store.finishSupervisedWork({ id: id(4), attemptToken: token, now, outcome: 'failed', nextAttemptAt: now });
+    }
+    expect(await store.readChannelStatus(id(3))).toMatchObject({ request: { delivery: 'unknown', attempts: 2 } });
+  } finally { await store.close(); await db.drop(); }
+});

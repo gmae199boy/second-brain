@@ -1,3 +1,5 @@
+import { maskOutputText } from './output/mask.js';
+import type { ChannelPublicStatus, ChannelFailure, ChannelResendCode } from './channels/store.js';
 import { searchRecall, type SearchInput } from './recall/search.js';
 import { expandRecall, type ExpandInput } from './recall/expand.js';
 import { readSessionPage, type ReadInput } from './sessions/read.js';
@@ -249,7 +251,14 @@ export interface BrainExt {
   enable(input: { name: string }): ReturnType<typeof setExtensionEnabled>;
   disable(input: { name: string }): ReturnType<typeof setExtensionEnabled>;
 }
+type ChannelSdkError = ChannelFailure | { ok: false; code: ChannelResendCode | 'INVALID_ARGUMENT'; message: string };
+export interface BrainChannels {
+  list(): Promise<{ ok: true; requests: ChannelPublicStatus[] } | ChannelFailure>;
+  status(input: { id: string }): Promise<{ ok: true; request: ChannelPublicStatus } | ChannelSdkError>;
+  resend(input: { id: string }): Promise<{ ok: true; workItemId: string } | ChannelSdkError>;
+}
 export interface Brain {
+  channels: BrainChannels;
   recall: { chunks(input: SearchInput): ReturnType<typeof searchRecall>; tools(input: SearchInput): ReturnType<typeof searchRecall>; expand(input: ExpandInput): ReturnType<typeof expandRecall> };
   ext: BrainExt;
   messages: BrainMessages;
@@ -400,6 +409,21 @@ export function createBrain(dependencies: BrainDependencies): Brain {
 
   const readTimeZone = () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' });
   return {
+    channels: {
+      list: async () => {
+        const result = await store.listChannelStatuses();
+        return result.ok ? result : { ...result, message: maskOutputText(result.message) };
+      },
+      status: async ({ id }) => {
+        if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(id)) return { ok: false, code: 'INVALID_ARGUMENT', message: '요청 ID가 UUID 형식이 아닙니다' };
+        const result = await store.readChannelStatus(id);
+        if (!result.ok) return { ...result, message: maskOutputText(result.message) };
+        return result.request ? { ok: true, request: result.request } : { ok: false, code: 'CHANNEL_REQUEST_NOT_FOUND', message: '요청이 없습니다' };
+      },
+      resend: async ({ id }) => /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(id)
+        ? ((result) => result.ok ? result : { ...result, message: maskOutputText(result.message) })(await store.resendChannelRequest({ requestId: id, workId: idGen.next(), now: clock.now() }))
+        : { ok: false, code: 'INVALID_ARGUMENT', message: '요청 ID가 UUID 형식이 아닙니다' },
+    },
     recall: { chunks: input => searchRecall(store, 'chunks', input), tools: input => searchRecall(store, 'tools', input), expand: input => expandRecall(store, input) },
     ext: { publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },

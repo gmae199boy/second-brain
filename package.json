@@ -19,7 +19,8 @@
     "test": "pnpm build && pnpm typecheck && vitest run",
     "brain": "node apps/cli/dist/bin.js",
     "test:python": "pnpm build && vitest run --config apps/cli/python-test/vitest.config.ts",
-    "eval:install": "node tooling/install-eval/eval.mjs"
+    "eval:install": "node tooling/install-eval/eval.mjs",
+    "eval:channels": "node tooling/channels-eval/eval.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

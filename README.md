@@ -800,6 +800,11 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 
 | 코드 | exit | 뜻 |
 | --- | --- | --- |
+| `CHANNEL_REQUEST_NOT_FOUND` | 1 | 채널 요청이 없습니다 |
+| `CHANNEL_ALREADY_SENT` | 1 | 이미 발신한 요청입니다 |
+| `CHANNEL_LEGACY_NOT_RESENDABLE` | 1 | 옛 이력은 재전송할 수 없습니다 |
+| `CHANNEL_REQUEST_IN_PROGRESS` | 1 | 요청이 진행 중입니다 |
+| `CHANNEL_NOT_RESENDABLE` | 1 | 재전송할 수 없는 요청입니다 |
 | `INVALID_ARGUMENT` | 2 | 입력값이 올바르지 않습니다 |
 | `SESSION_NOT_FOUND` | 1 | 지정한 세션이 없습니다 |
 | `EXTENSION_NOT_FOUND` | 2 | 지정한 확장 패키지가 없습니다 |
@@ -1152,3 +1157,5 @@ https://orbstack.dev 에서 설치하고, 꺼져 있으면 `orb start`로 켜세
 `setup uninstall --delete-volume --yes`로 동의하세요.
 
 Python 확장 통합 시험은 uv, fixture의 `.python-version`에 지정된 로컬 Python, 격리 PostgreSQL과 잠긴 의존성을 필요로 합니다. `pnpm test:python`으로 별도 실행합니다. 시험은 임시 홈과 데이터베이스를 정리하며, 자동으로 시작한 시험 컨테이너도 종료합니다.
+
+채널 스킬의 격리 평가 사례는 `pnpm eval:channels prepare failed <새-임시-폴더>`로 준비한다. `failed`, `sent`, `legacy`, `unsupported` 각각에 대해 별도 에이전트가 폴더의 안내와 스킬을 읽고 fake CLI를 호출한 다음 `pnpm eval:channels verify <폴더>`로 기록을 판정한다. 판정기 시험이나 고정 호출 재생은 실제 에이전트 행동 평가와 구분한다.

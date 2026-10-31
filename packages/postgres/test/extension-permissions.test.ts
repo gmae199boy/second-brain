@@ -151,7 +151,7 @@ it('v18의 확장 역할을 v19로 이전하고 최소 권한으로 재설정한
     for (const file of (await readdir(source)).filter(file => /^\d{4}_/.test(file) && file < '0019')) await copyFile(join(source, file), join(dir, file));
     expect(await runMigrations({ databaseUrl: db.url, clock, owners: [{ owner: 'core', directory: dir }] })).toMatchObject({ ok: true, to: 18 });
     await provisionExtension(db.url, name, password); owned = true;
-    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 18, to: 20 });
+    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 18, to: 21 });
     await provisionExtension(db.url, name, password);
     const url = new URL(db.url); url.username = role; url.password = password;
     const ext = new pg.Client({ connectionString: url.toString() }); await ext.connect();

@@ -13,7 +13,17 @@ export type ChannelLegacyInput = {
   localDate: string; at: Date;
 } & ({ type: 'notification'; event: string; detail: string } | { type: 'delivery'; originalId: string; kind: string; event: string | null; ok: boolean; reason: string | null });
 export type ChannelLegacyRecord = ChannelLegacyInput & { externalMessageId: null; body: null; metadataMissing: true; resendEligible: false };
+export type ChannelResendCode = 'CHANNEL_REQUEST_NOT_FOUND' | 'CHANNEL_ALREADY_SENT' | 'CHANNEL_LEGACY_NOT_RESENDABLE' | 'CHANNEL_REQUEST_IN_PROGRESS' | 'CHANNEL_NOT_RESENDABLE';
+export interface ChannelPublicStatus {
+  id: string; legacy: boolean; createdAt: Date; delivery: 'pending' | 'sent' | 'definite_failed' | 'unknown' | 'legacy';
+  workState: 'unhanded' | 'waiting' | 'running' | 'closed' | 'legacy'; attempts: number; nextAttemptAt: Date | null;
+  unresolvedFailures: number; resendEligible: boolean;
+}
 export interface ChannelStore {
+  listChannelStatuses(): Promise<{ ok: true; requests: ChannelPublicStatus[] } | ChannelFailure>;
+  readChannelStatus(id: string): Promise<{ ok: true; request: ChannelPublicStatus | null } | ChannelFailure>;
+  resendChannelRequest(input: { requestId: string; workId: string; now: Date }): Promise<{ ok: true; workItemId: string } | ChannelFailure | { ok: false; code: ChannelResendCode; message: string }>;
+
   insertChannelLegacy(input: ChannelLegacyInput): Promise<{ ok: true; created: boolean; record: ChannelLegacyRecord } | ChannelFailure | { ok: false; code: 'LEGACY_CONFLICT'; message: string }>;
   readChannelLegacy(input: { type: ChannelLegacyInput['type']; dataset: string; originalTable: string; originalKey: string }): Promise<{ ok: true; record: ChannelLegacyRecord | null } | ChannelFailure>;
   ensureChannel(input: Channel): Promise<{ ok: true; channel: Channel } | ChannelFailure>;

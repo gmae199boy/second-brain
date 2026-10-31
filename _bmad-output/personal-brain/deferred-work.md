@@ -450,3 +450,11 @@ location: n/a
 source_spec: `tickets/epic-search-and-health-query/tickets/story-8-000-plan.md`
 reason: 검토 필요: [ASSUMPTION] 페이지 사이 고아 메모 구성원이 바뀌면 현재 고아 목록을 처음부터 재표시하고 hint로 알린다. 메시지 진행은 보존하며 정적 페이지는 무중복이다.
 status: open
+
+### DW-34: 검토 필요: [ASSUMPTION] 과거 생성·시작 시각이 완전히 같은 시도는 안정적 ID 순서로 정렬한다.
+origin: spec-deferred 1f0a469e76b5
+location: packages/postgres/migrations/0021_channel_attempt_order.sql
+source_spec: `tickets/epic-channels/tickets/story-resend-brain-channels-status-resend-plan.md`
+severity: medium
+reason: v20에는 동일 시각 시도의 실제 삽입 순번이 없다. 0021은 확인 가능한 시각을 보존하고 동률만 식별자로 정렬한다. 다른 선후 증거가 확보되면 기존 공개 결과와 비교해야 한다.
+status: open

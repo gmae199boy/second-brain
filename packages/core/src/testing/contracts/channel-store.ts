@@ -5,7 +5,30 @@ import { contractCase, withSubject, type ContractCase } from '../contract.js';
 const id = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, '0')}`;
 const now = new Date('2026-10-31T00:00:00Z');
 export function channelStoreContract(): ContractCase<ChannelStore & WorkStore>[] {
-  return [contractCase('legacy 원문 중복과 충돌, dataset 분리', async make => withSubject(make, async store => {
+  return [contractCase('닫힌 실패의 동시 재개와 공개 상태', async make => withSubject(make, async store => {
+    await store.ensureChannel({ id: id(1), kind: 'telegram', botRef: 'secret-bot' });
+    await store.ensureChannelConversation({ id: id(2), channelId: id(1), externalRef: 'secret-chat', threadRef: 'secret-thread' });
+    await store.createChannelRequest({ id: id(3), conversationId: id(2), producer: 'test', producerResultId: 'result', purpose: 'notice', revision: null, text: 'secret-body', createdAt: now });
+    const unhanded = await store.resendChannelRequest({ requestId: id(3), workId: id(9), now }); assertTrue(!unhanded.ok && unhanded.code === 'CHANNEL_REQUEST_IN_PROGRESS', '미인계 거부');
+    await store.handoffChannelRequest({ requestId: id(3), workId: id(4), now });
+    await store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'worker', attemptToken: id(5) });
+    const attempt = { requestId: id(3), workItemId: id(4), attemptToken: id(5), now };
+    await store.gateChannelAttempt(attempt);
+    await store.finishChannelAttempt({ ...attempt, result: { outcome: 'unknown', code: 'secret-error', retryable: false } });
+    await store.finishSupervisedWork({ id: id(4), attemptToken: id(5), now, outcome: 'failed', failure: { id: id(6), stage: 'channel_send', fingerprint: 'fingerprint', code: 'FAILED', message: 'secret-message', occurredAt: now } });
+    const status = await store.readChannelStatus(id(3)); assertOk(status, '상태'); assertTrue(status.request?.resendEligible === true, '재전송 가능');
+    assertTrue(!JSON.stringify(status).includes('secret'), '민감한 원문과 외부 참조 제외');
+    const results = await Promise.all([store.resendChannelRequest({ requestId: id(3), workId: id(7), now }), store.resendChannelRequest({ requestId: id(3), workId: id(8), now })]);
+    assertEqual(results.filter(r => r.ok).length, 1, '동시 승자 하나');
+    const reopened = await store.readChannelStatus(id(3)); assertOk(reopened, '재개 상태'); assertEqual(reopened.request?.unresolvedFailures, 1, '실패 유지'); assertEqual(reopened.request?.attempts, 1, '이력 유지');
+    const won = results.find(r => r.ok); assertOk(won!, '승자');
+    const claim = await store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'worker', attemptToken: id(10) }); assertOk(claim, '새 일감 청구'); assertEqual(claim.item?.id, won.workItemId, '요청과 일감 일치'); assertEqual(claim.item?.attempts, 1, '시도 예산 재시작');
+    await store.gateChannelAttempt({ requestId: id(3), workItemId: won.workItemId, attemptToken: id(10), now });
+    await store.finishChannelAttempt({ requestId: id(3), workItemId: won.workItemId, attemptToken: id(10), now, externalMessageId: 'private' });
+    await store.finishSupervisedWork({ id: won.workItemId, attemptToken: id(10), now, outcome: 'succeeded' });
+    const done = await store.readChannelStatus(id(3)); assertOk(done, '성공 상태'); assertEqual(done.request?.unresolvedFailures, 0, '성공 시 해소');
+    const sent = await store.resendChannelRequest({ requestId: id(3), workId: id(11), now }); assertTrue(!sent.ok && sent.code === 'CHANNEL_ALREADY_SENT', '성공 거부');
+  })), contractCase('legacy 원문 중복과 충돌, dataset 분리', async make => withSubject(make, async store => {
     await store.ensureChannel({ id: id(1), kind: 'telegram', botRef: 'bot' });
     await store.ensureChannelConversation({ id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
     const input = { type: 'notification' as const, id: id(3), conversationId: id(2), source: 'garmin', dataset: 'a', originalTable: 'notifications', originalKey: '1', importBatch: 'first', localDate: '2026-10-31', event: 'event', detail: 'detail', at: now };
@@ -16,6 +39,11 @@ export function channelStoreContract(): ContractCase<ChannelStore & WorkStore>[]
     const delivery = { type: 'delivery' as const, id: id(6), conversationId: id(2), source: 'garmin', dataset: 'a', originalTable: 'deliveries', originalKey: '1', importBatch: 'first', originalId: '1', localDate: '2026-10-31', kind: 'notice', event: null, ok: false, reason: 'failure', at: now };
     const inserted = await store.insertChannelLegacy(delivery); assertOk(inserted, 'delivery'); assertEqual(inserted.record, { ...delivery, externalMessageId: null, body: null, metadataMissing: true, resendEligible: false }, '원래 값 보존');
     assertEqual(await store.readChannelLegacy(delivery), { ok: true, record: inserted.record }, '조회');
+    for (const legacyId of [id(3), id(6)]) {
+      const status = await store.readChannelStatus(legacyId); assertOk(status, 'legacy 상태'); assertEqual(status.request?.resendEligible, false, 'legacy 부적격');
+      const resend = await store.resendChannelRequest({ requestId: legacyId, workId: id(9), now }); assertTrue(!resend.ok && resend.code === 'CHANNEL_LEGACY_NOT_RESENDABLE', 'legacy 재전송 거부');
+    }
+    const missing = await store.resendChannelRequest({ requestId: id(99), workId: id(9), now }); assertTrue(!missing.ok && missing.code === 'CHANNEL_REQUEST_NOT_FOUND', '없는 요청');
     assertEqual(await store.listUnhandedChannelRequests(), { ok: true, requestIds: [] }, '인계 제외');
   })), contractCase('channel identity, duplicate request, atomic handoff and attempt fence', async make => withSubject(make, async store => {
     const channel = { id:id(1),kind:'telegram',botRef:'test-bot' };

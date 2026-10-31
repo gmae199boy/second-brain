@@ -478,7 +478,37 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     }
   }
 
+  function channelStatuses(): import('../../channels/store.js').ChannelPublicStatus[] {
+    const current = [...channelRequests.values()].map(request => {
+      const work = workItems.find(w => w.id === request.workItemId);
+      const attempts = [...channelAttempts.values()].filter(a => a.requestId === request.id);
+      const latest = attempts.at(-1)?.result;
+      const unresolvedFailures = failures.filter(f => f.targetKind === 'channel_request' && f.targetId === request.id && f.stage === 'channel_send' && f.resolvedAt === null).length;
+      return { id: request.id, legacy: false, createdAt: request.createdAt,
+        delivery: request.status === 'sent' ? 'sent' as const : latest?.outcome ?? 'pending' as const,
+        workState: !work ? 'unhanded' as const : work.completedAt ? 'closed' as const : work.currentAttemptToken ? 'running' as const : 'waiting' as const,
+        attempts: attempts.length, nextAttemptAt: work && !work.completedAt ? work.nextAttemptAt : null, unresolvedFailures,
+        resendEligible: request.status !== 'sent' && !!work?.completedAt && (unresolvedFailures > 0 || latest?.outcome === 'unknown' || latest?.outcome === 'definite_failed') };
+    });
+    const legacy: import('../../channels/store.js').ChannelPublicStatus[] = [...legacyRecords.values()].map(r => ({ id: r.id, legacy: true, createdAt: r.at, delivery: 'legacy', workState: 'legacy', attempts: 0, nextAttemptAt: null, unresolvedFailures: 0, resendEligible: false }));
+    return structuredClone([...current, ...legacy].sort((a,b) => b.createdAt.getTime() - a.createdAt.getTime() || a.id.localeCompare(b.id)));
+  }
   return {
+    async listChannelStatuses() { return { ok: true, requests: channelStatuses() }; },
+    async readChannelStatus(id) { return { ok: true, request: channelStatuses().find(r => r.id === id) ?? null }; },
+    async resendChannelRequest(input) {
+      const request = channelRequests.get(input.requestId);
+      if (!request) return { ok: false, code: [...legacyRecords.values()].some(r => r.id === input.requestId) ? 'CHANNEL_LEGACY_NOT_RESENDABLE' : 'CHANNEL_REQUEST_NOT_FOUND', message: '요청을 재전송할 수 없습니다' };
+      if (request.status === 'sent') return { ok: false, code: 'CHANNEL_ALREADY_SENT', message: '이미 발신했습니다' };
+      const status = channelStatuses().find(r => r.id === request.id)!;
+      if (status.workState !== 'closed') return { ok: false, code: 'CHANNEL_REQUEST_IN_PROGRESS', message: '요청이 진행 중입니다' };
+      if (!status.resendEligible) return { ok: false, code: 'CHANNEL_NOT_RESENDABLE', message: '재전송할 수 없는 요청입니다' };
+      const work = addWork({ id: input.workId, kind: 'channel_send', targetKind: 'channel_request', targetId: request.id, createdAt: input.now, nextAttemptAt: input.now });
+      if (!work.ok) return work;
+      if (!work.created) return { ok: false, code: 'CHANNEL_REQUEST_IN_PROGRESS', message: '요청이 진행 중입니다' };
+      request.workItemId = work.item.id;
+      return { ok: true, workItemId: work.item.id };
+    },
     async insertChannelLegacy(input) {
       const key = JSON.stringify([input.type, input.dataset, input.originalTable, input.originalKey]);
       const existing = legacyRecords.get(key);
@@ -1623,7 +1653,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       attempt.elapsedMs = input.elapsedMs ?? null; attempt.stderr = input.stderr ?? null;
       attempt.errorCode = input.errorCode ?? null; attempt.errorRetryable = input.errorRetryable ?? null;
       attempt.inputTokens = input.usage?.inputTokens ?? null; attempt.cachedInputTokens = input.usage?.cachedInputTokens ?? null; attempt.outputTokens = input.usage?.outputTokens ?? null;
-      if (input.outcome === 'succeeded') { settleSuccess(item, input.now); }
+      if (input.outcome === 'succeeded') { settleSuccess(item, input.now); if (item.kind === 'channel_send') for (const failure of failures) if (failure.targetKind === item.targetKind && failure.targetId === item.targetId && failure.stage === item.kind && failure.resolvedAt === null) failure.resolvedAt = input.now; }
       else if (item.cancelRequestedAt !== null) { item.completedAt = input.now; item.outcome = 'cancelled'; }
       else if (input.failure !== undefined) { item.completedAt = input.now; item.outcome = 'failed'; }
       if (input.outcome !== 'succeeded') {
