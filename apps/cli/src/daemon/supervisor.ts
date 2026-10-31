@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { envFilePath } from '../config/paths.js';
@@ -10,6 +10,7 @@ import { systemProcessLauncher } from '../runtime/process-group.js';
 import { systemTimer } from '../runtime/clock.js';
 import { resolveStoreUrl, extensionDatabaseUrl } from '../config/codec.js';
 import type { RunDaemonOptions } from './run.js';
+import { readDaemonLock } from './lock.js';
 import type { ReadConfigResult } from '../config/codec.js';
 export interface DaemonSupervisorOptions { launcher?: ProcessLauncher; inspector?: ProcessInspector; cancelGraceMs?: number; cancelPollMs?: number; groupConfirmMs?: number; probeWorker?: { command: string; args: readonly string[]; env?: Readonly<Record<string, string>> }; pollMs?: number; renewEveryMs?: number; disabled?: boolean }
 export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadConfigResult, log: { write(message: string): Promise<void> }): { stop(): Promise<void> } {
@@ -25,6 +26,7 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
       const loadProtectedLaunches = async (): Promise<NonNullable<SupervisorOptions['protectedLaunches']>> => {
       const protectedLaunches: Record<string, NonNullable<SupervisorOptions['protectedLaunches']>[string]> = {};
       const installed = await opened.store.listExtensions();
+      if (!installed.ok) throw new Error('확장 목록을 조회할 수 없습니다');
       if (installed.ok) for (const extension of installed.extensions.filter(entry => entry.enabled)) {
         try {
           const directory = join(options.home, 'extensions', extension.name);
@@ -59,7 +61,16 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
       }
       return protectedLaunches;
       };
-      await runSupervisor({ loadProtectedLaunches, store: opened.store, schemaVersions: opened.expected,
+      const readinessPath = join(options.home, 'run', 'supervisor-ready.json');
+      const onReadiness = async (ready: boolean) => {
+        if (!ready) { await rm(readinessPath, { force: true }); return; }
+        const owner = await readDaemonLock(options.home);
+        if (!owner || owner.pid !== process.pid) { await rm(readinessPath, { force: true }); return; }
+        const temporary = `${readinessPath}.${process.pid}.tmp`;
+        await writeFile(temporary, JSON.stringify({ pid: owner.pid, startedAt: owner.startedAt.toISOString(), at: options.clock.now().toISOString() }), { mode: 0o600 });
+        await rename(temporary, readinessPath);
+      };
+      await runSupervisor({ loadProtectedLaunches, onReadiness, store: opened.store, schemaVersions: opened.expected,
         inspector: options.supervisor?.inspector ?? systemProcessInspector,
         ...(options.supervisor?.cancelGraceMs === undefined ? {} : { cancelGraceMs: options.supervisor.cancelGraceMs }),
         ...(options.supervisor?.cancelPollMs === undefined ? {} : { cancelPollMs: options.supervisor.cancelPollMs }),
@@ -76,6 +87,6 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
         }) : null },
       });
     } finally { await opened.store.close(); }
-  })().catch(async () => { await log.write('감독자를 실행할 수 없습니다'); });
+  })().catch(async () => { await rm(join(options.home, 'run', 'supervisor-ready.json'), { force: true }); await log.write('감독자를 실행할 수 없습니다'); });
   return { async stop() { controller.abort(); await running; options.signal.removeEventListener('abort', abort); } };
 }

@@ -4,7 +4,7 @@ import { PROCESS_ABI_MAX_LINE_BYTES, type ProcessLauncher } from 'second_brain';
 export const systemProcessLauncher: ProcessLauncher = {
   async start(spec) {
     return new Promise((resolve) => {
-      const child = spawn(spec.command, [...spec.args], { env: { ...spec.env }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(spec.command, [...spec.args], { env: { ...spec.env }, ...(spec.cwd ? { cwd: spec.cwd } : {}), detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
       function buffer(stream: typeof child.stdout) {
         stream.setEncoding('utf8');
         const queue: string[] = [];

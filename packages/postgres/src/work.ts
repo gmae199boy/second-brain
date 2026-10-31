@@ -371,6 +371,14 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         return { ok: true, item: written.value, attemptToken: written.value === null ? null : input.attemptToken };
       } catch (error) { return { ...databaseFailure(error), message: `감독 일감을 청구할 수 없습니다: ${describe(error)}` }; }
     },
+    async getWork(id) {
+      const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const result = await sql<WorkItemRow & { attempt: Record<string, unknown> | null }>`select i.*, i.local_date_from::text, i.local_date_to::text, i.claimed_date_from::text, i.claimed_date_to::text, row_to_json(a) as attempt
+          from brain.work_items i left join lateral (select * from brain.work_attempts a where a.work_item_id = i.id order by started_at desc, token desc limit 1) a on true where i.id = ${id}::uuid`.execute(opened.connection.db);
+        const row = result.rows[0]; return { ok: true, entry: row ? { item: toWorkItem(row), latestAttempt: row.attempt === null ? null : listAttempt(row.attempt) } : null };
+      } catch (error) { return databaseFailure(error); }
+    },
     async listWork({ includeClosed, kind, limit }) {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };

@@ -472,7 +472,7 @@ describe('the plugin SessionStart hook', () => {
     const status = JSON.parse(brain('ext', 'status', 'pyfixture', '--json').stdout).data;
     const db = await homeDatabase(true);
     try {
-      await db.query('create schema pyfixture; create table pyfixture.data (id integer); insert into pyfixture.data values (7)');
+      await db.query('create schema if not exists pyfixture; create table pyfixture.data (id integer); insert into pyfixture.data values (7)');
       const ledger = (await db.query("select * from brain.schema_migrations where owner='pyfixture'")).rows;
       git(['-C', work, '-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--allow-empty', '-q', '-m', 'python upgrade']);
       git(['-C', work, 'push', '-q', bare, 'main']);

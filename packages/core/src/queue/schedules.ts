@@ -46,3 +46,16 @@ export async function removeSchedule({ store }: Pick<SchedulesDependencies, 'sto
   if (!read.ok) return read;
   return read.removed ? { ok: true as const, id: input.id } : { ok: false as const, code: 'SCHEDULE_NOT_FOUND' as const, message: '지정한 예약이 없습니다' };
 }
+
+/** 동일 키의 기존 예약이 실제 설정과 같을 때만 재사용한다. */
+export async function ensureDaily(deps: Pick<SchedulesDependencies, 'store' | 'clock' | 'idGen' | 'readTimeZone'>, input: AddDailyInput): Promise<AddDailyResult> {
+  const zone = await deps.readTimeZone(); if (!zone.ok) return zone;
+  const read = async () => deps.store.findDailySchedule(input);
+  const existing = await read(); if (!existing.ok) return existing;
+  const matches = (schedule: import('../domain/schedule.js').Schedule) => schedule.localTime === input.localTime && schedule.timeZone === zone.value && schedule.intervalSeconds === null && schedule.holdGroup === (input.kind.includes('.') ? `extension:${input.kind.split('.')[0]}` : input.holdGroup ?? null);
+  if (existing.schedule) return matches(existing.schedule) ? { ok: true, schedule: existing.schedule } : { ok: false, code: 'SCHEDULE_CONFLICT', message: '같은 대상에 다른 설정의 예약이 있습니다' };
+  const added = await addDaily({ ...deps, readTimeZone: async () => zone }, input);
+  if (!added.ok && added.code !== 'SCHEDULE_CONFLICT') return added;
+  const raced = await read(); if (!raced.ok) return raced;
+  return raced.schedule && matches(raced.schedule) ? { ok: true, schedule: raced.schedule } : { ok: false, code: 'SCHEDULE_CONFLICT', message: '등록된 예약 설정이 일치하지 않습니다' };
+}

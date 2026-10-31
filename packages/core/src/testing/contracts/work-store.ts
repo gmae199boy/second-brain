@@ -35,6 +35,15 @@ export function workStoreContract(readItem: (store: WorkStore, id: string) => Pr
   const KINDS = ['demo_work'];
 
   return [
+    contractCase('일감 ID로 정확한 항목과 마지막 시도를 조회한다', async make => {
+      await withSubject(make, async store => {
+        assertEqual(await store.getWork(sampleWorkItemId), { ok: true, entry: null }, '없는 일감');
+        const added = await store.addWork(sampleWorkInput()); assertOk(added, '일감 생성');
+        const read = await store.getWork(sampleWorkItemId); assertOk(read, 'ID 조회');
+        assertEqual(read.entry?.item, added.item, '일감 조회');
+        assertEqual(read.entry?.latestAttempt, null, '시도 없음');
+      });
+    }),
     contractCase('rejects invalid hold group names without persisting them', async make => {
       await withSubject(make, async store => {
         for (const group of ['', 'x'.repeat(201), '😀'.repeat(201)]) {

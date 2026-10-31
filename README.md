@@ -749,6 +749,14 @@ shim을 읽거나 해석할 수 없으면 `SHIM_MISSING`, 실행 권한·서명�
 현재 플러그인 기록과 root가 다르면 `PLUGIN_DUPLICATE` 경고와 두 폴더를 보여 줍니다.
 플러그인 갱신 직후 열린 옛 세션에서 hook이 오면 잠깐 경고할 수 있습니다.
 
+## 확장 설치와 재개
+
+`brain ext install <이름>`은 패키지, 환경, role, 마이그레이션, 설정, 로그인, 연결과 기본 예약의 진행 사실을 기록합니다. `brain ext status <이름> --json`의 `install`에는 현재 결과, 단계별 상태·코드·시각, 마지막 실패, 인증 일감과 예약 ID가 있습니다. 설치가 실패한 JSON 응답의 `data`도 같은 저장된 상태를 담으므로 설치 전 실패를 포함해 상태 명령과 대조할 수 있습니다.
+
+같은 패키지를 다시 설치하면 완료한 단계는 반복하지 않습니다. 최초 설치의 마이그레이션이 실패하면 앞서 적용한 SQL과 패키지를 보존하고, 실패한 SQL을 수정한 뒤 같은 명령으로 이어갈 수 있습니다. 이미 적용된 SQL의 내용은 바꾸지 마세요. 기존 확장을 교체하다 실패하면 이전 패키지와 tokenstore를 복원합니다.
+
+`EXTENSION_LOGIN_REQUIRED`가 나오면 확장 인증을 완료한 뒤 같은 설치 명령을 다시 실행하세요. 인증은 기존 데몬의 감독 일감으로 실행되며 비밀번호나 MFA를 명령 출력에 담지 않습니다. `EXTENSION_SCHEDULER_UNAVAILABLE`은 데몬의 감독자가 준비되지 않았거나 예약 기능을 사용할 수 없다는 뜻입니다. 데몬을 준비하고 재실행하면 기존과 설정이 같은 예약을 재사용하며 다른 설정의 충돌은 오류로 남깁니다. SIGINT 또는 SIGTERM으로 취소한 뒤에도 같은 명령으로 재개할 수 있습니다.
+
 ## 종료 코드
 
 | 코드 | 뜻 | 에이전트 행동 |
@@ -793,6 +801,11 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `EXTENSION_PYTHON_NOT_FOUND` | 1 | 지정한 Python을 찾을 수 없습니다 |
 | `EXTENSION_PYTHON_SYNC_FAILED` | 1 | Python 환경을 설치하지 못했습니다 |
 | `EXTENSION_PYTHON_VERSION_MISMATCH` | 1 | Python 환경의 버전이 지정한 버전과 다릅니다 |
+| `EXTENSION_CANCEL_UNCONFIRMED` | 1 | 확장 인증 자식의 종료를 확인하지 못했습니다 |
+| `EXTENSION_INSTALL_CANCELLED` | 1 | 확장 설치가 취소되었습니다 |
+| `EXTENSION_SCHEDULER_UNAVAILABLE` | 1 | 예약 감독자가 준비되지 않았습니다 |
+| `EXTENSION_LOGIN_REQUIRED` | 1 | 확장 인증이 완료되지 않았습니다 |
+| `EXTENSION_AUTH_FAILED` | 1 | 확장 인증에 실패했습니다 |
 | `EXTENSION_CHECK_FAILED` | 1 | 확장 설치 뒤 연결 확인에 실패했습니다 |
 | `ABI_LINE_INVALID` | 1 | 프로세스 출력 줄이 ABI 형식과 다릅니다 |
 | `ABI_VERSION_UNKNOWN` | 1 | 지원하지 않는 프로세스 ABI 버전입니다 |

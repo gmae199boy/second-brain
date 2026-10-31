@@ -290,3 +290,8 @@ export type * from './ports/recall-store.js';
 export * from './recall/search.js';
 export * from './recall/expand.js';
 export * from './sessions/read.js';
+
+export { validInstallProgress, installStages } from './extensions/install-progress.js';
+export type { ExtensionInstallProgress, StoredExtensionInstallProgress, InstallStage, InstallStageProgress, InstallResult } from './extensions/install-progress.js';
+
+export { cleanProcessGroup } from './queue/process-cleanup.js';

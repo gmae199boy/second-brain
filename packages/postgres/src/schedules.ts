@@ -64,6 +64,13 @@ export function postgresScheduleStore(connect: PgConnect): ScheduleStore {
         return result.ok ? { ok: true, removed: result.value } : result;
       } catch (error) { return databaseFailure(error); }
     },
+    async findDailySchedule({ kind, targetKind, targetId }) {
+      const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const result = await sql<ScheduleRow>`select * from brain.schedules where kind=${kind} and target_kind=${targetKind} and target_id=${targetId} and local_time is not null`.execute(opened.connection.db);
+        return { ok: true, schedule: result.rows[0] ? rowSchedule(result.rows[0]) : null };
+      } catch (error) { return databaseFailure(error); }
+    },
     async readSchedule({ id }) {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };

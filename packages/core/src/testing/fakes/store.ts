@@ -1,3 +1,4 @@
+import { validInstallProgress } from '../../extensions/install-progress.js';
 import { conversationFingerprint } from '../../recall/conversation-fingerprint.js';
 import { attemptUsage } from '../../queue/list.js';
 import type { SettingsStore, ScheduleSuccess } from '../../ports/store.js';
@@ -171,6 +172,7 @@ function plainToolNote(note: StoredToolNote): ToolNote {
 export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const { health = DEFAULT_HEALTH } = options;
 
+  const installProgress = new Map<string, import('../../extensions/install-progress.js').StoredExtensionInstallProgress>();
   const extensionWorkKinds = new Map<string, readonly string[]>();
   const pythonEnvironments = new Map<string, import('../../ports/store.js').ExtensionPythonEnvironment>();
   const extensions = new Map<string, import('../../ports/store.js').ExtensionRecord>();
@@ -501,6 +503,15 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       const literal = pattern.slice(1, -1).replaceAll('\0', '�').replace(/\\([\\%_])/g, '$1').toLowerCase();
       return { ok: true, chunks: structuredClone(conversationChunks.filter(c => c.body.replaceAll('\0', '�').toLowerCase().includes(literal))) };
     },
+    async getExtensionInstallProgress(name) { return { ok: true, journal: structuredClone(installProgress.get(name) ?? null) }; },
+    async writeExtensionInstallProgress({ expectedRevision, progress }) {
+      if (!validInstallProgress(progress) || !(expectedRevision === null || (Number.isSafeInteger(expectedRevision) && expectedRevision > 0 && expectedRevision < 2147483647))) return { ok: false, code: 'INVALID_INSTALL_PROGRESS', message: '잘못된 설치 진행 기록입니다' };
+      const existing = installProgress.get(progress.name);
+      if ((existing?.revision ?? null) !== expectedRevision) return { ok: true, written: false, revision: existing?.revision ?? null };
+      const revision = (existing?.revision ?? 0) + 1;
+      installProgress.set(progress.name, structuredClone({ revision, progress }));
+      return { ok: true, written: true, revision };
+    },
     async recordExtensionPythonEnvironment({ name, ...environment }) { pythonEnvironments.set(name, structuredClone(environment)); return { ok: true }; },
     async getExtensionPythonEnvironment(name) { return { ok: true, environment: structuredClone(pythonEnvironments.get(name) ?? null) }; },
     async recordExtensionInstall({ name, version, now, workKinds }) {
@@ -535,6 +546,11 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       for (const [key, row] of scheduleSuccesses) if (row.scheduleId === id) scheduleSuccesses.delete(key);
       return { ok: true, removed };
     },
+    async getWork(id) {
+      const item = workItems.find(value => value.id === id);
+      const latestAttempt = workAttempts.filter(a => a.workItemId === id).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime() || b.token.localeCompare(a.token))[0] ?? null;
+      return { ok: true, entry: item ? structuredClone({ item, latestAttempt }) : null };
+    },
     async listWork({ includeClosed, kind, limit }) {
       const rows = workItems.filter(i => (includeClosed || i.completedAt === null) && (kind === undefined || i.kind === kind))
         .sort((a,b) => b.createdAt.getTime()-a.createdAt.getTime() || b.id.localeCompare(a.id));
@@ -550,6 +566,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         elapsedMs: rows.reduce((n,a) => n+(a.elapsedMs ?? 0),0), latest: latest ? { workItemId: latest.workItemId,
           kind: workItems.find(i => i.id === latest.workItemId)!.kind, at: new Date(latest.startedAt), elapsedMs: latest.elapsedMs, usage: attemptUsage(latest) } : null } };
     },
+    async findDailySchedule(input) { const schedule = [...schedules.values()].find(s => s.localTime !== null && s.kind === input.kind && s.targetKind === input.targetKind && s.targetId === input.targetId); return { ok: true, schedule: schedule ? cloneSchedule(schedule) : null }; },
     async readSchedule({ id }) { return { ok: true, schedule: schedules.has(id) ? cloneSchedule(schedules.get(id)!) : null }; },
     async listDailySchedules({ limit }) {
       return { ok: true, schedules: [...schedules.values()].filter(row => row.localTime !== null).sort((a, b) => a.id < b.id ? -1 : 1).slice(0, limit).map(cloneSchedule) };

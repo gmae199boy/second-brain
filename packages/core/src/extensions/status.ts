@@ -3,6 +3,8 @@ export async function extensionStatus({ store }: { store: ExtensionStore }, { na
   const result = await store.getExtension(name);
   if (!result.ok) return result;
   const python = await store.getExtensionPythonEnvironment(name);
-  return python.ok ? { ok: true as const, name, extension: result.extension, pythonEnvironment: python.environment } : python;
+  if (!python.ok) return python;
+  const journal = await store.getExtensionInstallProgress(name);
+  return journal.ok ? { ok: true as const, name, extension: result.extension, pythonEnvironment: python.environment, progress: journal.journal?.progress ?? null } : journal;
 }
 export async function listExtensions({ store }: { store: ExtensionStore }) { return store.listExtensions(); }

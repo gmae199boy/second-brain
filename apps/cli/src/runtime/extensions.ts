@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, rename, rm, lstat, readdir, chmod, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -7,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { decodeExtensionManifest, isExtensionName, type Clock, type ExtensionRuntime } from 'second_brain';
 import { extensionAdminUrl, resolveStoreUrl, ensureExtensionPassword, extensionDatabaseUrl, type ReadConfigResult } from '../config/codec.js';
 import { prepareExtensionPython } from './extension-python.js';
+import { daemonLiveness } from '../daemon/liveness.js';
+import { readDaemonLock } from '../daemon/lock.js';
 import { systemTimer } from './clock.js';
 import { systemProcessLauncher } from './process-group.js';
 import { systemProcessInspector } from './process-inspector.js';
@@ -32,6 +35,22 @@ async function checkTree(folder: string): Promise<void> {
     if (stat.isSymbolicLink()) throw new Error('확장 패키지에 심볼릭 링크를 둘 수 없습니다');
     if (stat.isDirectory()) await checkTree(path);
   }
+}
+// 생성된 환경과 tokenstore는 패키지 내용이 아니다.
+async function packageDigest(folder: string, migrations: string, omitMigrations = false): Promise<string> {
+  const hash = createHash('sha256');
+  async function visit(dir: string, relative: string): Promise<void> {
+    for (const name of (await readdir(dir)).sort()) {
+      const path = relative ? `${relative}/${name}` : name;
+      if (path === '.venv' || path === 'tokenstore' || name === '__pycache__' || name.endsWith('.pyc') || (omitMigrations && (path === migrations || path.startsWith(`${migrations}/`)))) continue;
+      const full = join(dir, name), stat = await lstat(full);
+      if (stat.isSymbolicLink()) throw new Error('확장 패키지에 심볼릭 링크를 둘 수 없습니다');
+      if (stat.isDirectory()) { hash.update(`d${path.length}:${path}`); await visit(full, path); }
+      else if (stat.isFile()) { const bytes = await readFile(full); hash.update(`f${path.length}:${path}:${bytes.length}:`); hash.update(bytes); }
+      else throw new Error('확장 패키지에 일반 파일이 아닌 항목이 있습니다');
+    }
+  }
+  await visit(folder, ''); return hash.digest('hex');
 }
 /** 등록된 확장의 manifest만 읽고 런타임을 준비하지 않는다. */
 export async function installedExtensionMigrations(home: string, names: readonly string[]): Promise<{ owner: string; directory: string }[]> {
@@ -71,16 +90,62 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
     return url;
   };
   return {
+    async secureCredentials() { await chmod(envFilePath(home), 0o600); },
+    async schedulerReady() {
+      try {
+        const live = await daemonLiveness({ home, clock }); if (!live.alive) return false;
+        const owner = await readDaemonLock(home); if (!owner || owner.pid !== live.pid) return false;
+        const ready = JSON.parse(await readFile(join(home, 'run', 'supervisor-ready.json'), 'utf8')) as { pid?: number; startedAt?: string; at?: string };
+        const age = clock.now().getTime() - Date.parse(ready.at ?? '');
+        return ready.pid === owner.pid && ready.startedAt === owner.startedAt.toISOString() && Number.isFinite(age) && age >= 0 && age <= 20_000;
+      } catch { return false; }
+    },
+    async withInstallLock(name, run, signal) {
+      const { withExtensionInstallLock } = await import('second_brain/postgres');
+      return withExtensionInstallLock(await databaseUrl(), name, run, signal);
+    },
+    async provision(name) {
+      try {
+        const { provisionExtension } = await import('second_brain/postgres');
+        const adminUrl = await extensionAdminUrl(home, await databaseUrl(), env);
+        await provisionExtension(adminUrl, name, () => ensureExtensionPassword(home, name));
+        return { ok: true as const };
+      } catch { return { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: '확장 역할을 준비하지 못했습니다' }; }
+    },
     async readSecrets() {
       try { return Object.fromEntries(Object.entries(parseEnv(await readFile(envFilePath(home), 'utf8'))).filter((entry): entry is [string, string] => entry[1] !== undefined)); }
       catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}; throw error; }
     },
     machineValues: name => ({ tokenstore: join(home, 'extensions', name, 'tokenstore') }),
-    databaseUrl: async name => extensionDatabaseUrl(home, name, await databaseUrl()), preparePython: directory => prepareExtensionPython(directory, env), timer: systemTimer, launcher: { start: spec => systemProcessLauncher.start({ ...spec, command: spec.command === 'node' ? process.execPath : spec.command }) }, inspector: systemProcessInspector,
+    databaseUrl: async name => { await chmod(envFilePath(home), 0o600); return extensionDatabaseUrl(home, name, await databaseUrl()); }, preparePython: (directory, signal) => prepareExtensionPython(directory, env, signal), timer: systemTimer, launcher: { start: spec => systemProcessLauncher.start({ ...spec, command: spec.command === 'node' ? process.execPath : spec.command }) }, inspector: systemProcessInspector,
     packages: {
-      async rollback(name) {
+      async inspect(name, dir, migrations) {
+        await checkTree(dir);
+        const digest = await packageDigest(dir, migrations);
+        const target = join(home, 'extensions', name);
+        try {
+          const installedDigest = await packageDigest(target, migrations);
+          const sameBase = await packageDigest(dir, migrations, true) === await packageDigest(target, migrations, true);
+          return { digest, installedDigest, sameBase, installedDir: target };
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { digest, installedDigest: null, sameBase: false, installedDir: target };
+          throw error;
+        }
+      },
+      async refreshMigrations(name, dir, migrations) {
+        const target = join(home, 'extensions', name, migrations);
+        const stage = await mkdtemp(join(home, 'extensions', '.migrations-'));
+        const staged = join(stage, 'new'), backup = join(stage, 'previous');
+        let moved = false;
+        try {
+          await cp(join(dir, migrations), staged, { recursive: true, errorOnExist: true, force: false });
+          await rename(target, backup); moved = true;
+          try { await rename(staged, target); } catch (error) { await rename(backup, target); moved = false; throw error; }
+        } finally { if (!moved || await lstat(target).then(() => true, () => false)) await rm(stage, { recursive: true, force: true }); }
+      },
+      async rollback(name, preserveInitial = false) {
         const placement = pending.get(name); if (!placement) return;
-        await rm(placement.target, { recursive: true, force: true });
+        if (placement.moved || !preserveInitial) await rm(placement.target, { recursive: true, force: true });
         if (placement.moved) await rename(placement.backup, placement.target);
         await rm(placement.stage, { recursive: true, force: true }); pending.delete(name);
       },
@@ -131,16 +196,15 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
       async apply(owner, directory) {
         let result: Awaited<ReturnType<ExtensionRuntime['migrator']['apply']>>;
         try {
-          const { runMigrations, provisionExtension } = await import('second_brain/postgres');
+          const { runMigrations } = await import('second_brain/postgres');
           const adminUrl = await extensionAdminUrl(home, await databaseUrl(), env);
-          await provisionExtension(adminUrl, owner, () => ensureExtensionPassword(home, owner));
           result = await runMigrations({ databaseUrl: adminUrl, clock, owners: [{ owner, directory }] });
         } catch { result = { ok: false, code: 'DB_UNAVAILABLE', message: '확장 마이그레이션의 관리 연결을 열지 못했습니다' }; }
         const placement = pending.get(owner);
         if (placement) {
-          if (!result.ok) {
+          if (!result.ok && placement.moved) {
             await rm(placement.target, { recursive: true, force: true });
-            if (placement.moved) await rename(placement.backup, placement.target);
+            await rename(placement.backup, placement.target);
           }
           await rm(placement.stage, { recursive: true, force: true });
           pending.delete(owner);

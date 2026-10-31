@@ -39,6 +39,8 @@ export interface VerbCall {
  * exited 1 keeps doing so under a code the table puts at 2.
  */
 export interface Failure {
+  /** 실패 후 재조회한 구조화 결과. 다른 출력과 같이 마스킹한다. */
+  data?: unknown;
   /**
    * SCREAMING_SNAKE. One of `ERROR_CODES` for anything Core or the CLI raises;
    * a connector may name its own (`ports/connector.ts`), which is why this is
@@ -109,7 +111,8 @@ export function okEnvelope<T>(
 }
 
 /**
- * The command could not run, or ran and failed outright. No `data`, and the
+ * The command could not run, or ran and failed outright. Optional `data` carries
+ * a separately re-read result, and the
  * warnings that were already collected still travel: a configuration warning
  * is worth saying even when the command then refused to run.
  *
@@ -122,7 +125,7 @@ export function errorEnvelope(
   clock: Clock,
   failure: Failure,
   warnings: readonly WarningCode[] = [],
-): Envelope<never> {
+): Envelope<unknown> {
   const spec = errorCodeSpec(failure.code);
   const error: EnvelopeError = {
     code: failure.code,
@@ -149,6 +152,7 @@ export function errorEnvelope(
     now: isoWithOffset(clock.now()),
     warnings: maskOutputValue([...warnings]),
     error: maskOutputValue(error),
+    ...(failure.data === undefined ? {} : { data: maskOutputValue(failure.data) }),
   };
 }
 

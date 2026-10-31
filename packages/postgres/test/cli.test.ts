@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import type { TestDatabase } from '@second-brain/test-db';
 import { sampleSelfUserInput } from '@second-brain/core/testing';
-import { postgresStore } from '../src/index.js';
+import { postgresStore, CORE_SCHEMA_VERSION } from '../src/index.js';
 import { database } from './fixture.js';
 const bin=fileURLToPath(new URL('../../../apps/cli/dist/bin.js',import.meta.url));
 const fixture=fileURLToPath(new URL('../../claude-code/test/fixtures/two-turns.jsonl',import.meta.url));
@@ -163,7 +163,7 @@ it('answers commands with DB_UNAVAILABLE without the brain schema and SCHEMA_MIS
   const mismatch = await run(['queue','drain','--json'], kit.env);
   expect(mismatch.code).toBe(1);
   expect(JSON.parse(mismatch.stdout)).toMatchObject({ ok: false, error: { code: 'SCHEMA_MISMATCH', message: expect.stringContaining('core') } });
-  expect(JSON.parse(mismatch.stdout).error.message).toMatch(/16.*15/);
+  expect(JSON.parse(mismatch.stdout).error.message).toMatch(new RegExp(`${CORE_SCHEMA_VERSION + 1}.*${CORE_SCHEMA_VERSION}`));
   await kit.db.query('drop schema brain cascade');
   for (const args of [['queue','drain'], ['failures','list']]) {
     const result = await run([...args, '--json'], kit.env);

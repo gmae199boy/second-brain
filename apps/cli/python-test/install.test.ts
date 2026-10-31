@@ -1,4 +1,4 @@
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, mkdtemp, rm, cp, mkdir, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -70,3 +70,74 @@ async function compareDistributedFixtures(directory: string) {
     }
   } finally { await rm(temporary, { recursive: true, force: true }); }
 }
+
+
+it('Python 환경을 보존하고 최초 DDL 실패 뒤 앞 SQL을 반복하지 않는다', async () => {
+  const fixture = await extHome();
+  try {
+    const roots = join(fixture.home, 'packages'), source = join(roots, 'pyresume');
+    await mkdir(roots); await cp(fileURLToPath(new URL('../test/fixtures/extensions/pyfixture/', import.meta.url)), source, { recursive: true });
+    for (const file of ['manifest.json', 'check.py']) {
+      const path = join(source, file); await writeFile(path, (await readFile(path, 'utf8')).replaceAll('pyfixture', 'pyresume'));
+    }
+    await writeFile(join(source, 'migrations/0002_failure.sql'), 'select nonexistent_column;\n');
+    const bin = join(fixture.home, 'fake-bin'), log = join(fixture.home, 'uv-log'); await mkdir(bin);
+    const uv = execFileSync('which', ['uv'], { encoding: 'utf8' }).trim();
+    await writeFile(join(bin, 'uv'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nexec "${uv}" "$@"\n`); await chmod(join(bin, 'uv'), 0o755);
+    fixture.env.PATH = `${bin}:${process.env.PATH ?? ''}`; fixture.env.SECOND_BRAIN_TEST_EXTENSIONS = roots;
+    const failed = await fixture.run(['ext', 'install', 'pyresume', '--json']);
+    expect(failed.body).toMatchObject({ ok: false, error: { code: 'MIGRATION_FAILED' }, data: { install: { failed_stage: 'migration' } } });
+    expect(await fixture.ledger('pyresume')).toEqual([{ owner: 'pyresume', version: 1 }]);
+    const uvCalls = await readFile(log, 'utf8'); expect(uvCalls).toContain('sync');
+    await writeFile(join(source, 'migrations/0002_failure.sql'), 'select 1;\n');
+    const resumed = await fixture.run(['ext', 'install', 'pyresume', '--json']);
+    expect(resumed.code, resumed.stdout + resumed.stderr).toBe(0);
+    expect(await readFile(log, 'utf8')).toBe(uvCalls);
+    expect(await fixture.ledger('pyresume')).toEqual([{ owner: 'pyresume', version: 1 }, { owner: 'pyresume', version: 2 }]);
+  } finally { await fixture.cleanup(); }
+});
+
+it('Python 인증과 연결이 로컬 모듈을 import해도 환경과 인증을 반복하지 않는다', async () => {
+  const { runDaemon } = await import('../src/daemon/run.js');
+  const { systemClock } = await import('../src/runtime/clock.js');
+  const { uuidV7IdGen } = await import('../src/runtime/id-gen.js');
+  const fixture = await extHome();
+  const controller = new AbortController();
+  let daemon: ReturnType<typeof runDaemon> | undefined;
+  try {
+    const roots = join(fixture.home, 'packages'), source = join(roots, 'pyresume');
+    await mkdir(roots); await cp(fileURLToPath(new URL('../test/fixtures/extensions/pyfixture/', import.meta.url)), source, { recursive: true });
+    const manifestPath = join(source, 'manifest.json');
+    const manifest = JSON.parse((await readFile(manifestPath, 'utf8')).replaceAll('pyfixture', 'pyresume'));
+    manifest.auth = { kind: 'pyresume.login', execution: 'supervised', runtime: 'python', entry: 'auth.py' };
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    await writeFile(join(source, 'helper.py'), 'VALUE = 1\n');
+    await writeFile(join(source, 'auth.py'), "import helper, json\nprint(json.dumps({'abi': 1, 'type': 'result'}))\n");
+    const check = (await readFile(join(source, 'check.py'), 'utf8')).replaceAll('pyfixture', 'pyresume');
+    await writeFile(join(source, 'check.py'), 'import helper\n' + check);
+    const bin = join(fixture.home, 'fake-bin'), log = join(fixture.home, 'uv-log'); await mkdir(bin);
+    const uv = execFileSync('which', ['uv'], { encoding: 'utf8' }).trim();
+    await writeFile(join(bin, 'uv'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nexec "${uv}" "$@"\n`); await chmod(join(bin, 'uv'), 0o755);
+    fixture.env.PATH = `${bin}:${process.env.PATH ?? ''}`; fixture.env.SECOND_BRAIN_TEST_EXTENSIONS = roots;
+    daemon = runDaemon({ home: fixture.home, env: fixture.env, clock: systemClock, idGen: uuidV7IdGen(), signal: controller.signal, drainPauseMs: 25, heartbeatMs: 100, supervisor: { pollMs: 25 } });
+    const first = await fixture.run(['ext', 'install', 'pyresume', '--json']);
+    expect(first.body.error.code).toBe('EXTENSION_LOGIN_REQUIRED');
+    await expect.poll(async () => (await fixture.db.rows("select outcome from brain.work_items where kind='pyresume.login'"))[0]?.outcome, { timeout: 15000 }).toBe('succeeded');
+    const beforeCalls = await readFile(log, 'utf8');
+    const completed = await fixture.run(['ext', 'install', 'pyresume', '--json']);
+    expect(completed.code, completed.stdout + completed.stderr).toBe(0);
+    const again = await fixture.run(['ext', 'install', 'pyresume', '--json']);
+    expect(again.code, again.stdout + again.stderr).toBe(0);
+    expect(again.body.data).toEqual(completed.body.data);
+    expect(await readFile(log, 'utf8')).toBe(beforeCalls);
+    expect(await fixture.db.rows("select id from brain.work_items where kind='pyresume.login'")).toHaveLength(1);
+    expect(await fixture.ledger('pyresume')).toEqual([{ owner: 'pyresume', version: 1 }]);
+    const { readdir } = await import('node:fs/promises');
+    expect((await readdir(join(fixture.home, 'extensions/pyresume/__pycache__'))).some(name => name.startsWith('helper.') && name.endsWith('.pyc'))).toBe(true);
+    await writeFile(join(source, 'helper.py'), 'VALUE = 2\n');
+    const changed = await fixture.run(['ext', 'install', 'pyresume', '--json']);
+    expect(changed.body.error.code).toBe('EXTENSION_LOGIN_REQUIRED');
+    await expect.poll(async () => (await fixture.db.rows("select count(*)::integer as count from brain.work_items where kind='pyresume.login' and outcome='succeeded'"))[0]?.count, { timeout: 15000 }).toBe(2);
+    expect((await readFile(log, 'utf8')).length).toBeGreaterThan(beforeCalls.length);
+  } finally { controller.abort(); await daemon; await fixture.cleanup(); }
+});

@@ -101,9 +101,21 @@ it('restores the previous package and registry facts when a reinstall migration 
   expect(await readFile(join(target, 'bin/check.mjs'), 'utf8')).toBe(originalCheck);
   expect(await readFile(join(target, 'tokenstore', 'credentials'), 'utf8')).toBe('existing-token');
   await expect(access(join(target, 'migrations/0002_refused.sql'))).rejects.toThrow();
-  expect((await fixture.run(['ext', 'status', 'testext', '--json'])).body.data).toEqual(reinstalled.body.data);
+  const failedStatus = (await fixture.run(['ext', 'status', 'testext', '--json'])).body.data;
+  expect(failedStatus).toMatchObject({ installed: true, version: reinstalled.body.data.version, connection: reinstalled.body.data.connection, install: { result: 'failed', failed_stage: 'migration' } });
+  expect(failed.body.data).toEqual(failedStatus);
   expect(await fixture.ledger('testext')).toEqual([{ owner: 'testext', version: 1 }]);
   expect(await readdir(join(fixture.home, 'extensions'))).toEqual(['testext']);
+  const failedProgress = (await fixture.db.rows("select progress from brain.extension_install_progress where name='testext'"))[0]!.progress as import('second_brain').ExtensionInstallProgress;
+  await writeFile(join(source, 'bin/check.mjs'), originalCheck);
+  await writeFile(join(source, 'migrations/0002_refused.sql'), 'select 1;\n');
+  const resumed = await fixture.run(['ext', 'install', 'testext', '--json']);
+  expect(resumed.code, resumed.stdout + resumed.stderr).toBe(0);
+  expect(await readFile(join(target, 'manifest.json'), 'utf8')).toContain('0.2.0');
+  expect(await readFile(join(target, 'tokenstore', 'credentials'), 'utf8')).toBe('existing-token');
+  const resumedProgress = (await fixture.db.rows("select progress from brain.extension_install_progress where name='testext'"))[0]!.progress as import('second_brain').ExtensionInstallProgress;
+  expect(resumedProgress.stages.package?.at).not.toBe(failedProgress.stages.package?.at);
+  expect(await fixture.ledger('testext')).toEqual([{ owner: 'testext', version: 1 }, { owner: 'testext', version: 2 }]);
 });
 it.each([
   ['invalid', 'EXTENSION_PYTHON_PIN_INVALID'], ['uv', 'EXTENSION_UV_NOT_FOUND'],
@@ -241,10 +253,12 @@ it('reruns the connection check on reinstall and preserves the original installa
   expect(reinstalled.body).toMatchObject({ ok: false, error: { code: 'EXTENSION_CHECK_FAILED' } });
   const status = await fixture.run(['ext', 'status', 'testext', '--json']);
   expect(status.code, status.stdout + status.stderr).toBe(0);
+  expect(reinstalled.body.data).toEqual(status.body.data);
+  expect(status.body.data.install).toMatchObject({ result: 'connection_failed', failed_stage: 'connection' });
   expect(status.body.data).toMatchObject({ installed: true, enabled: true, installed_at: installed.body.data.installed_at,
     connection: { status: 'failed', code: 'EXTENSION_WORKER_ERROR' } });
 });
-it('cleans the initial package and staging directory when the first migration fails', async () => {
+it('preserves the initial package and cleans staging when the first migration fails', async () => {
   const { cp, mkdir, readdir, writeFile } = await import('node:fs/promises');
   const { fileURLToPath } = await import('node:url');
   const fixture = await extHome(); cleanup.push(fixture.cleanup);
@@ -260,8 +274,8 @@ it('cleans the initial package and staging directory when the first migration fa
   expect(failed.body).toMatchObject({ ok: false, error: { code: 'MIGRATION_FAILED' } });
   expect(await fixture.db.rows('select count(*)::integer as count from brain.extensions')).toEqual([{ count: 0 }]);
   expect(await fixture.ledger('testext')).toEqual([]);
-  await expect(access(join(fixture.home, 'extensions/testext'))).rejects.toThrow();
-  expect(await readdir(join(fixture.home, 'extensions'))).toEqual([]);
+  await expect(access(join(fixture.home, 'extensions/testext/migrations/0001_testext.sql'))).resolves.toBeUndefined();
+  expect(await readdir(join(fixture.home, 'extensions'))).toEqual(['testext']);
 });
 
 it('registers manifest work and auth kinds in PostgreSQL for subsequent enqueue', async () => {
@@ -276,7 +290,7 @@ it('registers manifest work and auth kinds in PostgreSQL for subsequent enqueue'
   manifest.work = [{ kind: 'testext.sync', execution: 'supervised', runtime: 'node', entry: 'bin/check.mjs' }];
   manifest.auth = { kind: 'testext.login', execution: 'supervised', runtime: 'node', entry: 'bin/check.mjs' };
   await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest)); fixture.env.SECOND_BRAIN_TEST_EXTENSIONS = sources;
-  const installed = await fixture.run(['ext', 'install', 'testext', '--json']); expect(installed.code).toBe(0);
+  const installed = await fixture.run(['ext', 'install', 'testext', '--json']); expect(installed.body.error.code).toBe('EXTENSION_LOGIN_REQUIRED');
   const store = postgresStore({ databaseUrl: fixture.db.appUrl });
   try {
     const now = new Date();
@@ -333,6 +347,8 @@ it('discovers a newly installed manifest and runs its registered work with a fre
   const store = postgresStore({ databaseUrl: fixture.db.appUrl });
   try {
     await new Promise(resolve => setTimeout(resolve, 80));
+    expect((await fixture.run(['ext', 'install', 'testext', '--json'])).body.error.code).toBe('EXTENSION_LOGIN_REQUIRED');
+    await expect.poll(async () => (await fixture.db.rows("select outcome from brain.work_items where kind='testext.login' and target_kind='extension'"))[0]?.outcome, { timeout: 5000 }).toBe('succeeded');
     expect((await fixture.run(['ext', 'install', 'testext', '--json'])).code).toBe(0);
     const now = new Date(); const loginId = idGen.next();
     const login = await store.addWork({ id: loginId, kind: 'testext.login', targetKind: 'account', targetId: 'a', createdAt: now, nextAttemptAt: now });

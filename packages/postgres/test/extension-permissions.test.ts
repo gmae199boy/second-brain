@@ -31,7 +31,7 @@ it('enforces the role, public view and fenced provenance contracts over real con
     const app = new pg.Client({ connectionString: db.appUrl }); await app.connect(); clients.push(app);
     expect((await app.query('select * from brain.extension_status_public_v1')).rows).toHaveLength(2);
     await a.query(`create table "${names[0]}".self_write (value text); insert into "${names[0]}".self_write values ('ok')`);
-    for (const sql of ['select * from brain.extensions', 'update brain.work_items set attempts=0', 'insert into brain.extensions(name) values (\'x\')', 'update brain.extension_status_public_v1 set enabled=false', 'delete from brain.extension_status_public_v1', 'set role brain_app']) {
+    for (const sql of ['select * from brain.extensions', 'select * from brain.extension_install_progress', 'update brain.work_items set attempts=0', 'insert into brain.extensions(name) values (\'x\')', 'update brain.extension_status_public_v1 set enabled=false', 'delete from brain.extension_status_public_v1', 'set role brain_app']) {
       await expect(a.query(sql)).rejects.toMatchObject({ code: '42501' });
     }
     await a.query(`create function "${names[0]}".probe(value text) returns boolean language plpgsql as $$ begin
@@ -104,7 +104,7 @@ it('grants the approved view to a role provisioned before the view migration', a
     await admin.query(`grant maintain on brain.work_items to "${role}"`);
     expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: false, file: '0015_extension_status_public.sql' });
     await admin.query(`revoke maintain on brain.work_items from "${role}"`);
-    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, to: 15 });
+    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, to: 16 });
     expect((await admin.query("select has_table_privilege($1,'brain.extension_status_public_v1','select') as allowed", [role])).rows).toEqual([{ allowed: true }]);
     await provisionExtension(db.url, name, password);
     await admin.query(`grant select on brain.work_items to "${role}"`);

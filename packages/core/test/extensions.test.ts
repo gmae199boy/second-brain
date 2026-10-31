@@ -59,7 +59,7 @@ it('returns not found and does no writes when a package cannot be resolved', asy
 it('reports an unconfigured runtime and returns missing registry facts without writing', async () => {
   const { deps } = setup();
   expect(await installExtension({ store: deps.store, clock: deps.clock, idGen: deps.idGen }, { name: 'testext' })).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
-  expect(await extensionStatus(deps, { name: 'testext' })).toEqual({ ok: true, name: 'testext', extension: null, pythonEnvironment: null });
+  expect(await extensionStatus(deps, { name: 'testext' })).toEqual({ ok: true, name: 'testext', extension: null, pythonEnvironment: null, progress: null });
 });
 it('uses a fresh ABI run and rereads installed connected facts; repeat installation keeps its original time', async () => {
   const { deps, fake } = setup();
@@ -200,7 +200,8 @@ it('registers only manifest work and auth kinds for supervised enqueue', async (
   const work = { kind: 'testext.sync', execution: 'supervised', runtime: 'node', entry: 'sync.mjs' };
   const auth = { kind: 'testext.login', execution: 'supervised', runtime: 'node', entry: 'login.mjs' };
   const { deps } = setup({ text: JSON.stringify({ ...manifest, work: [work], auth, raw_views: ['samples'], default_schedules: [{ kind: work.kind, target_kind: 'account', target_id: 'default', local_time: '09:00' }] }) });
-  expect((await installExtension(deps, { name: 'testext' })).ok).toBe(true);
+  deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: null, sameBase: false, installedDir: '/installed/testext' });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_LOGIN_REQUIRED' });
   for (const [kind, expected] of [['testext.sync', 'supervised'], ['testext.login', 'supervised'], ['other.job', 'core']] as const) {
     const result = await deps.store.addWork({ id: deps.idGen.next(), kind, targetKind: 'account', targetId: 'a', createdAt: now, nextAttemptAt: now });
     expect(result.ok && result.item.executionClass).toBe(expected);
@@ -250,4 +251,102 @@ it('Python 환경 사실을 기록할 수 없으면 DB 오류를 반환하고 �
   deps.store.recordExtensionPythonEnvironment = async () => ({ ok: false, code: 'DB_UNAVAILABLE', message: 'DB 오류' });
   expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
   expect(rolledBack).toBe(true); expect(writes().migrated).toBe(0); expect(fake.specs).toEqual([]);
+});
+
+it('SDK 취소 신호가 이미 온 경우 패키지를 배치하지 않고 취소 사실을 남긴다', async () => {
+  const { deps, writes } = setup();
+  deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: null, sameBase: false, installedDir: '/installed/testext' });
+  const controller = new AbortController(); controller.abort();
+  expect(await installExtension(deps, { name: 'testext', signal: controller.signal })).toMatchObject({ ok: false, code: 'EXTENSION_INSTALL_CANCELLED' });
+  expect(writes()).toEqual({ placed: 0, migrated: 0 });
+  expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { result: 'cancelled' } } });
+});
+
+it('예약 기능이 없는 SDK 실행 환경은 예약 성공을 기록하지 않는다', async () => {
+  const work = { kind: 'testext.sync', execution: 'supervised', runtime: 'node', entry: 'sync.mjs' };
+  const { deps } = setup({ text: JSON.stringify({ ...manifest, work: [work], default_schedules: [{ kind: work.kind, target_kind: 'account', target_id: 'default', local_time: '09:00' }] }) });
+  deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: null, sameBase: false, installedDir: '/installed/testext' });
+  deps.extensions.schedulerReady = async () => true;
+  const withoutScheduler = { ...deps, store: { ...deps.store, addSchedule: undefined }, readTimeZone: async () => ({ ok: true as const, value: 'Asia/Seoul' }) };
+  expect(await installExtension(withoutScheduler, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_SCHEDULER_UNAVAILABLE' });
+  expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { result: 'scheduler_unavailable' } } });
+});
+
+it('SDK 실행 중 취소는 자식 그룹 종료를 확인하고 앞 단계 성공을 보존한다', async () => {
+  const { deps } = setup(); const controller = new AbortController();
+  const fake = fakeProcessLauncher(); const inspector = fakeProcessInspector(fake);
+  deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: null, sameBase: false, installedDir: '/installed/testext' });
+  deps.extensions.launcher = { async start(spec) { const child = await fake.start(spec); controller.abort(); return child; } };
+  deps.extensions.inspector = inspector;
+  expect(await installExtension(deps, { name: 'testext', signal: controller.signal })).toMatchObject({ ok: false, code: 'EXTENSION_INSTALL_CANCELLED' });
+  expect(fake.processes[0]?.ended).toBe(true);
+  expect(inspector.signals).toMatchObject([{ signal: 'SIGTERM' }]);
+  expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { result: 'cancelled', stages: { package: { status: 'succeeded' }, migration: { status: 'succeeded' } } } } });
+});
+
+it('설치 journal 쓰기가 실패하면 성공을 보고하거나 DDL을 실행하지 않는다', async () => {
+  const { deps, writes } = setup(); let rolledBack = false;
+  deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: null, sameBase: false, installedDir: '/installed/testext' });
+  deps.extensions.packages.rollback = async () => { rolledBack = true; };
+  const store = { ...deps.store, async writeExtensionInstallProgress() { return { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: '시험 저장 실패' }; } };
+  expect(await installExtension({ ...deps, store }, { name: 'testext' })).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+  expect(writes()).toEqual({ placed: 1, migrated: 0 }); expect(rolledBack).toBe(true);
+  expect(await deps.store.getExtension('testext')).toEqual({ ok: true, extension: null });
+});
+
+it('사전 검사 실패는 기존 완료 단계와 인증·예약 식별자를 보존한다', async () => {
+  const { deps } = setup({ found: false });
+  const id = '00000000-0000-7000-8000-000000000001';
+  const progress = { name: 'testext', packageDigest: 'a'.repeat(64), result: 'login_required' as const, failedStage: null, lastFailure: null,
+    stages: { package: { status: 'succeeded' as const, code: null, at: now.toISOString() } }, authWorkId: id, scheduleIds: [id] };
+  expect(await deps.store.writeExtensionInstallProgress({ expectedRevision: null, progress })).toMatchObject({ ok: true, written: true });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_NOT_FOUND' });
+  expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { ...progress, result: 'failed', failedStage: 'package', lastFailure: { stage: 'package', code: 'EXTENSION_NOT_FOUND' } } } });
+});
+
+it.each(['manifest', 'tree'] as const)('사전 %s 검사 실패도 기존 journal을 보존한다', async kind => {
+  const { deps } = setup({ ...(kind === 'manifest' ? { text: '{' } : {}) });
+  const id = '00000000-0000-7000-8000-000000000001';
+  const progress = { name: 'testext', packageDigest: 'a'.repeat(64), result: 'login_required' as const, failedStage: null, lastFailure: null,
+    stages: { package: { status: 'succeeded' as const, code: null, at: now.toISOString() } }, authWorkId: id, scheduleIds: [id] };
+  await deps.store.writeExtensionInstallProgress({ expectedRevision: null, progress });
+  if (kind === 'tree') deps.extensions.packages.inspect = async () => { throw new Error('원문 진단'); };
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_INVALID' });
+  const read = await deps.store.getExtensionInstallProgress('testext');
+  expect(read).toMatchObject({ ok: true, journal: { progress: { ...progress, result: 'failed', failedStage: 'package', lastFailure: { stage: 'package', code: 'EXTENSION_INVALID' } } } });
+  expect(JSON.stringify(read)).not.toContain('원문 진단');
+});
+
+it.each(['add', 'lookup', 'save'] as const)('인증 %s 직후 SDK 취소는 일감 종료를 확인한다', async boundary => {
+  const auth = { kind: 'testext.login', execution: 'supervised', runtime: 'node', entry: 'login.mjs' };
+  const { deps } = setup({ text: JSON.stringify({ ...manifest, auth }) });
+  deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: null, sameBase: false, installedDir: '/installed/testext' });
+  const controller = new AbortController(); const original = deps.store;
+  const store = { ...original,
+    async addWork(input: Parameters<typeof original.addWork>[0]) { const result = await original.addWork(input); if (boundary === 'add') controller.abort(); return result; },
+    async getWork(id: string) { const result = await original.getWork(id); if (boundary === 'lookup') controller.abort(); return result; },
+    async writeExtensionInstallProgress(input: Parameters<typeof original.writeExtensionInstallProgress>[0]) { const result = await original.writeExtensionInstallProgress(input); if (boundary === 'save' && input.progress.authWorkId) controller.abort(); return result; },
+  };
+  const result = await installExtension({ ...deps, store }, { name: 'testext', signal: controller.signal });
+  expect(result).toMatchObject({ ok: false, code: 'EXTENSION_INSTALL_CANCELLED' });
+  const journal = await original.getExtensionInstallProgress('testext'); expect(journal.ok && journal.journal?.progress.result).toBe('cancelled');
+  if (journal.ok && journal.journal?.progress.authWorkId) {
+    const work = await original.getWork(journal.journal.progress.authWorkId);
+    expect(work).toMatchObject({ ok: true, entry: { item: { outcome: 'cancelled', currentAttemptToken: null } } });
+  }
+});
+
+it('인증 자식 종료가 미확정이면 취소 완료로 기록하지 않는다', async () => {
+  const auth = { kind: 'testext.login', execution: 'supervised', runtime: 'node', entry: 'login.mjs' };
+  const { deps } = setup({ text: JSON.stringify({ ...manifest, auth }) });
+  deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: null, sameBase: false, installedDir: '/installed/testext' });
+  deps.extensions.timer = { async sleep() {} };
+  const controller = new AbortController(); const original = deps.store;
+  const store = { ...original,
+    async addWork(input: Parameters<typeof original.addWork>[0]) { const result = await original.addWork(input); controller.abort(); return result; },
+    async requestWorkCancel() { return { ok: true as const, state: 'requested' as const }; },
+  };
+  const result = await installExtension({ ...deps, store }, { name: 'testext', signal: controller.signal });
+  expect(result).toMatchObject({ ok: false, code: 'EXTENSION_CANCEL_UNCONFIRMED' });
+  expect(await original.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { result: 'login_required', stages: { login: { status: 'pending' } } } } });
 });

@@ -208,3 +208,10 @@ describe('the envelope time', () => {
     }
   });
 });
+
+it('인증 취소 미확정 오류의 구조화 결과도 중앙 출력에서 마스킹한다', () => {
+  const output = errorEnvelope(fixedClock(INSTANT), { code: 'EXTENSION_CANCEL_UNCONFIRMED', message: '확인 중', data: { diagnostic: 'password=hunter2x' } });
+  expect(output.error).toMatchObject({ code: 'EXTENSION_CANCEL_UNCONFIRMED', exit_code: 1 });
+  expect(JSON.stringify(output)).not.toContain('hunter2x');
+  expect(JSON.stringify(output)).toContain('[REDACTED:password]');
+});

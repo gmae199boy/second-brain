@@ -7,6 +7,6 @@ export const extListCommand: CommandSpec = {
     const r = await context.brain.ext.list(); if (!r.ok) return r;
     const statuses = await Promise.all(r.extensions.map(row => context.brain.ext.status({ name: row.name })));
     const failure = statuses.find(status => !status.ok); if (failure && !failure.ok) return failure;
-    return { ok: true, data: statuses.flatMap(status => status.ok ? [extensionData(status.name, status.extension, status.pythonEnvironment)] : []), meta: { count: r.extensions.length }, text: [...r.extensions.map(row => `확장 ${row.name}: ${row.connectionStatus ?? '미확인'}`), `확장 ${r.extensions.length}건.`] };
+    return { ok: true, data: statuses.flatMap(status => status.ok ? [extensionData(status.name, status.extension, status.pythonEnvironment, status.progress)] : []), meta: { count: r.extensions.length }, text: [...r.extensions.map(row => `확장 ${row.name}: ${row.connectionStatus ?? '미확인'}`), `확장 ${r.extensions.length}건.`] };
   },
 };

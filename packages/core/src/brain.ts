@@ -242,7 +242,7 @@ export interface BrainSchedules {
   run(input: { scheduleId: string }): Promise<RunScheduleResult>;
 }
 export interface BrainExt {
-  install(input: { name: string }): ReturnType<typeof installExtension>;
+  install(input: { name: string; signal?: AbortSignal }): ReturnType<typeof installExtension>;
   status(input: { name: string }): ReturnType<typeof extensionStatus>;
   list(): ReturnType<typeof listExtensions>;
 }
@@ -398,7 +398,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
   const readTimeZone = () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' });
   return {
     recall: { chunks: input => searchRecall(store, 'chunks', input), tools: input => searchRecall(store, 'tools', input), expand: input => expandRecall(store, input) },
-    ext: { install: input => installExtension(dependencies, input), status: input => extensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
+    ext: { install: input => installExtension({ ...dependencies, readTimeZone }, input), status: input => extensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
     files: { redact: (input) => redactFile({ store, clock, idGen }, input) },
     doctor: {

@@ -685,6 +685,8 @@ export interface ModelWorkUsage {
   latest: { workItemId: string; kind: string; at: Date; elapsedMs: number | null; usage: { inputTokens: number; cachedInputTokens: number; outputTokens: number } | null } | null;
 }
 export interface WorkStore {
+  /** 일감 ID로 현재 상태와 마지막 감독 시도를 제한 없이 조회한다. */
+  getWork(id: string): Promise<{ ok: true; entry: { item: WorkItem; latestAttempt: import('../domain/work-item.js').WorkAttempt | null } | null } | ScheduleStoreFailure>;
   holdWorkGroup(input: { group: string; now: Date }): Promise<{ ok: true; held: boolean } | ScheduleStoreFailure>;
   releaseWorkGroup(input: { group: string }): Promise<{ ok: true; released: boolean } | ScheduleStoreFailure>;
   listWork(input: { includeClosed: boolean; kind?: string; limit: number }): Promise<{ ok: true; entries: { held: boolean; item: WorkItem; latestAttempt: import('../domain/work-item.js').WorkAttempt | null; currentAttempt: import('../domain/work-item.js').WorkAttempt | null }[]; hasMore: boolean } | ScheduleStoreFailure>;
@@ -1422,6 +1424,8 @@ export interface ExtractionStore {
 
 /** Schedule persistence; recurrence rules belong to Core's tick. */
 export interface ScheduleStore {
+  /** 매일 예약의 고유 키로 실제 설정을 조회한다. */
+  findDailySchedule(input: { kind: string; targetKind: string; targetId: string }): Promise<{ ok: true; schedule: import('../domain/schedule.js').Schedule | null } | ScheduleStoreFailure>;
   listSchedules(input: { limit: number }): Promise<{ ok: true; schedules: (import('../domain/schedule.js').Schedule & { held: boolean })[]; hasMore: boolean } | ScheduleStoreFailure>;
   removeSchedule(input: { id: string }): Promise<{ ok: true; removed: boolean } | ScheduleStoreFailure>;
   addSchedule(input: AddScheduleInput): Promise<AddScheduleResult>;
@@ -1470,7 +1474,11 @@ export interface ExtensionRecord {
 }
 export type ExtensionStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface ExtensionPythonEnvironment { status: 'succeeded' | 'failed'; code: string | null; checkedAt: Date }
+export type ExtensionProgressWriteResult = { ok: true; written: boolean; revision: number | null } | ExtensionStoreFailure | { ok: false; code: 'INVALID_INSTALL_PROGRESS'; message: string };
 export interface ExtensionStore {
+  /** 전체 snapshot을 revision 비교 후 교체한다. null은 기존 journal이 없어야 함을 뜻한다. */
+  writeExtensionInstallProgress(input: { expectedRevision: number | null; progress: import('../extensions/install-progress.js').ExtensionInstallProgress }): Promise<ExtensionProgressWriteResult>;
+  getExtensionInstallProgress(name: string): Promise<{ ok: true; journal: import('../extensions/install-progress.js').StoredExtensionInstallProgress | null } | ExtensionStoreFailure>;
   recordExtensionPythonEnvironment(input: { name: string } & ExtensionPythonEnvironment): Promise<{ ok: true } | ExtensionStoreFailure>;
   getExtensionPythonEnvironment(name: string): Promise<{ ok: true; environment: ExtensionPythonEnvironment | null } | ExtensionStoreFailure>;
   recordExtensionInstall(input: { name: string; version: string; now: Date; workKinds?: readonly string[] }): Promise<{ ok: true } | ExtensionStoreFailure>;

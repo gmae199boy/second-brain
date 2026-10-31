@@ -3,7 +3,7 @@ import type { ProcessInspector, ProcessLauncher, ProcessSpec } from '../ports/pr
 import { createAbiRun, createAbiStderr, decodeAbiEnv, decodeSettingsSnapshot, type AbiRunVerdict } from '../process-abi/codec.js';
 import { cleanProcessGroup } from '../queue/process-cleanup.js';
 export async function runExtensionCheck(options: {
-  launcher: ProcessLauncher; inspector: ProcessInspector; clock: Clock; timer: Timer; spec: ProcessSpec; timeoutMs?: number; protection?: { extension: string; declarations: Readonly<Record<string, 'string' | 'number' | 'boolean'>>; errorCodes: readonly string[]; required?: readonly string[]; secrets?: readonly string[] };
+  launcher: ProcessLauncher; inspector: ProcessInspector; clock: Clock; timer: Timer; spec: ProcessSpec; timeoutMs?: number; signal?: AbortSignal; protection?: { extension: string; declarations: Readonly<Record<string, 'string' | 'number' | 'boolean'>>; errorCodes: readonly string[]; required?: readonly string[]; secrets?: readonly string[] };
 }): Promise<AbiRunVerdict> {
   const run = createAbiRun(), stderr = createAbiStderr();
   if (options.protection && !Object.hasOwn(options.spec.env, 'BRAIN_SETTINGS_SNAPSHOT')) return { outcome: 'failed', code: 'EXTENSION_CONFIG_INVALID', retryable: false, message: '확장 설정을 확인하세요', usage: null };
@@ -23,24 +23,33 @@ export async function runExtensionCheck(options: {
   };
   const output = Promise.all([consume(handle.stdout, chunk => run.feed(chunk)), consume(handle.stderr, chunk => { if (!options.protection) stderr.feed(chunk); })]);
   const timeout = new AbortController();
+  let cancelled = false;
+  let abortListener: (() => void) | undefined;
+  const abort = new Promise<{ type: 'cancel' }>(resolve => {
+    abortListener = () => { cancelled = true; resolve({ type: 'cancel' }); };
+    options.signal?.addEventListener('abort', abortListener, { once: true });
+    if (options.signal?.aborted) abortListener();
+  });
   let exit: { code: number | null; signal: string | null } = { code: null, signal: null };
   try {
     const result = await Promise.race([
       handle.exited.then(value => ({ type: 'exit' as const, value })),
-      options.timer.sleep(options.timeoutMs ?? 60_000, timeout.signal).then(() => ({ type: 'timeout' as const })),
+      options.timer.sleep(options.timeoutMs ?? 60_000, timeout.signal).then(() => ({ type: 'timeout' as const })), abort,
     ]);
     if (result.type === 'timeout') run.fail('PROCESS_STALLED', '연결 확인 시간이 초과되었습니다');
-    else exit = result.value;
+    else if (result.type === 'exit') exit = result.value;
     const cleaned = await cleanProcessGroup({ ...options, identity, handle, graceMs: 1000, confirmMs: 1000 });
-    if (cleaned !== 'died') run.fail('PROCESS_DIED', '연결 확인 프로세스 그룹의 종료를 확인하지 못했습니다');
+    if (cleaned !== 'died') { cancelled = false; run.fail('PROCESS_DIED', '연결 확인 프로세스 그룹의 종료를 확인하지 못했습니다'); }
   } finally {
     timeout.abort();
+    if (abortListener) options.signal?.removeEventListener('abort', abortListener);
     const drain = new AbortController();
     await Promise.race([output, options.timer.sleep(1000, drain.signal)]);
     drain.abort();
     handle.closeOutput();
     await output;
   }
+  if (cancelled) return { outcome: 'failed', code: 'EXTENSION_INSTALL_CANCELLED', message: '확장 설치가 취소되었습니다', usage: null };
   run.end();
   // Stderr is bounded and masked by the shared ABI collector; the verdict is
   // determined solely by the protocol and exit, never by a textual summary.

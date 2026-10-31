@@ -17,6 +17,7 @@ export interface SupervisorOptions {
     prepare(item: WorkItem, token: string): Promise<{ ok: true; spec: ProcessSpec } | { ok: false; code: 'EXTENSION_CONFIG_INVALID' | 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
   }>>;
   loadProtectedLaunches?: () => Promise<NonNullable<SupervisorOptions['protectedLaunches']>>;
+  onReadiness?: (ready: boolean) => void | Promise<void>;
   signal: AbortSignal; log?: (message: string) => void | Promise<void>; schemaVersions: SchemaVersions;
   stallWindowMs?: (kind: string) => number;
   pollMs?: number; renewEveryMs?: number; cancelGraceMs?: number; cancelPollMs?: number; groupConfirmMs?: number;
@@ -323,18 +324,20 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
   }
   while (!signal.aborted) {
     try {
+      let ready = true;
       const schema = await checkSchema(store, options.schemaVersions);
-      if (!schema.ok) await problem(`감독자 데이터베이스 확인 실패 (${schema.code})`);
+      if (!schema.ok) { ready = false; await problem(`감독자 데이터베이스 확인 실패 (${schema.code})`); }
       else {
         await retrySettlements();
         if (options.loadProtectedLaunches) protectedLaunches = await options.loadProtectedLaunches();
         kinds = [...new Set([...Object.keys(launches).filter(kind => workExecutionClass(kind) === 'supervised'), ...Object.keys(protectedLaunches)])];
         if (!reconciled) reconciled = await reconcile();
+        if (!reconciled) ready = false;
         while (reconciled && !signal.aborted && running.size < SUPERVISOR_CAPACITY &&
           ![...executions].some(execution => execution.pendingSettlement !== undefined)) {
           const token = idGen.next();
           const claimed = await store.claimSupervisedWork({ now: clock.now(), claimedBy, kinds, attemptToken: token });
-          if (!claimed.ok) { await problem(`감독자 청구 실패 (${claimed.code})`); break; }
+          if (!claimed.ok) { ready = false; await problem(`감독자 청구 실패 (${claimed.code})`); break; }
           await problem();
           if (claimed.item === null) break;
           const execution: Execution = {};
@@ -345,9 +348,11 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
           running.add(task);
         }
       }
-    } catch { await problem('감독자 실행 중 오류가 발생했습니다'); }
+      await options.onReadiness?.(ready && !signal.aborted && lastProblem === undefined && ![...executions].some(execution => execution.pendingSettlement !== undefined));
+    } catch { await options.onReadiness?.(false); await problem('감독자 실행 중 오류가 발생했습니다'); }
     if (!signal.aborted) await waitForWork(signal);
   }
+  await options.onReadiness?.(false);
   // Every child observes abort independently; wait for all group cleanup before returning.
   await Promise.all([...running]);
   // Retain failed tokens for the next incarnation's reconcile; shutdown must finish.

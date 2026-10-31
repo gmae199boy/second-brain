@@ -97,6 +97,7 @@ export const OUTPUT_CODECS: readonly OutputCodec[] = [
       // stop happening.
       const failed = errorEnvelope(probeClock, {
         code: 'INVALID_ARGUMENT',
+        data: { texts: read.texts },
         message: allTexts(read),
         hint: allTexts(read),
         retry: { ns: 'sessions', verb: 'ingest', args: { note: allTexts(read) } },

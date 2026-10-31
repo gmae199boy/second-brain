@@ -26,7 +26,15 @@ export function scheduleStoreContract(): ContractCase<ScheduleStore & WorkStore>
     localTime: '11:00', timeZone: 'Asia/Seoul', intervalSeconds: null, nextRunAt: now, lastRunAt: null, createdAt: now, ...over });
   const dates = { scheduleId: IDS.a, from: '2026-02-01', to: '2026-02-02', timeZone: 'Asia/Seoul' };
   const work = (over: Partial<import('../../ports/store.js').AddWorkInput> = {}) => ({ id: IDS.workA, kind: 'schedule_probe', targetKind: 'probe', targetId: IDS.a, createdAt: now, nextAttemptAt: now, scheduledDates: dates, ...over });
-  return [contractCase('validates resolved schedule groups before persisting or checking conflicts', async make => {
+  return [contractCase('매일 예약의 고유 키로 정확한 설정을 조회한다', async make => {
+    await withSubject(make, async store => {
+      const key = { kind: 'schedule_probe', targetKind: 'probe', targetId: IDS.a };
+      assertEqual(await store.findDailySchedule(key), { ok: true, schedule: null }, '예약 없음');
+      const added = await store.addSchedule(daily()); assertOk(added, '예약 생성');
+      assertEqual(await store.findDailySchedule(key), { ok: true, schedule: added.schedule }, '키 조회');
+      assertEqual(await store.findDailySchedule({ ...key, targetId: IDS.b }), { ok: true, schedule: null }, '다른 키');
+    });
+  }), contractCase('validates resolved schedule groups before persisting or checking conflicts', async make => {
     await withSubject(make, async store => {
       for (const over of [{ holdGroup: '' }, { holdGroup: 'x'.repeat(201) }, { holdGroup: '😀'.repeat(201) }, { kind: 'x'.repeat(191) + '.daily' }]) {
         const result = await store.addSchedule(daily(over));

@@ -33,7 +33,7 @@ export async function extHome() {
       return db.rows(`select owner,version from brain.schema_migrations where owner='${owner}' order by version`);
     },
     async cleanup() {
-      for (const name of ['testext', 'pyfixture', 'otherext']) {
+      for (const name of ['testext', 'pyfixture', 'otherext', 'resumext', 'pyresume']) {
         const role = `brain_ext_${name}`;
         const owned = await db.rows(`select 1 from pg_roles where rolname='${role}' and shobj_description(oid, 'pg_authid')='second-brain extension:' || current_database()`);
         if (owned.length) await db.query(`drop owned by "${role}"; drop role "${role}"`);

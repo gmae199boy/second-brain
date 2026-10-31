@@ -175,6 +175,8 @@ export interface CommandSuccess<T> {
  * code the table does not know by exiting 1 and adding no hint.
  */
 export interface CommandFailure {
+  data?: unknown;
+  text?: readonly string[];
   ok: false;
   code: string;
   message: string;
@@ -810,13 +812,14 @@ function finish(
     // The command's own warnings join the configuration's, and say so on
     // stderr the same way a result's do: a code collected before the failure
     // is still a code the caller has to see (NFR-2).
-    const { ok: _ran, warnings: failureWarnings, ...failure } = outcome;
+    const { ok: _ran, warnings: failureWarnings, text: failureText, ...failure } = outcome;
     const collected = failureWarnings ?? [];
     return failed(
       rendering,
       failure,
       [...warningCodes, ...collected],
       [...warningLines, ...collected.map((code) => `경고: ${code}`)],
+      failureText,
     );
   }
 
@@ -848,15 +851,16 @@ function failed(
   failure: Failure,
   warnings: readonly WarningCode[],
   warningLines: readonly string[],
+  text: readonly string[] = [],
 ): Outcome {
-  const envelope: CliEnvelope<never> = errorEnvelope(rendering.clock, failure, warnings);
+  const envelope: CliEnvelope<unknown> = errorEnvelope(rendering.clock, failure, warnings);
   const error = envelope.error;
   if (error?.retry !== undefined) {
     error.retry_argv = retryArgv(error.retry, rendering.positional, rendering.json);
   }
   return {
     envelope,
-    text: [],
+    text,
     warningLines,
     exit: error?.exit_code ?? 1,
   };

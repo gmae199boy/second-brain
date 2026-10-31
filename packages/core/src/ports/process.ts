@@ -1,4 +1,4 @@
-export interface ProcessSpec { command: string; args: readonly string[]; env: Readonly<Record<string, string>> }
+export interface ProcessSpec { cwd?: string; command: string; args: readonly string[]; env: Readonly<Record<string, string>> }
 export interface ProcessExit { code: number | null; signal: string | null }
 export interface ProcessHandle {
   pid: number;
