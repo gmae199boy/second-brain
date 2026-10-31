@@ -4,7 +4,7 @@ type: feature
 ticket: 2
 created: '2026-10-31'
 status: built
-baseline_revision: d34aea9294b54ff189f044f0ed3314eef898fbce
+baseline_revision: 982c2cb4c09bd836733db8260e5ae40cee67b74b
 route: full
 route_source: pinned
 risk: high
@@ -100,6 +100,8 @@ deferred: []
 
 ## Implementation Notes
 
+- 이번 재시도: 보존 브랜치의 변경은 이전 검증 기록뿐임을 직접 확인했고 복사하지 않았다. 현재 baseline의 기존 구현을 세 단계로 명세와 대조했다. 구현 워커의 새 시험은 1단계 31개, 2단계 210개, 3단계 39개 파일 869개가 통과했으며 소스·시험 변경은 없다. 전체 보고는 `/tmp/brain152-g2-implementation.md`다. 이번 지휘자의 검증·리뷰가 최종 근거이며 이전 결과를 대신 쓰지 않는다.
+
 - 결정적 검증 복구: 설치·설정·PG 최고 스키마 버전 시험과 감독자 fixture를 core 18로 맞추고 새 outcome 기본값을 catalog의 전체 목록에 추가했다. 이전 마이그레이션과 발신 구현은 보존했다. 관련 266개 시험 및 마이그레이션·스키마 24개 시험이 통과했고, 지휘자의 전체 검증은 152개 파일 3767개 통과·1개 skipped다. 계획의 병렬 행렬 재검증도 19개 파일 392개가 통과했다.
 
 
@@ -150,6 +152,10 @@ deferred: []
 - verdicts: 0 findings — high 0, medium 0, low 0, false 0, maybe-false 0
 - findings: 없음. 독립 Quick 리뷰의 정식 성공 보고와 전문을 확인했다. patch·defer·reject는 각각 0개이며 후속 리뷰 추천은 false다. 보고서는 `/tmp/brain-15-2-repair-review.md`다.
 
+### 2026-10-31 — 이번 재시도 Review pass
+- verdicts: 0 findings — high 0, medium 0, low 0, false 0, maybe-false 0
+- findings: 없음. 독립 Quick 리뷰의 정식 succeeded 보고와 전문을 확인했다. 계획 diff의 검증 기록은 새 로그와 시험·fixture 원본에 일치한다. patch·defer·reject는 각각 0개이며 followup_review_recommended는 false다. 보고서는 `/tmp/brain152-g2-review.md`다.
+
 ## Design Notes
 
 - 저장된 gate는 전송 성공의 증거가 아니다. 접수 여부를 알 수 없으면 중복 가능성을 수용하고 재시도한다. sent가 저장됐으면 감독자 crash 뒤에도 HTTP를 반복하지 않는다.
@@ -197,19 +203,21 @@ deferred: []
 - 지휘자의 전체 검증은 152개 파일에서 3767개 통과·1개 skipped이며 build와 typecheck도 통과했다. 로그는 `/tmp/brain-15-2-repair-full-verification.log`다.
 - 계획의 별도 verbose 행렬은 최초 동시 실행 시험 1건 시간 초과 뒤 단독 재실행과 원래 병렬 재실행에서 모두 통과했다. 최종 19개 파일·392개 시험에서 모든 채널 행렬·실제 worker 종료·종료/보류 복구·DB fence·v17 보존의 개별 실행과 통과를 확인했다. 로그는 `/tmp/brain-15-2-repair-matrix2.log`다. 해당 동시 실행 시험은 변경하지 않았고 간헐적 시간 초과 관찰을 보존한다.
 
+### 이번 재시도의 행렬 감사
+
+- 지휘자의 `bash _bmad/custom/bmad-loop-verify.sh`는 build·typecheck와 152개 파일 3767개 시험 통과·1개 skipped로 성공했다. 로그는 `/tmp/brain152-g2-full.log`다. 이번 실행에는 실패나 재실행이 없었다.
+- 지휘자의 계획 Vitest 명령에 `--reporter verbose`를 붙인 검증은 19개 파일 392개 시험이 모두 통과했다. 로그는 `/tmp/brain152-g2-matrix.log`다. 8개 행렬의 각 시험과 첫·열 번째 저장 결과 복구, 현재 감독자의 미확인 worker 재검사, 정상 종료·보류 각 3개 사례, 직접 SQL fence와 v17 보존의 개별 실행·통과를 원본 출력에서 확인했다.
+- `channels-retry.test.ts`와 `channel-fixture.ts` 원본에서 모든 실패·복구 행렬이 실제 생산자 행과 SHA-256 해시를 전후 비교하는 것을 확인했다. 재시작 사례는 실제 worker를 종료한 뒤 새 감독자를 시작하며 이전 데몬 자체의 강제 종료 시험은 아니다.
+
 ## Auto Run Result
 
 - status: built
-- 결정적 검증의 7개 실패를 복구했다. core 18에 맞춰 설치·설정·PG 최고 버전 기대값과 감독자 fixture를 갱신하고 catalog의 새 outcome 기본값을 명시했다. 동결된 의도 계약과 baseline을 보존했다.
-- `apps/cli/test/install.test.ts`: 설치 완료 기록의 core 버전 18을 검증한다.
-- `apps/cli/test/setup.test.ts`: 설정 결과·완료 기록의 버전 18을 검증한다.
-- `packages/postgres/test/schema.test.ts`: 새 outcome 기본값을 전체 catalog 목록에서 검증한다.
-- `packages/postgres/test/store.test.ts`: core 최고 버전 18과 owner별 계약을 검증한다.
-- `packages/postgres/test/work-store.test.ts`: 감독자 fixture가 core 18에서 실제 열 번째 종료 복구와 PROCESS_DIED failure를 검증하도록 했다.
-- 이 계획: 복구 실행 항목·검증·행렬 감사·리뷰 결과와 정리 근거를 기록했다.
-- Quick 리뷰 0건: patch high/medium/low 각각 0개, defer 0개, reject 0개. followup_review_recommended: false.
-- `bash _bmad/custom/bmad-loop-verify.sh`: 성공. `pnpm build`, `pnpm typecheck`와 전체 152개 파일 3767개 시험 통과·1개 skipped. 로그: `/tmp/brain-15-2-repair-full-verification.log`.
-- 계획의 Vitest 명령에 `--reporter verbose`를 붙인 병렬 최종 검증: 19개 파일 392개 시험 모두 통과. 모든 행렬 시험의 개별 실행·통과를 확인했다. 로그: `/tmp/brain-15-2-repair-matrix2.log`.
-- 잔여 관찰: 첫 별도 행렬 실행에서 기존 감독자 동시 실행 시험의 core 완료 대기가 한 번 시간 초과됐다. 단독 및 원래 병렬 재실행은 통과했고 해당 시험은 변경하지 않았다. 구체적인 지연 원인은 확인하지 못했다.
-- 운영자 작업은 없다. 티켓 done 표시와 `tickets.py mark` 및 push는 실행하지 않았다. 티켓 완료 판정은 오케스트레이터 소관이다.
-- Orca 자기 Run `run_ad9477f72c95`의 구현·리뷰 Dispatch 모두 succeeded/completed/released를 확인했다. 수신 mail을 모두 ack했고 pending delivery는 없다. 미확인 워커는 없으며 정리·다음 행동·검증을 현재 task의 `orca-coordination.json`에 checkpoint했다. 전용 제어 셸만 마지막에 닫는다.
+- 기존 구현의 `sent`·`definite_failed`·`unknown` 분류, 지수 재시도·429 하한, 10회 소진과 doctor, crash 복구·현재 token fence·생산자 보존을 명세와 대조하고 새로 검증했다. 이번 시도에는 소스·시험 변경이 없다.
+- 변경 파일: `_bmad-output/personal-brain/tickets/epic-channels/tickets/story-unknown-10-doctor-plan.md` — 엔진의 baseline을 보존하고 새 단계별 대조·검증·행렬 감사·독립 리뷰 및 결과를 기록했다. 보존 브랜치의 미검증 결과는 복사하지 않았다.
+- 지휘자의 `bash _bmad/custom/bmad-loop-verify.sh`: 성공. build·typecheck와 152개 파일 3767개 시험 통과·1개 skipped. 로그: `/tmp/brain152-g2-full.log`.
+- 지휘자의 `pnpm exec vitest run --project core --project postgres --project cli channel-store channel-send channels-tracer channels-retry telegram supervisor process-abi migrate doctor --reporter verbose`: 19개 파일 392개 시험 모두 통과. 8개 행렬과 복구 보강의 개별 실행·통과를 확인했다. 로그: `/tmp/brain152-g2-matrix.log`.
+- 구현자의 단계별 대조·선별 검증: 31개, 210개, 마지막 39개 파일 869개 시험 통과. 전체 보고: `/tmp/brain152-g2-implementation.md`.
+- 독립 Quick 발견 0건. 적용 patch high/medium/low 각 0개, defer 0개, reject 0개. followup_review_recommended: false. 보고: `/tmp/brain152-g2-review.md`.
+- 잔여 관찰: 과거 실행의 PG 연결·정리 훅·동시 실행 시험 지연 원인은 미확정이다. 이번 전체·행렬 검증은 첫 실행에서 모두 통과했으며 기존 assertion·시간 제한은 변경하지 않았다. 재시작 시험은 실제 worker 종료 뒤 새 감독자를 띄우며 이전 데몬 자체를 강제 종료하는 시험은 아니다.
+- 운영자 작업은 없다. 실계정 발신·배포는 후속 티켓 범위다. 티켓 done 표시·`tickets.py mark`·push는 실행하지 않았다. 최종 티켓 완료 판정은 오케스트레이터 소관이다.
+- Orca 자기 Run `run_6579b7c9f052`의 구현 `ctx_66acaf41ffaf`와 Quick 리뷰 `ctx_3952d05196f7`는 모두 succeeded/completed/released다. 전문과 소유권을 확인하고 모든 보고를 ack했다. 활성·미확인·reclaimable 워커와 pending mail은 없으며 정리·검증·다음 행동을 현재 task의 `orca-coordination.json`에 checkpoint했다. 중간 transcript source_changed 관측은 정식 완료·restore·worker-list로 해소됐고 미확인 상태는 없다. 전용 제어 셸은 마지막에 닫는다.
