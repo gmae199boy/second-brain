@@ -759,6 +759,12 @@ shim을 읽거나 해석할 수 없으면 `SHIM_MISSING`, 실행 권한·서명�
 
 `EXTENSION_LOGIN_REQUIRED`가 나오면 확장 인증을 완료한 뒤 같은 설치 명령을 다시 실행하세요. 인증은 기존 데몬의 감독 일감으로 실행되며 비밀번호나 MFA를 명령 출력에 담지 않습니다. `EXTENSION_SCHEDULER_UNAVAILABLE`은 데몬의 감독자가 준비되지 않았거나 예약 기능을 사용할 수 없다는 뜻입니다. 데몬을 준비하고 재실행하면 기존과 설정이 같은 예약을 재사용하며 다른 설정의 충돌은 오류로 남깁니다. SIGINT 또는 SIGTERM으로 취소한 뒤에도 같은 명령으로 재개할 수 있습니다.
 
+### 설치 스킬 행동 평가
+
+`pnpm eval:install prepare normal /tmp/brain-install-normal`은 새 격리 디렉터리에 실제 스킬 사본, 평가 지시와 가짜 `brain`을 준비합니다. 사례는 `normal`, `already`, `failure`, `login`, `scheduler`, `unsupported`, `connection`, `secret`, `resume`, `cancel`입니다. 각 사례에 새 디렉터리를 사용하세요. 실제 에이전트에게 그 디렉터리의 `prompt.md`와 `SKILL.md`를 제공하고, 해당 디렉터리의 `bin`을 PATH 앞에 둔 격리 환경에서 실행합니다. 인증 사례에서는 지시된 사용자 응답을 로그인 안내 뒤 전달합니다. 대화 기록에는 실행 명령 줄을 `명령:`, 안내 줄을 `에이전트:`, 주어진 응답 원문을 `사용자 (fixture 응답):` 접두사로 시간순 기록합니다. 실제 홈, DB, 계정이나 외부 서비스는 사용하지 않습니다.
+
+에이전트의 전체 대화 기록을 `transcript.txt`, 최종 답변을 `report.txt`, 마지막 공개 status의 `data`를 `status-report.json`에 저장한 뒤 (지원이 없으면 JSON `null`) `pnpm eval:install verify /tmp/brain-install-normal`을 실행합니다. `calls.jsonl`의 호출 순서와 구조화 보고를 마지막 공개 응답과 대조하고 `verdict.json`을 생성하며, 실패 시 종료 코드가 0이 아닙니다. 자동 판정은 보고의 모든 의미를 완전히 이해하지 못하므로 대화와 상태를 사람도 검토해야 합니다. 평가가 끝나면 임시 디렉터리를 삭제하세요. 기본 Vitest의 판정기 자기시험은 고정 입력을 사용하므로 실제 에이전트 행동 평가가 아닙니다.
+
 ## 종료 코드
 
 | 코드 | 뜻 | 에이전트 행동 |
