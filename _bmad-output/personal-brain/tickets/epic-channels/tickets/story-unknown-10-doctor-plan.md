@@ -3,8 +3,8 @@ title: '불명 발신과 재시도 및 doctor 실패 노출'
 type: feature
 ticket: 2
 created: '2026-10-31'
-status: built
-baseline_revision: 982c2cb4c09bd836733db8260e5ae40cee67b74b
+status: done
+baseline_revision: 149039a444fa84c0d4682a6c370bf2b859d29560
 route: full
 route_source: pinned
 risk: high
@@ -158,6 +158,10 @@ deferred: []
 - verdicts: 0 findings — high 0, medium 0, low 0, false 0, maybe-false 0
 - findings: 없음. 독립 Quick 리뷰의 정식 succeeded 보고와 전문을 확인했다. 계획 diff의 검증 기록은 새 로그와 시험·fixture 원본에 일치한다. patch·defer·reject는 각각 0개이며 followup_review_recommended는 false다. 보고서는 `/tmp/brain152-g2-review.md`다.
 
+### 2026-10-31 — 복원 변경 Review pass
+- verdicts: 0 findings — high 0, medium 0, low 0, false 0, maybe-false 0
+- findings: 없음. 복원된 제품 diff 전체와 수정된 계획을 독립 Quick 리뷰 및 지휘자의 코드 대조로 확인했다. 정식 succeeded 보고와 전문은 `/tmp/brain152-g3-review.md`다. patch·defer·reject는 각각 0개이며 후속 리뷰 추천은 false다.
+
 ## Design Notes
 
 - 저장된 gate는 전송 성공의 증거가 아니다. 접수 여부를 알 수 없으면 중복 가능성을 수용하고 재시도한다. sent가 저장됐으면 감독자 crash 뒤에도 HTTP를 반복하지 않는다.
@@ -211,15 +215,53 @@ deferred: []
 - 지휘자의 계획 Vitest 명령에 `--reporter verbose`를 붙인 검증은 19개 파일 392개 시험이 모두 통과했다. 로그는 `/tmp/brain152-g2-matrix.log`다. 8개 행렬의 각 시험과 첫·열 번째 저장 결과 복구, 현재 감독자의 미확인 worker 재검사, 정상 종료·보류 각 3개 사례, 직접 SQL fence와 v17 보존의 개별 실행·통과를 원본 출력에서 확인했다.
 - `channels-retry.test.ts`와 `channel-fixture.ts` 원본에서 모든 실패·복구 행렬이 실제 생산자 행과 SHA-256 해시를 전후 비교하는 것을 확인했다. 재시작 사례는 실제 worker를 종료한 뒤 새 감독자를 시작하며 이전 데몬 자체의 강제 종료 시험은 아니다.
 
+### 복원 변경 검증 행렬 감사
+
+- 이번 실행의 `bash _bmad/custom/bmad-loop-verify.sh`가 build·typecheck 및 152개 파일 3767개 시험 통과·1개 skipped로 성공했다. 로그는 `/tmp/brain152-g3-full.log`이며 재실행 없이 통과했다.
+- 계획의 Vitest 명령에 `--reporter verbose`를 붙인 검증은 19개 파일 392개 시험이 모두 통과했다. 로그는 `/tmp/brain152-g3-matrix.log`다.
+- 원본 출력에서 끊김·연결 거부·깨진 응답·2xx ok=false·429 하한·5xx·10회 소진·첫 영구 실패·세 crash 장벽·첫/열 번째 저장 결과 우선 복구·종료/보류의 각 세 사례·미확인 worker 재검사·직접 SQL fence·v17 보존의 개별 실행과 통과를 확인했다. 실제 생산자 행과 SHA-256 해시 전후 비교를 유지한다.
+- 감독자 재시작 사례는 실제 worker 종료 후 새 감독자를 시작하는 시험이며, 이전 데몬 프로세스 자체의 강제 종료를 주장하지 않는다.
+
 ## Auto Run Result
 
-- status: built
-- 기존 구현의 `sent`·`definite_failed`·`unknown` 분류, 지수 재시도·429 하한, 10회 소진과 doctor, crash 복구·현재 token fence·생산자 보존을 명세와 대조하고 새로 검증했다. 이번 시도에는 소스·시험 변경이 없다.
-- 변경 파일: `_bmad-output/personal-brain/tickets/epic-channels/tickets/story-unknown-10-doctor-plan.md` — 엔진의 baseline을 보존하고 새 단계별 대조·검증·행렬 감사·독립 리뷰 및 결과를 기록했다. 보존 브랜치의 미검증 결과는 복사하지 않았다.
-- 지휘자의 `bash _bmad/custom/bmad-loop-verify.sh`: 성공. build·typecheck와 152개 파일 3767개 시험 통과·1개 skipped. 로그: `/tmp/brain152-g2-full.log`.
-- 지휘자의 `pnpm exec vitest run --project core --project postgres --project cli channel-store channel-send channels-tracer channels-retry telegram supervisor process-abi migrate doctor --reporter verbose`: 19개 파일 392개 시험 모두 통과. 8개 행렬과 복구 보강의 개별 실행·통과를 확인했다. 로그: `/tmp/brain152-g2-matrix.log`.
-- 구현자의 단계별 대조·선별 검증: 31개, 210개, 마지막 39개 파일 869개 시험 통과. 전체 보고: `/tmp/brain152-g2-implementation.md`.
-- 독립 Quick 발견 0건. 적용 patch high/medium/low 각 0개, defer 0개, reject 0개. followup_review_recommended: false. 보고: `/tmp/brain152-g2-review.md`.
-- 잔여 관찰: 과거 실행의 PG 연결·정리 훅·동시 실행 시험 지연 원인은 미확정이다. 이번 전체·행렬 검증은 첫 실행에서 모두 통과했으며 기존 assertion·시간 제한은 변경하지 않았다. 재시작 시험은 실제 worker 종료 뒤 새 감독자를 띄우며 이전 데몬 자체를 강제 종료하는 시험은 아니다.
-- 운영자 작업은 없다. 실계정 발신·배포는 후속 티켓 범위다. 티켓 done 표시·`tickets.py mark`·push는 실행하지 않았다. 최종 티켓 완료 판정은 오케스트레이터 소관이다.
-- Orca 자기 Run `run_6579b7c9f052`의 구현 `ctx_66acaf41ffaf`와 Quick 리뷰 `ctx_3952d05196f7`는 모두 succeeded/completed/released다. 전문과 소유권을 확인하고 모든 보고를 ack했다. 활성·미확인·reclaimable 워커와 pending mail은 없으며 정리·검증·다음 행동을 현재 task의 `orca-coordination.json`에 checkpoint했다. 중간 transcript source_changed 관측은 정식 완료·restore·worker-list로 해소됐고 미확인 상태는 없다. 전용 제어 셸은 마지막에 닫는다.
+- Status: built
+- 수정된 계획에 따라 복원 변경의 리뷰·검증을 완료했다. 같은 요청·최초 gate를 보존하는 attempt별 결과, 보수적 발신 오류 분류, 지수 재시도·429 하한·실패 소진, 저장 결과 우선 복구와 doctor 요청 노출을 확인했다.
+- 독립 Quick 리뷰: 결함 0건. 적용 patch 0건(high 0, medium 0, low 0), defer 0건, reject 0건. `followup_review_recommended: false`.
+- 검증: 전체 build·typecheck·시험 성공(152개 파일, 3767 passed, 1 skipped), 계획의 verbose 행렬 성공(19개 파일, 392 passed). 이번 검증에는 실패·재실행이 없다.
+- 잔여 위험: unknown 재시도는 결정된 중복 발신 가능성을 유지한다. 실계정 발신·배포는 후속 티켓 범위이며 이번 수락 조건의 운영자 작업은 없다.
+- 티켓 done 표시와 `tickets.py mark`는 실행하지 않았다. 최종 티켓 완료 판정은 오케스트레이터의 별도 검증에 맡긴다.
+- Orca 정리: `run_470e73d0f2f0`의 리뷰 `task_fdb96c936d60` / `ctx_3e7376f253be` 정식 succeeded 보고를 수락하고 release했다. 완료 mail을 ack했으며 pending delivery는 없다. 정리 영수증과 검증은 현재 generation의 `orca-coordination.json`에 checkpoint로 남긴다.
+
+### 변경 파일
+
+- `apps/cli/src/adapters/telegram.ts` — 발신 오류 분류·429 하한·크기 제한을 반환한다.
+- `apps/cli/src/daemon/supervisor.ts` — 시험용 확정 장벽을 worker에 전달한다.
+- `apps/cli/src/doctor/store.ts` — 실패 저장소에 새 복구 포트를 제공한다.
+- `apps/cli/src/workers/channel-send.ts` — 설정 실패를 저장하고 재시도 결과·시험 장벽을 연결한다.
+- `apps/cli/test/channel-fixture.ts` — 실제 생산자 보존·가짜 서버·clock·재기동 fixture를 확장한다.
+- `apps/cli/test/channels-tracer.test.ts` — 새 결과 저장 계약과 HTTP 대기 중 잠금 검증을 유지한다.
+- `apps/cli/test/channels-retry.test.ts` — 전체 실패·재시도·실제 worker 복구 행렬을 검증한다.
+- `apps/cli/test/dispatch.test.ts` — 새 저장소 포트를 시험 대역에 추가한다.
+- `apps/cli/test/install.test.ts` — 설치의 core 18 계약을 검증한다.
+- `apps/cli/test/setup.test.ts` — 설정의 core 18 계약을 검증한다.
+- `apps/cli/test/telegram.test.ts` — 네트워크·HTTP 분류와 크기 제한을 검증한다.
+- `packages/core/src/channels/send.ts` — gate 뒤 attempt 결과를 저장하고 확인된 성공의 재발신을 억제한다.
+- `packages/core/src/channels/store.ts` — attempt 결과와 복구 포트를 정의한다.
+- `packages/core/src/doctor/doctor.ts` — 실패한 채널 요청 ID를 노출한다.
+- `packages/core/src/ports/store.ts` — 종료 확인 뒤 정산 입력을 확장한다.
+- `packages/core/src/queue/supervisor.ts` — 저장 결과 우선 정산·지수 간격·보류 재검사를 연결한다.
+- `packages/core/src/testing/contracts/channel-store.ts` — fake·PG 공통 결과·복구·fence 계약을 검증한다.
+- `packages/core/src/testing/fakes/store.ts` — attempt별 결과와 종료 확인 후 정산을 구현한다.
+- `packages/core/test/channel-send.test.ts` — 저장 성공 뒤 HTTP 억제를 검증한다.
+- `packages/core/test/supervisor-channel.test.ts` — 실행·재시작·미확인·종료·보류 정산을 검증한다.
+- `packages/postgres/src/channels.ts` — 현재 token의 결과 저장과 미확정 복구를 구현한다.
+- `packages/postgres/src/migrate.ts` — 최고 core 스키마를 18로 올린다.
+- `packages/postgres/src/work.ts` — 종료 미확인 token을 보존하고 확인 뒤 원자 정산한다.
+- `packages/postgres/migrations/0018_channel_attempt_results.sql` — 기존 데이터를 보존하며 attempt 결과와 UPDATE fence를 추가한다.
+- `packages/postgres/test/channel-store.test.ts` — 결과 이력·직접 SQL fence·종료 확인 복구를 검증한다.
+- `packages/postgres/test/migrate.test.ts` — core 18 마이그레이션과 v17 데이터 보존을 검증한다.
+- `packages/postgres/test/schema.test.ts` — 새 기본값을 catalog 계약에 추가한다.
+- `packages/postgres/test/store.test.ts` — 최고 스키마 버전 계약을 갱신한다.
+- `packages/postgres/test/unavailable.test.ts` — 새 포트의 DB 불가 계약을 검증한다.
+- `packages/postgres/test/work-store.test.ts` — 기존 감독자 복구 fixture를 core 18로 맞춘다.
+- `_bmad-output/personal-brain/tickets/epic-channels/tickets/story-unknown-10-doctor-plan.md` — 복원 변경의 검증·리뷰·정리 결과와 built 상태를 기록한다.

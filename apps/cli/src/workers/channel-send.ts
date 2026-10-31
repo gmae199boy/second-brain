@@ -10,25 +10,24 @@ async function run(): Promise<void> {
     process.exitCode = 2;
     return;
   }
-  if (!env['BRAIN_TELEGRAM_BOT_TOKEN'] || !env['BRAIN_TELEGRAM_CHAT_ID']) {
-    console.log(JSON.stringify({ abi: 1, type: 'error', code: 'CHANNEL_CONFIG_INVALID', retryable: false }));
-    process.exitCode = 2;
-    return;
-  }
   const store = postgresStore({ databaseUrl: env[PROCESS_ABI_ENV.databaseUrl]! });
   try {
+    const barrier = async (stage: string) => {
+      if (env['BRAIN_CHANNEL_TEST_ENDPOINT'] && env['BRAIN_CHANNEL_TEST_BARRIER'] === stage)
+        await fetch(`${env['BRAIN_CHANNEL_TEST_ENDPOINT']}/test-barrier/${stage}`, { method: 'POST' });
+    };
     const read = await store.readChannelRequest(env[PROCESS_ABI_ENV.targetId]!);
-    if (!read.ok || read.channel?.kind !== 'telegram' || read.conversation?.externalRef !== env['BRAIN_TELEGRAM_CHAT_ID']) {
-      console.log(JSON.stringify({ abi: 1, type: 'error', code: 'CHANNEL_CONFIG_INVALID', retryable: false }));
-      process.exitCode = 2;
-      return;
-    }
-    const sent = await sendChannelRequest({ store, sender: telegramSender(env['BRAIN_TELEGRAM_BOT_TOKEN'],
-      env['BRAIN_CHANNEL_TEST_ENDPOINT'] ? { endpoint: env['BRAIN_CHANNEL_TEST_ENDPOINT'] } : {}),
+    if (!read.ok) throw Error('채널 요청 조회 실패');
+    const configured = !!env['BRAIN_TELEGRAM_BOT_TOKEN'] && !!env['BRAIN_TELEGRAM_CHAT_ID'] &&
+      read.channel?.kind === 'telegram' && read.conversation?.externalRef === env['BRAIN_TELEGRAM_CHAT_ID'];
+    const sent = await sendChannelRequest({ store, sender: configured ? telegramSender(env['BRAIN_TELEGRAM_BOT_TOKEN']!,
+      env['BRAIN_CHANNEL_TEST_ENDPOINT'] ? { endpoint: env['BRAIN_CHANNEL_TEST_ENDPOINT'] } : {}) :
+      { async sendMessage() { return { ok: false, outcome: 'definite_failed', code: 'CHANNEL_CONFIG_INVALID', retryable: false }; } },
       requestId: env[PROCESS_ABI_ENV.targetId]!, workItemId: env[PROCESS_ABI_ENV.workId]!,
-      attemptToken: env[PROCESS_ABI_ENV.attemptToken]!, now: () => new Date() });
+      attemptToken: env[PROCESS_ABI_ENV.attemptToken]!, now: () => new Date(), beforeFinish: () => barrier('before-finish') });
+    await barrier('after-finish');
     if (!sent.ok) {
-      console.log(JSON.stringify({ abi: 1, type: 'error', code: sent.code, retryable: false }));
+      console.log(JSON.stringify({ abi: 1, type: 'error', code: /^[A-Z][A-Z0-9_]{0,63}$/.test(sent.code) ? sent.code : `CHANNEL_${sent.code.toUpperCase()}`, retryable: sent.retryable ?? true }));
       process.exitCode = 2;
       return;
     }
@@ -38,6 +37,6 @@ async function run(): Promise<void> {
   }
 }
 await run().catch(() => {
-  console.log(JSON.stringify({ abi: 1, type: 'error', code: 'CHANNEL_WORKER_FAILED', retryable: false }));
+  console.log(JSON.stringify({ abi: 1, type: 'error', code: 'CHANNEL_WORKER_FAILED', retryable: true }));
   process.exitCode = 2;
 });

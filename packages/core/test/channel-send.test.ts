@@ -18,6 +18,6 @@ it('gate 확정 후 가린 본문을 보내고 원문은 보존한다', async ()
   expect(calls).toHaveLength(1);
   expect(calls[0]).not.toContain('secret123456');
   expect((await store.readChannelRequest('request'))).toMatchObject({ request: { text, status: 'sent', externalMessageId: null } });
-  expect(await run()).toEqual({ ok: false, code: 'CHANNEL_GATE_REFUSED' });
+  expect(await run()).toEqual({ ok: true });
   expect(calls).toHaveLength(1);
 });

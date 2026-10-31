@@ -12,7 +12,7 @@ import { resolveStoreUrl, resolveTelegramConfig, extensionDatabaseUrl } from '..
 import type { RunDaemonOptions } from './run.js';
 import { readDaemonLock } from './lock.js';
 import type { ReadConfigResult } from '../config/codec.js';
-export interface DaemonSupervisorOptions { launcher?: ProcessLauncher; inspector?: ProcessInspector; cancelGraceMs?: number; cancelPollMs?: number; groupConfirmMs?: number; probeWorker?: { command: string; args: readonly string[]; env?: Readonly<Record<string, string>> }; channelTestEndpoint?: string; pollMs?: number; renewEveryMs?: number; disabled?: boolean }
+export interface DaemonSupervisorOptions { launcher?: ProcessLauncher; inspector?: ProcessInspector; cancelGraceMs?: number; cancelPollMs?: number; groupConfirmMs?: number; probeWorker?: { command: string; args: readonly string[]; env?: Readonly<Record<string, string>> }; channelTestEndpoint?: string; channelTestBarrier?: 'before-finish' | 'after-finish'; pollMs?: number; renewEveryMs?: number; disabled?: boolean }
 export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadConfigResult, log: { write(message: string): Promise<void> }): { stop(): Promise<void> } {
   const controller = new AbortController();
   const abort = (): void => controller.abort();
@@ -89,6 +89,7 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
             [PROCESS_ABI_ENV.targetKind]: item.targetKind, [PROCESS_ABI_ENV.targetId]: item.targetId,
             ...(telegram ? { BRAIN_TELEGRAM_BOT_TOKEN: telegram.token, BRAIN_TELEGRAM_CHAT_ID: telegram.chatId } : {}),
             ...(options.supervisor?.channelTestEndpoint ? { BRAIN_CHANNEL_TEST_ENDPOINT: options.supervisor.channelTestEndpoint } : {}),
+            ...(options.supervisor?.channelTestEndpoint && options.supervisor.channelTestBarrier ? { BRAIN_CHANNEL_TEST_BARRIER: options.supervisor.channelTestBarrier } : {}),
           },
         }) : null, process_probe: (item, token) => url ? ({ command: options.supervisor?.probeWorker?.command ?? process.execPath,
           args: options.supervisor?.probeWorker?.args ?? [fileURLToPath(new URL('../../dist/workers/process-probe.js', import.meta.url))],

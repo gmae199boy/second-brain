@@ -316,7 +316,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
           pid: number | null; pgid: number | null; os_boot_at: string | null; os_started_at: string | null; cancel_requested: boolean; held: boolean }>`
           select a.*, w.kind, w.attempts, w.target_kind, w.target_id, w.cancel_requested_at is not null as cancel_requested, not (${groupAvailable('w')}) as held
           from brain.work_attempts a join brain.work_items w on w.current_attempt_token = a.token
-          where a.outcome is null`.execute(opened.connection.db);
+          where a.outcome is null or (w.kind='channel_send' and a.outcome='unknown')`.execute(opened.connection.db);
         return { ok: true, attempts: rows.rows.map(a => ({ token: a.token, workItemId: a.work_item_id, kind: a.kind, attempts: a.attempts, targetKind: a.target_kind, targetId: a.target_id,
           incarnation: a.incarnation, pid: a.pid, pgid: a.pgid, osBootAt: a.os_boot_at === null ? null : at(a.os_boot_at, 'work_attempts.os_boot_at'),
           osStartedAt: a.os_started_at === null ? null : at(a.os_started_at, 'work_attempts.os_started_at'), held: a.held, cancelRequested: a.cancel_requested })) };
@@ -324,7 +324,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
     },
     async settleSupervisedAttempt(input) {
       return finish(connect, async held => {
-        const item = await lockOpenSupervisedWork(held, input);
+        const item = await lockConfirmedChannelWork(held, input);
         if (!item) return 0;
         const now = instant(input.now, 'work_attempts.finished_at');
         const outcome = input.outcome === 'unknown' ? 'unknown' : item.cancel_requested_at !== null ? 'cancelled' : input.outcome;
@@ -448,7 +448,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
     },
     async finishSupervisedWork(input) {
       return finish(connect, async (held) => {
-        const item = await lockOpenSupervisedWork(held, input);
+        const item = await lockConfirmedChannelWork(held, input);
         if (!item) return 0;
         const failure = input.outcome !== 'succeeded' && item.cancel_requested_at === null ? input.failure : undefined;
         const now = instant(input.now, 'work_attempts.finished_at');
@@ -714,6 +714,20 @@ function toFailure(row: FailureRow): FailureRecord {
 }
 
 /** Lock the owner first, then read attempt state in a fresh statement snapshot. */
+/** 미확인 상태였던 채널 시도는 종료 확인 뒤 한 트랜잭션에서 복구·정산한다. */
+async function lockConfirmedChannelWork(held: Kysely<PgSchema>, input: { id: string; attemptToken: string; now: Date; confirmedDead?: boolean }): Promise<WorkItemRow | null> {
+  const current = await lockOpenSupervisedWork(held, input);
+  if (current || !input.confirmedDead) return current;
+  const found = await sql<WorkItemRow>`select *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text from brain.work_items
+    where id=${input.id} and kind='channel_send' and current_attempt_token=${input.attemptToken} and completed_at is null for update`.execute(held);
+  if (!found.rows[0]) return null;
+  const resumed = await sql`update brain.work_attempts set outcome=null,finished_at=null where token=${input.attemptToken} and work_item_id=${input.id} and outcome='unknown' returning token`.execute(held);
+  if (!resumed.rows.length) return null;
+  await sql`update brain.channel_attempt_results set outcome='unknown',error_code='INTERRUPTED',retryable=true,finished_at=${input.now.toISOString()}
+    where work_item_id=${input.id} and attempt_token=${input.attemptToken} and outcome is null`.execute(held);
+  return found.rows[0];
+}
+
 async function lockOpenSupervisedWork(held: Kysely<PgSchema>, input: { id: string; attemptToken: string }): Promise<WorkItemRow | null> {
   const found = await sql<WorkItemRow>`select *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text from brain.work_items where id = ${input.id}
     and current_attempt_token = ${input.attemptToken} for update`.execute(held);
