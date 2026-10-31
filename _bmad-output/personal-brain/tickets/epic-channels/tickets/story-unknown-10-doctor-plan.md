@@ -92,7 +92,16 @@ deferred: []
 - Given 같은 감독자가 띄운 worker의 cleanup이 unknown이고 다른 worker도 실행 중, When 이후 OS 조회가 종료를 확인하면, Then 보류 token만 재정산되어 재시도 또는 닫힘으로 수렴하고 다른 worker는 중단/중복 실행되지 않는다.
 - Given 저장된 영구 실패·429·열 번째 미확정 결과, When graceful shutdown 또는 hold와 재기동/보류 해제가 겹치면, Then 저장 결과의 영구성·대기 하한·시도 소진을 보존한다.
 
+### 결정적 검증 실패 복구
+
+- [x] 기존 채널 동작과 동결된 의도 계약을 유지하면서 `feedback/15.2-2.md` 및 같은 run의 `verify/verify-15.2-dev-1-1-0.stderr.log`에 기록된 7개 실패를 복구한다. `apps/cli/test/install.test.ts`, `setup.test.ts`, `packages/postgres/test/schema.test.ts`, `store.test.ts`, `work-store.test.ts`의 현재 스키마 기대값과 fixture를 0018 마이그레이션의 실제 계약에 맞춘다. 과거 버전 보존 시험과 버전 불일치 거부 시험은 의미를 보존한다. catalog의 새 기본값은 명시적으로 검증한다. 감독자의 schemaVersions 불일치가 복구 시험 실행을 막는지 확인하고 실제 종료·failure 검증을 유지한다.
+- [x] `apps/cli/test/daemon-supervisor.test.ts`의 동시 실행 시험에서 관찰한 core 일감 완료 대기 시간 초과를 조사한다. 동시 실행·완료 순서 assertion을 유지하고 fixture의 실제 경쟁이 있으면 복구한다.
+- [x] 해당 시험을 실행한 뒤 지휘자가 계획의 검증 명령과 `bash _bmad/custom/bmad-loop-verify.sh` 전체 검증을 수행한다. 실패를 숨기거나 assertion을 완화하지 않고 실제 계약에 맞춰 복구한다.
+
 ## Implementation Notes
+
+- 결정적 검증 복구: 설치·설정·PG 최고 스키마 버전 시험과 감독자 fixture를 core 18로 맞추고 새 outcome 기본값을 catalog의 전체 목록에 추가했다. 이전 마이그레이션과 발신 구현은 보존했다. 관련 266개 시험 및 마이그레이션·스키마 24개 시험이 통과했고, 지휘자의 전체 검증은 152개 파일 3767개 통과·1개 skipped다. 계획의 병렬 행렬 재검증도 19개 파일 392개가 통과했다.
+
 
 - 최종 보강: 현재 감독자가 unknown으로 보류한 channel token만 반복 검사하고, 다른 활성 worker는 보존한다. 저장 결과가 있으면 정상 종료·hold에도 영구성·대기 하한·소진을 우선하며 명시적 사용자 취소는 유지한다. 실제 worker·PG 종료/재기동·hold 해제 행렬과 단위 시험을 추가했다. 지휘자가 최종 diff와 `pnpm build`, `pnpm typecheck`, 계획의 전체 Vitest 명령을 직접 확인했으며 19개 파일·392개 시험이 모두 통과했다. 최종 로그는 `/tmp/brain-15-2-g1-tests3.log`다.
 
@@ -135,6 +144,10 @@ deferred: []
 - verdicts: 0 findings — high 0, medium 0, low 0, false 0, maybe-false 0
 - findings: 없음. Quick 정식 보고는 최종 diff를 주변 코드와 대조했고 확정 결함을 발견하지 못했다.
 
+### 2026-10-31 — 결정적 검증 복구 Review pass
+- verdicts: 0 findings — high 0, medium 0, low 0, false 0, maybe-false 0
+- findings: 없음. 독립 Quick 리뷰의 정식 성공 보고와 전문을 확인했다. patch·defer·reject는 각각 0개이며 후속 리뷰 추천은 false다. 보고서는 `/tmp/brain-15-2-repair-review.md`다.
+
 ## Design Notes
 
 - 저장된 gate는 전송 성공의 증거가 아니다. 접수 여부를 알 수 없으면 중복 가능성을 수용하고 재시도한다. sent가 저장됐으면 감독자 crash 뒤에도 HTTP를 반복하지 않는다.
@@ -176,48 +189,25 @@ deferred: []
 - 실제 worker·PG의 `정상 종료·재기동은 permanent/rate_limit/tenth_unknown의 저장 계약을 보존한다`, `보류와 해제는 permanent/rate_limit/tenth_unknown의 저장 계약을 보존한다` 6개 사례가 결과·종료 시각·attempts·POST 횟수·하한·failures/doctor·생산자 행과 해시를 검증했다.
 - 기존 8개 행렬과 첫·열 번째 결과 복구 및 DB fence 시험도 유지하며 최종 verbose 출력에서 모든 실행·통과를 확인했다.
 
+
+### 결정적 검증 복구 행렬 감사
+
+- 지휘자의 전체 검증은 152개 파일에서 3767개 통과·1개 skipped이며 build와 typecheck도 통과했다. 로그는 `/tmp/brain-15-2-repair-full-verification.log`다.
+- 계획의 별도 verbose 행렬은 최초 동시 실행 시험 1건 시간 초과 뒤 단독 재실행과 원래 병렬 재실행에서 모두 통과했다. 최종 19개 파일·392개 시험에서 모든 채널 행렬·실제 worker 종료·종료/보류 복구·DB fence·v17 보존의 개별 실행과 통과를 확인했다. 로그는 `/tmp/brain-15-2-repair-matrix2.log`다. 해당 동시 실행 시험은 변경하지 않았고 간헐적 시간 초과 관찰을 보존한다.
+
 ## Auto Run Result
 
-- Status: `built`
-- 구현: 같은 발신 요청과 최초 gate를 보존하면서 attempt별 sent·definite_failed·unknown을 남기고 지수 재시도·429 하한·10회 소진·첫 영구 실패를 감독자와 doctor에 연결했다. 저장 결과가 worker/감독자 종료·재시작·hold에도 우선하며 현재 token DB fence와 생산자 보존을 유지한다.
-- 리뷰: Quick 1차 4건(high 3·medium 1), 2차 2건(high 2)을 모두 bad_plan으로 검증하고 계획을 보강해 두 번 재구현했다. Quick 3차는 0건이다. 최종 pass patch는 high 0·medium 0·low 0이며 deferred 0·reject 0이다.
-- followup_review_recommended: `false`. 최종 pass에 patch가 없고 추가 미검증 위험을 식별하지 않았다.
-- 검증: 지휘자의 `pnpm build`, `pnpm typecheck`, `pnpm exec vitest run --project core --project postgres --project cli channel-store channel-send channels-tracer channels-retry telegram supervisor process-abi migrate doctor --reporter=verbose`가 모두 성공했다. 19개 파일·392개 시험이 통과했고 모든 행렬의 실행·통과를 확인했다. 로그는 `/tmp/brain-15-2-g1-build3.log`, `/tmp/brain-15-2-g1-typecheck3.log`, `/tmp/brain-15-2-g1-tests3.log`다.
-- 남는 특성: unknown 재발신의 원격 중복 가능성은 의도 계약에 따라 수용한다. 시험은 격리 PG·가짜 서버를 사용했고 실계정 발신·설치본 배포는 이 티켓의 검증 범위가 아니다.
-- 운영자 작업: 없음. HUMAN 외부 수락 작업이 없는 티켓이므로 awaiting-operator가 필요하지 않다.
-- 권한: 티켓 done과 tickets.py mark 및 push를 실행하지 않았다. 티켓 완료 판정은 오케스트레이터가 수행한다.
-
-### 변경 파일
-
-- `_bmad-output/personal-brain/tickets/epic-channels/tickets/story-unknown-10-doctor-plan.md` — 실행 계획·리뷰 분류·행렬 감사·최종 결과를 기록했다.
-- `apps/cli/src/adapters/telegram.ts` — 연결 전 실패·불명·HTTP·크기 초과와 retry_after를 분류한다.
-- `apps/cli/src/daemon/supervisor.ts` — 시험 전용 결과 확정 장벽을 worker에 전달한다.
-- `apps/cli/src/doctor/store.ts` — 채널 복구 저장 계약의 대체 구현을 맞췄다.
-- `apps/cli/src/workers/channel-send.ts` — 설정 실패 결과 저장·재시도 ABI와 시험 장벽을 연결한다.
-- `apps/cli/test/channel-fixture.ts` — 가짜 시각·HTTP 모드·재기동·생산자 행/해시를 제공한다.
-- `apps/cli/test/channels-retry.test.ts` — 실제 worker·PG 재시도·종료·재시작·hold 행렬을 검증한다.
-- `apps/cli/test/channels-tracer.test.ts` — 새 결과 계약과 HTTP 중 장기 트랜잭션 부재를 검증한다.
-- `apps/cli/test/dispatch.test.ts` — 채널 복구 저장 계약의 시험 stub을 맞췄다.
-- `apps/cli/test/telegram.test.ts` — 오류 분류·429 하한·UTF-16 크기 제한을 검증한다.
-- `packages/core/src/channels/send.ts` — attempt 결과 저장과 이미 sent인 요청의 발신 억제를 수행한다.
-- `packages/core/src/channels/store.ts` — attempt 결과와 안전한 복구 저장 계약을 정의한다.
-- `packages/core/src/doctor/doctor.ts` — 채널 실패에 요청 식별자를 표시한다.
-- `packages/core/src/ports/store.ts` — 확인된 채널 종료의 보류 정산 입력을 정의한다.
-- `packages/core/src/queue/supervisor.ts` — 저장 결과 우선 정산·지수 간격·unknown 재검사를 수행한다.
-- `packages/core/src/testing/contracts/channel-store.ts` — 현재 token·복구·불명 보류 계약을 공유한다.
-- `packages/core/src/testing/fakes/store.ts` — attempt 결과와 보류 복구를 메모리 저장소에 반영한다.
-- `packages/core/test/channel-send.test.ts` — 성공 확정 후 재발신 억제를 검증한다.
-- `packages/core/test/supervisor-channel.test.ts` — 실행·재시작·unknown·종료/hold·취소 경계를 검증한다.
-- `packages/postgres/migrations/0018_channel_attempt_results.sql` — 기존 데이터를 보존하며 attempt 결과와 UPDATE fence를 추가한다.
-- `packages/postgres/src/channels.ts` — 현재 token 결과 저장·최초 gate·복구를 구현한다.
-- `packages/postgres/src/migrate.ts` — 새 core 스키마 버전을 등록한다.
-- `packages/postgres/src/work.ts` — 종료가 확인된 보류 채널 시도를 원자적으로 복구·정산한다.
-- `packages/postgres/test/channel-store.test.ts` — 시도 이력·직접 stale UPDATE·확정 불변·복구를 검증한다.
-- `packages/postgres/test/migrate.test.ts` — v17 데이터 보존과 v18 이행을 검증한다.
-- `packages/postgres/test/unavailable.test.ts` — 새 복구 메서드의 DB 불가 계약을 등록한다.
-
-### 정리 결과
-
-- 구현 Dispatch와 Quick 리뷰 Dispatch 세 개의 정식 성공 보고·전체 보고를 수락하고 모두 release했다. 자기 Run의 worker-list는 released 4·활성 0·reclaimable 0이며 최종 inbox에는 pending Delivery와 미확인 요청이 없다.
-- 체크포인트는 `.bmad-loop/runs/20261030-175233-8a92/tasks/15.2-dev-1-g1/orca-coordination.json`이며 단계·다음 행동·검증·판단을 보존했다. 미확인 워커·mail 상태와 남은 운영자 작업은 없다.
-- 검토한 변경을 로컬 커밋하고 깨끗한 working tree를 확인한 뒤, 정리된 자기 전용 제어 셸만 마지막에 닫는다.
+- status: built
+- 결정적 검증의 7개 실패를 복구했다. core 18에 맞춰 설치·설정·PG 최고 버전 기대값과 감독자 fixture를 갱신하고 catalog의 새 outcome 기본값을 명시했다. 동결된 의도 계약과 baseline을 보존했다.
+- `apps/cli/test/install.test.ts`: 설치 완료 기록의 core 버전 18을 검증한다.
+- `apps/cli/test/setup.test.ts`: 설정 결과·완료 기록의 버전 18을 검증한다.
+- `packages/postgres/test/schema.test.ts`: 새 outcome 기본값을 전체 catalog 목록에서 검증한다.
+- `packages/postgres/test/store.test.ts`: core 최고 버전 18과 owner별 계약을 검증한다.
+- `packages/postgres/test/work-store.test.ts`: 감독자 fixture가 core 18에서 실제 열 번째 종료 복구와 PROCESS_DIED failure를 검증하도록 했다.
+- 이 계획: 복구 실행 항목·검증·행렬 감사·리뷰 결과와 정리 근거를 기록했다.
+- Quick 리뷰 0건: patch high/medium/low 각각 0개, defer 0개, reject 0개. followup_review_recommended: false.
+- `bash _bmad/custom/bmad-loop-verify.sh`: 성공. `pnpm build`, `pnpm typecheck`와 전체 152개 파일 3767개 시험 통과·1개 skipped. 로그: `/tmp/brain-15-2-repair-full-verification.log`.
+- 계획의 Vitest 명령에 `--reporter verbose`를 붙인 병렬 최종 검증: 19개 파일 392개 시험 모두 통과. 모든 행렬 시험의 개별 실행·통과를 확인했다. 로그: `/tmp/brain-15-2-repair-matrix2.log`.
+- 잔여 관찰: 첫 별도 행렬 실행에서 기존 감독자 동시 실행 시험의 core 완료 대기가 한 번 시간 초과됐다. 단독 및 원래 병렬 재실행은 통과했고 해당 시험은 변경하지 않았다. 구체적인 지연 원인은 확인하지 못했다.
+- 운영자 작업은 없다. 티켓 done 표시와 `tickets.py mark` 및 push는 실행하지 않았다. 티켓 완료 판정은 오케스트레이터 소관이다.
+- Orca 자기 Run `run_ad9477f72c95`의 구현·리뷰 Dispatch 모두 succeeded/completed/released를 확인했다. 수신 mail을 모두 ack했고 pending delivery는 없다. 미확인 워커는 없으며 정리·다음 행동·검증을 현재 task의 `orca-coordination.json`에 checkpoint했다. 전용 제어 셸만 마지막에 닫는다.
