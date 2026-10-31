@@ -1,0 +1,15 @@
+{
+  "actions": [
+    "\uc61b Telegram \ubd07\uc758 bot_token\uacfc chat_id\ub97c \uc548\uc804\ud558\uac8c \ud655\ubcf4\ud558\uc5ec ~/.second_brain/.env\uc758 BRAIN_TELEGRAM_BOT_TOKEN\uacfc BRAIN_TELEGRAM_CHAT_ID\uc5d0 \ud30c\uc77c \uad8c\ud55c 0600\uc73c\ub85c \uc124\uc815\ud558\uc138\uc694.",
+    "\ub450 \ud0a4 \uc124\uc815 \ub4a4 tooling/channels-mac/README.md\uc758 \ub370\ubaac \uc7ac\uc2dc\uc791\u00b7\uace0\uc815 probe\u00b7\ub3d9\uc77c \uc694\uccad \uc7ac\uc870\ud68c \uc808\ucc28\ub97c \uc2e4\ud589\ud558\uc5ec sent\uc640 \uc2e4\uc81c message ID \ubc0f \uc18c\uc720 \uc694\uccad \uc2dd\ubcc4\uc790\ub97c \uae30\ub85d\ud558\uc138\uc694.",
+    "\uac80\ud1a0\ub41c \uc774 \ud2f0\ucf13\uc758 \ubc30\ud3ec \ucee4\ubc0b\uacfc \uc0c1\ud0dc \uae30\ub85d \ucee4\ubc0b\uc744 \uc6d0\uaca9 \uc800\uc7a5\uc18c\uc5d0 push\ud558\uc138\uc694.",
+    "\uc6d0\uaca9 marketplace \ud50c\ub7ec\uadf8\uc778\uc744 \uac31\uc2e0\ud558\uc5ec version 0.1.14\uc640 app-ref 884fd42769e2921b872d2cca80adbdacce85b7af \ubc0f channels \uc2a4\ud0ac \ubc1c\uacac\uc744 \ud655\uc778\ud558\uc138\uc694.",
+    "\ub098\uba38\uc9c0 operator_actions\uc758 \uc99d\uac70\ub97c \ubaa8\ub450 \ud655\ubcf4\ud55c \ub4a4 \uc800\uc7a5\uc18c\uc5d0\uc11c bmad-loop confirm 15.7 --reverify\ub97c \uc2e4\ud589\ud558\uc138\uc694."
+  ],
+  "parked_at": "2026-10-31",
+  "ref": "15.7",
+  "run_id": "20261030-175233-8a92",
+  "source": "tickets",
+  "spec_file": "_bmad-output/personal-brain/tickets/epic-channels/tickets/story-mac-plan.md",
+  "story_key": "15.7"
+}
