@@ -1,0 +1,1359 @@
+{
+  "cases": [
+    {
+      "name": "단일",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 0,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": "a",
+        "reason": null,
+        "selected": [
+          "a"
+        ],
+        "unselected": []
+      }
+    },
+    {
+      "name": "권위",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 1,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D2",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 2,
+          "type": "number",
+          "unit": "count",
+          "id": "b",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": {
+        "datasets": [
+          "D2",
+          "D1"
+        ],
+        "version": 1
+      },
+      "expected": {
+        "current": "b",
+        "reason": null,
+        "selected": [
+          "b"
+        ],
+        "unselected": [
+          "a"
+        ]
+      }
+    },
+    {
+      "name": "권위 없음",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 1,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D2",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 1,
+          "type": "number",
+          "unit": "count",
+          "id": "b",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": null,
+        "reason": "dataset_ambiguous",
+        "selected": [],
+        "unselected": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    {
+      "name": "최신과 정수 버전",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 1,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-02T00:00:00Z",
+          "revision": "revision-b",
+          "version": 2,
+          "value": 1,
+          "type": "number",
+          "unit": "count",
+          "id": "b",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-02T00:00:00Z",
+          "revision": "revision-b",
+          "version": 10,
+          "value": -2,
+          "type": "number",
+          "unit": "count",
+          "id": "c",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1,
+        2,
+        10
+      ],
+      "authority": null,
+      "expected": {
+        "current": "c",
+        "reason": null,
+        "selected": [
+          "c"
+        ],
+        "unselected": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    {
+      "name": "원문 동률",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 1,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-b",
+          "version": 10,
+          "value": 1,
+          "type": "number",
+          "unit": "count",
+          "id": "b",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": null,
+        "reason": "revision_ambiguous",
+        "selected": [
+          "a",
+          "b"
+        ],
+        "unselected": []
+      }
+    },
+    {
+      "name": "값 동률 충돌",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 1,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 2,
+          "type": "number",
+          "unit": "count",
+          "id": "b",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": null,
+        "reason": "value_ambiguous",
+        "selected": [
+          "a",
+          "b"
+        ],
+        "unselected": []
+      }
+    },
+    {
+      "name": "같은 값 동률",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": null,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": null,
+          "type": "number",
+          "unit": "count",
+          "id": "b",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": "a",
+        "reason": null,
+        "selected": [
+          "a",
+          "b"
+        ],
+        "unselected": []
+      }
+    },
+    {
+      "name": "계정 미확인",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": null,
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 1,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": false
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": null,
+        "reason": "account_unconfirmed",
+        "selected": [],
+        "unselected": [
+          "a"
+        ]
+      }
+    },
+    {
+      "name": "시간대 미확인",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": null,
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 1,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": null,
+        "reason": "timezone_unconfirmed",
+        "selected": [],
+        "unselected": [
+          "a"
+        ]
+      }
+    },
+    {
+      "name": "미지원",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 2,
+          "value": 1,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": null,
+        "reason": "version_unsupported",
+        "selected": [
+          "a"
+        ],
+        "unselected": []
+      }
+    },
+    {
+      "name": "규칙 밖",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 1,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": {
+        "datasets": [
+          "D2"
+        ],
+        "version": 1
+      },
+      "expected": {
+        "current": null,
+        "reason": "dataset_unselected",
+        "selected": [],
+        "unselected": [
+          "a"
+        ]
+      }
+    },
+    {
+      "name": "동일 순간 다른 표현",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 0,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T09:00:00.000+09:00",
+          "revision": "revision-b",
+          "version": 1,
+          "value": 0,
+          "type": "number",
+          "unit": "count",
+          "id": "b",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": null,
+        "reason": "revision_ambiguous",
+        "selected": [
+          "a",
+          "b"
+        ],
+        "unselected": []
+      }
+    },
+    {
+      "name": "오프셋 실제 최신",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T10:00:00+09:00",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 0,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T02:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 3,
+          "type": "number",
+          "unit": "count",
+          "id": "b",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": "b",
+        "reason": null,
+        "selected": [
+          "b"
+        ],
+        "unselected": [
+          "a"
+        ]
+      }
+    },
+    {
+      "name": "밀리초 미만 순서",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00.000001Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 0,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00.000002Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 0,
+          "type": "number",
+          "unit": "count",
+          "id": "b",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": "b",
+        "reason": null,
+        "selected": [
+          "b"
+        ],
+        "unselected": [
+          "a"
+        ]
+      }
+    },
+    {
+      "name": "계정 값은 있으나 미확인",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 0,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": false
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": null,
+        "reason": "account_unconfirmed",
+        "selected": [],
+        "unselected": [
+          "a"
+        ]
+      }
+    },
+    {
+      "name": "수치 정수와 실수 동등",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 1,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 1.0,
+          "type": "number",
+          "unit": "count",
+          "id": "b",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": "a",
+        "reason": null,
+        "selected": [
+          "a",
+          "b"
+        ],
+        "unselected": []
+      }
+    },
+    {
+      "name": "JSON 내부 정수와 실수 동등",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "day_summary.drinks_json",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": {
+            "value": [
+              1,
+              {
+                "n": 1.0
+              }
+            ]
+          },
+          "type": "json",
+          "unit": "json",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "day_summary.drinks_json",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": {
+            "value": [
+              1.0,
+              {
+                "n": 1
+              }
+            ]
+          },
+          "type": "json",
+          "unit": "json",
+          "id": "b",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": "a",
+        "reason": null,
+        "selected": [
+          "a",
+          "b"
+        ],
+        "unselected": []
+      }
+    },
+    {
+      "name": "JSON 불리언과 숫자 구별",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "day_summary.drinks_json",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": {
+            "value": true
+          },
+          "type": "json",
+          "unit": "json",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "day_summary.drinks_json",
+          "activity": null,
+          "subIdentity": null,
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": {
+            "value": 1
+          },
+          "type": "json",
+          "unit": "json",
+          "id": "b",
+          "accountConfirmed": true
+        }
+      ],
+      "versions": [
+        1
+      ],
+      "authority": null,
+      "expected": {
+        "current": null,
+        "reason": "value_ambiguous",
+        "selected": [
+          "a",
+          "b"
+        ],
+        "unselected": []
+      }
+    }
+  ],
+  "aggregations": [
+    {
+      "name": "혼합 지표와 비수치 제외",
+      "metric": "daily_metric.steps",
+      "operation": "sum",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-0",
+          "subIdentity": "a",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 0,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-0",
+          "subIdentity": "b",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": -2,
+          "type": "number",
+          "unit": "count",
+          "id": "b",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "activity.distance_m",
+          "activity": "aggregate-0",
+          "subIdentity": "c",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 100,
+          "type": "number",
+          "unit": "m",
+          "id": "c",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.hrv_status",
+          "activity": "aggregate-0",
+          "subIdentity": "d",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": "9",
+          "type": "text",
+          "unit": "category",
+          "id": "d",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "day_summary.drinks_json",
+          "activity": "aggregate-0",
+          "subIdentity": "e",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": {
+            "n": 9
+          },
+          "type": "json",
+          "unit": "json",
+          "id": "e",
+          "accountConfirmed": true
+        }
+      ],
+      "expected": -2
+    },
+    {
+      "name": "평균",
+      "metric": "daily_metric.steps",
+      "operation": "mean",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-1",
+          "subIdentity": "a",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 0,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-1",
+          "subIdentity": "b",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": -2,
+          "type": "number",
+          "unit": "count",
+          "id": "b",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-1",
+          "subIdentity": "c",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": null,
+          "type": "number",
+          "unit": "count",
+          "id": "c",
+          "accountConfirmed": true
+        }
+      ],
+      "expected": -1
+    },
+    {
+      "name": "빈 집합",
+      "metric": "daily_metric.steps",
+      "operation": "sum",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-2",
+          "subIdentity": "a",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": null,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "분류 집계 금지",
+      "metric": "daily_metric.hrv_status",
+      "operation": "mean",
+      "rows": [],
+      "error": "HEALTH_AGGREGATION_NOT_ALLOWED"
+    },
+    {
+      "name": "원문과 값 충돌 제외",
+      "metric": "daily_metric.steps",
+      "operation": "sum",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-4",
+          "subIdentity": "revision",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "hash-a",
+          "version": 1,
+          "value": 10,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-4",
+          "subIdentity": "revision",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "hash-b",
+          "version": 1,
+          "value": 20,
+          "type": "number",
+          "unit": "count",
+          "id": "b",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-4",
+          "subIdentity": "value",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 30,
+          "type": "number",
+          "unit": "count",
+          "id": "c",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-4",
+          "subIdentity": "value",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 40,
+          "type": "number",
+          "unit": "count",
+          "id": "d",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-4",
+          "subIdentity": "current",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 4,
+          "type": "number",
+          "unit": "count",
+          "id": "e",
+          "accountConfirmed": true
+        }
+      ],
+      "expected": 4
+    },
+    {
+      "name": "충돌 제외 평균",
+      "metric": "daily_metric.steps",
+      "operation": "mean",
+      "rows": [
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-5",
+          "subIdentity": "revision",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "hash-a",
+          "version": 1,
+          "value": 10,
+          "type": "number",
+          "unit": "count",
+          "id": "a",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-5",
+          "subIdentity": "revision",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "hash-b",
+          "version": 1,
+          "value": 20,
+          "type": "number",
+          "unit": "count",
+          "id": "b",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-5",
+          "subIdentity": "value",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 30,
+          "type": "number",
+          "unit": "count",
+          "id": "c",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-5",
+          "subIdentity": "value",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 40,
+          "type": "number",
+          "unit": "count",
+          "id": "d",
+          "accountConfirmed": true
+        },
+        {
+          "source": "synthetic",
+          "account": "account",
+          "metric": "daily_metric.steps",
+          "activity": "aggregate-5",
+          "subIdentity": "current",
+          "date": "2026-01-01",
+          "instant": null,
+          "timezone": "Asia/Seoul",
+          "dataset": "D1",
+          "fetchedAt": "2026-01-01T00:00:00Z",
+          "revision": "revision-a",
+          "version": 1,
+          "value": 4,
+          "type": "number",
+          "unit": "count",
+          "id": "e",
+          "accountConfirmed": true
+        }
+      ],
+      "expected": 4
+    }
+  ]
+}

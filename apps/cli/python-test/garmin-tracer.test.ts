@@ -9,6 +9,11 @@ it('기본 배송 경로의 Garmin을 잠긴 Python으로 설치하고 연결한
     const installed = await fixture.run(['ext', 'install', 'garmin', '--json']);
     expect(installed, installed.stderr + installed.stdout).toMatchObject({ code: 0 });
     const python = join(fixture.home, 'extensions', 'garmin', '.venv', 'bin', 'python');
+    const { readFile } = await import('node:fs/promises');
+    expect(await readFile(join(fixture.home, 'extensions', 'garmin', 'src', 'health.py'), 'utf8')).toContain('def convert(');
+    const { fileURLToPath } = await import('node:url');
+    const checker = fileURLToPath(new URL('../../../extensions/garmin/tests/check_health_contract.py', import.meta.url));
+    expect(execFileSync(python, [checker], { encoding: 'utf8', env: { ...process.env, BRAIN_HEALTH_MODULE_DIR: join(fixture.home, 'extensions', 'garmin', 'src') } })).toContain('건강 선택 18건, 집계 6건');
     expect(execFileSync(python, ['-c', 'import platform, psycopg; print(platform.python_version(), psycopg.__version__)'], { encoding: 'utf8' }).trim()).toBe('3.14.10 3.3.6');
     const roundtrip = execFileSync(python, ['-c', "import psycopg, sys; c=psycopg.connect(__import__('os').environ['TEST_DATABASE_URL']); r=c.execute('select %s::text, %s::bigint, %s::text', ('한글', 1700000000123, None)).fetchone(); print(r[0], r[1], r[2])"], { encoding: 'utf8', env: { ...process.env, TEST_DATABASE_URL: fixture.db.url } }).trim();
     expect(roundtrip).toBe('한글 1700000000123 None');
@@ -54,6 +59,7 @@ it('합성 snapshot과 문서를 실제 감독자로 이전하고 재실행한�
     };
     await runImport();
     await expect.poll(async () => Number((await fixture.db.rows("select count(*)::int as n from brain.document_extractions where status='ok'"))[0]?.n), { timeout: 20000 }).toBe(1);
+    expect(await fixture.db.rows("select definition->>'unit' as unit, definition->'mappings'->0->>'factor' as factor from brain.health_catalog_v1 where metric='daily_metric.steps'")).toEqual([{unit:'count',factor:'1'}]);
     expect(await fixture.db.rows('select source,dataset,metric,value,unit from brain.health_current_v1')).toMatchObject([{source:'garmin',dataset:'synthetic',metric:'steps',value:1234,unit:'count'}]);
     expect(await store.imports.readHealth()).toMatchObject({ ok: true, rows: [{ source: 'garmin', dataset: 'synthetic', value: 1234, time_zone: 'Asia/Seoul', time_zone_missing: false }] });
     await store.setSetting({key:'timezone',value:'America/New_York',updatedAt:new Date()});

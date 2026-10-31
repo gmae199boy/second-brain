@@ -10,6 +10,7 @@ from uuid import uuid7
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import psycopg
+from health import convert
 
 
 def digest(value):
@@ -120,7 +121,12 @@ def main():
                     if kind == 'raw':
                         cur.execute('insert into garmin.raw_payloads(dataset,batch,account,scope,original_key,endpoint,fetched_at_ms,checked_at_ms,library_version,body) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)', (dataset,batch,account,raw['scope'],raw['key'],raw['endpoint'],raw['fetched_at'],raw['checked_at'],raw['library_version'],raw['raw']))
                     elif kind == 'health':
-                        cur.execute('insert into brain.health_observations(id,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,value,unit,local_date,revision,fetched_at,normalization_version,time_zone,time_zone_missing,source_work_item_id,source_attempt_token) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,to_timestamp(%s / 1000.0),%s,%s,%s,%s,%s)', (ids[kind],'garmin',dataset,batch,table,key,account,confirmed,'steps',daily['steps'],'count',daily['day_key'],raw_hash,raw['fetched_at'],version,time_zone,time_zone is None,work,token))
+                        cur.execute("select definition from brain.health_catalog_v1 where metric='daily_metric.steps'")
+                        metric_row = cur.fetchone()
+                        if metric_row is None: raise ValueError('건강 catalog')
+                        metric = metric_row[0]
+                        steps = convert(metric, 'daily_metric', 'steps', daily['steps'])
+                        cur.execute('insert into brain.health_observations(id,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,value,unit,local_date,revision,fetched_at,normalization_version,time_zone,time_zone_missing,source_work_item_id,source_attempt_token) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,to_timestamp(%s / 1000.0),%s,%s,%s,%s,%s)', (ids[kind],'garmin',dataset,batch,table,key,account,confirmed,'steps',steps,metric['unit'],daily['day_key'],raw_hash,raw['fetched_at'],version,time_zone,time_zone is None,work,token))
                     else:
                         file_id = uuid7()
                         cur.execute('insert into garmin.import_mapping(dataset,original_table,original_key,target_kind,target_id,content_hash,batch) values (%s,%s,%s,%s,%s,%s,%s)', (dataset,table,key,'file',file_id,hashed,batch))

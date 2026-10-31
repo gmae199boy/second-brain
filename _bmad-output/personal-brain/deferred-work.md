@@ -458,3 +458,10 @@ source_spec: `tickets/epic-channels/tickets/story-resend-brain-channels-status-r
 severity: medium
 reason: v20에는 동일 시각 시도의 실제 삽입 순번이 없다. 0021은 확인 가능한 시각을 보존하고 동률만 식별자로 정렬한다. 다른 선후 증거가 확보되면 기존 공개 결과와 비교해야 한다.
 status: open
+
+### DW-35: 검토 필요: [ASSUMPTION] 원본 SQL에서 단위 근거가 없는 지표는 legacy_unspecified로 보존하고 숫자 집계를 금지한다.
+origin: spec-deferred 8a251508420b
+location: n/a
+source_spec: `tickets/epic-garmin-import/tickets/story-view-fixture-ts-python-ambiguity-plan.md`
+reason: 검토 필요: [ASSUMPTION] 원본 SQL에서 단위 근거가 없는 지표는 legacy_unspecified로 보존하고 숫자 집계를 금지한다.
+status: open

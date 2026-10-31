@@ -1,0 +1,1935 @@
+{
+  "version": 1,
+  "metrics": [
+    {
+      "metric": "daily_metric.steps",
+      "type": "number",
+      "unit": "count",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "steps",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 steps 원본 값"
+    },
+    {
+      "metric": "daily_metric.distance_m",
+      "type": "number",
+      "unit": "m",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "distance_m",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 distance_m 원본 값"
+    },
+    {
+      "metric": "daily_metric.active_kcal",
+      "type": "number",
+      "unit": "kcal",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "active_kcal",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 active_kcal 원본 값"
+    },
+    {
+      "metric": "daily_metric.moderate_intensity_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "moderate_intensity_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 moderate_intensity_s 원본 값"
+    },
+    {
+      "metric": "daily_metric.vigorous_intensity_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "vigorous_intensity_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 vigorous_intensity_s 원본 값"
+    },
+    {
+      "metric": "daily_metric.sleep_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "sleep_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 sleep_s 원본 값"
+    },
+    {
+      "metric": "daily_metric.deep_sleep_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "deep_sleep_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 deep_sleep_s 원본 값"
+    },
+    {
+      "metric": "daily_metric.light_sleep_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "light_sleep_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 light_sleep_s 원본 값"
+    },
+    {
+      "metric": "daily_metric.rem_sleep_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "rem_sleep_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 rem_sleep_s 원본 값"
+    },
+    {
+      "metric": "daily_metric.awake_sleep_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "awake_sleep_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 awake_sleep_s 원본 값"
+    },
+    {
+      "metric": "daily_metric.min_hr",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "min_hr",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 min_hr 원본 값"
+    },
+    {
+      "metric": "daily_metric.max_hr",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "max_hr",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 max_hr 원본 값"
+    },
+    {
+      "metric": "daily_metric.resting_hr",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "resting_hr",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 resting_hr 원본 값"
+    },
+    {
+      "metric": "daily_metric.hrv_last_night_avg",
+      "type": "number",
+      "unit": "legacy_unspecified",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "hrv_last_night_avg",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL에 단위 근거 없음",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 hrv_last_night_avg 원본 값"
+    },
+    {
+      "metric": "daily_metric.hrv_weekly_avg",
+      "type": "number",
+      "unit": "legacy_unspecified",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "hrv_weekly_avg",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL에 단위 근거 없음",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 hrv_weekly_avg 원본 값"
+    },
+    {
+      "metric": "daily_metric.hrv_baseline_low",
+      "type": "number",
+      "unit": "legacy_unspecified",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "hrv_baseline_low",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL에 단위 근거 없음",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 hrv_baseline_low 원본 값"
+    },
+    {
+      "metric": "daily_metric.hrv_baseline_high",
+      "type": "number",
+      "unit": "legacy_unspecified",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "hrv_baseline_high",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL에 단위 근거 없음",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 hrv_baseline_high 원본 값"
+    },
+    {
+      "metric": "daily_metric.readiness_score",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "readiness_score",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 readiness_score 원본 값"
+    },
+    {
+      "metric": "daily_metric.sleep_score",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "sleep_score",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 sleep_score 원본 값"
+    },
+    {
+      "metric": "daily_metric.stress_avg",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "stress_avg",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 stress_avg 원본 값"
+    },
+    {
+      "metric": "daily_metric.stress_max",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "stress_max",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 stress_max 원본 값"
+    },
+    {
+      "metric": "daily_metric.bb_charged",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "bb_charged",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 bb_charged 원본 값"
+    },
+    {
+      "metric": "daily_metric.bb_drained",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "bb_drained",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 bb_drained 원본 값"
+    },
+    {
+      "metric": "daily_metric.bb_high",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "bb_high",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 bb_high 원본 값"
+    },
+    {
+      "metric": "daily_metric.bb_low",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "bb_low",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 bb_low 원본 값"
+    },
+    {
+      "metric": "daily_metric.hrv_status",
+      "type": "text",
+      "unit": "category",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "hrv_status",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 hrv_status 원본 값"
+    },
+    {
+      "metric": "daily_metric.readiness_level",
+      "type": "text",
+      "unit": "category",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "readiness_level",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 readiness_level 원본 값"
+    },
+    {
+      "metric": "daily_metric.sleep_start_ms",
+      "type": "number",
+      "unit": "epoch_ms",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "sleep_start_ms",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 sleep_start_ms 원본 값"
+    },
+    {
+      "metric": "daily_metric.sleep_end_ms",
+      "type": "number",
+      "unit": "epoch_ms",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "daily_metric",
+          "column": "sleep_end_ms",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "daily_metric의 sleep_end_ms 원본 값"
+    },
+    {
+      "metric": "body_battery_sample.level",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "body_battery_sample",
+          "column": "level",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "body_battery_sample의 level 원본 값"
+    },
+    {
+      "metric": "stress_bb_sample.level",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "stress_bb_sample",
+          "column": "level",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "stress_bb_sample의 level 원본 값"
+    },
+    {
+      "metric": "hr_sample.bpm",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "hr_sample",
+          "column": "bpm",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "hr_sample의 bpm 원본 값"
+    },
+    {
+      "metric": "activity_hr_sample.bpm",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity_hr_sample",
+          "column": "bpm",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity_hr_sample의 bpm 원본 값"
+    },
+    {
+      "metric": "activity_hr_sample.body_battery",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity_hr_sample",
+          "column": "body_battery",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity_hr_sample의 body_battery 원본 값"
+    },
+    {
+      "metric": "activity.type_key",
+      "type": "text",
+      "unit": "category",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "type_key",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 type_key 원본 값"
+    },
+    {
+      "metric": "activity.start_ms",
+      "type": "number",
+      "unit": "epoch_ms",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "start_ms",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 start_ms 원본 값"
+    },
+    {
+      "metric": "activity.duration_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "duration_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 duration_s 원본 값"
+    },
+    {
+      "metric": "activity.hr_zone1_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "hr_zone1_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 hr_zone1_s 원본 값"
+    },
+    {
+      "metric": "activity.hr_zone2_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "hr_zone2_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 hr_zone2_s 원본 값"
+    },
+    {
+      "metric": "activity.hr_zone3_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "hr_zone3_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 hr_zone3_s 원본 값"
+    },
+    {
+      "metric": "activity.hr_zone4_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "hr_zone4_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 hr_zone4_s 원본 값"
+    },
+    {
+      "metric": "activity.hr_zone5_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "hr_zone5_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 hr_zone5_s 원본 값"
+    },
+    {
+      "metric": "activity.distance_m",
+      "type": "number",
+      "unit": "m",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "distance_m",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 distance_m 원본 값"
+    },
+    {
+      "metric": "activity.avg_hr",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "avg_hr",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 avg_hr 원본 값"
+    },
+    {
+      "metric": "activity.max_hr",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "max_hr",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 max_hr 원본 값"
+    },
+    {
+      "metric": "activity.hr_zone1_low_bpm",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "hr_zone1_low_bpm",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 hr_zone1_low_bpm 원본 값"
+    },
+    {
+      "metric": "activity.hr_zone2_low_bpm",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "hr_zone2_low_bpm",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 hr_zone2_low_bpm 원본 값"
+    },
+    {
+      "metric": "activity.hr_zone3_low_bpm",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "hr_zone3_low_bpm",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 hr_zone3_low_bpm 원본 값"
+    },
+    {
+      "metric": "activity.hr_zone4_low_bpm",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "hr_zone4_low_bpm",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 hr_zone4_low_bpm 원본 값"
+    },
+    {
+      "metric": "activity.hr_zone5_low_bpm",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity",
+          "column": "hr_zone5_low_bpm",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity의 hr_zone5_low_bpm 원본 값"
+    },
+    {
+      "metric": "exercise_set.category",
+      "type": "text",
+      "unit": "category",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "exercise_set",
+          "column": "category",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "exercise_set의 category 원본 값"
+    },
+    {
+      "metric": "exercise_set.exercise_name",
+      "type": "text",
+      "unit": "category",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "exercise_set",
+          "column": "exercise_name",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "exercise_set의 exercise_name 원본 값"
+    },
+    {
+      "metric": "exercise_set.reps",
+      "type": "number",
+      "unit": "count",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "exercise_set",
+          "column": "reps",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "exercise_set의 reps 원본 값"
+    },
+    {
+      "metric": "exercise_set.is_rest",
+      "type": "number",
+      "unit": "boolean_code",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "exercise_set",
+          "column": "is_rest",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 스키마에서 NULL 불가",
+      "meaning": "휴식 세트는 1, 활동 세트는 0"
+    },
+    {
+      "metric": "exercise_set.weight_g",
+      "type": "number",
+      "unit": "g",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "exercise_set",
+          "column": "weight_g",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "exercise_set의 weight_g 원본 값"
+    },
+    {
+      "metric": "exercise_set.duration_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "exercise_set",
+          "column": "duration_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "exercise_set의 duration_s 원본 값"
+    },
+    {
+      "metric": "activity_recovery.end_ms",
+      "type": "number",
+      "unit": "epoch_ms",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "activity_recovery",
+          "column": "end_ms",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity_recovery의 end_ms 원본 값"
+    },
+    {
+      "metric": "activity_recovery.ts_1min_ms",
+      "type": "number",
+      "unit": "epoch_ms",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "activity_recovery",
+          "column": "ts_1min_ms",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity_recovery의 ts_1min_ms 원본 값"
+    },
+    {
+      "metric": "activity_recovery.ts_2min_ms",
+      "type": "number",
+      "unit": "epoch_ms",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "activity_recovery",
+          "column": "ts_2min_ms",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity_recovery의 ts_2min_ms 원본 값"
+    },
+    {
+      "metric": "activity_recovery.end_bpm",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity_recovery",
+          "column": "end_bpm",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity_recovery의 end_bpm 원본 값"
+    },
+    {
+      "metric": "activity_recovery.bpm_1min",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity_recovery",
+          "column": "bpm_1min",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity_recovery의 bpm_1min 원본 값"
+    },
+    {
+      "metric": "activity_recovery.bpm_2min",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity_recovery",
+          "column": "bpm_2min",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity_recovery의 bpm_2min 원본 값"
+    },
+    {
+      "metric": "activity_recovery.hrr1",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity_recovery",
+          "column": "hrr1",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity_recovery의 hrr1 원본 값"
+    },
+    {
+      "metric": "activity_recovery.hrr2",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "activity_recovery",
+          "column": "hrr2",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "activity_recovery의 hrr2 원본 값"
+    },
+    {
+      "metric": "day_summary.sleep_total_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "sleep_total_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 sleep_total_s 원본 값"
+    },
+    {
+      "metric": "day_summary.sleep_deep_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "sleep_deep_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 sleep_deep_s 원본 값"
+    },
+    {
+      "metric": "day_summary.sleep_light_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "sleep_light_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 sleep_light_s 원본 값"
+    },
+    {
+      "metric": "day_summary.sleep_rem_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "sleep_rem_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 sleep_rem_s 원본 값"
+    },
+    {
+      "metric": "day_summary.sleep_awake_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "sleep_awake_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 sleep_awake_s 원본 값"
+    },
+    {
+      "metric": "day_summary.stress_high_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "stress_high_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 stress_high_s 원본 값"
+    },
+    {
+      "metric": "day_summary.moderate_min",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "moderate_min",
+          "factor": 60
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 moderate_min 원본 값"
+    },
+    {
+      "metric": "day_summary.vigorous_min",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "vigorous_min",
+          "factor": 60
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 vigorous_min 원본 값"
+    },
+    {
+      "metric": "day_summary.weight_kg",
+      "type": "number",
+      "unit": "g",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "weight_kg",
+          "factor": 1000
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 weight_kg 원본 값"
+    },
+    {
+      "metric": "day_summary.steps",
+      "type": "number",
+      "unit": "count",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "steps",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 steps 원본 값"
+    },
+    {
+      "metric": "day_summary.active_kcal",
+      "type": "number",
+      "unit": "kcal",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "active_kcal",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 active_kcal 원본 값"
+    },
+    {
+      "metric": "day_summary.sleep_score",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "sleep_score",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 sleep_score 원본 값"
+    },
+    {
+      "metric": "day_summary.sleep_hr_min",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "sleep_hr_min",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 sleep_hr_min 원본 값"
+    },
+    {
+      "metric": "day_summary.hrv_avg",
+      "type": "number",
+      "unit": "legacy_unspecified",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "hrv_avg",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL에 단위 근거 없음",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 hrv_avg 원본 값"
+    },
+    {
+      "metric": "day_summary.spo2_avg",
+      "type": "number",
+      "unit": "legacy_unspecified",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "spo2_avg",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL에 단위 근거 없음",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 spo2_avg 원본 값"
+    },
+    {
+      "metric": "day_summary.spo2_min",
+      "type": "number",
+      "unit": "legacy_unspecified",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "spo2_min",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL에 단위 근거 없음",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 spo2_min 원본 값"
+    },
+    {
+      "metric": "day_summary.resp_avg",
+      "type": "number",
+      "unit": "legacy_unspecified",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "resp_avg",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL에 단위 근거 없음",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 resp_avg 원본 값"
+    },
+    {
+      "metric": "day_summary.wake_bb",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "wake_bb",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 wake_bb 원본 값"
+    },
+    {
+      "metric": "day_summary.bb_high",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "bb_high",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 bb_high 원본 값"
+    },
+    {
+      "metric": "day_summary.bb_low",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "bb_low",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 bb_low 원본 값"
+    },
+    {
+      "metric": "day_summary.bb_charged",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "bb_charged",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 bb_charged 원본 값"
+    },
+    {
+      "metric": "day_summary.bb_drained",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "bb_drained",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 bb_drained 원본 값"
+    },
+    {
+      "metric": "day_summary.stress_avg",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "stress_avg",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 stress_avg 원본 값"
+    },
+    {
+      "metric": "day_summary.resting_hr",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "resting_hr",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 resting_hr 원본 값"
+    },
+    {
+      "metric": "day_summary.sleep_hr_min_time",
+      "type": "text",
+      "unit": "category",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "sleep_hr_min_time",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 sleep_hr_min_time 원본 값"
+    },
+    {
+      "metric": "day_summary.drinks_json",
+      "type": "json",
+      "unit": "json",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "day_summary",
+          "column": "drinks_json",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "day_summary의 drinks_json 원본 값"
+    },
+    {
+      "metric": "workout.type",
+      "type": "text",
+      "unit": "category",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "workout",
+          "column": "type",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "workout의 type 원본 값"
+    },
+    {
+      "metric": "workout.start_ms",
+      "type": "number",
+      "unit": "epoch_ms",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "workout",
+          "column": "start_ms",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "workout의 start_ms 원본 값"
+    },
+    {
+      "metric": "workout.duration_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "workout",
+          "column": "duration_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "workout의 duration_s 원본 값"
+    },
+    {
+      "metric": "workout.zone1_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "workout",
+          "column": "zone1_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "workout의 zone1_s 원본 값"
+    },
+    {
+      "metric": "workout.zone2_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "workout",
+          "column": "zone2_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "workout의 zone2_s 원본 값"
+    },
+    {
+      "metric": "workout.zone3_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "workout",
+          "column": "zone3_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "workout의 zone3_s 원본 값"
+    },
+    {
+      "metric": "workout.zone4_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "workout",
+          "column": "zone4_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "workout의 zone4_s 원본 값"
+    },
+    {
+      "metric": "workout.zone5_s",
+      "type": "number",
+      "unit": "s",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "workout",
+          "column": "zone5_s",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "workout의 zone5_s 원본 값"
+    },
+    {
+      "metric": "workout.hr_avg",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "workout",
+          "column": "hr_avg",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "workout의 hr_avg 원본 값"
+    },
+    {
+      "metric": "workout.hr_max",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "workout",
+          "column": "hr_max",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "workout의 hr_max 원본 값"
+    },
+    {
+      "metric": "workout.bb_change",
+      "type": "number",
+      "unit": "score",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "workout",
+          "column": "bb_change",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "workout의 bb_change 원본 값"
+    },
+    {
+      "metric": "workout.session_no",
+      "type": "number",
+      "unit": "count",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "workout",
+          "column": "session_no",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "workout의 session_no 원본 값"
+    },
+    {
+      "metric": "exercise_log.sets",
+      "type": "number",
+      "unit": "count",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "exercise_log",
+          "column": "sets",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "exercise_log의 sets 원본 값"
+    },
+    {
+      "metric": "exercise_log.reps",
+      "type": "number",
+      "unit": "count",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "exercise_log",
+          "column": "reps",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "exercise_log의 reps 원본 값"
+    },
+    {
+      "metric": "exercise_log.set_peak_hr_avg",
+      "type": "number",
+      "unit": "bpm",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "exercise_log",
+          "column": "set_peak_hr_avg",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "exercise_log의 set_peak_hr_avg 원본 값"
+    },
+    {
+      "metric": "exercise_log.rest_drop_avg",
+      "type": "number",
+      "unit": "legacy_unspecified",
+      "aggregations": [],
+      "mappings": [
+        {
+          "table": "exercise_log",
+          "column": "rest_drop_avg",
+          "factor": 1
+        }
+      ],
+      "basis": "원본 SQL에 단위 근거 없음",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "exercise_log의 rest_drop_avg 원본 값"
+    },
+    {
+      "metric": "exercise_log.max_kg",
+      "type": "number",
+      "unit": "g",
+      "aggregations": [
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "exercise_log",
+          "column": "max_kg",
+          "factor": 1000
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "exercise_log의 max_kg 원본 값"
+    },
+    {
+      "metric": "exercise_log.volume_kg",
+      "type": "number",
+      "unit": "g_repetitions",
+      "aggregations": [
+        "sum",
+        "mean"
+      ],
+      "mappings": [
+        {
+          "table": "exercise_log",
+          "column": "volume_kg",
+          "factor": 1000
+        }
+      ],
+      "basis": "원본 SQL 열 이름·주석 및 지표 의미",
+      "nullMeaning": "원본 결측·센티넬 또는 정규화 실패로 원인을 구별할 수 없음",
+      "meaning": "반복 부하의 합, 체중과 구별"
+    }
+  ]
+}

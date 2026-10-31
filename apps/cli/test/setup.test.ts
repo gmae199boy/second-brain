@@ -41,7 +41,7 @@ it('installs when the argv it asked for is run back, and only then', async () =>
 
   const accepted = await run(refused.envelope.error.retry_argv.slice(1));
   expect(accepted.code).toBe(0);
-  expect(accepted.envelope).toMatchObject({ ok: true, data: { mirror_path: mirror, postgres: { schema_version: 22 }, harnesses: [{ harness: 'demo' }] } });
+  expect(accepted.envelope).toMatchObject({ ok: true, data: { mirror_path: mirror, postgres: { schema_version: 23 }, harnesses: [{ harness: 'demo' }] } });
   expect(await readInstalled(home)).toMatchObject({ plugin_root: plugin });
 });
 
@@ -54,8 +54,8 @@ it('sets up the same PG home through flags, imports disk transcripts and writes 
   const folder = join(configDir, 'projects', '-fixture'); await mkdir(folder, { recursive: true });
   await writeFile(join(folder, 'fixture.jsonl'), await readFile(new URL('../../../packages/claude-code/test/fixtures/two-turns.jsonl', import.meta.url)));
   const result = await runInstallerWithFlags({ yes: true, help: false, connect: [] }, env, deps);
-  expect(result, JSON.stringify(result)).toMatchObject({ ok: true, report: { postgres: { schema_version: 22, import: { enqueued: 1 } } } });
-  expect(await readInstalled(home)).toMatchObject({ schema_version: 22 });
+  expect(result, JSON.stringify(result)).toMatchObject({ ok: true, report: { postgres: { schema_version: 23, import: { enqueued: 1 } } } });
+  expect(await readInstalled(home)).toMatchObject({ schema_version: 23 });
   const doctor = await runPgCommand(['doctor', 'run', '--json'], env);
   expect(doctor.code).toBe(0);
   const checks = JSON.parse(doctor.stdout).data.checks;
