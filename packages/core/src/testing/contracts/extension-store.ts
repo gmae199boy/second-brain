@@ -4,12 +4,50 @@ import { assertEqual, assertOk } from '../assert.js';
 import { contractCase, withSubject, type ContractCase } from '../contract.js';
 export function extensionStoreContract(): ContractCase<ExtensionStore>[] {
   const now = new Date('2026-10-29T00:00:00.000Z'), next = new Date('2026-10-29T01:00:00.000Z');
-  return [contractCase('설치 전 진행 기록을 저장하고 오래되거나 안전하지 않은 쓰기를 거부한다', async make => {
+  return [contractCase('inventory는 registry와 journal 이름을 정렬하고 중복 제거한다', async make => {
+    await withSubject(make, async store => {
+      const progress = (name: string): ExtensionInstallProgress => ({ name, packageDigest: 'a'.repeat(64), result: 'failed', failedStage: 'package', lastFailure: { stage: 'package', code: 'EXTENSION_NOT_FOUND', at: now.toISOString() }, stages: {}, authWorkId: null, scheduleIds: [] });
+      assertEqual(await store.listExtensionInventory(), { ok: true, names: [] }, '빈 inventory');
+      assertOk(await store.recordExtensionInstall({ name: 'zeta', version: '1', now }), 'registry 전용');
+      assertOk(await store.recordExtensionInstall({ name: 'both', version: '1', now }), '양쪽 registry');
+      assertOk(await store.writeExtensionInstallProgress({ expectedRevision: null, progress: progress('both') }), '양쪽 journal');
+      assertOk(await store.writeExtensionInstallProgress({ expectedRevision: null, progress: progress('alpha') }), 'journal 전용');
+      assertEqual(await store.listExtensionInventory(), { ok: true, names: ['alpha', 'both', 'zeta'] }, '정렬된 합집합');
+      const installed = await store.listExtensions(); assertOk(installed, '설치 목록');
+      assertEqual(installed.extensions.map(row => row.name), ['both', 'zeta'], '설치 목록 의미 유지');
+    });
+  }), contractCase('로그인 미완료 설치 기록을 공개 상태로 구분한다', async make => {
+    await withSubject(make, async store => {
+      const progress: ExtensionInstallProgress = { name: 'testext', packageDigest: 'a'.repeat(64), result: 'login_required', failedStage: null, lastFailure: null,
+        stages: { login: { status: 'pending', code: 'LOGIN_REQUIRED', at: now.toISOString() } }, authWorkId: null, scheduleIds: [] };
+      assertOk(await store.recordExtensionInstall({ name: 'testext', version: '1', now }), '설치 등록');
+      assertOk(await store.writeExtensionInstallProgress({ expectedRevision: null, progress }), '로그인 기록');
+      const status = await store.getExtensionPublicStatus('testext'); assertOk(status, '공개 조회');
+      assertEqual([status.status.installed, status.status.enabled, status.status.installResult, status.status.login?.status, status.status.login?.code], [true, true, 'login_required', 'pending', 'LOGIN_REQUIRED'], '로그인 미완료');
+    });
+  }), contractCase('공개 상태와 활성 변경은 비밀을 제외하고 멱등이다', async make => {
+    await withSubject(make, async store => {
+      const missing = await store.getExtensionPublicStatus('testext'); assertOk(missing, '미설치 조회');
+      assertEqual([missing.status.installed, missing.status.journalPresent, missing.status.enabled], [false, false, null], '미설치 상태');
+      assertEqual(await store.setExtensionEnabled({ name: 'testext', enabled: false, now }), { ok: true, found: false, changed: false }, '미설치 변경');
+      assertOk(await store.recordExtensionInstall({ name: 'testext', version: '1', now }), '설치');
+      assertOk(await store.recordExtensionConnection({ name: 'testext', status: 'failed', code: 'REFUSED', message: 'password=secret-canary', checkedAt: now }), '연결 실패');
+      assertEqual(await store.setExtensionEnabled({ name: 'testext', enabled: false, now }), { ok: true, found: true, changed: true }, '비활성');
+      assertEqual(await store.setExtensionEnabled({ name: 'testext', enabled: false, now: next }), { ok: true, found: true, changed: false }, '반복 비활성');
+      const disabled = await store.getExtensionPublicStatus('testext'); assertOk(disabled, '공개 상태');
+      assertEqual([disabled.status.enabled, disabled.status.connection.code, JSON.stringify(disabled).includes('secret-canary')], [false, 'REFUSED', false], '안전한 상태');
+      assertEqual(await store.setExtensionEnabled({ name: 'testext', enabled: true, now: next }), { ok: true, found: true, changed: true }, '활성');
+      assertEqual(await store.setExtensionEnabled({ name: 'testext', enabled: true, now: next }), { ok: true, found: true, changed: false }, '반복 활성');
+    });
+  }), contractCase('설치 전 진행 기록을 저장하고 오래되거나 안전하지 않은 쓰기를 거부한다', async make => {
     await withSubject(make, async store => {
       const progress: ExtensionInstallProgress = { name: 'testext', packageDigest: 'a'.repeat(64), result: 'failed', failedStage: 'migration', lastFailure: { stage: 'migration', code: 'MIGRATION_FAILED', at: now.toISOString() }, stages: { package: { status: 'succeeded', code: null, at: now.toISOString() }, migration: { status: 'failed', code: 'MIGRATION_FAILED', at: next.toISOString() } }, authWorkId: null, scheduleIds: [] };
       assertEqual(await store.getExtensionInstallProgress('testext'), { ok: true, journal: null }, '기록 없음');
       assertEqual(await store.writeExtensionInstallProgress({ expectedRevision: null, progress }), { ok: true, written: true, revision: 1 }, '생성');
       assertEqual(await store.getExtension('testext'), { ok: true, extension: null }, '진행 기록은 설치 행을 만들지 않음');
+      const publicJournal = await store.getExtensionPublicStatus('testext'); assertOk(publicJournal, '설치 전 공개 진행');
+      assertEqual([publicJournal.status.installed, publicJournal.status.journalPresent, publicJournal.status.installResult, publicJournal.status.failedStage, publicJournal.status.lastFailure?.code], [false, true, 'failed', 'migration', 'MIGRATION_FAILED'], '설치 전 실패 구분');
+      assertEqual(JSON.stringify(publicJournal).includes(progress.packageDigest), false, '패키지 내부 정보 제외');
       assertEqual(await store.getExtensionInstallProgress('testext'), { ok: true, journal: { revision: 1, progress } }, '기록 재조회');
       const nextProgress = structuredClone(progress); nextProgress.result = 'cancelled';
       const races = await Promise.all([store.writeExtensionInstallProgress({ expectedRevision: 1, progress: nextProgress }), store.writeExtensionInstallProgress({ expectedRevision: 1, progress })]);

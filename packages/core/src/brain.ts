@@ -3,7 +3,7 @@ import { expandRecall, type ExpandInput } from './recall/expand.js';
 import { readSessionPage, type ReadInput } from './sessions/read.js';
 import { CONVERSATION_CHUNK_KIND, conversationChunkHandler } from './recall/conversation-work.js';
 import { installExtension, type ExtensionRuntime } from './extensions/install.js';
-import { extensionStatus, listExtensions } from './extensions/status.js';
+import { extensionStatus, listExtensions, publicExtensionStatus, setExtensionEnabled } from './extensions/status.js';
 import { holdWorkGroup, releaseWorkGroup } from './queue/hold-groups.js';
 import { listWork } from './queue/list.js';
 import { workExecutionClass } from './domain/work-item.js';
@@ -243,8 +243,11 @@ export interface BrainSchedules {
 }
 export interface BrainExt {
   install(input: { name: string; signal?: AbortSignal }): ReturnType<typeof installExtension>;
-  status(input: { name: string }): ReturnType<typeof extensionStatus>;
+  status(input: { name: string }): ReturnType<typeof publicExtensionStatus>;
   list(): ReturnType<typeof listExtensions>;
+  publicStatus(input: { name: string }): ReturnType<typeof publicExtensionStatus>;
+  enable(input: { name: string }): ReturnType<typeof setExtensionEnabled>;
+  disable(input: { name: string }): ReturnType<typeof setExtensionEnabled>;
 }
 export interface Brain {
   recall: { chunks(input: SearchInput): ReturnType<typeof searchRecall>; tools(input: SearchInput): ReturnType<typeof searchRecall>; expand(input: ExpandInput): ReturnType<typeof expandRecall> };
@@ -398,13 +401,14 @@ export function createBrain(dependencies: BrainDependencies): Brain {
   const readTimeZone = () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' });
   return {
     recall: { chunks: input => searchRecall(store, 'chunks', input), tools: input => searchRecall(store, 'tools', input), expand: input => expandRecall(store, input) },
-    ext: { install: input => installExtension({ ...dependencies, readTimeZone }, input), status: input => extensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
+    ext: { publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
     files: { redact: (input) => redactFile({ store, clock, idGen }, input) },
     doctor: {
       run: () =>
         runDoctor(store, {
           schemaVersions,
+          extensionStore: store,
           store,
           clock,
           folders: transcriptFolders,

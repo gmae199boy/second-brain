@@ -1,4 +1,4 @@
-import { validInstallProgress, type ExtensionInstallProgress, type ExtensionRecord, type ExtensionStore } from '@second-brain/core';
+import { extensionPublicProjection, validInstallProgress, type ExtensionInstallProgress, type ExtensionRecord, type ExtensionStore } from '@second-brain/core';
 import { sql } from 'kysely';
 import { databaseFailure, type PgConnect } from './connect.js';
 import { withWrite } from './write.js';
@@ -6,6 +6,41 @@ type Row = { name: string; version: string; installed_at: string; enabled: boole
 const record = (r: Row): ExtensionRecord => ({ name: r.name, version: r.version, installedAt: new Date(r.installed_at), enabled: r.enabled, enabledChangedAt: new Date(r.enabled_changed_at), connectionStatus: r.connection_status, connectionCheckedAt: r.connection_checked_at === null ? null : new Date(r.connection_checked_at), connectionCode: r.connection_code, connectionMessage: r.connection_message });
 export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
   return {
+    async listExtensionInventory() {
+      const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const result = await sql<{ name: string }>`select name from (select name from brain.extensions union select name from brain.extension_install_progress) inventory order by name collate "C"`.execute(opened.connection.db);
+        return { ok: true, names: result.rows.map(row => row.name) };
+      } catch (error) { return databaseFailure(error); }
+    },
+    async getExtensionPublicStatus(name) {
+      const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const result = await sql<{ extension: Row | null; progress: ExtensionInstallProgress | null; held_schedules: number; interrupted_work: number; python: { status: 'succeeded' | 'failed'; code: string | null; checked_at: string } | null }>`
+          select (select row_to_json(e) from brain.extensions e where e.name = ${name}) as extension,
+            (select p.progress from brain.extension_install_progress p where p.name = ${name}) as progress,
+            (select row_to_json(p) from brain.extension_python_environment p where p.name = ${name}) as python,
+            (select count(*)::int from brain.schedules s join brain.work_hold_groups h on h.name = s.hold_group where h.name = ${'extension:' + name}) as held_schedules,
+            (select count(*)::int from brain.work_items w join brain.work_hold_groups h on h.name = w.hold_group where h.name = ${'extension:' + name} and w.completed_at is null) as interrupted_work`.execute(opened.connection.db);
+        const row = result.rows[0]!;
+        return { ok: true, status: extensionPublicProjection(name, row.extension ? record(row.extension) : null, row.progress && validInstallProgress(row.progress) ? row.progress : null, row.held_schedules, row.interrupted_work, row.python ? { status: row.python.status, code: row.python.code, checkedAt: new Date(row.python.checked_at) } : null) };
+      } catch (error) { return databaseFailure(error); }
+    },
+    async setExtensionEnabled({ name, enabled, now }) {
+      const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      const result = await withWrite(opened.connection, async held => {
+        const rows = await sql<{ enabled: boolean }>`select enabled from brain.extensions where name=${name} for update`.execute(held);
+        const row = rows.rows[0];
+        if (!row) return { found: false, changed: false };
+        const changed = row.enabled !== enabled;
+        if (changed) await sql`update brain.extensions set enabled=${enabled}, enabled_changed_at=${now.toISOString()} where name=${name}`.execute(held);
+        const group = `extension:${name}`;
+        if (enabled) await sql`delete from brain.work_hold_groups where name=${group}`.execute(held);
+        else await sql`insert into brain.work_hold_groups(name, held_at) values (${group}, ${now.toISOString()}) on conflict(name) do nothing`.execute(held);
+        return { found: true, changed };
+      });
+      return result.ok ? { ok: true, ...result.value } : result;
+    },
     async getExtensionInstallProgress(name) {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {

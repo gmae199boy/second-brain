@@ -156,7 +156,11 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
-        const result = await withWrite(opened.connection, async held => (await sql`delete from brain.work_hold_groups where name = ${group} returning name`.execute(held)).rows.length > 0);
+        const result = await withWrite(opened.connection, async held => {
+          const registry = await sql<{ enabled: boolean }>`select enabled from brain.extensions where 'extension:' || name = ${group} for update`.execute(held);
+          if (registry.rows[0]?.enabled === false) return false;
+          return (await sql`delete from brain.work_hold_groups where name = ${group} returning name`.execute(held)).rows.length > 0;
+        });
         return result.ok ? { ok: true, released: result.value } : result;
       } catch (error) { return databaseFailure(error); }
     },

@@ -424,6 +424,7 @@ describe('createBrain', () => {
       'untagged',
       'transcripts',
       ...workCheckIds,
+      'extensions',
       'shim',
     ]);
 
@@ -446,6 +447,7 @@ describe('createBrain', () => {
       'untagged',
       'transcripts',
       ...workCheckIds,
+      'extensions',
     ]);
   });
 });
@@ -548,4 +550,61 @@ it('fails the model usage check when the store cannot be read', async () => {
   const store = { ...memoryStore(), async readModelWorkUsage() { return { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: '읽기 실패' }; } };
   const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store });
   expect(report.checks).toContainEqual({ id: 'work-model-usage', status: 'fail', code: 'DB_UNAVAILABLE', detail: '읽기 실패' });
+});
+
+it('확장 진단은 공개 상태의 비활성과 보류 수를 표시한다', async () => {
+  const store = memoryStore();
+  const now = new Date('2026-10-31T00:00:00Z');
+  await store.recordExtensionInstall({ name: 'testext', version: '1', now });
+  await store.addWork({ id: '00000000-0000-4000-8000-000000000001', kind: 'testext.job', targetKind: 'test', targetId: '1', createdAt: now, nextAttemptAt: now });
+  await store.setExtensionEnabled({ name: 'testext', enabled: false, now });
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store, extensionStore: store });
+  expect(report.checks).toContainEqual(expect.objectContaining({ id: 'extensions', status: 'warn', detail: expect.stringContaining('testext: 비활성, 중단 일감 1건, 보류 예약 0건') }));
+});
+it('확장 상태 조회 실패는 정상 진단으로 보고하지 않는다', async () => {
+  const store = memoryStore();
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store, extensionStore: { ...store, async listExtensionInventory() { return { ok: false, code: 'DB_UNAVAILABLE', message: '조회 실패' }; } } });
+  expect(report.checks).toContainEqual({ id: 'extensions', status: 'fail', code: 'DB_UNAVAILABLE', detail: '조회 실패' });
+});
+
+it.each(['login_required', 'connection_failed', 'scheduler_unavailable', 'failed', 'cancelled'] as const)('설치 결과 %s는 활성 확장도 경고한다', async result => {
+  const store = memoryStore(); const now = new Date('2026-10-31T00:00:00.000Z');
+  await store.recordExtensionInstall({ name: 'testext', version: '1', now });
+  await store.writeExtensionInstallProgress({ expectedRevision: null, progress: { name: 'testext', packageDigest: 'a'.repeat(64), result,
+    failedStage: 'login', lastFailure: { stage: 'login', code: 'LOGIN_REQUIRED', at: now.toISOString() },
+    stages: result === 'login_required' ? { login: { status: 'pending', code: 'LOGIN_REQUIRED', at: now.toISOString() } } : {}, authWorkId: null, scheduleIds: [] } });
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store, extensionStore: store });
+  const check = report.checks.find(entry => entry.id === 'extensions');
+  expect(check).toMatchObject({ status: 'warn', detail: expect.stringContaining(`설치 결과 ${result}`) });
+  if (result === 'login_required') expect(check?.detail).toContain('로그인 pending (LOGIN_REQUIRED)');
+  expect(check?.detail).toContain('마지막 실패 login (LOGIN_REQUIRED)');
+});
+it('registry 없이 설치 실패 journal만 있으면 doctor가 경고와 고정 코드를 표시한다', async () => {
+  const store = memoryStore(); const now = new Date('2026-10-31T00:00:00.000Z');
+  await store.writeExtensionInstallProgress({ expectedRevision: null, progress: { name: 'missingext', packageDigest: 'a'.repeat(64), result: 'failed', failedStage: 'package',
+    lastFailure: { stage: 'package', code: 'EXTENSION_NOT_FOUND', at: now.toISOString() }, stages: {}, authWorkId: null, scheduleIds: [] } });
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store, extensionStore: store });
+  const check = report.checks.find(entry => entry.id === 'extensions');
+  expect(check).toMatchObject({ status: 'warn', detail: expect.stringContaining('missingext: 미설치') });
+  expect(check?.detail).toContain('설치 결과 failed'); expect(check?.detail).toContain('package (EXTENSION_NOT_FOUND)');
+});
+it('활성 확장의 연결 실패는 경고하고 원문 진단을 출력하지 않는다', async () => {
+  const store = memoryStore(); const now = new Date('2026-10-31T00:00:00.000Z');
+  await store.recordExtensionInstall({ name: 'testext', version: '1', now });
+  await store.recordExtensionConnection({ name: 'testext', status: 'failed', code: 'REFUSED', message: 'SECRET_CANARY', checkedAt: now });
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store, extensionStore: store });
+  const check = report.checks.find(entry => entry.id === 'extensions');
+  expect(check).toMatchObject({ status: 'warn', detail: expect.stringContaining('연결 failed (REFUSED)') });
+  expect(JSON.stringify(report)).not.toContain('SECRET_CANARY');
+});
+it('미기록 legacy 상태는 실패가 아니다', async () => {
+  const store = memoryStore(); const now = new Date('2026-10-31T00:00:00.000Z');
+  await store.recordExtensionInstall({ name: 'testext', version: '1', now });
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store, extensionStore: store });
+  expect(report.checks).toContainEqual(expect.objectContaining({ id: 'extensions', status: 'ok', detail: expect.stringContaining('설치 결과 미기록') }));
+});
+it('개별 공개 상태 조회 실패는 진단 실패다', async () => {
+  const store = memoryStore(); await store.recordExtensionInstall({ name: 'testext', version: '1', now: new Date() });
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store, extensionStore: { ...store, async getExtensionPublicStatus() { return { ok: false, code: 'DB_UNAVAILABLE', message: '상태 조회 실패' }; } } });
+  expect(report.checks).toContainEqual({ id: 'extensions', status: 'fail', code: 'DB_UNAVAILABLE', detail: '상태 조회 실패' });
 });

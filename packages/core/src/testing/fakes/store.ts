@@ -1,3 +1,4 @@
+import { extensionPublicProjection } from '../../extensions/public-projection.js';
 import { validInstallProgress } from '../../extensions/install-progress.js';
 import { conversationFingerprint } from '../../recall/conversation-fingerprint.js';
 import { attemptUsage } from '../../queue/list.js';
@@ -503,6 +504,23 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       const literal = pattern.slice(1, -1).replaceAll('\0', '�').replace(/\\([\\%_])/g, '$1').toLowerCase();
       return { ok: true, chunks: structuredClone(conversationChunks.filter(c => c.body.replaceAll('\0', '�').toLowerCase().includes(literal))) };
     },
+    async listExtensionInventory() { return { ok: true, names: [...new Set([...extensions.keys(), ...installProgress.keys()])].sort() }; },
+    async getExtensionPublicStatus(name) {
+      const group = `extension:${name}`;
+      const held = heldGroups.has(group);
+      return { ok: true, status: structuredClone(extensionPublicProjection(name, extensions.get(name) ?? null, installProgress.get(name)?.progress ?? null,
+        held ? [...schedules.values()].filter(row => row.holdGroup === group).length : 0,
+        held ? workItems.filter(row => row.holdGroup === group && row.completedAt === null).length : 0, pythonEnvironments.get(name) ?? null)) };
+    },
+    async setExtensionEnabled({ name, enabled, now }) {
+      const row = extensions.get(name);
+      if (!row) return { ok: true, found: false, changed: false };
+      const changed = row.enabled !== enabled;
+      if (changed) { row.enabled = enabled; row.enabledChangedAt = new Date(now); }
+      const group = `extension:${name}`;
+      if (enabled) heldGroups.delete(group); else if (!heldGroups.has(group)) heldGroups.set(group, new Date(now));
+      return { ok: true, found: true, changed };
+    },
     async getExtensionInstallProgress(name) { return { ok: true, journal: structuredClone(installProgress.get(name) ?? null) }; },
     async writeExtensionInstallProgress({ expectedRevision, progress }) {
       if (!validInstallProgress(progress) || !(expectedRevision === null || (Number.isSafeInteger(expectedRevision) && expectedRevision > 0 && expectedRevision < 2147483647))) return { ok: false, code: 'INVALID_INSTALL_PROGRESS', message: '잘못된 설치 진행 기록입니다' };
@@ -535,7 +553,10 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       if (held) heldGroups.set(group, new Date(now));
       return { ok: true, held };
     },
-    async releaseWorkGroup({ group }) { return { ok: true, released: heldGroups.delete(group) }; },
+    async releaseWorkGroup({ group }) {
+      const extension = group.startsWith('extension:') ? extensions.get(group.slice('extension:'.length)) : undefined;
+      return { ok: true, released: extension?.enabled === false ? false : heldGroups.delete(group) };
+    },
     async listSchedules({ limit }) {
       const rows = [...schedules.values()].sort((a,b) => a.createdAt.getTime()-b.createdAt.getTime() || a.id.localeCompare(b.id));
       return { ok: true, schedules: structuredClone(rows.slice(0, limit).map(row => ({ ...row, held: isHeld(row.holdGroup) }))), hasMore: rows.length > limit };

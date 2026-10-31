@@ -65,3 +65,21 @@ it('lets user cancellation close held queued work', async () => {
   expect(await k.brain.queue.list({ all: true })).toMatchObject({ items: [{ state: 'cancelled' }] });
   await k.brain.queue.release({ group: 'extension:testext' }); await k.drain(); expect(k.handled).toEqual([]);
 });
+it('확장 활성 SDK가 같은 그룹 일감을 보류하고 재개한다', async () => {
+  const k = kit();
+  await k.store.recordExtensionInstall({ name: 'testext', version: '1', now: k.time.clock.now() });
+  await k.store.recordExtensionConnection({ name: 'testext', status: 'failed', code: 'REFUSED', message: 'CANARY_SECRET', checkedAt: k.time.clock.now() });
+  expect(JSON.stringify(await k.brain.ext.list())).not.toContain('CANARY_SECRET');
+  await k.add('testext.job', 'held'); await k.add('otherext.job', 'other');
+  expect(await k.brain.ext.disable({ name: 'testext' })).toMatchObject({ ok: true, changed: true });
+  const now = k.time.clock.now();
+  const schedule = await k.store.addSchedule({ id: '00000000-0000-7000-8000-000000000101', kind: 'schedule_probe', holdGroup: 'extension:testext', targetKind: 'probe', targetId: 'held-schedule', localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now });
+  expect(schedule).toMatchObject({ ok: true });
+  expect(await k.brain.queue.release({ group: 'extension:testext' })).toEqual({ ok: true, group: 'extension:testext', released: false });
+  expect(await k.store.listDueSchedules({ now, limit: 10 })).toMatchObject({ ok: true, schedules: [] });
+  expect(await k.brain.ext.publicStatus({ name: 'testext' })).toMatchObject({ ok: true, status: { enabled: false, interruptedWorkCount: 1 } });
+  await k.drain(); expect(k.handled).toEqual(['other']);
+  expect(await k.brain.ext.enable({ name: 'testext' })).toMatchObject({ ok: true, changed: true });
+  expect(await k.store.listDueSchedules({ now, limit: 10 })).toMatchObject({ ok: true, schedules: [expect.objectContaining({ targetId: 'held-schedule' })] });
+  await k.drain(); expect(k.handled.sort()).toEqual(['held', 'other']);
+});

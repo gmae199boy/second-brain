@@ -1475,7 +1475,32 @@ export interface ExtensionRecord {
 export type ExtensionStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface ExtensionPythonEnvironment { status: 'succeeded' | 'failed'; code: string | null; checkedAt: Date }
 export type ExtensionProgressWriteResult = { ok: true; written: boolean; revision: number | null } | ExtensionStoreFailure | { ok: false; code: 'INVALID_INSTALL_PROGRESS'; message: string };
+export interface ExtensionPublicStatus {
+  name: string;
+  installed: boolean;
+  version: string | null;
+  installedAt: Date | null;
+  pythonEnvironment: ExtensionPythonEnvironment | null;
+  authWorkId: string | null;
+  scheduleIds: string[];
+  enabled: boolean | null;
+  journalPresent: boolean;
+  login: import('../extensions/install-progress.js').InstallStageProgress | null;
+  connection: { status: 'connected' | 'failed' | null; code: string | null; checkedAt: Date | null };
+  schedule: import('../extensions/install-progress.js').InstallStageProgress | null;
+  heldScheduleCount: number;
+  interruptedWorkCount: number;
+  installResult: import('../extensions/install-progress.js').InstallResult | null;
+  failedStage: import('../extensions/install-progress.js').InstallStage | null;
+  lastFailure: import('../extensions/install-progress.js').ExtensionInstallProgress['lastFailure'];
+  stages: import('../extensions/install-progress.js').ExtensionInstallProgress['stages'];
+}
 export interface ExtensionStore {
+  /** registry와 설치 기록의 이름을 중복 없이 정렬해 읽는다. */
+  listExtensionInventory(): Promise<{ ok: true; names: string[] } | ExtensionStoreFailure>;
+  getExtensionPublicStatus(name: string): Promise<{ ok: true; status: ExtensionPublicStatus } | ExtensionStoreFailure>;
+  setExtensionEnabled(input: { name: string; enabled: boolean; now: Date }): Promise<{ ok: true; found: boolean; changed: boolean } | ExtensionStoreFailure>;
+
   /** 전체 snapshot을 revision 비교 후 교체한다. null은 기존 journal이 없어야 함을 뜻한다. */
   writeExtensionInstallProgress(input: { expectedRevision: number | null; progress: import('../extensions/install-progress.js').ExtensionInstallProgress }): Promise<ExtensionProgressWriteResult>;
   getExtensionInstallProgress(name: string): Promise<{ ok: true; journal: import('../extensions/install-progress.js').StoredExtensionInstallProgress | null } | ExtensionStoreFailure>;

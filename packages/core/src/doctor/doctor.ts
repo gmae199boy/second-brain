@@ -102,6 +102,7 @@ export type DoctorReadStore = Pick<WorkStore, 'listFailures' | 'readWorkAttemptH
   Pick<import('../ports/store.js').SessionStore, 'countUntaggedSessions'>;
 
 export interface DoctorOptions {
+  extensionStore?: Pick<import('../ports/store.js').ExtensionStore, 'listExtensionInventory' | 'getExtensionPublicStatus'>;
   modelWorkKinds?: readonly string[];
   prerequisites?: readonly DoctorCheckSource[];
   /** Adapter probes to mark skipped only when a prerequisite fails (AD-10). */
@@ -162,7 +163,7 @@ export async function runDoctor(
     if (check.status === 'fail' && failedPrerequisite === undefined) failedPrerequisite = check.id;
   }
   if (failedPrerequisite !== undefined) {
-    for (const id of ['db', ...(options.adapterProbeIds ?? []), 'schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage']) checks.push({ id, status: 'skip', detail: prereqFailed(failedPrerequisite) });
+    for (const id of ['db', ...(options.adapterProbeIds ?? []), 'schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage', ...(options.extensionStore ? ['extensions'] : [])]) checks.push({ id, status: 'skip', detail: prereqFailed(failedPrerequisite) });
     for (const source of options.checks ?? []) checks.push(await registered(source));
     return { checks, summary: summarise(checks) };
   }
@@ -172,7 +173,7 @@ export async function runDoctor(
     // Everything a store would have answered is skipped under the same reason,
     // so a reader never has to work out from what is missing whether a check
     // was skipped or never existed.
-    for (const id of ['schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage']) {
+    for (const id of ['schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage', ...(options.extensionStore ? ['extensions'] : [])]) {
       checks.push({ id, status: 'skip', detail: prereqFailed('db') });
     }
   } else {
@@ -187,6 +188,7 @@ export async function runDoctor(
     checks.push(await transcriptsCheck(options));
     checks.push(...await workAttemptChecks(options.store));
     checks.push(await modelUsageCheck(options));
+    if (options.extensionStore) checks.push(await extensionsCheck(options.extensionStore));
   }
 
   for (const source of options.checks ?? []) {
@@ -374,4 +376,24 @@ async function modelUsageCheck(options: DoctorOptions): Promise<DoctorCheck> {
   const tokens = (v: { inputTokens: number; cachedInputTokens: number; outputTokens: number }) => `입력 ${v.inputTokens} 토큰, 캐시 ${v.cachedInputTokens} 토큰, 출력 ${v.outputTokens} 토큰`;
   return { id: 'work-model-usage', status: 'ok', detail: `${tokens(u)}, 걸린 시간 ${u.elapsedMs / 1000}초` +
     (u.latest === null ? '' : `, 최근 종류 ${u.latest.kind} 일감 ${u.latest.workItemId}, 걸린 시간 ${u.latest.elapsedMs === null ? '없음' : String(u.latest.elapsedMs / 1000) + '초'}, ${u.latest.usage === null ? '토큰 없음' : tokens(u.latest.usage)}`) };
+}
+
+async function extensionsCheck(store: NonNullable<DoctorOptions['extensionStore']>): Promise<DoctorCheck> {
+  const inventory = await store.listExtensionInventory();
+  if (!inventory.ok) return { id: 'extensions', status: 'fail', code: inventory.code, detail: inventory.message };
+  const results = await Promise.all(inventory.names.map(name => store.getExtensionPublicStatus(name)));
+  const failure = results.find(result => !result.ok);
+  if (failure && !failure.ok) return { id: 'extensions', status: 'fail', code: failure.code, detail: failure.message };
+  const facts = results.flatMap(result => result.ok ? [result.status] : []);
+  const abnormal = facts.some(row => !row.installed || row.enabled === false || row.interruptedWorkCount > 0 || row.heldScheduleCount > 0 ||
+    (row.journalPresent && row.installResult !== 'installed') || row.login?.status === 'pending' || row.login?.status === 'failed' ||
+    row.connection.status === 'failed' || row.schedule?.status === 'failed');
+  const detail = facts.length === 0 ? '확장 0건' : facts.map(row => {
+    const installed = row.installed ? (row.enabled ? '활성' : '비활성') : '미설치';
+    const login = row.login ? `${row.login.status}${row.login.code ? ` (${row.login.code})` : ''}` : '미기록';
+    const connection = `${row.connection.status ?? '미기록'}${row.connection.code ? ` (${row.connection.code})` : ''}`;
+    const last = row.lastFailure ? `${row.lastFailure.stage} (${row.lastFailure.code})` : '없음';
+    return `${row.name}: ${installed}, 중단 일감 ${row.interruptedWorkCount}건, 보류 예약 ${row.heldScheduleCount}건, 설치 결과 ${row.installResult ?? (row.journalPresent ? '진행 중' : '미기록')}, 로그인 ${login}, 연결 ${connection}, 실패 단계 ${row.failedStage ?? '없음'}, 마지막 실패 ${last}`;
+  }).join('; ');
+  return { id: 'extensions', status: abnormal ? 'warn' : 'ok', detail };
 }

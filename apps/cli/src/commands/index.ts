@@ -1,3 +1,4 @@
+import { extEnableCommand, extDisableCommand } from './ext-activation.js';
 import { recallChunksCommand } from './recall-chunks.js';
 import { recallToolsCommand } from './recall-tools.js';
 import { recallExpandCommand } from './recall-expand.js';
@@ -53,6 +54,8 @@ export const commands: readonly CommandSpec[] = [
   extInstallCommand,
   extListCommand,
   extStatusCommand,
+  extEnableCommand,
+  extDisableCommand,
   doctorRun,
   configGetCommand,
   configSetCommand,

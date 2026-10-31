@@ -270,12 +270,12 @@ export type { BrainSchedules } from './brain.js';
 export { workHoldGroup } from './domain/work-item.js';
 export { holdWorkGroup, releaseWorkGroup } from './queue/hold-groups.js';
 
-export type { ExtensionStore, ExtensionRecord, ExtensionStoreFailure, ExtensionPythonEnvironment } from './ports/store.js';
+export type { ExtensionStore, ExtensionRecord, ExtensionStoreFailure, ExtensionPythonEnvironment, ExtensionPublicStatus } from './ports/store.js';
 
 export { EXTENSION_CORE_VERSION, decodeExtensionManifest, isExtensionName, type ExtensionManifest } from './extensions/manifest.js';
 export { runExtensionCheck } from './extensions/check.js';
 export { installExtension, type ExtensionPackages, type ExtensionMigrator, type ExtensionRuntime } from './extensions/install.js';
-export { extensionStatus, listExtensions } from './extensions/status.js';
+export { extensionStatus, listExtensions, publicExtensionStatus, setExtensionEnabled } from './extensions/status.js';
 export type { BrainExt } from './brain.js';
 export * from './extensions/snapshot.js';
 export * from './recall/conversation-chunker.js';
@@ -295,3 +295,5 @@ export { validInstallProgress, installStages } from './extensions/install-progre
 export type { ExtensionInstallProgress, StoredExtensionInstallProgress, InstallStage, InstallStageProgress, InstallResult } from './extensions/install-progress.js';
 
 export { cleanProcessGroup } from './queue/process-cleanup.js';
+
+export { extensionPublicProjection } from './extensions/public-projection.js';
