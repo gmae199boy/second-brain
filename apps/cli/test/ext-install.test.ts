@@ -27,7 +27,40 @@ it('installs testext through the real CLI, records its owner migration and reads
   const extensionUrl = await extensionDatabaseUrl(fixture.home, 'testext', override.toString());
   const client = new pg.default.Client({ connectionString: extensionUrl });
   await client.connect();
-  try { expect((await client.query('select current_user as name')).rows).toEqual([{ name: 'brain_ext_testext' }]); }
+  try {
+    expect((await client.query('select current_user as name')).rows).toEqual([{ name: 'brain_ext_testext' }]);
+    const { randomUUID } = await import('node:crypto');
+    const { postgresStore } = await import('second_brain/postgres');
+    const store = postgresStore({ databaseUrl: fixture.db.appUrl });
+    const channel = randomUUID(), conversation = randomUUID(), work = randomUUID(), token = randomUUID(), now = new Date();
+    try {
+      expect(await store.ensureChannel({ id: channel, kind: 'telegram', botRef: 'bot' })).toMatchObject({ ok: true });
+      expect(await store.ensureChannelConversation({ id: conversation, channelId: channel, externalRef: 'chat', threadRef: null })).toMatchObject({ ok: true });
+      expect(await store.addWork({ id: work, kind: 'process_probe', targetKind: 'probe', targetId: 'test', createdAt: now, nextAttemptAt: now })).toMatchObject({ ok: true });
+      expect(await store.claimSupervisedWork({ now, kinds: ['process_probe'], claimedBy: 'test', attemptToken: token })).toMatchObject({ ok: true, item: { id: work } });
+      const requestSql = `insert into brain.channel_requests(id,conversation_id,producer,producer_result_id,purpose,body,created_at,source_work_item_id,source_attempt_token) values ($1,$2,$3,$4,'notice','body',now(),$5,$6)`;
+      const notificationSql = `insert into brain.channel_legacy_notifications(id,conversation_id,source,dataset,original_table,original_key,import_batch,local_date,event,detail,at,source_work_item_id,source_attempt_token) values ($1,$2,$3,'data','notifications',$4,'batch','2026-10-31','event','',now(),$5,$6)`;
+      const deliverySql = `insert into brain.channel_legacy_deliveries(id,conversation_id,source,dataset,original_table,original_key,import_batch,original_id,local_date,kind,event,ok,at,source_work_item_id,source_attempt_token) values ($1,$2,$3,'data','deliveries',$4,'batch',$4,'2026-10-31','notice',null,true,now(),$5,$6)`;
+      const statements = [requestSql, notificationSql, deliverySql];
+      for (const statement of statements) {
+        await client.query(statement, [randomUUID(), conversation, 'testext', randomUUID(), work, token]);
+        await expect(client.query(statement, [randomUUID(), conversation, 'otherext', randomUUID(), work, token])).rejects.toMatchObject({ code: '42501' });
+        await expect(client.query(statement, [randomUUID(), conversation, 'testext', randomUUID(), work, null])).rejects.toMatchObject({ code: 'BRS01' });
+      }
+      for (const table of ['channel_requests', 'channel_legacy_notifications', 'channel_legacy_deliveries']) {
+        await expect(client.query(`update brain.${table} set id=id`)).rejects.toMatchObject({ code: '42501' });
+        await expect(client.query(`delete from brain.${table}`)).rejects.toMatchObject({ code: '42501' });
+      }
+      await expect(client.query(`insert into brain.channel_requests(id,conversation_id,producer,producer_result_id,purpose,body,created_at,work_item_id,source_work_item_id,source_attempt_token) values ($1,$2,'testext','forged','notice','body',now(),$3,$3,$4)`, [randomUUID(), conversation, work, token])).rejects.toMatchObject({ code: '42501' });
+      await expect(client.query(`insert into brain.channel_requests(id,conversation_id,producer,producer_result_id,purpose,body,created_at,status,source_work_item_id,source_attempt_token) values ($1,$2,'testext','forged','notice','body',now(),'sent',$3,$4)`, [randomUUID(), conversation, work, token])).rejects.toMatchObject({ code: '42501' });
+      await expect(client.query(`insert into brain.channel_requests(id,conversation_id,producer,producer_result_id,purpose,body,created_at,external_message_id,source_work_item_id,source_attempt_token) values ($1,$2,'testext','forged','notice','body',now(),'forged',$3,$4)`, [randomUUID(), conversation, work, token])).rejects.toMatchObject({ code: '42501' });
+      expect(await store.settleSupervisedAttempt({ id: work, attemptToken: token, now, outcome: 'died' })).toEqual({ ok: true, outcome: 'done' });
+      for (const statement of statements) await expect(client.query(statement, [randomUUID(), conversation, 'testext', randomUUID(), work, token])).rejects.toMatchObject({ code: 'BRS01' });
+      expect(await fixture.db.rows('select count(*)::integer as count from brain.channel_requests')).toEqual([{ count: 1 }]);
+      expect(await fixture.db.rows('select count(*)::integer as count from brain.channel_legacy_notifications')).toEqual([{ count: 1 }]);
+      expect(await fixture.db.rows('select count(*)::integer as count from brain.channel_legacy_deliveries')).toEqual([{ count: 1 }]);
+    } finally { await store.close(); }
+  }
   finally { await client.end(); }
   const adminUrl = new URL(await extensionAdminUrl(fixture.home, override.toString(), fixture.env));
   expect(adminUrl.searchParams.has('user')).toBe(false);

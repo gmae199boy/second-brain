@@ -31,6 +31,14 @@ export async function provisionExtension(databaseUrl: string, name: string, pass
         where n.nspname='brain' and c.relkind in ('r','p','v','m','S','f')
           and (case when c.relname='extension_status_public_v1' then
             has_table_privilege($1,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') or has_any_column_privilege($1,c.oid,'INSERT,UPDATE,REFERENCES')
+          when c.relname in ('channel_requests','channel_legacy_notifications','channel_legacy_deliveries') then
+            has_table_privilege($1,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') or
+            has_any_column_privilege($1,c.oid,'SELECT,UPDATE,REFERENCES') or exists (
+              select 1 from pg_attribute a where a.attrelid=c.oid and a.attnum>0 and not a.attisdropped
+                and has_column_privilege($1,c.oid,a.attname,'INSERT') and not (a.attname = any (case c.relname
+                  when 'channel_requests' then array['id','conversation_id','producer','producer_result_id','purpose','revision','body','created_at','source_work_item_id','source_attempt_token']
+                  when 'channel_legacy_notifications' then array['id','conversation_id','source','dataset','original_table','original_key','import_batch','local_date','event','detail','at','source_work_item_id','source_attempt_token']
+                  else array['id','conversation_id','source','dataset','original_table','original_key','import_batch','original_id','local_date','kind','event','ok','reason','at','source_work_item_id','source_attempt_token'] end)))
           else has_table_privilege($1,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
             or has_any_column_privilege($1,c.oid,'SELECT,INSERT,UPDATE,REFERENCES') end)) as excess`, [role])).rows[0].excess;
       const functions = (await client.query(`select exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
@@ -58,6 +66,10 @@ export async function provisionExtension(databaseUrl: string, name: string, pass
       alter default privileges for role brain_owner in schema "${name}" grant all on sequences to "${role}";
       alter default privileges for role brain_owner in schema "${name}" grant execute on functions to "${role}"`);
     if ((await client.query("select to_regclass('brain.extension_status_public_v1') as view")).rows[0].view) await client.query(`grant select on brain.extension_status_public_v1 to "${role}"`);
+    if ((await client.query("select to_regclass('brain.channel_legacy_notifications') as table")).rows[0].table) await client.query(`
+      grant insert (id,conversation_id,producer,producer_result_id,purpose,revision,body,created_at,source_work_item_id,source_attempt_token) on brain.channel_requests to "${role}";
+      grant insert (id,conversation_id,source,dataset,original_table,original_key,import_batch,local_date,event,detail,at,source_work_item_id,source_attempt_token) on brain.channel_legacy_notifications to "${role}";
+      grant insert (id,conversation_id,source,dataset,original_table,original_key,import_batch,original_id,local_date,kind,event,ok,reason,at,source_work_item_id,source_attempt_token) on brain.channel_legacy_deliveries to "${role}"`);
     await client.query('commit');
     // 비밀번호가 없거나 바뀐 경우 다른 자격 증명으로 대체하지 않는다.
     const roleUrl = new URL(databaseUrl); roleUrl.searchParams.delete('user'); roleUrl.searchParams.delete('password'); roleUrl.username = role; roleUrl.password = password;

@@ -202,6 +202,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const workItems: WorkItem[] = [];
   const channels = new Map<string, import('../../channels/store.js').Channel>();
   const conversations = new Map<string, import('../../channels/store.js').ChannelConversation>();
+  const legacyRecords = new Map<string, import('../../channels/store.js').ChannelLegacyRecord>();
   const channelRequests = new Map<string, import('../../channels/store.js').ChannelRequest>();
   const channelGates = new Map<string, { workItemId: string; attemptToken: string }>();
   const channelAttempts = new Map<string, { requestId: string; result: import('../../channels/store.js').ChannelAttemptResult | null }>();
@@ -476,6 +477,23 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   }
 
   return {
+    async insertChannelLegacy(input) {
+      const key = JSON.stringify([input.type, input.dataset, input.originalTable, input.originalKey]);
+      const existing = legacyRecords.get(key);
+      if (existing) {
+        const original = (r: import('../../channels/store.js').ChannelLegacyInput) => JSON.stringify(r.type === 'notification' ? [r.localDate, r.event, r.detail, r.at.toISOString()] : [r.originalId, r.localDate, r.kind, r.event, r.ok, r.reason, r.at.toISOString()]);
+        if (original(existing) !== original(input)) return { ok: false, code: 'LEGACY_CONFLICT', message: 'legacy 원문 충돌' };
+        return { ok: true, created: false, record: structuredClone(existing) };
+      }
+      if (!conversations.has(input.conversationId)) return { ok: false, code: 'DB_UNAVAILABLE', message: '대화가 없습니다' };
+      const record = { ...structuredClone(input), externalMessageId: null, body: null, metadataMissing: true as const, resendEligible: false as const };
+      legacyRecords.set(key, record);
+      return { ok: true, created: true, record: structuredClone(record) };
+    },
+    async readChannelLegacy(input) {
+      const record = legacyRecords.get(JSON.stringify([input.type, input.dataset, input.originalTable, input.originalKey]));
+      return { ok: true, record: record ? structuredClone(record) : null };
+    },
     async ensureChannel(input) {
       if (!channels.has(input.id)) channels.set(input.id, structuredClone(input));
       return { ok: true, channel: structuredClone(channels.get(input.id)!) };

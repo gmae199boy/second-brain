@@ -5,7 +5,19 @@ import { contractCase, withSubject, type ContractCase } from '../contract.js';
 const id = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, '0')}`;
 const now = new Date('2026-10-31T00:00:00Z');
 export function channelStoreContract(): ContractCase<ChannelStore & WorkStore>[] {
-  return [contractCase('channel identity, duplicate request, atomic handoff and attempt fence', async make => withSubject(make, async store => {
+  return [contractCase('legacy 원문 중복과 충돌, dataset 분리', async make => withSubject(make, async store => {
+    await store.ensureChannel({ id: id(1), kind: 'telegram', botRef: 'bot' });
+    await store.ensureChannelConversation({ id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
+    const input = { type: 'notification' as const, id: id(3), conversationId: id(2), source: 'garmin', dataset: 'a', originalTable: 'notifications', originalKey: '1', importBatch: 'first', localDate: '2026-10-31', event: 'event', detail: 'detail', at: now };
+    const first = await store.insertChannelLegacy(input); assertOk(first, 'legacy 저장'); assertTrue(first.created, '생성');
+    const duplicate = await store.insertChannelLegacy({ ...input, id: id(4), importBatch: 'second' }); assertOk(duplicate, '중복'); assertEqual(duplicate.created, false, 'batch가 달라도 중복'); assertEqual(duplicate.record, first.record, '최초 출처와 누락 표시 보존');
+    const conflict = await store.insertChannelLegacy({ ...input, detail: 'changed' }); assertTrue(!conflict.ok && conflict.code === 'LEGACY_CONFLICT', '충돌 명시');
+    const other = await store.insertChannelLegacy({ ...input, id: id(5), dataset: 'b' }); assertOk(other, '다른 dataset'); assertTrue(other.created, '독립 행');
+    const delivery = { type: 'delivery' as const, id: id(6), conversationId: id(2), source: 'garmin', dataset: 'a', originalTable: 'deliveries', originalKey: '1', importBatch: 'first', originalId: '1', localDate: '2026-10-31', kind: 'notice', event: null, ok: false, reason: 'failure', at: now };
+    const inserted = await store.insertChannelLegacy(delivery); assertOk(inserted, 'delivery'); assertEqual(inserted.record, { ...delivery, externalMessageId: null, body: null, metadataMissing: true, resendEligible: false }, '원래 값 보존');
+    assertEqual(await store.readChannelLegacy(delivery), { ok: true, record: inserted.record }, '조회');
+    assertEqual(await store.listUnhandedChannelRequests(), { ok: true, requestIds: [] }, '인계 제외');
+  })), contractCase('channel identity, duplicate request, atomic handoff and attempt fence', async make => withSubject(make, async store => {
     const channel = { id:id(1),kind:'telegram',botRef:'test-bot' };
     const conversation = { id:id(2),channelId:channel.id,externalRef:'chat',threadRef:'thread' };
     assertOk(await store.ensureChannel(channel),'channel'); assertOk(await store.ensureChannelConversation(conversation),'conversation');

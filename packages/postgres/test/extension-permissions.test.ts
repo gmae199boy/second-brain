@@ -70,10 +70,27 @@ it('enforces the role, public view and fenced provenance contracts over real con
     const id = randomUUID(), token = randomUUID(), now = clock.now();
     expect(await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: 'extension', createdAt: now, nextAttemptAt: now })).toMatchObject({ ok: true });
     expect(await store.claimSupervisedWork({ now, claimedBy: 'test', kinds: ['process_probe'], attemptToken: token })).toMatchObject({ ok: true, attemptToken: token });
+    const channel = randomUUID(), conversation = randomUUID();
+    await admin.query('insert into brain.channels values ($1,$2,$3)', [channel, 'telegram', 'bot']);
+    await admin.query('insert into brain.channel_conversations values ($1,$2,$3,null)', [conversation, channel, 'chat']);
+    const requestSql = `insert into brain.channel_requests(id,conversation_id,producer,producer_result_id,purpose,body,created_at,source_work_item_id,source_attempt_token) values ($1,$2,$3,$4,'notice','body',now(),$5,$6)`;
+    const notificationSql = `insert into brain.channel_legacy_notifications(id,conversation_id,source,dataset,original_table,original_key,import_batch,local_date,event,detail,at,source_work_item_id,source_attempt_token) values ($1,$2,$3,'dataset','notifications',$4,'batch','2026-10-31','event','',now(),$5,$6)`;
+    const deliverySql = `insert into brain.channel_legacy_deliveries(id,conversation_id,source,dataset,original_table,original_key,import_batch,original_id,local_date,kind,event,ok,at,source_work_item_id,source_attempt_token) values ($1,$2,$3,'dataset','deliveries',$4,'batch',$4,'2026-10-31','notice','event',true,now(),$5,$6)`;
+    for (const statement of [requestSql, notificationSql, deliverySql]) {
+      await a.query(statement, [randomUUID(), conversation, names[0], randomUUID(), id, token]);
+      await expect(a.query(statement, [randomUUID(), conversation, names[1], randomUUID(), id, token])).rejects.toMatchObject({ code: '42501' });
+      await expect(a.query(statement, [randomUUID(), conversation, names[0], randomUUID(), id, null])).rejects.toMatchObject({ code: 'BRS01' });
+    }
+    for (const table of ['channel_requests', 'channel_legacy_notifications', 'channel_legacy_deliveries']) {
+      await expect(a.query(`update brain.${table} set id=id`)).rejects.toMatchObject({ code: '42501' });
+      await expect(a.query(`delete from brain.${table}`)).rejects.toMatchObject({ code: '42501' });
+    }
+    await expect(a.query(`insert into brain.channel_requests(id,conversation_id,producer,producer_result_id,purpose,body,created_at,work_item_id,source_work_item_id,source_attempt_token) values ($1,$2,$3,'forged','notice','body',now(),$4,$4,$5)`, [randomUUID(), conversation, names[0], id, token])).rejects.toMatchObject({ code: '42501' });
     await a.query('insert into contract_test.results values ($1,$2,$3)', [names[0], id, token]);
     await expect(a.query('insert into contract_test.results values ($1,$2,$3)', [names[1], id, token])).rejects.toMatchObject({ code: '42501' });
     await store.settleSupervisedAttempt({ id, attemptToken: token, now, outcome: 'died' });
     await expect(a.query('insert into contract_test.results values ($1,$2,$3)', [names[0], id, token])).rejects.toMatchObject({ code: 'BRS01' });
+    for (const statement of [requestSql, notificationSql, deliverySql]) await expect(a.query(statement, [randomUUID(), conversation, names[0], randomUUID(), id, token])).rejects.toMatchObject({ code: 'BRS01' });
   } finally {
     await Promise.all(clients.map(client => client.end())); await store.close();
     for (const role of roles) await admin.query(`drop owned by "${role}"; drop role if exists "${role}"`).catch(() => {});
@@ -111,6 +128,49 @@ it('grants the approved view to a role provisioned before the view migration', a
     await expect(provisionExtension(db.url, name, password)).rejects.toThrow('허용되지 않은 권한');
   } finally {
     await admin.query(`drop owned by "${role}"; drop role if exists "${role}"`).catch(() => {});
+    await admin.end(); await db.drop(); await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it('v18의 확장 역할을 v19로 이전하고 최소 권한으로 재설정한다', async () => {
+  const { mkdtemp, readdir, copyFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const { runMigrations } = await import('../src/index.js');
+  const db = await database(false), dir = await mkdtemp(join(tmpdir(), 'brain-v18-role-'));
+  const name = `x${randomBytes(5).toString('hex')}`, role = `brain_ext_${name}`, password = randomBytes(24).toString('hex');
+  const admin = new pg.Client({ connectionString: db.url });
+  let owned = false;
+  try {
+    await admin.connect();
+    const source = fileURLToPath(new URL('../migrations/', import.meta.url));
+    for (const file of (await readdir(source)).filter(file => /^\d{4}_/.test(file) && file < '0019')) await copyFile(join(source, file), join(dir, file));
+    expect(await runMigrations({ databaseUrl: db.url, clock, owners: [{ owner: 'core', directory: dir }] })).toMatchObject({ ok: true, to: 18 });
+    await provisionExtension(db.url, name, password); owned = true;
+    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 18, to: 19 });
+    await provisionExtension(db.url, name, password);
+    const url = new URL(db.url); url.username = role; url.password = password;
+    const ext = new pg.Client({ connectionString: url.toString() }); await ext.connect();
+    try {
+      expect((await ext.query('select current_user as role')).rows[0]).toEqual({ role });
+      const store = postgresStore({ databaseUrl: db.appUrl });
+      const work = randomUUID(), token = randomUUID(), channel = randomUUID(), conversation = randomUUID();
+      try {
+        expect(await store.ensureChannel({ id: channel, kind: 'telegram', botRef: 'bot' })).toMatchObject({ ok: true });
+        expect(await store.ensureChannelConversation({ id: conversation, channelId: channel, externalRef: 'chat', threadRef: null })).toMatchObject({ ok: true });
+        expect(await store.addWork({ id: work, kind: 'process_probe', targetKind: 'probe', targetId: 'test', createdAt: clock.now(), nextAttemptAt: clock.now() })).toMatchObject({ ok: true });
+        expect(await store.claimSupervisedWork({ now: clock.now(), kinds: ['process_probe'], claimedBy: 'test', attemptToken: token })).toMatchObject({ ok: true, item: { id: work } });
+        await ext.query(`insert into brain.channel_legacy_deliveries(id,conversation_id,source,dataset,original_table,original_key,import_batch,original_id,local_date,kind,event,ok,at,source_work_item_id,source_attempt_token) values ($1,$2,$5,'data','deliveries','1','batch','1','2026-10-31','notice',null,true,now(),$3,$4)`, [randomUUID(), conversation, work, token, name]);
+        expect(await store.readChannelLegacy({ type: 'delivery', dataset: 'data', originalTable: 'deliveries', originalKey: '1' })).toMatchObject({ ok: true, record: { source: name, event: null, conversationId: conversation } });
+      } finally { await store.close(); }
+
+      for (const table of ['channel_requests', 'channel_legacy_notifications', 'channel_legacy_deliveries']) {
+        expect((await admin.query(`select has_column_privilege($1,'brain.${table}','id','insert') as allowed, has_table_privilege($1,'brain.${table}','update') as can_update, has_table_privilege($1,'brain.${table}','delete') as can_delete`, [role])).rows[0]).toEqual({ allowed: true, can_update: false, can_delete: false });
+      }
+    } finally { await ext.end(); }
+  } finally {
+    if (owned) await admin.query(`drop owned by "${role}"; drop role "${role}"`);
     await admin.end(); await db.drop(); await rm(dir, { recursive: true, force: true });
   }
 });

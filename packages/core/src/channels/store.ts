@@ -4,7 +4,14 @@ export interface ChannelConversation { id: string; channelId: string; externalRe
 export interface ChannelRequest { id: string; conversationId: string; producer: string; producerResultId: string; purpose: string; revision: string | null; text: string; createdAt: Date; workItemId: string | null; status: 'pending' | 'sent'; externalMessageId: string | null }
 export type ChannelFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export type ChannelAttemptResult = { outcome: 'sent'; externalMessageId: string | null } | { outcome: 'definite_failed' | 'unknown'; code: string; retryable: boolean; retryAfterMs?: number };
+export type ChannelLegacyInput = {
+  id: string; conversationId: string; source: string; dataset: string; originalTable: string; originalKey: string; importBatch: string;
+  localDate: string; at: Date;
+} & ({ type: 'notification'; event: string; detail: string } | { type: 'delivery'; originalId: string; kind: string; event: string | null; ok: boolean; reason: string | null });
+export type ChannelLegacyRecord = ChannelLegacyInput & { externalMessageId: null; body: null; metadataMissing: true; resendEligible: false };
 export interface ChannelStore {
+  insertChannelLegacy(input: ChannelLegacyInput): Promise<{ ok: true; created: boolean; record: ChannelLegacyRecord } | ChannelFailure | { ok: false; code: 'LEGACY_CONFLICT'; message: string }>;
+  readChannelLegacy(input: { type: ChannelLegacyInput['type']; dataset: string; originalTable: string; originalKey: string }): Promise<{ ok: true; record: ChannelLegacyRecord | null } | ChannelFailure>;
   ensureChannel(input: Channel): Promise<{ ok: true; channel: Channel } | ChannelFailure>;
   ensureChannelConversation(input: ChannelConversation): Promise<{ ok: true; conversation: ChannelConversation } | ChannelFailure>;
   createChannelRequest(input: Omit<ChannelRequest, 'workItemId' | 'status' | 'externalMessageId'>): Promise<{ ok: true; created: boolean; request: ChannelRequest } | ChannelFailure>;
