@@ -1403,6 +1403,14 @@ describe('the dispatcher and the lock budget', () => {
       // tests are about the lock budget, so every capability answers the same
       // way and none of them is reached.
       const store: Store & SchemaStore = {
+        async ensureChannel() { return unavailable; },
+        async ensureChannelConversation() { return unavailable; },
+        async createChannelRequest() { return unavailable; },
+        async readChannelRequest() { return unavailable; },
+        async listUnhandedChannelRequests() { return unavailable; },
+        async handoffChannelRequest() { return unavailable; },
+        async gateChannelAttempt() { return unavailable; },
+        async finishChannelAttempt() { return unavailable; },
         async searchRecall() { return unavailable; },
         async readConversationSnapshot() { return unavailable; },
         async commitConversationChunks() { return unavailable; },

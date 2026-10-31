@@ -96,6 +96,14 @@ const calls = {
   commitConversationChunks: s => s.commitConversationChunks({ sessionId: id, workId: id, claimedBy: id, now, fingerprint: '', chunks: [] }),
   searchConversationChunks: s => s.searchConversationChunks({ pattern: '%x%' }),
   searchRecall: s => s.searchRecall({ kind: 'chunks', query: 'x', pattern: '%x%', limit: 6 }),
+  ensureChannel: s => s.ensureChannel({id,kind:'telegram',botRef:'bot'}),
+  ensureChannelConversation: s => s.ensureChannelConversation({id,channelId:id,externalRef:'chat',threadRef:null}),
+  createChannelRequest: s => s.createChannelRequest({id,conversationId:id,producer:'test',producerResultId:'result',purpose:'notice',revision:null,text:'text',createdAt:now}),
+  readChannelRequest: s => s.readChannelRequest(id),
+  listUnhandedChannelRequests: s => s.listUnhandedChannelRequests(),
+  handoffChannelRequest: s => s.handoffChannelRequest({requestId:id,workId:id,now}),
+  gateChannelAttempt: s => s.gateChannelAttempt({requestId:id,workItemId:id,attemptToken:id,now}),
+  finishChannelAttempt: s => s.finishChannelAttempt({requestId:id,workItemId:id,attemptToken:id,now,externalMessageId:'1'}),
   setSetting: (s) => s.setSetting({ key: 'timezone', value: 'UTC', updatedAt: now }),
 } satisfies Record<Exclude<keyof PostgresStore, 'close'>, (store: PostgresStore) => Promise<unknown>>;
 

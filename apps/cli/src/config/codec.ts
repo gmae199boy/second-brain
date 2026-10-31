@@ -816,3 +816,12 @@ export async function extensionDatabaseUrl(home: string, name: string, runtimeUr
   url.username = `brain_ext_${name}`; url.password = password;
   return url.toString();
 }
+
+/** 채널 자격 증명은 이 설정 경계에서만 읽는다. */
+export async function resolveTelegramConfig(home: string, env: NodeJS.ProcessEnv): Promise<{ token: string; chatId: string } | null> {
+  const [token, chatId] = await Promise.all([
+    resolveStoreUrl(home, 'BRAIN_TELEGRAM_BOT_TOKEN', env),
+    resolveStoreUrl(home, 'BRAIN_TELEGRAM_CHAT_ID', env),
+  ]);
+  return token && chatId ? { token, chatId } : null;
+}

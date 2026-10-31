@@ -851,19 +851,28 @@ describe('brain daemon run, as a process', () => {
     const { home, configDir } = await installed();
     await mkdir(join(configDir, 'projects', '-demo-a'), { recursive: true });
     const daemon = spawned(['daemon', 'run'], environment(home, configDir));
-    await waitFor('감시 시작', async () => existsSync(daemonLogPath(home)) &&
-      (await readFile(daemonLogPath(home), 'utf8')).includes('파일 감시를 시작했습니다'));
-    // Let the initial round finish so this transcript must wake the idle loop.
-    await delay(250);
-    await transcript(configDir, 'watch-process');
-    await waitFor('프로세스 감시 수집', async () => (await sessionCount(home)) === 1, 9_500);
-    daemon.child.kill('SIGTERM');
-    expect((await daemon.ended).code).toBe(0);
-    await transcript(configDir, 'offline-process');
-    const restarted = spawned(['daemon', 'run'], environment(home, configDir));
-    await waitFor('재기동 수집', async () => (await sessionCount(home)) === 2, 5_000);
-    restarted.child.kill('SIGTERM');
-    expect((await restarted.ended).code).toBe(0);
+    let restarted: Daemon | undefined;
+    try {
+      await waitFor('감시 시작', async () => existsSync(daemonLogPath(home)) &&
+        (await readFile(daemonLogPath(home), 'utf8')).includes('파일 감시를 시작했습니다'), 4_000);
+      // Let the initial round finish so this transcript must wake the idle loop.
+      await delay(250);
+      await transcript(configDir, 'watch-process');
+      await waitFor('프로세스 감시 수집', async () => (await sessionCount(home)) === 1, 9_500);
+      daemon.child.kill('SIGTERM');
+      expect((await daemon.ended).code).toBe(0);
+      await transcript(configDir, 'offline-process');
+      restarted = spawned(['daemon', 'run'], environment(home, configDir));
+      await waitFor('재기동 수집', async () => (await sessionCount(home)) === 2, 4_000);
+      restarted.child.kill('SIGTERM');
+      expect((await restarted.ended).code).toBe(0);
+    } finally {
+      for (const process of [daemon, restarted]) {
+        if (process === undefined) continue;
+        if (process.child.exitCode === null && process.child.signalCode === null) process.child.kill('SIGKILL');
+        await process.ended;
+      }
+    }
   }, 20_000);
 
   it('uses a newly configured migrated database for subsequent rounds', async () => {
@@ -1255,6 +1264,7 @@ describe('PostgreSQL daemon reconnect', () => {
       rereadMissing: 0, reextractRedacted: 0, reextractUnreachable: 0 };
     vi.spyOn(brainStore, 'openBrainStore').mockImplementation(async () => {
       const store = postgresStore({ databaseUrl: pgAppUrl(':memory:') });
+      vi.spyOn(store, 'listUnhandedChannelRequests').mockResolvedValue({ ok: true, requestIds: [] });
       vi.spyOn(store, 'readSchemaVersions').mockImplementation(async () => unavailable
         ? { ok: false as const, code: 'DB_UNAVAILABLE', message: '시험 연결 끊김' }
         : { ok: true as const, versions: { core: { version: CORE_SCHEMA_VERSION, appliedAt: new Date() } } });
@@ -1286,13 +1296,16 @@ describe('PostgreSQL daemon reconnect', () => {
   });
 
 
-  it('starts a new recovery interval immediately when schema recovers but drain is unavailable', async () => {
+  it.each(['drain', 'handoff'] as const)('starts a new recovery interval immediately when schema recovers but %s is unavailable', async failure => {
     const home = await pgHome();
     const base = Date.now(); let now = base;
     const calls: number[] = [];
     const controller = new AbortController();
     vi.spyOn(brainStore, 'openBrainStore').mockImplementation(async () => {
       const store = postgresStore({ databaseUrl: pgAppUrl(':memory:') });
+      vi.spyOn(store, 'listUnhandedChannelRequests').mockResolvedValue(failure === 'handoff'
+        ? { ok: false, code: 'DB_UNAVAILABLE', message: '시험 연결 끊김' }
+        : { ok: true, requestIds: [] });
       vi.spyOn(store, 'readSchemaVersions').mockImplementation(async () => {
         // Build up a 400ms next retry deadline, then reach PG at 300ms.
         now = base + (calls.length === 1 ? 100 : calls.length >= 2 ? 300 : 0);
@@ -1324,7 +1337,7 @@ describe('PostgreSQL daemon reconnect', () => {
     await waitFor('복구 직후 즉시 compose 호출', () => calls.length === 4, 1000);
     expect(await finished).toEqual({ ok: true });
     expect(calls).toEqual([base, base + 100, base + 300, base + 300]);
-    expect(drain).toHaveBeenCalledOnce();
+    expect(drain).toHaveBeenCalledTimes(failure === 'drain' ? 1 : 0);
     const log = await readFile(daemonLogPath(home), 'utf8');
     expect(log.match(/데이터베이스에 다시 닿았습니다/g)).toHaveLength(1);
     expect(log.match(/컨테이너를 다시 띄웁니다/g)).toHaveLength(2);

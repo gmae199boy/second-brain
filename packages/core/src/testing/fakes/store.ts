@@ -2,6 +2,7 @@ import { extensionPublicProjection } from '../../extensions/public-projection.js
 import { validInstallProgress } from '../../extensions/install-progress.js';
 import { conversationFingerprint } from '../../recall/conversation-fingerprint.js';
 import { attemptUsage } from '../../queue/list.js';
+import type { ChannelStore } from '../../channels/store.js';
 import type { SettingsStore, ScheduleSuccess } from '../../ports/store.js';
 import { addLocalDays, isLocalTime } from '../../local-time.js';
 import { formatInstant } from '../../instant.js';
@@ -118,7 +119,7 @@ export interface MemoryStoreSnapshot {
   closes: number;
 }
 
-export interface MemoryStore extends Store, SettingsStore {
+export interface MemoryStore extends Store, SettingsStore, ChannelStore {
   snapshot(): MemoryStoreSnapshot;
 }
 
@@ -199,6 +200,12 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const isHeld = (group: string | null) => group !== null && heldGroups.has(group);
   const schedules = new Map<string, import('../../domain/schedule.js').Schedule>();
   const workItems: WorkItem[] = [];
+  const channels = new Map<string, import('../../channels/store.js').Channel>();
+  const conversations = new Map<string, import('../../channels/store.js').ChannelConversation>();
+  const channelRequests = new Map<string, import('../../channels/store.js').ChannelRequest>();
+  const channelGates = new Map<string, { workItemId: string; attemptToken: string }>();
+  const currentChannelAttempt = (workItemId: string, token: string) => workItems.some(w => w.id === workItemId && w.completedAt === null && w.currentAttemptToken === token) && workAttempts.some(a => a.workItemId === workItemId && a.token === token && a.outcome === null);
+
   const conversationChunks: (import('../../recall/conversation-chunker.js').ConversationChunk & { id: string; sessionId: string })[] = [];
   const conversationConfig = { targetChars: 1200, overlapMessages: 1, splitMessagesOverChars: 2400 };
   let conversationWorkSequence = 0;
@@ -468,6 +475,62 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   }
 
   return {
+    async ensureChannel(input) {
+      if (!channels.has(input.id)) channels.set(input.id, structuredClone(input));
+      return { ok: true, channel: structuredClone(channels.get(input.id)!) };
+    },
+    async ensureChannelConversation(input) {
+      if (!channels.has(input.channelId)) return { ok: false, code: 'DB_UNAVAILABLE', message: '채널이 없습니다' };
+      if (!conversations.has(input.id)) conversations.set(input.id, structuredClone(input));
+      return { ok: true, conversation: structuredClone(conversations.get(input.id)!) };
+    },
+    async createChannelRequest(input) {
+      const existing = [...channelRequests.values()].find(r => r.producerResultId === input.producerResultId &&
+        r.conversationId === input.conversationId && r.purpose === input.purpose && r.revision === input.revision);
+      if (existing) return { ok: true, created: false, request: structuredClone(existing) };
+      if (!conversations.has(input.conversationId) || channelRequests.has(input.id)) return { ok: false, code: 'DB_UNAVAILABLE', message: '요청을 만들 수 없습니다' };
+      const request = { ...structuredClone(input), workItemId: null, status: 'pending' as const, externalMessageId: null };
+      channelRequests.set(input.id, request);
+      return { ok: true, created: true, request: structuredClone(request) };
+    },
+    async readChannelRequest(id) {
+      const request = channelRequests.get(id);
+      const conversation = request && conversations.get(request.conversationId);
+      const channel = conversation && channels.get(conversation.channelId);
+      return { ok: true, request: request ? structuredClone(request) : null,
+        conversation: conversation ? structuredClone(conversation) : null, channel: channel ? structuredClone(channel) : null };
+    },
+    async listUnhandedChannelRequests() {
+      return { ok: true, requestIds: [...channelRequests.values()].filter(r => r.workItemId === null)
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id)).map(r => r.id) };
+    },
+    async handoffChannelRequest(input) {
+      const request = channelRequests.get(input.requestId);
+      if (!request) return { ok: true, workItemId: null };
+      if (!request.workItemId) {
+        const work = addWork({ id: input.workId, kind: 'channel_send', targetKind: 'channel_request',
+          targetId: request.id, createdAt: input.now, nextAttemptAt: input.now });
+        if (!work.ok) return work;
+        request.workItemId = work.item.id;
+      }
+      return { ok: true, workItemId: request.workItemId };
+    },
+    async gateChannelAttempt(input) {
+      const request = channelRequests.get(input.requestId);
+      if (request?.workItemId !== input.workItemId || !currentChannelAttempt(input.workItemId, input.attemptToken)) return { ok: true, outcome: 'lost' };
+      if (channelGates.has(input.requestId)) return { ok: true, outcome: 'already' };
+      channelGates.set(input.requestId, { workItemId: input.workItemId, attemptToken: input.attemptToken });
+      return { ok: true, outcome: 'won' };
+    },
+    async finishChannelAttempt(input) {
+      const request = channelRequests.get(input.requestId);
+      const gate = channelGates.get(input.requestId);
+      if (!request || request.status === 'sent' || gate?.workItemId !== input.workItemId ||
+          gate.attemptToken !== input.attemptToken || !currentChannelAttempt(input.workItemId, input.attemptToken)) return { ok: true, outcome: 'lost' };
+      request.status = 'sent';
+      request.externalMessageId = input.externalMessageId;
+      return { ok: true, outcome: 'done' };
+    },
     ...memorySettingsStore(),
     async readConversationSnapshot(sessionId) {
       if (![...sessions.values()].some(s => s.id === sessionId)) return { ok: true, snapshot: null };

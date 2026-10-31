@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { DAEMON_HEARTBEAT_MS } from './liveness.js';
 import {
   checkSchema,
+  handoffChannelRequests,
   createBrain,
   errorLine,
   type BrainDrainReport,
@@ -326,6 +327,14 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
       return { ...reached, ...(reconnectEligible && schema.code === 'DB_UNAVAILABLE' ? { unreachable: true as const } : {}), pause: true, problem: { key: schema.code, message: `데이터베이스 확인 실패: ${schema.message}` } };
     }
 
+    const handoff = await handoffChannelRequests(store, clock, idGen);
+    if (!handoff.ok) return {
+      ...reached,
+      ...(reconnectEligible && handoff.code === 'DB_UNAVAILABLE' ? { unreachable: true as const } : {}),
+      pause: true,
+      problem: { key: handoff.code, message: `채널 인계 실패 (${handoff.code})` },
+    };
+    if (signal.aborted) return { ...reached, pause: false };
     const brain = createBrain(
       brainDependencies({ home, env, config, schemaVersions: opened.expected, store, clock, idGen, workHandlers }),
     );

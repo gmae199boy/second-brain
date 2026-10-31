@@ -1,3 +1,4 @@
+import { encodeChannelText } from '../channels/send.js';
 import { errorEnvelope, okEnvelope } from '../envelope.js';
 import type { Clock } from '../ports/clock.js';
 import { maskOutputText, maskOutputValue, sessionForOutput } from './mask.js';
@@ -70,6 +71,10 @@ export function encodeTextLine(line: string): string {
 }
 
 export const OUTPUT_CODECS: readonly OutputCodec[] = [
+  {
+    name: 'channel',
+    render: (probe) => encodeChannelText(allTexts(sessionForOutput(probe))),
+  },
   {
     // Every surface that answers with an envelope: `brain … --json`, the
     // daemon socket, the MCP server. It is masked where it is *built* and not

@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { expect, it } from 'vitest';
-import { provisionExtension, postgresStore } from '../src/index.js';
+import { CORE_SCHEMA_VERSION, provisionExtension, postgresStore } from '../src/index.js';
 import { database, clock } from './fixture.js';
 
 it('enforces the role, public view and fenced provenance contracts over real connections', async () => {
@@ -104,7 +104,7 @@ it('grants the approved view to a role provisioned before the view migration', a
     await admin.query(`grant maintain on brain.work_items to "${role}"`);
     expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: false, file: '0015_extension_status_public.sql' });
     await admin.query(`revoke maintain on brain.work_items from "${role}"`);
-    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, to: 16 });
+    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, to: CORE_SCHEMA_VERSION });
     expect((await admin.query("select has_table_privilege($1,'brain.extension_status_public_v1','select') as allowed", [role])).rows).toEqual([{ allowed: true }]);
     await provisionExtension(db.url, name, password);
     await admin.query(`grant select on brain.work_items to "${role}"`);

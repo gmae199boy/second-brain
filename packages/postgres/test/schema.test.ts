@@ -66,7 +66,7 @@ async function seed() {
 }
 
 it('installs the complete catalog, five named unique indexes, five search indexes and explicit seed values', async () => {
-  const tables = ['extension_install_progress','extension_python_environment','extension_work_kinds','extensions','schema_migrations','workspaces','users','projects','worktrees','sessions','messages','tool_notes','transcript_files','failures','work_items','work_hold_groups','work_dependencies','work_attempts','files','file_locations','message_attachments','redactions','log_entries','log_entry_edits','index_configs','chunks','context_injections','document_extractions','document_chunks','file_names','file_metadata','schedules','schedule_successes','settings'];
+  const tables = ['channels','channel_conversations','channel_requests','channel_gates','channel_attempt_results','extension_install_progress','extension_python_environment','extension_work_kinds','extensions','schema_migrations','workspaces','users','projects','worktrees','sessions','messages','tool_notes','transcript_files','failures','work_items','work_hold_groups','work_dependencies','work_attempts','files','file_locations','message_attachments','redactions','log_entries','log_entry_edits','index_configs','chunks','context_injections','document_extractions','document_chunks','file_names','file_metadata','schedules','schedule_successes','settings'];
   expect((await query("select relname from pg_class where relnamespace='brain'::regnamespace and relkind='r' order by relname")).rows.map(r => r.relname)).toEqual(tables.sort());
   const indexes = (await query("select indexname,indexdef from pg_indexes where schemaname='brain'")).rows;
   expect(indexes.filter(r => r.indexdef.includes('UNIQUE') && r.indexname.endsWith('_idx')).map(r => r.indexname).sort()).toEqual(['users_self_idx','tool_notes_call_id_idx','work_items_open_key_idx','document_extractions_running_idx','index_configs_key_idx'].sort());
@@ -83,6 +83,7 @@ it('installs the complete catalog, five named unique indexes, five search indexe
     { id:'019a0000-0000-7000-8000-000000000003',kind:'chunk',model:null,dimensions:null,chunk_params:{targetChars:1200,overlapMessages:1,splitMessagesOverChars:2400,rules:{version:1,order:'occurred_at,id',units:'code_points',separator:'newline',boundary:'include_timestamp_group_at_target',split:'split_limit',parts:'range_0_or_1_to_n'}} },
   ]);
   expect((await query("select table_name,column_name,column_default,is_identity,is_generated from information_schema.columns where table_schema='brain' and (column_default is not null or is_identity <> 'NO' or is_generated <> 'NEVER') order by table_name,column_name")).rows).toEqual([
+    {table_name:'channel_requests',column_name:'status',column_default:"'pending'::text",is_identity:'NO',is_generated:'NEVER'},
     {table_name:'chunks',column_name:'part',column_default:'0',is_identity:'NO',is_generated:'NEVER'},
     {table_name:'messages',column_name:'is_subagent_report',column_default:'0',is_identity:'NO',is_generated:'NEVER'},
     {table_name:'work_items',column_name:'attempts',column_default:'0',is_identity:'NO',is_generated:'NEVER'},

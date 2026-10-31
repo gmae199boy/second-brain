@@ -160,6 +160,7 @@ export const DRAIN_BUDGET_MS = {
 
 export type WorkExecutionClass = 'core' | 'supervised';
 const WORK_KINDS: Readonly<Record<string, { executionClass: WorkExecutionClass; callsModel: boolean }>> = {
+  channel_send: { executionClass: 'supervised', callsModel: false },
   process_probe: { executionClass: 'supervised', callsModel: false },
 };
 export function workExecutionClass(kind: string): WorkExecutionClass {
