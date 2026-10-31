@@ -1,11 +1,14 @@
 """감독자가 제공한 private snapshot과 원본 capture를 읽기 전용으로 비교한다."""
 import json
+from decimal import Decimal
 import os
 import sys
+import sqlite3
 from uuid import UUID
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import set_json_loads
 from capture_manifest import load_capture
 from reports import write_reports
 from verify_compare import compare, public_projection, read_core_snapshot
@@ -30,14 +33,17 @@ def main():
         with conn.transaction():
             conn.execute('set transaction read only')
             catalog = [row['definition'] for row in conn.execute('select definition from brain.health_catalog_v1')]
-            stored = {name: conn.execute('select * from garmin.' + name).fetchall() for name in names}
+            # 내부 검증 cursor에만 적용해 catalog 및 다른 consumer는 그대로 둔다.
+            with conn.cursor() as cursor:
+                set_json_loads(lambda data: json.loads(data, parse_float=Decimal), cursor)
+                stored = {name: cursor.execute('select * from garmin.' + name).fetchall() for name in names}
         try:
-            capture = load_capture(settings['values']['garmin.capture_manifest'])
+            capture = load_capture(settings['values']['garmin.capture_manifest'], secure=True)
             details = compare(capture, stored, snapshot, catalog, conversation)
-            if load_capture(settings['values']['garmin.capture_manifest'])['private']['fingerprint'] != capture['private']['fingerprint']:
+            if (lambda final: (final['fingerprint'], final['manifest_token']) != (capture['private']['fingerprint'], capture['private']['manifest_token']))(load_capture(settings['values']['garmin.capture_manifest'], secure=True)['private']):
                 details['differences']['source_unchanged'].append('manifest_changed')
                 details['counts']['mismatches'] += 1
-        except (ValueError, OSError, KeyError, TypeError, UnicodeError):
+        except (ValueError, OSError, KeyError, TypeError, UnicodeError, sqlite3.DatabaseError):
             from verify_compare import CHECKS, COUNTS
             details = {'counts': {name: 0 for name in COUNTS}, 'differences': {name: ['input_invalid'] for name in CHECKS}, 'history': {'rerun': '미입증', 'resume': '미입증', 'outbound': '미입증'}}
             details['counts']['mismatches'] = len(CHECKS)

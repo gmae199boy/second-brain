@@ -15,7 +15,7 @@ it('출처와 현재 시도에 결합된 불변 가져오기 계약을 강제한
     const url = new URL(db.url); url.username = role; url.password = password;
     ext = new pg.Client({ connectionString: url.toString() }); await ext.connect();
     await admin.query('insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ($1,\'1\',now(),true,now())', [name]);
-    await admin.query(`create view "${name}".raw_records as select '${name}'::text as source, null::text as account, 'key'::text as key, 'endpoint'::text as endpoint, null::timestamptz as fetched_at, null::timestamptz as checked_at, '원문'::text as body`);
+    await admin.query(`create view "${name}".raw_records as select '${name}'::text as source, null::text as account, 'key'::text as key, 'endpoint'::text as endpoint, '2026-01-02T03:04:05.123456+09:00'::timestamptz as fetched_at, null::timestamptz as checked_at, '원문'::text as body`);
     await admin.query(`grant usage on schema "${name}" to brain_app; grant select on "${name}".raw_records to brain_app`);
     const active = await store.imports.readRaw({source:name,rawViews:['raw_records']});
     expect(active).toMatchObject({ok:true,extensionEnabled:true,rows:[{body:'원문'}]});
@@ -53,8 +53,14 @@ it('출처와 현재 시도에 결합된 불변 가져오기 계약을 강제한
     await admin.query('alter table brain.health_observations disable trigger user');
     try { await admin.query("insert into brain.health_observations(id,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,value,unit,local_date,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token) select $1,'foreign_source',dataset,import_batch,original_table,'foreign',account,account_confirmed,metric,value,unit,local_date,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token from brain.health_observations where source=$2 limit 1", [foreignId,name]); }
     finally { await admin.query('alter table brain.health_observations enable trigger user'); }
+    await admin.query('alter table brain.analyses disable trigger user');
+    try { await admin.query("update brain.analyses set created_at='2026-01-02T03:04:05.123456+09:00',created_at_missing=false where id=$1",[analysisId]); }
+    finally { await admin.query('alter table brain.analyses enable trigger user'); }
     const verification = await store.imports.readVerification({ source:name, workId:work, token, now, rawViews:['raw_records'] });
     expect(verification).toMatchObject({ ok:true, data:{ tables:{ health:[{source:name}], analyses:[{id:analysisId}], raw:[{body:'원문'}], requests:[{id:file}] }, files:[{requestId:file,fileId:null}] } });
+    expect(verification.ok && verification.data.tables.analyses?.[0]?.created_at).toBe('2026-01-01 18:04:05.123456+00');
+    expect(verification.ok && verification.data.tables.raw?.[0]).toMatchObject({fetched_at:'2026-01-01 18:04:05.123456+00',checked_at:null});
+    expect(verification.ok && verification.data.tables.health?.[0]?.fetched_at).toEqual(expect.any(String));
     expect(verification.ok && verification.data.tables.health_supported_versions).toEqual([{version:1},{version:2},{version:8}]);
     expect(verification.ok && verification.data.tables.health).not.toContainEqual(expect.objectContaining({id:foreignId}));
     await admin.query('alter table brain.health_observations disable trigger user');

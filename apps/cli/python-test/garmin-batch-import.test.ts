@@ -192,6 +192,7 @@ it('checkpoint 중단·재개와 동시 반입 및 입력 변경 충돌을 검�
     const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     execFileSync(python,['-c',"import sys,pathlib,sqlite3; sys.path.insert(0,sys.argv[1]); from fixtures import five_candidates,capture_manifest; p=pathlib.Path(sys.argv[2]); paths=five_candidates(p); c=sqlite3.connect(paths['D2']); c.executemany('insert into meta values (?,?)', [('extra%03d'%i,'value') for i in range(80)]); c.commit(); c.execute('pragma journal_mode=wal'); c.close(); capture_manifest(p,paths)",fixtures,fixture.home]);
+    const walOriginal=await readFile(join(fixture.home,'D2.db')); expect([...walOriginal.subarray(18,20)]).toEqual([2,2]);
     const manifest=await realpath(join(fixture.home,'manifest.json')), url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl);
     const entry=join(fixture.home,'extensions/garmin/src/import.py');
     const claim=async()=>{
@@ -244,6 +245,9 @@ it('checkpoint 중단·재개와 동시 반입 및 입력 변경 충돌을 검�
       const verified=await fixture.run(['ext','run','garmin','import-verify','--json']);
       expect(verified.code,verified.stdout+verified.stderr).toBe(0);
       expect(verified.body.data.report.counts).toMatchObject({outbound_requests:0,outbound_results:0,mismatches:0});
+      expect(await readFile(join(fixture.home,'D2.db'))).toEqual(walOriginal);
+      execFileSync(python,['-c',"import sys,pathlib; sys.path.insert(0,sys.argv[1]); from reader import read_snapshot,read_snapshot_bytes; from batch_import import encoded; p=pathlib.Path(sys.argv[2]); b=p.read_bytes(); a=read_snapshot(p); c=read_snapshot_bytes(b); assert a['schema']==c['schema'] and a['encoding']==c['encoding'] and a['tables'].keys()==c['tables'].keys(); [(lambda x,y: (x['columns']==y['columns'] and x['column_metadata']==y['column_metadata'] and x['keys']==y['keys'] and [{k:encoded(v) for k,v in r.items()} for r in x['rows']]==[{k:encoded(v) for k,v in r.items()} for r in y['rows']]) or (_ for _ in ()).throw(AssertionError()))(a['tables'][n],c['tables'][n]) for n in a['tables']]; assert p.read_bytes()==b",join(fixture.home,'extensions/garmin/src'),join(fixture.home,'D2.db')]);
+
       expect(await fixture.db.rows('select count(*)::int as n from brain.channel_requests')).toEqual([{n:0}]);
       expect(await fixture.db.rows('select count(*)::int as n from brain.channel_attempt_results')).toEqual([{n:0}]);
     } finally {controller.abort(); await daemon;}

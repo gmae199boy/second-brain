@@ -15,9 +15,10 @@ from batch_import import VERSION, canonical, contains_nul, contract_fingerprint,
 from capture_manifest import ROLES
 from health import import_candidates, resolve
 from metadata_codec import decode_metadata
-from preflight import ORDER, account, analyze
+from preflight import ORDER, account, analyze_snapshots
 from raw_codec import dataset_ref, project
-from reader import read_snapshot
+from reader import read_snapshot_bytes
+from verify_source import read_source, recheck_source
 
 CHECKS = ('source_unchanged', 'checkpoints', 'schemas', 'preserved', 'mappings', 'raw', 'health', 'authority', 'legacy', 'analyses', 'files', 'relations', 'inventory', 'provenance', 'conflicts', 'no_outbound')
 COUNTS = ('datasets', 'source_tables', 'source_rows', 'preserved_rows', 'health_rows', 'raw_rows', 'legacy_rows', 'analysis_rows', 'file_requests', 'artifacts', 'excluded', 'unlinked', 'unselected', 'unselected_ambiguous', 'unselected_account_unconfirmed', 'unselected_timezone_unconfirmed', 'unselected_dataset_ambiguous', 'unselected_dataset_unselected', 'unselected_revision_ambiguous', 'unselected_version_unsupported', 'unselected_value_ambiguous', 'excluded_config', 'excluded_secret', 'excluded_scan_failed', 'excluded_too_large', 'excluded_unknown', 'conflict_entries', 'outbound_requests', 'outbound_results', 'source_conflict_keys', 'raw_conflict_keys', 'raw_metadata_conflict_keys', 'excluded_keys', 'unassigned_files', 'mismatches')
@@ -35,7 +36,7 @@ def json_equal(left, right):
     if isinstance(left, bool) or isinstance(right, bool):
         return type(left) is bool and type(right) is bool and left == right
     if isinstance(left, (int, float, Decimal)) and isinstance(right, (int, float, Decimal)):
-        return left == right
+        return Decimal(str(left)) == Decimal(str(right))
     if isinstance(left, str) and isinstance(right, str): return left == right
     if type(left) is not type(right): return False
     if isinstance(left, dict):
@@ -47,8 +48,9 @@ def json_equal(left, right):
 
 def target_payload_hash(value, expected):
     """JSONB가 보존한 동등 숫자 표기를 원본의 숫자 표기로 정렬해 해시한다."""
+    if not json_equal(value, expected): return None
     def align(actual, source):
-        if isinstance(actual, (int, float)) and not isinstance(actual, bool) and isinstance(source, (int, float)) and not isinstance(source, bool) and actual == source:
+        if isinstance(actual, (int, float, Decimal)) and not isinstance(actual, bool) and isinstance(source, (int, float, Decimal)) and not isinstance(source, bool) and json_equal(actual, source):
             return source
         if isinstance(actual, dict) and isinstance(source, dict):
             return {k: align(v, source[k]) if k in source else v for k,v in actual.items()}
@@ -85,10 +87,6 @@ def read_core_snapshot(home, path, work, token):
                 if not isinstance(wrapped, dict) or set(wrapped) != {'encoding','data'} or wrapped['encoding'] != 'jsonb-text-v1' or not isinstance(wrapped['data'], str): raise ValueError('IMPORT_INVALID')
                 row[field] = json.loads(wrapped['data'], parse_float=Decimal, parse_int=Decimal)
     return value
-
-
-def digest_file(path):
-    with path.open('rb') as stream: return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
 def raw_bytes(value):
@@ -188,14 +186,13 @@ def compare(capture, stored, core, catalog, conversation):
     expected_map = set(); expected_preserved = set(); expected_provenance = set(); expected_raw = set(); expected_health = set(); expected_legacy = set()
     fingerprint = contract_fingerprint(capture['private']['fingerprint'], catalog)
     entries = sorted(capture['private']['datasets'], key=lambda e: ORDER.index(ROLES[e['source']]))
-    datasets = {}; batches = {}; snapshots = {}; accounts = {}; table_details = {}; health_details = {}; resolution_groups = {}
+    datasets = {}; batches = {}; snapshots = {}; source_tokens = {}; accounts = {}; table_details = {}; health_details = {}; resolution_groups = {}
     counts['datasets'] = len(entries)
     for entry in entries:
         original = entry['dataset']; dataset = dataset_ref(original); datasets[original] = dataset
         path = capture['datasets'][ROLES[entry['source']]]
         batch = hashlib.sha256(canonical([capture['private']['capture_id'], dataset]).encode()).hexdigest(); batches[dataset] = batch
-        before = digest_file(path); snapshot = read_snapshot(path); after = digest_file(path); snapshots[dataset] = snapshot
-        if before != after or path.with_name(path.name + '-wal').exists(): fail('source_unchanged', [dataset, 'changed'])
+        data, before, token = read_source(path, reject_wal=True); snapshot = read_snapshot_bytes(data); snapshots[dataset] = snapshot; source_tokens[dataset] = (before, token)
         info = account(snapshot)
         if info['confirmed']: accounts.setdefault(canonical(encoded(info['account'])), (info['account'], []))[1].append(dataset)
         checkpoint = lookup(stored['import_checkpoints'], dataset=dataset, batch=batch)
@@ -216,7 +213,7 @@ def compare(capture, stored, core, catalog, conversation):
             source_keys = {key(r, table['keys']) for r in table['rows']}
             target_rows = [r for r in preserved if r['dataset'] == dataset and r['original_table'] == name and r['original_key'] in source_keys]
             target_keys = {r['original_key'] for r in target_rows}
-            table_details.setdefault(dataset, {})[name] = {'source_count':len(table['rows']), 'target_count':len(target_rows), 'missing_keys':sorted(source_keys - target_keys), 'extra_keys':[], 'source_nulls':{column:sum(row[column] is None for row in table['rows']) for column in table['columns']}, 'target_nulls':{column:sum(row['values_json'].get(column) == {'type':'null'} for row in target_rows) for column in table['columns']}, 'value_difference_keys':[key(r,table['keys']) for r in table['rows'] if any(x['original_key'] == key(r,table['keys']) and not json_equal(x['values_json'], {k:encoded(v) for k,v in r.items()}) for x in target_rows)], 'value_unit_check':'전수 비교'}
+            table_details.setdefault(dataset, {})[name] = {'source_count':len(table['rows']), 'target_count':len(target_rows), 'missing_keys':sorted(source_keys - target_keys), 'extra_keys':[], 'source_nulls':{column:sum(row[column] is None for row in table['rows']) for column in table['columns']}, 'target_nulls':{column:sum(isinstance(row['values_json'], dict) and row['values_json'].get(column) == {'type':'null'} for row in target_rows) for column in table['columns']}, 'value_difference_keys':[key(r,table['keys']) for r in table['rows'] if any(x['original_key'] == key(r,table['keys']) and not json_equal(x['values_json'], {k:encoded(v) for k,v in r.items()}) for x in target_rows)], 'value_unit_check':'전수 비교'}
             for row in sorted(table['rows'], key=lambda r: key(r, table['keys'])):
                 rowkey = key(row, table['keys']); last = (name, rowkey)
                 payload = {k: encoded(v) for k, v in row.items()}; hashed = hashlib.sha256(canonical(payload).encode()).hexdigest()
@@ -268,10 +265,12 @@ def compare(capture, stored, core, catalog, conversation):
                             fail('health', [*identity, metric, 'value'])
                 if name == 'raw_response':
                     rid = canonical([encoded(row[k]) for k in ('scope','key','endpoint')]); expected_raw.add((dataset, rid))
-                    found = lookup(stored['raw_payloads'], dataset=dataset, raw_identity=rid)
-                    if len(found) != 1 or any(not matches_project(found[0], field, value) for field, value in [('account',info['account']),('scope',row['scope']),('original_key',row['key']),('endpoint',row['endpoint']),('library_version',row['library_version']),('body',row['raw'])]) or found[0]['fetched_at_ms'] != row['fetched_at'] or found[0]['checked_at_ms'] != row['checked_at']: fail('raw', list(identity))
-                    view = [v for v in tables['raw'] if matches_project(v, 'dataset', original) and all(matches_project(v, field, value) for field,value in [('account',info['account']),('scope',row['scope']),('original_key',row['key']),('endpoint',row['endpoint']),('body',row['raw'])])]
-                    if len(view) != 1 or not time_equal(view[0]['fetched_at'], datetime.fromtimestamp(row['fetched_at']/1000, timezone.utc)) or not time_equal(view[0]['checked_at'], datetime.fromtimestamp(row['checked_at']/1000, timezone.utc)): fail('raw', [*identity,'view'])
+                    natural_key = [('scope',row['scope']),('original_key',row['key']),('endpoint',row['endpoint'])]
+                    # batch나 본문으로 먼저 걸러내지 않아 현재 자연키의 과잉도 센다.
+                    found = [v for v in stored['raw_payloads'] if v['dataset'] == dataset and all(matches_project(v, field, value) for field,value in natural_key)]
+                    if len(found) != 1 or found[0]['raw_identity'] != rid or any(not matches_project(found[0], field, value) for field, value in [('account',info['account']),('library_version',row['library_version']),('body',row['raw'])]) or found[0]['fetched_at_ms'] != row['fetched_at'] or found[0]['checked_at_ms'] != row['checked_at']: fail('raw', list(identity))
+                    view = [v for v in tables['raw'] if matches_project(v, 'dataset', original) and all(matches_project(v, field, value) for field,value in natural_key)]
+                    if len(view) != 1 or not matches_project(view[0], 'account', info['account']) or not matches_project(view[0], 'body', row['raw']) or not time_equal(view[0]['fetched_at'], datetime.fromtimestamp(row['fetched_at']/1000, timezone.utc)) or not time_equal(view[0]['checked_at'], datetime.fromtimestamp(row['checked_at']/1000, timezone.utc)): fail('raw', [*identity,'view'])
                 if name in ('notification','delivery'):
                     mapping = mapped('legacy')
                     conversation_row = lookup(stored['legacy_conversations'], dataset=dataset, original_table=name, original_key=rowkey)
@@ -308,11 +307,11 @@ def compare(capture, stored, core, catalog, conversation):
             if r['dataset'] in batches and (r['import_batch'] == batches[r['dataset']] or (r['dataset'],r['original_table'],r['original_key']) in expected_preserved or str(r['id']) not in all_legacy) and str(r['id']) not in expected_legacy: fail('legacy', [r['dataset'],'extra'])
     for identity, (acct, ordered) in accounts.items():
         found = lookup(stored['authority_provenance'], account_identity=identity)
-        if len(found) != 1 or found[0]['datasets'] != ordered: fail('authority', [identity, 'provenance']); continue
+        if len(found) != 1 or found[0]['datasets'] != ordered or found[0]['revision'] != 1: fail('authority', [identity, 'provenance']); continue
         rules = lookup(tables['authority'], id=found[0]['rule_id'])
         if len(rules) != 1 or rules[0]['datasets'] != ordered or rules[0]['revision'] != 1 or any(rules[0].get(k) is not None for k in ('metric','activity_id','date_from','date_to')) or not matches_project(rules[0], 'account', acct): fail('authority', [identity, 'rule'])
     resolution_details = compare_resolution(resolution_groups, accounts, stored, tables, fail) or []
-    source_conflicts = analyze(capture['datasets'])
+    source_conflicts = analyze_snapshots({role: snapshots[datasets[next(entry['dataset'] for entry in entries if ROLES[entry['source']] == role)]] for role in ORDER})
     counts['source_conflict_keys'] = sum(v['conflicts'] or 0 for v in source_conflicts['tables'].values())
     counts['raw_conflict_keys'] = sum(v.get('raw_conflicts') or 0 for v in source_conflicts['tables'].values())
     counts['raw_metadata_conflict_keys'] = sum(v.get('metadata_conflicts') or 0 for v in source_conflicts['tables'].values())
@@ -328,11 +327,12 @@ def compare(capture, stored, core, catalog, conversation):
                 parts = json.loads(m['original_key'])
                 related |= isinstance(parts,list) and len(parts) == 3 and any((m['dataset'],'artifact',part) in current_identities for part in parts[:2])
             except (TypeError, ValueError): pass
-        if m['dataset'] in batches and (m['batch'] == batches[m['dataset']] or related) and identity not in expected_map: fail('mappings', [*identity,'extra'])
+        if (m['batch'] == batches.get(m['dataset']) or related) and identity not in expected_map: fail('mappings', [*identity,'extra'])
     for entry in entries:
         dataset = datasets[entry['dataset']]; path = capture['datasets'][ROLES[entry['source']]]
         checkpoint = lookup(stored['import_checkpoints'], dataset=dataset, batch=batches[dataset])
-        if path.with_name(path.name + '-wal').exists() or not checkpoint or digest_file(path) != checkpoint[0]['source_hash']: fail('source_unchanged', [dataset, 'final_hash'])
+        recheck_source(path, source_tokens[dataset])
+        if not checkpoint or source_tokens[dataset][0] != checkpoint[0]['source_hash']: fail('source_unchanged', [dataset, 'final_hash'])
     relevant = [r for r in stored['import_conflicts'] if r['dataset'] in batches and r['batch'] == batches[r['dataset']]]
     counts['conflict_entries'] = len(relevant)
     for conflict in relevant: fail('conflicts', [conflict['dataset'], conflict['original_table'], conflict['original_key'], conflict['reason']])
@@ -468,18 +468,24 @@ def compare_artifacts(capture, stored, tables, files, entries, datasets, batches
     while True:
         previous = (len(related_requests), len(related_analyses), len(related_relations))
         for row in analyses:
-            if row['dataset'] in batches and str(row['id']) in related_analyses:
+            if str(row['id']) in related_analyses:
                 related_requests.add(str(row['file_request_id']))
         for row in relations:
-            if row['dataset'] in batches and (str(row['id']) in related_relations or str(row['analysis_id']) in related_analyses or str(row['file_request_id']) in related_requests):
+            if str(row['id']) in related_relations or str(row['analysis_id']) in related_analyses or str(row['file_request_id']) in related_requests:
                 related_relations.add(str(row['id'])); related_analyses.add(str(row['analysis_id'])); related_requests.add(str(row['file_request_id']))
+        for row in stored['artifact_inventory'] + stored['artifact_relations']:
+            request_id = str(row['request_id']) if row['request_id'] is not None else None
+            analysis_id = str(row['analysis_id']) if row['analysis_id'] is not None else None
+            if request_id in related_requests or analysis_id in related_analyses:
+                if request_id is not None: related_requests.add(request_id)
+                if analysis_id is not None: related_analyses.add(analysis_id)
         if previous == (len(related_requests), len(related_analyses), len(related_relations)): break
     for row in requests:
-        if row['dataset'] in batches and (row['import_batch'] == batches[row['dataset']] or str(row['id']) in related_requests) and str(row['id']) not in expected_requests: fail('files',[row['dataset'],str(row['id']),'extra'])
+        if (row['import_batch'] == batches.get(row['dataset']) or str(row['id']) in related_requests) and str(row['id']) not in expected_requests: fail('files',[row['dataset'],str(row['id']),'extra'])
     for row in analyses:
-        if row['dataset'] in batches and (row['import_batch'] == batches[row['dataset']] or str(row['id']) in related_analyses or str(row['file_request_id']) in related_requests) and str(row['id']) not in expected_analyses: fail('analyses',[row['dataset'],str(row['id']),'extra'])
+        if (row['import_batch'] == batches.get(row['dataset']) or str(row['id']) in related_analyses or str(row['file_request_id']) in related_requests) and str(row['id']) not in expected_analyses: fail('analyses',[row['dataset'],str(row['id']),'extra'])
     for row in relations:
-        if row['dataset'] in batches and (row['import_batch'] == batches[row['dataset']] or str(row['analysis_id']) in related_analyses or str(row['file_request_id']) in related_requests) and str(row['id']) not in expected_relations: fail('relations',[row['dataset'],str(row['id']),'extra'])
+        if (row['import_batch'] == batches.get(row['dataset']) or str(row['analysis_id']) in related_analyses or str(row['file_request_id']) in related_requests) and str(row['id']) not in expected_relations: fail('relations',[row['dataset'],str(row['id']),'extra'])
     for row in stored['artifact_inventory']:
         identity = (row['dataset'],row['original_table'],row['artifact_key'])
         related = identity in current_identities
@@ -487,11 +493,11 @@ def compare_artifacts(capture, stored, tables, files, entries, datasets, batches
             related |= (row['dataset'],'evaluation',row['artifact_key'][len('evaluation:'):]) in current_identities
         related |= row['request_id'] is not None and str(row['request_id']) in related_requests
         related |= row['analysis_id'] is not None and str(row['analysis_id']) in related_analyses
-        if row['dataset'] in batches and (row['batch'] == batches[row['dataset']] or related) and identity not in expected_inventory:
+        if (row['batch'] == batches.get(row['dataset']) or related) and identity not in expected_inventory:
             fail('inventory',[row['dataset'],row['original_table'],row['artifact_key'],'extra'])
     for row in stored['input_inventory']:
         if row['dataset'] in batches and (row['dataset'],row['category']) not in expected_inputs: fail('inventory',[row['dataset'],row['category'],'extra'])
     for row in stored['artifact_relations']:
-        if row['dataset'] in batches and ((row['dataset'],'artifact',row['artifact_key']) in current_identities or (row['dataset'],'artifact',row['analysis_key']) in current_identities) and (row['dataset'],row['artifact_key'],row['analysis_key'],row['role']) not in expected_links: fail('relations',[row['dataset'],row['artifact_key'],'extra'])
+        if ((row['dataset'],'artifact',row['artifact_key']) in current_identities or (row['dataset'],'artifact',row['analysis_key']) in current_identities or (row['request_id'] is not None and str(row['request_id']) in related_requests) or (row['analysis_id'] is not None and str(row['analysis_id']) in related_analyses)) and (row['dataset'],row['artifact_key'],row['analysis_key'],row['role']) not in expected_links: fail('relations',[row['dataset'],row['artifact_key'],'extra'])
     counts['analysis_rows'] = len(expected_analyses); counts['file_requests'] = len(expected_requests); counts['unlinked'] = len(unlinked_keys)
     return {'identities': current_identities, 'related_target_ids': related_requests | related_analyses | related_relations}

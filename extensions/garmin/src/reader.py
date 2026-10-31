@@ -42,26 +42,41 @@ def read_snapshot(path):
     if not path.is_absolute() or not path.is_file() or path.with_name(path.name + '-wal').exists():
         raise ValueError('PREFLIGHT_INVALID')
     with closing(sqlite3.connect(path.as_uri() + '?mode=ro&immutable=1', uri=True)) as conn:
-        conn.execute('pragma query_only = on')
-        version = conn.execute('pragma user_version').fetchone()[0]
-        encoding = {'UTF-8': 'utf-8', 'UTF-16le': 'utf-16le', 'UTF-16be': 'utf-16be'}[conn.execute('pragma encoding').fetchone()[0]]
-        if version not in (10, 15):
-            raise ValueError('PREFLIGHT_SCHEMA_UNSUPPORTED')
-        tables = {}
-        names = [r[0] for r in conn.execute("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name")]
-        for name in names:
-            columns = conn.execute('pragma table_xinfo(' + quoted(name) + ')').fetchall()
-            keys = [c[1] for c in sorted((c for c in columns if c[5]), key=lambda c: c[5])]
-            if name == 'notification' and {'local_date', 'event'} <= {c[1] for c in columns}:
-                keys = ['local_date', 'event']
-            names = [c[1] for c in columns]
-            # TEXT만 BLOB으로 읽어 sqlite3의 암묵적인 UTF-8 디코딩을 피한다.
-            projections = []
-            for column in names:
-                col = quoted(column)
-                projections.extend((f'typeof({col})', f'case when typeof({col}) = \'text\' then cast({col} as blob) else {col} end'))
-            rows = []
-            for values in conn.execute('select ' + ','.join(projections) + ' from ' + quoted(name)):
-                rows.append({column: text_value(values[i * 2 + 1], encoding) if values[i * 2] == 'text' else values[i * 2 + 1] for i, column in enumerate(names)})
-            tables[name] = {'columns': names, 'column_metadata': [{'name': c[1], 'type': c[2], 'not_null': bool(c[3]), 'default': c[4], 'primary_key_position': c[5], 'hidden': c[6]} for c in columns], 'keys': keys, 'rows': rows}
-        return {'schema': version, 'encoding': encoding, 'tables': tables}
+        return read_connection(conn)
+
+
+def read_snapshot_bytes(data):
+    # WAL sidecar는 호출자가 거부한다. SQLite는 WAL 헤더를 메모리 DB에서
+    # 열 수 없으므로 메모리 복사본에서만 rollback 형식으로 읽는다.
+    # https://www.sqlite.org/c3ref/deserialize.html
+    if data[:16] == b'SQLite format 3\x00' and data[18:20] == b'\x02\x02':
+        data = data[:18] + b'\x01\x01' + data[20:]
+    with closing(sqlite3.connect(':memory:')) as conn:
+        conn.deserialize(data)
+        return read_connection(conn)
+
+
+def read_connection(conn):
+    conn.execute('pragma query_only = on')
+    version = conn.execute('pragma user_version').fetchone()[0]
+    encoding = {'UTF-8': 'utf-8', 'UTF-16le': 'utf-16le', 'UTF-16be': 'utf-16be'}[conn.execute('pragma encoding').fetchone()[0]]
+    if version not in (10, 15):
+        raise ValueError('PREFLIGHT_SCHEMA_UNSUPPORTED')
+    tables = {}
+    names = [r[0] for r in conn.execute("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name")]
+    for name in names:
+        columns = conn.execute('pragma table_xinfo(' + quoted(name) + ')').fetchall()
+        keys = [c[1] for c in sorted((c for c in columns if c[5]), key=lambda c: c[5])]
+        if name == 'notification' and {'local_date', 'event'} <= {c[1] for c in columns}:
+            keys = ['local_date', 'event']
+        names = [c[1] for c in columns]
+        # TEXT만 BLOB으로 읽어 sqlite3의 암묵적인 UTF-8 디코딩을 피한다.
+        projections = []
+        for column in names:
+            col = quoted(column)
+            projections.extend((f'typeof({col})', f'case when typeof({col}) = \'text\' then cast({col} as blob) else {col} end'))
+        rows = []
+        for values in conn.execute('select ' + ','.join(projections) + ' from ' + quoted(name)):
+            rows.append({column: text_value(values[i * 2 + 1], encoding) if values[i * 2] == 'text' else values[i * 2 + 1] for i, column in enumerate(names)})
+        tables[name] = {'columns': names, 'column_metadata': [{'name': c[1], 'type': c[2], 'not_null': bool(c[3]), 'default': c[4], 'primary_key_position': c[5], 'hidden': c[6]} for c in columns], 'keys': keys, 'rows': rows}
+    return {'schema': version, 'encoding': encoding, 'tables': tables}
