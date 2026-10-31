@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import secrets
 import stat
+from metadata_codec import safe_dumps
 
 
 def _open_dir(parent, name, create=False):
@@ -39,7 +40,7 @@ def write_reports(home, work_id, private, public):
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
             try:
                 with os.fdopen(fd, 'w', encoding='utf-8') as output:
-                    json.dump(value, output, ensure_ascii=False, separators=(',', ':'))
+                    output.write(safe_dumps(value, ensure_ascii=False, separators=(',', ':')))
                     output.flush()
                     os.fsync(output.fileno())
                 os.replace(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)

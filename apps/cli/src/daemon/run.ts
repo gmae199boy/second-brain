@@ -7,6 +7,7 @@ import {
   checkSchema,
   handoffChannelRequests,
   handoffImportRequests,
+  cleanupImportRequests,
   createBrain,
   errorLine,
   type BrainDrainReport,
@@ -18,6 +19,7 @@ import {
   type WorkHandlers,
 } from 'second_brain';
 import { brainDependencies } from '../assembly.js';
+import { importStaging } from '../runtime/import-staging.js';
 import { readConfig, resolveStoreUrl, type ReadConfigResult } from '../config/codec.js';
 import { readBuildIdentity } from '../install/installed.js';
 import { acquireDaemonLock } from './lock.js';
@@ -329,6 +331,7 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
     }
 
     if (store.imports) {
+      await cleanupImportRequests(store.imports, importStaging(home), clock);
       const imports = await handoffImportRequests(store.imports, clock, idGen);
       if (!imports.ok) return { ...reached, ...(reconnectEligible && imports.code === 'DB_UNAVAILABLE' ? { unreachable: true as const } : {}), pause: true, problem: { key: imports.code, message: '파일 요청 인계 실패' } };
     }

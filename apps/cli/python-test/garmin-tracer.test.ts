@@ -17,7 +17,7 @@ it('기본 배송 경로의 Garmin을 잠긴 Python으로 설치하고 연결한
     expect(execFileSync(python, ['-c', 'import platform, psycopg; print(platform.python_version(), psycopg.__version__)'], { encoding: 'utf8' }).trim()).toBe('3.14.10 3.3.6');
     const roundtrip = execFileSync(python, ['-c', "import psycopg, sys; c=psycopg.connect(__import__('os').environ['TEST_DATABASE_URL']); r=c.execute('select %s::text, %s::bigint, %s::text', ('한글', 1700000000123, None)).fetchone(); print(r[0], r[1], r[2])"], { encoding: 'utf8', env: { ...process.env, TEST_DATABASE_URL: fixture.db.url } }).trim();
     expect(roundtrip).toBe('한글 1700000000123 None');
-    expect(await fixture.ledger('garmin')).toEqual([{ owner: 'garmin', version: 1 }, { owner: 'garmin', version: 2 }, { owner: 'garmin', version: 3 }]);
+    expect(await fixture.ledger('garmin')).toEqual([{ owner: 'garmin', version: 1 }, { owner: 'garmin', version: 2 }, { owner: 'garmin', version: 3 }, { owner: 'garmin', version: 4 }]);
     const status = await fixture.run(['ext', 'status', 'garmin', '--json']);
     expect(status.body.data).toMatchObject({ installed: true, connection: { status: 'connected' }, python_environment: { status: 'succeeded' } });
   } finally { await fixture.cleanup(); }
@@ -179,8 +179,8 @@ it('같은 basename의 문서가 본문에 관계없이 서로 다른 상대 키
     execFileSync(python,['-c',"import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"delete from raw_response where scope='day' and key='2026-01-01' and endpoint='user_summary'\"); c.commit()",missing]);
     const missingHash = createHash('sha256').update(await readFile(missing)).digest('hex');
     const missingId=ids.next(), missingToken=ids.next(), missingNow=new Date();
-    await store.addWork({id:missingId,kind:'garmin.import',targetKind:'import',targetId:'missing',createdAt:missingNow,nextAttemptAt:missingNow});
-    await store.claimSupervisedWork({now:missingNow,claimedBy:'test',kinds:['garmin.import'],attemptToken:missingToken});
+    expect(await store.addWork({id:missingId,kind:'garmin.import',targetKind:'import',targetId:'missing',createdAt:missingNow,nextAttemptAt:missingNow})).toMatchObject({ok:true});
+    expect(await store.claimSupervisedWork({now:missingNow,claimedBy:'test',kinds:['garmin.import'],attemptToken:missingToken})).toMatchObject({ok:true,item:{id:missingId},attemptToken:missingToken});
     const missingSettings=JSON.stringify({version:1,extension:'garmin',values:{'garmin.snapshot_path':missing,'garmin.legacy_path':docs[0],'garmin.staging_path':staging,'garmin.artifact_root':fixture.home,'garmin.dataset':'missing'}});
     const rejected=spawnSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:missingId,BRAIN_ATTEMPT_TOKEN:missingToken,BRAIN_SETTINGS_SNAPSHOT:missingSettings}});
     expect(rejected.status).toBe(1); expect(JSON.parse(rejected.stdout)).toMatchObject({code:'IMPORT_INVALID',retryable:false});
@@ -193,7 +193,7 @@ it('같은 basename의 문서가 본문에 관계없이 서로 다른 상대 키
     for (const [index,doc] of docs.entries()) {
       const id=ids.next(),token=ids.next(),now=new Date();
       await store.addWork({id,kind:'garmin.import',targetKind:'import',targetId:String(index),createdAt:now,nextAttemptAt:now});
-      expect(await store.claimSupervisedWork({now,claimedBy:'test',kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true});
+      expect(await store.claimSupervisedWork({now,claimedBy:'test',kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true,item:{id},attemptToken:token});
       const snapshotSettings = JSON.stringify({version:1,extension:'garmin',values:{'garmin.snapshot_path':snapshot,'garmin.legacy_path':doc,'garmin.staging_path':staging,'garmin.artifact_root':fixture.home,'garmin.dataset':'same'}});
       const output=execFileSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_SETTINGS_SNAPSHOT:snapshotSettings}});
       expect(JSON.parse(output)).toMatchObject({type:'result'});
@@ -227,10 +227,14 @@ it('같은 basename의 문서가 본문에 관계없이 서로 다른 상대 키
     const requestKeys=await fixture.db.rows('select request_key from brain.file_requests');
     expect(new Set(requestKeys.map(row=>row.request_key)).size).toBe(4);
     for (const row of requestKeys) expect(JSON.parse(row.request_key)).toEqual(['same',expect.stringMatching(/\/report\.md$/)]);
+    // 데몬이 반입을 마친 뒤 완전히 종료되어 수동 claim을 빼앗지 못하게 한다.
+    controller.abort();
+    expect(await daemon).toEqual({ok:true});
+    daemon=undefined;
     const pg = (await import('pg')).default, locker=new pg.Client({connectionString:fixture.db.url});
     const lockId=ids.next(),lockToken=ids.next(),lockNow=new Date();
-    await store.addWork({id:lockId,kind:'garmin.import',targetKind:'import',targetId:'lock',createdAt:lockNow,nextAttemptAt:lockNow});
-    await store.claimSupervisedWork({now:lockNow,claimedBy:'test',kinds:['garmin.import'],attemptToken:lockToken});
+    expect(await store.addWork({id:lockId,kind:'garmin.import',targetKind:'import',targetId:'lock',createdAt:lockNow,nextAttemptAt:lockNow})).toMatchObject({ok:true});
+    expect(await store.claimSupervisedWork({now:lockNow,claimedBy:'test',kinds:['garmin.import'],attemptToken:lockToken})).toMatchObject({ok:true,item:{id:lockId},attemptToken:lockToken});
     const settings=JSON.stringify({version:1,extension:'garmin',values:{'garmin.snapshot_path':snapshot,'garmin.legacy_path':docs[0],'garmin.staging_path':staging,'garmin.artifact_root':fixture.home,'garmin.dataset':'same'}});
     const lockEnv={...process.env,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:lockId,BRAIN_ATTEMPT_TOKEN:lockToken,BRAIN_SETTINGS_SNAPSHOT:settings};
     await locker.connect();

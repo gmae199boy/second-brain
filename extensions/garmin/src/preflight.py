@@ -199,7 +199,10 @@ def classify_files(files):
     classified = []
     for entry in files:
         source = entry['source'].lower()
-        if source.endswith(('.toml', '.env', '.ini', '.yaml', '.yml')) or 'config' in source:
+        if 'category' in entry:
+            from artifacts import classify
+            group = classify(entry)
+        elif source.endswith(('.toml', '.env', '.ini', '.yaml', '.yml')) or 'config' in source:
             group = 'config'
         elif source.endswith('.log'):
             group = 'log'
@@ -215,8 +218,8 @@ def classify_files(files):
             group = 'unknown'
         groups[group] += 1
         classified.append({'source': entry['source'], 'snapshot': entry['snapshot'], 'category': group,
-                           'reason': '비밀·기계 설정' if group == 'config' else '운영 로그' if group == 'log' else '분류 확인 필요' if group == 'unknown' else None})
-    return {'groups': groups, 'files': classified, 'expected_requests': sum(groups[k] for k in ('report', 'facts', 'image', 'input'))}
+                           'reason': '비밀·기계 설정' if group == 'config' else '비밀 검사 필요' if group == 'log' else '분류 확인 필요' if group == 'unknown' else None})
+    return {'groups': groups, 'files': classified, 'expected_requests': sum(groups[k] for k in ('report', 'facts', 'image', 'input')) + sum(1 for entry, item in zip(files, classified) if 'category' in entry and item['category'] == 'log')}
 
 
 def unit_risks(report, catalog):

@@ -26,7 +26,7 @@ it.each([{name:'크기',size:4}, {name:'해시',size:3}])('$name 불일치면 Fi
     failImport: async () => ({ok:true as const}),
   } as unknown as ImportStore;
   const handler = importFileHandler(store, { read: async () => ({ok:true,bytes:new TextEncoder().encode('bad')}), remove: async () => {} }, { put: async () => { writes++; return {ok:false,code:'FILES_UNAVAILABLE',message:''}; } } as never, {now:()=>new Date()}, {next:()=> 'id'}, {listRedactedContentHashes:async()=>({ok:true,hashes:[]})});
-  const result = await handler({ id:'w',targetId:'r',claimedBy:'worker' } as never);
+  const result = await handler({ id:'w',targetId:'r',claimedBy:'worker',claimedAt:new Date() } as never);
   expect(result).toMatchObject({ok:false,code:'IMPORT_FILE_INVALID'}); expect(writes).toBe(0);
 });
 
@@ -35,7 +35,7 @@ it('가린 해시 조회가 실패하면 FileStore에 쓰지 않는다', async (
   const bytes=new TextEncoder().encode('safe'); let puts=0;
   const store={readImport:async()=>({ok:true as const,request:{id:'r',source:'sample',locator:'x',sha256:contentHashOfBytes(bytes).slice(7),sizeBytes:bytes.length,mediaType:'text/plain'},completed:false})} as unknown as ImportStore;
   const handler=importFileHandler(store,{read:async()=>({ok:true,bytes}),remove:async()=>{}},{put:async()=>{puts++; return {ok:false,code:'FILES_UNAVAILABLE',message:''};}} as never,{now:()=>new Date()},{next:()=> 'id'},{listRedactedContentHashes:async()=>({ok:false,code:'DB_UNAVAILABLE',message:'조회 실패'})});
-  expect(await handler({id:'w',targetId:'r',claimedBy:'worker'} as never)).toMatchObject({ok:false,code:'DB_UNAVAILABLE'});
+  expect(await handler({id:'w',targetId:'r',claimedBy:'worker',claimedAt:new Date()} as never)).toMatchObject({ok:false,code:'DB_UNAVAILABLE'});
   expect(puts).toBe(0);
 });
 

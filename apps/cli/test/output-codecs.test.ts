@@ -75,6 +75,8 @@ const SINKS: Readonly<Record<string, readonly string[]>> = {
   // Internal ABI events contain only validated duration and static text, no stored data.
   'apps/cli/src/workers/process-probe.ts': [],
   'apps/cli/src/workers/channel-send.ts': [],
+  // 검출 여부와 패턴 버전만 확장 프로세스에 반환한다.
+  'apps/cli/src/workers/secret-scan.ts': [],
   // The entry point's last sink: an exception out of the dispatcher, stack and
   // all, through `crashLines`.
   'apps/cli/src/bin.ts': ['text'],

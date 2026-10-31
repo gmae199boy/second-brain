@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
@@ -31,7 +32,7 @@ it('다섯 합성 snapshot의 원형과 키를 보존하고 재실행한다', as
       const id=ids.next(), token=ids.next(), now=new Date();
       await store.addWork({id,kind:'garmin.import',targetKind:'import',targetId:id,createdAt:now,nextAttemptAt:now});
       expect(await store.claimSupervisedWork({now,claimedBy:'test',kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true});
-      try { return execFileSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',values:{'garmin.capture_manifest':manifest,'garmin.legacy_conversation_id':conversation}})}}); } catch (e: any) { throw new Error(String(e.stdout) + String(e.stderr)); }
+      try { return execFileSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',values:{'garmin.capture_manifest':manifest,'garmin.legacy_conversation_id':conversation}})}}); } catch (e: any) { throw new Error(String(e.stdout) + String(e.stderr)); }
     };
     await fixture.db.query('grant select on brain.health_observations to brain_ext_garmin');
     await expect(run()).rejects.toThrow('IMPORT_INVALID');
@@ -195,7 +196,7 @@ it('checkpoint 중단·재개와 동시 반입 및 입력 변경 충돌을 검�
       expect(await store.claimSupervisedWork({now,claimedBy:'test',kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true,attemptToken:token});
       return {id,token};
     };
-    const env=(attempt:{id:string,token:string},conv?:string)=>({...process.env,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:attempt.id,BRAIN_ATTEMPT_TOKEN:attempt.token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',values:{'garmin.capture_manifest':manifest,...(conv?{'garmin.legacy_conversation_id':conv}:{})}})});
+    const env=(attempt:{id:string,token:string},conv?:string)=>({...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:attempt.id,BRAIN_ATTEMPT_TOKEN:attempt.token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',values:{'garmin.capture_manifest':manifest,...(conv?{'garmin.legacy_conversation_id':conv}:{})}})});
     const run=(attempt:{id:string,token:string},conv?:string)=>spawnSync(python,[entry],{encoding:'utf8',env:env(attempt,conv),timeout:20000});
     await fixture.db.query("create function garmin.test_delay() returns trigger language plpgsql as $$ begin perform pg_sleep(0.8); return new; end $$; create trigger test_delay before insert on garmin.preserved_rows for each row execute function garmin.test_delay(); create trigger test_delay_mapping before insert on garmin.import_mapping for each row execute function garmin.test_delay(); create trigger test_delay_checkpoint before update on garmin.import_checkpoints for each row execute function garmin.test_delay()");
     const timeoutAttempt=await claim(), started=Date.now();
@@ -344,7 +345,7 @@ data=json.loads(manifest.read_text()); data['datasets'][0]['dataset']='synthetic
     await store.claimSupervisedWork({now,claimedBy:'test',kinds:['garmin.import'],attemptToken:token});
     const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl);
     const manifest=await realpath(join(fixture.home,'manifest.json'));
-    const runImport = () => execFileSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',values:{'garmin.capture_manifest':manifest,'garmin.legacy_conversation_id':conversation}})}});
+    const runImport = () => execFileSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',values:{'garmin.capture_manifest':manifest,'garmin.legacy_conversation_id':conversation}})}});
     runImport(); runImport();
     const raw=await store.imports.readRaw({source:'garmin',rawViews:['raw_records','raw_records_v2']});
     expect(raw.ok && raw.rows).toContainEqual(expect.objectContaining({dataset:'synthetic\0D1',account:'a\0b',scope:'scope/a',originalKey:'b/c',body:'body\0end'}));

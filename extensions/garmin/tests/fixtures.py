@@ -88,3 +88,34 @@ def capture_manifest(directory, paths):
     path = directory / 'manifest.json'
     path.write_text(json.dumps(value), encoding='utf-8')
     return path, value
+
+
+def artifact_capture(directory):
+    """명시 관계와 세 inventory 상태를 가진 합성 version2 capture."""
+    paths = five_candidates(directory, rich=True)
+    path, value = capture_manifest(directory, paths)
+    with sqlite3.connect(paths['D1']) as conn:
+        conn.execute("update evaluation set summary=?, judgments=cast(x'ff' as text)", ('합성\0기록',))
+    value['version'] = 2
+    samples = [('report.md', b'# synthetic report\n', 'report', 'report', []),
+               ('facts.json', b'{"synthetic":true}\n', 'facts', 'facts', []),
+               ('plot.png', b'\x89PNG\r\n\x1a\nsynthetic', 'image', 'plot', [{'analysis_key':'report','role':'image'},{'analysis_key':'input','role':'image'}]),
+               ('input.json', b'{"day":"synthetic"}', 'input', 'input', [{'analysis_key':'report','role':'input'}]),
+               ('safe.log', b'operation completed\n', 'log', 'safe', []),
+               ('secret.log', b'password=example-secret-value\n', 'log', 'secret', []),
+               ('utf16le.log', 'password=example-secret-value\n'.encode('utf-16le'), 'log', 'utf16le', []),
+               ('utf16be.log', 'password=example-secret-value\n'.encode('utf-16be'), 'log', 'utf16be', []),
+               ('config.toml', b'option=true\n', 'config', 'config', []),
+               ('settings.log', b'harmless configuration\n', 'config', 'config_log', []),
+               ('mystery.log', b'harmless unknown\n', 'unknown', 'unknown_log', [])]
+    value['files'] = []
+    for filename, content, category, key, relations in samples:
+        (directory / filename).write_bytes(content)
+        value['files'].append({'source':filename,'snapshot':filename,'bytes':len(content),'dataset':'synthetic-D1','artifact_key':key,'category':category,'relations':relations})
+    value['files'][1]['created_at'] = '2026-01-02T03:04:05+09:00'
+    value['inventory'] = [
+        {'dataset':'synthetic-D1','category':'body','state':'present','metadata':{'measured_date':'2026-01-01','fields':{'weight':{'mtime':'2026-01-02T00:00:00Z'}}},'source_files':['input']},
+        {'dataset':'synthetic-D1','category':'profile','state':'empty','metadata':{},'source_files':[]},
+        {'dataset':'synthetic-D1','category':'inbox','state':'absent','metadata':{},'source_files':[]}]
+    path.write_text(json.dumps(value,ensure_ascii=False),encoding='utf-8')
+    return path

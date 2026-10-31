@@ -63,7 +63,7 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
                 [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: extensionUrl, [PROCESS_ABI_ENV.workId]: item.id,
                 [PROCESS_ABI_ENV.runGeneration]: String(item.attempts), [PROCESS_ABI_ENV.attemptToken]: token, [PROCESS_ABI_ENV.workKind]: item.kind,
                 [PROCESS_ABI_ENV.targetKind]: item.targetKind, [PROCESS_ABI_ENV.targetId]: item.targetId,
-                ...(item.scheduledDates ? { BRAIN_RANGE_FROM: item.scheduledDates.from, BRAIN_RANGE_TO: item.scheduledDates.to } : {}), BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized, BRAIN_EXTENSION_HOME: await realpath(directory), BRAIN_EXTENSION_READINESS: JSON.stringify(readiness),
+                ...(item.scheduledDates ? { BRAIN_RANGE_FROM: item.scheduledDates.from, BRAIN_RANGE_TO: item.scheduledDates.to } : {}), BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized, BRAIN_EXTENSION_HOME: await realpath(directory), BRAIN_SECRET_SCANNER_NODE: process.execPath, BRAIN_SECRET_SCANNER_SCRIPT: fileURLToPath(new URL('../../dist/workers/secret-scan.js', import.meta.url)), BRAIN_EXTENSION_READINESS: JSON.stringify(readiness),
               } } };
             },
           };

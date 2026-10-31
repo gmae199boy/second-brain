@@ -41,6 +41,9 @@ export function importStaging(home: string): ImportStaging {
         } finally { await handle.close(); }
       } catch { return { ok: false, code: 'IMPORT_FILE_INVALID', message: '파일 요청을 확인할 수 없습니다' }; }
     },
-    async remove(source, locator) { try { await unlink(await path(source, locator)); } catch { /* 이미 제거됐거나 경로가 바뀌었다. */ } },
+    async remove(source, locator) {
+      try { await unlink(await path(source, locator)); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    },
   };
 }

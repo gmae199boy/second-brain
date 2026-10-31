@@ -51,7 +51,7 @@ def main():
         report.update(file_classification=files, unit_risks=unit_risks(report, catalog), capture=capture['private'], readiness=ready, existing_mapping_count=mappings, source_unchanged=True, snapshot_hashes=hashes,
                       estimates=estimates,
                   risks=['원래 NULL의 결측 원인은 복원할 수 없음', '원본 단위와 정규화 버전을 별도로 검증해야 함'],
-                      exclusions=[{'category': group, 'count': files['groups'][group], 'reason': reason} for group, reason in [('config', '비밀·기계 설정 제외'), ('log', '운영 로그 제외'), ('unknown', '분류 확인 전 제외')] if files['groups'][group]],
+                      exclusions=[{'category': group, 'count': files['groups'][group], 'reason': reason} for group, reason in [('config', '비밀·기계 설정 제외'), ('unknown', '분류 확인 전 제외')] if files['groups'][group]],
                       checkpoint={'available': checkpoint_rows is not None, 'entries': checkpoints}, publication_reasons=[{'reason': r[0], 'count': r[1]} for r in (reasons or [])])
         public = public_report(report, ready)
         if current is False:

@@ -35,7 +35,59 @@ it('출처와 현재 시도에 결합된 불변 가져오기 계약을 강제한
     await ext.query(request, [file,name,'request','a'.repeat(64),work,token]);
     expect((await ext.query('select request_id,status,resumable from brain.file_request_results_public_v1')).rows).toMatchObject([{request_id:file,status:'pending',resumable:false}]);
     await ext.query(health, [randomUUID(),name,'one',work,token]);
-    await ext.query(analysis, [randomUUID(),name,'one',file,work,token]);
+    const analysisId = randomUUID();
+    await ext.query(analysis, [analysisId,name,'one',file,work,token]);
+    const relationId = randomUUID();
+    const relation = `insert into brain.analysis_artifacts(id,source,dataset,import_batch,analysis_id,file_request_id,role,source_work_item_id,source_attempt_token) values ($1,$2,$3,'b',$4,$5,'image',$6,$7)`;
+    const relationArgs = [relationId,name,'d',analysisId,file,work,token];
+    await ext.query(relation,relationArgs);
+    await ext.query(relation,relationArgs);
+    expect((await admin.query('select id from brain.analysis_artifacts')).rowCount).toBe(1);
+    await expect(ext.query(relation,[relationId,name,'d',analysisId,file,randomUUID(),token])).rejects.toMatchObject({code:'BRS01'});
+    await expect(ext.query(relation,[randomUUID(),name,'wrong',analysisId,file,work,token])).rejects.toThrow();
+    await expect(ext.query(relation,[relationId,name,'d',analysisId,file,work,token].map((v,i)=>i===2?'changed':v))).rejects.toThrow();
+    await expect(ext.query('select * from brain.analysis_artifacts')).rejects.toMatchObject({code:'42501'});
+    await expect(ext.query('update brain.analysis_artifacts set role=role')).rejects.toMatchObject({code:'42501'});
+    await expect(admin.query('delete from brain.analysis_artifacts')).rejects.toThrow('불변');
+    const payloadId = randomUUID();
+    const payload = analysis.replace('file_request_id,source_work_item_id', 'file_request_id,summary,summary_raw,summary_encoding,source_work_item_id').replace('$4,$5,$6)', "$4,'a�b',$7,'utf-8',$5,$6)");
+    await ext.query(payload,[payloadId,name,'payload',file,work,token,Buffer.from([97,0,98])]);
+    await ext.query(payload,[payloadId,name,'payload',file,work,token,Buffer.from([97,0,98])]);
+    await expect(ext.query(payload,[payloadId,name,'payload',file,work,token,Buffer.from([97,0,99])])).rejects.toThrow('충돌');
+    const analysesDto = await store.imports.readAnalyses();
+    expect(analysesDto.ok && analysesDto.rows).toContainEqual(expect.objectContaining({id:payloadId,summary:'a\0b'}));
+    expect(analysesDto.ok && analysesDto.rows).toContainEqual(expect.objectContaining({id:analysisId,artifacts:[expect.objectContaining({file_request_id:file,role:'image',file_id:null})]}));
+    await expect(ext.query(analysis.replace("'d','b'", "'other','b'"), [randomUUID(),name,'wrong-dataset',file,work,token])).rejects.toThrow();
+    const jsonTextId=randomUUID(), jsonText = 'x\ud800y\0', jsonRaw=Buffer.from('"x\\ud800y\\u0000"','ascii');
+    const jsonAnalysis=analysis.replace('file_request_id,source_work_item_id','file_request_id,scope,scope_raw,scope_encoding,source_work_item_id').replace('$4,$5,$6)', '$4,$7,$8,$9,$5,$6)');
+    const jsonArgs=[jsonTextId,name,'json-surrogate',file,work,token,'x�y�',jsonRaw,'json-string-v1'];
+    await ext.query(jsonAnalysis,jsonArgs); await ext.query(jsonAnalysis,jsonArgs);
+    const validJsonDto=await store.imports.readAnalyses();
+    expect(validJsonDto.ok && validJsonDto.rows).toContainEqual(expect.objectContaining({id:jsonTextId,scope:jsonText}));
+    await expect(ext.query(jsonAnalysis,[randomUUID(),name,'json-version',file,work,token,'x�y�',jsonRaw,'json-string-v2'])).rejects.toMatchObject({code:'23514'});
+    const mutateJson=async (display:string,raw:Buffer,encoding:string)=>{
+      await admin.query('alter table brain.analyses disable trigger import_immutable');
+      try { await admin.query('update brain.analyses set scope=$2,scope_raw=$3,scope_encoding=$4 where id=$1',[jsonTextId,display,raw,encoding]); }
+      finally { await admin.query('alter table brain.analyses enable trigger import_immutable'); }
+    };
+    for (const [display,raw,encoding] of [['wrong',jsonRaw,'json-string-v1'],['x�y�',Buffer.from('not-json'),'json-string-v1'],['x�y�',jsonRaw,'utf-8']] as const) {
+      await mutateJson(display,raw,encoding);
+      expect(await store.imports.readAnalyses()).toMatchObject({ok:false});
+    }
+    await mutateJson('x�y�',jsonRaw,'json-string-v1');
+
+    // primary는 같은 source/dataset이어도 분석의 불변 주 요청과 같아야 한다.
+    const anotherRequest=randomUUID();
+    await ext.query(request,[anotherRequest,name,'same-dataset-second','b'.repeat(64),work,token]);
+    const primary=relation.replace("'image'", "'primary'");
+    await expect(ext.query(primary,[randomUUID(),name,'d',analysisId,anotherRequest,work,token])).rejects.toThrow();
+    const primaryId=randomUUID(), primaryArgs=[primaryId,name,'d',analysisId,file,work,token];
+    await ext.query(primary,primaryArgs); await ext.query(primary,primaryArgs);
+    await ext.query(relation,[randomUUID(),name,'d',analysisId,anotherRequest,work,token]);
+    const input=relation.replace("'image'", "'input'");
+    await ext.query(input,[randomUUID(),name,'d',analysisId,anotherRequest,work,token]);
+    expect((await admin.query('select role,file_request_id from brain.analysis_artifacts where analysis_id=$1 order by role,file_request_id',[analysisId])).rows).toHaveLength(4);
+
     expect((await admin.query('select * from brain.health_current_v1')).rowCount).toBe(1);
     await admin.query("insert into brain.health_observations(id,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,value,unit,local_date,observed_at,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token) select $1,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,value,unit,local_date,observed_at,'America/New_York',false,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token from brain.health_observations limit 1", [randomUUID()]);
     expect((await admin.query('select * from brain.health_current_v1')).rowCount).toBe(2);
@@ -88,13 +140,27 @@ it('출처와 현재 시도에 결합된 불변 가져오기 계약을 강제한
       await expect(ext.query(`delete from brain.${table}`)).rejects.toMatchObject({ code: '42501' });
       await expect(admin.query(`update brain.${table} set id=id`)).rejects.toThrow('불변');
     }
+    // 실패 결과는 정리 대상이 아니며 완료 확정과 정리 근거는 원자적으로 생성된다.
+    const cleanupRequest = randomUUID(), cleanupFile = randomUUID();
+    await ext.query(request,[cleanupRequest,name,'cleanup','b'.repeat(64),work,token]);
+    await admin.query("insert into brain.file_request_results(request_id,error_code,finished_at) values ($1,'IMPORT_FAILED',now())",[cleanupRequest]);
+    expect((await admin.query('select * from brain.file_import_cleanup where request_id=$1',[cleanupRequest])).rowCount).toBe(0);
+    await admin.query('insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ($1,$2,1,now())',[cleanupFile,'sha256:'+'b'.repeat(64)]);
+    await admin.query('begin');
+    await admin.query('update brain.file_request_results set file_id=$2,error_code=null where request_id=$1',[cleanupRequest,cleanupFile]);
+    expect((await admin.query('select * from brain.file_import_cleanup where request_id=$1',[cleanupRequest])).rowCount).toBe(1);
+    await admin.query('rollback');
+    expect((await admin.query('select * from brain.file_import_cleanup where request_id=$1',[cleanupRequest])).rowCount).toBe(0);
+    await admin.query('update brain.file_request_results set file_id=$2,error_code=null where request_id=$1',[cleanupRequest,cleanupFile]);
+    expect((await admin.query('select * from brain.file_import_cleanup where request_id=$1',[cleanupRequest])).rowCount).toBe(1);
     const other = `${name}b`, otherWork = randomUUID(), otherToken = randomUUID(), otherFile = randomUUID();
     await admin.query("insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ($1,'1',now(),true,now())", [other]);
     await admin.query('insert into brain.extension_work_kinds(extension_name,kind) values ($1,$2)', [other, `${other}.import`]);
     await store.addWork({ id: otherWork, kind: `${other}.import`, targetKind: 'import', targetId: 'test', createdAt: now, nextAttemptAt: now });
     await store.claimSupervisedWork({ now, claimedBy: 'other', kinds: [`${other}.import`], attemptToken: otherToken });
     await admin.query(request, [otherFile,other,'foreign','a'.repeat(64),otherWork,otherToken]);
-    expect((await ext.query('select request_id from brain.file_request_results_public_v1')).rows).toEqual([{request_id:file}]);
+    expect((await ext.query('select request_id from brain.file_request_results_public_v1')).rows).toEqual(expect.arrayContaining([{request_id:file},{request_id:cleanupRequest}]));
+    await expect(ext.query(relation,[randomUUID(),name,'d',analysisId,otherFile,work,token])).rejects.toThrow();
     for (const [sql, args] of [
       [request,[randomUUID(),other,'foreign2','a'.repeat(64),otherWork,otherToken]],
       [health,[randomUUID(),other,'foreign',otherWork,otherToken]],
