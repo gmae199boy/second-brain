@@ -1,0 +1,67 @@
+"""감독된 preflight 진입점. 원본과 대상 계약 표에는 쓰지 않는다."""
+import json
+import hashlib
+import os
+import sys
+import psycopg
+from preflight import analyze, readiness, public_report, classify_files, unit_risks, estimate_candidates
+from reports import write_reports
+from capture_manifest import load_capture
+from role_probe import probe_role, safely
+
+
+def emit(kind, **values):
+    print(json.dumps({'abi': 1, 'type': kind, **values}), flush=True)
+
+
+def main():
+    settings = json.loads(os.environ['BRAIN_SETTINGS_SNAPSHOT'])
+    if settings.get('version') != 1 or settings.get('extension') != 'garmin':
+        raise ValueError('PREFLIGHT_INVALID')
+    capture = load_capture(settings['values']['garmin.capture_manifest'])
+    def digest(path):
+        with path.open('rb') as stream:
+            return hashlib.file_digest(stream, 'sha256').hexdigest()
+    hashes = {role: digest(path) for role, path in capture['datasets'].items()}
+    report = analyze(capture['datasets'])
+    after = {role: digest(path) for role, path in capture['datasets'].items()}
+    if hashes != after:
+        raise ValueError('PREFLIGHT_INVALID')
+    metadata = json.loads(os.environ['BRAIN_EXTENSION_READINESS'])
+    with psycopg.connect(os.environ['BRAIN_DATABASE_URL'], options='-c statement_timeout=1900 -c lock_timeout=1500') as conn:
+        checks = probe_role(conn)
+        attempt_rows = safely(conn, 'select brain.attempt_is_current(%s::uuid,%s::uuid)', (os.environ['BRAIN_WORK_ID'], os.environ['BRAIN_ATTEMPT_TOKEN'])) if checks['attempt_execute'] else None
+        current = attempt_rows[0][0] if attempt_rows else None
+        batch_rows = safely(conn, 'select id,dataset from garmin.import_batches order by id') if checks['batch_select'] else None
+        mapping_rows = safely(conn, 'select count(*) from garmin.import_mapping') if checks['mapping_select'] else None
+        catalog_rows = safely(conn, 'select definition from brain.health_catalog_v1') if checks['catalog_select'] else None
+        checks['batch_select'] = batch_rows is not None
+        checks['mapping_select'] = mapping_rows is not None
+        checks['catalog_select'] = catalog_rows is not None
+        batches = [{'id': row[0], 'dataset': row[1]} for row in batch_rows] if batch_rows is not None else []
+        mappings = mapping_rows[0][0] if mapping_rows else None
+        catalog = [row[0] for row in catalog_rows] if catalog_rows is not None else []
+        ready = readiness(metadata, 'brain_ext_garmin' if all(checks.values()) else '', current, batches)
+        ready['catalog'] = checks
+        files = classify_files(capture['private']['files'])
+        estimates = estimate_candidates(report, files, mappings)
+        report.update(file_classification=files, unit_risks=unit_risks(report, catalog), capture=capture['private'], readiness=ready, existing_mapping_count=mappings, source_unchanged=True, snapshot_hashes=hashes,
+                      estimates=estimates,
+                  risks=['원래 NULL의 결측 원인은 복원할 수 없음', '원본 단위와 정규화 버전을 별도로 검증해야 함'],
+                      exclusions=[{'category': group, 'count': files['groups'][group], 'reason': reason} for group, reason in [('config', '비밀·기계 설정 제외'), ('log', '운영 로그 제외'), ('unknown', '분류 확인 전 제외')] if files['groups'][group]],
+                      checkpoint={'available': False, 'resume': '미제공'})
+        public = public_report(report, ready)
+        if current is False:
+            raise ValueError('PREFLIGHT_STALE')
+        write_reports(os.environ['BRAIN_EXTENSION_HOME'], os.environ['BRAIN_WORK_ID'], report, public)
+        if not ready['ready']:
+            raise ValueError('EXTENSION_REPORT_NOT_READY')
+    emit('result')
+
+
+try:
+    main()
+except Exception as exc:
+    code = str(exc) if isinstance(exc, ValueError) and str(exc) in ('PREFLIGHT_INVALID', 'PREFLIGHT_SCHEMA_UNSUPPORTED', 'EXTENSION_REPORT_NOT_READY', 'PREFLIGHT_STALE') else 'PREFLIGHT_INVALID'
+    emit('error', code=code, retryable=False)
+    sys.exit(1)

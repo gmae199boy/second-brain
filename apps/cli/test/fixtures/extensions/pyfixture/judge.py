@@ -32,6 +32,21 @@ def event(line):
         return None, 'ABI_VERSION_UNKNOWN'
     return (obj, None) if event_schema.is_valid(obj) else (None, 'ABI_LINE_INVALID')
 
+def environment(value):
+    if not env_schema.is_valid(value):
+        return False
+    if 'BRAIN_EXTENSION_READINESS' not in value:
+        return True
+    try:
+        item = json.loads(value['BRAIN_EXTENSION_READINESS'])
+        if not isinstance(item, dict) or set(item) != {'version', 'core', 'expected_core', 'extension', 'migrations', 'applied_migrations', 'manifest_version', 'abi'} or type(item['version']) not in (int, float) or item['version'] != 1 or type(item['abi']) not in (int, float) or item['abi'] != 1:
+            return False
+        def integer(number, minimum):
+            return type(number) in (int, float) and math.isfinite(number) and number == int(number) and minimum <= number <= 9007199254740991
+        return all(v is None or integer(v, 0) for v in (item['core'], item['expected_core'], item['extension'])) and isinstance(item['migrations'], list) and all(integer(n, 1) for n in item['migrations']) and (item['applied_migrations'] is None or isinstance(item['applied_migrations'], list) and all(integer(n, 1) for n in item['applied_migrations'])) and isinstance(item['manifest_version'], str) and bool(item['manifest_version'])
+    except (ValueError, TypeError, KeyError):
+        return False
+
 def snapshot(raw):
     if not isinstance(raw, str) or len(raw.encode('utf-8')) > 16384:
         return False
@@ -83,7 +98,7 @@ def run(case):
 
 result = {}
 result['manifests'] = [{'name': c['name'], 'verdict': manifests.valid(c['manifest'])} for c in manifests.fixtures]
-result['env'] = [{'name': c['name'], 'verdict': env_schema.is_valid(c['env'])} for c in load(abi / 'env.json')]
+result['env'] = [{'name': c['name'], 'verdict': environment(c['env'])} for c in load(abi / 'env.json')]
 result['events'] = [{'name': c['name'], 'verdict': event(c['line'])[1] or True} for c in load(abi / 'events.json')]
 result['runs'] = [{'name': c['name'], 'verdict': run(c)} for c in load(abi / 'runs.json')]
 result['settings-snapshots'] = [{'name': c['name'], 'verdict': snapshot(c['snapshot'])} for c in load(abi / 'settings-snapshots.json')]

@@ -465,3 +465,31 @@ location: n/a
 source_spec: `tickets/epic-garmin-import/tickets/story-view-fixture-ts-python-ambiguity-plan.md`
 reason: 검토 필요: [ASSUMPTION] 원본 SQL에서 단위 근거가 없는 지표는 legacy_unspecified로 보존하고 숫자 집계를 금지한다.
 status: open
+
+### DW-36: 검토 필요: [ASSUMPTION] Q2 범위는 알려진 날짜·시각 열만 요약하고 다른 열은 원문으로 보존한다.
+origin: spec-deferred 630ef65583bb
+location: n/a
+source_spec: `tickets/epic-garmin-import/tickets/story-reader-preflight-brain-ext-run-garmin-import-preflight-plan.md`
+reason: 검토 필요: [ASSUMPTION] Q2 범위는 알려진 날짜·시각 열만 요약하고 다른 열은 원문으로 보존한다.
+status: open
+
+### DW-37: 검토 필요: [ASSUMPTION] 기존 private capture 형식의 코드 명세가 없어 version1 정규화 manifest를 엄격히 받고 알 수 없는 형식은 거부한다. 실제 capture 생성 단계에서 명시 변환한다.
+origin: spec-deferred 39121c6e6049
+location: n/a
+source_spec: `tickets/epic-garmin-import/tickets/story-reader-preflight-brain-ext-run-garmin-import-preflight-plan.md`
+reason: 검토 필요: [ASSUMPTION] 기존 private capture 형식의 코드 명세가 없어 version1 정규화 manifest를 엄격히 받고 알 수 없는 형식은 거부한다. 실제 capture 생성 단계에서 명시 변환한다.
+status: open
+
+### DW-38: 검토 필요: [ASSUMPTION] 수동 target은 default 또는 최대 64자의 영숫자·밑줄·하이픈으로 제한한다.
+origin: spec-deferred 2171a9e3714e
+location: n/a
+source_spec: `tickets/epic-garmin-import/tickets/story-reader-preflight-brain-ext-run-garmin-import-preflight-plan.md`
+reason: 검토 필요: [ASSUMPTION] 수동 target은 default 또는 최대 64자의 영숫자·밑줄·하이픈으로 제한한다.
+status: open
+
+### DW-39: 검토 필요: [ASSUMPTION] 수동 report 일감은 최대 30초 기다린 뒤 미완료면 queued 상태를 반환한다. 재개 checkpoint는 현재 미제공으로 보고한다.
+origin: spec-deferred 5f8b37e8a8ff
+location: n/a
+source_spec: `tickets/epic-garmin-import/tickets/story-reader-preflight-brain-ext-run-garmin-import-preflight-plan.md`
+reason: 검토 필요: [ASSUMPTION] 수동 report 일감은 최대 30초 기다린 뒤 미완료면 queued 상태를 반환한다. 재개 checkpoint는 현재 미제공으로 보고한다.
+status: open

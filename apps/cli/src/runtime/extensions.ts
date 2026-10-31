@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readFile, rename, rm, lstat, readdir, chmod, realpath } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { cp, mkdir, mkdtemp, readFile, rename, rm, lstat, readdir, chmod, realpath, open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseEnv } from 'node:util';
@@ -42,7 +43,7 @@ async function packageDigest(folder: string, migrations: string, omitMigrations 
   async function visit(dir: string, relative: string): Promise<void> {
     for (const name of (await readdir(dir)).sort()) {
       const path = relative ? `${relative}/${name}` : name;
-      if (path === '.venv' || path === 'tokenstore' || path === 'staging' || name === '__pycache__' || name.endsWith('.pyc') || (omitMigrations && (path === migrations || path.startsWith(`${migrations}/`)))) continue;
+      if (path === '.venv' || path === 'tokenstore' || path === 'staging' || path === 'reports' || name === '__pycache__' || name.endsWith('.pyc') || (omitMigrations && (path === migrations || path.startsWith(`${migrations}/`)))) continue;
       const full = join(dir, name), stat = await lstat(full);
       if (stat.isSymbolicLink()) throw new Error('확장 패키지에 심볼릭 링크를 둘 수 없습니다');
       if (stat.isDirectory()) { hash.update(`d${path.length}:${path}`); await visit(full, path); }
@@ -89,7 +90,20 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
     if (!url) throw new Error('데이터베이스 연결 주소가 없습니다');
     return url;
   };
+  async function safeFile(parts: string[]): Promise<string> {
+    let path = home;
+    for (const part of parts.slice(0, -1)) {
+      path = join(path, part); const stat = await lstat(path);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('invalid extension path');
+    }
+    const file = await open(join(path, parts[parts.length - 1]!), constants.O_RDONLY | constants.O_NOFOLLOW);
+    try { const stat = await file.stat(); if (!stat.isFile() || stat.size > 1024 * 1024) throw new Error('invalid extension file'); return await file.readFile('utf8'); }
+    finally { await file.close(); }
+  }
   return {
+    async installedManifest(name) { if (!isExtensionName(name)) throw new Error('invalid extension'); return safeFile(['extensions', name, 'manifest.json']); },
+    // [ASSUMPTION] 공개 보고 파일의 고정 이름은 public.json이다.
+    async readPublicReport(name, workId) { if (!isExtensionName(name) || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(workId)) throw new Error('invalid report'); return JSON.parse(await safeFile(['extensions', name, 'reports', workId, 'public.json'])); },
     async secureCredentials() { await chmod(envFilePath(home), 0o600); },
     async schedulerReady() {
       try {
@@ -170,6 +184,11 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
         try {
           const staged = join(stage, name);
           await cp(dir, staged, { recursive: true, errorOnExist: true, force: false });
+          // 보고서는 확장 소유의 영속 데이터다.
+          await rm(join(staged, 'reports'), { recursive: true, force: true });
+          const previousReports = join(target, 'reports');
+          try { const reportStat = await lstat(previousReports); if (!reportStat.isDirectory() || reportStat.isSymbolicLink()) throw new Error('invalid reports'); await checkTree(previousReports); await cp(previousReports, join(staged, 'reports'), { recursive: true, errorOnExist: true, force: false }); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
           // staging은 미완료 파일 요청의 소유이며 패키지 내용이 아니다.
           await rm(join(staged, 'staging'), { recursive: true, force: true });
           const previousStaging = join(target, 'staging');

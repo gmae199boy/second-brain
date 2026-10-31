@@ -1,5 +1,6 @@
 """실데이터를 포함하지 않는 schema10/15 시험 입력 생성기."""
 import sqlite3
+import json
 import sys
 from pathlib import Path
 
@@ -22,3 +23,38 @@ def create(path, version=15):
 
 if __name__ == '__main__':
     create(Path(sys.argv[1]), int(sys.argv[2]))
+
+
+def five_candidates(directory):
+    """독립적인 작은 충돌 기대값을 가진 다섯 합성 DB를 만든다."""
+    result = {}
+    for role in ('D1', 'D2', 'D3', 'D4', 'D5'):
+        path = directory / (role + '.db')
+        create(path, 15 if role == 'D1' else 10)
+        with sqlite3.connect(path) as conn:
+            if role == 'D3':
+                conn.execute('delete from raw_response')
+                conn.execute('delete from daily_metric')
+                conn.execute('insert into auth_event(local_date,logged_in_at) values (?,?)', ('2026-01-02', 1))
+            elif role == 'D4':
+                conn.execute('update raw_response set raw=?,checked_at=?', ('{"userProfileId":12345,"value":2}', 7))
+                conn.execute('update daily_metric set steps=?', (100,))
+            elif role == 'D5':
+                conn.execute('update raw_response set checked_at=?', (8,))
+                conn.execute('insert into raw_response values (?,?,?,?,?,?,?)', ('day', '2026-01-02', 'extra', '{"userProfileId":67890}', 1, 1, 'test'))
+            if role == 'D1':
+                conn.execute('create table day_summary(date text primary key, body text, extra text)')
+                conn.execute('insert into day_summary values (?,?,?)', ('2026-01-01', None, '원문'))
+        result[role] = path
+    return result
+
+
+def capture_manifest(directory, paths):
+    # [ASSUMPTION] 합성 fixture는 정규화 version1 형식을 사용한다.
+    roles = {'D1': 'development', 'D2': 'production', 'D3': 'development-before-change', 'D4': 'production-pre-epic5', 'D5': 'production-before-history-start'}
+    artifact = directory / 'synthetic.txt'
+    artifact.write_text('합성 자료', encoding='utf-8')
+    value = {'version': 1, 'capture_id': 'synthetic-capture', 'datasets': [{'dataset': 'synthetic-' + role, 'source': roles[role], 'snapshot': paths[role].name} for role in ('D1', 'D2', 'D3', 'D4', 'D5')], 'files': [{'source': 'synthetic-document', 'snapshot': artifact.name, 'bytes': artifact.stat().st_size}]}
+    path = directory / 'manifest.json'
+    path.write_text(json.dumps(value), encoding='utf-8')
+    return path, value

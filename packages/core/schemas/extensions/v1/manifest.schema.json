@@ -66,10 +66,50 @@
             "const": "supervised"
           },
           "runtime": {
-            "enum": ["node", "python"]
+            "enum": [
+              "node",
+              "python"
+            ]
           },
           "entry": {
             "$ref": "#/$defs/path"
+          },
+          "manual": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          },
+          "public_report": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "counts",
+              "checks"
+            ],
+            "properties": {
+              "counts": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                }
+              },
+              "checks": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                }
+              }
+            }
+          },
+          "required_settings": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            }
           }
         }
       }
@@ -92,7 +132,10 @@
           "const": "supervised"
         },
         "runtime": {
-          "enum": ["node", "python"]
+          "enum": [
+            "node",
+            "python"
+          ]
         },
         "entry": {
           "$ref": "#/$defs/path"
@@ -154,7 +197,10 @@
       ],
       "properties": {
         "runtime": {
-          "enum": ["node", "python"]
+          "enum": [
+            "node",
+            "python"
+          ]
         },
         "entry": {
           "$ref": "#/$defs/path"

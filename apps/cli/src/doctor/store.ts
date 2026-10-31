@@ -52,6 +52,7 @@ export function failedConfigStore(message: string): Store & SchemaStore & Settin
     async writeExtensionInstallProgress() { return unavailable; },
     async recordExtensionPythonEnvironment() { return unavailable; },
     async getExtensionPythonEnvironment() { return unavailable; },
+    async enqueueExtensionWork() { return unavailable; },
     async listExtensionInventory() { return unavailable; },
     async getExtensionPublicStatus() { return unavailable; },
     async setExtensionEnabled() { return unavailable; },

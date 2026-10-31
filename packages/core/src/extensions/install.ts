@@ -22,6 +22,8 @@ export interface ExtensionMigrator {
   apply(owner: string, directory: string): Promise<{ ok: true; from: number; to: number; applied: string[] } | { ok: false; code: 'MIGRATION_FAILED' | 'DB_UNAVAILABLE'; message: string; file?: string }>;
 }
 export interface ExtensionRuntime {
+  installedManifest?(name: string): Promise<string>;
+  readPublicReport?(name: string, workId: string): Promise<unknown>;
   schedulerReady?(): Promise<boolean>;
   secureCredentials?(name: string): Promise<void>;
   withInstallLock?<T>(name: string, run: () => Promise<T>, signal?: AbortSignal): Promise<T>;

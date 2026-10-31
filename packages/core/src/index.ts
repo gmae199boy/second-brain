@@ -304,3 +304,5 @@ export type * from './ports/import-store.js';
 export * from './files/import-work.js';
 
 export * from './domain/health.js';
+
+export { runExtension } from './extensions/run.js';

@@ -33,6 +33,15 @@ def valid(value):
     kinds = [w['kind'] for w in work]
     if len(kinds) != len(set(kinds)) or any(not k.startswith(name + '.') for k in kinds):
         return False
+    aliases = [w['manual'] for w in work if 'manual' in w]
+    if len(aliases) != len(set(aliases)):
+        return False
+    for item in work:
+        if any(k not in keys for k in item.get('required_settings', [])):
+            return False
+        report = item.get('public_report')
+        if report and set(report['counts']) & set(report['checks']):
+            return False
     auth = value.get('auth')
     if auth and (not auth['kind'].startswith(name + '.') or auth['kind'] in kinds):
         return False

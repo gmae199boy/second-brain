@@ -2,10 +2,26 @@ import { extensionPublicProjection, validInstallProgress, type ExtensionInstallP
 import { sql } from 'kysely';
 import { databaseFailure, type PgConnect } from './connect.js';
 import { withWrite } from './write.js';
+import { ensureWork } from './work.js';
 type Row = { name: string; version: string; installed_at: string; enabled: boolean; enabled_changed_at: string; connection_status: 'connected' | 'failed' | null; connection_checked_at: string | null; connection_code: string | null; connection_message: string | null };
 const record = (r: Row): ExtensionRecord => ({ name: r.name, version: r.version, installedAt: new Date(r.installed_at), enabled: r.enabled, enabledChangedAt: new Date(r.enabled_changed_at), connectionStatus: r.connection_status, connectionCheckedAt: r.connection_checked_at === null ? null : new Date(r.connection_checked_at), connectionCode: r.connection_code, connectionMessage: r.connection_message });
 export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
   return {
+    async enqueueExtensionWork({ name, version, work }) {
+      const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      const result = await withWrite(opened.connection, async held => {
+        const rows = await sql<{ enabled: boolean; version: string }>`select enabled, version from brain.extensions where name=${name} for update`.execute(held);
+        const row = rows.rows[0];
+        if (!row) return { state: 'missing' as const };
+        if (row.version !== version) return { state: 'changed' as const };
+        if (!row.enabled) return { state: 'disabled' as const };
+        const found = await sql`select 1 from brain.extension_work_kinds where extension_name=${name} and kind=${work.kind}`.execute(held);
+        if (!found.rows.length) return { state: 'changed' as const };
+        const queued = await ensureWork(held, work);
+        return { state: 'queued' as const, workId: queued.row.id, created: queued.created };
+      });
+      return result.ok ? { ok: true, ...result.value } : result;
+    },
     async listExtensionInventory() {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {

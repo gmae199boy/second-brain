@@ -701,6 +701,15 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       Object.assign(row, { connectionStatus: status, connectionCode: code, connectionMessage: message, connectionCheckedAt: new Date(checkedAt) });
       return { ok: true };
     },
+    async enqueueExtensionWork({ name, version, work }) {
+      const row = extensions.get(name);
+      if (!row) return { ok: true, state: 'missing' };
+      if (row.version !== version) return { ok: true, state: 'changed' };
+      if (!row.enabled) return { ok: true, state: 'disabled' };
+      if (!extensionWorkKinds.get(name)?.includes(work.kind)) return { ok: true, state: 'changed' };
+      const result = addWork(work);
+      return result.ok ? { ok: true, state: 'queued', workId: result.item.id, created: result.created } : result;
+    },
     async getExtension(name) { return { ok: true, extension: structuredClone(extensions.get(name) ?? null) }; },
     async listExtensions() { return { ok: true, extensions: structuredClone([...extensions.values()].sort((a, b) => a.name < b.name ? -1 : 1)) }; },
     async holdWorkGroup({ group, now }) {

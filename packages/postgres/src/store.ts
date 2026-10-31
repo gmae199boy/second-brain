@@ -64,6 +64,10 @@ export function postgresStore(options: PostgresStoreOptions): PostgresStore {
         } };
       } catch (error) { return { ...databaseFailure(error), message: describe(error) }; }
     },
+    async readSchemaMigrationVersions(owner) {
+      try { const read = await sql<{ version: number }>`select version from brain.schema_migrations where owner=${owner} order by version`.execute(db); return { ok: true as const, versions: read.rows.map(row => row.version) }; }
+      catch (error) { return databaseFailure(error); }
+    },
     async readSchemaVersions() {
       try {
         const read = await sql<{ owner: string; version: number; applied_at: string }>`select distinct on (owner) owner, version, applied_at from brain.schema_migrations order by owner, version desc`.execute(db);

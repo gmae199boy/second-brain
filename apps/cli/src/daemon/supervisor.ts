@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { readFile, writeFile, rename, rm } from 'node:fs/promises';
+import { readFile, writeFile, rename, rm, readdir, realpath, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { envFilePath } from '../config/paths.js';
@@ -31,13 +31,16 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
       if (installed.ok) for (const extension of installed.extensions.filter(entry => entry.enabled)) {
         try {
           const directory = join(options.home, 'extensions', extension.name);
+          const directoryInfo = await lstat(directory);
+          const manifestInfo = await lstat(join(directory, 'manifest.json'));
+          if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink() || !manifestInfo.isFile() || manifestInfo.isSymbolicLink()) continue;
           const decoded = decodeExtensionManifest(await readFile(join(directory, 'manifest.json'), 'utf8'));
           if (!decoded.ok || decoded.manifest.name !== extension.name || decoded.manifest.version !== extension.version) continue;
           const manifest = decoded.manifest;
           const declarations = manifest.settings ?? [];
           for (const work of [...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : [])]) protectedLaunches[work.kind] = {
             extension: manifest.name, declarations: Object.fromEntries(declarations.map(setting => [setting.key, setting.type])), errorCodes: manifest.error_codes ?? [],
-            required: declarations.filter(setting => setting.required.includes(manifest.auth?.kind === work.kind ? 'auth' : 'work')).map(setting => setting.key),
+            required: 'required_settings' in work && Array.isArray(work.required_settings) ? work.required_settings : declarations.filter(setting => setting.required.includes(manifest.auth?.kind === work.kind ? 'auth' : 'work')).map(setting => setting.key),
             secrets: declarations.filter(setting => setting.secret).map(setting => setting.key),
             async prepare(item, token) {
               const read = await opened.store.getSettings({ keys: declarations.map(setting => setting.key) });
@@ -46,15 +49,21 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
               try {
                 if (declarations.some(setting => setting.secret)) secrets = Object.fromEntries(Object.entries(parseEnv(await readFile(envFilePath(options.home), 'utf8'))).filter((entry): entry is [string, string] => entry[1] !== undefined));
               } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return { ok: false, code: 'EXTENSION_CONFIG_INVALID' }; }
-              const snapshot = createExtensionSnapshot({ extension: manifest.name, stage: manifest.auth?.kind === work.kind ? 'auth' : 'work', declarations, settings: Object.fromEntries(read.settings.map(setting => [setting.key, setting.value])), secrets, machine: { tokenstore: join(directory, 'tokenstore') } });
+              const snapshot = createExtensionSnapshot({ extension: manifest.name, stage: manifest.auth?.kind === work.kind ? 'auth' : 'work', declarations, ...('required_settings' in work && Array.isArray(work.required_settings) ? { requiredKeys: work.required_settings } : {}), settings: Object.fromEntries(read.settings.map(setting => [setting.key, setting.value])), secrets, machine: { tokenstore: join(directory, 'tokenstore') } });
               if (!snapshot.ok || !url) return { ok: false, code: 'EXTENSION_CONFIG_INVALID' };
               let extensionUrl: string;
               try { extensionUrl = await extensionDatabaseUrl(options.home, manifest.name, url); } catch { return { ok: false, code: 'EXTENSION_CONFIG_INVALID' }; }
+              const versions = await opened.store.readSchemaVersions();
+              const applied = await opened.store.readSchemaMigrationVersions?.(manifest.name);
+              let migrationVersions: number[];
+              try { migrationVersions = (await readdir(join(directory, manifest.migrations))).filter(file => /^\d{4}_.+\.sql$/.test(file)).map(file => Number(file.slice(0, 4))).sort((a, b) => a - b); }
+              catch { return { ok: false, code: 'EXTENSION_CONFIG_INVALID' }; }
+              const readiness = { version: 1, core: versions.ok ? versions.versions['core']?.version ?? null : null, expected_core: opened.expected.core ?? null, extension: versions.ok ? versions.versions[manifest.name]?.version ?? null : null, migrations: migrationVersions, applied_migrations: applied?.ok ? applied.versions : null, manifest_version: manifest.version, abi: manifest.abi };
               return { ok: true, spec: { command: work.runtime === 'python' ? join(directory, '.venv', 'bin', 'python') : process.execPath, args: [join(directory, work.entry)], env: {
                 [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: extensionUrl, [PROCESS_ABI_ENV.workId]: item.id,
                 [PROCESS_ABI_ENV.runGeneration]: String(item.attempts), [PROCESS_ABI_ENV.attemptToken]: token, [PROCESS_ABI_ENV.workKind]: item.kind,
                 [PROCESS_ABI_ENV.targetKind]: item.targetKind, [PROCESS_ABI_ENV.targetId]: item.targetId,
-                ...(item.scheduledDates ? { BRAIN_RANGE_FROM: item.scheduledDates.from, BRAIN_RANGE_TO: item.scheduledDates.to } : {}), BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized,
+                ...(item.scheduledDates ? { BRAIN_RANGE_FROM: item.scheduledDates.from, BRAIN_RANGE_TO: item.scheduledDates.to } : {}), BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized, BRAIN_EXTENSION_HOME: await realpath(directory), BRAIN_EXTENSION_READINESS: JSON.stringify(readiness),
               } } };
             },
           };

@@ -1425,6 +1425,7 @@ describe('the dispatcher and the lock budget', () => {
         async searchConversationChunks() { return unavailable; },
         async findDailySchedule() { return unavailable; },
     async getWork() { return unavailable; },
+    async enqueueExtensionWork() { return unavailable; },
     async listExtensionInventory() { return unavailable; },
     async getExtensionPublicStatus() { return unavailable; },
     async setExtensionEnabled() { return unavailable; },

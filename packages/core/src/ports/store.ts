@@ -864,6 +864,7 @@ export type ReadSchemaVersionsResult =
  * the shape of the health probe every adapter already passes (AD-10).
  */
 export interface SchemaStore {
+  readSchemaMigrationVersions?(owner: string): Promise<{ ok: true; versions: number[] } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string }>;
   /** Read each owner’s highest applied version. Never throws on database failures. */
   readSchemaVersions(): Promise<ReadSchemaVersionsResult>;
   /** Release every resource the store holds. */
@@ -1499,6 +1500,7 @@ export interface ExtensionPublicStatus {
   stages: import('../extensions/install-progress.js').ExtensionInstallProgress['stages'];
 }
 export interface ExtensionStore {
+  enqueueExtensionWork(input: { name: string; version: string; work: AddWorkInput }): Promise<{ ok: true; state: 'queued'; workId: string; created: boolean } | { ok: true; state: 'missing' | 'disabled' | 'changed' } | ExtensionStoreFailure>;
   /** registry와 설치 기록의 이름을 중복 없이 정렬해 읽는다. */
   listExtensionInventory(): Promise<{ ok: true; names: string[] } | ExtensionStoreFailure>;
   getExtensionPublicStatus(name: string): Promise<{ ok: true; status: ExtensionPublicStatus } | ExtensionStoreFailure>;

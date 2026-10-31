@@ -6,6 +6,7 @@ import { searchRecall, type SearchInput } from './recall/search.js';
 import { expandRecall, type ExpandInput } from './recall/expand.js';
 import { readSessionPage, type ReadInput } from './sessions/read.js';
 import { CONVERSATION_CHUNK_KIND, conversationChunkHandler } from './recall/conversation-work.js';
+import { runExtension } from './extensions/run.js';
 import { installExtension, type ExtensionRuntime } from './extensions/install.js';
 import { extensionStatus, listExtensions, publicExtensionStatus, setExtensionEnabled } from './extensions/status.js';
 import { holdWorkGroup, releaseWorkGroup } from './queue/hold-groups.js';
@@ -247,6 +248,7 @@ export interface BrainSchedules {
   run(input: { scheduleId: string }): Promise<RunScheduleResult>;
 }
 export interface BrainExt {
+  run(input: { name: string; job: string; target?: string; waitMs?: number }): ReturnType<typeof runExtension>;
   install(input: { name: string; signal?: AbortSignal }): ReturnType<typeof installExtension>;
   status(input: { name: string }): ReturnType<typeof publicExtensionStatus>;
   list(): ReturnType<typeof listExtensions>;
@@ -429,7 +431,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
         : { ok: false, code: 'INVALID_ARGUMENT', message: '요청 ID가 UUID 형식이 아닙니다' },
     },
     recall: { chunks: input => searchRecall(store, 'chunks', input), tools: input => searchRecall(store, 'tools', input), expand: input => expandRecall(store, input) },
-    ext: { publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
+    ext: { run: input => runExtension(dependencies, input), publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
     files: { redact: (input) => redactFile({ store, clock, idGen }, input) },
     doctor: {

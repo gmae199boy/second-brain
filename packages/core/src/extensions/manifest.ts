@@ -8,7 +8,7 @@ export interface ExtensionManifest {
   connection_check: { runtime: 'node' | 'python'; entry: string };
   settings?: ExtensionSettingDeclaration[];
   error_codes?: string[];
-  work?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string }[];
+  work?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string; manual?: string; public_report?: { counts: string[]; checks: string[] }; required_settings?: string[] }[];
   auth?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string };
   default_schedules?: { kind: string; target_kind: string; target_id: string; local_time: string }[];
   raw_views?: string[];
@@ -41,10 +41,17 @@ export function decodeExtensionManifest(text: string): { ok: true; manifest: Ext
   if (v['work'] !== undefined) {
     if (!Array.isArray(v['work'])) return invalid;
     const seen = new Set<string>();
+    const aliases = new Set<string>();
     for (const work of v['work']) {
-      if (!object(work) || !keys(work, ['kind', 'execution', 'runtime', 'entry']) || typeof work['kind'] !== 'string' ||
+      if (!object(work) || !['kind', 'execution', 'runtime', 'entry'].every(k => Object.hasOwn(work, k)) || !Object.keys(work).every(k => ['kind', 'execution', 'runtime', 'entry', 'manual', 'public_report', 'required_settings'].includes(k)) || typeof work['kind'] !== 'string' ||
           !work['kind'].startsWith(`${v['name']}.`) || !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(work['kind']) || seen.has(work['kind']) ||
           work['execution'] !== 'supervised' || !['node', 'python'].includes(work['runtime'] as string) || !inside(work['entry'])) return invalid;
+      if (work['manual'] !== undefined && (typeof work['manual'] !== 'string' || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(work['manual']) || aliases.has(work['manual']))) return invalid;
+      if (typeof work['manual'] === 'string') aliases.add(work['manual']);
+      const report = work['public_report'];
+      const labels = (x: unknown): x is string[] => Array.isArray(x) && x.every(v => typeof v === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(v)) && new Set(x).size === x.length;
+      if (report !== undefined && (!object(report) || !keys(report, ['counts', 'checks']) || !labels(report['counts']) || !labels(report['checks']) || report['counts'].some(k => (report['checks'] as string[]).includes(k)))) return invalid;
+      if (work['required_settings'] !== undefined && (!Array.isArray(work['required_settings']) || work['required_settings'].some((k: unknown) => typeof k !== 'string' || !Array.isArray(v['settings']) || !v['settings'].some(s => object(s) && s['key'] === k)) || new Set(work['required_settings']).size !== work['required_settings'].length)) return invalid;
       seen.add(work['kind']);
     }
   }

@@ -278,5 +278,101 @@
       }
     },
     "expect": "valid"
+  },
+  {
+    "name": "manual report",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.import_preflight",
+          "execution": "supervised",
+          "runtime": "python",
+          "entry": "preflight.py",
+          "manual": "import-preflight",
+          "public_report": {
+            "counts": [
+              "rows"
+            ],
+            "checks": [
+              "ready"
+            ]
+          }
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "bad manual alias",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.import_preflight",
+          "execution": "supervised",
+          "runtime": "python",
+          "entry": "preflight.py",
+          "manual": "../bad",
+          "public_report": {
+            "counts": [
+              "rows"
+            ],
+            "checks": [
+              "ready"
+            ]
+          }
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "duplicate report labels",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.import_preflight",
+          "execution": "supervised",
+          "runtime": "python",
+          "entry": "preflight.py",
+          "manual": "import-preflight",
+          "public_report": {
+            "counts": [
+              "rows"
+            ],
+            "checks": [
+              "rows"
+            ]
+          }
+        }
+      ]
+    },
+    "expect": "invalid"
   }
 ]

@@ -4,7 +4,21 @@ import { assertEqual, assertOk } from '../assert.js';
 import { contractCase, withSubject, type ContractCase } from '../contract.js';
 export function extensionStoreContract(): ContractCase<ExtensionStore>[] {
   const now = new Date('2026-10-29T00:00:00.000Z'), next = new Date('2026-10-29T01:00:00.000Z');
-  return [contractCase('inventory는 registry와 journal 이름을 정렬하고 중복 제거한다', async make => {
+  return [contractCase('수동 일감은 등록과 활성 상태를 원자적으로 확인하고 열린 요청을 합친다', async make => {
+    await withSubject(make, async store => {
+      const work = { id: '00000000-0000-7000-8000-000000000001', kind: 'testext.job', targetKind: 'extension', targetId: 'default', createdAt: now, nextAttemptAt: now };
+      assertEqual(await store.enqueueExtensionWork({ name: 'testext', version: '1', work }), { ok: true, state: 'missing' }, '미설치');
+      assertOk(await store.recordExtensionInstall({ name: 'testext', version: '1', now, workKinds: [work.kind] }), '설치');
+      const [first, second] = await Promise.all([store.enqueueExtensionWork({ name: 'testext', version: '1', work }), store.enqueueExtensionWork({ name: 'testext', version: '1', work: { ...work, id: '00000000-0000-7000-8000-000000000002' } })]);
+      assertOk(first, '첫 요청'); assertOk(second, '두 번째 요청');
+      if (first.state !== 'queued' || second.state !== 'queued') throw new Error('일감이 큐에 없습니다');
+      assertEqual(first.workId, second.workId, '동일 열린 일감');
+      assertEqual([first.created, second.created].sort(), [false, true], '한 번만 생성');
+      assertOk(await store.setExtensionEnabled({ name: 'testext', enabled: false, now }), '비활성');
+      assertEqual(await store.enqueueExtensionWork({ name: 'testext', version: '1', work }), { ok: true, state: 'disabled' }, '비활성 거부');
+      assertEqual(await store.enqueueExtensionWork({ name: 'testext', version: '2', work }), { ok: true, state: 'changed' }, '버전 변경 거부');
+    });
+  }), contractCase('inventory는 registry와 journal 이름을 정렬하고 중복 제거한다', async make => {
     await withSubject(make, async store => {
       const progress = (name: string): ExtensionInstallProgress => ({ name, packageDigest: 'a'.repeat(64), result: 'failed', failedStage: 'package', lastFailure: { stage: 'package', code: 'EXTENSION_NOT_FOUND', at: now.toISOString() }, stages: {}, authWorkId: null, scheduleIds: [] });
       assertEqual(await store.listExtensionInventory(), { ok: true, names: [] }, '빈 inventory');

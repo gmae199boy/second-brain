@@ -350,3 +350,65 @@ it('인증 자식 종료가 미확정이면 취소 완료로 기록하지 않는
   expect(result).toMatchObject({ ok: false, code: 'EXTENSION_CANCEL_UNCONFIRMED' });
   expect(await original.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { result: 'login_required', stages: { login: { status: 'pending' } } } } });
 });
+
+it('선언된 수동 일감만 큐에 넣고 비활성을 우회하지 않으며 열린 대상을 합친다', async () => {
+  const { deps } = setup();
+  const work = { kind: 'testext.import_preflight', execution: 'supervised', runtime: 'node', entry: 'job.mjs', manual: 'import-preflight' };
+  deps.extensions.installedManifest = async () => JSON.stringify({ ...manifest, work: [work] });
+  await deps.store.recordExtensionInstall({ name: 'testext', version: manifest.version, now, workKinds: [work.kind] });
+  const { runExtension } = await import('../src/extensions/run.js');
+  const first = await runExtension(deps, { name: 'testext', job: 'import-preflight' });
+  const second = await runExtension(deps, { name: 'testext', job: 'import-preflight' });
+  expect(first).toMatchObject({ ok: true, created: true, status: 'queued' });
+  expect(second).toMatchObject({ ok: true, created: false, workId: first.ok ? first.workId : '' });
+  const item = first.ok && await deps.store.getWork(first.workId);
+  expect(item && item.ok && item.entry?.item).toMatchObject({ executionClass: 'supervised', holdGroup: 'extension:testext', targetId: 'default' });
+  expect(await runExtension(deps, { name: 'testext', job: 'other' })).toMatchObject({ ok: false });
+  expect(await runExtension(deps, { name: 'testext', job: 'import-preflight', target: '../bad' })).toMatchObject({ ok: false });
+  await deps.store.setExtensionEnabled({ name: 'testext', enabled: false, now });
+  expect(await runExtension(deps, { name: 'testext', job: 'import-preflight' })).toMatchObject({ ok: false });
+});
+
+it('성공한 일감의 선언된 안전 공개 보고만 허용한다', async () => {
+  const { deps } = setup();
+  const work = { kind: 'testext.report', execution: 'supervised', runtime: 'node', entry: 'job.mjs', manual: 'report', public_report: { counts: ['rows'], checks: ['ready'] } };
+  deps.extensions.installedManifest = async () => JSON.stringify({ ...manifest, work: [work] });
+  await deps.store.recordExtensionInstall({ name: 'testext', version: manifest.version, now, workKinds: [work.kind] });
+  const original = deps.store.getWork;
+  deps.store.getWork = async id => { const result = await original(id); if (result.ok && result.entry) { result.entry.item.completedAt = now; result.entry.item.outcome = 'succeeded'; } return result; };
+  const { runExtension } = await import('../src/extensions/run.js');
+  let report: unknown = { counts: { rows: 2 }, checks: { ready: true } };
+  deps.extensions.readPublicReport = async () => report;
+  expect(await runExtension(deps, { name: 'testext', job: 'report', waitMs: 0 })).toMatchObject({ ok: true, status: 'completed', report });
+  const successfulGetWork = deps.store.getWork;
+  deps.store.getWork = async id => { const result = await successfulGetWork(id); if (result.ok && result.entry) { result.entry.item.outcome = 'failed'; result.entry.latestAttempt = { errorCode: 'EXTENSION_REPORT_NOT_READY' } as typeof result.entry.latestAttempt; } return result; };
+  expect(await runExtension(deps, { name: 'testext', job: 'report', waitMs: 0 })).toMatchObject({ ok: false, report: { checks: { ready: true } } });
+  deps.store.getWork = successfulGetWork;
+  for (report of [{ counts: { rows: -1 }, checks: { ready: true } }, { counts: { rows: 1, secret: 1 }, checks: { ready: true } }, { counts: { rows: 1 }, checks: { ready: 'yes' } }, { counts: { rows: 1 }, checks: { ready: true }, secret: 'x' }]) {
+    expect(await runExtension(deps, { name: 'testext', job: 'report', waitMs: 0 })).toMatchObject({ ok: false, code: 'EXTENSION_INVALID' });
+  }
+});
+
+it('보고 대기 예산에 주입된 시계와 타이머를 사용한다', async () => {
+  const { deps } = setup(); const time = manualTime(now);
+  const work = { kind: 'testext.report', execution: 'supervised', runtime: 'node', entry: 'job.mjs', manual: 'report', public_report: { counts: [], checks: [] } };
+  deps.extensions.installedManifest = async () => JSON.stringify({ ...manifest, work: [work] });
+  deps.extensions.readPublicReport = async () => { throw new Error('아직 완료되지 않음'); };
+  deps.extensions.timer = time.timer;
+  await deps.store.recordExtensionInstall({ name: 'testext', version: manifest.version, now, workKinds: [work.kind] });
+  const { runExtension } = await import('../src/extensions/run.js');
+  const pending = runExtension({ ...deps, clock: time.clock }, { name: 'testext', job: 'report', waitMs: 100 });
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  time.advance(100);
+  expect(await pending).toMatchObject({ ok: true, status: 'queued' });
+});
+
+it('설치 잠금 예외를 경로 없는 고정 저장소 오류로 반환한다', async () => {
+  const { deps } = setup();
+  deps.extensions.installedManifest = async () => JSON.stringify(manifest);
+  deps.extensions.withInstallLock = async () => { throw new Error('private-path-canary'); };
+  const { runExtension } = await import('../src/extensions/run.js');
+  const result = await runExtension(deps, { name: 'testext', job: 'report' });
+  expect(result).toEqual({ ok: false, code: 'DB_UNAVAILABLE', message: '확장 설치 잠금을 확보하지 못했습니다' });
+  expect(JSON.stringify(result)).not.toContain('private-path-canary');
+});
