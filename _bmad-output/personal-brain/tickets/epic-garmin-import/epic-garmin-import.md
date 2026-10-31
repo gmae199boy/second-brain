@@ -145,3 +145,5 @@ Garmin 확장 뼈대와 스키마를 PostgreSQL에 만들고 기존 Garmin 데�
 - Decision(2026-10-28, 세트 검증 S1·S2 채택): 1의 plan 상한을 description에 고정했다(raw 한 건, 일 지표 하나, Markdown 하나, 정상 파일 인계 하나). 각 plan은 실제 PG·Python·데몬 구성 명령, 공유 fixture 경로, kill 지점의 동기화·종료 확인, 재시작·정리 명령을 적는다. 5는 요청 INSERT 뒤, 인계 commit 전, FileStore 저장 뒤 결과 commit 전을 나눈다. 7은 TS 기본 suite와 Python suite의 실행 명령을 따로 남긴다.
 - Decision(2026-10-30, 사용자): 에픽마다 두던 Refactor sweep(14.7)을 뺐다(`dropped`). 리뷰가 미룬 기존 결함은 `deferred-work.md` 장부에 남고, 사용자가 원할 때 `bmad-loop sweep`으로 직접 처리한다. 이 Mac 확인(14.8)은 sweep 대신 sweep이 기다리던 스토리들을 기다린다.
 - Decision(2026-10-30, 추천으로 정함): 14.1의 15.6 레인 대기를 없애고 manifest(13.2)와 비발신 0건 검증에 쓰는 채널 요청 표(15.1)를 명시한다. PG FileStore(11.4)·attempt(12.3)·Python 설치(13.3)·role(13.4)이 tracer의 기능 선행이다. 채널 legacy 표는 소비자인 14.4가 15.3을 기다린다. 예전 15 완료 HEAD·번호 가정은 폐기하고 착수 시점 main HEAD에서 확인한다.
+
+- Decision(2026-11-01, 추천으로 정함, 14.5 escalation 해소): 리뷰 반복 상한은 세션 정지로 취급한다. 보존 구현에서 inventory namespace와 가림 삭제 후 claim 만료를 각각 회귀·교정·checkpoint하고 전체 검증과 독립 리뷰를 다시 수행한다. 수락 계약은 유지한다.

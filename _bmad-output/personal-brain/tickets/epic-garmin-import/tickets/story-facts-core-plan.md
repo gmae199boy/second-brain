@@ -278,6 +278,14 @@ bad_plan loopback을 위해 review_loop_iteration을 5에서 6으로 증가시�
 기존 Matrix Test Audit의 전 행과 실행4 추가 회귀가 다시 실행·통과했다. 변경·경계/바이트 검증 행은 `상한 초과 파일의 동일 크기 변경을 원문 해시로 충돌 처리한다`에서 32MiB+ 독립 hash·too_large·요청 없음·변경 충돌·기존 inventory 불변을 추가 확인했다. 정리/경쟁 행은 `재발행 staging과 core 정리는 같은 locator 잠금으로 직렬화된다`에서 별도 producer의 상태조회 후 staging 전 IPC barrier→core 완료 결과/정리 근거→DB advisory 잠금 대기→producer 재개→cleaned_at·staging 부재→재실행 후 부재를 확인했다. tracer 전체 기존 6시험도 Python 전체 suite에서 다시 통과했다. 순수 검사에서 동시 성장 조기 거부·FIFO/symlink/traversal·상한·정상 bytes/hash가 통과했다. 관련 시험에 skip·필터 제외는 없으며 독립 재리뷰를 진행한다.
 
 
+## 2026-11-01 감독자 재개 단계 (14.5)
+
+추천: 미검증 보존 커밋 `f3d9493`과 원래 기준 `143ebf5fc002a08ba4aba72fe58ef71ae32960c0`의 전체 diff 및 모든 KEEP을 유지하고 새 generation에서 단계별로 해결한다. 기존 검증은 아래 두 반례를 포함하지 않으며 완료 근거가 아니다.
+
+1. `/tmp/bmad-14-5-dev2-review6.md`의 inventory 원본 표 namespace 충돌을 재현하는 합성 회귀를 먼저 만들고 기존 저장 데이터와 재실행 호환성을 포함하여 충돌 없는 식별을 구현·검증한 뒤 checkpoint한다.
+2. 같은 보고의 redacted 삭제 도중 claim 만료 반례를 동기화해 재현하고 결과 확정 시점의 fence를 교정·검증한 뒤 checkpoint한다. 기존 claim 경쟁·정리·가림 계약을 유지한다.
+3. 원래 기준부터 전체 diff와 기존 행렬을 감사하고 기본 Verify, Python 전체 suite, 집중·순수 검사를 다시 실행한다. 두 반례와 보안·데이터 손실 경계에 대한 독립 리뷰를 포함해 전체 리뷰를 수행하고 미해결이면 완료로 표시하지 않는다. 보존 커밋이 엔진 기준에 포함되어 변경 없음으로 재정지하면 보존 patch 기반 지원 복구 경로를 조사한다.
+
 ## Auto Run Result
 
 - status: blocked
