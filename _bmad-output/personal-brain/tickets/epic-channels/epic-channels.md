@@ -77,6 +77,8 @@ Brain의 어떤 기능이든 같은 채널 계약으로 메시지를 보내고, 
 
 ## Notes
 
+- Decision(2026-10-31, 추천으로 정함, 15.4 escalation 해소): 초기화 DNS 오류가 난 정식 실패 Dispatch의 정리와 현재 PyPI 응답을 확인하고, 엔진 새 generation에서 기존 2단계 계획을 단계별 검증하며 재추진한다. 재귀 워크플로와 회로 차단 우회를 금지하고 계약과 전체 검증은 유지한다.
+
 - Decision(2026-10-31, 추천으로 정함, 15.2 escalation 해소): 기존 구현과 검증을 보존 ref와 patch로 고정하고 제한된 가역적 기준 준비 뒤 엔진의 restore-patch로 제품 diff를 복원해 리뷰·검증한다. 보안·데이터 계약과 선행 작업을 보존하며 완료 판정은 엔진에 맡긴다.
 
 - Waits on epic-postgres-primary because: 채널·대화·발신 이력 테이블이 들어갈 공통 스키마와 비밀 저장 계약이 필요하다.
