@@ -66,7 +66,7 @@ async function seed() {
 }
 
 it('installs the complete catalog, five named unique indexes, five search indexes and explicit seed values', async () => {
-  const tables = ['channel_item_results','channel_legacy_notifications','channel_legacy_deliveries','channels','channel_conversations','channel_requests','channel_gates','channel_attempt_results','extension_install_progress','extension_python_environment','extension_work_kinds','extensions','schema_migrations','workspaces','users','projects','worktrees','sessions','messages','tool_notes','transcript_files','failures','work_items','work_hold_groups','work_dependencies','work_attempts','files','file_locations','message_attachments','redactions','log_entries','log_entry_edits','index_configs','chunks','context_injections','document_extractions','document_chunks','file_names','file_metadata','schedules','schedule_successes','settings'];
+  const tables = ['analyses','file_request_handoffs','file_request_results','file_requests','health_observations','channel_item_results','channel_legacy_notifications','channel_legacy_deliveries','channels','channel_conversations','channel_requests','channel_gates','channel_attempt_results','extension_install_progress','extension_python_environment','extension_work_kinds','extensions','schema_migrations','workspaces','users','projects','worktrees','sessions','messages','tool_notes','transcript_files','failures','work_items','work_hold_groups','work_dependencies','work_attempts','files','file_locations','message_attachments','redactions','log_entries','log_entry_edits','index_configs','chunks','context_injections','document_extractions','document_chunks','file_names','file_metadata','schedules','schedule_successes','settings'];
   expect((await query("select relname from pg_class where relnamespace='brain'::regnamespace and relkind='r' order by relname")).rows.map(r => r.relname)).toEqual(tables.sort());
   const indexes = (await query("select indexname,indexdef from pg_indexes where schemaname='brain'")).rows;
   expect(indexes.filter(r => r.indexdef.includes('UNIQUE') && r.indexname.endsWith('_idx')).map(r => r.indexname).sort()).toEqual(['users_self_idx','tool_notes_call_id_idx','work_items_open_key_idx','document_extractions_running_idx','index_configs_key_idx'].sort());
@@ -91,6 +91,7 @@ it('installs the complete catalog, five named unique indexes, five search indexe
     {table_name:'channel_legacy_notifications',column_name:'resend_eligible',column_default:'false',is_identity:'NO',is_generated:'NEVER'},
     {table_name:'channel_requests',column_name:'status',column_default:"'pending'::text",is_identity:'NO',is_generated:'NEVER'},
     {table_name:'chunks',column_name:'part',column_default:'0',is_identity:'NO',is_generated:'NEVER'},
+    {table_name:'health_observations',column_name:'account_confirmed',column_default:'false',is_identity:'NO',is_generated:'NEVER'},
     {table_name:'messages',column_name:'is_subagent_report',column_default:'0',is_identity:'NO',is_generated:'NEVER'},
     {table_name:'work_items',column_name:'attempts',column_default:'0',is_identity:'NO',is_generated:'NEVER'},
   ]);

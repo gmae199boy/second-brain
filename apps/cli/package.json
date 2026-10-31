@@ -7,7 +7,8 @@
     "brain": "dist/bin.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "extensions"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/write-build-info.mjs"

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { cpSync, rmSync, writeFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CORE_SCHEMA_VERSION, EXPECTED_SCHEMA_VERSIONS } from 'second_brain/postgres';
 
@@ -44,3 +45,9 @@ writeFileSync(
   `${JSON.stringify({ commit: commit(), schema_version: CORE_SCHEMA_VERSION, schema_versions: EXPECTED_SCHEMA_VERSIONS }, undefined, 2)}\n`,
   'utf8',
 );
+
+// 기본 resolver에 패키지를 배송하되 로컬 환경은 제외한다.
+const packageSource = fileURLToPath(new URL('../../../extensions/garmin/', import.meta.url));
+const packageTarget = fileURLToPath(new URL('../extensions/garmin/', import.meta.url));
+rmSync(packageTarget, { recursive: true, force: true });
+cpSync(packageSource, packageTarget, { recursive: true, filter: source => !['.venv', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache'].includes(basename(source)) && !source.endsWith('.pyc') });

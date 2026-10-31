@@ -95,6 +95,8 @@ Garmin 확장 뼈대와 스키마를 PostgreSQL에 만들고 기존 Garmin 데�
 
 ## Notes
 
+- Decision(2026-10-31, 추천으로 정함, 14.1 재개): 시간 초과 뒤 기존 구현을 미검증 WIP로 보존하고 원래 기준과 전체 diff 및 리뷰를 유지하여 전체 검증부터 재개한다. 관리상 인계는 구현 실패로 세지 않는다.
+
 - Waits on epic-postgres-primary because: core 문서·출처·사용자 테이블과 마이그레이션 실행기가 있어야 한다.
 - Waits on epic-jobs-and-scheduler because: importer가 감독되는 확장 일감으로 돌며 임대 갱신과 attempt token을 받는다. 계약 표 INSERT는 DB가 현재 attempt와 대조한다(AD-33).
 - Waits on epic-extensions because: Garmin 스키마를 확장 DDL로 선언·등록하고, 확장 패키지 위치와 Python 런타임을 쓴다.

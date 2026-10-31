@@ -1265,6 +1265,7 @@ describe('PostgreSQL daemon reconnect', () => {
     vi.spyOn(brainStore, 'openBrainStore').mockImplementation(async () => {
       const store = postgresStore({ databaseUrl: pgAppUrl(':memory:') });
       vi.spyOn(store, 'listUnhandedChannelRequests').mockResolvedValue({ ok: true, requestIds: [] });
+      vi.spyOn(store.imports, 'listUnhandedImports').mockResolvedValue({ ok: true, ids: [] });
       vi.spyOn(store, 'readSchemaVersions').mockImplementation(async () => unavailable
         ? { ok: false as const, code: 'DB_UNAVAILABLE', message: '시험 연결 끊김' }
         : { ok: true as const, versions: { core: { version: CORE_SCHEMA_VERSION, appliedAt: new Date() } } });
@@ -1303,6 +1304,7 @@ describe('PostgreSQL daemon reconnect', () => {
     const controller = new AbortController();
     vi.spyOn(brainStore, 'openBrainStore').mockImplementation(async () => {
       const store = postgresStore({ databaseUrl: pgAppUrl(':memory:') });
+      vi.spyOn(store.imports, 'listUnhandedImports').mockResolvedValue({ ok: true, ids: [] });
       vi.spyOn(store, 'listUnhandedChannelRequests').mockResolvedValue(failure === 'handoff'
         ? { ok: false, code: 'DB_UNAVAILABLE', message: '시험 연결 끊김' }
         : { ok: true, requestIds: [] });

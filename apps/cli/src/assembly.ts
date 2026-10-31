@@ -1,3 +1,4 @@
+import { importStaging } from './runtime/import-staging.js';
 import { extensionRuntime } from './runtime/extensions.js';
 import type { SettingsStore } from 'second_brain';
 import { postgresPrerequisites } from './runtime/orbstack.js';
@@ -87,6 +88,7 @@ export function brainDependencies<S extends SessionIngestStore>(assembly: BrainA
     spool: fileSpool({ folder: spoolPath(home), clock }),
     files: localFileStore({ root: config.ok ? config.config.filesPath : join(home, 'files') }),
     sources: fileSourceReader(),
+    importStaging: importStaging(home),
     userHome: env['HOME']?.startsWith('/') === true ? env['HOME'] : null,
     schemaVersions: assembly.schemaVersions,
     clock,

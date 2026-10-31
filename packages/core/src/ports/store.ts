@@ -840,7 +840,7 @@ export interface TranscriptFileStore {
  * the whole `Store` contract (AD-10).
  */
 export type { ChannelStore } from '../channels/store.js';
-export type Store = import('../channels/store.js').ChannelStore & import('./recall-store.js').RecallStore & import('./conversation-index-store.js').ConversationIndexStore & ExtensionStore & HealthStore &
+export type Store = { imports?: import('./import-store.js').ImportStore } & import('../channels/store.js').ChannelStore & import('./recall-store.js').RecallStore & import('./conversation-index-store.js').ConversationIndexStore & ExtensionStore & HealthStore &
   SessionStore &
   UserStore &
   WorkStore &

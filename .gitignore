@@ -100,3 +100,6 @@ _bmad/render/
 # (it registers claude and codex, the CLIs .bmad-loop/policy.toml names).
 .claude/settings.json
 .codex/hooks.json
+
+# 빌드에서 생성한 배포용 확장 패키지
+apps/cli/extensions/

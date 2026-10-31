@@ -1,3 +1,5 @@
+import { FILE_IMPORT_KIND, importFileHandler } from './files/import-work.js';
+import type { ImportStaging } from './ports/import-store.js';
 import { maskOutputText } from './output/mask.js';
 import type { ChannelPublicStatus, ChannelFailure, ChannelResendCode } from './channels/store.js';
 import { searchRecall, type SearchInput } from './recall/search.js';
@@ -70,6 +72,7 @@ import {
 import { replaySpool, type SpoolReplayHandlers } from './spool/replay.js';
 
 export interface BrainDependencies {
+  importStaging?: ImportStaging;
   extensions?: ExtensionRuntime;
   sources?: SourceFileReader;
   userHome?: string | null;
@@ -315,6 +318,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
   // because what it does is a use case and the ports it needs are the ones this
   // brain was assembled from (`capture/session-ingest-work.ts`).
   const coreHandlers: WorkHandlers = {
+    ...(store.imports && dependencies.importStaging ? { [FILE_IMPORT_KIND]: importFileHandler(store.imports, dependencies.importStaging, files, clock, idGen, store, store) } : {}),
     [CONVERSATION_CHUNK_KIND]: conversationChunkHandler({ store, clock, idGen }),
     [SCHEDULE_PROBE_KIND]: scheduleProbeHandler,
     [SESSION_IDENTITY_KIND]: sessionIdentityHandler(ingestDependencies),

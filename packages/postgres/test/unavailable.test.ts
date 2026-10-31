@@ -113,7 +113,7 @@ const calls = {
   recordChannelItemResult: s => s.recordChannelItemResult({requestId:id,workItemId:id,attemptToken:id,index:0,now,result:{outcome:'sent',externalMessageId:null}}),
   finishChannelAttempt: s => s.finishChannelAttempt({requestId:id,workItemId:id,attemptToken:id,now,externalMessageId:'1'}),
   setSetting: (s) => s.setSetting({ key: 'timezone', value: 'UTC', updatedAt: now }),
-} satisfies Record<Exclude<keyof PostgresStore, 'close'>, (store: PostgresStore) => Promise<unknown>>;
+} satisfies Record<Exclude<keyof PostgresStore, 'close' | 'imports'>, (store: PostgresStore) => Promise<unknown>>;
 
 it.each(['refused', 'terminated', 'missing-schema', 'missing-database', 'missing-role', 'authentication'] as const)('every store verb answers DB_UNAVAILABLE when %s', async kind => {
   const db = kind === 'refused' ? undefined : await database();
@@ -135,7 +135,7 @@ it.each(['refused', 'terminated', 'missing-schema', 'missing-database', 'missing
       const applicationName = `unavailable-${name}`;
       const store = postgresStore({ databaseUrl: url.toString(), applicationName, connectTimeoutMs: 200, lockTimeoutMs: 5000 });
       stores.push(store);
-      expect(Object.keys(store).filter(key => key !== 'close').sort()).toEqual(Object.keys(calls).sort());
+      expect(Object.keys(store).filter(key => key !== 'close' && key !== 'imports').sort()).toEqual(Object.keys(calls).sort());
       const pending = invoke(store);
       if (blocker) {
         const deadline = Date.now() + 3000;

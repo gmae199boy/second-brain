@@ -1,0 +1,68 @@
+{
+  "name": "garmin",
+  "version": "1.0.0",
+  "core": 1,
+  "abi": 1,
+  "migrations": "migrations",
+  "connection_check": {
+    "runtime": "python",
+    "entry": "src/check.py"
+  },
+  "work": [
+    {
+      "kind": "garmin.import",
+      "execution": "supervised",
+      "runtime": "python",
+      "entry": "src/import.py"
+    }
+  ],
+  "raw_views": [
+    "raw_records"
+  ],
+  "settings": [
+    {
+      "key": "garmin.snapshot_path",
+      "type": "string",
+      "secret": false,
+      "required": [
+        "work"
+      ]
+    },
+    {
+      "key": "garmin.legacy_path",
+      "type": "string",
+      "secret": false,
+      "required": [
+        "work"
+      ]
+    },
+    {
+      "key": "garmin.staging_path",
+      "type": "string",
+      "secret": false,
+      "required": [
+        "work"
+      ]
+    },
+    {
+      "key": "garmin.dataset",
+      "type": "string",
+      "secret": false,
+      "required": [
+        "work"
+      ]
+    },
+    {
+      "key": "garmin.artifact_root",
+      "type": "string",
+      "secret": false,
+      "required": [
+        "work"
+      ]
+    }
+  ],
+  "error_codes": [
+    "IMPORT_CONFLICT",
+    "IMPORT_INVALID"
+  ]
+}

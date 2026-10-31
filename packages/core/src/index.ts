@@ -300,3 +300,5 @@ export type { ExtensionInstallProgress, StoredExtensionInstallProgress, InstallS
 export { cleanProcessGroup } from './queue/process-cleanup.js';
 
 export { extensionPublicProjection } from './extensions/public-projection.js';
+export type * from './ports/import-store.js';
+export * from './files/import-work.js';

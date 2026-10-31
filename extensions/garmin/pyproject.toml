@@ -1,0 +1,5 @@
+[project]
+name = "brain-garmin"
+version = "1.0.0"
+requires-python = "==3.14.10"
+dependencies = ["psycopg[binary]==3.3.6"]

@@ -6,6 +6,7 @@ import { DAEMON_HEARTBEAT_MS } from './liveness.js';
 import {
   checkSchema,
   handoffChannelRequests,
+  handoffImportRequests,
   createBrain,
   errorLine,
   type BrainDrainReport,
@@ -327,6 +328,10 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
       return { ...reached, ...(reconnectEligible && schema.code === 'DB_UNAVAILABLE' ? { unreachable: true as const } : {}), pause: true, problem: { key: schema.code, message: `데이터베이스 확인 실패: ${schema.message}` } };
     }
 
+    if (store.imports) {
+      const imports = await handoffImportRequests(store.imports, clock, idGen);
+      if (!imports.ok) return { ...reached, ...(reconnectEligible && imports.code === 'DB_UNAVAILABLE' ? { unreachable: true as const } : {}), pause: true, problem: { key: imports.code, message: '파일 요청 인계 실패' } };
+    }
     const handoff = await handoffChannelRequests(store, clock, idGen);
     if (!handoff.ok) return {
       ...reached,

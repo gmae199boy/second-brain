@@ -1,4 +1,5 @@
 import { FAILURE_RETRY_KINDS, FAILURE_RETRY_STAGES } from '../capture/session-ingest-work.js';
+import { FILE_IMPORT_KIND } from '../files/import-work.js';
 import { DOCUMENT_EXTRACT_KIND } from '../files/extract-work.js';
 import type { Clock } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
@@ -108,7 +109,9 @@ export async function retryFailures(
   const seen = new Set<string>();
 
   for (const failure of read.failures) {
-    const kind = Object.hasOwn(FAILURE_RETRY_STAGES, failure.stage)
+    const kind = failure.stage === FILE_IMPORT_KIND && failure.targetKind === 'file_request'
+      ? FILE_IMPORT_KIND
+      : Object.hasOwn(FAILURE_RETRY_STAGES, failure.stage)
       ? FAILURE_RETRY_STAGES[failure.stage]
       : Object.hasOwn(FAILURE_RETRY_KINDS, failure.targetKind)
         ? FAILURE_RETRY_KINDS[failure.targetKind]
