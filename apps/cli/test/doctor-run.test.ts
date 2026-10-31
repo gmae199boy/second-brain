@@ -12,6 +12,7 @@ import { dispatch } from '../src/dispatch.js';
 import { commands } from '../src/commands/index.js';
 import { assertKoreanLines } from './language.js';
 import { writeShim } from '../src/install/shim.js';
+import { writeConfig } from '../src/config/codec.js';
 const temporary = tempHomes();
 afterEach(() => temporary.cleanup());
 async function world() {
@@ -59,11 +60,15 @@ describe('PG doctor', () => {
     expect(JSON.parse(result.stdout).data.checks).toContainEqual(expect.objectContaining({ id: 'config-timezone', status: 'warn' }));
   });
   it('reports an unavailable database without creating a local file', async () => {
-    const kit = await world(); kit.env.BRAIN_DATABASE_URL = 'postgresql://unused@127.0.0.1:1/unavailable';
-    const result = await kit.run(); expect(result.code).toBe(1);
+    const home = await temporary.create('brain-doctor-');
+    expect((await writeConfig(home, {})).ok).toBe(true);
+    await writeShim(home, { bin: fileURLToPath(new URL('../dist/bin.js', import.meta.url)) });
+    const env = withoutHarnessFolders({ ...process.env, SECOND_BRAIN_HOME: home, BRAIN_DATABASE_URL: 'postgresql://unused@127.0.0.1:1/unavailable' });
+    delete env.DOCKER_HOST;
+    const result = await runPgCommand(['doctor', 'run', '--json'], env); expect(result.code).toBe(1);
     expect(JSON.parse(result.stdout).data.checks).toContainEqual(expect.objectContaining({ id: 'db', status: 'fail', code: 'DB_UNAVAILABLE' }));
     for (const name of ['brain.db', 'brain.db-wal', 'brain.db-shm']) {
-      expect(await readdir(kit.home)).not.toContain(name);
+      expect(await readdir(home)).not.toContain(name);
     }
   });
   it('reports owner-specific schema mismatch', async () => {

@@ -4,16 +4,10 @@ import type { SendMessagePort } from 'second_brain';
 export function telegramSender(token: string, options: { fetch?: typeof fetch; endpoint?: string } = {}): SendMessagePort {
   const endpoint = options.endpoint ?? 'https://api.telegram.org';
   const send = options.fetch ?? fetch;
-  return {
-    async sendMessage(input) {
-      if (input.text.length > 4096) return { ok: false, outcome: 'definite_failed', code: 'too_large', retryable: false };
+  async function request(method: string, body: string | FormData, headers?: Record<string, string>): ReturnType<NonNullable<SendMessagePort['sendMediaGroup']>> {
       let response: Response;
       try {
-        response = await send(`${endpoint}/bot${token}/sendMessage`, {
-          method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ chat_id: input.chatId, text: input.text,
-            ...(input.threadId === null ? {} : { message_thread_id: input.threadId }) }),
-        });
+        response = await send(`${endpoint}/bot${token}/${method}`, { method: 'POST', redirect: 'error', ...(headers ? { headers } : {}), body });
       } catch (error) {
         const cause = error instanceof Error ? error.cause : null;
         const code = cause && typeof cause === 'object' && 'code' in cause ? cause.code : null;
@@ -39,9 +33,35 @@ export function telegramSender(token: string, options: { fetch?: typeof fetch; e
         const body: unknown = await response.json();
         if (!body || typeof body !== 'object' || !('ok' in body) || body.ok !== true) return { ok: false, outcome: 'unknown', code: 'invalid_response', retryable: true };
         const result = 'result' in body && body.result && typeof body.result === 'object' ? body.result : null;
-        const messageId = result && 'message_id' in result ? result.message_id : null;
-        return { ok: true, messageId: typeof messageId === 'string' || typeof messageId === 'number' ? String(messageId) : null };
+        const id = (value: unknown): string | null => { if (!value || typeof value !== 'object' || !('message_id' in value)) return null; const v = value.message_id; return typeof v === 'string' || typeof v === 'number' ? String(v) : null; };
+        if (Array.isArray(result)) { const messageIds = result.map(id).filter((v): v is string => v !== null); return { ok: true, messageId: messageIds[0] ?? null, messageIds }; }
+        return { ok: true, messageId: id(result) };
       } catch { return { ok: false, outcome: 'unknown', code: 'invalid_response', retryable: true }; }
+  }
+  function form(address: { chatId: string; threadId: string | null }): FormData {
+    const data = new FormData(); data.set('chat_id', address.chatId);
+    if (address.threadId !== null) data.set('message_thread_id', address.threadId);
+    return data;
+  }
+  function attach(data: FormData, name: string, file: { bytes: Uint8Array; filename: string }): void {
+    data.set(name, new Blob([Uint8Array.from(file.bytes)]), file.filename);
+  }
+  return {
+    async sendMessage(input) {
+      if (input.text.length > 4096) return { ok: false, outcome: 'definite_failed', code: 'too_large', retryable: false };
+      return request('sendMessage', JSON.stringify({ chat_id: input.chatId, text: input.text, ...(input.threadId === null ? {} : { message_thread_id: input.threadId }) }), { 'content-type': 'application/json' });
+    },
+    async sendPhoto(input) {
+      const data = form(input); attach(data, 'photo', input.photo); if (input.caption !== undefined) data.set('caption', input.caption);
+      return request('sendPhoto', data);
+    },
+    async sendMediaGroup(input) {
+      const data = form(input);
+      const media = input.photos.map((photo, index) => { const name = `photo${index}`; attach(data, name, photo); return { type: 'photo', media: `attach://${name}`, ...(index === 0 && input.caption !== undefined ? { caption: input.caption } : {}) }; });
+      data.set('media', JSON.stringify(media)); return request('sendMediaGroup', data);
+    },
+    async sendDocument(input) {
+      const data = form(input); attach(data, 'document', input.document); return request('sendDocument', data);
     },
   };
 }

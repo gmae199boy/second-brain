@@ -204,6 +204,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const conversations = new Map<string, import('../../channels/store.js').ChannelConversation>();
   const legacyRecords = new Map<string, import('../../channels/store.js').ChannelLegacyRecord>();
   const channelRequests = new Map<string, import('../../channels/store.js').ChannelRequest>();
+  const channelItems = new Map<string, Map<number, import('../../channels/store.js').ChannelAttemptResult>>();
+  const channelItemTokens = new Map<string, Map<number, string>>();
   const channelGates = new Map<string, { workItemId: string; attemptToken: string }>();
   const channelAttempts = new Map<string, { requestId: string; result: import('../../channels/store.js').ChannelAttemptResult | null }>();
   const currentChannelAttempt = (workItemId: string, token: string) => workItems.some(w => w.id === workItemId && w.completedAt === null && w.currentAttemptToken === token) && workAttempts.some(a => a.workItemId === workItemId && a.token === token && a.outcome === null);
@@ -519,6 +521,20 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       return { ok: true, request: request ? structuredClone(request) : null,
         conversation: conversation ? structuredClone(conversation) : null, channel: channel ? structuredClone(channel) : null };
     },
+    async listChannelItemResults(requestId) {
+      return { ok: true, items: [...(channelItems.get(requestId) ?? new Map()).entries()].map(([index, result]) => ({ index, result: structuredClone(result) })) };
+    },
+    async recordChannelItemResult(input) {
+      const request = channelRequests.get(input.requestId);
+      const attempt = channelAttempts.get(input.attemptToken);
+      if (!request?.bundle || input.index < 0 || input.index >= request.bundle.albums.length + 2 || request.workItemId !== input.workItemId || attempt?.requestId !== input.requestId || attempt.result !== null || !currentChannelAttempt(input.workItemId, input.attemptToken)) return { ok: true, outcome: 'lost' };
+      const items = channelItems.get(input.requestId) ?? new Map();
+      if (items.get(input.index)?.outcome === 'sent') return { ok: true, outcome: 'lost' };
+      items.set(input.index, structuredClone(input.result)); channelItems.set(input.requestId, items);
+      const tokens = channelItemTokens.get(input.requestId) ?? new Map();
+      tokens.set(input.index, input.attemptToken); channelItemTokens.set(input.requestId, tokens);
+      return { ok: true, outcome: 'done' };
+    },
     async listUnhandedChannelRequests() {
       return { ok: true, requestIds: [...channelRequests.values()].filter(r => r.workItemId === null)
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id)).map(r => r.id) };
@@ -557,6 +573,20 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       const owner = workAttempts.find(a => a.token === input.attemptToken && (a.outcome === null || a.outcome === 'unknown'));
       if (!work || !owner) return { ok: true, outcome: 'lost' };
       const attempt = channelAttempts.get(input.attemptToken);
+      const request = channelRequests.get(input.requestId);
+      const items = channelItems.get(input.requestId);
+      if (request?.bundle && request.workItemId === input.workItemId && request.status === 'pending' && attempt?.requestId === input.requestId && attempt.result === null && items) {
+        const total = request.bundle.albums.length + 2;
+        const complete = Array.from({ length: total }, (_, index) => items.get(index));
+        const last = complete.at(-1);
+        if (complete.every(result => result?.outcome === 'sent') && last?.outcome === 'sent') {
+          attempt.result = structuredClone(last); request.status = 'sent'; request.externalMessageId = last.externalMessageId;
+          return { ok: true, outcome: 'ready', result: structuredClone(last) };
+        }
+        const tokens = channelItemTokens.get(input.requestId);
+        const failure = [...items.entries()].sort(([a], [b]) => a - b).find(([index, result]) => tokens?.get(index) === input.attemptToken && result.outcome !== 'sent')?.[1];
+        if (failure) { attempt.result = structuredClone(failure); return { ok: true, outcome: 'ready', result: structuredClone(failure) }; }
+      }
       if (attempt?.requestId === input.requestId && attempt.result === null) {
         const unknown = { outcome: 'unknown' as const, code: 'INTERRUPTED', retryable: true };
         if (owner.outcome === null) attempt.result = unknown;

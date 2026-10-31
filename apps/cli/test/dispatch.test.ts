@@ -1411,6 +1411,8 @@ describe('the dispatcher and the lock budget', () => {
         async readChannelRequest() { return unavailable; },
         async listUnhandedChannelRequests() { return unavailable; },
         async handoffChannelRequest() { return unavailable; },
+        async listChannelItemResults() { return unavailable; },
+        async recordChannelItemResult() { return unavailable; },
         async gateChannelAttempt() { return unavailable; },
         async finishChannelAttempt() { return unavailable; },
         async recoverChannelAttempt() { return unavailable; },

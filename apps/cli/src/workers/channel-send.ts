@@ -1,5 +1,6 @@
 import { PROCESS_ABI_ENV, decodeAbiEnv, sendChannelRequest } from 'second_brain';
 import { postgresStore } from 'second_brain/postgres';
+import { localFileStore } from '../runtime/file-store.js';
 import { telegramSender } from '../adapters/telegram.js';
 
 const env = process.env;
@@ -23,6 +24,7 @@ async function run(): Promise<void> {
     const sent = await sendChannelRequest({ store, sender: configured ? telegramSender(env['BRAIN_TELEGRAM_BOT_TOKEN']!,
       env['BRAIN_CHANNEL_TEST_ENDPOINT'] ? { endpoint: env['BRAIN_CHANNEL_TEST_ENDPOINT'] } : {}) :
       { async sendMessage() { return { ok: false, outcome: 'definite_failed', code: 'CHANNEL_CONFIG_INVALID', retryable: false }; } },
+      ...(env['BRAIN_CHANNEL_FILES_PATH'] ? { files: localFileStore({ root: env['BRAIN_CHANNEL_FILES_PATH'] }) } : {}),
       requestId: env[PROCESS_ABI_ENV.targetId]!, workItemId: env[PROCESS_ABI_ENV.workId]!,
       attemptToken: env[PROCESS_ABI_ENV.attemptToken]!, now: () => new Date(), beforeFinish: () => barrier('before-finish') });
     await barrier('after-finish');

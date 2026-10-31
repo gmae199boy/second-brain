@@ -227,3 +227,50 @@ it.each(['permanent', 'rate_limit', 'tenth_unknown'] as const)('보류와 해제
     await checkProducer(f, before);
   } finally { await f.close(); }
 }, 30000);
+
+it('마지막 허용 시도에서 전체 항목 저장 직후 worker 종료를 추가 HTTP 없이 성공으로 정산한다', async () => {
+  const f = await channelFixture();
+  try {
+    const saved = await f.files.put(Buffer.from('document')); if (!saved.ok) throw Error(saved.message);
+    const doc = { location: saved.location, filename: 'report.txt' };
+    const bundle = { summary: 'summary', albums: [], document: doc };
+    await f.store.createChannelRequest({ ...f.input, bundle });
+    const handoff = await f.store.handoffChannelRequest({ requestId: f.input.id, workId: f.ids.next(), now: f.now() });
+    if (!handoff.ok || !handoff.workItemId) throw Error('인계 실패');
+    for (let n = 1; n < 10; n++) { const token = f.ids.next(), now = f.now(); await f.store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'old', attemptToken: token }); await f.store.finishSupervisedWork({ id: handoff.workItemId, attemptToken: token, now, outcome: 'failed', nextAttemptAt: now }); }
+    await f.start(true, 'before-finish'); await expect.poll(() => f.barriers.length, { timeout }).toBe(1);
+    const [running] = await f.db.rows<{ pid: number; token: string }>("select pid,token from brain.work_attempts where outcome is null and pid is not null");
+    if (!running) throw Error('worker가 없습니다');
+    expect(await f.store.listChannelItemResults(f.input.id)).toMatchObject({ items: [{ result: { outcome: 'sent' } }, { result: { outcome: 'sent', externalMessageId: '987' } }] });
+    process.kill(running.pid, 'SIGKILL');
+    await expect.poll(async () => f.db.rows<{ outcome: string }>(`select outcome from brain.work_items where id='${handoff.workItemId}'`), { timeout }).toMatchObject([{ outcome: 'succeeded' }]);
+    expect(await f.store.readChannelRequest(f.input.id)).toMatchObject({ request: { status: 'sent', externalMessageId: '987' } });
+    expect(await f.db.rows(`select outcome,external_message_id from brain.channel_attempt_results where attempt_token='${running.token}'`)).toMatchObject([{ outcome: 'sent', external_message_id: '987' }]);
+    expect(f.requests.map(r => r.url.split('/').pop())).toEqual(['sendMessage', 'sendDocument']);
+    expect(await f.db.rows(`select id from brain.failures where target_id='${f.input.id}'`)).toHaveLength(0);
+  } finally { await f.close(); }
+}, 30000);
+
+it.each(['too_large', 'http_429'] as const)('항목 %s 저장 직후 worker 종료 시 실패 정책을 보존한다', async code => {
+  const f = await channelFixture(code === 'http_429' ? '429' : 'success');
+  try {
+    const saved = await f.files.put(Buffer.from('document')); if (!saved.ok) throw Error(saved.message);
+    const bundle = { summary: code === 'too_large' ? 'x'.repeat(4097) : 'summary', albums: [], document: { location: saved.location, filename: 'report.txt' } };
+    await f.store.createChannelRequest({ ...f.input, bundle });
+    await f.start(true, 'before-finish'); await expect.poll(() => f.barriers.length, { timeout }).toBe(1);
+    const [running] = await f.db.rows<{ pid: number; token: string }>('select pid,token from brain.work_attempts where outcome is null and pid is not null');
+    if (!running) throw Error('worker가 없습니다');
+    expect(await f.store.listChannelItemResults(f.input.id)).toMatchObject({ items: [{ result: { outcome: 'definite_failed', code } }] });
+    process.kill(running.pid, 'SIGKILL');
+    await expect.poll(async () => (await f.db.rows<{ current_attempt_token: string | null }>("select current_attempt_token from brain.work_items where kind='channel_send'"))[0]?.current_attempt_token, { timeout }).toBeNull();
+    expect(await f.db.rows(`select outcome,error_code,retryable,retry_after_ms from brain.channel_attempt_results where attempt_token='${running.token}'`)).toMatchObject([{ outcome: 'definite_failed', error_code: code, retryable: code === 'http_429', retry_after_ms: code === 'http_429' ? '7000' : null }]);
+    const [work] = await f.db.rows<{ outcome: string | null; next_attempt_at: Date }>("select outcome,next_attempt_at from brain.work_items where kind='channel_send'");
+    if (code === 'too_large') {
+      expect(work?.outcome).toBe('failed'); f.advance(3_600_000); await new Promise(resolve => setTimeout(resolve, 200)); expect(f.requests).toHaveLength(0);
+    } else {
+      expect(work?.outcome).toBeNull(); const remaining = work!.next_attempt_at.getTime() - f.now().getTime(); expect(remaining).toBeGreaterThanOrEqual(7000);
+      f.setMode('success'); f.advance(remaining - 1); await new Promise(resolve => setTimeout(resolve, 200)); expect(f.requests).toHaveLength(1);
+      f.advance(1); await expect.poll(async () => f.store.readChannelRequest(f.input.id), { timeout }).toMatchObject({ request: { status: 'sent' } }); expect(f.requests).toHaveLength(3);
+    }
+  } finally { await f.close(); }
+}, 30000);

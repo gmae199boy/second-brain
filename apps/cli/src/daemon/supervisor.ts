@@ -87,6 +87,7 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
             [PROCESS_ABI_ENV.workId]: item.id, [PROCESS_ABI_ENV.runGeneration]: String(item.attempts),
             [PROCESS_ABI_ENV.attemptToken]: token, [PROCESS_ABI_ENV.workKind]: item.kind,
             [PROCESS_ABI_ENV.targetKind]: item.targetKind, [PROCESS_ABI_ENV.targetId]: item.targetId,
+            BRAIN_CHANNEL_FILES_PATH: config.ok ? config.config.filesPath : join(options.home, 'files'),
             ...(telegram ? { BRAIN_TELEGRAM_BOT_TOKEN: telegram.token, BRAIN_TELEGRAM_CHAT_ID: telegram.chatId } : {}),
             ...(options.supervisor?.channelTestEndpoint ? { BRAIN_CHANNEL_TEST_ENDPOINT: options.supervisor.channelTestEndpoint } : {}),
             ...(options.supervisor?.channelTestEndpoint && options.supervisor.channelTestBarrier ? { BRAIN_CHANNEL_TEST_BARRIER: options.supervisor.channelTestBarrier } : {}),

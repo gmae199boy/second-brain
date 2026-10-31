@@ -6,9 +6,10 @@ import { ensureWork } from './work.js';
 
 const columns = sql`id, conversation_id as "conversationId", producer, producer_result_id as "producerResultId",
   purpose, revision, body as text, created_at as "createdAt", work_item_id as "workItemId", status,
-  external_message_id as "externalMessageId"`;
+  external_message_id as "externalMessageId", bundle`;
 function request(row: ChannelRequest): ChannelRequest {
-  return { ...row, createdAt: new Date(row.createdAt) };
+  const { bundle, ...rest } = row;
+  return { ...rest, createdAt: new Date(row.createdAt), ...(bundle == null ? {} : { bundle }) };
 }
 function legacyOriginal(r: ChannelLegacyInput): string {
   return JSON.stringify(r.type === 'notification' ? [r.localDate, r.event, r.detail, r.at.toISOString()] : [r.originalId, r.localDate, r.kind, r.event, r.ok, r.reason, r.at.toISOString()]);
@@ -70,8 +71,8 @@ export function postgresChannelStore(connect: PgConnect): ChannelStore {
         const opened = connect();
         if (!opened.ok) throw Error(opened.message);
         const result = await sql<ChannelRequest>`insert into brain.channel_requests
-          (id,conversation_id,producer,producer_result_id,purpose,revision,body,created_at)
-          values (${input.id},${input.conversationId},${input.producer},${input.producerResultId},${input.purpose},${input.revision},${input.text},${input.createdAt.toISOString()})
+          (id,conversation_id,producer,producer_result_id,purpose,revision,body,created_at,bundle)
+          values (${input.id},${input.conversationId},${input.producer},${input.producerResultId},${input.purpose},${input.revision},${input.text},${input.createdAt.toISOString()},${input.bundle ? JSON.stringify(input.bundle) : null}::jsonb)
           on conflict do nothing returning ${columns}`.execute(opened.connection.db);
         if (result.rows[0]) return { ok: true, created: true, request: request(result.rows[0]) };
         const found = await sql<ChannelRequest>`select ${columns} from brain.channel_requests
@@ -97,6 +98,28 @@ export function postgresChannelStore(connect: PgConnect): ChannelStore {
           conversation: { id: value.id, channelId: value.channelId, externalRef: value.externalRef, threadRef: value.threadRef },
           channel: { id: value.channelId, kind: value.kind, botRef: value.botRef } };
       } catch (error) { return databaseFailure(error); }
+    },
+    async listChannelItemResults(requestId) {
+      try {
+        const opened = connect(); if (!opened.ok) throw Error(opened.message);
+        const rows = await sql<{ index: number; result: import('@second-brain/core').ChannelAttemptResult }>`select item_index as index,result from brain.channel_item_results where request_id=${requestId} order by item_index`.execute(opened.connection.db);
+        return { ok: true, items: rows.rows };
+      } catch (error) { return databaseFailure(error); }
+    },
+    async recordChannelItemResult(input) {
+      const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      const written = await withWrite(opened.connection, async held => {
+        const valid = await sql<{ valid: boolean }>`select brain.attempt_is_current(${input.workItemId}::uuid,${input.attemptToken}::uuid) as valid`.execute(held);
+        if (!valid.rows[0]?.valid) return 'lost' as const;
+        const result = await sql`insert into brain.channel_item_results(request_id,item_index,work_item_id,attempt_token,result,updated_at)
+          select r.id,${input.index},${input.workItemId},${input.attemptToken},${JSON.stringify(input.result)}::jsonb,${input.now.toISOString()} from brain.channel_requests r
+          join brain.channel_attempt_results a on a.request_id=r.id and a.work_item_id=${input.workItemId} and a.attempt_token=${input.attemptToken} and a.outcome is null
+          where r.id=${input.requestId} and r.work_item_id=${input.workItemId} and r.status='pending' and r.bundle is not null and ${input.index} >= 0 and ${input.index} < jsonb_array_length(r.bundle->'albums')+2
+          on conflict(request_id,item_index) do update set work_item_id=excluded.work_item_id,attempt_token=excluded.attempt_token,result=excluded.result,updated_at=excluded.updated_at
+          where brain.channel_item_results.result->>'outcome' <> 'sent' returning request_id`.execute(held);
+        return result.rows.length ? 'done' as const : 'lost' as const;
+      });
+      return written.ok ? { ok: true, outcome: written.value } : written;
     },
     async listUnhandedChannelRequests() {
       try {
@@ -149,6 +172,30 @@ export function postgresChannelStore(connect: PgConnect): ChannelStore {
         const valid = await sql<{ outcome: string | null }>`select a.outcome from brain.work_items w join brain.work_attempts a on a.token=w.current_attempt_token and a.work_item_id=w.id
           where w.id=${input.workItemId} and w.kind='channel_send' and w.target_id=${input.requestId} and w.current_attempt_token=${input.attemptToken} and w.completed_at is null and (a.outcome is null or a.outcome='unknown') for share of w,a`.execute(held);
         if (!valid.rows[0]) return { outcome: 'lost' as const };
+        const complete = await sql<{ result: import('@second-brain/core').ChannelAttemptResult }>`select last.result from brain.channel_requests r
+          join brain.channel_item_results last on last.request_id=r.id and last.item_index=jsonb_array_length(r.bundle->'albums')+1
+          where r.id=${input.requestId} and r.work_item_id=${input.workItemId} and r.bundle is not null and r.status='pending'
+            and (select count(*) from brain.channel_item_results i where i.request_id=r.id and i.result->>'outcome'='sent')=jsonb_array_length(r.bundle->'albums')+2
+            and last.result->>'outcome'='sent'`.execute(held);
+        const final = complete.rows[0]?.result;
+        if (final?.outcome === 'sent') {
+          const updated = await sql`update brain.channel_attempt_results set outcome='sent',external_message_id=${final.externalMessageId},finished_at=${input.now.toISOString()}
+            where request_id=${input.requestId} and work_item_id=${input.workItemId} and attempt_token=${input.attemptToken} and outcome is null returning request_id`.execute(held);
+          if (updated.rows.length) {
+            await sql`update brain.channel_requests set status='sent',external_message_id=${final.externalMessageId} where id=${input.requestId}`.execute(held);
+            return { outcome: 'ready' as const, result: final };
+          }
+        }
+        const failures = await sql<{ result: import('@second-brain/core').ChannelAttemptResult }>`select i.result from brain.channel_item_results i
+          join brain.channel_requests r on r.id=i.request_id and r.work_item_id=i.work_item_id
+          where i.request_id=${input.requestId} and i.work_item_id=${input.workItemId} and i.attempt_token=${input.attemptToken}
+            and r.status='pending' and r.bundle is not null and i.result->>'outcome' in ('unknown','definite_failed') order by i.item_index limit 1`.execute(held);
+        const failure = failures.rows[0]?.result;
+        if (failure && failure.outcome !== 'sent') {
+          const updated = await sql`update brain.channel_attempt_results set outcome=${failure.outcome},error_code=${failure.code},retryable=${failure.retryable},retry_after_ms=${failure.retryAfterMs ?? null},finished_at=${input.now.toISOString()}
+            where request_id=${input.requestId} and work_item_id=${input.workItemId} and attempt_token=${input.attemptToken} and outcome is null returning request_id`.execute(held);
+          if (updated.rows.length) return { outcome: 'ready' as const, result: failure };
+        }
         if (valid.rows[0].outcome === null) await sql`update brain.channel_attempt_results set outcome='unknown',error_code='INTERRUPTED',retryable=true,finished_at=${input.now.toISOString()}
           where request_id=${input.requestId} and work_item_id=${input.workItemId} and attempt_token=${input.attemptToken} and outcome is null`.execute(held);
         const read = await sql<{ outcome: 'sent' | 'unknown' | 'definite_failed' | null; external_message_id: string | null; error_code: string | null; retryable: boolean | null; retry_after_ms: string | null }>`select outcome,external_message_id,error_code,retryable,retry_after_ms from brain.channel_attempt_results

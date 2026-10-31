@@ -86,6 +86,9 @@ it('enforces the role, public view and fenced provenance contracts over real con
       await expect(a.query(`delete from brain.${table}`)).rejects.toMatchObject({ code: '42501' });
     }
     await expect(a.query(`insert into brain.channel_requests(id,conversation_id,producer,producer_result_id,purpose,body,created_at,work_item_id,source_work_item_id,source_attempt_token) values ($1,$2,$3,'forged','notice','body',now(),$4,$4,$5)`, [randomUUID(), conversation, names[0], id, token])).rejects.toMatchObject({ code: '42501' });
+    await a.query(`insert into brain.channel_requests(id,conversation_id,producer,producer_result_id,purpose,body,bundle,created_at,source_work_item_id,source_attempt_token) values ($1,$2,$3,$4,'report','body',$5,now(),$6,$7)`, [randomUUID(), conversation, names[0], randomUUID(), JSON.stringify({summary:'summary',albums:[],document:{}}), id, token]);
+    await expect(a.query('select * from brain.channel_item_results')).rejects.toMatchObject({ code: '42501' });
+    await expect(a.query("insert into brain.channel_item_results(request_id,item_index,work_item_id,attempt_token,result,updated_at) values ($1,0,$2,$3,'{}',now())", [randomUUID(),id,token])).rejects.toMatchObject({ code: '42501' });
     await a.query('insert into contract_test.results values ($1,$2,$3)', [names[0], id, token]);
     await expect(a.query('insert into contract_test.results values ($1,$2,$3)', [names[1], id, token])).rejects.toMatchObject({ code: '42501' });
     await store.settleSupervisedAttempt({ id, attemptToken: token, now, outcome: 'died' });
@@ -148,7 +151,7 @@ it('v18의 확장 역할을 v19로 이전하고 최소 권한으로 재설정한
     for (const file of (await readdir(source)).filter(file => /^\d{4}_/.test(file) && file < '0019')) await copyFile(join(source, file), join(dir, file));
     expect(await runMigrations({ databaseUrl: db.url, clock, owners: [{ owner: 'core', directory: dir }] })).toMatchObject({ ok: true, to: 18 });
     await provisionExtension(db.url, name, password); owned = true;
-    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 18, to: 19 });
+    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 18, to: 20 });
     await provisionExtension(db.url, name, password);
     const url = new URL(db.url); url.username = role; url.password = password;
     const ext = new pg.Client({ connectionString: url.toString() }); await ext.connect();

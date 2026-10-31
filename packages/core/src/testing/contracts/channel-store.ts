@@ -36,7 +36,58 @@ export function channelStoreContract(): ContractCase<ChannelStore & WorkStore>[]
     assertEqual(await store.finishChannelAttempt({...gate,attemptToken:id(8),externalMessageId:'42'}),{ok:true,outcome:'lost'},'stale result');
     assertEqual(await store.finishChannelAttempt({...gate,externalMessageId:'42'}),{ok:true,outcome:'done'},'result');
     const read=await store.readChannelRequest(requestId); assertOk(read,'read'); assertEqual(read.channel,channel,'channel preserved'); assertEqual(read.conversation,conversation,'conversation preserved'); assertEqual(read.request,{...input,id:requestId,workItemId,status:'sent',externalMessageId:'42'},'request preserved');
-  })), contractCase('미확정 시도를 복구하고 같은 요청의 새 토큰을 사용한다', async make => withSubject(make, async store => {
+  })), contractCase('묶음 항목 성공은 재시도에 보존되고 오래된 토큰은 거부된다', async make => withSubject(make, async store => {
+    await store.ensureChannel({ id: id(1), kind: 'telegram', botRef: 'bot' });
+    await store.ensureChannelConversation({ id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
+    const file = { location: { storeKind: 'local' as const, ownership: 'brain' as const, locator: 'locator' }, filename: 'photo.jpg' };
+    const bundle = { summary: '원문 비밀', albums: [{ photos: [file], caption: '캡션 원문' }], document: file };
+    const created = await store.createChannelRequest({ id: id(3), conversationId: id(2), producer: 'test', producerResultId: 'bundle', purpose: 'report', revision: null, text: '기존 본문', bundle, createdAt: now });
+    assertOk(created, '묶음 저장'); assertEqual(created.request.bundle, bundle, '원문 보존');
+    await store.handoffChannelRequest({ requestId: id(3), workId: id(4), now });
+    await store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'worker', attemptToken: id(5) });
+    const first = { requestId: id(3), workItemId: id(4), attemptToken: id(5), now };
+    await store.gateChannelAttempt(first);
+    assertEqual(await store.recordChannelItemResult({ ...first, index: 0, result: { outcome: 'sent', externalMessageId: '42' } }), { ok: true, outcome: 'done' }, '첫 항목 확정');
+    await store.finishChannelAttempt({ ...first, result: { outcome: 'unknown', code: 'network', retryable: true } });
+    await store.finishSupervisedWork({ id: id(4), attemptToken: id(5), now, outcome: 'failed', nextAttemptAt: now });
+    await store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'worker', attemptToken: id(6) });
+    await store.gateChannelAttempt({ ...first, attemptToken: id(6) });
+    assertEqual(await store.recordChannelItemResult({ ...first, index: 1, result: { outcome: 'sent', externalMessageId: 'stale' } }), { ok: true, outcome: 'lost' }, '오래된 토큰 거부');
+    assertEqual(await store.recordChannelItemResult({ ...first, attemptToken: id(6), index: 0, result: { outcome: 'sent', externalMessageId: 'forged' } }), { ok: true, outcome: 'lost' }, '성공 불변');
+    assertEqual(await store.listChannelItemResults(id(3)), { ok: true, items: [{ index: 0, result: { outcome: 'sent', externalMessageId: '42' } }] }, '재시도에서 성공 보존');
+  })), contractCase('모든 항목 성공 후 미확인 시도를 성공으로 정산한다', async make => withSubject(make, async store => {
+    await store.ensureChannel({ id: id(1), kind: 'telegram', botRef: 'bot' });
+    await store.ensureChannelConversation({ id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
+    const file = { location: { storeKind: 'local' as const, ownership: 'brain' as const, locator: 'locator' }, filename: 'doc' };
+    await store.createChannelRequest({ id: id(3), conversationId: id(2), producer: 'test', producerResultId: 'result', purpose: 'report', revision: null, text: 'text', bundle: { summary: 'summary', albums: [], document: file }, createdAt: now });
+    await store.handoffChannelRequest({ requestId: id(3), workId: id(4), now });
+    await store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'worker', attemptToken: id(5) });
+    const attempt = { requestId: id(3), workItemId: id(4), attemptToken: id(5), now };
+    await store.gateChannelAttempt(attempt);
+    await store.recordChannelItemResult({ ...attempt, index: 0, result: { outcome: 'sent', externalMessageId: '1' } });
+    await store.recordChannelItemResult({ ...attempt, index: 1, result: { outcome: 'sent', externalMessageId: '2' } });
+    await store.settleSupervisedAttempt({ id: id(4), attemptToken: id(5), now, outcome: 'unknown' });
+    assertEqual(await store.recoverChannelAttempt(attempt), { ok: true, outcome: 'ready', result: { outcome: 'sent', externalMessageId: '2' } }, '내구성 있는 성공 정산');
+    const read = await store.readChannelRequest(id(3)); assertOk(read, '요청'); assertEqual(read.request?.externalMessageId, '2', '마지막 ID'); assertEqual(read.request?.status, 'sent', '요청 성공');
+  })), ...([{ outcome: 'definite_failed' as const, code: 'too_large', retryable: false }, { outcome: 'definite_failed' as const, code: 'http_429', retryable: true, retryAfterMs: 7000 }].map(failure => contractCase<ChannelStore & WorkStore>(`현재 시도의 ${failure.code} 항목 실패를 복구한다`, async make => withSubject(make, async store => {
+    await store.ensureChannel({ id: id(1), kind: 'telegram', botRef: 'bot' });
+    await store.ensureChannelConversation({ id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
+    const file = { location: { storeKind: 'local' as const, ownership: 'brain' as const, locator: 'locator' }, filename: 'doc' };
+    await store.createChannelRequest({ id: id(3), conversationId: id(2), producer: 'test', producerResultId: 'result', purpose: 'report', revision: null, text: 'text', bundle: { summary: 'summary', albums: [], document: file }, createdAt: now });
+    await store.handoffChannelRequest({ requestId: id(3), workId: id(4), now });
+    await store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'worker', attemptToken: id(5) });
+    const first = { requestId: id(3), workItemId: id(4), attemptToken: id(5), now };
+    await store.gateChannelAttempt(first);
+    await store.recordChannelItemResult({ ...first, index: 0, result: failure });
+    await store.settleSupervisedAttempt({ id: id(4), attemptToken: id(5), now, outcome: 'unknown' });
+    assertEqual(await store.recoverChannelAttempt(first), { ok: true, outcome: 'ready', result: failure }, '현재 실패 복구');
+    await store.finishSupervisedWork({ id: id(4), attemptToken: id(5), now, outcome: 'died', confirmedDead: true, nextAttemptAt: now });
+    await store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'worker', attemptToken: id(6) });
+    const second = { ...first, attemptToken: id(6) };
+    await store.gateChannelAttempt(second);
+    assertEqual(await store.recoverChannelAttempt(first), { ok: true, outcome: 'lost' }, '이전 토큰 거부');
+    assertEqual(await store.recoverChannelAttempt(second), { ok: true, outcome: 'ready', result: { outcome: 'unknown', code: 'INTERRUPTED', retryable: true } }, '이전 실패 재사용 금지');
+  })))), contractCase('미확정 시도를 복구하고 같은 요청의 새 토큰을 사용한다', async make => withSubject(make, async store => {
     await store.ensureChannel({ id: id(1), kind: 'telegram', botRef: 'bot' });
     await store.ensureChannelConversation({ id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
     await store.createChannelRequest({ id: id(3), conversationId: id(2), producer: 'test', producerResultId: 'result', purpose: 'notice', revision: null, text: 'text', createdAt: now });

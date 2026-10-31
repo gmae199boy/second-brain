@@ -36,7 +36,7 @@ export async function provisionExtension(databaseUrl: string, name: string, pass
             has_any_column_privilege($1,c.oid,'SELECT,UPDATE,REFERENCES') or exists (
               select 1 from pg_attribute a where a.attrelid=c.oid and a.attnum>0 and not a.attisdropped
                 and has_column_privilege($1,c.oid,a.attname,'INSERT') and not (a.attname = any (case c.relname
-                  when 'channel_requests' then array['id','conversation_id','producer','producer_result_id','purpose','revision','body','created_at','source_work_item_id','source_attempt_token']
+                  when 'channel_requests' then array['id','conversation_id','producer','producer_result_id','purpose','revision','body','created_at','bundle','source_work_item_id','source_attempt_token']
                   when 'channel_legacy_notifications' then array['id','conversation_id','source','dataset','original_table','original_key','import_batch','local_date','event','detail','at','source_work_item_id','source_attempt_token']
                   else array['id','conversation_id','source','dataset','original_table','original_key','import_batch','original_id','local_date','kind','event','ok','reason','at','source_work_item_id','source_attempt_token'] end)))
           else has_table_privilege($1,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
@@ -70,6 +70,7 @@ export async function provisionExtension(databaseUrl: string, name: string, pass
       grant insert (id,conversation_id,producer,producer_result_id,purpose,revision,body,created_at,source_work_item_id,source_attempt_token) on brain.channel_requests to "${role}";
       grant insert (id,conversation_id,source,dataset,original_table,original_key,import_batch,local_date,event,detail,at,source_work_item_id,source_attempt_token) on brain.channel_legacy_notifications to "${role}";
       grant insert (id,conversation_id,source,dataset,original_table,original_key,import_batch,original_id,local_date,kind,event,ok,reason,at,source_work_item_id,source_attempt_token) on brain.channel_legacy_deliveries to "${role}"`);
+    if ((await client.query("select exists(select 1 from information_schema.columns where table_schema='brain' and table_name='channel_requests' and column_name='bundle') as present")).rows[0].present) await client.query(`grant insert (bundle) on brain.channel_requests to "${role}"`);
     await client.query('commit');
     // 비밀번호가 없거나 바뀐 경우 다른 자격 증명으로 대체하지 않는다.
     const roleUrl = new URL(databaseUrl); roleUrl.searchParams.delete('user'); roleUrl.searchParams.delete('password'); roleUrl.username = role; roleUrl.password = password;
