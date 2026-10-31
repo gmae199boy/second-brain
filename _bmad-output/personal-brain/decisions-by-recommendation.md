@@ -111,6 +111,12 @@
 
 - 2026-10-31 · 15.4 · 구현 전 DNS 실패 Dispatch는 정식 종료·정리됐고 PyPI jinja2 HTTP 200과 Docker 응답을 확인했다. 새 generation에서 기존 2단계 계획을 phase-ready와 검증으로 이어 가며 재귀 워크플로·회로 차단 우회를 금지한다.
 
+## 2026-11-01 Garmin 14.4 원문 표현
+
+| 결정 | 추천 및 근거 |
+|---|---|
+| 14.4 NUL과 SQL 투영 | 원문 보존과 필수 발행을 유지하면서 SQL text에 bytea 원문 짝과 버전 공통 raw view·dataset provenance를 추가한다. 표시값으로 identity/충돌을 판단하지 않고 legacy·건강 JSON·기존 mapping reconciliation·최소권한을 함께 처리한다. PostgreSQL text/jsonb의 NUL 제약과 독립 정적 반례 검증, 단계별 검증은 14.4 계획에 기록했다. |
+
 ## 사람 몫
 
 사람만 할 수 있는 일이다. 어느 것도 run을 막지 않는다. 해당 스토리는 그 단계만 `awaiting-operator`로 두고 `operator_actions`에 재개 절차를 남긴다. 끝나면 `bmad-loop confirm`으로 알린다.

@@ -3,7 +3,7 @@ title: '전수 반입과 원자 checkpoint 재개'
 type: 'feature'
 ticket: '4'
 created: '2026-10-31'
-status: 'built'
+status: blocked
 baseline_revision: '4601a1eb63581d62310781c3a788f75fece48c9a'
 route: 'full'
 route_source: 'pinned'
@@ -12,12 +12,14 @@ review: 'quick'
 review_source: 'pinned'
 lenses_ran: [quick]
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context:
   - _bmad-output/personal-brain/tickets/epic-garmin-import/epic-garmin-import.md
   - packages/core/schemas/health/v1/README.md
 warnings: [oversized]
 deferred: []
+blocked_at: "2026-11-01"
+blocked_reason: "intent gap: NUL 포함 SQLite TEXT의 원문 바이트와 legacy 필수 투영을 PostgreSQL text에 그대로 발행할 수 없다. 필수 투영 생략이나 escape 변환은 고정 intent-contract를 위반한다. 시도 패치와 검증 근거는 story-batch-checkpoint-plan.patch 및 현재 계획 Auto Run Result에 보존했다."
 ---
 
 <intent-contract>
@@ -45,6 +47,21 @@ deferred: []
 | 관계 | 두 dataset의 같은 run/error/auth/delivery 정수 id | 다른 UUID·dataset-local run FK | 부모 부재를 조용히 누락하지 않음 |
 | 건강·선택 | 겹치는 값·보관본 전용 BB·확인/미확인 계정·옛 버전 | catalog typed 값·단위·NULL·revision·권위 provenance와 현재/ambiguity | 근거 없는 시각/버전/계정 추정 금지 |
 | legacy·권한 | notification/delivery·기존 conversation·stale/타 출처 attempt | 같은 conversation에서 한 번 조회·gate 의미·발신/인계/HTTP 0 | 연결 미설정/잘못된 UUID·권한 위반 실패 |
+
+
+### 2026-11-01 추천 결정: NUL 원문과 필수 투영
+
+E14-2/E14-3 및 AD-30의 SQL 물리 text/7열 고정은 이 결정으로 확장한다. 전수 원형 보존과 필수 논리 조회는 줄이지 않는다. PostgreSQL text/jsonb는 실제 NUL을 담지 못한다. 정상 Unicode TEXT는 논리 원문 UTF-8로 왕복하고, SQLite snapshot 파일의 원래 바이트와 fingerprint를 별도로 보존한다. 비정상 TEXT나 다른 SQLite 인코딩의 원래 값도 손실 없이 보존할 수 있도록 원래 타입·바이트·인코딩을 추출하고 복원한다. 이를 이미 지원한다고 주장하거나 조용히 대체·누락하지 않는다.
+
+- 자유 원천 TEXT는 NUL 없는 text와 nullable 원문 bytea 짝으로 저장한다. NUL 시 표시 text는 U+FFFD이며 원문 bytea가 권위다. NULL/빈값/실제 NUL/U+FFFD/문자열 `\u0000`은 구별하고 일관성·엄격 디코딩을 검증한다. 제어 식별자·권한 판정값은 원천 자유 필드와 분리한다. 표시값을 identity, UNIQUE, 원문 비교나 해시로 사용하지 않는다. 키는 타입을 포함한 가역 canonical 원문과 실제 바이트 비교를 사용한다.
+- 기존 v1과 구분되는 공통 버전 raw view를 manifest와 Core에서 협상한다. 원문 짝과 dataset provenance를 전달하고 Core는 복원해 논리 필드를 제공한다. 동일 계정의 서로 다른 dataset과 slash 포함 scope/key도 충돌 없이 각각 식별하고 원래 키를 보존한다. 손실된 v1을 정확한 원문으로 가장하지 않으며 Core에 Garmin 분기를 넣지 않는다.
+- legacy의 모든 원천 자유 문자열과 건강 text/JSON 값·중첩 객체 키도 같은 원칙으로 보존·복원한다. JSON 키 치환으로 서로 다른 키를 합치지 않는다. 원본 JSON을 재직렬화하거나 파생 손실 값을 exact 원문으로 노출하지 않는다. 복원 후 명시 DTO만 내보내 raw 짝을 제거하고, 가림이 필요한 출력은 복원 후 가린다. 공개 import 보고는 집계·boolean·고정 오류만 유지한다.
+- 기존 migration은 수정하지 않고 후속 migration, 모든 batch/tracer 및 Store writer, Core reader, manifest, provisioning 허용목록과 role probe를 함께 갱신한다. RLS·attempt fence·최소권한·같은 conversation·발신 금지와 원자 transaction을 유지한다. 계정·dataset·source 자유값과 제어값의 표현 및 identity 경계를 명시하고 NUL 때문에 필수 행을 버리지 않는다.
+- codec·projection·canonical key 순서·catalog의 버전 또는 fingerprint를 checkpoint에 고정한다. 기존 checkpoint를 덮거나 자동 reset하지 않는다. 기존 mapping도 skip의 충분한 증거가 아니므로 각 필수 대상의 원문·FK·버전을 확인해 누락만 보충하는 명시적 reconciliation을 구현한다. 같은 tracer 원문과 metadata는 재사용하고 차이는 기존 값을 보존하며 conflict를 영속화한다. source snapshot·충돌·checkpoint 검증과 stale attempt 거부를 유지한다.
+
+실행은 단계별 phase-ready와 검증으로 나눈다: (1) reader 원형·타입·인코딩 및 canonical identity, (2) migration·공통 raw/legacy/건강 codec과 권한, (3) writer·Core 복원 및 기존 대상 reconciliation, (4) 전체 계약 검증과 독립 리뷰. 보존한 `story-batch-checkpoint-plan.patch`를 읽어 tracer 재사용과 8개 제한 병렬 수정의 의도를 반영하되 현재 트리에 적용됐다고 가정하지 않는다. 이전 성공은 보존 patch 상태의 증거이며 최종 트리 통과가 아니다.
+
+필수 검증: 실제 NUL/U+FFFD/escape/NULL/빈값과 UTF-16·비정상 TEXT 원형; raw body·키·account·legacy·건강 JSON 중첩 값 및 키; dataset identity와 slash 충돌; 동일·상이 tracer와 mapping 존재/대상 누락; 구 checkpoint 버전 거부 및 reconciliation; 중단·재개·경합·stale attempt; 재provision/probe·RLS와 비발신; raw DTO 누출·가림; 격리 PG/홈 전체 suite 및 Python 검증. 검사자 두 명의 정적 코드·반례 대조는 `~/.local/share/second-brain-loop/14.4-nul-research.md`와 `~/.local/share/second-brain-loop/14.4-nul-verification.md`에 있다. 이들은 실행 시험이 아니다.
 
 </intent-contract>
 
@@ -97,6 +114,12 @@ deferred: []
   - `[medium]` `[patch]` NUL 포함 TEXT 인코딩이 jsonb 저장 경계에서 실패한다 — encoded는 그대로의 TEXT를 넘기며 PostgreSQL jsonb가 NUL escape를 거부한다. 원래 TEXT 타입을 유지하는 UTF-8 base64 표현과 실제 PG 저장·재실행 회귀를 적용했다.
 
 
+### 2026-11-01 — Review pass
+- verdicts: 2 findings — high 0, medium 2, low 0, false 0, maybe-false 0
+- findings:
+  - `[medium]` `[intent_gap]` NUL 포함 TEXT의 raw/legacy 공개 투영과 고정 계약이 양립하지 않는다 — `batch_import.py:150-161`의 PostgreSQL text 대상은 NUL을 받지 않으며 encoded 원형 보존만으로 raw view와 legacy 조회를 충족하지 못한다. health의 미발행 사유만으로 raw/legacy 필수 투영을 생략할 권한은 없다. 구현자의 명시적 질문으로 같은 결론을 대조했고 계약을 임의 축소하지 않는다. 시도한 변경은 `story-batch-checkpoint-plan.patch`에 저장하며 이번 세션의 소스 변경만 되돌린다. 이전 커밋은 보존한다.
+  - `[medium]` `[patch]` 기존 tracer raw와 capture 전수 반입의 동일 키 충돌 — `0001_tracer.sql`의 raw PK는 유지되는데 새 importer가 preserved mapping만 조회하므로 기존 raw를 발견하지 못한다. 모든 열을 대조해 동일 값을 재사용하고 차이는 영속 conflict로 처리하는 최소 수정 대상이다. 앞선 intent_gap이 우선하므로 부분 수정은 패치에 보존한 뒤 되돌리며 완료로 주장하지 않는다.
+
 ## Design Notes
 
 - route는 pinned full이며 데이터 손실 위험 high다. 실제 HEAD 조사로 tracer·legacy·health 계약을 확인했다. 14.3의 정규화 manifest·source 역할·안전 보고·원본 불변 경계를 이어받는다.
@@ -118,50 +141,41 @@ deferred: []
 
 실제 시험 이름·실행 결과는 구현 뒤 기록한다. fixture extHome/globalSetup으로 격리 PG/Brain 홈을 만들고 실제 프로세스 PID와 checkpoint 관찰로 kill 지점을 동기화한다. exit를 확인한 뒤 재개하고 finally에서 자식·daemon abort/종료·store·DB·marker role·임시 홈을 정리한다. 실데이터·운영 접근은 없다.
 
+
+## Verification Repair — 2026-11-01
+
+- 재개 근거: `.bmad-loop/runs/20261030-175233-8a92/feedback/14.4-1.md`의 결정적 검증에서 `packages/postgres/test/unavailable.test.ts`의 terminated 행렬이 30초 안에 끝나지 않았다. 기존 intent-contract와 baseline은 그대로 유지한다.
+- 단계 1: `packages/postgres/test/unavailable.test.ts`와 필요한 연결/시험 fixture를 조사하여 전체 store verb의 실제 연결 종료 및 DB_UNAVAILABLE 검증을 유지하면서 시간 초과 원인을 수정한다. 단순 assertion 제거·skip·임의 timeout 증가는 하지 않는다. 집중 시험 실행 결과와 원인·변경 근거를 한국어 보고에 남긴다.
+- 단계 2: 지휘자가 누적 diff와 모든 기존 Verification 명령 및 `bash _bmad/custom/bmad-loop-verify.sh` 결과를 대조한다. 기존 matrix·AC를 유지하고 quick 리뷰 후 같은 구현자가 필요한 수정만 반영한다.
+- 기존 generation의 Orca 워커 세 명은 모두 completed/released이며 제어 셸은 operator_close로 종료됐다. 현재 generation `14.4-dev-2`는 별도 Run과 체크포인트로 소유권을 기록한다. 티켓 완료와 커밋 판정은 엔진에 남긴다.
+
+- 복구 Verify 중간 결과: `bash _bmad/custom/bmad-loop-verify.sh` 성공(내부 `pnpm test`의 build/typecheck 포함), 165파일 3899통과·기존1skip. 순수 Python `check_preflight.py`와 `check_batch_import.py`도 성공했다. `pnpm test:python`을 독립 실행 중이다.
+- 수정은 종료 행렬의 105개 동작을 최대 8개 묶음으로 실행하며 실제 잠금 대기·backend 종료·각 오류 검증을 보존한다. 고정 계약이 HEAD의 원문과 바이트 동일함을 확인했다.
+
+- 복구 Verify 최종 결과: `pnpm test:python` 5파일18통과·skip없음, 별도 `garmin-batch-import.test.ts` 1파일3통과(13.30초). 별도 집중 시험을 Python 전체 실행과 겹친 최초 시도는 공유 role 충돌로 실패했으므로 두 실행 종료 후 단독 재실행으로 확인했다. 소스 변경으로 숨기지 않았다.
+
+### 복구 Matrix Test Audit
+
+| 행렬 | 실행·통과한 시험과 관찰 |
+|---|---|
+| 보존 | `다섯 합성 snapshot의 원형과 키를 보존하고 재실행한다`: 20개 표·71개 schema metadata·원형 전수·NUL·recovery 보존. `check_preflight.py`의 미지원 입력 및 `check_batch_import.py`의 독립 인코딩 기대값도 통과했다. |
+| 멱등·경쟁 | 첫 시험의 재실행과 `checkpoint 중단·재개와 동시 반입 및 입력 변경 충돌을 검증한다`의 두 실제 프로세스 결과·행·UUID 불변을 확인했다. |
+| 재개 | 셋째 시험의 실제 PID SIGKILL·exit 확인·중간 건수·최종 재개 및 누적 timeout의 backend 소멸·대상/mapping rollback을 확인했다. |
+| 변경·충돌 | 셋째 시험에서 source bytes·schema·importer 버전·manifest·계정·권위·conversation·WAL 변경의 거부 및 영속 conflict와 기존 대상 불변을 확인했다. |
+| 관계 | 첫 시험에서 두 dataset의 서로 다른 run UUID와 fetch_error의 dataset-local 부모 FK를 확인했다. |
+| 건강·선택 | 첫 시험의 archive BB 현재 view·catalog 단위와 typed 값, `health-contract.test.ts` 및 순수 mapping 검사로 NULL·구버전·미확인 ambiguity를 확인했다. |
+| legacy·권한 | `공용 명령과 실제 감독자가 capture를 반입하고 발신 없이 재실행한다`: 같은 conversation의 legacy gate·delivery 1회, channel_requests/channel_send/HTTP 0과 공개 표식 비노출·원본 hash 불변을 확인했다. 첫·셋째 시험의 초과권한/skip-only·stale/타 출처 및 `extension-permissions.test.ts`의 authority INSERT 권한도 통과했다. |
+
+- 위 Python 통합 3시험은 전체 suite와 단독 실행 모두 skip 없이 통과했고, 기본 suite의 health-contract/extension-permissions도 실행·통과했다. 기존 skip 1개는 신규 행렬 시험이 아니다.
+
 ## Auto Run Result
 
-Status: built
+Status: blocked
 
-다섯 후보의 DB 표를 원래 타입·키·NULL·raw TEXT와 함께 dataset별로 보존하고 UUID/FK·원자 checkpoint·동일 입력 재실행·동시 재개·입력 변경 영속 충돌을 구현했다. catalog 건강 관측과 권위 규칙 v1, 기존 conversation의 legacy 이력을 연결하며 반입 중 발신 요청·channel_send·HTTP 발신은 0이다. 원문·정규화 근거 없는 관측은 원형과 미발행 사유를 남긴다.
+결정적 검증 실패의 복구안은 `unavailable.test.ts`의 실제 종료·오류 검증을 유지한 8개 제한 병렬이며 수정 상태에서 결정적 전체 검증(165파일3899통과·기존1skip), Python 전체(5파일18통과), 단독 batch(3통과), 순수 Python 두 검사를 통과했다. 리뷰가 새 계약 충돌을 확인했으므로 이 결과는 패치의 검증 근거이며 되돌린 최종 트리의 검증 결과로 주장하지 않는다.
 
-변경 파일:
-- `_bmad-output/personal-brain/tickets/epic-garmin-import/tickets/story-batch-checkpoint-plan.md` — 계획·검증·리뷰 판정·최종 결과를 기록한다.
-- `apps/cli/python-test/garmin-batch-import.test.ts` — 원형 전수·실제 CLI/감독자·중단/동시 재개·충돌·권한·WAL/NUL·세션 종료를 검증한다.
-- `apps/cli/python-test/garmin-preflight.test.ts` — 새 Garmin migration 버전에 맞춘 준비 실패 회귀를 유지한다.
-- `apps/cli/python-test/garmin-tracer.test.ts` — 두 Garmin migration의 설치 ledger를 확인한다.
-- `apps/cli/test/install.test.ts` — 설치 schema 24 기대를 갱신한다.
-- `apps/cli/test/setup.test.ts` — 설정·설치 결과 schema 24 기대를 갱신한다.
-- `extensions/garmin/manifest.json` — capture/tracer 분기와 명시 legacy conversation 설정을 선언한다.
-- `extensions/garmin/migrations/0002_batch_import.sql` — 원형·schema metadata·checkpoint·충돌·권위/legacy provenance와 source fence를 만든다.
-- `extensions/garmin/src/batch_import.py` — 원자 행 반입·UUID/FK·멱등/재개·영속 충돌·건강/legacy·안전 실패를 구현한다.
-- `extensions/garmin/src/health.py` — catalog별 원천 endpoint와 정규화 근거를 연결해 typed 관측을 만든다.
-- `extensions/garmin/src/import.py` — capture와 기존 tracer를 분기한다.
-- `extensions/garmin/src/import_preflight.py` — 실제 checkpoint와 미발행 사유를 private 보고서에 기록한다.
-- `extensions/garmin/src/reader.py` — WAL 입력을 거부하고 immutable read-only snapshot을 읽는다.
-- `extensions/garmin/src/role_probe.py` — 권위 계약의 최소 INSERT 허용 열을 대조한다.
-- `extensions/garmin/src/tracer_import.py` — 기존 tracer 동작을 바이트 변경 없이 별도 모듈로 보존한다.
-- `extensions/garmin/tests/check_batch_import.py` — 독립 literal 타입·NUL 인코딩·archive catalog 소유권을 검증한다.
-- `extensions/garmin/tests/fixtures.py` — 20개 합성 표·FK·보관본 BB·legacy·NUL 입력을 만든다.
-- `packages/postgres/migrations/0024_health_authority_import.sql` — 불변 권위 기록에 자기 출처 INSERT RLS와 현재 attempt를 적용한다.
-- `packages/postgres/src/extension-provision.ts` — 권위 INSERT의 열 권한을 신규/기존 확장에 제공하며 초과권한을 거부한다.
-- `packages/postgres/src/migrate.ts` — core schema 버전을 24로 올린다.
-- `packages/postgres/test/extension-permissions.test.ts` — 권위의 자기 출처·현재 token·읽기/수정 거부와 재provision을 검증한다.
-- `packages/postgres/test/import-contracts.test.ts` — 권위 작성에 token을 요구하는 고정 오류를 확인한다.
-- `packages/postgres/test/migrate.test.ts` — 신규 migration과 기존 자료·checksum 보존 기대를 갱신한다.
-- `packages/postgres/test/store.test.ts` — 소유자별 schema 최대 버전 기대를 갱신한다.
-- `packages/postgres/test/work-store.test.ts` — 감독자에 전달하는 core schema 기대를 갱신한다.
+차단 사유는 `intent gap`: NUL을 포함한 SQLite TEXT를 PostgreSQL text의 raw body와 legacy detail로 바이트 동일하게 발행할 수 없다. 원형은 lossless encoding으로 보존할 수 있지만 필수 공개 투영을 생략하거나 escape로 바꾸는 것은 고정 intent-contract를 바꾼다. 허용된 표현 또는 입력 경계가 계약에 없으므로 임의 변경하지 않았다. 외부 운영자 조치에 해당하지 않는다.
 
-리뷰: quick 한 렌즈, 총 4건(high 1·medium 3)을 모두 patch했다. WAL 무감지, 초과권한 검사 누락, 연결 종료 오류 분류, NUL TEXT 저장을 수정했다. defer 0·reject 0이며 기각 사유는 없다. followup_review_recommended: true — WAL 부재 확인 직후 sidecar가 생기는 동시 변경 경계는 별도 독립 재검토를 권고한다. 이번 합성 검증은 이미 존재하는 WAL commit의 명시 거부와 원본 불변을 입증했으며 실제 private capture의 전수 품질은 후속 14.8에서 확인한다.
+시도한 누적 변경은 계획 옆 `story-batch-checkpoint-plan.patch`에 보존한다. 이번 세션의 소스·시험 변경은 되돌리며 기존 커밋을 보존한다. quick 리뷰는 2건(medium 2), intent_gap 1·후속 patch 1이며 적용 완료·defer·reject로 처리한 항목은 없다. 후속 검토는 계약 충돌 해결 후 필요하다. 티켓 done·push는 수행하지 않는다. 워커 최종 보고·해제와 mail 정리 결과는 아래 덧붙인다.
 
-최종 독립 검증:
-- `pnpm test` — build/typecheck 포함 성공, 165파일3899통과·기존1skip.
-- `pnpm test:python` — 성공, 5파일18통과·skip없음. 새 batch 통합 시험 3개를 포함한다.
-- `uv run --project extensions/garmin --frozen --python 3.14.10 python extensions/garmin/tests/check_preflight.py` — 성공.
-- `uv run --project extensions/garmin --frozen --python 3.14.10 python extensions/garmin/tests/check_batch_import.py` — 성공.
-- `git diff --check` — 성공.
-
-행렬의 보존·관계·건강·legacy·공개 비노출·원본 불변·중단·경쟁·변경 거부·권한을 실행된 시험과 대조했다. 실제 누적 transaction timeout에서는 각 SQL 0.8초의 총합으로 확장 세션 PID 소멸, rollback, 재시도 가능 오류와 후속 정상 재개를 확인했다. 순수 인코딩 검사에 그치지 않고 NUL TEXT의 실제 PG 저장·재실행을 확인했다. 앞선 회귀 중 기존 schema 번호 기대와 병렬 부하 실패는 최종 독립 전체 성공으로 해소했고, 단일 statement timeout을 세션 종료로 과장한 초기 보고는 정정했다.
-
-실데이터·운영 홈·배포·push는 수행하지 않았다. 외부에서 사람만 수행할 AC는 없으며 operator_actions는 필요하지 않다. 티켓 done과 tickets.py mark를 수행하지 않으며 최종 완료 판정은 오케스트레이터 소관이다.
-
-정리 결과: 자기 Orca Run의 조사·구현·quick 리뷰 워커 세 개 모두 정식 succeeded 보고 전문을 수락하고 release했다. 최종 목록은 completed/released 3개이며 active·reclaimable·다음 페이지와 미처리 Delivery는 없다. 생성 Python cache는 제거했다. 제어 셸의 미실행 따옴표 입력 대기는 입력 취소 뒤 동일 key·payload의 스크립트로 복구했고, transcript source_changed는 관찰 오류로 보존했으며 실제 구현 실패로 세지 않았다. 중복 워커·강제 취소·kill은 없었다. 최종 커밋과 HALT checkpoint를 저장한 뒤 자기 전용 제어 셸만 마지막에 닫는다.
+정리 결과: 구현자는 계약 차단을 명시한 failed 보고, quick 리뷰어는 검사 완료 succeeded 보고를 수락한 뒤 모두 release했다. 자기 Run의 상태는 구현자 failed/released·리뷰어 completed/released이며 active·reclaimable·미처리 Delivery·다음 페이지가 없다. 세 소스/시험 파일은 HEAD와 동일하고 Python cache는 제거했으며 고정 intent-contract도 HEAD와 동일함을 재확인했다. 이번 세션의 커밋·push·티켓 done은 없다. `tickets.py mark`는 build-auto 자체 HALT에서 blocked 기록에만 사용했다. 여러 줄 제어 입력의 quote 대기는 취소 후 같은 key·payload를 스크립트로 전달해 복구했고, source_changed 관찰 오류를 구현 능력 실패로 세지 않았다. 최종 checkpoint 저장 뒤 자기 전용 제어 셸을 닫는다.
