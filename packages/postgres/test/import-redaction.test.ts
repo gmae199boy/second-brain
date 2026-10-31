@@ -35,7 +35,7 @@ async function fixture() {
     expect(await store.redactFile({fileId,plan: current=>planFileRedaction(current,{clock,idGen:ids})})).toMatchObject({ok:true});
     expect(await drainQueue({store,clock,idGen:ids,spool},{budgetMs:5000,handlers:{[BLOB_DELETE_KIND]:blobDeleteHandler({store,files:real,clock})}})).toMatchObject({stopped:'empty'});
   }
-  return {db,store,admin,ext,ids,clock,real,dir,body,request,drain,redact,advance(){at+=4_000_000;},async close(){await ext.end(); await store.close(); await admin.query(`drop owned by "${role}"; drop role "${role}"`); await admin.end(); await db.drop(); await rm(home,{recursive:true,force:true});}};
+  return {db,store,admin,ext,ids,clock,real,staging,dir,body,request,drain,redact,advance(){at+=4_000_000;},async close(){await ext.end(); await store.close(); await admin.query(`drop owned by "${role}"; drop role "${role}"`); await admin.end(); await db.drop(); await rm(home,{recursive:true,force:true});}};
 }
 
 it('이미 가린 내용의 새 요청은 put 없이 가린 파일을 참조한다',async()=>{
@@ -78,3 +78,30 @@ it('put과 확정 사이 가리기가 끝나고 정리가 실패해도 재시도
     expect((await f.admin.query('select count(*)::int as n from brain.file_request_results where file_id=$1',[file.id])).rows[0].n).toBe(2);
   } finally {await f.close();}
 });
+
+
+it('가린 파일 삭제 중 청구가 만료되면 결과와 정리를 확정하지 않는다',async()=>{
+  const f=await fixture();
+  try {
+    await f.request('first.md'); await f.drain(f.real);
+    const file=(await f.admin.query('select id from brain.files')).rows[0];
+    await f.redact(file.id);
+    const request=await f.request('expired.md');
+    const claim=await f.store.claimWork({now:f.clock.now(),claimedBy:'expired-worker',kinds:[FILE_IMPORT_KIND]});
+    if(!claim.ok || !claim.item) throw Error('청구 누락');
+    let entered!:()=>void, release!:()=>void;
+    const deleting=new Promise<void>(resolve=>{entered=resolve;}), resume=new Promise<void>(resolve=>{release=resolve;});
+    const files:FileStore={...f.real,delete:async location=>{entered(); await resume; return f.real.delete(location);}};
+    const pending=importFileHandler(f.store.imports,f.staging,files,f.clock,f.ids,f.store,f.store)(claim.item);
+    await deleting;
+    expect((await f.admin.query('select count(*)::int as n from brain.file_request_results where request_id=$1',[request])).rows[0].n).toBe(0);
+    f.advance(); release();
+    expect(await pending).toMatchObject({ok:false,code:'DB_UNAVAILABLE'});
+    expect((await f.admin.query('select count(*)::int as n from brain.file_request_results where request_id=$1',[request])).rows[0].n).toBe(0);
+    expect((await f.admin.query('select count(*)::int as n from brain.file_import_cleanup where request_id=$1',[request])).rows[0].n).toBe(0);
+    expect(await readFile(join(f.dir,'expired.md'))).toEqual(f.body);
+    expect(await f.drain(f.real)).toMatchObject({completed:1});
+    expect((await f.admin.query('select count(*)::int as n from brain.file_request_results where request_id=$1',[request])).rows[0].n).toBe(1);
+    await expect(readFile(join(f.dir,'expired.md'))).rejects.toMatchObject({code:'ENOENT'});
+  } finally {await f.close();}
+},30000);

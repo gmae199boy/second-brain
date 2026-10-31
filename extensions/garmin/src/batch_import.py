@@ -397,11 +397,11 @@ def run():
             from metadata_codec import decode_metadata
             with conn.transaction():
                 cur=conn.cursor(); check(cur)
-                artifact_rows=cur.execute('select dataset,artifact_key,category,exclusion_reason,request_id,analysis_id,metadata,metadata_raw,unlinked_reason from garmin.artifact_inventory order by dataset,artifact_key').fetchall()
+                artifact_rows=cur.execute('select dataset,artifact_key,category,exclusion_reason,request_id,analysis_id,metadata,metadata_raw,unlinked_reason,original_table from garmin.artifact_inventory order by dataset,original_table,artifact_key').fetchall()
                 inventory_rows=cur.execute('select dataset,category,state,metadata,metadata_raw from garmin.input_inventory order by dataset,category').fetchall()
                 relation_rows=cur.execute('select dataset,artifact_key,analysis_key,role,request_id,analysis_id,reason from garmin.artifact_relations order by dataset,artifact_key,analysis_key,role').fetchall()
             from artifacts import decode_identity
-            private={'artifacts':[{'dataset':r[0],'key':decode_identity(r[1]),'category':r[2],'reason':r[3],'request_id':str(r[4]) if r[4] else None,'analysis_id':str(r[5]) if r[5] else None,'metadata':decode_metadata(r[6],r[7]),'unlinked_reason':r[8]} for r in artifact_rows],
+            private={'artifacts':[{'dataset':r[0],'key':decode_identity(r[1]),'category':r[2],'reason':r[3],'request_id':str(r[4]) if r[4] else None,'analysis_id':str(r[5]) if r[5] else None,'metadata':decode_metadata(r[6],r[7]),'unlinked_reason':r[8],'original_table':r[9]} for r in artifact_rows],
                      'inventory':[{'dataset':r[0],'category':r[1],'state':r[2],'metadata':decode_metadata(r[3],r[4])} for r in inventory_rows],
                      'relations':[{'dataset':r[0],'artifact_key':decode_identity(r[1]),'analysis_key':decode_identity(r[2]),'role':r[3],'request_id':str(r[4]) if r[4] else None,'analysis_id':str(r[5]) if r[5] else None,'reason':r[6]} for r in relation_rows],
                      'unassigned_files':[{'source':f['source'],'reason':'unknown_provenance'} for f in capture['private']['files']] if capture['private']['version']==1 else []}

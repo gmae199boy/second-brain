@@ -96,8 +96,8 @@ def publish(conn, capture, entries, verified):
                 locator = prepare_locator(dataset,'artifact',key,data,fingerprint) if reason is None else None
                 with conn.transaction():
                     cur=conn.cursor(); check(cur)
-                    cur.execute('select pg_advisory_xact_lock(hashtextextended(%s,7))',(canon([dataset,key]),))
-                    old=cur.execute('select category,content_hash,size_bytes,request_id,analysis_id,exclusion_reason,unlinked_reason,metadata,metadata_raw,batch from garmin.artifact_inventory where dataset=%s and artifact_key=%s',(dataset,key)).fetchone()
+                    cur.execute('select pg_advisory_xact_lock(hashtextextended(%s,7))',(canon([dataset,'artifact',key]),))
+                    old=cur.execute('select category,content_hash,size_bytes,request_id,analysis_id,exclusion_reason,unlinked_reason,metadata,metadata_raw,batch from garmin.artifact_inventory where dataset=%s and original_table=%s and artifact_key=%s',(dataset,'artifact',key)).fetchone()
                     if old and (old[0],old[1],old[2],old[5],old[6],decode_metadata(old[7],old[8])) != (category,hashed,artifact['bytes'],reason,unlinked,metadata): raise ValueError('ARTIFACT_CONFLICT')
                     if reason is None: file_id,analysis_id,hashed=emit_one(entry,key,category,data,metadata,prepared_locator=locator)
                     if old and (old[3],old[4]) != (file_id,analysis_id): raise ValueError('ARTIFACT_CONFLICT')
@@ -137,10 +137,10 @@ def publish(conn, capture, entries, verified):
                     metadata={'original_table':'evaluation','original_key':key}
                     with conn.transaction():
                         cur=conn.cursor(); check(cur)
-                        cur.execute('select pg_advisory_xact_lock(hashtextextended(%s,7))',(canon([dataset,inventory_key]),))
-                        old=cur.execute('select category,content_hash,size_bytes,request_id,analysis_id,exclusion_reason,metadata from garmin.artifact_inventory where dataset=%s and artifact_key=%s',(dataset,inventory_key)).fetchone()
+                        cur.execute('select pg_advisory_xact_lock(hashtextextended(%s,7))',(canon([dataset,'evaluation',inventory_key]),))
+                        old=cur.execute('select category,content_hash,size_bytes,request_id,analysis_id,exclusion_reason,metadata from garmin.artifact_inventory where dataset=%s and original_table=%s and artifact_key=%s',(dataset,'evaluation',inventory_key)).fetchone()
                         mismatch=bool(old and old != ('report',digest(data),len(data),None,None,'too_large',metadata))
-                        if not old: cur.execute("insert into garmin.artifact_inventory(dataset,artifact_key,batch,category,content_hash,size_bytes,exclusion_reason,metadata) values (%s,%s,%s,'report',%s,%s,'too_large',%s::jsonb)",(dataset,inventory_key,batch,digest(data),len(data),canon(metadata)))
+                        if not old: cur.execute("insert into garmin.artifact_inventory(dataset,original_table,artifact_key,batch,category,content_hash,size_bytes,exclusion_reason,metadata) values (%s,'evaluation',%s,%s,'report',%s,%s,'too_large',%s::jsonb)",(dataset,inventory_key,batch,digest(data),len(data),canon(metadata)))
                     if mismatch: conflict(conn,dataset,batch,'evaluation',key,'evaluation_mismatch')
                     continue
                 try: emit_one(entry,key,'report',data,{'source':'evaluation.md'},evaluation=row,original_table='evaluation')

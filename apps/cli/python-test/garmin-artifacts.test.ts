@@ -360,3 +360,33 @@ it('재발행 staging과 core 정리는 같은 locator 잠금으로 직렬화된
     await expect(readFile(join(home,'staging',String(request.locator)))).rejects.toMatchObject({code:'ENOENT'});
   } finally {if(child && child.exitCode===null && child.signalCode===null){const closed=once(child,'close'); child.kill('SIGKILL'); await closed;} controller.abort(); if(daemon) await daemon; await store.close(); await fixture.cleanup();}
 },90000);
+
+it('같은 inventory 키의 artifact와 대형 evaluation을 원본 표별로 보존하고 재개한다', async () => {
+  const fixture=await extHome(), store=postgresStore({databaseUrl:fixture.db.appUrl}), controller=new AbortController(), ids=uuidV7IdGen();
+  let daemon: ReturnType<typeof runDaemon> | undefined;
+  try {
+    const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), root=join(fixture.home,'capture'); await mkdir(root);
+    const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
+    execFileSync(python,['-c',"import sys,pathlib,sqlite3; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; p=pathlib.Path(sys.argv[2]); artifact_capture(p); c=sqlite3.connect(p/'D1.db'); c.execute('update evaluation set report_md=?',('x'*(32*1024*1024+1),)); c.commit(); c.close()",fixtures,root]);
+    const path=join(root,'manifest.json'), manifest=JSON.parse(await readFile(path,'utf8'));
+    // SQLite 원문 키는 반입기가 사용하는 정렬된 바이트 표현이다.
+    const key='evaluation:'+JSON.stringify(['2026-01-01','day'].map(x=>({base64:Buffer.from(x).toString('base64'),encoding:'utf-8',type:'text'})));
+    manifest.files=[{source:'report.md',snapshot:'report.md',bytes:Buffer.byteLength('# synthetic report\n'),dataset:'synthetic-D1',artifact_key:key,category:'report'}]; manifest.inventory=[]; await writeFile(path,JSON.stringify(manifest));
+    const channel=ids.next(),conversation=ids.next(); await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
+    await store.setSetting({key:'garmin.capture_manifest',value:await realpath(path),updatedAt:new Date()}); await store.setSetting({key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
+    daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
+    const run=async()=>{const result=await fixture.run(['ext','run','garmin','import','--json']); expect(result.code,result.stdout+result.stderr).toBe(0); await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${result.body.data.work_id}'`))[0]?.outcome,{timeout:60000}).toBe('succeeded');};
+    await run();
+    const rows=await fixture.db.rows('select original_table,artifact_key,batch,request_id,analysis_id,exclusion_reason from garmin.artifact_inventory order by original_table');
+    expect(rows).toHaveLength(2); expect(rows[0]).toMatchObject({original_table:'artifact',artifact_key:key,exclusion_reason:null}); expect(rows[0]!.request_id).toBeTruthy(); expect(rows[1]).toMatchObject({original_table:'evaluation',artifact_key:key,exclusion_reason:'too_large',request_id:null});
+    await run(); expect(await fixture.db.rows('select original_table,artifact_key,batch,request_id,analysis_id,exclusion_reason from garmin.artifact_inventory order by original_table')).toEqual(rows);
+    // 0005 이전의 evaluation 제외 행을 재현하고 실제 전환 뒤 같은 capture를 재실행한다.
+    await fixture.db.query("insert into garmin.artifact_inventory(dataset,artifact_key,batch,category,content_hash,size_bytes,metadata) select dataset,'legacy-artifact',batch,category,content_hash,size_bytes,metadata from garmin.artifact_inventory where original_table='artifact'; delete from garmin.artifact_inventory where original_table='artifact' and artifact_key <> 'legacy-artifact'; alter table garmin.artifact_inventory drop constraint artifact_inventory_pkey; alter table garmin.artifact_inventory drop constraint artifact_inventory_original_table_check; alter table garmin.artifact_inventory drop column original_table; alter table garmin.artifact_inventory add primary key(dataset,artifact_key)");
+    await fixture.db.query(await readFile(new URL('../../../extensions/garmin/migrations/0005_inventory_namespace.sql',import.meta.url),'utf8'));
+    expect(await fixture.db.rows("select original_table,artifact_key,batch,request_id,analysis_id,exclusion_reason from garmin.artifact_inventory where original_table='evaluation'")).toEqual([rows[1]]);
+    expect(await fixture.db.rows("select original_table,artifact_key,batch from garmin.artifact_inventory where artifact_key='legacy-artifact'")).toEqual([{original_table:'artifact',artifact_key:'legacy-artifact',batch:rows[0]!.batch}]);
+    await fixture.db.query("delete from garmin.artifact_inventory where artifact_key='legacy-artifact'");
+    await run(); expect(await fixture.db.rows('select original_table,artifact_key,batch,request_id,analysis_id,exclusion_reason from garmin.artifact_inventory order by original_table')).toEqual(rows);
+  } finally {controller.abort(); if(daemon) await daemon; await store.close(); await fixture.cleanup();}
+},120000);

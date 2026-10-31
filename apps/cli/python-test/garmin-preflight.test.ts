@@ -53,13 +53,13 @@ it('합성 capture를 공용 명령과 실제 감독자로 읽고 계약 자료�
     expect(unsupported.code).not.toBe(0);
     expect(await fixture.db.rows("select error_code from brain.work_attempts order by started_at desc limit 1")).toEqual([{error_code:'PREFLIGHT_SCHEMA_UNSUPPORTED'}]);
     execFileSync(python, ['-c', "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('pragma user_version=15'); c.commit()", snapshots[0]!]);
-    await fixture.db.query("update brain.schema_migrations set version=5 where owner='garmin' and version=4");
+    await fixture.db.query("update brain.schema_migrations set version=6 where owner='garmin' and version=5");
     try {
       const unready = await fixture.run(['ext','run','garmin','import-preflight','--json']);
       expect(unready.code, unready.stdout + unready.stderr).not.toBe(0);
       expect(unready.body.data).toMatchObject({status:'failed',report:{checks:{extension_ready:false}}});
       expect(await fixture.db.rows("select error_code from brain.work_attempts order by started_at desc limit 1")).toEqual([{error_code:'EXTENSION_REPORT_NOT_READY'}]);
-    } finally { await fixture.db.query("update brain.schema_migrations set version=4 where owner='garmin' and version=5"); }
+    } finally { await fixture.db.query("update brain.schema_migrations set version=5 where owner='garmin' and version=6"); }
     const roleCases = [
       { alter: 'revoke insert(value) on brain.health_observations from brain_ext_garmin', restore: 'grant insert(value) on brain.health_observations to brain_ext_garmin', key: 'required_inserts', publicKey: 'role_ready' },
       { alter: 'grant select on brain.health_observations to brain_ext_garmin', restore: 'revoke select on brain.health_observations from brain_ext_garmin', key: 'no_excess_tables', publicKey: 'role_ready' },

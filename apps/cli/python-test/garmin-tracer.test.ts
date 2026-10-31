@@ -17,7 +17,7 @@ it('기본 배송 경로의 Garmin을 잠긴 Python으로 설치하고 연결한
     expect(execFileSync(python, ['-c', 'import platform, psycopg; print(platform.python_version(), psycopg.__version__)'], { encoding: 'utf8' }).trim()).toBe('3.14.10 3.3.6');
     const roundtrip = execFileSync(python, ['-c', "import psycopg, sys; c=psycopg.connect(__import__('os').environ['TEST_DATABASE_URL']); r=c.execute('select %s::text, %s::bigint, %s::text', ('한글', 1700000000123, None)).fetchone(); print(r[0], r[1], r[2])"], { encoding: 'utf8', env: { ...process.env, TEST_DATABASE_URL: fixture.db.url } }).trim();
     expect(roundtrip).toBe('한글 1700000000123 None');
-    expect(await fixture.ledger('garmin')).toEqual([{ owner: 'garmin', version: 1 }, { owner: 'garmin', version: 2 }, { owner: 'garmin', version: 3 }, { owner: 'garmin', version: 4 }]);
+    expect(await fixture.ledger('garmin')).toEqual([{ owner: 'garmin', version: 1 }, { owner: 'garmin', version: 2 }, { owner: 'garmin', version: 3 }, { owner: 'garmin', version: 4 }, { owner: 'garmin', version: 5 }]);
     const status = await fixture.run(['ext', 'status', 'garmin', '--json']);
     expect(status.body.data).toMatchObject({ installed: true, connection: { status: 'connected' }, python_environment: { status: 'succeeded' } });
   } finally { await fixture.cleanup(); }

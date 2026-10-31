@@ -54,7 +54,7 @@ export function importFileHandler(store: ImportStore, staging: ImportStaging, fi
     if (finished.redacted) {
       const removed = await files.delete(location);
       if (!removed.ok) return { ...removed, retryable: true };
-      finished = await store.finishImport({ ...input, cleanupDone: true });
+      finished = await store.finishImport({ ...input, now: clock.now(), cleanupDone: true });
       if (!finished.ok) return finished;
     }
     if (failures) { const resolved = await failures.resolveFailures({ targetKind: 'file_request', targetId: item.targetId, stage: FILE_IMPORT_KIND, now: clock.now() }); if (!resolved.ok) return resolved; }
