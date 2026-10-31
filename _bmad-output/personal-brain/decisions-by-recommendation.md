@@ -123,3 +123,5 @@
 | epic 4 | SM-3 채점표(addendum §8)로 실제 질문의 답변을 채점한다(러너의 hit@k는 이를 대신하지 않음) | 4 완료 뒤 |
 | epic 16·18 | Codex·Garmin 로그인이 만료됐을 때만 재로그인한다 | 해당 스토리가 `awaiting-operator`일 때 |
 | epic 8 · 8.8 | Google Cloud에서 데스크톱 OAuth client를 만들고(동의 화면은 In production 권장, 8.3이 확인), client id·secret을 `.env`에 넣은 뒤 `brain sources connect drive`로 동의한다 | 8.8이 `awaiting-operator`일 때 |
+
+- 2026-10-31 · 15.2 · 최초 구현 실패는 PyPI DNS였고 현재 조회 성공; Dispatch 정식 실패·release·ack 및 활성 0 기록을 보존하고 엔진 새 generation에서 단계별 재추진. Orca 정식 재시도 제한이 지속되면 제어 도구 복구를 분할하며 회로 차단을 우회하지 않는다.
