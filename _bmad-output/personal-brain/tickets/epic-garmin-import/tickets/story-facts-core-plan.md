@@ -3,7 +3,7 @@ title: '기존 분석과 파일 요청의 내구성 있는 반입'
 type: 'feature'
 ticket: '5'
 created: '2026-11-01'
-status: 'in-progress'
+status: blocked
 baseline_revision: '143ebf5fc002a08ba4aba72fe58ef71ae32960c0'
 route: 'full'
 route_source: 'pinned'
@@ -11,13 +11,15 @@ risk: 'high'
 review: 'quick'
 review_source: 'pinned'
 lenses_ran: [quick]
-review_loop_iteration: 3
+review_loop_iteration: 6
 followup_review_recommended: false
 context:
   - _bmad-output/personal-brain/tickets/epic-garmin-import/epic-garmin-import.md
   - _bmad-output/personal-brain/prep-garmin-absorption/migration-contract.md
 warnings: [oversized]
 deferred: []
+blocked_at: "2026-11-01"
+blocked_reason: "review repair loop exceeded 5 iterations (non-convergence): inventory 원래 표 namespace 충돌과 가림 파일 삭제 후 오래된 시각의 청구 만료 검사가 미해결이다. 운영자 외부 작업 대기가 아니며 다음 자동 generation에서 교정·전체 검증·독립 리뷰가 필요하다."
 ---
 
 <intent-contract>
@@ -107,6 +109,24 @@ deferred: []
 - `packages/postgres/migrations/0027_analysis_artifacts.sql`, `packages/postgres/test/import-contracts.test.ts`: role=primary는 분석의 불변 file_request_id와 일치하는 요청만 허용한다. 같은 출처/dataset이어도 다른 요청의 primary INSERT는 거부하고 올바른 primary 재삽입과 image/input 관계는 유지한다. 기존 기준 migration은 수정하지 않는다.
 - `apps/cli/python-test/garmin-artifacts.test.ts`, `extensions/garmin/tests/check_artifacts.py` 및 합성 fixture: NUL metadata/model/dataset label과 body 중첩 키·값의 정확한 원문/private 복원·재실행 성공, relations 생략/빈 PNG/input의 파일 완료와 미연결 사유·공개 건수, primary 불일치 거부를 실제 경계에서 검증한다. 먼저 재도출과 집중 시험 뒤 implementation-ready로 보고하며 전체 Verify·행렬 감사·재리뷰는 지휘자가 수행한다.
 
+### 2026-11-01 — 실행 4 재도출
+
+- 원인: 제외 inventory와 요청 발행의 커밋 경계가 분리돼 변경 충돌 전에 새 요청을 확정할 수 있었고, 허용 artifact 식별자의 SQL 표현이 실행3의 자유 metadata 보존 범위에서 빠졌다. intent-contract와 원래 baseline은 유지한다.
+- KEEP: 실행1~3의 검증 snapshot 전달·UTF-16/NUL 비밀 로그 거부·공유 분류·원형 codec·정상 fingerprint·기존 SQLite 의미·NULL/시각·관계/primary·가역 metadata·미연결 사유·원래 표별 locator·blob readback·현재 claim·정리/가림·권한·실제 kill/restart·모든 기존 assertion을 유지한다. 기존 적용 migration과 원본은 변경하지 않는다. 제품·시험 누적 diff는 `/tmp/bmad-14-5-dev2-pass4-preserved.patch`에 보존했다. 같은 구현자는 이미 역적용·기준과 동등·재적용 가능성을 확인했고 HEAD와 계획을 유지했다. 이제 동일 patch를 재적용하고 아래 교정을 포함해 재도출한다.
+- `extensions/garmin/src/analyses.py`와 필요한 작은 helper: 동일 dataset/artifact key의 기존 inventory와 새 category/hash/size/exclusion/unlinked/논리 metadata를 확인하고, file request·analysis·primary relation·mapping·inventory 확정을 하나의 짧은 잠금/트랜잭션 단위로 수행한다. 제외→수용 또는 수용→제외·내용 변경은 새 요청·분석·mapping·관계·inventory 변경 없이 영속 충돌이어야 한다. 먼저 별도 요청을 커밋하고 나중에 inventory로 거부하지 않는다. 파일 읽기·스캔·staging I/O는 이 트랜잭션 밖에서 준비하며 core I/O도 기존 경계를 유지한다. 동시 발행은 같은 identity 잠금과 재조정으로 수렴하고 입력 재조정이 실패하면 전체 발행 단위를 rollback한다. 기존 중간 상태의 동일 입력 재개는 허용한다.
+- `extensions/garmin/src/{artifacts,analyses}.py`와 필요한 식별자 helper 및 private 보고 호출자: 허용 artifact_key/analysis_key/source_files의 단독 surrogate 문자열을 손실 없는 버전 식별자 표현으로 SQL에 저장하고 private 보고·참조에서 원문을 복원한다. 일반 키의 기존 SQL 값·request key·fingerprint·locator는 유지한다. 예약 prefix 자체를 가진 정상 입력도 escaping해 원형과 충돌하지 않게 하고, encode/decode 및 모든 mapping/inventory/relation/충돌 경로는 단일 함수를 공유한다. surrogate를 삭제·대체하거나 허용 입력을 거부하지 않는다. metadata 원문과 실제 파일 locator를 구별하고 core original_key는 안정된 artifact 식별자를 사용한다. 기존 전역 SQLite raw codec 의미는 바꾸지 않는다.
+- `apps/cli/python-test/garmin-artifacts.test.ts`, `extensions/garmin/tests/check_artifacts.py`와 필요한 합성 fixture: 최초 비밀 로그 제외 뒤 같은 길이의 안전 bytes로 바꾸고 동일 manifest로 재실행해 영속 충돌·해당 key의 신규 요청/analysis/mapping/관계 없음·기존 inventory와 core files 불변을 실제 설치·명령/데몬 경계에서 확인한다. 반대 수용→제외와 동일 key의 동시 발행 또는 commit 중단/재개에서 요청·inventory가 원자적으로 수렴함을 검증한다. 수용 및 제외 artifact의 surrogate key, 그 key를 참조하는 relations/source_files, 예약 prefix 충돌을 실제 설치·private 원형·재실행·불변 ID로 검증한다. 기존 정상 키/locator/fingerprint 회귀와 모든 KEEP을 유지한다.
+- 집중 검증 후 한국어 전체 보고와 implementation-ready를 보내고 같은 Dispatch를 유지한다. 지휘자는 누적 diff·전체 Verification·행렬 감사 및 새 quick 리뷰를 다시 수행한다. 단계 소유권·티켓 done/커밋 금지와 운영자 외부 AC 없음은 그대로다.
+
+### 2026-11-01 — 실행 5 재도출
+
+- 원인: 상한 초과 제외 파일의 원문 식별과 생산자 staging 준비의 core 정리 잠금 참여가 계획 실행 경계에서 빠졌다. intent-contract·원래 baseline은 유지한다. 제품·시험 전체는 `/tmp/bmad-14-5-dev2-pass5-preserved.patch`에 보존했고 같은 구현자가 정확히 역적용·기준 동등·재적용 가능성을 확인했다. 계획·HEAD·원본은 보존했다.
+- KEEP: 실행1~4의 모든 보존 조건과 원자 inventory/요청·분석·mapping/primary 발행, 가역 artifact 식별자 및 실제 prefix 충돌, 원형 metadata·정상 fingerprint·기존 SQLite 의미·검증 snapshot·비밀 검사·분류·관계·미연결·원래 표별 locator·readback·claim·정리·가림·권한·비발신·실제 kill/restart와 모든 기존 assertion을 유지한다. 정상 키/locator·기존 적용 migration을 변경하지 않는다. 보존 patch를 정확히 재적용한 뒤 아래 교정을 포함해 재도출한다.
+- `extensions/garmin/src/artifacts.py`, `analyses.py` 및 필요한 반환 타입/호출자: 상한 초과 파일도 같은 안전 fd에서 제한된 메모리의 스트리밍 SHA-256을 계산하고 읽은 총 바이트·전후 stat·현재 inode로 원문을 확인한다. 상한 이하 파일 bytes와 hash는 같은 읽기에서 얻고, 상한 초과는 bytes를 적재/요청/스캔하지 않지만 hash를 private inventory에 보존한다. 두 번 읽어 TOCTOU를 만들거나 상한을 높이지 않는다. 모든 파일에 대해 변경된 원문은 같은 key 재실행에서 영속 충돌이며 기존 요청/분석/inventory는 불변이다. 공개 출력에 hash/개인 내용은 넣지 않는다.
+- `extensions/garmin/src/analyses.py`, 필요한 공통 locator 잠금 helper 및 `tracer_import.py`: deterministic locator를 계산한 뒤 core cleanup의 정확한 `(source,locator)` advisory lock과 같은 key/seed로 producer의 상태 조회와 staging 준비를 조정한다. session lock을 짧은 DB 단위에서 획득/해제하면 파일 I/O는 transaction 밖에서 유지할 수 있다. 상태 조회가 pending일 때 core cleanup이 먼저 완료하고 그 뒤 producer가 파일을 다시 만드는 순서를 막는다. lock 획득 뒤 상태를 새로 읽고 completed이면 재생성하지 않는다. 예외·프로세스 종료에도 lock 소유권과 기존 재시도 계약을 유지한다. 같은 staging 생산자인 tracer의 status/read→write 경로도 확인하고 동일 경쟁에 노출된 구간을 같은 helper/경계로 고친다. core SELECT/UPDATE/DELETE 권한을 늘리지 않고 view와 INSERT-only를 유지한다. session lock을 transaction lock과 혼동하거나 파일 I/O를 transaction 안으로 옮기지 않는다.
+- `apps/cli/python-test/garmin-artifacts.test.ts`, 필요한 tracer 집중 회귀, `extensions/garmin/tests/check_artifacts.py`: 32MiB+ 합성 파일의 첫 too_large 제외·정확한 독립 해시·파일 요청 없음과 같은 길이 bytes 변경의 영속 충돌/기존 inventory 불변을 실제 설치·명령 경계에서 검증한다. 순수 검사는 동일 fd hash/상한/경계를 확인한다. producer가 상태를 본 뒤 staging하기 전 IPC barrier에 멈춘 동안 core 결과 확정/cleanup이 경쟁하도록 실제 프로세스와 DB 잠금 대기로 순서를 입증한다. producer와 cleanup이 끝나면 completed 결과와 staging 부재·cleaned_at을 확인하고 재실행도 복사본을 만들지 않아야 한다. sleep만으로 경쟁 순서를 추정하지 않는다. tracer와 artifact/evaluation 경로의 공유 잠금·기존 2초 transaction·재시도·kill/restart assertion을 유지한다.
+- 집중 시험과 모든 KEEP 확인 후 한국어 전체 보고를 implementation-ready로 보내고 같은 Dispatch를 유지한다. 지휘자가 누적 diff·전체 Verification·행렬 감사·새 quick 재리뷰를 수행한다. 티켓 done·커밋·계획 상태는 지휘자/엔진 소관이다.
+
 ## Review Triage Log
 
 ### 2026-11-01 — Review pass 1
@@ -130,6 +150,26 @@ deferred: []
 - `extensions/garmin/src/analyses.py`, `packages/postgres/migrations/0027_analysis_artifacts.sql`, `packages/postgres/src/imports.ts` 및 필요한 분석 전용 codec: 기존 SQLite 원형과 UTF-8/UTF-16 encoding 의미를 유지하며 JSON에서 온 단독 surrogate 문자열을 구별 가능한 버전 원형 표현으로 저장하고 core 분석 DTO에서 정확한 원문 문자열로 복원한다. 새 분석 열만 허용하는 json-string-v1 bytea/encoding 표현과 분석 전용 검증·복원을 사용할 수 있다. 기존 전역 원문 codec의 의미와 이미 적용된 migration은 바꾸지 않는다. 손실·문자 대체만으로 완료하거나 malformed SQLite 바이트와 JSON 문자열의 출처 의미를 혼합하지 않는다.
 - `apps/cli/python-test/garmin-artifacts.test.ts`, `packages/postgres/test/import-contracts.test.ts`와 순수 검사: artifact의 model/scope/report_date 각각 단독 surrogate와 NUL·비ASCII를 혼합해 실제 설치 명령·core 분석 DTO·private metadata·같은 입력 재실행에서 정확한 원문을 대조한다. 새 codec 표시값/원형/버전 불일치를 거부하고 기존 SQLite invalid-text 원형과 정상문자 fingerprint를 유지하는 회귀를 보존한다.
 - 현재 root 기본 Verify는 성공(168파일3907통과·기존1skip)했고 실행3 순수 네 검사도 성공했다. 이 추가 교정 뒤 전체 검증을 다시 수행한다.
+
+### 2026-11-01 — Review pass 4 (복구 실행2)
+- verdicts: 2 findings — high 1, medium 1, low 0, false 0, maybe-false 0
+- findings:
+  - `[high]` `[bad_plan]` 제외 inventory 충돌 전 요청 확정 — publish는 비밀 로그를 같은 크기의 안전한 내용으로 바꿨을 때 기존 file mapping이 없어 요청을 커밋한 뒤 inventory에서 충돌한다. listUnhandedImports는 이 요청을 인계하므로 기존 제외 파일 변경을 안전하게 거부하지 못한다. 실행4에 inventory와 요청·분석·mapping의 단일 원자 단위, 파일 I/O의 트랜잭션 밖 수행, 변경·동시 발행 회귀를 명시한다.
+  - `[medium]` `[bad_plan]` 허용 artifact key의 단독 surrogate 저장 실패 — load_capture는 해당 key를 허용하고 safe_dumps fingerprint는 성공하지만 publish의 SQL original_key/artifact_key 인자가 strict UTF-8에서 실패한다. metadata/분석 codec은 이 경계를 보호하지 않는다. 실행4에 기존 정상 키 호환·원형 복원·참조 일치를 유지하는 식별자 가역 표현과 수용/제외/재실행 회귀를 명시한다.
+
+### 2026-11-01 — Review pass 5 (실행4 재검토)
+- verdicts: 2 findings — high 0, medium 2, low 0, false 0, maybe-false 0
+- findings:
+  - `[medium]` `[bad_plan]` 상한 초과 artifact의 동일 크기 변경 누락 — read_relative가 32MiB 초과 시 원문을 해시하지 않고 None을 반환하므로 inventory는 hash NULL/too_large/크기만 대조한다. manifest fingerprint는 bytes를 포함하지 않아 다른 bytes의 재실행이 성공한다. 실행5에 같은 fd의 제한 메모리 스트리밍 해시와 실제 변경 충돌 회귀를 추가한다.
+  - `[medium]` `[bad_plan]` staging 준비·정리 경쟁의 원문 잔존 — prepare_locator의 pending 조회 뒤 core unlink/cleaned_at 확정과 producer stage 재생성이 가능하다. 기존 request reconcile은 RETURN NULL로 재삽입을 끝내고 cleanup은 cleaned_at NULL만 찾으므로 복사본이 남는다. 실행5에 producer의 상태조회와 staging 준비까지 같은 locator 잠금으로 조정하고 실제 barrier 회귀를 추가한다.
+
+### 2026-11-01 — Review pass 6 (실행5 재검토)
+- verdicts: 2 findings — high 1, medium 1, low 0, false 0, maybe-false 0
+- findings:
+  - `[medium]` `[bad_plan]` 상한 초과 evaluation inventory namespace 충돌 — analyses.py의 `evaluation:`+canonical key는 정상 artifact key로도 허용되고 PK는 dataset/artifact_key뿐이다. 같은 dataset에서 정상 artifact와 큰 evaluation이 함께 있으면 서로 다른 원래 표인데 evaluation_mismatch로 첫 반입이 실패한다. staging과 별개로 inventory에도 원래 표를 구분하는 충돌 없는 식별자가 필요하다. 기존 리뷰와 다른 위치·주장이며 아직 미해결이다.
+  - `[high]` `[patch]` 가림 파일 삭제 뒤 오래된 시각으로 만료 검사 — import-work.ts는 첫 finishImport 전 계산한 input.now를 비동기 files.delete 뒤에도 재사용한다. 첫 호출은 가림 결과 확정 없이 반환하므로 삭제 중 만료된 claim도 두 번째 finishImport가 claim_expires_at>옛 시각으로 확정·staging 정리할 수 있다. 두 번째 호출에 새 clock.now()를 전달하는 교정과 만료 중 삭제 회귀가 필요하다. bad_plan 우선 및 반복 상한 HALT로 이번 실행에서는 적용하지 않았다.
+
+bad_plan loopback을 위해 review_loop_iteration을 5에서 6으로 증가시켰으며 워크플로의 5회 상한을 초과했다. 코드·계약·기존 KEEP과 통과 검증을 보존하고 추가 재도출 없이 HALT한다. 이는 구현자 기능 실패나 운영자 외부 작업의 대기가 아니다.
 
 ## Design Notes
 
@@ -201,3 +241,57 @@ deferred: []
 ## 2026-11-01 감독자 시간 초과 복구
 
 엔진 90분 시간 초과로 기존 구현자를 관리상 인계하고 정식 failed 보고를 수락했다. 기능 실패가 아니며 원래 기준은 `143ebf5fc002a08ba4aba72fe58ef71ae32960c0`이다. 부분 구현을 미검증 보존 커밋으로 보존한다. 전체 diff는 원래 기준부터 확인하고, 최신 분석 metadata 교정 후 기본 Verify·Python 전체 suite·집중 종단·순수 네 검사와 행렬 감사 및 독립 재리뷰를 다시 수행한다. 기존 계약과 모든 KEEP을 유지하고 검증 전 완료로 간주하지 않는다. 기준 수락 후 변경 없음으로 재정지하면 보존 patch를 사용한 엔진 지원 복구 경로를 조사한다. 인계 및 집중 검증 보고는 run task의 Orca 기록과 `/tmp/bmad-14-5-handoff.md`, `/tmp/bmad-14-5-analysis-surrogate-fix.md`에 있다.
+
+## 2026-11-01 복구 실행2 독립 Verify 및 Matrix Test Audit
+
+원래 기준 `143ebf5fc002a08ba4aba72fe58ef71ae32960c0`부터 보존 커밋 `2e69c3b8f0c9c460871798fcd343df8b2aa9fc9d`와 현재 계획을 포함한 누적 unified diff를 임시 파일에 보존하고 전체 변경을 확인했다. 이전 Run의 워커 5개는 모두 released다. 새 구현자는 계획·문맥·최신 codec을 확인하고 집중 검증 후 추가 코드 변경 없이 implementation-ready를 보고했다. 티켓 완료와 커밋 판정은 엔진에 남긴다.
+
+지휘자 독립 검증은 기본 Verify(빌드·타입 포함) 168파일 3907통과·기존1skip, Python 전체 6파일25통과·skip없음, 별도 garmin-artifacts 1파일4통과, 순수 check_artifacts/check_reader_bytes/check_preflight/check_batch_import 각각 성공, `git diff --check` 성공이다. 원시 로그는 `/tmp/bmad-14-5-dev2-{verify,python,artifacts,pure}.log`, 누적 diff는 `/tmp/bmad-14-5-dev2-full.diff`다. 검증 중 제품·시험 변경은 없었다.
+
+| 행렬 | 이번 실행에서 실행·통과한 시험과 대조 |
+|---|---|
+| 파일·분석 / 제외 | `garmin-artifacts.test.ts`의 명시 다종 파일 시험에서 다섯 수용 파일의 원문 bytes·hash·size와 주 분석/역할 관계, 안전 로그 수용과 비밀·설정·불명 encoding 제외, 불변 재실행을 확인했다. |
+| metadata·evaluation / 입력 상태 | 같은 시험의 evaluation 원형·NULL/flag·명시 시각·mtime 비대체 및 body present/profile empty/inbox absent·필드별 mtime·원본 요청 관계, NUL metadata 시험의 단독 surrogate 세 분석 필드와 private 복원·미연결 사유·재실행이 통과했다. 기존 batch 시험은 version1 unknown을 보존한다. |
+| 장애 수렴 | 기본 suite의 `import-crash.test.ts` request/handoff/put/result 네 경우가 IPC/DB barrier→SIGKILL→close→새 프로세스로 단일 요청·인계·결과·파일 및 최종 bytes를 검증했다. artifact/evaluation locator 시험은 첫 파일 정리 뒤 발행 전 kill/restart와 내용당 파일 하나를 확인했다. |
+| 바이트 검증 / 정리 | `import-safety.test.ts`의 미완료 공유 locator 보호·unlink 실패·삭제 뒤 결과 확정 전 kill·재정리·재사용 거부·hash 불일치·동일 크기 오염 blob 거부 및 `import-staging.test.ts` 크기 불일치가 통과했다. 완료 전 정리는 staging을 남겼다. |
+| 경쟁·권한 | `import-safety.test.ts` 동시 인계·다른 회차/만료 청구 거부와 `import-contracts.test.ts`, migrate·extension-permissions의 현재 attempt·source/dataset·primary 일치·INSERT-only·불변·기존/신규 role 검사가 통과했다. |
+| 변경·경계 | artifact 시험의 동일 크기 문서 변경 영속 충돌·checkpoint 뒤 SQLite 변경에도 검증본 evaluation 사용, 순수 check_artifacts와 import-staging의 symlink/FIFO/traversal·상한·크기·시각 형식 검증이 통과했다. |
+| 추출·가림 | artifact 시험에서 Markdown 추출 세대/조각·PNG unsupported 및 채널 요청 0, `import-redaction.test.ts`의 두 가림/정리 재시도 시험과 `import-retry.test.ts` 공개 failed/resumable→completed·정리가 통과했다. |
+
+관련 행렬 시험에는 skip/필터 제외가 없다. 기존 기본 suite skip은 이 행렬을 충족하는 근거로 사용하지 않았다. 운영자만 할 외부 작업과 미해결 수락 조건은 없으며 독립 재리뷰를 진행한다.
+
+
+## 실행4 지휘자 재검증 및 행렬 감사
+
+보존 patch 재적용 뒤 수정된 여섯 경로와 누적 diff를 확인했다. `analyses.py`는 파일 I/O를 준비한 뒤 inventory identity 잠금과 기존 논리 metadata 대조 아래 nested 발행 transaction을 같은 외부 transaction에 포함한다. inventory INSERT의 실패는 요청·분석·primary·mapping 전체를 rollback한다. 버전 식별자 함수는 surrogate 및 예약 prefix를 구분해 보존하고 private 보고에서 복원하며 정상 키는 기존 값을 유지한다.
+
+지휘자 독립 재실행은 기본 Verify 168파일3907통과·기존1skip, 전체 Python 6파일28통과·skip없음, 별도 artifact 1파일7통과·skip없음, 순수 네 검사 각각 exit 0, staged/unstaged diff 검사 성공이다. 원시 로그와 누적 diff는 `/tmp/bmad-14-5-dev2-pass4-{verify,python,artifacts,pure}.log`, `/tmp/bmad-14-5-dev2-pass4-full.diff`에 보존했다.
+
+기존 복구 실행2 Matrix Test Audit의 모든 행은 같은 시험에서 다시 실행·통과했다. 변경·경계/파일·분석/제외 행은 `로그 수용 상태 변경은 발행 전체를 충돌로 거부한다` 양방향 두 시험에서 inventory·mapping·요청·분석·관계·core 파일 불변과 영속 충돌을 추가 확인했다. 장애 수렴 행은 `inventory 확정 직전 장애는 요청과 mapping을 되돌리고 재개한다`에서 전체 발행 rollback과 새 실행의 단일 수렴을 추가 확인했다. metadata·입력 상태 행은 NUL metadata 시험의 수용/제외 surrogate key·실제 인코딩값과 같은 예약 prefix 원문 key·relations/source_files private 원형·ID 불변 재실행으로 보강했다. 해당 7시험에는 필터/skip이 없고 기존 정상 키·fingerprint·SQLite 원형 및 전체 KEEP assertion도 통과했다.
+
+## 실행5 지휘자 재검증 및 행렬 감사
+
+스트리밍 원문 읽기·공통 locator session lock·artifact/evaluation/tracer 호출 경계와 새 집중 시험을 직접 확인했다. 파일 읽기는 같은 fd에서 1MiB씩 수행하고 상한 초과 파일은 hash만 보관한다. 추가 확인에서 발견한 동시 append 시 누적 가능성은 같은 구현자가 total>expected를 해시/누적 전에 거부하도록 교정했다. 실제 fd 읽기 뒤 파일을 늘리는 순수 회귀는 세 번째 chunk에서 즉시 거부한다. 상태조회와 staging 준비는 core와 같은 source/locator JSON seed10 잠금 안에 있지만 파일 I/O는 transaction 밖이다.
+
+지휘자 최신 독립 재실행은 기본 Verify 168파일3907통과·기존1skip, Python 전체 6파일30통과·skip없음, 별도 artifact 1파일9통과·skip없음, 순수 네 검사 각각 exit 0, staged/unstaged diff 검사 성공이다. 원시 로그와 누적 diff는 `/tmp/bmad-14-5-dev2-pass5-{verify,python,artifacts,pure}.log`, `/tmp/bmad-14-5-dev2-pass5-full.diff`에 보존했다.
+
+기존 Matrix Test Audit의 전 행과 실행4 추가 회귀가 다시 실행·통과했다. 변경·경계/바이트 검증 행은 `상한 초과 파일의 동일 크기 변경을 원문 해시로 충돌 처리한다`에서 32MiB+ 독립 hash·too_large·요청 없음·변경 충돌·기존 inventory 불변을 추가 확인했다. 정리/경쟁 행은 `재발행 staging과 core 정리는 같은 locator 잠금으로 직렬화된다`에서 별도 producer의 상태조회 후 staging 전 IPC barrier→core 완료 결과/정리 근거→DB advisory 잠금 대기→producer 재개→cleaned_at·staging 부재→재실행 후 부재를 확인했다. tracer 전체 기존 6시험도 Python 전체 suite에서 다시 통과했다. 순수 검사에서 동시 성장 조기 거부·FIFO/symlink/traversal·상한·정상 bytes/hash가 통과했다. 관련 시험에 skip·필터 제외는 없으며 독립 재리뷰를 진행한다.
+
+
+## Auto Run Result
+
+- status: blocked
+- 사유: `review repair loop exceeded 5 iterations (non-convergence)` — 새 bad_plan으로 review_loop_iteration이 6이 되어 워크플로의 5회 복구 상한을 넘었다. 티켓 done은 표시하지 않았다.
+- 구현: 기존 분석·다종 파일의 불변 반입, 원형 metadata/식별자, 원자 file_requests 인계와 inventory 발행, hash 검증·문서 추출·비밀 제외·재개 및 내구 staging 정리를 구현하고 기존 보존 커밋 이후 교정을 staged 상태와 임시 patch로 보존한다. 완성·수락 완료로 판정하지 않는다.
+- 변경 경로: `extensions/garmin/src/{capture_manifest,analyses,analysis_codec,artifacts,batch_import,import_preflight,metadata_codec,preflight,reports,role_probe,tracer_import}.py`는 분류·원형·안정 identity·발행·원문 읽기·잠금·private 보고를 맡는다. `extensions/garmin/migrations/0004_artifacts.sql`은 inventory·관계, `extensions/garmin/tests/{fixtures,check_artifacts}.py`는 합성 자료와 순수 회귀다.
+- 변경 경로: `packages/core/src/{files/import-work,ports/import-store}.ts`는 요청 처리/정리와 DTO, `packages/core/schemas/imports/v1/README.md`는 계약이다. `packages/postgres/{migrations/0027_analysis_artifacts.sql,src/imports.ts,src/extension-provision.ts,src/migrate.ts}`는 불변 분석/관계·권한·결과/정리·claim fence와 migration 버전이다.
+- 변경 경로: `apps/cli/src/{daemon/run,daemon/supervisor,runtime/import-staging,workers/secret-scan}.ts`는 발견/감독자·안전 staging·Core 비밀 검사 연결이다. CLI의 artifact/batch/preflight/tracer Python 시험과 staging/install/output-codecs/setup 시험, PostgreSQL의 import-contracts/import-crash/import-safety 및 crash-child fixture·migrate/schema/store/work-store 시험은 합성 종단·장애·권한·기존 버전 회귀다.
+- 리뷰: 이번 실행의 pass4 두 bad_plan과 pass5 두 bad_plan은 재도출로 교정했다. pass6은 medium bad_plan 1건과 high patch 1건이 미해결이며 후자는 상위 bad_plan/반복 상한으로 미적용이다. 이번 실행의 직접 patch 적용은 0건, deferred 0건, reject 0건이다. 앞선 리뷰 이력은 모두 보존했다.
+- followup_review_recommended: false — 마지막 pass에 적용된 patch는 high/medium/low 모두 0건이다. 이는 성공 판정이 아니며 다음 자동 재개에서 두 결함 교정·전체 검증·독립 리뷰가 필요하다.
+- 최신 검증: `bash _bmad/custom/bmad-loop-verify.sh` 성공(빌드·타입 포함 168파일3907통과·기존1skip), `pnpm test:python` 성공(6파일30통과), 별도 artifact 집중 성공(1파일9통과), 고정 Python의 check_artifacts/check_reader_bytes/check_preflight/check_batch_import 각각 exit 0, staged/unstaged diff 검사 성공. 모든 기존 행렬 시험은 실행·통과했으나 새 정적 반례 두 건은 그 시험으로 검증되지 않았으므로 수락 완료가 아니다.
+- 보존: 원래 기준 `143ebf5fc002a08ba4aba72fe58ef71ae32960c0`, 기존 보존 커밋 `2e69c3b8f0c9c460871798fcd343df8b2aa9fc9d`. 최신 누적 diff와 보고/로그는 `/tmp/bmad-14-5-dev2-pass5-full.diff`, `/tmp/bmad-14-5-dev2-review6.md`, `/tmp/bmad-14-5-dev2-pass5-implementation.md`, `/tmp/bmad-14-5-dev2-pass5-{verify,python,artifacts,pure}.log`다. HALT 전 최종 patch는 `/tmp/bmad-14-5-dev2-halt-preserved.patch`에 남긴다.
+- 운영자 외부 작업은 없다. 미해결 namespace·청구 시각 결함은 다음 자동 구현/검증의 소유이며 awaiting-operator나 사람 승인으로 넘기지 않는다. 원본·운영 홈·실데이터·push는 건드리지 않았다.
+- 워커 정리와 최종 체크포인트 결과는 아래에 덧붙인다.
+
+- HALT 정리: 구현자의 정식 failed 관리상 인계 보고 `/tmp/bmad-14-5-dev2-halt-handoff.md`를 수락하고 release했다. 자기 Orca Run `run_0be2bfbebc17`의 워커 4개가 모두 released이며 마지막 Delivery를 처리·ack한 뒤 pending mail은 없다. 이전 Run의 5개도 released를 확인했다. 추가 취소·kill·중복 워커는 없고 미확인 소유권은 없다. 전용 제어 셸은 최종 checkpoint 후 닫는다.
+- 커밋: 이번 실행은 성공 finalization에 도달하지 않아 새 커밋을 만들지 않았다. 기존 보존 커밋은 유지하고 제품·시험·계획의 staged 변경과 최종 patch를 다음 자동 generation에 남겼다. 계획은 blocked이며 티켓 done은 하지 않았다.

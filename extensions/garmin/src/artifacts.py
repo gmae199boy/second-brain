@@ -1,5 +1,7 @@
 """명시된 원본만 안전하게 읽고 해시 기반 staging에 내구 복사한다."""
 import hashlib
+import base64
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -9,6 +11,33 @@ import secrets
 from metadata_codec import safe_dumps
 
 MAX_BYTES = 32 * 1024 * 1024
+
+
+IDENTITY_PREFIX = '~garmin-key-v1~'
+
+
+def encode_identity(value):
+    if value.startswith(IDENTITY_PREFIX) or any(0xD800 <= ord(c) <= 0xDFFF for c in value):
+        return IDENTITY_PREFIX + base64.urlsafe_b64encode(value.encode('utf-8', 'surrogatepass')).decode('ascii')
+    return value
+
+
+def decode_identity(value):
+    if value.startswith(IDENTITY_PREFIX):
+        return base64.urlsafe_b64decode(value[len(IDENTITY_PREFIX):].encode('ascii')).decode('utf-8', 'surrogatepass')
+    return value
+
+
+@contextmanager
+def locator_lock(conn, locator):
+    # 세션 잠금은 짧은 transaction에서 얻고 파일 I/O 동안 유지한다.
+    with conn.transaction():
+        conn.execute("select pg_advisory_lock(hashtextextended(jsonb_build_array(%s::text,%s::text)::text,10))", ('garmin', locator))
+    try:
+        yield
+    finally:
+        with conn.transaction():
+            conn.execute("select pg_advisory_unlock(hashtextextended(jsonb_build_array(%s::text,%s::text)::text,10))", ('garmin', locator))
 
 
 def read_relative(root, relative, expected):
@@ -24,12 +53,18 @@ def read_relative(root, relative, expected):
         try:
             before = os.fstat(fd)
             if not stat.S_ISREG(before.st_mode) or before.st_size != expected: raise ValueError('IMPORT_INVALID')
-            if before.st_size > MAX_BYTES: return None
-            with os.fdopen(fd, 'rb', closefd=False) as stream: data = stream.read(MAX_BYTES + 1)
+            hashed = hashlib.sha256(); total = 0; chunks = [] if expected <= MAX_BYTES else None
+            with os.fdopen(fd, 'rb', closefd=False) as stream:
+                while chunk := stream.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > expected: raise ValueError('IMPORT_INVALID')
+                    hashed.update(chunk)
+                    if chunks is not None: chunks.append(chunk)
+            data = b''.join(chunks) if chunks is not None else None
             after = os.fstat(fd)
             current = os.stat(parts[-1], dir_fd=directory, follow_symlinks=False)
-            if (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns) != (after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns) or (current.st_dev,current.st_ino) != (before.st_dev,before.st_ino) or len(data) != expected: raise ValueError('IMPORT_INVALID')
-            return data
+            if (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns) != (after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns) or (current.st_dev,current.st_ino) != (before.st_dev,before.st_ino) or total != expected: raise ValueError('IMPORT_INVALID')
+            return data, hashed.hexdigest()
         finally: os.close(fd)
     finally: os.close(directory)
 

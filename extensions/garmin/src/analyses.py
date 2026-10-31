@@ -5,7 +5,7 @@ import json
 import os
 from uuid import uuid7
 import psycopg
-from artifacts import MAX_BYTES, classify, read_relative, scan_log, stage, locator_for
+from artifacts import MAX_BYTES, classify, read_relative, scan_log, stage, locator_for, encode_identity, locator_lock
 from analysis_codec import project_analysis
 from metadata_codec import encode_metadata, decode_metadata, safe_dumps
 from reader import SQLiteText, InvalidSQLiteText
@@ -35,17 +35,25 @@ def publish(conn, capture, entries, verified):
         ident = uuid7()
         cur.execute('insert into garmin.import_mapping values (%s,%s,%s,%s,%s,%s,%s)',(dataset,table,key,kind,ident,fingerprint,batch))
         return ident,batch
-    def emit_one(entry, key, category, data, metadata, evaluation=None, original_table='artifact'):
+    def prepare_locator(dataset, original_table, key, data, fingerprint):
+        content_hash = digest(data)
+        locator = locator_for(dataset,original_table,key,content_hash)
+        with locator_lock(conn, locator):
+            with conn.transaction():
+                cur=conn.cursor(); check(cur)
+                old=cur.execute("select target_id,content_hash from garmin.import_mapping where dataset=%s and original_table=%s and original_key=%s and target_kind='artifact_file'",(dataset,original_table,key)).fetchone()
+                if old and old[1] != fingerprint: raise ValueError('ARTIFACT_CONFLICT')
+                status=cur.execute('select status from brain.file_request_results_public_v1 where request_id=%s',(old[0],)).fetchone() if old else None
+            return locator if status and status[0]=='completed' else stage(os.environ['BRAIN_EXTENSION_HOME'],dataset,original_table,key,data)
+
+    def emit_one(entry, key, category, data, metadata, evaluation=None, original_table='artifact', prepared_locator=None):
         dataset, batch = entry['dataset'], batch_for(entry)
         content_hash = digest(data)
         fingerprint = digest(canon({'hash':content_hash,'category':category,'metadata':metadata,'evaluation':evaluation and {k:encoded(v) for k,v in evaluation.items()}}).encode())
-        # 이전 완료 결과는 staging을 다시 만들지 않는다.
-        with conn.transaction():
-            cur=conn.cursor(); check(cur)
-            old=cur.execute("select target_id,content_hash from garmin.import_mapping where dataset=%s and original_table=%s and original_key=%s and target_kind='artifact_file'",(dataset,original_table,key)).fetchone()
-            if old and old[1] != fingerprint: raise ValueError('ARTIFACT_CONFLICT')
-            status=cur.execute('select status from brain.file_request_results_public_v1 where request_id=%s',(old[0],)).fetchone() if old else None
-        locator = locator_for(dataset,original_table,key,content_hash) if status and status[0]=='completed' else stage(os.environ['BRAIN_EXTENSION_HOME'],dataset,original_table,key,data)
+        # 파일 I/O는 호출자의 발행 트랜잭션 밖에서 준비한다.
+        if prepared_locator is None:
+            prepared_locator = prepare_locator(dataset, original_table, key, data, fingerprint)
+        locator = prepared_locator
         with conn.transaction():
             cur=conn.cursor(); check(cur)
             file_id, file_batch = mapped(cur,dataset,original_table,key,'artifact_file',fingerprint,batch)
@@ -69,10 +77,10 @@ def publish(conn, capture, entries, verified):
     published={}
     if capture['private']['version']==2:
         for artifact in capture['private']['files']:
-            entry=by_dataset[artifact['dataset']]; dataset=entry['dataset']; batch=batch_for(entry); key=artifact['artifact_key']
+            entry=by_dataset[artifact['dataset']]; dataset=entry['dataset']; batch=batch_for(entry); raw_key=artifact['artifact_key']; key=encode_identity(raw_key)
             try:
                 category=classify(artifact); reason=None
-                data = read_relative(capture['private']['root'],artifact['snapshot'],artifact['bytes'])
+                data, hashed = read_relative(capture['private']['root'],artifact['snapshot'],artifact['bytes'])
                 if data is None: reason='too_large'
                 elif category=='config': reason='config'
                 elif category=='unknown': reason='unknown'
@@ -81,35 +89,38 @@ def publish(conn, capture, entries, verified):
                     except ValueError: reason='scan_failed'
                 metadata=dict(artifact)
                 if category == 'log' and data is not None and reason != 'scan_failed': metadata['scanner_version']=result['version']
-                file_id=analysis_id=None; hashed=digest(data) if data is not None else None
+                file_id=analysis_id=None
                 unlinked = 'no_analysis_reference' if reason is None and category in ('image','input') and not artifact.get('relations',[]) else None
                 metadata_display, metadata_raw = encode_metadata(metadata)
-                if reason is None: file_id,analysis_id,hashed=emit_one(entry,key,category,data,metadata)
+                fingerprint = digest(canon({'hash':hashed,'category':category,'metadata':metadata,'evaluation':None}).encode()) if reason is None else None
+                locator = prepare_locator(dataset,'artifact',key,data,fingerprint) if reason is None else None
                 with conn.transaction():
                     cur=conn.cursor(); check(cur)
                     cur.execute('select pg_advisory_xact_lock(hashtextextended(%s,7))',(canon([dataset,key]),))
                     old=cur.execute('select category,content_hash,size_bytes,request_id,analysis_id,exclusion_reason,unlinked_reason,metadata,metadata_raw,batch from garmin.artifact_inventory where dataset=%s and artifact_key=%s',(dataset,key)).fetchone()
-                    value=(category,hashed,artifact['bytes'],file_id,analysis_id,reason,unlinked,metadata)
-                    if old and (*old[:7],decode_metadata(old[7],old[8])) != value: raise ValueError('ARTIFACT_CONFLICT')
+                    if old and (old[0],old[1],old[2],old[5],old[6],decode_metadata(old[7],old[8])) != (category,hashed,artifact['bytes'],reason,unlinked,metadata): raise ValueError('ARTIFACT_CONFLICT')
+                    if reason is None: file_id,analysis_id,hashed=emit_one(entry,key,category,data,metadata,prepared_locator=locator)
+                    if old and (old[3],old[4]) != (file_id,analysis_id): raise ValueError('ARTIFACT_CONFLICT')
                     if not old: cur.execute('insert into garmin.artifact_inventory(dataset,artifact_key,batch,category,content_hash,size_bytes,request_id,analysis_id,exclusion_reason,unlinked_reason,metadata,metadata_raw) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)',(dataset,key,batch,category,hashed,artifact['bytes'],file_id,analysis_id,reason,unlinked,canon(metadata_display),metadata_raw))
-                published[(artifact['dataset'],key)]=(file_id,analysis_id)
+                published[(artifact['dataset'],raw_key)]=(file_id,analysis_id)
             except (ValueError,psycopg.errors.RaiseException,psycopg.errors.UniqueViolation) as exc:
                 if str(exc) in ('ARTIFACT_CONFLICT','IMPORT_CONFLICT') or isinstance(exc,(psycopg.errors.RaiseException,psycopg.errors.UniqueViolation)): conflict(conn,dataset,batch,'artifact',key,'artifact_mismatch')
                 raise
         for artifact in capture['private']['files']:
-            entry=by_dataset[artifact['dataset']]; dataset=entry['dataset']; batch=batch_for(entry); key=artifact['artifact_key']; file_id,_=published[(artifact['dataset'],key)]
+            entry=by_dataset[artifact['dataset']]; dataset=entry['dataset']; batch=batch_for(entry); raw_key=artifact['artifact_key']; key=encode_identity(raw_key); file_id,_=published[(artifact['dataset'],raw_key)]
             for relation in artifact.get('relations',[]):
                 _,analysis_id=published[(artifact['dataset'],relation['analysis_key'])]
+                analysis_key=encode_identity(relation['analysis_key'])
                 reason = 'source_excluded' if file_id is None else 'analysis_unavailable' if analysis_id is None else None
                 with conn.transaction():
                     cur=conn.cursor(); check(cur)
-                    cur.execute('select pg_advisory_xact_lock(hashtextextended(%s,8))',(canon([dataset,key,relation['analysis_key'],relation['role']]),))
-                    prior=cur.execute('select request_id,analysis_id,reason from garmin.artifact_relations where dataset=%s and artifact_key=%s and analysis_key=%s and role=%s',(dataset,key,relation['analysis_key'],relation['role'])).fetchone()
+                    cur.execute('select pg_advisory_xact_lock(hashtextextended(%s,8))',(canon([dataset,key,analysis_key,relation['role']]),))
+                    prior=cur.execute('select request_id,analysis_id,reason from garmin.artifact_relations where dataset=%s and artifact_key=%s and analysis_key=%s and role=%s',(dataset,key,analysis_key,relation['role'])).fetchone()
                     mismatch = bool(prior and prior != (file_id,analysis_id,reason))
-                    if not prior: cur.execute('insert into garmin.artifact_relations values (%s,%s,%s,%s,%s,%s,%s)',(dataset,key,relation['analysis_key'],relation['role'],file_id,analysis_id,reason))
-                if mismatch: conflict(conn,dataset,batch,'artifact_relation',canon([key,relation['analysis_key'],relation['role']]),'relation_mismatch')
+                    if not prior: cur.execute('insert into garmin.artifact_relations values (%s,%s,%s,%s,%s,%s,%s)',(dataset,key,analysis_key,relation['role'],file_id,analysis_id,reason))
+                if mismatch: conflict(conn,dataset,batch,'artifact_relation',canon([key,analysis_key,relation['role']]),'relation_mismatch')
                 if reason is not None: continue
-                rel_key=canon([key,relation['analysis_key'],relation['role']]); fingerprint=digest(rel_key.encode())
+                rel_key=canon([key,analysis_key,relation['role']]); fingerprint=digest(rel_key.encode())
                 try:
                     with conn.transaction():
                         cur=conn.cursor(); check(cur); rel_id,rel_batch=mapped(cur,dataset,'artifact_relation',rel_key,'relation',fingerprint,batch)

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from uuid import uuid7
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import psycopg
+from artifacts import locator_lock
 from health import convert
 from reader import read_snapshot, InvalidSQLiteText
 from raw_codec import dataset_ref, project, restore
@@ -84,20 +85,24 @@ def main():
     with psycopg.connect(os.environ['BRAIN_DATABASE_URL'], options='-c transaction_timeout=2000 -c statement_timeout=1900 -c lock_timeout=1500') as probe:
         check(probe.cursor())
         if not all(probe_role(probe).values()): raise ValueError('입력')
-        previous = probe.execute("select target_id from garmin.import_mapping where dataset=%s and original_table='legacy_markdown' and original_key=%s and target_kind='file'", (dataset,artifact_key)).fetchone()
-        status = probe.execute('select status from brain.file_request_results_public_v1 where request_id=%s', (previous[0],)).fetchone() if previous else None
-    if not status or status[0] != 'completed':
-        staging.mkdir(parents=True, exist_ok=True)
-        try:
-            fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        except FileExistsError:
-            fd = os.open(staged, os.O_RDONLY | os.O_NOFOLLOW)
-            with os.fdopen(fd, 'rb') as existing:
-                if existing.read() != text:
-                    raise ValueError('staging conflict')
-        else:
-            with os.fdopen(fd, 'wb') as output:
-                output.write(text)
+        probe.commit()
+        with locator_lock(probe, staged.name):
+            with probe.transaction():
+                check(probe.cursor())
+                previous = probe.execute("select target_id from garmin.import_mapping where dataset=%s and original_table='legacy_markdown' and original_key=%s and target_kind='file'", (dataset,artifact_key)).fetchone()
+                status = probe.execute('select status from brain.file_request_results_public_v1 where request_id=%s', (previous[0],)).fetchone() if previous else None
+            if not status or status[0] != 'completed':
+                staging.mkdir(parents=True, exist_ok=True)
+                try:
+                    fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                except FileExistsError:
+                    fd = os.open(staged, os.O_RDONLY | os.O_NOFOLLOW)
+                    with os.fdopen(fd, 'rb') as existing:
+                        if existing.read() != text:
+                            raise ValueError('staging conflict')
+                else:
+                    with os.fdopen(fd, 'wb') as output:
+                        output.write(text)
     now = datetime.now(timezone.utc)
     work = os.environ['BRAIN_WORK_ID']; token = os.environ['BRAIN_ATTEMPT_TOKEN']
     try:
