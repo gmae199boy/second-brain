@@ -14,13 +14,7 @@
       "execution": "supervised",
       "runtime": "python",
       "entry": "src/import.py",
-      "required_settings": [
-        "garmin.snapshot_path",
-        "garmin.legacy_path",
-        "garmin.staging_path",
-        "garmin.dataset",
-        "garmin.artifact_root"
-      ],
+      "required_settings": [],
       "manual": "import"
     },
     {
@@ -158,44 +152,39 @@
       "key": "garmin.snapshot_path",
       "type": "string",
       "secret": false,
-      "required": [
-        "work"
-      ]
+      "required": []
     },
     {
       "key": "garmin.legacy_path",
       "type": "string",
       "secret": false,
-      "required": [
-        "work"
-      ]
+      "required": []
     },
     {
       "key": "garmin.staging_path",
       "type": "string",
       "secret": false,
-      "required": [
-        "work"
-      ]
+      "required": []
     },
     {
       "key": "garmin.dataset",
       "type": "string",
       "secret": false,
-      "required": [
-        "work"
-      ]
+      "required": []
     },
     {
       "key": "garmin.artifact_root",
       "type": "string",
       "secret": false,
-      "required": [
-        "work"
-      ]
+      "required": []
     },
     {
       "key": "garmin.capture_manifest",
+      "type": "string",
+      "required": []
+    },
+    {
+      "key": "garmin.legacy_conversation_id",
       "type": "string",
       "required": []
     }

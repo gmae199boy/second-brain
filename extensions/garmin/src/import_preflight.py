@@ -30,7 +30,7 @@ def main():
     metadata = json.loads(os.environ['BRAIN_EXTENSION_READINESS'])
     with psycopg.connect(os.environ['BRAIN_DATABASE_URL'], options='-c statement_timeout=1900 -c lock_timeout=1500') as conn:
         checks = probe_role(conn)
-        attempt_rows = safely(conn, 'select brain.attempt_is_current(%s::uuid,%s::uuid)', (os.environ['BRAIN_WORK_ID'], os.environ['BRAIN_ATTEMPT_TOKEN'])) if checks['attempt_execute'] else None
+        attempt_rows = safely(conn, 'select garmin.attempt_valid(%s::uuid,%s::uuid)', (os.environ['BRAIN_WORK_ID'], os.environ['BRAIN_ATTEMPT_TOKEN'])) if checks['attempt_execute'] else None
         current = attempt_rows[0][0] if attempt_rows else None
         batch_rows = safely(conn, 'select id,dataset from garmin.import_batches order by id') if checks['batch_select'] else None
         mapping_rows = safely(conn, 'select count(*) from garmin.import_mapping') if checks['mapping_select'] else None
@@ -38,6 +38,9 @@ def main():
         checks['batch_select'] = batch_rows is not None
         checks['mapping_select'] = mapping_rows is not None
         checks['catalog_select'] = catalog_rows is not None
+        checkpoint_rows = safely(conn, 'select batch,dataset,source_hash,schema_version,importer_version,manifest_fingerprint,source_role,original_table,original_key,conversation_id from garmin.import_checkpoints order by dataset,batch')
+        checkpoints = [{'batch': r[0], 'dataset': r[1], 'source_hash': r[2], 'schema': r[3], 'importer_version': r[4], 'manifest_fingerprint': r[5], 'source_role': r[6], 'table': r[7], 'key': r[8], 'conversation_id': str(r[9]) if r[9] else None} for r in (checkpoint_rows or [])]
+        reasons = safely(conn, 'select reason,count(*) from garmin.import_provenance group by reason order by reason')
         batches = [{'id': row[0], 'dataset': row[1]} for row in batch_rows] if batch_rows is not None else []
         mappings = mapping_rows[0][0] if mapping_rows else None
         catalog = [row[0] for row in catalog_rows] if catalog_rows is not None else []
@@ -49,7 +52,7 @@ def main():
                       estimates=estimates,
                   risks=['원래 NULL의 결측 원인은 복원할 수 없음', '원본 단위와 정규화 버전을 별도로 검증해야 함'],
                       exclusions=[{'category': group, 'count': files['groups'][group], 'reason': reason} for group, reason in [('config', '비밀·기계 설정 제외'), ('log', '운영 로그 제외'), ('unknown', '분류 확인 전 제외')] if files['groups'][group]],
-                      checkpoint={'available': False, 'resume': '미제공'})
+                      checkpoint={'available': checkpoint_rows is not None, 'entries': checkpoints}, publication_reasons=[{'reason': r[0], 'count': r[1]} for r in (reasons or [])])
         public = public_report(report, ready)
         if current is False:
             raise ValueError('PREFLIGHT_STALE')

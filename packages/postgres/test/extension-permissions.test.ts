@@ -177,3 +177,32 @@ it('v18의 확장 역할을 v19로 이전하고 최소 권한으로 재설정한
     await admin.end(); await db.drop(); await rm(dir, { recursive: true, force: true });
   }
 });
+
+it('건강 권위는 자기 출처의 현재 시도로만 추가한다', async () => {
+  const db = await database(), suffix = randomBytes(5).toString('hex');
+  const name = `x${suffix}`, role = `brain_ext_${name}`, password = randomBytes(24).toString('hex');
+  const admin = new pg.Client({connectionString:db.url});
+  const store = postgresStore({databaseUrl:db.appUrl});
+  let ext: pg.Client | undefined;
+  try {
+    await admin.connect(); await provisionExtension(db.url,name,password);
+    const url=new URL(db.url); url.username=role; url.password=password;
+    ext=new pg.Client({connectionString:url.toString()}); await ext.connect();
+    await admin.query("insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ($1,'1',now(),true,now())",[name]);
+    await admin.query('insert into brain.extension_work_kinds(extension_name,kind) values ($1,$2)',[name,`${name}.import`]);
+    const id=randomUUID(), token=randomUUID(), now=clock.now();
+    await store.addWork({id,kind:`${name}.import`,targetKind:'import',targetId:'x',createdAt:now,nextAttemptAt:now});
+    await store.claimSupervisedWork({now,claimedBy:'test',kinds:[`${name}.import`],attemptToken:token});
+    const sql='insert into brain.health_authority_rules(id,source,account,revision,datasets,source_work_item_id,source_attempt_token) values ($1,$2,$3,1,$4,$5,$6)';
+    await ext.query(sql,[randomUUID(),name,'one',['D2','D1'],id,token]);
+    await expect(ext.query(sql,[randomUUID(),'other','two',['D1'],id,token])).rejects.toMatchObject({code:'BRS01'});
+    await expect(ext.query(sql,[randomUUID(),name,'two',['D1'],id,randomUUID()])).rejects.toMatchObject({code:'BRS01'});
+    await expect(ext.query('select * from brain.health_authority_rules')).rejects.toMatchObject({code:'42501'});
+    await expect(ext.query('update brain.health_authority_rules set revision=2')).rejects.toMatchObject({code:'42501'});
+    await provisionExtension(db.url,name,password);
+  } finally {
+    await ext?.end(); await store.close();
+    await admin.query(`drop owned by "${role}"; drop role if exists "${role}"`).catch(() => {});
+    await admin.end(); await db.drop();
+  }
+});

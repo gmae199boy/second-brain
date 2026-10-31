@@ -44,7 +44,7 @@ it('출처와 현재 시도에 결합된 불변 가져오기 계약을 강제한
     const typed = `insert into brain.health_observations(id,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,unit,local_date,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token,value_type,value_text,activity_id,sub_identity) values ($1,$2,'d','b','daily','typed','acct',true,'daily_metric.hrv_status','category','2026-01-01','Asia/Seoul',false,'hash',now(),1,$3,$4,'text','normal','exercise','set')`;
     await ext.query(typed,[randomUUID(),name,work,token]);
     expect((await admin.query("select value_type,value_text,activity_id,sub_identity from brain.health_current_v1 where original_key='typed'")).rows).toEqual([{value_type:'text',value_text:'normal',activity_id:'exercise',sub_identity:'set'}]);
-    await expect(ext.query("insert into brain.health_authority_rules(id,source,account,revision,datasets) values ($1,$2,'acct',1,array['d'])",[randomUUID(),name])).rejects.toMatchObject({code:'42501'});
+    await expect(ext.query("insert into brain.health_authority_rules(id,source,account,revision,datasets) values ($1,$2,'acct',1,array['d'])",[randomUUID(),name])).rejects.toMatchObject({code:'BRS01'});
     for (const table of ['health_observations','file_requests','analyses']) {
       await expect(ext.query(`select * from brain.${table}`)).rejects.toMatchObject({ code: '42501' });
       await expect(ext.query(`update brain.${table} set id=id`)).rejects.toMatchObject({ code: '42501' });

@@ -10,9 +10,9 @@ def quoted(name):
 
 def read_snapshot(path):
     path = Path(path)
-    if not path.is_absolute() or not path.is_file():
+    if not path.is_absolute() or not path.is_file() or path.with_name(path.name + '-wal').exists():
         raise ValueError('PREFLIGHT_INVALID')
-    with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as conn:
+    with closing(sqlite3.connect(path.as_uri() + '?mode=ro&immutable=1', uri=True)) as conn:
         conn.execute('pragma query_only = on')
         version = conn.execute('pragma user_version').fetchone()[0]
         if version not in (10, 15):

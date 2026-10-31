@@ -5,6 +5,7 @@ REQUIRED_INSERTS = {
     'channel_requests': 'id conversation_id producer producer_result_id purpose revision body created_at bundle source_work_item_id source_attempt_token',
     'channel_legacy_notifications': 'id conversation_id source dataset original_table original_key import_batch local_date event detail at source_work_item_id source_attempt_token',
     'channel_legacy_deliveries': 'id conversation_id source dataset original_table original_key import_batch original_id local_date kind event ok reason at source_work_item_id source_attempt_token',
+    'health_authority_rules': 'id source account metric activity_id date_from date_to revision datasets source_work_item_id source_attempt_token',
     'health_observations': 'id source dataset import_batch original_table original_key account account_confirmed metric value unit local_date observed_at time_zone time_zone_missing revision fetched_at normalization_version source_work_item_id source_attempt_token value_type value_text value_json catalog_version activity_id sub_identity',
     'file_requests': 'id source request_key dataset import_batch locator sha256 size_bytes media_type created_at source_work_item_id source_attempt_token',
     'analyses': 'id source dataset import_batch original_table original_key revision model model_missing created_at created_at_missing file_request_id source_work_item_id source_attempt_token',

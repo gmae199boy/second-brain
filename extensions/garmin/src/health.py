@@ -99,3 +99,69 @@ def convert(metric, table, column, value):
         if isinstance(value, (dict, list)):
             return value
     raise ValueError('HEALTH_INVALID_OBSERVATION')
+
+
+def source_endpoint(table_name, column):
+    """원본 정규화 코드가 소유권을 명시한 열의 endpoint를 반환한다."""
+    endpoints = {
+        'body_battery_sample': 'body_battery', 'stress_bb_sample': 'stress_data',
+        'hr_sample': 'heart_rates', 'activity_hr_sample': 'activity_details',
+        'exercise_set': 'activity_exercise_sets',
+    }
+    if table_name == 'daily_metric':
+        if column in ('steps','distance_m','active_kcal','moderate_intensity_s','vigorous_intensity_s','min_hr','max_hr'): return 'user_summary'
+        elif column == 'resting_hr': return 'rhr_day'
+        elif column.startswith('hrv_'): return 'hrv_data'
+        elif column.startswith('readiness_'): return 'training_readiness'
+        elif column.startswith('sleep_') or column in ('deep_sleep_s','light_sleep_s','rem_sleep_s','awake_sleep_s'): return 'sleep_data'
+        elif column.startswith('stress_'): return 'stress_data'
+        elif column.startswith('bb_'): return 'body_battery'
+        else: return None
+    elif table_name == 'activity': return 'activity_hr_in_timezones' if column.startswith('hr_zone') else 'activity'
+    else: return endpoints.get(table_name)
+
+
+def import_candidates(snapshot, catalog, table_name, row):
+    """원문과 정규화 근거가 유일한 catalog 열만 발행 대상으로 만든다."""
+    import hashlib
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    meta = {r['key']: r['value'] for r in snapshot['tables'].get('meta', {}).get('rows', [])}
+    version = meta.get('normalize_version')
+    zone = meta.get('timezone')
+    try:
+        if zone is not None: ZoneInfo(zone)
+    except Exception:
+        zone = None
+    day = row.get('day_key') or row.get('date')
+    activity = row.get('activity_id')
+    if activity is not None and day is None:
+        parent = next((r for r in snapshot['tables'].get('activity', {}).get('rows', []) if r.get('activity_id') == activity), None)
+        if parent: day = parent.get('day_key')
+    source_key = str(activity) if activity is not None else day
+    scope = 'activity' if activity is not None else 'day'
+    raw = [r for r in snapshot['tables'].get('raw_response', {}).get('rows', []) if r['scope'] == scope and r['key'] == source_key]
+    normal = snapshot['tables'].get('normalize_result', {}).get('rows', [])
+    valid_raw = [r for r in raw if any(n['scope'] == r['scope'] and n['key'] == r['key'] and n['endpoint'] == r['endpoint'] and n['ok'] == 1 and n['raw_fetched_at'] == r['fetched_at'] for n in normal)]
+    timestamp = row.get('ts_ms')
+    observed = datetime.fromtimestamp(timestamp / 1000, timezone.utc) if timestamp is not None else None
+    for definition in catalog:
+        for mapping in definition.get('mappings', []):
+            column = mapping['column']
+            if mapping['table'] != table_name or column not in row:
+                continue
+            endpoint = source_endpoint(table_name, column)
+            matched = [r for r in valid_raw if r['endpoint'] == endpoint]
+            reason = None
+            if not isinstance(version, str) or not version.isdigit() or int(version) < 1: reason = '정규화 버전 없음'
+            elif len(matched) != 1: reason = '원문·정규화 연결이 유일하지 않음'
+            elif observed is None and day is None: reason = '날짜·시각 근거 없음'
+            if reason:
+                yield definition, column, None, reason
+                continue
+            source = matched[0]
+            yield definition, column, {'value': convert(definition, table_name, column, row[column]),
+                'revision': hashlib.sha256(source['raw'].encode('utf-8')).hexdigest(),
+                'fetched_at': datetime.fromtimestamp(source['fetched_at'] / 1000, timezone.utc),
+                'version': int(version), 'zone': zone, 'day': day if observed is None else None,
+                'observed': observed, 'activity': str(activity) if activity is not None else None}, None
