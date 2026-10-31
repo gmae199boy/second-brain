@@ -83,7 +83,6 @@ it('installs the complete catalog, five named unique indexes, five search indexe
     { id:'019a0000-0000-7000-8000-000000000003',kind:'chunk',model:null,dimensions:null,chunk_params:{targetChars:1200,overlapMessages:1,splitMessagesOverChars:2400,rules:{version:1,order:'occurred_at,id',units:'code_points',separator:'newline',boundary:'include_timestamp_group_at_target',split:'split_limit',parts:'range_0_or_1_to_n'}} },
   ]);
   expect((await query("select table_name,column_name,column_default,is_identity,is_generated from information_schema.columns where table_schema='brain' and (column_default is not null or is_identity <> 'NO' or is_generated <> 'NEVER') order by table_name,column_name")).rows).toEqual([
-    {table_name:'channel_attempt_results',column_name:'outcome',column_default:"'sent'::text",is_identity:'NO',is_generated:'NEVER'},
     {table_name:'channel_requests',column_name:'status',column_default:"'pending'::text",is_identity:'NO',is_generated:'NEVER'},
     {table_name:'chunks',column_name:'part',column_default:'0',is_identity:'NO',is_generated:'NEVER'},
     {table_name:'messages',column_name:'is_subagent_report',column_default:'0',is_identity:'NO',is_generated:'NEVER'},

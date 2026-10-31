@@ -4,13 +4,12 @@ import { MAX_WORK_ATTEMPTS, SUPERVISOR_CAPACITY, workKindPolicy, workStallWindow
 import type { Clock, Timer } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
 import type { ProcessInspector, ProcessLauncher, ProcessSpec } from '../ports/process.js';
-import type { FinishSupervisedWorkInput, FinishWorkResult, OpenSupervisedAttempt, SchemaStore, WorkStore } from '../ports/store.js';
-import type { ChannelStore } from '../channels/store.js';
+import type { FinishWorkResult, OpenSupervisedAttempt, SchemaStore, WorkStore } from '../ports/store.js';
 import { createAbiRun, createAbiStderr, decodeAbiEnv, type AbiRunVerdict } from '../process-abi/codec.js';
 import { checkSchema, type SchemaVersions } from '../schema.js';
 import { cleanProcessGroup, inspectGroup, type GroupIdentity } from './process-cleanup.js';
 export interface SupervisorOptions {
-  store: WorkStore & SchemaStore & Partial<Pick<ChannelStore, 'recoverChannelAttempt'>>; launcher: ProcessLauncher; inspector: ProcessInspector;
+  store: WorkStore & SchemaStore; launcher: ProcessLauncher; inspector: ProcessInspector;
   clock: Clock; timer: Timer; idGen: IdGen;
   launches: Readonly<Record<string, (item: WorkItem, token: string) => ProcessSpec | null>>;
   protectedLaunches?: Readonly<Record<string, {
@@ -33,7 +32,6 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
   type Execution = { finished?: boolean; pendingSettlement?: () => Promise<FinishWorkResult>; retrying?: Promise<void> };
   const executions = new Set<Execution>();
   const running = new Set<Promise<void>>();
-  const uncertainChannelTokens = new Set<string>();
   let lastProblem: string | undefined;
   async function problem(message?: string): Promise<void> {
     try { if (message !== undefined && message !== lastProblem) await options.log?.(message); } catch { /* Logging must never interrupt supervision. */ }
@@ -65,45 +63,9 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     inspector, identity, clock, timer, graceMs: options.cancelGraceMs ?? SUPERVISOR_CANCEL_GRACE_MS,
     confirmMs: options.groupConfirmMs ?? SUPERVISOR_GROUP_CONFIRM_MS, ...extra,
   });
-  function channelSettlement(item: { id: string; targetId: string; targetKind: string; attempts: number; deferred?: boolean; deferredOutcome?: 'cancelled' | 'died' }, input: FinishSupervisedWorkInput): () => Promise<FinishWorkResult> {
-    return async () => {
-      if (!store.recoverChannelAttempt) return { ok: false, code: 'DB_UNAVAILABLE', message: '채널 시도 결과를 읽을 수 없습니다' };
-      const recovered = await store.recoverChannelAttempt({ requestId: item.targetId, workItemId: item.id, attemptToken: input.attemptToken, now: input.now });
-      if (!recovered.ok) return recovered;
-      if (recovered.outcome === 'lost') return { ok: true, outcome: 'lost' };
-      const result = recovered.result;
-      const confirmedDead = input.outcome === 'died';
-      if (item.deferred && result?.outcome !== 'sent') {
-        const open = await store.listOpenSupervisedAttempts();
-        if (!open.ok) return open;
-        const current = open.attempts.find(attempt => attempt.token === input.attemptToken);
-        if (!current) return { ok: true, outcome: 'lost' };
-        if (current.cancelRequested || result === null) return store.settleSupervisedAttempt({ id: item.id, attemptToken: input.attemptToken, now: input.now, outcome: current.cancelRequested ? 'cancelled' : item.deferredOutcome ?? 'died', confirmedDead });
-      }
-      if (result === null) return store.finishSupervisedWork({ ...input, confirmedDead });
-      if (result.outcome === 'sent') return store.finishSupervisedWork({ id: item.id, attemptToken: input.attemptToken, now: input.now, outcome: 'succeeded', confirmedDead, elapsedMs: input.elapsedMs, stderr: input.stderr });
-      const code = /^[A-Z][A-Z0-9_]{0,63}$/.test(result.code) ? result.code : `CHANNEL_${result.code.toUpperCase()}`;
-      const lastError = failureText(`채널 전송 실패 (${code})`);
-      const terminal = !result.retryable || item.attempts >= MAX_WORK_ATTEMPTS;
-      const nextAttemptAt = new Date(input.now.getTime() + Math.max(workKindPolicy('channel_send').retryDelayMs(item.attempts), result.retryAfterMs ?? 0));
-      return store.finishSupervisedWork({ id: item.id, attemptToken: input.attemptToken, now: input.now,
-        outcome: input.outcome === 'died' ? 'died' : 'failed', confirmedDead, elapsedMs: input.elapsedMs, stderr: input.stderr, lastError,
-        ...(input.outcome === 'died' ? {} : { errorCode: code, errorRetryable: result.retryable }),
-        ...(terminal ? { failure: { id: idGen.next(), stage: 'channel_send', fingerprint: failureFingerprint({ stage: 'channel_send', input: `${item.targetKind}:${item.targetId}`, code }), code, message: lastError, occurredAt: input.now } } : { nextAttemptAt }) });
-    };
-  }
   function lostSettlement(attempt: Pick<OpenSupervisedAttempt, 'workItemId' | 'token' | 'kind' | 'attempts' | 'targetKind' | 'targetId' | 'cancelRequested' | 'held'>,
     outcome: 'died' | 'unknown', detail: { elapsedMs?: number; stderr?: string | null } = {}): () => Promise<FinishWorkResult> {
     const now = clock.now();
-    if (outcome === 'died' && attempt.kind === 'channel_send') {
-      const code = 'PROCESS_DIED';
-      const lastError = failureText(`자식 프로세스 실행 실패 (${code}): 정상 결과를 받지 못했습니다`);
-      return channelSettlement({ id: attempt.workItemId, targetId: attempt.targetId, targetKind: attempt.targetKind, attempts: attempt.attempts, deferred: attempt.cancelRequested || attempt.held },
-        { id: attempt.workItemId, attemptToken: attempt.token, now, outcome, ...detail, lastError,
-          ...(attempt.attempts >= MAX_WORK_ATTEMPTS ? { failure: { id: idGen.next(), stage: attempt.kind,
-            fingerprint: failureFingerprint({ stage: attempt.kind, input: `${attempt.targetKind}:${attempt.targetId}`, code }), code, message: lastError, occurredAt: now } }
-            : { nextAttemptAt: new Date(now.getTime() + workKindPolicy(attempt.kind).retryDelayMs(attempt.attempts)) }) });
-    }
     if (outcome === 'died' && attempt.attempts >= MAX_WORK_ATTEMPTS && !attempt.cancelRequested && !attempt.held) {
       const code = 'PROCESS_DIED';
       const lastError = failureText(`자식 프로세스 실행 실패 (${code}): 정상 결과를 받지 못했습니다`);
@@ -129,23 +91,8 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
       if (!current) continue;
       const settled = await lostSettlement(current, outcome)();
       if (!settled.ok) { await problem(`감독자 이전 시도 정산 실패 (${settled.code})`); return false; }
-      // 채널 프로세스가 불확실하면 토큰을 보유한 채 다음 검사에서 다시 확인한다.
-      if (outcome === 'unknown' && current.kind === 'channel_send') return false;
     }
     return true;
-  }
-  async function recheckUncertainChannels(): Promise<void> {
-    if (!uncertainChannelTokens.size) return;
-    const open = await store.listOpenSupervisedAttempts();
-    if (!open.ok) { await problem(`감독자 이전 시도 조회 실패 (${open.code})`); return; }
-    for (const token of uncertainChannelTokens) {
-      const attempt = open.attempts.find(row => row.token === token);
-      if (!attempt) { uncertainChannelTokens.delete(token); continue; }
-      if (await inspectGroup(inspector, attempt) !== 'died') continue;
-      const result = await lostSettlement(attempt, 'died')();
-      if (!result.ok) { await problem(`감독자 이전 시도 정산 실패 (${result.code})`); continue; }
-      uncertainChannelTokens.delete(token);
-    }
   }
   async function execute(item: WorkItem, token: string, execution: Execution): Promise<void> {
     let failed: string | undefined;
@@ -290,11 +237,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
             handle.closeOutput();
             await readStderr;
             const input = { id: item.id, attemptToken: token, now: clock.now(), outcome: 'unknown' as const, elapsedMs: Math.max(0, (endedAt ?? clock.now().getTime()) - startedAt), stderr: stderr.value() };
-            execution.pendingSettlement = async () => {
-              const result = await store.settleSupervisedAttempt(input);
-              if (item.kind === 'channel_send' && result.ok && result.outcome === 'done') uncertainChannelTokens.add(token);
-              return result;
-            };
+            execution.pendingSettlement = () => store.settleSupervisedAttempt(input);
             await retrySettlement(execution);
             return;
           }
@@ -327,12 +270,10 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
           const open = await store.listOpenSupervisedAttempts();
           if (!open.ok) return open;
           const attempt = open.attempts.find(a => a.token === token);
-          const settled = await lostSettlement(attempt ?? {
+          return lostSettlement(attempt ?? {
             workItemId: item.id, token, kind: item.kind, attempts: item.attempts,
             targetKind: item.targetKind, targetId: item.targetId, cancelRequested: false, held: false,
           }, outcome, detail)();
-          if (item.kind === 'channel_send' && outcome === 'unknown' && settled.ok && settled.outcome === 'done') uncertainChannelTokens.add(token);
-          return settled;
         };
         await retrySettlement(execution);
         return;
@@ -349,9 +290,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     // A valid result and exit zero win a cancellation race. Shutdown returns unfinished work.
     if (signal.aborted || (stopped && failed !== undefined)) {
       const input = { id: item.id, attemptToken: token, now, outcome: 'cancelled' as const, ...detail };
-      execution.pendingSettlement = item.kind === 'channel_send'
-        ? channelSettlement({ ...item, deferred: true, deferredOutcome: 'cancelled' }, { ...input, outcome: 'died' })
-        : () => store.settleSupervisedAttempt(input);
+      execution.pendingSettlement = () => store.settleSupervisedAttempt(input);
     } else {
       const outcome = verdict.outcome === 'succeeded' ? 'succeeded' as const : terminationCause === 'stalled' && !sawFinal ? 'stalled' as const
         : terminationCause === 'exit' && !sawFinal && verdict.code === 'ABI_EXIT_FAILED' && exit.signal !== null ? 'died' as const : 'failed' as const;
@@ -371,7 +310,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
         ...(decision.decision === 'record' ? { failure: { id: idGen.next(), stage: item.kind,
           fingerprint: failureFingerprint({ stage: item.kind, input: `${item.targetKind}:${item.targetId}`, code: code! }),
           code: code!, message: lastError, occurredAt: now } } : {}) };
-      execution.pendingSettlement = item.kind === 'channel_send' ? channelSettlement(item, input) : () => store.finishSupervisedWork(input);
+      execution.pendingSettlement = () => store.finishSupervisedWork(input);
     }
     await retrySettlement(execution);
   }
@@ -390,7 +329,6 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
       if (!schema.ok) { ready = false; await problem(`감독자 데이터베이스 확인 실패 (${schema.code})`); }
       else {
         await retrySettlements();
-        await recheckUncertainChannels();
         if (options.loadProtectedLaunches) protectedLaunches = await options.loadProtectedLaunches();
         kinds = [...new Set([...Object.keys(launches).filter(kind => workExecutionClass(kind) === 'supervised'), ...Object.keys(protectedLaunches)])];
         if (!reconciled) reconciled = await reconcile();

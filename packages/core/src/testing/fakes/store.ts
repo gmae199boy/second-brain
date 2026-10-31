@@ -204,7 +204,6 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const conversations = new Map<string, import('../../channels/store.js').ChannelConversation>();
   const channelRequests = new Map<string, import('../../channels/store.js').ChannelRequest>();
   const channelGates = new Map<string, { workItemId: string; attemptToken: string }>();
-  const channelAttempts = new Map<string, { requestId: string; result: import('../../channels/store.js').ChannelAttemptResult | null }>();
   const currentChannelAttempt = (workItemId: string, token: string) => workItems.some(w => w.id === workItemId && w.completedAt === null && w.currentAttemptToken === token) && workAttempts.some(a => a.workItemId === workItemId && a.token === token && a.outcome === null);
 
   const conversationChunks: (import('../../recall/conversation-chunker.js').ConversationChunk & { id: string; sessionId: string })[] = [];
@@ -519,32 +518,18 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     async gateChannelAttempt(input) {
       const request = channelRequests.get(input.requestId);
       if (request?.workItemId !== input.workItemId || !currentChannelAttempt(input.workItemId, input.attemptToken)) return { ok: true, outcome: 'lost' };
-      if (request.status === 'sent') return { ok: true, outcome: 'sent' };
-      if (channelAttempts.has(input.attemptToken)) return { ok: true, outcome: 'already' };
-      if (!channelGates.has(input.requestId)) channelGates.set(input.requestId, { workItemId: input.workItemId, attemptToken: input.attemptToken });
-      channelAttempts.set(input.attemptToken, { requestId: input.requestId, result: null });
+      if (channelGates.has(input.requestId)) return { ok: true, outcome: 'already' };
+      channelGates.set(input.requestId, { workItemId: input.workItemId, attemptToken: input.attemptToken });
       return { ok: true, outcome: 'won' };
     },
     async finishChannelAttempt(input) {
       const request = channelRequests.get(input.requestId);
-      const attempt = channelAttempts.get(input.attemptToken);
-      if (!request || request.status === 'sent' || request.workItemId !== input.workItemId || attempt?.requestId !== input.requestId || attempt.result !== null || !currentChannelAttempt(input.workItemId, input.attemptToken)) return { ok: true, outcome: 'lost' };
-      const result = 'result' in input ? input.result : { outcome: 'sent' as const, externalMessageId: input.externalMessageId };
-      attempt.result = result;
-      if (result.outcome === 'sent') { request.status = 'sent'; request.externalMessageId = result.externalMessageId; }
+      const gate = channelGates.get(input.requestId);
+      if (!request || request.status === 'sent' || gate?.workItemId !== input.workItemId ||
+          gate.attemptToken !== input.attemptToken || !currentChannelAttempt(input.workItemId, input.attemptToken)) return { ok: true, outcome: 'lost' };
+      request.status = 'sent';
+      request.externalMessageId = input.externalMessageId;
       return { ok: true, outcome: 'done' };
-    },
-    async recoverChannelAttempt(input) {
-      const work = workItems.find(w => w.id === input.workItemId && w.kind === 'channel_send' && w.targetId === input.requestId && w.currentAttemptToken === input.attemptToken && w.completedAt === null);
-      const owner = workAttempts.find(a => a.token === input.attemptToken && (a.outcome === null || a.outcome === 'unknown'));
-      if (!work || !owner) return { ok: true, outcome: 'lost' };
-      const attempt = channelAttempts.get(input.attemptToken);
-      if (attempt?.requestId === input.requestId && attempt.result === null) {
-        const unknown = { outcome: 'unknown' as const, code: 'INTERRUPTED', retryable: true };
-        if (owner.outcome === null) attempt.result = unknown;
-        return { ok: true, outcome: 'ready', result: unknown };
-      }
-      return { ok: true, outcome: 'ready', result: attempt?.requestId === input.requestId ? attempt.result : null };
     },
     ...memorySettingsStore(),
     async readConversationSnapshot(sessionId) {
@@ -1513,7 +1498,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     async listOpenSupervisedAttempts() {
       return { ok: true, attempts: workAttempts.flatMap(a => {
         const item = workItems.find(i => i.currentAttemptToken === a.token);
-        return !item || (a.outcome !== null && !(item.kind === 'channel_send' && a.outcome === 'unknown')) ? [] : [{ token: a.token, workItemId: item.id, kind: item.kind, attempts: item.attempts, targetKind: item.targetKind, targetId: item.targetId,
+        return !item || a.outcome !== null ? [] : [{ token: a.token, workItemId: item.id, kind: item.kind, attempts: item.attempts, targetKind: item.targetKind, targetId: item.targetId,
           incarnation: a.incarnation, pid: a.pid, pgid: a.pgid, osBootAt: a.osBootAt, osStartedAt: a.osStartedAt,
           held: isHeld(item.holdGroup), cancelRequested: item.cancelRequestedAt !== null }];
       }) };
@@ -1522,8 +1507,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       const item = workItems.find(i => i.id === input.id && i.currentAttemptToken === input.attemptToken);
       if (!item) return { ok: true, outcome: 'lost' };
       const attempt = workAttempts.find(a => a.token === input.attemptToken)!;
-      if (attempt.outcome !== null && !(input.confirmedDead && item.kind === 'channel_send' && attempt.outcome === 'unknown')) return { ok: true, outcome: 'lost' };
-      if (attempt.outcome === 'unknown') { const saved = channelAttempts.get(input.attemptToken); if (saved?.result === null) saved.result = { outcome: 'unknown', code: 'INTERRUPTED', retryable: true }; }
+      if (attempt.outcome !== null) return { ok: true, outcome: 'lost' };
       attempt.outcome = input.outcome === 'unknown' ? 'unknown' : item.cancelRequestedAt !== null ? 'cancelled' : input.outcome;
       attempt.finishedAt = input.now;
       attempt.elapsedMs = input.elapsedMs ?? null; attempt.stderr = input.stderr ?? null;
@@ -1562,8 +1546,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       const item = workItems.find((i) => i.id === input.id && i.currentAttemptToken === input.attemptToken);
       if (!item) return { ok: true, outcome: 'lost' };
       const attempt = workAttempts.find((a) => a.token === input.attemptToken)!;
-      if (attempt.outcome !== null && !(input.confirmedDead && item.kind === 'channel_send' && attempt.outcome === 'unknown')) return { ok: true, outcome: 'lost' };
-      if (attempt.outcome === 'unknown') { const saved = channelAttempts.get(input.attemptToken); if (saved?.result === null) saved.result = { outcome: 'unknown', code: 'INTERRUPTED', retryable: true }; }
+      if (attempt.outcome !== null) return { ok: true, outcome: 'lost' };
       // Record before changing either row: a refused failure write leaves the
       // attempt and claim available for the supervisor's pending settlement.
       if (input.outcome !== 'succeeded' && item.cancelRequestedAt === null && input.failure !== undefined) {

@@ -274,8 +274,7 @@ async function failuresCheck(store: DoctorReadStore): Promise<DoctorCheck> {
   }
   const detail = [...byKind.entries()]
     .map(([kind, count]) => `${kind} ${String(count)}건`)
-    .join(', ') + read.failures.filter(failure => failure.targetKind === 'channel_request')
-      .map(failure => `, 요청 ${failure.targetId}`).join('');
+    .join(', ');
   return { id: 'failures', status: 'warn', detail };
 }
 

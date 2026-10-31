@@ -989,7 +989,7 @@ it('closes a tenth recovered supervised death with one PROCESS_DIED failure', as
   await store.claimSupervisedWork({ now, claimedBy: 'old', kinds: ['process_probe'], attemptToken: id(101) });
   await db.query(`update brain.work_items set attempts = 10 where id = '${id(1)}'`);
   const controller = new AbortController(); const time = manualTime(now);
-  const running = runSupervisor({ store, schemaVersions: { core: 18 }, ...time,
+  const running = runSupervisor({ store, schemaVersions: { core: 17 }, ...time,
     inspector: fakeProcessInspector(), launcher: fakeProcessLauncher(),
     idGen: sequenceIdGen({ timestampMs: now.getTime() }), signal: controller.signal, launches: {} });
   try {
