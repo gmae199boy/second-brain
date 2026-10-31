@@ -103,6 +103,7 @@ const calls = {
   listUnhandedChannelRequests: s => s.listUnhandedChannelRequests(),
   handoffChannelRequest: s => s.handoffChannelRequest({requestId:id,workId:id,now}),
   gateChannelAttempt: s => s.gateChannelAttempt({requestId:id,workItemId:id,attemptToken:id,now}),
+  recoverChannelAttempt: s => s.recoverChannelAttempt({requestId:id,workItemId:id,attemptToken:id,now}),
   finishChannelAttempt: s => s.finishChannelAttempt({requestId:id,workItemId:id,attemptToken:id,now,externalMessageId:'1'}),
   setSetting: (s) => s.setSetting({ key: 'timezone', value: 'UTC', updatedAt: now }),
 } satisfies Record<Exclude<keyof PostgresStore, 'close'>, (store: PostgresStore) => Promise<unknown>>;

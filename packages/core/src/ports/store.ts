@@ -526,6 +526,7 @@ export interface RenewSupervisedLeaseInput {
 }
 export interface FinishSupervisedWorkInput {
   id: string; attemptToken: string; now: Date; outcome: 'succeeded' | 'failed' | 'stalled' | 'died';
+  confirmedDead?: boolean;
   failure?: Pick<RecordFailureInput, 'id' | 'stage' | 'fingerprint' | 'code' | 'message' | 'occurredAt'>;
   nextAttemptAt?: Date; lastError?: string;
   elapsedMs?: number; usage?: { inputTokens: number; cachedInputTokens: number; outputTokens: number };
@@ -554,6 +555,7 @@ export interface OpenSupervisedAttempt {
 export type ListOpenSupervisedAttemptsResult = { ok: true; attempts: OpenSupervisedAttempt[] } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface SettleSupervisedAttemptInput {
   id: string; attemptToken: string; now: Date; outcome: 'cancelled' | 'died' | 'unknown';
+  confirmedDead?: boolean;
   elapsedMs?: number; stderr?: string | null;
 }
 

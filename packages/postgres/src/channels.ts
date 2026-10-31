@@ -94,32 +94,56 @@ export function postgresChannelStore(connect: PgConnect): ChannelStore {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       const result = await withWrite(opened.connection, async held => {
-        const found = await sql<{ work_item_id: string | null }>`select work_item_id from brain.channel_requests
+        const found = await sql<{ work_item_id: string | null; status: string }>`select work_item_id,status from brain.channel_requests
           where id=${input.requestId} for update`.execute(held);
         if (found.rows[0]?.work_item_id !== input.workItemId) return 'lost' as const;
         const valid = await sql<{ valid: boolean }>`select brain.attempt_is_current(${input.workItemId}::uuid,${input.attemptToken}::uuid) as valid`.execute(held);
         if (!valid.rows[0]?.valid) return 'lost' as const;
-        const inserted = await sql`insert into brain.channel_gates(request_id,work_item_id,attempt_token,created_at)
-          values (${input.requestId},${input.workItemId},${input.attemptToken},${input.now.toISOString()})
-          on conflict do nothing returning request_id`.execute(held);
-        return inserted.rows.length ? 'won' as const : 'already' as const;
+        if (found.rows[0].status === 'sent') return 'sent' as const;
+        const existing = await sql`select 1 from brain.channel_attempt_results where request_id=${input.requestId} and attempt_token=${input.attemptToken}`.execute(held);
+        if (existing.rows.length) return 'already' as const;
+        await sql`insert into brain.channel_gates(request_id,work_item_id,attempt_token,created_at)
+          values (${input.requestId},${input.workItemId},${input.attemptToken},${input.now.toISOString()}) on conflict do nothing`.execute(held);
+        await sql`insert into brain.channel_attempt_results(request_id,work_item_id,attempt_token,created_at,outcome)
+          values (${input.requestId},${input.workItemId},${input.attemptToken},${input.now.toISOString()},null)`.execute(held);
+        return 'won' as const;
       });
       return result.ok ? { ok: true, outcome: result.value } : result;
+    },
+    async recoverChannelAttempt(input) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      const written = await withWrite(opened.connection, async held => {
+        const valid = await sql<{ outcome: string | null }>`select a.outcome from brain.work_items w join brain.work_attempts a on a.token=w.current_attempt_token and a.work_item_id=w.id
+          where w.id=${input.workItemId} and w.kind='channel_send' and w.target_id=${input.requestId} and w.current_attempt_token=${input.attemptToken} and w.completed_at is null and (a.outcome is null or a.outcome='unknown') for share of w,a`.execute(held);
+        if (!valid.rows[0]) return { outcome: 'lost' as const };
+        if (valid.rows[0].outcome === null) await sql`update brain.channel_attempt_results set outcome='unknown',error_code='INTERRUPTED',retryable=true,finished_at=${input.now.toISOString()}
+          where request_id=${input.requestId} and work_item_id=${input.workItemId} and attempt_token=${input.attemptToken} and outcome is null`.execute(held);
+        const read = await sql<{ outcome: 'sent' | 'unknown' | 'definite_failed' | null; external_message_id: string | null; error_code: string | null; retryable: boolean | null; retry_after_ms: string | null }>`select outcome,external_message_id,error_code,retryable,retry_after_ms from brain.channel_attempt_results
+          where request_id=${input.requestId} and work_item_id=${input.workItemId} and attempt_token=${input.attemptToken}`.execute(held);
+        const row = read.rows[0];
+        const result = !row ? null : row.outcome === null ? { outcome: 'unknown' as const, code: 'INTERRUPTED', retryable: true } : row.outcome === 'sent' ? { outcome: 'sent' as const, externalMessageId: row.external_message_id } :
+          { outcome: row.outcome, code: row.error_code!, retryable: row.retryable!, ...(row.retry_after_ms === null ? {} : { retryAfterMs: Number(row.retry_after_ms) }) };
+        return { outcome: 'ready' as const, result };
+      });
+      return written.ok ? { ok: true, ...written.value } : written;
     },
     async finishChannelAttempt(input) {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       const result = await withWrite(opened.connection, async held => {
-        const gate = await sql<{ request_id: string }>`select request_id from brain.channel_gates
-          where request_id=${input.requestId} and work_item_id=${input.workItemId} and attempt_token=${input.attemptToken}`.execute(held);
-        if (!gate.rows[0]) return 'lost' as const;
+        const found = await sql<{ work_item_id: string | null; status: string }>`select work_item_id,status from brain.channel_requests where id=${input.requestId} for update`.execute(held);
+        if (found.rows[0]?.work_item_id !== input.workItemId || found.rows[0].status === 'sent') return 'lost' as const;
         const valid = await sql<{ valid: boolean }>`select brain.attempt_is_current(${input.workItemId}::uuid,${input.attemptToken}::uuid) as valid`.execute(held);
         if (!valid.rows[0]?.valid) return 'lost' as const;
-        const inserted = await sql`insert into brain.channel_attempt_results(request_id,work_item_id,attempt_token,external_message_id,created_at)
-          values (${input.requestId},${input.workItemId},${input.attemptToken},${input.externalMessageId},${input.now.toISOString()})
-          on conflict do nothing returning request_id`.execute(held);
-        if (!inserted.rows.length) return 'lost' as const;
-        await sql`update brain.channel_requests set status='sent',external_message_id=${input.externalMessageId} where id=${input.requestId}`.execute(held);
+        const value = 'result' in input ? input.result : { outcome: 'sent' as const, externalMessageId: input.externalMessageId };
+        const changed = await sql`update brain.channel_attempt_results set outcome=${value.outcome},
+          external_message_id=${value.outcome === 'sent' ? value.externalMessageId : null},
+          error_code=${value.outcome === 'sent' ? null : value.code}, retryable=${value.outcome === 'sent' ? null : value.retryable},
+          retry_after_ms=${value.outcome === 'sent' ? null : value.retryAfterMs ?? null}, finished_at=${input.now.toISOString()}
+          where request_id=${input.requestId} and work_item_id=${input.workItemId} and attempt_token=${input.attemptToken} and outcome is null returning request_id`.execute(held);
+        if (!changed.rows.length) return 'lost' as const;
+        if (value.outcome === 'sent') await sql`update brain.channel_requests set status='sent',external_message_id=${value.externalMessageId} where id=${input.requestId}`.execute(held);
         return 'done' as const;
       });
       return result.ok ? { ok: true, outcome: result.value } : result;
