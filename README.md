@@ -1009,6 +1009,28 @@ git config core.hooksPath .githooks
 로컬 marketplace(상대 경로 `source`)는 복사하지 않고 그 자리에서 읽으므로 개발
 중에는 `version`이 영향을 주지 않습니다. 그래서 잊기 쉽습니다.
 
+## Mac 설치본 격리 검증 준비
+
+Node 24.16 이상, pnpm, Docker와 인증된 Claude CLI가 필요합니다. 운영 Brain 홈과 DB는 사용하지 않습니다. 다음 명령은 두 커밋의 조상 관계를 확인하고 임시 홈, Claude 설정, 플러그인과 시험 fixture를 만듭니다. 출력된 디렉터리와 소유권 영수증을 보관하세요.
+
+```sh
+node tooling/mac-install/run.mjs prepare
+node tooling/mac-install/run.mjs setup <출력된-디렉터리>
+node tooling/mac-install/run.mjs doctor <출력된-디렉터리>
+node tooling/mac-install/run.mjs verify <출력된-디렉터리>
+node tooling/mac-install/run.mjs upgrade <출력된-디렉터리>
+# cleanup 전에 evidence와 영수증만 별도로 보존한다.
+BRAIN_VERIFY_ROOT='<출력된-디렉터리>'
+BRAIN_EVIDENCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/brain-evidence.XXXXXX")"
+chmod 700 "$BRAIN_EVIDENCE_DIR"
+cp -R "$BRAIN_VERIFY_ROOT/evidence" "$BRAIN_EVIDENCE_DIR/"
+cp "$BRAIN_VERIFY_ROOT/ownership.json" "$BRAIN_EVIDENCE_DIR/"
+printf '보존 위치: %s\n' "$BRAIN_EVIDENCE_DIR"
+node tooling/mac-install/run.mjs cleanup "$BRAIN_VERIFY_ROOT"
+```
+
+setup은 별도 홈에 선행 커밋을 실제 clone·build·설치하고 홈별 PostgreSQL 컨테이너를 만듭니다. cleanup은 영수증과 compose 소유권을 확인하고 격리 Label, marker가 일치하는 시험 role, 컨테이너와 볼륨을 정리합니다. 데몬 소유 PID 기록이 남아 있으면 종료 확인을 위해 정리를 거부합니다. doctor는 확장이 없는 설치본에서 Python과 uv 탐색을 감시합니다. verify는 실제 설치 CLI와 격리 foreground 데몬으로 시험 로그인, 연결, 예약과 활성 전환을 확인하며 upgrade는 후보 앱으로 갱신해 확장 파일과 DB 상태를 비교합니다. 보존한 증거에는 민감한 세션 내용이 있을 수 있으므로 공개 전에 검토하세요. 실제 Claude 스킬 발견과 실행은 [운영자 확인 절차](tooling/mac-install/operator-actions.md)를 따릅니다. 원격 marketplace 갱신은 해당 커밋을 원격에 push한 뒤 별도로 수행해야 합니다.
+
 ## 테스트 데이터베이스
 
 CLI·bootstrap·`packages/postgres` 테스트는 실제 PostgreSQL 테스트 데이터베이스를 씁니다.

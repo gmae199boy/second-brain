@@ -1,0 +1,13 @@
+{
+  "actions": [
+    "tooling/mac-install/operator-actions.md\uc5d0 \ub530\ub77c \uc2e4\uc81c Claude \uc138\uc158\uc758 install \uc2a4\ud0ac \ubc1c\uacac\u00b7\uc124\uce58\u00b7\uc2dc\ud5d8 \ub85c\uadf8\uc778 \uc7ac\uac1c\uc640 \ucd5c\uc885 \uc0c1\ud0dc\ub97c \uac80\uc99d\ud558\uc138\uc694.",
+    "\uac19\uc740 \uc808\ucc28\uc5d0 \ub530\ub77c \uc2e4\uc81c Claude \uc138\uc158 \uc6d0\ubcf8\uacfc \ub2e8\uacc4\ubcc4 \uc99d\uac70\ub97c \ubcf4\uc874\ud558\uace0 \uaca9\ub9ac \uc790\uc6d0\uc744 \uc815\ub9ac\ud558\uc138\uc694.",
+    "\uac80\ud1a0\ub41c \ub9b4\ub9ac\uc2a4 \ucee4\ubc0b\uc744 \uc6d0\uaca9\uc5d0 push\ud55c \ub4a4 marketplace\ub97c \uac31\uc2e0\ud558\uc5ec \ud50c\ub7ec\uadf8\uc778 0.1.12\uc640 install \uc2a4\ud0ac \ubc1c\uacac\uc744 \ud655\uc778\ud558\uc138\uc694."
+  ],
+  "parked_at": "2026-10-31",
+  "ref": "13.10",
+  "run_id": "20261030-175233-8a92",
+  "source": "tickets",
+  "spec_file": "_bmad-output/personal-brain/tickets/epic-extensions/tickets/story-mac-install-plan.md",
+  "story_key": "13.10"
+}
