@@ -36,13 +36,13 @@ async function checkTree(folder: string): Promise<void> {
     if (stat.isDirectory()) await checkTree(path);
   }
 }
-// 생성된 환경과 tokenstore는 패키지 내용이 아니다.
+// 생성된 환경과 확장의 영속 상태는 패키지 내용이 아니다.
 async function packageDigest(folder: string, migrations: string, omitMigrations = false): Promise<string> {
   const hash = createHash('sha256');
   async function visit(dir: string, relative: string): Promise<void> {
     for (const name of (await readdir(dir)).sort()) {
       const path = relative ? `${relative}/${name}` : name;
-      if (path === '.venv' || path === 'tokenstore' || name === '__pycache__' || name.endsWith('.pyc') || (omitMigrations && (path === migrations || path.startsWith(`${migrations}/`)))) continue;
+      if (path === '.venv' || path === 'tokenstore' || path === 'staging' || name === '__pycache__' || name.endsWith('.pyc') || (omitMigrations && (path === migrations || path.startsWith(`${migrations}/`)))) continue;
       const full = join(dir, name), stat = await lstat(full);
       if (stat.isSymbolicLink()) throw new Error('확장 패키지에 심볼릭 링크를 둘 수 없습니다');
       if (stat.isDirectory()) { hash.update(`d${path.length}:${path}`); await visit(full, path); }
@@ -170,6 +170,17 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
         try {
           const staged = join(stage, name);
           await cp(dir, staged, { recursive: true, errorOnExist: true, force: false });
+          // staging은 미완료 파일 요청의 소유이며 패키지 내용이 아니다.
+          await rm(join(staged, 'staging'), { recursive: true, force: true });
+          const previousStaging = join(target, 'staging');
+          let staging: Awaited<ReturnType<typeof lstat>> | undefined;
+          try { staging = await lstat(previousStaging); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+          if (staging) {
+            if (!staging.isDirectory() || staging.isSymbolicLink()) throw new Error('staging은 실제 폴더여야 합니다');
+            await checkTree(previousStaging);
+            await cp(previousStaging, join(staged, 'staging'), { recursive: true, errorOnExist: true, force: false });
+          }
           const previousTokenstore = join(target, 'tokenstore');
           let tokenstore: Awaited<ReturnType<typeof lstat>> | undefined;
           try { tokenstore = await lstat(previousTokenstore); }

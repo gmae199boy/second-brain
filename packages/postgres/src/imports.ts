@@ -16,9 +16,9 @@ export function postgresImportStore(connect: PgConnect): ImportStore {
     async readRaw(input) {
       if (!/^[a-z][a-z0-9_]{0,30}$/.test(input.source) || !input.rawViews.includes('raw_records')) return { ok: false, code: 'IMPORT_VIEW_INVALID', message: '선언된 원문 view가 없습니다' };
       try { const c = connect(); if (!c.ok) throw Error(c.message);
-        const exists = await sql`select name from brain.extensions where name=${input.source} and enabled`.execute(c.connection.db);
+        const exists = await sql<{ enabled: boolean }>`select enabled from brain.extensions where name=${input.source}`.execute(c.connection.db);
         if (!exists.rows.length) return { ok: false, code: 'IMPORT_VIEW_INVALID', message: '설치된 확장이 없습니다' };
-        return { ok: true, rows: (await sql<Record<string, unknown>>`select source,account,key,endpoint,fetched_at,checked_at,body from ${sql.ref(input.source + '.raw_records')}`.execute(c.connection.db)).rows };
+        return { ok: true, extensionEnabled: exists.rows[0]!.enabled, rows: (await sql<Record<string, unknown>>`select source,account,key,endpoint,fetched_at,checked_at,body from ${sql.ref(input.source + '.raw_records')}`.execute(c.connection.db)).rows };
       } catch (error) { return databaseFailure(error); }
     },
     async listUnhandedImports() {

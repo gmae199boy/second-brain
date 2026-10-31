@@ -119,11 +119,14 @@ it('restores the previous package and registry facts when a reinstall migration 
   const originalCheck = await readFile(join(target, 'bin/check.mjs'), 'utf8');
   await mkdir(join(target, 'tokenstore'));
   await writeFile(join(target, 'tokenstore', 'credentials'), 'existing-token');
+  await mkdir(join(target, 'staging'));
+  await writeFile(join(target, 'staging', 'pending'), 'pending-bytes');
   await mkdir(join(source, 'tokenstore'));
   await writeFile(join(source, 'tokenstore', 'credentials'), 'package-token');
   const reinstalled = await fixture.run(['ext', 'install', 'testext', '--json']);
   expect(reinstalled.code).toBe(0);
   expect(await readFile(join(target, 'tokenstore', 'credentials'), 'utf8')).toBe('existing-token');
+  expect(await readFile(join(target, 'staging', 'pending'), 'utf8')).toBe('pending-bytes');
   await writeFile(join(source, 'manifest.json'), originalManifest.replace('0.1.0', '0.2.0'));
   await writeFile(join(source, 'bin/check.mjs'), 'throw new Error("replacement must not remain");\n');
   await writeFile(join(source, 'migrations/0002_refused.sql'), 'select extension_missing_column;\n');
@@ -133,6 +136,7 @@ it('restores the previous package and registry facts when a reinstall migration 
   expect(await readFile(join(target, 'manifest.json'), 'utf8')).toBe(originalManifest);
   expect(await readFile(join(target, 'bin/check.mjs'), 'utf8')).toBe(originalCheck);
   expect(await readFile(join(target, 'tokenstore', 'credentials'), 'utf8')).toBe('existing-token');
+  expect(await readFile(join(target, 'staging', 'pending'), 'utf8')).toBe('pending-bytes');
   await expect(access(join(target, 'migrations/0002_refused.sql'))).rejects.toThrow();
   const failedStatus = (await fixture.run(['ext', 'status', 'testext', '--json'])).body.data;
   expect(failedStatus).toMatchObject({ installed: true, version: reinstalled.body.data.version, connection: reinstalled.body.data.connection, install: { result: 'failed', failed_stage: 'migration' } });
@@ -146,6 +150,7 @@ it('restores the previous package and registry facts when a reinstall migration 
   expect(resumed.code, resumed.stdout + resumed.stderr).toBe(0);
   expect(await readFile(join(target, 'manifest.json'), 'utf8')).toContain('0.2.0');
   expect(await readFile(join(target, 'tokenstore', 'credentials'), 'utf8')).toBe('existing-token');
+  expect(await readFile(join(target, 'staging', 'pending'), 'utf8')).toBe('pending-bytes');
   const resumedProgress = (await fixture.db.rows("select progress from brain.extension_install_progress where name='testext'"))[0]!.progress as import('second_brain').ExtensionInstallProgress;
   expect(resumedProgress.stages.package?.at).not.toBe(failedProgress.stages.package?.at);
   expect(await fixture.ledger('testext')).toEqual([{ owner: 'testext', version: 1 }, { owner: 'testext', version: 2 }]);

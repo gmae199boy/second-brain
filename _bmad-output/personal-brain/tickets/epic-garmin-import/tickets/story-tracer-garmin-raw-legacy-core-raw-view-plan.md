@@ -3,15 +3,15 @@ title: 'Garmin 합성 raw·legacy 문서의 core tracer'
 type: 'feature'
 ticket: '1'
 created: '2026-10-31'
-status: ready-for-dev
-baseline_revision: 'aa67551a81383a6b13967a5b724825fefb69636e'
+status: done
+baseline_revision: '077e399cbc9699b4b932f68064677aed36458543'
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
 review: 'quick'
 review_source: 'pinned'
 lenses_ran: [quick]
-review_loop_iteration: 2
+review_loop_iteration: 3
 followup_review_recommended: false
 context:
   - _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md
@@ -78,6 +78,10 @@ deferred: []
 - [x] 재구현 2차 D — `extensions/garmin/manifest.json`, `extensions/garmin/src/import.py`, `apps/cli/python-test/garmin-tracer.test.ts` — ABI 설정에 dataset의 기준 디렉터리 `garmin.artifact_root`를 명시하고 문서의 정규 상대 경로를 original_key로 보존한다. 기준 밖 경로는 거부하고 절대 경로나 basename만으로 키를 만들지 않는다. mapping·request_key·staging·완료 조회 모두 같은 상대 artifact key를 쓴다. request_key는 dataset과 상대 key의 경계가 모호하지 않은 정규 인코딩을 사용하여 콜론 등 문자가 있어도 다른 두 식별자가 합쳐지지 않게 한다. 같은 dataset의 서로 다른 디렉터리에 같은 basename인 문서를 동일 본문과 다른 본문 양쪽으로 시험해 두 분석/요청과 원문이 구분돼 보존되는지 확인한다.
 - [x] 재구현 2차 D — `packages/postgres/migrations/0022_import_contracts.sql`, `packages/postgres/src/extension-provision.ts`, `extensions/garmin/src/import.py`, `extensions/garmin/tests/fixtures.py`, PG/실제 Python 시험 — 건강 행에 원본 IANA `time_zone`과 `time_zone_missing`을 보존하고 논리/보관 키 및 현재 view 비교에 포함한다. 원본 snapshot meta의 timezone이 있으면 검증해 보존하고, 없으면 NULL+누락 flag로 남기며 실행 기계나 현재 사용자 설정으로 추정하지 않는다. 시간대 미확인 일 값은 현재 view에서 제외하되 보관 행은 유지한다. 합성 fixture에는 명시적 원본 시간대를 두어 정상 tracer가 읽히게 하고, 원본 시간대 없음 및 현재 사용자 시간대 변경에도 원본 날짜·시간대가 유지되는 시험을 추가한다. 지표 catalog·권위 선택 전체는 계속 14.2 범위다.
 
+- [x] 재개 리뷰 보완 — `apps/cli/src/runtime/extensions.ts`, 관련 설치 시험 및 `apps/cli/python-test/garmin-tracer.test.ts` — staging은 패키지 digest에서 제외하고 설치 교체·실패 rollback에서도 미확정 바이트를 보존한다. 기존 tokenstore·symlink 및 경계 방어를 유지한다. 동일 버전 재설치와 실제 패키지 교체를 core 처리 전 실행해 요청·mapping·바이트가 유지되고 두 경우 모두 원문 파일로 완료되는지 관찰한다.
+- [x] 재개 리뷰 보완 — `extensions/garmin/src/import.py`, `extensions/garmin/tests/fixtures.py`, `apps/cli/python-test/garmin-tracer.test.ts` — 먼저 고른 daily 날짜의 day/user_summary raw만 steps의 revision·fetched_at 및 보존 raw로 연결한다. 관련 raw가 없으면 원천을 추정하지 않고 IMPORT_INVALID로 거부한다. activity·다른 날짜·다른 endpoint raw가 정렬상 앞서도 해당 날짜 user_summary의 해시·수신 시각을 쓰는지와 연결 누락의 원본 불변·대상 무쓰기 회귀를 관찰한다. 한 raw·일 지표의 tracer 상한을 유지한다.
+- [x] 재개 리뷰 보완 — `packages/core/src/ports/import-store.ts`, `packages/postgres/src/imports.ts`, PG/실제 Python 시험 — readRaw는 설치 존재와 실행 활성 여부를 분리하고 성공 응답에 extensionEnabled boolean을 포함한다. 비활성 설치의 보관 raw도 동일 원문으로 읽히며 비활성 상태가 드러나야 한다. 미설치 거부와 새 작업 hold를 유지한다.
+
 **Acceptance Criteria:**
 - Given 격리 PG·Brain 홈과 exact Python이 준비됐을 때, When 기본 패키지 resolver로 `brain ext install garmin`하고 실제 데몬이 import 일감을 처리하면, Then core 읽기에서 정규 단위·source·dataset을 가진 건강 한 행, scope 포함 key와 원문이 일치하는 raw 한 행, 분석→요청→파일 원문이 읽히고 기존 문서 추출 세대가 생긴다.
 - Given 같은 입력을 새 import 일감으로 재실행할 때, When 실제 감독자가 다시 처리하면, Then 보존·계약·mapping·파일 행 수가 그대로이고 발신 요청·일감·전송 호출은 0이다.
@@ -85,6 +89,11 @@ deferred: []
 - Given 확장 role 또는 회수된 token일 때, When 위 행렬의 금지 쓰기를 시도하면, Then 모든 세 계약에서 거부가 관찰된다.
 
 ## Implementation Notes
+
+- 재개 독립 리뷰의 세 보완 뒤 최종 검증은 build/typecheck, 지정 PG 95개, tracer 4개, staging 5개, 기본 3859개와 전체 Python 14개가 모두 성공했다. 이번 전체 실행에는 실패가 없고 Python skip도 없었다. 설치 rollback·교체 staging 보존, 올바른 raw 원천과 누락 거부, 비활성 보관 읽기와 새 일감 hold를 기존 행렬과 함께 검증했다. 로그는 `/tmp/brain14-dev3-r1-*.log`다.
+
+- 재개 뒤 지휘자 검증: build/typecheck, 지정 PG 95개, 실제 tracer 4개, staging 5개와 기본 suite 3859개가 성공했다. 기본 suite의 선택적 Python 시험 1개는 전체 Python suite에서 실행했다.
+- 전체 Python 최초 실행은 importer 이전 공통 DB 마이그레이션 연결 timeout으로 1개 실패·13개 성공했다. 소스 변경 없이 전체 재실행은 14개 모두 성공·skip 없음이었다. 최초 및 재실행 로그는 각각 `/tmp/brain14-dev3-python.log`, `/tmp/brain14-dev3-python-retry.log`에 보존했다. 일시 연결 지연과 부합하지만 근본 원인은 미확정이다.
 
 - 두 번째 재구현의 최종 독립 검증은 build/typecheck, 가리기 포함 PG 95개, staging 4개, 실제 Garmin tracer 4개, 기본 3858개와 전체 Python 14개가 성공했다. 최종 전체 실행에는 추가 실패가 없었다. 원래 행렬과 누적 리뷰 6건의 회귀가 모두 실행됐고 intent-contract 원문 보존도 확인했다.
 - 가린 hash 조회는 put 전 실패 시 쓰지 않고 반환하며 파일 확정도 가리기·삭제를 재확인한다. 도중 가리기는 블롭 정리 뒤에만 관계를 확정하고 정리 실패는 재시도한다. 상대 artifact key·JSON tuple 요청 키·원본 IANA 시간대/누락 flag와 2초 SQL 트랜잭션 상한을 추가했다.
@@ -119,6 +128,13 @@ deferred: []
 - 회피할 상태: 가린 블롭 복원, 서로 다른 문서 합치기/거짓 충돌, 시간대 해석을 복원할 수 없는 일 지표다.
 - KEEP: 앞선 모든 정상 경로와 원문·권한·attempt·멱등·비발신, 요청별 staging·NULL 안전 raw identity·최종 실패/기존 retry 성공의 세 회귀를 유지한다. 소스·시험 39개 파일은 `/tmp/brain14-before-rederive2.patch`로 보존 후 baseline으로 복원했고 정방향 적용 검사를 확인했다.
 
+### 2026-10-31 — 재개 독립 리뷰 뒤 재구현
+
+- 원인: 설치 폴더의 staging 수명, steps 원천 raw의 날짜·endpoint 연결, 비활성 설치의 보관 읽기가 실행 항목에서 빠져 있었다.
+- 보완: staging의 digest 제외·교체 보존·rollback 회귀, day/user_summary 원천 연결과 누락 거부, 비활성 읽기 및 활성 상태 반환을 실행 항목에 고정했다.
+- 회피할 상태: 아직 처리하지 않은 바이트 삭제, 잘못된 관측 revision·수신 시각, 보관 원문 조회 차단이다.
+- KEEP: 기존 설치·pin·배송·정확한 raw TEXT/metadata·NULL·UUIDv7·시간대·RLS/attempt·원자 인계·FileStore/추출·가리기 방어·멱등/충돌·비발신·FIFO/PG 재시도와 모든 기존 회귀를 보존한다. 재개 직전 전체 diff는 `/tmp/brain14-dev3-before-rederive.diff`, 소스·시험 보존 패치는 `/tmp/brain14-dev3-source-preserved.patch`에 남긴다. 원래 baseline과 기존 WIP 커밋을 바꾸지 않는다.
+
 ## Review Triage Log
 
 ### 2026-10-31 — Review pass 1
@@ -135,6 +151,28 @@ deferred: []
   - `[medium]` `[bad_plan]` basename 기반 artifact 식별 충돌 — legacy.name이 디렉터리를 잃어 다른 문서가 합쳐지거나 충돌했다. 명시적 dataset 기준의 상대 경로와 같은 basename 회귀를 계획에 반영했다.
   - `[medium]` `[bad_plan]` 일 지표의 IANA 시간대 누락 — AD-13/32가 요구한 시간대가 키·관측·현재 view에서 빠졌다. 원본 시간대/누락 flag 보존과 시간대 미확인 일 값의 현재 제외를 계획에 반영했다.
 
+### 2026-10-31 — Review pass 3 수정 확인
+
+- verdicts: 2 findings — high 0, medium 2, low 0, false 0, maybe-false 0
+- findings:
+  - `[medium]` `[patch]` FIFO open 대기 — 보존 구현의 O_NONBLOCK 수정이 regular-file 검사 전에 생기던 무기한 대기를 막는다. staging 회귀 5개에서 작성자 없는 FIFO 거부를 재검증했다.
+  - `[medium]` `[patch]` 일시적인 PG 오류의 영구 실패 분류 — 보존 구현은 연결·잠금·트랜잭션 오류를 retryable로 분류한다. 실제 tracer 4개에서 잠금 오류·해제 뒤 성공과 입력/충돌/오래된 attempt의 재시도 금지를 재검증했다.
+- 위 두 수정은 관리상 인계 전에 구현됐고 이번 재개에서는 추가 패치 없이 대조·검증했다.
+
+### 2026-10-31 — Review pass 4 재개 독립 검사
+
+- verdicts: 3 findings — high 2, medium 1, low 0, false 0, maybe-false 0
+- findings:
+  - `[high]` `[bad_plan]` 재설치의 미확정 staging 삭제 — packageDigest는 staging을 포함하고 place는 tokenstore만 보존해 pending 파일 요청의 원본 바이트를 잃는다. digest 제외·설치 교체/rollback 보존과 실제 요청 완료 회귀를 실행 항목에 추가했다.
+  - `[high]` `[bad_plan]` 일 지표와 무관한 raw revision 연결 — importer의 독립적인 첫 raw·첫 daily 선택은 activity와 다른 날짜를 steps에 연결한다. 원본 0006_normalize.sql의 steps 소유 endpoint는 user_summary다. 날짜·scope·endpoint 연결과 누락 거부 회귀를 추가했다.
+  - `[medium]` `[bad_plan]` 비활성 확장의 보관 raw 차단 — readRaw의 enabled 조건은 데이터 보존과 별개인 실행 hold를 읽기 차단으로 바꾼다. AD-29에 맞게 설치 확인·비활성 상태 반환 및 보관 읽기 회귀를 추가했다.
+
+### 2026-10-31 — Review pass 5 재구현 독립 검사
+
+- verdicts: 0 findings — high 0, medium 0, low 0, false 0, maybe-false 0
+- findings: 없음. 독립 리뷰가 원래 기준부터의 전체 diff·수락 조건·아키텍처·주변 코드를 대조했고 추가 결함을 찾지 않았다.
+- 이번 pass의 patch high 0·medium 0·low 0, defer 0, reject 0이다. followup_review_recommended는 false다.
+
 ## Design Notes
 
 Python importer도 AD-7의 2초 트랜잭션 상한을 지킨다. PG18의 transaction_timeout과 필요한 statement/lock timeout을 연결에 명시해 잠금 대기 중에도 열린 이전 트랜잭션이 무기한 남지 않게 한다. 바이트 읽기·해시·staging 작업은 계속 트랜잭션 밖에 둔다.
@@ -150,7 +188,7 @@ staging 바이트는 `<home>/extensions/<source>/staging/` 아래에 두고 요�
 - `pnpm typecheck` — 시험 포함 타입 검사 성공.
 - `pnpm exec vitest run --project postgres test/import-contracts.test.ts test/import-retry.test.ts test/import-redaction.test.ts test/redaction.test.ts test/extension-permissions.test.ts test/attempt-fence.test.ts test/attachment-extraction.test.ts` — 실제 PG 계약·기존 보안·추출 회귀 통과.
 - `pnpm exec vitest run --config apps/cli/python-test/vitest.config.ts apps/cli/python-test/garmin-tracer.test.ts` — 설치된 실제 Python·실제 데몬·PG 경로와 행렬 통과, skip 없음.
-- `pnpm exec vitest run --project cli test/import-staging.test.ts` — 경로·symlink·크기/해시 거부 3시험 성공.
+- `pnpm exec vitest run --project cli test/import-staging.test.ts` — 경로·symlink·크기/해시 및 FIFO 거부 5시험 성공.
 - `pnpm test` — 기본 suite 회귀 통과.
 - `pnpm test:python` — 기존 Python 설치 suite와 신규 Garmin suite 통과.
 
@@ -158,5 +196,70 @@ staging 바이트는 `<home>/extensions/<source>/staging/` 아래에 두고 요�
 
 ## 2026-10-31 감독자 재개 인계
 
+- 엔진의 복구 기준은 `077e399cbc9699b4b932f68064677aed36458543`이다. 원래 구현 기준 `aa67551a81383a6b13967a5b724825fefb69636e`과 전체 diff·기존 리뷰는 유지한다. 기준 불일치로 검증 전 중단되어 엔진 기준을 명시하고 보존된 작업의 검증과 리뷰를 재실행한다.
+
 - 원래 기준은 `aa67551a81383a6b13967a5b724825fefb69636e`. 시간 초과로 엔진이 멈췄으며 기존 구현자의 정식 관리상 인계를 받았다. 이는 코드 실패가 아니다. 보존 위치 `.bmad-loop/runs/20261030-175233-8a92/restore/14.1-user-resume-20261031-203925/`의 전체 patch와 구현 인계, task 디렉터리의 review-quick-pass3.md 및 기존 리뷰 보고를 대조한다.
 - 마지막 FIFO 및 일시 PG 오류 수정의 관련 시험은 통과했으나 그 후 전체 검증과 리뷰는 미완료다. 이 WIP는 완료 증거가 아니다. 전체 원래 diff와 intent-contract, 격리된 Python·기본·PostgreSQL 검증 및 리뷰를 다시 확인하고 미완료를 수정한다. 기존 구현을 버리지 않는다.
+
+## Auto Run Result
+
+Status: built
+
+- 구현: frozen 설치된 Garmin Python 확장의 합성 raw·일 지표·legacy Markdown을 core 건강·분석·파일 요청 계약, FileStore·문서 추출·원문 읽기까지 연결했다. 원문·NULL·출처·dataset·시간대·관측 원천을 보존하고 RLS·attempt·멱등·충돌·비발신을 유지한다.
+- 재개 보완: 미확정 staging의 재설치·패키지 교체·rollback 보존, steps의 해당 날짜 day/user_summary revision 연결, 비활성 확장의 보관 raw 읽기와 활성 상태 반환을 추가했다.
+- 리뷰: 기존 누적 1~3차 수정을 보존했다. 재개 4차의 high 2·medium 1은 계획 보완과 재구현 및 회귀 검증으로 해결했다. 최종 5차 독립 quick findings는 0이며 이번 pass의 patch high 0·medium 0·low 0, defer 0, reject 0이다. 새로 보류하거나 기각한 항목은 없다. followup_review_recommended: false.
+- 최종 검증: 위 Verification의 모든 명령이 성공했다. build/typecheck, PG 95개, 실제 tracer 4개, staging 5개, 기본 3859개와 전체 Python 14개가 통과했다. 기본의 선택적 Python 1개 skip은 전체 Python suite에서 실제 실행·성공했다. 최종 로그는 `/tmp/brain14-dev3-r1-*.log`와 `/tmp/brain14-dev3-r1-verify.json`이다. 설치 회귀 20개도 단계별 실행과 최종 기본 suite에 포함된다.
+- 행렬 감사: 정상·재실행·충돌·비발신은 실제 tracer, 세 계약의 출처·UPDATE/DELETE·회수 token은 import-contracts, 경계·링크·해시/크기·FIFO는 import-staging으로 실행·성공했다. 추가로 가리기·실패 재시도와 설치 수명·원천 연결·비활성 읽기를 실행했다. intent-contract 원문은 보존했다.
+- 잔여 위험: 최초 전체 Python 실행에서 공통 DB 초기화 연결 timeout 1건이 있었고 무변경 재실행과 보완 후 최종 전체 실행은 모두 성공했다. 최초 실패의 근본 원인은 미확정이며 실패·성공 로그를 보존했다. 전체 catalog·권위 선택·전수 reader/mapping·전체 파일 실패 행렬과 실데이터 반입은 원래 후속 티켓 범위다.
+- 운영자 외부 작업은 없다. 티켓 done 표시와 push는 수행하지 않으며 오케스트레이터가 별도 검증 후 완료를 결정한다.
+- 원래 WIP 커밋과 baseline을 보존하고 추가로 리뷰된 변경만 커밋한다. 로컬 실행 프로필은 바이트를 보존한 채 `.git/info/exclude`에서만 제외했다.
+
+변경 파일과 역할:
+
+- `.gitignore` — CLI 빌드에서 생성한 확장 배송 폴더를 제외한다.
+- `_bmad-output/personal-brain/decisions-by-recommendation.md` — 시간 초과 복구의 WIP 보존 결정을 기록한다.
+- `_bmad-output/personal-brain/tickets/epic-garmin-import/epic-garmin-import.md` — 기존 구현을 보존하는 재개 결정을 기록한다.
+- `_bmad-output/personal-brain/tickets/epic-garmin-import/tickets/story-tracer-garmin-raw-legacy-core-raw-view-plan.md` — 계획·누적 리뷰·보완 항목과 최신 검증·종료 근거를 기록한다.
+- `apps/cli/package.json` — 배송 패키지에 확장 폴더를 포함한다.
+- `apps/cli/python-test/garmin-tracer.test.ts` — 실제 설치·Python·데몬·PG에서 원래 행렬과 세 재개 보완을 증명한다.
+- `apps/cli/scripts/write-build-info.mjs` — 로컬 환경·캐시를 빼고 Garmin 정본 패키지를 배송한다.
+- `apps/cli/src/assembly.ts` — 홈에 결합한 staging port를 조립한다.
+- `apps/cli/src/daemon/run.ts` — 미인계 파일 요청을 core 일감으로 인계한다.
+- `apps/cli/src/runtime/extensions.ts` — staging을 digest에서 빼고 패키지 교체·rollback 때 보존한다.
+- `apps/cli/src/runtime/import-staging.ts` — 경계·링크·열린 descriptor·일반 파일·크기를 확인하며 FIFO를 비차단 거부한다.
+- `apps/cli/test/daemon-run.test.ts` — 새 파일 인계 port를 기존 재연결 회귀에 반영한다.
+- `apps/cli/test/ext-fixture.ts` — 격리 시험의 Garmin 확장 역할을 정리한다.
+- `apps/cli/test/ext-install.test.ts` — 재설치·migration 실패 rollback·교체의 staging 보존을 확인한다.
+- `apps/cli/test/import-staging.test.ts` — 경계·링크·해시·크기·가리기 조회 실패·FIFO를 검증한다.
+- `apps/cli/test/install.test.ts` — 설치 결과의 core 스키마 22를 확인한다.
+- `apps/cli/test/setup.test.ts` — setup·doctor 결과의 스키마 22를 확인한다.
+- `extensions/garmin/.python-version` — 정확한 Python 3.14.10을 고정한다.
+- `extensions/garmin/manifest.json` — ABI v1 연결 확인·감독 import·설정·DDL·raw view를 선언한다.
+- `extensions/garmin/migrations/0001_tracer.sql` — raw TEXT·dataset·batch·mapping과 NULL 안전 공개 identity를 둔다.
+- `extensions/garmin/pyproject.toml` — Python pin과 psycopg binary 의존만 선언한다.
+- `extensions/garmin/src/check.py` — 설치된 확장 역할의 PG 연결을 확인한다.
+- `extensions/garmin/src/import.py` — 읽기 전용 snapshot·원천 raw·일 지표·legacy 문서를 불변 계약에 멱등 이전한다.
+- `extensions/garmin/tests/fixtures.py` — 실제 schema10/15 DDL로 합성 입력을 생성한다.
+- `extensions/garmin/uv.lock` — 정확한 driver와 플랫폼 wheel을 frozen 설치용으로 잠근다.
+- `packages/core/src/brain.ts` — 출처 중립 파일 이전 handler와 가리기 보호를 조립한다.
+- `packages/core/src/failures/retry.ts` — 기존 실패 재시도를 file_request 작업에 연결한다.
+- `packages/core/src/files/import-work.ts` — 원자 인계·바이트 검증·FileStore·가리기 정리·완료 처리를 잇는다.
+- `packages/core/src/index.ts` — 이전 port와 파일 작업을 공개한다.
+- `packages/core/src/ports/import-store.ts` — 건강·분석·raw 읽기와 파일 요청 처리 port를 정의한다.
+- `packages/core/src/ports/store.ts` — 선택적인 이전 Store를 조합한다.
+- `packages/postgres/migrations/0022_import_contracts.sql` — 건강·분석·파일 요청·처리 계약에 RLS·attempt·불변 제약과 공개 view를 둔다.
+- `packages/postgres/src/extension-provision.ts` — 기존·신규 확장에 최소 INSERT·공개 결과 SELECT 권한만 준다.
+- `packages/postgres/src/imports.ts` — 계약 읽기·원자 인계·파일 확정 및 비활성 보관 읽기를 구현한다.
+- `packages/postgres/src/migrate.ts` — core 스키마 상수를 22로 올린다.
+- `packages/postgres/src/store.ts` — PostgreSQL 이전 Store를 조합한다.
+- `packages/postgres/test/extension-permissions.test.ts` — 기존 확장 역할의 최신 스키마 이전·최소 권한을 확인한다.
+- `packages/postgres/test/import-contracts.test.ts` — 세 계약의 출처·attempt·불변성과 활성 전후 raw 읽기를 검증한다.
+- `packages/postgres/test/import-redaction.test.ts` — 가린 내용 재등록과 put 중 가리기의 재시도 정리를 검증한다.
+- `packages/postgres/test/import-retry.test.ts` — 10회 파일 실패부터 기존 재시도·성공·staging 정리까지 검증한다.
+- `packages/postgres/test/migrate.test.ts` — 스키마 22 적용·재실행·기존 데이터 보존을 확인한다.
+- `packages/postgres/test/schema.test.ts` — 새 계약 표와 명시적 기본값을 검사한다.
+- `packages/postgres/test/store.test.ts` — 스키마 소유자별 최신 버전 계약을 갱신한다.
+- `packages/postgres/test/unavailable.test.ts` — 조합된 imports port를 기존 Store 메서드 감사와 구분한다.
+- `packages/postgres/test/work-store.test.ts` — 최신 스키마에서 감독 일감 회복을 검증한다.
+
+정리 결과: 이번 Run의 구현자 1명과 독립 리뷰어 2명의 정식 succeeded 보고 전문을 수락하고 모두 release했다. reclaimable 0·미처리 mail 0을 확인했다. 과업 취소나 워커 강제 종료는 없고, 전용 제어 셸은 마지막 정리 대상으로 남긴다. 원래 Run의 워커 5개도 재개 전에 모두 released임을 확인했다.

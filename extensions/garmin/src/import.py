@@ -39,8 +39,8 @@ def main():
         raise ValueError('경로')
     with sqlite3.connect('file:' + quote(str(source), safe='/') + '?mode=ro', uri=True) as src:
         src.row_factory = sqlite3.Row
-        raw = src.execute('select scope,key,endpoint,raw,fetched_at,checked_at,library_version from raw_response order by scope,key,endpoint limit 1').fetchone()
         daily = src.execute('select day_key,steps from daily_metric order by day_key limit 1').fetchone()
+        raw = src.execute("select scope,key,endpoint,raw,fetched_at,checked_at,library_version from raw_response where scope='day' and key=? and endpoint='user_summary'", (daily['day_key'],)).fetchone() if daily else None
         if raw is None or daily is None:
             raise ValueError('입력')
         version_row = src.execute("select value from meta where key='normalize_version'").fetchone()

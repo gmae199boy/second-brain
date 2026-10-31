@@ -4,7 +4,7 @@ export interface ImportRequest { id: string; source: string; locator: string; sh
 export interface ImportStore {
   readHealth(): Promise<{ ok: true; rows: Record<string, unknown>[] } | Failure>;
   readAnalyses(): Promise<{ ok: true; rows: Record<string, unknown>[] } | Failure>;
-  readRaw(input: { source: string; rawViews: readonly string[] }): Promise<{ ok: true; rows: Record<string, unknown>[] } | Failure>;
+  readRaw(input: { source: string; rawViews: readonly string[] }): Promise<{ ok: true; extensionEnabled: boolean; rows: Record<string, unknown>[] } | Failure>;
   listUnhandedImports(): Promise<{ ok: true; ids: string[] } | Failure>;
   handoffImport(input: { requestId: string; workId: string; now: Date }): Promise<{ ok: true; created: boolean } | Failure>;
   readImport(id: string): Promise<{ ok: true; request: ImportRequest | null; completed: boolean } | Failure>;

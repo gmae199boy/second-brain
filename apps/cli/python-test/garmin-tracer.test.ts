@@ -60,8 +60,19 @@ it('합성 snapshot과 문서를 실제 감독자로 이전하고 재실행한�
     expect(await fixture.db.rows("select local_date::text,time_zone from brain.health_current_v1 where dataset='synthetic'")).toEqual([{local_date:'2026-01-01',time_zone:'Asia/Seoul'}]);
     expect(await store.imports.readAnalyses()).toMatchObject({ ok: true, rows: [{ source: 'garmin', dataset: 'synthetic' }] });
     const rawResult = await store.imports.readRaw({ source: 'garmin', rawViews: ['raw_records'] });
-    expect(rawResult.ok).toBe(true);
+    expect(rawResult).toMatchObject({ok:true,extensionEnabled:true});
     const raw = rawResult.ok ? rawResult.rows : [];
+    expect(await store.imports.readRaw({source:'missingext',rawViews:['raw_records']})).toMatchObject({ok:false,code:'IMPORT_VIEW_INVALID'});
+    const disabled = await fixture.run(['ext','disable','garmin','--json']);
+    expect(disabled.code, disabled.stdout + disabled.stderr).toBe(0);
+    expect(await store.imports.readRaw({source:'garmin',rawViews:['raw_records']})).toEqual({ok:true,extensionEnabled:false,rows:raw});
+    const heldId=ids.next(), heldNow=new Date();
+    expect(await store.addWork({id:heldId,kind:'garmin.import',targetKind:'import',targetId:'held',holdGroup:'extension:garmin',createdAt:heldNow,nextAttemptAt:heldNow})).toMatchObject({ok:true});
+    expect(await store.claimSupervisedWork({now:new Date(),claimedBy:'test',kinds:['garmin.import'],attemptToken:ids.next()})).toMatchObject({ok:true,item:null});
+    expect((await fixture.db.rows(`select attempts,completed_at from brain.work_items where id='${heldId}'`))[0]).toMatchObject({attempts:0,completed_at:null});
+    await fixture.db.query(`delete from brain.work_items where id='${heldId}'`);
+    const enabled=await fixture.run(['ext','enable','garmin','--json']); expect(enabled.code,enabled.stdout+enabled.stderr).toBe(0);
+    expect(await store.imports.readRaw({source:'garmin',rawViews:['raw_records']})).toEqual({ok:true,extensionEnabled:true,rows:raw});
     expect(await fixture.db.rows('select fetched_at_ms::text,checked_at_ms::text,library_version from garmin.raw_payloads')).toEqual([{fetched_at_ms:'1700000000123',checked_at_ms:'1700000000456',library_version:'test-1'}]);
     expect(raw).toMatchObject([{source:'garmin',account:'12345',key:'day/2026-01-01',body:'{"userProfileId": 12345, "한글": null, "order": [2,1]}'}]);
     const locations = await fixture.db.rows('select l.locator from brain.analyses a join brain.file_request_results r on r.request_id=a.file_request_id join brain.files f on f.id=r.file_id join brain.file_locations l on l.id=f.home_location_id');
@@ -107,15 +118,15 @@ it('합성 snapshot과 문서를 실제 감독자로 이전하고 재실행한�
     expect(hash(await readFile(snapshot10))).toBe(unknownHash);
     expect(await fixture.db.rows("select body from garmin.raw_records where account is null")).toEqual([{body:'null'}]);
 
-    execFileSync(python, ['-c', "import sqlite3,sys,json; c=sqlite3.connect(sys.argv[1]); c.execute('update raw_response set raw=?,key=?',(json.dumps({'userProfileId':1}),'2026-01-03')); c.execute('insert into raw_response values (?,?,?,?,?,?,?)',('day','2026-01-02','other',json.dumps({'userProfileId':2}),1700000000123,1700000000456,'test')); c.commit()",snapshot10]);
+    execFileSync(python, ['-c', "import sqlite3,sys,json; c=sqlite3.connect(sys.argv[1]); c.execute('update raw_response set raw=?,key=?',(json.dumps({'userProfileId':1}),'2026-01-03')); c.execute('insert into raw_response values (?,?,?,?,?,?,?)',('day','2026-01-02','other',json.dumps({'userProfileId':2}),1700000000123,1700000000456,'test')); c.execute('update daily_metric set day_key=?',('2026-01-03',)); c.commit()",snapshot10]);
     await store.setSetting({key:'garmin.dataset',value:'mixed',updatedAt:new Date()});
     await runImport();
     expect(await fixture.db.rows("select account,account_confirmed from brain.health_observations where dataset='mixed'")).toEqual([{account:null,account_confirmed:false}]);
     expect(await fixture.db.rows("select dataset from brain.health_current_v1 where dataset='mixed'")).toEqual([]);
-    execFileSync(python, ['-c', "import sqlite3,sys,json; c=sqlite3.connect(sys.argv[1]); c.execute('delete from raw_response'); c.execute('insert into raw_response values (?,?,?,?,?,?,?)',('day','2026-01-04','daily',json.dumps({'userProfileId':12345}),1700000000123,1700000000456,'test')); c.commit()",snapshot10]);
+    execFileSync(python, ['-c', "import sqlite3,sys,json; c=sqlite3.connect(sys.argv[1]); c.execute('delete from raw_response'); c.execute('insert into raw_response values (?,?,?,?,?,?,?)',('day','2026-01-04','user_summary',json.dumps({'userProfileId':12345}),1700000000123,1700000000456,'test')); c.execute('update daily_metric set day_key=?',('2026-01-04',)); c.commit()",snapshot10]);
     await store.setSetting({key:'garmin.dataset',value:'no-zone',updatedAt:new Date()});
     await runImport();
-    expect(await fixture.db.rows("select account,time_zone,time_zone_missing,local_date::text from brain.health_observations where dataset='no-zone'")).toEqual([{account:'12345',time_zone:null,time_zone_missing:true,local_date:'2026-01-01'}]);
+    expect(await fixture.db.rows("select account,time_zone,time_zone_missing,local_date::text from brain.health_observations where dataset='no-zone'")).toEqual([{account:'12345',time_zone:null,time_zone_missing:true,local_date:'2026-01-04'}]);
     expect(await fixture.db.rows("select * from brain.health_current_v1 where dataset='no-zone'")).toEqual([]);
     execFileSync(python, ['-c', "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"insert into meta(key,value) values ('timezone','Not/AZone')\"); c.commit()",snapshot10]);
     await store.setSetting({key:'garmin.dataset',value:'invalid-zone',updatedAt:new Date()});
@@ -137,7 +148,8 @@ it('합성 snapshot과 문서를 실제 감독자로 이전하고 재실행한�
 });
 
 it('같은 basename의 문서가 본문에 관계없이 서로 다른 상대 키와 staging을 가진다', async () => {
-  const { writeFile, mkdir, readFile, readdir } = await import('node:fs/promises');
+  const { writeFile, mkdir, readFile, readdir, copyFile } = await import('node:fs/promises');
+  const { createHash } = await import('node:crypto');
   const { fileURLToPath } = await import('node:url');
   const { postgresStore } = await import('second_brain/postgres');
   const { extensionDatabaseUrl } = await import('../src/config/codec.js');
@@ -153,11 +165,27 @@ it('같은 basename의 문서가 본문에 관계없이 서로 다른 상대 키
     const snapshot=join(fixture.home,'snapshot.sqlite'), staging=join(fixture.home,'extensions/garmin/staging');
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python');
     execFileSync(python,[fileURLToPath(new URL('../../../extensions/garmin/tests/fixtures.py', import.meta.url)),snapshot,'15']);
+    execFileSync(python,['-c',"import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.executemany('insert into raw_response values (?,?,?,?,?,?,?)',[('activity','000','other','{}',1,2,'x'),('day','2025-01-01','user_summary','{}',3,4,'x'),('day','2026-01-01','other','{}',5,6,'x')]); c.commit()",snapshot]);
     await mkdir(staging,{recursive:true});
     const roots=['one','two','three','four'];
     const docs=roots.map(root=>join(fixture.home,root,'report.md'));
     for (const [index,doc] of docs.entries()) { await mkdir(join(fixture.home,roots[index]!),{recursive:true}); await writeFile(doc,index<2 ? '# 같은 합성 본문\n' : `# 다른 합성 본문 ${index}\n`); }
     const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl);
+    const missing = join(fixture.home, 'missing.sqlite'); await copyFile(snapshot, missing);
+    execFileSync(python,['-c',"import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"delete from raw_response where scope='day' and key='2026-01-01' and endpoint='user_summary'\"); c.commit()",missing]);
+    const missingHash = createHash('sha256').update(await readFile(missing)).digest('hex');
+    const missingId=ids.next(), missingToken=ids.next(), missingNow=new Date();
+    await store.addWork({id:missingId,kind:'garmin.import',targetKind:'import',targetId:'missing',createdAt:missingNow,nextAttemptAt:missingNow});
+    await store.claimSupervisedWork({now:missingNow,claimedBy:'test',kinds:['garmin.import'],attemptToken:missingToken});
+    const missingSettings=JSON.stringify({version:1,extension:'garmin',values:{'garmin.snapshot_path':missing,'garmin.legacy_path':docs[0],'garmin.staging_path':staging,'garmin.artifact_root':fixture.home,'garmin.dataset':'missing'}});
+    const rejected=spawnSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:missingId,BRAIN_ATTEMPT_TOKEN:missingToken,BRAIN_SETTINGS_SNAPSHOT:missingSettings}});
+    expect(rejected.status).toBe(1); expect(JSON.parse(rejected.stdout)).toMatchObject({code:'IMPORT_INVALID',retryable:false});
+    expect(createHash('sha256').update(await readFile(missing)).digest('hex')).toBe(missingHash);
+    expect(await fixture.db.rows('select * from garmin.raw_payloads')).toEqual([]);
+    expect(await fixture.db.rows('select * from brain.health_observations')).toEqual([]);
+    expect(await fixture.db.rows('select * from brain.file_requests')).toEqual([]);
+    expect(await readdir(staging)).toEqual([]);
+    await store.finishSupervisedWork({id:missingId,attemptToken:missingToken,now:new Date(),outcome:'failed'});
     for (const [index,doc] of docs.entries()) {
       const id=ids.next(),token=ids.next(),now=new Date();
       await store.addWork({id,kind:'garmin.import',targetKind:'import',targetId:String(index),createdAt:now,nextAttemptAt:now});
@@ -168,7 +196,24 @@ it('같은 basename의 문서가 본문에 관계없이 서로 다른 상대 키
       expect(await store.finishSupervisedWork({id,attemptToken:token,now:new Date(),outcome:'succeeded'})).toMatchObject({ok:true});
     }
     expect((await readdir(staging)).length).toBe(4);
+    const sourceBody = '{"userProfileId": 12345, "한글": null, "order": [2,1]}';
+    expect(await fixture.db.rows("select scope,original_key,endpoint,body from garmin.raw_payloads")).toEqual([{scope:'day',original_key:'2026-01-01',endpoint:'user_summary',body:sourceBody}]);
+    expect(await fixture.db.rows("select revision,extract(epoch from fetched_at)*1000 as fetched_ms from brain.health_observations")).toMatchObject([{revision:createHash('sha256').update(sourceBody).digest('hex'),fetched_ms:'1700000000123.000000'}]);
     expect(await fixture.db.rows('select distinct locator from brain.file_requests')).toHaveLength(4);
+    const requestsBefore = await fixture.db.rows('select id, locator from brain.file_requests order by id');
+    const mappingsBefore = await fixture.db.rows('select * from garmin.import_mapping order by original_key');
+    const bytesBefore = await Promise.all(requestsBefore.map(row => readFile(join(staging, row.locator))));
+    const same = await fixture.run(['ext','install','garmin','--json']);
+    expect(same.code, same.stdout + same.stderr).toBe(0);
+    // 설치된 패키지를 바꿔 실제 설치기의 교체 경로를 실행한다.
+    const check = join(fixture.home,'extensions/garmin/src/check.py');
+    await writeFile(check, (await readFile(check, 'utf8')) + '\n# 교체 확인\n');
+    const replaced = await fixture.run(['ext','install','garmin','--json']);
+    expect(replaced.code, replaced.stdout + replaced.stderr).toBe(0);
+    expect(await readFile(check, 'utf8')).not.toContain('교체 확인');
+    expect(await fixture.db.rows('select id, locator from brain.file_requests order by id')).toEqual(requestsBefore);
+    expect(await fixture.db.rows('select * from garmin.import_mapping order by original_key')).toEqual(mappingsBefore);
+    expect(await Promise.all(requestsBefore.map(row => readFile(join(staging, row.locator))))).toEqual(bytesBefore);
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
     await expect.poll(async () => Number((await fixture.db.rows('select count(*)::int as n from brain.file_request_results where file_id is not null'))[0]?.n),{timeout:20000}).toBe(4);
     const files=await fixture.db.rows('select a.original_key,l.locator from brain.analyses a join brain.file_request_results r on r.request_id=a.file_request_id join brain.files f on f.id=r.file_id join brain.file_locations l on l.id=f.home_location_id order by a.original_key');
@@ -225,7 +270,7 @@ it('콜론을 포함한 dataset과 상대 경로는 요청 키에서 섞이지 �
     for (const [index,pair] of pairs.entries()) {
       const snapshot=join(fixture.home,`snap${index}.sqlite`),doc=join(fixture.home,pair.key);
       execFileSync(python,[fileURLToPath(new URL('../../../extensions/garmin/tests/fixtures.py', import.meta.url)),snapshot,'15']);
-      execFileSync(python,['-c',"import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('update raw_response set key=?',(sys.argv[2],)); c.commit()",snapshot,pair.raw]);
+      execFileSync(python,['-c',"import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('update raw_response set key=?',(sys.argv[2],)); c.execute('update daily_metric set day_key=?',(sys.argv[2],)); c.commit()",snapshot,pair.raw]);
       await writeFile(doc,'# 합성 내용\n');
       const id=ids.next(),token=ids.next(),now=new Date(); await store.addWork({id,kind:'garmin.import',targetKind:'import',targetId:String(index),createdAt:now,nextAttemptAt:now});
       await store.claimSupervisedWork({now,claimedBy:'test',kinds:['garmin.import'],attemptToken:token});

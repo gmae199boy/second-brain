@@ -15,6 +15,15 @@ it('출처와 현재 시도에 결합된 불변 가져오기 계약을 강제한
     const url = new URL(db.url); url.username = role; url.password = password;
     ext = new pg.Client({ connectionString: url.toString() }); await ext.connect();
     await admin.query('insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ($1,\'1\',now(),true,now())', [name]);
+    await admin.query(`create view "${name}".raw_records as select '${name}'::text as source, null::text as account, 'key'::text as key, 'endpoint'::text as endpoint, null::timestamptz as fetched_at, null::timestamptz as checked_at, '원문'::text as body`);
+    await admin.query(`grant usage on schema "${name}" to brain_app; grant select on "${name}".raw_records to brain_app`);
+    const active = await store.imports.readRaw({source:name,rawViews:['raw_records']});
+    expect(active).toMatchObject({ok:true,extensionEnabled:true,rows:[{body:'원문'}]});
+    await admin.query('update brain.extensions set enabled=false where name=$1',[name]);
+    const inactive = await store.imports.readRaw({source:name,rawViews:['raw_records']});
+    expect(inactive).toEqual(active.ok ? {...active,extensionEnabled:false} : null);
+    expect(await store.imports.readRaw({source:'missingext',rawViews:['raw_records']})).toMatchObject({ok:false,code:'IMPORT_VIEW_INVALID'});
+    await admin.query('update brain.extensions set enabled=true where name=$1',[name]);
     await admin.query('insert into brain.extension_work_kinds(extension_name,kind) values ($1,$2)', [name, `${name}.import`]);
     const work = randomUUID(), token = randomUUID(), now = clock.now();
     expect(await store.addWork({ id: work, kind: `${name}.import`, targetKind: 'import', targetId: 'test', createdAt: now, nextAttemptAt: now })).toMatchObject({ ok: true });
