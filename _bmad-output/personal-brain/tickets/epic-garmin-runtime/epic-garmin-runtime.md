@@ -129,3 +129,5 @@ Garmin 사용자가 별도 Garmin 설치 없이 Brain에서 수집과 정제를 
 - Handoff(2026-10-28, spine 갱신 u3 adversary B): manifest의 `garmin.tokenstore`는 비밀 참조가 아니라 경로 설정이다. Runtime은 경로만 snapshot에 넘기고, Garmin 인증 adapter가 그 위치의 세션 내용을 라이브러리로 연다(spine AD-18 예외). epic 13의 snapshot 규칙(13.2)은 이 키를 `.env` 비밀로 해석하지 않는다.
 - Decision(2026-10-30, 사용자): 에픽마다 두던 Refactor sweep(16.8)을 뺐다(`dropped`). 리뷰가 미룬 기존 결함은 `deferred-work.md` 장부에 남고, 사용자가 원할 때 `bmad-loop sweep`으로 직접 처리한다. 이 Mac 확인(16.9)은 sweep 대신 sweep이 기다리던 스토리들을 기다린다.
 - Decision(2026-10-30, 추천으로 정함): 16.1은 14.7 sweep 대신 확장 뼈대·raw schema(14.1)와 지표 catalog·현재 view(14.2)를 기다린다. 합성 fake client tracer는 전수 반입·검증 보고서와 무관하다. 실제 시그니처·마이그레이션 번호는 착수 시점 main HEAD에서 확인한다(예전 마지막 코드 스토리 대기 결정을 대체).
+
+- Decision(2026-11-01, 추천으로 정함, 16.2 escalation 해소): 인증 전용 상호 검증 채널과 같은 UID 미승인 프로세스까지의 격리, 미확인 계정 discovery 차단, 독립 latch와 durable admission/HTTP intent를 채택한다. 신원·호출 제어가 증명되지 않으면 실패 닫힘을 유지하고 16.2 계획의 독립 반례 행렬을 검증한다.
