@@ -15,6 +15,9 @@ typedef struct {
 int brain_channel_init(brain_auth_channel *channel, int fd, const uint8_t session[16], int ui, int timeout_ms);
 int brain_channel_send(brain_auth_channel *channel, uint8_t kind, const uint8_t prompt[16], const uint8_t *payload, size_t length, int timeout_ms);
 int brain_channel_receive(brain_auth_channel *channel, const uint8_t prompt[16], uint8_t *kind, uint8_t *payload, size_t capacity, size_t *length, int timeout_ms);
+/* verifier는 인증된 broker 제어 연결에서 현재 제출 capability를 단회 소비해야 한다. */
+int brain_channel_receive_submission(brain_auth_channel *channel, const uint8_t prompt[16], uint64_t generation,
+  int (*verifier)(void *, const uint8_t [16], uint64_t), int (*confirm)(void *, const uint8_t [16], uint64_t), void *context, uint8_t *payload, size_t capacity, size_t *length, int timeout_ms);
 void brain_channel_close(brain_auth_channel *channel);
 /* 모든 send/receive가 반환된 다음에만 호출한다. */
 int brain_channel_destroy(brain_auth_channel *channel);

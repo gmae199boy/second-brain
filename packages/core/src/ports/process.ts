@@ -1,7 +1,10 @@
 export interface ProcessSpec { bootstrapPipe?: true; cwd?: string; command: string; args: readonly string[]; env: Readonly<Record<string, string>> }
-export interface ProcessExit { code: number | null; signal: string | null }
+/** 봉인 launcher가 OS에서 얻은 현재 실행 세대다. 입력 비밀은 포함하지 않는다. */
+export interface ProtectedProcessIdentity { launchLease: string; connectionEpoch: number; startTimeUs: string }
+export interface ProcessExit { code: number | null; signal: string | null; unknown?: true }
 export interface ProcessHandle {
   pid: number;
+  readonly protectedIdentity?: ProtectedProcessIdentity;
   stdout: AsyncIterable<string>;
   stderr: AsyncIterable<string>;
   /** The leader's exit/reaping, independent of descendant-held stdio. */
@@ -10,6 +13,8 @@ export interface ProcessHandle {
   /** bootstrap의 비밀 없는 ACK만 보낸다. 상대 인증은 별도 경계가 책임진다. */
   sendBootstrapAck?(): Promise<boolean>;
   closeBootstrap?(): void;
+  /** 보호 입력 폐기의 인증된 ACK를 기다린다. 불명이면 false다. */
+  revokeInput?(): Promise<boolean>;
   /** Stop waiting for pipe EOF while preserving already queued chunks. */
   closeOutput(): void;
   signalGroup(signal: 'SIGKILL' | 'SIGTERM'): void;

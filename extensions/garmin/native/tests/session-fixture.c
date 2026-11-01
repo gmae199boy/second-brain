@@ -15,7 +15,9 @@ int main(void) {
   memcpy(worker.hash,b.worker_hash,20); memcpy(ui.hash,b.ui_hash,20);
   if (!ready(&s,&b,&worker,&ui)) return 1;
   uint8_t prompt[16] = {1};
-  for (uint64_t i = 1; i <= 3; i++) { prompt[0] = (uint8_t)i; if (!brain_auth_prompt(&s,prompt,1) || !brain_auth_approve(&s,1) || !brain_auth_response(&s,prompt,i)) return 2; }
+  if (!brain_auth_prompt(&s,prompt,0) || !brain_auth_approve(&s,1) || !brain_auth_response(&s,prompt,1)) return 2;
+  for (uint64_t i = 2; i <= 4; i++) { prompt[0] = (uint8_t)i; if (!brain_auth_prompt(&s,prompt,1) || !brain_auth_approve(&s,1) || !brain_auth_response(&s,prompt,i)) return 2; }
+  prompt[0] = 5;
   if (brain_auth_prompt(&s,prompt,1) || !s.revoked) return 3;
   if (!ready(&s,&b,&worker,&ui) || !brain_auth_prompt(&s,prompt,0) || !brain_auth_approve(&s,1) || !brain_auth_response(&s,prompt,1)) return 4;
   if (brain_auth_response(&s,prompt,1) || !s.revoked) return 5;
@@ -49,7 +51,11 @@ int main(void) {
   prompt[0]++;if(!brain_auth_prompt(&s,prompt,1) || brain_auth_response(&s,prompt,2) || !s.revoked)return 25;
   if(!ready(&s,&b,&worker,&ui) || !brain_auth_prompt(&s,prompt,0))return 26;
   brain_auth_revoke(&s);if(brain_auth_approve(&s,1) || !s.revoked)return 27;
-  if(!brain_auth_init(&s,&b,25) || !brain_auth_worker(&s,&worker) || !brain_auth_recorded(&s) || !brain_auth_attach(&s,&ui,&b) || !brain_auth_prompt(&s,prompt,1))return 28;
+  if(!brain_auth_init(&s,&b,25) || !brain_auth_worker(&s,&worker) || !brain_auth_recorded(&s) || !brain_auth_attach(&s,&ui,&b) || !brain_auth_prompt(&s,prompt,0))return 28;
   usleep(40000);if(brain_auth_approve(&s,1) || !s.revoked)return 29;
+  if(!ready(&s,&b,&worker,&ui) || brain_auth_prompt(&s,prompt,1) || !s.revoked)return 30;
+  if(!ready(&s,&b,&worker,&ui) || !brain_auth_prompt(&s,prompt,0) || !brain_auth_approve(&s,1) || !brain_auth_response(&s,prompt,1))return 31;
+  prompt[0]++; if(brain_auth_prompt(&s,prompt,0) || !s.revoked)return 32;
+  if(!ready(&s,&b,&worker,&ui) || !brain_auth_prompt(&s,prompt,0) || brain_auth_prompt(&s,prompt,1) || !s.revoked)return 33;
   return 0;
 }

@@ -24,7 +24,8 @@ it('Garmin 재provision은 보호 schema의 권한을 되살리지 않는다', a
     await admin.connect();
     const coreDirectory = fileURLToPath(new URL('../migrations/', import.meta.url));
     for (const name of await readdir(coreDirectory)) await copyFile(join(coreDirectory, name), join(core, name));
-    await copyFile(fileURLToPath(new URL('../protected-migrations/0028_protected_work.sql', import.meta.url)), join(core, '0028_protected_work.sql'));
+    for (const name of ['0028_protected_work.sql', '0029_protected_auth_revoke.sql'])
+      await copyFile(fileURLToPath(new URL(`../protected-migrations/${name}`, import.meta.url)), join(core, name));
     expect(await runMigrations({ databaseUrl: db.url, clock, owners: [{ owner: 'core', directory: core }] })).toMatchObject({ ok: true });
     await prepareProtectedRoles(db.url);
     await prepareProtectedRoles(db.url);
@@ -65,6 +66,95 @@ it('Garmin 재provision은 보호 schema의 권한을 되살리지 않는다', a
     const admission = await admin.query("select garmin.reserve_work_admission($1,$2,1,'fixture','UTC') as result", [work, token]);
     expect(admission.rows[0].result).toMatchObject({ state: 'admitted', target: 'fixture' });
     await expect(admin.query("select garmin.start_external_call($1,$2,1,'fixture',1,'data','summary','UTC',null,false)", [work, token])).rejects.toMatchObject({ code: '42501' });
+    const authWork = randomUUID(), authToken = randomUUID(), lease = randomUUID();
+    await admin.query("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,attempts,claimed_at,claim_expires_at,claimed_by,hold_group) values ($1,'garmin.auth','extension','garmin',$2,$2,'supervised',1,$2,$2::timestamptz + interval '1 hour','fixture','extension:garmin')", [authWork, now]);
+    await admin.query('insert into brain.work_attempts(token,work_item_id,started_at) values ($1,$2,$3)', [authToken, authWork, now]);
+    await admin.query('update brain.work_items set current_attempt_token=$1 where id=$2', [authToken, authWork]);
+    await admin.query('reset session authorization');
+    await expect(app.query('select brain.begin_protected_input_launch($1,$2,1)', [authWork, authToken])).rejects.toMatchObject({ code: '42501' });
+    await expect(app.query('select brain.close_unstarted_protected_input($1,$2,1)', [authWork, authToken])).rejects.toMatchObject({ code: '42501' });
+    // 이 로그인은 격리 시험 DB의 임시 role 설정이며 마지막에 되돌린다.
+    await admin.query("alter role brain_protected_supervisor login password 'fixture-supervisor-only'");
+    const supervisorUrl = new URL(db.url); supervisorUrl.username = 'brain_protected_supervisor'; supervisorUrl.password = 'fixture-supervisor-only';
+    const supervisor = postgresStore({ databaseUrl: supervisorUrl.toString() });
+    try {
+      const process = { id: authWork, attemptToken: authToken, pid: 1234, pgid: 1234, osBootAt: now, osStartedAt: now,
+        protectedIdentity: { launchLease: lease, connectionEpoch: 1, startTimeUs: String(BigInt(now.getTime()) * 1000n + 789n) } };
+      expect(await supervisor.recordSupervisedProcess({ ...process, attemptToken: randomUUID() })).toMatchObject({ ok: true, outcome: 'lost' });
+      expect(await supervisor.recordSupervisedProcess({ ...process, protectedIdentity: { ...process.protectedIdentity, connectionEpoch: 0 } })).toMatchObject({ ok: true, outcome: 'lost' });
+      expect(await supervisor.recordSupervisedProcess(process)).toMatchObject({ ok: true, outcome: 'lost' });
+      await admin.query('set session authorization brain_protected_supervisor');
+      expect((await admin.query('select brain.begin_protected_input_launch($1,$2,1) as started', [authWork, authToken])).rows[0]).toEqual({ started: true });
+      await admin.query('reset session authorization');
+      const recorded = await supervisor.recordSupervisedProcess(process);
+      expect(recorded, JSON.stringify(recorded)).toMatchObject({ ok: true, outcome: 'done' });
+      expect(await supervisor.recordSupervisedProcess(process)).toMatchObject({ ok: true, outcome: 'done' });
+      expect(await supervisor.recordSupervisedProcess({ ...process, protectedIdentity: { ...process.protectedIdentity, launchLease: randomUUID() } })).toMatchObject({ ok: true, outcome: 'lost' });
+      expect(await supervisor.recordSupervisedProcess({ ...process, protectedIdentity: { ...process.protectedIdentity, connectionEpoch: 2 } })).toMatchObject({ ok: true, outcome: 'lost' });
+      expect((await admin.query('select protected_launch_lease, protected_connection_epoch, pid, (extract(epoch from os_started_at)*1000000)::bigint::text as start_us from brain.work_attempts where token=$1', [authToken])).rows[0])
+        .toEqual({ protected_launch_lease: lease, protected_connection_epoch: '1', pid: 1234, start_us: process.protectedIdentity.startTimeUs });
+      const pendingToken = randomUUID();
+      await admin.query('set session authorization brain_protected_supervisor');
+      await admin.query('update brain.work_items set current_attempt_token=null where id=$1', [authWork]);
+      await admin.query('insert into brain.work_attempts(token,work_item_id,started_at) values ($1,$2,$3)', [pendingToken, authWork, now]);
+      await admin.query('update brain.work_items set current_attempt_token=$1,attempts=2 where id=$2', [pendingToken, authWork]);
+      await admin.query('reset session authorization');
+      expect(await supervisor.requestWorkCancel({ id: authWork, now })).toMatchObject({ ok: true, state: 'requested' });
+      await admin.query('set session authorization brain_protected_supervisor');
+      expect((await admin.query('select brain.begin_protected_input_launch($1,$2,2) as started', [authWork, pendingToken])).rows[0]).toEqual({ started: false });
+      await admin.query('reset session authorization');
+      // spawn 진입과 취소가 경합해도 같은 attempt에서 둘 다 성공하지 않는다.
+      const raceWork = randomUUID(), raceToken = randomUUID();
+      await admin.query('set session authorization brain_protected_supervisor');
+      await admin.query("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,attempts,claimed_at,claim_expires_at,claimed_by,hold_group) values ($1,'garmin.auth','extension','race-fixture',$2,$2,'supervised',1,$2,$2::timestamptz + interval '1 hour','fixture','extension:garmin')", [raceWork, now]);
+      await admin.query('insert into brain.work_attempts(token,work_item_id,started_at) values ($1,$2,$3)', [raceToken, raceWork, now]);
+      await admin.query('update brain.work_items set current_attempt_token=$1 where id=$2', [raceToken, raceWork]);
+      await admin.query('reset session authorization');
+      const concurrent = new pg.Client({ connectionString: supervisorUrl.toString() });
+      await concurrent.connect();
+      try {
+        const [beginResult, cancelResult] = await Promise.all([
+          concurrent.query('select brain.begin_protected_input_launch($1,$2,1) as started', [raceWork, raceToken]),
+          supervisor.requestWorkCancel({ id: raceWork, now }),
+        ]);
+        const began = beginResult.rows[0].started === true;
+        const cancelled = cancelResult.ok && cancelResult.state === 'requested';
+        expect(began !== cancelled).toBe(true);
+        const observed = (await admin.query('select l.state,w.cancel_requested_at is not null as cancelled from brain.protected_input_launches l join brain.work_items w on w.id=l.work_id where l.work_id=$1 and l.attempt_token=$2', [raceWork, raceToken])).rows[0];
+        expect(observed).toEqual(began ? { state: 'spawning', cancelled: false } : { state: 'closed', cancelled: true });
+      } finally { await concurrent.end(); }
+      await admin.query('set session authorization brain_protected_supervisor');
+      await admin.query('update brain.work_items set current_attempt_token=null where id=$1', [raceWork]);
+      await admin.query('reset session authorization');
+      const addPending = async (target: string) => {
+        const pendingWork = randomUUID(), pendingAttempt = randomUUID();
+        await admin.query('set session authorization brain_protected_supervisor');
+        await admin.query("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,attempts,claimed_at,claim_expires_at,claimed_by,hold_group) values ($1,'garmin.auth','extension',$2,$3,$3,'supervised',1,$3,$3::timestamptz + interval '1 hour','fixture','extension:garmin')", [pendingWork, target, now]);
+        await admin.query('insert into brain.work_attempts(token,work_item_id,started_at) values ($1,$2,$3)', [pendingAttempt, pendingWork, now]);
+        await admin.query('update brain.work_items set current_attempt_token=$1 where id=$2', [pendingAttempt, pendingWork]);
+        await admin.query('reset session authorization');
+        return { pendingWork, pendingAttempt };
+      };
+      const held = await addPending('hold-fixture');
+      expect(await supervisor.holdWorkGroup({ group: 'extension:garmin', now })).toMatchObject({ ok: true, held: true });
+      await admin.query('set session authorization brain_protected_supervisor');
+      expect((await admin.query('select brain.begin_protected_input_launch($1,$2,1) as started', [held.pendingWork, held.pendingAttempt])).rows[0]).toEqual({ started: false });
+      await admin.query('update brain.work_items set current_attempt_token=null where id=$1', [held.pendingWork]);
+      await admin.query('reset session authorization');
+      expect(await supervisor.releaseWorkGroup({ group: 'extension:garmin' })).toMatchObject({ ok: true, released: true });
+      const disabled = await addPending('disable-fixture');
+      expect(await supervisor.setExtensionEnabled({ name: 'garmin', enabled: false, now })).toMatchObject({ ok: true, found: true, changed: true });
+      await admin.query('set session authorization brain_protected_supervisor');
+      expect((await admin.query('select brain.begin_protected_input_launch($1,$2,1) as started', [disabled.pendingWork, disabled.pendingAttempt])).rows[0]).toEqual({ started: false });
+      await admin.query('update brain.work_items set current_attempt_token=null where id=$1', [disabled.pendingWork]);
+      await admin.query('reset session authorization');
+      expect(await supervisor.setExtensionEnabled({ name: 'garmin', enabled: true, now })).toMatchObject({ ok: true, found: true, changed: true });
+    } finally {
+      await supervisor.close();
+      await admin.query('alter role brain_protected_supervisor nologin password null');
+    }
+    await admin.query('set session authorization brain_protected_supervisor');
+    await admin.query("update brain.work_items set current_attempt_token=null where id=$1", [authWork]);
     await admin.query('reset session authorization');
     await admin.query('set session authorization brain_protected_broker');
     expect((await admin.query("select garmin.admission_valid($1,$2,1,'fixture',1) as valid", [work, token])).rows[0]).toEqual({ valid: true });

@@ -1,3 +1,4 @@
+import { closePendingProtectedInputs } from './protected-input.js';
 import { attemptUsage } from '@second-brain/core';
 import {
   formatInstant,
@@ -181,8 +182,11 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
-        const result = await withWrite(opened.connection, async held => (await sql`insert into brain.work_hold_groups (name, held_at)
-          values (${group}, ${instant(now, 'work_hold_groups.held_at')}) on conflict (name) do nothing returning name`.execute(held)).rows.length > 0);
+        const result = await withWrite(opened.connection, async held => {
+          await closePendingProtectedInputs(held, group);
+          return (await sql`insert into brain.work_hold_groups (name, held_at)
+            values (${group}, ${instant(now, 'work_hold_groups.held_at')}) on conflict (name) do nothing returning name`.execute(held)).rows.length > 0;
+        });
         return result.ok ? { ok: true, held: result.value } : result;
       } catch (error) { return databaseFailure(error); }
     },
@@ -315,12 +319,18 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
         const written = await withWrite(opened.connection, async held => {
+          const protectedApi = await sql<{ enabled: boolean }>`select session_user='brain_protected_supervisor'
+            and to_regprocedure('brain.close_unstarted_protected_input(uuid,uuid,bigint)') is not null as enabled`.execute(held);
+          if (protectedApi.rows[0]?.enabled)
+            await sql`select pg_advisory_xact_lock(hashtextextended('brain.protected.auth.revoke',0))`.execute(held);
           const found = await sql<WorkItemRow>`select *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text from brain.work_items where id = ${input.id} for update`.execute(held);
           const item = found.rows[0];
           if (!item) return 'not_found' as const;
           if (item.completed_at !== null) return 'already_closed' as const;
           const now = instant(input.now, 'work_items.cancel_requested_at');
           if (item.current_attempt_token !== null) {
+            if (protectedApi.rows[0]?.enabled)
+              await sql`select brain.close_unstarted_protected_input(${input.id}::uuid,${item.current_attempt_token}::uuid,${item.attempts}::bigint)`.execute(held);
             await sql`update brain.work_items set cancel_requested_at = coalesce(cancel_requested_at, ${now}::timestamptz) where id = ${input.id}`.execute(held);
             return 'requested' as const;
           }
@@ -346,6 +356,32 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
     },
     async recordSupervisedProcess(input) {
       return finish(connect, async held => {
+        if (input.protectedIdentity) {
+          const identity = input.protectedIdentity;
+          if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identity.launchLease)
+            || identity.launchLease.toLowerCase() === '00000000-0000-0000-0000-000000000000'
+            || !Number.isSafeInteger(identity.connectionEpoch) || identity.connectionEpoch <= 0
+            || !Number.isSafeInteger(input.pid) || input.pid <= 0 || input.pgid !== input.pid || input.osBootAt === null || input.osStartedAt === null
+            || !Number.isFinite(input.osStartedAt.getTime()) || !/^[1-9][0-9]{0,18}$/.test(identity.startTimeUs)
+            || BigInt(identity.startTimeUs) / 1000000n !== BigInt(Math.floor(input.osStartedAt.getTime() / 1000))) return 0;
+          await sql`select pg_advisory_xact_lock(hashtextextended('brain.protected.auth.revoke',0))`.execute(held);
+          const item = await lockOpenSupervisedWork(held, input);
+          if (!item || item.cancel_requested_at !== null) return 0;
+          const written = await sql`update brain.work_attempts a set pid=${input.pid},pgid=${input.pgid},
+            os_boot_at=${instant(input.osBootAt, 'work_attempts.os_boot_at')},os_started_at=to_timestamp(${identity.startTimeUs}::numeric / 1000000),
+            protected_launch_lease=${identity.launchLease}::uuid,protected_connection_epoch=${identity.connectionEpoch}::bigint
+            where a.token=${input.attemptToken} and a.work_item_id=${input.id}
+              and (a.protected_launch_lease is null or (a.protected_launch_lease=${identity.launchLease}::uuid
+                and a.protected_connection_epoch=${identity.connectionEpoch}::bigint and a.pid=${input.pid}
+                and a.os_boot_at=${instant(input.osBootAt, 'work_attempts.os_boot_at')}::timestamptz
+                and a.os_started_at=to_timestamp(${identity.startTimeUs}::numeric / 1000000)))
+              and exists(select 1 from brain.work_items w join brain.protected_work_kinds k on k.kind=w.kind
+                where w.id=${input.id} and k.requires_input_revoke and w.cancel_requested_at is null
+                  and not exists(select 1 from brain.work_hold_groups h where h.name=w.hold_group)
+                  and exists(select 1 from brain.protected_input_launches l where l.work_id=w.id and l.attempt_token=a.token
+                    and l.run_generation=w.attempts and l.state='spawning'))`.execute(held);
+          return changesOf(written);
+        }
         if (!await lockOpenSupervisedWork(held, input)) return 0;
         await sql`update brain.work_attempts set pid = ${input.pid}, pgid = ${input.pgid},
           os_boot_at = ${input.osBootAt === null ? null : instant(input.osBootAt, 'work_attempts.os_boot_at')},

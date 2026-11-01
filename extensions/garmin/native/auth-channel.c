@@ -64,3 +64,15 @@ int brain_channel_receive(brain_auth_channel *c, const uint8_t prompt[16], uint8
 done:
   wipe(frame,sizeof frame); wipe(expected,sizeof expected); if(!ok)brain_channel_close(c); if(fd>=0)unpin(c); pthread_mutex_unlock(&c->receive_lock); return ok;
 }
+int brain_channel_receive_submission(brain_auth_channel *c, const uint8_t prompt[16], uint64_t generation,
+  int (*verifier)(void *, const uint8_t [16], uint64_t), int (*confirm)(void *, const uint8_t [16], uint64_t), void *context, uint8_t *payload, size_t capacity, size_t *length, int timeout_ms) {
+  uint8_t secret[MAX_PAYLOAD],kind=0;size_t n=0;int ok=0;
+  if(length)*length=0;
+  if(c && prompt && generation && verifier && confirm && payload && length
+    && verifier(context,prompt,generation) && !closed(c)
+    && brain_channel_receive(c,prompt,&kind,secret,sizeof secret,&n,timeout_ms) && kind==3 && n && n<=capacity && !closed(c)
+    && confirm(context,prompt,generation) && !closed(c)) {
+    memcpy(payload,secret,n);*length=n;ok=1;
+  }
+  wipe(secret,sizeof secret);if(!ok && c)brain_channel_close(c);return ok;
+}

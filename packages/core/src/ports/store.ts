@@ -546,6 +546,7 @@ export type WorkCancelState = 'cancelled' | 'requested' | 'already_closed' | 'no
 export type RequestWorkCancelResult = { ok: true; state: WorkCancelState } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface RecordSupervisedProcessInput {
   id: string; attemptToken: string; pid: number; pgid: number; osBootAt: Date | null; osStartedAt: Date | null;
+  protectedIdentity?: import('./process.js').ProtectedProcessIdentity;
 }
 export interface OpenSupervisedAttempt {
   token: string; workItemId: string; kind: string; attempts: number; targetKind: string; targetId: string;

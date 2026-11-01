@@ -58,10 +58,11 @@ int brain_host_connect(brain_host_client *c,const char *name,uid_t uid,const uin
   int ok=r && brain_xpc_authenticate(&c->service,r); if(r)xpc_release(r);
   if(ok){pthread_mutex_lock(&observer->lock);observer->peer=c->service;pthread_mutex_unlock(&observer->lock);}else brain_host_close(c); return ok;
 }
-int brain_host_start(brain_host_client *c,const uuid_t work,const uuid_t attempt,uint64_t run,uint64_t binding,uint64_t epoch,const uint8_t package[32]) {
+static int start(brain_host_client *c,const uuid_t work,const uuid_t attempt,uint64_t run,uint64_t binding,uint64_t epoch,const uint8_t package[32],int channel_fd) {
   if(!c || !c->service.authenticated || c->started || !work || !attempt || !run || !binding || !epoch || !package)return 0;
   xpc_object_t m=xpc_dictionary_create(NULL,NULL,0); if(!m)return 0;
-  xpc_dictionary_set_string(m,"op","start");xpc_dictionary_set_uuid(m,"work",work);xpc_dictionary_set_uuid(m,"attempt",attempt);
+  xpc_dictionary_set_string(m,"op",channel_fd>=0?"start_auth":"start");xpc_dictionary_set_uuid(m,"work",work);xpc_dictionary_set_uuid(m,"attempt",attempt);
+  if(channel_fd>=0)xpc_dictionary_set_fd(m,"channel",channel_fd);
   xpc_dictionary_set_uint64(m,"run",run);xpc_dictionary_set_uint64(m,"binding",binding);xpc_dictionary_set_uint64(m,"epoch",epoch);xpc_dictionary_set_data(m,"package",package,32);
   xpc_object_t r=bounded_call(c->service.connection,m);xpc_release(m);
   int ok=r && brain_xpc_verify_message(&c->service,r) && xpc_dictionary_get_count(r)==6 && field(r,"pid",XPC_TYPE_INT64)
@@ -78,6 +79,8 @@ int brain_host_start(brain_host_client *c,const uuid_t work,const uuid_t attempt
   }
   if(r)xpc_release(r); if(!c->started || brain_host_observe(c,NULL)!=0){brain_host_close(c);return 0;} return 1;
 }
+int brain_host_start(brain_host_client *c,const uuid_t work,const uuid_t attempt,uint64_t run,uint64_t binding,uint64_t epoch,const uint8_t package[32]) {return start(c,work,attempt,run,binding,epoch,package,-1);}
+int brain_host_start_auth(brain_host_client *c,const uuid_t work,const uuid_t attempt,uint64_t run,uint64_t binding,uint64_t epoch,const uint8_t package[32],int channel_fd) {return channel_fd>=0 && start(c,work,attempt,run,binding,epoch,package,channel_fd);}
 int brain_host_recorded(brain_host_client *c) {
   if(!c || !c->service.authenticated || !c->started || c->recorded)return 0;
   if(brain_host_observe(c,NULL)!=0){brain_host_close(c);return 0;}

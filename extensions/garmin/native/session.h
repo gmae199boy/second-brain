@@ -25,6 +25,8 @@ int brain_auth_recorded(brain_auth_session *session);
 int brain_auth_attach(brain_auth_session *session, const brain_xpc_peer *peer, const brain_auth_binding *selection);
 /* trusted_presence는 OS 검증된 UI 승인 증거만 받는다. XPC payload의 boolean이 아니다. */
 int brain_auth_approve(brain_auth_session *session, int trusted_presence);
+/* broker 전용: 검증된 UI callback assertion을 broker가 소비한 뒤 호출한다. */
+int brain_auth_approve_callback(brain_auth_session *session);
 int brain_auth_prompt(brain_auth_session *session, const uint8_t prompt[16], int is_mfa);
 int brain_auth_response(brain_auth_session *session, const uint8_t prompt[16], uint64_t sequence);
 int brain_auth_is_active(brain_auth_session *session);

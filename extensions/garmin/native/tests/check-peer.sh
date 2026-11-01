@@ -13,10 +13,12 @@ xcrun clang -Wall -Wextra -Werror -DBRAIN_NATIVE_FIXTURE "$base/session.c" "$bas
 "$work/session"
 xcrun clang -Wall -Wextra -Werror "$base/session.c" "$base/tests/presence-closed.c" -o "$work/presence"
 "$work/presence"
-xcrun clang -Wall -Wextra -Werror -DBRAIN_NATIVE_FIXTURE "$base/peer.c" "$base/session.c" "$base/broker.c" "$base/tests/broker-fixture.c" -lbsm -framework Security -framework CoreFoundation -o "$work/broker"
+xcrun clang -Wall -Wextra -Werror -DBRAIN_NATIVE_FIXTURE "$base/peer.c" "$base/session.c" "$base/presence.c" "$base/broker.c" "$base/tests/broker-fixture.c" -lbsm -framework Security -framework CoreFoundation -o "$work/broker"
 xcrun clang -Wall -Wextra -Werror "$base/peer.c" "$base/tests/inherited-child.c" -lbsm -framework Security -framework CoreFoundation -o "$work/inherited-child"
 broker_output=$("$work/broker" "$work/inherited-child" 2>&1)
 [ -z "$broker_output" ]
+xcrun clang -Wall -Wextra -Werror -DBRAIN_NATIVE_FIXTURE "$base/peer.c" "$base/session.c" "$base/presence.c" "$base/broker.c" "$base/tests/submission-fixture.c" -lbsm -framework Security -framework CoreFoundation -o "$work/submission"
+"$work/submission"
 xcrun clang -Wall -Wextra -Werror -DBRAIN_NATIVE_FIXTURE "$base/peer.c" "$base/worker-host.c" "$base/tests/worker-host-fixture.c" -lbsm -framework Security -framework CoreFoundation -o "$work/worker-host"
 worker_hash=$(codesign -dv --verbose=4 /usr/bin/true 2>&1 | sed -n 's/^CDHash=//p')
 [ ${#worker_hash} -eq 40 ]
@@ -46,4 +48,13 @@ xcrun clang -Wall -Wextra -Werror "$base/presence.c" "$base/session.c" "$base/te
 printf '%s\n' '합성 서명 일회성 검증 통과'
 xcrun clang -Wall -Wextra -Werror -fblocks -c "$base/presence-gate.m" -o "$work/presence-gate.o"
 xcrun clang -Wall -Wextra -Werror -fblocks -c "$base/secure-prompt.m" -o "$work/secure-prompt.o"
+xcrun clang -Wall -Wextra -Werror -fblocks -c "$base/submission-ui.m" -o "$work/submission-ui.o"
+xcrun clang -Wall -Wextra -Werror -fblocks -DBRAIN_NATIVE_FIXTURE "$base/peer.c" "$base/session.c" "$base/presence.c" "$base/broker.c" "$base/auth-channel.c" "$base/submission-ui.m" "$base/tests/submission-e2e.m" -lbsm -framework AppKit -framework Security -framework CoreFoundation -o "$work/submission-e2e"
+"$work/submission-e2e"
+xcrun clang -Wall -Wextra -Werror -fblocks "$base/supervisor-bootstrap.c" "$base/tests/supervisor-bootstrap-fixture.c" -o "$work/supervisor-bootstrap"
+"$work/supervisor-bootstrap"
 printf '%s\n' '생체 승인·보안 입력 부품 컴파일 통과'
+xcrun clang -Wall -Wextra -Werror "$base/tests/ui-events-fixture.c" -o "$work/ui-events"
+"$work/ui-events"
+xcrun clang -Wall -Wextra -Werror -fblocks "$base/tests/auth-ui-handler-fixture.m" "$base/xpc-peer.c" "$base/submission-ipc.c" "$base/auth-channel.c" "$base/peer.c" "$base/submission-ui.m" "$base/presence-gate.m" -lbsm -framework AppKit -framework Security -framework CoreFoundation -framework LocalAuthentication -framework SystemConfiguration -o "$work/ui-handler"
+"$work/ui-handler"

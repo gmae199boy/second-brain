@@ -17,6 +17,8 @@ typedef struct {
 /* 이름, UID, 해시는 보호된 설치 정책에서 제공한다. */
 int brain_host_connect(brain_host_client *client,const char *service,uid_t uid,const uint8_t hash[20]);
 int brain_host_start(brain_host_client *client,const uuid_t work,const uuid_t attempt,uint64_t run,uint64_t binding,uint64_t epoch,const uint8_t package[32]);
+/* 인증된 supervisor는 auth admission 확인 후 broker가 만든 endpoint만 넘긴다. */
+int brain_host_start_auth(brain_host_client *client,const uuid_t work,const uuid_t attempt,uint64_t run,uint64_t binding,uint64_t epoch,const uint8_t package[32],int channel_fd);
 /* 호출자는 성공적인 내구성 기록 후에만 호출한다. */
 int brain_host_recorded(brain_host_client *client);
 /* 1은 신원·그룹 확인, -1은 불명이다. */

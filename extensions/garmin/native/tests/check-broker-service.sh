@@ -11,7 +11,7 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT HUP INT TERM
-xcrun clang -Wall -Wextra -Werror -fblocks "$base/xpc-peer.c" "$base/peer.c" "$base/auth-channel.c" "$base/tests/broker-service-client.c" -lbsm -framework Security -framework CoreFoundation -o "$work/client"
+xcrun clang -Wall -Wextra -Werror -fblocks "$base/xpc-peer.c" "$base/peer.c" "$base/auth-channel.c" "$base/submission-ipc.c" "$base/tests/broker-service-client.c" -lbsm -framework Security -framework CoreFoundation -o "$work/client"
 client_hash=$(codesign -dv --verbose=4 "$work/client" 2>&1 | sed -n 's/^CDHash=//p')
 [ ${#client_hash} -eq 40 ]
 python3 - "$work/policy.h" "$label" "$(id -u)" "$client_hash" <<'PY'
@@ -22,9 +22,9 @@ with open(path,'w',encoding='utf-8') as out:
     for role in ('SUPERVISOR','WORKER','UI'):
         out.write(f'#define BRAIN_BROKER_{role}_SERVICE "{label}.{role.lower()}"\n#define BRAIN_{role}_UID {uid}\n')
         out.write(f'static const uint8_t BRAIN_{role}_HASH[20]={{{values}}};\n')
-    out.write(f'#define BRAIN_BROKER_UID {uid}\nstatic const uint8_t BRAIN_PACKAGE_HASH[32]={{'+','.join(['1']*32)+'};\n')
+    out.write(f'#define BRAIN_BROKER_UID {uid}\n#define BRAIN_PRESENCE_POLICY_GENERATION 1\nstatic const uint8_t BRAIN_PACKAGE_HASH[32]={{'+','.join(['1']*32)+'};\n')
 PY
-xcrun clang -Wall -Wextra -Werror -fblocks -DBRAIN_NATIVE_FIXTURE -DBRAIN_SAME_UID_FIXTURE -DBRAIN_NATIVE_POLICY_HEADER="\"$work/policy.h\"" "$base/broker-service.c" "$base/broker.c" "$base/session.c" "$base/peer.c" "$base/xpc-peer.c" -lbsm -framework Security -framework CoreFoundation -o "$work/service"
+xcrun clang -Wall -Wextra -Werror -fblocks -DBRAIN_NATIVE_FIXTURE -DBRAIN_SAME_UID_FIXTURE -DBRAIN_NATIVE_POLICY_HEADER="\"$work/policy.h\"" "$base/broker-service.c" "$base/broker.c" "$base/session.c" "$base/presence.c" "$base/peer.c" "$base/xpc-peer.c" -lbsm -framework Security -framework CoreFoundation -framework SystemConfiguration -o "$work/service"
 service_hash=$(codesign -dv --verbose=4 "$work/service" 2>&1 | sed -n 's/^CDHash=//p')
 [ ${#service_hash} -eq 40 ]
 cat > "$work/fixture.plist" <<PLIST
@@ -35,4 +35,4 @@ PLIST
 if ! launchctl bootstrap "$domain" "$work/fixture.plist"; then uncertain=1; exit 1; fi
 owned=1
 "$work/client" "$label" "$service_hash"
-printf '%s\n' 'broker 세 역할 연결과 승인 차단 통과'
+printf '%s\n' '합성 broker 세 역할 연결과 단회 제출 검사 통과'

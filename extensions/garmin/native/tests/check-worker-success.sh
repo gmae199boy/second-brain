@@ -13,9 +13,11 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT HUP INT TERM
-xcrun clang -Wall -Wextra -Werror -fblocks "$base/xpc-peer.c" "$base/host-client.c" "$base/tests/worker-success-client.c" -framework Security -framework CoreFoundation -o "$work/client"
+fixture_flag=
+if [ "${BRAIN_FIXTURE_DESCENDANT:-}" = 1 ]; then fixture_flag=-DBRAIN_FIXTURE_DESCENDANT; fi
+xcrun clang -Wall -Wextra -Werror -fblocks $fixture_flag "$base/xpc-peer.c" "$base/host-client.c" "$base/tests/worker-success-client.c" -framework Security -framework CoreFoundation -o "$work/client"
 client_hash=$(codesign -dv --verbose=4 "$work/client" 2>&1 | sed -n 's/^CDHash=//p')
-xcrun clang -Wall -Wextra -Werror "$base/peer.c" "$base/tests/worker-success-child.c" -lbsm -framework Security -framework CoreFoundation -o "$work/child"
+xcrun clang -Wall -Wextra -Werror $fixture_flag "$base/peer.c" "$base/tests/worker-success-child.c" -lbsm -framework Security -framework CoreFoundation -o "$work/child"
 worker_hash=$(codesign -dv --verbose=4 "$work/child" 2>&1 | sed -n 's/^CDHash=//p')
 [ ${#client_hash} -eq 40 ] && [ ${#worker_hash} -eq 40 ]
 python3 - "$work/policy.h" "$label" "$(id -u)" "$client_hash" "$worker_hash" <<'PY'

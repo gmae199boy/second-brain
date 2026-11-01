@@ -44,18 +44,22 @@ int brain_auth_attach(brain_auth_session *s, const brain_xpc_peer *peer, const b
     || memcmp(peer->hash,s->binding.ui_hash,20) || !selection || !same(&s->binding,selection)) { brain_auth_revoke(s); return 0; }
   s->attached = 1; return 1;
 }
+int brain_auth_approve_callback(brain_auth_session *s) {
+  if (!active(s) || !s->attached || !s->prompt_open || s->approved) { brain_auth_revoke(s); return 0; }
+  s->approved = 1; return 1;
+}
 int brain_auth_approve(brain_auth_session *s, int trusted_presence) {
   if (!active(s) || !s->attached || !s->prompt_open || s->approved || trusted_presence != 1) { brain_auth_revoke(s); return 0; }
 #ifndef BRAIN_NATIVE_FIXTURE
   /* 사용자 승인 세탁과 접근성 자동화의 OS 증거가 없어 실제 승인은 닫혀 있다. */
   brain_auth_revoke(s); return 0;
 #else
-  s->approved = 1; return 1;
+  return brain_auth_approve_callback(s);
 #endif
 }
 int brain_auth_prompt(brain_auth_session *s, const uint8_t prompt[16], int is_mfa) {
   if (!active(s) || !s->attached || s->prompt_open || s->approved || !prompt || !nonzero(prompt,16) || (is_mfa != 0 && is_mfa != 1)
-    || s->prompt_count >= 64 || (is_mfa && s->mfa_count >= 3)) { brain_auth_revoke(s); return 0; }
+    || s->prompt_count >= 4 || (is_mfa ? (s->sequence == 0 || s->mfa_count >= 3) : s->prompt_count != 0)) { brain_auth_revoke(s); return 0; }
   for (size_t i = 0; i < s->prompt_count; i++) if (!memcmp(s->seen_prompts[i], prompt, 16)) { brain_auth_revoke(s); return 0; }
   if (is_mfa) s->mfa_count++; memcpy(s->seen_prompts[s->prompt_count++],prompt,16); memcpy(s->prompt,prompt,16); s->prompt_open = 1; return 1;
 }

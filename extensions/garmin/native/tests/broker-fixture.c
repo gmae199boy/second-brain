@@ -4,11 +4,13 @@
 #include <sys/random.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <CommonCrypto/CommonDigest.h>
 #include "../broker.h"
 #include "../peer.h"
 extern char **environ;
 int brain_xpc_send_fd(brain_xpc_peer *peer, int fd) { (void)peer;(void)fd;return 0; }
 void brain_xpc_close(brain_xpc_peer *peer) { if(peer)peer->authenticated=0; }
+static int guard(void *context) {(void)context;return 1;}
 int main(int argc,char **argv) {
   if(argc!=2)return 1;int worker=-1,ui=-1;if(!brain_broker_prepare_channel(&worker,&ui,2000))return 2;
   int inherited=fcntl(worker,F_DUPFD_CLOEXEC,10);if(inherited<0)return 3;
@@ -25,7 +27,16 @@ int main(int argc,char **argv) {
   brain_auth_binding b={.run_generation=1,.binding_generation=1,.package_generation=1,.connection_epoch=1,.worker_uid=501,.ui_uid=502,.worker_pid=10};
   memset(b.session,1,16);memset(b.work,2,16);memset(b.attempt,3,16);memset(b.launch_lease,4,16);memset(b.package,5,32);memset(b.worker_hash,6,20);memset(b.ui_hash,7,20);
   brain_xpc_peer w={.uid=501,.pid=10,.authenticated=1},u={.uid=502,.pid=20,.authenticated=1};memcpy(w.hash,b.worker_hash,20);memcpy(u.hash,b.ui_hash,20);
-  brain_auth_broker broker;if(!brain_broker_init(&broker,&b,&u,&w,3000) || !brain_broker_worker(&broker) || !brain_broker_recorded(&broker) || !brain_broker_attach(&broker,&b) || !brain_broker_prompt(&broker,b.session,0) || !brain_broker_approve(&broker,1))return 9;
-  if(brain_broker_deliver(&broker,2000) || !broker.needs_reap || !broker.session.revoked)return 10;
+  brain_auth_broker broker;if(!brain_broker_init(&broker,&b,&u,&w,3000) || !brain_broker_set_guard(&broker,guard,NULL) || !brain_broker_worker(&broker) || !brain_broker_recorded(&broker) || !brain_broker_attach(&broker,&b) || !brain_broker_prompt(&broker,b.session,0))return 9;
+  brain_presence_scope scope={.gui_pid=20,.gui_asid=1,.gui_start_sec=1,.policy_generation=1,.response_generation=1};memset(scope.gui_session,8,16);memset(scope.gui_instance,9,16);memset(scope.gui_boot,10,16);
+  brain_presence_challenge challenge;uint8_t digest[32],capability[32];
+  if(!brain_broker_challenge(&broker,&scope,1000,&challenge))return 11;
+  CC_SHA256(challenge.message,(CC_LONG)challenge.length,digest);
+  if(!brain_broker_callback(&broker,digest,capability) || !brain_broker_consume(&broker,&scope,b.session,capability))return 12;
+  if(brain_broker_consume(&broker,&scope,b.session,capability) || !broker.session.revoked)return 13;
+  brain_broker_destroy(&broker);
+  w.authenticated=u.authenticated=1;
+  if(!brain_broker_init(&broker,&b,&u,&w,3000) || !brain_broker_set_guard(&broker,guard,NULL) || !brain_broker_worker(&broker) || !brain_broker_recorded(&broker) || !brain_broker_attach(&broker,&b) || !brain_broker_prompt(&broker,b.session,0) || !brain_broker_approve(&broker,1))return 14;
+  if(brain_broker_deliver(&broker,-1) || !broker.needs_reap || !broker.session.revoked)return 10;
   brain_broker_destroy(&broker);return 0;
 }

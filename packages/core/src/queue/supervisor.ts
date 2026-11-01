@@ -3,7 +3,7 @@ import { failureFingerprint, failureText } from '../domain/failure.js';
 import { MAX_WORK_ATTEMPTS, SUPERVISOR_CAPACITY, workKindPolicy, workStallWindowMs, SUPERVISOR_POLL_MS, SUPERVISOR_RENEW_EVERY_MS, SUPERVISOR_CANCEL_GRACE_MS, SUPERVISOR_CANCEL_POLL_MS, SUPERVISOR_GROUP_CONFIRM_MS, workExecutionClass, type WorkItem } from '../domain/work-item.js';
 import type { Clock, Timer } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
-import type { ProcessHandle, ProcessInspector, ProcessLauncher, ProcessSpec } from '../ports/process.js';
+import type { ProcessExit, ProcessHandle, ProcessInspector, ProcessLauncher, ProcessSpec } from '../ports/process.js';
 import type { FinishSupervisedWorkInput, FinishWorkResult, OpenSupervisedAttempt, SchemaStore, WorkStore } from '../ports/store.js';
 import type { ChannelStore } from '../channels/store.js';
 import { createAbiRun, createAbiStderr, decodeAbiEnv, type AbiRunVerdict } from '../process-abi/codec.js';
@@ -21,6 +21,8 @@ export interface ProtectedLaunch {
   prepare(item: WorkItem, token: string): Promise<{ ok: true; spec: ProcessSpec } | { ok: false; code: 'EXTENSION_CONFIG_INVALID' | 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
   admit?(item: WorkItem, token: string, spec: ProcessSpec): Promise<{ ok: true; admitted: boolean; busy?: boolean; spec?: ProcessSpec } | { ok: false; code: 'EXTENSION_CONFIG_INVALID' | 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
   releaseAdmission?(item: WorkItem, token: string): Promise<{ ok: true; released: boolean } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
+  /** 봉인 registry의 입력 채널 작업은 실행 세대가 없는 child를 승인하지 않는다. */
+  requiresInputChannel?: boolean;
   // 이 경계는 보호 설치의 신뢰된 registry만 제공한다. 일반 manifest로 선택하지 않는다.
   bootstrap?: { authorize(handle: ProcessHandle, identity: GroupIdentity, item: WorkItem, token: string, signal: AbortSignal): Promise<boolean> };
 }
@@ -182,7 +184,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     const startedAt = clock.now().getTime();
     let endedAt: number | undefined;
     let verdict: AbiRunVerdict;
-    let exit = { code: null as number | null, signal: null as string | null };
+    let exit: ProcessExit = { code: null, signal: null };
     let stopped = false;
     let terminationCause: 'exit' | 'cancelled' | 'stalled' | 'protocol' | undefined;
     let sawFinal = false;
@@ -265,6 +267,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
       }
       const supervisionFailure = (): void => { supervisionFailed = true; terminate('protocol'); };
       try {
+        if (protection?.requiresInputChannel && (!options.sealedService || !handle.protectedIdentity)) throw new Error('보호 입력 실행 신원 누락');
         const inspect = Promise.all([inspector.bootTime(), inspector.startedAt(handle.pid)] as const);
         const observed = protection?.bootstrap ? await Promise.race([inspect, bootstrapAborted.then(() => null)]) : await inspect;
         if (observed === null) throw new Error('보호 신원 조회 중단');
@@ -273,7 +276,8 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
           osStartedAt: start.state === 'found' ? start.value : null };
         if (identity.osBootAt === null || identity.osStartedAt === null) await problem('감독자가 자식의 OS 시작 신원을 확인하지 못했습니다');
         const record = store.recordSupervisedProcess({ id: item.id, attemptToken: token, pid: handle.pid, pgid: handle.pid,
-          osBootAt: identity.osBootAt, osStartedAt: identity.osStartedAt });
+          osBootAt: identity.osBootAt, osStartedAt: identity.osStartedAt,
+          ...(protection?.requiresInputChannel && handle.protectedIdentity ? { protectedIdentity: handle.protectedIdentity } : {}) });
         const recorded = protection?.bootstrap ? await Promise.race([record, bootstrapAborted.then(() => ({ ok: false as const, code: 'DB_UNAVAILABLE' as const, message: '중단됨' }))]) : await record;
         if (!recorded.ok) await problem(`감독자 프로세스 기록 실패 (${recorded.code})`);
         if (protection?.bootstrap && (!recorded.ok || recorded.outcome !== 'done' || identity.osBootAt === null || identity.osStartedAt === null)) throw new Error('보호 신원 기록 실패');
@@ -366,8 +370,11 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
           if (supervisionFailed) throw new Error('supervision failed');
           // Always confirm the group before terminal settlement. A cancellation can
           // commit after our last read, including when leader exit wins the race.
+          const revoked = !protection?.requiresInputChannel || terminationCause === 'exit'
+            || (handle.revokeInput ? await handle.revokeInput().catch(() => false) : false);
           const cleaned = await cleanup(identity, { handle });
-          if (cleaned === 'unknown') {
+          const observedExit = cleaned === 'died' ? await exited : null;
+          if (!revoked || cleaned === 'unknown' || observedExit?.unknown) {
             readingStopped = true;
             await pendingRenewal;
             handle.closeOutput();
@@ -382,7 +389,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
             return;
           }
           groupConfirmed = true;
-          exit = await exited;
+          exit = observedExit!;
           // Drain buffered ABI lines, but inherited pipes can outlive both the
           // leader and its original group. Closing them releases the iterator.
           const outputWait = new AbortController();
@@ -406,7 +413,11 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
             await problem('감독자 실행 중 오류가 발생했습니다');
             await stopWatching();
             let outcome: 'died' | 'unknown' = 'unknown';
-            try { outcome = await cleanup(identity, { handle }); } catch { /* Unconfirmed cleanup retains the token. */ }
+            try {
+              const revoked = !protection?.requiresInputChannel || (handle.revokeInput ? await handle.revokeInput().catch(() => false) : false);
+              outcome = await cleanup(identity, { handle });
+              if (!revoked || (outcome === 'died' && (await handle.exited).unknown)) outcome = 'unknown';
+            } catch { /* Unconfirmed cleanup retains the token. */ }
             await stopReading();
             return { outcome, detail: { elapsedMs: Math.max(0, (endedAt ?? clock.now().getTime()) - startedAt), stderr: stderr.value() } };
           })();

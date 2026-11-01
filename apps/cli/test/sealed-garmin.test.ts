@@ -5,10 +5,10 @@ import { SEALED_GARMIN_WORKER, sealedGarminLaunches } from '../src/daemon/sealed
 it('봉인 registry는 검증 실패를 닫고 실행 경로·인자·환경을 고정한다', async () => {
   let verified = false, seen = '';
   const ports = {
-    async verifyInstalledWorker(path) { seen = path; return verified; },
+    async verifyInstalledWorker(path: string) { seen = path; return verified; },
     async snapshot() { return '{"version":1,"extension":"garmin","values":{}}'; },
-    async admit() { return { ok: true, admitted: true }; },
-    async release() { return { ok: true, released: true }; },
+    async admit() { return { ok: true as const, admitted: true }; },
+    async release() { return { ok: true as const, released: true }; },
     bootstrap: { async authorize() { return false; } },
     command: '/tmp/attacker', PATH: '/tmp', url: 'postgres://attacker',
   };

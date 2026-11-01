@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <xpc/xpc.h>
 #include "worker-host.h"
 #include "xpc-peer.h"
@@ -82,9 +83,9 @@ static void on_child_exit(host_connection *host) {
   if (host->peer.authenticated && !host->revoked) {
     xpc_object_t event=xpc_dictionary_create(NULL,NULL,0);
     if (event) {
-      xpc_dictionary_set_string(event,"op",host->unknown ? "unknown" : "exit");
+      xpc_dictionary_set_string(event,"op",reaped==1 ? "exit" : "unknown");
       xpc_dictionary_set_int64(event,"pid",host->worker.pid);
-      if (!host->unknown) xpc_dictionary_set_int64(event,"wait_status",status);
+      if (reaped==1) xpc_dictionary_set_int64(event,"wait_status",status);
       xpc_connection_send_message(host->peer.connection,event); xpc_release(event);
     }
   }
@@ -92,8 +93,8 @@ static void on_child_exit(host_connection *host) {
   if (host->exit_source) { dispatch_source_cancel(host->exit_source); dispatch_release(host->exit_source); host->exit_source=NULL; }
   if (host->connection_invalid && !host->active) { dispatch_release(host->queue); free(host); }
 }
-static void handle_start(host_connection *host, xpc_object_t message) {
-  if (host->active || host->unknown || xpc_dictionary_get_count(message)!=7 || !field(message,"work",XPC_TYPE_UUID)
+static void handle_start(host_connection *host, xpc_object_t message, int auth) {
+  if (host->active || host->unknown || xpc_dictionary_get_count(message)!=(auth?8u:7u) || (auth && !field(message,"channel",XPC_TYPE_FD)) || !field(message,"work",XPC_TYPE_UUID)
       || !field(message,"attempt",XPC_TYPE_UUID) || !field(message,"run",XPC_TYPE_UINT64)
       || !field(message,"binding",XPC_TYPE_UINT64) || !field(message,"epoch",XPC_TYPE_UINT64)
       || !field(message,"package",XPC_TYPE_DATA)) { revoke_host(host); return; }
@@ -104,7 +105,11 @@ static void handle_start(host_connection *host, xpc_object_t message) {
   host->run=run; host->binding=binding; host->epoch=epoch;
   host->ledger_index=reserve_launch(host->work,host->attempt);
   if (host->ledger_index<0) { revoke_host(host); return; }
-  if (getentropy(host->lease,sizeof host->lease) || !brain_spawn_worker(BRAIN_WORKER_HASH,BRAIN_WORKER_UID,&host->worker)) { settle_launch(host->ledger_index); revoke_host(host); return; }
+  int channel=-1;
+  if(auth) {channel=xpc_dictionary_dup_fd(message,"channel");if(channel<0 || fcntl(channel,F_SETFD,FD_CLOEXEC)<0){if(channel>=0)close(channel);settle_launch(host->ledger_index);revoke_host(host);return;}}
+  int spawned=!getentropy(host->lease,sizeof host->lease) && (auth?brain_spawn_worker_with_channel(BRAIN_WORKER_HASH,BRAIN_WORKER_UID,channel,&host->worker):brain_spawn_worker(BRAIN_WORKER_HASH,BRAIN_WORKER_UID,&host->worker));
+  if(channel>=0)close(channel);
+  if(!spawned) { settle_launch(host->ledger_index); revoke_host(host); return; }
   host->active=1;
 #ifdef BRAIN_NATIVE_FIXTURE
   (void)write(2,"fixture-spawned\n",16);
@@ -152,6 +157,9 @@ static void handle_signal(host_connection *host, xpc_object_t message) {
     || !field(message,"signal",XPC_TYPE_INT64) || !current_identity(host)){revoke_host(host);return;}
   int64_t signal_value=xpc_dictionary_get_int64(message,"signal");
   if((signal_value!=SIGTERM && signal_value!=SIGKILL) || !brain_worker_signal(&host->worker,(int)signal_value)){host->unknown=1;revoke_host(host);return;}
+#ifdef BRAIN_NATIVE_FIXTURE
+  (void)write(2,"fixture-signalled\n",18);
+#endif
   xpc_object_t reply=xpc_dictionary_create_reply(message);if(!reply){revoke_host(host);return;}
   xpc_dictionary_set_bool(reply,"sent",true);xpc_connection_send_message(host->peer.connection,reply);xpc_release(reply);
 }
@@ -175,7 +183,8 @@ static void on_connection(xpc_connection_t connection) {
     }
     if (!brain_xpc_verify_message(&host->peer,message) || !field(message,"op",XPC_TYPE_STRING)) { revoke_host(host); return; }
     const char *op=xpc_dictionary_get_string(message,"op");
-    if (!strcmp(op,"start")) handle_start(host,message);
+    if (!strcmp(op,"start")) handle_start(host,message,0);
+    else if (!strcmp(op,"start_auth")) handle_start(host,message,1);
     else if (!strcmp(op,"recorded")) handle_recorded(host,message);
     else if (!strcmp(op,"inspect")) handle_inspect(host,message);
     else if (!strcmp(op,"signal")) handle_signal(host,message);

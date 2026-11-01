@@ -31,6 +31,7 @@ export function sealedGarminLaunches(ports: SealedGarminPorts): Readonly<Record<
         BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_SETTINGS_SNAPSHOT: settings,
       } } };
     },
+    ...(kind === 'garmin.auth' ? { requiresInputChannel: true } : {}),
     admit, releaseAdmission: release, bootstrap: Object.freeze({ authorize }),
   });
   return Object.freeze({ 'garmin.auth': make('garmin.auth'), 'garmin.collect': make('garmin.collect') });

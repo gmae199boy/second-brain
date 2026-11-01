@@ -3,8 +3,8 @@ title: '16.2 Garmin 인증과 영속 계정 보호'
 type: 'feature'
 ticket: 2
 created: '2026-11-01'
-status: blocked
-baseline_revision: 9008fd8d31e17b0335186b9b28ef367606088c7d
+status: in-progress
+baseline_revision: 1d4fec9a16056b0f473967fb6fcaca8a8f37790d
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
@@ -21,8 +21,6 @@ deferred:
   - summary: "검토 필요: [ASSUMPTION] 보호 bootstrap ACK 대기 상한은 10초로 두며 operator attach/session 제한과 구분한다."
   - summary: "검토 필요: [ASSUMPTION] 봉인 worker 설치 후보는 /Library/Application Support/SecondBrain/libexec/garmin-worker이며 D1 설치·D4 신원 검증 전 활성화하지 않는다."
   - summary: "검토 필요: [ASSUMPTION] UI 준비 재조회는 250ms 주기·15초 상한이며 native host 응답 상한도 15초로 두고 실제 취소·배포에서 재검증한다."
-blocked_at: "2026-11-01"
-blocked_reason: "보안 결정 공백: 일회성 OS 승인의 세션 또는 각 credentials·MFA 제출 소비 단위, 승인 policy와 broker 증거 신뢰 방식이 계획·epic·architecture에 미명시다. 같은 UID AX·승인 세탁 위협의 경계를 임의 확정할 수 없어 build-auto persistent facts의 security gap HALT를 적용한다. 저장소 내 D2B·D3B/D4·D5–D7 구현도 남아 awaiting-operator 조건이 아니다."
 ---
 
 <intent-contract>
@@ -107,6 +105,12 @@ blocked_reason: "보안 결정 공백: 일회성 OS 승인의 세션 또는 각 
 
 ## Implementation Notes
 
+### g4 재개
+
+D4A의 native 구성요소·libpq supervisor adapter·broker DB guard와 실제 보호 스키마 fixture를 구현했다. revoke ACK 뒤에만 cancel/hold/disable을 commit하는 경로와 이전 epoch 증거 거부를 지휘자도 독립 검증했다. 공통 registry 일반화와 다른 보호 auth·일반 kind 비간섭 시험도 통과했다. DB superuser가 trigger를 우회하는 별도 주입의 이미 전송된 frame은 in-flight로 구분하며 library 전달을 막는다. DB와 FD/HTTP가 원자적이라는 주장은 하지 않는다. 지휘자는 native 변경 diff와 전문을 읽고 보호 자격 파일의 초과 길이 쓰기·연결 옵션 검증을 수정 요청한 뒤 수정 소스와 ASan 시험의 독립 통과를 확인했다. 제품 `runSupervisor` 조립과 D2B·D5–D7은 미완료이며 운영 경로는 닫혀 있다. 이 저장소 구현은 operator 행동만 남은 상태가 아니다.
+
+타입 오류 두 건과 credentials 최초 1회·이후 MFA 최대 3회 예산을 수정했다. 지휘자는 해당 diff·전문 보고를 읽고 `pnpm typecheck`와 native session fixture를 독립 재실행해 통과했다. 제출별 callback·broker 소비·worker gate부터 나머지 단계를 계속한다. 전체 수락이나 실제 OS 격리 성공을 뜻하지 않는다.
+
 g3의 D1 부분 구현은 `tooling/protected-deployment/`에 있다. staging·고정 정책·FD 경로와 macOS ACL 검사·생성 실패 복구를 격리 fixture로 검증 중이다. 실제 설치·서명·서비스별 권한·별도 principal 거부·보호 엔진 실증은 아직 미완료다. [보호 엔진 공식 지원 조사](story-mfa-0-engine-research.md)에서는 headless와 멀티유저는 확인했으나 전체 관리 경로 격리 배치의 긍정 근거를 확인하지 못했다. 이 한계를 입력·HTTP 허용 근거로 바꾸지 않는다.
 
 현재 generation의 부분 구현으로 보호 schema·독립 latch·intent·alias 병합·영속 pacing·작업별 예산, 합성 MFA·전송 seam, 실패 닫힌 auth 진입점, 공통 supervisor의 spawn 전 admission과 재provision 권한 보존을 구현 중이다. 지휘자는 초기 보호 시험을 새 격리 PostgreSQL 18에서 독립 실행해 통과를 확인했다. 이후 확장된 시험과 실제 supervisor·권한·daemon 검증은 워커 보고를 수집했으며 최종 독립 검증과 전체 수락은 아직 남아 있다. native peer API spike는 가능했으나 신뢰된 서명·같은 UID 공격자에 대한 실행물/tokenstore 격리는 미증명이다. 실제 Garmin HTTP·운영 tokenstore는 사용하지 않았다. 전체 T01–T28과 정상 인증·수집·해제 경로는 미완료이며 티켓 완료를 뜻하지 않는다.
@@ -114,6 +118,16 @@ g3의 D1 부분 구현은 `tooling/protected-deployment/`에 있다. staging·�
 이전 generation은 구현하지 않았다. 당시 HEAD의 직접 코드 확인과 읽기 전용 Orca 조사 보고서를 대조했다. 조사 보고서는 `/tmp/brain16-2-research.md`이며 기준 revision은 이 계획의 전체 baseline과 같다. ticket 16.1의 publisher·격리 fixture 연속성을 유지한다. 소스·시험·lock은 바꾸거나 실행하지 않았다.
 
 ## Plan Change Log
+
+- g4 D6 준비: [T01–T28 시험 연결 지도](story-mfa-0-g4-matrix-map.md)를 전문 확인했다. 현재 함수·합성·native·제품 Core runner의 관찰 층과 실제 wire/동시 binding/저장 실패·재시작 및 추가 보안 반례의 미검증을 분리했다. 읽기 전용 조사는 시험 실행이나 전체 행렬 통과가 아니며, 이후 D5/D6 구현·독립 실행에서 각 행의 정확한 runner와 결과를 기록한다.
+
+- g4 D4B 준비: [Core/native 연결 조사](story-mfa-0-g4-core-native-map.md)를 확보했다. Core의 단일 admission·identity commit 소유권, native ACK 분할, 실제 worker PID/leader reaping/그룹 관찰, 미spawn 단계의 취소 및 재시작 fence를 구현·검증 대상으로 보존한다. 보고의 bridge 선택은 제안이며 보안 조건을 완화하거나 새 claim loop를 허용하지 않는다. 기존 감독자의 durable admission·현재 attempt·불명 보존 권한 범위에서 내부 전이를 구체화하며 실제 결정 모순은 원본과 대조한다.
+
+- g4 D4A 수락 범위: [native 구현 전문](story-mfa-0-g4-native-report.md)과 해당 source diff를 읽고 native·격리 PG 검증 및 credential ASan 보완을 확인했다. 이는 구성 요소 단계의 수락이며 실제 운영·전체 수락을 뜻하지 않는다. D4B는 기존 단일 `runSupervisor`의 제품 launcher·저장소·bootstrap·취소 경로에 이 부품을 연결하고 실제 Core/격리 PG/native 통합을 검증한다.
+
+- g4 실행 단위 재정렬: D4A는 native UI·broker·worker·GUI host와 실제 PG adapter 및 revoke 순서를, D4B는 기존 `runSupervisor`와 제품의 저장소·launcher·취소 경로에 해당 부품을 연결하는 단위를 맡는다. D4A의 합성·격리 PG 성공은 D4B나 실제 배포 완료를 뜻하지 않는다. 이후 D2B B1–B6, D5, D6 전체 행렬·독립 리뷰와 D7을 그대로 유지한다.
+
+- g4 D2B 준비: [제한 API 실제 연결 조사](story-mfa-0-g4-api-composition.md)를 확보했다. 축약 queue 응답·오류·Date·drain 손실 및 첨부 spool의 locator 신뢰 반례를 보존한다. 조사 자체는 읽기 전용이며 구현·시험 성공이 아니다. 보고의 선택 후보는 기존 보호 배치 결정의 좁은 데이터 API·사용자 principal 취득·내부 권위 분리 범위에서 구현자가 구체화하며, 실제 보안 계약 모순이 발견되면 별도로 근거를 대조한다. release-block은 epic의 기존 에이전트 수동 실행 위임을 유지하고 credentials/MFA의 생체 정책을 임의 확장하지 않는다.
 
 - g3 D5 준비: [고정 라이브러리 연결 지도](story-mfa-0-library-map.md)에서 실제 lock/설치 소스를 대조했다. MFA early return·대체 verify POST·broad fallback·내부 refresh/redirect·tokenstore 상대 접근 및 cookie 호환 근거를 구현자에게 전달했다. 읽기 전용 조사이며 D5 구현/시험 성공이 아니다.
 
@@ -141,6 +155,26 @@ g3의 D1 부분 구현은 `tooling/protected-deployment/`에 있다. staging·�
 보호 DB 저장 전에 client 생성의 자동 I/O까지 금지하고, 호출 의도 commit 후 호출하며, 결과 저장 실패 시 의도를 남긴다. 외부 호출 중 SQL 쓰기 트랜잭션은 열지 않는다. library 내부 retry와 token refresh의 HTTP 수를 wrapper 호출 간격 보장과 혼동하지 않는다. 최초 미확인 계정의 안전한 발견·alias 결합은 기존 계정 차단을 초기화해서는 안 된다.
 
 ## Verification
+
+### g4 중간 지휘자 검증
+
+- `sh extensions/garmin/native/tests/check-broker-credential.sh` 지휘자 독립 실행 통과(`/tmp/brain162g4-parent-credential.log`). ASan으로 초과 길이·크기 변경·내부 NUL과 연결 옵션·단일 주소 경계를 확인했다. 실제 보호 principal·서버 TLS 성공은 아직 검증하지 않았다.
+
+- `BRAIN_FIXTURE_AUTHORITY=1 BRAIN_FIXTURE_GENERIC=1 sh extensions/garmin/native/tests/check-composed-auth.sh` 지휘자 독립 실행 통과(`/tmp/brain162g4-parent-generic-registry.log`). 다른 보호 auth·확장 간 범위와 일반 kind 비간섭을 확인했다.
+
+- `for fixture_case in 12 13 14; do BRAIN_FIXTURE_AUTHORITY=1 BRAIN_FIXTURE_NATIVE_STORE=1 BRAIN_FIXTURE_CASE="$fixture_case" sh extensions/garmin/native/tests/check-composed-auth.sh; done`의 각 별도 실행 및 `BRAIN_FIXTURE_AUTHORITY=1 BRAIN_FIXTURE_RACE=1` 실행을 지휘자가 독립 수행해 모두 통과했다. 로그는 `/tmp/brain162g4-parent-revoke-12.log`, `-13.log`, `-14.log`, `/tmp/brain162g4-parent-claim-hold-race.log`다. revoke 선행 취소·hold·disable과 claim/hold 및 이전 epoch 증거 거부의 native/DB 구성 요소 검증이며 제품 Core 연결은 아직 별도다.
+
+- libpq 정상 경로 안정화 뒤 지휘자 재실행은 종료 0이었다(`/tmp/brain162g4-parent-native-store-stable.log`). 구현자의 동일 정상 경로 연속 4회·기록 거부 1회 로그도 확인했다. 이전 종료 6의 원인은 수정 중 스냅샷 또는 간헐 실패 중 어느 쪽인지 단정하지 않으며 원래 기록을 보존한다.
+
+- libpq adapter 중간 독립 검증: `BRAIN_FIXTURE_NATIVE_STORE=1 BRAIN_FIXTURE_AUTHORITY=1 sh extensions/garmin/native/tests/check-composed-auth.sh`는 종료 6으로 실패했고, `BRAIN_FIXTURE_DENY_RECORD=1` 추가 경로는 통과했다. 로그는 `/tmp/brain162g4-parent-native-store.log`, `/tmp/brain162g4-parent-native-store-denied.log`다. broker DB guard 수정 중 스냅샷 여부와 원인을 같은 구현자에게 조사·수정 요청했으며 현재 성공 증거로 세지 않는다.
+
+- `BRAIN_FIXTURE_AUTHORITY=1 sh extensions/garmin/native/tests/check-composed-auth.sh` 및 `BRAIN_FIXTURE_AUTHORITY=1 BRAIN_FIXTURE_DENY_RECORD=1 sh extensions/garmin/native/tests/check-composed-auth.sh` 지휘자 독립 실행 통과. 로그는 `/tmp/brain162g4-parent-authority.log`, `/tmp/brain162g4-parent-authority-denied.log`다. 실제 core/Garmin/보호 migration과 supervisor role의 admission·attempt 기록 및 오류 뒤 보존을 확인했다. 시험용 psql adapter·합성 생체·같은 UID 역할 fixture이며 제품 adapter·별도 principal 배포 완료 증거가 아니다.
+
+- `sh extensions/garmin/native/tests/check-composed-auth.sh` 및 `sh extensions/garmin/native/tests/check-gui-service.sh` 지휘자 독립 실행 통과. 로그는 `/tmp/brain162g4-parent-composed-auth.log`, `/tmp/brain162g4-parent-gui-service.log`다. 별도 프로세스의 합성 승인·FD·전용 fixture PostgreSQL 기록/거부를 검증하며 실제 Brain 권위 표·서비스 배포·생체 성공을 뜻하지 않는다.
+- `check-broker-service.sh`, `check-gui-host.sh`, `check-worker-success.sh` 지휘자 독립 실행 통과. 로그는 각각 `/tmp/brain162g4-parent-broker-service.log`, `/tmp/brain162g4-parent-gui-host.log`, `/tmp/brain162g4-parent-worker-success.log`다.
+
+- `pnpm typecheck` 통과: `/tmp/brain162g4-phase1-typecheck.log`.
+- `sh extensions/garmin/native/tests/check-peer.sh` 통과: `/tmp/brain162g4-parent-peer.log`. 제출별 합성 callback·broker 소비·worker의 권한 확인 전 FD 미읽기와 native 회귀 및 UI 부품 컴파일 범위다. 실제 GUI 생체·AX·서비스 principal·내구 DB 연결이나 전체 수락 성공은 아니다.
 
 ### g3 지휘자 재검증
 
@@ -403,18 +437,6 @@ Garmin 부분은 새 auth/client/protection 모듈, 새 migrations, manifest.aut
 
 이 워크플로의 persistent facts는 보안·비밀 관련 결정 공백이면 보수적 가정으로 진행하지 않고 HALT하도록 지시한다. 제출별 생체 승인 제안은 미확정 제안으로 보존한다. 재개 조건은 승인 policy·소비 단위·broker가 신뢰할 증거 출처와 실제 AX/취소 검증 조건을 결정문에 명시하는 것이다. 이외의 D2B·D3B/D4·D5–D7 미완료 코드도 보존하며 완료로 올리지 않는다. 따라서 관리자 설치·생체 동작 같은 외부 행동만 남은 `awaiting-operator` 상황이 아니다.
 
-## Auto Run Result
-
-- Status: `blocked`
-- Blocking condition: OS 승인의 소비 단위(인증 세션 1회 또는 credentials·MFA 각 제출), 승인 policy와 broker가 신뢰할 증거 출처가 미결정이다. 보안 관련 결정 공백은 HALT하라는 persistent facts를 적용했다. 외부 operator 행동만 남은 상태가 아니며 `awaiting-operator`로 바꾸지 않는다.
-- 구현: D1 staging·경로 검증, D2A 보호 role·migration·제한 API, D3A 단일 supervisor와 launcher port, D3B/D4의 native peer·host·broker·FD·후보 UI 및 합성 시험을 부분 보존했다. [최종 구현 보고](story-mfa-0-g3-implementation.md)에 구현자 결과와 지휘자 추가 확인을 함께 기록했다. D2B, 실제 서비스 composition·권위 DB ACK, egress·정상 library 연결, D6 전체 T01–T28/독립 리뷰와 D7은 미완료다.
-- 검증: 기존 D2A 33건·D3A 67건과 부분 회귀를 통과했다. 지휘자는 native peer/C-Python frame, worker peer 미확인 거부, 종료 event 정상/잘못된 PID 거부를 직접 재실행해 통과를 확인했다. 이는 동일 UID·합성 시험이며 실제 보호 엔진·서비스 principal·생체/AX 증거가 아니다. worker 측 XPC FD 전달 시험은 잘못된 계약이라 수락 증거에서 제외했다.
-- 종료 직전 `pnpm typecheck` 실패: `apps/cli/test/sealed-garmin.test.ts:8` implicit any 및 `:15` literal widening 두 오류. 이미 정식 종료된 구현 Dispatch는 수정 메시지를 거부했으며 재개 시 해결해야 한다. `git diff --check`는 통과했다. 전체 Verify·행렬 감사·독립 리뷰는 진행하지 않았다.
-- 상태 소유권: 이 HALT에서만 `tickets.py mark 16.2 blocked --blocked …`를 실행했다. done·커밋·push는 하지 않았고 기존 WIP와 미추적 소스를 보존했다. 인증 입력·외부 HTTP·운영 DB/토큰·실계정·관리자 설치는 사용하지 않았다.
-- 재개: 승인 범위와 policy·증거 provenance를 명시적으로 확정하고 타입 오류부터 수정한 뒤 D3B/D4→D2B→D5–D7의 전체 요구·검증·독립 리뷰를 계속한다.
-- 정리: 자기 Orca Run `run_633e0c971529`의 구현자 1명·읽기 전용 조사자 5명의 정식 보고를 읽고 release했다. fleet은 `released: 6`, `reclaimable: 0`, 후속 inbox 검사에 미처리 delivery가 없었다. 다른 Run이나 워커는 종료하지 않았다. 이 확인과 검증·재개 조건을 checkpoint한 뒤 자기 전용 제어 셸만 닫는다.
-
-
 ## 감독자 결정 2026-11-01: 제출별 승인과 재개
 
 <intent-contract>
@@ -425,3 +447,9 @@ Garmin 부분은 새 auth/client/protection 모듈, 새 migrations, manifest.aut
 </intent-contract>
 
 재개: 원래 기준 `885ad522`부터 전체 diff와 기존 리뷰를 유지한다. 부분 구현은 미검증 WIP `72b1fec`에 보존되었으며 타입 검사 오류 두 건도 남았다. 먼저 해당 타입 오류와 phase/credentials 예산을 고치고, 제출별 callback·broker 소비·worker gate, FD 상속/DB ACK, D2B 보호 경계, D5 egress를 각각 구현·검증·checkpoint한다. D6 전체 T01–T28과 위 추가 반례, 독립 리뷰 및 D7을 생략하지 않는다. 단계별 phase-ready로 같은 구현자를 이어가며 capacity 오류는 같은 모델·세션으로 재개한다. 기존 production fail-closed를 검증 전 제거하지 않는다. 이 결정은 완료 증거가 아니다.
+
+## 감독자 재개 2026-11-01: g4 시간 초과 인계
+
+지휘자 90분 시간 초과 후 기존 구현자는 관리상 failed 인계 보고를 제출하고 release·ACK됐다. [전체 보고](story-mfa-0-g4-implementation.md)와 g4 조사 세 문서를 보존한다. 원래 기준은 `885ad522`, 이번 generation 기준은 `1d4fec9`이며 전체 원래 diff 및 기존 보안 계약을 유지한다. 이 인계는 구현 실패 횟수가 아니며 WIP는 완료 증거가 아니다.
+
+재개 순서: (1) D4B 제품 단일 supervisor 조립과 ABI 연결을 작은 단계로 검증, (2) 활성 cancel/hold/disable의 broker 폐기·다중 attempt·복구, (3) leader 종료 후 안전한 그룹 정리와 별도 principal 검증, (4) D2B B1–B6, (5) D5 egress/library, (6) D6 T01–T28·추가 반례·독립 보안 리뷰, (7) D7. 각 단계 phase-ready·checkpoint 후 이어간다. 마지막 Core hook과 DB EXECUTE 검증 추가 뒤 관련 테스트, split denied 및 보호 migration generic/race/revoke 전부 재실행한다. 합성 성공을 실제 봉인·OS 생체·AX·운영 격리 증거로 취급하지 않고 검증 전 운영 auth/HTTP를 닫는다. capacity는 같은 모델·세션으로 재개한다.

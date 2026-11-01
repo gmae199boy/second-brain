@@ -2,6 +2,7 @@ import { extensionPublicProjection, validInstallProgress, type ExtensionInstallP
 import { sql } from 'kysely';
 import { databaseFailure, type PgConnect } from './connect.js';
 import { withWrite } from './write.js';
+import { closePendingProtectedInputs } from './protected-input.js';
 import { ensureWork } from './work.js';
 type Row = { name: string; version: string; installed_at: string; enabled: boolean; enabled_changed_at: string; connection_status: 'connected' | 'failed' | null; connection_checked_at: string | null; connection_code: string | null; connection_message: string | null };
 const record = (r: Row): ExtensionRecord => ({ name: r.name, version: r.version, installedAt: new Date(r.installed_at), enabled: r.enabled, enabledChangedAt: new Date(r.enabled_changed_at), connectionStatus: r.connection_status, connectionCheckedAt: r.connection_checked_at === null ? null : new Date(r.connection_checked_at), connectionCode: r.connection_code, connectionMessage: r.connection_message });
@@ -64,6 +65,7 @@ export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
     async setExtensionEnabled({ name, enabled, now }) {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       const result = await withWrite(opened.connection, async held => {
+        if (!enabled) await closePendingProtectedInputs(held, `extension:${name}`);
         const rows = await sql<{ enabled: boolean }>`select enabled from brain.extensions where name=${name} for update`.execute(held);
         const row = rows.rows[0];
         if (!row) return { found: false, changed: false };
