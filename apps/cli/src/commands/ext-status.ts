@@ -14,11 +14,13 @@ export function publicExtensionData(status: ExtensionPublicStatus) {
     python_environment: { status: status.pythonEnvironment?.status ?? null, code: status.pythonEnvironment?.code ?? null, checked_at: status.pythonEnvironment ? isoWithOffset(status.pythonEnvironment.checkedAt) : null },
     journal_present: status.journalPresent, login: status.login, connection: { status: status.connection.status,
       code: status.connection.code, message: status.connection.status === 'failed' ? '확장 실행에 실패했습니다' : null, checked_at: status.connection.checkedAt ? isoWithOffset(status.connection.checkedAt) : null },
+    ...(status.attention ? { attention: { requires_action: status.attention.requiresAction, requires_manual_action: status.attention.requiresManualAction } } : {}),
     schedule: status.schedule, held_schedule_count: status.heldScheduleCount, interrupted_work_count: status.interruptedWorkCount,
     install: status.journalPresent ? { result: status.installResult, failed_stage: status.failedStage, last_failure: status.lastFailure, stages: status.stages, auth_work_id: status.authWorkId, schedule_ids: status.scheduleIds } : null };
 }
 export function publicExtensionText(status: ExtensionPublicStatus): string[] {
   return [`확장 ${status.name}: ${status.installed ? (status.enabled ? '활성' : '비활성') : '미설치'}, 연결 ${status.connection.status ?? '미확인'}, 중단 일감 ${status.interruptedWorkCount}건, 보류 예약 ${status.heldScheduleCount}건.`,
+    ...(status.attention?.requiresManualAction ? ['수동 조치가 필요합니다.'] : status.attention?.requiresAction ? ['확장 조치가 필요합니다.'] : []),
     `설치 결과: ${status.installResult ?? (status.journalPresent ? '진행 중' : '미확인')}.`,
     ...installStages.map(stage => { const entry = status.stages[stage]; return `설치 단계 ${stage}: ${entry?.status ?? '미완료'}${entry?.code ? ` (${entry.code})` : ''}.`; })];
 }

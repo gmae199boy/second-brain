@@ -5,6 +5,7 @@ import { recallToolsCommand } from './recall-tools.js';
 import { recallExpandCommand } from './recall-expand.js';
 import { sessionsReadCommand } from './sessions-read.js';
 import { extRunCommand } from './ext-run.js';
+import { extAuthCommand } from './ext-auth.js';
 import { extInstallCommand } from './ext-install.js';
 import { extListCommand } from './ext-list.js';
 import { extStatusCommand } from './ext-status.js';
@@ -56,6 +57,7 @@ export const commands: readonly CommandSpec[] = [
   recallChunksCommand, recallToolsCommand, recallExpandCommand, sessionsReadCommand,
   extInstallCommand,
   extRunCommand,
+  extAuthCommand,
   extListCommand,
   extStatusCommand,
   extEnableCommand,

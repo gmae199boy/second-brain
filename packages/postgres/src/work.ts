@@ -143,6 +143,40 @@ export async function ensureWork(held: Kysely<PgSchema>, input: AddWorkInput) {
 
 export function postgresWorkStore(connect: PgConnect): WorkStore {
   return {
+    async releaseExtensionAdmission(input) {
+      if (!/^[a-z][a-z0-9_]{0,30}$/.test(input.extension) || /^(core|brain|public|pg_)/.test(input.extension)) return { ok: false, code: 'DB_UNAVAILABLE', message: '확장 admission이 올바르지 않습니다' };
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      const written = await withWrite(opened.connection, async held => {
+        await sql`set local transaction_timeout = '1900ms'`.execute(held);
+        await sql`set local statement_timeout = '1900ms'`.execute(held);
+        await sql`set local lock_timeout = '1500ms'`.execute(held);
+        const item = await lockOpenSupervisedWork(held,{id:input.workId,attemptToken:input.attemptToken});
+        if (!item || !item.kind.startsWith(input.extension + '.')) return false;
+        const result = await sql<{ released: boolean }>`select ${sql.ref(input.extension + '.release_work_admission')}(${input.workId}::uuid,${input.attemptToken}::uuid) as released`.execute(held);
+        return result.rows[0]?.released === true;
+      });
+      return written.ok ? { ok: true, released: written.value } : written;
+    },
+    async reserveExtensionAdmission(input) {
+      if (!/^[a-z][a-z0-9_]{0,30}$/.test(input.extension) || /^(core|brain|public|pg_)/.test(input.extension)) return { ok: false, code: 'DB_UNAVAILABLE', message: '확장 admission이 올바르지 않습니다' };
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      const written = await withWrite(opened.connection, async held => {
+        await sql`set local transaction_timeout = '1900ms'`.execute(held);
+        await sql`set local statement_timeout = '1900ms'`.execute(held);
+        await sql`set local lock_timeout = '1500ms'`.execute(held);
+        const item = await lockOpenSupervisedWork(held,{id:input.workId,attemptToken:input.attemptToken});
+        if (!item || !item.kind.startsWith(input.extension + '.') || item.attempts !== input.generation) return {state:'blocked',target:undefined};
+        const result = await sql<{ result: unknown }>`select ${sql.ref(input.extension + '.reserve_work_admission')}(${input.workId}::uuid,${input.attemptToken}::uuid,${input.generation}::bigint,${input.target}::text,${input.timeZone ?? 'UTC'}::text) as result`.execute(held);
+        const value = result.rows[0]?.result;
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('잘못된 admission 상태');
+        const record = value as Record<string,unknown>;
+        if (!['admitted','busy','blocked'].includes(String(record['state'])) || (record['state'] === 'admitted' && (typeof record['target'] !== 'string' || !record['target']))) throw new Error('잘못된 admission 상태');
+        return {state:record['state'],target:record['target']};
+      });
+      return written.ok ? { ok: true, admitted: written.value.state === 'admitted', ...(written.value.state === 'busy' ? { busy:true } : {}), ...(written.value.state === 'admitted' && written.value.target !== input.target ? { resolvedTarget: written.value.target as string } : {}) } : written;
+    },
     async holdWorkGroup({ group, now }) {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
@@ -297,6 +331,18 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         });
         return written.ok ? { ok: true, state: written.value } : written;
       } catch (error) { return { ...databaseFailure(error), message: `취소를 요청할 수 없습니다: ${describe(error)}` }; }
+    },
+    async deferSupervisedAdmission(input) {
+      return finish(connect, async held => {
+        const item = await lockOpenSupervisedWork(held, input);
+        if (!item || item.cancel_requested_at !== null) return 0;
+        const now = instant(input.now, 'work_attempts.finished_at');
+        const next = instant(new Date(input.now.getTime() + 30_000), 'work_items.next_attempt_at');
+        await sql`update brain.work_attempts set finished_at=${now},outcome='cancelled' where token=${input.attemptToken}`.execute(held);
+        await sql`update brain.work_items set current_attempt_token=null,claimed_at=null,claim_expires_at=null,claimed_by=null,
+          attempts=greatest(0,attempts-1),next_attempt_at=${next} where id=${input.id}`.execute(held);
+        return 1;
+      });
     },
     async recordSupervisedProcess(input) {
       return finish(connect, async held => {

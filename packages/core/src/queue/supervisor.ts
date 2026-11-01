@@ -16,6 +16,8 @@ export interface SupervisorOptions {
   protectedLaunches?: Readonly<Record<string, {
     extension: string; declarations: Readonly<Record<string, 'string' | 'number' | 'boolean'>>; errorCodes: readonly string[]; required?: readonly string[]; secrets?: readonly string[];
     prepare(item: WorkItem, token: string): Promise<{ ok: true; spec: ProcessSpec } | { ok: false; code: 'EXTENSION_CONFIG_INVALID' | 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
+    admit?(item: WorkItem, token: string, spec: ProcessSpec): Promise<{ ok: true; admitted: boolean; busy?: boolean; spec?: ProcessSpec } | { ok: false; code: 'EXTENSION_CONFIG_INVALID' | 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
+    releaseAdmission?(item: WorkItem, token: string): Promise<{ ok: true; released: boolean } | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
   }>>;
   loadProtectedLaunches?: () => Promise<NonNullable<SupervisorOptions['protectedLaunches']>>;
   onReadiness?: (ready: boolean) => void | Promise<void>;
@@ -151,6 +153,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     let failed: string | undefined;
     const protection = protectedLaunches[item.kind];
     let preparationFailure: { code: string; retryable: boolean } | undefined;
+    let admissionHeld = false, groupConfirmed = false;
     const run = createAbiRun(), stderr = createAbiStderr();
     const startedAt = clock.now().getTime();
     let endedAt: number | undefined;
@@ -176,6 +179,31 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
           }
         }
       } else spec = launches[item.kind]?.(item, token) ?? null;
+      if (protection && spec && protection.admit) {
+        const admission = await protection.admit(item, token, spec);
+        if (admission.ok && !admission.admitted && admission.busy && store.deferSupervisedAdmission) {
+          const input = { id:item.id, attemptToken:token, now:clock.now() };
+          execution.pendingSettlement = () => store.deferSupervisedAdmission!(input);
+          await retrySettlement(execution);
+          return;
+        }
+        if (!admission.ok || !admission.admitted) {
+          preparationFailure = { code: admission.ok ? 'EXTENSION_CONFIG_INVALID' : admission.code, retryable: false };
+          spec = null;
+        } else {
+          admissionHeld = true;
+          if (admission.spec) {
+            if (!Object.hasOwn(admission.spec.env,'BRAIN_SETTINGS_SNAPSHOT') || !decodeAbiEnv(admission.spec.env).ok || !validateProtectedSnapshot(admission.spec.env['BRAIN_SETTINGS_SNAPSHOT'],protection)) {
+              preparationFailure = { code:'EXTENSION_CONFIG_INVALID', retryable:false }; spec = null;
+            } else spec = admission.spec;
+          }
+          const open = await store.listOpenSupervisedAttempts();
+          const current = open.ok ? open.attempts.find(a => a.token === token) : undefined;
+          if (!open.ok || !current || current.cancelRequested || current.held || signal.aborted) {
+            stopped = true; preparationFailure = undefined; spec = null;
+          }
+        }
+      }
       if (protection && signal.aborted) { stopped = true; preparationFailure = undefined; spec = null; }
       started = spec === null ? { ok: false, message: '일감 실행 명세가 없습니다' } : await launcher.start(spec);
     } catch { if (protection) preparationFailure = { code: 'EXTENSION_CONFIG_INVALID', retryable: false }; started = { ok: false, message: '자식 프로세스를 시작할 수 없습니다' }; }
@@ -298,6 +326,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
             await retrySettlement(execution);
             return;
           }
+          groupConfirmed = true;
           exit = await exited;
           // Drain buffered ABI lines, but inherited pipes can outlive both the
           // leader and its original group. Closing them releases the iterator.
@@ -342,6 +371,11 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     if (preparationFailure) verdict = { outcome: 'failed', ...preparationFailure, usage: null, message: '확장 설정을 확인하세요' };
     else if (protection && verdict.outcome === 'failed') {
       verdict = projectProtectedVerdict(verdict, protection.errorCodes, run.workerError);
+    }
+    if (admissionHeld && groupConfirmed && verdict.outcome === 'succeeded' && protection?.releaseAdmission) {
+      // 실패한 worker는 첫 intent 저장에도 실패했을 수 있다. 정상 결과와
+      // group 종료가 모두 확인되고 pending intent가 없을 때만 해제한다.
+      try { await protection.releaseAdmission(item, token); } catch { /* 불명은 보수적으로 유지한다. */ }
     }
     failed = verdict.outcome === 'failed' ? verdict.code : undefined;
     const detail = { elapsedMs: Math.max(0, (endedAt ?? clock.now().getTime()) - startedAt), stderr: stderr.value() };

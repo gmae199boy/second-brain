@@ -248,6 +248,7 @@ export interface BrainSchedules {
   run(input: { scheduleId: string }): Promise<RunScheduleResult>;
 }
 export interface BrainExt {
+  auth(input: { name: string }): Promise<{ ok: true } | { ok: false; code: 'AUTH_PEER_UNVERIFIED'; message: string }>;
   run(input: { name: string; job: string; target?: string; waitMs?: number }): ReturnType<typeof runExtension>;
   install(input: { name: string; signal?: AbortSignal }): ReturnType<typeof installExtension>;
   status(input: { name: string }): ReturnType<typeof publicExtensionStatus>;
@@ -431,7 +432,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
         : { ok: false, code: 'INVALID_ARGUMENT', message: '요청 ID가 UUID 형식이 아닙니다' },
     },
     recall: { chunks: input => searchRecall(store, 'chunks', input), tools: input => searchRecall(store, 'tools', input), expand: input => expandRecall(store, input) },
-    ext: { run: input => runExtension(dependencies, input), publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
+    ext: { auth: input => dependencies.extensions?.authorize ? dependencies.extensions.authorize(input.name) : Promise.resolve({ok:false as const,code:'AUTH_PEER_UNVERIFIED' as const,message:'승인된 인증 채널을 확인할 수 없습니다'}), run: input => runExtension(dependencies, input), publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
     files: { redact: (input) => redactFile({ store, clock, idGen }, input) },
     doctor: {

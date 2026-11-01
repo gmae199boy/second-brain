@@ -3,10 +3,21 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { extHome } from '../test/ext-fixture.js';
 
+// 반입 회귀는 인증 프로토콜을 시험하지 않는다. 격리 DB에서만 auth 일감을
+// 합성 성공으로 정산해 설치를 재개하며 실제 인증 성공으로 취급하지 않는다.
+async function installSynthetic(fixture: Awaited<ReturnType<typeof extHome>>) {
+  const pending = await fixture.run(['ext','install','garmin','--json']);
+  expect(pending.body?.error?.code).toBe('EXTENSION_LOGIN_REQUIRED');
+  const work = pending.body.data.install.auth_work_id;
+  expect(work).toMatch(/^[0-9a-f-]{36}$/);
+  await fixture.db.query(`update brain.work_items set outcome='succeeded',completed_at=now() where id='${work}'`);
+  return fixture.run(['ext','install','garmin','--json']);
+}
+
 it('기본 배송 경로의 Garmin을 잠긴 Python으로 설치하고 연결한다', async () => {
   const fixture = await extHome();
   try {
-    const installed = await fixture.run(['ext', 'install', 'garmin', '--json']);
+    const installed = await installSynthetic(fixture);
     expect(installed, installed.stderr + installed.stdout).toMatchObject({ code: 0 });
     const python = join(fixture.home, 'extensions', 'garmin', '.venv', 'bin', 'python');
     const { readFile } = await import('node:fs/promises');
@@ -17,7 +28,7 @@ it('기본 배송 경로의 Garmin을 잠긴 Python으로 설치하고 연결한
     expect(execFileSync(python, ['-c', 'import platform, psycopg; print(platform.python_version(), psycopg.__version__)'], { encoding: 'utf8' }).trim()).toBe('3.14.10 3.3.6');
     const roundtrip = execFileSync(python, ['-c', "import psycopg, sys; c=psycopg.connect(__import__('os').environ['TEST_DATABASE_URL']); r=c.execute('select %s::text, %s::bigint, %s::text', ('한글', 1700000000123, None)).fetchone(); print(r[0], r[1], r[2])"], { encoding: 'utf8', env: { ...process.env, TEST_DATABASE_URL: fixture.db.url } }).trim();
     expect(roundtrip).toBe('한글 1700000000123 None');
-    expect(await fixture.ledger('garmin')).toEqual([{ owner: 'garmin', version: 1 }, { owner: 'garmin', version: 2 }, { owner: 'garmin', version: 3 }, { owner: 'garmin', version: 4 }, { owner: 'garmin', version: 5 }, { owner: 'garmin', version: 6 }]);
+    expect(await fixture.ledger('garmin')).toEqual([{ owner: 'garmin', version: 1 }, { owner: 'garmin', version: 2 }, { owner: 'garmin', version: 3 }, { owner: 'garmin', version: 4 }, { owner: 'garmin', version: 5 }, { owner: 'garmin', version: 6 }, { owner: 'garmin', version: 7 }]);
     const status = await fixture.run(['ext', 'status', 'garmin', '--json']);
     expect(status.body.data).toMatchObject({ installed: true, connection: { status: 'connected' }, python_environment: { status: 'succeeded' } });
   } finally { await fixture.cleanup(); }
@@ -41,7 +52,7 @@ it('합성 snapshot과 문서를 실제 감독자로 이전하고 재실행한�
   const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
   const store = postgresStore({ databaseUrl: fixture.db.appUrl });
   try {
-    const installed = await fixture.run(['ext', 'install', 'garmin', '--json']);
+    const installed = await installSynthetic(fixture);
     expect(installed.code, installed.stdout + installed.stderr).toBe(0);
     const snapshot = join(fixture.home,'snapshot.sqlite'), document = join(fixture.home,'report.md'), staging = join(fixture.home,'extensions/garmin/staging');
     const python = join(fixture.home,'extensions/garmin/.venv/bin/python');
@@ -164,7 +175,7 @@ it('같은 basename의 문서가 본문에 관계없이 서로 다른 상대 키
   const store = postgresStore({databaseUrl: fixture.db.appUrl});
   let daemon: ReturnType<typeof runDaemon> | undefined;
   try {
-    const installed = await fixture.run(['ext','install','garmin','--json']);
+    const installed = await installSynthetic(fixture);
     expect(installed.code, installed.stdout + installed.stderr).toBe(0);
     const snapshot=join(fixture.home,'snapshot.sqlite'), staging=join(fixture.home,'extensions/garmin/staging');
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python');
@@ -212,7 +223,7 @@ it('같은 basename의 문서가 본문에 관계없이 서로 다른 상대 키
     // 설치된 패키지를 바꿔 실제 설치기의 교체 경로를 실행한다.
     const check = join(fixture.home,'extensions/garmin/src/check.py');
     await writeFile(check, (await readFile(check, 'utf8')) + '\n# 교체 확인\n');
-    const replaced = await fixture.run(['ext','install','garmin','--json']);
+    const replaced = await installSynthetic(fixture);
     expect(replaced.code, replaced.stdout + replaced.stderr).toBe(0);
     expect(await readFile(check, 'utf8')).not.toContain('교체 확인');
     expect(await fixture.db.rows('select id, locator from brain.file_requests order by id')).toEqual(requestsBefore);
@@ -271,7 +282,7 @@ it('콜론을 포함한 dataset과 상대 경로는 요청 키에서 섞이지 �
   const { uuidV7IdGen }=await import('../src/runtime/id-gen.js');
   const fixture=await extHome(),ids=uuidV7IdGen(),store=postgresStore({databaseUrl:fixture.db.appUrl});
   try {
-    const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code).toBe(0);
+    const installed=await installSynthetic(fixture); expect(installed.code).toBe(0);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), staging=join(fixture.home,'extensions/garmin/staging'); await mkdir(staging,{recursive:true});
     const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl);
     const pairs=[{dataset:'a:b',key:'c',raw:'2026-01-01'},{dataset:'a',key:'b:c',raw:'2026-01-02'}];
@@ -301,7 +312,7 @@ it.each([{encoding:'UTF-8',dataset:'trace\0data'},{encoding:'UTF-16le',dataset:'
   const { extensionDatabaseUrl } = await import('../src/config/codec.js');
   const fixture=await extHome(), store=postgresStore({databaseUrl:fixture.db.appUrl}), ids=uuidV7IdGen();
   try {
-    expect((await fixture.run(['ext','install','garmin','--json'])).code).toBe(0);
+    expect((await installSynthetic(fixture)).code).toBe(0);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), snapshot=join(fixture.home,'trace.sqlite');
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     execFileSync(python,['-c',"import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from fixtures import create; create(Path(sys.argv[2]),15,sys.argv[3])",fixtures,snapshot,encoding]);

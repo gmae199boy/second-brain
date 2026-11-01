@@ -22,6 +22,7 @@ export interface ExtensionMigrator {
   apply(owner: string, directory: string): Promise<{ ok: true; from: number; to: number; applied: string[] } | { ok: false; code: 'MIGRATION_FAILED' | 'DB_UNAVAILABLE'; message: string; file?: string }>;
 }
 export interface ExtensionRuntime {
+  authorize?(name: string): Promise<{ ok: true } | { ok: false; code: 'AUTH_PEER_UNVERIFIED'; message: string }>;
   installedManifest?(name: string): Promise<string>;
   readPublicReport?(name: string, workId: string): Promise<unknown>;
   schedulerReady?(): Promise<boolean>;

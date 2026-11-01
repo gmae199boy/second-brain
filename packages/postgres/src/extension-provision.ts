@@ -64,12 +64,11 @@ export async function provisionExtension(databaseUrl: string, name: string, pass
       grant usage, create on schema "${name}" to "${role}";
       grant usage on schema brain to "${role}";
       grant execute on function brain.attempt_is_current(uuid, uuid) to "${role}";
-      grant all privileges on all tables in schema "${name}" to "${role}";
-      grant all privileges on all sequences in schema "${name}" to "${role}";
-      grant execute on all functions in schema "${name}" to "${role}";
       alter default privileges for role brain_owner in schema "${name}" grant all on tables to "${role}";
       alter default privileges for role brain_owner in schema "${name}" grant all on sequences to "${role}";
       alter default privileges for role brain_owner in schema "${name}" grant execute on functions to "${role}"`);
+    // 객체별 권한은 migration이 소유한다. 기존 객체에 일괄 GRANT하면
+    // 재설치 또는 역할 재생성 시 보안상 REVOKE가 무효화된다.
     if ((await client.query("select to_regclass('brain.extension_status_public_v1') as view")).rows[0].view) await client.query(`grant select on brain.extension_status_public_v1 to "${role}"`);
     if ((await client.query("select to_regclass('brain.channel_legacy_notifications') as table")).rows[0].table) await client.query(`
       grant insert (id,conversation_id,producer,producer_result_id,purpose,revision,body,created_at,source_work_item_id,source_attempt_token) on brain.channel_requests to "${role}";

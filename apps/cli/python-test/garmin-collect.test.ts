@@ -23,11 +23,22 @@ it('합성 정상·재실행·legacy coverage·회수 및 격리 실패를 실�
   const calls = async () => (await readFile(join(home, 'collect-calls'), 'utf8').catch(() => '')).split('\n').filter(Boolean).length;
   const counts = async () => (await fixture.db.rows('select (select count(*)::int from garmin.raw_payloads) raw,(select count(*)::int from brain.health_observations) health,(select count(*)::int from garmin.collect_state) state'))[0];
   try {
+    // 이 회귀는 합성 수집 publisher를 검사한다. 별도 인증 시험이 아니므로
+    // 격리 DB의 대기 auth를 합성 성공으로 정산하고 설치를 재개한다.
+    const pending = await fixture.run(['ext', 'install', 'garmin', '--json']);
+    expect(pending.body?.error?.code).toBe('EXTENSION_LOGIN_REQUIRED');
+    const authWork = pending.body.data.install.auth_work_id;
+    expect(authWork).toMatch(/^[0-9a-f-]{36}$/);
+    await fixture.db.query(`update brain.work_items set outcome='succeeded',completed_at=now() where id='${authWork}'`);
     const installed = await fixture.run(['ext', 'install', 'garmin', '--json']);
     expect(installed.code, installed.stdout + installed.stderr).toBe(0);
     await copyFile(fileURLToPath(new URL('../../../extensions/garmin/tests/collect_fixture.py', import.meta.url)), join(ext, 'collect_fixture.py'));
     const manifestPath = join(ext, 'manifest.json'), manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-    manifest.work.find((w: {kind:string}) => w.kind === 'garmin.collect').entry = 'collect_fixture.py';
+    const collectWork = manifest.work.find((w: {kind:string}) => w.kind === 'garmin.collect');
+    collectWork.entry = 'collect_fixture.py';
+    // 이 합성 client는 외부 호출이 없다. 실제 admission 경계는 별도 시험한다.
+    delete collectWork.admission_setting;
+    delete collectWork.admission_clock_setting;
     await writeFile(manifestPath, JSON.stringify(manifest));
     await writeMarker();
     await store.setSetting({key:'garmin.timezone',value:'Asia/Seoul',updatedAt:new Date()});

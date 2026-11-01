@@ -8,8 +8,8 @@ export interface ExtensionManifest {
   connection_check: { runtime: 'node' | 'python'; entry: string };
   settings?: ExtensionSettingDeclaration[];
   error_codes?: string[];
-  work?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string; manual?: string; verification_snapshot?: true; public_report?: { counts: string[]; checks: string[] }; required_settings?: string[] }[];
-  auth?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string };
+  work?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string; manual?: string; verification_snapshot?: true; public_report?: { counts: string[]; checks: string[] }; required_settings?: string[]; admission_setting?: string; admission_clock_setting?: string }[];
+  auth?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string; admission_setting?: string; admission_clock_setting?: string };
   default_schedules?: { kind: string; target_kind: string; target_id: string; local_time: string }[];
   raw_views?: string[];
 }
@@ -43,7 +43,7 @@ export function decodeExtensionManifest(text: string): { ok: true; manifest: Ext
     const seen = new Set<string>();
     const aliases = new Set<string>();
     for (const work of v['work']) {
-      if (!object(work) || !['kind', 'execution', 'runtime', 'entry'].every(k => Object.hasOwn(work, k)) || !Object.keys(work).every(k => ['kind', 'execution', 'runtime', 'entry', 'manual', 'public_report', 'required_settings', 'verification_snapshot'].includes(k)) || typeof work['kind'] !== 'string' ||
+      if (!object(work) || !['kind', 'execution', 'runtime', 'entry'].every(k => Object.hasOwn(work, k)) || !Object.keys(work).every(k => ['kind', 'execution', 'runtime', 'entry', 'manual', 'public_report', 'required_settings', 'verification_snapshot', 'admission_setting', 'admission_clock_setting'].includes(k)) || typeof work['kind'] !== 'string' ||
           !work['kind'].startsWith(`${v['name']}.`) || !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(work['kind']) || seen.has(work['kind']) ||
           work['execution'] !== 'supervised' || !['node', 'python'].includes(work['runtime'] as string) || !inside(work['entry'])) return invalid;
       if (work['verification_snapshot'] !== undefined && (work['verification_snapshot'] !== true || work['runtime'] !== 'python')) return invalid;
@@ -53,15 +53,19 @@ export function decodeExtensionManifest(text: string): { ok: true; manifest: Ext
       const labels = (x: unknown): x is string[] => Array.isArray(x) && x.every(v => typeof v === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(v)) && new Set(x).size === x.length;
       if (report !== undefined && (!object(report) || !keys(report, ['counts', 'checks']) || !labels(report['counts']) || !labels(report['checks']) || report['counts'].some(k => (report['checks'] as string[]).includes(k)))) return invalid;
       if (work['required_settings'] !== undefined && (!Array.isArray(work['required_settings']) || work['required_settings'].some((k: unknown) => typeof k !== 'string' || !Array.isArray(v['settings']) || !v['settings'].some(s => object(s) && s['key'] === k)) || new Set(work['required_settings']).size !== work['required_settings'].length)) return invalid;
+      if (work['admission_setting'] !== undefined && (typeof work['admission_setting'] !== 'string' || !Array.isArray(v['settings']) || !v['settings'].some(s => object(s) && s['key'] === work['admission_setting'] && s['type'] === 'string' && s['secret'] !== true))) return invalid;
+      if (work['admission_clock_setting'] !== undefined && (typeof work['admission_clock_setting'] !== 'string' || !work['admission_setting'] || !Array.isArray(v['settings']) || !v['settings'].some(s => object(s) && s['key'] === work['admission_clock_setting'] && s['type'] === 'string' && s['secret'] !== true))) return invalid;
       seen.add(work['kind']);
     }
   }
   if (v['auth'] !== undefined) {
     const auth = v['auth'];
-    if (!object(auth) || !keys(auth, ['kind', 'execution', 'runtime', 'entry']) || typeof auth['kind'] !== 'string' ||
+    if (!object(auth) || (!['kind', 'execution', 'runtime', 'entry'].every(k => Object.hasOwn(auth,k)) || !Object.keys(auth).every(k => ['kind','execution','runtime','entry','admission_setting','admission_clock_setting'].includes(k))) || typeof auth['kind'] !== 'string' ||
         !auth['kind'].startsWith(`${v['name']}.`) || !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(auth['kind']) ||
         auth['execution'] !== 'supervised' || !['node', 'python'].includes(auth['runtime'] as string) || !inside(auth['entry']) ||
-        (Array.isArray(v['work']) && v['work'].some(work => object(work) && work['kind'] === auth['kind']))) return invalid;
+        (Array.isArray(v['work']) && v['work'].some(work => object(work) && work['kind'] === auth['kind'])) ||
+        (auth['admission_setting'] !== undefined && (typeof auth['admission_setting'] !== 'string' || !Array.isArray(v['settings']) || !v['settings'].some(s => object(s) && s['key'] === auth['admission_setting'] && s['type'] === 'string' && s['secret'] !== true))) ||
+        (auth['admission_clock_setting'] !== undefined && (typeof auth['admission_clock_setting'] !== 'string' || !auth['admission_setting'] || !Array.isArray(v['settings']) || !v['settings'].some(s => object(s) && s['key'] === auth['admission_clock_setting'] && s['type'] === 'string' && s['secret'] !== true)))) return invalid;
   }
   if (v['raw_views'] !== undefined && (!Array.isArray(v['raw_views']) || v['raw_views'].some((view: unknown) => typeof view !== 'string' || !/^[a-z][a-z0-9_]*$/.test(view)) || new Set(v['raw_views']).size !== v['raw_views'].length)) return invalid;
   if (v['default_schedules'] !== undefined) {

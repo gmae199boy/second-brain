@@ -687,6 +687,10 @@ export interface ModelWorkUsage {
   latest: { workItemId: string; kind: string; at: Date; elapsedMs: number | null; usage: { inputTokens: number; cachedInputTokens: number; outputTokens: number } | null } | null;
 }
 export interface WorkStore {
+  /** 선택된 확장의 opaque target에 대한 durable admission을 spawn 전에 기록한다. */
+  releaseExtensionAdmission?(input: { extension: string; workId: string; attemptToken: string }): Promise<{ ok: true; released: boolean } | ScheduleStoreFailure>;
+  reserveExtensionAdmission?(input: { extension: string; workId: string; attemptToken: string; generation: number; target: string; timeZone?: string }): Promise<{ ok: true; admitted: boolean; busy?: boolean; resolvedTarget?: string } | ScheduleStoreFailure>;
+  deferSupervisedAdmission?(input: { id: string; attemptToken: string; now: Date }): Promise<FinishWorkResult>;
   /** 일감 ID로 현재 상태와 마지막 감독 시도를 제한 없이 조회한다. */
   getWork(id: string): Promise<{ ok: true; entry: { item: WorkItem; latestAttempt: import('../domain/work-item.js').WorkAttempt | null } | null } | ScheduleStoreFailure>;
   holdWorkGroup(input: { group: string; now: Date }): Promise<{ ok: true; held: boolean } | ScheduleStoreFailure>;
@@ -1480,6 +1484,7 @@ export type ExtensionStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LO
 export interface ExtensionPythonEnvironment { status: 'succeeded' | 'failed'; code: string | null; checkedAt: Date }
 export type ExtensionProgressWriteResult = { ok: true; written: boolean; revision: number | null } | ExtensionStoreFailure | { ok: false; code: 'INVALID_INSTALL_PROGRESS'; message: string };
 export interface ExtensionPublicStatus {
+  attention?: { requiresAction: boolean; requiresManualAction: boolean };
   name: string;
   installed: boolean;
   version: string | null;

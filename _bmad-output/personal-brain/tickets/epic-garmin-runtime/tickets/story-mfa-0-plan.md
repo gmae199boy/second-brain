@@ -4,7 +4,7 @@ type: 'feature'
 ticket: 2
 created: '2026-11-01'
 status: blocked
-baseline_revision: c034f85675e71c9c80c9fe4ffef4c11dd2fe451e
+baseline_revision: 885ad522e5a30b820c12f984959c03c98ca28bc1
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
@@ -17,7 +17,7 @@ context: []
 warnings: [oversized]
 deferred: []
 blocked_at: "2026-11-01"
-blocked_reason: "worker initialization failed: 구현 워커의 필수 bmad-build 렌더 명령이 PyPI jinja2 DNS 조회 실패로 exit 2를 반환했다. 소스·시험 변경은 없다. 정식 failed Dispatch를 수락·release했으며 제어 helper start는 동일 역할의 기존 요청만 복원하고 --task/--retry-of를 허용하지 않아 동일 Task를 안전하게 재시도할 수 없다. 의존성 접근과 동일 Task 재시도 지원을 복구한 뒤 재개해야 한다."
+blocked_reason: "security decision gap: 같은 UID 미승인 프로세스를 포함하는 위협 범위에 맞춰 권위 DB·OrbStack 관리 API·DB admin/brain_app 자격·단일 supervisor를 보호된 OS principal로 격리하는 배치와 기존 CLI/hook 직접 DB 접속 계약의 변경 범위가 정해지지 않았다. architecture AD-10/18/27/34와 현재 사용자 .env/OrbStack 경로를 그대로 둔 채 native 서명만으로 guard/auth evidence를 신뢰할 수 없다. 부분 구현·합성 검증은 보존했으나 정상 인증 transport·실제 library/HTTP 연결·전체 T01–T28·리뷰가 미완료다. 서명 인증서나 관리자 설치만 남은 외부 operator 행동 대기가 아니다."
 ---
 
 <intent-contract>
@@ -93,7 +93,9 @@ blocked_reason: "worker initialization failed: 구현 워커의 필수 bmad-buil
 
 ## Implementation Notes
 
-구현하지 않았다. 현재 HEAD의 직접 코드 확인과 읽기 전용 Orca 조사 보고서를 대조했다. 조사 보고서는 `/tmp/brain16-2-research.md`이며 기준 revision은 이 계획의 전체 baseline과 같다. ticket 16.1의 publisher·격리 fixture 연속성을 유지한다. 소스·시험·lock은 바꾸거나 실행하지 않았다.
+현재 generation의 부분 구현으로 보호 schema·독립 latch·intent·alias 병합·영속 pacing·작업별 예산, 합성 MFA·전송 seam, 실패 닫힌 auth 진입점, 공통 supervisor의 spawn 전 admission과 재provision 권한 보존을 구현 중이다. 지휘자는 초기 보호 시험을 새 격리 PostgreSQL 18에서 독립 실행해 통과를 확인했다. 이후 확장된 시험과 실제 supervisor·권한·daemon 검증은 워커 보고를 수집했으며 최종 독립 검증과 전체 수락은 아직 남아 있다. native peer API spike는 가능했으나 신뢰된 서명·같은 UID 공격자에 대한 실행물/tokenstore 격리는 미증명이다. 실제 Garmin HTTP·운영 tokenstore는 사용하지 않았다. 전체 T01–T28과 정상 인증·수집·해제 경로는 미완료이며 티켓 완료를 뜻하지 않는다.
+
+이전 generation은 구현하지 않았다. 당시 HEAD의 직접 코드 확인과 읽기 전용 Orca 조사 보고서를 대조했다. 조사 보고서는 `/tmp/brain16-2-research.md`이며 기준 revision은 이 계획의 전체 baseline과 같다. ticket 16.1의 publisher·격리 fixture 연속성을 유지한다. 소스·시험·lock은 바꾸거나 실행하지 않았다.
 
 ## Plan Change Log
 
@@ -113,16 +115,18 @@ blocked_reason: "worker initialization failed: 구현 워커의 필수 bmad-buil
 
 ## Verification
 
-이번 실행은 조사만 수행했다. 아래는 구현 후 실행할 명령이며 통과했다고 주장하지 않는다.
+현재 generation의 부분 구현 검증이다. 전체 수락·T01–T28·독립 코드 리뷰를 통과했다는 의미가 아니다. 전문 구현 보고는 [구현 최종 보고](story-mfa-0-implementation-report.md)에 있다.
 
-- `pnpm build`, `pnpm typecheck` — 빌드·타입 성공.
-- `uv sync --project extensions/garmin --frozen` — macOS arm64에서 Python 3.14.10 결합 lock 설치 성공.
-- `uv run --project extensions/garmin --frozen python -c 'import platform, psycopg, garminconnect, curl_cffi; print(platform.python_version(), platform.machine())'` — 버전·아키텍처와 import 확인.
-- `uv run --project extensions/garmin --frozen python extensions/garmin/tests/check_protection.py` — 새 보호 상태·오류·pacing·MFA 단위 시험 전부 실행.
-- `pnpm exec vitest run --config apps/cli/python-test/vitest.config.ts apps/cli/python-test/garmin-protection.test.ts apps/cli/python-test/garmin-collect.test.ts apps/cli/python-test/garmin-tracer.test.ts` — 새 행렬 및 기존 설치·반입·수집 회귀를 실제 격리 PG/worker로 확인.
-- `pnpm exec vitest run packages/core/test/extensions.test.ts packages/postgres/test/work-store.test.ts apps/cli/test/ext-install-resume.test.ts` — 공통 인증 재개·키별 직렬화 회귀.
+- 지휘자 실행: `pnpm build`, `pnpm typecheck` 성공. 로그는 `/tmp/brain16-g2-final-build.log`, `/tmp/brain16-g2-final-typecheck.log`다.
+- 지휘자 실행: `uv sync --project extensions/garmin --frozen` 성공. frozen Python에서 `platform`, `psycopg`, `garminconnect`, `curl_cffi` import가 성공하고 `3.14.10 arm64`를 확인했다. 설치 로그는 `/tmp/brain16-g2-final-frozen.log`다.
+- 지휘자 실행: 초기 보호 모듈은 새 격리 PostgreSQL 18에서 `uv run --project extensions/garmin --frozen python extensions/garmin/tests/check_protection.py <격리 포트>`로 통과했다. 이 시험은 격리 포트 인자가 필수다. 이후 확장된 최종 보호 시험의 성공 근거는 구현자 전문 보고에 있다. 운영 DB를 사용하지 않았다.
+- 지휘자 실행: 합성 `check_auth_flow.py`, `check_collect.py`, `check_auth_wire.py`, `check_http_guard.py`, `check_tokenstore.py` 통과를 확인했다. 이후 변경된 버전의 최종 Python 시험 및 tokenstore race 반례는 구현자 보고에서 성공·한계를 확인했다.
+- 지휘자 최종 실행: `pnpm exec vitest run --config apps/cli/python-test/vitest.config.ts apps/cli/python-test/garmin-protection.test.ts apps/cli/python-test/garmin-collect.test.ts apps/cli/python-test/garmin-tracer.test.ts apps/cli/python-test/garmin-admission.test.ts apps/cli/python-test/garmin-release.test.ts apps/cli/python-test/garmin-auth-wire.test.ts` — 6개 파일 15개 시험 통과. 마지막 fixture 수정 뒤 묶음 전체를 재실행했으며 로그는 `/tmp/brain16-g2-final-cli-tests.log`다.
+- 구현자 최종 실행: `pnpm exec vitest run packages/core/test/extensions.test.ts packages/core/test/supervisor.test.ts packages/postgres/test/work-store.test.ts packages/postgres/test/extension-permissions.test.ts apps/cli/test/ext-install-resume.test.ts` — 5개 파일 290개 통과 보고를 수락했다.
+- 지휘자 실행: `sh extensions/garmin/tests/native/check-native.sh` 성공. 승인 cdhash 허용·다른 같은 UID 코드 거부 및 익명 XPC 일치/불일치를 확인했다. 로그는 `/tmp/brain16-g2-native-verify.log`다. 실제 승인 UI·서로 다른 서비스 principal·보호된 배포의 증거로 확장하지 않는다.
+- 실제 감독자의 합성 Python worker PID 대조·SIGKILL·daemon 재시작과 선행/결과 저장 거부는 위 15개 시험에 포함된다. 전체 예약·force 행렬, OS peer spoof·모든 비밀 canary 경로, 실제 모든 HTTP 전송 계측은 미완료다. CLI doctor 전체 경로는 fixture의 선행 컨테이너 점검 때문에 skip됐고 core doctor와 공개 상태 경로만 검증됐다.
 
-crash 시험은 격리 fixture가 보호 commit 직후 barrier/PID를 기록하고 시험 관리자가 그 worker만 종료·reap한 뒤 새 attempt를 실행한다. 공개 관찰은 상태·호출 개수·허용 코드뿐이다. `finally`에서 barrier 해제·자식 reap·daemon abort/await·store.close·fixture.cleanup 순서로 정리하고 권한 실패 주입은 복원한다. 운영 홈·DB·tokenstore·네트워크는 사용하지 않는다.
+실계정·운영 tokenstore·Garmin 네트워크·운영 배포를 사용하지 않았다. 구성 요소 성공과 정상 인증/수집의 전체 완료를 구분하며 정상 인증 경로는 실패 닫힘으로 유지했다.
 
 ## 독립 보안 조사 근거 (2026-11-01)
 
@@ -332,13 +336,24 @@ Garmin 부분은 새 auth/client/protection 모듈, 새 migrations, manifest.aut
 
 - 이전 구현 Dispatch는 PyPI DNS 오류로 초기화 전 실패하고 정식 종료·release됐다. 호스트에서 pypi.org DNS 조회와 HTTPS 200, 동일 `uv run --no-cache` 렌더 명령 종료 0을 확인했다. 이는 워커 환경의 성공 증거는 아니다. 추천: 지원되는 resolve로 새 generation을 재무장하고 기존 보안 계약과 1단계부터 순서대로 수행한다. 재발하면 워커 환경의 DNS·네트워크 접근을 조사하고 근거를 남긴다. 구현과 검증은 아직 미완료다.
 
+## 새 보안 배치 공백 (현재 generation)
+
+읽기 전용 조사 전문은 [보안 경계 조사 보고](story-mfa-0-security-boundary-report.md)에 보존했다. native peer·전용 FD·storage 격리의 구현 경로를 제시한 보고이며 이번 티켓 전체 구현 완료나 검증 통과를 뜻하지 않는다.
+
+계획의 감독자 결정은 같은 UID의 미승인 프로세스를 공격 범위에 포함한다. 그러나 architecture spine AD-10·18은 DB URL과 비밀을 사용자 홈 `.env`에 두고 같은 설정 접속 정보로 CLI·hook·daemon이 PostgreSQL에 직접 접근하도록 정한다. AD-27·34는 같은 shim의 사용자 daemon과 OrbStack Docker 관리 경로를 유지한다. 현재 `apps/cli/src/config/codec.ts`의 `postgresSecrets`와 `extensionAdminUrl`은 app 및 관리자 자격을 그 파일에서 공급하고, 신규 인증 evidence도 `brain_app` 쓰기 권한을 사용한다. 사용자 UID가 읽는 0600 비밀과 같은 UID의 Docker 관리 API는 그 UID의 미승인 프로세스를 구분하지 못한다. native 코드 서명만 더해 이 DB 권위 경계를 보호했다고 판정할 수 없다. 운영 `.env`나 token 본문을 읽거나 운영 DB 공격을 수행한 것은 아니다. 이 실행의 격리 Docker 생성·제거와 소스의 관리 경로를 근거로 판단했다.
+
+재개하려면 DB·관리 소켓·관리/app/broker 자격·단일 supervisor를 보호된 OS principal로 배치하는 방식과 CLI·hook의 기존 직접 DB 접속 및 setup/업데이트 경로를 어떻게 보존·변경할지 결정해야 한다. 보호된 OrbStack 엔진을 유지할지 별도 local PostgreSQL 배치로 AD-10·34를 변경할지 현재 계약이 답하지 않는다. 이를 임의로 선택하는 것은 비밀·권한 및 운영 데이터 이전 경계를 변경하는 보안 결정이다. persistent facts의 보안 공백 HALT를 적용하며, 인증서 취득이나 관리자 설치만 남은 operator 행동 대기로 분류하지 않는다. 단순 UID 신뢰로 요구를 낮추지 않는다.
+
+현재까지 작성한 보호·admission·공개 해제·frame·합성 시험과 native 재현 산출물은 후속 generation에서 재사용할 부분 구현이다. 실제 인증 transport·정상 library 연결·보호 principal 설치 산출물·전체 T01–T28은 미완료다. 운영 배포와 실계정 전환은 기존대로 16.9에 남는다.
+
 ## Auto Run Result
 
 - Status: blocked
-- Blocking condition: worker initialization failed — 구현 워커의 필수 `bmad-build` 렌더 명령이 PyPI `jinja2` 조회 중 DNS 오류로 exit 2를 반환했다. 오류 원문은 `failed to lookup address information: nodename nor servname provided, or not known`이다.
-- 수행: 계획과 epic 전체·감독자 보안 결정을 읽고, 기존 staged 재개 입력과 baseline `c034f85675e71c9c80c9fe4ffef4c11dd2fe451e`을 보존했다. 계획의 1단계만 구현 워커에 배정했으나 소스·시험·lock 변경과 검증 실행 전에 실패했다. 모든 수락 기준과 이후 단계는 미검증이다. review는 실행하지 않았다.
-- 실패 근거: Run `run_6d24f9afc7b7`, Task `task_8835879e468f`, Dispatch `ctx_c42dde32339c`의 정식 `failed` 보고와 transcript를 대조했다. 요청/실제 모델은 모두 `codex gpt-6.1-terra / medium`이다. 보고서는 `/private/tmp/garmin-mfa-worker-report.md`다. capacity·사용량 한도 증거는 없으며 실제 실패는 1회다.
-- 재개 제약: `_bmad/custom/bmad-orca-control.py:243`의 `start`는 `--task`·`--retry-of`를 허용하지 않고 같은 역할의 원래 요청만 복원한다. 정식 완료된 Dispatch를 다시 깨우거나 새 Task/Run으로 재시도 규칙을 우회하지 않았다. 의존성 접근과 동일 Task의 정식 재시도 경로를 복구한 뒤 1단계부터 이어가야 한다.
-- 적용 지침: 워커가 읽은 `bmad-build/SKILL.md`는 `On any other output or failure ... report the command output and stop. Do not run any workflow source directly.`라고 명시한다. 별도 스킬 원본을 직접 실행하여 실패를 우회하지 않았다.
-- 상태 소유권: 이번 HALT에서만 `tickets.py mark 16.2 blocked --blocked ...`를 실행했다. 티켓 done·커밋·push는 수행하지 않았다. 사람 전용 외부 수락 작업이 아니므로 `awaiting-operator`로 분류하지 않았다.
-- Orca 정리: 실패 보고 전문을 수락한 뒤 해당 Dispatch를 `released`로 확인했고 Delivery `delivery_9ffe4033841a`를 ack했다. 자기 Run의 활성·reclaimable 워커와 pending mail은 없고 불명 요청·취소할 과업도 없다. 단계·검증 미실행·실패 근거·재개 제약·정리 상태를 현재 task의 `orca-coordination.json`에 checkpoint하고 전용 제어 셸만 마지막에 닫는다.
+- Blocking condition: security decision gap — 같은 UID 위협 범위에 맞는 권위 DB·OrbStack 관리 API·admin/app/broker 자격·단일 supervisor의 보호 principal 배치와 기존 CLI/hook 직접 DB 접속 계약의 변경 범위가 미정이다. AD-10·18·27·34를 임의 변경하거나 같은 UID를 신뢰하는 것으로 요구를 낮추지 않았다. 서명·관리자 설치만 남은 operator 행동 대기가 아니다.
+- 수행: 영속 보호·latch·intent·probe·budget·binding/admission·공개 수동 해제/doctor·frame codec·합성 HTTP seam과 native 재현 산출물을 작성했다. 부분 구현과 정확한 한계는 [구현 최종 보고](story-mfa-0-implementation-report.md), 배치 결정 근거와 재개 순서는 [보안 경계 조사 보고](story-mfa-0-security-boundary-report.md)에 보존했다.
+- 지휘자 검증: 최종 `pnpm build`, `pnpm typecheck`, frozen 의존 설치·Python `3.14.10 arm64` import, Garmin 6개 파일 15개 시험과 native 재현 스크립트가 통과했다. 초기 격리 PG 보호와 Python 구성 요소도 독립 실행했다. 상세 명령·로그는 위 Verification에 있다.
+- 구현자 검증: 공통 인증·supervisor·권한·직렬화 회귀 5개 파일 290개 성공 보고와 실제 worker SIGKILL·daemon 재시작·저장 실패 근거를 확인했다. 이전 Garmin 묶음의 fixture 실패는 수정 후 지휘자 전체 15개 재실행으로 해소됐다.
+- 미완료: 보호 principal·실제 승인 UI/broker/worker·전용 FD bootstrap/수명·실제 tokenstore identity 예약 연결·정상 library login/dump·모든 HTTP의 OS 전송 매개·전체 T01–T28·독립 코드 리뷰와 수정이 남았다. 현재 auth capability와 수집 기본 client는 실패 닫힘이다. 시험 성공을 전체 수락으로 승격하지 않았다.
+- 버전 관리: baseline과 최종 HEAD는 `885ad522e5a30b820c12f984959c03c98ca28bc1`이다. 부분 변경을 작업 트리에 보존했고 커밋·push·티켓 done을 수행하지 않았다. 이번 HALT에서만 `tickets.py mark 16.2 blocked --blocked ...`를 실행했다.
+- Orca: Run `run_fe83da057c7c`에서 구현 Task `task_a0820b6e9ab4`/Dispatch `ctx_a3076da611d3`의 정식 미완료 보고와 조사 Task `task_0c4ce186b888`/Dispatch `ctx_1e7178d28685`의 성공 보고를 전문으로 확인했다. 두 Dispatch를 모두 released로 확인하고 전달 mail을 ack했다. 현재 task의 checkpoint에 단계·검증·보안 판단·정리 상태를 보존한다.
+- Orca 최종 정리 확인: 자기 Run의 2개 Dispatch 모두 released이고 활성·reclaimable 워커 0, pending mail 0, 불명 요청 0이다. checkpoint의 `halt-blocked` 단계에 최종 검증과 보안 판단을 저장했다. 자기 전용 제어 셸만 마지막에 닫는다.

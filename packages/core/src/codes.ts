@@ -191,6 +191,7 @@ const CODES = {
   EXTENSION_INSTALL_CANCELLED: { exit: 1, meaning: '확장 설치가 취소되었습니다', hint: '설치를 다시 실행하여 이어가세요' },
   EXTENSION_SCHEDULER_UNAVAILABLE: { exit: 1, meaning: '예약 감독자가 준비되지 않았습니다', hint: '데몬을 시작한 뒤 설치를 다시 실행하세요' },
   EXTENSION_LOGIN_REQUIRED: { exit: 1, meaning: '확장 인증이 완료되지 않았습니다', hint: '인증을 완료한 뒤 설치를 다시 실행하세요' },
+  AUTH_PEER_UNVERIFIED: { exit: 1, retryable: false, meaning: '인증 채널의 상대 신원을 확인하지 못했습니다', hint: '승인된 인증 환경을 확인하세요' },
   EXTENSION_AUTH_FAILED: { exit: 1, meaning: '확장 인증에 실패했습니다', hint: '확장 인증 설정을 확인하세요' },
   EXTENSION_CHECK_FAILED: { exit: 1, meaning: '확장 설치 뒤 연결 확인에 실패했습니다', hint: '`brain ext status`로 연결 확인 결과를 읽으세요' },
   ABI_LINE_INVALID: { exit: 1, retryable: false, meaning: '프로세스 출력 줄이 ABI 형식과 다릅니다', hint: '작업자의 JSON 이벤트 형식을 고치세요' },

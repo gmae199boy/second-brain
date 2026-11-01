@@ -44,6 +44,26 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
             extension: manifest.name, declarations: Object.fromEntries(declarations.map(setting => [setting.key, setting.type])), errorCodes: manifest.error_codes ?? [],
             required: 'required_settings' in work && Array.isArray(work.required_settings) ? work.required_settings : declarations.filter(setting => setting.required.includes(manifest.auth?.kind === work.kind ? 'auth' : 'work')).map(setting => setting.key),
             secrets: declarations.filter(setting => setting.secret).map(setting => setting.key),
+            ...('admission_setting' in work && work.admission_setting ? {
+              async releaseAdmission(item, token) {
+                if (!opened.store.releaseExtensionAdmission) return { ok: false as const, code: 'DB_UNAVAILABLE' as const };
+                return opened.store.releaseExtensionAdmission({ extension: manifest.name, workId: item.id, attemptToken: token });
+              },
+              async admit(item, token, spec) {
+                if (!opened.store.reserveExtensionAdmission) return { ok: false as const, code: 'EXTENSION_CONFIG_INVALID' as const };
+                let snapshot: {values:Record<string,unknown>};
+                try { snapshot = JSON.parse(spec.env['BRAIN_SETTINGS_SNAPSHOT'] ?? ''); }
+                catch { return { ok: false as const, code: 'EXTENSION_CONFIG_INVALID' as const }; }
+                const target = snapshot.values[work.admission_setting!];
+                const zone = work.admission_clock_setting ? snapshot.values[work.admission_clock_setting] : 'UTC';
+                if (typeof target !== 'string' || !target || typeof zone !== 'string' || !zone) return { ok: false as const, code: 'EXTENSION_CONFIG_INVALID' as const };
+                const admission = await opened.store.reserveExtensionAdmission({ extension: manifest.name, workId: item.id, attemptToken: token, generation: item.attempts, target, timeZone:zone });
+                if (!admission.ok || !admission.admitted || admission.resolvedTarget === undefined) return admission;
+                snapshot.values[work.admission_setting!] = admission.resolvedTarget;
+                return { ok:true as const, admitted:true, spec:{...spec,env:{...spec.env,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify(snapshot)}} };
+
+              },
+            } : {}),
             async prepare(item, token) {
               const read = await opened.store.getSettings({ keys: declarations.map(setting => setting.key) });
               if (!read.ok) return { ok: false, code: read.code };

@@ -707,6 +707,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       if (row.version !== version) return { ok: true, state: 'changed' };
       if (!row.enabled) return { ok: true, state: 'disabled' };
       if (!extensionWorkKinds.get(name)?.includes(work.kind)) return { ok: true, state: 'changed' };
+      const existing = openWork(work.kind, work.targetKind, work.targetId);
+      if (existing && work.serializationKey !== undefined && existing.serializationKey !== work.serializationKey) return { ok:true, state:'changed' };
       const result = addWork(work);
       return result.ok ? { ok: true, state: 'queued', workId: result.item.id, created: result.created } : result;
     },

@@ -386,7 +386,7 @@ async function extensionsCheck(store: NonNullable<DoctorOptions['extensionStore'
   const failure = results.find(result => !result.ok);
   if (failure && !failure.ok) return { id: 'extensions', status: 'fail', code: failure.code, detail: failure.message };
   const facts = results.flatMap(result => result.ok ? [result.status] : []);
-  const abnormal = facts.some(row => !row.installed || row.enabled === false || row.interruptedWorkCount > 0 || row.heldScheduleCount > 0 ||
+  const abnormal = facts.some(row => row.attention?.requiresAction || row.attention?.requiresManualAction || !row.installed || row.enabled === false || row.interruptedWorkCount > 0 || row.heldScheduleCount > 0 ||
     (row.journalPresent && row.installResult !== 'installed') || row.login?.status === 'pending' || row.login?.status === 'failed' ||
     row.connection.status === 'failed' || row.schedule?.status === 'failed');
   const detail = facts.length === 0 ? '확장 0건' : facts.map(row => {
@@ -394,7 +394,8 @@ async function extensionsCheck(store: NonNullable<DoctorOptions['extensionStore'
     const login = row.login ? `${row.login.status}${row.login.code ? ` (${row.login.code})` : ''}` : '미기록';
     const connection = `${row.connection.status ?? '미기록'}${row.connection.code ? ` (${row.connection.code})` : ''}`;
     const last = row.lastFailure ? `${row.lastFailure.stage} (${row.lastFailure.code})` : '없음';
-    return `${row.name}: ${installed}, 중단 일감 ${row.interruptedWorkCount}건, 보류 예약 ${row.heldScheduleCount}건, 설치 결과 ${row.installResult ?? (row.journalPresent ? '진행 중' : '미기록')}, 로그인 ${login}, 연결 ${connection}, 실패 단계 ${row.failedStage ?? '없음'}, 마지막 실패 ${last}`;
+    const attention = row.attention?.requiresManualAction ? ', 수동 조치 필요' : row.attention?.requiresAction ? ', 조치 필요' : '';
+    return `${row.name}: ${installed}${attention}, 중단 일감 ${row.interruptedWorkCount}건, 보류 예약 ${row.heldScheduleCount}건, 설치 결과 ${row.installResult ?? (row.journalPresent ? '진행 중' : '미기록')}, 로그인 ${login}, 연결 ${connection}, 실패 단계 ${row.failedStage ?? '없음'}, 마지막 실패 ${last}`;
   }).join('; ');
   return { id: 'extensions', status: abnormal ? 'warn' : 'ok', detail };
 }

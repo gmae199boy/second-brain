@@ -757,7 +757,7 @@ shim을 읽거나 해석할 수 없으면 `SHIM_MISSING`, 실행 권한·서명�
 
 같은 패키지를 다시 설치하면 완료한 단계는 반복하지 않습니다. 최초 설치의 마이그레이션이 실패하면 앞서 적용한 SQL과 패키지를 보존하고, 실패한 SQL을 수정한 뒤 같은 명령으로 이어갈 수 있습니다. 이미 적용된 SQL의 내용은 바꾸지 마세요. 기존 확장을 교체하다 실패하면 이전 패키지와 tokenstore를 복원합니다.
 
-`EXTENSION_LOGIN_REQUIRED`가 나오면 확장 인증을 완료한 뒤 같은 설치 명령을 다시 실행하세요. 인증은 기존 데몬의 감독 일감으로 실행되며 비밀번호나 MFA를 명령 출력에 담지 않습니다. `EXTENSION_SCHEDULER_UNAVAILABLE`은 데몬의 감독자가 준비되지 않았거나 예약 기능을 사용할 수 없다는 뜻입니다. 데몬을 준비하고 재실행하면 기존과 설정이 같은 예약을 재사용하며 다른 설정의 충돌은 오류로 남깁니다. SIGINT 또는 SIGTERM으로 취소한 뒤에도 같은 명령으로 재개할 수 있습니다.
+`EXTENSION_LOGIN_REQUIRED`가 나오면 `brain ext auth <확장 이름>`으로 인증을 시작하고 완료한 뒤 같은 설치 명령을 다시 실행하세요. 승인된 인증 채널이 없는 환경에서는 입력을 받기 전에 `AUTH_PEER_UNVERIFIED`를 반환합니다. 인증은 기존 데몬의 감독 일감으로 실행되며 비밀번호나 MFA를 명령 출력에 담지 않습니다. `EXTENSION_SCHEDULER_UNAVAILABLE`은 데몬의 감독자가 준비되지 않았거나 예약 기능을 사용할 수 없다는 뜻입니다. 데몬을 준비하고 재실행하면 기존과 설정이 같은 예약을 재사용하며 다른 설정의 충돌은 오류로 남깁니다. SIGINT 또는 SIGTERM으로 취소한 뒤에도 같은 명령으로 재개할 수 있습니다.
 
 ### 설치 스킬 행동 평가
 
@@ -818,6 +818,7 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `EXTENSION_INSTALL_CANCELLED` | 1 | 확장 설치가 취소되었습니다 |
 | `EXTENSION_SCHEDULER_UNAVAILABLE` | 1 | 예약 감독자가 준비되지 않았습니다 |
 | `EXTENSION_LOGIN_REQUIRED` | 1 | 확장 인증이 완료되지 않았습니다 |
+| `AUTH_PEER_UNVERIFIED` | 1 | 인증 채널의 상대 신원을 확인하지 못했습니다 |
 | `EXTENSION_AUTH_FAILED` | 1 | 확장 인증에 실패했습니다 |
 | `EXTENSION_CHECK_FAILED` | 1 | 확장 설치 뒤 연결 확인에 실패했습니다 |
 | `ABI_LINE_INVALID` | 1 | 프로세스 출력 줄이 ABI 형식과 다릅니다 |

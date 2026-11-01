@@ -398,3 +398,42 @@ it.each(['PROCESS_DIED', 'ABI_EXIT_FAILED'] as const)('projects undeclared worke
     expect(k.store.snapshot().workAttempts[0]).toMatchObject({ errorCode: 'EXTENSION_WORKER_ERROR', errorRetryable: true });
   } finally { k.controller.abort(); await k.running; }
 });
+
+it.each(['deny', 'commit-unknown', 'cancel'] as const)('admission 미확정 시 worker를 spawn하지 않는다: %s', async mode => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const k = await kit({ protectedLaunches: { process_probe: { extension: 'testext', declarations: {}, errorCodes: [],
+    async prepare(item, token) { return { ok: true, spec: { command:'probe', args:[], env: {
+      BRAIN_ABI_VERSION:'1', BRAIN_DATABASE_URL:'postgres://localhost/brain', BRAIN_WORK_ID:item.id,
+      BRAIN_ATTEMPT_TOKEN:token, BRAIN_WORK_KIND:item.kind, BRAIN_TARGET_KIND:item.targetKind,
+      BRAIN_TARGET_ID:item.targetId, BRAIN_RUN_GENERATION:String(item.attempts),
+      BRAIN_SETTINGS_SNAPSHOT:'{"version":1,"extension":"testext","values":{}}',
+    } } }; },
+    async admit() { await gate; if (mode === 'commit-unknown') throw new Error('불명'); return { ok:true, admitted:mode === 'cancel' }; },
+  } } });
+  try {
+    expect(k.launcher.specs).toEqual([]);
+    if (mode === 'cancel') await k.store.requestWorkCancel({ id:k.id, now });
+    release(); await flush();
+    expect(k.launcher.specs).toEqual([]);
+  } finally { release(); k.controller.abort(); await k.running; }
+});
+
+it.each(['success','failure'] as const)('종료 확인 뒤 정상 결과에서만 admission 해제를 시도한다: %s', async outcome => {
+  let releases = 0;
+  const k = await kit({ protectedLaunches:{ process_probe:{ extension:'testext',declarations:{},errorCodes:['FIXTURE_ERROR'],
+    async prepare(item,token) { return {ok:true,spec:{command:'probe',args:[],env:{
+      BRAIN_ABI_VERSION:'1',BRAIN_DATABASE_URL:'postgres://localhost/brain',BRAIN_WORK_ID:item.id,BRAIN_ATTEMPT_TOKEN:token,
+      BRAIN_WORK_KIND:item.kind,BRAIN_TARGET_KIND:item.targetKind,BRAIN_TARGET_ID:item.targetId,BRAIN_RUN_GENERATION:String(item.attempts),
+      BRAIN_SETTINGS_SNAPSHOT:'{"version":1,"extension":"testext","values":{}}',
+    }}}; },
+    async admit() { return {ok:true,admitted:true}; },
+    async releaseAdmission() { releases++; return {ok:true,released:true}; },
+  }} });
+  try {
+    const child = k.launcher.processes[0]!;
+    child.push(outcome === 'success' ? '{"abi":1,"type":"result","summary":"ok"}' : '{"abi":1,"type":"error","code":"FIXTURE_ERROR","retryable":false}');
+    child.exit(outcome === 'success' ? 0 : 1); await flush();
+    expect(releases).toBe(outcome === 'success' ? 1 : 0);
+  } finally { k.controller.abort(); await k.running; }
+});

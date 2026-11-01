@@ -211,7 +211,17 @@
       "required_settings": [
         "garmin.timezone"
       ],
-      "manual": "collect"
+      "manual": "collect",
+      "admission_setting": "garmin.tokenstore",
+      "admission_clock_setting": "garmin.timezone"
+    },
+    {
+      "kind": "garmin.release_block",
+      "execution": "supervised",
+      "runtime": "python",
+      "entry": "src/release_block.py",
+      "required_settings": [],
+      "manual": "release-block"
     }
   ],
   "raw_views": [
@@ -264,6 +274,13 @@
       "type": "string",
       "secret": false,
       "required": []
+    },
+    {
+      "key": "garmin.tokenstore",
+      "type": "string",
+      "secret": false,
+      "required": [],
+      "default": "~/.garmin-pipeline/tokens"
     }
   ],
   "error_codes": [
@@ -277,6 +294,16 @@
     "COLLECT_INVALID",
     "COLLECT_INVALID_ATTEMPT",
     "COLLECT_CLIENT_UNAVAILABLE",
-    "COLLECT_STOPPED"
-  ]
+    "COLLECT_STOPPED",
+    "AUTH_PEER_UNVERIFIED",
+    "RELEASE_INVALID"
+  ],
+  "auth": {
+    "kind": "garmin.auth",
+    "execution": "supervised",
+    "runtime": "python",
+    "entry": "src/auth.py",
+    "admission_setting": "garmin.tokenstore",
+    "admission_clock_setting": "garmin.timezone"
+  }
 }

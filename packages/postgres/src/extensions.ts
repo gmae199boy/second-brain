@@ -17,7 +17,16 @@ export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
         if (!row.enabled) return { state: 'disabled' as const };
         const found = await sql`select 1 from brain.extension_work_kinds where extension_name=${name} and kind=${work.kind}`.execute(held);
         if (!found.rows.length) return { state: 'changed' as const };
+        // 기존 null/다른 직렬화 키의 열린 일감을 새 보호 대상과 합치지 않는다.
+        // schedule range 병합이 이미 일어났을 수도 있으므로 savepoint로 되돌린다.
+        await sql`savepoint extension_enqueue`.execute(held);
         const queued = await ensureWork(held, work);
+        if (!queued.created && work.serializationKey !== undefined && queued.row.serialization_key !== work.serializationKey) {
+          await sql`rollback to savepoint extension_enqueue`.execute(held);
+          await sql`release savepoint extension_enqueue`.execute(held);
+          return { state: 'changed' as const };
+        }
+        await sql`release savepoint extension_enqueue`.execute(held);
         return { state: 'queued' as const, workId: queued.row.id, created: queued.created };
       });
       return result.ok ? { ok: true, ...result.value } : result;
@@ -39,7 +48,17 @@ export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
             (select count(*)::int from brain.schedules s join brain.work_hold_groups h on h.name = s.hold_group where h.name = ${'extension:' + name}) as held_schedules,
             (select count(*)::int from brain.work_items w join brain.work_hold_groups h on h.name = w.hold_group where h.name = ${'extension:' + name} and w.completed_at is null) as interrupted_work`.execute(opened.connection.db);
         const row = result.rows[0]!;
-        return { ok: true, status: extensionPublicProjection(name, row.extension ? record(row.extension) : null, row.progress && validInstallProgress(row.progress) ? row.progress : null, row.held_schedules, row.interrupted_work, row.python ? { status: row.python.status, code: row.python.code, checkedAt: new Date(row.python.checked_at) } : null) };
+        const status = extensionPublicProjection(name, row.extension ? record(row.extension) : null, row.progress && validInstallProgress(row.progress) ? row.progress : null, row.held_schedules, row.interrupted_work, row.python ? { status: row.python.status, code: row.python.code, checkedAt: new Date(row.python.checked_at) } : null);
+        if (!/^[a-z][a-z0-9_]{0,30}$/.test(name) || /^(core|brain|public|pg_)/.test(name)) return { ok: false, code: 'DB_UNAVAILABLE', message: '확장 상태를 읽을 수 없습니다' };
+        const schema = await sql<{ accessible: boolean }>`select exists(select 1 from pg_namespace where nspname=${name} and has_schema_privilege(current_user,oid,'USAGE')) as accessible`.execute(opened.connection.db);
+        const view = schema.rows[0]?.accessible ? await sql<{ present: boolean }>`select to_regclass(${name + '.public_attention_v1'}) is not null as present`.execute(opened.connection.db) : null;
+        if (view?.rows[0]?.present) {
+          const attention = await sql<{ requires_action: unknown; requires_manual_action: unknown }>`select requires_action,requires_manual_action from ${sql.ref(name + '.public_attention_v1')} limit 2`.execute(opened.connection.db);
+          const value = attention.rows[0];
+          if (attention.rows.length !== 1 || typeof value?.requires_action !== 'boolean' || typeof value.requires_manual_action !== 'boolean') return { ok: false, code: 'DB_UNAVAILABLE', message: '확장 공개 상태가 올바르지 않습니다' };
+          status.attention = { requiresAction: value.requires_action, requiresManualAction: value.requires_manual_action };
+        }
+        return { ok: true, status };
       } catch (error) { return databaseFailure(error); }
     },
     async setExtensionEnabled({ name, enabled, now }) {
