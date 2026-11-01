@@ -413,3 +413,15 @@ Garmin 부분은 새 auth/client/protection 모듈, 새 migrations, manifest.aut
 - 상태 소유권: 이 HALT에서만 `tickets.py mark 16.2 blocked --blocked …`를 실행했다. done·커밋·push는 하지 않았고 기존 WIP와 미추적 소스를 보존했다. 인증 입력·외부 HTTP·운영 DB/토큰·실계정·관리자 설치는 사용하지 않았다.
 - 재개: 승인 범위와 policy·증거 provenance를 명시적으로 확정하고 타입 오류부터 수정한 뒤 D3B/D4→D2B→D5–D7의 전체 요구·검증·독립 리뷰를 계속한다.
 - 정리: 자기 Orca Run `run_633e0c971529`의 구현자 1명·읽기 전용 조사자 5명의 정식 보고를 읽고 release했다. fleet은 `released: 6`, `reclaimable: 0`, 후속 inbox 검사에 미처리 delivery가 없었다. 다른 Run이나 워커는 종료하지 않았다. 이 확인과 검증·재개 조건을 checkpoint한 뒤 자기 전용 제어 셸만 닫는다.
+
+
+## 감독자 결정 2026-11-01: 제출별 승인과 재개
+
+<intent-contract>
+1. 일회성 승인은 채널 attach가 아니라 credentials 최초 제출 1회 및 동일 client의 각 MFA 제출(최대 3회)에 각각 소비한다. 대상·prompt·응답을 고정한 뒤 제출 직전에 현재 active GUI 사용자의 새 LAContext 생체 전용 평가를 수행한다. 암호·Watch·관리자 대리·캐시·버튼·일반 이벤트 fallback은 없다. 미지원·오류는 실패 닫힘이다.
+2. 보호 설치된 UI의 OS callback 성공 경로에서만 생성되는 앱 assertion을 신뢰한다. OS의 독립적 transaction attestation이라 부르지 않는다. 보호된 실행물·주입 방지와 OS peer 및 supervisor가 기록한 GUI 실행 인스턴스가 전제다. broker 생성 무작위 단회 challenge를 policy·GUI session·instance·connection·prompt·동결 response generation·work/attempt/launch/package/binding과 결합하고, broker가 현재 상태·만료·취소를 재검사해 원자 소비한다. worker는 정확한 제출 capability 확인 전 비밀 frame을 수락하지 않는다. 비밀은 전용 FD 밖으로 보내지 않는다.
+3. 입력 변경·취소·hold·lock·sleep·사용자 전환·연결 상실·세대 변경은 기존 승인을 폐기한다. 중복 callback·재전송·재시작·불명 결과는 자동 재사용하지 않는다. SEP 서명은 정확한 생체 ACL, 보호 등록 및 broker key/policy pinning 입증 전 비활성이다. 생체 일치가 사용자 의도나 물리 입력을 증명한다고 주장하지 않는다.
+4. 기존 T01–T28과 [독립 정적 검증의 반례 및 추가 행렬](story-mfa-0-supervisor-security-review.md)을 모두 보존한다. 실제 봉인·동일 UID/AX·생체·취소·FD/프로세스 복구·권위 DB·egress 격리와 전체 검증이 입증되기 전 운영 auth/HTTP는 닫힌다. 합성 검증은 실기 증거가 아니다.
+</intent-contract>
+
+재개: 원래 기준 `885ad522`부터 전체 diff와 기존 리뷰를 유지한다. 부분 구현은 미검증 WIP `72b1fec`에 보존되었으며 타입 검사 오류 두 건도 남았다. 먼저 해당 타입 오류와 phase/credentials 예산을 고치고, 제출별 callback·broker 소비·worker gate, FD 상속/DB ACK, D2B 보호 경계, D5 egress를 각각 구현·검증·checkpoint한다. D6 전체 T01–T28과 위 추가 반례, 독립 리뷰 및 D7을 생략하지 않는다. 단계별 phase-ready로 같은 구현자를 이어가며 capacity 오류는 같은 모델·세션으로 재개한다. 기존 production fail-closed를 검증 전 제거하지 않는다. 이 결정은 완료 증거가 아니다.

@@ -146,3 +146,5 @@
 - 2026-11-01 · 16.2 인증 보안 · 같은 UID 미승인 프로세스까지의 OS 검증·격리와 auth 전용 채널, 미확인 identity discovery 차단, 독립 보호 latch·durable admission/호출 의도를 채택한다. 16.2 계획의 독립 코드 반례와 T01–T28을 단계별로 검증하고 미증명 시 실패 닫힘을 유지한다.
 
 - 2026-11-01 · 16.2 보호 배치 · 독립 정적 반례를 대조해 OrbStack 권위 DB를 유지하는 보호 엔진을 우선 검증하고, 단일 supervisor·분리 broker/worker·제한 CLI API 및 인증된 OS IPC 전용 FD 전달로 단계화한다. 격리 미증명 시 auth/HTTP는 닫고 운영 이전은 16.9에 둔다. 원래 기준과 미검증 WIP는 16.2 계획에 기록했다.
+
+- 2026-11-01 · 16.2 제출 승인 · credentials 및 각 MFA 제출마다 fresh 생체 전용 승인, 보호 UI callback assertion과 단회 challenge·동결 응답의 결합을 채택한다. 독립 정적 반례와 추가 검증 행렬은 16.2 계획에 연결했으며 실기 보안 증거 전 운영 경로는 닫는다.

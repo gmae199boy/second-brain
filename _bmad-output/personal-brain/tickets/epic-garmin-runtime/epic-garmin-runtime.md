@@ -133,3 +133,5 @@ Garmin 사용자가 별도 Garmin 설치 없이 Brain에서 수집과 정제를 
 - Decision(2026-10-30, 추천으로 정함): 16.1은 14.7 sweep 대신 확장 뼈대·raw schema(14.1)와 지표 catalog·현재 view(14.2)를 기다린다. 합성 fake client tracer는 전수 반입·검증 보고서와 무관하다. 실제 시그니처·마이그레이션 번호는 착수 시점 main HEAD에서 확인한다(예전 마지막 코드 스토리 대기 결정을 대체).
 
 - Decision(2026-11-01, 추천으로 정함, 16.2 escalation 해소): 인증 전용 상호 검증 채널과 같은 UID 미승인 프로세스까지의 격리, 미확인 계정 discovery 차단, 독립 latch와 durable admission/HTTP intent를 채택한다. 신원·호출 제어가 증명되지 않으면 실패 닫힘을 유지하고 16.2 계획의 독립 반례 행렬을 검증한다.
+
+- Decision(2026-11-01, 추천으로 정함, 16.2 escalation 해소): credentials와 각 MFA 제출마다 현재 GUI 사용자의 fresh 생체 승인을 단회 소비하고, 봉인 UI callback assertion을 지정 실행 인스턴스·challenge·동결 응답과 결합한다. 독립 정적 반례와 실제 OS/AX·격리 검증 전 운영 경로는 닫는다.
