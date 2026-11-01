@@ -4,7 +4,7 @@ type: 'feature'
 ticket: 2
 created: '2026-11-01'
 status: blocked
-baseline_revision: '8d071a83d6d11030f71ae0ae255aa25a891dbfa0'
+baseline_revision: c034f85675e71c9c80c9fe4ffef4c11dd2fe451e
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
@@ -17,7 +17,7 @@ context: []
 warnings: [oversized]
 deferred: []
 blocked_at: "2026-11-01"
-blocked_reason: "intent gap: epic 13 인증 단계의 비밀번호·MFA 입력 transport와 접속 권한·상대 신원 검증 계약이 없다. install.ts는 supervised auth 상태만 관리하고 process-group.ts:8은 stdin=ignore다. workflow.md의 보안·비밀 공백 HALT 규칙에 따라 구현 전 인증 전달 경계 명세가 필요하다."
+blocked_reason: "worker initialization failed: 구현 워커의 필수 bmad-build 렌더 명령이 PyPI jinja2 DNS 조회 실패로 exit 2를 반환했다. 소스·시험 변경은 없다. 정식 failed Dispatch를 수락·release했으며 제어 helper start는 동일 역할의 기존 요청만 복원하고 --task/--retry-of를 허용하지 않아 동일 Task를 안전하게 재시도할 수 없다. 의존성 접근과 동일 Task 재시도 지원을 복구한 뒤 재개해야 한다."
 ---
 
 <intent-contract>
@@ -123,16 +123,6 @@ blocked_reason: "intent gap: epic 13 인증 단계의 비밀번호·MFA 입력 t
 - `pnpm exec vitest run packages/core/test/extensions.test.ts packages/postgres/test/work-store.test.ts apps/cli/test/ext-install-resume.test.ts` — 공통 인증 재개·키별 직렬화 회귀.
 
 crash 시험은 격리 fixture가 보호 commit 직후 barrier/PID를 기록하고 시험 관리자가 그 worker만 종료·reap한 뒤 새 attempt를 실행한다. 공개 관찰은 상태·호출 개수·허용 코드뿐이다. `finally`에서 barrier 해제·자식 reap·daemon abort/await·store.close·fixture.cleanup 순서로 정리하고 권한 실패 주입은 복원한다. 운영 홈·DB·tokenstore·네트워크는 사용하지 않는다.
-
-## Auto Run Result
-
-- Status: blocked
-- Blocking condition: intent gap — epic 13 인증 단계의 비밀번호·MFA 전달 transport와 접속 권한·상대 신원 검증 계약이 없다. `packages/core/src/extensions/install.ts:176`은 supervised auth 상태만 관리하고 `apps/cli/src/runtime/process-group.ts:8`은 stdin을 닫는다. 위 Design Notes에 증거와 재개 조건을 기록했다.
-- 적용 규칙: 렌더된 `workflow.md` persistent facts는 “Still HALT with status `blocked` (reason with the evidence) when the gap touches security, secrets or masking”이라고 명시한다. 비밀 전달·권한 경계를 임의 가정하지 않고 구현 준비 게이트 전에 HALT했다. 이는 저장소 밖 사람 전용 인수 작업이 아니므로 awaiting-operator로 분류하지 않았다.
-- 수행: 기준 revision 직접 확인, 16.1 연속성·epic 13 인증 선행 계약 대조, 읽기 전용 조사 워커 보고 수락, 이 계획 작성. 소스·시험·lock은 변경하지 않았고 빌드·시험·실계정 호출·커밋·push는 실행하지 않았다. 검증 명령은 재개용이며 성공 결과가 아니다.
-- 변경 파일: 이 계획 하나. 수락 조건은 미검증이다. review 렌즈는 실행하지 않았으며 findings·patch·defer·reject 집계는 해당하지 않는다.
-- HALT 절차에서만 `tickets.py mark 16.2 blocked --blocked ...`를 실행해 계획 frontmatter의 status·blocked_at·blocked_reason을 기록했다. 티켓 파일·tickets.toml은 수정하지 않았고 done은 표시하지 않았다. 최종 완료 판정은 오케스트레이터 소유다.
-- Orca 정리: 자기 Run `run_55a57c23095e`의 조사 Task `task_afafb55bb19a` / Dispatch `ctx_688dd4051150` succeeded 보고 전문을 수락하고 release했다. worker-list는 released 1건, 활성·reclaimable 0건이다. 미처리 mail·불명 요청·취소할 과업은 없다. 최종 checkpoint에 HALT 이유·검증 미실행·정리 상태를 남기고 자기 전용 제어 셸만 마지막에 닫는다.
 
 ## 독립 보안 조사 근거 (2026-11-01)
 
@@ -337,3 +327,18 @@ Garmin 부분은 새 auth/client/protection 모듈, 새 migrations, manifest.aut
 
 이 보고서는 보안 공백을 ‘사소한 구현 선택’으로 해소했다고 판정하지 않는다. transport를 정하는 것 외에도 같은 UID 신뢰, 발견 전 identity, 재인증/probe 예외, 불확실한 외부 호출의 복구가 결정되어야 안전하게 구현할 수 있다. 현재 소스에서 재사용 가능한 것은 supervised auth lifecycle, OS process-group 정리, opaque key 배타 claim, attempt fence, 보호된 출력 경계이며, 각 연결 계약의 부재는 그대로 남아 있다.
 
+
+## 감독자 환경 복구 (2026-11-01)
+
+- 이전 구현 Dispatch는 PyPI DNS 오류로 초기화 전 실패하고 정식 종료·release됐다. 호스트에서 pypi.org DNS 조회와 HTTPS 200, 동일 `uv run --no-cache` 렌더 명령 종료 0을 확인했다. 이는 워커 환경의 성공 증거는 아니다. 추천: 지원되는 resolve로 새 generation을 재무장하고 기존 보안 계약과 1단계부터 순서대로 수행한다. 재발하면 워커 환경의 DNS·네트워크 접근을 조사하고 근거를 남긴다. 구현과 검증은 아직 미완료다.
+
+## Auto Run Result
+
+- Status: blocked
+- Blocking condition: worker initialization failed — 구현 워커의 필수 `bmad-build` 렌더 명령이 PyPI `jinja2` 조회 중 DNS 오류로 exit 2를 반환했다. 오류 원문은 `failed to lookup address information: nodename nor servname provided, or not known`이다.
+- 수행: 계획과 epic 전체·감독자 보안 결정을 읽고, 기존 staged 재개 입력과 baseline `c034f85675e71c9c80c9fe4ffef4c11dd2fe451e`을 보존했다. 계획의 1단계만 구현 워커에 배정했으나 소스·시험·lock 변경과 검증 실행 전에 실패했다. 모든 수락 기준과 이후 단계는 미검증이다. review는 실행하지 않았다.
+- 실패 근거: Run `run_6d24f9afc7b7`, Task `task_8835879e468f`, Dispatch `ctx_c42dde32339c`의 정식 `failed` 보고와 transcript를 대조했다. 요청/실제 모델은 모두 `codex gpt-6.1-terra / medium`이다. 보고서는 `/private/tmp/garmin-mfa-worker-report.md`다. capacity·사용량 한도 증거는 없으며 실제 실패는 1회다.
+- 재개 제약: `_bmad/custom/bmad-orca-control.py:243`의 `start`는 `--task`·`--retry-of`를 허용하지 않고 같은 역할의 원래 요청만 복원한다. 정식 완료된 Dispatch를 다시 깨우거나 새 Task/Run으로 재시도 규칙을 우회하지 않았다. 의존성 접근과 동일 Task의 정식 재시도 경로를 복구한 뒤 1단계부터 이어가야 한다.
+- 적용 지침: 워커가 읽은 `bmad-build/SKILL.md`는 `On any other output or failure ... report the command output and stop. Do not run any workflow source directly.`라고 명시한다. 별도 스킬 원본을 직접 실행하여 실패를 우회하지 않았다.
+- 상태 소유권: 이번 HALT에서만 `tickets.py mark 16.2 blocked --blocked ...`를 실행했다. 티켓 done·커밋·push는 수행하지 않았다. 사람 전용 외부 수락 작업이 아니므로 `awaiting-operator`로 분류하지 않았다.
+- Orca 정리: 실패 보고 전문을 수락한 뒤 해당 Dispatch를 `released`로 확인했고 Delivery `delivery_9ffe4033841a`를 ack했다. 자기 Run의 활성·reclaimable 워커와 pending mail은 없고 불명 요청·취소할 과업도 없다. 단계·검증 미실행·실패 근거·재개 제약·정리 상태를 현재 task의 `orca-coordination.json`에 checkpoint하고 전용 제어 셸만 마지막에 닫는다.
