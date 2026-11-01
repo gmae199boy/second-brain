@@ -59,6 +59,15 @@ blocked_reason: "security decision gap: 같은 UID 미승인 프로세스를 포
 5. supervisor가 worker launch 전에 durable admission을 기록하고 각 실제 HTTP 전에 현재 attempt·취소·hold·binding·gate를 검사하여 intent를 commit한다. 저장 실패·결과 불명·crash는 pending/uncertain을 남기고 재시작에서도 호출을 막는다. HTTP와 DB를 원자적이라 주장하지 않고 이미 전송된 in-flight는 격리한다. 쓰기 tx는 외부 호출·입력 대기 중 열지 않고 2초 이내다. 라이브러리 내부 HTTP·retry·refresh도 gate와 pacing으로 계측한다.
 6. 아래 조사 보고의 T01–T28을 구현 후 격리 fake HTTP/PG와 실제 supervisor로 검증한다. 보안 peer spoof·동일 UID 공격·secret canary·취소·identity alias·미확정 intent·SIGKILL·probe 실제 HTTP 수를 포함한다. OS 격리 또는 라이브러리 제어를 증명할 수 없으면 성공으로 꾸미지 말고 실패 닫힘을 유지하며 단계별 진단·대안을 기록한다. 실계정 MFA·배포는 16.9에 남긴다.
 
+### 감독자 결정 (2026-11-01, 추천으로 정함; 보호 배치 재추진)
+
+독립 정적 대조는 [독립 보안 검증](story-mfa-0-independent-boundary-review.md)에 보존한다. 소스 반례와 추천안의 검토이며 실제 OS 격리 성공은 아니다. 미검증 부분 구현은 `c7e9112`에 보존했고 원래 기준은 `885ad522e5a30b820c12f984959c03c98ca28bc1`이다. 재무장으로 기준이 전진해도 최종 검증·독립 리뷰는 원래 기준부터 전체 diff와 기존 보고, 아래 미완료 작업을 포함한다. WIP를 완료로 간주하지 않는다.
+
+1. 저장소의 단일 권위 PostgreSQL 및 OrbStack Docker 계약을 유지한다. 로그인 UID에서 관리 API·VM·컨텍스트·volume·백업·inspect/exec/create 등 동등 관리 경로 모두 접근할 수 없는 **보호된 OrbStack 배치**를 우선 구현·조사한다. 별도 principal 또는 소켓 이름만으로 격리가 입증되었다고 간주하지 않는다. 실제 지원·재부팅·업데이트 후 격리 증명이 실패하거나 불명이면 보호 배포 미완료로 남기고 auth 입력과 외부 HTTP를 닫는다. local PostgreSQL 대안은 현재 저장소 정책을 바꾸므로 암묵적으로 전환하지 않는다. 실제 운영 이전은 16.9이며 기존 데이터·원본을 보존한다.
+2. 보호된 기존 단일 supervisor와 broker, 별도 Garmin worker principal의 봉인 실행물·자격·DB role을 분리한다. 사용자 수정 shim, manifest, venv, PATH, URL, `.env`, 엔진 API로 보호 권한을 획득하거나 증거·admission·latch를 위조할 수 없어야 한다. CLI/hook은 기존 명령 의미와 spool을 보존하되 보호 서비스의 좁은 데이터 API를 통해 접근하고 비인가 SQL·DB 자격·임의 실행은 노출하지 않는다. 서비스 부재 때 보호 기능은 실패 닫히며 일반 입력은 비권위 spool로 구분한다. 다른 확장을 privileged UID로 실행하지 않는다.
+3. 비밀 채널의 문구를 정밀화한다: broker가 만든 익명 전용 FD로만 비밀을 보내고 worker에는 spawn 상속, 검증된 UI에는 인증된 OS IPC의 FD 전달을 허용한다. XPC 본문·argv·env·파일·로그에는 비밀을 넣지 않는다. 역할별 OS 신원, 세션·attempt·generation·package 결합, 일회성 승인, 복제 FD 정리 및 프로세스 그룹 종료를 검증한다. 기존의 ‘전용 상속 FD’는 이 항목으로 대체하며 XPC descriptor 전달과 상속을 동일하다고 주장하지 않는다. 사용자 승인 세탁·접근성/자동화 권한의 실제 위협을 검사하고 증명되지 않으면 열지 않는다.
+4. 실행을 D1 설치 staging·보호 엔진 가능성 검사 → D2 DB 역할과 제한 API → D3 단일 supervisor와 launcher → D4 UI/broker/FD → D5 tokenstore와 OS egress·HTTP broker → D6 전체 T01–T28 및 독립 리뷰 → D7 이전 준비로 나눈다. 각 단계에서 같은 구현자가 phase-ready 보고, 지휘자 검증·checkpoint 뒤 다음 단계를 받는다. 실제 보호 엔진이 미검증이어도 stage·fake·별도 프로세스 fixture를 계속 작성한다. fake 성공을 실제 격리 성공으로 승격하지 않고 사용자 요구·계약·전체 검증을 줄이지 않는다. native PID assertion은 현재 소스에 이미 존재한다.
+
 </intent-contract>
 
 ## Code Map

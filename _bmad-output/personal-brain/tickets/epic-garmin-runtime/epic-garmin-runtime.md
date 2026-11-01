@@ -82,6 +82,8 @@ Garmin 사용자가 별도 Garmin 설치 없이 Brain에서 수집과 정제를 
 
 ## Notes
 
+- Decision(2026-11-01, 추천으로 정함, 16.2 escalation 해소): OrbStack 권위 DB 계약을 유지하며 보호 엔진·단일 supervisor·분리 broker/worker와 제한 CLI API를 단계적으로 검증한다. 인증된 OS IPC의 전용 FD 전달을 명시하고 보호 경계 미증명 시 실패 닫힘을 유지한다. 정적 반례·미검증 항목과 원래 diff 기준은 16.2 계획에 남겼다.
+
 - Waits on epic-jobs-and-scheduler because: 계정 키 직렬화, 긴 수집의 임대 갱신과 attempt token, 현지 시각 예약을 쓴다.
 - Waits on epic-extensions because: 확장 설치·활성화, manifest와 설정 snapshot, `brain_ext_garmin` role과 확장 마이그레이션 적용을 쓴다.
 - Waits on epic-garmin-import because: 그 에픽이 만든 확장 뼈대·스키마, core 건강 계약 표, `file_requests` 위에 수집을 더하고, 이전된 기존 기록 위에서 새 수집이 이어진다.
