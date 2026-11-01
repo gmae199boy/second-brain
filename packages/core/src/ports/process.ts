@@ -1,4 +1,4 @@
-export interface ProcessSpec { cwd?: string; command: string; args: readonly string[]; env: Readonly<Record<string, string>> }
+export interface ProcessSpec { bootstrapPipe?: true; cwd?: string; command: string; args: readonly string[]; env: Readonly<Record<string, string>> }
 export interface ProcessExit { code: number | null; signal: string | null }
 export interface ProcessHandle {
   pid: number;
@@ -7,6 +7,9 @@ export interface ProcessHandle {
   /** The leader's exit/reaping, independent of descendant-held stdio. */
   exited: Promise<ProcessExit>;
   readonly leaderExited: boolean;
+  /** bootstrap의 비밀 없는 ACK만 보낸다. 상대 인증은 별도 경계가 책임진다. */
+  sendBootstrapAck?(): Promise<boolean>;
+  closeBootstrap?(): void;
   /** Stop waiting for pipe EOF while preserving already queued chunks. */
   closeOutput(): void;
   signalGroup(signal: 'SIGKILL' | 'SIGTERM'): void;

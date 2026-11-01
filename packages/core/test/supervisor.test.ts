@@ -437,3 +437,95 @@ it.each(['success','failure'] as const)('종료 확인 뒤 정상 결과에서�
     expect(releases).toBe(outcome === 'success' ? 1 : 0);
   } finally { k.controller.abort(); await k.running; }
 });
+
+it('보호 서비스는 사용자 manifest와 일반 launcher를 조회하거나 청구하지 않는다', async () => {
+  const store = memoryStore(), time = manualTime(now), idGen = sequenceIdGen({ timestampMs: now.getTime() });
+  const controller = new AbortController(), launcher = fakeProcessLauncher();
+  let loaded = 0, ordinary = 0;
+  const id = idGen.next();
+  await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt: now, nextAttemptAt: now });
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time,
+    inspector: fakeProcessInspector(launcher), launcher, idGen, signal: controller.signal,
+    sealedService: { launches: {} },
+    async loadProtectedLaunches() { loaded++; return {}; },
+    launches: { process_probe: () => { ordinary++; return { command: 'fixture', args: [], env: {} }; } },
+  });
+  try {
+    await flush();
+    expect(loaded).toBe(0); expect(ordinary).toBe(0); expect(launcher.specs).toEqual([]);
+    expect(store.snapshot().workAttempts).toEqual([]);
+  } finally { controller.abort(); await running; }
+});
+
+it('보호 registry에 admission과 bootstrap이 없으면 자식을 시작하지 않는다', async () => {
+  const store = memoryStore(), time = manualTime(now), idGen = sequenceIdGen({ timestampMs: now.getTime() });
+  const controller = new AbortController(), launcher = fakeProcessLauncher();
+  const id = idGen.next();
+  await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt: now, nextAttemptAt: now });
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time,
+    inspector: fakeProcessInspector(launcher), launcher, idGen, signal: controller.signal, launches: {},
+    sealedService: { launches: { process_probe: { extension: 'testext', declarations: {}, errorCodes: [],
+      async prepare() { return { ok: true, spec: { command: 'fixture', args: [], env: {} } }; },
+    } } },
+  });
+  try { await flush(); expect(launcher.specs).toEqual([]); expect(store.snapshot().workAttempts[0]?.outcome).toBe('failed'); }
+  finally { controller.abort(); await running; }
+});
+
+it('보호 admission은 실행물이나 환경을 교체할 수 없다', async () => {
+  const store = memoryStore(), time = manualTime(now), idGen = sequenceIdGen({ timestampMs: now.getTime() });
+  const controller = new AbortController(), launcher = fakeProcessLauncher(), id = idGen.next();
+  await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt: now, nextAttemptAt: now });
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time,
+    inspector: fakeProcessInspector(launcher), launcher, idGen, signal: controller.signal, launches: {},
+    sealedService: { launches: { process_probe: { extension: 'testext', declarations: {}, errorCodes: [],
+      async prepare(item, token) { return { ok: true, spec: { bootstrapPipe: true, command: 'sealed', args: [], env: {
+        BRAIN_ABI_VERSION: '1', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind,
+        BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts),
+        BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"testext","values":{}}',
+      } } }; },
+      async admit(_item, _token, spec) { return { ok: true, admitted: true, spec: { ...spec, command: 'attacker' } }; },
+      bootstrap: { async authorize() { return true; } },
+    } } },
+  });
+  try { await flush(); expect(launcher.specs).toEqual([]); expect(store.snapshot().workAttempts[0]?.outcome).toBe('failed'); }
+  finally { controller.abort(); await running; }
+});
+
+it('한 보호 감독자가 봉인 일감과 비특권 host 일감을 각각 청구한다', async () => {
+  const store = memoryStore(), time = manualTime(now), idGen = sequenceIdGen({ timestampMs: now.getTime() });
+  const controller = new AbortController(), launcher = fakeProcessLauncher();
+  let ordinary = 0, loaded = 0;
+  const claimedKinds: string[][] = [];
+  const claim = store.claimSupervisedWork.bind(store);
+  store.claimSupervisedWork = async input => { claimedKinds.push([...input.kinds]); return claim(input); };
+  await store.recordExtensionInstall({ name: 'garmin', version: '1', now, workKinds: ['garmin.auth'] });
+  await store.addWork({ id: idGen.next(), kind: 'garmin.auth', targetKind: 'extension', targetId: 'garmin', createdAt: now, nextAttemptAt: now });
+  await store.addWork({ id: idGen.next(), kind: 'process_probe', targetKind: 'probe', targetId: '1', createdAt: now, nextAttemptAt: now });
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time,
+    inspector: fakeProcessInspector(launcher), launcher, idGen, signal: controller.signal,
+    async loadProtectedLaunches() { loaded++; return {}; }, launches: { process_probe: () => { throw new Error('사용자 launcher 금지'); } },
+    sealedService: { ordinaryKinds: ['process_probe'], protectedKinds: ['garmin.auth', 'garmin.release_block'],
+      ordinaryWorkerHost: { async kinds() { return ['process_probe', 'garmin.auth', 'garmin.release_block', 'garmin.unregistered']; }, async start(item) {
+        expect(item.kind).toBe('process_probe'); ordinary++;
+        return launcher.start({ command: 'unprivileged-fixture', args: [], env: {} });
+      } },
+      launches: { 'garmin.auth': { extension: 'garmin', declarations: {}, errorCodes: [],
+        async prepare(item, token) { return { ok: true, spec: { bootstrapPipe: true, command: 'sealed-fixture', args: [], env: {
+          BRAIN_ABI_VERSION: '1', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind,
+          BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts),
+          BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"garmin","values":{}}',
+        } } }; },
+        async admit() { return { ok: true, admitted: true }; }, bootstrap: { async authorize() { return true; } },
+      } },
+    },
+  });
+  try {
+    await flush(); expect(loaded).toBe(0); expect(ordinary).toBe(1);
+    expect(claimedKinds.flat()).not.toContain('garmin.release_block'); expect(claimedKinds.flat()).not.toContain('garmin.unregistered');
+    expect(launcher.specs.map(spec => spec.command).sort()).toEqual(['sealed-fixture', 'unprivileged-fixture']);
+    for (const process of launcher.processes) { process.push('{"abi":1,"type":"result"}'); process.exit(); }
+    await flush();
+    expect(store.snapshot().workAttempts.map(attempt => attempt.outcome)).toEqual(['succeeded', 'succeeded']);
+  } finally { controller.abort(); await running; }
+});

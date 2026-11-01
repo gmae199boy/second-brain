@@ -60,13 +60,20 @@ export async function provisionExtension(databaseUrl: string, name: string, pass
     if (foreignAccess) throw new Error('확장 역할에 허용되지 않은 schema 권한');
     const schema = (await client.query('select pg_get_userbyid(nspowner) as owner from pg_namespace where nspname=$1', [name])).rows[0];
     if (schema && schema.owner !== 'brain_owner') throw new Error('확장 schema 충돌');
+    // 첫 migration 이후 권한 정책은 각 migration이 소유한다.
+    const migrated = Boolean((await client.query(
+      'select exists(select 1 from brain.schema_migrations where owner=$1) as present', [name],
+    )).rows[0].present);
     await client.query(`create schema if not exists "${name}" authorization brain_owner;
-      grant usage, create on schema "${name}" to "${role}";
+      grant usage on schema "${name}" to "${role}";
       grant usage on schema brain to "${role}";
-      grant execute on function brain.attempt_is_current(uuid, uuid) to "${role}";
-      alter default privileges for role brain_owner in schema "${name}" grant all on tables to "${role}";
-      alter default privileges for role brain_owner in schema "${name}" grant all on sequences to "${role}";
-      alter default privileges for role brain_owner in schema "${name}" grant execute on functions to "${role}"`);
+      grant execute on function brain.attempt_is_current(uuid, uuid) to "${role}"`);
+    if (!migrated) {
+      await client.query(`grant create on schema "${name}" to "${role}";
+        alter default privileges for role brain_owner in schema "${name}" grant all on tables to "${role}";
+        alter default privileges for role brain_owner in schema "${name}" grant all on sequences to "${role}";
+        alter default privileges for role brain_owner in schema "${name}" grant execute on functions to "${role}"`);
+    }
     // 객체별 권한은 migration이 소유한다. 기존 객체에 일괄 GRANT하면
     // 재설치 또는 역할 재생성 시 보안상 REVOKE가 무효화된다.
     if ((await client.query("select to_regclass('brain.extension_status_public_v1') as view")).rows[0].view) await client.query(`grant select on brain.extension_status_public_v1 to "${role}"`);

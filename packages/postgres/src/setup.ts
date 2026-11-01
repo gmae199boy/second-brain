@@ -1,4 +1,5 @@
 import { createPool, describe, type ConnectionOptions } from './connect.js';
+import { prepareProtectedRoles } from './protected-roles.js';
 export interface PrepareDatabaseOptions extends ConnectionOptions { appPassword: string; maintenancePassword?: string; databaseName?: string }
 export type PrepareDatabaseResult = { ok: true; databaseUrl: string } | { ok: false; code: 'DB_UNAVAILABLE'; message: string };
 /** Administrative preparation only. Runtime never imports or calls this path. */
@@ -14,6 +15,7 @@ export async function prepareDatabase(options: PrepareDatabaseOptions): Promise<
   // must not cancel administrative work; the connection deadline still applies.
   const pool = createPool({ ...options, databaseUrl: adminUrl.toString(), lockTimeoutMs: 0, queryTimeoutMs: 0 });
   try {
+    await prepareProtectedRoles(adminUrl.toString());
     const client = await pool.connect();
     try {
       // Roles are cluster-wide, so preparation of unrelated test databases also serializes.

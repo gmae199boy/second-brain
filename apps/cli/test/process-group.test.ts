@@ -2,6 +2,8 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { expect, it } from 'vitest';
 import { systemProcessLauncher } from '../src/runtime/process-group.js';
+import { sealedProcessLauncher } from '../src/daemon/sealed-launcher.js';
+import { SEALED_GARMIN_WORKER } from '../src/daemon/sealed-garmin.js';
 const worker = fileURLToPath(new URL('./fixtures/process-worker.mjs', import.meta.url));
 it('preserves line order and reports the leader exit code', async () => {
   const started = await systemProcessLauncher.start({ command: process.execPath, args: [worker], env: { FAKE_WORKER_PLAN: JSON.stringify({ lines: ['one', 'two', 'three'], code: 7 }) } });
@@ -205,3 +207,129 @@ it('projects real child diagnostics before storing attempts, failures and logs',
     expect(store.snapshot().failures[0]).toMatchObject({ code: 'EXTENSION_WORKER_ERROR' });
   } finally { controller.abort(); await running; }
 });
+
+it.each(['success', 'record-failed', 'cancel', 'hold', 'hold-during-bootstrap', 'identity-unknown', 'shutdown-before-record'] as const)('실제 보호 자식은 신원 기록과 bootstrap 전 실행하지 않는다: %s', async mode => {
+  const directory = await mkdtemp(join(tmpdir(), 'brain-bootstrap-fixture-'));
+  const marker = join(directory, 'constructor');
+  const store = memoryStore(), createdAt = new Date(), idGen = sequenceIdGen({ timestampMs: createdAt.getTime() });
+  const controller = new AbortController(), id = idGen.next();
+  let childHandle: ProcessHandle | undefined;
+  let lateAck: boolean | undefined;
+  let release!: () => void, reached!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let bootstrapRelease!: () => void, bootstrapReached!: () => void;
+  const bootstrapGate = new Promise<void>(resolve => { bootstrapRelease = resolve; });
+  const bootstrapEntered = new Promise<void>(resolve => { bootstrapReached = resolve; });
+  const recorded = new Promise<void>(resolve => { reached = resolve; });
+  const realRecord = store.recordSupervisedProcess.bind(store);
+  store.recordSupervisedProcess = async input => {
+    reached(); await gate;
+    if (mode === 'record-failed') return { ok: false, code: 'DB_UNAVAILABLE', message: 'fixture' };
+    return realRecord(input);
+  };
+  await store.recordExtensionInstall({ name: 'garmin', version: '1', now: createdAt, workKinds: ['garmin.auth'] });
+  await store.addWork({ id, holdGroup: 'extension:garmin', kind: 'garmin.auth', targetKind: 'probe', targetId: '1', createdAt, nextAttemptAt: createdAt });
+  const source = `const fs=require('node:fs'); const b=Buffer.alloc(1); if(fs.readSync(3,b,0,1,null)!==1 || b[0]!==1) process.exit(4); fs.writeFileSync(process.env.MARKER,'entered'); process.stdout.write('{"abi":1,"type":"result"}\\n');`;
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, clock: systemClock, timer: systemTimer, idGen,
+    launcher: sealedProcessLauncher({ async startGarmin(spec) { const result = await systemProcessLauncher.start({ ...spec, command: process.execPath, args: ['-e', source], env: { ...spec.env, MARKER: marker } }); if (result.ok) childHandle = result.handle; return result; } }),
+    inspector: { ...systemProcessInspector, ...(mode === 'identity-unknown' ? { async startedAt() { return { state: 'unknown' as const }; }, async groupMembers() { return { state: 'unknown' as const }; } } : {}) }, signal: controller.signal, pollMs: 10, cancelPollMs: 10, cancelGraceMs: 30, groupConfirmMs: 100,
+    launches: {}, sealedService: { launches: { 'garmin.auth': { extension: 'testext', declarations: {}, errorCodes: [],
+      async prepare(item, token) { return { ok: true, spec: { bootstrapPipe: true, command: SEALED_GARMIN_WORKER, args: [], env: {
+        BRAIN_ABI_VERSION: '1', BRAIN_WORK_ID: item.id,
+        BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId,
+        BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"testext","values":{}}',
+      } } }; },
+      async admit() { return { ok: true, admitted: true }; },
+      bootstrap: { async authorize(handle, identity, _item, _token, signal) {
+        if (mode === 'hold-during-bootstrap') { bootstrapReached(); await bootstrapGate; lateAck = await handle.sendBootstrapAck?.() ?? false; return lateAck; }
+        if (signal.aborted || !identity.osBootAt || !identity.osStartedAt) return false;
+        return await handle.sendBootstrapAck?.() ?? false;
+      } },
+    } } },
+  });
+  try {
+    await recorded;
+    expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+    if (mode === 'cancel') await store.requestWorkCancel({ id, now: new Date() });
+    if (mode === 'hold') await store.holdWorkGroup({ group: 'extension:garmin', now: new Date() });
+    if (mode === 'shutdown-before-record') controller.abort();
+    else release();
+    if (mode === 'hold-during-bootstrap') { await bootstrapEntered; await store.holdWorkGroup({ group: 'extension:garmin', now: new Date() }); }
+    if (mode === 'success') {
+      await expect.poll(() => readFile(marker, 'utf8').catch(() => null), { timeout: 5000 }).toBe('entered');
+      await expect.poll(() => store.snapshot().workAttempts[0]?.outcome, { timeout: 5000 }).toBe('succeeded');
+    } else {
+      await expect.poll(() => store.snapshot().workAttempts[0]?.outcome, { timeout: 5000 }).not.toBeNull();
+      if (mode === 'hold-during-bootstrap') { bootstrapRelease(); await expect.poll(() => lateAck, { timeout: 3000 }).toBe(false); }
+      expect(await readFile(marker, 'utf8').catch(() => null)).toBeNull();
+      if (mode === 'identity-unknown') expect(store.snapshot().workAttempts[0]?.outcome).toBe('unknown');
+    }
+  } finally { release(); bootstrapRelease(); controller.abort(); await running; if (childHandle && !childHandle.leaderExited) { childHandle.signalGroup('SIGKILL'); await childHandle.exited; } await rm(directory, { recursive: true, force: true }); }
+}, 15_000);
+
+it('bootstrap ACK는 한 번만 보내고 닫힌 pipe 쓰기는 실패한다', async () => {
+  const source = `const fs=require('node:fs'); const b=Buffer.alloc(2); const n=fs.readSync(3,b,0,2,null); process.stdout.write(String(n));`;
+  const started = await systemProcessLauncher.start({ bootstrapPipe: true, command: process.execPath, args: ['-e', source], env: {} });
+  expect(started.ok).toBe(true); if (!started.ok) return;
+  expect(await started.handle.sendBootstrapAck?.()).toBe(true);
+  expect(await started.handle.sendBootstrapAck?.()).toBe(false);
+  let output = ''; for await (const chunk of started.handle.stdout) output += chunk;
+  expect(output).toBe('1'); await started.handle.exited;
+  expect(await started.handle.sendBootstrapAck?.()).toBe(false);
+
+  const closed = await systemProcessLauncher.start({ bootstrapPipe: true, command: process.execPath, args: ['-e', "require('node:fs').closeSync(3); process.stdout.write('ready'); setTimeout(()=>{},1000)"], env: {} });
+  expect(closed.ok).toBe(true); if (!closed.ok) return;
+  try {
+    await closed.handle.stdout[Symbol.asyncIterator]().next();
+    expect(await closed.handle.sendBootstrapAck?.()).toBe(false);
+  } finally { closed.handle.closeBootstrap?.(); closed.handle.signalGroup('SIGKILL'); await closed.handle.exited; }
+});
+
+it('자손이 bootstrap FD를 보유해도 부모 폐기는 자손에 EOF를 보낸다', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'brain-bootstrap-fd-'));
+  const marker = join(directory, 'eof');
+  const grandchild = `const fs=require('node:fs');const b=Buffer.alloc(1);const n=fs.readSync(3,b,0,1,null);fs.writeFileSync(process.env.MARKER,String(n));`;
+  const source = `const {spawn}=require('node:child_process');const c=spawn(process.execPath,['-e',${JSON.stringify(grandchild)}],{stdio:['ignore','ignore','ignore',3],env:process.env});process.stdout.write('ready');c.on('exit',()=>process.exit(0));`;
+  const started = await systemProcessLauncher.start({ bootstrapPipe: true, command: process.execPath, args: ['-e', source], env: { MARKER: marker } });
+  expect(started.ok).toBe(true); if (!started.ok) return;
+  try {
+    await started.handle.stdout[Symbol.asyncIterator]().next();
+    started.handle.closeBootstrap?.();
+    await expect.poll(() => readFile(marker, 'utf8').catch(() => ''), { timeout: 3000 }).toBe('0');
+    await started.handle.exited;
+    expect(await started.handle.sendBootstrapAck?.()).toBe(false);
+  } finally { if (!started.handle.leaderExited) { started.handle.signalGroup('SIGKILL'); await started.handle.exited; } await rm(directory, { recursive: true, force: true }); }
+});
+
+it('같은 supervisor가 보호 launcher와 일반 WorkerHost의 실제 자식을 각각 감독한다', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'brain-mixed-host-'));
+  const sealedMarker = join(directory, 'sealed'), ordinaryMarker = join(directory, 'ordinary');
+  const store = memoryStore(), createdAt = new Date(), idGen = sequenceIdGen({ timestampMs: createdAt.getTime() });
+  const controller = new AbortController();
+  await store.recordExtensionInstall({ name: 'garmin', version: '1', now: createdAt, workKinds: ['garmin.auth'] });
+  await store.addWork({ id: idGen.next(), kind: 'garmin.auth', targetKind: 'extension', targetId: 'garmin', createdAt, nextAttemptAt: createdAt });
+  await store.addWork({ id: idGen.next(), kind: 'process_probe', targetKind: 'probe', targetId: 'fixture', createdAt, nextAttemptAt: createdAt });
+  const result = `process.stdout.write('{"abi":1,"type":"result"}\\n')`;
+  const sealedSource = `const fs=require('node:fs');const b=Buffer.alloc(1);if(fs.readSync(3,b,0,1,null)!==1)process.exit(4);fs.writeFileSync(process.env.MARKER,'sealed');${result}`;
+  const ordinarySource = `require('node:fs').writeFileSync(process.env.MARKER,'ordinary');${result}`;
+  const sealed = sealedProcessLauncher({ async startGarmin(spec) { return systemProcessLauncher.start({ ...spec, command: process.execPath, args: ['-e', sealedSource], env: { ...spec.env, MARKER: sealedMarker } }); } });
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, clock: systemClock, timer: systemTimer, idGen,
+    launcher: sealed, inspector: systemProcessInspector, signal: controller.signal, pollMs: 10, cancelPollMs: 10, cancelGraceMs: 30, groupConfirmMs: 100, launches: {},
+    sealedService: { ordinaryKinds: ['process_probe'], protectedKinds: ['garmin.auth', 'garmin.collect', 'garmin.release_block'],
+      ordinaryWorkerHost: { async kinds() { return ['process_probe']; }, async start() { return systemProcessLauncher.start({ command: process.execPath, args: ['-e', ordinarySource], env: { MARKER: ordinaryMarker } }); } },
+      launches: { 'garmin.auth': { extension: 'garmin', declarations: {}, errorCodes: [],
+        async prepare(item, token) { return { ok: true, spec: { bootstrapPipe: true, command: SEALED_GARMIN_WORKER, args: [], env: {
+          BRAIN_ABI_VERSION: '1', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind,
+          BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts),
+          BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"garmin","values":{}}',
+        } } }; },
+        async admit() { return { ok: true, admitted: true }; }, bootstrap: { async authorize(handle) { return await handle.sendBootstrapAck?.() ?? false; } },
+      } },
+    },
+  });
+  try {
+    await expect.poll(() => store.snapshot().workAttempts.filter(attempt => attempt.outcome === 'succeeded').length, { timeout: 5000 }).toBe(2);
+    expect(await readFile(sealedMarker, 'utf8')).toBe('sealed');
+    expect(await readFile(ordinaryMarker, 'utf8')).toBe('ordinary');
+  } finally { controller.abort(); await running; await rm(directory, { recursive: true, force: true }); }
+}, 15_000);

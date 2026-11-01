@@ -50,12 +50,12 @@ export function decodeAbiLine(line: string): { ok: true; event: ProcessAbiEvent 
 function validReadiness(raw: string): boolean {
   try { const v: unknown = JSON.parse(raw); return object(v) && only(v, ['version', 'core', 'expected_core', 'extension', 'migrations', 'applied_migrations', 'manifest_version', 'abi']) && Object.keys(v).length === 8 && v['version'] === 1 && [v['core'], v['expected_core'], v['extension']].every(n => n === null || Number.isSafeInteger(n) && (n as number) >= 0) && Array.isArray(v['migrations']) && v['migrations'].every(n => Number.isSafeInteger(n) && n > 0) && (v['applied_migrations'] === null || Array.isArray(v['applied_migrations']) && v['applied_migrations'].every(n => Number.isSafeInteger(n) && n > 0)) && typeof v['manifest_version'] === 'string' && v['manifest_version'].length > 0 && v['abi'] === 1; } catch { return false; }
 }
-export function decodeAbiEnv(env: Readonly<Record<string, unknown>>): { ok: true } | AbiFailure {
+export function decodeAbiEnv(env: Readonly<Record<string, unknown>>, options: { brokered?: boolean } = {}): { ok: true } | AbiFailure {
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const string = (key: string): string => typeof env[key] === 'string' ? env[key] as string : '';
   const from = env['BRAIN_RANGE_FROM'], to = env['BRAIN_RANGE_TO'];
-  const valid = Object.values(PROCESS_ABI_ENV).every(k => string(k).length > 0) && env['BRAIN_ABI_VERSION'] === '1' &&
-    /^postgres(?:ql)?:\/\//.test(string('BRAIN_DATABASE_URL')) && uuid.test(string('BRAIN_WORK_ID')) && uuid.test(string('BRAIN_ATTEMPT_TOKEN')) &&
+  const valid = Object.values(PROCESS_ABI_ENV).filter(k => !options.brokered || k !== PROCESS_ABI_ENV.databaseUrl).every(k => string(k).length > 0) && env['BRAIN_ABI_VERSION'] === '1' &&
+    (options.brokered ? !Object.hasOwn(env, PROCESS_ABI_ENV.databaseUrl) : /^postgres(?:ql)?:\/\//.test(string('BRAIN_DATABASE_URL'))) && uuid.test(string('BRAIN_WORK_ID')) && uuid.test(string('BRAIN_ATTEMPT_TOKEN')) &&
     /^[1-9][0-9]{0,8}$/.test(string('BRAIN_RUN_GENERATION')) &&
     (!Object.hasOwn(env, 'BRAIN_ACCOUNT') || string('BRAIN_ACCOUNT').length > 0) &&
     (!Object.hasOwn(env, 'BRAIN_SETTINGS_SNAPSHOT') || string('BRAIN_SETTINGS_SNAPSHOT').length > 0) &&

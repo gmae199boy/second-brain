@@ -4,7 +4,7 @@ type: 'feature'
 ticket: 2
 created: '2026-11-01'
 status: blocked
-baseline_revision: 885ad522e5a30b820c12f984959c03c98ca28bc1
+baseline_revision: 9008fd8d31e17b0335186b9b28ef367606088c7d
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
@@ -15,9 +15,14 @@ review_loop_iteration: 0
 followup_review_recommended: false
 context: []
 warnings: [oversized]
-deferred: []
+deferred:
+  - summary: "검토 필요: [ASSUMPTION] 전용 인증 FD의 취소 확인 주기는 50ms이며 실제 UI 연결 검증에서 재평가한다."
+  - summary: "검토 필요: [ASSUMPTION] native 인증 세션 전체 TTL 상한은 5분이며 실제 UI·취소 검증에서 재평가한다."
+  - summary: "검토 필요: [ASSUMPTION] 보호 bootstrap ACK 대기 상한은 10초로 두며 operator attach/session 제한과 구분한다."
+  - summary: "검토 필요: [ASSUMPTION] 봉인 worker 설치 후보는 /Library/Application Support/SecondBrain/libexec/garmin-worker이며 D1 설치·D4 신원 검증 전 활성화하지 않는다."
+  - summary: "검토 필요: [ASSUMPTION] UI 준비 재조회는 250ms 주기·15초 상한이며 native host 응답 상한도 15초로 두고 실제 취소·배포에서 재검증한다."
 blocked_at: "2026-11-01"
-blocked_reason: "security decision gap: 같은 UID 미승인 프로세스를 포함하는 위협 범위에 맞춰 권위 DB·OrbStack 관리 API·DB admin/brain_app 자격·단일 supervisor를 보호된 OS principal로 격리하는 배치와 기존 CLI/hook 직접 DB 접속 계약의 변경 범위가 정해지지 않았다. architecture AD-10/18/27/34와 현재 사용자 .env/OrbStack 경로를 그대로 둔 채 native 서명만으로 guard/auth evidence를 신뢰할 수 없다. 부분 구현·합성 검증은 보존했으나 정상 인증 transport·실제 library/HTTP 연결·전체 T01–T28·리뷰가 미완료다. 서명 인증서나 관리자 설치만 남은 외부 operator 행동 대기가 아니다."
+blocked_reason: "보안 결정 공백: 일회성 OS 승인의 세션 또는 각 credentials·MFA 제출 소비 단위, 승인 policy와 broker 증거 신뢰 방식이 계획·epic·architecture에 미명시다. 같은 UID AX·승인 세탁 위협의 경계를 임의 확정할 수 없어 build-auto persistent facts의 security gap HALT를 적용한다. 저장소 내 D2B·D3B/D4·D5–D7 구현도 남아 awaiting-operator 조건이 아니다."
 ---
 
 <intent-contract>
@@ -102,11 +107,24 @@ blocked_reason: "security decision gap: 같은 UID 미승인 프로세스를 포
 
 ## Implementation Notes
 
+g3의 D1 부분 구현은 `tooling/protected-deployment/`에 있다. staging·고정 정책·FD 경로와 macOS ACL 검사·생성 실패 복구를 격리 fixture로 검증 중이다. 실제 설치·서명·서비스별 권한·별도 principal 거부·보호 엔진 실증은 아직 미완료다. [보호 엔진 공식 지원 조사](story-mfa-0-engine-research.md)에서는 headless와 멀티유저는 확인했으나 전체 관리 경로 격리 배치의 긍정 근거를 확인하지 못했다. 이 한계를 입력·HTTP 허용 근거로 바꾸지 않는다.
+
 현재 generation의 부분 구현으로 보호 schema·독립 latch·intent·alias 병합·영속 pacing·작업별 예산, 합성 MFA·전송 seam, 실패 닫힌 auth 진입점, 공통 supervisor의 spawn 전 admission과 재provision 권한 보존을 구현 중이다. 지휘자는 초기 보호 시험을 새 격리 PostgreSQL 18에서 독립 실행해 통과를 확인했다. 이후 확장된 시험과 실제 supervisor·권한·daemon 검증은 워커 보고를 수집했으며 최종 독립 검증과 전체 수락은 아직 남아 있다. native peer API spike는 가능했으나 신뢰된 서명·같은 UID 공격자에 대한 실행물/tokenstore 격리는 미증명이다. 실제 Garmin HTTP·운영 tokenstore는 사용하지 않았다. 전체 T01–T28과 정상 인증·수집·해제 경로는 미완료이며 티켓 완료를 뜻하지 않는다.
 
 이전 generation은 구현하지 않았다. 당시 HEAD의 직접 코드 확인과 읽기 전용 Orca 조사 보고서를 대조했다. 조사 보고서는 `/tmp/brain16-2-research.md`이며 기준 revision은 이 계획의 전체 baseline과 같다. ticket 16.1의 publisher·격리 fixture 연속성을 유지한다. 소스·시험·lock은 바꾸거나 실행하지 않았다.
 
 ## Plan Change Log
+
+- g3 D5 준비: [고정 라이브러리 연결 지도](story-mfa-0-library-map.md)에서 실제 lock/설치 소스를 대조했다. MFA early return·대체 verify POST·broad fallback·내부 refresh/redirect·tokenstore 상대 접근 및 cookie 호환 근거를 구현자에게 전달했다. 읽기 전용 조사이며 D5 구현/시험 성공이 아니다.
+
+- g3 D3A/D3B: 고정 registry·단일 supervisor·비특권 WorkerHost·bootstrap 준비 경계를 D3A로 독립 검증(5개 파일 67개 시험)했다. 실제 principal launcher와 양방향 peer/FD는 D3B+D4에서 함께 구현한다. [공식 native API 연결 지도](story-mfa-0-native-map.md)는 SDK/공식 문서 조사이며 실제 배포/시험 증거가 아니다.
+
+- g3 실행 분할: D2A의 DB 권한·API 검증 부품을 독립 확인한 뒤 D3/D4 실행·전송 의존을 먼저 구현한다. D2B의 실제 사용자 operation·CLI/hook·spool·자격 이관은 D4 직후 D5/D6 전에 닫으며, D1 설치·D7 복구와 전체 T01–T28을 줄이지 않는다.
+- [ASSUMPTION] bootstrap 상한 10초와 봉인 worker 설치 후보 경로는 보수적인 미활성 준비 상수다. 코드 주석과 frontmatter deferred에 별도 검토 항목으로 보존했다.
+
+- g3 D2: [제한 API 연결 지도](story-mfa-0-api-map.md)를 읽기 전용 조사로 확보했다. 명명된 Core operation과 내부 typed port·비권위 spool 경계를 구현자에게 전달했다. DB 역할 분리의 fixture 성공과 정상 서비스/CLI 연결 미완료를 구분한다.
+
+- g3 재개: 감독자 보호 배치 결정을 따라 D1 staging·보호 엔진 검사를 먼저 배정하고, D2 역할/API → D3 supervisor → D4 UI/FD → D5 전송 → D6 전체 검증·리뷰 → D7 이전 준비 순으로 진행한다. 기존 부분 구현과 원래 전체 diff 기준을 보존한다.
 
 ## Review Triage Log
 
@@ -123,6 +141,22 @@ blocked_reason: "security decision gap: 같은 UID 미승인 프로세스를 포
 보호 DB 저장 전에 client 생성의 자동 I/O까지 금지하고, 호출 의도 commit 후 호출하며, 결과 저장 실패 시 의도를 남긴다. 외부 호출 중 SQL 쓰기 트랜잭션은 열지 않는다. library 내부 retry와 token refresh의 HTTP 수를 wrapper 호출 간격 보장과 혼동하지 않는다. 최초 미확인 계정의 안전한 발견·alias 결합은 기존 계정 차단을 초기화해서는 안 된다.
 
 ## Verification
+
+### g3 지휘자 재검증
+
+- 새 native 부품: `sh extensions/garmin/native/tests/check-peer.sh` 성공. 로그는 `/tmp/brain162g3-native-peer.log`다. 별도 합성 프로세스 peer·단회 FD와 해당 시점 프레임·XPC fixture 범위이며 이후 추가된 WorkerHost·세션·서비스 전체를 검증했다는 뜻은 아니다.
+- D3A 최종 준비 묶음: `pnpm exec vitest run apps/cli/test/process-group.test.ts packages/core/test/supervisor.test.ts apps/cli/test/sealed-garmin.test.ts apps/cli/test/sealed-launcher.test.ts apps/cli/test/ordinary-worker-host.test.ts` — 5개 파일 67개 시험 통과. 로그는 `/tmp/brain162g3-d3a-tests.log`다.
+
+- D2A: `pnpm exec vitest run packages/postgres/test/garmin-quarantine.test.ts packages/core/test/protected-api.test.ts packages/postgres/test/extension-permissions.test.ts packages/postgres/test/migrate.test.ts` — 4개 파일 33개 시험 통과. 로그는 `/tmp/brain162g3-d2a-tests.log`다.
+- D3 중간: `pnpm exec vitest run apps/cli/test/process-group.test.ts packages/core/test/supervisor.test.ts` — 2개 파일 56개 시험 통과. 로그는 `/tmp/brain162g3-d3-process.log`다. 이후 고정 launcher·sealed registry 변경은 이 실행 범위 이후이므로 후속 재검증이 필요하다.
+
+- `pnpm build`, `pnpm typecheck` 성공. 로그는 `/tmp/brain162g3-build.log`, `/tmp/brain162g3-typecheck.log`다.
+- 공통 회귀 명령 `pnpm exec vitest run packages/core/test/extensions.test.ts packages/core/test/supervisor.test.ts packages/postgres/test/work-store.test.ts packages/postgres/test/extension-permissions.test.ts apps/cli/test/ext-install-resume.test.ts`에서 5개 파일 290개 시험 통과. 로그는 `/tmp/brain162g3-core-tests.log`다.
+- 기존 Garmin 여섯 파일 묶음 명령을 위와 동일하게 실행해 6개 파일 15개 시험 통과. 로그는 `/tmp/brain162g3-garmin-tests.log`다.
+- `uv sync --project extensions/garmin --frozen` 및 frozen Python의 psycopg·garminconnect·curl_cffi import 성공, Python `3.14.10 arm64` 확인. 로그는 `/tmp/brain162g3-frozen.log`다.
+- `sh extensions/garmin/tests/native/check-native.sh` 성공. 로그는 `/tmp/brain162g3-native.log`다. 구성 요소 재검증이며 실제 보호 배치·전체 수락 성공이 아니다.
+
+### 이전 generation 근거
 
 현재 generation의 부분 구현 검증이다. 전체 수락·T01–T28·독립 코드 리뷰를 통과했다는 의미가 아니다. 전문 구현 보고는 [구현 최종 보고](story-mfa-0-implementation-report.md)에 있다.
 
@@ -355,14 +389,27 @@ Garmin 부분은 새 auth/client/protection 모듈, 새 migrations, manifest.aut
 
 현재까지 작성한 보호·admission·공개 해제·frame·합성 시험과 native 재현 산출물은 후속 generation에서 재사용할 부분 구현이다. 실제 인증 transport·정상 library 연결·보호 principal 설치 산출물·전체 T01–T28은 미완료다. 운영 배포와 실계정 전환은 기존대로 16.9에 남는다.
 
+## D4 공식 API 조사와 현재 검증 범위
+
+- [사람 승인 구현 지도](story-mfa-0-presence-map.md)는 Apple 공식 문서와 공개 SDK를 대조했다. 새 생체 인증 문맥과 봉인 UI callback에 결합한 단회 challenge는 작성 가능한 후보이며 실제 OS 승인·AX·봉인·GUI session 검증 결과는 아니다. Secure Enclave 속성만으로 생체 ACL이나 키 등록의 신뢰를 증명하지 않는다.
+- 조사에서 제안한 생체 전용·현재 GUI 사용자·제출별 새 승인은 확정된 감독자 결정이 아니다. 이 선택은 승인 소비 단위와 비밀 전달의 보안 경계를 정하므로 사소한 구현 가정으로 채택하지 않는다. 실제 코드·배포·검증 전 운영 경로를 열지 않는다.
+- worker FD의 XPC 전달 합성 성공은 spawn 상속 계약을 충족하지 않아 수락 증거에서 제외했다. 별도 자식 FD 5 상속 부품을 작성했으며 broker·host·내구 DB 기록·UI의 전체 연결은 미완료다. D2B 실제 명령/CLI/hook/spool 이관과 D5–D7도 남아 있어 operator만의 외부 작업 대기로 분류하지 않는다.
+
+## 새 사람 승인 보안 결정 공백
+
+계획의 보호 배치 결정 3은 “일회성 승인”과 “사용자 승인 세탁·접근성/자동화 권한의 실제 위협” 검증을 요구하지만 승인 소비 단위를 정하지 않았다. 세션 채널 개시 1회로 credentials와 최대 3 MFA를 허용하는 정책과 각 secret 제출 직전에 새 OS 승인을 요구하는 정책은 승인 후 AX 자동 제출에 대한 경계가 다르다. 생체 전용과 OS 로그인 암호 fallback 또한 같은 보증이 아니다. [공식 API 조사](story-mfa-0-presence-map.md)의 §E.1–3은 이 차이와 가능한 구현을 기록한다. epic의 결정과 architecture spine에도 이 소비 단위와 승인 policy는 명시되어 있지 않다.
+
+현재 `extensions/garmin/native/presence-ui.m`의 SEP 속성 검사는 정확한 생체 ACL·보호 등록·broker key pinning을 증명하지 않으며, `secure-prompt.m`의 전송 부품은 선택 이후 직접 frame을 보낸다. 실제 승인 소스·전달 신뢰는 OS-callback-only 봉인 UI assertion 또는 보호 등록된 ACL key 서명 등으로 작성할 수 있으나 어떤 보증과 소비 범위를 수락할지 명시하지 않고 운영 입력을 열 수 없다. 공개 API가 없거나 구현이 불가능하다는 판단은 아니다.
+
+이 워크플로의 persistent facts는 보안·비밀 관련 결정 공백이면 보수적 가정으로 진행하지 않고 HALT하도록 지시한다. 제출별 생체 승인 제안은 미확정 제안으로 보존한다. 재개 조건은 승인 policy·소비 단위·broker가 신뢰할 증거 출처와 실제 AX/취소 검증 조건을 결정문에 명시하는 것이다. 이외의 D2B·D3B/D4·D5–D7 미완료 코드도 보존하며 완료로 올리지 않는다. 따라서 관리자 설치·생체 동작 같은 외부 행동만 남은 `awaiting-operator` 상황이 아니다.
+
 ## Auto Run Result
 
-- Status: blocked
-- Blocking condition: security decision gap — 같은 UID 위협 범위에 맞는 권위 DB·OrbStack 관리 API·admin/app/broker 자격·단일 supervisor의 보호 principal 배치와 기존 CLI/hook 직접 DB 접속 계약의 변경 범위가 미정이다. AD-10·18·27·34를 임의 변경하거나 같은 UID를 신뢰하는 것으로 요구를 낮추지 않았다. 서명·관리자 설치만 남은 operator 행동 대기가 아니다.
-- 수행: 영속 보호·latch·intent·probe·budget·binding/admission·공개 수동 해제/doctor·frame codec·합성 HTTP seam과 native 재현 산출물을 작성했다. 부분 구현과 정확한 한계는 [구현 최종 보고](story-mfa-0-implementation-report.md), 배치 결정 근거와 재개 순서는 [보안 경계 조사 보고](story-mfa-0-security-boundary-report.md)에 보존했다.
-- 지휘자 검증: 최종 `pnpm build`, `pnpm typecheck`, frozen 의존 설치·Python `3.14.10 arm64` import, Garmin 6개 파일 15개 시험과 native 재현 스크립트가 통과했다. 초기 격리 PG 보호와 Python 구성 요소도 독립 실행했다. 상세 명령·로그는 위 Verification에 있다.
-- 구현자 검증: 공통 인증·supervisor·권한·직렬화 회귀 5개 파일 290개 성공 보고와 실제 worker SIGKILL·daemon 재시작·저장 실패 근거를 확인했다. 이전 Garmin 묶음의 fixture 실패는 수정 후 지휘자 전체 15개 재실행으로 해소됐다.
-- 미완료: 보호 principal·실제 승인 UI/broker/worker·전용 FD bootstrap/수명·실제 tokenstore identity 예약 연결·정상 library login/dump·모든 HTTP의 OS 전송 매개·전체 T01–T28·독립 코드 리뷰와 수정이 남았다. 현재 auth capability와 수집 기본 client는 실패 닫힘이다. 시험 성공을 전체 수락으로 승격하지 않았다.
-- 버전 관리: baseline과 최종 HEAD는 `885ad522e5a30b820c12f984959c03c98ca28bc1`이다. 부분 변경을 작업 트리에 보존했고 커밋·push·티켓 done을 수행하지 않았다. 이번 HALT에서만 `tickets.py mark 16.2 blocked --blocked ...`를 실행했다.
-- Orca: Run `run_fe83da057c7c`에서 구현 Task `task_a0820b6e9ab4`/Dispatch `ctx_a3076da611d3`의 정식 미완료 보고와 조사 Task `task_0c4ce186b888`/Dispatch `ctx_1e7178d28685`의 성공 보고를 전문으로 확인했다. 두 Dispatch를 모두 released로 확인하고 전달 mail을 ack했다. 현재 task의 checkpoint에 단계·검증·보안 판단·정리 상태를 보존한다.
-- Orca 최종 정리 확인: 자기 Run의 2개 Dispatch 모두 released이고 활성·reclaimable 워커 0, pending mail 0, 불명 요청 0이다. checkpoint의 `halt-blocked` 단계에 최종 검증과 보안 판단을 저장했다. 자기 전용 제어 셸만 마지막에 닫는다.
+- Status: `blocked`
+- Blocking condition: OS 승인의 소비 단위(인증 세션 1회 또는 credentials·MFA 각 제출), 승인 policy와 broker가 신뢰할 증거 출처가 미결정이다. 보안 관련 결정 공백은 HALT하라는 persistent facts를 적용했다. 외부 operator 행동만 남은 상태가 아니며 `awaiting-operator`로 바꾸지 않는다.
+- 구현: D1 staging·경로 검증, D2A 보호 role·migration·제한 API, D3A 단일 supervisor와 launcher port, D3B/D4의 native peer·host·broker·FD·후보 UI 및 합성 시험을 부분 보존했다. [최종 구현 보고](story-mfa-0-g3-implementation.md)에 구현자 결과와 지휘자 추가 확인을 함께 기록했다. D2B, 실제 서비스 composition·권위 DB ACK, egress·정상 library 연결, D6 전체 T01–T28/독립 리뷰와 D7은 미완료다.
+- 검증: 기존 D2A 33건·D3A 67건과 부분 회귀를 통과했다. 지휘자는 native peer/C-Python frame, worker peer 미확인 거부, 종료 event 정상/잘못된 PID 거부를 직접 재실행해 통과를 확인했다. 이는 동일 UID·합성 시험이며 실제 보호 엔진·서비스 principal·생체/AX 증거가 아니다. worker 측 XPC FD 전달 시험은 잘못된 계약이라 수락 증거에서 제외했다.
+- 종료 직전 `pnpm typecheck` 실패: `apps/cli/test/sealed-garmin.test.ts:8` implicit any 및 `:15` literal widening 두 오류. 이미 정식 종료된 구현 Dispatch는 수정 메시지를 거부했으며 재개 시 해결해야 한다. `git diff --check`는 통과했다. 전체 Verify·행렬 감사·독립 리뷰는 진행하지 않았다.
+- 상태 소유권: 이 HALT에서만 `tickets.py mark 16.2 blocked --blocked …`를 실행했다. done·커밋·push는 하지 않았고 기존 WIP와 미추적 소스를 보존했다. 인증 입력·외부 HTTP·운영 DB/토큰·실계정·관리자 설치는 사용하지 않았다.
+- 재개: 승인 범위와 policy·증거 provenance를 명시적으로 확정하고 타입 오류부터 수정한 뒤 D3B/D4→D2B→D5–D7의 전체 요구·검증·독립 리뷰를 계속한다.
+- 정리: 자기 Orca Run `run_633e0c971529`의 구현자 1명·읽기 전용 조사자 5명의 정식 보고를 읽고 release했다. fleet은 `released: 6`, `reclaimable: 0`, 후속 inbox 검사에 미처리 delivery가 없었다. 다른 Run이나 워커는 종료하지 않았다. 이 확인과 검증·재개 조건을 checkpoint한 뒤 자기 전용 제어 셸만 닫는다.

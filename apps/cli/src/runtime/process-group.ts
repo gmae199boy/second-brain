@@ -1,11 +1,17 @@
 import { spawn } from 'node:child_process';
+import type { Writable } from 'node:stream';
 import { PROCESS_ABI_MAX_LINE_BYTES, type ProcessLauncher } from 'second_brain';
 
 export const systemProcessLauncher: ProcessLauncher = {
   async start(spec) {
     return new Promise((resolve) => {
-      const child = spawn(spec.command, [...spec.args], { env: { ...spec.env }, ...(spec.cwd ? { cwd: spec.cwd } : {}), detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
-      function buffer(stream: typeof child.stdout) {
+      const child = spawn(spec.command, [...spec.args], { env: { ...spec.env }, ...(spec.cwd ? { cwd: spec.cwd } : {}), detached: true, stdio: spec.bootstrapPipe ? ['ignore', 'pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'] });
+      const bootstrap = spec.bootstrapPipe ? child.stdio[3] as Writable | null : null;
+      let bootstrapUsed = false;
+      bootstrap?.on('error', () => { /* 쓰기 callback이 실패를 전달한다. */ });
+      const closeBootstrap = () => { bootstrapUsed = true; bootstrap?.destroy(); };
+      child.once('exit', closeBootstrap);
+      function buffer(stream: NonNullable<typeof child.stdout>) {
         stream.setEncoding('utf8');
         const queue: string[] = [];
         let queuedBytes = 0;
@@ -35,7 +41,7 @@ export const systemProcessLauncher: ProcessLauncher = {
         } };
         return { output, close };
       }
-      const stdout = buffer(child.stdout), stderr = buffer(child.stderr);
+      const stdout = buffer(child.stdout!), stderr = buffer(child.stderr!);
       const exited = new Promise<{ code: number | null; signal: string | null }>((done) => {
         child.once('exit', (code, signal) => done({ code, signal }));
       });
@@ -43,7 +49,14 @@ export const systemProcessLauncher: ProcessLauncher = {
       child.once('spawn', () => resolve({ ok: true, handle: {
         pid: child.pid!, stdout: stdout.output, stderr: stderr.output, exited,
         get leaderExited() { return child.exitCode !== null || child.signalCode !== null; },
-        closeOutput() { stdout.close(); stderr.close(); child.stdout.destroy(); child.stderr.destroy(); },
+        ...(spec.bootstrapPipe ? { closeBootstrap, async sendBootstrapAck() {
+          if (bootstrapUsed || !bootstrap || bootstrap.destroyed || !bootstrap.writable || child.exitCode !== null || child.signalCode !== null) return false;
+          bootstrapUsed = true;
+          return await new Promise<boolean>(resolve => {
+            bootstrap.write(Buffer.from([1]), error => { if (error) { closeBootstrap(); resolve(false); } else { bootstrap.end(); resolve(true); } });
+          });
+        } } : {}),
+        closeOutput() { closeBootstrap(); stdout.close(); stderr.close(); child.stdout!.destroy(); child.stderr!.destroy(); },
         signalGroup(signal) {
           try { process.kill(-child.pid!, signal); }
           catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
