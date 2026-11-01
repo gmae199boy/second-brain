@@ -11,6 +11,7 @@ typedef struct {
 } brain_supervisor_pg_store;
 /* 현재 commit된 holder에서 검증된 대상과 binding 세대를 읽는다. */
 int brain_supervisor_pg_admission_context(PGconn *connection,const brain_auth_binding *binding,char target[1025],uint64_t *generation);
+int brain_supervisor_pg_work_target(PGconn *connection,const brain_auth_binding *binding,const char *kind,const char *target);
 int brain_supervisor_pg_init(brain_supervisor_pg_store *store,PGconn *connection,const brain_auth_binding *binding,const char *target,const char *zone);
 brain_supervisor_store_ops brain_supervisor_pg_ops(brain_supervisor_pg_store *store);
 typedef enum { BRAIN_PROTECTED_CANCEL=1, BRAIN_PROTECTED_HOLD=2, BRAIN_PROTECTED_DISABLE=3 } brain_protected_action;

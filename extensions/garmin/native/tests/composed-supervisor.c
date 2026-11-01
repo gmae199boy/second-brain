@@ -91,6 +91,13 @@ int main(void){
   if(getenv("BRAIN_FIXTURE_DENY_RECORD")){if(started || !state.admission || state.recorded)return 9;brain_host_close(&host);brain_xpc_close(&gui_peer);return 0;}
   if(!started || !state.admission || !state.recorded)return 4;
 #endif
+#ifdef BRAIN_FIXTURE_MULTI_SESSION
+  if(getenv("BRAIN_FIXTURE_MULTI_REVOKE")) {
+    char request[1024],ack[1024];snprintf(request,sizeof request,"%s/revoke",BRAIN_FIXTURE_BARRIER);snprintf(ack,sizeof ack,"%s/revoked",BRAIN_FIXTURE_BARRIER);
+    int found=0;for(int i=0;i<300;i++){if(!access(request,F_OK)){found=1;break;}usleep(100000);}if(!found || !brain_submission_revoke(&broker,&b,5000))return 20;
+    int fd=open(ack,O_WRONLY|O_CREAT|O_EXCL,0600);if(fd<0)return 21;close(fd);
+  }
+#endif
 #ifdef FIXTURE_NATIVE_STORE
   if(FIXTURE_CASE>=10 && FIXTURE_CASE<=16) {
     int ready=0;for(int i=0;i<100;i++){if(sql("select 1/(case when exists(select 1 from fixture_sync where mark='ready') then 1 else 0 end)")){ready=1;break;}usleep(100000);}
@@ -110,12 +117,15 @@ int main(void){
 #endif
   int flags=fcntl(host.stdout_fd,F_GETFL);if(flags<0 || fcntl(host.stdout_fd,F_SETFL,flags|O_NONBLOCK)<0)return 5;
   char result[3]={0};ssize_t n=-1;for(int i=0;i<300 && n<0;i++){usleep(10000);n=read(host.stdout_fd,result,2);}
-  int outcome=0,status=-1;for(int i=0;i<300 && !outcome;i++){usleep(10000);outcome=brain_host_observe(&host,&status);}
-  int negative=(FIXTURE_CASE>=1 && FIXTURE_CASE<=3) || (FIXTURE_CASE>=5 && FIXTURE_CASE<=16);
+  int outcome=0,status=-1;for(int i=0;i<300 && !outcome;i++){usleep(10000);outcome=brain_host_leader_observed(&host,&status);}
+  int negative=(FIXTURE_CASE>=1 && FIXTURE_CASE<=3) || (FIXTURE_CASE>=5 && FIXTURE_CASE<=16) || getenv("BRAIN_FIXTURE_MULTI_REVOKE")!=NULL;
   if((!negative && (n!=2 || memcmp(result,"ok",2))) || (negative && n!=0)) {
     int stage=outcome==1 && WIFEXITED(status)?WEXITSTATUS(status):-1;dprintf(2,"fixture worker 단계=%d\n",stage);return 6;
   }
   if(outcome!=1 || !WIFEXITED(status) || (negative ? WEXITSTATUS(status)==0 : WEXITSTATUS(status)!=0))return 7;
+  brain_group_member members[24];size_t member_count=0;int empty=0;
+  for(int i=0;i<300;i++){if(brain_host_members(&host,members,24,&member_count)!=1)break;if(!member_count){empty=1;break;}usleep(10000);}
+  if(!empty || !brain_host_reap(&host))return 22;
   if(!brain_gui_client_cancel(&gui))return 8;brain_host_close(&host);brain_xpc_close(&broker);brain_xpc_close(&gui_peer);
 #ifdef FIXTURE_NATIVE_STORE
   PQfinish(connection);

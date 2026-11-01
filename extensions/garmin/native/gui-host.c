@@ -89,8 +89,15 @@ int brain_gui_start(brain_gui_process *p,uid_t uid,const uint8_t hash[20],uint64
 int brain_gui_resume(brain_gui_process *p) {if(!same_process(p) || p->resumed || !console_uid(geteuid()) || kill(p->pid,SIGCONT))return 0;p->resumed=1;return 1;}
 int brain_gui_cancel(brain_gui_process *p) {
   if(!p || p->pid<=0)return 0;
-  if(!p->reaped){int status=0;pid_t r=waitpid(p->pid,&status,WNOHANG);if(r==p->pid)p->reaped=1;
-    else if(r==0 && same_process(p) && !kill(-p->pid,SIGKILL))for(int i=0;i<100;i++){r=waitpid(p->pid,&status,WNOHANG);if(r==p->pid){p->reaped=1;break;}if(r<0 && errno!=EINTR)break;usleep(10000);}}
-  if(!p->reaped)return 0;pid_t ids[4096];errno=0;int bytes=proc_listpids(PROC_PGRP_ONLY,(uint32_t)p->pid,ids,sizeof ids);
-  return bytes==0 && errno==0;
+  if(!p->reaped){int status=0,signalled=0;
+    for(int i=0;i<100;i++){
+      pid_t r=waitpid(p->pid,&status,WNOHANG);if(r==p->pid){p->reaped=1;break;}
+      if(r<0 && errno!=EINTR)break;
+      if(r==0 && !signalled && same_process(p)){if(!kill(-p->pid,SIGKILL))signalled=1;else if(errno!=ESRCH)break;}
+      usleep(10000);
+    }}
+  if(!p->reaped)return 0;pid_t ids[4096];
+  for(int i=0;i<100;i++) {errno=0;int bytes=proc_listpids(PROC_PGRP_ONLY,(uint32_t)p->pid,ids,sizeof ids);
+    if(bytes==0 && errno==0)return 1;if(bytes<0 || bytes>=(int)sizeof ids || bytes%(int)sizeof(pid_t))return 0;usleep(10000);}
+  return 0;
 }

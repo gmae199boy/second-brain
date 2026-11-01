@@ -248,6 +248,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
         terminationCause = cause; stopResolve();
       };
       const exited = handle.exited.then(value => { endedAt = clock.now().getTime(); terminate('exit'); return value; });
+      const leaderObserved = handle.leaderObserved?.then(value => { endedAt = clock.now().getTime(); terminate('exit'); return value; });
       // Consume stderr while identity/database work is pending so the adapter
       // cannot accumulate an unbounded diagnostic queue behind these awaits.
       const readStderr = (async () => {
@@ -366,11 +367,11 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
         })();
         stopReading = async () => { readingStopped = true; handle.closeOutput(); await Promise.allSettled([read, readStderr]); };
         try {
-          await Promise.race([exited, stop]);
+          await Promise.race([exited, ...(leaderObserved ? [leaderObserved] : []), stop]);
           if (supervisionFailed) throw new Error('supervision failed');
           // Always confirm the group before terminal settlement. A cancellation can
           // commit after our last read, including when leader exit wins the race.
-          const revoked = !protection?.requiresInputChannel || terminationCause === 'exit'
+          const revoked = !protection?.requiresInputChannel || (terminationCause === 'exit' && !handle.leaderObserved)
             || (handle.revokeInput ? await handle.revokeInput().catch(() => false) : false);
           const cleaned = await cleanup(identity, { handle });
           const observedExit = cleaned === 'died' ? await exited : null;

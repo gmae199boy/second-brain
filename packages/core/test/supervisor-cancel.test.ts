@@ -145,6 +145,15 @@ it('never signals an unknown group after the leader has been reaped', async () =
     graceMs: 300, confirmMs: 200, handle: started.handle })).toBe('unknown');
   expect(inspector.signals).toEqual([]);
 });
+it.each(['boot-changed','group-unknown'] as const)('보호 host는 %s에서 신호나 reap을 시도하지 않는다', async scenario => {
+  const inspector=fakeProcessInspector();
+  if(scenario==='boot-changed')inspector.boot={state:'found',value:new Date(0)};
+  else inspector.groups.set(123,{state:'unknown'});
+  const launcher=fakeProcessLauncher();const started=await launcher.start({command:'fake',args:[],env:{}});if(!started.ok)throw new Error('start');
+  let reaps=0;const handle={...started.handle,reapLeader:async()=>{reaps++;return true;}};
+  expect(await cleanProcessGroup({inspector,identity:{pgid:123,osBootAt:now,osStartedAt:now},...manualTime(now),graceMs:1,confirmMs:1,handle})).toBe('unknown');
+  expect(inspector.signals).toEqual([]);expect(reaps).toBe(0);
+});
 it('does not claim until startup reconciliation can list previous attempts', async () => {
   const store = memoryStore(); let reads = 0; let claims = 0;
   const list = store.listOpenSupervisedAttempts.bind(store); const claim = store.claimSupervisedWork.bind(store);

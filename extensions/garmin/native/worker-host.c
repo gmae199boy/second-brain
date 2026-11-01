@@ -155,9 +155,42 @@ int brain_worker_reap(brain_worker *worker, int *status) {
   if (pid!=worker->pid) return -1;
   worker->reaped=1; worker->wait_status=result; *status=result; return 1;
 }
+int brain_worker_observe_exit(brain_worker *worker,int *status) {
+  if(!worker || worker->pid<=0 || worker->reaped)return -1;
+  int prior=worker->exit_observed,previous=worker->wait_status;
+  siginfo_t info;memset(&info,0,sizeof info);int result;
+  do {result=waitid(P_PID,(id_t)worker->pid,&info,WEXITED|WNOHANG|WNOWAIT);} while(result<0 && errno==EINTR);
+  if(result<0)return -1;if(info.si_pid==0)return prior?-1:0;if(info.si_pid!=worker->pid)return -1;
+  if(info.si_code==CLD_EXITED)worker->wait_status=(info.si_status&255)<<8;
+  else if(info.si_code==CLD_KILLED)worker->wait_status=info.si_status&127;
+  else if(info.si_code==CLD_DUMPED)worker->wait_status=(info.si_status&127)|128;
+  else return -1;
+  if(prior && previous!=worker->wait_status)return -1;
+  worker->exit_observed=1;if(status)*status=worker->wait_status;return 1;
+}
+int brain_worker_members(brain_worker *worker,brain_group_member *members,size_t capacity,size_t *count) {
+  if(!worker || !members || !count || worker->pid<=0 || worker->reaped || !worker->start_sec)return -1;
+  *count=0;int observed=brain_worker_observe_exit(worker,NULL);if(observed<0)return -1;
+  pid_t ids[4096];errno=0;int bytes=proc_listpids(PROC_PGRP_ONLY,(uint32_t)worker->pid,ids,sizeof ids);
+  if(bytes<0 || (bytes==0 && errno!=0) || bytes>=(int)sizeof ids || bytes%(int)sizeof(pid_t))return -1;
+  int entries=bytes/(int)sizeof(pid_t),valid=0;
+  for(int i=0;i<entries;i++) {
+    if(ids[i]<=0)continue;valid++;
+    /* waitid(WNOWAIT)가 확인한 zombie PID는 회수 전까지 재사용되지 않는다. */
+    if(ids[i]==worker->pid && observed==1)continue;
+    struct proc_bsdinfo info;int n=proc_pidinfo(ids[i],PROC_PIDTBSDINFO,0,&info,sizeof info);
+    if(n!=(int)sizeof info || info.pbi_pid!=(uint32_t)ids[i] || info.pbi_pgid!=(uint32_t)worker->pid || info.pbi_uid!=geteuid())return -1;
+    if(ids[i]==worker->pid) {
+      if(info.pbi_start_tvsec!=worker->start_sec || info.pbi_start_tvusec!=worker->start_usec)return -1;
+    } else if(info.pbi_start_tvsec<worker->start_sec || (info.pbi_start_tvsec==worker->start_sec && info.pbi_start_tvusec<worker->start_usec))return -1;
+    if(*count>=capacity)return -1;members[(*count)++]=(brain_group_member){.pid=ids[i],.start_sec=info.pbi_start_tvsec,.start_usec=info.pbi_start_tvusec};
+  }
+  if(entries && !valid)return -1;return 1;
+}
 int brain_worker_signal(brain_worker *worker, int signal_number) {
   if (!worker || (signal_number!=SIGTERM && signal_number!=SIGKILL)) return 0;
-  int status; if (brain_worker_reap(worker,&status)!=0 || getpgid(worker->pid)!=worker->pid) return 0;
+  int observed=brain_worker_observe_exit(worker,NULL);if(observed<0)return 0;
+  if(!observed && getpgid(worker->pid)!=worker->pid)return 0;
   return kill(-worker->pid,signal_number)==0;
 }
 

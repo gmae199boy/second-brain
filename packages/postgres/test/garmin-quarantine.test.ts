@@ -5,12 +5,13 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import pg from 'pg';
 import { expect, it } from 'vitest';
-import { postgresStore, provisionExtension, runMigrations } from '../src/index.js';
-import { clock, database } from './fixture.js';
+import { postgresStore, postgresProtectedMutationStore, provisionExtension, runMigrations } from '../src/index.js';
+import { clock } from './fixture.js';
+import { isolatedClusterDatabase } from './isolated-cluster.js';
 import { prepareProtectedRoles } from '../src/protected-roles.js';
 
 it('Garmin 재provision은 보호 schema의 권한을 되살리지 않는다', async () => {
-  const db = await database();
+  const db = await isolatedClusterDatabase();
   const partial = await mkdtemp(join(tmpdir(), 'brain-quarantine-migrations-'));
   const full = await mkdtemp(join(tmpdir(), 'brain-protected-migrations-'));
   const core = await mkdtemp(join(tmpdir(), 'brain-protected-core-'));
@@ -24,7 +25,7 @@ it('Garmin 재provision은 보호 schema의 권한을 되살리지 않는다', a
     await admin.connect();
     const coreDirectory = fileURLToPath(new URL('../migrations/', import.meta.url));
     for (const name of await readdir(coreDirectory)) await copyFile(join(coreDirectory, name), join(core, name));
-    for (const name of ['0028_protected_work.sql', '0029_protected_auth_revoke.sql'])
+    for (const name of ['0028_protected_work.sql', '0029_protected_auth_revoke.sql', '0030_protected_mutation_read.sql', '0031_protected_mutation_receipts.sql'])
       await copyFile(fileURLToPath(new URL(`../protected-migrations/${name}`, import.meta.url)), join(core, name));
     expect(await runMigrations({ databaseUrl: db.url, clock, owners: [{ owner: 'core', directory: core }] })).toMatchObject({ ok: true });
     await prepareProtectedRoles(db.url);
@@ -77,7 +78,50 @@ it('Garmin 재provision은 보호 schema의 권한을 되살리지 않는다', a
     await admin.query("alter role brain_protected_supervisor login password 'fixture-supervisor-only'");
     const supervisorUrl = new URL(db.url); supervisorUrl.username = 'brain_protected_supervisor'; supervisorUrl.password = 'fixture-supervisor-only';
     const supervisor = postgresStore({ databaseUrl: supervisorUrl.toString() });
+    const mutations = postgresProtectedMutationStore({ databaseUrl: supervisorUrl.toString() });
     try {
+      await admin.query("insert into brain.protected_work_kinds(kind,hold_group,extension_name,requires_input_revoke) values ('fixture.auth','extension:fixture','fixture',true)");
+      const ids = [randomUUID(),randomUUID()], tokens = [randomUUID(),randomUUID()], leases = [randomUUID(),randomUUID()];
+      await admin.query('set session authorization brain_protected_supervisor');
+      for (let i=0;i<2;i++) {
+        await admin.query("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,attempts,claimed_at,claim_expires_at,claimed_by,hold_group) values ($1,'fixture.auth','extension',$2,$3,$3,'supervised',1,$3,$3::timestamptz + interval '1 hour','fixture','extension:fixture')",[ids[i],`fixture-${i}`,now]);
+        await admin.query('insert into brain.work_attempts(token,work_item_id,started_at) values ($1,$2,$3)',[tokens[i],ids[i],now]);
+        await admin.query('update brain.work_items set current_attempt_token=$1 where id=$2',[tokens[i],ids[i]]);
+        expect((await admin.query('select brain.begin_protected_input_launch($1,$2,1) as ok',[ids[i],tokens[i]])).rows[0].ok).toBe(true);
+        await admin.query('update brain.work_attempts set protected_launch_lease=$1,protected_connection_epoch=1 where token=$2',[leases[i],tokens[i]]);
+      }
+      await admin.query('reset session authorization');
+      const action = { type: 'hold' as const, group: 'extension:fixture' };
+      const snapshot = await mutations.list(action);expect(snapshot).toHaveLength(2);
+      const changed = snapshot!.map((item,index)=>index===0?{...item,epoch:2}:item);
+      expect(await mutations.commit(action,changed,randomUUID())).toEqual({status:'changed'});
+      expect((await admin.query("select count(*)::int as count from brain.protected_auth_revocations where work_id=any($1::uuid[])",[ids])).rows[0].count).toBe(0);
+      const request=randomUUID();expect(await mutations.commit(action,snapshot!,request)).toEqual({status:'committed',result:{type:'hold',held:true}});
+      expect(await mutations.applied(action,snapshot!,request)).toEqual({type:'hold',held:true});
+      expect((await admin.query("select count(*)::int as count from brain.protected_auth_revocations where work_id=any($1::uuid[])",[ids])).rows[0].count).toBe(2);
+      await expect(app.query('select * from brain.protected_auth_revocations')).rejects.toMatchObject({code:'42501'});
+      await expect(app.query('select * from brain.protected_mutation_receipts')).rejects.toMatchObject({code:'42501'});
+      await expect(app.query('select brain.record_protected_auth_revoke($1,$2,1,1,$3)',[ids[0],tokens[0],leases[0]])).rejects.toMatchObject({code:'42501'});
+      const accountA=randomUUID(),accountB=randomUUID();
+      await admin.query("insert into garmin.account_protection(id,profile_id) values ($1,'account-a'),($2,'account-b')",[accountA,accountB]);
+      await admin.query("insert into garmin.account_binding(target,protection_id) values ('path-a',$1),('path-b',$2)",[accountA,accountB]);
+      const accountWorks=[randomUUID(),randomUUID(),randomUUID()],accountTokens=[randomUUID(),randomUUID(),randomUUID()];
+      await admin.query('set session authorization brain_protected_supervisor');
+      for(let i=0;i<3;i++) {
+        const kind=i===2?'garmin.collect':'garmin.auth',target=i===2?'account-a':i===0?accountA:accountB;
+        await admin.query("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,attempts,claimed_at,claim_expires_at,claimed_by,hold_group) values ($1,$2,'account',$3,$4,$4,'supervised',1,$4,$4::timestamptz + interval '1 hour','fixture','extension:garmin')",[accountWorks[i],kind,target,now]);
+        await admin.query('insert into brain.work_attempts(token,work_item_id,started_at) values ($1,$2,$3)',[accountTokens[i],accountWorks[i],now]);
+        await admin.query('update brain.work_items set current_attempt_token=$1 where id=$2',[accountTokens[i],accountWorks[i]]);
+      }
+      await admin.query('reset session authorization');
+      expect(await supervisor.reserveExtensionAdmission!({extension:'garmin',workId:accountWorks[0]!,attemptToken:accountTokens[0]!,generation:1,target:'path-b',timeZone:'UTC'})).toMatchObject({ok:true,admitted:false});
+      expect(await supervisor.reserveExtensionAdmission!({extension:'garmin',workId:accountWorks[0]!,attemptToken:accountTokens[0]!,generation:1,target:'path-a',timeZone:'UTC'})).toMatchObject({ok:true,admitted:true});
+      expect(await supervisor.reserveExtensionAdmission!({extension:'garmin',workId:accountWorks[1]!,attemptToken:accountTokens[1]!,generation:1,target:'path-b',timeZone:'UTC'})).toMatchObject({ok:true,admitted:true});
+      expect(await supervisor.reserveExtensionAdmission!({extension:'garmin',workId:accountWorks[2]!,attemptToken:accountTokens[2]!,generation:1,target:'path-a',timeZone:'UTC'})).toMatchObject({ok:true,admitted:false,busy:true});
+      await admin.query('delete from garmin.admission_holder where work_id=any($1::uuid[])',[accountWorks]);
+      await admin.query('set session authorization brain_protected_supervisor');
+      await admin.query('update brain.work_items set current_attempt_token=null where id=any($1::uuid[])',[accountWorks]);
+      await admin.query('reset session authorization');
       const process = { id: authWork, attemptToken: authToken, pid: 1234, pgid: 1234, osBootAt: now, osStartedAt: now,
         protectedIdentity: { launchLease: lease, connectionEpoch: 1, startTimeUs: String(BigInt(now.getTime()) * 1000n + 789n) } };
       expect(await supervisor.recordSupervisedProcess({ ...process, attemptToken: randomUUID() })).toMatchObject({ ok: true, outcome: 'lost' });
@@ -150,6 +194,7 @@ it('Garmin 재provision은 보호 schema의 권한을 되살리지 않는다', a
       await admin.query('reset session authorization');
       expect(await supervisor.setExtensionEnabled({ name: 'garmin', enabled: true, now })).toMatchObject({ ok: true, found: true, changed: true });
     } finally {
+      await mutations.close();
       await supervisor.close();
       await admin.query('alter role brain_protected_supervisor nologin password null');
     }
@@ -192,14 +237,6 @@ it('Garmin 재provision은 보호 schema의 권한을 되살리지 않는다', a
     await app.end().catch(() => {}); await worker.end().catch(() => {});
     await admin.end();
     await db.drop();
-    const cleanupUrl = new URL(db.url);
-    cleanupUrl.pathname = '/postgres';
-    const cleanup = new pg.Client({ connectionString: cleanupUrl.toString() });
-    await cleanup.connect();
-    try {
-      const marker = `second-brain extension:${new URL(db.url).pathname.slice(1)}`;
-      const owned = await cleanup.query("select shobj_description(oid,'pg_authid') as marker from pg_roles where rolname='brain_ext_garmin'");
-      if (owned.rows[0]?.marker === marker) await cleanup.query('drop role brain_ext_garmin');
-    } finally { await cleanup.end(); }
+
   }
 }, 60_000);

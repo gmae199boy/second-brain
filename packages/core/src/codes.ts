@@ -173,6 +173,10 @@ export interface ErrorCodeSpec {
 }
 
 const CODES = {
+  SERVICE_UNAVAILABLE: { exit: 2, retryable: false, meaning: '보호 서비스를 사용할 수 없습니다', hint: '보호 서비스의 상태를 확인하세요' },
+  SERVICE_DENIED: { exit: 2, retryable: false, meaning: '보호 서비스 연결이 거부되었습니다', hint: '승인된 서비스와 실행 환경을 확인하세요' },
+  SERVICE_INVALID_RESPONSE: { exit: 2, retryable: false, meaning: '보호 서비스 응답이 올바르지 않습니다', hint: '서비스와 실행 파일의 버전을 확인하세요' },
+  SERVICE_INVALID_REQUEST: { exit: 2, retryable: false, meaning: '보호 서비스 요청이 올바르지 않습니다', hint: '요청 형식과 서비스 버전을 확인하세요' },
   CHANNEL_REQUEST_NOT_FOUND: { exit: 1, retryable: false, meaning: '채널 요청이 없습니다', hint: '요청 ID를 확인하세요' },
   CHANNEL_ALREADY_SENT: { exit: 1, retryable: false, meaning: '이미 발신한 요청입니다', hint: '상태를 확인하세요' },
   CHANNEL_LEGACY_NOT_RESENDABLE: { exit: 1, retryable: false, meaning: '옛 이력은 재전송할 수 없습니다', hint: '이력의 상태를 확인하세요' },

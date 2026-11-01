@@ -102,15 +102,20 @@ int main(void) {
     int ready=poll(fds,5,250);if(ready<0 && errno==EINTR)continue;if(ready<0)break;
     if(fds[0].revents&(POLLHUP|POLLERR|POLLNVAL))break;
     if(fds[0].revents&POLLIN) {
-      uint8_t frame[512];size_t size=0;if(!brain_read_frame(3,frame,sizeof frame,&size,2000))break;
-      if(frame[0]==1 && !started && size>=51) {
-        size_t zone_size=(size_t)frame[49]*256+frame[50];if(!zone_size || zone_size>128 || size!=51+zone_size)break;
-        char zone[129];memcpy(zone,frame+51,zone_size);zone[zone_size]=0;
+      uint8_t frame[1243];size_t size=0;if(!brain_read_frame(3,frame,sizeof frame,&size,2000))break;
+      if(frame[0]==1 && !started && size>=55) {
+        size_t zone_size=(size_t)frame[49]*256+frame[50],target_size=(size_t)frame[51]*256+frame[52],id_size=frame[54];
+        if(!zone_size || zone_size>128 || !target_size || target_size>1024 || (frame[53]!=1 && frame[53]!=2) || !id_size || id_size>36 || size!=55+zone_size+target_size+id_size || memchr(frame+55+zone_size,0,target_size))break;
+        if(memchr(frame+55+zone_size+target_size,0,id_size))break;
+        char zone[129],target_id[37];memcpy(zone,frame+55,zone_size);zone[zone_size]=0;memcpy(target_id,frame+55+zone_size+target_size,id_size);target_id[id_size]=0;
+        uuid_t parsed_id;if((frame[53]==1 && strcmp(target_id,"garmin")) || (frame[53]==2 && (id_size!=36 || uuid_parse(target_id,parsed_id) || uuid_is_null(parsed_id))))break;
         for(size_t i=0;i<zone_size;i++){unsigned char c=(unsigned char)zone[i];if(!((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='/'||c=='_'||c=='-'||c=='+'))ok=0;}
         if(!ok)break;memcpy(binding.work,frame+1,16);memcpy(binding.attempt,frame+17,16);binding.run_generation=u64(frame+33);binding.connection_epoch=u64(frame+41);
         binding.package_generation=BRAIN_PACKAGE_GENERATION;memcpy(binding.package,BRAIN_PACKAGE_HASH,32);uuid_generate_random(binding.session);
         char target[1025];uint64_t generation=0;
-        if(!binding.run_generation || !binding.connection_epoch || !brain_supervisor_pg_admission_context(connection,&binding,target,&generation))break;
+        if(!binding.run_generation || !binding.connection_epoch || !brain_supervisor_pg_admission_context(connection,&binding,target,&generation)
+          || strlen(target)!=target_size || memcmp(target,frame+55+zone_size,target_size)
+          || !brain_supervisor_pg_work_target(connection,&binding,frame[53]==1?"extension":"account",target_id))break;
         binding.binding_generation=generation;
         if(!brain_supervisor_pg_init(&store,connection,&binding,target,zone))break;ops=brain_supervisor_pg_ops(&store);
         if(!brain_host_connect(&host,BRAIN_BRIDGE_HOST_SERVICE,BRAIN_HOST_UID,host_hash)
@@ -118,7 +123,9 @@ int main(void) {
           || !brain_submission_connect(&gui_peer,BRAIN_BRIDGE_GUI_SERVICE,BRAIN_GUI_UID,gui_hash,5000))break;
         gui=(brain_gui_client){.peer=&gui_peer,.timeout_ms=5000};
         if(!brain_supervisor_native_start_admitted(&host,&broker,&binding,&ops,5000))break;
-        started=1;out.input=host.stdout_fd;err.input=host.stderr_fd;
+        started=1;uint8_t metadata[1235];memcpy(metadata,frame,41);memcpy(metadata+41,frame+49,size-49);
+        if(!brain_host_metadata(&host,metadata,size-8))break;
+        out.input=host.stdout_fd;err.input=host.stderr_fd;
         if(!nonblocking(out.input) || !nonblocking(err.input) || host.start_usec>=1000000 || host.start_sec>UINT64_MAX/1000000)break;
         uint8_t reply[29]={0x81};put32(reply+1,(uint32_t)host.pid);put64(reply+5,host.start_sec*1000000+host.start_usec);memcpy(reply+13,host.lease,16);
         if(!send_reply(reply,sizeof reply))break;
@@ -126,8 +133,31 @@ int main(void) {
         authorized=brain_supervisor_native_authorize_recorded(&host,&broker,&gui,&binding,&ops,5000);
         uint8_t reply[2]={0x82,(uint8_t)(authorized?1:0)};if(!send_reply(reply,sizeof reply) || !authorized)break;
       } else if(frame[0]==3 && size==1 && started) {
-        int status=0,state=brain_host_observe(&host,&status);uint8_t reply[6]={0x83,(uint8_t)(state<0?2:state)};put32(reply+2,(uint32_t)status);if(!send_reply(reply,sizeof reply))break;
+        int status=0,state=brain_host_observe(&host,&status);
+        if(state==0){int observed=brain_host_leader_observed(&host,&status);if(observed<0)state=-1;else if(observed==1)state=3;}
+#ifdef BRAIN_NATIVE_FIXTURE
+        if(state==3)(void)write(2,"fixture-observed-wire\n",22);
+#endif
+        uint8_t reply[6]={0x83,(uint8_t)(state<0?2:state)};put32(reply+2,(uint32_t)status);if(!send_reply(reply,sizeof reply))break;
+      } else if(frame[0]==7 && size==1 && started) {
+#ifdef BRAIN_NATIVE_FIXTURE
+        (void)write(2,"fixture-members-wire\n",21);
+#endif
+        brain_group_member members[24];size_t count=0;int state=brain_host_members(&host,members,24,&count);
+        uint8_t reply[2+24*12]={0x87,(uint8_t)(state==1?count:255)};
+        if(state==1)for(size_t i=0;i<count;i++){if(members[i].start_sec>UINT64_MAX/1000000 || members[i].start_usec>=1000000){state=-1;break;}
+          put32(reply+2+i*12,(uint32_t)members[i].pid);put64(reply+6+i*12,members[i].start_sec*1000000+members[i].start_usec);}
+        if(state!=1)reply[1]=255;
+        if(!send_reply(reply,state==1?2+count*12:2))break;
+      } else if(frame[0]==8 && size==1 && started) {
+#ifdef BRAIN_NATIVE_FIXTURE
+        (void)write(2,"fixture-reap-wire\n",18);
+#endif
+        int reaped=brain_host_reap(&host);uint8_t reply[2]={0x88,(uint8_t)(reaped?1:0)};if(!send_reply(reply,sizeof reply) || !reaped)break;
       } else if(frame[0]==6 && size==1 && started && authorized) {
+#ifdef BRAIN_NATIVE_FIXTURE
+        (void)write(2,"fixture-revoke-wire\n",20);
+#endif
         int revoked=brain_submission_revoke(&broker,&binding,5000);uint8_t reply[2]={0x86,(uint8_t)(revoked?1:0)};
         if(!send_reply(reply,sizeof reply) || !revoked)break;authorized=0;
       } else if(frame[0]==5 && size==2 && started && (frame[1]==SIGTERM || frame[1]==SIGKILL)) {

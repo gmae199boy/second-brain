@@ -9,6 +9,10 @@ export interface ProcessHandle {
   stderr: AsyncIterable<string>;
   /** The leader's exit/reaping, independent of descendant-held stdio. */
   exited: Promise<ProcessExit>;
+  /** 선택적 보호 host: PID를 고정한 종료 관찰이며 아직 reap 증거가 아니다. */
+  leaderObserved?: Promise<ProcessExit>;
+  /** 그룹이 비었을 때만 leader reap을 요청한다. 불명은 false다. */
+  reapLeader?(): Promise<boolean>;
   readonly leaderExited: boolean;
   /** bootstrap의 비밀 없는 ACK만 보낸다. 상대 인증은 별도 경계가 책임진다. */
   sendBootstrapAck?(): Promise<boolean>;

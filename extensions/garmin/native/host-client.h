@@ -1,6 +1,7 @@
 #ifndef BRAIN_HOST_CLIENT_H
 #define BRAIN_HOST_CLIENT_H
 #include "xpc-peer.h"
+#include "worker-host.h"
 #include <uuid/uuid.h>
 
 typedef struct brain_host_observer brain_host_observer;
@@ -19,10 +20,15 @@ int brain_host_connect(brain_host_client *client,const char *service,uid_t uid,c
 int brain_host_start(brain_host_client *client,const uuid_t work,const uuid_t attempt,uint64_t run,uint64_t binding,uint64_t epoch,const uint8_t package[32]);
 /* 인증된 supervisor는 auth admission 확인 후 broker가 만든 endpoint만 넘긴다. */
 int brain_host_start_auth(brain_host_client *client,const uuid_t work,const uuid_t attempt,uint64_t run,uint64_t binding,uint64_t epoch,const uint8_t package[32],int channel_fd);
+/* 인증된 host에 고정 비밀 없는 ABI frame을 전달한다. ACK 전 한 번만 허용된다. */
+int brain_host_metadata(brain_host_client *client,const uint8_t *frame,size_t length);
 /* 호출자는 성공적인 내구성 기록 후에만 호출한다. */
 int brain_host_recorded(brain_host_client *client);
 /* 1은 신원·그룹 확인, -1은 불명이다. */
 int brain_host_inspect(brain_host_client *client,int *group);
+int brain_host_members(brain_host_client *client,brain_group_member *members,size_t capacity,size_t *count);
+int brain_host_reap(brain_host_client *client);
+int brain_host_leader_observed(brain_host_client *client,int *wait_status);
 int brain_host_signal(brain_host_client *client,int signal_number);
 /* 0은 진행 중, 1은 검증된 종료, -1은 관찰 불명이다. */
 int brain_host_observe(brain_host_client *client,int *wait_status);

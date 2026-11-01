@@ -74,6 +74,7 @@ describe('the error codes', () => {
     );
 
     expect(exits).toEqual({
+      SERVICE_UNAVAILABLE: 2, SERVICE_DENIED: 2, SERVICE_INVALID_RESPONSE: 2, SERVICE_INVALID_REQUEST: 2,
       CHANNEL_REQUEST_NOT_FOUND: 1,
       CHANNEL_ALREADY_SENT: 1,
       CHANNEL_LEGACY_NOT_RESENDABLE: 1,

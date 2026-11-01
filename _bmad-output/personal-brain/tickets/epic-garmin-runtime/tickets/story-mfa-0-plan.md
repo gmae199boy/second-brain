@@ -4,7 +4,7 @@ type: 'feature'
 ticket: 2
 created: '2026-11-01'
 status: in-progress
-baseline_revision: 1d4fec9a16056b0f473967fb6fcaca8a8f37790d
+baseline_revision: 8e396997c7b25c8750a2cbec1f8b550de2817138
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
@@ -16,6 +16,12 @@ followup_review_recommended: false
 context: []
 warnings: [oversized]
 deferred:
+  - summary: "검토 필요: [ASSUMPTION] 봉인 bundle의 파일 상한 4096·경로 깊이 64는 실제 배포 package에서 재평가한다."
+  - summary: "검토 필요: [ASSUMPTION] 봉인 payload 경로 component 상한 64는 실제 package 구성에서 재평가한다."
+  - summary: "검토 필요: [ASSUMPTION] 일반 데이터 frame 1 MiB·JSON 깊이 8·문자열 16384 상한은 실제 부하와 소비자 호환성에서 재평가한다."
+  - summary: "검토 필요: [ASSUMPTION] 그룹 응답은 24명, 열거 경합 재조회는 1초, leader 관찰은 10초 상한이며 실제 부하·별도 principal에서 재평가한다."
+  - summary: "검토 필요: [ASSUMPTION] broker와 GUI의 동시 세션 상한은 각각 64이며 실제 부하·운영 복구에서 재평가한다."
+  - summary: "검토 필요: [ASSUMPTION] 보호 mutation의 claim 경합 재조회는 3회 상한이며 초과 시 실패 닫힘이다."
   - summary: "검토 필요: [ASSUMPTION] 전용 인증 FD의 취소 확인 주기는 50ms이며 실제 UI 연결 검증에서 재평가한다."
   - summary: "검토 필요: [ASSUMPTION] native 인증 세션 전체 TTL 상한은 5분이며 실제 UI·취소 검증에서 재평가한다."
   - summary: "검토 필요: [ASSUMPTION] 보호 bootstrap ACK 대기 상한은 10초로 두며 operator attach/session 제한과 구분한다."
@@ -105,6 +111,12 @@ deferred:
 
 ## Implementation Notes
 
+### g5 진행
+
+[g5 전체 구현 보고](story-mfa-0-g5-implementation.md)의 D4B 단일 Core 제품 조립·고정 metadata 및 다중 broker/GUI 세션·revoke-all과 기존 보호 명령 연결을 구성 요소 단계로 수락했다. 지휘자는 정상 Core/native, 신원 commit 응답 유실·metadata 누락, 두 native 세션 격리와 실제 두 Core attempt의 commit 유실·두 번째 ACK 실패를 독립 재실행했다. 아래 Verification에 명령과 로그를 남겼다.
+
+leader 종료 관찰/reap·그룹 정리도 구성 요소 단계로 수락했고, quarantine의 전역 LOGIN 변경은 독립 클러스터 fixture로 격리해 동일 병렬 회귀를 통과했다. 별도 principal 실기는 관리자 권한 부재로 미실행이며 자동 fixture와 실행 절차만 준비됐다. D2B B1 façade·wire와 B2의 native peer/framing/고정 spawn 합성 사슬을 구성 요소로 확인했으며, 현재 같은 구현 Dispatch에서 B2의 root registry·전체 Node/JS 로딩 신원·기본 운영 transport 연결을 계속한다. D2B B2–B6 전체, collect 비입력 bootstrap·D5 library/HTTP/egress, D6 전체 행렬·독립 리뷰와 D7은 여전히 미완료다. 실제 보호 설치·생체·AX·OrbStack 관리 경로 격리 성공을 주장하지 않으며 운영 auth/HTTP는 닫힌다.
+
 ### g4 재개
 
 D4A의 native 구성요소·libpq supervisor adapter·broker DB guard와 실제 보호 스키마 fixture를 구현했다. revoke ACK 뒤에만 cancel/hold/disable을 commit하는 경로와 이전 epoch 증거 거부를 지휘자도 독립 검증했다. 공통 registry 일반화와 다른 보호 auth·일반 kind 비간섭 시험도 통과했다. DB superuser가 trigger를 우회하는 별도 주입의 이미 전송된 frame은 in-flight로 구분하며 library 전달을 막는다. DB와 FD/HTTP가 원자적이라는 주장은 하지 않는다. 지휘자는 native 변경 diff와 전문을 읽고 보호 자격 파일의 초과 길이 쓰기·연결 옵션 검증을 수정 요청한 뒤 수정 소스와 ASan 시험의 독립 통과를 확인했다. 제품 `runSupervisor` 조립과 D2B·D5–D7은 미완료이며 운영 경로는 닫혀 있다. 이 저장소 구현은 operator 행동만 남은 상태가 아니다.
@@ -118,6 +130,8 @@ g3의 D1 부분 구현은 `tooling/protected-deployment/`에 있다. staging·�
 이전 generation은 구현하지 않았다. 당시 HEAD의 직접 코드 확인과 읽기 전용 Orca 조사 보고서를 대조했다. 조사 보고서는 `/tmp/brain16-2-research.md`이며 기준 revision은 이 계획의 전체 baseline과 같다. ticket 16.1의 publisher·격리 fixture 연속성을 유지한다. 소스·시험·lock은 바꾸거나 실행하지 않았다.
 
 ## Plan Change Log
+
+- g5 D5 준비: [현재 library·HTTP broker 연결 지도](story-mfa-0-g5-d5-map.md)를 전문 확인했다. 정상 auth/collect/probe, per-wire intent·sticky deny, 쿠키·redirect·refresh, tokenstore pin, raw FD 및 OS egress의 현재 결손과 작은 실행 단위를 보존한다. 읽기 전용 조사이며 시험·빌드·실기 격리 성공을 뜻하지 않는다. 조사 Dispatch는 정식 성공 보고를 확인한 뒤 release했다.
 
 - g4 D6 준비: [T01–T28 시험 연결 지도](story-mfa-0-g4-matrix-map.md)를 전문 확인했다. 현재 함수·합성·native·제품 Core runner의 관찰 층과 실제 wire/동시 binding/저장 실패·재시작 및 추가 보안 반례의 미검증을 분리했다. 읽기 전용 조사는 시험 실행이나 전체 행렬 통과가 아니며, 이후 D5/D6 구현·독립 실행에서 각 행의 정확한 runner와 결과를 기록한다.
 
@@ -155,6 +169,37 @@ g3의 D1 부분 구현은 `tooling/protected-deployment/`에 있다. staging·�
 보호 DB 저장 전에 client 생성의 자동 I/O까지 금지하고, 호출 의도 commit 후 호출하며, 결과 저장 실패 시 의도를 남긴다. 외부 호출 중 SQL 쓰기 트랜잭션은 열지 않는다. library 내부 retry와 token refresh의 HTTP 수를 wrapper 호출 간격 보장과 혼동하지 않는다. 최초 미확인 계정의 안전한 발견·alias 결합은 기존 계정 차단을 초기화해서는 안 된다.
 
 ## Verification
+
+### g5 중간 지휘자 검증
+
+- `sh extensions/garmin/native/tests/check-sealed-files.sh` 및 `pnpm exec vitest run apps/cli/test/queue-frame-stream.test.ts apps/cli/test/protected-queue.test.ts`: 각각 종료 0, 2개 파일 6건 통과. 로그는 `/tmp/brain162g5-parent-b2-bundle.log`, `/tmp/brain162g5-parent-b2-bundle-chain.log`다. 고정 전체 목록·파일별 digest/ACL·실행물 strict 코드 서명을 spawn 전후에 검사하고 미등록 JS·서명/파일/상대 신원 변조 거부를 확인했다. 현재 단일 native 합성 bundle이며 실제 Node CLI closure·root registry·기본 운영 transport 완료로 확대하지 않는다.
+
+- `pnpm exec vitest run apps/cli/test/queue-frame-stream.test.ts apps/cli/test/protected-queue.test.ts`: 2개 파일 6건 통과(`/tmp/brain162g5-parent-b2-spawn.log`). 열린 검증 FD·고정 argv/env spawn·bootstrap ACK·OS peer 인스턴스와 CLI/제품 handler/Core/격리 PG 합성 사슬, 변조 digest·양방향 해시·다른 PID 거부·사용자 Store 생성 0을 확인했다. 사용자 소유 단일 native fixture와 시험 신원이므로 root registry·전체 Node/JS 로딩 봉인·실제 기본 운영 transport 완료로 세지 않는다.
+
+- `sh extensions/garmin/native/tests/check-sealed-files.sh`: 종료 0(`/tmp/brain162g5-parent-b2-files.log`). 열린 기준 디렉터리 FD에서 소유권·쓰기 권한·ACL·symlink·하드링크·고정 SHA-256을 검사하는 부품과 변조·실제 확장 ACL 거부를 확인했다. root 기준 FD·목록/digest의 보호된 출처, 전체 의존성과 loader, 실제 spawn/peer 등록·기본 운영 transport 연결은 미완료다.
+
+- `pnpm exec vitest run apps/cli/test/queue-frame-stream.test.ts`: 1개 파일 3건 통과(`/tmp/brain162g5-parent-b2-chain.log`). 합성 native 양방향 OS peer와 CLI dispatch·제품 handler·Core·격리 PG를 하나의 사슬로 연결한 정상 목록·각 방향 해시 거부 및 사용자 Store 생성 0을 확인했다. 신원 공급은 여전히 시험 gateway가 담당하며, 봉인된 CLI 실행/로딩 신원·보호 서비스 instance 출처·기본 운영 transport는 미완료다.
+
+- `pnpm exec vitest run apps/cli/test/queue-frame-stream.test.ts apps/cli/test/protected-queue.test.ts`: 2개 파일 5건 통과(`/tmp/brain162g5-parent-b2-stream.log`). 별도 합성 서비스 프로세스의 제품 queue handler·실제 Core·격리 PG 왕복과 사용자 Store 생성 0, 분할/연속/잘림/초과/불량 UTF-8 framing을 확인했다. native OS 인증과 이 프로세스 사슬은 아직 결합되지 않았으며 기본 운영 transport는 미완료다.
+
+- B2 peer fixture의 완료 ACK·생존 장벽·연결 교체 진단 보완 후 `sh extensions/garmin/native/tests/check-data-peer.sh`: 종료 0(`/tmp/brain162g5-parent-b2-peer-fixed.log`). `REPLACE_LIVE=1 OTHER_ID=1 OLD_ID_REJECTED=1 WRITE_REJECTED=1`을 확인했다. 원래 peer가 살아 있는 상태의 새 상대와 옛 상대 신원 판정·쓰기 거부를 구분했다. 최초 종료 10의 내부 원인은 미확인으로 유지하며, 실제 CLI/보호 서비스 transport 조립은 별도 미완료다.
+
+- B2 하위 `pnpm exec vitest run apps/cli/test/protected-queue.test.ts packages/core/test/protected-api.test.ts packages/core/test/codes.test.ts`: 3개 파일 304건 통과(`/tmp/brain162g5-parent-b2-tests.log`). `sh extensions/garmin/native/tests/check-data-peer.sh` 최초 독립 실행은 종료 10(`/tmp/brain162g5-parent-b2-peer.log`), `sh -x` 재실행은 종료 0(`/tmp/brain162g5-parent-b2-peer-trace.log`)이었다. 간헐 실패 원인은 미확인으로 보존하고 같은 구현자에게 fixture 수명·후검증 경합을 포함한 진단·수정을 요청했다. 후검증을 완화하지 않으며 B2나 실제 운영 transport 완료 증거로 세지 않는다.
+
+- `pnpm exec vitest run apps/cli/test/protected-queue.test.ts packages/core/test/protected-api.test.ts apps/cli/test/protected-mutations.test.ts`: 3개 파일 11건 통과(`/tmp/brain162g5-parent-b1.log`). B1의 실제 Core·격리 PG·제품 서비스 객체 경유 queue 출력과 잘못된 요청/응답·서비스 부재/거부 시 사용자 Store 생성 0을 확인했다. in-process transport 시험이며 기본 CLI의 운영 transport가 없어 queue list가 닫힌 중간 상태는 B2에서 해소해야 한다. OS peer 인증·서비스 배치·오류 구분 완료로 세지 않는다.
+
+- `BRAIN_FIXTURE_AUTHORITY=1 BRAIN_FIXTURE_NATIVE_STORE=1 BRAIN_FIXTURE_CORE=1 BRAIN_FIXTURE_CORE_DESCENDANT=1 sh extensions/garmin/native/tests/check-composed-auth.sh`: 종료 0(`/tmp/brain162g5-parent-core-descendant.log`). 실제 Core/native의 leader 종료 관찰·입력 폐기·손자 그룹 정리·reap 및 정산을 확인했다. `pnpm exec vitest run packages/core/test/protected-api.test.ts packages/core/test/supervisor.test.ts packages/core/test/supervisor-cancel.test.ts packages/postgres/test/garmin-quarantine.test.ts packages/postgres/test/work-store.test.ts apps/cli/test/protected-mutations.test.ts apps/cli/test/sealed-native-bridge.test.ts`: 7개 파일 261건 통과(`/tmp/brain162g5-parent-parallel-regression.log`). 독립 클러스터 fixture로 이전 병렬 role 충돌이 재발하지 않았다. 별도 UID·실제 서비스 배치와 그룹 밖 후손 격리는 미검증으로 유지한다.
+
+- `BRAIN_FIXTURE_AUTHORITY=1 BRAIN_FIXTURE_NATIVE_STORE=1 BRAIN_FIXTURE_CORE=1 BRAIN_FIXTURE_CORE_SIGNAL=1 BRAIN_FIXTURE_CORE_MUTATION=hold BRAIN_FIXTURE_TWO_CORE=1`에 `BRAIN_FIXTURE_CORE_COMMIT_LOST=1` 또는 `BRAIN_FIXTURE_CORE_ACK_FAIL=second`를 각각 추가한 `sh extensions/garmin/native/tests/check-composed-auth.sh`: 모두 종료 0. 로그는 `/tmp/brain162g5-parent-two-core-lost.log`, `/tmp/brain162g5-parent-two-core-ack-fail.log`다. `pnpm exec vitest run packages/core/test/protected-api.test.ts apps/cli/test/protected-mutations.test.ts`: 2개 파일 8건 통과(`/tmp/brain162g5-parent-mutation-api.log`). 두 활성 Core/native의 정확한 폐기 증거·receipt 복구와 ACK 실패 시 mutation 차단을 확인했다. 실제 외부 인증 transport·별도 principal·완전 복구 성공으로 확대하지 않는다.
+
+- `BRAIN_FIXTURE_MULTI_SESSION=1 sh extensions/garmin/native/tests/check-composed-auth.sh`: 종료 0(`/tmp/brain162g5-parent-two-native.log`). 같은 broker·GUI 서비스의 두 native 세션을 ACK 뒤 barrier에 세워 한쪽 폐기와 다른 쪽 독립 완료를 확인했다. 독자 합성 supervisor 시험이며 실제 단일 Core의 두 활성 attempt revoke-all·보호 API 조립은 별도 미완료다.
+
+- `BRAIN_FIXTURE_AUTHORITY=1 BRAIN_FIXTURE_NATIVE_STORE=1 BRAIN_FIXTURE_CORE=1 BRAIN_FIXTURE_CORE_RECORD=lost sh extensions/garmin/native/tests/check-composed-auth.sh` 및 `BRAIN_FIXTURE_METADATA_CASE=5 sh extensions/garmin/native/tests/check-worker-success.sh`: 각각 종료 0. 로그는 `/tmp/brain162g5-parent-core-lost.log`, `/tmp/brain162g5-parent-metadata-missing.log`다. commit 응답 유실에서 ACK·prompt 0과 holder 보존, 필수 metadata 누락 시 ACK 거부를 확인했다. [g5 전체 구현 보고](story-mfa-0-g5-implementation.md)의 Core 거부·metadata 반례·회귀 결과와 소스 diff를 대조했다. 첫 단계 부품 수락이며 전체 티켓·실제 배포 완료가 아니다.
+
+- `pnpm exec vitest run apps/cli/test/sealed-native-bridge.test.ts packages/postgres/test/garmin-quarantine.test.ts`: 2개 파일 2건 통과(`/tmp/brain162g5-parent-phase1-tests.log`). `BRAIN_FIXTURE_AUTHORITY=1 BRAIN_FIXTURE_NATIVE_STORE=1 BRAIN_FIXTURE_CORE=1 sh extensions/garmin/native/tests/check-composed-auth.sh`: 종료 0(`/tmp/brain162g5-parent-core-native.log`). 실제 Core·격리 PG·동일 UID 합성 native 서비스의 ACK 후 metadata와 정상 정산을 확인했으며 신원 기록 실패/응답 유실·변조 반례는 구현자에게 보완 요청했다. 실제 별도 principal·봉인 설치·생체·운영 HTTP 성공으로 확대하지 않는다.
+
+- `node --test tooling/protected-deployment/stage.test.mjs`: 5건 통과. 로그는 `/tmp/brain162g5-parent-stage.log`다.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tooling/protected-deployment -p 'test_*.py' -v`: 8건 통과·별도 UID/root fixture 1건 skip. 로그는 `/tmp/brain162g5-parent-deployment.log`다. staging·경로 부품의 회귀 확인이며 실제 보호 principal·엔진 격리 성공을 뜻하지 않는다.
 
 ### g4 중간 지휘자 검증
 
@@ -453,3 +498,10 @@ Garmin 부분은 새 auth/client/protection 모듈, 새 migrations, manifest.aut
 지휘자 90분 시간 초과 후 기존 구현자는 관리상 failed 인계 보고를 제출하고 release·ACK됐다. [전체 보고](story-mfa-0-g4-implementation.md)와 g4 조사 세 문서를 보존한다. 원래 기준은 `885ad522`, 이번 generation 기준은 `1d4fec9`이며 전체 원래 diff 및 기존 보안 계약을 유지한다. 이 인계는 구현 실패 횟수가 아니며 WIP는 완료 증거가 아니다.
 
 재개 순서: (1) D4B 제품 단일 supervisor 조립과 ABI 연결을 작은 단계로 검증, (2) 활성 cancel/hold/disable의 broker 폐기·다중 attempt·복구, (3) leader 종료 후 안전한 그룹 정리와 별도 principal 검증, (4) D2B B1–B6, (5) D5 egress/library, (6) D6 T01–T28·추가 반례·독립 보안 리뷰, (7) D7. 각 단계 phase-ready·checkpoint 후 이어간다. 마지막 Core hook과 DB EXECUTE 검증 추가 뒤 관련 테스트, split denied 및 보호 migration generic/race/revoke 전부 재실행한다. 합성 성공을 실제 봉인·OS 생체·AX·운영 격리 증거로 취급하지 않고 검증 전 운영 auth/HTTP를 닫는다. capacity는 같은 모델·세션으로 재개한다.
+
+### 2026-11-01 g5 시간 초과 후 재개 인계
+
+- 지휘자 90분 시간 초과 후 기존 구현자의 정식 관리상 인계 보고 `story-mfa-0-g5-implementation.md`를 수락하고 Dispatch를 release·ack했다. 이는 기술적 실패가 아니며 구현은 미완료다. 원래 전체 기준 `885ad522`, 직전 엔진 기준 `8e396997`과 전체 diff·이전 보안 계약을 유지한다.
+- g5는 D4B와 D2B 합성 경로 및 봉인 bundle 부품을 보존했다. 보고의 합성 테스트·build·typecheck는 실제 root 설치나 Node/JS 실행 신원의 증거가 아니다. 운영 queue/auth/HTTP는 실패 닫힘을 유지한다.
+- 다음 실행은 B2를 더 작게 나눈다: (1) root 소유 registry와 전체 Node/CLI/loader closure 및 서명·소유권 검증의 고정 입력과 부정 시험, (2) 정확한 실행 인스턴스의 OS peer 연결과 주입·대리 호출·재연결 거부, (3) 실제 보호 서비스 principal 및 운영 transport 조립과 실패 닫힘 검증. 각 단계마다 phase-ready와 검증 근거를 checkpoint한다. 이후 B3–B6, D5–D7, T01–T28 전체 검증과 원래 기준 전체 diff의 독립 보안 리뷰를 수행한다. 단계 완료를 티켓 완료로 취급하지 않는다.
+- 프레임·경로·bundle 크기 상한 가정은 실제 배포 구성에 맞춰 검증하고 계약을 줄이지 않는다. 관리자 권한이 필요한 실기 검증은 합성 결과와 구분해 기록하고 가능한 자동 실행 경로를 먼저 조사한다.

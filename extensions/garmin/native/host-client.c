@@ -24,7 +24,7 @@ static xpc_object_t bounded_call(xpc_connection_t c,xpc_object_t message) {
   request_release(r); return result;
 }
 static int field(xpc_object_t m,const char *key,xpc_type_t type) { xpc_object_t v=xpc_dictionary_get_value(m,key); return v && xpc_get_type(v)==type; }
-struct brain_host_observer { atomic_int refs; pthread_mutex_t lock; brain_xpc_peer peer; pid_t pid; int state,status; };
+struct brain_host_observer { atomic_int refs; pthread_mutex_t lock; brain_xpc_peer peer; pid_t pid; int state,status,observed,observed_status; };
 static void observer_release(brain_host_observer *o) { if(atomic_fetch_sub(&o->refs,1)==1){pthread_mutex_destroy(&o->lock);free(o);} }
 static void observe_event(brain_host_observer *o,xpc_object_t event) {
   pthread_mutex_lock(&o->lock);
@@ -33,7 +33,9 @@ static void observe_event(brain_host_observer *o,xpc_object_t event) {
     if(!o->peer.authenticated || !brain_xpc_verify_message(&o->peer,event) || !field(event,"op",XPC_TYPE_STRING) || !field(event,"pid",XPC_TYPE_INT64) || !o->pid || xpc_dictionary_get_int64(event,"pid")!=o->pid) o->state=-1;
     else {
       const char *op=xpc_dictionary_get_string(event,"op");
-      if(!strcmp(op,"exit") && xpc_dictionary_get_count(event)==3 && field(event,"wait_status",XPC_TYPE_INT64)) { o->status=(int)xpc_dictionary_get_int64(event,"wait_status");o->state=1; }
+      if(!strcmp(op,"leader_exit") && !o->observed && xpc_dictionary_get_count(event)==3 && field(event,"wait_status",XPC_TYPE_INT64)) {o->observed_status=(int)xpc_dictionary_get_int64(event,"wait_status");o->observed=1;}
+      else if(!strcmp(op,"exit") && xpc_dictionary_get_count(event)==3 && field(event,"wait_status",XPC_TYPE_INT64)
+        && (!o->observed || o->observed_status==(int)xpc_dictionary_get_int64(event,"wait_status"))) { o->status=(int)xpc_dictionary_get_int64(event,"wait_status");o->observed=1;o->observed_status=o->status;o->state=1; }
       else o->state=-1;
     }
   }
@@ -81,6 +83,14 @@ static int start(brain_host_client *c,const uuid_t work,const uuid_t attempt,uin
 }
 int brain_host_start(brain_host_client *c,const uuid_t work,const uuid_t attempt,uint64_t run,uint64_t binding,uint64_t epoch,const uint8_t package[32]) {return start(c,work,attempt,run,binding,epoch,package,-1);}
 int brain_host_start_auth(brain_host_client *c,const uuid_t work,const uuid_t attempt,uint64_t run,uint64_t binding,uint64_t epoch,const uint8_t package[32],int channel_fd) {return channel_fd>=0 && start(c,work,attempt,run,binding,epoch,package,channel_fd);}
+int brain_host_metadata(brain_host_client *c,const uint8_t *frame,size_t length) {
+  if(!c || !c->started || c->recorded || !frame || length<47 || length>1235)return 0;
+  xpc_object_t m=xpc_dictionary_create(NULL,NULL,0);if(!m)return 0;
+  xpc_dictionary_set_string(m,"op","metadata");xpc_dictionary_set_uuid(m,"lease",c->lease);xpc_dictionary_set_data(m,"frame",frame,length);
+  xpc_object_t r=bounded_call(c->connection,m);xpc_release(m);
+  int ok=r && brain_xpc_verify_message(&c->service,r) && xpc_dictionary_get_count(r)==1 && field(r,"accepted",XPC_TYPE_BOOL) && xpc_dictionary_get_bool(r,"accepted");
+  if(r)xpc_release(r);return ok;
+}
 int brain_host_recorded(brain_host_client *c) {
   if(!c || !c->service.authenticated || !c->started || c->recorded)return 0;
   if(brain_host_observe(c,NULL)!=0){brain_host_close(c);return 0;}
@@ -101,6 +111,30 @@ int brain_host_inspect(brain_host_client *c,int *group) {
     && xpc_dictionary_get_int64(r,"pid")==c->pid && xpc_dictionary_get_uint64(r,"start_sec")==c->start_sec && xpc_dictionary_get_uint64(r,"start_usec")==c->start_usec;
   int64_t value=ok?xpc_dictionary_get_int64(r,"group"):-1;if(r)xpc_release(r);
   if(!ok || (value!=0 && value!=1)){brain_host_close(c);return -1;}*group=(int)value;return 1;
+}
+int brain_host_members(brain_host_client *c,brain_group_member *members,size_t capacity,size_t *count) {
+  if(!c || !members || !count || !capacity || !c->started || !c->service.authenticated || brain_host_observe(c,NULL)<0)return -1;
+  xpc_object_t m=xpc_dictionary_create(NULL,NULL,0);if(!m)return -1;
+  xpc_dictionary_set_string(m,"op","members");xpc_dictionary_set_uuid(m,"lease",c->lease);xpc_dictionary_set_int64(m,"pid",c->pid);
+  xpc_object_t r=bounded_call(c->connection,m);xpc_release(m);xpc_object_t a=r?xpc_dictionary_get_value(r,"members"):NULL;
+  int ok=r && brain_xpc_verify_message(&c->service,r) && xpc_dictionary_get_count(r)==1 && a && xpc_get_type(a)==XPC_TYPE_ARRAY && xpc_array_get_count(a)<=capacity;
+  size_t n=ok?xpc_array_get_count(a):0;
+  for(size_t i=0;ok && i<n;i++){xpc_object_t v=xpc_array_get_value(a,i);ok=v && xpc_get_type(v)==XPC_TYPE_DICTIONARY && xpc_dictionary_get_count(v)==3 && field(v,"pid",XPC_TYPE_INT64) && field(v,"start_sec",XPC_TYPE_UINT64) && field(v,"start_usec",XPC_TYPE_UINT64);
+    int64_t pid=ok?xpc_dictionary_get_int64(v,"pid"):0;uint64_t sec=ok?xpc_dictionary_get_uint64(v,"start_sec"):0,usec=ok?xpc_dictionary_get_uint64(v,"start_usec"):0;
+    if(pid<=0 || pid>INT32_MAX || !sec || usec>=1000000)ok=0;else members[i]=(brain_group_member){.pid=(pid_t)pid,.start_sec=sec,.start_usec=usec};}
+  if(r)xpc_release(r);if(!ok){brain_host_close(c);return -1;}*count=n;return 1;
+}
+int brain_host_reap(brain_host_client *c) {
+  if(!c || !c->started || !c->service.authenticated || brain_host_leader_observed(c,NULL)!=1)return 0;
+  xpc_object_t m=xpc_dictionary_create(NULL,NULL,0);if(!m)return 0;
+  xpc_dictionary_set_string(m,"op","reap");xpc_dictionary_set_uuid(m,"lease",c->lease);xpc_dictionary_set_int64(m,"pid",c->pid);
+  xpc_object_t r=bounded_call(c->connection,m);xpc_release(m);
+  int ok=r && brain_xpc_verify_message(&c->service,r) && xpc_dictionary_get_count(r)==1 && field(r,"reaped",XPC_TYPE_BOOL) && xpc_dictionary_get_bool(r,"reaped");
+  if(r)xpc_release(r);if(!ok)brain_host_close(c);return ok;
+}
+int brain_host_leader_observed(brain_host_client *c,int *wait_status) {
+  if(!c || !c->observer)return -1;brain_host_observer *o=c->observer;pthread_mutex_lock(&o->lock);
+  int result=o->state<0?-1:o->observed;if(result==1 && wait_status)*wait_status=o->observed_status;pthread_mutex_unlock(&o->lock);return result;
 }
 int brain_host_signal(brain_host_client *c,int signal_number) {
   if(!c || !c->started || !c->service.authenticated || (signal_number!=SIGTERM && signal_number!=SIGKILL) || brain_host_observe(c,NULL)!=0)return 0;

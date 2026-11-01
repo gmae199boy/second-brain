@@ -8,3 +8,4 @@ export { postgresSettingsStore } from './settings.js';
 export { EXPECTED_SCHEMA_VERSIONS } from './migrate.js';
 export { provisionExtension } from './extension-provision.js';
 export { withExtensionInstallLock } from './extension-install-lock.js';
+export { postgresProtectedMutationStore } from './protected-mutation-store.js';

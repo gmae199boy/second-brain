@@ -119,11 +119,23 @@ if [ "${BRAIN_FIXTURE_NATIVE_STORE:-}" = 1 ]; then
   broker_source="$base/broker-store.c"
 fi
 fixture_abi=
+if [ "${BRAIN_FIXTURE_MULTI_SESSION:-}" = 1 ]; then
+  mkdir "$work/barrier"
+  fixture_abi="-DBRAIN_FIXTURE_MULTI_SESSION -DBRAIN_FIXTURE_BARRIER=\"$work/barrier\""
+fi
 if [ "${BRAIN_FIXTURE_CORE:-}" = 1 ]; then
   [ "${BRAIN_FIXTURE_NATIVE_STORE:-}" = 1 ] && [ "${BRAIN_FIXTURE_AUTHORITY:-}" = 1 ]
   fixture_abi=-DBRAIN_FIXTURE_ABI
   if [ "${BRAIN_FIXTURE_CORE_SIGNAL:-}" = 1 ]; then fixture_abi="$fixture_abi -DBRAIN_FIXTURE_SIGNAL"; fi
+  if [ "${BRAIN_FIXTURE_CORE_MULTIPLE:-}" = host-restart ] || [ "${BRAIN_FIXTURE_CORE_MULTIPLE:-}" = restart ]; then fixture_abi="$fixture_abi -DBRAIN_FIXTURE_HOST_CRASH"; fi
+  if [ "${BRAIN_FIXTURE_CORE_DESCENDANT:-}" = 1 ]; then fixture_abi="$fixture_abi -DBRAIN_FIXTURE_CORE_DESCENDANT"; fi
   docker exec "$db" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "alter role brain_protected_supervisor login; insert into brain.schema_migrations(owner,version,name,checksum,applied_at) values ('core',29,'fixture','fixture',now()); set session authorization brain_protected_supervisor; insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,hold_group) values ('00000000-0000-4000-8000-000000000151','garmin.auth','extension','garmin',now(),now(),'supervised','extension:garmin')" >/dev/null
+  if [ "${BRAIN_FIXTURE_TWO_CORE:-}" = 1 ]; then
+    docker exec "$db" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "update garmin.account_protection set profile_id='fixture-profile-1' where id='00000000-0000-4000-8000-000000000001'; insert into garmin.account_protection(id,profile_id) values ('00000000-0000-4000-8000-000000000002','fixture-profile-2'); insert into garmin.account_binding(target,protection_id) values ('fixture2','00000000-0000-4000-8000-000000000002'); set session authorization brain_protected_supervisor; update brain.work_items set target_kind='account',target_id='00000000-0000-4000-8000-000000000001' where id='00000000-0000-4000-8000-000000000151'; insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,hold_group) values ('00000000-0000-4000-8000-000000000152','garmin.auth','account','00000000-0000-4000-8000-000000000002',now(),now(),'supervised','extension:garmin')" >/dev/null
+  fi
+  if [ "${BRAIN_FIXTURE_CORE_RECORD:-}" = deny ]; then
+    docker exec "$db" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "create function brain.fixture_reject_identity() returns trigger language plpgsql as \$\$ begin if old.pid is null and new.pid is not null then raise exception 'fixture'; end if; return new; end \$\$; create trigger fixture_reject_identity before update on brain.work_attempts for each row execute function brain.fixture_reject_identity()" >/dev/null
+  fi
 fi
 case "${BRAIN_FIXTURE_CASE:-0}" in 0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16) fixture_case=${BRAIN_FIXTURE_CASE:-0};; *) exit 1;; esac
 if [ "$fixture_case" -ge 6 ]; then [ "${BRAIN_FIXTURE_NATIVE_STORE:-}" = 1 ]; fi
@@ -131,7 +143,7 @@ xcrun clang $common $fixture_abi -DFIXTURE_CASE="$fixture_case" -DFIXTURE_HOST_P
   "$base/tests/composed-worker.c" "$base/child-bootstrap.c" "$base/submission-ipc.c" "$base/auth-channel.c" "$base/peer.c" "$base/xpc-peer.c" -lbsm -framework Security -framework CoreFoundation -o "$work/worker"
 xcrun clang $common $native_flags -DFIXTURE_CASE="$fixture_case" -DFIXTURE_BROKER_PATH="\"$work/broker\"" -DFIXTURE_BROKER_UI="\"$prefix.broker.ui\"" \
   "$base/tests/composed-ui.m" "$base/submission-ui.m" "$base/submission-ipc.c" "$base/auth-channel.c" "$base/peer.c" "$base/xpc-peer.c" $native_lib -lbsm -framework AppKit -framework Security -framework CoreFoundation -o "$work/ui"
-xcrun clang $common $native_flags -DFIXTURE_CASE="$fixture_case" -DFIXTURE_HOST_PATH="\"$work/host\"" -DFIXTURE_BROKER_PATH="\"$work/broker\"" -DFIXTURE_GUI_PATH="\"$work/gui\"" \
+xcrun clang $common $fixture_abi $native_flags -DFIXTURE_CASE="$fixture_case" -DFIXTURE_HOST_PATH="\"$work/host\"" -DFIXTURE_BROKER_PATH="\"$work/broker\"" -DFIXTURE_GUI_PATH="\"$work/gui\"" \
   -DFIXTURE_HOST_SERVICE="\"$prefix.host\"" -DFIXTURE_GUI_SERVICE="\"$prefix.gui\"" -DFIXTURE_BROKER_SUPERVISOR="\"$prefix.broker.supervisor\"" \
   -DFIXTURE_DB_CONTAINER="\"$db\"" \
   "$base/tests/composed-supervisor.c" "$base/supervisor-native.c" "$base/supervisor-bootstrap.c" "$base/gui-client.c" "$base/host-client.c" "$base/submission-ipc.c" "$base/auth-channel.c" "$base/peer.c" "$base/xpc-peer.c" $native_source $native_lib -lbsm -framework Security -framework CoreFoundation -o "$work/supervisor"
@@ -183,13 +195,72 @@ PLIST
   case "$role" in broker) broker_owned=1;; host) host_owned=1;; gui) gui_owned=1;; esac
 done
 if [ "${BRAIN_FIXTURE_CORE:-}" = 1 ]; then
-  node "$base/tests/core-native-runner.mjs" "$work/bridge" "$port" "$work/worker" "${BRAIN_FIXTURE_CORE_SIGNAL:-0}"
-  if [ "${BRAIN_FIXTURE_CORE_SIGNAL:-}" = 1 ]; then
+  if ! node "$base/tests/core-native-runner.mjs" "$work/bridge" "$port" "$work/worker" "${BRAIN_FIXTURE_CORE_SIGNAL:-0}" "$domain/$prefix.host"; then
+    rg '^fixture-' "$work/broker.err" >&2 || :
+    exit 1
+  fi
+  if [ -n "${BRAIN_FIXTURE_CORE_RECORD:-}" ]; then
+    rg -q '^fixture-spawned$' "$work/host.err"
+    if rg -q '^fixture-ack$' "$work/host.err" || rg -q '^fixture-prompt$' "$work/broker.err"; then exit 1; fi
+  fi
+  if [ "${BRAIN_FIXTURE_CORE_SIGNAL:-}" = 1 ] && [ "${BRAIN_FIXTURE_CORE_MULTIPLE:-}" != restart ] && [ "${BRAIN_FIXTURE_CORE_MULTIPLE:-}" != host-restart ]; then
     rg -q '^fixture-revoked$' "$work/broker.err"
     rg -q '^fixture-signalled$' "$work/host.err"
+    if [ "${BRAIN_FIXTURE_TWO_CORE:-}" = 1 ]; then
+      [ "$(rg -c '^fixture-revoked$' "$work/broker.err")" = 2 ]
+    fi
+  fi
+  if [ "${BRAIN_FIXTURE_CORE_MULTIPLE:-}" = restart ] || [ "${BRAIN_FIXTURE_CORE_MULTIPLE:-}" = host-restart ]; then
+    if rg -q '^fixture-signalled$' "$work/host.err"; then exit 1; fi
+  fi
+  if [ "${BRAIN_FIXTURE_CORE_DESCENDANT:-}" = 1 ]; then
+    rg -q '^fixture-leader-observed$' "$work/host.err"
+    rg -q '^fixture-signalled$' "$work/host.err"
+    rg -q '^fixture-reaped$' "$work/host.err"
+    rg -q '^fixture-revoked$' "$work/broker.err"
+  fi
+  if [ -n "${BRAIN_FIXTURE_CORE_MUTATION:-}" ]; then
+    case "$BRAIN_FIXTURE_CORE_MUTATION" in
+      cancel) condition="exists(select 1 from brain.work_items where id='00000000-0000-4000-8000-000000000151' and cancel_requested_at is not null)";;
+      hold) condition="exists(select 1 from brain.work_hold_groups where name='extension:garmin')";;
+      disable) condition="exists(select 1 from brain.extensions where name='garmin' and not enabled) and exists(select 1 from brain.work_hold_groups where name='extension:garmin')";;
+      *) exit 1;;
+    esac
+    count=$(docker exec "$db" psql -U postgres -d postgres -Atc "select count(*) from brain.protected_auth_revocations r join brain.work_attempts a on a.token=r.attempt_token where r.work_id='00000000-0000-4000-8000-000000000151' and r.launch_lease=a.protected_launch_lease and r.connection_epoch=a.protected_connection_epoch and ($condition)")
+    if [ "${BRAIN_FIXTURE_CORE_MULTIPLE:-}" = missing ] || [ "${BRAIN_FIXTURE_CORE_MULTIPLE:-}" = restart ] || [ "${BRAIN_FIXTURE_CORE_MULTIPLE:-}" = host-restart ] || [ -n "${BRAIN_FIXTURE_CORE_ACK_FAIL:-}" ]; then
+      [ "$count" = 0 ]
+      count=$(docker exec "$db" psql -U postgres -d postgres -Atc "select count(*) from brain.work_hold_groups where name='extension:garmin'")
+      [ "$count" = 0 ]
+    else [ "$count" = 1 ]; fi
+    if [ "${BRAIN_FIXTURE_CORE_MULTIPLE:-}" = pending ] || [ "${BRAIN_FIXTURE_CORE_MULTIPLE:-}" = race ]; then
+      count=$(docker exec "$db" psql -U postgres -d postgres -Atc "select count(*) from brain.protected_input_launches where work_id='00000000-0000-4000-8000-000000000251' and state='closed'")
+      [ "$count" = 1 ]
+    fi
+    if [ "${BRAIN_FIXTURE_TWO_CORE:-}" = 1 ]; then
+      count=$(docker exec "$db" psql -U postgres -d postgres -Atc "select count(*) from brain.protected_auth_revocations r join brain.work_attempts a on a.token=r.attempt_token where r.work_id in ('00000000-0000-4000-8000-000000000151','00000000-0000-4000-8000-000000000152') and r.launch_lease=a.protected_launch_lease and r.connection_epoch=a.protected_connection_epoch")
+      if [ -n "${BRAIN_FIXTURE_CORE_ACK_FAIL:-}" ]; then [ "$count" = 0 ]; elif [ "${BRAIN_FIXTURE_CORE_MUTATION:-}" = cancel ]; then [ "$count" = 1 ]; else [ "$count" = 2 ]; fi
+    fi
   fi
 else
-  "$work/supervisor"
+  if [ "${BRAIN_FIXTURE_MULTI_SESSION:-}" = 1 ]; then
+    [ "${BRAIN_FIXTURE_AUTHORITY:-}" != 1 ]
+    BRAIN_FIXTURE_MULTI_REVOKE=1 "$work/supervisor" & first=$!
+    "$work/supervisor" & second=$!
+    ready=0
+    for attempt in $(seq 1 200); do
+      count=$(find "$work/barrier" -name 'worker-*' -type f | wc -l | tr -d ' ')
+      if [ "$count" = 2 ]; then ready=1;break;fi
+      sleep 0.05
+    done
+    : > "$work/barrier/revoke"
+    revoked=0
+    for attempt in $(seq 1 200); do if [ -f "$work/barrier/revoked" ]; then revoked=1;break;fi;sleep 0.05;done
+    : > "$work/barrier/release"
+    first_ok=0;second_ok=0
+    wait "$first" || first_ok=$?
+    wait "$second" || second_ok=$?
+    [ "$ready" = 1 ] && [ "$revoked" = 1 ] && [ "$first_ok" = 0 ] && [ "$second_ok" = 0 ]
+  else "$work/supervisor"; fi
 fi
 if [ -s "$work/gui.out" ]; then printf '%s\n' '합성 GUI 경계 검증 실패' >&2;exit 1;fi
 if [ "$fixture_case" -eq 15 ] || [ "$fixture_case" -eq 16 ]; then
@@ -217,7 +288,11 @@ if [ "$fixture_case" -eq 14 ]; then
   count=$(docker exec "$db" psql -U postgres -d postgres -Atc "select count(*) from brain.extensions where name='garmin' and not enabled")
   [ "$count" = 1 ]
 fi
-if [ "${BRAIN_FIXTURE_CORE_SIGNAL:-}" = 1 ]; then
+if [ "${BRAIN_FIXTURE_CORE_RECORD:-}" = deny ]; then
+  count=$(docker exec "$db" psql -U postgres -d postgres -Atc "select count(*) from brain.work_attempts a join garmin.admission_holder h on h.attempt_token=a.token where a.pid is null")
+elif [ "${BRAIN_FIXTURE_CORE_RECORD:-}" = lost ]; then
+  count=$(docker exec "$db" psql -U postgres -d postgres -Atc "select count(*) from brain.work_attempts a join garmin.admission_holder h on h.attempt_token=a.token where a.pid>0 and a.protected_launch_lease is not null")
+elif [ "${BRAIN_FIXTURE_CORE_SIGNAL:-}" = 1 ]; then
   count=$(docker exec "$db" psql -U postgres -d postgres -Atc "select count(*) from brain.work_attempts a join brain.work_items w on w.id=a.work_item_id where w.id='00000000-0000-4000-8000-000000000151' and a.pid>0 and a.last_progress_at is not null and a.outcome is not null and exists(select 1 from garmin.admission_holder h where h.work_id=w.id)")
 elif [ "${BRAIN_FIXTURE_CORE:-}" = 1 ]; then
   count=$(docker exec "$db" psql -U postgres -d postgres -Atc "select count(*) from brain.work_attempts a join brain.work_items w on w.id=a.work_item_id where w.id='00000000-0000-4000-8000-000000000151' and w.outcome='succeeded' and a.pid>0 and a.os_started_at is not null and a.os_boot_at is not null and a.protected_launch_lease is not null and a.protected_connection_epoch>0 and not exists(select 1 from garmin.admission_holder h where h.work_id=w.id)")
@@ -232,5 +307,5 @@ elif [ "${BRAIN_FIXTURE_DENY_RECORD:-}" = 1 ]; then
 else
   count=$(docker exec "$db" psql -U postgres -d postgres -Atc 'select count(*) from fixture_admission where pid > 0 and start_sec > 0')
 fi
-[ "$count" = 1 ]
+if [ "${BRAIN_FIXTURE_MULTI_SESSION:-}" = 1 ]; then [ "$count" = 2 ]; else [ "$count" = 1 ]; fi
 printf '%s\n' '합성 supervisor·broker·GUI·별도 worker 제출 종단 검사 통과'

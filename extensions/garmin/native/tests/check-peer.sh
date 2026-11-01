@@ -25,6 +25,8 @@ worker_hash=$(codesign -dv --verbose=4 /usr/bin/true 2>&1 | sed -n 's/^CDHash=//
 "$work/worker-host" "$worker_hash"
 xcrun clang -Wall -Wextra -Werror "$base/peer.c" "$base/worker-host.c" "$base/tests/bootstrap-parent.c" -lbsm -framework Security -framework CoreFoundation -o "$work/bootstrap-parent"
 xcrun clang -Wall -Wextra -Werror "$base/peer.c" "$base/child-bootstrap.c" "$base/tests/bootstrap-child.c" -lbsm -framework Security -framework CoreFoundation -o "$work/bootstrap-child"
+xcrun clang -Wall -Wextra -Werror "$base/peer.c" "$base/child-bootstrap.c" "$base/tests/metadata-child-fixture.c" -lbsm -framework Security -framework CoreFoundation -o "$work/metadata-child"
+"$work/metadata-child"
 bootstrap_parent=$(codesign -dv --verbose=4 "$work/bootstrap-parent" 2>&1 | sed -n 's/^CDHash=//p')
 bootstrap_child=$(codesign -dv --verbose=4 "$work/bootstrap-child" 2>&1 | sed -n 's/^CDHash=//p')
 [ ${#bootstrap_parent} -eq 40 ] && [ ${#bootstrap_child} -eq 40 ]

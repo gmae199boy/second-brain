@@ -101,6 +101,13 @@ int brain_supervisor_pg_admission_context(PGconn *connection,const brain_auth_bi
   }
   if(r)PQclear(r);if(!finish(&s,ok)){target[0]=0;*generation=0;return 0;}return 1;
 }
+int brain_supervisor_pg_work_target(PGconn *connection,const brain_auth_binding *binding,const char *kind,const char *target) {
+  if(!connection || !binding || !kind || !target || !binding->run_generation)return 0;
+  brain_supervisor_pg_store s={.connection=connection};if(!begin(&s))return 0;
+  char work[37],token[37],run[32];params(binding,work,token,run);const char *p[]={work,token,run,kind,target};
+  int ok=identity(&s) && single(&s,"select (brain.attempt_is_current($1::uuid,$2::uuid) and exists(select 1 from brain.work_items w where w.id=$1::uuid and w.attempts=$3::bigint and w.kind='garmin.auth' and w.target_kind=$4 and w.target_id=$5))::text",5,p,"true");
+  return finish(&s,ok);
+}
 int brain_supervisor_pg_init(brain_supervisor_pg_store *s,PGconn *connection,const brain_auth_binding *binding,const char *target,const char *zone) {
   if(!s)return 0;memset(s,0,sizeof *s);s->unusable=1;
   if(!connection || !binding || !target || !*target || strlen(target)>=sizeof s->target || !zone || !*zone || strlen(zone)>=sizeof s->zone || !binding->run_generation || !binding->binding_generation || !binding->package_generation || !binding->connection_epoch)return 0;

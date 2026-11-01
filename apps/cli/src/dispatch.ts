@@ -38,6 +38,8 @@ import { openBrainStore } from './runtime/brain-store.js';
 import { uuidV7IdGen } from './runtime/id-gen.js';
 import { recordHookArrival } from './runtime/hook-arrival.js';
 import { readStdin } from './runtime/stdin.js';
+import { protectedQueueClient, type ProtectedQueueTransport } from './daemon/protected-queue.js';
+import { runQueueList } from './commands/queue-list.js';
 import {
   JSON_FLAG,
   argumentName,
@@ -354,6 +356,7 @@ export type CommandSpec<T = unknown> = DatabaseCommandSpec<T> | StandaloneComman
 export type CreateConnectionStore = NonNullable<import('./runtime/brain-store.js').OpenBrainStoreOptions['createStore']>;
 
 export interface DispatchRuntime {
+  protectedQueueTransport?: ProtectedQueueTransport;
   runner?: CommandRunner;
   clock: Clock;
   env?: NodeJS.ProcessEnv;
@@ -443,6 +446,7 @@ export async function dispatch(
   try {
     outcome = await execute(registry, argv, { clock, json, positional: [] }, env, {
       runner: runtime.runner,
+      protectedQueueTransport: runtime.protectedQueueTransport,
       createStore: runtime.createStore,
       stdin: runtime.stdin ?? (() => readStdin()),
       recordHookArrival: (harness) => recordHookArrival(configHome(env), harness, env['SECOND_BRAIN_PLUGIN_ROOT']),
@@ -530,6 +534,7 @@ export async function dispatch(
 
 /** The parts of the runtime `execute` passes on to a command or to the SDK. */
 interface Wiring {
+  protectedQueueTransport?: ProtectedQueueTransport;
   runner?: CommandRunner;
   createStore: CreateConnectionStore | undefined;
   stdin: () => Promise<string>;
@@ -594,6 +599,10 @@ async function execute(
   const warningLines = config.ok
     ? config.warnings.map((warning) => `경고: ${warning.message}`)
     : [];
+
+  if (spec.ns === 'queue' && spec.verb === 'list') {
+    return finish(rendering, await runQueueList({options, queue: protectedQueueClient(wiring.protectedQueueTransport)}), warningCodes, warningLines);
+  }
 
   const opened = await openBrainStore({ home, env, config,
     path: spec.hook === true ? 'turn' : 'command', createStore });

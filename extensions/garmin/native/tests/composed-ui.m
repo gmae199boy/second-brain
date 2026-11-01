@@ -52,7 +52,8 @@ int main(void) {@autoreleasepool {
   xpc_object_t target=NULL;
   for(int i=0;i<150;i++){xpc_object_t m=xpc_dictionary_create(NULL,NULL,0);xpc_dictionary_set_string(m,"op","select_target");reply=brain_submission_call(&peer,m,1000);xpc_release(m);
     if(!reply)return 4;if(xpc_dictionary_get_count(reply)==10){target=reply;break;}xpc_release(reply);usleep(100000);}
-  if(!target || !xpc_dictionary_get_string(target,"tokenstore") || strcmp(xpc_dictionary_get_string(target,"tokenstore"),"fixture"))return 5;uint8_t session[16];const uint8_t *session_ptr=xpc_dictionary_get_uuid(target,"session");if(!session_ptr)return 6;memcpy(session,session_ptr,16);
+  const char *target_store=target?xpc_dictionary_get_string(target,"tokenstore"):NULL;
+  if(!target_store || (strcmp(target_store,"fixture") && strcmp(target_store,"fixture2")))return 5;uint8_t session[16];const uint8_t *session_ptr=xpc_dictionary_get_uuid(target,"session");if(!session_ptr)return 6;memcpy(session,session_ptr,16);
   xpc_object_t selection=xpc_dictionary_create(NULL,NULL,0);xpc_dictionary_set_string(selection,"op","selection");
   const char *keys[]={"work","attempt","session","lease","run","binding","package_generation","epoch","package"};
   for(size_t i=0;i<9;i++){xpc_object_t value=xpc_dictionary_get_value(target,keys[i]);if(!value)return 7;xpc_dictionary_set_value(selection,keys[i],value);}xpc_release(target);

@@ -33,3 +33,19 @@ it('서비스가 없으면 클라이언트는 고정 실패를 반환하고 재�
   expect(await client.listQueue(201)).toEqual({ ok: false, code: 'INVALID_REQUEST' });
   expect(calls).toBe(1);
 });
+
+it('보호 명령은 고정 operation과 필드만 전달하고 Core 결과를 보존한다', async () => {
+  let calls=0;
+  const port = { async status(){return {available:true,requiresAction:false};},async listQueue(){return [];},commands:{
+    async cancel(id: string){calls++;return {ok:true as const,id,state:'requested' as const};},
+    async hold(group: string){calls++;return {ok:true as const,group,held:false};},
+    async disable(name: string){calls++;return {ok:true as const,name,enabled:false,changed:true};},
+  }};
+  expect(await handleProtectedRequest({operation:'queue.cancel',id:'fixture',lease:'secret'},port)).toEqual({ok:false,code:'INVALID_REQUEST'});
+  expect(await handleProtectedRequest({operation:'queue.cancel',id:'fixture'},port)).toEqual({ok:true,id:'fixture',state:'requested'});
+  expect(await handleProtectedRequest({operation:'queue.hold',group:'fixture'},port)).toEqual({ok:true,group:'fixture',held:false});
+  expect(await handleProtectedRequest({operation:'extension.disable',name:'fixture'},port)).toEqual({ok:true,name:'fixture',enabled:false,changed:true});
+  expect(calls).toBe(3);
+  const failing={...port,commands:{...port.commands,async hold(){return {ok:false as const,code:'DB_LOCKED' as const,message:'fixture-secret'};}}};
+  expect(await handleProtectedRequest({operation:'queue.hold',group:'fixture'},failing)).toEqual({ok:false,code:'DB_LOCKED',message:'저장소가 사용 중입니다'});
+});

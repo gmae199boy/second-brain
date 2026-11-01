@@ -15,6 +15,14 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 fixture_flag=
 if [ "${BRAIN_FIXTURE_DESCENDANT:-}" = 1 ]; then fixture_flag=-DBRAIN_FIXTURE_DESCENDANT; fi
+if [ -n "${BRAIN_FIXTURE_METADATA_CASE:-}" ]; then
+  case "$BRAIN_FIXTURE_METADATA_CASE" in 1|2|3|4|5) ;; *) exit 1;; esac
+  fixture_flag="$fixture_flag -DBRAIN_FIXTURE_METADATA_CASE=$BRAIN_FIXTURE_METADATA_CASE"
+fi
+if [ -n "${BRAIN_FIXTURE_IDENTITY_CASE:-}" ]; then
+  case "$BRAIN_FIXTURE_IDENTITY_CASE" in 1|2|3|4) ;; *) exit 1;; esac
+  fixture_flag="$fixture_flag -DBRAIN_FIXTURE_IDENTITY_CASE=$BRAIN_FIXTURE_IDENTITY_CASE"
+fi
 xcrun clang -Wall -Wextra -Werror -fblocks $fixture_flag "$base/xpc-peer.c" "$base/host-client.c" "$base/tests/worker-success-client.c" -framework Security -framework CoreFoundation -o "$work/client"
 client_hash=$(codesign -dv --verbose=4 "$work/client" 2>&1 | sed -n 's/^CDHash=//p')
 xcrun clang -Wall -Wextra -Werror $fixture_flag "$base/peer.c" "$base/tests/worker-success-child.c" -lbsm -framework Security -framework CoreFoundation -o "$work/child"
@@ -30,7 +38,7 @@ with open(path,'w',encoding='utf-8') as out:
     out.write(f'static const uint8_t BRAIN_WORKER_HASH[20]={{{values(worker)}}};\n')
     out.write('static const uint8_t BRAIN_PACKAGE_HASH[32]={' + ','.join(['1']*32) + '};\n')
 PY
-xcrun clang -Wall -Wextra -Werror -fblocks -DBRAIN_NATIVE_FIXTURE -DBRAIN_FIXTURE_WORKER_PATH="\"$work/child\"" -DBRAIN_NATIVE_POLICY_HEADER="\"$work/policy.h\"" \
+xcrun clang -Wall -Wextra -Werror -fblocks $fixture_flag -DBRAIN_NATIVE_FIXTURE ${BRAIN_FIXTURE_METADATA_CASE:+-DBRAIN_FIXTURE_REQUIRE_METADATA} -DBRAIN_FIXTURE_WORKER_PATH="\"$work/child\"" -DBRAIN_NATIVE_POLICY_HEADER="\"$work/policy.h\"" \
   "$base/worker-service.c" "$base/worker-host.c" "$base/peer.c" "$base/xpc-peer.c" -lbsm -framework Security -framework CoreFoundation -o "$work/service"
 service_hash=$(codesign -dv --verbose=4 "$work/service" 2>&1 | sed -n 's/^CDHash=//p')
 [ ${#service_hash} -eq 40 ]
@@ -43,4 +51,6 @@ if ! launchctl bootstrap "$domain" "$work/fixture.plist"; then uncertain=1; exit
 owned=1
 "$work/client" "$label" "$service_hash"
 rg -q '^fixture-spawned$' "$work/service-error"
+if [ "${BRAIN_FIXTURE_METADATA_CASE:-1}" != 1 ] && rg -q '^fixture-ack$' "$work/service-error"; then exit 1; fi
+if [ -n "${BRAIN_FIXTURE_IDENTITY_CASE:-}" ] && rg -q '^fixture-signalled$' "$work/service-error"; then exit 1; fi
 printf '%s\n' '합성 자식의 ACK 전 차단·원격 검사·종료 관찰 통과'

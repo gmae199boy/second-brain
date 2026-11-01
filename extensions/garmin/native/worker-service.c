@@ -4,6 +4,7 @@
 #include <libproc.h>
 #include <sys/proc_info.h>
 #include <sys/random.h>
+#include <sys/wait.h>
 #include <signal.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -11,9 +12,11 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <xpc/xpc.h>
 #include "worker-host.h"
 #include "xpc-peer.h"
+#include "peer.h"
 
 #ifdef BRAIN_NATIVE_POLICY_HEADER
 #include BRAIN_NATIVE_POLICY_HEADER
@@ -29,7 +32,7 @@ typedef struct {
   brain_worker worker;
   uint8_t work[16], attempt[16], lease[16];
   uint64_t run, binding, epoch, start_sec, start_usec;
-  int active, revoked, unknown, connection_invalid, ledger_index;
+  int active, revoked, unknown, connection_invalid, ledger_index, metadata_sent, auth, exit_event_sent;
   dispatch_queue_t queue;
   dispatch_source_t exit_source;
 } host_connection;
@@ -64,32 +67,34 @@ static void revoke_host(host_connection *host) {
   if (!host || host->revoked) return; host->revoked=1;
   if (host->active) {
     brain_worker_close(&host->worker);
-    if (!brain_worker_signal(&host->worker,SIGTERM)) host->unknown=1;
-    /* leader 종료만으로 그룹이 비었다고 가정하지 않는다. D4 inspector가 확인한다. */
+    /* 연결이 끊겼거나 신원이 불명이면 별도 신호를 추측하지 않고 holder를 보존한다. */
     host->unknown=1;
   }
   brain_xpc_close(&host->peer);
 }
 static int current_identity(host_connection *host) {
+  if(host->worker.exit_observed && !host->worker.reaped)return brain_worker_observe_exit(&host->worker,NULL)==1;
   struct proc_bsdinfo info;
   int n=proc_pidinfo(host->worker.pid,PROC_PIDTBSDINFO,0,&info,sizeof info);
   return n==(int)sizeof info && info.pbi_pid==(uint32_t)host->worker.pid && info.pbi_pgid==(uint32_t)host->worker.pid
     && info.pbi_start_tvsec==host->start_sec && info.pbi_start_tvusec==host->start_usec;
 }
 static void on_child_exit(host_connection *host) {
-  int status=0, reaped=brain_worker_reap(&host->worker,&status);
-  int group=brain_worker_group_state(&host->worker);
-  host->unknown = reaped!=1 || group!=0;
+  int status=0, observed=brain_worker_observe_exit(&host->worker,&status);
+  host->unknown = observed!=1;
   if (host->peer.authenticated && !host->revoked) {
     xpc_object_t event=xpc_dictionary_create(NULL,NULL,0);
     if (event) {
-      xpc_dictionary_set_string(event,"op",reaped==1 ? "exit" : "unknown");
+      xpc_dictionary_set_string(event,"op",observed==1 ? "leader_exit" : "unknown");
       xpc_dictionary_set_int64(event,"pid",host->worker.pid);
-      if (reaped==1) xpc_dictionary_set_int64(event,"wait_status",status);
+      if (observed==1) xpc_dictionary_set_int64(event,"wait_status",status);
       xpc_connection_send_message(host->peer.connection,event); xpc_release(event);
+      if(observed==1)host->exit_event_sent=1;
+#ifdef BRAIN_NATIVE_FIXTURE
+      if(observed==1)(void)write(2,"fixture-leader-observed\n",24);
+#endif
     }
   }
-  if (!host->unknown) { brain_worker_close(&host->worker); host->active=0; settle_launch(host->ledger_index); }
   if (host->exit_source) { dispatch_source_cancel(host->exit_source); dispatch_release(host->exit_source); host->exit_source=NULL; }
   if (host->connection_invalid && !host->active) { dispatch_release(host->queue); free(host); }
 }
@@ -102,7 +107,7 @@ static void handle_start(host_connection *host, xpc_object_t message, int auth) 
   uint64_t run=xpc_dictionary_get_uint64(message,"run"), binding=xpc_dictionary_get_uint64(message,"binding"), epoch=xpc_dictionary_get_uint64(message,"epoch");
   if (!package || size!=32 || memcmp(package,BRAIN_PACKAGE_HASH,32) || !run || !binding || !epoch) { revoke_host(host); return; }
   memcpy(host->work,xpc_dictionary_get_uuid(message,"work"),16); memcpy(host->attempt,xpc_dictionary_get_uuid(message,"attempt"),16);
-  host->run=run; host->binding=binding; host->epoch=epoch;
+  host->run=run; host->binding=binding; host->epoch=epoch; host->auth=auth;
   host->ledger_index=reserve_launch(host->work,host->attempt);
   if (host->ledger_index<0) { revoke_host(host); return; }
   int channel=-1;
@@ -122,6 +127,10 @@ static void handle_start(host_connection *host, xpc_object_t message, int auth) 
   struct proc_bsdinfo info; int n=proc_pidinfo(host->worker.pid,PROC_PIDTBSDINFO,0,&info,sizeof info);
   if (n!=(int)sizeof info || info.pbi_pid!=(uint32_t)host->worker.pid || info.pbi_pgid!=(uint32_t)host->worker.pid) { revoke_host(host); return; }
   host->start_sec=info.pbi_start_tvsec; host->start_usec=info.pbi_start_tvusec;
+  host->worker.start_sec=host->start_sec;host->worker.start_usec=host->start_usec;
+#if defined(BRAIN_NATIVE_FIXTURE) && defined(BRAIN_FIXTURE_IDENTITY_CASE) && BRAIN_FIXTURE_IDENTITY_CASE==1
+  host->worker.start_usec^=1;
+#endif
   xpc_object_t reply=xpc_dictionary_create_reply(message); if (!reply) { revoke_host(host); return; }
   xpc_dictionary_set_int64(reply,"pid",host->worker.pid); xpc_dictionary_set_uint64(reply,"start_sec",host->start_sec);
   xpc_dictionary_set_uint64(reply,"start_usec",host->start_usec); xpc_dictionary_set_uuid(reply,"lease",host->lease);
@@ -130,6 +139,9 @@ static void handle_start(host_connection *host, xpc_object_t message, int auth) 
   close(host->worker.stdout_read); close(host->worker.stderr_read); host->worker.stdout_read=host->worker.stderr_read=-1;
 }
 static void handle_recorded(host_connection *host, xpc_object_t message) {
+#if !defined(BRAIN_NATIVE_FIXTURE) || defined(BRAIN_FIXTURE_REQUIRE_METADATA)
+  if(host->auth && !host->metadata_sent){revoke_host(host);return;}
+#endif
   if (!host->active || host->unknown || xpc_dictionary_get_count(message)!=8 || !field(message,"work",XPC_TYPE_UUID)
       || !field(message,"attempt",XPC_TYPE_UUID) || !field(message,"lease",XPC_TYPE_UUID)
       || !field(message,"run",XPC_TYPE_UINT64) || !field(message,"binding",XPC_TYPE_UINT64) || !field(message,"epoch",XPC_TYPE_UINT64)
@@ -138,8 +150,27 @@ static void handle_recorded(host_connection *host, xpc_object_t message) {
       || xpc_dictionary_get_uint64(message,"binding")!=host->binding || xpc_dictionary_get_uint64(message,"epoch")!=host->epoch
       || xpc_dictionary_get_int64(message,"pid")!=host->worker.pid || !current_identity(host)
       || !brain_worker_recorded(&host->worker,host->worker.pid) || !brain_worker_ack(&host->worker)) { revoke_host(host); return; }
+#ifdef BRAIN_NATIVE_FIXTURE
+  (void)write(2,"fixture-ack\n",12);
+#endif
   xpc_object_t reply=xpc_dictionary_create_reply(message); if (!reply) { revoke_host(host); return; }
   xpc_dictionary_set_bool(reply,"accepted",true); xpc_connection_send_message(host->peer.connection,reply); xpc_release(reply);
+}
+static void handle_metadata(host_connection *host,xpc_object_t message) {
+  if(!host->active || host->unknown || host->metadata_sent || host->worker.identity_recorded || xpc_dictionary_get_count(message)!=3
+    || !field(message,"lease",XPC_TYPE_UUID) || !same_uuid(message,"lease",host->lease) || !field(message,"frame",XPC_TYPE_DATA)) {revoke_host(host);return;}
+  size_t n=0;const uint8_t *p=xpc_dictionary_get_data(message,"frame",&n);
+  if(!p || n<47 || n>1235 || p[0]!=1 || memcmp(p+1,host->work,16) || memcmp(p+17,host->attempt,16)){revoke_host(host);return;}
+  uint64_t run=0;for(int i=33;i<41;i++)run=(run<<8)|p[i];
+  size_t zone=(size_t)p[41]*256+p[42],target=(size_t)p[43]*256+p[44],id=p[46];
+  if(run!=host->run || !zone || zone>128 || !target || target>1024 || (p[45]!=1 && p[45]!=2) || !id || id>36 || n!=47+zone+target+id || memchr(p+47+zone,0,target)){revoke_host(host);return;}
+  if(memchr(p+47+zone+target,0,id)){revoke_host(host);return;}
+  char target_id[37];memcpy(target_id,p+47+zone+target,id);target_id[id]=0;uuid_t parsed;
+  if((p[45]==1 && strcmp(target_id,"garmin")) || (p[45]==2 && (id!=36 || uuid_parse(target_id,parsed) || uuid_is_null(parsed)))){revoke_host(host);return;}
+  for(size_t i=0;i<zone;i++){uint8_t c=p[47+i];if(!((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='/'||c=='_'||c=='-'||c=='+')){revoke_host(host);return;}}
+  if(!brain_write_frame(host->worker.control_fd,p,n,2000)){revoke_host(host);return;}host->metadata_sent=1;
+  xpc_object_t reply=xpc_dictionary_create_reply(message);if(!reply){revoke_host(host);return;}
+  xpc_dictionary_set_bool(reply,"accepted",true);xpc_connection_send_message(host->peer.connection,reply);xpc_release(reply);
 }
 static void handle_inspect(host_connection *host, xpc_object_t message) {
   if(!host->active || host->unknown || xpc_dictionary_get_count(message)!=3 || !field(message,"lease",XPC_TYPE_UUID)
@@ -163,6 +194,55 @@ static void handle_signal(host_connection *host, xpc_object_t message) {
   xpc_object_t reply=xpc_dictionary_create_reply(message);if(!reply){revoke_host(host);return;}
   xpc_dictionary_set_bool(reply,"sent",true);xpc_connection_send_message(host->peer.connection,reply);xpc_release(reply);
 }
+static int control_identity(host_connection *host,xpc_object_t message) {
+  return host->active && !host->unknown && xpc_dictionary_get_count(message)==3 && field(message,"lease",XPC_TYPE_UUID)
+    && same_uuid(message,"lease",host->lease) && field(message,"pid",XPC_TYPE_INT64) && xpc_dictionary_get_int64(message,"pid")==host->worker.pid && current_identity(host);
+}
+static void handle_members(host_connection *host,xpc_object_t message) {
+  if(!control_identity(host,message)){revoke_host(host);return;}
+#if defined(BRAIN_NATIVE_FIXTURE) && defined(BRAIN_FIXTURE_IDENTITY_CASE) && BRAIN_FIXTURE_IDENTITY_CASE==4
+  /* 합성 자식만 회수해 이전 waitable identity가 사라진 반례를 만든다. */
+  (void)kill(host->worker.pid,SIGKILL);int fixture_status=0;(void)waitpid(host->worker.pid,&fixture_status,0);
+  host->worker.exit_observed=1;host->worker.wait_status=fixture_status;
+#endif
+  /* [ASSUMPTION] 그룹 관찰 응답은 24명까지며 초과는 불명으로 보존한다. */
+  brain_group_member members[24];size_t count=0;
+  /* [ASSUMPTION] 종료 중인 구성원이 열거와 조회 사이 사라질 수 있어 1초간 재조회한다. */
+  int inspected=0;for(int i=0;i<100;i++){
+#if defined(BRAIN_NATIVE_FIXTURE) && defined(BRAIN_FIXTURE_IDENTITY_CASE) && BRAIN_FIXTURE_IDENTITY_CASE==3
+    (void)members;(void)count;
+#else
+    if(brain_worker_members(&host->worker,members,24,&count)==1){inspected=1;break;}
+#endif
+    usleep(10000);}
+  if(!inspected){
+#ifdef BRAIN_NATIVE_FIXTURE
+    (void)write(2,"fixture-members-unknown\n",24);
+#endif
+    host->unknown=1;revoke_host(host);return;}
+#ifdef BRAIN_NATIVE_FIXTURE
+  dprintf(2,"fixture-members-%zu\n",count);
+#endif
+  xpc_object_t reply=xpc_dictionary_create_reply(message),array=xpc_array_create(NULL,0);
+  if(!reply || !array){if(reply)xpc_release(reply);if(array)xpc_release(array);revoke_host(host);return;}
+  for(size_t i=0;i<count;i++) {xpc_object_t item=xpc_dictionary_create(NULL,NULL,0);if(!item){xpc_release(array);xpc_release(reply);revoke_host(host);return;}
+    xpc_dictionary_set_int64(item,"pid",members[i].pid);xpc_dictionary_set_uint64(item,"start_sec",members[i].start_sec);xpc_dictionary_set_uint64(item,"start_usec",members[i].start_usec);xpc_array_append_value(array,item);xpc_release(item);}
+  xpc_dictionary_set_value(reply,"members",array);xpc_release(array);xpc_connection_send_message(host->peer.connection,reply);xpc_release(reply);
+}
+static void handle_reap(host_connection *host,xpc_object_t message) {
+  if(!control_identity(host,message) || !host->exit_event_sent || !host->worker.exit_observed){revoke_host(host);return;}
+  brain_group_member members[24];size_t count=0;int status=0,expected=host->worker.wait_status;
+  if(brain_worker_members(&host->worker,members,24,&count)!=1 || count || brain_worker_reap(&host->worker,&status)!=1 || status!=expected || brain_worker_group_state(&host->worker)!=0){host->unknown=1;revoke_host(host);return;}
+  xpc_object_t event=xpc_dictionary_create(NULL,NULL,0),reply=xpc_dictionary_create_reply(message);
+  if(!event || !reply){if(event)xpc_release(event);if(reply)xpc_release(reply);host->unknown=1;revoke_host(host);return;}
+  xpc_dictionary_set_string(event,"op","exit");xpc_dictionary_set_int64(event,"pid",host->worker.pid);xpc_dictionary_set_int64(event,"wait_status",status);
+  xpc_connection_send_message(host->peer.connection,event);xpc_release(event);
+  xpc_dictionary_set_bool(reply,"reaped",true);xpc_connection_send_message(host->peer.connection,reply);xpc_release(reply);
+#ifdef BRAIN_NATIVE_FIXTURE
+  (void)write(2,"fixture-reaped\n",15);
+#endif
+  brain_worker_close(&host->worker);host->active=0;settle_launch(host->ledger_index);
+}
 static void on_connection(xpc_connection_t connection) {
   host_connection *host=calloc(1,sizeof *host); if (!host) return;
   host->ledger_index=-1;
@@ -185,9 +265,12 @@ static void on_connection(xpc_connection_t connection) {
     const char *op=xpc_dictionary_get_string(message,"op");
     if (!strcmp(op,"start")) handle_start(host,message,0);
     else if (!strcmp(op,"start_auth")) handle_start(host,message,1);
+    else if (!strcmp(op,"metadata")) handle_metadata(host,message);
     else if (!strcmp(op,"recorded")) handle_recorded(host,message);
     else if (!strcmp(op,"inspect")) handle_inspect(host,message);
     else if (!strcmp(op,"signal")) handle_signal(host,message);
+    else if (!strcmp(op,"members")) handle_members(host,message);
+    else if (!strcmp(op,"reap")) handle_reap(host,message);
     else if (!strcmp(op,"cancel") && host->active && xpc_dictionary_get_count(message)==2
       && field(message,"lease",XPC_TYPE_UUID) && same_uuid(message,"lease",host->lease)) revoke_host(host);
     else revoke_host(host);
