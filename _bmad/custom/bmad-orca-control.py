@@ -70,7 +70,7 @@ def compact_message(message):
     payload = {k: (v[:2048] if isinstance(v, str) else v[:32] if isinstance(v, list) else v)
                for k, v in payload.items() if k in fields}
     body = str(message.get('body') or '')
-    return {**{k: message.get(k) for k in ('id', 'type', 'subject', 'from_handle')},
+    return {**{k: message.get(k) for k in ('id', 'type', 'subject', 'from_handle', 'from')},
             'body': body[:2048], 'body_clipped': len(body) > 2048,
             'payload': payload}
 
@@ -390,19 +390,32 @@ class Control:
         return candidate, None
 
     def remember_delivery(self, result):
-        if not isinstance(result, dict) or result.get('runId') != self.state['run']:
+        # 새 Orca의 check 결과에는 runId가 없을 수 있다. 있으면 대조하고, 메시지는 아래에서 Dispatch·Task·handle로 귀속한다.
+        if not isinstance(result, dict) or result.get('runId', self.state['run']) != self.state['run']:
             raise ControlError('Delivery Run mismatch')
-        if not result.get('deliveryId'): return
         messages = result.get('messages')
+        if not result.get('deliveryId'):
+            # 새 Orca의 check는 deliveryId 없이 이미 소비한 messages를 돌려준다. 지역 Delivery로 보존하고 ack는 지역에서만 닫는다.
+            if not isinstance(messages, list) or not messages: return
+            if self.state.get('pending_delivery'):
+                # 이전 지역 Delivery를 덮지 않고 메시지를 이어 붙인다.
+                prev = self.state['pending_delivery']; messages = list(messages)
+                result = {**result, 'deliveryId': prev['deliveryId']}
+                self.state['pending_delivery'] = None
+                prior = prev.get('messages') or []
+            else:
+                result = {**result, 'deliveryId': 'local:' + str(messages[0].get('id'))}; prior = []
+        else:
+            prior = []
         if not isinstance(messages, list): raise ControlError('Delivery messages missing')
         compact = [compact_message(m) for m in messages]
-        self.state['pending_delivery'] = {'deliveryId': result['deliveryId'], 'count': len(compact),
-                                          'messages': compact, 'raw_receipt': self.last_receipt}
+        self.state['pending_delivery'] = {'deliveryId': result['deliveryId'], 'count': len(prior) + len(compact),
+                                          'messages': prior + compact, 'raw_receipt': self.last_receipt}
         for m, small in zip(messages, compact):
             payload = small['payload']
             for role, w in self.state['workers'].items():
                 if (payload.get('dispatchId') != w['dispatch'] or payload.get('taskId') != w['task'] or
-                    m.get('from_handle') != w['handle']): continue
+                    (m.get('from_handle') or m.get('from')) != w['handle']): continue
                 if payload.get('reportPath'): self.state['reports'][m['id']] = payload['reportPath']
                 if m.get('type') == 'status' and m.get('subject') == 'implementation-ready':
                     self.state['stage'] = 'implementation-ready'
@@ -591,6 +604,9 @@ def main():
             elif a.command == 'ack':
                 c.identity(); pending = c.state['pending_delivery']
                 if not pending or pending.get('deliveryId') != a.delivery: raise ControlError('Delivery mismatch')
+                if a.delivery.startswith('local:'):
+                    c.state['pending_delivery'] = None; c.commit(); output = c.summary(acknowledged=a.delivery)
+                    print(json.dumps(output, ensure_ascii=False)); return
                 result = c.request('ack:' + a.delivery, ['orchestration', 'check', '--ack', a.delivery])
                 if result.get('acknowledged') != a.delivery: raise ControlError('ack unconfirmed')
                 c.state['pending_delivery'] = None
