@@ -3,7 +3,7 @@ title: '원본과 반입 대상의 전수 검증 및 안전한 공개 집계'
 type: 'feature'
 ticket: '6'
 created: '2026-11-01'
-status: built
+status: done
 baseline_revision: '573647c4a102ebd6c7fd98efc04364eeb08a81b2'
 route: 'full'
 route_source: 'pinned'
