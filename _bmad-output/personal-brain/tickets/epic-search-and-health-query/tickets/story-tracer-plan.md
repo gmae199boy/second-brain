@@ -3,7 +3,7 @@ title: '17.2 대화 조각과 redact 재생성'
 type: 'feature'
 ticket: '2'
 created: '2026-10-30'
-status: built
+status: done
 baseline_revision: dbc02b17e7f7296b2eaa69299e5a5025b7fb3c4e
 route: 'full'
 route_source: 'pinned'
@@ -176,3 +176,7 @@ deferred:
 - 티켓 done 표시·tickets.py mark·push는 실행하지 않았다. 티켓 완료 판정은 오케스트레이터가 자체 검증 뒤 수행한다.
 
 - Orca 정리: 자기 Run `run_8f7210c09053`의 구현·리뷰 Dispatch를 정식 성공 보고와 전문 확인 뒤 모두 release했다. worker-list는 released 2, active/reclaimable 0이며 coordinator mail은 0이다. 미확인 워커나 남은 과업은 없다. 전용 제어 셸만 마지막에 닫는다.
+
+## 2026-11-02 완료 판정
+
+엔진은 17.2를 `built`까지 기록한 뒤, 자체 결정적 검증에서 변경과 무관한 PG 연결 timeout(`DB_UNAVAILABLE: Connection terminated due to connection timeout`)으로 실패해 deferred 처리했고 done 판정을 남기지 않았다. 마지막 변경(`bd37ec4`) 뒤의 「결정적 검증 복구 리뷰」는 findings 0이었다. 17.2 구현을 포함한 현재 main 코드에서 2026-11-02 `bash _bmad/custom/bmad-loop-verify.sh`를 실행한 결과 exit 0, 169파일 3915개 통과, 기존 조건부 1 skip이었다. 이를 근거로 대화형 지휘자가 done으로 표시했다. 열린 [ASSUMPTION] DW-27(일반 메시지 결합·시각 묶음 경계)은 `deferred-work.md`에 그대로 남긴다.
