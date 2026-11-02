@@ -12,7 +12,7 @@ review: 'quick'
 review_source: 'pinned'
 lenses_ran: [quick]
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context: ['{project-root}/_bmad-output/personal-brain/tickets/epic-garmin-runtime/epic-garmin-runtime.md']
 warnings: ['oversized']
 deferred:
@@ -209,6 +209,14 @@ deferred:
   - `[low]` `[reject]` `collect.py:89-99`: 계정 매핑 전 첫 로그인이 실패하면 run 기록이 없어서 같은 날 retry가 다시 로그인한다. 설치가 인증 단계를 통과해야 예약이 생기므로 평소 사용에서는 드물다. 고치려면 계정 없는 인증 실패 상태를 새로 둬야 해서 받지 않았다.
   - `[medium]` `[patch]` `collect.py:98-113`: 진입표·계획을 `.session.lock` 밖에서 계산한다. collect와 retry가 겹치면 낡은 계획으로 재호출한다. 옛 collect는 단일 쓰기 잠금 안에서 판단부터 수집까지 했다. → 고쳤다. collect가 `.session.lock`을 먼저 잡고, 그 안에서 block·진입표·계획·수집을 한다. 세션을 열 때는 `lock_held`로 다시 잡지 않는다. 겹친 collect·retry 시험을 더했다.
 
+### 2026-11-02 — Review pass (후속, quick, Codex `gpt-6.1-sol`)
+
+- verdicts: 3 findings — high 0, medium 1, low 2, false 0, maybe-false 0
+- findings:
+  - `[medium]` `[patch]` `collect_store.py:15-23`·`:155-159`: 짝 없는 surrogate가 든 `user_summary`가 문제다. `prepare`가 `ensure_ascii=False`로 다시 직렬화한 뒤 UTF-8 인코딩에서 실패한다. 그러면 같은 트랜잭션의 raw까지 롤백되고 수집이 `COLLECT_INVALID`로 끝난다. 옛 `upsert_raw`의 surrogate 보존과 어긋난다. → 고쳤다. `prepare`에 같은 `ensure_ascii=True` fallback을 넣었다. `check_collect.py`에 surrogate raw·걸음 수 동시 저장과 revision 검사를 더했다(새 구현 Dispatch).
+  - `[low]` `[reject]` `collect.py:76-80`: tokenstore 폴더 검사가 진입표보다 먼저라서, 성공한 날의 재진입도 폴더가 없으면 `LOGIN_REQUIRED`가 된다. 성공 뒤 같은 날 tokenstore가 사라지는 경우에만 나서 평소 사용에서는 드물다. 고치려면 잠금 밖 진입표 분기를 하나 더 둬야 해서 받지 않았다.
+  - `[low]` `[reject]` plan 기록: 에픽 F4의 "라이브러리 내부 retry와 wrapper 간격의 보장 범위" 검토 결과가 plan에 없다. 사실이다. garminconnect `client/transport.py:230-237`은 401 뒤 토큰을 갱신하고 즉시 한 번 더 요청한다. 다만 수정 방법이 이 build의 plan 편집뿐이라 규칙상 reject했다. 대신 Auto Run Result 남은 위험에 적었다.
+
 ## Design Notes
 
 **대상 계정.** `account` 대상은 target_id를 계정으로 쓴다(시험·tracer 경로). `extension` 대상(예약·수동)은 `collect_targets`에 기록된 계정을 쓴다. 기록이 없으면 진입표 1행(block)을 확인한 뒤 세션을 연다. 로그인 profile의 `profile_id`를 기록하고 나서 coverage를 계산한다. 기록과 로그인 id가 다르면 `COLLECT_ACCOUNT_MISMATCH`이고, id가 없으면 `COLLECT_ACCOUNT_UNKNOWN`이다. 둘 다 retryable=false이고 쓰기는 0이다.
@@ -298,3 +306,16 @@ deferred:
 - 실계정 호출은 하지 않았다(16.9).
 - 실제 설치는 이제 데몬 scheduler가 있어야 예약 단계가 끝난다.
 - 테스트 DB 정리 문제는 deferred에 남겼다.
+
+### 후속 리뷰(2026-11-02)
+
+- findings 3건: patch 1건(medium, surrogate `user_summary` 발행), reject 2건(low: 성공한 날 tokenstore 선검사 / plan 편집만으로 고쳐지는 F4 기록 누락). 새로 deferred한 항목은 없다.
+- 바뀐 파일: `extensions/garmin/src/collect_store.py`(`prepare`의 surrogate fallback), `extensions/garmin/tests/check_collect.py`(회귀 검사).
+- 후속 리뷰 권고: `false`. 이번 후속 리뷰는 high를 고치지 않았다(patch는 medium 1건). 계산은 수렴했다.
+- 남은 위험(F4 기록): wrapper의 1~2초 간격과 first-call 3건은 논리 endpoint 호출 단위로 보장된다. garminconnect 내부는 401이면 토큰을 갱신하고 같은 요청을 즉시 한 번 더 보낸다(`client/transport.py:230-237`). 그래서 실제 HTTP 요청 전체에 같은 간격·건수가 보장되지는 않는다. 16.2의 deferred(SSO 429 뒤 내부 전략 진행)와 같은 종류의 라이브러리 내부 범위다.
+- 지휘자 도구 `_bmad/custom/bmad-orca-control.py`를 새 Orca 영수증 모양에 맞게 더 고쳤다. worker-start의 `terminal`·`agent/model/effort`와 release된 행의 `terminalState`를 받는다.
+- 검증(지휘자, patch 뒤):
+  - Python check 6종 통과
+  - 대상 Vitest 13/13
+  - `pnpm test:python` 45/45
+  - `pnpm test`: 3920 통과, 실패 1, skip 1. 실패한 1건은 `packages/postgres/test/attachment-extraction.test.ts`의 "file B extraction" 30초 timeout이다. 이번 diff가 건드리지 않은 영역이고, 그 파일만 단독으로 다시 돌리면 35/35 통과했다. 전체 실행 부하에서 나는 간헐 실패로 본다.

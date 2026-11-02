@@ -15,6 +15,10 @@ def _digest(*parts):
 def prepare(response, day, catalog, fetched_at=None, library_version='synthetic-port'):
     """외부 호출 후 트랜잭션 밖에서 원문과 v8 관측을 준비한다."""
     body = json.dumps(response, ensure_ascii=False)
+    try:
+        body.encode('utf-8')
+    except UnicodeEncodeError:
+        body = json.dumps(response, ensure_ascii=True)
     metric = next(m for m in catalog if m['metric'] == 'daily_metric.steps')
     value = None if response is None else convert(metric, 'daily_metric', 'steps', user_summary(body, day)['steps'])
     fetched_at = fetched_at or datetime.now(timezone.utc)
