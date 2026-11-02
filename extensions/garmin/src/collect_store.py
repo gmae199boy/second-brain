@@ -4,32 +4,13 @@ import hashlib
 import json
 import uuid
 
-from health import convert
-from collect_normalize import user_summary
+# 다음 API는 외부 호출과 분리된 짧은 트랜잭션으로만 쓴다.
+from contextlib import contextmanager
+import base64
 
 
 def _digest(*parts):
     return hashlib.sha256(json.dumps(parts, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
-
-
-def prepare(response, day, catalog, fetched_at=None, library_version='synthetic-port'):
-    """외부 호출 후 트랜잭션 밖에서 원문과 v8 관측을 준비한다."""
-    body = json.dumps(response, ensure_ascii=False)
-    try:
-        body.encode('utf-8')
-    except UnicodeEncodeError:
-        body = json.dumps(response, ensure_ascii=True)
-    metric = next(m for m in catalog if m['metric'] == 'daily_metric.steps')
-    value = None if response is None else convert(metric, 'daily_metric', 'steps', user_summary(body, day)['steps'])
-    fetched_at = fetched_at or datetime.now(timezone.utc)
-    fetched_ms = int(fetched_at.timestamp() * 1000)
-    return {'body': body, 'revision': hashlib.sha256(body.encode('utf-8')).hexdigest(),
-            'fetched_ms': fetched_ms, 'value': value, 'unit': metric['unit'], 'library_version': library_version}
-
-
-# 다음 API는 외부 호출과 분리된 짧은 트랜잭션으로만 쓴다.
-from contextlib import contextmanager
-import base64
 
 
 def dataset_for(account):
@@ -132,7 +113,7 @@ def coverage_snapshot(conn, account):
     return {'raw': raw, 'runs': runs, 'errors': errors, 'history_start': row[0] if row else history_start}
 
 
-def upsert_raw(conn, account, work_id, attempt_token, scope, key, endpoint, payload, library_version, now_ms, *, zone=None, catalog=None):
+def upsert_raw(conn, account, work_id, attempt_token, scope, key, endpoint, payload, library_version, now_ms, *, expected=None, publish=None):
     if scope not in ('day', 'activity'):
         raise ValueError('COLLECT_INVALID')
     with _write(conn, account, work_id, attempt_token) as (cur, dataset):
@@ -156,11 +137,10 @@ def upsert_raw(conn, account, work_id, attempt_token, scope, key, endpoint, payl
             on conflict (dataset,scope,original_key,endpoint) where raw_identity is null do update
             set body=excluded.body,fetched_at_ms=excluded.fetched_at_ms,checked_at_ms=excluded.checked_at_ms,library_version=excluded.library_version''',
             (dataset,batch,account,scope,key,endpoint,value['body'],value['fetched_at_ms'],value['checked_at_ms'],value['library_version']))
-        if scope == 'day' and endpoint == 'user_summary' and value['body'] != 'null' and zone is not None:
-            prepared = prepare(json.loads(value['body']), key, catalog,
-                               datetime.fromtimestamp(value['fetched_at_ms'] / 1000, timezone.utc),
-                               value['library_version'])
-            _publish_steps(cur, dataset, account, key, zone, work_id, attempt_token, prepared)
+        if expected is not None and value != expected:
+            raise ValueError('COLLECT_RAW_CHANGED')
+        if publish is not None:
+            publish(cur, dataset, value)
         return value
 
 
@@ -201,18 +181,3 @@ def set_target(conn, account, work_id, attempt_token, target_kind, target_id):
             raise ValueError('COLLECT_ACCOUNT_MISMATCH')
 
 
-def _publish_steps(cur, dataset, account, day, zone, work_id, attempt_token, prepared):
-    """호출자의 raw 저장 트랜잭션 안에서 걸음 수를 발행한다."""
-    if prepared['value'] is None:
-        return False
-    cur.execute('select pg_advisory_xact_lock(hashtextextended(%s,0))', (_digest(account,day,'steps'),))
-    cur.execute('insert into garmin.collect_published(dataset,day,revision) values (%s,%s,%s) on conflict do nothing returning revision',
-                (dataset,day,prepared['revision']))
-    if cur.fetchone() is None:
-        return False
-    batch = 'collect-' + _digest(account, 'day', day, 'user_summary')
-    fetched = datetime.fromtimestamp(prepared['fetched_ms'] / 1000, timezone.utc)
-    cur.execute("""insert into brain.health_observations(id,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,value,unit,local_date,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token,value_type,sub_identity)
-        values (%s,'garmin',%s,%s,'daily_metric',%s,%s,true,'daily_metric.steps',%s,%s,%s,%s,false,%s,%s,8,%s,%s,'number',%s)""",
-        (uuid.uuid7(),dataset,batch,day,account,prepared['value'],prepared['unit'],day,zone,prepared['revision'],fetched,work_id,attempt_token,day))
-    return True

@@ -10,7 +10,7 @@ root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(root / 'extensions/garmin/src'))
 from collect_normalize import NormalizeParseError, user_summary
 import collect_store
-from collect_store import prepare
+from collect_store import raw_transition
 from unittest.mock import Mock, patch
 
 catalog = json.loads((root / 'packages/core/schemas/health/v1/catalog.json').read_text())['metrics']
@@ -33,8 +33,8 @@ except NormalizeParseError:
     pass
 else:
     raise AssertionError('missing field accepted')
-p = prepare(response, '2026-01-01', catalog, datetime(2026, 1, 1, tzinfo=timezone.utc))
-assert p['body'] == raw and p['value'] == 12 and len(p['revision']) == 64
+p = raw_transition(None,response,'v',1767225600000)
+assert p['body'] == raw
 
 # 짝 없는 surrogate가 원문과 걸음 수의 같은 트랜잭션 발행을 막지 않는다.
 surrogate_response = response | {'note': '\ud83d'}
@@ -43,17 +43,15 @@ cursor.fetchone.return_value = None
 @contextmanager
 def write_fixture(*args):
     yield cursor, 'fixture-dataset'
-with patch.object(collect_store, '_write', write_fixture), \
-     patch.object(collect_store, '_publish_steps') as publish:
+publish = Mock()
+with patch.object(collect_store, '_write', write_fixture):
     stored = collect_store.upsert_raw(None, 'acct', 'work', 'token', 'day', '2026-01-01',
-        'user_summary', surrogate_response, 'v', 1767225600000, zone='UTC', catalog=catalog)
+        'user_summary', surrogate_response, 'v', 1767225600000, publish=publish)
 raw_insert = next(call for call in cursor.execute.call_args_list
                   if 'insert into garmin.raw_payloads' in call.args[0])
 assert raw_insert.args[1][6] == stored['body']
 assert json.loads(stored['body']) == surrogate_response
-prepared = publish.call_args.args[-1]
-assert prepared['body'] == stored['body'] and prepared['value'] == 12
-assert prepared['revision'] == __import__('hashlib').sha256(stored['body'].encode('utf-8')).hexdigest()
+assert publish.call_args.args[-1] == stored
 
 # ABI 검증과 worker 경계를 실제 연결 없이 검사한다.
 import collect
@@ -97,5 +95,5 @@ output = StringIO()
 with redirect_stdout(output):
     collect.result('success', 123, __import__('datetime').date(2026,1,1))
 event = json.loads(output.getvalue())
-assert event['type'] == 'result' and json.loads(event['summary']) == {'status':'success','cutoff_ms':123,'local_date':'2026-01-01'}
+assert event['type'] == 'result' and json.loads(event['summary']) == {'status':'success','cutoff_ms':123,'local_date':'2026-01-01','normalized':0,'normalize_failed':0}
 print('수집 ABI 입력과 결과 검사 통과')

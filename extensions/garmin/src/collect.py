@@ -15,6 +15,8 @@ from collect_client import open_client, blocked_today
 from collect_settings import decode
 import collect_coverage as coverage
 import collect_store as store
+import normalize_store as normalized_store
+import normalize_runtime as normalization
 from garmin_session import GarminError, session_lock, silence_library_logging
 
 _stopping = False
@@ -51,8 +53,8 @@ def inputs(env):
             'day':date.fromisoformat(start) if start else None,'settings':settings,
             'recent':env['BRAIN_WORK_KIND']=='garmin.collect_recent'}
 
-def result(status, cutoff_ms, local_date):
-    emit('result', summary=json.dumps({'status':status,'cutoff_ms':cutoff_ms,'local_date':local_date.isoformat()},separators=(',',':')))
+def result(status, cutoff_ms, local_date, normalized=0, normalize_failed=0):
+    emit('result', summary=json.dumps({'status':status,'cutoff_ms':cutoff_ms,'local_date':local_date.isoformat(),'normalized':normalized,'normalize_failed':normalize_failed},separators=(',',':')))
 
 def _clock_ms():
     return int(datetime.now(timezone.utc).timestamp()*1000)
@@ -107,13 +109,18 @@ def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, c
             snapshot = store.coverage_snapshot(conn,account)
             mode = coverage.entry(snapshot,today,force=args['recent'],token_saved_at=_token_mtime(tokenstore))
             if mode == 'noop':
-                result('noop',cutoff,today)
+                pending_days = [str(row[0]) for row in normalized_store.unfinished_days(conn,account)]
+                failed = normalization.publish_days(conn,account,work,token,zone,pending_days,normalization.catalog(conn),boundary,snapshot=snapshot) if pending_days else 0
+                result('noop',cutoff,today,normalize_failed=failed)
                 return
             if args['recent']:
                 mode = 'rejected'
             history = date.fromisoformat(snapshot['history_start']) if snapshot['history_start'] else today-timedelta(days=30)
             planned = coverage.plan(snapshot,history,today,zone,int(settings['garmin.max_dates_per_run']),int(settings['garmin.max_rejected_attempts']),mode,args['recent'])
             counts = {'transient':0,'rejected':0}
+            normalized = normalize_failed = 0
+            affected = set()
+            catalogue = normalization.catalog(conn)
             status, detail = 'success', ''
             try:
                 if planned:
@@ -154,23 +161,51 @@ def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, c
                                         raise
                                 finally:
                                     boundary(f'{key} {endpoint} 완료')
-                                catalog = None
-                                if scope == 'day' and endpoint == 'user_summary':
-                                    row = conn.execute("select definition from brain.health_catalog_v1 where metric='daily_metric.steps'").fetchone()
-                                    if row is None:
-                                        raise ValueError('COLLECT_INVALID')
-                                    catalog = [row[0]]
-                                store.upsert_raw(conn,account,work,token,scope,key,endpoint,payload,
-                                                 getattr(active,'library_version','synthetic-port'),_clock_ms(),
-                                                 zone=zone if catalog is not None else None,catalog=catalog)
+                                nonlocal normalized, normalize_failed
+                                before = snapshot['raw']
+                                old_activity_day = normalization.activity_date(before,key,zone) if scope == 'activity' else None
+                                previous = next((i for i in before if i['scope']==scope and i['key']==key and i['endpoint']==endpoint),None)
+                                now = _clock_ms()
+                                library = getattr(active,'library_version','synthetic-port')
+                                predicted = store.raw_transition(previous,payload,library,now)
+                                prepared = normalization.prepare(conn,account,before,scope,key,endpoint,predicted['body'],zone)
+                                published = [True]
+                                revision = None
+                                observations = []
+                                if prepared is not None:
+                                    rows,error = prepared
+                                    dataset = store.dataset_for(account)
+                                    revision = normalized_store.anticipated_revision(conn,account,scope,key,endpoint,predicted['body'],predicted['fetched_at_ms'])
+                                    batch = normalized_store.item_batch(dataset,scope,key,endpoint,revision)
+                                    if not error:
+                                        observations = normalized_store.observations(rows,catalogue,dataset=dataset,account=account,zone=zone,revision=revision,fetched_ms=predicted['fetched_at_ms'],batch=batch,endpoint=endpoint)
+                                def publish(cur,dataset,value):
+                                    if prepared is not None:
+                                        published[0] = normalized_store.publish_atomic(cur,dataset,account,work,token,scope,key,endpoint,value['body'],value['fetched_at_ms'],revision,observations,error)
+                                stored = store.upsert_raw(conn,account,work,token,scope,key,endpoint,payload,library,now,expected=predicted,publish=publish)
+                                if prepared is not None:
+                                    rows,error = prepared
+                                    if not published[0]:
+                                        boundary('큰 항목 발행')
+                                        normalized_store.publish_item(conn,account,work,token,scope,key,endpoint,stored['body'],stored['fetched_at_ms'],zone,rows,catalogue,error,boundary=boundary)
+                                    normalized += not bool(error)
+                                    normalize_failed += bool(error)
+                                before[:] = [i for i in before if (i['scope'],i['key'],i['endpoint']) != (scope,key,endpoint)]
+                                before.append({'scope':scope,'key':key,'endpoint':endpoint,**stored})
+                                if scope == 'day':
+                                    affected.add(key)
+                                else:
+                                    affected.add(old_activity_day)
+                                    affected.add(normalization.activity_date(before,key,zone))
                             for endpoint in endpoints:
                                 fetch('day',day.isoformat(),endpoint)
-                            snapshot = store.coverage_snapshot(conn,account)
                             for item in coverage.pending_activities(snapshot,day,zone,int(settings['garmin.max_rejected_attempts']),mode,today):
                                 fetch('activity',item.key,item.endpoint)
                 else:
                     store.set_history_start(conn,account,work,token,history.isoformat())
                     store.put_run(conn,account,work,token,run_id,today,started,'running')
+                affected.update(str(row[0]) for row in normalized_store.unfinished_days(conn,account))
+                normalize_failed += normalization.publish_days(conn,account,work,token,zone,affected,catalogue,boundary,snapshot=snapshot)
                 if any(counts.values()):
                     status = 'partial'
                     detail = ' '.join(f'{key}={value}' for key,value in counts.items() if value)
@@ -187,7 +222,7 @@ def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, c
             store.put_run(conn,account,work,token,run_id,today,started,status,detail,_clock_ms())
             if status == 'partial':
                 raise ValueError('COLLECT_PARTIAL')
-            result(status,cutoff,today)
+            result(status,cutoff,today,normalized,normalize_failed)
 
 def main():
     silence_library_logging()

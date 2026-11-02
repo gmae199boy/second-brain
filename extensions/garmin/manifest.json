@@ -231,6 +231,16 @@
         "garmin.timezone"
       ],
       "manual": "collect-recent"
+    },
+    {
+      "kind": "garmin.normalize",
+      "execution": "supervised",
+      "runtime": "python",
+      "entry": "src/normalize.py",
+      "required_settings": [
+        "garmin.timezone"
+      ],
+      "manual": "normalize"
     }
   ],
   "raw_views": [

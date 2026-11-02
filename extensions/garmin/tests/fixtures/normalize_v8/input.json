@@ -1,0 +1,132 @@
+{
+  "timezone": "Asia/Seoul",
+  "history_start": "2026-10-15",
+  "items": [
+    {
+      "scope": "day",
+      "key": "2026-10-15",
+      "endpoint": "user_summary",
+      "raw": "{\"calendarDate\": \"2026-10-15\", \"totalSteps\": 8123, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 412.4, \"moderateIntensityMinutes\": 12, \"vigorousIntensityMinutes\": 3.5, \"minHeartRate\": 48, \"maxHeartRate\": 151, \"restingHeartRate\": 55, \"메모\": \"원문표식-9b2e\"}",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "day",
+      "key": "2026-10-15",
+      "endpoint": "rhr_day",
+      "raw": "{\"userProfileId\": 1, \"statisticsStartDate\": \"2026-10-15\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 60.0, \"calendarDate\": \"2026-10-14\"}, {\"value\": 52.0, \"calendarDate\": \"2026-10-15\"}]}}}",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "day",
+      "key": "2026-10-15",
+      "endpoint": "hrv_data",
+      "raw": "{\"userProfilePk\": 1, \"hrvSummary\": {\"calendarDate\": \"2026-10-15\", \"weeklyAvg\": 41, \"lastNightAvg\": 38.6, \"lastNight5MinHigh\": 60, \"status\": \"BALANCED\", \"baseline\": {\"lowUpper\": 30, \"balancedLow\": 35, \"balancedUpper\": 48.2, \"markerValue\": 0.4}, \"feedbackPhrase\": \"원문표식-9b2e\"}}",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "day",
+      "key": "2026-10-15",
+      "endpoint": "training_readiness",
+      "raw": "[{\"timestamp\": \"2026-10-15T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-15T06:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "day",
+      "key": "2026-10-15",
+      "endpoint": "sleep_data",
+      "raw": "{\"dailySleepDTO\": {\"id\": 1, \"calendarDate\": \"2026-10-15\", \"sleepTimeSeconds\": 26100, \"deepSleepSeconds\": 5400.4, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792013400000, \"sleepEndTimestampGMT\": 1792040400000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}, \"sleepScoreFeedback\": \"원문표식-9b2e\"}, \"remSleepData\": true}",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "day",
+      "key": "2026-10-15",
+      "endpoint": "stress_data",
+      "raw": "{\"calendarDate\": \"2026-10-15\", \"maxStressLevel\": 99, \"avgStressLevel\": 77, \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792013400000, 30], [1792013580000, -1], [1792013760000, 50], [1792013940000, -2], [1792014120000, null]], \"bodyBatteryValueDescriptorsDTOList\": [{\"bodyBatteryValueDescriptorKey\": \"timestamp\", \"bodyBatteryValueDescriptorIndex\": 0}, {\"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\", \"bodyBatteryValueDescriptorIndex\": 1}], \"bodyBatteryValuesArray\": [[1792013400000, 42.5], [1792013580000, -1], [1792013760000, 43.5]]}",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "day",
+      "key": "2026-10-15",
+      "endpoint": "body_battery",
+      "raw": "[{\"date\": \"2026-10-15\", \"charged\": 45, \"drained\": 38.6, \"startTimestampGMT\": \"2026-10-14T15:00:00.0\", \"bodyBatteryValuesArray\": [[1792013400000, 20], [1792038600000, 61], [1792040400000, null], [1792044000000, 55.5]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}], \"메모\": \"원문표식-9b2e\"}]",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "day",
+      "key": "2026-10-15",
+      "endpoint": "heart_rates",
+      "raw": "{\"userProfilePK\": 1, \"calendarDate\": \"2026-10-15\", \"maxHeartRate\": 151, \"restingHeartRate\": 55, \"heartRateValueDescriptors\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"heartrate\", \"index\": 1}], \"heartRateValues\": [[1792045800000, 58], [1792045920000, null], [1792046040000, 61.6], [1792046160000, 70], [1792046280000, 64]], \"메모\": \"원문표식-9b2e\"}",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "day",
+      "key": "2026-10-15",
+      "endpoint": "daily_weigh_ins",
+      "raw": "null",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "day",
+      "key": "2026-10-15",
+      "endpoint": "lifestyle_logging_data",
+      "raw": "null",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "activity",
+      "key": "2001",
+      "endpoint": "activity",
+      "raw": "{\"activityId\": 2001, \"activityName\": \"원문표식-9b2e\", \"activityTypeDTO\": {\"typeId\": 1, \"typeKey\": \"running\"}, \"summaryDTO\": {\"startTimeLocal\": \"2026-10-15T07:30:00.0\", \"startTimeGMT\": \"2026-10-14T22:30:00.0\", \"duration\": 1800.4, \"elapsedDuration\": 1900.0, \"movingDuration\": 1750.0, \"distance\": 5012.6, \"averageHR\": 141.5, \"maxHR\": 170, \"calories\": 400}}",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "activity",
+      "key": "2001",
+      "endpoint": "activity_hr_in_timezones",
+      "raw": "[{\"zoneNumber\": 1, \"secsInZone\": 120, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 2, \"secsInZone\": null, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 3, \"secsInZone\": 61.6, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 4, \"secsInZone\": 900, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 5, \"secsInZone\": 30, \"zoneLowBoundary\": 100}]",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "activity",
+      "key": "2001",
+      "endpoint": "activity_details",
+      "raw": "{\"activityId\": 2001, \"measurementCount\": 3, \"metricsCount\": 4, \"metricDescriptors\": [{\"metricsIndex\": 0, \"key\": \"directTimestamp\", \"unit\": {\"id\": 0, \"key\": \"원문표식-9b2e\"}}, {\"metricsIndex\": 1, \"key\": \"directHeartRate\", \"unit\": {\"id\": 1, \"key\": \"원문표식-9b2e\"}}, {\"metricsIndex\": 2, \"key\": \"directSpeed\", \"unit\": {\"id\": 2, \"key\": \"원문표식-9b2e\"}}], \"activityDetailMetrics\": [{\"metrics\": [1792017000000.0, 120, 2.5]}, {\"metrics\": [1792017001000.4, null, 2.6]}, {\"metrics\": [1792017002000.6, 150.5, 2.7]}, {\"metrics\": [1792017003000, 171, null]}], \"geoPolylineDTO\": null, \"메모\": \"원문표식-9b2e\"}",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "day",
+      "key": "2026-10-15",
+      "endpoint": "activities_by_date",
+      "raw": "[{\"activityId\": 2001, \"activityName\": \"원문표식-9b2e\", \"startTimeLocal\": \"2026-10-15 07:30:00\", \"startTimeGMT\": \"2026-10-14 22:30:00\", \"beginTimestamp\": 1792017000000}]",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "activity",
+      "key": "2001",
+      "endpoint": "activity_exercise_sets",
+      "raw": "{\"activityId\": 2001, \"exerciseSets\": [{\"exercises\": [{\"category\": \"SQUAT\", \"name\": \"BARBELL_BACK_SQUAT\", \"probability\": 41.0}, {\"category\": \"DEADLIFT\", \"name\": \"BARBELL_DEADLIFT\", \"probability\": 40.6}], \"duration\": 61.588, \"repetitionCount\": 10, \"weight\": 40000.0, \"setType\": \"ACTIVE\", \"startTime\": \"2026-10-15T07:30:00.0\", \"wktStepIndex\": null, \"messageIndex\": null, \"avgConcentricMeanVelocity\": null, \"maxConcentricRom\": null, \"메모\": \"원문표식-9b2e\"}, {\"exercises\": [], \"duration\": 59.5, \"repetitionCount\": null, \"weight\": null, \"setType\": \"REST\", \"startTime\": \"2026-10-15T07:30:00.0\", \"wktStepIndex\": null, \"messageIndex\": null, \"avgConcentricMeanVelocity\": null, \"maxConcentricRom\": null, \"메모\": \"원문표식-9b2e\"}, {\"exercises\": [{\"category\": \"PUSH_UP\", \"name\": null, \"probability\": 70.0}], \"duration\": 30.2, \"repetitionCount\": 12, \"weight\": -1.0, \"setType\": \"ACTIVE\", \"startTime\": \"2026-10-15T07:30:00.0\", \"wktStepIndex\": null, \"messageIndex\": null, \"avgConcentricMeanVelocity\": null, \"maxConcentricRom\": null, \"메모\": \"원문표식-9b2e\"}]}",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "day",
+      "key": "2026-10-14",
+      "endpoint": "user_summary",
+      "raw": "{\"calendarDate\": \"2026-10-15\", \"totalSteps\": 8123, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 412.4, \"moderateIntensityMinutes\": 12, \"vigorousIntensityMinutes\": 3.5, \"minHeartRate\": 48, \"maxHeartRate\": 151, \"restingHeartRate\": 55, \"메모\": \"원문표식-9b2e\"}",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "day",
+      "key": "2026-10-16",
+      "endpoint": "rhr_day",
+      "raw": "{\"allMetrics\": \"bad\"}",
+      "fetched_at": 1760000000000
+    },
+    {
+      "scope": "day",
+      "key": "2026-10-16",
+      "endpoint": "heart_rates",
+      "raw": "null",
+      "fetched_at": 1760000000000
+    }
+  ]
+}

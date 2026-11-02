@@ -7,3 +7,6 @@ dependencies = [
     "garminconnect==0.3.20",
     "psycopg[binary]==3.3.6",
 ]
+
+[tool.setuptools.package-data]
+"*" = ["labels/*.json"]

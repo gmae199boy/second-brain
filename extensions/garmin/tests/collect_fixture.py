@@ -72,6 +72,8 @@ class Fake:
                 from garmin_session import GarminError
                 raise GarminError('GARMIN_NO_DATA')
             return self.marker['sleep_payload']
+        if endpoint in self.marker.get('responses', {}):
+            return self.marker['responses'][endpoint]
         return self.marker['response'] if endpoint == 'user_summary' else ([] if endpoint == 'activities_by_date' else {'ok': True})
 
 def main():
@@ -103,7 +105,7 @@ def main():
         if marker.get('publish_failure'):
             def fail_publish(*args, **kwargs):
                 raise ValueError('synthetic publication failure')
-            collect.store._publish_steps = fail_publish
+            collect.normalized_store.publish_atomic = fail_publish
         import signal
         signal.signal(signal.SIGTERM, collect._stop)
         (home / ('collect-start-' + os.environ['BRAIN_ATTEMPT_TOKEN'])).touch()

@@ -50,7 +50,7 @@ it('실제 감독자가 최초 수집과 재진입 및 부분 실패를 처리�
     expect(fetched.filter(x=>x[2]==='daily_weigh_ins')).toHaveLength(3);
     expect((await fixture.db.rows("select count(*)::int n from garmin.raw_payloads where account='collect-test'"))[0]?.n).toBe(96);
     expect((await fixture.db.rows("select value from garmin.collect_meta where key='history_start'"))[0]?.value).toBe('2026-01-01');
-    expect((await fixture.db.rows("select count(*)::int n from brain.health_observations where account='collect-test'"))[0]?.n).toBe(10);
+    expect((await fixture.db.rows("select count(*)::int n from brain.health_observations where account='collect-test'"))[0]?.n).toBe(330);
     const second=await queue('collect-test','2026-01-31');
     await expect.poll(async () => (await fixture.db.rows(`select outcome from brain.work_items where id='${second}'`))[0]?.outcome,{timeout:20000}).toBe('succeeded');
     expect(await calls()).toHaveLength(fetched.length);
@@ -66,7 +66,7 @@ it('실제 감독자가 최초 수집과 재진입 및 부분 실패를 처리�
     const repeat=await queue('collect-test','2026-01-31','garmin.collect_recent');
     await expect.poll(async () => (await fixture.db.rows(`select outcome from brain.work_items where id='${repeat}'`))[0]?.outcome,{timeout:20000}).toBe('succeeded');
     expect((await calls()).slice(callsBeforeRepeat).some(x=>x[1]==='2026-01-31' && x[2]==='user_summary')).toBe(true);
-    expect((await fixture.db.rows("select count(*)::int n from brain.health_observations where account='collect-test'"))[0]?.n).toBe(10);
+    expect((await fixture.db.rows("select count(*)::int n from brain.health_observations where account='collect-test' and metric='daily_metric.steps' and local_date='2026-01-31'"))[0]?.n).toBe(1);
     expect((await fixture.db.rows(`select count(*)::int n from garmin.collect_published where dataset='${previousRaw.dataset}' and day='2026-01-31' and revision='${revision}'`))[0]?.n).toBe(1);
     marker.publish_failure=true; await writeMarker();
     const failed=await queue('atomic-failure','2026-01-31');

@@ -1,0 +1,452 @@
+{
+  "activity": [
+    {
+      "activity_id": 2001,
+      "avg_hr": 142,
+      "day_key": "2026-10-15",
+      "distance_m": 5013,
+      "duration_s": 1800,
+      "hr_zone1_low_bpm": 100,
+      "hr_zone1_s": 120,
+      "hr_zone2_low_bpm": 100,
+      "hr_zone2_s": null,
+      "hr_zone3_low_bpm": 100,
+      "hr_zone3_s": 62,
+      "hr_zone4_low_bpm": 100,
+      "hr_zone4_s": 900,
+      "hr_zone5_low_bpm": 100,
+      "hr_zone5_s": 30,
+      "max_hr": 170,
+      "start_ms": 1792017000000,
+      "type_key": "running"
+    }
+  ],
+  "activity_hr_sample": [
+    {
+      "activity_id": 2001,
+      "body_battery": null,
+      "bpm": 120,
+      "ts_ms": 1792017000000
+    },
+    {
+      "activity_id": 2001,
+      "body_battery": null,
+      "bpm": 150,
+      "ts_ms": 1792017002001
+    },
+    {
+      "activity_id": 2001,
+      "body_battery": null,
+      "bpm": 171,
+      "ts_ms": 1792017003000
+    },
+    {
+      "activity_id": 2001,
+      "body_battery": null,
+      "bpm": null,
+      "ts_ms": 1792017001000
+    }
+  ],
+  "body_battery_sample": [
+    {
+      "day_key": "2026-10-15",
+      "level": 20,
+      "ts_ms": 1792013400000
+    },
+    {
+      "day_key": "2026-10-15",
+      "level": 56,
+      "ts_ms": 1792044000000
+    },
+    {
+      "day_key": "2026-10-15",
+      "level": 61,
+      "ts_ms": 1792038600000
+    },
+    {
+      "day_key": "2026-10-15",
+      "level": null,
+      "ts_ms": 1792040400000
+    }
+  ],
+  "daily_metric": [
+    {
+      "active_kcal": 412,
+      "awake_sleep_s": 900,
+      "bb_charged": 45,
+      "bb_drained": 39,
+      "bb_high": 61,
+      "bb_low": 20,
+      "day_key": "2026-10-15",
+      "deep_sleep_s": 5400,
+      "distance_m": 6544,
+      "hrv_baseline_high": 48,
+      "hrv_baseline_low": 35,
+      "hrv_last_night_avg": 39,
+      "hrv_status": "BALANCED",
+      "hrv_weekly_avg": 41,
+      "light_sleep_s": 14400,
+      "max_hr": 151,
+      "min_hr": 48,
+      "moderate_intensity_s": 720,
+      "readiness_level": "HIGH",
+      "readiness_score": 81,
+      "rem_sleep_s": 6300,
+      "resting_hr": 52,
+      "sleep_end_ms": 1792040400000,
+      "sleep_s": 26100,
+      "sleep_score": 82,
+      "sleep_start_ms": 1792013400000,
+      "steps": 8123,
+      "stress_avg": 40,
+      "stress_max": 50,
+      "vigorous_intensity_s": 210
+    },
+    {
+      "active_kcal": 412,
+      "awake_sleep_s": null,
+      "bb_charged": null,
+      "bb_drained": null,
+      "bb_high": null,
+      "bb_low": null,
+      "day_key": "2026-10-14",
+      "deep_sleep_s": null,
+      "distance_m": 6544,
+      "hrv_baseline_high": null,
+      "hrv_baseline_low": null,
+      "hrv_last_night_avg": null,
+      "hrv_status": null,
+      "hrv_weekly_avg": null,
+      "light_sleep_s": null,
+      "max_hr": 151,
+      "min_hr": 48,
+      "moderate_intensity_s": 720,
+      "readiness_level": null,
+      "readiness_score": null,
+      "rem_sleep_s": null,
+      "resting_hr": null,
+      "sleep_end_ms": null,
+      "sleep_s": null,
+      "sleep_score": null,
+      "sleep_start_ms": null,
+      "steps": 8123,
+      "stress_avg": null,
+      "stress_max": null,
+      "vigorous_intensity_s": 210
+    }
+  ],
+  "day_summary": [
+    {
+      "active_kcal": 412.4,
+      "bb_charged": null,
+      "bb_drained": null,
+      "bb_high": null,
+      "bb_low": null,
+      "date": "2026-10-15",
+      "drinks_json": null,
+      "hrv_avg": null,
+      "moderate_min": 12.0,
+      "resp_avg": null,
+      "resting_hr": 52.0,
+      "sleep_awake_s": 900.0,
+      "sleep_deep_s": 5400.4,
+      "sleep_hr_min": null,
+      "sleep_hr_min_time": null,
+      "sleep_light_s": 14400.0,
+      "sleep_rem_s": 6300.0,
+      "sleep_score": 82.0,
+      "sleep_total_s": 26100.0,
+      "spo2_avg": null,
+      "spo2_min": null,
+      "steps": 8123.0,
+      "stress_avg": null,
+      "stress_high_s": null,
+      "vigorous_min": 3.5,
+      "wake_bb": null,
+      "weight_kg": null
+    },
+    {
+      "active_kcal": null,
+      "bb_charged": null,
+      "bb_drained": null,
+      "bb_high": null,
+      "bb_low": null,
+      "date": "2026-10-16",
+      "drinks_json": null,
+      "hrv_avg": null,
+      "moderate_min": null,
+      "resp_avg": null,
+      "resting_hr": null,
+      "sleep_awake_s": null,
+      "sleep_deep_s": null,
+      "sleep_hr_min": null,
+      "sleep_hr_min_time": null,
+      "sleep_light_s": null,
+      "sleep_rem_s": null,
+      "sleep_score": null,
+      "sleep_total_s": null,
+      "spo2_avg": null,
+      "spo2_min": null,
+      "steps": null,
+      "stress_avg": null,
+      "stress_high_s": null,
+      "vigorous_min": null,
+      "wake_bb": null,
+      "weight_kg": null
+    }
+  ],
+  "exercise_log": [
+    {
+      "activity_id": 2001,
+      "exercise": "바벨 백 스쿼트",
+      "max_kg": 40.0,
+      "reps": 10.0,
+      "rest_drop_avg": null,
+      "set_peak_hr_avg": null,
+      "sets": 1,
+      "volume_kg": 400.0
+    },
+    {
+      "activity_id": 2001,
+      "exercise": "푸시업",
+      "max_kg": null,
+      "reps": 12.0,
+      "rest_drop_avg": null,
+      "set_peak_hr_avg": null,
+      "sets": 1,
+      "volume_kg": 0.0
+    }
+  ],
+  "exercise_set": [
+    {
+      "activity_id": 2001,
+      "category": "PUSH_UP",
+      "duration_s": 30,
+      "exercise_name": null,
+      "is_rest": 0,
+      "reps": 12,
+      "set_index": 2,
+      "weight_g": null
+    },
+    {
+      "activity_id": 2001,
+      "category": "SQUAT",
+      "duration_s": 62,
+      "exercise_name": "BARBELL_BACK_SQUAT",
+      "is_rest": 0,
+      "reps": 10,
+      "set_index": 0,
+      "weight_g": 40000
+    },
+    {
+      "activity_id": 2001,
+      "category": null,
+      "duration_s": 60,
+      "exercise_name": null,
+      "is_rest": 1,
+      "reps": null,
+      "set_index": 1,
+      "weight_g": null
+    }
+  ],
+  "hr_sample": [
+    {
+      "bpm": 58,
+      "day_key": "2026-10-15",
+      "ts_ms": 1792045800000
+    },
+    {
+      "bpm": 62,
+      "day_key": "2026-10-15",
+      "ts_ms": 1792046040000
+    },
+    {
+      "bpm": 64,
+      "day_key": "2026-10-15",
+      "ts_ms": 1792046280000
+    },
+    {
+      "bpm": 70,
+      "day_key": "2026-10-15",
+      "ts_ms": 1792046160000
+    },
+    {
+      "bpm": null,
+      "day_key": "2026-10-15",
+      "ts_ms": 1792045920000
+    }
+  ],
+  "normalize_result": [
+    {
+      "endpoint": "activity",
+      "error_code": null,
+      "key": "2001",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "activity"
+    },
+    {
+      "endpoint": "activity_details",
+      "error_code": null,
+      "key": "2001",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "activity"
+    },
+    {
+      "endpoint": "activity_exercise_sets",
+      "error_code": null,
+      "key": "2001",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "activity"
+    },
+    {
+      "endpoint": "activity_hr_in_timezones",
+      "error_code": null,
+      "key": "2001",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "activity"
+    },
+    {
+      "endpoint": "body_battery",
+      "error_code": null,
+      "key": "2026-10-15",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "day"
+    },
+    {
+      "endpoint": "daily_weigh_ins",
+      "error_code": null,
+      "key": "2026-10-15",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "day"
+    },
+    {
+      "endpoint": "heart_rates",
+      "error_code": null,
+      "key": "2026-10-15",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "day"
+    },
+    {
+      "endpoint": "heart_rates",
+      "error_code": null,
+      "key": "2026-10-16",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "day"
+    },
+    {
+      "endpoint": "hrv_data",
+      "error_code": null,
+      "key": "2026-10-15",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "day"
+    },
+    {
+      "endpoint": "lifestyle_logging_data",
+      "error_code": null,
+      "key": "2026-10-15",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "day"
+    },
+    {
+      "endpoint": "rhr_day",
+      "error_code": "parse_error",
+      "key": "2026-10-16",
+      "ok": 0,
+      "raw_fetched_at": 1760000000000,
+      "scope": "day"
+    },
+    {
+      "endpoint": "rhr_day",
+      "error_code": null,
+      "key": "2026-10-15",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "day"
+    },
+    {
+      "endpoint": "sleep_data",
+      "error_code": null,
+      "key": "2026-10-15",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "day"
+    },
+    {
+      "endpoint": "stress_data",
+      "error_code": null,
+      "key": "2026-10-15",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "day"
+    },
+    {
+      "endpoint": "training_readiness",
+      "error_code": null,
+      "key": "2026-10-15",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "day"
+    },
+    {
+      "endpoint": "user_summary",
+      "error_code": null,
+      "key": "2026-10-14",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "day"
+    },
+    {
+      "endpoint": "user_summary",
+      "error_code": null,
+      "key": "2026-10-15",
+      "ok": 1,
+      "raw_fetched_at": 1760000000000,
+      "scope": "day"
+    }
+  ],
+  "stress_bb_sample": [
+    {
+      "day_key": "2026-10-15",
+      "level": 42,
+      "ts_ms": 1792013400000
+    },
+    {
+      "day_key": "2026-10-15",
+      "level": 44,
+      "ts_ms": 1792013760000
+    },
+    {
+      "day_key": "2026-10-15",
+      "level": null,
+      "ts_ms": 1792013580000
+    }
+  ],
+  "workout": [
+    {
+      "activity_id": 2001,
+      "bb_change": null,
+      "date": "2026-10-15",
+      "duration_s": 1800.0,
+      "hr_avg": 141.5,
+      "hr_max": 170.0,
+      "session_no": 1,
+      "start_ms": 1792017000000,
+      "type": "running",
+      "zone1_s": 120.0,
+      "zone2_s": null,
+      "zone3_s": 62.0,
+      "zone4_s": 900.0,
+      "zone5_s": 30.0
+    }
+  ]
+}
