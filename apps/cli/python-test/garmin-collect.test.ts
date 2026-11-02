@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { copyFile, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, realpath, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -82,6 +82,44 @@ it('합성 정상·재실행·legacy coverage·회수 및 격리 실패를 실�
     expect(await calls()).toBe(beforeIsolation); expect(await counts()).toEqual(beforeRevoke);
     expect(await readFile(join(home,'collect-connections'),'utf8')).toBe(beforeConnections);
     expect(await readFile(join(home,'collect-outbound'),'utf8').catch(() => '')).toBe('');
+
+    // The test-only wrapper calls the same session repeatedly so a single
+    // supervisor attempt can exercise the legacy consecutive-403 boundary.
+    await copyFile(fileURLToPath(new URL('../../../extensions/garmin/tests/collect_guard_fixture.py', import.meta.url)), join(ext, 'collect_guard_fixture.py'));
+    await mkdir(join(home, 'guard-tokens'));
+    Object.assign(marker, {guard_fail:true, guard_date:'2026-11-02'}); await writeMarker();
+    manifest.work.find((w: {kind:string}) => w.kind === 'garmin.collect').entry = 'collect_guard_fixture.py';
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    const guarded = await queue('guard-account', '2026-01-04');
+    await expect.poll(async () => (await fixture.db.rows(`select error_code from brain.work_attempts where work_item_id='${guarded}'`))[0]?.error_code,{timeout:20000}).toBe('BLOCKED_403');
+    expect((await readFile(join(home,'guard-calls'),'utf8')).trim().split('\n')).toHaveLength(3);
+    expect(JSON.parse(await readFile(join(home,'guard-tokens/block.json'),'utf8'))).toMatchObject({local_date:'2026-11-02',reason:'blocked_403'});
+    const blocked = await queue('guard-account', '2026-01-05');
+    await expect.poll(async () => (await fixture.db.rows(`select error_code from brain.work_attempts where work_item_id='${blocked}'`))[0]?.error_code,{timeout:20000}).toBe('SESSION_BLOCKED');
+    expect((await readFile(join(home,'guard-calls'),'utf8')).trim().split('\n')).toHaveLength(3);
+    Object.assign(marker, {guard_fail:false, guard_date:'2026-11-03'}); await writeMarker();
+    const next = await queue('guard-account', '2026-01-06');
+    await expect.poll(async () => (await fixture.db.rows(`select outcome from brain.work_items where id='${next}'`))[0]?.outcome,{timeout:20000}).toBe('succeeded');
+    expect((await readFile(join(home,'guard-calls'),'utf8')).trim().split('\n')).toHaveLength(4);
+    expect((await readFile(join(home,'process-audit'),'utf8')).trim().split('\n')).toEqual(['collect: clean','collect: clean','collect: clean']);
+    const publicRecords = JSON.stringify(await fixture.db.rows('select * from brain.work_attempts'));
+    expect(publicRecords).not.toContain('synthetic-password-canary');
+    expect(publicRecords).not.toContain('synthetic-token-canary');
+    expect(JSON.stringify(await fixture.db.rows('select * from brain.failures'))).not.toMatch(/synthetic-(password|token)-canary/);
+    async function scan(directory: string): Promise<void> {
+      for (const entry of await readdir(directory, {withFileTypes:true})) {
+        const path = join(directory, entry.name);
+        if (path === join(home, 'guard-tokens')) continue;
+        if (entry.isDirectory()) await scan(path);
+        else if (entry.isFile()) {
+          const bytes = await readFile(path);
+          expect(bytes.includes(Buffer.from('synthetic-password-canary')), path).toBe(false);
+          expect(bytes.includes(Buffer.from('synthetic-token-canary')), path).toBe(false);
+        }
+      }
+    }
+    await scan(home);
+
   } finally {
     await writeFile(join(home,'collect-release'), 'release').catch(() => {});
     controller.abort(); await daemon; await store.close(); await fixture.cleanup();

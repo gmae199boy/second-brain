@@ -22,16 +22,15 @@ def covered(conn, account, day):
         and r.endpoint_raw is null and r.body_raw is null)''', (account, account, day)).fetchone()[0]
 
 
-def prepare(response, day, catalog, fetched_at=None):
+def prepare(response, day, catalog, fetched_at=None, library_version='synthetic-port'):
     """외부 호출 후 트랜잭션 밖에서 원문과 v8 관측을 준비한다."""
     body = json.dumps(response, ensure_ascii=False)
-    values = user_summary(body, day)
     metric = next(m for m in catalog if m['metric'] == 'daily_metric.steps')
-    value = convert(metric, 'daily_metric', 'steps', values['steps'])
+    value = None if response is None else convert(metric, 'daily_metric', 'steps', user_summary(body, day)['steps'])
     fetched_at = fetched_at or datetime.now(timezone.utc)
     fetched_ms = int(fetched_at.timestamp() * 1000)
     return {'body': body, 'revision': hashlib.sha256(body.encode('utf-8')).hexdigest(),
-            'fetched_ms': fetched_ms, 'value': value, 'unit': metric['unit']}
+            'fetched_ms': fetched_ms, 'value': value, 'unit': metric['unit'], 'library_version': library_version}
 
 
 def publish(conn, account, day, zone, work_id, attempt_token, prepared):
@@ -56,8 +55,10 @@ def publish(conn, account, day, zone, work_id, attempt_token, prepared):
         fetched = datetime.fromtimestamp(prepared['fetched_ms'] / 1000, timezone.utc)
         cur.execute('insert into garmin.import_batches(id,dataset,imported_at) values (%s,%s,%s) on conflict (id) do nothing', (batch, dataset, fetched))
         cur.execute('''insert into garmin.raw_payloads(dataset,batch,account,scope,original_key,endpoint,fetched_at_ms,checked_at_ms,library_version,body)
-            values (%s,%s,%s,'day',%s,'user_summary',%s,%s,'synthetic-port',%s)''',
-            (dataset,batch,account,day,prepared['fetched_ms'],prepared['fetched_ms'],prepared['body']))
+            values (%s,%s,%s,'day',%s,'user_summary',%s,%s,%s,%s)''',
+            (dataset,batch,account,day,prepared['fetched_ms'],prepared['fetched_ms'],prepared['library_version'],prepared['body']))
+        if prepared['value'] is None:
+            return True
         cur.execute('''insert into brain.health_observations(id,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,value,unit,local_date,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token,value_type,sub_identity)
             values (%s,'garmin',%s,%s,'daily_metric',%s,%s,true,'daily_metric.steps',%s,%s,%s,%s,false,%s,%s,8,%s,%s,'number',%s)''',
             (uuid.uuid7(),dataset,batch,day,account,prepared['value'],prepared['unit'],day,zone,prepared['revision'],fetched,work_id,attempt_token,day))

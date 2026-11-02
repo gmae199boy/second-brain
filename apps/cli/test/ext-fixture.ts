@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
-import { appendFile } from 'node:fs/promises';
+import { appendFile, readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tempHomes } from './temp-home.js';
 import { pgHome } from './pg-home.js';
 import { withoutHarnessFolders } from './environment.js';
-export async function extHome() {
+export async function extHome(options: { realGarminAuth?: boolean } = {}) {
   const homes = tempHomes(), home = await homes.create('brain-ext-');
   const db = await pgHome(home);
   // Production setup creates the database with brain_owner ownership. The
@@ -16,17 +16,48 @@ export async function extHome() {
   const password = decodeURIComponent(new URL(db.url).password);
   await appendFile(join(home, '.env'), `BRAIN_POSTGRES_PASSWORD=${password}\n`);
   const env = { ...withoutHarnessFolders(process.env), SECOND_BRAIN_HOME: home, SECOND_BRAIN_TEST_EXTENSIONS: fileURLToPath(new URL('./fixtures/extensions/', import.meta.url)), BRAIN_DATABASE_URL: db.appUrl };
+  async function runRaw(args: readonly string[]) {
+    return new Promise<{ code: number | null; stdout: string; stderr: string; body: any }>((resolve, reject) => {
+      const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/bin.js', import.meta.url)), ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '', stderr = '';
+      child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+      child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+      child.once('error', reject);
+      child.once('close', code => { let body; try { body = JSON.parse(stdout); } catch { body = undefined; } resolve({ code, stdout, stderr, body }); });
+    });
+  }
   return {
     home, db, env,
-    run(args: readonly string[]) {
-      return new Promise<{ code: number | null; stdout: string; stderr: string; body: any }>((resolve, reject) => {
-        const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/bin.js', import.meta.url)), ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-        let stdout = '', stderr = '';
-        child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
-        child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
-        child.once('error', reject);
-        child.once('close', code => { let body; try { body = JSON.parse(stdout); } catch { body = undefined; } resolve({ code, stdout, stderr, body }); });
-      });
+    async run(args: readonly string[]) {
+      const result = await runRaw(args);
+      if (options.realGarminAuth || args[0] !== 'ext' || args[1] !== 'install' || args[2] !== 'garmin' || result.body?.error?.code !== 'EXTENSION_LOGIN_REQUIRED') return result;
+      const directory = join(home, 'extensions/garmin'), manifestPath = join(directory, 'manifest.json');
+      const original = await readFile(manifestPath, 'utf8');
+      const manifest = JSON.parse(original);
+      manifest.auth.entry = 'fake_auth_fixture.py';
+      await writeFile(join(directory, 'fake_auth_fixture.py'), "import json\nprint(json.dumps({'abi': 1, 'type': 'result', 'summary': 'fixture'}))\n");
+      await writeFile(manifestPath, JSON.stringify(manifest));
+      const { startDaemonSupervisor } = await import('../src/daemon/supervisor.js');
+      const { readConfig } = await import('../src/config/codec.js');
+      const { systemClock } = await import('../src/runtime/clock.js');
+      const { uuidV7IdGen } = await import('../src/runtime/id-gen.js');
+      const controller = new AbortController();
+      const daemon = startDaemonSupervisor({ home, env, clock: systemClock, idGen: uuidV7IdGen(), signal: controller.signal, supervisor: { pollMs: 25 } }, await readConfig(home), { async write() {} });
+      try {
+        const id = result.body.data.install.auth_work_id;
+        const deadline = Date.now() + 20000;
+        while (Date.now() < deadline) {
+          const outcome = (await db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome;
+          if (outcome === 'succeeded') break;
+          if (outcome === 'failed') throw new Error('fake auth failed');
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        if ((await db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome !== 'succeeded') throw new Error('fake auth timed out');
+      } finally {
+        controller.abort(); await daemon.stop();
+        await writeFile(manifestPath, original); await unlink(join(directory, 'fake_auth_fixture.py'));
+      }
+      return runRaw(args);
     },
     ledger(owner: string) {
       if (!/^[a-z][a-z0-9_]*$/.test(owner)) throw new Error('잘못된 소유자');

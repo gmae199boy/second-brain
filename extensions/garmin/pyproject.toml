@@ -2,4 +2,8 @@
 name = "brain-garmin"
 version = "1.0.0"
 requires-python = "==3.14.10"
-dependencies = ["psycopg[binary]==3.3.6"]
+dependencies = [
+    "curl-cffi==0.17.0",
+    "garminconnect==0.3.20",
+    "psycopg[binary]==3.3.6",
+]

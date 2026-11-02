@@ -264,6 +264,13 @@
       "type": "string",
       "secret": false,
       "required": []
+    },
+    {
+      "key": "garmin.tokenstore",
+      "type": "string",
+      "secret": false,
+      "required": [],
+      "default": "~/.garmin-pipeline/tokens"
     }
   ],
   "error_codes": [
@@ -277,6 +284,21 @@
     "COLLECT_INVALID",
     "COLLECT_INVALID_ATTEMPT",
     "COLLECT_CLIENT_UNAVAILABLE",
-    "COLLECT_STOPPED"
-  ]
+    "COLLECT_STOPPED",
+    "LOGIN_REQUIRED",
+    "SESSION_BLOCKED",
+    "SESSION_LOCK_TIMEOUT",
+    "BLOCK_FILE_INVALID",
+    "RATE_LIMITED",
+    "BLOCKED_403",
+    "GARMIN_TRANSIENT",
+    "GARMIN_NO_DATA",
+    "GARMIN_REJECTED"
+  ],
+  "auth": {
+    "kind": "garmin.auth",
+    "execution": "supervised",
+    "runtime": "python",
+    "entry": "src/auth.py"
+  }
 }

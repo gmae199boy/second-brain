@@ -86,6 +86,7 @@ it('합성 capture를 공용 명령과 실제 감독자로 읽고 계약 자료�
     const disabled = await fixture.run(['ext','disable','garmin','--json']); expect(disabled.code).toBe(0);
     const rejected = await fixture.run(['ext','run','garmin','import-preflight','--json']); expect(rejected.code).not.toBe(0);
     const enabled = await fixture.run(['ext','enable','garmin','--json']); expect(enabled.code).toBe(0);
+    controller.abort(); if (daemon) { await daemon; daemon = undefined; }
     await writeFile(join(fixture.home, 'extensions/garmin/reinstall-marker.txt'), '합성 변경');
     const reinstalled = await fixture.run(['ext','install','garmin','--json']); expect(reinstalled.code, reinstalled.stdout + reinstalled.stderr).toBe(0);
     expect(await readFile(join(report, 'private.json'), 'utf8')).toBe(privateText);

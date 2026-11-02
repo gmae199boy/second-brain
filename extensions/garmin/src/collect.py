@@ -9,7 +9,9 @@ import sys
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import psycopg
-from collect_client import UnavailableClient
+from contextlib import nullcontext
+from collect_client import open_client
+from garmin_session import GarminError, silence_library_logging
 from collect_store import covered, prepare, publish
 
 _stopping = False
@@ -64,13 +66,15 @@ def inputs(env):
         ZoneInfo(zone)
     except (ZoneInfoNotFoundError, ValueError):
         raise ValueError('COLLECT_INVALID') from None
-    return account, start, zone
+    tokenstore = snapshot['values'].get('garmin.tokenstore', '~/.garmin-pipeline/tokens')
+    if not isinstance(tokenstore, str) or not tokenstore:
+        raise ValueError('COLLECT_INVALID')
+    return account, start, zone, tokenstore
 
 
 def run(client=None, env=None, connect=psycopg.connect):
     env = os.environ if env is None else env
-    account, day, zone = inputs(env)
-    client = client if client is not None else UnavailableClient()
+    account, day, zone, tokenstore = inputs(env)
     boundary()
     with connect(env['BRAIN_DATABASE_URL'], autocommit=True,
                  options='-c transaction_timeout=2000 -c statement_timeout=1900 -c lock_timeout=1500') as conn:
@@ -88,9 +92,11 @@ def run(client=None, env=None, connect=psycopg.connect):
         if row is None:
             raise ValueError('COLLECT_INVALID')
         boundary()
-        response = client.user_summary(day)
+        with (open_client(tokenstore, zone) if client is None else nullcontext(client)) as active_client:
+            response = active_client.user_summary(day)
+            library_version = getattr(active_client, 'library_version', 'synthetic-port')
         boundary()
-        prepared = prepare(response, day, [row[0]])
+        prepared = prepare(response, day, [row[0]], library_version=library_version)
         boundary()
         publish(conn, account, day, zone, env['BRAIN_WORK_ID'], env['BRAIN_ATTEMPT_TOKEN'], prepared)
         boundary()
@@ -99,13 +105,14 @@ def run(client=None, env=None, connect=psycopg.connect):
 
 
 def main():
+    silence_library_logging()
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
     try:
         run()
     except Exception as exc:
-        code = str(exc) if isinstance(exc, ValueError) and str(exc) in ('COLLECT_CLIENT_UNAVAILABLE', 'COLLECT_INVALID_ATTEMPT', 'COLLECT_STOPPED') else 'COLLECT_INVALID'
-        emit('error', code=code, retryable=False)
+        code = exc.code if isinstance(exc, GarminError) else str(exc) if isinstance(exc, ValueError) and str(exc) in ('COLLECT_CLIENT_UNAVAILABLE', 'COLLECT_INVALID_ATTEMPT', 'COLLECT_STOPPED') else 'COLLECT_INVALID'
+        emit('error', code=code, retryable=exc.retryable if isinstance(exc, GarminError) else False)
         return 1
     return 0
 

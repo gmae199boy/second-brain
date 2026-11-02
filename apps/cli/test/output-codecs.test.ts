@@ -90,6 +90,9 @@ const SINKS: Readonly<Record<string, readonly string[]>> = {
   // whether anybody is watching writes nothing.
   'apps/cli/src/install.ts': ['text'],
   'apps/cli/src/commands/setup-run.ts': ['text'],
+  // TTY 여부만 읽으며, 자식의 대화형 로그인에 stdin·stdout을 상속한다.
+  // stderr 원문은 출력하지 않고 선언된 코드만 결과로 돌려준다.
+  'apps/cli/src/commands/ext-login.ts': [],
 };
 
 interface Run {
