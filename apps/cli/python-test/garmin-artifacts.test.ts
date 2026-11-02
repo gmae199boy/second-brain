@@ -384,6 +384,18 @@ it('같은 inventory 키의 artifact와 대형 evaluation을 원본 표별로 �
     expect(verified.body.data.report.counts).toMatchObject({artifacts:2,excluded_too_large:1,analysis_rows:1});
     const rows=await fixture.db.rows('select original_table,artifact_key,batch,request_id,analysis_id,exclusion_reason from garmin.artifact_inventory order by original_table');
     expect(rows).toHaveLength(2); expect(rows[0]).toMatchObject({original_table:'artifact',artifact_key:key,exclusion_reason:null}); expect(rows[0]!.request_id).toBeTruthy(); expect(rows[1]).toMatchObject({original_table:'evaluation',artifact_key:key,exclusion_reason:'too_large',request_id:null});
+    for (const [field, value] of [['metadata_raw', "convert_to('evaluation-secret-raw','UTF8')"], ['unlinked_reason', "'evaluation-secret-reason'"]] as const) {
+      await fixture.db.query(`update garmin.artifact_inventory set ${field}=${value} where original_table='evaluation'`);
+      try {
+        const before=await fixture.db.rows("select encode(metadata_raw,'hex') as raw,unlinked_reason from garmin.artifact_inventory where original_table='evaluation'"); expect(before).toHaveLength(1);
+        const result=await fixture.run(['ext','run','garmin','import-verify','--json']);
+        expect(result.code,field).not.toBe(0); expect(result.body.data.report.checks.inventory,field).toBe(false);
+        expect(await fixture.db.rows("select encode(metadata_raw,'hex') as raw,unlinked_reason from garmin.artifact_inventory where original_table='evaluation'")).toEqual(before);
+        const publicReport=await readFile(join(fixture.home,'extensions/garmin/reports',result.body.data.work_id,'public.json'),'utf8');
+        for (const secret of ['synthetic-D1','2026-01-01','evaluation-secret']) expect(result.stdout+result.stderr+publicReport).not.toContain(secret);
+        expect(JSON.parse(publicReport)).toEqual(result.body.data.report);
+      } finally {await fixture.db.query(`update garmin.artifact_inventory set ${field}=null where original_table='evaluation'`);}
+    }
     await run(); expect(await fixture.db.rows('select original_table,artifact_key,batch,request_id,analysis_id,exclusion_reason from garmin.artifact_inventory order by original_table')).toEqual(rows);
     // 0005 이전의 evaluation 제외 행을 재현하고 실제 전환 뒤 같은 capture를 재실행한다.
     await fixture.db.query("insert into garmin.artifact_inventory(dataset,artifact_key,batch,category,content_hash,size_bytes,metadata) select dataset,'legacy-artifact',batch,category,content_hash,size_bytes,metadata from garmin.artifact_inventory where original_table='artifact'; delete from garmin.artifact_inventory where original_table='artifact' and artifact_key <> 'legacy-artifact'; alter table garmin.artifact_inventory drop constraint artifact_inventory_pkey; alter table garmin.artifact_inventory drop constraint artifact_inventory_original_table_check; alter table garmin.artifact_inventory drop column original_table; alter table garmin.artifact_inventory add primary key(dataset,artifact_key)");

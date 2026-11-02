@@ -131,6 +131,25 @@ it('합성 capture를 반입하고 공개 검증 뒤 변조를 실패로 감지�
         checkPublic(result.stdout+result.stderr+publicReport); expect(JSON.parse(publicReport)).toEqual(result.body.data.report);
       } finally {await fixture.db.query(`alter table ${table} disable trigger user; update ${table} set ${field}=${field}-interval '1 microsecond' where id='${id}'; alter table ${table} enable trigger user`);}
     }
+    for (const table of ['brain.channel_legacy_notifications','brain.channel_legacy_deliveries'] as const) {
+      const rows=await fixture.db.rows(`select id from ${table} limit 1`); expect(rows,table).toHaveLength(1);
+      const id=rows[0]!.id;
+      for (const [kind, change] of [
+        ['plain', "original_key_label='legacy-secret-label'"],
+        ['raw', "original_key_label='legacy-secret-label',original_key_label_raw=convert_to('legacy-secret-raw','UTF8'),original_key_label_encoding='utf-8'"],
+      ] as const) {
+        await fixture.db.query(`alter table ${table} disable trigger user; update ${table} set ${change} where id='${id}'; alter table ${table} enable trigger user`);
+        try {
+          const before=await fixture.db.rows(`select original_key_label,encode(original_key_label_raw,'hex') as raw,original_key_label_encoding from ${table} where id='${id}'`);
+          const result=await fixture.run(['ext','run','garmin','import-verify','--json']);
+          expect(result.code,`${table}.${kind}`).not.toBe(0); expect(result.body.data.report.checks.legacy,`${table}.${kind}`).toBe(false);
+          expect(await fixture.db.rows(`select original_key_label,encode(original_key_label_raw,'hex') as raw,original_key_label_encoding from ${table} where id='${id}'`)).toEqual(before);
+          const publicReport=await readFile(join(fixture.home,'extensions/garmin/reports',result.body.data.work_id,'public.json'),'utf8');
+          checkPublic(result.stdout+result.stderr+publicReport); expect(result.stdout+result.stderr+publicReport).not.toContain('legacy-secret');
+          expect(JSON.parse(publicReport)).toEqual(result.body.data.report);
+        } finally {await fixture.db.query(`alter table ${table} disable trigger user; update ${table} set original_key_label=null,original_key_label_raw=null,original_key_label_encoding=null where id='${id}'; alter table ${table} enable trigger user`);}
+      }
+    }
     for (const value of ['[]','null']) {
       await fixture.db.query(`alter table garmin.preserved_rows disable trigger user; update garmin.preserved_rows set values_json='${value}'::jsonb where id=(select id from public.backup_typed); alter table garmin.preserved_rows enable trigger user`);
       try {
@@ -162,9 +181,29 @@ it('합성 capture를 반입하고 공개 검증 뒤 변조를 실패로 감지�
       try {
         const before=await fixture.db.rows(`select encode(metadata_raw,'hex') as raw from ${table} where ${where}`); expect(before[0]!.raw).not.toEqual((await fixture.db.rows(`select encode(metadata_raw,'hex') as raw from ${backup}`))[0]!.raw);
         const result=await fixture.run(['ext','run','garmin','import-verify','--json']);
-        expect(result.code,kind).toBe(0); expect(result.body.data.report.checks.inventory,kind).toBe(true);
-        expect(await fixture.db.rows(`select encode(metadata_raw,'hex') as raw from ${table} where ${where}`)).toEqual(before); checkPublic(result.stdout+result.stderr);
+        expect(result.code,kind).not.toBe(0); expect(result.body.data.report.checks.inventory,kind).toBe(false);
+        expect(await fixture.db.rows(`select encode(metadata_raw,'hex') as raw from ${table} where ${where}`)).toEqual(before);
+        const publicReport=await readFile(join(fixture.home,'extensions/garmin/reports',result.body.data.work_id,'public.json'),'utf8');
+        checkPublic(result.stdout+result.stderr+publicReport);
+        for (const secret of ['raw-secret','raw-artifact']) expect(result.stdout+result.stderr+publicReport).not.toContain(secret);
+        expect(JSON.parse(publicReport)).toEqual(result.body.data.report);
       } finally {await fixture.db.query(`update ${table} set metadata_raw=(select metadata_raw from ${backup}) where ${where}`);}
+    }
+    for (const [label, where, value, backup] of [
+      ['missing', "dataset='synthetic-D1' and category='profile'", 'null', 'public.backup_input_raw'],
+      ['malformed', "dataset='synthetic-D1' and category='profile'", "convert_to('raw-secret-invalid','UTF8')", 'public.backup_input_raw'],
+      ['unnecessary', "dataset='synthetic-D1' and category='body'", "convert_to('raw-secret-invalid','UTF8')", 'public.backup_input'],
+    ] as const) {
+      await fixture.db.query(`update garmin.input_inventory set metadata_raw=${value} where ${where}`);
+      try {
+        const before=await fixture.db.rows(`select encode(metadata_raw,'hex') as raw from garmin.input_inventory where ${where}`);
+        const result=await fixture.run(['ext','run','garmin','import-verify','--json']);
+        expect(result.code,label).not.toBe(0); expect(result.body.data.report.checks.inventory,label).toBe(false);
+        expect(await fixture.db.rows(`select encode(metadata_raw,'hex') as raw from garmin.input_inventory where ${where}`)).toEqual(before);
+        const publicReport=await readFile(join(fixture.home,'extensions/garmin/reports',result.body.data.work_id,'public.json'),'utf8');
+        checkPublic(result.stdout+result.stderr+publicReport); expect(result.stdout+result.stderr+publicReport).not.toContain('raw-secret-invalid');
+        expect(JSON.parse(publicReport)).toEqual(result.body.data.report);
+      } finally {await fixture.db.query(`update garmin.input_inventory set metadata_raw=(select metadata_raw from ${backup}) where ${where}`);}
     }
     const cases = [
       ['typed 정수와 boolean', 'preserved', "alter table garmin.preserved_rows disable trigger user; update garmin.preserved_rows set values_json=jsonb_set(values_json,'{id,value}','true'::jsonb) where id=(select id from public.backup_typed); alter table garmin.preserved_rows enable trigger user", "alter table garmin.preserved_rows disable trigger user; update garmin.preserved_rows p set values_json=b.values_json from public.backup_typed b where p.id=b.id; alter table garmin.preserved_rows enable trigger user"],

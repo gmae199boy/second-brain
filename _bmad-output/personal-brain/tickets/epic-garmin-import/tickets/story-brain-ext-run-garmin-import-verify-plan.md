@@ -3,7 +3,7 @@ title: '원본과 반입 대상의 전수 검증 및 안전한 공개 집계'
 type: 'feature'
 ticket: '6'
 created: '2026-11-01'
-status: in-progress
+status: built
 baseline_revision: '573647c4a102ebd6c7fd98efc04364eeb08a81b2'
 route: 'full'
 route_source: 'pinned'
@@ -11,7 +11,7 @@ risk: 'high'
 review: 'quick'
 review_source: 'pinned'
 lenses_ran: [quick]
-review_loop_iteration: 5
+review_loop_iteration: 6
 followup_review_recommended: false
 context:
   - _bmad-output/personal-brain/tickets/epic-garmin-import/epic-garmin-import.md
@@ -178,6 +178,13 @@ KEEP: `/tmp/bmad-14-6-dev2-review5-source.patch`의 전체19파일과 기존 모
   - `[high]` `[bad_plan]` legacy original_key_label3칸 검증 누락 — publisher의 NULL 기대, DDL의 저장 허용, channels consumer의 originalKey override 및 verifier의 누락 조건을 확인했다. 두 legacy 표의 plain/raw label 변조 실제 CLI 회귀와 세 칸 NULL 대조를 실행 항목에 명시했다.
   - `[high]` `[bad_plan]` 대형 evaluation inventory 보조 필드 누락 — publisher의 metadata_raw/unlinked_reason NULL 기대와 verifier의7필드 비교·예상identity 과잉검사 제외, 공유 보고 decoder의 비빈 display/raw 거부를 확인했다. 두 칸 독립 실제 CLI 변조와 NULL 기대 대조를 실행 항목에 명시했다.
 
+### 2026-11-02 — Review pass 6 (대화형 재개, quick)
+
+- verdicts: 1 finding — high 0, medium 0, low 1, false 0, maybe-false 0
+- findings:
+  - `[low]` `[patch]` 정밀 raw 변조 시험의 비유출 단언 누락 — 정밀 숫자 변조 루프의 공개 출력에 `raw-secret`·`raw-artifact` 표식 부재를 직접 단언하도록 시험만 보완했다.
+- 리뷰5의 세 high는 정적 추적상 해소로 판정됐다. 범위 밖 발견 0. reviewer 정식 성공 보고 수락·release 완료.
+
 ## Design Notes
 
 최소권한을 유지하기 위해 DB helper 권한을 새로 열지 않고 supervisor/core가 자기 출처의 계약 자료와 현재 파일 검증을 private snapshot으로 제공한다. core는 Garmin 내부 표를 읽지 않는다. DB 자료는 일관된 읽기 단위로 가져오고 2초 transaction 제한을 유지하며 파일 I/O는 밖에서 수행한다. snapshot은 현재 검사 시점 관찰이며 이후 삭제까지 보증하지 않는다. 다른 capture의 보존 자료는 현재 capture의 extra로 오판하지 않되 현재 논리 범위의 누락·과잉은 감추지 않는다. 과거 kill/재실행을 현 상태만으로 증명할 수 없다는 사실과 시험 증거를 분리한다.
@@ -307,3 +314,15 @@ raw 단계: stored raw와 선언 view를 원형 자연키로 먼저 묶고 batch
 지휘자 dev-2가 90분 timeout으로 멈췄다. 기존 구현자는 관리상 failed 인계로 정식 종료·release 및 delivery ack했으며 구현 실패로 세지 않는다. 원래 기준 `573647c4a102ebd6c7fd98efc04364eeb08a81b2`, 이전 미검증 WIP `1a8df1a`와 리뷰5의 19파일 보존 patch 및 전체 인계 보고는 run의 `bmad-14-6-dev2-review5-source.patch`, `14.6-dev2-handoff.md`에 보존했다. 현재 변경은 미검증이며 완료가 아니다.
 
 재추진은 세 단계로 나눈다: (1) metadata 원형의 display/raw 정확한 대조와 input/artifact 정밀 소수 변조 시험의 임시 성공 기대를 실패 기대와 inventory=false로 고친다. (2) legacy 두 표의 label 세 칸 NULL 계약과 plain/raw 변조를 검증한다. (3) 대형 evaluation의 metadata_raw 및 unlinked_reason NULL 계약과 각각의 변조를 검증한다. 각 단계에서 기존 전체 KEEP과 정상·실패·비복구·비유출 시험을 유지하고 단계별 보고를 수락한다. 그 후 원래 기준 전체 diff, 전체 기본 검증, Python 전체, 행렬과 독립 리뷰를 다시 수행한다. 이전 통과 결과는 리뷰5 교정 전 증거일 뿐이다.
+
+
+## 2026-11-02 대화형 재개 결과
+
+사용자 결정으로 자동 루프 대신 대화형 지휘자가 `2f5829f` 위에서 이어 갔다. 작업 브랜치는 `story/14.6`(16.1 완료 커밋 `8d071a8` 기준)이며, 미완성 16.2 작업은 `wip/16.2`에 보존했다. 되돌림·재도출 반복 없이 리뷰5 세 항목만 단계별로 처리했다.
+
+- 단계1: input/artifact inventory의 metadata를 `encode_metadata` display와 canonical raw bytes 양쪽으로 정확히 대조한다(`verify_compare.metadata_equal`). 임시 오판 기대 시험을 실패·`inventory=false` 기대로 교정했고, raw 누락·손상·불필요 시험을 추가했다.
+- 단계2: legacy notification/delivery의 `original_key_label`·`_raw`·`_encoding`을 NULL 계약과 대조한다. 두 표의 plain/raw 변조 네 사례가 수정 전 오판, 수정 후 실패·비복구·비유출임을 실제 CLI로 확인했다.
+- 단계3: 대형 evaluation inventory의 `metadata_raw`·`unlinked_reason`을 NULL 계약과 대조한다. 두 칸 독립 변조 시험을 추가했다.
+- 16.1 회귀: `0006_collect.sql` 추가로 `garmin-preflight.test.ts`의 하드코딩 5→6 갱신이 PK 중복으로 실패했다. 시험이 현재 최신 버전+1을 쓰도록 고쳤으며 제품 코드는 바꾸지 않았다(별도 커밋).
+
+지휘자 독립 검증: `bash _bmad/custom/bmad-loop-verify.sh` 첫 실행은 변경하지 않은 `packages/postgres/test/attachment-extraction.test.ts` 1건이 migration 준비 중 DB 연결 timeout으로 실패했다. 단독 실행은 35개 통과였고, 코드 변경 없이 재실행한 결과 exit 0, 169파일 3915개 통과, 기존 조건부 1 skip이었다. `pnpm test:python`은 exit 0, 8파일 43개 통과, skip 없음이다. 계획의 두 파일 집중 명령은 리뷰 보완 뒤 다시 실행해 exit 0, 2파일 20개 통과, skip 없음이었다. `pnpm typecheck`와 `git diff --check`도 통과했다. 워커는 Orca Run `run_7144001e2ed1`의 구현자(`gpt-6.1-terra`)와 리뷰어(`gpt-6.1-sol`)이며 둘 다 정식 완료 후 release했다. 계획 상태는 `built`이며, 티켓 done 판정은 사람 또는 엔진의 소관으로 남긴다.

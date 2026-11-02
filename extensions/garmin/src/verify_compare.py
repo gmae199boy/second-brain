@@ -14,7 +14,7 @@ from artifacts import MAX_BYTES, classify, read_relative, scan_log, encode_ident
 from batch_import import VERSION, canonical, contains_nul, contract_fingerprint, encoded
 from capture_manifest import ROLES
 from health import import_candidates, resolve
-from metadata_codec import decode_metadata
+from metadata_codec import encode_metadata
 from preflight import ORDER, account, analyze_snapshots
 from raw_codec import dataset_ref, project
 from reader import read_snapshot_bytes
@@ -45,6 +45,12 @@ def json_equal(left, right):
         return len(left) == len(right) and all(json_equal(a, b) for a, b in zip(left, right))
     return left == right
 
+
+
+def metadata_equal(row, expected):
+    display, raw = encode_metadata(expected)
+    actual_raw = row['metadata_raw']
+    return json_equal(row['metadata'], display) and (bytes(actual_raw) if actual_raw is not None else None) == raw
 
 def target_payload_hash(value, expected):
     """JSONB가 보존한 동등 숫자 표기를 원본의 숫자 표기로 정렬해 해시한다."""
@@ -281,7 +287,7 @@ def compare(capture, stored, core, catalog, conversation):
                         fields = ('local_date','event','detail') if name == 'notification' else ('local_date','kind','event','reason')
                         bad = len(found) != 1
                         if not bad:
-                            v = found[0]; bad = any(not matches_project(v, f, row[f]) for f in fields) or v['dataset'] != dataset or v['original_table'] != name or v['original_key'] != rowkey or v['import_batch'] != mapping['batch'] or v['source'] != 'garmin' or not matches_project(v, 'dataset_label', label) or v['external_message_id'] is not None or v['body'] is not None or v['metadata_missing'] is not True or v['resend_eligible'] is not False or str(v['conversation_id']) != conversation or not time_equal(v['at'], datetime.fromtimestamp(row['at']/1000, timezone.utc)) or (name == 'delivery' and (v['ok'] != bool(row['ok']) or not matches_project(v, 'original_id', str(row['id']))))
+                            v = found[0]; bad = any(not matches_project(v, f, row[f]) for f in fields) or v['dataset'] != dataset or v['original_table'] != name or v['original_key'] != rowkey or v['import_batch'] != mapping['batch'] or v['source'] != 'garmin' or not matches_project(v, 'dataset_label', label) or any(v.get(field) is not None for field in ('original_key_label', 'original_key_label_raw', 'original_key_label_encoding')) or v['external_message_id'] is not None or v['body'] is not None or v['metadata_missing'] is not True or v['resend_eligible'] is not False or str(v['conversation_id']) != conversation or not time_equal(v['at'], datetime.fromtimestamp(row['at']/1000, timezone.utc)) or (name == 'delivery' and (v['ok'] != bool(row['ok']) or not matches_project(v, 'original_id', str(row['id']))))
                         if bad: fail('legacy', list(identity))
         if checkpoint and ((checkpoint[0]['original_table'], checkpoint[0]['original_key']) != (last if last else (None,None))): fail('checkpoints', [dataset, 'position'])
     counts['preserved_rows'] = len(expected_preserved); counts['health_rows'] = len(expected_health); counts['raw_rows'] = len(expected_raw); counts['legacy_rows'] = len(expected_legacy)
@@ -411,7 +417,7 @@ def compare_artifacts(capture, stored, tables, files, entries, datasets, batches
             published[(artifact['dataset'],artifact['artifact_key'])] = (request_id, analysis_id)
             row = one(stored['artifact_inventory'],dataset=dataset,original_table='artifact',artifact_key=k)
             if row is not None and row['content_hash'] != hashed: fail('source_unchanged', [dataset,'artifact',k,'checkpoint_hash'])
-            if row is None or not json_equal([row['category'],row['content_hash'],row['size_bytes'],row['exclusion_reason'],row['unlinked_reason'],decode_metadata(row['metadata'],row['metadata_raw'])], [category,hashed,artifact['bytes'],reason,unlinked,metadata]) or (str(row['request_id']) if row['request_id'] else None) != request_id or (str(row['analysis_id']) if row['analysis_id'] else None) != analysis_id: fail('inventory', list(identity))
+            if row is None or not json_equal([row['category'],row['content_hash'],row['size_bytes'],row['exclusion_reason'],row['unlinked_reason']], [category,hashed,artifact['bytes'],reason,unlinked]) or not metadata_equal(row, metadata) or (str(row['request_id']) if row['request_id'] else None) != request_id or (str(row['analysis_id']) if row['analysis_id'] else None) != analysis_id: fail('inventory', list(identity))
             counts['artifacts'] += 1; counts['excluded'] += int(reason is not None)
             if unlinked is not None: unlinked_keys.add((dataset,k))
             if reason in ('config','secret','scan_failed','too_large','unknown'): counts['excluded_' + reason] += 1
@@ -437,7 +443,7 @@ def compare_artifacts(capture, stored, tables, files, entries, datasets, batches
                 k = key(row,table['keys']); data = original_bytes(row['report_md']); current_identities.add((dataset,'evaluation',k))
                 if len(data) > MAX_BYTES:
                     invkey = 'evaluation:' + k; expected_inventory.add((dataset,'evaluation',invkey)); record = one(stored['artifact_inventory'],dataset=dataset,original_table='evaluation',artifact_key=invkey)
-                    if record is None or not json_equal([record['category'],record['content_hash'],record['size_bytes'],record['request_id'],record['analysis_id'],record['exclusion_reason'],record['metadata']], ['report',hashlib.sha256(data).hexdigest(),len(data),None,None,'too_large',{'original_table':'evaluation','original_key':k}]): fail('inventory',[dataset,'evaluation',k])
+                    if record is None or not json_equal([record['category'],record['content_hash'],record['size_bytes'],record['request_id'],record['analysis_id'],record['exclusion_reason'],record['metadata'],record['metadata_raw'],record['unlinked_reason']], ['report',hashlib.sha256(data).hexdigest(),len(data),None,None,'too_large',{'original_table':'evaluation','original_key':k},None,None]): fail('inventory',[dataset,'evaluation',k])
                     counts['artifacts'] += 1; counts['excluded'] += 1; counts['excluded_too_large'] += 1
                 else: emit(dataset,'evaluation',k,'report',data,{'source':'evaluation.md'},row)
         for category in ('body','profile','inbox'):
@@ -445,7 +451,7 @@ def compare_artifacts(capture, stored, tables, files, entries, datasets, batches
             state = item['state'] if item else 'unknown'
             metadata = {'fields':item['metadata'],'source_files':[{'artifact_key':k,'request_id':published[(original,k)][0]} for k in item['source_files']]} if item else None
             actual = one(stored['input_inventory'],dataset=dataset,category=category)
-            if actual is None or actual['state'] != state or not json_equal(decode_metadata(actual['metadata'],actual['metadata_raw']), metadata): fail('inventory',[dataset,category])
+            if actual is None or actual['state'] != state or not metadata_equal(actual, metadata): fail('inventory',[dataset,category])
     # 논리 identity와 연결된 ID는 기존 batch를 그대로 유지할 수 있다.
     related_requests = set(expected_requests)
     related_analyses = set(expected_analyses)
