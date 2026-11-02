@@ -155,6 +155,9 @@ class Control:
         status = self.call('status')
         current = self.call('orchestration', 'run-current')
         run = current.get('run') if isinstance(current, dict) else None
+        # 새 Orca는 run-current를 {"runId": ...} 모양으로 돌려준다.
+        if run is None and isinstance(current, dict) and isinstance(current.get('runId'), str):
+            run = {'id': current['runId']}
         if not isinstance(run, dict) or run.get('id') != self.state['run']:
             raise ControlError('bound Run mismatch/unknown')
         caller = (status.get('caller') or {}) if isinstance(status, dict) else {}
@@ -180,6 +183,13 @@ class Control:
     def show(self, worker):
         r = self.call('orchestration', 'worker-show', '--dispatch', worker['dispatch'])
         d = r.get('dispatch', {}) if isinstance(r, dict) else {}
+        # 새 Orca의 평평한 worker-show 모양을 같은 필드로 맞춘다.
+        if not d and isinstance(r, dict) and r.get('dispatchId'):
+            outcome = r.get('outcome')
+            status = {'in_progress': 'dispatched', 'succeeded': 'completed', 'failed': 'failed'}.get(outcome) if outcome else (
+                'completed' if r.get('state') in ('completed', 'settled', 'done') else 'dispatched' if r.get('terminalState') == 'active' else 'unknown')
+            d = {'id': r['dispatchId'], 'taskId': r.get('taskId'), 'runId': r.get('runId'), 'assigneeHandle': r.get('terminal'), 'status': status}
+            r = {**r, 'dispatch': d}
         if (d.get('id') != worker['dispatch'] or (d.get('taskId') or d.get('task_id')) != worker['task'] or
             d.get('runId') != self.state['run'] or d.get('assigneeHandle') != worker['handle']):
             raise ControlError('worker ownership mismatch/unknown')
@@ -194,7 +204,9 @@ class Control:
             if not isinstance(r, dict) or not isinstance(r.get('workers'), list) or r.get('scope', {}).get('run') != self.state['run']:
                 raise ControlError('fleet scope unknown')
             rows.extend(r['workers'])
-            page = r.get('page', {})
+            # 새 Orca는 한 페이지뿐이면 page를 생략한다.
+            if 'page' not in r or r['page'] is None: return rows
+            page = r['page']
             if page.get('hasMore') is False: return rows
             nxt = page.get('nextCursor')
             if page.get('hasMore') is not True or not nxt or nxt in cursors:
