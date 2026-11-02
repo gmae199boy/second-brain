@@ -493,3 +493,6 @@ location: n/a
 source_spec: `tickets/epic-garmin-import/tickets/story-reader-preflight-brain-ext-run-garmin-import-preflight-plan.md`
 reason: 검토 필요: [ASSUMPTION] 수동 report 일감은 최대 30초 기다린 뒤 미완료면 queued 상태를 반환한다. 재개 checkpoint는 현재 미제공으로 보고한다.
 status: open
+- source_plan: `_bmad-output/personal-brain/tickets/epic-garmin-runtime/tickets/story-mfa-0-plan.md`
+  summary: garminconnect 0.3.20 SSO가 로그인 429 뒤에도 내부 로그인 전략을 이어 가서, 로그인 단계 429에서 즉시 당일 차단·추가 요청 0이 보장되지 않는다.
+  evidence: 리뷰가 `client/sso.py:231-241`의 `except GarminConnectTooManyRequestsError: continue`를 확인했다. wrapper 수준 보호(옛 동작)는 지켜지며, 라이브러리 내부 retry 보장은 에픽 F4가 별도 검토 대상으로 둔 범위다. 16.9 실계정 로그인 전에 필요성을 판단한다.

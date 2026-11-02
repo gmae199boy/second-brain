@@ -40,9 +40,9 @@
 | 2026-10-28 | epic 14 · 보고서 위치 | private 상세는 Brain 홈 확장 데이터 아래, 공개 집계만 출력·plan에(해시·원문·계정·개인 날짜 없음) | 공개 저장소 |
 | 2026-10-28 | epic 14 · 실제 반입 | 옛 writer를 멈추지 않고, 반입 직전 에이전트가 새 일관 capture(backup API, 해시 비교)를 Brain 홈에 만든다. 14.8은 `hitl = false` | 조사 9절 전제, 위임 |
 | 2026-10-28 | epic 14 · 순서 | 1~8 한 줄, 14.1은 15.6을 기다림. tracer 1 → 건강 의미 2 → preflight 3 → 반입 4 → 파일 5 → 검증 6 → sweep 7 → 실제 반입 8 | 같은 파일(조사 8절), 15.1 선례 |
-| 2026-10-28 | epic 16 · 계정 보호 | 인증 실패·MFA는 재인증 성공까지, 429·403은 다음 현지 날짜의 탐색 호출 성공까지 외부 호출 0. 이틀 연속 차단은 `brain ext run garmin release-block`으로만 해제. 상태는 garmin schema에 | 옛 동작(날짜가 지나면 해제)이 Done when 2와 어긋남(조사 2절) |
+| 2026-10-28 | epic 16 · 계정 보호 | 인증 실패·MFA는 재인증 성공까지, 429·403은 다음 현지 날짜의 탐색 호출 성공까지 외부 호출 0. 이틀 연속 차단은 `brain ext run garmin release-block`으로만 해제. 상태는 garmin schema에 | 옛 동작(날짜가 지나면 해제)이 Done when 2와 어긋남(조사 2절) → 2026-11-02 사용자 결정으로 대체(에픽 16 Notes: 옛 동작 그대로, `release-block` 뺌) |
 | 2026-10-28 | epic 16 · tokenstore | 라이브러리 관리 세션 파일이라 `.env` 밖에 둔다(`garmin.tokenstore` 경로만 snapshot). spine AD-18에 예외로 적음 | 옛 tokenstore 재사용 위임 |
-| 2026-10-28 | epic 16 · 일감 | `collect`(증분 정규화·publish 포함)·`normalize`(rebuild·재개)·`artifacts`(body·digest·그래프)·`release-block` | raw만 남고 publish가 빠지는 틈을 줄임 |
+| 2026-10-28 | epic 16 · 일감 | `collect`(증분 정규화·publish 포함)·`normalize`(rebuild·재개)·`artifacts`(body·digest·그래프)·`release-block` | raw만 남고 publish가 빠지는 틈을 줄임 → 2026-11-02 사용자 결정으로 대체(에픽 16 Notes: 옛 동작 그대로, `release-block` 뺌) |
 | 2026-10-28 | epic 16 · 동등성 | 합성 fixture만 옛 archive 코드에 한 번 넣어 기대 JSON을 고정(opt-in 스크립트), 새 코드는 그 JSON과 비교 | 순환 검증 회피(조사 8절) |
 | 2026-10-28 | epic 16 · digest | digest 일 값은 core 건강 요약 행. catalog에 없는 지표는 호환 core 마이그레이션으로 더함 | epic 18 입력이 core 계약만 읽음(AD-35) |
 | 2026-10-28 | epic 16 · 전환 | 공통 예약 전에 옛 collect LaunchAgent를 내림(plist 보존). 옛 report는 스스로 수집할 때만 함께 내리고 아니면 epic 18이 내림. capture 뒤 날짜는 새 수집이 채움 | 두 수집기 동시 호출은 차단 위험 |

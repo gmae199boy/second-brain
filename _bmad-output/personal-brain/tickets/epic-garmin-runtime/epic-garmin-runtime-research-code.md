@@ -33,6 +33,8 @@ status: research
 
 ## 2. 인증·계정 보호와 ABI v1
 
+정정(2026-11-02, 사용자 결정): 이 절의 옛 코드 관찰은 유지한다. 아래 이식 제안·ABI 재호출 제약·시험 후보는 epic의 최신 E16-2·E16-8과 Notes를 따른다. MFA 입력·재시도 흐름, 영속 계정 보호 상태, 재인증/수동 해제 전 무호출, 날짜 경과 후 탐색 호출, release-block·doctor는 구현하지 않는다. 당일 block.json과 실행 중 중단, 다음 날 자동 해제, 같은 날 auth_failed의 토큰 mtime 재시도를 보존하고, MFA 요구는 로그인 필요로 그 실행을 끝낸다. tokenstore 기준 별도 보호 키는 만들지 않고 인증·수집은 기존 (source, account) 직렬화 키를 쓴다. 아래 S2 후보의 "영속 latch"·"보호 migration/port"도 같은 정정을 따른다.
+
 무인 세션은 tokenstore 디렉터리 검사→`.session.lock` flock→block 검사→client→`login(tokenstore)`→세션 yield다. 자격 증명·MFA는 login 명령의 LoginPrompts로만 받고, 락 밖에서 묻고 락 안에서 credentials login(`return_on_mfa=True`)·resume_login을 한다. 잘못된 MFA 코드는 같은 client에서 최대 3회이며 성공 뒤 dump한다(`P/garmin/__init__.py:443`, `:486`, `:511`, `:542`; `P/auth.py:55`, `:68`). 비밀번호는 getpass이고 TTY가 없으면 거부한다. 새 감독자 stdout은 JSONL이므로 옛 input 프롬프트/일반 print를 그 stdout과 섞지 않는 별도 operator 로그인 경로가 필요하다(`P/auth.py:55`, `:61`; `spine:504`, `T13:56`).
 
 토큰 기본 위치는 `~/.garmin-pipeline/tokens`, 명세상 파일은 `garmin_tokens.json`(라이브러리 dump의 JSON, 0600), 폴더는 0700이다. block.json은 비밀 토큰과 별개인 schema_version/local_date/reason JSON이며 임시 파일→replace로 쓴다. 토큰 JSON 내부 필드/세대 변환은 archive에 라이브러리 소스가 없어 확정하지 않는다. **garth 어긋남:** 현재 lock의 garminconnect 0.3.17 의존은 curl-cffi/requests/ua-generator이며 garth 패키지가 없다. 옛 garth oauth 파일이 있을 것이라는 가정을 새 token reader 계약으로 만들지 말고 라이브러리의 login/dump를 경유한다(`P/config.py:35`, `P/auth.py:5`, `P/garmin/__init__.py:69`, `:545`, `:676`, `:721`; `G/uv.lock:472`).
