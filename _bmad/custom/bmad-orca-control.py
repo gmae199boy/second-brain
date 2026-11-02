@@ -272,7 +272,8 @@ class Control:
         key = 'start:' + role
         if key not in self.state['requests'] and role == 'implementer':
             for row in self.fleet():
-                if row.get('dispatchStatus') not in SETTLED:
+                # 새 Orca 행에는 dispatchStatus가 없고, release된 워커는 terminalState=released다.
+                if row.get('dispatchStatus') not in SETTLED and row.get('terminalState') != 'released':
                     raise ControlError('active or unknown worker prevents duplicate implementer')
         result = self.request(key, ['orchestration', 'worker-start', *options, '--run', self.state['run']])
         self.record_start(role, result)
@@ -282,9 +283,16 @@ class Control:
         if not isinstance(result, dict): raise ControlError('start receipt unknown')
         task, dispatch = result.get('taskId'), result.get('dispatchId')
         handles = [x.get('id') for x in result.get('effects', []) if x.get('kind') == 'terminal' and x.get('role') == 'agent' and x.get('id')]
+        # 새 Orca는 effects 대신 최상위 terminal에 agent handle을 둔다.
+        if not handles and isinstance(result.get('terminal'), str) and result['terminal']:
+            handles = [result['terminal']]
         if (not task or not dispatch or len(handles) != 1 or result.get('runId') != self.state['run'] or result.get('state') != 'ready'):
             raise ControlError('start receipt identity unknown; preserve request and inspect')
         launch = result.get('launch', {})
+        # 새 Orca는 실제 적용된 agent/model/effort를 최상위에 둔다.
+        if not launch and all(isinstance(result.get(k), str) and result[k] for k in ('agent', 'model', 'effort')):
+            applied = {k: result[k] for k in ('agent', 'model', 'effort')}
+            launch = {'requested': applied, 'effective': applied}
         w = self.state['workers'].get(role) or {'task': task, 'dispatch': dispatch, 'handle': handles[0], 'launch': launch}
         if (w['task'], w['dispatch'], w['handle']) != (task, dispatch, handles[0]):
             raise ControlError('start receipt changed worker identity')
