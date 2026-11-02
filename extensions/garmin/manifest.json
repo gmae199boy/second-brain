@@ -212,6 +212,25 @@
         "garmin.timezone"
       ],
       "manual": "collect"
+    },
+    {
+      "kind": "garmin.collect_retry",
+      "execution": "supervised",
+      "runtime": "python",
+      "entry": "src/collect.py",
+      "required_settings": [
+        "garmin.timezone"
+      ]
+    },
+    {
+      "kind": "garmin.collect_recent",
+      "execution": "supervised",
+      "runtime": "python",
+      "entry": "src/collect.py",
+      "required_settings": [
+        "garmin.timezone"
+      ],
+      "manual": "collect-recent"
     }
   ],
   "raw_views": [
@@ -271,6 +290,62 @@
       "secret": false,
       "required": [],
       "default": "~/.garmin-pipeline/tokens"
+    },
+    {
+      "key": "garmin.date_pause_seconds",
+      "type": "number",
+      "secret": false,
+      "required": [],
+      "default": "5"
+    },
+    {
+      "key": "garmin.call_pause_min_seconds",
+      "type": "number",
+      "secret": false,
+      "required": [],
+      "default": "1"
+    },
+    {
+      "key": "garmin.call_pause_max_seconds",
+      "type": "number",
+      "secret": false,
+      "required": [],
+      "default": "2"
+    },
+    {
+      "key": "garmin.max_dates_per_run",
+      "type": "number",
+      "secret": false,
+      "required": [],
+      "default": "10"
+    },
+    {
+      "key": "garmin.max_rejected_attempts",
+      "type": "number",
+      "secret": false,
+      "required": [],
+      "default": "3"
+    },
+    {
+      "key": "garmin.max_consecutive_403",
+      "type": "number",
+      "secret": false,
+      "required": [],
+      "default": "3"
+    },
+    {
+      "key": "garmin.lock_wait_seconds",
+      "type": "number",
+      "secret": false,
+      "required": [],
+      "default": "60"
+    },
+    {
+      "key": "garmin.cffi_api_session",
+      "type": "boolean",
+      "secret": false,
+      "required": [],
+      "default": "false"
     }
   ],
   "error_codes": [
@@ -293,12 +368,29 @@
     "BLOCKED_403",
     "GARMIN_TRANSIENT",
     "GARMIN_NO_DATA",
-    "GARMIN_REJECTED"
+    "GARMIN_REJECTED",
+    "COLLECT_PARTIAL",
+    "COLLECT_ACCOUNT_UNKNOWN",
+    "COLLECT_ACCOUNT_MISMATCH"
   ],
   "auth": {
     "kind": "garmin.auth",
     "execution": "supervised",
     "runtime": "python",
     "entry": "src/auth.py"
-  }
+  },
+  "default_schedules": [
+    {
+      "kind": "garmin.collect",
+      "target_kind": "extension",
+      "target_id": "default",
+      "local_time": "11:00"
+    },
+    {
+      "kind": "garmin.collect_retry",
+      "target_kind": "extension",
+      "target_id": "default",
+      "local_time": "11:15"
+    }
+  ]
 }

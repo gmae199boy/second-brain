@@ -139,7 +139,10 @@ def session_lock(tokenstore, wait_seconds=60, *, monotonic=time.monotonic, sleep
 
 
 class GarminAdapter:
-    def __init__(self, tokenstore, *, client_factory=garminconnect.Garmin, today=date.today, sleep=time.sleep, uniform=random.uniform, monotonic=time.monotonic, lock_wait_seconds=60):
+    def __init__(self, tokenstore, *, client_factory=garminconnect.Garmin, today=date.today, sleep=time.sleep, uniform=random.uniform, monotonic=time.monotonic, lock_wait_seconds=60, date_pause_seconds=5, call_pause_min_seconds=1, call_pause_max_seconds=2, max_consecutive_403=3):
+        self.date_pause_seconds = date_pause_seconds
+        self.call_pause_min_seconds, self.call_pause_max_seconds = call_pause_min_seconds, call_pause_max_seconds
+        self.max_consecutive_403 = max_consecutive_403
         self.tokenstore = Path(tokenstore).expanduser()
         self.client_factory, self.today, self.sleep, self.uniform = client_factory, today, sleep, uniform
         self.monotonic, self.lock_wait_seconds = monotonic, lock_wait_seconds
@@ -165,13 +168,14 @@ class GarminAdapter:
         raise mapped from None
 
     @contextlib.contextmanager
-    def open_session(self, *, first_call_endpoints=()):
+    def open_session(self, *, first_call_endpoints=(), lock_held=False):
         first = frozenset(first_call_endpoints)
         if first - set(DAY_ENDPOINTS + ACTIVITY_ENDPOINTS):
             raise ValueError('invalid endpoint')
         if not self.tokenstore.is_dir():
             raise GarminError('LOGIN_REQUIRED')
-        with session_lock(self.tokenstore, self.lock_wait_seconds, monotonic=self.monotonic, sleep=self.sleep):
+        lock = contextlib.nullcontext() if lock_held else session_lock(self.tokenstore, self.lock_wait_seconds, monotonic=self.monotonic, sleep=self.sleep)
+        with lock:
             if self.blocked_today():
                 raise GarminError('SESSION_BLOCKED')
             client = self.client_factory()
@@ -187,7 +191,7 @@ class Session:
         self.attempts = dict.fromkeys(first, 0)
 
     def next_date(self):
-        self.adapter.sleep(5)
+        self.adapter.sleep(self.adapter.date_pause_seconds)
 
     def fetch_day(self, endpoint, day):
         if endpoint not in DAY_ENDPOINTS or not isinstance(day, date) or isinstance(day, datetime):
@@ -214,7 +218,7 @@ class Session:
             if self.attempts[endpoint] >= 3:
                 return None
             self.attempts[endpoint] += 1
-        self.adapter.sleep(self.adapter.uniform(1, 2))
+        self.adapter.sleep(self.adapter.uniform(self.adapter.call_pause_min_seconds, self.adapter.call_pause_max_seconds))
         status = None
         try:
             payload = call()
@@ -233,7 +237,7 @@ class Session:
             pass
         elif status == 403:
             self.consecutive_403 += 1
-            if self.consecutive_403 >= 3:
+            if self.consecutive_403 >= self.adapter.max_consecutive_403:
                 mapped = GarminError('BLOCKED_403')
         else:
             self.consecutive_403 = 0

@@ -26,10 +26,27 @@ export async function extHome(options: { realGarminAuth?: boolean } = {}) {
       child.once('close', code => { let body; try { body = JSON.parse(stdout); } catch { body = undefined; } resolve({ code, stdout, stderr, body }); });
     });
   }
+  async function withScheduler(args: readonly string[]) {
+    const { runDaemon } = await import('../src/daemon/run.js');
+    const { postgresStore } = await import('second_brain/postgres');
+    const { systemClock } = await import('../src/runtime/clock.js');
+    const { uuidV7IdGen } = await import('../src/runtime/id-gen.js');
+    const controller = new AbortController();
+    const running = runDaemon({ home, env, clock: systemClock, idGen: uuidV7IdGen(), signal: controller.signal, drainPauseMs: 25, heartbeatMs: 100, supervisor: { pollMs: 25 }, createStore: options => Object.assign(postgresStore(options), { imports: undefined }) });
+    try {
+      const ready = join(home, 'run', 'supervisor-ready.json'), deadline = Date.now() + 20000;
+      while (Date.now() < deadline) {
+        if (await readFile(ready, 'utf8').then(() => true).catch(() => false)) break;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      return await runRaw(args);
+    } finally { controller.abort(); await running; }
+  }
   return {
     home, db, env,
     async run(args: readonly string[]) {
       const result = await runRaw(args);
+      if (args[0] === 'ext' && args[1] === 'install' && args[2] === 'garmin' && result.body?.error?.code === 'EXTENSION_SCHEDULER_UNAVAILABLE' && !options.realGarminAuth) return withScheduler(args);
       if (options.realGarminAuth || args[0] !== 'ext' || args[1] !== 'install' || args[2] !== 'garmin' || result.body?.error?.code !== 'EXTENSION_LOGIN_REQUIRED') return result;
       const directory = join(home, 'extensions/garmin'), manifestPath = join(directory, 'manifest.json');
       const original = await readFile(manifestPath, 'utf8');
@@ -57,7 +74,9 @@ export async function extHome(options: { realGarminAuth?: boolean } = {}) {
         controller.abort(); await daemon.stop();
         await writeFile(manifestPath, original); await unlink(join(directory, 'fake_auth_fixture.py'));
       }
-      return runRaw(args);
+      const retry = await runRaw(args);
+      if (retry.body?.error?.code !== 'EXTENSION_SCHEDULER_UNAVAILABLE') return retry;
+      return withScheduler(args);
     },
     ledger(owner: string) {
       if (!/^[a-z][a-z0-9_]*$/.test(owner)) throw new Error('잘못된 소유자');

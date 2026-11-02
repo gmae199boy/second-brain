@@ -96,6 +96,8 @@ def run():
             adapter.lock_wait_seconds = 0
             error = expect('SESSION_LOCK_TIMEOUT', lambda: adapter.open_session().__enter__())
             assert error.retryable
+            with adapter.open_session(lock_held=True) as session:
+                assert session is not None
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)

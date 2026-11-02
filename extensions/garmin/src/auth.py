@@ -7,30 +7,21 @@ import os
 from pathlib import Path
 import sys
 
+from collect_settings import decode
 from garmin_session import GarminAdapter, GarminError, session_lock, silence_library_logging
 
 DEFAULT_TOKENSTORE = '~/.garmin-pipeline/tokens'
 
 
 def tokenstore_from_env(env):
-    raw = env.get('BRAIN_SETTINGS_SNAPSHOT')
-    if not raw:
-        return Path(DEFAULT_TOKENSTORE).expanduser()
-    snapshot = json.loads(raw)
-    value = snapshot['values'].get('garmin.tokenstore', DEFAULT_TOKENSTORE)
-    if not isinstance(value, str) or not value:
-        raise ValueError('invalid settings')
-    return Path(value).expanduser()
+    return Path(decode(env.get('BRAIN_SETTINGS_SNAPSHOT'), strict=False)['garmin.tokenstore']).expanduser()
 
 
 def today_from_env(env):
-    raw = env.get('BRAIN_SETTINGS_SNAPSHOT')
-    zone = json.loads(raw)['values'].get('garmin.timezone') if raw else None
+    zone = decode(env.get('BRAIN_SETTINGS_SNAPSHOT'), strict=False).get('garmin.timezone')
     if zone is None:
         # [ASSUMPTION] 설정 시간대가 없으면 시스템 현지 날짜를 사용한다.
         return date.today
-    if not isinstance(zone, str) or not zone:
-        raise ValueError('invalid timezone')
     timezone = ZoneInfo(zone)
     return lambda: datetime.now(timezone).date()
 
@@ -100,7 +91,9 @@ def main(argv=None, env=None):
     try:
         if argv and not terminal:
             raise GarminError('LOGIN_REQUIRED')
-        adapter = GarminAdapter(tokenstore_from_env(env), today=today_from_env(env))
+        settings = decode(env.get('BRAIN_SETTINGS_SNAPSHOT'), strict=False)
+        kwargs = {} if settings['garmin.lock_wait_seconds'] == 60 else {'lock_wait_seconds': settings['garmin.lock_wait_seconds']}
+        adapter = GarminAdapter(tokenstore_from_env(env), today=today_from_env(env), **kwargs)
         if terminal:
             terminal_login(adapter)
             print('Garmin 로그인 완료')
