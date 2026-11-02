@@ -4,7 +4,7 @@ title: "텍스트·원문·건강 수치 조회"
 parent: personal-brain
 covers: [R14, R15, R16, CAP-4, CAP-6, CAP-7]
 sources: [_bmad-output/personal-brain/initiative-personal-brain.md, _bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md, _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md]
-companions: [_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, _bmad-output/personal-brain/tickets/epic-search-and-health-query/epic-search-and-health-query-research-code.md]
+companions: [_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, _bmad-output/personal-brain/tickets/epic-search-and-health-query/epic-search-and-health-query-research-code.md, _bmad-output/personal-brain/inputs/rag-oss-patterns.md, _bmad-output/personal-brain/inputs/rag-oss-core-architecture.md]
 after: []
 refined: true
 risk: medium
@@ -77,6 +77,8 @@ Drive E8-6과 epic-recall-and-mirror는 이 검색 경로를 쓴다(2026-10-28, 
 - architecture — _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-11, AD-15, AD-23, AD-29, AD-30, AD-32
 - epic — _bmad-output/personal-brain/tickets/epic-recall-and-mirror/epic-recall-and-mirror.md, Description(결과 계약 보강, 2026-10-15)
 - research — _bmad-output/personal-brain/tickets/epic-search-and-health-query/epic-search-and-health-query-research-code.md (2026-10-28 정적 코드 조사)
+- inputs — _bmad-output/personal-brain/inputs/rag-oss-patterns.md, §1.1 R1~R4·R13, §3·§4 (2026-11-02 채택 companion)
+- inputs — _bmad-output/personal-brain/inputs/rag-oss-core-architecture.md, §1 검색 절, §2 결론 5·6 (2026-11-02 채택 companion)
 
 ## Notes
 
@@ -113,3 +115,4 @@ Drive E8-6과 epic-recall-and-mirror는 이 검색 경로를 쓴다(2026-10-28, 
 - Decision(2026-10-28, 세트 검증 S1·S2·S3 채택): 각 plan은 PG 연결 두 개의 역할, 막는 잠금(격리 시험의 ACCESS EXCLUSIVE 등), timeout 값, 잠금 해제·정리 명령을 적는다. 2는 snapshot 읽기 barrier 뒤 새 메시지와 redact를 따로 끼우고, 3은 1위 단독 초과·`meta.omitted`·`sessions read` 쪽 이동·가린 뒤 코드 포인트 길이를, 1은 세대 교체·가린 파일·실패 상태의 원문 읽기를 시험 행렬에 넣는다. 5는 기본 suite와 별도 행동 시험 명령을 적는다. 1은 격리 PG·홈·리포트 한 건·정리·문서 probe만 완성하고, 대화 fixture는 2, 도구 메모는 3, 건강 fixture는 4가 같은 기반에 더한다. 7은 실행 전에 문항·기대 결과·허용 재질의·문항별 성공 조건을 함께 고정하고, 최초 판정과 수정 뒤 재실행을 구별한다.
 - Decision(2026-10-30, 사용자): 에픽마다 두던 Refactor sweep(17.6)을 뺐다(`dropped`). 리뷰가 미룬 기존 결함은 `deferred-work.md` 장부에 남고, 사용자가 원할 때 `bmad-loop sweep`으로 직접 처리한다. 이 Mac 확인(17.7)은 sweep 대신 sweep이 기다리던 스토리들을 기다린다.
 - Decision(2026-10-30, 추천으로 정함): 기존 문서 우선 tracer 순서를 대체한다. 17.2가 공통 질의 함수·최소 검색 port·PG adapter·대화 시험 기반과 조각 생성을 맡아 11.5 뒤 시작하고, 17.3이 대화 검색·원문·공통 budget을 완성한다. 17.1은 17.3·14.5·11.4 뒤 문서 결과·files show·문서 probe·리포트 fixture를 더한다. 17.4는 17.3·14.2 뒤 독립 진행하고 17.5가 17.1·17.4·13.6·13.7을 모은다. 범위·기존 verify는 유지하고 17.2에 질의 port 판정 검증을 더한다. 모든 번호·시그니처는 18 완료 가정 없이 착수 시점 main HEAD에서 확인한다.
+- Note(2026-11-02, refine 입력): `../../inputs/rag-oss-patterns.md` §1.1 R1~R4·R13 — `queries[]` 다중 질의와 조각 해시 중복 제거(17.3), 구→AND→OR 단계 완화와 `meta.hint`(17.3), 일치 주변 `snippet` 칸(17.3 결과 계약), 인접 조각 합치기(17.3), 스킬 안내문의 질의 바꾸기 지침(17.6). 저장·검색 구조 비교는 `../../inputs/rag-oss-core-architecture.md`. 17.3·17.6 착수 전 채택 여부를 정한다. 토크나이저·재순위·질의 재작성은 가져오지 않는다(§3). 검증(2026-11-02, Sofia): R1(`queries[]`)·R3(`snippet` 칸)·R13(인접 조각 합치기)은 AD-15 결과 계약(E17-2)을 바꾸므로 채택 시 `bmad-architecture`로 spine을 함께 갱신한다. R2는 질의 함수 하나(E17-2) 안의 단계라 계약 변경이 아니고 `meta.hint` 값만 는다. R4는 스킬 안내문이라 계약과 무관하다.

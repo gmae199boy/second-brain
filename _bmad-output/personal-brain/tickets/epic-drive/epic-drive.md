@@ -4,7 +4,7 @@ title: "Google Drive 연동"
 parent: personal-brain
 covers: [CAP-14, CAP-6, CAP-7, CAP-12]
 sources: [_bmad-output/personal-brain/initiative-personal-brain.md, _bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md, _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md]
-companions: [_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, _bmad-output/personal-brain/tickets/epic-drive/epic-drive-research-code.md]
+companions: [_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, _bmad-output/personal-brain/tickets/epic-drive/epic-drive-research-code.md, _bmad-output/personal-brain/inputs/rag-oss-patterns.md, _bmad-output/personal-brain/inputs/rag-oss-core-architecture.md]
 after: []
 assignee: ""
 refined: true
@@ -77,6 +77,8 @@ AD-11·15·23·24·27. 사용자의 외부 파일은 옮기거나 지우지 않�
 - change — _bmad-output/personal-brain/change-local-sqlite-primary/change-local-sqlite-primary.md, §7
 - inputs — _bmad-output/personal-brain/inputs/weknora-patterns.md, §2 (조건부: lease 먼저 적기, 저장 보상과 삭제 순서, 참조 수 삭제, 배치 엔벨로프)
 - research — _bmad-output/personal-brain/tickets/epic-drive/epic-drive-research-code.md (2026-10-28 정적 코드 조사와 공식 문서 확인)
+- inputs — _bmad-output/personal-brain/inputs/rag-oss-patterns.md, §1.2 R5·R6·R14, §1.3 D1~D11 (2026-11-02 채택 companion: 문서 집계·이름 가중, Drive 동기화의 오류·바로가기·지문·크기·대조)
+- inputs — _bmad-output/personal-brain/inputs/rag-oss-core-architecture.md, §1.1·1.2 동기화, §2 결론 3·7 (2026-11-02 채택 companion)
 
 ## Notes
 
@@ -139,3 +141,6 @@ AD-11·15·23·24·27. 사용자의 외부 파일은 옮기거나 지우지 않�
 - Decision(2026-10-28, spine 갱신 u4 Reviewer Gate R1~R3): source 단위 접근 불가는 그 source 출처에만 경고를 붙이고, `files.source_unreachable_at`은 쓸 수 있는 원본이 하나도 없을 때만 쓰고 돌아오면 해제한다(2·5). Drive FileStore의 모든 연산은 `drive_uploads` 매핑 하나로 remote id를 해석하고 이름 검색을 쓰지 않으며, 매핑 저장 함수는 이전 일감과 put이 공유한다(1). 가린 내용에 연결된 Drive 항목의 이름·경로·링크는 source 이름 검색과 `files show`에서 빠진다(2·6).
 - Decision(2026-10-30, 사용자): 에픽마다 두던 Refactor sweep(8.7)을 뺐다(`dropped`). 리뷰가 미룬 기존 결함은 `deferred-work.md` 장부에 남고, 사용자가 원할 때 `bmad-loop sweep`으로 직접 처리한다. 이 Mac 확인(8.8)은 sweep 대신 sweep이 기다리던 스토리들을 기다린다.
 - Decision(2026-10-30, 추천으로 정함): 8.1은 dropped 17.6·10.13 대신 실제 원문 명령(17.1)·PG FileStore(11.4)·설정(11.6)·FileStore 의미 계약(완료된 10.3)·데몬 감시(완료된 9.7)를 기다린다. 17의 회귀·스킬까지 기다릴 이유는 없다. 시그니처는 착수 시점 main HEAD에서 확인한다.
+- Decision(2026-11-02, 추천으로 정함): Drive는 가민 같은 확장이 아니라 **core의 설치 없는 연결**이다. Drive는 출처이면서 첨부 원본의 저장 위치(FileStore port)라 확장이 될 수 없고, 런타임이 TS뿐이라 설치 단계가 없다. 문서 찾기 기능은 항상 core에 있고 Drive를 연결하지 않으면 대화 첨부만 대상이다. 외부 앱의 Drive 커넥터는 쓰지 않는다(마스킹 우회).
+- Note(2026-11-02, refine 입력): `../../inputs/rag-oss-patterns.md` §1.2 R5·R6 — `meta.documents[]` 문서 단위 집계와 본문·파일·폴더 이름 동시 질의(이름 일치는 약한 가산). E8-6 착수 전 채택 여부를 정한다. 최근성 감쇠는 보류.
+- Note(2026-11-02, refine 입력, Drive 동기화): `../../inputs/rag-oss-patterns.md` §1.2 R5·R6·R14와 §1.3 D1~D11 — Onyx·RAGFlow Drive 커넥터와 저장 구조에서 epic 8 문서에 없는 것만(문서 집계와 제목 가중 분리, 임시 바이트 수명 D10, 버전 표식은 조각 커밋 뒤 D11 포함): 403을 속도 제한으로 읽기(D1), 접근 확인에서 5xx를 없음으로 읽지 않기(D2), 잘못된 pageToken·incompleteSearch 때 처음부터(D3), 바로가기 해석과 원본 id 중복 제거(D4), 목록 질의 고정(`trashed=false`, `createdTime` 포함 창, 필드 목록)(D5), 지문으로 export 건너뛰기(D6), 받는 중 크기 상한 끊기(D7), 전체 목록 대조를 changes의 보조로(D8), Google Docs 제목 절과 제목 딥링크(D9). 두 커넥터 모두 changes API를 쓰지 않으나 1인 1계정에서는 changes가 맞고 D8이 보조다. 스토리 2·5·6 착수 전에 채택 여부를 정한다. 검증(2026-11-02, Sofia): D9(Docs API 제목 절·딥링크)는 2026-10-28 "Google Docs는 `text/plain`으로 export(text locator)" 결정과 locator 종류(AD-24)에 어긋나므로, 채택하려면 그 결정을 바꾸고 spine을 갱신해야 한다. D10은 스토리 2의 F4 확인("재시작 정리가 자기 소유가 아닌 파일을 보존")에 "열린 추출 attempt의 임시 바이트도 보존"을 더하는 조건으로만 맞는다. D1~D8·D11은 기존 결정과 충돌이 없다.

@@ -82,7 +82,7 @@ Garmin 흡수의 범위 밖(2026-10-28)은 다음과 같다. 이것들은 흡수
 - Touch point: Telegram Bot API — 첫 채널 발신; owner: epic-channels (2026-10-28)
 - Touch point: Garmin 저장소의 private capture(`data/absorption-prep/LATEST`: SQLite DB 5개, 파일 349개, `manifest.private.json`) — 기존 Garmin 데이터 이전의 원천, 읽기 전용; owner: epic-garmin-import (2026-10-28)
 - Touch point: Google Drive API — 첨부 원본 저장소·외부 문서; owner: epic-drive
-- Touch point: Model Studio — 임베딩·재순위 호출(선택); owner: epic-embedding-index (V1 뒤)
+- Touch point: OpenAI 호환 임베딩 endpoint(Model Studio 호환 모드·Ollama 등 사용자가 설정) — 임베딩 호출(선택, 기본 꺼짐); owner: epic-embedding-index (V1 뒤. 2026-11-02: "Model Studio 임베딩·재순위"에서 바꿈, 재순위는 기본 없음)
 - Touch point: 문서 추출 라이브러리(`pdfjs-dist`, `mammoth`, `file-type`, `exif-reader`) — 첨부·문서 텍스트 추출과 EXIF; owner: epic-attachments(`file-type`, txt·md), epic-drive(`pdfjs-dist`·`mammoth`), epic-recall-and-mirror(`exif-reader`, V1 뒤)(2026-10-26)
 
 ## References
@@ -98,6 +98,8 @@ Garmin 흡수의 범위 밖(2026-10-28)은 다음과 같다. 이것들은 흡수
 - change — _bmad-output/personal-brain/change-v1-capture-and-drive/change-v1-capture-and-drive.md (V1 재절단과 데몬 먼저, 2026-10-26)
 - inputs — _bmad-output/personal-brain/inputs/weknora-patterns.md (각 에픽 인셉션의 입력)
 - inputs — _bmad-output/personal-brain/inputs/external-review-2026-10-16.md (외부 리뷰 검증. 각 에픽 Notes가 항목 ID로 가리킨다)
+- inputs — _bmad-output/personal-brain/inputs/rag-oss-patterns.md (2026-11-02. epic 17·8·6의 refine·인셉션 입력, R1~R14·D1~D11. 세 에픽의 companion)
+- inputs — _bmad-output/personal-brain/inputs/rag-oss-core-architecture.md (2026-11-02. 네 RAG 앱의 동기화·저장·검색 구조 비교. 세 에픽의 companion)
 - prd — _bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md, FR별 testable consequences
 
 ## Notes
@@ -192,3 +194,5 @@ Garmin 흡수의 범위 밖(2026-10-28)은 다음과 같다. 이것들은 흡수
   - 사람만 할 수 있는 일(Drive OAuth 동의, 토큰이 만료됐을 때의 Garmin MFA, 모델 분석 품질 판단, 원격 push)은 스토리를 `awaiting-operator`로 두어 run을 막지 않고, 목록으로 남긴다.
   - 루프 설정 `gates.mode`는 `none`으로 바꿨다. 에픽 경계에서 멈추지 않는다(`.bmad-loop/policy.toml`, 계획과 함께 main에 들어간다).
 - Decision(2026-10-28, 사용자): 임베딩 선택 색인은 나중에 확장(extension)으로 만든다. 지금은 구현하지 않고, 남은 에픽을 이어 만드는 무인 파이프라인(V1과 V1 뒤 5·3·4)에서 뺀다. 착수할 때 확장 계약(AD-29·30·33, epic 13) 위에서 다시 정의한다. 이 에픽 파일과 `tickets.toml`의 자리는 그때의 입력으로 남긴다.
+- Decision(2026-11-02, 추천으로 정함 → 같은 날 사용자 승인): core·확장 경계를 "확장은 데이터를 가져오는 connector(AD-29), 데이터를 쓰는 방식은 core"로 확인했다. 검색·조각·추출·문서 집계는 core(epic 17·8), Drive는 설치 없는 core 연결(epic 8), 임베딩은 확장이 아니라 core의 선택 기능(epic 6, 2026-10-28 결정을 바꿈). 외부 RAG 앱(RAGFlow·Onyx·Open WebUI·AnythingLLM)은 붙이지 않고 공식·수치·도구 모양만 가져온다(`inputs/rag-oss-patterns.md`). 에이전트가 보는 면(검색·원문·로그·doctor 각 하나)이 하나로 남는 것이 Brain과 플러그인 모음을 가르는 기준이다.
+- Note(2026-11-02, 입력): 네 RAG 오픈소스의 동기화·저장·검색 구조 비교는 `inputs/rag-oss-core-architecture.md`, 채택 후보 목록은 `inputs/rag-oss-patterns.md`(R1~R14, D1~D11). 비교의 결론: Brain의 "PG 하나에 원본·문서 행·조각" 구성은 Open WebUI pgvector 구성과 같은 모양이고, 조각은 어디서나 재생성 파생물이다. 위 2026-11-02 Decision(core·확장 경계)의 근거 §2-1·2-2.
