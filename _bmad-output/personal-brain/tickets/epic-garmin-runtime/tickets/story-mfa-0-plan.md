@@ -4,7 +4,7 @@ type: 'feature'
 ticket: 2
 created: '2026-11-01'
 status: in-progress
-baseline_revision: 8e396997c7b25c8750a2cbec1f8b550de2817138
+baseline_revision: 47d280120abbe0d977b1fe61ed9084711d13ad36
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
@@ -111,6 +111,16 @@ deferred:
 
 ## Implementation Notes
 
+### g6 진행
+
+supervisor 전용 registry·고정 spawn·실제 OS instance/DB 등록·단회 native capability의 bootstrap 부품을 구현했다. [g6 보고](story-mfa-0-g6-implementation.md)의 재현된 합성 service 자식 SIGSEGV는 Security 초기화 후 fork 경로를 posix_spawn 독립 실행으로 바꿔 수정했다. 지휘자는 진단 원본의 `service_status=11`과 변경을 대조했고, 최신 8개 파일 12건을 독립 통과했다(`/tmp/brain162g6-parent-peer-exec-fixed.log`). 최초 지휘자 종료 7은 당시 내부 PID 진단이 없어 같은 crash라고 사후 단정하지 않는다. 현재 봉인 entry는 아직 bootstrap 단계이므로, 같은 구현자에게 실제 기존 상주 보호 서비스·DB fence·endpoint를 하나의 봉인 실행 instance에 결합하는 단위를 배정했다. root/principal/엔진·최종 loader·전체 나머지 요구는 미완료다.
+
+상주 `runProtectedSupervisor`와 queue 전용 native endpoint/client를 같은 수명에 연결했고, 제품 host runner의 native 종료 증거를 실제 PostgreSQL fence에 연결했다. 지휘자 독립 제품 서비스 묶음은 6개 파일 9건(`/tmp/brain162g6-parent-product-service.log`), 이어 상주 readiness·인증 승인 세탁 거부를 포함한 최신 묶음은 6개 파일 10건(`/tmp/brain162g6-parent-resident.log`) 통과했다. 기본 CLI transport 코드와 고정 root pin 검증은 작성됐으나 실제 설치 pin·보호 principal/OrbStack·supervisor 전체 Node/JS/loader 및 정확한 실행 instance 신뢰는 미완료다. `createInstalledProtectedService`는 이 경계 미증명 때문에 설치 endpoint를 명시적으로 닫는다. 현재 같은 구현자가 supervisor 봉인 bootstrap을 작성한다. 일반 queue helper 실행을 사람의 auth 승인으로 인정하지 않는 기존 독립 검토 §3의 구분을 유지하며, B2 전체·B3–B6·D5–D7 및 원래 기준 전체 리뷰는 미완료다.
+
+후속으로 Node의 launcher OS peer 검증 addon, Node/addon 서명을 고정한 registry v2, 제품 native launcher/host와 합성 supervisor의 인증된 FD 전달 사슬을 작성했다. 지휘자 독립 `BRAIN_G6_PG=1 pnpm exec vitest run apps/cli/test/protected-queue-host.test.ts apps/cli/test/sealed-node-peer.test.ts apps/cli/test/sealed-queue-client.test.ts packages/postgres/test/protected-queue-host.test.ts`에서 4개 파일 5건 통과(`/tmp/brain162g6-parent-host-fence.log`). 별도 프로세스의 실제 제품 handler/격리 PG와 영속 admission 경합·불명 보존을 확인했으나, 실제 기존 보호 supervisor의 native host/service 소유 및 cleanup 증거→DB fence 연결·기본 CLI transport는 아직 미완료다. 같은 구현자에게 이 제품 연결 전체를 후속 배정했다. 합성 supervisor 성공을 실제 보호 설치·principal·엔진·주입 방지 증거로 취급하지 않는다.
+
+[g6 전체 구현 보고](story-mfa-0-g6-implementation.md)의 root 전용 registry 검증·고정 Node spawn·제한 queue 후보 및 실제 Node/native/Core/격리 PG 합성 사슬을 구성 요소로 확인했다. 지휘자 독립 실행에서 registry·경로 교체·후보 변조 거부와 제한 client 회귀 4건, 실제 PG를 포함한 Node 사슬 2건이 통과했다. Node ACK 출처·실제 제품 서비스 조립·같은 UID 대리 호출·재연결 거부와 root/principal·loader 전체 실증은 미완료다. 같은 활성 구현 Dispatch에서 B2-2 제품 native 조립을 진행한다. B2 전체·B3–B6·D5–D7·T01–T28 및 원래 기준 독립 리뷰는 완료되지 않았으며 운영 queue/auth/HTTP는 닫혀 있다.
+
 ### g5 진행
 
 [g5 전체 구현 보고](story-mfa-0-g5-implementation.md)의 D4B 단일 Core 제품 조립·고정 metadata 및 다중 broker/GUI 세션·revoke-all과 기존 보호 명령 연결을 구성 요소 단계로 수락했다. 지휘자는 정상 Core/native, 신원 commit 응답 유실·metadata 누락, 두 native 세션 격리와 실제 두 Core attempt의 commit 유실·두 번째 ACK 실패를 독립 재실행했다. 아래 Verification에 명령과 로그를 남겼다.
@@ -169,6 +179,17 @@ g3의 D1 부분 구현은 `tooling/protected-deployment/`에 있다. staging·�
 보호 DB 저장 전에 client 생성의 자동 I/O까지 금지하고, 호출 의도 commit 후 호출하며, 결과 저장 실패 시 의도를 남긴다. 외부 호출 중 SQL 쓰기 트랜잭션은 열지 않는다. library 내부 retry와 token refresh의 HTTP 수를 wrapper 호출 간격 보장과 혼동하지 않는다. 최초 미확인 계정의 안전한 발견·alias 결합은 기존 계정 차단을 초기화해서는 안 된다.
 
 ## Verification
+
+### g6 중간 지휘자 검증
+
+- 위 실패와 같은 supervisor 봉인 포함 8파일 묶음을 합성 service의 posix_spawn 수정 뒤 독립 재실행해 8개 파일 12건 통과(`/tmp/brain162g6-parent-peer-exec-fixed.log`). 수정 전 진단 `/tmp/brain162g6-peer-trace-2.log`의 service 자식 `wait status 11`과 원래 Security-after-fork 경로 및 수정 소스를 대조했다. 최초 종료 7의 상세 분기는 사후 확정하지 않고 이전 실패 기록을 보존한다. 현재 통과는 bootstrap 부품 및 queue 합성 사슬 범위다.
+
+- supervisor 봉인 신규 시험을 포함한 `BRAIN_G6_PG=1 pnpm exec vitest run apps/cli/test/sealed-supervisor-product.test.ts packages/postgres/test/sealed-supervisor-instance.test.ts apps/cli/test/queue-host-product.test.ts apps/cli/test/protected-queue-host.test.ts apps/cli/test/protected-queue.test.ts apps/cli/test/sealed-node-peer.test.ts apps/cli/test/sealed-queue-client.test.ts packages/postgres/test/protected-queue-host.test.ts`: 7개 파일 11건 통과·1개 파일 1건 실패(`/tmp/brain162g6-parent-supervisor-seal.log`). `sealed-node-peer.test.ts:45`의 정상 `run('ok')`가 expected 0·received 7로 실패했으며 diagnostic은 비어 있었다. 이전 종료 9와 같은 원인이라고 단정하지 않는다. 같은 구현자에게 정확한 내부 경로 진단·수정과 동일 병렬 묶음 재검증을 요청했으며 단계 전체는 미수락 상태다.
+
+- `sh extensions/garmin/native/tests/check-sealed-registry.sh`: 종료 0. 최종 경로 고정 버전 로그는 `/tmp/brain162g6-parent-registry3.log`다. 합성 registry·고정 Node spawn 및 경로 교체 거부를 확인했으며 실제 root 설치 증거는 아니다.
+- `sh extensions/garmin/native/tests/check-local-cli-registry.sh`: 종료 0(`/tmp/brain162g6-parent-local-cli2.log`). 제한 후보의 고정 목록·변조 거부와 닫힌 진입점을 확인했다. 이후 Node entry의 ACK 연결 변경은 다음 사슬 시험으로 확인했다.
+- `pnpm exec vitest run apps/cli/test/sealed-queue-client.test.ts apps/cli/test/protected-queue.test.ts`: 2개 파일 4건 통과(`/tmp/brain162g6-parent-limited-tests.log`). 제한 client와 기존 queue 요청·렌더러 및 서비스 부재를 확인했다.
+- `BRAIN_G6_PG=1 pnpm exec vitest run apps/cli/test/sealed-node-peer.test.ts apps/cli/test/sealed-queue-client.test.ts`: 2개 파일 2건 통과(`/tmp/brain162g6-parent-node-peer.log`). 실제 Node→합성 native OS peer→제품 handler/Core/격리 PG 왕복과 신원·변조·연결 교체 거부를 확인했다. 시험 gateway와 Node ACK 출처 검증의 한계 때문에 실제 제품 보호 transport나 별도 principal의 증거로 세지 않는다.
 
 ### g5 중간 지휘자 검증
 

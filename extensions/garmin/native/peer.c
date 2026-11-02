@@ -11,15 +11,26 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#ifdef BRAIN_PEER_DIAGNOSTIC
+#include <signal.h>
+#endif
 #include <poll.h>
 #include <time.h>
 
 int brain_verify_peer(int fd, uid_t uid, pid_t pid, const uint8_t hash[20]) {
-  audit_token_t token; socklen_t size = sizeof token; unsigned nonzero = 0;
+  audit_token_t token={0}; socklen_t size = sizeof token; unsigned nonzero = 0;
   if (!hash || uid == 0 || pid <= 0) return 0;
   for (int i = 0; i < 20; i++) nonzero |= hash[i];
-  if (!nonzero || getsockopt(fd, SOL_LOCAL, LOCAL_PEERTOKEN, &token, &size) || size != sizeof token
-      || audit_token_to_euid(token) != uid || audit_token_to_pid(token) != pid) return 0;
+  if(!nonzero)return 0;
+  int socket_result=getsockopt(fd,SOL_LOCAL,LOCAL_PEERTOKEN,&token,&size),socket_errno=errno;
+  if (socket_result || size != sizeof token || audit_token_to_euid(token) != uid || audit_token_to_pid(token) != pid) {
+#ifdef BRAIN_PEER_DIAGNOSTIC
+    fprintf(stderr,"PEER_TOKEN fd=%d rc=%d errno=%d size=%u expected_uid=%u actual_uid=%u expected_pid=%d actual_pid=%d alive=%d\n",fd,socket_result,socket_errno,(unsigned)size,(unsigned)uid,(unsigned)audit_token_to_euid(token),pid,audit_token_to_pid(token),kill(pid,0)==0);
+#else
+    (void)socket_errno;
+#endif
+    return 0;
+  }
   char requirement[64]; memcpy(requirement, "cdhash H\"", 9);
   static const char hex[] = "0123456789abcdef";
   for (int i = 0; i < 20; i++) { requirement[9+i*2] = hex[hash[i] >> 4]; requirement[10+i*2] = hex[hash[i] & 15]; }
@@ -30,9 +41,14 @@ int brain_verify_peer(int fd, uid_t uid, pid_t pid, const uint8_t hash[20]) {
   CFDictionaryRef attrs = CFDictionaryCreate(NULL, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
   SecCodeRef code = NULL; SecRequirementRef req = NULL;
   CFStringRef text = CFStringCreateWithCString(NULL, requirement, kCFStringEncodingUTF8);
-  int ok = attrs && text && SecCodeCopyGuestWithAttributes(NULL, attrs, kSecCSDefaultFlags, &code) == errSecSuccess
-    && SecRequirementCreateWithString(text, kSecCSDefaultFlags, &req) == errSecSuccess
-    && SecCodeCheckValidity(code, kSecCSStrictValidate, req) == errSecSuccess;
+  OSStatus guest_status=-1,requirement_status=-1,validity_status=-1;
+  if(attrs && text)guest_status=SecCodeCopyGuestWithAttributes(NULL,attrs,kSecCSDefaultFlags,&code);
+  if(guest_status==errSecSuccess)requirement_status=SecRequirementCreateWithString(text,kSecCSDefaultFlags,&req);
+  if(requirement_status==errSecSuccess)validity_status=SecCodeCheckValidity(code,kSecCSStrictValidate,req);
+  int ok=guest_status==errSecSuccess && requirement_status==errSecSuccess && validity_status==errSecSuccess;
+#ifdef BRAIN_PEER_DIAGNOSTIC
+  if(!ok)fprintf(stderr,"PEER_SIGNATURE pid=%d alive=%d guest=%d requirement=%d validity=%d\n",pid,kill(pid,0)==0,(int)guest_status,(int)requirement_status,(int)validity_status);
+#endif
   if (req) CFRelease(req); if (code) CFRelease(code); if (text) CFRelease(text); if (attrs) CFRelease(attrs); CFRelease(data);
   return ok;
 }

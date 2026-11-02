@@ -40,6 +40,7 @@ import { recordHookArrival } from './runtime/hook-arrival.js';
 import { readStdin } from './runtime/stdin.js';
 import { protectedQueueClient, type ProtectedQueueTransport } from './daemon/protected-queue.js';
 import { runQueueList } from './commands/queue-list.js';
+import { installedQueueTransport } from './daemon/installed-queue-transport.js';
 import {
   JSON_FLAG,
   argumentName,
@@ -601,7 +602,7 @@ async function execute(
     : [];
 
   if (spec.ns === 'queue' && spec.verb === 'list') {
-    return finish(rendering, await runQueueList({options, queue: protectedQueueClient(wiring.protectedQueueTransport)}), warningCodes, warningLines);
+    return finish(rendering, await runQueueList({options, queue: protectedQueueClient(wiring.protectedQueueTransport ?? installedQueueTransport)}), warningCodes, warningLines);
   }
 
   const opened = await openBrainStore({ home, env, config,

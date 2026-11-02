@@ -8,6 +8,12 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef BRAIN_PEER_DIAGNOSTIC
+#include <stdio.h>
+#define TRACE(...) fprintf(stderr,__VA_ARGS__)
+#else
+#define TRACE(...) ((void)0)
+#endif
 
 /* [ASSUMPTION] 일반 데이터 frame 상한은 실제 목록 부하와 함께 재평가한다. */
 #define DATA_FRAME_MAX (1024U * 1024U)
@@ -22,10 +28,10 @@ static int transfer(int fd, uint8_t *buffer, size_t length, int writing, int64_t
     struct pollfd event = { .fd = fd, .events = writing ? POLLOUT : POLLIN };
     int ready = poll(&event, 1, (int)(deadline - now));
     if (ready < 0 && errno == EINTR) continue;
-    if (ready <= 0 || (event.revents & (POLLERR | POLLNVAL))) return 0;
+    if (ready <= 0 || (event.revents & (POLLERR | POLLNVAL))) { TRACE("DATA_POLL fd=%d writing=%d ready=%d events=%d errno=%d remaining=%zu\n",fd,writing,ready,event.revents,errno,length);return 0;}
     ssize_t count = writing ? send(fd, buffer, length, MSG_DONTWAIT) : recv(fd, buffer, length, MSG_DONTWAIT);
     if (count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
-    if (count <= 0) return 0;
+    if (count <= 0) { TRACE("DATA_IO fd=%d writing=%d count=%ld errno=%d remaining=%zu\n",fd,writing,(long)count,errno,length);return 0;}
     buffer += count; length -= (size_t)count;
   }
   return 1;
@@ -45,12 +51,14 @@ int brain_data_peer_open(brain_data_peer *peer, int fd, uid_t uid, pid_t pid, co
   peer->fd = fd; peer->uid = uid; peer->pid = pid; memcpy(peer->hash, hash, 20); peer->authenticated = 1; return 1;
 }
 int brain_data_peer_read(brain_data_peer *peer, uint8_t *buffer, size_t capacity, size_t *length, int timeout_ms) {
-  int64_t deadline; uint32_t wire;
-  if (!buffer || !length || !valid(peer, timeout_ms, &deadline) || !transfer(peer->fd, (uint8_t *)&wire, sizeof wire, 0, deadline)) goto fail;
-  size_t size = ntohl(wire);
-  if (!size || size > DATA_FRAME_MAX || size > capacity || !transfer(peer->fd, buffer, size, 0, deadline) || !brain_verify_peer(peer->fd, peer->uid, peer->pid, peer->hash)) goto fail;
-  *length = size; return 1;
-fail: brain_data_peer_close(peer); return 0;
+  int64_t deadline; uint32_t wire;int stage=0;
+  if (!buffer || !length || !valid(peer, timeout_ms, &deadline)) goto fail;
+  stage=1;if(!transfer(peer->fd,(uint8_t *)&wire,sizeof wire,0,deadline))goto fail;
+  size_t size=ntohl(wire);stage=2;if(!size||size>DATA_FRAME_MAX||size>capacity)goto fail;
+  stage=3;if(!transfer(peer->fd,buffer,size,0,deadline))goto fail;
+  stage=4;if(!brain_verify_peer(peer->fd,peer->uid,peer->pid,peer->hash))goto fail;
+  *length=size;return 1;
+fail: (void)stage;TRACE("DATA_READ_FAIL stage=%d fd=%d errno=%d\n",stage,peer?peer->fd:-1,errno);brain_data_peer_close(peer);return 0;
 }
 int brain_data_peer_write(brain_data_peer *peer, const uint8_t *buffer, size_t length, int timeout_ms) {
   int64_t deadline;

@@ -1,5 +1,6 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, open, realpath } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { constants as osConstants } from 'node:os';
@@ -25,10 +26,8 @@ function uuidText(bytes: Buffer): string {
 }
 
 /** 봉인 registry가 고정 cdhash를 공급한다. 경로와 명령은 사용자 설정에서 읽지 않는다. */
-async function verifyInstalledBridge(expectedHash: string): Promise<boolean> {
-  if (!/^[0-9a-f]{40}$/.test(expectedHash)) return false;
+async function verifyRootOwnedFile(path: string): Promise<boolean> {
   try {
-    const path = SEALED_NATIVE_BRIDGE;
     if (await realpath(path) !== path) return false;
     for (let part = path; ; part = dirname(part)) {
       const info = await lstat(part);
@@ -38,6 +37,12 @@ async function verifyInstalledBridge(expectedHash: string): Promise<boolean> {
       if (lines.length !== 1 || lines[0]!.slice(0,11).includes('+')) return false;
       if (part === '/') break;
     }
+    return true;
+  } catch { return false; }
+}
+async function verifyInstalledExecutable(path: string, expectedHash: string): Promise<boolean> {
+  if (!/^[0-9a-f]{40}$/.test(expectedHash) || !(await verifyRootOwnedFile(path))) return false;
+  try {
     await execute('/usr/bin/codesign', ['--verify', '--strict', path], { env: { PATH: '/usr/bin:/bin', LANG: 'C' }, timeout: 5000, maxBuffer: 4096 });
     const display = await execute('/usr/bin/codesign', ['-d', '--verbose=4', path], { env: { PATH: '/usr/bin:/bin', LANG: 'C' }, timeout: 5000, maxBuffer: 8192 });
     return /^CDHash=([0-9a-f]{40})$/m.exec(display.stderr)?.[1] === expectedHash;
@@ -232,8 +237,36 @@ export function createNativeBridgeAdapter(spawnBridge: SpawnBridge, osInspector:
 /** 검증된 설치 registry의 hash가 있을 때만 고정 경로를 실행한다. */
 export function sealedNativeBridge(expectedHash: string): ReturnType<typeof createNativeBridgeAdapter> {
   return createNativeBridgeAdapter(async () => {
-    if (!(await verifyInstalledBridge(expectedHash))) throw new Error('unverified');
+    if (!(await verifyInstalledExecutable(SEALED_NATIVE_BRIDGE,expectedHash))) throw new Error('unverified');
     const child = spawn(resolve(SEALED_NATIVE_BRIDGE), [], { cwd: '/', env: { PATH: '/usr/bin:/bin', LANG: 'C' }, stdio: ['ignore','pipe','pipe','pipe'] });
     return child as BridgeProcess;
   });
+}
+
+/** 고정 queue host의 pin은 보호 설치 registry에서만 공급한다. */
+export const SEALED_QUEUE_HOST = '/Library/Application Support/SecondBrain/libexec/queue-supervisor-host';
+export async function verifyInstalledQueueHost(expectedHash: string): Promise<boolean> {
+  return verifyInstalledExecutable(SEALED_QUEUE_HOST,expectedHash);
+}
+
+const SEALED_QUEUE_CLIENT_PIN = '/Library/Application Support/SecondBrain/config/queue-client.pin';
+export const SEALED_QUEUE_CLIENT = '/Library/Application Support/SecondBrain/libexec/queue-data-client';
+/** root 소유 pin만 사용한다. 사용자 환경과 설정은 신원의 출처가 아니다. */
+export async function verifyInstalledQueueClient(): Promise<boolean> {
+  if(!await verifyRootOwnedFile(SEALED_QUEUE_CLIENT_PIN))return false;
+  try {
+    const fd=await open(SEALED_QUEUE_CLIENT_PIN,fsConstants.O_RDONLY|fsConstants.O_NOFOLLOW);
+    try {
+      const before=await fd.stat();if(!before.isFile()||before.uid!==0||before.nlink!==1||before.size>128)return false;
+      const text=await fd.readFile({encoding:'utf8'});const after=await fd.stat();const named=await lstat(SEALED_QUEUE_CLIENT_PIN);
+      if(before.dev!==after.dev||before.ino!==after.ino||before.dev!==named.dev||before.ino!==named.ino||before.size!==after.size||before.mtimeMs!==after.mtimeMs)return false;
+      const match=/^([1-9][0-9]*) ([0-9a-f]{40})\n$/.exec(text);
+      return !!match && Number(match[1])===process.getuid?.() && await verifyRootOwnedFile(SEALED_QUEUE_CLIENT_PIN) && await verifyInstalledExecutable(SEALED_QUEUE_CLIENT,match[2]!);
+    } finally {await fd.close();}
+  } catch {return false;}
+}
+
+export const SEALED_QUEUE_ENDPOINT = '/Library/Application Support/SecondBrain/libexec/queue-endpoint';
+export async function verifyInstalledQueueEndpoint(expectedHash: string): Promise<boolean> {
+  return verifyInstalledExecutable(SEALED_QUEUE_ENDPOINT,expectedHash);
 }

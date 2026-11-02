@@ -16,7 +16,7 @@ const messages = {USAGE:'목록 한도는 1~200 정수여야 합니다',DB_LOCKE
 const MAX_FRAME = 1024 * 1024;
 
 // JSON.parse는 중복 키를 지우므로 파싱 전에 거부한다.
-function parseFrame(raw: string): unknown {
+export function parseFrame(raw: string): unknown {
   if (typeof raw !== 'string' || Buffer.byteLength(raw) > MAX_FRAME) throw new Error('frame');
   let i=0;
   const ws=()=>{while (/\s/u.test(raw[i] ?? '') && i<raw.length) i++;};
@@ -43,6 +43,14 @@ function decodeItem(v: unknown): PublicItem {
   for(const key of ['nextAttemptAt','createdAt','completedAt','cancelRequestedAt','attemptStartedAt','lastProgressAt']) if(v[key]!==null) v[key]=new Date(v[key] as string);
   return v as unknown as PublicItem;
 }
+/** native host에 전달할 명명된 queue 입력만 허용한다. */
+export function queueOptionsFromFrame(raw: string): Record<string, unknown> | undefined {
+  try {
+    const value=parseFrame(raw);
+    if(!object(value) || !(exact(value,['operation','all','limit']) || exact(value,['operation','all','limit','kind'])) || value.operation!=='queue.list.v1' || typeof value.all!=='boolean' || !nat(value.limit) || (value.limit as number)<1 || (value.limit as number)>200 || (Object.hasOwn(value,'kind') && !text(value.kind))) return undefined;
+    return {all:value.all,limit:String(value.limit),...(typeof value.kind==='string'?{kind:value.kind}:{})};
+  } catch {return undefined;}
+}
 /** 서버는 고정된 공개 필드만 반환하며 저장소나 attempt 권한은 내보내지 않는다. */
 export async function handleQueueFrame(raw: string, queue: Pick<Brain['queue'],'list'>): Promise<string> {
   let request: Record<string,unknown>;
@@ -65,6 +73,7 @@ function decodeResponse(raw: string, limit: number): QueueResult {
   const v=parseFrame(raw);
   if(!object(v) || typeof v.ok!=='boolean') throw new Error('response');
   if(v.ok===false) {
+    if(exact(v,['ok','code','message']) && v.code==='SERVICE_UNAVAILABLE' && v.message==='보호 서비스를 사용할 수 없습니다') return failure('SERVICE_UNAVAILABLE');
     if(exact(v,['ok','code']) && v.code==='INVALID_REQUEST') return failure('SERVICE_INVALID_REQUEST');
     if(!exact(v,['ok','code','message']) || typeof v.code!=='string' || !Object.hasOwn(messages,v.code) || v.message!==messages[v.code as keyof typeof messages]) throw new Error('failure');
     return v as QueueResult;
