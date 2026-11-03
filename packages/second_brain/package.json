@@ -5,14 +5,17 @@
   "type": "module",
   "exports": {
     ".": {
+      "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./testing": {
+      "source": "./src/testing.ts",
       "types": "./dist/testing.d.ts",
       "default": "./dist/testing.js"
     },
     "./postgres": {
+      "source": "./src/postgres.ts",
       "types": "./dist/postgres.d.ts",
       "default": "./dist/postgres.js"
     }

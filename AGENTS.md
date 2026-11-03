@@ -12,6 +12,12 @@ Personal Brain (`second-brain`): a local-first memory of agent sessions whose so
 
 <!-- /bmad:context -->
 
+## 시험 실행 범위
+
+- 구현·리뷰 수정·재검증을 반복하는 동안에는 `pnpm test:changed`만 돌린다(기본 `origin/main` 대비, `pnpm test:changed -- <ref>`로 기준 변경). 바뀐 파일의 TS 의존 시험은 Vitest `--changed`로, Python 통합 시험은 `tooling/test-changed/rules.mjs`의 경로 규칙으로 고른다. 규칙에 걸리지 않으면 Python 시험은 생략된다.
+- 작업(티켓)을 마무리하기 직전, 커밋·push 전에만 전체 `pnpm test`와 `pnpm test:python`을 한 번씩 순차로 돌린다. 이 마지막 전체 회귀를 생략하지 않는다 — 경로 규칙과 `--changed`가 못 따라가는 의존을 여기서 잡는다.
+- `pnpm test`와 `pnpm test:python`은 둘 다 build하므로 동시에 돌리지 않는다. Python·SQL·자식 프로세스로만 쓰이는 새 경로를 만들면 `rules.mjs`에 규칙을 더한다.
+
 ## 티켓 자동화와 컴팩션 복구
 
 - 새 세션 또는 컴팩션 후 첫 행동은 `_bmad-output/personal-brain/automation/runbook.md`를 읽는 것이다. 자동화 관련 작업·재개·상태 보고 전에는 반드시 다시 읽는다.
