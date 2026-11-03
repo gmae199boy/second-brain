@@ -21,6 +21,8 @@
 
 중앙이 개입하는 시점은 최종 결과 보고, 지휘자가 요청한 명세·외부 입력 판단, 지휘자가 자체 복구할 수 없는 실패, 세션·컴팩션 복구 시 소유권 대조다. 최초 실행 방식의 시작 증거 확인은 한 번의 preflight 검증이며 주기적 진행 점검의 근거가 아니다. 중앙은 최종 보고를 받은 뒤 계획·diff·검증·리뷰·브랜치 push 증거를 대조하고 main 병합·push 및 다음 티켓·에픽 전이를 수행한다. 증거에 공백이나 모순이 있을 때만 필요한 보완을 지휘자에게 돌린다.
 
+중앙 Run에는 지휘자의 최종 결과(`ticket-result:<ticket>`)만 정상 보고로 보낸다. 하위 구현·리뷰 워커의 시작·종료·phase-ready·findings·depth 검증 알림은 지휘자 자신의 Run에서 처리하고 중앙에 전달하지 않는다. 예외는 중앙 판단이 필요한 명세·외부 입력 질문과 지휘자가 자체 복구할 수 없는 실패다. 중앙도 보고가 없는 단순 목표 재개마다 같은 대기 상태를 사용자에게 반복 설명하지 않는다.
+
 정상 실행 중 중앙의 다음 행동은 `await-ticket-result`다. 목표 자동 재개만 있고 새 보고·질문·실패 알림이 없으면 중간 진행을 조회하거나 같은 티켓의 작업을 중복 시작하지 않는다. Orca 알림으로 재개하며, 구현·리뷰가 진행된다는 이유로 전체 목표를 blocked로 바꾸지 않는다.
 
 ## 상태와 증거 저장
@@ -69,7 +71,7 @@ python3.14 _bmad/method/scripts/tickets.py find <ticket-ref>
 
 긴 명세는 중앙의 티켓별 로컬 파일에 먼저 만들고 생성 prompt에서 읽을 실제 위치를 명시한다. 첫 세션은 이를 자기 checkout의 `.brain-automation/`에 복사해 복구에 사용한다. `worktree create --agent`가 이미 시작한 지휘자를 중복 launch하지 않는다. 이미 작업 중인 checkout을 복구할 때는 아래 전환 절차를 따른다.
 
-긴 spec은 저장소 상대 경로와 원문 티켓 요구를 담아 파일로 만들고 `--spec-file`로 전달한다. 런북·티켓 ref·계획·원래 baseline·main 병합 금지·branch push 의무·보고 및 체크포인트 위치를 포함한다. 독립 지휘자에게 중앙 Run ID와 보고 규약을 명시한다. 하위 구현·리뷰 워커는 자신의 Task/Dispatch와 최종 worker_done 의무를 injected preamble에서 읽게 한다. 최초 실제 하위 시작의 ready 영수증과 worker-show depth를 확인하고 중앙에 보고한다. 실패하면 부분 자원을 보존한 뒤 복구한다.
+긴 spec은 저장소 상대 경로와 원문 티켓 요구를 담아 파일로 만들고 `--spec-file`로 전달한다. 런북·티켓 ref·계획·원래 baseline·main 병합 금지·branch push 의무·보고 및 체크포인트 위치를 포함한다. 독립 지휘자에게 중앙 Run ID와 보고 규약을 명시한다. 하위 구현·리뷰 워커는 자신의 Task/Dispatch와 최종 worker_done 의무를 injected preamble에서 읽게 한다. 최초 실제 하위 시작의 ready 영수증과 worker-show depth는 지휘자 로컬에 저장하고 최종 보고에 포함한다. 별도의 시작·depth 보고를 중앙에 보내지 않는다. 실패하면 부분 자원을 보존한 뒤 복구한다.
 
 워커 대기는 최신 Orca 스킬대로 턴을 종료하고 알림으로 재개한다. 깨어나면 제시된 check를 수행한다. 예전 helper의 반복 polling이나 다른 Run의 inbox 소비를 쓰지 않는다. 독립 지휘자는 자신이 소유하는 Run과 하위 Task/Dispatch를 저장하고 중앙 질문·최종 결과 보고 의무를 유지한다. 중앙 소유 Run을 run-use하거나 종료된 이전 지휘자의 --from 핸들을 사용하지 않는다.
 
@@ -82,7 +84,7 @@ python3.14 _bmad/method/scripts/tickets.py find <ticket-ref>
 1. 중앙·워커 체크포인트, 계획·baseline·미커밋 변경, 기존 Run/Dispatch·실패 영수증을 보존한다. 모호한 생존 상태를 종료로 추정하지 않는다.
 2. 사용자가 승인한 교체 대상 Dispatch만 최신 recovery 절차로 정리한다. `stopped` 등 확정 증거가 없으면 같은 checkout에 새 편집자를 띄우지 않는다. 워크트리나 부분 작업을 삭제하지 않는다.
 3. 이미 Orca가 만든 checkout이면 `worktree set --worktree <selector> --no-parent`로 최상위에 두고 `agent launch --worktree <selector> --agent codex --model gpt-6.1-sol --effort medium --prompt <복구 명세>`로 독립 지휘자를 시작한다. 새 티켓은 앞 절의 `worktree create --no-parent` 경로를 사용한다.
-4. launch operation ID·정확한 handle·prompt delivery와 부모 없음 확인 결과를 중앙에 저장한다. 독립 지휘자는 종료된 이전 Task/Dispatch를 자기 것으로 재사용하지 않고 새 소유 Run에서 구현·리뷰를 감독한다. 실제 depth 1 시작 성공을 확인한다.
+4. launch operation ID·정확한 handle·prompt delivery와 부모 없음 확인 결과를 중앙에 저장한다. 독립 지휘자는 종료된 이전 Task/Dispatch를 자기 것으로 재사용하지 않고 새 소유 Run에서 구현·리뷰를 감독한다. 실제 depth 1 시작 성공을 자기 체크포인트에 저장하고 최종 보고에 포함한다.
 5. 독립 지휘자는 중앙 Run에 `orchestration send --to run:<중앙 Run ID> --type status --subject ticket-result:<ticket> --report-path <실제 보고 파일> --body <성공/실패와 근거>`로 보고한다. 자신의 parent Dispatch가 없으므로 worker_done을 위조하지 않는다. 하위 dispatched 워커는 정상 worker_done을 보낸다. 질문과 차단도 중앙 Run으로 send하고 중앙은 그 메시지 ID에 reply한다.
 6. 중앙은 독립 세션 handle·Run·하위 Dispatch 및 보고 원문·계획·원격 브랜치 SHA를 대조한다. 단순 status 전달 성공으로 완료하지 않는다. 이후 main 병합·push와 에픽 전이 기준은 동일하다.
 
