@@ -107,20 +107,20 @@ def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, c
                 account = str(identity)
                 store.set_target(conn,account,work,token,args['target_kind'],args['target_id'])
             snapshot = store.coverage_snapshot(conn,account)
+            catalogue = normalization.catalog(conn)
+            normalized, normalize_failed = normalization.retry_items(conn,account,work,token,zone,boundary,snapshot,catalogue)
             mode = coverage.entry(snapshot,today,force=args['recent'],token_saved_at=_token_mtime(tokenstore))
             if mode == 'noop':
-                pending_days = [str(row[0]) for row in normalized_store.unfinished_days(conn,account)]
-                failed = normalization.publish_days(conn,account,work,token,zone,pending_days,normalization.catalog(conn),boundary,snapshot=snapshot) if pending_days else 0
-                result('noop',cutoff,today,normalize_failed=failed)
+                pending_days = [str(row[0]) for row in normalized_store.unfinished_days(conn,account,history_start=snapshot['history_start'])]
+                failed = normalization.publish_days(conn,account,work,token,zone,pending_days,catalogue,boundary,snapshot=snapshot) if pending_days else 0
+                result('noop',cutoff,today,normalized=normalized,normalize_failed=normalize_failed + failed)
                 return
             if args['recent']:
                 mode = 'rejected'
             history = date.fromisoformat(snapshot['history_start']) if snapshot['history_start'] else today-timedelta(days=30)
             planned = coverage.plan(snapshot,history,today,zone,int(settings['garmin.max_dates_per_run']),int(settings['garmin.max_rejected_attempts']),mode,args['recent'])
             counts = {'transient':0,'rejected':0}
-            normalized = normalize_failed = 0
             affected = set()
-            catalogue = normalization.catalog(conn)
             status, detail = 'success', ''
             try:
                 if planned:
@@ -135,7 +135,8 @@ def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, c
                                 raise ValueError('COLLECT_ACCOUNT_MISMATCH')
                         if (initial is not None or client is not None) and hasattr(active, 'configure_first'):
                             active.configure_first(first)
-                        store.set_history_start(conn,account,work,token,history.isoformat())
+                        snapshot['history_start'] = store.set_history_start(conn,account,work,token,history.isoformat())
+                        history = date.fromisoformat(snapshot['history_start'])
                         store.put_run(conn,account,work,token,run_id,today,started,'running')
                         for index,(day,endpoints) in enumerate(planned):
                             if index:
@@ -168,6 +169,10 @@ def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, c
                                 now = _clock_ms()
                                 library = getattr(active,'library_version','synthetic-port')
                                 predicted = store.raw_transition(previous,payload,library,now)
+                                projected = [i for i in before if (i['scope'],i['key'],i['endpoint']) != (scope,key,endpoint)]
+                                projected.append({'scope':scope,'key':key,'endpoint':endpoint,**predicted})
+                                dirty_days = [key] if scope == 'day' else [day.isoformat(),old_activity_day,normalization.activity_date(projected,key,zone)]
+                                dirty_days = [d for d in dirty_days if d and d >= history.isoformat()]
                                 prepared = normalization.prepare(conn,account,before,scope,key,endpoint,predicted['body'],zone)
                                 published = [True]
                                 revision = None
@@ -180,9 +185,10 @@ def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, c
                                     if not error:
                                         observations = normalized_store.observations(rows,catalogue,dataset=dataset,account=account,zone=zone,revision=revision,fetched_ms=predicted['fetched_at_ms'],batch=batch,endpoint=endpoint)
                                 def publish(cur,dataset,value):
+                                    normalized_store.mark_days_dirty(cur,dataset,dirty_days)
                                     if prepared is not None:
                                         published[0] = normalized_store.publish_atomic(cur,dataset,account,work,token,scope,key,endpoint,value['body'],value['fetched_at_ms'],revision,observations,error)
-                                stored = store.upsert_raw(conn,account,work,token,scope,key,endpoint,payload,library,now,expected=predicted,publish=publish)
+                                stored = store.upsert_raw(conn,account,work,token,scope,key,endpoint,payload,library,now,expected=predicted,publish=publish,expected_raw=before)
                                 if prepared is not None:
                                     rows,error = prepared
                                     if not published[0]:
@@ -202,9 +208,10 @@ def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, c
                             for item in coverage.pending_activities(snapshot,day,zone,int(settings['garmin.max_rejected_attempts']),mode,today):
                                 fetch('activity',item.key,item.endpoint)
                 else:
-                    store.set_history_start(conn,account,work,token,history.isoformat())
+                    snapshot['history_start'] = store.set_history_start(conn,account,work,token,history.isoformat())
+                    history = date.fromisoformat(snapshot['history_start'])
                     store.put_run(conn,account,work,token,run_id,today,started,'running')
-                affected.update(str(row[0]) for row in normalized_store.unfinished_days(conn,account))
+                affected.update(str(row[0]) for row in normalized_store.unfinished_days(conn,account,history_start=history.isoformat()))
                 normalize_failed += normalization.publish_days(conn,account,work,token,zone,affected,catalogue,boundary,snapshot=snapshot)
                 if any(counts.values()):
                     status = 'partial'

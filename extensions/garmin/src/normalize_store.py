@@ -1,14 +1,15 @@
 """Immutable health publication and resumable normalization ledger."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import time
 from uuid import UUID, uuid5
 
 from batch_import import canonical, encoded
-from collect_store import _write, dataset_for
+from collect_store import _write, dataset_for, raw_fingerprint, current_raw_fingerprint
 from health import convert, source_endpoint
 from raw_codec import project
 from reader import SQLiteText
+import normalize_tables as tables_rules
 
 NORMALIZATION_VERSION = 8
 CHUNK_SIZE = 500
@@ -138,9 +139,9 @@ def publish_item(conn, account, work_id, token, scope, key, endpoint, body, fetc
             for row in part:
                 _insert(cur,row,work_id,token)
             if index == len(parts)-1:
-                cur.execute('''update garmin.normalize_items set ok=%s,error_code=%s,normalized_at_ms=%s
+                cur.execute('''update garmin.normalize_items set ok=%s,error_code=%s,normalized_at_ms=%s,null_materialized=%s
                     where dataset=%s and scope=%s and key=%s and endpoint=%s and revision=%s and normalization_version=%s''',
-                    (not bool(error_code),error_code,int(time.time()*1000),dataset,scope,key,endpoint,revision,version))
+                    (not bool(error_code),error_code,int(time.time()*1000),body != 'null' or bool(rows),dataset,scope,key,endpoint,revision,version))
     return revision
 
 
@@ -151,15 +152,107 @@ def unpublished(conn, account, version=NORMALIZATION_VERSION):
     cur.execute('''select scope,original_key,endpoint,body,fetched_at_ms from garmin.raw_payloads
         where dataset=%s and raw_identity is null and body_raw is null order by scope,original_key,endpoint''', (dataset,))
     items = [dict(zip(('scope','key','endpoint','body','fetched_at_ms'),row)) for row in cur.fetchall()]
-    cur.execute('select scope,key,endpoint,revision,fetched_at_ms,ok from garmin.normalize_items where dataset=%s and normalization_version=%s', (dataset,version))
+    cur.execute('select scope,key,endpoint,revision,fetched_at_ms,ok,null_materialized from garmin.normalize_items where dataset=%s and normalization_version=%s', (dataset,version))
     states = cur.fetchall()
-    return [i for i in items if not any(scope == i['scope'] and key == i['key'] and endpoint == i['endpoint'] and fetched == i['fetched_at_ms'] and ok and (revision == raw_revision(i['body']) or revision == raw_revision(i['body']) + ':' + str(fetched)) for scope,key,endpoint,revision,fetched,ok in states)]
+    successful = {(scope,key,endpoint,revision,fetched) for scope,key,endpoint,revision,fetched,ok,_ in states if ok}
+    targets = {(scope,key) for scope,key,endpoint,revision,_,ok,_ in states if ok and endpoint in tables_rules.NORMALIZERS and tables_rules.NORMALIZERS[endpoint].columns and not (revision == raw_revision('null') or revision.startswith(raw_revision('null') + ':'))}
+    empty_null = {(scope,key,endpoint,revision,fetched) for scope,key,endpoint,revision,fetched,ok,materialized in states if ok and not materialized}
+    pending = []
+    for item in items:
+        fetched = item['fetched_at_ms']
+        sha = raw_revision(item['body'])
+        prefix = (item['scope'],item['key'],item['endpoint'])
+        revisions = (sha,sha + ':' + str(fetched))
+        rule = tables_rules.NORMALIZERS.get(item['endpoint'])
+        retry_null = item['body']=='null' and rule is not None and bool(rule.columns) and (item['scope'],item['key']) in targets and any((*prefix,revision,fetched) in empty_null for revision in revisions)
+        if retry_null or not any((*prefix,revision,fetched) in successful for revision in revisions):
+            pending.append(item)
+    return pending
 
 
-def publish_day(conn, account, work_id, token, day, revision, fetched_ms, zone, tables, catalog, error_code=None, version=NORMALIZATION_VERSION, boundary=None):
+def mark_days_dirty(cur, dataset, days):
+    for day in sorted(set(day for day in days if day)):
+        cur.execute('''insert into garmin.normalize_day_dirty(dataset,day,generation) values (%s,%s,1)
+            on conflict (dataset,day) do update set generation=garmin.normalize_day_dirty.generation+1''', (dataset,day))
+
+
+def reserve_day(conn, account, work_id, token, day, revision, source_max_ms, raw, version=NORMALIZATION_VERSION, *, fingerprint=None):
+    """Reserve against the current account-wide raw snapshot, never a stale one."""
+    fingerprint = raw_fingerprint(raw) if fingerprint is None else fingerprint
+    with _write(conn,account,work_id,token) as (cur,dataset):
+        # Import and collect both write this table; the lock fences them until
+        # validation and reservation commit, including writers outside collect.
+        cur.execute('lock table garmin.raw_payloads in share mode')
+        if current_raw_fingerprint(conn,account) != fingerprint:
+            return None
+        cur.execute('select pg_advisory_xact_lock(hashtextextended(%s,0))', (digest(dataset,day,'day-reservation'),))
+        base_revision = revision
+        legacy_collision = False
+        cur.execute('select source_max_ms,watermark_us from garmin.normalize_day_revisions where dataset=%s and day=%s and revision=%s', (dataset,day,revision))
+        existing = cur.fetchone()
+        if existing:
+            # 0008 could publish multiple revisions at the same fetched time.
+            # Preserve those immutable rows and give this input one stable alias.
+            cur.execute('''select exists(select 1 from garmin.normalize_day_revisions
+                where dataset=%s and day=%s and watermark_us=%s and revision<>%s)''',
+                (dataset,day,existing[1],revision))
+            if cur.fetchone()[0]:
+                legacy_collision = True
+                revision = digest(revision,'legacy-collision-repair')
+                cur.execute('select source_max_ms,watermark_us from garmin.normalize_day_revisions where dataset=%s and day=%s and revision=%s', (dataset,day,revision))
+                existing = cur.fetchone()
+        cur.execute('''select revision,base_revision,watermark_us from garmin.normalize_day_revisions
+            where dataset=%s and day=%s and source_max_ms=%s order by watermark_us desc,revision desc limit 1''', (dataset,day,source_max_ms))
+        latest = cur.fetchone()
+        if latest and latest[1] == base_revision and (not legacy_collision or latest[0] != base_revision):
+            revision = latest[0]
+            cur.execute('select source_max_ms,watermark_us from garmin.normalize_day_revisions where dataset=%s and day=%s and revision=%s', (dataset,day,revision))
+            existing = cur.fetchone()
+        elif latest and existing:
+            revision = digest(base_revision,'day-occurrence',latest[0])
+            cur.execute('select source_max_ms,watermark_us from garmin.normalize_day_revisions where dataset=%s and day=%s and revision=%s', (dataset,day,revision))
+            existing = cur.fetchone()
+        if existing:
+            source_max_ms, watermark = existing
+        else:
+            cur.execute('select max(watermark_us) from garmin.normalize_day_revisions where dataset=%s and day=%s and source_max_ms=%s', (dataset,day,source_max_ms))
+            previous = cur.fetchone()[0]
+            watermark = max(source_max_ms*1000, (previous+1) if previous is not None else source_max_ms*1000)
+            if watermark >= (source_max_ms+1)*1000:
+                raise ValueError('NORMALIZE_DAY_WATERMARK_EXHAUSTED')
+            cur.execute('insert into garmin.normalize_day_revisions(dataset,day,revision,base_revision,source_max_ms,watermark_us) values (%s,%s,%s,%s,%s,%s)', (dataset,day,revision,base_revision,source_max_ms,watermark))
+        cur.execute('select generation from garmin.normalize_day_dirty where dataset=%s and day=%s', (dataset,day))
+        dirty = cur.fetchone()
+        generation = dirty[0] if dirty else None
+        cur.execute("""insert into garmin.normalize_days(dataset,day,revision,normalization_version,fetched_at_ms,ok,error_code,normalized_at_ms)
+            values (%s,%s,%s,%s,%s,false,'pending',%s) on conflict do nothing""", (dataset,day,revision,version,source_max_ms,int(time.time()*1000)))
+        cur.execute('select ok from garmin.normalize_days where dataset=%s and day=%s and revision=%s and normalization_version=%s', (dataset,day,revision,version))
+        ok = cur.fetchone()[0]
+        if ok:
+            # Preserve an untouched success unless it must supersede a later
+            # failed reservation for this day in the legacy retry ledger.
+            cur.execute('''update garmin.normalize_days success set normalized_at_ms=greatest(%s,
+                (select max(failure.normalized_at_ms)+1 from garmin.normalize_days failure
+                 where failure.dataset=success.dataset and failure.day=success.day
+                   and failure.normalization_version=success.normalization_version and not failure.ok))
+                where success.dataset=%s and success.day=%s and success.revision=%s and success.normalization_version=%s
+                  and exists (select 1 from garmin.normalize_days failure where failure.dataset=success.dataset
+                    and failure.day=success.day and failure.normalization_version=success.normalization_version
+                    and not failure.ok and failure.normalized_at_ms>=success.normalized_at_ms)''',
+                (int(time.time()*1000),dataset,day,revision,version))
+        if ok and generation is not None:
+            cur.execute('update garmin.normalize_day_dirty set completed_generation=%s where dataset=%s and day=%s and generation=%s', (generation,dataset,day,generation))
+        return revision, watermark, generation, ok
+
+
+def publish_day(conn, account, work_id, token, day, revision, fetched_ms, zone, tables, catalog, error_code=None, version=NORMALIZATION_VERSION, boundary=None, *, watermark_us=None, generation=None):
     dataset = dataset_for(account)
     batch = day_batch(dataset, day, revision, version)
     rows = [] if error_code else observations(tables,catalog,dataset=dataset,account=account,zone=zone,revision=revision,fetched_ms=fetched_ms,batch=batch,version=version,day=day)
+    if watermark_us is not None:
+        fetched = datetime(1970,1,1,tzinfo=timezone.utc) + timedelta(microseconds=watermark_us)
+        for row in rows:
+            row['fetched'] = fetched
     parts = chunks(rows)
     for index, part in enumerate(parts):
         if boundary:
@@ -172,18 +265,23 @@ def publish_day(conn, account, work_id, token, day, revision, fetched_ms, zone, 
             if index == len(parts)-1:
                 cur.execute("""insert into garmin.normalize_days(dataset,day,revision,normalization_version,fetched_at_ms,ok,error_code,normalized_at_ms)
                     values (%s,%s,%s,%s,%s,%s,%s,%s) on conflict (dataset,day,revision,normalization_version)
-                    do update set ok=excluded.ok,error_code=excluded.error_code,normalized_at_ms=excluded.normalized_at_ms""",
+                    do update set ok=excluded.ok,error_code=excluded.error_code,normalized_at_ms=excluded.normalized_at_ms
+                    where not garmin.normalize_days.ok""",
                     (dataset,day,revision,version,fetched_ms,not bool(error_code),error_code,int(time.time()*1000)))
+                if not error_code and generation is not None:
+                    cur.execute('update garmin.normalize_day_dirty set completed_generation=%s where dataset=%s and day=%s and generation=%s', (generation,dataset,day,generation))
 
 
-def unfinished_days(conn, account, version=NORMALIZATION_VERSION):
+def unfinished_days(conn, account, version=NORMALIZATION_VERSION, *, history_start=None):
     cur = conn.cursor()
     cur.execute('''select day,revision,fetched_at_ms,error_code from (
         select distinct on (day) day,revision,fetched_at_ms,error_code,ok
         from garmin.normalize_days where dataset=%s and normalization_version=%s
         order by day,normalized_at_ms desc,ok desc,revision desc
-        ) latest where not ok order by day''', (dataset_for(account),version))
-    return cur.fetchall()
+        ) latest where not ok
+        union select day,'pending',0,'pending' from garmin.normalize_day_dirty
+        where dataset=%s and generation>completed_generation order by day''', (dataset_for(account),version,dataset_for(account)))
+    return [row for row in cur.fetchall() if not history_start or row[0].isoformat() >= history_start]
 
 
 def anticipated_revision(conn, account, scope, key, endpoint, body, fetched_ms, version=NORMALIZATION_VERSION):
@@ -203,7 +301,7 @@ def publish_atomic(cur, dataset, account, work_id, token, scope, key, endpoint, 
         _authority(cur,dataset,account,work_id,token)
     for row in rows:
         _insert(cur,row,work_id,token)
-    cur.execute('''update garmin.normalize_items set ok=%s,error_code=%s,normalized_at_ms=%s
+    cur.execute('''update garmin.normalize_items set ok=%s,error_code=%s,normalized_at_ms=%s,null_materialized=%s
         where dataset=%s and scope=%s and key=%s and endpoint=%s and revision=%s and normalization_version=%s''',
-        (not bool(error_code),error_code,int(time.time()*1000),dataset,scope,key,endpoint,revision,version))
+        (not bool(error_code),error_code,int(time.time()*1000),body != 'null' or bool(rows),dataset,scope,key,endpoint,revision,version))
     return True

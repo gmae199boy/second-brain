@@ -63,8 +63,7 @@ def _legacy_value(value):
     return None
 
 
-def coverage_snapshot(conn, account):
-    """동일 계정 dataset의 최신 raw와 모든 실행·실패, 운영 meta를 읽는다."""
+def raw_snapshot(conn, account):
     dataset = dataset_for(account)
     cur = conn.cursor()
     cur.execute('''select distinct on (r.scope,r.original_key,r.endpoint)
@@ -76,7 +75,40 @@ def coverage_snapshot(conn, account):
           and r.library_version_raw is null
         order by r.scope,r.original_key,r.endpoint,r.checked_at_ms desc,(r.dataset=%s) desc,r.dataset''',
         (account, account, dataset))
-    raw = [dict(zip(('scope','key','endpoint','body','fetched_at_ms','checked_at_ms','library_version'), row)) for row in cur.fetchall()]
+    return [dict(zip(('scope','key','endpoint','body','fetched_at_ms','checked_at_ms','library_version'), row)) for row in cur.fetchall()]
+
+
+def same_raw(left, right):
+    key = lambda item: (item['scope'],item['key'],item['endpoint'])
+    return sorted(left,key=key) == sorted(right,key=key)
+
+
+def raw_fingerprint(raw):
+    return sorted((i['scope'],i['key'],i['endpoint'],hashlib.sha256(i['body'].encode('utf-8')).hexdigest(),
+                   i['fetched_at_ms'],i['checked_at_ms'],i['library_version']) for i in raw)
+
+
+def current_raw_fingerprint(conn, account):
+    cur = conn.cursor()
+    cur.execute('''select scope,original_key,endpoint,encode(sha256(convert_to(body,'UTF8')),'hex'),
+        fetched_at_ms,checked_at_ms,library_version from (
+        select distinct on (r.scope,r.original_key,r.endpoint)
+          r.scope,r.original_key,r.endpoint,r.body,r.fetched_at_ms,r.checked_at_ms,r.library_version
+        from garmin.raw_payloads r join garmin.datasets d on d.dataset=r.dataset
+        where d.account=%s and d.account_confirmed and d.account_raw is null
+          and r.account=%s and r.account_raw is null and r.scope_raw is null
+          and r.original_key_raw is null and r.endpoint_raw is null and r.body_raw is null
+          and r.library_version_raw is null
+        order by r.scope,r.original_key,r.endpoint,r.checked_at_ms desc,(r.dataset=%s) desc,r.dataset
+        ) latest order by scope,original_key,endpoint''', (account,account,dataset_for(account)))
+    return sorted(cur.fetchall())
+
+
+def coverage_snapshot(conn, account):
+    """동일 계정 dataset의 최신 raw와 모든 실행·실패, 운영 meta를 읽는다."""
+    dataset = dataset_for(account)
+    raw = raw_snapshot(conn, account)
+    cur = conn.cursor()
     cur.execute('''select r.local_date,r.started_at,r.finished_at,r.status,r.detail,
         garmin.attempt_valid(r.work_id,r.attempt_token)
         from garmin.collect_runs r join garmin.datasets d on d.dataset=r.dataset
@@ -113,10 +145,27 @@ def coverage_snapshot(conn, account):
     return {'raw': raw, 'runs': runs, 'errors': errors, 'history_start': row[0] if row else history_start}
 
 
-def upsert_raw(conn, account, work_id, attempt_token, scope, key, endpoint, payload, library_version, now_ms, *, expected=None, publish=None):
+def upsert_raw(conn, account, work_id, attempt_token, scope, key, endpoint, payload, library_version, now_ms, *, expected=None, publish=None, expected_raw=None):
     if scope not in ('day', 'activity'):
         raise ValueError('COLLECT_INVALID')
     with _write(conn, account, work_id, attempt_token) as (cur, dataset):
+        if expected_raw is not None and scope == 'activity':
+            # Only the activity's start time determines the old/new dirty days.
+            # Fence writers and validate that input without rescanning the
+            # account's entire history on every endpoint fetch.
+            cur.execute('lock table garmin.raw_payloads in share row exclusive mode')
+            cur.execute('''select r.body,r.fetched_at_ms,r.checked_at_ms,r.library_version
+                from garmin.raw_payloads r join garmin.datasets d on d.dataset=r.dataset
+                where d.account=%s and d.account_confirmed and d.account_raw is null
+                  and r.account=%s and r.account_raw is null and r.scope='activity' and r.scope_raw is null
+                  and r.original_key=%s and r.original_key_raw is null and r.endpoint='activity'
+                  and r.endpoint_raw is null and r.body_raw is null and r.library_version_raw is null
+                order by r.checked_at_ms desc,(r.dataset=%s) desc,r.dataset limit 1''', (account,account,key,dataset))
+            row = cur.fetchone()
+            expected_activity = next((i for i in expected_raw if i['scope']=='activity' and i['key']==key and i['endpoint']=='activity'),None)
+            fields = ('body','fetched_at_ms','checked_at_ms','library_version')
+            if (dict(zip(fields,row)) if row else None) != ({name:expected_activity[name] for name in fields} if expected_activity else None):
+                raise ValueError('COLLECT_RAW_CHANGED')
         cur.execute('select pg_advisory_xact_lock(hashtextextended(%s,0))', (_digest(account, scope, key, endpoint),))
         cur.execute('''select r.body,r.fetched_at_ms,r.checked_at_ms,r.library_version
             from garmin.raw_payloads r join garmin.datasets d on d.dataset=r.dataset

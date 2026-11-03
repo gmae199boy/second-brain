@@ -177,11 +177,11 @@ def normalize_all(items, timezone="Asia/Seoul", history_start=None):
         end = date.fromisoformat(dates[-1])
         dates = [(start + timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
     for day in dates:
-        day_raw = {i["endpoint"]: json.loads(i["raw"]) for i in items if i["scope"] == "day" and i["key"] == day}
-        activities = {aid: {i["endpoint"]: json.loads(i["raw"]) for i in items if i["scope"] == "activity" and i["key"] == aid} for aid, date in activity_days.items() if date == day}
-        if not day_raw and not activities:
-            continue
         try:
+            day_raw = {i["endpoint"]: json.loads(i["raw"]) for i in items if i["scope"] == "day" and i["key"] == day}
+            activities = {aid: {i["endpoint"]: json.loads(i["raw"]) for i in items if i["scope"] == "activity" and i["key"] == aid} for aid, date in activity_days.items() if date == day}
+            if not day_raw and not activities:
+                continue
             values = digest.day_values(day, day_raw, activities, labels.load(), timezone)
             tables["day_summary"].append(values["day_summary"])
             tables["workout"].extend(values["workouts"])
