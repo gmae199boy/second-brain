@@ -8,11 +8,11 @@ baseline_revision: '1b31120e62c0b8787634f7c685dc7e3b7869609a'
 route: 'full'
 route_source: 'pinned'
 risk: 'high'
-review: 'quick'
+review: 'thorough'
 review_source: 'pinned'
-lenses_ran: [quick]
+lenses_ran: [blind-hunter, edge-case-hunter, verification-gap, intent-alignment]
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context: ['{project-root}/_bmad-output/personal-brain/tickets/epic-garmin-runtime/epic-garmin-runtime.md', '{project-root}/_bmad-output/personal-brain/tickets/epic-garmin-runtime/tickets/story-15-endpoint-raw-plan.md']
 warnings: ['oversized']
 deferred:
@@ -44,6 +44,28 @@ deferred:
     location: >-
       extensions/garmin/src/normalize_store.py
     severity: low
+  - summary: >-
+      16.3 평문 steps 논리 키의 과거 관측과 canonical 키 관측을 함께 보유한 시험/설치 이력의 정리가 필요하다.
+    evidence: |-
+      원래 baseline의 _publish_steps가 original_key/sub_identity에 day 평문을 기록했다. 16.4는 반입과 같은 canonical 키를 사용하며 기존 불변 건강 행을 수정하지 않는다. 배포 전 과거 합성 데이터 정리와 소비 계약을 별도 판단한다.
+    location: >-
+      extensions/garmin/src/normalize_store.py
+    severity: medium
+  - summary: >-
+      옛 Orca 제어 helper의 새 from 메시지 및 지역 ack 검증 공백은 해당 도구 소유 작업으로 남긴다.
+    evidence: |-
+      기존 제어 시험은 from_handle과 서버 delivery만 사용한다. 이번 독립 명세는 옛 helper 사용을 금지하므로 실행하거나 수정하지 않았다.
+    location: >-
+      _bmad/custom/test_bmad_orca_control.py
+    severity: medium
+  - summary: >-
+      garmin.timezone 설정 전환 뒤 기존/새 시간대 관측의 재발행과 소비 계약은 별도 정리가 필요하다.
+    evidence: |-
+      item 상태는 raw revision/fetched/version을 기준으로 하고 건강 logical key는 timezone을 포함한다. 고정 시간대 v8 이식과 재개는 검증했으나 기존 16.3의 시간대 전환을 새로운 마이그레이션 기능으로 넓히지 않았다.
+    location: >-
+      extensions/garmin/src/normalize_runtime.py
+    severity: medium
+
 ---
 
 <intent-contract>
@@ -303,3 +325,143 @@ deferred:
 - 새 정규화 버전을 current로 쓰려면 core 지원 버전 마이그레이션이 필요하다(deferred).
 - `unfinished_days`는 같은 날의 최신 상태가 성공이면 건너뛴다. 실패가 남은 날은 collect마다 다시 계산한다. 멱등이라 비용만 든다.
 - 실계정 호출은 하지 않았다(16.9).
+
+
+## 2026-11-03 필수 후속 리뷰
+
+# 16.4 후속 리뷰 triage — 수정 전 판정
+
+모든 독립 렌즈 완료 후 현재 코드·호출자·기존 시험·기존 triage와 대조했다. 아래 번호는 원문 항목과 일대일 대응한다. 수정 결과와 검증은 완료 뒤 계획에 추가한다. 원래 baseline과 기존 증거를 보존한다.
+
+## Blind Hunter — 10건
+
+- B1 `[medium]` `[patch]` account 정규화 no-op: collect.py는 account target에서 set_target을 생략하고 normalize.py는 target_account 매핑만 사용한다. 시험의 관리자 INSERT가 이 공백을 가린다. 실제 account 경로 연결과 관리자 보충 없는 PG 시험을 채택한다.
+- B2 `[medium]` `[patch]` collect 재진입의 pending item 누락: unpublished 호출은 rebuild뿐이고 no-op 경로는 unfinished_days만 읽는다. raw coverage가 완료면 남은 chunk를 채울 길이 없다. 수집과 독립된 미완료 발행 복구를 채택한다.
+- B3 `[medium]` `[patch]` 날짜 pending 누락: publish_day는 마지막 chunk에서만 상태를 쓴다. 최초 chunk 뒤 및 raw commit 뒤 날짜 집계 전 중단을 재발견하도록 보완하고 시험한다.
+- B4 `[medium]` `[patch]` 반입 전용 날짜 복제: rebuild는 수집 raw의 연속 범위를 만들고 publish_days는 계정 전체 raw를 읽는다. 중간 반입 전용 날짜가 새 수집 요약으로 바뀐다. 실제 수집 날짜·영향 활동으로 후보를 제한한다. 같은 날짜의 계정 전체 보조 입력 사용은 기존 Design Notes대로 유지한다.
+- B5 `[medium]` `[patch]` 날짜 revision 충돌: day_revision은 입력별 fetched/labels를 포함하나 fetched는 max 하나뿐이다. migration 0026의 revision_count는 normalization_version 선택 전이므로 같은 max에 다른 revision이면 current에서 제외한다. 날짜 파생 발행 순서 설계 보완과 역순·동률·버전 재사용 시험을 채택한다. 원문 항목의 fetched 의미는 보존한다.
+- B6 `[medium]` `[patch]` unpublished 이중 선형 탐색: raw마다 전체 revision 상태를 any로 순회하고 raw hash도 반복 계산한다. 장기 이력에서 수동 재정규화 선택 비용이 곱으로 커진다. 성공 키 집합으로 단순화한다.
+- B7 `[medium]` `[patch]` 잘못된 JSON 날짜 격리 실패: normalize_all의 날짜 json.loads가 try 바깥임을 확인했다. decode를 날짜 격리 안으로 이동하고 정상 날짜와 함께 검증한다.
+- B8 `[medium]` `[patch]` PG text/json/활동 키 검증 공백: 기존 storage check는 세 numeric catalog뿐이며 PG 직접 키 대조도 steps뿐이다. 실제 publisher의 text/json·활동·세트·문자열 PK를 검증한다.
+- B9 `[medium]` `[patch]` chunk 중간 attempt 회수 검증 공백: 501행 완주와 완료 token 처음부터 거부는 중간 상태를 만들지 않는다. 500행 commit 뒤 회수·거부·새 attempt 수렴을 검증한다.
+- B10 `[medium]` `[patch]` normalize 출력 비밀 검증 공백: 상태 행 canary 확인은 stdout/stderr를 관찰하지 않는다. 성공·파서 실패·DB 실패의 출력과 상태를 검증한다.
+
+## Edge Case Hunter — 6건
+
+- E1 `[medium]` `[patch]` labels 변경의 날짜 revision 동률: B5와 같은 원인. 날짜 입력 max가 같아도 파생 revision이 달라지는 실제 경로이므로 같은 수정과 시험으로 해결한다.
+- E2 `[medium]` `[patch]` 날짜 chunk 중단 미재발견: B3과 같은 원인. 마지막 chunk 전 상태가 없으므로 같은 pending 보완으로 해결한다.
+- E3 `[low]` `[reject]` 극단 timestamp: carried — 기존 quick의 같은 위치·같은 주장이다. datetime 범위 밖 값은 평소 입력에서 만나기 어렵고 새 예외 경로가 필요하다는 기존 판정과 조치를 유지한다.
+- E4 `[medium]` `[defer]` 16.3 평문 steps 키와 새 canonical 키 중복: 원래 baseline의 _publish_steps가 이미 평문 sub_identity/day를 썼다. 16.4의 새 canonical 키는 반입과 같은 키라는 수락조건을 충족하며 옛 잘못된 관측을 변경하는 core 계약 작업은 이번 후속 리뷰 명세 밖이다. 실제 배포 전 16.3 합성/설치 시험 데이터가 남는 경우의 별도 정리 대상으로 기록한다. 건강 행 UPDATE/DELETE로 숨기지 않는다.
+- E5 `[medium]` `[defer]` 빠진 샘플의 예전 current 유지: carried — 계획 frontmatter의 같은 deferred 항목과 같은 원인이다. 기존 불변 보관/키별 current 계약을 유지하며 재등록하지 않는다.
+- E6 `[medium]` `[patch]` 순수 날짜 JSON decode 격리 주장 반증: B7과 같은 원인. 같은 날짜 격리 수정으로 해결한다.
+
+## Verification Gap — 3건
+
+- V1 `[medium]` `[patch]` 큰 항목 첫 chunk 뒤 재개 관찰 없음: 렌즈의 시험 검색 증거를 수용한다. B9와 같은 중단·새 attempt 수렴 시험으로 해결한다.
+- V2 `[medium]` `[patch]` 유효 체중 원문 최신 선택·반올림 검증 없음: 렌즈의 fixture/검색 증거를 수용한다. 합성 역순 측정을 격리 legacy oracle로 고정하고 동등성 검사를 확장한다.
+- V3 `[medium]` `[defer]` 옛 Orca helper 새 메시지/지역 ack 시험 없음: 렌즈의 공백 증거는 유효하지만 이번 명세는 그 helper 사용을 금지한다. baseline 이후 별도 도구 커밋이 diff에 포함된 것이며 제품 16.4의 필수 조건이 아니다. 도구 소유 작업으로 남기고 이번 수정에서 사용·변경하지 않는다.
+
+## Intent Alignment — 관찰 A~G 7건
+
+- I-A `[medium]` `[patch]` 계산 fixture와 PG publisher 관찰 폭 차이: B8과 같은 검증 공백. DB 변환·키·타입 검증을 추가한다.
+- I-B `[false]` `[reject]` NULL raw 무조건 행 생성이라는 해석: 원래 intent는 옛 coordinator의 계산 의미를 보존하며 계획 Code Map과 Implementation Notes가 NULL raw의 기존 행 조건을 명시한다. 파서가 만든 열 NULL과 raw 자체 null은 별개다. 새 결함으로 판정하지 않는다.
+- I-C `[false]` `[reject]` 계정 전체 보조 raw 사용 자체가 금지라는 해석: Design Notes는 day_values의 계정 전체 coverage snapshot을 명시한다. 반입 dataset 항목 자체를 재발행하거나 반입 dataset에 쓰지 않는 경계와 양립한다. 반입 전용 날짜가 수집 출력 후보가 되는 별도 실제 결함은 B4로 수정한다.
+- I-D `[medium]` `[patch]` 완주 결과와 chunk 중단 관찰 차이: B9/V1과 같은 시험 공백. 실제 중간 commit·회수·수렴을 관찰한다.
+- I-E `[low]` `[reject]` matrix COLLECT_STOPPED와 invalid attempt 코드 차이: signal은 STOPPED, DB token 회수는 INVALID_ATTEMPT이며 둘 다 fail closed다. 코드 결함이 아니라 계획의 포괄 표현이다. 계획만 고치는 finding은 워크플로 규칙상 reject하고 검증 결과에 원인별 코드를 기록한다.
+- I-F `[medium]` `[defer]` 옛 샘플 표 교체와 current 집합 차이: carried — E5 및 기존 deferred와 같은 원인. 새 항목으로 다시 등록하지 않는다.
+- I-G `[false]` `[reject]` 입력 diff에 자동화·타 티켓 변경이 포함됨: 공식 워크플로는 원래 baseline 이후 전체 diff를 요구한다. 이미 커밋된 별도 변경을 이번 신규 제품 변경으로 해석하지 않으며 해당 파일을 수정하지 않는다.
+
+합계 26건: medium 21, low 2, false 3. patch 17건(공유 원인 그룹 포함), defer 4건(그중 carried 2건), reject 5건. high 및 maybe-false 0건. 이 수는 실제 수정 완료 수가 아니라 채택 판정 수다.
+
+
+# 16.4 후속 수정의 설계 보완과 검증 범위
+
+원래 baseline `1b31120e62c0b8787634f7c685dc7e3b7869609a`와 기존 구현·quick 리뷰 증거를 보존한다. intent-contract는 변경하지 않았다. 후속 수정은 기존 수락조건의 불변 발행·멱등·실제 중단 복구를 완성한다.
+
+- 계정 대상 수동 normalize는 account ID를 직접 사용한다. extension 대상은 기존 확인된 매핑을 사용한다.
+- 수집 시작 시 미발행 항목을 다시 처리한다. raw 저장 트랜잭션에서 날짜 dirty generation을 기록하고, 날짜 발행 완료는 예약한 세대에만 적용한다. 첫 날짜 chunk 전에 pending을 예약해 raw commit 뒤와 날짜 chunk 사이 중단을 재발견한다.
+- 날짜 후보는 수집 dataset에 실제로 있는 날짜와 활동의 영향 날짜다. 같은 날짜를 계산하는 보조 입력은 기존 설계의 계정 전체 coverage snapshot을 유지한다.
+- 날짜 revision 재료의 입력 fetched와 labels SHA는 유지한다. 원문 항목 관측의 fetched는 원문 fetched 그대로다. 날짜 파생 관측은 source max 밀리초 안의 마이크로초 슬롯을 사용한다. 원래 source max는 ledger에 별도로 보존하며, 같은 source max의 다른 입력 조합은 다음 슬롯에 예약한다. 다른 source max의 자연 순서는 유지된다. 같은 revision은 버전 전체에서 같은 슬롯을 재사용한다. 1밀리초의 1,000개 슬롯이 모두 쓰이면 명시적으로 실패하며 현재를 임의로 되돌리지 않는다.
+- 예약은 짧은 트랜잭션에서 현재 raw와 계산 snapshot을 검증한다. stale snapshot은 새 슬롯을 얻지 않고 다시 계산한다. 기존 0008의 동일시각 revision 충돌은 기존 관측을 보존하면서 현재 base revision의 결정적 repair alias를 다음 슬롯에 발행한다. 충돌 없는 기존 revision은 그대로 재사용한다.
+- `0009_day_publication.sql`은 dirty generation과 버전 공통 revision 예약을 확장 schema에 추가한다. core·plugin·app-ref는 변경하지 않는다.
+- 미발행 검색은 성공 키 집합으로 바꾸었고 순수 날짜 JSON decode는 날짜별 실패 격리 안으로 옮겼다.
+- 실제 PG 시험에 500행 commit 뒤 중단/attempt 회수/새 attempt 재개, text 원문/JSONB/활동·세트·문자열 PK/단위·날짜·시각, normalize 출력 비밀 비노출, 반입 전용 중간 날짜 불변, 0008→0009 충돌 복구와 버전 재사용을 추가했다.
+- 고정 oracle에 합성 역순 체중 측정을 추가했다. 최신 72,346g이 72.3kg으로 계산됨을 격리 legacy oracle로 고정했으며 archive SHA-256 `02cbaf47a5cca4a799fe42aa7d2eb988860b4395fd1ff9649439fffb87f56b25`는 유지한다. 기본 suite에서 oracle은 실행하지 않는다.
+
+구현 워커의 대상 시험은 통과했으며 독립 재리뷰와 최종 전체 검증을 추가로 수행한다. 정상화 버전9 시험은 임시 확장 복사본과 시험 DB 지원 목록에서만 실행한다.
+
+
+# 16.4 수정 후 thorough 재리뷰 triage
+
+4렌즈 전부 완료 후 18개 항목을 현재 코드·호출자와 대조했다. 이전 판정과 같은 위치·주장은 carried로 보존했다. 최종 검증 워커가 소스 수정 없이 전체 시험을 마칠 때까지 다음 수정을 시작하지 않는다.
+
+## Blind Hunter — 10건
+
+- F-B1 `[medium]` `[defer]` 시간대 변경 재발행: item/day 상태에 zone이 없고 건강 logical key에는 zone이 있으므로 설정 전환은 단순 재발행으로 옛 그룹을 없앨 수 없다. 이는 원래 baseline의 16.3에서도 존재하던 시간대 설정 전환 계약 문제다. 이번 명세는 동일 timezone에서의 v8 이식·revision·복구이며 시간대 마이그레이션은 요구하지 않는다. 현재 실행은 고정 zone snapshot을 따른다. 별도 설정/소비 계약의 후속 작업으로 기록한다.
+- F-B2 `[medium]` `[patch]` labels A→B→A: 현재 reserve_day는 A의 과거 성공을 재사용하므로 B의 높은 슬롯이 current에 남는다. B5 수정이 도입한 예약 재사용에서 드러난 실제 결함이다. 현재 입력 조합의 재등장을 별도 결정적 발행 회차로 예약하고 버전 공통 재사용·멱등을 유지한다.
+- F-B3 `[low]` `[reject]` datetime 상한: carried — 기존 quick 및 E3의 같은 위치/주장/코드다. 극단 입력에 새 예외 경로를 더하지 않는 기존 판정을 유지한다.
+- F-B4 `[medium]` `[patch]` collect history_start 누락: rebuild 후보만 history_start를 거르고 공통 publish_days는 거르지 않는다. collect 활동의 옛/새 시작 날짜는 시작일 이전으로 갈 수 있다. 공통 경계에 필터를 두고 실제 경계 시험을 추가한다.
+- F-B5 `[medium]` `[patch]` NULL 상태 전이 검증 공백: 최초 NoData·다른 소유 endpoint의 대상 행 생성·기존 행 뒤 null·재시도의 상태 의존은 순수 fixture가 관찰하지 않는다. 원래 legacy 의미를 유지하는 제품 경로 PG 전이를 추가한다.
+- F-B6 `[medium]` `[patch]` rich frozen 입력과 제품 runtime 연결 공백: publisher 직접 생성 행 시험은 저장 계약은 증명하지만 raw→prepare→publish_days 전체를 통과하지 않는다. 합성 frozen 입력 전체를 제품 경로로 발행하고 고정 expected의 catalog 투영과 대조한다.
+- F-B7 `[medium]` `[patch]` 날짜의 실제 여러 chunk 중단 검증: 항목 501행 및 날짜 첫 chunk 전 중단은 날짜 마지막 chunk의 generation 완료 조건을 증명하지 않는다. 날짜 관측 500초과의 첫 commit 뒤 중단·새 attempt 복구·id/batch/watermark 보존을 추가한다.
+- F-B8 `[medium]` `[patch]` dirty 세대 경합 검증 공백: 예약 N 뒤 raw commit N+1, N 완료의 generation 조건을 시험하지 않는다. 실제 두 연결을 결정적 순서로 제어해 N+1 pending 및 최종 current 수렴을 관찰한다.
+- F-B9 `[medium]` `[patch]` 잠금 안 전체 raw 전송 비용: reserve_day는 날짜마다 계정 전체 본문을 SHARE 잠금 아래 전송·정렬·비교한다. 몇 년치 샘플이 있는 정상 계정에서 1.9초 제한과 전체 writer 차단을 유발할 수 있다. stale 검증 정확성을 보존하면서 본문 전송·비교 범위를 줄이고 대표 합성 이력의 짧은 transaction 경계를 검증한다.
+- F-B10 `[low]` `[reject]` 같은 source millisecond의 1000슬롯 소진: 명시적 fail closed가 이미 구현돼 있어 임의 최신성 훼손은 없다. 고정 labels와 실제 endpoint timestamp가 유지된 채 1000회 서로 다른 조합이 발행되는 것은 평소 입력에서 드물다. 자동 복구 정책을 새로 추가하는 것은 단순 정정이 아니므로 reject하고 알려진 한도를 최종 보고에 보존한다.
+
+## Edge Case Hunter — 2건
+
+- F-E1 `[medium]` `[defer]` 사라진 샘플/세트/라벨 키 current 잔존: carried — E5와 I-F 및 원래 deferred의 같은 키별 current 계약이다. 불변 발행의 삭제 표식 계약을 이번에 새로 만들지 않고 기존 판정과 후속 항목을 유지한다.
+- F-E2 `[low]` `[reject]` 극단 timestamp 변환 격리: carried — F-B3과 같은 기존 quick 판정이다. 추가 patch/defer하지 않는다.
+
+## Verification Gap — 2건
+
+- F-V1 `[medium]` `[patch]` 예약 뒤 새 dirty 세대 보존 시험 없음: 렌즈의 검색·시험 증거를 수용한다. F-B8과 같은 경합 시험으로 해결한다.
+- F-V2 `[medium]` `[patch]` 제품 runtime의 문법상 잘못된 JSON 격리 시험 없음: 렌즈의 검색·시험 증거를 수용한다. 순수 normalize_all 검사와 실제 normalize의 날짜 ledger/result/current는 별도 표면이다. 손상 날짜와 뒤의 정상 날짜를 제품 일감으로 함께 검증한다.
+
+## Intent Alignment — A~D 4건
+
+- F-I-A `[false]` `[reject]` imported raw를 날짜 보조 입력으로 쓰는 것 자체가 금지라는 해석: carried — I-C와 같은 주장이다. 기존 Design Notes가 계정 전체 snapshot 보조 입력을 명시하며 대상 항목/출력 dataset 경계와 양립한다. 반입 전용 날짜의 출력 오염은 B4 수정/PG 시험으로 별도 해결했다.
+- F-I-B `[medium]` `[patch]` 고정 기대값과 실제 제품 발행 경로의 연결 폭: F-B6과 같은 검증 공백이다. rich fixture 전체를 제품 runtime으로 검증한다.
+- F-I-C `[false]` `[reject]` 최초 null의 무조건 열 발행 해석: carried — I-B와 같은 주장이다. 옛 coordinator의 기존 행 조건을 우선하는 원래 판정은 유지하며, F-B5의 전이 시험으로 이 의미를 명시적으로 관찰한다.
+- F-I-D `[low]` `[reject]` 취소 코드 문자 차이: carried — I-E와 같은 주장이다. signal STOPPED와 DB INVALID_ATTEMPT는 원인별로 구분되고 모두 fail closed이며 실제 chunk 회수 시험이 이를 관찰한다. 계획 문구만 바꾸는 finding은 reject한다.
+
+합계 18건: medium 12, low 4, false 2; patch 10, defer 2, reject 6. high 및 maybe-false 0. 공유 원인별 수정/검증 후 결과와 독립 확인을 추가한다.
+
+
+## 2026-11-03 필수 후속 리뷰 최종 결과
+
+기존 구현 commit `149c3e0ed59817834501e6486ac0edb38c26e833`, 원래 baseline `1b31120e62c0b8787634f7c685dc7e3b7869609a`, 이번 checkout 기준 `0fe53a467be768374b1f679286845a19dae41695`를 보존했다. 새 기능 재계획 없이 공식 full/thorough의 독립 4렌즈를 실행하고, 수정 후 4렌즈 재리뷰와 정확성·검증 증거 확인 및 마지막 시작일 확인을 수행했다.
+
+### Review Triage Log 보완
+
+두 번째 4렌즈 판정 전문은 `reviews/story-v2-fixture-2026-11-03/triage-pass-2.md`에 있다. 18개 항목 각각의 verdict·route·근거를 보존했다. 1차 26개 판정은 위 본문과 `triage-pass-1.md`에 보존했다. 후속 정확성 확인에서 추가한 1건은 다음과 같다.
+
+- C1 `[medium]` `[patch]` 최초 수집의 확정 history_start가 snapshot에 반영되지 않음: `collect.py`의 planned/empty 두 경로가 `set_history_start`의 DB 확정 반환값으로 snapshot과 로컬 history를 갱신하도록 고쳤다. 기존 DB 값의 `on conflict do nothing`은 유지한다. 새 실제 collect 시험은 패치 전 시작일 이전 파생 관측 50행으로 실패하고 패치 후 0행 및 no-op 불변으로 통과했다. 마지막 독립 확인의 발견사항은 0건이다.
+
+이번 후속 실행 전체 발견사항은 45건(26+18+1): medium 34, low 6, false 5, high/maybe-false 0. 행별 route는 patch 28, defer 6(기존 carried 포함), reject 11이다. 공유 원인으로 묶은 medium patch entry는 1차 11개, 2차 8개, 마지막 최초 시작일 1개다. 별도 실행 검증에서 발견한 canary 리터럴 시험 fixture 회귀도 수정했다. 실제 인증 비노출 assertion은 완화하지 않았다. 모든 채택 항목은 코드/시험과 독립 확인으로 처리했고, 현재 티켓의 미충족 수락조건을 defer하지 않았다.
+
+### 최종 설계와 변경 파일
+
+- `collect.py`, `collect_store.py`, `normalize.py`, `normalize_runtime.py`, `normalize_store.py` — account 수동 정규화 연결, pending 항목 재개, raw commit과 날짜 dirty 세대 연결, 날짜 pending 예약/완료 세대 검사, 실제 수집 날짜·활동 후보 및 확정 history_start, 짧은 snapshot fingerprint 검증, 성공 키 집합 조회, NULL 상태 전이를 보완했다.
+- `0009_day_publication.sql` — 확장 schema의 날짜 dirty·버전 공통 revision 예약과 NULL materialization 상태를 추가한다. 기존 건강 관측과 v1 권위는 수정하지 않는다.
+- 날짜 파생 revision은 base fingerprint와 실제 발행 occurrence를 구별한다. 원래 source max 밀리초와 버전 공통 watermark를 보존하며, 동일 source max의 새 조합/라벨 복원은 같은 밀리초 안의 다음 마이크로초 슬롯을 예약한다. 연속 동일 입력·다른 정규화 버전은 같은 occurrence를 재사용한다. stale raw snapshot은 예약하지 않는다. 기존 0008 동일시각 충돌은 원래 관측을 보존한 결정적 복구 별칭으로 수렴한다. 원문 항목 관측의 fetched는 원문 fetched 그대로다. 이 내용은 위 초기 Design Notes의 단순 max와 초기 후속 설계의 base 재사용 설명을 보완한다.
+- `normalize_tables.py`, `check_normalize_equivalence.py`, frozen `normalize_v8/input.json`·`expected.json` — 날짜 decode 격리와 역순 합성 체중 oracle를 검증한다. 나머지 옛 계산 본문과 archive SHA는 유지했다.
+- `garmin-normalize.test.ts`, `garmin-pass2.test.ts`, `garmin-upgrade.test.ts`, `garmin-history-start.test.ts`, `garmin-tracer.test.ts` 및 합성 Python fixture — actual 500행 중단/회수/재개, 날짜 chunk와 세대 경합, raw 전체 제품 경로와 고정 expected의 독립 투영, PG text/json/키/단위/시각, NULL 전이, 비밀 비노출, 이전 전용 날짜 불변, watermark/라벨 복원/버전 재사용, 실제 0008→0009 upgrade 및 최초 수집 경계를 검증한다.
+- 리뷰·triage·구현·검증 보고서는 `reviews/story-v2-fixture-2026-11-03/`에 보존한다. 원래 quick 보고와 Auto Run Result는 과거 증거로 남긴다. 이 최종 결과가 현재 완료 판정이다.
+
+### 최종 Verification
+
+- frozen 의존성 설치: `pnpm install --frozen-lockfile`, `uv sync --frozen --python python3.14 --project extensions/garmin` 성공. 초기 sandbox DNS/cache 제한은 권한 확장으로 같은 명령을 실행해 해결했다.
+- 격리 oracle: `PYTHONDONTWRITEBYTECODE=1 extensions/garmin/.venv/bin/python extensions/garmin/scripts/legacy_normalize_oracle.py`로 합성 역순 체중 기대값을 고정했다. archive SHA-256 `02cbaf47a5cca4a799fe42aa7d2eb988860b4395fd1ff9649439fffb87f56b25`. 기본 suite는 oracle를 호출하지 않는다.
+- 계획 Python check 7개와 `check_health_contract.py`: 8개 모두 통과.
+- `PYTHONDONTWRITEBYTECODE=1 pnpm test:python`: 13파일 48시험 통과, skip 0. `pnpm build` 포함. 앞선 canary 리터럴 실패를 수정한 뒤 전체 통과를 확인했다.
+- `PYTHONDONTWRITEBYTECODE=1 pnpm test`: 170파일, 3,921시험 통과, 기존 skip 1. build와 typecheck 포함.
+- 위 전체 검증 뒤 추가된 작은 history_start 전달 수정은 패치 전 실패를 재현하고, 수정 후 `garmin-collect`, `garmin-collect-resume`, `garmin-pass2`, `garmin-history-start` 4파일 4시험 모두 통과(skip 0)했다. Python collect/collect_plan/raw_transitions 3개 및 typecheck도 통과했다. 이 마지막 경계 수정 후 전체 suite를 불필요하게 다시 반복하지 않았다.
+- 시험 PostgreSQL은 `compose.test.yaml`의 `127.0.0.1:54329`이며 합성 fixture/fake client만 사용했다. 시험 파일은 전역 확장 role 충돌을 피하도록 순차 실행했다. 실계정 호출과 운영 데이터 변경은 하지 않았다.
+- `git diff --check` 및 문서 홈 절대경로 검사를 통과했다. 이번 신규 diff에 core 실행 코드·plugin/app-ref 변경은 없다.
+
+### Auto Run Result 보완
+
+최종 상태는 `built`이며 사용자 인수 전 `done`으로 올리지 않는다. 이번 실행은 follow-up pass이며 patched high가 0개이므로 `followup_review_recommended: false`다. medium patch 수 자체는 후속 pass를 다시 권고하는 기준이 아니다. 채택 항목의 수정 뒤 필요한 독립 확인과 시험을 마쳤으며 남은 미검증 high 위험은 없다.
+
+원래 deferred 4개와 새로 기록한 16.3 평문 키 이력 정리, 금지된 옛 Orca helper 시험, 시간대 설정 전환 계약은 별도 후속 범위다. 사라진 키의 current 잔존, 새 지원 버전의 core migration 필요, 늦은 반입의 권위 버전 갱신 필요는 기존 범위와 같다. 같은 source 밀리초의 1,000개 파생 watermark 슬롯이 소진되면 명시적으로 실패한다. 극단 datetime과 슬롯 소진은 평소 발생 가능성이 낮고 복구 정책 확장이 필요한 low reject로 기록했다. 실제 계정 identity 확인은 16.9이며 이번 합성 검증의 성공으로 대신하지 않는다.

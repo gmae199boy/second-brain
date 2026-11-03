@@ -62,7 +62,7 @@
       "scope": "day",
       "key": "2026-10-15",
       "endpoint": "daily_weigh_ins",
-      "raw": "null",
+      "raw": "{\"dateWeightList\": [{\"timestampGMT\": \"2026-10-15T20:00:00Z\", \"weight\": 72346}, {\"timestampGMT\": \"2026-10-15T08:00:00Z\", \"weight\": 68000}]}",
       "fetched_at": 1760000000000
     },
     {

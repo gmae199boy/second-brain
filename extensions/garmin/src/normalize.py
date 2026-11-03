@@ -22,7 +22,8 @@ def run(env=None, connect=psycopg.connect):
         raise ValueError('COLLECT_INVALID')
     zone = decode(env.get('BRAIN_SETTINGS_SNAPSHOT'),require_timezone=True)['garmin.timezone']
     with connect(env['BRAIN_DATABASE_URL'],autocommit=True,options='-c transaction_timeout=2000 -c statement_timeout=1900 -c lock_timeout=1500') as conn:
-        account = collect_store.target_account(conn,env['BRAIN_TARGET_KIND'],env['BRAIN_TARGET_ID'])
+        account = (env['BRAIN_TARGET_ID'] if env['BRAIN_TARGET_KIND'] == 'account'
+                   else collect_store.target_account(conn,env['BRAIN_TARGET_KIND'],env['BRAIN_TARGET_ID']))
         if account is None:
             collect.emit('result',summary=json.dumps({'normalized':0,'normalize_failed':0}))
             return

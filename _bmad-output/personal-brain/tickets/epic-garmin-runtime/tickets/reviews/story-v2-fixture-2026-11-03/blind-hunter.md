@@ -1,0 +1,21 @@
+- 하한 계산: 516,616 bytes ÷ 1,000 = 516.616 kB; N = min(floor(√516.616 + 1), 10) = min(23, 10) = 10. 아래 10건은 diff와 현재 코드의 정적 추적 결과이며, 지시대로 빌드·시험·실계정 호출은 실행하지 않았다.
+
+- **계정 대상 수집이 수동 normalize에 필요한 매핑을 남기지 않는다.** `extensions/garmin/src/collect.py:91,100-108`은 account 대상으로 실행하면 `set_target()`을 지나치지만, `extensions/garmin/src/normalize.py:25-28`은 account 대상도 반드시 `collect_targets`에서 찾고 없으면 성공한 no-op으로 끝낸다. `apps/cli/python-test/garmin-normalize.test.ts:69`가 그 매핑을 관리자 INSERT로 보충하므로 이 연결 결함이 시험에서 가려진다. 실제 account 수집 경로에서 매핑을 저장하거나 normalize가 account 대상을 직접 해석하고, 시험의 보충 INSERT 없이 재정규화되는지 확인해야 한다.
+
+- **다음 collect가 중단된 큰 항목의 발행을 재개하지 않는다.** `extensions/garmin/src/normalize_store.py:125-143,195-201`은 큰 항목을 pending으로 예약한 뒤 여러 트랜잭션에 나눠 발행하지만, collect의 재진입은 `extensions/garmin/src/collect.py:111-115,207-208`에서 실패 날짜만 찾는다. 항목 pending을 읽는 `unpublished()`는 수동 rebuild에서만 호출된다(`normalize_runtime.py:118`). raw가 이미 완결된 coverage로 판정되면 중단된 샘플은 재수집 대상도 아니어서 다음 collect가 남은 관측을 채우지 못한다. 네트워크 계획과 별도로 항목 발행 미완료를 재개해야 한다.
+
+- **날짜 발행 도중 죽으면 그 날짜를 재발견할 예약 상태가 없다.** `extensions/garmin/src/normalize_store.py:159-176`은 마지막 chunk에서만 `normalize_days`를 INSERT한다. 최초 날짜의 첫 chunk 뒤 중단되거나, 이전 성공 날짜의 새 revision 발행 도중 중단되면 새 revision의 실패·pending 행이 없고, `unfinished_days()`(`:179-186`)는 해당 날짜를 재시도 대상으로 반환하지 못한다. 앞 항목의 항목별 pending과 별개로 날짜 revision도 첫 chunk 전에 예약하고, raw 발행 직후부터 날짜 계산 전까지의 중단도 복구할 수 있게 영향 날짜를 보존해야 한다.
+
+- **재구성 날짜 범위 안의 반입 전용 날짜가 여전히 수집 dataset으로 복제된다.** `extensions/garmin/src/normalize_runtime.py:131-136`은 수집 raw의 마지막 날짜까지 연속 범위를 만들지만, 시작은 계정 snapshot의 history_start이고, `publish_days()`의 `:81,91`은 계정 전체 dataset의 raw를 선택한다. 수집 raw가 1일과 3일에만 있고 반입 raw만 2일에 있으면 2일도 수집 dataset의 day_summary로 발행된다. 반입에서 얻은 더 이른 history_start가 있으면 범위 앞쪽에도 같은 문제가 생긴다. 날짜 후보를 수집 dataset의 실제 날짜·영향 활동과 교차시키고, 두 수집 날짜 사이에 반입 전용 날짜를 둔 회귀 사례가 필요하다.
+
+- **날짜 revision이 바뀌어도 최대 fetched_at이 같으면 current가 사라질 수 있다.** `extensions/garmin/src/normalize_runtime.py:94-110`은 모든 입력·labels의 변경으로 revision을 바꾸면서 fetched_at은 입력 중 최댓값만 쓴다. 예를 들어 다른 endpoint의 시각 200이 남아 있는 상태에서 시각 100의 입력이 150으로 교정되거나 labels만 바뀌면, 날짜 관측은 같은 fetched_at 200에 서로 다른 revision 두 개가 된다. core `packages/postgres/migrations/0026_health_json_comparison.sql:130-145`는 이 경우 값을 고르지 않고 `revision_ambiguous`로 제외한다. 여러 입력의 날짜 revision과 core 최신성 선택 규칙을 함께 정리하고, 최대 시각이 고정된 입력 변경 사례를 검사해야 한다.
+
+- **미발행 검색이 raw 수와 전체 revision 이력의 곱으로 커진다.** `extensions/garmin/src/normalize_store.py:151-156`은 raw와 상태를 모두 메모리에 가져온 뒤 raw마다 상태 전체를 `any()`로 선형 검색한다. 상태 이력은 revision별로 계속 쌓이므로 수만 개 raw와 재수집 이력이 있는 계정에서 이미 성공한 항목을 건너뛰는 조회 자체가 O(raw 수 × 이력 수)가 된다. 성공한 `(scope,key,endpoint,fetched_at,revision)`을 집합으로 만들거나 SQL anti-join으로 필터링하고, 긴 수집 이력에서도 조회 비용이 선형에 가깝게 유지되는지 확인해야 한다. 실행 시간을 측정한 결과를 주장하는 것은 아니다.
+
+- **순수 동등성 경로는 잘못된 JSON 한 개를 날짜 격리 밖에서 다시 읽는다.** `extensions/garmin/src/normalize_tables.py:158-163`은 endpoint 파싱 실패를 결과 행으로 격리하지만, `:180-181`의 `json.loads()`는 `:184`의 try 바깥이다. 따라서 구조 오류가 아니라 JSON 텍스트 자체가 깨진 raw를 넣으면 이미 기록한 항목 실패와 무관하게 `normalize_all()` 전체가 예외로 끝난다. 비교 대상인 archive의 `normalize/__init__.py:553-611`은 날짜 raw 디코딩도 날짜 try 안에서 수행한다. 디코딩을 격리 안으로 옮기고, 깨진 JSON과 정상 날짜가 함께 있는 고정 입력을 추가해야 한다.
+
+- **새 발행기의 text·json 및 활동 계열 DB 계약을 검증하는 사례가 없다.** `extensions/garmin/tests/check_normalize_store.py:10-22`의 catalog는 숫자 세 종류뿐이고, `apps/cli/python-test/garmin-normalize.test.ts:87-114`의 raw 발행 검증도 daily_metric과 hr_sample에 집중한다. 순수 SQLite 동등성 fixture에 활동·세트가 있어도 `normalize_store._insert()`의 text 원문 처리, jsonb 값, exercise_log의 문자열 PK, 활동 local_date·observed_at이 PostgreSQL trigger와 반입 키 규칙을 통과하는지는 증명하지 않는다. 합성 활동·세트와 drinks JSON 등을 실제 발행기로 보내 반입과 같은 논리 키·값·단위인지 비교하는 사례가 필요하다.
+
+- **chunk 중간의 attempt 회수와 재시도를 검증하지 않는다.** `apps/cli/python-test/garmin-normalize.test.ts:92-100`은 501샘플을 끝까지 발행하고, `:115-121`은 이미 끝난 attempt로 빈 발행을 처음부터 거부시키는 사례다. 첫 chunk가 커밋된 뒤 attempt를 회수했을 때 다음 chunk가 거부되고 완료 표시가 남지 않으며, 새 attempt가 같은 id·batch로 중복 없이 마치는지는 두 사례 모두 확인하지 않는다. 이 경계는 현재 설계의 핵심이므로 첫 chunk 뒤 제어 지점을 둔 합성 감독자 시험이 필요하다.
+
+- **normalize의 stdout·stderr 비밀 비노출 수락 기준을 확인하지 않는다.** `apps/cli/python-test/garmin-normalize.test.ts:36,122`는 합성 token canary를 만들고 상태 행만 검사하며, 실제 normalize의 성공·파서 실패·DB 실패 출력은 검사하지 않는다. 기존 collect 시험의 출력 검사는 collect_fixture가 캡처한 collect 경로를 대상으로 하므로 새 normalize entry의 근거가 되지 않는다. normalize 성공과 실패의 stdout·stderr도 캡처해 canary가 없는지, 정상 결과는 제한된 요약·오류 코드로만 나오는지 확인해야 한다.

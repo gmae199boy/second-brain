@@ -102,10 +102,51 @@ def main():
                 (home / ('collect-' + kind + '-' + os.environ['BRAIN_ATTEMPT_TOKEN'])).write_text(json.dumps({'abi': 1, 'type': kind, **values}))
             original_emit(kind, **values)
         collect.emit = record_emit
+        if marker.get('force_activity'):
+            from types import SimpleNamespace
+            def forced_activity(*args, **kwargs):
+                return [SimpleNamespace(key=str(marker['force_activity']),endpoint='activity')]
+            collect.coverage.pending_activities = forced_activity
         if marker.get('publish_failure'):
             def fail_publish(*args, **kwargs):
                 raise ValueError('synthetic publication failure')
             collect.normalized_store.publish_atomic = fail_publish
+        if marker.get('interrupt_after_raw'):
+            original_upsert = collect.store.upsert_raw
+            def interrupted_upsert(*args, **kwargs):
+                result = original_upsert(*args, **kwargs)
+                if args[6] == marker['interrupt_after_raw']:
+                    raise ValueError('COLLECT_STOPPED')
+                return result
+            collect.store.upsert_raw = interrupted_upsert
+        if marker.get('interrupt_day_batch'):
+            original_day = collect.normalized_store.publish_day
+            def interrupted_day(*args, **kwargs):
+                if args[4] == marker['interrupt_day_batch']:
+                    def stop_at_batch(message=None):
+                        raise ValueError('COLLECT_STOPPED')
+                    kwargs['boundary'] = stop_at_batch
+                return original_day(*args, **kwargs)
+            collect.normalized_store.publish_day = interrupted_day
+        if marker.get('pause_item_second_batch'):
+            original_item = collect.normalized_store.publish_item
+            def paused_item(*args, **kwargs):
+                if (args[4],args[5],args[6]) == tuple(marker['pause_item_second_batch']):
+                    original_boundary = kwargs.get('boundary')
+                    calls = 0
+                    def at_batch(message=None):
+                        nonlocal calls
+                        calls += 1
+                        if calls == 2:
+                            (home / 'item-first-chunk').write_text(token)
+                            deadline = time.monotonic() + 30
+                            while not (home / 'item-release').exists():
+                                if time.monotonic() > deadline: raise ValueError('fixture timeout')
+                                time.sleep(.02)
+                        if original_boundary: original_boundary(message)
+                    kwargs['boundary'] = at_batch
+                return original_item(*args, **kwargs)
+            collect.normalized_store.publish_item = paused_item
         import signal
         signal.signal(signal.SIGTERM, collect._stop)
         (home / ('collect-start-' + os.environ['BRAIN_ATTEMPT_TOKEN'])).touch()

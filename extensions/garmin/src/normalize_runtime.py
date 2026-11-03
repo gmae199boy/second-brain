@@ -1,14 +1,13 @@
 """Pure preparation and database orchestration shared by collect and rebuild."""
 import hashlib
 import json
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import collect_rawparse as rawparse
 import collect_store
 import digest
-import labels
 import normalize_store as store
 import normalize_tables as tables
 
@@ -75,18 +74,21 @@ def activity_date(raw, key, zone):
         return None
 
 
-def publish_days(conn,account,work,token,zone,days,catalogue,boundary,snapshot=None):
+def publish_days(conn,account,work,token,zone,days,catalogue,boundary,snapshot=None,_retries=0):
     if snapshot is None:
         snapshot = collect_store.coverage_snapshot(conn,account)
     raw = snapshot['raw']
+    fingerprint = collect_store.raw_fingerprint(raw)
     activity_days = {i['key']:activity_date(raw,i['key'],zone) for i in raw if i['scope']=='activity' and i['endpoint']=='activity'}
     label_path = Path(__file__).parent / 'labels' / 'exercise_types_ko.json'
-    label_hash = hashlib.sha256(label_path.read_bytes()).hexdigest()
+    label_bytes = label_path.read_bytes()
+    label_hash = hashlib.sha256(label_bytes).hexdigest()
     cur = conn.cursor()
     cur.execute('select scope,key,endpoint,revision,fetched_at_ms from garmin.normalize_items where dataset=%s', (collect_store.dataset_for(account),))
     states = cur.fetchall()
     failed = 0
-    for day in sorted(set(d for d in days if d)):
+    start = snapshot['history_start']
+    for day in sorted(set(d for d in days if d and (not start or d >= start))):
         boundary('날짜 정규화 ' + day)
         selected = [i for i in raw if (i['scope']=='day' and i['key']==day) or (i['scope']=='activity' and activity_days.get(i['key'])==day)]
         if not selected:
@@ -98,22 +100,30 @@ def publish_days(conn,account,work,token,zone,days,catalogue,boundary,snapshot=N
             inputs.append(dict(scope=i['scope'],key=i['key'],endpoint=i['endpoint'],revision=revision,fetched_at_ms=i['fetched_at_ms']))
         revision = store.day_revision(inputs,label_hash)
         fetched = max(i['fetched_at_ms'] for i in selected)
+        reservation = store.reserve_day(conn,account,work,token,day,revision,fetched,raw,fingerprint=fingerprint)
+        if reservation is None:
+            # The calculated snapshot lost a race with a raw writer. Recompute
+            # against a fresh snapshot; never reserve the stale derivation.
+            if _retries >= 3:
+                raise ValueError('COLLECT_RAW_CHANGED')
+            return failed + publish_days(conn,account,work,token,zone,[d for d in days if d and d >= day],catalogue,boundary,_retries=_retries+1)
+        revision, watermark, generation, done = reservation
+        if done:
+            continue
         try:
             daily = {i['endpoint']:json.loads(i['body']) for i in selected if i['scope']=='day'}
             activities = {key:{i['endpoint']:json.loads(i['body']) for i in selected if i['scope']=='activity' and i['key']==key} for key in activity_days if activity_days[key]==day}
-            values = digest.day_values(day,daily,activities,labels.load(),zone)
+            values = digest.day_values(day,daily,activities,json.loads(label_bytes),zone)
             rows = {'day_summary':[values['day_summary']], 'workout':values['workouts'], 'exercise_log':values['exercise_logs']}
             error = None
         except Exception:
             rows, error = {}, 'internal'
             failed += 1
-        store.publish_day(conn,account,work,token,day,revision,fetched,zone,rows,catalogue,error,boundary=boundary)
+        store.publish_day(conn,account,work,token,day,revision,fetched,zone,rows,catalogue,error,boundary=boundary,watermark_us=watermark,generation=generation)
     return failed
 
 
-def rebuild(conn,account,work,token,zone,boundary):
-    catalogue = catalog(conn)
-    snapshot = collect_store.coverage_snapshot(conn,account)
+def retry_items(conn,account,work,token,zone,boundary,snapshot,catalogue):
     raw = snapshot['raw']
     pending = store.unpublished(conn,account)
     normalized = failed = 0
@@ -126,12 +136,21 @@ def rebuild(conn,account,work,token,zone,boundary):
         store.publish_item(conn,account,work,token,item['scope'],item['key'],item['endpoint'],item['body'],item['fetched_at_ms'],zone,rows,catalogue,error,boundary=boundary)
         normalized += not bool(error)
         failed += bool(error)
-    # Legacy rebuild scans from history_start to the last available day and skips empty days.
+    return normalized, failed
+
+
+def rebuild(conn,account,work,token,zone,boundary):
+    catalogue = catalog(conn)
+    snapshot = collect_store.coverage_snapshot(conn,account)
+    raw = snapshot['raw']
+    normalized, failed = retry_items(conn,account,work,token,zone,boundary,snapshot,catalogue)
+    # Only collected dates are candidates; the snapshot remains account-wide input.
     cur = conn.cursor()
-    cur.execute("select distinct original_key from garmin.raw_payloads where dataset=%s and scope='day' and raw_identity is null and original_key_raw is null", (collect_store.dataset_for(account),))
-    all_days = sorted(row[0] for row in cur.fetchall())
-    if all_days:
-        first = date.fromisoformat(snapshot['history_start'] or all_days[0]); last = date.fromisoformat(all_days[-1])
-        days = [(first+timedelta(days=i)).isoformat() for i in range((last-first).days+1)]
-        failed += publish_days(conn,account,work,token,zone,days,catalogue,boundary,snapshot=snapshot)
+    cur.execute("select distinct scope,original_key from garmin.raw_payloads where dataset=%s and raw_identity is null and original_key_raw is null", (collect_store.dataset_for(account),))
+    collected = cur.fetchall()
+    days = {key for scope,key in collected if scope == 'day'}
+    days.update(activity_date(raw,key,zone) for scope,key in collected if scope == 'activity')
+    start = snapshot['history_start']
+    days = {day for day in days if day and (not start or day >= start)}
+    failed += publish_days(conn,account,work,token,zone,days,catalogue,boundary,snapshot=snapshot)
     return normalized, failed

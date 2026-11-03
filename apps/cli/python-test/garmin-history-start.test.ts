@@ -1,0 +1,60 @@
+import { copyFile, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { expect, it } from 'vitest';
+import { extHome } from '../test/ext-fixture.js';
+
+it('최초 수집의 확정 history_start가 활동 보정과 no-op에 적용된다', async()=>{
+  const {postgresStore}=await import('second_brain/postgres');
+  const {runDaemon}=await import('../src/daemon/run.js');
+  const {systemClock}=await import('../src/runtime/clock.js');
+  const {uuidV7IdGen}=await import('../src/runtime/id-gen.js');
+  const fixture=await extHome(), ids=uuidV7IdGen(), controller=new AbortController();
+  const store=postgresStore({databaseUrl:fixture.db.appUrl});
+  let daemon:ReturnType<typeof runDaemon>|undefined;
+  try {
+    const installed=await fixture.run(['ext','install','garmin','--json']);
+    expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    const home=await realpath(fixture.home),ext=join(home,'extensions/garmin');
+    const tests=fileURLToPath(new URL('../../../extensions/garmin/tests/',import.meta.url));
+    await copyFile(join(tests,'collect_fixture.py'),join(ext,'collect_fixture.py'));
+    const input=JSON.parse(await readFile(join(tests,'fixtures/normalize_v8/input.json'),'utf8'));
+    const responses:Record<string,unknown>={};
+    for(const item of input.items) if(item.scope==='activity') responses[item.endpoint]=JSON.parse(item.raw);
+    const activity=responses.activity as any;
+    activity.summaryDTO.startTimeGMT='2025-12-31T07:30:00.0';
+    activity.summaryDTO.startTimeLocal='2025-12-31T07:30:00.0';
+    responses.activities_by_date=[{activityId:2001,startTimeLocal:'2026-01-31 07:30:00',totalSets:1}];
+    const marker={home,database:new URL(fixture.db.url).pathname.slice(1),host:new URL(fixture.db.url).hostname,port:new URL(fixture.db.url).port,responses,response:{totalSteps:1234}};
+    await writeFile(join(home,'.garmin-collect-fixture.json'),JSON.stringify(marker));
+    const manifestPath=join(ext,'manifest.json'),manifest=JSON.parse(await readFile(manifestPath,'utf8'));
+    for(const work of manifest.work) if(work.kind.startsWith('garmin.collect')) work.entry='collect_fixture.py';
+    await writeFile(manifestPath,JSON.stringify(manifest));
+    await store.setSetting({key:'garmin.timezone',value:'UTC',updatedAt:new Date()});
+    const tokens=join(home,'tokens'); await mkdir(tokens); await writeFile(join(tokens,'garmin_tokens.json'),'synthetic');
+    await store.setSetting({key:'garmin.tokenstore',value:tokens,updatedAt:new Date()});
+    daemon=runDaemon({home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
+    const queue=async()=>{
+      const id=ids.next(),now=new Date();
+      expect(await store.addWork({id,kind:'garmin.collect',targetKind:'account',targetId:'new-history',createdAt:now,nextAttemptAt:new Date(Date.now()+3600000)})).toMatchObject({ok:true});
+      await fixture.db.query(`update brain.work_items set local_date_from='2026-01-31',local_date_to='2026-01-31',local_time_zone='UTC',next_attempt_at=now() where id='${id}'`);
+      await expect.poll(async()=>(await fixture.db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome,{timeout:30000}).toBe('succeeded');
+      return id;
+    };
+    expect(await fixture.db.rows("select * from garmin.collect_meta")).toEqual([]);
+    await queue();
+    expect(await fixture.db.rows("select value from garmin.collect_meta where key='history_start'")).toEqual([{value:'2026-01-01'}]);
+    const raw=await fixture.db.rows("select body from garmin.raw_payloads where account='new-history' and scope='activity' and original_key='2001' and endpoint='activity'");
+    expect(raw).toHaveLength(1);
+    expect(JSON.parse(String(raw[0]!.body)).summaryDTO.startTimeGMT).toBe('2025-12-31T07:30:00.0');
+    const outside=()=>fixture.db.rows("select id from brain.health_observations where account='new-history' and original_table in ('day_summary','workout','exercise_log') and local_date='2025-12-31'");
+    expect(await outside()).toEqual([]);
+    const before=await fixture.db.rows("select id from brain.health_observations where account='new-history' order by id");
+    const noop=await queue(), token=(await fixture.db.rows(`select token from brain.work_attempts where work_item_id='${noop}'`))[0]!.token;
+    const result=JSON.parse(await readFile(join(home,`collect-result-${token}`),'utf8'));
+    expect(JSON.parse(result.summary).status).toBe('noop');
+    expect(await outside()).toEqual([]);
+    expect(await fixture.db.rows("select id from brain.health_observations where account='new-history' order by id")).toEqual(before);
+    expect(await fixture.db.rows("select value from garmin.collect_meta where key='history_start'")).toEqual([{value:'2026-01-01'}]);
+  } finally {controller.abort(); await daemon; await store.close(); await fixture.cleanup();}
+},120000);
