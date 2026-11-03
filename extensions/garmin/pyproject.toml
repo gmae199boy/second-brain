@@ -5,6 +5,7 @@ requires-python = "==3.14.10"
 dependencies = [
     "curl-cffi==0.17.0",
     "garminconnect==0.3.20",
+    "matplotlib==3.11.2",
     "psycopg[binary]==3.3.6",
 ]
 

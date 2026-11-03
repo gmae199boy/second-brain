@@ -21,6 +21,11 @@ def request(conn, home, account, work, token, kind, key, data, metadata, created
     removed its staging locator. The caller must wait for completed before any
     source move and must check that the source still matches its staged bytes.
     """
+    if kind == 'graph':
+        if not isinstance(metadata, dict) or key != metadata.get('name') or type(created_ms) is not int or created_ms < 0:
+            raise ValueError('ARTIFACT_INVALID')
+        request_id, row = graph_request(conn, home, account, work, token, data, metadata, created_ms)
+        return request_id, row[0] if row else 'pending'
     if kind not in ('body_source', 'digest') or not isinstance(key, str) or not key or not isinstance(data, bytes) or len(data) > MAX_BYTES:
         raise ValueError('ARTIFACT_INVALID')
     if not isinstance(metadata, dict) or type(created_ms) is not int or created_ms < 0:
@@ -50,3 +55,41 @@ def request(conn, home, account, work, token, kind, key, data, metadata, created
                  datetime.fromtimestamp(created_ms / 1000, timezone.utc),work,token,meta))
             row = cur.execute('select status from brain.file_request_results_public_v1 where request_id=%s', (request_id,)).fetchone()
     return request_id, row[0] if row else 'pending'
+
+
+def graph_identity(account, metadata):
+    from collect_store import dataset_for
+    dataset = dataset_for(account)
+    identity = _canonical([dataset, 'graph', metadata['local_date'], metadata['name'], metadata['revision']])
+    return dataset, identity, uuid5(_NAMESPACE, identity)
+
+
+def graph_lookup(conn, account, work, token, metadata):
+    _, _, request_id = graph_identity(account, metadata)
+    with _write(conn, account, work, token) as (cur, _):
+        row = cur.execute('select status,file_id from brain.file_request_results_public_v1 where request_id=%s', (request_id,)).fetchone()
+    return request_id, row
+
+
+def graph_request(conn, home, account, work, token, data, metadata, created_ms):
+    dataset, identity, request_id = graph_identity(account, metadata)
+    if not isinstance(data, bytes) or len(data) > 10_000_000:
+        raise ValueError('ARTIFACT_INVALID')
+    meta = _canonical(metadata)
+    if len(meta.encode('utf-8')) > 16000:
+        raise ValueError('ARTIFACT_INVALID')
+    content_hash = hashlib.sha256(data).hexdigest()
+    request_key = 'runtime-' + hashlib.sha256(identity.encode()).hexdigest()
+    # Lock by logical identity, not content: different PNG encodings share one request.
+    with locator_lock(conn, hashlib.sha256(identity.encode()).hexdigest()):
+        _, row = graph_lookup(conn, account, work, token, metadata)
+        if row: return request_id, row
+        locator = stage(home, dataset, 'graph', identity, data)
+        with _write(conn, account, work, token) as (cur, _):
+            cur.execute('''insert into brain.file_requests
+                (id,source,request_key,dataset,import_batch,locator,sha256,size_bytes,media_type,created_at,source_work_item_id,source_attempt_token,metadata)
+                values (%s,'garmin',%s,%s,%s,%s,%s,%s,'image/png',%s,%s,%s,%s::jsonb)''',
+                (request_id,request_key,dataset,request_key,locator,content_hash,len(data),
+                 datetime.fromtimestamp(created_ms / 1000, timezone.utc),work,token,meta))
+            row = cur.execute('select status,file_id from brain.file_request_results_public_v1 where request_id=%s', (request_id,)).fetchone()
+    return request_id, row

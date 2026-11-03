@@ -232,4 +232,13 @@ it('retains only the explicitly allowed Garmin result fields', async () => {
   expect(publicCollectSummary('garmin.collect',JSON.stringify({...valid,cutoff_ms:-1}))).toBeUndefined();
   expect(publicCollectSummary('other.work',JSON.stringify(valid))).toBeUndefined();
   expect(publicCollectSummary('garmin.artifacts',JSON.stringify({status:'success',request_id:valid.snapshot_id,revision:'a'.repeat(64)}))).toBeDefined();
+  const artifact={status:'success',request_id:valid.snapshot_id,revision:'a'.repeat(64)};
+  const graphs={graphs_registered:1,graphs_skipped:2,graphs_failed:1,graphs_failed_names:'52-heart-30d.png'};
+  expect(publicCollectSummary('garmin.artifacts',JSON.stringify({...artifact,...graphs}))).toEqual({...artifact,...graphs});
+  expect(publicCollectSummary('garmin.artifacts',JSON.stringify({...artifact,...graphs,graphs_failed:0,graphs_failed_names:''}))).toBeDefined();
+  for (const invalid of [{...graphs,extra:1}, {...graphs,graphs_registered:-1}, {...graphs,graphs_skipped:61}, {...graphs,graphs_failed_names:'../secret.png'}, {...graphs,graphs_failed:2,graphs_failed_names:'01-x.png,01-x.png'}, {...graphs,graphs_registered:60}, {...graphs,graphs_failed:2}, {...graphs,graphs_failed_names:'x'.repeat(1201)}]) {
+    expect(publicCollectSummary('garmin.artifacts',JSON.stringify({...artifact,...invalid}))).toBeUndefined();
+  }
+  expect(publicCollectSummary('garmin.artifacts',JSON.stringify({...artifact,graphs_failed:0}))).toBeUndefined();
+  expect(publicCollectSummary('garmin.collect',JSON.stringify({...valid,...graphs}))).toBeUndefined();
 });

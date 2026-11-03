@@ -17,10 +17,22 @@ export function publicCollectSummary(kind: string, summary: string | undefined):
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const v = value as Record<string, unknown>;
   if (kind === 'garmin.artifacts') {
-    if (Object.keys(v).sort().join(',') !== 'request_id,revision,status' || v['status'] !== 'success' ||
+    const keys = Object.keys(v).sort().join(',');
+    if (!['request_id,revision,status','graphs_failed,graphs_failed_names,graphs_registered,graphs_skipped,request_id,revision,status'].includes(keys) || v['status'] !== 'success' ||
         typeof v['request_id'] !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v['request_id']) ||
         typeof v['revision'] !== 'string' || !/^[0-9a-f]{64}$/.test(v['revision'])) return undefined;
-    return v as Record<string, string | number>;
+    const result: Record<string, string | number> = {status:v['status'],request_id:v['request_id'],revision:v['revision']};
+    if ('graphs_failed' in v) {
+      const registered = v['graphs_registered'], skipped = v['graphs_skipped'], failed = v['graphs_failed'], names = v['graphs_failed_names'];
+      if (typeof registered !== 'number' || !Number.isSafeInteger(registered) || registered < 0 || registered > 60 ||
+          typeof skipped !== 'number' || !Number.isSafeInteger(skipped) || skipped < 0 || skipped > 60 ||
+          typeof failed !== 'number' || !Number.isSafeInteger(failed) || failed < 0 || failed > 60 ||
+          typeof names !== 'string' || names.length > 1200 || registered + skipped + failed > 60) return undefined;
+      const list = names === '' ? [] : names.split(',');
+      if (list.length !== failed || new Set(list).size !== list.length || !list.every(n => /^[0-9]{2}-[a-z0-9-]+\.png$/.test(n))) return undefined;
+      Object.assign(result, {graphs_registered:registered,graphs_skipped:skipped,graphs_failed:failed,graphs_failed_names:names});
+    }
+    return result;
   }
   if (Object.keys(v).sort().join(',') !== 'cutoff_ms,local_date,normalize_failed,normalized,snapshot_id,status,timezone' ||
       !['success', 'noop'].includes(String(v['status'])) || typeof v['local_date'] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v['local_date']) ||
