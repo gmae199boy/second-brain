@@ -104,3 +104,6 @@ _bmad/render/
 
 # 빌드에서 생성한 배포용 확장 패키지
 apps/cli/extensions/
+
+# 새 티켓 자동화의 로컬 실행 상태·영수증·보고서
+.brain-automation/

@@ -1,126 +1,33 @@
-# Project override for bmad-build-auto — bmad-loop unattended build (2026-10-29).
-#
-# Roles
-#   orchestrator = the bmad-loop dev session: codex gpt-6.1-sol, effort medium (.bmad-loop/policy.toml [adapter])
-#   implementer  = Orca supervised Codex worker, gpt-6.1-terra / medium
-#   review lens  = Orca supervised Codex worker, gpt-6.1-sol / medium, inspection only
-#   Triage of review findings and the bad_plan loop-back stay with the orchestrator, as the skill defines.
-# Speed
-#   One quick review per ticket. bmad-loop's separate review session is off and follow-up reviews are 0
-#   (.bmad-loop/policy.toml); the thorough lenses below stay defined but the policy never selects them.
-
+# 새 티켓별 Orca 자동화 프로젝트 override.
 [workflow]
-
-# Implementation always goes to the implementer session; the orchestrator never implements inline.
+activation_steps_prepend = ["이 프로젝트에서는 런북과 Orca 최신 생명주기가 렌더된 기본 Subagents 절의 blocking/턴 종료 금지 지시보다 우선한다. 워커 시작 뒤 턴을 끝내고 Orca 알림으로 재개한다. 기본 finalize/HALT가 done을 요구해도 built로 기록한다. 명시한 브랜치 커밋·push 의무를 수행한다."]
 route = "full"
-
-# Review is always one quick pass.
-review = "quick"
-
-on_complete = """
-워크플로 종료 또는 HALT 전에 bmad-orca-control.py checkpoint로 단계·다음 행동·검증·미해결 판단을 저장하고 자기 Orca Run의 워커·mail 상태를 확인한다. 완료 보고를 수락한 워커는 release하고, 남은 과업을 명시적으로 취소해야 하면 스킬의 recovery 절차로 해당 Dispatch만 취소한다. 원인·소유권이 불명확한 워커를 임의로 kill하거나 중복 실행하지 않는다. 정리 결과와 미확인 상태는 checkpoint와 기존 Auto Run Result에 덧붙인다. 모든 워커와 mail이 정리된 자기 전용 제어 셸만 마지막에 닫는다. 워커 보고를 티켓 done 표시로 대신하지 않는다.
-"""
-
-persistent_facts = [
-  "file:_bmad/custom/bmad-orca-workers.md",
-  """
-Orca coordinator 명령은 _bmad/custom/bmad-orca-control.py의 init/start/check/checkpoint/restore/message/ack로 수행한다. tmux 지휘자는 자기 Orca 제어 셸 안에서 실행한다. 동일 task/generation 재개·컴팩션 뒤에는 먼저 현재 task의 orca-coordination.json을 restore해 실제 Run/Dispatch와 대조한다. 모호한 요청·활성 구현자를 새 Run/워커로 우회하지 않는다. 결과 대기는 helper check --timeout-ms 45000을 같은 턴에서 반복해 워커 capacity 1분 관측도 수행한다. 구현 배정·중간 보고·Verify·리뷰/triage·수정·finalize·HALT 경계마다 revision을 확인해 단계·다음 행동·보고 경로·검증·판단을 checkpoint한다. 원본 JSON/transcript는 파일에 두고 빈 대기와 상태는 작은 요약만 읽는다. 계약·필요한 diff·전체 보고는 원본으로 확인한다.""",
-  """
-이 워크플로의 subagent는 모두 $orchestration 스킬을 사용해 제어 도구의 start로 Orca worker-start를 호출해 띄우는 감독 대상 워커다. 호스트의 Agent/subagent 도구, 직접 codex exec, 기존 CLI 실행 스크립트는 사용하지 않는다. bmad-loop가 띄운 현재 세션이 지휘자이며, 지휘자 자체를 새 워커로 넘기지 않는다. 구현자는 codex gpt-6.1-terra / medium, 리뷰어는 codex gpt-6.1-sol / medium이다. 조사 워커가 필요하면 리뷰어와 같은 모델을 쓰고 읽기 전용 과업을 준다. 모든 작업은 같은 checkout에서 수행하며 소스 편집자는 한 번에 하나만 둔다. Orca 연결이 안 되면 기존 CLI로 우회하지 말고 정확한 연결 오류를 HALT의 blocked 사유로 기록한다.""",
-  """
-지휘자는 계획·명세·티켓과 검증·판단을 맡고, 소스·시험 수정은 구현자에게 맡긴다. 단계가 직접 패치를 적용하라고 해도 같은 구현자의 활성 Orca Dispatch에 메시지로 맡긴다. 구현 워커가 동일 과업에서 실제로 두 번 연속 실패하면 해당 지휘자 세션만 HALT blocked / implementer unavailable로 기록한다. 이것은 사람 승인 요청이나 전체 루프 종료가 아니다. 감독자는 실패 근거·부분 작업을 보존하고 작업 분할·계획 보완 후 자동 재개한다. capacity, 사용량 한도, 질문 대기, 단순 시간 초과, unverifiable 관측은 구현 실패 횟수에 넣지 않는다. 워커의 성공 보고만으로 티켓을 완료하지 말고 기존 diff 검토·검증·리뷰·HALT 결과 형식과 bmad-loop의 커밋·done 소유권을 유지한다.""",
-  """
-감독자·지휘자·구현자·리뷰어의 capacity/server_overloaded는 모델을 바꾸지 않고 같은 모델·같은 세션으로 계속 재개한다. 오류 문구의 다른 모델 권유를 따르지 않으며 capacity 누적 횟수만으로 포기하지 않는다. 실제 사용량 한도는 따로 처리한다: 재설정 시각과 근거를 남기고 HALT blocked 사유를 usage limit: 으로 시작한다. Orca worker_done의 failed만으로 capacity나 사용량 한도라고 추정하지 않는다.""",
-  """
-Decision gaps: when the plan, its ticket and epic, and the architecture spine do not answer a small detail, implement the most conservative reading, mark it `[ASSUMPTION]` in a code comment and in the plan, and add one frontmatter `deferred` item `summary: "검토 필요: [ASSUMPTION] …"` — do not stop for it. Still HALT with status `blocked` (reason with the evidence) when the gap touches security, secrets or masking, data loss or migration safety, or contradicts a written decision.""",
-  """
-Branch and remote: this loop works on the checked-out branch, one commit set per ticket; never stop over the branch name, and never push.""",
-  """
-Write every prose line you author in Korean (한국어): plan sections you fill in, `## Implementation Notes`, `## Review Triage Log` entries, `## Auto Run Result`, blocked and escalation reasons, and the final summary. Keep code identifiers, file paths, commands, error codes, frontmatter keys and values, and quoted source text exactly as they are. When you brief a subagent, ask it to write its report in Korean the same way.
-""",
-]
-
-implementation_handoff = """
-$orchestration 스킬과 persistent_facts의 Orca 절차를 따라 체크포인트를 init 또는 restore하고 제어 도구의 start --role implementer로 구현 워커를 띄운다. agent는 codex, model은 gpt-6.1-terra, effort는 medium이며 현재 checkout의 명시적인 worktree 선택자를 사용한다. Task spec은 아래 지시와 Orca 완료 보고 의무로 구성한다. 지휘자 자신의 역할·티켓 done 권한은 넘기지 않는다.
-
-Read {plan_file} fully and implement it — the plan is the sole source of truth. Load every file listed in its frontmatter `context:` before you start. Do not commit; the orchestrator commits.
-
-구현 워커는 계획을 따라 직접 소스·시험을 구현하고 검증한다. build-auto 워크플로를 재귀 실행하거나 호스트 Agent/subagent·직접 codex exec·추가 워커를 사용하지 않는다. 계획·티켓의 상태 변경과 커밋·done 표시는 지휘자·엔진 소관이다.
-
-지휘자는 배정 전에 계획의 실행 항목을 검증 가능한 작은 단계로 나누고 현재 단계·파일 범위·완료 관찰·다음 단계를 checkpoint한다. 최초 spec에는 전체 계획 경로와 첫 단계의 구체적 구현 지시를 함께 준다. 워커는 각 단계를 실제로 구현·시험한 뒤 type status / subject phase-ready와 보고 파일을 보내고 같은 활성 Dispatch에서 다음 단계 지시를 기다린다. 지휘자는 결과·diff·시험을 확인하고 checkpoint한 다음 message --subject next-phase로 다음 단계만 지시한다. 모든 실행 항목이 충족돼야 implementation-ready로 넘어간다. 전체 요구·검증·리뷰·엔진 done 판정은 줄이지 않는다. 일부 항목 구현, 큰 작업, 긴 대기, 스스로 정한 응답/시간 예산만으로 worker_done failed를 보내지 않는다. 실제 계속할 수 없는 구체적 원인만 실패로 보고하고 재현 근거와 남은 작업을 파일에 남긴다.
-
-이 Task는 최초 구현과 지휘자의 검증·리뷰 반영까지 포함한다. 최초 구현 후 한국어 변경 내용·검증 결과·미완료 사항 전문을 임시 파일에 저장하고, injected preamble의 정확한 handle과 Task/Dispatch로 type status / subject implementation-ready 및 실제 report-path를 보낸다. 이 시점에는 worker_done이나 최종 응답으로 끝내지 않고 자신의 inbox를 check --wait하며 질문·후속 수정 지시를 처리한다. 최종 수정·검증이 끝났다는 지휘자의 명시적인 finalize 지시를 받은 뒤 전체 보고를 갱신하고 worker_done을 한 번 보낸다. 실제로 과업을 수행할 수 없으면 기다리지 말고 outcome failed로 정식 보고한다. 현재 모델을 유지하고 capacity 오류는 같은 세션에서 재개한다.
-
-지휘자는 도구가 저장한 Run·Task·Dispatch·worker handle을 확인하고 check --timeout-ms 45000을 반복하면서 질문에 답하고 phase-ready를 받으면 앞 절차로 다음 단계를 보내며, 전체 implementation-ready 중간 보고 또는 실제 실패 보고까지 기다린다. 중간 보고를 받으면 기존 Verify와 리뷰 단계로 진행하며 구현자의 같은 Dispatch를 유지한다. 모든 수정 지시는 제어 도구의 message로 이 활성 Dispatch에 전달하고 각 단계·검증·판단을 checkpoint한다. 리뷰와 최종 검증이 끝나면 finalize를 보내고 정식 worker_done과 최종 보고를 수락한 뒤 release한다. 이미 완료된 structured worker 핸들에 worker-start --terminal을 호출하지 않는다.
-"""
+review = "thorough"
+persistent_facts = ["file:_bmad-output/personal-brain/automation/runbook.md", "이 실행은 새 티켓 자동화다. 사용자 지시는 실행·커밋·티켓 브랜치 push를 승인했다. 기존 bmad-loop 정책·런북·제어 helper를 사용하지 않는다. 중앙 상태는 중앙 checkout의 .brain-automation/state.json이며 워커는 이를 수정하지 않는다.", "티켓 지휘자는 codex gpt-6.1-sol / medium, 구현자는 codex gpt-6.1-terra / medium, 모든 독립 리뷰어는 codex gpt-6.1-sol / medium이다. 구현·리뷰는 설치된 $orchestration으로 Orca 감독 대상 워커에 배정한다. 호스트 subagent·직접 codex exec로 대체하지 않는다. 같은 checkout의 소스 편집자는 한 번에 하나다.", "각 지휘자는 자신의 주어진 Task/Dispatch 완료 보고 의무와 하위 워커를 감독하는 Run을 구별한다. 매 복구에 자신의 .brain-automation/worker.json, Dispatch 지시, 런북과 보고를 읽고 Git·Orca 실제 상태를 대조한다. 단계·Run/Task/Dispatch·handle·request ID·영수증·검증·보고·다음 행동을 원자적으로 체크포인트한다. 외부 변경 전 의도와 request ID를 기록한다.", "Orca 최신 가이드의 worker-start/send/ask/worker_done 및 알림 생명주기를 따른다. 워커 시작 뒤 턴을 끝내고 알림으로 재개한다. 반복 polling·옛 helper·다른 호출자 핸들 사용·다른 Run의 inbox 소비를 금지한다. 실패한 시작은 동일 Task의 최신 recovery 절차로 복원하고 중복 편집자를 만들지 않는다. timeout·capacity·무응답·unverifiable을 종료나 구현 실패로 추정하지 않는다. 모델을 임의 변경하지 않는다.", "필수 검증과 독립 리뷰를 수행하고 지적을 근거로 triage한다. 리뷰 반영 변경은 영향 검증과 필요한 후속 독립 리뷰를 마친다. 추가 검사 요구나 해결 불명확 사항을 남긴 채 built로 올리지 않는다. 미충족 수락 기준을 defer로 숨기지 않는다. 작은 판단은 근거를 기록해 자율 해결하고 실제 외부 차단은 정확한 실패와 재개 조건으로 남긴다.", "사용자 인수 전 최종 상태는 built이며 done으로 올리지 않는다. 지휘자는 필수 구현·검증·리뷰 완료 후 티켓 범위 소스·시험·계획만 stage하고 커밋한 뒤 자신의 티켓 브랜치를 원격에 push하고 원격 SHA를 확인한다. main 병합·push와 에픽 전이는 중앙 전용이다. 강제 push와 훅 우회는 금지한다. app-ref 변경에는 같은 커밋의 plugin version 증가와 이전 커밋 참조가 필요하다.", "최종 보고와 작성하는 계획·리뷰 triage·Auto Run Result·차단 사유는 한국어다. 식별자·키·명령·원문 인용은 유지한다. 개인 홈 절대 경로를 문서·커밋·워커 프롬프트에 쓰지 말고 ~/ 또는 저장소 상대 경로를 쓴다. 실제 검증 오류와 미완료를 성공으로 보고하지 않는다. 최종 보고는 티켓 ref·baseline·commit·원격 브랜치·검증 결과·리뷰/후속 리뷰 경로·미해결 항목을 포함한다."]
+implementation_handoff = "설치된 $orchestration과 $orca-cli를 읽고 같은 Orca 실행 파일의 최신 가이드를 따른다. 현재 checkout에 codex gpt-6.1-terra / medium 구현 워커를 worker-start --worktree current로 배정한다. 긴 명세는 --spec-file로 전달한다. 주어진 전체 계획 {plan_file}과 context를 읽고 구현·시험하게 한다. 구현자는 소스·시험만 편집하며 커밋·push·티켓 상태 전이는 지휘자가 맡는다. 추가 워커나 build-auto 재귀 실행은 금지한다. 한국어 보고 파일과 injected preamble의 worker_done을 요구한다. 최초 구현이 완료되면 정식 완료 보고를 받고, 리뷰 반영 수정은 최신 send로 같은 Dispatch에 후속 Task를 전달한다. 이전 Task가 끝나지 않았으면 같은 활성 Dispatch에 보낸다. 시작 후 턴을 끝내고 알림으로 재개하며 관측 불명으로 중복 실행하지 않는다. 지휘자는 보고 원문·diff·검증을 확인하고 체크포인트를 남긴다."
+on_complete = "워크플로 종료/HALT 전 자기 .brain-automation/worker.json에 실제 단계·검증·리뷰·미해결 항목·다음 행동을 저장한다. 성공일 때만 built·커밋·티켓 브랜치 push와 원격 SHA 확인을 마친다. 자신의 중앙 Task/Dispatch에 injected preamble의 worker_done을 실제 보고 파일과 함께 보낸다. 실패는 failed로 보고하고 부분 작업을 보존한다. main을 병합·push하지 않는다. 하위 워커 정리는 최신 Orca 가이드와 영수증의 next를 따른다. 사용자 소유·불명확한 자원은 임의로 닫지 않는다."
 
 [[workflow.quick_lenses]]
 id = "quick"
 name = "Quick"
-instruction = """
-$orchestration 스킬과 persistent_facts의 Orca 절차로 제어 도구의 start --role review-<현재 렌즈 id>를 사용해 독립적인 리뷰 워커를 띄운다. 수집은 도구의 check로 수행하고 결과·triage를 checkpoint한다. agent codex / model gpt-6.1-sol / effort medium, 현재 checkout을 사용한다. 이 단계의 모든 렌즈를 먼저 띄운 뒤 결과를 수집한다. Task spec의 검사 지시는 다음과 같다:
-Read `{plan_file}` — the plan holding the acceptance criteria and intent — and the files its frontmatter `context:` lists. Read the agent instruction files (`AGENTS.md`, `CLAUDE.md`, or equivalents) at the repository root and in the directories the diff touches; those are the rules. Then read the unified diff at `{diff_file}` — it is the change under review.
-
-Report unmet acceptance criteria, broken rules, and bugs. Each finding: the location, what goes wrong, and evidence checked against the surrounding code. Output a Markdown list of findings only — no severity, priority, or ranking. Write the findings in Korean.
-
-Review by inspection only. Do not modify code, run builds or tests, or invoke quality gates. Do not invoke build/review workflow skills or spawn helpers — you are the reviewer. Follow the injected Orca worker lifecycle obligations. 한국어 findings 전문을 임시 파일에 저장하고 injected preamble의 정확한 명령으로 worker_done을 한 번 보낸다. 파일 경로는 실제 report-path로 전달하고, 검사를 끝내지 못했으면 outcome failed를 명시한다. 지휘자는 해당 Dispatch의 정식 완료 보고와 전문을 받은 뒤 결과를 triage하고 워커를 release한다.
-"""
+instruction = "설치된 $orchestration의 최신 가이드로 현재 checkout에 독립 Orca 리뷰어를 worker-start --worktree current --agent codex --model gpt-6.1-sol --effort medium으로 배정한다. 검사 과업만 주고 코드·계획 수정과 빌드·시험·추가 워커를 금지한다. 긴 명세는 --spec-file로 전달한다. 시작 뒤 턴을 끝내고 알림으로 재개한다. 한국어 리뷰 전문을 파일로 남기고 injected preamble에 따라 worker_done으로 실제 report-path와 outcome을 보고하게 한다. 지휘자는 원문과 정식 결과를 확인하고 triage·필요한 수정·검증·후속 리뷰를 수행한다. 다음은 리뷰어에게 줄 검사 지시다:\n\nRead `{plan_file}` — the plan holding the acceptance criteria and intent — and the files its frontmatter `context:` lists. Read the agent instruction files (`AGENTS.md`, `CLAUDE.md`, or equivalents) at the repository root and in the directories the diff touches; those are the rules. Then read the unified diff at `{diff_file}` — it is the change under review.\n\nReport unmet acceptance criteria, broken rules, and bugs. Each finding: the location, what goes wrong, and evidence checked against the surrounding code. Output a Markdown list of findings only — no severity, priority, or ranking.\n\n\n검사만 수행하고 수정·시험·추가 워커 없이 한국어 발견사항과 근거를 보고한다. 결함을 지어내지 않는다. 검사 실패는 명시한다."
 
 [[workflow.thorough_lenses]]
 id = "blind-hunter"
 name = "Blind Hunter"
-instruction = """
-$orchestration 스킬과 persistent_facts의 Orca 절차로 제어 도구의 start --role review-<현재 렌즈 id>를 사용해 독립적인 리뷰 워커를 띄운다. 수집은 도구의 check로 수행하고 결과·triage를 checkpoint한다. agent codex / model gpt-6.1-sol / effort medium, 현재 checkout을 사용한다. 이 단계의 모든 렌즈를 먼저 띄운 뒤 결과를 수집한다. Task spec의 검사 지시는 다음과 같다:
-Conduct a review of CONTENT.
-Look for what's missing, not only what's wrong.
-Compute your finding floor N from the diff file's size: N = min(floor(sqrt(kB) + 1), 10), where kB is the file's size in kilobytes. State the arithmetic in one line, then find at least N issues to fix or improve.
-Output a Markdown list of findings only — no severity, priority, or ranking.
-If the content is empty, stop and say so.
-If you have zero findings, re-check and keep thinking; do not stop with an empty list.
-
-CONTENT: the unified diff at `{diff_file}`. Read that file — it is the content under review.
-
-Review by inspection only. Do not modify code, run builds or tests, or invoke quality gates. Do not invoke build/review workflow skills or spawn helpers — you are the reviewer. Follow the injected Orca worker lifecycle obligations. 한국어 findings 전문을 임시 파일에 저장하고 injected preamble의 정확한 명령으로 worker_done을 한 번 보낸다. 파일 경로는 실제 report-path로 전달하고, 검사를 끝내지 못했으면 outcome failed를 명시한다. 지휘자는 해당 Dispatch의 정식 완료 보고와 전문을 받은 뒤 결과를 triage하고 워커를 release한다.
-"""
+instruction = "설치된 $orchestration의 최신 가이드로 현재 checkout에 독립 Orca 리뷰어를 worker-start --worktree current --agent codex --model gpt-6.1-sol --effort medium으로 배정한다. 검사 과업만 주고 코드·계획 수정과 빌드·시험·추가 워커를 금지한다. 긴 명세는 --spec-file로 전달한다. 시작 뒤 턴을 끝내고 알림으로 재개한다. 한국어 리뷰 전문을 파일로 남기고 injected preamble에 따라 worker_done으로 실제 report-path와 outcome을 보고하게 한다. 지휘자는 원문과 정식 결과를 확인하고 triage·필요한 수정·검증·후속 리뷰를 수행한다. 다음은 리뷰어에게 줄 검사 지시다:\n\nConduct a review of CONTENT.\nLook for what's missing, not only what's wrong.\nCompute your finding floor N from the diff file's size: N = min(floor(sqrt(kB) + 1), 10), where kB is the file's size in kilobytes. State the arithmetic in one line, then find at least N issues to fix or improve.\nOutput a Markdown list of findings only — no severity, priority, or ranking.\nIf the content is empty, stop and say so.\nIf you have zero findings, re-check and keep thinking; do not stop with an empty list.\n\nCONTENT: the unified diff at `{diff_file}`. Read that file — it is the content under review.\n\n\n검사만 수행하고 수정·시험·추가 워커 없이 한국어 발견사항과 근거를 보고한다. 결함을 지어내지 않는다. 검사 실패는 명시한다."
 
 [[workflow.thorough_lenses]]
 id = "edge-case-hunter"
 name = "Edge Case Hunter"
-instruction = """
-$orchestration 스킬과 persistent_facts의 Orca 절차로 제어 도구의 start --role review-<현재 렌즈 id>를 사용해 독립적인 리뷰 워커를 띄운다. 수집은 도구의 check로 수행하고 결과·triage를 checkpoint한다. agent codex / model gpt-6.1-sol / effort medium, 현재 checkout을 사용한다. 이 단계의 모든 렌즈를 먼저 띄운 뒤 결과를 수집한다. Task spec의 검사 지시는 다음과 같다:
-Read `{skill-root}/review-prompts/edge-case-hunter.md` completely and follow it as your review instructions.
-
-claims_file (leave unread until your instructions call for it): {claims_file}
-
-Review content: the unified diff at `{diff_file}`. Read that file — it is the content under review.
-
-Review by inspection only. Do not modify code, run builds or tests, or invoke quality gates. Do not invoke build/review workflow skills or spawn helpers — you are the reviewer. Follow the injected Orca worker lifecycle obligations. If the instruction file is unreadable, report that exact failure and stop. 한국어 findings 전문을 임시 파일에 저장하고 injected preamble의 정확한 명령으로 worker_done을 한 번 보낸다. 파일 경로는 실제 report-path로 전달하고, 검사를 끝내지 못했으면 outcome failed를 명시한다. 지휘자는 해당 Dispatch의 정식 완료 보고와 전문을 받은 뒤 결과를 triage하고 워커를 release한다.
-"""
+instruction = "설치된 $orchestration의 최신 가이드로 현재 checkout에 독립 Orca 리뷰어를 worker-start --worktree current --agent codex --model gpt-6.1-sol --effort medium으로 배정한다. 검사 과업만 주고 코드·계획 수정과 빌드·시험·추가 워커를 금지한다. 긴 명세는 --spec-file로 전달한다. 시작 뒤 턴을 끝내고 알림으로 재개한다. 한국어 리뷰 전문을 파일로 남기고 injected preamble에 따라 worker_done으로 실제 report-path와 outcome을 보고하게 한다. 지휘자는 원문과 정식 결과를 확인하고 triage·필요한 수정·검증·후속 리뷰를 수행한다. 다음은 리뷰어에게 줄 검사 지시다:\n\nRead `{skill-root}/review-prompts/edge-case-hunter.md` completely and follow it as your review instructions.\n\nclaims_file (leave unread until your instructions call for it): {claims_file}\n\nReview content: the unified diff at `{diff_file}`. Read that file — it is the content under review.\n\n\n검사만 수행하고 수정·시험·추가 워커 없이 한국어 발견사항과 근거를 보고한다. 결함을 지어내지 않는다. 검사 실패는 명시한다."
 
 [[workflow.thorough_lenses]]
 id = "verification-gap"
 name = "Verification Gap Reviewer"
-instruction = """
-$orchestration 스킬과 persistent_facts의 Orca 절차로 제어 도구의 start --role review-<현재 렌즈 id>를 사용해 독립적인 리뷰 워커를 띄운다. 수집은 도구의 check로 수행하고 결과·triage를 checkpoint한다. agent codex / model gpt-6.1-sol / effort medium, 현재 checkout을 사용한다. 이 단계의 모든 렌즈를 먼저 띄운 뒤 결과를 수집한다. Task spec의 검사 지시는 다음과 같다:
-Read `{skill-root}/review-prompts/verification-gap.md` completely and follow it as your review instructions.
-
-Review content: the unified diff at `{diff_file}`. Read that file — it is the content under review.
-
-Review by inspection only. Do not modify code, run builds or tests, or invoke quality gates. Do not invoke build/review workflow skills or spawn helpers — you are the reviewer. Follow the injected Orca worker lifecycle obligations. If the instruction file is unreadable, report that exact failure and stop. 한국어 findings 전문을 임시 파일에 저장하고 injected preamble의 정확한 명령으로 worker_done을 한 번 보낸다. 파일 경로는 실제 report-path로 전달하고, 검사를 끝내지 못했으면 outcome failed를 명시한다. 지휘자는 해당 Dispatch의 정식 완료 보고와 전문을 받은 뒤 결과를 triage하고 워커를 release한다.
-"""
+instruction = "설치된 $orchestration의 최신 가이드로 현재 checkout에 독립 Orca 리뷰어를 worker-start --worktree current --agent codex --model gpt-6.1-sol --effort medium으로 배정한다. 검사 과업만 주고 코드·계획 수정과 빌드·시험·추가 워커를 금지한다. 긴 명세는 --spec-file로 전달한다. 시작 뒤 턴을 끝내고 알림으로 재개한다. 한국어 리뷰 전문을 파일로 남기고 injected preamble에 따라 worker_done으로 실제 report-path와 outcome을 보고하게 한다. 지휘자는 원문과 정식 결과를 확인하고 triage·필요한 수정·검증·후속 리뷰를 수행한다. 다음은 리뷰어에게 줄 검사 지시다:\n\nRead `{skill-root}/review-prompts/verification-gap.md` completely and follow it as your review instructions.\n\nReview content: the unified diff at `{diff_file}`. Read that file — it is the content under review.\n\n\n검사만 수행하고 수정·시험·추가 워커 없이 한국어 발견사항과 근거를 보고한다. 결함을 지어내지 않는다. 검사 실패는 명시한다."
 
 [[workflow.thorough_lenses]]
 id = "intent-alignment"
 name = "Intent Alignment Auditor"
-instruction = """
-$orchestration 스킬과 persistent_facts의 Orca 절차로 제어 도구의 start --role review-<현재 렌즈 id>를 사용해 독립적인 리뷰 워커를 띄운다. 수집은 도구의 check로 수행하고 결과·triage를 checkpoint한다. agent codex / model gpt-6.1-sol / effort medium, 현재 checkout을 사용한다. 이 단계의 모든 렌즈를 먼저 띄운 뒤 결과를 수집한다. Task spec의 검사 지시는 다음과 같다:
-You are an intent-alignment auditor. You have no other context about how this change was produced. Here is the verbatim intent this work started from:
-
-{verbatim_intent}
-
-The diff is the unified diff at `{diff_file}`. Read that file — it is the change under review.
-
-Your task is strictly descriptive — do not prescribe additional work. Report: (1) the defensible readings of the intent, enumerated; (2) which reading this diff implements; (3) where the readings and the diff diverge — specifically, which surface the intent's expectations live at versus which surface the diff's changes and its tests exercise.
-
-Review by inspection only. Do not modify code, run builds or tests, or invoke quality gates. Do not invoke build/review workflow skills or spawn helpers — you are the reviewer. Follow the injected Orca worker lifecycle obligations. 한국어 findings 전문을 임시 파일에 저장하고 injected preamble의 정확한 명령으로 worker_done을 한 번 보낸다. 파일 경로는 실제 report-path로 전달하고, 검사를 끝내지 못했으면 outcome failed를 명시한다. 지휘자는 해당 Dispatch의 정식 완료 보고와 전문을 받은 뒤 결과를 triage하고 워커를 release한다.
-"""
+instruction = "설치된 $orchestration의 최신 가이드로 현재 checkout에 독립 Orca 리뷰어를 worker-start --worktree current --agent codex --model gpt-6.1-sol --effort medium으로 배정한다. 검사 과업만 주고 코드·계획 수정과 빌드·시험·추가 워커를 금지한다. 긴 명세는 --spec-file로 전달한다. 시작 뒤 턴을 끝내고 알림으로 재개한다. 한국어 리뷰 전문을 파일로 남기고 injected preamble에 따라 worker_done으로 실제 report-path와 outcome을 보고하게 한다. 지휘자는 원문과 정식 결과를 확인하고 triage·필요한 수정·검증·후속 리뷰를 수행한다. 다음은 리뷰어에게 줄 검사 지시다:\n\nYou are an intent-alignment auditor. You have no other context about how this change was produced. Here is the verbatim intent this work started from:\n\n{verbatim_intent}\n\nThe diff is the unified diff at `{diff_file}`. Read that file — it is the change under review.\n\nYour task is strictly descriptive — do not prescribe additional work. Report: (1) the defensible readings of the intent, enumerated; (2) which reading this diff implements; (3) where the readings and the diff diverge — specifically, which surface the intent's expectations live at versus which surface the diff's changes and its tests exercise.\n\n\n검사만 수행하고 수정·시험·추가 워커 없이 한국어 발견사항과 근거를 보고한다. 결함을 지어내지 않는다. 검사 실패는 명시한다."

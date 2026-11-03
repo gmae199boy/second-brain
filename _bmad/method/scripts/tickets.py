@@ -21,7 +21,8 @@ What this script decides itself: a leaf file joins its entry through the `id` in
 and `"6"` are one id); a plan joins through `ticket`, an entry id or a backlog file's stem, and is
 never a row. A leaf file's `after` and `hitl` replace the entry's, absent reading as empty; a
 difference is `drift` on the row. A prerequisite is met when it is done or in review, a dropped one
-still blocks, and an epic file's own `after` waits for that epic to be done. A plan whose `ticket`
+still blocks. Project override: an epic may be built; its gates accept built or done prerequisites,
+but not in-review or unresolved blocked prerequisites. A plan whose `ticket`
 names nothing is skipped and one whose `status` is unknown blocks its ticket; both are listed under
 `problems`. A moved entry takes the destination's next id and goes last there; the folder it left keeps
 that id from coming back, and every `after` naming it is rewritten.
@@ -53,6 +54,7 @@ sys.dont_write_bytecode = True
 STATUSES = ("draft", "ready-for-dev", "in-progress", "in-review", "built", "done", "blocked", "dropped")
 STATES = ("backlog", "in-progress", "review", "done", "dropped")
 CONTAINER_STATUSES = ("in-progress", "done", "dropped")
+EPIC_STATUSES = (*CONTAINER_STATUSES, "built")
 STATE_OF = {
     "": "backlog",
     "draft": "backlog",
@@ -263,11 +265,14 @@ def load_container(folder: Path) -> dict:
         raise TicketError(
             f"{folder.name}/{path.name}: type {fm.get('type')!r} is not one of {', '.join(CONTAINER_TYPES)}"
         )
-    status = _one_of(fm.get("status", ""), CONTAINER_STATUSES, f"{folder.name}/{path.name}", "status")
+    allowed = EPIC_STATUSES if fm["type"] == "epic" else CONTAINER_STATUSES
+    status = _one_of(fm.get("status", ""), allowed, f"{folder.name}/{path.name}", "status")
     return {
         "slug": folder.name,
         "tracker_id": str(fm.get("tracker_id", "") or ""),
         "status": status,
+        "blocked_at": fm.get("blocked_at", ""),
+        "blocked_reason": fm.get("blocked_reason", ""),
         "refined": str(fm.get("refined", "")).lower() != "false",
         "raw_after": _list(fm.get("after"), f"{folder.name}.md"),
     }
@@ -585,16 +590,29 @@ def in_scope(tree: dict) -> list[dict]:
     return [t for t in tree["tickets"] if tree["scope"] in (None, t["epic"])]
 
 
+def build_prerequisite_keys(tree: dict) -> set:
+    """로컬 자동화: done 의미를 보존하고 에픽 gate만 built/done을 인정한다."""
+    def satisfied(row):
+        return row["status"] in ("built", "done") and not (row.get("blocked_at") or row.get("blocked_reason"))
+
+    return {t["key"] for t in tree["tickets"] if satisfied(t)} | {
+        slug for slug, container in tree["containers"].items() if satisfied(container)
+    }
+
+
 def classify(tree: dict) -> dict:
-    done = done_keys(tree)
-    # A ticket in review meets an `after`; an epic gate still waits for the epic to be done.
-    met = done | {t["key"] for t in tree["tickets"] if t["state"] == "review"}
+    built = build_prerequisite_keys(tree)
+    # 일반 leaf after의 리뷰 허용은 유지하고 에픽 gate는 built/done만 인정한다.
+    met = built | {
+        t["key"] for t in tree["tickets"]
+        if t["state"] in ("done", "review") and not (t.get("blocked_at") or t.get("blocked_reason"))
+    }
     groups = {"ready_to_refine": [], "ready_to_start": [], "in_progress": [], "blocked": []}
     for t in in_scope(tree):
         s = t["state"]
         if s in ("done", "dropped"):
             continue
-        unmet = [b for b in t["after"] if b not in met] + [b for b in t["gated_by"] if b not in done]
+        unmet = [b for b in t["after"] if b not in met] + [b for b in t["gated_by"] if b not in built]
         if t["status"] == "blocked" or t["blocked_at"]:
             t["waiting_on"] = unmet
             groups["blocked"].append(t)
@@ -1701,7 +1719,9 @@ its file name.
 Output: `ready_to_refine` (needs full criteria first), `ready_to_start`, `in_progress`, and `blocked`; a
 `blocked` row has `waiting_on`, its unmet prerequisites, `blocked_reason`, or `unknown`, a question to
 settle before it starts. A prerequisite is met when it is done or in review; an epic's own gate
-(`gated_by`) waits for that epic to be done. `unpinned_after`, `undeclared_after`, `order_conflict`, and
+(`gated_by`) accepts built or done with no unresolved blocked fields (project override).
+Epic status also permits built; initiative status rules are unchanged.
+`unpinned_after`, `undeclared_after`, `order_conflict`, and
 `problems` report a tree that needs fixing. Every row carries `ref`, which find resolves, `state`, and
 `risk`; a row has `drift` when the leaf file's `after` or `hitl` differs from the entry's, and `plan_checkpoint` or
 `done_checkpoint` when the entry sets it.

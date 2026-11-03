@@ -1,0 +1,109 @@
+# 티켓별 Orca 자동 구현 런북
+
+## 목적과 현재 승인 범위
+
+남아 있는 Personal Brain 티켓을 의존순으로 하나씩 구현한다. 티켓마다 Orca 워크트리에 Codex 지휘자 `gpt-6.1-sol / medium`을 배정하고 `$bmad-build-auto`로 구현·검증·리뷰·필요한 후속 리뷰를 마친다. 워커는 티켓 브랜치를 푸시하고, 중앙 감독자는 main 병합·푸시가 실제 원격에 반영됐는지 확인한 뒤 다음 티켓으로 간다. 사용자의 최종 인수 전에는 티켓과 에픽을 `built`로 남긴다.
+
+현재 요청은 티켓 도구 수정과 런북 작성이다. 티켓 자동 실행은 아직 시작하지 않는다. `.brain-automation/state.json`의 초기값은 `mode: prepared`, `execution_authorized: false`다. 이후 사용자가 실행을 지시하면 승인과 시각을 기록한 뒤 preflight부터 진행한다. 문서에 적힌 향후 작업 절차 자체를 지금 실행하라는 지시로 읽지 않는다.
+
+## 소유권과 기준 문서
+
+- 중앙 감독자는 이 채팅이다. 티켓 선택·워크트리 배정·결과 수락·main 병합·푸시·에픽 전이를 맡는다.
+- 티켓 지휘자는 전용 Orca 워커다. 계획·구현 배정·검증·리뷰·수정·후속 리뷰·티켓 built·커밋·티켓 브랜치 푸시를 맡는다. main을 병합하거나 푸시하지 않는다.
+- 구현·리뷰 위임은 현재 설치된 `$orchestration` 절차를 따른다. 지휘자의 하위 구현자는 `gpt-6.1-terra / medium`, 리뷰어는 `gpt-6.1-sol / medium`을 사용한다. 하나의 checkout에서 동시에 소스를 편집하는 구현자는 하나다.
+- 티켓의 실제 상태는 계획 파일의 `status`, 에픽 상태는 에픽 문서의 `status`가 원천이다. 실행 JSON은 Git·Orca와 진행 단계를 잇는 체크포인트이며 티켓 상태를 대체하지 않는다.
+- 전역 스킬 원본은 수정하지 않는다. 기존 bmad-loop 정책·런북·감독 스크립트·제어 도구는 이번 자동화에서 사용하지 않는다. 과거 완료 증거·미완료 코드는 보존한다.
+- 사용자 지시와 `AGENTS.md`가 우선이다. 문서·커밋·프롬프트에 개인 홈 절대 경로를 쓰지 않는다. 경로는 `<repo>/…`, `~/…`, 저장소 상대 경로로 기록한다.
+
+## 상태와 증거 저장
+
+중앙 checkout의 `.brain-automation/state.json`이 로컬 실행 체크포인트다. 최초 준비 사본은 `state.example.json`과 같은 구조다. `.brain-automation/`은 gitignored이며 원격으로 푸시하지 않는다. 다른 checkout의 동명 파일을 중앙 상태로 착각하지 않는다. 워커 프롬프트에 중앙 checkout과 자신의 체크포인트 위치를 명시한다.
+
+중앙에는 Run/Task/Dispatch/handle, 생성 request ID와 영수증, 현재 티켓·워크트리·기준 SHA·다음 행동·보고서·검증·브랜치 푸시·main 반영 SHA를 남긴다. 티켓별 상세 상태와 보고서는 중앙 `.brain-automation/tickets/<ticket>/`에 둔다. 각 워커도 자신의 checkout `.brain-automation/worker.json`에 단계를 기록하고 중앙에 보고 경로를 전달한다. 비밀 값·토큰·전체 환경 변수는 저장하지 않는다.
+
+상태는 단일 소유자가 같은 디렉터리의 임시 파일에 쓴 뒤 원자적 rename으로 교체한다. 외부 변경 명령을 내리기 전에 의도와 request ID를, 응답을 받은 후 실제 영수증과 다음 행동을 기록한다. 시작·검증·리뷰·수정·built·커밋·브랜치 푸시·병합·main 푸시 경계마다 저장한다. JSON 문법은 `python3.14 -m json.tool .brain-automation/state.json`으로 확인한다. Python은 3.11 이상을 사용한다.
+
+단계 이름은 `preflight → dispatching → building → reviewing → fixing → built → branch-pushed → merging → main-pushed → selecting-next`다. 재리뷰는 `fixing → reviewing`으로 되돌린다. 환경·외부 입력 차단은 `blocked`에 원인·증거·재개 조건을 기록하며 완료로 바꾸지 않는다.
+
+## 매 세션·컴팩션 후 복구
+
+1. `AGENTS.md`, 이 런북, 자기 역할의 상태 JSON과 마지막 보고서를 읽는다. 요약 기억만으로 새 Run·워크트리·워커를 만들지 않는다.
+2. `prepared`면 준비 상태를 유지한다. `running`이면 디스크 상태를 실제 Git·티켓·Orca와 대조하고 저장된 다음 행동부터 이어 간다. 사용자 중단 지시가 있으면 유지한다.
+3. `git status --short`, 현재 branch/HEAD, 저장된 워크트리·티켓·기준 SHA를 확인한다. fetch 후 원격 티켓 브랜치와 main SHA도 확인한다. 예상하지 못한 변경은 소유권을 조사하며 reset·clean·blanket stash로 지우지 않는다.
+4. 설치된 `$orca-cli`, `$orchestration`을 읽고 세션의 Orca 실행 파일을 선택한다. 같은 실행 파일의 `skills get orca-cli`, `skills get orchestration`으로 최신 가이드를 읽는다. 기존 run이 있으면 현재 Run/Dispatch·worker-show/read·처리된 inbox를 조사한다. 다른 호출자 핸들로 소유권을 위조하지 않는다.
+5. timeout·무응답·관측 불명은 종료 증거가 아니다. 응답을 잃은 시작은 저장한 request ID/영수증과 해당 버전의 recovery 절차로 복원한다. 같은 티켓에 중복 편집자를 띄우지 않는다.
+6. `branch-pushed`면 원격 브랜치 커밋과 보고를 확인해 병합부터 재개한다. `merging`이면 Git의 병합 진행 상태와 부모 커밋을 확인한다. `main-pushed`면 해당 merge SHA가 원격 main의 조상인지 확인한 후 다음 티켓을 고른다.
+7. 상태 파일이 없거나 손상됐으면 예제 파일로 덮어써서 재시작하지 않는다. 실제 워크트리·Orca·Git·티켓을 조사하고 소유권과 마지막 확정 단계를 복원한다. 예제의 null은 실제 워커 부재 증거가 아니다.
+
+## 실행 전 preflight
+
+1. 사용자의 실행 지시를 기록하고 단일 중앙 감독자만 실행 중인지 확인한다. 과거 bmad-loop 실행기가 실제로 동작 중인지 확인하고, 살아 있으면 명시적으로 소유권을 이전하기 전 중복 실행하지 않는다. 오래된 state 파일만으로 생존을 판단하지 않는다.
+2. 원격 이름·URL·main 기본 브랜치·인증·보호 규칙을 읽기 전용으로 확인한다. remote를 `origin`으로 추측하지 않는다. main은 현재 원격 상태와 맞추되 미커밋 변경을 먼저 보존한다. 필요하면 보호 규칙을 지키는 PR 경로로 병합하며 강제 푸시·규칙 우회는 하지 않는다.
+3. 중앙의 미커밋 변경을 확인한다. 준비 변경은 별도 커밋으로 검토 가능하게 남겨 main과 원격에 반영한 뒤 첫 티켓 기준점을 잡는다. unrelated 변경을 함께 stage하지 않는다. 현재 준비 요청만으로 이 커밋·푸시를 실행하지 않는다.
+4. **기존 `_bmad/custom/bmad-build-auto.toml`은 아직 옛 bmad-loop 설정이다. 그대로 티켓을 시작하지 않는다.** 시작 준비 단계에서 새 프로젝트 override를 작성해 이 런북의 역할·커밋·푸시·Orca 생명주기·후속 리뷰·한국어 보고 규칙으로 교체하고 resolve/render 결과를 확인한다. 기존 bmad-orca-workers.md나 제어 helper를 새 override가 참조하지 않아야 한다. 사용자 override도 확인해 충돌을 제거한다. 대화형 bmad-build 설정은 이번 실행에 사용하지 않는다.
+5. `$bmad-build-auto`는 설치 스킬의 공식 렌더 명령을 따른다. 실패하면 원인과 원문 오류를 기록하고 환경을 해결한다. 워크플로 소스를 직접 실행해 우회하지 않는다. DNS·사용량 제한·권한 오류를 구현 완료로 취급하지 않는다.
+6. 아래 회귀 테스트와 실제 트리 `status/next/find`를 확인한다. tickets.py는 프로젝트 패치이므로 실행 중 BMAD setup/update를 하지 않는다. 필요하면 상태를 보존하고 재설치 후 패치와 테스트를 다시 확인한다.
+7. 워크트리 setup에 필요한 pnpm·Python·DB·설정·시험 격리를 확인한다. 운영 데이터와 외부 계정을 시험 데이터로 바꾸지 않는다. 비밀 파일을 저장소나 보고서에 복사하지 않는다.
+
+## 티켓 선택과 배정
+
+```sh
+python3.14 _bmad/method/scripts/tickets.py status _bmad-output/personal-brain
+python3.14 _bmad/method/scripts/tickets.py next _bmad-output/personal-brain
+python3.14 _bmad/method/scripts/tickets.py find <ticket-ref>
+```
+
+실제 트리를 매번 다시 읽고 `problems`·의존조건·미완료 작업을 확인한다. 선택 가능 0건은 완료가 아니다. 기존 built 티켓도 이전 검증·리뷰·원격 main 반영 증거를 확인한 뒤 종료 대상으로 계산한다. 기존 in-review 티켓은 실제 부분 작업과 원래 baseline부터 이어간다. dropped 티켓을 부활시키지 않는다.
+
+티켓의 일반 `after`는 BMAD 원래 규칙상 리뷰 상태도 충족할 수 있다. 이 자동화에서는 그것만 보고 선행 티켓 병합 전에 다음 티켓을 띄우지 않는다. 선행 티켓의 구현·리뷰 완료와 원격 main 반영을 따로 확인한다.
+
+새 티켓은 방금 확인한 원격 main SHA에서 분기한다. `$orca-cli`를 통해 Orca가 워크트리를 관리하고 `$orchestration`의 `worker-start --worktree new-child`로 감독 대상 지휘자를 시작한다. 시작 명령의 `--base-branch`로 확인한 main 기준 ref를 명시하며 `--agent codex --model gpt-6.1-sol --effort medium`을 지정한다. 정확한 flag와 반환 receipt는 현재 CLI help를 따른다. CLI는 워크트리를 만들기 전에 별도로 같은 워커를 중복 launch하지 않는다.
+
+긴 spec은 저장소 상대 경로와 원문 티켓 요구를 담아 파일로 만들고 `--spec-file`로 전달한다. 런북·티켓 ref·계획·원래 baseline·main 병합 금지·branch push 의무·보고 및 체크포인트 위치를 포함한다. 자신의 Task/Dispatch와 최종 worker_done 의무를 injected preamble에서 읽게 한다. 자식 지휘자가 구현·리뷰 워커를 감독할 수 있는지 첫 배정에서 검증하고, 실패하면 부분 자원을 복원한 뒤 해결한다. 아직 중첩 실행을 실증했다고 주장하지 않는다.
+
+워커 대기는 최신 Orca 스킬대로 턴을 종료하고 알림으로 재개한다. 깨어나면 제시된 check를 수행한다. 예전 helper의 반복 polling이나 다른 Run의 inbox 소비를 쓰지 않는다. 지휘자는 자신의 중앙 Task와 하위 Run/Dispatch를 구별해 저장하고 중앙 질문·완료 보고 의무도 유지한다.
+
+## 구현·리뷰·built·브랜치 푸시
+
+지휘자는 티켓과 계획의 전체 수락 기준을 유지한 채 `$bmad-build-auto`를 수행한다. 모든 필수 검증과 독립 리뷰를 완료하고 발견사항을 근거와 함께 triage한다. 코드 변경을 반영한 부분은 필요한 시험과 후속 리뷰로 다시 확인한다. 리뷰가 추가 검사를 요구하거나 해결 여부가 불명확하면 필요한 후속 리뷰를 수행한다. 무조건 리뷰 1회·후속 리뷰 0회 규칙은 사용하지 않는다.
+
+범위 밖 지적은 근거를 남겨 후속 작업으로 분리할 수 있지만 현 티켓의 미충족 수락 기준을 defer로 숨기지 않는다. 작은 판단은 근거를 기록해 자율 해결한다. 실제 비밀·로그인·외부 승인처럼 에이전트가 충족할 수 없는 조건은 정확히 기록한다. 사람만 할 수 있다고 추측해 구현 실패를 넘기지 않으며 미완료를 built로 꾸미지 않는다.
+
+모든 필수 조건 충족 후 계획 상태를 `built`로 기록한다. 지휘자는 티켓 범위의 소스·시험·계획만 stage하고 커밋한 뒤 자기 브랜치를 원격에 push한다. app-ref 변경 시 같은 커밋의 플러그인 version 증가와 이전 커밋 참조 규칙을 지킨다. 원격 브랜치가 해당 commit을 포함하는지 확인한다. 강제 푸시는 하지 않는다.
+
+최종 보고는 티켓 ref·기준 SHA·commit SHA·원격 브랜치·검증 명령/결과·리뷰/후속 리뷰 보고 경로·미해결 항목을 포함한다. 실패 시에도 부분 작업과 재개 지점을 보존하고 실제 실패로 보고한다. 전송 성공 영수증만으로 실제 작업 성공을 판단하지 않는다.
+
+## 중앙의 main 병합·푸시
+
+1. 예상한 Dispatch의 보고를 수신하고 원문 계획·diff·검증·리뷰를 확인한다. built와 blocked 필드가 모순되지 않는지, 원격 브랜치가 보고한 SHA인지 확인한다.
+2. 최신 main을 fetch하고 기준 이후 변경을 조사한다. main이 이동해 충돌·검증 영향이 생겼으면 같은 티켓의 수정 작업으로 돌려 해결·검증·필요한 재리뷰·브랜치 재푸시를 받는다.
+3. 중앙에서 티켓 브랜치를 main에 병합한다. 병합 훅과 요구되는 CI/검증을 통과한다. 정상 정책으로 main을 push하고 다시 fetch해 merge SHA가 원격 main에 포함되는지 확인한다. 보호 브랜치면 승인된 PR 경로를 사용한다.
+4. 브랜치 push, 로컬 merge, main push를 별도 체크포인트로 기록한다. main push 실패·CI 실패·병합 미완료는 다음 티켓을 시작할 근거가 아니다. 네트워크 응답이 불명확하면 원격 ref부터 확인한다.
+5. 에픽 전이를 처리하고 실제 원격 반영까지 확인한 뒤 completed 기록과 다음 행동을 저장한다. 이후 Orca의 최신 정상 정리 절차를 따른다. 증거가 남아 있지 않은 워크트리나 불명확한 살아 있는 워커를 삭제하지 않는다.
+
+## 에픽 built 전이
+
+`tickets.py`의 프로젝트 패치는 에픽 `status: built`를 허용한다. 에픽의 `after` gate는 선행 티켓·에픽이 `built/done`이고 미해결 blocked 필드가 없을 때 충족된다. in-review·blocked·dropped는 해당 gate를 충족하지 않는다. 일반 티켓 after의 기존 리뷰 허용과 initiative 상태 규칙은 유지한다. `done`으로 재분류하지 않으므로 built 티켓은 CLI 집계에서 계속 review로 나타날 수 있다.
+
+중앙은 에픽의 모든 유효 하위 티켓이 `built/done`인지 확인한다. dropped는 제외하지만 그 티켓을 여전히 요구하는 의존조건은 해결해야 한다. 각 티켓의 요구·검증·리뷰와 원격 main 반영을 확인하고 미해결 blocked·필수 에픽 검증이 없어야 한다. 그 후 실제 에픽 Markdown frontmatter에 `status: built`를 적고 중앙에서 커밋·main push를 완료한다. 기존 done 에픽은 되돌리지 않는다. 실행 JSON의 표시만으로 에픽을 완료했다고 하지 않는다.
+
+에픽 built는 사람이 인수한 done과 다르다. 하위 티켓 built만 보고 자동으로 모든 검증을 충족했다고 추정하지 않는다. 사용자가 인수하기 전 done으로 올리지 않는다. 이 패치는 에픽 전이를 자동 실행하지 않으며 중앙이 위 근거를 확인해 수행한다.
+
+## 차단·오류·완료 판정
+
+실제 live worker는 현재 핸들로 관측한다. capacity/일시 네트워크 오류는 모델을 바꾸거나 새 편집자를 띄우는 근거가 아니다. 최신 복구 절차에 따라 같은 작업의 상태를 확인한다. usage limit은 reset 시각과 증거를 보존한다. 질문은 명세와 사용자 지시에서 답할 수 있으면 감독자가 처리한다.
+
+필수 외부 입력이 없으면 해당 티켓과 영향받는 의존 티켓을 미완료로 남기고 독립 작업을 검토한다. blocked 원인·재개 조건·다음 행동을 기록한다. 전체 완료는 모든 대상이 built/done 또는 적법한 dropped이고, 미해결 차단·트리 오류가 없으며 모든 결과가 원격 main에 반영됐다는 현재 증거로만 선언한다.
+
+## 준비 패치 검증과 업데이트
+
+```sh
+python3.14 -B -m unittest discover -s tooling/brain-automation/tests -v
+python3.14 _bmad/method/scripts/tickets.py status _bmad-output/personal-brain
+python3.14 _bmad/method/scripts/tickets.py next _bmad-output/personal-brain
+git diff --check
+```
+
+패치 대상은 `_bmad/method/scripts/tickets.py`, 회귀 테스트는 `tooling/brain-automation/tests/test_epic_built.py`다. 전역 스킬에는 영향이 없지만 BMAD setup/update가 프로젝트 복사본을 덮어쓸 수 있다. 패치를 별도 커밋으로 보존하고 재설치 후 diff와 회귀 테스트를 다시 확인한다. 무조건 옛 파일 전체를 덮어쓰지 말고 새 버전과 병합한다.
+
+현재 준비 작업은 이 패치·테스트·런북·AGENTS 연결·로컬 초기 상태까지다. 기존 build-auto override 교체와 렌더 검증, 실제 중첩 Orca 실행, Git push/merge는 실행 preflight에서 확인해야 하며 아직 수행 완료로 취급하지 않는다.
