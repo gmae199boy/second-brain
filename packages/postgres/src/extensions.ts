@@ -2,7 +2,7 @@ import { extensionPublicProjection, validInstallProgress, type ExtensionInstallP
 import { sql } from 'kysely';
 import { databaseFailure, type PgConnect } from './connect.js';
 import { withWrite } from './write.js';
-import { ensureWork } from './work.js';
+import { ensureFollowup, ensureWork, type WorkItemRow } from './work.js';
 type Row = { name: string; version: string; installed_at: string; enabled: boolean; enabled_changed_at: string; connection_status: 'connected' | 'failed' | null; connection_checked_at: string | null; connection_code: string | null; connection_message: string | null };
 const record = (r: Row): ExtensionRecord => ({ name: r.name, version: r.version, installedAt: new Date(r.installed_at), enabled: r.enabled, enabledChangedAt: new Date(r.enabled_changed_at), connectionStatus: r.connection_status, connectionCheckedAt: r.connection_checked_at === null ? null : new Date(r.connection_checked_at), connectionCode: r.connection_code, connectionMessage: r.connection_message });
 export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
@@ -17,7 +17,17 @@ export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
         if (!row.enabled) return { state: 'disabled' as const };
         const found = await sql`select 1 from brain.extension_work_kinds where extension_name=${name} and kind=${work.kind}`.execute(held);
         if (!found.rows.length) return { state: 'changed' as const };
-        const queued = await ensureWork(held, work);
+        const upstream = await sql<{ id: string }>`select w.id from brain.extension_work_kinds k
+          join brain.work_items w on w.kind=k.kind
+          where k.extension_name=${name} and k.followup_kind=${work.kind}
+            and w.target_kind=${work.targetKind} and w.target_id=${work.targetId}
+            and (w.completed_at is null or w.outcome='succeeded')
+          order by (w.completed_at is null) desc, w.created_at desc, w.id desc limit 1`.execute(held);
+        const requires = await sql`select 1 from brain.extension_work_kinds where extension_name=${name} and followup_kind=${work.kind}`.execute(held);
+        if (requires.rows.length && !upstream.rows.length) return { state: 'changed' as const };
+        const parent = upstream.rows[0]?.id;
+        const queued = await ensureWork(held, parent ? { ...work, targetId: parent } : work);
+        if (parent) await sql`insert into brain.work_dependencies(work_item_id,prerequisite_id) values (${queued.row.id},${parent}) on conflict do nothing`.execute(held);
         return { state: 'queued' as const, workId: queued.row.id, created: queued.created };
       });
       return result.ok ? { ok: true, ...result.value } : result;
@@ -85,13 +95,17 @@ export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try { const result = await sql<{ status: 'succeeded' | 'failed'; code: string | null; checked_at: string }>`select status, code, checked_at from brain.extension_python_environment where name=${name}`.execute(opened.connection.db); const row = result.rows[0]; return { ok: true, environment: row ? { status: row.status, code: row.code, checkedAt: new Date(row.checked_at) } : null }; } catch (error) { return databaseFailure(error); }
     },
-    async recordExtensionInstall({ name, version, now, workKinds }) {
+    async recordExtensionInstall({ name, version, now, workKinds, workFollowups }) {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
         const result = await withWrite(opened.connection, async held => {
           await sql`insert into brain.extensions(name, version, installed_at, enabled, enabled_changed_at) values (${name}, ${version}, ${now.toISOString()}, true, ${now.toISOString()}) on conflict(name) do update set version=excluded.version`.execute(held);
           await sql`delete from brain.extension_work_kinds where extension_name=${name}`.execute(held);
           for (const kind of workKinds ?? []) await sql`insert into brain.extension_work_kinds(extension_name, kind) values (${name}, ${kind})`.execute(held);
+          for (const [kind, followup] of Object.entries(workFollowups ?? {})) await sql`update brain.extension_work_kinds set followup_kind=${followup} where extension_name=${name} and kind=${kind}`.execute(held);
+          const parents=await sql<WorkItemRow>`select w.* from brain.work_items w join brain.extension_work_kinds k on k.kind=w.kind
+            where k.extension_name=${name} and k.followup_kind is not null and w.completed_at is null for update of w`.execute(held);
+          for (const parent of parents.rows) await ensureFollowup(held,parent);
         });
         return result.ok ? { ok: true } : result;
       } catch (error) { return databaseFailure(error); }

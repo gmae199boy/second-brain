@@ -235,3 +235,13 @@ it('checks the snapshot environment string and object schema separately', async 
     expect(Boolean(contract), fixture.name).toBe(fixture.expect === 'valid');
   }
 });
+
+it('exposes the final result summary only for a valid ABI stream', () => {
+  const run = createAbiRun();
+  run.feed('{"abi":1,"type":"result","summary":"synthetic"}\n');
+  run.end();
+  expect(run.verdict({ code: 0, signal: null }).outcome).toBe('succeeded');
+  expect(run.resultSummary).toBe('synthetic');
+  run.feed('{"abi":1,"type":"result","summary":"duplicate"}\n');
+  expect(run.resultSummary).toBeUndefined();
+});

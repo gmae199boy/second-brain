@@ -211,7 +211,8 @@
       "required_settings": [
         "garmin.timezone"
       ],
-      "manual": "collect"
+      "manual": "collect",
+      "followup": "garmin.artifacts"
     },
     {
       "kind": "garmin.collect_retry",
@@ -220,7 +221,8 @@
       "entry": "src/collect.py",
       "required_settings": [
         "garmin.timezone"
-      ]
+      ],
+      "followup": "garmin.artifacts"
     },
     {
       "kind": "garmin.collect_recent",
@@ -230,7 +232,8 @@
       "required_settings": [
         "garmin.timezone"
       ],
-      "manual": "collect-recent"
+      "manual": "collect-recent",
+      "followup": "garmin.artifacts"
     },
     {
       "kind": "garmin.normalize",
@@ -241,6 +244,16 @@
         "garmin.timezone"
       ],
       "manual": "normalize"
+    },
+    {
+      "kind": "garmin.artifacts",
+      "execution": "supervised",
+      "runtime": "python",
+      "entry": "src/runtime_artifacts.py",
+      "required_settings": [
+        "garmin.timezone"
+      ],
+      "manual": "artifacts"
     }
   ],
   "raw_views": [
@@ -381,7 +394,13 @@
     "GARMIN_REJECTED",
     "COLLECT_PARTIAL",
     "COLLECT_ACCOUNT_UNKNOWN",
-    "COLLECT_ACCOUNT_MISMATCH"
+    "COLLECT_ACCOUNT_MISMATCH",
+    "ARTIFACT_INVALID",
+    "ARTIFACT_COLLECT_REQUIRED",
+    "ARTIFACT_BODY_PENDING",
+    "ARTIFACT_NORMALIZE_FAILED",
+    "ARTIFACT_FILE_FAILED",
+    "ARTIFACT_DB_RETRY"
   ],
   "auth": {
     "kind": "garmin.auth",

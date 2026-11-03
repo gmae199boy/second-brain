@@ -1,0 +1,266 @@
+{
+  "about": "측정값만 담는다. 판단은 리포트를 쓰는 쪽이 한다. 시각은 manifest timezone 기준이다.",
+  "baseline_days": [
+    "2026-10-14"
+  ],
+  "body": {
+    "change_from_previous": null,
+    "days_since_latest": 1,
+    "history": [
+      {
+        "measured_on": "2026-10-14",
+        "schema_version": 1,
+        "source_files": [
+          "inbox/inbody/synthetic.png"
+        ],
+        "value_mtime_ns": {
+          "weight_kg": 1
+        },
+        "values": {
+          "weight_kg": 80.8
+        }
+      }
+    ],
+    "latest": {
+      "measured_on": "2026-10-14",
+      "schema_version": 1,
+      "source_files": [
+        "inbox/inbody/synthetic.png"
+      ],
+      "value_mtime_ns": {
+        "weight_kg": 1
+      },
+      "values": {
+        "weight_kg": 80.8
+      }
+    },
+    "new_today": false,
+    "previous": null
+  },
+  "collect": {
+    "status": "success"
+  },
+  "data_cutoff": "2026-10-15T11:00:00+09:00",
+  "day": {
+    "baseline": {
+      "active_kcal": {
+        "days": 0,
+        "mean": null
+      },
+      "bb_charged": {
+        "days": 0,
+        "mean": null
+      },
+      "bb_drained": {
+        "days": 0,
+        "mean": null
+      },
+      "bb_high": {
+        "days": 0,
+        "mean": null
+      },
+      "bb_low": {
+        "days": 0,
+        "mean": null
+      },
+      "bb_wake": {
+        "days": 0,
+        "mean": null
+      },
+      "moderate_min": {
+        "days": 0,
+        "mean": null
+      },
+      "resting_hr": {
+        "days": 0,
+        "mean": null
+      },
+      "steps": {
+        "days": 0,
+        "mean": null
+      },
+      "stress_avg": {
+        "days": 0,
+        "mean": null
+      },
+      "stress_high_s": {
+        "days": 0,
+        "mean": null,
+        "mean_hm": null
+      },
+      "vigorous_min": {
+        "days": 0,
+        "mean": null
+      }
+    },
+    "today_morning": {
+      "bb_drops": [],
+      "bb_high_after_wake": null,
+      "bb_last": null,
+      "bb_last_time": null,
+      "bb_wake": null,
+      "date": "2026-10-15",
+      "from": "00:00",
+      "resting_hr": null,
+      "stress_avg_samples": null,
+      "stress_high_samples": null,
+      "stress_measured_samples": "0:00",
+      "until": "2026-10-15T11:00:00+09:00"
+    },
+    "yesterday": null
+  },
+  "drinks_last_8_days": [
+    {
+      "date": "2026-10-14",
+      "fetched": true,
+      "logged": [
+        {
+          "amount": 2,
+          "item": "Water",
+          "kind": "glass"
+        }
+      ]
+    },
+    {
+      "date": "2026-10-15",
+      "fetched": false
+    }
+  ],
+  "last_8_days": [
+    {
+      "bb_wake": null,
+      "date": "2026-10-14",
+      "hr_min": null,
+      "hrv_avg": null,
+      "resting_hr": null,
+      "score": null,
+      "spo2_min": null,
+      "total": null
+    },
+    {
+      "bb_wake": null,
+      "date": "2026-10-15",
+      "hr_min": null,
+      "hrv_avg": null,
+      "resting_hr": null,
+      "score": null,
+      "spo2_min": null,
+      "total": null
+    }
+  ],
+  "notes": [
+    "2026-10-15 sleep_data: 원본이 없다",
+    "2026-10-15 수면 원본이 없거나 수면 시간이 0이다",
+    "2026-10-14 sleep_data: 원본이 없다",
+    "직전 7일 중 수면 기록이 없는 날: 2026-10-14",
+    "2026-10-14 user_summary: 원본이 없다",
+    "2026-10-15 hrv_data: 원본이 없다",
+    "2026-10-14 rhr_day: 원본이 없다",
+    "2026-10-15 rhr_day: 원본이 없다",
+    "2026-10-15 user_summary: 원본이 없다",
+    "2026-10-15 stress_data: 원본이 없다",
+    "2026-10-15 lifestyle_logging_data: 원본이 없다"
+  ],
+  "recent_training": {
+    "days_since_last_workout": null,
+    "last_workout_date": null,
+    "latest_by_exercise": [],
+    "sessions_30d": []
+  },
+  "recovery": {
+    "hrv_baseline": null,
+    "hrv_baseline_7d": {
+      "days": 0,
+      "mean": null
+    },
+    "hrv_last_night": null,
+    "hrv_status": null,
+    "hrv_weekly_avg": null,
+    "resting_hr_7d": {
+      "days": 0,
+      "mean": null
+    },
+    "resting_hr_today": null
+  },
+  "report_date": "2026-10-15",
+  "sleep": {
+    "baseline": {
+      "awake_count_summary": {
+        "days": 0,
+        "mean": null
+      },
+      "awake_s": {
+        "days": 0,
+        "mean": null,
+        "mean_hm": null
+      },
+      "deep_s": {
+        "days": 0,
+        "mean": null,
+        "mean_hm": null
+      },
+      "hr_min": {
+        "days": 0,
+        "mean": null
+      },
+      "hr_min_time_mean": null,
+      "hrv_avg": {
+        "days": 0,
+        "mean": null
+      },
+      "light_s": {
+        "days": 0,
+        "mean": null,
+        "mean_hm": null
+      },
+      "rem_s": {
+        "days": 0,
+        "mean": null,
+        "mean_hm": null
+      },
+      "resp_avg": {
+        "days": 0,
+        "mean": null
+      },
+      "score": {
+        "days": 0,
+        "mean": null
+      },
+      "sleep_end_mean": null,
+      "sleep_start_mean": null,
+      "spo2_avg": {
+        "days": 0,
+        "mean": null
+      },
+      "spo2_min": {
+        "days": 0,
+        "mean": null
+      },
+      "total_s": {
+        "days": 0,
+        "mean": null,
+        "mean_hm": null
+      }
+    },
+    "last_night": null
+  },
+  "weekday": null,
+  "weight": {
+    "avg_7d_days": 1,
+    "avg_7d_kg": 80.8,
+    "days": [
+      {
+        "date": "2026-10-14",
+        "fetched": true,
+        "weight_kg": 80.8
+      },
+      {
+        "date": "2026-10-15",
+        "fetched": true,
+        "weight_kg": null
+      }
+    ]
+  },
+  "workouts": [],
+  "yesterday": "2026-10-14"
+}

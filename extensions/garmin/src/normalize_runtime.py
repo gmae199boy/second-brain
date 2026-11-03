@@ -2,12 +2,12 @@
 import hashlib
 import json
 from datetime import datetime
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import collect_rawparse as rawparse
 import collect_store
 import digest
+import labels
 import normalize_store as store
 import normalize_tables as tables
 
@@ -80,8 +80,7 @@ def publish_days(conn,account,work,token,zone,days,catalogue,boundary,snapshot=N
     raw = snapshot['raw']
     fingerprint = collect_store.raw_fingerprint(raw)
     activity_days = {i['key']:activity_date(raw,i['key'],zone) for i in raw if i['scope']=='activity' and i['endpoint']=='activity'}
-    label_path = Path(__file__).parent / 'labels' / 'exercise_types_ko.json'
-    label_bytes = label_path.read_bytes()
+    label_bytes = labels.load_bytes()
     label_hash = hashlib.sha256(label_bytes).hexdigest()
     cur = conn.cursor()
     cur.execute('select scope,key,endpoint,revision,fetched_at_ms from garmin.normalize_items where dataset=%s', (collect_store.dataset_for(account),))
@@ -113,7 +112,7 @@ def publish_days(conn,account,work,token,zone,days,catalogue,boundary,snapshot=N
         try:
             daily = {i['endpoint']:json.loads(i['body']) for i in selected if i['scope']=='day'}
             activities = {key:{i['endpoint']:json.loads(i['body']) for i in selected if i['scope']=='activity' and i['key']==key} for key in activity_days if activity_days[key]==day}
-            values = digest.day_values(day,daily,activities,json.loads(label_bytes),zone)
+            values = digest.day_values(day,daily,activities,labels.load(label_bytes),zone)
             rows = {'day_summary':[values['day_summary']], 'workout':values['workouts'], 'exercise_log':values['exercise_logs']}
             error = None
         except Exception:

@@ -33,7 +33,7 @@ it('고정 raw를 제품 경로로 발행하고 labels 복원과 시작일을 �
       expect(await store.addWork({id,kind,targetKind:'account',targetId:'12345',createdAt:now,nextAttemptAt:new Date(Date.now()+3600000)})).toMatchObject({ok:true});
       if(day) await fixture.db.query(`update brain.work_items set local_date_from='${day}',local_date_to='${day}',local_time_zone='Asia/Seoul',next_attempt_at=now() where id='${id}'`);
       else await fixture.db.query(`update brain.work_items set next_attempt_at=now() where id='${id}'`);
-      await expect.poll(async()=>(await fixture.db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome,{timeout:30000}).toBe(outcome);
+      await expect.poll(async()=>(await fixture.db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome,{timeout:90000}).toBe(outcome);
       return id;
     };
     await queue();
@@ -113,4 +113,4 @@ it('고정 raw를 제품 경로로 발행하고 labels 복원과 시작일을 �
     expect(stress.raw_count).toBeGreaterThanOrEqual(500); expect(stress.seconds).toBeLessThan(2); expect(stress.rejected).toEqual([true,true,true,true]);
     console.info(`pass2 fingerprint: ${stress.raw_count} raw items, ${stress.seconds.toFixed(3)} seconds`);
   } finally {controller.abort(); await daemon; await store.close(); await fixture.cleanup();}
-},180000);
+},300000);

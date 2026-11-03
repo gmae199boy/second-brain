@@ -170,7 +170,7 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
     if (!migrated.ok) return { ok: false as const, code: migrated.code, message: '확장 마이그레이션을 적용하지 못했습니다' };
   }
   const afterMigration = await cancelled(); if (afterMigration) return afterMigration;
-  const recorded = await deps.store.recordExtensionInstall({ name, version: manifest.version, now: deps.clock.now(), workKinds: [...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : [])].map(work => work.kind) });
+  const recorded = await deps.store.recordExtensionInstall({ name, version: manifest.version, now: deps.clock.now(), workKinds: [...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : [])].map(work => work.kind), workFollowups: Object.fromEntries((manifest.work ?? []).filter(work => work.followup).map(work => [work.kind, work.followup!])) });
   if (!recorded.ok) return recorded;
   const afterRegistry = await cancelled(); if (afterRegistry) return afterRegistry;
   if (!manifest.auth) {

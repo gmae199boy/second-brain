@@ -1,0 +1,40 @@
+{
+  "day_summary": {
+    "active_kcal": null,
+    "bb_charged": null,
+    "bb_drained": null,
+    "bb_high": null,
+    "bb_low": null,
+    "date": "2026-01-31",
+    "drinks_json": null,
+    "hrv_avg": null,
+    "moderate_min": null,
+    "resp_avg": null,
+    "resting_hr": null,
+    "sleep_awake_s": null,
+    "sleep_deep_s": null,
+    "sleep_hr_min": null,
+    "sleep_hr_min_time": null,
+    "sleep_light_s": null,
+    "sleep_rem_s": null,
+    "sleep_score": null,
+    "sleep_total_s": null,
+    "spo2_avg": null,
+    "spo2_min": null,
+    "steps": 1234,
+    "stress_avg": null,
+    "stress_high_s": null,
+    "vigorous_min": null,
+    "wake_bb": null,
+    "weight_kg": null
+  },
+  "exercise_logs": [],
+  "notes": [
+    "2026-01-31 sleep_data: 원본이 없다",
+    "2026-01-31 stress_data: 원본이 없다",
+    "2026-01-31 rhr_day: 원본이 없다",
+    "2026-01-31 daily_weigh_ins: 원본이 없다",
+    "2026-01-31 lifestyle_logging_data: 원본이 없다"
+  ],
+  "workouts": []
+}

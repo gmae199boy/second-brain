@@ -57,7 +57,22 @@
           "runtime",
           "entry"
         ],
-        "allOf": [{ "if": { "required": ["verification_snapshot"] }, "then": { "properties": { "runtime": { "const": "python" } } } }],
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "verification_snapshot"
+              ]
+            },
+            "then": {
+              "properties": {
+                "runtime": {
+                  "const": "python"
+                }
+              }
+            }
+          }
+        ],
         "properties": {
           "kind": {
             "type": "string",
@@ -114,6 +129,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "followup": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
           }
         }
       }

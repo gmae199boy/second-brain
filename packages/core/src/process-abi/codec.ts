@@ -121,6 +121,7 @@ export function createAbiRun() {
     feed, fail,
     get violation() { return failure; },
     get workerError() { return !failure && final?.type === 'error'; },
+    get resultSummary() { return !failure && final?.type === 'result' ? final.summary : undefined; },
     end() { if (pendingHigh && bytes + 3 > PROCESS_ABI_MAX_LINE_BYTES) fail('ABI_LINE_TOO_LONG', '출력 줄이 65536바이트를 넘었습니다'); if (line || pendingHigh) fail('ABI_LINE_TRUNCATED', '출력의 마지막 줄이 잘렸습니다'); },
     verdict(exit: { code: number | null; signal: string | null }): AbiRunVerdict {
       if (failure) return { outcome: 'failed', code: failure.code, retryable: abiRetryable(failure.code), usage, message: failure.reason };

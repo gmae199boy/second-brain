@@ -63,6 +63,7 @@ it('합성 capture를 공용 명령과 실제 감독자로 읽고 계약 자료�
       expect(await fixture.db.rows("select error_code from brain.work_attempts order by started_at desc limit 1")).toEqual([{error_code:'EXTENSION_REPORT_NOT_READY'}]);
     } finally { await fixture.db.query(`update brain.schema_migrations set version=${latestVersion} where owner='garmin' and version=${futureVersion}`); }
     const roleCases = [
+      { alter: 'revoke execute on function brain.extension_predecessor_results(uuid,uuid) from brain_ext_garmin', restore: 'grant execute on function brain.extension_predecessor_results(uuid,uuid) to brain_ext_garmin', key: 'predecessor_execute', publicKey: 'role_ready' },
       { alter: 'revoke insert(value) on brain.health_observations from brain_ext_garmin', restore: 'grant insert(value) on brain.health_observations to brain_ext_garmin', key: 'required_inserts', publicKey: 'role_ready' },
       { alter: 'grant select on brain.health_observations to brain_ext_garmin', restore: 'revoke select on brain.health_observations from brain_ext_garmin', key: 'no_excess_tables', publicKey: 'role_ready' },
       { alter: 'grant brain_app to brain_ext_garmin', restore: 'revoke brain_app from brain_ext_garmin', key: 'membership_absent', publicKey: 'role_ready' },
@@ -82,6 +83,8 @@ it('합성 capture를 공용 명령과 실제 감독자로 읽고 계약 자료�
         for (const secret of ['12345', '2026-01-01', fixture.home, '한글']) expect(failed.stdout).not.toContain(secret);
       } finally { await fixture.db.query(scenario.restore); }
     }
+    const restoredRole = await fixture.run(['ext','run','garmin','import-preflight','--json']);
+    expect(restoredRole.code, restoredRole.stdout + restoredRole.stderr).toBe(0);
     const missing = await fixture.run(['ext','run','garmin','not-declared','--json']); expect(missing.code).not.toBe(0);
     const disabled = await fixture.run(['ext','disable','garmin','--json']); expect(disabled.code).toBe(0);
     const rejected = await fixture.run(['ext','run','garmin','import-preflight','--json']); expect(rejected.code).not.toBe(0);

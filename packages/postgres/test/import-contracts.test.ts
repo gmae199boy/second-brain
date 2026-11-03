@@ -34,6 +34,14 @@ it('출처와 현재 시도에 결합된 불변 가져오기 계약을 강제한
     const analysis = `insert into brain.analyses(id,source,dataset,import_batch,original_table,original_key,revision,model_missing,created_at_missing,file_request_id,source_work_item_id,source_attempt_token) values ($1,$2,'d','b','reports',$3,1,true,true,$4,$5,$6)`;
     await ext.query(request, [file,name,'request','a'.repeat(64),work,token]);
     expect((await ext.query('select request_id,status,resumable from brain.file_request_results_public_v1')).rows).toMatchObject([{request_id:file,status:'pending',resumable:false}]);
+    const metadataId=randomUUID();
+    const metadataRequest=`insert into brain.file_requests(id,source,request_key,dataset,import_batch,locator,sha256,size_bytes,media_type,created_at,source_work_item_id,source_attempt_token,metadata) values ($1,$2,'metadata','d','b','metadata',$3,1,'application/json','2026-01-01T00:00:00Z',$4,$5,$6::jsonb)`;
+    const metadataArgs=[metadataId,name,'d'.repeat(64),work,token,JSON.stringify({kind:'digest',revision:'synthetic'})];
+    await ext.query(metadataRequest,metadataArgs); await ext.query(metadataRequest,metadataArgs);
+    expect((await admin.query('select metadata from brain.file_requests where id=$1',[metadataId])).rows[0].metadata).toEqual({kind:'digest',revision:'synthetic'});
+    await expect(ext.query(metadataRequest,[...metadataArgs.slice(0,5),JSON.stringify({kind:'changed'})])).rejects.toThrow('충돌');
+    await expect(ext.query(metadataRequest,[randomUUID(),name,'d'.repeat(64),work,randomUUID(),metadataArgs[5]])).rejects.toMatchObject({code:'BRS01'});
+
     await ext.query(health, [randomUUID(),name,'one',work,token]);
     const analysisId = randomUUID();
     await ext.query(analysis, [analysisId,name,'one',file,work,token]);
@@ -57,7 +65,7 @@ it('출처와 현재 시도에 결합된 불변 가져오기 계약을 강제한
     try { await admin.query("update brain.analyses set created_at='2026-01-02T03:04:05.123456+09:00',created_at_missing=false where id=$1",[analysisId]); }
     finally { await admin.query('alter table brain.analyses enable trigger user'); }
     const verification = await store.imports.readVerification({ source:name, workId:work, token, now, rawViews:['raw_records'] });
-    expect(verification).toMatchObject({ ok:true, data:{ tables:{ health:[{source:name}], analyses:[{id:analysisId}], raw:[{body:'원문'}], requests:[{id:file}] }, files:[{requestId:file,fileId:null}] } });
+    expect(verification).toMatchObject({ ok:true, data:{ tables:{ health:[{source:name}], analyses:[{id:analysisId}], raw:[{body:'원문'}], requests:expect.arrayContaining([expect.objectContaining({id:file})]) }, files:expect.arrayContaining([expect.objectContaining({requestId:file,fileId:null})]) } });
     expect(verification.ok && verification.data.tables.analyses?.[0]?.created_at).toBe('2026-01-01 18:04:05.123456+00');
     expect(verification.ok && verification.data.tables.raw?.[0]).toMatchObject({fetched_at:'2026-01-01 18:04:05.123456+00',checked_at:null});
     expect(verification.ok && verification.data.tables.health?.[0]?.fetched_at).toEqual(expect.any(String));

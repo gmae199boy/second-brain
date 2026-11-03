@@ -178,6 +178,7 @@ export const SUPERVISOR_CANCEL_GRACE_MS = 5_000;
 export const SUPERVISOR_CANCEL_POLL_MS = 1_000;
 export const SUPERVISOR_GROUP_CONFIRM_MS = 2_000;
 export interface WorkAttempt {
+  resultSummary?: Record<string, string | number> | null;
   errorCode: string | null; errorRetryable: boolean | null;
   inputTokens: number | null; cachedInputTokens: number | null; outputTokens: number | null;
   elapsedMs: number | null; stderr: string | null;

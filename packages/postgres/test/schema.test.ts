@@ -91,6 +91,7 @@ it('installs the complete catalog, five named unique indexes, five search indexe
     {table_name:'channel_legacy_notifications',column_name:'resend_eligible',column_default:'false',is_identity:'NO',is_generated:'NEVER'},
     {table_name:'channel_requests',column_name:'status',column_default:"'pending'::text",is_identity:'NO',is_generated:'NEVER'},
     {table_name:'chunks',column_name:'part',column_default:'0',is_identity:'NO',is_generated:'NEVER'},
+    {table_name:'file_requests',column_name:'metadata',column_default:"'{}'::jsonb",is_identity:'NO',is_generated:'NEVER'},
     {table_name:'health_observations',column_name:'account_confirmed',column_default:'false',is_identity:'NO',is_generated:'NEVER'},
     {table_name:'health_observations',column_name:'catalog_version',column_default:'1',is_identity:'NO',is_generated:'NEVER'},
     {table_name:'health_observations',column_name:'value_type',column_default:"'number'::text",is_identity:'NO',is_generated:'NEVER'},

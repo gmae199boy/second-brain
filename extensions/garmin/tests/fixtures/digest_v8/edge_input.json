@@ -1,0 +1,130 @@
+{
+  "manifest": {
+    "report_date": "2026-10-27",
+    "yesterday": "2026-10-26",
+    "weekday": "화",
+    "timezone": "Asia/Seoul",
+    "data_cutoff": "2026-10-27T11:00:30.500+09:00",
+    "baseline_days": [
+      "2026-10-26"
+    ],
+    "workouts": [
+      "1"
+    ],
+    "notes": []
+  },
+  "days": {
+    "2026-10-27": {
+      "sleep_data": {
+        "dailySleepDTO": {
+          "sleepTimeSeconds": 28800,
+          "sleepStartTimestampGMT": 1793023200000,
+          "sleepEndTimestampGMT": 1793052000000
+        }
+      },
+      "stress_data": {
+        "stressValueDescriptorsDTOList": [
+          {
+            "key": "timestamp",
+            "index": 0
+          },
+          {
+            "key": "stressLevel",
+            "index": 1
+          }
+        ],
+        "stressValuesArray": [
+          [
+            1793051940000,
+            99
+          ],
+          [
+            1793052000000,
+            20
+          ],
+          [
+            1793066415000,
+            40
+          ],
+          [
+            1793066430500,
+            90
+          ],
+          [
+            1793066460000,
+            100
+          ]
+        ]
+      }
+    },
+    "2026-10-26": {
+      "daily_weigh_ins": null,
+      "lifestyle_logging_data": {
+        "dailyLogsReport": []
+      }
+    }
+  },
+  "activities": {
+    "1": {
+      "activity": {
+        "summaryDTO": {
+          "startTimeGMT": 1793055600000,
+          "duration": 120
+        },
+        "activityTypeDTO": {
+          "typeKey": "strength_training"
+        }
+      },
+      "activity_details": {
+        "metricDescriptors": [
+          {
+            "key": "directTimestamp",
+            "metricsIndex": 0
+          },
+          {
+            "key": "directHeartRate",
+            "metricsIndex": 1
+          }
+        ],
+        "activityDetailMetrics": [
+          {
+            "metrics": [
+              1793055610000,
+              110
+            ]
+          },
+          {
+            "metrics": [
+              1793055672000,
+              155
+            ]
+          },
+          {
+            "metrics": [
+              1793055680000,
+              190
+            ]
+          }
+        ]
+      },
+      "activity_exercise_sets": {
+        "exerciseSets": [
+          {
+            "setType": "ACTIVE",
+            "startTime": 1793055600000,
+            "duration": 30,
+            "repetitionCount": 8,
+            "weight": 16000
+          },
+          {
+            "setType": "ACTIVE",
+            "startTime": 1793055680000,
+            "duration": 30
+          }
+        ]
+      }
+    }
+  },
+  "labels": {},
+  "body": []
+}

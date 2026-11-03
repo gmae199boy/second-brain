@@ -1,0 +1,1462 @@
+{
+  "bad_shape_notes": {
+    "activities": {},
+    "body": [],
+    "days": {
+      "2026-10-26": {
+        "daily_weigh_ins": null,
+        "lifestyle_logging_data": {
+          "dailyLogsReport": []
+        }
+      },
+      "2026-10-27": {
+        "sleep_data": {
+          "dailySleepDTO": [
+            1
+          ]
+        },
+        "stress_data": []
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-26"
+      ],
+      "data_cutoff": "2026-10-27T11:00:30.500+09:00",
+      "notes": [],
+      "report_date": "2026-10-27",
+      "timezone": "Asia/Seoul",
+      "weekday": "화",
+      "workouts": [],
+      "yesterday": "2026-10-26"
+    }
+  },
+  "cross_midnight_recovery": {
+    "activities": {
+      "1": {
+        "activity": {
+          "activityTypeDTO": {
+            "typeKey": "strength_training"
+          },
+          "summaryDTO": {
+            "duration": 120,
+            "startTimeGMT": 1793026800000
+          }
+        },
+        "activity_details": {
+          "activityDetailMetrics": [
+            {
+              "metrics": [
+                1793055610000,
+                110
+              ]
+            },
+            {
+              "metrics": [
+                1793055672000,
+                155
+              ]
+            },
+            {
+              "metrics": [
+                1793055680000,
+                190
+              ]
+            }
+          ],
+          "metricDescriptors": [
+            {
+              "key": "directTimestamp",
+              "metricsIndex": 0
+            },
+            {
+              "key": "directHeartRate",
+              "metricsIndex": 1
+            }
+          ]
+        },
+        "activity_exercise_sets": {
+          "exerciseSets": [
+            {
+              "duration": 30,
+              "repetitionCount": 8,
+              "setType": "ACTIVE",
+              "startTime": 1793055600000,
+              "weight": 16000
+            },
+            {
+              "duration": 30,
+              "setType": "ACTIVE",
+              "startTime": 1793055680000
+            }
+          ]
+        }
+      },
+      "2": {
+        "activity": {
+          "activityTypeDTO": {
+            "typeKey": "strength_training"
+          },
+          "summaryDTO": {
+            "duration": 120,
+            "startTimeGMT": 1793030400000
+          }
+        },
+        "activity_details": {
+          "activityDetailMetrics": [
+            {
+              "metrics": [
+                1793055610000,
+                110
+              ]
+            },
+            {
+              "metrics": [
+                1793055672000,
+                155
+              ]
+            },
+            {
+              "metrics": [
+                1793055680000,
+                190
+              ]
+            }
+          ],
+          "metricDescriptors": [
+            {
+              "key": "directTimestamp",
+              "metricsIndex": 0
+            },
+            {
+              "key": "directHeartRate",
+              "metricsIndex": 1
+            }
+          ]
+        },
+        "activity_exercise_sets": {
+          "exerciseSets": [
+            {
+              "duration": 30,
+              "repetitionCount": 8,
+              "setType": "ACTIVE",
+              "startTime": 1793055600000,
+              "weight": 16000
+            },
+            {
+              "duration": 30,
+              "setType": "ACTIVE",
+              "startTime": 1793055680000
+            }
+          ]
+        }
+      }
+    },
+    "body": [],
+    "days": {
+      "2026-10-26": {
+        "daily_weigh_ins": null,
+        "lifestyle_logging_data": {
+          "dailyLogsReport": []
+        }
+      },
+      "2026-10-27": {
+        "sleep_data": {
+          "dailySleepDTO": {
+            "sleepEndTimestampGMT": 1793052000000,
+            "sleepStartTimestampGMT": 1793023200000,
+            "sleepTimeSeconds": 28800
+          }
+        },
+        "stress_data": {
+          "stressValueDescriptorsDTOList": [
+            {
+              "index": 0,
+              "key": "timestamp"
+            },
+            {
+              "index": 1,
+              "key": "stressLevel"
+            }
+          ],
+          "stressValuesArray": [
+            [
+              1793051940000,
+              99
+            ],
+            [
+              1793052000000,
+              20
+            ],
+            [
+              1793066415000,
+              40
+            ],
+            [
+              1793066430500,
+              90
+            ],
+            [
+              1793066460000,
+              100
+            ]
+          ]
+        }
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-26"
+      ],
+      "data_cutoff": "2026-10-27T11:00:30.500+09:00",
+      "notes": [],
+      "report_date": "2026-10-27",
+      "timezone": "Asia/Seoul",
+      "weekday": "화",
+      "workouts": [
+        "1",
+        "2"
+      ],
+      "yesterday": "2026-10-26"
+    }
+  },
+  "lifestyle_empty": {
+    "activities": {},
+    "body": [
+      {
+        "measured_on": "2026-10-14",
+        "schema_version": 1,
+        "source_files": [
+          "inbox/inbody/synthetic.png"
+        ],
+        "value_mtime_ns": {
+          "weight_kg": 1
+        },
+        "values": {
+          "weight_kg": 80.8
+        }
+      }
+    ],
+    "days": {
+      "2026-10-14": {
+        "daily_weigh_ins": {
+          "dateWeightList": [
+            {
+              "timestampGMT": "2026-10-14T01:00:00Z",
+              "weight": 80800
+            }
+          ]
+        },
+        "lifestyle_logging_data": {
+          "dailyLogsReport": []
+        }
+      },
+      "2026-10-15": {
+        "daily_weigh_ins": {
+          "dateWeightList": []
+        },
+        "lifestyle_logging_data": null
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-14"
+      ],
+      "collect": {
+        "status": "success"
+      },
+      "data_cutoff": "2026-10-15T11:00:00+09:00",
+      "report_date": "2026-10-15",
+      "timezone": "Asia/Seoul",
+      "workouts": [],
+      "yesterday": "2026-10-14"
+    }
+  },
+  "lifestyle_malformed_completion": {
+    "activities": {},
+    "body": [
+      {
+        "measured_on": "2026-10-14",
+        "schema_version": 1,
+        "source_files": [
+          "inbox/inbody/synthetic.png"
+        ],
+        "value_mtime_ns": {
+          "weight_kg": 1
+        },
+        "values": {
+          "weight_kg": 80.8
+        }
+      }
+    ],
+    "days": {
+      "2026-10-14": {
+        "daily_weigh_ins": {
+          "dateWeightList": [
+            {
+              "timestampGMT": "2026-10-14T01:00:00Z",
+              "weight": 80800
+            }
+          ]
+        },
+        "lifestyle_logging_data": {
+          "completionStats": {}
+        }
+      },
+      "2026-10-15": {
+        "daily_weigh_ins": {
+          "dateWeightList": []
+        },
+        "lifestyle_logging_data": null
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-14"
+      ],
+      "collect": {
+        "status": "success"
+      },
+      "data_cutoff": "2026-10-15T11:00:00+09:00",
+      "report_date": "2026-10-15",
+      "timezone": "Asia/Seoul",
+      "workouts": [],
+      "yesterday": "2026-10-14"
+    }
+  },
+  "lifestyle_missing": {
+    "activities": {},
+    "body": [
+      {
+        "measured_on": "2026-10-14",
+        "schema_version": 1,
+        "source_files": [
+          "inbox/inbody/synthetic.png"
+        ],
+        "value_mtime_ns": {
+          "weight_kg": 1
+        },
+        "values": {
+          "weight_kg": 80.8
+        }
+      }
+    ],
+    "days": {
+      "2026-10-14": {
+        "daily_weigh_ins": {
+          "dateWeightList": [
+            {
+              "timestampGMT": "2026-10-14T01:00:00Z",
+              "weight": 80800
+            }
+          ]
+        }
+      },
+      "2026-10-15": {
+        "daily_weigh_ins": {
+          "dateWeightList": []
+        },
+        "lifestyle_logging_data": null
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-14"
+      ],
+      "collect": {
+        "status": "success"
+      },
+      "data_cutoff": "2026-10-15T11:00:00+09:00",
+      "report_date": "2026-10-15",
+      "timezone": "Asia/Seoul",
+      "workouts": [],
+      "yesterday": "2026-10-14"
+    }
+  },
+  "lifestyle_null": {
+    "activities": {},
+    "body": [
+      {
+        "measured_on": "2026-10-14",
+        "schema_version": 1,
+        "source_files": [
+          "inbox/inbody/synthetic.png"
+        ],
+        "value_mtime_ns": {
+          "weight_kg": 1
+        },
+        "values": {
+          "weight_kg": 80.8
+        }
+      }
+    ],
+    "days": {
+      "2026-10-14": {
+        "daily_weigh_ins": {
+          "dateWeightList": [
+            {
+              "timestampGMT": "2026-10-14T01:00:00Z",
+              "weight": 80800
+            }
+          ]
+        },
+        "lifestyle_logging_data": null
+      },
+      "2026-10-15": {
+        "daily_weigh_ins": {
+          "dateWeightList": []
+        },
+        "lifestyle_logging_data": null
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-14"
+      ],
+      "collect": {
+        "status": "success"
+      },
+      "data_cutoff": "2026-10-15T11:00:00+09:00",
+      "report_date": "2026-10-15",
+      "timezone": "Asia/Seoul",
+      "workouts": [],
+      "yesterday": "2026-10-14"
+    }
+  },
+  "lifestyle_stale_completion": {
+    "activities": {},
+    "body": [
+      {
+        "measured_on": "2026-10-14",
+        "schema_version": 1,
+        "source_files": [
+          "inbox/inbody/synthetic.png"
+        ],
+        "value_mtime_ns": {
+          "weight_kg": 1
+        },
+        "values": {
+          "weight_kg": 80.8
+        }
+      }
+    ],
+    "days": {
+      "2026-10-14": {
+        "daily_weigh_ins": {
+          "dateWeightList": [
+            {
+              "timestampGMT": "2026-10-14T01:00:00Z",
+              "weight": 80800
+            }
+          ]
+        },
+        "lifestyle_logging_data": {
+          "completionStats": [
+            {
+              "calendarDate": "2026-10-14",
+              "completedTracking": 3,
+              "totalTracking": 3
+            }
+          ]
+        }
+      },
+      "2026-10-15": {
+        "daily_weigh_ins": {
+          "dateWeightList": []
+        },
+        "lifestyle_logging_data": null
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-14"
+      ],
+      "collect": {
+        "status": "success"
+      },
+      "data_cutoff": "2026-10-15T11:00:00+09:00",
+      "report_date": "2026-10-15",
+      "timezone": "Asia/Seoul",
+      "workouts": [],
+      "yesterday": "2026-10-14"
+    }
+  },
+  "malformed_daily_numeric": {
+    "activities": {
+      "1": {
+        "activity": {
+          "activityTypeDTO": {
+            "typeKey": "strength_training"
+          },
+          "summaryDTO": {
+            "duration": 120,
+            "startTimeGMT": 1793055600000
+          }
+        },
+        "activity_details": {
+          "activityDetailMetrics": [
+            {
+              "metrics": [
+                1793055610000,
+                110
+              ]
+            },
+            {
+              "metrics": [
+                1793055672000,
+                155
+              ]
+            },
+            {
+              "metrics": [
+                1793055680000,
+                190
+              ]
+            }
+          ],
+          "metricDescriptors": [
+            {
+              "key": "directTimestamp",
+              "metricsIndex": 0
+            },
+            {
+              "key": "directHeartRate",
+              "metricsIndex": 1
+            }
+          ]
+        },
+        "activity_exercise_sets": {
+          "exerciseSets": [
+            {
+              "duration": 30,
+              "repetitionCount": 8,
+              "setType": "ACTIVE",
+              "startTime": 1793055600000,
+              "weight": 16000
+            },
+            {
+              "duration": 30,
+              "setType": "ACTIVE",
+              "startTime": 1793055680000
+            }
+          ]
+        }
+      }
+    },
+    "body": [],
+    "days": {
+      "2026-10-26": {
+        "daily_weigh_ins": null,
+        "lifestyle_logging_data": {
+          "dailyLogsReport": []
+        },
+        "user_summary": {
+          "activeKilocalories": 123,
+          "moderateIntensityMinutes": null,
+          "totalSteps": "bad"
+        }
+      },
+      "2026-10-27": {
+        "sleep_data": {
+          "dailySleepDTO": {
+            "sleepEndTimestampGMT": 1793052000000,
+            "sleepStartTimestampGMT": 1793023200000,
+            "sleepTimeSeconds": 28800
+          }
+        },
+        "stress_data": {
+          "stressValueDescriptorsDTOList": [
+            {
+              "index": 0,
+              "key": "timestamp"
+            },
+            {
+              "index": 1,
+              "key": "stressLevel"
+            }
+          ],
+          "stressValuesArray": [
+            [
+              1793051940000,
+              99
+            ],
+            [
+              1793052000000,
+              20
+            ],
+            [
+              1793066415000,
+              40
+            ],
+            [
+              1793066430500,
+              90
+            ],
+            [
+              1793066460000,
+              100
+            ]
+          ]
+        }
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-26"
+      ],
+      "data_cutoff": "2026-10-27T11:00:30.500+09:00",
+      "notes": [],
+      "report_date": "2026-10-27",
+      "timezone": "Asia/Seoul",
+      "weekday": "화",
+      "workouts": [
+        "1"
+      ],
+      "yesterday": "2026-10-26"
+    }
+  },
+  "malformed_set_reps": {
+    "activities": {
+      "1": {
+        "activity": {
+          "activityTypeDTO": {
+            "typeKey": "strength_training"
+          },
+          "summaryDTO": {
+            "duration": 120,
+            "startTimeGMT": 1793055600000
+          }
+        },
+        "activity_details": {
+          "activityDetailMetrics": [
+            {
+              "metrics": [
+                1793055610000,
+                110
+              ]
+            },
+            {
+              "metrics": [
+                1793055672000,
+                155
+              ]
+            },
+            {
+              "metrics": [
+                1793055680000,
+                190
+              ]
+            }
+          ],
+          "metricDescriptors": [
+            {
+              "key": "directTimestamp",
+              "metricsIndex": 0
+            },
+            {
+              "key": "directHeartRate",
+              "metricsIndex": 1
+            }
+          ]
+        },
+        "activity_exercise_sets": {
+          "exerciseSets": [
+            {
+              "duration": 30,
+              "repetitionCount": "bad",
+              "setType": "ACTIVE",
+              "startTime": 1793055600000,
+              "weight": 16000
+            },
+            {
+              "duration": 30,
+              "setType": "ACTIVE",
+              "startTime": 1793055680000
+            }
+          ]
+        }
+      }
+    },
+    "body": [],
+    "days": {
+      "2026-10-26": {
+        "daily_weigh_ins": null,
+        "lifestyle_logging_data": {
+          "dailyLogsReport": []
+        }
+      },
+      "2026-10-27": {
+        "sleep_data": {
+          "dailySleepDTO": {
+            "sleepEndTimestampGMT": 1793052000000,
+            "sleepStartTimestampGMT": 1793023200000,
+            "sleepTimeSeconds": 28800
+          }
+        },
+        "stress_data": {
+          "stressValueDescriptorsDTOList": [
+            {
+              "index": 0,
+              "key": "timestamp"
+            },
+            {
+              "index": 1,
+              "key": "stressLevel"
+            }
+          ],
+          "stressValuesArray": [
+            [
+              1793051940000,
+              99
+            ],
+            [
+              1793052000000,
+              20
+            ],
+            [
+              1793066415000,
+              40
+            ],
+            [
+              1793066430500,
+              90
+            ],
+            [
+              1793066460000,
+              100
+            ]
+          ]
+        }
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-26"
+      ],
+      "data_cutoff": "2026-10-27T11:00:30.500+09:00",
+      "notes": [],
+      "report_date": "2026-10-27",
+      "timezone": "Asia/Seoul",
+      "weekday": "화",
+      "workouts": [
+        "1"
+      ],
+      "yesterday": "2026-10-26"
+    }
+  },
+  "missing_endpoint_notes": {
+    "activities": {},
+    "body": [],
+    "days": {},
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-26"
+      ],
+      "data_cutoff": "2026-10-27T11:00:30.500+09:00",
+      "notes": [],
+      "report_date": "2026-10-27",
+      "timezone": "Asia/Seoul",
+      "weekday": "화",
+      "workouts": [],
+      "yesterday": "2026-10-26"
+    }
+  },
+  "set_peak_and_precise_cutoff": {
+    "activities": {
+      "1": {
+        "activity": {
+          "activityTypeDTO": {
+            "typeKey": "strength_training"
+          },
+          "summaryDTO": {
+            "duration": 120,
+            "startTimeGMT": 1793055600000
+          }
+        },
+        "activity_details": {
+          "activityDetailMetrics": [
+            {
+              "metrics": [
+                1793055610000,
+                110
+              ]
+            },
+            {
+              "metrics": [
+                1793055672000,
+                155
+              ]
+            },
+            {
+              "metrics": [
+                1793055680000,
+                190
+              ]
+            }
+          ],
+          "metricDescriptors": [
+            {
+              "key": "directTimestamp",
+              "metricsIndex": 0
+            },
+            {
+              "key": "directHeartRate",
+              "metricsIndex": 1
+            }
+          ]
+        },
+        "activity_exercise_sets": {
+          "exerciseSets": [
+            {
+              "duration": 30,
+              "repetitionCount": 8,
+              "setType": "ACTIVE",
+              "startTime": 1793055600000,
+              "weight": 16000
+            },
+            {
+              "duration": 30,
+              "setType": "ACTIVE",
+              "startTime": 1793055680000
+            }
+          ]
+        }
+      }
+    },
+    "body": [],
+    "days": {
+      "2026-10-26": {
+        "daily_weigh_ins": null,
+        "lifestyle_logging_data": {
+          "dailyLogsReport": []
+        }
+      },
+      "2026-10-27": {
+        "sleep_data": {
+          "dailySleepDTO": {
+            "sleepEndTimestampGMT": 1793052000000,
+            "sleepStartTimestampGMT": 1793023200000,
+            "sleepTimeSeconds": 28800
+          }
+        },
+        "stress_data": {
+          "stressValueDescriptorsDTOList": [
+            {
+              "index": 0,
+              "key": "timestamp"
+            },
+            {
+              "index": 1,
+              "key": "stressLevel"
+            }
+          ],
+          "stressValuesArray": [
+            [
+              1793051940000,
+              99
+            ],
+            [
+              1793052000000,
+              20
+            ],
+            [
+              1793066415000,
+              40
+            ],
+            [
+              1793066430500,
+              90
+            ],
+            [
+              1793066460000,
+              100
+            ]
+          ]
+        }
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-26"
+      ],
+      "data_cutoff": "2026-10-27T11:00:30.500+09:00",
+      "notes": [],
+      "report_date": "2026-10-27",
+      "timezone": "Asia/Seoul",
+      "weekday": "화",
+      "workouts": [
+        "1"
+      ],
+      "yesterday": "2026-10-26"
+    }
+  },
+  "stress_empty_object": {
+    "activities": {
+      "1": {
+        "activity": {
+          "activityTypeDTO": {
+            "typeKey": "strength_training"
+          },
+          "summaryDTO": {
+            "duration": 120,
+            "startTimeGMT": 1793055600000
+          }
+        },
+        "activity_details": {
+          "activityDetailMetrics": [
+            {
+              "metrics": [
+                1793055610000,
+                110
+              ]
+            },
+            {
+              "metrics": [
+                1793055672000,
+                155
+              ]
+            },
+            {
+              "metrics": [
+                1793055680000,
+                190
+              ]
+            }
+          ],
+          "metricDescriptors": [
+            {
+              "key": "directTimestamp",
+              "metricsIndex": 0
+            },
+            {
+              "key": "directHeartRate",
+              "metricsIndex": 1
+            }
+          ]
+        },
+        "activity_exercise_sets": {
+          "exerciseSets": [
+            {
+              "duration": 30,
+              "repetitionCount": 8,
+              "setType": "ACTIVE",
+              "startTime": 1793055600000,
+              "weight": 16000
+            },
+            {
+              "duration": 30,
+              "setType": "ACTIVE",
+              "startTime": 1793055680000
+            }
+          ]
+        }
+      }
+    },
+    "body": [],
+    "days": {
+      "2026-10-26": {
+        "daily_weigh_ins": null,
+        "lifestyle_logging_data": {
+          "dailyLogsReport": []
+        }
+      },
+      "2026-10-27": {
+        "sleep_data": {
+          "dailySleepDTO": {
+            "sleepEndTimestampGMT": 1793052000000,
+            "sleepStartTimestampGMT": 1793023200000,
+            "sleepTimeSeconds": 28800
+          }
+        },
+        "stress_data": {}
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-26"
+      ],
+      "data_cutoff": "2026-10-27T11:00:30.500+09:00",
+      "notes": [],
+      "report_date": "2026-10-27",
+      "timezone": "Asia/Seoul",
+      "weekday": "화",
+      "workouts": [
+        "1"
+      ],
+      "yesterday": "2026-10-26"
+    }
+  },
+  "stress_empty_samples": {
+    "activities": {
+      "1": {
+        "activity": {
+          "activityTypeDTO": {
+            "typeKey": "strength_training"
+          },
+          "summaryDTO": {
+            "duration": 120,
+            "startTimeGMT": 1793055600000
+          }
+        },
+        "activity_details": {
+          "activityDetailMetrics": [
+            {
+              "metrics": [
+                1793055610000,
+                110
+              ]
+            },
+            {
+              "metrics": [
+                1793055672000,
+                155
+              ]
+            },
+            {
+              "metrics": [
+                1793055680000,
+                190
+              ]
+            }
+          ],
+          "metricDescriptors": [
+            {
+              "key": "directTimestamp",
+              "metricsIndex": 0
+            },
+            {
+              "key": "directHeartRate",
+              "metricsIndex": 1
+            }
+          ]
+        },
+        "activity_exercise_sets": {
+          "exerciseSets": [
+            {
+              "duration": 30,
+              "repetitionCount": 8,
+              "setType": "ACTIVE",
+              "startTime": 1793055600000,
+              "weight": 16000
+            },
+            {
+              "duration": 30,
+              "setType": "ACTIVE",
+              "startTime": 1793055680000
+            }
+          ]
+        }
+      }
+    },
+    "body": [],
+    "days": {
+      "2026-10-26": {
+        "daily_weigh_ins": null,
+        "lifestyle_logging_data": {
+          "dailyLogsReport": []
+        }
+      },
+      "2026-10-27": {
+        "sleep_data": {
+          "dailySleepDTO": {
+            "sleepEndTimestampGMT": 1793052000000,
+            "sleepStartTimestampGMT": 1793023200000,
+            "sleepTimeSeconds": 28800
+          }
+        },
+        "stress_data": {
+          "stressValuesArray": []
+        }
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-26"
+      ],
+      "data_cutoff": "2026-10-27T11:00:30.500+09:00",
+      "notes": [],
+      "report_date": "2026-10-27",
+      "timezone": "Asia/Seoul",
+      "weekday": "화",
+      "workouts": [
+        "1"
+      ],
+      "yesterday": "2026-10-26"
+    }
+  },
+  "stress_null": {
+    "activities": {
+      "1": {
+        "activity": {
+          "activityTypeDTO": {
+            "typeKey": "strength_training"
+          },
+          "summaryDTO": {
+            "duration": 120,
+            "startTimeGMT": 1793055600000
+          }
+        },
+        "activity_details": {
+          "activityDetailMetrics": [
+            {
+              "metrics": [
+                1793055610000,
+                110
+              ]
+            },
+            {
+              "metrics": [
+                1793055672000,
+                155
+              ]
+            },
+            {
+              "metrics": [
+                1793055680000,
+                190
+              ]
+            }
+          ],
+          "metricDescriptors": [
+            {
+              "key": "directTimestamp",
+              "metricsIndex": 0
+            },
+            {
+              "key": "directHeartRate",
+              "metricsIndex": 1
+            }
+          ]
+        },
+        "activity_exercise_sets": {
+          "exerciseSets": [
+            {
+              "duration": 30,
+              "repetitionCount": 8,
+              "setType": "ACTIVE",
+              "startTime": 1793055600000,
+              "weight": 16000
+            },
+            {
+              "duration": 30,
+              "setType": "ACTIVE",
+              "startTime": 1793055680000
+            }
+          ]
+        }
+      }
+    },
+    "body": [],
+    "days": {
+      "2026-10-26": {
+        "daily_weigh_ins": null,
+        "lifestyle_logging_data": {
+          "dailyLogsReport": []
+        }
+      },
+      "2026-10-27": {
+        "sleep_data": {
+          "dailySleepDTO": {
+            "sleepEndTimestampGMT": 1793052000000,
+            "sleepStartTimestampGMT": 1793023200000,
+            "sleepTimeSeconds": 28800
+          }
+        },
+        "stress_data": null
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-26"
+      ],
+      "data_cutoff": "2026-10-27T11:00:30.500+09:00",
+      "notes": [],
+      "report_date": "2026-10-27",
+      "timezone": "Asia/Seoul",
+      "weekday": "화",
+      "workouts": [
+        "1"
+      ],
+      "yesterday": "2026-10-26"
+    }
+  },
+  "weight_empty": {
+    "activities": {},
+    "body": [
+      {
+        "measured_on": "2026-10-14",
+        "schema_version": 1,
+        "source_files": [
+          "inbox/inbody/synthetic.png"
+        ],
+        "value_mtime_ns": {
+          "weight_kg": 1
+        },
+        "values": {
+          "weight_kg": 80.8
+        }
+      }
+    ],
+    "days": {
+      "2026-10-14": {
+        "daily_weigh_ins": {
+          "dateWeightList": [
+            {
+              "timestampGMT": "2026-10-14T01:00:00Z",
+              "weight": 80800
+            }
+          ]
+        },
+        "lifestyle_logging_data": {
+          "dailyLogsReport": [
+            {
+              "details": [
+                {
+                  "amount": 2,
+                  "subTypeName": "glass"
+                }
+              ],
+              "logStatus": "YES",
+              "measurementType": "QUANTITY",
+              "name": "Water"
+            }
+          ]
+        }
+      },
+      "2026-10-15": {
+        "daily_weigh_ins": {
+          "dateWeightList": []
+        },
+        "lifestyle_logging_data": null
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-14"
+      ],
+      "collect": {
+        "status": "success"
+      },
+      "data_cutoff": "2026-10-15T11:00:00+09:00",
+      "report_date": "2026-10-15",
+      "timezone": "Asia/Seoul",
+      "workouts": [],
+      "yesterday": "2026-10-14"
+    }
+  },
+  "weight_malformed": {
+    "activities": {},
+    "body": [
+      {
+        "measured_on": "2026-10-14",
+        "schema_version": 1,
+        "source_files": [
+          "inbox/inbody/synthetic.png"
+        ],
+        "value_mtime_ns": {
+          "weight_kg": 1
+        },
+        "values": {
+          "weight_kg": 80.8
+        }
+      }
+    ],
+    "days": {
+      "2026-10-14": {
+        "daily_weigh_ins": {
+          "dateWeightList": [
+            {
+              "timestampGMT": "2026-10-14T01:00:00Z",
+              "weight": 80800
+            }
+          ]
+        },
+        "lifestyle_logging_data": {
+          "dailyLogsReport": [
+            {
+              "details": [
+                {
+                  "amount": 2,
+                  "subTypeName": "glass"
+                }
+              ],
+              "logStatus": "YES",
+              "measurementType": "QUANTITY",
+              "name": "Water"
+            }
+          ]
+        }
+      },
+      "2026-10-15": {
+        "daily_weigh_ins": {
+          "dateWeightList": {
+            "bad": 1
+          }
+        },
+        "lifestyle_logging_data": null
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-14"
+      ],
+      "collect": {
+        "status": "success"
+      },
+      "data_cutoff": "2026-10-15T11:00:00+09:00",
+      "report_date": "2026-10-15",
+      "timezone": "Asia/Seoul",
+      "workouts": [],
+      "yesterday": "2026-10-14"
+    }
+  },
+  "weight_null": {
+    "activities": {},
+    "body": [
+      {
+        "measured_on": "2026-10-14",
+        "schema_version": 1,
+        "source_files": [
+          "inbox/inbody/synthetic.png"
+        ],
+        "value_mtime_ns": {
+          "weight_kg": 1
+        },
+        "values": {
+          "weight_kg": 80.8
+        }
+      }
+    ],
+    "days": {
+      "2026-10-14": {
+        "daily_weigh_ins": {
+          "dateWeightList": [
+            {
+              "timestampGMT": "2026-10-14T01:00:00Z",
+              "weight": 80800
+            }
+          ]
+        },
+        "lifestyle_logging_data": {
+          "dailyLogsReport": [
+            {
+              "details": [
+                {
+                  "amount": 2,
+                  "subTypeName": "glass"
+                }
+              ],
+              "logStatus": "YES",
+              "measurementType": "QUANTITY",
+              "name": "Water"
+            }
+          ]
+        }
+      },
+      "2026-10-15": {
+        "daily_weigh_ins": null,
+        "lifestyle_logging_data": null
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-14"
+      ],
+      "collect": {
+        "status": "success"
+      },
+      "data_cutoff": "2026-10-15T11:00:00+09:00",
+      "report_date": "2026-10-15",
+      "timezone": "Asia/Seoul",
+      "workouts": [],
+      "yesterday": "2026-10-14"
+    }
+  },
+  "weight_seven_day_window": {
+    "activities": {},
+    "body": [
+      {
+        "measured_on": "2026-10-14",
+        "schema_version": 1,
+        "source_files": [
+          "inbox/inbody/synthetic.png"
+        ],
+        "value_mtime_ns": {
+          "weight_kg": 1
+        },
+        "values": {
+          "weight_kg": 80.8
+        }
+      }
+    ],
+    "days": {
+      "2026-10-08": {
+        "daily_weigh_ins": {
+          "dateWeightList": [
+            {
+              "date": 1800000000000,
+              "weight": 100000
+            }
+          ]
+        }
+      },
+      "2026-10-09": {
+        "daily_weigh_ins": {
+          "dateWeightList": [
+            {
+              "date": 1800000000000,
+              "weight": 80000
+            }
+          ]
+        }
+      },
+      "2026-10-15": {
+        "daily_weigh_ins": {
+          "dateWeightList": [
+            {
+              "date": 1800000000000,
+              "weight": 82000
+            }
+          ]
+        }
+      }
+    },
+    "labels": {},
+    "manifest": {
+      "baseline_days": [
+        "2026-10-08",
+        "2026-10-09",
+        "2026-10-10",
+        "2026-10-11",
+        "2026-10-12",
+        "2026-10-13",
+        "2026-10-14"
+      ],
+      "collect": {
+        "status": "success"
+      },
+      "data_cutoff": "2026-10-15T11:00:00+09:00",
+      "report_date": "2026-10-15",
+      "timezone": "Asia/Seoul",
+      "workouts": [],
+      "yesterday": "2026-10-14"
+    }
+  }
+}

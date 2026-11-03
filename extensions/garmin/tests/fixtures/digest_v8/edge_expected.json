@@ -1,0 +1,400 @@
+{
+  "about": "측정값만 담는다. 판단은 리포트를 쓰는 쪽이 한다. 시각은 manifest timezone 기준이다.",
+  "baseline_days": [
+    "2026-10-26"
+  ],
+  "body": {
+    "change_from_previous": null,
+    "days_since_latest": null,
+    "history": [],
+    "latest": null,
+    "new_today": false,
+    "previous": null
+  },
+  "collect": null,
+  "data_cutoff": "2026-10-27T11:00:30.500+09:00",
+  "day": {
+    "baseline": {
+      "active_kcal": {
+        "days": 0,
+        "mean": null
+      },
+      "bb_charged": {
+        "days": 0,
+        "mean": null
+      },
+      "bb_drained": {
+        "days": 0,
+        "mean": null
+      },
+      "bb_high": {
+        "days": 0,
+        "mean": null
+      },
+      "bb_low": {
+        "days": 0,
+        "mean": null
+      },
+      "bb_wake": {
+        "days": 0,
+        "mean": null
+      },
+      "moderate_min": {
+        "days": 0,
+        "mean": null
+      },
+      "resting_hr": {
+        "days": 0,
+        "mean": null
+      },
+      "steps": {
+        "days": 0,
+        "mean": null
+      },
+      "stress_avg": {
+        "days": 0,
+        "mean": null
+      },
+      "stress_high_s": {
+        "days": 0,
+        "mean": null,
+        "mean_hm": null
+      },
+      "vigorous_min": {
+        "days": 0,
+        "mean": null
+      }
+    },
+    "today_morning": {
+      "bb_drops": [],
+      "bb_high_after_wake": null,
+      "bb_last": null,
+      "bb_last_time": null,
+      "bb_wake": null,
+      "date": "2026-10-27",
+      "from": "07:00",
+      "resting_hr": null,
+      "stress_avg_samples": 30,
+      "stress_high_samples": "0:00",
+      "stress_measured_samples": "0:06",
+      "until": "2026-10-27T11:00:30.500+09:00"
+    },
+    "yesterday": null
+  },
+  "drinks_last_8_days": [
+    {
+      "date": "2026-10-26",
+      "fetched": true,
+      "logged": []
+    },
+    {
+      "date": "2026-10-27",
+      "fetched": false
+    }
+  ],
+  "last_8_days": [
+    {
+      "bb_wake": null,
+      "date": "2026-10-26",
+      "hr_min": null,
+      "hrv_avg": null,
+      "resting_hr": null,
+      "score": null,
+      "spo2_min": null,
+      "total": null
+    },
+    {
+      "bb_wake": null,
+      "date": "2026-10-27",
+      "hr_min": null,
+      "hrv_avg": null,
+      "resting_hr": null,
+      "score": null,
+      "spo2_min": null,
+      "total": "8:00"
+    }
+  ],
+  "notes": [
+    "2026-10-26 sleep_data: 원본이 없다",
+    "직전 7일 중 수면 기록이 없는 날: 2026-10-26",
+    "2026-10-26 user_summary: 원본이 없다",
+    "2026-10-27 heart_rates: 원본이 없다",
+    "2026-10-28 heart_rates: 원본이 없다",
+    "2026-10-27 hrv_data: 원본이 없다",
+    "2026-10-26 rhr_day: 원본이 없다",
+    "2026-10-27 rhr_day: 원본이 없다",
+    "2026-10-27 user_summary: 원본이 없다",
+    "2026-10-27 lifestyle_logging_data: 원본이 없다",
+    "2026-10-26 daily_weigh_ins: 원본이 없다",
+    "2026-10-27 daily_weigh_ins: 원본이 없다"
+  ],
+  "recent_training": {
+    "days_since_last_workout": 0,
+    "last_workout_date": "2026-10-27",
+    "latest_by_exercise": [
+      {
+        "date": "2026-10-27",
+        "exercise": "종목 미상",
+        "kind": "근력",
+        "max_kg": 16,
+        "reps": null,
+        "sets": 2,
+        "top_set": "8 × 16.0 kg"
+      }
+    ],
+    "sessions_30d": [
+      {
+        "date": "2026-10-27",
+        "duration": "0:02",
+        "parts": [
+          {
+            "duration": "0:02",
+            "exercises": [
+              {
+                "exercise": "종목 미상",
+                "max_kg": 16,
+                "reps": null,
+                "sets": 2
+              }
+            ],
+            "hr_avg": null,
+            "kind": "근력",
+            "sets_recorded": true
+          }
+        ],
+        "start": "08:00"
+      }
+    ]
+  },
+  "recovery": {
+    "hrv_baseline": null,
+    "hrv_baseline_7d": {
+      "days": 0,
+      "mean": null
+    },
+    "hrv_last_night": null,
+    "hrv_status": null,
+    "hrv_weekly_avg": null,
+    "resting_hr_7d": {
+      "days": 0,
+      "mean": null
+    },
+    "resting_hr_today": null
+  },
+  "report_date": "2026-10-27",
+  "sleep": {
+    "baseline": {
+      "awake_count_summary": {
+        "days": 0,
+        "mean": null
+      },
+      "awake_s": {
+        "days": 0,
+        "mean": null,
+        "mean_hm": null
+      },
+      "deep_s": {
+        "days": 0,
+        "mean": null,
+        "mean_hm": null
+      },
+      "hr_min": {
+        "days": 0,
+        "mean": null
+      },
+      "hr_min_time_mean": null,
+      "hrv_avg": {
+        "days": 0,
+        "mean": null
+      },
+      "light_s": {
+        "days": 0,
+        "mean": null,
+        "mean_hm": null
+      },
+      "rem_s": {
+        "days": 0,
+        "mean": null,
+        "mean_hm": null
+      },
+      "resp_avg": {
+        "days": 0,
+        "mean": null
+      },
+      "score": {
+        "days": 0,
+        "mean": null
+      },
+      "sleep_end_mean": null,
+      "sleep_start_mean": null,
+      "spo2_avg": {
+        "days": 0,
+        "mean": null
+      },
+      "spo2_min": {
+        "days": 0,
+        "mean": null
+      },
+      "total_s": {
+        "days": 0,
+        "mean": null,
+        "mean_hm": null
+      }
+    },
+    "last_night": {
+      "awake": null,
+      "awake_count_summary": null,
+      "awake_s": null,
+      "awake_segments": [],
+      "bb_charged_in_sleep": null,
+      "bb_end": null,
+      "bb_start": null,
+      "breathing_disruption": null,
+      "date": "2026-10-27",
+      "deep": null,
+      "deep_s": null,
+      "hr_avg": null,
+      "hr_min": null,
+      "hr_min_after_sleep_start": null,
+      "hr_min_time": null,
+      "hrv_avg": null,
+      "hrv_first_half": null,
+      "hrv_second_half": null,
+      "light": null,
+      "light_s": null,
+      "rem": null,
+      "rem_s": null,
+      "resp_avg": null,
+      "resp_max": null,
+      "resp_min": null,
+      "restless_count": 0,
+      "score": null,
+      "sleep_end": "07:00",
+      "sleep_start": "23:00",
+      "spo2_avg": null,
+      "spo2_dips": [],
+      "spo2_min": null,
+      "spo2_min_time": null,
+      "stages": [],
+      "stress_avg": null,
+      "total": "8:00",
+      "total_s": 28800
+    }
+  },
+  "weekday": "화",
+  "weight": {
+    "avg_7d_days": 0,
+    "avg_7d_kg": null,
+    "days": [
+      {
+        "date": "2026-10-26",
+        "fetched": false,
+        "weight_kg": null
+      },
+      {
+        "date": "2026-10-27",
+        "fetched": false,
+        "weight_kg": null
+      }
+    ]
+  },
+  "workouts": [
+    {
+      "after": {
+        "samples": 0,
+        "workout_end": "08:02"
+      },
+      "bb_end": null,
+      "bb_start": null,
+      "date": "2026-10-27",
+      "detail": [
+        {
+          "bb_end": null,
+          "bb_start": null,
+          "date": "2026-10-27",
+          "duration": "0:02",
+          "duration_s": 120,
+          "end": "08:02",
+          "exercise_totals": [
+            {
+              "bodyweight_sets": 0,
+              "exercise": "종목 미상",
+              "max_kg": 16,
+              "no_weight_sets": 1,
+              "reps": null,
+              "set_peaks": [
+                155,
+                190
+              ],
+              "sets": 2,
+              "volume_kg": 128,
+              "weighted_sets": 1
+            }
+          ],
+          "hr_avg": null,
+          "hr_first": 110,
+          "hr_last": 190,
+          "hr_max": null,
+          "hr_max_time": "08:01",
+          "id": "1",
+          "kind": "근력",
+          "previous": [
+            {
+              "date": null,
+              "exercise": "종목 미상"
+            }
+          ],
+          "sets": [
+            {
+              "drop_in_rest": 0,
+              "duration_s": 30,
+              "exercise": "종목 미상",
+              "exercise_key": "",
+              "next_start_hr": 190,
+              "order": 1,
+              "reps": 8,
+              "rest_low_hr": 155,
+              "rest_s": null,
+              "set_no": 1,
+              "set_peak_after_end_s": 42,
+              "set_peak_hr": 155,
+              "start": "08:00",
+              "weight": "16.0 kg",
+              "weight_kg": 16
+            },
+            {
+              "drop_in_rest": null,
+              "duration_s": 30,
+              "exercise": "종목 미상",
+              "exercise_key": "",
+              "next_start_hr": null,
+              "order": 2,
+              "reps": null,
+              "rest_low_hr": null,
+              "rest_s": null,
+              "set_no": 2,
+              "set_peak_after_end_s": 0,
+              "set_peak_hr": 190,
+              "start": "08:01",
+              "weight": "무게 기록 없음",
+              "weight_kg": null
+            }
+          ],
+          "start": "08:00",
+          "type": "strength_training",
+          "zones": {}
+        }
+      ],
+      "duration": "0:02",
+      "end": "08:02",
+      "hr_max": 190,
+      "hr_max_time": "08:01",
+      "parts": [
+        "근력"
+      ],
+      "session": 1,
+      "start": "08:00"
+    }
+  ],
+  "yesterday": "2026-10-26"
+}

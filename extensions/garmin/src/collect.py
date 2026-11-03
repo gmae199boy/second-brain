@@ -53,8 +53,11 @@ def inputs(env):
             'day':date.fromisoformat(start) if start else None,'settings':settings,
             'recent':env['BRAIN_WORK_KIND']=='garmin.collect_recent'}
 
-def result(status, cutoff_ms, local_date, normalized=0, normalize_failed=0):
-    emit('result', summary=json.dumps({'status':status,'cutoff_ms':cutoff_ms,'local_date':local_date.isoformat(),'normalized':normalized,'normalize_failed':normalize_failed},separators=(',',':')))
+def result(status, cutoff_ms, local_date, normalized=0, normalize_failed=0, *, zone=None, snapshot_id=None):
+    summary = {'status':status,'cutoff_ms':cutoff_ms,'local_date':local_date.isoformat(),'normalized':normalized,'normalize_failed':normalize_failed}
+    if zone is not None and snapshot_id is not None:
+        summary.update(timezone=zone,snapshot_id=snapshot_id)
+    emit('result', summary=json.dumps(summary,separators=(',',':')))
 
 def _clock_ms():
     return int(datetime.now(timezone.utc).timestamp()*1000)
@@ -113,7 +116,8 @@ def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, c
             if mode == 'noop':
                 pending_days = [str(row[0]) for row in normalized_store.unfinished_days(conn,account,history_start=snapshot['history_start'])]
                 failed = normalization.publish_days(conn,account,work,token,zone,pending_days,catalogue,boundary,snapshot=snapshot) if pending_days else 0
-                result('noop',cutoff,today,normalized=normalized,normalize_failed=normalize_failed + failed)
+                snapshot_id = store.save_artifact_snapshot(conn,account,work,token,snapshot,boundary)
+                result('noop',cutoff,today,normalized=normalized,normalize_failed=normalize_failed + failed,zone=zone,snapshot_id=snapshot_id)
                 return
             if args['recent']:
                 mode = 'rejected'
@@ -229,7 +233,8 @@ def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, c
             store.put_run(conn,account,work,token,run_id,today,started,status,detail,_clock_ms())
             if status == 'partial':
                 raise ValueError('COLLECT_PARTIAL')
-            result(status,cutoff,today,normalized,normalize_failed)
+            snapshot_id = store.save_artifact_snapshot(conn,account,work,token,snapshot,boundary)
+            result(status,cutoff,today,normalized,normalize_failed,zone=zone,snapshot_id=snapshot_id)
 
 def main():
     silence_library_logging()

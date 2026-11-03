@@ -11,6 +11,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[3]
 ARCHIVE = ROOT / '_bmad-output/personal-brain/prep-garmin-absorption/inputs/garmin-source.tar.gz'
 FIXTURE = ROOT / 'extensions/garmin/tests/fixtures/normalize_v8'
+DIGEST_FIXTURE = ROOT / 'extensions/garmin/tests/fixtures/digest_v8'
 
 CHILD = r'''
 import json, sqlite3, sys
@@ -31,6 +32,22 @@ for table in normalize._DERIVED_TABLES:
 print(json.dumps(out,ensure_ascii=False,sort_keys=True,indent=2))
 '''
 
+DIGEST_CHILD = r'''
+import json, sys
+from garmin_pipeline import digest
+data = json.loads(open(sys.argv[1], encoding='utf-8').read())
+def build(d): return digest.build(d['manifest'], d['days'], d['activities'], d['labels'], d['body'])
+out = build(data) if 'manifest' in data else {name:build(case) for name,case in data.items()}
+print(json.dumps(out, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False))
+'''
+
+DAY_CHILD = r'''
+import json, sys
+from garmin_pipeline import digest
+d = json.loads(open(sys.argv[1], encoding="utf-8").read())
+print(json.dumps(digest.day_values(d['date'],d['day_raw'],d['activities'],d['labels'],d['timezone']),ensure_ascii=False,sort_keys=True,indent=2,allow_nan=False))
+'''
+
 def main():
     with tempfile.TemporaryDirectory(prefix='garmin-oracle-') as temporary:
         temp = Path(temporary)
@@ -42,6 +59,11 @@ def main():
         env = {'HOME': str(home), 'PYTHONPATH': str(source), 'PATH': os.defpath}
         result = subprocess.run([sys.executable, '-c', CHILD, str(FIXTURE / 'input.json')], cwd=temp, env=env, text=True, capture_output=True, check=True)
         (FIXTURE / 'expected.json').write_text(result.stdout, encoding='utf-8')
+        for prefix in ('', 'edge_', 'cases_'):
+            result = subprocess.run([sys.executable, '-c', DIGEST_CHILD, str(DIGEST_FIXTURE / (prefix + 'input.json'))], cwd=temp, env=env, text=True, capture_output=True, check=True)
+            (DIGEST_FIXTURE / (prefix + 'expected.json')).write_text(result.stdout, encoding='utf-8')
+        result = subprocess.run([sys.executable, '-c', DAY_CHILD, str(DIGEST_FIXTURE / 'core_current_input.json')], cwd=temp, env=env, text=True, capture_output=True, check=True)
+        (DIGEST_FIXTURE / 'core_current_expected.json').write_text(result.stdout, encoding='utf-8')
 
 if __name__ == '__main__':
     main()

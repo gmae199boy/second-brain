@@ -1,0 +1,9 @@
+{
+  "date": "2026-01-31",
+  "day_raw": {
+    "user_summary": {"totalSteps":1234,"totalDistanceMeters":null,"activeKilocalories":null,"moderateIntensityMinutes":null,"vigorousIntensityMinutes":null,"minHeartRate":null,"maxHeartRate":null}
+  },
+  "activities": {},
+  "labels": {},
+  "timezone": "UTC"
+}

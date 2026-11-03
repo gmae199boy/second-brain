@@ -419,3 +419,11 @@ it('검증 스냅샷은 일감별 명시적 true만 허용한다', () => {
   expect(decodeExtensionManifest(JSON.stringify({ ...manifest, work: [{ ...work, runtime: 'node', verification_snapshot: true }] })).ok).toBe(false);
   for (const value of [false, 'true', null, 1]) expect(decodeExtensionManifest(JSON.stringify({ ...manifest, work: [{ ...work, verification_snapshot: value }] })).ok).toBe(false);
 });
+
+it('requires declared, non-cyclic followup work', () => {
+  const first={kind:'testext.collect',execution:'supervised',runtime:'python',entry:'src/collect.py',followup:'testext.artifacts'};
+  const second={kind:'testext.artifacts',execution:'supervised',runtime:'python',entry:'src/artifacts.py'};
+  expect(decodeExtensionManifest(JSON.stringify({...manifest,work:[first,second]})).ok).toBe(true);
+  expect(decodeExtensionManifest(JSON.stringify({...manifest,work:[first]})).ok).toBe(false);
+  expect(decodeExtensionManifest(JSON.stringify({...manifest,work:[first,{...second,followup:first.kind}]})).ok).toBe(false);
+});
