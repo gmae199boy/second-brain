@@ -106,7 +106,19 @@ python3.14 _bmad/method/scripts/tickets.py find <ticket-ref>
 2. 최신 main을 fetch하고 기준 이후 변경을 조사한다. main이 이동해 충돌·검증 영향이 생겼으면 같은 티켓의 수정 작업으로 돌려 해결·검증·필요한 재리뷰·브랜치 재푸시를 받는다.
 3. 중앙에서 티켓 브랜치를 main에 병합한다. 병합 훅과 요구되는 CI/검증을 통과한다. 정상 정책으로 main을 push하고 다시 fetch해 merge SHA가 원격 main에 포함되는지 확인한다. 보호 브랜치면 승인된 PR 경로를 사용한다.
 4. 브랜치 push, 로컬 merge, main push를 별도 체크포인트로 기록한다. main push 실패·CI 실패·병합 미완료는 다음 티켓을 시작할 근거가 아니다. 네트워크 응답이 불명확하면 원격 ref부터 확인한다.
-5. 에픽 전이를 처리하고 실제 원격 반영까지 확인한 뒤 completed 기록과 다음 행동을 저장한다. 이후 Orca의 최신 정상 정리 절차를 따른다. 증거가 남아 있지 않은 워크트리나 불명확한 살아 있는 워커를 삭제하지 않는다.
+5. 에픽 전이를 처리하고 실제 원격 반영까지 확인한 뒤 completed 기록을 저장한다. 아래 병합 후 정리 절차로 Orca 워크트리와 원격 티켓 브랜치를 정리·검증한 후 다음 티켓으로 간다. 증거가 남아 있지 않은 워크트리나 불명확한 살아 있는 워커를 삭제하지 않는다.
+
+## 병합 후 Orca 정리와 원격 브랜치 삭제
+
+2026-11-03 사용자 지시: 중앙은 main 병합·push 확인 뒤 해당 Orca 작업 공간을 정리하고 원격 티켓 브랜치를 삭제한다. 브랜치 보존이나 main 반영만으로 정리를 마쳤다고 하지 않는다.
+
+1. 최신 원격 main과 대상 브랜치를 fetch한다. 보고한 최종 SHA와 실제 브랜치 tip이 같고, 그 tip과 merge SHA가 원격 main에 포함됐는지 확인한다. 예상하지 못한 추가 commit이 있으면 삭제하지 않고 소유권과 반영 여부부터 확인한다.
+2. 대상 checkout의 tracked/untracked 변경과 소유 세션·Dispatch를 확인한다. 미보존 변경이나 진행 중인 다른 작업을 버리지 않는다. 최종 보고·리뷰·영수증·재개 체크포인트 등 gitignored 실행 증거는 중앙 `.brain-automation/tickets/<ticket>/worktree-checkpoint-archive/`에 먼저 보관한다. 실제 private 데이터의 보관 위치도 재개 기록에 남기며 공개 Git으로 옮기지 않는다.
+3. 사용자 지시로 정리할 정확한 작업 공간만 현재 `$orca-cli`의 `worktree rm --worktree <정확한 selector> --delete-branch --json`으로 제거한다. 이 명령의 영수증과 최신 가이드에 따라 소유 세션을 정리한다. raw git worktree/rm이나 orchestration reset으로 대체하지 않는다. `--force`는 미보존 변경이나 정체 불명 세션을 버리는 수단으로 쓰지 않는다. 로컬 브랜치 삭제는 Orca의 안전 판정에 따르고 실제 ref로 확인한다.
+4. 확인한 원격에 `git push <remote> --delete <정확한 티켓 브랜치>`를 실행한다. main·다른 티켓·실행 중인 워크트리의 브랜치는 삭제하지 않는다. 삭제 응답이 불명확하면 같은 삭제를 반복하기 전에 `git ls-remote`로 실제 ref부터 확인한다.
+5. Orca worktree list와 Git worktree list에서 대상이 사라지고, 원격 ref가 없으며, 현재 실행 중인 다음 티켓은 유지됐는지 대조한다. 정리 영수증·삭제 결과·원격 main SHA·보관 경로를 중앙 체크포인트에 남긴다. 정리 실패는 완료로 기록하지 않는다.
+
+blocked 티켓의 검토 완료 부분 작업이 main에 반영된 경우도 위 증거·보관 조건을 충족하면 정리한다. 워크트리나 브랜치를 없애도 계획의 blocked 원인과 미완료 수락조건은 유지한다. 향후 재개는 원격 main의 보존 commit과 중앙에 보관한 체크포인트를 기준으로 새 최상위 Orca 워크트리를 만들어 수행한다.
 
 ## 에픽 built 전이
 
