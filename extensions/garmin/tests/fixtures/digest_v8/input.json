@@ -1,0 +1,12 @@
+{
+  "manifest": {"report_date":"2026-10-15", "yesterday":"2026-10-14", "baseline_days":["2026-10-14"], "data_cutoff":"2026-10-15T11:00:00+09:00", "timezone":"Asia/Seoul", "workouts":[], "collect":{"status":"success"}},
+  "days": {
+    "2026-10-14": {
+      "daily_weigh_ins":{"dateWeightList":[{"timestampGMT":"2026-10-14T01:00:00Z","weight":80800}]},
+      "lifestyle_logging_data":{"dailyLogsReport":[{"logStatus":"YES","measurementType":"QUANTITY","name":"Water","details":[{"subTypeName":"glass","amount":2}]}]}
+    },
+    "2026-10-15": {"daily_weigh_ins":{"dateWeightList":[]}, "lifestyle_logging_data":null}
+  },
+  "activities": {}, "labels": {},
+  "body": [{"measured_on":"2026-10-14", "values":{"weight_kg":80.8}, "value_mtime_ns":{"weight_kg":1}, "source_files":["inbox/inbody/synthetic.png"], "schema_version":1}]
+}

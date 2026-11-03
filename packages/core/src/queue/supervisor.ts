@@ -9,6 +9,27 @@ import type { ChannelStore } from '../channels/store.js';
 import { createAbiRun, createAbiStderr, decodeAbiEnv, type AbiRunVerdict } from '../process-abi/codec.js';
 import { checkSchema, type SchemaVersions } from '../schema.js';
 import { cleanProcessGroup, inspectGroup, type GroupIdentity } from './process-cleanup.js';
+// Persist only narrowly defined, non-health public Garmin result summaries.
+export function publicCollectSummary(kind: string, summary: string | undefined): Record<string, string | number> | undefined {
+  if (!['garmin.collect', 'garmin.collect_retry', 'garmin.collect_recent', 'garmin.artifacts'].includes(kind) || !summary || summary.length > 2048) return undefined;
+  let value: unknown;
+  try { value = JSON.parse(summary); } catch { return undefined; }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  if (kind === 'garmin.artifacts') {
+    if (Object.keys(v).sort().join(',') !== 'request_id,revision,status' || v['status'] !== 'success' ||
+        typeof v['request_id'] !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v['request_id']) ||
+        typeof v['revision'] !== 'string' || !/^[0-9a-f]{64}$/.test(v['revision'])) return undefined;
+    return v as Record<string, string | number>;
+  }
+  if (Object.keys(v).sort().join(',') !== 'cutoff_ms,local_date,normalize_failed,normalized,snapshot_id,status,timezone' ||
+      !['success', 'noop'].includes(String(v['status'])) || typeof v['local_date'] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v['local_date']) ||
+      !['cutoff_ms', 'normalized', 'normalize_failed'].every(k => Number.isSafeInteger(v[k]) && (v[k] as number) >= 0) ||
+      typeof v['snapshot_id'] !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v['snapshot_id']) ||
+      typeof v['timezone'] !== 'string' || v['timezone'].length < 1 || v['timezone'].length > 80 || !/^[A-Za-z0-9_+\-/]+$/.test(v['timezone'])) return undefined;
+  return v as Record<string, string | number>;
+}
+
 export interface SupervisorOptions {
   store: WorkStore & SchemaStore & Partial<Pick<ChannelStore, 'recoverChannelAttempt'>>; launcher: ProcessLauncher; inspector: ProcessInspector;
   clock: Clock; timer: Timer; idGen: IdGen;
@@ -363,7 +384,9 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
       const decision = outcome === 'succeeded' ? { decision: 'complete' as const }
         : retryable === false || item.attempts >= MAX_WORK_ATTEMPTS ? { decision: 'record' as const }
         : { decision: 'retry' as const, at: new Date(now.getTime() + workKindPolicy(item.kind).transientDelayMs) };
+      const summary = outcome === 'succeeded' ? publicCollectSummary(item.kind, run.resultSummary) : undefined;
       const input = { id: item.id, attemptToken: token, now, outcome, ...detail,
+        ...(summary === undefined ? {} : { resultSummary: summary }),
         ...(verdict.usage === null ? {} : { usage: { inputTokens: verdict.usage.input_tokens, cachedInputTokens: verdict.usage.cached_input_tokens, outputTokens: verdict.usage.output_tokens } }),
         ...(outcome === 'succeeded' ? {} : { lastError }),
         ...(outcome === 'failed' ? { errorCode: verdict.code!, errorRetryable: verdict.retryable! } : {}),

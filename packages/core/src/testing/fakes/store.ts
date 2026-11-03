@@ -176,6 +176,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
 
   const installProgress = new Map<string, import('../../extensions/install-progress.js').StoredExtensionInstallProgress>();
   const extensionWorkKinds = new Map<string, readonly string[]>();
+  const extensionFollowups = new Map<string, Readonly<Record<string, string>>>();
   const pythonEnvironments = new Map<string, import('../../ports/store.js').ExtensionPythonEnvironment>();
   const extensions = new Map<string, import('../../ports/store.js').ExtensionRecord>();
   const users = new Map<string, User>();
@@ -429,6 +430,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     if (!validHoldGroup(holdGroup)) return invalidGroup;
     const existing = openWork(input.kind, input.targetKind, input.targetId);
     if (existing !== undefined) {
+      ensureFollowup(existing);
       if (input.scheduledDates) {
         if (!existing.scheduledDates) existing.scheduledDates = { ...input.scheduledDates };
         else {
@@ -463,7 +465,17 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       outcome: null, cancelRequestedAt: null,
     };
     workItems.push(item);
+    ensureFollowup(item);
     return { ok: true, created: true, item: structuredClone(item) };
+  }
+
+  function ensureFollowup(item: WorkItem): void {
+    const followup = [...extensionFollowups.values()].map(mapping => mapping[item.kind]).find(Boolean);
+    if (!followup) return;
+    const child = addWork({ id: globalThis.crypto.randomUUID(), kind: followup, targetKind: 'extension', targetId: item.id,
+      createdAt: item.createdAt, nextAttemptAt: item.nextAttemptAt, holdGroup: item.holdGroup });
+    if (child.ok && !workDependencies.some(edge => edge.workItemId === child.item.id && edge.prerequisiteId === item.id))
+      workDependencies.push({ workItemId: child.item.id, prerequisiteId: item.id });
   }
 
   function closeDependents(rootId: string, outcome: 'failed' | 'cancelled' | 'dependency_failed', now: Date) {
@@ -688,8 +700,10 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     },
     async recordExtensionPythonEnvironment({ name, ...environment }) { pythonEnvironments.set(name, structuredClone(environment)); return { ok: true }; },
     async getExtensionPythonEnvironment(name) { return { ok: true, environment: structuredClone(pythonEnvironments.get(name) ?? null) }; },
-    async recordExtensionInstall({ name, version, now, workKinds }) {
+    async recordExtensionInstall({ name, version, now, workKinds, workFollowups }) {
       extensionWorkKinds.set(name, workKinds ?? []);
+      extensionFollowups.set(name, workFollowups ?? {});
+      for (const item of [...workItems]) if (item.completedAt === null && (workKinds ?? []).includes(item.kind)) ensureFollowup(item);
       const existing = extensions.get(name);
       if (existing) existing.version = version;
       else extensions.set(name, { name, version, installedAt: new Date(now), enabled: true, enabledChangedAt: new Date(now), connectionStatus: null, connectionCheckedAt: null, connectionCode: null, connectionMessage: null });
@@ -707,7 +721,13 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       if (row.version !== version) return { ok: true, state: 'changed' };
       if (!row.enabled) return { ok: true, state: 'disabled' };
       if (!extensionWorkKinds.get(name)?.includes(work.kind)) return { ok: true, state: 'changed' };
-      const result = addWork(work);
+      const predecessors = Object.entries(extensionFollowups.get(name) ?? {}).filter(([, next]) => next === work.kind).map(([kind]) => kind);
+      const candidates = workItems.filter(item => predecessors.includes(item.kind) && item.targetKind === work.targetKind && item.targetId === work.targetId && (item.completedAt === null || item.outcome === 'succeeded'))
+        .sort((a,b) => Number(a.completedAt !== null) - Number(b.completedAt !== null) || b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id));
+      if (predecessors.length && !candidates.length) return { ok: true, state: 'changed' };
+      const parent = candidates[0];
+      const result = addWork(parent ? { ...work, targetId: parent.id } : work);
+      if (result.ok && parent && !workDependencies.some(edge => edge.workItemId === result.item.id && edge.prerequisiteId === parent.id)) workDependencies.push({ workItemId: result.item.id, prerequisiteId: parent.id });
       return result.ok ? { ok: true, state: 'queued', workId: result.item.id, created: result.created } : result;
     },
     async getExtension(name) { return { ok: true, extension: structuredClone(extensions.get(name) ?? null) }; },
@@ -1659,6 +1679,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       }
       attempt.finishedAt = input.now;
       attempt.outcome = input.outcome;
+      attempt.resultSummary = input.resultSummary ?? null;
       attempt.elapsedMs = input.elapsedMs ?? null; attempt.stderr = input.stderr ?? null;
       attempt.errorCode = input.errorCode ?? null; attempt.errorRetryable = input.errorRetryable ?? null;
       attempt.inputTokens = input.usage?.inputTokens ?? null; attempt.cachedInputTokens = input.usage?.cachedInputTokens ?? null; attempt.outputTokens = input.usage?.outputTokens ?? null;

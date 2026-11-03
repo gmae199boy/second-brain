@@ -7,7 +7,7 @@ REQUIRED_INSERTS = {
     'channel_legacy_deliveries': 'id conversation_id source dataset original_table original_key import_batch original_id local_date kind event ok reason at source_work_item_id source_attempt_token original_id_raw original_id_encoding local_date_raw local_date_encoding kind_raw kind_encoding event_raw event_encoding reason_raw reason_encoding dataset_label dataset_label_raw dataset_label_encoding',
     'health_authority_rules': 'id source account metric activity_id date_from date_to revision datasets source_work_item_id source_attempt_token account_raw account_encoding activity_id_raw activity_id_encoding',
     'health_observations': 'id source dataset import_batch original_table original_key account account_confirmed metric value unit local_date observed_at time_zone time_zone_missing revision fetched_at normalization_version source_work_item_id source_attempt_token value_type value_text value_json catalog_version activity_id sub_identity account_raw account_encoding activity_id_raw activity_id_encoding sub_identity_raw sub_identity_encoding value_text_raw value_text_encoding value_json_raw value_json_encoding dataset_label dataset_label_raw dataset_label_encoding',
-    'file_requests': 'id source request_key dataset import_batch locator sha256 size_bytes media_type created_at source_work_item_id source_attempt_token',
+    'file_requests': 'id source request_key dataset import_batch locator sha256 size_bytes media_type created_at source_work_item_id source_attempt_token metadata',
     'analyses': 'id source dataset import_batch original_table original_key revision model model_missing created_at created_at_missing file_request_id source_work_item_id source_attempt_token report_date report_date_raw report_date_encoding scope scope_raw scope_encoding summary summary_raw summary_encoding judgments judgments_raw judgments_encoding evidence evidence_raw evidence_encoding next_checks next_checks_raw next_checks_encoding report_md report_md_raw report_md_encoding model_raw model_encoding',
     'analysis_artifacts': 'id source dataset import_batch analysis_id file_request_id role source_work_item_id source_attempt_token',
 }
@@ -28,7 +28,7 @@ def probe_role(conn):
     checks = {'identity': False, 'role_safe': False, 'membership_absent': False, 'schema_ready': False,
               'required_inserts': False, 'required_views': False, 'no_excess_tables': False,
               'no_excess_functions': False, 'no_excess_schemas': False, 'attempt_execute': False,
-              'original_codec_execute': False, 'authority_reconcile_execute': False,
+              'original_codec_execute': False, 'authority_reconcile_execute': False, 'predecessor_execute': False,
               'catalog_select': False, 'mapping_select': False, 'batch_select': False}
     roles = safely(conn, """select current_user, rolcanlogin, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolreplication,
         shobj_description(oid,'pg_authid') = 'second-brain extension:' || current_database(),
@@ -49,6 +49,8 @@ def probe_role(conn):
         checks['no_excess_schemas'] = not (create_excess or usage_excess)
     attempt = safely(conn, "select coalesce(has_function_privilege(current_user,to_regprocedure('brain.attempt_is_current(uuid,uuid)'),'EXECUTE'),false)")
     checks['attempt_execute'] = bool(attempt and attempt[0][0])
+    predecessor = safely(conn, "select coalesce(has_function_privilege(current_user,to_regprocedure('brain.extension_predecessor_results(uuid,uuid)'),'EXECUTE'),false)")
+    checks['predecessor_execute'] = bool(predecessor and predecessor[0][0])
     helpers = safely(conn, """select coalesce(has_function_privilege(current_user,to_regprocedure('brain.original_utf8(text)'),'EXECUTE'),false),
       coalesce(has_function_privilege(current_user,to_regprocedure('brain.reconcile_import_authority(uuid,text,text,bytea,text,text[],uuid,uuid,boolean)'),'EXECUTE'),false)""")
     if helpers:
@@ -68,7 +70,7 @@ def probe_role(conn):
         checks['no_excess_tables'] = all(not write and not modify and (name in VIEWS or not select and not select_col) and set(insert_cols) <= REQUIRED_INSERTS.get(name, frozenset()) for name, select, write, select_col, modify, insert_cols in objects)
     functions = safely(conn, """select exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
        where n.nspname='brain' and p.prorettype <> 'pg_catalog.trigger'::regtype
-       and p.oid is distinct from to_regprocedure('brain.attempt_is_current(uuid,uuid)') and p.oid is distinct from to_regprocedure('brain.original_utf8(text)') and p.oid is distinct from to_regprocedure('brain.reconcile_import_authority(uuid,text,text,bytea,text,text[],uuid,uuid,boolean)')
+       and p.oid is distinct from to_regprocedure('brain.attempt_is_current(uuid,uuid)') and p.oid is distinct from to_regprocedure('brain.original_utf8(text)') and p.oid is distinct from to_regprocedure('brain.reconcile_import_authority(uuid,text,text,bytea,text,text[],uuid,uuid,boolean)') and p.oid is distinct from to_regprocedure('brain.extension_predecessor_results(uuid,uuid)')
        and has_function_privilege(current_user,p.oid,'EXECUTE'))""")
     checks['no_excess_functions'] = bool(functions is not None and not functions[0][0])
     own = safely(conn, """select coalesce(has_table_privilege(current_user,to_regclass('garmin.import_mapping'),'SELECT'),false),

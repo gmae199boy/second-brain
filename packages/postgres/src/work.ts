@@ -124,9 +124,13 @@ export async function ensureWork(held: Kysely<PgSchema>, input: AddWorkInput) {
       on conflict (kind, target_kind, target_id) where completed_at is null do nothing returning *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text
     `.execute(held);
     const row = inserted.rows[0];
-    if (row !== undefined) return { created: true, row };
+    if (row !== undefined) {
+      await ensureFollowup(held, row);
+      return { created: true, row };
+    }
     const existing = await readOpenWork(held, input);
     if (existing !== null) {
+      await ensureFollowup(held, existing);
       if (!input.scheduledDates) return { created: false, row: existing };
       const dates = input.scheduledDates;
       const merged = await sql<WorkItemRow>`update brain.work_items set
@@ -139,6 +143,14 @@ export async function ensureWork(held: Kysely<PgSchema>, input: AddWorkInput) {
     // A drain completed the conflicting row between these statements. At READ
     // COMMITTED the next insert can create its replacement using a fresh snapshot.
   }
+}
+
+export async function ensureFollowup(held: Kysely<PgSchema>, row: WorkItemRow): Promise<void> {
+  const found = await sql<{ followup_kind: string | null }>`select to_jsonb(k)->>'followup_kind' as followup_kind from brain.extension_work_kinds k where kind=${row.kind}`.execute(held);
+  const kind=found.rows[0]?.followup_kind;
+  if (!kind) return;
+  const child=await ensureWork(held,{id:crypto.randomUUID(),kind,targetKind:'extension',targetId:row.id,createdAt:new Date(row.created_at),nextAttemptAt:new Date(row.next_attempt_at),holdGroup:row.hold_group});
+  await sql`insert into brain.work_dependencies(work_item_id,prerequisite_id) values (${child.row.id},${row.id}) on conflict do nothing`.execute(held);
 }
 
 export function postgresWorkStore(connect: PgConnect): WorkStore {
@@ -450,6 +462,9 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
       return finish(connect, async (held) => {
         const item = await lockConfirmedChannelWork(held, input);
         if (!item) return 0;
+        // Serialize related successful results so the frozen predecessor reflects commit order.
+        if (input.outcome === 'succeeded' && input.resultSummary !== undefined)
+          await sql`select pg_advisory_xact_lock(hashtextextended(${'result-boundary:' + item.target_kind + ':' + item.target_id}, 0))`.execute(held);
         const failure = input.outcome !== 'succeeded' && item.cancel_requested_at === null ? input.failure : undefined;
         const now = instant(input.now, 'work_attempts.finished_at');
         const next = input.nextAttemptAt === undefined ? now : instant(input.nextAttemptAt, 'work_items.next_attempt_at');
@@ -479,6 +494,19 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
           input_tokens = ${input.usage?.inputTokens ?? null}, cached_input_tokens = ${input.usage?.cachedInputTokens ?? null}, output_tokens = ${input.usage?.outputTokens ?? null},
           elapsed_ms = ${input.elapsedMs ?? null}, stderr = ${input.stderr ?? null}
           where token = ${input.attemptToken}`.execute(held);
+        if (input.resultSummary !== undefined) await sql`update brain.work_attempts set result_summary=${JSON.stringify(input.resultSummary)}::jsonb,
+          previous_result=(select oa.result_summary from brain.work_items older
+            join brain.extension_work_kinds ok on ok.kind=older.kind
+            join brain.extension_work_kinds ck on ck.kind=${item.kind} and ck.extension_name=ok.extension_name
+            join brain.work_attempts oa on oa.work_item_id=older.id and oa.outcome='succeeded'
+            where ok.followup_kind is not null and ok.followup_kind=ck.followup_kind and older.target_kind=${item.target_kind} and older.target_id=${item.target_id}
+              and older.id<>${input.id} and older.outcome='succeeded' and older.completed_at is not null
+              and oa.result_summary->>'local_date'=to_char((${JSON.stringify(input.resultSummary)}::jsonb->>'local_date')::date - 1,'YYYY-MM-DD')
+              and oa.result_summary->>'cutoff_ms' ~ '^[0-9]{1,16}$'
+              and ${JSON.stringify(input.resultSummary)}::jsonb->>'cutoff_ms' ~ '^[0-9]{1,16}$'
+              and (oa.result_summary->>'cutoff_ms')::bigint < (${JSON.stringify(input.resultSummary)}::jsonb->>'cutoff_ms')::bigint
+            order by (oa.result_summary->>'cutoff_ms')::bigint desc,older.id desc limit 1)
+          where token=${input.attemptToken}`.execute(held);
         return 1;
       });
     },

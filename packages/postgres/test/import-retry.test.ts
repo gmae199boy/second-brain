@@ -42,11 +42,15 @@ it('파일 저장 10회 실패 뒤 공개 실패와 기존 재시도에서 성�
       at+=4_000_000;
     }
     expect(await publicStatus()).toMatchObject({status:'failed',resumable:true,error_code:'FILES_UNAVAILABLE',file_id:null});
+    await ext.query(`insert into brain.file_requests(id,source,request_key,dataset,import_batch,locator,sha256,size_bytes,media_type,created_at,source_work_item_id,source_attempt_token) values ($1,$2,'request','dataset','batch','document.md',$3,$4,'text/markdown',$5,$6,$7)`,[request,name,createHash('sha256').update(body).digest('hex'),body.length,now,work,token]);
+    expect(await publicStatus()).toMatchObject({status:'failed',resumable:true});
+    expect((await admin.query("select count(*)::int n from brain.work_items where kind='file_import' and target_id=$1",[request])).rows[0].n).toBe(1);
     expect(await retryFailures({store,clock,idGen:ids},{targetKind:'file_request'})).toMatchObject({ok:true,added:1,skipped:[]});
     expect(await publicStatus()).toMatchObject({status:'processing',resumable:false});
     expect(await drainQueue({store,clock,idGen:ids,spool},{budgetMs:1000,handlers:{[FILE_IMPORT_KIND]:handler}})).toMatchObject({completed:1});
     expect(await publicStatus()).toMatchObject({status:'completed',resumable:false,error_code:null});
     expect(puts).toBe(11);
+    expect((await admin.query('select count(*)::int n from brain.file_requests where id=$1',[request])).rows[0].n).toBe(1);
     expect((await admin.query('select resolved_at from brain.failures where target_id=$1',[request])).rows[0].resolved_at).not.toBeNull();
     await expect(readFile(join(stagingDir,'document.md'))).rejects.toMatchObject({code:'ENOENT'});
     expect((await admin.query('select count(*)::int as n from brain.files')).rows[0].n).toBe(1);

@@ -223,3 +223,13 @@ it.each([1048576, 1048577])('persists the stderr raw cap verdict for %i bytes an
       stderr: bytes === 1048576 ? 'TOKEN=[REDACTED:password]\n' : '[stderr 생략: 원문 1 MiB 초과]' });
   } finally { await k.stop(); }
 });
+
+it('retains only the explicitly allowed Garmin result fields', async () => {
+  const { publicCollectSummary } = await import('../src/queue/supervisor.js');
+  const valid={status:'success',cutoff_ms:123,local_date:'2026-01-01',normalized:1,normalize_failed:0,timezone:'Asia/Seoul',snapshot_id:'00000000-0000-4000-8000-000000000001'};
+  expect(publicCollectSummary('garmin.collect',JSON.stringify(valid))).toEqual(valid);
+  expect(publicCollectSummary('garmin.collect',JSON.stringify({...valid,health:80}))).toBeUndefined();
+  expect(publicCollectSummary('garmin.collect',JSON.stringify({...valid,cutoff_ms:-1}))).toBeUndefined();
+  expect(publicCollectSummary('other.work',JSON.stringify(valid))).toBeUndefined();
+  expect(publicCollectSummary('garmin.artifacts',JSON.stringify({status:'success',request_id:valid.snapshot_id,revision:'a'.repeat(64)}))).toBeDefined();
+});

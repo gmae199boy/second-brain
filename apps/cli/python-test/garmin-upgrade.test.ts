@@ -20,7 +20,7 @@ it('upgrades legacy 0008 ties without changing old observations', async () => {
     const migration=join(migrations,'0009_day_publication.sql'), saved=join(home,'0009_day_publication.sql');
     // Installation starts on the current bundle. Reconstruct the exact empty
     // 0008 schema and ledger, then run the production migration runner below.
-    await fixture.db.query("drop table garmin.normalize_day_dirty; drop table garmin.normalize_day_revisions; alter table garmin.normalize_items drop column null_materialized; delete from brain.schema_migrations where owner='garmin' and version=9");
+    await fixture.db.query("drop table garmin.collect_snapshot_items,garmin.collect_snapshots,garmin.body_sources,garmin.body_documents,garmin.body_measurements; drop table garmin.normalize_day_dirty; drop table garmin.normalize_day_revisions; alter table garmin.normalize_items drop column null_materialized; delete from brain.schema_migrations where owner='garmin' and version in (9,10)");
     await rename(migration,saved);
     expect((await fixture.ledger('garmin')).at(-1)).toEqual({owner:'garmin',version:8});
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests/',import.meta.url));
@@ -47,8 +47,8 @@ it('upgrades legacy 0008 ties without changing old observations', async () => {
     expect(await fixture.db.rows(`select reason from brain.health_resolution_v1 where dataset='${dataset}' and metric='day_summary.steps' and local_date='2026-01-01'`)).toEqual([{reason:'revision_ambiguous'}]);
     expect(await fixture.db.rows(`select value,revision from brain.health_current_v1 where dataset='${dataset}' and metric='day_summary.steps' and local_date='2026-01-02'`)).toEqual([{value:2222,revision:bases['2026-01-02']}]);
     await rename(saved,migration);
-    expect(await runMigrations({databaseUrl:fixture.db.url,clock:systemClock,owners:[{owner:'garmin',directory:migrations}]})).toMatchObject({ok:true,applied:['0009_day_publication.sql']});
-    expect((await fixture.ledger('garmin')).at(-1)).toEqual({owner:'garmin',version:9});
+    expect(await runMigrations({databaseUrl:fixture.db.url,clock:systemClock,owners:[{owner:'garmin',directory:migrations}]})).toMatchObject({ok:true,applied:['0009_day_publication.sql','0010_runtime_body.sql']});
+    expect((await fixture.ledger('garmin')).at(-1)).toEqual({owner:'garmin',version:10});
     expect(await fixture.db.rows(`select ok,null_materialized from garmin.normalize_items where dataset='${dataset}' and key='2025-12-30' and endpoint='rhr_day'`)).toEqual([{ok:true,null_materialized:false}]);
     expect(await fixture.db.rows(`select reason from brain.health_resolution_v1 where dataset='${dataset}' and metric='day_summary.steps' and local_date='2026-01-01'`)).toEqual([{reason:'revision_ambiguous'}]);
     manifest.work.find((w:any)=>w.kind==='garmin.normalize').entry='src/normalize.py';

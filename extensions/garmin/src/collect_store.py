@@ -230,3 +230,41 @@ def set_target(conn, account, work_id, attempt_token, target_kind, target_id):
             raise ValueError('COLLECT_ACCOUNT_MISMATCH')
 
 
+
+
+def save_artifact_snapshot(conn, account, work_id, attempt_token, snapshot, boundary):
+    """Persist the collect attempt's raw input in bounded, fenced transactions."""
+    from uuid import UUID, uuid5
+    snapshot_id = uuid5(UUID('bd6dfbb9-6f47-5f3f-a81c-67a9453dfb0a'), str(work_id) + ':' + str(attempt_token))
+    rows = snapshot['raw']
+    with _write(conn,account,work_id,attempt_token) as (cur,dataset):
+        cur.execute('''insert into garmin.collect_snapshots(id,dataset,work_id,attempt_token,history_start,item_count)
+            values (%s,%s,%s,%s,%s,%s) on conflict(id) do nothing''',
+            (snapshot_id,dataset,work_id,attempt_token,snapshot['history_start'],len(rows)))
+        existing = cur.execute('select dataset,work_id,attempt_token,history_start,item_count from garmin.collect_snapshots where id=%s',(snapshot_id,)).fetchone()
+        if tuple(map(str,existing[:3])) != (dataset,str(work_id),str(attempt_token)) or existing[3:] != (snapshot['history_start'],len(rows)):
+            raise ValueError('COLLECT_RAW_CHANGED')
+    for offset in range(0,len(rows),25):
+        boundary('산출 snapshot 저장')
+        with _write(conn,account,work_id,attempt_token) as (cur,_):
+            for item in rows[offset:offset+25]:
+                values=(item['scope'],item['key'],item['endpoint'],item['body'],item['fetched_at_ms'],item['checked_at_ms'],item['library_version'])
+                cur.execute('''insert into garmin.collect_snapshot_items(snapshot_id,scope,key,endpoint,body,fetched_at_ms,checked_at_ms,library_version)
+                    values (%s,%s,%s,%s,%s,%s,%s,%s) on conflict do nothing''',(snapshot_id,*values))
+                stored=cur.execute('select scope,key,endpoint,body,fetched_at_ms,checked_at_ms,library_version from garmin.collect_snapshot_items where snapshot_id=%s and scope=%s and key=%s and endpoint=%s',(snapshot_id,*values[:3])).fetchone()
+                if stored != values: raise ValueError('COLLECT_RAW_CHANGED')
+    with _write(conn,account,work_id,attempt_token) as (cur,_):
+        count=cur.execute('select count(*) from garmin.collect_snapshot_items where snapshot_id=%s',(snapshot_id,)).fetchone()[0]
+        if count != len(rows): raise ValueError('COLLECT_RAW_CHANGED')
+        cur.execute('update garmin.collect_snapshots set complete=true where id=%s',(snapshot_id,))
+    return str(snapshot_id)
+
+
+def artifact_snapshot(conn, account, snapshot_id, work_id):
+    dataset=dataset_for(account)
+    row=conn.execute('select history_start,item_count,complete from garmin.collect_snapshots where id=%s and dataset=%s and work_id=%s',(snapshot_id,dataset,work_id)).fetchone()
+    if not row or not row[2]: raise ValueError('ARTIFACT_COLLECT_REQUIRED')
+    items=conn.execute('''select scope,key,endpoint,body,fetched_at_ms,checked_at_ms,library_version
+        from garmin.collect_snapshot_items where snapshot_id=%s order by scope,key,endpoint''',(snapshot_id,)).fetchall()
+    if len(items) != row[1]: raise ValueError('ARTIFACT_COLLECT_REQUIRED')
+    return {'history_start':row[0], 'raw':[dict(zip(('scope','key','endpoint','body','fetched_at_ms','checked_at_ms','library_version'),item)) for item in items]}
