@@ -86,6 +86,7 @@ Garmin 사용자가 예약된 시각에 day·7d·30d·all 평가를 받고, 성�
 
 ## Notes
 
+- Waits on epic-test-time because: 18.3이 시험 시간 개선 19.5·19.6·19.1·19.2·19.3을 기다린다(2026-11-04 사용자 결정 A, 순서 결정). epic-test-time은 19.5에서 18.10을 실제 선행으로 기다리므로 `tickets.py status`의 `order_conflict` 중 `{epic: epic-test-time, after: epic-health-analysis}` 1건은 2026-11-04 사용자 승인 예외다. 티켓 선택을 막지 않으며, 순서를 바꾸거나 에픽을 합치지 않는다. 근거는 epic-test-time Notes.
 - Waits on epic-jobs-and-scheduler because: 일감 의존, 모델을 부르는 일감의 감독(자식 프로세스 그룹·취소·reap), 긴 평가의 임대 갱신, 현지 시각 예약을 쓴다.
 - Waits on epic-garmin-import because: `analyses` 최소 계약·DDL을 호환 확장하고, 이전된 기존 분석이 선행 analysis와 재시작 지점이며, 건강 계약 표의 "현재" view를 읽는다.
 - Waits on epic-channels because: 결과 묶음을 채널 발신 요청(의미 키 UNIQUE, 최초 시도 gate)으로 보낸다.
