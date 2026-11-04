@@ -17,7 +17,11 @@ export function normalizeTimeZone(value: string): SettingValidation {
 }
 export function isTimeZone(value: string): boolean { return normalizeTimeZone(value).ok; }
 export const TIMEZONE_SETTING: SettingDefinition & { defaultValue: string } = { key: 'timezone', defaultValue: 'Asia/Seoul', normalize: normalizeTimeZone };
-export const CORE_SETTING_DEFINITIONS: readonly SettingDefinition[] = [TIMEZONE_SETTING];
+export const ANALYSIS_AGENT_SETTING: SettingDefinition & { defaultValue: string } = {
+  key: 'analysis.agent', defaultValue: 'codex',
+  normalize: value => value === 'codex' ? { ok: true, value } : { ok: false, message: 'analysis.agent는 codex여야 합니다' },
+};
+export const CORE_SETTING_DEFINITIONS: readonly SettingDefinition[] = [TIMEZONE_SETTING, ANALYSIS_AGENT_SETTING];
 /** Extensions register complete definitions; unknown namespaces stay unknown. */
 export function settingDefinitions(extensions: readonly SettingDefinition[] = []): ReadonlyMap<string, SettingDefinition> {
   const definitions = new Map(CORE_SETTING_DEFINITIONS.map(def => [def.key, def]));

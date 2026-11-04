@@ -50,6 +50,7 @@ try {
   console.log(`기준 ${ref}: 변경 파일 ${paths.length}개 (커밋·작업 트리·미추적 포함)`);
   for (const reason of selected.reasons) console.log(`경로 규칙 ${reason.prefix}: ${reason.reason}`);
   run([],true,'기본 --changed');
+  if (selected.analysisTracer) command('pnpm',['exec','vitest','run','apps/cli/test/health-analysis-tracer.test.ts']);
   if (selected.postgresAll) run(['--project','postgres'],false,'Postgres migration 전체');
   else console.log('Postgres 전체: migration 변경 없음');
   const python = ['--config','apps/cli/python-test/vitest.config.ts'];

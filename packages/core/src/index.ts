@@ -306,3 +306,5 @@ export * from './files/import-work.js';
 export * from './domain/health.js';
 
 export { runExtension } from './extensions/run.js';
+export * from './analysis/index.js';
+export type * from './ports/analysis.js';
