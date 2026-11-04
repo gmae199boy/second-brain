@@ -117,3 +117,19 @@
 | 검증 데이터 격리 | 초기 fixture가 실제 하네스 transcript를 격리 시험 DB에 수집 | fixture 수정 및 소유 DB·임시 홈 제거 확인. 커밋·보고서에 실내용 없음 |
 
 `operator_actions: []`. snapshot은18.2 전까지 합성 바이트이며 bundle id는 snapshot 행에 보존한다. 원문 로그·리뷰·영수증은 중앙 로컬 체크포인트와 보존한 워크트리에 있다.
+
+## 18.2 — built
+
+근거: [입력 snapshot 계획](../tickets/epic-health-analysis/tickets/story-snapshot-fixture-snapshot-export-report-input-plan.md)의 Design Notes·Review Triage Log·Auto Run Result. 독립 리뷰4개와 후속3개, 후속 권고 false, deferred 없음.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 채택 가정 / 호환 차이 | all 월별 hrv_avg·spo2_avg·spo2_min·resp_avg는 null | 원문의 허용 집계 조건과0023 catalog를 우선한 명시적 차이. 옛 숫자 평균과 같은 값이라고 주장하지 않으며 인수 시 확인 |
+| 채택 가정 | body는 collect target dataset, 선행은 legacy Garmin과 같은 account core 입력 | tracer 제외; 같은 날짜 후보는 core·revision·생성 시각·id 순 |
+| 채택 가정 | profile은 snapshot 바이트, 그래프는 manifest 참조 | profile core 파일 등록 없음. digest는 artifacts 원문 사용 |
+| 시험 불안정 / 미확정 | 전체 Python75/76, UTF-16 NUL 반입 시험1건 EXTENSION_INVALID | 단독2회 모두5/5 통과. 기준 커밋 재현 미확인이므로 기존 결함 확정 아님. 전체 회귀 성공으로 집계하지 않음 |
+| 잔여 위험 / low reject | TEXT 지표의 value_text_raw NUL 원문 미복원 | 표시값의 대체 문자가 옛 원문과 다를 수 있음. 원본 바이트는 보존, 차이와 리뷰 거절 근거 유지 |
+| 후속 연결 | 네 scope 실행의 snapshot 소비·sameGraph 전달, 모델 export 가리기 |18.3·18.4 범위.18.1 tracer는 기존 export.json 경로 유지 |
+| 시험 환경 | 오라클 jsonschema4.26.0 캐시·Garmin venv·전용 PG | 전역 role 잔존은 소유 PG 재생성으로 해소, 다른 작업 자원 변경 없음 |
+
+전체 JS3985통과·1skip, 입력 단위12·비교/계약15 통과. `operator_actions: []`. 원문·영수증·리뷰는 보존한 워크트리와 중앙 로컬 체크포인트에 보관한다. 다음 실행은 사용자 지정18.10이며18.3보다 앞선다.
