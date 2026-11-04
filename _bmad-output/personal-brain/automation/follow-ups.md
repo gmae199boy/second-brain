@@ -75,3 +75,16 @@
 | 성능 권고 | Python 통합 시험의 role 격리·normalize 일감 비용·폰트 캐시 | 시험 시간 실측 근거와 함께 별도 개선 검토 |
 | 시험 불안정 | tracer 설치 단계 DB_UNAVAILABLE 1건 | 단독 재실행 및 최종 전체 통과, 원인 미재현; 재발 시 조사 |
 | 채택 가정 | 같은 날 같은 revision이면 첫 요청과 metadata 재사용 | 계획의 멱등 계약 근거 유지 |
+
+## 16.7 — built
+
+근거: [수집 알림 계획](../tickets/epic-garmin-runtime/tickets/story-telegram-plan.md)의 deferred·Review Triage Log·Auto Run Result. 후속 리뷰 권고 false이며 전체 회귀의 기존 불안정은 아래와 같이 구별한다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 보류 / medium | DB 진입·계정 확인 전 종료는 실행 행이 없어 무알림 | 기존16.2/16.3 결손. 계정 미상 귀속과 실행 행 경계 별도 판단 |
+| 운영 조치 | garmin.notice_conversation_id 설정 | 기존 Garmin 봇·채팅 conversation UUID를 설정해야 실제 알림 활성화. 실운영 설정 확인은 전환 작업에서 수행 |
+| 잔여 위험 | normalize_failed는 kill·알림 실패 뒤 재발견하지 않음 | 이번 실행 실패만 판정하는 계약의 한계 보존 |
+| 잔여 위험 | normalize_days 날짜 실패는 endpoint 실패 건수에 포함되지 않음 | 옛 규칙 유지. 별도 사건 종류 필요성 판단 |
+| 시험 불안정 | queue-drain·commit-unknown PG timeout, import-verify EXTENSION_INVALID/UUID 가리기 | 단독 통과 또는 기준 커밋6회 중2회 재현. 전체 회귀 성공으로 표현하지 않음; 실행 증거는 중앙 보관 |
+| 시험 환경 | 공유 클러스터 전역 Garmin role 충돌 | 이번 검증은 전용 임시 PG54367 사용 후 정리. 격리 개선은 별도 과제 |
