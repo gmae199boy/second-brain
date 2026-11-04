@@ -1,0 +1,3958 @@
+{
+  "expected": {
+    "all": {
+      "from": "2026-09-03",
+      "metrics": {
+        "hrv_ms": [
+          {
+            "days": 4,
+            "from": "2026-09-03",
+            "mean": 39.0,
+            "to": "2026-09-06"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-07",
+            "mean": 39.0,
+            "to": "2026-09-13"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-14",
+            "mean": 39.0,
+            "to": "2026-09-20"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-21",
+            "mean": 39.0,
+            "to": "2026-09-27"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-28",
+            "mean": 39.0,
+            "to": "2026-10-04"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-05",
+            "mean": 39.0,
+            "to": "2026-10-11"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-12",
+            "mean": 39.0,
+            "to": "2026-10-18"
+          }
+        ],
+        "resting_hr": [
+          {
+            "days": 4,
+            "from": "2026-09-03",
+            "mean": 83.5,
+            "to": "2026-09-06"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-07",
+            "mean": 78.0,
+            "to": "2026-09-13"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-14",
+            "mean": 71.0,
+            "to": "2026-09-20"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-21",
+            "mean": 64.0,
+            "to": "2026-09-27"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-28",
+            "mean": 57.0,
+            "to": "2026-10-04"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-05",
+            "mean": 50.0,
+            "to": "2026-10-11"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-12",
+            "mean": 44.7,
+            "to": "2026-10-18"
+          }
+        ],
+        "sessions": [
+          {
+            "days": 4,
+            "from": "2026-09-03",
+            "mean": 0.0,
+            "to": "2026-09-06"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-07",
+            "mean": 0.1,
+            "to": "2026-09-13"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-14",
+            "mean": 0.0,
+            "to": "2026-09-20"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-21",
+            "mean": 0.0,
+            "to": "2026-09-27"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-28",
+            "mean": 0.1,
+            "to": "2026-10-04"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-05",
+            "mean": 0.1,
+            "to": "2026-10-11"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-12",
+            "mean": 0.4,
+            "to": "2026-10-18"
+          }
+        ],
+        "sleep_min_hr": [
+          {
+            "days": 4,
+            "from": "2026-09-03",
+            "mean": 48.0,
+            "to": "2026-09-06"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-07",
+            "mean": 48.0,
+            "to": "2026-09-13"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-14",
+            "mean": 48.0,
+            "to": "2026-09-20"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-21",
+            "mean": 48.0,
+            "to": "2026-09-27"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-28",
+            "mean": 48.0,
+            "to": "2026-10-04"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-05",
+            "mean": 48.0,
+            "to": "2026-10-11"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-12",
+            "mean": 48.0,
+            "to": "2026-10-18"
+          }
+        ],
+        "sleep_s": [
+          {
+            "days": 4,
+            "from": "2026-09-03",
+            "mean": 27810,
+            "to": "2026-09-06"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-07",
+            "mean": 27480,
+            "to": "2026-09-13"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-14",
+            "mean": 27060,
+            "to": "2026-09-20"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-21",
+            "mean": 26640,
+            "to": "2026-09-27"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-28",
+            "mean": 26220,
+            "to": "2026-10-04"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-05",
+            "mean": 25800,
+            "to": "2026-10-11"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-12",
+            "mean": 25509,
+            "to": "2026-10-18"
+          }
+        ],
+        "sleep_score": [
+          {
+            "days": 4,
+            "from": "2026-09-03",
+            "mean": 82.0,
+            "to": "2026-09-06"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-07",
+            "mean": 82.0,
+            "to": "2026-09-13"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-14",
+            "mean": 82.0,
+            "to": "2026-09-20"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-21",
+            "mean": 82.0,
+            "to": "2026-09-27"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-28",
+            "mean": 82.0,
+            "to": "2026-10-04"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-05",
+            "mean": 82.0,
+            "to": "2026-10-11"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-12",
+            "mean": 82.0,
+            "to": "2026-10-18"
+          }
+        ],
+        "strength_volume_kg": [
+          {
+            "days": 4,
+            "from": "2026-09-03",
+            "mean": 0.0,
+            "to": "2026-09-06"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-07",
+            "mean": 27.1,
+            "to": "2026-09-13"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-14",
+            "mean": 0.0,
+            "to": "2026-09-20"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-21",
+            "mean": 0.0,
+            "to": "2026-09-27"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-28",
+            "mean": 0.0,
+            "to": "2026-10-04"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-05",
+            "mean": 17.9,
+            "to": "2026-10-11"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-12",
+            "mean": 95.0,
+            "to": "2026-10-18"
+          }
+        ],
+        "stress_avg": [
+          {
+            "days": 4,
+            "from": "2026-09-03",
+            "mean": 40.0,
+            "to": "2026-09-06"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-07",
+            "mean": 40.0,
+            "to": "2026-09-13"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-14",
+            "mean": 40.0,
+            "to": "2026-09-20"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-21",
+            "mean": 40.0,
+            "to": "2026-09-27"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-28",
+            "mean": 40.0,
+            "to": "2026-10-04"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-05",
+            "mean": 40.0,
+            "to": "2026-10-11"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-12",
+            "mean": 40.0,
+            "to": "2026-10-18"
+          }
+        ],
+        "workout_duration_s": [
+          {
+            "days": 4,
+            "from": "2026-09-03",
+            "mean": 0,
+            "to": "2026-09-06"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-07",
+            "mean": 771,
+            "to": "2026-09-13"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-14",
+            "mean": 0,
+            "to": "2026-09-20"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-21",
+            "mean": 0,
+            "to": "2026-09-27"
+          },
+          {
+            "days": 7,
+            "from": "2026-09-28",
+            "mean": 171,
+            "to": "2026-10-04"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-05",
+            "mean": 514,
+            "to": "2026-10-11"
+          },
+          {
+            "days": 7,
+            "from": "2026-10-12",
+            "mean": 857,
+            "to": "2026-10-18"
+          }
+        ]
+      },
+      "to": "2026-10-18",
+      "unit": "week"
+    },
+    "body_measurements": {
+      "items": [
+        {
+          "measured_on": "2026-09-08",
+          "values": {
+            "body_fat_percent": 20.1,
+            "skeletal_muscle_mass_kg": 31.0,
+            "weight_kg": 72.4
+          }
+        },
+        {
+          "measured_on": "2026-09-28",
+          "values": {
+            "body_fat_percent": 19.5,
+            "weight_kg": 71.8
+          }
+        },
+        {
+          "measured_on": "2026-10-15",
+          "values": {
+            "body_fat_percent": 19.0,
+            "inbody_score": 80,
+            "skeletal_muscle_mass_kg": 31.4,
+            "weight_kg": 71.1
+          }
+        }
+      ],
+      "labels": {
+        "basal_metabolic_rate_kcal": "기초대사량 (kcal)",
+        "bmi": "BMI",
+        "body_fat_mass_kg": "체지방량 (kg)",
+        "body_fat_percent": "체지방률 (%)",
+        "inbody_score": "인바디 점수",
+        "minerals_kg": "무기질 (kg)",
+        "protein_kg": "단백질 (kg)",
+        "skeletal_muscle_mass_kg": "골격근량 (kg)",
+        "total_body_water_l": "체수분 (L)",
+        "visceral_fat_level": "내장지방 레벨",
+        "weight_kg": "체중 (kg)"
+      }
+    },
+    "daily": {
+      "days": [
+        {
+          "day_key": "2026-09-19",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 69.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26940.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-09-20",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 68.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26880.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-09-21",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 67.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26820.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-09-22",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 66.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26760.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-09-23",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 65.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26700.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-09-24",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 64.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26640.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-09-25",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 63.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26580.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-09-26",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 62.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26520.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-09-27",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 61.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26460.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-09-28",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 60.0,
+          "sessions": 1,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26400.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 1200.0,
+          "workouts": {
+            "by_type": [
+              {
+                "duration_s": 1200.0,
+                "label": "달리기",
+                "type_key": "running"
+              }
+            ],
+            "sessions": [
+              1
+            ]
+          }
+        },
+        {
+          "day_key": "2026-09-29",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 59.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26340.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-09-30",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 58.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26280.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-01",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 57.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26220.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-02",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 56.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26160.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-03",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 55.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26100.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-04",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 54.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26040.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-05",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 53.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 25980.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-06",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 52.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 25920.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-07",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 51.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 25860.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-08",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 50.0,
+          "sessions": 1,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 25800.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 125.0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 3600.0,
+          "workouts": {
+            "by_type": [
+              {
+                "duration_s": 3600.0,
+                "label": "달리기",
+                "type_key": "running"
+              }
+            ],
+            "sessions": [
+              1
+            ]
+          }
+        },
+        {
+          "day_key": "2026-10-09",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 49.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 25740.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-10",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 48.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 25680.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-11",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 47.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 25620.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-12",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 46.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 25560.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-13",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 45.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 25500.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-14",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 44.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 25440.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-15",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 43.0,
+          "sessions": 1,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 25380.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0.0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 2700.0,
+          "workouts": {
+            "by_type": [
+              {
+                "duration_s": 2700.0,
+                "label": "달리기",
+                "type_key": "running"
+              }
+            ],
+            "sessions": [
+              1
+            ]
+          }
+        },
+        {
+          "day_key": "2026-10-16",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 42.0,
+          "sessions": 0,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 25320.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 0,
+          "workouts": {
+            "by_type": [],
+            "sessions": []
+          }
+        },
+        {
+          "day_key": "2026-10-17",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 41.0,
+          "sessions": 1,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 25260.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 465.0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 1800.0,
+          "workouts": {
+            "by_type": [
+              {
+                "duration_s": 1800.0,
+                "label": "달리기",
+                "type_key": "running"
+              }
+            ],
+            "sessions": [
+              1
+            ]
+          }
+        },
+        {
+          "day_key": "2026-10-18",
+          "hrv_baseline_high_ms": 48,
+          "hrv_baseline_low_ms": 35,
+          "hrv_ms": 39.0,
+          "resting_hr": 52.0,
+          "sessions": 1,
+          "sleep_min_hr": 48.0,
+          "sleep_s": 26100.0,
+          "sleep_score": 82.0,
+          "strength_volume_kg": 200.0,
+          "stress_avg": 40.0,
+          "workout_duration_s": 1500.0,
+          "workouts": {
+            "by_type": [
+              {
+                "duration_s": 1500.0,
+                "label": "달리기",
+                "type_key": "running"
+              }
+            ],
+            "sessions": [
+              1
+            ]
+          }
+        }
+      ],
+      "from": "2026-09-19",
+      "to": "2026-10-18"
+    },
+    "report_date": "2026-10-18",
+    "sessions": {
+      "items": [
+        {
+          "activities": [
+            {
+              "end_ms": 1792191600000,
+              "label": "달리기",
+              "start_ms": 1792189800000,
+              "zone_low_bpm": [
+                100,
+                100,
+                100,
+                100,
+                100
+              ]
+            }
+          ],
+          "activity_ids": [
+            101
+          ],
+          "body_battery": [
+            [
+              1792189800000,
+              63
+            ],
+            [
+              1792189860000,
+              61
+            ]
+          ],
+          "day_key": "2026-10-17",
+          "hr": [
+            [
+              1792189800000,
+              110
+            ],
+            [
+              1792189860000,
+              120
+            ]
+          ],
+          "start_local": "2026-10-17 07:30",
+          "start_ms": 1792189800000
+        },
+        {
+          "activities": [
+            {
+              "end_ms": 1792268700000,
+              "label": "달리기",
+              "start_ms": 1792267200000,
+              "zone_low_bpm": [
+                100,
+                100,
+                null,
+                null,
+                null
+              ]
+            }
+          ],
+          "activity_ids": [
+            107
+          ],
+          "body_battery": [
+            [
+              1792267200000,
+              63
+            ],
+            [
+              1792267260000,
+              61
+            ]
+          ],
+          "day_key": "2026-10-18",
+          "hr": [
+            [
+              1792267200000,
+              110
+            ],
+            [
+              1792267260000,
+              120
+            ]
+          ],
+          "start_local": "2026-10-18 05:00",
+          "start_ms": 1792267200000
+        }
+      ]
+    },
+    "strength_progress": {
+      "items": [
+        {
+          "days": [
+            {
+              "best_weight_kg": 40.0,
+              "day_key": "2026-09-08",
+              "sets": 2,
+              "volume_kg": 190.0
+            },
+            {
+              "best_weight_kg": 25.0,
+              "day_key": "2026-10-08",
+              "sets": 1,
+              "volume_kg": 125.0
+            },
+            {
+              "best_weight_kg": 22.5,
+              "day_key": "2026-10-17",
+              "sets": 2,
+              "volume_kg": 465.0
+            },
+            {
+              "best_weight_kg": 20.0,
+              "day_key": "2026-10-18",
+              "sets": 1,
+              "volume_kg": 200.0
+            }
+          ],
+          "label": "고블릿 스쿼트"
+        },
+        {
+          "days": [
+            {
+              "best_weight_kg": null,
+              "day_key": "2026-10-15",
+              "sets": 1,
+              "volume_kg": 0.0
+            },
+            {
+              "best_weight_kg": null,
+              "day_key": "2026-10-17",
+              "sets": 1,
+              "volume_kg": 0.0
+            }
+          ],
+          "label": "푸시업"
+        }
+      ]
+    },
+    "yesterday": {
+      "activities": [
+        {
+          "end_ms": 1792191600000,
+          "start_ms": 1792189800000
+        }
+      ],
+      "body_battery": [
+        [
+          1792206000000,
+          55
+        ]
+      ],
+      "from_ms": 1792162800000,
+      "hr": [
+        [
+          1792206000000,
+          62
+        ],
+        [
+          1792247400000,
+          48
+        ]
+      ],
+      "sleep": [
+        {
+          "end_ms": 1792269900000,
+          "start_ms": 1792242900000
+        },
+        {
+          "end_ms": 1792269900000,
+          "start_ms": 1792242900000
+        }
+      ],
+      "to_ms": 1792249200000
+    }
+  },
+  "measurements": [
+    {
+      "measured_on": "2026-09-08",
+      "values": {
+        "body_fat_percent": 20.1,
+        "skeletal_muscle_mass_kg": 31.0,
+        "weight_kg": 72.4
+      }
+    },
+    {
+      "measured_on": "2026-09-28",
+      "values": {
+        "body_fat_percent": 19.5,
+        "weight_kg": 71.8
+      }
+    },
+    {
+      "measured_on": "2026-10-15",
+      "values": {
+        "body_fat_percent": 19.0,
+        "inbody_score": 80,
+        "skeletal_muscle_mass_kg": 31.4,
+        "weight_kg": 71.1
+      }
+    }
+  ],
+  "report_date": "2026-10-18",
+  "snapshot": {
+    "history_start": "2026-09-03",
+    "raw": [
+      {
+        "endpoint": "activity",
+        "fetched_at": 1760000000000,
+        "key": "101",
+        "raw": "{\"activityId\": 101, \"activityTypeDTO\": {\"typeId\": 1, \"typeKey\": \"running\"}, \"summaryDTO\": {\"startTimeGMT\": \"2026-10-16T22:30:00.0\", \"duration\": 1800, \"distance\": 5012.6, \"averageHR\": 141.5, \"maxHR\": 170, \"calories\": 400}}",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity_details",
+        "fetched_at": 1760000000000,
+        "key": "101",
+        "raw": "{\"activityId\": 101, \"metricDescriptors\": [{\"metricsIndex\": 0, \"key\": \"directTimestamp\"}, {\"metricsIndex\": 1, \"key\": \"directHeartRate\"}, {\"metricsIndex\": 2, \"key\": \"directBodyBattery\"}], \"activityDetailMetrics\": [{\"metrics\": [1792189800000, 110, 63]}, {\"metrics\": [1792189860000, 120, 61]}]}",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity_exercise_sets",
+        "fetched_at": 1760000000000,
+        "key": "101",
+        "raw": "{\"activityId\": 101, \"exerciseSets\": [{\"exercises\": [{\"category\": \"SQUAT\", \"name\": \"GOBLET_SQUAT\", \"probability\": 90.0}], \"duration\": 40.0, \"repetitionCount\": 12, \"weight\": 20000.0, \"setType\": \"ACTIVE\", \"startTime\": \"2026-10-18T06:00:00.0\", \"wktStepIndex\": null, \"messageIndex\": null, \"avgConcentricMeanVelocity\": null, \"maxConcentricRom\": null}, {\"exercises\": [], \"duration\": 60.0, \"repetitionCount\": null, \"weight\": null, \"setType\": \"REST\", \"startTime\": \"2026-10-18T06:00:00.0\", \"wktStepIndex\": null, \"messageIndex\": null, \"avgConcentricMeanVelocity\": null, \"maxConcentricRom\": null}, {\"exercises\": [{\"category\": \"SQUAT\", \"name\": \"GOBLET_SQUAT\", \"probability\": 90.0}], \"duration\": 40.0, \"repetitionCount\": 10, \"weight\": 22500.0, \"setType\": \"ACTIVE\", \"startTime\": \"2026-10-18T06:00:00.0\", \"wktStepIndex\": null, \"messageIndex\": null, \"avgConcentricMeanVelocity\": null, \"maxConcentricRom\": null}, {\"exercises\": [{\"category\": \"PUSH_UP\", \"name\": \"PUSH_UP\", \"probability\": 90.0}], \"duration\": 30.0, \"repetitionCount\": 15, \"weight\": -1.0, \"setType\": \"ACTIVE\", \"startTime\": \"2026-10-18T06:00:00.0\", \"wktStepIndex\": null, \"messageIndex\": null, \"avgConcentricMeanVelocity\": null, \"maxConcentricRom\": null}]}",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity_hr_in_timezones",
+        "fetched_at": 1760000000000,
+        "key": "101",
+        "raw": "[{\"zoneNumber\": 1, \"secsInZone\": 120, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 2, \"secsInZone\": null, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 3, \"secsInZone\": 600, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 4, \"secsInZone\": 900, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 5, \"secsInZone\": 180, \"zoneLowBoundary\": 100}]",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity",
+        "fetched_at": 1760000000000,
+        "key": "102",
+        "raw": "{\"activityId\": 102, \"activityTypeDTO\": {\"typeId\": 1, \"typeKey\": \"running\"}, \"summaryDTO\": {\"startTimeGMT\": \"2026-10-14T22:30:00.0\", \"duration\": 2700, \"distance\": 5012.6, \"averageHR\": 141.5, \"maxHR\": 170, \"calories\": 400}}",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity_exercise_sets",
+        "fetched_at": 1760000000000,
+        "key": "102",
+        "raw": "{\"activityId\": 102, \"exerciseSets\": [{\"exercises\": [{\"category\": \"PUSH_UP\", \"name\": \"PUSH_UP\", \"probability\": 90.0}], \"duration\": 30.0, \"repetitionCount\": 15, \"weight\": -1.0, \"setType\": \"ACTIVE\", \"startTime\": \"2026-10-18T06:00:00.0\", \"wktStepIndex\": null, \"messageIndex\": null, \"avgConcentricMeanVelocity\": null, \"maxConcentricRom\": null}]}",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity_hr_in_timezones",
+        "fetched_at": 1760000000000,
+        "key": "102",
+        "raw": "[{\"zoneNumber\": 1, \"secsInZone\": 300, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 2, \"secsInZone\": 1200, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 3, \"secsInZone\": 1200, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 4, \"secsInZone\": 0, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 5, \"secsInZone\": 0, \"zoneLowBoundary\": 100}]",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity",
+        "fetched_at": 1760000000000,
+        "key": "103",
+        "raw": "{\"activityId\": 103, \"activityTypeDTO\": {\"typeId\": 1, \"typeKey\": \"running\"}, \"summaryDTO\": {\"startTimeGMT\": \"2026-10-15T09:00:00.0\", \"duration\": null, \"distance\": 5012.6, \"averageHR\": 141.5, \"maxHR\": 170, \"calories\": 400}}",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity",
+        "fetched_at": 1760000000000,
+        "key": "104",
+        "raw": "{\"activityId\": 104, \"activityTypeDTO\": {\"typeId\": 1, \"typeKey\": \"running\"}, \"summaryDTO\": {\"startTimeGMT\": \"2026-10-07T22:30:00.0\", \"duration\": 3600, \"distance\": 5012.6, \"averageHR\": 141.5, \"maxHR\": 170, \"calories\": 400}}",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity_exercise_sets",
+        "fetched_at": 1760000000000,
+        "key": "104",
+        "raw": "{\"activityId\": 104, \"exerciseSets\": [{\"exercises\": [{\"category\": \"SQUAT\", \"name\": \"GOBLET_SQUAT\", \"probability\": 90.0}], \"duration\": 40.0, \"repetitionCount\": 5, \"weight\": 25000.0, \"setType\": \"ACTIVE\", \"startTime\": \"2026-10-18T06:00:00.0\", \"wktStepIndex\": null, \"messageIndex\": null, \"avgConcentricMeanVelocity\": null, \"maxConcentricRom\": null}]}",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity_hr_in_timezones",
+        "fetched_at": 1760000000000,
+        "key": "104",
+        "raw": "[{\"zoneNumber\": 1, \"secsInZone\": 600, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 2, \"secsInZone\": 1800, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 3, \"secsInZone\": 1200, \"zoneLowBoundary\": 100}]",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity",
+        "fetched_at": 1760000000000,
+        "key": "105",
+        "raw": "{\"activityId\": 105, \"activityTypeDTO\": {\"typeId\": 1, \"typeKey\": \"running\"}, \"summaryDTO\": {\"startTimeGMT\": \"2026-09-27T22:30:00.0\", \"duration\": 1200, \"distance\": 5012.6, \"averageHR\": 141.5, \"maxHR\": 170, \"calories\": 400}}",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity",
+        "fetched_at": 1760000000000,
+        "key": "106",
+        "raw": "{\"activityId\": 106, \"activityTypeDTO\": {\"typeId\": 1, \"typeKey\": \"running\"}, \"summaryDTO\": {\"startTimeGMT\": \"2026-09-07T22:30:00.0\", \"duration\": 5400, \"distance\": 5012.6, \"averageHR\": 141.5, \"maxHR\": 170, \"calories\": 400}}",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity_exercise_sets",
+        "fetched_at": 1760000000000,
+        "key": "106",
+        "raw": "{\"activityId\": 106, \"exerciseSets\": [{\"exercises\": [{\"category\": \"SQUAT\", \"name\": \"GOBLET_SQUAT\", \"probability\": 90.0}], \"duration\": 40.0, \"repetitionCount\": 1, \"weight\": 40000.0, \"setType\": \"ACTIVE\", \"startTime\": \"2026-10-18T06:00:00.0\", \"wktStepIndex\": null, \"messageIndex\": null, \"avgConcentricMeanVelocity\": null, \"maxConcentricRom\": null}, {\"exercises\": [{\"category\": \"SQUAT\", \"name\": \"GOBLET_SQUAT\", \"probability\": 90.0}], \"duration\": 40.0, \"repetitionCount\": 5, \"weight\": 30000.0, \"setType\": \"ACTIVE\", \"startTime\": \"2026-10-18T06:00:00.0\", \"wktStepIndex\": null, \"messageIndex\": null, \"avgConcentricMeanVelocity\": null, \"maxConcentricRom\": null}]}",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity_hr_in_timezones",
+        "fetched_at": 1760000000000,
+        "key": "106",
+        "raw": "[{\"zoneNumber\": 1, \"secsInZone\": 1000, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 2, \"secsInZone\": 2000, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 3, \"secsInZone\": 1500, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 4, \"secsInZone\": 700, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 5, \"secsInZone\": 200, \"zoneLowBoundary\": 100}]",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity",
+        "fetched_at": 1760000000000,
+        "key": "107",
+        "raw": "{\"activityId\": 107, \"activityTypeDTO\": {\"typeId\": 1, \"typeKey\": \"running\"}, \"summaryDTO\": {\"startTimeGMT\": \"2026-10-17T20:00:00.0\", \"duration\": 1500, \"distance\": 5012.6, \"averageHR\": 141.5, \"maxHR\": 170, \"calories\": 400}}",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity_details",
+        "fetched_at": 1760000000000,
+        "key": "107",
+        "raw": "{\"activityId\": 107, \"metricDescriptors\": [{\"metricsIndex\": 0, \"key\": \"directTimestamp\"}, {\"metricsIndex\": 1, \"key\": \"directHeartRate\"}, {\"metricsIndex\": 2, \"key\": \"directBodyBattery\"}], \"activityDetailMetrics\": [{\"metrics\": [1792267200000, 110, 63]}, {\"metrics\": [1792267260000, 120, 61]}]}",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity_exercise_sets",
+        "fetched_at": 1760000000000,
+        "key": "107",
+        "raw": "{\"activityId\": 107, \"exerciseSets\": [{\"exercises\": [{\"category\": \"SQUAT\", \"name\": \"GOBLET_SQUAT\", \"probability\": 90.0}], \"duration\": 40.0, \"repetitionCount\": 10, \"weight\": 20000.0, \"setType\": \"ACTIVE\", \"startTime\": \"2026-10-18T06:00:00.0\", \"wktStepIndex\": null, \"messageIndex\": null, \"avgConcentricMeanVelocity\": null, \"maxConcentricRom\": null}]}",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activity_hr_in_timezones",
+        "fetched_at": 1760000000000,
+        "key": "107",
+        "raw": "[{\"zoneNumber\": 1, \"secsInZone\": 500, \"zoneLowBoundary\": 100}, {\"zoneNumber\": 2, \"secsInZone\": 1000, \"zoneLowBoundary\": 100}]",
+        "scope": "activity"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-03",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-03",
+        "raw": "[{\"date\": \"2026-09-03\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-03",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-03\", \"weeklyAvg\": 41, \"lastNightAvg\": 40, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-03",
+        "raw": "{\"statisticsStartDate\": \"2026-09-03\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 85.0, \"calendarDate\": \"2026-09-03\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-03",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-03\", \"sleepTimeSeconds\": 27900, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-03",
+        "raw": "{\"calendarDate\": \"2026-09-03\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-03",
+        "raw": "[{\"timestamp\": \"2026-09-03T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-03T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-03",
+        "raw": "{\"calendarDate\": \"2026-09-03\", \"totalSteps\": 9500, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 345, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-04",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-04",
+        "raw": "[{\"date\": \"2026-09-04\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-04",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-04\", \"weeklyAvg\": 41, \"lastNightAvg\": 44, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-04",
+        "raw": "{\"statisticsStartDate\": \"2026-09-04\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 84.0, \"calendarDate\": \"2026-09-04\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-04",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-04\", \"sleepTimeSeconds\": 27840, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-04",
+        "raw": "{\"calendarDate\": \"2026-09-04\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-04",
+        "raw": "[{\"timestamp\": \"2026-09-04T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-04T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-04",
+        "raw": "{\"calendarDate\": \"2026-09-04\", \"totalSteps\": 9400, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 344, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-05",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-05",
+        "raw": "[{\"date\": \"2026-09-05\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-05",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-05\", \"weeklyAvg\": 41, \"lastNightAvg\": 43, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-05",
+        "raw": "{\"statisticsStartDate\": \"2026-09-05\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 83.0, \"calendarDate\": \"2026-09-05\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-05",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-05\", \"sleepTimeSeconds\": 27780, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-05",
+        "raw": "{\"calendarDate\": \"2026-09-05\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-05",
+        "raw": "[{\"timestamp\": \"2026-09-05T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-05T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-05",
+        "raw": "{\"calendarDate\": \"2026-09-05\", \"totalSteps\": 9300, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 343, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-06",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-06",
+        "raw": "[{\"date\": \"2026-09-06\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-06",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-06\", \"weeklyAvg\": 41, \"lastNightAvg\": 42, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-06",
+        "raw": "{\"statisticsStartDate\": \"2026-09-06\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 82.0, \"calendarDate\": \"2026-09-06\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-06",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-06\", \"sleepTimeSeconds\": 27720, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-06",
+        "raw": "{\"calendarDate\": \"2026-09-06\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-06",
+        "raw": "[{\"timestamp\": \"2026-09-06T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-06T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-06",
+        "raw": "{\"calendarDate\": \"2026-09-06\", \"totalSteps\": 9200, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 342, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-07",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-07",
+        "raw": "[{\"date\": \"2026-09-07\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-07",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-07\", \"weeklyAvg\": 41, \"lastNightAvg\": 41, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-07",
+        "raw": "{\"statisticsStartDate\": \"2026-09-07\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 81.0, \"calendarDate\": \"2026-09-07\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-07",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-07\", \"sleepTimeSeconds\": 27660, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-07",
+        "raw": "{\"calendarDate\": \"2026-09-07\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-07",
+        "raw": "[{\"timestamp\": \"2026-09-07T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-07T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-07",
+        "raw": "{\"calendarDate\": \"2026-09-07\", \"totalSteps\": 9100, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 341, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-08",
+        "raw": "[{\"activityId\": 106, \"startTimeLocal\": \"2026-09-08 07:30:00\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-08",
+        "raw": "[{\"date\": \"2026-09-08\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-08",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-08\", \"weeklyAvg\": 41, \"lastNightAvg\": 40, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-08",
+        "raw": "{\"statisticsStartDate\": \"2026-09-08\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 80.0, \"calendarDate\": \"2026-09-08\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-08",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-08\", \"sleepTimeSeconds\": 27600, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-08",
+        "raw": "{\"calendarDate\": \"2026-09-08\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-08",
+        "raw": "[{\"timestamp\": \"2026-09-08T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-08T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-08",
+        "raw": "{\"calendarDate\": \"2026-09-08\", \"totalSteps\": 9000, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 340, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-09",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-09",
+        "raw": "[{\"date\": \"2026-09-09\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-09",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-09\", \"weeklyAvg\": 41, \"lastNightAvg\": 44, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-09",
+        "raw": "{\"statisticsStartDate\": \"2026-09-09\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 79.0, \"calendarDate\": \"2026-09-09\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-09",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-09\", \"sleepTimeSeconds\": 27540, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-09",
+        "raw": "{\"calendarDate\": \"2026-09-09\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-09",
+        "raw": "[{\"timestamp\": \"2026-09-09T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-09T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-09",
+        "raw": "{\"calendarDate\": \"2026-09-09\", \"totalSteps\": 8900, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 339, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-10",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-10",
+        "raw": "[{\"date\": \"2026-09-10\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-10",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-10\", \"weeklyAvg\": 41, \"lastNightAvg\": 43, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-10",
+        "raw": "{\"statisticsStartDate\": \"2026-09-10\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 78.0, \"calendarDate\": \"2026-09-10\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-10",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-10\", \"sleepTimeSeconds\": 27480, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-10",
+        "raw": "{\"calendarDate\": \"2026-09-10\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-10",
+        "raw": "[{\"timestamp\": \"2026-09-10T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-10T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-10",
+        "raw": "{\"calendarDate\": \"2026-09-10\", \"totalSteps\": 8800, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 338, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-11",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-11",
+        "raw": "[{\"date\": \"2026-09-11\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-11",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-11\", \"weeklyAvg\": 41, \"lastNightAvg\": 42, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-11",
+        "raw": "{\"statisticsStartDate\": \"2026-09-11\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 77.0, \"calendarDate\": \"2026-09-11\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-11",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-11\", \"sleepTimeSeconds\": 27420, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-11",
+        "raw": "{\"calendarDate\": \"2026-09-11\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-11",
+        "raw": "[{\"timestamp\": \"2026-09-11T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-11T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-11",
+        "raw": "{\"calendarDate\": \"2026-09-11\", \"totalSteps\": 8700, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 337, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-12",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-12",
+        "raw": "[{\"date\": \"2026-09-12\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-12",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-12\", \"weeklyAvg\": 41, \"lastNightAvg\": 41, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-12",
+        "raw": "{\"statisticsStartDate\": \"2026-09-12\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 76.0, \"calendarDate\": \"2026-09-12\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-12",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-12\", \"sleepTimeSeconds\": 27360, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-12",
+        "raw": "{\"calendarDate\": \"2026-09-12\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-12",
+        "raw": "[{\"timestamp\": \"2026-09-12T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-12T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-12",
+        "raw": "{\"calendarDate\": \"2026-09-12\", \"totalSteps\": 8600, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 336, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-13",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-13",
+        "raw": "[{\"date\": \"2026-09-13\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-13",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-13\", \"weeklyAvg\": 41, \"lastNightAvg\": 40, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-13",
+        "raw": "{\"statisticsStartDate\": \"2026-09-13\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 75.0, \"calendarDate\": \"2026-09-13\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-13",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-13\", \"sleepTimeSeconds\": 27300, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-13",
+        "raw": "{\"calendarDate\": \"2026-09-13\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-13",
+        "raw": "[{\"timestamp\": \"2026-09-13T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-13T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-13",
+        "raw": "{\"calendarDate\": \"2026-09-13\", \"totalSteps\": 8500, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 335, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-14",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-14",
+        "raw": "[{\"date\": \"2026-09-14\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-14",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-14\", \"weeklyAvg\": 41, \"lastNightAvg\": 44, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-14",
+        "raw": "{\"statisticsStartDate\": \"2026-09-14\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 74.0, \"calendarDate\": \"2026-09-14\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-14",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-14\", \"sleepTimeSeconds\": 27240, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-14",
+        "raw": "{\"calendarDate\": \"2026-09-14\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-14",
+        "raw": "[{\"timestamp\": \"2026-09-14T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-14T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-14",
+        "raw": "{\"calendarDate\": \"2026-09-14\", \"totalSteps\": 8400, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 334, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-15",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-15",
+        "raw": "[{\"date\": \"2026-09-15\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-15",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-15\", \"weeklyAvg\": 41, \"lastNightAvg\": 43, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-15",
+        "raw": "{\"statisticsStartDate\": \"2026-09-15\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 73.0, \"calendarDate\": \"2026-09-15\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-15",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-15\", \"sleepTimeSeconds\": 27180, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-15",
+        "raw": "{\"calendarDate\": \"2026-09-15\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-15",
+        "raw": "[{\"timestamp\": \"2026-09-15T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-15T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-15",
+        "raw": "{\"calendarDate\": \"2026-09-15\", \"totalSteps\": 8300, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 333, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-16",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-16",
+        "raw": "[{\"date\": \"2026-09-16\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-16",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-16\", \"weeklyAvg\": 41, \"lastNightAvg\": 42, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-16",
+        "raw": "{\"statisticsStartDate\": \"2026-09-16\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 72.0, \"calendarDate\": \"2026-09-16\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-16",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-16\", \"sleepTimeSeconds\": 27120, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-16",
+        "raw": "{\"calendarDate\": \"2026-09-16\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-16",
+        "raw": "[{\"timestamp\": \"2026-09-16T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-16T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-16",
+        "raw": "{\"calendarDate\": \"2026-09-16\", \"totalSteps\": 8200, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 332, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-17",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-17",
+        "raw": "[{\"date\": \"2026-09-17\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-17",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-17\", \"weeklyAvg\": 41, \"lastNightAvg\": 41, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-17",
+        "raw": "{\"statisticsStartDate\": \"2026-09-17\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 71.0, \"calendarDate\": \"2026-09-17\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-17",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-17\", \"sleepTimeSeconds\": 27060, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-17",
+        "raw": "{\"calendarDate\": \"2026-09-17\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-17",
+        "raw": "[{\"timestamp\": \"2026-09-17T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-17T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-17",
+        "raw": "{\"calendarDate\": \"2026-09-17\", \"totalSteps\": 8100, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 331, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-18",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-18",
+        "raw": "[{\"date\": \"2026-09-18\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-18",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-18\", \"weeklyAvg\": 41, \"lastNightAvg\": 40, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-18",
+        "raw": "{\"statisticsStartDate\": \"2026-09-18\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 70.0, \"calendarDate\": \"2026-09-18\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-18",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-18\", \"sleepTimeSeconds\": 27000, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-18",
+        "raw": "{\"calendarDate\": \"2026-09-18\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-18",
+        "raw": "[{\"timestamp\": \"2026-09-18T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-18T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-18",
+        "raw": "{\"calendarDate\": \"2026-09-18\", \"totalSteps\": 8000, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 330, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-19",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-19",
+        "raw": "[{\"date\": \"2026-09-19\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-19",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-19\", \"weeklyAvg\": 41, \"lastNightAvg\": 44, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-19",
+        "raw": "{\"statisticsStartDate\": \"2026-09-19\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 69.0, \"calendarDate\": \"2026-09-19\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-19",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-19\", \"sleepTimeSeconds\": 26940, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-19",
+        "raw": "{\"calendarDate\": \"2026-09-19\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-19",
+        "raw": "[{\"timestamp\": \"2026-09-19T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-19T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-19",
+        "raw": "{\"calendarDate\": \"2026-09-19\", \"totalSteps\": 7900, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 329, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-20",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-20",
+        "raw": "[{\"date\": \"2026-09-20\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-20",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-20\", \"weeklyAvg\": 41, \"lastNightAvg\": 43, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-20",
+        "raw": "{\"statisticsStartDate\": \"2026-09-20\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 68.0, \"calendarDate\": \"2026-09-20\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-20",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-20\", \"sleepTimeSeconds\": 26880, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-20",
+        "raw": "{\"calendarDate\": \"2026-09-20\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-20",
+        "raw": "[{\"timestamp\": \"2026-09-20T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-20T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-20",
+        "raw": "{\"calendarDate\": \"2026-09-20\", \"totalSteps\": 7800, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 328, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-21",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-21",
+        "raw": "[{\"date\": \"2026-09-21\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-21",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-21\", \"weeklyAvg\": 41, \"lastNightAvg\": 42, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-21",
+        "raw": "{\"statisticsStartDate\": \"2026-09-21\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 67.0, \"calendarDate\": \"2026-09-21\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-21",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-21\", \"sleepTimeSeconds\": 26820, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-21",
+        "raw": "{\"calendarDate\": \"2026-09-21\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-21",
+        "raw": "[{\"timestamp\": \"2026-09-21T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-21T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-21",
+        "raw": "{\"calendarDate\": \"2026-09-21\", \"totalSteps\": 7700, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 327, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-22",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-22",
+        "raw": "[{\"date\": \"2026-09-22\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-22",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-22\", \"weeklyAvg\": 41, \"lastNightAvg\": 41, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-22",
+        "raw": "{\"statisticsStartDate\": \"2026-09-22\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 66.0, \"calendarDate\": \"2026-09-22\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-22",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-22\", \"sleepTimeSeconds\": 26760, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-22",
+        "raw": "{\"calendarDate\": \"2026-09-22\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-22",
+        "raw": "[{\"timestamp\": \"2026-09-22T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-22T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-22",
+        "raw": "{\"calendarDate\": \"2026-09-22\", \"totalSteps\": 7600, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 326, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-23",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-23",
+        "raw": "[{\"date\": \"2026-09-23\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-23",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-23\", \"weeklyAvg\": 41, \"lastNightAvg\": 40, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-23",
+        "raw": "{\"statisticsStartDate\": \"2026-09-23\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 65.0, \"calendarDate\": \"2026-09-23\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-23",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-23\", \"sleepTimeSeconds\": 26700, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-23",
+        "raw": "{\"calendarDate\": \"2026-09-23\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-23",
+        "raw": "[{\"timestamp\": \"2026-09-23T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-23T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-23",
+        "raw": "{\"calendarDate\": \"2026-09-23\", \"totalSteps\": 7500, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 325, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-24",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-24",
+        "raw": "[{\"date\": \"2026-09-24\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-24",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-24\", \"weeklyAvg\": 41, \"lastNightAvg\": 44, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-24",
+        "raw": "{\"statisticsStartDate\": \"2026-09-24\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 64.0, \"calendarDate\": \"2026-09-24\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-24",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-24\", \"sleepTimeSeconds\": 26640, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-24",
+        "raw": "{\"calendarDate\": \"2026-09-24\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-24",
+        "raw": "[{\"timestamp\": \"2026-09-24T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-24T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-24",
+        "raw": "{\"calendarDate\": \"2026-09-24\", \"totalSteps\": 7400, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 324, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-25",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-25",
+        "raw": "[{\"date\": \"2026-09-25\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-25",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-25\", \"weeklyAvg\": 41, \"lastNightAvg\": 43, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-25",
+        "raw": "{\"statisticsStartDate\": \"2026-09-25\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 63.0, \"calendarDate\": \"2026-09-25\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-25",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-25\", \"sleepTimeSeconds\": 26580, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-25",
+        "raw": "{\"calendarDate\": \"2026-09-25\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-25",
+        "raw": "[{\"timestamp\": \"2026-09-25T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-25T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-25",
+        "raw": "{\"calendarDate\": \"2026-09-25\", \"totalSteps\": 7300, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 323, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-26",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-26",
+        "raw": "[{\"date\": \"2026-09-26\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-26",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-26\", \"weeklyAvg\": 41, \"lastNightAvg\": 42, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-26",
+        "raw": "{\"statisticsStartDate\": \"2026-09-26\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 62.0, \"calendarDate\": \"2026-09-26\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-26",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-26\", \"sleepTimeSeconds\": 26520, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-26",
+        "raw": "{\"calendarDate\": \"2026-09-26\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-26",
+        "raw": "[{\"timestamp\": \"2026-09-26T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-26T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-26",
+        "raw": "{\"calendarDate\": \"2026-09-26\", \"totalSteps\": 7200, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 322, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-27",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-27",
+        "raw": "[{\"date\": \"2026-09-27\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-27",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-27\", \"weeklyAvg\": 41, \"lastNightAvg\": 41, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-27",
+        "raw": "{\"statisticsStartDate\": \"2026-09-27\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 61.0, \"calendarDate\": \"2026-09-27\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-27",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-27\", \"sleepTimeSeconds\": 26460, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-27",
+        "raw": "{\"calendarDate\": \"2026-09-27\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-27",
+        "raw": "[{\"timestamp\": \"2026-09-27T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-27T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-27",
+        "raw": "{\"calendarDate\": \"2026-09-27\", \"totalSteps\": 7100, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 321, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-28",
+        "raw": "[{\"activityId\": 105, \"startTimeLocal\": \"2026-09-28 07:30:00\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-28",
+        "raw": "[{\"date\": \"2026-09-28\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-28",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-28\", \"weeklyAvg\": 41, \"lastNightAvg\": 40, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-28",
+        "raw": "{\"statisticsStartDate\": \"2026-09-28\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 60.0, \"calendarDate\": \"2026-09-28\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-28",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-28\", \"sleepTimeSeconds\": 26400, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-28",
+        "raw": "{\"calendarDate\": \"2026-09-28\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-28",
+        "raw": "[{\"timestamp\": \"2026-09-28T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-28T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-28",
+        "raw": "{\"calendarDate\": \"2026-09-28\", \"totalSteps\": 7000, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 320, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-29",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-29",
+        "raw": "[{\"date\": \"2026-09-29\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-29",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-29\", \"weeklyAvg\": 41, \"lastNightAvg\": 44, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-29",
+        "raw": "{\"statisticsStartDate\": \"2026-09-29\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 59.0, \"calendarDate\": \"2026-09-29\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-29",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-29\", \"sleepTimeSeconds\": 26340, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-29",
+        "raw": "{\"calendarDate\": \"2026-09-29\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-29",
+        "raw": "[{\"timestamp\": \"2026-09-29T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-29T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-29",
+        "raw": "{\"calendarDate\": \"2026-09-29\", \"totalSteps\": 6900, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 319, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-09-30",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-30",
+        "raw": "[{\"date\": \"2026-09-30\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-30",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-09-30\", \"weeklyAvg\": 41, \"lastNightAvg\": 43, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-30",
+        "raw": "{\"statisticsStartDate\": \"2026-09-30\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 58.0, \"calendarDate\": \"2026-09-30\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-30",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-09-30\", \"sleepTimeSeconds\": 26280, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-30",
+        "raw": "{\"calendarDate\": \"2026-09-30\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-30",
+        "raw": "[{\"timestamp\": \"2026-09-30T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-09-30T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-09-30",
+        "raw": "{\"calendarDate\": \"2026-09-30\", \"totalSteps\": 6800, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 318, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-01",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-01",
+        "raw": "[{\"date\": \"2026-10-01\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-01",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-01\", \"weeklyAvg\": 41, \"lastNightAvg\": 42, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-01",
+        "raw": "{\"statisticsStartDate\": \"2026-10-01\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 57.0, \"calendarDate\": \"2026-10-01\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-01",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-01\", \"sleepTimeSeconds\": 26220, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-01",
+        "raw": "{\"calendarDate\": \"2026-10-01\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-01",
+        "raw": "[{\"timestamp\": \"2026-10-01T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-01T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-01",
+        "raw": "{\"calendarDate\": \"2026-10-01\", \"totalSteps\": 6700, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 317, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-02",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-02",
+        "raw": "[{\"date\": \"2026-10-02\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-02",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-02\", \"weeklyAvg\": 41, \"lastNightAvg\": 41, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-02",
+        "raw": "{\"statisticsStartDate\": \"2026-10-02\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 56.0, \"calendarDate\": \"2026-10-02\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-02",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-02\", \"sleepTimeSeconds\": 26160, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-02",
+        "raw": "{\"calendarDate\": \"2026-10-02\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-02",
+        "raw": "[{\"timestamp\": \"2026-10-02T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-02T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-02",
+        "raw": "{\"calendarDate\": \"2026-10-02\", \"totalSteps\": 6600, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 316, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-03",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-03",
+        "raw": "[{\"date\": \"2026-10-03\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-03",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-03\", \"weeklyAvg\": 41, \"lastNightAvg\": 40, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-03",
+        "raw": "{\"statisticsStartDate\": \"2026-10-03\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 55.0, \"calendarDate\": \"2026-10-03\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-03",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-03\", \"sleepTimeSeconds\": 26100, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-03",
+        "raw": "{\"calendarDate\": \"2026-10-03\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-03",
+        "raw": "[{\"timestamp\": \"2026-10-03T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-03T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-03",
+        "raw": "{\"calendarDate\": \"2026-10-03\", \"totalSteps\": 6500, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 315, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-04",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-04",
+        "raw": "[{\"date\": \"2026-10-04\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-04",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-04\", \"weeklyAvg\": 41, \"lastNightAvg\": 44, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-04",
+        "raw": "{\"statisticsStartDate\": \"2026-10-04\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 54.0, \"calendarDate\": \"2026-10-04\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-04",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-04\", \"sleepTimeSeconds\": 26040, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-04",
+        "raw": "{\"calendarDate\": \"2026-10-04\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-04",
+        "raw": "[{\"timestamp\": \"2026-10-04T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-04T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-04",
+        "raw": "{\"calendarDate\": \"2026-10-04\", \"totalSteps\": 6400, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 314, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-05",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-05",
+        "raw": "[{\"date\": \"2026-10-05\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-05",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-05\", \"weeklyAvg\": 41, \"lastNightAvg\": 43, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-05",
+        "raw": "{\"statisticsStartDate\": \"2026-10-05\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 53.0, \"calendarDate\": \"2026-10-05\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-05",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-05\", \"sleepTimeSeconds\": 25980, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-05",
+        "raw": "{\"calendarDate\": \"2026-10-05\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-05",
+        "raw": "[{\"timestamp\": \"2026-10-05T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-05T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-05",
+        "raw": "{\"calendarDate\": \"2026-10-05\", \"totalSteps\": 6300, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 313, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-06",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-06",
+        "raw": "[{\"date\": \"2026-10-06\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-06",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-06\", \"weeklyAvg\": 41, \"lastNightAvg\": 42, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-06",
+        "raw": "{\"statisticsStartDate\": \"2026-10-06\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 52.0, \"calendarDate\": \"2026-10-06\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-06",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-06\", \"sleepTimeSeconds\": 25920, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-06",
+        "raw": "{\"calendarDate\": \"2026-10-06\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-06",
+        "raw": "[{\"timestamp\": \"2026-10-06T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-06T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-06",
+        "raw": "{\"calendarDate\": \"2026-10-06\", \"totalSteps\": 6200, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 312, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-07",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-07",
+        "raw": "[{\"date\": \"2026-10-07\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-07",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-07\", \"weeklyAvg\": 41, \"lastNightAvg\": 41, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-07",
+        "raw": "{\"statisticsStartDate\": \"2026-10-07\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 51.0, \"calendarDate\": \"2026-10-07\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-07",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-07\", \"sleepTimeSeconds\": 25860, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-07",
+        "raw": "{\"calendarDate\": \"2026-10-07\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-07",
+        "raw": "[{\"timestamp\": \"2026-10-07T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-07T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-07",
+        "raw": "{\"calendarDate\": \"2026-10-07\", \"totalSteps\": 6100, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 311, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-08",
+        "raw": "[{\"activityId\": 104, \"startTimeLocal\": \"2026-10-08 07:30:00\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-08",
+        "raw": "[{\"date\": \"2026-10-08\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-08",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-08\", \"weeklyAvg\": 41, \"lastNightAvg\": 40, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-08",
+        "raw": "{\"statisticsStartDate\": \"2026-10-08\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 50.0, \"calendarDate\": \"2026-10-08\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-08",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-08\", \"sleepTimeSeconds\": 25800, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-08",
+        "raw": "{\"calendarDate\": \"2026-10-08\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-08",
+        "raw": "[{\"timestamp\": \"2026-10-08T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-08T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-08",
+        "raw": "{\"calendarDate\": \"2026-10-08\", \"totalSteps\": 6000, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 310, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-09",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-09",
+        "raw": "[{\"date\": \"2026-10-09\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-09",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-09\", \"weeklyAvg\": 41, \"lastNightAvg\": 44, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-09",
+        "raw": "{\"statisticsStartDate\": \"2026-10-09\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 49.0, \"calendarDate\": \"2026-10-09\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-09",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-09\", \"sleepTimeSeconds\": 25740, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-09",
+        "raw": "{\"calendarDate\": \"2026-10-09\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-09",
+        "raw": "[{\"timestamp\": \"2026-10-09T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-09T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-09",
+        "raw": "{\"calendarDate\": \"2026-10-09\", \"totalSteps\": 5900, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 309, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-10",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-10",
+        "raw": "[{\"date\": \"2026-10-10\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-10",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-10\", \"weeklyAvg\": 41, \"lastNightAvg\": 43, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-10",
+        "raw": "{\"statisticsStartDate\": \"2026-10-10\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 48.0, \"calendarDate\": \"2026-10-10\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-10",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-10\", \"sleepTimeSeconds\": 25680, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-10",
+        "raw": "{\"calendarDate\": \"2026-10-10\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-10",
+        "raw": "[{\"timestamp\": \"2026-10-10T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-10T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-10",
+        "raw": "{\"calendarDate\": \"2026-10-10\", \"totalSteps\": 5800, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 308, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-11",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-11",
+        "raw": "[{\"date\": \"2026-10-11\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-11",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-11\", \"weeklyAvg\": 41, \"lastNightAvg\": 42, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-11",
+        "raw": "{\"statisticsStartDate\": \"2026-10-11\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 47.0, \"calendarDate\": \"2026-10-11\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-11",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-11\", \"sleepTimeSeconds\": 25620, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-11",
+        "raw": "{\"calendarDate\": \"2026-10-11\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-11",
+        "raw": "[{\"timestamp\": \"2026-10-11T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-11T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-11",
+        "raw": "{\"calendarDate\": \"2026-10-11\", \"totalSteps\": 5700, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 307, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-12",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-12",
+        "raw": "[{\"date\": \"2026-10-12\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-12",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-12\", \"weeklyAvg\": 41, \"lastNightAvg\": 41, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-12",
+        "raw": "{\"statisticsStartDate\": \"2026-10-12\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 46.0, \"calendarDate\": \"2026-10-12\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-12",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-12\", \"sleepTimeSeconds\": 25560, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-12",
+        "raw": "{\"calendarDate\": \"2026-10-12\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-12",
+        "raw": "[{\"timestamp\": \"2026-10-12T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-12T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-12",
+        "raw": "{\"calendarDate\": \"2026-10-12\", \"totalSteps\": 5600, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 306, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-13",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-13",
+        "raw": "[{\"date\": \"2026-10-13\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-13",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-13\", \"weeklyAvg\": 41, \"lastNightAvg\": 40, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-13",
+        "raw": "{\"statisticsStartDate\": \"2026-10-13\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 45.0, \"calendarDate\": \"2026-10-13\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-13",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-13\", \"sleepTimeSeconds\": 25500, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-13",
+        "raw": "{\"calendarDate\": \"2026-10-13\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-13",
+        "raw": "[{\"timestamp\": \"2026-10-13T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-13T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-13",
+        "raw": "{\"calendarDate\": \"2026-10-13\", \"totalSteps\": 5500, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 305, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-14",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-14",
+        "raw": "[{\"date\": \"2026-10-14\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-14",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-14\", \"weeklyAvg\": 41, \"lastNightAvg\": 44, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-14",
+        "raw": "{\"statisticsStartDate\": \"2026-10-14\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 44.0, \"calendarDate\": \"2026-10-14\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-14",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-14\", \"sleepTimeSeconds\": 25440, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-14",
+        "raw": "{\"calendarDate\": \"2026-10-14\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-14",
+        "raw": "[{\"timestamp\": \"2026-10-14T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-14T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-14",
+        "raw": "{\"calendarDate\": \"2026-10-14\", \"totalSteps\": 5400, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 304, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-15",
+        "raw": "[{\"activityId\": 102, \"startTimeLocal\": \"2026-10-15 07:30:00\"}, {\"activityId\": 103, \"startTimeLocal\": \"2026-10-15 07:30:00\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-15",
+        "raw": "[{\"date\": \"2026-10-15\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-15",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-15\", \"weeklyAvg\": 41, \"lastNightAvg\": 43, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-15",
+        "raw": "{\"statisticsStartDate\": \"2026-10-15\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 43.0, \"calendarDate\": \"2026-10-15\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-15",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-15\", \"sleepTimeSeconds\": 25380, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-15",
+        "raw": "{\"calendarDate\": \"2026-10-15\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-15",
+        "raw": "[{\"timestamp\": \"2026-10-15T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-15T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-15",
+        "raw": "{\"calendarDate\": \"2026-10-15\", \"totalSteps\": 5300, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 303, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-16",
+        "raw": "[]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-16",
+        "raw": "[{\"date\": \"2026-10-16\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-16",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-16\", \"weeklyAvg\": 41, \"lastNightAvg\": 42, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-16",
+        "raw": "{\"statisticsStartDate\": \"2026-10-16\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 42.0, \"calendarDate\": \"2026-10-16\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-16",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-16\", \"sleepTimeSeconds\": 25320, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-16",
+        "raw": "{\"calendarDate\": \"2026-10-16\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-16",
+        "raw": "[{\"timestamp\": \"2026-10-16T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-16T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-16",
+        "raw": "{\"calendarDate\": \"2026-10-16\", \"totalSteps\": 5200, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 302, \"moderateIntensityMinutes\": 40, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-17",
+        "raw": "[{\"activityId\": 101, \"startTimeLocal\": \"2026-10-17 07:30:00\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-17",
+        "raw": "[{\"date\": \"2026-10-17\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "heart_rates",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-17",
+        "raw": "{\"heartRateValueDescriptors\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"heartrate\", \"index\": 1}], \"heartRateValues\": [[1792206000000, 62], [1792247400000, 48]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-17",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-17\", \"weeklyAvg\": 41, \"lastNightAvg\": 41, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-17",
+        "raw": "{\"statisticsStartDate\": \"2026-10-17\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 41.0, \"calendarDate\": \"2026-10-17\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-17",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-17\", \"sleepTimeSeconds\": 25260, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-17",
+        "raw": "{\"calendarDate\": \"2026-10-17\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]], \"bodyBatteryValuesArray\": [[1792206000000, 55]], \"bodyBatteryValueDescriptorsDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-17",
+        "raw": "[{\"timestamp\": \"2026-10-17T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-17T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-17",
+        "raw": "{\"calendarDate\": \"2026-10-17\", \"totalSteps\": 5100, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 301, \"moderateIntensityMinutes\": 20, \"vigorousIntensityMinutes\": 30, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "activities_by_date",
+        "fetched_at": 1760000000000,
+        "key": "2026-10-18",
+        "raw": "[{\"activityId\": 107, \"startTimeLocal\": \"2026-10-18 07:30:00\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "body_battery",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-18",
+        "raw": "[{\"date\": \"2026-10-18\", \"charged\": 45, \"drained\": 38, \"bodyBatteryValuesArray\": [[1792241100000, 70], [1792242900000, 20], [1792268100000, 61], [1792269900000, null], [1792271700000, 55]], \"bodyBatteryValueDescriptorDTOList\": [{\"bodyBatteryValueDescriptorIndex\": 0, \"bodyBatteryValueDescriptorKey\": \"timestamp\"}, {\"bodyBatteryValueDescriptorIndex\": 1, \"bodyBatteryValueDescriptorKey\": \"bodyBatteryLevel\"}]}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "hrv_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-18",
+        "raw": "{\"hrvSummary\": {\"calendarDate\": \"2026-10-18\", \"weeklyAvg\": 41, \"lastNightAvg\": 38.6, \"status\": \"BALANCED\", \"baseline\": {\"balancedLow\": 35, \"balancedUpper\": 48.2}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "rhr_day",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-18",
+        "raw": "{\"statisticsStartDate\": \"2026-10-18\", \"allMetrics\": {\"metricsMap\": {\"WELLNESS_RESTING_HEART_RATE\": [{\"value\": 52.0, \"calendarDate\": \"2026-10-18\"}]}}}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "sleep_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-18",
+        "raw": "{\"dailySleepDTO\": {\"calendarDate\": \"2026-10-18\", \"sleepTimeSeconds\": 26100, \"deepSleepSeconds\": 5400, \"lightSleepSeconds\": 14400, \"remSleepSeconds\": 6300, \"awakeSleepSeconds\": 900, \"sleepStartTimestampGMT\": 1792242900000, \"sleepEndTimestampGMT\": 1792269900000, \"sleepScores\": {\"overall\": {\"value\": 82, \"qualifierKey\": \"GOOD\"}}}, \"avgOvernightHrv\": 39, \"sleepHeartRate\": [{\"startGMT\": \"2026-10-17T14:00:00\", \"value\": 48}]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "stress_data",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-18",
+        "raw": "{\"calendarDate\": \"2026-10-18\", \"stressValueDescriptorsDTOList\": [{\"key\": \"timestamp\", \"index\": 0}, {\"key\": \"stressLevel\", \"index\": 1}], \"stressValuesArray\": [[1792269900000, 30], [1792270080000, -1], [1792270260000, 50], [1792270440000, null]]}",
+        "scope": "day"
+      },
+      {
+        "endpoint": "training_readiness",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-18",
+        "raw": "[{\"timestamp\": \"2026-10-18T09:30:00.0\", \"score\": 70, \"level\": \"MODERATE\"}, {\"timestamp\": \"2026-10-18T05:45:00.0\", \"score\": 81.4, \"level\": \"HIGH\"}]",
+        "scope": "day"
+      },
+      {
+        "endpoint": "user_summary",
+        "fetched_at": 1792267260000,
+        "key": "2026-10-18",
+        "raw": "{\"calendarDate\": \"2026-10-18\", \"totalSteps\": 5000, \"averageStressLevel\": 40, \"totalDistanceMeters\": 6543.6, \"activeKilocalories\": 300, \"moderateIntensityMinutes\": 0, \"vigorousIntensityMinutes\": 0, \"minHeartRate\": 48, \"maxHeartRate\": 151}",
+        "scope": "day"
+      }
+    ]
+  },
+  "timezone": "Asia/Seoul"
+}

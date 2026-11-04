@@ -129,7 +129,7 @@ it('감독자가 원본 인계와 중단 재개 및 늦은 측정을 처리한�
     expect(JSON.parse(await readFile(join(home,'files',String(storedB.locator)),'utf8')).day.yesterday.steps).toBe(9876);
     await store.setSetting({key:'garmin.timezone',value:'Asia/Seoul',updatedAt:new Date()});
     await runManual();
-    expect((await fixture.db.rows("select count(*)::int n from brain.file_requests"))[0]!.n).toBe(3);
+    expect((await fixture.db.rows("select count(*)::int n from brain.file_requests where metadata->>'kind' <> 'graph'"))[0]!.n).toBe(3);
     expect((await fixture.db.rows("select count(*)::int n from brain.health_observations"))[0]!.n).toBe(originalCount);
     const late=join(inbox,'late.png'); await writeFile(late,'synthetic late');
     execFileSync(python,['-c',`import json,os,sys\np=sys.argv[1]\nstamp=json.load(open(sys.argv[3]))['value_mtime_ns']['weight_kg']\nos.utime(p,ns=(stamp,stamp))\nd={'schema_version':1,'measured_on':'2026-01-31','values':{'weight_kg':81,'bmi':23},'value_mtime_ns':{'weight_kg':stamp,'bmi':stamp},'source_files':['inbox/inbody/late.png']}\nopen(sys.argv[2],'w').write(json.dumps(d))`,late,join(inbox,'late.json'),join(inbox,'measurement.json')]);
@@ -144,10 +144,10 @@ it('감독자가 원본 인계와 중단 재개 및 늦은 측정을 처리한�
     expect(await readFile(join(inbox,'bad-source.png'),'utf8')).toBe('unaccepted');
     expect((updated[0]!.field_sources as any).bmi).toHaveLength(1);
     expect(await stat(late).then(()=>true).catch(()=>false)).toBe(false);
-    const afterLate=(await fixture.db.rows("select count(*)::int n from brain.file_requests"))[0]!.n;
+    const afterLate=(await fixture.db.rows("select count(*)::int n from brain.file_requests where metadata->>'kind' <> 'graph'"))[0]!.n;
     expect(afterLate).toBe(5);
     await runManual();
-    expect((await fixture.db.rows("select count(*)::int n from brain.file_requests"))[0]!.n).toBe(afterLate);
+    expect((await fixture.db.rows("select count(*)::int n from brain.file_requests where metadata->>'kind' <> 'graph'"))[0]!.n).toBe(afterLate);
     expect((await fixture.db.rows("select count(*)::int n from brain.health_observations"))[0]!.n).toBe(originalCount);
     const beforeReplacement=(await fixture.db.rows("select metadata->>'revision' revision from brain.file_requests where metadata->>'kind'='digest' order by created_at desc,id desc"));
     const beforeSource=(updated[0]!.field_sources as any).weight_kg[0];
@@ -156,7 +156,7 @@ it('감독자가 원본 인계와 중단 재개 및 늦은 측정을 처리한�
     await runManual();
     const newSource=(await fixture.db.rows("select field_sources from garmin.body_measurements where measured_on='2026-01-31'"))[0]!.field_sources as any;
     expect(newSource.weight_kg[0]).not.toBe(beforeSource);
-    const afterReplacement=(await fixture.db.rows("select count(*)::int n from brain.file_requests"))[0]!.n;
+    const afterReplacement=(await fixture.db.rows("select count(*)::int n from brain.file_requests where metadata->>'kind' <> 'graph'"))[0]!.n;
     expect(afterReplacement).toBe(afterLate+2);
     const revisions=await fixture.db.rows("select metadata->>'revision' revision from brain.file_requests where metadata->>'kind'='digest'");
     expect(revisions.length).toBe(beforeReplacement.length+1);
@@ -165,11 +165,11 @@ it('감독자가 원본 인계와 중단 재개 및 늦은 측정을 처리한�
     await runManual();
     expect((await currentDay())['day_summary.steps']).toBe(7777);
     expect((await currentDay())['day_summary.active_kcal']).toBeNull();
-    expect((await fixture.db.rows("select count(*)::int n from brain.file_requests"))[0]!.n).toBe(afterReplacement);
+    expect((await fixture.db.rows("select count(*)::int n from brain.file_requests where metadata->>'kind' <> 'graph'"))[0]!.n).toBe(afterReplacement);
     const labelPath=join(ext,'src','labels','exercise_types_ko.json');
     await writeFile(labelPath,(await readFile(labelPath,'utf8'))+'\n');
     await runManual();
-    expect((await fixture.db.rows("select count(*)::int n from brain.file_requests"))[0]!.n).toBe(afterReplacement+1);
+    expect((await fixture.db.rows("select count(*)::int n from brain.file_requests where metadata->>'kind' <> 'graph'"))[0]!.n).toBe(afterReplacement+1);
     // A newer sidecar may reuse an earlier sidecar's source path and timestamp.
     await writeFile(late,'new claimant source');
     execFileSync(python,['-c',`import json,os,sys\ns=json.load(open(sys.argv[2]))['value_mtime_ns']['weight_kg']\nos.utime(sys.argv[1],ns=(s,s))\nd={'schema_version':1,'measured_on':'2026-01-31','values':{'weight_kg':82},'value_mtime_ns':{'weight_kg':s},'source_files':['inbox/inbody/late.png']}\nopen(sys.argv[3],'w').write(json.dumps(d))`,late,join(inbox,'late.json'),join(inbox,'new-claim.json')]);
@@ -177,7 +177,7 @@ it('감독자가 원본 인계와 중단 재개 및 늦은 측정을 처리한�
     const newest=(await fixture.db.rows("select sidecar,field_sources from garmin.body_measurements where measured_on='2026-01-31'"))[0]!;
     expect((newest.sidecar as any).values.weight_kg).toBe(82);
     expect((newest.field_sources as any).weight_kg[0]).not.toBe(newSource.weight_kg[0]);
-    expect((await fixture.db.rows("select count(*)::int n from brain.file_requests"))[0]!.n).toBe(afterReplacement+3);
+    expect((await fixture.db.rows("select count(*)::int n from brain.file_requests where metadata->>'kind' <> 'graph'"))[0]!.n).toBe(afterReplacement+3);
     // Two distinct source timestamps; simulate a stop after one move and before its ledger update.
     const first=join(inbox,'multi-a.png'), second=join(inbox,'multi-b.png'), multi=join(inbox,'multi.json');
     await writeFile(first,'old-a'); await writeFile(second,'old-b');
@@ -206,8 +206,8 @@ it('감독자가 원본 인계와 중단 재개 및 늦은 측정을 처리한�
     const rel=await fixture.db.rows("select field_sources from garmin.body_measurements where measured_on='2026-01-30'");
     expect((rel[0]!.field_sources as any).weight_kg[0]).toBe(rowsMulti.find(r=>r.request_id!==oldSources[0]!.request_id)!.request_id);
     expect((rel[0]!.field_sources as any).bmi[0]).toBe(oldSources[1]!.request_id);
-    const stableCount=(await fixture.db.rows("select count(*)::int n from brain.file_requests"))[0]!.n;
-    await runManual(); expect((await fixture.db.rows("select count(*)::int n from brain.file_requests"))[0]!.n).toBe(stableCount);
+    const stableCount=(await fixture.db.rows("select count(*)::int n from brain.file_requests where metadata->>'kind' <> 'graph'"))[0]!.n;
+    await runManual(); expect((await fixture.db.rows("select count(*)::int n from brain.file_requests where metadata->>'kind' <> 'graph'"))[0]!.n).toBe(stableCount);
 
     // A duplicate value key with otherwise valid provenance must not register its source.
     const duplicateImage=join(inbox,'duplicate-valid.png'); await writeFile(duplicateImage,'duplicate-source');
@@ -215,7 +215,7 @@ it('감독자가 원본 인계와 중단 재개 및 늦은 측정을 처리한�
     const beforeDuplicate=await fixture.db.rows("select sidecar,field_sources from garmin.body_measurements where measured_on='2026-01-30'");
     await runManual();
     expect(await fixture.db.rows("select sidecar,field_sources from garmin.body_measurements where measured_on='2026-01-30'")).toEqual(beforeDuplicate);
-    expect((await fixture.db.rows("select count(*)::int n from brain.file_requests"))[0]!.n).toBe(stableCount);
+    expect((await fixture.db.rows("select count(*)::int n from brain.file_requests where metadata->>'kind' <> 'graph'"))[0]!.n).toBe(stableCount);
     expect(await readFile(duplicateImage,'utf8')).toBe('duplicate-source');
 
     // A newer malformed claimant must not steal a valid resubmitted source.

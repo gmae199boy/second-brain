@@ -15,10 +15,55 @@ import body_runtime
 import collect
 import collect_settings
 import collect_store
+import charts
 import digest
 import labels
 import normalize_runtime
 import runtime_files
+
+
+def publish_graphs(conn, home, account, work, token, parent, report_day, zone, cutoff_ms, chart_data, version, face):
+    graphs, graph_failed, skipped = [], [], 0
+    for name, size, draw in charts.graph_jobs(chart_data):
+        collect.boundary('그래프 처리')
+        graph_path = None
+        try:
+            graph_revision = charts.revision(name, chart_data, version, face)
+            graph_meta = {'kind':'graph','local_date':report_day.isoformat(), 'name':name,
+                          'role':'today' if int(name[:2]) < 50 else 'trend',
+                          'collect_result_id':str(parent), 'revision':graph_revision,
+                          'timezone':zone, 'cutoff_ms':cutoff_ms}
+            request_id, row = runtime_files.graph_lookup(conn,account,work,token,graph_meta)
+            if row is None:
+                rendered = charts.render_one(home,name,size,draw)
+                if rendered is None:
+                    skipped += 1
+                    continue
+                graph_path, title = rendered
+                graph_meta['title'] = title
+                graph_bytes = graph_path.read_bytes()
+                graph_path.unlink()
+                graph_path = None
+                request_id, row = runtime_files.graph_request(conn,str(home),account,work,token,graph_bytes,graph_meta,cutoff_ms)
+            while row is None or row[0] not in ('completed','failed'):
+                collect.boundary('그래프 파일 등록 확인 대기')
+                time.sleep(1)
+                request_id, row = runtime_files.graph_lookup(conn,account,work,token,graph_meta)
+            if row[0] == 'failed' or row[1] is None:
+                graph_failed.append(name)
+            else:
+                graphs.append(name)
+        except (psycopg.Error, KeyboardInterrupt):
+            raise
+        except ValueError as exc:
+            if str(exc) in ('COLLECT_INVALID_ATTEMPT','COLLECT_STOPPED'): raise
+            graph_failed.append(name)
+        except Exception:
+            graph_failed.append(name)
+        finally:
+            if graph_path is not None: graph_path.unlink(missing_ok=True)
+    collect.boundary('그래프 처리 완료')
+    return graphs, graph_failed, skipped
 
 
 def run(env=None, connect=psycopg.connect):
@@ -81,7 +126,10 @@ def run(env=None, connect=psycopg.connect):
             with collect_store._write(conn,account,work,token) as (cur,_):
                 row = cur.execute('select status from brain.file_request_results_public_v1 where request_id=%s',(file_id,)).fetchone()
                 status = row[0] if row else 'pending'
-        collect.emit('result', summary=json.dumps({'status':'success','request_id':str(file_id),'revision':revision},separators=(',',':')))
+        chart_data = charts.read_chart_data(snapshot, measurements, report_day, zone)
+        version, face = charts.prepare(home)
+        graphs, graph_failed, skipped = publish_graphs(conn,home,account,work,token,parent,report_day,zone,result['cutoff_ms'],chart_data,version,face)
+        collect.emit('result', summary=json.dumps({'status':'success','request_id':str(file_id),'revision':revision,'graphs_registered':len(graphs),'graphs_skipped':skipped,'graphs_failed':len(graph_failed),'graphs_failed_names':','.join(graph_failed)},separators=(',',':')))
 
 
 def main():
