@@ -63,3 +63,15 @@
 | 시험 불안정 | 미변경 redaction MAINTAIN 시험의 실패 행수 차이 | 최초 전체 1건 실패 후 수정 없이 해당 파일39건·전체3926건 통과. 원인 미재현; 원문 실패·재실행 로그 보관, 반복 시 별도 조사 |
 
 `operator_actions: []`. 위 미검증 가능성과 운영 권고는 필수 수락조건 미완료를 대체하지 않는다.
+
+## 16.6 — built
+
+근거: [그래프 계획](../tickets/epic-garmin-runtime/tickets/story-png-core-plan.md)의 Review Triage Log와 Auto Run Result. deferred 및 operator_actions는 없다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 운영 권고 | 그래프 draw 의미 변경 시 RENDERER_VERSION 증가 | 이후 변경 시 revision 정책에 반영 |
+| 잔여 위험 | 렌더 중 강제 종료 시 임시 PNG 잔존, core 완료 순차 대기 | 임시 디렉터리 권한과 실행 시간 관찰 후 필요 시 개선 판단 |
+| 성능 권고 | Python 통합 시험의 role 격리·normalize 일감 비용·폰트 캐시 | 시험 시간 실측 근거와 함께 별도 개선 검토 |
+| 시험 불안정 | tracer 설치 단계 DB_UNAVAILABLE 1건 | 단독 재실행 및 최종 전체 통과, 원인 미재현; 재발 시 조사 |
+| 채택 가정 | 같은 날 같은 revision이면 첫 요청과 metadata 재사용 | 계획의 멱등 계약 근거 유지 |
