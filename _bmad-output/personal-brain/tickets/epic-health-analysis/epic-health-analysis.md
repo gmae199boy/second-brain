@@ -82,6 +82,7 @@ Garmin 사용자가 예약된 시각에 day·7d·30d·all 평가를 받고, 성�
 - inputs — _bmad-output/personal-brain/prep-garmin-absorption/inputs/research/garmin-runtime.md, "분석·중단·전송"
 - source — _bmad-output/personal-brain/prep-garmin-absorption/accepted-intent.md, S5·S11·S12·E6
 - research — _bmad-output/personal-brain/tickets/epic-health-analysis/epic-health-analysis-research-code.md (2026-10-28 정적 코드 조사)
+- evidence — _bmad-output/personal-brain/tickets/epic-health-analysis/epic-health-analysis-health-query-performance-evidence.md, 사용자 결정·측정 근거·유지할 계약(18.10)
 
 ## Notes
 
@@ -136,3 +137,5 @@ Garmin 사용자가 예약된 시각에 day·7d·30d·all 평가를 받고, 성�
 - Decision(2026-10-28, 재검증 F7, 추천으로 정함): `body_intake`가 그날 artifacts의 읽기 경계보다 늦게 끝나면 그 JSON은 inbox에 남고 다음 artifacts 실행(다음 날 예약 또는 `brain ext run garmin artifacts` 수동 실행)에서 병합된다. 16.5는 날짜가 아니라 아직 병합하지 않은 측정을 읽으므로 한 번만 들어간다. intake가 artifacts를 다시 넣지 않아 순환이 없다. 10:45 시각은 순서를 보장하지 않는 기본값일 뿐이다.
 - Decision(2026-10-30, 사용자): 에픽마다 두던 Refactor sweep(18.8)을 뺐다(`dropped`). 리뷰가 미룬 기존 결함은 `deferred-work.md` 장부에 남고, 사용자가 원할 때 `bmad-loop sweep`으로 직접 처리한다. 이 Mac 확인(18.9)은 sweep 대신 sweep이 기다리던 스토리들을 기다린다.
 - Decision(2026-10-30, 추천으로 정함): 18.1의 16.8 레인 대기를 없앤다. 고정 합성 snapshot·fake 모델 tracer는 analyses·파일 관계(14.5)와 ABI(12.4)로 검증한다. 실제 digest·그래프 소비는 18.2·18.5의 16.5, 18.6의 16.6 의존으로 남는다. 예전 16 완료 HEAD·번호 가정 대신 착수 시점 main HEAD에서 확인한다.
+
+- Decision(2026-11-04, 사용자, 건강 조회 성능): 18.2의 입력 snapshot 뒤에 18.10(건강 현재값 조회 성능)을 두고 18.3이 18.10을 기다리게 한다. 18.2는 그대로 완료하며 진행 중인 plan과 Dispatch를 수정·중단하지 않는다. E18-1의 입력·현재값·ambiguity 계약은 바꾸지 않고 조회 방법과 비용을 개선한다. 18.2는 입력 snapshot 동등성, 18.10은 그 경로와 공통 건강 조회의 성능·기존 판정 보존을 맡는다. 완료된 epic 14의 계약은 호환 유지하고 새 사용자 건강 조회 기능(epic 17)은 추가하지 않는다. 이는 현재값 뷰의 성능 개선을 위한 명시적 경계 예외이며, 공통 판정을 프로그램으로 옮길 때도 공개 DB·Store 계약은 유지하고 필요한 호환 마이그레이션·소비자 변경을 함께 검증한다. 구현 방안은 SQL 최적화와 일괄 조회 후 판정을 비교해 정한다. 근거와 측정 한계는 `epic-health-analysis-health-query-performance-evidence.md`에 남긴다.

@@ -26,13 +26,26 @@ risk = "high"
 references = ["_bmad-output/personal-brain/tickets/epic-health-analysis/epic-health-analysis-research-code.md, §2, §9(Done when 1), 스토리 후보 T2"]
 
 [[entry]]
+id = 10
+type = "story"
+title = "건강 현재값 조회: 판정과 입력 snapshot을 유지하며 조회·회귀 시험 시간을 줄인다"
+description = "E18-1의 조회 성능을 개선한다. 18.2가 완료·병합된 기준에서 건강 현재값·판정 조회, 반입 검증 snapshot, 18.2 입력 snapshot과 느린 Garmin 정규화 시험을 같은 합성 데이터로 측정한다. SQL 최적화와 필요한 후보·권위 규칙을 일괄 조회한 뒤 공통 프로그램 코드에서 판정하는 방안을 비교하고, 동등성과 실행 계획·시간·쿼리 수를 근거로 하나를 구현한다. 계정·날짜·지표 등 논리 키 범위를 일찍 제한하되 그 키의 경쟁 dataset·revision·버전 후보를 임의로 버리지 않는다. 일괄 조회를 쓰면 후보와 규칙을 같은 읽기 snapshot에서 얻고 항목별 추가 조회를 반복하지 않는다. 필터 없는 전체 조회와 반입 검증도 함께 확인한다. 기존 공개 건강 DB 계약과 18.2 snapshot의 내용·순서·cutoff·ambiguity 제외 목록·권위 provenance를 유지하고, Python 검증기의 독립 기대 판정은 유지한다. 생산 조회 경로를 개선하며 시험 assertion 생략·시험 전용 우회·전역 timeout 증가로 성능 개선을 대신하지 않는다. SQL 경로를 남기면 그 경로도 개선 대상이다. Python 전체 이식, 수집 빈도 변경, 수집·정규화·분석 정책 변경은 범위 밖이다."
+verify = "합성 fixture의 기존·변경 구현 결과를 대조한다: 명시 권위 순서, 복수 dataset ambiguity, 계정·시간대 미확인, 동률 revision 충돌, 지원/미지원 버전, 논리 text·JSON 동등/상이, 원형 identity·NUL, NULL·누락, 날짜/instant·cutoff 경계, 재정규화·재개에서 current 행과 resolution의 reason/current_id/selected_ids/unselected_ids/authority 버전이 같고, 18.2 입력 snapshot 비교와 반입 검증의 독립 기대 판정을 통과한다. 조건을 좁힌 조회가 전체 판정 후 같은 키를 고른 결과와 같고 다른 날짜·계정·지표를 늘려도 후보 판정 범위가 함께 늘지 않는지 실행 계획 또는 처리 행수로 확인한다. 착수 시 고정한 기준 커밋과 동일 환경·동일 fixture에서 간섭 작업 없이 warm-up 뒤 3회씩 비교하여 좁은 현재값 조회와 기존 정규화 시험의 중앙 실행 시간이 각각 절반 이하이고, 전체 조회·반입 검증·18.2 snapshot의 중앙 실행 시간이 기준보다 10% 넘게 나빠지지 않음을 보인다. 관측 수와 쿼리 수를 함께 기록하고 결과 캐시·assertion 축소로 달성하지 않는다. 실패하면 원인과 미달 구간을 남기고 성능 조건 충족으로 처리하지 않는다. 반복 검증은 pnpm test:changed만 사용하며, 최종 커밋 직전 pnpm test와 pnpm test:python을 순차로 각 한 번 실행해 결과와 전체 시간을 기록한다. 명령·환경·준비/측정 구간·실행 계획·행수·정리 방법은 plan에 남긴다."
+covers = ["E18-1"]
+after = [2]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-health-analysis/epic-health-analysis.md, Requirements E18-1; Notes Decision(2026-11-04, 건강 조회 성능)", "_bmad-output/personal-brain/tickets/epic-health-analysis/epic-health-analysis-health-query-performance-evidence.md, 사용자 결정·측정 근거·유지할 계약·검증"]
+notes = ["Decision(2026-11-04, 사용자): 18.2 완료·병합 뒤 18.3보다 먼저 별도 티켓으로 진행한다. 구현 방식을 언어나 SQL 형태로 미리 고정하지 않는다.", "Decision(2026-11-04, 추천으로 정함): 성능 인수 기준은 동일 fixture 3회 중앙값으로 좁은 조회·정규화 시험 각각 기준의 절반 이하, 전체 조회·검증·snapshot은 10% 초과 회귀 없음으로 둔다. 과거 9초/148초 측정치를 절대 시간 기준으로 쓰지 않는다.", "Risk: high — 잘못된 후보 제한이나 판정 변경은 분석 입력을 빠뜨리거나 잘못된 현재값을 선택할 수 있다.", "추가 확인: 구현자가 만든 기대값만 쓰지 않고 기존 계약 fixture와 독립 검증기로 권위·revision·버전·논리 값 충돌을 대조한다. 저장 원문과 기존 분석 행이 바뀌지 않았는지도 별도로 확인한다."]
+
+[[entry]]
 id = 3
 type = "story"
 title = "네 scope와 재개: day → 7d → 30d → all이 성공할 때마다 바로 남고, 중간에 죽이면 남은 scope만 다시 돈다"
 description = "E18-2·E18-3을 끝낸다. 분석 그래프를 epic 12의 일감 의존으로 넣는다: scope마다 `supervised` 모델 일감, 확정 트랜잭션이 다음 scope를 푼다. 실패한 scope는 AD-21 재시도를 받고, 끝내 실패하면 뒤 scope는 `dependency_failed`다. 선행 분석 관계(별도 관계 표: 당일 앞 scope와 참조한 과거 평가의 id·역할)를 남긴다. 확정 직전·확정 직후·파일 등록 중에 죽어도 같은 scope 결과로 수렴하고 모델을 다시 부르지 않는다. 오래된 attempt의 확정은 거부된다. 명시적 재생성은 새 revision의 새 행이고 이전 행과 이전된 분석은 그대로다. period 출력 schema와 period skill을 v1 리소스로 더한다."
 verify = "시험(fake 모델 CLI, 실제 감독자. 시험 이름과 실행 명령은 plan에 적는다)에서 네 scope가 순서대로 돌고 각 scope의 `analyses` 행이 그 scope가 끝난 직후 보이며, 7d 확정 직후 감독자를 죽이고 다시 띄우면 30d·all만 돌고 fake CLI 호출 수가 4이며, 검증한 출력의 durable checkpoint 뒤·FileStore 넣기 뒤·관계 확정 직전에 죽여도 호출 수가 늘지 않고(checkpoint 전에 죽인 경우만 다시 부름), 30d를 계속 실패시키면 all이 `dependency_failed`로 닫히고 day·7d 행이 남고, 회수된 attempt의 확정이 거부되며, 재생성하면 새 revision 행이 생기고 이전 행과 이전된 합성 분석 행이 바뀌지 않으며, 선행 분석 관계가 기대한 id를 가리킨다."
 covers = ["E18-2", "E18-3", "E18-5"]
-after = [2, "12.6"]
+after = [2, 10, "12.6"]
 hitl = false
 risk = "high"
 references = ["_bmad-output/personal-brain/tickets/epic-health-analysis/epic-health-analysis-research-code.md, §1(재시작 어긋남), §5, 스토리 후보 T3"]

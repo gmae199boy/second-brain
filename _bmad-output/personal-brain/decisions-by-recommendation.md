@@ -146,3 +146,4 @@
 - 2026-11-02 · 이니셔티브 Notes · core·확장 경계: 확장은 데이터를 가져오는 connector(AD-29), 데이터를 쓰는 방식(검색·조각·추출·집계·임베딩)은 core. 외부 RAG 앱은 붙이지 않고 공식·수치만 가져온다 · 근거 `inputs/rag-oss-core-architecture.md` §2
 - 2026-11-02 · epic 6 Notes · 임베딩은 확장이 아니라 core 선택 기능(pgvector, OpenAI 호환 endpoint 하나, 기본 꺼짐, 재순위 기본 없음). **2026-10-28 사용자 결정(확장으로)을 바꿈 → 2026-11-02 사용자 승인** · 근거: AD-29 한 방향 의존, AD-30 raw_records 고정 모양에 벡터가 못 들어감, AD-15·Table Contract·setup 흐름이 이미 core 전제
 - 2026-11-02 · epic 8 Notes · Drive는 설치 없는 core 연결(출처이자 FileStore 저장 위치, TS 런타임뿐). 기존 결정의 확인이지 변경 아님 · 근거 AD-23·29
+- 2026-11-04 · 18.10 Notes · 건강 조회 성능의 인수 기준은 18.2 병합 후 고정 커밋·동일 합성 fixture·동일 환경에서 warm-up 뒤 3회 중앙값으로 비교한다. 좁은 조회와 기존 정규화 시험은 각각 기준 시간의 절반 이하, 전체 조회·반입 검증·입력 snapshot은 10% 초과 회귀 없음으로 둔다. 과거 진단의 9초·148초는 절대 상한이 아니다. · 근거: epic-health-analysis의 건강 조회 성능 결정과 측정 근거 문서
