@@ -88,3 +88,16 @@
 | 잔여 위험 | normalize_days 날짜 실패는 endpoint 실패 건수에 포함되지 않음 | 옛 규칙 유지. 별도 사건 종류 필요성 판단 |
 | 시험 불안정 | queue-drain·commit-unknown PG timeout, import-verify EXTENSION_INVALID/UUID 가리기 | 단독 통과 또는 기준 커밋6회 중2회 재현. 전체 회귀 성공으로 표현하지 않음; 실행 증거는 중앙 보관 |
 | 시험 환경 | 공유 클러스터 전역 Garmin role 충돌 | 이번 검증은 전용 임시 PG54367 사용 후 정리. 격리 개선은 별도 과제 |
+
+## 16.9 — blocked
+
+근거: [Mac 전환 계획](../tickets/epic-garmin-runtime/tickets/story-mac-garmin-plan.md)의 blocked_reason·operator_actions·Auto Run Result. 마지막 문서 patch의 후속 확인은 완료했고 권고 false다. 운영 전환과 실수집은 전혀 실행하지 않았다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 필수 차단 | 14.8 반입·verify 완료 뒤 운영 전환 | 반입0건에서 첫 수집 시 권위v2가 기존 dataset 없이 고정된다. 기존 수집 유지, 반입 전 실수집 금지 |
+| 운영 조치 | 반입 계정과 tokenstore profile의 private 일치 확인 | 계정 근거 확보 전 재개 금지; 공개문서에 계정값 기록 금지 |
+| 운영 조치 | 채널 conversation 등록과 notice_conversation_id 설정 | 현 설치본은 키 미지원·conversation0. 갱신 후 실제 설정 확인 필요 |
+| 운영 조치 | 재개 때 app-ref·version 배포 및 원격 반영 | 중앙 main 반영·marketplace 갱신과 설치본 증거 별도 확인 |
+| 재개 검증 | 실행 직전 현재코드 기준 전환 절차 독립 확인 | 이번 정적 리뷰 완료와 실제 운영 재개 시 검증을 구별 |
+| 시험 환경 | 전역Garmin role 충돌·새checkout venv 준비·기존 통합 불안정 | JS3933통과/1skip, Python전체 일괄통과 기록 없음. 실패3파일 단독통과 증거 보존; 성공으로 집계하지 않음 |
