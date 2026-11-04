@@ -173,6 +173,7 @@ export interface ErrorCodeSpec {
 }
 
 const CODES = {
+  ANALYSIS_SNAPSHOT_INPUT_INVALID: { exit: 1, retryable: false, meaning: '분석 snapshot 입력이 올바르지 않습니다', hint: '수집 및 산출물 결과를 확인하세요' },
   ANALYSIS_OUTPUT_INVALID: { exit: 1, retryable: false, meaning: '분석 출력 형식이 올바르지 않습니다', hint: '모델 출력 스키마를 확인하세요' },
   ANALYSIS_MODEL_FAILED: { exit: 1, retryable: true, meaning: '분석 모델 실행에 실패했습니다', hint: '모델 실행 환경을 확인하고 다시 실행하세요' },
   ANALYSIS_SNAPSHOT_MISSING: { exit: 1, retryable: false, meaning: '분석 snapshot이 없습니다', hint: 'snapshot을 확인하세요' },

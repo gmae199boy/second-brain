@@ -48,3 +48,11 @@ describe('settings', () => {
     expect(settingDefinitions().get('timezone')).toBe(TIMEZONE_SETTING);
   });
 });
+
+it('accepts an optional home-relative analysis profile path', () => {
+  const definition = settingDefinitions().get('analysis.profile_path')!;
+  expect(definition.defaultValue).toBeUndefined();
+  expect(definition.normalize('~/profile.md')).toEqual({ok:true,value:'~/profile.md'});
+  expect(definition.normalize('/tmp/profile.md').ok).toBe(false);
+  expect(definition.normalize('~/../profile.md').ok).toBe(false);
+});

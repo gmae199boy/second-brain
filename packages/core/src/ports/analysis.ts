@@ -14,3 +14,10 @@ export interface ModelUsage { inputTokens: number; cachedInputTokens: number; ou
 export interface ModelRunner {
   run(input: { cwd: string; prompt: string; schemaPath: string; outputPath: string; effort: 'high'; model: string | null; timeoutMs: number }): Promise<{ ok: true; output: string; usage: ModelUsage | null } | { ok: false; code: 'ANALYSIS_MODEL_FAILED' }>;
 }
+
+export type AnalysisInputFailure = { ok: false; code: 'ANALYSIS_SNAPSHOT_INPUT_INVALID' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+export interface AnalysisInputStore {
+  findAnalysisSnapshotByInputs(collectWorkId: string, artifactsWorkId: string): Promise<{ok:true; snapshot: AnalysisSnapshot | null} | AnalysisInputFailure>;
+  readAnalysisInputSources(collectWorkId: string, artifactsWorkId: string): Promise<{ok:true; sources: import('../analysis/input/sources.js').AnalysisInputSources} | AnalysisInputFailure>;
+  createInputSnapshot(snapshot: AnalysisSnapshot, collectWorkId: string, artifactsWorkId: string): Promise<{ok:true; snapshot: AnalysisSnapshot} | AnalysisInputFailure>;
+}

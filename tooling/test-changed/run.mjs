@@ -55,6 +55,7 @@ try {
   else console.log('Postgres 전체: migration 변경 없음');
   const python = ['--config','apps/cli/python-test/vitest.config.ts'];
   if (selected.pythonAll) run(python,false,'Python 전체 (경로 규칙)');
+  else if (selected.analysisInput) command('pnpm',['exec','vitest','run',...python,'apps/cli/python-test/analysis-input-snapshot.test.ts',...selected.pythonFiles.filter(path => path !== 'apps/cli/python-test/analysis-input-snapshot.test.ts' && existsSync(resolve(root,path)))]);
   else if (selected.pythonFiles.length) {
     const existing = selected.pythonFiles.filter(path => existsSync(resolve(root,path)));
     if (!existing.length) console.log('Python 선택: 존재하는 시험 파일 없음');

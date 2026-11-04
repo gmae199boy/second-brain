@@ -1,0 +1,361 @@
+{
+  "date": "2026-02-01",
+  "timezone": "Asia/Seoul",
+  "cutoff": 1769911200000,
+  "previous_cutoff": 1769824680000,
+  "profile": "합성 프로필\n",
+  "digest": "{\"synthetic\":true}\n",
+  "raw": [
+    {
+      "scope": "day",
+      "key": "2026-01-30",
+      "endpoint": "user_summary",
+      "body": "{\"steps\":123}"
+    },
+    {
+      "scope": "day",
+      "key": "2026-02-01",
+      "endpoint": "heart_rates",
+      "body": "{\"userProfilePK\":123,\"heartRateValues\":[[1769911199999,70],[1769911200000,80],[1769911200001,90]],\"large\":1769911200000000001}"
+    },
+    {
+      "scope": "day",
+      "key": "2026-02-01",
+      "endpoint": "stress_data",
+      "body": "{\"nested\":[{\"ownerId\":9,\"ok\":4}],\"stressValuesArray\":[[1769911199999,2],[1769911200000,3]]}"
+    },
+    {
+      "scope": "day",
+      "key": "2026-02-01",
+      "endpoint": "bad",
+      "body": "{"
+    },
+    {
+      "scope": "day",
+      "key": "2026-02-01",
+      "endpoint": "../x",
+      "body": "{}"
+    },
+    {
+      "scope": "day",
+      "key": "2026-02-01",
+      "endpoint": "body_battery",
+      "body": "{}"
+    },
+    {
+      "scope": "activity",
+      "key": "1",
+      "endpoint": "activity",
+      "body": "{\"ownerId\":1,\"keep\":2}"
+    },
+    {
+      "scope": "activity",
+      "key": "2",
+      "endpoint": "activity",
+      "body": "{}"
+    },
+    {
+      "scope": "day",
+      "key": "2025-12-31",
+      "endpoint": "summary",
+      "body": "{}"
+    }
+  ],
+  "activities": [
+    {
+      "activity_id": 1,
+      "day_key": "2026-02-01",
+      "start_ms": 1769911190000,
+      "duration_s": 9
+    },
+    {
+      "activity_id": 2,
+      "day_key": "2026-02-01",
+      "start_ms": 1769911190000,
+      "duration_s": 10
+    }
+  ],
+  "day_summary": [
+    {
+      "date": "2026-01-30",
+      "steps": 1000,
+      "hrv_avg": 44,
+      "spo2_avg": 97,
+      "spo2_min": 93,
+      "resp_avg": 16,
+      "active_kcal": null,
+      "drinks_json": "[{\"name\": \"물\", \"amount\": 2}]",
+      "moderate_min": 12.5,
+      "vigorous_min": 7.5,
+      "weight_kg": 70.125
+    },
+    {
+      "date": "2026-01-31",
+      "steps": 2000,
+      "active_kcal": 13
+    },
+    {
+      "date": "2026-02-01",
+      "steps": 3000
+    },
+    {
+      "date": "2025-12-31",
+      "steps": 450,
+      "moderate_min": 4,
+      "weight_kg": 69.5
+    }
+  ],
+  "workout": [
+    {
+      "activity_id": 1,
+      "date": "2026-02-01",
+      "start_ms": 1769911190000,
+      "duration_s": 9,
+      "hr_avg": null,
+      "hr_max": 150
+    },
+    {
+      "activity_id": 2,
+      "date": "2026-02-01",
+      "start_ms": 1769911190000,
+      "duration_s": 10,
+      "hr_avg": 120,
+      "hr_max": null
+    },
+    {
+      "activity_id": 3,
+      "date": "2026-01-15",
+      "start_ms": 1768464000000,
+      "duration_s": null
+    },
+    {
+      "activity_id": 4,
+      "date": "2026-01-25",
+      "start_ms": 1769328000000,
+      "duration_s": 120
+    },
+    {
+      "activity_id": 5,
+      "date": "2025-12-31",
+      "start_ms": 1767168000000,
+      "duration_s": 60
+    }
+  ],
+  "exercise_log": [
+    {
+      "activity_id": 1,
+      "exercise": "Z press",
+      "sets": 2,
+      "max_kg": 30.125,
+      "volume_kg": 120.375
+    },
+    {
+      "activity_id": 1,
+      "exercise": "a squat",
+      "sets": 1,
+      "max_kg": 40,
+      "volume_kg": 40
+    },
+    {
+      "activity_id": 3,
+      "exercise": "Z press",
+      "sets": 1,
+      "max_kg": 20.125,
+      "volume_kg": null
+    },
+    {
+      "activity_id": 4,
+      "exercise": "Z press",
+      "sets": 1,
+      "max_kg": 25.5,
+      "volume_kg": 40.125
+    },
+    {
+      "activity_id": 5,
+      "exercise": "Z press",
+      "sets": 1,
+      "max_kg": 15.5,
+      "volume_kg": 45.25
+    }
+  ],
+  "body": [
+    {
+      "measured_on": "2026-01-31",
+      "sidecar": {
+        "schema_version": 1,
+        "measured_on": "2026-01-31",
+        "values": {
+          "weight_kg": 80
+        },
+        "value_mtime_ns": {
+          "weight_kg": 1769911200000000001
+        },
+        "source_files": [
+          "synthetic.png"
+        ]
+      }
+    },
+    {
+      "measured_on": "2026-02-01",
+      "sidecar": {
+        "schema_version": 1,
+        "measured_on": "2026-02-01",
+        "values": {
+          "weight_kg": 9999
+        },
+        "value_mtime_ns": {
+          "weight_kg": 1
+        },
+        "source_files": [
+          "synthetic.png"
+        ]
+      }
+    }
+  ],
+  "evaluations": [
+    {
+      "report_date": "2026-01-31",
+      "scope": "day",
+      "summary": "core 어제",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "별도 core 보고서\n"
+    },
+    {
+      "report_date": "2026-01-28",
+      "scope": "day",
+      "summary": "day 이전",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    },
+    {
+      "report_date": "2025-12-15",
+      "scope": "7d",
+      "summary": "week 2025-12-15",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    },
+    {
+      "report_date": "2025-12-29",
+      "scope": "7d",
+      "summary": "week 2025-12-29",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    },
+    {
+      "report_date": "2026-01-05",
+      "scope": "7d",
+      "summary": "week 2026-01-05",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    },
+    {
+      "report_date": "2026-01-12",
+      "scope": "7d",
+      "summary": "week 2026-01-12",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    },
+    {
+      "report_date": "2026-01-19",
+      "scope": "7d",
+      "summary": "week 2026-01-19",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    },
+    {
+      "report_date": "2026-01-25",
+      "scope": "7d",
+      "summary": "week 2026-01-25",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    },
+    {
+      "report_date": "2026-01-31",
+      "scope": "7d",
+      "summary": "week 2026-01-31",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    },
+    {
+      "report_date": "2026-02-02",
+      "scope": "7d",
+      "summary": "week 2026-02-02",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    },
+    {
+      "report_date": "2025-12-10",
+      "scope": "30d",
+      "summary": "month 2025-12-10",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    },
+    {
+      "report_date": "2025-12-30",
+      "scope": "30d",
+      "summary": "month 2025-12-30",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    },
+    {
+      "report_date": "2026-01-10",
+      "scope": "30d",
+      "summary": "month 2026-01-10",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    },
+    {
+      "report_date": "2026-01-30",
+      "scope": "30d",
+      "summary": "month 2026-01-30",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    },
+    {
+      "report_date": "2026-01-15",
+      "scope": "all",
+      "summary": "all 이전",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    },
+    {
+      "report_date": "2026-01-30",
+      "scope": "all",
+      "summary": "all 최근",
+      "judgments": [],
+      "evidence": [],
+      "next_checks": [],
+      "report_md": "합성 본문\n"
+    }
+  ]
+}
