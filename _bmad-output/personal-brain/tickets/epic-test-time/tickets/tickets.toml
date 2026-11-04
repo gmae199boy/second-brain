@@ -1,0 +1,68 @@
+# epic 19 회귀 시험 시간. 표 순서가 build 순서다(예상 절감 큰 순).
+# 2026-11-04 사용자 결정(A)과 runner 조사: 18.10 → 5 → 6 → 1 → 2 → 3 → 18.3.
+
+[[entry]]
+id = 5
+type = "story"
+title = "Python 통합 시험 병렬화: 확장 role 계약을 지킨 채 pnpm test:python이 여러 slot에서 동시에 돈다"
+description = "apps/cli/python-test/vitest.config.ts의 fileParallelism: false(4601a1e, 공유 확장 role 때문)로 Python 통합 시험 17~19파일이 직렬로 돌아, 성공한 16.6 회귀에서 Vitest 구간 665초 중 약 583초(88%)를 차지했다. 직렬 이유는 brain_ext_garmin 같은 확장 role이 PG cluster 전역이라 DB·home을 나눠도 충돌하기 때문이다(packages/postgres/src/extension-provision.ts의 역할 충돌). worker slot마다 독립 PG cluster와 고유 host port를 소유권 있는 시작·종료로 주고, 한 slot 안의 파일은 순차로 재사용하는 방식으로 병렬화한다. 생산 role 계약·advisory lock·cleanup 의미는 바꾸지 않는다. 실패·timeout으로 끝난 파일이 남긴 role·DB·container가 다음 파일과 다른 실행을 막지 않게 slot 단위로 정리한다. garmin-review-boundaries.test.ts는 저장소 extensions/garmin/.venv를 공유하므로 사전 준비를 global setup에서 한 번 한다. tooling/bootstrap/test/hook.test.ts는 자체 container·해시 포트를 쓰므로 별도 lane으로 두거나 포트 충돌을 막은 뒤에만 병렬로 둔다. uv 캐시는 실제 HOME 공유이며 각 venv는 private임을 유지한다. slot의 cluster URL과 소유권은 tooling/test-db와 apps/cli/test/pg-home.ts를 거쳐 각 시험 DB 준비에 넘기며, 19.1의 시험 DB 준비가 이 handoff를 소비한다. 시험 case·assertion·timeout은 줄이지 않는다."
+verify = "독립 환경(공용 54329 미사용)에서 build를 한 번 끝낸 뒤, 성공 기록상 가장 긴 Python 시험 파일 묶음(normalize·import-verify·body-digest·hook·artifacts·batch-import)을 새 slot runner로 1·2·3·4 slot 각각 warm-up 뒤 3회 재고 slot 수를 고른다. 1 slot 비교군도 같은 runner·cluster 준비·venv 사전 준비·hook 배치로 고정하며, 파일 시간 재배치 모델과 명령 wall을 섞지 않는다. 고른 구성의 묶음 중앙값이 1 slot의 절반 이하이고 case 수·통과 결과가 같다. 실행 중 role·DB·container 소유가 slot 사이에 섞이지 않고, 한 파일을 강제로 실패·timeout시켜도 다음 파일과 다른 slot이 통과하며 실행 뒤 남는 role·DB·container·포트가 없음을 보인다. build를 먼저 끝낸 상태에서 기본 suite와 Python suite의 Vitest process를 동시에 한 번 돌려 서로의 cluster를 건드리지 않음을 보인다(pnpm test와 pnpm test:python 명령 자체는 build 충돌 때문에 동시에 돌리지 않는다). peak CPU·연결 수를 plan에 남긴다. 전체 suite는 반복 측정하지 않고, 커밋 직전 필수 pnpm test·pnpm test:python 1회의 시간을 16.6 회귀 기록(Python 약 583초)과 나란히 기록한다."
+covers = ["E19-5"]
+after = ["18.10"]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/tickets/epic-garmin-import/tickets/story-reader-preflight-brain-ext-run-garmin-import-preflight-plan.md, 변경 파일과 역할(직렬화 이유)", "_bmad-output/personal-brain/research-performance-2026-11-04/research-performance-2026-11-04.md, 확정 결과 5"]
+notes = ["Risk: high — slot 격리가 새면 시험이 서로의 role·DB 상태로 통과·실패해 회귀를 숨긴다.", "절감 수치(3~4 slot 약 190초)는 성공 JSON의 파일 시간을 재배치한 상한 모델이다. 새 cluster 준비·CPU/DB 경쟁·18.10 뒤 critical path 변화가 빠져 있으니 착수 때 실측으로 정한다."]
+
+[[entry]]
+id = 6
+type = "story"
+title = "bootstrap hook 시험 중복 제거: 두 suite가 같은 hook 시험을 두 번 돌리지 않고 검증 집합은 그대로다"
+description = "기본 Vitest config와 Python config가 둘 다 tooling/bootstrap/test/hook.test.ts를 고른다(기본 cache 약 48.6초, Python 약 39.3초). Python 쪽에만 있는 보존 case(BRAIN_PYTHON_UPDATE_TEST=1, 약 2.7초)는 살리고 공통 case는 한 suite에서만 돌게 나눈다. hook.test.ts는 beforeAll snapshot과 앞선 설치 case가 만든 home·bin·DB를 뒤의 Python 보존 case가 이어 쓰므로, 파일 전체를 Python flag가 켜진 한 suite로 옮기거나 나눈 각 집합에 필요한 setup을 따로 준다. tooling/test-changed/rules.mjs의 bootstrap 규칙(tooling/bootstrap/ 변경 시 Python 전체, hook 경로 하드코딩)도 바뀐 배치에 맞춰, hook 시험과 fixture·src 변경이 실제로 그 시험을 가진 suite를 빠짐없이 고르게 한다. 실제 container·설치·갱신 검증은 줄이지 않는다."
+verify = "변경 전후 두 suite에서 hook 관련 case 목록(이름)을 비교해 합집합이 같고 공통 case가 한 번씩만 실행되며, Python 전용 보존 case가 BRAIN_PYTHON_UPDATE_TEST=1 조건에서 그대로 돈다. 옮기거나 나눈 각 hook 시험이 단독으로도 통과하며, tooling/test-db/test/test-changed.test.ts와 run.mjs의 실제 list·run 선택으로 hook 관련 파일 변경 때 pnpm test:changed가 바뀐 배치의 시험을 고름을 보인다. 전체 suite 시간은 커밋 직전 필수 1회에서 기록한다."
+covers = ["E19-6"]
+after = [5]
+hitl = false
+risk = "low"
+references = ["_bmad-output/personal-brain/research-performance-2026-11-04/tests/report.md, bootstrap 구성 비용과 중복 범위", "_bmad-output/personal-brain/research-performance-2026-11-04/research-performance-2026-11-04.md, 확정 결과 5"]
+notes = ["5와 같은 Python config를 바꾸므로 5 뒤에 한다."]
+
+[[entry]]
+id = 1
+type = "story"
+title = "시험 DB 초기화: 독립 DB 격리를 유지한 채 매 시험의 전체 migration 반복이 사라진다"
+description = "19.5가 바꾼 slot 구성 위에서 packages/postgres/test/fixture.ts와 apps/cli/test/pg-home.ts의 시험 DB 준비를 바꾼다. 최신 migration을 한 번 적용한 template DB를 만들고 시험마다 그 복제로 독립 DB를 얻는 방식과, DB를 초기화해 재사용하는 방식을 비교해 하나를 고른다. 재사용을 고르더라도 동시에 도는 시험끼리 DB를 공유하지 않고, 한 시험이 끝난 상태가 다음 시험에 남지 않아야 한다. template을 고르면 migration 내용(파일 hash)이 바뀔 때 다시 만들고, 병렬 worker 사이에서 생성 경쟁이 없어야 한다. 이 fixture는 18.10의 회귀 시험과 import 계약 시험, apps/cli/test/ext-fixture.ts의 extHome → pg-home.ts의 pgHome을 거치는 Garmin E2E도 쓴다. role·권한·소유자는 시험마다 지금과 같게 준비한다. migration 자체, 파괴적 DDL, role·권한, 빈 DB 상태를 검증하는 시험은 지금처럼 새 DB에 migration을 적용한다. 시험 case·assertion은 줄이지 않는다."
+verify = "착수 시 고정한 기준 커밋과 같은 환경에서 redaction·store·work-store·sessions-ingest 네 파일의 warm-up 뒤 3회 중앙값을 전후 비교해, 네 파일의 DB 준비·정리 합계가 기준의 절반 이하이고 case 수와 통과 결과가 같다. 전체 suite 시간은 커밋 직전 필수 pnpm test·pnpm test:python 1회의 시간을 기준 커밋의 같은 1회와 나란히 기록한다(반복 측정하지 않는다). 한 시험이 쓴 행·role·schema 변경이 다른 시험에 보이지 않음을 시험으로 보이고, template을 채택했으면 migration 파일을 바꿀 때 template이 다시 만들어지고, 병렬 실행에서 template 생성이 slot(PG cluster)·migration hash마다 한 번만 일어남을, 재사용을 채택했으면 초기화 뒤 상태가 새 migration DB와 같음을 함께 보인다. 성능 비교의 반복 실행은 전용 독립 DB·home에서 직렬 잠금 아래 하며 AGENTS.md의 마무리 회귀 1회와 별개다. 반복 검증은 pnpm test:changed, 커밋 직전 pnpm test와 pnpm test:python을 순차로 한 번씩 실행한다."
+covers = ["E19-1"]
+after = [5]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/research-performance-2026-11-04/tests/report.md, 4개 파일의 실제 구간; 영향·18.10·티켓 판단"]
+notes = ["Risk: medium — 격리가 새면 시험이 서로의 상태로 통과·실패해 회귀를 숨긴다."]
+
+[[entry]]
+id = 2
+type = "story"
+title = "폰트 캐시: 새 home 시험이 matplotlib 폰트 목록을 매번 새로 만들지 않는다"
+description = "extensions/garmin/src/charts.py의 prepare는 home 아래 private MPLCONFIGDIR을 쓰므로 새 home을 만드는 시험마다 macOS 폰트 열거(약 9.3초)가 반복된다. 시험 세션에서 한 번 만든 폰트 캐시를 각 시험 home의 private 캐시로 복사하거나 미리 채우는 방식과, 생산의 첫 실행 비용을 줄이는 방식을 비교한다. 생산 MPLCONFIGDIR 위치·0700 권한·home 격리, Apple SD Gothic Neo → DejaVu Sans 선택, 캐시가 깨졌거나 matplotlib 버전이 바뀌었을 때 다시 만드는 동작은 유지한다. 19.5 뒤에는 여러 slot·process가 동시에 돌므로, 공유 seed 캐시를 쓰면 누가 만드는지, 완성된 캐시만 원자적으로 공개되는지, 각 home에는 복사본만 들어가는지(또는 slot별 seed)를 정한다. 시험에서 폰트 선택이나 그래프 렌더를 mock으로 바꾸지 않는다. 시험 home 준비(apps/cli/test/ext-fixture.ts의 extHome → pg-home.ts의 pgHome)를 19.1과 함께 쓰므로 19.1 뒤에 한다."
+verify = "같은 환경에서 Garmin 그래프·prepare 관련 Python 시험 파일의 warm-up 뒤 3회 중앙값을 전후 비교해(전체 suite는 커밋 직전 필수 1회의 시간만 기록) 새 home당 폰트 캐시 생성이 시험 세션에서 한 번만 일어남을 계측으로 보이고, 각 home의 캐시 디렉터리 권한이 0700이며, 한글 라벨 그래프가 같은 폰트 family를 고르며 extensions/garmin/tests/check_chart_fonts.py의 glyph 누락·경고 없음 검사가 그대로 통과하고, 버전 불일치·손상 캐시에서 다시 만들어지고, 여러 process가 동시에 처음 실행해도 반쯤 쓴 캐시를 읽지 않음을 시험으로 보인다."
+covers = ["E19-2"]
+after = [1]
+hitl = false
+risk = "low"
+references = ["_bmad-output/personal-brain/research-performance-2026-11-04/garmin/report.md, 3. Python 시작·matplotlib·PNG 단계", "_bmad-output/personal-brain/tickets/epic-garmin-runtime/epic-garmin-runtime.md, E16-6"]
+notes = ["폰트 cold 비용은 이 Mac(macOS system_profiler) 기준이다. 다른 OS의 비용이 같다고 가정하지 않는다."]
+
+[[entry]]
+id = 3
+type = "story"
+title = "등록 확인 대기: 그래프와 digest 파일이 끝나는 대로 확인되고 요청마다 1초를 기다리지 않는다"
+description = "extensions/garmin/src/runtime_artifacts.py의 그래프 발행 루프와 digest 발행은 파일 등록 요청 뒤 완료를 확인하기 전에 매번 time.sleep(1)을 한다. 그래프 요청을 먼저 모두 보낸 뒤 한꺼번에 확인하는 방식, 대기 간격을 점진적으로 늘리는 방식 등을 비교해 고른다. 그래프별 실패 격리, collect.boundary의 취소·중지 검사, COLLECT_INVALID_ATTEMPT·COLLECT_STOPPED 전파, attempt fencing, 완료 캐시 재사용, revision 의미와 file_requests 계약은 유지한다. digest 발행의 별도 대기 루프(ARTIFACT_FILE_FAILED 포함)도 같은 기준으로 고친다. core 등록기 쪽은 바꾸지 않는다. extensions/garmin/tests/check_charts.py가 캐시·렌더와 발행 취소를 함께 검증하므로 19.2 뒤에 한다."
+verify = "착수 시 실제 core 등록 경로에서 잰 기준과 비교해, 신규 그래프 3장 발행과 digest 발행의 대기 합계가 각각 기준의 절반 이하이고(render·request·대기 분리 계측), 그래프 하나 실패·등록 실패·digest ARTIFACT_FILE_FAILED·대기 중 취소·attempt 무효·중단 뒤 재개·완료 캐시 재사용에서 결과(graphs·graph_failed·예외)가 기존과 같음을 보인다. 등록 완료 확인 조회가 대기 없이 바쁘게 반복되지 않음(조회 횟수 상한)을 함께 보인다."
+covers = ["E19-3"]
+after = [2]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/research-performance-2026-11-04/garmin/report.md, 2. 실제 PNG·독립 DB와 그래프 등록 대기", "_bmad-output/personal-brain/tickets/epic-garmin-runtime/epic-garmin-runtime.md, E16-6"]
+notes = ["조사의 3초는 합성 등록기 기준이며 core E2E가 아니다. 착수 시 실제 core 등록 E2E에서 기준을 다시 잰다."]
+

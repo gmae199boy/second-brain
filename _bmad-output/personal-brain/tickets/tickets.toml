@@ -77,12 +77,20 @@ covers = ["R2", "R11"]
 after = [{ epic = 12, needs = "계정 키 직렬화, 긴 수집의 임대 갱신·attempt token, 현지 시각 예약(manifest의 기본 수집 예약)" }, { epic = 13, needs = "확장 설치·활성화, manifest와 설정 snapshot, `brain_ext_garmin` role과 확장 마이그레이션 적용" }, { epic = 14, needs = "Garmin 확장 뼈대·스키마, core 건강 계약 표와 그 의미 계약(AD-32), `file_requests`, 이전된 기존 기록(새 수집이 그 위에 이어진다)" }, { epic = 15, needs = "채널 발신 요청과 의미 키 UNIQUE(수집 사건 알림, 2026-10-28)" }]
 
 [[epic]]
+id = 19
+slug = "epic-test-time"
+title = "회귀 시험 시간"
+description = "10분 넘는 pnpm test·pnpm test:python 회귀가 계약·assertion을 줄이지 않고 동일 조건 전후 비교로 크게 줄어 있다 — 직렬로 도는 Python 통합 시험의 병렬화, 두 suite의 hook 시험 중복, 시험마다 반복되는 DB migration, 새 home의 matplotlib 폰트 캐시, 파일 등록 확인의 고정 1초 대기."
+covers = []
+after = [{ epic = 18, needs = "18.10 건강 조회 성능 개선의 병합(19.5가 실행 구성을 바꾸는 Python suite에 18.10의 정규화 시험이 있다)" }]
+
+[[epic]]
 id = 18
 slug = "epic-health-analysis"
 title = "core 건강 분석"
 description = "예약된 core 일감이 분석 에이전트(이 Mac의 Codex 로그인)를 띄워 core 건강 데이터로 day→7d→30d→all 평가를 순서대로 만들고, 검증한 출력을 `analyses`와 리포트 파일로 바로 보존하며, 결과 묶음을 채널 발신 요청으로 보내고, 발신 실패가 성공한 평가를 지우지 않는다."
 covers = ["R2", "R10", "R11", "R12"]
-after = [{ epic = 12, needs = "일감 의존(day→7d→30d→all), 모델을 부르는 일감의 감독(자식 프로세스 그룹·취소·reap), 긴 평가의 임대 갱신, 현지 시각 예약" }, { epic = 14, needs = "`analyses` 최소 계약·DDL(이 에픽이 호환 확장한다)과 이전된 기존 분석(선행 analysis·재시작 지점), 건강 계약 표의 \"현재\" view" }, { epic = 15, needs = "채널 발신 요청의 의미 키 UNIQUE와 최초 시도 gate(결과 묶음 발신)" }, { epic = 16, needs = "새 수집이 넣는 정제 행(digest)과 그래프 파일 등록 요청 — 새 날짜의 분석 입력과 결과 묶음의 그래프" }]
+after = [{ epic = 19, needs = "시험 시간 개선 19.5·19.6·19.1·19.2·19.3의 병합 — 18.3부터 빨라진 회귀로 개발한다(2026-11-04 사용자 결정 A, 기능 선행 아님)" }, { epic = 12, needs = "일감 의존(day→7d→30d→all), 모델을 부르는 일감의 감독(자식 프로세스 그룹·취소·reap), 긴 평가의 임대 갱신, 현지 시각 예약" }, { epic = 14, needs = "`analyses` 최소 계약·DDL(이 에픽이 호환 확장한다)과 이전된 기존 분석(선행 analysis·재시작 지점), 건강 계약 표의 \"현재\" view" }, { epic = 15, needs = "채널 발신 요청의 의미 키 UNIQUE와 최초 시도 gate(결과 묶음 발신)" }, { epic = 16, needs = "새 수집이 넣는 정제 행(digest)과 그래프 파일 등록 요청 — 새 날짜의 분석 입력과 결과 묶음의 그래프" }]
 
 [[epic]]
 id = 17
