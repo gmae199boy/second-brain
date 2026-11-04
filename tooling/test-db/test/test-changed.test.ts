@@ -30,6 +30,10 @@ describe('changed test path rules', () => {
       expect(classifyChanges([file]),file).toMatchObject({pythonAll:false,pythonFiles:[],postgresAll:false,reasons:[]});
     }
   });
+  it('selects the tracer for subprocess and resource changes', () => {
+    for (const path of ['apps/cli/src/workers/health-analysis.ts', 'apps/cli/src/runtime/model-codex.ts', 'apps/cli/test/fixtures/fake-codex.mjs', 'packages/core/resources/health-analysis/v1/schema.json']) expect(classifyChanges([path]).analysisTracer).toBe(true);
+    expect(classifyChanges(['packages/core/resources-extra/schema.json']).analysisTracer).toBe(false);
+  });
   it('runs Postgres and Python for migrations', () => {
     expect(classifyChanges(['packages/postgres/migrations/0028_file_request_metadata.sql'])).toMatchObject({pythonAll:true,postgresAll:true});
   });

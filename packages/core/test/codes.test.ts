@@ -74,6 +74,9 @@ describe('the error codes', () => {
     );
 
     expect(exits).toEqual({
+      ANALYSIS_OUTPUT_INVALID: 1,
+      ANALYSIS_MODEL_FAILED: 1,
+      ANALYSIS_SNAPSHOT_MISSING: 1,
       CHANNEL_REQUEST_NOT_FOUND: 1,
       CHANNEL_ALREADY_SENT: 1,
       CHANNEL_LEGACY_NOT_RESENDABLE: 1,

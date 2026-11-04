@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { expect, it } from 'vitest';
 import { provisionExtension, postgresStore } from '../src/index.js';
@@ -81,8 +81,16 @@ it('출처와 현재 시도에 결합된 불변 가져오기 계약을 강제한
     await ext.query(payload,[payloadId,name,'payload',file,work,token,Buffer.from([97,0,98])]);
     await ext.query(payload,[payloadId,name,'payload',file,work,token,Buffer.from([97,0,98])]);
     await expect(ext.query(payload,[payloadId,name,'payload',file,work,token,Buffer.from([97,0,99])])).rejects.toThrow('충돌');
+    const snapshotId = randomUUID(), bundleId = randomUUID(), coreWork = randomUUID(), coreToken = randomUUID(), coreId = randomUUID();
+    const snapshotBytes = Buffer.from('{}');
+    const snapshot = { id: snapshotId, bundleId, localDate: '2026-01-02', timeZone: 'UTC', content: snapshotBytes, contentSha256: createHash('sha256').update(snapshotBytes).digest('hex'), createdAt: now };
+    expect(await store.createAnalysisSnapshot(snapshot)).toMatchObject({ ok: true });
+    expect(await store.addWork({ id: coreWork, kind: 'health_analysis', targetKind: 'analysis_snapshot', targetId: snapshotId, createdAt: now, nextAttemptAt: now })).toMatchObject({ ok: true });
+    expect(await store.claimSupervisedWork({ now, claimedBy: 'core', kinds: ['health_analysis'], attemptToken: coreToken })).toMatchObject({ ok: true });
+    expect(await store.commitCoreAnalysis({ id: coreId, fileId: randomUUID(), locationId: randomUUID(), snapshot, output: { status: 'ok', summary: 'synthetic', report_md: 'report', judgments: [], evidence: [], next_checks: [] }, agent: 'codex', workId: coreWork, attemptToken: coreToken, now, contentHash: 'sha256:' + 'c'.repeat(64), sizeBytes: 6, location: { storeKind: 'local', locator: 'synthetic', ownership: 'brain' } })).toMatchObject({ ok: true });
     const analysesDto = await store.imports.readAnalyses();
     expect(analysesDto.ok && analysesDto.rows).toContainEqual(expect.objectContaining({id:payloadId,summary:'a\0b'}));
+    expect(analysesDto.ok && analysesDto.rows.map(row => row.id)).not.toContain(coreId);
     expect(analysesDto.ok && analysesDto.rows).toContainEqual(expect.objectContaining({id:analysisId,artifacts:[expect.objectContaining({file_request_id:file,role:'image',file_id:null})]}));
     await expect(ext.query(analysis.replace("'d','b'", "'other','b'"), [randomUUID(),name,'wrong-dataset',file,work,token])).rejects.toThrow();
     const jsonTextId=randomUUID(), jsonText = 'x\ud800y\0', jsonRaw=Buffer.from('"x\\ud800y\\u0000"','ascii');

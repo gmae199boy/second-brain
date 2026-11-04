@@ -269,7 +269,7 @@ describe('the envelope codec masks as the envelope is built', () => {
 describe('the registry of the ways out', () => {
   it('names every codec once', () => {
     const names = OUTPUT_CODECS.map((codec) => codec.name);
-    expect(names).toEqual(['channel', 'envelope', 'hook', 'text']);
+    expect(names).toEqual(['analysis-export', 'channel', 'envelope', 'hook', 'text']);
     expect(new Set(names).size).toBe(names.length);
   });
 

@@ -52,6 +52,7 @@ export function classifyChanges(paths) {
   return {
     pythonAll: matched.length > 0 || exactMatches.length > 0 || bootstrapChanged,
     pythonFiles,
+    analysisTracer: paths.some(path => path === 'apps/cli/src/workers/health-analysis.ts' || path === 'apps/cli/src/runtime/model-codex.ts' || path === 'apps/cli/test/fixtures/fake-codex.mjs' || path.startsWith('packages/core/resources/')),
     postgresAll: paths.some(path => path.startsWith('packages/postgres/migrations/')),
     reasons: [
       ...matched.map(({prefix,reason}) => ({prefix,reason})),

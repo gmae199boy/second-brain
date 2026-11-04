@@ -800,6 +800,9 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 
 | 코드 | exit | 뜻 |
 | --- | --- | --- |
+| `ANALYSIS_OUTPUT_INVALID` | 1 | 분석 출력 형식이 올바르지 않습니다 |
+| `ANALYSIS_MODEL_FAILED` | 1 | 분석 모델 실행에 실패했습니다 |
+| `ANALYSIS_SNAPSHOT_MISSING` | 1 | 분석 snapshot이 없습니다 |
 | `CHANNEL_REQUEST_NOT_FOUND` | 1 | 채널 요청이 없습니다 |
 | `CHANNEL_ALREADY_SENT` | 1 | 이미 발신한 요청입니다 |
 | `CHANNEL_LEGACY_NOT_RESENDABLE` | 1 | 옛 이력은 재전송할 수 없습니다 |

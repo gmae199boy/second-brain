@@ -141,3 +141,4 @@ export * from './process.js';
 export type { WorkCancelState, RequestWorkCancelResult, RecordSupervisedProcessInput, OpenSupervisedAttempt, ListOpenSupervisedAttemptsResult, SettleSupervisedAttemptInput } from './store.js';
 
 export type { WorkAttemptHealthEntry, WorkAttemptHealthKind, ReadWorkAttemptHealthResult } from './store.js';
+export type * from './analysis.js';

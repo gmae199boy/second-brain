@@ -173,6 +173,9 @@ export interface ErrorCodeSpec {
 }
 
 const CODES = {
+  ANALYSIS_OUTPUT_INVALID: { exit: 1, retryable: false, meaning: '분석 출력 형식이 올바르지 않습니다', hint: '모델 출력 스키마를 확인하세요' },
+  ANALYSIS_MODEL_FAILED: { exit: 1, retryable: true, meaning: '분석 모델 실행에 실패했습니다', hint: '모델 실행 환경을 확인하고 다시 실행하세요' },
+  ANALYSIS_SNAPSHOT_MISSING: { exit: 1, retryable: false, meaning: '분석 snapshot이 없습니다', hint: 'snapshot을 확인하세요' },
   CHANNEL_REQUEST_NOT_FOUND: { exit: 1, retryable: false, meaning: '채널 요청이 없습니다', hint: '요청 ID를 확인하세요' },
   CHANNEL_ALREADY_SENT: { exit: 1, retryable: false, meaning: '이미 발신한 요청입니다', hint: '상태를 확인하세요' },
   CHANNEL_LEGACY_NOT_RESENDABLE: { exit: 1, retryable: false, meaning: '옛 이력은 재전송할 수 없습니다', hint: '이력의 상태를 확인하세요' },

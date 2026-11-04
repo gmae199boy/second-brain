@@ -25,6 +25,8 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
     const opened = await openBrainStore({ home: options.home, env: options.env, config, path: 'drain', createStore: options.createStore });
     try {
       const url = config.ok ? await resolveStoreUrl(options.home, config.config.storeUrlEnv, options.env).catch(() => undefined) : undefined;
+      const analysisEnv = { ...options.env };
+      if (config.ok) delete analysisEnv[config.config.storeUrlEnv];
       const telegram = await resolveTelegramConfig(options.home, options.env).catch(() => null);
       const loadProtectedLaunches = async (): Promise<NonNullable<SupervisorOptions['protectedLaunches']>> => {
       const protectedLaunches: Record<string, NonNullable<SupervisorOptions['protectedLaunches']>[string]> = {};
@@ -101,7 +103,14 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
         idGen: options.idGen, signal: controller.signal, log: (message) => log.write(message),
         ...(options.supervisor?.pollMs === undefined ? {} : { pollMs: options.supervisor.pollMs }),
         ...(options.supervisor?.renewEveryMs === undefined ? {} : { renewEveryMs: options.supervisor.renewEveryMs }),
-        launches: { channel_send: (item, token) => url ? ({
+        launches: { health_analysis: (item, token) => url ? ({ command: process.execPath,
+          args: [fileURLToPath(new URL('../../dist/workers/health-analysis.js', import.meta.url))],
+          env: { ...analysisEnv, [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: url,
+            [PROCESS_ABI_ENV.workId]: item.id, [PROCESS_ABI_ENV.runGeneration]: String(item.attempts),
+            [PROCESS_ABI_ENV.attemptToken]: token, [PROCESS_ABI_ENV.workKind]: item.kind,
+            [PROCESS_ABI_ENV.targetKind]: item.targetKind, [PROCESS_ABI_ENV.targetId]: item.targetId,
+            BRAIN_ANALYSIS_FILES_PATH: config.ok ? config.config.filesPath : join(options.home, 'files') },
+        }) : null, channel_send: (item, token) => url ? ({
           command: process.execPath,
           args: [fileURLToPath(new URL('../../dist/workers/channel-send.js', import.meta.url))],
           env: { [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: url,

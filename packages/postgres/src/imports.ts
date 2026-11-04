@@ -64,7 +64,7 @@ export function postgresImportStore(connect: PgConnect): ImportStore {
     },
     async readAnalyses() {
       try { const c = connect(); if (!c.ok) throw Error(c.message);
-        const rows = (await sql<Record<string, unknown>>`select a.*,r.file_id,r.error_code from brain.analyses a left join brain.file_request_results r on r.request_id=a.file_request_id`.execute(c.connection.db)).rows;
+        const rows = (await sql<Record<string, unknown>>`select a.*,r.file_id,r.error_code from brain.analyses a left join brain.file_request_results r on r.request_id=a.file_request_id where a.source <> 'core'`.execute(c.connection.db)).rows;
         const relations = (await sql<{ analysis_id: string; file_request_id: string; role: string; file_id: string | null; error_code: string | null }>`select x.analysis_id,x.file_request_id,x.role,r.file_id,r.error_code from brain.analysis_artifacts x left join brain.file_request_results r on r.request_id=x.file_request_id order by x.analysis_id,x.role,x.file_request_id`.execute(c.connection.db)).rows;
         const fields = ['id','source','dataset','import_batch','original_table','original_key','revision','model_missing','created_at','created_at_missing','file_request_id','source_work_item_id','source_attempt_token','file_id','error_code'];
         return { ok: true, rows: rows.map(r => {
