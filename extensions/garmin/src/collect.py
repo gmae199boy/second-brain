@@ -15,6 +15,7 @@ from collect_client import open_client, blocked_today
 from collect_settings import decode
 import collect_coverage as coverage
 import collect_store as store
+import collect_notice
 import normalize_store as normalized_store
 import normalize_runtime as normalization
 from garmin_session import GarminError, session_lock, silence_library_logging
@@ -85,6 +86,17 @@ def run(client=None, env=None, connect=psycopg.connect):
         return _run_locked(client, env, connect, args, settings, zone, tokenstore, today, _clock_ms(), work, token)
 
 
+def _notify_checked(*args):
+    try:
+        collect_notice.notify(*args)
+    except ValueError as error:
+        if str(error) == 'COLLECT_INVALID_ATTEMPT':
+            raise
+        raise ValueError('COLLECT_NOTICE_FAILED') from error
+    except Exception as error:
+        raise ValueError('COLLECT_NOTICE_FAILED') from error
+
+
 def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, cutoff, work, token):
     boundary()
     with connect(env['BRAIN_DATABASE_URL'],autocommit=True,options='-c transaction_timeout=2000 -c statement_timeout=1900 -c lock_timeout=1500') as conn:
@@ -97,6 +109,8 @@ def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, c
         if blocked:
             if account:
                 store.put_run(conn,account,work,token,run_id,today,started,'skipped_blocked',finished_at=_clock_ms())
+                _notify_checked(conn,account,zone,today,'skipped_blocked','',started,
+                                settings.get('garmin.notice_conversation_id'),work,token)
             raise GarminError('SESSION_BLOCKED')
         # 미등록 extension 대상은 로그인 profile로 식별해야 coverage를 읽을 수 있다.
         manager = None
@@ -109,6 +123,9 @@ def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, c
                     raise ValueError('COLLECT_ACCOUNT_UNKNOWN')
                 account = str(identity)
                 store.set_target(conn,account,work,token,args['target_kind'],args['target_id'])
+            def notify(status, detail=''):
+                _notify_checked(conn,account,zone,today,status,detail,started,
+                                settings.get('garmin.notice_conversation_id'),work,token)
             snapshot = store.coverage_snapshot(conn,account)
             catalogue = normalization.catalog(conn)
             normalized, normalize_failed = normalization.retry_items(conn,account,work,token,zone,boundary,snapshot,catalogue)
@@ -117,6 +134,7 @@ def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, c
                 pending_days = [str(row[0]) for row in normalized_store.unfinished_days(conn,account,history_start=snapshot['history_start'])]
                 failed = normalization.publish_days(conn,account,work,token,zone,pending_days,catalogue,boundary,snapshot=snapshot) if pending_days else 0
                 snapshot_id = store.save_artifact_snapshot(conn,account,work,token,snapshot,boundary)
+                notify('noop')
                 result('noop',cutoff,today,normalized=normalized,normalize_failed=normalize_failed + failed,zone=zone,snapshot_id=snapshot_id)
                 return
             if args['recent']:
@@ -224,13 +242,16 @@ def _run_locked(client, env, connect, args, settings, zone, tokenstore, today, c
                 status = {'RATE_LIMITED':'rate_limited','BLOCKED_403':'blocked_403','LOGIN_REQUIRED':'auth_failed'}.get(error.code,'error')
                 detail = error.code.lower()
                 store.put_run(conn,account,work,token,run_id,today,started,status,detail,_clock_ms())
+                notify(status,detail)
                 raise
             except ValueError as error:
                 if str(error) in ('COLLECT_ACCOUNT_UNKNOWN', 'COLLECT_ACCOUNT_MISMATCH'):
                     raise
                 store.put_run(conn,account,work,token,run_id,today,started,'error','error',_clock_ms())
+                notify('error','error')
                 raise
             store.put_run(conn,account,work,token,run_id,today,started,status,detail,_clock_ms())
+            notify(status,detail)
             if status == 'partial':
                 raise ValueError('COLLECT_PARTIAL')
             snapshot_id = store.save_artifact_snapshot(conn,account,work,token,snapshot,boundary)
@@ -242,9 +263,9 @@ def main():
     try:
         run()
     except Exception as error:
-        allowed = ('COLLECT_CLIENT_UNAVAILABLE','COLLECT_INVALID_ATTEMPT','COLLECT_STOPPED','COLLECT_PARTIAL','COLLECT_ACCOUNT_UNKNOWN','COLLECT_ACCOUNT_MISMATCH')
+        allowed = ('COLLECT_CLIENT_UNAVAILABLE','COLLECT_INVALID_ATTEMPT','COLLECT_STOPPED','COLLECT_PARTIAL','COLLECT_ACCOUNT_UNKNOWN','COLLECT_ACCOUNT_MISMATCH','COLLECT_NOTICE_FAILED')
         code = error.code if isinstance(error,GarminError) else str(error) if isinstance(error,ValueError) and str(error) in allowed else 'COLLECT_INVALID'
-        emit('error',code=code,retryable=error.retryable if isinstance(error,GarminError) else False)
+        emit('error',code=code,retryable=error.retryable if isinstance(error,GarminError) else code == 'COLLECT_NOTICE_FAILED')
         return 1
     return 0
 

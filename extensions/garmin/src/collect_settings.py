@@ -2,6 +2,7 @@
 import json
 import math
 import re
+import uuid
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -66,6 +67,11 @@ def decode(raw=None, *, require_timezone=False, strict=True):
         raise ValueError('COLLECT_INVALID')
     if not values['garmin.tokenstore']:
         raise ValueError('COLLECT_INVALID')
+    if 'garmin.notice_conversation_id' in values:
+        try:
+            uuid.UUID(values['garmin.notice_conversation_id'])
+        except (ValueError, AttributeError):
+            raise ValueError('COLLECT_INVALID') from None
     zone = values.get('garmin.timezone')
     if zone is not None:
         try:

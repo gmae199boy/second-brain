@@ -65,8 +65,17 @@ class Fake:
                 if time.monotonic() > deadline: raise ValueError('fixture timeout')
                 time.sleep(.02)
         if endpoint == self.marker.get('fail_endpoint'):
+            from garmin_session import GarminError, write_block
+            code = self.marker.get('fail_code', 'GARMIN_TRANSIENT')
+            if self.marker.get('write_block') and code in ('RATE_LIMITED', 'BLOCKED_403'):
+                from datetime import date
+                write_block(Path(os.environ['BRAIN_TOKENSTORE_FOR_FIXTURE']), date.fromisoformat(os.environ['BRAIN_RANGE_FROM']), code.lower())
+            raise GarminError(code, True)
+        if endpoint == 'sleep_data' and key in self.marker.get('invalid_sleep_days', []):
+            return {'unexpected': 'structure'}
+        if self.marker.get('all_no_data'):
             from garmin_session import GarminError
-            raise GarminError(self.marker.get('fail_code', 'GARMIN_TRANSIENT'), True)
+            raise GarminError('GARMIN_NO_DATA')
         if endpoint == 'sleep_data' and 'sleep_payload' in self.marker:
             if self.marker['sleep_payload'] is None:
                 from garmin_session import GarminError
@@ -79,6 +88,7 @@ class Fake:
 def main():
     try:
         home, marker = checked_fixture()
+        os.environ['BRAIN_TOKENSTORE_FOR_FIXTURE'] = json.loads(os.environ['BRAIN_SETTINGS_SNAPSHOT'])['values']['garmin.tokenstore']
         class Tee:
             def __init__(self, stream, path):
                 self.stream, self.file = stream, path.open('w')
@@ -87,15 +97,22 @@ def main():
                 return self.stream.write(data)
             def flush(self): self.file.flush(); self.stream.flush()
         token = os.environ['BRAIN_ATTEMPT_TOKEN']
+        (home / ('collect-conversation-' + token)).write_text(json.loads(os.environ['BRAIN_SETTINGS_SNAPSHOT'])['values'].get('garmin.notice_conversation_id',''))
         sys.stdout = Tee(sys.stdout, home / ('collect-stdout-' + token))
         sys.stderr = Tee(sys.stderr, home / ('collect-stderr-' + token))
         original_connect = socket.socket.connect
         def guarded_connect(sock, address):
+            with (home / 'collect-addresses').open('a') as output: output.write(json.dumps(str(address)) + '\n')
             if sock.family in (socket.AF_INET, socket.AF_INET6) and address[0] not in ('127.0.0.1', '::1'):
                 with (home / 'collect-outbound').open('a') as output: output.write('blocked\n')
                 raise OSError('outbound blocked')
             return original_connect(sock, address)
         socket.socket.connect = guarded_connect
+        if marker.get('notice_kill'):
+            def notice_hook(stage):
+                if stage == marker['notice_kill']:
+                    os.kill(os.getpid(), __import__('signal').SIGKILL)
+            collect.collect_notice.hook = notice_hook
         original_emit = collect.emit
         def record_emit(kind, **values):
             if kind in ('error', 'result'):
@@ -181,8 +198,8 @@ def main():
         else:
             collect.run(Fake(home, marker))
     except Exception as exc:
-        code = exc.code if isinstance(exc, collect.GarminError) else str(exc) if isinstance(exc, ValueError) and str(exc) in ('COLLECT_INVALID_ATTEMPT', 'COLLECT_STOPPED', 'COLLECT_PARTIAL', 'COLLECT_ACCOUNT_UNKNOWN', 'COLLECT_ACCOUNT_MISMATCH') else 'COLLECT_INVALID'
-        collect.emit('error', code=code, retryable=False)
+        code = exc.code if isinstance(exc, collect.GarminError) else str(exc) if isinstance(exc, ValueError) and str(exc) in ('COLLECT_INVALID_ATTEMPT', 'COLLECT_STOPPED', 'COLLECT_PARTIAL', 'COLLECT_ACCOUNT_UNKNOWN', 'COLLECT_ACCOUNT_MISMATCH', 'COLLECT_NOTICE_FAILED') else 'COLLECT_INVALID'
+        collect.emit('error', code=code, retryable=code == 'COLLECT_NOTICE_FAILED')
         return 1
     finally:
         if 'home' in locals():

@@ -369,6 +369,12 @@
       "secret": false,
       "required": [],
       "default": "false"
+    },
+    {
+      "key": "garmin.notice_conversation_id",
+      "type": "string",
+      "secret": false,
+      "required": []
     }
   ],
   "error_codes": [
@@ -400,7 +406,8 @@
     "ARTIFACT_BODY_PENDING",
     "ARTIFACT_NORMALIZE_FAILED",
     "ARTIFACT_FILE_FAILED",
-    "ARTIFACT_DB_RETRY"
+    "ARTIFACT_DB_RETRY",
+    "COLLECT_NOTICE_FAILED"
   ],
   "auth": {
     "kind": "garmin.auth",
