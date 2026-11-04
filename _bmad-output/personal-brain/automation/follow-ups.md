@@ -101,3 +101,19 @@
 | 운영 조치 | 재개 때 app-ref·version 배포 및 원격 반영 | 중앙 main 반영·marketplace 갱신과 설치본 증거 별도 확인 |
 | 재개 검증 | 실행 직전 현재코드 기준 전환 절차 독립 확인 | 이번 정적 리뷰 완료와 실제 운영 재개 시 검증을 구별 |
 | 시험 환경 | 전역Garmin role 충돌·새checkout venv 준비·기존 통합 불안정 | JS3933통과/1skip, Python전체 일괄통과 기록 없음. 실패3파일 단독통과 증거 보존; 성공으로 집계하지 않음 |
+
+## 18.1 — built
+
+근거: [분석 tracer 계획](../tickets/epic-health-analysis/tickets/story-tracer-snapshot-day-core-fake-analyses-plan.md)의 deferred·Review Triage Log·Auto Run Result. 독립 리뷰 4개와 후속 3개를 마쳤고 후속 리뷰 권고 false다. 전체 회귀 실패를 통과로 집계하지 않는다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 보류 / 기존 결함 | import-verify 변조 감지 시험 실패 | 기준 커밋에서도 2회 재현. 별도 원인 조사 필요 |
+| 보류 / 시험 격리 | 중단된 확장 시험이 전역 brain_ext_garmin role을 남김 | 전용 임시 PG에서 검증 후 정리. 다른 작업의 role 삭제 금지 |
+| 보류 / 저장소 위생 | 추적 pyc가 시험 실행으로 변경됨 | 생성 파일 추적 정책 별도 판단 |
+| 채택 가정 | codex만 허용, 기본 모델·effort high·20분 timeout | 최소 tracer 계약. skill 발견·다중 adapter·진단은18.4/18.9에서 판단 |
+| 잔여 위험 | 실패 attempt usage를 ABI v1 error에 기록할 칸 없음 |18.4의 모델 실행 계약에서 다룸 |
+| 시험 불안정 / 사전 조건 | JS PG 연결 timeout, 새 checkout Garmin venv 부재 | JS 실패 파일159건 단독 통과, venv 설치 뒤 해당 Python 통과. 기존 import-verify 실패는 남아 전체 성공 아님 |
+| 검증 데이터 격리 | 초기 fixture가 실제 하네스 transcript를 격리 시험 DB에 수집 | fixture 수정 및 소유 DB·임시 홈 제거 확인. 커밋·보고서에 실내용 없음 |
+
+`operator_actions: []`. snapshot은18.2 전까지 합성 바이트이며 bundle id는 snapshot 행에 보존한다. 원문 로그·리뷰·영수증은 중앙 로컬 체크포인트와 보존한 워크트리에 있다.
