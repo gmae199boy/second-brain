@@ -45,11 +45,11 @@ title = "네 scope와 재개: day → 7d → 30d → all이 성공할 때마다 
 description = "E18-2·E18-3을 끝낸다. 분석 그래프를 epic 12의 일감 의존으로 넣는다: scope마다 `supervised` 모델 일감, 확정 트랜잭션이 다음 scope를 푼다. 실패한 scope는 AD-21 재시도를 받고, 끝내 실패하면 뒤 scope는 `dependency_failed`다. 선행 분석 관계(별도 관계 표: 당일 앞 scope와 참조한 과거 평가의 id·역할)를 남긴다. 확정 직전·확정 직후·파일 등록 중에 죽어도 같은 scope 결과로 수렴하고 모델을 다시 부르지 않는다. 오래된 attempt의 확정은 거부된다. 명시적 재생성은 새 revision의 새 행이고 이전 행과 이전된 분석은 그대로다. period 출력 schema와 period skill을 v1 리소스로 더한다."
 verify = "시험(fake 모델 CLI, 실제 감독자. 시험 이름과 실행 명령은 plan에 적는다)에서 네 scope가 순서대로 돌고 각 scope의 `analyses` 행이 그 scope가 끝난 직후 보이며, 7d 확정 직후 감독자를 죽이고 다시 띄우면 30d·all만 돌고 fake CLI 호출 수가 4이며, 검증한 출력의 durable checkpoint 뒤·FileStore 넣기 뒤·관계 확정 직전에 죽여도 호출 수가 늘지 않고(checkpoint 전에 죽인 경우만 다시 부름), 30d를 계속 실패시키면 all이 `dependency_failed`로 닫히고 day·7d 행이 남고, 회수된 attempt의 확정이 거부되며, 재생성하면 새 revision 행이 생기고 이전 행과 이전된 합성 분석 행이 바뀌지 않으며, 선행 분석 관계가 기대한 id를 가리킨다."
 covers = ["E18-2", "E18-3", "E18-5"]
-after = [2, 10, "12.6", "19.5", "19.6", "19.1", "19.2", "19.3", "19.7"]
+after = [2, 10, "12.6", "19.5", "19.6", "19.1", "19.2", "19.3", "19.7", "19.10"]
 hitl = false
 risk = "high"
 references = ["_bmad-output/personal-brain/tickets/epic-health-analysis/epic-health-analysis-research-code.md, §1(재시작 어긋남), §5, 스토리 후보 T3"]
-notes = ["Decision(2026-11-04, 사용자 A): 시험이 10분 넘게 걸려 개발이 늦어지므로 19.5·19.6·19.1·19.2·19.3·19.7(시험 시간·안정성 개선)를 18.10 뒤, 18.3보다 먼저 한다. 기능상 선행이 아니라 순서 결정이다."]
+notes = ["Decision(2026-11-04, 사용자 A): 시험이 10분 넘게 걸려 개발이 늦어지므로 19.5·19.6·19.1·19.2·19.3·19.7·19.10(시험 시간·안정성 개선)를 18.10 뒤, 18.3보다 먼저 한다. 기능상 선행이 아니라 순서 결정이다."]
 
 [[entry]]
 id = 4

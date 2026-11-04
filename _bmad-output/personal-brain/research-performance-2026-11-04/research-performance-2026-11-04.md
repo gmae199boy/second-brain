@@ -134,12 +134,20 @@
 
 티켓: epic 19의 19.7(import-verify 안정화), 19.8(test:changed 실행 기록), 19.9(단독 시험 선택 좁히기). 남은 후보: 위 원인 미확정 불안정 3종의 재현·진단, 기본 changed와 Postgres 전체·tracer 추가 실행의 중복 제거(19.8 기록으로 양을 잰 뒤), 넓은 규칙 일괄 축소(시험별 영향 지도 필요).
 
+## 확정 결과 7 — 원인 미확정 불안정 시험 3종의 정적 조사 (2026-11-04)
+
+시험·DB·container를 실행하지 않고 기존 실패 기록과 코드만 읽었다(같은 Mac의 18.10 성능 측정 보호). 실패 원문은 gitignored `.brain-automation/tickets/{16.5,16.7,16.9,18.1,18.2}/` archive와 그 로그에 있다.
+
+- **garmin-normalize:** 16.9 run4의 `expected 'COLLECT_STOPPED' to be 'COLLECT_INVALID_ATTEMPT'`(:128). 시험은 attempt 취소 뒤 release하는데, 감독자의 취소 확인(`packages/core/src/domain/work-item.ts:179` 기본 1000ms)이 먼저 SIGTERM을 보내면 자식이 `COLLECT_STOPPED`를, 자식이 먼저 쓰면 fence가 `COLLECT_INVALID_ATTEMPT`를 낸다. 순서 경합이 정확히 설명하므로 19.10으로 등록했다.
+- **garmin-batch-import:** UTF-16le/be 실패는 직접 반입과 NUL 복원 검증을 통과한 뒤 CLI import-verify 단계(:401-402, :409-410)에서 `EXTENSION_INVALID`·`report` 누락으로 깨졌다. 인코딩 처리에는 무작위 감지 분기가 없다. 19.7에 합쳤다. 16.7의 첫 case 120초 timeout은 원래 스택이 없고, CLI 자식 spawn(`apps/cli/test/ext-fixture.ts:19-26`)과 첫 case `execFileSync`에 deadline이 없다. **남은 TODO:** install·각 자식·cleanup 진입/종료 시각과 DB 대기를 계측하고 단계별 지연을 주입해 120초를 쓰는 단계와 timeout 뒤 잔존 자원을 판정한다.
+- **redaction:** 16.5·18.2의 `expected … to have a length of 1 but got 2`(:274). 1순위 가설은 같은 cluster의 다른 DB가 잡은 오래된 snapshot 때문에 정상 대상(tool_notes)의 VACUUM FULL도 retained>0으로 재시도 10회를 소진하는 것이다(`maintenance.ts:13-32`, `drain.ts:149-151`, 시험 주석 :84-89). 실패 행 내용이 출력되지 않아 확정할 수 없다. **남은 TODO:** 실패 행의 target·code·fingerprint를 출력하고, 전용 cluster 단독 10회와 다른 DB에서 repeatable-read snapshot을 잡은 조건 10회를 backend_xmin·retained 수와 함께 비교한다. 19.5는 Python suite만 격리하므로 기본 suite의 Postgres 시험 cluster 공유는 그대로다.
+
 ## TODO — 아직 남은 작업
 
 ### 티켓·실행 계획
 
 - [ ] **18.10 구현:** 18.2 완료·원격 main 반영을 확인한 뒤 기존 승인된 자동화 순서로 진행. 이 조사 세션이 중복 워커를 띄우지 않는다.
-- [x] **추가 티켓 분할·순서 결정:** 2026-11-04 epic 19 `epic-test-time`로 등록. 실측 근거가 있는 시험 시간 스토리만 티켓이다. 사용자 결정 A에 따라 시험 시간 스토리 19.1 시험 DB 초기화, 19.2 폰트 캐시, 19.3 그래프·digest 등록 대기, 그리고 확정 결과 6에서 더한 19.7 import-verify 안정화·19.8 test:changed 실행 기록·19.9 단독 시험 선택 좁히기. 반입 정리 조회는 시험 시간 목표 밖이라 티켓에서 빼고 아래 후보로 남긴다. 추가 조사로 확인한 runner 구성은 19.5 Python 통합 시험 병렬화·19.6 hook 중복 제거로 등록하고, 시험 시간 lane을 18.10 → 19.5 → 19.6 → 19.1 → 19.2 → 19.3 → 18.3으로 바꿨다(위 "확정 결과 5"). 아래 큰 세션·검색·로그 scanner 후보와 "측정·범위의 남은 공백"은 조사가 미완료라 티켓으로 만들지 않았고, 이 문서의 TODO로 남는다. 끝나면 결과에 맞는 별도 작업으로 분류한다(epic 19는 회귀 시험 시간 전용이며 제품 성능은 그 범위 밖이다). 낮은 우선순위 후보는 epic Notes의 Parked.
+- [x] **추가 티켓 분할·순서 결정:** 2026-11-04 epic 19 `epic-test-time`로 등록. 실측 근거가 있는 시험 시간 스토리만 티켓이다. 사용자 결정 A에 따라 시험 시간 스토리 19.1 시험 DB 초기화, 19.2 폰트 캐시, 19.3 그래프·digest 등록 대기, 그리고 확정 결과 6에서 더한 19.7 import-verify 안정화·19.8 test:changed 실행 기록·19.9 단독 시험 선택 좁히기. 확정 결과 7에서 19.10 normalize 취소·fence 순서를 더하고 batch-import UTF-16 실패를 19.7에 합쳤다. 현재 실행 우선순위는 18.10 → 19.5 → 19.6 → 19.1 → 19.2 → 19.3 → 19.7 → 19.10 → 18.3이고 19.8 → 19.9가 18.3과 별개로 이어진다(실제 의존은 19.5에서 19.6·19.1로 갈라지고, 19.1에서 19.2·19.7·19.10으로 갈라진다). 반입 정리 조회는 시험 시간 목표 밖이라 티켓에서 빼고 아래 후보로 남긴다. 추가 조사로 확인한 runner 구성은 19.5 Python 통합 시험 병렬화·19.6 hook 중복 제거로 등록하고, 시험 시간 lane을 18.10 → 19.5 → 19.6 → 19.1 → 19.2 → 19.3 → 18.3으로 바꿨다(당시 기록, 현재 목록은 아래 등록 결과)(위 "확정 결과 5"). 아래 큰 세션·검색·로그 scanner 후보와 "측정·범위의 남은 공백"은 조사가 미완료라 티켓으로 만들지 않았고, 이 문서의 TODO로 남는다. 끝나면 결과에 맞는 별도 작업으로 분류한다(epic 19는 회귀 시험 시간 전용이며 제품 성능은 그 범위 밖이다). 낮은 우선순위 후보는 epic Notes의 Parked.
 - [x] **시험 DB 초기화 개선 후보:** → 19.1. fixture 격리·권한·파괴적 DDL·migration 자체 검증을 유지하면서 template/초기화 재사용을 비교. 362회 반복 비용을 줄이는 것이 목표이며 테스트 assertion 축소 금지.
 - [ ] **반입 정리 인덱스 후보:** (제품 성능, 시험 시간 epic 19 밖) 규모별 동일 결과, 공유 locator 차단, 쓰기/인덱스 크기·마이그레이션·배포 잠금 비용을 검증.
 - [x] **폰트 캐시 후보:** → 19.2. 새 home 시험 격리·권한·한글 glyph·환경 차이를 보존하는 캐시 초기화/재사용 방식 검토.

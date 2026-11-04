@@ -1,5 +1,5 @@
 # epic 19 회귀 시험 시간. 표 순서가 build 순서다(예상 절감 큰 순).
-# 2026-11-04 사용자 결정(A)과 runner 조사: 18.10 → 5 → 6 → 1 → 2 → 3 → 7 → 18.3, 그 뒤 8 → 9(18.3을 막지 않음).
+# 2026-11-04 사용자 결정(A)과 runner 조사: 18.10 → 5 → 6 → 1 → 2 → 3 → 7 → 10 → 18.3, 그 뒤 8 → 9(18.3을 막지 않음).
 
 [[entry]]
 id = 5
@@ -70,14 +70,27 @@ notes = ["조사의 3초는 합성 등록기 기준이며 core E2E가 아니다.
 id = 7
 type = "story"
 title = "import-verify 불안정 수정: garmin-import-verify가 같은 커밋에서 반복 실행해도 매번 같은 결과를 낸다"
-description = "apps/cli/python-test/garmin-import-verify.test.ts가 여러 티켓(16.7·16.9·18.1·18.2)에서 재발했고 16.7 기준 커밋 6회 중 2회 실패가 재현됐다. 실패 모양은 실패 응답에 data.report가 없는데 시험이 바로 참조하는 TypeError, EXTENSION_INVALID, 무작위 UUID가 card-number 가림 규칙에 걸리는 경우다. 먼저 결정적으로 재현해 원인을 하나씩 분리하고 고친다. 실패할 때는 가림 규칙 안에서 원래 예외·실패 envelope·work_id를 남겨 다음 실패가 진단 가능하게 한다. 가림 규칙이 실제 card-number를 가리는 계약, 반입 검증의 판정 의미, 시험 assertion은 약하게 하지 않는다. 원인이 제품 코드면 제품을 고치고, 시험 fixture의 무작위성이면 fixture를 고친다. batch-import NUL·normalize attempt 경합·redaction 행 수는 원인이 미확정이라 이 스토리 밖이다."
-verify = "착수 기준 커밋에서 실패를 재현하는 방법(시드·반복 횟수·조건)과 원인별 분류를 plan에 남긴다. 고친 뒤 같은 독립 환경에서 이 파일을 연속 20회 돌려 모두 통과하고, 실패를 일부러 일으킨 경우에도 원래 예외·work_id가 가려진 출력에 남는다. 가림 규칙 시험은 그대로 통과한다. 커밋 직전 필수 pnpm test·pnpm test:python 1회가 통과한다."
+description = "apps/cli/python-test/garmin-import-verify.test.ts가 여러 티켓(16.7·16.9·18.1·18.2)에서 재발했고 16.7 기준 커밋 6회 중 2회 실패가 재현됐다. 실패 모양은 실패 응답에 data.report가 없는데 시험이 바로 참조하는 TypeError, EXTENSION_INVALID, 무작위 UUID가 card-number 가림 규칙에 걸리는 경우다. apps/cli/python-test/garmin-batch-import.test.ts의 UTF-16le/be case도 직접 반입과 NUL 복원 검증을 통과한 뒤 같은 CLI import-verify 단계(:401-402, 변조 검증 :409-410)에서 EXTENSION_INVALID·report 누락으로 실패했으므로(16.9·18.1·18.2) 같은 단계·실패 유형으로 함께 원인을 분리한다(같은 근본 원인으로 확정된 것은 아니다). 먼저 결정적으로 재현해 원인을 하나씩 분리하고 고친다. 실패할 때는 가림 규칙 안에서 원래 예외·실패 envelope·work_id를 남겨 다음 실패가 진단 가능하게 한다. 가림 규칙이 실제 card-number를 가리는 계약, 반입 검증의 판정 의미, 시험 assertion은 약하게 하지 않는다. 원인이 제품 코드면 제품을 고치고, 시험 fixture의 무작위성이면 fixture를 고친다. batch-import의 120초 timeout(원인 미확정), normalize 취소 순서 경합(19.10), redaction 행 수(원인 미확정)는 이 스토리 밖이다."
+verify = "착수 기준 커밋에서 실패를 재현하는 방법(시드·반복 횟수·조건)과 원인별 분류를 plan에 남긴다. 고친 뒤 같은 독립 환경에서 이 파일과 garmin-batch-import.test.ts의 UTF-8/UTF-16le/UTF-16be 검증 case를 각각 연속 20회 돌려 모두 통과하고, 실패를 일부러 일으킨 경우에도 원래 예외·work_id가 가려진 출력에 남는다. 가림 규칙 시험은 그대로 통과한다. 커밋 직전 필수 pnpm test·pnpm test:python 1회가 통과한다."
 covers = ["E19-7"]
 after = [1]
 hitl = false
 risk = "medium"
-references = ["_bmad-output/personal-brain/research-performance-2026-11-04/research-performance-2026-11-04.md, 확정 결과 6"]
+references = ["_bmad-output/personal-brain/research-performance-2026-11-04/research-performance-2026-11-04.md, 확정 결과 6·7"]
 notes = ["19.5가 role 잔존·venv·build 간섭 같은 비격리 원인을 먼저 없애고 19.1이 시험 DB 준비(extHome → pg-home → tooling/test-db)를 바꾼 뒤에 시작해, 남는 실패를 이 파일 고유 원인으로 좁힌다. 원인이 19.2·19.3의 파일(charts·runtime_artifacts)로 확정되면 그때 범위와 after를 다시 본다.", "Decision(2026-11-04, 추천으로 정함): 수락 기준 연속 20회는 재현율 약 1/3(6회 중 2회)에서 우연 통과 확률을 무시할 만큼 낮추려는 값이며, 원인별 결정적 재현·수정 검증을 대신하지 않는다.", "실패 원문 증거는 gitignored 로컬 archive에 있다: .brain-automation/tickets/16.7/worktree-checkpoint-archive/impl-report-2.md·impl-report-3.md, 16.9 archive verify/, 18.1 archive final-python 로그, 18.2 archive impl-report.md. 다른 checkout에는 없을 수 있다."]
+
+[[entry]]
+id = 10
+type = "story"
+title = "normalize 취소·fence 순서: 감독자 취소와 attempt fence가 어느 순서로 와도 각 경로가 결정적으로 검증된다"
+description = "apps/cli/python-test/garmin-normalize.test.ts(:113-128)는 500행 chunk 뒤 멈춘 자식의 attempt를 취소하고 release한 뒤 COLLECT_INVALID_ATTEMPT만 기대한다. 그런데 감독자 취소 확인 주기(packages/core/src/domain/work-item.ts:179 기본 1000ms)에 따라 감독자가 먼저 SIGTERM을 보내면(packages/core/src/queue/supervisor.ts:254-261, process-cleanup.ts:27-28) 자식이 release에서 collect.py:25-31의 COLLECT_STOPPED를 먼저 내고, 자식이 먼저 쓰면 normalize_store.py:134-136 → collect_store.py:28-30의 fence가 COLLECT_INVALID_ATTEMPT를 낸다(16.9 run4 실패). 시험 fixture에 순서를 정하는 barrier를 두어 두 순서를 각각 강제하고 두 경로를 따로 검증한다. barrier는 시험 fixture(extensions/garmin/tests/collect_fixture.py:148-168)에만 둔다: SIGTERM 처리 진입은 원래 collect._stop handler를 반드시 부르는 시험 전용 wrapper로 관측하고, 취소 감시 지연은 시험 쪽 gate로만 만든다. 실제 감독자 SIGTERM, 원래 collect.boundary, 실제 DB attempt_valid fence를 모두 통과시키며 heartbeat·claim 갱신, cancel flag, 생산 polling 주기·cleanup grace를 바꾸거나 fence 결과·예외를 주입하지 않는다. barrier는 finally에서 풀고 SIGTERM 확인 뒤 곧바로 release해 기존 5초 cleanup grace 안에서 실제 SIGKILL·reap을 피하지 않는다. 제품의 취소·fence 의미와 재개 알고리즘은 바꾸지 않으며, 두 결과를 모두 허용하도록 assertion을 느슨하게 만들지 않는다."
+verify = "취소 뒤 release를 보류하고 자식의 SIGTERM 처리 진입을 확인한 다음 release하는 순서를 10회, 취소 감시를 막은 채 취소→release→fence 실패를 확인한 다음 감시를 푸는 순서를 10회 돌려 앞의 것은 매번 COLLECT_STOPPED, 뒤의 것은 매번 COLLECT_INVALID_ATTEMPT이고, 두 경우 모두 받은 500행 보존·오래된 attempt의 추가 쓰기 0·재개 뒤 최종 501행이 완성됨(앞 500행의 identity·값 보존, 특정 cursor·offset 구현을 요구하지 않음)을 보인다. 이 파일을 독립 환경에서 연속 20회 돌려 모두 통과한다. 커밋 직전 필수 pnpm test·pnpm test:python 1회가 통과한다."
+covers = ["E19-10"]
+after = [1]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/research-performance-2026-11-04/research-performance-2026-11-04.md, 확정 결과 7"]
+notes = ["Decision(2026-11-04, 추천으로 정함): 두 순서 각 10회·전체 파일 20회는 원천의 실측 성공 수가 아니라 새 수락 기준이다.", "19.7과는 다른 시험 파일이고 barrier 대상 fixture도 다르다. 19.7의 수정이 공통 fixture(extensions/garmin/tests/fixtures.py)·daemon·출력 경로로 넓어지면 그때 공유 파일을 다시 확인해 after나 범위를 정한다.", "18.10이 정규화 경로를 바꾸므로 18.10 뒤(19.5 → 19.1 경로)에 한다. 실패 원문은 gitignored .brain-automation/tickets/16.9/worktree-checkpoint-archive/verify/test-python-run4-dedicated-venv.log:50-65에 있다."]
 
 [[entry]]
 id = 8
