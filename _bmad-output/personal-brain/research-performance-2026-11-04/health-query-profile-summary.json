@@ -1,0 +1,103 @@
+{
+  "scope": "Profiling garmin-normalize.test.ts only; no implementation change",
+  "testRuns": [
+    {
+      "command": "pnpm test:changed",
+      "isolatedDatabase": true,
+      "durationSeconds": 190.4,
+      "passed": true,
+      "note": "Initial Python atexit diagnostic had an error; corrected in the detailed run."
+    },
+    {
+      "command": "pnpm test:changed",
+      "isolatedDatabase": true,
+      "durationSeconds": 147.96,
+      "passed": true
+    }
+  ],
+  "detailedRun": {
+    "fixtureReadCalls": 367,
+    "fixtureReadSeconds": 131.03467934000005,
+    "readsOverOneSecond": 17,
+    "slowReadSeconds": 129.48618612400003,
+    "queueCalls": 25,
+    "queueWaitSeconds": 13.92447400199999,
+    "pythonProcesses": {
+      "fake_auth_fixture.py": {
+        "count": 1,
+        "sumSeconds": 0.016314499999999954,
+        "medianMs": 16.314499999999953
+      },
+      "import.py": {
+        "count": 1,
+        "sumSeconds": 0.4150985839999998,
+        "medianMs": 415.09858399999985
+      },
+      "collect_fixture.py": {
+        "count": 10,
+        "sumSeconds": 11.757172999999993,
+        "medianMs": 534.5858335000012
+      },
+      "normalize_fixture.py": {
+        "count": 14,
+        "sumSeconds": 6.570550875000017,
+        "medianMs": 444.28306299999895
+      },
+      "day_repair_fixture.py": {
+        "count": 1,
+        "sumSeconds": 0.20996004199999152,
+        "medianMs": 209.96004199999152
+      },
+      "publisher_contract_fixture.py": {
+        "count": 1,
+        "sumSeconds": 0.18253858299998682,
+        "medianMs": 182.53858299998683
+      },
+      "check.py": {
+        "count": 1,
+        "sumSeconds": 0.8589252919999999,
+        "medianMs": 858.9252919999999
+      }
+    }
+  },
+  "simpleQueryBenchmark": {
+    "queries": 100,
+    "persistentConnectionMs": 86.96,
+    "connectQueryCloseMs": 890.41
+  },
+  "rootCause": "health_current_v1 joins health_resolution_v1 only on current_id=id; outer selective predicates do not restrict resolution keys early. Correlated subqueries are repeated across irrelevant keys. JIT compilation also costs several seconds.",
+  "queryPlan": {
+    "observationRows": 2608,
+    "resolutionLoopRows": 1133,
+    "subplans": 93,
+    "nodes": 311,
+    "sharedHitBlocks": 5599819
+  },
+  "queryExperiment": {
+    "baselineJitOnMs": [
+      9339.111,
+      8894.276
+    ],
+    "baselineJitOffMs": [
+      7137.796,
+      7988.621
+    ],
+    "predicateOnBothRelationsMs": [
+      323.689,
+      320.153,
+      319.665
+    ],
+    "sameResultInSyntheticCase": true
+  },
+  "limitations": [
+    "Entire ten-minute suite was not re-profiled. This finding covers the slow normalize test.",
+    "EXPLAIN comparisons ran while the synthetic test was active and add CPU load; timings are diagnostic, not isolated stable benchmarks.",
+    "Equivalent output was checked for one synthetic account/metric/date query; a general view rewrite needs semantic verification.",
+    "Turning JIT off alone did not resolve the expensive repeated subqueries."
+  ],
+  "cleanup": {
+    "temporaryTestInstrumentationRestored": true,
+    "evidenceDirectory": ".brain-automation/test-profile",
+    "testDatabase": "Dedicated ephemeral container on localhost:54339; public test container untouched"
+  }
+}
