@@ -3,5 +3,6 @@ export function classifyChanges(paths: string[]): {
   pythonFiles: string[];
   postgresAll: boolean;
   analysisTracer: boolean;
+  analysisInput: boolean;
   reasons: { prefix: string; reason: string }[];
 };

@@ -7,6 +7,10 @@ import { fileURLToPath } from 'node:url';
 import { classifyChanges } from '../../test-changed/rules.mjs';
 
 describe('changed test path rules', () => {
+  it('selects analysis input integration dependencies', () => {
+    for (const path of ['packages/core/src/analysis/input/snapshot.ts', 'packages/core/resources/health-analysis/v1/a.json', 'apps/cli/test/fixtures/legacy-report-input-oracle.py', 'apps/cli/test/fixtures/analysis-input-fixture.json']) expect(classifyChanges([path]).analysisInput, path).toBe(true);
+    expect(classifyChanges(['packages/core/src/analysis/input-extra/a.ts']).analysisInput).toBe(false);
+  });
   it('runs Python for extension and runtime paths', () => {
     for (const file of [
       'extensions/garmin/src/x.py', 'extensions/other/manifest.json',
