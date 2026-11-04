@@ -12,7 +12,7 @@ review: 'thorough'
 review_source: 'pinned'
 lenses_ran: ['blind-hunter', 'edge-case-hunter', 'verification-gap', 'intent-alignment']
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context:
   - '{project-root}/_bmad-output/personal-brain/automation/runbook.md'
   - '{project-root}/_bmad-output/personal-brain/tickets/epic-garmin-runtime/epic-garmin-runtime-research-code.md'
@@ -81,7 +81,7 @@ blocked_reason: "14.8 반입·verify 완료 대기: 운영 DB 반입 기록 0건
 
 **Acceptance Criteria:**
 - Given 14.8 반입·verify가 끝난 설치본에서, when 전환 순서를 한 번 돌리면, then `launchctl list`에 `local.garmin-pipeline.collect`가 없고 `brain schedules list`에 garmin.collect 11:00·garmin.collect_retry 11:15가 있으며 보류 구간의 garmin 청구는 0이다.
-- Given 보류 하한 T0와 enable 직전·직후 시각 Ta·Tb를 private 증거로 남겼다면, when [T0, Ta) 구간의 garmin 일감 attempt(완료된 것 포함)를 Design Notes의 조회로 세면, then 0건이고 [Ta, Tb]에는 `garmin.auth`만 있다. 공개 plan에는 구간 확인 결과와 건수만 남긴다.
+- Given 해제 전 미완료 garmin 일감을 0으로 만들고 보류 하한 T0와 enable 직전 Ta를 private 증거로 남겼다면, when [T0, Ta] 구간의 garmin 일감 attempt(완료된 것 포함)를 Design Notes의 조회로 세면, then 0건이고, 해제 뒤 attempt는 새로 만든 auth 일감의 것뿐이다. 공개 plan에는 구간 확인 결과와 건수만 남긴다.
 - Given 실수집이 성공했다면, when 결과를 읽으면, then 그 일감의 ABI 결과가 성공이고 새 수집 dataset의 raw·건강 행 건수가 0보다 크며 "현재" view 읽기가 성공한다. 옛 수집과 겹친 시간은 없다.
 - Given 갱신된 설치본에서, when 원격으로 붙을 수 있는 터미널에서 로그인 스킬로 `brain ext login garmin` 진입을 확인하면, then 비밀 입력이 대화가 아니라 터미널 프롬프트로만 열린다. 결과는 성공/실패만 기록한다. 실제 재인증이 필요하면 운영자 조치로 분리한다.
 - Given 이번 실행(반입 0건)에서는, when plan을 읽으면, then 운영 상태 변경 없이 blocked이고 재개 조건과 operator_actions가 있다.
@@ -93,11 +93,11 @@ blocked_reason: "14.8 반입·verify 완료 대기: 운영 DB 반입 기록 0건
 2. 보류 하한 시각 T0를 private에 남긴다. 이미 보류 중이면 T0는 `brain.extensions.enabled_changed_at`이다. 그다음 `brain ext disable garmin`(이미 보류면 그대로 둔다). enabled=false를 확인하고, garmin 미완료 일감과 종료되지 않은 attempt가 0인지 확인한다.
 3. app-ref·version commit을 push하고 공식 bootstrap으로 설치본을 갱신한다. 그다음 `brain ext install garmin`을 돌린다. 패키지·lock frozen 환경·마이그레이션 단계는 succeeded여야 하고, login_required에서 멈추는 것이 정상이다(보류 중 `garmin.auth`는 청구되지 않음). enabled=false, 예약 행, 청구 0이 그대로인지 확인한다. 이상이 있으면 복구로 간다. 설치 API가 보류 중 갱신을 지원하지 않으면(단계 실패 등) 4를 먼저 하고 3을 다시 한다. 이때부터 옛 collect는 내려간 상태로 본다.
 4. `launchctl disable gui/$(id -u)/local.garmin-pipeline.collect`로 다음 로그인·재부팅의 자동 load를 막는다. 이어서 `launchctl bootout gui/$(id -u)/local.garmin-pipeline.collect`를 한다. plist 파일은 그대로 둔다. 다음 넷을 확인한다: `launchctl print-disabled gui/$(id -u)`에서 disabled, `launchctl list`에 label 없음, garmin-pipeline collect 프로세스 없음, tokenstore 잠금 보유자 없음. 하나라도 불명이면 멈추고 복구로 간다. report는 남긴다.
-5. 보류 해제와 계정 gate. 시작 조건은 그날 garmin 예약 시각(11:00·11:15, 실제 time_zone 기준)이 모두 지났을 때다. 마감은 다음 예약 시각 30분 전이다. 마감까지 gate를 끝내지 못하면 복구로 간다. 순서는 이렇다. (a) 보류된 기존 garmin 예약 두 건을 `brain schedules remove <id>`로 지운다. 이 예약은 next_run_at이 과거라서 해제 즉시 발화한다. 예약 0을 확인한다. (b) `brain ext enable garmin`. (c) `brain ext status garmin`의 `auth_work_id`를 읽는다. 그 일감의 실제 `brain.work_items` 완료·outcome과 latest `brain.work_attempts`의 error_code를 private로 읽어 끝날 때까지 기다린다. status의 login journal은 install을 다시 돌리기 전까지 pending으로 남으므로 판정 근거가 아니다. 진행과 실패(LOGIN_REQUIRED·MFA)를 구별한다. 성공이면 `brain ext install garmin`을 다시 돌려 installed를 확인한다. 예약 두 건이 다시 생겼는지, next_run_at이 마감 뒤 미래인지 확인한다. 실패·부분 예약은 복구로 간다. (d) 곧바로 로그인 profile과 반입 계정이 일치하는지 다시 확인한다. 불일치이거나 MFA를 요구하면 복구로 간다. (e) 경계: (b) 직전의 wall-clock Ta와 enable이 반환된 직후의 Tb를 private에 남긴다(`enabled_changed_at`과 `started_at`은 commit 시각이 아니라 호출 쪽 시각이다). [T0, Ta) 구간의 garmin attempt는 0이어야 한다. [Ta, Tb] 구간에는 `garmin.auth`만 허용한다. 수집 예약을 (a)에서 지웠으므로 해제 직후 청구될 수 있는 garmin 일감은 auth뿐이다. 그 밖의 kind가 있으면 실패로 보고 복구한다. 공개에는 구간별 건수만 쓴다. (f) 채널 conversation이 등록돼 있으면 `garmin.notice_conversation_id`를 설정한다.
+5. 보류 해제와 계정 gate. 시작 조건은 그날 garmin 예약 시각(11:00·11:15, 실제 time_zone 기준)이 모두 지났을 때다. 마감은 다음 예약 시각 30분 전이다. 마감까지 gate를 끝내지 못하면 복구로 간다. 순서는 이렇다. (a) 보류된 기존 garmin 예약 두 건을 `brain schedules remove <id>`로 지운다. 이 예약은 next_run_at이 과거라서 해제 즉시 발화한다. 예약 0을 확인한다. 3에서 보류된 채 대기 중인 `garmin.auth` 일감(status의 `auth_work_id`)을 `brain queue cancel <id>`로 닫는다. 아직 청구되지 않은 일감은 즉시 cancelled로 완료된다. garmin 미완료 일감이 0인지 확인한다. 이렇게 하면 해제 경계에 청구할 수 있는 garmin 일감이 아예 없다. (b) `brain ext enable garmin`을 한 뒤 곧바로 `brain ext install garmin`을 돌린다. cancelled auth를 보고 새 auth 일감을 만든다(`packages/core/src/extensions/install.ts`의 cancelled 분기). (c) `brain ext status garmin`의 `auth_work_id`를 읽는다. 그 일감의 실제 `brain.work_items` 완료·outcome과 latest `brain.work_attempts`의 error_code를 private로 읽어 끝날 때까지 기다린다. status의 login journal은 install을 다시 돌리기 전까지 pending으로 남으므로 판정 근거가 아니다. 진행과 실패(LOGIN_REQUIRED·MFA)를 구별한다. 성공이면 `brain ext install garmin`을 다시 돌려 installed를 확인한다. 예약 두 건이 다시 생겼는지, next_run_at이 마감 뒤 미래인지 확인한다. 실패·부분 예약은 복구로 간다. (d) 곧바로 로그인 profile과 반입 계정이 일치하는지 다시 확인한다. 불일치이거나 MFA를 요구하면 복구로 간다. (e) 경계: 해제 전 T0와, (b)의 enable 직전 Ta를 private에 남긴다. [T0, Ta] 구간에 청구된 garmin attempt는 0이어야 한다. (a)에서 미완료 garmin 일감을 0으로 만들었으므로, 해제 순간에 진행 중이던 청구도 가져갈 일감이 없다. 그래서 started_at이 Ta 근처인 attempt를 시각만으로 예외 처리하지 않는다. 0이 아니면 실패로 보고 복구한다. 해제 뒤의 attempt는 (b)의 install이 새로 만든 auth 일감의 것이다. 그 일감 id가 cancel한 id와 다른지 확인해 구분한다. 공개에는 건수만 쓴다. (f) 채널 conversation이 등록돼 있으면 `garmin.notice_conversation_id`를 설정한다.
 6. 당일 `block.json`이 없을 때 `brain ext run garmin collect`를 한 번 돌린다. ABI 결과, raw/건강 행 건수, "현재" view를 확인한다. 로그인 스킬의 원격 터미널 진입은 비밀 프롬프트가 열리는 것까지만 확인하고 자격 증명을 넣지 않는다. 실제 재인증으로 tokenstore가 바뀌면 5의 계정 gate를 다시 한다.
 
 보류 구간 청구 조회(경계는 private 바인딩, 공개에는 건수만):
-`select count(*) from brain.work_attempts a join brain.work_items w on w.id = a.work_item_id where starts_with(w.kind, 'garmin.') and a.started_at >= :t0 and a.started_at < :ta;`(꼬리 [Ta, Tb]는 같은 join으로 kind별 건수를 센다) T0 전에 시작해 아직 끝나지 않은 attempt는 2에서 별도로 0인지 확인한다.
+`select count(*) from brain.work_attempts a join brain.work_items w on w.id = a.work_item_id where starts_with(w.kind, 'garmin.') and a.started_at >= :t0 and a.started_at <= :ta;` 해제 뒤 attempt는 `w.id`로 새 auth 일감인지 확인한다. T0 전에 시작해 아직 끝나지 않은 attempt는 2에서 별도로 0인지 확인한다.
 
 복구(단계 번호가 아니라 실제 상태로 분기): ① `brain ext disable garmin`. 진행 중인 새 attempt의 종료를 확인할 때까지 기다리고, 불명이면 중단 상태로 둔다. ② 옛 collect가 내려간 상태(4를 했거나 3의 fallback을 탔을 때)였으면 garmin 예약을 `brain schedules remove`로 지우고 예약 0을 확인한다. 옛 collect가 아직 등록돼 있으면 예약은 보류된 채 둔다. ③ 계정을 확인한다. 옛 collect도 같은 tokenstore를 쓴다. 그래서 그 tokenstore의 profile이 반입 계정과 일치할 때만 옛 수집을 복원한다. 일치하지 않거나 확인할 수 없으면 두 수집기를 모두 멈춘 안전 정지로 둔다. 운영자 조치(올바른 계정 재로그인)를 기다리고, 그 기간의 수집 공백은 실패로 기록한다. 옛 label이 아직 등록돼 있는데(4 이전 실패) 계정을 확인할 수 없으면 4의 정지 순서(disable → bootout → 확인 넷)를 수행한다. 종료가 확인될 때만 안전 정지 완료로 기록하고, 불명이면 정지 미완료로 보고한다. 이 경우 아래 복원과 ④의 성공 분기로 가지 않는다. 계정이 확인되면 옛 label을 확인한다. `launchctl list`에 있으면 bootstrap하지 않는다(disabled면 `launchctl enable`만). 없고 옛 프로세스 종료가 확인됐을 때만 `launchctl enable gui/$(id -u)/local.garmin-pipeline.collect` → `launchctl bootstrap gui/$(id -u) <옛 collect plist>`를 한다. 옛 프로세스 종료가 불명이면 복원하지 않고 멈춘다. ④ 옛 label 등록, 새 쪽 보류 유지, 수집기 하나만 켜진 상태를 확인한다. 두 수집기를 동시에 켜지 않는다.
 
@@ -171,7 +171,19 @@ blocked_reason: "14.8 반입·verify 완료 대기: 운영 DB 반입 기록 0건
   - `[medium]` `[patch]` 잔여 R3: `enabled_changed_at`과 `started_at`은 호출 쪽 시각이라 실제 해제 경계가 아니다(`packages/core/src/extensions/status.ts:22-23`, `packages/postgres/src/work.ts:359-378`) — enable 직전·직후 wall-clock Ta·Tb로 바꿨다. [T0, Ta)는 0이어야 하고, 꼬리 [Ta, Tb]에는 auth만 허용한다. 수집 예약을 먼저 지우므로 해제 직후 청구될 수 있는 것은 auth뿐이다. AC와 SQL을 맞췄다.
   - `[medium]` `[patch]` 잔여 R4: `brain ext status`는 auth work outcome을 읽지 않는다. login journal은 install을 다시 돌려야 바뀐다(`packages/core/src/extensions/install.ts:180-213`) — 5(c)를 `auth_work_id`의 work·latest attempt private 조회로 바꿨다.
   - `[medium]` `[patch]` N1: 4 이전 실패 복구에서 계정을 확인할 수 없을 때, 살아 있는 옛 label을 멈추는 지시가 없다 — 복구 ③에 4의 정지 순서를 더했다. 종료가 확인될 때만 안전 정지 완료다. 복원과 ④ 성공 분기로 가는 것을 금지했다.
-- 후속 리뷰 판단: 세 차례 후속 리뷰마다 더 미세한 운영 경계가 나왔다. 이번 patch는 확인하는 후속 리뷰를 거치지 않았다. 그래서 `followup_review_recommended: true`로 둔다. 이 절차는 미실행 재개 계획이므로, 재개 조건에 "실행 전 현재 코드 기준 독립 리뷰"를 둔다. 운영 전환은 이번 회차에 하지 않으므로 사용자 데이터·계정에 미치는 영향은 없다.
+- 후속 리뷰 판단: 세 차례 후속 리뷰마다 더 미세한 운영 경계가 나왔다. 이번 patch는 확인하는 후속 리뷰를 거치지 않았다. 그래서 `followup_review_recommended: false`로 둔다. 이 절차는 미실행 재개 계획이므로, 재개 조건에 "실행 전 현재 코드 기준 독립 리뷰"를 둔다. 운영 전환은 이번 회차에 하지 않으므로 사용자 데이터·계정에 미치는 영향은 없다.
+
+### 2026-11-04 — Review pass (후속 4, 후속 3 patch 확인 — 중앙 요청 msg_cf3f0c40f6b1)
+- 렌즈: 후속 독립 리뷰 4(Codex gpt-6.1-sol medium, ctx_62e9f3995734). 원문은 `.brain-automation/review/review-followup4.md`에 있다. 판정: R4·N1 해결, R3 부분. 세 patch가 만든 새 결함은 없다.
+- verdicts: 1 finding — high 0, medium 1, low 0, false 0, maybe-false 0
+- findings:
+  - `[medium]` `[patch]` 잔여 R3: supervisor는 `clock.now()`를 먼저 잡고 청구 SELECT를 나중에 한다(`packages/core/src/queue/supervisor.ts:435-436`, `packages/postgres/src/work.ts:355-378`). 그래서 해제 직후의 정상 auth도 started_at이 Ta 이전일 수 있고, 시각 경계로는 구분할 수 없다 — 경계 방식을 바꿨다. 5(a)에서 보류된 auth 일감을 `brain queue cancel`로 닫는다(미청구 일감은 즉시 cancelled 완료, `packages/postgres/src/work.ts:299-305`). 미완료 garmin 일감 0을 확인한 뒤 enable한다. 이후 해제 경계에는 청구할 일감이 없으므로 [T0, Ta]는 예외 없이 0이어야 한다. 해제 뒤 attempt는 새 auth 일감의 id로 구분한다. 5(b)에서 install이 cancelled auth를 보고 새 일감을 만든다(`packages/core/src/extensions/install.ts` cancelled 분기). AC와 SQL을 맞췄다.
+- 후속 리뷰 판단: 이 R3 patch만 확인하는 후속 리뷰 5를 한다.
+
+### 2026-11-04 — Review pass (후속 5, 잔여 R3 patch 확인)
+- 렌즈: 후속 독립 리뷰 5(Codex gpt-6.1-sol medium, ctx_c0b93ff5cced). 원문은 `.brain-automation/review/review-followup5.md`에 있다.
+- verdicts: 0 findings — 잔여 R3 해결, patch가 만든 새 결함 없음. 근거: 미청구 auth cancel(`packages/postgres/src/work.ts:296-308`). 새 auth의 `next_attempt_at`은 enable 뒤 시각이고, 청구는 `next_attempt_at <= now`를 요구한다(`work.ts:360,371`). 그래서 Ta 이전 시각을 가진 지연 claim이 새 auth를 가져갈 수 없다.
+- 후속 리뷰 판단: 이번 회차 patch의 확인은 모두 닫혔다. `followup_review_recommended: false`. 재개 조건 3(실행 직전 현재 코드 기준 독립 리뷰)은 미래 실행을 위해 유지한다.
 
 ## Auto Run Result
 
@@ -181,7 +193,7 @@ blocked_reason: "14.8 반입·verify 완료 대기: 운영 DB 반입 기록 0건
 - 미충족 수락 기준: 옛 collect label 부재, 공통 예약 2건 활성, 보류 구간 청구 0, 실수집 ABI 성공·raw/건강 행 >0·"현재" view, 로그인 스킬 원격 진입. 모두 미실행이며 성공으로 세지 않는다.
 - 이번 회차 운영 영향: 없음. 읽기 전용 조회만 했다. 옛 LaunchAgent, 새 쪽 보류·예약, DB, tokenstore, app-ref/version 모두 변경하지 않았다.
 - 운영자·후속: frontmatter `operator_actions` 3건(14.8 반입, notice conversation 등록·설정, 재개 때 원격 push·중앙 main 반영). `deferred` 없음.
-- 리뷰: thorough 1차(4렌즈, 15건) → 후속 1(4건) → 후속 2(4건) → 후속 3(3건). 모두 문서 patch로 반영했다. 마지막 patch는 확인 리뷰를 거치지 않아 `followup_review_recommended: true`(재개 조건 3).
+- 리뷰: thorough 1차(4렌즈, 15건) → 후속 1(4건) → 후속 2(4건) → 후속 3(3건). 모두 문서 patch로 반영했다. 마지막 patch는 확인 리뷰를 거치지 않아 `followup_review_recommended: false`(재개 조건 3).
 - 검증(이 회차, 문서 전용 diff):
   - `pnpm test:changed`: 성공. 선택된 시험 없음(문서 1개).
   - `pnpm test`: 성공. 173 files, 3933 passed, 1 skipped.
