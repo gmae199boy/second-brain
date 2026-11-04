@@ -14,7 +14,7 @@ risk: medium
 
 ## Description
 
-`pnpm test`와 `pnpm test:python` 회귀가 10분 넘게 걸려 개발이 늦어진다. 이 에픽의 목표는 그 시간을 대폭 줄이는 것이다. 성공한 16.6 회귀 기록에서 Vitest 구간 약 665초 중 약 583초(88%)가 Python 통합 시험 suite였고, 이 suite는 공유 확장 role 때문에 파일을 하나씩 직렬로 돌린다(source "확정 결과 5"). 그래서 가장 큰 수단은 이 suite의 병렬화이고, 그다음이 2026-11-04 성능 조사가 실측으로 확인한 시험 병목(건강 현재값 판정 18.10 제외)이다: 두 suite가 같은 bootstrap hook 시험을 두 번 도는 중복, 시험마다 새 DB에 전체 migration을 반복하는 비용(4파일 362개 DB, 준비·정리가 명령 시간의 약 58.6%), 새 home마다 matplotlib 폰트 캐시를 만드는 비용(약 10.6초), 파일 등록 확인의 고정 1초 대기(신규 그래프 3장 중 약 3초)이다. 모두 18.3보다 먼저 한다. 두 번째 build(약 1초)는 이득이 작아 넣지 않는다. 제품 조회 성능(반입 정리·큰 세션·검색·로그 scanner)은 이 에픽의 목표가 아니다.
+`pnpm test`와 `pnpm test:python` 회귀가 10분 넘게 걸려 개발이 늦어진다. 이 에픽의 목표는 그 시간을 대폭 줄이는 것이다. 성공한 16.6 회귀 기록에서 Vitest 구간 약 665초 중 약 583초(88%)가 Python 통합 시험 suite였고, 이 suite는 공유 확장 role 때문에 파일을 하나씩 직렬로 돌린다(source "확정 결과 5"). 그래서 가장 큰 수단은 이 suite의 병렬화이고, 그다음이 2026-11-04 성능 조사가 실측으로 확인한 시험 병목(건강 현재값 판정 18.10 제외)이다: 두 suite가 같은 bootstrap hook 시험을 두 번 도는 중복, 시험마다 새 DB에 전체 migration을 반복하는 비용(4파일 362개 DB, 준비·정리가 명령 시간의 약 58.6%), 새 home마다 matplotlib 폰트 캐시를 만드는 비용(약 10.6초), 파일 등록 확인의 고정 1초 대기(신규 그래프 3장 중 약 3초)이다. 여기에 반복 실패를 일으키는 import-verify 시험 안정화를 더해 모두 18.3보다 먼저 한다. 그 뒤 반복 검증(`pnpm test:changed`)의 실행 기록과 단독 시험 선택 좁히기를 이어 간다(source "확정 결과 6"). 두 번째 build(약 1초)는 이득이 작아 넣지 않는다. 제품 조회 성능(반입 정리·큰 세션·검색·로그 scanner)은 이 에픽의 목표가 아니다.
 
 ## Outcome
 
@@ -26,6 +26,9 @@ risk: medium
 - E19-2 (source "확정 결과 3"): 폰트 캐시 — 새 home을 만드는 시험이 matplotlib 폰트 목록 생성을 home마다 반복하지 않는다. 각 home의 캐시 디렉터리는 private(0700)이고, 한글 라벨 그래프는 같은 폰트 family를 고르고 glyph 누락이 없으며, 손상되거나 버전이 다른 캐시는 다시 만들어진다.
 - E19-5 (source "확정 결과 5"): Python 통합 시험 병렬화 — `pnpm test:python`의 파일들이 서로 role·DB·container를 공유하지 않는 여러 slot에서 동시에 돌아, 같은 조건의 중앙값이 1 slot 기준의 절반 이하가 된다. case 수·통과 결과는 같고, 한 파일이 실패·timeout해도 다른 파일과 다음 실행이 영향받지 않으며, 실행 뒤 남는 role·DB·container·포트가 없다. 생산 확장 role 계약은 바꾸지 않는다.
 - E19-6 (source "확정 결과 5", tests report "bootstrap 구성 비용과 중복 범위"): hook 시험 중복 — 두 suite를 합쳐 bootstrap hook 시험의 각 case가 한 번만 돌고, 두 suite의 hook case 합집합과 Python 전용 보존 case는 그대로다.
+- E19-7 (source "확정 결과 6"): import-verify 안정성 — `garmin-import-verify` 시험이 같은 커밋·독립 환경에서 연속 20회 모두 같은 결과를 내고, 실패하면 가려진 출력에 원래 예외·work_id가 남는다. 가림 규칙과 반입 검증 판정 의미는 그대로다.
+- E19-8 (source "확정 결과 6"): test:changed 실행 기록 — 매 실행이 단계별 시간·종료 코드·중단 사유·선택 목록과 그 이유를 로컬 구조화 기록으로 남기고, 기록 실패가 시험 결과를 바꾸지 않는다.
+- E19-9 (source "확정 결과 6"): 단독 시험 선택 — 런타임에 쓰이지 않는 단독 시험 파일만 바뀐 경우 반복 검증이 Python 전체를 돌지 않고, 그 밖의 경우 선택은 그대로다.
 - E19-3 (source "확정 결과 3"): 등록 확인 대기 — 그래프와 digest 파일 등록 확인에 요청마다 고정 대기 시간이 붙지 않는다: 실제 core 등록 경로에서 신규 그래프 3장과 digest의 대기 합계가 각각 기준의 절반 이하이고, 확인 조회 횟수는 상한 안에 있다. 그래프별 실패 격리, 취소·중지·attempt 무효 전파, 중단 뒤 재개, 완료 캐시 재사용의 결과는 기존과 같다.
 
 ## Constraints
@@ -38,9 +41,10 @@ risk: medium
 
 ## Done when
 
-- E19-5·E19-6·E19-1~E19-3이 각각 동일 조건 전후 수치와 계약 동등성 검증을 갖고 main에 병합돼 있고, 18.3이 그 뒤에 시작된다.
+- E19-5·E19-6·E19-1~E19-3·E19-7이 각각 동일 조건 전후 수치와 계약 동등성 검증을 갖고 main에 병합돼 있고, 18.3이 그 뒤에 시작된다.
 - 마지막 스토리의 커밋 직전 전체 `pnpm test`·`pnpm test:python` 시간이 16.6 회귀 기록(Vitest 구간 약 665초)과 나란히 plan에 기록돼 있다.
 - 각 스토리의 커밋 직전 전체 `pnpm test`·`pnpm test:python`이 통과하고, 그 전체 시간이 plan에 기록돼 있다.
+- E19-8·E19-9가 병합돼 있고(18.3을 막지 않으며 실행 우선순위상 그 뒤에 이어 간다), 반복 검증의 선택 범위와 시간을 기록으로 셀 수 있다.
 
 ## Boundaries
 
@@ -48,12 +52,13 @@ risk: medium
 - 제품 조회·반입 성능(반입 정리 anti-join, 큰 세션, 흔한 검색어 점수, 로그 scanner)은 시험 시간 목표 밖이라 이 에픽에 없다. 조사 문서 TODO에 남는다.
 - 두 번째 `pnpm build` 제거(약 1초), 실제 ref upgrade E2E 측정, typecheck 단독 시간은 이 에픽에 없다. 이득이 작거나 증거가 없다(source "확정 결과 5").
 - 기능 의미(반입·정리·그래프·비밀 판정)는 바꾸지 않는다. 바꿔야만 빨라지는 개선은 별도 결정으로 올린다.
+- batch-import NUL·timeout, normalize attempt 경합, redaction 행 수 불일치(원인 미확정), 기본 changed와 Postgres 전체·tracer 추가 실행의 중복(양 미측정), 넓은 규칙의 일괄 축소(의존 누락 위험)는 이 에픽에 없다. 조사 문서 TODO에 남는다(source "확정 결과 6").
 - 생산 daemon 기본 polling 주기, 시험용 25ms polling, no-op migration 왕복(약 22ms), 패키지 digest·uv 준비는 근거가 약해 범위 밖이다(source "확정 결과 2·3").
 - Touch point: Garmin 그래프·digest 발행(`extensions/garmin/src/runtime_artifacts.py`, `charts.py`) — 대기·캐시 방식만 바꾼다; owner: epic-garmin-runtime
 
 ## References
 
-- research — _bmad-output/personal-brain/research-performance-2026-11-04/research-performance-2026-11-04.md, "확정 결과 2~5", "TODO"
+- research — _bmad-output/personal-brain/research-performance-2026-11-04/research-performance-2026-11-04.md, "확정 결과 2~6", "TODO"
 - research — _bmad-output/personal-brain/research-performance-2026-11-04/tests/report.md, "4개 파일의 실제 구간", "영향·18.10·티켓 판단"
 - research — _bmad-output/personal-brain/research-performance-2026-11-04/garmin/report.md, "후보별 판정", 2·3절
 - parent — _bmad-output/personal-brain/initiative-personal-brain.md, Constraints C4
@@ -69,6 +74,7 @@ risk: medium
 - Decision(2026-11-04, 사용자 채택): tracer는 19.5다. 이 에픽은 기능 경로가 아니라 독립 개선의 묶음이라 "모든 layer를 지나는 가장 얇은 경로"가 없다. 예상 절감이 가장 크고(수분) 격리 위험도 가장 큰 스토리를 먼저 둔다.
 - Decision(2026-11-04, 사용자 채택): 닫는 Refactor sweep 스토리는 두지 않는다. 스토리들이 runner 설정·시험 fixture·charts.py·runtime_artifacts.py를 각각 건드리는 개선이라 모아서 치울 공통 정리가 생기기 어렵다. 리뷰가 미룬 정리가 쌓이면 그때 스토리로 더한다.
 - Parked: 위치 UUID 조건(대문자·비UUID 계약 차이), 채널 목록 최신 결과 인덱스(분포에 따라 악화), 첨부 대량 반입, Garmin 원문 재해시, Garmin unpublished/retry_items 무변경 전수 읽기·이력 성장(82MB·20만 행에서 약 457ms) — 실제 빈도·규모 근거가 생기면 판단한다(source "TODO" 낮은 우선순위 후보).
+- Decision(2026-11-04, 사용자): 개발 속도·품질 추가 조사(확정 결과 6)로 19.7 import-verify 안정화(19.5 뒤, 18.3 전), 19.8 test:changed 실행 기록(19.6 뒤), 19.9 단독 시험 선택 좁히기(19.8 뒤)를 더한다. 19.7은 19.1이 바꾸는 시험 DB 준비를 쓰므로 19.1 뒤다(Set 재검증 반영). 19.8·19.9는 18.3을 막지 않는다. 19.8·19.9는 19.6과 같은 run.mjs·rules.mjs와 그 시험을 바꾼다.
 - Waits on epic-health-analysis because: 19.5는 18.10이 같이 바꾸는 시험 선택 규칙(`tooling/test-changed/rules.mjs`와 그 시험)과, `BRAIN_TEST_DATABASE_URL`로 시험 DB를 받는 18.10의 측정 도구(`tooling/health-perf`)를 이어받아 slot 구성으로 바꾼다. slot 수도 18.10 뒤 정규화 시험 시간으로 정해진다(2026-11-04 18.10 checkout 읽기 전용 확인).
-- Decision(2026-11-04, runner 조사 반영, 사용자 확정): 시험 시간 lane을 예상 절감 큰 순으로 18.10 → 19.5 Python 병렬화 → 19.6 hook 중복 제거 → 19.1 시험 DB → 19.2 폰트 캐시 → 19.3 등록 대기 → 18.3으로 한다. 이 화살표는 실행 우선순위이고, 실제 의존은 19.5 → 19.6, 19.5 → 19.1 → 19.2 → 19.3으로 갈라진다. 19.6은 19.5와 같은 Python config를, 19.1은 19.5가 바꾸는 시험 DB helper(pg-home·tooling/test-db)를 건드려 19.5 뒤다. 18.3은 다섯 스토리를 모두 기다린다(순서 결정). E19-4는 은퇴했고 id를 다시 쓰지 않는다.
+- Decision(2026-11-04, runner 조사 반영, 사용자 확정): 시험 시간 lane을 예상 절감 큰 순으로 18.10 → 19.5 Python 병렬화 → 19.6 hook 중복 제거 → 19.1 시험 DB → 19.2 폰트 캐시 → 19.3 등록 대기 → 18.3으로 한다. 이 화살표는 실행 우선순위이고, 실제 의존은 19.5 → 19.6, 19.5 → 19.1 → 19.2 → 19.3으로 갈라진다. 19.6은 19.5와 같은 Python config를, 19.1은 19.5가 바꾸는 시험 DB helper(pg-home·tooling/test-db)를 건드려 19.5 뒤다. 18.3은 다섯 스토리를 모두 기다린다(순서 결정, 당시 기록; 이후 19.7이 더해져 여섯). E19-4는 은퇴했고 id를 다시 쓰지 않는다.
 - Decision(2026-11-04, 사용자): 이 에픽의 목표는 10분 넘는 회귀 시험 시간을 대폭 줄이는 것이다. 그래서 제품 성능인 반입 정리 조회(옛 19.4)는 빼서 조사 문서 TODO로 돌린다. 기존 조사가 보지 않은 runner 구성(`apps/cli/python-test/vitest.config.ts`의 `fileParallelism: false`로 Python 통합 시험 18파일+hook 시험이 직렬, 두 명령의 build 중복, typecheck)을 조사해 결과로 스토리를 더한다.
