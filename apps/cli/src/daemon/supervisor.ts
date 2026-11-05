@@ -19,6 +19,15 @@ export function scheduleEnvironment(groups: import('second_brain').ScheduledOccu
   const dates = (groups ?? []).flatMap(group => group.occurrences.map(at => new Intl.DateTimeFormat('en-CA', { timeZone: group.timeZone ?? 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(at))).sort();
   return { BRAIN_RANGE_FROM:dates[0]!, BRAIN_RANGE_TO:dates.at(-1)!, BRAIN_OCCURRENCES:JSON.stringify(instants.map(at=>at.replace('Z','+00:00'))) };
 }
+/** Runtime lookup and login context for supervised extension processes. */
+export function extensionRuntimeEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const key of ['HOME', 'PATH', 'CODEX_HOME', 'XDG_CONFIG_HOME']) {
+    const value = env[key];
+    if (typeof value === 'string') result[key] = value;
+  }
+  return result;
+}
 export interface DaemonSupervisorOptions { launcher?: ProcessLauncher; inspector?: ProcessInspector; cancelGraceMs?: number; cancelPollMs?: number; groupConfirmMs?: number; probeWorker?: { command: string; args: readonly string[]; env?: Readonly<Record<string, string>> }; channelTestEndpoint?: string; channelTestBarrier?: 'before-finish' | 'after-finish'; pollMs?: number; renewEveryMs?: number; disabled?: boolean }
 export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadConfigResult, log: { write(message: string): Promise<void> }): { stop(): Promise<void> } {
   const controller = new AbortController();
@@ -69,7 +78,7 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
               catch { return { ok: false, code: 'EXTENSION_CONFIG_INVALID' }; }
               const readiness = { version: 1, core: versions.ok ? versions.versions['core']?.version ?? null : null, expected_core: opened.expected.core ?? null, extension: versions.ok ? versions.versions[manifest.name]?.version ?? null : null, migrations: migrationVersions, applied_migrations: applied?.ok ? applied.versions : null, manifest_version: manifest.version, abi: manifest.abi };
               return { ok: true, spec: { command: work.runtime === 'python' ? join(directory, '.venv', 'bin', 'python') : process.execPath, args: [join(directory, work.entry)], env: {
-                [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: extensionUrl, [PROCESS_ABI_ENV.workId]: item.id,
+                ...extensionRuntimeEnvironment(options.env), [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: extensionUrl, [PROCESS_ABI_ENV.workId]: item.id,
                 [PROCESS_ABI_ENV.runGeneration]: String(item.attempts), [PROCESS_ABI_ENV.attemptToken]: token, [PROCESS_ABI_ENV.workKind]: item.kind,
                 [PROCESS_ABI_ENV.targetKind]: item.targetKind, [PROCESS_ABI_ENV.targetId]: item.targetId,
                 ...scheduleEnvironment(item.scheduledOccurrences), BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized, BRAIN_EXTENSION_HOME: await realpath(directory), BRAIN_SECRET_SCANNER_NODE: process.execPath, BRAIN_SECRET_SCANNER_SCRIPT: fileURLToPath(new URL('../../dist/workers/secret-scan.js', import.meta.url)), BRAIN_EXTENSION_READINESS: JSON.stringify(readiness),

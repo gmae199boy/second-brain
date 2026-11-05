@@ -39,8 +39,12 @@ def envelope(env):
         if not isinstance(snapshot, dict) or set(snapshot) != {'version', 'extension', 'user_id', 'values'} or type(snapshot['version']) is not int or snapshot['version'] != 1 or snapshot['extension'] != 'garmin' or snapshot['user_id'] != str(user):
             raise ValueError('invalid snapshot')
         values = snapshot['values']
+        from report_runtime import validate_settings
+        if not isinstance(values, dict):
+            raise ValueError('invalid settings')
+        validate_settings(values)
         allowed = {'garmin.timezone', 'garmin.tokenstore', 'garmin.capture_manifest', 'garmin.legacy_conversation_id'}
-        if not isinstance(values, dict) or not set(values) <= allowed or any(not isinstance(v, str) for v in values.values()):
+        if any(not isinstance(values[k], str) for k in allowed & values.keys()):
             raise ValueError('invalid settings')
         timezone = values['garmin.timezone']
         ZoneInfo(timezone)

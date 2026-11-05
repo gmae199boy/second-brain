@@ -1,7 +1,7 @@
 """Daily AI analysis, body intake, graph assembly, and atomic report delivery.
 
 Native inputs are read from PostgreSQL by report_input and charts.
-Codex runs in the runtime root with an isolated process group and no API keys.
+Codex runs in the runtime root in the supervisor process group and without API keys.
 """
 
 import contextlib
@@ -56,6 +56,7 @@ CODEX_SKILL_PROMPT = "$garmin-daily-analysis"
 """프롬프트 첫 줄(skill 호출). 셸을 거치지 않으므로 그대로 넘어간다."""
 CODEX_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
 """첨부하는 이미지 확장자(소문자로 비교한다)."""
+PROGRESS_INTERVAL_SECONDS = 30
 KILL_GRACE_SECONDS = 5
 """그룹에 SIGTERM을 보낸 뒤 SIGKILL 전까지 리더를 기다리는 시간(초)."""
 REPORT_OUTPUT_SCHEMA = "daily_analysis_output.schema.json"
@@ -216,18 +217,76 @@ def _codex_env() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if key not in _STRIPPED_ENV}
 
 
-def _signal_group(pgid: int, signum: signal.Signals) -> None:
-    with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(pgid, signum)
-
-
-def _end_group(proc: subprocess.Popen[bytes]) -> None:
-    """그룹(리더 pid = 그룹 id)에 SIGTERM → 리더를 grace까지 기다림 → 그룹에 SIGKILL → 리더를 거둔다."""
-    _signal_group(proc.pid, signal.SIGTERM)
-    with contextlib.suppress(subprocess.TimeoutExpired):
-        proc.wait(KILL_GRACE_SECONDS)
-    _signal_group(proc.pid, signal.SIGKILL)
+def _end_child(proc: subprocess.Popen[bytes]) -> None:
+    """Reap the direct child; the supervisor owns cleanup of the shared group."""
+    if proc.poll() is None:
+        with contextlib.suppress(ProcessLookupError):
+            proc.terminate()
+        try:
+            proc.wait(KILL_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
     proc.wait()
+
+
+class ProcessCleanupError(store.StoreError):
+    """Process ownership or termination could not be established."""
+
+
+def _owned_process_group():
+    pid = os.getpid()
+    if os.getpgrp() != pid or os.getsid(0) != pid:
+        raise ProcessCleanupError('report is not the supervised group leader')
+    return pid
+
+
+def _group_members(group):
+    # ps runs in our group: exclude it and ourselves from its own snapshot.
+    try:
+        ps = subprocess.Popen(['ps', '-axo', 'pid=,pgid=,stat='], stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, text=True)
+        output, _ = ps.communicate(timeout=5)
+        if ps.returncode != 0: raise ProcessCleanupError('cannot inspect supervised group')
+        members = []
+        for line in output.splitlines():
+            fields = line.split()
+            if len(fields) < 3: raise ProcessCleanupError('invalid process listing')
+            pid, pgid = int(fields[0]), int(fields[1])
+            if pgid == group and pid not in (os.getpid(), ps.pid) and not fields[2].startswith('Z'):
+                members.append(pid)
+        return members
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        if 'ps' in locals() and ps.poll() is None:
+            ps.kill(); ps.wait()
+        raise ProcessCleanupError('cannot inspect supervised group') from exc
+
+
+def _cleanup_owned_group(group):
+    if _owned_process_group() != group:
+        raise ProcessCleanupError('supervised group changed')
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        deadline = time.monotonic() + KILL_GRACE_SECONDS
+        while True:
+            members = _group_members(group)
+            if not members: return
+            for pid in members:
+                try:
+                    if os.getpgid(pid) == group:
+                        os.kill(pid, sig)
+                except ProcessLookupError:
+                    pass
+                except OSError as exc:
+                    raise ProcessCleanupError('cannot terminate supervised descendant') from exc
+            if time.monotonic() >= deadline: break
+            time.sleep(.05)
+    if _group_members(group):
+        raise ProcessCleanupError('supervised descendants still alive')
+
+
+def _abi_progress() -> None:
+    """Only ABI progress, never the model's JSON stream, reaches stdout."""
+    print(json.dumps({'abi': 1, 'type': 'progress'}), flush=True)
 
 
 def _schema_error(schema: dict[str, object], instance: object) -> str | None:
@@ -285,10 +344,14 @@ class CodexWriter:
     """
 
     def __init__(
-        self, executable: str | None = None, timeout_seconds: float | None = None
+        self, executable: str | None = None, timeout_seconds: float | None = None,
+        progress: Callable[[], None] | None = None,
+        body_handler: Callable[..., Any] | None = None,
     ) -> None:
+        self.body_handler = body_handler
         self.executable = executable
         self.timeout_seconds = timeout_seconds
+        self.progress = progress if progress is not None else (_abi_progress if os.environ.get("BRAIN_ABI_VERSION") == "1" else None)
 
     def write(self, cfg: config.Config, inputs: list[str]) -> DailyAnalysis:
         return self._execute(cfg, inputs, intake=False)
@@ -354,7 +417,8 @@ class CodexWriter:
                 )
                 events = workdir / "events.jsonl"
                 with events.open("wb") as stream:
-                    self._run(cfg, argv, timeout, stdout=stream)
+                    self._run(cfg, argv, timeout, stdout=stream, progress=self.progress,
+                              body_handler=self.body_handler if intake else None, workdir=workdir)
                 result = _read_output(output, schema_path)
                 if isinstance(result, DailyAnalysis):
                     result = replace(result, usage=_usage(events))
@@ -369,19 +433,32 @@ class CodexWriter:
         timeout: float,
         *,
         stdout=subprocess.DEVNULL,
+        progress: Callable[[], None] | None = None,
+        body_handler: Callable[..., Any] | None = None,
+        workdir: Path | None = None,
     ) -> None:
-        """codex를 띄워 기다린다. 끝나면(시간 초과·예외 포함) 그룹을 정리한다."""
+        """Wait for Codex and serve its scoped body requests on the host."""
+        group = _owned_process_group()
+        ipc = None
+        env = _codex_env()
+        if body_handler is not None:
+            if workdir is None: raise ProcessCleanupError("missing model scope")
+            ipc = workdir / "body-ipc"
+            ipc.mkdir(mode=0o700)
+            env["BRAIN_BODY_IPC_DIR"] = str(ipc)
+        else:
+            env.pop("BRAIN_BODY_IPC_DIR", None)
         failed = errors.ReportFailReason.CODEX_FAILED
         started = time.monotonic()
         try:
             proc = subprocess.Popen(
                 argv,
                 cwd=body.runtime_root(cfg),
-                env=_codex_env(),
+                env=env,
                 stdin=subprocess.DEVNULL,
                 stdout=stdout,
                 stderr=subprocess.DEVNULL,
-                start_new_session=True,
+                start_new_session=False,
             )
         except (OSError, ValueError) as error:
             logger.warning("codex를 실행하지 못했다: %s", type(error).__name__)
@@ -391,15 +468,37 @@ class CodexWriter:
         returncode: int | None = None
         trapped, previous = _trap_sigterm()
         try:
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                returncode = proc.wait(timeout)
+            deadline = started + timeout
+            next_progress = started + PROGRESS_INTERVAL_SECONDS
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                if ipc is not None:
+                    if proc.poll() is not None:
+                        returncode = proc.returncode
+                        break
+                    import body_ipc
+                    body_ipc.service(ipc, body_handler,
+                                     active=lambda: proc.poll() is None and time.monotonic() < deadline)
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                try:
+                    returncode = proc.wait(min(remaining, .1 if ipc else PROGRESS_INTERVAL_SECONDS))
+                    break
+                except subprocess.TimeoutExpired:
+                    now = time.monotonic()
+                    if progress is not None and proc.poll() is None and now >= next_progress and now < deadline:
+                        progress()
+                        next_progress = now + PROGRESS_INTERVAL_SECONDS
         finally:
-            _end_group(proc)
-            if trapped:
-                # 이전 핸들러가 Python 밖에서 정해졌으면(`None`) 기본 동작으로 돌린다.
-                signal.signal(
-                    signal.SIGTERM, signal.SIG_DFL if previous is None else previous
-                )
+            try:
+                _end_child(proc)
+                _cleanup_owned_group(group)
+            finally:
+                if trapped:
+                    signal.signal(signal.SIGTERM, signal.SIG_DFL if previous is None else previous)
         elapsed = time.monotonic() - started
         if returncode is None:
             logger.warning("codex 시간 초과: %.0f초 제한, %.1f초", timeout, elapsed)
@@ -564,6 +663,8 @@ def _daily_analysis(
             reason = errors.ReportFailReason.CODEX_FAILED
         logger.warning("하루 분석 작성기 실패: %s (%s)", reason, error.detail or "-")
         return _fallback(reason), reason, None
+    except (store.StoreError, psycopg.Error):
+        raise
     except Exception as error:  # noqa: BLE001 - 작성기의 예상 밖 실패도 폴백으로 바꾼다
         reason = errors.ReportFailReason.CODEX_FAILED
         logger.warning("하루 분석 작성기 예외: %s (%s)", reason, type(error).__name__)
@@ -1050,3 +1151,96 @@ def _combined_summary(day, periods):
             lines[0].encode("utf-16-le")[:8000].decode("utf-16-le", errors="ignore")
         )
     return "\n".join(lines)
+
+
+class SupervisedReportFailed(Exception):
+    """A supervised analysis scope or body intake did not complete."""
+
+
+def _completed_scopes(cfg, day):
+    """Read latest revisions without converting database failures into missing work."""
+    conn = store.read_connection(cfg)
+    try:
+        return {scope for scope in ('day', '7d', '30d', 'all')
+                if store.latest_evaluation(conn, report_date=day.isoformat(), scope=scope) is not None}
+    finally:
+        conn.close()
+
+
+def _assert_attempt_current(cfg):
+    """Fence before each model call so a revoked attempt does not continue."""
+    with store.write_session(cfg) as conn:
+        with store.transaction(conn):
+            pass
+
+
+def run_supervised(cfg, writer, *, regenerate=False, today=None):
+    """Run only analysis, appending each success before starting the next scope.
+
+    The caller owns the supervised_account binding and the report session lock.
+    All read snapshots are closed by the input builders before model invocation.
+    """
+    today = dates.today(cfg) if today is None else today
+    started_at = dates.now_ms()
+    completed = set() if regenerate else _completed_scopes(cfg, today)
+    remaining = [scope for scope in ('day', '7d', '30d', 'all') if scope not in completed]
+    if not remaining:
+        return {'status': 'noop', 'scopes': 0}
+    failed = False
+    try:
+        pending = body.pending(cfg)
+    except (store.StoreError, psycopg.Error):
+        raise
+    except (body.BodyError, OSError):
+        pending = []
+        failed = True
+    if pending:
+        _assert_attempt_current(cfg)
+        try:
+            intake_result = writer.intake(cfg, pending)
+        except (store.StoreError, psycopg.Error):
+            raise
+        except Exception:
+            failed = True
+        else:
+            if not isinstance(intake_result, dict) or intake_result.get('status') != 'ok':
+                failed = True
+            else:
+                try:
+                    unhandled = set(pending).intersection(body.pending(cfg))
+                except (store.StoreError, psycopg.Error):
+                    raise
+                except (body.BodyError, OSError):
+                    failed = True
+                else:
+                    # New arrivals belong to a later run; reject removes pending too.
+                    if unhandled:
+                        failed = True
+    exported = report_input.build(cfg, today, started_at=started_at)
+    measurements = digest.build(exported.manifest, exported.days, exported.activities,
+                                exported.labels, exported.body)
+    report_input.write_json(exported.path / 'digest.json', measurements)
+    runtime = body.runtime_root(cfg)
+    usages = []
+    for scope in remaining:
+        if scope == 'day':
+            inputs = [os.path.relpath(exported.path, runtime)]
+        else:
+            try:
+                folder = report_input.build_period(cfg, exported.path, today, scope)
+            except (store.StoreError, psycopg.Error):
+                raise
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                failed = True
+                continue
+            inputs = [os.path.relpath(folder, runtime),
+                      os.path.relpath(exported.path / 'profile.md', runtime)]
+        _assert_attempt_current(cfg)
+        analysis, _, failure, _ = _evaluate(cfg, writer, inputs, scope, usages)
+        if failure is not None:
+            failed = True
+            continue
+        _save_evaluation(cfg, today, scope, analysis)
+    if failed:
+        raise SupervisedReportFailed('analysis or body intake failed')
+    return {'status': 'success', 'scopes': len(remaining)}

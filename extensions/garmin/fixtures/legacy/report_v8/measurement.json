@@ -1,0 +1,10 @@
+{
+  "weight_kg": 70.2,
+  "skeletal_muscle_mass_kg": 32.1,
+  "body_fat_mass_kg": 12.9,
+  "body_fat_percent": 18.4,
+  "bmi": 22.9,
+  "basal_metabolic_rate_kcal": 1580,
+  "visceral_fat_level": 6,
+  "inbody_score": 78
+}

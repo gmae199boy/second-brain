@@ -48,3 +48,24 @@ f872a842595f25d734b2aee734579db8a28870b048bddcc4e72a2e942e9db8d8  src/garmin_pip
 e607c8b4ae8d50113fd26eeb230712c3ab22e0c82ab47f04aea104e9a9e34fcc  src/garmin_pipeline/store/migrations/0016_day_values_evaluation.sql
 6aaef0a82cb3e9416de3bd661256a7f50172032b66a3631b219e74975d8d0c2b  src/garmin_pipeline/telegram.py
 ```
+
+## 21.4 분석 원본과 비교 경계
+
+`tests/oracle/src`는 위 고정 commit의 추적 SQLite 구현이며 제품 PG 모듈과
+별도 subprocess에서 사용한다. `fixtures/legacy/report_v8/measurement.json`은
+같은 commit의 `tests/fixtures/body/measurement.json` 추적 바이트다.
+`fixtures/legacy/analysis-input-fixture.json`은 이전 프로젝트의 합성 공통 입력이다.
+`tests/report_input_oracle_child.py`가 SQLite 결과·digest·프롬프트·schema와
+측정 검증을 내고 `tests/test_report_input_pg.py`가 같은 입력의 PG 결과와
+비교한다. 기대값을 제품 PG 출력으로 만들지 않는다. 원본 fixture 생성기나
+checker는 실행하지 않았다. 시험 실행은 **21.8로 이관, 미실행**이다.
+
+### 감독 body 경계와 시험 인계
+
+body의 원본 schema·검증·mtime 병합·replace·source 이동 의미는 유지한다.
+모델의 body CLI는 호출별 파일 요청만 내며 계정과 attempt를 호스트가 결정해
+fenced 원본 body 명령을 수행한다. 모델 종료·timeout·취소 뒤에는 감독 소유
+그룹의 후손을 정리하고 다음 모델 전 종료를 확인한다. `test_body_runtime.py`,
+`test_report_process.py`, `test_report_supervised.py`와 실제 감독 PG harness의
+`garmin-report.test.ts`가 요청/취소/재개 및 replace·이동 중단을 덮는다.
+실행은 README의 전용 자원 절차에 따라 **21.8로 이관, 미실행**이다.

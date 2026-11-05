@@ -4,3 +4,9 @@
 
 `legacy_normalize_oracle.py`와 `normalize_v8/`은 같은 기준 commit의 epic 16 정규화 oracle과 합성 입출력이다. 21.2 독립 정규화 비교 시험이 `normalize_v8/input.json`을 사용한다. 고정 SQLite 원본은 `tests/oracle/src`에서 별도 subprocess로 불러오며 이 생성 스크립트는 호출하지 않는다. 시험 실행은 21.8로 이관되어 미실행이다.
 보존한 oracle이 참조하던 `charts_v8/`, `digest_v8/`도 같은 출처로 함께 옮겼다. 실행 경로는 향후 이식 시 새 위치에 맞춰 조정해야 한다.
+
+21.4는 `analysis-input-fixture.json`을 `tests/report_input_oracle_child.py`와
+PG 비교 시험의 공통 입력으로 사용한다. `report_v8/measurement.json`은 고정
+Garmin commit `7fb33dd1661ad25cd73e14ed63abe0a87151f62e`의 추적
+`tests/fixtures/body/measurement.json` 바이트다. SQLite 원본은 별도 프로세스로
+소비하며 생성기·checker와 모든 시험은 실행하지 않았다(21.8로 이관).
