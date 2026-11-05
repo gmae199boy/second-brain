@@ -203,3 +203,5 @@ KEEP: native원형/revision불변·oracle독립성,보호tokenstore/binding·att
 - 운영조치(21.7): 선택self/connection과보호tokenstore·brain-account-binding.json동일계정확인, garmin.connection_id/garmin.timezone/analysis_model·agent/effort/timeout 및 자기channel_conversation_id설정, 실제marketplace설치/운영전환·옛예약해제는별도운영인수다. 사용자설정/예약/삭제표식과기존native/평가/core파일을재설치로덮지않는다. 20.4공통잠금/quiesce/registry/복구·legacy안전거부/불명잠금보존은유지한다.
 - 잔여위험: 실제PG원자성/동시성·DDL권한·모델후손/대기·파일/채널비동기·합성fixture/독립oracle동등성·새/기존전체회귀의실행결과는21.8에서확정된다. 원본문서상대그래프링크의단독소비한계는deferred1건이다. 다중사용자보안완성을주장하지않는다.
 - 배포: 구현commit뒤플러그인ref는그이전구현commit을가리키도록별도releasecommit에서올리고같은commit에plugin version/package.plugin_version/digest를동기화한다. 정상hook의티켓branchcommit/push·원격SHA일치증거는로컬최종보고에기록한다. main병합/push·에픽전이·중앙state변경은하지않는다. worktree/로컬branch/세션과로컬증거를보존한다.
+
+- 릴리스 반영: 구현 commit `ca8b1742b2122fde46a76e390040a5952cc1eea1`를 이전커밋ref로선택하고Garmin plugin version을0.1.0→0.1.1로올린다. 같은releasecommit에package.plugin_version/digest를재생성하며source/SQL바이트는변경하지않는다. 최종branch/remoteSHA는실제최종보고파일에서확인한다.
