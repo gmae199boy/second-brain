@@ -280,3 +280,18 @@
 | 후속 연결 |결과file_requests·발송/cron/플러그인21.5,운영전환21.7 |분석model필수설정과21.3credential운영확인준비. 이번티켓실계정/모델/운영변경없음 |
 
 모델후손은감독그룹상속·scope경계정리/불명시중단,DB읽기는짧은RR·확정은짧은fence다. 원문리뷰는계획옆reviews폴더,전체로그/영수증은보존워크트리와중앙로컬archive에있다. 새·기존시험미실행/미해결이면21.8 built 및21.7시작금지다.
+
+## 21.5 — built / 예약·조회·발신·플러그인, 시험21.8 이관
+
+근거: [core 연결 계획](../tickets/epic-garmin-extension/tickets/story-core-cron-core-brain-ext-garmin-second-brain-garmin-plan.md)의 deferred·Review Triage Log·Auto Run Result.구현ca8b174/release7c9e572에서조회3종·11:00/11:30cron/같은날성공의존·파일/채널게시·Garmin plugin을연결했다. R1독립4렌즈·R2~R5후속,24행중23수정·1보류,필수미완료0·후속권고false. build/typecheck/Python정적컴파일/shell구문/diffcheck 종료0. 모든시험실행은21.8이관·미실행이다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 보류 / medium 기존 한계 |BH04 Markdown의날짜/그래프상대링크가문서단독소비시해석되지않음 |원본_assemble/TelegramReportSink도같은문서+별도사진전달. file_id관계는추가하되새URL/압축/문서소비UX는별도판단. 원문계획frontmatter location/evidence보존 |
+| 필수 시험 인계 |수집성공/정규화완료의존·중단같은work복구·cron회계/재설치·조회NULL40/20/운동/0건·가리기·파일/채널의미키·disable/enable·plugin |21.8전용소유PG/role/home·fakeGarmin/Codex/localhostTelegram로새garmin-core/query와기존전체순차실행. 계획Verification/README의명령·관찰·정리준수 |
+| 운영 조치21.7 |self/connection·보호tokenstore/binding·시간대·analysis모델/agent/effort/timeout·자기채널대화 |실marketplace설치·옛예약해제·운영전환은21.7만수행. 사용자예약변경/삭제표식·회계/평가/core파일보존 |
+| 채택 연결 |범용target_setting·날짜/user/target 선행성공·채널공개중립SQL |partial/blocked/auth/정규화실패/pending은예약성공아님. 성공run/work날짜근거원자기록·같은work복구·타work도용거부. 현재attempt/출처/self대화/동일target완료파일검증 |
+| release 증거 |second-brain-garmin0.1.1/ref ca8b174 |7c9e572의이전구현commit참조·같은release의package.plugin_version/digest동기화. source/SQL변경없음 |
+| 잔여 위험 |PG원자성/경쟁·실권한·비동기파일/채널·oracle/전체회귀 |실행결과21.8확정. 다중사용자보안완성주장없음. 미실행/미해결이면21.8 built/21.7시작금지 |
+
+운영/실계정/모델변경없음.원문·로그·ready/depth1은보존워크트리와중앙로컬archive에있다. 성공scope/revision·후손정리/bodyIPC·대기transaction0·20.4잠금/quiesce/legacy안전거부제약을유지한다.
