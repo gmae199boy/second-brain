@@ -110,6 +110,14 @@ covers = []
 after = [{ epic = 20, needs = "20.6 정리 뒤의 Python 시험 집합(19.5)" }, { epic = 21, needs = "21.3의 이식된 normalize(19.10). 2026-11-05: 18.10 drop으로 epic 18 대기를 대신한다" }]
 
 [[epic]]
+id = 22
+slug = "epic-query-performance"
+title = "제품 조회 성능"
+description = "대화·파일·첨부가 많아져도 데몬의 반입 정리, 큰 세션의 수집·검증, 흔한 검색어 검색, 대량 첨부 반입, 파일 위치 조회가 같은 결과를 더 빠르게 낸다(2026-11-04 성능 조사의 확인된 SQL 병목)."
+covers = ["R3", "R14", "R18"]
+after = [{ epic = 21, needs = "Garmin 작업 끝(21.6 sweep) — core migration·Store 편집 충돌을 피하는 순서 결정(기능 선행 아님)" }]
+
+[[epic]]
 id = 17
 slug = "epic-search-and-health-query"
 title = "텍스트·원문·건강 수치 조회"
