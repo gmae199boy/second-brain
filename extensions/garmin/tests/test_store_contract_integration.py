@@ -4,9 +4,12 @@ The harness installs Garmin and supplies owner and extension DSNs. Immutable row
 are deliberately left in that database until the owning fixture drops it.
 """
 import concurrent.futures
+import hashlib
 import json
 import os
 import tempfile
+import subprocess
+import sys
 import threading
 import unittest
 from datetime import date, time
@@ -16,7 +19,8 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import psycopg
-from garmin_pipeline import charts, coverage, report_input, store
+from garmin_pipeline import charts, coverage, report_input, store, normalize
+from collect_credentials import CredentialEvidenceError, verify_credentials
 
 DAY = '2026-01-01'
 REPORT_DAY = date(2026, 1, 2)
@@ -55,6 +59,123 @@ class RealStoreContractTest(unittest.TestCase):
     def append(self, conn, report_date, scope, text):
         return store.append_evaluation(conn,report_date=report_date,scope=scope,summary=text,
             judgments='[]',evidence='[]',next_checks='[]',report_md='report '+text,model='synthetic',created_at=1)
+
+    def test_credential_binding_fence_and_competing_accounts(self):
+        with tempfile.TemporaryDirectory(prefix='garmin-binding-') as tmp:
+            root = Path(os.path.realpath(tmp))
+            paths = []
+            for index, account in enumerate(self.accounts[:2]):
+                path = root / str(index); path.mkdir(mode=0o700)
+                token_file = path / 'garmin_tokens.json'
+                token_file.write_bytes(b'synthetic-shared-token'); token_file.chmod(0o600)
+                evidence = {'version': 1, 'user_id': str(account[0]), 'connection_id': str(account[1]),
+                    'external_identity': account[2], 'token_sha256': hashlib.sha256(b'synthetic-shared-token').hexdigest()}
+                evidence_file = path / 'brain-account-binding.json'
+                evidence_file.write_text(json.dumps(evidence)); evidence_file.chmod(0o600)
+                paths.append(path)
+            barrier = threading.Barrier(2, timeout=5)
+            def bind(index):
+                writer = self.writer(self.accounts[index])
+                try:
+                    barrier.wait()
+                    with store.transaction(writer): verify_credentials(writer, SimpleNamespace(tokenstore=paths[index]))
+                    return 'bound'
+                except CredentialEvidenceError:
+                    return 'rejected'
+                finally:
+                    writer.close()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                outcomes = list(pool.map(bind, (0, 1)))
+            self.assertEqual(sorted(outcomes), ['bound', 'rejected'])
+            with psycopg.connect(self.owner_dsn, autocommit=True) as owner:
+                rows = owner.execute('select connection_id, tokenstore_ref from garmin.account_connections where user_id=%s and connection_id=any(%s)', (self.user, [a[1] for a in self.accounts[:2]])).fetchall()
+                self.assertEqual(sum(value is not None for _, value in rows), 1)
+                owner.execute('update brain.work_items set current_attempt_token=null where id=%s', (self.work,))
+            writer = self.writer(self.accounts[outcomes.index('rejected')])
+            try:
+                with self.assertRaises(store.StaleAttempt):
+                    with store.transaction(writer): verify_credentials(writer, SimpleNamespace(tokenstore=paths[outcomes.index('rejected')]))
+            finally:
+                writer.close()
+
+    def test_raw_observations_current_semantics_and_fence(self):
+        account = self.accounts[0]; writer = self.writer(account)
+        key = '2026-01-05'; endpoint = 'user_summary'
+        try:
+            oracle = json.loads(subprocess.check_output([sys.executable, str(Path(__file__).with_name('raw_oracle_child.py'))], text=True))
+            observed = []
+            def put(payload, at, version):
+                store.upsert_raw(writer, scope='day', key=key, endpoint=endpoint, payload=payload, library_version=version, now_ms=at)
+            def current():
+                with psycopg.connect(self.ext_dsn) as reader:
+                    return reader.execute('select raw,fetched_at,checked_at,library_version from garmin.raw_current where user_id=%s and connection_id=%s and scope=%s and key=%s and endpoint=%s', (*account[:2], 'day', key, endpoint)).fetchone()
+            put(None, 1, 'v1'); self.assertEqual(current(), ('null', 1, 1, 'v1')); observed.append(list(current()))
+            put(None, 2, 'v2'); self.assertEqual(current(), ('null', 1, 2, 'v1')); observed.append(list(current()))
+            put({'totalSteps': 10}, 3, 'v3'); self.assertEqual(current(), ('{"totalSteps": 10}', 3, 3, 'v3')); observed.append(list(current()))
+            with store.transaction(writer):
+                self.assertIn(('day', key, endpoint, 3), [tuple(item) for item in normalize._work_set(writer)])
+                normalize._record(writer, normalize._Item('day', key, endpoint, 3), ok=True, error_code=None)
+            put({'totalSteps': 10}, 4, 'v4'); self.assertEqual(current(), ('{"totalSteps": 10}', 3, 4, 'v3')); observed.append(list(current()))
+            put(None, 5, 'v5'); self.assertEqual(current(), ('{"totalSteps": 10}', 3, 5, 'v3')); observed.append(list(current()))
+            with store.transaction(writer):
+                self.assertNotIn(('day', key, endpoint, 3), [tuple(item) for item in normalize._work_set(writer)])
+            put({'totalSteps': 20}, 6, 'v6'); self.assertEqual(current(), ('{"totalSteps": 20}', 6, 6, 'v6')); observed.append(list(current()))
+            self.assertEqual(observed, oracle)
+            with store.transaction(writer):
+                self.assertIn(('day', key, endpoint, 6), [tuple(item) for item in normalize._work_set(writer)])
+            with psycopg.connect(self.ext_dsn, autocommit=True) as ext:
+                self.assertEqual(ext.execute('select raw from garmin.raw_response where user_id=%s and connection_id=%s and key=%s', (*account[:2], key)).fetchone(), ('null',))
+                rows = ext.execute('select raw,observed_at,library_version from garmin.raw_observations where user_id=%s and connection_id=%s and key=%s order by id', (*account[:2], key)).fetchall()
+                self.assertEqual(rows, [('null',1,'v1'),('null',2,'v2'),('{"totalSteps": 10}',3,'v3'),('{"totalSteps": 10}',4,'v4'),('null',5,'v5'),('{"totalSteps": 20}',6,'v6')])
+                with self.assertRaises(psycopg.errors.RaiseException):
+                    ext.execute('update garmin.raw_observations set raw=%s where user_id=%s and connection_id=%s and key=%s', ('{}',*account[:2],key))
+            with psycopg.connect(self.owner_dsn, autocommit=True) as owner:
+                owner.execute('update brain.work_items set current_attempt_token=null where id=%s', (self.work,))
+            with self.assertRaises(store.StaleAttempt): put({'totalSteps': 30}, 7, 'v7')
+            self.assertEqual(current(), ('{"totalSteps": 20}', 6, 6, 'v6'))
+            with psycopg.connect(self.ext_dsn) as reader:
+                self.assertEqual(reader.execute('select count(*) from garmin.raw_observations where user_id=%s and connection_id=%s and key=%s', (*account[:2], key)).fetchone()[0], 6)
+        finally:
+            writer.close()
+
+    def test_imported_raw_becomes_current_without_mutating_import(self):
+        account = self.accounts[0]; writer = self.writer(account)
+        key = '2026-01-06'
+        try:
+            with psycopg.connect(self.owner_dsn, autocommit=True) as owner:
+                owner.execute('insert into garmin.raw_response(user_id,connection_id,scope,key,endpoint,raw,fetched_at,checked_at,library_version) values (%s,%s,%s,%s,%s,%s,%s,%s,%s)', (*account[:2], 'day', key, 'user_summary', '{"totalSteps": 1}', 1, 1, 'import'))
+            store.upsert_raw(writer, scope='day', key=key, endpoint='user_summary', payload={'totalSteps': 2}, library_version='new', now_ms=2)
+            with psycopg.connect(self.ext_dsn) as ext:
+                args = (*account[:2], key)
+                self.assertEqual(ext.execute('select raw from garmin.raw_response where user_id=%s and connection_id=%s and key=%s', args).fetchone(), ('{"totalSteps": 1}',))
+                self.assertEqual(ext.execute('select raw,fetched_at from garmin.raw_current where user_id=%s and connection_id=%s and key=%s', args).fetchall(), [('{"totalSteps": 2}',2)])
+        finally:
+            writer.close()
+
+    def test_report_snapshot_reads_second_day_and_activity_payload_preserving_originals(self):
+        account = self.accounts[0]; writer = self.writer(account)
+        try:
+            for scope, key, endpoint, first, second in (
+                ('day', DAY, 'sleep_data', {'marker': 'day-first'}, {'marker': 'day-second'}),
+                ('activity', '77', 'activity', {'marker': 'activity-first'}, {'marker': 'activity-second'}),
+            ):
+                store.upsert_raw(writer, scope=scope, key=key, endpoint=endpoint, payload=first, library_version='first', now_ms=1)
+                store.upsert_raw(writer, scope=scope, key=key, endpoint=endpoint, payload=second, library_version='second', now_ms=2)
+            with store.transaction(writer):
+                writer.execute('insert into garmin.activity(user_id,connection_id,activity_id,day_key,start_ms,duration_s) values (%s,%s,%s,%s,%s,%s)', (*account[:2], 77, DAY, 1767312000000, 1))
+            with self.envelope(account):
+                notes = []
+                snapshot = report_input._snapshot(CFG, REPORT_DAY, 1767398400000, notes)
+            self.assertEqual(notes, [])
+            self.assertEqual(snapshot[0][DAY]['sleep_data'], {'marker': 'day-second'})
+            self.assertEqual(snapshot[1]['77']['activity'], {'marker': 'activity-second'})
+            with psycopg.connect(self.ext_dsn) as reader:
+                rows = reader.execute('select scope,key,endpoint,raw from garmin.raw_response where user_id=%s and connection_id=%s order by scope', account[:2]).fetchall()
+            self.assertEqual({(scope, key, endpoint): json.loads(raw) for scope, key, endpoint, raw in rows},
+                             {('day', DAY, 'sleep_data'): {'marker': 'day-first'},
+                              ('activity', '77', 'activity'): {'marker': 'activity-first'}})
+        finally:
+            writer.close()
 
     def test_real_sequential_and_simultaneous_append_latest(self):
         account=self.accounts[0]; first=self.writer(account); second=self.writer(account)

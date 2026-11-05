@@ -48,6 +48,7 @@ import logging
 import os
 import random
 import re
+import stat
 import tempfile
 import time
 from collections.abc import Callable, Collection, Iterator
@@ -748,9 +749,11 @@ def _session_lock(tokenstore: Path, wait_seconds: float) -> Iterator[None]:
     `os.open`의 fd는 상속되지 않으므로 하위 프로세스가 락을 물려받지 않는다.
     """
     lock_path = tokenstore / SESSION_LOCK_FILENAME
-    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
     try:
         info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077 or info.st_nlink != 1:
+            raise GarminAdapterError("unsafe session lock")
         key = (info.st_dev, info.st_ino)
         if key in _held_locks:
             raise RuntimeError(

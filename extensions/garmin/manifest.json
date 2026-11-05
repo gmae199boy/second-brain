@@ -172,6 +172,17 @@
           "conflicts"
         ]
       }
+    },
+    {
+      "kind": "garmin.collect",
+      "execution": "supervised",
+      "runtime": "python",
+      "entry": "src/collect.py",
+      "manual": "collect",
+      "required_settings": [
+        "garmin.timezone",
+        "garmin.tokenstore"
+      ]
     }
   ],
   "settings": [
@@ -190,6 +201,12 @@
       "type": "string",
       "scope": "user",
       "required": []
+    },
+    {
+      "key": "garmin.tokenstore",
+      "type": "string",
+      "machine": "tokenstore",
+      "required": []
     }
   ],
   "error_codes": [
@@ -200,6 +217,9 @@
     "EXTENSION_REPORT_NOT_READY",
     "PREFLIGHT_STALE",
     "IMPORT_FILES_PENDING",
-    "IMPORT_FILES_FAILED"
+    "IMPORT_FILES_FAILED",
+    "COLLECT_INVALID",
+    "COLLECT_LOCKED",
+    "COLLECT_UNAVAILABLE"
   ]
 }

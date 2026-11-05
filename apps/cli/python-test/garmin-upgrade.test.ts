@@ -5,11 +5,11 @@ import { expect, it } from 'vitest';
 import { extHome } from '../test/ext-fixture.js';
 import { provisionExtension, runMigrations } from 'second_brain/postgres';
 
-it('새 설치는 core 31과 Garmin 14 및 native 표를 적용한다', async () => {
+it('새 설치는 core 31과 Garmin 15 및 native 표를 적용한다', async () => {
  const fixture=await extHome();
  try {
   const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
-  expect((await fixture.ledger('garmin')).map(row=>row.version)).toEqual(Array.from({length:14},(_,i)=>i+1));
+  expect((await fixture.ledger('garmin')).map(row=>row.version)).toEqual(Array.from({length:15},(_,i)=>i+1));
   expect(await fixture.ledger('core')).toContainEqual({owner:'core',version:31});
   expect(await fixture.db.rows("select to_regclass('garmin.raw_records') as raw, to_regclass('garmin.collect_state') as collect")).toEqual([{raw:null,collect:null}]);
   expect(await fixture.db.rows("select to_regclass('garmin.account_connections') is not null as accounts, to_regclass('garmin.evaluation_revisions') is not null as revisions, to_regclass('garmin.evaluation_files') is not null as files")).toEqual([{accounts:true,revisions:true,files:true}]);
@@ -45,6 +45,8 @@ it('Garmin v12 이력과 보존 행을 유지하고 v13에서 옛 경로만 제�
   expect(await runMigrations(options)).toMatchObject({ok:true,applied:['0013_remove_legacy_collect.sql']}); expect(await snapshot()).toEqual(before);
   await copyFile(new URL('0014_native_store.sql',source),join(dir,'0014_native_store.sql'));
   expect(await runMigrations(options)).toMatchObject({ok:true,applied:['0014_native_store.sql']}); expect(await snapshot()).toEqual(before);
+  await copyFile(new URL('0015_raw_observations.sql',source),join(dir,'0015_raw_observations.sql'));
+  expect(await runMigrations(options)).toMatchObject({ok:true,applied:['0015_raw_observations.sql']}); expect(await snapshot()).toEqual(before);
   for(const name of ['raw_records','raw_records_v2','body_records','collect_target_accounts','collect_state','collect_runs','collect_fetch_errors','collect_meta','collect_targets','collect_published','normalize_items','normalize_days','normalize_day_dirty','normalize_day_revisions','authority_v2','body_documents','body_sources','body_measurements','collect_snapshots','collect_snapshot_items','collect_notices','import_provenance','authority_provenance']) expect(await fixture.db.rows(`select to_regclass('garmin.${name}') as object`)).toEqual([{object:null}]);
   expect(await fixture.db.rows("select has_schema_privilege('brain_app','garmin','usage') as allowed")).toEqual([{allowed:false}]);
  } finally {await fixture.cleanup(); await rm(dir,{recursive:true,force:true});}

@@ -11,11 +11,17 @@ import { checkSchema, type SchemaVersions } from '../schema.js';
 import { cleanProcessGroup, inspectGroup, type GroupIdentity } from './process-cleanup.js';
 // Persist only narrowly defined, non-health public Garmin result summaries.
 export function publicCollectSummary(kind: string, summary: string | undefined): Record<string, string | number> | undefined {
-  if (!['garmin.collect', 'garmin.collect_retry', 'garmin.collect_recent', 'garmin.artifacts'].includes(kind) || !summary || summary.length > 2048) return undefined;
+  if (!summary || summary.length > 2048) return undefined;
   let value: unknown;
   try { value = JSON.parse(summary); } catch { return undefined; }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const v = value as Record<string, unknown>;
+  // General-purpose, fixed-shape result: no arbitrary strings or user data.
+  if (Object.keys(v).sort().join(',') === 'errors,runs,status' &&
+      typeof v['status'] === 'string' && ['success','partial','blocked','auth_required','error','noop'].includes(v['status']) &&
+      ['runs','errors'].every(k => typeof v[k] === 'number' && Number.isSafeInteger(v[k]) && (v[k] as number) >= 0))
+    return {status:v['status'],runs:v['runs'] as number,errors:v['errors'] as number};
+  if (!['garmin.collect', 'garmin.collect_retry', 'garmin.collect_recent', 'garmin.artifacts'].includes(kind)) return undefined;
   if (kind === 'garmin.artifacts') {
     const keys = Object.keys(v).sort().join(',');
     if (!['request_id,revision,status','graphs_failed,graphs_failed_names,graphs_registered,graphs_skipped,request_id,revision,status'].includes(keys) || v['status'] !== 'success' ||

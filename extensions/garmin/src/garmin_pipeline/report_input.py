@@ -152,14 +152,14 @@ def _snapshot(cfg, day, started_at, notes):
         if previous:
             window_from = previous[0]
         earliest = conn.execute(
-            "SELECT MIN(key COLLATE \"C\") FROM garmin.raw_response WHERE user_id=%s AND connection_id=%s AND scope='day'",
+            "SELECT MIN(key COLLATE \"C\") FROM garmin.raw_current WHERE user_id=%s AND connection_id=%s AND scope='day'",
             (conn.user_id, conn.connection_id)
         ).fetchone()[0]
         if earliest:
             first_ever = date.fromisoformat(earliest)
         first = (day - timedelta(days=HISTORY_DAYS)).isoformat()
         for key, endpoint, encoded in conn.execute(
-            "SELECT key, endpoint, raw FROM garmin.raw_response WHERE user_id=%s AND connection_id=%s AND scope='day' AND key BETWEEN %s AND %s ORDER BY key COLLATE \"C\", endpoint COLLATE \"C\"",
+            "SELECT key, endpoint, raw FROM garmin.raw_current WHERE user_id=%s AND connection_id=%s AND scope='day' AND key BETWEEN %s AND %s ORDER BY key COLLATE \"C\", endpoint COLLATE \"C\"",
             (conn.user_id, conn.connection_id, first, day.isoformat()),
         ):
             if key == day.isoformat() and endpoint in ("user_summary", "body_battery"):
@@ -201,7 +201,7 @@ def _snapshot(cfg, day, started_at, notes):
                 continue
             endpoints = {}
             for endpoint, encoded in conn.execute(
-                "SELECT endpoint, raw FROM garmin.raw_response WHERE user_id=%s AND connection_id=%s AND scope='activity' AND key=%s",
+                "SELECT endpoint, raw FROM garmin.raw_current WHERE user_id=%s AND connection_id=%s AND scope='activity' AND key=%s",
                 (conn.user_id, conn.connection_id, activity_id),
             ):
                 if Path(endpoint).name != endpoint or endpoint in (".", ".."):

@@ -624,7 +624,7 @@ def _first_call_endpoints(conn: store.Connection) -> tuple[str, ...]:
         return tuple(
             endpoint for endpoint in FIRST_CALL_ENDPOINTS
             if conn.execute(
-                "SELECT 1 FROM garmin.raw_response WHERE user_id=%s AND connection_id=%s AND endpoint = %s AND raw != %s LIMIT 1",
+                "SELECT 1 FROM garmin.raw_current WHERE user_id=%s AND connection_id=%s AND endpoint = %s AND raw != %s LIMIT 1",
                 (conn.user_id, conn.connection_id, endpoint, _NULL),
             ).fetchone() is None
         )
