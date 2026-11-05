@@ -1,3 +1,5 @@
+import { readScopedSettings } from '../settings/index.js';
+import type { SettingsStore } from '../ports/store.js';
 import { decodeSettingsSnapshot, PROCESS_ABI_SNAPSHOT_MAX_BYTES } from '../process-abi/codec.js';
 import { utf8Bytes } from '../domain/sha256.js';
 
@@ -43,6 +45,26 @@ export function createExtensionSnapshot(input: {
   const serialized = JSON.stringify({ version: 1, extension: input.extension, user_id: input.userId, values });
   if (utf8Bytes(serialized).length > PROCESS_ABI_SNAPSHOT_MAX_BYTES || !decodeSettingsSnapshot(serialized, input.extension, types).ok) return invalid();
   return { ok: true, serialized };
+}
+
+/** 기존 scope 조회와 비밀 읽기 순서를 유지하여 소비자용 snapshot을 취득한다. */
+export async function acquireExtensionSnapshot(input: {
+  extension: string; userId: string; stage: ExtensionStage; declarations: readonly ExtensionSettingDeclaration[];
+  requiredKeys?: readonly string[]; getSettings?: SettingsStore['getSettings'];
+  readSecrets?: () => Promise<Readonly<Record<string, string>>>;
+  machineValues?: () => Readonly<Record<string, string>>;
+}) {
+  const invalid = () => ({ ok: false as const, kind: 'config' as const, result: { ok: false as const, code: 'EXTENSION_CONFIG_INVALID' as const, retryable: false as const, message: '확장 설정을 확인하세요' } });
+  if (input.declarations.length && (!input.getSettings || !input.readSecrets)) return invalid();
+  const read = input.declarations.length
+    ? await readScopedSettings({ getSettings: input.getSettings! }, input.userId, input.declarations)
+    : { ok: true as const, settings: [] };
+  if (!read.ok) return { ok: false as const, kind: 'settings' as const, result: read };
+  let secrets: Readonly<Record<string, string>> = {};
+  try { if (input.declarations.some(d => d.secret)) secrets = await input.readSecrets!(); }
+  catch { return invalid(); }
+  const snapshot = createExtensionSnapshot({ ...input, settings: Object.fromEntries(read.settings.map(s => [s.key, s.value])), secrets, machine: input.machineValues?.() ?? {} });
+  return snapshot.ok ? snapshot : { ok: false as const, kind: 'snapshot' as const, result: snapshot };
 }
 
 /** 비밀의 참조만 반환하는 설정 CLI 정의를 만든다. */

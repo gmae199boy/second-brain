@@ -29,3 +29,46 @@ it('extension setting definitions retain declared scope and default to user', as
   ]);
   expect(definitions.map(definition => definition.scope)).toEqual(['user', 'global']);
 });
+
+it('acquires empty snapshots without capabilities or IO', async () => {
+  const { acquireExtensionSnapshot } = await import('../src/extensions/snapshot.js');
+  expect(await acquireExtensionSnapshot({ extension: 'testext', userId: base.userId, stage: 'connect', declarations: [] })).toEqual({ ok: true, serialized: `{"version":1,"extension":"testext","user_id":"${base.userId}","values":{}}` });
+  let settingsReads = 0, secretReads = 0;
+  expect(await acquireExtensionSnapshot({ extension: 'testext', userId: base.userId, stage: 'connect', declarations: [],
+    getSettings: async () => { settingsReads++; return { ok: true, settings: [] }; },
+    readSecrets: async () => { secretReads++; return {}; },
+  })).toEqual({ ok: true, serialized: `{"version":1,"extension":"testext","user_id":"${base.userId}","values":{}}` });
+  expect([settingsReads, secretReads]).toEqual([0, 0]);
+});
+
+it('acquires scoped values, defaults, secrets and machine values in the original order', async () => {
+  const { acquireExtensionSnapshot } = await import('../src/extensions/snapshot.js');
+  const { memoryStore } = await import('../src/testing/index.js');
+  const store = memoryStore(), calls: string[] = [];
+  await store.setSetting({ userId: null, key: 'testext.user', value: 'fallback', updatedAt: new Date(0) });
+  await store.setSetting({ userId: base.userId, key: 'testext.user', value: 'self', updatedAt: new Date(0) });
+  await store.setSetting({ userId: null, key: 'testext.global', value: 'true', updatedAt: new Date(0) });
+  await store.setSetting({ userId: base.userId, key: 'testext.token', value: 'REF', updatedAt: new Date(0) });
+  const result = await acquireExtensionSnapshot({ extension: 'testext', userId: base.userId, stage: 'connect', declarations: [
+    { key: 'testext.user', type: 'string', required: [] }, { key: 'testext.global', type: 'boolean', scope: 'global', required: [] },
+    { key: 'testext.default', type: 'number', default: '3', required: [] }, { key: 'testext.token', type: 'string', secret: true, required: [] },
+    { key: 'testext.machine', type: 'string', machine: 'tokenstore', required: [] },
+  ], getSettings: async input => { calls.push(input.userId ?? 'global'); return store.getSettings(input); }, readSecrets: async () => { calls.push('secrets'); return { REF: 'synthetic' }; }, machineValues: () => { calls.push('machine'); return { tokenstore: '/tokenstore' }; } });
+  expect(calls).toEqual([base.userId, 'global', 'secrets', 'machine']);
+  expect(result.ok && JSON.parse(result.serialized)).toEqual({ version: 1, extension: 'testext', user_id: base.userId, values: { 'testext.user': 'self', 'testext.global': true, 'testext.default': 3, 'testext.token': 'synthetic', 'testext.machine': '/tokenstore' } });
+});
+
+it('preserves capability, database, secret and required-stage failures', async () => {
+  const { acquireExtensionSnapshot } = await import('../src/extensions/snapshot.js');
+  const { memoryStore } = await import('../src/testing/index.js');
+  const store = memoryStore(); let secretsRead = 0;
+  const common = { extension: 'testext', userId: base.userId, stage: 'connect' as const, declarations: [{ key: 'testext.required', type: 'string' as const, required: ['connect' as const, 'work' as const] }] };
+  expect(await acquireExtensionSnapshot(common)).toMatchObject({ ok: false, kind: 'config' });
+  expect(await acquireExtensionSnapshot({ ...common, getSettings: store.getSettings.bind(store) })).toMatchObject({ ok: false, kind: 'config' });
+  expect(await acquireExtensionSnapshot({ ...common, getSettings: async () => ({ ok: false, code: 'DB_LOCKED', message: 'locked' }), readSecrets: async () => { secretsRead++; return {}; } })).toMatchObject({ ok: false, kind: 'settings', result: { code: 'DB_LOCKED', message: 'locked' } });
+  const caps = { getSettings: store.getSettings.bind(store), readSecrets: async () => { secretsRead++; return {}; } };
+  expect(await acquireExtensionSnapshot({ ...common, ...caps })).toMatchObject({ ok: false, kind: 'snapshot' });
+  expect(await acquireExtensionSnapshot({ ...common, ...caps, stage: 'work', requiredKeys: [] })).toMatchObject({ ok: true });
+  expect(secretsRead).toBe(0);
+  expect(await acquireExtensionSnapshot({ ...common, ...caps, declarations: [{ key: 'testext.secret', type: 'string', secret: true, required: [] }], readSecrets: async () => { throw new Error('secret'); } })).toMatchObject({ ok: false, kind: 'config', result: { code: 'EXTENSION_CONFIG_INVALID' } });
+});
