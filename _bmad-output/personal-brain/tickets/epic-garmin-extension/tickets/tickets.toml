@@ -63,13 +63,26 @@ hitl = false
 risk = "low"
 
 [[entry]]
+id = 8
+type = "story"
+title = "통합 시험 실행·수정: Garmin 구현의 새·기존 시험을 전용 DB에서 실행하고 미해결 실패 없이 전환을 준비한다"
+description = "epic20·21 최신 시험 실행 결정의 검증을 맡는다.20.1~20.5·21.2~21.6의 계획·리뷰와 시험 코드 목록을 모아 기능 수락조건의 실행 누락을 확인한다.21.6과20.5가 main에 반영된 기준에서 소유가 명확한 전용 시험 DB·임시 Brain 홈·합성 자료로 pnpm test 다음 pnpm test:python을 순차 실행한다. 새·기존 시험을 건너뛰지 않고 실패를 기능·fixture·환경 원인별로 고쳐 관련 시험을 재검증한다. 독립 리뷰와 필요한 후속 리뷰를 수행한다. 실제 계정·운영 전환·unrelated 성능 개선은 하지 않는다. 기존 중앙 전체 회귀 gate를 이 티켓으로 대체한다."
+verify = "plan에 고정된 기준 SHA·시험 목록·전용 자원 준비/정리 명령·환경·전체 두 명령의 종료 코드와 로그가 있고, pnpm test 및 pnpm test:python을 순차로 모두 실행했으며 Garmin 새·기존 시험과 기존 공용 계약 시험이 누락되지 않고 실패별 수정/재검증 결과에 미해결 실패가 없다. 실패·미실행을 통과로 바꾸거나 skip·assertion 축소·timeout 증가로 숨기지 않는다. 독립 리뷰에서 요구한 보완이 완료됐고 중앙이 commit·원격main 반영과 실행 증거를 확인해야21.7을 시작한다."
+covers = []
+after = [6, "20.5"]
+hitl = false
+risk = "high"
+references = ["AGENTS.md, Garmin 구현 시험 실행 유예", "_bmad-output/personal-brain/automation/runbook.md, Garmin 구현 시험 실행 유예", "_bmad-output/personal-brain/tickets/epic-garmin-extension/epic-garmin-extension.md, Notes 최신 시험 범위"]
+notes = ["Decision(2026-11-05, 사용자): 구현 중 시험은 코드로만 작성하고 통합 실행·수정 티켓을21.6 뒤21.7 앞에 둔다.", "Risk: high — 미실행 또는 실패를 놓치면 실계정 전환 전에 데이터 손실·중복 실행 결함을 발견하지 못한다.", "추가 확인:20/21 모든 구현 plan의 수락조건별 시험 목록과 실제 실행 로그를 별도로 대조해 누락0을 확인한다."]
+
+[[entry]]
 id = 7
 type = "story"
 title = "이 Mac에서 전환: 옛 데이터를 확정 반입하고 옛 예약을 새 예약으로 바꿔 실수집·실평가가 한 번 돈다"
-description = "E21-6과 epic 20 설치본 확인을 한다. 플러그인 배포로 core·Garmin 플러그인을 설치하고, 예비 반입(online capture, 계정 raw profile id 확인 gate)으로 경로와 전수 비교를 확인한다. 전환: 옛 예약 중지 → 옛 writer 종료 확인 → 최종 capture → 차분 확정 반입 → 전수 비교·파일 관계 확인 → 새 예약 활성화 → 실수집·실평가 한 번. 어느 단계든 실패하면 새 예약을 켜지 않고 옛 plist를 되살린다. 설치본에서 확장 명령·cron 예약·확장 플러그인 설치가 동작하는지 확인한다. 공개 plan에는 건수·상태만 둔다."
+description = "21.8의 실행·수정 증거가 중앙에서 수락되고 원격 main에 반영된 뒤 E21-6과 epic 20 설치본 확인을 한다. 플러그인 배포로 core·Garmin 플러그인을 설치하고, 예비 반입(online capture, 계정 raw profile id 확인 gate)으로 경로와 전수 비교를 확인한다. 전환: 옛 예약 중지 → 옛 writer 종료 확인 → 최종 capture → 차분 확정 반입 → 전수 비교·파일 관계 확인 → 새 예약 활성화 → 실수집·실평가 한 번. 어느 단계든 실패하면 새 예약을 켜지 않고 옛 plist를 되살린다. 설치본에서 확장 명령·cron 예약·확장 플러그인 설치가 동작하는지 확인한다. 공개 plan에는 건수·상태만 둔다."
 verify = "설치본에서 확정 반입 보고서의 표별 건수·자연키·해시·평가·파일 관계 비교가 모두 일치하고, 옛 LaunchAgent가 내려가 있으며, 새 예약으로 실수집 한 번과 실평가 한 번이 형식·순서·저장·발신 상태 기준으로 성공하고, brain ext garmin 명령이 실제 수치를 돌려주며, 공개 plan·로그에 계정·건강값·평가 본문이 없다(모델 품질은 사람이 판단)."
 covers = ["E21-6"]
-after = [6, "20.5"]
+after = [8, "20.5"]
 hitl = true
 risk = "high"
 references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-36", "_bmad-output/personal-brain/tickets/epic-garmin-import/tickets/story-mac-garmin-capture-a-plan.md, 계정 확인 gate(14.8)"]
