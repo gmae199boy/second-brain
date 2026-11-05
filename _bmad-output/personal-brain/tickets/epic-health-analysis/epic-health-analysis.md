@@ -140,3 +140,7 @@ Garmin 사용자가 예약된 시각에 day·7d·30d·all 평가를 받고, 성�
 - Decision(2026-10-30, 추천으로 정함): 18.1의 16.8 레인 대기를 없앤다. 고정 합성 snapshot·fake 모델 tracer는 analyses·파일 관계(14.5)와 ABI(12.4)로 검증한다. 실제 digest·그래프 소비는 18.2·18.5의 16.5, 18.6의 16.6 의존으로 남는다. 예전 16 완료 HEAD·번호 가정 대신 착수 시점 main HEAD에서 확인한다.
 
 - Decision(2026-11-04, 사용자, 건강 조회 성능): 18.2의 입력 snapshot 뒤에 18.10(건강 현재값 조회 성능)을 두고 18.3이 18.10을 기다리게 한다. 18.2는 그대로 완료하며 진행 중인 plan과 Dispatch를 수정·중단하지 않는다. E18-1의 입력·현재값·ambiguity 계약은 바꾸지 않고 조회 방법과 비용을 개선한다. 18.2는 입력 snapshot 동등성, 18.10은 그 경로와 공통 건강 조회의 성능·기존 판정 보존을 맡는다. 완료된 epic 14의 계약은 호환 유지하고 새 사용자 건강 조회 기능(epic 17)은 추가하지 않는다. 이는 현재값 뷰의 성능 개선을 위한 명시적 경계 예외이며, 공통 판정을 프로그램으로 옮길 때도 공개 DB·Store 계약은 유지하고 필요한 호환 마이그레이션·소비자 변경을 함께 검증한다. 구현 방안은 SQL 최적화와 일괄 조회 후 판정을 비교해 정한다. 근거와 측정 한계는 `epic-health-analysis-health-query-performance-evidence.md`에 남긴다.
+- Decision(2026-11-05, 사용자, Garmin 확장 재설계): 분석은 core 일감이 아니라 Garmin 확장 일감이다(spine 확장 원칙·AD-29·35, 처분표). 옛 report를 거의 그대로 쓰는 epic-garmin-extension(21)이 이 에픽의 남은 일을 대신한다. 18.1·18.2는 병합된 이력으로 남기고 그 코드는 20.6이 지운다. 에픽의 종료(dropped·done)는 사용자 확인 뒤 정한다.
+- Dropped(2026-11-05): 18.3·18.4·18.5·18.6·18.7·18.9 — core 분석 그래프·두 adapter·intake·결과 묶음·예약·전환은 21.4·21.5·21.7이 옛 프로그램으로 대신한다. 같은 id에 새 기준을 섞지 않는다.
+- Dropped(2026-11-05): 18.10 — 대상인 core 건강 판정 view가 20.6에서 사라진다. 미커밋 구현(0031·health-perf·동등성 시험)과 측정 증거는 보존 브랜치 `gmae199boy/brain-ticket-18-10-perf-wip`의 WIP 커밋과 로컬 `.brain-automation/perf/`에만 보존하고 main에 병합하지 않는다.
+- Decision(2026-11-05): epic-test-time(19)을 기다리던 이 에픽의 after를 지운다(18.3 drop). 승인 예외였던 order_conflict가 끝난다.

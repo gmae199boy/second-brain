@@ -3,7 +3,7 @@ title: '이 Mac에서 전환: 옛 Garmin 수집 예약을 내리고 공통 예�
 type: 'chore'
 ticket: '9'
 created: '2026-11-04'
-status: blocked
+status: dropped
 baseline_revision: '03c7b2b50829343b80a22dc6c7923cf070937481'
 route: 'full'
 route_source: 'pinned'
@@ -31,8 +31,6 @@ operator_actions:
       재개 때 app-ref·version commit을 원격에 push해야 공식 bootstrap이 그 ref를 fetch할 수 있다. 원격 marketplace 반영은 중앙 main 병합·push 뒤에만 된다.
     evidence: |-
       `plugin/bootstrap.mjs`는 clone에서 `git fetch origin` 뒤 app-ref로 detach한다. README "릴리스"에 따르면 원격 marketplace는 version별로 캐시한다. 지휘자는 티켓 브랜치만 push하고 main은 중앙 소유다.
-blocked_at: "2026-11-04"
-blocked_reason: "14.8 반입·verify 완료 대기: 운영 DB 반입 기록 0건에서 실수집하면 core 권위 v2가 반입 dataset 없이 영구 기록됨(중앙 결정 A, msg_ac873b59896a). 운영 상태 무변경"
 ---
 
 <intent-contract>

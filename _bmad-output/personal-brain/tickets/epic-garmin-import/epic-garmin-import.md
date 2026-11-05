@@ -147,3 +147,5 @@ Garmin 확장 뼈대와 스키마를 PostgreSQL에 만들고 기존 Garmin 데�
 - Decision(2026-10-30, 추천으로 정함): 14.1의 15.6 레인 대기를 없애고 manifest(13.2)와 비발신 0건 검증에 쓰는 채널 요청 표(15.1)를 명시한다. PG FileStore(11.4)·attempt(12.3)·Python 설치(13.3)·role(13.4)이 tracer의 기능 선행이다. 채널 legacy 표는 소비자인 14.4가 15.3을 기다린다. 예전 15 완료 HEAD·번호 가정은 폐기하고 착수 시점 main HEAD에서 확인한다.
 
 - Decision(2026-11-01, 추천으로 정함, 14.5 escalation 해소): 리뷰 반복 상한은 세션 정지로 취급한다. 보존 구현에서 inventory namespace와 가림 삭제 후 claim 만료를 각각 회귀·교정·checkpoint하고 전체 검증과 독립 리뷰를 다시 수행한다. 수락 계약은 유지한다.
+- Decision(2026-11-05, 사용자, Garmin 확장 재설계): 옛 데이터는 core 건강 표·`analyses`가 아니라 원본 SQLite 표를 같은 모양 `garmin` 표로 복사해 반입한다(AD-36). 이 에픽의 capture·읽기 전용 reader·hash·checkpoint·preserved_rows는 21.2가 재사용하고, core 쓰기 경로는 20.6이 지운다.
+- Dropped(2026-11-05): 14.8 — 실제 반입은 21.7(예비·확정 반입, 계정 확인 gate 유지)이 한다. blocked 원인(계정 미확인 후보)은 21.7의 gate로 넘어간다.

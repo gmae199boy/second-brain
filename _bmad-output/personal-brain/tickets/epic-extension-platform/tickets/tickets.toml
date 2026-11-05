@@ -1,0 +1,73 @@
+# epic 20 확장 지점 보강 — 표 순서 = 만드는 순서. id는 영구. (2026-11-05)
+# 한 레인(공유 편집: Runtime 명령 봉투·설정 snapshot, manifest decoder, 설치기, core migration·extension-provision): 6 → 1 → 2 → 3 → 4 → 5.
+
+[[entry]]
+id = 6
+type = "story"
+title = "정리: 옛 core Garmin 경로와 epic 16 확장 코드가 사라지고, 대화 수집·파일·채널 등 남길 것과 그 시험은 그대로 통과한다"
+description = "E21-1을 만든다. core 건강 계약(건강 표·catalog·지원 버전·권위 규칙·판정 view·health_aggregate_v1·readHealth·readVerification·import-verification runtime), core 분석(18.1 health_analysis 일감·worker·fake-codex 분석 tracer·$garmin-daily-analysis 리소스, 18.2 analysis-inputs reader·snapshot·legacy report-input oracle 시험, analyses 확장·analysis_files), `garmin.raw_records`·`garmin.body_records`·`garmin.collect_target_accounts` 읽기 view(확장 0003·0012), epic 14 importer의 core 쓰기 경로, epic 16 확장 코드(collect/normalize/digest/charts/verify 등)와 그 시험, 관련 test-changed 규칙을 지운다. 새 core forward migration 하나가 해당 표·view·함수·권한을 drop하고, Garmin 확장 schema는 확장 migration으로 정리한다. 적용된 migration 파일은 보존한다(AD-31). 남길 것: file_requests·FileStore, 채널 원문 보존·legacy 채널 이력, 확장 설치·스케줄러, 대화 수집 표. 옛 프로그램 이식은 21.2다. `packages/postgres/src/extension-provision.ts`에서 건강·analyses grant만 빼고 file_requests·채널 grant는 남긴다. 18.1·18.2의 합성 fixture 중 21.2~21.4가 쓸 것은 옮겨 둔다."
+verify = "pnpm test와 pnpm test:python이 통과하고, core 실행 소스(packages/·apps/의 src)와 명령 등록부·시험(보존한 옛 migration 파일·새 drop migration·이 정리를 검증하는 시험 fixture·문서는 제외)에서 health_observations·health_resolution_v1·health_current_v1·health_aggregate_v1·health_analysis·garmin-daily-analysis·analysis_snapshots·raw_records 참조가 없으며, 기존 schema 업그레이드 시험에서 drop 뒤 대화 수집 표의 건수·내용, file_requests·FileStore, 채널 원문 보존·legacy 채널 이력 표가 그대로이고, 새 설치에서도 migration이 끝까지 적용된다."
+covers = ["E20-5"]
+after = ["18.2"]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/garmin-extension-redesign-disposition.md, 처분표", "_bmad-output/personal-brain/research-garmin-extension-redesign-2026-11-05/research-garmin-extension-redesign-2026-11-05.md, Q2(b), Q3"]
+[[entry]]
+id = 1
+type = "story"
+title = "Tracer: testext가 선언한 읽기 명령이 brain ext testext <cmd>와 MCP 도구로 보이고 가려진 결과를 돌려준다"
+description = "E20-1을 만든다. manifest decoder에 `commands[]`(이름·실행 명령·설명·예시·입력/출력 schema·timeout, 읽기 전용)를 더하고 쓰기 선언은 설치를 거부한다. 설치·활성 때 공통 명령 메타(ns `ext.<name>`, verb, used_for, examples, risk read, hook no)로 등록하고 비활성·제거 때 없앤다. CLI `brain ext <name> <command>`, MCP `ext_<name>_<command>`, `guide schema`를 같은 메타에서 생성한다. 실행은 큐 없는 자식 프로세스(AD-33 그룹 정리·reap), stdin 봉투 `{abi,user_id,settings,input}`, timeout·출력 크기 상한, 출력 schema 검증 → 출력 코덱 → 재검증(실패 `EXTENSION_COMMAND_OUTPUT_REDACTED`). testext에 읽기 명령 `echo-stats` 하나를 더한다. 명령 봉투의 user_id 검증은 20.2가 이어받는다. user_id는 20.2 전까지 기존 self 조회로 채운다."
+verify = "시험에서 testext 설치 뒤 `brain ext testext echo-stats --json`과 MCP 도구 호출과 `guide schema`가 같은 입력 schema를 보이고 같은 결과를 돌려주며, 출력의 시험 비밀 문자열이 가려지고, 가린 뒤 enum을 어기는 출력은 EXTENSION_COMMAND_OUTPUT_REDACTED로 실패하며, timeout 넘는 명령은 프로세스 그룹까지 정리되고, 쓰기 명령을 선언한 manifest는 설치가 거부되며, ext disable 뒤 명령이 사라진다."
+covers = ["E20-1"]
+after = ["13.8", 6]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-37, AD-5, AD-11, AD-28"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "사용자 키와 \"나\" 해석: 설정·채널 대화가 user_id를 갖고, Runtime이 self를 모든 실행 입력에 넣는다"
+description = "E20-2를 만든다. `brain.settings`를 `(user_id, key)` + `UNIQUE NULLS NOT DISTINCT`로 바꾸고 설정 코덱에 키별 scope(user|global)와 사용자 → 공통 → 기본값 읽기, manifest 기본값 부재 시 삽입을 둔다. `channel_conversations`에 user_id를 더한다. Runtime에 유일한 is_self 해석기를 두고 20.1의 명령 봉투와 설정 snapshot·일감 입력·명령 봉투에 넣으며 없으면 USER_MISSING. 이행 순서는 nullable 추가 → setup의 self 보장 → backfill → 기본값 → NOT NULL. 기존 key 단독 읽기(`packages/postgres/src/settings.ts` 등)를 모두 옮긴다."
+verify = "시험에서 새 DB와 기존 schema 업그레이드 둘 다 설정·대화 행이 self user_id로 채워지고, 같은 (user,key)와 (NULL,key)가 각각 하나만 허용되며, 사용자 값이 공통 값보다 먼저 읽히고, global scope 키에 사용자 쓰기가 거부되며, 확장 재설치가 사용자 값을 덮지 않고, self 행이 없으면 일감·명령이 USER_MISSING으로 멈추며, 대화 수집 표의 건수·내용이 바뀌지 않는다."
+covers = ["E20-2"]
+after = [1]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-18, AD-40, AD-12"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "cron·once 예약: 매주 금요일 예약과 한 번 실행이 회차 단위로 한 번씩 성공 기록되고 놓친 회차 정책대로 돈다"
+description = "E20-3을 만든다. schedules에 trigger(cron식+IANA 시간대 | once run_at)·schedule_key·user_id를 더하고 회차 표 schedule_occurrences(schedule_id, occurrence_at, status, work_id)를 만든다. 다음 발화는 Core port 뒤 Runtime adapter(croner 11, mode 5-part)가 계산한다. 발화는 next_run_at CAS·회차 생성·일감 연결을 한 트랜잭션에 확정하고, attempt 시작 때 붙은 회차만 성공 확정한다(work.ts의 날짜 범위 성공 처리를 대체). 놓친 회차(유예 5분) 정책 latest|coalesce|skip을 manifest 일감별로 선언하고 표대로 처리한다. 기존 daily 예약을 cron으로, schedule_successes를 회차 done으로 옮긴다. CLI `brain schedules add --cron/--once`와 manifest default_schedules를 확장한다. 설치는 없는 schedule_key만 만들고 사용자 변경·삭제(표식)를 보존한다."
+verify = "시험(가짜 clock)에서 Asia/Seoul '0 9 * * 5' 예약이 금요일마다 한 번 발화해 그 회차만 done이 되고, 데몬을 3주 꺼 두면 latest는 최근 회차 하나만 실행하고 나머지는 skipped, coalesce는 세 회차를 한 일감으로 돌려 셋 다 done, skip은 실행 없이 skipped이며, 실행 중 붙은 새 회차는 다음 attempt로 넘어가고, once는 늦어도 한 번 돌고 끝나며, 서머타임 시간대의 없는/겹친 시각이 규칙대로이고, 기존 daily 예약과 성공 날짜가 cron·회차로 옮겨진 뒤 같은 날 중복 발화가 없으며, 재설치가 사용자가 바꾼 trigger를 덮지 않는다."
+covers = ["E20-3"]
+after = [2, "12.10"]
+hitl = false
+risk = "high"
+references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-39, AD-21, AD-27", "_bmad-output/personal-brain/research-garmin-extension-redesign-2026-11-05/research-garmin-extension-redesign-2026-11-05.md, Q1"]
+
+[[entry]]
+id = 4
+type = "story"
+title = "패키지 설치와 확장 플러그인 틀: testext 패키지를 경로로 설치·갱신하고, core 갱신과 겹치면 한쪽이 기다린다"
+description = "E20-4를 만든다. `brain ext install --package <경로>`(manifest 파일 목록 내용 digest, 호환 core 버전, symlink·경로 탈출 검사, registry 패키지 신원 기록)를 더한다. core bootstrap과 확장 설치가 같은 `<home>/install.lock/` 안에서 core 신원·호환 재확인 → 해당 확장 예약·청구·명령 quiesce → migration → 원자적 복사 → registry 전환 → 재개 순서를 지키고, 설치본이 앞서면 아무것도 하지 않고 doctor가 알린다. marketplace에 확장 플러그인 항목을 둘 수 있는 틀(얇은 진입점: core 설치 확인 → ext install --package, `package/`와 digest 동기화 시험, 플러그인별 ref·version 규칙 시험)을 testext 플러그인 fixture로 만든다."
+verify = "시험에서 testext 패키지를 --package로 설치·갱신하면 registry에 이름·version·digest가 남고, digest가 다르거나 symlink·경로 탈출·호환 버전 불일치면 거부되며, core bootstrap과 확장 설치를 동시에 돌리면 한쪽이 잠금을 기다려 둘 다 일관된 결과가 되고, 낮은 version 패키지로는 설치본을 내리지 않으며, testext 플러그인 fixture의 진입점이 core 미설치 때 안내만 하고 설치하지 않는다."
+covers = ["E20-4"]
+after = [3]
+hitl = false
+risk = "medium"
+references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-38, AD-19, AD-31", "_bmad-output/personal-brain/research-garmin-extension-redesign-2026-11-05/research-garmin-extension-redesign-2026-11-05.md, Q2"]
+
+[[entry]]
+id = 5
+type = "story"
+title = "Refactor sweep"
+description = "이 에픽의 정리만 한다. 착수 때 6·1~4의 plan과 리뷰가 미룬 항목에서 범위를 정한다. 다른 스토리에서 밀려난 범위는 새 스토리다."
+verify = "착수 때 정한 정리 항목이 모두 처리되고 6·1~4의 시험이 그대로 통과한다."
+covers = []
+after = [6, 1, 2, 3, 4]
+hitl = false
+risk = "low"
+

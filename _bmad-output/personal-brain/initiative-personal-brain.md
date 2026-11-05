@@ -4,7 +4,7 @@ title: "어떤 에이전트로 일해도 이어지는 나의 작업·건강 기�
 parent: none
 covers: [CAP-1, CAP-2, CAP-3, CAP-4, CAP-5, CAP-6, CAP-7, CAP-8, CAP-9, CAP-10, CAP-11, CAP-12, CAP-13, CAP-14]
 sources: [_bmad-output/personal-brain/prep-garmin-absorption/accepted-intent.md, _bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md]
-companions: [_bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md, _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, _bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md, _bmad-output/personal-brain/prep-garmin-absorption/integration-boundaries.md, _bmad-output/personal-brain/prep-garmin-absorption/migration-contract.md, _bmad-output/personal-brain/decisions-by-recommendation.md]
+companions: [_bmad-output/personal-brain/spec-brain-v1-slice-1/spec-brain-v1-slice-1.md, _bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, _bmad-output/personal-brain/architecture-brain-v1-slice-1/garmin-extension-redesign-disposition.md, _bmad-output/personal-brain/prd-brain-v1-slice-1/prd-brain-v1-slice-1.md, _bmad-output/personal-brain/prep-garmin-absorption/integration-boundaries.md, _bmad-output/personal-brain/prep-garmin-absorption/migration-contract.md, _bmad-output/personal-brain/decisions-by-recommendation.md]
 after: []
 assignee: ""
 risk: high
@@ -77,10 +77,10 @@ Garmin 흡수의 범위 밖(2026-10-28)은 다음과 같다. 이것들은 흡수
 - Touch point: LaunchAgent KeepAlive(데몬 실행·재시작만) — 데몬; owner: epic-daemon. UNIX 소켓은 V1 뒤(2026-10-26)
 - Touch point: PostgreSQL 18(OrbStack Docker, 영속 볼륨) — 단일 주 저장소; owner: epic-postgres-primary (2026-10-28. 이전의 SQLite `node:sqlite` 원본 파일(owner epic-foundation-and-install)은 전환 뒤 지우고, Docker·Postgres 복제 대상(epic-replicas)은 drop)
 - Touch point: uv·Python ≥3.12(확장 잠금 파일) — 확장 런타임; owner: epic-extensions (2026-10-28)
-- Touch point: Garmin Connect(`garminconnect`·`curl-cffi`) — 건강 원본 수집과 사용자 로그인; owner: epic-garmin-runtime (2026-10-28)
-- Touch point: Codex CLI(이 Mac의 로그인) — 건강 평가의 모델 호출(분석 에이전트, AD-35); owner: epic-health-analysis (2026-10-28. 옛 owner epic-garmin-runtime에서 분할로 옮김)
+- Touch point: Garmin Connect(`garminconnect`·`curl-cffi`) — 건강 원본 수집과 사용자 로그인; owner: epic-garmin-extension (2026-11-05. 옛 owner epic-garmin-runtime)
+- Touch point: Codex CLI(이 Mac의 로그인) — 건강 평가의 모델 호출(Garmin 확장 분석 일감, AD-35); owner: epic-garmin-extension (2026-11-05. 옛 owner epic-health-analysis)
 - Touch point: Telegram Bot API — 첫 채널 발신; owner: epic-channels (2026-10-28)
-- Touch point: Garmin 저장소의 private capture(`data/absorption-prep/LATEST`: SQLite DB 5개, 파일 349개, `manifest.private.json`) — 기존 Garmin 데이터 이전의 원천, 읽기 전용; owner: epic-garmin-import (2026-10-28)
+- Touch point: Garmin 저장소의 private capture(`data/absorption-prep/LATEST`: SQLite DB 5개, 파일 349개, `manifest.private.json`) — 기존 Garmin 데이터 이전의 원천, 읽기 전용; owner: epic-garmin-extension (2026-11-05. 옛 owner epic-garmin-import, 복사 반입 21.2·21.7)
 - Touch point: Google Drive API — 첨부 원본 저장소·외부 문서; owner: epic-drive
 - Touch point: OpenAI 호환 임베딩 endpoint(Model Studio 호환 모드·Ollama 등 사용자가 설정) — 임베딩 호출(선택, 기본 꺼짐); owner: epic-embedding-index (V1 뒤. 2026-11-02: "Model Studio 임베딩·재순위"에서 바꿈, 재순위는 기본 없음)
 - Touch point: 문서 추출 라이브러리(`pdfjs-dist`, `mammoth`, `file-type`, `exif-reader`) — 첨부·문서 텍스트 추출과 EXIF; owner: epic-attachments(`file-type`, txt·md), epic-drive(`pdfjs-dist`·`mammoth`), epic-recall-and-mirror(`exif-reader`, V1 뒤)(2026-10-26)
@@ -196,3 +196,4 @@ Garmin 흡수의 범위 밖(2026-10-28)은 다음과 같다. 이것들은 흡수
 - Decision(2026-10-28, 사용자): 임베딩 선택 색인은 나중에 확장(extension)으로 만든다. 지금은 구현하지 않고, 남은 에픽을 이어 만드는 무인 파이프라인(V1과 V1 뒤 5·3·4)에서 뺀다. 착수할 때 확장 계약(AD-29·30·33, epic 13) 위에서 다시 정의한다. 이 에픽 파일과 `tickets.toml`의 자리는 그때의 입력으로 남긴다.
 - Decision(2026-11-02, 추천으로 정함 → 같은 날 사용자 승인): core·확장 경계를 "확장은 데이터를 가져오는 connector(AD-29), 데이터를 쓰는 방식은 core"로 확인했다. 검색·조각·추출·문서 집계는 core(epic 17·8), Drive는 설치 없는 core 연결(epic 8), 임베딩은 확장이 아니라 core의 선택 기능(epic 6, 2026-10-28 결정을 바꿈). 외부 RAG 앱(RAGFlow·Onyx·Open WebUI·AnythingLLM)은 붙이지 않고 공식·수치·도구 모양만 가져온다(`inputs/rag-oss-patterns.md`). 에이전트가 보는 면(검색·원문·로그·doctor 각 하나)이 하나로 남는 것이 Brain과 플러그인 모음을 가르는 기준이다.
 - Note(2026-11-02, 입력): 네 RAG 오픈소스의 동기화·저장·검색 구조 비교는 `inputs/rag-oss-core-architecture.md`, 채택 후보 목록은 `inputs/rag-oss-patterns.md`(R1~R14, D1~D11). 비교의 결론: Brain의 "PG 하나에 원본·문서 행·조각" 구성은 Open WebUI pgvector 구성과 같은 모양이고, 조각은 어디서나 재생성 파생물이다. 위 2026-11-02 Decision(core·확장 경계)의 근거 §2-1·2-2.
+- Decision(2026-11-05, 사용자, Garmin 확장 재설계): core는 확장의 내용을 모른다. 확장은 manifest 선언(일감·예약·설정·명령·migration)으로만 붙고 데이터·로직은 확장 안에 있다(spine 확장 원칙, AD-29·30·32·35~40, `architecture-brain-v1-slice-1/garmin-extension-redesign-disposition.md`). Garmin은 옛 프로그램을 거의 그대로 PG `garmin` 표 위에서 쓰고 옛 SQLite를 복사 반입한다. 요구사항 R1~R18은 그대로이고 구현 방식만 바뀐다. epic-extension-platform(20)과 epic-garmin-extension(21)을 더하고, epic 18의 남은 core 분석·14.8·16.9·18.10·19.7을 drop하며, epic 17은 확장 명령을 소비하도록 고친다. 여러 사용자는 키와 "나" 해석까지만 하고 인증·격리는 뒤로 미룬다. S1의 "흡수"를 core가 기능을 가져가는 뜻으로 풀었던 기존 해석(AD-29·30·35 [ADOPTED])을 S11(기존 동작 재사용)에 맞게 바로잡는다.

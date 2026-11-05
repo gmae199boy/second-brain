@@ -67,7 +67,7 @@ python3.14 _bmad/method/scripts/tickets.py find <ticket-ref>
 
 티켓의 일반 `after`는 BMAD 원래 규칙상 리뷰 상태도 충족할 수 있다. 이 자동화에서는 그것만 보고 선행 티켓 병합 전에 다음 티켓을 띄우지 않는다. 선행 티켓의 구현·리뷰 완료와 원격 main 반영을 따로 확인한다.
 
-`tickets.py status`의 `order_conflict` 중 `{epic: epic-test-time, after: epic-health-analysis}` 1건은 2026-11-04 사용자 승인 예외다. epic-test-time의 19.5가 18.10을, epic-health-analysis의 18.3이 19.5·19.6·19.1·19.2·19.3·19.7·19.10을 기다리는 entry 단위 상호 순서라 생기며 entry 사이 순환은 없다. 경고 전용이라 `next`의 준비 판정·순서를 바꾸지 않는다. 이 경고를 이유로 에픽 순서를 바꾸거나 합치거나 사용자 판단을 기다리며 멈추지 않는다. 그 밖의 order_conflict는 평소대로 다룬다. 근거는 epic-test-time Notes.
+`tickets.py status`의 `order_conflict` 중 `{epic: epic-test-time, after: epic-health-analysis}`는 2026-11-04 사용자 승인 예외였고, 2026-11-05 Garmin 확장 재설계로 원인(18.3의 epic 19 gate, 19.5의 18.10 대기)이 사라져 끝났다. 남은 order_conflict는 평소대로 다룬다. 근거는 epic-test-time·epic-health-analysis Notes.
 
 새 티켓은 방금 확인한 원격 main SHA에서 분기한다. `$orca-cli`의 `worktree create --no-parent --base-branch <확인한 main ref> --agent claude --model claude-opus-5-5 --effort medium --prompt <명세 파일을 읽는 지시>`로 저장소의 최상위 워크트리와 독립 지휘자를 함께 시작한다. `worktree show`의 `parentWorktreeId: null`을 확인해 main과 같은 레벨인지 검증한다. `--no-parent`는 Orca 계층을 정하고 `--base-branch`는 Git 기준을 정하므로 둘을 구별한다. 이 경로에서 지휘자 자체를 `worker-start`로 다시 Dispatch하지 않는다. 구현·리뷰 워커만 독립 지휘자 자신의 Run에서 `worker-start --worktree current`로 시작해 depth 1을 유지한다. 정확한 flag와 반환 receipt는 현재 CLI help를 따른다.
 
