@@ -23,9 +23,10 @@ from psycopg.pq import TransactionStatus
 
 NORMALIZE_VERSION = 8
 NORMALIZE_VERSION_KEY = "normalize_version"
-NATIVE_SCHEMA_VERSION = 14
+NATIVE_SCHEMA_VERSION = 15
 _write_held = contextvars.ContextVar("garmin_write_held", default=False)
 _report_held = contextvars.ContextVar("garmin_report_held", default=False)
+_account_context = contextvars.ContextVar("garmin_account_context", default=None)
 
 
 class StoreError(Exception):
@@ -141,14 +142,27 @@ def _driver(conn: Connection):
     return conn._Connection__driver
 
 
+@contextlib.contextmanager
+def supervised_account(account: AccountContext):
+    """Bind a validated supervisor selection for this execution only."""
+    token = _account_context.set(account)
+    try:
+        yield
+    finally:
+        _account_context.reset(token)
+
+
 def _envelope():
     try:
         database_url = os.environ['BRAIN_DATABASE_URL']
         user_id = UUID(os.environ['BRAIN_USER_ID'])
         work_id = UUID(os.environ['BRAIN_WORK_ID'])
         token = UUID(os.environ['BRAIN_ATTEMPT_TOKEN'])
-        identity = os.environ['BRAIN_ACCOUNT']
-        if not database_url or not identity:
+        selected = _account_context.get()
+        identity = os.environ.get('BRAIN_ACCOUNT') if selected is None else None
+        if selected is not None and (selected.user_id != user_id or selected.work_id != work_id or selected.attempt_token != token):
+            raise ValueError('account context mismatch')
+        if not database_url or (selected is None and not identity):
             raise ValueError('empty context')
     except (KeyError, ValueError, TypeError) as exc:
         raise StoreError('missing or invalid supervised account context') from exc
@@ -165,10 +179,17 @@ def _connect(*, readonly: bool) -> Connection:
         version = raw.execute('select garmin.native_schema_version()').fetchone()[0]
         if version != NATIVE_SCHEMA_VERSION:
             raise SchemaMismatch(version, NATIVE_SCHEMA_VERSION)
-        row = raw.execute(
-            'select connection_id from garmin.account_connections where user_id=%s and external_identity=%s',
-            (user_id, identity),
-        ).fetchone()
+        selected = _account_context.get()
+        if selected is None:
+            row = raw.execute(
+                'select connection_id from garmin.account_connections where user_id=%s and external_identity=%s',
+                (user_id, identity),
+            ).fetchone()
+        else:
+            row = raw.execute(
+                'select connection_id from garmin.account_connections where user_id=%s and connection_id=%s',
+                (user_id, selected.connection_id),
+            ).fetchone()
         if row is None:
             raise StoreError('confirmed account connection not found')
         account = AccountContext(user_id, row[0], work_id, token)
@@ -315,24 +336,30 @@ def insert_run_unlocked(cfg, *, local_date: str, started_at: int, finished_at: i
 
 def upsert_raw(conn: Connection, *, scope: str, key: str, endpoint: str,
                payload: object, library_version: str, now_ms: int) -> None:
-    """Insert immutable raw or accept the same existing raw, never overwrite it."""
+    """Save an immutable observation and publish the original SQLite current row."""
     if conn.readonly:
         raise StoreError("write attempted on read-only connection")
+    raw = json.dumps(payload, ensure_ascii=False)
+    try:
+        raw.encode('utf-8')
+    except UnicodeEncodeError:
+        raw = json.dumps(payload, ensure_ascii=True)
+    identity = (conn.user_id, conn.connection_id, scope, key, endpoint)
     with transaction(conn):
-        raw = json.dumps(payload, ensure_ascii=False)
-        try:
-            raw.encode('utf-8')
-        except UnicodeEncodeError:
-            raw = json.dumps(payload, ensure_ascii=True)
-        identity = (conn.user_id, conn.connection_id, scope, key, endpoint)
-        conn.execute('''insert into garmin.raw_response
-            (user_id,connection_id,scope,key,endpoint,raw,fetched_at,checked_at,library_version)
-            values (%s,%s,%s,%s,%s,%s,%s,%s,%s) on conflict do nothing''',
-            (*identity, raw, now_ms, now_ms, library_version))
-        existing = conn.execute('''select raw from garmin.raw_response
-            where user_id=%s and connection_id=%s and scope=%s and key=%s and endpoint=%s''', identity).fetchone()
-        if existing is None or (payload is not None and existing[0] != raw):
-            raise RawConflict('raw identity already has a different value')
+        # This is the same account key as write_session and native import.
+        conn.execute('select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(%s,0))',
+                     (account_write_lock_key(conn.user_id, conn.connection_id),))
+        existing = conn.execute('select raw,fetched_at,checked_at,library_version from garmin.raw_current where user_id=%s and connection_id=%s and scope=%s and key=%s and endpoint=%s', identity).fetchone()
+        conn.execute('insert into garmin.raw_observations(user_id,connection_id,scope,key,endpoint,raw,observed_at,library_version) values (%s,%s,%s,%s,%s,%s,%s,%s)', (*identity, raw, now_ms, library_version))
+        if existing is None:
+            current = (raw, now_ms, now_ms, library_version)
+            # Preserve the first original in the existing immutable native table.
+            conn.execute('insert into garmin.raw_response(user_id,connection_id,scope,key,endpoint,raw,fetched_at,checked_at,library_version) values (%s,%s,%s,%s,%s,%s,%s,%s,%s) on conflict do nothing', (*identity, *current))
+        elif payload is None or existing[0] == raw:
+            current = (existing[0], existing[1], now_ms, existing[3])
+        else:
+            current = (raw, now_ms, now_ms, library_version)
+        conn.execute('insert into garmin.raw_current_state(user_id,connection_id,scope,key,endpoint,raw,fetched_at,checked_at,library_version) values (%s,%s,%s,%s,%s,%s,%s,%s,%s) on conflict (user_id,connection_id,scope,key,endpoint) do update set raw=excluded.raw,fetched_at=excluded.fetched_at,checked_at=excluded.checked_at,library_version=excluded.library_version', (*identity, *current))
 
 
 def append_evaluation(conn: Connection, *, report_date: str, scope: str, summary: str,

@@ -27,7 +27,7 @@ class Cursor:
 
 
 class FakeRaw:
-    def __init__(self, *, version=14, account=True, attempt=True, raw=None):
+    def __init__(self, *, version=15, account=True, attempt=True, raw=None):
         self.version, self.account, self.attempt, self.value = version, account, attempt, raw
         self.commands, self.closed, self.depth = [], False, 0
         self.info = type('Info', (), {'transaction_status': TransactionStatus.IDLE})()
@@ -43,7 +43,7 @@ class FakeRaw:
         if 'insert into garmin.raw_response' in query:
             if self.value is None: self.value = params[5]
             return Cursor()
-        if 'select raw from' in query: return Cursor(row=(self.value,) if self.value is not None else None)
+        if 'select raw,fetched_at,checked_at,library_version from garmin.raw_current' in query: return Cursor(row=(self.value, 1, 1, '0') if self.value is not None else None)
         if 'returning revision' in query: return Cursor(row=(2,))
         return Cursor()
 
@@ -94,6 +94,25 @@ class StoreTest(unittest.TestCase):
     def test_missing_context_does_not_connect(self):
         del os.environ['BRAIN_ACCOUNT']
         with patch.object(store.psycopg, 'connect') as connect:
+            with self.assertRaises(store.StoreError): store.read_connection(None)
+            connect.assert_not_called()
+
+    def test_explicit_supervised_selection_is_scoped_and_restored(self):
+        raw = FakeRaw()
+        del os.environ['BRAIN_ACCOUNT']
+        account = store.AccountContext(USER, CONNECTION, WORK, TOKEN)
+        with store.supervised_account(account), patch.object(store.psycopg, 'connect', return_value=raw):
+            conn = store.read_connection(None)
+            self.assertEqual(raw.commands[2][1], (USER, CONNECTION))
+            self.assertIn('connection_id=%s', raw.commands[2][0])
+            conn.close()
+        with patch.object(store.psycopg, 'connect') as connect:
+            with self.assertRaises(store.StoreError): store.read_connection(None)
+            connect.assert_not_called()
+
+    def test_supervised_context_must_match_envelope(self):
+        account = store.AccountContext(USER, CONNECTION, WORK, CONNECTION)
+        with store.supervised_account(account), patch.object(store.psycopg, 'connect') as connect:
             with self.assertRaises(store.StoreError): store.read_connection(None)
             connect.assert_not_called()
 
@@ -176,15 +195,15 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(args[:2], (USER, CONNECTION))
         self.assertEqual(args[-4:], (USER, CONNECTION, '2026-01-01', 'day'))
 
-    def test_raw_never_overwrites_and_savepoint_rolls_back(self):
+    def test_raw_observation_does_not_overwrite_original(self):
         raw = FakeRaw(raw='{"a": 1}')
         conn = store.Connection(raw, store.AccountContext(USER, CONNECTION, WORK, TOKEN), readonly=False)
-        with store.transaction(conn):
-            with self.assertRaises(store.RawConflict):
-                with store.savepoint(conn):
-                    store.upsert_raw(conn, scope='day', key='synthetic', endpoint='x', payload={'a': 2}, library_version='0', now_ms=1)
+        store.upsert_raw(conn, scope='day', key='synthetic', endpoint='x', payload={'a': 2}, library_version='1', now_ms=2)
         self.assertEqual(raw.value, '{"a": 1}')
-        self.assertIn(('ROLLBACK TO SAVEPOINT', None), raw.commands)
+        observation = next(args for sql, args in raw.commands if 'insert into garmin.raw_observations' in sql)
+        state = next(args for sql, args in raw.commands if 'insert into garmin.raw_current_state' in sql)
+        self.assertEqual(observation[5:], ('{"a": 2}', 2, '1'))
+        self.assertEqual(state[5:], ('{"a": 2}', 2, 2, '1'))
 
 
 # Only dedicated synthetic databases may supply these test credentials. The owner

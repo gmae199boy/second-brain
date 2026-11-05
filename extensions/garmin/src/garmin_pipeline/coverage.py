@@ -264,7 +264,7 @@ def _raw_rows(
 ) -> dict[tuple[str, str, str], _Raw]:
     """범위 안 day-scope 원문과 모든 activity-scope 원문의 `(checked_at, 'null'인지)`."""
     rows = conn.execute(
-        "SELECT scope, key, endpoint, checked_at, raw = %s FROM garmin.raw_response"
+        "SELECT scope, key, endpoint, checked_at, raw = %s FROM garmin.raw_current"
         " WHERE user_id = %s AND connection_id = %s AND ((scope = %s AND key BETWEEN %s AND %s) OR scope = %s)",
         (_NULL, conn.user_id, conn.connection_id, _DAY, first, last, _ACTIVITY),
     )
@@ -293,7 +293,7 @@ def _activity_refs(
     활동마다 소속 목록 원문의 `fetched_at`을 함께 돌려준다.
     """
     rows = conn.execute(
-        "SELECT key, raw, fetched_at FROM garmin.raw_response"
+        "SELECT key, raw, fetched_at FROM garmin.raw_current"
         " WHERE user_id=%s AND connection_id=%s AND scope = %s AND endpoint = %s ORDER BY key COLLATE \"C\"",
         (conn.user_id, conn.connection_id, _DAY, _ACTIVITY_LIST),
     )
@@ -317,7 +317,7 @@ def _activity_refs(
 def _stale_lifestyle(conn: store.Connection) -> set[str]:
     """Compare stored self counts with the latest non-null report, across all keys."""
     rows = conn.execute(
-        "SELECT key, raw, fetched_at, checked_at FROM garmin.raw_response"
+        "SELECT key, raw, fetched_at, checked_at FROM garmin.raw_current"
         " WHERE user_id=%s AND connection_id=%s AND scope = 'day' AND endpoint = 'lifestyle_logging_data' ORDER BY key COLLATE \"C\" DESC",
         (conn.user_id, conn.connection_id)
     ).fetchall()

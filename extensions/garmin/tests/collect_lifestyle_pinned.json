@@ -1,0 +1,37 @@
+{
+  "calendarDate": "2026-10-14",
+  "dailyLogsReport": [
+    {
+      "behaviourId": 1,
+      "measurementType": "QUANTITY",
+      "calendarDate": "2026-10-14",
+      "name": "Alcohol",
+      "logStatus": "YES",
+      "category": "LIFESTYLE",
+      "details": [
+        {
+          "subTypeId": 2,
+          "subTypeName": "BEER",
+          "amount": 7
+        }
+      ],
+      "sleepRelated": false
+    },
+    {
+      "behaviourId": 4,
+      "measurementType": "NONE",
+      "calendarDate": "2026-10-14",
+      "name": "Healthy Meals",
+      "logStatus": "YES",
+      "category": "LIFESTYLE",
+      "sleepRelated": false
+    }
+  ],
+  "completionStats": [
+    {
+      "calendarDate": "2026-10-14",
+      "totalTracking": 2,
+      "completedTracking": 2
+    }
+  ]
+}

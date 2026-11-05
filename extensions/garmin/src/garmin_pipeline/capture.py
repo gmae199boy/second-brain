@@ -206,7 +206,7 @@ def _selected(
     rows: list[Row] = []
     for scope, key, endpoint in wanted:
         found = conn.execute(
-            "SELECT raw FROM garmin.raw_response WHERE user_id=%s AND connection_id=%s AND scope = %s AND key = %s AND endpoint = %s",
+            "SELECT raw FROM garmin.raw_current WHERE user_id=%s AND connection_id=%s AND scope = %s AND key = %s AND endpoint = %s",
             (conn.user_id, conn.connection_id, scope, key, endpoint),
         ).fetchone()
         if found is not None:
@@ -221,7 +221,7 @@ def _latest_days(conn: store.Connection) -> list[Row]:
     rows: list[Row] = []
     for endpoint in coverage.DAY_ENDPOINTS:
         candidates = conn.execute(
-            "SELECT key, raw FROM garmin.raw_response"
+            "SELECT key, raw FROM garmin.raw_current"
             " WHERE user_id=%s AND connection_id=%s AND scope = %s AND endpoint = %s AND raw != %s ORDER BY key COLLATE \"C\" DESC",
             (conn.user_id, conn.connection_id, _DAY, endpoint, _NULL),
         )
@@ -242,7 +242,7 @@ def _recent_activities(conn: store.Connection) -> list[Row]:
         found = [
             Row(_ACTIVITY, key, endpoint, raw)
             for endpoint, raw in conn.execute(
-                "SELECT endpoint, raw FROM garmin.raw_response"
+                "SELECT endpoint, raw FROM garmin.raw_current"
                 " WHERE user_id=%s AND connection_id=%s AND scope = %s AND key = %s AND raw != %s",
                 (conn.user_id, conn.connection_id, _ACTIVITY, key, _NULL),
             )
@@ -267,7 +267,7 @@ def _activity_ids(conn: store.Connection) -> list[int]:
     메시지만)을 남긴다.
     """
     lists = conn.execute(
-        "SELECT key, raw FROM garmin.raw_response"
+        "SELECT key, raw FROM garmin.raw_current"
         " WHERE user_id=%s AND connection_id=%s AND scope = %s AND endpoint = %s ORDER BY key COLLATE \"C\" DESC",
         (conn.user_id, conn.connection_id, _DAY, _ACTIVITY_LIST),
     )

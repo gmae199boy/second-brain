@@ -343,7 +343,7 @@ def _work_set(conn: store.Connection) -> list[_Item]:
     registered = " OR ".join("(r.scope = %s AND r.endpoint = %s)" for _ in pairs)
     rows = conn.execute(
         "SELECT r.scope, r.key, r.endpoint, r.fetched_at"
-        " FROM garmin.raw_response AS r"
+        " FROM garmin.raw_current AS r"
         " LEFT JOIN garmin.normalize_result AS n"
         " ON n.user_id=r.user_id AND n.connection_id=r.connection_id AND n.scope = r.scope AND n.key = r.key AND n.endpoint = r.endpoint"
         f" WHERE r.user_id=%s AND r.connection_id=%s AND ({registered})"
@@ -360,7 +360,7 @@ def _activity_day_keys(conn: store.Connection) -> dict[int, str]:
     형식이 틀린 목록은 WARNING(key만)을 남기고 건너뛴다. `coverage._activity_refs`와 같은 규칙이다.
     """
     rows = conn.execute(
-        "SELECT key, raw FROM garmin.raw_response WHERE user_id=%s AND connection_id=%s AND scope = %s AND endpoint = %s ORDER BY key COLLATE \"C\"",
+        "SELECT key, raw FROM garmin.raw_current WHERE user_id=%s AND connection_id=%s AND scope = %s AND endpoint = %s ORDER BY key COLLATE \"C\"",
         (conn.user_id, conn.connection_id, _DAY, _ACTIVITY_LIST),
     ).fetchall()
     day_keys: dict[int, str] = {}
@@ -400,7 +400,7 @@ def _normalize_item(
         raise NormalizeParseError(f"{item.endpoint}: key가 십진수 activityId가 아니다")
     target = _TARGETS[item.scope]
     (raw,) = conn.execute(
-        "SELECT raw FROM garmin.raw_response WHERE user_id=%s AND connection_id=%s AND scope = %s AND key = %s AND endpoint = %s",
+        "SELECT raw FROM garmin.raw_current WHERE user_id=%s AND connection_id=%s AND scope = %s AND key = %s AND endpoint = %s",
         (conn.user_id, conn.connection_id, item.scope, item.key, item.endpoint),
     ).fetchone()
     sample_table = normalizer.sample_table
@@ -556,7 +556,7 @@ def _refresh_days(conn, items, unit, timezone, rebuild, previous_dates, durable_
         if rebuild:
             affected = set()
             first, last = conn.execute(
-                "SELECT MIN(key), MAX(key) FROM garmin.raw_response WHERE user_id=%s AND connection_id=%s AND scope='day'", account
+                "SELECT MIN(key), MAX(key) FROM garmin.raw_current WHERE user_id=%s AND connection_id=%s AND scope='day'", account
             ).fetchone()
             history = conn.execute(
                 "SELECT value FROM garmin.meta WHERE user_id=%s AND connection_id=%s AND key='history_start'", account
@@ -587,7 +587,7 @@ def _refresh_days(conn, items, unit, timezone, rebuild, previous_dates, durable_
                 day_raw = {
                     endpoint: json.loads(raw)
                     for endpoint, raw in conn.execute(
-                        "SELECT endpoint,raw FROM garmin.raw_response WHERE user_id=%s AND connection_id=%s AND scope='day' AND key=%s",
+                        "SELECT endpoint,raw FROM garmin.raw_current WHERE user_id=%s AND connection_id=%s AND scope='day' AND key=%s",
                         (*account, key),
                     )
                 }
@@ -597,7 +597,7 @@ def _refresh_days(conn, items, unit, timezone, rebuild, previous_dates, durable_
                         activities[activity_id] = {
                             endpoint: json.loads(raw)
                             for endpoint, raw in conn.execute(
-                                "SELECT endpoint,raw FROM garmin.raw_response WHERE user_id=%s AND connection_id=%s AND scope='activity' AND key=%s",
+                                "SELECT endpoint,raw FROM garmin.raw_current WHERE user_id=%s AND connection_id=%s AND scope='activity' AND key=%s",
                                 (*account, activity_id),
                             )
                         }

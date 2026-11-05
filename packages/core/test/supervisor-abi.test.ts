@@ -242,3 +242,20 @@ it('retains only the explicitly allowed Garmin result fields', async () => {
   expect(publicCollectSummary('garmin.artifacts',JSON.stringify({...artifact,graphs_failed:0}))).toBeUndefined();
   expect(publicCollectSummary('garmin.collect',JSON.stringify({...valid,...graphs}))).toBeUndefined();
 });
+
+it('allows only bounded, generic status and integer counts for public result summaries', async () => {
+  const { publicCollectSummary } = await import('../src/queue/supervisor.js');
+  for (const status of ['success', 'partial', 'blocked', 'auth_required', 'error', 'noop']) {
+    const value = {status, runs: 1, errors: 0};
+    expect(publicCollectSummary('example.work', JSON.stringify(value))).toEqual(value);
+  }
+  for (const value of [
+    {status:'private',runs:1,errors:0}, {status:'success',runs:1,errors:0,secret:'x'},
+    {status:'success',runs:-1,errors:0}, {status:'success',runs:1.5,errors:0},
+    {status:'success',runs:Number.MAX_SAFE_INTEGER+1,errors:0},
+    {status:'success',runs:1,errors:'0'}, {status:['success'],runs:1,errors:0},
+    {status:'success',runs:1}, {status:'success',runs:1,errors:null},
+  ]) expect(publicCollectSummary('example.work', JSON.stringify(value))).toBeUndefined();
+  expect(publicCollectSummary('example.work', '{broken')).toBeUndefined();
+  expect(publicCollectSummary('example.work', 'x'.repeat(2049))).toBeUndefined();
+});

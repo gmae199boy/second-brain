@@ -59,5 +59,39 @@ docker compose -p brain-garmin-21-8 -f compose.test.yaml down
 
 기존 schema 10/15·비정상 TEXT·legacy 장부 회귀는 격리 설치본에만 놓는
 `tests/preservation_entry.py`가 현재 보존 primitives를 감독 실행하여 유지한다.
-운영 manifest는 native 반입만 제공한다. 새 native tracer와 기존 보존·업그레이드
+운영 manifest는 native 반입과 감독 수집 일감을 제공한다. 새 native tracer와 기존 보존·업그레이드
 시험을 모두 실행해 두 계약을 확인하며 어떤 시험도 삭제하거나 skip하지 않는다.
+
+## 감독 수집과 21.8 시험 인계
+
+21.3의 수집 시험 실행은 **21.8로 이관, 미실행**이다. 21.8에서는 위
+전용 DB·소유 role/container·격리 home을 준비한 뒤 새 시험을 포함해 `pnpm test`
+다음 `pnpm test:python`을 순차 실행한다. 관련 실패의 수정 뒤에는 다음 시험을
+재검증한다:
+
+```sh
+pnpm exec vitest run --config apps/cli/python-test/vitest.config.ts apps/cli/python-test/garmin-collect.test.ts apps/cli/python-test/garmin-native.test.ts apps/cli/python-test/garmin-unit.test.ts
+```
+
+`garmin-collect.test.ts`는 격리 설치본의 외부 Garmin 어댑터만 fake로 교체하고
+실제 manifest→감독자→`collect.py`→계정 락·credential·수집·저장을 사용한다.
+합성 요청 장부에서 수집 중 취소 후 프로세스와 자식 종료, 이미 받은 raw 보존,
+재개 시 확정 항목 생략, 오래된 attempt 쓰기 거부, 같은 대상 일감 합치기와 다른
+연결의 자격 거부, 차단 시 외부 호출 0, 기존 기억 보존을 확인한다.
+`garmin-unit.test.ts`의 Python discovery는 `test_collect_oracle_pg.py`를 포함한다.
+그 시험은 고정 SQLite oracle과 동일 fake 응답으로 raw·run·coverage·정규화·digest,
+NULL·배열·동률·시간대·중단 뒤 pending 복구를 비교한다. DB/role/home·명령·종료
+코드·기준 SHA·로그·실패별 처분·관련 재검증을 기록하고 이 실행이 소유한 자원만
+위 정리 명령으로 제거한다. 미실행 시험이나 미해결 실패가 있으면 21.8 built 및
+21.7 시작을 금지한다.
+
+21.7의 실제 연결 준비는 별도 운영 작업이다. 운영자가 선택된 self·connection과
+기존에 확인한 Garmin profile 및 전용 tokenstore의 동일 계정을 직접 확인한 뒤,
+소유자 전용 0700 tokenstore에 `brain-account-binding.json`을 0600으로 준비한다.
+필드는 `version`(1), `user_id`, `connection_id`, `external_identity`,
+`token_sha256`이며 마지막 값은 같은 디렉터리 `garmin_tokens.json`의 바이트에
+대한 소문자 SHA-256이다. 토큰과 확인서의 실제 내용·계정 식별자는 저장소나
+로그에 넣지 않는다. 확인서는 Garmin 서명이 아닌 로컬 운영자의 명시적 귀속
+확인이다. 정상 토큰 갱신은 잠금 아래 보호된 작업 사본과 복구 장부로 처리하며,
+중단된 갱신은 다음 동일 계정 실행에서 검증 후 이어간다. 수동 토큰 교체·다른
+계정·불일치 증거는 자동 귀속하지 않으므로 운영자가 원인을 확인해야 한다.
