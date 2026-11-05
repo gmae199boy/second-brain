@@ -251,3 +251,17 @@
 | 기존 회귀 보존 | legacy/TEXT시험의test-only preservation adapter |현재보존primitives로이전계약도검사. 기존시험삭제/skip아님. 새native및보존시험모두21.8실행 |
 
 공용계정락·snapshot별rowid provenance와원자적선택순서게시·durablepending/staging publish·SQLite 정수/REAL 경계는 독립후속리뷰로 보완했다. 운영설치/DB/계정/건강자료/모델/예약·원본checkout변경없음. 원문·로그·ready/depth1은보존워크트리와중앙로컬archive에있다.
+
+## 21.3 — built / 감독 수집·정규화, 시험21.8 이관
+
+근거: [수집·정규화 계획](../tickets/epic-garmin-extension/tickets/story-collectnormalize-pg-garmin-fixture-raw-plan.md)의 Design Notes·Review Triage Log·Auto Run Result.468bf5a에서collect일감/runtime self·settings·connection·attempt,계정/tokenstore락,credential복구,PG raw관찰/current와계산소비를연결했다. full/thorough4렌즈+R2/R3독립2렌즈후속,23행중22수정·1기각,마지막추가결함0·deferred0·후속권고false. build/typecheck/Python정적컴파일 종료0. 모든시험실행은21.8로이관·미실행이다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 운영 조치 |21.7 선택self/connection·확인profile·전용tokenstore 귀속증거 |보호0700디렉터리/0600 brain-account-binding.json 준비. 필드/지문계약은 extensions/garmin/README.md. 로컬운영자명시확인이며Garmin서명아님. 임의token수동교체/불명장부는보존·거부. 지금실계정/토큰접근없음 |
+| 채택 저장계약 |원형raw_response불변+0015관찰장부/current분리 |원본data→NULL/동일checked·변경data의미를논리현재값으로보존. 기존원형손실/덮어쓰기아님. normalize/report reader가current소비 |
+| 필수 시험 인계 |독립SQLite동등성·감독entry·인증보호·누락만재개·fence/락경합·credential각게시/부분삭제중단·요약실정산 |21.8에서새garmin-collect/기존native/unit/upgrade·supervisorABI·분류시험포함전체순차실행. 계획Verification/README의소유PG/role/home·fake요청장부·준비/정리명령준수 |
+| 채택 core경계 |고정status/runs/errors의범용안전요약 |정확한키·유한상태·safeinteger필터로result_summary저장. 새Garmin명칭/지표/schema/reader core추가없음 |
+| 잔여 위험 |DDL/실권한·수치동등성·동시성/프로세스정리·crash/fsync·harness시간제한 |실행결과는21.8확정. 원본fetched millisecond변경추적한계유지. 다중사용자전체격리완성주장없음 |
+
+운영설치/DB/계정/API/모델/예약변경없음.원문·로그·ready/depth1은보존워크트리와중앙로컬archive에있다. 새·기존시험미실행/미해결이면21.8 built 및21.7시작금지다.
