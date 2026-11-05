@@ -1,3 +1,4 @@
+import { cronCalculator } from '../src/runtime/cron.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,7 +28,7 @@ async function fixture() {
   return { f, store, run, add,
     start() { daemon = runDaemon({ home, env, clock: systemClock, idGen, signal: controller.signal,
       drainPauseMs: 25, heartbeatMs: 100, supervisor: { pollMs: 50, cancelPollMs: 50, cancelGraceMs: 100, groupConfirmMs: 1000 } }); },
-    tick: (now: Date) => tickSchedules({ store, clock: { now: () => now }, idGen, readTimeZone: async () => ({ ok: true, value: 'Asia/Seoul' }) }),
+    tick: (now: Date) => tickSchedules({ cron: cronCalculator, store, clock: { now: () => now }, idGen, readTimeZone: async () => ({ ok: true, value: 'Asia/Seoul' }) }),
     async close() { controller.abort(); try { await daemon; } finally { await store.close(); await f.close(); await rm(home, { recursive: true, force: true }); } },
   };
 }

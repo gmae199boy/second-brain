@@ -130,15 +130,15 @@ else console.log(JSON.stringify({abi:1,type:'result'}));\n`);
   } finally { controller.abort(); await daemon; }
 });
 
-it('감독자 준비 전에는 예약하지 않고 준비 후 동일 설정의 예약을 재사용하며 충돌을 거부한다', async () => {
+it('재설치는 이행 키와 사용자 변경·삭제를 보존하고 빠진 키를 비활성화한다', async () => {
   const { runDaemon } = await import('../src/daemon/run.js');
   const { systemClock } = await import('../src/runtime/clock.js');
   const { uuidV7IdGen } = await import('../src/runtime/id-gen.js');
   const fixture = await extHome(); cleanup.push(fixture.cleanup);
   const source = await resumeSource(fixture);
   const manifest = JSON.parse(await readFile(join(source, 'manifest.json'), 'utf8'));
-  manifest.work = [{ kind: 'resumext.sync', execution: 'supervised', runtime: 'node', entry: 'bin/check.mjs' }];
-  manifest.default_schedules = [{ kind: 'resumext.sync', target_kind: 'account', target_id: 'default', local_time: '09:00' }];
+  manifest.work = [{ kind: 'resumext.sync', execution: 'supervised', runtime: 'node', entry: 'bin/check.mjs', missed: 'coalesce' }];
+  manifest.default_schedules = [{ kind:'resumext.sync',target_kind:'account',target_id:'default',local_time:'09:00' },{kind:'resumext.sync',target_kind:'account',target_id:'removed',key:'removed',cron:'0 10 * * *',time_zone:'UTC'},{kind:'resumext.sync',target_kind:'account',target_id:'obsolete',key:'obsolete',cron:'0 11 * * *'}];
   await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest));
   const unavailable = await fixture.run(['ext', 'install', 'resumext', '--json']);
   expect(unavailable.body.error.code).toBe('EXTENSION_SCHEDULER_UNAVAILABLE');
@@ -149,37 +149,28 @@ it('감독자 준비 전에는 예약하지 않고 준비 후 동일 설정의 �
   const daemon = runDaemon({ home: fixture.home, env: fixture.env, clock: systemClock, idGen: uuidV7IdGen(), signal: controller.signal, drainPauseMs: 25, heartbeatMs: 100, supervisor: { pollMs: 25 } });
   try {
     await expect.poll(async () => { try { return JSON.parse(await readFile(join(fixture.home, 'run/supervisor-ready.json'), 'utf8')).pid; } catch { return null; } }, { timeout: 10000 }).toBe(process.pid);
-    const first = await fixture.run(['ext', 'install', 'resumext', '--json']);
-    expect(first.code, first.stdout + first.stderr).toBe(0);
-    let rows = await fixture.db.rows('select id,local_time from brain.schedules'); expect(rows).toHaveLength(1);
-    expect((await fixture.run(['ext', 'install', 'resumext', '--json'])).code).toBe(0);
-    expect(await fixture.db.rows('select id,local_time from brain.schedules')).toEqual(rows);
-    const originalId = rows[0]!.id;
-    await fixture.db.query('delete from brain.schedules');
-    const restored = await fixture.run(['ext', 'install', 'resumext', '--json']);
-    expect(restored.code, restored.stdout + restored.stderr).toBe(0);
-    rows = await fixture.db.rows('select id,local_time from brain.schedules');
-    expect(rows).toHaveLength(1); expect(rows[0]!.id).not.toBe(originalId);
-    expect(restored.body.data.install.schedule_ids).toEqual([rows[0]!.id]);
-    for (const stage of ['package', 'environment', 'role', 'migration', 'login', 'configuration', 'connection']) expect(restored.body.data.install.stages[stage]).toEqual(first.body.data.install.stages[stage]);
-    await fixture.db.query("update brain.schedules set local_time='10:00' where kind='resumext.sync'");
-    const conflict = await fixture.run(['ext', 'install', 'resumext', '--json']);
-    expect(conflict.body.error.code).toBe('SCHEDULE_CONFLICT');
-    expect(conflict.body.data).toEqual((await fixture.run(['ext', 'status', 'resumext', '--json'])).body.data);
-    expect(conflict.body.data.install).toMatchObject({ result: 'failed', failed_stage: 'schedule' });
-    expect((await fixture.db.rows('select id,local_time from brain.schedules'))[0]).toMatchObject({ id: rows[0]!.id, local_time: '10:00' });
-    await fixture.db.query("update brain.schedules set local_time='09:00' where kind='resumext.sync'");
-    manifest.default_schedules.push({ kind: 'resumext.sync', target_kind: 'account', target_id: 'second', local_time: '11:00' });
-    await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest));
-    await fixture.db.query("insert into brain.schedules(id,kind,hold_group,target_kind,target_id,interval_seconds,next_run_at,last_run_at,created_at,local_time,time_zone) select uuidv7(),kind,hold_group,target_kind,'second',interval_seconds,next_run_at,last_run_at,created_at,'12:00',time_zone from brain.schedules where kind='resumext.sync'");
-    const partial = await fixture.run(['ext', 'install', 'resumext', '--json']);
-    expect(partial.body.error.code).toBe('SCHEDULE_CONFLICT');
-    const partialJournal = (await fixture.db.rows("select progress from brain.extension_install_progress where name='resumext'"))[0]!.progress as ExtensionInstallProgress;
-    expect(partialJournal.scheduleIds).toEqual([rows[0]!.id]);
-    await fixture.db.query("update brain.schedules set local_time='11:00' where target_id='second'");
-    const continued = await fixture.run(['ext', 'install', 'resumext', '--json']);
-    expect(continued.code, continued.stdout + continued.stderr).toBe(0);
-    expect(await fixture.db.rows('select id from brain.schedules')).toHaveLength(2);
+    // A row already transformed by 0033 has the derived installation key.
+    await fixture.db.query(`insert into brain.schedules(id,kind,hold_group,target_kind,target_id,trigger_kind,cron_expr,time_zone,time_zone_source,extension,schedule_key,user_id,enabled,next_run_at,created_at)
+      select uuidv7(),'resumext.sync','extension:resumext','account','default','cron','0 9 * * *','Asia/Seoul','user','resumext','resumext.sync:account:default',id,true,now()+interval '1 day',now() from brain.users where is_self=1`);
+    const first = await fixture.run(['ext','install','resumext','--json']);expect(first.code,first.stdout+first.stderr).toBe(0);
+    expect(await fixture.db.rows("select missed_policy from brain.extension_work_kinds where kind='resumext.sync'")).toEqual([{missed_policy:'coalesce'}]);
+    const initial=await fixture.db.rows("select id,schedule_key,cron_expr,enabled,removed_at from brain.schedules where extension='resumext' order by schedule_key");expect(initial).toHaveLength(3);
+    const migrated=initial.find(row=>row.schedule_key==='resumext.sync:account:default')!,removed=initial.find(row=>row.schedule_key==='removed')!;
+    const changed=await fixture.run(['schedules','update',String(migrated.id),'--cron','15 8 * * 5','--tz','America/New_York','--disable','--json']);expect(changed.code,changed.stdout+changed.stderr).toBe(0);
+    const tombstone=await fixture.run(['schedules','remove',String(removed.id),'--json']);expect(tombstone.body.data).toMatchObject({marked:true});
+    manifest.default_schedules=manifest.default_schedules.filter((item:{key?:string})=>item.key!=='obsolete');
+    manifest.default_schedules.push({kind:'resumext.sync',target_kind:'account',target_id:'new',key:'new',cron:'0 12 * * *'});
+    await writeFile(join(source,'manifest.json'),JSON.stringify(manifest));
+    const reinstalled=await fixture.run(['ext','install','resumext','--json']);expect(reinstalled.code,reinstalled.stdout+reinstalled.stderr).toBe(0);
+    expect(reinstalled.body.data.install.disabled_schedule_keys).toEqual(['obsolete']);
+    expect((await fixture.run(['ext','status','resumext','--json'])).body.data.install.disabled_schedule_keys).toEqual(['obsolete']);
+    const after=await fixture.db.rows("select id,schedule_key,cron_expr,time_zone,time_zone_source,enabled,removed_at from brain.schedules where extension='resumext' order by schedule_key");expect(after).toHaveLength(4);
+    expect(after).toContainEqual(expect.objectContaining({id:migrated.id,schedule_key:'resumext.sync:account:default',cron_expr:'15 8 * * 5',time_zone:'America/New_York',time_zone_source:'fixed',enabled:false}));
+    expect(after).toContainEqual(expect.objectContaining({id:removed.id,schedule_key:'removed',enabled:false,removed_at:expect.anything()}));
+    expect(after).toContainEqual(expect.objectContaining({schedule_key:'obsolete',enabled:false}));expect(after).toContainEqual(expect.objectContaining({schedule_key:'new',enabled:true}));
+    expect(reinstalled.body.data.install.schedule_ids).toHaveLength(3);
+    const repeated=await fixture.run(['ext','install','resumext','--json']);expect(repeated.code).toBe(0);expect(repeated.body.data.install.disabled_schedule_keys).toEqual(['obsolete']);
+    expect(await fixture.db.rows("select id,schedule_key,cron_expr,time_zone,time_zone_source,enabled,removed_at from brain.schedules where extension='resumext' order by schedule_key")).toEqual(after);
   } finally { controller.abort(); await daemon; }
 });
 
@@ -332,4 +323,21 @@ it('자격 증명 파일 접근 실패를 설정 단계에 기록하고 복구 �
   expect(recovered.body.data.install.stages.configuration.status).toBe('succeeded');
   expect(recovered.body.data.install.stages.connection).toEqual(first.body.data.install.stages.connection);
   expect(recovered.body.data.connection).toEqual(first.body.data.connection);
+});
+it('기본 예약을 모두 제거한 재설치는 행을 보존하고 비활성 키를 텍스트와 상태에 보고한다',async()=>{
+ const {runDaemon}=await import('../src/daemon/run.js');const {systemClock}=await import('../src/runtime/clock.js');const {uuidV7IdGen}=await import('../src/runtime/id-gen.js');
+ const fixture=await extHome();cleanup.push(fixture.cleanup);const source=await resumeSource(fixture);const path=join(source,'manifest.json');const manifest=JSON.parse(await readFile(path,'utf8'));
+ manifest.work=[{kind:'resumext.sync',execution:'supervised',runtime:'node',entry:'bin/check.mjs'}];manifest.default_schedules=[{kind:'resumext.sync',target_kind:'account',target_id:'a',key:'alpha',local_time:'09:00'},{kind:'resumext.sync',target_kind:'account',target_id:'b',key:'beta',cron:' 0   10 * * * ',time_zone:'UTC'}];await writeFile(path,JSON.stringify(manifest));
+ const controller=new AbortController();const daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:uuidV7IdGen(),signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
+ try{
+  await expect.poll(async()=>{try{return JSON.parse(await readFile(join(fixture.home,'run/supervisor-ready.json'),'utf8')).pid;}catch{return null;}},{timeout:10000}).toBe(process.pid);
+  const installed=await fixture.run(['ext','install','resumext','--json']);expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+  const before=await fixture.db.rows("select id,schedule_key,cron_expr from brain.schedules where extension='resumext' order by schedule_key");expect(before).toHaveLength(2);expect(before).toContainEqual(expect.objectContaining({schedule_key:'beta',cron_expr:'0 10 * * *'}));
+  manifest.default_schedules=[];await writeFile(path,JSON.stringify(manifest));
+  const updated=await fixture.run(['ext','install','resumext','--json']);expect(updated.code,updated.stdout+updated.stderr).toBe(0);expect(updated.body.data.install).toMatchObject({schedule_ids:[],disabled_schedule_keys:['alpha','beta']});
+  const after=await fixture.db.rows("select id,schedule_key,cron_expr,enabled from brain.schedules where extension='resumext' order by schedule_key");expect(after).toEqual(before.map(row=>({...row,enabled:false})));
+  const status=await fixture.run(['ext','status','resumext','--json']);expect(status.body.data.install).toMatchObject({schedule_ids:[],disabled_schedule_keys:['alpha','beta']});
+  const textStatus=await fixture.run(['ext','status','resumext']);expect(textStatus.stdout).toContain('비활성화된 예약 키: alpha, beta');
+  const textInstall=await fixture.run(['ext','install','resumext']);expect(textInstall.stdout).toContain('비활성화된 예약 키: alpha, beta');
+ }finally{controller.abort();await daemon;}
 });

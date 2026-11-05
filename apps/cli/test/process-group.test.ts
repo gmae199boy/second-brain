@@ -154,18 +154,19 @@ it('records ABI_LINE_TRUNCATED and masked stderr from a real supervised child', 
     expect(store.snapshot().workItems[0]!.nextAttemptAt.getTime()).toBeGreaterThan(createdAt.getTime());
   } finally { controller.abort(); await running; }
 });
-it.each(['missing', 'uppercase UUID', 'unpaired range', 'valid'])('probe validates %s environment and emits the ABI error contract', async mode => {
+it.each(['missing', 'uppercase UUID', 'unpaired range', 'invalid occurrences', 'valid occurrences', 'valid'])('probe validates %s environment and emits the ABI error contract', async mode => {
   const env: Record<string, string> = { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain',
     BRAIN_WORK_ID: '019a0000-0000-7000-8000-000000000001', BRAIN_ATTEMPT_TOKEN: '019a0000-0000-7000-8000-000000000002',
     BRAIN_WORK_KIND: 'process_probe', BRAIN_TARGET_KIND: 'probe', BRAIN_TARGET_ID: '0', BRAIN_RUN_GENERATION: '1' };
   if (mode === 'missing') delete env.BRAIN_RUN_GENERATION;
   if (mode === 'uppercase UUID') env.BRAIN_WORK_ID = env.BRAIN_WORK_ID!.toUpperCase();
   if (mode === 'unpaired range') env.BRAIN_RANGE_FROM = '2026-01-01';
+  if (mode === 'invalid occurrences' || mode === 'valid occurrences') { env.BRAIN_RANGE_FROM='2026-01-01'; env.BRAIN_RANGE_TO='2026-01-01'; env.BRAIN_OCCURRENCES=mode === 'valid occurrences' ? '["2026-01-01T00:00:00.000+00:00"]' : 'not-json'; }
   const started = await systemProcessLauncher.start({ command: process.execPath, args: [fileURLToPath(new URL('../dist/workers/process-probe.js', import.meta.url))], env });
   expect(started.ok).toBe(true); if (!started.ok) return;
   let stdout = ''; for await (const chunk of started.handle.stdout) stdout += chunk;
-  expect(JSON.parse(stdout)).toMatchObject(mode === 'valid' ? { abi: 1, type: 'result' } : { abi: 1, type: 'error', code: 'ABI_ENV_INVALID', retryable: false });
-  expect(await started.handle.exited).toEqual({ code: mode === 'valid' ? 0 : 2, signal: null });
+  expect(JSON.parse(stdout)).toMatchObject((mode === 'valid' || mode === 'valid occurrences') ? { abi: 1, type: 'result' } : { abi: 1, type: 'error', code: 'ABI_ENV_INVALID', retryable: false });
+  expect(await started.handle.exited).toEqual({ code: (mode === 'valid' || mode === 'valid occurrences') ? 0 : 2, signal: null });
 });
 
 it('records externally SIGKILLed real children as died and schedules a retry', async () => {

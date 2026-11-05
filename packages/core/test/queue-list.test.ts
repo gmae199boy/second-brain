@@ -1,4 +1,4 @@
-import { sampleSelfUserInput } from '../src/testing/index.js';
+import { fakeCron, sampleSelfUserInput } from '../src/testing/index.js';
 import { expect, it } from 'vitest';
 import { createBrain } from '../src/brain.js';
 import { memoryStore, memorySchemaStore, memorySpool, memoryFileStore, memoryRepositories,
@@ -6,7 +6,7 @@ import { memoryStore, memorySchemaStore, memorySpool, memoryFileStore, memoryRep
 
 function kit(start = '2026-10-01T00:00:00Z') {
   const time = manualTime(new Date(start)); const store = memoryStore(); void store.ensureSelfUser(sampleSelfUserInput());
-  const brain = createBrain({ store: { ...store, ...memorySchemaStore({ version: 9 }) }, schemaVersions: { core: 9 },
+  const brain = createBrain({ cron: fakeCron, store: { ...store, ...memorySchemaStore({ version: 9 }) }, schemaVersions: { core: 9 },
     clock: time.clock, idGen: sequenceIdGen({ timestampMs: new Date(start).getTime() }), spool: memorySpool(), files: memoryFileStore(), parsers: [],
     transcripts: memoryTranscriptReader(), repositories: memoryRepositories(), machine: 'test' });
   return { store, brain, time, set: (at: string) => time.advance(new Date(at).getTime() - time.clock.now().getTime()),

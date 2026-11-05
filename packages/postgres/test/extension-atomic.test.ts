@@ -55,12 +55,13 @@ it('활성 변경과 청구·예약 발화 경합 후 보류된 그룹은 다시
   const store = await subject();
   try {
     const now = new Date();
+    await store.ensureSelfUser({id:'01940000-0000-7000-8000-00000000000a',name:'synthetic',createdAt:now});
     await store.recordExtensionInstall({ name: 'testext', version: '1', now });
     const work = { id: '00000000-0000-7000-8000-000000000211', kind: 'schedule_probe', targetKind: 'probe', targetId: 'race', holdGroup: 'extension:testext', createdAt: now, nextAttemptAt: now };
     const scheduleId = '00000000-0000-7000-8000-000000000212';
     await store.addWork(work);
-    await store.addSchedule({ id: scheduleId, kind: 'schedule_probe', holdGroup: 'extension:testext', targetKind: 'probe', targetId: 'race-schedule', localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now });
-    const fire = { scheduleId, expectedNextRunAt: now, nextRunAt: new Date(now.getTime() + 60000), now, work: { ...work, id: '00000000-0000-7000-8000-000000000213', targetId: 'race-schedule' } };
+    await store.addSchedule({ id: scheduleId, kind: 'schedule_probe', holdGroup: 'extension:testext', targetKind: 'probe', targetId: 'race-schedule', triggerKind: 'interval' as const, cronExpr: null, runAt: null, timeZoneSource: null, extension: null, scheduleKey: null, userId: '01940000-0000-7000-8000-00000000000a', enabled: true, removedAt: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now });
+    const fire = { expectedTriggerKind:'interval' as const,expectedTimeZone:null,expectedCronExpr:null, occurrences: [{ occurrenceAt: now, status: 'pending' as const }], scheduleId, expectedNextRunAt: now, nextRunAt: new Date(now.getTime() + 60000), now, work: { ...work, id: '00000000-0000-7000-8000-000000000213', targetId: 'race-schedule' } };
     const [disabled, claimed, fired] = await Promise.all([
       store.setExtensionEnabled({ name: 'testext', enabled: false, now }),
       store.claimWork({ now, claimedBy: '00000000-0000-7000-8000-000000000214', kinds: ['schedule_probe'] }),
@@ -77,9 +78,10 @@ it('비활성 확장의 보류는 일반 해제에 유지되고 활성 뒤 청�
   const store = await subject();
   try {
     const now = new Date(); const group = 'extension:testext';
+    await store.ensureSelfUser({id:'01940000-0000-7000-8000-00000000000a',name:'synthetic',createdAt:now});
     await store.recordExtensionInstall({ name: 'testext', version: '1', now });
     await store.addWork({ id: '00000000-0000-7000-8000-000000000221', kind: 'schedule_probe', targetKind: 'probe', targetId: 'held', holdGroup: group, createdAt: now, nextAttemptAt: now });
-    await store.addSchedule({ id: '00000000-0000-7000-8000-000000000222', kind: 'schedule_probe', holdGroup: group, targetKind: 'probe', targetId: 'scheduled', localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now });
+    await store.addSchedule({ id: '00000000-0000-7000-8000-000000000222', kind: 'schedule_probe', holdGroup: group, targetKind: 'probe', targetId: 'scheduled', triggerKind: 'interval' as const, cronExpr: null, runAt: null, timeZoneSource: null, extension: null, scheduleKey: null, userId: '01940000-0000-7000-8000-00000000000a', enabled: true, removedAt: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now });
     expect(await store.setExtensionEnabled({ name: 'testext', enabled: false, now })).toMatchObject({ ok: true });
     expect(await store.releaseWorkGroup({ group })).toEqual({ ok: true, released: false });
     expect(await store.claimWork({ now, claimedBy: '00000000-0000-7000-8000-000000000223', kinds: ['schedule_probe'] })).toMatchObject({ ok: true, item: null });

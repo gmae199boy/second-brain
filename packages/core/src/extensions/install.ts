@@ -4,7 +4,7 @@ import type { ExtensionInstallProgress, InstallStage } from './install-progress.
 import { failureText } from '../domain/failure.js';
 import type { Clock, Timer } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
-import { ensureDaily, type ReadTimeZone } from '../queue/schedules.js';
+import { ensureSchedule, type ReadTimeZone } from '../queue/schedules.js';
 import type { ExtensionStore, WorkStore, ScheduleStore, UserStore } from '../ports/store.js';
 import type { ProcessInspector, ProcessLauncher } from '../ports/process.js';
 import { PROCESS_ABI_ENV } from '../process-abi/codec.js';
@@ -40,7 +40,7 @@ export interface ExtensionRuntime {
   readSecrets?(): Promise<Readonly<Record<string, string>>>;
   machineValues?(name: string): Readonly<Record<string, string>>;
 }
-export interface ExtensionDependencies { store: ExtensionStore & Partial<SettingsStore & WorkStore & ScheduleStore & Pick<UserStore, 'readSelfUser'>>; readTimeZone?: ReadTimeZone; clock: Clock; idGen: IdGen; extensions?: ExtensionRuntime }
+export interface ExtensionDependencies { cron?: import('../ports/cron.js').CronCalculator; store: ExtensionStore & Partial<SettingsStore & WorkStore & ScheduleStore & Pick<UserStore, 'readSelfUser'>>; readTimeZone?: ReadTimeZone; clock: Clock; idGen: IdGen; extensions?: ExtensionRuntime }
 export async function installExtension(deps: ExtensionDependencies, { name, signal }: { name: string; signal?: AbortSignal }) {
   if (!isExtensionName(name)) return { ok: false as const, code: 'EXTENSION_NOT_FOUND' as const, message: '확장 이름이 이름 규칙에 맞지 않습니다' };
   const runtime = deps.extensions;
@@ -77,6 +77,7 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
   const decoded = decodeExtensionManifest(source.manifestText, runtime.validateSchema);
   if (!decoded.ok) return preflightFailure('EXTENSION_INVALID', decoded.message);
   const manifest = decoded.manifest;
+  if (deps.cron && (manifest.default_schedules ?? []).some(schedule => schedule.cron !== undefined && !deps.cron!.validate(schedule.cron, schedule.time_zone ?? 'UTC').ok)) return preflightFailure('EXTENSION_INVALID', '예약 cron 식 또는 시간대가 올바르지 않습니다');
   const folderName = source.dir.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1);
   if (manifest.name !== name || folderName !== name) return preflightFailure('EXTENSION_INVALID', '요청한 이름과 manifest 및 패키지 폴더 이름이 다릅니다');
   let progress: ExtensionInstallProgress | null = null;
@@ -176,7 +177,7 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
     if (!migrated.ok) return { ok: false as const, code: migrated.code, message: '확장 마이그레이션을 적용하지 못했습니다' };
   }
   const afterMigration = await cancelled(); if (afterMigration) return afterMigration;
-  const recorded = await deps.store.recordExtensionInstall({ name, version: manifest.version, now: deps.clock.now(), workKinds: [...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : [])].map(work => work.kind), workFollowups: Object.fromEntries((manifest.work ?? []).filter(work => work.followup).map(work => [work.kind, work.followup!])) });
+  const recorded = await deps.store.recordExtensionInstall({ name, version: manifest.version, now: deps.clock.now(), workKinds: [...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : [])].map(work => work.kind), workFollowups: Object.fromEntries((manifest.work ?? []).filter(work => work.followup).map(work => [work.kind, work.followup!])), missedPolicies: Object.fromEntries((manifest.work ?? []).filter(work => work.missed).map(work => [work.kind, work.missed!])) });
   if (!recorded.ok) return recorded;
   const afterRegistry = await cancelled(); if (afterRegistry) return afterRegistry;
   const self = deps.store.readSelfUser ? await resolveSelfUser({ readSelfUser: deps.store.readSelfUser.bind(deps.store) }) : { ok: false as const, code: 'USER_MISSING' as const, message: '사용자가 없습니다' };
@@ -285,17 +286,18 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
     return { ok: false as const, code: 'EXTENSION_SCHEDULER_UNAVAILABLE' as const, message: '데몬 감독자 또는 예약 기능이 준비되지 않았습니다' };
   };
   const schedules = manifest.default_schedules ?? [];
-  if (schedules.length === 0) { if (!completed('schedule')) { const saved = await mark('schedule', 'skipped', 'EXTENSION_SCHEDULE_NOT_REQUIRED'); if (!saved.ok) return saved; } }
-  else {
-    if (!runtime.schedulerReady || !await runtime.schedulerReady() || !deps.readTimeZone || !deps.store.addSchedule || !deps.store.findDailySchedule) {
-      return schedulerUnavailable();
-    }
+  // Even an empty new manifest must disable keys from an older installation.
+  if (!deps.store.disableMissingSchedules || (schedules.length > 0 && (!runtime.schedulerReady || !await runtime.schedulerReady() || !deps.readTimeZone || !deps.cron || !deps.store.addSchedule || !deps.store.findScheduleByKey || !deps.store.readSelfUser))) {
+    if (schedules.length || progress?.scheduleIds.length) return schedulerUnavailable();
+    if (!completed('schedule')) { const saved = await mark('schedule', 'skipped', 'EXTENSION_SCHEDULE_NOT_REQUIRED'); if (!saved.ok) return saved; }
+  } else {
     const previousIds = progress?.scheduleIds.slice() ?? [];
     const confirmedIds: string[] = [];
-    for (const schedule of schedules) {
+    const keys = schedules.map(schedule => schedule.key ?? `${schedule.kind}:${schedule.target_kind}:${schedule.target_id}`);
+    for (const [index, schedule] of schedules.entries()) {
       const stopped = await cancelled(); if (stopped) return stopped;
-      if (!await runtime.schedulerReady()) return schedulerUnavailable();
-      const result = await ensureDaily({ store: deps.store as ScheduleStore & WorkStore, clock: deps.clock, idGen: deps.idGen, readTimeZone: deps.readTimeZone }, { kind: schedule.kind, targetKind: schedule.target_kind, targetId: schedule.target_id, localTime: schedule.local_time });
+      if (!runtime.schedulerReady || !await runtime.schedulerReady()) return schedulerUnavailable();
+      const result = await ensureSchedule({ store: deps.store as ScheduleStore & WorkStore & Pick<UserStore, 'readSelfUser'>, clock: deps.clock, idGen: deps.idGen, readTimeZone: deps.readTimeZone!, cron: deps.cron! }, { extension:name, scheduleKey:keys[index]!, kind:schedule.kind, targetKind:schedule.target_kind, targetId:schedule.target_id, ...(schedule.local_time !== undefined ? {localTime:schedule.local_time} : {cron:schedule.cron!, ...(schedule.time_zone === undefined ? {} : {timeZone:schedule.time_zone})}) });
       if (!result.ok) { if (progress) progress.scheduleIds = confirmedIds; const saved = await mark('schedule', 'failed', result.code); if (!saved.ok) return saved; return result; }
       if (!confirmedIds.includes(result.schedule.id)) confirmedIds.push(result.schedule.id);
       if (progress) {
@@ -303,8 +305,10 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
         if (JSON.stringify(progress.scheduleIds) !== JSON.stringify(actualIds)) { progress.scheduleIds = actualIds; const saved = await save(); if (!saved.ok) return saved; }
       }
     }
-    if (progress) progress.scheduleIds = confirmedIds;
-    if (!completed('schedule') || JSON.stringify(previousIds) !== JSON.stringify(confirmedIds)) { const saved = await mark('schedule', 'succeeded'); if (!saved.ok) return saved; }
+    const disabled = await deps.store.disableMissingSchedules({extension:name,userId:self.userId,keys}); if (!disabled.ok) return disabled;
+    const previousDisabled = progress?.disabledScheduleKeys ?? [];
+    if (progress) { progress.scheduleIds = confirmedIds; progress.disabledScheduleKeys = disabled.keys; }
+    if (!completed('schedule') || JSON.stringify(previousIds) !== JSON.stringify(confirmedIds) || JSON.stringify(previousDisabled) !== JSON.stringify(disabled.keys)) { const saved = await mark('schedule', schedules.length ? 'succeeded' : 'skipped', schedules.length ? null : 'EXTENSION_SCHEDULE_NOT_REQUIRED'); if (!saved.ok) return saved; }
   }
   const beforeFinish = await cancelled(); if (beforeFinish) return beforeFinish;
   if (progress) { progress.result = 'installed'; progress.failedStage = null; const saved = await save(); if (!saved.ok) return saved; }

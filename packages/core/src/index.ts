@@ -311,3 +311,5 @@ export * from './extensions/commands.js';
 export { hasOnlyFiniteNumbers } from './extensions/json-values.js';
 
 export { resolveSelfUser } from './users/self.js';
+
+export type { CronCalculator } from './ports/cron.js';

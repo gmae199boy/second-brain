@@ -71,8 +71,7 @@ export function workStoreContract(readItem: (store: WorkStore, id: string) => Pr
         assertEqual(added.item.holdGroup, '😀'.repeat(200), 'counts code points');
         const before = await store.listWork({ includeClosed: true, limit: 10 });
         for (const holdGroup of ['', '😀'.repeat(201)]) {
-          const merged = await store.addWork(sampleWorkInput({ id: otherWorkItemId, holdGroup,
-            scheduledDates: { scheduleId: null, from: '2026-02-01', to: '2026-02-02', timeZone: 'UTC' } }));
+          const merged = await store.addWork(sampleWorkInput({ id: otherWorkItemId, holdGroup }));
           assertEqual(merged.ok, false, 'invalid merge rejected');
           if (!merged.ok) assertEqual(merged.code, 'DB_UNAVAILABLE', 'merge constraint failure');
         }

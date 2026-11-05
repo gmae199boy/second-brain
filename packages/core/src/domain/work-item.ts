@@ -25,10 +25,10 @@
  * holding it still counted once, which is what stops it from being claimed for
  * ever (Decision 1, 2026-10-19).
  */
-export interface ScheduledDates { scheduleId: string | null; from: string; to: string; timeZone: string }
+export interface ScheduledOccurrences { scheduleId: string; timeZone: string | null; occurrences: Date[] }
 
 export interface WorkItem {
-  scheduledDates: ScheduledDates | null;
+  scheduledOccurrences: ScheduledOccurrences[] | null;
   /** UUIDv7 minted by whoever created the row (AD-8). */
   id: string;
   /** What has to be done. A Core constant of the unit that does it. */

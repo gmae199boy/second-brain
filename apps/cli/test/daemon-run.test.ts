@@ -183,7 +183,7 @@ describe('runDaemon, with its timers wound down', () => {
     const due = new Date(at.getTime() + 60000);
     const store = postgresStore({ databaseUrl: pgAppUrl(path) });
     await store.addSchedule({ id: '01940000-0000-7000-8000-000000000001', kind: 'schedule_probe', targetKind: 'probe', targetId: '01940000-0000-7000-8000-000000000001',
-      localTime: null, timeZone: null, intervalSeconds: null, nextRunAt: due, lastRunAt: null, createdAt: at });
+      triggerKind: 'once' as const, cronExpr: null, runAt: at, timeZoneSource: null, extension: null, scheduleKey: null, userId: '01940000-0000-7000-8000-00000000000a', enabled: true, removedAt: null, timeZone: null, intervalSeconds: null, nextRunAt: due, lastRunAt: null, createdAt: at });
     await store.close();
     let rounds = 0;
     const daemon = startDaemon({ home, env: environment(home), clock: { now: () => new Date(at) },
@@ -210,7 +210,7 @@ describe('runDaemon, with its timers wound down', () => {
     const due = new Date(at.getTime() - 185000);
     const store = postgresStore({ databaseUrl: pgAppUrl(path) });
     await store.addSchedule({ id: '01940000-0000-7000-8000-000000000002', kind: 'schedule_probe', targetKind: 'probe', targetId: '01940000-0000-7000-8000-000000000002',
-      localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: due, lastRunAt: null, createdAt: due });
+      triggerKind: 'interval' as const, cronExpr: null, runAt: null, timeZoneSource: null, extension: null, scheduleKey: null, userId: '01940000-0000-7000-8000-00000000000a', enabled: true, removedAt: null, timeZone: null, intervalSeconds: 60, nextRunAt: due, lastRunAt: null, createdAt: due });
     await store.addWork({ id: '01940000-0000-7000-8000-000000000003', kind: 'schedule_probe', targetKind: 'probe', targetId: 'other',
       createdAt: at, nextAttemptAt: at });
     await store.close();
@@ -242,7 +242,7 @@ describe('runDaemon, with its timers wound down', () => {
       await waitFor('복구 뒤 회차', () => rounds >= recovered + 2);
       expect((await db.prepare("select * from work_items where target_id='01940000-0000-7000-8000-000000000002'").all())).toHaveLength(1);
       expect((await db.prepare('select next_run_at,last_run_at from schedules').get())).toEqual({
-        next_run_at: new Date(at.getTime() + 60000).toISOString(), last_run_at: at.toISOString() });
+        next_run_at: new Date(due.getTime() + 240000).toISOString(), last_run_at: at.toISOString() });
       expect(await readFile(daemonLogPath(home), 'utf8')).toContain('예약 1건 발화, 새 일감 1건');
       (await db.prepare('update schedules set next_run_at = $1').run(at.toISOString()));
       (await db.exec("create or replace function brain.reject_tick() returns trigger language plpgsql as $$ begin raise exception 'refused'; end $$; create trigger reject_tick before update on brain.schedules for each row execute function brain.reject_tick()"));
@@ -320,7 +320,7 @@ describe('runDaemon, with its timers wound down', () => {
     const store = postgresStore({ databaseUrl: pgAppUrl(join(home, 'brain.db')) });
     const at = new Date('2026-02-03T04:05:06.000Z');
     expect((await store.addSchedule({ id: '01940000-0000-7000-8000-000000000004', kind: 'schedule_probe', targetKind: 'probe',
-      targetId: '01940000-0000-7000-8000-000000000004', localTime: null, timeZone: null, intervalSeconds: null, nextRunAt: at, lastRunAt: null, createdAt: at })).ok).toBe(true);
+      targetId: '01940000-0000-7000-8000-000000000004', triggerKind: 'once' as const, cronExpr: null, runAt: at, timeZoneSource: null, extension: null, scheduleKey: null, userId: '01940000-0000-7000-8000-00000000000a', enabled: true, removedAt: null, timeZone: null, intervalSeconds: null, nextRunAt: at, lastRunAt: null, createdAt: at })).ok).toBe(true);
     const controller = new AbortController();
     const fireSchedule = store.fireSchedule.bind(store);
     vi.spyOn(store, 'fireSchedule').mockImplementation(async input => {

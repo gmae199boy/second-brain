@@ -103,6 +103,7 @@ export {
   retryDelayMs,
   workKindPolicy,
   type WorkItem,
+  type ScheduledOccurrences,
   type WorkKindPolicy,
 } from './work-item.js';
 export {
@@ -127,5 +128,5 @@ export { planRedaction, type RedactionCurrent, type RedactionRequest, type Redac
 export * from './file.js';
 export type { AttachmentLinkSpoolPayload, AttachmentLinkSpoolRecord } from './spool-record.js';
 
-export type { Schedule } from './schedule.js';
+export type { Schedule, ScheduleOccurrence } from './schedule.js';
 export { workStallWindowMs, SUPERVISOR_STALL_WINDOW_MS, workExecutionClass, SUPERVISOR_CANCEL_GRACE_MS, SUPERVISOR_CANCEL_POLL_MS, SUPERVISOR_GROUP_CONFIRM_MS, SUPERVISOR_POLL_MS, SUPERVISOR_RENEW_EVERY_MS, type WorkExecutionClass, type WorkAttempt } from './work-item.js';

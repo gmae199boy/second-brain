@@ -37,9 +37,7 @@ import { withWrite } from './write.js';
 import { pgText } from './text.js';
 
 export interface WorkItemRow {
-  schedule_id: string | null;
-  local_date_from: string | null; local_date_to: string | null; local_time_zone: string | null;
-  claimed_date_from: string | null; claimed_date_to: string | null;
+  scheduled?: WorkItem['scheduledOccurrences'];
   id: string;
   kind: string;
   execution_class: 'core' | 'supervised';
@@ -94,8 +92,7 @@ export function claimCandidateQuery(query: DueWorkQuery): RawBuilder<WorkItemRow
   const now = instant(query.now, 'work_items.next_attempt_at');
   return sql<WorkItemRow>`
     select id, kind, execution_class, current_attempt_token, serialization_key, hold_group, target_kind, target_id, created_at, attempts, next_attempt_at,
-           claimed_at, claim_expires_at, claimed_by, last_error, completed_at, outcome, cancel_requested_at, schedule_id, local_time_zone,
-           local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text
+           claimed_at, claim_expires_at, claimed_by, last_error, completed_at, outcome, cancel_requested_at
       from brain.work_items
      where completed_at is null
        and not exists (
@@ -119,9 +116,9 @@ export async function ensureWork(held: Kysely<PgSchema>, input: AddWorkInput) {
   const nextAttemptAt = instant(input.nextAttemptAt, 'work_items.next_attempt_at');
   for (;;) {
     const inserted = await sql<WorkItemRow>`
-      insert into brain.work_items (id, kind, execution_class, serialization_key, hold_group, target_kind, target_id, created_at, attempts, next_attempt_at, schedule_id, local_date_from, local_date_to, local_time_zone)
-      values (${input.id}, ${input.kind}, (case when exists (select 1 from brain.extension_work_kinds where kind=${input.kind}) then 'supervised' else ${workExecutionClass(input.kind)} end), ${input.serializationKey ?? null}, ${workHoldGroup(input.kind, input.holdGroup)}, ${input.targetKind}, ${input.targetId}, ${createdAt}, 0, ${nextAttemptAt}, ${input.scheduledDates?.scheduleId ?? null}, ${input.scheduledDates?.from ?? null}, ${input.scheduledDates?.to ?? null}, ${input.scheduledDates?.timeZone ?? null})
-      on conflict (kind, target_kind, target_id) where completed_at is null do nothing returning *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text
+      insert into brain.work_items (id, kind, execution_class, serialization_key, hold_group, target_kind, target_id, created_at, attempts, next_attempt_at)
+      values (${input.id}, ${input.kind}, (case when exists (select 1 from brain.extension_work_kinds where kind=${input.kind}) then 'supervised' else ${workExecutionClass(input.kind)} end), ${input.serializationKey ?? null}, ${workHoldGroup(input.kind, input.holdGroup)}, ${input.targetKind}, ${input.targetId}, ${createdAt}, 0, ${nextAttemptAt})
+      on conflict (kind, target_kind, target_id) where completed_at is null do nothing returning *
     `.execute(held);
     const row = inserted.rows[0];
     if (row !== undefined) {
@@ -131,14 +128,7 @@ export async function ensureWork(held: Kysely<PgSchema>, input: AddWorkInput) {
     const existing = await readOpenWork(held, input);
     if (existing !== null) {
       await ensureFollowup(held, existing);
-      if (!input.scheduledDates) return { created: false, row: existing };
-      const dates = input.scheduledDates;
-      const merged = await sql<WorkItemRow>`update brain.work_items set
-        local_date_from = least(local_date_from, ${dates.from}::date), local_date_to = greatest(local_date_to, ${dates.to}::date),
-        local_time_zone = coalesce(local_time_zone, ${dates.timeZone}), schedule_id = coalesce(schedule_id, ${dates.scheduleId}::uuid)
-        where id = ${existing.id} and completed_at is null
-        returning *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text`.execute(held);
-      if (merged.rows[0]) return { created: false, row: merged.rows[0] };
+      return { created: false, row: existing };
     }
     // A drain completed the conflicting row between these statements. At READ
     // COMMITTED the next insert can create its replacement using a fresh snapshot.
@@ -265,12 +255,12 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
                  set attempts = attempts + 1,
                      claimed_at = ${now},
                      claim_expires_at = ${expiresAt},
-                     claimed_by = ${input.claimedBy},
-                     claimed_date_from = local_date_from, claimed_date_to = local_date_to
+                     claimed_by = ${input.claimedBy}
                where id = ${candidate.id}
             `.execute(held);
+            const scheduled = await claimOccurrences(held, candidate.id);
             return {
-              ...candidate,
+              ...candidate, scheduled,
               attempts: candidate.attempts + 1,
               claimed_at: now,
               claim_expires_at: expiresAt,
@@ -293,7 +283,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
         const written = await withWrite(opened.connection, async held => {
-          const found = await sql<WorkItemRow>`select *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text from brain.work_items where id = ${input.id} for update`.execute(held);
+          const found = await sql<WorkItemRow>`select * from brain.work_items where id = ${input.id} for update`.execute(held);
           const item = found.rows[0];
           if (!item) return 'not_found' as const;
           if (item.completed_at !== null) return 'already_closed' as const;
@@ -304,6 +294,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
           }
           await sql`update brain.work_items set cancel_requested_at = ${now}, completed_at = ${now}, outcome = 'cancelled',
             claimed_at = null, claim_expires_at = null, claimed_by = null where id = ${input.id}`.execute(held);
+          await transitionOccurrences(held, input.id, 'failed');
           await closeDependents(held, input.id, 'cancelled', now);
           return 'cancelled' as const;
         });
@@ -348,6 +339,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
           attempts = case when cancel_requested_at is null and ${input.outcome} = 'cancelled' then greatest(0, attempts - 1) else attempts end,
           next_attempt_at = case when cancel_requested_at is null and ${input.outcome} = 'died' then ${now}::timestamptz else next_attempt_at end
           where id = ${input.id}`.execute(held);
+        await transitionOccurrences(held, input.id, item.cancel_requested_at !== null ? 'failed' : 'pending');
         if (item.cancel_requested_at !== null) await closeDependents(held, input.id, 'cancelled', now);
         return 1;
       });
@@ -359,7 +351,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         const written = await withWrite(opened.connection, async (held) => {
           const now = instant(input.now, 'work_items.claimed_at');
           for (;;) {
-            const found = await sql<WorkItemRow>`select *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text from brain.work_items
+            const found = await sql<WorkItemRow>`select * from brain.work_items
               where execution_class = 'supervised' and completed_at is null
                 and not exists (
                   select 1 from brain.work_dependencies d join brain.work_items p on p.id = d.prerequisite_id
@@ -379,8 +371,8 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
             const expires = instant(new Date(input.now.getTime() + workKindPolicy(candidate.kind).claimForMs), 'work_items.claim_expires_at');
             const changed = await sql<WorkItemRow>`update brain.work_items set attempts = attempts + 1,
               claimed_at = ${now}, claim_expires_at = ${expires}, claimed_by = ${input.claimedBy},
-              current_attempt_token = ${input.attemptToken}, claimed_date_from = local_date_from, claimed_date_to = local_date_to where id = ${candidate.id} returning *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text`.execute(held);
-            return toWorkItem(changed.rows[0]!);
+              current_attempt_token = ${input.attemptToken} where id = ${candidate.id} returning *`.execute(held);
+            return toWorkItem({ ...changed.rows[0]!, scheduled: await claimOccurrences(held, candidate.id) });
           }
         });
         if (!written.ok) return written;
@@ -390,7 +382,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
     async getWork(id) {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
-        const result = await sql<WorkItemRow & { attempt: Record<string, unknown> | null }>`select i.*, i.local_date_from::text, i.local_date_to::text, i.claimed_date_from::text, i.claimed_date_to::text, row_to_json(a) as attempt
+        const result = await sql<WorkItemRow & { attempt: Record<string, unknown> | null }>`select i.*, row_to_json(a) as attempt
           from brain.work_items i left join lateral (select * from brain.work_attempts a where a.work_item_id = i.id order by started_at desc, token desc limit 1) a on true where i.id = ${id}::uuid`.execute(opened.connection.db);
         const row = result.rows[0]; return { ok: true, entry: row ? { item: toWorkItem(row), latestAttempt: row.attempt === null ? null : listAttempt(row.attempt) } : null };
       } catch (error) { return databaseFailure(error); }
@@ -399,7 +391,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
-        const result = await sql<WorkItemRow & { held: boolean; attempt: Record<string, unknown> | null; current_attempt: Record<string, unknown> | null }>`select i.*, i.local_date_from::text, i.local_date_to::text, i.claimed_date_from::text, i.claimed_date_to::text, row_to_json(a) as attempt, row_to_json(c) as current_attempt, not (${groupAvailable('i')}) as held
+        const result = await sql<WorkItemRow & { held: boolean; attempt: Record<string, unknown> | null; current_attempt: Record<string, unknown> | null }>`select i.*, row_to_json(a) as attempt, row_to_json(c) as current_attempt, not (${groupAvailable('i')}) as held
           from brain.work_items i left join lateral (select * from brain.work_attempts a where a.work_item_id = i.id order by started_at desc, token desc limit 1) a on true
           left join brain.work_attempts c on c.work_item_id = i.id and c.token = i.current_attempt_token
           where (${includeClosed} or i.completed_at is null) and (${kind ?? null}::text is null or i.kind = ${kind ?? null})
@@ -480,6 +472,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
           await settleScheduledSuccess(held, input.id, now);
           if (item.kind === 'channel_send') await sql`update brain.failures set resolved_at=${now} where target_kind=${item.target_kind} and target_id=${item.target_id} and stage='channel_send' and resolved_at is null`.execute(held);
         }
+        if (input.outcome !== 'succeeded') await transitionOccurrences(held, input.id, failure !== undefined || item.cancel_requested_at !== null ? 'failed' : 'pending');
         if (input.outcome !== 'succeeded' && (item.cancel_requested_at !== null || failure !== undefined))
           await closeDependents(held, input.id, item.cancel_requested_at !== null ? 'cancelled' : 'failed', now);
         if (failure !== undefined) {
@@ -538,7 +531,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
     async retryWork(input: RetryWorkInput): Promise<FinishWorkResult> {
       return finish(connect, async (held) => {
         const nextAttemptAt = instant(input.nextAttemptAt, 'work_items.next_attempt_at');
-        return changesOf(
+        const changed = changesOf(
           await sql`
             update brain.work_items
                set next_attempt_at = ${nextAttemptAt},
@@ -547,12 +540,14 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
              where id = ${input.id} and claimed_by = ${input.claimedBy}
           `.execute(held),
         );
+        if (changed) await transitionOccurrences(held, input.id, 'pending');
+        return changed;
       });
     },
 
     async releaseWork(input: FinishWorkInput): Promise<FinishWorkResult> {
       return finish(connect, async (held) => {
-        return changesOf(
+        const changed = changesOf(
           await sql`
             update brain.work_items
                set attempts = greatest(0, attempts - 1),
@@ -560,6 +555,8 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
              where id = ${input.id} and claimed_by = ${input.claimedBy}
           `.execute(held),
         );
+        if (changed) await transitionOccurrences(held, input.id, 'pending');
+        return changed;
       });
     },
 
@@ -586,6 +583,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
               `.execute(held),
             );
             if (closed === 0) return null;
+            await transitionOccurrences(held, closing.id, 'failed');
             await closeDependents(held, closing.id, 'failed', closedAt!);
           }
 
@@ -749,7 +747,7 @@ function toFailure(row: FailureRow): FailureRecord {
 async function lockConfirmedChannelWork(held: Kysely<PgSchema>, input: { id: string; attemptToken: string; now: Date; confirmedDead?: boolean }): Promise<WorkItemRow | null> {
   const current = await lockOpenSupervisedWork(held, input);
   if (current || !input.confirmedDead) return current;
-  const found = await sql<WorkItemRow>`select *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text from brain.work_items
+  const found = await sql<WorkItemRow>`select * from brain.work_items
     where id=${input.id} and kind='channel_send' and current_attempt_token=${input.attemptToken} and completed_at is null for update`.execute(held);
   if (!found.rows[0]) return null;
   const resumed = await sql`update brain.work_attempts set outcome=null,finished_at=null where token=${input.attemptToken} and work_item_id=${input.id} and outcome='unknown' returning token`.execute(held);
@@ -760,7 +758,7 @@ async function lockConfirmedChannelWork(held: Kysely<PgSchema>, input: { id: str
 }
 
 async function lockOpenSupervisedWork(held: Kysely<PgSchema>, input: { id: string; attemptToken: string }): Promise<WorkItemRow | null> {
-  const found = await sql<WorkItemRow>`select *, local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text from brain.work_items where id = ${input.id}
+  const found = await sql<WorkItemRow>`select * from brain.work_items where id = ${input.id}
     and current_attempt_token = ${input.attemptToken} for update`.execute(held);
   const item = found.rows[0];
   if (!item) return null;
@@ -794,7 +792,7 @@ async function closeDependents(held: Kysely<PgSchema>, rootId: string,
   // Refresh the snapshot after each update, traversing even closed ancestors
   // so newly committed descendants remain reachable on the next pass.
   for (;;) {
-    const changed = await sql`with recursive dependents(id) as (
+    const changed = await sql<{ id: string }>`with recursive dependents(id) as (
       select work_item_id from brain.work_dependencies where prerequisite_id = ${rootId}
       union
       select d.work_item_id from dependents parent
@@ -802,8 +800,9 @@ async function closeDependents(held: Kysely<PgSchema>, rootId: string,
     ) update brain.work_items set completed_at = ${now}, outcome = 'dependency_failed',
       claimed_at = null, claim_expires_at = null, claimed_by = null,
       last_error = ${encodedFailure(dependencyFailedText(rootId, outcome))}
-      where id in (select id from dependents) and completed_at is null`.execute(held);
-    if (changesOf(changed) === 0) return;
+      where id in (select id from dependents) and completed_at is null returning id`.execute(held);
+    for (const row of changed.rows) await transitionOccurrences(held, row.id, 'failed');
+    if (changed.rows.length === 0) return;
   }
 }
 
@@ -813,8 +812,7 @@ async function readOpenWork(
 ): Promise<WorkItemRow | null> {
   const found = await sql<WorkItemRow>`
     select id, kind, execution_class, current_attempt_token, serialization_key, hold_group, target_kind, target_id, created_at, attempts, next_attempt_at,
-           claimed_at, claim_expires_at, claimed_by, last_error, completed_at, outcome, cancel_requested_at, schedule_id, local_time_zone,
-           local_date_from::text, local_date_to::text, claimed_date_from::text, claimed_date_to::text
+           claimed_at, claim_expires_at, claimed_by, last_error, completed_at, outcome, cancel_requested_at
       from brain.work_items
      where kind = ${key.kind} and target_kind = ${key.targetKind}
        and target_id = ${key.targetId} and completed_at is null
@@ -846,7 +844,7 @@ function at(value: string, column: string): Date {
 function toWorkItem(row: WorkItemRow): WorkItem {
   return {
     id: row.id,
-    scheduledDates: row.local_date_from === null ? null : { scheduleId: row.schedule_id, from: row.local_date_from, to: row.local_date_to!, timeZone: row.local_time_zone! },
+    scheduledOccurrences: row.scheduled ?? null,
     kind: row.kind,
     executionClass: row.execution_class,
     currentAttemptToken: row.current_attempt_token,
@@ -876,18 +874,24 @@ function encodedFailure(message: string): string {
   return truncateUtf8(pgText(message).text!, FAILURE_MESSAGE_MAX_BYTES);
 }
 
-/** Called only by a winning completion, in that completion's transaction. */
+const SCHEDULE_CLAIM_BATCH = 1000;
+async function claimOccurrences(held: Kysely<PgSchema>, id: string): Promise<WorkItem['scheduledOccurrences']> {
+  // Row lock on work serializes firing against claim/completion.
+  await sql`update brain.schedule_occurrences set status='pending' where work_id=${id} and status='claimed'`.execute(held);
+  await sql`update brain.schedule_occurrences set status='claimed' where (schedule_id, occurrence_at) in (select schedule_id, occurrence_at from brain.schedule_occurrences where work_id=${id} and status='pending' order by occurrence_at, schedule_id limit ${SCHEDULE_CLAIM_BATCH})`.execute(held);
+  const rows = await sql<{ schedule_id: string; time_zone: string | null; occurrence_at: string }>`select o.schedule_id,o.time_zone,o.occurrence_at from brain.schedule_occurrences o where o.work_id=${id} and o.status='claimed' order by o.schedule_id,o.time_zone nulls first,o.occurrence_at`.execute(held);
+  const groups: NonNullable<WorkItem['scheduledOccurrences']> = [];
+  for (const row of rows.rows) { let group = groups.at(-1); if (!group || group.scheduleId !== row.schedule_id || group.timeZone !== row.time_zone) { group={scheduleId:row.schedule_id,timeZone:row.time_zone,occurrences:[]}; groups.push(group); } group.occurrences.push(at(row.occurrence_at,'schedule_occurrences.occurrence_at')); }
+  return groups.length ? groups : null;
+}
+async function transitionOccurrences(held: Kysely<PgSchema>, id: string, status: 'pending' | 'failed'): Promise<void> {
+  if (status === 'failed') await sql`update brain.schedule_occurrences set status='failed' where work_id=${id} and status in ('pending','claimed')`.execute(held);
+  else await sql`update brain.schedule_occurrences set status='pending' where work_id=${id} and status='claimed'`.execute(held);
+}
 async function settleScheduledSuccess(held: Kysely<PgSchema>, id: string, now: string): Promise<void> {
-  await sql`insert into brain.schedule_successes (schedule_id, local_date, time_zone, work_id, recorded_at)
-    select w.schedule_id, d::date, w.local_time_zone, w.id, ${now}::timestamptz
-    from brain.work_items w cross join lateral generate_series(w.claimed_date_from, w.claimed_date_to, interval '1 day') d
-    where w.id = ${id} and w.schedule_id is not null
-    on conflict (schedule_id, local_date) do nothing`.execute(held);
-  await sql`update brain.work_items set completed_at = null, outcome = null, next_attempt_at = ${now},
-    current_attempt_token = null, claimed_at = null, claim_expires_at = null, claimed_by = null
-    where id = ${id} and local_date_from is not null and cancel_requested_at is null
-      and (claimed_date_from is null or local_date_from < claimed_date_from or local_date_to > claimed_date_to)`.execute(held);
-  await sql`update brain.work_items set claimed_date_from = null, claimed_date_to = null where id = ${id}`.execute(held);
+  await sql`update brain.schedule_occurrences set status='done', recorded_at=${now} where work_id=${id} and status='claimed'`.execute(held);
+  await sql`update brain.work_items set completed_at=null,outcome=null,next_attempt_at=${now},current_attempt_token=null,claimed_at=null,claim_expires_at=null,claimed_by=null where id=${id} and cancel_requested_at is null and exists(select 1 from brain.schedule_occurrences where work_id=${id} and status='pending')`.execute(held);
+  await sql`update brain.schedule_occurrences set status='failed' where work_id=${id} and status in ('pending','claimed') and exists(select 1 from brain.work_items where id=${id} and completed_at is not null)`.execute(held);
 }
 
 function listAttempt(row: Record<string, unknown>): import('@second-brain/core').WorkAttempt {

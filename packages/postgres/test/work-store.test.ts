@@ -10,7 +10,7 @@ import { createPool, type PgSchema } from '../src/connect.js';
 import { postgresWorkStore } from '../src/work.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { dependencyFailedText, enqueueWorkGraph, tickSchedules, failureText, FAILURE_MESSAGE_MAX_BYTES, truncateUtf8, retryFailures, runSupervisor } from '@second-brain/core';
-import { workStoreContract, scheduleStoreContract, sequenceIdGen, manualTime, fakeProcessInspector, fakeProcessLauncher } from '@second-brain/core/testing';
+import { fakeCron, workStoreContract, scheduleStoreContract, sequenceIdGen, manualTime, fakeProcessInspector, fakeProcessLauncher } from '@second-brain/core/testing';
 import { postgresStore } from '../src/index.js';
 import { database, subject, clock } from './fixture.js';
 
@@ -24,13 +24,14 @@ const id = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, '0')
 const now = clock.now();
 const next = new Date(now.getTime() + 60_000);
 const work = (n = 1) => ({ id: id(n), kind: 'demo_work', targetKind: 'probe', targetId: `target-${n}`, createdAt: now, nextAttemptAt: now });
-const schedule = { id: id(100), kind: 'demo_work', targetKind: 'probe', targetId: 'target-1', localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now };
-const firing = { scheduleId: schedule.id, expectedNextRunAt: now, nextRunAt: next, now, work: work() };
+const schedule = { id: id(100), kind: 'demo_work', targetKind: 'probe', targetId: 'target-1', triggerKind: 'interval' as const, cronExpr: null, runAt: null, timeZoneSource: null, extension: null, scheduleKey: null, userId: '01940000-0000-7000-8000-00000000000a', enabled: true, removedAt: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now };
+const firing = { expectedTriggerKind:'interval' as const,expectedTimeZone:null,expectedCronExpr:null, scheduleId: schedule.id, expectedNextRunAt: now, nextRunAt: next, now, work: work(), occurrences: [{ occurrenceAt: now, status: 'pending' as const }] };
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 async function fixture(options = {}) {
   const db = await database(); cleanup.push(() => db.drop());
   const store = postgresStore({ databaseUrl: db.appUrl, ...options }); cleanup.push(() => store.close());
+  await store.ensureSelfUser({id:'01940000-0000-7000-8000-00000000000a',name:'synthetic',createdAt:now});
   const blocker = new pg.Client({ connectionString: db.url }); await blocker.connect();
   cleanup.push(async () => { await blocker.query('rollback'); await blocker.end(); });
   return { db, store, blocker };
@@ -92,10 +93,9 @@ it('settles cleanup failures atomically only when completeWork wins its claim', 
 it.each(['completeWork', 'finishSupervisedWork'] as const)('%s rolls back completion when scheduled success recording fails', async path => {
   const { db, store } = await fixture(); const token = id(201);
   const kind = path === 'completeWork' ? 'demo_work' : 'process_probe';
-  expect(await store.addSchedule({ ...schedule, kind, localTime: '11:00', timeZone: 'Asia/Seoul', intervalSeconds: null }))
+  expect(await store.addSchedule({ ...schedule, kind, triggerKind: 'cron', cronExpr: '0 11 * * *', timeZoneSource:'fixed', timeZone: 'Asia/Seoul', intervalSeconds: null }))
     .toMatchObject({ ok: true });
-  const dates = { scheduleId: schedule.id, from: '2026-02-01', to: '2026-02-02', timeZone: 'Asia/Seoul' };
-  expect(await store.addWork({ ...work(), kind, scheduledDates: dates })).toMatchObject({ ok: true });
+  expect(await store.fireSchedule({scheduleId:schedule.id,expectedTriggerKind:'cron',expectedTimeZone:'Asia/Seoul',expectedCronExpr:'0 11 * * *',expectedNextRunAt:now,nextRunAt:next,now,work:{...work(),kind},occurrences:[{occurrenceAt:now,status:'pending'}]})).toMatchObject({ok:true,fired:true});
   const claim = path === 'completeWork'
     ? await store.claimWork({ now, kinds: [kind], claimedBy: 'worker' })
     : await store.claimSupervisedWork({ now, kinds: [kind], claimedBy: 'worker', attemptToken: token });
@@ -106,19 +106,18 @@ it.each(['completeWork', 'finishSupervisedWork'] as const)('%s rolls back comple
     : store.finishSupervisedWork({ id: id(1), attemptToken: token, now: next, outcome: 'succeeded' });
   await db.query(`create function brain.refuse_schedule_success() returns trigger language plpgsql as $$
     begin raise exception 'test success recording refused'; end $$;
-    create trigger refuse_schedule_success before insert on brain.schedule_successes
+    create trigger refuse_schedule_success before update on brain.schedule_occurrences
       for each row execute function brain.refuse_schedule_success()`);
   expect(await finish()).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
   expect(await db.rows('select * from brain.work_items')).toEqual(before.items);
   expect(await db.rows('select * from brain.work_attempts')).toEqual(before.attempts);
-  expect(await db.rows('select * from brain.schedule_successes')).toEqual([]);
-  await db.query('drop trigger refuse_schedule_success on brain.schedule_successes');
+  expect(await db.rows('select status from brain.schedule_occurrences')).toEqual([{status:'claimed'}]);
+  await db.query('drop trigger refuse_schedule_success on brain.schedule_occurrences');
   expect(await finish()).toEqual({ ok: true, outcome: 'done' });
   expect(await finish()).toEqual({ ok: true, outcome: 'lost' });
   expect(await db.rows('select completed_at,outcome,claimed_at,claim_expires_at,claimed_by,current_attempt_token from brain.work_items'))
     .toEqual([{ completed_at: next, outcome: 'succeeded', claimed_at: null, claim_expires_at: null, claimed_by: null, current_attempt_token: null }]);
-  expect(await db.rows('select local_date::text,time_zone,work_id,recorded_at from brain.schedule_successes order by local_date'))
-    .toEqual([dates.from, dates.to].map(local_date => ({ local_date, time_zone: dates.timeZone, work_id: id(1), recorded_at: next })));
+  expect(await db.rows('select status from brain.schedule_occurrences')).toEqual([{status:'done'}]);
   expect(await db.rows('select outcome,finished_at from brain.work_attempts'))
     .toEqual(path === 'completeWork' ? [] : [{ outcome: 'succeeded', finished_at: next }]);
 });
@@ -282,8 +281,8 @@ it('fires a schedule once when two ticks race for it', async () => {
   const { db, store, blocker } = await fixture({ applicationName: 'schedule-race-a' });
   const other = postgresStore({ databaseUrl: db.appUrl, applicationName: 'schedule-race-b' }); cleanup.push(() => other.close());
   await store.addSchedule(schedule); await lock(blocker, 'schedules', schedule.id);
-  const a = tickSchedules({ store, clock, readTimeZone: async () => ({ ok: true, value: 'Asia/Seoul' }), idGen: sequenceIdGen({ timestampMs: now.getTime(), start: 1000 }) });
-  const b = tickSchedules({ store: other, clock, readTimeZone: async () => ({ ok: true, value: 'Asia/Seoul' }), idGen: sequenceIdGen({ timestampMs: now.getTime(), start: 2000 }) });
+  const a = tickSchedules({ cron: fakeCron, store, clock, readTimeZone: async () => ({ ok: true, value: 'Asia/Seoul' }), idGen: sequenceIdGen({ timestampMs: now.getTime(), start: 1000 }) });
+  const b = tickSchedules({ cron: fakeCron, store: other, clock, readTimeZone: async () => ({ ok: true, value: 'Asia/Seoul' }), idGen: sequenceIdGen({ timestampMs: now.getTime(), start: 2000 }) });
   try {
     await expect.poll(async () => {
       const rows = await db.rows<{ count: number }>("select count(*)::int as count from pg_stat_activity where application_name in ('schedule-race-a','schedule-race-b') and wait_event_type = 'Lock'");
@@ -989,7 +988,7 @@ it('closes a tenth recovered supervised death with one PROCESS_DIED failure', as
   await store.claimSupervisedWork({ now, claimedBy: 'old', kinds: ['process_probe'], attemptToken: id(101) });
   await db.query(`update brain.work_items set attempts = 10 where id = '${id(1)}'`);
   const controller = new AbortController(); const time = manualTime(now);
-  const running = runSupervisor({ store, schemaVersions: { core: 32 }, ...time,
+  const running = runSupervisor({ store, schemaVersions: { core: 33 }, ...time,
     inspector: fakeProcessInspector(), launcher: fakeProcessLauncher(),
     idGen: sequenceIdGen({ timestampMs: now.getTime() }), signal: controller.signal, launches: {} });
   try {

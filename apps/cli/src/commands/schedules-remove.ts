@@ -6,6 +6,6 @@ export const schedulesRemoveCommand: CommandSpec = {
   risk: 'write', writes: true, drain: false, hook: false, dryRun: false, preflight: scheduleIdPreflight,
   async run(context) {
     const r = await context.brain.schedules.remove({ id: context.args[0]! }); if (!r.ok) return r;
-    return { ok: true, data: { id: r.id }, text: ['예약을 지웠습니다.'] };
+    return { ok: true, data: { id: r.id, marked: r.marked }, text: ['예약을 지웠습니다.'] };
   },
 };

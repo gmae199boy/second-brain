@@ -401,7 +401,6 @@ export interface UserStore {
 
 /** What `addWork` needs to put one piece of work on the queue (AD-21). */
 export interface AddWorkInput {
-  scheduledDates?: import('../domain/work-item.js').ScheduledDates;
   /** New-row exclusion key. An existing open row keeps its original key. */
   serializationKey?: string | null;
   holdGroup?: string | null;
@@ -1427,32 +1426,30 @@ export interface ExtractionStore {
   listExtractionChunks(extractionId: string): Promise<ListExtractionChunksResult>;
 }
 
-/** Schedule persistence; recurrence rules belong to Core's tick. */
+/** Schedule persistence; recurrence policy belongs to Core's tick. */
 export interface ScheduleStore {
-  /** 매일 예약의 고유 키로 실제 설정을 조회한다. */
-  findDailySchedule(input: { kind: string; targetKind: string; targetId: string }): Promise<{ ok: true; schedule: import('../domain/schedule.js').Schedule | null } | ScheduleStoreFailure>;
+  findScheduleByKey(input: { extension: string | null; scheduleKey: string; userId: string }): Promise<{ ok: true; schedule: import('../domain/schedule.js').Schedule | null } | ScheduleStoreFailure>;
   listSchedules(input: { limit: number }): Promise<{ ok: true; schedules: (import('../domain/schedule.js').Schedule & { held: boolean })[]; hasMore: boolean } | ScheduleStoreFailure>;
-  removeSchedule(input: { id: string }): Promise<{ ok: true; removed: boolean } | ScheduleStoreFailure>;
+  removeSchedule(input: { id: string; now: Date }): Promise<{ ok: true; removed: boolean; marked: boolean } | ScheduleStoreFailure>;
+  disableMissingSchedules(input: { extension: string; userId: string; keys: readonly string[] }): Promise<{ok:true; keys:string[]} | ScheduleStoreFailure>;
   addSchedule(input: AddScheduleInput): Promise<AddScheduleResult>;
-  listDailySchedules(query: { limit: number }): Promise<ListDueSchedulesResult>;
+  updateSchedule(input: { id: string; expected: import('../domain/schedule.js').Schedule; schedule: import('../domain/schedule.js').Schedule }): Promise<{ ok: true; updated: boolean } | ScheduleStoreFailure>;
+  listUserZoneSchedules(query: { limit: number }): Promise<ListDueSchedulesResult>;
   readSchedule(query: { id: string }): Promise<{ ok: true; schedule: import('../domain/schedule.js').Schedule | null } | ScheduleStoreFailure>;
-  rezoneSchedule(input: { id: string; expectedNextRunAt: Date; expectedTimeZone: string; timeZone: string; nextRunAt: Date }): Promise<{ ok: true; updated: boolean } | ScheduleStoreFailure>;
-  listScheduleSuccesses(query: { scheduleId: string }): Promise<{ ok: true; successes: ScheduleSuccess[] } | ScheduleStoreFailure>;
+  rezoneSchedule(input: { id: string; expectedNextRunAt: Date; expectedTimeZone: string; expectedCronExpr: string; expectedTriggerUpdatedAt: Date | null; timeZone: string; nextRunAt: Date }): Promise<{ ok: true; updated: boolean } | ScheduleStoreFailure>;
+  listOccurrences(query: { scheduleId: string }): Promise<{ ok: true; occurrences: import('../domain/schedule.js').ScheduleOccurrence[] } | ScheduleStoreFailure>;
+  readMissedPolicy(input: { kind: string }): Promise<{ ok: true; policy: 'latest' | 'coalesce' | 'skip' } | ScheduleStoreFailure>;
   listDueSchedules(query: { now: Date; limit: number }): Promise<ListDueSchedulesResult>;
   fireSchedule(input: FireScheduleInput): Promise<FireScheduleResult>;
 }
-export type AddScheduleInput = Omit<import('../domain/schedule.js').Schedule, 'holdGroup'> & { holdGroup?: string | null };
+export type AddScheduleInput = Omit<import('../domain/schedule.js').Schedule, 'holdGroup' | 'triggerUpdatedAt'> & { holdGroup?: string | null; triggerUpdatedAt?: Date | null };
 export type ScheduleStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
-export interface ScheduleSuccess { localDate: string; timeZone: string; workId: string; recordedAt: Date }
 export type AddScheduleResult = { ok: false; code: 'SCHEDULE_CONFLICT'; message: string } | { ok: true; schedule: import('../domain/schedule.js').Schedule } | ScheduleStoreFailure;
 export type ListDueSchedulesResult = { ok: true; schedules: readonly import('../domain/schedule.js').Schedule[] } | ScheduleStoreFailure;
 export interface FireScheduleInput {
-  localDates?: { from: string; to: string; timeZone: string };
-  scheduleId: string;
-  expectedNextRunAt: Date;
-  nextRunAt: Date | null;
+  scheduleId: string; expectedTriggerKind: import('../domain/schedule.js').Schedule['triggerKind']; expectedTimeZone: string | null; expectedCronExpr: string | null; expectedNextRunAt: Date; nextRunAt: Date | null; now: Date;
+  occurrences: readonly { occurrenceAt: Date; status: 'pending' | 'skipped' }[];
   work: AddWorkInput;
-  now: Date;
 }
 export type FireScheduleResult = { ok: true; fired: true; created: boolean; covered: boolean } | { ok: true; fired: false } | ScheduleStoreFailure;
 
@@ -1489,6 +1486,7 @@ export interface ExtensionPublicStatus {
   pythonEnvironment: ExtensionPythonEnvironment | null;
   authWorkId: string | null;
   scheduleIds: string[];
+  disabledScheduleKeys: string[];
   enabled: boolean | null;
   journalPresent: boolean;
   login: import('../extensions/install-progress.js').InstallStageProgress | null;
@@ -1513,7 +1511,7 @@ export interface ExtensionStore {
   getExtensionInstallProgress(name: string): Promise<{ ok: true; journal: import('../extensions/install-progress.js').StoredExtensionInstallProgress | null } | ExtensionStoreFailure>;
   recordExtensionPythonEnvironment(input: { name: string } & ExtensionPythonEnvironment): Promise<{ ok: true } | ExtensionStoreFailure>;
   getExtensionPythonEnvironment(name: string): Promise<{ ok: true; environment: ExtensionPythonEnvironment | null } | ExtensionStoreFailure>;
-  recordExtensionInstall(input: { name: string; version: string; now: Date; workKinds?: readonly string[]; workFollowups?: Readonly<Record<string, string>> }): Promise<{ ok: true } | ExtensionStoreFailure>;
+  recordExtensionInstall(input: { name: string; version: string; now: Date; workKinds?: readonly string[]; workFollowups?: Readonly<Record<string, string>>; missedPolicies?: Readonly<Record<string, 'latest' | 'coalesce' | 'skip'>> }): Promise<{ ok: true } | ExtensionStoreFailure>;
   recordExtensionConnection(input: { name: string; status: 'connected' | 'failed'; code: string | null; message: string | null; checkedAt: Date }): Promise<{ ok: true } | ExtensionStoreFailure>;
   getExtension(name: string): Promise<{ ok: true; extension: ExtensionRecord | null } | ExtensionStoreFailure>;
   listExtensions(): Promise<{ ok: true; extensions: ExtensionRecord[] } | ExtensionStoreFailure>;

@@ -81,7 +81,9 @@ def _valid(value, schema_adapter=None):
     auth = value.get('auth')
     if auth and (not auth['kind'].startswith(name + '.') or auth['kind'] in kinds):
         return False
-    return all(schedule['kind'] in kinds for schedule in value.get('default_schedules', []))
+    schedules = value.get('default_schedules', [])
+    schedule_keys = [s.get('key', f"{s['kind']}:{s['target_kind']}:{s['target_id']}") for s in schedules]
+    return len(schedule_keys) == len(set(schedule_keys)) and all(schedule['kind'] in kinds for schedule in schedules)
 
 def valid(value, schema_adapter=None):
     try:

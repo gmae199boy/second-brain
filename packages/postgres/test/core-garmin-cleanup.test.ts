@@ -21,8 +21,9 @@ it('v30에서 공용 데이터와 권한을 보존하며 v31로 정리한다', a
   await admin.query('insert into brain.extension_work_kinds(extension_name,kind) values ($1,$2)',[name,`${name}.import`]);
   const work=randomUUID(),token=randomUUID(),channel=randomUUID(),conversation=randomUUID(),req=randomUUID(),file=randomUUID();
   await admin.query("insert into brain.work_items(id,kind,target_kind,target_id,created_at,attempts,next_attempt_at,execution_class) values ($1,'health_analysis','analysis_snapshot','old',now(),0,now(),'supervised')",[randomUUID()]);
-  await store.addWork({id:work,kind:`${name}.import`,targetKind:'import',targetId:'seed',createdAt:clock.now(),nextAttemptAt:clock.now()});
-  await store.claimSupervisedWork({now:clock.now(),claimedBy:'test',kinds:[`${name}.import`],attemptToken:token});
+  await admin.query("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values ($1,$2,'import','seed',now(),now(),'supervised',now(),now()+interval '10 minutes','test')",[work,`${name}.import`]);
+  await admin.query("insert into brain.work_attempts(token,work_item_id,started_at,incarnation) values ($1,$2,now(),'test')",[token,work]);
+  await admin.query('update brain.work_items set current_attempt_token=$1 where id=$2',[token,work]);
   await admin.query('insert into brain.channels values ($1,$2,$3)',[channel,'telegram','bot']);
   await admin.query('insert into brain.channel_conversations values ($1,$2,$3,null)',[conversation,channel,'chat']);
   const url=new URL(db.url);url.username=role;url.password=password;ext=new pg.Client({connectionString:url.toString()});await ext.connect();
@@ -62,7 +63,10 @@ it('v30에서 공용 데이터와 권한을 보존하며 v31로 정리한다', a
   const emptyRequired=requiredNonempty.filter(table => (before[table] as {count:number}).count===0);
   expect(emptyRequired).toEqual([]);
   // 나머지는 이 seed에 해당 기록이 없는 별도의 기능 표다.
-  const emptyAllowed=['channel_gates','channel_item_results','context_injections','extension_install_progress','extension_python_environment','file_metadata','file_names','log_entries','log_entry_edits','projects','redactions','schedule_successes','schedules','settings','tool_notes','work_dependencies','work_hold_groups','workspaces','worktrees'];
+  const emptyAllowed=['channel_gates','channel_item_results','context_injections','extension_install_progress','extension_python_environment','file_metadata','file_names','log_entries','log_entry_edits','projects','redactions','schedules','settings','tool_notes','work_dependencies','work_hold_groups','workspaces','worktrees'];
+  // Historical scheduling tables may be empty in this v30 snapshot.
+  const schedulingTables=(await admin.query("select tablename from pg_tables where schemaname='brain' and tablename like 'schedule_%'")).rows.map(row=>row.tablename as string);
+  emptyAllowed.push(...schedulingTables);
   const unexpectedEmpty=Object.entries(before).filter(([name,row]) => (row as {count:number}).count===0 && !emptyAllowed.includes(name)).map(([name])=>name);
   expect(unexpectedEmpty).toEqual([]);
   await copyFile(new URL('0031_remove_core_garmin.sql',source),join(dir,'0031_remove_core_garmin.sql'));

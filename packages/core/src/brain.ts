@@ -15,7 +15,7 @@ import { listWork } from './queue/list.js';
 import { workExecutionClass } from './domain/work-item.js';
 import type { SchemaVersions } from './schema.js';
 import { getSetting, setSetting, settingDefinitions } from './settings/index.js';
-import { addDaily, listSchedules, removeSchedule, runSchedule, type AddDailyInput, type AddDailyResult, type RunScheduleResult } from './queue/schedules.js';
+import { addSchedule, updateSchedule, listSchedules, removeSchedule, runSchedule, type CreateScheduleInput, type AddDailyResult, type RunScheduleResult } from './queue/schedules.js';
 import { tickSchedules, type ScheduleTickResult } from './queue/schedule-tick.js';
 import { SCHEDULE_PROBE_KIND, scheduleProbeHandler } from './queue/schedule-probe-work.js';
 import type { AttachmentLinkSpoolPayload } from './domain/spool-record.js';
@@ -74,6 +74,7 @@ import {
 import { replaySpool, type SpoolReplayHandlers } from './spool/replay.js';
 
 export interface BrainDependencies {
+  cron?: import('./ports/cron.js').CronCalculator;
   importStaging?: ImportStaging;
   extensions?: ExtensionRuntime;
   sources?: SourceFileReader;
@@ -243,7 +244,8 @@ export interface BrainFiles {
 
 export interface BrainSchedules {
   tick(): Promise<ScheduleTickResult>;
-  add(input: AddDailyInput): Promise<AddDailyResult>;
+  add(input: CreateScheduleInput): Promise<AddDailyResult>;
+  update(input: Parameters<typeof updateSchedule>[1]): ReturnType<typeof updateSchedule>;
   list(input?: { limit?: number }): ReturnType<typeof listSchedules>;
   remove(input: { id: string }): ReturnType<typeof removeSchedule>;
   run(input: { scheduleId: string }): Promise<RunScheduleResult>;
@@ -285,6 +287,7 @@ export interface Brain {
 export function createBrain(dependencies: BrainDependencies): Brain {
   const {
     store,
+    cron = { validate: () => ({ok:false as const,code:'SCHEDULE_INVALID' as const,message:'cron 계산기가 없습니다'}), next: () => null },
     files,
     sources,
     userHome,
@@ -433,7 +436,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
         : { ok: false, code: 'INVALID_ARGUMENT', message: '요청 ID가 UUID 형식이 아닙니다' },
     },
     recall: { chunks: input => searchRecall(store, 'chunks', input), tools: input => searchRecall(store, 'tools', input), expand: input => expandRecall(store, input) },
-    ext: { command: input => executeExtensionCommand(dependencies, input), run: input => runExtension(dependencies, input), publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
+    ext: { command: input => executeExtensionCommand(dependencies, input), run: input => runExtension(dependencies, input), publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, cron, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
     files: { redact: (input) => redactFile({ store, clock, idGen }, input) },
     doctor: {
@@ -474,11 +477,12 @@ export function createBrain(dependencies: BrainDependencies): Brain {
       retry: (input) => retryFailures({ store, clock, idGen }, input),
     },
     schedules: {
-      tick: () => tickSchedules({ store, clock, idGen, readTimeZone }),
+      tick: () => tickSchedules({ store, clock, idGen, readTimeZone, cron }),
       list: input => listSchedules({ store }, input),
-      remove: input => removeSchedule({ store }, input),
-      add: input => addDaily({ store, clock, idGen, readTimeZone }, input),
-      run: input => runSchedule({ store, clock, idGen, readTimeZone }, input),
+      remove: input => removeSchedule({ store, clock }, input),
+      add: input => addSchedule({ store, clock, idGen, readTimeZone, cron }, input),
+      update: input => updateSchedule({ store, clock, idGen, readTimeZone, cron }, input),
+      run: input => runSchedule({ store, clock, idGen, readTimeZone, cron }, input),
     },
     queue: {
       hold: input => holdWorkGroup({ store, clock }, input),

@@ -2,11 +2,12 @@ import { isoWithOffset, type ExtensionRecord, type ExtensionPythonEnvironment, t
 import type { CommandSpec } from '../dispatch.js';
 export function extensionData(name: string, r: ExtensionRecord | null, python: ExtensionPythonEnvironment | null = null, progress: ExtensionInstallProgress | null = null) {
   return { name, installed: r !== null, version: r?.version ?? null, installed_at: r ? isoWithOffset(r.installedAt) : null,
-    enabled: r?.enabled ?? false, install: progress ? { result: progress.result, failed_stage: progress.failedStage, last_failure: progress.lastFailure, stages: progress.stages, auth_work_id: progress.authWorkId, schedule_ids: progress.scheduleIds } : null, python_environment: { status: python?.status ?? null, code: python?.code ?? null, checked_at: python ? isoWithOffset(python.checkedAt) : null }, connection: { status: r?.connectionStatus ?? null, checked_at: r?.connectionCheckedAt ? isoWithOffset(r.connectionCheckedAt) : null, code: r?.connectionCode ?? null, message: null } };
+    enabled: r?.enabled ?? false, install: progress ? { result: progress.result, failed_stage: progress.failedStage, last_failure: progress.lastFailure, stages: progress.stages, auth_work_id: progress.authWorkId, schedule_ids: progress.scheduleIds, disabled_schedule_keys: progress.disabledScheduleKeys ?? [] } : null, python_environment: { status: python?.status ?? null, code: python?.code ?? null, checked_at: python ? isoWithOffset(python.checkedAt) : null }, connection: { status: r?.connectionStatus ?? null, checked_at: r?.connectionCheckedAt ? isoWithOffset(r.connectionCheckedAt) : null, code: r?.connectionCode ?? null, message: null } };
 }
 export function extensionProgressText(progress: ExtensionInstallProgress | null): string[] {
   if (!progress) return ['설치 진행 기록이 없습니다.'];
   return [`설치 결과: ${progress.result ?? '진행 중'}${progress.failedStage ? `, 실패 단계: ${progress.failedStage}` : ''}.`,
+    ...(progress.disabledScheduleKeys?.length ? [`비활성화된 예약 키: ${progress.disabledScheduleKeys.join(', ')}.`] : []),
     ...installStages.map(stage => { const entry = progress.stages[stage]; return `설치 단계 ${stage}: ${entry?.status ?? '미완료'}${entry?.code ? ` (${entry.code})` : ''}.`; })];
 }
 export function publicExtensionData(status: ExtensionPublicStatus) {
@@ -15,11 +16,12 @@ export function publicExtensionData(status: ExtensionPublicStatus) {
     journal_present: status.journalPresent, login: status.login, connection: { status: status.connection.status,
       code: status.connection.code, message: status.connection.status === 'failed' ? '확장 실행에 실패했습니다' : null, checked_at: status.connection.checkedAt ? isoWithOffset(status.connection.checkedAt) : null },
     schedule: status.schedule, held_schedule_count: status.heldScheduleCount, interrupted_work_count: status.interruptedWorkCount,
-    install: status.journalPresent ? { result: status.installResult, failed_stage: status.failedStage, last_failure: status.lastFailure, stages: status.stages, auth_work_id: status.authWorkId, schedule_ids: status.scheduleIds } : null };
+    install: status.journalPresent ? { result: status.installResult, failed_stage: status.failedStage, last_failure: status.lastFailure, stages: status.stages, auth_work_id: status.authWorkId, schedule_ids: status.scheduleIds, disabled_schedule_keys: status.disabledScheduleKeys } : null };
 }
 export function publicExtensionText(status: ExtensionPublicStatus): string[] {
   return [`확장 ${status.name}: ${status.installed ? (status.enabled ? '활성' : '비활성') : '미설치'}, 연결 ${status.connection.status ?? '미확인'}, 중단 일감 ${status.interruptedWorkCount}건, 보류 예약 ${status.heldScheduleCount}건.`,
     `설치 결과: ${status.installResult ?? (status.journalPresent ? '진행 중' : '미확인')}.`,
+    ...(status.disabledScheduleKeys.length ? [`비활성화된 예약 키: ${status.disabledScheduleKeys.join(', ')}.`] : []),
     ...installStages.map(stage => { const entry = status.stages[stage]; return `설치 단계 ${stage}: ${entry?.status ?? '미완료'}${entry?.code ? ` (${entry.code})` : ''}.`; })];
 }
 export const extStatusCommand: CommandSpec = {

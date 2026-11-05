@@ -1,4 +1,4 @@
-import { sampleSelfUserInput } from '../src/testing/index.js';
+import { fakeCron, sampleSelfUserInput } from '../src/testing/index.js';
 import { describe, expect, it } from 'vitest';
 import { createBrain } from '../src/brain.js';
 import { tickSchedules, SCHEDULE_TICK_LIMIT } from '../src/queue/schedule-tick.js';
@@ -9,13 +9,13 @@ import type { Schedule } from '../src/domain/schedule.js';
 
 const now = new Date('2026-02-03T04:05:06.000Z');
 const schedule = (over: Partial<Schedule> = {}): Schedule => ({ holdGroup: null, id: 's', kind: SCHEDULE_PROBE_KIND,
-  targetKind: 'probe', targetId: 's', localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now, ...over });
+  targetKind: 'probe', targetId: 's', triggerKind:'interval',cronExpr:null,runAt:null,timeZoneSource:null,extension:null,scheduleKey:null,userId:sampleSelfUserInput().id,enabled:true,removedAt:null,triggerUpdatedAt:null,timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now, ...over });
 function kit() {
   const store = memoryStore(); void store.ensureSelfUser(sampleSelfUserInput()); let at = now; let reads = 0;
   const clock = { now: () => { reads++; return new Date(at); } };
   const idGen = sequenceIdGen({ timestampMs: now.getTime() });
   return { store, clock, idGen, set: (value: Date) => { at = value; }, reads: () => reads,
-    tick: () => tickSchedules({ store, clock, idGen, readTimeZone: async () => ({ ok: true, value: 'Asia/Seoul' }) }) };
+    tick: () => tickSchedules({ store, clock, idGen, cron: fakeCron, readTimeZone: async () => ({ ok: true, value: 'Asia/Seoul' }) }) };
 }
 describe('schedule tick', () => {
   it('reads the clock once, waits until due, and collapses three missed periods', async () => {
@@ -26,11 +26,11 @@ describe('schedule tick', () => {
     expect(await k.tick()).toEqual({ ok: true, fired: 1, enqueued: 1 });
     expect(k.reads()).toBe(2);
     const result = await k.store.listDueSchedules({ now: new Date(late.getTime() + 60000), limit: 100 });
-    expect(result).toMatchObject({ ok: true, schedules: [{ nextRunAt: new Date(late.getTime() + 60000), lastRunAt: late }] });
+    expect(result).toMatchObject({ ok: true, schedules: [{ nextRunAt: new Date(now.getTime() + 240000), lastRunAt: late }] });
     expect(k.store.snapshot().workItems).toHaveLength(1);
   });
   it('ends one-shots and advances a recurring schedule with existing work', async () => {
-    const k = kit(); await k.store.addSchedule(schedule({ intervalSeconds: null }));
+    const k = kit(); await k.store.addSchedule(schedule({ triggerKind:'once',runAt:now,intervalSeconds: null }));
     expect(await k.tick()).toEqual({ ok: true, fired: 1, enqueued: 1 });
     k.set(new Date(now.getTime() + 500000)); expect(await k.tick()).toEqual({ ok: true, fired: 0, enqueued: 0 });
     await k.store.addSchedule(schedule({ id: 'second' }));
@@ -66,7 +66,7 @@ describe('schedule tick', () => {
   });
   it('enqueues and completes a new occurrence after previous work completes', async () => {
     const k = kit(); await k.store.addSchedule(schedule());
-    const brain = createBrain({ store: { ...k.store, ...memorySchemaStore({ version: 9 }) },
+    const brain = createBrain({ cron: fakeCron, store: { ...k.store, ...memorySchemaStore({ version: 9 }) },
       files: memoryFileStore(), spool: memorySpool(), clock: k.clock, idGen: k.idGen, schemaVersions: { core: 9 },
       parsers: [], transcripts: memoryTranscriptReader(), repositories: memoryRepositories(), machine: 'test' });
     expect(await brain.schedules.tick()).toEqual({ ok: true, fired: 1, enqueued: 1 });
@@ -86,8 +86,8 @@ describe('schedule tick', () => {
     });
   });
   it('brain tick then drain completes the Core probe handler', async () => {
-    const k = kit(); await k.store.addSchedule(schedule({ intervalSeconds: null }));
-    const brain = createBrain({ store: { ...k.store, ...memorySchemaStore({ version: 9 }) },
+    const k = kit(); await k.store.addSchedule(schedule({ triggerKind:'once',runAt:now,intervalSeconds: null }));
+    const brain = createBrain({ cron: fakeCron, store: { ...k.store, ...memorySchemaStore({ version: 9 }) },
       files: memoryFileStore(), spool: memorySpool(), clock: k.clock, idGen: k.idGen, schemaVersions: { core: 9 },
       parsers: [], transcripts: memoryTranscriptReader(), repositories: memoryRepositories(), machine: 'test' });
     expect(await brain.schedules.tick()).toEqual({ ok: true, fired: 1, enqueued: 1 });
@@ -96,9 +96,9 @@ describe('schedule tick', () => {
   });
 });
 
-it('advances a daily schedule without work when its candidate date range is empty', async () => {
+it('leaves a future daily schedule untouched', async () => {
   const k = kit();
-  await k.store.addSchedule(schedule({ localTime: '23:00', timeZone: 'Asia/Seoul', intervalSeconds: null }));
+  await k.store.addSchedule(schedule({ triggerKind:'cron', cronExpr:'0 23 * * *', timeZoneSource:'user', timeZone: 'Asia/Seoul', intervalSeconds: null, nextRunAt:new Date('2026-02-03T14:00:00Z') }));
   expect(await k.tick()).toEqual({ ok: true, fired: 0, enqueued: 0 });
   expect(k.store.snapshot().workItems).toHaveLength(0);
   expect(await k.store.readSchedule({ id: 's' })).toMatchObject({ schedule: { nextRunAt: new Date('2026-02-03T14:00:00Z') } });
@@ -111,16 +111,16 @@ it('rezones daily schedules beyond the first 100 before firing in the new timezo
   for (let n = 0; n < 100; n++) {
     const id = String(n).padStart(3, '0');
     await k.store.addSchedule(schedule({ id, targetId: id, intervalSeconds: null,
-      localTime: '23:00', timeZone: 'America/New_York', createdAt,
+      triggerKind:'cron', cronExpr:'0 23 * * *', timeZoneSource:'user', timeZone: 'America/New_York', createdAt,
       nextRunAt: new Date('2026-02-04T04:00:00Z') }));
   }
   await k.store.addSchedule(schedule({ id: '100', targetId: '100', intervalSeconds: null,
-    localTime: '11:00', timeZone: 'Asia/Seoul', createdAt,
+    triggerKind:'cron', cronExpr:'0 11 * * *', timeZoneSource:'user', timeZone: 'Asia/Seoul', createdAt,
     nextRunAt: new Date('2026-02-03T02:00:00Z') }));
   const limits: number[] = []; let zoneReads = 0;
-  const listDaily = k.store.listDailySchedules;
-  k.store.listDailySchedules = async query => { limits.push(query.limit); return listDaily(query); };
-  const tick = () => tickSchedules({ store: k.store, clock: k.clock, idGen: k.idGen,
+  const listDaily = k.store.listUserZoneSchedules;
+  k.store.listUserZoneSchedules = async query => { limits.push(query.limit); return listDaily(query); };
+  const tick = () => tickSchedules({ store: k.store, clock: k.clock, idGen: k.idGen, cron: fakeCron,
     readTimeZone: async () => { zoneReads++; return { ok: true, value: 'America/New_York' }; } });
 
   expect(await tick()).toEqual({ ok: true, fired: 0, enqueued: 0 });
@@ -132,8 +132,7 @@ it('rezones daily schedules beyond the first 100 before firing in the new timezo
 
   k.set(newOccurrence);
   expect(await tick()).toEqual({ ok: true, fired: 1, enqueued: 1 });
-  expect(k.store.snapshot().workItems).toMatchObject([{ targetId: '100', scheduledDates: {
-    from: '2026-02-03', to: '2026-02-03', timeZone: 'America/New_York' } }]);
+  expect(k.store.snapshot().workItems).toMatchObject([{ targetId: '100', scheduledOccurrences: null }]);
   expect(await k.store.readSchedule({ id: '100' })).toMatchObject({ schedule: {
     nextRunAt: new Date('2026-02-04T16:00:00Z'), lastRunAt: newOccurrence } });
 });

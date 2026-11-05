@@ -14,6 +14,7 @@ import { queueListCommand } from './queue-list.js';
 import { schedulesAddCommand } from './schedules-add.js';
 import { schedulesListCommand } from './schedules-list.js';
 import { schedulesRemoveCommand } from './schedules-remove.js';
+import { schedulesUpdateCommand } from './schedules-update.js';
 import { schedulesRunCommand } from './schedules-run.js';
 import { configGetCommand } from './config-get.js';
 import { configSetCommand } from './config-set.js';
@@ -87,6 +88,7 @@ export const commands: readonly CommandSpec[] = [
   schedulesListCommand,
   schedulesRemoveCommand,
   schedulesRunCommand,
+  schedulesUpdateCommand,
   sessionsIngestCommand(harnesses),
   setupRun,
   setupUninstallCommand,

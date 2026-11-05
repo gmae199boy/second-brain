@@ -48,7 +48,7 @@ it('실제 CLI 비활성이 데몬 일감과 예약을 보류하고 재활성이
     await expect.poll(async () => (await fixture.db.rows(`select current_attempt_token from brain.work_items where id='${runningId}'`))[0]?.current_attempt_token, { timeout: 15000 }).toBeTruthy();
     expect(await add(pendingId, '50', 'extension:extdisable', 'same')).toMatchObject({ ok: true });
     expect(await add(otherId, '75', 'extension:otherext', 'other', 'process_probe')).toMatchObject({ ok: true });
-    expect(await store.addSchedule({ id: scheduleId, kind: 'schedule_probe', holdGroup: 'extension:extdisable', targetKind: 'probe', targetId: 'held-schedule', localTime: null, timeZone: null, intervalSeconds: 3600, nextRunAt: new Date(now.getTime() + 3600000), lastRunAt: null, createdAt: now })).toMatchObject({ ok: true });
+    expect(await store.addSchedule({ id: scheduleId, kind: 'schedule_probe', holdGroup: 'extension:extdisable', targetKind: 'probe', targetId: 'held-schedule', triggerKind: 'interval' as const, cronExpr: null, runAt: null, timeZoneSource: null, extension: null, scheduleKey: null, userId: '01940000-0000-7000-8000-00000000000a', enabled: true, removedAt: null, timeZone: null, intervalSeconds: 3600, nextRunAt: new Date(now.getTime() + 3600000), lastRunAt: null, createdAt: now })).toMatchObject({ ok: true });
     const disabled = await fixture.run(['ext', 'disable', 'extdisable', '--json']);
     expect(disabled.code, disabled.stdout + disabled.stderr).toBe(0);
     expect((await fixture.run(['ext', 'disable', 'extdisable', '--json'])).body.data.changed).toBe(false);

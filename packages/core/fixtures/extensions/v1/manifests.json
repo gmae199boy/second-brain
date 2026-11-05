@@ -1521,5 +1521,280 @@
       ]
     },
     "expect": "invalid"
+  },
+  {
+    "name": "cron fixed zone",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.sync",
+          "execution": "supervised",
+          "runtime": "node",
+          "entry": "sync.mjs"
+        }
+      ],
+      "default_schedules": [
+        {
+          "kind": "testext.sync",
+          "target_kind": "account",
+          "target_id": "default",
+          "key": "weekly",
+          "cron": "0 9 * * 5",
+          "time_zone": "Asia/Seoul"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "legacy daily",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.sync",
+          "execution": "supervised",
+          "runtime": "node",
+          "entry": "sync.mjs"
+        }
+      ],
+      "default_schedules": [
+        {
+          "kind": "testext.sync",
+          "target_kind": "account",
+          "target_id": "default",
+          "local_time": "09:00"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "two triggers",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.sync",
+          "execution": "supervised",
+          "runtime": "node",
+          "entry": "sync.mjs"
+        }
+      ],
+      "default_schedules": [
+        {
+          "kind": "testext.sync",
+          "target_kind": "account",
+          "target_id": "default",
+          "cron": "0 9 * * *",
+          "local_time": "09:00"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "missing trigger",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.sync",
+          "execution": "supervised",
+          "runtime": "node",
+          "entry": "sync.mjs"
+        }
+      ],
+      "default_schedules": [
+        {
+          "kind": "testext.sync",
+          "target_kind": "account",
+          "target_id": "default"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "six fields",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.sync",
+          "execution": "supervised",
+          "runtime": "node",
+          "entry": "sync.mjs"
+        }
+      ],
+      "default_schedules": [
+        {
+          "kind": "testext.sync",
+          "target_kind": "account",
+          "target_id": "default",
+          "cron": "0 0 9 * * *"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "legacy with timezone",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.sync",
+          "execution": "supervised",
+          "runtime": "node",
+          "entry": "sync.mjs"
+        }
+      ],
+      "default_schedules": [
+        {
+          "kind": "testext.sync",
+          "target_kind": "account",
+          "target_id": "default",
+          "local_time": "09:00",
+          "time_zone": "UTC"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "duplicate explicit and default key",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.sync",
+          "execution": "supervised",
+          "runtime": "node",
+          "entry": "sync.mjs"
+        }
+      ],
+      "default_schedules": [
+        {
+          "kind": "testext.sync",
+          "target_kind": "account",
+          "target_id": "default",
+          "local_time": "09:00"
+        },
+        {
+          "kind": "testext.sync",
+          "target_kind": "account",
+          "target_id": "default",
+          "key": "testext.sync:account:default",
+          "cron": "0 9 * * *"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "invalid missed policy",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.sync",
+          "execution": "supervised",
+          "runtime": "node",
+          "entry": "sync.mjs",
+          "missed": "sometimes"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "coalesce policy",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.sync",
+          "execution": "supervised",
+          "runtime": "node",
+          "entry": "sync.mjs",
+          "missed": "coalesce"
+        }
+      ]
+    },
+    "expect": "valid"
   }
 ]
