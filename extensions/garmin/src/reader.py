@@ -60,9 +60,12 @@ def read_connection(conn):
     conn.execute('pragma query_only = on')
     version = conn.execute('pragma user_version').fetchone()[0]
     encoding = {'UTF-8': 'utf-8', 'UTF-16le': 'utf-16le', 'UTF-16be': 'utf-16be'}[conn.execute('pragma encoding').fetchone()[0]]
-    if version not in (10, 15):
+    if version not in (10, 15, 16):
         raise ValueError('PREFLIGHT_SCHEMA_UNSUPPORTED')
     tables = {}
+    # table_list's wr flag distinguishes WITHOUT ROWID even when SQLite treats
+    # a double-quoted unknown identifier as a string literal.
+    without_rowid = {r[1] for r in conn.execute('pragma table_list') if r[4]}
     names = [r[0] for r in conn.execute("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name")]
     for name in names:
         columns = conn.execute('pragma table_xinfo(' + quoted(name) + ')').fetchall()
@@ -75,8 +78,19 @@ def read_connection(conn):
         for column in names:
             col = quoted(column)
             projections.extend((f'typeof({col})', f'case when typeof({col}) = \'text\' then cast({col} as blob) else {col} end'))
-        rows = []
-        for values in conn.execute('select ' + ','.join(projections) + ' from ' + quoted(name)):
+        # Hidden rowid is ancillary metadata aligned with rows, never a source column.
+        # Identifiers may shadow rowid aliases, so choose an unshadowed alias.
+        used = {column.lower() for column in names}
+        alias = next((value for value in ('rowid', '_rowid_', 'oid') if value not in used), None)
+        if name in without_rowid:
+            alias = None
+        if name == 'exercise_log' and alias is None:
+            raise ValueError('PREFLIGHT_ROWID_UNSUPPORTED')
+        select = projections + ([alias] if alias is not None else [])
+        rows, rowids = [], [] if alias is not None else None
+        for values in conn.execute('select ' + ','.join(select) + ' from ' + quoted(name)):
             rows.append({column: text_value(values[i * 2 + 1], encoding) if values[i * 2] == 'text' else values[i * 2 + 1] for i, column in enumerate(names)})
-        tables[name] = {'columns': names, 'column_metadata': [{'name': c[1], 'type': c[2], 'not_null': bool(c[3]), 'default': c[4], 'primary_key_position': c[5], 'hidden': c[6]} for c in columns], 'keys': keys, 'rows': rows}
+            if rowids is not None:
+                rowids.append(values[-1])
+        tables[name] = {'columns': names, 'column_metadata': [{'name': c[1], 'type': c[2], 'not_null': bool(c[3]), 'default': c[4], 'primary_key_position': c[5], 'hidden': c[6]} for c in columns], 'keys': keys, 'rows': rows, 'rowids': rowids}
     return {'schema': version, 'encoding': encoding, 'tables': tables}

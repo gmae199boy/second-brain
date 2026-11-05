@@ -9,6 +9,7 @@ import { classifyChanges } from '../../test-changed/rules.mjs';
 describe('changed test path rules', () => {
   it('runs Python for extension and runtime paths', () => {
     for (const file of [
+      'extensions/garmin/src/native_import.py', 'extensions/garmin/src/native_artifacts.py', 'extensions/garmin/migrations/0014_native_store.sql', 'extensions/garmin/fixtures/native/synthetic.py', 'extensions/garmin/tests/oracle/src/garmin_pipeline/report_input.py', 'extensions/garmin/tests/test_native_store.py', 'extensions/garmin/tests/test_normalize_oracle_pg.py', 'extensions/garmin/tests/normalize_oracle_child.py', 'extensions/garmin/fixtures/legacy/normalize_v8/input.json', 'extensions/garmin/tests/oracle/src/garmin_pipeline/normalize/__init__.py',
       'extensions/garmin/src/x.py', 'extensions/other/manifest.json', 'plugins/testext/bin/install.sh', 'plugins/testext/package/digest', '.claude-plugin/marketplace.json',
       'packages/postgres/src/store.ts','packages/postgres/src/extension-install-lock.ts','packages/postgres/test/extension-command-lock.test.ts','packages/postgres/migrations/001.sql',
       'packages/core/src/queue/supervisor.ts','packages/core/src/process-abi/codec.ts',
@@ -36,6 +37,7 @@ describe('changed test path rules', () => {
   });
   it('selects only explicitly changed Python and hook tests without a full rule', () => {
     const tests: [string, string] = ['apps/cli/python-test/garmin-charts.test.ts','tooling/bootstrap/test/hook.test.ts'];
+    expect(classifyChanges(['apps/cli/python-test/garmin-native.test.ts','apps/cli/python-test/garmin-unit.test.ts'])).toMatchObject({pythonAll:false,pythonFiles:['apps/cli/python-test/garmin-native.test.ts','apps/cli/python-test/garmin-unit.test.ts']});
     expect(classifyChanges([tests[0],tests[0]])).toMatchObject({pythonAll:false,pythonFiles:[tests[0]]});
     expect(classifyChanges([tests[1]])).toMatchObject({pythonAll:true,pythonFiles:[tests[1]]});
     expect(classifyChanges(tests)).toMatchObject({pythonAll:true,pythonFiles:tests});

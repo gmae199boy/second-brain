@@ -1,7 +1,7 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
@@ -11,12 +11,20 @@ import { runDaemon } from '../src/daemon/run.js';
 import { systemClock } from '../src/runtime/clock.js';
 import { uuidV7IdGen } from '../src/runtime/id-gen.js';
 
+// Exercise the historical preservation and artifact primitives inside an isolated installation.
+const self='01940000-0000-7000-8000-00000000000a';
+async function installPreservationAdapter(home:string, store:ReturnType<typeof postgresStore>) {
+  await copyFile(fileURLToPath(new URL('../../../extensions/garmin/tests/preservation_entry.py',import.meta.url)),join(home,'extensions/garmin/src/import.py'));
+  await store.setSetting({userId:self,key:'garmin.timezone',value:'Asia/Seoul',updatedAt:new Date()});
+}
+
 it('명시 다종 파일과 기존 evaluation을 설치된 감독자가 발행하고 재실행한다', async () => {
   const fixture=await extHome(), store=postgresStore({databaseUrl:fixture.db.appUrl}), controller=new AbortController(), ids=uuidV7IdGen();
   let daemon: ReturnType<typeof runDaemon> | undefined;
   try {
     const installed=await fixture.run(['ext','install','garmin','--json']);
     expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    await installPreservationAdapter(fixture.home,store);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), root=join(fixture.home,'capture');
     await mkdir(root);
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
@@ -96,6 +104,7 @@ it('checkpoint 뒤 같은 크기로 바뀐 SQLite에서 evaluation을 재독해�
   const fixture=await extHome(), store=postgresStore({databaseUrl:fixture.db.appUrl}), ids=uuidV7IdGen();
   try {
     const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    await installPreservationAdapter(fixture.home,store);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), root=join(fixture.home,'capture'); await mkdir(root);
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     execFileSync(python,['-c','import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; artifact_capture(pathlib.Path(sys.argv[2]))',fixtures,root]);
@@ -106,9 +115,9 @@ it('checkpoint 뒤 같은 크기로 바뀐 SQLite에서 evaluation을 재독해�
     expect(await store.claimSupervisedWork({now,claimedBy:'snapshot-barrier',kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true});
     const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), home=await realpath(join(fixture.home,'extensions/garmin'));
     // ingest가 보존 checkpoint를 커밋하고 검증된 객체를 반환한 직후 같은 크기의 값을 교체한다.
-    const script=`import sys,sqlite3\nsys.path.insert(0,sys.argv[1])\nimport batch_import\noriginal=batch_import.ingest\ndef intercepted(conn,capture,entry,conversation):\n result=original(conn,capture,entry,conversation)\n if entry['dataset']=='synthetic-D1':\n  with sqlite3.connect(sys.argv[2]) as db: db.execute('update evaluation set summary=?',('가성\\0기록',))\n return result\nbatch_import.ingest=intercepted\nbatch_import.run()`;
-    const result=execFileSync(python,['-c',script,join(home,'src'),source],{encoding:'utf8',env:{...process.env,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:work,BRAIN_ATTEMPT_TOKEN:token,BRAIN_EXTENSION_HOME:home,BRAIN_SECRET_SCANNER_NODE:process.execPath,BRAIN_SECRET_SCANNER_SCRIPT:fileURLToPath(new URL('../dist/workers/secret-scan.js',import.meta.url)),BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.capture_manifest':await realpath(join(root,'manifest.json')),'garmin.legacy_conversation_id':conversation}})}});
-    expect(result).toContain('"type": "result"');
+    const script=`import sys,sqlite3\nsys.path.insert(0,sys.argv[1])\nimport batch_import\noriginal=batch_import.ingest\ndef intercepted(conn,capture,entry,conversation,**kwargs):\n result=original(conn,capture,entry,conversation,**kwargs)\n if entry['dataset']=='synthetic-D1':\n  print('SNAPSHOT_BARRIER',flush=True)\n  with sqlite3.connect(sys.argv[2]) as db: db.execute('update evaluation set summary=?',('가성\\0기록',))\n return result\nbatch_import.ingest=intercepted\nimport runpy\nrunpy.run_path(sys.argv[1]+'/import.py',run_name='__main__')`;
+    const result=execFileSync(python,['-c',script,join(home,'src'),source],{encoding:'utf8',env:{...process.env,BRAIN_DATABASE_URL:url,BRAIN_USER_ID:self,BRAIN_WORK_ID:work,BRAIN_ATTEMPT_TOKEN:token,BRAIN_EXTENSION_HOME:home,BRAIN_SECRET_SCANNER_NODE:process.execPath,BRAIN_SECRET_SCANNER_SCRIPT:fileURLToPath(new URL('../dist/workers/secret-scan.js',import.meta.url)),BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.timezone':'Asia/Seoul','garmin.capture_manifest':await realpath(join(root,'manifest.json')),'garmin.legacy_conversation_id':conversation}})}});
+    expect(result).toContain('SNAPSHOT_BARRIER'); expect(result).toContain('"type": "result"');
     const after=await readFile(source); expect(after.length).toBe(before.length); expect(createHash('sha256').update(after).digest('hex')).not.toBe(beforeHash);
     expect(await fixture.db.rows("select source_hash from garmin.import_checkpoints where dataset='synthetic-D1'")).toEqual([{source_hash:beforeHash}]);
     const preserved=await fixture.db.rows("select values_json->'summary' as summary from garmin.preserved_rows where dataset='synthetic-D1' and original_table='evaluation'");
@@ -122,6 +131,7 @@ it('NUL metadata를 원형으로 재개하고 참조 없는 파일의 미연결 
   let daemon: ReturnType<typeof runDaemon> | undefined;
   try {
     const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    await installPreservationAdapter(fixture.home,store);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), root=join(fixture.home,'capture'); await mkdir(root);
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     execFileSync(python,['-c','import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; artifact_capture(pathlib.Path(sys.argv[2]))',fixtures,root]);
@@ -188,6 +198,7 @@ it('같은 key와 bytes의 artifact 정리 뒤 evaluation은 별도 locator로 �
   let daemon: ReturnType<typeof runDaemon> | undefined, child: ChildProcess | undefined;
   try {
     const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    await installPreservationAdapter(fixture.home,store);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), home=await realpath(join(fixture.home,'extensions/garmin')), root=join(fixture.home,'capture'); await mkdir(root);
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     execFileSync(python,['-c','import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; artifact_capture(pathlib.Path(sys.argv[2]))',fixtures,root]);
@@ -199,7 +210,7 @@ it('같은 key와 bytes의 artifact 정리 뒤 evaluation은 별도 locator로 �
     await writeFile(manifestPath,JSON.stringify(manifest));
     const channel=ids.next(),conversation=ids.next();
     await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
-    const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), settings=JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.capture_manifest':await realpath(manifestPath),'garmin.legacy_conversation_id':conversation}});
+    const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), settings=JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.timezone':'Asia/Seoul','garmin.capture_manifest':await realpath(manifestPath),'garmin.legacy_conversation_id':conversation}});
     const claim=async(target:string)=>{
       const id=ids.next(),token=ids.next(),now=new Date();
       expect(await store.addWork({id,kind:'garmin.import',targetKind:'import',targetId:target,createdAt:now,nextAttemptAt:now})).toMatchObject({ok:true});
@@ -208,8 +219,8 @@ it('같은 key와 bytes의 artifact 정리 뒤 evaluation은 별도 locator로 �
     };
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{disabled:true}});
     const first=await claim('locator-first');
-    const env={...process.env,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:first.id,BRAIN_ATTEMPT_TOKEN:first.token,BRAIN_EXTENSION_HOME:home,BRAIN_SETTINGS_SNAPSHOT:settings};
-    const script=`import sys\nsys.path.insert(0,sys.argv[1])\nimport artifact_publish,batch_import\noriginal=artifact_publish.stage\ndef stage(home,dataset,table,key,data):\n if table=='evaluation':\n  print('EVALUATION_BARRIER',flush=True)\n  sys.stdin.read(1)\n return original(home,dataset,table,key,data)\nartifact_publish.stage=stage\nbatch_import.run()`;
+    const env={...process.env,BRAIN_DATABASE_URL:url,BRAIN_USER_ID:self,BRAIN_WORK_ID:first.id,BRAIN_ATTEMPT_TOKEN:first.token,BRAIN_EXTENSION_HOME:home,BRAIN_SETTINGS_SNAPSHOT:settings};
+    const script=`import sys\nsys.path.insert(0,sys.argv[1])\nimport artifact_publish,batch_import\noriginal=artifact_publish.stage\ndef stage(home,dataset,table,key,data):\n if table=='evaluation':\n  print('EVALUATION_BARRIER',flush=True)\n  sys.stdin.read(1)\n return original(home,dataset,table,key,data)\nartifact_publish.stage=stage\nimport runpy\nrunpy.run_path(sys.argv[1]+'/import.py',run_name='__main__')`;
     child=spawn(python,['-c',script,join(home,'src')],{env,stdio:['pipe','pipe','pipe']});
     expect(String((await once(child.stdout!,'data'))[0])).toContain('EVALUATION_BARRIER');
     const requestSql="select q.id,q.locator,r.file_id,c.cleaned_at from brain.file_requests q left join brain.file_request_results r on r.request_id=q.id left join brain.file_import_cleanup c on c.request_id=q.id where q.request_key::jsonb->>1='artifact'";
@@ -244,6 +255,7 @@ for (const [initial, changed] of [['password=synthetic\n','operation complete\n'
     let daemon: ReturnType<typeof runDaemon> | undefined;
     try {
       const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    await installPreservationAdapter(fixture.home,store);
       const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), root=join(fixture.home,'capture'); await mkdir(root);
       const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
       execFileSync(python,['-c','import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; artifact_capture(pathlib.Path(sys.argv[2]))',fixtures,root]);
@@ -280,6 +292,7 @@ it('inventory 확정 직전 장애는 요청과 mapping을 되돌리고 재개�
   let daemon: ReturnType<typeof runDaemon> | undefined;
   try {
     const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    await installPreservationAdapter(fixture.home,store);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), root=join(fixture.home,'capture'); await mkdir(root);
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     execFileSync(python,['-c','import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; artifact_capture(pathlib.Path(sys.argv[2]))',fixtures,root]);
@@ -307,6 +320,7 @@ it('상한 초과 파일의 동일 크기 변경을 원문 해시로 충돌 처�
   let daemon: ReturnType<typeof runDaemon> | undefined;
   try {
     const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    await installPreservationAdapter(fixture.home,store);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), root=join(fixture.home,'capture'); await mkdir(root);
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     execFileSync(python,['-c','import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; artifact_capture(pathlib.Path(sys.argv[2]))',fixtures,root]);
@@ -333,20 +347,21 @@ it('재발행 staging과 core 정리는 같은 locator 잠금으로 직렬화된
   let daemon: ReturnType<typeof runDaemon> | undefined, child: ChildProcess | undefined;
   try {
     const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    await installPreservationAdapter(fixture.home,store);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), home=await realpath(join(fixture.home,'extensions/garmin')), root=join(fixture.home,'capture'); await mkdir(root);
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     execFileSync(python,['-c','import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; artifact_capture(pathlib.Path(sys.argv[2]))',fixtures,root]);
     const path=join(root,'manifest.json'), manifest=JSON.parse(await readFile(path,'utf8')); manifest.files=manifest.files.filter((x:any)=>x.artifact_key==='report'); manifest.inventory=[]; await writeFile(path,JSON.stringify(manifest));
     const channel=ids.next(),conversation=ids.next(); await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
-    const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), settings=JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.capture_manifest':await realpath(path),'garmin.legacy_conversation_id':conversation}});
+    const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), settings=JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.timezone':'Asia/Seoul','garmin.capture_manifest':await realpath(path),'garmin.legacy_conversation_id':conversation}});
     const claim=async(target:string)=>{const id=ids.next(),token=ids.next(),now=new Date(); expect(await store.addWork({id,kind:'garmin.import',targetKind:'import',targetId:target,createdAt:now,nextAttemptAt:now})).toMatchObject({ok:true}); expect(await store.claimSupervisedWork({now,claimedBy:target,kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true,item:{id},attemptToken:token}); return {id,token};};
-    const first=await claim('lock-first'), base={...process.env,BRAIN_DATABASE_URL:url,BRAIN_EXTENSION_HOME:home,BRAIN_SETTINGS_SNAPSHOT:settings};
+    const first=await claim('lock-first'), base={...process.env,BRAIN_DATABASE_URL:url,BRAIN_USER_ID:self,BRAIN_EXTENSION_HOME:home,BRAIN_SETTINGS_SNAPSHOT:settings};
     const env=(attempt:{id:string;token:string})=>({...base,BRAIN_WORK_ID:attempt.id,BRAIN_ATTEMPT_TOKEN:attempt.token});
     expect(JSON.parse(execFileSync(python,[join(home,'src/import.py')],{encoding:'utf8',env:env(first)}))).toMatchObject({type:'result'});
     expect(await store.finishSupervisedWork({id:first.id,attemptToken:first.token,now:new Date(),outcome:'succeeded'})).toMatchObject({ok:true});
     const request=(await fixture.db.rows("select id,locator from brain.file_requests where request_key::jsonb->>2='report'"))[0]!;
     const second=await claim('lock-second');
-    const script=`import sys\nsys.path.insert(0,sys.argv[1])\nimport artifact_publish,batch_import\noriginal=artifact_publish.stage\ndef stage(*args):\n if args[2]=='artifact':\n  print('STAGING_BARRIER',flush=True)\n  sys.stdin.read(1)\n return original(*args)\nartifact_publish.stage=stage\nbatch_import.run()`;
+    const script=`import sys\nsys.path.insert(0,sys.argv[1])\nimport artifact_publish,batch_import\noriginal=artifact_publish.stage\ndef stage(*args):\n if args[2]=='artifact':\n  print('STAGING_BARRIER',flush=True)\n  sys.stdin.read(1)\n return original(*args)\nartifact_publish.stage=stage\nimport runpy\nrunpy.run_path(sys.argv[1]+'/import.py',run_name='__main__')`;
     child=spawn(python,['-c',script,join(home,'src')],{env:env(second),stdio:['pipe','pipe','pipe']});
     expect(String((await once(child.stdout!,'data'))[0])).toContain('STAGING_BARRIER');
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{disabled:true}});
@@ -366,6 +381,7 @@ it('같은 inventory 키의 artifact와 대형 evaluation을 원본 표별로 �
   let daemon: ReturnType<typeof runDaemon> | undefined;
   try {
     const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    await installPreservationAdapter(fixture.home,store);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), root=join(fixture.home,'capture'); await mkdir(root);
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     execFileSync(python,['-c',"import sys,pathlib,sqlite3; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; p=pathlib.Path(sys.argv[2]); artifact_capture(p); c=sqlite3.connect(p/'D1.db'); c.execute('update evaluation set report_md=?',('x'*(32*1024*1024+1),)); c.commit(); c.close()",fixtures,root]);
@@ -379,7 +395,26 @@ it('같은 inventory 키의 artifact와 대형 evaluation을 원본 표별로 �
     const run=async()=>{const result=await fixture.run(['ext','run','garmin','import','--json']); expect(result.code,result.stdout+result.stderr).toBe(0); await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${result.body.data.work_id}'`))[0]?.outcome,{timeout:60000}).toBe('succeeded');};
     await run();
     await expect.poll(async()=> (await fixture.db.rows('select count(*)::int as n from brain.file_requests q left join brain.file_request_results r on r.request_id=q.id where r.file_id is null'))[0]?.n,{timeout:20000}).toBe(0);
-    const verified = await fixture.run(['ext','run','garmin','import-verify','--json']);
+    // Run the preservation verifier under a distinct, claimed extension work kind.
+    // The production import-verify entry remains native and is not replaced.
+    const {extensionDatabaseUrl}=await import('../src/config/codec.js');
+    const {spawnSync}=await import('node:child_process');
+    const home=await realpath(join(fixture.home,'extensions/garmin'));
+    const verifyDir=join(home,'src/test-preservation'); await mkdir(verifyDir);
+    const verifyEntry=join(verifyDir,'import_verify.py');
+    await copyFile(fileURLToPath(new URL('../../../extensions/garmin/tests/preservation_entry.py',import.meta.url)),verifyEntry);
+    const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl);
+    await fixture.db.query("insert into brain.extension_work_kinds(extension_name,kind) values ('garmin','garmin.test_preservation_verify')");
+    const verify=async()=>{
+      const id=ids.next(),token=ids.next(),now=new Date();
+      expect(await store.addWork({id,kind:'garmin.test_preservation_verify',targetKind:'import',targetId:id,createdAt:now,nextAttemptAt:now})).toMatchObject({ok:true});
+      expect(await store.claimSupervisedWork({now,claimedBy:'preservation-verify',kinds:['garmin.test_preservation_verify'],attemptToken:token})).toMatchObject({ok:true,item:{id},attemptToken:token});
+      const result=spawnSync(python,[verifyEntry],{encoding:'utf8',env:{...process.env,PYTHONPATH:join(home,'src'),BRAIN_USER_ID:self,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_EXTENSION_HOME:home,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',user_id:self,values:{'garmin.timezone':'Asia/Seoul','garmin.capture_manifest':await realpath(path),'garmin.legacy_conversation_id':conversation}})}});
+      const report=JSON.parse(await readFile(join(home,'reports',id,'public.json'),'utf8'));
+      expect(await store.finishSupervisedWork({id,attemptToken:token,now:new Date(),outcome:result.status===0?'succeeded':'failed'})).toMatchObject({ok:true});
+      return {code:result.status,stdout:result.stdout,stderr:result.stderr,body:{data:{work_id:id,report}}};
+    };
+    const verified = await verify();
     expect(verified.code,verified.stdout+verified.stderr).toBe(0);
     expect(verified.body.data.report.checks.files).toBe(true);
     const rows=await fixture.db.rows('select original_table,artifact_key,batch,request_id,analysis_id,exclusion_reason from garmin.artifact_inventory order by original_table');
@@ -388,7 +423,7 @@ it('같은 inventory 키의 artifact와 대형 evaluation을 원본 표별로 �
       await fixture.db.query(`update garmin.artifact_inventory set ${field}=${value} where original_table='evaluation'`);
       try {
         const before=await fixture.db.rows("select encode(metadata_raw,'hex') as raw,unlinked_reason from garmin.artifact_inventory where original_table='evaluation'"); expect(before).toHaveLength(1);
-        const result=await fixture.run(['ext','run','garmin','import-verify','--json']);
+        const result=await verify();
         expect(result.code,field).not.toBe(0); expect(result.body.data.report.checks.inventory,field).toBe(false);
         expect(await fixture.db.rows("select encode(metadata_raw,'hex') as raw,unlinked_reason from garmin.artifact_inventory where original_table='evaluation'")).toEqual(before);
         const publicReport=await readFile(join(fixture.home,'extensions/garmin/reports',result.body.data.work_id,'public.json'),'utf8');

@@ -1,0 +1,31 @@
+CREATE TABLE day_summary (date TEXT PRIMARY KEY,
+    sleep_total_s REAL,
+    sleep_deep_s REAL,
+    sleep_light_s REAL,
+    sleep_rem_s REAL,
+    sleep_awake_s REAL,
+    sleep_score REAL,
+    sleep_hr_min REAL,
+    sleep_hr_min_time TEXT,
+    hrv_avg REAL,
+    spo2_avg REAL,
+    spo2_min REAL,
+    resp_avg REAL,
+    wake_bb REAL,
+    bb_high REAL,
+    bb_low REAL,
+    bb_charged REAL,
+    bb_drained REAL,
+    stress_avg REAL,
+    stress_high_s REAL,
+    steps REAL,
+    active_kcal REAL,
+    moderate_min REAL,
+    vigorous_min REAL,
+    resting_hr REAL,
+    weight_kg REAL,
+    drinks_json TEXT);
+CREATE TABLE workout (activity_id INTEGER PRIMARY KEY, date TEXT NOT NULL, type TEXT, start_ms INTEGER, duration_s REAL, hr_avg REAL, hr_max REAL, zone1_s REAL, zone2_s REAL, zone3_s REAL, zone4_s REAL, zone5_s REAL, bb_change REAL, session_no INTEGER);
+CREATE INDEX workout_date ON workout(date);
+CREATE TABLE exercise_log (activity_id INTEGER NOT NULL, exercise TEXT NOT NULL, sets INTEGER, reps REAL, max_kg REAL, volume_kg REAL, set_peak_hr_avg REAL, rest_drop_avg REAL, PRIMARY KEY(activity_id, exercise));
+CREATE TABLE evaluation (report_date TEXT NOT NULL, scope TEXT NOT NULL CHECK(scope IN ('day','7d','30d','all')), summary TEXT NOT NULL, judgments TEXT NOT NULL, evidence TEXT NOT NULL, next_checks TEXT NOT NULL, report_md TEXT NOT NULL, model TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(report_date, scope));

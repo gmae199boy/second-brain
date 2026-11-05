@@ -1,7 +1,8 @@
 // Python integration uses the daemon, its real store, extension runtime and
 // subprocesses; these paths have effects beyond Vitest's TS import graph.
 const rules = [
-  { prefix:'extensions/', reason:'extension runtime and payloads' },
+  // Includes Garmin native SQL, pinned SQLite oracle, Python fixtures and subprocess readers.
+  { prefix:'extensions/', reason:'extension runtime, Garmin native SQL, Python oracle and subprocess fixtures' },
   { prefix:'plugins/testext/', reason:'extension plugin package and launcher' },
   { prefix:'packages/postgres/', reason:'Python integration uses the real PostgreSQL store' },
   { prefix:'packages/core/src/queue/', reason:'daemon work scheduling and supervision' },
