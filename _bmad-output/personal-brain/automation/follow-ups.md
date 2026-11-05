@@ -237,3 +237,17 @@
 | 실행 증거 | 최초 보고 파일 누락 후 보완 수신 | stdin 인코딩 오류 뒤 전송만 실행된 원인 기록. 실제 최종 보고·로그·R1/R2·ready/depth1을 중앙 로컬 archive와 워크트리에 보존 |
 
 신규 운영 조치 없음. 시험/harness runtime 위험은21.8 확인이며 운영 자원 변경 없음. 에픽20은 최신 시험 유예 범위의 built로 전환하며 인수/전체 시험 통과로 표현하지 않는다.
+
+## 21.2 — built / Garmin native PG tracer, 시험21.8 이관
+
+근거: [native tracer 계획](../tickets/epic-garmin-extension/tickets/story-tracer-garmin-pg-garmin-sqlite-report-input-sqlite-plan.md)의 Design Notes·Review Triage Log·Auto Run Result. f07d761에 고정원본 src·PG store·0014 native19표·계정연결·평가revision·재개복사/파일관계·합성fixture와독립SQLite oracle을 반영했다. full/thorough4렌즈+source/verification 후속3라운드(10리뷰), 마지막추가발견0·deferred0·후속권고false. build/typecheck/Python정적컴파일 종료0이며 모든 시험 실행은21.8로 이관·미실행이다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 필수 시험 인계 | native19표·copy/verify·SQLite↔PG report_input·정규화동등성·파일관계·revision경쟁/trigger·계정한정/RR·중단복구·공용기억보존 |21.8에서 새garmin-native/garmin-unit과 기존Garmin시험을 모두 실행. 계획 Verification 및 extensions/garmin/README.md에격리전제/명령/기대값/정리명령 보존 |
+| 실행 위험 | DDL/실권한·wheel설치·PG동시성/시간제한·oracle 결과 미확정 |컴파일/정적리뷰를 실행통과로 해석하지 않음. 미실행/미해결이면21.8 built 및21.7시작금지 |
+| 채택 경계 | 고정원본src/store이식과실제운영연결 분리 |수집·분석·예약/채널/플러그인 실제연결은21.3~21.5. 원본계산/프롬프트/schema 의미유지. 과거activity_recovery는원본0012제거표로native대상아니며원형보존 |
+| 계정/파일 정책 | profile+self+명시timezone, 불명귀속 금지 |미확인은원형보존후native차단. v1미귀속파일은중립요청/장부로보존하되계정/평가관계추정금지. native새계정tokenstore_ref는NULL이며후속운영연결필요 |
+| 기존 회귀 보존 | legacy/TEXT시험의test-only preservation adapter |현재보존primitives로이전계약도검사. 기존시험삭제/skip아님. 새native및보존시험모두21.8실행 |
+
+공용계정락·snapshot별rowid provenance와원자적선택순서게시·durablepending/staging publish·SQLite 정수/REAL 경계는 독립후속리뷰로 보완했다. 운영설치/DB/계정/건강자료/모델/예약·원본checkout변경없음. 원문·로그·ready/depth1은보존워크트리와중앙로컬archive에있다.
