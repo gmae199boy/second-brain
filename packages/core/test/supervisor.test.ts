@@ -10,7 +10,7 @@ import { memorySchemaStore } from '../src/testing/fakes/schema-store.js';
 import type { ProcessLauncher } from '../src/ports/process.js';
 const now = new Date('2026-10-29T00:00:00Z');
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
-async function kit(options: { holdGroup?: string; keys?: (string | null)[]; launcher?: ProcessLauncher; configureStore?: (store: ReturnType<typeof memoryStore>) => void; log?: (message: string) => void; protectedLaunches?: Parameters<typeof runSupervisor>[0]['protectedLaunches'] } = {}) {
+async function kit(options: { holdGroup?: string; keys?: (string | null)[]; launcher?: ProcessLauncher; configureStore?: (store: ReturnType<typeof memoryStore>) => void; log?: (message: string) => void; protectedLaunches?: Parameters<typeof runSupervisor>[0]['protectedLaunches']; prepareLaunch?: Parameters<typeof runSupervisor>[0]['prepareLaunch'] } = {}) {
   const store = memoryStore();
   options.configureStore?.(store);
   const time = manualTime(now);
@@ -21,6 +21,7 @@ async function kit(options: { holdGroup?: string; keys?: (string | null)[]; laun
   for (const [index, key] of (options.keys ?? [null]).entries())
     await store.addWork({ id: index === 0 ? id : idGen.next(), serializationKey: key, holdGroup: options.holdGroup, kind: 'process_probe', targetKind: 'probe', targetId: String(700000 + index), createdAt: now, nextAttemptAt: now });
   const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector: fakeProcessInspector(launcher), launcher: options.launcher ?? launcher, idGen,
+    ...(options.prepareLaunch === undefined ? {} : { prepareLaunch: options.prepareLaunch }),
     ...(options.log === undefined ? {} : { log: options.log }),
     ...(options.protectedLaunches === undefined ? {} : { protectedLaunches: options.protectedLaunches }),
     launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) }, signal: controller.signal });
@@ -338,7 +339,7 @@ it('protected preparation rejects missing snapshots before launching', async () 
 });
 it('protected runs discard arbitrary worker diagnostics before persistence', async () => {
   const secret = 'SYNTHETIC_SECRET_ABC';
-  const k = await kit({ protectedLaunches: { process_probe: { extension: 'testext', declarations: {}, errorCodes: [], async prepare(item, token) { return { ok: true, spec: { command: 'probe', args: [], env: { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"testext","values":{}}' } } }; } } } });
+  const k = await kit({ protectedLaunches: { process_probe: { extension: 'testext', declarations: {}, errorCodes: [], async prepare(item, token) { return { ok: true, spec: { command: 'probe', args: [], env: { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"testext","user_id":"019a0000-0000-7000-8000-000000000001","values":{}}' } } }; } } } });
   try {
     const child = k.launcher.processes[0]!;
     child.writeStderr(secret);
@@ -359,7 +360,7 @@ it.each(['cancel', 'hold', 'lost'] as const)('does not launch when ownership cha
     store.listOpenSupervisedAttempts = async () => lose ? { ok: true, attempts: [] } : list();
   }, protectedLaunches: { process_probe: { extension: 'testext', declarations: {}, errorCodes: [], async prepare(item, token) {
     await gate;
-    return { ok: true, spec: { command: 'probe', args: [], env: { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"testext","values":{}}' } } };
+    return { ok: true, spec: { command: 'probe', args: [], env: { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"testext","user_id":"019a0000-0000-7000-8000-000000000001","values":{}}' } } };
   } } } });
   try {
     if (mode === 'cancel') await k.store.requestWorkCancel({ id: k.id, now });
@@ -373,7 +374,7 @@ it.each(['cancel', 'hold', 'lost'] as const)('does not launch when ownership cha
 it('prepares a new immutable snapshot for each retry', async () => {
   let value = 'first';
   const k = await kit({ protectedLaunches: { process_probe: { extension: 'testext', declarations: { 'testext.value': 'string' }, errorCodes: ['TEMPORARY'], async prepare(item, token) {
-    return { ok: true, spec: { command: 'probe', args: [], env: { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_SETTINGS_SNAPSHOT: JSON.stringify({ version: 1, extension: 'testext', values: { 'testext.value': value } }) } } };
+    return { ok: true, spec: { command: 'probe', args: [], env: { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_SETTINGS_SNAPSHOT: JSON.stringify({ version: 1, extension: 'testext', user_id: '019a0000-0000-7000-8000-000000000001', values: { 'testext.value': value } }) } } };
   } } } });
   try {
     expect(JSON.parse(k.launcher.specs[0]!.env.BRAIN_SETTINGS_SNAPSHOT!).values['testext.value']).toBe('first');
@@ -386,15 +387,61 @@ it('prepares a new immutable snapshot for each retry', async () => {
 });
 
 it('rejects a syntactically valid snapshot missing a required key before start', async () => {
-  const k = await kit({ protectedLaunches: { process_probe: { extension: 'testext', declarations: { 'testext.token': 'string' }, required: ['testext.token'], secrets: ['testext.token'], errorCodes: [], async prepare(item, token) { return { ok: true, spec: { command: 'probe', args: [], env: { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"testext","values":{}}' } } }; } } } });
+  const k = await kit({ protectedLaunches: { process_probe: { extension: 'testext', declarations: { 'testext.token': 'string' }, required: ['testext.token'], secrets: ['testext.token'], errorCodes: [], async prepare(item, token) { return { ok: true, spec: { command: 'probe', args: [], env: { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"testext","user_id":"019a0000-0000-7000-8000-000000000001","values":{}}' } } }; } } } });
   try { expect(k.launcher.specs).toEqual([]); expect(k.store.snapshot().workAttempts[0]).toMatchObject({ errorCode: 'EXTENSION_CONFIG_INVALID', errorRetryable: false }); }
   finally { k.controller.abort(); await k.running; }
 });
 
 it.each(['PROCESS_DIED', 'ABI_EXIT_FAILED'] as const)('projects undeclared worker error %s without changing retryability', async code => {
-  const k = await kit({ protectedLaunches: { process_probe: { extension: 'testext', declarations: {}, errorCodes: [], async prepare(item, token) { return { ok: true, spec: { command: 'probe', args: [], env: { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"testext","values":{}}' } } }; } } } });
+  const k = await kit({ protectedLaunches: { process_probe: { extension: 'testext', declarations: {}, errorCodes: [], async prepare(item, token) { return { ok: true, spec: { command: 'probe', args: [], env: { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"testext","user_id":"019a0000-0000-7000-8000-000000000001","values":{}}' } } }; } } } });
   try {
     k.launcher.processes[0]!.push(JSON.stringify({ abi: 1, type: 'error', code, retryable: true })); k.launcher.processes[0]!.exit(); await flush();
     expect(k.store.snapshot().workAttempts[0]).toMatchObject({ errorCode: 'EXTENSION_WORKER_ERROR', errorRetryable: true });
+  } finally { k.controller.abort(); await k.running; }
+});
+
+it('does not start a protected child when self is missing', async () => {
+  const k = await kit({ protectedLaunches: { process_probe: { extension: 'testext', declarations: {}, errorCodes: [], async prepare() { return { ok: false, code: 'USER_MISSING' }; } } } });
+  try {
+    expect(k.launcher.specs).toEqual([]);
+    expect(k.store.snapshot().workAttempts[0]).toMatchObject({ errorCode: 'USER_MISSING', errorRetryable: false });
+  } finally { k.controller.abort(); await k.running; }
+});
+
+it('common launch preparation refuses core supervised work without self', async () => {
+  const k = await kit({ prepareLaunch: async () => ({ ok: false, code: 'USER_MISSING' }) });
+  try {
+    expect(k.launcher.specs).toEqual([]);
+    expect(k.store.snapshot().workAttempts[0]).toMatchObject({ errorCode: 'USER_MISSING', errorRetryable: false });
+  } finally { k.controller.abort(); await k.running; }
+});
+
+it.each(['cancel', 'hold', 'lost', 'abort'] as const)('does not launch core work if %s occurs during common preparation', async mode => {
+  let release!: () => void, lose = false;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const k = await kit({ holdGroup: 'test:gate', prepareLaunch: async () => { await gate; return { ok: true }; }, configureStore: store => {
+    const list = store.listOpenSupervisedAttempts;
+    store.listOpenSupervisedAttempts = async () => lose ? { ok: true, attempts: [] } : list();
+  } });
+  try {
+    if (mode === 'cancel') await k.store.requestWorkCancel({ id: k.id, now });
+    if (mode === 'hold') await k.store.holdWorkGroup({ group: 'test:gate', now });
+    if (mode === 'lost') lose = true;
+    if (mode === 'abort') k.controller.abort();
+    release(); await flush();
+    expect(k.launcher.specs).toEqual([]);
+  } finally { release(); k.controller.abort(); await k.running; }
+});
+
+it.each([
+  ['USER_MISSING', 'setup을 실행해 사용자를 확인하세요'],
+  ['DB_LOCKED', '데이터베이스 상태를 확인하세요'],
+  ['DB_UNAVAILABLE', '데이터베이스 상태를 확인하세요'],
+] as const)('stores the guidance for common preparation failure %s', async (code, message) => {
+  const k = await kit({ prepareLaunch: async () => ({ ok: false, code }) });
+  try {
+    expect(k.launcher.specs).toEqual([]);
+    expect(k.store.snapshot().workItems[0]?.lastError).toContain(message);
+    expect(k.store.snapshot().workAttempts[0]).toMatchObject({ errorCode: code, errorRetryable: code !== 'USER_MISSING' });
   } finally { k.controller.abort(); await k.running; }
 });

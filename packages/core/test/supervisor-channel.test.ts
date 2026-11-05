@@ -13,7 +13,7 @@ async function fixture(count: number, holdGroup?: string) {
   const store = memoryStore(), time = manualTime(now), launcher = fakeProcessLauncher();
   const idGen = sequenceIdGen({ timestampMs: now.getTime() });
   await store.ensureChannel({ id: 'channel', kind: 'telegram', botRef: 'bot' });
-  await store.ensureChannelConversation({ id: 'conversation', channelId: 'channel', externalRef: 'chat', threadRef: null });
+  await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: 'conversation', channelId: 'channel', externalRef: 'chat', threadRef: null });
   await store.createChannelRequest({ id: 'request', conversationId: 'conversation', producer: 'test', producerResultId: 'result', purpose: 'notice', revision: null, text: 'text', createdAt: now });
   if (holdGroup) await store.addWork({ id: 'work', kind: 'channel_send', targetKind: 'channel_request', targetId: 'request', holdGroup, createdAt: now, nextAttemptAt: now });
   await store.handoffChannelRequest({ requestId: 'request', workId: 'work', now });
@@ -55,7 +55,7 @@ it.each([
   const store = memoryStore(), time = manualTime(now), launcher = fakeProcessLauncher();
   const idGen = sequenceIdGen({ timestampMs: now.getTime() });
   await store.ensureChannel({ id: 'channel', kind: 'telegram', botRef: 'bot' });
-  await store.ensureChannelConversation({ id: 'conversation', channelId: 'channel', externalRef: 'chat', threadRef: null });
+  await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: 'conversation', channelId: 'channel', externalRef: 'chat', threadRef: null });
   await store.createChannelRequest({ id: 'request', conversationId: 'conversation', producer: 'test', producerResultId: 'result', purpose: 'notice', revision: null, text: 'text', createdAt: now });
   await store.handoffChannelRequest({ requestId: 'request', workId: 'work', now });
   for (let n = 1; n <= count; n++) {
@@ -77,7 +77,7 @@ it('프로세스 미확인으로 보류한 토큰은 이후 종료가 확인되�
   const store = memoryStore(), time = manualTime(now), launcher = fakeProcessLauncher();
   const idGen = sequenceIdGen({ timestampMs: now.getTime() });
   await store.ensureChannel({ id: 'channel', kind: 'telegram', botRef: 'bot' });
-  await store.ensureChannelConversation({ id: 'conversation', channelId: 'channel', externalRef: 'chat', threadRef: null });
+  await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: 'conversation', channelId: 'channel', externalRef: 'chat', threadRef: null });
   await store.createChannelRequest({ id: 'request', conversationId: 'conversation', producer: 'test', producerResultId: 'result', purpose: 'notice', revision: null, text: 'text', createdAt: now });
   await store.handoffChannelRequest({ requestId: 'request', workId: 'work', now });
   const token = idGen.next(); await store.claimSupervisedWork({ now, claimedBy: 'old', kinds: ['channel_send'], attemptToken: token });
@@ -96,7 +96,7 @@ it('종료가 확인되지 않은 프로세스는 토큰을 보존하며 이후 
   const store = memoryStore(), time = manualTime(now), launcher = fakeProcessLauncher(), inspector = fakeProcessInspector(launcher);
   const idGen = sequenceIdGen({ timestampMs: now.getTime() });
   await store.ensureChannel({ id: 'channel', kind: 'telegram', botRef: 'bot' });
-  await store.ensureChannelConversation({ id: 'conversation', channelId: 'channel', externalRef: 'chat', threadRef: null });
+  await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: 'conversation', channelId: 'channel', externalRef: 'chat', threadRef: null });
   await store.createChannelRequest({ id: 'request', conversationId: 'conversation', producer: 'test', producerResultId: 'result', purpose: 'notice', revision: null, text: 'text', createdAt: now });
   await store.handoffChannelRequest({ requestId: 'request', workId: 'work', now });
   const token = idGen.next(); await store.claimSupervisedWork({ now, claimedBy: 'old', kinds: ['channel_send'], attemptToken: token });

@@ -32,7 +32,7 @@ it('실제 CLI 비활성이 데몬 일감과 예약을 보류하고 재활성이
     const installed = await fixture.run(['ext', 'install', 'extdisable', '--json']);
     expect(installed.code, installed.stdout + installed.stderr).toBe(0);
     const canary = 'canary-secret-diagnostic';
-    expect(await store.setSetting({ key: 'extdisable.secret', value: canary, updatedAt: new Date() })).toMatchObject({ ok: true });
+    expect(await store.setSetting({ userId: null, key: 'extdisable.secret', value: canary, updatedAt: new Date() })).toMatchObject({ ok: true });
     await fixture.db.query("update brain.extensions set connection_status='failed', connection_code='EXTENSION_WORKER_ERROR', connection_message='canary-secret-diagnostic' where name='extdisable'");
     const manifest = join(fixture.home, 'extensions/extdisable/manifest.json');
     const hash = () => readFile(manifest).then(data => createHash('sha256').update(data).digest('hex'));
@@ -86,7 +86,7 @@ it('실제 설치 전 실패와 활성 로그인·연결 실패를 SDK, 상태 �
     const now = new Date(); const canary = 'EXT_DIAGNOSTIC_SECRET_CANARY';
     const failed = await fixture.run(['ext', 'install', 'missingdiag', '--json']);
     expect(failed.body.error.code).toBe('EXTENSION_NOT_FOUND');
-    expect(await store.setSetting({ key: 'logindiag.secret', value: canary, updatedAt: now })).toMatchObject({ ok: true });
+    expect(await store.setSetting({ userId: null, key: 'logindiag.secret', value: canary, updatedAt: now })).toMatchObject({ ok: true });
     await store.recordExtensionInstall({ name: 'logindiag', version: '1', now });
     await store.writeExtensionInstallProgress({ expectedRevision: null, progress: { name: 'logindiag', packageDigest: 'a'.repeat(64), result: 'login_required', failedStage: null,
       lastFailure: null, stages: { login: { status: 'pending', code: 'LOGIN_REQUIRED', at: now.toISOString() } }, authWorkId: null, scheduleIds: [] } });

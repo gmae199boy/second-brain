@@ -1552,7 +1552,7 @@ describe('the dispatcher and the lock budget', () => {
           // Nothing was ever opened.
         },
       };
-      return { ...store, async getSettings() { return unavailable; }, async getSetting() { return unavailable; }, async setSetting() { return unavailable; } };
+      return { ...store, async getSettings() { return unavailable; }, async getSetting() { return unavailable; }, async setSetting() { return unavailable; }, async insertSetting() { return unavailable; } };
     };
     return { calls, createStore };
   }

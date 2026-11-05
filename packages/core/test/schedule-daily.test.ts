@@ -1,15 +1,16 @@
+import { sampleSelfUserInput } from '../src/testing/index.js';
 import { expect, it } from 'vitest';
 import { createBrain } from '../src/brain.js';
 import { memoryStore, memorySchemaStore, memorySpool, memoryFileStore, memoryRepositories,
   memoryTranscriptReader, sequenceIdGen, manualTime } from '../src/testing/index.js';
 
 function kit(start = '2026-10-01T00:00:00Z') {
-  const time = manualTime(new Date(start)); const store = memoryStore();
+  const time = manualTime(new Date(start)); const store = memoryStore(); void store.ensureSelfUser(sampleSelfUserInput());
   const brain = createBrain({ store: { ...store, ...memorySchemaStore({ version: 9 }) }, schemaVersions: { core: 9 },
     clock: time.clock, idGen: sequenceIdGen({ timestampMs: new Date(start).getTime() }), spool: memorySpool(), files: memoryFileStore(), parsers: [],
     transcripts: memoryTranscriptReader(), repositories: memoryRepositories(), machine: 'test' });
   return { store, brain, time, set: (at: string) => time.advance(new Date(at).getTime() - time.clock.now().getTime()),
-    zone: (value: string) => store.setSetting({ key: 'timezone', value, updatedAt: time.clock.now() }),
+    zone: (value: string) => store.setSetting({ userId: null, key: 'timezone', value, updatedAt: time.clock.now() }),
     add: (localTime = '11:00') => brain.schedules.add({ kind: 'schedule_probe', targetKind: 'probe', targetId: 'daily', localTime }),
     drain: () => brain.queue.drain({ budgetMs: 1000 }) };
 }

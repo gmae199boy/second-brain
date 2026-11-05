@@ -77,6 +77,7 @@ export function failedConfigStore(message: string): Store & SchemaStore & Settin
     async getSettings() { return unavailable; },
     async getSetting() { return unavailable; },
     async setSetting() { return unavailable; },
+    async insertSetting() { return unavailable; },
     async listDailySchedules() { return unavailable; },
         async readSchedule() { return unavailable; },
         async rezoneSchedule() { return unavailable; },

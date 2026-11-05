@@ -1,9 +1,11 @@
+import { readScopedSettings } from '../settings/index.js';
+import { resolveSelfUser } from '../users/self.js';
 import type { ExtensionInstallProgress, InstallStage } from './install-progress.js';
 import { failureText } from '../domain/failure.js';
 import type { Clock, Timer } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
 import { ensureDaily, type ReadTimeZone } from '../queue/schedules.js';
-import type { ExtensionStore, WorkStore, ScheduleStore } from '../ports/store.js';
+import type { ExtensionStore, WorkStore, ScheduleStore, UserStore } from '../ports/store.js';
 import type { ProcessInspector, ProcessLauncher } from '../ports/process.js';
 import { PROCESS_ABI_ENV } from '../process-abi/codec.js';
 import { decodeExtensionManifest, isExtensionName } from './manifest.js';
@@ -38,7 +40,7 @@ export interface ExtensionRuntime {
   readSecrets?(): Promise<Readonly<Record<string, string>>>;
   machineValues?(name: string): Readonly<Record<string, string>>;
 }
-export interface ExtensionDependencies { store: ExtensionStore & Partial<SettingsStore & WorkStore & ScheduleStore>; readTimeZone?: ReadTimeZone; clock: Clock; idGen: IdGen; extensions?: ExtensionRuntime }
+export interface ExtensionDependencies { store: ExtensionStore & Partial<SettingsStore & WorkStore & ScheduleStore & Pick<UserStore, 'readSelfUser'>>; readTimeZone?: ReadTimeZone; clock: Clock; idGen: IdGen; extensions?: ExtensionRuntime }
 export async function installExtension(deps: ExtensionDependencies, { name, signal }: { name: string; signal?: AbortSignal }) {
   if (!isExtensionName(name)) return { ok: false as const, code: 'EXTENSION_NOT_FOUND' as const, message: '확장 이름이 이름 규칙에 맞지 않습니다' };
   const runtime = deps.extensions;
@@ -177,6 +179,8 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
   const recorded = await deps.store.recordExtensionInstall({ name, version: manifest.version, now: deps.clock.now(), workKinds: [...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : [])].map(work => work.kind), workFollowups: Object.fromEntries((manifest.work ?? []).filter(work => work.followup).map(work => [work.kind, work.followup!])) });
   if (!recorded.ok) return recorded;
   const afterRegistry = await cancelled(); if (afterRegistry) return afterRegistry;
+  const self = deps.store.readSelfUser ? await resolveSelfUser({ readSelfUser: deps.store.readSelfUser.bind(deps.store) }) : { ok: false as const, code: 'USER_MISSING' as const, message: '사용자가 없습니다' };
+  if (!self.ok) { const saved = await mark(manifest.auth ? 'login' : 'configuration', 'failed', self.code); return saved.ok ? self : saved; }
   if (!manifest.auth) {
     if (!completed('login')) { const saved = await mark('login', 'skipped', 'EXTENSION_AUTH_NOT_REQUIRED'); if (!saved.ok) return saved; }
   } else if (!completed('login')) {
@@ -233,19 +237,26 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
       return { ok: false as const, code: 'EXTENSION_CONFIG_INVALID' as const, message: '확장 자격 증명을 확인하세요' };
     }
   }
-  if (!completed('connection') || !completed('configuration')) {
   const declarations = manifest.settings ?? [];
+
+  for (const declaration of declarations) {
+    if (declaration.machine || declaration.default === undefined) continue;
+    if (!deps.store.insertSetting) return configFailure();
+    const inserted = await deps.store.insertSetting({ userId: declaration.scope === 'global' ? null : self.userId, key: declaration.key, value: declaration.default, updatedAt: deps.clock.now() });
+    if (!inserted.ok) { const saved = await mark('configuration', 'failed', inserted.code); return saved.ok ? inserted : saved; }
+  }
+  if (!completed('connection') || !completed('configuration')) {
   let values: Record<string, string> = {};
   if (declarations.length) {
     if (!deps.store.getSettings || !runtime.readSecrets) return configFailure();
-    const read = await deps.store.getSettings({ keys: declarations.map(setting => setting.key) });
-    if (!read.ok) return { ok: false as const, code: read.code, message: '확장 설정을 읽을 수 없습니다' };
+    const read = await readScopedSettings({ getSettings: deps.store.getSettings.bind(deps.store) }, self.userId, declarations);
+    if (!read.ok) { const saved = await mark('configuration', 'failed', read.code); return saved.ok ? { ok: false as const, code: read.code, message: '확장 설정을 읽을 수 없습니다' } : saved; }
     values = Object.fromEntries(read.settings.map(setting => [setting.key, setting.value]));
   }
   let secrets: Readonly<Record<string, string>> = {};
   try { if (declarations.some(setting => setting.secret)) secrets = await runtime.readSecrets!(); }
   catch { return configFailure(); }
-  const snapshot = createExtensionSnapshot({ extension: name, stage: 'connect', declarations, settings: values, secrets, machine: runtime.machineValues?.(name) ?? {} });
+  const snapshot = createExtensionSnapshot({ extension: name, userId: self.userId, stage: 'connect', declarations, settings: values, secrets, machine: runtime.machineValues?.(name) ?? {} });
   if (!snapshot.ok) return configFailure();
   if (!completed('configuration')) { const configSaved = await mark('configuration', 'succeeded'); if (!configSaved.ok) return configSaved; }
   if (!completed('connection')) {

@@ -1466,9 +1466,10 @@ export type SessionIngestStore = Pick<SessionStore, 'findSession' | 'ensureSessi
 export interface SettingRecord { key: string; value: string; updatedAt: Date }
 export type SettingsStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface SettingsStore {
-  getSettings(input: { keys: readonly string[] }): Promise<{ ok: true; settings: SettingRecord[] } | SettingsStoreFailure>;
-  getSetting(input: { key: string }): Promise<{ ok: true; setting: SettingRecord | null } | SettingsStoreFailure>;
-  setSetting(input: SettingRecord): Promise<{ ok: true } | SettingsStoreFailure>;
+  getSettings(input: { userId: string | null; keys: readonly string[] }): Promise<{ ok: true; settings: SettingRecord[] } | SettingsStoreFailure>;
+  getSetting(input: { userId: string | null; key: string }): Promise<{ ok: true; setting: SettingRecord | null } | SettingsStoreFailure>;
+  setSetting(input: SettingRecord & { userId: string | null }): Promise<{ ok: true } | SettingsStoreFailure>;
+  insertSetting(input: SettingRecord & { userId: string | null }): Promise<{ ok: true } | SettingsStoreFailure>;
 }
 
 

@@ -22,7 +22,7 @@ it('다섯 합성 snapshot의 원형과 키를 보존하고 재실행한다', as
     const manifest=await realpath(join(fixture.home,'manifest.json'));
     const ids=uuidV7IdGen(), channel=ids.next(), conversation=ids.next();
     await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot')`);
-    await fixture.db.query(`insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
+    await fixture.db.query(`insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
     await fixture.db.query(`insert into garmin.datasets(dataset,account,account_confirmed) values ('synthetic-D1','12345',true);
       insert into garmin.import_batches values ('tracer-seed','synthetic-D1',now());
       insert into garmin.raw_payloads(dataset,batch,account,scope,original_key,endpoint,fetched_at_ms,checked_at_ms,library_version,body)
@@ -32,7 +32,7 @@ it('다섯 합성 snapshot의 원형과 키를 보존하고 재실행한다', as
       const id=ids.next(), token=ids.next(), now=new Date();
       await store.addWork({id,kind:'garmin.import',targetKind:'import',targetId:id,createdAt:now,nextAttemptAt:now});
       expect(await store.claimSupervisedWork({now,claimedBy:'test',kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true});
-      try { return execFileSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',values:{'garmin.capture_manifest':manifest,'garmin.legacy_conversation_id':conversation}})}}); } catch (e: any) { throw new Error(String(e.stdout) + String(e.stderr)); }
+      try { return execFileSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.capture_manifest':manifest,'garmin.legacy_conversation_id':conversation}})}}); } catch (e: any) { throw new Error(String(e.stdout) + String(e.stderr)); }
     };
     expect(await fixture.db.rows('select count(*)::int as n from garmin.preserved_rows')).toEqual([{n:0}]);
     expect(await run()).toContain('"type": "result"');
@@ -103,9 +103,9 @@ it('공용 명령과 실제 감독자가 capture를 반입하고 발신 없이 �
     const hashes=await Promise.all(snapshots.map(hash));
     const channel=ids.next(), conversation=ids.next();
     await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot')`);
-    await fixture.db.query(`insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
-    await store.setSetting({key:'garmin.capture_manifest',value:await realpath(join(root,'manifest.json')),updatedAt:new Date()});
-    await store.setSetting({key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
+    await fixture.db.query(`insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
+    await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.capture_manifest',value:await realpath(join(root,'manifest.json')),updatedAt:new Date()});
+    await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
     const endpoint=`http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25,channelTestEndpoint:endpoint}});
     const first=await fixture.run(['ext','run','garmin','import','--json']);
@@ -175,7 +175,7 @@ it('checkpoint 중단·재개와 동시 반입 및 입력 변경 충돌을 검�
       expect(await store.claimSupervisedWork({now,claimedBy:'test',kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true,attemptToken:token});
       return {id,token};
     };
-    const env=(attempt:{id:string,token:string},conv?:string)=>({...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:attempt.id,BRAIN_ATTEMPT_TOKEN:attempt.token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',values:{'garmin.capture_manifest':manifest,...(conv?{'garmin.legacy_conversation_id':conv}:{})}})});
+    const env=(attempt:{id:string,token:string},conv?:string)=>({...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:attempt.id,BRAIN_ATTEMPT_TOKEN:attempt.token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.capture_manifest':manifest,...(conv?{'garmin.legacy_conversation_id':conv}:{})}})});
     const run=(attempt:{id:string,token:string},conv?:string)=>spawnSync(python,[entry],{encoding:'utf8',env:env(attempt,conv),timeout:20000});
     await fixture.db.query("create function garmin.test_delay() returns trigger language plpgsql as $$ begin perform pg_sleep(0.8); return new; end $$; create trigger test_delay before insert on garmin.preserved_rows for each row execute function garmin.test_delay(); create trigger test_delay_mapping before insert on garmin.import_mapping for each row execute function garmin.test_delay(); create trigger test_delay_checkpoint before update on garmin.import_checkpoints for each row execute function garmin.test_delay()");
     const timeoutAttempt=await claim(), started=Date.now();
@@ -211,7 +211,7 @@ it('checkpoint 중단·재개와 동시 반입 및 입력 변경 충돌을 검�
     for (const [attempt, outcome] of [[timeoutAttempt,'failed'],[killed,'failed'],[resumedA,'succeeded'],[resumedB,'succeeded']] as const) {
       expect(await store.finishSupervisedWork({id:attempt.id,attemptToken:attempt.token,now:new Date(),outcome})).toMatchObject({ok:true});
     }
-    await store.setSetting({key:'garmin.capture_manifest',value:manifest,updatedAt:new Date()});
+    await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.capture_manifest',value:manifest,updatedAt:new Date()});
     const {runDaemon}=await import('../src/daemon/run.js'); const {systemClock}=await import('../src/runtime/clock.js');
     const controller=new AbortController();
     const daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
@@ -327,12 +327,12 @@ data=json.loads(manifest.read_text()); data['datasets'][0]['dataset']='synthetic
     execFileSync(python,['-c',code,fixtures,fixture.home]);
     const ids=uuidV7IdGen(), channel=ids.next(), conversation=ids.next(), id=ids.next(), token=ids.next(), now=new Date();
     await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot')`);
-    await fixture.db.query(`insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
+    await fixture.db.query(`insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
     await store.addWork({id,kind:'garmin.import',targetKind:'import',targetId:id,createdAt:now,nextAttemptAt:now});
     await store.claimSupervisedWork({now,claimedBy:'test',kinds:['garmin.import'],attemptToken:token});
     const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl);
     const manifest=await realpath(join(fixture.home,'manifest.json'));
-    const runImport = () => execFileSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',values:{'garmin.capture_manifest':manifest,'garmin.legacy_conversation_id':conversation}})}});
+    const runImport = () => execFileSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.capture_manifest':manifest,'garmin.legacy_conversation_id':conversation}})}});
     runImport(); runImport();
     const raw=await fixture.db.rows("select scope,original_key,body,encode(body_raw,'base64') as raw,body_encoding from garmin.raw_payloads where dataset like '~dataset1:%' and endpoint='extra'");
     expect(raw).toContainEqual(expect.objectContaining({scope:'scope/a',original_key:'b/c',body:'body�end',body_encoding:encoding.toLowerCase()}));
@@ -349,8 +349,8 @@ data=json.loads(manifest.read_text()); data['datasets'][0]['dataset']='synthetic
     const publicReport = execFileSync(python,['-c',preflightCode,join(fixture.home,'extensions/garmin/src'),fixture.home],{encoding:'utf8'});
     expect(publicReport).not.toContain('body\\u0000end'); expect(publicReport).not.toContain('synthetic'); expect(publicReport).not.toContain('2026-01-01'); expect(publicReport).not.toContain(badBase64);
     expect(await store.finishSupervisedWork({id,attemptToken:token,now:new Date(),outcome:'succeeded'})).toMatchObject({ok:true});
-    await store.setSetting({key:'garmin.capture_manifest',value:manifest,updatedAt:new Date()});
-    await store.setSetting({key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
+    await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.capture_manifest',value:manifest,updatedAt:new Date()});
+    await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
     const {runDaemon}=await import('../src/daemon/run.js'); const {systemClock}=await import('../src/runtime/clock.js');
     const controller=new AbortController();
     const daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});

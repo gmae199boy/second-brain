@@ -3,7 +3,7 @@ import type { IdGen } from '../ports/id-gen.js';
 import type { ScheduleStore, WorkStore, ScheduleStoreFailure } from '../ports/store.js';
 import { isLocalTime, localDateOf, nextDailyOccurrence } from '../local-time.js';
 
-export type TimeZoneFailure = { ok: false; code: 'CONFIG_INVALID' | 'SCHEMA_MISMATCH' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
+export type TimeZoneFailure = { ok: false; code: 'USER_MISSING' | 'CONFIG_INVALID' | 'SCHEMA_MISMATCH' | 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export type ReadTimeZone = () => Promise<{ ok: true; value: string } | TimeZoneFailure>;
 export interface SchedulesDependencies { store: ScheduleStore & WorkStore; clock: Clock; idGen: IdGen; readTimeZone: ReadTimeZone }
 export interface AddDailyInput { kind: string; targetKind: string; targetId: string; localTime: string; holdGroup?: string | null }

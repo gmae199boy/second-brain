@@ -309,3 +309,5 @@ export { runExtension } from './extensions/run.js';
 export * from './extensions/commands.js';
 
 export { hasOnlyFiniteNumbers } from './extensions/json-values.js';
+
+export { resolveSelfUser } from './users/self.js';

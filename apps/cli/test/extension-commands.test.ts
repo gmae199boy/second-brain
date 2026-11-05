@@ -13,10 +13,13 @@ it('exposes an installed read command through CLI, guide and MCP and follows act
     const guide = await fixture.run(['guide', 'schema', 'ext.testext', 'echo-stats', '--json']);
     expect(guide.body?.ok).toBe(true);
     const schema = guide.body.data.commands[0].input_schema;
+    const selfId = (await fixture.db.rows('select id from brain.users where is_self=1'))[0]!.id;
+    await fixture.db.query("insert into brain.settings(user_id,key,value,updated_at) values (null,'testext.label','global-value',now())");
+    expect((await fixture.run(['config', 'set', 'testext.label', 'user-value', '--json'])).body.ok).toBe(true);
     const call = await fixture.run(['ext', 'testext', 'echo-stats', '--input', '{"value":"hello"}', '--json']);
     expect(call.body?.ok).toBe(true);
-    expect(call.body.data).toMatchObject({ abi: 1, settings: { 'testext.label': 'fixture' }, input: { value: 'hello' } });
-    expect(call.body.data.user_id).toBeTruthy();
+    expect(call.body.data).toMatchObject({ abi: 1, settings: { 'testext.label': 'user-value' }, input: { value: 'hello' } });
+    expect(call.body.data.user_id).toBe(selfId);
     const invalid = await fixture.run(['ext', 'testext', 'echo-stats', '--input', '{"value":7}', '--json']);
     expect(invalid.body?.error?.code).toBe('EXTENSION_COMMAND_INPUT_INVALID');
     const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/bin.js', import.meta.url)), 'mcp', 'serve'], { env: fixture.env, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -32,7 +35,9 @@ it('exposes an installed read command through CLI, guide and MCP and follows act
       const list = await request(2, 'tools/list');
       expect(list.result.tools[0].inputSchema).toEqual(schema);
       const result = await request(3, 'tools/call', { name: 'ext_testext_echo_stats', arguments: { value: 'hello' } });
-      expect(JSON.parse(result.result.content[0].text).data).toEqual(call.body.data);
+      const mcpData = JSON.parse(result.result.content[0].text).data;
+      expect(mcpData).toEqual(call.body.data);
+      expect(mcpData).toMatchObject({ user_id: selfId, settings: { 'testext.label': 'user-value' } });
       expect((await fixture.run(['ext', 'disable', 'testext', '--json'])).body.ok).toBe(true);
       expect((await request(4, 'tools/list')).result.tools).toEqual([]);
       expect((await fixture.run(['ext', '--help'])).stdout).not.toContain('testext');

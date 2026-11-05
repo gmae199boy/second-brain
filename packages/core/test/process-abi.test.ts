@@ -211,7 +211,7 @@ it('validates snapshot fixtures against declared keys and types', async () => {
   }
 });
 it('counts snapshot size in UTF-8 bytes', () => {
-  const wrap = (value: string) => JSON.stringify({ version: 1, extension: 'testext', values: { 'testext.token': value } });
+  const wrap = (value: string) => JSON.stringify({ version: 1, extension: 'testext', user_id: '019a0000-0000-7000-8000-000000000001', values: { 'testext.token': value } });
   const base = Buffer.byteLength(wrap(''));
   const declarations = { 'testext.token': 'string' as const };
   expect(decodeSettingsSnapshot(wrap('x'.repeat(PROCESS_ABI_SNAPSHOT_MAX_BYTES - base)), 'testext', declarations).ok).toBe(true);

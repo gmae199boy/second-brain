@@ -35,7 +35,7 @@ it('installs testext through the real CLI, records its owner migration and reads
     const channel = randomUUID(), conversation = randomUUID(), work = randomUUID(), token = randomUUID(), now = new Date();
     try {
       expect(await store.ensureChannel({ id: channel, kind: 'telegram', botRef: 'bot' })).toMatchObject({ ok: true });
-      expect(await store.ensureChannelConversation({ id: conversation, channelId: channel, externalRef: 'chat', threadRef: null })).toMatchObject({ ok: true });
+      expect(await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: conversation, channelId: channel, externalRef: 'chat', threadRef: null })).toMatchObject({ ok: true });
       await fixture.db.query("insert into brain.extension_work_kinds(extension_name,kind) values ('testext','testext.import')");
       expect(await store.addWork({ id: work, kind: 'testext.import', targetKind: 'probe', targetId: 'test', createdAt: now, nextAttemptAt: now })).toMatchObject({ ok: true });
       expect(await store.claimSupervisedWork({ now, kinds: ['testext.import'], claimedBy: 'test', attemptToken: token })).toMatchObject({ ok: true, item: { id: work } });
@@ -350,7 +350,7 @@ it('resolves a real connection snapshot and keeps arbitrary diagnostics out of r
   manifest.settings = [{ key: 'testext.token', type: 'string', secret: true, required: ['connect'] }];
   await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest));
   await appendFile(join(fixture.home, '.env'), '\nTESTEXT_SECRET=SYNTHETIC_VALUE_49\n');
-  await fixture.db.query("insert into brain.settings(key,value,updated_at) values ('testext.token','TESTEXT_SECRET',now())");
+  await fixture.db.query("insert into brain.settings(user_id,key,value,updated_at) values ((select id from brain.users where is_self=1),'testext.token','TESTEXT_SECRET',now())");
   await writeFile(join(source, 'bin/check.mjs'), `const v=JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT).values['testext.token']; if(v!=='SYNTHETIC_VALUE_49'||process.argv.join(' ').includes(v)) process.exit(2); process.stderr.write(v.slice(0,4)); process.stderr.write(v.slice(4)); const s=JSON.stringify({abi:1,type:'error',code:v,retryable:false,message:v+'\\n'}); process.stdout.write(s.slice(0,7)); process.stdout.write(s.slice(7)+'\\n');\n`);
   fixture.env.SECOND_BRAIN_TEST_EXTENSIONS = sources;
   const result = await fixture.run(['ext', 'install', 'testext', '--json']);
@@ -378,7 +378,7 @@ it('discovers a newly installed manifest and runs its registered work with a fre
   manifest.settings = [{ key: 'testext.token', type: 'string', secret: true, required: ['work'] }, { key: 'testext.tokenstore', type: 'string', machine: 'tokenstore', required: ['auth', 'work'] }];
   await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest));
   await writeFile(join(source, 'bin/login.mjs'), `if(new URL(process.env.BRAIN_DATABASE_URL).username!=='brain_ext_testext' || process.argv.join(' ').includes(new URL(process.env.BRAIN_DATABASE_URL).password)) process.exit(2); const v=JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT).values; if('testext.token' in v || !v['testext.tokenstore'].endsWith('/testext/tokenstore')) process.exit(2); console.log(JSON.stringify({abi:1,type:'result'}));\n`);
-  await writeFile(join(source, 'bin/sync.mjs'), `if(new URL(process.env.BRAIN_DATABASE_URL).username!=='brain_ext_testext' || process.argv.join(' ').includes(new URL(process.env.BRAIN_DATABASE_URL).password)) process.exit(2); const x=JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT).values['testext.token']; if(process.argv.join(' ').includes(x) || process.env.BRAIN_RANGE_FROM!=='2026-10-20' || process.env.BRAIN_RANGE_TO!=='2026-10-22') process.exit(2); if(process.env.BRAIN_RUN_GENERATION==='1' && x==='SYNTHETIC_VALUE_49') console.log(JSON.stringify({abi:1,type:'error',code:'TEMPORARY',retryable:true,message:x})); else if(process.env.BRAIN_RUN_GENERATION==='2' && x==='SYNTHETIC_VALUE_50') console.log(JSON.stringify({abi:1,type:'result'})); else process.exit(2);\n`);
+  await writeFile(join(source, 'bin/sync.mjs'), `import {writeFileSync} from 'node:fs'; const snapshot=JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT); writeFileSync(process.env.BRAIN_EXTENSION_HOME+'/snapshot-user-id',snapshot.user_id); if(new URL(process.env.BRAIN_DATABASE_URL).username!=='brain_ext_testext' || process.argv.join(' ').includes(new URL(process.env.BRAIN_DATABASE_URL).password)) process.exit(2); const x=snapshot.values['testext.token']; if(process.argv.join(' ').includes(x) || process.env.BRAIN_RANGE_FROM!=='2026-10-20' || process.env.BRAIN_RANGE_TO!=='2026-10-22') process.exit(2); if(process.env.BRAIN_RUN_GENERATION==='1' && x==='SYNTHETIC_VALUE_49') console.log(JSON.stringify({abi:1,type:'error',code:'TEMPORARY',retryable:true,message:x})); else if(process.env.BRAIN_RUN_GENERATION==='2' && x==='SYNTHETIC_VALUE_50') console.log(JSON.stringify({abi:1,type:'result'})); else process.exit(2);\n`);
   await appendFile(join(fixture.home, '.env'), '\nTESTEXT_SECRET=SYNTHETIC_VALUE_49\nTESTEXT_NEW=SYNTHETIC_VALUE_50\n');
   fixture.env.SECOND_BRAIN_TEST_EXTENSIONS = sources;
   const controller = new AbortController(); const logs: string[] = []; const idGen = sequenceIdGen({ timestampMs: Date.now() });
@@ -401,6 +401,8 @@ it('discovers a newly installed manifest and runs its registered work with a fre
     expect((await fixture.run(['config', 'set', 'testext.token', 'TESTEXT_NEW', '--json'])).code).toBe(0);
     await fixture.db.query(`update brain.work_items set next_attempt_at=now() where id='${id}'`);
     await expect.poll(async () => (await fixture.db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome, { timeout: 5000 }).toBe('succeeded');
+    const selfId = (await fixture.db.rows('select id from brain.users where is_self=1'))[0]!.id;
+    expect(await readFile(join(fixture.home, 'extensions/testext/snapshot-user-id'), 'utf8')).toBe(selfId);
     const facts = await fixture.db.rows(`select * from brain.work_attempts where work_item_id='${id}'`);
     const status = await fixture.run(['ext', 'status', 'testext', '--json']);
     expect(JSON.stringify({ facts, status, logs })).not.toContain('SYNTHETIC_VALUE_49');
@@ -432,3 +434,120 @@ it('preserves both private passwords during simultaneous installs in separate pr
   expect((await stat(join(fixture.home, '.env'))).mode & 0o777).toBe(0o600);
   for (const result of results) for (const secret of [env.BRAIN_EXT_TESTEXT_PASSWORD!, env.BRAIN_EXT_OTHEREXT_PASSWORD!]) expect(result.stdout + result.stderr).not.toContain(secret);
 });
+
+it('reinstall keeps a user setting and inserts only newly declared defaults', async () => {
+  const { cp, mkdir, readFile, writeFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const fixture = await extHome(); cleanup.push(fixture.cleanup);
+  const sources = join(fixture.home, 'setting-packages'), source = join(sources, 'testext');
+  await mkdir(sources);
+  await cp(fileURLToPath(new URL('./fixtures/extensions/testext/', import.meta.url)), source, { recursive: true });
+  fixture.env.SECOND_BRAIN_TEST_EXTENSIONS = sources;
+  const first = await fixture.run(['ext', 'install', 'testext', '--json']);
+  expect(first.code, first.stdout + first.stderr).toBe(0);
+  const changed = await fixture.run(['config', 'set', 'testext.label', 'custom-value', '--json']);
+  expect(changed.code, changed.stdout + changed.stderr).toBe(0);
+  const path = join(source, 'manifest.json'), manifest = JSON.parse(await readFile(path, 'utf8'));
+  manifest.settings.push({ key: 'testext.added', type: 'string', required: [], default: 'new-default' });
+  await writeFile(path, JSON.stringify(manifest));
+  const second = await fixture.run(['ext', 'install', 'testext', '--json']);
+  expect(second.code, second.stdout + second.stderr).toBe(0);
+  const old = await fixture.run(['config', 'get', 'testext.label', '--json']);
+  const added = await fixture.run(['config', 'get', 'testext.added', '--json']);
+  expect(old.body.data).toMatchObject({ value: 'custom-value', source: 'db', scope: 'user' });
+  expect(added.body.data).toMatchObject({ value: 'new-default', source: 'db', scope: 'user' });
+  expect(await fixture.db.rows("select s.key,s.value from brain.settings s join brain.users u on u.id=s.user_id where u.is_self=1 and s.key in ('testext.label','testext.added') order by s.key")).toEqual([{ key: 'testext.added', value: 'new-default' }, { key: 'testext.label', value: 'custom-value' }]);
+});
+
+it('daemon prepare fails with USER_MISSING without starting an extension child', async () => {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const { randomUUID } = await import('node:crypto');
+  const { postgresStore } = await import('second_brain/postgres');
+  const { fakeProcessLauncher } = await import('second_brain/testing');
+  const { startDaemonSupervisor } = await import('../src/daemon/supervisor.js');
+  const { readConfig } = await import('../src/config/codec.js');
+  const { uuidV7IdGen } = await import('../src/runtime/id-gen.js');
+  const fixture = await extHome({ self: false }); cleanup.push(fixture.cleanup);
+  const directory = join(fixture.home, 'extensions', 'testext'); await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, 'manifest.json'), JSON.stringify({ name: 'testext', version: '1', core: 1, abi: 1, migrations: 'migrations', connection_check: { runtime: 'node', entry: 'check.mjs' }, work: [{ kind: 'testext.sync', execution: 'supervised', runtime: 'node', entry: 'sync.mjs' }] }));
+  await fixture.db.query("insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ('testext','1',now(),true,now()); insert into brain.extension_work_kinds(extension_name,kind) values ('testext','testext.sync')");
+  const store = postgresStore({ databaseUrl: fixture.db.appUrl }), id = randomUUID(), now = new Date(), controller = new AbortController(), launcher = fakeProcessLauncher();
+  const added = await store.addWork({ id, kind: 'testext.sync', targetKind: 'extension', targetId: 'testext', createdAt: now, nextAttemptAt: now });
+  expect(added.ok).toBe(true);
+  const supervisor = startDaemonSupervisor({ home: fixture.home, env: fixture.env, clock: { now: () => new Date() }, idGen: uuidV7IdGen(), signal: controller.signal, supervisor: { pollMs: 20, launcher } }, await readConfig(fixture.home), { async write() {} });
+  try {
+    await expect.poll(async () => (await fixture.db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome, { timeout: 10000 }).toBe('failed');
+    expect(await fixture.db.rows(`select error_code,error_retryable from brain.work_attempts where work_item_id='${id}'`)).toEqual([{ error_code: 'USER_MISSING', error_retryable: false }]);
+    expect(launcher.specs).toEqual([]);
+  } finally { controller.abort(); await supervisor.stop(); await store.close(); }
+});
+
+it('daemon refuses a core supervised process when self is missing', async () => {
+  const { randomUUID } = await import('node:crypto');
+  const { postgresStore } = await import('second_brain/postgres');
+  const { fakeProcessLauncher } = await import('second_brain/testing');
+  const { startDaemonSupervisor } = await import('../src/daemon/supervisor.js');
+  const { readConfig } = await import('../src/config/codec.js');
+  const { uuidV7IdGen } = await import('../src/runtime/id-gen.js');
+  const fixture = await extHome({ self: false }); cleanup.push(fixture.cleanup);
+  const store = postgresStore({ databaseUrl: fixture.db.appUrl }), id = randomUUID(), now = new Date(), controller = new AbortController(), launcher = fakeProcessLauncher();
+  expect(await store.addWork({ id, kind: 'process_probe', targetKind: 'probe', targetId: '100', createdAt: now, nextAttemptAt: now })).toMatchObject({ ok: true });
+  const supervisor = startDaemonSupervisor({ home: fixture.home, env: fixture.env, clock: { now: () => new Date() }, idGen: uuidV7IdGen(), signal: controller.signal, supervisor: { pollMs: 20, launcher } }, await readConfig(fixture.home), { async write() {} });
+  try {
+    await expect.poll(async () => (await fixture.db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome, { timeout: 10000 }).toBe('failed');
+    expect(await fixture.db.rows(`select error_code,error_retryable from brain.work_attempts where work_item_id='${id}'`)).toEqual([{ error_code: 'USER_MISSING', error_retryable: false }]);
+    expect(launcher.specs).toEqual([]);
+  } finally { controller.abort(); await supervisor.stop(); await store.close(); }
+});
+
+it('installs and preserves a global default at the NULL scope on reinstall', async () => {
+  const { cp, mkdir, readFile, writeFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const fixture = await extHome(); cleanup.push(fixture.cleanup);
+  const sources = join(fixture.home, 'global-packages'), source = join(sources, 'testext');
+  await mkdir(sources); await cp(fileURLToPath(new URL('./fixtures/extensions/testext/', import.meta.url)), source, { recursive: true });
+  const path = join(source, 'manifest.json'), manifest = JSON.parse(await readFile(path, 'utf8'));
+  manifest.settings.push({ key: 'testext.global', type: 'string', required: [], scope: 'global', default: 'initial' });
+  await writeFile(path, JSON.stringify(manifest)); fixture.env.SECOND_BRAIN_TEST_EXTENSIONS = sources;
+  const first = await fixture.run(['ext', 'install', 'testext', '--json']); expect(first.code, first.stdout + first.stderr).toBe(0);
+  expect(await fixture.db.rows("select user_id,value from brain.settings where key='testext.global'")).toEqual([{ user_id: null, value: 'initial' }]);
+  expect((await fixture.run(['config', 'set', 'testext.global', 'changed', '--json'])).body.ok).toBe(true);
+  const before = await fixture.db.rows("select user_id,value,updated_at from brain.settings where key='testext.global'");
+  const again = await fixture.run(['ext', 'install', 'testext', '--json']); expect(again.code, again.stdout + again.stderr).toBe(0);
+  expect(await fixture.db.rows("select user_id,value,updated_at from brain.settings where key='testext.global'")).toEqual(before);
+  expect((await fixture.run(['config', 'get', 'testext.global', '--json'])).body.data).toMatchObject({ scope: 'global', source: 'db', value: 'changed' });
+});
+
+it('global setting agrees across config, command, connection check and daemon work', async () => {
+  const { cp, mkdir, readFile, writeFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const { randomUUID } = await import('node:crypto');
+  const { postgresStore } = await import('second_brain/postgres');
+  const { startDaemonSupervisor } = await import('../src/daemon/supervisor.js');
+  const { readConfig } = await import('../src/config/codec.js');
+  const { uuidV7IdGen } = await import('../src/runtime/id-gen.js');
+  const fixture = await extHome(); cleanup.push(fixture.cleanup);
+  const sources = join(fixture.home, 'scope-packages'), source = join(sources, 'testext'); await mkdir(sources);
+  await cp(fileURLToPath(new URL('./fixtures/extensions/testext/', import.meta.url)), source, { recursive: true });
+  const path = join(source, 'manifest.json'), manifest = JSON.parse(await readFile(path, 'utf8'));
+  manifest.settings.push({ key: 'testext.global', type: 'string', scope: 'global', required: ['connect', 'work'] });
+  manifest.work = [{ kind: 'testext.scope', execution: 'supervised', runtime: 'node', entry: 'bin/scope.mjs' }];
+  await writeFile(path, JSON.stringify(manifest));
+  await writeFile(join(source, 'bin/check.mjs'), "const s=JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT); if(s.values['testext.global']!=='shared') process.exit(2); console.log(JSON.stringify({abi:1,type:'result'}));\n");
+  await writeFile(join(source, 'bin/scope.mjs'), "import {writeFileSync} from 'node:fs'; const s=JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT); writeFileSync(process.env.BRAIN_EXTENSION_HOME+'/scope-result',JSON.stringify(s)); console.log(JSON.stringify({abi:1,type:'result'}));\n");
+  await fixture.db.query("insert into brain.settings(user_id,key,value,updated_at) values (null,'testext.global','shared',now()),((select id from brain.users where is_self=1),'testext.global','personal',now())");
+  fixture.env.SECOND_BRAIN_TEST_EXTENSIONS = sources;
+  const installed = await fixture.run(['ext', 'install', 'testext', '--json']); expect(installed.code, installed.stdout + installed.stderr).toBe(0);
+  const config = await fixture.run(['config', 'get', 'testext.global', '--json']); expect(config.body.data).toMatchObject({ value: 'shared', scope: 'global' });
+  const command = await fixture.run(['ext', 'testext', 'echo-stats', '--json']); expect(command.body.data.settings['testext.global']).toBe(config.body.data.value);
+  const self = (await fixture.db.rows('select id from brain.users where is_self=1'))[0]!.id;
+  expect(command.body.data.user_id).toBe(self);
+  const store = postgresStore({ databaseUrl: fixture.db.appUrl }), controller = new AbortController(), id = randomUUID(), now = new Date();
+  expect(await store.addWork({ id, kind: 'testext.scope', targetKind: 'extension', targetId: 'testext', createdAt: now, nextAttemptAt: now })).toMatchObject({ ok: true });
+  const supervisor = startDaemonSupervisor({ home: fixture.home, env: fixture.env, clock: { now: () => new Date() }, idGen: uuidV7IdGen(), signal: controller.signal, supervisor: { pollMs: 20 } }, await readConfig(fixture.home), { async write() {} });
+  try {
+    await expect.poll(async () => (await fixture.db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome, { timeout: 10000 }).toBe('succeeded');
+    const snapshot = JSON.parse(await readFile(join(fixture.home, 'extensions/testext/scope-result'), 'utf8'));
+    expect(snapshot).toMatchObject({ user_id: self, values: { 'testext.global': config.body.data.value } });
+  } finally { controller.abort(); await supervisor.stop(); await store.close(); }
+}, 60000);

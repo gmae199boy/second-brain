@@ -48,10 +48,11 @@ export interface SupervisorOptions {
   launches: Readonly<Record<string, (item: WorkItem, token: string) => ProcessSpec | null>>;
   protectedLaunches?: Readonly<Record<string, {
     extension: string; declarations: Readonly<Record<string, 'string' | 'number' | 'boolean'>>; errorCodes: readonly string[]; required?: readonly string[]; secrets?: readonly string[];
-    prepare(item: WorkItem, token: string): Promise<{ ok: true; spec: ProcessSpec } | { ok: false; code: 'EXTENSION_CONFIG_INVALID' | 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
+    prepare(item: WorkItem, token: string): Promise<{ ok: true; spec: ProcessSpec } | { ok: false; code: 'USER_MISSING' | 'EXTENSION_CONFIG_INVALID' | 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
   }>>;
   loadProtectedLaunches?: () => Promise<NonNullable<SupervisorOptions['protectedLaunches']>>;
   onReadiness?: (ready: boolean) => void | Promise<void>;
+  prepareLaunch?: () => Promise<{ ok: true } | { ok: false; code: 'USER_MISSING' | 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
   signal: AbortSignal; log?: (message: string) => void | Promise<void>; schemaVersions: SchemaVersions;
   stallWindowMs?: (kind: string) => number;
   pollMs?: number; renewEveryMs?: number; cancelGraceMs?: number; cancelPollMs?: number; groupConfirmMs?: number;
@@ -195,21 +196,23 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     let started: Awaited<ReturnType<ProcessLauncher['start']>>;
     try {
       let spec: ProcessSpec | null = null;
-      if (protection) {
+      const preflight = await options.prepareLaunch?.();
+      if (preflight && !preflight.ok) preparationFailure = { code: preflight.code, retryable: preflight.code !== 'USER_MISSING' };
+      else if (protection) {
         const prepared = await protection.prepare(item, token);
-        if (!prepared.ok) preparationFailure = { code: prepared.code, retryable: prepared.code !== 'EXTENSION_CONFIG_INVALID' };
+        if (!prepared.ok) preparationFailure = { code: prepared.code, retryable: prepared.code !== 'EXTENSION_CONFIG_INVALID' && prepared.code !== 'USER_MISSING' };
         else if (!Object.hasOwn(prepared.spec.env, 'BRAIN_SETTINGS_SNAPSHOT') || !decodeAbiEnv(prepared.spec.env).ok || !validateProtectedSnapshot(prepared.spec.env['BRAIN_SETTINGS_SNAPSHOT'], protection)) preparationFailure = { code: 'EXTENSION_CONFIG_INVALID', retryable: false };
         else spec = prepared.spec;
-        {
-          const open = await store.listOpenSupervisedAttempts();
-          if (!open.ok) { preparationFailure = { code: open.code, retryable: true }; spec = null; }
-          else {
-            const attempt = open.attempts.find(a => a.token === token);
-            if (!attempt || attempt.cancelRequested || attempt.held || signal.aborted) { stopped = true; preparationFailure = undefined; spec = null; }
-          }
-        }
       } else spec = launches[item.kind]?.(item, token) ?? null;
-      if (protection && signal.aborted) { stopped = true; preparationFailure = undefined; spec = null; }
+      if (spec !== null && !signal.aborted) {
+        const open = await store.listOpenSupervisedAttempts();
+        if (!open.ok) { preparationFailure = { code: open.code, retryable: true }; spec = null; }
+        else {
+          const attempt = open.attempts.find(a => a.token === token && a.workItemId === item.id);
+          if (!attempt || attempt.cancelRequested || attempt.held) { stopped = true; preparationFailure = undefined; spec = null; }
+        }
+      }
+      if (signal.aborted) { stopped = true; preparationFailure = undefined; spec = null; }
       started = spec === null ? { ok: false, message: '일감 실행 명세가 없습니다' } : await launcher.start(spec);
     } catch { if (protection) preparationFailure = { code: 'EXTENSION_CONFIG_INVALID', retryable: false }; started = { ok: false, message: '자식 프로세스를 시작할 수 없습니다' }; }
     if (!started.ok) { run.fail('PROCESS_START_FAILED', started.message); failed = started.message; }
@@ -372,7 +375,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
       }
     }
     verdict = run.verdict(exit);
-    if (preparationFailure) verdict = { outcome: 'failed', ...preparationFailure, usage: null, message: '확장 설정을 확인하세요' };
+    if (preparationFailure) verdict = { outcome: 'failed', ...preparationFailure, usage: null, message: preparationFailure.code === 'USER_MISSING' ? 'setup을 실행해 사용자를 확인하세요' : ['DB_LOCKED', 'DB_UNAVAILABLE'].includes(preparationFailure.code) ? '데이터베이스 상태를 확인하세요' : '확장 설정을 확인하세요' };
     else if (protection && verdict.outcome === 'failed') {
       verdict = projectProtectedVerdict(verdict, protection.errorCodes, run.workerError);
     }

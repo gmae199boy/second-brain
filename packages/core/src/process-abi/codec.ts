@@ -64,7 +64,7 @@ export function decodeAbiEnv(env: Readonly<Record<string, unknown>>): { ok: true
     (from === undefined && to === undefined || typeof from === 'string' && typeof to === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to));
   return valid ? { ok: true } : invalid('프로세스 환경 변수가 올바르지 않습니다', 'ABI_ENV_INVALID');
 }
-export interface SettingsSnapshot { version: 1; extension: string; values: Record<string, string | number | boolean> }
+export interface SettingsSnapshot { version: 1; extension: string; user_id: string; values: Record<string, string | number | boolean> }
 /** 직렬화된 객체를 ABI 환경 스키마와 별도로 검증한다. */
 export function decodeSettingsSnapshot(raw: unknown, extension: string, declarations: Readonly<Record<string, 'string' | 'number' | 'boolean'>>):
   { ok: true; snapshot: SettingsSnapshot } | AbiFailure {
@@ -72,7 +72,8 @@ export function decodeSettingsSnapshot(raw: unknown, extension: string, declarat
   if (typeof raw !== 'string' || utf8Bytes(raw).length > PROCESS_ABI_SNAPSHOT_MAX_BYTES) return bad();
   let value: unknown;
   try { value = JSON.parse(raw); } catch { return bad(); }
-  if (!object(value) || !only(value, ['version', 'extension', 'values']) || value['version'] !== 1 ||
+  if (!object(value) || !only(value, ['version', 'extension', 'user_id', 'values']) || value['version'] !== 1 ||
+      typeof value['user_id'] !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value['user_id']) ||
       value['extension'] !== extension || !/^[a-z][a-z0-9_]{0,30}$/.test(extension) ||
       /^(core|brain|public|pg_)/.test(extension) || !object(value['values'])) return bad();
   for (const [key, item] of Object.entries(value['values'])) {

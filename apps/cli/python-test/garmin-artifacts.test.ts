@@ -22,9 +22,9 @@ it('명시 다종 파일과 기존 evaluation을 설치된 감독자가 발행�
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     execFileSync(python,['-c','import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; artifact_capture(pathlib.Path(sys.argv[2]))',fixtures,root]);
     const channel=ids.next(), conversation=ids.next();
-    await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
-    await store.setSetting({key:'garmin.capture_manifest',value:await realpath(join(root,'manifest.json')),updatedAt:new Date()});
-    await store.setSetting({key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
+    await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
+    await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.capture_manifest',value:await realpath(join(root,'manifest.json')),updatedAt:new Date()});
+    await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
     const run=async()=>{
       const result=await fixture.run(['ext','run','garmin','import','--json']);
@@ -101,13 +101,13 @@ it('checkpoint 뒤 같은 크기로 바뀐 SQLite에서 evaluation을 재독해�
     execFileSync(python,['-c','import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; artifact_capture(pathlib.Path(sys.argv[2]))',fixtures,root]);
     const source=join(root,'D1.db'), before=await readFile(source), beforeHash=createHash('sha256').update(before).digest('hex');
     const channel=ids.next(),conversation=ids.next(),work=ids.next(),token=ids.next(),now=new Date();
-    await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
+    await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
     await store.addWork({id:work,kind:'garmin.import',targetKind:'import',targetId:'snapshot-barrier',createdAt:now,nextAttemptAt:now});
     expect(await store.claimSupervisedWork({now,claimedBy:'snapshot-barrier',kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true});
     const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), home=await realpath(join(fixture.home,'extensions/garmin'));
     // ingest가 보존 checkpoint를 커밋하고 검증된 객체를 반환한 직후 같은 크기의 값을 교체한다.
     const script=`import sys,sqlite3\nsys.path.insert(0,sys.argv[1])\nimport batch_import\noriginal=batch_import.ingest\ndef intercepted(conn,capture,entry,conversation):\n result=original(conn,capture,entry,conversation)\n if entry['dataset']=='synthetic-D1':\n  with sqlite3.connect(sys.argv[2]) as db: db.execute('update evaluation set summary=?',('가성\\0기록',))\n return result\nbatch_import.ingest=intercepted\nbatch_import.run()`;
-    const result=execFileSync(python,['-c',script,join(home,'src'),source],{encoding:'utf8',env:{...process.env,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:work,BRAIN_ATTEMPT_TOKEN:token,BRAIN_EXTENSION_HOME:home,BRAIN_SECRET_SCANNER_NODE:process.execPath,BRAIN_SECRET_SCANNER_SCRIPT:fileURLToPath(new URL('../dist/workers/secret-scan.js',import.meta.url)),BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',values:{'garmin.capture_manifest':await realpath(join(root,'manifest.json')),'garmin.legacy_conversation_id':conversation}})}});
+    const result=execFileSync(python,['-c',script,join(home,'src'),source],{encoding:'utf8',env:{...process.env,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:work,BRAIN_ATTEMPT_TOKEN:token,BRAIN_EXTENSION_HOME:home,BRAIN_SECRET_SCANNER_NODE:process.execPath,BRAIN_SECRET_SCANNER_SCRIPT:fileURLToPath(new URL('../dist/workers/secret-scan.js',import.meta.url)),BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.capture_manifest':await realpath(join(root,'manifest.json')),'garmin.legacy_conversation_id':conversation}})}});
     expect(result).toContain('"type": "result"');
     const after=await readFile(source); expect(after.length).toBe(before.length); expect(createHash('sha256').update(after).digest('hex')).not.toBe(beforeHash);
     expect(await fixture.db.rows("select source_hash from garmin.import_checkpoints where dataset='synthetic-D1'")).toEqual([{source_hash:beforeHash}]);
@@ -147,9 +147,9 @@ it('NUL metadata를 원형으로 재개하고 참조 없는 파일의 미연결 
     manifest.files.push({source:'orphan.json',snapshot:'orphan.json',bytes:loneInput.length,dataset:label,artifact_key:'orphan_input',category:'input',relations:[]});
     await writeFile(manifestPath,JSON.stringify(manifest));
     const channel=ids.next(),conversation=ids.next();
-    await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
-    await store.setSetting({key:'garmin.capture_manifest',value:await realpath(manifestPath),updatedAt:new Date()});
-    await store.setSetting({key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
+    await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
+    await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.capture_manifest',value:await realpath(manifestPath),updatedAt:new Date()});
+    await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
     const run=async()=>{
       const result=await fixture.run(['ext','run','garmin','import','--json']); expect(result.code,result.stdout+result.stderr).toBe(0);
@@ -198,8 +198,8 @@ it('같은 key와 bytes의 artifact 정리 뒤 evaluation은 별도 locator로 �
     manifest.files=[{source:'same.md',snapshot:'same.md',bytes:body.length,dataset:'synthetic-D1',artifact_key:key,category:'report'}]; manifest.inventory=[];
     await writeFile(manifestPath,JSON.stringify(manifest));
     const channel=ids.next(),conversation=ids.next();
-    await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
-    const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), settings=JSON.stringify({version:1,extension:'garmin',values:{'garmin.capture_manifest':await realpath(manifestPath),'garmin.legacy_conversation_id':conversation}});
+    await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
+    const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), settings=JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.capture_manifest':await realpath(manifestPath),'garmin.legacy_conversation_id':conversation}});
     const claim=async(target:string)=>{
       const id=ids.next(),token=ids.next(),now=new Date();
       expect(await store.addWork({id,kind:'garmin.import',targetKind:'import',targetId:target,createdAt:now,nextAttemptAt:now})).toMatchObject({ok:true});
@@ -253,9 +253,9 @@ for (const [initial, changed] of [['password=synthetic\n','operation complete\n'
       manifest.files=[{source:'case.log',snapshot:'case.log',bytes:Buffer.byteLength(initial),dataset:'synthetic-D1',artifact_key:'case',category:'log'}]; manifest.inventory=[];
       await writeFile(path,JSON.stringify(manifest));
       const channel=ids.next(),conversation=ids.next();
-      await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
-      await store.setSetting({key:'garmin.capture_manifest',value:await realpath(path),updatedAt:new Date()});
-      await store.setSetting({key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
+      await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
+      await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.capture_manifest',value:await realpath(path),updatedAt:new Date()});
+      await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
       daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
       const run=async(outcome:string)=>{const result=await fixture.run(['ext','run','garmin','import','--json']); expect(result.code,result.stdout+result.stderr).toBe(0); await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${result.body.data.work_id}'`))[0]?.outcome,{timeout:25000}).toBe(outcome);};
       await run('succeeded');
@@ -286,9 +286,9 @@ it('inventory 확정 직전 장애는 요청과 mapping을 되돌리고 재개�
     const path=join(root,'manifest.json'), manifest=JSON.parse(await readFile(path,'utf8'));
     manifest.files=manifest.files.filter((x:any)=>x.artifact_key==='report'); manifest.inventory=[]; await writeFile(path,JSON.stringify(manifest));
     const channel=ids.next(),conversation=ids.next();
-    await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
-    await store.setSetting({key:'garmin.capture_manifest',value:await realpath(path),updatedAt:new Date()});
-    await store.setSetting({key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
+    await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
+    await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.capture_manifest',value:await realpath(path),updatedAt:new Date()});
+    await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
     await fixture.db.query("create function garmin.test_inventory_failure() returns trigger language plpgsql as $$ begin raise exception 'synthetic barrier'; end $$; create trigger test_inventory_failure before insert on garmin.artifact_inventory for each row execute function garmin.test_inventory_failure()");
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
     const run=async(outcome:string)=>{const result=await fixture.run(['ext','run','garmin','import','--json']); expect(result.code,result.stdout+result.stderr).toBe(0); await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${result.body.data.work_id}'`))[0]?.outcome,{timeout:25000}).toBe(outcome);};
@@ -313,8 +313,8 @@ it('상한 초과 파일의 동일 크기 변경을 원문 해시로 충돌 처�
     const path=join(root,'manifest.json'), manifest=JSON.parse(await readFile(path,'utf8')), bytes=Buffer.alloc(32*1024*1024+1,0x61);
     await writeFile(join(root,'large.md'),bytes);
     manifest.files=[{source:'large.md',snapshot:'large.md',bytes:bytes.length,dataset:'synthetic-D1',artifact_key:'large',category:'report'}]; manifest.inventory=[]; await writeFile(path,JSON.stringify(manifest));
-    const channel=ids.next(),conversation=ids.next(); await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
-    await store.setSetting({key:'garmin.capture_manifest',value:await realpath(path),updatedAt:new Date()}); await store.setSetting({key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
+    const channel=ids.next(),conversation=ids.next(); await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
+    await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.capture_manifest',value:await realpath(path),updatedAt:new Date()}); await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
     const run=async(outcome:string)=>{const result=await fixture.run(['ext','run','garmin','import','--json']); expect(result.code,result.stdout+result.stderr).toBe(0); await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${result.body.data.work_id}'`))[0]?.outcome,{timeout:25000}).toBe(outcome);};
     await run('succeeded');
@@ -337,8 +337,8 @@ it('재발행 staging과 core 정리는 같은 locator 잠금으로 직렬화된
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     execFileSync(python,['-c','import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; artifact_capture(pathlib.Path(sys.argv[2]))',fixtures,root]);
     const path=join(root,'manifest.json'), manifest=JSON.parse(await readFile(path,'utf8')); manifest.files=manifest.files.filter((x:any)=>x.artifact_key==='report'); manifest.inventory=[]; await writeFile(path,JSON.stringify(manifest));
-    const channel=ids.next(),conversation=ids.next(); await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
-    const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), settings=JSON.stringify({version:1,extension:'garmin',values:{'garmin.capture_manifest':await realpath(path),'garmin.legacy_conversation_id':conversation}});
+    const channel=ids.next(),conversation=ids.next(); await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
+    const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), settings=JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.capture_manifest':await realpath(path),'garmin.legacy_conversation_id':conversation}});
     const claim=async(target:string)=>{const id=ids.next(),token=ids.next(),now=new Date(); expect(await store.addWork({id,kind:'garmin.import',targetKind:'import',targetId:target,createdAt:now,nextAttemptAt:now})).toMatchObject({ok:true}); expect(await store.claimSupervisedWork({now,claimedBy:target,kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true,item:{id},attemptToken:token}); return {id,token};};
     const first=await claim('lock-first'), base={...process.env,BRAIN_DATABASE_URL:url,BRAIN_EXTENSION_HOME:home,BRAIN_SETTINGS_SNAPSHOT:settings};
     const env=(attempt:{id:string;token:string})=>({...base,BRAIN_WORK_ID:attempt.id,BRAIN_ATTEMPT_TOKEN:attempt.token});
@@ -373,8 +373,8 @@ it('같은 inventory 키의 artifact와 대형 evaluation을 원본 표별로 �
     // SQLite 원문 키는 반입기가 사용하는 정렬된 바이트 표현이다.
     const key='evaluation:'+JSON.stringify(['2026-01-01','day'].map(x=>({base64:Buffer.from(x).toString('base64'),encoding:'utf-8',type:'text'})));
     manifest.files=[{source:'report.md',snapshot:'report.md',bytes:Buffer.byteLength('# synthetic report\n'),dataset:'synthetic-D1',artifact_key:key,category:'report'}]; manifest.inventory=[]; await writeFile(path,JSON.stringify(manifest));
-    const channel=ids.next(),conversation=ids.next(); await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null)`);
-    await store.setSetting({key:'garmin.capture_manifest',value:await realpath(path),updatedAt:new Date()}); await store.setSetting({key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
+    const channel=ids.next(),conversation=ids.next(); await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
+    await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.capture_manifest',value:await realpath(path),updatedAt:new Date()}); await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
     const run=async()=>{const result=await fixture.run(['ext','run','garmin','import','--json']); expect(result.code,result.stdout+result.stderr).toBe(0); await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${result.body.data.work_id}'`))[0]?.outcome,{timeout:60000}).toBe('succeeded');};
     await run();

@@ -428,8 +428,8 @@ function harness(options: HarnessOptions = {}): Harness {
       return { ok: true, report: { project: 'second-brain-test', volume: 'test', port: 54329, schema_version: 1, applied: migrated.applied, owner_name: owner.name, owner_created: owner.created, compose_started: true } };
     },
     settings: {
-      get: async () => ({ ok: true, key: 'timezone', value: options.recordedTimezone ?? 'Asia/Seoul', source: 'db', updatedAt: new Date() }),
-      set: async (_home, _selector, _env, value) => ({ ok: true, key: 'timezone', value, source: 'db', updatedAt: new Date() }),
+      get: async () => ({ ok: true, key: 'timezone', scope: 'user' as const, value: options.recordedTimezone ?? 'Asia/Seoul', source: 'db', updatedAt: new Date() }),
+      set: async (_home, _selector, _env, value) => ({ ok: true, key: 'timezone', scope: 'user' as const, value, source: 'db', updatedAt: new Date() }),
     },
     importTranscripts: async () => ({ scanned: 0, enqueued: 0, failed: 0, spoolFailed: 0, stopped: 'empty' }) as never,
     prompts,

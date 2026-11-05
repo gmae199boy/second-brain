@@ -159,7 +159,7 @@ async function verify(rootArg) {
     const query = sql => execFileSync('docker', [...args, sql], { encoding: 'utf8' }).trim();
     query('insert into testext.checks values (43, now())');
     const preserved = () => ({ tree: treeHash(join(home, 'extensions/testext')),
-      setting: query("select value from brain.settings where key='testext.limit'"),
+      setting: query("select value from brain.settings where key='testext.limit' and (user_id is null or user_id=(select id from brain.users where is_self=1)) order by user_id nulls last limit 1"),
       row: query('select id, checked_at from testext.checks where id=43'),
       schedules: query("select count(*) || '|' || coalesce(string_agg(id::text, ',' order by id::text), '') from brain.schedules") });
     const stateBefore = preserved();
@@ -216,12 +216,15 @@ function upgrade(rootArg) {
   const compose = ['compose', '--env-file', join(home, '.env'), '-f', join(home, 'postgres/compose.yaml'), 'exec', '-T', 'postgres', 'psql', '-U', 'postgres', '-d', database, '-tAc'];
   const sql = query => execFileSync('docker', [...compose, query], { encoding: 'utf8' }).trim();
   sql('insert into testext.checks values (42, now())');
+  const setting = () => sql("select exists(select 1 from information_schema.columns where table_schema='brain' and table_name='settings' and column_name='user_id')") === 't'
+    ? sql("select value from brain.settings where key='testext.limit' and (user_id is null or user_id=(select id from brain.users where is_self=1)) order by user_id nulls last limit 1")
+    : sql("select value from brain.settings where key='testext.limit'");
   const snapshot = () => ({ status: cli(), config: readFileSync(join(home, 'config.toml'), 'utf8'),
     manifest: createHash('sha256').update(readFileSync(join(home, 'extensions/testext/manifest.json'))).digest('hex'),
     ddl: createHash('sha256').update(readFileSync(join(home, 'extensions/testext/migrations/0001_testext.sql'))).digest('hex'),
     tree: treeHash(join(home, 'extensions/testext')),
     tokenstore: createHash('sha256').update(readFileSync(join(home, 'extensions/testext/tokenstore/ready'))).digest('hex'),
-    setting: sql("select value from brain.settings where key='testext.limit'"),
+    setting: setting(),
     counts: sql("select (select count(*) from testext.checks where id=42), (select count(*) from brain.schedules), (select count(*) from brain.schema_migrations where owner='testext')") });
   const before = snapshot();
   if (before.setting !== '42' || before.counts !== '1|1|1') throw new Error('갱신 전 시험 데이터가 예상과 다릅니다.');

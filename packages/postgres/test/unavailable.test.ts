@@ -94,8 +94,8 @@ const calls = {
   listScheduleSuccesses: s => s.listScheduleSuccesses({ scheduleId: id }),
   listDueSchedules: (s) => s.listDueSchedules({ now, limit: 1 }),
   fireSchedule: (s) => s.fireSchedule({ scheduleId: id, expectedNextRunAt: now, nextRunAt: null, work: sampleWorkInput(), now }),
-  getSettings: (s) => s.getSettings({ keys: ['timezone'] }),
-  getSetting: (s) => s.getSetting({ key: 'timezone' }),
+  getSettings: (s) => s.getSettings({ userId: null, keys: ['timezone'] }),
+  getSetting: (s) => s.getSetting({ userId: null, key: 'timezone' }),
   readConversationSnapshot: s => s.readConversationSnapshot(id),
   commitConversationChunks: s => s.commitConversationChunks({ sessionId: id, workId: id, claimedBy: id, now, fingerprint: '', chunks: [] }),
   searchConversationChunks: s => s.searchConversationChunks({ pattern: '%x%' }),
@@ -106,7 +106,7 @@ const calls = {
   insertChannelLegacy: s => s.insertChannelLegacy({type:'notification',id,conversationId:id,source:'test',dataset:'data',originalTable:'notifications',originalKey:'1',importBatch:'batch',localDate:'2026-01-01',event:'event',detail:'',at:now}),
   readChannelLegacy: s => s.readChannelLegacy({type:'notification',dataset:'data',originalTable:'notifications',originalKey:'1'}),
   ensureChannel: s => s.ensureChannel({id,kind:'telegram',botRef:'bot'}),
-  ensureChannelConversation: s => s.ensureChannelConversation({id,channelId:id,externalRef:'chat',threadRef:null}),
+  ensureChannelConversation: s => s.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a',id,channelId:id,externalRef:'chat',threadRef:null}),
   createChannelRequest: s => s.createChannelRequest({id,conversationId:id,producer:'test',producerResultId:'result',purpose:'notice',revision:null,text:'text',createdAt:now}),
   readChannelRequest: s => s.readChannelRequest(id),
   listUnhandedChannelRequests: s => s.listUnhandedChannelRequests(),
@@ -116,7 +116,8 @@ const calls = {
   listChannelItemResults: s => s.listChannelItemResults(id),
   recordChannelItemResult: s => s.recordChannelItemResult({requestId:id,workItemId:id,attemptToken:id,index:0,now,result:{outcome:'sent',externalMessageId:null}}),
   finishChannelAttempt: s => s.finishChannelAttempt({requestId:id,workItemId:id,attemptToken:id,now,externalMessageId:'1'}),
-  setSetting: (s) => s.setSetting({ key: 'timezone', value: 'UTC', updatedAt: now }),
+  insertSetting: (s) => s.insertSetting({ userId: null, key: 'timezone', value: 'UTC', updatedAt: now }),
+  setSetting: (s) => s.setSetting({ userId: null, key: 'timezone', value: 'UTC', updatedAt: now }),
 } satisfies Record<Exclude<keyof PostgresStore, 'close' | 'imports'>, (store: PostgresStore) => Promise<unknown>>;
 
 it.each(['refused', 'terminated', 'missing-schema', 'missing-database', 'missing-role', 'authentication'] as const)('every store verb answers DB_UNAVAILABLE when %s', async kind => {
@@ -163,7 +164,7 @@ it.each(['refused', 'terminated', 'missing-schema', 'missing-database', 'missing
 
 it.each([
   ['sessions', (store: PostgresStore) => store.findSession(sampleSessionKey)],
-  ['settings', (store: PostgresStore) => store.getSetting({ key: 'timezone' })],
+  ['settings', (store: PostgresStore) => store.getSetting({ userId: null, key: 'timezone' })],
   ['schema_migrations', (store: PostgresStore) => store.readSchemaVersions()],
   ['work_items', (store: PostgresStore) => store.checkHealth()],
 ] as const)('answers DB_UNAVAILABLE when the brain.%s table is absent', async (table, invoke) => {

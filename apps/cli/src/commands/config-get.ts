@@ -17,7 +17,7 @@ export const configGetCommand: CommandSpec = {
   async runSettings(context) {
     const result = await context.brain.config.get({ key: context.args[0] ?? '' });
     if (!result.ok) return result;
-    return { ok: true, data: { key: result.key, value: result.value, source: result.source, updated_at: result.updatedAt?.toISOString() ?? null }, text: [`${result.key} = ${result.value} (${result.source})`] };
+    return { ok: true, data: { key: result.key, scope: result.scope, value: result.value, source: result.source, updated_at: result.updatedAt?.toISOString() ?? null }, text: [`${result.key} = ${result.value} (${result.source})`] };
   },
   async run() { return { ok: false, code: 'CONFIG_INVALID', message: '사용자 설정은 PostgreSQL 저장소에 둡니다', exit: 2 }; },
 };

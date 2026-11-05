@@ -623,7 +623,7 @@ export function createIngestBrain(dependencies: IngestSessionDependencies): Inge
 
 export type SettingsBrain = { config: {
   get(input: { key: string }): Promise<import('./settings/index.js').SettingResult>;
-  set(input: { key: string; value: string }): Promise<import('./settings/index.js').SettingResult>;
+  set(input: { key: string; value: string; scope?: 'user' | 'global' }): Promise<import('./settings/index.js').SettingResult>;
 } };
 export function createSettingsBrain(dependencies: import('./settings/index.js').SettingsDependencies): SettingsBrain {
   // Validate registrations at assembly time, before any I/O.

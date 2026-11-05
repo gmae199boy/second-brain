@@ -13,7 +13,7 @@ function harness() {
     orbstack: vi.fn(async () => { step('orbstack'); return { ok: true as const, detail: '실행 중입니다' }; }),
     legacyFileExists: vi.fn(async () => false),
     postgres: vi.fn(async () => { step('postgres'); return { ok: true as const, report: { project: 'second-brain-test', volume: 'test', port: 54329, schema_version: 1, applied: ['0001_initial.sql'], owner_created: true, owner_name: 'brain-owner', compose_started: true } }; }),
-    settings: { get: vi.fn(async () => { step('timezone'); return { ok: true as const, key: 'timezone', value: 'Asia/Seoul', source: 'default' as const, updatedAt: null }; }), set: vi.fn(async (_h, _s, _e, value) => ({ ok: true as const, key: 'timezone', value, source: 'db' as const, updatedAt: new Date() })) },
+    settings: { get: vi.fn(async () => { step('timezone'); return { ok: true as const, key: 'timezone', scope: 'user' as const, value: 'Asia/Seoul', source: 'default' as const, updatedAt: null }; }), set: vi.fn(async (_h, _s, _e, value) => ({ ok: true as const, key: 'timezone', scope: 'user' as const, value, source: 'db' as const, updatedAt: new Date() })) },
     files: { prepare: vi.fn(async path => { step('files'); return { ok: true as const, path, created: true }; }) },
     importTranscripts: vi.fn(async () => { step('import'); return { scanned: 0, enqueued: 0, spooled: 0, spoolFailed: 0, imported: 0, succeeded: 0, failed: 0, claimed: 0, processed: 0, stopped: 'empty' } as never; }),
     postgresDoctor: vi.fn(async () => { step('doctor'); return { checks: [{ id: 'db', status: 'ok' as const, detail: '접속했습니다' }], summary: { passed: 1, failed: 0, skipped: 0, warned: 0 } }; }),
@@ -71,7 +71,7 @@ describe('PG installer flow', () => {
     const kit = harness();
     kit.deps.settings!.get = vi.fn(async () => operation === 'get'
       ? { ok: false as const, code: 'DB_LOCKED' as const, message: '잠금 초과' }
-      : { ok: true as const, key: 'timezone', value: 'Asia/Seoul', source: 'default' as const, updatedAt: null });
+      : { ok: true as const, key: 'timezone', scope: 'user' as const, value: 'Asia/Seoul', source: 'default' as const, updatedAt: null });
     kit.deps.settings!.set = vi.fn(async () => ({ ok: false as const, code: 'DB_UNAVAILABLE' as const, message: '연결 실패' }));
 
     const result = await kit.run();

@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { tempHomes } from './temp-home.js';
 import { pgHome } from './pg-home.js';
 import { withoutHarnessFolders } from './environment.js';
-export async function extHome(options: { realGarminAuth?: boolean } = {}) {
+export async function extHome(options: { realGarminAuth?: boolean; self?: boolean } = {}) {
   const homes = tempHomes(), home = await homes.create('brain-ext-');
-  const db = await pgHome(home);
+  const db = await pgHome(home, options.self ?? true);
   // Production setup creates the database with brain_owner ownership. The
   // shared test helper precreates it as postgres, so reproduce that ownership.
   const databaseName = new URL(db.url).pathname.slice(1);

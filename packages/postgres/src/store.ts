@@ -36,7 +36,7 @@ export function postgresStore(options: PostgresStoreOptions): PostgresStore {
         const client = await pool.connect();
         try {
           await client.query('begin');
-          await client.query("insert into brain.settings(key,value,updated_at) values ('doctor.writable', 'probe', '2000-01-01T00:00:00Z') on conflict(key) do update set value=excluded.value");
+          await client.query("insert into brain.settings(key,value,updated_at) values ('doctor.writable', 'probe', '2000-01-01T00:00:00Z') on conflict(user_id,key) do update set value=excluded.value");
           writable = { id: writableProbeId, ok: true, detail: '쓰기 확인 뒤 되돌렸습니다' };
         } catch (error) {
           const code = (error as { code?: string }).code;
