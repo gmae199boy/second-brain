@@ -5,13 +5,13 @@ import time
 import os
 from datetime import time as clock_time
 from pathlib import Path
-from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from garmin_pipeline import collect, config, dates, errors, garmin, normalize, ports, store
 from collect_credentials import CredentialEvidenceError, _evidence, verify_credentials
 from collect_refresh import approve, begin, recover
 from scheduled_date import scheduled_date
+from supervised_input import decode_envelope
 
 
 class InvalidCollectInput(Exception):
@@ -22,35 +22,10 @@ class ScheduledCollectIncomplete(Exception):
     pass
 
 
-def _uuid(value):
-    parsed = UUID(value)
-    if str(parsed) != value:
-        raise ValueError('non-canonical UUID')
-    return parsed
-
-
 def envelope(env):
     try:
-        if env['BRAIN_ABI_VERSION'] != '1' or env['BRAIN_WORK_KIND'] != 'garmin.collect' or env['BRAIN_TARGET_KIND'] != 'extension':
-            raise ValueError('wrong work')
-        if not env['BRAIN_DATABASE_URL'].startswith(('postgres://', 'postgresql://')):
-            raise ValueError('invalid database')
-        generation = env['BRAIN_RUN_GENERATION']
-        if not generation.isascii() or not generation.isdigit() or generation.startswith('0') or len(generation) > 9:
-            raise ValueError('invalid generation')
-        user = _uuid(env['BRAIN_USER_ID'])
-        account = store.AccountContext(user, _uuid(env['BRAIN_TARGET_ID']), _uuid(env['BRAIN_WORK_ID']), _uuid(env['BRAIN_ATTEMPT_TOKEN']))
-        snapshot = json.loads(env['BRAIN_SETTINGS_SNAPSHOT'])
-        if not isinstance(snapshot, dict) or set(snapshot) != {'version', 'extension', 'user_id', 'values'} or type(snapshot['version']) is not int or snapshot['version'] != 1 or snapshot['extension'] != 'garmin' or snapshot['user_id'] != str(user):
-            raise ValueError('invalid snapshot')
-        values = snapshot['values']
-        from report_runtime import validate_settings
-        if not isinstance(values, dict):
-            raise ValueError('invalid settings')
-        validate_settings(values)
-        allowed = {'garmin.timezone', 'garmin.tokenstore', 'garmin.capture_manifest', 'garmin.legacy_conversation_id'}
-        if any(not isinstance(values[k], str) for k in allowed & values.keys()):
-            raise ValueError('invalid settings')
+        account, values = decode_envelope(env, work_kinds=('garmin.collect',),
+                                          reject_duplicate_keys=False)
         timezone = values['garmin.timezone']
         ZoneInfo(timezone)
         tokenstore = Path(values['garmin.tokenstore'])
