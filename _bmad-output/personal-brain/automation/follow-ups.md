@@ -165,3 +165,18 @@
 | 통합 검증 |Garmin 전체 회귀 gate |사용자 새 규칙대로21.6 뒤21.7 전 pending. 이번 시험 결과로 gate를 완료 처리하지 않음 |
 
 티켓·baseline Orca 자원과 로컬 실행 증거는 보존한다. 전용 brain-206-test와 /tmp 기준 export는 남아 있다는 보고를 기록하며 자동 제거하지 않는다.
+
+## 20.1 — built / 최종 시험 실행은21.8 이관
+
+근거: [확장 읽기 명령 계획](../tickets/epic-extension-platform/tickets/story-tracer-testext-brain-ext-testext-cmd-mcp-plan.md)의 Implementation Notes·Review Triage Log·Auto Run Result. 독립4렌즈×5회, 마지막 발견0·후속 권고false·deferred없음. 최종 build·typecheck 종료0이며 최종 코드의 시험은 사용자 지시로 미실행이다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 필수 실행 인계 |CLI/MCP/guide·출력 가림/재검증·프로세스 정리·PG 취소·schema/ref/deep/time-control 시험 |21.8 전용DB 실행 목록에 포함. 과거 round2~4 실행을 최종 round6 통과로 소급하지 않음 |
+| 채택 가정 |명령은 registry·활성 상태·설치manifest에서 동적으로 도출 |별도 명령 영속 테이블 없음. MCP kebab→underscore는AD-37 준수 |
+| 운영 경계 |disable은 실행 중 읽기 명령의 확장 잠금 해제를 기다릴 수 있음 |현재 계약 기록. 새 timeout/운영 정책 필요 시 별도 판단 |
+| 범위 경계 |제거는 registry/manifest 부재 상태로 판정 |새 uninstall 제품 기능을 추가하지 않음 |
+| 시험 의존 |Python 공유 fixture가 배포 runtime schema adapter를 사용 |21.8에서 배포 fixture·정상 인접 schema·거부 사례 실행 확인 |
+| 실행 이력 |round4 실행 중 정책 메시지가 턴 종료 후 도착 |당시 실행 종료 사실 보존. 수신 뒤 round5/6은 추가 시험 없음 |
+
+알려진 미해결 기능결함0 보고이며 통합 실행 검증은 아직 미완료다. 공용PG·운영 설치는 변경하지 않았다. 원문 리뷰20개·triage·영수증은 보존 워크트리와 중앙 로컬 archive에 있다.
