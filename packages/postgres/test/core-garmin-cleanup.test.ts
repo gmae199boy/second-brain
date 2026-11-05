@@ -94,4 +94,3 @@ it('v30에서 공용 데이터와 권한을 보존하며 v31로 정리한다', a
   await expect(ext.query(request,[randomUUID(),name,'a'.repeat(64),work,randomUUID()])).rejects.toMatchObject({code:'BRS01'});
  } finally { await ext?.end();await store.close();await admin.query(`drop owned by "${role}"; drop role if exists "${role}"`).catch(()=>{});await admin.query(`drop owned by "${newRole}"; drop role if exists "${newRole}"`).catch(()=>{});await admin.end();await db.drop();await rm(dir,{recursive:true,force:true}); }
 });
-

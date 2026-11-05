@@ -148,3 +148,20 @@
 | 명세 보강 |epic19 일부 entry는 refine=true | 폐기 경로 전제는 착수 전 새 생산 경로 기준 재정제. 옛 문구만으로 시작하지 않음 |
 
 이전14.8·16.9 차단 및18.1·18.2 잔여 위험 기록은 과거 계약의 증거다. 새 설계의 수락조건 충족·실계정 gate 해제로 해석하지 않는다.
+
+## 20.6 — built
+
+근거: [옛 core Garmin 정리 계획](../tickets/epic-extension-platform/tickets/story-core-garmin-epic-16-plan.md)의 deferred·Review Triage Log·Auto Run Result. 4렌즈 독립 리뷰와 후속4렌즈 완료, 후속 권고 false. core0031·Garmin0013 forward migration만 추가했으며 과거 migration은 보존했다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 보류 / medium 미확인 | manifest에서 빠진 옛 Garmin 예약의 설치 갱신 시 정리 |20.3 예약 재설계와21.7 설치본 전환에서 확인. 운영 예약은 이번 티켓에서 변경하지 않음 |
+| 운영 조치 |설치본schema27에서0031·0013 적용·보존 검증 |21.7에서 수행. 합성 v30→31·v12→13 건수/해시·권한 시험은 통과 |
+| 채택 판단 |옛 health_analysis work 행은 보존 |미등록 kind는 claim하지 않음. 공용 work 기록 삭제 금지 유지 |
+| 채택 판단 |확장 verify는 core FileStore 바이트·legacy 채널 내용까지 대조하지 않음 |core 검증 runtime 제거·확장 권한 경계에 따름. 공용 보존은 core 시험, 새 전체 반입 검증은21.2 |
+| 호환 위험 |importer v3가 v2 checkpoint를 거부 |운영 checkpoint 없음 전제,21.2 새 반입 경로에서 확인 |
+| 시험 환경 |공유PG에 다른 작업의 brain_ext_garmin role 잔존 |삭제하지 않음. 후속 티켓·통합 gate는 소유가 명확한 격리PG 사용 |
+| 시험 결과 |병렬 전체 시험은 매번 다른 연결/시간초과 실패, 단독 통과 |기준 export에서도 재현. 단일worker 전체3897통과/1skip·Python32통과. 병렬 전체 성공으로 표현하지 않음 |
+| 통합 검증 |Garmin 전체 회귀 gate |사용자 새 규칙대로21.6 뒤21.7 전 pending. 이번 시험 결과로 gate를 완료 처리하지 않음 |
+
+티켓·baseline Orca 자원과 로컬 실행 증거는 보존한다. 전용 brain-206-test와 /tmp 기준 export는 남아 있다는 보고를 기록하며 자동 제거하지 않는다.
