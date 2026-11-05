@@ -44,7 +44,8 @@ export async function provisionExtension(databaseUrl: string, name: string, pass
             or has_any_column_privilege($1,c.oid,'SELECT,INSERT,UPDATE,REFERENCES') end)) as excess`, [role])).rows[0].excess;
       const functions = (await client.query(`select exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
         where n.nspname='brain' and p.prorettype <> 'pg_catalog.trigger'::regtype and p.oid <> 'brain.attempt_is_current(uuid,uuid)'::regprocedure and p.oid is distinct from to_regprocedure('brain.original_utf8(text)') and p.oid is distinct from to_regprocedure('brain.extension_predecessor_results(uuid,uuid)')
-        and has_function_privilege($1,p.oid,'EXECUTE')) as excess`, [role])).rows[0].excess;
+        and p.oid is distinct from to_regprocedure('brain.extension_channel_publish(uuid,uuid,uuid,text,text,text,text,uuid,jsonb)')
+        and p.oid is distinct from to_regprocedure('brain.extension_channel_conversation_valid(uuid,uuid,uuid)') and has_function_privilege($1,p.oid,'EXECUTE')) as excess`, [role])).rows[0].excess;
       const schemas = (await client.query(`select exists (select 1 from pg_namespace n where n.nspname <> $2
         and n.nspname not like 'pg_%' and n.nspname <> 'information_schema'
         and has_schema_privilege($1,n.oid,'CREATE')) as excess`, [role, name])).rows[0].excess;
@@ -79,6 +80,8 @@ export async function provisionExtension(databaseUrl: string, name: string, pass
     if ((await client.query("select exists(select 1 from information_schema.columns where table_schema='brain' and table_name='channel_legacy_notifications' and column_name='local_date_raw') as present")).rows[0].present) await client.query(`
       grant insert (local_date_raw,local_date_encoding,event_raw,event_encoding,detail_raw,detail_encoding) on brain.channel_legacy_notifications to "${role}"`);
     if ((await client.query("select exists(select 1 from information_schema.columns where table_schema='brain' and table_name='channel_legacy_deliveries' and column_name='original_id_raw') as present")).rows[0].present) await client.query(`grant insert (original_id_raw,original_id_encoding,local_date_raw,local_date_encoding,kind_raw,kind_encoding,event_raw,event_encoding,reason_raw,reason_encoding) on brain.channel_legacy_deliveries to "${role}"`);
+    if ((await client.query("select to_regprocedure('brain.extension_channel_publish(uuid,uuid,uuid,text,text,text,text,uuid,jsonb)') as fn")).rows[0].fn) await client.query(`grant execute on function brain.extension_channel_publish(uuid,uuid,uuid,text,text,text,text,uuid,jsonb) to "${role}"`);
+    if ((await client.query("select to_regprocedure('brain.extension_channel_conversation_valid(uuid,uuid,uuid)') as fn")).rows[0].fn) await client.query(`grant execute on function brain.extension_channel_conversation_valid(uuid,uuid,uuid) to "${role}"`);
     if ((await client.query("select to_regprocedure('brain.extension_predecessor_results(uuid,uuid)') as fn")).rows[0].fn) await client.query(`grant execute on function brain.extension_predecessor_results(uuid,uuid) to "${role}"`);
     if ((await client.query("select to_regprocedure('brain.original_utf8(text)') as fn")).rows[0].fn) await client.query(`grant execute on function brain.original_utf8(text) to "${role}"`);
     if ((await client.query("select exists(select 1 from information_schema.columns where table_schema='brain' and table_name='channel_legacy_notifications' and column_name='dataset_label') as present")).rows[0].present) await client.query(`

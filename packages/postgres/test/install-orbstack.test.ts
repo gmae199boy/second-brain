@@ -110,7 +110,7 @@ it.each(['journal', 'gate', 'incompatible', 'identity', 'legacy'] as const)('ins
     if (kind === 'gate') await kit.db.query("insert into brain.extension_quiesce values ('testext','00000000-0000-7000-8000-000000000090',now())");
     if (kind === 'incompatible') { const path = join(kit.dir, 'manifest.json'); const manifest = JSON.parse(await readFile(path, 'utf8')); manifest.core_compat = { min: '1.0.0', max_exclusive: '2.0.0' }; await writeFile(path, JSON.stringify(manifest)); }
     if (kind === 'identity') await rm(join(kit.home, 'installed.json'));
-    if (kind === 'legacy') await kit.db.query("drop table brain.extension_quiesce; delete from brain.schema_migrations where owner='core' and version=35");
+    if (kind === 'legacy') await kit.db.query("drop table brain.extension_quiesce; delete from brain.schema_migrations where owner='core' and version>=35");
     const gates = kind === 'legacy' ? [] : await kit.db.rows('select * from brain.extension_quiesce');
     const result = await kit.install(); expect(result).toMatchObject({ ok: false, code: 'DB_LOCKED', message: expect.stringContaining(kind === 'legacy' ? '옛 schema' : '복구') });
     expect(await kit.db.rows("select * from brain.schema_migrations where owner='testext'")).toEqual(ledger);
@@ -403,7 +403,7 @@ it('installPostgres creates self before migrating a v31 database with settings a
   await db.query("insert into brain.settings(key,value,updated_at) values ('timezone','UTC','2026-01-01T00:00:00Z')");
   await db.query(`insert into brain.channels(id,kind,bot_ref) values ('${channel}','telegram','synthetic'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref) values ('${conversation}','${channel}','chat','thread')`);
   const result = await installPostgres({ home: kit.home, urlEnv: 'BRAIN_DATABASE_URL', env: kit.env, clock, runner: kit.runner, secrets: { adminUrl: db.url, appPassword: 'brain-test-app' }, databaseName: new URL(db.url).pathname.slice(1) });
-  expect(result).toMatchObject({ ok: true, report: { schema_version: 35, owner_created: true } });
+  expect(result).toMatchObject({ ok: true, report: { schema_version: 38, owner_created: true } });
   const self = (await db.rows('select id from brain.users where is_self=1'))[0]!.id;
   expect(await db.rows("select user_id,value,updated_at from brain.settings where key='timezone'")).toEqual([{ user_id: self, value: 'UTC', updated_at: new Date('2026-01-01T00:00:00Z') }]);
   expect(await db.rows(`select user_id,external_ref,thread_ref from brain.channel_conversations where id='${conversation}'`)).toEqual([{ user_id: self, external_ref: 'chat', thread_ref: 'thread' }]);
@@ -425,7 +425,7 @@ it('retries setup after a v32 migration failure without replacing self or old da
   const oldSetting = await db.rows("select key,value,updated_at from brain.settings where key='timezone'");
   const oldConversation = await db.rows(`select id,channel_id,external_ref,thread_ref from brain.channel_conversations where id='${conversation}'`);
   await db.query('alter table brain.settings drop column user_id');
-  expect(await installPostgres(options)).toMatchObject({ ok: true, report: { schema_version: 35, owner_created: false } });
+  expect(await installPostgres(options)).toMatchObject({ ok: true, report: { schema_version: 38, owner_created: false } });
   expect(await db.rows('select id from brain.users where is_self=1')).toEqual([{ id: self }]);
   expect(await db.rows("select key,value,updated_at from brain.settings where key='timezone'")).toEqual(oldSetting);
   expect(await db.rows(`select id,channel_id,external_ref,thread_ref from brain.channel_conversations where id='${conversation}'`)).toEqual(oldConversation);

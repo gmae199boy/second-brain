@@ -37,7 +37,7 @@ it('32→33은 성공과 미완료 날짜를 회차로 옮기고 수집 데이�
       return rows;
     };
     const before = await snapshot();
-    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 32, to: 35 });
+    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 32, to: 38 });
     expect(await snapshot()).toEqual(before);
     expect((await client.query('select trigger_kind,cron_expr,time_zone,time_zone_source,extension,schedule_key,user_id,enabled from brain.schedules where id=$1', [schedule])).rows[0]).toEqual({ trigger_kind: 'cron', cron_expr: '5 9 * * *', time_zone: 'Asia/Seoul', time_zone_source: 'user', extension: 'testext', schedule_key: 'testext.sync:account:a', user_id: user, enabled: true });
     const rows = (await client.query("select to_char(occurrence_at at time zone 'UTC','YYYY-MM-DD HH24:MI') as at,status,work_id,user_id,time_zone from brain.schedule_occurrences order by occurrence_at")).rows;
@@ -81,7 +81,7 @@ it('DST gap은 전환 순간, fold는 첫 instant로 이행한다', async () => 
       await kit.client.query("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class) values ($1,'testext.sync','account',$2,now(),now(),'core')", [id, target]);
       await kit.client.query("insert into brain.schedule_successes values ($1,$2,'America/New_York',$3,now())", [schedule, date, id]);
     }
-    expect(await runMigrations({ databaseUrl: kit.db.url, clock })).toMatchObject({ ok: true, from: 32, to: 35 });
+    expect(await runMigrations({ databaseUrl: kit.db.url, clock })).toMatchObject({ ok: true, from: 32, to: 38 });
     const rows = (await kit.client.query('select schedule_id,occurrence_at,status from brain.schedule_occurrences order by occurrence_at')).rows;
     expect(rows).toEqual([{ schedule_id: gap, occurrence_at: new Date('2026-03-08T07:00:00Z'), status: 'done' }, { schedule_id: fold, occurrence_at: new Date('2026-11-01T05:30:00Z'), status: 'done' }]);
   } finally { await kit.close(); }
@@ -146,11 +146,131 @@ it('같은 확장 대상의 daily·interval·once와 완료 once fallback을 이
   const user=randomUUID(),daily=randomUUID(),interval=randomUUID(),onceLast=randomUUID(),onceCreated=randomUUID();
   await kit.client.query("insert into brain.users(id,name,is_self,created_at) values ($1,'synthetic',1,now())",[user]);
   await kit.client.query("insert into brain.schedules(id,kind,target_kind,target_id,local_time,time_zone,interval_seconds,next_run_at,last_run_at,created_at) values ($1,'testext.sync','account','same','09:00','UTC',null,'2026-01-02T09:00Z',null,'2026-01-01T00:00Z'),($2,'testext.sync','account','same',null,null,60,'2026-01-02T09:00Z',null,'2026-01-01T00:00Z'),($3,'testext.sync','account','same',null,null,null,null,'2026-01-02T08:00Z','2026-01-01T00:00Z'),($4,'testext.sync','account','same',null,null,null,null,null,'2026-01-01T00:00Z')",[daily,interval,onceLast,onceCreated]);
-  expect(await runMigrations({databaseUrl:kit.db.url,clock})).toMatchObject({ok:true,from:32,to:35});
+  expect(await runMigrations({databaseUrl:kit.db.url,clock})).toMatchObject({ok:true,from:32,to:38});
   const rows=(await kit.client.query('select id,trigger_kind,schedule_key,run_at,next_run_at from brain.schedules')).rows;
   expect(rows.find(r=>r.id===daily)).toMatchObject({trigger_kind:'cron',schedule_key:'testext.sync:account:same'});
   expect(rows.find(r=>r.id===interval)).toMatchObject({trigger_kind:'interval',schedule_key:`testext.sync:account:same:${interval}`});
   expect(rows.find(r=>r.id===onceLast)).toMatchObject({trigger_kind:'once',schedule_key:`testext.sync:account:same:${onceLast}`,run_at:new Date('2026-01-02T08:00:00Z'),next_run_at:null});
   expect(rows.find(r=>r.id===onceCreated)).toMatchObject({trigger_kind:'once',schedule_key:`testext.sync:account:same:${onceCreated}`,run_at:new Date('2026-01-01T00:00:00Z'),next_run_at:null});
  }finally{await kit.close();}
+});
+
+it('freezes the selected user target at firing and preserves a due occurrence until configured', async () => {
+  const db = await database();
+  const store = postgresStore({databaseUrl:db.appUrl});
+  const user=randomUUID(), other=randomUUID(), scheduleId=randomUUID();
+  const due=new Date('2026-10-28T01:00:00Z'), next=new Date('2026-10-29T01:00:00Z');
+  const fire = (id:string, at:Date, following:Date) => store.fireSchedule({scheduleId,expectedTriggerKind:'cron',expectedTimeZone:'UTC',expectedCronExpr:'0 1 * * *',expectedNextRunAt:at,nextRunAt:following,now:at,occurrences:[{occurrenceAt:at,status:'pending'}],work:{id,kind:'testext.sync',targetKind:'account',targetId:'unselected',createdAt:at,nextAttemptAt:at}});
+  try {
+    await db.query(`insert into brain.users(id,name,is_self,created_at) values ('${user}','synthetic',1,now()),('${other}','other',0,now())`);
+    const inserted=await store.addSchedule({id:scheduleId,kind:'testext.sync',targetKind:'account',targetId:'unselected',targetSetting:'testext.account',triggerKind:'cron',cronExpr:'0 1 * * *',runAt:null,timeZone:'UTC',timeZoneSource:'fixed',intervalSeconds:null,extension:'testext',scheduleKey:'daily',userId:user,enabled:true,removedAt:null,nextRunAt:due,lastRunAt:null,createdAt:due});
+    expect(inserted).toMatchObject({ok:true,schedule:{targetSetting:'testext.account'}});
+    await store.setSetting({userId:other,key:'testext.account',value:'other-target',updatedAt:due});
+    expect(await fire(randomUUID(),due,next)).toMatchObject({ok:true,fired:false});
+    expect((await store.readSchedule({id:scheduleId}))).toMatchObject({ok:true,schedule:{nextRunAt:due}});
+    expect((await store.listOccurrences({scheduleId}))).toMatchObject({ok:true,occurrences:[]});
+    await store.setSetting({userId:user,key:'testext.account',value:'   ',updatedAt:due});
+    expect(await fire(randomUUID(),due,next)).toMatchObject({ok:true,fired:false});
+    await store.setSetting({userId:user,key:'testext.account',value:'account-a',updatedAt:due});
+    const first=randomUUID(); expect(await fire(first,due,next)).toMatchObject({ok:true,fired:true,created:true});
+    await store.setSetting({userId:user,key:'testext.account',value:'account-b',updatedAt:due});
+    const later=new Date('2026-10-30T01:00:00Z'), second=randomUUID();
+    expect(await fire(second,next,later)).toMatchObject({ok:true,fired:true,created:true});
+    expect(await db.rows(`select target_id from brain.work_items where id in ('${first}','${second}') order by target_id`)).toEqual([{target_id:'account-a'},{target_id:'account-b'}]);
+    expect((await store.listOccurrences({scheduleId}))).toMatchObject({ok:true,occurrences:[{workId:first},{workId:second}]});
+  } finally { await store.close(); await db.drop(); }
+});
+
+it('gates dependent occurrences by user, target and local date, recovers late success and skips stale pending', async () => {
+  const db=await database(), store=postgresStore({databaseUrl:db.appUrl});
+  const user=randomUUID(), other=randomUUID(), parent=randomUUID(), child=randomUUID(), unrelated=randomUUID();
+  const at=new Date('2026-10-28T02:00:00Z'), next=new Date('2026-10-29T02:00:00Z'), next2=new Date('2026-10-30T02:00:00Z');
+  try {
+    await db.query(`insert into brain.users(id,name,is_self,created_at) values ('${user}','self',1,now()),('${other}','other',0,now());
+      insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ('testext','1',now(),true,now());
+      insert into brain.extension_work_kinds(extension_name,kind) values ('testext','testext.collect'),('testext','testext.report'),('testext','testext.other')`);
+    const make=async(id:string,kind:string,key:string,afterSchedule?:string)=>store.addSchedule({id,kind,targetKind:'account',targetId:'a',...(afterSchedule?{afterSchedule}:{}),triggerKind:'cron',cronExpr:'0 11 * * *',runAt:null,timeZone:'Asia/Seoul',timeZoneSource:'fixed',intervalSeconds:null,extension:'testext',scheduleKey:key,userId:user,enabled:true,removedAt:null,nextRunAt:at,lastRunAt:null,createdAt:at});
+    expect(await make(parent,'testext.collect','collect')).toMatchObject({ok:true});
+    expect(await make(child,'testext.report','report','collect')).toMatchObject({ok:true});
+    const fire=async(scheduleId:string,kind:string,atDate:Date,following:Date,id:string)=>store.fireSchedule({scheduleId,expectedTriggerKind:'cron',expectedTimeZone:'Asia/Seoul',expectedCronExpr:'0 11 * * *',expectedNextRunAt:atDate,nextRunAt:following,now:atDate,occurrences:[{occurrenceAt:atDate,status:'pending'}],work:{id,kind,targetKind:'account',targetId:'a',createdAt:atDate,nextAttemptAt:atDate}});
+    const childWork=randomUUID();expect(await fire(child,'testext.report',at,next,childWork)).toMatchObject({ok:true,created:true});
+    await store.addWork({id:unrelated,kind:'testext.other',targetKind:'account',targetId:'a',createdAt:at,nextAttemptAt:at});
+    const claim=async(kinds:string[])=>store.claimSupervisedWork({kinds,now:next,claimedBy:'worker',attemptToken:randomUUID()});
+    expect(await claim(['testext.report','testext.other'])).toMatchObject({ok:true,item:{id:unrelated}});
+    expect(await claim(['testext.report'])).toMatchObject({ok:true,item:null});
+    const wrongWork=randomUUID();
+    await db.query(`insert into brain.work_items(id,kind,execution_class,target_kind,target_id,created_at,next_attempt_at,completed_at,outcome) values ('${wrongWork}','testext.collect','supervised','account','other',now(),now(),now(),'succeeded');
+      insert into brain.schedule_occurrences(schedule_id,occurrence_at,time_zone,status,work_id,user_id,recorded_at) values ('${parent}','2026-10-28T02:00Z','Asia/Seoul','done','${wrongWork}','${user}',now())`);
+    expect(await claim(['testext.report'])).toMatchObject({ok:true,item:null});
+    await fire(child,'testext.report',next,next2,randomUUID());
+    expect(await store.listOccurrences({scheduleId:child})).toMatchObject({ok:true,occurrences:[{status:'skipped'},{status:'pending'}]});
+    const foreignSchedule=randomUUID(), foreignWork=randomUUID();
+    await db.query(`insert into brain.schedules(id,kind,target_kind,target_id,trigger_kind,cron_expr,time_zone,time_zone_source,extension,schedule_key,user_id,created_at) values ('${foreignSchedule}','testext.collect','account','a','cron','0 11 * * *','Asia/Seoul','fixed','testext','collect','${other}',now());
+      insert into brain.work_items(id,kind,execution_class,target_kind,target_id,created_at,next_attempt_at,completed_at,outcome) values ('${foreignWork}','testext.collect','supervised','account','a',now(),now(),now(),'succeeded');
+      insert into brain.schedule_occurrences(schedule_id,occurrence_at,time_zone,status,work_id,user_id,recorded_at) values ('${foreignSchedule}','2026-10-29T02:00Z','Asia/Seoul','done','${foreignWork}','${other}',now())`);
+    expect(await claim(['testext.report'])).toMatchObject({ok:true,item:null});
+    const laterWork=randomUUID();await fire(parent,'testext.collect',next,next2,laterWork);
+    await db.query(`update brain.schedule_occurrences set status='failed' where schedule_id='${parent}' and occurrence_at='2026-10-29T02:00Z'`);
+    expect(await claim(['testext.report'])).toMatchObject({ok:true,item:null});
+    await db.query(`update brain.work_items set completed_at=now(),outcome='cancelled' where id='${laterWork}'`);
+    expect(await claim(['testext.report'])).toMatchObject({ok:true,item:null});
+    await db.query(`update brain.work_items set outcome='succeeded' where id='${laterWork}'; update brain.schedule_occurrences set status='done' where schedule_id='${parent}' and occurrence_at='2026-10-29T02:00Z'`);
+    const restarted=postgresStore({databaseUrl:db.appUrl});
+    try {
+      const token=randomUUID(); const eligible=await restarted.claimSupervisedWork({kinds:['testext.report'],now:next,claimedBy:'restart',attemptToken:token});
+      expect(eligible).toMatchObject({ok:true,item:{id:childWork,scheduledOccurrences:[{scheduleId:child,occurrences:[next]}]}});
+      expect(await restarted.claimSupervisedWork({kinds:['testext.report'],now:next,claimedBy:'restart',attemptToken:randomUUID()})).toMatchObject({ok:true,item:null});
+      expect(await restarted.finishSupervisedWork({id:childWork,attemptToken:token,now:next,outcome:'succeeded'})).toMatchObject({ok:true,outcome:'done'});
+      const duplicate=new Date('2026-10-29T03:00:00Z');
+      await db.query(`update brain.schedules set next_run_at='2026-10-29T03:00Z' where id='${child}'`);
+      expect(await fire(child,'testext.report',duplicate,next2,randomUUID())).toMatchObject({ok:true,fired:true,created:false,covered:true});
+      expect((await store.listOccurrences({scheduleId:child}))).toMatchObject({ok:true,occurrences:[{status:'skipped'},{status:'done'},{status:'skipped'}]});
+    } finally {await restarted.close();}
+  } finally {await store.close();await db.drop();}
+});
+
+it('latest prerequisite coalesces accumulated pending days to one claimed occurrence', async () => {
+  const db=await database(), store=postgresStore({databaseUrl:db.appUrl});
+  const user=randomUUID(), scheduleId=randomUUID(), workId=randomUUID(), at=new Date('2026-10-28T02:00:00Z'), next=new Date('2026-10-29T02:00:00Z'), later=new Date('2026-10-30T02:00:00Z');
+  try {
+    await db.query(`insert into brain.users(id,name,is_self,created_at) values ('${user}','synthetic',1,now()); insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ('testext','1',now(),true,now()); insert into brain.extension_work_kinds(extension_name,kind,missed_policy) values ('testext','testext.collect','latest')`);
+    await store.addSchedule({id:scheduleId,kind:'testext.collect',targetKind:'account',targetId:'a',triggerKind:'cron',cronExpr:'0 11 * * *',runAt:null,timeZone:'Asia/Seoul',timeZoneSource:'fixed',intervalSeconds:null,extension:'testext',scheduleKey:'collect',userId:user,enabled:true,removedAt:null,nextRunAt:at,lastRunAt:null,createdAt:at});
+    const fire=(date:Date,following:Date,id:string)=>store.fireSchedule({scheduleId,expectedTriggerKind:'cron',expectedTimeZone:'Asia/Seoul',expectedCronExpr:'0 11 * * *',expectedNextRunAt:date,nextRunAt:following,now:date,occurrences:[{occurrenceAt:date,status:'pending'}],work:{id,kind:'testext.collect',targetKind:'account',targetId:'a',createdAt:date,nextAttemptAt:date}});
+    expect(await fire(at,next,workId)).toMatchObject({ok:true,created:true});
+    expect(await fire(next,later,randomUUID())).toMatchObject({ok:true,created:false});
+    expect(await store.listOccurrences({scheduleId})).toMatchObject({ok:true,occurrences:[{status:'skipped'},{status:'pending'}]});
+    const claimed=await store.claimSupervisedWork({kinds:['testext.collect'],now:next,claimedBy:'worker',attemptToken:randomUUID()});
+    expect(claimed).toMatchObject({ok:true,item:{id:workId,scheduledOccurrences:[{scheduleId,occurrences:[next]}]}});
+  } finally {await store.close();await db.drop();}
+});
+
+it('concurrent firing and completion serialize without deadlock and deduplicate the local day', async () => {
+  const db=await database(), store=postgresStore({databaseUrl:db.appUrl});
+  const user=randomUUID(), parent=randomUUID(), child=randomUUID(), prerequisite=randomUUID(), work=randomUUID(), token=randomUUID();
+  const at=new Date('2026-10-28T02:00:00Z'), duplicate=new Date('2026-10-28T03:00:00Z'), next=new Date('2026-10-29T02:00:00Z');
+  try {
+    await db.query(`insert into brain.users(id,name,is_self,created_at) values ('${user}','synthetic',1,now());
+      insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ('testext','1',now(),true,now());
+      insert into brain.extension_work_kinds(extension_name,kind) values ('testext','testext.collect'),('testext','testext.report')`);
+    const make=(id:string,kind:string,key:string,afterSchedule?:string)=>store.addSchedule({id,kind,targetKind:'account',targetId:'a',...(afterSchedule?{afterSchedule}:{}),triggerKind:'cron',cronExpr:'0 11 * * *',runAt:null,timeZone:'Asia/Seoul',timeZoneSource:'fixed',intervalSeconds:null,extension:'testext',scheduleKey:key,userId:user,enabled:true,removedAt:null,nextRunAt:at,lastRunAt:null,createdAt:at});
+    expect(await make(parent,'testext.collect','collect')).toMatchObject({ok:true});
+    expect(await make(child,'testext.report','report','collect')).toMatchObject({ok:true});
+    await db.query(`insert into brain.work_items(id,kind,execution_class,target_kind,target_id,created_at,next_attempt_at,completed_at,outcome) values ('${prerequisite}','testext.collect','supervised','account','a',now(),now(),now(),'succeeded');
+      insert into brain.schedule_occurrences(schedule_id,occurrence_at,time_zone,status,work_id,user_id,recorded_at) values ('${parent}','${at.toISOString()}','Asia/Seoul','done','${prerequisite}','${user}',now())`);
+    const fire=(when:Date, following:Date, id:string)=>store.fireSchedule({scheduleId:child,expectedTriggerKind:'cron',expectedTimeZone:'Asia/Seoul',expectedCronExpr:'0 11 * * *',expectedNextRunAt:when,nextRunAt:following,now:when,occurrences:[{occurrenceAt:when,status:'pending'}],work:{id,kind:'testext.report',targetKind:'account',targetId:'a',createdAt:when,nextAttemptAt:when}});
+    expect(await fire(at,duplicate,work)).toMatchObject({ok:true,created:true});
+    expect(await store.claimSupervisedWork({kinds:['testext.report'],now:duplicate,claimedBy:'worker',attemptToken:token})).toMatchObject({ok:true,item:{id:work}});
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const results=await Promise.race([
+        Promise.all([fire(duplicate,next,randomUUID()),store.finishSupervisedWork({id:work,attemptToken:token,now:duplicate,outcome:'succeeded'})]),
+        new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('concurrent schedule operations timed out')),10000);}),
+      ]);
+      expect(results[0]).toMatchObject({ok:true,fired:true});
+      expect(results[1]).toMatchObject({ok:true,outcome:'done'});
+    } finally { if (timer) clearTimeout(timer); }
+    const rows=await store.listOccurrences({scheduleId:child});
+    expect(rows).toMatchObject({ok:true,occurrences:[{status:'done',workId:work},{status:'skipped'}]});
+    expect((await db.rows(`select count(*)::int n from brain.work_items where kind='testext.report' and completed_at is null`))[0]?.n).toBe(0);
+  } finally {await store.close();await db.drop();}
 });

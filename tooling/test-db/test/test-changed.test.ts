@@ -13,7 +13,7 @@ describe('changed test path rules', () => {
       'apps/cli/python-test/garmin-report-observer.ts', 'extensions/garmin/tests/report_input_oracle_child.py', 'extensions/garmin/tests/test_report_input_pg.py', 'extensions/garmin/fixtures/legacy/analysis-input-fixture.json', 'extensions/garmin/fixtures/legacy/report_v8/measurement.json', 'extensions/garmin/src/report.py', 'extensions/garmin/src/report_runtime.py', 'extensions/garmin/src/body_runtime.py', 'extensions/garmin/skills/garmin-body-intake/SKILL.md',
       'extensions/garmin/src/collect_runtime.py', 'extensions/garmin/src/collect_refresh.py', 'extensions/garmin/migrations/0015_raw_observations.sql', 'extensions/garmin/tests/collect_oracle_child.py', 'extensions/garmin/tests/supervised_fake_network.py', 'extensions/garmin/tests/test_collect_oracle_pg.py',
       'extensions/garmin/src/native_import.py', 'extensions/garmin/src/native_artifacts.py', 'extensions/garmin/migrations/0014_native_store.sql', 'extensions/garmin/fixtures/native/synthetic.py', 'extensions/garmin/tests/oracle/src/garmin_pipeline/report_input.py', 'extensions/garmin/tests/test_native_store.py', 'extensions/garmin/tests/test_normalize_oracle_pg.py', 'extensions/garmin/tests/normalize_oracle_child.py', 'extensions/garmin/fixtures/legacy/normalize_v8/input.json', 'extensions/garmin/tests/oracle/src/garmin_pipeline/normalize/__init__.py',
-      'extensions/garmin/src/x.py', 'extensions/other/manifest.json', 'plugins/testext/bin/install.sh', 'plugins/testext/package/digest', '.claude-plugin/marketplace.json',
+      'extensions/garmin/src/x.py', 'extensions/other/manifest.json', 'plugins/testext/bin/install.sh', 'plugins/testext/package/digest', 'plugins/garmin/bin/install.sh', 'plugins/garmin/package/digest', 'tooling/package-garmin/build.mjs', '.claude-plugin/marketplace.json',
       'packages/postgres/src/store.ts','packages/postgres/src/extension-install-lock.ts','packages/postgres/test/extension-command-lock.test.ts','packages/postgres/migrations/001.sql',
       'packages/core/src/queue/supervisor.ts','packages/core/src/process-abi/codec.ts',
       'packages/core/src/extensions/install.ts','packages/core/src/imports/x.ts',
@@ -40,6 +40,7 @@ describe('changed test path rules', () => {
   });
   it('selects only explicitly changed Python and hook tests without a full rule', () => {
     const tests: [string, string] = ['apps/cli/python-test/garmin-charts.test.ts','tooling/bootstrap/test/hook.test.ts'];
+    expect(classifyChanges(['apps/cli/python-test/garmin-core.test.ts'])).toMatchObject({pythonAll:false,pythonFiles:['apps/cli/python-test/garmin-core.test.ts']});
     expect(classifyChanges(['apps/cli/python-test/garmin-report.test.ts'])).toMatchObject({pythonAll:false,pythonFiles:['apps/cli/python-test/garmin-report.test.ts']});
     expect(classifyChanges(['apps/cli/python-test/garmin-collect.test.ts'])).toMatchObject({pythonAll:false,pythonFiles:['apps/cli/python-test/garmin-collect.test.ts']});
     expect(classifyChanges(['apps/cli/python-test/garmin-native.test.ts','apps/cli/python-test/garmin-unit.test.ts'])).toMatchObject({pythonAll:false,pythonFiles:['apps/cli/python-test/garmin-native.test.ts','apps/cli/python-test/garmin-unit.test.ts']});

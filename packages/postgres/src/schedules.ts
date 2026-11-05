@@ -4,10 +4,10 @@ import { databaseFailure, type PgConnect } from './connect.js';
 import { ensureWork, groupAvailable } from './work.js';
 import { withWrite } from './write.js';
 
-interface Row { id: string; kind: string; hold_group: string | null; target_kind: string; target_id: string; trigger_kind: Schedule['triggerKind']; cron_expr: string | null; run_at: string | null; trigger_updated_at: string | null; time_zone: string | null; time_zone_source: Schedule['timeZoneSource']; interval_seconds: number | null; extension: string | null; schedule_key: string | null; user_id: string; enabled: boolean; removed_at: string | null; next_run_at: string | null; last_run_at: string | null; created_at: string }
+interface Row { id: string; kind: string; hold_group: string | null; target_kind: string; target_id: string; target_setting: string | null; after_schedule: string | null; trigger_kind: Schedule['triggerKind']; cron_expr: string | null; run_at: string | null; trigger_updated_at: string | null; time_zone: string | null; time_zone_source: Schedule['timeZoneSource']; interval_seconds: number | null; extension: string | null; schedule_key: string | null; user_id: string; enabled: boolean; removed_at: string | null; next_run_at: string | null; last_run_at: string | null; created_at: string }
 function instant(value: Date): string { const r = formatInstant(value); if (!r.ok) throw new TypeError(r.message); return r.value; }
 function at(value: string | null): Date | null { if (value === null) return null; const r = parseInstant(value); if (!r.ok) throw new TypeError(r.message); return r.value; }
-function schedule(r: Row): Schedule { return { id:r.id,kind:r.kind,holdGroup:r.hold_group,targetKind:r.target_kind,targetId:r.target_id,triggerKind:r.trigger_kind,cronExpr:r.cron_expr,runAt:at(r.run_at),triggerUpdatedAt:at(r.trigger_updated_at),timeZone:r.time_zone,timeZoneSource:r.time_zone_source,intervalSeconds:r.interval_seconds,extension:r.extension,scheduleKey:r.schedule_key,userId:r.user_id,enabled:r.enabled,removedAt:at(r.removed_at),nextRunAt:at(r.next_run_at),lastRunAt:at(r.last_run_at),createdAt:at(r.created_at)! }; }
+function schedule(r: Row): Schedule { return { id:r.id,kind:r.kind,holdGroup:r.hold_group,targetKind:r.target_kind,targetId:r.target_id,...(r.target_setting === null ? {} : {targetSetting:r.target_setting}),...(r.after_schedule === null ? {} : {afterSchedule:r.after_schedule}),triggerKind:r.trigger_kind,cronExpr:r.cron_expr,runAt:at(r.run_at),triggerUpdatedAt:at(r.trigger_updated_at),timeZone:r.time_zone,timeZoneSource:r.time_zone_source,intervalSeconds:r.interval_seconds,extension:r.extension,scheduleKey:r.schedule_key,userId:r.user_id,enabled:r.enabled,removedAt:at(r.removed_at),nextRunAt:at(r.next_run_at),lastRunAt:at(r.last_run_at),createdAt:at(r.created_at)! }; }
 const ts = (d: Date | null) => d === null ? null : instant(d);
 const scheduleAvailable = () => sql<boolean>`not exists (select 1 from brain.extension_quiesce q where q.name = brain.schedules.extension or (position('.' in brain.schedules.kind) > 0 and q.name = split_part(brain.schedules.kind, '.', 1)))`;
 export function postgresScheduleStore(connect: PgConnect): ScheduleStore {
@@ -16,8 +16,8 @@ export function postgresScheduleStore(connect: PgConnect): ScheduleStore {
   async addSchedule(input) {
    const opened=connect(); if(!opened.ok) return {ok:false,code:'DB_UNAVAILABLE',message:opened.message};
    try { const result=await withWrite(opened.connection,async held=>{
-    const inserted=await sql<Row>`insert into brain.schedules(id,kind,hold_group,target_kind,target_id,trigger_kind,cron_expr,run_at,trigger_updated_at,time_zone,time_zone_source,interval_seconds,extension,schedule_key,user_id,enabled,removed_at,next_run_at,last_run_at,created_at)
-     values (${input.id},${input.kind},${workHoldGroup(input.kind,input.holdGroup)},${input.targetKind},${input.targetId},${input.triggerKind},${input.cronExpr},${ts(input.runAt)},${ts(input.triggerUpdatedAt ?? null)},${input.timeZone},${input.timeZoneSource},${input.intervalSeconds},${input.extension},${input.scheduleKey},${input.userId},${input.enabled},${ts(input.removedAt)},${ts(input.nextRunAt)},${ts(input.lastRunAt)},${instant(input.createdAt)}) on conflict do nothing returning *`.execute(held);
+    const inserted=await sql<Row>`insert into brain.schedules(id,kind,hold_group,target_kind,target_id,target_setting,after_schedule,trigger_kind,cron_expr,run_at,trigger_updated_at,time_zone,time_zone_source,interval_seconds,extension,schedule_key,user_id,enabled,removed_at,next_run_at,last_run_at,created_at)
+     values (${input.id},${input.kind},${workHoldGroup(input.kind,input.holdGroup)},${input.targetKind},${input.targetId},${input.targetSetting ?? null},${input.afterSchedule ?? null},${input.triggerKind},${input.cronExpr},${ts(input.runAt)},${ts(input.triggerUpdatedAt ?? null)},${input.timeZone},${input.timeZoneSource},${input.intervalSeconds},${input.extension},${input.scheduleKey},${input.userId},${input.enabled},${ts(input.removedAt)},${ts(input.nextRunAt)},${ts(input.lastRunAt)},${instant(input.createdAt)}) on conflict do nothing returning *`.execute(held);
     return inserted.rows[0] ? schedule(inserted.rows[0]) : null;
    }); return result.ok ? result.value ? {ok:true,schedule:result.value} : {ok:false,code:'SCHEDULE_CONFLICT',message:'이미 예약이 있습니다'} : result; } catch(error){return databaseFailure(error);}
   },
@@ -33,13 +33,39 @@ export function postgresScheduleStore(connect: PgConnect): ScheduleStore {
   async listOccurrences({scheduleId}) {const o=connect();if(!o.ok)return {ok:false,code:'DB_UNAVAILABLE',message:o.message};try {const r=await sql<{schedule_id:string;occurrence_at:string;time_zone:string|null;status:'pending'|'claimed'|'done'|'skipped'|'failed';work_id:string|null;user_id:string;recorded_at:string}>`select * from brain.schedule_occurrences where schedule_id=${scheduleId} order by occurrence_at`.execute(o.connection.db);return {ok:true,occurrences:r.rows.map(x=>({scheduleId:x.schedule_id,occurrenceAt:at(x.occurrence_at)!,timeZone:x.time_zone,status:x.status,workId:x.work_id,userId:x.user_id,recordedAt:at(x.recorded_at)!}))};}catch(e){return databaseFailure(e);} },
   async fireSchedule(i) {const o=connect();if(!o.ok)return {ok:false,code:'DB_UNAVAILABLE',message:o.message};try { instant(i.now); instant(i.expectedNextRunAt); ts(i.nextRunAt); instant(i.work.createdAt); instant(i.work.nextAttemptAt); for (const item of i.occurrences) instant(item.occurrenceAt); const r=await withWrite(o.connection,async h=>{
    await sql`lock table brain.extension_quiesce in share mode`.execute(h);
+   // Shared ordering gate: completion takes this before locking its work row.
+   await sql`select pg_advisory_xact_lock(hashtextextended('schedule-fire-settle', 0))`.execute(h);
+   const selected=await sql<{target_setting:string|null;user_id:string;target_id:string}>`select target_setting,user_id,target_id from brain.schedules where id=${i.scheduleId} for update`.execute(h);
+   const original=selected.rows[0]; if(!original)return {ok:true,fired:false} as const;
+   let targetId=original.target_id;
+   if(original.target_setting !== null) {
+     const setting=await sql<{value:string}>`select value from brain.settings where user_id=${original.user_id} and key=${original.target_setting} for share`.execute(h);
+     const value=setting.rows[0]?.value;
+     if(typeof value !== 'string' || !value.trim() || value.length>1024 || /[\u0000-\u001f\u007f-\u009f]/.test(value)) return {ok:true,fired:false} as const;
+     targetId=value;
+   }
    const updated=await sql<{hold_group:string|null;user_id:string;time_zone:string|null}>`update brain.schedules set last_run_at=${instant(i.now)},next_run_at=${ts(i.nextRunAt)} where id=${i.scheduleId} and enabled and removed_at is null and next_run_at=${instant(i.expectedNextRunAt)} and trigger_kind=${i.expectedTriggerKind} and time_zone is not distinct from ${i.expectedTimeZone} and cron_expr is not distinct from ${i.expectedCronExpr} and ${groupAvailable('brain.schedules')} and ${scheduleAvailable()} returning hold_group,user_id,time_zone`.execute(h);
    if(!updated.rows.length)return {ok:true,fired:false} as const;
    const row=updated.rows[0]!; const inserted: string[]=[];
    for(const item of i.occurrences) {const at=instant(item.occurrenceAt);const result=await sql`insert into brain.schedule_occurrences(schedule_id,occurrence_at,time_zone,status,work_id,user_id,recorded_at) values (${i.scheduleId},${at},${row.time_zone},${item.status},null,${row.user_id},${instant(i.now)}) on conflict do nothing returning occurrence_at`.execute(h);if(result.rows.length && item.status==='pending')inserted.push(at);}
    if(!inserted.length)return {ok:true,fired:true,created:false,covered:true} as const;
-   const work=await ensureWork(h,{...i.work,holdGroup:row.hold_group});
+   // A second firing on the same local day and target is already covered by a completed occurrence.
+   await sql`update brain.schedule_occurrences o set status='skipped',recorded_at=${instant(i.now)}
+     where o.schedule_id=${i.scheduleId} and o.occurrence_at=any(${inserted}::timestamptz[]) and o.status='pending'
+       and exists (select 1 from brain.schedules s where s.id=o.schedule_id and s.after_schedule is not null)
+       and exists (select 1 from brain.schedule_occurrences done join brain.work_items w on w.id=done.work_id
+         where done.schedule_id=o.schedule_id and done.user_id=o.user_id and done.status='done' and done.time_zone=o.time_zone
+           and (done.occurrence_at at time zone done.time_zone)::date=(o.occurrence_at at time zone o.time_zone)::date
+           and w.target_kind=${i.work.targetKind} and w.target_id=${targetId})`.execute(h);
+   const pending=await sql<{occurrence_at:string}>`select occurrence_at from brain.schedule_occurrences where schedule_id=${i.scheduleId} and occurrence_at=any(${inserted}::timestamptz[]) and status='pending'`.execute(h);
+   if(!pending.rows.length)return {ok:true,fired:true,created:false,covered:true} as const;
+   const work=await ensureWork(h,{...i.work,targetId,holdGroup:row.hold_group});
    await sql`update brain.schedule_occurrences set work_id=${work.row.id} where schedule_id=${i.scheduleId} and occurrence_at=any(${inserted}::timestamptz[]) and status='pending'`.execute(h);
+   // The declared latest policy also applies to an independent prerequisite; never replace a claim.
+   await sql`update brain.schedule_occurrences set status='skipped',recorded_at=${instant(i.now)}
+     where schedule_id=${i.scheduleId} and work_id=${work.row.id} and status='pending'
+       and exists (select 1 from brain.schedules s left join brain.extension_work_kinds k on k.kind=s.kind where s.id=${i.scheduleId} and (s.after_schedule is not null or k.missed_policy='latest'))
+       and occurrence_at < (select max(o.occurrence_at) from brain.schedule_occurrences o where o.schedule_id=${i.scheduleId} and o.work_id=${work.row.id} and o.status='pending')`.execute(h);
    return {ok:true,fired:true,created:work.created,covered:false} as const;
   });return r.ok?r.value:r;}catch(e){return databaseFailure(e);} }
  };

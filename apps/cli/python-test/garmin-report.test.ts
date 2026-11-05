@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { copyFile, chmod, mkdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +18,10 @@ type Call={scope:string; target:string; work:string; attempt:string; pid:number;
 
 async function setup(startDaemon=true) {
   const fixture=await extHome(), ids=uuidV7IdGen(), controller=new AbortController();
+  const server=createServer((req,res)=>{req.resume(); req.on('end',()=>{const method=req.url?.split('/').at(-1); res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({ok:true,result:method==='sendMediaGroup'?[{message_id:1},{message_id:2}]:{message_id:1}}));});});
+  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const address=server.address(); if(!address || typeof address==='string') throw Error('missing fake channel address');
+  const channelTestEndpoint=`http://127.0.0.1:${address.port}`;
   const store=postgresStore({databaseUrl:fixture.db.appUrl});
   const installed=await fixture.run(['ext','install','garmin','--json']);
   expect(installed.code,installed.stdout+installed.stderr).toBe(0);
@@ -30,14 +35,17 @@ async function setup(startDaemon=true) {
   await store.setSetting({userId:self,key:'garmin.timezone',value:'UTC',updatedAt:new Date()});
   await store.setSetting({userId:self,key:'garmin.analysis_model',value:'synthetic',updatedAt:new Date()});
   await store.setSetting({userId:self,key:'garmin.analysis_reasoning_effort',value:'medium',updatedAt:new Date()});
+  const channel=ids.next(), conversation=ids.next();
+  await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','synthetic'); insert into brain.channel_conversations(id,channel_id,external_ref,user_id) values ('${conversation}','${channel}','synthetic-chat','${self}')`);
+  expect(await store.setSetting({userId:self,key:'garmin.channel_conversation_id',value:conversation,updatedAt:new Date()})).toMatchObject({ok:true});
   const account=ids.next(), other=ids.next();
   await fixture.db.query(`insert into garmin.account_connections(user_id,connection_id,external_identity,timezone) values ('${self}','${account}','fixture-a','UTC'),('${self}','${other}','fixture-b','UTC')`);
   for (const target of [account,other]) {
     const runtime=join(extension,'reports/accounts',self,target); await mkdir(runtime,{recursive:true});
     await writeFile(join(runtime,'profile.md'),`profile-${target}`);
   }
-  const env={...fixture.env,HOME:home,PATH:`${bin}:${fixture.env.PATH ?? ''}`};
-  const daemon=startDaemon ? runDaemon({home,env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25,cancelPollMs:25,cancelGraceMs:200}}) : undefined;
+  const env={...fixture.env,HOME:home,PATH:`${bin}:${fixture.env.PATH ?? ''}`,BRAIN_TELEGRAM_BOT_TOKEN:'synthetic-token',BRAIN_TELEGRAM_CHAT_ID:'synthetic-chat'};
+  const daemon=startDaemon ? runDaemon({home,env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25,cancelPollMs:25,cancelGraceMs:200,channelTestEndpoint}}) : undefined;
   const calls=async():Promise<Call[]> => (await readFile(join(control,'calls.jsonl'),'utf8').catch(()=>'')) .split('\n').filter(Boolean).map(line=>JSON.parse(line) as Call);
   const enqueue=async(target=account,regenerate=false)=>{
     const result=await fixture.run(['ext','run','garmin',regenerate?'report-regenerate':'report','--target',target,'--json']);
@@ -66,8 +74,8 @@ async function setup(startDaemon=true) {
     const dir=join(extension,'reports/accounts',self,target,'inbox/inbody'); await mkdir(dir,{recursive:true});
     const file=join(dir,'synthetic.png'); await writeFile(file,Buffer.from((await readFile(join(root,'synthetic-photo.png.base64'),'utf8')).trim(),'base64')); return file;
   };
-  return {fixture,ids,controller,store,home,env,extension,control,account,other,calls,enqueue,outcome,revisions,waitCall,failedAttempt,retryNow,photo,
-    async close(){controller.abort(); if(daemon) await daemon; await store.close(); await fixture.cleanup();}};
+  return {fixture,ids,controller,store,home,env,extension,control,account,other,calls,enqueue,outcome,revisions,waitCall,failedAttempt,retryNow,photo,channelTestEndpoint,
+    async close(){controller.abort(); if(daemon) await daemon; await store.close(); await new Promise<void>(resolve=>server.close(()=>resolve())); await fixture.cleanup();}};
 }
 
 it('resumes 30d/all after 7d commit, skips complete day even with pending photo, regenerates and preserves memory',async()=>{
@@ -183,10 +191,16 @@ it('failed regeneration appends successful scopes only and latest selects each m
       const expected=after.filter(value=>value.scope===row.scope).at(-1)!;
       expect(row.report_md).toBe(expected.report_md);
     }
+    const links=()=>t.fixture.db.rows(`select scope,revision,request_id,file_id,kind from garmin.evaluation_files where user_id='${self}' and connection_id='${t.account}' order by scope,revision,request_id`);
+    const originalLinks=await links(); expect(originalLinks.length).toBeGreaterThanOrEqual(4);
+    expect(originalLinks.every(row=>row.file_id)).toBe(true);
     await unlink(join(t.control,'status-failed-7d')); await t.retryNow(regen);
-    const retry=await t.waitCall(regen,'day',{except:regenAttempt}); await t.outcome(regen,'succeeded');
-    expect((await t.calls()).filter(row=>row.work===regen && row.attempt===retry.attempt).map(row=>row.scope)).toEqual(['day','7d','30d','all']);
-    for(const row of after) expect(await t.revisions()).toContainEqual(row);
+    const retry=await t.waitCall(regen,'7d',{except:regenAttempt}); await t.outcome(regen,'succeeded');
+    expect((await t.calls()).filter(row=>row.work===regen && row.attempt===retry.attempt).map(row=>row.scope)).toEqual(['7d']);
+    const recovered=await t.revisions(); expect(recovered).toHaveLength(8);
+    for(const row of after) expect(recovered).toContainEqual(row);
+    const recoveredLinks=await links(); for(const row of originalLinks) expect(recoveredLinks).toContainEqual(row);
+    for(const row of recovered.filter(r=>String(r.report_md).includes(regen))) expect(recoveredLinks.some(link=>link.scope===row.scope && String(link.revision)===String(row.revision) && link.file_id)).toBe(true);
   } finally {await t.close();}
 },240000);
 
@@ -284,7 +298,7 @@ it('model timeout produces a failed attempt and cleans its group descendants',as
 
 it('daemon SIGKILL after 7d commit recovers its group then resumes only 30d and all',async()=>{
   const t=await setup(false); const daemonBin=fileURLToPath(new URL('../dist/bin.js',import.meta.url));
-  const daemon=spawn(process.execPath,[daemonBin,'daemon','run'],{env:t.env,stdio:'ignore'});
+  const daemon=spawn(process.execPath,[daemonBin,'daemon','run'],{env:{...t.env,BRAIN_TELEGRAM_BOT_TOKEN:'',BRAIN_TELEGRAM_CHAT_ID:''},stdio:'ignore'});
   let recovery:ReturnType<typeof runDaemon>|undefined, modelPid=0, grandchild=0;
   const recoveryController=new AbortController();
   try {
@@ -296,7 +310,7 @@ it('daemon SIGKILL after 7d commit recovers its group then resumes only 30d and 
     await expect.poll(()=>readFile(join(t.control,`child-${t.account}-30d`),'utf8').then(Number).catch(()=>0),{timeout:15000}).toBeGreaterThan(0);
     grandchild=Number(await readFile(join(t.control,`child-${t.account}-30d`),'utf8'));
     const exited=new Promise<void>(resolve=>daemon.once('exit',()=>resolve())); daemon.kill('SIGKILL'); await exited;
-    recovery=runDaemon({home:t.home,env:t.env,clock:systemClock,idGen:t.ids,signal:recoveryController.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25,cancelPollMs:25,cancelGraceMs:200}});
+    recovery=runDaemon({home:t.home,env:t.env,clock:systemClock,idGen:t.ids,signal:recoveryController.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25,cancelPollMs:25,cancelGraceMs:200,channelTestEndpoint:t.channelTestEndpoint}});
     await expect.poll(()=>[pidAlive(modelPid),pidAlive(grandchild)],{timeout:45000}).toEqual([false,false]);
     await expect.poll(async()=> (await t.fixture.db.rows(`select outcome from brain.work_attempts where token='${call.attempt}'`))[0]?.outcome,{timeout:45000}).toBe('died');
     expect((await t.fixture.db.rows(`select finished_at from brain.work_attempts where token='${call.attempt}'`))[0]?.finished_at).toBeTruthy();

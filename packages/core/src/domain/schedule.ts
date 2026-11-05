@@ -1,6 +1,6 @@
 /** Persisted schedule and its trigger. */
 export interface Schedule {
-  id: string; kind: string; holdGroup: string | null; targetKind: string; targetId: string;
+  id: string; kind: string; holdGroup: string | null; targetKind: string; targetId: string; targetSetting?: string | null; afterSchedule?: string | null;
   triggerKind: 'cron' | 'once' | 'interval'; cronExpr: string | null; runAt: Date | null;
   timeZone: string | null; timeZoneSource: 'user' | 'fixed' | null; intervalSeconds: number | null;
   extension: string | null; scheduleKey: string | null; userId: string;

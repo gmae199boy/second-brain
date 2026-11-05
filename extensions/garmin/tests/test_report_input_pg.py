@@ -145,6 +145,30 @@ class SQLiteCutoffArithmeticIntegrationTest(unittest.TestCase):
 
 class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
     """Pinned SQLite child and account-scoped PG consume the same fixed fixture."""
+    def test_one_work_records_and_resumes_revisions_on_two_dates(self):
+        import os
+        from uuid import uuid4
+        import psycopg
+        from garmin_pipeline import report, store
+        from report_runtime import envelope
+        from test_report_runtime import report_env
+        user, account, work, token = None, uuid4(), uuid4(), uuid4()
+        with psycopg.connect(os.environ['GARMIN_TEST_OWNER_DSN'], autocommit=True) as owner:
+            user = owner.execute('select id from brain.users where is_self=1').fetchone()[0]
+            owner.execute('insert into garmin.account_connections(user_id,connection_id,external_identity,timezone) values (%s,%s,%s,%s)', (user,account,'work-dates-'+str(account),'UTC'))
+            owner.execute("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values (%s,'garmin.report','extension',%s,now(),now(),'supervised',now(),now()+interval '1 hour','fixture')", (work,str(account)))
+            owner.execute('insert into brain.work_attempts(token,work_item_id,started_at) values (%s,%s,now())', (token,work))
+            owner.execute('update brain.work_items set current_attempt_token=%s where id=%s', (token,work))
+            for day in ('2026-01-01','2026-01-02'):
+                owner.execute("insert into garmin.evaluation_revisions(user_id,connection_id,report_date,scope,summary,judgments,evidence,next_checks,report_md,model,created_at,revision) values (%s,%s,%s,'day','synthetic','[]','[]','[]','synthetic','fake',1,1)", (user,account,day))
+        _, cfg = envelope(report_env())
+        with patch.dict(os.environ, {'BRAIN_DATABASE_URL':os.environ['GARMIN_TEST_EXTENSION_DSN'],'BRAIN_USER_ID':str(user),'BRAIN_WORK_ID':str(work),'BRAIN_ATTEMPT_TOKEN':str(token)}), store.supervised_account(store.AccountContext(user,account,work,token)):
+            for day in (date(2026,1,1),date(2026,1,2),date(2026,1,1),date(2026,1,2)):
+                self.assertEqual(report._work_revisions(cfg,day,False), {'day':1})
+                self.assertEqual(report._read_work_revisions(cfg,day), {'day':1})
+        with psycopg.connect(os.environ['GARMIN_TEST_OWNER_DSN']) as owner:
+            self.assertEqual(owner.execute('select report_date,scope,revision from garmin.report_work_revisions where work_id=%s order by report_date', (work,)).fetchall(), [('2026-01-01','day',1),('2026-01-02','day',1)])
+
     def test_report_input_matches_independent_sqlite_and_model_contract(self):
         import os
         import subprocess
@@ -152,7 +176,9 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
         from datetime import timedelta
         from uuid import uuid4
         import psycopg
-        from garmin_pipeline import body, config, digest, report, store
+        from garmin_pipeline import body, digest, report, store
+        from report_runtime import envelope
+        from test_report_runtime import report_env, setting
 
         root = Path(__file__).resolve().parents[1]
         fixture_path = root / 'fixtures/legacy/analysis-input-fixture.json'
@@ -162,9 +188,10 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
             env = {'HOME':tmp,'PATH':os.defpath,'PYTHONPATH':str(root / 'tests/oracle/src'),'PYTHONDONTWRITEBYTECODE':'1'}
             child = subprocess.run([sys.executable,str(root / 'tests/report_input_oracle_child.py'),str(fixture_path)],cwd=tmp,env=env,text=True,capture_output=True,check=True,timeout=60)
             expected = json.loads(child.stdout)
-            cfgfile = base / 'config.toml'
-            cfgfile.write_text('environment = "dev"\ntimezone = ' + json.dumps(fixture['timezone']) + '\ntokenstore = ' + json.dumps(str(base / 'tokens')) + '\n', encoding='utf-8')
-            cfg = config.load(cfgfile)
+            snapshot_env = report_env()
+            snapshot_env['BRAIN_EXTENSION_HOME'] = str(base)
+            setting(snapshot_env, 'garmin.timezone', fixture['timezone'])
+            _, cfg = envelope(snapshot_env)
             user, account, work, token = None, uuid4(), uuid4(), uuid4()
             with psycopg.connect(os.environ['GARMIN_TEST_OWNER_DSN'],autocommit=True) as owner:
                 user = owner.execute('select id from brain.users where is_self=1').fetchone()[0]

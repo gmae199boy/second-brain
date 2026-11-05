@@ -82,16 +82,12 @@ class CollectPortsPGTest(unittest.TestCase):
         self.assertIn('garmin.fetch_error', conn.calls[0][0])
         self.assert_scoped()
 
-    def test_notification_deduplicates_and_sends_outside_transaction(self):
+    def test_notification_deduplicates_without_direct_delivery(self):
         conn = self.conn
-        class Sender:
-            def send(self, *args, **kwargs):
-                assert conn.depth == 0
-                return None
-        notifier = ports.TelegramNotifier(conn, Sender(), budget_seconds=10)
+        notifier = ports.TableNotifier(conn)
         self.assertTrue(notifier.notify(DAY, errors.NotifyEvent.ERROR, 'synthetic'))
         self.assertFalse(notifier.notify(DAY, errors.NotifyEvent.ERROR, 'other'))
-        self.assertEqual(sum('garmin.delivery' in sql for sql, _ in conn.calls), 1)
+        self.assertFalse(any('garmin.delivery' in sql for sql, _ in conn.calls))
         self.assert_scoped()
 
     def test_coverage_read_runs_inside_transaction(self):
@@ -131,6 +127,25 @@ class CollectPortsPGTest(unittest.TestCase):
         self.assertEqual(conn.calls[1][1][-1], 7)
         self.assertIn('user_id=%s AND connection_id=%s', conn.calls[1][0])
         self.assert_scoped()
+
+    def test_success_hook_shares_run_commit_and_non_success_never_calls_it(self):
+        conn = self.conn
+        hook_calls = []
+        def hook(c, run_id, day):
+            self.assertEqual(c.depth, 1)
+            self.assertIn('UPDATE garmin.run', c.calls[-1][0])
+            hook_calls.append((run_id, day))
+        cfg = SimpleNamespace(timezone='UTC')
+        with patch.object(collect, '_abandon_running'), patch.object(collect, '_enter', return_value=collect._exclude_nothing), \
+             patch.object(collect, '_history_start', return_value=DAY), patch.object(collect, '_plan', return_value=[]), \
+             patch.object(collect, '_first_call_endpoints', return_value=()), patch.object(collect, '_detail', return_value=''), \
+             patch.object(collect, '_notify_end'):
+            collect._collect_once(conn,cfg,None,None,today=DAY,started_at=1,force=False,manual=False,recent_lists=False,notifier=None,success_in_transaction=hook)
+            self.assertEqual(hook_calls, [(7,DAY)])
+        hook_calls.clear()
+        with patch.object(collect, '_abandon_running'), patch.object(collect, '_enter', return_value=(errors.RunStatus.SKIPPED_BLOCKED,'')), patch.object(collect, '_notify_end'):
+            collect._collect_once(conn,cfg,None,None,today=DAY,started_at=1,force=False,manual=False,recent_lists=False,notifier=None,success_in_transaction=hook)
+        self.assertEqual(hook_calls, [])
 
     def test_first_call_and_rejected_are_scoped(self):
         self.assertEqual(collect._first_call_endpoints(self.conn), collect.FIRST_CALL_ENDPOINTS)

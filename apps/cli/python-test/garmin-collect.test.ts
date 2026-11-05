@@ -29,7 +29,12 @@ it('installed supervised collect cancels its process tree, resumes missing raw, 
     expect(installed.code,installed.stdout+installed.stderr).toBe(0);
     const home=await realpath(fixture.home), extension=join(home,'extensions/garmin'), src=join(extension,'src');
     const manifest=JSON.parse(await readFile(join(extension,'manifest.json'),'utf8'));
-    expect(manifest.work).toContainEqual(expect.objectContaining({kind:'garmin.collect',entry:'src/collect.py',execution:'supervised',manual:'collect'}));
+    expect(manifest.work).toContainEqual(expect.objectContaining({kind:'garmin.collect',entry:'src/collect.py',execution:'supervised',manual:'collect',missed:'latest'}));
+    expect(manifest.work).toContainEqual(expect.objectContaining({kind:'garmin.report',missed:'latest'}));
+    expect(manifest.default_schedules).toEqual(expect.arrayContaining([
+      expect.objectContaining({key:'collect',kind:'garmin.collect',cron:'0 11 * * *',time_zone:'Asia/Seoul',target_setting:'garmin.connection_id'}),
+      expect.objectContaining({key:'report',kind:'garmin.report',cron:'30 11 * * *',time_zone:'Asia/Seoul',target_setting:'garmin.connection_id',after_schedule:'collect'}),
+    ]));
     await copyFile(source,join(src,'supervised_fake_network.py'));
     await appendFile(join(src,'collect_runtime.py'),'\nimport supervised_fake_network\n');
     const tokenstore=join(extension,'tokenstore'); await mkdir(tokenstore,{recursive:true,mode:0o700}); await chmod(tokenstore,0o700);

@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "SessionStart": [{
+      "hooks": [{
+        "type": "command",
+        "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/install.sh\" || exit 0",
+        "async": true
+      }]
+    }]
+  }
+}

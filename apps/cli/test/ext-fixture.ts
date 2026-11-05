@@ -46,11 +46,12 @@ export async function extHome(options: { realGarminAuth?: boolean; self?: boolea
     } finally { controller.abort(); await running; }
   }
   return {
-    home, db, env,
+    home, db, env, runDirect: runRaw,
     async run(args: readonly string[]) {
       const result = await runRaw(args);
-      if (args[0] === 'ext' && args[1] === 'install' && args[2] === 'garmin' && result.body?.error?.code === 'EXTENSION_SCHEDULER_UNAVAILABLE' && !options.realGarminAuth) return withScheduler(args);
-      if (options.realGarminAuth || args[0] !== 'ext' || args[1] !== 'install' || args[2] !== 'garmin' || result.body?.error?.code !== 'EXTENSION_LOGIN_REQUIRED') return result;
+      const garminInstall = args[0] === 'ext' && args[1] === 'install' && (args[2] === 'garmin' || (args[2] === '--package' && args[3]?.endsWith('/plugins/garmin/package')));
+      if (garminInstall && result.body?.error?.code === 'EXTENSION_SCHEDULER_UNAVAILABLE' && !options.realGarminAuth) return withScheduler(args);
+      if (options.realGarminAuth || !garminInstall || result.body?.error?.code !== 'EXTENSION_LOGIN_REQUIRED') return result;
       const directory = join(home, 'extensions/garmin'), manifestPath = join(directory, 'manifest.json');
       const original = await readFile(manifestPath, 'utf8');
       const manifest = JSON.parse(original);

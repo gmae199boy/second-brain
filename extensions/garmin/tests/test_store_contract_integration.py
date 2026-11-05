@@ -64,6 +64,51 @@ class RealStoreContractTest(unittest.TestCase):
         return store.append_evaluation(conn,report_date=report_date,scope=scope,summary=text,
             judgments='[]',evidence='[]',next_checks='[]',report_md='report '+text,model='synthetic',created_at=1)
 
+    def test_collect_success_provenance_survives_normalize_db_error_and_interruption(self):
+        import collect_runtime
+        from garmin_pipeline import collect
+        from test_collect_runtime import environment
+        for index, error in enumerate((psycopg.OperationalError('synthetic'), KeyboardInterrupt())):
+            user, account, _ = self.accounts[index]
+            work, token = (self.work, self.token) if index == 0 else (uuid4(), uuid4())
+            if index:
+                with psycopg.connect(self.owner_dsn, autocommit=True) as owner:
+                    owner.execute("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values (%s,'garmin.import','extension',%s,now(),now(),'supervised',now(),now()+interval '1 hour','fixture')", (work,str(account)))
+                    owner.execute('insert into brain.work_attempts(token,work_item_id,started_at) values (%s,%s,now())', (token,work))
+                    owner.execute('update brain.work_items set current_attempt_token=%s where id=%s', (token,work))
+            env = environment()
+            snapshot=json.loads(env['BRAIN_SETTINGS_SNAPSHOT']); snapshot['user_id']=str(user)
+            env.update(BRAIN_DATABASE_URL=self.ext_dsn,BRAIN_USER_ID=str(user),BRAIN_TARGET_ID=str(account),BRAIN_WORK_ID=str(work),BRAIN_ATTEMPT_TOKEN=str(token),BRAIN_OCCURRENCES='["2026-01-02T02:00:00.000+00:00"]',BRAIN_RANGE_FROM='2026-01-02',BRAIN_RANGE_TO='2026-01-02',BRAIN_SETTINGS_SNAPSHOT=json.dumps(snapshot))
+            class Port:
+                def blocked_today(self): return None
+                def open_session(self, **kwargs): raise AssertionError('unexpected network')
+            with self.subTest(error=type(error).__name__), patch.dict(os.environ,env), \
+                 patch.object(collect,'_history_start',return_value=REPORT_DAY), patch.object(collect,'_plan',return_value=[]), \
+                 patch.object(collect,'_first_call_endpoints',return_value=()), patch.object(collect,'_notify_end'), \
+                 patch.object(collect,'_notify_normalize_failed'), patch.object(normalize,'_work_set',return_value=[]), \
+                 patch.object(normalize,'run',side_effect=[error,None]), patch.object(collect,'_enter',wraps=collect._enter) as enter:
+                with self.assertRaises(type(error)): collect_runtime.run(env,port_factory=lambda *args, **kwargs:Port())
+                with psycopg.connect(self.owner_dsn) as owner:
+                    rows=owner.execute('select w.work_id,w.user_id,w.connection_id,w.local_date,r.status,r.local_date from garmin.collect_work_runs w join garmin.run r on (r.user_id,r.connection_id,r.id)=(w.user_id,w.connection_id,w.run_id) where w.work_id=%s',(work,)).fetchall()
+                self.assertEqual(rows,[(work,user,account,'2026-01-02','success','2026-01-02')])
+                self.assertEqual(json.loads(collect_runtime.run(env,port_factory=lambda *args, **kwargs:Port()))['status'],'success')
+                self.assertTrue(all(call.args[5] is False for call in enter.call_args_list))
+                with psycopg.connect(self.owner_dsn) as owner:
+                    self.assertEqual(owner.execute('select count(*) from garmin.run where user_id=%s and connection_id=%s',(user,account)).fetchone()[0],1)
+                # Model core settling the successful attempt before creating the next work.
+                other_work, other_token = uuid4(), uuid4()
+                with psycopg.connect(self.owner_dsn) as owner:
+                    owner.execute("update brain.work_attempts set outcome='succeeded',finished_at=now() where token=%s and work_item_id=%s",(token,work))
+                    owner.execute("update brain.work_items set completed_at=now(),outcome='succeeded',current_attempt_token=null,claimed_at=null,claim_expires_at=null,claimed_by=null where id=%s",(work,))
+                    # Another work for the same account and date cannot adopt this success.
+                    owner.execute("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values (%s,'garmin.import','extension',%s,now(),now(),'supervised',now(),now()+interval '1 hour','fixture')",(other_work,str(account)))
+                    owner.execute('insert into brain.work_attempts(token,work_item_id,started_at) values (%s,%s,now())',(other_token,other_work))
+                    owner.execute('update brain.work_items set current_attempt_token=%s where id=%s',(other_token,other_work))
+                env.update(BRAIN_WORK_ID=str(other_work),BRAIN_ATTEMPT_TOKEN=str(other_token))
+                with patch.dict(os.environ,env), patch.object(normalize,'run'):
+                    with self.assertRaises(collect_runtime.ScheduledCollectIncomplete):
+                        collect_runtime.run(env,port_factory=lambda *args, **kwargs:Port())
+
     def test_body_publication_holds_real_attempt_fence_cancel_and_retry(self):
         user, account, _ = self.accounts[0]
         with tempfile.TemporaryDirectory(prefix='body-fence-') as tmp:

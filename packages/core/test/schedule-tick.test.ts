@@ -136,3 +136,39 @@ it('rezones daily schedules beyond the first 100 before firing in the new timezo
   expect(await k.store.readSchedule({ id: '100' })).toMatchObject({ schedule: {
     nextRunAt: new Date('2026-02-04T16:00:00Z'), lastRunAt: newOccurrence } });
 });
+
+it('keeps due work until a user target is configured and freezes each fired target', async () => {
+  const k=kit(), user=sampleSelfUserInput().id;
+  const first=schedule({id:'setting',kind:'testext.sync',extension:'testext',scheduleKey:'daily',targetKind:'account',targetId:'unselected',targetSetting:'testext.account'});
+  expect(await k.store.addSchedule(first)).toMatchObject({ok:true});
+  await k.store.setSetting({userId:null,key:'testext.account',value:'global',updatedAt:now});
+  expect(await k.tick()).toMatchObject({ok:true,fired:0,enqueued:0});
+  expect(await k.store.listOccurrences({scheduleId:'setting'})).toMatchObject({ok:true,occurrences:[]});
+  await k.store.setSetting({userId:user,key:'testext.account',value:' ',updatedAt:now});
+  expect(await k.tick()).toMatchObject({ok:true,fired:0,enqueued:0});
+  await k.store.setSetting({userId:user,key:'testext.account',value:'account-a',updatedAt:now});
+  expect(await k.tick()).toMatchObject({ok:true,fired:1,enqueued:1});
+  await k.store.setSetting({userId:user,key:'testext.account',value:'account-b',updatedAt:now});
+  k.set(new Date(now.getTime()+60000));
+  expect(await k.tick()).toMatchObject({ok:true,fired:1,enqueued:1});
+  expect(k.store.snapshot().workItems.map(x=>x.targetId).sort()).toEqual(['account-a','account-b']);
+});
+
+it('reinstallation keeps the existing setting target and a removed schedule tombstone', async () => {
+  const {ensureSchedule}=await import('../src/queue/schedules.js');
+  const k=kit(), deps={store:k.store,clock:k.clock,idGen:k.idGen,cron:fakeCron,readTimeZone:async()=>({ok:true as const,value:'UTC'})};
+  const spec={extension:'testext',scheduleKey:'daily',kind:'testext.sync',targetKind:'account',targetId:'unselected',targetSetting:'testext.account',afterSchedule:'collect',cron:'0 11 * * *',timeZone:'UTC'};
+  const created=await ensureSchedule(deps,spec); if(!created.ok)throw new Error(created.message);
+  const again=await ensureSchedule(deps,{...spec,targetSetting:'testext.changed'});
+  expect(again).toMatchObject({ok:true,schedule:{id:created.schedule.id,targetSetting:'testext.account',afterSchedule:'collect'}});
+  await k.store.removeSchedule({id:created.schedule.id,now});
+  expect(await ensureSchedule(deps,spec)).toMatchObject({ok:true,schedule:{id:created.schedule.id,targetSetting:'testext.account',removedAt:now}});
+});
+
+it('does not let many unset target schedules starve another due schedule', async () => {
+  const k=kit();
+  for(let i=0;i<SCHEDULE_TICK_LIMIT+2;i++) await k.store.addSchedule(schedule({id:`missing-${String(i).padStart(3,'0')}`,kind:'testext.sync',targetId:'missing',targetSetting:'testext.account',extension:'testext',scheduleKey:`missing-${i}`}));
+  await k.store.addSchedule(schedule({id:'zz-ready',targetId:'ready'}));
+  expect(await k.tick()).toMatchObject({ok:true,fired:1,enqueued:1});
+  expect(k.store.snapshot().workItems.map(w=>w.targetId)).toEqual(['ready']);
+});

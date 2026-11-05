@@ -13,3 +13,13 @@ dependencies = [
 
 [tool.setuptools.package-data]
 "*" = ["labels/*.json", "schemas/*.json", "store/migrations/*.sql"]
+
+# Only product modules can enter Python distributions; the pinned SQLite oracle
+# and its provenance fixtures remain test-only inputs in the checkout.
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["garmin_pipeline", "garmin_pipeline.*"]
+exclude = ["tests", "tests.*", "oracle", "oracle.*"]
+
+[tool.setuptools]
+include-package-data = false

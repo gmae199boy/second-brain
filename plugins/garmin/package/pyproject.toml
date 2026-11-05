@@ -1,0 +1,25 @@
+[project]
+name = "brain-garmin"
+version = "1.0.0"
+requires-python = "==3.14.10"
+dependencies = [
+    "curl-cffi==0.17.0",
+    "garminconnect==0.3.20",
+    "jsonschema>=4.26.0",
+    "matplotlib==3.11.2",
+    "psycopg[binary]==3.3.6",
+    "requests==2.34.2",
+]
+
+[tool.setuptools.package-data]
+"*" = ["labels/*.json", "schemas/*.json", "store/migrations/*.sql"]
+
+# Only product modules can enter Python distributions; the pinned SQLite oracle
+# and its provenance fixtures remain test-only inputs in the checkout.
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["garmin_pipeline", "garmin_pipeline.*"]
+exclude = ["tests", "tests.*", "oracle", "oracle.*"]
+
+[tool.setuptools]
+include-package-data = false

@@ -64,7 +64,7 @@ def probe_role(conn):
         checks['no_excess_tables'] = all(not write and not modify and (name in VIEWS or not select and not select_col) and set(insert_cols) <= REQUIRED_INSERTS.get(name, frozenset()) for name, select, write, select_col, modify, insert_cols in objects)
     functions = safely(conn, """select exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
        where n.nspname='brain' and p.prorettype <> 'pg_catalog.trigger'::regtype
-       and p.oid is distinct from to_regprocedure('brain.attempt_is_current(uuid,uuid)') and p.oid is distinct from to_regprocedure('brain.original_utf8(text)') and p.oid is distinct from to_regprocedure('brain.extension_predecessor_results(uuid,uuid)')
+       and p.oid is distinct from to_regprocedure('brain.attempt_is_current(uuid,uuid)') and p.oid is distinct from to_regprocedure('brain.original_utf8(text)') and p.oid is distinct from to_regprocedure('brain.extension_predecessor_results(uuid,uuid)') and p.oid is distinct from to_regprocedure('brain.extension_channel_publish(uuid,uuid,uuid,text,text,text,text,uuid,jsonb)')
        and has_function_privilege(current_user,p.oid,'EXECUTE'))""")
     checks['no_excess_functions'] = bool(functions is not None and not functions[0][0])
     own = safely(conn, """select coalesce(has_table_privilege(current_user,to_regclass('garmin.import_mapping'),'SELECT'),false),

@@ -12,7 +12,8 @@ export interface ExtensionManifest {
   error_codes?: string[];
   work?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string; manual?: string; followup?: string; missed?: 'latest' | 'coalesce' | 'skip'; public_report?: { counts: string[]; checks: string[] }; required_settings?: string[] }[];
   auth?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string };
-  default_schedules?: { kind: string; target_kind: string; target_id: string; key?: string; local_time?: string; cron?: string; time_zone?: string }[];
+  default_schedules?: { kind: string; target_kind: string; target_id: string; target_setting?: string; after_schedule?: string; key?: string; local_time?: string; cron?: string; time_zone?: string }[];
+  requires?: ('channel.send')[];
   raw_views?: string[];
   commands?: ExtensionCommandDeclaration[];
 }
@@ -44,7 +45,7 @@ const inside = (value: unknown): value is string => typeof value === 'string' &&
 function decodeManifestUnchecked(text: string, validateSchema?: (schema: Record<string, unknown>) => boolean): { ok: true; manifest: ExtensionManifest } | { ok: false; code: 'EXTENSION_INVALID'; message: string } {
   const invalid = { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장 manifest의 필드나 패키지 상대 경로가 올바르지 않습니다' };
   let v: unknown; try { v = JSON.parse(text); } catch { return invalid; }
-  if (!object(v) || !['name', 'version', 'core', 'abi', 'migrations', 'connection_check'].every(k => Object.hasOwn(v, k)) || !Object.keys(v).every(k => ['name', 'version', 'core', 'abi', 'migrations', 'connection_check', 'settings', 'error_codes', 'work', 'auth', 'default_schedules', 'raw_views', 'commands', 'files', 'core_compat', 'plugin_version'].includes(k))) return invalid;
+  if (!object(v) || !['name', 'version', 'core', 'abi', 'migrations', 'connection_check'].every(k => Object.hasOwn(v, k)) || !Object.keys(v).every(k => ['name', 'version', 'core', 'abi', 'migrations', 'connection_check', 'settings', 'error_codes', 'work', 'auth', 'default_schedules', 'requires', 'raw_views', 'commands', 'files', 'core_compat', 'plugin_version'].includes(k))) return invalid;
   const check = v['connection_check'];
   if (typeof v['name'] !== 'string' || !isExtensionName(v['name']) || typeof v['version'] !== 'string' || !v['version'].trim() || /[\u0000-\u001f\u007f-\u009f]/.test(v['version']) || v['core'] !== EXTENSION_CORE_VERSION || v['abi'] !== 1 || !inside(v['migrations']) || !object(check) || !keys(check, ['runtime', 'entry']) || !['node', 'python'].includes(check['runtime'] as string) || !inside(check['entry'])) return invalid;
   const semver = (x: unknown): x is string => typeof x === 'string' && /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(x);
@@ -120,14 +121,17 @@ function decodeManifestUnchecked(text: string, validateSchema?: (schema: Record<
         auth['execution'] !== 'supervised' || !['node', 'python'].includes(auth['runtime'] as string) || !inside(auth['entry']) ||
         (Array.isArray(v['work']) && v['work'].some(work => object(work) && work['kind'] === auth['kind']))) return invalid;
   }
+  if (v['requires'] !== undefined && (!Array.isArray(v['requires']) || v['requires'].some(x => x !== 'channel.send') || new Set(v['requires']).size !== v['requires'].length)) return invalid;
   if (v['raw_views'] !== undefined && (!Array.isArray(v['raw_views']) || v['raw_views'].some((view: unknown) => typeof view !== 'string' || !/^[a-z][a-z0-9_]*$/.test(view)) || new Set(v['raw_views']).size !== v['raw_views'].length)) return invalid;
   if (v['default_schedules'] !== undefined) {
     if (!Array.isArray(v['default_schedules'])) return invalid;
     const seen = new Set<string>();
     for (const schedule of v['default_schedules']) {
-      if (!object(schedule) || !['kind','target_kind','target_id'].every(k => Object.hasOwn(schedule,k)) || !Object.keys(schedule).every(k => ['kind','target_kind','target_id','key','local_time','cron','time_zone'].includes(k)) ||
+      if (!object(schedule) || !['kind','target_kind','target_id'].every(k => Object.hasOwn(schedule,k)) || !Object.keys(schedule).every(k => ['kind','target_kind','target_id','target_setting','after_schedule','key','local_time','cron','time_zone'].includes(k)) ||
           typeof schedule['kind'] !== 'string' || !Array.isArray(v['work']) || !v['work'].some(work => object(work) && work['kind'] === schedule['kind']) ||
           typeof schedule['target_kind'] !== 'string' || !schedule['target_kind'].trim() || typeof schedule['target_id'] !== 'string' || !schedule['target_id'].trim() ||
+          (schedule['target_setting'] !== undefined && (typeof schedule['target_setting'] !== 'string' || !Array.isArray(v['settings']) || !v['settings'].some(s => object(s) && s['key'] === schedule['target_setting'] && s['type'] === 'string' && (s['scope'] === undefined || s['scope'] === 'user') && s['secret'] !== true && s['machine'] === undefined))) ||
+          (schedule['after_schedule'] !== undefined && (typeof schedule['after_schedule'] !== 'string' || !schedule['after_schedule'].trim() || /[\u0000-\u001f\u007f-\u009f]/.test(schedule['after_schedule']))) ||
           (schedule['key'] !== undefined && (typeof schedule['key'] !== 'string' || !schedule['key'].trim() || /[\u0000-\u001f\u007f-\u009f]/.test(schedule['key']))) ||
           (schedule['local_time'] === undefined) === (schedule['cron'] === undefined) ||
           (schedule['local_time'] !== undefined && (typeof schedule['local_time'] !== 'string' || !/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(schedule['local_time']) || schedule['time_zone'] !== undefined)) ||
@@ -135,6 +139,11 @@ function decodeManifestUnchecked(text: string, validateSchema?: (schema: Record<
           (schedule['time_zone'] !== undefined && (typeof schedule['time_zone'] !== 'string' || !schedule['time_zone'].trim()))) return invalid;
       const key = typeof schedule['key'] === 'string' ? schedule['key'] : `${schedule['kind']}:${schedule['target_kind']}:${schedule['target_id']}`;
       if (seen.has(key)) return invalid; seen.add(key);
+    }
+    for (const entry of v['default_schedules']) {
+      if (!object(entry) || entry['after_schedule'] === undefined) continue;
+      const parent = v['default_schedules'].find(candidate => object(candidate) && (candidate['key'] ?? `${candidate['kind']}:${candidate['target_kind']}:${candidate['target_id']}`) === entry['after_schedule']);
+      if (!object(parent) || parent === entry || parent['after_schedule'] !== undefined || parent['target_kind'] !== entry['target_kind'] || parent['target_setting'] !== entry['target_setting'] || (parent['target_setting'] === undefined && parent['target_id'] !== entry['target_id']) || parent['time_zone'] !== entry['time_zone'] || parent['local_time'] !== undefined || entry['local_time'] !== undefined || parent['time_zone'] === undefined) return invalid;
     }
   }
   if (v['error_codes'] !== undefined && (!Array.isArray(v['error_codes']) || v['error_codes'].some((code: unknown) => typeof code !== 'string' || !/^[A-Z][A-Z0-9_]{0,63}$/.test(code)) || new Set(v['error_codes']).size !== v['error_codes'].length)) return invalid;

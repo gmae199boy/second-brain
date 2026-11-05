@@ -13,6 +13,8 @@ def main():
         summary = runtime.run()
     except (runtime.InvalidCollectInput, runtime.CredentialEvidenceError):
         event = {'abi': 1, 'type': 'error', 'code': 'COLLECT_INVALID', 'retryable': False}
+    except runtime.ScheduledCollectIncomplete:
+        event = {'abi': 1, 'type': 'error', 'code': 'COLLECT_INCOMPLETE', 'retryable': True}
     except runtime.store.LockTimeout:
         event = {'abi': 1, 'type': 'error', 'code': 'COLLECT_LOCKED', 'retryable': True}
     except Exception:

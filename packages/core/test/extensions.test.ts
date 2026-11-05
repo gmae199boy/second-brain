@@ -754,3 +754,40 @@ it('command propagates invalid secret snapshot without launching', async () => {
   expect(await executeExtensionCommand(deps, { name: 'testext', command: 'echo', input: {} })).toEqual({ ok: false, code: 'EXTENSION_CONFIG_INVALID', retryable: false, message: '확장 설정을 확인하세요' });
   expect(fake.specs).toEqual([]);
 });
+
+it('validates a user string target setting and the capability allowlist', () => {
+  const work = [{kind:'testext.sync', execution:'supervised', runtime:'node', entry:'bin/work.mjs'}];
+  const setting = {key:'testext.account', type:'string', scope:'user', required:[]};
+  const schedule = {kind:'testext.sync', target_kind:'account', target_id:'unselected', target_setting:'testext.account', cron:'0 11 * * *', time_zone:'Asia/Seoul'};
+  const candidate = {...manifest, work, settings:[setting], default_schedules:[schedule], requires:['channel.send']};
+  expect(decodeExtensionManifest(JSON.stringify(candidate)).ok).toBe(true);
+  for (const changed of [
+    {...candidate, requires:['channel.send','channel.send']}, {...candidate, requires:['other.capability']},
+    {...candidate, settings:[]}, {...candidate, settings:[{...setting,type:'number'}]},
+    {...candidate, settings:[{...setting,scope:'global'}]}, {...candidate, settings:[{...setting,secret:true}]},
+    {...candidate, default_schedules:[{...schedule,target_setting:'other.account'}]},
+  ]) expect(decodeExtensionManifest(JSON.stringify(changed)).ok).toBe(false);
+});
+
+it('installs target-setting schedules without overwriting a previously installed key', async () => {
+  const work={kind:'testext.sync',execution:'supervised',runtime:'node',entry:'bin/work.mjs'};
+  const text=JSON.stringify({...manifest,work:[work],settings:[{key:'testext.account',type:'string',scope:'user',required:[]}],requires:['channel.send'],default_schedules:[{key:'daily',kind:work.kind,target_kind:'account',target_id:'unselected',target_setting:'testext.account',cron:'0 11 * * *',time_zone:'Asia/Seoul'}]});
+  const {deps}=setup({text});
+  deps.extensions.schedulerReady=async()=>true;
+  const installed=await installExtension({...deps,readTimeZone:async()=>({ok:true as const,value:'Asia/Seoul'})},{name:'testext'});
+  expect(installed.ok).toBe(true);
+  const user='019a0000-0000-7000-8000-000000000001';
+  expect(await deps.store.findScheduleByKey({extension:'testext',scheduleKey:'daily',userId:user})).toMatchObject({ok:true,schedule:{targetSetting:'testext.account'}});
+});
+
+it('requires a valid same-target same-zone predecessor schedule key', () => {
+  const work=['collect','report'].map(name=>({kind:`testext.${name}`,execution:'supervised',runtime:'node',entry:'bin/work.mjs'}));
+  const settings=[{key:'testext.account',type:'string',scope:'user',required:[]}];
+  const base={target_kind:'account',target_id:'unselected',target_setting:'testext.account',time_zone:'Asia/Seoul'};
+  const parent={...base,key:'collect',kind:'testext.collect',cron:'0 11 * * *'};
+  const child={...base,key:'report',kind:'testext.report',cron:'30 11 * * *',after_schedule:'collect'};
+  const valid={...manifest,work,settings,default_schedules:[parent,child]};
+  expect(decodeExtensionManifest(JSON.stringify(valid)).ok).toBe(true);
+  for(const bad of [{...child,after_schedule:'missing'},{...child,after_schedule:'report'},{...child,time_zone:'UTC'},{...child,target_kind:'other'}, {...child,target_setting:undefined}])
+    expect(decodeExtensionManifest(JSON.stringify({...valid,default_schedules:[parent,bad]})).ok).toBe(false);
+});

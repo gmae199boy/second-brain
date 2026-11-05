@@ -8,12 +8,17 @@ from pathlib import Path
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from garmin_pipeline import collect, config, dates, errors, garmin, ports, store
+from garmin_pipeline import collect, config, dates, errors, garmin, normalize, ports, store
 from collect_credentials import CredentialEvidenceError, _evidence, verify_credentials
 from collect_refresh import approve, begin, recover
+from scheduled_date import scheduled_date
 
 
 class InvalidCollectInput(Exception):
+    pass
+
+
+class ScheduledCollectIncomplete(Exception):
     pass
 
 
@@ -99,7 +104,12 @@ class SupervisedGarmin(garmin.GarminAdapter):
 
 
 def run(env=None, *, port_factory=SupervisedGarmin, sleep=time.sleep):
-    account, cfg = envelope(os.environ if env is None else env)
+    actual = os.environ if env is None else env
+    account, cfg = envelope(actual)
+    try:
+        day = scheduled_date(actual, cfg.timezone)
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
+        raise InvalidCollectInput('invalid scheduled date') from exc
     with store.supervised_account(account), store.write_session(cfg) as conn:
         with store.transaction(conn):
             row = conn.execute('select timezone from garmin.account_connections where user_id=%s and connection_id=%s', (account.user_id, account.connection_id)).fetchone()
@@ -107,14 +117,33 @@ def run(env=None, *, port_factory=SupervisedGarmin, sleep=time.sleep):
                 raise InvalidCollectInput('account timezone mismatch')
         with store.transaction(conn):
             before = conn.execute('select coalesce(max(id), 0) from garmin.run where user_id=%s and connection_id=%s', (account.user_id, account.connection_id)).fetchone()[0]
+        started_at = dates.now_ms()
+        def save_scheduled_success(conn, run_id, run_day):
+            if day is None or run_day != day or (conn.user_id, conn.connection_id) != (account.user_id, account.connection_id):
+                raise InvalidCollectInput('scheduled success context mismatch')
+            conn.execute('insert into garmin.collect_work_runs(work_id,user_id,connection_id,local_date,run_id) values (%s,%s,%s,%s,%s) on conflict (work_id,local_date) do update set user_id=excluded.user_id,connection_id=excluded.connection_id,run_id=excluded.run_id', (account.work_id, account.user_id, account.connection_id, day.isoformat(), run_id))
         collect.run(conn, cfg, port_factory(cfg, conn, sleep=sleep), sleep,
-                    today=dates.today(cfg), started_at=dates.now_ms(), manual=True,
+                    today=day if day is not None else dates.today(cfg), started_at=started_at, manual=day is None,
+                    retry_normalize_failed=day is not None,
+                    success_in_transaction=save_scheduled_success if day is not None else None,
                     notifier=ports.TableNotifier(conn))
         with store.transaction(conn):
             row = conn.execute('select id, status from garmin.run where user_id=%s and connection_id=%s and id>%s order by id desc limit 1', (account.user_id, account.connection_id, before)).fetchone()
+            if day is not None and (row is None or row[1] == 'success'):
+                recorded = conn.execute("select r.id,r.status from garmin.collect_work_runs w join garmin.run r on (r.user_id,r.connection_id,r.id)=(w.user_id,w.connection_id,w.run_id) where w.work_id=%s and w.user_id=%s and w.connection_id=%s and w.local_date=%s and r.local_date=w.local_date and r.status='success'", (account.work_id, account.user_id, account.connection_id, day.isoformat())).fetchone()
+                if row is not None and (recorded is None or recorded[0] != row[0]):
+                    raise ScheduledCollectIncomplete('scheduled success has no matching provenance')
+                row = recorded
             if row is None:
+                if day is not None: raise ScheduledCollectIncomplete('scheduled collection had no run')
                 return json.dumps({'status': 'noop', 'runs': 0, 'errors': 0})
             count = conn.execute('select count(*) from garmin.fetch_error where user_id=%s and connection_id=%s and run_id=%s', (account.user_id, account.connection_id, row[0])).fetchone()[0]
+            if day is not None:
+                failed = conn.execute('select exists(select 1 from garmin.normalize_result where user_id=%s and connection_id=%s and ok=0 and normalized_at >= %s)', (account.user_id, account.connection_id, started_at)).fetchone()[0]
+                pending = conn.execute("select exists(select 1 from garmin.meta where user_id=%s and connection_id=%s and key='day_values_pending')", (account.user_id, account.connection_id)).fetchone()[0]
+                incomplete = failed or pending or bool(normalize._work_set(conn))
+        if day is not None and incomplete:
+            raise ScheduledCollectIncomplete('scheduled projection incomplete')
         status = str(row[1])
         if status not in {str(value) for value in errors.RunStatus if value != errors.RunStatus.RUNNING}:
             raise RuntimeError('invalid final run status')
@@ -123,6 +152,7 @@ def run(env=None, *, port_factory=SupervisedGarmin, sleep=time.sleep):
             'rate_limited': 'blocked', 'blocked_403': 'blocked',
             'skipped_blocked': 'blocked', 'auth_failed': 'auth_required', 'error': 'error',
         }[status]
+        if day is not None and public_status != 'success': raise ScheduledCollectIncomplete('scheduled collection incomplete')
         if not isinstance(count, int) or isinstance(count, bool) or not 0 <= count <= 9007199254740991:
             raise RuntimeError('invalid error count')
         return json.dumps({'status': public_status, 'runs': 1, 'errors': count})
