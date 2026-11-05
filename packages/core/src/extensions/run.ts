@@ -12,7 +12,7 @@ export async function runExtension(deps: ExtensionDependencies, input: { name: s
     if (!installed.ok) return installed;
     if (!installed.extension) return { ok: false as const, code: 'EXTENSION_NOT_FOUND' as const, message: '설치된 확장이 없습니다' };
     let text: string; try { text = await runtime.installedManifest!(input.name); } catch { return invalid(); }
-    const decoded = decodeExtensionManifest(text);
+    const decoded = decodeExtensionManifest(text, runtime.validateSchema);
     if (!decoded.ok || decoded.manifest.name !== input.name || decoded.manifest.version !== installed.extension.version) return invalid();
     const job = decoded.manifest.work?.find(w => w.manual === input.job);
     if (!job) return invalid();

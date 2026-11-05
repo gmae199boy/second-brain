@@ -1,3 +1,4 @@
+import { mcpServeCommand } from './mcp-serve.js';
 import { channelsListCommand, channelsStatusCommand, channelsResendCommand } from './channels-status.js';
 import { extEnableCommand, extDisableCommand } from './ext-activation.js';
 import { recallChunksCommand } from './recall-chunks.js';
@@ -53,6 +54,7 @@ import { setupRun } from './setup-run.js';
  * who runs them, so there is no `admin` (AD-5, Decision 2026-10-16).
  */
 export const commands: readonly CommandSpec[] = [
+  mcpServeCommand,
   channelsListCommand, channelsStatusCommand, channelsResendCommand,
   recallChunksCommand, recallToolsCommand, recallExpandCommand, sessionsReadCommand,
   extInstallCommand,

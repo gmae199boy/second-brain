@@ -97,7 +97,9 @@ def run(case):
     return {'outcome': 'failed', 'code': code, 'retryable': code == 'ABI_EXIT_FAILED', 'usage': usage}
 
 result = {}
-result['manifests'] = [{'name': c['name'], 'verdict': manifests.valid(c['manifest'])} for c in manifests.fixtures]
+result['manifests'] = [{'name': c['name'], 'verdict': manifests.valid(c['manifest'], sys.argv[2])} for c in manifests.fixtures]
+recipe, deep = manifests.deep_fixture()
+result['deep-manifest'] = [{'name': recipe['name'], 'verdict': manifests.valid(deep, sys.argv[2])}]
 result['env'] = [{'name': c['name'], 'verdict': environment(c['env'])} for c in load(abi / 'env.json')]
 result['events'] = [{'name': c['name'], 'verdict': event(c['line'])[1] or True} for c in load(abi / 'events.json')]
 result['runs'] = [{'name': c['name'], 'verdict': run(c)} for c in load(abi / 'runs.json')]

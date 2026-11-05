@@ -1,3 +1,4 @@
+import { validateSchema } from '../runtime/json-schema.js';
 import { spawn } from 'node:child_process';
 import { lstat, open, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -30,7 +31,7 @@ export const extLoginCommand: CommandSpec = {
       const dirInfo = await lstat(directory);
       const manifestInfo = await lstat(join(directory, 'manifest.json'));
       if (!dirInfo.isDirectory() || dirInfo.isSymbolicLink() || !manifestInfo.isFile() || manifestInfo.isSymbolicLink()) throw Error();
-      const decoded = decodeExtensionManifest(await readFile(join(directory, 'manifest.json'), 'utf8'));
+      const decoded = decodeExtensionManifest(await readFile(join(directory, 'manifest.json'), 'utf8'), validateSchema);
       if (!decoded.ok || decoded.manifest.name !== name || decoded.manifest.version !== extension.version || !decoded.manifest.auth) return { ok: false, code: 'EXTENSION_INVALID', message: '확장 인증을 찾을 수 없습니다' };
       const manifest = decoded.manifest;
       const declarations = manifest.settings ?? [];

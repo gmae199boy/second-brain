@@ -1,5 +1,7 @@
+import { validateSchema } from '../../../apps/cli/src/runtime/json-schema.js';
+const decodeExtensionManifest = (text: string) => decodeManifest(text, validateSchema);
 import { expect, it } from 'vitest';
-import { decodeExtensionManifest, isExtensionName, installExtension, extensionStatus, runExtensionCheck, decodeAbiEnv } from '../src/index.js';
+import { decodeExtensionManifest as decodeManifest, isExtensionName, installExtension, extensionStatus, runExtensionCheck, decodeAbiEnv } from '../src/index.js';
 import { fakeProcessInspector, fakeProcessLauncher, fixedClock, manualTime, memoryStore, sequenceIdGen } from '../src/testing/index.js';
 import type { ExtensionRuntime, ProcessLauncher } from '../src/index.js';
 const now = new Date('2026-10-29T00:00:00Z');
@@ -14,7 +16,7 @@ function setup(options: { text?: string; found?: boolean; output?: string; code?
   } };
   const time = manualTime(now);
   const runtime: ExtensionRuntime = {
-    launcher, inspector: fakeProcessInspector(fake), timer: time.timer, databaseUrl: () => env.BRAIN_DATABASE_URL,
+    validateSchema, launcher, inspector: fakeProcessInspector(fake), timer: time.timer, databaseUrl: () => env.BRAIN_DATABASE_URL,
     packages: {
       async resolve() { return options.found === false ? { ok: false } : { ok: true, dir: '/packages/testext', manifestText: options.text ?? JSON.stringify(manifest) }; },
       async place() { placed++; return '/installed/testext'; },
@@ -426,4 +428,144 @@ it('requires declared, non-cyclic followup work', () => {
   expect(decodeExtensionManifest(JSON.stringify({...manifest,work:[first,second]})).ok).toBe(true);
   expect(decodeExtensionManifest(JSON.stringify({...manifest,work:[first]})).ok).toBe(false);
   expect(decodeExtensionManifest(JSON.stringify({...manifest,work:[first,{...second,followup:first.kind}]})).ok).toBe(false);
+});
+
+it('validates read-only command declarations before installing the extension', async () => {
+  const command = { name: 'echo-stats', runtime: 'node', entry: 'bin/echo.mjs', description: '통계를 반환합니다', input_schema: { type: 'object' }, output_schema: { type: 'object' }, timeout_ms: 1000, risk: 'read' };
+  expect(decodeExtensionManifest(JSON.stringify({ ...manifest, commands: [command] })).ok).toBe(true);
+  for (const invalid of [
+    { ...manifest, commands: [{ ...command, risk: 'write' }] },
+    { ...manifest, commands: [command, command] },
+    { ...manifest, commands: [{ ...command, name: 'echo_stats' }] },
+    { ...manifest, commands: [{ ...command, input_schema: { type: 'nonsense' } }] },
+    { ...manifest, commands: [{ ...command, entry: '../outside' }] },
+    { ...manifest, name: 'test_ext', commands: [command] },
+  ]) {
+    expect(decodeExtensionManifest(JSON.stringify(invalid))).toMatchObject({ ok: false, code: 'EXTENSION_INVALID' });
+  }
+  const { deps, writes } = setup({ text: JSON.stringify({ ...manifest, commands: [{ ...command, risk: 'write' }] }) });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_INVALID' });
+  expect(writes()).toEqual({ placed: 0, migrated: 0 });
+});
+
+it('kills and reaps a live command leader if group inspection or signalling fails', async () => {
+  const { executeExtensionCommand } = await import('../src/extensions/commands.js');
+  const { sampleSelfUserInput } = await import('../src/testing/index.js');
+  const { deps } = setup();
+  const launcher = fakeProcessLauncher(), inspector = fakeProcessInspector(launcher);
+  inspector.signalFailure = true;
+  const command = { name: 'echo-stats', runtime: 'node', entry: 'bin/echo.mjs', description: '조회', input_schema: { type: 'object' }, output_schema: { type: 'object' }, timeout_ms: 15, risk: 'read' };
+  await deps.store.ensureSelfUser(sampleSelfUserInput());
+  await deps.store.recordExtensionInstall({ name: 'testext', version: '0.1.0', now });
+  Object.assign(deps.extensions, {
+    launcher, inspector, installedDirectory: () => '/installed/testext', installedManifest: async () => JSON.stringify({ ...manifest, commands: [command] }),
+    validateValue: () => true,
+    timer: { sleep: (ms: number, signal: AbortSignal) => new Promise<void>(resolve => { const id = setTimeout(resolve, ms); signal.addEventListener('abort', () => { clearTimeout(id); resolve(); }, { once: true }); }) },
+  });
+  expect(await executeExtensionCommand(deps, { name: 'testext', command: 'echo-stats', input: {} })).toMatchObject({ ok: false, code: 'EXTENSION_COMMAND_CLEANUP_FAILED' });
+  expect(launcher.processes[0]?.signals).toContain('SIGKILL');
+  expect(launcher.processes[0]?.leaderExited).toBe(true);
+});
+
+it('prepares Python for command-only usage before migration and propagates failure', async () => {
+  const command = { name: 'echo', runtime: 'python', entry: 'echo.py', description: '조회', input_schema: { type: 'object' }, output_schema: { type: 'object' }, timeout_ms: 100, risk: 'read' };
+  const { deps, writes } = setup({ text: JSON.stringify({ ...manifest, commands: [command] }) });
+  deps.extensions.preparePython = async () => ({ ok: false, code: 'EXTENSION_PYTHON_SYNC_FAILED', message: '실패' });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_PYTHON_SYNC_FAILED' });
+  expect(writes().migrated).toBe(0);
+});
+
+it('rechecks activation after discovery and never starts a stale command', async () => {
+  const { executeExtensionCommand, extensionCommands } = await import('../src/extensions/commands.js');
+  const { sampleSelfUserInput } = await import('../src/testing/index.js');
+  const { deps, fake } = setup();
+  const command = { name: 'echo', runtime: 'node', entry: 'echo.mjs', description: '조회', input_schema: { type: 'object' }, output_schema: { type: 'object' }, timeout_ms: 100, risk: 'read' };
+  await deps.store.ensureSelfUser(sampleSelfUserInput()); await deps.store.recordExtensionInstall({ name: 'testext', version: '0.1.0', now });
+  Object.assign(deps.extensions, { installedDirectory: () => '/installed/testext', installedManifest: async () => JSON.stringify({ ...manifest, commands: [command] }), validateValue: () => true });
+  const registry = await extensionCommands(deps); expect(registry.ok && registry.commands).toHaveLength(1);
+  await deps.store.setExtensionEnabled({ name: 'testext', enabled: false, now });
+  expect(await executeExtensionCommand(deps, { name: 'testext', command: 'echo', input: {} })).toMatchObject({ ok: false, code: 'EXTENSION_COMMAND_UNAVAILABLE' });
+  expect(fake.specs).toHaveLength(0);
+});
+
+it('honors pre-cancellation and bounds installation lock wait', async () => {
+  const { executeExtensionCommand } = await import('../src/extensions/commands.js');
+  const { deps, fake } = setup();
+  Object.assign(deps.extensions, { installedDirectory: () => '/installed/testext', installedManifest: async () => '{}', validateValue: () => true });
+  const controller = new AbortController(); controller.abort();
+  expect(await executeExtensionCommand(deps, { name: 'testext', command: 'echo', input: {}, signal: controller.signal })).toMatchObject({ ok: false, code: 'EXTENSION_COMMAND_TIMEOUT' });
+  deps.extensions.timer = { sleep: async (ms, signal) => { if (ms === 30000 && !signal.aborted) return; await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true }); }); } };
+  deps.extensions.withInstallLock = async (_name, _run, signal) => { await new Promise<void>(resolve => { if (signal?.aborted) resolve(); else signal?.addEventListener('abort', () => resolve(), { once: true }); }); throw new Error('cancelled'); };
+  expect(await executeExtensionCommand(deps, { name: 'testext', command: 'echo', input: {} })).toMatchObject({ ok: false, code: 'EXTENSION_COMMAND_TIMEOUT' });
+  expect(fake.specs).toHaveLength(0);
+});
+
+it('counts slow process observation against timeout and cleans the leader', async () => {
+  const { executeExtensionCommand } = await import('../src/extensions/commands.js');
+  const { sampleSelfUserInput } = await import('../src/testing/index.js');
+  const { deps } = setup(); const launcher = fakeProcessLauncher(), inspector = fakeProcessInspector(launcher);
+  const bootTime = inspector.bootTime; let observations = 0;
+  inspector.bootTime = async () => ++observations === 1 ? new Promise(() => {}) : bootTime();
+  const command = { name: 'echo', runtime: 'node', entry: 'echo.mjs', description: '조회', input_schema: { type: 'object' }, output_schema: { type: 'object' }, timeout_ms: 20, risk: 'read' };
+  await deps.store.ensureSelfUser(sampleSelfUserInput()); await deps.store.recordExtensionInstall({ name: 'testext', version: '0.1.0', now });
+  const time = manualTime(now); deps.clock = time.clock;
+  Object.assign(deps.extensions, { launcher, inspector, installedDirectory: () => '/installed/testext', installedManifest: async () => JSON.stringify({ ...manifest, commands: [command] }), validateValue: () => true, timer: time.timer });
+  const pending = executeExtensionCommand(deps, { name: 'testext', command: 'echo', input: {} });
+  for (let i = 0; i < 100 && !launcher.processes.length; i++) await Promise.resolve();
+  expect(launcher.processes).toHaveLength(1); for (let i = 0; i < 20; i++) await Promise.resolve();
+  time.advance(19); for (let i = 0; i < 20; i++) await Promise.resolve(); expect(launcher.processes[0]?.leaderExited).toBe(false);
+  let settled = false; void pending.then(() => { settled = true; });
+  time.advance(1); for (let i = 0; i < 1000 && !settled; i++) await Promise.resolve();
+  expect(settled).toBe(true);
+  expect(time.clock.now().getTime()).toBe(now.getTime() + 20);
+  expect(await pending).toMatchObject({ ok: false, code: 'EXTENSION_COMMAND_TIMEOUT' });
+  expect(launcher.processes[0]?.leaderExited).toBe(true);
+}, 5000);
+
+it('returns EXTENSION_INVALID rather than throwing on a deeply nested schema', () => {
+  const command = { name: 'echo', runtime: 'node', entry: 'echo.mjs', description: '조회', input_schema: { type: 'object' }, output_schema: { type: 'object' }, timeout_ms: 100, risk: 'read' };
+  const text = JSON.stringify({ ...manifest, commands: [command] }).replace('"input_schema":{"type":"object"}', `"input_schema":${'{"type":"object","properties":{"x":'.repeat(15000)}{}${'}}'.repeat(15000)}`);
+  expect(decodeExtensionManifest(text)).toMatchObject({ ok: false, code: 'EXTENSION_INVALID' });
+});
+
+it('serializes disable with preparation and the start of a command', async () => {
+  const { executeExtensionCommand } = await import('../src/extensions/commands.js');
+  const { setExtensionEnabled } = await import('../src/extensions/status.js');
+  const { sampleSelfUserInput } = await import('../src/testing/index.js');
+  const { deps } = setup(); const launcher = fakeProcessLauncher(), inspector = fakeProcessInspector(launcher);
+  const command = { name: 'echo', runtime: 'node', entry: 'echo.mjs', description: '조회', input_schema: { type: 'object' }, output_schema: { type: 'object' }, timeout_ms: 1000, risk: 'read' };
+  await deps.store.ensureSelfUser(sampleSelfUserInput()); await deps.store.recordExtensionInstall({ name: 'testext', version: '0.1.0', now });
+  let releasePreparation!: () => void, prepared!: () => void;
+  const preparing = new Promise<void>(resolve => { prepared = resolve; });
+  const gate = new Promise<void>(resolve => { releasePreparation = resolve; });
+  let tail: Promise<void> = Promise.resolve();
+  const lock = async <T>(_name: string, run: () => Promise<T>): Promise<T> => {
+    const prior = tail; let release!: () => void; tail = new Promise<void>(resolve => { release = resolve; });
+    await prior; try { return await run(); } finally { release(); }
+  };
+  const events: string[] = [];
+  const wrappedLauncher: ProcessLauncher = { async start(spec) { events.push('start'); const result = await launcher.start(spec); if (result.ok) { const child = launcher.processes.at(-1)!; child.write('{}'); child.exit(0); } return result; } };
+  Object.assign(deps.extensions, { withCommandLock: lock, withInstallLock: lock, launcher: wrappedLauncher, inspector, installedDirectory: () => '/installed/testext', installedManifest: async () => JSON.stringify({ ...manifest, commands: [command] }), validateValue: () => true,
+    databaseUrl: async () => { prepared(); await gate; return 'postgres://fixture'; } });
+  const execution = executeExtensionCommand(deps, { name:'testext', command:'echo', input:{} }); await preparing;
+  let disabled = false;
+  const disable = setExtensionEnabled(deps, { name:'testext', enabled:false }).then(result => { disabled = true; events.push('disabled'); return result; });
+  for (let i=0;i<50;i++) await Promise.resolve(); expect(disabled).toBe(false); expect(launcher.specs).toHaveLength(0);
+  releasePreparation(); expect(await execution).toMatchObject({ ok:true }); expect(await disable).toMatchObject({ ok:true, enabled:false });
+  expect(events).toEqual(['start', 'disabled']);
+  expect(await executeExtensionCommand(deps, { name:'testext', command:'echo', input:{} })).toMatchObject({ ok:false, code:'EXTENSION_COMMAND_UNAVAILABLE' });
+  expect(launcher.specs).toHaveLength(1);
+});
+
+it('rejects nonfinite SDK input and output even with loose object schemas', async () => {
+  const { executeExtensionCommand } = await import('../src/extensions/commands.js');
+  const { sampleSelfUserInput } = await import('../src/testing/index.js');
+  const { deps } = setup(); const launcher = fakeProcessLauncher(), inspector = fakeProcessInspector(launcher);
+  const command = { name: 'echo', runtime: 'node', entry: 'echo.mjs', description: '조회', input_schema: { type:'object' }, output_schema: { type:'object' }, timeout_ms: 1000, risk:'read' };
+  await deps.store.ensureSelfUser(sampleSelfUserInput()); await deps.store.recordExtensionInstall({ name:'testext', version:'0.1.0', now });
+  const wrappedLauncher: ProcessLauncher = { async start(spec) { const result = await launcher.start(spec); if (result.ok) { const child = launcher.processes.at(-1)!; child.write('{"nested":{"value":1e400}}'); child.exit(0); } return result; } };
+  Object.assign(deps.extensions, { launcher: wrappedLauncher, inspector, installedDirectory: () => '/installed/testext', installedManifest: async () => JSON.stringify({ ...manifest, commands:[command] }), validateValue: () => true });
+  expect(await executeExtensionCommand(deps, { name:'testext', command:'echo', input:{ value:Infinity } })).toMatchObject({ ok:false, code:'EXTENSION_COMMAND_INPUT_INVALID' });
+  expect(launcher.specs).toHaveLength(0);
+  expect(await executeExtensionCommand(deps, { name:'testext', command:'echo', input:{} })).toMatchObject({ ok:false, code:'EXTENSION_COMMAND_OUTPUT_INVALID' });
 });

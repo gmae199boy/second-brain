@@ -809,6 +809,13 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `SESSION_NOT_FOUND` | 1 | 지정한 세션이 없습니다 |
 | `EXTENSION_NOT_FOUND` | 2 | 지정한 확장 패키지가 없습니다 |
 | `EXTENSION_INVALID` | 2 | 확장 패키지의 선언이 올바르지 않습니다 |
+| `EXTENSION_COMMAND_UNAVAILABLE` | 2 | 등록된 확장 명령이 없습니다 |
+| `EXTENSION_COMMAND_INPUT_INVALID` | 2 | 확장 명령 입력이 올바르지 않습니다 |
+| `EXTENSION_COMMAND_FAILED` | 1 | 확장 명령 실행이 실패했습니다 |
+| `EXTENSION_COMMAND_TIMEOUT` | 1 | 확장 명령 실행 시간이 초과되었습니다 |
+| `EXTENSION_COMMAND_CLEANUP_FAILED` | 1 | 확장 명령 프로세스 종료를 확인하지 못했습니다 |
+| `EXTENSION_COMMAND_OUTPUT_INVALID` | 1 | 확장 명령 출력이 올바르지 않습니다 |
+| `EXTENSION_COMMAND_OUTPUT_REDACTED` | 1 | 가린 출력이 확장 출력 schema를 만족하지 않습니다 |
 | `EXTENSION_PYTHON_PIN_INVALID` | 1 | Python 확장 의존 파일이나 버전 지정이 올바르지 않습니다 |
 | `EXTENSION_UV_NOT_FOUND` | 1 | uv를 찾을 수 없습니다 |
 | `EXTENSION_PYTHON_NOT_FOUND` | 1 | 지정한 Python을 찾을 수 없습니다 |

@@ -19,9 +19,15 @@ export async function listExtensions({ store }: { store: ExtensionStore }) {
 export async function publicExtensionStatus({ store }: { store: ExtensionStore }, { name }: { name: string }) {
   return store.getExtensionPublicStatus(name);
 }
-export async function setExtensionEnabled({ store, clock }: { store: ExtensionStore; clock: { now(): Date } }, input: { name: string; enabled: boolean }) {
-  const result = await store.setExtensionEnabled({ ...input, now: clock.now() });
-  if (!result.ok) return result;
-  if (!result.found) return { ok: false as const, code: 'EXTENSION_NOT_FOUND' as const, message: '설치된 확장이 없습니다' };
-  return { ok: true as const, name: input.name, enabled: input.enabled, changed: result.changed };
+export async function setExtensionEnabled({ store, clock, extensions }: { store: ExtensionStore; clock: { now(): Date }; extensions?: import('./install.js').ExtensionRuntime }, input: { name: string; enabled: boolean }) {
+  const update = async () => {
+    const result = await store.setExtensionEnabled({ ...input, now: clock.now() });
+    if (!result.ok) return result;
+    if (!result.found) return { ok: false as const, code: 'EXTENSION_NOT_FOUND' as const, message: '설치된 확장이 없습니다' };
+    return { ok: true as const, name: input.name, enabled: input.enabled, changed: result.changed };
+  };
+  const withLock = extensions?.withInstallLock ?? extensions?.withCommandLock;
+  if (!withLock) return update();
+  try { return await withLock(input.name, update); }
+  catch { return { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: '확장 활성 상태의 잠금을 확보하지 못했습니다' }; }
 }

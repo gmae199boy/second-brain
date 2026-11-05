@@ -22,10 +22,14 @@ export interface ExtensionMigrator {
   apply(owner: string, directory: string): Promise<{ ok: true; from: number; to: number; applied: string[] } | { ok: false; code: 'MIGRATION_FAILED' | 'DB_UNAVAILABLE'; message: string; file?: string }>;
 }
 export interface ExtensionRuntime {
+  installedDirectory?(name: string): string;
+  validateValue?(schema: Record<string, unknown>, value: unknown): boolean;
+  validateSchema?(schema: Record<string, unknown>): boolean;
   installedManifest?(name: string): Promise<string>;
   readPublicReport?(name: string, workId: string): Promise<unknown>;
   schedulerReady?(): Promise<boolean>;
   secureCredentials?(name: string): Promise<void>;
+  withCommandLock?<T>(name: string, run: () => Promise<T>, signal?: AbortSignal): Promise<T>;
   withInstallLock?<T>(name: string, run: () => Promise<T>, signal?: AbortSignal): Promise<T>;
   provision?(name: string): Promise<{ ok: true } | { ok: false; code: 'DB_UNAVAILABLE'; message: string }>;
   packages: ExtensionPackages; migrator: ExtensionMigrator; launcher: ProcessLauncher; inspector: ProcessInspector; timer: Timer;
@@ -68,7 +72,7 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
   try { source = await runtime.packages.resolve(name); }
   catch { return preflightFailure('EXTENSION_INVALID', '확장 패키지의 manifest를 읽지 못했습니다'); }
   if (!source.ok) return preflightFailure('EXTENSION_NOT_FOUND', '지정한 확장 패키지가 없습니다');
-  const decoded = decodeExtensionManifest(source.manifestText);
+  const decoded = decodeExtensionManifest(source.manifestText, runtime.validateSchema);
   if (!decoded.ok) return preflightFailure('EXTENSION_INVALID', decoded.message);
   const manifest = decoded.manifest;
   const folderName = source.dir.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1);
@@ -146,7 +150,7 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
     const saved = await mark('package', 'succeeded'); if (!saved.ok) { await runtime.packages.rollback?.(name); return saved; }
   }
   const afterPackage = await cancelled(); if (afterPackage) return afterPackage;
-  const needsPython = [manifest.connection_check, ...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : [])].some(command => command.runtime === 'python');
+  const needsPython = [manifest.connection_check, ...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : []), ...(manifest.commands ?? [])].some(command => command.runtime === 'python');
   if (!completed('environment') && needsPython) {
     const prepared = runtime.preparePython ? await runtime.preparePython(installedDir, signal) : { ok: false as const, code: 'EXTENSION_UV_NOT_FOUND' as const, message: 'uv를 찾을 수 없습니다' };
     if (!prepared.ok && prepared.code === 'EXTENSION_INSTALL_CANCELLED') { const stopped = await cancelled(); if (stopped) return stopped; }

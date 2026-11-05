@@ -21,6 +21,8 @@ import { argumentName } from '../envelope.js';
 
 /** One command's meta, its arguments and its flags, as the schema carries it. */
 export interface CommandSchema {
+  input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
   ns: string;
   verb: string;
   used_for: string;
@@ -111,6 +113,8 @@ function answer(commands: readonly CommandSpec[]): {
 
 function schemaOf(spec: CommandSpec): CommandSchema {
   return {
+    ...(spec.inputSchema ? { input_schema: spec.inputSchema } : {}),
+    ...(spec.outputSchema ? { output_schema: spec.outputSchema } : {}),
     ns: spec.ns,
     verb: spec.verb,
     used_for: spec.usedFor,

@@ -80,6 +80,8 @@ const SINKS: Readonly<Record<string, readonly string[]>> = {
   // The entry point's last sink: an exception out of the dispatcher, stack and
   // all, through `crashLines`.
   'apps/cli/src/bin.ts': ['text'],
+  // MCP messages pass through the shared value mask before serialization.
+  'apps/cli/src/mcp/serve.ts': ['envelope'],
   // The dispatcher's two sinks. Text mode, the warning lines and the drain's
   // error line go through `text`; a hook's one line of stderr goes through
   // `hook`; `--json` is already masked, because Core masks an envelope as it

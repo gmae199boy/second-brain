@@ -184,6 +184,71 @@
           }
         }
       }
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "runtime",
+          "entry",
+          "description",
+          "input_schema",
+          "output_schema",
+          "timeout_ms",
+          "risk"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          },
+          "runtime": {
+            "enum": [
+              "node",
+              "python"
+            ]
+          },
+          "entry": {
+            "$ref": "#/$defs/path"
+          },
+          "description": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "input_schema": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "object"
+              }
+            }
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "risk": {
+            "const": "read"
+          }
+        }
+      }
     }
   },
   "$defs": {

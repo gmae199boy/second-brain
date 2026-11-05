@@ -10,7 +10,7 @@ describe('changed test path rules', () => {
   it('runs Python for extension and runtime paths', () => {
     for (const file of [
       'extensions/garmin/src/x.py', 'extensions/other/manifest.json',
-      'packages/postgres/src/store.ts','packages/postgres/migrations/001.sql',
+      'packages/postgres/src/store.ts','packages/postgres/src/extension-install-lock.ts','packages/postgres/test/extension-command-lock.test.ts','packages/postgres/migrations/001.sql',
       'packages/core/src/queue/supervisor.ts','packages/core/src/process-abi/codec.ts',
       'packages/core/src/extensions/install.ts','packages/core/src/imports/x.ts',
       'packages/core/src/channels/handoff.ts','packages/core/src/files/import-work.ts',
@@ -23,6 +23,7 @@ describe('changed test path rules', () => {
       'apps/cli/src/commands/daemon-status.ts','apps/cli/test/ext-fixture.ts','apps/cli/test/global-setup.ts',
       'apps/cli/test/pg-home.ts','tooling/test-db/src/index.ts','tooling/bootstrap/src/bootstrap.ts',
       'apps/cli/python-test/vitest.config.ts','tooling/test-changed/rules.mjs','package.json','pnpm-lock.yaml',
+      'apps/cli/src/mcp/serve.ts', 'apps/cli/src/commands/mcp-serve.ts', 'packages/core/src/ports/process.ts', 'packages/core/fixtures/extensions/v1/check-manifests.py',
     ]) expect(classifyChanges([file]).pythonAll, file).toBe(true);
   });
   it('skips Python for unrelated command and core changes', () => {
