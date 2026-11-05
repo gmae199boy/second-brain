@@ -1,3 +1,4 @@
+import { sampleSelfUserInput } from '../src/testing/index.js';
 import { describe, expect, it } from 'vitest';
 import { createBrain } from '../src/brain.js';
 import { tickSchedules, SCHEDULE_TICK_LIMIT } from '../src/queue/schedule-tick.js';
@@ -10,7 +11,7 @@ const now = new Date('2026-02-03T04:05:06.000Z');
 const schedule = (over: Partial<Schedule> = {}): Schedule => ({ holdGroup: null, id: 's', kind: SCHEDULE_PROBE_KIND,
   targetKind: 'probe', targetId: 's', localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now, ...over });
 function kit() {
-  const store = memoryStore(); let at = now; let reads = 0;
+  const store = memoryStore(); void store.ensureSelfUser(sampleSelfUserInput()); let at = now; let reads = 0;
   const clock = { now: () => { reads++; return new Date(at); } };
   const idGen = sequenceIdGen({ timestampMs: now.getTime() });
   return { store, clock, idGen, set: (value: Date) => { at = value; }, reads: () => reads,

@@ -15,6 +15,7 @@ const rules = [
   { prefix:'packages/core/src/files/', reason:'core file import and cleanup' },
   { prefix:'packages/core/src/domain/', reason:'queue, ABI and extension work domain' },
   { prefix:'packages/core/src/settings/', reason:'daemon schedule and extension settings' },
+  { prefix:'packages/core/src/users/', reason:'extension and daemon self resolution' },
   { prefix:'packages/core/src/spool/', reason:'daemon queue spool replay' },
   { prefix:'apps/cli/src/mcp/', reason:'extension MCP runtime' },
   { prefix:'apps/cli/src/daemon/', reason:'daemon supervisor and drain' },

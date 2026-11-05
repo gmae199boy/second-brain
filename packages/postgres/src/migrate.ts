@@ -4,12 +4,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Clock } from '@second-brain/core';
 import { createPool, describe, type ConnectionOptions } from './connect.js';
-export const CORE_SCHEMA_VERSION = 31;
+export const CORE_SCHEMA_VERSION = 32;
 export const SCHEMA_VERSION = CORE_SCHEMA_VERSION;
 export interface MigrationOwner { owner: string; directory: string }
 export interface RunMigrationsOptions extends ConnectionOptions {
   clock: Clock;
   owners?: readonly MigrationOwner[];
+  coreMaxVersion?: number;
 }
 export type MigrationResult = { ok: true; from: number; to: number; applied: string[] }
   | { ok: false; code: 'DB_UNAVAILABLE' | 'MIGRATION_FAILED'; message: string; file?: string };
@@ -20,6 +21,7 @@ const defaultOwners: readonly MigrationOwner[] = [{ owner: 'core', directory: fi
 export async function runMigrations(options: RunMigrationsOptions): Promise<MigrationResult> {
   let files: { owner: string; name: string; version: number; body: string; checksum: string }[] = [];
   try {
+    if (options.coreMaxVersion !== undefined && (!Number.isInteger(options.coreMaxVersion) || options.coreMaxVersion < 1 || options.coreMaxVersion > CORE_SCHEMA_VERSION)) throw new Error('core 마이그레이션 상한이 올바르지 않습니다');
     const owners = options.owners ?? defaultOwners;
     if (new Set(owners.map(o => o.owner)).size !== owners.length) throw new Error('마이그레이션 소유자가 중복됩니다');
     for (const owner of owners) {
@@ -60,6 +62,7 @@ export async function runMigrations(options: RunMigrationsOptions): Promise<Migr
     };
     await validate();
     for (const file of files) {
+      if (file.owner === 'core' && options.coreMaxVersion !== undefined && file.version > options.coreMaxVersion) continue;
       attempting = file.name;
       await client.query('begin');
       try {

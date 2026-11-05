@@ -6,7 +6,7 @@ it('gate 확정 후 가린 본문을 보내고 원문은 보존한다', async ()
   const store = memoryStore();
   const now = new Date('2026-10-31T00:00:00Z');
   await store.ensureChannel({ id: 'channel', kind: 'telegram', botRef: 'bot' });
-  await store.ensureChannelConversation({ id: 'conversation', channelId: 'channel', externalRef: 'chat', threadRef: 'thread' });
+  await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: 'conversation', channelId: 'channel', externalRef: 'chat', threadRef: 'thread' });
   const text = 'password: secret123456';
   await store.createChannelRequest({ id: 'request', conversationId: 'conversation', producer: 'test', producerResultId: 'result', purpose: 'notice', revision: null, text, createdAt: now });
   await store.handoffChannelRequest({ requestId: 'request', workId: 'work', now });
@@ -25,7 +25,7 @@ it('gate 확정 후 가린 본문을 보내고 원문은 보존한다', async ()
 it('부분 성공을 저장하고 새 시도에서 남은 항목부터 순서대로 보낸다', async () => {
   const store = memoryStore(), now = new Date('2026-10-31T00:00:00Z');
   await store.ensureChannel({ id: 'channel', kind: 'telegram', botRef: 'bot' });
-  await store.ensureChannelConversation({ id: 'conversation', channelId: 'channel', externalRef: 'chat', threadRef: null });
+  await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: 'conversation', channelId: 'channel', externalRef: 'chat', threadRef: null });
   const file = { location: { storeKind: 'local' as const, locator: 'file', ownership: 'brain' as const }, filename: 'file' };
   const bundle = { summary: 'password: secret123456', albums: [{ photos: [file], caption: 'password: secret123456' }, { photos: [file, file] }], document: file };
   await store.createChannelRequest({ id: 'request', conversationId: 'conversation', producer: 'test', producerResultId: 'bundle', purpose: 'report', revision: null, text: '원문', bundle, createdAt: now });
@@ -51,7 +51,7 @@ it('부분 성공을 저장하고 새 시도에서 남은 항목부터 순서대
 
 it('파일 저장소 일시 장애 뒤 이미 보낸 요약을 건너뛰고 복구한다', async () => {
   const store = memoryStore(), now = new Date();
-  await store.ensureChannel({ id: 'c', kind: 'telegram', botRef: 'bot' }); await store.ensureChannelConversation({ id: 'v', channelId: 'c', externalRef: 'chat', threadRef: null });
+  await store.ensureChannel({ id: 'c', kind: 'telegram', botRef: 'bot' }); await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: 'v', channelId: 'c', externalRef: 'chat', threadRef: null });
   const doc = { location: { storeKind: 'local' as const, ownership: 'brain' as const, locator: 'file' }, filename: 'file' };
   await store.createChannelRequest({ id: 'r', conversationId: 'v', producer: 'p', producerResultId: 'r', purpose: 'report', revision: null, text: '', bundle: { summary: 'summary', albums: [], document: doc }, createdAt: now });
   await store.handoffChannelRequest({ requestId: 'r', workId: 'w', now });
@@ -68,7 +68,7 @@ it('파일 저장소 일시 장애 뒤 이미 보낸 요약을 건너뛰고 복�
 
 it('모든 항목 저장 후 finish 전 중단된 요청은 재시도에서 마지막 외부 ID를 복원한다', async () => {
   const store = memoryStore(), now = new Date();
-  await store.ensureChannel({ id: 'c', kind: 'telegram', botRef: 'bot' }); await store.ensureChannelConversation({ id: 'v', channelId: 'c', externalRef: 'chat', threadRef: null });
+  await store.ensureChannel({ id: 'c', kind: 'telegram', botRef: 'bot' }); await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: 'v', channelId: 'c', externalRef: 'chat', threadRef: null });
   const doc = { location: { storeKind: 'local' as const, ownership: 'brain' as const, locator: 'file' }, filename: 'file' };
   await store.createChannelRequest({ id: 'r', conversationId: 'v', producer: 'p', producerResultId: 'r', purpose: 'report', revision: null, text: '', bundle: { summary: 'summary', albums: [], document: doc }, createdAt: now });
   await store.handoffChannelRequest({ requestId: 'r', workId: 'w', now });

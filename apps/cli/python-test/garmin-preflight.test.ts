@@ -27,7 +27,7 @@ it('합성 capture를 공용 명령과 실제 감독자로 읽고 계약 자료�
     const tables = ['garmin.datasets', 'garmin.import_batches', 'garmin.import_mapping', 'garmin.raw_payloads', 'brain.file_requests'];
     const contract = async () => Promise.all(tables.map(table => fixture.db.rows(`select coalesce(json_agg(t order by t::text)::text,'[]') as contents from ${table} t`)));
     const prior = await contract();
-    await store.setSetting({ key: 'garmin.capture_manifest', value: await realpath(join(capture, 'manifest.json')), updatedAt: new Date() });
+    await store.setSetting({ userId:'01940000-0000-7000-8000-00000000000a', key: 'garmin.capture_manifest', value: await realpath(join(capture, 'manifest.json')), updatedAt: new Date() });
     daemon = runDaemon({ home: fixture.home, env: fixture.env, clock: systemClock, idGen: uuidV7IdGen(), signal: controller.signal, drainPauseMs: 25, heartbeatMs: 100, supervisor: { pollMs: 25 } });
     const run = await fixture.run(['ext', 'run', 'garmin', 'import-preflight', '--json']);
     const errors = await fixture.db.rows("select error_code,stderr from brain.work_attempts order by started_at");

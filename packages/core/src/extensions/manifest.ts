@@ -60,10 +60,11 @@ function decodeManifestUnchecked(text: string, validateSchema?: (schema: Record<
     if (!Array.isArray(v['settings'])) return invalid;
     const seen = new Set<string>();
     for (const setting of v['settings']) {
-      if (!object(setting) || !Object.keys(setting).every(k => ['key', 'type', 'required', 'secret', 'default', 'machine'].includes(k)) ||
+      if (!object(setting) || !Object.keys(setting).every(k => ['key', 'type', 'required', 'secret', 'default', 'machine', 'scope'].includes(k)) ||
           typeof setting['key'] !== 'string' || !setting['key'].startsWith(`${v['name']}.`) || !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/.test(setting['key']) || seen.has(setting['key']) ||
           !['string', 'number', 'boolean'].includes(setting['type'] as string) || !Array.isArray(setting['required']) ||
           setting['required'].some((stage: unknown) => !['connect', 'auth', 'work'].includes(stage as string)) || new Set(setting['required']).size !== setting['required'].length ||
+          (setting['scope'] !== undefined && !['user', 'global'].includes(setting['scope'] as string)) ||
           (setting['secret'] !== undefined && typeof setting['secret'] !== 'boolean') || (setting['secret'] === true && setting['type'] !== 'string') ||
           (setting['default'] !== undefined && typeof setting['default'] !== 'string') ||
           (setting['machine'] !== undefined && (setting['machine'] !== 'tokenstore' || setting['type'] !== 'string' || setting['secret'] === true || setting['default'] !== undefined))) return invalid;

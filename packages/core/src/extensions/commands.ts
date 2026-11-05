@@ -1,3 +1,5 @@
+import { readScopedSettings } from '../settings/index.js';
+import { resolveSelfUser } from '../users/self.js';
 import { hasOnlyFiniteNumbers } from './json-values.js';
 import { decodeExtensionManifest } from './manifest.js';
 import { createExtensionSnapshot } from './snapshot.js';
@@ -38,21 +40,20 @@ export async function executeExtensionCommand(deps: ExtensionDependencies & { st
     const command = manifest.manifest.commands?.find(c => c.name === input.command);
     if (!command) return failure('EXTENSION_COMMAND_UNAVAILABLE');
     if (!hasOnlyFiniteNumbers(input.input) || runtime.validateValue!(command.input_schema, input.input) !== true) return failure('EXTENSION_COMMAND_INPUT_INVALID');
-    const self = await deps.store.readSelfUser();
+    const self = await resolveSelfUser(deps.store);
     if (!self.ok) return self;
-    if (!self.user) return failure('USER_MISSING');
     const declarations = manifest.manifest.settings ?? [];
     if (declarations.length && (!deps.store.getSettings || !runtime.readSecrets)) return failure('EXTENSION_CONFIG_INVALID');
-    const settings = declarations.length ? await deps.store.getSettings!({ keys: declarations.map(d => d.key) }) : { ok: true as const, settings: [] };
+    const settings = declarations.length ? await readScopedSettings({ getSettings: deps.store.getSettings!.bind(deps.store) }, self.userId, declarations) : { ok: true as const, settings: [] };
     if (!settings.ok) return settings;
     let secrets: Readonly<Record<string, string>>;
     try { secrets = declarations.some(d => d.secret) ? await runtime.readSecrets!() : {}; } catch { return failure('EXTENSION_CONFIG_INVALID'); }
-    const snapshot = createExtensionSnapshot({ extension: input.name, stage: 'work', requiredKeys: [], declarations, settings: Object.fromEntries(settings.settings.map(s => [s.key, s.value])), secrets, machine: runtime.machineValues?.(input.name) ?? {} });
+    const snapshot = createExtensionSnapshot({ extension: input.name, userId: self.userId, stage: 'work', requiredKeys: [], declarations, settings: Object.fromEntries(settings.settings.map(s => [s.key, s.value])), secrets, machine: runtime.machineValues?.(input.name) ?? {} });
     if (!snapshot.ok) return snapshot;
     const directory = runtime.installedDirectory!(input.name);
     let url: string; try { url = await runtime.databaseUrl(input.name); } catch { return failure('EXTENSION_CONFIG_INVALID'); }
     if (input.signal?.aborted) return failure('EXTENSION_COMMAND_TIMEOUT');
-    const started = await runtime.launcher.start({ command: command.runtime === 'python' ? `${directory}/.venv/bin/python` : 'node', args: [`${directory}/${command.entry}`], cwd: directory, env: { BRAIN_DATABASE_URL: url }, stdin: JSON.stringify({ abi: 1, user_id: self.user.id, settings: (JSON.parse(snapshot.serialized) as { values: unknown }).values, input: input.input }) });
+    const started = await runtime.launcher.start({ command: command.runtime === 'python' ? `${directory}/.venv/bin/python` : 'node', args: [`${directory}/${command.entry}`], cwd: directory, env: { BRAIN_DATABASE_URL: url }, stdin: JSON.stringify({ abi: 1, user_id: self.userId, settings: (JSON.parse(snapshot.serialized) as { values: unknown }).values, input: input.input }) });
     if (!started.ok) return failure('EXTENSION_COMMAND_FAILED');
     const handle = started.handle;
     const timerPort = runtime.timer;

@@ -315,6 +315,12 @@
         },
         "machine": {
           "const": "tokenstore"
+        },
+        "scope": {
+          "enum": [
+            "user",
+            "global"
+          ]
         }
       },
       "allOf": [

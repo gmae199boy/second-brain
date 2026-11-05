@@ -1,10 +1,11 @@
+import { sampleSelfUserInput } from '../src/testing/index.js';
 import { expect, it } from 'vitest';
 import { createBrain } from '../src/brain.js';
 import { memoryStore, memorySchemaStore, memorySpool, memoryFileStore, memoryRepositories,
   memoryTranscriptReader, sequenceIdGen, manualTime, sampleFailureInput } from '../src/testing/index.js';
 
 function kit() {
-  const time = manualTime(new Date('2026-10-29T00:00:00Z')); const store = memoryStore();
+  const time = manualTime(new Date('2026-10-29T00:00:00Z')); const store = memoryStore(); void store.ensureSelfUser(sampleSelfUserInput());
   const idGen = sequenceIdGen({ timestampMs: time.clock.now().getTime() });
   const brain = createBrain({ store: { ...store, ...memorySchemaStore({ version: 10 }) }, schemaVersions: { core: 10 },
     clock: time.clock, idGen, spool: memorySpool(), files: memoryFileStore(), parsers: [],
@@ -36,7 +37,7 @@ it('holds and resumes only the named group', async () => {
 });
 it('manual run and failures retry do not bypass a hold', async () => {
   const k = kit();
-  await k.store.setSetting({ key: 'timezone', value: 'Asia/Seoul', updatedAt: k.time.clock.now() });
+  await k.store.setSetting({ userId: null, key: 'timezone', value: 'Asia/Seoul', updatedAt: k.time.clock.now() });
   const added = await k.brain.schedules.add({ kind: 'testext.daily', targetKind: 'probe', targetId: 'manual', localTime: '11:00' });
   if (!added.ok) throw new Error(added.message);
   await k.add('session_ingest', 'failed', 'extension:testext');

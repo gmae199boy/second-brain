@@ -21,7 +21,7 @@ export const PROCESS_ABI_ENV = {
   attemptToken: 'BRAIN_ATTEMPT_TOKEN', workKind: 'BRAIN_WORK_KIND', targetKind: 'BRAIN_TARGET_KIND', targetId: 'BRAIN_TARGET_ID',
   runGeneration: 'BRAIN_RUN_GENERATION',
 } as const;
-export const PROCESS_ABI_OPTIONAL_ENV = { account: 'BRAIN_ACCOUNT', rangeFrom: 'BRAIN_RANGE_FROM', rangeTo: 'BRAIN_RANGE_TO', settingsSnapshot: 'BRAIN_SETTINGS_SNAPSHOT', extensionHome: 'BRAIN_EXTENSION_HOME', extensionReadiness: 'BRAIN_EXTENSION_READINESS' } as const;
+export const PROCESS_ABI_OPTIONAL_ENV = { userId: 'BRAIN_USER_ID', account: 'BRAIN_ACCOUNT', rangeFrom: 'BRAIN_RANGE_FROM', rangeTo: 'BRAIN_RANGE_TO', settingsSnapshot: 'BRAIN_SETTINGS_SNAPSHOT', extensionHome: 'BRAIN_EXTENSION_HOME', extensionReadiness: 'BRAIN_EXTENSION_READINESS' } as const;
 export type AbiFailure = { ok: false; code: string; reason: string };
 const invalid = (reason: string, code = 'ABI_LINE_INVALID'): AbiFailure => ({ ok: false, code, reason });
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
@@ -50,6 +50,7 @@ export function decodeAbiLine(line: string): { ok: true; event: ProcessAbiEvent 
 function validReadiness(raw: string): boolean {
   try { const v: unknown = JSON.parse(raw); return object(v) && only(v, ['version', 'core', 'expected_core', 'extension', 'migrations', 'applied_migrations', 'manifest_version', 'abi']) && Object.keys(v).length === 8 && v['version'] === 1 && [v['core'], v['expected_core'], v['extension']].every(n => n === null || Number.isSafeInteger(n) && (n as number) >= 0) && Array.isArray(v['migrations']) && v['migrations'].every(n => Number.isSafeInteger(n) && n > 0) && (v['applied_migrations'] === null || Array.isArray(v['applied_migrations']) && v['applied_migrations'].every(n => Number.isSafeInteger(n) && n > 0)) && typeof v['manifest_version'] === 'string' && v['manifest_version'].length > 0 && v['abi'] === 1; } catch { return false; }
 }
+export const isAbiUserId = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 export function decodeAbiEnv(env: Readonly<Record<string, unknown>>): { ok: true } | AbiFailure {
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const string = (key: string): string => typeof env[key] === 'string' ? env[key] as string : '';
@@ -57,6 +58,7 @@ export function decodeAbiEnv(env: Readonly<Record<string, unknown>>): { ok: true
   const valid = Object.values(PROCESS_ABI_ENV).every(k => string(k).length > 0) && env['BRAIN_ABI_VERSION'] === '1' &&
     /^postgres(?:ql)?:\/\//.test(string('BRAIN_DATABASE_URL')) && uuid.test(string('BRAIN_WORK_ID')) && uuid.test(string('BRAIN_ATTEMPT_TOKEN')) &&
     /^[1-9][0-9]{0,8}$/.test(string('BRAIN_RUN_GENERATION')) &&
+    (!Object.hasOwn(env, 'BRAIN_USER_ID') || isAbiUserId(env['BRAIN_USER_ID'])) &&
     (!Object.hasOwn(env, 'BRAIN_ACCOUNT') || string('BRAIN_ACCOUNT').length > 0) &&
     (!Object.hasOwn(env, 'BRAIN_SETTINGS_SNAPSHOT') || string('BRAIN_SETTINGS_SNAPSHOT').length > 0) &&
     (!Object.hasOwn(env, 'BRAIN_EXTENSION_HOME') || string('BRAIN_EXTENSION_HOME').length > 0) &&
@@ -64,7 +66,7 @@ export function decodeAbiEnv(env: Readonly<Record<string, unknown>>): { ok: true
     (from === undefined && to === undefined || typeof from === 'string' && typeof to === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to));
   return valid ? { ok: true } : invalid('프로세스 환경 변수가 올바르지 않습니다', 'ABI_ENV_INVALID');
 }
-export interface SettingsSnapshot { version: 1; extension: string; values: Record<string, string | number | boolean> }
+export interface SettingsSnapshot { version: 1; extension: string; user_id: string; values: Record<string, string | number | boolean> }
 /** 직렬화된 객체를 ABI 환경 스키마와 별도로 검증한다. */
 export function decodeSettingsSnapshot(raw: unknown, extension: string, declarations: Readonly<Record<string, 'string' | 'number' | 'boolean'>>):
   { ok: true; snapshot: SettingsSnapshot } | AbiFailure {
@@ -72,7 +74,8 @@ export function decodeSettingsSnapshot(raw: unknown, extension: string, declarat
   if (typeof raw !== 'string' || utf8Bytes(raw).length > PROCESS_ABI_SNAPSHOT_MAX_BYTES) return bad();
   let value: unknown;
   try { value = JSON.parse(raw); } catch { return bad(); }
-  if (!object(value) || !only(value, ['version', 'extension', 'values']) || value['version'] !== 1 ||
+  if (!object(value) || !only(value, ['version', 'extension', 'user_id', 'values']) || value['version'] !== 1 ||
+      typeof value['user_id'] !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value['user_id']) ||
       value['extension'] !== extension || !/^[a-z][a-z0-9_]{0,30}$/.test(extension) ||
       /^(core|brain|public|pg_)/.test(extension) || !object(value['values'])) return bad();
   for (const [key, item] of Object.entries(value['values'])) {

@@ -4,9 +4,9 @@ const declarations = [
   { key: 'testext.limit', type: 'number' as const, required: ['work' as const], default: '10' },
   { key: 'testext.token', type: 'string' as const, required: ['work' as const], secret: true },
 ];
-const base = { extension: 'testext', declarations, settings: {}, secrets: {} };
+const base = { userId: '019a0000-0000-7000-8000-000000000001', extension: 'testext', declarations, settings: {}, secrets: {} };
 it('permits the initial auth without a token but requires it for work', () => {
-  expect(createExtensionSnapshot({ ...base, stage: 'auth' })).toEqual({ ok: true, serialized: '{"version":1,"extension":"testext","values":{"testext.limit":10}}' });
+  expect(createExtensionSnapshot({ ...base, stage: 'auth' })).toEqual({ ok: true, serialized: '{"version":1,"extension":"testext","user_id":"019a0000-0000-7000-8000-000000000001","values":{"testext.limit":10}}' });
   expect(createExtensionSnapshot({ ...base, stage: 'work' })).toMatchObject({ ok: false, code: 'EXTENSION_CONFIG_INVALID', retryable: false });
 });
 it('resolves references without trimming and rejects invalid configured values in every stage', () => {
@@ -17,6 +17,15 @@ it('resolves references without trimming and rejects invalid configured values i
   expect(createExtensionSnapshot({ ...input, settings: { 'testext.token': 'invalid-name' } }).ok).toBe(false);
 });
 it('uses the machine tokenstore path instead of settings or secret contents', () => {
-  const result = createExtensionSnapshot({ extension: 'testext', stage: 'auth', declarations: [{ key: 'testext.tokenstore', type: 'string', required: ['auth'], machine: 'tokenstore' }], settings: { 'testext.tokenstore': 'untrusted' }, secrets: {}, machine: { tokenstore: '/runtime/tokenstore' } });
+  const result = createExtensionSnapshot({ extension: 'testext', userId: '019a0000-0000-7000-8000-000000000001', stage: 'auth', declarations: [{ key: 'testext.tokenstore', type: 'string', required: ['auth'], machine: 'tokenstore' }], settings: { 'testext.tokenstore': 'untrusted' }, secrets: {}, machine: { tokenstore: '/runtime/tokenstore' } });
   expect(result.ok && JSON.parse(result.serialized).values).toEqual({ 'testext.tokenstore': '/runtime/tokenstore' });
+});
+
+it('extension setting definitions retain declared scope and default to user', async () => {
+  const { extensionSettingDefinitions } = await import('../src/extensions/snapshot.js');
+  const definitions = extensionSettingDefinitions([
+    { key: 'testext.user', type: 'string', required: [] },
+    { key: 'testext.global', type: 'string', required: [], scope: 'global' },
+  ]);
+  expect(definitions.map(definition => definition.scope)).toEqual(['user', 'global']);
 });

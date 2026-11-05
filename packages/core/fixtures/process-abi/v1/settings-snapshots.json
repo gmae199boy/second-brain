@@ -1,9 +1,47 @@
 [
-  { "name": "empty", "snapshot": "{\"version\":1,\"extension\":\"testext\",\"values\":{}}", "expect": "valid" },
-  { "name": "typed values", "snapshot": "{\"version\":1,\"extension\":\"testext\",\"values\":{\"testext.limit\":10,\"testext.token\":\"secret\"}}", "expect": "valid" },
-  { "name": "unknown key", "snapshot": "{\"version\":1,\"extension\":\"testext\",\"values\":{\"testext.unknown\":1}}", "expect": "invalid" },
-  { "name": "wrong type", "snapshot": "{\"version\":1,\"extension\":\"testext\",\"values\":{\"testext.limit\":\"10\"}}", "expect": "invalid" },
-  { "name": "wrong version", "snapshot": "{\"version\":2,\"extension\":\"testext\",\"values\":{}}", "expect": "invalid" },
-  { "name": "wrong extension", "snapshot": "{\"version\":1,\"extension\":\"other\",\"values\":{}}", "expect": "invalid" },
-  { "name": "invalid JSON", "snapshot": "{", "expect": "invalid" }
+  {
+    "name": "empty",
+    "snapshot": "{\"version\":1,\"extension\":\"testext\",\"values\":{},\"user_id\":\"019a0000-0000-7000-8000-000000000001\"}",
+    "expect": "valid"
+  },
+  {
+    "name": "typed values",
+    "snapshot": "{\"version\":1,\"extension\":\"testext\",\"values\":{\"testext.limit\":10,\"testext.token\":\"secret\"},\"user_id\":\"019a0000-0000-7000-8000-000000000001\"}",
+    "expect": "valid"
+  },
+  {
+    "name": "unknown key",
+    "snapshot": "{\"version\":1,\"extension\":\"testext\",\"values\":{\"testext.unknown\":1},\"user_id\":\"019a0000-0000-7000-8000-000000000001\"}",
+    "expect": "invalid"
+  },
+  {
+    "name": "wrong type",
+    "snapshot": "{\"version\":1,\"extension\":\"testext\",\"values\":{\"testext.limit\":\"10\"},\"user_id\":\"019a0000-0000-7000-8000-000000000001\"}",
+    "expect": "invalid"
+  },
+  {
+    "name": "wrong version",
+    "snapshot": "{\"version\":2,\"extension\":\"testext\",\"values\":{},\"user_id\":\"019a0000-0000-7000-8000-000000000001\"}",
+    "expect": "invalid"
+  },
+  {
+    "name": "wrong extension",
+    "snapshot": "{\"version\":1,\"extension\":\"other\",\"values\":{},\"user_id\":\"019a0000-0000-7000-8000-000000000001\"}",
+    "expect": "invalid"
+  },
+  {
+    "name": "invalid JSON",
+    "snapshot": "{",
+    "expect": "invalid"
+  },
+  {
+    "name": "missing user",
+    "snapshot": "{\"version\":1,\"extension\":\"testext\",\"values\":{}}",
+    "expect": "invalid"
+  },
+  {
+    "name": "invalid user",
+    "snapshot": "{\"version\":1,\"extension\":\"testext\",\"user_id\":\"bad\",\"values\":{}}",
+    "expect": "invalid"
+  }
 ]

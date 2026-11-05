@@ -1999,9 +1999,12 @@ function cloneSchedule(row: import('../../domain/schedule.js').Schedule): import
 /** Independent fake: settings remain a separate Store capability. */
 export function memorySettingsStore(): import('../../ports/store.js').SettingsStore {
   const settings = new Map<string, import('../../ports/store.js').SettingRecord>();
+  const keyOf = (userId: string | null, key: string) => JSON.stringify([userId, key]);
+  const read = (userId: string | null, key: string) => settings.get(keyOf(userId, key)) ?? settings.get(keyOf(null, key));
   return {
-    async getSettings({ keys }) { return { ok: true, settings: keys.flatMap(key => { const row = settings.get(key); return row ? [{ ...row, updatedAt: new Date(row.updatedAt.getTime()) }] : []; }) }; },
-    async getSetting({ key }) { return { ok: true, setting: settings.has(key) ? { ...settings.get(key)!, updatedAt: new Date(settings.get(key)!.updatedAt.getTime()) } : null }; },
-    async setSetting(input) { settings.set(input.key, { ...input, updatedAt: new Date(input.updatedAt.getTime()) }); return { ok: true }; },
+    async getSettings({ keys, userId }) { return { ok: true, settings: [...new Set(keys)].flatMap(key => { const row = read(userId, key); return row ? [{ ...row, updatedAt: new Date(row.updatedAt) }] : []; }) }; },
+    async getSetting({ key, userId }) { const row = read(userId, key); return { ok: true, setting: row ? { ...row, updatedAt: new Date(row.updatedAt) } : null }; },
+    async setSetting({ userId, ...input }) { settings.set(keyOf(userId, input.key), { ...input, updatedAt: new Date(input.updatedAt) }); return { ok: true }; },
+    async insertSetting({ userId, ...input }) { const key = keyOf(userId, input.key); if (!settings.has(key)) settings.set(key, { ...input, updatedAt: new Date(input.updatedAt) }); return { ok: true }; },
   };
 }

@@ -9,6 +9,7 @@ const home = process.env.SECOND_BRAIN_HOME || join(homedir(), '.second_brain');
 const receiptPath = join(home, 'run', 'channels-mac-probe.json');
 const load = path => import(pathToFileURL(join(app, path)).href);
 const { readConfig, resolveStoreUrl, resolveTelegramConfig } = await load('apps/cli/dist/config/codec.js');
+const { resolveSelfUser } = await load('packages/core/dist/index.js');
 const { postgresStore } = await load('packages/postgres/dist/index.js');
 const { uuidV7IdGen } = await load('apps/cli/dist/runtime/id-gen.js');
 let store;
@@ -39,13 +40,14 @@ try {
     const telegram = await resolveTelegramConfig(home, {});
     if (!telegram) { console.log('Telegram 두 키가 없어 요청을 생성하지 않았습니다.'); process.exitCode=2; }
     else {
+      const self = await resolveSelfUser(store); if (!self.ok) throw Error(self.code);
       const id = uuidV7IdGen(); receipt={version:1,request:id.next(),channel:id.next(),conversation:id.next(),work:id.next(),producerResult:id.next()};
       await mkdir(join(home,'run'),{recursive:true,mode:0o700});
       const f=await open(receiptPath,'wx',0o600);
       try { await f.writeFile(JSON.stringify(receipt,null,2)+'\n'); await f.sync(); } finally { await f.close(); }
       const check = result => { if (!result.ok) throw Error('요청 저장 또는 인계 실패. 영수증을 보존하고 조사하세요'); return result; };
       check(await store.ensureChannel({id:receipt.channel,kind:'telegram',botRef:'channels-mac-probe'}));
-      check(await store.ensureChannelConversation({id:receipt.conversation,channelId:receipt.channel,externalRef:telegram.chatId,threadRef:null}));
+      check(await store.ensureChannelConversation({id:receipt.conversation,userId:self.userId,channelId:receipt.channel,externalRef:telegram.chatId,threadRef:null}));
       const created=check(await store.createChannelRequest({id:receipt.request,conversationId:receipt.conversation,producer:'channels-mac-probe',producerResultId:receipt.producerResult,purpose:'notice',revision:null,text:'Personal Brain 채널 연결 확인 메시지입니다.',createdAt:new Date()}));
       if (!created.created || created.request.id !== receipt.request) throw Error('요청 소유권 충돌');
       const handoff=check(await store.handoffChannelRequest({requestId:receipt.request,workId:receipt.work,now:new Date()}));

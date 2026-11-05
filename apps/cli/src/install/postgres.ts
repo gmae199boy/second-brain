@@ -59,22 +59,24 @@ export async function installPostgres(options: { home: string; urlEnv: string; e
     const { prepareDatabase, runMigrations, postgresStore } = await import('second_brain/postgres');
     const prepared = await prepareDatabase({ databaseUrl: secrets.adminUrl, appPassword: secrets.appPassword, ...(options.databaseName === undefined ? {} : { databaseName: options.databaseName }) });
     if (!prepared.ok) return { ...prepared, message: `${prepared.message}\n기존 볼륨의 비밀번호가 다르면 .env를 복원하거나 볼륨을 명시적으로 지운 뒤 다시 설치하세요` };
-    const migrated = await runMigrations({ databaseUrl: prepared.databaseUrl, clock });
+    const migrated = await runMigrations({ databaseUrl: prepared.databaseUrl, clock, coreMaxVersion: 31 });
     if (!migrated.ok) return migrated;
     const store = postgresStore({ databaseUrl: prepared.databaseUrl });
     try {
+      const owner = await store.ensureSelfUser({ id: v7(), name: userInfo().username, createdAt: clock.now() });
+      if (!owner.ok) return owner;
+      const completed = await runMigrations({ databaseUrl: prepared.databaseUrl, clock });
+      if (!completed.ok) return completed;
       const registered = await store.listExtensions();
       if (!registered.ok) return registered;
       const owners = await installedExtensionMigrations(home, registered.extensions.map(extension => extension.name));
-      const applied = [...migrated.applied];
+      const applied = [...migrated.applied, ...completed.applied];
       if (owners.length > 0) {
         const extensions = await runMigrations({ databaseUrl: prepared.databaseUrl, clock, owners });
         if (!extensions.ok) return extensions;
         applied.push(...extensions.applied);
       }
-      const owner = await store.ensureSelfUser({ id: v7(), name: userInfo().username, createdAt: clock.now() });
-      if (!owner.ok) return owner;
-      return { ok: true, report: { ...resources, schema_version: migrated.to, applied, owner_created: owner.created, owner_name: owner.user.name, compose_started: composeStarted } };
+      return { ok: true, report: { ...resources, schema_version: completed.to, applied, owner_created: owner.created, owner_name: owner.user.name, compose_started: composeStarted } };
     } finally { await store.close(); }
   } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: `PostgreSQL 설치에 실패했습니다: ${error instanceof Error ? error.message : String(error)}` }; }
 }

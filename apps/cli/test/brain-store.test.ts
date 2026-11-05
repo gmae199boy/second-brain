@@ -28,6 +28,6 @@ it('returns all unavailable capabilities without loading PG for an unreadable co
   vi.doMock('second_brain/postgres', imported);
   const { openBrainStore } = await import('../src/runtime/brain-store.js');
   const opened = await openBrainStore({ home: '/brain', env: {}, config: { ok: false, code: 'CONFIG_INVALID', message: 'broken' }, path: 'command' });
-  for (const result of [await opened.store.checkHealth(), await opened.store.readSchemaVersions(), await opened.store.getSetting({ key: 'timezone' }), await opened.store.setSetting({ key: 'timezone', value: 'Asia/Seoul', updatedAt: new Date() })]) expect(result).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+  for (const result of [await opened.store.checkHealth(), await opened.store.readSchemaVersions(), await opened.store.getSetting({ userId: null, key: 'timezone' }), await opened.store.setSetting({ userId: null, key: 'timezone', value: 'Asia/Seoul', updatedAt: new Date() })]) expect(result).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
   expect(imported).not.toHaveBeenCalled();
 });

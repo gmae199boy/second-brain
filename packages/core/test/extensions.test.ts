@@ -7,7 +7,7 @@ import type { ExtensionRuntime, ProcessLauncher } from '../src/index.js';
 const now = new Date('2026-10-29T00:00:00Z');
 const manifest = { name: 'testext', version: '0.1.0', core: 1, abi: 1, migrations: 'migrations', connection_check: { runtime: 'node', entry: 'bin/check.mjs' } };
 const env = { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://brain_app:secret@localhost/brain', BRAIN_WORK_ID: '00000000-0000-7000-8000-000000000001', BRAIN_ATTEMPT_TOKEN: '00000000-0000-7000-8000-000000000002', BRAIN_WORK_KIND: 'testext.connection_check', BRAIN_TARGET_KIND: 'extension', BRAIN_TARGET_ID: 'testext', BRAIN_RUN_GENERATION: '1' };
-function setup(options: { text?: string; found?: boolean; output?: string; code?: number; migrationFailure?: boolean } = {}) {
+function setup(options: { missingSelf?: boolean; text?: string; found?: boolean; output?: string; code?: number; migrationFailure?: boolean } = {}) {
   const fake = fakeProcessLauncher(); let placed = 0, migrated = 0;
   const launcher: ProcessLauncher = { async start(spec) {
     const result = await fake.start(spec);
@@ -27,6 +27,7 @@ function setup(options: { text?: string; found?: boolean; output?: string; code?
     } },
   };
   const deps = { store: memoryStore(), clock: fixedClock(now), idGen: sequenceIdGen({ timestampMs: now.getTime() }), extensions: runtime };
+  if (!options.missingSelf) void deps.store.ensureSelfUser({ id: '019a0000-0000-7000-8000-000000000001', name: 'synthetic', createdAt: now });
   return { deps, fake, writes: () => ({ placed, migrated }) };
 }
 it('accepts the exact minimal manifest and extension names', () => {
@@ -156,7 +157,7 @@ it('projects untrusted connection diagnostics before storing them', async () => 
   const result = await installExtension(deps, { name: 'testext' });
   expect(result).toMatchObject({ ok: false, extension: { connectionCode: 'EXTENSION_WORKER_ERROR', connectionMessage: '확장 실행에 실패했습니다' } });
   expect(JSON.stringify(result)).not.toContain(secret);
-  expect(JSON.parse(fake.specs[0]!.env['BRAIN_SETTINGS_SNAPSHOT']!)).toEqual({ version: 1, extension: 'testext', values: {} });
+  expect(JSON.parse(fake.specs[0]!.env['BRAIN_SETTINGS_SNAPSHOT']!)).toEqual({ version: 1, extension: 'testext', user_id: '019a0000-0000-7000-8000-000000000001', values: {} });
 });
 it('rejects a missing protected snapshot before starting the connection child', async () => {
   const time = manualTime(now), fake = fakeProcessLauncher(), inspector = fakeProcessInspector(fake);
@@ -176,10 +177,10 @@ it('resolves declared connection settings from a single read and does not expose
   const text = JSON.stringify({ ...manifest, settings: [{ key: 'testext.token', type: 'string', secret: true, required: ['connect'] }, { key: 'testext.limit', type: 'number', default: '10', required: ['work'] }], error_codes: ['REFUSED'] });
   const { deps, fake } = setup({ text });
   deps.extensions.readSecrets = async () => ({ REF: '  synthetic-secret  ' });
-  await deps.store.setSetting({ key: 'testext.token', value: 'REF', updatedAt: now });
+  await deps.store.setSetting({ userId: null, key: 'testext.token', value: 'REF', updatedAt: now });
   const result = await installExtension(deps, { name: 'testext' });
   expect(result.ok).toBe(true);
-  expect(JSON.parse(fake.specs[0]!.env.BRAIN_SETTINGS_SNAPSHOT!)).toEqual({ version: 1, extension: 'testext', values: { 'testext.token': '  synthetic-secret  ', 'testext.limit': 10 } });
+  expect(JSON.parse(fake.specs[0]!.env.BRAIN_SETTINGS_SNAPSHOT!)).toEqual({ version: 1, extension: 'testext', user_id: '019a0000-0000-7000-8000-000000000001', values: { 'testext.token': '  synthetic-secret  ', 'testext.limit': 10 } });
   expect(JSON.stringify(result)).not.toContain('synthetic-secret');
   expect(fake.specs[0]!.args.join(' ')).not.toContain('synthetic-secret');
 });
@@ -225,7 +226,7 @@ it('validates distributed manifest fixtures against the JSON schema', async () =
 
 it.each(['PROCESS_DIED', 'ABI_EXIT_FAILED'] as const)('projects undeclared worker error %s in a connection check', async code => {
   const { deps } = setup({ output: JSON.stringify({ abi: 1, type: 'error', code, retryable: true }) + '\n' });
-  const verdict = await runExtensionCheck({ ...deps.extensions, clock: deps.clock, spec: { command: 'node', args: [], env: { ...env, BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"testext","values":{}}' } }, protection: { extension: 'testext', declarations: {}, errorCodes: [] } });
+  const verdict = await runExtensionCheck({ ...deps.extensions, clock: deps.clock, spec: { command: 'node', args: [], env: { ...env, BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"testext","user_id":"019a0000-0000-7000-8000-000000000001","values":{}}' } }, protection: { extension: 'testext', declarations: {}, errorCodes: [] } });
   expect(verdict).toMatchObject({ outcome: 'failed', code: 'EXTENSION_WORKER_ERROR', retryable: true });
 });
 
@@ -568,4 +569,66 @@ it('rejects nonfinite SDK input and output even with loose object schemas', asyn
   expect(await executeExtensionCommand(deps, { name:'testext', command:'echo', input:{ value:Infinity } })).toMatchObject({ ok:false, code:'EXTENSION_COMMAND_INPUT_INVALID' });
   expect(launcher.specs).toHaveLength(0);
   expect(await executeExtensionCommand(deps, { name:'testext', command:'echo', input:{} })).toMatchObject({ ok:false, code:'EXTENSION_COMMAND_OUTPUT_INVALID' });
+});
+
+it('refuses an installation check without self before launching a child', async () => {
+  const { deps, fake } = setup({ missingSelf: true });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'USER_MISSING' });
+  expect(fake.specs).toEqual([]);
+});
+
+it('reinstallation preserves changed settings and inserts newly declared defaults', async () => {
+  const first = { ...manifest, settings: [{ key: 'testext.old', type: 'string', required: [], default: 'original' }] };
+  const { deps } = setup({ text: JSON.stringify(first) });
+  deps.extensions.readSecrets = async () => ({});
+  expect((await installExtension(deps, { name: 'testext' })).ok).toBe(true);
+  const userId = '019a0000-0000-7000-8000-000000000001';
+  await deps.store.setSetting({ userId, key: 'testext.old', value: 'changed', updatedAt: now });
+  deps.extensions.packages.resolve = async () => ({ ok: true, dir: '/packages/testext', manifestText: JSON.stringify({ ...first, settings: [...first.settings, { key: 'testext.new', type: 'string', required: [], default: 'new' }] }) });
+  expect((await installExtension(deps, { name: 'testext' })).ok).toBe(true);
+  expect(await deps.store.getSetting({ userId, key: 'testext.old' })).toMatchObject({ setting: { value: 'changed' } });
+  expect(await deps.store.getSetting({ userId, key: 'testext.new' })).toMatchObject({ setting: { value: 'new' } });
+});
+
+it('missing self before auth records login failure without enqueuing or launching', async () => {
+  const text = JSON.stringify({ ...manifest, auth: { kind: 'testext.login', execution: 'supervised', runtime: 'node', entry: 'login.mjs' } });
+  const { deps, fake } = setup({ text, missingSelf: true });
+  deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: null, sameBase: false, installedDir: '/installed/testext' });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'USER_MISSING' });
+  expect(deps.store.snapshot().workItems).toEqual([]); expect(fake.specs).toEqual([]);
+  expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { failedStage: 'login', stages: { login: { status: 'failed', code: 'USER_MISSING' } } } } });
+});
+
+it('records configuration failure when default insertion fails', async () => {
+  const text = JSON.stringify({ ...manifest, settings: [{ key: 'testext.value', type: 'string', required: [], default: 'value' }] });
+  const { deps } = setup({ text });
+  deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: null, sameBase: false, installedDir: '/installed/testext' });
+  deps.store.insertSetting = async () => ({ ok: false, code: 'DB_LOCKED', message: 'locked' });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
+  expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { failedStage: 'configuration', stages: { configuration: { status: 'failed', code: 'DB_LOCKED' } } } } });
+});
+
+it('records configuration failure when self lookup fails', async () => {
+  const { deps } = setup();
+  deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: null, sameBase: false, installedDir: '/installed/testext' });
+  deps.store.readSelfUser = async () => ({ ok: false, code: 'DB_LOCKED', message: 'locked' });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
+  expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { failedStage: 'configuration', stages: { configuration: { status: 'failed', code: 'DB_LOCKED' } } } } });
+});
+
+it.each(['DB_LOCKED', 'DB_UNAVAILABLE'] as const)('self lookup %s stops installation without starting a child', async code => {
+  const { deps, fake } = setup();
+  deps.store.readSelfUser = async () => ({ ok: false, code, message: 'self lookup failed' });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code, message: 'self lookup failed' });
+  expect(fake.specs).toEqual([]);
+});
+
+it('records configuration failure when scoped settings lookup fails', async () => {
+  const text = JSON.stringify({ ...manifest, settings: [{ key: 'testext.value', type: 'string', required: [] }] });
+  const { deps } = setup({ text });
+  deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: null, sameBase: false, installedDir: '/installed/testext' });
+  deps.extensions.readSecrets = async () => ({});
+  deps.store.getSettings = async () => ({ ok: false, code: 'DB_LOCKED', message: 'locked' });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
+  expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { failedStage: 'configuration', stages: { configuration: { status: 'failed', code: 'DB_LOCKED' } } } } });
 });

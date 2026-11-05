@@ -1452,5 +1452,74 @@
       ]
     },
     "expect": "valid"
+  },
+  {
+    "name": "setting scope user",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "settings": [
+        {
+          "key": "testext.option",
+          "type": "string",
+          "required": [],
+          "scope": "user"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "setting scope global",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "settings": [
+        {
+          "key": "testext.option",
+          "type": "string",
+          "required": [],
+          "scope": "global"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "setting scope invalid",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "settings": [
+        {
+          "key": "testext.option",
+          "type": "string",
+          "required": [],
+          "scope": "machine"
+        }
+      ]
+    },
+    "expect": "invalid"
   }
 ]

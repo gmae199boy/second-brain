@@ -4,7 +4,7 @@ import { readFile, writeFile, rename, rm, readdir, realpath, lstat } from 'node:
 import { join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { envFilePath } from '../config/paths.js';
-import { runSupervisor, PROCESS_ABI_ENV, decodeExtensionManifest, createExtensionSnapshot, type SupervisorOptions, type ProcessInspector, type ProcessLauncher } from 'second_brain';
+import { runSupervisor, readScopedSettings, resolveSelfUser, PROCESS_ABI_ENV, decodeExtensionManifest, createExtensionSnapshot, type SupervisorOptions, type ProcessInspector, type ProcessLauncher } from 'second_brain';
 import { openBrainStore } from '../runtime/brain-store.js';
 import { systemProcessInspector } from '../runtime/process-inspector.js';
 import { systemProcessLauncher } from '../runtime/process-group.js';
@@ -43,14 +43,16 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
             extension: manifest.name, declarations: Object.fromEntries(declarations.map(setting => [setting.key, setting.type])), errorCodes: manifest.error_codes ?? [],
             required: 'required_settings' in work && Array.isArray(work.required_settings) ? work.required_settings : declarations.filter(setting => setting.required.includes(manifest.auth?.kind === work.kind ? 'auth' : 'work')).map(setting => setting.key),
             secrets: declarations.filter(setting => setting.secret).map(setting => setting.key),
-            async prepare(item, token) {
-              const read = await opened.store.getSettings({ keys: declarations.map(setting => setting.key) });
+            async prepare(item, token, userId) {
+              const self = userId === undefined ? await resolveSelfUser(opened.store) : { ok: true as const, userId };
+              if (!self.ok) return { ok: false, code: self.code };
+              const read = await readScopedSettings(opened.store, self.userId, declarations);
               if (!read.ok) return { ok: false, code: read.code };
               let secrets: Record<string, string> = {};
               try {
                 if (declarations.some(setting => setting.secret)) secrets = Object.fromEntries(Object.entries(parseEnv(await readFile(envFilePath(options.home), 'utf8'))).filter((entry): entry is [string, string] => entry[1] !== undefined));
               } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return { ok: false, code: 'EXTENSION_CONFIG_INVALID' }; }
-              const snapshot = createExtensionSnapshot({ extension: manifest.name, stage: manifest.auth?.kind === work.kind ? 'auth' : 'work', declarations, ...('required_settings' in work && Array.isArray(work.required_settings) ? { requiredKeys: work.required_settings } : {}), settings: Object.fromEntries(read.settings.map(setting => [setting.key, setting.value])), secrets, machine: { tokenstore: join(directory, 'tokenstore') } });
+              const snapshot = createExtensionSnapshot({ extension: manifest.name, userId: self.userId, stage: manifest.auth?.kind === work.kind ? 'auth' : 'work', declarations, ...('required_settings' in work && Array.isArray(work.required_settings) ? { requiredKeys: work.required_settings } : {}), settings: Object.fromEntries(read.settings.map(setting => [setting.key, setting.value])), secrets, machine: { tokenstore: join(directory, 'tokenstore') } });
               if (!snapshot.ok || !url) return { ok: false, code: 'EXTENSION_CONFIG_INVALID' };
               let extensionUrl: string;
               try { extensionUrl = await extensionDatabaseUrl(options.home, manifest.name, url); } catch { return { ok: false, code: 'EXTENSION_CONFIG_INVALID' }; }
@@ -82,6 +84,7 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
         await rename(temporary, readinessPath);
       };
       await runSupervisor({ loadProtectedLaunches, onReadiness, store: opened.store, schemaVersions: opened.expected,
+        prepareLaunch: async () => { const self = await resolveSelfUser(opened.store); return self.ok ? { ok: true, userId: self.userId } : { ok: false, code: self.code }; },
         inspector: options.supervisor?.inspector ?? systemProcessInspector,
         ...(options.supervisor?.cancelGraceMs === undefined ? {} : { cancelGraceMs: options.supervisor.cancelGraceMs }),
         ...(options.supervisor?.cancelPollMs === undefined ? {} : { cancelPollMs: options.supervisor.cancelPollMs }),

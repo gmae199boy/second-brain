@@ -24,3 +24,7 @@ fixture 파일은 core 패키지의 fixtures/process-abi/v1에 있다.
 선택 환경 입력 `BRAIN_SETTINGS_SNAPSHOT`은 UTF-8 JSON 문자열이다. snapshot 실행은 값을 반드시 제공하며, 파싱된 객체는 `settings-snapshot.schema.json`을 따른다. 직렬화된 값은 최대 16384 UTF-8 바이트이고 확장 이름 및 키·타입은 신뢰된 manifest와도 대조한다. 보호된 확장 실행의 진단은 자유 문자열을 고정 안내로 대체하고 선언되지 않은 작업자 오류 코드를 고정 코드로 투영한다. 이는 위의 일반 ABI 실행에서 미등록 코드를 보존하는 동작과 다르다.
 
 `fixtures/process-abi/v1/settings-snapshots.json`은 선언 키 `testext.limit`(number), `testext.token`(string)을 기준으로 판정한다.
+
+설정 snapshot은 `{ "version": 1, "extension": "testext", "user_id": "01940000-0000-7000-8000-00000000000a", "values": {} }` 형태이며 `user_id`는 필수 UUID 문자열이다. self 사용자가 없으면 Runtime은 `USER_MISSING`으로 실행을 중단하고 자식 프로세스를 시작하지 않는다.
+
+선택 환경 변수 `BRAIN_USER_ID`는 UUID 문자열이며 Runtime은 감독 자식의 self 사용자 ID를 채운다. 이 값이 없던 기존 ABI 입력도 유효하다.

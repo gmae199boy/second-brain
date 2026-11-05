@@ -65,7 +65,8 @@ it('v30에서 공용 데이터와 권한을 보존하며 v31로 정리한다', a
   const emptyAllowed=['channel_gates','channel_item_results','context_injections','extension_install_progress','extension_python_environment','file_metadata','file_names','log_entries','log_entry_edits','projects','redactions','schedule_successes','schedules','settings','tool_notes','work_dependencies','work_hold_groups','workspaces','worktrees'];
   const unexpectedEmpty=Object.entries(before).filter(([name,row]) => (row as {count:number}).count===0 && !emptyAllowed.includes(name)).map(([name])=>name);
   expect(unexpectedEmpty).toEqual([]);
-  expect(await runMigrations({databaseUrl:db.url,clock})).toMatchObject({ok:true,from:30,to:31});
+  await copyFile(new URL('0031_remove_core_garmin.sql',source),join(dir,'0031_remove_core_garmin.sql'));
+  expect(await runMigrations({databaseUrl:db.url,clock,owners:[{owner:'core',directory:dir}]})).toMatchObject({ok:true,from:30,to:31});
   expect(await snapshot()).toEqual(before); expect(await definitions()).toEqual(beforeDefinitions);
   for(const table of ['health_observations','health_current_v1','health_resolution_v1','health_authority_rules','health_catalog_v1','health_supported_versions','analyses','analysis_artifacts','analysis_files','analysis_snapshots']) expect((await admin.query('select to_regclass($1) as object',[`brain.${table}`])).rows[0].object).toBeNull();
   await provisionExtension(db.url,name,password); await provisionExtension(db.url,newName,password);

@@ -118,10 +118,10 @@ export function postgresChannelStore(connect: PgConnect): ChannelStore {
       try {
         const opened = connect();
         if (!opened.ok) throw Error(opened.message);
-        const result = await sql<typeof input>`insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref)
-          values (${input.id},${input.channelId},${input.externalRef},${input.threadRef})
+        const result = await sql<typeof input>`insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id)
+          values (${input.id},${input.channelId},${input.externalRef},${input.threadRef},${input.userId})
           on conflict(id) do update set id=excluded.id
-          returning id,channel_id as "channelId",external_ref as "externalRef",thread_ref as "threadRef"`.execute(opened.connection.db);
+          returning id,user_id as "userId",channel_id as "channelId",external_ref as "externalRef",thread_ref as "threadRef"`.execute(opened.connection.db);
         return { ok: true, conversation: result.rows[0]! };
       } catch (error) { return databaseFailure(error); }
     },
@@ -148,13 +148,13 @@ export function postgresChannelStore(connect: PgConnect): ChannelStore {
         const result = await sql<ChannelRequest>`select ${columns} from brain.channel_requests where id=${id}`.execute(opened.connection.db);
         if (!result.rows[0]) return { ok: true, request: null, channel: null, conversation: null };
         const row = request(result.rows[0]);
-        const found = await sql<{ id: string; channelId: string; externalRef: string; threadRef: string | null; kind: string; botRef: string }>`
-          select v.id,v.channel_id as "channelId",v.external_ref as "externalRef",v.thread_ref as "threadRef",
+        const found = await sql<{ id: string; userId: string; channelId: string; externalRef: string; threadRef: string | null; kind: string; botRef: string }>`
+          select v.id,v.user_id as "userId",v.channel_id as "channelId",v.external_ref as "externalRef",v.thread_ref as "threadRef",
                  c.kind,c.bot_ref as "botRef" from brain.channel_conversations v
           join brain.channels c on c.id=v.channel_id where v.id=${row.conversationId}`.execute(opened.connection.db);
         const value = found.rows[0]!;
         return { ok: true, request: row,
-          conversation: { id: value.id, channelId: value.channelId, externalRef: value.externalRef, threadRef: value.threadRef },
+          conversation: { id: value.id, userId: value.userId, channelId: value.channelId, externalRef: value.externalRef, threadRef: value.threadRef },
           channel: { id: value.channelId, kind: value.kind, botRef: value.botRef } };
       } catch (error) { return databaseFailure(error); }
     },

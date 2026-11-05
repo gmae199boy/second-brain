@@ -1,7 +1,7 @@
 import type { FileLocation } from '../domain/file.js';
 /** 발신 요청의 저장 계약이다. 비밀 token은 저장하지 않는다. */
 export interface Channel { id: string; kind: string; botRef: string }
-export interface ChannelConversation { id: string; channelId: string; externalRef: string; threadRef: string | null }
+export interface ChannelConversation { id: string; userId: string; channelId: string; externalRef: string; threadRef: string | null }
 export interface ChannelFile { location: FileLocation; filename: string }
 export interface ChannelBundle { summary: string; albums: { photos: ChannelFile[]; caption?: string }[]; document: ChannelFile }
 export interface ChannelItemResult { index: number; result: ChannelAttemptResult }

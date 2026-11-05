@@ -176,3 +176,42 @@ it.each(['volume', 'port'])('returns exit 2 from installer and CLI for a %s conf
   expect(result).toMatchObject({ exit: 2, ok: false, error: { code: 'DB_UNAVAILABLE', message: expect.stringContaining(expectedDetail) } });
   if (conflict === 'volume') expect(kit.calls.some(c => c.args.includes('up'))).toBe(false);
 });
+
+it('installPostgres creates self before migrating a v31 database with settings and conversations', async () => {
+  const { runMigrations } = await import('../src/index.js');
+  const { randomUUID } = await import('node:crypto');
+  const kit = await world(), db = kit.db!;
+  expect(await runMigrations({ databaseUrl: db.url, clock, coreMaxVersion: 31 })).toMatchObject({ ok: true, to: 31 });
+  const channel = randomUUID(), conversation = randomUUID();
+  await db.query("insert into brain.settings(key,value,updated_at) values ('timezone','UTC','2026-01-01T00:00:00Z')");
+  await db.query(`insert into brain.channels(id,kind,bot_ref) values ('${channel}','telegram','synthetic'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref) values ('${conversation}','${channel}','chat','thread')`);
+  const result = await installPostgres({ home: kit.home, urlEnv: 'BRAIN_DATABASE_URL', env: kit.env, clock, runner: kit.runner, secrets: { adminUrl: db.url, appPassword: 'brain-test-app' }, databaseName: new URL(db.url).pathname.slice(1) });
+  expect(result).toMatchObject({ ok: true, report: { schema_version: 32, owner_created: true } });
+  const self = (await db.rows('select id from brain.users where is_self=1'))[0]!.id;
+  expect(await db.rows("select user_id,value,updated_at from brain.settings where key='timezone'")).toEqual([{ user_id: self, value: 'UTC', updated_at: new Date('2026-01-01T00:00:00Z') }]);
+  expect(await db.rows(`select user_id,external_ref,thread_ref from brain.channel_conversations where id='${conversation}'`)).toEqual([{ user_id: self, external_ref: 'chat', thread_ref: 'thread' }]);
+});
+
+it('retries setup after a v32 migration failure without replacing self or old data', async () => {
+  const { runMigrations } = await import('../src/index.js');
+  const { randomUUID } = await import('node:crypto');
+  const kit = await world(), db = kit.db!, channel = randomUUID(), conversation = randomUUID();
+  expect(await runMigrations({ databaseUrl: db.url, clock, coreMaxVersion: 31 })).toMatchObject({ ok: true, to: 31 });
+  await db.query("insert into brain.settings(key,value,updated_at) values ('timezone','UTC','2026-01-01T00:00:00Z')");
+  await db.query(`insert into brain.channels(id,kind,bot_ref) values ('${channel}','telegram','synthetic'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref) values ('${conversation}','${channel}','chat','thread')`);
+  // A conflicting column causes 0032 to fail inside its own transaction after setup creates self.
+  await db.query('alter table brain.settings add column user_id text');
+  const options = { home: kit.home, urlEnv: 'BRAIN_DATABASE_URL', env: kit.env, clock, runner: kit.runner, secrets: { adminUrl: db.url, appPassword: 'brain-test-app' }, databaseName: new URL(db.url).pathname.slice(1) };
+  expect(await installPostgres(options)).toMatchObject({ ok: false, code: 'MIGRATION_FAILED', file: '0032_user_keys.sql' });
+  expect((await db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'"))[0]!.version).toBe(31);
+  const self = (await db.rows('select id from brain.users where is_self=1'))[0]!.id;
+  const oldSetting = await db.rows("select key,value,updated_at from brain.settings where key='timezone'");
+  const oldConversation = await db.rows(`select id,channel_id,external_ref,thread_ref from brain.channel_conversations where id='${conversation}'`);
+  await db.query('alter table brain.settings drop column user_id');
+  expect(await installPostgres(options)).toMatchObject({ ok: true, report: { schema_version: 32, owner_created: false } });
+  expect(await db.rows('select id from brain.users where is_self=1')).toEqual([{ id: self }]);
+  expect(await db.rows("select key,value,updated_at from brain.settings where key='timezone'")).toEqual(oldSetting);
+  expect(await db.rows(`select id,channel_id,external_ref,thread_ref from brain.channel_conversations where id='${conversation}'`)).toEqual(oldConversation);
+  expect(await db.rows("select user_id from brain.settings where key='timezone'")).toEqual([{ user_id: self }]);
+  expect(await db.rows(`select user_id from brain.channel_conversations where id='${conversation}'`)).toEqual([{ user_id: self }]);
+});

@@ -1,8 +1,8 @@
 import { it } from 'vitest';
 import pg from 'pg';
-import { channelStoreContract } from '@second-brain/core/testing';
+import { channelStoreContract, sampleSelfUserInput } from '@second-brain/core/testing';
 import { subject } from './fixture.js';
-for (const test of channelStoreContract()) it(test.name, () => test.run(subject));
+for (const test of channelStoreContract()) it(test.name, () => test.run(async () => { const store = await subject(); const result = await store.ensureSelfUser(sampleSelfUserInput()); if (!result.ok) throw Error(result.message); return store; }));
 
 import { expect } from 'vitest';
 import { postgresStore } from '../src/index.js';
@@ -12,8 +12,9 @@ it('독립 생산과 인계를 직렬화하고 오래된 직접 삽입을 거부
   const db=await database(); const a=postgresStore({databaseUrl:db.appUrl}); const b=postgresStore({databaseUrl:db.appUrl});
   try {
     const now=new Date('2026-10-31T00:00:00Z');
+    await a.ensureSelfUser(sampleSelfUserInput());
     await a.ensureChannel({id:id(1),kind:'telegram',botRef:'bot'});
-    await a.ensureChannelConversation({id:id(2),channelId:id(1),externalRef:'chat',threadRef:null});
+    await a.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a',id:id(2),channelId:id(1),externalRef:'chat',threadRef:null});
     const input={id:id(3),conversationId:id(2),producer:'test',producerResultId:'same',purpose:'notice',revision:null,text:'text',createdAt:now};
     const results=await Promise.all([a.createChannelRequest(input),b.createChannelRequest({...input,id:id(4)})]);
     expect(results.filter(x=>x.ok && x.created)).toHaveLength(1);
@@ -29,8 +30,9 @@ it('중단과 실패를 시도별로 기록하고 최초 gate를 보존한다', 
   const db = await database(); const store = postgresStore({ databaseUrl: db.appUrl });
   const now = new Date('2026-10-31T00:00:00Z');
   try {
+    await store.ensureSelfUser(sampleSelfUserInput());
     await store.ensureChannel({ id: id(1), kind: 'telegram', botRef: 'bot' });
-    await store.ensureChannelConversation({ id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
+    await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
     await store.createChannelRequest({ id: id(3), conversationId: id(2), producer: 'test', producerResultId: 'result', purpose: 'notice', revision: null, text: 'text', createdAt: now });
     await store.handoffChannelRequest({ requestId: id(3), workId: id(4), now });
     for (const n of [5, 6, 7]) {
@@ -55,8 +57,9 @@ it('중단과 실패를 시도별로 기록하고 최초 gate를 보존한다', 
 it('토큰을 잃은 진행 중 결과의 직접 변경을 거부한다', async () => {
   const db = await database(); const store = postgresStore({ databaseUrl: db.appUrl }); const now = new Date('2026-10-31T00:00:00Z');
   try {
+    await store.ensureSelfUser(sampleSelfUserInput());
     await store.ensureChannel({ id: id(1), kind: 'telegram', botRef: 'bot' });
-    await store.ensureChannelConversation({ id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
+    await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
     await store.createChannelRequest({ id: id(3), conversationId: id(2), producer: 'test', producerResultId: 'result', purpose: 'notice', revision: null, text: 'text', createdAt: now });
     await store.handoffChannelRequest({ requestId: id(3), workId: id(4), now });
     await store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'old', attemptToken: id(5) });
@@ -72,8 +75,9 @@ it('토큰을 잃은 진행 중 결과의 직접 변경을 거부한다', async 
 it('종료가 불확실한 시도는 보존하고 종료 확인 뒤 불명 결과를 확정한다', async () => {
   const db = await database(); const store = postgresStore({ databaseUrl: db.appUrl }); const now = new Date('2026-10-31T00:00:00Z');
   try {
+    await store.ensureSelfUser(sampleSelfUserInput());
     await store.ensureChannel({ id: id(1), kind: 'telegram', botRef: 'bot' });
-    await store.ensureChannelConversation({ id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
+    await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
     await store.createChannelRequest({ id: id(3), conversationId: id(2), producer: 'test', producerResultId: 'result', purpose: 'notice', revision: null, text: 'text', createdAt: now });
     await store.handoffChannelRequest({ requestId: id(3), workId: id(4), now });
     await store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'old', attemptToken: id(5) });
@@ -90,8 +94,9 @@ it('종료가 불확실한 시도는 보존하고 종료 확인 뒤 불명 결�
 it('같은 시각의 역순 UUID 시도에서도 마지막 삽입 결과를 읽는다', async () => {
   const db = await database(); const store = postgresStore({ databaseUrl: db.appUrl }); const now = new Date('2026-10-31T00:00:00Z');
   try {
+    await store.ensureSelfUser(sampleSelfUserInput());
     await store.ensureChannel({ id: id(1), kind: 'telegram', botRef: 'bot' });
-    await store.ensureChannelConversation({ id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
+    await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
     await store.createChannelRequest({ id: id(3), conversationId: id(2), producer: 'test', producerResultId: 'result', purpose: 'notice', revision: null, text: 'text', createdAt: now });
     await store.handoffChannelRequest({ requestId: id(3), workId: id(4), now });
     for (const [token, outcome] of [[id(9), 'definite_failed'], [id(5), 'unknown']] as const) {

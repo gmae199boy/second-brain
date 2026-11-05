@@ -1,3 +1,4 @@
+import { resolveSelfUser } from '../users/self.js';
 import type { SessionIngestStore } from '../ports/store.js';
 import type { SourceFileReader } from '../ports/source-file.js';
 import { brainLocator, contentHashOfBytes, externalLocator } from '../domain/file.js';
@@ -463,15 +464,8 @@ export async function ingestSession(
       external: locator === null ? null : { id: idGen.next(), storeKind: 'local', ownership: 'external', locator } } });
   }
   afterParse.attachments = attachments;
-  const owner = await store.readSelfUser();
+  const owner = await resolveSelfUser(store);
   if (!owner.ok) return unwritable(owner.code) ? spooled(owner.code, afterParse) : owner;
-  if (owner.user === null) {
-    return {
-      ok: false,
-      code: 'USER_MISSING',
-      message: '이 데이터베이스에 주인이 기록되어 있지 않아 세션이 속할 사람이 없습니다',
-    };
-  }
 
   // One instant for the whole batch, read once (AD-13).
   const ingestedAt = clock.now();
@@ -507,7 +501,7 @@ export async function ingestSession(
     const ensured = await store.ensureSession({
       id: idGen.next(),
       key,
-      userId: owner.user.id,
+      userId: owner.userId,
       machine,
       // When the session's first message was uttered. An existing row keeps the
       // `started_at` it already has.

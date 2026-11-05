@@ -6,6 +6,7 @@ export interface ExtensionSettingDeclaration {
   key: string;
   type: 'string' | 'number' | 'boolean';
   required: readonly ExtensionStage[];
+  scope?: 'user' | 'global';
   secret?: boolean;
   machine?: 'tokenstore';
   default?: string;
@@ -13,7 +14,7 @@ export interface ExtensionSettingDeclaration {
 export type SnapshotResult = { ok: true; serialized: string } | { ok: false; code: 'EXTENSION_CONFIG_INVALID'; retryable: false; message: string };
 /** 일관된 설정 조회와 한 번 읽은 환경 값으로 snapshot을 만든다. */
 export function createExtensionSnapshot(input: {
-  extension: string; stage: ExtensionStage; declarations: readonly ExtensionSettingDeclaration[];
+  extension: string; userId: string; stage: ExtensionStage; declarations: readonly ExtensionSettingDeclaration[];
   requiredKeys?: readonly string[]; settings: Readonly<Record<string, string>>; secrets: Readonly<Record<string, string>>; machine?: Readonly<Record<string, string>>;
 }): SnapshotResult {
   const invalid = (): SnapshotResult => ({ ok: false, code: 'EXTENSION_CONFIG_INVALID', retryable: false, message: '확장 설정을 확인하세요' });
@@ -39,7 +40,7 @@ export function createExtensionSnapshot(input: {
       values[declaration.key] = raw === 'true';
     } else values[declaration.key] = raw;
   }
-  const serialized = JSON.stringify({ version: 1, extension: input.extension, values });
+  const serialized = JSON.stringify({ version: 1, extension: input.extension, user_id: input.userId, values });
   if (utf8Bytes(serialized).length > PROCESS_ABI_SNAPSHOT_MAX_BYTES || !decodeSettingsSnapshot(serialized, input.extension, types).ok) return invalid();
   return { ok: true, serialized };
 }
@@ -48,6 +49,7 @@ export function createExtensionSnapshot(input: {
 export function extensionSettingDefinitions(declarations: readonly ExtensionSettingDeclaration[]): import('../settings/index.js').SettingDefinition[] {
   return declarations.filter(declaration => !declaration.machine).map(declaration => ({
     key: declaration.key,
+    scope: declaration.scope ?? 'user',
     ...(declaration.default === undefined ? {} : { defaultValue: declaration.default }),
     normalize(raw: string) {
       const valid = declaration.secret ? /^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) : declaration.type === 'boolean' ? raw === 'true' || raw === 'false' : declaration.type === 'number' ? /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(raw) && Number.isFinite(Number(raw)) : true;

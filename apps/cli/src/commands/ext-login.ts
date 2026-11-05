@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { lstat, open, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseEnv } from 'node:util';
-import { createExtensionSnapshot, decodeExtensionManifest, isExtensionName } from 'second_brain';
+import { createExtensionSnapshot, readScopedSettings, resolveSelfUser, decodeExtensionManifest, isExtensionName } from 'second_brain';
 import type { CommandSpec, StandaloneCommandContext } from '../dispatch.js';
 import { readConfig } from '../config/codec.js';
 import { configHome, envFilePath } from '../config/paths.js';
@@ -35,14 +35,16 @@ export const extLoginCommand: CommandSpec = {
       if (!decoded.ok || decoded.manifest.name !== name || decoded.manifest.version !== extension.version || !decoded.manifest.auth) return { ok: false, code: 'EXTENSION_INVALID', message: '확장 인증을 찾을 수 없습니다' };
       const manifest = decoded.manifest;
       const declarations = manifest.settings ?? [];
-      const read = await store.getSettings({ keys: declarations.map(setting => setting.key) });
+      const self = await resolveSelfUser(store);
+      if (!self.ok) return self;
+      const read = await readScopedSettings(store, self.userId, declarations);
       if (!read.ok) return read;
       let secrets: Record<string, string> = {};
       if (declarations.some(setting => setting.secret)) {
         try { secrets = Object.fromEntries(Object.entries(parseEnv(await readFile(envFilePath(home), 'utf8'))).filter((entry): entry is [string, string] => entry[1] !== undefined)); }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
       }
-      const snapshot = createExtensionSnapshot({ extension: name, stage: 'auth', declarations, settings: Object.fromEntries(read.settings.map(setting => [setting.key, setting.value])), secrets, machine: { tokenstore: join(directory, 'tokenstore') } });
+      const snapshot = createExtensionSnapshot({ extension: name, userId: self.userId, stage: 'auth', declarations, settings: Object.fromEntries(read.settings.map(setting => [setting.key, setting.value])), secrets, machine: { tokenstore: join(directory, 'tokenstore') } });
       if (!snapshot.ok) return { ok: false, code: snapshot.code, message: '확장 설정을 확인하세요' };
       const entry = manifest.auth!;
       const { status, code } = await launchTerminal(entry.runtime === 'python' ? join(directory, '.venv', 'bin', 'python') : process.execPath, join(directory, entry.entry), { ...context.env, BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized, BRAIN_EXTENSION_HOME: directory }, manifest.error_codes ?? []);

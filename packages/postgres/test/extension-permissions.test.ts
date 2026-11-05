@@ -1,3 +1,4 @@
+import { sampleSelfUserInput } from '@second-brain/core/testing';
 import { randomBytes, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { expect, it } from 'vitest';
@@ -15,6 +16,7 @@ it('enforces the role, public view and fenced provenance contracts over real con
   const store = postgresStore({ databaseUrl: db.appUrl });
   try {
     await admin.connect();
+    const self = await store.ensureSelfUser(sampleSelfUserInput()); if (!self.ok) throw Error(self.message);
     const adminOverride = new URL(db.url);
     adminOverride.searchParams.set('user', adminOverride.username);
     adminOverride.searchParams.set('password', decodeURIComponent(adminOverride.password));
@@ -74,7 +76,7 @@ it('enforces the role, public view and fenced provenance contracts over real con
     expect(await store.claimSupervisedWork({ now, claimedBy: 'test', kinds: [workKind], attemptToken: token })).toMatchObject({ ok: true, attemptToken: token });
     const channel = randomUUID(), conversation = randomUUID();
     await admin.query('insert into brain.channels values ($1,$2,$3)', [channel, 'telegram', 'bot']);
-    await admin.query('insert into brain.channel_conversations values ($1,$2,$3,null)', [conversation, channel, 'chat']);
+    await admin.query('insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ($1,$2,$3,null,$4)', [conversation, channel, 'chat', sampleSelfUserInput().id]);
     const requestSql = `insert into brain.channel_requests(id,conversation_id,producer,producer_result_id,purpose,body,created_at,source_work_item_id,source_attempt_token) values ($1,$2,$3,$4,'notice','body',now(),$5,$6)`;
     const notificationSql = `insert into brain.channel_legacy_notifications(id,conversation_id,source,dataset,original_table,original_key,import_batch,local_date,event,detail,at,source_work_item_id,source_attempt_token) values ($1,$2,$3,'dataset','notifications',$4,'batch','2026-10-31','event','',now(),$5,$6)`;
     const deliverySql = `insert into brain.channel_legacy_deliveries(id,conversation_id,source,dataset,original_table,original_key,import_batch,original_id,local_date,kind,event,ok,at,source_work_item_id,source_attempt_token) values ($1,$2,$3,'dataset','deliveries',$4,'batch',$4,'2026-10-31','notice','event',true,now(),$5,$6)`;
@@ -165,8 +167,9 @@ it('v18의 확장 역할을 v19로 이전하고 최소 권한으로 재설정한
         await admin.query("insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ($1,'1',now(),true,now())",[name]);
         const workKind = `${name}.import`;
         await admin.query('insert into brain.extension_work_kinds(extension_name,kind) values ($1,$2)',[name,workKind]);
+        const self = await store.ensureSelfUser(sampleSelfUserInput()); if (!self.ok) throw Error(self.message);
         expect(await store.ensureChannel({ id: channel, kind: 'telegram', botRef: 'bot' })).toMatchObject({ ok: true });
-        expect(await store.ensureChannelConversation({ id: conversation, channelId: channel, externalRef: 'chat', threadRef: null })).toMatchObject({ ok: true });
+        expect(await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: conversation, channelId: channel, externalRef: 'chat', threadRef: null })).toMatchObject({ ok: true });
         expect(await store.addWork({ id: work, kind: workKind, targetKind: 'probe', targetId: 'test', createdAt: clock.now(), nextAttemptAt: clock.now() })).toMatchObject({ ok: true });
         expect(await store.claimSupervisedWork({ now: clock.now(), kinds: [workKind], claimedBy: 'test', attemptToken: token })).toMatchObject({ ok: true, item: { id: work } });
         await ext.query(`insert into brain.channel_legacy_deliveries(id,conversation_id,source,dataset,original_table,original_key,import_batch,original_id,local_date,kind,event,ok,at,source_work_item_id,source_attempt_token) values ($1,$2,$5,'data','deliveries','1','batch','1','2026-10-31','notice',null,true,now(),$3,$4)`, [randomUUID(), conversation, work, token, name]);

@@ -4,6 +4,7 @@
   "required": [
     "version",
     "extension",
+    "user_id",
     "values"
   ],
   "additionalProperties": false,
@@ -24,6 +25,10 @@
           "boolean"
         ]
       }
+    },
+    "user_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
     }
   }
 }

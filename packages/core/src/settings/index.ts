@@ -1,11 +1,13 @@
 import type { SchemaVersions } from '../schema.js';
 import type { Clock } from '../ports/clock.js';
-import type { SettingsStore, SchemaStore } from '../ports/store.js';
+import type { SettingsStore, SchemaStore, UserStore } from '../ports/store.js';
+import { resolveSelfUser } from '../users/self.js';
 import { checkSchema } from '../schema.js';
 
 export type SettingValidation = { ok: true; value: string } | { ok: false; message: string };
 export interface SettingDefinition {
   key: string;
+  scope?: 'user' | 'global';
   defaultValue?: string;
   normalize(raw: string): SettingValidation;
 }
@@ -16,7 +18,7 @@ export function normalizeTimeZone(value: string): SettingValidation {
   } catch { return { ok: false, message: `timezone "${value}"은 유효한 IANA 시간대 이름이 아닙니다` }; }
 }
 export function isTimeZone(value: string): boolean { return normalizeTimeZone(value).ok; }
-export const TIMEZONE_SETTING: SettingDefinition & { defaultValue: string } = { key: 'timezone', defaultValue: 'Asia/Seoul', normalize: normalizeTimeZone };
+export const TIMEZONE_SETTING: SettingDefinition & { defaultValue: string } = { key: 'timezone', scope: 'user', defaultValue: 'Asia/Seoul', normalize: normalizeTimeZone };
 export const CORE_SETTING_DEFINITIONS: readonly SettingDefinition[] = [TIMEZONE_SETTING];
 /** Extensions register complete definitions; unknown namespaces stay unknown. */
 export function settingDefinitions(extensions: readonly SettingDefinition[] = []): ReadonlyMap<string, SettingDefinition> {
@@ -32,10 +34,20 @@ export function settingDefinitions(extensions: readonly SettingDefinition[] = []
   }
   return definitions;
 }
-export interface SettingValue { key: string; value: string; source: 'default' | 'db'; updatedAt: Date | null }
-export type SettingResult = ({ ok: true } & SettingValue) | { ok: false; code: 'CONFIG_INVALID' | 'DB_UNAVAILABLE' | 'DB_LOCKED' | 'SCHEMA_MISMATCH'; message: string };
+/** Scope-aware bulk read shared by config and extension snapshots. */
+export async function readScopedSettings(store: Pick<SettingsStore, 'getSettings'>, userId: string | null, definitions: readonly { key: string; scope?: 'user' | 'global' }[]) {
+  const userKeys = definitions.filter(d => (d.scope ?? 'user') === 'user').map(d => d.key);
+  const globalKeys = definitions.filter(d => d.scope === 'global').map(d => d.key);
+  const user = userKeys.length ? await store.getSettings({ userId, keys: userKeys }) : { ok: true as const, settings: [] };
+  if (!user.ok) return user;
+  const global = globalKeys.length ? await store.getSettings({ userId: null, keys: globalKeys }) : { ok: true as const, settings: [] };
+  if (!global.ok) return global;
+  return { ok: true as const, settings: [...user.settings, ...global.settings] };
+}
+export interface SettingValue { scope: 'user' | 'global'; key: string; value: string; source: 'default' | 'db'; updatedAt: Date | null }
+export type SettingResult = ({ ok: true } & SettingValue) | { ok: false; code: 'CONFIG_INVALID' | 'USER_MISSING' | 'DB_UNAVAILABLE' | 'DB_LOCKED' | 'SCHEMA_MISMATCH'; message: string };
 export interface SettingsDependencies {
-  store: SettingsStore & SchemaStore;
+  store: SettingsStore & SchemaStore & Pick<UserStore, 'readSelfUser'>;
   /** Current schema version supplied by the adapter. */
   schemaVersions: SchemaVersions;
   clock: Clock;
@@ -47,21 +59,29 @@ export async function getSetting(deps: SettingsDependencies, input: { key: strin
   if (definition === undefined) return invalid(`모르는 사용자 설정 키입니다: ${input.key}`);
   const schema = await checkSchema(deps.store, deps.schemaVersions);
   if (!schema.ok) return schema;
-  const read = await deps.store.getSetting(input);
+  const scope = definition.scope ?? 'user';
+  const self = scope === 'user' ? await resolveSelfUser(deps.store) : null;
+  if (self && !self.ok) return self;
+  const read = await readScopedSettings(deps.store, self?.userId ?? null, [definition]);
   if (!read.ok) return read;
-  if (read.setting === null) return definition.defaultValue === undefined ? invalid('설정 값이 없습니다') : { ok: true, key: input.key, value: definition.defaultValue, source: 'default', updatedAt: null };
-  const parsed = definition.normalize(read.setting.value);
+  const setting = read.settings[0] ?? null;
+  if (setting === null) return definition.defaultValue === undefined ? invalid('설정 값이 없습니다') : { ok: true, scope, key: input.key, value: definition.defaultValue, source: 'default', updatedAt: null };
+  const parsed = definition.normalize(setting.value);
   if (!parsed.ok) return invalid(parsed.message);
-  return { ok: true, key: input.key, value: parsed.value, source: 'db', updatedAt: read.setting.updatedAt };
+  return { ok: true, scope, key: input.key, value: parsed.value, source: 'db', updatedAt: setting.updatedAt };
 }
-export async function setSetting(deps: SettingsDependencies, input: { key: string; value: string }): Promise<SettingResult> {
+export async function setSetting(deps: SettingsDependencies, input: { key: string; value: string; scope?: 'user' | 'global' }): Promise<SettingResult> {
   const definition = settingDefinitions(deps.settingDefinitions).get(input.key);
   if (definition === undefined) return invalid(`모르는 사용자 설정 키입니다: ${input.key}`);
+  const scope = definition.scope ?? 'user';
+  if (input.scope !== undefined && input.scope !== scope) return invalid('설정 scope가 일치하지 않습니다');
   const parsed = definition.normalize(input.value);
   if (!parsed.ok) return invalid(parsed.message);
   const schema = await checkSchema(deps.store, deps.schemaVersions);
   if (!schema.ok) return schema;
+  const self = scope === 'user' ? await resolveSelfUser(deps.store) : null;
+  if (self && !self.ok) return self;
   const updatedAt = deps.clock.now();
-  const written = await deps.store.setSetting({ key: input.key, value: parsed.value, updatedAt });
-  return written.ok ? { ok: true, key: input.key, value: parsed.value, source: 'db', updatedAt } : written;
+  const written = await deps.store.setSetting({ userId: self?.userId ?? null, key: input.key, value: parsed.value, updatedAt });
+  return written.ok ? { ok: true, scope, key: input.key, value: parsed.value, source: 'db', updatedAt } : written;
 }
