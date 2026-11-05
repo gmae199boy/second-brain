@@ -31,6 +31,9 @@ export async function executeExtensionCommand(deps: ExtensionDependencies & { st
   if (input.signal?.aborted) return failure('EXTENSION_COMMAND_TIMEOUT');
   const run = async () => {
     if (input.signal?.aborted) return failure('EXTENSION_COMMAND_TIMEOUT');
+    const quiesce = await deps.store.readExtensionQuiesce(input.name);
+    if (!quiesce.ok) return quiesce;
+    if (quiesce.owner !== null) return failure('EXTENSION_COMMAND_UNAVAILABLE');
     const installed = await deps.store.getExtension(input.name);
     if (!installed.ok) return installed;
     if (!installed.extension?.enabled) return failure('EXTENSION_COMMAND_UNAVAILABLE');

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -105,12 +106,8 @@ export const MIN_PNPM_MAJOR = 12;
 export const PNPM_INSTALL_COMMAND = 'npm install -g pnpm@latest';
 
 /**
- * How long a lock folder may go untouched before it is taken for abandoned.
- *
- * It is the second half of the stale test and not the first: a lock whose
- * owning process is gone is reclaimed at once, whatever its age. This covers
- * the case the pid cannot settle — a pid file that was never written, or one
- * whose number has since been handed to an unrelated process.
+ * Historical lock age retained for compatibility; age no longer permits recovery.
+
  */
 export const LOCK_STALE_MS = 30 * 60 * 1000;
 
@@ -119,6 +116,7 @@ export interface CommandRequest {
   command: string;
   args: readonly string[];
   cwd?: string;
+  env?: NodeJS.ProcessEnv;
   /** Read stdout instead of letting the child write to the terminal. */
   capture?: boolean;
 }
@@ -179,6 +177,8 @@ export interface BootstrapDeps {
   /** Whether a process with this pid exists — `kill(pid, 0)` without ESRCH. */
   alive(pid: number): boolean;
   nowMs(): number;
+  /** Optional wait seam; production waits without polling shared state elsewhere. */
+  waitForInstallLock?(): Promise<void>;
   /** This process's own pid, written into the lock. */
   pid: number;
   nodeVersion: string;
@@ -307,31 +307,43 @@ async function npxMode(
   // The same lock a `SessionStart` takes. An install that ran beside one
   // already in flight would have two `pnpm install`s in one `node_modules` and
   // two installers writing one configuration folder.
-  if (!takeLock(home, deps)) {
-    deps.log('다른 설치가 진행 중입니다. 그것이 끝난 뒤에 다시 실행하세요.');
-    return 0;
-  }
+  const lockOwner = await waitForLock(home, deps);
+  const stage = join(home, `.app-stage-${randomUUID()}`);
 
   try {
-    const folder = await prepareApp(app, repo, deps);
+    const hadApp = deps.exists(app);
+    if (deps.exists(join(home, '.app-next'))) { deps.log('중단된 app 전환을 먼저 복구하세요'); return 1; }
+    if (hadApp) {
+      if (await checkClone(app, repo, deps) !== 0) return 1;
+      if ((await capture(['symbolic-ref', '-q', 'HEAD'], app, deps)).code !== 0) { deps.log('고정된 클론은 플러그인의 ref로 갱신하세요'); return 1; }
+    }
+    const previous = hadApp ? await capture(['rev-parse', 'HEAD'], app, deps) : undefined;
+    if (previous && (previous.code !== 0 || !/^[0-9a-f]{40}$/.test(previous.stdout.trim()))) return 1;
+    const folder = await prepareApp(stage, repo, deps);
     if (folder !== 0) return folder;
+    if (previous && await isAncestor(previous.stdout.trim(), 'HEAD', stage, deps) !== true) { deps.log('기존 app 이력과 대상 이력이 일치하지 않습니다'); return 1; }
 
-    const pnpm = await ensurePnpm(app, deps, true);
+    const pnpm = await ensurePnpm(stage, deps, true);
     if (pnpm !== 0) return pnpm;
 
-    const built = await installAndBuild(app, deps);
+    const built = await installAndBuild(stage, deps);
     if (built !== 0) return built;
+    const target = stagedTarget(stage, deps);
+    if (!target) { deps.log('대상 설치기가 app 승격을 지원하는지 확인할 수 없습니다. 지원되는 버전으로 다시 시도하세요.'); return 1; }
 
     deps.log('설치기를 시작합니다');
     const installer = await deps.run({
       command: deps.nodePath,
-      args: [installerPath(app), ...argv],
-      cwd: app,
+      args: [installerPath(stage), ...argv],
+      cwd: stage,
+      env: { ...process.env, SECOND_BRAIN_INSTALL_LOCK_OWNER: lockOwner, SECOND_BRAIN_STAGED_APP: stage, SECOND_BRAIN_PREVIOUS_APP_HEAD: previous?.stdout.trim() ?? '' },
     });
     // The installer owns the outcome from here on, so hand its code straight on.
+    if (installer.code === 0 && (deps.readText(join(stage, 'apps/cli/dist/build.json')) !== deps.readText(join(app, 'apps/cli/dist/build.json')) || !finishAppPromotion(home, target, deps))) return 1;
     return installer.code;
   } finally {
-    releaseLock(home, deps);
+    deps.removeFolder(stage);
+    releaseLock(home, deps, lockOwner);
   }
 }
 
@@ -387,10 +399,10 @@ async function hookMode(
   // The fast path, and the one that runs on almost every session: one JSON
   // file, and a few lines of TOML. No git, no pnpm, nothing spawned.
   const before = readInstalled(home, deps);
-  if (before.commit === ref) return 0;
+  if (before.commit === ref && !deps.exists(join(home, '.app-promotion.json')) && !deps.exists(join(home, '.app-previous')) && !deps.exists(join(home, '.app-next'))) return 0;
   // A first install happens whatever the configuration says — there is no
   // installation yet for an update to be automatic about.
-  if (before.present && !updateAuto(home, deps)) {
+  if (before.present && before.commit !== ref && !updateAuto(home, deps)) {
     // Nothing is being installed, and the one thing a person will ask next is
     // what the difference is. `doctor run` answers that by asking the clone
     // which of the two commits is the ancestor, and the plugin's commit was
@@ -407,31 +419,41 @@ async function hookMode(
     return failed('필요한 도구 확인');
   }
 
-  // A lock somebody else holds means another session got here first. There is
-  // nothing to add and nothing to wait for: that install is this install.
-  if (!takeLock(home, deps)) return 0;
+  // Wait for the shared lock; a previous installer may be updating this home.
+  const lockOwner = await waitForLock(home, deps);
+  const stage = join(home, `.app-stage-${randomUUID()}`);
 
   try {
     // Read again under the lock: the install that just released it may have
     // been for this very ref.
     const taken = readInstalled(home, deps);
-    if (taken.commit === ref) return 0;
+    if (taken.commit === ref) {
+      if (!deps.exists(join(home, '.app-promotion.json'))) return deps.exists(join(home, '.app-previous')) || deps.exists(join(home, '.app-next')) ? failed('중단된 app 전환 복구') : 0;
+      return finishAppPromotion(home, ref, deps) ? 0 : failed('중단된 app 전환 복구');
+    }
 
-    const prepared = await prepareAppAt(app, repo, ref, taken.commit, deps);
+    if (deps.exists(join(home, '.app-next'))) return failed('중단된 app 전환 복구');
+    const prepared = deps.exists(app) ? await prepareAppAt(app, repo, ref, taken.commit, deps, true) : 0;
     if (prepared === 'quiet') return 0;
     if (prepared !== 0) return failed('저장소 준비');
+    const previous = deps.exists(app) ? await capture(['rev-parse', 'HEAD'], app, deps) : undefined;
+    if (previous && (previous.code !== 0 || !/^[0-9a-f]{40}$/.test(previous.stdout.trim()))) return failed('기존 app 신원 확인');
 
-    const pnpm = await ensurePnpm(app, deps, false);
+    const staged = await prepareAppAt(stage, repo, ref, undefined, deps);
+    if (staged !== 0) return failed('대상 저장소 준비');
+    const pnpm = await ensurePnpm(stage, deps, false);
     if (pnpm !== 0) return failed('pnpm 확인');
 
-    const built = await installAndBuild(app, deps);
+    const built = await installAndBuild(stage, deps);
     if (built !== 0) return failed('클론 빌드');
+    if (stagedTarget(stage, deps) !== ref) return failed('대상 설치기 승격 지원 확인');
 
     deps.log('설치기를 시작합니다');
     const installer = await deps.run({
       command: deps.nodePath,
-      args: [installerPath(app), ...installerArgs],
-      cwd: app,
+      args: [installerPath(stage), ...installerArgs],
+      cwd: stage,
+      env: { ...process.env, SECOND_BRAIN_INSTALL_LOCK_OWNER: lockOwner, SECOND_BRAIN_STAGED_APP: stage, SECOND_BRAIN_PREVIOUS_APP_HEAD: previous?.stdout.trim() ?? '' },
     });
     if (installer.code !== 0) {
       deps.log(`설치기가 종료 코드 ${String(installer.code)}로 끝났습니다.`);
@@ -447,6 +469,7 @@ async function hookMode(
       deps.log(`설치기가 끝났는데 ${join(home, INSTALLED_FILE)}이 ${ref}를 담고 있지 않습니다.`);
       return failed('완료 기록 확인');
     }
+    if (deps.readText(join(stage, 'apps/cli/dist/build.json')) !== deps.readText(join(app, 'apps/cli/dist/build.json')) || !finishAppPromotion(home, ref, deps)) return failed('이전 app 정리');
 
     noteBootstrap(home, seen.record, { result: 'installed', log: logPath }, deps);
     deps.message(
@@ -454,13 +477,38 @@ async function hookMode(
     );
     return 0;
   } finally {
-    releaseLock(home, deps);
+    deps.removeFolder(stage);
+    releaseLock(home, deps, lockOwner);
   }
 }
 
 /** The installer the clone built, which is what both modes hand over to. */
 function installerPath(app: string): string {
   return join(app, 'apps', 'cli', 'dist', 'install.js');
+}
+
+/** Remove only the previous app named by this installer's promotion marker. */
+function stagedTarget(stage: string, deps: BootstrapDeps): string | undefined {
+  try {
+    const build = JSON.parse(deps.readText(join(stage, 'apps/cli/dist/build.json')) ?? '') as { commit?: unknown; staged_promotion?: unknown };
+    return build.staged_promotion === 1 && typeof build.commit === 'string' && /^[0-9a-f]{40}$/.test(build.commit) && deps.exists(installerPath(stage)) ? build.commit : undefined;
+  } catch { return undefined; }
+}
+function finishAppPromotion(home: string, target: string, deps: BootstrapDeps): boolean {
+  const marker = join(home, '.app-promotion.json'), backup = join(home, '.app-previous');
+  try {
+    const record = JSON.parse(deps.readText(marker) ?? '') as { target?: unknown; hadPrevious?: unknown; owner?: unknown };
+    const app = join(home, APP_FOLDER);
+    const build = JSON.parse(deps.readText(join(app, 'apps/cli/dist/build.json')) ?? '') as { commit?: unknown; staged_promotion?: unknown };
+    const bin = join(app, 'apps/cli/dist/bin.js');
+    const quoted = `'${bin.replaceAll("'", `'\\''`)}'`;
+    const shim = deps.readText(join(home, 'bin/brain'))?.split('\n') ?? [];
+    if (record.target !== target || typeof record.owner !== 'string' || !/^\d+ [0-9a-f-]{36}\n$/.test(record.owner) || typeof record.hadPrevious !== 'boolean' || (!record.hadPrevious && deps.exists(backup)) || deps.exists(join(home, '.app-next')) || build.commit !== target || build.staged_promotion !== 1 || readInstalled(home, deps).commit !== target || !deps.exists(bin) || !shim.includes(`BIN=${quoted}`) || !shim.includes('exec "$NODE" "$BIN" "$@"')) return false;
+  } catch { return false; }
+  deps.removeFolder(backup);
+  if (deps.exists(backup)) return false;
+  deps.removeFolder(marker);
+  return !deps.exists(marker);
 }
 
 /** The two steps between a checkout and the installer, in both modes. */
@@ -568,6 +616,7 @@ async function prepareAppAt(
   ref: string,
   recorded: string | undefined,
   deps: BootstrapDeps,
+  checkOnly = false,
 ): Promise<Prepared> {
   if (!deps.exists(app)) {
     deps.log(`${repo}를 ${app}에 클론합니다`);
@@ -609,7 +658,7 @@ async function prepareAppAt(
     return 1;
   }
 
-  return detach(app, ref, deps);
+  return checkOnly ? 0 : detach(app, ref, deps);
 }
 
 /** The clone, at one commit and on no branch. */
@@ -988,63 +1037,31 @@ function isoTime(ms: number): string {
   return new Date(ms).toISOString();
 }
 
-/**
- * Take `<home>/install.lock`, or answer that somebody else has it.
- *
- * `mkdir` of one folder is the one "create unless it exists" every filesystem
- * does atomically, so the folder is the lock and the `pid` file inside it is
- * only the owner's name. A lock whose owner is gone, or one nobody has touched
- * for `LOCK_STALE_MS`, is reclaimed once — once, because a loop of reclaiming
- * and failing to take would be two processes fighting over a third's folder.
- */
-function takeLock(home: string, deps: BootstrapDeps): boolean {
+/** A lock with missing or dead owner is retained: a child may still write. */
+async function waitForLock(home: string, deps: BootstrapDeps): Promise<string> {
   const lock = join(home, LOCK_FOLDER);
   deps.makeFolders(home);
-
-  if (deps.makeFolder(lock)) {
-    deps.writeText(join(lock, LOCK_PID_FILE), `${String(deps.pid)}\n`);
-    return true;
+  let warned = false;
+  for (;;) {
+    if (deps.makeFolder(lock)) {
+      const owner = `${deps.pid} ${randomUUID()}\n`;
+      deps.writeText(join(lock, LOCK_PID_FILE), `${deps.pid}\n`);
+      deps.writeText(join(lock, 'owner'), owner);
+      if (deps.readText(join(lock, 'owner')) !== owner) throw new Error('설치 잠금 소유권을 기록하지 못했습니다');
+      return owner;
+    }
+    if (!warned) {
+      deps.log('다른 설치가 진행 중이거나 이전 설치 잠금이 남아 기다립니다. 복구하려면 새 설치를 차단하고 이전 설치와 모든 자식의 공유 상태 쓰기 종료를 확인한 뒤 해당 잠금만 제거하고 다시 실행하세요.');
+      warned = true;
+    }
+    await (deps.waitForInstallLock?.() ?? new Promise<void>(resolve => setTimeout(resolve, 100)));
   }
-  if (!staleLock(lock, deps)) return false;
-
-  deps.removeFolder(lock);
-  if (!deps.makeFolder(lock)) return false;
-  deps.writeText(join(lock, LOCK_PID_FILE), `${String(deps.pid)}\n`);
-  return true;
 }
 
-/** Whether the lock that is there belongs to nobody any more. */
-function staleLock(lock: string, deps: BootstrapDeps): boolean {
-  const text = deps.readText(join(lock, LOCK_PID_FILE));
-  const pid = text === undefined ? undefined : pidOf(text);
-  // An owner that is gone cannot come back, however recently the folder was
-  // touched.
-  if (pid !== undefined && !deps.alive(pid)) return true;
-
-  // Otherwise the age decides, whether there was a pid to read or not: pids
-  // are recycled, and a live process that is not this lock's owner would
-  // otherwise make the lock permanent.
-  const mtime = deps.folderMtimeMs(lock);
-  if (mtime === undefined) return false;
-  return deps.nowMs() - mtime > LOCK_STALE_MS;
-}
-
-/** The decimal pid one line holds, or `undefined` when it holds no pid. */
-function pidOf(text: string): number | undefined {
-  const matched = /^\s*(\d+)\s*$/.exec(text);
-  const pid = matched?.[1];
-  if (pid === undefined) return undefined;
-  const number = Number(pid);
-  return Number.isSafeInteger(number) && number > 0 ? number : undefined;
-}
-
-/**
- * Release the lock, on every ending there is. It is called from a `finally`,
- * so a failure, a refusal and an exception all leave the folder free: a lock
- * left behind by a crash costs the next session half an hour.
- */
-function releaseLock(home: string, deps: BootstrapDeps): void {
-  deps.removeFolder(join(home, LOCK_FOLDER));
+/** Only the invocation whose unique token remains in the lock may release it. */
+function releaseLock(home: string, deps: BootstrapDeps, owner: string): void {
+  const lock = join(home, LOCK_FOLDER);
+  if (deps.readText(join(lock, 'owner')) === owner) deps.removeFolder(lock);
 }
 
 function capture(
@@ -1198,9 +1215,7 @@ export function systemDeps(): BootstrapDeps {
       try {
         writeFileSync(path, text, { encoding: 'utf8', mode: 0o600 });
       } catch {
-        // The lock is the folder; its `pid` file is only the owner's name, and
-        // a lock with no name in it is still held. Failing the install over a
-        // file nobody has to read would be the wrong trade.
+        // The caller verifies the owner record before allowing any install.
       }
     },
     moveFile: (from: string, to: string): boolean => {
@@ -1238,8 +1253,7 @@ export function systemDeps(): BootstrapDeps {
       try {
         rmSync(path, { recursive: true, force: true });
       } catch {
-        // Same: a lock that cannot be released goes stale, which the next run
-        // reclaims. There is no better answer available from here.
+        // A lock that cannot be released remains for explicit recovery.
       }
     },
     folderMtimeMs: (path: string): number | undefined => {
@@ -1301,6 +1315,7 @@ function runCommand(
   return new Promise((resolve) => {
     const child = spawn(request.command, [...request.args], {
       cwd: request.cwd,
+      env: request.env,
       stdio: [...childStdio(captured, logFile())],
     });
 

@@ -83,7 +83,7 @@ export const setupRun: CommandSpec<SetupRunData> = {
     // turn above all — would otherwise load all of it to not use it (AD-3, AD-6).
     const { runInstallerWithFlags, systemInstallDeps } = await import('../install.js');
 
-    const deps = systemInstallDeps({ runner: context.runner });
+    const deps = systemInstallDeps({ runner: context.runner, allowOfflinePrompt: !json });
     const result = await runInstallerWithFlags(setupRunFlags(context.options), context.env, {
       ...deps,
       log,

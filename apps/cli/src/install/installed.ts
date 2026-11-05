@@ -25,6 +25,7 @@ import { shimPath } from './shim.js';
 export interface BuildIdentity {
   /** The full 40-character commit, or `null` on a tree that is not a clone. */
   commit: string | null;
+  version?: string;
   /** The store schema version this build was made for. */
   schema_version: number;
   schema_versions: SchemaVersions;
@@ -84,11 +85,12 @@ export async function readBuildIdentity(): Promise<BuildIdentity | undefined> {
   }
   if (typeof document !== 'object' || document === null) return undefined;
 
-  const { commit, schema_version: schemaVersion, schema_versions: schemaVersions } = document as Record<string, unknown>;
+  const { commit, version, schema_version: schemaVersion, schema_versions: schemaVersions } = document as Record<string, unknown>;
   if (!(commit === null || isCommit(commit))) return undefined;
   if (typeof schemaVersion !== 'number' || !Number.isInteger(schemaVersion)) return undefined;
   if (!isSchemaVersions(schemaVersions)) return undefined;
-  return { commit, schema_version: schemaVersion, schema_versions: schemaVersions };
+  if (version !== undefined && typeof version !== 'string') return undefined;
+  return { commit, ...(version === undefined ? {} : { version }), schema_version: schemaVersion, schema_versions: schemaVersions };
 }
 
 /**

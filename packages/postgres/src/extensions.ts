@@ -3,10 +3,32 @@ import { sql } from 'kysely';
 import { databaseFailure, type PgConnect } from './connect.js';
 import { withWrite } from './write.js';
 import { ensureFollowup, ensureWork, type WorkItemRow } from './work.js';
-type Row = { name: string; version: string; installed_at: string; enabled: boolean; enabled_changed_at: string; connection_status: 'connected' | 'failed' | null; connection_checked_at: string | null; connection_code: string | null; connection_message: string | null };
-const record = (r: Row): ExtensionRecord => ({ name: r.name, version: r.version, installedAt: new Date(r.installed_at), enabled: r.enabled, enabledChangedAt: new Date(r.enabled_changed_at), connectionStatus: r.connection_status, connectionCheckedAt: r.connection_checked_at === null ? null : new Date(r.connection_checked_at), connectionCode: r.connection_code, connectionMessage: r.connection_message });
+type Row = { name: string; version: string; package_digest: string | null; plugin_version: string | null; installed_at: string; enabled: boolean; enabled_changed_at: string; connection_status: 'connected' | 'failed' | null; connection_checked_at: string | null; connection_code: string | null; connection_message: string | null };
+const record = (r: Row): ExtensionRecord => ({ name: r.name, version: r.version, packageDigest: r.package_digest, pluginVersion: r.plugin_version, installedAt: new Date(r.installed_at), enabled: r.enabled, enabledChangedAt: new Date(r.enabled_changed_at), connectionStatus: r.connection_status, connectionCheckedAt: r.connection_checked_at === null ? null : new Date(r.connection_checked_at), connectionCode: r.connection_code, connectionMessage: r.connection_message });
 export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
   return {
+    async beginExtensionQuiesce({ name, owner, now }) {
+      const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      const result = await withWrite(opened.connection, async held => {
+        const rows = await sql<{owner:string}>`insert into brain.extension_quiesce(name,owner,started_at) values (${name},${owner},${now.toISOString()}) on conflict(name) do nothing returning owner`.execute(held);
+        if (rows.rows.length) return true;
+        const current = await sql<{owner:string}>`select owner from brain.extension_quiesce where name=${name}`.execute(held);
+        return current.rows[0]?.owner === owner;
+      }); return result.ok ? { ok: true, acquired: result.value } : result;
+    },
+    async readExtensionQuiesce(name) {
+      const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      try {
+        const result = await sql<{owner:string|null;running:number}>`select (select owner from brain.extension_quiesce where name=${name}) as owner,
+          (select count(*)::int from brain.work_items w where split_part(w.kind,'.',1)=${name} and position('.' in w.kind)>0 and w.completed_at is null and (w.current_attempt_token is not null or w.claimed_by is not null)) as running`.execute(opened.connection.db);
+        return { ok: true, ...result.rows[0]! };
+      } catch(error) { return databaseFailure(error); }
+    },
+    async endExtensionQuiesce({name,owner}) {
+      const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      const result = await withWrite(opened.connection, async held => (await sql`delete from brain.extension_quiesce where name=${name} and owner=${owner} returning name`.execute(held)).rows.length > 0);
+      return result.ok ? { ok: true, released: result.value } : result;
+    },
     async enqueueExtensionWork({ name, version, work }) {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       const result = await withWrite(opened.connection, async held => {
@@ -35,21 +57,22 @@ export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
     async listExtensionInventory() {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
-        const result = await sql<{ name: string }>`select name from (select name from brain.extensions union select name from brain.extension_install_progress) inventory order by name collate "C"`.execute(opened.connection.db);
+        const result = await sql<{ name: string }>`select name from (select name from brain.extensions union select name from brain.extension_install_progress union select name from brain.extension_quiesce) inventory order by name collate "C"`.execute(opened.connection.db);
         return { ok: true, names: result.rows.map(row => row.name) };
       } catch (error) { return databaseFailure(error); }
     },
     async getExtensionPublicStatus(name) {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
-        const result = await sql<{ extension: Row | null; progress: ExtensionInstallProgress | null; held_schedules: number; interrupted_work: number; python: { status: 'succeeded' | 'failed'; code: string | null; checked_at: string } | null }>`
+        const result = await sql<{ extension: Row | null; progress: ExtensionInstallProgress | null; held_schedules: number; interrupted_work: number; quiesced: boolean; python: { status: 'succeeded' | 'failed'; code: string | null; checked_at: string } | null }>`
           select (select row_to_json(e) from brain.extensions e where e.name = ${name}) as extension,
             (select p.progress from brain.extension_install_progress p where p.name = ${name}) as progress,
             (select row_to_json(p) from brain.extension_python_environment p where p.name = ${name}) as python,
+            exists(select 1 from brain.extension_quiesce q where q.name = ${name}) as quiesced,
             (select count(*)::int from brain.schedules s join brain.work_hold_groups h on h.name = s.hold_group where h.name = ${'extension:' + name}) as held_schedules,
             (select count(*)::int from brain.work_items w join brain.work_hold_groups h on h.name = w.hold_group where h.name = ${'extension:' + name} and w.completed_at is null) as interrupted_work`.execute(opened.connection.db);
         const row = result.rows[0]!;
-        return { ok: true, status: extensionPublicProjection(name, row.extension ? record(row.extension) : null, row.progress && validInstallProgress(row.progress) ? row.progress : null, row.held_schedules, row.interrupted_work, row.python ? { status: row.python.status, code: row.python.code, checkedAt: new Date(row.python.checked_at) } : null) };
+        return { ok: true, status: extensionPublicProjection(name, row.extension ? record(row.extension) : null, row.progress && validInstallProgress(row.progress) ? row.progress : null, row.held_schedules, row.interrupted_work, row.python ? { status: row.python.status, code: row.python.code, checkedAt: new Date(row.python.checked_at) } : null, row.quiesced) };
       } catch (error) { return databaseFailure(error); }
     },
     async setExtensionEnabled({ name, enabled, now }) {
@@ -95,11 +118,11 @@ export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try { const result = await sql<{ status: 'succeeded' | 'failed'; code: string | null; checked_at: string }>`select status, code, checked_at from brain.extension_python_environment where name=${name}`.execute(opened.connection.db); const row = result.rows[0]; return { ok: true, environment: row ? { status: row.status, code: row.code, checkedAt: new Date(row.checked_at) } : null }; } catch (error) { return databaseFailure(error); }
     },
-    async recordExtensionInstall({ name, version, now, workKinds, workFollowups, missedPolicies }) {
+    async recordExtensionInstall({ name, version, now, packageIdentity, workKinds, workFollowups, missedPolicies }) {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
         const result = await withWrite(opened.connection, async held => {
-          await sql`insert into brain.extensions(name, version, installed_at, enabled, enabled_changed_at) values (${name}, ${version}, ${now.toISOString()}, true, ${now.toISOString()}) on conflict(name) do update set version=excluded.version`.execute(held);
+          await sql`insert into brain.extensions(name, version, package_digest, plugin_version, installed_at, enabled, enabled_changed_at) values (${name}, ${version}, ${packageIdentity?.digest ?? null}, ${packageIdentity?.pluginVersion ?? null}, ${now.toISOString()}, true, ${now.toISOString()}) on conflict(name) do update set version=excluded.version, package_digest=excluded.package_digest, plugin_version=excluded.plugin_version`.execute(held);
           await sql`delete from brain.extension_work_kinds where extension_name=${name}`.execute(held);
           for (const kind of workKinds ?? []) await sql`insert into brain.extension_work_kinds(extension_name, kind, missed_policy) values (${name}, ${kind}, ${missedPolicies?.[kind] ?? 'latest'})`.execute(held);
           for (const [kind, followup] of Object.entries(workFollowups ?? {})) await sql`update brain.extension_work_kinds set followup_kind=${followup} where extension_name=${name} and kind=${kind}`.execute(held);

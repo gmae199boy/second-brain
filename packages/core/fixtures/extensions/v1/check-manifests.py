@@ -15,6 +15,17 @@ def _valid(value, schema_adapter=None):
     if not validator.is_valid(value):
         return False
     name = value['name']
+    fields = ('files', 'core_compat', 'plugin_version')
+    if any(field in value for field in fields):
+        if not all(field in value for field in fields):
+            return False
+        files = value['files']
+        version = re.compile(r'^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')
+        compat = value['core_compat']
+        if files != sorted(set(files)) or 'manifest.json' not in files or 'digest' in files or not version.fullmatch(value['version']) or not version.fullmatch(value['plugin_version']):
+            return False
+        if tuple(map(int, compat['min'].split('.'))) >= tuple(map(int, compat['max_exclusive'].split('.'))):
+            return False
     commands = value.get('commands', [])
     if commands and ('_' in name or name in ('install', 'run', 'login', 'list', 'status', 'enable', 'disable')):
         return False

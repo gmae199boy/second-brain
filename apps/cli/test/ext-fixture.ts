@@ -8,6 +8,9 @@ import { withoutHarnessFolders } from './environment.js';
 export async function extHome(options: { realGarminAuth?: boolean; self?: boolean } = {}) {
   const homes = tempHomes(), home = await homes.create('brain-ext-');
   const db = await pgHome(home, options.self ?? true);
+  const { readBuildIdentity } = await import('../src/install/installed.js');
+  const build = await readBuildIdentity(); if (!build?.commit) throw new Error('시험 build 신원이 없습니다');
+  await writeFile(join(home, 'installed.json'), JSON.stringify({ commit: build.commit, schema_version: build.schema_version, schema_versions: build.schema_versions, node: process.execPath, plugin_root: null, installed_at: new Date(0).toISOString() }));
   // Production setup creates the database with brain_owner ownership. The
   // shared test helper precreates it as postgres, so reproduce that ownership.
   const databaseName = new URL(db.url).pathname.slice(1);

@@ -1471,7 +1471,7 @@ export interface SettingsStore {
 
 
 export interface ExtensionRecord {
-  name: string; version: string; installedAt: Date; enabled: boolean; enabledChangedAt: Date;
+  name: string; version: string; packageDigest: string | null; pluginVersion: string | null; installedAt: Date; enabled: boolean; enabledChangedAt: Date;
   connectionStatus: 'connected' | 'failed' | null; connectionCheckedAt: Date | null;
   connectionCode: string | null; connectionMessage: string | null;
 }
@@ -1482,12 +1482,15 @@ export interface ExtensionPublicStatus {
   name: string;
   installed: boolean;
   version: string | null;
+  packageDigest: string | null;
+  pluginVersion: string | null;
   installedAt: Date | null;
   pythonEnvironment: ExtensionPythonEnvironment | null;
   authWorkId: string | null;
   scheduleIds: string[];
   disabledScheduleKeys: string[];
   enabled: boolean | null;
+  quiesced: boolean;
   journalPresent: boolean;
   login: import('../extensions/install-progress.js').InstallStageProgress | null;
   connection: { status: 'connected' | 'failed' | null; code: string | null; checkedAt: Date | null };
@@ -1500,8 +1503,11 @@ export interface ExtensionPublicStatus {
   stages: import('../extensions/install-progress.js').ExtensionInstallProgress['stages'];
 }
 export interface ExtensionStore {
+  beginExtensionQuiesce(input: { name: string; owner: string; now: Date }): Promise<{ ok: true; acquired: boolean } | ExtensionStoreFailure>;
+  readExtensionQuiesce(name: string): Promise<{ ok: true; owner: string | null; running: number } | ExtensionStoreFailure>;
+  endExtensionQuiesce(input: { name: string; owner: string }): Promise<{ ok: true; released: boolean } | ExtensionStoreFailure>;
   enqueueExtensionWork(input: { name: string; version: string; work: AddWorkInput }): Promise<{ ok: true; state: 'queued'; workId: string; created: boolean } | { ok: true; state: 'missing' | 'disabled' | 'changed' } | ExtensionStoreFailure>;
-  /** registry와 설치 기록의 이름을 중복 없이 정렬해 읽는다. */
+  /** registry, 설치 기록과 정지 gate의 이름을 중복 없이 정렬해 읽는다. */
   listExtensionInventory(): Promise<{ ok: true; names: string[] } | ExtensionStoreFailure>;
   getExtensionPublicStatus(name: string): Promise<{ ok: true; status: ExtensionPublicStatus } | ExtensionStoreFailure>;
   setExtensionEnabled(input: { name: string; enabled: boolean; now: Date }): Promise<{ ok: true; found: boolean; changed: boolean } | ExtensionStoreFailure>;
@@ -1511,7 +1517,7 @@ export interface ExtensionStore {
   getExtensionInstallProgress(name: string): Promise<{ ok: true; journal: import('../extensions/install-progress.js').StoredExtensionInstallProgress | null } | ExtensionStoreFailure>;
   recordExtensionPythonEnvironment(input: { name: string } & ExtensionPythonEnvironment): Promise<{ ok: true } | ExtensionStoreFailure>;
   getExtensionPythonEnvironment(name: string): Promise<{ ok: true; environment: ExtensionPythonEnvironment | null } | ExtensionStoreFailure>;
-  recordExtensionInstall(input: { name: string; version: string; now: Date; workKinds?: readonly string[]; workFollowups?: Readonly<Record<string, string>>; missedPolicies?: Readonly<Record<string, 'latest' | 'coalesce' | 'skip'>> }): Promise<{ ok: true } | ExtensionStoreFailure>;
+  recordExtensionInstall(input: { name: string; version: string; now: Date; packageIdentity?: { digest: string; pluginVersion: string }; workKinds?: readonly string[]; workFollowups?: Readonly<Record<string, string>>; missedPolicies?: Readonly<Record<string, 'latest' | 'coalesce' | 'skip'>> }): Promise<{ ok: true } | ExtensionStoreFailure>;
   recordExtensionConnection(input: { name: string; status: 'connected' | 'failed'; code: string | null; message: string | null; checkedAt: Date }): Promise<{ ok: true } | ExtensionStoreFailure>;
   getExtension(name: string): Promise<{ ok: true; extension: ExtensionRecord | null } | ExtensionStoreFailure>;
   listExtensions(): Promise<{ ok: true; extensions: ExtensionRecord[] } | ExtensionStoreFailure>;

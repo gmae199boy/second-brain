@@ -1,3 +1,7 @@
+import { extensionTransitions } from './extension-transition.js';
+import { randomUUID } from 'node:crypto';
+import { prepareExtensionPackage, checkPackageCore, checkInstalledCore, digestPackageFiles, needsPython, observePackage, readPackageObservation } from './extension-package.js';
+import { withHomeInstallLock } from './install-lock.js';
 import { validateSchema, validateValue } from './json-schema.js';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -7,14 +11,19 @@ import { join, resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { envFilePath } from '../config/paths.js';
 import { fileURLToPath } from 'node:url';
-import { decodeExtensionManifest, isExtensionName, type Clock, type ExtensionRuntime } from 'second_brain';
+import { decodeExtensionManifest, isExtensionName, validateMigrationNames, type Clock, type ExtensionRuntime } from 'second_brain';
 import { extensionAdminUrl, resolveStoreUrl, ensureExtensionPassword, extensionDatabaseUrl, type ReadConfigResult } from '../config/codec.js';
-import { prepareExtensionPython } from './extension-python.js';
+import { prepareExtensionPython, validatePythonInputs } from './extension-python.js';
+import { readBuildIdentity } from '../install/installed.js';
 import { daemonLiveness } from '../daemon/liveness.js';
 import { readDaemonLock } from '../daemon/lock.js';
 import { systemTimer } from './clock.js';
 import { systemProcessLauncher } from './process-group.js';
 import { systemProcessInspector } from './process-inspector.js';
+
+// Capture at module load, before an install command can wait for the shared
+// lock. Never use the post-wait on-disk build as the identity of loaded code.
+const runningBuildIdentity = readBuildIdentity();
 
 async function realHome(path: string): Promise<string> {
   try { return await realpath(path); }
@@ -55,7 +64,7 @@ async function packageDigest(folder: string, migrations: string, omitMigrations 
   await visit(folder, ''); return hash.digest('hex');
 }
 /** 등록된 확장의 manifest만 읽고 런타임을 준비하지 않는다. */
-export async function installedExtensionMigrations(home: string, names: readonly string[]): Promise<{ owner: string; directory: string }[]> {
+export async function installedExtensionMigrations(home: string, names: readonly string[], targetVersion?: string): Promise<{ owner: string; directory: string }[]> {
   const folder = join(home, 'extensions');
   const owners: { owner: string; directory: string }[] = [];
   for (const name of [...names].sort()) {
@@ -68,6 +77,11 @@ export async function installedExtensionMigrations(home: string, names: readonly
     if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) throw new Error(`확장 manifest가 일반 파일이 아닙니다: ${name}`);
     const decoded = decodeExtensionManifest(await readFile(manifestPath, 'utf8'), validateSchema);
     if (!decoded.ok || decoded.manifest.name !== name) throw new Error(`확장 manifest가 올바르지 않습니다: ${name}`);
+    if (targetVersion) {
+      if (!decoded.manifest.core_compat) throw new Error(`대상 core 호환 범위가 없습니다: ${name}`);
+      const { compareRelease } = await import('./extension-package.js');
+      if (compareRelease(targetVersion, decoded.manifest.core_compat.min) < 0 || compareRelease(targetVersion, decoded.manifest.core_compat.max_exclusive) >= 0) throw new Error(`대상 core와 확장이 호환되지 않습니다: ${name}`);
+    }
     let path = directory;
     for (const part of decoded.manifest.migrations.split('/')) {
       path = join(path, part);
@@ -84,7 +98,7 @@ export async function installedExtensionMigrations(home: string, names: readonly
   return owners;
 }
 export function extensionRuntime({ home, env, config, clock }: { home: string; env: NodeJS.ProcessEnv; config: ReadConfigResult; clock: Clock }): ExtensionRuntime {
-  const pending = new Map<string, { stage: string; target: string; backup: string; moved: boolean }>();
+  const transition = extensionTransitions(home);
   const databaseUrl = async () => {
     if (!config.ok) throw new Error('설정을 읽을 수 없습니다');
     const url = await resolveStoreUrl(home, config.config.storeUrlEnv, env);
@@ -116,6 +130,7 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
         return ready.pid === owner.pid && ready.startedAt === owner.startedAt.toISOString() && Number.isFinite(age) && age >= 0 && age <= 20_000;
       } catch { return false; }
     },
+    withHomeInstallLock: (run, signal) => withHomeInstallLock(home, run, signal),
     async withCommandLock(name, run, signal) {
       const { withExtensionInstallLock } = await import('second_brain/postgres');
       return withExtensionInstallLock(await databaseUrl(), name, run, signal, { queryTimeoutMs: 1000 });
@@ -139,12 +154,37 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
     machineValues: name => ({ tokenstore: join(home, 'extensions', name, 'tokenstore') }),
     databaseUrl: async name => { await chmod(envFilePath(home), 0o600); return extensionDatabaseUrl(home, name, await databaseUrl()); }, preparePython: (directory, signal) => prepareExtensionPython(directory, env, signal), timer: systemTimer, launcher: { start: spec => systemProcessLauncher.start({ ...spec, command: spec.command === 'node' ? process.execPath : spec.command }) }, inspector: systemProcessInspector,
     packages: {
-      async inspect(name, dir, migrations) {
+      prepareExternal: prepareExtensionPackage,
+      captureRunningCore: async () => { await runningBuildIdentity; },
+      checkCore: async manifest => checkPackageCore(home, manifest, await runningBuildIdentity),
+      checkInstalledCore: async () => checkInstalledCore(home, await runningBuildIdentity),
+      async preflight(directory, manifest) {
+        try {
+          await checkTree(directory);
+          const migrationDirectory = join(directory, manifest.migrations);
+          const stat = await lstat(migrationDirectory); if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('invalid migrations directory');
+          const names = validateMigrationNames(await readdir(migrationDirectory));
+          await Promise.all(names.map(async name => { const item = await lstat(join(migrationDirectory, name)); if (!item.isFile() || item.isSymbolicLink()) throw new Error('invalid migration file'); }));
+        } catch { return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장 마이그레이션 파일이 올바르지 않습니다' }; }
+        if (needsPython(manifest)) {
+          try { await validatePythonInputs(directory); }
+          catch { return { ok: false as const, code: 'EXTENSION_PYTHON_PIN_INVALID' as const, message: 'Python 확장 의존 파일이나 버전 지정이 올바르지 않습니다' }; }
+        }
+        return { ok: true as const };
+      },
+      observe: observation => observePackage(home, observation),
+      readObservation: name => readPackageObservation(home, name),
+      async inspect(name, dir, migrations, files) {
         await checkTree(dir);
-        const digest = await packageDigest(dir, migrations);
+        const listedDigest = async (root: string) => {
+          const bytes = new Map<string, Buffer>();
+          for (const path of files!) { const full = join(root, path); const stat = await lstat(full); if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('invalid package file'); bytes.set(path, await readFile(full)); }
+          return digestPackageFiles(files!, bytes);
+        };
+        const digest = files ? await listedDigest(dir) : await packageDigest(dir, migrations);
         const target = join(home, 'extensions', name);
         try {
-          const installedDigest = await packageDigest(target, migrations);
+          const installedDigest = files ? await listedDigest(target) : await packageDigest(target, migrations);
           const sameBase = await packageDigest(dir, migrations, true) === await packageDigest(target, migrations, true);
           return { digest, installedDigest, sameBase, installedDir: target };
         } catch (error) {
@@ -152,6 +192,7 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
           throw error;
         }
       },
+      async sameBase(first, second, migrations) { return await packageDigest(first, migrations, true) === await packageDigest(second, migrations, true); },
       async refreshMigrations(name, dir, migrations) {
         const target = join(home, 'extensions', name, migrations);
         const stage = await mkdtemp(join(home, 'extensions', '.migrations-'));
@@ -163,11 +204,14 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
           try { await rename(staged, target); } catch (error) { await rename(backup, target); moved = false; throw error; }
         } finally { if (!moved || await lstat(target).then(() => true, () => false)) await rm(stage, { recursive: true, force: true }); }
       },
+      transition,
       async rollback(name, preserveInitial = false) {
-        const placement = pending.get(name); if (!placement) return;
-        if (placement.moved || !preserveInitial) await rm(placement.target, { recursive: true, force: true });
-        if (placement.moved) await rename(placement.backup, placement.target);
-        await rm(placement.stage, { recursive: true, force: true }); pending.delete(name);
+        const journal = await transition.read(name); if (!journal) return;
+        if (preserveInitial && journal.hadPrevious === false && journal.phase === 'active') await transition.commit(name, journal.owner);
+        else await transition.rollback(name, journal.owner);
+      },
+      async finalizePlacement(name) {
+        const journal = await transition.read(name); if (journal) await transition.commit(name, journal.owner);
       },
       async resolve(name) {
         const test = await testExtensionsFolder(home, env, join(homedir(), '.second_brain'));
@@ -180,52 +224,13 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
         return { ok: false };
       },
       async place(name, dir) {
-        if (pending.has(name)) throw new Error('확장 설치가 이미 진행 중입니다');
-        await checkTree(dir);
-        const folder = resolve(home, 'extensions');
-        await mkdir(folder, { recursive: true, mode: 0o700 }); await chmod(folder, 0o700);
-        const stage = await mkdtemp(join(folder, '.install-'));
-        const target = join(folder, name), backup = join(stage, 'previous');
-        let moved = false;
-        try {
-          const staged = join(stage, name);
-          await cp(dir, staged, { recursive: true, errorOnExist: true, force: false });
-          // 보고서는 확장 소유의 영속 데이터다.
-          await rm(join(staged, 'reports'), { recursive: true, force: true });
-          const previousReports = join(target, 'reports');
-          try { const reportStat = await lstat(previousReports); if (!reportStat.isDirectory() || reportStat.isSymbolicLink()) throw new Error('invalid reports'); await checkTree(previousReports); await cp(previousReports, join(staged, 'reports'), { recursive: true, errorOnExist: true, force: false }); }
-          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-          // staging은 미완료 파일 요청의 소유이며 패키지 내용이 아니다.
-          await rm(join(staged, 'staging'), { recursive: true, force: true });
-          const previousStaging = join(target, 'staging');
-          let staging: Awaited<ReturnType<typeof lstat>> | undefined;
-          try { staging = await lstat(previousStaging); }
-          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-          if (staging) {
-            if (!staging.isDirectory() || staging.isSymbolicLink()) throw new Error('staging은 실제 폴더여야 합니다');
-            await checkTree(previousStaging);
-            await cp(previousStaging, join(staged, 'staging'), { recursive: true, errorOnExist: true, force: false });
-          }
-          const previousTokenstore = join(target, 'tokenstore');
-          let tokenstore: Awaited<ReturnType<typeof lstat>> | undefined;
-          try { tokenstore = await lstat(previousTokenstore); }
-          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-          if (tokenstore) {
-            if (tokenstore.isSymbolicLink()) throw new Error('tokenstore에 심볼릭 링크를 둘 수 없습니다');
-            if (tokenstore.isDirectory()) await checkTree(previousTokenstore);
-            await rm(join(staged, 'tokenstore'), { recursive: true, force: true });
-            await cp(previousTokenstore, join(staged, 'tokenstore'), { recursive: true, errorOnExist: true, force: false });
-          }
-          try { await rename(target, backup); moved = true; }
-          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-          try { await rename(staged, target); }
-          catch (error) { if (moved) await rename(backup, target); throw error; }
-          pending.set(name, { stage, target, backup, moved });
-          return target;
-        } catch (error) {
-          await rm(stage, { recursive: true, force: true });
-          throw error;
-        }
+        const existing = await transition.read(name);
+        if (existing) throw new Error('미완료 확장 전환을 먼저 복구해야 합니다');
+        const owner = randomUUID(), digest = await packageDigest(dir, '');
+        await transition.prepare({ name, owner, digest, directory: dir });
+        const stage = await transition.stagedDirectory(name, owner);
+        if (await packageDigest(stage, '') !== digest) { await transition.rollback(name, owner); throw new Error('확장 패키지 복사 중 내용이 바뀌었습니다'); }
+        return transition.activate(name, owner);
       },
     },
     migrator: {
@@ -236,14 +241,9 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
           const adminUrl = await extensionAdminUrl(home, await databaseUrl(), env);
           result = await runMigrations({ databaseUrl: adminUrl, clock, owners: [{ owner, directory }] });
         } catch { result = { ok: false, code: 'DB_UNAVAILABLE', message: '확장 마이그레이션의 관리 연결을 열지 못했습니다' }; }
-        const placement = pending.get(owner);
-        if (placement) {
-          if (!result.ok && placement.moved) {
-            await rm(placement.target, { recursive: true, force: true });
-            await rename(placement.backup, placement.target);
-          }
-          await rm(placement.stage, { recursive: true, force: true });
-          pending.delete(owner);
+        if (!result.ok) {
+          const journal = await transition.read(owner);
+          if (journal && journal.hadPrevious) await transition.rollback(owner, journal.owner);
         }
         return result;
       },

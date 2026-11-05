@@ -1,0 +1,58 @@
+{
+  "name": "testext",
+  "version": "0.1.0",
+  "core": 1,
+  "abi": 1,
+  "migrations": "migrations",
+  "connection_check": {
+    "runtime": "node",
+    "entry": "bin/check.mjs"
+  },
+  "settings": [
+    {
+      "key": "testext.label",
+      "type": "string",
+      "required": [],
+      "default": "fixture"
+    }
+  ],
+  "commands": [
+    {
+      "name": "echo-stats",
+      "runtime": "node",
+      "entry": "bin/echo-stats.mjs",
+      "description": "입력과 설정을 반환합니다",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "abi",
+          "user_id",
+          "settings",
+          "input"
+        ]
+      },
+      "timeout_ms": 3000,
+      "risk": "read"
+    }
+  ],
+  "files": [
+    "bin/check.mjs",
+    "bin/echo-stats.mjs",
+    "manifest.json",
+    "migrations/0001_testext.sql"
+  ],
+  "core_compat": {
+    "min": "0.0.0",
+    "max_exclusive": "1.0.0"
+  },
+  "plugin_version": "0.1.0"
+}

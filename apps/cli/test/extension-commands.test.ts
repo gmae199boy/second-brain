@@ -371,3 +371,19 @@ it('guards compiled schema references and dependencies without treating literal 
   expect(validateValue(ordinary, { name: 'ok' })).toBe(true);
   expect(validateValue(ordinary, { name: 42 })).toBe(false);
 });
+
+it('지속 quiesce 중 명령은 시작하지 않고 소유한 정지 해제 후 다시 실행한다', async () => {
+  const fixture = await extHome();
+  const { postgresStore } = await import('second_brain/postgres');
+  const store = postgresStore({ databaseUrl: fixture.db.appUrl });
+  const owner = '00000000-0000-7000-8000-000000000001';
+  try {
+    expect((await fixture.run(['ext', 'install', 'testext', '--json'])).body.ok).toBe(true);
+    expect(await store.beginExtensionQuiesce({ name:'testext', owner, now:new Date() })).toEqual({ok:true,acquired:true});
+    const blocked = await fixture.run(['ext','testext','echo-stats','--json']);
+    expect(blocked.body.error.code).toBe('EXTENSION_COMMAND_UNAVAILABLE');
+    expect(await store.endExtensionQuiesce({name:'testext',owner:'00000000-0000-7000-8000-000000000002'})).toEqual({ok:true,released:false});
+    expect(await store.endExtensionQuiesce({name:'testext',owner})).toEqual({ok:true,released:true});
+    expect((await fixture.run(['ext','testext','echo-stats','--json'])).body.ok).toBe(true);
+  } finally { await store.close(); await fixture.cleanup(); }
+},60000);

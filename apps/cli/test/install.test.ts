@@ -27,7 +27,7 @@ describe('real PG installer with machine commands injected', () => {
     expect(await readdir(kit.home)).not.toContain('brain.db');
     expect((await stat(join(kit.home, '.env'))).mode & 0o777).toBe(0o600);
     expect((await stat(join(kit.home, 'files'))).mode & 0o777).toBe(0o700);
-    expect(await readInstalled(kit.home)).toMatchObject({ schema_version: 33, schema_versions: { core: 33 } });
+    expect(await readInstalled(kit.home)).toMatchObject({ schema_version: 35, schema_versions: { core: 35 } });
   });
   it('reruns migrations and ownership idempotently and keeps stored settings', async () => {
     const kit = await world(); expect(await kit.run(), kit.lines.join('\n')).toBe(0);

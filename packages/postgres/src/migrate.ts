@@ -2,15 +2,32 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Clock } from '@second-brain/core';
+import { validateMigrationNames, type Clock } from '@second-brain/core';
 import { createPool, describe, type ConnectionOptions } from './connect.js';
-export const CORE_SCHEMA_VERSION = 33;
+export const CORE_SCHEMA_VERSION = 35;
 export const SCHEMA_VERSION = CORE_SCHEMA_VERSION;
 export interface MigrationOwner { owner: string; directory: string }
 export interface RunMigrationsOptions extends ConnectionOptions {
   clock: Clock;
   owners?: readonly MigrationOwner[];
   coreMaxVersion?: number;
+}
+/** Read legacy schema state before any core migration changes it. */
+export async function inspectExtensionFence(databaseUrl: string): Promise<{ names: string[]; gateNames: string[]; fenceReady: boolean }> {
+  const pool = createPool({ databaseUrl });
+  try {
+    const tables = await pool.query<{ registry: string | null; gate: string | null; ledger: string | null }>("select to_regclass('brain.extensions')::text as registry, to_regclass('brain.extension_quiesce')::text as gate, to_regclass('brain.schema_migrations')::text as ledger");
+    const { registry, gate, ledger } = tables.rows[0]!;
+    const gateRows = gate ? (await pool.query<{ name: string }>('select name from brain.extension_quiesce')).rows.map(row => row.name) : [];
+    if (!registry) return { names: [], gateNames: gateRows, fenceReady: false };
+    const rows = await pool.query<{ name: string }>('select name from brain.extensions order by name collate "C"');
+    if (!gate || !ledger) return { names: rows.rows.map(row => row.name), gateNames: gateRows, fenceReady: false };
+    const version = await pool.query<{ ready: boolean }>("select exists(select 1 from brain.schema_migrations where owner='core' and version=35) as ready");
+    return { names: rows.rows.map(row => row.name), gateNames: gateRows, fenceReady: version.rows[0]!.ready };
+  } catch (error) {
+    if ((error as { code?: string }).code === '3D000') return { names: [], gateNames: [], fenceReady: false };
+    throw error;
+  } finally { await pool.end(); }
 }
 export type MigrationResult = { ok: true; from: number; to: number; applied: string[] }
   | { ok: false; code: 'DB_UNAVAILABLE' | 'MIGRATION_FAILED'; message: string; file?: string };
@@ -25,14 +42,12 @@ export async function runMigrations(options: RunMigrationsOptions): Promise<Migr
     const owners = options.owners ?? defaultOwners;
     if (new Set(owners.map(o => o.owner)).size !== owners.length) throw new Error('마이그레이션 소유자가 중복됩니다');
     for (const owner of owners) {
-      const names = (await readdir(owner.directory)).filter(n => /^\d{4}_.+\.sql$/.test(n)).sort();
-      for (const [index, name] of names.entries()) {
+      const names = validateMigrationNames(await readdir(owner.directory));
+      for (const name of names) {
         const version = Number(name.slice(0, 4));
-        if (version !== index + 1) throw new Error(`${owner.owner}: 마이그레이션 번호 중복 또는 누락 (${name})`);
         const body = await readFile(join(owner.directory, name), 'utf8');
         files.push({ owner: owner.owner, name, version, body, checksum: createHash('sha256').update(body).digest('hex') });
       }
-      if (names.length === 0) throw new Error(`${owner.owner}: 마이그레이션 파일이 없습니다`);
     }
     if (options.owners === undefined) {
       const highest = Math.max(0, ...files.map(file => file.version));

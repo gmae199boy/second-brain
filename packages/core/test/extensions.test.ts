@@ -646,3 +646,65 @@ it('유효하지 않은 cron 또는 시간대는 복사와 마이그레이션 �
   expect(await installExtension(deps,{name:'testext'})).toMatchObject({ok:false,code:'EXTENSION_INVALID'});expect(writes()).toEqual({placed:0,migrated:0});
  }
 });
+
+it.each(['digest', 'migration', 'activate', 'registry', 'commit', 'release'] as const)('recovers a fenced transition after injected %s failure', async failure => {
+  const { mkdtemp, mkdir, writeFile, readFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+  const { extensionTransitions } = await import('../../../apps/cli/src/runtime/extension-transition.js');
+  const home = await mkdtemp(join(tmpdir(), 'brain-transition-install-'));
+  try {
+    const source = join(home, 'packages', 'testext'), target = join(home, 'extensions', 'testext');
+    await mkdir(source, { recursive: true }); await writeFile(join(source, 'code'), 'new');
+    const { deps } = setup(); const real = extensionTransitions(home), events: string[] = [];
+    let injected = false;
+    const stop = (point: string) => { if (point === failure && !injected) { injected = true; throw new Error('injected'); } };
+    const originalRecord = deps.store.recordExtensionInstall.bind(deps.store);
+    deps.store.recordExtensionInstall = async input => { events.push('registry'); stop('registry'); return originalRecord(input); };
+    const originalRelease = deps.store.endExtensionQuiesce.bind(deps.store);
+    deps.store.endExtensionQuiesce = async input => { events.push('release'); stop('release'); return originalRelease(input); };
+    deps.extensions.packages = {
+      async resolve() { return { ok: true, dir: source, manifestText: JSON.stringify(manifest) }; },
+      async place() { throw new Error('legacy path'); },
+      async inspect(_name, dir) {
+        const installed = await readFile(join(target, 'code'), 'utf8').then(() => 'a'.repeat(64), () => null);
+        await readFile(join(dir, 'code'));
+        const corruptStage = failure === 'digest' && dir.endsWith('/new') && !injected;
+        if (corruptStage) injected = true;
+        return { digest: (corruptStage ? 'b' : 'a').repeat(64), installedDigest: installed, sameBase: false, installedDir: target };
+      },
+      transition: {
+        ...real,
+        async activate(name, owner) { events.push('activate'); stop('activate'); return real.activate(name, owner); },
+        async commit(name, owner) { events.push('commit'); stop('commit'); return real.commit(name, owner); },
+      },
+    };
+    deps.extensions.migrator = { async apply() {
+      events.push('migration');
+      if (failure === 'migration' && !injected) { injected = true; return { ok: false, code: 'MIGRATION_FAILED', message: 'synthetic' }; }
+      return { ok: true, from: 0, to: 1, applied: [] };
+    } };
+    const first = await installExtension(deps, { name: 'testext' }); expect(first.ok).toBe(false);
+    const gate = await deps.store.readExtensionQuiesce('testext'); expect(gate).toMatchObject({ ok: true, owner: expect.any(String) });
+    const resumed = await installExtension(deps, { name: 'testext' }); expect(resumed.ok).toBe(true);
+    expect(await deps.store.readExtensionQuiesce('testext')).toMatchObject({ ok: true, owner: null });
+    expect(await readFile(join(target, 'code'), 'utf8')).toBe('new');
+    expect(events.indexOf('migration')).toBeLessThan(events.indexOf('activate'));
+    expect(events.lastIndexOf('registry')).toBeLessThan(events.lastIndexOf('release'));
+    expect(await real.read('testext')).toBeNull();
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+it.each(['before', 'during', 'after-result'] as const)('외부 snapshot %s 취소는 구조화된 취소와 정리를 반환한다', async phase => {
+  const { deps, writes } = setup(); const controller = new AbortController(); let calls = 0, cleaned = 0, locks = 0;
+  deps.extensions.packages.checkCore = async () => {};
+  deps.extensions.packages.prepareExternal = async (_path, options) => {
+    calls++; expect(options?.signal).toBe(controller.signal);
+    if (phase === 'during') { controller.abort(); throw new Error('cancelled'); }
+    if (phase === 'after-result') controller.abort();
+    return { name: 'testext', dir: '/snapshot', manifestText: JSON.stringify(manifest), digest: 'a'.repeat(64), async cleanup() { cleaned++; } };
+  };
+  deps.extensions.withHomeInstallLock = async run => { locks++; return run(); };
+  if (phase === 'before') controller.abort();
+  expect(await installExtension(deps, { packagePath: '/synthetic', signal: controller.signal })).toMatchObject({ ok: false, code: 'EXTENSION_INSTALL_CANCELLED' });
+  expect(calls).toBe(phase === 'before' ? 0 : 1); expect(cleaned).toBe(phase === 'after-result' ? 1 : 0); expect(locks).toBe(0); expect(writes()).toEqual({ placed: 0, migrated: 0 });
+});

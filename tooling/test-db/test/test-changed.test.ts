@@ -9,7 +9,7 @@ import { classifyChanges } from '../../test-changed/rules.mjs';
 describe('changed test path rules', () => {
   it('runs Python for extension and runtime paths', () => {
     for (const file of [
-      'extensions/garmin/src/x.py', 'extensions/other/manifest.json',
+      'extensions/garmin/src/x.py', 'extensions/other/manifest.json', 'plugins/testext/bin/install.sh', 'plugins/testext/package/digest', '.claude-plugin/marketplace.json',
       'packages/postgres/src/store.ts','packages/postgres/src/extension-install-lock.ts','packages/postgres/test/extension-command-lock.test.ts','packages/postgres/migrations/001.sql',
       'packages/core/src/queue/supervisor.ts','packages/core/src/process-abi/codec.ts',
       'packages/core/src/extensions/install.ts','packages/core/src/imports/x.ts',
@@ -18,10 +18,10 @@ describe('changed test path rules', () => {
       'packages/core/src/instant.ts','packages/core/src/envelope.ts',
       'packages/core/src/testing/fixtures.ts','packages/second_brain/src/testing.ts',
       'packages/core/schemas/example.json','apps/cli/src/daemon/run.ts','apps/cli/src/runtime/extensions.ts',
-      'apps/cli/src/install/flow.ts','apps/cli/src/config/codec.ts','apps/cli/src/commands/ext-install.ts',
-      'apps/cli/src/assembly.ts','apps/cli/src/envelope.ts','apps/cli/src/commands/index.ts',
+      'apps/cli/src/runtime/extension-package-worker.ts','apps/cli/src/install/flow.ts','apps/cli/src/install/promotion-protocol.ts','apps/cli/src/config/codec.ts','apps/cli/src/commands/ext-install.ts',
+      'apps/cli/src/assembly.ts','apps/cli/scripts/write-build-info.mjs','apps/cli/src/envelope.ts','apps/cli/src/commands/index.ts',
       'apps/cli/src/commands/daemon-status.ts','apps/cli/test/ext-fixture.ts','apps/cli/test/global-setup.ts',
-      'apps/cli/test/pg-home.ts','tooling/test-db/src/index.ts','tooling/bootstrap/src/bootstrap.ts',
+      'apps/cli/test/pg-home.ts','apps/cli/test/extension-commands.test.ts','packages/core/src/testing/contracts/extension-quiesce.ts','apps/cli/test/install-lock.test.ts','apps/cli/test/ext-package.test.ts','apps/cli/test/ext-install-resume.test.ts','tooling/test-db/src/index.ts','tooling/bootstrap/src/bootstrap.ts',
       'apps/cli/python-test/vitest.config.ts','tooling/test-changed/rules.mjs','package.json','pnpm-lock.yaml',
       'apps/cli/src/mcp/serve.ts', 'apps/cli/src/commands/mcp-serve.ts', 'packages/core/src/ports/process.ts', 'packages/core/fixtures/extensions/v1/check-manifests.py',
     ]) expect(classifyChanges([file]).pythonAll, file).toBe(true);

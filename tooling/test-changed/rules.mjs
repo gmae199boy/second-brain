@@ -2,10 +2,12 @@
 // subprocesses; these paths have effects beyond Vitest's TS import graph.
 const rules = [
   { prefix:'extensions/', reason:'extension runtime and payloads' },
+  { prefix:'plugins/testext/', reason:'extension plugin package and launcher' },
   { prefix:'packages/postgres/', reason:'Python integration uses the real PostgreSQL store' },
   { prefix:'packages/core/src/queue/', reason:'daemon work scheduling and supervision' },
   { prefix:'packages/core/src/process-abi/', reason:'supervised extension process protocol' },
   { prefix:'packages/core/src/extensions/', reason:'extension lifecycle' },
+  { prefix:'packages/core/src/testing/contracts/extension-quiesce.ts', reason:'quiesce store contract' },
   { prefix:'packages/core/src/imports/', reason:'import lifecycle' },
   { prefix:'packages/core/fixtures/extensions/', reason:'shared extension fixtures' },
   { prefix:'packages/core/schemas/', reason:'core schema resources' },
@@ -37,11 +39,11 @@ const exact = [
   // pg-home calls sampleSelfUserInput via these testing exports.
   'packages/core/src/testing/index.ts','packages/core/src/testing/fixtures.ts',
   // The fixture spawns the CLI and uses config, database and home helpers.
-  'apps/cli/src/bin.ts','apps/cli/src/dispatch.ts','apps/cli/src/assembly.ts',
+  'apps/cli/src/bin.ts','apps/cli/src/dispatch.ts','apps/cli/src/assembly.ts','apps/cli/scripts/write-build-info.mjs',
   'apps/cli/src/harnesses.ts','apps/cli/src/error-text.ts','apps/cli/src/envelope.ts',
   'apps/cli/src/commands/mcp-serve.ts','apps/cli/src/commands/index.ts','apps/cli/src/commands/daemon-status.ts',
-  'apps/cli/test/ext-fixture.ts','apps/cli/test/global-setup.ts','apps/cli/test/pg-home.ts',
-  'apps/cli/test/temp-home.ts','apps/cli/test/environment.ts',
+  'apps/cli/test/ext-fixture.ts','apps/cli/test/extension-commands.test.ts','apps/cli/test/install-lock.test.ts','apps/cli/test/ext-package.test.ts','apps/cli/test/ext-install-resume.test.ts','apps/cli/test/global-setup.ts','apps/cli/test/pg-home.ts',
+  'apps/cli/test/temp-home.ts','apps/cli/test/environment.ts','.claude-plugin/marketplace.json',
   'apps/cli/python-test/vitest.config.ts','package.json','pnpm-lock.yaml',
 ];
 const hook = 'tooling/bootstrap/test/hook.test.ts';

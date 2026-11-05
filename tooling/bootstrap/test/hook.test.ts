@@ -23,6 +23,7 @@ import { tmpdir, uptime } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { withoutHarnessFolders } from '../../../apps/cli/test/environment.js';
 import {
   BOOTSTRAP_LOG_FILE,
   INSTALLED_FILE,
@@ -80,7 +81,7 @@ beforeAll(() => {
   symlinkSync(process.execPath, join(allowed, 'node'));
   const pnpm = spawnSync('/usr/bin/which', ['pnpm'], { encoding: 'utf8' }).stdout.trim();
   const wrapper = join(allowed, 'pnpm');
-  writeFileSync(wrapper, `#!/bin/sh\nPATH='${process.env.PATH}'\nexport PATH\nunset NODE_OPTIONS BRAIN_PROCESS_SPY BRAIN_RESTRICTED_PATH\nexec '${pnpm}' "$@"\n`);
+  writeFileSync(wrapper, `#!/bin/sh\nprintf '%s %s\\n' "$PWD" "$*" >> '${join(root,'pnpm-calls')}'\nPATH='${process.env.PATH}'\nexport PATH\nunset NODE_OPTIONS BRAIN_PROCESS_SPY BRAIN_RESTRICTED_PATH\nexec '${pnpm}' "$@"\n`);
   chmodSync(wrapper, 0o755);
   configDir = join(root, 'claude-config');
   mkdirSync(join(configDir, 'projects', '-demo'), { recursive: true });
@@ -254,6 +255,10 @@ describe('the plugin SessionStart hook', () => {
 
       // The clone built itself, and the install went all the way through.
       expect(existsSync(join(home, 'app', 'apps', 'cli', 'dist', 'bin.js'))).toBe(true);
+      const shim = readFileSync(join(home,'bin/brain'),'utf8');
+      expect(shim).toContain(join(home,'app/apps/cli/dist/bin.js'));
+      expect(shim).not.toContain('.app-stage-');
+      expect(JSON.parse(readFileSync(join(home,'app/apps/cli/dist/build.json'),'utf8')).commit).toBe(record.commit);
       expect(existsSync(join(home, 'config.toml'))).toBe(true);
       expect(existsSync(join(home, 'extensions'))).toBe(false);
       // The lock is released on every ending there is.
@@ -320,6 +325,7 @@ describe('the plugin SessionStart hook', () => {
     expect(calls.filter((line) => line === `kill SIGTERM gui/${String(process.getuid?.())}/${label}`)).toHaveLength(1);
     expect(calls.filter((line) => line.startsWith('bootstrap '))).toHaveLength(1);
     const plist = readFileSync(join(root, 'launch-agents', `${label}.plist`), 'utf8');
+    expect(plist).toContain(join(home,'bin/brain')); expect(plist).not.toContain('.app-stage-');
     const argumentsXml = plist.match(/<array>(.*?)<\/array>/s)?.[1] ?? '';
     const args = [...argumentsXml.matchAll(/<string>(.*?)<\/string>/g)].map((match) => (match[1] ?? '').replaceAll('&amp;', '&').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&#13;', '\r'));
     const env = { ...isolatedEnvironment(), SECOND_BRAIN_HOME: home, CLAUDE_CONFIG_DIR: configDir,
@@ -340,6 +346,33 @@ describe('the plugin SessionStart hook', () => {
       } while (Date.now() < deadline);
       expect(status.alive).toBe(true); expect(status.commit).toBe(installed().commit);
     } finally { daemon.kill('SIGTERM'); await closed; }
+  }, SLOW);
+
+  it('실제 app 승격 뒤 완료 기록 실패를 같은 대상으로 재시도하며 원래 backup을 보존한다', async () => {
+    const app = join(home, 'app'), previous = installed().commit!;
+    const oldBuild = readFileSync(join(app, 'apps/cli/dist/build.json'));
+    const oldBin = readFileSync(join(app, 'apps/cli/dist/bin.js'));
+    git(['-C', work, '-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--allow-empty', '-q', '-m', 'promotion retry']);
+    git(['-C', work, 'push', '-q', bare, 'main']); snapshotCommit = git(['-C', work, 'rev-parse', 'HEAD']).trim();
+    writeFileSync(join(plugin, 'app-ref'), `${snapshotCommit}\n`);
+    const preload = join(root, 'promotion-failure.cjs'), failed = join(root, 'promotion-failed'), observed = join(root, 'promotion-backup-observed');
+    writeFileSync(preload, `const fs = require('node:fs'); const path = require('node:path'); const old = fs.promises.writeFile;
+fs.promises.writeFile = async function(file,...args) { const p=String(file); if (/installed\\.json\\.\\d+\\.tmp$/.test(p)) { const root=process.env.SECOND_BRAIN_HOME; if (!fs.existsSync(${JSON.stringify(failed)})) { fs.writeFileSync(${JSON.stringify(failed)},'once'); throw new Error('synthetic installed record failure'); } fs.writeFileSync(${JSON.stringify(observed)},JSON.stringify({build:fs.readFileSync(path.join(root,'.app-previous/apps/cli/dist/build.json'),'base64'),bin:fs.readFileSync(path.join(root,'.app-previous/apps/cli/dist/bin.js'),'base64')})); } return old.call(this,file,...args); }; require('node:module').syncBuiltinESMExports();
+`);
+    const env = { NODE_OPTIONS: `--require=${preload}` };
+    const first = hook('SessionStart', '', env); expect(first.status).toBe(1);
+    const marker = join(home, '.app-promotion.json'), backup = join(home, '.app-previous');
+    expect(installed().commit).toBe(previous);
+    expect(JSON.parse(readFileSync(marker, 'utf8'))).toMatchObject({ target: snapshotCommit, hadPrevious: true, owner: expect.any(String) });
+    expect(readFileSync(join(backup, 'apps/cli/dist/build.json'))).toEqual(oldBuild);
+    expect(readFileSync(join(backup, 'apps/cli/dist/bin.js'))).toEqual(oldBin);
+    const second = hook('SessionStart', '', env); expect(second.status, log()).toBe(0);
+    const during = JSON.parse(readFileSync(observed, 'utf8'));
+    expect(Buffer.from(during.build, 'base64')).toEqual(oldBuild); expect(Buffer.from(during.bin, 'base64')).toEqual(oldBin);
+    expect(installed().commit).toBe(snapshotCommit);
+    expect(JSON.parse(readFileSync(join(app, 'apps/cli/dist/build.json'), 'utf8')).commit).toBe(snapshotCommit);
+    expect(readFileSync(join(home, 'bin/brain'), 'utf8')).toContain(join(app, 'apps/cli/dist/bin.js'));
+    expect(existsSync(marker)).toBe(false); expect(existsSync(backup)).toBe(false);
   }, SLOW);
 
   it('collects a Stop payload, records its arrival, and ignores a transcript with no conversation', async () => {
@@ -372,87 +405,181 @@ describe('the plugin SessionStart hook', () => {
   }, SLOW);
 
 
-  it('설치된 확장을 갱신할 때 보존하고 새 마이그레이션만 적용한다', async () => {
+  it('실제 package 설치와 같은 core bootstrap이 겹쳐도 둘 다 성공하고 일관된다', async () => {
+    const name = `race${createHash('sha256').update(root).digest('hex').slice(0, 10)}`;
+    const pkg = join(root, 'race-package'); cpSync(join(repoRoot, 'apps/cli/test/fixtures/extensions/testext'), pkg, { recursive: true });
+    const manifestPath = join(pkg, 'manifest.json'); const manifest = JSON.parse(readFileSync(manifestPath, 'utf8').replaceAll('testext', name));
+    const checkPath = join(pkg, 'bin/check.mjs'); writeFileSync(checkPath, readFileSync(checkPath, 'utf8').replaceAll('testext', name));
+    Object.assign(manifest, { files:['bin/check.mjs','bin/echo-stats.mjs','manifest.json','migrations/0001_testext.sql'], core_compat:{min:'0.0.0',max_exclusive:'1.0.0'}, plugin_version:'1.0.0' });
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    const sqlPath = join(pkg, 'migrations/0001_testext.sql'); writeFileSync(sqlPath, readFileSync(sqlPath,'utf8').replaceAll('testext',name));
+    const hash=createHash('sha256'); for(const path of manifest.files as string[]){const data=readFileSync(join(pkg,path)), bytes=Buffer.from(path);hash.update(`f${bytes.length}:`);hash.update(bytes);hash.update(`:${data.length}:`);hash.update(data);}
+    const digest=hash.digest('hex'); writeFileSync(join(pkg,'digest'),`${digest}\n`);
+    const env: NodeJS.ProcessEnv = { ...withoutHarnessFolders(process.env), SECOND_BRAIN_HOME:home, SECOND_BRAIN_REPO:`file://${bare}`, SECOND_BRAIN_NODE_DIRS:join(root,'allowed-tools'), PATH:join(root,'allowed-tools'), SECOND_BRAIN_LAUNCHCTL:join(repoRoot,'apps/cli/test/fixtures/fake-launchctl.sh'), SECOND_BRAIN_LAUNCH_AGENTS:join(root,'launch-agents'), FAKE_LAUNCHCTL_DIR:join(root,'launchctl') };
+    delete env.NODE_OPTIONS; delete env.BRAIN_DATABASE_URL;
+    const db=await homeDatabase(true); let installer: ReturnType<typeof spawn> | undefined, bootstrap: ReturnType<typeof spawn> | undefined;
+    let installerDone: Promise<{code:number|null;output:string}> | undefined, bootstrapDone: Promise<{code:number|null;output:string}> | undefined;
+    const watch=(child:ReturnType<typeof spawn>) => { let output=''; child.stdout?.on('data', chunk=>{output+=String(chunk)}); child.stderr?.on('data', chunk=>{output+=String(chunk)}); return new Promise<{code:number|null;output:string}>(resolve=>child.once('close',code=>resolve({code,output}))); };
+    try {
+      git(['-C',join(home,'app'),'checkout','-q','main']);
+      await db.query('begin'); await db.query('select pg_advisory_xact_lock($1)',[4919270911]);
+      installer=spawn(join(home,'bin/brain'),['ext','install','--package',pkg,'--json'],{env,stdio:['ignore','pipe','pipe'],detached:true}); installerDone=watch(installer);
+      await expect.poll(()=>{try{return JSON.parse(readFileSync(join(home,`extensions/.transition-${name}.json`),'utf8')).phase}catch{return ''}},{timeout:30000}).toBe('prepared');
+      const owner=readFileSync(join(home,'install.lock/owner'),'utf8');
+      bootstrap=spawn(process.execPath,[join(plugin,'bootstrap.mjs'),'--yes'],{env,stdio:['ignore','pipe','pipe'],detached:true}); bootstrapDone=watch(bootstrap);
+      await new Promise(resolve=>setTimeout(resolve,500)); expect(bootstrap.exitCode).toBeNull(); expect(readFileSync(join(home,'install.lock/owner'),'utf8')).toBe(owner);
+      await db.query('rollback'); const first=await installerDone; expect(first.code,first.output).toBe(0);
+      const second=await bootstrapDone; expect(second.code,second.output).toBe(0);
+      expect(installed().commit).toBe(snapshotCommit);
+      expect(JSON.parse(readFileSync(join(home,'app/apps/cli/dist/build.json'),'utf8')).commit).toBe(snapshotCommit);
+      const row=(await db.query('select version,package_digest,plugin_version from brain.extensions where name=$1',[name])).rows;
+      expect(row).toEqual([{version:'0.1.0',package_digest:digest,plugin_version:'1.0.0'}]);
+      expect(readFileSync(join(home,'extensions',name,'manifest.json'),'utf8')).toBe(readFileSync(manifestPath,'utf8'));
+      for(const path of manifest.files as string[]) expect(readFileSync(join(home,'extensions',name,path))).toEqual(readFileSync(join(pkg,path)));
+      expect((await db.query('select version from brain.schema_migrations where owner=$1 order by version',[name])).rows).toEqual([{version:1}]);
+    } finally {
+      await db.query('rollback').catch(()=>{});
+      for(const child of [installer,bootstrap]) if(child?.exitCode===null && child.pid) { try { process.kill(-child.pid,'SIGKILL'); } catch { /* already exited */ } }
+      await installerDone; await bootstrapDone;
+      await db.query('delete from brain.extension_install_progress where name=$1',[name]); await db.query('delete from brain.extensions where name=$1',[name]); await db.query('delete from brain.schema_migrations where owner=$1',[name]);
+      await db.query(`drop schema if exists "${name}" cascade`);
+      const role=`brain_ext_${name}`, owned=await db.query("select 1 from pg_roles where rolname=$1 and shobj_description(oid,'pg_authid')='second-brain extension:' || current_database()",[role]);
+      if(owned.rowCount) await db.query(`drop owned by "${role}"; drop role "${role}"`);
+      await db.end(); rmSync(join(home,'extensions',name),{recursive:true,force:true}); git(['-C',join(home,'app'),'checkout','-q','--detach',snapshotCommit]);
+    }
+  }, SLOW);
+
+  it('설치된 확장의 다른 commit 자동 갱신은 offline 확인 없이 거부하고 보존한다', async () => {
     const fixtures = join(root, 'extension-fixtures');
     cpSync(join(repoRoot, 'apps/cli/test/fixtures/extensions/testext'), join(fixtures, 'testext'), { recursive: true });
     const sourceManifest = join(fixtures, 'testext/manifest.json');
     const manifest = JSON.parse(readFileSync(sourceManifest, 'utf8'));
-    manifest.settings = [{ key: 'testext.limit', type: 'number', required: [] }];
+    Object.assign(manifest, { files:['bin/check.mjs','bin/echo-stats.mjs','manifest.json','migrations/0001_testext.sql'], core_compat:{min:'0.0.0',max_exclusive:'1.0.0'}, plugin_version:'1.0.0' });
     writeFileSync(sourceManifest, JSON.stringify(manifest));
-    const env = { ...isolatedEnvironment(), SECOND_BRAIN_HOME: home, SECOND_BRAIN_TEST_EXTENSIONS: fixtures };
+    const env = { ...withoutHarnessFolders(process.env), SECOND_BRAIN_HOME: home, SECOND_BRAIN_TEST_EXTENSIONS: fixtures };
     const brain = (...args: string[]) => spawnSync(join(home, 'bin/brain'), args, { env, encoding: 'utf8' });
-    const installedExt = brain('ext', 'install', 'testext', '--json');
-    expect(installedExt.status, installedExt.stdout + installedExt.stderr).toBe(0);
-    mkdirSync(join(home, 'extensions/.install-interrupted'));
-    mkdirSync(join(home, 'extensions/unregistered'));
+    const result = brain('ext', 'install', 'testext', '--json'); expect(result.status, result.stdout + result.stderr).toBe(0);
     const directory = join(home, 'extensions/testext');
-    const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
-    const manifestHash = hash(join(directory, 'manifest.json'));
-    const ddlHash = hash(join(directory, 'migrations/0001_testext.sql'));
-    expect(brain('config', 'set', 'testext.limit', '42', '--json').status).toBe(0);
-    const setting = JSON.parse(brain('config', 'get', 'testext.limit', '--json').stdout).data;
-    const status = JSON.parse(brain('ext', 'status', 'testext', '--json').stdout).data;
-    const config = readFileSync(join(home, 'config.toml'), 'utf8');
+    writeFileSync(join(directory, 'migrations/0002_new.sql'), 'create table testext.new_table (id integer primary key);');
+    const beforeTree = treeHash(directory), previous = installed().commit;
+    const app = join(home,'app'), headBefore = git(['-C',app,'rev-parse','HEAD']).trim();
+    const binBefore = readFileSync(join(app,'apps/cli/dist/bin.js')), buildBefore = readFileSync(join(app,'apps/cli/dist/build.json'));
+    const dependencyFile=join(app,'node_modules/.modules.yaml'), depsBefore=readFileSync(dependencyFile);
+    const pnpmBefore=existsSync(join(root,'pnpm-calls')) ? readFileSync(join(root,'pnpm-calls'),'utf8').length : 0;
     const db = await homeDatabase(true);
     try {
-      await db.query('insert into testext.checks values (42, now())');
-      writeFileSync(join(directory, 'migrations/0002_new.sql'), 'create table testext.new_table (id integer primary key);');
-      const beforeTree = treeHash(directory);
-      const upgrade = () => {
-        git(['-C', work, '-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--allow-empty', '-q', '-m', 'extension upgrade']);
-        git(['-C', work, 'push', '-q', bare, 'main']);
-        snapshotCommit = git(['-C', work, 'rev-parse', 'HEAD']).trim();
-        writeFileSync(join(plugin, 'app-ref'), `${snapshotCommit}\n`);
-        return hook('SessionStart');
-      };
-      const beforeLog = log().length;
-      expect(upgrade().status, log()).toBe(0);
-      expect(log().slice(beforeLog)).toContain('적용 1건');
-      expect(installed().commit).toBe(snapshotCommit);
+      const ledger = (await db.query("select * from brain.schema_migrations where owner='testext' order by version")).rows;
+      const registry = (await db.query("select * from brain.extensions where name='testext'")).rows;
+      git(['-C', work, '-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--allow-empty', '-q', '-m', 'extension upgrade']);
+      git(['-C', work, 'push', '-q', bare, 'main']);
+      snapshotCommit = git(['-C', work, 'rev-parse', 'HEAD']).trim();
+      writeFileSync(join(plugin, 'app-ref'), `${snapshotCommit}\n`);
+      expect(hook('SessionStart').status).toBe(1);
+      expect(runRecord().last_bootstrap?.result).toBe('failed');
+      expect(installed().commit).toBe(previous);
       expect(treeHash(directory)).toBe(beforeTree);
-      expect(hash(join(directory, 'manifest.json'))).toBe(manifestHash);
-      expect(hash(join(directory, 'migrations/0001_testext.sql'))).toBe(ddlHash);
-      expect(readFileSync(join(home, 'config.toml'), 'utf8')).toBe(config);
-      expect(JSON.parse(brain('ext', 'status', 'testext', '--json').stdout).data).toEqual(status);
-      expect(JSON.parse(brain('config', 'get', 'testext.limit', '--json').stdout).data).toEqual(setting);
-      expect((await db.query('select id from testext.checks')).rows).toEqual([{ id: 42 }]);
-      const ledger = (await db.query("select version, checksum, applied_at from brain.schema_migrations where owner='testext' order by version")).rows;
-      expect(ledger.map((row: { version: number }) => row.version)).toEqual([1, 2]);
-      expect(upgrade().status, log()).toBe(0);
-      expect((await db.query("select version, checksum, applied_at from brain.schema_migrations where owner='testext' order by version")).rows).toEqual(ledger);
-      const external = join(root, 'external.sql');
-      writeFileSync(external, 'create table testext.external_executed (id integer);');
-      const link = join(directory, 'migrations/0003_external.sql');
-      symlinkSync(external, link);
-      const beforeLink = installed().commit;
-      upgrade();
-      expect(installed().commit).toBe(beforeLink);
-      expect(runRecord().last_bootstrap?.result).toBe('failed');
-      expect((await db.query("select to_regclass('testext.external_executed') as name")).rows).toEqual([{ name: null }]);
-      rmSync(link);
-      const manifestPath = join(directory, 'manifest.json');
-      const savedManifest = join(root, 'saved-manifest.json');
-      renameSync(manifestPath, savedManifest);
-      symlinkSync(savedManifest, manifestPath);
-      expect(hook('SessionStart').status).toBe(0);
-      expect(installed().commit).toBe(beforeLink);
-      expect(runRecord().last_bootstrap?.result).toBe('failed');
-      rmSync(manifestPath);
-      renameSync(savedManifest, manifestPath);
-      writeFileSync(join(directory, 'migrations/0003_bad.sql'), 'invalid sql;');
-      const before = installed().commit;
-      upgrade();
-      expect(installed().commit).toBe(before);
-      expect(runRecord().last_bootstrap?.result).toBe('failed');
-      expect((await db.query("select version from brain.schema_migrations where owner='testext' order by version")).rows).toEqual([{ version: 1 }, { version: 2 }]);
-      rmSync(join(directory, 'migrations/0003_bad.sql'));
-      expect(hook('SessionStart').status, log()).toBe(0);
-      expect(installed().commit).toBe(snapshotCommit);
-    } finally { await db.end(); }
-    expect(readFileSync(join(root, 'process-spy.log'), 'utf8')).not.toMatch(/(?:^|[\s/'"=])(?:python(?:3(?:\.\d+)?)?|uv)(?:$|[\s/'";])/im);
+      expect((await db.query("select * from brain.schema_migrations where owner='testext' order by version")).rows).toEqual(ledger);
+      expect((await db.query("select * from brain.extensions where name='testext'")).rows).toEqual(registry);
+      expect((await db.query("select to_regclass('testext.new_table') as name")).rows).toEqual([{ name: null }]);
+      const assertApp = () => {
+        expect(git(['-C',app,'rev-parse','HEAD']).trim()).toBe(headBefore);
+        expect(readFileSync(join(app,'apps/cli/dist/bin.js'))).toEqual(binBefore);
+        expect(readFileSync(join(app,'apps/cli/dist/build.json'))).toEqual(buildBefore);
+        expect(readFileSync(dependencyFile)).toEqual(depsBefore);
+        const calls=readFileSync(join(root,'pnpm-calls'),'utf8').slice(pnpmBefore).split('\n').filter(Boolean);
+        expect(calls.some(line=>line.startsWith(`${app} `))).toBe(false);
+      };
+      assertApp();
+      const installedManifestPath=join(directory,'manifest.json'), originalManifest=readFileSync(installedManifestPath,'utf8');
+      const incompatible=JSON.parse(originalManifest); incompatible.core_compat={min:'1.0.0',max_exclusive:'2.0.0'};
+      writeFileSync(installedManifestPath,JSON.stringify(incompatible));
+      try { expect(hook('SessionStart').status).toBe(1); assertApp(); expect(installed().commit).toBe(previous); }
+      finally { writeFileSync(installedManifestPath,originalManifest); }
+      const core35=(await db.query("delete from brain.schema_migrations where owner='core' and version=35 returning *")).rows[0];
+      try { expect(hook('SessionStart').status).toBe(1); assertApp(); expect(installed().commit).toBe(previous); }
+      finally { await db.query('insert into brain.schema_migrations(owner,version,name,checksum,applied_at) values($1,$2,$3,$4,$5)',[core35.owner,core35.version,core35.name,core35.checksum,core35.applied_at]); }
+      git(['-C',app,'checkout','-q','-B','main',headBefore]);
+      const npx = spawnSync(process.execPath,[join(plugin,'bootstrap.mjs'),'--yes'],{env:{...withoutHarnessFolders(process.env),SECOND_BRAIN_HOME:home,SECOND_BRAIN_REPO:`file://${bare}`,SECOND_BRAIN_NODE_DIRS:join(root,'allowed-tools'),PATH:join(root,'allowed-tools')},encoding:'utf8',timeout:600000});
+      expect(npx.status,npx.stdout+npx.stderr).toBe(1); assertApp(); expect(installed().commit).toBe(previous);
+      git(['-C',app,'checkout','-q','--detach',headBefore]);
+      const alternate=join(root,'alternate-cli'); cpSync(app,alternate,{recursive:true,verbatimSymlinks:true});
+      const altBuild=join(alternate,'apps/cli/dist/build.json'), identity=JSON.parse(readFileSync(altBuild,'utf8')); identity.commit=snapshotCommit; writeFileSync(altBuild,JSON.stringify(identity));
+      const direct=spawnSync(process.execPath,[join(alternate,'apps/cli/dist/bin.js'),'setup','run','--yes','--json'],{env:{...withoutHarnessFolders(process.env),SECOND_BRAIN_HOME:home},encoding:'utf8',timeout:600000});
+      expect(direct.status,direct.stdout+direct.stderr).not.toBe(0); expect(JSON.parse(direct.stdout).error.code).toBe('DB_LOCKED');
+      assertApp(); expect(installed().commit).toBe(previous);
+      // Exercise the real setup command under a pseudo-terminal. The parent
+      // responds only after the fresh challenge has appeared on the terminal.
+      const ptyDriver = String.raw`import os, pty, select, subprocess, sys, time, re, json
+master, slave = pty.openpty()
+mode, node, cli, manifest = sys.argv[1:]
+args = [node, cli, 'setup', 'run', '--yes'] + (['--json'] if mode == 'json' else [])
+p = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=slave, env=os.environ, start_new_session=True)
+os.close(slave)
+out = b''; answered = False; deadline = time.monotonic() + 120
+while p.poll() is None and time.monotonic() < deadline:
+ r, _, _ = select.select([master], [], [], .2)
+ if not r: continue
+ try: chunk = os.read(master, 65536)
+ except OSError: break
+ if not chunk: break
+ out += chunk
+ if not answered and b'> ' in out:
+  match = re.search('(?m)^(확인 [^\r\n]+)\r?$'.encode(), out)
+  if match:
+   if mode == 'manifest':
+    with open(manifest, 'r+') as f:
+     data = json.load(f); data['core_compat'] = {'min':'1.0.0','max_exclusive':'2.0.0'}; f.seek(0); json.dump(data, f); f.truncate()
+   os.write(master, (match.group(1) if mode in ('correct','manifest') else b'wrong') + b'\n' if mode != 'eof' else b'\x04')
+   answered = True
+if p.poll() is None: p.kill()
+p.wait()
+while True:
+ try:
+  r, _, _ = select.select([master], [], [], 0)
+  if not r: break
+  out += os.read(master, 65536)
+ except OSError: break
+os.close(master)
+print(json.dumps({'code':p.returncode,'output':out.decode('utf8','replace'),'answered':answered}))`;
+      const ttyEnv = { ...withoutHarnessFolders(process.env), SECOND_BRAIN_HOME: home, SECOND_BRAIN_LAUNCHCTL: join(repoRoot, 'apps/cli/test/fixtures/fake-launchctl.sh'), SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'), FAKE_LAUNCHCTL_DIR: join(root, 'launchctl'), CLAUDE_CONFIG_DIR: configDir };
+      const noninteractive = spawnSync(process.execPath, [join(alternate,'apps/cli/dist/bin.js'), 'setup', 'run', '--yes'], { env: ttyEnv, encoding: 'utf8', timeout: 120000 });
+      expect(noninteractive.status).not.toBe(0); expect(noninteractive.stdout + noninteractive.stderr).not.toContain('공유 상태 쓰기가 끝났음');
+      const tty = (mode: string) => {
+        const run = spawnSync('python3', ['-c', ptyDriver, mode, process.execPath, join(alternate,'apps/cli/dist/bin.js'), installedManifestPath], { env: ttyEnv, encoding: 'utf8', timeout: 130000 });
+        expect(run.status, run.stderr).toBe(0); return JSON.parse(run.stdout) as { code: number; output: string; answered: boolean };
+      };
+      for (const mode of ['wrong', 'eof', 'manifest', 'json']) {
+        const result = tty(mode); expect(result.code, result.output).not.toBe(0);
+        expect(result.answered).toBe(mode !== 'json');
+        if (mode === 'json') expect(result.output).not.toContain('공유 상태 쓰기가 끝났음');
+        if (mode === 'manifest') writeFileSync(installedManifestPath, originalManifest);
+        expect((await db.query("select * from brain.schema_migrations where owner='testext' order by version")).rows).toEqual(ledger);
+        expect((await db.query('select * from brain.extension_quiesce')).rows).toEqual([]);
+      }
+      const recordPath = join(home, 'installed.json'); const originalRecord = readFileSync(recordPath, 'utf8');
+      const accepted = tty('correct'); expect(accepted.answered).toBe(true); expect(accepted.code, accepted.output).toBe(0);
+      expect((await db.query("select version from brain.schema_migrations where owner='testext' order by version")).rows).toEqual([{version:1},{version:2}]);
+      // Restore the synthetic setup state for the remaining preservation checks.
+      await db.query('drop table testext.new_table; delete from brain.schema_migrations where owner=$1 and version=2', ['testext']);
+      writeFileSync(recordPath, originalRecord);
+      expect(treeHash(directory)).toBe(beforeTree);
+      expect((await db.query("select * from brain.schema_migrations where owner='testext' order by version")).rows).toEqual(ledger);
+      expect((await db.query("select * from brain.extensions where name='testext'")).rows).toEqual(registry);
+      const { installedExtensionMigrations } = await import('../../../apps/cli/dist/runtime/extensions.js');
+      const external = join(root,'external.sql'); writeFileSync(external,'select 1;');
+      const linked = join(directory,'migrations/0003_external.sql'); symlinkSync(external,linked);
+      await expect(installedExtensionMigrations(home,['testext'])).rejects.toThrow(); rmSync(linked);
+      const installedManifest = join(directory,'manifest.json'), saved = join(root,'saved-manifest.json');
+      renameSync(installedManifest,saved); symlinkSync(saved,installedManifest);
+      try { await expect(installedExtensionMigrations(home,['testext'])).rejects.toThrow(); }
+      finally { rmSync(installedManifest); renameSync(saved,installedManifest); }
+    } finally {
+      await db.end();
+      if (previous) { snapshotCommit=previous; writeFileSync(join(plugin,'app-ref'),`${previous}\n`); }
+    }
   }, SLOW);
 
-  it.skipIf(process.env.BRAIN_PYTHON_UPDATE_TEST !== '1')('실제 bootstrap 갱신에서 Python 확장 전체를 보존한다', async () => {
+  it.skipIf(process.env.BRAIN_PYTHON_UPDATE_TEST !== '1')('offline 확인 없는 bootstrap 갱신을 거부하고 Python 확장을 보존한다', async () => {
     const spyDir = join(root, 'spy'); mkdirSync(spyDir);
     const spyLog = join(root, 'uv-calls');
     const uv = execFileSync('which', ['uv'], { encoding: 'utf8' }).trim();
@@ -478,8 +605,9 @@ describe('the plugin SessionStart hook', () => {
       git(['-C', work, 'push', '-q', bare, 'main']);
       snapshotCommit = git(['-C', work, 'rev-parse', 'HEAD']).trim();
       writeFileSync(join(plugin, 'app-ref'), `${snapshotCommit}\n`);
-      expect(hook('SessionStart', '', { PATH: env.PATH, NODE_OPTIONS: '', BRAIN_PROCESS_SPY: '', BRAIN_RESTRICTED_PATH: '' }).status, log()).toBe(0);
-      expect(installed().commit).toBe(snapshotCommit);
+      const previous=installed().commit;
+      expect(hook('SessionStart', '', { PATH: env.PATH, NODE_OPTIONS: '', BRAIN_PROCESS_SPY: '', BRAIN_RESTRICTED_PATH: '' }).status, log()).toBe(1);
+      expect(installed().commit).toBe(previous);
       expect(readFileSync(spyLog, 'utf8')).toBe('');
       expect(treeHash(directory)).toBe(environment);
       expect(readFileSync(join(home, 'config.toml'), 'utf8')).toBe(config);

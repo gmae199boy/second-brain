@@ -37,14 +37,22 @@ async function run(command: string, args: string[], cwd: string, env: Record<str
     signal?.removeEventListener('abort', stop); handle.closeOutput(); await consume.catch(() => {});
   }
 }
+/** Both preflight and environment setup apply the same pin policy. */
+export function validPythonPin(pin: string): boolean {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(pin.trim());
+  return !!match && (Number(match[1]) > 3 || (Number(match[1]) === 3 && Number(match[2]) >= 12));
+}
+export async function validatePythonInputs(directory: string): Promise<string> {
+  const names = ['.python-version', 'pyproject.toml', 'uv.lock'];
+  await Promise.all(names.map(async name => { if (!(await stat(join(directory, name))).isFile()) throw new Error('missing Python dependency input'); }));
+  const pin = (await readFile(join(directory, '.python-version'), 'utf8')).trim();
+  if (!validPythonPin(pin)) throw new Error('invalid Python pin');
+  return pin;
+}
 export async function prepareExtensionPython(directory: string, parent: NodeJS.ProcessEnv, signal?: AbortSignal) {
   let pin: string;
-  try {
-    pin = (await readFile(join(directory, '.python-version'), 'utf8')).trim();
-    await Promise.all(['pyproject.toml', 'uv.lock'].map(async file => { if (!(await stat(join(directory, file))).isFile()) throw new Error(); }));
-  } catch { return failure('EXTENSION_PYTHON_PIN_INVALID'); }
-  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(pin);
-  if (!match || Number(match[1]) < 3 || (Number(match[1]) === 3 && Number(match[2]) < 12)) return failure('EXTENSION_PYTHON_PIN_INVALID');
+  try { pin = await validatePythonInputs(directory); }
+  catch { return failure('EXTENSION_PYTHON_PIN_INVALID'); }
   const env = { PATH: parent['PATH'] ?? '', HOME: parent['HOME'] ?? '', UV_PYTHON_DOWNLOADS: 'never' };
   const cancelled = (error: unknown) => signal?.aborted && error instanceof Error && error.message === 'cancelled' ? { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' } : undefined;
   try { await run('uv', ['--version'], directory, env, signal); } catch (error) { return cancelled(error) ?? failure('EXTENSION_UV_NOT_FOUND'); }

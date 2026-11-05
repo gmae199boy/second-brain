@@ -11,16 +11,17 @@ export function extensionProgressText(progress: ExtensionInstallProgress | null)
     ...installStages.map(stage => { const entry = progress.stages[stage]; return `설치 단계 ${stage}: ${entry?.status ?? '미완료'}${entry?.code ? ` (${entry.code})` : ''}.`; })];
 }
 export function publicExtensionData(status: ExtensionPublicStatus) {
-  return { name: status.name, installed: status.installed, version: status.version, installed_at: status.installedAt ? isoWithOffset(status.installedAt) : null, enabled: status.enabled ?? false,
+  return { name: status.name, installed: status.installed, version: status.version, package_digest: status.packageDigest, plugin_version: status.pluginVersion, installed_at: status.installedAt ? isoWithOffset(status.installedAt) : null, enabled: status.enabled ?? false,
     python_environment: { status: status.pythonEnvironment?.status ?? null, code: status.pythonEnvironment?.code ?? null, checked_at: status.pythonEnvironment ? isoWithOffset(status.pythonEnvironment.checkedAt) : null },
     journal_present: status.journalPresent, login: status.login, connection: { status: status.connection.status,
       code: status.connection.code, message: status.connection.status === 'failed' ? '확장 실행에 실패했습니다' : null, checked_at: status.connection.checkedAt ? isoWithOffset(status.connection.checkedAt) : null },
-    schedule: status.schedule, held_schedule_count: status.heldScheduleCount, interrupted_work_count: status.interruptedWorkCount,
+    schedule: status.schedule, held_schedule_count: status.heldScheduleCount, interrupted_work_count: status.interruptedWorkCount, quiesced: status.quiesced,
     install: status.journalPresent ? { result: status.installResult, failed_stage: status.failedStage, last_failure: status.lastFailure, stages: status.stages, auth_work_id: status.authWorkId, schedule_ids: status.scheduleIds, disabled_schedule_keys: status.disabledScheduleKeys } : null };
 }
 export function publicExtensionText(status: ExtensionPublicStatus): string[] {
   return [`확장 ${status.name}: ${status.installed ? (status.enabled ? '활성' : '비활성') : '미설치'}, 연결 ${status.connection.status ?? '미확인'}, 중단 일감 ${status.interruptedWorkCount}건, 보류 예약 ${status.heldScheduleCount}건.`,
     `설치 결과: ${status.installResult ?? (status.journalPresent ? '진행 중' : '미확인')}.`,
+    ...(status.quiesced ? ['확장이 정지되어 있습니다. 설치 복구가 필요할 수 있습니다.'] : []),
     ...(status.disabledScheduleKeys.length ? [`비활성화된 예약 키: ${status.disabledScheduleKeys.join(', ')}.`] : []),
     ...installStages.map(stage => { const entry = status.stages[stage]; return `설치 단계 ${stage}: ${entry?.status ?? '미완료'}${entry?.code ? ` (${entry.code})` : ''}.`; })];
 }

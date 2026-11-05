@@ -6,6 +6,7 @@ export function isExtensionName(value: string): boolean {
 }
 export interface ExtensionManifest {
   name: string; version: string; core: 1; abi: 1; migrations: string;
+  files?: string[]; core_compat?: { min: string; max_exclusive: string }; plugin_version?: string;
   connection_check: { runtime: 'node' | 'python'; entry: string };
   settings?: ExtensionSettingDeclaration[];
   error_codes?: string[];
@@ -33,13 +34,29 @@ function hasAsyncSchema(value: unknown): boolean {
   return ['items', 'additionalItems', 'additionalProperties', 'unevaluatedProperties', 'unevaluatedItems', 'contains', 'propertyNames', 'not', 'if', 'then', 'else', 'contentSchema'].some(key => hasAsyncSchema(value[key]));
 }
 const keys = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).length === allowed.length && Object.keys(value).every(k => allowed.includes(k));
+/** Lexicographic Unicode code point order, shared with Python's string order. */
+export function comparePackagePaths(a: string, b: string): number {
+  const left = Array.from(a, char => char.codePointAt(0)!), right = Array.from(b, char => char.codePointAt(0)!);
+  for (let i = 0; i < Math.min(left.length, right.length); i++) if (left[i] !== right[i]) return left[i]! < right[i]! ? -1 : 1;
+  return left.length - right.length;
+}
 const inside = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && !value.includes('\\') && !value.includes('\0') && !value.startsWith('/') && !/^[A-Za-z]:/.test(value) && value.split('/').every(part => part !== '..' && part !== '.' && part !== '');
 function decodeManifestUnchecked(text: string, validateSchema?: (schema: Record<string, unknown>) => boolean): { ok: true; manifest: ExtensionManifest } | { ok: false; code: 'EXTENSION_INVALID'; message: string } {
   const invalid = { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장 manifest의 필드나 패키지 상대 경로가 올바르지 않습니다' };
   let v: unknown; try { v = JSON.parse(text); } catch { return invalid; }
-  if (!object(v) || !['name', 'version', 'core', 'abi', 'migrations', 'connection_check'].every(k => Object.hasOwn(v, k)) || !Object.keys(v).every(k => ['name', 'version', 'core', 'abi', 'migrations', 'connection_check', 'settings', 'error_codes', 'work', 'auth', 'default_schedules', 'raw_views', 'commands'].includes(k))) return invalid;
+  if (!object(v) || !['name', 'version', 'core', 'abi', 'migrations', 'connection_check'].every(k => Object.hasOwn(v, k)) || !Object.keys(v).every(k => ['name', 'version', 'core', 'abi', 'migrations', 'connection_check', 'settings', 'error_codes', 'work', 'auth', 'default_schedules', 'raw_views', 'commands', 'files', 'core_compat', 'plugin_version'].includes(k))) return invalid;
   const check = v['connection_check'];
   if (typeof v['name'] !== 'string' || !isExtensionName(v['name']) || typeof v['version'] !== 'string' || !v['version'].trim() || /[\u0000-\u001f\u007f-\u009f]/.test(v['version']) || v['core'] !== EXTENSION_CORE_VERSION || v['abi'] !== 1 || !inside(v['migrations']) || !object(check) || !keys(check, ['runtime', 'entry']) || !['node', 'python'].includes(check['runtime'] as string) || !inside(check['entry'])) return invalid;
+  const semver = (x: unknown): x is string => typeof x === 'string' && /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(x);
+  const packageFields = [v['files'], v['core_compat'], v['plugin_version']];
+  if (packageFields.some(x => x !== undefined)) {
+    const files = v['files'], compat = v['core_compat'];
+    if (!Array.isArray(files) || !files.length || files.some(x => !inside(x) || x === 'digest') || !files.includes('manifest.json') || files.some((x, i) => i > 0 && comparePackagePaths(files[i - 1], x) >= 0) ||
+        !object(compat) || !keys(compat, ['min', 'max_exclusive']) || !semver(compat['min']) || !semver(compat['max_exclusive']) ||
+        !semver(v['version']) || !semver(v['plugin_version'])) return invalid;
+    const compare = (a: string, b: string) => { const x = a.split('.').map(BigInt), y = b.split('.').map(BigInt); for (let i = 0; i < 3; i++) { if (x[i]! < y[i]!) return -1; if (x[i]! > y[i]!) return 1; } return 0; };
+    if (compare(compat['min'], compat['max_exclusive']) >= 0) return invalid;
+  }
   if (v['commands'] !== undefined) {
     if (!Array.isArray(v['commands']) || (v['commands'].length > 0 && (v['name'].includes('_') || ['install', 'run', 'login', 'list', 'status', 'enable', 'disable'].includes(v['name'])))) return invalid;
     const seen = new Set<string>();

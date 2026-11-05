@@ -199,6 +199,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const validHoldGroup = (group: string | null) => group === null || (group !== '' && [...group].length <= 200);
   const invalidGroup = { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: '보류 그룹은 1~200자여야 합니다' };
   const heldGroups = new Map<string, Date>();
+  const quiescedExtensions = new Map<string, string>();
+  const isQuiesced = (kind: string) => kind.includes('.') && quiescedExtensions.has(kind.split('.')[0]!);
   const isHeld = (group: string | null) => group !== null && heldGroups.has(group);
   const schedules = new Map<string, import('../../domain/schedule.js').Schedule>();
   const workItems: WorkItem[] = [];
@@ -664,13 +666,25 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       const literal = pattern.slice(1, -1).replaceAll('\0', '�').replace(/\\([\\%_])/g, '$1').toLowerCase();
       return { ok: true, chunks: structuredClone(conversationChunks.filter(c => c.body.replaceAll('\0', '�').toLowerCase().includes(literal))) };
     },
-    async listExtensionInventory() { return { ok: true, names: [...new Set([...extensions.keys(), ...installProgress.keys()])].sort() }; },
+    async beginExtensionQuiesce({name,owner}) {
+      const current = quiescedExtensions.get(name);
+      if (current !== undefined && current !== owner) return { ok: true, acquired: false };
+      quiescedExtensions.set(name, owner); return { ok: true, acquired: true };
+    },
+    async readExtensionQuiesce(name) {
+      return { ok: true, owner: quiescedExtensions.get(name) ?? null, running: workItems.filter(item => item.kind.startsWith(`${name}.`) && item.completedAt === null && (item.currentAttemptToken !== null || item.claimedBy !== null)).length };
+    },
+    async endExtensionQuiesce({name,owner}) {
+      if (quiescedExtensions.get(name) !== owner) return { ok: true, released: false };
+      quiescedExtensions.delete(name); return { ok: true, released: true };
+    },
+    async listExtensionInventory() { return { ok: true, names: [...new Set([...extensions.keys(), ...installProgress.keys(), ...quiescedExtensions.keys()])].sort() }; },
     async getExtensionPublicStatus(name) {
       const group = `extension:${name}`;
       const held = heldGroups.has(group);
       return { ok: true, status: structuredClone(extensionPublicProjection(name, extensions.get(name) ?? null, installProgress.get(name)?.progress ?? null,
         held ? [...schedules.values()].filter(row => row.holdGroup === group).length : 0,
-        held ? workItems.filter(row => row.holdGroup === group && row.completedAt === null).length : 0, pythonEnvironments.get(name) ?? null)) };
+        held ? workItems.filter(row => row.holdGroup === group && row.completedAt === null).length : 0, pythonEnvironments.get(name) ?? null, quiescedExtensions.has(name))) };
     },
     async setExtensionEnabled({ name, enabled, now }) {
       const row = extensions.get(name);
@@ -692,14 +706,14 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     },
     async recordExtensionPythonEnvironment({ name, ...environment }) { pythonEnvironments.set(name, structuredClone(environment)); return { ok: true }; },
     async getExtensionPythonEnvironment(name) { return { ok: true, environment: structuredClone(pythonEnvironments.get(name) ?? null) }; },
-    async recordExtensionInstall({ name, version, now, workKinds, workFollowups, missedPolicies }) {
+    async recordExtensionInstall({ name, version, now, packageIdentity, workKinds, workFollowups, missedPolicies }) {
       extensionMissedPolicies.set(name, { ...missedPolicies });
       extensionWorkKinds.set(name, workKinds ?? []);
       extensionFollowups.set(name, workFollowups ?? {});
       for (const item of [...workItems]) if (item.completedAt === null && (workKinds ?? []).includes(item.kind)) ensureFollowup(item);
       const existing = extensions.get(name);
-      if (existing) existing.version = version;
-      else extensions.set(name, { name, version, installedAt: new Date(now), enabled: true, enabledChangedAt: new Date(now), connectionStatus: null, connectionCheckedAt: null, connectionCode: null, connectionMessage: null });
+      if (existing) { existing.version = version; existing.packageDigest = packageIdentity?.digest ?? null; existing.pluginVersion = packageIdentity?.pluginVersion ?? null; }
+      else extensions.set(name, { name, version, packageDigest: packageIdentity?.digest ?? null, pluginVersion: packageIdentity?.pluginVersion ?? null, installedAt: new Date(now), enabled: true, enabledChangedAt: new Date(now), connectionStatus: null, connectionCheckedAt: null, connectionCode: null, connectionMessage: null });
       return { ok: true };
     },
     async recordExtensionConnection({ name, status, code, message, checkedAt }) {
@@ -780,10 +794,10 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       const row={...input,holdGroup,triggerUpdatedAt:input.triggerUpdatedAt ?? null}; schedules.set(row.id,cloneSchedule(row));return {ok:true,schedule:cloneSchedule(row)};
     },
     async readMissedPolicy({kind}) { const ext=kind.split('.')[0] ?? ''; return {ok:true,policy:extensionMissedPolicies.get(ext)?.[kind] ?? 'latest'}; },
-    async listDueSchedules({now,limit}) {return {ok:true,schedules:[...schedules.values()].filter(s=>s.enabled && !s.removedAt && !isHeld(s.holdGroup) && s.nextRunAt!==null && s.nextRunAt<=now).sort((a,b)=>a.nextRunAt!.getTime()-b.nextRunAt!.getTime()||a.id.localeCompare(b.id)).slice(0,limit).map(cloneSchedule)};},
+    async listDueSchedules({now,limit}) {return {ok:true,schedules:[...schedules.values()].filter(s=>s.enabled && !s.removedAt && !isHeld(s.holdGroup) && !isQuiesced(s.kind) && !(s.extension && quiescedExtensions.has(s.extension)) && s.nextRunAt!==null && s.nextRunAt<=now).sort((a,b)=>a.nextRunAt!.getTime()-b.nextRunAt!.getTime()||a.id.localeCompare(b.id)).slice(0,limit).map(cloneSchedule)};},
     async fireSchedule(input) {
       if ([input.now, input.expectedNextRunAt, input.nextRunAt, input.work.createdAt, input.work.nextAttemptAt, ...input.occurrences.map(item => item.occurrenceAt)].some(value => value !== null && !formatInstant(value).ok)) return {ok:false,code:'DB_UNAVAILABLE',message:'잘못된 예약 발화 시각입니다'};
-      const row=schedules.get(input.scheduleId);if(!row || !row.enabled || row.removedAt || isHeld(row.holdGroup) || row.nextRunAt?.getTime()!==input.expectedNextRunAt.getTime() || row.triggerKind!==input.expectedTriggerKind || row.timeZone!==input.expectedTimeZone || row.cronExpr!==input.expectedCronExpr)return {ok:true,fired:false};
+      const row=schedules.get(input.scheduleId);if(!row || !row.enabled || row.removedAt || isHeld(row.holdGroup) || isQuiesced(row.kind) || (row.extension !== null && quiescedExtensions.has(row.extension)) || row.nextRunAt?.getTime()!==input.expectedNextRunAt.getTime() || row.triggerKind!==input.expectedTriggerKind || row.timeZone!==input.expectedTimeZone || row.cronExpr!==input.expectedCronExpr)return {ok:true,fired:false};
       const fresh=input.occurrences.filter(x=>!occurrences.has(`${row.id}/${x.occurrenceAt.toISOString()}`));
       const pending=fresh.filter(x=>x.status==='pending');let workId:string|null=null;let created=false;
       if(pending.length){const work=addWork({...input.work,holdGroup:row.holdGroup});if(!work.ok)return work;workId=work.item.id;created=work.created;}
@@ -1525,11 +1539,11 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     },
 
     async hasDueWork(query: DueWorkQuery): Promise<HasDueWorkResult> {
-      return { ok: true, due: candidates(workItems.filter(i => !isHeld(i.holdGroup)), query, workDependencies, 'core', workItems).length > 0 };
+      return { ok: true, due: candidates(workItems.filter(i => !isHeld(i.holdGroup) && !isQuiesced(i.kind)), query, workDependencies, 'core', workItems).length > 0 };
     },
 
     async claimWork(input: ClaimWorkInput): Promise<ClaimWorkResult> {
-      const [next] = candidates(workItems.filter(i => !isHeld(i.holdGroup)), input, workDependencies, 'core', workItems);
+      const [next] = candidates(workItems.filter(i => !isHeld(i.holdGroup) && !isQuiesced(i.kind)), input, workDependencies, 'core', workItems);
       if (next === undefined) return { ok: true, item: null };
 
       // The attempt is raised by the claim and not by the outcome, so an item
@@ -1602,7 +1616,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       return { ok: true, outcome: 'done' };
     },
     async claimSupervisedWork(input) {
-      const [item] = candidates(workItems.filter(i => i.currentAttemptToken === null && i.cancelRequestedAt === null && !isHeld(i.holdGroup)), input, workDependencies, 'supervised', workItems);
+      const [item] = candidates(workItems.filter(i => i.currentAttemptToken === null && i.cancelRequestedAt === null && !isHeld(i.holdGroup) && !isQuiesced(i.kind)), input, workDependencies, 'supervised', workItems);
       if (!item) return { ok: true, item: null, attemptToken: null };
       if (workAttempts.some((a) => a.token === input.attemptToken)) return { ok: false, code: 'DB_UNAVAILABLE', message: '이미 쓰인 시도 토큰입니다' };
       item.attempts += 1;

@@ -120,6 +120,9 @@ const calls = {
   recordChannelItemResult: s => s.recordChannelItemResult({requestId:id,workItemId:id,attemptToken:id,index:0,now,result:{outcome:'sent',externalMessageId:null}}),
   finishChannelAttempt: s => s.finishChannelAttempt({requestId:id,workItemId:id,attemptToken:id,now,externalMessageId:'1'}),
   insertSetting: (s) => s.insertSetting({ userId: null, key: 'timezone', value: 'UTC', updatedAt: now }),
+  beginExtensionQuiesce: s => s.beginExtensionQuiesce({ name: 'testext', owner: '00000000-0000-4000-8000-000000000000', now }),
+  readExtensionQuiesce: s => s.readExtensionQuiesce('testext'),
+  endExtensionQuiesce: s => s.endExtensionQuiesce({ name: 'testext', owner: '00000000-0000-4000-8000-000000000000' }),
   setSetting: (s) => s.setSetting({ userId: null, key: 'timezone', value: 'UTC', updatedAt: now }),
 } satisfies Record<Exclude<keyof PostgresStore, 'close' | 'imports'>, (store: PostgresStore) => Promise<unknown>>;
 

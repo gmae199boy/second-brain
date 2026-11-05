@@ -608,3 +608,17 @@ it('개별 공개 상태 조회 실패는 진단 실패다', async () => {
   const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store, extensionStore: { ...store, async getExtensionPublicStatus() { return { ok: false, code: 'DB_UNAVAILABLE', message: '상태 조회 실패' }; } } });
   expect(report.checks).toContainEqual({ id: 'extensions', status: 'fail', code: 'DB_UNAVAILABLE', detail: '상태 조회 실패' });
 });
+
+it('관측한 플러그인 package가 설치본보다 뒤처지면 경고하고 최신 관측에서 해소한다', async () => {
+  const store = memoryStore();
+  await store.recordExtensionInstall({ name: 'testext', version: '2.0.0', packageIdentity: { digest: 'a'.repeat(64), pluginVersion: '2.0.0' }, now: new Date() });
+  let observed = { name: 'testext', version: '1.0.0', pluginVersion: '1.0.0', digest: 'b'.repeat(64) };
+  const report = () => runDoctor(fakeStore(healthy()), { ...OPTIONS, store, extensionStore: store, readPackageObservation: async () => observed });
+  expect((await report()).checks.find(check => check.id === 'extensions')).toMatchObject({ status: 'warn', code: 'PLUGIN_BEHIND', detail: expect.stringContaining('testext: 설치 2.0.0, 플러그인 패키지 1.0.0') });
+  observed = { name: 'testext', version: '2.0.0', pluginVersion: '3.0.0', digest: 'a'.repeat(64) };
+  expect((await report()).checks.find(check => check.id === 'extensions')).toMatchObject({ status: 'warn', code: 'EXTENSION_PACKAGE_CONFLICT' });
+  observed = { name: 'testext', version: '2.0.0', pluginVersion: '2.0.0', digest: 'b'.repeat(64) };
+  expect((await report()).checks.find(check => check.id === 'extensions')).toMatchObject({ status: 'warn', code: 'EXTENSION_PACKAGE_CONFLICT' });
+  observed = { name: 'testext', version: '2.0.0', pluginVersion: '2.0.0', digest: 'a'.repeat(64) };
+  expect((await report()).checks.find(check => check.id === 'extensions')).toMatchObject({ status: 'ok' });
+});

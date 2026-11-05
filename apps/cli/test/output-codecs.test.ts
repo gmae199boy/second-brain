@@ -89,9 +89,12 @@ const SINKS: Readonly<Record<string, readonly string[]>> = {
   'apps/cli/src/dispatch.ts': ['text', 'hook'],
   // The installer prints as it asks, so it cannot wait for the dispatcher.
   // This row also covers the `process.stdout.isTTY` read beside it: asking
-  // whether anybody is watching writes nothing.
+  // whether anybody is watching writes nothing. Its readline prompt displays
+  // the transition identity and the exact challenge that must be typed back.
   'apps/cli/src/install.ts': ['text'],
   'apps/cli/src/commands/setup-run.ts': ['text'],
+  // 고정 설치 잠금 복구 안내만 stderr에 기록하며 사용자 데이터는 포함하지 않는다.
+  'apps/cli/src/runtime/install-lock.ts': [],
   // TTY 여부만 읽으며, 자식의 대화형 로그인에 stdin·stdout을 상속한다.
   // stderr 원문은 출력하지 않고 선언된 코드만 결과로 돌려준다.
   'apps/cli/src/commands/ext-login.ts': [],

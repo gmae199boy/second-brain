@@ -1,3 +1,4 @@
+import { comparePackageVersion } from '../extensions/install.js';
 import { modelWorkKinds } from '../domain/work-item.js';
 import type { SchemaVersions } from '../schema.js';
 import { transcriptChanges } from '../capture/scan.js';
@@ -103,6 +104,7 @@ export type DoctorReadStore = Pick<WorkStore, 'listFailures' | 'readWorkAttemptH
 
 export interface DoctorOptions {
   extensionStore?: Pick<import('../ports/store.js').ExtensionStore, 'listExtensionInventory' | 'getExtensionPublicStatus'>;
+  readPackageObservation?: (name: string) => Promise<{ name: string; version: string; pluginVersion: string; digest: string } | null>;
   modelWorkKinds?: readonly string[];
   prerequisites?: readonly DoctorCheckSource[];
   /** Adapter probes to mark skipped only when a prerequisite fails (AD-10). */
@@ -188,7 +190,7 @@ export async function runDoctor(
     checks.push(await transcriptsCheck(options));
     checks.push(...await workAttemptChecks(options.store));
     checks.push(await modelUsageCheck(options));
-    if (options.extensionStore) checks.push(await extensionsCheck(options.extensionStore));
+    if (options.extensionStore) checks.push(await extensionsCheck(options.extensionStore, options.readPackageObservation));
   }
 
   for (const source of options.checks ?? []) {
@@ -379,14 +381,33 @@ async function modelUsageCheck(options: DoctorOptions): Promise<DoctorCheck> {
     (u.latest === null ? '' : `, 최근 종류 ${u.latest.kind} 일감 ${u.latest.workItemId}, 걸린 시간 ${u.latest.elapsedMs === null ? '없음' : String(u.latest.elapsedMs / 1000) + '초'}, ${u.latest.usage === null ? '토큰 없음' : tokens(u.latest.usage)}`) };
 }
 
-async function extensionsCheck(store: NonNullable<DoctorOptions['extensionStore']>): Promise<DoctorCheck> {
+async function extensionsCheck(store: NonNullable<DoctorOptions['extensionStore']>, readObservation?: DoctorOptions['readPackageObservation']): Promise<DoctorCheck> {
   const inventory = await store.listExtensionInventory();
   if (!inventory.ok) return { id: 'extensions', status: 'fail', code: inventory.code, detail: inventory.message };
   const results = await Promise.all(inventory.names.map(name => store.getExtensionPublicStatus(name)));
   const failure = results.find(result => !result.ok);
   if (failure && !failure.ok) return { id: 'extensions', status: 'fail', code: failure.code, detail: failure.message };
   const facts = results.flatMap(result => result.ok ? [result.status] : []);
-  const abnormal = facts.some(row => !row.installed || row.enabled === false || row.interruptedWorkCount > 0 || row.heldScheduleCount > 0 ||
+  let behind: string[] = [];
+  let conflicts: string[] = [];
+  let observationUnreadable = false;
+  if (readObservation) {
+    try {
+      const observations = await Promise.all(facts.map(row => readObservation(row.name)));
+      behind = facts.flatMap((row, index) => {
+        const observed = observations[index];
+        if (!row.installed || !row.version || !observed) return [];
+        const comparison = comparePackageVersion(row.version, observed.version);
+        return comparison === null || comparison > 0 ? [`${row.name}: 설치 ${row.version}, 플러그인 패키지 ${observed.version}`] : [];
+      });
+      conflicts = facts.flatMap((row, index) => {
+        const observed = observations[index];
+        if (!row.installed || !row.version || !observed || comparePackageVersion(row.version, observed.version) !== 0 || row.packageDigest === null) return [];
+        return row.packageDigest !== observed.digest || row.pluginVersion !== observed.pluginVersion ? [row.name] : [];
+      });
+    } catch { observationUnreadable = true; }
+  }
+  const abnormal = observationUnreadable || behind.length > 0 || conflicts.length > 0 || facts.some(row => !row.installed || row.enabled === false || row.quiesced || row.interruptedWorkCount > 0 || row.heldScheduleCount > 0 ||
     (row.journalPresent && row.installResult !== 'installed') || row.login?.status === 'pending' || row.login?.status === 'failed' ||
     row.connection.status === 'failed' || row.schedule?.status === 'failed');
   const detail = facts.length === 0 ? '확장 0건' : facts.map(row => {
@@ -394,7 +415,7 @@ async function extensionsCheck(store: NonNullable<DoctorOptions['extensionStore'
     const login = row.login ? `${row.login.status}${row.login.code ? ` (${row.login.code})` : ''}` : '미기록';
     const connection = `${row.connection.status ?? '미기록'}${row.connection.code ? ` (${row.connection.code})` : ''}`;
     const last = row.lastFailure ? `${row.lastFailure.stage} (${row.lastFailure.code})` : '없음';
-    return `${row.name}: ${installed}, 중단 일감 ${row.interruptedWorkCount}건, 보류 예약 ${row.heldScheduleCount}건, 설치 결과 ${row.installResult ?? (row.journalPresent ? '진행 중' : '미기록')}, 로그인 ${login}, 연결 ${connection}, 실패 단계 ${row.failedStage ?? '없음'}, 마지막 실패 ${last}`;
+    return `${row.name}: ${installed}, 중단 일감 ${row.interruptedWorkCount}건, 보류 예약 ${row.heldScheduleCount}건, 설치 결과 ${row.installResult ?? (row.journalPresent ? '진행 중' : '미기록')}, 로그인 ${login}, 연결 ${connection}, 실패 단계 ${row.failedStage ?? '없음'}, 마지막 실패 ${last}${row.quiesced ? ', 정지 중: 설치 복구 필요' : ''}`;
   }).join('; ');
-  return { id: 'extensions', status: abnormal ? 'warn' : 'ok', detail };
+  return { id: 'extensions', status: abnormal ? 'warn' : 'ok', ...(conflicts.length ? { code: 'EXTENSION_PACKAGE_CONFLICT' } : behind.length ? { code: 'PLUGIN_BEHIND' } : {}), detail: `${detail}${behind.length ? `; 뒤처진 플러그인: ${behind.join(', ')}` : ''}${conflicts.length ? `; 같은 버전의 패키지 신원 충돌: ${conflicts.join(', ')}` : ''}${observationUnreadable ? '; 확장 패키지 관측 기록을 읽을 수 없습니다' : ''}` };
 }
