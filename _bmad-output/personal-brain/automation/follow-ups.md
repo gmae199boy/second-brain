@@ -295,3 +295,16 @@
 | 잔여 위험 |PG원자성/경쟁·실권한·비동기파일/채널·oracle/전체회귀 |실행결과21.8확정. 다중사용자보안완성주장없음. 미실행/미해결이면21.8 built/21.7시작금지 |
 
 운영/실계정/모델변경없음.원문·로그·ready/depth1은보존워크트리와중앙로컬archive에있다. 성공scope/revision·후손정리/bodyIPC·대기transaction0·20.4잠금/quiesce/legacy안전거부제약을유지한다.
+
+## 21.6 — built / 감독입력 중복정리, 시험21.8 이관
+
+근거: [정리 계획](../tickets/epic-garmin-extension/tickets/story-refactor-sweep-plan.md)의 Design Notes·Review Triage Log·Auto Run Result.4be310a구현/58a64f6release/fc3cdfe문서정정으로collect/report의감독봉투·typed설정검증을공통화했다. 독립thorough4렌즈·BH1~7보완·후속verification해결/추가0,신규deferred0·후속권고false. build/typecheck/Python정적컴파일 종료0. 모든시험실행은21.8이관·미실행이다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 채택 정리경계 |소비자별검사순서/중복키비대칭·필수값/Config/공개예외보존 |collect의report_runtime의존제거·순수공통모듈. 10계약시험메서드의관찰목표는입력경계이며전체기능실행증거아님 |
+| 필수 시험 인계 |20.6·20.1~20.5·21.2~21.6 새·기존전체회귀 |21.8전용소유PG/role/home·fakeGarmin/Codex/로컬Telegram로 pnpm test→pnpm test:python 순차실행·실패별수정/관련재검증. 미실행/미해결이면21.8 built/21.7시작금지 |
+| release 증거 |Garmin plugin0.1.2/ref4be310a·package목록/digest |이전구현commit참조·같은release의version/identity/digest갱신. 제품정리와배포사본동기화 |
+| 기존 제약 보존 |21.5 BH04상대링크·credential운영확인·KST/reject/pending·A1/legacy/offline·attempts정책 |새기능/보안/소비UX추가없음. 21.7운영조치그대로유지 |
+
+신규운영조치/실계정/모델/운영변경없음. 원문·로그·ready/depth1은보존워크트리와중앙로컬archive에있다. PG권한/동시성·oracle·crash/fsync·프로세스/sandbox·파일/채널·전체시험실제결과는21.8확정이며인수완료주장없음.
