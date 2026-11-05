@@ -1,7 +1,6 @@
 import type { SchemaVersions } from '../schema.js';
 import type { Clock } from '../ports/clock.js';
 import type { SettingsStore, SchemaStore } from '../ports/store.js';
-import { isExternalLocator } from '../domain/file.js';
 import { checkSchema } from '../schema.js';
 
 export type SettingValidation = { ok: true; value: string } | { ok: false; message: string };
@@ -18,16 +17,7 @@ export function normalizeTimeZone(value: string): SettingValidation {
 }
 export function isTimeZone(value: string): boolean { return normalizeTimeZone(value).ok; }
 export const TIMEZONE_SETTING: SettingDefinition & { defaultValue: string } = { key: 'timezone', defaultValue: 'Asia/Seoul', normalize: normalizeTimeZone };
-export const ANALYSIS_AGENT_SETTING: SettingDefinition & { defaultValue: string } = {
-  key: 'analysis.agent', defaultValue: 'codex',
-  normalize: value => value === 'codex' ? { ok: true, value } : { ok: false, message: 'analysis.agent는 codex여야 합니다' },
-};
-export const ANALYSIS_PROFILE_PATH_SETTING: SettingDefinition = {
-  key: 'analysis.profile_path',
-  normalize: value => isExternalLocator(value)
-    ? { ok: true, value } : { ok: false, message: 'analysis.profile_path는 ~/로 시작하는 경로여야 합니다' },
-};
-export const CORE_SETTING_DEFINITIONS: readonly SettingDefinition[] = [TIMEZONE_SETTING, ANALYSIS_AGENT_SETTING, ANALYSIS_PROFILE_PATH_SETTING];
+export const CORE_SETTING_DEFINITIONS: readonly SettingDefinition[] = [TIMEZONE_SETTING];
 /** Extensions register complete definitions; unknown namespaces stay unknown. */
 export function settingDefinitions(extensions: readonly SettingDefinition[] = []): ReadonlyMap<string, SettingDefinition> {
   const definitions = new Map(CORE_SETTING_DEFINITIONS.map(def => [def.key, def]));

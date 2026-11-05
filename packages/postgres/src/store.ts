@@ -1,5 +1,3 @@
-import { postgresAnalysisInputStore } from './analysis-inputs.js';
-import { postgresAnalysisStore } from './analyses.js';
 import { postgresImportStore } from './imports.js';
 import { postgresChannelStore } from './channels.js';
 import { postgresRecallStore } from './recall.js';
@@ -19,7 +17,7 @@ import { postgresWorkStore } from './work.js';
 import { postgresScheduleStore } from './schedules.js';
 export type PostgresStoreOptions = CreatePoolOptions;
 export type PostgresIngestStore = SessionIngestStore & UserStore & HealthStore & SchemaStore;
-export type PostgresStore = import('@second-brain/core').AnalysisInputStore & import('@second-brain/core').AnalysisStore & { imports: import('@second-brain/core').ImportStore } & import('@second-brain/core').ChannelStore & import('@second-brain/core').RecallStore & import('@second-brain/core').ConversationIndexStore & ExtensionStore & PostgresIngestStore & SettingsStore & SessionStore & TranscriptFileStore & WorkStore & ScheduleStore & AttachmentStore & ExtractionStore;
+export type PostgresStore = { imports: import('@second-brain/core').ImportStore } & import('@second-brain/core').ChannelStore & import('@second-brain/core').RecallStore & import('@second-brain/core').ConversationIndexStore & ExtensionStore & PostgresIngestStore & SettingsStore & SessionStore & TranscriptFileStore & WorkStore & ScheduleStore & AttachmentStore & ExtractionStore;
 /** Ordered adapter probes shared by health checks and doctor assembly. */
 export const POSTGRES_DOCTOR_PROBE_IDS = ['writable', 'pg_trgm', 'redaction_cleanup'] as const;
 const [writableProbeId, trgmProbeId, cleanupProbeId] = POSTGRES_DOCTOR_PROBE_IDS;
@@ -29,7 +27,6 @@ export function postgresStore(options: PostgresStoreOptions): PostgresStore {
   const connect: PgConnect = () => ({ ok: true, connection: { db } });
   return {
     imports: postgresImportStore(connect),
-    ...postgresAnalysisStore(connect), ...postgresAnalysisInputStore(connect),
     ...postgresChannelStore(connect), ...postgresRecallStore(connect), ...postgresConversationIndexStore(connect), ...postgresExtensionStore(connect), ...postgresSettingsStore(connect), ...postgresExtractionStore(connect), ...postgresWorkStore(connect), ...postgresScheduleStore(connect), ...postgresSessionStore(connect), ...postgresUserStore(connect),
     ...postgresTranscriptFileStore(connect), ...postgresAttachmentStore(connect),
     async checkHealth() {

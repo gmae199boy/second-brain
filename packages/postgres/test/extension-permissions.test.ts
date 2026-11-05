@@ -78,14 +78,6 @@ it('enforces the role, public view and fenced provenance contracts over real con
     const requestSql = `insert into brain.channel_requests(id,conversation_id,producer,producer_result_id,purpose,body,created_at,source_work_item_id,source_attempt_token) values ($1,$2,$3,$4,'notice','body',now(),$5,$6)`;
     const notificationSql = `insert into brain.channel_legacy_notifications(id,conversation_id,source,dataset,original_table,original_key,import_batch,local_date,event,detail,at,source_work_item_id,source_attempt_token) values ($1,$2,$3,'dataset','notifications',$4,'batch','2026-10-31','event','',now(),$5,$6)`;
     const deliverySql = `insert into brain.channel_legacy_deliveries(id,conversation_id,source,dataset,original_table,original_key,import_batch,original_id,local_date,kind,event,ok,at,source_work_item_id,source_attempt_token) values ($1,$2,$3,'dataset','deliveries',$4,'batch',$4,'2026-10-31','notice','event',true,now(),$5,$6)`;
-    const reconcile = 'select brain.reconcile_import_authority($1,$2,$3,$4,$5,$6,$7,$8,$9) as id';
-    const authorityId=randomUUID(), authorityArgs=[authorityId,names[0],'acct',null,null,['d'],id,token,false];
-    expect((await a.query(reconcile,authorityArgs)).rows).toEqual([{id:authorityId}]);
-    expect((await a.query(reconcile,[randomUUID(),names[0],'acct',null,null,['d'],id,token,false])).rows).toEqual([{id:authorityId}]);
-    await expect(a.query(reconcile,[randomUUID(),names[1],'acct',null,null,['d'],id,token,false])).rejects.toMatchObject({code:'42501'});
-    await expect(a.query(reconcile,[authorityId,names[0],'acct',null,null,['d'],id,randomUUID(),true])).rejects.toMatchObject({code:'BRS01'});
-    await expect(a.query(reconcile,[authorityId,names[0],'acct',null,null,['other'],id,token,true])).rejects.toMatchObject({code:'P0001'});
-    await expect(a.query('select * from brain.health_authority_rules')).rejects.toMatchObject({code:'42501'});
     for (const statement of [requestSql, notificationSql, deliverySql]) {
       await a.query(statement, [randomUUID(), conversation, names[0], randomUUID(), id, token]);
       await expect(a.query(statement, [randomUUID(), conversation, names[1], randomUUID(), id, token])).rejects.toMatchObject({ code: '42501' });
@@ -188,34 +180,5 @@ it('v18의 확장 역할을 v19로 이전하고 최소 권한으로 재설정한
   } finally {
     if (owned) await admin.query(`drop owned by "${role}"; drop role "${role}"`);
     await admin.end(); await db.drop(); await rm(dir, { recursive: true, force: true });
-  }
-});
-
-it('건강 권위는 자기 출처의 현재 시도로만 추가한다', async () => {
-  const db = await database(), suffix = randomBytes(5).toString('hex');
-  const name = `x${suffix}`, role = `brain_ext_${name}`, password = randomBytes(24).toString('hex');
-  const admin = new pg.Client({connectionString:db.url});
-  const store = postgresStore({databaseUrl:db.appUrl});
-  let ext: pg.Client | undefined;
-  try {
-    await admin.connect(); await provisionExtension(db.url,name,password);
-    const url=new URL(db.url); url.username=role; url.password=password;
-    ext=new pg.Client({connectionString:url.toString()}); await ext.connect();
-    await admin.query("insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ($1,'1',now(),true,now())",[name]);
-    await admin.query('insert into brain.extension_work_kinds(extension_name,kind) values ($1,$2)',[name,`${name}.import`]);
-    const id=randomUUID(), token=randomUUID(), now=clock.now();
-    await store.addWork({id,kind:`${name}.import`,targetKind:'import',targetId:'x',createdAt:now,nextAttemptAt:now});
-    await store.claimSupervisedWork({now,claimedBy:'test',kinds:[`${name}.import`],attemptToken:token});
-    const sql='insert into brain.health_authority_rules(id,source,account,revision,datasets,source_work_item_id,source_attempt_token) values ($1,$2,$3,1,$4,$5,$6)';
-    await ext.query(sql,[randomUUID(),name,'one',['D2','D1'],id,token]);
-    await expect(ext.query(sql,[randomUUID(),'other','two',['D1'],id,token])).rejects.toMatchObject({code:'BRS01'});
-    await expect(ext.query(sql,[randomUUID(),name,'two',['D1'],id,randomUUID()])).rejects.toMatchObject({code:'BRS01'});
-    await expect(ext.query('select * from brain.health_authority_rules')).rejects.toMatchObject({code:'42501'});
-    await expect(ext.query('update brain.health_authority_rules set revision=2')).rejects.toMatchObject({code:'42501'});
-    await provisionExtension(db.url,name,password);
-  } finally {
-    await ext?.end(); await store.close();
-    await admin.query(`drop owned by "${role}"; drop role if exists "${role}"`).catch(() => {});
-    await admin.end(); await db.drop();
   }
 });

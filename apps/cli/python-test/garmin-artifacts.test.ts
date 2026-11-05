@@ -68,14 +68,18 @@ it('명시 다종 파일과 기존 evaluation을 설치된 감독자가 발행�
     await expect.poll(async()=> (await fixture.db.rows(`select count(*)::int as n from garmin.artifact_inventory i join brain.file_request_results r on r.request_id=i.request_id join brain.document_extractions e on e.file_id=r.file_id where i.artifact_key='plot' and e.status='unsupported'`))[0]?.n,{timeout:20000}).toBeGreaterThan(0);
     const blob=(await fixture.db.rows(`select l.locator from garmin.artifact_inventory i join brain.file_request_results r on r.request_id=i.request_id join brain.files f on f.id=r.file_id join brain.file_locations l on l.id=f.home_location_id where i.artifact_key='report'`))[0]!.locator as string;
     expect(await readFile(join(fixture.home,'files',blob))).toEqual(Buffer.from('# synthetic report\n'));
-    const analyses=await store.imports.readAnalyses(); expect(analyses.ok).toBe(true);
-    if (!analyses.ok) throw Error('analysis read failed');
-    expect(analyses.rows).toContainEqual(expect.objectContaining({original_key:'report',model:null,model_missing:true,created_at:null,created_at_missing:true,artifacts:expect.arrayContaining([expect.objectContaining({role:'image'}),expect.objectContaining({role:'input'})])}));
-    expect(analyses.rows).toContainEqual(expect.objectContaining({original_key:'facts',created_at:'2026-01-01T18:04:05.000Z',created_at_missing:false}));
-    expect(analyses.rows).toContainEqual(expect.objectContaining({original_table:'evaluation',report_date:'2026-01-01',scope:'day',summary:'합성\0기록',judgments:{type:'invalid-text',encoding:'utf-8',base64:'/w=='},evidence:'[]',next_checks:'[]',report_md:'본문',model:'model',created_at:'1970-01-01T00:00:00.001Z'}));
-    const before=await fixture.db.rows('select id,source,dataset,original_table,original_key from brain.analyses order by id');
+    const before=await fixture.db.rows('select dataset,original_table,original_key,target_kind,target_id,content_hash from garmin.import_mapping order by dataset,original_table,original_key,target_kind');
+    // v12에서 온 장부를 합성한다. 기존 요청과 관계는 새 발행에서도 유지돼야 한다.
+    const legacyAnalysis=ids.next();
+    await fixture.db.query(`update garmin.artifact_inventory set analysis_id='${legacyAnalysis}' where artifact_key='input'; update garmin.artifact_relations set analysis_id='${legacyAnalysis}',reason='legacy-reason' where analysis_key='input'`);
+    const oldInventory=await fixture.db.rows("select request_id,analysis_id,exclusion_reason,unlinked_reason from garmin.artifact_inventory where artifact_key='input'");
+    const oldRelation=await fixture.db.rows("select request_id,analysis_id,reason from garmin.artifact_relations where analysis_key='input'");
+    expect(oldInventory).toHaveLength(1); expect(oldInventory[0]).toMatchObject({analysis_id:legacyAnalysis}); expect(oldInventory[0]!.request_id).toBeTruthy();
+    expect(oldRelation).toHaveLength(1); expect(oldRelation[0]).toMatchObject({analysis_id:legacyAnalysis,reason:'legacy-reason'});
     await run();
-    expect(await fixture.db.rows('select id,source,dataset,original_table,original_key from brain.analyses order by id')).toEqual(before);
+    expect(await fixture.db.rows("select request_id,analysis_id,exclusion_reason,unlinked_reason from garmin.artifact_inventory where artifact_key='input'")).toEqual(oldInventory);
+    expect(await fixture.db.rows("select request_id,analysis_id,reason from garmin.artifact_relations where analysis_key='input'")).toEqual(oldRelation);
+    expect(await fixture.db.rows('select dataset,original_table,original_key,target_kind,target_id,content_hash from garmin.import_mapping order by dataset,original_table,original_key,target_kind')).toEqual(before);
     expect(await fixture.db.rows('select count(*)::int as n from brain.channel_requests')).toEqual([{n:0}]);
     expect((await readFile(join(root,'report.md'),'utf8'))).toBe('# synthetic report\n');
     await writeFile(join(root,'report.md'),'# synthetic reporz\n');
@@ -83,7 +87,7 @@ it('명시 다종 파일과 기존 evaluation을 설치된 감독자가 발행�
     expect(conflict.code,conflict.stdout+conflict.stderr).toBe(0);
     await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${conflict.body.data.work_id}'`))[0]?.outcome,{timeout:25000}).toBe('failed');
     expect(await fixture.db.rows("select count(*)::int as n from garmin.import_conflicts where reason='artifact_mismatch'")).toEqual([{n:1}]);
-    expect(await fixture.db.rows('select id,source,dataset,original_table,original_key from brain.analyses order by id')).toEqual(before);
+    expect(await fixture.db.rows('select dataset,original_table,original_key,target_kind,target_id,content_hash from garmin.import_mapping order by dataset,original_table,original_key,target_kind')).toEqual(before);
   } finally { controller.abort(); if (daemon) await daemon; await store.close(); await fixture.cleanup(); }
 }, 90000);
 
@@ -102,14 +106,14 @@ it('checkpoint 뒤 같은 크기로 바뀐 SQLite에서 evaluation을 재독해�
     expect(await store.claimSupervisedWork({now,claimedBy:'snapshot-barrier',kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true});
     const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), home=await realpath(join(fixture.home,'extensions/garmin'));
     // ingest가 보존 checkpoint를 커밋하고 검증된 객체를 반환한 직후 같은 크기의 값을 교체한다.
-    const script=`import sys,sqlite3\nsys.path.insert(0,sys.argv[1])\nimport batch_import\noriginal=batch_import.ingest\ndef intercepted(conn,capture,entry,catalog,conversation):\n result=original(conn,capture,entry,catalog,conversation)\n if entry['dataset']=='synthetic-D1':\n  with sqlite3.connect(sys.argv[2]) as db: db.execute('update evaluation set summary=?',('가성\\0기록',))\n return result\nbatch_import.ingest=intercepted\nbatch_import.run()`;
+    const script=`import sys,sqlite3\nsys.path.insert(0,sys.argv[1])\nimport batch_import\noriginal=batch_import.ingest\ndef intercepted(conn,capture,entry,conversation):\n result=original(conn,capture,entry,conversation)\n if entry['dataset']=='synthetic-D1':\n  with sqlite3.connect(sys.argv[2]) as db: db.execute('update evaluation set summary=?',('가성\\0기록',))\n return result\nbatch_import.ingest=intercepted\nbatch_import.run()`;
     const result=execFileSync(python,['-c',script,join(home,'src'),source],{encoding:'utf8',env:{...process.env,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:work,BRAIN_ATTEMPT_TOKEN:token,BRAIN_EXTENSION_HOME:home,BRAIN_SECRET_SCANNER_NODE:process.execPath,BRAIN_SECRET_SCANNER_SCRIPT:fileURLToPath(new URL('../dist/workers/secret-scan.js',import.meta.url)),BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',values:{'garmin.capture_manifest':await realpath(join(root,'manifest.json')),'garmin.legacy_conversation_id':conversation}})}});
     expect(result).toContain('"type": "result"');
     const after=await readFile(source); expect(after.length).toBe(before.length); expect(createHash('sha256').update(after).digest('hex')).not.toBe(beforeHash);
     expect(await fixture.db.rows("select source_hash from garmin.import_checkpoints where dataset='synthetic-D1'")).toEqual([{source_hash:beforeHash}]);
     const preserved=await fixture.db.rows("select values_json->'summary' as summary from garmin.preserved_rows where dataset='synthetic-D1' and original_table='evaluation'");
     expect(preserved).toEqual([{summary:{type:'text',encoding:'utf-8',base64:Buffer.from('합성\0기록').toString('base64')}}]);
-    const analyses=await store.imports.readAnalyses(); expect(analyses.ok && analyses.rows).toContainEqual(expect.objectContaining({dataset:'synthetic-D1',original_table:'evaluation',summary:'합성\0기록'}));
+    expect(await fixture.db.rows("select count(*)::int as n from garmin.import_mapping where dataset='synthetic-D1' and original_table='evaluation' and target_kind='artifact_file'")).toEqual([{n:1}]);
   } finally {await store.close(); await fixture.cleanup();}
 },90000);
 
@@ -162,8 +166,6 @@ it('NUL metadata를 원형으로 재개하고 참조 없는 파일의 미연결 
     expect(privateReport.artifacts.find((x:any)=>x.key===excludedKey).reason).toBe('secret');
     expect(privateReport.artifacts.find((x:any)=>x.key===reservedKey).request_id).toBeTruthy();
     expect(privateReport.relations).toContainEqual(expect.objectContaining({analysis_key:surrogateKey}));
-    const analyses=await store.imports.readAnalyses();
-    expect(analyses.ok && analyses.rows).toContainEqual(expect.objectContaining({original_key:expect.stringMatching(/^~garmin-key-v1~/),model:'모델\ud800\0원형',scope:'범위\udfff\0값',report_date:'날짜\ud800\0값'}));
     expect(await fixture.db.rows("select dataset_label from garmin.datasets where dataset_label is not null")).toEqual([{dataset_label:'synthetic�D1'}]);
     const normal=await fixture.db.rows("select metadata,metadata_raw is null as ordinary from garmin.input_inventory where category='profile' and state='empty'");
     expect(normal).toEqual([{metadata:{fields:{},source_files:[]},ordinary:true}]);
@@ -171,12 +173,12 @@ it('NUL metadata를 원형으로 재개하고 참조 없는 파일의 미연결 
     const unlinked=await fixture.db.rows("select artifact_key,request_id,unlinked_reason from garmin.artifact_inventory where artifact_key in ('orphan_input','orphan_png') order by artifact_key");
     expect(unlinked).toEqual([{artifact_key:'orphan_input',request_id:expect.any(String),unlinked_reason:'no_analysis_reference'},{artifact_key:'orphan_png',request_id:expect.any(String),unlinked_reason:'no_analysis_reference'}]);
     expect(await fixture.db.rows("select count(*)::int as n from garmin.artifact_relations where artifact_key in ('orphan_input','orphan_png')")).toEqual([{n:0}]);
-    expect(publicReport.counts.unlinked).toBe(3); // 두 미참조 파일과 한 명시 미해결 참조
+    expect(publicReport.counts.unlinked).toBe(4); // 분석 미이관으로 명시 참조도 미해결로 보존한다.
     await expect.poll(async()=> (await fixture.db.rows("select count(*)::int as n from garmin.artifact_inventory i join brain.file_request_results r on r.request_id=i.request_id where i.artifact_key in ('orphan_input','orphan_png') and r.file_id is not null"))[0]?.n,{timeout:20000}).toBe(2);
     const before=await fixture.db.rows("select artifact_key,request_id,analysis_id,unlinked_reason from garmin.artifact_inventory order by artifact_key");
     const second=await run();
     expect(await fixture.db.rows("select artifact_key,request_id,analysis_id,unlinked_reason from garmin.artifact_inventory order by artifact_key")).toEqual(before);
-    const repeated=JSON.parse(await readFile(join(fixture.home,'extensions/garmin/reports',second,'public.json'),'utf8')); expect(repeated.counts.unlinked).toBe(3);
+    const repeated=JSON.parse(await readFile(join(fixture.home,'extensions/garmin/reports',second,'public.json'),'utf8')); expect(repeated.counts.unlinked).toBe(4);
   } finally {controller.abort(); if(daemon) await daemon; await store.close(); await fixture.cleanup();}
 },90000);
 
@@ -207,7 +209,7 @@ it('같은 key와 bytes의 artifact 정리 뒤 evaluation은 별도 locator로 �
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{disabled:true}});
     const first=await claim('locator-first');
     const env={...process.env,BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:first.id,BRAIN_ATTEMPT_TOKEN:first.token,BRAIN_EXTENSION_HOME:home,BRAIN_SETTINGS_SNAPSHOT:settings};
-    const script=`import sys\nsys.path.insert(0,sys.argv[1])\nimport analyses,batch_import\noriginal=analyses.stage\ndef stage(home,dataset,table,key,data):\n if table=='evaluation':\n  print('EVALUATION_BARRIER',flush=True)\n  sys.stdin.read(1)\n return original(home,dataset,table,key,data)\nanalyses.stage=stage\nbatch_import.run()`;
+    const script=`import sys\nsys.path.insert(0,sys.argv[1])\nimport artifact_publish,batch_import\noriginal=artifact_publish.stage\ndef stage(home,dataset,table,key,data):\n if table=='evaluation':\n  print('EVALUATION_BARRIER',flush=True)\n  sys.stdin.read(1)\n return original(home,dataset,table,key,data)\nartifact_publish.stage=stage\nbatch_import.run()`;
     child=spawn(python,['-c',script,join(home,'src')],{env,stdio:['pipe','pipe','pipe']});
     expect(String((await once(child.stdout!,'data'))[0])).toContain('EVALUATION_BARRIER');
     const requestSql="select q.id,q.locator,r.file_id,c.cleaned_at from brain.file_requests q left join brain.file_request_results r on r.request_id=q.id left join brain.file_import_cleanup c on c.request_id=q.id where q.request_key::jsonb->>1='artifact'";
@@ -225,11 +227,11 @@ it('같은 key와 bytes의 artifact 정리 뒤 evaluation은 별도 locator로 �
     const rows=await fixture.db.rows(sql); expect(rows.map(r=>r.original_table)).toEqual(['artifact','evaluation']);
     expect(rows[0]!.locator).not.toBe(rows[1]!.locator); expect(rows[0]!.file_id).toBe(rows[1]!.file_id);
     expect(await fixture.db.rows(`select count(*)::int as n from brain.files where content_hash='sha256:${createHash('sha256').update(body).digest('hex')}'`)).toEqual([{n:1}]);
-    const before=await fixture.db.rows('select id,original_table,original_key,file_request_id from brain.analyses order by id');
+    const before=await fixture.db.rows("select dataset,original_table,original_key,target_id from garmin.import_mapping where target_kind='artifact_file' order by dataset,original_table,original_key");
     const third=await claim('locator-third');
     const replay=execFileSync(python,[join(home,'src/import.py')],{encoding:'utf8',env:{...env,BRAIN_WORK_ID:third.id,BRAIN_ATTEMPT_TOKEN:third.token}});
     expect(JSON.parse(replay)).toMatchObject({type:'result'});
-    expect(await fixture.db.rows('select id,original_table,original_key,file_request_id from brain.analyses order by id')).toEqual(before);
+    expect(await fixture.db.rows("select dataset,original_table,original_key,target_id from garmin.import_mapping where target_kind='artifact_file' order by dataset,original_table,original_key")).toEqual(before);
   } finally {
     if(child && child.exitCode===null && child.signalCode===null){const closed=once(child,'close'); child.kill('SIGKILL'); await closed;}
     controller.abort(); if(daemon) await daemon; await store.close(); await fixture.cleanup();
@@ -264,8 +266,7 @@ for (const [initial, changed] of [['password=synthetic\n','operation complete\n'
         fixture.db.rows("select * from garmin.artifact_inventory where artifact_key='case'"),
         fixture.db.rows("select * from garmin.import_mapping where original_table='artifact' and original_key='case' order by target_kind"),
         fixture.db.rows("select id from brain.file_requests where request_key::jsonb->>2='case'"),
-        fixture.db.rows("select id from brain.analyses where original_table='artifact' and original_key='case'"),
-        fixture.db.rows('select id from brain.analysis_artifacts order by id'), fixture.db.rows('select id from brain.files order by id')]);
+        fixture.db.rows('select id from brain.files order by id')]);
       const before=await snapshot(); expect(inventory[0]?.exclusion_reason).toBe(initial.startsWith('password')?'secret':null);
       await writeFile(join(root,'case.log'),changed); await run('failed');
       expect(await snapshot()).toEqual(before);
@@ -295,10 +296,9 @@ it('inventory 확정 직전 장애는 요청과 mapping을 되돌리고 재개�
     expect(await fixture.db.rows("select count(*)::int as n from garmin.artifact_inventory where artifact_key='report'")).toEqual([{n:0}]);
     expect(await fixture.db.rows("select count(*)::int as n from garmin.import_mapping where original_table='artifact' and original_key='report'")).toEqual([{n:0}]);
     expect(await fixture.db.rows("select count(*)::int as n from brain.file_requests where request_key::jsonb->>2='report'")).toEqual([{n:0}]);
-    expect(await fixture.db.rows("select count(*)::int as n from brain.analyses where original_table='artifact' and original_key='report'")).toEqual([{n:0}]);
     await fixture.db.query('drop trigger test_inventory_failure on garmin.artifact_inventory; drop function garmin.test_inventory_failure()');
     await run('succeeded');
-    expect(await fixture.db.rows("select count(*)::int as n from garmin.artifact_inventory i join brain.file_requests q on q.id=i.request_id join brain.analyses a on a.id=i.analysis_id where i.artifact_key='report'")).toEqual([{n:1}]);
+    expect(await fixture.db.rows("select count(*)::int as n from garmin.artifact_inventory i join brain.file_requests q on q.id=i.request_id where i.artifact_key='report'")).toEqual([{n:1}]);
   } finally {controller.abort(); if(daemon) await daemon; await store.close(); await fixture.cleanup();}
 },90000);
 
@@ -346,7 +346,7 @@ it('재발행 staging과 core 정리는 같은 locator 잠금으로 직렬화된
     expect(await store.finishSupervisedWork({id:first.id,attemptToken:first.token,now:new Date(),outcome:'succeeded'})).toMatchObject({ok:true});
     const request=(await fixture.db.rows("select id,locator from brain.file_requests where request_key::jsonb->>2='report'"))[0]!;
     const second=await claim('lock-second');
-    const script=`import sys\nsys.path.insert(0,sys.argv[1])\nimport analyses,batch_import\noriginal=analyses.stage\ndef stage(*args):\n if args[2]=='artifact':\n  print('STAGING_BARRIER',flush=True)\n  sys.stdin.read(1)\n return original(*args)\nanalyses.stage=stage\nbatch_import.run()`;
+    const script=`import sys\nsys.path.insert(0,sys.argv[1])\nimport artifact_publish,batch_import\noriginal=artifact_publish.stage\ndef stage(*args):\n if args[2]=='artifact':\n  print('STAGING_BARRIER',flush=True)\n  sys.stdin.read(1)\n return original(*args)\nartifact_publish.stage=stage\nbatch_import.run()`;
     child=spawn(python,['-c',script,join(home,'src')],{env:env(second),stdio:['pipe','pipe','pipe']});
     expect(String((await once(child.stdout!,'data'))[0])).toContain('STAGING_BARRIER');
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{disabled:true}});
@@ -381,7 +381,7 @@ it('같은 inventory 키의 artifact와 대형 evaluation을 원본 표별로 �
     await expect.poll(async()=> (await fixture.db.rows('select count(*)::int as n from brain.file_requests q left join brain.file_request_results r on r.request_id=q.id where r.file_id is null'))[0]?.n,{timeout:20000}).toBe(0);
     const verified = await fixture.run(['ext','run','garmin','import-verify','--json']);
     expect(verified.code,verified.stdout+verified.stderr).toBe(0);
-    expect(verified.body.data.report.counts).toMatchObject({artifacts:2,excluded_too_large:1,analysis_rows:1});
+    expect(verified.body.data.report.checks.files).toBe(true);
     const rows=await fixture.db.rows('select original_table,artifact_key,batch,request_id,analysis_id,exclusion_reason from garmin.artifact_inventory order by original_table');
     expect(rows).toHaveLength(2); expect(rows[0]).toMatchObject({original_table:'artifact',artifact_key:key,exclusion_reason:null}); expect(rows[0]!.request_id).toBeTruthy(); expect(rows[1]).toMatchObject({original_table:'evaluation',artifact_key:key,exclusion_reason:'too_large',request_id:null});
     for (const [field, value] of [['metadata_raw', "convert_to('evaluation-secret-raw','UTF8')"], ['unlinked_reason', "'evaluation-secret-reason'"]] as const) {

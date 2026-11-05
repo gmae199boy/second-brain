@@ -8,7 +8,7 @@ export interface ExtensionManifest {
   connection_check: { runtime: 'node' | 'python'; entry: string };
   settings?: ExtensionSettingDeclaration[];
   error_codes?: string[];
-  work?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string; manual?: string; followup?: string; verification_snapshot?: true; public_report?: { counts: string[]; checks: string[] }; required_settings?: string[] }[];
+  work?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string; manual?: string; followup?: string; public_report?: { counts: string[]; checks: string[] }; required_settings?: string[] }[];
   auth?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string };
   default_schedules?: { kind: string; target_kind: string; target_id: string; local_time: string }[];
   raw_views?: string[];
@@ -43,10 +43,9 @@ export function decodeExtensionManifest(text: string): { ok: true; manifest: Ext
     const seen = new Set<string>();
     const aliases = new Set<string>();
     for (const work of v['work']) {
-      if (!object(work) || !['kind', 'execution', 'runtime', 'entry'].every(k => Object.hasOwn(work, k)) || !Object.keys(work).every(k => ['kind', 'execution', 'runtime', 'entry', 'manual', 'followup', 'public_report', 'required_settings', 'verification_snapshot'].includes(k)) || typeof work['kind'] !== 'string' ||
+      if (!object(work) || !['kind', 'execution', 'runtime', 'entry'].every(k => Object.hasOwn(work, k)) || !Object.keys(work).every(k => ['kind', 'execution', 'runtime', 'entry', 'manual', 'followup', 'public_report', 'required_settings'].includes(k)) || typeof work['kind'] !== 'string' ||
           !work['kind'].startsWith(`${v['name']}.`) || !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(work['kind']) || seen.has(work['kind']) ||
           work['execution'] !== 'supervised' || !['node', 'python'].includes(work['runtime'] as string) || !inside(work['entry'])) return invalid;
-      if (work['verification_snapshot'] !== undefined && (work['verification_snapshot'] !== true || work['runtime'] !== 'python')) return invalid;
       if (work['manual'] !== undefined && (typeof work['manual'] !== 'string' || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(work['manual']) || aliases.has(work['manual']))) return invalid;
       if (typeof work['manual'] === 'string') aliases.add(work['manual']);
       const report = work['public_report'];

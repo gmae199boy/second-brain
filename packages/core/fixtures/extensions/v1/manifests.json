@@ -374,5 +374,29 @@
       ]
     },
     "expect": "invalid"
+  },
+  {
+    "name": "removed-verification-snapshot",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.verify",
+          "execution": "supervised",
+          "runtime": "python",
+          "entry": "verify.py",
+          "verification_snapshot": true
+        }
+      ]
+    },
+    "expect": "invalid"
   }
 ]

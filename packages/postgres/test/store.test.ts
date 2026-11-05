@@ -279,14 +279,14 @@ it('reads the highest migration version for every owner', async () => {
   try {
     const versions = await store.readSchemaVersions();
     expect(versions.ok && Object.keys(versions.versions)).toEqual(['core', 'garmin']);
-    expect(versions).toMatchObject({ ok: true, versions: { core: { version: 30 }, garmin: { version: 3, appliedAt: new Date('2026-01-02T00:00:00Z') } } });
-    expect(await checkSchema(store, { core: 30, garmin: 3 })).toMatchObject({ ok: true });
-    expect(await checkSchema(store, { core: 30 })).toMatchObject({ ok: true });
+    expect(versions).toMatchObject({ ok: true, versions: { core: { version: 31 }, garmin: { version: 3, appliedAt: new Date('2026-01-02T00:00:00Z') } } });
+    expect(await checkSchema(store, { core: 31, garmin: 3 })).toMatchObject({ ok: true });
+    expect(await checkSchema(store, { core: 31 })).toMatchObject({ ok: true });
   } finally { await store.close(); }
 });
 
 describe('schema owner maxima contract', () => {
-  for (const test of schemaStoreContract({ ...sampleSchemaVersions(), core: 30 })) it(test.name, () => test.run(async () => {
+  for (const test of schemaStoreContract({ ...sampleSchemaVersions(), core: 31 })) it(test.name, () => test.run(async () => {
     const db = await database();
     await db.query("insert into brain.schema_migrations(owner,version,name,checksum,applied_at) values ('garmin',1,'first','a','2026-01-01T00:00:00Z'),('garmin',3,'third','b','2026-01-02T00:00:00Z')");
     const store = postgresStore({ databaseUrl: db.appUrl });
