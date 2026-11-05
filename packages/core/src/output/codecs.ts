@@ -1,4 +1,3 @@
-import { encodeAnalysisExport } from '../analysis/export.js';
 import { encodeChannelText } from '../channels/send.js';
 import { errorEnvelope, okEnvelope } from '../envelope.js';
 import type { Clock } from '../ports/clock.js';
@@ -72,7 +71,6 @@ export function encodeTextLine(line: string): string {
 }
 
 export const OUTPUT_CODECS: readonly OutputCodec[] = [
-  { name: 'analysis-export', render: probe => encodeAnalysisExport(probe) },
   {
     name: 'channel',
     render: (probe) => encodeChannelText(allTexts(sessionForOutput(probe))),

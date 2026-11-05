@@ -1,6 +1,6 @@
-# 파일 반입과 분석 계약 v1
+# 파일 반입 계약 v1
 
-확장은 자기 출처의 현재 supervised attempt에서 `file_requests`, `analyses`, `analysis_artifacts`에 지정된 열만 INSERT한다. 기존 ID나 자연키의 재삽입은 생산자 work/token을 제외한 모든 보존 필드가 같을 때에만 허용된다. 분석의 주 요청과 역할 관계는 같은 출처·dataset이어야 하며 행은 불변이다. core 조회는 주 요청 및 역할별 요청을 별도 결과에 결합해 확정 파일과 상태를 나타낸다. evaluation 자유 TEXT는 표시값과 bytea/encoding 쌍으로 원본을 복원하며 제공되지 않은 model/created_at은 NULL과 missing flag를 사용한다.
+확장은 자기 출처의 현재 supervised attempt에서 `file_requests`의 지정된 열만 INSERT한다. 기존 ID나 자연키의 재삽입은 생산자 work/token을 제외한 모든 보존 필드가 같을 때에만 허용된다.
 
 요청 locator는 `<home>/extensions/<source>/staging/` 아래 상대 경로이고 생산자는 원본과 같은 바이트를 내구 복사한다. 파일 I/O는 DB 트랜잭션 밖에서 이루어진다. core는 요청의 예상 크기와 SHA-256을 확인하고 FileStore에 저장한 뒤 실제 blob을 다시 읽어 해시를 확인한다. 현재 청구의 소유자·청구 시각·유효 기한을 확인한 트랜잭션에서만 결과를 확정하며, 실패는 고정 오류로 기록하고 staging은 보존한다.
 

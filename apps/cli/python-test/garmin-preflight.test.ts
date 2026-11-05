@@ -24,7 +24,7 @@ it('합성 capture를 공용 명령과 실제 감독자로 읽고 계약 자료�
     const snapshots = ['D1','D2','D3','D4','D5'].map(role => join(capture, `${role}.db`));
     const hash = async (path: string) => createHash('sha256').update(await readFile(path)).digest('hex');
     const before = await Promise.all(snapshots.map(hash));
-    const tables = ['garmin.datasets', 'garmin.import_batches', 'garmin.import_mapping', 'garmin.raw_payloads', 'brain.health_observations', 'brain.analyses', 'brain.file_requests'];
+    const tables = ['garmin.datasets', 'garmin.import_batches', 'garmin.import_mapping', 'garmin.raw_payloads', 'brain.file_requests'];
     const contract = async () => Promise.all(tables.map(table => fixture.db.rows(`select coalesce(json_agg(t order by t::text)::text,'[]') as contents from ${table} t`)));
     const prior = await contract();
     await store.setSetting({ key: 'garmin.capture_manifest', value: await realpath(join(capture, 'manifest.json')), updatedAt: new Date() });
@@ -64,10 +64,9 @@ it('합성 capture를 공용 명령과 실제 감독자로 읽고 계약 자료�
     } finally { await fixture.db.query(`update brain.schema_migrations set version=${latestVersion} where owner='garmin' and version=${futureVersion}`); }
     const roleCases = [
       { alter: 'revoke execute on function brain.extension_predecessor_results(uuid,uuid) from brain_ext_garmin', restore: 'grant execute on function brain.extension_predecessor_results(uuid,uuid) to brain_ext_garmin', key: 'predecessor_execute', publicKey: 'role_ready' },
-      { alter: 'revoke insert(value) on brain.health_observations from brain_ext_garmin', restore: 'grant insert(value) on brain.health_observations to brain_ext_garmin', key: 'required_inserts', publicKey: 'role_ready' },
-      { alter: 'grant select on brain.health_observations to brain_ext_garmin', restore: 'revoke select on brain.health_observations from brain_ext_garmin', key: 'no_excess_tables', publicKey: 'role_ready' },
+      { alter: 'revoke insert(metadata) on brain.file_requests from brain_ext_garmin', restore: 'grant insert(metadata) on brain.file_requests to brain_ext_garmin', key: 'required_inserts', publicKey: 'role_ready' },
+      { alter: 'grant select on brain.file_requests to brain_ext_garmin', restore: 'revoke select on brain.file_requests from brain_ext_garmin', key: 'no_excess_tables', publicKey: 'role_ready' },
       { alter: 'grant brain_app to brain_ext_garmin', restore: 'revoke brain_app from brain_ext_garmin', key: 'membership_absent', publicKey: 'role_ready' },
-      { alter: 'revoke select on brain.health_catalog_v1 from brain_ext_garmin', restore: 'grant select on brain.health_catalog_v1 to brain_ext_garmin', key: 'catalog_select', publicKey: 'role_ready' },
       { alter: 'revoke execute on function brain.attempt_is_current(uuid,uuid) from public, brain_ext_garmin; grant execute on function brain.attempt_is_current(uuid,uuid) to brain_app', restore: 'grant execute on function brain.attempt_is_current(uuid,uuid) to public, brain_ext_garmin; revoke execute on function brain.attempt_is_current(uuid,uuid) from brain_app', key: 'attempt_execute', publicKey: 'attempt_current' },
     ];
     for (const scenario of roleCases) {

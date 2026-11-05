@@ -12,7 +12,6 @@ from artifacts import MAX_BYTES, classify, read_relative, stage, locator_for, en
 from capture_manifest import load_capture
 from preflight import classify_files
 from metadata_codec import encode_metadata, decode_metadata, safe_dumps
-from analysis_codec import project_analysis
 from fixtures import artifact_capture, capture_manifest, five_candidates
 
 for key in ['normal', 'key' + chr(0xd800), '~garmin-key-v1~literal', '~garmin-key-v1~a2V5']:
@@ -32,10 +31,6 @@ assert safe_dumps(ordinary,ensure_ascii=False,sort_keys=True,separators=(',',':'
 surrogate = {'key' + chr(0xd800): 'value' + chr(0xdfff)}
 assert json.loads(safe_dumps(surrogate,ensure_ascii=False)) == surrogate
 assert decode_metadata(*encode_metadata(surrogate)) == surrogate
-analysis_value = '비ASCII' + chr(0xd800) + '\0끝'
-display, raw, encoding = project_analysis(analysis_value)
-assert display == '비ASCII��끝' and encoding == 'json-string-v1' and json.loads(raw) == analysis_value
-assert project_analysis('정상\0문자')[2] == 'utf-8'
 assert locator_for('dataset','artifact','key','a'*64) != locator_for('dataset','evaluation','key','a'*64)
 
 

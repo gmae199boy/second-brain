@@ -52,8 +52,6 @@ export function classifyChanges(paths) {
   return {
     pythonAll: matched.length > 0 || exactMatches.length > 0 || bootstrapChanged,
     pythonFiles,
-    analysisTracer: paths.some(path => path === 'apps/cli/src/workers/health-analysis.ts' || path === 'apps/cli/src/runtime/model-codex.ts' || path === 'apps/cli/test/fixtures/fake-codex.mjs' || path.startsWith('packages/core/resources/')),
-    analysisInput: paths.some(path => path.startsWith('packages/core/src/analysis/input/') || path.startsWith('packages/core/resources/health-analysis/') || path === 'apps/cli/test/fixtures/legacy-report-input-oracle.py' || path === 'apps/cli/test/fixtures/analysis-input-fixture.json'),
     postgresAll: paths.some(path => path.startsWith('packages/postgres/migrations/')),
     reasons: [
       ...matched.map(({prefix,reason}) => ({prefix,reason})),

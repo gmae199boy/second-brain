@@ -45,6 +45,10 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Python execution cache
+__pycache__/
+*.pyc
+
 # Test and coverage
 coverage/
 .nyc_output/

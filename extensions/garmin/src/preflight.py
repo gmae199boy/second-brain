@@ -226,20 +226,6 @@ def classify_files(files):
     return {'groups': groups, 'files': classified, 'expected_requests': sum(groups[k] for k in ('report', 'facts', 'image', 'input')) + sum(1 for entry, item in zip(files, classified) if 'category' in entry and item['category'] == 'log')}
 
 
-def unit_risks(report, catalog):
-    mappings = {}
-    for definition in catalog:
-        for mapping in definition.get('mappings', []):
-            mappings.setdefault((mapping.get('table'), mapping.get('column')), []).append({'metric': definition.get('metric'), 'unit': definition.get('unit'), 'factor': mapping.get('factor')})
-    risks = []
-    for role, dataset in report['datasets'].items():
-        for name, table in dataset['tables'].items():
-            for column in table['columns']:
-                if (name, column) in mappings:
-                    risks.append({'dataset': role, 'table': name, 'column': column, 'nulls': table['null_counts'][column], 'catalog': mappings[(name, column)], 'reason': '변환과 NULL 의미 검증 필요'})
-    return risks
-
-
 def estimate_candidates(report, files, existing_mappings):
     """입력으로 확인되는 후보를 세며 실제 반입 INSERT 총계를 예측하지 않는다."""
     preservation = sum(table['count'] for dataset in report['datasets'].values() for table in dataset['tables'].values())

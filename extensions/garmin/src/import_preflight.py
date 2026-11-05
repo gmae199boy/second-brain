@@ -4,7 +4,7 @@ import hashlib
 import os
 import sys
 import psycopg
-from preflight import analyze, readiness, public_report, classify_files, unit_risks, estimate_candidates
+from preflight import analyze, readiness, public_report, classify_files, estimate_candidates
 from reports import write_reports
 from capture_manifest import load_capture
 from role_probe import probe_role, safely
@@ -34,25 +34,21 @@ def main():
         current = attempt_rows[0][0] if attempt_rows else None
         batch_rows = safely(conn, 'select id,dataset from garmin.import_batches order by id') if checks['batch_select'] else None
         mapping_rows = safely(conn, 'select count(*) from garmin.import_mapping') if checks['mapping_select'] else None
-        catalog_rows = safely(conn, 'select definition from brain.health_catalog_v1') if checks['catalog_select'] else None
         checks['batch_select'] = batch_rows is not None
         checks['mapping_select'] = mapping_rows is not None
-        checks['catalog_select'] = catalog_rows is not None
         checkpoint_rows = safely(conn, 'select batch,dataset,source_hash,schema_version,importer_version,manifest_fingerprint,source_role,original_table,original_key,conversation_id from garmin.import_checkpoints order by dataset,batch')
         checkpoints = [{'batch': r[0], 'dataset': r[1], 'source_hash': r[2], 'schema': r[3], 'importer_version': r[4], 'manifest_fingerprint': r[5], 'source_role': r[6], 'table': r[7], 'key': r[8], 'conversation_id': str(r[9]) if r[9] else None} for r in (checkpoint_rows or [])]
-        reasons = safely(conn, 'select reason,count(*) from garmin.import_provenance group by reason order by reason')
         batches = [{'id': row[0], 'dataset': row[1]} for row in batch_rows] if batch_rows is not None else []
         mappings = mapping_rows[0][0] if mapping_rows else None
-        catalog = [row[0] for row in catalog_rows] if catalog_rows is not None else []
         ready = readiness(metadata, 'brain_ext_garmin' if all(checks.values()) else '', current, batches)
         ready['catalog'] = checks
         files = classify_files(capture['private']['files'])
         estimates = estimate_candidates(report, files, mappings)
-        report.update(file_classification=files, unit_risks=unit_risks(report, catalog), capture=capture['private'], readiness=ready, existing_mapping_count=mappings, source_unchanged=True, snapshot_hashes=hashes,
+        report.update(file_classification=files, unit_risks=[], capture=capture['private'], readiness=ready, existing_mapping_count=mappings, source_unchanged=True, snapshot_hashes=hashes,
                       estimates=estimates,
                   risks=['원래 NULL의 결측 원인은 복원할 수 없음', '원본 단위와 정규화 버전을 별도로 검증해야 함'],
                       exclusions=[{'category': group, 'count': files['groups'][group], 'reason': reason} for group, reason in [('config', '비밀·기계 설정 제외'), ('unknown', '분류 확인 전 제외')] if files['groups'][group]],
-                      checkpoint={'available': checkpoint_rows is not None, 'entries': checkpoints}, publication_reasons=[{'reason': r[0], 'count': r[1]} for r in (reasons or [])])
+                      checkpoint={'available': checkpoint_rows is not None, 'entries': checkpoints}, publication_reasons=[])
         public = public_report(report, ready)
         if current is False:
             raise ValueError('PREFLIGHT_STALE')

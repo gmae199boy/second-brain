@@ -13,12 +13,11 @@ from preflight import account
 from reader import read_snapshot, SQLiteText, InvalidSQLiteText
 from raw_codec import dataset_ref, project, restore
 from metadata_codec import safe_dumps
-from health import import_candidates
 from role_probe import probe_role
 from preflight import ORDER
 
-# 원문 바이트와 인코딩을 포함한 canonical key는 기존 checkpoint와 호환되지 않는다.
-VERSION = 2
+# core 건강 발행 제거로 기존 checkpoint의 계약 fingerprint와 호환되지 않는다.
+VERSION = 3
 
 
 class RowMismatch(Exception):
@@ -57,8 +56,8 @@ def contains_nul(value):
     return False
 
 
-def contract_fingerprint(manifest, catalog):
-    contract = ['raw-v2', 'text-codec-v1', 'canonical-sqlite-v2', 'json-projection-v2', manifest, sorted(catalog, key=lambda c: c['metric'])]
+def contract_fingerprint(manifest):
+    contract = ['raw-v2', 'text-codec-v1', 'canonical-sqlite-v2', 'json-projection-v2', manifest]
     return hashlib.sha256(canonical(contract).encode('utf-8')).hexdigest()
 
 
@@ -150,7 +149,7 @@ def conflict(conn, dataset, batch, table, key, reason):
     raise ValueError('IMPORT_CONFLICT')
 
 
-def ingest(conn, capture, entry, catalog, conversation):
+def ingest(conn, capture, entry, conversation):
     dataset = entry['dataset']
     label = entry['dataset_label']
     label_display, label_raw, label_encoding = project(label)
@@ -250,36 +249,6 @@ def ingest(conn, capture, entry, catalog, conversation):
                                 parent=found[0]
                             cur.execute('insert into garmin.preserved_rows values (%s,%s,%s,%s,%s::jsonb,%s)',(ident,dataset,name,key,payload,parent))
                             cur.execute("insert into garmin.import_mapping values (%s,%s,%s,'preserved',%s,%s,%s)",(dataset,name,key,ident,hashed,batch))
-                        for definition, column, candidate, reason in import_candidates(snapshot,catalog,name,row):
-                            metric=definition['metric']
-                            cur.execute('select reason from garmin.import_provenance where dataset=%s and original_table=%s and original_key=%s and metric=%s',(dataset,name,key,metric))
-                            provenance=cur.fetchone()
-                            if provenance and provenance[0] != (reason or '발행'): raise RowMismatch()
-                            if not provenance: cur.execute('insert into garmin.import_provenance values (%s,%s,%s,%s,%s)',(dataset,name,key,metric,reason or '발행'))
-                            if candidate:
-                                value=candidate['value']; kind=definition['type']
-                                cur.execute("select target_id,content_hash,batch from garmin.import_mapping where dataset=%s and original_table=%s and original_key=%s and target_kind=%s",(dataset,name,key,'health:' + metric))
-                                mapped=cur.fetchone()
-                                if mapped and mapped[1] != hashed: raise RowMismatch()
-                                health_id, health_batch = (mapped[0],mapped[2]) if mapped else (uuid7(),batch)
-                                text_display, text_raw, text_encoding = project(value) if kind == 'text' else (None, None, None)
-                                json_display = None; json_raw = None; json_encoding = None
-                                if kind == 'json' and value is not None:
-                                    source_value = candidate['source_value']
-                                    if isinstance(source_value, (SQLiteText, InvalidSQLiteText)): json_raw, json_encoding = source_value.raw, source_value.encoding
-                                    elif isinstance(source_value, str): json_raw, json_encoding = source_value.encode('utf-8'), 'utf-8'
-                                    else: raise ValueError('IMPORT_INVALID')
-                                    if isinstance(value, (str, InvalidSQLiteText)):
-                                        json_display = '{}'
-                                    else:
-                                        json_display = canonical([] if isinstance(value, list) else {}) if contains_nul(value) else canonical(value)
-                                activity_display, activity_raw, activity_encoding = project(candidate['activity'])
-                                if not mapped: cur.execute('insert into garmin.import_mapping values (%s,%s,%s,%s,%s,%s,%s)',(dataset,name,key,'health:' + metric,health_id,hashed,batch))
-                                try:
-                                    with conn.transaction():
-                                        cur.execute("insert into brain.health_observations(id,source,dataset,import_batch,original_table,original_key,account,account_confirmed,metric,value,unit,local_date,observed_at,time_zone,time_zone_missing,revision,fetched_at,normalization_version,source_work_item_id,source_attempt_token,value_type,value_text,value_json,activity_id,sub_identity,account_raw,account_encoding,activity_id_raw,activity_id_encoding,value_text_raw,value_text_encoding,value_json_raw,value_json_encoding,dataset_label,dataset_label_raw,dataset_label_encoding) values (%s,'garmin',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",(health_id,dataset,health_batch,name,key,account_display,acct['confirmed'],metric,value if kind == 'number' else None,definition['unit'],candidate['day'],candidate['observed'],candidate['zone'],candidate['zone'] is None,candidate['revision'],candidate['fetched_at'],candidate['version'],os.environ['BRAIN_WORK_ID'],os.environ['BRAIN_ATTEMPT_TOKEN'],kind,text_display,json_display,activity_display,key,account_raw,account_encoding,activity_raw,activity_encoding,text_raw,text_encoding,json_raw,json_encoding,label_display,label_raw,label_encoding))
-                                except (psycopg.errors.RaiseException, psycopg.errors.UniqueViolation):
-                                    raise RowMismatch()
                         if not mismatch and name in ('notification', 'delivery'):
                             if conversation is None: raise ValueError('IMPORT_INVALID')
                             cur.execute('select conversation_id from garmin.legacy_conversations where dataset=%s and original_table=%s and original_key=%s',(dataset,name,key))
@@ -334,8 +303,7 @@ def run():
             with conn.transaction():
                 cur=conn.cursor(); check(cur)
                 if not all(probe_role(conn).values()): raise ValueError('IMPORT_INVALID')
-                catalog=[row[0] for row in cur.execute('select definition from brain.health_catalog_v1')]
-            capture['private']['fingerprint'] = contract_fingerprint(capture['private']['fingerprint'], catalog)
+            capture['private']['fingerprint'] = contract_fingerprint(capture['private']['fingerprint'])
             # 권위 행보다 먼저 모든 기존 checkpoint의 입력을 확인한다.
             for entry in ordered:
                 dataset=entry['dataset']; path=capture['datasets'][ROLES[entry['source']]]
@@ -356,42 +324,8 @@ def run():
                     conflict(conn,dataset,batch,None,None,'checkpoint_mismatch')
                 schema=read_snapshot(path)['schema']
                 if old and old[1] != schema: conflict(conn,dataset,batch,None,None,'checkpoint_mismatch')
-            accounts = {}
-            for entry in ordered:
-                info = account(read_snapshot(capture['datasets'][ROLES[entry['source']]]))
-                with conn.transaction():
-                    cur=conn.cursor(); check(cur)
-                    cur.execute('select account,account_confirmed,account_raw,account_encoding from garmin.datasets where dataset=%s',(entry['dataset'],))
-                    existing=cur.fetchone()
-                if existing and (existing[1] != info['confirmed'] or restore(existing[0],existing[2],existing[3]) != info['account']):
-                    batch=hashlib.sha256(canonical([capture['private']['capture_id'],entry['dataset']]).encode()).hexdigest()
-                    conflict(conn,entry['dataset'],batch,None,None,'account_mismatch')
-                if info['confirmed']: accounts.setdefault(info['account'], []).append(entry['dataset'])
-            for acct, datasets in accounts.items():
-                account_display, account_raw, account_encoding = project(acct)
-                account_identity = canonical(encoded(acct))
-                with conn.transaction():
-                    cur=conn.cursor(); check(cur)
-                    cur.execute('select pg_advisory_xact_lock(hashtextextended(%s,1))',(account_identity,))
-                    cur.execute('select datasets,rule_id from garmin.authority_provenance where account_identity=%s or (account_identity is null and account=%s and %s::bytea is null)',(account_identity,account_display,account_raw))
-                    previous=cur.fetchone()
-                    authority_mismatch = bool(previous and previous[0] != datasets)
-                    if not authority_mismatch:
-                        ident=previous[1] if previous else uuid7()
-                        try:
-                            with conn.transaction():
-                                cur.execute("select brain.reconcile_import_authority(%s,'garmin',%s,%s,%s,%s,%s,%s,%s)",(ident,account_display,account_raw,account_encoding,datasets,os.environ['BRAIN_WORK_ID'],os.environ['BRAIN_ATTEMPT_TOKEN'],bool(previous)))
-                                ident=cur.fetchone()[0]
-                        except (psycopg.errors.RaiseException,psycopg.errors.UniqueViolation):
-                            authority_mismatch=True
-                        if not previous and not authority_mismatch:
-                            cur.execute('insert into garmin.authority_provenance(account,datasets,rule_id,revision,account_identity) values (%s,%s,%s,1,%s)',(account_display,datasets,ident,account_identity))
-                if authority_mismatch:
-                    first=next(e for e in ordered if e['dataset'] in datasets)
-                    batch=hashlib.sha256(canonical([capture['private']['capture_id'],first['dataset']]).encode()).hexdigest()
-                    conflict(conn,first['dataset'],batch,None,None,'authority_mismatch')
-            verified = {entry['dataset']: ingest(conn,capture,entry,catalog,conversation) for entry in ordered}
-            from analyses import publish
+            verified = {entry['dataset']: ingest(conn,capture,entry,conversation) for entry in ordered}
+            from artifact_publish import publish
             publish(conn,capture,ordered,verified)
             from reports import write_reports
             from metadata_codec import decode_metadata

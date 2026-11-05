@@ -1,77 +1,48 @@
-import { createHash } from 'node:crypto';
-import { copyFile, readFile, realpath, rename, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { randomBytes } from 'node:crypto';
+import { copyFile, mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os'; import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { extHome } from '../test/ext-fixture.js';
+import { provisionExtension, runMigrations } from 'second_brain/postgres';
 
-it('upgrades legacy 0008 ties without changing old observations', async () => {
-  const {postgresStore,runMigrations}=await import('second_brain/postgres');
-  const {runDaemon}=await import('../src/daemon/run.js');
-  const {systemClock}=await import('../src/runtime/clock.js');
-  const {uuidV7IdGen}=await import('../src/runtime/id-gen.js');
-  const fixture=await extHome(), ids=uuidV7IdGen(), controller=new AbortController();
-  const store=postgresStore({databaseUrl:fixture.db.appUrl});
-  let daemon:ReturnType<typeof runDaemon>|undefined;
-  try {
-    const installed=await fixture.run(['ext','install','garmin','--json']);
-    expect(installed.code,installed.stdout+installed.stderr).toBe(0);
-    const home=await realpath(fixture.home), ext=join(home,'extensions/garmin'), migrations=join(ext,'migrations');
-    const migration=join(migrations,'0009_day_publication.sql'), saved=join(home,'0009_day_publication.sql');
-    const noticeMigration=join(migrations,'0011_collect_notices.sql'), savedNotice=join(home,'0011_collect_notices.sql');
-    // Installation starts on the current bundle. Reconstruct the exact empty
-    // 0008 schema and ledger, then run the production migration runner below.
-    await fixture.db.query("drop view garmin.body_records,garmin.collect_target_accounts; drop table garmin.collect_notices,garmin.collect_snapshot_items,garmin.collect_snapshots,garmin.body_sources,garmin.body_documents,garmin.body_measurements; drop table garmin.normalize_day_dirty; drop table garmin.normalize_day_revisions; alter table garmin.normalize_items drop column null_materialized; delete from brain.schema_migrations where owner='garmin' and version in (9,10,11,12)");
-    await rename(migration,saved); await rename(noticeMigration,savedNotice);
-    expect((await fixture.ledger('garmin')).at(-1)).toEqual({owner:'garmin',version:8});
-    const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests/',import.meta.url));
-    await copyFile(join(fixtures,'collect_fixture.py'),join(ext,'collect_fixture.py'));
-    await copyFile(join(fixtures,'legacy_upgrade_fixture.py'),join(ext,'legacy_upgrade_fixture.py'));
-    const manifestPath=join(ext,'manifest.json'), manifest=JSON.parse(await readFile(manifestPath,'utf8'));
-    manifest.work.find((w:any)=>w.kind==='garmin.normalize').entry='legacy_upgrade_fixture.py';
-    await writeFile(manifestPath,JSON.stringify(manifest));
-    await writeFile(join(home,'.garmin-collect-fixture.json'),JSON.stringify({home,database:new URL(fixture.db.url).pathname.slice(1),host:new URL(fixture.db.url).hostname,port:new URL(fixture.db.url).port}));
-    await store.setSetting({key:'garmin.timezone',value:'Asia/Seoul',updatedAt:new Date()});
-    daemon=runDaemon({home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
-    const queue=async()=>{
-      const id=ids.next(), now=new Date();
-      expect(await store.addWork({id,kind:'garmin.normalize',targetKind:'account',targetId:'12345',createdAt:now,nextAttemptAt:now})).toMatchObject({ok:true});
-      await expect.poll(async()=>(await fixture.db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome,{timeout:30000}).toBe('succeeded');
-    };
-    await queue();
-    const bases=JSON.parse(await readFile(join(home,'legacy-day-bases.json'),'utf8'));
-    const alias=createHash('sha256').update(JSON.stringify([bases['2026-01-01'],'legacy-collision-repair'])).digest('hex');
-    const dataset=String((await fixture.db.rows("select dataset from garmin.datasets where account='12345'"))[0]!.dataset);
-    const legacy=await fixture.db.rows(`select id::text,import_batch,revision,value,normalization_version,to_char(fetched_at at time zone 'UTC','YYYY-MM-DD HH24:MI:SS.US') fetched from brain.health_observations where dataset='${dataset}' and metric='day_summary.steps' order by id`);
-    const legacyStates=await fixture.db.rows(`select day::text,revision,normalization_version,fetched_at_ms::text,ok,error_code,normalized_at_ms::text from garmin.normalize_days where dataset='${dataset}' order by day,revision`);
-    expect(legacy).toHaveLength(3);
-    expect(await fixture.db.rows(`select reason from brain.health_resolution_v1 where dataset='${dataset}' and metric='day_summary.steps' and local_date='2026-01-01'`)).toEqual([{reason:'revision_ambiguous'}]);
-    expect(await fixture.db.rows(`select value,revision from brain.health_current_v1 where dataset='${dataset}' and metric='day_summary.steps' and local_date='2026-01-02'`)).toEqual([{value:2222,revision:bases['2026-01-02']}]);
-    await rename(saved,migration); await rename(savedNotice,noticeMigration);
-    expect(await runMigrations({databaseUrl:fixture.db.url,clock:systemClock,owners:[{owner:'garmin',directory:migrations}]})).toMatchObject({ok:true,applied:['0009_day_publication.sql','0010_runtime_body.sql','0011_collect_notices.sql','0012_analysis_reads.sql']});
-    expect((await fixture.ledger('garmin')).at(-1)).toEqual({owner:'garmin',version:12});
-    expect(await fixture.db.rows(`select ok,null_materialized from garmin.normalize_items where dataset='${dataset}' and key='2025-12-30' and endpoint='rhr_day'`)).toEqual([{ok:true,null_materialized:false}]);
-    expect(await fixture.db.rows(`select reason from brain.health_resolution_v1 where dataset='${dataset}' and metric='day_summary.steps' and local_date='2026-01-01'`)).toEqual([{reason:'revision_ambiguous'}]);
-    manifest.work.find((w:any)=>w.kind==='garmin.normalize').entry='src/normalize.py';
-    await writeFile(manifestPath,JSON.stringify(manifest));
-    await queue();
-    const current=await fixture.db.rows(`select value,revision,normalization_version,to_char(fetched_at at time zone 'UTC','YYYY-MM-DD HH24:MI:SS.US') fetched from brain.health_current_v1 where dataset='${dataset}' and metric='day_summary.steps' and local_date='2026-01-01'`);
-    expect(current).toEqual([{value:1111,revision:alias,normalization_version:8,fetched:'2033-05-18 03:33:20.000001'}]);
-    expect(await fixture.db.rows(`select value,revision from brain.health_current_v1 where dataset='${dataset}' and metric='day_summary.steps' and local_date='2026-01-02'`)).toEqual([{value:2222,revision:bases['2026-01-02']}]);
-    const observations=()=>fixture.db.rows(`select id::text,import_batch,revision,value,normalization_version,to_char(fetched_at at time zone 'UTC','YYYY-MM-DD HH24:MI:SS.US') fetched from brain.health_observations where dataset='${dataset}' and metric='day_summary.steps' order by id`);
-    const after=await observations(); expect(after).toHaveLength(4);
-    expect(after.filter(r=>legacy.some(l=>l.id===r.id))).toEqual(legacy);
-    const states=await fixture.db.rows(`select day::text,revision,normalization_version,fetched_at_ms::text,ok,error_code,normalized_at_ms::text from garmin.normalize_days where dataset='${dataset}' and revision in ('${bases['2026-01-01']}','${bases['2026-01-02']}','${bases.other}') order by day,revision`);
-    expect(states).toEqual(legacyStates);
-    await queue(); expect(await observations()).toEqual(after);
-    const sourcePath=join(ext,'src/normalize_store.py');
-    await writeFile(sourcePath,(await readFile(sourcePath,'utf8')).replace('NORMALIZATION_VERSION = 8','NORMALIZATION_VERSION = 9'));
-    await fixture.db.query('insert into brain.health_supported_versions values (9)');
-    await queue();
-    expect(await fixture.db.rows(`select value,revision,normalization_version,to_char(fetched_at at time zone 'UTC','YYYY-MM-DD HH24:MI:SS.US') fetched from brain.health_current_v1 where dataset='${dataset}' and metric='day_summary.steps' and local_date='2026-01-01'`)).toEqual([{...current[0],normalization_version:9}]);
-    const allVersions=await observations();
-    expect(allVersions.filter(r=>legacy.some(l=>l.id===r.id))).toEqual(legacy);
-    expect(allVersions.filter(r=>r.revision===alias).map(r=>r.fetched)).toEqual([current[0]!.fetched,current[0]!.fetched]);
-    await queue(); expect(await observations()).toEqual(allVersions);
-  } finally {controller.abort(); await daemon; await store.close(); await fixture.cleanup();}
-},180000);
+it('새 설치는 core 31과 Garmin 13을 적용한다', async () => {
+ const fixture=await extHome();
+ try {
+  const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+  expect((await fixture.ledger('garmin')).map(row=>row.version)).toEqual(Array.from({length:13},(_,i)=>i+1));
+  expect(await fixture.ledger('core')).toContainEqual({owner:'core',version:31});
+  expect(await fixture.db.rows("select to_regclass('garmin.raw_records') as raw, to_regclass('garmin.collect_state') as collect")).toEqual([{raw:null,collect:null}]);
+ } finally {await fixture.cleanup();}
+});
+
+it('Garmin v12 이력과 보존 행을 유지하고 v13에서 옛 경로만 제거한다', async () => {
+ const fixture=await extHome(), dir=await mkdtemp(join(tmpdir(),'brain-garmin-v12-'));
+ const clock={now:()=>new Date('2026-01-01T00:00:00Z')};
+ try {
+  await provisionExtension(fixture.db.url,'garmin',randomBytes(24).toString('hex'));
+  const source=new URL('../../../extensions/garmin/migrations/',import.meta.url);
+  for(const file of (await readdir(source)).filter(f=>/^\d{4}_/.test(f) && f<'0013')) await copyFile(new URL(file,source),join(dir,file));
+  const options={databaseUrl:fixture.db.url,clock,owners:[{owner:'garmin',directory:dir}]};
+  expect(await runMigrations(options)).toMatchObject({ok:true});
+  await fixture.db.query(`insert into garmin.datasets(dataset,account,account_confirmed) values ('synthetic','acct',true);
+    insert into garmin.import_batches values ('batch','synthetic',now());
+    insert into garmin.preserved_rows(id,dataset,original_table,original_key,values_json) values ('00000000-0000-4000-8000-000000000001','synthetic','meta','key','{"value":"sample"}');
+    insert into garmin.raw_payloads(dataset,batch,account,scope,original_key,endpoint,fetched_at_ms,checked_at_ms,library_version,body) values ('synthetic','batch','acct','day','key','endpoint',1,2,'v','body');
+    insert into garmin.import_mapping values ('synthetic','meta','key','preserved','00000000-0000-4000-8000-000000000001','hash','batch');
+    insert into garmin.source_schemas values ('synthetic','meta',15,'[{"name":"value"}]','["key"]');
+    insert into garmin.import_checkpoints(batch,dataset,source_hash,schema_version,importer_version,manifest_fingerprint,source_role,conversation_id) values ('batch','synthetic','hash',15,2,'fingerprint','D1','00000000-0000-4000-8000-000000000002');
+    insert into garmin.import_conflicts values ('00000000-0000-4000-8000-000000000003','synthetic','batch','meta','key','synthetic',now());
+    insert into garmin.legacy_conversations values ('synthetic','notification','key','00000000-0000-4000-8000-000000000002');
+    insert into garmin.artifact_inventory(dataset,original_table,artifact_key,batch,category,request_id,analysis_id,metadata) values ('synthetic','artifact','report','batch','report','00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000005','{}');
+    insert into garmin.artifact_relations values ('synthetic','report','report','image','00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000005',null);
+    insert into garmin.input_inventory(dataset,batch,category,state,metadata,metadata_raw) values ('synthetic','batch','body','present','{}',decode('610062','hex'));`);
+  const tables=['datasets','import_batches','raw_payloads','import_mapping','source_schemas','preserved_rows','import_checkpoints','import_conflicts','legacy_conversations','artifact_inventory','input_inventory','artifact_relations'];
+  const snapshot=async()=>{const rows:Record<string,unknown>={};for(const name of tables) rows[name]=await fixture.db.rows(`select count(*)::int as n,md5(coalesce(string_agg(row_to_json(t)::text,',' order by row_to_json(t)::text),'')) as hash from garmin.${name} t`);return rows;};
+  const before=await snapshot();
+  for(const table of tables) expect((before[table] as {n:number}[])[0]?.n,table).toBeGreaterThan(0);
+  await copyFile(new URL('0013_remove_legacy_collect.sql',source),join(dir,'0013_remove_legacy_collect.sql'));
+  expect(await runMigrations(options)).toMatchObject({ok:true,applied:['0013_remove_legacy_collect.sql']}); expect(await snapshot()).toEqual(before);
+  for(const name of ['raw_records','raw_records_v2','body_records','collect_target_accounts','collect_state','collect_runs','collect_fetch_errors','collect_meta','collect_targets','collect_published','normalize_items','normalize_days','normalize_day_dirty','normalize_day_revisions','authority_v2','body_documents','body_sources','body_measurements','collect_snapshots','collect_snapshot_items','collect_notices','import_provenance','authority_provenance']) expect(await fixture.db.rows(`select to_regclass('garmin.${name}') as object`)).toEqual([{object:null}]);
+  expect(await fixture.db.rows("select has_schema_privilege('brain_app','garmin','usage') as allowed")).toEqual([{allowed:false}]);
+ } finally {await fixture.cleanup(); await rm(dir,{recursive:true,force:true});}
+});

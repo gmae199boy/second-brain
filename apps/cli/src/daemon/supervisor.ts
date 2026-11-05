@@ -4,8 +4,6 @@ import { join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { envFilePath } from '../config/paths.js';
 import { runSupervisor, PROCESS_ABI_ENV, decodeExtensionManifest, createExtensionSnapshot, type SupervisorOptions, type ProcessInspector, type ProcessLauncher } from 'second_brain';
-import { localFileStore } from '../runtime/file-store.js';
-import { prepareImportVerification } from '../runtime/import-verification.js';
 import { openBrainStore } from '../runtime/brain-store.js';
 import { systemProcessInspector } from '../runtime/process-inspector.js';
 import { systemProcessLauncher } from '../runtime/process-group.js';
@@ -25,8 +23,6 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
     const opened = await openBrainStore({ home: options.home, env: options.env, config, path: 'drain', createStore: options.createStore });
     try {
       const url = config.ok ? await resolveStoreUrl(options.home, config.config.storeUrlEnv, options.env).catch(() => undefined) : undefined;
-      const analysisEnv = { ...options.env };
-      if (config.ok) delete analysisEnv[config.config.storeUrlEnv];
       const telegram = await resolveTelegramConfig(options.home, options.env).catch(() => null);
       const loadProtectedLaunches = async (): Promise<NonNullable<SupervisorOptions['protectedLaunches']>> => {
       const protectedLaunches: Record<string, NonNullable<SupervisorOptions['protectedLaunches']>[string]> = {};
@@ -63,21 +59,11 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
               try { migrationVersions = (await readdir(join(directory, manifest.migrations))).filter(file => /^\d{4}_.+\.sql$/.test(file)).map(file => Number(file.slice(0, 4))).sort((a, b) => a - b); }
               catch { return { ok: false, code: 'EXTENSION_CONFIG_INVALID' }; }
               const readiness = { version: 1, core: versions.ok ? versions.versions['core']?.version ?? null : null, expected_core: opened.expected.core ?? null, extension: versions.ok ? versions.versions[manifest.name]?.version ?? null : null, migrations: migrationVersions, applied_migrations: applied?.ok ? applied.versions : null, manifest_version: manifest.version, abi: manifest.abi };
-              let verificationPath: string | undefined;
-              if ('verification_snapshot' in work && work.verification_snapshot === true) {
-                if (!opened.store.imports || !config.ok) return { ok: false, code: 'EXTENSION_CONFIG_INVALID' };
-                try {
-                  const extensions = join(await realpath(options.home), 'extensions');
-                  const extensionsInfo = await lstat(extensions);
-                  if (!extensionsInfo.isDirectory() || extensionsInfo.isSymbolicLink() || await realpath(directory) !== join(extensions, manifest.name)) throw Error('EXTENSION_CONFIG_INVALID');
-                  verificationPath = await prepareImportVerification({ directory: join(extensions, manifest.name), source: manifest.name, workId: item.id, token, python: join(directory, '.venv', 'bin', 'python'), now: () => options.clock.now(), rawViews: manifest.raw_views ?? [], imports: opened.store.imports, files: localFileStore({ root: config.config.filesPath }) });
-                } catch { return { ok: false, code: 'EXTENSION_CONFIG_INVALID' }; }
-              }
               return { ok: true, spec: { command: work.runtime === 'python' ? join(directory, '.venv', 'bin', 'python') : process.execPath, args: [join(directory, work.entry)], env: {
                 [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: extensionUrl, [PROCESS_ABI_ENV.workId]: item.id,
                 [PROCESS_ABI_ENV.runGeneration]: String(item.attempts), [PROCESS_ABI_ENV.attemptToken]: token, [PROCESS_ABI_ENV.workKind]: item.kind,
                 [PROCESS_ABI_ENV.targetKind]: item.targetKind, [PROCESS_ABI_ENV.targetId]: item.targetId,
-                ...(item.scheduledDates ? { BRAIN_RANGE_FROM: item.scheduledDates.from, BRAIN_RANGE_TO: item.scheduledDates.to } : {}), BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized, BRAIN_EXTENSION_HOME: await realpath(directory), BRAIN_SECRET_SCANNER_NODE: process.execPath, BRAIN_SECRET_SCANNER_SCRIPT: fileURLToPath(new URL('../../dist/workers/secret-scan.js', import.meta.url)), BRAIN_EXTENSION_READINESS: JSON.stringify(readiness), ...(verificationPath ? { BRAIN_IMPORT_VERIFICATION_SNAPSHOT: verificationPath } : {}),
+                ...(item.scheduledDates ? { BRAIN_RANGE_FROM: item.scheduledDates.from, BRAIN_RANGE_TO: item.scheduledDates.to } : {}), BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized, BRAIN_EXTENSION_HOME: await realpath(directory), BRAIN_SECRET_SCANNER_NODE: process.execPath, BRAIN_SECRET_SCANNER_SCRIPT: fileURLToPath(new URL('../../dist/workers/secret-scan.js', import.meta.url)), BRAIN_EXTENSION_READINESS: JSON.stringify(readiness),
               } } };
             },
           };
@@ -103,14 +89,7 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
         idGen: options.idGen, signal: controller.signal, log: (message) => log.write(message),
         ...(options.supervisor?.pollMs === undefined ? {} : { pollMs: options.supervisor.pollMs }),
         ...(options.supervisor?.renewEveryMs === undefined ? {} : { renewEveryMs: options.supervisor.renewEveryMs }),
-        launches: { health_analysis: (item, token) => url ? ({ command: process.execPath,
-          args: [fileURLToPath(new URL('../../dist/workers/health-analysis.js', import.meta.url))],
-          env: { ...analysisEnv, [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: url,
-            [PROCESS_ABI_ENV.workId]: item.id, [PROCESS_ABI_ENV.runGeneration]: String(item.attempts),
-            [PROCESS_ABI_ENV.attemptToken]: token, [PROCESS_ABI_ENV.workKind]: item.kind,
-            [PROCESS_ABI_ENV.targetKind]: item.targetKind, [PROCESS_ABI_ENV.targetId]: item.targetId,
-            BRAIN_ANALYSIS_FILES_PATH: config.ok ? config.config.filesPath : join(options.home, 'files') },
-        }) : null, channel_send: (item, token) => url ? ({
+        launches: { channel_send: (item, token) => url ? ({
           command: process.execPath,
           args: [fileURLToPath(new URL('../../dist/workers/channel-send.js', import.meta.url))],
           env: { [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: url,
