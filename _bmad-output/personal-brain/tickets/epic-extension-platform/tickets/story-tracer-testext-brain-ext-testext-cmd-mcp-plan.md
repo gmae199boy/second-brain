@@ -1,7 +1,7 @@
 ---
 title: '20.1 testext 읽기 명령 tracer'
 type: 'feature'
-ticket: '20.1'
+ticket: '1'
 created: '2026-11-05'
 status: 'built'
 baseline_revision: '255d34e98cf6a4f6a049c5f2fdc5ae5385603772'
