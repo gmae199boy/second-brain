@@ -224,3 +224,16 @@
 | release 기록 | core plugin0.1.16은 이전 구현adea434를 참조 | release3501560과 분리. 운영 설치·계정·예약 변경 없음. runtime/시험harness 실패 가능성은21.8 확인 |
 
 원문·로그·ready/depth1 영수증은 보존 워크트리와 중앙 로컬 archive에 있다. 사용자 인수 전 done으로 올리지 않는다.
+
+## 20.5 — built / snapshot 취득 중복 정리, 시험21.8 이관
+
+근거: [정리 계획](../tickets/epic-extension-platform/tickets/story-refactor-sweep-plan.md)의 Design Notes·Review Triage Log·Auto Run Result.19cef9d에서 core 연결 확인/읽기 명령의 scope설정·비밀·snapshot 취득을 통합했다. R1 독립4렌즈 및 R2 후속verification0건, 단언4묶음 보완, deferred0·후속권고false. 최종 build/typecheck/diffcheck 종료0.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 채택 범위 | 두 core 소비자의 snapshot 취득만 통합 | self·stage/requiredKeys·capability·IO순서·오류/설치실패기록 유지. Runtime auth/daemon의 다른 경계는 기존 순수 생성기 유지 |
+| 필수 시험 인계 | core snapshot/extensions/settings 및 CLI 설치/명령·감독 경로 | 모든 시험 실행21.8 이관·미실행. 선행20.6·20.1~4 시험도 계획 Verification 목록에 포함 |
+| 보존된 정책 |20.3 attempts누적,20.4 A1/quiesce/legacy 안전거부/offline확인 | 이 티켓에서 변경하지 않음. 기존 후속 판단·21.7 운영 절차 유지 |
+| 실행 증거 | 최초 보고 파일 누락 후 보완 수신 | stdin 인코딩 오류 뒤 전송만 실행된 원인 기록. 실제 최종 보고·로그·R1/R2·ready/depth1을 중앙 로컬 archive와 워크트리에 보존 |
+
+신규 운영 조치 없음. 시험/harness runtime 위험은21.8 확인이며 운영 자원 변경 없음. 에픽20은 최신 시험 유예 범위의 built로 전환하며 인수/전체 시험 통과로 표현하지 않는다.
