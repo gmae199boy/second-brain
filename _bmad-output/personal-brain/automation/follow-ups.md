@@ -210,3 +210,17 @@
 | 잔여 위험 / low reject |ABI 날짜 달력 검사·삭제된 예약의 옛 날짜범위·특수 과거DST·키충돌·조회상 회차null |계획 triage의 각 기각 근거 보존. 발생 근거가 생기면 별도 판단;10,000절단 기각은 위 해결 처분으로 대체 |
 
 원문 보고·리뷰·영수증은 보존 워크트리와 중앙 로컬 archive에 있다. 사용자가 인수하기 전 done으로 올리지 않는다.
+
+## 20.4 — built / 패키지 설치·직렬화, 시험21.8 이관
+
+근거: [패키지 설치 계획](../tickets/epic-extension-platform/tickets/story-testext-core-plan.md)의 Review Triage Log·Auto Run Result. 구현 adea434, release 3501560. 독립 R1/R2 thorough4렌즈, R3증분3·R4증분2 후속 및 마지막 시험코드 보완 완료. deferred0, 후속 리뷰 권고 false. build/typecheck 종료0이며 모든 시험 실행은21.8로 이관·미실행이다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 채택 명세 / 가용성 제약 | A1: 불명 잔존 설치 잠금 자동 회수 금지 | 나이·부모PID사망만으로 회수하지 않음. 새 설치 진입 차단·모든 이전 쓰기 자식 종료 확인 후 정확한 잔존 잠금만 명시 복구. DB gate/journal 임의 삭제 금지 |
+| 채택 명세 | core 갱신의 기존 확장 migration에도 quiesce 적용 | 대상core 호환 재확인·새 진입 차단·안전 정산·자기 정지만 재개. legacy gate부재/불명 상태는 관련 변경 전 거부 |
+| 운영 조치 / 자동갱신 제약 | 미추적 과거 자식 가능성이 있는 cross-commit offline 확인 | 잠금 아래 home·이전/목표commit·시도nonce에 결합된 운영자 확인 필요. 기계적 종료증명 아님. hook/JSON/비대화형/yes 대체 불가. 실제 이 Mac 전환21.7에서 준비하며 legacy schema 안전거부 시 지원 가능한 전환 경로부터 확인 |
+| 필수 시험 인계 | 실제 CLI·동시bootstrap/package·전환 중단·gate/claim/fire·감독 자식·공용 보존 |21.8에서 새·기존 시험 순차 실행. app승격/재개·TTY·offline 확인 수명·33→34→35·권한·TS/Python ABI·fixture digest/ref/version 포함. 계획 Verification 및 최종 보고에 목록/준비/정리 명령 보존 |
+| release 기록 | core plugin0.1.16은 이전 구현adea434를 참조 | release3501560과 분리. 운영 설치·계정·예약 변경 없음. runtime/시험harness 실패 가능성은21.8 확인 |
+
+원문·로그·ready/depth1 영수증은 보존 워크트리와 중앙 로컬 archive에 있다. 사용자 인수 전 done으로 올리지 않는다.
