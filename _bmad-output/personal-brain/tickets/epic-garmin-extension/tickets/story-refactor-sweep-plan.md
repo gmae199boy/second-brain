@@ -119,3 +119,5 @@ deferred: []
 -21.8 인계: 선행20.6·20.1~20.5·21.2~21.5와이번영향시험모두포함한 `pnpm test` → `pnpm test:python` 순차실행·실패별수정/관련재검증필수. 이번직접영향은garmin-unit(신규11메서드 discovery)·collect/report/core/native/query와package/경로분류다. README의전용소유compose/PG/role·격리home·합성자료/fake외부를준비하고기준SHA/환경/소유자원·명령/종료코드/로그·실패처분/재검증을남긴다. 자기소유자원만harness/compose절차로정리한다. 새·기존시험미실행/미해결실패시21.8 built/21.7 시작금지다.
 - 잔여위험: PG/oracle/실권한·credential crash/fsync·모델후손/bodyIPC·예약경쟁·파일/채널비동기·설치/전체회귀의실행결과는21.8에서만확정된다. 신규운영조치없음. 선행BH04문서링크한계/보호tokenstore귀속증거/KST서술/명시재생성·reject/실패pending·20.4 A1/quiesce/legacy안전거부/offline확인/자동hook·JSON·yes제약·20.3 attempts는 Design Notes의처분대로보존한다. 새제품/보안/운영정책추가없음.
 - 티켓branch정상hook commit/push·원격SHA확인뒤실제최종보고파일을작성·내용확인해중앙Run으로보낸다. main병합/push·에픽전이·중앙state/공용follow-ups변경은하지않는다. worktree/branch/세션/증거는보존한다. 구현commit뒤별도release에서이전구현commit참조·Garmin pluginversion0.1.2·package.plugin_version/digest를함께갱신한다.
+
+- 릴리스: 이전 구현commit `4be310a8ab97bddcf5a80f565f7d9bf5ab0f9a44`을 Garmin app-ref로 선택하고 plugin version0.1.1→0.1.2와 package.plugin_version/digest를 같은releasecommit에동기화한다. 제품source/SQL/시험코드는구현commit뒤변경없다. 최종branch/remoteSHA는실제최종보고에남긴다.
