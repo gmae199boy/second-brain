@@ -199,6 +199,14 @@
           "time_zone": {
             "type": "string",
             "pattern": "\\S"
+          },
+          "target_setting": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_.-]*$"
+          },
+          "after_schedule": {
+            "type": "string",
+            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$"
           }
         },
         "oneOf": [
@@ -328,6 +336,15 @@
     "plugin_version": {
       "type": "string",
       "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "requires": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "channel.send"
+        ]
+      }
     }
   },
   "$defs": {

@@ -24,8 +24,10 @@ export async function tickSchedules({store,clock,idGen,readTimeZone,cron,log}: {
    }
    if(list.schedules.length<limit)break;limit*=2;
   }
-  const due=await store.listDueSchedules({now,limit:SCHEDULE_TICK_LIMIT});if(!due.ok)return {...due,fired,enqueued};
-  for(const s of due.schedules){if(!s.nextRunAt)continue;
+  let dueLimit=SCHEDULE_TICK_LIMIT;const seenDue=new Set<string>();
+  for (;;) {
+  const due=await store.listDueSchedules({now,limit:dueLimit});if(!due.ok)return {...due,fired,enqueued};
+  for(const s of due.schedules){if(fired>=SCHEDULE_TICK_LIMIT)break;if(seenDue.has(s.id) || !s.nextRunAt)continue;seenDue.add(s.id);
    const advance=(after:Date):Date|null=>s.triggerKind==='cron'?cron.next(s.cronExpr!,s.timeZone!,after):s.triggerKind==='interval'?new Date(after.getTime()+s.intervalSeconds!*1000):null;
    let policy:'latest'|'coalesce'|'skip'='latest';if(s.triggerKind!=='once'){const read=await store.readMissedPolicy({kind:s.kind});if(!read.ok)return {...read,fired,enqueued};policy=read.policy;}
    let expected:Date|null=s.nextRunAt;
@@ -44,6 +46,9 @@ export async function tickSchedules({store,clock,idGen,readTimeZone,cron,log}: {
     const result=await store.fireSchedule({scheduleId:s.id,expectedTriggerKind:s.triggerKind,expectedTimeZone:s.timeZone,expectedCronExpr:s.cronExpr,expectedNextRunAt:expected,nextRunAt:next,now,occurrences,work:{id:idGen.next(),kind:s.kind,targetKind:s.targetKind,targetId:s.targetId,holdGroup:s.holdGroup,createdAt:now,nextAttemptAt:now}});
     if(!result.ok)return {...result,fired,enqueued};if(!result.fired)break;fired++;if(result.created)enqueued++;expected=next;
    }
+  }
+  if(fired>=SCHEDULE_TICK_LIMIT || due.schedules.length<dueLimit)break;
+  if(dueLimit > Number.MAX_SAFE_INTEGER / 2)break;dueLimit*=2;
   }
   return {ok:true,fired,enqueued,...(warnings.length ? {warnings} : {})};
  }catch(error){return {ok:false,code:'SCHEDULE_INVALID',message:error instanceof Error?error.message:'예약을 계산할 수 없습니다',fired,enqueued};}

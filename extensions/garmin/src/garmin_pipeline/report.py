@@ -842,7 +842,7 @@ def _notify_failed(
             timeout_seconds=ports.NOTIFY_TIMEOUT_SECONDS,
         )
     except Exception as error:  # noqa: BLE001 - 전송 실패는 사유만 남기고 명령을 계속한다
-        logger.warning("Telegram: network (%s)", type(error).__name__)
+        logger.warning("notice delivery failed (%s)", type(error).__name__)
         reason = errors.DeliveryReason.NETWORK
     try:
         with store.write_session(cfg) as conn:
@@ -1127,18 +1127,21 @@ def _evaluate(cfg, writer, inputs, scope, usages):
 
 def _save_evaluation(cfg, day, scope, analysis):
     with store.write_session(cfg) as conn:
-        store.append_evaluation(
-            conn,
-            report_date=day.isoformat(),
-            scope=scope,
-            summary=analysis.summary,
-            judgments=json.dumps(analysis.judgments, ensure_ascii=False),
-            evidence=json.dumps(analysis.evidence, ensure_ascii=False),
-            next_checks=json.dumps(analysis.next_checks, ensure_ascii=False),
-            report_md=analysis.report_md,
-            model=cfg.report_model or "",
-            created_at=dates.now_ms(),
-        )
+        with store.transaction(conn):
+            revision = store.append_evaluation(
+                conn,
+                report_date=day.isoformat(),
+                scope=scope,
+                summary=analysis.summary,
+                judgments=json.dumps(analysis.judgments, ensure_ascii=False),
+                evidence=json.dumps(analysis.evidence, ensure_ascii=False),
+                next_checks=json.dumps(analysis.next_checks, ensure_ascii=False),
+                report_md=analysis.report_md,
+                model=cfg.report_model or "",
+                created_at=dates.now_ms(),
+            )
+            conn.execute('insert into garmin.report_work_revisions(work_id,user_id,connection_id,report_date,scope,revision) values (%s,%s,%s,%s,%s,%s)',
+                         (os.environ['BRAIN_WORK_ID'], conn.user_id, conn.connection_id, day.isoformat(), scope, revision))
 
 
 def _combined_summary(day, periods):
@@ -1174,6 +1177,31 @@ def _assert_attempt_current(cfg):
             pass
 
 
+def _work_revisions(cfg, today, regenerate):
+    with store.write_session(cfg) as conn:
+        with store.transaction(conn):
+            recorded = dict(conn.execute('select scope,revision from garmin.report_work_revisions where work_id=%s and user_id=%s and connection_id=%s and report_date=%s',
+                                         (os.environ['BRAIN_WORK_ID'], conn.user_id, conn.connection_id, today.isoformat())).fetchall())
+            if not regenerate:
+                for scope in ('day', '7d', '30d', 'all'):
+                    if scope not in recorded:
+                        row = store.latest_evaluation(conn, report_date=today.isoformat(), scope=scope)
+                        if row is not None:
+                            conn.execute('insert into garmin.report_work_revisions(work_id,user_id,connection_id,report_date,scope,revision) values (%s,%s,%s,%s,%s,%s)',
+                                         (os.environ['BRAIN_WORK_ID'], conn.user_id, conn.connection_id, today.isoformat(), scope, row[9]))
+                            recorded[scope] = row[9]
+    return recorded
+
+
+def _read_work_revisions(cfg, today):
+    conn = store.read_connection(cfg)
+    try:
+        return dict(conn.execute('select scope,revision from garmin.report_work_revisions where work_id=%s and user_id=%s and connection_id=%s and report_date=%s',
+                                 (os.environ['BRAIN_WORK_ID'], conn.user_id, conn.connection_id, today.isoformat())).fetchall())
+    finally:
+        conn.close()
+
+
 def run_supervised(cfg, writer, *, regenerate=False, today=None):
     """Run only analysis, appending each success before starting the next scope.
 
@@ -1182,9 +1210,14 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
     """
     today = dates.today(cfg) if today is None else today
     started_at = dates.now_ms()
-    completed = set() if regenerate else _completed_scopes(cfg, today)
+    recorded = _work_revisions(cfg, today, regenerate)
+    completed = set(recorded)
     remaining = [scope for scope in ('day', '7d', '30d', 'all') if scope not in completed]
     if not remaining:
+        import report_publish
+        document = report_publish.publish_and_wait(cfg, today, recorded)
+        import report_channel
+        report_channel.success(cfg, today, recorded, document)
         return {'status': 'noop', 'scopes': 0}
     failed = False
     try:
@@ -1243,4 +1276,9 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
         _save_evaluation(cfg, today, scope, analysis)
     if failed:
         raise SupervisedReportFailed('analysis or body intake failed')
+    recorded = _read_work_revisions(cfg, today)
+    import report_publish
+    document = report_publish.publish_and_wait(cfg, today, recorded)
+    import report_channel
+    report_channel.success(cfg, today, recorded, document)
     return {'status': 'success', 'scopes': len(remaining)}

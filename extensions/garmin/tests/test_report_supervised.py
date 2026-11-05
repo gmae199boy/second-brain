@@ -47,7 +47,11 @@ class SupervisedReportTest(unittest.TestCase):
         self.completed_scopes = report._completed_scopes
         self.stack = contextlib.ExitStack()
         self.addCleanup(self.stack.close)
-        self.stack.enter_context(patch.object(report, '_completed_scopes', side_effect=lambda cfg, day: set(self.rows)))
+        self.work_rows = {}
+        self.stack.enter_context(patch.object(report, '_work_revisions', side_effect=lambda cfg, day, regenerate: dict(self.work_rows) if regenerate else {k: len(v) for k, v in self.rows.items()}))
+        self.stack.enter_context(patch.object(report, '_read_work_revisions', side_effect=lambda cfg, day: {k: len(v) for k, v in self.rows.items()}))
+        self.stack.enter_context(patch('report_publish.publish_and_wait'))
+        self.stack.enter_context(patch('report_channel.success'))
         self.stack.enter_context(patch.object(report.body, 'pending', side_effect=lambda cfg: list(self.pending)))
         self.stack.enter_context(patch.object(report.report_input, 'build', return_value=self.exported))
         self.stack.enter_context(patch.object(report.report_input, 'build_period', side_effect=lambda cfg, folder, day, scope: folder / scope))
@@ -57,10 +61,12 @@ class SupervisedReportTest(unittest.TestCase):
             if self.stale: raise store.StaleAttempt('stale')
             self.calls.append('saved:' + scope)
             self.rows.setdefault(scope, []).append(result.report_md)
+            self.work_rows[scope] = len(self.rows[scope])
         self.stack.enter_context(patch.object(report, '_save_evaluation', side_effect=save))
         self.stack.enter_context(patch.object(report, '_assert_attempt_current', side_effect=lambda cfg: None))
 
     def run_report(self, regenerate=False):
+        if regenerate: self.work_rows = {}
         return report.run_supervised(self.cfg, self.writer, regenerate=regenerate, today=DAY)
 
     def test_order_immediate_append_then_resume_missing_scopes(self):
@@ -214,6 +220,18 @@ class SupervisedReportTest(unittest.TestCase):
 
 
 class RuntimeBindingTest(unittest.TestCase):
+    def test_invalid_channel_stops_before_model(self):
+        env = report_env()
+        class Conn:
+            def execute(self, sql, args):
+                return SimpleNamespace(fetchone=lambda: ('UTC',) if 'account_connections' in sql else (False,))
+        scope = lambda *args, **kwargs: contextlib.nullcontext(Conn())
+        with patch.object(store, 'supervised_account', scope), patch.object(store, 'report_session', scope), \
+             patch.object(store, 'write_session', scope), patch.object(store, 'transaction', scope), \
+             patch.object(report, 'run_supervised') as model:
+            with self.assertRaises(report_runtime.InvalidReportInput): report_runtime.run(env, writer='fake')
+            model.assert_not_called()
+
     def test_account_and_report_lock_span_model_and_all_appends(self):
         states = []
         @contextlib.contextmanager
@@ -227,7 +245,7 @@ class RuntimeBindingTest(unittest.TestCase):
         @contextlib.contextmanager
         def write_session(cfg):
             states.append(('write-enter',)); yield 'conn'; states.append(('write-exit',))
-        def validate(conn, account, cfg): states.append(('validate', conn))
+        def validate(conn, account, cfg, conversation): states.append(('validate', conn))
         def analysis(cfg, writer, regenerate):
             states.append(('analysis', regenerate))
             return {'status': 'success', 'scopes': 4}
@@ -308,3 +326,16 @@ class RuntimeBindingTest(unittest.TestCase):
                 for thread in threads:
                     if thread.ident is not None: thread.join(2)
             self.assertTrue(same_inside.is_set()); self.assertEqual(errors_seen, [])
+
+class ScheduledReportTest(unittest.TestCase):
+    def test_supervisor_date_is_used_and_invalid_never_starts(self):
+        env=report_env(); env.update(BRAIN_OCCURRENCES='["2026-01-02T02:00:00.000+00:00"]',BRAIN_RANGE_FROM='2026-01-02',BRAIN_RANGE_TO='2026-01-02')
+        @contextlib.contextmanager
+        def scope(*args, **kwargs): yield 'conn'
+        with patch.object(store,'supervised_account',scope), patch.object(store,'report_session',scope), patch.object(store,'write_session',scope), patch.object(report_runtime,'validate_account'), patch.object(report_runtime,'install_skills'), patch.object(report,'run_supervised',return_value={'status':'success','scopes':4}) as run:
+            report_runtime.run(env,writer='fake')
+            self.assertEqual(run.call_args.kwargs['today'],date(2026,1,2))
+        env['BRAIN_RANGE_TO']='2026-01-03'
+        with patch.object(store,'report_session') as session:
+            with self.assertRaises(report_runtime.InvalidReportInput): report_runtime.run(env,writer='fake')
+            session.assert_not_called()

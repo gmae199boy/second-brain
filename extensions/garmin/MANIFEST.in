@@ -1,0 +1,5 @@
+graft src
+prune tests
+prune fixtures
+exclude UPSTREAM.md
+recursive-exclude * __pycache__ *.py[cod]

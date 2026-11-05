@@ -93,8 +93,24 @@ def _valid(value, schema_adapter=None):
     if auth and (not auth['kind'].startswith(name + '.') or auth['kind'] in kinds):
         return False
     schedules = value.get('default_schedules', [])
+    for schedule in schedules:
+        target = schedule.get('target_setting')
+        if target is not None and not any(s['key'] == target and s['type'] == 'string' and s.get('scope', 'user') == 'user' and not s.get('secret', False) and 'machine' not in s for s in settings):
+            return False
     schedule_keys = [s.get('key', f"{s['kind']}:{s['target_kind']}:{s['target_id']}") for s in schedules]
-    return len(schedule_keys) == len(set(schedule_keys)) and all(schedule['kind'] in kinds for schedule in schedules)
+    if len(schedule_keys) != len(set(schedule_keys)) or not all(schedule['kind'] in kinds for schedule in schedules):
+        return False
+    for entry in schedules:
+        if 'after_schedule' not in entry:
+            continue
+        parent = next((item for item, key in zip(schedules, schedule_keys) if key == entry['after_schedule']), None)
+        if (parent is None or parent is entry or 'after_schedule' in parent or parent['target_kind'] != entry['target_kind']
+                or parent.get('target_setting') != entry.get('target_setting')
+                or ('target_setting' not in parent and parent['target_id'] != entry['target_id'])
+                or parent.get('time_zone') is None or parent.get('time_zone') != entry.get('time_zone')
+                or 'local_time' in parent or 'local_time' in entry):
+            return False
+    return True
 
 def valid(value, schema_adapter=None):
     try:

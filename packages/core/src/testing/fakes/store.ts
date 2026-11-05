@@ -172,6 +172,7 @@ function plainToolNote(note: StoredToolNote): ToolNote {
  * it is read back in (migration 0006).
  */
 export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
+  const settingStore = memorySettingsStore();
   const { health = DEFAULT_HEALTH } = options;
 
   const installProgress = new Map<string, import('../../extensions/install-progress.js').StoredExtensionInstallProgress>();
@@ -227,6 +228,20 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   }
 
   const occurrences = new Map<string, import('../../domain/schedule.js').ScheduleOccurrence>();
+  const localOccurrenceDate=(d:Date,zone:string)=>new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
+  function occurrenceReady(row: import('../../domain/schedule.js').ScheduleOccurrence, item: WorkItem): boolean {
+    const schedule=schedules.get(row.scheduleId);
+    if (!schedule?.afterSchedule) return true;
+    if (!row.timeZone || [...occurrences.values()].some(newer=>newer.scheduleId===row.scheduleId && newer.workId===row.workId && (newer.status==='pending'||newer.status==='claimed') && newer.occurrenceAt>row.occurrenceAt)) return false;
+    return [...occurrences.values()].some(prior=>{
+      const parent=schedules.get(prior.scheduleId), work=workItems.find(w=>w.id===prior.workId);
+      return parent?.extension===schedule.extension && parent?.scheduleKey===schedule.afterSchedule && parent?.userId===row.userId && prior.userId===row.userId && prior.status==='done' && prior.timeZone===row.timeZone && localOccurrenceDate(prior.occurrenceAt,row.timeZone!)===localOccurrenceDate(row.occurrenceAt,row.timeZone!) && work?.targetKind===item.targetKind && work?.targetId===item.targetId;
+    });
+  }
+  function scheduledReady(item:WorkItem):boolean {
+    const active=[...occurrences.values()].filter(o=>o.workId===item.id && (o.status==='pending'||o.status==='claimed'));
+    return active.length===0 || active.some(o=>occurrenceReady(o,item));
+  }
   function transition(item: WorkItem, target: 'pending' | 'failed') {
     for (const row of occurrences.values()) if (row.workId === item.id && (row.status === 'claimed' || (target === 'failed' && row.status === 'pending'))) row.status = target;
     item.scheduledOccurrences = null;
@@ -235,12 +250,15 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   function claimOccurrences(item: WorkItem) {
     const groups: NonNullable<WorkItem['scheduledOccurrences']> = [];
     for (const row of occurrences.values()) if (row.workId===item.id && row.status==='claimed') row.status='pending';
-    const rows=[...occurrences.values()].filter(row=>row.workId===item.id && row.status==='pending').sort((a,b)=>a.occurrenceAt.getTime()-b.occurrenceAt.getTime()||a.scheduleId.localeCompare(b.scheduleId)).slice(0,SCHEDULE_CLAIM_BATCH).sort((a,b)=>a.scheduleId.localeCompare(b.scheduleId)||(a.timeZone ?? '').localeCompare(b.timeZone ?? '')||a.occurrenceAt.getTime()-b.occurrenceAt.getTime());
+    for(const row of occurrences.values()) if(row.workId===item.id && row.status==='pending' && (schedules.get(row.scheduleId)?.afterSchedule || extensionMissedPolicies.get(item.kind.split('.')[0] ?? '')?.[item.kind]==='latest') && [...occurrences.values()].some(newer=>newer.scheduleId===row.scheduleId && newer.workId===row.workId && newer.status==='pending' && newer.occurrenceAt>row.occurrenceAt)) row.status='skipped';
+    const gated=[...occurrences.values()].some(row=>row.workId===item.id && row.status==='pending' && (schedules.get(row.scheduleId)?.afterSchedule || extensionMissedPolicies.get(item.kind.split('.')[0] ?? '')?.[item.kind]==='latest'));
+    const rows=[...occurrences.values()].filter(row=>row.workId===item.id && row.status==='pending' && occurrenceReady(row,item)).sort((a,b)=>a.occurrenceAt.getTime()-b.occurrenceAt.getTime()||a.scheduleId.localeCompare(b.scheduleId)).slice(0,gated ? 1 : SCHEDULE_CLAIM_BATCH).sort((a,b)=>a.scheduleId.localeCompare(b.scheduleId)||(a.timeZone ?? '').localeCompare(b.timeZone ?? '')||a.occurrenceAt.getTime()-b.occurrenceAt.getTime());
     for (const row of rows) { row.status='claimed'; let group=groups.at(-1); if (!group || group.scheduleId!==row.scheduleId || group.timeZone!==row.timeZone) { group={scheduleId:row.scheduleId,timeZone:row.timeZone,occurrences:[]}; groups.push(group); } group.occurrences.push(new Date(row.occurrenceAt)); }
     item.scheduledOccurrences=groups.length?groups:null;
   }
   function settleSuccess(item: WorkItem, now: Date) {
     for (const row of occurrences.values()) if (row.workId===item.id && row.status==='claimed') { row.status='done'; row.recordedAt=new Date(now); }
+    for(const pendingRow of occurrences.values()) if(pendingRow.workId===item.id && pendingRow.status==='pending' && pendingRow.timeZone && schedules.get(pendingRow.scheduleId)?.afterSchedule && [...occurrences.values()].some(done=>done.workId===item.id && done.scheduleId===pendingRow.scheduleId && done.userId===pendingRow.userId && done.status==='done' && done.timeZone===pendingRow.timeZone && localOccurrenceDate(done.occurrenceAt,done.timeZone!)===localOccurrenceDate(pendingRow.occurrenceAt,pendingRow.timeZone!))) {pendingRow.status='skipped';pendingRow.recordedAt=new Date(now);}
     const pending=item.cancelRequestedAt===null && [...occurrences.values()].some(row=>row.workId===item.id && row.status==='pending');
     item.completedAt=pending?null:now; item.outcome=pending?null:'succeeded'; if(pending)item.nextAttemptAt=now; else transition(item,'failed'); item.scheduledOccurrences=null;
   }
@@ -630,7 +648,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       }
       return { ok: true, outcome: 'ready', result: attempt?.requestId === input.requestId ? attempt.result : null };
     },
-    ...memorySettingsStore(),
+    ...settingStore,
     async readConversationSnapshot(sessionId) {
       if (![...sessions.values()].some(s => s.id === sessionId)) return { ok: true, snapshot: null };
       const rows = conversationMessages(sessionId);
@@ -798,10 +816,25 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     async fireSchedule(input) {
       if ([input.now, input.expectedNextRunAt, input.nextRunAt, input.work.createdAt, input.work.nextAttemptAt, ...input.occurrences.map(item => item.occurrenceAt)].some(value => value !== null && !formatInstant(value).ok)) return {ok:false,code:'DB_UNAVAILABLE',message:'잘못된 예약 발화 시각입니다'};
       const row=schedules.get(input.scheduleId);if(!row || !row.enabled || row.removedAt || isHeld(row.holdGroup) || isQuiesced(row.kind) || (row.extension !== null && quiescedExtensions.has(row.extension)) || row.nextRunAt?.getTime()!==input.expectedNextRunAt.getTime() || row.triggerKind!==input.expectedTriggerKind || row.timeZone!==input.expectedTimeZone || row.cronExpr!==input.expectedCronExpr)return {ok:true,fired:false};
-      const fresh=input.occurrences.filter(x=>!occurrences.has(`${row.id}/${x.occurrenceAt.toISOString()}`));
+      let targetId=row.targetId;
+      if(row.targetSetting) {
+        const found=await settingStore.getExactSetting({key:row.targetSetting,userId:row.userId});
+        const value=found?.value;
+        if(typeof value!=='string' || !value.trim() || value.length>1024 || /[\u0000-\u001f\u007f-\u009f]/.test(value)) return {ok:true,fired:false};
+        targetId=value;
+      }
+      const fresh=input.occurrences.filter(x=>!occurrences.has(`${row.id}/${x.occurrenceAt.toISOString()}`)).map(entry=>{
+        const covered=row.afterSchedule && row.timeZone && entry.status==='pending' && [...occurrences.values()].some(done=>{const old=workItems.find(w=>w.id===done.workId);return done.scheduleId===row.id && done.userId===row.userId && done.status==='done' && done.timeZone===row.timeZone && localOccurrenceDate(done.occurrenceAt,row.timeZone!)===localOccurrenceDate(entry.occurrenceAt,row.timeZone!) && old?.targetKind===input.work.targetKind && old?.targetId===targetId;});
+        return covered ? {...entry,status:'skipped' as const} : entry;
+      });
       const pending=fresh.filter(x=>x.status==='pending');let workId:string|null=null;let created=false;
-      if(pending.length){const work=addWork({...input.work,holdGroup:row.holdGroup});if(!work.ok)return work;workId=work.item.id;created=work.created;}
+      if(pending.length){const work=addWork({...input.work,targetId,holdGroup:row.holdGroup});if(!work.ok)return work;workId=work.item.id;created=work.created;}
       for(const item of fresh)occurrences.set(`${row.id}/${item.occurrenceAt.toISOString()}`,{scheduleId:row.id,occurrenceAt:new Date(item.occurrenceAt),status:item.status,timeZone:row.timeZone,workId:item.status==='pending'?workId:null,userId:row.userId,recordedAt:new Date(input.now)});
+      if((row.afterSchedule || extensionMissedPolicies.get(row.kind.split('.')[0] ?? '')?.[row.kind]==='latest') && workId){
+        const pendingRows=[...occurrences.values()].filter(o=>o.scheduleId===row.id && o.workId===workId && o.status==='pending');
+        const latest=Math.max(...pendingRows.map(o=>o.occurrenceAt.getTime()));
+        for(const pendingRow of pendingRows) if(pendingRow.occurrenceAt.getTime()<latest){pendingRow.status='skipped';pendingRow.recordedAt=new Date(input.now);}
+      }
       row.lastRunAt=new Date(input.now);row.nextRunAt=input.nextRunAt?new Date(input.nextRunAt):null;
       return {ok:true,fired:true,created,covered:!pending.length};
     },
@@ -1539,11 +1572,11 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     },
 
     async hasDueWork(query: DueWorkQuery): Promise<HasDueWorkResult> {
-      return { ok: true, due: candidates(workItems.filter(i => !isHeld(i.holdGroup) && !isQuiesced(i.kind)), query, workDependencies, 'core', workItems).length > 0 };
+      return { ok: true, due: candidates(workItems.filter(i => !isHeld(i.holdGroup) && !isQuiesced(i.kind) && scheduledReady(i)), query, workDependencies, 'core', workItems).length > 0 };
     },
 
     async claimWork(input: ClaimWorkInput): Promise<ClaimWorkResult> {
-      const [next] = candidates(workItems.filter(i => !isHeld(i.holdGroup) && !isQuiesced(i.kind)), input, workDependencies, 'core', workItems);
+      const [next] = candidates(workItems.filter(i => !isHeld(i.holdGroup) && !isQuiesced(i.kind) && scheduledReady(i)), input, workDependencies, 'core', workItems);
       if (next === undefined) return { ok: true, item: null };
 
       // The attempt is raised by the claim and not by the outcome, so an item
@@ -1616,7 +1649,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       return { ok: true, outcome: 'done' };
     },
     async claimSupervisedWork(input) {
-      const [item] = candidates(workItems.filter(i => i.currentAttemptToken === null && i.cancelRequestedAt === null && !isHeld(i.holdGroup) && !isQuiesced(i.kind)), input, workDependencies, 'supervised', workItems);
+      const [item] = candidates(workItems.filter(i => i.currentAttemptToken === null && i.cancelRequestedAt === null && !isHeld(i.holdGroup) && !isQuiesced(i.kind) && scheduledReady(i)), input, workDependencies, 'supervised', workItems);
       if (!item) return { ok: true, item: null, attemptToken: null };
       if (workAttempts.some((a) => a.token === input.attemptToken)) return { ok: false, code: 'DB_UNAVAILABLE', message: '이미 쓰인 시도 토큰입니다' };
       item.attempts += 1;
@@ -1974,11 +2007,12 @@ function cloneSchedule(row: import('../../domain/schedule.js').Schedule): import
 }
 
 /** Independent fake: settings remain a separate Store capability. */
-export function memorySettingsStore(): import('../../ports/store.js').SettingsStore {
+export function memorySettingsStore(): import('../../ports/store.js').SettingsStore & {getExactSetting(input:{userId:string;key:string}):Promise<import('../../ports/store.js').SettingRecord | undefined>} {
   const settings = new Map<string, import('../../ports/store.js').SettingRecord>();
   const keyOf = (userId: string | null, key: string) => JSON.stringify([userId, key]);
   const read = (userId: string | null, key: string) => settings.get(keyOf(userId, key)) ?? settings.get(keyOf(null, key));
   return {
+    async getExactSetting({userId,key}) { return settings.get(keyOf(userId,key)); },
     async getSettings({ keys, userId }) { return { ok: true, settings: [...new Set(keys)].flatMap(key => { const row = read(userId, key); return row ? [{ ...row, updatedAt: new Date(row.updatedAt) }] : []; }) }; },
     async getSetting({ key, userId }) { const row = read(userId, key); return { ok: true, setting: row ? { ...row, updatedAt: new Date(row.updatedAt) } : null }; },
     async setSetting({ userId, ...input }) { settings.set(keyOf(userId, input.key), { ...input, updatedAt: new Date(input.updatedAt) }); return { ok: true }; },

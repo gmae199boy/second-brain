@@ -727,7 +727,7 @@ def _read_body(cfg, report_date):
     return {"items": items, "labels": BODY_LABELS}
 
 
-def _read_chart_data(cfg, report_date):
+def _read_chart_data(cfg, report_date, *, strict=False):
     result = {"report_date": report_date.isoformat()}
     try:
         with (
@@ -748,19 +748,27 @@ def _read_chart_data(cfg, report_date):
                 result["all"] = _bucket(
                     _read_daily(conn, date.fromisoformat(first), report_date)
                 )
-    except Exception as error:  # noqa: BLE001 - DB failure must not block the ledger
+    except Exception as error:  # noqa: BLE001 - preserve legacy best-effort callers
+        if strict:
+            raise
         logger.warning("charts DB 실패: error=%s", type(error).__name__)
         result = {"report_date": report_date.isoformat()}
     try:
         result["body_measurements"] = _read_body(cfg, report_date)
-    except Exception as error:  # noqa: BLE001 - ledger failure must not block DB graphs
+    except Exception as error:  # noqa: BLE001 - preserve legacy best-effort callers
+        if strict:
+            raise
         logger.warning("charts 장부 실패: error=%s", type(error).__name__)
     return result
 
 
-def render(cfg: config.Config, report_date: date, out_dir: Path) -> list[Graph]:
+class ChartRenderFailed(Exception):
+    """At least one eligible graph could not be rendered."""
+
+
+def render(cfg: config.Config, report_date: date, out_dir: Path, *, strict=False) -> list[Graph]:
     """빈 out_dir에 PNG(0600)를 쓰고 성공한 Graph만 번호 순으로 돌려준다."""
-    chart_data = _read_chart_data(cfg, report_date)
+    chart_data = _read_chart_data(cfg, report_date, strict=True) if strict else _read_chart_data(cfg, report_date)
 
     jobs = [
         ("01-yesterday.png", FIGURE_SIZE_IN, lambda fig: _yesterday(fig, chart_data))
@@ -872,6 +880,7 @@ def render(cfg: config.Config, report_date: date, out_dir: Path) -> list[Graph]:
         ("59-body.png", FIGURE_SIZE_IN, lambda fig: _body_trend(fig, chart_data))
     )
     drawn = []
+    failed = []
     for name, size, draw in jobs:
         path = out_dir / name
         figure = None
@@ -902,6 +911,7 @@ def render(cfg: config.Config, report_date: date, out_dir: Path) -> list[Graph]:
                         raise ValueError("PNG size limit")
                     drawn.append(Graph(name, figure.axes[0].get_title()))
             except Exception as error:  # noqa: BLE001 - 그래프별 실패를 격리한다
+                failed.append(name)
                 logger.warning(
                     "charts 그래프 실패: graph=%s error=%s", name, type(error).__name__
                 )
@@ -917,5 +927,7 @@ def render(cfg: config.Config, report_date: date, out_dir: Path) -> list[Graph]:
                         len(caught),
                         caught[0].category.__name__,
                     )
+    if strict and failed:
+        raise ChartRenderFailed(tuple(failed))
     logger.info("charts 끝: drawn=%d", len(drawn))
     return drawn

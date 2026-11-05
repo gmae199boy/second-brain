@@ -77,6 +77,13 @@ it('enforces the role, public view and fenced provenance contracts over real con
     const channel = randomUUID(), conversation = randomUUID();
     await admin.query('insert into brain.channels values ($1,$2,$3)', [channel, 'telegram', 'bot']);
     await admin.query('insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ($1,$2,$3,null,$4)', [conversation, channel, 'chat', sampleSelfUserInput().id]);
+    const otherUser = randomUUID(), otherConversation = randomUUID();
+    await admin.query("insert into brain.users(id,name,is_self,created_at) values ($1,'synthetic',0,now())", [otherUser]);
+    await admin.query('insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ($1,$2,$3,null,$4)', [otherConversation, channel, 'other-chat', otherUser]);
+    const validate = 'select brain.extension_channel_conversation_valid($1,$2,$3) as valid';
+    expect((await a.query(validate, [id,token,conversation])).rows[0].valid).toBe(true);
+    for (const target of [otherConversation, randomUUID()]) expect((await a.query(validate, [id,token,target])).rows[0].valid).toBe(false);
+    await expect(b.query(validate, [id,token,conversation])).rejects.toMatchObject({code:'42501'});
     const requestSql = `insert into brain.channel_requests(id,conversation_id,producer,producer_result_id,purpose,body,created_at,source_work_item_id,source_attempt_token) values ($1,$2,$3,$4,'notice','body',now(),$5,$6)`;
     const notificationSql = `insert into brain.channel_legacy_notifications(id,conversation_id,source,dataset,original_table,original_key,import_batch,local_date,event,detail,at,source_work_item_id,source_attempt_token) values ($1,$2,$3,'dataset','notifications',$4,'batch','2026-10-31','event','',now(),$5,$6)`;
     const deliverySql = `insert into brain.channel_legacy_deliveries(id,conversation_id,source,dataset,original_table,original_key,import_batch,original_id,local_date,kind,event,ok,at,source_work_item_id,source_attempt_token) values ($1,$2,$3,'dataset','deliveries',$4,'batch',$4,'2026-10-31','notice','event',true,now(),$5,$6)`;
@@ -95,7 +102,55 @@ it('enforces the role, public view and fenced provenance contracts over real con
     await expect(a.query("insert into brain.channel_item_results(request_id,item_index,work_item_id,attempt_token,result,updated_at) values ($1,0,$2,$3,'{}',now())", [randomUUID(),id,token])).rejects.toMatchObject({ code: '42501' });
     await a.query('insert into contract_test.results values ($1,$2,$3)', [names[0], id, token]);
     await expect(a.query('insert into contract_test.results values ($1,$2,$3)', [names[1], id, token])).rejects.toMatchObject({ code: '42501' });
+    const publish = 'select brain.extension_channel_publish($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb) as id';
+    const args = [id, token, conversation, `notice:${randomUUID()}`, 'failure', null, 'synthetic', null, null];
+    const first = (await a.query(publish, args)).rows[0].id;
+    expect((await a.query(publish, args)).rows[0].id).toBe(first);
+    await expect(a.query(publish, [...args.slice(0, 6), 'changed', null, null])).rejects.toThrow('publication conflict');
+    await expect(b.query(publish, args)).rejects.toMatchObject({ code: '42501' });
+    await expect(a.query(publish, [id, token, randomUUID(), ...args.slice(3)])).rejects.toMatchObject({ code: '42501' });
+    await expect(a.query(publish, [id, token, conversation, randomUUID(), 'report', null, 'synthetic', randomUUID(), '[]'])).rejects.toThrow('invalid document');
+    const fileRequest = randomUUID(), file = randomUUID(), location = randomUUID();
+    await a.query(`insert into brain.file_requests(id,source,request_key,dataset,import_batch,locator,sha256,size_bytes,media_type,created_at,source_work_item_id,source_attempt_token)
+      values ($1,$2,$3,'synthetic','batch',$4,$5,1,'text/markdown',now(),$6,$7)`, [fileRequest,names[0],randomUUID(),'synthetic', 'a'.repeat(64),id,token]);
+    await admin.query('insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ($1,$2,1,now())', [file, `sha256:${'a'.repeat(64)}`]);
+    await admin.query("insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ($1,$2,'local','synthetic','brain',now())", [location,file]);
+    await admin.query('update brain.files set home_location_id=$1 where id=$2', [location,file]);
+    await admin.query('insert into brain.file_request_results(request_id,file_id,finished_at) values ($1,$2,now())', [fileRequest,file]);
+    const bundleArgs = [id,token,conversation,randomUUID(),'report','revision','synthetic',fileRequest,'[]'];
+    const bundleId = (await a.query(publish,bundleArgs)).rows[0].id;
+    expect((await a.query(publish,bundleArgs)).rows[0].id).toBe(bundleId);
+    const bundle = (await admin.query('select bundle from brain.channel_requests where id=$1',[bundleId])).rows[0].bundle;
+    expect(bundle).toMatchObject({ summary: 'synthetic', albums: [], document: { filename: 'report.md', location: { ownership: 'brain' } } });
+    for (const filename of [null, 42, {}, '', 'bad/name', 'bad\\name', 'bad\nname', 'bad\u007fname']) {
+      const albums = JSON.stringify([[{request_id:fileRequest, filename}]]);
+      await expect(a.query(publish, [...bundleArgs.slice(0, 3), randomUUID(), ...bundleArgs.slice(4, 8), albums])).rejects.toThrow('invalid photo');
+    }
+    const photoAlbums = JSON.stringify([[{request_id:fileRequest, filename:'01.png'}]]);
+    const photoId = (await a.query(publish, [...bundleArgs.slice(0, 3), randomUUID(), ...bundleArgs.slice(4, 8), photoAlbums])).rows[0].id;
+    expect((await admin.query('select bundle from brain.channel_requests where id=$1',[photoId])).rows[0].bundle.albums[0].photos[0].filename).toBe('01.png');
+
+    // The other target has a real completed file from the same extension.
+    const otherWork=randomUUID(), otherToken=randomUUID(), otherRequest=randomUUID(), otherFile=randomUUID(), otherLocation=randomUUID();
+    expect(await store.addWork({id:otherWork,kind:workKind,targetKind:'probe',targetId:'other',createdAt:now,nextAttemptAt:now})).toMatchObject({ok:true});
+    expect(await store.claimSupervisedWork({now,claimedBy:'other',kinds:[workKind],attemptToken:otherToken})).toMatchObject({ok:true,item:{id:otherWork}});
+    await a.query(`insert into brain.file_requests(id,source,request_key,dataset,import_batch,locator,sha256,size_bytes,media_type,created_at,source_work_item_id,source_attempt_token)
+      values ($1,$2,$3,'synthetic','batch','other',$4,1,'image/png',now(),$5,$6)`, [otherRequest,names[0],randomUUID(),'b'.repeat(64),otherWork,otherToken]);
+    await admin.query('insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ($1,$2,1,now())', [otherFile,`sha256:${'b'.repeat(64)}`]);
+    await admin.query("insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ($1,$2,'local','other','brain',now())", [otherLocation,otherFile]);
+    await admin.query('update brain.files set home_location_id=$1 where id=$2', [otherLocation,otherFile]);
+    await admin.query('insert into brain.file_request_results(request_id,file_id,finished_at) values ($1,$2,now())', [otherRequest,otherFile]);
+    const otherArgs=[otherWork,otherToken,conversation,randomUUID(),'report','revision','synthetic',otherRequest,JSON.stringify([[{request_id:otherRequest,filename:'other.png'}]])];
+    const otherId=(await a.query(publish,otherArgs)).rows[0].id;
+    expect((await admin.query('select bundle from brain.channel_requests where id=$1',[otherId])).rows[0].bundle.albums[0].photos[0].filename).toBe('other.png');
+    const beforeRequests=(await admin.query('select id,producer_result_id,body,bundle from brain.channel_requests order by id')).rows;
+    await expect(a.query(publish,[id,token,conversation,randomUUID(),'report','revision','synthetic',otherRequest,'[]'])).rejects.toThrow('invalid document');
+    await expect(a.query(publish,[id,token,conversation,randomUUID(),'report','revision','synthetic',fileRequest,JSON.stringify([[{request_id:otherRequest,filename:'other.png'}]])])).rejects.toThrow('invalid photo');
+    expect((await admin.query('select id,producer_result_id,body,bundle from brain.channel_requests order by id')).rows).toEqual(beforeRequests);
+
     await store.settleSupervisedAttempt({ id, attemptToken: token, now, outcome: 'died' });
+    await expect(a.query(validate, [id,token,conversation])).rejects.toMatchObject({code:'42501'});
+    await expect(a.query(publish, args)).rejects.toMatchObject({ code: '42501' });
     await expect(a.query('insert into contract_test.results values ($1,$2,$3)', [names[0], id, token])).rejects.toMatchObject({ code: 'BRS01' });
     for (const statement of [requestSql, notificationSql, deliverySql]) await expect(a.query(statement, [randomUUID(), conversation, names[0], randomUUID(), id, token])).rejects.toMatchObject({ code: 'BRS01' });
   } finally {

@@ -1,4 +1,4 @@
-"""웰니스·활동 일일 수집(`garmin-pipeline collect`)과 빠진 날 자동 메우기, 실행 중단 규칙,
+"""웰니스·활동 일일 감독 수집과 빠진 날 자동 메우기, 실행 중단 규칙,
 하루 단위 멱등, 실패 알림(FR5~8·12·15~17·19~22, AD-4·5·6·8·10).
 
 수집 계획은 커서·플래그 없이 저장된 데이터(`coverage.items`)에서 실행마다 유도한다. 그래서 빠진 날은
@@ -221,6 +221,8 @@ def run(
     manual: bool = False,
     recent_lists: bool = False,
     notifier: ports.Notifier | None = None,
+    retry_normalize_failed: bool = False,
+    success_in_transaction=None,
 ) -> None:
     """실행 한 번: 수집(`_collect_once`) → 정규화(`normalize.run`) → `normalize_failed` 판정.
 
@@ -240,8 +242,12 @@ def run(
         manual=manual,
         recent_lists=recent_lists,
         notifier=notifier,
+        success_in_transaction=success_in_transaction,
     )
-    normalize.run(conn, timezone=cfg.timezone)
+    if retry_normalize_failed:
+        normalize.run(conn, timezone=cfg.timezone, retry_failed=True)
+    else:
+        normalize.run(conn, timezone=cfg.timezone)
     _notify_normalize_failed(conn, notifier, today, started_at)
 
 
@@ -257,6 +263,7 @@ def _collect_once(
     manual: bool,
     recent_lists: bool,
     notifier: ports.Notifier,
+    success_in_transaction=None,
 ) -> None:
     """수집 한 번: `abandoned` 정리 → 진입 표 → 계획 → 수집 → `run` 행 기록 → 끝 알림 판정."""
     _abandon_running(conn, notifier)
@@ -314,6 +321,8 @@ def _collect_once(
             "UPDATE garmin.run SET status = %s, finished_at = %s, detail = %s WHERE user_id=%s AND connection_id=%s AND id = %s",
             (status.value, dates.now_ms(), detail, conn.user_id, conn.connection_id, run_id),
         )
+        if status == errors.RunStatus.SUCCESS and success_in_transaction is not None:
+            success_in_transaction(conn, run_id, today)
     logger.info("collect 끝: status=%s detail=%s", status, detail)
     _notify_end(conn, notifier, today, (status, detail))
 

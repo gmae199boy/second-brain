@@ -182,7 +182,8 @@
       "required_settings": [
         "garmin.timezone",
         "garmin.tokenstore"
-      ]
+      ],
+      "missed": "latest"
     },
     {
       "kind": "garmin.report",
@@ -192,8 +193,10 @@
       "manual": "report",
       "required_settings": [
         "garmin.timezone",
-        "garmin.analysis_model"
-      ]
+        "garmin.analysis_model",
+        "garmin.channel_conversation_id"
+      ],
+      "missed": "latest"
     },
     {
       "kind": "garmin.report_regenerate",
@@ -203,7 +206,8 @@
       "manual": "report-regenerate",
       "required_settings": [
         "garmin.timezone",
-        "garmin.analysis_model"
+        "garmin.analysis_model",
+        "garmin.channel_conversation_id"
       ]
     }
   ],
@@ -252,6 +256,18 @@
       "type": "number",
       "required": [],
       "default": "20"
+    },
+    {
+      "key": "garmin.connection_id",
+      "type": "string",
+      "scope": "user",
+      "required": []
+    },
+    {
+      "key": "garmin.channel_conversation_id",
+      "type": "string",
+      "scope": "user",
+      "required": []
     }
   ],
   "error_codes": [
@@ -270,6 +286,395 @@
     "REPORT_STALE",
     "REPORT_LOCKED",
     "REPORT_FAILED",
-    "REPORT_UNAVAILABLE"
+    "REPORT_UNAVAILABLE",
+    "COLLECT_INCOMPLETE"
+  ],
+  "commands": [
+    {
+      "name": "daily-values",
+      "runtime": "python",
+      "entry": "src/query_daily_values.py",
+      "description": "Garmin daily-values 조회",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "start_date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "end_date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "metric": {
+            "type": "string",
+            "enum": [
+              "sleep_total_s",
+              "sleep_deep_s",
+              "sleep_light_s",
+              "sleep_rem_s",
+              "sleep_awake_s",
+              "sleep_score",
+              "sleep_hr_min",
+              "hrv_avg",
+              "spo2_avg",
+              "spo2_min",
+              "resp_avg",
+              "wake_bb",
+              "bb_high",
+              "bb_low",
+              "bb_charged",
+              "bb_drained",
+              "stress_avg",
+              "stress_high_s",
+              "steps",
+              "active_kcal",
+              "moderate_min",
+              "vigorous_min",
+              "resting_hr",
+              "weight_kg",
+              "workout.duration_s",
+              "workout.hr_avg",
+              "workout.hr_max",
+              "workout.zone1_s",
+              "workout.zone2_s",
+              "workout.zone3_s",
+              "workout.zone4_s",
+              "workout.zone5_s",
+              "workout.bb_change",
+              "exercise.sets",
+              "exercise.reps",
+              "exercise.max_kg",
+              "exercise.volume_kg",
+              "exercise.set_peak_hr_avg",
+              "exercise.rest_drop_avg",
+              "set.reps",
+              "set.weight_g",
+              "set.duration_s"
+            ]
+          },
+          "activity_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "exercise": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "connection_id",
+          "timezone",
+          "start_date",
+          "end_date",
+          "metric"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                },
+                "value": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "unit": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "date",
+                "value",
+                "unit"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "additionalProperties": false
+      },
+      "timeout_ms": 15000,
+      "risk": "read"
+    },
+    {
+      "name": "period-summary",
+      "runtime": "python",
+      "entry": "src/query_period_summary.py",
+      "description": "Garmin period-summary 조회",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "start_date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "end_date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "metric": {
+            "type": "string",
+            "enum": [
+              "sleep_total_s",
+              "sleep_deep_s",
+              "sleep_light_s",
+              "sleep_rem_s",
+              "sleep_awake_s",
+              "sleep_score",
+              "sleep_hr_min",
+              "hrv_avg",
+              "spo2_avg",
+              "spo2_min",
+              "resp_avg",
+              "wake_bb",
+              "bb_high",
+              "bb_low",
+              "bb_charged",
+              "bb_drained",
+              "stress_avg",
+              "stress_high_s",
+              "steps",
+              "active_kcal",
+              "moderate_min",
+              "vigorous_min",
+              "resting_hr",
+              "weight_kg",
+              "workout.duration_s",
+              "workout.hr_avg",
+              "workout.hr_max",
+              "workout.zone1_s",
+              "workout.zone2_s",
+              "workout.zone3_s",
+              "workout.zone4_s",
+              "workout.zone5_s",
+              "workout.bb_change",
+              "exercise.sets",
+              "exercise.reps",
+              "exercise.max_kg",
+              "exercise.volume_kg",
+              "exercise.set_peak_hr_avg",
+              "exercise.rest_drop_avg",
+              "set.reps",
+              "set.weight_g",
+              "set.duration_s"
+            ]
+          },
+          "activity_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "exercise": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "aggregation": {
+            "type": "string",
+            "enum": [
+              "sum",
+              "mean"
+            ]
+          }
+        },
+        "required": [
+          "connection_id",
+          "timezone",
+          "start_date",
+          "end_date",
+          "metric",
+          "aggregation"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "unit": {
+            "type": "string"
+          },
+          "observed_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "null_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "start_date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "end_date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          }
+        },
+        "required": [
+          "value",
+          "unit",
+          "observed_count",
+          "null_count",
+          "start_date",
+          "end_date"
+        ],
+        "additionalProperties": false
+      },
+      "timeout_ms": 15000,
+      "risk": "read"
+    },
+    {
+      "name": "recent-evaluations",
+      "runtime": "python",
+      "entry": "src/query_recent_evaluations.py",
+      "description": "Garmin recent-evaluations 조회",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "day",
+              "7d",
+              "30d",
+              "all"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "connection_id",
+          "timezone",
+          "scope",
+          "limit"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "evaluations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "day",
+                    "7d",
+                    "30d",
+                    "all"
+                  ]
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "file_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "date",
+                "scope",
+                "summary",
+                "file_id"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "evaluations"
+        ],
+        "additionalProperties": false
+      },
+      "timeout_ms": 15000,
+      "risk": "read"
+    }
+  ],
+  "requires": [
+    "channel.send"
+  ],
+  "default_schedules": [
+    {
+      "key": "collect",
+      "kind": "garmin.collect",
+      "target_kind": "extension",
+      "target_id": "unselected",
+      "target_setting": "garmin.connection_id",
+      "cron": "0 11 * * *",
+      "time_zone": "Asia/Seoul"
+    },
+    {
+      "key": "report",
+      "kind": "garmin.report",
+      "target_kind": "extension",
+      "target_id": "unselected",
+      "target_setting": "garmin.connection_id",
+      "cron": "30 11 * * *",
+      "time_zone": "Asia/Seoul",
+      "after_schedule": "collect"
+    }
   ]
 }

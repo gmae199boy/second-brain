@@ -141,3 +141,93 @@ attempt 재시도를 관찰하고 `test_body_runtime.py`는 날짜와 source 거
 파일 보존을 확인한다. 독립 SQLite oracle도 계산 digest를 파일에 게시해 PG와
 비교한다. 이 코드와 fixture 생성·checker·모든 시험 실행은 **21.8로 이관,
 미실행**이다. 경로 분류는 기존 Garmin 전체 규칙과 분류 assertion을 사용한다.
+
+## 조회 명령 계약
+
+`brain ext garmin daily-values|period-summary|recent-evaluations --input <JSON> --json`과 MCP 도구는 동일 schema를 쓴다. 모든 입력에 자기 소유 `connection_id`와 해당 연결의 IANA `timezone`이 필요하다. 연결 시간대와 다르면 거부한다. 날짜는 `start_date`, `end_date`의 현지 날짜 양끝 포함이며 선택 `activity_type`, `exercise`는 정확히 일치하는 운동으로 제한한다. 일별 지표는 조건에 맞는 운동이 있는 날짜를 고르고, 운동·운동종목·세트 지표는 해당 행만 고른다. `set.*`은 휴식 세트를 제외한다.
+
+`daily-values`는 `rows`에 날짜·값·단위를 반환한다. `period-summary`는 `aggregation` (`sum` 또는 `mean`)을 받고 `value`, `unit`, `observed_count`, `null_count`, 적용 `start_date`/`end_date`를 반환한다. NULL은 0이 아니며 전부 NULL이거나 행이 없으면 값은 null, 관측 수는 0이다. `recent-evaluations`는 `scope` (day/7d/30d/all), `limit` (1~100)을 받아 최신 revision의 날짜·요지·report `file_id`(미확정이면 null)를 반환한다.
+
+| 지표 | 단위 | 허용 집계 |
+|---|---|---|
+| `sleep_total_s` | s | sum, mean |
+| `sleep_deep_s` | s | sum, mean |
+| `sleep_light_s` | s | sum, mean |
+| `sleep_rem_s` | s | sum, mean |
+| `sleep_awake_s` | s | sum, mean |
+| `sleep_score` | score | mean |
+| `sleep_hr_min` | bpm | mean |
+| `hrv_avg` | ms | 없음 |
+| `spo2_avg` | % | 없음 |
+| `spo2_min` | % | 없음 |
+| `resp_avg` | breaths/min | 없음 |
+| `wake_bb` | score | mean |
+| `bb_high` | score | mean |
+| `bb_low` | score | mean |
+| `bb_charged` | score | sum, mean |
+| `bb_drained` | score | sum, mean |
+| `stress_avg` | score | mean |
+| `stress_high_s` | s | sum, mean |
+| `steps` | count | sum, mean |
+| `active_kcal` | kcal | sum, mean |
+| `moderate_min` | min | sum, mean |
+| `vigorous_min` | min | sum, mean |
+| `resting_hr` | bpm | mean |
+| `weight_kg` | kg | mean |
+| `workout.duration_s` | s | sum, mean |
+| `workout.hr_avg` | bpm | mean |
+| `workout.hr_max` | bpm | mean |
+| `workout.zone1_s` | s | sum, mean |
+| `workout.zone2_s` | s | sum, mean |
+| `workout.zone3_s` | s | sum, mean |
+| `workout.zone4_s` | s | sum, mean |
+| `workout.zone5_s` | s | sum, mean |
+| `workout.bb_change` | score | sum, mean |
+| `exercise.sets` | count | sum, mean |
+| `exercise.reps` | count | sum, mean |
+| `exercise.max_kg` | kg | 없음 |
+| `exercise.volume_kg` | kg | sum, mean |
+| `exercise.set_peak_hr_avg` | bpm | mean |
+| `exercise.rest_drop_avg` | bpm | mean |
+| `set.reps` | count | sum, mean |
+| `set.weight_g` | g | mean |
+| `set.duration_s` | s | sum, mean |
+
+예약 기본값은 `Asia/Seoul` 기준 수집 11:00, 분석 11:30이며 두 예약은
+사용자 설정 `garmin.connection_id`를 발화 때 고정한다. 21.7 운영자는 해당
+연결이 보호 tokenstore binding과 일치하는지 확인하고 이 설정을 지정한다.
+분석은 같은 사용자·대상·현지 날짜의 수집 성공 회차를 기다린다. 놓친 회차는
+latest로 정산하며 예약 수집의 부분 수집·차단·인증 실패·무실행은 성공이 아니다.
+예약 실행은 봉투의 단일 회차 날짜를 사용하며 수동 실행은 기존 날짜 규칙을 쓴다.
+시험 코드는 작성했으나 시험 실행은 **21.8로 이관, 미실행**이다.
+
+분석 게시에는 사용자 설정 `garmin.channel_conversation_id`에 자신의 core 채널 대화 UUID가 필요하다. 저장된 평가와 완료된 core 파일로 요약, 두 그래프 묶음과 보고서 문서를 구성한다. 채널 발송·불명 상태·재시도는 core가 관리하며 발송 실패로 평가를 다시 생성하지 않는다. 분석 실패 알림은 같은 날짜와 계정의 `report_failed` 요청으로 중복을 억제한다.
+
+Marketplace 패키지는 `node tooling/package-garmin/build.mjs`로 제품 소스에서 생성한다. 생성된 `plugins/garmin/package/manifest.json`의 파일 목록과 digest가 core 설치기의 검증 대상이며, 독립 oracle·fixture·출처 이력은 패키지에 넣지 않는다. 제품 변경 후에는 이 명령을 다시 실행해 바이트와 목록을 동기화한다.
+
+## 21.5 설치부터 채널·조회까지의 21.8 인계
+
+`apps/cli/python-test/garmin-core.test.ts`는 위 전용 시험 DB와 격리 home에서
+marketplace Garmin 패키지의 실제 `--package` 설치와 manifest를 사용한다.
+가짜 clock으로 기본 cron 회차를 발화하고 Garmin과 Codex의 외부 경계만
+합성 대체하며, 실제 감독자·파일 drain·core 채널 worker를 로컬 가짜 Telegram
+서버에 연결한다. 실패한 수집에서 모델 호출 0, 수집 성공 뒤 네 scope 한 번,
+파일의 중립 metadata와 평가 revision 관계, 채널 실패/재시도의 평가 보존과
+의미 키 중복 억제를 관찰한다. CLI와 MCP의 sum/mean, NULL·0건·운동 필터,
+허용 집계 거부·가리기, disable/enable 및 재설치 시 예약 삭제표식·사용자
+변경과 native/평가/파일 보존도 확인한다. 별도 `garmin-plugin.test.ts`는 core
+부재 안내와 격리 가짜 core에 대한 플러그인 진입점의 패키지 위임을 확인한다.
+
+위 전용 compose와 `BRAIN_TEST_DATABASE_URL`을 준비하고 `pnpm test` 다음
+`pnpm test:python`을 순차 실행한다. 실패를 수정한 뒤 관련 재검증은 다음과 같다.
+
+```sh
+pnpm exec vitest run tooling/bootstrap/test/garmin-plugin.test.ts tooling/test-db/test/test-changed.test.ts
+pnpm exec vitest run --config apps/cli/python-test/vitest.config.ts apps/cli/python-test/garmin-core.test.ts apps/cli/python-test/garmin-query.test.ts apps/cli/python-test/garmin-report.test.ts apps/cli/python-test/garmin-collect.test.ts
+```
+
+실행은 **21.8로 이관, 미실행**이다. 기준 SHA, 소유 DB·role·격리 home과
+compose 자원, 명령·종료 코드·로그·실패별 처분 및 재검증을 기록한다.
+종료 시 시험 harness가 자신이 만든 DB·role·home을 정리하고, 운영자가 이
+실행이 만든 compose 프로젝트만 앞의 `down` 명령으로 정리한다. 하나라도
+미실행이거나 해결되지 않은 실패가 있으면 21.8 built 및 21.7 시작은 금지다.

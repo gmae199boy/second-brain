@@ -189,7 +189,7 @@ type _Unit = Callable[[store.Connection], contextlib.AbstractContextManager[obje
 
 
 def run(
-    conn: store.Connection, *, rebuild: bool = False, timezone: str = "Asia/Seoul"
+    conn: store.Connection, *, rebuild: bool = False, timezone: str = "Asia/Seoul", retry_failed: bool = False
 ) -> Summary:
     """작업 집합의 항목을 하나씩 정규화한다. 항목 실패는 기록하고 넘어간다.
 
@@ -203,7 +203,7 @@ def run(
     elif stored != str(NORMALIZE_VERSION):
         reason = "version"
     else:
-        return _process(conn, store.transaction, timezone=timezone)
+        return _process(conn, store.transaction, timezone=timezone, retry_failed=retry_failed)
     logger.info(
         "normalize 재구성: reason=%s stored=%s code=%s",
         reason,
@@ -279,12 +279,12 @@ def _stored_version(conn: store.Connection) -> str | None:
 
 
 def _process(
-    conn: store.Connection, unit: _Unit, *, timezone: str, rebuild: bool = False, durable_pending: set[str] | None = None
+    conn: store.Connection, unit: _Unit, *, timezone: str, rebuild: bool = False, durable_pending: set[str] | None = None, retry_failed: bool = False
 ) -> Summary:
     """작업 집합을 처리한다. 항목·실패 기록은 각각 `unit(conn)` 하나다."""
     processed = failed = 0
     with store.transaction(conn):
-        items = _work_set(conn)
+        items = _work_set(conn, retry_failed=retry_failed)
         previous_dates = {
             row[0]
             for item in items if item.scope == _ACTIVITY and _target_key(item) is not None
@@ -337,7 +337,7 @@ def _process(
     return Summary(processed, failed)
 
 
-def _work_set(conn: store.Connection) -> list[_Item]:
+def _work_set(conn: store.Connection, *, retry_failed: bool = False) -> list[_Item]:
     """정규화할 원문의 (scope, key, endpoint, fetched_at). 원문 내용은 읽지 않는다."""
     pairs = sorted((rule.scope, endpoint) for endpoint, rule in NORMALIZERS.items())
     registered = " OR ".join("(r.scope = %s AND r.endpoint = %s)" for _ in pairs)
@@ -347,9 +347,9 @@ def _work_set(conn: store.Connection) -> list[_Item]:
         " LEFT JOIN garmin.normalize_result AS n"
         " ON n.user_id=r.user_id AND n.connection_id=r.connection_id AND n.scope = r.scope AND n.key = r.key AND n.endpoint = r.endpoint"
         f" WHERE r.user_id=%s AND r.connection_id=%s AND ({registered})"
-        " AND (n.scope IS NULL OR n.raw_fetched_at != r.fetched_at)"
+        " AND (n.scope IS NULL OR n.raw_fetched_at != r.fetched_at OR (%s AND n.ok = 0))"
         " ORDER BY r.scope COLLATE \"C\", r.key COLLATE \"C\", r.endpoint COLLATE \"C\"",
-        [conn.user_id, conn.connection_id, *(value for pair in pairs for value in pair)],
+        [conn.user_id, conn.connection_id, *(value for pair in pairs for value in pair), retry_failed],
     ).fetchall()
     return [_Item(*row) for row in rows]
 

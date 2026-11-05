@@ -1,4 +1,4 @@
-"""최초 로그인(`garmin-pipeline login`)과 연결 점검(`garmin-pipeline smoke`)(FR1~4).
+"""확장 감독 로그인과 연결 점검(FR1~4).
 
 `login`: tokenstore 준비, 터미널 프롬프트, `auth_event` 기록.
 
@@ -237,7 +237,7 @@ def _smoke_failure_message(
             )
         return (
             "Garmin 토큰이 없거나 만료됐다(token_invalid). "
-            "`garmin-pipeline login`을 다시 실행하라."
+            "`brain ext login garmin`을 다시 실행하라."
         )
     if isinstance(error, errors.RateLimited | errors.Blocked403):
         status = 429 if isinstance(error, errors.RateLimited) else 403

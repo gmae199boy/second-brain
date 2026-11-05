@@ -7,14 +7,15 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from garmin_pipeline import config, store
+from scheduled_date import scheduled_date
 
 
 class InvalidReportInput(Exception):
     pass
 
 
-_STRING_SETTINGS = {'garmin.timezone', 'garmin.tokenstore', 'garmin.capture_manifest',
-                    'garmin.legacy_conversation_id', 'garmin.analysis_agent',
+_STRING_SETTINGS = {'garmin.timezone', 'garmin.connection_id', 'garmin.tokenstore', 'garmin.capture_manifest',
+                    'garmin.legacy_conversation_id', 'garmin.channel_conversation_id', 'garmin.analysis_agent',
                     'garmin.analysis_model', 'garmin.analysis_reasoning_effort'}
 _ALLOWED = _STRING_SETTINGS | {'garmin.analysis_timeout_minutes'}
 
@@ -67,6 +68,7 @@ def envelope(env):
             raise ValueError('invalid snapshot')
         values = snapshot['values']
         validate_settings(values)
+        _uuid(values['garmin.channel_conversation_id'])
         # Collect shares settings validation but does not require an analysis model.
         model = values['garmin.analysis_model']
         if not model.strip():
@@ -90,13 +92,18 @@ def envelope(env):
         raise InvalidReportInput('invalid supervised report input') from exc
 
 
-def validate_account(conn, account, cfg):
+def validate_account(conn, account, cfg, conversation=None):
     """Check selected ownership and timezone under the store's attempt fence."""
     with store.transaction(conn):
         row = conn.execute('select timezone from garmin.account_connections where user_id=%s and connection_id=%s',
                            (account.user_id, account.connection_id)).fetchone()
         if not row or row[0] != cfg.timezone:
             raise InvalidReportInput('account timezone mismatch')
+        if conversation is not None:
+            valid = conn.execute('select brain.extension_channel_conversation_valid(%s,%s,%s)',
+                                 (account.work_id, account.attempt_token, conversation)).fetchone()
+            if not valid or not valid[0]:
+                raise InvalidReportInput('invalid channel configuration')
 
 
 def install_skills(cfg):
@@ -115,14 +122,26 @@ def run(env=None, *, writer=None):
     from garmin_pipeline import report
     actual = os.environ if env is None else env
     account, cfg = envelope(actual)
+    try:
+        day = scheduled_date(actual, cfg.timezone)
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
+        raise InvalidReportInput('invalid scheduled date') from exc
     regenerate = actual['BRAIN_WORK_KIND'] == 'garmin.report_regenerate'
     with store.supervised_account(account), store.report_session(cfg, blocking=not regenerate):
         with store.write_session(cfg) as conn:
-            validate_account(conn, account, cfg)
+            conversation = _uuid(json.loads(actual['BRAIN_SETTINGS_SNAPSHOT'])['values']['garmin.channel_conversation_id'])
+            validate_account(conn, account, cfg, conversation)
         install_skills(cfg)
         if writer is None:
             import body_runtime
             def body_handler(action, **kwargs):
                 return body_runtime.execute(actual, action, **kwargs)
             writer = report.CodexWriter(body_handler=body_handler)
-        return json.dumps(report.run_supervised(cfg, writer, regenerate=regenerate))
+        import report_publish
+        try:
+            return json.dumps(report.run_supervised(cfg, writer, regenerate=regenerate, **({'today': day} if day is not None else {})))
+        except (report.SupervisedReportFailed, report_publish.FilesFailed, OSError):
+            import report_channel
+            from garmin_pipeline import dates
+            report_channel.failure(cfg, day if day is not None else dates.today(cfg), actual)
+            raise

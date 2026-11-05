@@ -90,6 +90,24 @@ async function lockAvailableKey(held: Kysely<PgSchema>, row: WorkItemRow, now: s
   return available;
 }
 
+/** A successful predecessor must cover the same local date, user and frozen target. */
+function occurrenceEligible(): RawBuilder<boolean> {
+  return sql<boolean>`(s.after_schedule is null or (not exists (select 1 from brain.schedule_occurrences newer where newer.schedule_id=o.schedule_id and newer.work_id=o.work_id and newer.status in ('pending','claimed') and newer.occurrence_at>o.occurrence_at) and exists (
+    select 1 from brain.schedules ps
+    join brain.schedule_occurrences po on po.schedule_id=ps.id and po.status='done'
+    join brain.work_items pw on pw.id=po.work_id
+    where ps.extension=s.extension and ps.schedule_key=s.after_schedule and ps.user_id=o.user_id
+      and po.user_id=o.user_id and po.time_zone=o.time_zone
+      and (po.occurrence_at at time zone po.time_zone)::date=(o.occurrence_at at time zone o.time_zone)::date
+      and pw.target_kind=w.target_kind and pw.target_id=w.target_id
+  )))`;
+}
+function scheduleWorkReady(): RawBuilder<boolean> {
+  return sql<boolean>`(not exists (select 1 from brain.schedule_occurrences pending where pending.work_id=brain.work_items.id and pending.status in ('pending','claimed'))
+    or exists (select 1 from brain.schedule_occurrences o join brain.schedules s on s.id=o.schedule_id join brain.work_items w on w.id=o.work_id
+      where o.work_id=brain.work_items.id and o.status in ('pending','claimed') and ${occurrenceEligible()}))`;
+}
+
 /** Shared due predicate and order; only the claiming caller adds row locking. */
 export function claimCandidateQuery(query: DueWorkQuery): RawBuilder<WorkItemRow> {
   const now = instant(query.now, 'work_items.next_attempt_at');
@@ -104,6 +122,7 @@ export function claimCandidateQuery(query: DueWorkQuery): RawBuilder<WorkItemRow
             and (p.completed_at is null or p.outcome is distinct from 'succeeded')
        )
        and ${keyAvailable(now)} and ${groupAvailable('brain.work_items')} and ${quiesceAvailable('brain.work_items')}
+       and ${scheduleWorkReady()}
        and execution_class = 'core'
        and next_attempt_at <= ${now}
        and (claim_expires_at is null or claim_expires_at <= ${now})
@@ -364,6 +383,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
                      and (p.completed_at is null or p.outcome is distinct from 'succeeded')
                 )
                 and ${keyAvailable(now)} and ${groupAvailable('brain.work_items')} and ${quiesceAvailable('brain.work_items')}
+                and ${scheduleWorkReady()}
                 and current_attempt_token is null and cancel_requested_at is null
                 and next_attempt_at <= ${now} and (claim_expires_at is null or claim_expires_at <= ${now})
                 and kind = any(${[...input.kinds]}::text[])
@@ -457,6 +477,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
     },
     async finishSupervisedWork(input) {
       return finish(connect, async (held) => {
+        await sql`select pg_advisory_xact_lock(hashtextextended('schedule-fire-settle', 0))`.execute(held);
         const item = await lockConfirmedChannelWork(held, input);
         if (!item) return 0;
         // Serialize related successful results so the frozen predecessor reflects commit order.
@@ -511,6 +532,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
 
     async completeWork(input: CompleteWorkInput): Promise<FinishWorkResult> {
       return finish(connect, async (held) => {
+        await sql`select pg_advisory_xact_lock(hashtextextended('schedule-fire-settle', 0))`.execute(held);
         const now = instant(input.now, 'work_items.completed_at');
         const completed = await sql<{ kind: string; target_kind: string; target_id: string }>`
           update brain.work_items
@@ -883,7 +905,14 @@ const SCHEDULE_CLAIM_BATCH = 1000;
 async function claimOccurrences(held: Kysely<PgSchema>, id: string): Promise<WorkItem['scheduledOccurrences']> {
   // Row lock on work serializes firing against claim/completion.
   await sql`update brain.schedule_occurrences set status='pending' where work_id=${id} and status='claimed'`.execute(held);
-  await sql`update brain.schedule_occurrences set status='claimed' where (schedule_id, occurrence_at) in (select schedule_id, occurrence_at from brain.schedule_occurrences where work_id=${id} and status='pending' order by occurrence_at, schedule_id limit ${SCHEDULE_CLAIM_BATCH})`.execute(held);
+  await sql`update brain.schedule_occurrences o set status='skipped'
+    where o.work_id=${id} and o.status='pending' and exists(select 1 from brain.schedules s join brain.extension_work_kinds k on k.kind=s.kind where s.id=o.schedule_id and (s.after_schedule is not null or k.missed_policy='latest'))
+      and exists(select 1 from brain.schedule_occurrences newer where newer.work_id=o.work_id and newer.schedule_id=o.schedule_id and newer.status='pending' and newer.occurrence_at>o.occurrence_at)`.execute(held);
+  const gated=await sql<{gated:boolean}>`select exists(select 1 from brain.schedule_occurrences o join brain.schedules s on s.id=o.schedule_id left join brain.extension_work_kinds k on k.kind=s.kind where o.work_id=${id} and o.status='pending' and (s.after_schedule is not null or k.missed_policy='latest')) as gated`.execute(held);
+  await sql`update brain.schedule_occurrences set status='claimed' where (schedule_id, occurrence_at) in (
+    select o.schedule_id,o.occurrence_at from brain.schedule_occurrences o join brain.schedules s on s.id=o.schedule_id join brain.work_items w on w.id=o.work_id
+    where o.work_id=${id} and o.status='pending' and ${occurrenceEligible()}
+    order by o.occurrence_at,o.schedule_id limit ${gated.rows[0]?.gated ? 1 : SCHEDULE_CLAIM_BATCH})`.execute(held);
   const rows = await sql<{ schedule_id: string; time_zone: string | null; occurrence_at: string }>`select o.schedule_id,o.time_zone,o.occurrence_at from brain.schedule_occurrences o where o.work_id=${id} and o.status='claimed' order by o.schedule_id,o.time_zone nulls first,o.occurrence_at`.execute(held);
   const groups: NonNullable<WorkItem['scheduledOccurrences']> = [];
   for (const row of rows.rows) { let group = groups.at(-1); if (!group || group.scheduleId !== row.schedule_id || group.timeZone !== row.time_zone) { group={scheduleId:row.schedule_id,timeZone:row.time_zone,occurrences:[]}; groups.push(group); } group.occurrences.push(at(row.occurrence_at,'schedule_occurrences.occurrence_at')); }
@@ -894,7 +923,14 @@ async function transitionOccurrences(held: Kysely<PgSchema>, id: string, status:
   else await sql`update brain.schedule_occurrences set status='pending' where work_id=${id} and status='claimed'`.execute(held);
 }
 async function settleScheduledSuccess(held: Kysely<PgSchema>, id: string, now: string): Promise<void> {
+  // Serialize day-level deduplication against a concurrent fire of the same schedule.
+  await sql`select s.id from brain.schedules s where s.after_schedule is not null and exists
+    (select 1 from brain.schedule_occurrences o where o.schedule_id=s.id and o.work_id=${id} and o.status='claimed') order by s.id for update`.execute(held);
   await sql`update brain.schedule_occurrences set status='done', recorded_at=${now} where work_id=${id} and status='claimed'`.execute(held);
+  await sql`update brain.schedule_occurrences pending set status='skipped',recorded_at=${now}
+    where pending.work_id=${id} and pending.status='pending'
+      and exists (select 1 from brain.schedules s where s.id=pending.schedule_id and s.after_schedule is not null)
+      and exists (select 1 from brain.schedule_occurrences done where done.work_id=${id} and done.schedule_id=pending.schedule_id and done.user_id=pending.user_id and done.status='done' and done.time_zone=pending.time_zone and (done.occurrence_at at time zone done.time_zone)::date=(pending.occurrence_at at time zone pending.time_zone)::date)`.execute(held);
   await sql`update brain.work_items set completed_at=null,outcome=null,next_attempt_at=${now},current_attempt_token=null,claimed_at=null,claim_expires_at=null,claimed_by=null where id=${id} and cancel_requested_at is null and exists(select 1 from brain.schedule_occurrences where work_id=${id} and status='pending')`.execute(held);
   await sql`update brain.schedule_occurrences set status='failed' where work_id=${id} and status in ('pending','claimed') and exists(select 1 from brain.work_items where id=${id} and completed_at is not null)`.execute(held);
 }

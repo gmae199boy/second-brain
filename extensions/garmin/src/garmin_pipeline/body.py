@@ -1,7 +1,7 @@
-"""체성분 입력 장부: `garmin-pipeline body {pending,write,reject}`(FR23·24·25, NFR3, AD-9).
+"""감독 body IPC를 사용하는 체성분 입력 장부(FR23·24·25, NFR3, AD-9).
 
 경로 규칙:
-- 운영 루트 = config 파일이 있는 폴더(`cfg.path.parent`, `schedule.runtime_root`와 같은 정의).
+- 운영 루트 = 감독 작업에 지정된 계정별 작업공간(`cfg.path.parent`).
   입력 폴더 = `<inbox_dir>/inbody`, 장부 폴더 = `<data_dir>/body`. 둘 다 운영 루트 안이어야 한다.
 - 출력과 `source_files`의 경로는 모두 운영 루트 기준 상대 POSIX 경로다. 포함 판정은 `resolve()`한 경로끼리
   한다(macOS `/var` → `/private/var`).
@@ -77,7 +77,7 @@ class WriteResult:
 
 
 def runtime_root(cfg: config.Config) -> Path:
-    """운영 루트: config 파일이 있는 폴더(`schedule.runtime_root`와 같은 정의)."""
+    """운영 루트: 감독 작업에 지정된 계정별 작업공간."""
     return cfg.path.parent
 
 

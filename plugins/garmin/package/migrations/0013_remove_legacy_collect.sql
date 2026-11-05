@@ -1,0 +1,25 @@
+-- Remove the old core-facing reads and epic 16 storage in dependency order.
+drop view garmin.body_records;
+drop view garmin.collect_target_accounts;
+drop view garmin.raw_records_v2;
+drop view garmin.raw_records;
+revoke usage on schema garmin from brain_app;
+drop table garmin.collect_snapshot_items;
+drop table garmin.collect_snapshots;
+drop table garmin.body_sources;
+drop table garmin.body_documents;
+drop table garmin.body_measurements;
+drop table garmin.collect_fetch_errors;
+drop table garmin.collect_runs;
+drop table garmin.collect_state;
+drop table garmin.collect_meta;
+drop table garmin.collect_targets;
+drop table garmin.collect_published;
+drop table garmin.normalize_items;
+drop table garmin.normalize_days;
+drop table garmin.normalize_day_dirty;
+drop table garmin.normalize_day_revisions;
+drop table garmin.authority_v2;
+drop table garmin.collect_notices;
+drop table garmin.import_provenance;
+drop table garmin.authority_provenance;

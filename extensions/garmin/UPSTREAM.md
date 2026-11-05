@@ -69,3 +69,11 @@ fenced 원본 body 명령을 수행한다. 모델 종료·timeout·취소 뒤에
 `test_report_process.py`, `test_report_supervised.py`와 실제 감독 PG harness의
 `garmin-report.test.ts`가 요청/취소/재개 및 replace·이동 중단을 덮는다.
 실행은 README의 전용 자원 절차에 따라 **21.8로 이관, 미실행**이다.
+
+## 21.5 제품 패키지 경계
+
+위 해시는 제거된 옛 모듈을 포함한 도입 당시 출처 이력이다. 제품 실행은
+core 설정 snapshot과 예약·채널 계약을 사용하며 옛 독립 설정 로더, 예약 및
+직접 발송 구현은 제거했다. Python 배포 선언과 `MANIFEST.in`은 제품 `src`만
+포함하고 `tests/oracle`, 시험 fixture 및 이 출처 문서를 제외한다. marketplace
+설치용 파일 목록과 digest의 실제 바이트 경계는 별도 Execution 5에서 완성한다.
