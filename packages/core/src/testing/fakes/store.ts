@@ -229,9 +229,11 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     for (const row of occurrences.values()) if (row.workId === item.id && (row.status === 'claimed' || (target === 'failed' && row.status === 'pending'))) row.status = target;
     item.scheduledOccurrences = null;
   }
+  const SCHEDULE_CLAIM_BATCH=1000;
   function claimOccurrences(item: WorkItem) {
     const groups: NonNullable<WorkItem['scheduledOccurrences']> = [];
-    const rows=[...occurrences.values()].filter(row=>row.workId===item.id && (row.status==='pending' || row.status==='claimed')).sort((a,b)=>a.scheduleId.localeCompare(b.scheduleId)||(a.timeZone ?? '').localeCompare(b.timeZone ?? '')||a.occurrenceAt.getTime()-b.occurrenceAt.getTime());
+    for (const row of occurrences.values()) if (row.workId===item.id && row.status==='claimed') row.status='pending';
+    const rows=[...occurrences.values()].filter(row=>row.workId===item.id && row.status==='pending').sort((a,b)=>a.occurrenceAt.getTime()-b.occurrenceAt.getTime()||a.scheduleId.localeCompare(b.scheduleId)).slice(0,SCHEDULE_CLAIM_BATCH).sort((a,b)=>a.scheduleId.localeCompare(b.scheduleId)||(a.timeZone ?? '').localeCompare(b.timeZone ?? '')||a.occurrenceAt.getTime()-b.occurrenceAt.getTime());
     for (const row of rows) { row.status='claimed'; let group=groups.at(-1); if (!group || group.scheduleId!==row.scheduleId || group.timeZone!==row.timeZone) { group={scheduleId:row.scheduleId,timeZone:row.timeZone,occurrences:[]}; groups.push(group); } group.occurrences.push(new Date(row.occurrenceAt)); }
     item.scheduledOccurrences=groups.length?groups:null;
   }

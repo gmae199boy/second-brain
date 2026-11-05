@@ -52,10 +52,25 @@ it('형식·시간대·과거 또는 잘못된 once를 거부한다',async()=>{
  expect(await addSchedule(k.deps,{kind:'x',targetKind:'y',targetId:'z',cron:'0 9 * * *',timeZone:'Invalid/Zone'})).toMatchObject({ok:false,code:'SCHEDULE_INVALID'});
  for(const once of ['2025-01-01T00:00:00Z','2026-02-31T00:00:00Z','2026-01-02T00:00:00'])expect(await addSchedule(k.deps,{kind:'x',targetKind:'y',targetId:'z',once})).toMatchObject({ok:false,code:'SCHEDULE_INVALID'});
 });
-it('10000 초과 회차는 경고하고 최근 1000개만 기록한다',async()=>{
- const k=await kit('2026-01-01T00:00:00.000Z'),s=await k.add({cron:'* * * * *',timeZone:'UTC'});
- k.set('2026-01-08T00:02:00.000Z');const result=await k.tick();expect(result).toMatchObject({ok:true,warnings:[expect.stringContaining('10000')]});
- const rows=await k.rows(s);expect(rows).toHaveLength(1000);expect(rows.at(-1)?.occurrenceAt).toEqual(k.now());expect(rows.filter(row=>row.status==='pending')).toHaveLength(7);
+it.each(['latest','coalesce','skip'] as const)('대량 회차를 빠짐없이 이어서 기록: %s',async policy=>{
+ const k=await kit();await k.store.recordExtensionInstall({name:'testext',version:'1',now:k.now(),workKinds:['testext.sync'],missedPolicies:{'testext.sync':policy}});
+ const s=await k.add({kind:'testext.sync',cron:'* * * * *',timeZone:'UTC'});const first=s.nextRunAt!;const count=12000;k.set(new Date(first.getTime()+(count-1)*60000+360000).toISOString());
+ const fire=k.store.fireSchedule;let recorded=0;const batchSizes:number[]=[];k.store.fireSchedule=async input=>{batchSizes.push(input.occurrences.length);const result=await fire(input);if(result.ok&&result.fired){recorded+=input.occurrences.length;expect(input.nextRunAt).toEqual(new Date(first.getTime()+recorded*60000));}return result;};
+ await k.tick();expect(recorded).toBe(10000);expect(await k.rows(s)).toHaveLength(10000);expect(batchSizes).toEqual(Array(10).fill(1000));
+ expect(await k.store.readSchedule({id:s.id})).toMatchObject({schedule:{nextRunAt:new Date(first.getTime()+10000*60000)}});
+ await k.tick();expect(recorded).toBe(count+6);expect(batchSizes.slice(10)).toEqual([1000,1000,6]);
+ const rows=await k.rows(s);expect(rows).toHaveLength(count+6);expect(rows.map(r=>r.occurrenceAt.getTime())).toEqual(Array.from({length:count+6},(_,i)=>first.getTime()+i*60000));
+ expect((await k.store.readSchedule({id:s.id}))).toMatchObject({schedule:{nextRunAt:new Date(first.getTime()+(count+6)*60000)}});
+ expect(rows.filter(r=>r.status==='skipped')).toHaveLength(policy==='latest'?count-1:policy==='skip'?count:0);
+ expect(k.store.snapshot().workItems).toHaveLength(1);
+ const seen:number[]=[];let token=100;
+ while(policy!=='skip' && seen.length<(policy==='latest'?7:count+6)){
+  const attemptToken=`00000000-0000-7000-8000-${String(token++).padStart(12,'0')}`;
+  const claim=await k.store.claimSupervisedWork({now:k.now(),claimedBy:'worker',kinds:['testext.sync'],attemptToken});if(!claim.ok||!claim.item)throw Error('claim');
+  const batch=claim.item.scheduledOccurrences!.flatMap(g=>g.occurrences.map(d=>d.getTime()));expect(batch.length).toBeLessThanOrEqual(1000);seen.push(...batch);
+  await k.store.finishSupervisedWork({id:claim.item.id,attemptToken,now:k.now(),outcome:'succeeded'});
+ }
+ if(policy!=='skip'){expect(seen).toEqual(rows.filter(r=>r.status==='pending').map(r=>r.occurrenceAt.getTime()));expect((await k.rows(s)).filter(r=>r.status==='done')).toHaveLength(seen.length);}
 });
 it('그룹별 현지 날짜와 중복 제거된 전체 instant를 ABI로 전달한다',async()=>{
  const {scheduleEnvironment}=await import('../src/daemon/supervisor.js');const a=new Date('2026-01-01T16:00:00.000Z'),b=new Date('2026-01-02T01:00:00.000Z');
@@ -77,12 +92,12 @@ it('rezone 중 trigger가 바뀌면 오래된 식으로 다음 시각을 덮지 
   await k.store.updateSchedule({id:s.id,expected:current.schedule,schedule:{...current.schedule,cronExpr:'0 10 * * 5'}});return rezone(input);};
  await k.tick();expect(await k.store.readSchedule({id:s.id})).toMatchObject({schedule:{cronExpr:'0 10 * * 5',timeZone:'Asia/Seoul'}});
 });
-it('10000회 초과 interval은 원래 격자와 다음 시각의 위상을 보존한다',async()=>{
- const k=await kit('2026-01-01T00:00:00.000Z');const user=await k.store.readSelfUser();if(!user.ok||!user.user)throw Error('self');
+it('대량 interval 회차는 격자 위상을 보존하며 모두 기록한다',async()=>{
+ const k=await kit();const user=await k.store.readSelfUser();if(!user.ok||!user.user)throw Error('self');
  const base=new Date('2026-01-01T00:00:07.000Z');const added=await k.store.addSchedule({id:'00000000-0000-7000-8000-000000000098',kind:'schedule_probe',targetKind:'probe',targetId:'interval',triggerKind:'interval',cronExpr:null,runAt:null,timeZone:null,timeZoneSource:null,intervalSeconds:17,extension:null,scheduleKey:null,userId:user.user.id,enabled:true,removedAt:null,nextRunAt:base,lastRunAt:null,createdAt:k.now()});if(!added.ok)throw Error(added.message);
- const now=new Date(base.getTime()+17_000*11000+4321);k.set(now.toISOString());expect(await k.tick()).toMatchObject({ok:true,warnings:[expect.any(String)]});
- const rows=await k.rows(added.schedule);expect(rows).toHaveLength(1000);expect(rows.every(row=>(row.occurrenceAt.getTime()-base.getTime())%17000===0)).toBe(true);
- const read=await k.store.readSchedule({id:added.schedule.id});if(!read.ok||!read.schedule?.nextRunAt)throw Error('next');expect(read.schedule.nextRunAt.getTime()).toBe(base.getTime()+17_000*11001);
+ k.set(new Date(base.getTime()+17_000*11000+4321).toISOString());await k.tick();await k.tick();
+ const rows=await k.rows(added.schedule);expect(rows).toHaveLength(11001);expect(rows.map(r=>r.occurrenceAt.getTime())).toEqual(Array.from({length:11001},(_,i)=>base.getTime()+17000*i));
+ expect(await k.store.readSchedule({id:added.schedule.id})).toMatchObject({schedule:{nextRunAt:new Date(base.getTime()+17_000*11001)}});
 });
 it('trigger 변경 뒤 user zone 변경은 변경 이전 회차를 소급하지 않는다',async()=>{
  const k=await kit('2026-01-01T00:00:00.000Z'),s=await k.add();k.set('2026-01-10T00:00:00.000Z');

@@ -118,7 +118,9 @@ deferred:
 - 결정(지휘자, T2 질문 응답): 다른 예약이 같은 미완료 일감에 회차를 붙일 수 있으므로 `WorkItem.scheduledOccurrences`는 `{scheduleId, timeZone, occurrences}[]`(schedule_id·시각 오름차순) 그룹 배열이다. 청구 때 그 일감에 붙은 모든 회차를 claimed로 묶는다(AD-39 "attempt 시작 때 붙어 있던 회차 집합"). ABI `BRAIN_OCCURRENCES`는 전체 instant 합집합 오름차순, `BRAIN_RANGE_FROM/TO`는 각 회차를 자기 예약 zone으로 현지 날짜화한 min/max.
 - Task 2(T2) succeeded(capacity 오류 1회 뒤 같은 Dispatch에서 재개, 모델 변경 없음), Task 3(T3) succeeded — `croner` 11.0.0을 `apps/cli`에만 추가, adapter는 UTC 벽시계 열거 + core `occurrenceAt`, Task 4(T4·T5) succeeded. T6 `tooling/test-changed/rules.mjs`의 `packages/core/src/ports/cron.ts` exact 규칙은 지휘자가 추가.
 - 리뷰 반영 fix-r1: 회차 행에 생성 당시 `time_zone` 저장(청구 그룹은 `(schedule_id, time_zone)`), `schedules.trigger_updated_at`으로 rezone 소급 방지, 발화 CAS에 trigger 종류·식·zone 포함, 비daily 확장 행의 이행 키에 id 접미, 재개 없이 닫히는 일감의 남은 회차 `failed`, interval 대량 경로 격자 정렬. fix-r2: 텍스트 출력(예약 trigger·비활성, 비활성화 키), cron 공백 정규화, fake 발화 시각 검증 복원.
-- 결정: 10,000개 초과 열거 시 최근 1,000개만 기록(계획 Design Notes) 유지 — 리뷰 low reject 근거는 Triage Log.
+- 결정(폐기): 10,000개 초과 열거 시 최근 1,000개만 기록 — 아래 중앙 수락 보완으로 폐기.
+- 중앙 수락 보완(2026-11-05, 중앙 `msg_54718c70efe9`): 10,000 초과 절단은 AD-39·E20-3의 전부 회계 계약을 축소하므로 r1 intent A·r2 intent B의 low reject를 뒤집고 필수 범위로 받았다. 커밋 55e2c87 뒤 계획을 in-progress로 되돌리고, 구현 워커가 6 Task에 이르러 새 Terra/medium 워커(`ctx_60990efb729b`, accept1)에 배정했다. 발화 1,000개 배치·tick당 10배치 이어가기, latest 국소 lookahead, 청구 1,000개 상한·재개 이어가기로 바꾸고 절단 시험을 12,000회차 세 정책·next_run_at 연속성·interval 격자·청구 상한 계약 시험으로 대체했다. 지휘자 확인 build 0·typecheck 0·diff-check 0, 시험 미실행(21.8).
+- 수락 보완 증분 리뷰(a1, edge·verification-gap 2렌즈) 3건 medium patch → fix-a1(`ctx_bca574788a89`): 새 청구 시작 때 그 일감의 claimed를 pending으로 되돌린 뒤 가장 이른 1,000개만 claimed(PG·fake), 만료 재청구 계약 시험, 첫 tick 1,000×10·두 번째 tick 1,000·1,000·6 배치 단언. 최종 지휘자 확인 build 0·typecheck 0·diff-check 0.
 - 시험 실행: **21.8로 이관, 미실행**. 지휘자 확인 `pnpm build` 0, `pnpm typecheck` 0, `git diff --check` 0.
 
 ## Plan Change Log
@@ -179,10 +181,21 @@ deferred:
   - `[false]` `[reject]` (intent C) latest가 최신 놓친 회차와 유예 안 회차를 함께 실행 — AD-39의 "나머지 놓친 회차"와 5분 유예 정의를 따른 계획 해석 그대로다.
   - `[false]` `[reject]` (intent D) 외부 효과 exactly-once 미보장 — 원문·AD는 회차 회계의 한 번을 요구하며 외부 효과 보장은 범위가 아니다(research Q1).
 
+### 2026-11-05 — 중앙 수락 보완 (accept1)
+- 처분 변경: r1 `(intent A)`·r2 `(intent B)` 10,000 초과 시 최근 1,000개만 기록 — 기존 `[low]` `[reject]`를 중앙 판정에 따라 `[medium]` 필수 수정으로 바꾼다. 근거: 절단은 latest 나머지 skipped·coalesce 전부·skip 전부 skipped 계약을 축소하는 알려진 회차 유실이며 일상 빈도로 기각할 수 없다. 조치: accept1(Implementation Notes). 증분 후속 리뷰 결과는 아래 항목.
+
+### 2026-11-05 — Review pass (수락 보완 증분 a1)
+- verdicts: 3 findings — high 0, medium 3, low 0, false 0, maybe-false 0
+- 리뷰 원문: 로컬 `.brain-automation/review/a1-{edge-case-hunter,verification-gap}.md`(Codex gpt-6.1-sol/medium, ctx_10f86037f65a·ctx_739819b09f40), 증분 diff `/tmp/brain-20-3-diff-a1.patch`(55e2c87 이후). 증분 범위라 두 렌즈만 실행.
+- findings:
+  - `[medium]` `[patch]` (edge 1) PG 재청구가 이전 claimed를 되돌리지 않아 더 이른 회차가 추가되면 1,000개 상한 초과 — `work.ts` claimOccurrences 확인. fix-a1: 청구 시작 때 claimed→pending 후 상한 전환.
+  - `[medium]` `[patch]` (edge 2) fake 재청구에서 밀려난 claimed가 남아 미전달 회차가 done — 같은 원인. fix-a1.
+  - `[medium]` `[patch]` (vgap 1) 발화 1,000개·tick당 10배치 상한 시험 부재 — fix-a1: 첫 tick 10,000·배치 크기 배열·두 번째 tick 2,006 단언.
+
 ## Design Notes
 
 - **cron adapter와 DST:** croner를 현지 벽시계 열거기로만 쓴다. `new Cron(expr, { mode: '5-part', timezone: 'UTC', paused: true })`로 "UTC로 가장한 벽시계"의 다음 일치를 구하고, 각 벽시계(날짜+HH:MM)를 core `occurrenceAt(date, HH:MM, zone)`으로 instant로 바꾼 뒤 `after`보다 큰 첫 instant를 고른다. gap의 두 벽시계가 같은 전환 instant가 되면 하나로 합친다. 이렇게 하면 croner의 DST 해석과 무관하게 현행 규칙과 같다. 5필드 외 형식(초·연·`@reboot`·`?` 등 croner 확장)은 `SCHEDULE_INVALID`.
-- **회차 열거와 정책(tick):** due 예약마다 `next_run_at`부터 `now` 이하 회차를 열거한다(안전 한도 10,000; 넘으면 최근 1,000개만 행으로 남기고 나머지는 행 없이 건너뜀·로그). `now - occurrence > 5분`이면 놓친 회차. latest: 가장 최근 회차와 유예 안 회차를 연결, 나머지 놓친 회차 `skipped`; coalesce: 전부 연결; skip: 놓친 회차 `skipped`, 유예 안 회차만 연결; 연결할 회차가 없으면 일감을 만들지 않고 CAS만 전진. 새 next_run_at = `now` 이후 첫 회차(once는 NULL). 이미 있는 회차(`done` 이행분 등)는 `on conflict do nothing`으로 다시 연결하지 않는다.
+- **회차 열거와 정책(tick):** (중앙 수락 보완으로 개정) due 예약마다 `next_run_at`부터 시간순으로 최대 1,000개(`SCHEDULE_FIRE_BATCH`)씩 회차를 열거해 배치마다 `fireSchedule` 한 트랜잭션으로 기록하고, 남은 회차가 있으면 배치의 `nextRunAt`을 처리 안 한 첫 회차로 두어 CAS 사슬을 잇는다. tick당 예약별 10배치, 넘으면 다음 tick이 이어 간다. 회차는 버리지 않는다. `now - occurrence > 5분`이면 놓친 회차. latest: 뒤에 놓친 회차가 있으면 skipped(배치 마지막은 다음 회차 하나를 미리 계산), 즉 가장 최근 놓친 회차와 유예 안 회차만 연결; coalesce: 전부 연결(배치들이 같은 미완료 일감에 합쳐짐); skip: 놓친 회차 `skipped`, 유예 안 회차만 연결; 연결할 회차가 없으면 일감 없이 CAS만 전진. 마지막 배치의 next_run_at = `now` 이후 첫 회차(once는 NULL). 한 attempt의 청구는 오래된 순 최대 1,000개(`SCHEDULE_CLAIM_BATCH`), 나머지는 pending으로 남아 성공 정산의 재개로 이어 받는다. 이미 있는 회차(`done` 이행분 등)는 `on conflict do nothing`으로 다시 연결하지 않는다.
 - **시간대 출처:** `time_zone_source='user'`(이행된 daily, `--tz` 없는 add, `time_zone` 없는 manifest 기본 예약)는 self의 `timezone` 설정을 따라 tick이 rezone한다(현행 동작 보존, `last_run_at ?? created_at` 이후 첫 회차). `fixed`는 rezone하지 않는다.
 - **이행의 DST 계산(SQL):** 성공 날짜 d·시각 t·zone z의 회차 instant는 `ts=d+t`, `a=ts at time zone z`, `generate_series(a-3h, a+3h, 1 minute)`에서 `i at time zone z = ts`인 최소 i, 없으면 `> ts`인 최소 i. PG 기본 gap/fold 해석은 규칙과 다르므로 쓰지 않는다. 0033 안의 임시 함수로 두고 이행 뒤 drop.
 - **ABI:** `BRAIN_OCCURRENCES`(선택, 그 attempt의 claimed 회차 시각 오름차순)를 env schema·fixture에 추가하고, 있을 때만 `BRAIN_RANGE_FROM/TO`(예약 zone의 현지 날짜 min/max)를 함께 준다. 기존 Python·Node 소비자 호환.
@@ -203,7 +216,7 @@ deferred:
 
 **상태:** built (사용자 인수 전, done 아님). 시험 실행은 **21.8로 이관, 미실행**이며 통과로 보고하지 않는다.
 
-**구현 요약:** 예약 trigger를 cron(5필드+IANA)·once·내부 interval로 바꾸고 `schedule_occurrences`를 회계 원본으로 삼았다. core `CronCalculator` port 뒤 Runtime adapter(croner 11 `mode:'5-part'`)가 다음 회차를 계산하며 DST는 현행 `occurrenceAt` 규칙(gap→전환, fold→첫 instant)이다. tick은 유예 5분·latest/coalesce/skip·once 한 번·user/fixed zone을 처리하고, 발화 CAS·회차 삽입·일감 연결을 한 쓰기 트랜잭션에서 확정한다. 청구 때 붙은 회차만 claimed→성공 시 done, 실행 중 도착 회차는 다음 attempt, 재시도는 pending 복귀, 영구 실패·취소 닫힘은 failed. 0033이 daily→cron, `schedule_successes`→done, 미완료 날짜범위→pending/claimed 회차로 옮기고 옛 칼럼·표를 제거한다. CLI `schedules add --cron/--once/--at`, `update`, `list`, `remove`(키 행 삭제 표식), manifest `default_schedules`(key·cron·time_zone 또는 legacy local_time)·`work[].missed`, 설치의 `(extension, schedule_key, user_id)` 멱등·사용자 변경/표식 보존·빠진 키 비활성 보고(20.6 deferred 해소 — 처리·시험 코드 반영, 운영 예약 조작은 21.7). ABI `BRAIN_OCCURRENCES`와 회차 기반 `BRAIN_RANGE_FROM/TO`.
+**구현 요약:** (중앙 수락 보완 accept1 반영: 놓친 회차를 버리지 않고 1,000개 배치로 이어 기록·청구) 예약 trigger를 cron(5필드+IANA)·once·내부 interval로 바꾸고 `schedule_occurrences`를 회계 원본으로 삼았다. core `CronCalculator` port 뒤 Runtime adapter(croner 11 `mode:'5-part'`)가 다음 회차를 계산하며 DST는 현행 `occurrenceAt` 규칙(gap→전환, fold→첫 instant)이다. tick은 유예 5분·latest/coalesce/skip·once 한 번·user/fixed zone을 처리하고, 발화 CAS·회차 삽입·일감 연결을 한 쓰기 트랜잭션에서 확정한다. 청구 때 붙은 회차만 claimed→성공 시 done, 실행 중 도착 회차는 다음 attempt, 재시도는 pending 복귀, 영구 실패·취소 닫힘은 failed. 0033이 daily→cron, `schedule_successes`→done, 미완료 날짜범위→pending/claimed 회차로 옮기고 옛 칼럼·표를 제거한다. CLI `schedules add --cron/--once/--at`, `update`, `list`, `remove`(키 행 삭제 표식), manifest `default_schedules`(key·cron·time_zone 또는 legacy local_time)·`work[].missed`, 설치의 `(extension, schedule_key, user_id)` 멱등·사용자 변경/표식 보존·빠진 키 비활성 보고(20.6 deferred 해소 — 처리·시험 코드 반영, 운영 예약 조작은 21.7). ABI `BRAIN_OCCURRENCES`와 회차 기반 `BRAIN_RANGE_FROM/TO`.
 
 **주요 파일:**
 - `packages/postgres/migrations/0033_schedule_occurrences.sql`, `packages/postgres/src/migrate.ts` — 새 forward migration·버전 33.
@@ -217,10 +230,10 @@ deferred:
 
 **리뷰:** thorough 4렌즈(blind-hunter, edge-case-hunter, verification-gap, intent-alignment; Codex gpt-6.1-sol/medium) 2회. r1 25건: patch 18행(medium 17·low 1, 원인 묶음 11), reject 7. r2(후속) 19건: patch 6(medium 2·low 4), defer 1(medium, 기존 동작), reject 12(carried 5 포함). 기각 사유는 Triage Log 각 행. 리뷰 원문 로컬 `.brain-automation/review/`.
 
-**후속 리뷰 권고:** `false` — r1은 medium 2건 이상을 수정해 후속 r2를 수행했고, r2는 high를 수정하지 않았다(patched: medium 2, low 4).
+**후속 리뷰 권고:** `false` — r1은 medium 2건 이상을 수정해 후속 r2를 수행했고, r2는 high를 수정하지 않았다(patched: medium 2, low 4). 중앙 수락 보완 뒤 증분 후속 리뷰 a1(2렌즈) 3건 medium patch, high 0이라 수렴.
 
 **검증(지휘자 실행):** `pnpm build` 종료 0, `pnpm typecheck` 종료 0, `git diff --check` 종료 0, 제거 API 검색은 0033·이행 시험의 의도된 참조만 남음(`ensureDaily`는 키 기반 `ensureSchedule`을 감싼 미사용 호환 export로 남음). 과거 migration 0001~0032 diff 없음. Matrix 행별 시험 코드는 작성했으나 실행은 21.8.
 
 **21.8 실행 인계(미실행):** 전용 시험 PG(`compose.test.yaml`)·합성 자료에서 `pnpm test` → `pnpm test:python` 순차. 대상: `apps/cli/test/schedule-cron.test.ts`, `apps/cli/test/schedule-migration-tick.test.ts`, `packages/postgres/test/schedule-occurrences.test.ts`(32→33 이행·self 없음 rollback·DST·once fallback·키 충돌), 공통 계약(core·PG), `work-store`·`ext-install`·`ext-install-resume`·`schedules-queue-list`·`daemon-run`·`process-group`·`extensions`, Python 공유 manifest·ABI fixture. 준비: 시험 PG 기동, 정리: 시험이 만든 `brain_test_*` DB·격리 home 삭제.
 
-**잔여 위험·운영 조치:** deferred 1건(재개 일감 attempts 누적). 이 Mac 설치본에 0033 적용·옛 manifest 예약 정리 확인은 21.7. 10,000개 초과 누락 시 최근 1,000개만 기록. 시험 미실행이므로 런타임 결함은 21.8에서 드러날 수 있다.
+**잔여 위험·운영 조치:** deferred 1건(재개 일감 attempts 누적). 이 Mac 설치본에 0033 적용·옛 manifest 예약 정리 확인은 21.7. 시험 미실행이므로 런타임 결함은 21.8에서 드러날 수 있다.

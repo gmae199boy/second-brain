@@ -874,9 +874,11 @@ function encodedFailure(message: string): string {
   return truncateUtf8(pgText(message).text!, FAILURE_MESSAGE_MAX_BYTES);
 }
 
+const SCHEDULE_CLAIM_BATCH = 1000;
 async function claimOccurrences(held: Kysely<PgSchema>, id: string): Promise<WorkItem['scheduledOccurrences']> {
   // Row lock on work serializes firing against claim/completion.
-  await sql`update brain.schedule_occurrences set status='claimed' where work_id=${id} and status in ('pending','claimed')`.execute(held);
+  await sql`update brain.schedule_occurrences set status='pending' where work_id=${id} and status='claimed'`.execute(held);
+  await sql`update brain.schedule_occurrences set status='claimed' where (schedule_id, occurrence_at) in (select schedule_id, occurrence_at from brain.schedule_occurrences where work_id=${id} and status='pending' order by occurrence_at, schedule_id limit ${SCHEDULE_CLAIM_BATCH})`.execute(held);
   const rows = await sql<{ schedule_id: string; time_zone: string | null; occurrence_at: string }>`select o.schedule_id,o.time_zone,o.occurrence_at from brain.schedule_occurrences o where o.work_id=${id} and o.status='claimed' order by o.schedule_id,o.time_zone nulls first,o.occurrence_at`.execute(held);
   const groups: NonNullable<WorkItem['scheduledOccurrences']> = [];
   for (const row of rows.rows) { let group = groups.at(-1); if (!group || group.scheduleId !== row.schedule_id || group.timeZone !== row.time_zone) { group={scheduleId:row.schedule_id,timeZone:row.time_zone,occurrences:[]}; groups.push(group); } group.occurrences.push(at(row.occurrence_at,'schedule_occurrences.occurrence_at')); }

@@ -40,6 +40,22 @@ export function scheduleStoreContract(): ContractCase<ScheduleStore & WorkStore 
   assertEqual(await store.completeWork({id:id(10),claimedBy:'first',now:expiry}),{ok:true,outcome:'lost'},'old claim loses');
   assertOk(await store.completeWork({id:id(10),claimedBy:'second',now:expiry}),'complete');
   const rows=await store.listOccurrences({scheduleId:s.id});assertOk(rows,'rows');assertEqual(rows.occurrences.map(x=>x.status),['done','skipped'],'statuses');
+ })),...(['core','supervised'] as const).map(mode=>contractCase<ScheduleStore & WorkStore & UserStore>(`${mode}: 청구 상한과 성공 후 이어가기`,async make=>withSubject(make,async store=>{
+  const kind=mode==='core'?'schedule_probe':'process_probe',a=await seed(store,1,kind),b=await seed(store,2,kind);
+  const dates=Array.from({length:1002},(_,i)=>new Date(now.getTime()+i*1000));
+  for(const [schedule,offset] of [[a,0],[b,1]] as const) assertOk(await store.fireSchedule({scheduleId:schedule.id,expectedTriggerKind:'cron',expectedTimeZone:'UTC',expectedCronExpr:schedule.cronExpr,expectedNextRunAt:now,nextRunAt:later,now:later,occurrences:dates.filter((_,i)=>i%2===offset).map(occurrenceAt=>({occurrenceAt,status:'pending' as const})),work:work(10+offset,kind)}),'fire');
+  const claim=async(token:number)=>mode==='core'?store.claimWork({now:later,claimedBy:'worker',kinds:[kind]}):store.claimSupervisedWork({now:later,claimedBy:'worker',kinds:[kind],attemptToken:id(token)});
+  const finish=async(token:number)=>mode==='core'?store.completeWork({id:id(10),claimedBy:'worker',now:later}):store.finishSupervisedWork({id:id(10),attemptToken:id(token),now:later,outcome:'succeeded'});
+  const first=await claim(20);assertOk(first,'claim');const flattened=(first.item?.scheduledOccurrences??[]).flatMap(g=>g.occurrences).sort((x,y)=>x.getTime()-y.getTime());assertEqual(flattened,dates.slice(0,1000),'oldest first');
+  assertOk(await finish(20),'success');const second=await claim(21);assertOk(second,'resumed');assertEqual((second.item?.scheduledOccurrences??[]).flatMap(g=>g.occurrences).sort((x,y)=>x.getTime()-y.getTime()),dates.slice(1000),'remaining');assertOk(await finish(21),'finish');
+ }))),contractCase('만료 재청구는 더 이른 회차를 포함한 상한만 완료한다',async make=>withSubject(make,async store=>{
+  const a=await seed(store,1),b=await seed(store,2),dates=Array.from({length:1000},(_,i)=>new Date(now.getTime()-(1000-i)*1000));
+  const fire=(schedule:Schedule,occurrences:Date[],n:number)=>store.fireSchedule({scheduleId:schedule.id,expectedTriggerKind:'cron',expectedTimeZone:'UTC',expectedCronExpr:schedule.cronExpr,expectedNextRunAt:now,nextRunAt:next,now,occurrences:occurrences.map(occurrenceAt=>({occurrenceAt,status:'pending' as const})),work:work(n)});
+  assertOk(await fire(a,dates,10),'first fire');const first=await store.claimWork({now,claimedBy:'first',kinds:['schedule_probe']});assertOk(first,'first claim');assertEqual(first.item?.scheduledOccurrences?.[0]?.occurrences,dates,'first thousand');
+  const earlier=new Date(dates[0]!.getTime()-1000);assertOk(await fire(b,[earlier],11),'earlier arrival');const expiry=new Date(now.getTime()+700000);
+  const reclaimed=await store.claimWork({now:expiry,claimedBy:'second',kinds:['schedule_probe']});assertOk(reclaimed,'reclaim');const claimed=(reclaimed.item?.scheduledOccurrences??[]).flatMap(g=>g.occurrences).sort((x,y)=>x.getTime()-y.getTime());assertEqual(claimed,[earlier,...dates.slice(0,999)],'oldest thousand only');
+  assertOk(await store.completeWork({id:id(10),claimedBy:'second',now:expiry}),'success');const rows=await store.listOccurrences({scheduleId:a.id});assertOk(rows,'rows');assertEqual(rows.occurrences.map(r=>r.status),[...Array(999).fill('done'),'pending'],'unclaimed remains pending');
+  const earlyRows=await store.listOccurrences({scheduleId:b.id});assertOk(earlyRows,'earlier rows');assertEqual(earlyRows.occurrences[0]?.status,'done','earlier done');
  })),...(['core','supervised'] as const).map(mode=>contractCase<ScheduleStore & WorkStore & UserStore>(`${mode}: 청구 후 새 회차와 재시도·종료`,async make=>withSubject(make,async store=>{
   const kind=mode==='core'?'schedule_probe':'process_probe',s=await seed(store,1,kind);
   const fire=(at:Date,after:Date,n:number)=>store.fireSchedule({scheduleId:s.id,expectedTriggerKind:'cron',expectedTimeZone:'UTC',expectedCronExpr:'0 9 * * *',expectedNextRunAt:at,nextRunAt:after,now:at,occurrences:[{occurrenceAt:at,status:'pending'}],work:work(n,kind)});
