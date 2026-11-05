@@ -62,6 +62,9 @@ export interface WorkItemRow {
 export function groupAvailable(table: string): RawBuilder<boolean> {
   return sql<boolean>`not exists (select 1 from brain.work_hold_groups g where g.name = ${sql.ref(table + '.hold_group')})`;
 }
+export function quiesceAvailable(table: string): RawBuilder<boolean> {
+  return sql<boolean>`not exists (select 1 from brain.extension_quiesce q where position('.' in ${sql.ref(table + '.kind')}) > 0 and q.name = split_part(${sql.ref(table + '.kind')}, '.', 1))`;
+}
 
 /** A retained supervised token holds the key even after its lease expires. */
 function keyAvailable(now: string): RawBuilder<boolean> {
@@ -100,7 +103,7 @@ export function claimCandidateQuery(query: DueWorkQuery): RawBuilder<WorkItemRow
           where d.work_item_id = brain.work_items.id
             and (p.completed_at is null or p.outcome is distinct from 'succeeded')
        )
-       and ${keyAvailable(now)} and ${groupAvailable('brain.work_items')}
+       and ${keyAvailable(now)} and ${groupAvailable('brain.work_items')} and ${quiesceAvailable('brain.work_items')}
        and execution_class = 'core'
        and next_attempt_at <= ${now}
        and (claim_expires_at is null or claim_expires_at <= ${now})
@@ -239,6 +242,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
       let written;
       try {
         written = await withWrite(opened.connection, async (held) => {
+          await sql`lock table brain.extension_quiesce in share mode`.execute(held);
           const now = instant(input.now, 'work_items.claimed_at');
           for (;;) {
             const found = await sql<WorkItemRow>`${claimCandidateQuery(input)} for update skip locked`.execute(held);
@@ -349,6 +353,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
         const written = await withWrite(opened.connection, async (held) => {
+          await sql`lock table brain.extension_quiesce in share mode`.execute(held);
           const now = instant(input.now, 'work_items.claimed_at');
           for (;;) {
             const found = await sql<WorkItemRow>`select * from brain.work_items
@@ -358,7 +363,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
                    where d.work_item_id = brain.work_items.id
                      and (p.completed_at is null or p.outcome is distinct from 'succeeded')
                 )
-                and ${keyAvailable(now)} and ${groupAvailable('brain.work_items')}
+                and ${keyAvailable(now)} and ${groupAvailable('brain.work_items')} and ${quiesceAvailable('brain.work_items')}
                 and current_attempt_token is null and cancel_requested_at is null
                 and next_attempt_at <= ${now} and (claim_expires_at is null or claim_expires_at <= ${now})
                 and kind = any(${[...input.kinds]}::text[])

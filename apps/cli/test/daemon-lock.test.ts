@@ -7,6 +7,7 @@ import { RUN_FOLDER, daemonPidPath } from '../src/config/paths.js';
 import {
   BOOT_SLACK_MS,
   acquireDaemonLock,
+  acquireOfflineDaemonFence,
   readDaemonLock,
   releaseDaemonLock,
 } from '../src/daemon/lock.js';
@@ -37,6 +38,18 @@ const bootAt = (): Date => BOOT;
 /** Nothing is alive unless a case says so. */
 const noneAlive = (): boolean => false;
 const allAlive = (): boolean => true;
+
+it('설치 offline fence는 데몬의 진입을 막고 알 수 없는 잔존 잠금을 회수하지 않는다', async () => {
+  const at = await home();
+  const fence = await acquireOfflineDaemonFence({ home: at, clock, pid: 4242, bootAt });
+  expect(fence.ok).toBe(true);
+  if (!fence.ok) throw new Error('offline fence');
+  expect((await acquireDaemonLock({ home: at, clock, pid: 4243, isAlive: allAlive, bootAt })).ok).toBe(false);
+  await fence.release();
+  await plant(at, 'corrupt');
+  expect((await acquireOfflineDaemonFence({ home: at, clock, pid: 4242, bootAt })).ok).toBe(false);
+  expect(await readFile(daemonPidPath(at), 'utf8')).toBe('corrupt');
+});
 
 async function home(): Promise<string> {
   return temporary.create('brain-daemon-lock-');

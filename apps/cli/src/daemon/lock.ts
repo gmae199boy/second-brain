@@ -150,6 +150,18 @@ export async function acquireDaemonLock(options: DaemonLockOptions): Promise<Dae
   return refused((await readOwner(target))?.pid ?? null);
 }
 
+/** An installer cannot reclaim a dead or unreadable daemon lock: the daemon's
+ * children may still be writing after their parent stopped. */
+export async function acquireOfflineDaemonFence(options: DaemonLockOptions): Promise<DaemonLockResult> {
+  const pid = options.pid ?? process.pid;
+  const target = daemonPidPath(options.home);
+  // Old daemon versions reclaim locks whose boot date precedes theirs. A
+  // future boot marker keeps a live installer fenced even across clock jumps.
+  if (await take(target, pid, options.clock, new Date('9999-01-01T00:00:00.000Z'), options.commit ?? null)) return held(options.home, pid);
+  return { ok: false, ownerPid: (await readOwner(target))?.pid ?? null,
+    message: '데몬 잠금이 남아 안전 정지를 확인할 수 없습니다. 새 실행을 차단하고 데몬과 모든 자식의 종료를 확인한 뒤 기존 잠금을 복구하세요.' };
+}
+
 /**
  * What the lock file says, or `undefined` when there is none or it cannot be
  * read. Story 9.3 reports the owner and the instant from here, which is why it

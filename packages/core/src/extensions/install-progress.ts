@@ -14,6 +14,7 @@ export interface ExtensionInstallProgress {
   authWorkId: string | null;
   scheduleIds: string[];
   disabledScheduleKeys?: string[];
+  transition?: { owner: string; registered: boolean };
 }
 export interface StoredExtensionInstallProgress { revision: number; progress: ExtensionInstallProgress }
 
@@ -25,7 +26,12 @@ const uuid = (value: unknown) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9
 const stage = (value: unknown): value is InstallStage => typeof value === 'string' && (installStages as readonly string[]).includes(value);
 /** 예상하지 않은 속성과 임의 진단 문구를 거부한다. */
 export function validInstallProgress(value: unknown): value is ExtensionInstallProgress {
-  if (!object(value) || !keys(value, Object.hasOwn(value, 'disabledScheduleKeys') ? ['name', 'packageDigest', 'result', 'failedStage', 'lastFailure', 'stages', 'authWorkId', 'scheduleIds', 'disabledScheduleKeys'] : ['name', 'packageDigest', 'result', 'failedStage', 'lastFailure', 'stages', 'authWorkId', 'scheduleIds'])) return false;
+  if (!object(value)) return false;
+  const expected = ['name', 'packageDigest', 'result', 'failedStage', 'lastFailure', 'stages', 'authWorkId', 'scheduleIds'];
+  if (Object.hasOwn(value, 'disabledScheduleKeys')) expected.push('disabledScheduleKeys');
+  if (Object.hasOwn(value, 'transition')) expected.push('transition');
+  if (!keys(value, expected)) return false;
+  if (value.transition !== undefined && (!object(value.transition) || !keys(value.transition, ['owner', 'registered']) || !uuid(value.transition.owner) || typeof value.transition.registered !== 'boolean')) return false;
   if (value.disabledScheduleKeys !== undefined && (!Array.isArray(value.disabledScheduleKeys) || value.disabledScheduleKeys.some(key => typeof key !== 'string' || !key.trim() || key.includes('\u0000')) || new Set(value.disabledScheduleKeys).size !== value.disabledScheduleKeys.length)) return false;
   if (typeof value.name !== 'string' || (!/^[a-z][a-z0-9_]{0,30}$/.test(value.name) || /^(core|brain|public|pg_)/.test(value.name)) || typeof value.packageDigest !== 'string' || !/^[0-9a-f]{64}$/.test(value.packageDigest)) return false;
   if (value.result !== null && !['installed', 'failed', 'cancelled', 'login_required', 'connection_failed', 'scheduler_unavailable'].includes(value.result as string)) return false;

@@ -78,6 +78,7 @@ export const WARNING_CODES = [
   'PLUGIN_NOT_INSTALLED',
   /** The installed plugin is older than the build answering this command. */
   'PLUGIN_BEHIND',
+  'EXTENSION_PACKAGE_CONFLICT',
   /** More than one copy of the plugin is installed, so hooks may run twice. */
   'PLUGIN_DUPLICATE',
   /**
@@ -122,6 +123,7 @@ export const WARNING_CODE_MEANINGS: Readonly<Record<WarningCode, string>> = {
   DAEMON_NOT_REGISTERED: '데몬을 launchd에 등록하지 못했고, 명령과 hook은 데몬 없이 그대로 실행됩니다',
   PLUGIN_NOT_INSTALLED: '이 brain이 기대하는 하네스 플러그인이 설치되어 있지 않습니다',
   PLUGIN_BEHIND: '설치된 플러그인이 이 명령에 답하는 빌드보다 오래되었습니다',
+  EXTENSION_PACKAGE_CONFLICT: '같은 버전의 확장 패키지 신원이 설치된 내용과 다릅니다',
   PLUGIN_DUPLICATE: '플러그인이 두 벌 이상 설치되어 hook이 두 번 돌 수 있습니다',
   UPDATE_AVAILABLE: '플러그인이 더 새 앱을 담고 있는데 자동 업데이트가 꺼져 있습니다',
 };

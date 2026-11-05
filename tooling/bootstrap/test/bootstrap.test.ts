@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
@@ -45,6 +45,8 @@ const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 /** A fixed home, so an expected command line can be written out in full. */
 const HOME = '/tmp/brain-home';
 const APP = join(HOME, APP_FOLDER);
+const STAGE = join(HOME, '.app-stage-<stage>');
+const stageLine = (line: string) => line.replace(/\.app-stage-[0-9a-f-]{36}/g, '.app-stage-<stage>');
 const ENV: NodeJS.ProcessEnv = { [HOME_ENV]: HOME };
 
 /** What a fake command answers. Anything left out is "exit 0, no output". */
@@ -54,6 +56,7 @@ interface Harness {
   deps: BootstrapDeps;
   /** Every command, as `command arg arg`, in the order it was run. */
   calls: string[];
+  requests: CommandRequest[];
   lines: string[];
   questions: string[];
   /** The `systemMessage` texts, in order. Hook mode says at most one. */
@@ -90,6 +93,7 @@ interface HarnessOptions {
   installerWrites?: Record<string, string>;
   /** How many renames fail before one works, for the record that cannot be written. */
   brokenMoves?: number;
+  stageProtocol?: number | null;
 }
 
 /** A folder that exists only in the harness's own map of folders. */
@@ -103,6 +107,7 @@ const PID = 4242;
 function healthy(line: string): Partial<CommandResult> | undefined {
   if (line === 'pnpm --version') return { stdout: '12.11.2\n' };
   if (line.endsWith('rev-parse --show-toplevel')) return { stdout: `${APP}\n` };
+  if (line.endsWith('rev-parse HEAD')) return { stdout: `${OTHER}\n` };
   if (line.endsWith('remote get-url origin')) return { stdout: `${DEFAULT_REPO}\n` };
   return undefined;
 }
@@ -116,11 +121,13 @@ function healthy(line: string): Partial<CommandResult> | undefined {
  */
 function harness(options: HarnessOptions = {}): Harness {
   const calls: string[] = [];
+  const requests: CommandRequest[] = [];
   const lines: string[] = [];
   const questions: string[] = [];
   const messages: string[] = [];
   const writes: string[] = [];
   let moves = 0;
+  let appExists = options.exists ?? false;
   const files = new Map<string, string>(Object.entries(options.files ?? {}));
   const folders = new Map<string, number>();
   const alive = new Set<number>(options.alive ?? [PID]);
@@ -137,11 +144,25 @@ function harness(options: HarnessOptions = {}): Harness {
 
   const deps: BootstrapDeps = {
     run: async (request: CommandRequest): Promise<CommandResult> => {
-      const line = [request.command, ...request.args].join(' ');
-      calls.push(line);
+      const line = stageLine([request.command, ...request.args].join(' '));
+      requests.push(request); calls.push(line);
       const scripted = options.respond?.(line, request) ?? healthy(line) ?? {};
       const code = scripted.code ?? 0;
-      if (line.startsWith(INSTALLER) && code === 0) {
+      if (line === 'pnpm build' && code === 0 && request.cwd) {
+        files.set(join(request.cwd, 'apps/cli/dist/build.json'), JSON.stringify({ commit: REF, staged_promotion: options.stageProtocol === undefined ? 1 : options.stageProtocol }));
+        files.set(join(request.cwd, 'apps/cli/dist/install.js'), 'installer');
+      }
+      if (request.command === '/fake/node' && request.args[0]?.endsWith('/apps/cli/dist/install.js') && code === 0 && request.cwd) {
+        const installHome = dirname(request.cwd), installApp = join(installHome, APP_FOLDER);
+        // The child owns promotion after its checks. Model that boundary only
+        // when the child succeeds; failed preparation leaves app untouched.
+        const hadPrevious = appExists; appExists = true;
+        if (hadPrevious) folders.set(join(installHome, '.app-previous'), now);
+        files.set(join(installHome, '.app-promotion.json'), JSON.stringify({ target: REF, hadPrevious, owner: request.env?.SECOND_BRAIN_INSTALL_LOCK_OWNER }));
+        files.set(join(installApp, 'apps/cli/dist/build.json'), JSON.stringify({ commit: REF, staged_promotion: 1 }));
+        files.set(join(installApp, 'apps/cli/dist/bin.js'), 'bin');
+        files.set(join(installHome, 'bin/brain'), `BIN='${join(installApp, 'apps/cli/dist/bin.js')}'\nexec "$NODE" "$BIN" "$@"\n`);
+        if (!line.includes('--plugin-root') && !options.installerWrites) files.set(join(installHome, 'installed.json'), record(REF));
         for (const [path, text] of Object.entries(options.installerWrites ?? {})) {
           files.set(path, text);
         }
@@ -168,7 +189,7 @@ function harness(options: HarnessOptions = {}): Harness {
     logToFile: (path: string): void => {
       logPath = path;
     },
-    exists: (path: string) => (path === APP ? (options.exists ?? false) : folders.has(path)),
+    exists: (path: string) => (path === APP ? appExists : folders.has(path) || files.has(path)),
     realpath: (path: string) => path,
     readText: (path: string) => files.get(path),
     writeText: (path: string, text: string) => {
@@ -195,6 +216,7 @@ function harness(options: HarnessOptions = {}): Harness {
     },
     removeFolder: (path: string) => {
       folders.delete(path);
+      files.delete(path);
       for (const key of [...files.keys()]) {
         if (key.startsWith(`${path}/`)) files.delete(key);
       }
@@ -210,6 +232,7 @@ function harness(options: HarnessOptions = {}): Harness {
   return {
     deps,
     calls,
+    requests,
     lines,
     questions,
     messages,
@@ -242,7 +265,7 @@ function respondWith(
   };
 }
 
-const INSTALLER = `/fake/node ${join(APP, 'apps', 'cli', 'dist', 'install.js')}`;
+const INSTALLER = `/fake/node ${join(STAGE, 'apps', 'cli', 'dist', 'install.js')}`;
 
 describe('resolving where things go', () => {
   it('uses the folder the environment names', () => {
@@ -278,13 +301,19 @@ describe('a first install', () => {
     expect(code).toBe(0);
     expect(run.calls).toEqual([
       'git --version',
-      `git clone ${DEFAULT_REPO} ${APP}`,
+      `git clone ${DEFAULT_REPO} ${STAGE}`,
       'pnpm --version',
       'pnpm install --frozen-lockfile --ignore-scripts',
       'pnpm build',
       INSTALLER,
     ]);
     expect(run.questions).toEqual([]);
+    const installer = run.requests.at(-1)!;
+    expect(installer.env?.SECOND_BRAIN_STAGED_APP).toMatch(/\.app-stage-[0-9a-f-]{36}$/);
+    expect(installer.cwd).toBe(installer.env?.SECOND_BRAIN_STAGED_APP);
+    expect(installer.env?.SECOND_BRAIN_INSTALL_LOCK_OWNER).toMatch(/^4242 /);
+    expect(installer.env?.SECOND_BRAIN_PREVIOUS_APP_HEAD).toBe('');
+    expect(JSON.parse(run.file(join(APP, 'apps/cli/dist/build.json'))!).commit).toBe(REF);
   });
 
   it('clones the repository the environment names, for a fork or a test', async () => {
@@ -292,7 +321,7 @@ describe('a first install', () => {
 
     await main([], { ...ENV, [REPO_ENV]: 'file:///tmp/fork.git' }, run.deps);
 
-    expect(run.calls).toContain(`git clone file:///tmp/fork.git ${APP}`);
+    expect(run.calls).toContain(`git clone file:///tmp/fork.git ${STAGE}`);
   });
 
   it('passes its own arguments on to the installer', async () => {
@@ -311,9 +340,9 @@ describe('a first install', () => {
     expect(code).toBe(0);
     // Every step below runs with the clone as its working directory, so a
     // relative path would be resolved against itself once per step.
-    const app = resolve('relative-home', APP_FOLDER);
-    expect(run.calls).toContain(`git clone ${DEFAULT_REPO} ${app}`);
-    expect(run.calls.at(-1)).toBe(`/fake/node ${join(app, 'apps', 'cli', 'dist', 'install.js')}`);
+    const stage = resolve('relative-home', '.app-stage-<stage>');
+    expect(run.calls).toContain(`git clone ${DEFAULT_REPO} ${stage}`);
+    expect(run.calls.at(-1)).toBe(`/fake/node ${join(stage, 'apps', 'cli', 'dist', 'install.js')}`);
   });
 
   it('hands back whatever the installer exited with', async () => {
@@ -327,7 +356,7 @@ describe('a first install', () => {
 });
 
 describe('a second run', () => {
-  it('fast-forwards the existing clone instead of cloning again', async () => {
+  it('checks the existing history and builds a separate target clone', async () => {
     const run = harness({ exists: true });
 
     const code = await main([], ENV, run.deps);
@@ -339,12 +368,25 @@ describe('a second run', () => {
       `git -C ${APP} remote get-url origin`,
       `git -C ${APP} status --porcelain`,
       `git -C ${APP} symbolic-ref -q HEAD`,
-      `git -C ${APP} pull --ff-only`,
+      `git -C ${APP} rev-parse HEAD`,
+      `git clone ${DEFAULT_REPO} ${STAGE}`,
+      `git -C ${STAGE} merge-base --is-ancestor ${OTHER} HEAD`,
       'pnpm --version',
       'pnpm install --frozen-lockfile --ignore-scripts',
       'pnpm build',
       INSTALLER,
     ]);
+  });
+
+  it('keeps the previous app bytes when the staged build fails', async () => {
+    const buildPath = join(APP, 'apps/cli/dist/build.json');
+    const oldBuild = JSON.stringify({ commit: OTHER });
+    const run = harness({ exists: true, files: { [buildPath]: oldBuild }, respond: respondWith({ 'pnpm build': { code: 1 } }) });
+    expect(await main([], ENV, run.deps)).toBe(1);
+    expect(run.file(buildPath)).toBe(oldBuild);
+    expect(run.calls).not.toContain(INSTALLER);
+    expect(run.calls).not.toContain(`git -C ${APP} pull --ff-only`);
+    expect(run.requests.find(request => request.command === 'pnpm' && request.args[0] === 'build')?.cwd).toMatch(/\.app-stage-[0-9a-f-]{36}$/);
   });
 });
 
@@ -377,14 +419,13 @@ describe('an app folder Brain must not touch', () => {
     expect(code).toBe(1);
     expect(run.calls).not.toContain(`git -C ${APP} pull --ff-only`);
     const said = run.lines.join('\n');
-    expect(said).toContain('고정해 둔 클론입니다');
-    expect(said).toContain('app-ref');
+    expect(said).toContain('고정된 클론은 플러그인의 ref로 갱신하세요');
   });
 
   it('stops when the clone cannot be fast-forwarded, changing nothing', async () => {
     const run = harness({
       exists: true,
-      respond: respondWith({ [`git -C ${APP} pull --ff-only`]: { code: 1 } }),
+      respond: respondWith({ [`git -C ${STAGE} merge-base --is-ancestor ${OTHER} HEAD`]: { code: 1 } }),
     });
 
     const code = await main([], ENV, run.deps);
@@ -397,9 +438,11 @@ describe('an app folder Brain must not touch', () => {
       `git -C ${APP} remote get-url origin`,
       `git -C ${APP} status --porcelain`,
       `git -C ${APP} symbolic-ref -q HEAD`,
-      `git -C ${APP} pull --ff-only`,
+      `git -C ${APP} rev-parse HEAD`,
+      `git clone ${DEFAULT_REPO} ${STAGE}`,
+      `git -C ${STAGE} merge-base --is-ancestor ${OTHER} HEAD`,
     ]);
-    expect(run.lines.join('\n')).toContain('fast-forward할 수 없으므로');
+    expect(run.lines.join('\n')).toContain('기존 app 이력과 대상 이력이 일치하지 않습니다');
   });
 
   it('stops when the folder is not a git repository at all', async () => {
@@ -481,7 +524,7 @@ describe('pnpm', () => {
     expect(run.questions[0]).toContain(PNPM_INSTALL_COMMAND);
     expect(run.calls).toEqual([
       'git --version',
-      `git clone ${DEFAULT_REPO} ${APP}`,
+      `git clone ${DEFAULT_REPO} ${STAGE}`,
       'pnpm --version',
       'npm install -g pnpm@latest',
       // What npm installed is not necessarily what the PATH now finds, so the
@@ -617,7 +660,7 @@ describe('a step that fails', () => {
   it.each([
     ['pnpm install --frozen-lockfile --ignore-scripts', 'pnpm install'],
     ['pnpm build', 'pnpm build'],
-    [`git clone ${DEFAULT_REPO} ${APP}`, 'git clone'],
+    [`git clone ${DEFAULT_REPO} ${STAGE}`, 'git clone'],
   ])('names %s and its exit code', async (command, step) => {
     const run = harness({
       exists: false,
@@ -822,6 +865,7 @@ function record(commit: string): string {
 function git(...args: readonly string[]): string {
   return `git -C ${APP} ${args.join(' ')}`;
 }
+function stageGit(...args: readonly string[]): string { return `git -C ${STAGE} ${args.join(' ')}`; }
 
 /** Hook mode's own arguments: the ref it consumes, and what it passes on. */
 const HOOK_ARGS = ['--yes', '--ref', REF, '--plugin-root', '/plugin'] as const;
@@ -910,59 +954,33 @@ describe('the install lock', () => {
     expect(run.locked()).toBe(false);
   });
 
-  it('stops an npx install that somebody else is already doing', async () => {
-    const run = harness({ exists: false, heldLock: { pid: 777 }, alive: [777] });
-
-    const code = await main([], ENV, run.deps);
-
-    expect(code).toBe(0);
-    expect(run.calls).toEqual(['git --version']);
-    expect(run.lines.join('\n')).toContain('다른 설치가 진행 중입니다');
+  it.each(['npx', 'hook'] as const)('%s waits for the existing owner before running', async mode => {
+    const run = harness({ exists: mode === 'hook', heldLock: { pid: 777 }, alive: [777], respond: atRef, installerWrites: { [INSTALLED_PATH]: record(REF) } });
+    let wake!: () => void;
+    let waiting!: () => void;
+    const reached = new Promise<void>(resolve => { waiting = resolve; });
+    run.deps.waitForInstallLock = () => new Promise<void>(resolve => { wake = resolve; waiting(); });
+    const result = main(mode === 'hook' ? [...HOOK_ARGS] : [], ENV, run.deps);
+    await reached;
+    expect(run.locked()).toBe(true);
+    expect(run.calls).not.toContain(`git clone ${DEFAULT_REPO} ${STAGE}`);
+    expect(run.lines.join(' ')).toContain('공유 상태 쓰기 종료');
+    run.deps.removeFolder(join(HOME, LOCK_FOLDER)); wake();
+    expect(await result).toBe(0);
+    expect(run.locked()).toBe(false);
   });
-
-  it('stops a hook run that somebody else is already doing, saying nothing', async () => {
-    const run = harness({ exists: true, heldLock: { pid: 777 }, alive: [777] });
-
-    const code = await main([...HOOK_ARGS], ENV, run.deps);
-
-    expect(code).toBe(0);
-    expect(run.messages).toEqual([]);
-    expect(run.calls).toEqual(['git --version']);
-  });
-
-  it('reclaims a lock whose owning process is gone', async () => {
-    // The pid settles it: an owner that is gone cannot come back, however
-    // recently the folder was touched.
-    const run = harness({
-      exists: false,
-      heldLock: { pid: 777 },
-      alive: [PID],
-      respond: atRef,
-    });
-
-    const code = await main([], ENV, run.deps);
-
-    expect(code).toBe(0);
-    expect(run.calls).toContain(`git clone ${DEFAULT_REPO} ${APP}`);
-  });
-
-  it('reclaims a lock nobody has touched for half an hour, with no pid in it', async () => {
-    const run = harness({
-      exists: false,
-      heldLock: { ageMs: LOCK_STALE_MS + 60_000 },
-    });
-
+  it('does not release a lock whose ownership record was replaced', async () => {
+    const run = harness({ exists: false });
+    const base = run.deps.run;
+    run.deps.run = async request => {
+      const result = await base(request);
+      if (request.command === 'pnpm' && request.args[0] === 'build') run.deps.writeText(join(HOME, LOCK_FOLDER, 'owner'), 'other-owner');
+      return result;
+    };
     expect(await main([], ENV, run.deps)).toBe(0);
+    expect(run.locked()).toBe(true);
   });
 
-  it('leaves a young lock with no pid in it alone', async () => {
-    const run = harness({ exists: false, heldLock: { ageMs: 60_000 } });
-
-    const code = await main([], ENV, run.deps);
-
-    expect(code).toBe(0);
-    expect(run.calls).toEqual(['git --version']);
-  });
 });
 
 describe('hook mode on a first install', () => {
@@ -979,8 +997,8 @@ describe('hook mode on a first install', () => {
 
     expect(run.calls).toEqual([
       'git --version',
-      `git clone --no-checkout ${DEFAULT_REPO} ${APP}`,
-      git('checkout', '--detach', REF),
+      `git clone --no-checkout ${DEFAULT_REPO} ${STAGE}`,
+      stageGit('checkout', '--detach', REF),
       'pnpm --version',
       'pnpm install --frozen-lockfile --ignore-scripts',
       'pnpm build',
@@ -1041,7 +1059,7 @@ describe('hook mode when there is nothing to do', () => {
 
     await main([...HOOK_ARGS], ENV, run.deps);
 
-    expect(run.calls).toContain(`git clone --no-checkout ${DEFAULT_REPO} ${APP}`);
+    expect(run.calls).toContain(`git clone --no-checkout ${DEFAULT_REPO} ${STAGE}`);
   });
 
   it('says nothing when the plugin is behind what is installed', async () => {
@@ -1081,10 +1099,11 @@ describe('hook mode when there is nothing to do', () => {
 });
 
 describe('hook mode on a clone it has to move forward', () => {
-  it('fetches, checks the three relations, and detaches at the ref', async () => {
+  it('checks existing history and detaches the isolated target at the ref', async () => {
     const run = harness({
       exists: true,
       files: { [INSTALLED_PATH]: record(OTHER) },
+      installerWrites: { [INSTALLED_PATH]: record(REF) },
       respond: respondWith({
         [git('rev-parse', '--verify', '--quiet', `${REF}^{commit}`)]: { stdout: REF },
         [git('merge-base', '--is-ancestor', REF, OTHER)]: { code: 1 },
@@ -1094,7 +1113,9 @@ describe('hook mode on a clone it has to move forward', () => {
       }),
     });
 
-    await main([...HOOK_ARGS], ENV, run.deps);
+    expect(await main([...HOOK_ARGS], ENV, run.deps)).toBe(0);
+    expect(JSON.parse(run.file(INSTALLED_PATH)!).commit).toBe(REF);
+    expect(JSON.parse(run.file(join(APP, 'apps/cli/dist/build.json'))!).commit).toBe(REF);
 
     expect(run.calls).toEqual([
       'git --version',
@@ -1106,12 +1127,18 @@ describe('hook mode on a clone it has to move forward', () => {
       git('merge-base', '--is-ancestor', REF, OTHER),
       git('merge-base', '--is-ancestor', OTHER, REF),
       git('merge-base', '--is-ancestor', 'HEAD', REF),
-      git('checkout', '--detach', REF),
+      git('rev-parse', 'HEAD'),
+      `git clone --no-checkout ${DEFAULT_REPO} ${STAGE}`,
+      stageGit('checkout', '--detach', REF),
       'pnpm --version',
       'pnpm install --frozen-lockfile --ignore-scripts',
       'pnpm build',
       HOOK_INSTALLER,
     ]);
+    const installer = run.requests.at(-1)!;
+    expect(installer.env?.SECOND_BRAIN_PREVIOUS_APP_HEAD).toBe(OTHER);
+    expect(installer.cwd).toBe(installer.env?.SECOND_BRAIN_STAGED_APP);
+    expect(run.calls).not.toContain(git('checkout', '--detach', REF));
   });
 
   it('refuses a clone whose HEAD is not an ancestor of the ref, and checks nothing out', async () => {
@@ -1462,32 +1489,79 @@ describe('the plugin record', () => {
   });
 });
 
-describe('a lock whose pid is alive', () => {
-  it('is reclaimed anyway once nobody has touched the folder for half an hour', async () => {
-    // Pids are recycled. A live process that is not this lock's owner used to
-    // make the lock permanent, because a readable pid ended the stale test.
-    const run = harness({
-      exists: false,
-      heldLock: { pid: 777, ageMs: LOCK_STALE_MS + 60_000 },
-      alive: [PID, 777],
-    });
-
-    const code = await main([], ENV, run.deps);
-
-    expect(code).toBe(0);
-    expect(run.calls).toContain(`git clone ${DEFAULT_REPO} ${APP}`);
+describe('ambiguous old install locks', () => {
+  it.each([{ pid: 777, ageMs: LOCK_STALE_MS + 60000 }, { pid: 777 }, { ageMs: LOCK_STALE_MS + 60000 }])('preserves an old or ownerless lock until explicitly removed: %j', async heldLock => {
+    const run = harness({ exists: false, heldLock, alive: [PID, 777] });
+    let wake!: () => void, reached!: () => void;
+    const waiting = new Promise<void>(resolve => { reached = resolve; });
+    run.deps.waitForInstallLock = () => new Promise<void>(resolve => { wake = resolve; reached(); });
+    const result = main([], ENV, run.deps);
+    await waiting;
+    expect(run.locked()).toBe(true);
+    run.deps.removeFolder(join(HOME, LOCK_FOLDER)); wake();
+    expect(await result).toBe(0);
   });
+});
 
-  it('is left alone while the folder is young', async () => {
-    const run = harness({
-      exists: false,
-      heldLock: { pid: 777, ageMs: 60_000 },
-      alive: [PID, 777],
-    });
-
-    const code = await main([], ENV, run.deps);
-
-    expect(code).toBe(0);
-    expect(run.calls).toEqual(['git --version']);
+describe('staged promotion verification and cleanup', () => {
+  it.each(['npx', 'hook'] as const)('%s rejects an older target without promotion support before the installer', async mode => {
+    const build = join(APP, 'apps/cli/dist/build.json'), old = JSON.stringify({ commit: OTHER });
+    const run = harness({ exists: true, stageProtocol: null, files: { [build]: old }, respond: atRef });
+    expect(await main(mode === 'hook' ? [...HOOK_ARGS] : [], ENV, run.deps)).toBe(1);
+    expect(run.requests.some(request => request.args[0]?.endsWith('/apps/cli/dist/install.js'))).toBe(false);
+    expect(run.file(build)).toBe(old); expect(run.file(INSTALLED_PATH)).toBeUndefined();
+    expect(run.file(join(HOME, '.app-promotion.json'))).toBeUndefined();
+  });
+  const marker = join(HOME, '.app-promotion.json'), backup = join(HOME, '.app-previous'), bin = join(APP, 'apps/cli/dist/bin.js');
+  const state = () => ({ [INSTALLED_PATH]: record(REF), [join(APP, 'apps/cli/dist/build.json')]: JSON.stringify({ commit: REF, staged_promotion: 1 }), [bin]: 'bin', [join(HOME, 'bin/brain')]: `BIN='${bin}'\nexec "$NODE" "$BIN" "$@"\n`, [marker]: JSON.stringify({ target: REF, hadPrevious: true, owner: '4242 00000000-0000-4000-8000-000000000000\n' }), [backup]: 'previous' });
+  it.each(['backup', 'marker'] as const)('resumes after interruption during %s cleanup', async phase => {
+    const run = harness({ exists: true, files: state() }); const remove = run.deps.removeFolder;
+    let blocked = true;
+    run.deps.removeFolder = path => { if (blocked && path === (phase === 'backup' ? backup : marker)) return; remove(path); };
+    expect(await main([...HOOK_ARGS], ENV, run.deps)).toBe(1);
+    expect(run.file(marker)).toBeDefined(); expect(run.file(backup)).toBe(phase === 'backup' ? 'previous' : undefined);
+    blocked = false;
+    expect(await main([...HOOK_ARGS], ENV, run.deps)).toBe(0);
+    expect(run.file(marker)).toBeUndefined(); expect(run.file(backup)).toBeUndefined();
+    expect(JSON.parse(run.file(INSTALLED_PATH)!).commit).toBe(REF);
+  });
+  it.each(['owner', 'target', 'build', 'shim', 'next', 'bin', 'marker'] as const)('preserves ambiguous cleanup state: %s', async reason => {
+    const files = state();
+    if (reason === 'owner') files[marker] = JSON.stringify({ target: REF, hadPrevious: true });
+    if (reason === 'target') files[marker] = JSON.stringify({ target: OTHER, hadPrevious: true, owner: '4242 00000000-0000-4000-8000-000000000000\n' });
+    if (reason === 'build') files[join(APP, 'apps/cli/dist/build.json')] = JSON.stringify({ commit: OTHER, staged_promotion: 1 });
+    if (reason === 'shim') files[join(HOME, 'bin/brain')] = 'wrong';
+    if (reason === 'next') files[join(HOME, '.app-next')] = 'unfinished';
+    if (reason === 'bin') delete files[bin];
+    if (reason === 'marker') delete files[marker];
+    const run = harness({ exists: true, files });
+    expect(await main([...HOOK_ARGS], ENV, run.deps)).toBe(1);
+    expect(run.file(marker)).toBe(files[marker]); expect(run.file(backup)).toBe('previous');
+  });
+  it('refuses a successful child that did not actually promote an app', async () => {
+    const run = harness({ exists: false }); const real = run.deps.run;
+    run.deps.run = async request => request.command === '/fake/node' ? { code: 0, stdout: '' } : real(request);
+    expect(await main([], ENV, run.deps)).toBe(1);
+    expect(run.file(join(HOME, '.app-promotion.json'))).toBeUndefined();
+  });
+  it('npx preserves the promotion and backup when the successful installer leaves an older installed commit', async () => {
+    const run = harness({ exists: true, installerWrites: { [INSTALLED_PATH]: record(OTHER) } });
+    const execute = run.deps.run;
+    let childCode: number | undefined, stagedBuild: string | undefined;
+    run.deps.run = async request => {
+      if (request.command === '/fake/node') stagedBuild = run.file(join(request.cwd!, 'apps/cli/dist/build.json'));
+      const result = await execute(request);
+      if (request.command === '/fake/node') childCode = result.code;
+      return result;
+    };
+    expect(await main([], ENV, run.deps)).toBe(1);
+    expect(childCode).toBe(0);
+    expect(JSON.parse(stagedBuild!)).toEqual({ commit: REF, staged_promotion: 1 });
+    expect(run.file(join(APP, 'apps/cli/dist/build.json'))).toBe(stagedBuild);
+    expect(run.file(bin)).toBe('bin');
+    expect(run.file(join(HOME, 'bin/brain'))).toBe(`BIN='${bin}'\nexec "$NODE" "$BIN" "$@"\n`);
+    expect(JSON.parse(run.file(INSTALLED_PATH)!).commit).toBe(OTHER);
+    expect(JSON.parse(run.file(marker)!)).toMatchObject({ target: REF, hadPrevious: true, owner: expect.any(String) });
+    expect(run.deps.exists(backup)).toBe(true);
   });
 });

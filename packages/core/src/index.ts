@@ -275,8 +275,10 @@ export { holdWorkGroup, releaseWorkGroup } from './queue/hold-groups.js';
 
 export type { ExtensionStore, ExtensionRecord, ExtensionStoreFailure, ExtensionPythonEnvironment, ExtensionPublicStatus } from './ports/store.js';
 
-export { EXTENSION_CORE_VERSION, decodeExtensionManifest, isExtensionName, type ExtensionManifest } from './extensions/manifest.js';
+export { validateMigrationNames } from './extensions/migration-names.js';
+export { comparePackagePaths, EXTENSION_CORE_VERSION, decodeExtensionManifest, isExtensionName, type ExtensionManifest } from './extensions/manifest.js';
 export { runExtensionCheck } from './extensions/check.js';
+export { quiesceExtension } from './extensions/quiesce.js';
 export { installExtension, type ExtensionPackages, type ExtensionMigrator, type ExtensionRuntime } from './extensions/install.js';
 export { extensionStatus, listExtensions, publicExtensionStatus, setExtensionEnabled } from './extensions/status.js';
 export type { BrainExt } from './brain.js';

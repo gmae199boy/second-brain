@@ -160,7 +160,7 @@ it.each([
   ['invalid', 'EXTENSION_PYTHON_PIN_INVALID'], ['uv', 'EXTENSION_UV_NOT_FOUND'],
   ['python', 'EXTENSION_PYTHON_NOT_FOUND'], ['sync', 'EXTENSION_PYTHON_SYNC_FAILED'],
   ['version', 'EXTENSION_PYTHON_VERSION_MISMATCH'],
-])('Python %s 실패 시 이전 패키지와 tokenstore를 복원한다', async (mode, code) => {
+])('Python %s 실패의 변경 경계와 복구 재개를 보존한다', async (mode, code) => {
   const { cp, mkdir, readFile, writeFile, readdir } = await import('node:fs/promises');
   const { fileURLToPath } = await import('node:url');
   const fixture = await extHome(); cleanup.push(fixture.cleanup);
@@ -173,8 +173,16 @@ it.each([
   const target = join(fixture.home, 'extensions/testext');
   const original = await readFile(join(target, 'manifest.json'), 'utf8');
   await mkdir(join(target, 'tokenstore')); await writeFile(join(target, 'tokenstore/credentials'), 'existing-token');
+  const previousState = mode === 'invalid' ? {
+    registry: await fixture.db.rows("select * from brain.extensions where name='testext'"),
+    progress: await fixture.db.rows("select * from brain.extension_install_progress where name='testext'"),
+    gate: await fixture.db.rows("select * from brain.extension_quiesce where name='testext'"),
+    ledger: await fixture.ledger('testext'),
+  } : null;
   const replacement = JSON.parse(original);
-  replacement.connection_check = { runtime: 'python', entry: 'check.py' };
+  replacement.version = '0.2.0'; replacement.connection_check = { runtime: 'python', entry: 'check.py' };
+  await writeFile(join(source, 'check.py'), 'synthetic\n');
+  await writeFile(join(source, 'migrations/0002_new.sql'), 'create table testext.python_recovery (id integer);\n');
   await writeFile(join(source, 'manifest.json'), JSON.stringify(replacement));
   await writeFile(join(source, '.python-version'), mode === 'invalid' ? '3.12' : '3.12.13');
   await writeFile(join(source, 'pyproject.toml'), ''); await writeFile(join(source, 'uv.lock'), '');
@@ -184,13 +192,54 @@ it.each([
   environment.PATH = bin; environment.SECRET_TEST_VALUE = 'secret-output';
   const failed = await fixture.run(['ext', 'install', 'testext', '--json']);
   expect(failed.body.error.code).toBe(code);
-  expect(await readFile(join(target, 'manifest.json'), 'utf8')).toBe(original);
   expect(await readFile(join(target, 'tokenstore/credentials'), 'utf8')).toBe('existing-token');
-  expect(await readdir(join(fixture.home, 'extensions'))).toEqual(['testext']);
+  if (mode === 'invalid') {
+    expect(await readFile(join(target, 'manifest.json'), 'utf8')).toBe(original);
+    expect(await readdir(join(fixture.home, 'extensions'))).toEqual(['testext']);
+    expect({ registry: await fixture.db.rows("select * from brain.extensions where name='testext'"), progress: await fixture.db.rows("select * from brain.extension_install_progress where name='testext'"), gate: await fixture.db.rows("select * from brain.extension_quiesce where name='testext'"), ledger: await fixture.ledger('testext') }).toEqual(previousState);
+    expect(failed.body).toMatchObject({ ok: false, error: { code: 'EXTENSION_PYTHON_PIN_INVALID' } });
+    return;
+  }
+  expect(await readFile(join(target, 'manifest.json'), 'utf8')).toBe(JSON.stringify(replacement));
+  expect(await fixture.ledger('testext')).toEqual([{ owner: 'testext', version: 1 }, { owner: 'testext', version: 2 }]);
+  expect(await fixture.db.rows("select version from brain.extensions where name='testext'")).toEqual([{ version: '0.1.0' }]);
+  const journal = JSON.parse(await readFile(join(fixture.home, 'extensions/.transition-testext.json'), 'utf8'));
+  const gates = await fixture.db.rows("select owner from brain.extension_quiesce where name='testext'");
+  expect(journal).toMatchObject({ phase: 'active', owner: gates[0]?.owner }); expect(gates).toHaveLength(1);
+  const progress = (await fixture.db.rows("select progress from brain.extension_install_progress where name='testext'"))[0]!.progress as import('second_brain').ExtensionInstallProgress;
+  expect(progress.transition).toEqual({ owner: journal.owner, registered: false });
+  expect(progress.stages.migration?.status).toBe('succeeded'); expect(progress.stages.environment).toMatchObject({ status: 'failed', code });
   const status = await fixture.run(['ext', 'status', 'testext', '--json']);
   expect(status.body.data).toMatchObject({ installed: true, connection: { status: 'connected' }, python_environment: { status: 'failed', code } });
   expect(JSON.stringify({ failed, status })).not.toContain('secret-output');
   const textStatus = await fixture.run(['ext', 'status', 'testext']); expect(textStatus.stdout).toContain(code);
+  await writeFile(join(bin, 'uv'), `#!/bin/sh
+case "$1" in
+--version) exit 0;;
+python) echo /synthetic/python; exit 0;;
+sync) /usr/bin/touch "${join(fixture.home, 'recovery-marker')}"; while [ ! -f "${join(fixture.home, 'recovery-release')}" ]; do /bin/sleep 0.05; done; /bin/mkdir -p .venv/bin; /bin/cat > .venv/bin/python <<'PYTHON'
+#!/bin/sh
+if [ "$1" = "-c" ]; then echo 3.12.13; else echo '{"abi":1,"type":"result","summary":"synthetic"}'; fi
+PYTHON
+/bin/chmod +x .venv/bin/python; exit 0;;
+esac
+exit 1
+`, { mode: 0o755 });
+  environment.RECOVERY_MARKER = join(fixture.home, 'recovery-marker'); environment.RECOVERY_RELEASE = join(fixture.home, 'recovery-release');
+  const resuming = fixture.run(['ext', 'install', 'testext', '--json']);
+  try {
+    await expect.poll(async () => readFile(environment.RECOVERY_MARKER!, 'utf8').then(() => true, () => false), { timeout: 10000 }).toBe(true);
+    expect(await fixture.db.rows("select owner from brain.extension_quiesce where name='testext'")).toEqual(gates);
+    expect(JSON.parse(await readFile(join(fixture.home, 'extensions/.transition-testext.json'), 'utf8')).owner).toBe(journal.owner);
+  } finally { await writeFile(environment.RECOVERY_RELEASE, 'continue'); }
+  const resumed = await resuming; expect(resumed.code, resumed.stdout + resumed.stderr).toBe(0);
+  expect(resumed.body.data).toMatchObject({ version: '0.2.0', python_environment: { status: 'succeeded' } });
+  expect(await fixture.ledger('testext')).toEqual([{ owner: 'testext', version: 1 }, { owner: 'testext', version: 2 }]);
+  expect(await fixture.db.rows("select * from brain.extension_quiesce where name='testext'")).toEqual([]);
+  await expect(readFile(join(fixture.home, 'extensions/.transition-testext.json'))).rejects.toThrow();
+  const resumedProgress = (await fixture.db.rows("select progress from brain.extension_install_progress where name='testext'"))[0]!.progress as import('second_brain').ExtensionInstallProgress;
+  expect(resumedProgress.transition).toBeUndefined(); expect(resumedProgress.stages.migration?.status).toBe('succeeded');
+  expect(await readFile(join(target, 'tokenstore/credentials'), 'utf8')).toBe('existing-token');
 });
 it('persists ABI errors containing NUL and credentials as a failed connection', async () => {
   const { cp, mkdir, writeFile } = await import('node:fs/promises');

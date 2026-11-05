@@ -1796,5 +1796,180 @@
       ]
     },
     "expect": "valid"
+  },
+  {
+    "name": "package",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "files": [
+        "check.mjs",
+        "manifest.json",
+        "migrations/0001_test.sql"
+      ],
+      "core_compat": {
+        "min": "0.0.0",
+        "max_exclusive": "1.0.0"
+      },
+      "plugin_version": "1.0.0"
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "package-unsorted",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "files": [
+        "migrations/0001_test.sql",
+        "manifest.json",
+        "check.mjs"
+      ],
+      "core_compat": {
+        "min": "0.0.0",
+        "max_exclusive": "1.0.0"
+      },
+      "plugin_version": "1.0.0"
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "package-partial",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "files": [
+        "check.mjs",
+        "manifest.json",
+        "migrations/0001_test.sql"
+      ],
+      "core_compat": {
+        "min": "0.0.0",
+        "max_exclusive": "1.0.0"
+      }
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "package-range",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "files": [
+        "check.mjs",
+        "manifest.json",
+        "migrations/0001_test.sql"
+      ],
+      "core_compat": {
+        "min": "1.0.0",
+        "max_exclusive": "1.0.0"
+      },
+      "plugin_version": "1.0.0"
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "package-path",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "files": [
+        "check.mjs",
+        "manifest.json",
+        "migrations/0001_test.sql",
+        "../outside"
+      ],
+      "core_compat": {
+        "min": "0.0.0",
+        "max_exclusive": "1.0.0"
+      },
+      "plugin_version": "1.0.0"
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "unicode-codepoint-order",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "core_compat": {
+        "min": "0.0.0",
+        "max_exclusive": "1.0.0"
+      },
+      "plugin_version": "1.0.0",
+      "files": [
+        "manifest.json",
+        "x/",
+        "x/𐀀"
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "unicode-codepoint-reversed",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "core_compat": {
+        "min": "0.0.0",
+        "max_exclusive": "1.0.0"
+      },
+      "plugin_version": "1.0.0",
+      "files": [
+        "manifest.json",
+        "x/𐀀",
+        "x/"
+      ]
+    },
+    "expect": "invalid"
   }
 ]

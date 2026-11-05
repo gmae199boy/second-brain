@@ -8,9 +8,12 @@ import { composeArgs, fakeCommandRunner, systemCommandRunner } from '../src/runt
 import { installPostgres, renderPostgresCompose } from '../src/install/postgres.js';
 const pg = vi.hoisted(() => ({
   prepareDatabase: vi.fn(), runMigrations: vi.fn(), ensureSelfUser: vi.fn(), close: vi.fn(),
+  inspectExtensionFence: vi.fn(),
 }));
 vi.mock('second_brain/postgres', () => ({
   prepareDatabase: pg.prepareDatabase, runMigrations: pg.runMigrations,
+  inspectExtensionFence: pg.inspectExtensionFence,
+  withExtensionInstallLock: async (_url: string, _name: string, run: () => Promise<unknown>) => run(),
   postgresStore: () => ({ listExtensions: async () => ({ ok: true, extensions: [] }), ensureSelfUser: pg.ensureSelfUser, close: pg.close }),
 }));
 const homes: string[] = [];
@@ -47,12 +50,14 @@ it('runs Compose through shared argv, prepares and migrates before seeding the o
   const home=await fresh();const fake=fakeCommandRunner([{ok:false,stdout:'',stderr:'no such volume',message:'missing'}, {ok:true,stdout:'',stderr:''}, {ok:true,stdout:'healthy',stderr:''}]);
   pg.prepareDatabase.mockResolvedValue({ok:true,databaseUrl:'postgresql://postgres:private@localhost/brain'});
   pg.runMigrations.mockResolvedValue({ok:true,to:1,applied:['0001_initial.sql']});pg.ensureSelfUser.mockResolvedValue({ok:true,created:true,user:{name:'주인'}});
+  pg.inspectExtensionFence.mockResolvedValue({names:[],gateNames:[],fenceReady:false});
   const result=await installPostgres({home,urlEnv:'BRAIN_DATABASE_URL',env:{COMPOSE_PROJECT_NAME:'another-home'},clock,runner:fake.runner});
   expect(result).toMatchObject({ok:true,report:{...homeResources(home),schema_version:1,owner_created:true}});
   const expected=['compose','-p',homeResources(home).project,'--env-file',join(home,'.env'),'-f',join(home,'postgres','compose.yaml'),'up','-d','--wait'];
   expect(composeArgs(home,['up','-d','--wait'])).toEqual(expected);
   expect(fake.calls[2]?.args).toEqual(expected);expect(fake.calls[2]?.command).toBe('docker');
   expect(pg.prepareDatabase.mock.invocationCallOrder[0]).toBeLessThan(pg.runMigrations.mock.invocationCallOrder[0]!);
+  expect(pg.inspectExtensionFence.mock.invocationCallOrder[0]).toBeLessThan(pg.prepareDatabase.mock.invocationCallOrder[0]!);
   expect(pg.runMigrations.mock.invocationCallOrder[0]).toBeLessThan(pg.ensureSelfUser.mock.invocationCallOrder[0]!);expect(pg.close).toHaveBeenCalledOnce();
 });
 it('reports Compose tail and OrbStack guidance without preparing the database',async()=>{
@@ -63,8 +68,9 @@ it('reports Compose tail and OrbStack guidance without preparing the database',a
 });
 it('guides lost-secret recovery without removing the existing volume',async()=>{
   const home=await fresh();const fake=fakeCommandRunner([{ok:false,stdout:'',stderr:'no such volume',message:'missing'}, {ok:true,stdout:'',stderr:''}, {ok:true,stdout:'healthy',stderr:''}]);pg.prepareDatabase.mockResolvedValue({ok:false,code:'DB_UNAVAILABLE',message:'password authentication failed'});
+  pg.inspectExtensionFence.mockResolvedValue({names:[],gateNames:[],fenceReady:false});
   const result=await installPostgres({home,urlEnv:'BRAIN_DATABASE_URL',env:{},clock,runner:fake.runner});
-  expect(result).toMatchObject({ok:false});if(result.ok)return;expect(result.message).toContain('.env');expect(result.message).toContain('볼륨을 명시적으로');expect(fake.calls).toHaveLength(3);expect(pg.runMigrations).not.toHaveBeenCalled();
+  expect(result).toMatchObject({ok:false});if(result.ok)return;expect(result.message).toContain('password authentication failed');expect(result.message).toContain('기존 볼륨의 비밀번호를 확인하세요');expect(fake.calls).toHaveLength(3);expect(fake.calls.some(call=>call.args.includes('down') || call.args.includes('-v'))).toBe(false);expect(pg.runMigrations).not.toHaveBeenCalled();
 });
 it('bounds an asynchronous command and returns an execution failure as a value',async()=>{
   const result=await systemCommandRunner({command:process.execPath,args:['-e','setTimeout(()=>{},10000)'],env:process.env,timeoutMs:50});expect(result.ok).toBe(false);

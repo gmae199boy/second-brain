@@ -253,7 +253,7 @@ export interface BrainSchedules {
 export interface BrainExt {
   command(input: { name: string; command: string; input: unknown; signal?: AbortSignal }): ReturnType<typeof executeExtensionCommand>;
   run(input: { name: string; job: string; target?: string; waitMs?: number }): ReturnType<typeof runExtension>;
-  install(input: { name: string; signal?: AbortSignal }): ReturnType<typeof installExtension>;
+  install(input: { name?: string; packagePath?: string; signal?: AbortSignal }): ReturnType<typeof installExtension>;
   status(input: { name: string }): ReturnType<typeof publicExtensionStatus>;
   list(): ReturnType<typeof listExtensions>;
   publicStatus(input: { name: string }): ReturnType<typeof publicExtensionStatus>;
@@ -444,6 +444,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
         runDoctor(store, {
           schemaVersions,
           extensionStore: store,
+          ...(dependencies.extensions?.packages.readObservation ? { readPackageObservation: dependencies.extensions.packages.readObservation } : {}),
           store,
           clock,
           folders: transcriptFolders,

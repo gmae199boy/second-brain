@@ -33,7 +33,7 @@ it('enforces the role, public view and fenced provenance contracts over real con
     const app = new pg.Client({ connectionString: db.appUrl }); await app.connect(); clients.push(app);
     expect((await app.query('select * from brain.extension_status_public_v1')).rows).toHaveLength(2);
     await a.query(`create table "${names[0]}".self_write (value text); insert into "${names[0]}".self_write values ('ok')`);
-    for (const sql of ['select * from brain.extensions', 'select * from brain.extension_install_progress', 'update brain.work_items set attempts=0', 'insert into brain.extensions(name) values (\'x\')', 'update brain.extension_status_public_v1 set enabled=false', 'delete from brain.extension_status_public_v1', 'set role brain_app']) {
+    for (const sql of ['select * from brain.extensions', 'select package_digest, plugin_version from brain.extensions', 'select * from brain.extension_quiesce', 'select * from brain.extension_install_progress', 'update brain.work_items set attempts=0', 'insert into brain.extensions(name) values (\'x\')', 'update brain.extension_status_public_v1 set enabled=false', 'delete from brain.extension_status_public_v1', 'set role brain_app']) {
       await expect(a.query(sql)).rejects.toMatchObject({ code: '42501' });
     }
     await a.query(`create function "${names[0]}".probe(value text) returns boolean language plpgsql as $$ begin

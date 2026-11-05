@@ -8,6 +8,7 @@ import { readConfig } from './config/codec.js';
 import { installPostgres } from './install/postgres.js';
 import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
 import { cancel, confirm, isCancel, multiselect, text, type Option } from '@clack/prompts';
 import { createBrain, DRAIN_BUDGET_MS, createSettingsBrain, encodeTextLine } from 'second_brain';
 import { CORE_SCHEMA_VERSION, postgresStore } from 'second_brain/postgres';
@@ -151,7 +152,7 @@ export class Cancelled extends Error {
 }
 
 /** The real world, in one place, so the tests can replace all of it. */
-export function systemInstallDeps(options: { runner?: CommandRunner; secrets?: { adminUrl: string; appPassword: string }; databaseName?: string } = {}): InstallDeps {
+export function systemInstallDeps(options: { runner?: CommandRunner; secrets?: { adminUrl: string; appPassword: string }; databaseName?: string; allowOfflinePrompt?: boolean } = {}): InstallDeps {
   const withBrain = async <T>(home: string, env: NodeJS.ProcessEnv, run: (brain: import('second_brain').Brain) => Promise<T>): Promise<T> => {
     const config = await readConfig(home);
     const opened = await openBrainStore({ home, env, config, path: 'command' });
@@ -166,7 +167,14 @@ export function systemInstallDeps(options: { runner?: CommandRunner; secrets?: {
       get: (home, urlEnv, env) => withSettings(home, urlEnv, env, brain => brain.config.get({ key: 'timezone' })),
       set: (home, urlEnv, env, value) => withSettings(home, urlEnv, env, brain => brain.config.set({ key: 'timezone', value })),
     },
-    postgres: (home, urlEnv, env) => installPostgres({ home, urlEnv, env, clock: { now: () => new Date() }, runner: options.runner, secrets: options.secrets, databaseName: options.databaseName }),
+    postgres: (home, urlEnv, env) => installPostgres({ home, urlEnv, env, clock: { now: () => new Date() }, runner: options.runner, secrets: options.secrets, databaseName: options.databaseName,
+      ...(options.allowOfflinePrompt !== false && process.stdin.isTTY && process.stdout.isTTY ? { confirmOffline: async request => {
+        const { createInterface } = await import('node:readline/promises');
+        const terminal = createInterface({ input: process.stdin, output: process.stdout });
+        try {
+          return await terminal.question(`\n${request.home}의 이전 core ${request.previousCommit}에서 대상 ${request.targetCommit}로 갱신합니다. 새 데몬과 확장 명령 진입을 차단했습니다. 이전 데몬·직접 명령과 모든 자식의 공유 상태 쓰기가 끝났음을 직접 확인한 경우에만 아래 문구를 입력하세요. 이 확인은 운영자의 확인이며 기계가 종료를 증명한 것이 아닙니다.\n${request.challenge}\n> `);
+        } finally { terminal.close(); }
+      } } : {}) }),
     prompts: clackPrompts(),
     // Both ends have to be a terminal: a question needs an answer and a place
     // to be read. Anything else counts as not interactive at all.
@@ -188,7 +196,10 @@ export function systemInstallDeps(options: { runner?: CommandRunner; secrets?: {
     files: { prepare: prepareFilesRoot },
     // The node running this process, and the entry point beside the shim
     // module: whatever node started the installer is the node the hooks get.
-    shim: { write: (home: string) => writeShim(home) },
+    shim: { write: (home: string) => {
+      const staged = process.env.SECOND_BRAIN_STAGED_APP;
+      return writeShim(home, staged && dirname(resolve(staged)) === resolve(home) ? { bin: join(resolve(home), 'app/apps/cli/dist/bin.js') } : {});
+    } },
     // The proof and the record of AD-19's last step. `verify` runs the shim as
     // a harness hook would — from outside this process, with none of its
     // environment — which is the one thing no check inside it can establish.

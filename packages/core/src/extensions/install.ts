@@ -8,17 +8,43 @@ import { ensureSchedule, type ReadTimeZone } from '../queue/schedules.js';
 import type { ExtensionStore, WorkStore, ScheduleStore, UserStore } from '../ports/store.js';
 import type { ProcessInspector, ProcessLauncher } from '../ports/process.js';
 import { PROCESS_ABI_ENV } from '../process-abi/codec.js';
-import { decodeExtensionManifest, isExtensionName } from './manifest.js';
+import { decodeExtensionManifest, isExtensionName, type ExtensionManifest } from './manifest.js';
 import { createExtensionSnapshot } from './snapshot.js';
 import type { SettingsStore } from '../ports/store.js';
 import { runExtensionCheck } from './check.js';
 import { extensionStatus } from './status.js';
+import { quiesceExtension } from './quiesce.js';
+export function comparePackageVersion(a: string, b: string): number | null {
+  const valid = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
+  if (!valid.test(a) || !valid.test(b)) return null;
+  const left = a.split('.').map(BigInt), right = b.split('.').map(BigInt);
+  for (let i = 0; i < 3; i++) { if (left[i]! < right[i]!) return -1; if (left[i]! > right[i]!) return 1; }
+  return 0;
+}
 export interface ExtensionPackages {
   resolve(name: string): Promise<{ ok: true; dir: string; manifestText: string } | { ok: false }>;
+  prepareExternal?(path: string, options?: { signal?: AbortSignal }): Promise<{ name: string; dir: string; manifestText: string; digest: string; cleanup(): Promise<void> }>;
+  checkCore?(manifest: ExtensionManifest): Promise<void>;
+  checkInstalledCore?(): Promise<void>;
+  captureRunningCore?(): Promise<void>;
+  preflight?(directory: string, manifest: ExtensionManifest): Promise<{ ok: true } | { ok: false; code: 'EXTENSION_INVALID' | 'EXTENSION_PYTHON_PIN_INVALID'; message: string }>;
+  observe?(input: { name: string; version: string; pluginVersion: string; digest: string }): Promise<void>;
+  readObservation?(name: string): Promise<{ name: string; version: string; pluginVersion: string; digest: string } | null>;
+  /** All transition calls require both installation locks and a caller-owned quiesce gate. */
+  transition?: {
+    read(name: string): Promise<{ name: string; owner: string; digest: string; phase: 'preparing' | 'prepared' | 'discarding' | 'switching' | 'active' | 'committing' | 'rolling_back' | 'rolled_back'; hadPrevious: boolean | null } | null>;
+    prepare(input: { name: string; owner: string; digest: string; directory: string }): Promise<unknown>;
+    stagedDirectory(name: string, owner: string): Promise<string>;
+    activate(name: string, owner: string): Promise<string>;
+    commit(name: string, owner: string): Promise<void>;
+    rollback(name: string, owner: string): Promise<void>;
+  };
   place(name: string, dir: string): Promise<string>;
+  finalizePlacement?(name: string): Promise<void>;
   rollback?(name: string, preserveInitial?: boolean): Promise<void>;
-  inspect?(name: string, dir: string, migrations: string): Promise<{ digest: string; installedDigest: string | null; sameBase: boolean; installedDir: string }>;
+  inspect?(name: string, dir: string, migrations: string, files?: readonly string[]): Promise<{ digest: string; installedDigest: string | null; sameBase: boolean; installedDir: string }>;
   refreshMigrations?(name: string, dir: string, migrations: string): Promise<void>;
+  sameBase?(first: string, second: string, migrations: string): Promise<boolean>;
 }
 export interface ExtensionMigrator {
   apply(owner: string, directory: string): Promise<{ ok: true; from: number; to: number; applied: string[] } | { ok: false; code: 'MIGRATION_FAILED' | 'DB_UNAVAILABLE'; message: string; file?: string }>;
@@ -32,6 +58,7 @@ export interface ExtensionRuntime {
   schedulerReady?(): Promise<boolean>;
   secureCredentials?(name: string): Promise<void>;
   withCommandLock?<T>(name: string, run: () => Promise<T>, signal?: AbortSignal): Promise<T>;
+  withHomeInstallLock?<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T>;
   withInstallLock?<T>(name: string, run: () => Promise<T>, signal?: AbortSignal): Promise<T>;
   provision?(name: string): Promise<{ ok: true } | { ok: false; code: 'DB_UNAVAILABLE'; message: string }>;
   packages: ExtensionPackages; migrator: ExtensionMigrator; launcher: ProcessLauncher; inspector: ProcessInspector; timer: Timer;
@@ -41,60 +68,94 @@ export interface ExtensionRuntime {
   machineValues?(name: string): Readonly<Record<string, string>>;
 }
 export interface ExtensionDependencies { cron?: import('../ports/cron.js').CronCalculator; store: ExtensionStore & Partial<SettingsStore & WorkStore & ScheduleStore & Pick<UserStore, 'readSelfUser'>>; readTimeZone?: ReadTimeZone; clock: Clock; idGen: IdGen; extensions?: ExtensionRuntime }
-export async function installExtension(deps: ExtensionDependencies, { name, signal }: { name: string; signal?: AbortSignal }) {
-  if (!isExtensionName(name)) return { ok: false as const, code: 'EXTENSION_NOT_FOUND' as const, message: '확장 이름이 이름 규칙에 맞지 않습니다' };
+export async function installExtension(deps: ExtensionDependencies, input: { name?: string; packagePath?: string; signal?: AbortSignal }) {
   const runtime = deps.extensions;
   if (!runtime) return { ok: false as const, code: 'CONFIG_INVALID' as const, message: '확장 실행 환경이 설정되지 않았습니다' };
-  const run = async () => {
-    const outcome = await installExtensionUnlocked(deps, name, runtime, signal);
-    const status = await extensionStatus(deps, { name });
-    if (!status.ok) return status;
-    return outcome.ok ? status : { ...outcome, status };
-  };
-  if (runtime.withInstallLock) {
-    try { return await runtime.withInstallLock(name, run, signal); }
+  if ((input.name === undefined) === (input.packagePath === undefined) || (input.name !== undefined && !isExtensionName(input.name))) return { ok: false as const, code: 'EXTENSION_NOT_FOUND' as const, message: '확장 이름 또는 패키지 경로 하나가 필요합니다' };
+  if (input.packagePath !== undefined && input.signal?.aborted) return { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' };
+  try { await runtime.packages.captureRunningCore?.(); }
+  catch { return input.signal?.aborted ? { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' } : { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '실행 중인 core 신원을 확인하지 못했습니다' }; }
+  let prepared: Awaited<ReturnType<NonNullable<ExtensionPackages['prepareExternal']>>> | undefined;
+  try {
+    if (input.packagePath !== undefined) {
+      if (!runtime.packages.prepareExternal || !runtime.packages.checkCore) return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '패키지 설치를 사용할 수 없습니다' };
+      try { prepared = await runtime.packages.prepareExternal(input.packagePath, { signal: input.signal }); }
+      catch { return input.signal?.aborted ? { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' } : { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장 패키지를 검사하지 못했습니다' }; }
+    }
+    if (input.packagePath !== undefined && input.signal?.aborted) return { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' };
+    const name = prepared?.name ?? input.name!;
+    const run = async () => {
+      try { await runtime.packages.checkInstalledCore?.(); }
+      catch { return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '설치된 core 신원이 현재 실행 파일과 다릅니다' }; }
+      if (prepared) {
+        const decoded = decodeExtensionManifest(prepared.manifestText, runtime.validateSchema);
+        if (!decoded.ok) return decoded;
+        try { await runtime.packages.checkCore!(decoded.manifest); }
+        catch { return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '설치된 core 신원 또는 호환 버전이 올바르지 않습니다' }; }
+        try { await runtime.packages.observe?.({ name, version: decoded.manifest.version, pluginVersion: decoded.manifest.plugin_version!, digest: prepared.digest }); }
+        catch { return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '패키지 관측 기록을 쓸 수 없습니다' }; }
+      }
+      const outcome = await installExtensionUnlocked(deps, name, runtime, input.signal, prepared);
+      const status = await extensionStatus(deps, { name });
+      if (!status.ok) return status;
+      return outcome.ok ? status : { ...outcome, status };
+    };
+    const locked = () => runtime.withInstallLock ? runtime.withInstallLock(name, run, input.signal) : run();
+    try { return await (runtime.withHomeInstallLock ? runtime.withHomeInstallLock(locked, input.signal) : locked()); }
     catch (error) { if ((error as { code?: string })?.code === 'EXTENSION_INSTALL_CANCELLED') return { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치 잠금 대기가 취소되었습니다' }; return { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: '확장 설치 잠금을 확보하지 못했습니다' }; }
-  }
-  return run();
+  } finally { await prepared?.cleanup(); }
 }
-async function installExtensionUnlocked(deps: ExtensionDependencies, name: string, runtime: ExtensionRuntime, signal?: AbortSignal) {
+async function installExtensionUnlocked(deps: ExtensionDependencies, name: string, runtime: ExtensionRuntime, signal?: AbortSignal, prepared?: { dir: string; manifestText: string; digest: string }) {
   const preflightFailure = async (code: 'EXTENSION_NOT_FOUND' | 'EXTENSION_INVALID', message: string) => {
     if (signal?.aborted) return { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' };
-    const previous = await deps.store.getExtensionInstallProgress(name); if (!previous.ok) return previous;
-    const at = deps.clock.now().toISOString();
-    // 기존 설치 시도의 완료 사실과 식별자는 사전 검사 실패로 지우지 않는다.
-    const progress: ExtensionInstallProgress = previous.journal
-      ? { ...structuredClone(previous.journal.progress), result: 'failed', failedStage: 'package', lastFailure: { stage: 'package', code, at } }
-      : { name, packageDigest: '0'.repeat(64), result: 'failed', failedStage: 'package', lastFailure: { stage: 'package', code, at }, stages: { package: { status: 'failed', code, at } }, authWorkId: null, scheduleIds: [] };
-    const saved = await deps.store.writeExtensionInstallProgress({ expectedRevision: previous.journal?.revision ?? null, progress });
-    if (!saved.ok) return saved;
-    return saved.written ? { ok: false as const, code, message } : { ok: false as const, code: 'DB_LOCKED' as const, message: '확장 설치 기록이 동시에 변경되었습니다' };
+    if (code === 'EXTENSION_NOT_FOUND') {
+      const previous = await deps.store.getExtensionInstallProgress(name); if (!previous.ok) return previous;
+      if (!previous.journal) {
+        const at = deps.clock.now().toISOString();
+        const progress: ExtensionInstallProgress = { name, packageDigest: '0'.repeat(64), result: 'failed', failedStage: 'package', lastFailure: { stage: 'package', code, at }, stages: { package: { status: 'failed', code, at } }, authWorkId: null, scheduleIds: [] };
+        const saved = await deps.store.writeExtensionInstallProgress({ expectedRevision: null, progress }); if (!saved.ok) return saved;
+        if (!saved.written) return { ok: false as const, code: 'DB_LOCKED' as const, message: '확장 설치 기록이 동시에 변경되었습니다' };
+      }
+    }
+    return { ok: false as const, code, message };
   };
   let source: Awaited<ReturnType<ExtensionPackages['resolve']>>;
-  try { source = await runtime.packages.resolve(name); }
+  try { source = prepared ? { ok: true, dir: prepared.dir, manifestText: prepared.manifestText } : await runtime.packages.resolve(name); }
   catch { return preflightFailure('EXTENSION_INVALID', '확장 패키지의 manifest를 읽지 못했습니다'); }
   if (!source.ok) return preflightFailure('EXTENSION_NOT_FOUND', '지정한 확장 패키지가 없습니다');
   const decoded = decodeExtensionManifest(source.manifestText, runtime.validateSchema);
   if (!decoded.ok) return preflightFailure('EXTENSION_INVALID', decoded.message);
   const manifest = decoded.manifest;
+  if (runtime.packages.preflight) { const checked = await runtime.packages.preflight(source.dir, manifest); if (!checked.ok) return checked; }
   if (deps.cron && (manifest.default_schedules ?? []).some(schedule => schedule.cron !== undefined && !deps.cron!.validate(schedule.cron, schedule.time_zone ?? 'UTC').ok)) return preflightFailure('EXTENSION_INVALID', '예약 cron 식 또는 시간대가 올바르지 않습니다');
+  // Compare before any progress, migration, placement or registry write.
+  const installed = await deps.store.getExtension(name);
+  if (!installed.ok) return installed;
+  if (installed.extension && (prepared || installed.extension.packageDigest !== null)) {
+    const comparison = comparePackageVersion(installed.extension.version, manifest.version);
+    if (comparison === null) return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '설치 버전을 안전하게 비교할 수 없습니다' };
+    if (comparison > 0) return { ok: true as const };
+    if (comparison === 0 && (prepared === undefined || installed.extension.packageDigest !== prepared.digest)) return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '같은 버전의 패키지 내용이 다릅니다' };
+  }
   const folderName = source.dir.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1);
-  if (manifest.name !== name || folderName !== name) return preflightFailure('EXTENSION_INVALID', '요청한 이름과 manifest 및 패키지 폴더 이름이 다릅니다');
+  if (manifest.name !== name || (!prepared && folderName !== name)) return preflightFailure('EXTENSION_INVALID', '요청한 이름과 manifest 및 패키지 폴더 이름이 다릅니다');
   let progress: ExtensionInstallProgress | null = null;
   let revision: number | null = null;
   let inspected: Awaited<ReturnType<NonNullable<ExtensionPackages['inspect']>>> | null = null;
   if (runtime.packages.inspect) {
-    try { inspected = await runtime.packages.inspect(name, source.dir, manifest.migrations); }
+    try { inspected = await runtime.packages.inspect(name, source.dir, manifest.migrations, prepared ? manifest.files : undefined); }
     catch { return preflightFailure('EXTENSION_INVALID', '확장 패키지를 검사하지 못했습니다'); }
+    if (prepared && inspected.digest !== prepared.digest) return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '검증된 패키지 내용이 바뀌었습니다' };
     const existing = await deps.store.getExtensionInstallProgress(name);
     if (!existing.ok) return existing;
     revision = existing.journal?.revision ?? null;
     const previous = existing.journal?.progress;
     const sameInstalled = previous && inspected.installedDigest === previous.packageDigest;
-    const correction = sameInstalled && previous.stages.migration?.status === 'failed' && inspected.sameBase && runtime.packages.refreshMigrations;
-    if (previous && sameInstalled && (previous.packageDigest === inspected.digest || correction)) {
+    const correction = !runtime.packages.transition && sameInstalled && previous.stages.migration?.status === 'failed' && inspected.sameBase && runtime.packages.refreshMigrations;
+    if (previous?.transition && previous.packageDigest !== inspected.digest && (prepared || previous.stages.migration?.status !== 'failed' || !runtime.packages.sameBase || !runtime.packages.transition)) return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '중단된 설치와 패키지 내용이 다릅니다. 기존 패키지로 복구하세요' };
+    if (previous && ((previous.transition && (previous.packageDigest === inspected.digest || (!prepared && previous.stages.migration?.status === 'failed'))) || (sameInstalled && (previous.packageDigest === inspected.digest || correction)))) {
       progress = structuredClone(previous);
-      if (previous.packageDigest !== inspected.digest) {
+      if (previous.packageDigest !== inspected.digest && !previous.transition) {
         try { await runtime.packages.refreshMigrations!(name, source.dir, manifest.migrations); }
         catch { return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장 마이그레이션을 갱신하지 못했습니다' }; }
         progress.packageDigest = inspected.digest;
@@ -139,13 +200,95 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
       }
       if (!confirmed) return { ok: false as const, code: 'EXTENSION_CANCEL_UNCONFIRMED' as const, message: '인증 자식의 종료를 확인하지 못했습니다' };
     }
-    await runtime.packages.rollback?.(name, true);
+    if (!progress?.transition) await runtime.packages.rollback?.(name, true);
     if (progress) { progress.result = 'cancelled'; progress.failedStage = null; const saved = await save(); if (!saved.ok) return saved; }
     return { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' };
   };
   const completed = (stage: InstallStage) => progress?.stages[stage]?.status === 'succeeded' || progress?.stages[stage]?.status === 'skipped';
   const beforePackage = await cancelled(); if (beforePackage) return beforePackage;
   let installedDir: string;
+  const transition = runtime.packages.transition;
+  if (transition && progress && !progress.transition) {
+    const gate = await deps.store.readExtensionQuiesce(name); if (!gate.ok) return gate;
+    if (gate.owner !== null || await transition.read(name)) return { ok: false as const, code: 'DB_LOCKED' as const, message: '소유권을 확인할 수 없는 확장 전환을 복구해야 합니다' };
+  }
+  if (transition && inspected && progress && !progress.transition && inspected.installedDigest === inspected.digest && completed('package') && completed('migration') && installed.extension?.version === manifest.version) {
+    installedDir = inspected.installedDir;
+  } else if (transition && inspected && progress) {
+    // Persist the owner before setting the gate, so every crash boundary can
+    // be resumed without adopting another installer's quiesce token.
+    if (!progress.transition) { progress.transition = { owner: deps.idGen.next(), registered: false }; const saved = await save(); if (!saved.ok) return saved; }
+    const owner = progress.transition.owner;
+    const stopped = await quiesceExtension(deps.store, runtime.timer, { name, owner, now: deps.clock.now(), ...(signal ? { signal } : {}) });
+    if (!stopped.ok) return stopped;
+    const fail = (message: string) => ({ ok: false as const, code: 'EXTENSION_INVALID' as const, message });
+    try {
+      let journal = await transition.read(name);
+      if (journal && journal.owner !== owner) return fail('중단된 설치 전환의 소유권이 다릅니다');
+      if (journal?.phase === 'discarding') {
+        // The corrected digest was saved before the old stage was discarded.
+        // Do not adopt a different source after the comparison stage is gone.
+        if (prepared || progress.stages.migration?.status !== 'failed' || progress.packageDigest !== inspected.digest) return fail('중단된 파일 복구의 패키지 신원이 다릅니다');
+        await transition.rollback(name, owner); journal = null;
+      }
+      if (journal && journal.digest !== inspected.digest) {
+        if (prepared || progress.stages.migration?.status !== 'failed' || journal.phase !== 'prepared' || !runtime.packages.sameBase) return fail('중단된 설치와 패키지 내용이 다릅니다');
+        const oldStage = await transition.stagedDirectory(name, owner);
+        if (!await runtime.packages.sameBase(source.dir, oldStage, manifest.migrations)) return fail('수정된 마이그레이션 외 패키지 내용이 다릅니다');
+        // Persist the new identity first; a crash before rollback is reconciled
+        // by this same branch on retry, while the quiesce gate remains held.
+        progress.packageDigest = inspected.digest; const saved = await save(); if (!saved.ok) return saved;
+        await transition.rollback(name, owner); journal = null;
+      } else if (!journal && progress.packageDigest !== inspected.digest) return fail('기존 설치의 패키지 신원을 확인할 수 없습니다');
+      if (journal?.phase === 'rolling_back' || journal?.phase === 'rolled_back') return fail('중단된 파일 복구를 먼저 완료해야 합니다');
+      if (!progress.transition.registered) {
+        if (!journal) { await transition.prepare({ name, owner, digest: inspected.digest, directory: source.dir }); journal = await transition.read(name); }
+        if (journal?.phase === 'preparing') { await transition.prepare({ name, owner, digest: inspected.digest, directory: source.dir }); journal = await transition.read(name); }
+        if (!journal) return fail('설치 전환 기록이 없습니다');
+        if (journal.phase === 'prepared') {
+          const stageDir = await transition.stagedDirectory(name, owner);
+          const stageCheck = await runtime.packages.inspect!(name, stageDir, manifest.migrations, prepared ? manifest.files : undefined);
+          if (stageCheck.digest !== inspected.digest || (prepared && stageCheck.digest !== prepared.digest)) return fail('복사한 확장 패키지의 digest가 다릅니다');
+          if (signal?.aborted) return { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' };
+          if (runtime.provision && !completed('role')) {
+            const provisioned = await runtime.provision(name);
+            const saved = await mark('role', provisioned.ok ? 'succeeded' : 'failed', provisioned.ok ? null : provisioned.code); if (!saved.ok) return saved;
+            if (!provisioned.ok) return provisioned;
+          }
+          // Always re-run the ledger on recovery: individual migrations commit
+          // independently and the shared runner enforces applied checksums.
+          const migrated = await runtime.migrator.apply(name, `${stageDir}/${manifest.migrations}`);
+          const saved = await mark('migration', migrated.ok ? 'succeeded' : 'failed', migrated.ok ? null : migrated.code); if (!saved.ok) return saved;
+          if (!migrated.ok) return { ok: false as const, code: migrated.code, message: '확장 마이그레이션을 적용하지 못했습니다' };
+          if (signal?.aborted) return { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' };
+        }
+        installedDir = await transition.activate(name, owner);
+        const active = await runtime.packages.inspect!(name, source.dir, manifest.migrations, prepared ? manifest.files : undefined);
+        if (active.installedDigest !== inspected.digest) return fail('전환된 확장 패키지의 digest가 다릅니다');
+        if (!completed('package')) { const saved = await mark('package', 'succeeded'); if (!saved.ok) return saved; }
+        const needsPython = [manifest.connection_check, ...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : []), ...(manifest.commands ?? [])].some(command => command.runtime === 'python');
+        if (!completed('environment') && needsPython) {
+          const envResult = runtime.preparePython ? await runtime.preparePython(installedDir, signal) : { ok: false as const, code: 'EXTENSION_UV_NOT_FOUND' as const, message: 'uv를 찾을 수 없습니다' };
+          const envSaved = await deps.store.recordExtensionPythonEnvironment({ name, status: envResult.ok ? 'succeeded' : 'failed', code: envResult.ok ? null : envResult.code, checkedAt: deps.clock.now() }); if (!envSaved.ok) return envSaved;
+          const saved = await mark('environment', envResult.ok ? 'succeeded' : 'failed', envResult.ok ? null : envResult.code); if (!saved.ok) return saved;
+          if (!envResult.ok) return envResult;
+        } else if (!needsPython && !completed('environment')) { const saved = await mark('environment', 'skipped', 'EXTENSION_ENV_NOT_REQUIRED'); if (!saved.ok) return saved; }
+        if (signal?.aborted) return { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' };
+        const recorded = await deps.store.recordExtensionInstall({ name, version: manifest.version, now: deps.clock.now(), ...(prepared ? { packageIdentity: { digest: prepared.digest, pluginVersion: manifest.plugin_version! } } : {}), workKinds: [...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : [])].map(work => work.kind), workFollowups: Object.fromEntries((manifest.work ?? []).filter(work => work.followup).map(work => [work.kind, work.followup!])), missedPolicies: Object.fromEntries((manifest.work ?? []).filter(work => work.missed).map(work => [work.kind, work.missed!])) });
+        if (!recorded.ok) return recorded;
+        progress.transition.registered = true; const saved = await save(); if (!saved.ok) return saved;
+      }
+      installedDir = inspected.installedDir;
+      const confirmed = await deps.store.getExtension(name); if (!confirmed.ok) return confirmed;
+      const current = await runtime.packages.inspect!(name, source.dir, manifest.migrations, prepared ? manifest.files : undefined);
+      if (current.installedDigest !== inspected.digest || confirmed.extension?.version !== manifest.version || (prepared && confirmed.extension.packageDigest !== prepared.digest)) return fail('registry와 설치 파일이 일치하지 않습니다');
+      journal = await transition.read(name);
+      if (journal) await transition.commit(name, owner);
+      const released = await deps.store.endExtensionQuiesce({ name, owner }); if (!released.ok) return released;
+      if (!released.released) return fail('확장 정지 소유권을 해제하지 못했습니다');
+      delete progress.transition; const saved = await save(); if (!saved.ok) return saved;
+    } catch { return fail('설치 전환을 완료하지 못했습니다. 같은 패키지로 다시 실행하세요'); }
+  } else {
   if (inspected && completed('package')) installedDir = inspected.installedDir;
   else {
     try { installedDir = await runtime.packages.place(name, source.dir); }
@@ -177,8 +320,10 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
     if (!migrated.ok) return { ok: false as const, code: migrated.code, message: '확장 마이그레이션을 적용하지 못했습니다' };
   }
   const afterMigration = await cancelled(); if (afterMigration) return afterMigration;
-  const recorded = await deps.store.recordExtensionInstall({ name, version: manifest.version, now: deps.clock.now(), workKinds: [...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : [])].map(work => work.kind), workFollowups: Object.fromEntries((manifest.work ?? []).filter(work => work.followup).map(work => [work.kind, work.followup!])), missedPolicies: Object.fromEntries((manifest.work ?? []).filter(work => work.missed).map(work => [work.kind, work.missed!])) });
+  const recorded = await deps.store.recordExtensionInstall({ name, version: manifest.version, now: deps.clock.now(), ...(prepared ? { packageIdentity: { digest: prepared.digest, pluginVersion: manifest.plugin_version! } } : {}), workKinds: [...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : [])].map(work => work.kind), workFollowups: Object.fromEntries((manifest.work ?? []).filter(work => work.followup).map(work => [work.kind, work.followup!])), missedPolicies: Object.fromEntries((manifest.work ?? []).filter(work => work.missed).map(work => [work.kind, work.missed!])) });
   if (!recorded.ok) return recorded;
+  await runtime.packages.finalizePlacement?.(name);
+  }
   const afterRegistry = await cancelled(); if (afterRegistry) return afterRegistry;
   const self = deps.store.readSelfUser ? await resolveSelfUser({ readSelfUser: deps.store.readSelfUser.bind(deps.store) }) : { ok: false as const, code: 'USER_MISSING' as const, message: '사용자가 없습니다' };
   if (!self.ok) { const saved = await mark(manifest.auth ? 'login' : 'configuration', 'failed', self.code); return saved.ok ? self : saved; }

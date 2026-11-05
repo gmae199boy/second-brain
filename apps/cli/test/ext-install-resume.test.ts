@@ -1,6 +1,6 @@
 import type { ExtensionInstallProgress } from 'second_brain';
 import { afterEach, expect, it } from 'vitest';
-import { cp, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extHome } from './ext-fixture.js';
@@ -16,6 +16,52 @@ async function resumeSource(fixture: Awaited<ReturnType<typeof extHome>>) {
 }
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 
+it('수정 migration의 prepared stage 삭제 직후 중단해도 같은 owner로 설치를 완료한다', async () => {
+  const { spawn } = await import('node:child_process');
+  const fixture = await extHome(); cleanup.push(fixture.cleanup);
+  const source = await resumeSource(fixture);
+  const first = await fixture.run(['ext', 'install', 'resumext', '--json']); expect(first.code, first.stdout + first.stderr).toBe(0);
+  const registry = await fixture.db.rows("select * from brain.extensions where name='resumext'");
+  const target = join(fixture.home, 'extensions/resumext');
+  for (const folder of ['reports', 'staging', 'tokenstore']) { await mkdir(join(target, folder), { recursive: true }); await writeFile(join(target, folder, 'preserved'), folder); }
+  const manifestPath = join(source, 'manifest.json'); const manifest = JSON.parse(await readFile(manifestPath, 'utf8')); manifest.version = '0.2.0';
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  await writeFile(join(source, 'migrations/0002_more.sql'), 'select missing_column;\n');
+  const failed = await fixture.run(['ext', 'install', 'resumext', '--json']); expect(failed.body.error.code).toBe('MIGRATION_FAILED');
+  const before = (await fixture.db.rows("select progress from brain.extension_install_progress where name='resumext'"))[0]!.progress as ExtensionInstallProgress;
+  const owner = before.transition!.owner;
+  expect(await fixture.ledger('resumext')).toEqual([{ owner: 'resumext', version: 1 }]);
+  expect(await fixture.db.rows("select * from brain.extensions where name='resumext'")).toEqual(registry);
+  await writeFile(join(source, 'migrations/0002_more.sql'), 'select 1;\n');
+  const stage = join(fixture.home, 'extensions', `.transition-resumext-${owner}`);
+  const hook = join(fixture.home, 'interrupt-discard.cjs');
+  await writeFile(hook, `const fs = require('node:fs'); const original = fs.promises.rm; fs.promises.rm = async function(path, options) { const result = await original(path, options); if (String(path) === ${JSON.stringify(stage)}) process.kill(process.pid, 'SIGKILL'); return result; }; require('node:module').syncBuiltinESMExports();\n`);
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/bin.js', import.meta.url)), 'ext', 'install', 'resumext', '--json'], { env: { ...fixture.env, NODE_OPTIONS: `--require=${hook}` }, stdio: 'ignore' });
+  const signal = await new Promise<NodeJS.Signals | null>((resolve, reject) => { child.once('error', reject); child.once('close', (_code, value) => resolve(value)); });
+  expect(signal).toBe('SIGKILL');
+  const journal = JSON.parse(await readFile(join(fixture.home, 'extensions/.transition-resumext.json'), 'utf8'));
+  expect(journal).toMatchObject({ owner, phase: 'discarding', digest: before.packageDigest });
+  await expect(stat(stage)).rejects.toThrow();
+  const pending = (await fixture.db.rows("select progress from brain.extension_install_progress where name='resumext'"))[0]!.progress as ExtensionInstallProgress;
+  expect(pending.transition?.owner).toBe(owner); expect(pending.packageDigest).not.toBe(before.packageDigest);
+  expect((await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'"))[0]!.owner).toBe(owner);
+  expect(await fixture.ledger('resumext')).toEqual([{ owner: 'resumext', version: 1 }]);
+  // The killed synthetic installer has no child writer; remove only its lock.
+  await rm(join(fixture.home, 'install.lock'), { recursive: true });
+  await writeFile(join(source, 'migrations/0002_more.sql'), 'select 2;\n');
+  const wrong = await fixture.run(['ext', 'install', 'resumext', '--json']); expect(wrong.body.error.code).toBe('EXTENSION_INVALID');
+  expect((await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'"))[0]!.owner).toBe(owner);
+  expect((JSON.parse(await readFile(join(fixture.home, 'extensions/.transition-resumext.json'), 'utf8'))).phase).toBe('discarding');
+  expect(await fixture.db.rows("select * from brain.extensions where name='resumext'")).toEqual(registry);
+  await writeFile(join(source, 'migrations/0002_more.sql'), 'select 1;\n');
+  const resumed = await fixture.run(['ext', 'install', 'resumext', '--json']); expect(resumed.code, resumed.stdout + resumed.stderr).toBe(0);
+  expect(await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'")).toEqual([]);
+  expect(await fixture.ledger('resumext')).toEqual([{ owner: 'resumext', version: 1 }, { owner: 'resumext', version: 2 }]);
+  expect(await readFile(join(target, 'migrations/0002_more.sql'), 'utf8')).toBe('select 1;\n');
+  for (const folder of ['reports', 'staging', 'tokenstore']) expect(await readFile(join(target, folder, 'preserved'), 'utf8')).toBe(folder);
+  await expect(stat(join(fixture.home, 'extensions/.transition-resumext.json'))).rejects.toThrow();
+});
+
 it('최초 DDL 실패 후 앞 단계와 적용된 SQL을 보존하고 수정된 SQL부터 재개한다', async () => {
   const fixture = await extHome(); cleanup.push(fixture.cleanup);
   const source = await resumeSource(fixture);
@@ -25,29 +71,29 @@ it('최초 DDL 실패 후 앞 단계와 적용된 SQL을 보존하고 수정된 
   expect(failed.body.data).toEqual((await fixture.run(['ext', 'status', 'resumext', '--json'])).body.data);
   expect(await fixture.ledger('resumext')).toEqual([{ owner: 'resumext', version: 1 }]);
   const target = join(fixture.home, 'extensions/resumext');
-  const before = await stat(join(target, 'manifest.json'));
+  await expect(stat(join(target, 'manifest.json'))).rejects.toThrow();
   const rows = await fixture.db.rows("select progress from brain.extension_install_progress where name='resumext'");
   const beforeProgress = rows[0]!.progress as ExtensionInstallProgress;
   const manifestPath = join(source, 'manifest.json'); const validManifest = await readFile(manifestPath, 'utf8');
   await writeFile(manifestPath, '{');
   const preflight = await fixture.run(['ext', 'install', 'resumext', '--json']);
-  expect(preflight.body).toMatchObject({ ok: false, error: { code: 'EXTENSION_INVALID' }, data: { install: { failed_stage: 'package' } } });
+  expect(preflight.body).toMatchObject({ ok: false, error: { code: 'EXTENSION_INVALID' }, data: { install: { failed_stage: 'migration' } } });
   const preserved = (await fixture.db.rows("select progress from brain.extension_install_progress where name='resumext'"))[0]!.progress as ExtensionInstallProgress;
   expect(preserved.packageDigest).toBe(beforeProgress.packageDigest);
   expect(preserved.stages).toEqual(beforeProgress.stages);
   expect(preserved.authWorkId).toBe(beforeProgress.authWorkId); expect(preserved.scheduleIds).toEqual(beforeProgress.scheduleIds);
   await writeFile(manifestPath, validManifest);
-  expect(beforeProgress).toMatchObject({ result: 'failed', failedStage: 'migration', stages: { package: { status: 'succeeded' }, environment: { status: 'skipped' }, role: { status: 'succeeded' }, migration: { status: 'failed' } } });
+  expect(beforeProgress).toMatchObject({ result: 'failed', failedStage: 'migration', stages: { role: { status: 'succeeded' }, migration: { status: 'failed' } } });
   await writeFile(join(source, 'migrations/0002_more.sql'), 'select 1;\n');
   const resumed = await fixture.run(['ext', 'install', 'resumext', '--json']);
   expect(resumed.code, resumed.stdout + resumed.stderr).toBe(0);
-  expect((await stat(join(target, 'manifest.json'))).ino).toBe(before.ino);
+  expect(await readFile(join(target, 'manifest.json'), 'utf8')).toBe(validManifest);
   expect(await readFile(join(target, 'migrations/0002_more.sql'), 'utf8')).toBe('select 1;\n');
   expect(await fixture.ledger('resumext')).toEqual([{ owner: 'resumext', version: 1 }, { owner: 'resumext', version: 2 }]);
   const after = await fixture.db.rows("select progress from brain.extension_install_progress where name='resumext'");
   const afterProgress = after[0]!.progress as ExtensionInstallProgress;
-  expect(afterProgress.stages.package).toEqual(beforeProgress.stages.package);
-  expect(afterProgress.stages.environment).toEqual(beforeProgress.stages.environment);
+  expect(afterProgress.stages.package?.status).toBe('succeeded');
+  expect(afterProgress.stages.environment?.status).toBe('skipped');
   expect(afterProgress.stages.role).toEqual(beforeProgress.stages.role);
 });
 
@@ -341,3 +387,79 @@ it('기본 예약을 모두 제거한 재설치는 행을 보존하고 비활성
   const textInstall=await fixture.run(['ext','install','resumext']);expect(textInstall.stdout).toContain('비활성화된 예약 키: alpha, beta');
  }finally{controller.abort();await daemon;}
 });
+
+it('migration 대기 중 프로세스 중단 후 같은 owner로 재개하고 영속 파일을 보존한다', async () => {
+  const { spawn } = await import('node:child_process');
+  const { rm } = await import('node:fs/promises');
+  const { default: pg } = await import('pg');
+  const fixture = await extHome(); cleanup.push(fixture.cleanup); const source = await resumeSource(fixture);
+  const first = await fixture.run(['ext', 'install', 'resumext', '--json']); expect(first.code, first.stdout + first.stderr).toBe(0);
+  const target = join(fixture.home, 'extensions', 'resumext');
+  for (const folder of ['reports', 'staging', 'tokenstore']) { await mkdir(join(target, folder), { recursive: true }); await writeFile(join(target, folder, 'preserved'), folder); }
+  const manifest = JSON.parse(await readFile(join(source, 'manifest.json'), 'utf8')); manifest.version = '0.2.0';
+  await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest));
+  await writeFile(join(source, 'migrations/0002_more.sql'), 'select 1;\n');
+  const blocker = new pg.Client({ connectionString: fixture.db.url });
+  let child: ReturnType<typeof spawn> | undefined;
+  try {
+    await blocker.connect(); await blocker.query('begin'); await blocker.query('select pg_advisory_xact_lock($1)', [4919270911]);
+    child = spawn(process.execPath, [fileURLToPath(new URL('../dist/bin.js', import.meta.url)), 'ext', 'install', 'resumext', '--json'], { env: fixture.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    child.stdout!.resume(); child.stderr!.resume(); const exited = new Promise<void>(resolve => child!.once('close', () => resolve()));
+    await expect.poll(async () => (await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'")).length, { timeout: 10000 }).toBe(1);
+    await expect.poll(async () => { try { return JSON.parse(await readFile(join(fixture.home, 'extensions/.transition-resumext.json'), 'utf8')).phase; } catch { return ''; } }, { timeout: 10000 }).toBe('prepared');
+    const owner = (await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'"))[0]!.owner;
+    child.kill('SIGKILL'); await exited; child = undefined; await blocker.query('rollback');
+    // This synthetic installer has no spawned writer; its process has exited.
+    await rm(join(fixture.home, 'install.lock'), { recursive: true });
+    expect((await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'"))[0]!.owner).toBe(owner);
+    const resumed = await fixture.run(['ext', 'install', 'resumext', '--json']); expect(resumed.code, resumed.stdout + resumed.stderr).toBe(0);
+    expect(await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'")).toEqual([]);
+    expect(await fixture.ledger('resumext')).toHaveLength(2);
+    for (const folder of ['reports', 'staging', 'tokenstore']) expect(await readFile(join(target, folder, 'preserved'), 'utf8')).toBe(folder);
+  } finally { child?.kill('SIGKILL'); await blocker.query('rollback').catch(() => {}); await blocker.end().catch(() => {}); }
+});
+
+it('실제 supervisor 확장 자식과 후손의 종료·정산 뒤에만 설치 파일을 전환한다', async () => {
+  const { runDaemon } = await import('../src/daemon/run.js');
+  const { systemClock } = await import('../src/runtime/clock.js');
+  const { uuidV7IdGen } = await import('../src/runtime/id-gen.js');
+  const { postgresStore } = await import('second_brain/postgres');
+  const { default: pg } = await import('pg');
+  const fixture = await extHome(); cleanup.push(fixture.cleanup); const source = await resumeSource(fixture);
+  const manifestPath = join(source, 'manifest.json'); const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  manifest.work = [{ kind:'resumext.sync', execution:'supervised', runtime:'node', entry:'bin/worker.mjs' }];
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  await writeFile(join(source, 'bin/worker.mjs'), `import {spawn} from 'node:child_process'; import {writeFileSync,existsSync,mkdirSync} from 'node:fs'; import {join} from 'node:path'; const dir=join(process.env.BRAIN_EXTENSION_HOME,'tokenstore'); mkdirSync(dir,{recursive:true}); const marker=join(dir,'release'); const child=spawn(process.execPath,['-e',"const fs=require('node:fs');const p=process.argv[1];setInterval(()=>{if(fs.existsSync(p))process.exit(0)},50)",marker],{stdio:'inherit'}); writeFileSync(join(dir,'pids'),JSON.stringify([process.pid,child.pid])); setInterval(()=>{if(existsSync(marker)) { process.stdout.write(JSON.stringify({abi:1,type:'result'})+'\\n'); process.exit(0); }},50);`);
+  const first = await fixture.run(['ext','install','resumext','--json']); expect(first.code, first.stdout+first.stderr).toBe(0);
+  const target = join(fixture.home,'extensions/resumext'), store = postgresStore({databaseUrl:fixture.db.appUrl});
+  const controller = new AbortController(), daemon = runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:uuidV7IdGen(),signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25,groupConfirmMs:2000}});
+  const blocker = new pg.Client({connectionString:fixture.db.url}); await blocker.connect();
+  let installing: Promise<Awaited<ReturnType<typeof fixture.run>>> | undefined;
+  try {
+    await expect.poll(async()=>{try{return JSON.parse(await readFile(join(fixture.home,'run/supervisor-ready.json'),'utf8')).pid}catch{return null}},{timeout:10000}).toBe(process.pid);
+    const id=uuidV7IdGen().next(), now=new Date(); expect((await store.addWork({id,kind:'resumext.sync',targetKind:'probe',targetId:'a',createdAt:now,nextAttemptAt:now})).ok).toBe(true);
+    await expect.poll(async()=>{try{return JSON.parse(await readFile(join(target,'tokenstore/pids'),'utf8')) as number[]}catch{return []}},{timeout:15000}).toHaveLength(2);
+    const processes = JSON.parse(await readFile(join(target,'tokenstore/pids'),'utf8')) as number[];
+    await expect.poll(async()=> (await fixture.db.rows(`select pid from brain.work_attempts where work_item_id='${id}'`))[0]?.pid,{timeout:10000}).toBe(processes[0]);
+    const active = await fixture.db.rows(`select a.pid,a.pgid,a.finished_at,w.current_attempt_token from brain.work_attempts a join brain.work_items w on w.id=a.work_item_id where w.id='${id}'`);
+    expect(active[0]).toMatchObject({pid:processes[0],pgid:processes[0],finished_at:null,current_attempt_token:expect.any(String)});
+    manifest.version='0.2.0'; await writeFile(manifestPath,JSON.stringify(manifest));
+    installing=fixture.run(['ext','install','resumext','--json']);
+    await expect.poll(async()=> (await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'")).length,{timeout:10000}).toBe(1);
+    expect(JSON.parse(await readFile(join(target,'manifest.json'),'utf8')).version).toBe('0.1.0');
+    await expect(stat(join(fixture.home,'extensions/.transition-resumext.json'))).rejects.toThrow();
+    for (const pid of processes) expect(()=>process.kill(pid,0)).not.toThrow();
+    await blocker.query('begin'); await blocker.query('select id from brain.work_items where id=$1 for update',[id]);
+    await writeFile(join(target,'tokenstore/release'),'yes');
+    await expect.poll(()=>processes.every(pid=>{try{process.kill(pid,0);return false}catch{return true}}),{timeout:15000}).toBe(true);
+    expect((await fixture.db.rows(`select finished_at from brain.work_attempts where work_item_id='${id}'`))[0]?.finished_at).toBeNull();
+    await expect(stat(join(fixture.home,'extensions/.transition-resumext.json'))).rejects.toThrow();
+    expect(JSON.parse(await readFile(join(target,'manifest.json'),'utf8')).version).toBe('0.1.0');
+    await blocker.query('rollback');
+    await expect.poll(async()=> (await fixture.db.rows(`select finished_at from brain.work_attempts where work_item_id='${id}'`))[0]?.finished_at,{timeout:15000}).toBeTruthy();
+    for (const pid of processes) expect(()=>process.kill(pid,0)).toThrow();
+    const completed=await installing; expect(completed.code,completed.stdout+completed.stderr).toBe(0);
+    expect(JSON.parse(await readFile(join(target,'manifest.json'),'utf8')).version).toBe('0.2.0');
+    expect(await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'")).toEqual([]);
+  } finally { await blocker.query('rollback').catch(()=>{}); await blocker.end(); await writeFile(join(target,'tokenstore/release'),'yes').catch(()=>{}); controller.abort(); await daemon; await installing?.catch(()=>{}); await store.close(); }
+}, 60000);

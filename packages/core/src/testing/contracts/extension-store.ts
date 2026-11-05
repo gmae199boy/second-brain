@@ -18,6 +18,17 @@ export function extensionStoreContract(): ContractCase<ExtensionStore>[] {
       assertEqual(await store.enqueueExtensionWork({ name: 'testext', version: '1', work }), { ok: true, state: 'disabled' }, '비활성 거부');
       assertEqual(await store.enqueueExtensionWork({ name: 'testext', version: '2', work }), { ok: true, state: 'changed' }, '버전 변경 거부');
     });
+  }), contractCase('package 신원을 registry와 공개 상태에 저장하고 갱신한다', async make => {
+    await withSubject(make, async store => {
+      assertOk(await store.recordExtensionInstall({ name: 'testext', version: '1.0.0', now, packageIdentity: { digest: 'a'.repeat(64), pluginVersion: '2.0.0' } }), '신원 설치');
+      const first = await store.getExtension('testext'); assertOk(first, '신원 조회');
+      assertEqual([first.extension?.packageDigest, first.extension?.pluginVersion], ['a'.repeat(64), '2.0.0'], '신원 보존');
+      const status = await store.getExtensionPublicStatus('testext'); assertOk(status, '공개 신원');
+      assertEqual([status.status.packageDigest, status.status.pluginVersion], ['a'.repeat(64), '2.0.0'], '공개 신원 보존');
+      assertOk(await store.recordExtensionInstall({ name: 'testext', version: '1.1.0', now: next, packageIdentity: { digest: 'b'.repeat(64), pluginVersion: '2.1.0' } }), '신원 갱신');
+      const nextRecord = await store.getExtension('testext'); assertOk(nextRecord, '갱신 조회');
+      assertEqual([nextRecord.extension?.version, nextRecord.extension?.packageDigest, nextRecord.extension?.pluginVersion], ['1.1.0', 'b'.repeat(64), '2.1.0'], '신원 원자 전환');
+    });
   }), contractCase('inventory는 registry와 journal 이름을 정렬하고 중복 제거한다', async make => {
     await withSubject(make, async store => {
       const progress = (name: string): ExtensionInstallProgress => ({ name, packageDigest: 'a'.repeat(64), result: 'failed', failedStage: 'package', lastFailure: { stage: 'package', code: 'EXTENSION_NOT_FOUND', at: now.toISOString() }, stages: {}, authWorkId: null, scheduleIds: [] });
@@ -26,7 +37,10 @@ export function extensionStoreContract(): ContractCase<ExtensionStore>[] {
       assertOk(await store.recordExtensionInstall({ name: 'both', version: '1', now }), '양쪽 registry');
       assertOk(await store.writeExtensionInstallProgress({ expectedRevision: null, progress: progress('both') }), '양쪽 journal');
       assertOk(await store.writeExtensionInstallProgress({ expectedRevision: null, progress: progress('alpha') }), 'journal 전용');
-      assertEqual(await store.listExtensionInventory(), { ok: true, names: ['alpha', 'both', 'zeta'] }, '정렬된 합집합');
+      assertOk(await store.beginExtensionQuiesce({ name: 'gateonly', owner: '00000000-0000-7000-8000-000000000090', now }), 'gate 전용');
+      assertEqual(await store.listExtensionInventory(), { ok: true, names: ['alpha', 'both', 'gateonly', 'zeta'] }, '정렬된 합집합');
+      const gate = await store.getExtensionPublicStatus('gateonly'); assertOk(gate, 'gate 상태'); assertEqual(gate.status.quiesced, true, 'gate 전용 정지');
+      assertOk(await store.endExtensionQuiesce({ name: 'gateonly', owner: '00000000-0000-7000-8000-000000000090' }), 'gate 해제');
       const installed = await store.listExtensions(); assertOk(installed, '설치 목록');
       assertEqual(installed.extensions.map(row => row.name), ['both', 'zeta'], '설치 목록 의미 유지');
     });
@@ -87,7 +101,7 @@ export function extensionStoreContract(): ContractCase<ExtensionStore>[] {
       assertEqual(await store.getExtension('testext'), { ok: true, extension: null }, 'missing');
       assertEqual(await store.listExtensions(), { ok: true, extensions: [] }, 'empty');
       assertOk(await store.recordExtensionInstall({ name: 'testext', version: '0.1', now }), 'install');
-      const first = { name: 'testext', version: '0.1', installedAt: now, enabled: true, enabledChangedAt: now, connectionStatus: null, connectionCheckedAt: null, connectionCode: null, connectionMessage: null };
+      const first = { name: 'testext', version: '0.1', packageDigest: null, pluginVersion: null, installedAt: now, enabled: true, enabledChangedAt: now, connectionStatus: null, connectionCheckedAt: null, connectionCode: null, connectionMessage: null };
       assertEqual(await store.getExtension('testext'), { ok: true, extension: first }, 'installed without check');
       assertOk(await store.recordExtensionConnection({ name: 'testext', status: 'failed', checkedAt: next, code: 'REFUSED', message: '연결 거절' }), 'failed check');
       assertOk(await store.recordExtensionInstall({ name: 'testext', version: '0.2', now: next }), 'reinstall');
