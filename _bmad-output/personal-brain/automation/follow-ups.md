@@ -180,3 +180,18 @@
 | 실행 이력 |round4 실행 중 정책 메시지가 턴 종료 후 도착 |당시 실행 종료 사실 보존. 수신 뒤 round5/6은 추가 시험 없음 |
 
 알려진 미해결 기능결함0 보고이며 통합 실행 검증은 아직 미완료다. 공용PG·운영 설치는 변경하지 않았다. 원문 리뷰20개·triage·영수증은 보존 워크트리와 중앙 로컬 archive에 있다.
+
+## 20.2 — built / self 전달 보완 수락, 시험21.8 이관
+
+근거: [사용자 키 계획](../tickets/epic-extension-platform/tickets/story-user-id-runtime-self-plan.md)의 Review Triage Log·Auto Run Result와 수락 보완 기록. 독립4렌즈×3회 및 증분4렌즈 후속 완료. 최종 build·typecheck 종료0, 시험 실행은21.8로 이관·미실행이다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 해결 / 필수 범위 |core 감독 자식 실행 입력 self 전달 |중앙이 E20-2·AD-40의 일감 범위로 판정.769fe2b에서 BRAIN_USER_ID 주입 후 최종 spec 검증·보호snapshot 같은self·시험코드 보완. 열린deferred0 |
+| 필수 시험 인계 |schema31→32 backfill·값/공용 기억 보존·scope/유일성·self부재·재설치·core자식 ID |21.8에서 실행. 설정 NULL global과 대화user_id NOT NULL을 구별하고 시도별 snapshot/ABI ID 일치 확인 |
+| 채택 가정 |ABI env BRAIN_USER_ID는 선택, 있으면 UUID |실제 Runtime은 모든 감독 실행에 self 주입. 기존 저수준 ABI 소비자 호환 유지, 인증/RLS 추가 아님 |
+| 잔여 위험 / low reject |user/global 조회 두 statement 사이 동시 갱신으로 값 혼합 |현 단일self 범위에서 보존. 독립 읽기 snapshot 필요성은 별도 판단 |
+| 잔여 위험 / low reject |공통 행만 있는 user 키의 default 설치 시 유효 값 변경 |직접 SQL로 만든 상태 전제. 기존 사용자 행은 덮지 않음 |
+| 잔여 위험 / low reject |멱등 기본값 삽입 루프의 취소 확인 부재 |현 계약 기록, 취소 정책 확장은 별도 판단 |
+
+설치본·운영DB는 변경하지 않았다. 새키 사용자 해석과 설정·대화 이행은 이 티켓, 예약 user_id·회차 이행은20.3이다. 원문 증거와 v1/v2 보고는 보존 워크트리 및 중앙 archive에 있다.
