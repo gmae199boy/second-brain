@@ -1,8 +1,7 @@
-import { readScopedSettings } from '../settings/index.js';
 import { resolveSelfUser } from '../users/self.js';
 import { hasOnlyFiniteNumbers } from './json-values.js';
 import { decodeExtensionManifest } from './manifest.js';
-import { createExtensionSnapshot } from './snapshot.js';
+import { acquireExtensionSnapshot } from './snapshot.js';
 import { cleanProcessGroup } from '../queue/process-cleanup.js';
 import { maskOutputText, maskOutputValue } from '../output/mask.js';
 import type { ExtensionDependencies } from './install.js';
@@ -46,13 +45,8 @@ export async function executeExtensionCommand(deps: ExtensionDependencies & { st
     const self = await resolveSelfUser(deps.store);
     if (!self.ok) return self;
     const declarations = manifest.manifest.settings ?? [];
-    if (declarations.length && (!deps.store.getSettings || !runtime.readSecrets)) return failure('EXTENSION_CONFIG_INVALID');
-    const settings = declarations.length ? await readScopedSettings({ getSettings: deps.store.getSettings!.bind(deps.store) }, self.userId, declarations) : { ok: true as const, settings: [] };
-    if (!settings.ok) return settings;
-    let secrets: Readonly<Record<string, string>>;
-    try { secrets = declarations.some(d => d.secret) ? await runtime.readSecrets!() : {}; } catch { return failure('EXTENSION_CONFIG_INVALID'); }
-    const snapshot = createExtensionSnapshot({ extension: input.name, userId: self.userId, stage: 'work', requiredKeys: [], declarations, settings: Object.fromEntries(settings.settings.map(s => [s.key, s.value])), secrets, machine: runtime.machineValues?.(input.name) ?? {} });
-    if (!snapshot.ok) return snapshot;
+    const snapshot = await acquireExtensionSnapshot({ extension: input.name, userId: self.userId, stage: 'work', requiredKeys: [], declarations, getSettings: deps.store.getSettings?.bind(deps.store), readSecrets: runtime.readSecrets?.bind(runtime), machineValues: () => runtime.machineValues?.(input.name) ?? {} });
+    if (!snapshot.ok) return snapshot.kind === 'settings' || snapshot.kind === 'snapshot' ? snapshot.result : failure('EXTENSION_CONFIG_INVALID');
     const directory = runtime.installedDirectory!(input.name);
     let url: string; try { url = await runtime.databaseUrl(input.name); } catch { return failure('EXTENSION_CONFIG_INVALID'); }
     if (input.signal?.aborted) return failure('EXTENSION_COMMAND_TIMEOUT');

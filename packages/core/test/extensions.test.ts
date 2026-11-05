@@ -629,7 +629,7 @@ it('records configuration failure when scoped settings lookup fails', async () =
   deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: null, sameBase: false, installedDir: '/installed/testext' });
   deps.extensions.readSecrets = async () => ({});
   deps.store.getSettings = async () => ({ ok: false, code: 'DB_LOCKED', message: 'locked' });
-  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'DB_LOCKED', message: '확장 설정을 읽을 수 없습니다' });
   expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { failedStage: 'configuration', stages: { configuration: { status: 'failed', code: 'DB_LOCKED' } } } } });
 });
 it('manifest cron·legacy·키 중복과 놓친 회차 정책을 검증한다', () => {
@@ -707,4 +707,50 @@ it.each(['before', 'during', 'after-result'] as const)('외부 snapshot %s 취�
   if (phase === 'before') controller.abort();
   expect(await installExtension(deps, { packagePath: '/synthetic', signal: controller.signal })).toMatchObject({ ok: false, code: 'EXTENSION_INSTALL_CANCELLED' });
   expect(calls).toBe(phase === 'before' ? 0 : 1); expect(cleaned).toBe(phase === 'after-result' ? 1 : 0); expect(locks).toBe(0); expect(writes()).toEqual({ placed: 0, migrated: 0 });
+});
+
+it('preserves consumer-specific snapshot errors and required keys', async () => {
+  const { executeExtensionCommand } = await import('../src/extensions/commands.js');
+  const command = { name: 'echo', runtime: 'node', entry: 'echo.mjs', description: '조회', input_schema: { type: 'object' }, output_schema: { type: 'object' }, timeout_ms: 100, risk: 'read' };
+  const settings = [{ key: 'testext.required', type: 'string', required: ['connect', 'work'] }];
+  const text = JSON.stringify({ ...manifest, settings, commands: [command] });
+  const { deps, fake } = setup({ text, output: '{"answer":42}' });
+  deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: null, sameBase: false, installedDir: '/installed/testext' });
+  deps.extensions.readSecrets = async () => ({});
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_CONFIG_INVALID' });
+  expect(fake.specs).toHaveLength(0);
+  expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { failedStage: 'configuration', stages: { configuration: { status: 'failed', code: 'EXTENSION_CONFIG_INVALID' } } } } });
+  await deps.store.recordExtensionInstall({ name: 'testext', version: '0.1.0', now });
+  Object.assign(deps.extensions, { installedDirectory: () => '/installed/testext', installedManifest: async () => text, validateValue: () => true });
+  expect(await executeExtensionCommand(deps, { name: 'testext', command: 'echo', input: {} })).toEqual({ ok: true, data: { answer: 42 } });
+  expect(JSON.parse(fake.specs[0]!.stdin!)).toMatchObject({ user_id: '019a0000-0000-7000-8000-000000000001', settings: {}, input: {} });
+  fake.specs.length = 0;
+  deps.store.getSettings = async () => ({ ok: false, code: 'DB_LOCKED', message: 'locked' });
+  expect(await executeExtensionCommand(deps, { name: 'testext', command: 'echo', input: {} })).toMatchObject({ ok: false, code: 'DB_LOCKED', message: 'locked' });
+  expect(fake.specs).toHaveLength(0);
+  deps.extensions.readSecrets = undefined;
+  expect(await executeExtensionCommand(deps, { name: 'testext', command: 'echo', input: {} })).toMatchObject({ ok: false, code: 'EXTENSION_CONFIG_INVALID', message: '확장 명령을 실행할 수 없습니다' });
+  expect(fake.specs).toHaveLength(0);
+});
+
+it.each(['capability', 'secret'] as const)('installation records %s configuration failure before launching', async failure => {
+  const text = JSON.stringify({ ...manifest, settings: [{ key: 'testext.token', type: 'string', secret: true, required: [] }] });
+  const { deps, fake } = setup({ text });
+  deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: null, sameBase: false, installedDir: '/installed/testext' });
+  if (failure === 'secret') deps.extensions.readSecrets = async () => { throw new Error('synthetic'); };
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_CONFIG_INVALID' });
+  expect(fake.specs).toEqual([]);
+  expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { failedStage: 'configuration', stages: { configuration: { status: 'failed', code: 'EXTENSION_CONFIG_INVALID' } } } } });
+});
+
+it('command propagates invalid secret snapshot without launching', async () => {
+  const { executeExtensionCommand } = await import('../src/extensions/commands.js');
+  const command = { name: 'echo', runtime: 'node', entry: 'echo.mjs', description: '조회', input_schema: { type: 'object' }, output_schema: { type: 'object' }, timeout_ms: 100, risk: 'read' };
+  const text = JSON.stringify({ ...manifest, commands: [command], settings: [{ key: 'testext.token', type: 'string', secret: true, required: [] }] });
+  const { deps, fake } = setup();
+  await deps.store.recordExtensionInstall({ name: 'testext', version: '0.1.0', now });
+  await deps.store.setSetting({ userId: '019a0000-0000-7000-8000-000000000001', key: 'testext.token', value: 'REF', updatedAt: now });
+  Object.assign(deps.extensions, { installedDirectory: () => '/installed/testext', installedManifest: async () => text, validateValue: () => true, readSecrets: async () => ({}) });
+  expect(await executeExtensionCommand(deps, { name: 'testext', command: 'echo', input: {} })).toEqual({ ok: false, code: 'EXTENSION_CONFIG_INVALID', retryable: false, message: '확장 설정을 확인하세요' });
+  expect(fake.specs).toEqual([]);
 });

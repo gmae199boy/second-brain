@@ -1,4 +1,3 @@
-import { readScopedSettings } from '../settings/index.js';
 import { resolveSelfUser } from '../users/self.js';
 import type { ExtensionInstallProgress, InstallStage } from './install-progress.js';
 import { failureText } from '../domain/failure.js';
@@ -9,7 +8,7 @@ import type { ExtensionStore, WorkStore, ScheduleStore, UserStore } from '../por
 import type { ProcessInspector, ProcessLauncher } from '../ports/process.js';
 import { PROCESS_ABI_ENV } from '../process-abi/codec.js';
 import { decodeExtensionManifest, isExtensionName, type ExtensionManifest } from './manifest.js';
-import { createExtensionSnapshot } from './snapshot.js';
+import { acquireExtensionSnapshot } from './snapshot.js';
 import type { SettingsStore } from '../ports/store.js';
 import { runExtensionCheck } from './check.js';
 import { extensionStatus } from './status.js';
@@ -392,18 +391,12 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
     if (!inserted.ok) { const saved = await mark('configuration', 'failed', inserted.code); return saved.ok ? inserted : saved; }
   }
   if (!completed('connection') || !completed('configuration')) {
-  let values: Record<string, string> = {};
-  if (declarations.length) {
-    if (!deps.store.getSettings || !runtime.readSecrets) return configFailure();
-    const read = await readScopedSettings({ getSettings: deps.store.getSettings.bind(deps.store) }, self.userId, declarations);
-    if (!read.ok) { const saved = await mark('configuration', 'failed', read.code); return saved.ok ? { ok: false as const, code: read.code, message: '확장 설정을 읽을 수 없습니다' } : saved; }
-    values = Object.fromEntries(read.settings.map(setting => [setting.key, setting.value]));
+  const snapshot = await acquireExtensionSnapshot({ extension: name, userId: self.userId, stage: 'connect', declarations, getSettings: deps.store.getSettings?.bind(deps.store), readSecrets: runtime.readSecrets?.bind(runtime), machineValues: () => runtime.machineValues?.(name) ?? {} });
+  if (!snapshot.ok) {
+    if (snapshot.kind !== 'settings') return configFailure();
+    const saved = await mark('configuration', 'failed', snapshot.result.code);
+    return saved.ok ? { ok: false as const, code: snapshot.result.code, message: '확장 설정을 읽을 수 없습니다' } : saved;
   }
-  let secrets: Readonly<Record<string, string>> = {};
-  try { if (declarations.some(setting => setting.secret)) secrets = await runtime.readSecrets!(); }
-  catch { return configFailure(); }
-  const snapshot = createExtensionSnapshot({ extension: name, userId: self.userId, stage: 'connect', declarations, settings: values, secrets, machine: runtime.machineValues?.(name) ?? {} });
-  if (!snapshot.ok) return configFailure();
   if (!completed('configuration')) { const configSaved = await mark('configuration', 'succeeded'); if (!configSaved.ok) return configSaved; }
   if (!completed('connection')) {
   let databaseUrl: string;
