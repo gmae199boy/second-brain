@@ -18,6 +18,13 @@ Personal Brain (`second-brain`): a local-first memory of agent sessions whose so
 - 작업(티켓)을 마무리하기 직전, 커밋·push 전에만 전체 `pnpm test`와 `pnpm test:python`을 한 번씩 순차로 돌린다. 이 마지막 전체 회귀를 생략하지 않는다 — 경로 규칙과 `--changed`가 못 따라가는 의존을 여기서 잡는다.
 - `pnpm test`와 `pnpm test:python`은 둘 다 build하므로 동시에 돌리지 않는다. Python·SQL·자식 프로세스로만 쓰이는 새 경로를 만들면 `rules.mjs`에 규칙을 더한다.
 
+### Garmin 작업 시험 예외 — epic 20·21 (2026-11-05 사용자 지시)
+
+- epic 20·21의 각 티켓은 바뀐 파일의 직접 시험, `pnpm test:changed`, 독립 리뷰와 필요한 수정·후속 리뷰로 검증한다. 티켓별 마무리 전체 `pnpm test`·`pnpm test:python`은 생략하고, 이 검증 범위로 built·커밋·브랜치 push·중앙 main 병합·push를 진행한다. 티켓 verify나 이전 Dispatch의 티켓별 전체 회귀 요구보다 이 예외가 우선한다. 기능 수락조건과 변경 시험·리뷰는 생략하지 않는다.
+- 전체 회귀는 Garmin 작업 끝의 **21.6(sweep) 완료 뒤, 21.7(이 Mac 전환) 시작 전**에 `pnpm test` → `pnpm test:python` 순차로 각 한 번 실행한다. 이 단계에서 나온 실패만 수정·관련 재검증하며 unrelated 개선으로 넓히지 않는다. 실패를 통과로 처리하지 않고 미해결 실패가 있으면 21.7을 시작하지 않는다. 중앙은 실행 기준 SHA·명령·종료 코드·로그와 수정/재검증 증거를 체크포인트에 남긴다.
+- 진행 중인 20.6은 이미 남은 마무리 회귀 3회차를 그대로 끝내도 된다. 결과를 기록하고 추가 전체 회귀 반복을 요구하지 않는다. 이후 티켓부터 위 예외를 적용한다.
+- 다른 에픽에는 기존 시험 실행 범위를 그대로 적용한다. 전체 회귀 두 명령은 build 충돌 때문에 동시에 실행하지 않는다.
+
 ## 티켓 자동화와 컴팩션 복구
 
 - 새 세션 또는 컴팩션 후 첫 행동은 `_bmad-output/personal-brain/automation/runbook.md`를 읽는 것이다. 자동화 관련 작업·재개·상태 보고 전에는 반드시 다시 읽는다.
