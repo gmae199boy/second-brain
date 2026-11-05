@@ -265,3 +265,18 @@
 | 잔여 위험 |DDL/실권한·수치동등성·동시성/프로세스정리·crash/fsync·harness시간제한 |실행결과는21.8확정. 원본fetched millisecond변경추적한계유지. 다중사용자전체격리완성주장없음 |
 
 운영설치/DB/계정/API/모델/예약변경없음.원문·로그·ready/depth1은보존워크트리와중앙로컬archive에있다. 새·기존시험미실행/미해결이면21.8 built 및21.7시작금지다.
+
+## 21.4 — built / 감독 분석·체성분·scope재개, 시험21.8 이관
+
+근거: [분석 이식 계획](../tickets/epic-garmin-extension/tickets/story-report-day7d30dall-plan.md)의 Design Notes·Review Triage Log·Auto Run Result.329aff7에서report/report-regenerate·analysis설정·계정runtime·scope별revision저장/재개·모델후손정리·호스트bodyIPC를연결했다. R1독립4렌즈·R2~R5후속·34행개별처분(29수정·5기각), 마지막추가발견0·deferred0·후속권고false. build/typecheck/Python정적컴파일/fake구문/diffcheck 종료0. 모든시험실행은21.8로이관·미실행이다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 채택 원본 의미 |저장성공scope재개·완성당일skip·명시재생성전체시도 |실패scope뒤에도가능한scope계속. 재생성은새revision이며별도원자세대재개추가없음 |
+| 채택 원본 의미 |명시reject는unreadable,실행/검증실패미처리사진은pending |이미성공한측정rollback보장추가없음. 파일공개뒤중단/재시도시험코드포함 |
+| 원본 한계 / 운영 검토 |daily skill의KST서술·실모델/OCR품질 |원본프롬프트의미보존으로KST문구유지. 다른timezone서술한계와실모델품질은fake/정적검증으로입증하지않음 |
+| 필수 시험 인계 |감독7d확정뒤kill/restart·30d/all만재개·revision/최신view·입력/digest·모델대기transaction0·attemptfence/retry·TERM무시후손·bodyIPC/실PG확정·파일중단 |21.8에서새report/native/unit및기존전체순차실행. 기준SHA·소유PG/role/home·fakeCLI·명령/종료코드/로그/실패별수정/재검증필수 |
+| 실행 환경 검증 |설치모델실행경로·workspace sandbox의skill/body파일요청허용 |21.8소유시험환경에서실모델호출없이계약확인. 실제sandbox동작미확인상태를통과로표현하지않음 |
+| 후속 연결 |결과file_requests·발송/cron/플러그인21.5,운영전환21.7 |분석model필수설정과21.3credential운영확인준비. 이번티켓실계정/모델/운영변경없음 |
+
+모델후손은감독그룹상속·scope경계정리/불명시중단,DB읽기는짧은RR·확정은짧은fence다. 원문리뷰는계획옆reviews폴더,전체로그/영수증은보존워크트리와중앙로컬archive에있다. 새·기존시험미실행/미해결이면21.8 built 및21.7시작금지다.
