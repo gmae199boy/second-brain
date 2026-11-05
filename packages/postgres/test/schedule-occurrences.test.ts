@@ -209,12 +209,20 @@ it('gates dependent occurrences by user, target and local date, recovers late su
       insert into brain.work_items(id,kind,execution_class,target_kind,target_id,created_at,next_attempt_at,completed_at,outcome) values ('${foreignWork}','testext.collect','supervised','account','a',now(),now(),now(),'succeeded');
       insert into brain.schedule_occurrences(schedule_id,occurrence_at,time_zone,status,work_id,user_id,recorded_at) values ('${foreignSchedule}','2026-10-29T02:00Z','Asia/Seoul','done','${foreignWork}','${other}',now())`);
     expect(await claim(['testext.report'])).toMatchObject({ok:true,item:null});
-    const laterWork=randomUUID();await fire(parent,'testext.collect',next,next2,laterWork);
+    // The manually seeded previous-day occurrence represents a firing; advance its schedule as well.
+    await db.query(`update brain.schedules set next_run_at='2026-10-29T02:00Z' where id='${parent}'`);
+    const laterWork=randomUUID();expect(await fire(parent,'testext.collect',next,next2,laterWork)).toMatchObject({ok:true,fired:true,created:true});
+    expect(await db.rows(`select next_attempt_at from brain.work_items where id='${laterWork}'`)).toEqual([{next_attempt_at:next}]);
     await db.query(`update brain.schedule_occurrences set status='failed' where schedule_id='${parent}' and occurrence_at='2026-10-29T02:00Z'`);
     expect(await claim(['testext.report'])).toMatchObject({ok:true,item:null});
-    await db.query(`update brain.work_items set completed_at=now(),outcome='cancelled' where id='${laterWork}'`);
+    const cancelledWork=randomUUID();
+    await db.query(`insert into brain.work_items(id,kind,execution_class,target_kind,target_id,created_at,next_attempt_at,completed_at,outcome) values ('${cancelledWork}','testext.collect','supervised','account','a','${next.toISOString()}','${next.toISOString()}','${next.toISOString()}','cancelled'); update brain.schedule_occurrences set work_id='${cancelledWork}' where schedule_id='${parent}' and occurrence_at='2026-10-29T02:00Z'`);
     expect(await claim(['testext.report'])).toMatchObject({ok:true,item:null});
-    await db.query(`update brain.work_items set outcome='succeeded' where id='${laterWork}'; update brain.schedule_occurrences set status='done' where schedule_id='${parent}' and occurrence_at='2026-10-29T02:00Z'`);
+    await db.query(`update brain.schedule_occurrences set status='pending',work_id='${laterWork}' where schedule_id='${parent}' and occurrence_at='2026-10-29T02:00Z'`);
+    const parentToken=randomUUID();
+    expect(await store.claimSupervisedWork({kinds:['testext.collect'],now:next,claimedBy:'parent',attemptToken:parentToken})).toMatchObject({ok:true,item:{id:laterWork,currentAttemptToken:parentToken,scheduledOccurrences:[{scheduleId:parent,occurrences:[next]}]}});
+    expect(await store.finishSupervisedWork({id:laterWork,attemptToken:parentToken,now:next,outcome:'succeeded'})).toMatchObject({ok:true,outcome:'done'});
+    expect(await store.listOccurrences({scheduleId:parent})).toMatchObject({ok:true,occurrences:[{status:'done'},{status:'done',workId:laterWork}]});
     const restarted=postgresStore({databaseUrl:db.appUrl});
     try {
       const token=randomUUID(); const eligible=await restarted.claimSupervisedWork({kinds:['testext.report'],now:next,claimedBy:'restart',attemptToken:token});

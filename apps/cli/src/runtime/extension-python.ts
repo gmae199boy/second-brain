@@ -1,5 +1,6 @@
-import { readFile, stat } from 'node:fs/promises';
+import { cp, lstat, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { cleanProcessGroup } from 'second_brain';
 import { systemProcessLauncher } from './process-group.js';
 import { systemProcessInspector } from './process-inspector.js';
@@ -49,7 +50,21 @@ export async function validatePythonInputs(directory: string): Promise<string> {
   if (!validPythonPin(pin)) throw new Error('invalid Python pin');
   return pin;
 }
-export async function prepareExtensionPython(directory: string, parent: NodeJS.ProcessEnv, signal?: AbortSignal) {
+export async function validatePreparedPython(directory: string, parent: NodeJS.ProcessEnv, signal?: AbortSignal) {
+  try {
+    const pin = await validatePythonInputs(directory);
+    const root = await lstat(join(directory, '.venv'));
+    if (!root.isDirectory() || root.isSymbolicLink()) throw new Error('invalid environment root');
+    const env = { PATH: parent['PATH'] ?? '', HOME: parent['HOME'] ?? '', UV_PYTHON_DOWNLOADS: 'never' };
+    const actual = (await run(join(directory, '.venv', 'bin', 'python'), ['-c', 'import platform; print(platform.python_version())'], directory, env, signal)).trim();
+    if (actual !== pin) throw new Error('version mismatch');
+    return { ok: true as const };
+  } catch {
+    if (signal?.aborted) return { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' };
+    return failure('EXTENSION_PYTHON_VERSION_MISMATCH');
+  }
+}
+export async function prepareExtensionPython(directory: string, parent: NodeJS.ProcessEnv, signal?: AbortSignal, resetOwnedStage = false) {
   let pin: string;
   try { pin = await validatePythonInputs(directory); }
   catch { return failure('EXTENSION_PYTHON_PIN_INVALID'); }
@@ -59,7 +74,18 @@ export async function prepareExtensionPython(directory: string, parent: NodeJS.P
   let python: string;
   try { python = (await run('uv', ['python', 'find', pin, '--no-python-downloads'], directory, env, signal)).trim(); }
   catch (error) { return cancelled(error) ?? failure('EXTENSION_PYTHON_NOT_FOUND'); }
-  try { await run('uv', ['sync', '--frozen', '--no-dev', '--python', python], directory, env, signal); }
+  try {
+    const venv = join(directory, '.venv');
+    const existing = await lstat(venv).catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; });
+    if (existing && (!existing.isDirectory() || existing.isSymbolicLink())) throw new Error('invalid environment root');
+    if (existing && resetOwnedStage) await rm(venv, { recursive: true, force: true });
+    if (!existing || resetOwnedStage) await run('uv', ['venv', '--relocatable', '--python', python, '.venv'], directory, env, signal);
+    const scratch = await mkdtemp(join(tmpdir(), 'brain-python-build-'));
+    try {
+      await cp(directory, scratch, { recursive: true, filter: path => path !== venv });
+      await run('uv', ['sync', '--frozen', '--no-dev', '--no-editable', '--python', python], scratch, { ...env, UV_PROJECT_ENVIRONMENT: venv }, signal);
+    } finally { await rm(scratch, { recursive: true, force: true }); }
+  }
   catch (error) { return cancelled(error) ?? failure('EXTENSION_PYTHON_SYNC_FAILED'); }
   try {
     const actual = (await run(join(directory, '.venv', 'bin', 'python'), ['-c', 'import platform; print(platform.python_version())'], directory, env, signal)).trim();

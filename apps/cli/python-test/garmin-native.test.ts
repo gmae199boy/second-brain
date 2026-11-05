@@ -15,6 +15,21 @@ const root=fileURLToPath(new URL('../../../extensions/garmin',import.meta.url));
 const synthetic=join(root,'fixtures/native');
 const self='01940000-0000-7000-8000-00000000000a';
 
+// Advance only a settled synthetic retry after its prerequisite is complete.
+// The production retry policy and the supervisor still own the next attempt.
+async function resumeImport(fixture: Awaited<ReturnType<typeof extHome>>, id: string, crashed = false) {
+  const rows = await fixture.db.rows(`select a.error_code, w.current_attempt_token, w.completed_at,
+    (select count(*)::int from brain.file_requests q left join brain.file_request_results r on r.request_id=q.id where q.source='garmin' and r.file_id is null) pending,
+    (select count(*)::int from brain.work_attempts where work_item_id=w.id) attempts
+    from brain.work_items w join lateral (select error_code,finished_at from brain.work_attempts where work_item_id=w.id order by started_at desc limit 1) a on true
+    where w.id='${id}' and a.finished_at is not null`);
+  const row = rows[0];
+  if (row && row.current_attempt_token === null && row.completed_at === null && (row.error_code === 'IMPORT_FILES_PENDING' && row.pending === 0 || crashed && row.attempts === 1 && row.error_code === 'ABI_EXIT_FAILED')) {
+    await fixture.db.query(`update brain.work_items set next_attempt_at=now() where id='${id}' and completed_at is null and current_attempt_token is null`);
+  }
+  return (await fixture.db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome;
+}
+
 async function files(dir: string): Promise<string[]> {
   const result:string[]=[];
   async function walk(current:string) {
@@ -25,6 +40,34 @@ async function files(dir: string): Promise<string[]> {
   }
   await walk(dir); return result.sort();
 }
+
+it('installed native import rejects unsupported schema 17 without changing source or preservation ledgers', async () => {
+  const fixture=await extHome(), store=postgresStore({databaseUrl:fixture.db.appUrl}), controller=new AbortController(), ids=uuidV7IdGen();
+  let daemon:ReturnType<typeof runDaemon>|undefined;
+  try {
+    const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), capture=join(fixture.home,'unsupported-capture'); await mkdir(capture);
+    execFileSync(python,['-c',`import sqlite3,sys;sys.path.insert(0,sys.argv[1]);from synthetic import make_capture;from pathlib import Path;root=Path(sys.argv[2]);make_capture(root);c=sqlite3.connect(root/'D2.db');c.execute('pragma user_version=17');c.commit();c.close()`,synthetic,capture],{env:fixture.env});
+    const hashes=async()=>Promise.all((await files(capture)).map(async name=>({name,hash:createHash('sha256').update(await readFile(join(capture,name))).digest('hex')})));
+    const beforeHashes=await hashes();
+    await fixture.db.query("insert into garmin.datasets(dataset,account,account_confirmed) values ('synthetic-existing',null,false)");
+    const tables=['garmin.datasets','garmin.import_batches','garmin.import_mapping','garmin.import_checkpoints','garmin.raw_payloads','garmin.import_conflicts','garmin.artifact_inventory','garmin.artifact_relations','garmin.input_inventory','garmin.unassigned_file_requests','garmin.native_import_mapping','garmin.native_import_checkpoints','brain.file_requests'];
+    const ledger=async()=>Promise.all(tables.map(table=>fixture.db.rows(`select coalesce(json_agg(t order by t::text)::text,'[]') as contents from ${table} t`)));
+    const before=await ledger();
+    await store.setSetting({userId:self,key:'garmin.capture_manifest',value:await realpath(join(capture,'manifest.json')),updatedAt:new Date()});
+    await store.setSetting({userId:self,key:'garmin.timezone',value:'Asia/Seoul',updatedAt:new Date()});
+    daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
+    const request=await fixture.run(['ext','run','garmin','import','--json']); expect(request.code,request.stdout+request.stderr).toBe(0);
+    const id=String(request.body.data.work_id);
+    await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome,{timeout:90000}).toBe('failed');
+    const attempts=await fixture.db.rows(`select error_code,error_retryable,stderr from brain.work_attempts where work_item_id='${id}'`);
+    expect(attempts,JSON.stringify(attempts)).toMatchObject([{error_code:'PREFLIGHT_SCHEMA_UNSUPPORTED',error_retryable:false}]);
+    const queue=await fixture.run(['queue','list','--all','--kind','garmin.import','--json']); expect(queue.code,queue.stdout+queue.stderr).toBe(0);
+    expect(queue.body.data.items).toContainEqual(expect.objectContaining({id,state:'failed',last_error:expect.stringContaining('PREFLIGHT_SCHEMA_UNSUPPORTED')}));
+    expect(await hashes()).toEqual(beforeHashes); expect(await ledger()).toEqual(before);
+    expect(await fixture.db.rows('select count(*)::int n from garmin.native_import_checkpoints where completed')).toEqual([{n:0}]);
+  } finally {controller.abort(); if(daemon) await daemon; await store.close(); await fixture.cleanup();}
+},120000);
 
 it('copies schema 16 under supervision, resumes after a crash and matches the pinned SQLite oracle', async () => {
   const fixture=await extHome(), store=postgresStore({databaseUrl:fixture.db.appUrl}), controller=new AbortController(), ids=uuidV7IdGen();
@@ -46,14 +89,16 @@ it('copies schema 16 under supervision, resumes after a crash and matches the pi
     // after an atomic row commit forces the supervisor to retry the same work item.
     await appendFile(join(fixture.home,'extensions/garmin/src/native_import.py'), `\n_original_copy_for_test = copy\ndef copy(conn,capture,entries,verified,settings,seam=None):\n    from pathlib import Path\n    marker=Path(os.environ['BRAIN_EXTENSION_HOME'])/'synthetic-crash-once'\n    def stop(stage,*args):\n        if stage=='after' and not marker.exists():\n            marker.write_text('crashed')\n            os._exit(23)\n    return _original_copy_for_test(conn,capture,entries,verified,settings,seam=stop)\n`);
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
-    const run=async (kind:string) => {
+    const run=async (kind:string, crashed=false) => {
       const request=await fixture.run(['ext','run','garmin',kind,'--json']);
       expect(request.code,request.stdout+request.stderr).toBe(0);
       const id=String(request.body.data.work_id);
-      await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome,{timeout:90000,interval:100}).toBe('succeeded');
+      await expect.poll(()=>resumeImport(fixture,id,crashed),{timeout:90000,interval:100}).toBe('succeeded');
       return id;
     };
-    const work=await run('import');
+    const work=await run('import',true);
+    expect(await readFile(join(fixture.home,'extensions/garmin/synthetic-crash-once'),'utf8')).toBe('crashed');
+    expect((await fixture.db.rows(`select error_code from brain.work_attempts where work_item_id='${work}' order by started_at limit 1`))[0]?.error_code).toBe('ABI_EXIT_FAILED');
     expect((await fixture.db.rows(`select count(*)::int n from brain.work_attempts where work_item_id='${work}'`))[0]!.n).toBeGreaterThan(1);
     expect(await fixture.db.rows(`select count(*)::int n from garmin.native_import_checkpoints where completed`)).toEqual([{n:5}]);
     expect(await fixture.db.rows(`select count(*)::int n from brain.file_requests q left join brain.file_request_results r on r.request_id=q.id where q.source='garmin' and r.file_id is null`)).toEqual([{n:0}]);
@@ -198,7 +243,7 @@ it('registers v1 capture files without inventing account provenance and records 
     const run=async (kind:string, outcome:string) => {
       const result=await fixture.run(['ext','run','garmin',kind,'--json']);
       expect(result.code,result.stdout+result.stderr).toBe(0);
-      await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${String(result.body.data.work_id)}'`))[0]?.outcome,{timeout:90000,interval:100}).toBe(outcome);
+      await expect.poll(()=>resumeImport(fixture,String(result.body.data.work_id)),{timeout:90000,interval:100}).toBe(outcome);
     };
     await run('import','succeeded');
     const rows=await fixture.db.rows(`select u.path_hash,u.request_id,u.request_batch,q.dataset,q.import_batch,q.sha256,q.metadata,r.file_id,f.content_hash from garmin.unassigned_file_requests u join brain.file_requests q on q.id=u.request_id join brain.file_request_results r on r.request_id=q.id join brain.files f on f.id=r.file_id order by u.path_hash`);

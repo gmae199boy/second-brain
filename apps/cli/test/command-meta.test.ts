@@ -42,7 +42,29 @@ function without(field: keyof CommandSpec): CommandSpec {
   return spec as unknown as CommandSpec;
 }
 
+/** Split the literal shell words used in examples, including quoted cron fields. */
+function exampleWords(line: string): string[] {
+  const words: string[] = []; let word = '', quote = '', started = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]!;
+    if (!quote && /\s/.test(char)) { if (started) { words.push(word); word = ''; started = false; } continue; }
+    if (char === "'" && quote !== '"' || char === '"' && quote !== "'") { quote = quote ? '' : char; started = true; continue; }
+    if (char === '\\' && quote !== "'") { if (++i === line.length) throw new Error('unfinished escape'); word += line[i]; started = true; continue; }
+    word += char; started = true;
+  }
+  if (quote) throw new Error('unclosed quote');
+  if (started) words.push(word);
+  return words;
+}
+
 describe('the meta of every registered command', () => {
+  it('parses quoted and escaped example arguments without splitting cron fields', () => {
+    expect(exampleWords(`brain schedules add --cron "0 9 * * 5" --target-id 'daily run'`)).toEqual(['brain', 'schedules', 'add', '--cron', '0 9 * * 5', '--target-id', 'daily run']);
+    expect(exampleWords(`brain fake read pre"fix"`)).toEqual(['brain', 'fake', 'read', 'prefix']);
+    expect(exampleWords(String.raw`brain fake read two\ words`)).toEqual(['brain', 'fake', 'read', 'two words']);
+    expect(() => exampleWords(`brain fake read "unterminated`)).toThrow();
+  });
+
   it.each(commands.map((spec) => [`${spec.ns} ${spec.verb}`, spec] as const))(
     '%s declares all seven fields and agrees with itself',
     (_name, spec) => {
@@ -54,7 +76,7 @@ describe('the meta of every registered command', () => {
     '%s has examples this registry actually selects',
     (_name, spec) => {
       for (const example of spec.examples) {
-        const [binary, ...argv] = example.split(/\s+/);
+        const [binary, ...argv] = exampleWords(example);
         // Every example is a whole command line, so it starts with the binary
         // and not with the namespace.
         expect(binary).toBe('brain');

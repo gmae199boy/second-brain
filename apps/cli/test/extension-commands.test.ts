@@ -367,6 +367,23 @@ it('guards compiled schema references and dependencies without treating literal 
     ['{"type":"object","const":{"properties":{"__proto__":42}},"enum":[{"properties":{"__proto__":42}}],"default":{"properties":{"__proto__":42}},"examples":[{"properties":{"__proto__":42}}]}', true],
   ];
   for (const [text, expected] of cases) expect(validateSchema(JSON.parse(text)), text).toBe(expected);
+  const scoped = JSON.parse('{"$id":"https://example.invalid/root","type":"object","$defs":{"scope":{"$id":"https://example.invalid/inner","hidden":{"properties":{"name":{"type":"string"}}},"$ref":"https://example.invalid/inner#/hidden"}},"$ref":"https://example.invalid/inner"}');
+  expect(validateSchema(scoped)).toBe(true);
+  expect(validateValue(scoped, { name: 'ok' })).toBe(true);
+  expect(validateValue(scoped, { name: 42 })).toBe(false);
+  const relative = structuredClone(scoped);
+  relative.$defs.scope.$id = 'inner'; relative.$defs.scope.$ref = '#/hidden'; relative.$ref = 'inner';
+  expect(validateSchema(relative)).toBe(true);
+  expect(validateValue(relative, { name: 'ok' })).toBe(true);
+  expect(validateValue(relative, { name: 42 })).toBe(false);
+  const crossScope = JSON.parse('{"$id":"https://example.invalid/root","$defs":{"name":{"type":"string"},"scope":{"$id":"inner","$ref":"https://example.invalid/root#/$defs/name"}},"$ref":"inner"}');
+  expect(validateValue(crossScope, 'ok')).toBe(true);
+  expect(validateValue(crossScope, 42)).toBe(false);
+  const missingScope = structuredClone(scoped);
+  missingScope.$defs.scope.$ref = 'https://example.invalid/external#/hidden';
+  expect(validateSchema(missingScope)).toBe(false);
+  const literal = { const: { $id: 'inner', $ref: '#/missing' } };
+  expect(validateValue(literal, { $id: 'inner', $ref: '#/missing' })).toBe(true);
   const ordinary = JSON.parse('{"type":"object","properties":{"name":{"type":"string"}}}');
   expect(validateValue(ordinary, { name: 'ok' })).toBe(true);
   expect(validateValue(ordinary, { name: 42 })).toBe(false);

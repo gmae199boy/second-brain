@@ -306,6 +306,10 @@ class NativeOrderAndLockIntegrationTest(unittest.TestCase):
                     datasets[1]:{'sha256':'same','snapshot':{'schema':16,'tables':{'exercise_log':table([(101,'B',17)])}}}}
         with psycopg.connect(os.environ['GARMIN_TEST_OWNER_DSN'],autocommit=True) as owner:
             uid=owner.execute('select id from brain.users where is_self=1').fetchone()[0]
+            work,token=uuid4(),uuid4()
+            owner.execute("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values (%s,'garmin.import','synthetic',%s,now(),now(),'supervised',now(),now()+interval '1 hour','fixture')",(work,str(work)))
+            owner.execute('insert into brain.work_attempts(token,work_item_id,started_at) values (%s,%s,now())',(token,work))
+            owner.execute('update brain.work_items set current_attempt_token=%s where id=%s',(token,work))
             for dataset in datasets:
                 owner.execute('insert into garmin.datasets(dataset,account,account_confirmed) values (%s,%s,true)',(dataset,profile))
                 for i in range(4):
@@ -313,7 +317,7 @@ class NativeOrderAndLockIntegrationTest(unittest.TestCase):
             settings={'user_id':str(uid),'values':{'garmin.timezone':'UTC'}}
             try:
                 with psycopg.connect(os.environ['GARMIN_TEST_EXTENSION_DSN']) as ext, \
-                     patch.dict(os.environ,{'BRAIN_USER_ID':str(uid),'BRAIN_ACCOUNT':profile},clear=False), \
+                     patch.dict(os.environ,{'BRAIN_USER_ID':str(uid),'BRAIN_ACCOUNT':profile,'BRAIN_WORK_ID':str(work),'BRAIN_ATTEMPT_TOKEN':str(token)},clear=False), \
                      patch.object(native,'account',return_value={'confirmed':True,'account':profile}), \
                      patch.object(native,'check'), patch.dict(native.BY_VERSION,{16:{'exercise_log':['activity_id','exercise']}}):
                     native.copy(ext,capture(0,True),entries,sources(0),settings)

@@ -185,8 +185,9 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
         fixture = json.loads(fixture_path.read_text(encoding='utf-8'))
         with tempfile.TemporaryDirectory(prefix='report-input-comparison-') as tmp:
             base = Path(tmp)
-            env = {'HOME':tmp,'PATH':os.defpath,'PYTHONPATH':str(root / 'tests/oracle/src'),'PYTHONDONTWRITEBYTECODE':'1'}
-            child = subprocess.run([sys.executable,str(root / 'tests/report_input_oracle_child.py'),str(fixture_path)],cwd=tmp,env=env,text=True,capture_output=True,check=True,timeout=60)
+            env = {'HOME':os.path.realpath(tmp),'TMPDIR':os.path.realpath(tmp),'PATH':os.defpath,'PYTHONPATH':str(root / 'tests/oracle/src'),'PYTHONDONTWRITEBYTECODE':'1'}
+            child = subprocess.run([sys.executable,str(root / 'tests/report_input_oracle_child.py'),str(fixture_path)],cwd=tmp,env=env,text=True,capture_output=True,timeout=60)
+            self.assertEqual(child.returncode, 0, child.stderr)
             expected = json.loads(child.stdout)
             snapshot_env = report_env()
             snapshot_env['BRAIN_EXTENSION_HOME'] = str(base)

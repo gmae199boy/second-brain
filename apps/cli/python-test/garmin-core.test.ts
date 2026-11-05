@@ -26,12 +26,13 @@ it.each(['database','exit'])('package → cron dependency recovers %s interrupti
   const world = await extHome(), ids = uuidV7IdGen(), store = postgresStore({ databaseUrl: world.db.appUrl });
   const controller = new AbortController(); let daemon: ReturnType<typeof runDaemon> | undefined;
   let realController: AbortController | undefined, realDaemon: ReturnType<typeof runDaemon> | undefined;
-  const messages: string[] = []; let failDocument = true;
+  const messages: string[] = []; let failDocument = true; let diagnosticClock = () => 0;
+  const responses: {method:string; status:number; clock:number}[] = [];
   const server = createServer((req, res) => {
     req.resume(); req.on('end', () => {
       const method = req.url?.split('/').at(-1) ?? ''; messages.push(method);
-      if (method === 'sendDocument' && failDocument) { failDocument = false; res.writeHead(500).end(); return; }
-      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok:true, result:method === 'sendMediaGroup' ? [{message_id:1},{message_id:2}] : {message_id:1} }));
+      if (method === 'sendDocument' && failDocument) { failDocument = false; responses.push({method,status:500,clock:diagnosticClock()}); res.writeHead(500).end(); return; }
+      responses.push({method,status:200,clock:diagnosticClock()}); res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok:true, result:method === 'sendMediaGroup' ? [{message_id:1},{message_id:2}] : {message_id:1} }));
     });
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -54,7 +55,7 @@ it.each(['database','exit'])('package → cron dependency recovers %s interrupti
     const day=new Date(Date.now()+2*86400000).toISOString().slice(0,10);
     const collectAt=new Date(`${day}T02:00:00.000Z`), reportAt=new Date(`${day}T02:30:00.000Z`);
     const prior1=new Date(collectAt.getTime()-86400000).toISOString().slice(0,10), prior2=new Date(collectAt.getTime()-2*86400000).toISOString().slice(0,10);
-    let time=reportAt.getTime()+1000; const clock={now:()=>new Date(time)};
+    let time=reportAt.getTime()+1000; diagnosticClock = () => time; const clock={now:()=>new Date(time)};
     const tokenstore=join(ext,'tokenstore'), token=Buffer.from('synthetic-token');
     await mkdir(tokenstore,{recursive:true,mode:0o700}); await chmod(tokenstore,0o700);
     await writeFile(join(tokenstore,'garmin_tokens.json'),token,{mode:0o600});
@@ -130,7 +131,7 @@ it.each(['database','exit'])('package → cron dependency recovers %s interrupti
     await expect.poll(async()=> (await world.db.rows(`select count(*)::int n from garmin.evaluation_revisions where connection_id='${account}'`))[0]?.n,{timeout:120000}).toBe(4);
     expect((await calls()).map(c=>c.scope)).toEqual(['day','7d','30d','all']);
     // File handoff and retry are asynchronous; accelerate only this owned test queue.
-    await expect.poll(async()=>{ await world.db.query("update brain.work_items set next_attempt_at=now() where kind='garmin.report' and completed_at is null and current_attempt_token is null"); time+=1000; return (await world.db.rows("select count(*)::int n from brain.channel_requests where producer='garmin' and purpose='report'"))[0]?.n; },{timeout:120000,interval:500}).toBe(1);
+    await expect.poll(async()=>{ await world.db.query("update brain.work_items set next_attempt_at=now() where kind='garmin.report' and completed_at is null and current_attempt_token is null"); if (failDocument) time+=1000; return (await world.db.rows("select count(*)::int n from brain.channel_requests where producer='garmin' and purpose='report'"))[0]?.n; },{timeout:120000,interval:500}).toBe(1);
     const revisions=await world.db.rows(`select scope,revision,summary from garmin.evaluation_revisions where connection_id='${account}' order by scope`);
     const links=await world.db.rows(`select ef.kind,ef.file_id,fr.metadata from garmin.evaluation_files ef join brain.file_requests fr on fr.id=ef.request_id where ef.connection_id='${account}'`);
     expect(links.some(link=>link.kind==='report')).toBe(true);
@@ -139,9 +140,25 @@ it.each(['database','exit'])('package → cron dependency recovers %s interrupti
     for (const link of links) { expect(link.file_id).toBeTruthy(); expect(link.metadata).toMatchObject({kind:link.kind,report_date:day,scope:expect.any(String),original_path_hash:expect.stringMatching(/^[a-f0-9]{64}$/)}); }
     await expect.poll(()=>messages.includes('sendDocument'),{timeout:90000}).toBe(true);
     expect(await world.db.rows(`select scope,revision,summary from garmin.evaluation_revisions where connection_id='${account}' order by scope`)).toEqual(revisions);
-    await world.db.query("update brain.work_items set next_attempt_at=now() where kind='channel_send' and completed_at is null and current_attempt_token is null"); time+=60000;
+    // The HTTP handler sees the request before the supervisor settles its failed attempt.
+    // Wait for the retryable 500 to be recorded and released before moving only this work's clock.
+    let channelWork = '', lastDiagnostic = '';
+    await expect.poll(async()=> {
+      const snapshot = await world.db.rows(`select r.id request_id,r.status,w.id work_id,w.current_attempt_token,w.completed_at,w.next_attempt_at,w.attempts,a.attempt_token,a.outcome,a.error_code,a.retryable,a.finished_at,wa.outcome work_outcome,wa.finished_at work_finished from brain.channel_requests r left join brain.work_items w on w.id=r.work_item_id left join brain.channel_attempt_results a on a.request_id=r.id left join brain.work_attempts wa on wa.token=a.attempt_token where r.producer='garmin' and r.purpose='report' order by a.sequence`);
+      const diagnostic = JSON.stringify({interruption, clock:time, responses, snapshot});
+      if (diagnostic !== lastDiagnostic) { process.stdout.write(`CHANNEL_DIAGNOSTIC ${diagnostic}\n`); lastDiagnostic=diagnostic; }
+      const row=(await world.db.rows(`select w.id from brain.channel_requests r join brain.work_items w on w.id=r.work_item_id join brain.channel_attempt_results a on a.request_id=r.id and a.work_item_id=w.id where r.producer='garmin' and r.purpose='report' and a.outcome='definite_failed' and a.error_code='http_5xx' and a.retryable=true and a.finished_at is not null and w.current_attempt_token is null and w.completed_at is null`))[0];
+      if (!row) return false; channelWork=String(row.id); return true;
+    },{timeout:90000}).toBe(true);
+    expect(responses.filter(response=>response.method==='sendDocument').map(response=>response.status)).toEqual([500]);
+    await world.db.query(`update brain.work_items set next_attempt_at=now() where id='${channelWork}' and completed_at is null and current_attempt_token is null`); time+=60000;
     await expect.poll(async()=> (await world.db.rows("select status from brain.channel_requests where producer='garmin' and purpose='report'"))[0]?.status,{timeout:90000}).toBe('sent');
+    expect(responses.filter(response=>response.method==='sendDocument').map(response=>response.status)).toEqual([500,200]);
+    expect(await world.db.rows(`select outcome,error_code,retryable from brain.channel_attempt_results where work_item_id='${channelWork}' order by sequence`)).toEqual([
+      {outcome:'definite_failed',error_code:'http_5xx',retryable:true}, {outcome:'sent',error_code:null,retryable:null},
+    ]);
     expect(messages.filter(x=>x==='sendMessage')).toHaveLength(1);
+    expect(messages.filter(x=>x==='sendPhoto')).toHaveLength(1);
     expect(messages.filter(x=>x==='sendDocument')).toHaveLength(2);
     expect(await tickSchedules(deps)).toMatchObject({ok:true,enqueued:0});
     expect((await world.db.rows("select count(*)::int n from brain.channel_requests where producer='garmin' and purpose='report'"))[0]?.n).toBe(1);

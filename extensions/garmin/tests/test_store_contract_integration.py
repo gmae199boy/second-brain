@@ -387,5 +387,5 @@ class RealStoreContractTest(unittest.TestCase):
                     self.assertEqual(values['months'][0]['steps'],index*100)
                     self.assertEqual(values['exercises'][0]['volume_kg'],index*100)
         with psycopg.connect(self.ext_dsn) as ext:
-            rows=ext.execute("select user_id,connection_id,raw from garmin.raw_response where user_id=any(%s) and scope='day' and key=%s and endpoint='sleep_data'",([self.user,self.other_user],DAY)).fetchall()
+            rows=ext.execute("select user_id,connection_id,raw from garmin.raw_response where user_id=any(%s) and connection_id=any(%s) and scope='day' and key=%s and endpoint='sleep_data'",([self.user,self.other_user],[account[1] for account in self.accounts],DAY)).fetchall()
             self.assertEqual({(user,connection,json.loads(raw)['synthetic_marker']) for user,connection,raw in rows},{(account[0],account[1],index) for index,account in enumerate(self.accounts,1)})

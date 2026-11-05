@@ -361,7 +361,8 @@ def run():
         from native_artifacts import FilesPending, FilesFailed
         code = ('IMPORT_FILES_PENDING' if isinstance(exc, FilesPending) else
                 'IMPORT_FILES_FAILED' if isinstance(exc, FilesFailed) else
-                'IMPORT_CONFLICT' if str(exc) == 'IMPORT_CONFLICT' else 'IMPORT_INVALID')
+                'IMPORT_CONFLICT' if str(exc) == 'IMPORT_CONFLICT' else
+                'PREFLIGHT_SCHEMA_UNSUPPORTED' if str(exc) == 'PREFLIGHT_SCHEMA_UNSUPPORTED' else 'IMPORT_INVALID')
         state = getattr(exc, 'sqlstate', None)
         retryable = isinstance(exc, FilesPending) or (state is None and isinstance(exc, psycopg.OperationalError)) or state in ('40001','40P01','55P03','57014','25P04','57P01','57P02','57P03') or bool(state and state.startswith('08'))
         print(json.dumps({'abi':1,'type':'error','code':code,'retryable':retryable}),flush=True)

@@ -5,9 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { tempHomes } from './temp-home.js';
 import { pgHome } from './pg-home.js';
 import { withoutHarnessFolders } from './environment.js';
+import { createIsolatedTestDatabase } from '@second-brain/test-db';
 export async function extHome(options: { realGarminAuth?: boolean; self?: boolean } = {}) {
   const homes = tempHomes(), home = await homes.create('brain-ext-');
-  const db = await pgHome(home, options.self ?? true);
+  let db: Awaited<ReturnType<typeof pgHome>>;
+  try { db = await pgHome(home, options.self ?? true, createIsolatedTestDatabase); }
+  catch (error) { await homes.cleanup(); throw error; }
+  try {
   const { readBuildIdentity } = await import('../src/install/installed.js');
   const build = await readBuildIdentity(); if (!build?.commit) throw new Error('시험 build 신원이 없습니다');
   await writeFile(join(home, 'installed.json'), JSON.stringify({ commit: build.commit, schema_version: build.schema_version, schema_versions: build.schema_versions, node: process.execPath, plugin_root: null, installed_at: new Date(0).toISOString() }));
@@ -45,6 +49,10 @@ export async function extHome(options: { realGarminAuth?: boolean; self?: boolea
       return await runRaw(args);
     } finally { controller.abort(); await running; }
   }
+  let cleaned = false;
+  let rolesCleaned = false;
+  let homeCleaned = false;
+  let cleaning: Promise<void> | undefined;
   return {
     home, db, env, runDirect: runRaw,
     async run(args: readonly string[]) {
@@ -86,13 +94,33 @@ export async function extHome(options: { realGarminAuth?: boolean; self?: boolea
       if (!/^[a-z][a-z0-9_]*$/.test(owner)) throw new Error('잘못된 소유자');
       return db.rows(`select owner,version from brain.schema_migrations where owner='${owner}' order by version`);
     },
-    async cleanup() {
-      for (const name of ['garmin', 'extdisable', 'testext', 'pyfixture', 'otherext', 'resumext', 'pyresume']) {
-        const role = `brain_ext_${name}`;
-        const owned = await db.rows(`select 1 from pg_roles where rolname='${role}' and shobj_description(oid, 'pg_authid')='second-brain extension:' || current_database()`);
-        if (owned.length) await db.query(`drop owned by "${role}"; drop role "${role}"`);
-      }
-      await db.drop(); await homes.cleanup();
+    cleanup() {
+      if (cleaned) return Promise.resolve();
+      if (cleaning) return cleaning;
+      cleaning = (async () => {
+        const errors: unknown[] = [];
+        if (!rolesCleaned && !db.fixtureContainerRemoved && !db.fixtureDatabaseDropped) {
+          try {
+            for (const name of ['garmin', 'extdisable', 'testext', 'pyfixture', 'otherext', 'resumext', 'pyresume']) {
+              const role = `brain_ext_${name}`;
+              const owned = await db.rows(`select 1 from pg_roles where rolname='${role}' and shobj_description(oid, 'pg_authid')='second-brain extension:' || current_database()`);
+              if (owned.length) await db.query(`drop owned by "${role}"; drop role "${role}"`);
+            }
+            rolesCleaned = true;
+          } catch (error) { errors.push(error); }
+        }
+        if (!db.fixtureContainerRemoved) {
+          try { await db.drop(); } catch (error) { errors.push(error); }
+        }
+        if (!homeCleaned) {
+          try { await homes.cleanup(); homeCleaned = true; } catch (error) { errors.push(error); }
+        }
+        if (errors.length === 1) throw errors[0];
+        if (errors.length > 1) throw new AggregateError(errors, 'fixture cleanup failed');
+        cleaned = true;
+      })().finally(() => { cleaning = undefined; });
+      return cleaning;
     },
   };
+  } catch (error) { try { await db.drop(); } finally { await homes.cleanup(); } throw error; }
 }

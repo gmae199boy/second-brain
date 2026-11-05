@@ -6,7 +6,9 @@ import { expect, it } from 'vitest';
 import { isoWithOffset, tickSchedules } from 'second_brain';
 import { postgresStore } from 'second_brain/postgres';
 import { supervisorFixture } from './supervisor-fixture.js';
-import { runPgCommand } from './pg-home.js';
+import { pgRunner, runPgCommand } from './pg-home.js';
+import { dispatch } from '../src/dispatch.js';
+import { commands } from '../src/commands/index.js';
 import { withoutHarnessFolders } from './environment.js';
 import { HOME_ENV } from '../src/config/paths.js';
 import { uuidV7IdGen } from '../src/runtime/id-gen.js';
@@ -18,7 +20,7 @@ async function fixture() {
   const store = postgresStore({ databaseUrl: f.db.appUrl });
   const run = (args: string[], json = true) => runPgCommand(json ? [...args, '--json'] : args, env);
   const add = (targetId = 'daily', at = '11:00') => run(['schedules', 'add', '--kind', 'process_probe', '--target-kind', 'probe', '--target-id', targetId, '--at', at]);
-  return { f, store, run, add, async close() { await store.close(); await f.close(); await rm(home, { recursive: true, force: true }); } };
+  return { f, store, run, add, env, async close() { await store.close(); await f.close(); await rm(home, { recursive: true, force: true }); } };
 }
 it('adds a local schedule and lists it', async () => {
   const k = await fixture();
@@ -128,4 +130,27 @@ it('키가 있는 예약 삭제는 표식을 반환하고 다시 만들지 않�
   const removed=await k.run(['schedules','remove',id]);expect(JSON.parse(removed.stdout).data).toEqual({id,marked:true});
   expect(await k.store.findScheduleByKey({extension:'testext',scheduleKey:'default',userId:self.user.id})).toMatchObject({ok:true,schedule:{id,enabled:false,removedAt:expect.any(Date)}});
  }finally{await k.close();}
+});
+
+
+it('schedules update의 CAS 충돌은 재시도를 안내하고 예약과 회차를 보존한다', async () => {
+  const k = await fixture();
+  try {
+    const added = await k.run(['schedules','add','--kind','process_probe','--target-kind','probe','--target-id','cas','--cron','0 9 * * 5','--tz','Asia/Seoul']);
+    expect(added.code).toBe(0); const id=JSON.parse(added.stdout).data.id as string;
+    const beforeSchedule=await k.store.readSchedule({id});
+    if (!beforeSchedule.ok || !beforeSchedule.schedule?.nextRunAt) throw Error('missing schedule');
+    const next=beforeSchedule.schedule.nextRunAt;
+    expect(await tickSchedules({cron:cronCalculator,store:k.store,clock:{now:()=>new Date(next.getTime()+1000)},idGen:uuidV7IdGen(),readTimeZone:async()=>({ok:true,value:'Asia/Seoul'})})).toMatchObject({ok:true,fired:1});
+    const schedule=await k.store.readSchedule({id}); const occurrences=await k.store.listOccurrences({scheduleId:id});
+    expect(occurrences).toMatchObject({ok:true,occurrences:[{}]});
+    let calls=0, stdout='', stderr='';
+    const code=await dispatch(commands,['schedules','update',id,'--cron','0 10 * * 5','--json'],{
+      env:k.env,clock:{now:()=>new Date()},runner:pgRunner,stdout:text=>{stdout+=text;},stderr:text=>{stderr+=text;},
+      createStore:options=>{const store=postgresStore(options); store.updateSchedule=async input=>{calls++; expect(input.id).toBe(id); expect(input.expected).toEqual(schedule.ok ? schedule.schedule : null); return {ok:true,updated:false};}; return store;},
+    });
+    expect(code,stdout+stderr).toBe(1); expect(calls).toBe(1);
+    expect(JSON.parse(stdout)).toMatchObject({ok:false,error:{code:'SCHEDULE_CONFLICT',message:expect.stringContaining('다시 시도')}});
+    expect(await k.store.readSchedule({id})).toEqual(schedule); expect(await k.store.listOccurrences({scheduleId:id})).toEqual(occurrences);
+  } finally {await k.close();}
 });

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
-import type { TestDatabase } from '@second-brain/test-db';
+import { createIsolatedTestDatabase, type TestDatabase } from '@second-brain/test-db';
 import type { CommandRunner, CommandRequest } from '../../../apps/cli/src/runtime/command-runner.js';
 import { database, clock } from './fixture.js';
 // These imports deliberately exercise the built CLI, as its installed entry point does.
@@ -17,8 +17,12 @@ const homes: string[] = []; const databases: TestDatabase[] = [];
 afterEach(async () => { await Promise.all(databases.splice(0).map(db => db.drop())); await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true }))); });
 const flags = { yes: true, help: false, connect: [] };
 async function extensionWorld() {
-  const kit = await world(); expect((await kit.setup()).ok).toBe(true);
+  const kit = await world('running', true, true); expect((await kit.setup()).ok).toBe(true);
   const db = kit.db!, { postgresStore, runMigrations } = await import('../src/index.js');
+  // Production's database is owned by brain_owner; the test helper creates it as postgres.
+  const dbName = new URL(db.url).pathname.slice(1);
+  if (!/^brain_test_[a-f0-9]+$/.test(dbName)) throw new Error('invalid fixture database name');
+  await db.query(`alter database "${dbName}" owner to brain_owner`);
   const dir = join(kit.home, 'extensions/testext');
   await mkdir(join(kit.home, 'extensions'), { recursive: true });
   await cp(fileURLToPath(new URL('../../../apps/cli/test/fixtures/extensions/testext/', import.meta.url)), dir, { recursive: true });
@@ -27,7 +31,8 @@ async function extensionWorld() {
   await writeFile(manifestPath, JSON.stringify(manifest));
   const store = postgresStore({ databaseUrl: db.appUrl });
   expect(await store.recordExtensionInstall({ name: 'testext', version: '0.1.0', now: clock.now(), workKinds: ['testext.job'] })).toEqual({ ok: true });
-  expect((await runMigrations({ databaseUrl: db.url, clock, owners: [{ owner: 'testext', directory: join(dir, 'migrations') }] })).ok).toBe(true);
+  const migration = await runMigrations({ databaseUrl: db.url, clock, owners: [{ owner: 'testext', directory: join(dir, 'migrations') }] });
+  expect(migration.ok, JSON.stringify(migration)).toBe(true);
   await writeFile(join(dir, 'migrations/0002_marker.sql'), 'create table testext.marker (value text);\n');
   const options = { home: kit.home, urlEnv: 'BRAIN_DATABASE_URL', env: kit.env, clock, runner: kit.runner, secrets: { adminUrl: db.url, appPassword: 'brain-test-app' }, databaseName: new URL(db.url).pathname.slice(1) };
   return { ...kit, db, dir, store, install: (confirmOffline?: (request: import('../../../apps/cli/src/install/postgres.js').OfflineConfirmationRequest) => Promise<string>) => installPostgres({ ...options, ...(confirmOffline ? { confirmOffline } : {}) }) };
@@ -42,7 +47,7 @@ it('서로 다른 core는 실제 데몬과 명령 진입을 막고 운영자 off
     await kit.db.query("insert into brain.work_hold_groups(name,held_at) values ('extension:testext',now())");
     const { randomUUID } = await import('node:crypto'); const channel = randomUUID(), conversation = randomUUID(), file = randomUUID(), session = randomUUID(), message = randomUUID();
     const self = (await kit.db.rows('select id from brain.users where is_self=1'))[0]!.id;
-    await kit.db.query(`insert into brain.channels values ('${channel}','telegram','synthetic'); insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null); insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${file}','sha256:${'a'.repeat(64)}',1,now()); insert into brain.sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source) values ('${session}','synthetic','session','${self}','test',now(),'import'); insert into brain.messages(id,session_id,harness_message_id,role,body,occurred_at) values ('${message}','${session}','message','user','synthetic memory',now())`);
+    await kit.db.query(`insert into brain.channels values ('${channel}','telegram','synthetic'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,'${self}'); insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${file}','sha256:${'a'.repeat(64)}',1,now()); insert into brain.sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source) values ('${session}','synthetic','session','${self}','test',now(),'import'); insert into brain.messages(id,session_id,harness_message_id,role,body,occurred_at) values ('${message}','${session}','message','user','synthetic memory',now())`);
     const memory = { messages: await kit.db.rows('select * from brain.messages'), files: await kit.db.rows('select * from brain.files'), channels: await kit.db.rows('select * from brain.channel_conversations'), holds: await kit.db.rows('select * from brain.work_hold_groups') };
     const before = await kit.db.rows("select * from brain.extensions where name='testext'");
     const result = await kit.install(async request => {
@@ -128,8 +133,8 @@ it('installPostgres는 미정산 일감을 거부하고 자기 gate와 공용 �
     await kit.db.query(`insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values ('${id}','testext.job','probe','a',now(),now(),'supervised',now(),now()+interval '10 minutes','test')`);
     await kit.db.query(`insert into brain.work_attempts(token,work_item_id,started_at,incarnation) values ('${token}','${id}',now(),'test'); update brain.work_items set current_attempt_token='${token}' where id='${id}'`);
     await kit.db.query(`insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class) values ('${pending}','testext.job','probe','b','2026-01-01','2026-01-01','supervised')`);
-    await kit.db.query(`insert into brain.work_hold_groups(name,held_at) values ('extension:testext',now()); insert into brain.channels values ('${channel}','telegram','synthetic'); insert into brain.channel_conversations values ('${conversation}','${channel}','chat',null); insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${file}','sha256:${'a'.repeat(64)}',1,now())`);
     const self = (await kit.db.rows('select id from brain.users where is_self=1'))[0]!.id;
+    await kit.db.query(`insert into brain.work_hold_groups(name,held_at) values ('extension:testext',now()); insert into brain.channels values ('${channel}','telegram','synthetic'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,'${self}'); insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${file}','sha256:${'a'.repeat(64)}',1,now())`);
     await kit.db.query(`insert into brain.sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source) values ('${session}','synthetic','session','${self}','test',now(),'import'); insert into brain.messages(id,session_id,harness_message_id,role,body,occurred_at) values ('${message}','${session}','message','user','synthetic memory',now())`);
     const before = { files: await kit.db.rows('select * from brain.files'), channels: await kit.db.rows('select * from brain.channel_conversations'), messages: await kit.db.rows('select * from brain.messages'), holds: await kit.db.rows('select * from brain.work_hold_groups') };
     const installedPath = join(kit.home, 'installed.json'); const installed = JSON.parse(await readFile(installedPath, 'utf8'));
@@ -143,7 +148,7 @@ it('installPostgres는 미정산 일감을 거부하고 자기 gate와 공용 �
     expect(await kit.db.rows("select to_regclass('testext.marker') as marker")).toEqual([{ marker: null }]);
     const claim = await kit.store.claimSupervisedWork({ now: clock.now(), claimedBy: 'other', kinds: ['testext.job'], attemptToken: randomUUID() });
     expect(claim).toMatchObject({ ok: true, item: null });
-    await kit.db.query(`update brain.work_attempts set finished_at=now(),outcome='died' where token='${token}'; update brain.work_items set current_attempt_token=null,claimed_by=null,completed_at=now(),outcome='died' where id='${id}'`);
+    await kit.db.query(`update brain.work_attempts set finished_at=now(),outcome='died' where token='${token}'; update brain.work_items set current_attempt_token=null,claimed_at=null,claim_expires_at=null,claimed_by=null,completed_at=now(),outcome='failed' where id='${id}'`);
     expect(await kit.install(async request => request.challenge)).toMatchObject({ ok: true });
     expect(await kit.db.rows("select to_regclass('testext.marker') as marker")).toEqual([{ marker: 'testext.marker' }]);
     expect(await kit.db.rows('select * from brain.extension_quiesce')).toEqual([]);
@@ -231,14 +236,14 @@ it.each(['live', 'unknown'] as const)('installPostgres는 %s daemon 잠금을 �
     expect(await kit.db.rows("select to_regclass('testext.marker') as marker")).toEqual([{ marker: null }]);
   } finally { if (lock?.ok) await lock.release(); await kit.store.close(); }
 });
-async function world(mode = 'running', withDatabase = true) {
+async function world(mode = 'running', withDatabase = true, isolated = false) {
   const home = await mkdtemp(join(tmpdir(), 'brain-orbstack-')); homes.push(home);
   const env: NodeJS.ProcessEnv = { ...withoutHarnessFolders(process.env), SECOND_BRAIN_HOME: home, CLAUDE_CONFIG_DIR: join(home, 'claude'), SECOND_BRAIN_LAUNCH_AGENTS: join(home, 'agents'), SECOND_BRAIN_LAUNCHCTL: fileURLToPath(new URL('../../../apps/cli/test/fixtures/fake-launchctl.sh', import.meta.url)), FAKE_LAUNCHCTL_DIR: join(home, 'launchctl') };
   delete env.SECOND_BRAIN_INSTALL_LOCK_OWNER;
   delete env.DOCKER_HOST;
   await mkdir(join(home, 'claude'), { recursive: true });
   await writeFile(join(home, 'config.toml'), 'schema_version=1\n[store]\nurl_env="BRAIN_DATABASE_URL"\n');
-  const db = withDatabase ? await database(false) : undefined; if (db) databases.push(db);
+  const db = withDatabase ? await database(false, isolated ? createIsolatedTestDatabase : undefined) : undefined; if (db) databases.push(db);
   if (db) env.BRAIN_DATABASE_URL = db.appUrl;
   const calls: CommandRequest[] = [];
   let container: 'absent' | 'running' | 'stopped' = 'absent';

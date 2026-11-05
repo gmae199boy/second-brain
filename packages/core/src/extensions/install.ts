@@ -34,6 +34,7 @@ export interface ExtensionPackages {
     read(name: string): Promise<{ name: string; owner: string; digest: string; phase: 'preparing' | 'prepared' | 'discarding' | 'switching' | 'active' | 'committing' | 'rolling_back' | 'rolled_back'; hadPrevious: boolean | null } | null>;
     prepare(input: { name: string; owner: string; digest: string; directory: string }): Promise<unknown>;
     stagedDirectory(name: string, owner: string): Promise<string>;
+    refreshPreparedMigrations(input: { name: string; owner: string; source: string; migrations: string; digest: string; verify(stage: string): Promise<boolean> }): Promise<void>;
     activate(name: string, owner: string): Promise<string>;
     commit(name: string, owner: string): Promise<void>;
     rollback(name: string, owner: string): Promise<void>;
@@ -41,7 +42,7 @@ export interface ExtensionPackages {
   place(name: string, dir: string): Promise<string>;
   finalizePlacement?(name: string): Promise<void>;
   rollback?(name: string, preserveInitial?: boolean): Promise<void>;
-  inspect?(name: string, dir: string, migrations: string, files?: readonly string[]): Promise<{ digest: string; installedDigest: string | null; sameBase: boolean; installedDir: string }>;
+  inspect?(name: string, dir: string, migrations: string, files?: readonly string[], stageOwner?: string): Promise<{ digest: string; installedDigest: string | null; sameBase: boolean; installedDir: string }>;
   refreshMigrations?(name: string, dir: string, migrations: string): Promise<void>;
   sameBase?(first: string, second: string, migrations: string): Promise<boolean>;
 }
@@ -61,7 +62,8 @@ export interface ExtensionRuntime {
   withInstallLock?<T>(name: string, run: () => Promise<T>, signal?: AbortSignal): Promise<T>;
   provision?(name: string): Promise<{ ok: true } | { ok: false; code: 'DB_UNAVAILABLE'; message: string }>;
   packages: ExtensionPackages; migrator: ExtensionMigrator; launcher: ProcessLauncher; inspector: ProcessInspector; timer: Timer;
-  preparePython?(directory: string, signal?: AbortSignal): Promise<{ ok: true } | { ok: false; code: 'EXTENSION_INSTALL_CANCELLED' | 'EXTENSION_PYTHON_PIN_INVALID' | 'EXTENSION_UV_NOT_FOUND' | 'EXTENSION_PYTHON_NOT_FOUND' | 'EXTENSION_PYTHON_SYNC_FAILED' | 'EXTENSION_PYTHON_VERSION_MISMATCH'; message: string }>;
+  preparePython?(directory: string, signal?: AbortSignal, resetOwnedStage?: boolean): Promise<{ ok: true } | { ok: false; code: 'EXTENSION_INSTALL_CANCELLED' | 'EXTENSION_PYTHON_PIN_INVALID' | 'EXTENSION_UV_NOT_FOUND' | 'EXTENSION_PYTHON_NOT_FOUND' | 'EXTENSION_PYTHON_SYNC_FAILED' | 'EXTENSION_PYTHON_VERSION_MISMATCH'; message: string }>;
+  validatePreparedPython?(directory: string, signal?: AbortSignal): Promise<{ ok: true } | { ok: false; code: 'EXTENSION_INSTALL_CANCELLED' | 'EXTENSION_PYTHON_PIN_INVALID' | 'EXTENSION_UV_NOT_FOUND' | 'EXTENSION_PYTHON_NOT_FOUND' | 'EXTENSION_PYTHON_SYNC_FAILED' | 'EXTENSION_PYTHON_VERSION_MISMATCH'; message: string }>;
   databaseUrl(name: string): string | Promise<string>;
   readSecrets?(): Promise<Readonly<Record<string, string>>>;
   machineValues?(name: string): Readonly<Record<string, string>>;
@@ -228,27 +230,47 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
         // The corrected digest was saved before the old stage was discarded.
         // Do not adopt a different source after the comparison stage is gone.
         if (prepared || progress.stages.migration?.status !== 'failed' || progress.packageDigest !== inspected.digest) return fail('중단된 파일 복구의 패키지 신원이 다릅니다');
+        if (progress.stages.environment) { delete progress.stages.environment; const saved = await save(); if (!saved.ok) return saved; }
         await transition.rollback(name, owner); journal = null;
       }
+      if (journal?.phase === 'prepared' && progress.packageDigest !== journal.digest && progress.packageDigest !== inspected.digest) return fail('진행 중인 마이그레이션 수정 목표가 다릅니다');
       if (journal && journal.digest !== inspected.digest) {
         if (prepared || progress.stages.migration?.status !== 'failed' || journal.phase !== 'prepared' || !runtime.packages.sameBase) return fail('중단된 설치와 패키지 내용이 다릅니다');
         const oldStage = await transition.stagedDirectory(name, owner);
+        if (progress.packageDigest !== journal.digest && progress.packageDigest !== inspected.digest) return fail('진행 중인 마이그레이션 수정 목표가 다릅니다');
         if (!await runtime.packages.sameBase(source.dir, oldStage, manifest.migrations)) return fail('수정된 마이그레이션 외 패키지 내용이 다릅니다');
-        // Persist the new identity first; a crash before rollback is reconciled
-        // by this same branch on retry, while the quiesce gate remains held.
-        progress.packageDigest = inspected.digest; const saved = await save(); if (!saved.ok) return saved;
-        await transition.rollback(name, owner); journal = null;
+        const stageCheck = await runtime.packages.inspect!(name, oldStage, manifest.migrations, undefined, owner);
+        if (progress.packageDigest === journal.digest) {
+          if (stageCheck.digest !== journal.digest) return fail('기존 준비 패키지의 digest가 다릅니다');
+          progress.packageDigest = inspected.digest; const saved = await save(); if (!saved.ok) return saved;
+        }
+        await transition.refreshPreparedMigrations({ name, owner, source: source.dir, migrations: manifest.migrations, digest: inspected.digest,
+          verify: async stage => (await runtime.packages.inspect!(name, stage, manifest.migrations, undefined, owner)).digest === inspected.digest });
+        journal = await transition.read(name);
       } else if (!journal && progress.packageDigest !== inspected.digest) return fail('기존 설치의 패키지 신원을 확인할 수 없습니다');
       if (journal?.phase === 'rolling_back' || journal?.phase === 'rolled_back') return fail('중단된 파일 복구를 먼저 완료해야 합니다');
       if (!progress.transition.registered) {
+        if ((!journal || journal.phase === 'preparing') && progress.stages.environment) { delete progress.stages.environment; const saved = await save(); if (!saved.ok) return saved; }
         if (!journal) { await transition.prepare({ name, owner, digest: inspected.digest, directory: source.dir }); journal = await transition.read(name); }
         if (journal?.phase === 'preparing') { await transition.prepare({ name, owner, digest: inspected.digest, directory: source.dir }); journal = await transition.read(name); }
         if (!journal) return fail('설치 전환 기록이 없습니다');
         if (journal.phase === 'prepared') {
           const stageDir = await transition.stagedDirectory(name, owner);
-          const stageCheck = await runtime.packages.inspect!(name, stageDir, manifest.migrations, prepared ? manifest.files : undefined);
+          const stageCheck = await runtime.packages.inspect!(name, stageDir, manifest.migrations, prepared ? manifest.files : undefined, owner);
           if (stageCheck.digest !== inspected.digest || (prepared && stageCheck.digest !== prepared.digest)) return fail('복사한 확장 패키지의 digest가 다릅니다');
-          if (signal?.aborted) return { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' };
+          const beforeEnvironment = await cancelled(); if (beforeEnvironment) return beforeEnvironment;
+          const needsPython = [manifest.connection_check, ...(manifest.work ?? []), ...(manifest.auth ? [manifest.auth] : []), ...(manifest.commands ?? [])].some(command => command.runtime === 'python');
+          if (!completed('environment') && needsPython) {
+            const envResult = runtime.preparePython ? await runtime.preparePython(stageDir, signal, true) : { ok: false as const, code: 'EXTENSION_UV_NOT_FOUND' as const, message: 'uv를 찾을 수 없습니다' };
+            if (!envResult.ok && envResult.code === 'EXTENSION_INSTALL_CANCELLED') { const stopped = await cancelled(); return stopped ?? envResult; }
+            const envSaved = await deps.store.recordExtensionPythonEnvironment({ name, status: envResult.ok ? 'succeeded' : 'failed', code: envResult.ok ? null : envResult.code, checkedAt: deps.clock.now() }); if (!envSaved.ok) return envSaved;
+            const saved = await mark('environment', envResult.ok ? 'succeeded' : 'failed', envResult.ok ? null : envResult.code); if (!saved.ok) return saved;
+            if (!envResult.ok) return envResult;
+          } else if (needsPython) {
+            const validated = runtime.validatePreparedPython ? await runtime.validatePreparedPython(stageDir, signal) : { ok: false as const, code: 'EXTENSION_PYTHON_VERSION_MISMATCH' as const, message: '준비된 Python 환경을 확인할 수 없습니다' };
+            if (!validated.ok) { const stopped = await cancelled(); if (stopped) return stopped; return validated; }
+          } else if (!completed('environment')) { const saved = await mark('environment', 'skipped', 'EXTENSION_ENV_NOT_REQUIRED'); if (!saved.ok) return saved; }
+          const afterPreparedEnvironment = await cancelled(); if (afterPreparedEnvironment) return afterPreparedEnvironment;
           if (runtime.provision && !completed('role')) {
             const provisioned = await runtime.provision(name);
             const saved = await mark('role', provisioned.ok ? 'succeeded' : 'failed', provisioned.ok ? null : provisioned.code); if (!saved.ok) return saved;

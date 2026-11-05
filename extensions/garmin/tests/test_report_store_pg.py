@@ -1,6 +1,7 @@
 """Synthetic report storage contracts; execution deferred to ticket 21.8."""
 import contextlib
 import json
+import os
 import sys
 import unittest
 from datetime import date
@@ -27,7 +28,7 @@ class Conn:
     def execute(self, sql, args=()):
         self.calls.append((sql, args))
         if 'insert into garmin.evaluation_revisions' in sql:
-            assert self.depth == 1
+            assert self.depth == 2
             revision = len(self.rows) + 1
             self.rows.append((args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], revision))
             return Result((revision,))
@@ -39,7 +40,7 @@ class Conn:
 
 @contextlib.contextmanager
 def transaction(conn):
-    assert conn.depth == 0
+    assert conn.depth in (0, 1)
     conn.depth += 1
     try: yield conn
     finally: conn.depth -= 1
@@ -52,7 +53,7 @@ class ReportStoreTest(unittest.TestCase):
         cfg = SimpleNamespace(report_model='synthetic')
         def analysis(text):
             return SimpleNamespace(summary='summary ' + text, judgments=[], evidence=[], next_checks=[], report_md=text)
-        with patch.object(store, 'transaction', transaction), patch.object(store, 'write_session', session), \
+        with patch.dict(os.environ, {'BRAIN_WORK_ID':str(USER)}), patch.object(store, 'transaction', transaction), patch.object(store, 'write_session', session), \
              patch.object(store, 'read_connection', return_value=conn):
             self.assertIsNone(report._today_evaluation(cfg, DAY, 'day'))
             report._save_evaluation(cfg, DAY, 'day', analysis('first'))
@@ -77,7 +78,7 @@ class ReportStoreTest(unittest.TestCase):
                                        judgments=[], evidence=[], next_checks=[])
             def assert_outside(self): assert conn.depth == 0
         cfg = SimpleNamespace(report_model='synthetic')
-        with patch.object(store, 'transaction', transaction), patch.object(store, 'write_session', session):
+        with patch.dict(os.environ, {'BRAIN_WORK_ID':str(USER)}), patch.object(store, 'transaction', transaction), patch.object(store, 'write_session', session):
             result, _, failure, _ = report._evaluate(cfg, Writer(), [], 'day', [])
             self.assertIsNone(failure)
             report._save_evaluation(cfg, DAY, 'day', result)

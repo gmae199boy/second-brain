@@ -42,8 +42,9 @@ def main():
                  'artifact_inventory', 'artifact_relations', 'input_inventory')
         with psycopg.connect(os.environ['BRAIN_DATABASE_URL'], options=options, row_factory=dict_row) as conn:
             with conn.transaction():
-                conn.execute('set transaction isolation level repeatable read read only')
                 check(conn.cursor(row_factory=tuple_row))
+            with conn.transaction():
+                conn.execute('set transaction isolation level repeatable read read only')
                 with conn.cursor() as cursor:
                     set_json_loads(lambda data: json.loads(data, parse_float=Decimal), cursor)
                     stored = {name: cursor.execute('select * from garmin.' + name).fetchall() for name in names}

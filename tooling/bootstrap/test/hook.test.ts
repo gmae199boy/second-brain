@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   readdirSync,
   rmSync,
@@ -73,7 +74,7 @@ beforeAll(() => {
   mkdirSync(home, { recursive: true });
   const allowed = join(root, 'allowed-tools');
   mkdirSync(allowed);
-  for (const name of ['git', 'docker', 'sh', 'dirname', 'grep', 'head', 'tr', 'sed', 'cat', 'uname', 'which', 'mkdir', 'touch', 'rm', 'sleep']) {
+  for (const name of ['git', 'docker', 'sh', 'dirname', 'grep', 'head', 'tr', 'sed', 'cat', 'uname', 'which', 'mkdir', 'touch', 'rm', 'sleep', 'mv', 'cp', 'chmod']) {
     const found = spawnSync('/usr/bin/which', [name], { encoding: 'utf8' });
     if (found.status !== 0) throw new Error(`시험 명령을 찾을 수 없습니다: ${name}`);
     symlinkSync(found.stdout.trim(), join(allowed, name));
@@ -118,8 +119,17 @@ beforeAll(() => {
 
 afterAll(() => {
   if (home !== undefined && existsSync(join(home, 'postgres', 'compose.yaml'))) {
-    const result = spawnSync('docker', ['compose', '--env-file', join(home, '.env'), '-f', join(home, 'postgres', 'compose.yaml'), 'down', '-v'], { encoding: 'utf8', timeout: 120_000 });
+    const compose = ['compose', '--env-file', join(home, '.env'), '-f', join(home, 'postgres', 'compose.yaml')];
+    const before = spawnSync('docker', [...compose, 'ps', '-aq'], { encoding: 'utf8', timeout: 120_000 });
+    if (before.status !== 0) throw new Error(`시험 PostgreSQL 식별에 실패했습니다: ${before.stderr}`);
+    const ids = before.stdout.trim().split('\n').filter(Boolean);
+    const result = spawnSync('docker', [...compose, 'down', '-v'], { encoding: 'utf8', timeout: 120_000 });
     if (result.status !== 0) throw new Error(`시험 PostgreSQL 정리에 실패했습니다: ${result.stderr}`);
+    for (const id of ids) {
+      const check = spawnSync('docker', ['inspect', id], { encoding: 'utf8', timeout: 120_000 });
+      if (check.status === 0 || !/no such object/i.test(check.stderr)) throw new Error(`시험 컨테이너 정리를 확인하지 못했습니다: ${id}`);
+    }
+    console.log(JSON.stringify({ fixtureCompose: 'removed', containers: ids }));
   }
   if (root !== undefined) rmSync(root, { recursive: true, force: true });
 });
@@ -360,7 +370,9 @@ describe('the plugin SessionStart hook', () => {
 fs.promises.writeFile = async function(file,...args) { const p=String(file); if (/installed\\.json\\.\\d+\\.tmp$/.test(p)) { const root=process.env.SECOND_BRAIN_HOME; if (!fs.existsSync(${JSON.stringify(failed)})) { fs.writeFileSync(${JSON.stringify(failed)},'once'); throw new Error('synthetic installed record failure'); } fs.writeFileSync(${JSON.stringify(observed)},JSON.stringify({build:fs.readFileSync(path.join(root,'.app-previous/apps/cli/dist/build.json'),'base64'),bin:fs.readFileSync(path.join(root,'.app-previous/apps/cli/dist/bin.js'),'base64')})); } return old.call(this,file,...args); }; require('node:module').syncBuiltinESMExports();
 `);
     const env = { NODE_OPTIONS: `--require=${preload}` };
-    const first = hook('SessionStart', '', env); expect(first.status).toBe(1);
+    const first = hook('SessionStart', '', env); expect(first.status, log()).toBe(0);
+    expect(runRecord().last_bootstrap).toMatchObject({ result: 'failed', step: '설치기' });
+    expect(existsSync(failed), log()).toBe(true);
     const marker = join(home, '.app-promotion.json'), backup = join(home, '.app-previous');
     expect(installed().commit).toBe(previous);
     expect(JSON.parse(readFileSync(marker, 'utf8'))).toMatchObject({ target: snapshotCommit, hadPrevious: true, owner: expect.any(String) });
@@ -407,7 +419,7 @@ fs.promises.writeFile = async function(file,...args) { const p=String(file); if 
 
   it('실제 package 설치와 같은 core bootstrap이 겹쳐도 둘 다 성공하고 일관된다', async () => {
     const name = `race${createHash('sha256').update(root).digest('hex').slice(0, 10)}`;
-    const pkg = join(root, 'race-package'); cpSync(join(repoRoot, 'apps/cli/test/fixtures/extensions/testext'), pkg, { recursive: true });
+    const pkg = join(realpathSync(root), 'race-package'); cpSync(join(repoRoot, 'apps/cli/test/fixtures/extensions/testext'), pkg, { recursive: true });
     const manifestPath = join(pkg, 'manifest.json'); const manifest = JSON.parse(readFileSync(manifestPath, 'utf8').replaceAll('testext', name));
     const checkPath = join(pkg, 'bin/check.mjs'); writeFileSync(checkPath, readFileSync(checkPath, 'utf8').replaceAll('testext', name));
     Object.assign(manifest, { files:['bin/check.mjs','bin/echo-stats.mjs','manifest.json','migrations/0001_testext.sql'], core_compat:{min:'0.0.0',max_exclusive:'1.0.0'}, plugin_version:'1.0.0' });
@@ -424,7 +436,11 @@ fs.promises.writeFile = async function(file,...args) { const p=String(file); if 
       git(['-C',join(home,'app'),'checkout','-q','main']);
       await db.query('begin'); await db.query('select pg_advisory_xact_lock($1)',[4919270911]);
       installer=spawn(join(home,'bin/brain'),['ext','install','--package',pkg,'--json'],{env,stdio:['ignore','pipe','pipe'],detached:true}); installerDone=watch(installer);
-      await expect.poll(()=>{try{return JSON.parse(readFileSync(join(home,`extensions/.transition-${name}.json`),'utf8')).phase}catch{return ''}},{timeout:30000}).toBe('prepared');
+      let installerOutput = '';
+      installer.stdout?.on('data', chunk => { installerOutput += String(chunk); });
+      installer.stderr?.on('data', chunk => { installerOutput += String(chunk); });
+      try { await expect.poll(()=>{try{return JSON.parse(readFileSync(join(home,`extensions/.transition-${name}.json`),'utf8')).phase}catch{return ''}},{timeout:30000}).toBe('prepared'); }
+      catch (error) { console.error('package installer before prepared:', installerOutput); throw error; }
       const owner=readFileSync(join(home,'install.lock/owner'),'utf8');
       bootstrap=spawn(process.execPath,[join(plugin,'bootstrap.mjs'),'--yes'],{env,stdio:['ignore','pipe','pipe'],detached:true}); bootstrapDone=watch(bootstrap);
       await new Promise(resolve=>setTimeout(resolve,500)); expect(bootstrap.exitCode).toBeNull(); expect(readFileSync(join(home,'install.lock/owner'),'utf8')).toBe(owner);
@@ -474,7 +490,7 @@ fs.promises.writeFile = async function(file,...args) { const p=String(file); if 
       git(['-C', work, 'push', '-q', bare, 'main']);
       snapshotCommit = git(['-C', work, 'rev-parse', 'HEAD']).trim();
       writeFileSync(join(plugin, 'app-ref'), `${snapshotCommit}\n`);
-      expect(hook('SessionStart').status).toBe(1);
+      expect(hook('SessionStart').status).toBe(0);
       expect(runRecord().last_bootstrap?.result).toBe('failed');
       expect(installed().commit).toBe(previous);
       expect(treeHash(directory)).toBe(beforeTree);
@@ -493,10 +509,10 @@ fs.promises.writeFile = async function(file,...args) { const p=String(file); if 
       const installedManifestPath=join(directory,'manifest.json'), originalManifest=readFileSync(installedManifestPath,'utf8');
       const incompatible=JSON.parse(originalManifest); incompatible.core_compat={min:'1.0.0',max_exclusive:'2.0.0'};
       writeFileSync(installedManifestPath,JSON.stringify(incompatible));
-      try { expect(hook('SessionStart').status).toBe(1); assertApp(); expect(installed().commit).toBe(previous); }
+      try { expect(hook('SessionStart').status).toBe(0); assertApp(); expect(installed().commit).toBe(previous); }
       finally { writeFileSync(installedManifestPath,originalManifest); }
       const core35=(await db.query("delete from brain.schema_migrations where owner='core' and version=35 returning *")).rows[0];
-      try { expect(hook('SessionStart').status).toBe(1); assertApp(); expect(installed().commit).toBe(previous); }
+      try { expect(hook('SessionStart').status).toBe(0); assertApp(); expect(installed().commit).toBe(previous); }
       finally { await db.query('insert into brain.schema_migrations(owner,version,name,checksum,applied_at) values($1,$2,$3,$4,$5)',[core35.owner,core35.version,core35.name,core35.checksum,core35.applied_at]); }
       git(['-C',app,'checkout','-q','-B','main',headBefore]);
       const npx = spawnSync(process.execPath,[join(plugin,'bootstrap.mjs'),'--yes'],{env:{...withoutHarnessFolders(process.env),SECOND_BRAIN_HOME:home,SECOND_BRAIN_REPO:`file://${bare}`,SECOND_BRAIN_NODE_DIRS:join(root,'allowed-tools'),PATH:join(root,'allowed-tools')},encoding:'utf8',timeout:600000});
@@ -509,13 +525,14 @@ fs.promises.writeFile = async function(file,...args) { const p=String(file); if 
       assertApp(); expect(installed().commit).toBe(previous);
       // Exercise the real setup command under a pseudo-terminal. The parent
       // responds only after the fresh challenge has appeared on the terminal.
-      const ptyDriver = String.raw`import os, pty, select, subprocess, sys, time, re, json
+      const ptyDriver = String.raw`import os, pty, select, subprocess, sys, time, re, json, fcntl, termios, struct
 master, slave = pty.openpty()
+fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 500, 0, 0))
 mode, node, cli, manifest = sys.argv[1:]
 args = [node, cli, 'setup', 'run', '--yes'] + (['--json'] if mode == 'json' else [])
 p = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=slave, env=os.environ, start_new_session=True)
 os.close(slave)
-out = b''; answered = False; deadline = time.monotonic() + 120
+out = b''; answered = False; prompts = set(); deadline = time.monotonic() + 120
 while p.poll() is None and time.monotonic() < deadline:
  r, _, _ = select.select([master], [], [], .2)
  if not r: continue
@@ -523,13 +540,18 @@ while p.poll() is None and time.monotonic() < deadline:
  except OSError: break
  if not chunk: break
  out += chunk
- if not answered and b'> ' in out:
-  match = re.search('(?m)^(확인 [^\r\n]+)\r?$'.encode(), out)
+ clean = re.sub(rb'\x1b\[[0-9;?]*[A-Za-z]', b'', out)
+ for prompt in ['미러를 어디에 둘까요?', '임베딩을 켤까요?', '자동 업데이트를 켤까요?', '시간대를 무엇으로 할까요?', '이 brain을 어떤 하네스에 연결할까요?']:
+  key = prompt.encode()
+  if key in clean and key not in prompts:
+   prompts.add(key); os.write(master, b'\r')
+ if not answered and b'> ' in clean:
+  match = re.search('확인 [^\r\n]+ [0-9a-f]{40} [0-9a-f]{40} [0-9a-f-]{36}'.encode(), clean)
   if match:
    if mode == 'manifest':
     with open(manifest, 'r+') as f:
      data = json.load(f); data['core_compat'] = {'min':'1.0.0','max_exclusive':'2.0.0'}; f.seek(0); json.dump(data, f); f.truncate()
-   os.write(master, (match.group(1) if mode in ('correct','manifest') else b'wrong') + b'\n' if mode != 'eof' else b'\x04')
+   os.write(master, (match.group(0) if mode in ('correct','manifest') else b'wrong') + b'\n' if mode != 'eof' else b'\x04')
    answered = True
 if p.poll() is None: p.kill()
 p.wait()
@@ -537,7 +559,9 @@ while True:
  try:
   r, _, _ = select.select([master], [], [], 0)
   if not r: break
-  out += os.read(master, 65536)
+  chunk = os.read(master, 65536)
+  if not chunk: break
+  out += chunk
  except OSError: break
 os.close(master)
 print(json.dumps({'code':p.returncode,'output':out.decode('utf8','replace'),'answered':answered}))`;
@@ -550,18 +574,20 @@ print(json.dumps({'code':p.returncode,'output':out.decode('utf8','replace'),'ans
       };
       for (const mode of ['wrong', 'eof', 'manifest', 'json']) {
         const result = tty(mode); expect(result.code, result.output).not.toBe(0);
-        expect(result.answered).toBe(mode !== 'json');
+        expect(result.answered, result.output).toBe(mode !== 'json');
         if (mode === 'json') expect(result.output).not.toContain('공유 상태 쓰기가 끝났음');
         if (mode === 'manifest') writeFileSync(installedManifestPath, originalManifest);
         expect((await db.query("select * from brain.schema_migrations where owner='testext' order by version")).rows).toEqual(ledger);
         expect((await db.query('select * from brain.extension_quiesce')).rows).toEqual([]);
       }
       const recordPath = join(home, 'installed.json'); const originalRecord = readFileSync(recordPath, 'utf8');
+      const shimPath = join(home, 'bin/brain'); const originalShim = readFileSync(shimPath);
       const accepted = tty('correct'); expect(accepted.answered).toBe(true); expect(accepted.code, accepted.output).toBe(0);
       expect((await db.query("select version from brain.schema_migrations where owner='testext' order by version")).rows).toEqual([{version:1},{version:2}]);
       // Restore the synthetic setup state for the remaining preservation checks.
-      await db.query('drop table testext.new_table; delete from brain.schema_migrations where owner=$1 and version=2', ['testext']);
-      writeFileSync(recordPath, originalRecord);
+      await db.query('drop table testext.new_table');
+      await db.query('delete from brain.schema_migrations where owner=$1 and version=2', ['testext']);
+      writeFileSync(recordPath, originalRecord); writeFileSync(shimPath, originalShim);
       expect(treeHash(directory)).toBe(beforeTree);
       expect((await db.query("select * from brain.schema_migrations where owner='testext' order by version")).rows).toEqual(ledger);
       expect((await db.query("select * from brain.extensions where name='testext'")).rows).toEqual(registry);
@@ -580,6 +606,7 @@ print(json.dumps({'code':p.returncode,'output':out.decode('utf8','replace'),'ans
   }, SLOW);
 
   it.skipIf(process.env.BRAIN_PYTHON_UPDATE_TEST !== '1')('offline 확인 없는 bootstrap 갱신을 거부하고 Python 확장을 보존한다', async () => {
+    process.stdout.write('HOOK_PYTHON_PRESERVATION_START\n');
     const spyDir = join(root, 'spy'); mkdirSync(spyDir);
     const spyLog = join(root, 'uv-calls');
     const uv = execFileSync('which', ['uv'], { encoding: 'utf8' }).trim();
@@ -606,7 +633,8 @@ print(json.dumps({'code':p.returncode,'output':out.decode('utf8','replace'),'ans
       snapshotCommit = git(['-C', work, 'rev-parse', 'HEAD']).trim();
       writeFileSync(join(plugin, 'app-ref'), `${snapshotCommit}\n`);
       const previous=installed().commit;
-      expect(hook('SessionStart', '', { PATH: env.PATH, NODE_OPTIONS: '', BRAIN_PROCESS_SPY: '', BRAIN_RESTRICTED_PATH: '' }).status, log()).toBe(1);
+      expect(hook('SessionStart', '', { PATH: env.PATH, NODE_OPTIONS: '', BRAIN_PROCESS_SPY: '', BRAIN_RESTRICTED_PATH: '' }).status, log()).toBe(0);
+      expect(runRecord().last_bootstrap).toMatchObject({ result: 'failed', step: '설치기' });
       expect(installed().commit).toBe(previous);
       expect(readFileSync(spyLog, 'utf8')).toBe('');
       expect(treeHash(directory)).toBe(environment);
@@ -614,6 +642,7 @@ print(json.dumps({'code':p.returncode,'output':out.decode('utf8','replace'),'ans
       expect(JSON.parse(brain('ext', 'status', 'pyfixture', '--json').stdout).data).toEqual(status);
       expect((await db.query('select id from pyfixture.data')).rows).toEqual([{ id: 7 }]);
       expect((await db.query("select * from brain.schema_migrations where owner='pyfixture'")).rows).toEqual(ledger);
+      process.stdout.write('HOOK_PYTHON_PRESERVATION_PASS\n');
     } finally { await db.end(); }
   }, SLOW);
 

@@ -16,7 +16,7 @@ async function resumeSource(fixture: Awaited<ReturnType<typeof extHome>>) {
 }
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 
-it('수정 migration의 prepared stage 삭제 직후 중단해도 같은 owner로 설치를 완료한다', async () => {
+it('수정 migration의 파일 교체 직후 중단해도 같은 owner와 stage로 설치를 완료한다', async () => {
   const { spawn } = await import('node:child_process');
   const fixture = await extHome(); cleanup.push(fixture.cleanup);
   const source = await resumeSource(fixture);
@@ -34,14 +34,16 @@ it('수정 migration의 prepared stage 삭제 직후 중단해도 같은 owner�
   expect(await fixture.db.rows("select * from brain.extensions where name='resumext'")).toEqual(registry);
   await writeFile(join(source, 'migrations/0002_more.sql'), 'select 1;\n');
   const stage = join(fixture.home, 'extensions', `.transition-resumext-${owner}`);
+  await mkdir(join(stage, 'new/.venv'), { recursive: true });
+  const marker = join(stage, 'new/.venv/marker'); await writeFile(marker, 'environment'); const markerInode = (await stat(marker)).ino;
   const hook = join(fixture.home, 'interrupt-discard.cjs');
-  await writeFile(hook, `const fs = require('node:fs'); const original = fs.promises.rm; fs.promises.rm = async function(path, options) { const result = await original(path, options); if (String(path) === ${JSON.stringify(stage)}) process.kill(process.pid, 'SIGKILL'); return result; }; require('node:module').syncBuiltinESMExports();\n`);
+  await writeFile(hook, `const fs = require('node:fs'); const original = fs.promises.rename; fs.promises.rename = async function(from, to) { const result = await original(from, to); if (String(to) === ${JSON.stringify(join(stage, 'new/migrations/0002_more.sql'))}) process.kill(process.pid, 'SIGKILL'); return result; }; require('node:module').syncBuiltinESMExports();\n`);
   const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/bin.js', import.meta.url)), 'ext', 'install', 'resumext', '--json'], { env: { ...fixture.env, NODE_OPTIONS: `--require=${hook}` }, stdio: 'ignore' });
   const signal = await new Promise<NodeJS.Signals | null>((resolve, reject) => { child.once('error', reject); child.once('close', (_code, value) => resolve(value)); });
   expect(signal).toBe('SIGKILL');
   const journal = JSON.parse(await readFile(join(fixture.home, 'extensions/.transition-resumext.json'), 'utf8'));
-  expect(journal).toMatchObject({ owner, phase: 'discarding', digest: before.packageDigest });
-  await expect(stat(stage)).rejects.toThrow();
+  expect(journal).toMatchObject({ owner, phase: 'prepared', digest: before.packageDigest });
+  expect((await stat(marker)).ino).toBe(markerInode); expect(await readFile(marker, 'utf8')).toBe('environment');
   const pending = (await fixture.db.rows("select progress from brain.extension_install_progress where name='resumext'"))[0]!.progress as ExtensionInstallProgress;
   expect(pending.transition?.owner).toBe(owner); expect(pending.packageDigest).not.toBe(before.packageDigest);
   expect((await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'"))[0]!.owner).toBe(owner);
@@ -51,13 +53,18 @@ it('수정 migration의 prepared stage 삭제 직후 중단해도 같은 owner�
   await writeFile(join(source, 'migrations/0002_more.sql'), 'select 2;\n');
   const wrong = await fixture.run(['ext', 'install', 'resumext', '--json']); expect(wrong.body.error.code).toBe('EXTENSION_INVALID');
   expect((await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'"))[0]!.owner).toBe(owner);
-  expect((JSON.parse(await readFile(join(fixture.home, 'extensions/.transition-resumext.json'), 'utf8'))).phase).toBe('discarding');
+  expect((JSON.parse(await readFile(join(fixture.home, 'extensions/.transition-resumext.json'), 'utf8'))).phase).toBe('prepared');
   expect(await fixture.db.rows("select * from brain.extensions where name='resumext'")).toEqual(registry);
   await writeFile(join(source, 'migrations/0002_more.sql'), 'select 1;\n');
+  const baseFile = join(source, 'bin/check.mjs'), base = await readFile(baseFile, 'utf8');
+  await writeFile(baseFile, `${base}\n// unexpected change\n`);
+  expect((await fixture.run(['ext', 'install', 'resumext', '--json'])).body.error.code).toBe('EXTENSION_INVALID');
+  expect((await stat(marker)).ino).toBe(markerInode); await writeFile(baseFile, base);
   const resumed = await fixture.run(['ext', 'install', 'resumext', '--json']); expect(resumed.code, resumed.stdout + resumed.stderr).toBe(0);
   expect(await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'")).toEqual([]);
   expect(await fixture.ledger('resumext')).toEqual([{ owner: 'resumext', version: 1 }, { owner: 'resumext', version: 2 }]);
   expect(await readFile(join(target, 'migrations/0002_more.sql'), 'utf8')).toBe('select 1;\n');
+  expect((await stat(join(target, '.venv/marker'))).ino).toBe(markerInode);
   for (const folder of ['reports', 'staging', 'tokenstore']) expect(await readFile(join(target, folder, 'preserved'), 'utf8')).toBe(folder);
   await expect(stat(join(fixture.home, 'extensions/.transition-resumext.json'))).rejects.toThrow();
 });
@@ -84,7 +91,12 @@ it('최초 DDL 실패 후 앞 단계와 적용된 SQL을 보존하고 수정된 
   expect(preserved.authWorkId).toBe(beforeProgress.authWorkId); expect(preserved.scheduleIds).toEqual(beforeProgress.scheduleIds);
   await writeFile(manifestPath, validManifest);
   expect(beforeProgress).toMatchObject({ result: 'failed', failedStage: 'migration', stages: { role: { status: 'succeeded' }, migration: { status: 'failed' } } });
+  const appliedFile = join(source, 'migrations/0001_testext.sql'), applied = await readFile(appliedFile, 'utf8');
+  await writeFile(appliedFile, `${applied}\n-- changed applied migration\n`);
   await writeFile(join(source, 'migrations/0002_more.sql'), 'select 1;\n');
+  expect((await fixture.run(['ext', 'install', 'resumext', '--json'])).body.error.code).toBe('MIGRATION_FAILED');
+  expect(await fixture.ledger('resumext')).toEqual([{ owner: 'resumext', version: 1 }]);
+  await writeFile(appliedFile, applied);
   const resumed = await fixture.run(['ext', 'install', 'resumext', '--json']);
   expect(resumed.code, resumed.stdout + resumed.stderr).toBe(0);
   expect(await readFile(join(target, 'manifest.json'), 'utf8')).toBe(validManifest);
@@ -197,7 +209,7 @@ it('재설치는 이행 키와 사용자 변경·삭제를 보존하고 빠진 �
     await expect.poll(async () => { try { return JSON.parse(await readFile(join(fixture.home, 'run/supervisor-ready.json'), 'utf8')).pid; } catch { return null; } }, { timeout: 10000 }).toBe(process.pid);
     // A row already transformed by 0033 has the derived installation key.
     await fixture.db.query(`insert into brain.schedules(id,kind,hold_group,target_kind,target_id,trigger_kind,cron_expr,time_zone,time_zone_source,extension,schedule_key,user_id,enabled,next_run_at,created_at)
-      select uuidv7(),'resumext.sync','extension:resumext','account','default','cron','0 9 * * *','Asia/Seoul','user','resumext','resumext.sync:account:default',id,true,now()+interval '1 day',now() from brain.users where is_self=1`);
+      select uuidv7(),'resumext.sync','extension:resumext','account','default','cron','0 9 * * *','Asia/Seoul','user','resumext','resumext.sync:account:default',id,true,date_trunc('milliseconds',now()+interval '1 day'),date_trunc('milliseconds',now()) from brain.users where is_self=1`);
     const first = await fixture.run(['ext','install','resumext','--json']);expect(first.code,first.stdout+first.stderr).toBe(0);
     expect(await fixture.db.rows("select missed_policy from brain.extension_work_kinds where kind='resumext.sync'")).toEqual([{missed_policy:'coalesce'}]);
     const initial=await fixture.db.rows("select id,schedule_key,cron_expr,enabled,removed_at from brain.schedules where extension='resumext' order by schedule_key");expect(initial).toHaveLength(3);

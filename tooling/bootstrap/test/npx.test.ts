@@ -6,6 +6,9 @@ import {
   mkdirSync,
   mkdtempSync,
   readlinkSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
   rmSync,
   symlinkSync,
 } from 'node:fs';
@@ -13,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { withoutHarnessFolders } from '../../../apps/cli/test/environment.js';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -45,6 +49,11 @@ beforeAll(() => {
   bare = join(root, 'second-brain.git');
   home = join(root, 'home');
   mkdirSync(home, { recursive: true });
+  writeFileSync(join(root, 'installer-spy.cjs'), `const fs = require('node:fs'); const path = require('node:path');
+if (process.argv[1] && process.argv[1].endsWith('/apps/cli/dist/install.js')) {
+  const stage = process.env.SECOND_BRAIN_STAGED_APP;
+  fs.appendFileSync(${JSON.stringify(join(root, 'installer-spy.log'))}, JSON.stringify({ stage, bin: fs.existsSync(path.join(stage, 'apps/cli/dist/bin.js')), build: JSON.parse(fs.readFileSync(path.join(stage, 'apps/cli/dist/build.json'), 'utf8')) }) + '\\n');
+}`);
 
   const work = join(root, 'work');
   snapshot(work);
@@ -87,8 +96,12 @@ describe('npx github:gmae199boy/second-brain', () => {
       // handover this test is about.
       expect(first.status).toBe(3);
       expect(first.stdout).toContain(`file://${bare}를 `);
-      // The clone built itself: the CLI that story 1.4 left is there.
-      expect(existsSync(join(home, 'app', 'apps', 'cli', 'dist', 'bin.js'))).toBe(true);
+      // The installer sees a built stage; declining consent removes it without promotion.
+      const seen = JSON.parse(readFileSync(join(root, 'installer-spy.log'), 'utf8').trim());
+      expect(seen.stage).toMatch(new RegExp(`^${home}/\\.app-stage-`));
+      expect(seen.bin).toBe(true); expect(seen.build.staged_promotion).toBe(1);
+      expect(existsSync(join(home, 'app'))).toBe(false);
+      expect(readdirSync(home).filter(name => name.startsWith('.app-stage-'))).toEqual([]);
       expect(first.stdout).toContain('second-brain 0.0.0');
       expect(first.stdout).toContain(`설정 폴더: ${home}`);
       expect(first.stdout).toContain('--yes');
@@ -97,13 +110,22 @@ describe('npx github:gmae199boy/second-brain', () => {
   );
 
   it(
-    'updates the clone instead of cloning again on a second run',
+    'preserves an existing clone when a staged update lacks consent',
     () => {
+      // A pre-existing clone must remain untouched if the installer declines consent.
+      const app = join(home, 'app'); git(['clone', '-q', `file://${bare}`, app]);
+      mkdirSync(join(app, 'node_modules'));
+      writeFileSync(join(app, 'node_modules', 'preserved-fixture'), 'original');
       const second = npx();
 
       expect(second.status).toBe(3);
-      expect(second.stdout).toContain(`${join(home, 'app')}을 업데이트합니다`);
-      expect(second.stdout).not.toContain('클론합니다');
+      expect(second.stdout).toContain(`file://${bare}를 `);
+      expect(second.stdout).toContain('설치기를 시작합니다');
+      const seen = readFileSync(join(root, 'installer-spy.log'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      expect(seen).toHaveLength(2); expect(seen[1].bin).toBe(true);
+      expect(seen[1].build.staged_promotion).toBe(1);
+      expect(readFileSync(join(app, 'node_modules', 'preserved-fixture'), 'utf8')).toBe('original');
+      expect(readdirSync(home).filter(name => name.startsWith('.app-stage-'))).toEqual([]);
       // Same ending as the first run.
       expect(second.stdout).toContain('second-brain 0.0.0');
       expect(second.stdout).toContain(`설정 폴더: ${home}`);
@@ -158,7 +180,8 @@ function npx(): { status: number | null; stdout: string; stderr: string } {
     cwd: root,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...withoutHarnessFolders(process.env),
+      NODE_OPTIONS: `--require=${join(root, 'installer-spy.cjs')}`,
       SECOND_BRAIN_LAUNCHCTL: join(repoRoot, 'apps/cli/test/fixtures/fake-launchctl.sh'),
       SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'),
       FAKE_LAUNCHCTL_DIR: join(root, 'launchctl'),

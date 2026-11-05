@@ -71,7 +71,7 @@ os.open=_os_open
     const seam='\ntry:\n    main()'; expect(source.split(seam)).toHaveLength(2);
     source=source.replace(seam,instrumentation+seam); expect(source).toContain(instrumentation); await writeFile(script,source);
     const result=await fixture.run(['ext','run','garmin','import-verify','--json']);
-    expect(result.code,result.stdout+result.stderr).not.toBe(0); expect(result.body.data.report.checks.source_unchanged).toBe(false);
+    expect(result.code,result.stdout+result.stderr).not.toBe(0); expect(result.body.data,result.stdout+result.stderr+JSON.stringify(await fixture.db.rows('select error_code,stderr from brain.work_attempts order by started_at desc limit 1'))).toBeDefined(); expect(result.body.data.report.checks.source_unchanged).toBe(false);
     expect(await readFile(marker+'-attempt','utf8')).toBe('attempted');
     await expect(readFile(marker,'utf8')).rejects.toMatchObject({code:'ENOENT'});
     const publicReport=await readFile(join(fixture.home,'extensions/garmin/reports',result.body.data.work_id,'public.json'),'utf8');
@@ -104,7 +104,7 @@ it('원본·보존 행·mapping·raw·checkpoint·파일 결과 변조를 읽기
     await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
     const unfinished=await fixture.run(['ext','run','garmin','import-verify','--json']);
-    expect(unfinished.code).not.toBe(0); expect(unfinished.body.data.report.checks.files).toBe(false);
+    expect(unfinished.code).not.toBe(0); expect(unfinished.body.data,unfinished.stdout+unfinished.stderr+JSON.stringify(await fixture.db.rows('select error_code,stderr from brain.work_attempts order by started_at desc limit 1'))).toBeDefined(); expect(unfinished.body.data.report.checks.files).toBe(false);
     const imported=await fixture.run(['ext','run','garmin','import','--json']); expect(imported.code,imported.stdout+imported.stderr).toBe(0);
     await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${imported.body.data.work_id}'`))[0]?.outcome,{timeout:30000}).toBe('succeeded');
     await expect.poll(async()=> (await fixture.db.rows('select count(*)::int as n from brain.file_requests q left join brain.file_request_results r on r.request_id=q.id where r.file_id is null'))[0]?.n,{timeout:20000}).toBe(0);

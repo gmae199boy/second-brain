@@ -164,7 +164,7 @@ it('installed manifest and supervisor collect rich fixture equal pinned SQLite t
     expect(runs.map(row=>[row.local_date,Number(row.started_at),Number(row.finished_at),row.status,row.detail])).toEqual(expected.runs);
     for(const [table,definition] of Object.entries(expected.tables)) {
       expect(/^[a-z_]+$/.test(table)).toBe(true);
-      for(const column of definition.columns) expect(/^[a-z_]+$/.test(column)).toBe(true);
+      for(const column of definition.columns) expect(/^[a-z_][a-z0-9_]*$/.test(column),column).toBe(true);
       const fields=definition.columns.map(column=>`"${column}"`).join(',');
       const rows=await fixture.db.rows(`select row_to_json(t) as value from (select ${fields} from garmin."${table}" where ${where}) t`);
       const actual=rows.map(row=>row.value as Record<string,unknown>).sort((a,b)=>lexical(compareKey(a,definition.keys),compareKey(b,definition.keys)));
