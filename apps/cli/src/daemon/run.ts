@@ -350,7 +350,7 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
     tickState = {
       tickRan: true,
       ...(!tick.ok ? { tickProblem: { key: tick.code, message: `예약 틱 실패 (${tick.code}): ${tick.message}` } } : {}),
-      ...(tick.fired > 0 ? { tickCounts: `예약 ${String(tick.fired)}건 발화, 새 일감 ${String(tick.enqueued)}건` } : {}),
+      ...(tick.fired > 0 ? { tickCounts: [`예약 ${String(tick.fired)}건 발화, 새 일감 ${String(tick.enqueued)}건`, ...(tick.ok ? tick.warnings ?? [] : [])].join(' — ') } : {}),
     };
     if (signal.aborted) return { ...tickState, pause: false };
     const report = await brain.queue.drain({ budgetMs });

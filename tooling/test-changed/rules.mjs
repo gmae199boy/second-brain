@@ -30,7 +30,7 @@ const rules = [
 ];
 const exact = [
   // runDaemon imports createBrain/checkSchema and core queue uses these helpers.
-  'packages/core/src/ports/process.ts','packages/core/src/brain.ts','packages/core/src/schema.ts','packages/core/src/local-time.ts',
+  'packages/core/src/ports/process.ts','packages/core/src/ports/cron.ts','packages/core/src/brain.ts','packages/core/src/schema.ts','packages/core/src/local-time.ts',
   'packages/core/src/error-text.ts','packages/core/src/codes.ts','packages/core/src/index.ts',
   'packages/core/src/instant.ts','packages/core/src/envelope.ts',
   'packages/second_brain/src/index.ts','packages/second_brain/src/postgres.ts','packages/second_brain/src/testing.ts',

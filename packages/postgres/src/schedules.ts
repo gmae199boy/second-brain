@@ -4,149 +4,41 @@ import { databaseFailure, type PgConnect } from './connect.js';
 import { ensureWork, groupAvailable } from './work.js';
 import { withWrite } from './write.js';
 
-export interface ScheduleRow {
-  id: string; kind: string; hold_group: string | null; target_kind: string; target_id: string;
-  local_time: string | null; time_zone: string | null;
-  interval_seconds: number | null; next_run_at: string | null;
-  last_run_at: string | null; created_at: string;
-}
-function instant(value: Date): string {
-  const result = formatInstant(value);
-  if (!result.ok) throw new TypeError(result.message);
-  return result.value;
-}
-function at(value: string, column: string): Date {
-  const parsed = parseInstant(value);
-  if (!parsed.ok) throw new Error(`${column}을 읽을 수 없습니다: ${parsed.message}`);
-  return parsed.value;
-}
-function rowSchedule(row: ScheduleRow): Schedule {
-  return { id: row.id, kind: row.kind, holdGroup: row.hold_group, targetKind: row.target_kind, targetId: row.target_id,
-    localTime: row.local_time, timeZone: row.time_zone, intervalSeconds: row.interval_seconds, nextRunAt: row.next_run_at === null ? null : at(row.next_run_at, 'schedules.next_run_at'),
-    lastRunAt: row.last_run_at === null ? null : at(row.last_run_at, 'schedules.last_run_at'), createdAt: at(row.created_at, 'schedules.created_at') };
-}
-/** All firing writes share one transaction, beginning with the schedule CAS. */
+interface Row { id: string; kind: string; hold_group: string | null; target_kind: string; target_id: string; trigger_kind: Schedule['triggerKind']; cron_expr: string | null; run_at: string | null; trigger_updated_at: string | null; time_zone: string | null; time_zone_source: Schedule['timeZoneSource']; interval_seconds: number | null; extension: string | null; schedule_key: string | null; user_id: string; enabled: boolean; removed_at: string | null; next_run_at: string | null; last_run_at: string | null; created_at: string }
+function instant(value: Date): string { const r = formatInstant(value); if (!r.ok) throw new TypeError(r.message); return r.value; }
+function at(value: string | null): Date | null { if (value === null) return null; const r = parseInstant(value); if (!r.ok) throw new TypeError(r.message); return r.value; }
+function schedule(r: Row): Schedule { return { id:r.id,kind:r.kind,holdGroup:r.hold_group,targetKind:r.target_kind,targetId:r.target_id,triggerKind:r.trigger_kind,cronExpr:r.cron_expr,runAt:at(r.run_at),triggerUpdatedAt:at(r.trigger_updated_at),timeZone:r.time_zone,timeZoneSource:r.time_zone_source,intervalSeconds:r.interval_seconds,extension:r.extension,scheduleKey:r.schedule_key,userId:r.user_id,enabled:r.enabled,removedAt:at(r.removed_at),nextRunAt:at(r.next_run_at),lastRunAt:at(r.last_run_at),createdAt:at(r.created_at)! }; }
+const ts = (d: Date | null) => d === null ? null : instant(d);
 export function postgresScheduleStore(connect: PgConnect): ScheduleStore {
-  return {
-    async addSchedule(input) {
-      const opened = connect();
-      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
-      try {
-        const result = await withWrite(opened.connection, async held => {
-          const inserted = await sql`insert into brain.schedules (id, kind, hold_group, target_kind, target_id, interval_seconds, next_run_at, last_run_at, created_at, local_time, time_zone)
-            values (${input.id}, ${input.kind}, ${workHoldGroup(input.kind, input.holdGroup)}, ${input.targetKind}, ${input.targetId}, ${input.intervalSeconds},
-              ${input.nextRunAt === null ? null : instant(input.nextRunAt)},
-              ${input.lastRunAt === null ? null : instant(input.lastRunAt)}, ${instant(input.createdAt)}, ${input.localTime}, ${input.timeZone})
-            on conflict (kind, target_kind, target_id) where local_time is not null do nothing returning id`.execute(held);
-          if (!inserted.rows.length) return null;
-          return { ...structuredClone(input), holdGroup: workHoldGroup(input.kind, input.holdGroup) };
-        });
-        return result.ok ? result.value === null ? { ok: false, code: 'SCHEDULE_CONFLICT', message: '같은 대상의 매일 예약이 있습니다' } : { ok: true, schedule: result.value } : result;
-      } catch (error) {
-        if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505' && 'constraint' in error && error.constraint === 'schedules_daily_target_unique')
-          return { ok: false, code: 'SCHEDULE_CONFLICT', message: '같은 대상의 매일 예약이 있습니다' };
-        return databaseFailure(error);
-      }
-    },
-    async listSchedules({ limit }) {
-      const opened = connect();
-      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
-      try {
-        const result = await sql<ScheduleRow & { held: boolean }>`select *, not (${groupAvailable('brain.schedules')}) as held from brain.schedules order by created_at, id limit ${limit + 1}`.execute(opened.connection.db);
-        return { ok: true, schedules: result.rows.slice(0, limit).map(row => ({ ...rowSchedule(row), held: row.held })), hasMore: result.rows.length > limit };
-      } catch (error) { return databaseFailure(error); }
-    },
-    async removeSchedule({ id }) {
-      const opened = connect();
-      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
-      try {
-        const result = await withWrite(opened.connection, async held => (await sql`delete from brain.schedules where id = ${id} returning id`.execute(held)).rows.length > 0);
-        return result.ok ? { ok: true, removed: result.value } : result;
-      } catch (error) { return databaseFailure(error); }
-    },
-    async findDailySchedule({ kind, targetKind, targetId }) {
-      const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
-      try {
-        const result = await sql<ScheduleRow>`select * from brain.schedules where kind=${kind} and target_kind=${targetKind} and target_id=${targetId} and local_time is not null`.execute(opened.connection.db);
-        return { ok: true, schedule: result.rows[0] ? rowSchedule(result.rows[0]) : null };
-      } catch (error) { return databaseFailure(error); }
-    },
-    async readSchedule({ id }) {
-      const opened = connect();
-      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
-      try {
-        const result = await sql<ScheduleRow>`select * from brain.schedules where id = ${id}`.execute(opened.connection.db);
-        return { ok: true, schedule: result.rows[0] ? rowSchedule(result.rows[0]) : null };
-      } catch (error) { return databaseFailure(error); }
-    },
-    async listDailySchedules({ limit }) {
-      const opened = connect();
-      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
-      try {
-        const result = await sql<ScheduleRow>`select * from brain.schedules where local_time is not null order by id limit ${limit}`.execute(opened.connection.db);
-        return { ok: true, schedules: result.rows.map(rowSchedule) };
-      } catch (error) { return databaseFailure(error); }
-    },
-    async rezoneSchedule(input) {
-      const opened = connect();
-      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
-      try {
-        const result = await withWrite(opened.connection, async held => {
-          const changed = await sql`update brain.schedules set time_zone = ${input.timeZone}, next_run_at = ${instant(input.nextRunAt)}
-            where id = ${input.id} and next_run_at = ${instant(input.expectedNextRunAt)} and time_zone = ${input.expectedTimeZone} returning id`.execute(held);
-          return changed.rows.length > 0;
-        });
-        return result.ok ? { ok: true, updated: result.value } : result;
-      } catch (error) { return databaseFailure(error); }
-    },
-    async listScheduleSuccesses({ scheduleId }) {
-      const opened = connect();
-      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
-      try {
-        const result = await sql<{ local_date: string; time_zone: string; work_id: string; recorded_at: string }>`
-          select local_date::text, time_zone, work_id, recorded_at from brain.schedule_successes
-          where schedule_id = ${scheduleId} order by local_date`.execute(opened.connection.db);
-        return { ok: true, successes: result.rows.map(row => ({ localDate: row.local_date, timeZone: row.time_zone, workId: row.work_id, recordedAt: at(row.recorded_at, 'schedule_successes.recorded_at') })) };
-      } catch (error) { return databaseFailure(error); }
-    },
-    async listDueSchedules({ now, limit }) {
-      const opened = connect();
-      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
-      try {
-        const result = await sql<ScheduleRow>`select * from brain.schedules where next_run_at <= ${instant(now)} and ${groupAvailable('brain.schedules')}
-          order by next_run_at, id limit ${limit}`.execute(opened.connection.db);
-        return { ok: true, schedules: result.rows.map(rowSchedule) };
-      } catch (error) { return databaseFailure(error); }
-    },
-    async fireSchedule(input) {
-      const opened = connect();
-      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
-      try {
-        const result = await withWrite(opened.connection, async held => {
-          const expected = instant(input.expectedNextRunAt);
-          const now = instant(input.now);
-          const next = input.nextRunAt === null ? null : instant(input.nextRunAt);
-          // Validate work even when the compare-and-set would lose.
-          instant(input.work.createdAt); instant(input.work.nextAttemptAt);
-          const updated = await sql<{ hold_group: string | null }>`update brain.schedules set last_run_at = ${now}, next_run_at = ${next}
-            where id = ${input.scheduleId} and next_run_at = ${expected} and ${groupAvailable('brain.schedules')}
-              and time_zone is not distinct from ${input.localDates?.timeZone ?? null} returning hold_group`.execute(held);
-          if (updated.rows.length === 0) return { ok: true, fired: false } as const;
-          let workInput = { ...input.work, holdGroup: updated.rows[0]!.hold_group };
-          if (input.localDates) {
-            const missing = await sql<{ local_date: string }>`select to_char(d, 'YYYY-MM-DD') as local_date
-              from generate_series(${input.localDates.from}::date, ${input.localDates.to}::date, interval '1 day') d
-              where not exists (select 1 from brain.schedule_successes s where s.schedule_id = ${input.scheduleId} and s.local_date = d::date)
-              order by d`.execute(held);
-            if (!missing.rows.length) return { ok: true, fired: true, created: false, covered: true } as const;
-            workInput = { ...workInput, scheduledDates: { scheduleId: input.scheduleId, from: missing.rows[0]!.local_date,
-              to: missing.rows[missing.rows.length - 1]!.local_date, timeZone: input.localDates.timeZone } };
-          }
-          const work = await ensureWork(held, workInput);
-          return { ok: true, fired: true, created: work.created, covered: false } as const;
-        });
-        return result.ok ? result.value : result;
-      } catch (error) { return databaseFailure(error); }
-    },
-  };
+ return {
+  async disableMissingSchedules({extension,userId,keys}) {const o=connect();if(!o.ok)return {ok:false,code:'DB_UNAVAILABLE',message:o.message};try {const r=await withWrite(o.connection,async h=>{const rows=await sql<{schedule_key:string}>`update brain.schedules set enabled=false where extension=${extension} and user_id=${userId} and schedule_key is not null and removed_at is null and not (schedule_key=any(${[...keys]}::text[])) returning schedule_key`.execute(h);return rows.rows.map(row=>row.schedule_key).sort();});return r.ok?{ok:true,keys:r.value}:r;}catch(e){return databaseFailure(e);} },
+  async addSchedule(input) {
+   const opened=connect(); if(!opened.ok) return {ok:false,code:'DB_UNAVAILABLE',message:opened.message};
+   try { const result=await withWrite(opened.connection,async held=>{
+    const inserted=await sql<Row>`insert into brain.schedules(id,kind,hold_group,target_kind,target_id,trigger_kind,cron_expr,run_at,trigger_updated_at,time_zone,time_zone_source,interval_seconds,extension,schedule_key,user_id,enabled,removed_at,next_run_at,last_run_at,created_at)
+     values (${input.id},${input.kind},${workHoldGroup(input.kind,input.holdGroup)},${input.targetKind},${input.targetId},${input.triggerKind},${input.cronExpr},${ts(input.runAt)},${ts(input.triggerUpdatedAt ?? null)},${input.timeZone},${input.timeZoneSource},${input.intervalSeconds},${input.extension},${input.scheduleKey},${input.userId},${input.enabled},${ts(input.removedAt)},${ts(input.nextRunAt)},${ts(input.lastRunAt)},${instant(input.createdAt)}) on conflict do nothing returning *`.execute(held);
+    return inserted.rows[0] ? schedule(inserted.rows[0]) : null;
+   }); return result.ok ? result.value ? {ok:true,schedule:result.value} : {ok:false,code:'SCHEDULE_CONFLICT',message:'이미 예약이 있습니다'} : result; } catch(error){return databaseFailure(error);}
+  },
+  async findScheduleByKey({extension,scheduleKey,userId}) { const o=connect(); if(!o.ok)return {ok:false,code:'DB_UNAVAILABLE',message:o.message}; try {const r=await sql<Row>`select * from brain.schedules where extension is not distinct from ${extension} and schedule_key=${scheduleKey} and user_id=${userId}`.execute(o.connection.db);return {ok:true,schedule:r.rows[0]?schedule(r.rows[0]):null};}catch(e){return databaseFailure(e);} },
+  async readSchedule({id}) { const o=connect(); if(!o.ok)return {ok:false,code:'DB_UNAVAILABLE',message:o.message}; try {const r=await sql<Row>`select * from brain.schedules where id=${id} and removed_at is null`.execute(o.connection.db);return {ok:true,schedule:r.rows[0]?schedule(r.rows[0]):null};}catch(e){return databaseFailure(e);} },
+  async listSchedules({limit}) { const o=connect();if(!o.ok)return {ok:false,code:'DB_UNAVAILABLE',message:o.message};try {const r=await sql<Row & {held:boolean}>`select *,not (${groupAvailable('brain.schedules')}) as held from brain.schedules where removed_at is null order by created_at,id limit ${limit+1}`.execute(o.connection.db);return {ok:true,schedules:r.rows.slice(0,limit).map(x=>({...schedule(x),held:x.held})),hasMore:r.rows.length>limit};}catch(e){return databaseFailure(e);} },
+  async listUserZoneSchedules({limit}) {const o=connect();if(!o.ok)return {ok:false,code:'DB_UNAVAILABLE',message:o.message};try {const r=await sql<Row>`select * from brain.schedules where time_zone_source='user' and enabled and removed_at is null and next_run_at is not null order by id limit ${limit}`.execute(o.connection.db);return {ok:true,schedules:r.rows.map(schedule)};}catch(e){return databaseFailure(e);} },
+  async readMissedPolicy({kind}) {const o=connect();if(!o.ok)return {ok:false,code:'DB_UNAVAILABLE',message:o.message};try {const r=await sql<{missed_policy:'latest'|'coalesce'|'skip'}>`select missed_policy from brain.extension_work_kinds where kind=${kind}`.execute(o.connection.db);return {ok:true,policy:r.rows[0]?.missed_policy ?? 'latest'};}catch(e){return databaseFailure(e);} },
+  async listDueSchedules({now,limit}) {const o=connect();if(!o.ok)return {ok:false,code:'DB_UNAVAILABLE',message:o.message};try {const r=await sql<Row>`select * from brain.schedules where enabled and removed_at is null and next_run_at<=${instant(now)} and ${groupAvailable('brain.schedules')} order by next_run_at,id limit ${limit}`.execute(o.connection.db);return {ok:true,schedules:r.rows.map(schedule)};}catch(e){return databaseFailure(e);} },
+  async removeSchedule({id,now}) {const o=connect();if(!o.ok)return {ok:false,code:'DB_UNAVAILABLE',message:o.message};try {const r=await withWrite(o.connection,async h=>{const marked=await sql`update brain.schedules set removed_at=${instant(now)},enabled=false where id=${id} and schedule_key is not null and removed_at is null returning id`.execute(h);if(marked.rows.length)return {removed:true,marked:true};return {removed:(await sql`delete from brain.schedules where id=${id} and schedule_key is null returning id`.execute(h)).rows.length>0,marked:false};});return r.ok?{ok:true,...r.value}:r;}catch(e){return databaseFailure(e);} },
+  async updateSchedule({id,expected:e,schedule:s}) {const o=connect();if(!o.ok)return {ok:false,code:'DB_UNAVAILABLE',message:o.message};try {const r=await withWrite(o.connection,async h=>(await sql`update brain.schedules set trigger_kind=${s.triggerKind},cron_expr=${s.cronExpr},run_at=${ts(s.runAt)},trigger_updated_at=${ts(s.triggerUpdatedAt)},time_zone=${s.timeZone},time_zone_source=${s.timeZoneSource},interval_seconds=${s.intervalSeconds},enabled=${s.enabled},next_run_at=${ts(s.nextRunAt)} where id=${id} and removed_at is null and next_run_at is not distinct from ${ts(e.nextRunAt)}::timestamptz and trigger_updated_at is not distinct from ${ts(e.triggerUpdatedAt)}::timestamptz and trigger_kind=${e.triggerKind} and cron_expr is not distinct from ${e.cronExpr} and run_at is not distinct from ${ts(e.runAt)}::timestamptz and time_zone is not distinct from ${e.timeZone} and time_zone_source is not distinct from ${e.timeZoneSource} and interval_seconds is not distinct from ${e.intervalSeconds} and enabled=${e.enabled} returning id`.execute(h)).rows.length>0);return r.ok?{ok:true,updated:r.value}:r;}catch(e){return databaseFailure(e);} },
+  async rezoneSchedule(i) {const o=connect();if(!o.ok)return {ok:false,code:'DB_UNAVAILABLE',message:o.message};try {const r=await withWrite(o.connection,async h=>(await sql`update brain.schedules set time_zone=${i.timeZone},next_run_at=${instant(i.nextRunAt)} where id=${i.id} and time_zone_source='user' and removed_at is null and next_run_at=${instant(i.expectedNextRunAt)} and time_zone=${i.expectedTimeZone} and trigger_kind='cron' and cron_expr=${i.expectedCronExpr} and trigger_updated_at is not distinct from ${ts(i.expectedTriggerUpdatedAt)}::timestamptz returning id`.execute(h)).rows.length>0);return r.ok?{ok:true,updated:r.value}:r;}catch(e){return databaseFailure(e);} },
+  async listOccurrences({scheduleId}) {const o=connect();if(!o.ok)return {ok:false,code:'DB_UNAVAILABLE',message:o.message};try {const r=await sql<{schedule_id:string;occurrence_at:string;time_zone:string|null;status:'pending'|'claimed'|'done'|'skipped'|'failed';work_id:string|null;user_id:string;recorded_at:string}>`select * from brain.schedule_occurrences where schedule_id=${scheduleId} order by occurrence_at`.execute(o.connection.db);return {ok:true,occurrences:r.rows.map(x=>({scheduleId:x.schedule_id,occurrenceAt:at(x.occurrence_at)!,timeZone:x.time_zone,status:x.status,workId:x.work_id,userId:x.user_id,recordedAt:at(x.recorded_at)!}))};}catch(e){return databaseFailure(e);} },
+  async fireSchedule(i) {const o=connect();if(!o.ok)return {ok:false,code:'DB_UNAVAILABLE',message:o.message};try { instant(i.now); instant(i.expectedNextRunAt); ts(i.nextRunAt); instant(i.work.createdAt); instant(i.work.nextAttemptAt); for (const item of i.occurrences) instant(item.occurrenceAt); const r=await withWrite(o.connection,async h=>{
+   const updated=await sql<{hold_group:string|null;user_id:string;time_zone:string|null}>`update brain.schedules set last_run_at=${instant(i.now)},next_run_at=${ts(i.nextRunAt)} where id=${i.scheduleId} and enabled and removed_at is null and next_run_at=${instant(i.expectedNextRunAt)} and trigger_kind=${i.expectedTriggerKind} and time_zone is not distinct from ${i.expectedTimeZone} and cron_expr is not distinct from ${i.expectedCronExpr} and ${groupAvailable('brain.schedules')} returning hold_group,user_id,time_zone`.execute(h);
+   if(!updated.rows.length)return {ok:true,fired:false} as const;
+   const row=updated.rows[0]!; const inserted: string[]=[];
+   for(const item of i.occurrences) {const at=instant(item.occurrenceAt);const result=await sql`insert into brain.schedule_occurrences(schedule_id,occurrence_at,time_zone,status,work_id,user_id,recorded_at) values (${i.scheduleId},${at},${row.time_zone},${item.status},null,${row.user_id},${instant(i.now)}) on conflict do nothing returning occurrence_at`.execute(h);if(result.rows.length && item.status==='pending')inserted.push(at);}
+   if(!inserted.length)return {ok:true,fired:true,created:false,covered:true} as const;
+   const work=await ensureWork(h,{...i.work,holdGroup:row.hold_group});
+   await sql`update brain.schedule_occurrences set work_id=${work.row.id} where schedule_id=${i.scheduleId} and occurrence_at=any(${inserted}::timestamptz[]) and status='pending'`.execute(h);
+   return {ok:true,fired:true,created:work.created,covered:false} as const;
+  });return r.ok?r.value:r;}catch(e){return databaseFailure(e);} }
+ };
 }

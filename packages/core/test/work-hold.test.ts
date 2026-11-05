@@ -1,4 +1,4 @@
-import { sampleSelfUserInput } from '../src/testing/index.js';
+import { fakeCron, sampleSelfUserInput } from '../src/testing/index.js';
 import { expect, it } from 'vitest';
 import { createBrain } from '../src/brain.js';
 import { memoryStore, memorySchemaStore, memorySpool, memoryFileStore, memoryRepositories,
@@ -7,7 +7,7 @@ import { memoryStore, memorySchemaStore, memorySpool, memoryFileStore, memoryRep
 function kit() {
   const time = manualTime(new Date('2026-10-29T00:00:00Z')); const store = memoryStore(); void store.ensureSelfUser(sampleSelfUserInput());
   const idGen = sequenceIdGen({ timestampMs: time.clock.now().getTime() });
-  const brain = createBrain({ store: { ...store, ...memorySchemaStore({ version: 10 }) }, schemaVersions: { core: 10 },
+  const brain = createBrain({ cron: fakeCron, store: { ...store, ...memorySchemaStore({ version: 10 }) }, schemaVersions: { core: 10 },
     clock: time.clock, idGen, spool: memorySpool(), files: memoryFileStore(), parsers: [],
     transcripts: memoryTranscriptReader(), repositories: memoryRepositories(), machine: 'test' });
   const handled: string[] = [];
@@ -74,7 +74,7 @@ it('확장 활성 SDK가 같은 그룹 일감을 보류하고 재개한다', asy
   await k.add('testext.job', 'held'); await k.add('otherext.job', 'other');
   expect(await k.brain.ext.disable({ name: 'testext' })).toMatchObject({ ok: true, changed: true });
   const now = k.time.clock.now();
-  const schedule = await k.store.addSchedule({ id: '00000000-0000-7000-8000-000000000101', kind: 'schedule_probe', holdGroup: 'extension:testext', targetKind: 'probe', targetId: 'held-schedule', localTime: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now });
+  const schedule = await k.store.addSchedule({ id: '00000000-0000-7000-8000-000000000101', kind: 'schedule_probe', holdGroup: 'extension:testext', targetKind: 'probe', targetId: 'held-schedule', triggerKind: 'interval' as const, cronExpr: null, runAt: null, timeZoneSource: null, extension: null, scheduleKey: null, userId: '01940000-0000-7000-8000-00000000000a', enabled: true, removedAt: null, timeZone: null, intervalSeconds: 60, nextRunAt: now, lastRunAt: null, createdAt: now });
   expect(schedule).toMatchObject({ ok: true });
   expect(await k.brain.queue.release({ group: 'extension:testext' })).toEqual({ ok: true, group: 'extension:testext', released: false });
   expect(await k.store.listDueSchedules({ now, limit: 10 })).toMatchObject({ ok: true, schedules: [] });

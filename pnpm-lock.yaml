@@ -32,6 +32,9 @@ importers:
       commander:
         specifier: 15.0.0
         version: 15.0.0
+      croner:
+        specifier: 11.0.0
+        version: 11.0.0
       second_brain:
         specifier: workspace:*
         version: link:../../packages/second_brain
@@ -450,6 +453,10 @@ packages:
   commander@15.0.0:
     resolution: {integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==}
     engines: {node: '>=22.12.0'}
+
+  croner@11.0.0:
+    resolution: {integrity: sha512-T17ADjdttrVToyzLpLq9Xb9xzcMwpQ/M3Qs9szhh0MVNTbv6NWQ9OFYa2qlzPYXFMn+uoDlnW1IpIv6cAvFtyA==}
+    engines: {node: '>=18.0'}
 
   detect-libc@2.1.2:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
@@ -966,6 +973,8 @@ snapshots:
   chai@6.3.0: {}
 
   commander@15.0.0: {}
+
+  croner@11.0.0: {}
 
   detect-libc@2.1.2: {}
 

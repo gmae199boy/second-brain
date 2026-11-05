@@ -114,6 +114,13 @@
           "followup": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+          },
+          "missed": {
+            "enum": [
+              "latest",
+              "coalesce",
+              "skip"
+            ]
           }
         }
       }
@@ -162,8 +169,7 @@
         "required": [
           "kind",
           "target_kind",
-          "target_id",
-          "local_time"
+          "target_id"
         ],
         "properties": {
           "kind": {
@@ -181,8 +187,51 @@
           "local_time": {
             "type": "string",
             "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+          },
+          "cron": {
+            "type": "string",
+            "pattern": "^\\s*[0-9*,/A-Za-z-]+(?:\\s+[0-9*,/A-Za-z-]+){4}\\s*$"
+          },
+          "time_zone": {
+            "type": "string",
+            "pattern": "\\S"
           }
-        }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "local_time"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "cron"
+                  ]
+                },
+                {
+                  "required": [
+                    "time_zone"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "required": [
+              "cron"
+            ],
+            "not": {
+              "required": [
+                "local_time"
+              ]
+            }
+          }
+        ]
       }
     },
     "commands": {

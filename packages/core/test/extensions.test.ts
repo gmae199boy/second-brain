@@ -2,7 +2,7 @@ import { validateSchema } from '../../../apps/cli/src/runtime/json-schema.js';
 const decodeExtensionManifest = (text: string) => decodeManifest(text, validateSchema);
 import { expect, it } from 'vitest';
 import { decodeExtensionManifest as decodeManifest, isExtensionName, installExtension, extensionStatus, runExtensionCheck, decodeAbiEnv } from '../src/index.js';
-import { fakeProcessInspector, fakeProcessLauncher, fixedClock, manualTime, memoryStore, sequenceIdGen } from '../src/testing/index.js';
+import { fakeCron, fakeProcessInspector, fakeProcessLauncher, fixedClock, manualTime, memoryStore, sequenceIdGen } from '../src/testing/index.js';
 import type { ExtensionRuntime, ProcessLauncher } from '../src/index.js';
 const now = new Date('2026-10-29T00:00:00Z');
 const manifest = { name: 'testext', version: '0.1.0', core: 1, abi: 1, migrations: 'migrations', connection_check: { runtime: 'node', entry: 'bin/check.mjs' } };
@@ -26,7 +26,7 @@ function setup(options: { missingSelf?: boolean; text?: string; found?: boolean;
       return options.migrationFailure ? { ok: false, code: 'MIGRATION_FAILED', message: 'SQL 오류' } : { ok: true, from: 0, to: 0, applied: ['0001_testext.sql'] };
     } },
   };
-  const deps = { store: memoryStore(), clock: fixedClock(now), idGen: sequenceIdGen({ timestampMs: now.getTime() }), extensions: runtime };
+  const deps = { cron: fakeCron, store: memoryStore(), clock: fixedClock(now), idGen: sequenceIdGen({ timestampMs: now.getTime() }), extensions: runtime };
   if (!options.missingSelf) void deps.store.ensureSelfUser({ id: '019a0000-0000-7000-8000-000000000001', name: 'synthetic', createdAt: now });
   return { deps, fake, writes: () => ({ placed, migrated }) };
 }
@@ -631,4 +631,18 @@ it('records configuration failure when scoped settings lookup fails', async () =
   deps.store.getSettings = async () => ({ ok: false, code: 'DB_LOCKED', message: 'locked' });
   expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
   expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { failedStage: 'configuration', stages: { configuration: { status: 'failed', code: 'DB_LOCKED' } } } } });
+});
+it('manifest cron·legacy·키 중복과 놓친 회차 정책을 검증한다', () => {
+ const work={kind:'testext.sync',execution:'supervised',runtime:'node',entry:'sync.mjs'};
+ const base={...manifest,work:[work]}, schedule={kind:'testext.sync',target_kind:'account',target_id:'default'};
+ for(const entry of [{...schedule,local_time:'09:00'},{...schedule,key:'weekly',cron:'0 9 * * 5',time_zone:'Asia/Seoul'}]) expect(decodeExtensionManifest(JSON.stringify({...base,default_schedules:[entry]})).ok).toBe(true);
+ for(const entries of [[schedule],[{...schedule,cron:'0 9 * * *',local_time:'09:00'}],[{...schedule,cron:'0 0 9 * * *'}],[{...schedule,local_time:'09:00'},{...schedule,key:'testext.sync:account:default',cron:'0 9 * * *'}]])expect(decodeExtensionManifest(JSON.stringify({...base,default_schedules:entries})).ok).toBe(false);
+ expect(decodeExtensionManifest(JSON.stringify({...base,work:[{...work,missed:'later'}]})).ok).toBe(false);
+});
+it('유효하지 않은 cron 또는 시간대는 복사와 마이그레이션 전에 거부한다',async()=>{
+ const work={kind:'testext.sync',execution:'supervised',runtime:'node',entry:'sync.mjs'};
+ for(const schedule of [{kind:'testext.sync',target_kind:'account',target_id:'a',cron:'99 9 * * *'}, {kind:'testext.sync',target_kind:'account',target_id:'a',cron:'0 9 * * *',time_zone:'Invalid/Zone'}]) {
+  const {deps,writes}=setup({text:JSON.stringify({...manifest,work:[work],default_schedules:[schedule]})});
+  expect(await installExtension(deps,{name:'testext'})).toMatchObject({ok:false,code:'EXTENSION_INVALID'});expect(writes()).toEqual({placed:0,migrated:0});
+ }
 });

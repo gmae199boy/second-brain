@@ -155,3 +155,4 @@ export { manualTime } from './fakes/clock.js';
 export { fakeProcessLauncher, fakeProcessInspector, type FakeProcess } from './fakes/process.js';
 export { extensionStoreContract } from './contracts/extension-store.js';
 export { channelStoreContract } from './contracts/channel-store.js';
+export { fakeCron } from './fakes/cron.js';

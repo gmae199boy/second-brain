@@ -95,13 +95,13 @@ export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try { const result = await sql<{ status: 'succeeded' | 'failed'; code: string | null; checked_at: string }>`select status, code, checked_at from brain.extension_python_environment where name=${name}`.execute(opened.connection.db); const row = result.rows[0]; return { ok: true, environment: row ? { status: row.status, code: row.code, checkedAt: new Date(row.checked_at) } : null }; } catch (error) { return databaseFailure(error); }
     },
-    async recordExtensionInstall({ name, version, now, workKinds, workFollowups }) {
+    async recordExtensionInstall({ name, version, now, workKinds, workFollowups, missedPolicies }) {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
         const result = await withWrite(opened.connection, async held => {
           await sql`insert into brain.extensions(name, version, installed_at, enabled, enabled_changed_at) values (${name}, ${version}, ${now.toISOString()}, true, ${now.toISOString()}) on conflict(name) do update set version=excluded.version`.execute(held);
           await sql`delete from brain.extension_work_kinds where extension_name=${name}`.execute(held);
-          for (const kind of workKinds ?? []) await sql`insert into brain.extension_work_kinds(extension_name, kind) values (${name}, ${kind})`.execute(held);
+          for (const kind of workKinds ?? []) await sql`insert into brain.extension_work_kinds(extension_name, kind, missed_policy) values (${name}, ${kind}, ${missedPolicies?.[kind] ?? 'latest'})`.execute(held);
           for (const [kind, followup] of Object.entries(workFollowups ?? {})) await sql`update brain.extension_work_kinds set followup_kind=${followup} where extension_name=${name} and kind=${kind}`.execute(held);
           const parents=await sql<WorkItemRow>`select w.* from brain.work_items w join brain.extension_work_kinds k on k.kind=w.kind
             where k.extension_name=${name} and k.followup_kind is not null and w.completed_at is null for update of w`.execute(held);

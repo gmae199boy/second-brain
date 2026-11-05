@@ -21,7 +21,7 @@ export const PROCESS_ABI_ENV = {
   attemptToken: 'BRAIN_ATTEMPT_TOKEN', workKind: 'BRAIN_WORK_KIND', targetKind: 'BRAIN_TARGET_KIND', targetId: 'BRAIN_TARGET_ID',
   runGeneration: 'BRAIN_RUN_GENERATION',
 } as const;
-export const PROCESS_ABI_OPTIONAL_ENV = { userId: 'BRAIN_USER_ID', account: 'BRAIN_ACCOUNT', rangeFrom: 'BRAIN_RANGE_FROM', rangeTo: 'BRAIN_RANGE_TO', settingsSnapshot: 'BRAIN_SETTINGS_SNAPSHOT', extensionHome: 'BRAIN_EXTENSION_HOME', extensionReadiness: 'BRAIN_EXTENSION_READINESS' } as const;
+export const PROCESS_ABI_OPTIONAL_ENV = { userId: 'BRAIN_USER_ID', account: 'BRAIN_ACCOUNT', occurrences: 'BRAIN_OCCURRENCES', rangeFrom: 'BRAIN_RANGE_FROM', rangeTo: 'BRAIN_RANGE_TO', settingsSnapshot: 'BRAIN_SETTINGS_SNAPSHOT', extensionHome: 'BRAIN_EXTENSION_HOME', extensionReadiness: 'BRAIN_EXTENSION_READINESS' } as const;
 export type AbiFailure = { ok: false; code: string; reason: string };
 const invalid = (reason: string, code = 'ABI_LINE_INVALID'): AbiFailure => ({ ok: false, code, reason });
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
@@ -55,7 +55,9 @@ export function decodeAbiEnv(env: Readonly<Record<string, unknown>>): { ok: true
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const string = (key: string): string => typeof env[key] === 'string' ? env[key] as string : '';
   const from = env['BRAIN_RANGE_FROM'], to = env['BRAIN_RANGE_TO'];
-  const valid = Object.values(PROCESS_ABI_ENV).every(k => string(k).length > 0) && env['BRAIN_ABI_VERSION'] === '1' &&
+  const occurrences = env['BRAIN_OCCURRENCES'];
+  const occurrencePattern = /^\["\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(?:Z|[+-]\d{2}:\d{2})"(?:,"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(?:Z|[+-]\d{2}:\d{2})")*\]$/;
+  const valid = (occurrences === undefined || typeof occurrences === 'string' && occurrencePattern.test(occurrences) && from !== undefined && to !== undefined) && Object.values(PROCESS_ABI_ENV).every(k => string(k).length > 0) && env['BRAIN_ABI_VERSION'] === '1' &&
     /^postgres(?:ql)?:\/\//.test(string('BRAIN_DATABASE_URL')) && uuid.test(string('BRAIN_WORK_ID')) && uuid.test(string('BRAIN_ATTEMPT_TOKEN')) &&
     /^[1-9][0-9]{0,8}$/.test(string('BRAIN_RUN_GENERATION')) &&
     (!Object.hasOwn(env, 'BRAIN_USER_ID') || isAbiUserId(env['BRAIN_USER_ID'])) &&

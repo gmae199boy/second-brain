@@ -1,3 +1,4 @@
+import { cronCalculator } from './runtime/cron.js';
 import { importStaging } from './runtime/import-staging.js';
 import { extensionRuntime } from './runtime/extensions.js';
 import type { SettingsStore } from 'second_brain';
@@ -77,6 +78,7 @@ export function brainDependencies<S extends SessionIngestStore>(assembly: BrainA
   const { home, env, config, store, clock, idGen, workHandlers } = assembly;
   return {
     store,
+    cron: cronCalculator,
     extensions: extensionRuntime({ home, env, config, clock }),
     prerequisites: postgresPrerequisites({ home, env, runner: assembly.runner }),
     adapterProbeIds: assembly.adapterProbeIds,

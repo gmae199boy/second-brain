@@ -47,7 +47,7 @@ it('v31 사용자 설정과 대화만 self로 채우고 수집 행을 보존한�
     const empty = ['message_attachments', 'context_injections', 'files', 'file_locations', 'file_names', 'document_extractions', 'document_chunks', 'projects', 'worktrees', 'workspaces', 'failures', 'redactions', 'log_entries', 'log_entry_edits'];
     for (const table of seeded) expect((await client.query(`select count(*)::int as n from brain.${table}`)).rows[0].n, table).toBeGreaterThan(0);
     for (const table of empty) expect((await client.query(`select count(*)::int as n from brain.${table}`)).rows[0].n, table).toBe(0);
-    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 31, to: 32 });
+    expect(await runMigrations({ databaseUrl: db.url, clock, coreMaxVersion: 32 })).toMatchObject({ ok: true, from: 31, to: 32 });
     expect((await client.query('select key,value,updated_at from brain.settings order by key')).rows).toEqual(settings);
     expect((await client.query('select key,user_id from brain.settings order by key')).rows).toEqual([{ key: 'doctor.writable', user_id: null }, { key: 'testext.limit', user_id: user }, { key: 'testext.shared', user_id: user }, { key: 'timezone', user_id: user }]);
     expect((await client.query('select user_id from brain.channel_conversations where id=$1', [conversation])).rows[0].user_id).toBe(user);
@@ -94,7 +94,7 @@ it('self 없는 기존 행은 migration 전체를 rollback한다', async () => {
   const kit = await v31();
   try {
     await kit.client.query("insert into brain.settings(key,value,updated_at) values ('timezone','UTC',now())");
-    const result = await runMigrations({ databaseUrl: kit.db.url, clock });
+    const result = await runMigrations({ databaseUrl: kit.db.url, clock, coreMaxVersion: 32 });
     expect(result).toMatchObject({ ok: false, code: 'MIGRATION_FAILED', file: '0032_user_keys.sql', message: expect.stringContaining('USER_MISSING') });
     expect((await kit.client.query("select max(version)::int as version from brain.schema_migrations where owner='core'")).rows[0].version).toBe(31);
     expect((await kit.client.query("select count(*)::int as n from information_schema.columns where table_schema='brain' and table_name='settings' and column_name='user_id'")).rows[0].n).toBe(0);
@@ -126,7 +126,7 @@ it('설정 없이 기존 대화만 있어도 self 누락 시 rollback한다', as
     const channel = randomUUID();
     await kit.client.query("insert into brain.channels(id,kind,bot_ref) values ($1,'telegram','synthetic')", [channel]);
     await kit.client.query("insert into brain.channel_conversations(id,channel_id,external_ref) values ($1,$2,'chat')", [randomUUID(), channel]);
-    expect(await runMigrations({ databaseUrl: kit.db.url, clock })).toMatchObject({ ok: false, code: 'MIGRATION_FAILED', message: expect.stringContaining('USER_MISSING') });
+    expect(await runMigrations({ databaseUrl: kit.db.url, clock, coreMaxVersion: 32 })).toMatchObject({ ok: false, code: 'MIGRATION_FAILED', message: expect.stringContaining('USER_MISSING') });
     expect((await kit.client.query("select max(version)::int as version from brain.schema_migrations where owner='core'")).rows[0].version).toBe(31);
   } finally { await kit.close(); }
 });
@@ -141,7 +141,7 @@ it('setup ordering creates self between schema 31 and 32 and backfills old rows'
     await kit.client.query("insert into brain.channel_conversations(id,channel_id,external_ref) values ($1,$2,'chat')", [conversation, channel]);
     expect(await runMigrations({ databaseUrl: kit.db.url, clock, coreMaxVersion: 31 })).toMatchObject({ ok: true, to: 31 });
     expect(await store.ensureSelfUser({ id: user, name: 'synthetic', createdAt: clock.now() })).toMatchObject({ ok: true });
-    expect(await runMigrations({ databaseUrl: kit.db.url, clock })).toMatchObject({ ok: true, from: 31, to: 32 });
+    expect(await runMigrations({ databaseUrl: kit.db.url, clock, coreMaxVersion: 32 })).toMatchObject({ ok: true, from: 31, to: 32 });
     expect((await kit.client.query("select user_id from brain.settings where key='timezone'")).rows[0].user_id).toBe(user);
     expect((await kit.client.query('select user_id from brain.channel_conversations where id=$1', [conversation])).rows[0].user_id).toBe(user);
   } finally { await store.close(); await kit.close(); }
@@ -152,7 +152,7 @@ it('migrates a doctor probe without self and leaves its value and timestamp glob
   try {
     await kit.client.query("insert into brain.settings(key,value,updated_at) values ('doctor.writable','probe','2026-01-01T00:00:00Z')");
     const before = (await kit.client.query("select key,value,updated_at from brain.settings where key='doctor.writable'")).rows;
-    expect(await runMigrations({ databaseUrl: kit.db.url, clock })).toMatchObject({ ok: true, from: 31, to: 32 });
+    expect(await runMigrations({ databaseUrl: kit.db.url, clock, coreMaxVersion: 32 })).toMatchObject({ ok: true, from: 31, to: 32 });
     expect((await kit.client.query("select key,value,updated_at from brain.settings where key='doctor.writable'")).rows).toEqual(before);
     expect((await kit.client.query("select user_id from brain.settings where key='doctor.writable'")).rows).toEqual([{ user_id: null }]);
     expect((await kit.client.query('select count(*)::int as n from brain.users where is_self=1')).rows[0].n).toBe(0);
@@ -168,7 +168,7 @@ it('backfills settings and conversation to self even when a non-self user was in
     await kit.client.query("insert into brain.settings(key,value,updated_at) values ('timezone','UTC',now()),('testext.limit','7',now()),('doctor.writable','probe',now())");
     await kit.client.query("insert into brain.channels(id,kind,bot_ref) values ($1,'telegram','synthetic')", [channel]);
     await kit.client.query("insert into brain.channel_conversations(id,channel_id,external_ref) values ($1,$2,'chat')", [conversation, channel]);
-    expect(await runMigrations({ databaseUrl: kit.db.url, clock })).toMatchObject({ ok: true, from: 31, to: 32 });
+    expect(await runMigrations({ databaseUrl: kit.db.url, clock, coreMaxVersion: 32 })).toMatchObject({ ok: true, from: 31, to: 32 });
     expect((await kit.client.query('select key,user_id from brain.settings order by key')).rows).toEqual([{ key: 'doctor.writable', user_id: null }, { key: 'testext.limit', user_id: self }, { key: 'timezone', user_id: self }]);
     expect((await kit.client.query('select user_id from brain.channel_conversations where id=$1', [conversation])).rows).toEqual([{ user_id: self }]);
     expect((await kit.client.query('select count(*)::int as n from brain.settings where user_id=$1', [other])).rows[0].n).toBe(0);

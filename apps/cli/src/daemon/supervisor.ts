@@ -13,6 +13,12 @@ import { resolveStoreUrl, resolveTelegramConfig, extensionDatabaseUrl } from '..
 import type { RunDaemonOptions } from './run.js';
 import { readDaemonLock } from './lock.js';
 import type { ReadConfigResult } from '../config/codec.js';
+export function scheduleEnvironment(groups: import('second_brain').ScheduledOccurrences[] | null): Record<string,string> {
+  const instants = [...new Set((groups ?? []).flatMap(group => group.occurrences.map(at => at.toISOString())))].sort();
+  if (!instants.length) return {};
+  const dates = (groups ?? []).flatMap(group => group.occurrences.map(at => new Intl.DateTimeFormat('en-CA', { timeZone: group.timeZone ?? 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(at))).sort();
+  return { BRAIN_RANGE_FROM:dates[0]!, BRAIN_RANGE_TO:dates.at(-1)!, BRAIN_OCCURRENCES:JSON.stringify(instants.map(at=>at.replace('Z','+00:00'))) };
+}
 export interface DaemonSupervisorOptions { launcher?: ProcessLauncher; inspector?: ProcessInspector; cancelGraceMs?: number; cancelPollMs?: number; groupConfirmMs?: number; probeWorker?: { command: string; args: readonly string[]; env?: Readonly<Record<string, string>> }; channelTestEndpoint?: string; channelTestBarrier?: 'before-finish' | 'after-finish'; pollMs?: number; renewEveryMs?: number; disabled?: boolean }
 export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadConfigResult, log: { write(message: string): Promise<void> }): { stop(): Promise<void> } {
   const controller = new AbortController();
@@ -66,7 +72,7 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
                 [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: extensionUrl, [PROCESS_ABI_ENV.workId]: item.id,
                 [PROCESS_ABI_ENV.runGeneration]: String(item.attempts), [PROCESS_ABI_ENV.attemptToken]: token, [PROCESS_ABI_ENV.workKind]: item.kind,
                 [PROCESS_ABI_ENV.targetKind]: item.targetKind, [PROCESS_ABI_ENV.targetId]: item.targetId,
-                ...(item.scheduledDates ? { BRAIN_RANGE_FROM: item.scheduledDates.from, BRAIN_RANGE_TO: item.scheduledDates.to } : {}), BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized, BRAIN_EXTENSION_HOME: await realpath(directory), BRAIN_SECRET_SCANNER_NODE: process.execPath, BRAIN_SECRET_SCANNER_SCRIPT: fileURLToPath(new URL('../../dist/workers/secret-scan.js', import.meta.url)), BRAIN_EXTENSION_READINESS: JSON.stringify(readiness),
+                ...scheduleEnvironment(item.scheduledOccurrences), BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized, BRAIN_EXTENSION_HOME: await realpath(directory), BRAIN_SECRET_SCANNER_NODE: process.execPath, BRAIN_SECRET_SCANNER_SCRIPT: fileURLToPath(new URL('../../dist/workers/secret-scan.js', import.meta.url)), BRAIN_EXTENSION_READINESS: JSON.stringify(readiness),
               } } };
             },
           };
