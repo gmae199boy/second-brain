@@ -195,3 +195,18 @@
 | 잔여 위험 / low reject |멱등 기본값 삽입 루프의 취소 확인 부재 |현 계약 기록, 취소 정책 확장은 별도 판단 |
 
 설치본·운영DB는 변경하지 않았다. 새키 사용자 해석과 설정·대화 이행은 이 티켓, 예약 user_id·회차 이행은20.3이다. 원문 증거와 v1/v2 보고는 보존 워크트리 및 중앙 archive에 있다.
+
+## 20.3 — built / 대량 회차 보완 수락, 시험21.8 이관
+
+근거: [cron·once 계획](../tickets/epic-extension-platform/tickets/story-crononce-plan.md)의 deferred·Review Triage Log·중앙 수락 보완·Auto Run Result. 독립4렌즈2회와 수락 보완 증분2렌즈 후속, 후속 권고 false. 최종 build·typecheck 종료0. 시험 실행은21.8로 이관·미실행이다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 해결 / 필수 범위 |10,000 초과 누락 회차 절단 |a04e5c4에서 제거. 발화1,000개·tick당10배치와 next_run_at CAS 사슬로 이어 기록, 청구1,000개·재개 이어가기·재청구 claimed 초기화.12,006회차 세 정책·상한·연속성 시험 코드는21.8 실행 대상 |
+| 보류 / medium 기존 동작 |성공 후 새 회차로 재개한 일감의 attempts 누적 |기준5510d15도 같은 동작. 오래 실행되는 반복 일감의 첫 일시 실패가 재시도 한도에 걸릴 수 있음. 재시도 예산 정책은 별도 판단 |
+| 필수 시험 인계 |cron/once·DST·회차 수명·대량 정책·이행/중복·재설치·자식ABI |21.8 전용PG에서 새·기존 시험 실행. schedule-cron·schedule-migration-tick·schedule-occurrences·Store 공통계약(core/supervised)·work-store·ext-install(-resume)·daemon·Python 공유 manifest/ABI 포함 |
+| 운영 조치 |설치본0033 적용·manifest에서 빠진 옛 예약 정리 |21.7에서 실제 확인.20.6 후속 처리와 시험코드는 이번 티켓에 반영했으나 운영 예약·설치본 변경 및 시험 실행은 하지 않음 |
+| 채택 가정 |영구 실패 회차failed·예약update·기본키·다중예약 청구 |원문 계획에 판단 근거 보존. 비daily 이행키는id접미, 기본 manifest는반복cron/legacy local_time·once는CLI에서 등록 |
+| 잔여 위험 / low reject |ABI 날짜 달력 검사·삭제된 예약의 옛 날짜범위·특수 과거DST·키충돌·조회상 회차null |계획 triage의 각 기각 근거 보존. 발생 근거가 생기면 별도 판단;10,000절단 기각은 위 해결 처분으로 대체 |
+
+원문 보고·리뷰·영수증은 보존 워크트리와 중앙 로컬 archive에 있다. 사용자가 인수하기 전 done으로 올리지 않는다.
