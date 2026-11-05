@@ -29,10 +29,10 @@ references = ["_bmad-output/personal-brain/tickets/epic-search-and-health-query/
 id = 1
 type = "story"
 title = "분석 리포트 한 건을 한국어 두 글자로 찾고, 그 출처만으로 원문을 읽는다"
-description = "17.2의 텍스트 질의 함수와 검색 Store port·PG adapter, 17.3의 공통 결과 budget·원문 출처 계약 위에 리포트 검색 층을 잇는다. 문서 대상을 `analyses`와 파일 관계가 있는 core 파일의 현재 추출 세대로 좁힌다(14.5의 관계를 받는다). `document` 결과 종류(file_id·표시 이름·`chunk_locator`·분석 id·날짜·원문 접근 상태)와 `brain recall docs`, 문서 출처로 원문을 읽는 `brain files show`(현재 세대의 위치와 앞뒤)를 CommandSpec·명령 메타·SDK 1:1로 만든다. 출력 코덱 계약의 `OutputProbe`에 문서 조각·표시 이름·locator를 더하고 실제 renderer를 통과시킨다. 2가 만든 시험 기반에 합성 리포트 fixture를 더하고 뒤 스토리가 다시 쓴다. 각 plan은 실행 명령, 사전 조건, 관찰값, 정리 명령을 적는다. 받는 것: 11의 PG 전문 색인(`document_chunks.body`의 expression GIN)·추출 세대, 14.5의 `analyses` 파일 관계. 실제 이름은 착수 시점 main HEAD에서 확인한다. plan 상한은 리포트 한 파일, 질의 하나, 원문 경로 하나다."
-verify = "통합 시험(PG. 시험 이름과 실행 명령은 plan에 적는다)에서 합성 `analyses` 리포트 Markdown 하나를 넣고 `brain recall docs`로 그 안의 한국어 두 글자를 찾으면 `document` 결과 하나가 분석 id·날짜·locator와 함께 나오고, 그 출처를 그대로 `brain files show`에 주면 같은 위치의 원문이 나오며, 리포트에 넣은 시험 비밀 문자열이 두 출력 모두에서 가려지고, 분석과 관계없는 core 파일은 결과에 나오지 않으며, 출력 코덱 계약 시험의 probe가 문서 조각을 포함한다."
+description = "17.2의 텍스트 질의 함수와 검색 Store port·PG adapter, 17.3의 공통 결과 budget·원문 출처 계약 위에 리포트 검색 층을 잇는다. 문서 대상을 확장이 리포트로 등록한 core 파일(파일 요청 metadata의 종류)의 현재 추출 세대로 좁힌다(2026-11-05: `analyses` 관계 대신, 21.5의 등록을 받는다). `document` 결과 종류(file_id·표시 이름·`chunk_locator`·리포트 날짜·출처 확장·원문 접근 상태)와 `brain recall docs`, 문서 출처로 원문을 읽는 `brain files show`(현재 세대의 위치와 앞뒤)를 CommandSpec·명령 메타·SDK 1:1로 만든다. 출력 코덱 계약의 `OutputProbe`에 문서 조각·표시 이름·locator를 더하고 실제 renderer를 통과시킨다. 2가 만든 시험 기반에 합성 리포트 fixture를 더하고 뒤 스토리가 다시 쓴다. 각 plan은 실행 명령, 사전 조건, 관찰값, 정리 명령을 적는다. 받는 것: 11의 PG 전문 색인(`document_chunks.body`의 expression GIN)·추출 세대, 21.5의 리포트 파일 등록. 실제 이름은 착수 시점 main HEAD에서 확인한다. plan 상한은 리포트 한 파일, 질의 하나, 원문 경로 하나다."
+verify = "통합 시험(PG. 시험 이름과 실행 명령은 plan에 적는다)에서 합성 리포트 Markdown 하나를 확장 파일 요청으로 등록하고 `brain recall docs`로 그 안의 한국어 두 글자를 찾으면 `document` 결과 하나가 리포트 날짜·출처 확장·locator와 함께 나오고, 그 출처를 그대로 `brain files show`에 주면 같은 위치의 원문이 나오며, 리포트에 넣은 시험 비밀 문자열이 두 출력 모두에서 가려지고, 리포트가 아닌 core 파일은 결과에 나오지 않으며, 출력 코덱 계약 시험의 probe가 문서 조각을 포함한다."
 covers = ["E17-2", "E17-3", "E17-6"]
-after = [3, "14.5", "11.4"]
+after = [3, "21.5", "11.4"]
 hitl = false
 risk = "medium"
 references = ["_bmad-output/personal-brain/tickets/epic-search-and-health-query/epic-search-and-health-query-research-code.md, §1, §4, §7, 스토리 후보 T1"]
@@ -40,14 +40,14 @@ references = ["_bmad-output/personal-brain/tickets/epic-search-and-health-query/
 [[entry]]
 id = 4
 type = "story"
-title = "건강 수치 조회: brain health query의 합계·평균이 독립 계산과 같고, NULL·ambiguity·현지 날짜 규칙을 지킨다"
-description = "E17-4를 만든다. Core 건강 조회 port와 집계 함수: 입력은 기간(현지 날짜 범위+IANA 시간대, 또는 반열린 UTC 순간 범위), 지표 목록, 운동 조건, 집계(`sum` | `mean`, catalog 허용분만), 묶음(`day` | `month` | 없음). Store는 14.2의 \"현재\" view와 catalog에서 선택된 행과 근거를 읽고, 합계·평균은 Core 코드가 계산한다. NULL은 0이 아니고 평균의 분모는 유효 숫자 수이며, 값이 없으면 `value = null`과 개수 0이다. ambiguity는 집계에서 빠지고 건수·이유로 돌아온다. 단위가 다른 행은 섞지 않는다. 응답은 지표·정규 단위·집계·값·관측 수·NULL 수·ambiguity 수·적용 기간과 시간대를 낸다. 날짜형은 날짜+시간대로 비교하고, 순간형만 설정 시간대의 날짜 경계를 반열린 UTC로 바꾼다(23·25시간 날 포함). `brain health query`를 CommandSpec·명령 메타·SDK 1:1로 만든다. 독립 계산 fixture는 손으로 정한 기대값과 원시 행 목록이고, 제품의 집계·현재 선택 함수를 재사용하지 않는다."
-verify = "시험(PG. 시험 이름과 실행 명령은 plan에 적는다)에서 `[10, NULL, 30]`의 합계 40·평균 20, 같은 논리 키의 다른 dataset·버전 중복(현재 값만 집계), ambiguity 두 행(빠지고 건수 2), 전부 NULL(`value = null`, 개수 0), 0건, 분류형 지표의 평균(정해진 오류), 다른 단위, 자정 경계, America/New_York DST 전환일, 운동 필터가 모두 손으로 정한 기대값과 같고, `brain health query`가 같은 결과를 출력 코덱을 거쳐 내며, garmin schema를 읽는 SQL이 없다(정적 검사)."
+title = "건강 수치 조회: recall 스킬이 Garmin 조회 명령으로 기간 합계·평균을 묻고, 독립 계산과 같은 값으로 답한다"
+description = "E17-4를 만든다(2026-11-05 바뀜). core 건강 조회 port·brain health query는 만들지 않는다. recall 스킬이 질문을 기간(현지 날짜+시간대)·지표·운동·집계 조건으로 바꿔 21.5의 Garmin 읽기 명령(`brain ext garmin period-summary`·`daily-values`, MCP 도구)을 부르고, 응답의 값·단위·관측 수·NULL 수·적용 기간을 근거로 답하게 한다. 미설치·비활성·0건·명령 오류는 구분해 안내한다. 독립 계산 fixture(손으로 정한 기대값과 원시 행)로 명령 결과를 확인하며 제품 집계 함수를 재사용하지 않는다."
+verify = "시험(합성 Garmin 데이터를 넣은 설치 fixture)에서 `[10, NULL, 30]`의 합계 40·평균 20, 전부 NULL(값 null·개수 0), 0건, 자정 경계, America/New_York DST 전환일 질의가 손으로 정한 기대값과 같고, recall 스킬 행동 시험이 명령을 불러 같은 값을 답하며, Garmin 미설치·비활성 때 명령이 없음을 안내하고, core 코드에 garmin schema를 읽는 SQL이 없다(정적 검사)."
 covers = ["E17-4", "E17-6"]
-after = [3, "14.2"]
+after = [3, "21.5"]
 hitl = false
-risk = "high"
-references = ["_bmad-output/personal-brain/tickets/epic-search-and-health-query/epic-search-and-health-query-research-code.md, §5, 스토리 후보 T4"]
+risk = "medium"
+references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-37", "_bmad-output/personal-brain/tickets/epic-garmin-extension/epic-garmin-extension.md, E21-5"]
 
 [[entry]]
 id = 5
@@ -76,10 +76,10 @@ risk = "low"
 id = 7
 type = "story"
 title = "이 Mac에서 확인: 설치본에서 대화·리포트를 찾아 원문을 읽고 건강 수치를 묻는 실제 질문 10건 중 7건이 성공한다"
-description = "기능 묶음을 플러그인 배포(`plugin/app-ref`를 앞선 커밋으로, `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올림)로 이 Mac의 설치본에 넣고 에이전트가 확인한다(2026-10-28 위임, `hitl = false`). 순서: 설치본에서 조각 drain이 기존 세션을 따라잡는지 확인 → `brain recall chunks|docs|expand`, `brain sessions read`, `brain files show`, `brain health query`, doctor, recall 스킬 발견을 확인 → 이 Mac의 실제 기억으로 질문 10개(대화 6, 분석 리포트 2, 건강 수치 2)를 만들고, 실행 전에 Brain 홈의 private 검증 기록에 문항, 기대 식별자·수치 oracle, 허용 재질의, 문항별 성공 조건(검색 문항은 결과 5건 안 적중과 출처만으로 원문 읽기, 건강 문항은 독립 계산 일치)을 고정한 뒤 돌린다. 실제 질문 원문·원시 행·명령 출력·오류 상세는 private 기록에만 두고, 공개 plan에는 문항 id, 중립 질문 유형, 공개용 불투명 id, 성공 여부, 값 없는 실패 분류만 둔다. 최초 10건 판정과 버그 수정 뒤 재실행을 구별한다. 7건 미만이거나 설치·doctor·원문·명령 확인이 실패하면 실패 원인(질의·색인·결과 계약·설치)을 분류해 plan에 남기고 버그 스토리로 고친 뒤 다시 확인한다. 원격 push가 있어야만 하는 단계는 `operator_actions`다."
+description = "기능 묶음을 플러그인 배포(`plugin/app-ref`를 앞선 커밋으로, `plugin/.claude-plugin/plugin.json`의 `version`을 함께 올림)로 이 Mac의 설치본에 넣고 에이전트가 확인한다(2026-10-28 위임, `hitl = false`). 순서: 설치본에서 조각 drain이 기존 세션을 따라잡는지 확인 → `brain recall chunks|docs|expand`, `brain sessions read`, `brain files show`, `brain ext garmin period-summary`, doctor, recall 스킬 발견을 확인 → 이 Mac의 실제 기억으로 질문 10개(대화 6, 분석 리포트 2, 건강 수치 2)를 만들고, 실행 전에 Brain 홈의 private 검증 기록에 문항, 기대 식별자·수치 oracle, 허용 재질의, 문항별 성공 조건(검색 문항은 결과 5건 안 적중과 출처만으로 원문 읽기, 건강 문항은 독립 계산 일치)을 고정한 뒤 돌린다. 실제 질문 원문·원시 행·명령 출력·오류 상세는 private 기록에만 두고, 공개 plan에는 문항 id, 중립 질문 유형, 공개용 불투명 id, 성공 여부, 값 없는 실패 분류만 둔다. 최초 10건 판정과 버그 수정 뒤 재실행을 구별한다. 7건 미만이거나 설치·doctor·원문·명령 확인이 실패하면 실패 원인(질의·색인·결과 계약·설치)을 분류해 plan에 남기고 버그 스토리로 고친 뒤 다시 확인한다. 원격 push가 있어야만 하는 단계는 `operator_actions`다."
 verify = "에이전트가 이 Mac에서 위 순서를 한 번 돌리고 결과를 plan에 남긴다(공개 투영만). 각 명령이 설치본에서 정상 응답을 내고, 실제 질문 10건 중 7건 이상이 미리 고정한 기준으로 성공하며, plan에 실제 질문 원문·본문·건강값이 없고, 합성 본문·건강값 표식을 넣은 시험 질의와 실패 출력이 공개 증거에 섞이지 않는다."
 covers = ["E17-6", "E17-7"]
-after = [1, 2, 3, 4, 5]
+after = [1, 2, 3, 4, 5, "21.7"]
 hitl = false
 risk = "medium"
 references = ["_bmad-output/personal-brain/tickets/epic-search-and-health-query/epic-search-and-health-query-research-code.md, §9(Done when 4), 스토리 후보 T6"]

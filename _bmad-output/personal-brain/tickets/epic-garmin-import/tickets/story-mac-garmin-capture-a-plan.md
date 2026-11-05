@@ -3,7 +3,7 @@ title: '이 Mac의 설치본에서 새 Garmin capture를 규칙 A로 반입하�
 type: 'feature'
 ticket: 8
 created: '2026-11-03'
-status: blocked
+status: dropped
 baseline_revision: 'e33a78718d6fefda38312c98f2ca2428b9bf0b97'
 route: 'full'
 route_source: 'pinned'
@@ -19,8 +19,6 @@ deferred: []
 operator_actions:
   - >-
       티켓 브랜치 push와 중앙 main 병합 후 원격 marketplace에 plugin version 갱신을 반영한다. 로컬 공식 bootstrap 설치본 갱신과 Garmin 설치는 성공했다.
-blocked_at: "2026-11-03"
-blocked_reason: "사용자 strict gate 유지: raw profile 증거가 없는 보관 후보 1개의 Garmin 계정을 확인할 수 없어 실제 import·전수 verify 미실행"
 ---
 
 <intent-contract>

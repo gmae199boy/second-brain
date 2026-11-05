@@ -7,13 +7,14 @@ paradigm: 'hexagonal (ports & adapters), 단명 CLI + 상주 데몬 하나(epic 
 scope: 'slice 1 — V1은 세션 수집, 첨부·Google Drive 파일 수집과 문서 찾기, 상주 데몬, 설치(로컬 백업은 V1 뒤, epic 5). 작업 로그·시간 조회·시작 맥락은 V1 다음. 대화 검색·원문 읽기는 V1 epic 17. 개인용, 기계 한 대, 수집 경로는 Claude Code 하나(Harness 중립 구조). 설치·hook 진입점은 Claude Code 플러그인. 2026-10-28: 저장소는 OrbStack Docker의 PostgreSQL 하나이고, 그 위에 공통 작업·스케줄러, 확장 설치, 공통 채널, 텍스트 검색과 선택 설치형 Garmin 확장(별도 프로세스)을 둔다(epic 11~18)'
 status: final
 created: '2026-10-08'
-updated: '2026-10-28'
+updated: '2026-11-05'
 binds: [FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, FR-12, FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22, FR-23, FR-24, FR-25, FR-26, FR-27, FR-28, NFR-1, NFR-2, NFR-3, NFR-4, NFR-5, NFR-6, NFR-7, NFR-8, NFR-9, R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13, R14, R15, R16, R17, R18]
 sources:
   - ../initiative-personal-brain.md
   - ../prep-garmin-absorption/accepted-intent.md
   - ../prep-garmin-absorption/integration-boundaries.md
   - ../prep-garmin-absorption/migration-contract.md
+  - ../research-garmin-extension-redesign-2026-11-05/research-garmin-extension-redesign-2026-11-05.md
   - ../prd-brain-v1-slice-1/prd-brain-v1-slice-1.md
   - ../prd-brain-v1-slice-1/addendum.md
   - ../change-surface-plugin-daemon/change-surface-plugin-daemon.md
@@ -35,7 +36,7 @@ companions: []
 | 층 | 위치 | 아는 것 |
 | --- | --- | --- |
 | Core (도메인 + use case + port) | `packages/core` | 외부 패키지 없음 |
-| Adapter (port 구현) | `packages/postgres`(Store 구현 하나), `packages/claude-code`, `packages/modelstudio`, 채널·모델 실행 adapter(AD-35, 패키지 배치는 epic 15·16). `packages/sqlite`는 전환 뒤 지운다 | `core` + 자기 제품 하나 |
+| Adapter (port 구현) | `packages/postgres`(Store 구현 하나), `packages/claude-code`, `packages/modelstudio`, 채널 adapter(AD-35, 패키지 배치는 epic 15), 예약 cron 계산 adapter(AD-39). `packages/sqlite`는 전환 뒤 지운다 | `core` + 자기 제품 하나 |
 | 묶음 (조립용 표면) | `packages/second_brain` | 위 전부. 재export만, 코드 없음 |
 | Runtime (CLI·설치기·hook 진입점·설정·spool·데몬) | `apps/cli` | `second_brain` |
 | 플러그인 (Claude Code hooks·skills·bootstrap 복사본, AD-19) | `plugin/` | 코드 의존 없음. shim 절대 경로만 부른다 |
@@ -53,9 +54,11 @@ flowchart LR
   cc --> core
   ms --> core
   cli -. "manifest 명령을 자식 프로세스로 (AD-33)" .-> ext["extensions/garmin 등<br/>(별도 프로세스)"]
-  ext -. "DB 계약: 계약 표 INSERT, raw view (AD-30)" .-> dbc[("PostgreSQL<br/>brain·확장 schema")]
+  ext -. "DB 계약: 자기 schema + core 요청 표 INSERT (AD-30)" .-> dbc[("PostgreSQL<br/>brain·확장 schema")]
   pg -. "SQL" .-> dbc
 ```
+
+**확장 원칙(2026-11-05 사용자, 최상위):** core는 확장의 내용을 모른다. 확장은 의족처럼 붙는다 — manifest 선언(일감·예약·설정 키·명령·migration·필요한 core 기능)으로만 core와 결합하고, 데이터·로직·분석은 확장 schema와 확장 코드 안에 있다. core가 주는 것은 확장 지점뿐이다: 스케줄러·감독자(AD-21·33·39), 설정(AD-18), 채널 발신(AD-35), 파일 등록(AD-23·30), 명령 노출(AD-37), 설치·배포(AD-19·38), migration 실행기(AD-31). 여러 확장의 데이터를 합치는 공통 계약은 두 번째 출처가 실제로 생길 때 확장 지점으로 더한다. core 안에 특정 확장의 지표·프롬프트·표 이름이 들어가면 위반이다.
 
 실선 화살표는 허용되는 import 방향이다. 역방향, adapter 간 의존, `core`의 외부 의존은 금지다. 점선은 import가 아니라 프로세스·DB 경계다. 확장과 core 사이에는 import 화살표가 없다.
 
@@ -317,7 +320,7 @@ sequenceDiagram
 - **Prevents:** 키가 공개 저장소로 들어오는 것, 설정을 읽는 곳이 흩어지는 것, 모르는 설정이 조용히 기본값으로 떨어지는 것, 기계를 옮기면 사용자 설정을 잃는 것, 확장마다 설정 체계를 따로 만드는 것
 - **Rule:**
   - **기계 값**은 `~/.second_brain/config.toml`(`schema_version` 포함)에만 둔다: 저장소 접속 `[store] url_env`(기본 `BRAIN_DATABASE_URL`, AD-10), 경로(`[mirror] path`, `[files] path`), 자동 업데이트 `[update] auto`(기본 true. 설치기가 TTY에서 묻는다, AD-19·27, 2026-10-16). Stop 점검 여부 `[discipline] stop_remind`(기본 false, 설치기는 묻지 않는다, epic 3, AD-17)는 DB를 열지 않는 조기 반환(AD-6)이 읽으므로 여기 남는다. 데몬은 설치되면 늘 켠다(설정 키 없음. 임시 정지는 `daemon stop`, AD-25·27, 2026-10-26).
-  - **사용자 설정**은 DB `brain.settings`(key, value, updated_at)에 두고 `brain config get/set`이 읽고 쓴다. 키는 설정 코덱이 정의한다. 시간대 `timezone`(기본 `Asia/Seoul`)은 `config.toml`에서 여기로 옮긴다. 다음 키는 `drive.keep_local_days`(epic 8)다. 확장의 키는 `<ext>.*` 이름공간이고 manifest가 선언한다(AD-29). [ADOPTED]
+  - **사용자 설정**은 DB `brain.settings`(key, value, updated_at)에 두고 `brain config get/set`이 읽고 쓴다. 키는 설정 코덱이 정의한다. 시간대 `timezone`(기본 `Asia/Seoul`)은 `config.toml`에서 여기로 옮긴다. 다음 키는 `drive.keep_local_days`(epic 8)다. 확장의 키는 `<ext>.*` 이름공간이고 manifest가 선언하며 설치 때 기본값이 들어간다(AD-29). 확장은 설정 파일을 따로 두지 않는다(2026-11-05 사용자). 설정 행은 `user_id`를 갖고(기존 행은 "나"로 채운다, AD-40) 기계 공통 값은 `user_id` NULL이다. 유일성은 `UNIQUE NULLS NOT DISTINCT (user_id, key)`다. 설정 코덱이 키마다 scope(`user` | `global`)를 선언하고 다른 scope의 쓰기는 거부한다. 읽기는 사용자 행 → 공통 행 → 코덱 기본값 순이다. manifest 기본값은 행이 없을 때만 넣고, 재설치·업그레이드가 기존 값을 덮지 않는다. [ADOPTED]
   - **비밀**(비밀번호가 든 DB URL, 토큰)은 `~/.second_brain/.env`에만 둔다. 설정 파일에는 값이 아니라 환경 변수 이름만 적는다. 예외는 외부 라이브러리가 스스로 관리하는 세션 파일 하나다: Garmin tokenstore(기본 `~/.garmin-pipeline/tokens`, 폴더 0700·파일 0600)는 그 자리에 두고, 설정 snapshot에는 경로(`garmin.tokenstore`)만 담으며, 내용은 라이브러리의 login/dump만 읽고 쓴다(2026-10-28, epic 16). 그 밖의 비밀을 이 방식으로 두지 않는다.
   - 설치 기록(`<home>/installed.json`)과 런타임 상태(`<home>/run/`)는 설정이 아니라 사실이고 코덱을 거치지 않는다(AD-19, Conventions).
   - 읽기·쓰기는 Runtime의 설정 코덱 하나만 한다(설치기 포함). 모르는 키는 경고하고, Core에는 값으로 넘긴다.
@@ -337,6 +340,7 @@ sequenceDiagram
   - **doctor**는 OrbStack 실행(없거나 꺼져 있으면 안내), 저장소(`store`: 연결, 쓰기 가능 — 다른 프로세스가 잠금을 쥐고 있어 확인할 수 없으면 `warn`, `pg_trgm`을 버전 문자열이 아니라 직접 찔러 봄), 소유자별 스키마 버전(AD-20), shim과 node 경로의 실존, 실행 중인 node가 Stack 지원 보안 기준을 만족하는지, Harness별 마지막 hook 수신 시각, 플러그인(`installed.json`의 `commit`과 `app-ref`·빌드 신원의 관계, `PLUGIN_NOT_INSTALLED`·`PLUGIN_BEHIND`·`PLUGIN_DUPLICATE`는 `warn`)을 검사한다. 상태는 `ok | warn | fail | skip`(`skip`은 `detail`에 사유)이고, 선행 점검이 실패하면 그에 의존하는 점검은 `skip`이며 `detail`에 선행 항목을 적는다. `summary`(passed·warned·failed·skipped 건수)를 낸다. `warn`은 exit 0이다.
 
   - **수집 런처와 마지막 수신(2.14, 2026-10-21):** Stop·SessionEnd는 `plugin/bin/brain.sh`가 `<home>/bin/brain` shim 절대 경로만 부른다. shim이 node를 찾고 재고정한다. shim이 없으면 조용히 exit 0이며, SessionStart 런처는 bootstrap 뒤에 stdin 없는 `queue drain`을 한 번 돌려 놓친 세션을 줍고 drain 출력은 버린다. bootstrap 종료 코드는 보존한다. `sessions ingest`는 payload를 읽으면 DB 작업 전에 `<home>/run/last-hook-<harness>`를 임시 파일→rename으로 쓴다. 내용은 `SECOND_BRAIN_PLUGIN_ROOT` 한 줄(없으면 빈 파일), mtime은 수신 시각이다. 진단 기록 실패는 수집을 막지 않는다. doctor `last-hook`은 `run/plugin.json`의 root(없으면 완료 기록)와 비교해 다르면 `PLUGIN_DUPLICATE`를 낸다.
+  - **확장 플러그인은 따로다**(2026-11-05 사용자, AD-38): 확장마다 같은 marketplace의 별도 플러그인이고 `/plugin`으로 따로 설치·제거한다. 확장 플러그인은 core bootstrap을 복제하지 않는다.
   - 공통 install 스킬은 Garmin 미설치 때도 `plugin/skills/`에 기본 포함한다(epic 13). 실제 CLI 메타·상태 확인 → 설치 → 사용자 로그인 → 연결 확인 → 공통 예약 → 실제 결과 보고 순서다. 미지원 명령을 임의 설치로 우회하지 않는다. 성공 단계만 보고·보존하고 부분 설정에서 재진입한다. 실패·취소·로그인 필요·예약 미준비를 구분하며, 미준비는 예약 대기와 수동 실행 가능 여부를 알린다. 비밀번호·MFA는 대화/스킬에 남기지 않는다.
 
 ### AD-20 — 운영: 스키마 버전, 업그레이드, 백업, 제거
@@ -451,29 +455,32 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
   - 쓰기 verb(`log.append`, `sessions.ingest`, `messages.redact` 등)는 `session` 인자(`harness:harness_session_id`)가 필수이고 없으면 오류 `SESSION_REQUIRED`다. 읽기 verb는 선택이다. 세션 토큰은 시작 맥락의 토큰 줄이 준다(AD-17). 출처 우선순위는 AD-4와 같다(명시 인자 > 소켓 필드 > 환경 변수). 플러그인 `.mcp.json`은 `${CLAUDE_PLUGIN_ROOT}`의 래퍼를 가리키고 래퍼가 shim을 exec한다.
   - 확인이 필요한 명령은 MCP에서도 같은 코드(`CONFIRMATION_REQUIRED`)로 멈춘다. MCP 도구 결과는 CLI와 같은 엔벨로프를 `content`에 담고, `ok: false`면 `isError: true`다.
 
-### AD-29 — 확장은 connector다 [ADOPTED]
+### AD-29 — 확장은 자기 기능을 끝까지 소유한다 [ADOPTED]
 
-- **Binds:** R1, R2, R16, C4
-- **Prevents:** core가 확장의 계산을 불러 확장에 의존하는 것, 확장을 더할 때마다 core 코드를 고치는 것, 확장을 설치하지 않은 Brain이 확장 런타임을 요구하는 것
+- **Binds:** R1, R2, R11, R12, R16, C4
+- **Prevents:** core가 확장의 계산·데이터 모양을 알게 되는 것, 확장은 수집기로 남고 나머지를 core가 다시 만드는 이중 작업, 확장을 더할 때마다 core 코드를 고치는 것, 확장을 설치하지 않은 Brain이 확장 런타임이나 확장 DDL을 요구하는 것
 - **Rule:**
-  - 확장은 별도 패키지·프로세스이고 언어는 무관하다. manifest가 선언한다: 이름, 버전, 호환 core 버전, 일감 종류와 실행 명령, 기본 예약, DDL 마이그레이션(AD-31), 설정 키(`<ext>.*`, AD-18), raw view(AD-30), 인증·로그인 단계.
-  - 확장은 자기 파이프라인을 끝까지 돈다(Garmin: 인증, 수집 → raw → 정규화, digest, 그래프). core는 출처 중립 건강 데이터 계약만 갖는다.
-  - 의존은 확장 → core뿐이다. core는 manifest가 선언한 명령을 부르는 것 말고는 확장 로직을 import하지도 부르지도 않는다. 확장을 더해도 core 코드는 바뀌지 않는다. AD-4의 connector 계약과 같은 모양이다.
+  - 확장은 별도 패키지·프로세스이고 언어는 무관하다. manifest가 선언한다: 이름, 버전, 호환 core 버전, 일감 종류와 실행 명령·의존, 기본 예약(AD-39), DDL 마이그레이션(AD-31), 설정 키(`<ext>.*`, AD-18), 명령(AD-37), 필요한 core 기능(예: `channel.send`), 인증·로그인 단계.
+  - 확장은 수집·정규화·저장·분석·조회를 끝까지 소유한다. core는 출처 중립 건강 계약을 갖지 않는다(2026-11-05 사용자. 이전의 "core는 출처 중립 건강 데이터 계약만 갖는다"를 대신한다).
+  - 의존은 확장 → core뿐이다. core는 manifest가 선언한 명령을 부르는 것 말고는 확장 로직을 import하지도 부르지도 않고, 확장 schema의 표를 JOIN하지도 않는다. 확장을 더해도 core 코드는 바뀌지 않는다. AD-4의 connector 계약과 같은 모양이다.
+  - 확장이 core에 있는 기능(채널 발신, 파일 등록, 설정, 예약)과 같은 일을 하던 코드는 core 것으로 바꾼다. 확장 안에 자체 발송기·자체 예약기·설정 파일을 두지 않는다(2026-11-05 사용자).
   - 확장을 설치하지 않은 Brain은 확장 런타임(Garmin은 Python·uv)을 설치하지도 읽지도 않는다.
-  - core 확장 registry(epic 13)가 설치·활성 상태의 유일한 작성자이고 공개 상태 view를 낸다. 검색·doctor·install 스킬은 이 상태를 읽는다. 비활성화는 예약 발화·새 청구를 막고, 대기/진행 작업의 중단 상태를 기록한다. 기존 schema·데이터·분석은 보존하고 검색 가능 여부와 비활성 상태를 응답에 명시한다. 진행 작업 종료 방식은 epic 12·13 인셉션에서 정한다.
-  - epic 16(Garmin connector)은 기존 raw/normalize/digest 수치와 실패 경계, 인증/계정 보호의 보존을, epic 18(core 건강 분석)은 입력 필터·report-input fixture의 보존을 검증한다(R11). 새 PG 계약은 exact raw text·NULL/단위·중복/재개·FK mapping·평가 비삭제·lease/cancel·계정 차단을 포함한다.
+  - core 확장 registry(epic 13)가 설치·활성 상태의 유일한 작성자이고 공개 상태 view를 낸다. 검색·doctor·install 스킬은 이 상태를 읽는다. 비활성화는 예약 발화·새 청구·확장 명령(AD-37)을 막고, 대기/진행 작업의 중단 상태를 기록한다. 기존 schema·데이터·분석은 보존한다.
+  - Garmin(2026-11-05 사용자): 옛 프로그램(`~/github/garmin` `7fb33dd`)을 거의 그대로 확장으로 쓴다. 바꾸는 것은 SQLite→PostgreSQL의 SQL·드라이버·읽기 snapshot(REPEATABLE READ)과, 예약·발송·설정을 core에 잇는 부분뿐이다. 옛 표는 같은 모양의 `garmin` schema native 표가 되고, 옛 데이터는 원본 SQLite 표를 같은 모양 표로 한 번 복사해 반입한다(AD-36). 평가는 덮어쓰지 않는 이력으로 바꾼다(R7). 옛 계산·프롬프트·schema·report_input 의미는 바꾸지 않는다.
+  - Garmin 저장 계약: "같은 모양"의 예외는 `user_id`·계정 연결 id 칸 추가와 평가 이력뿐이다. 옛 자연키는 계정 연결 안에서 유일하다. raw 응답은 불변이다. 정규화 파생 표(`day_summary`·`workout`·`exercise_log` 등)는 옛 프로그램처럼 재계산으로 갱신되는 투영이고 revision을 붙이지 않는다. 평가는 `(계정 연결, report_date, scope, revision)` 이력 행이고, 옛 SQL이 읽는 한 행은 최신 revision을 고르는 view가 준다. 반입 때 겹친 자연키는 선택한 출처의 행만 native 표에 쓰고 미선택 후보는 `preserved_rows`에 둔다(AD-36).
 
 ### AD-30 — schema 경계와 DB 계약 [ADOPTED]
 
 - **Binds:** R3, R5, R11, R16, R18
-- **Prevents:** 확장 내부 표 구조가 core 코드에 새는 것, core 규칙을 두 언어로 지키는 것, raw와 정제가 갈라진 트랜잭션, 확장이 남의 출처 행이나 core 내부 표를 바꾸는 것
+- **Prevents:** 확장 내부 표 구조가 core 코드에 새는 것, core 규칙을 두 언어로 지키는 것, 확장이 남의 출처 행이나 core 내부 표를 바꾸는 것, core가 확장 데이터를 직접 읽어 확장에 묶이는 것
 - **Rule:**
   - database는 하나다. core schema는 `brain`이고, 확장마다 자기 schema(`garmin`)를 갖는다. 확장 → core FK는 허용하고, core → 확장 FK는 금지한다.
-  - 확장은 자기 schema에 자유롭게 쓴다. core에는 공개 계약 표에만 쓴다: 건강 측정·요약, legacy 이전 분석(`analyses`), 채널 발신 요청과 legacy 채널 이력, 파일 등록 요청(`file_requests`). 쓰는 role은 자기 `brain_ext_<name>`이고 INSERT만 한다. row-level security로 출처가 자기인 행만 쓸 수 있고, UPDATE·DELETE는 없다. 그 밖의 core 표에는 권한이 없다. raw와 정제는 한 트랜잭션에 쓸 수 있다.
-  - 확장은 고정 모양의 읽기 전용 view `<ext>.raw_records`(source, account, key, endpoint, fetched_at, checked_at, 받은 그대로의 text인 body)를 낸다. core는 확장 데이터를 이 view로만 읽는다. `key`는 확장이 정하는 안정 정규형이고 view 안에서 `(source, account, key, endpoint)`가 하나의 원본을 가리킨다. Garmin은 `<scope>/<원래 key>`다(2026-10-28, epic 14).
+  - 확장은 자기 schema에 자유롭게 쓴다. core에는 범용 요청 표에만 쓴다: 파일 등록 요청(`file_requests`), 채널 발신 요청. 쓰는 role은 자기 `brain_ext_<name>`이고 INSERT만 한다. row-level security로 출처가 자기인 행만 쓸 수 있고, UPDATE·DELETE는 없다. 그 밖의 core 표에는 권한이 없다(2026-11-05: 건강 측정·legacy `analyses` INSERT는 쓰기 계약에서 빼고 정리 티켓이 표·권한과 함께 지운다. legacy 채널 이력 표는 core 채널 소유로 남긴다).
+  - core는 확장 schema를 읽지 않는다. 확장 데이터가 core 표면에 필요하면 확장이 명령(AD-37)으로 내놓는다. 기존 `<ext>.raw_records`와 `garmin.body_records`·`garmin.collect_target_accounts` 읽기 view는 core 소비 경로(18.1·18.2)와 함께 정리 티켓에서 없앤다.
   - 확장 role은 계약 표 owner와 분리한 non-superuser·NOBYPASSRLS이며 RLS WITH CHECK 출처 정책은 변경 가능한 GUC가 아니라 DB role에 결합한다.
-  - role은 셋이다: 마이그레이션 소유자(setup), `brain_app`(TS 런타임), `brain_ext_<name>`(자기 schema 전부, core 계약 표 INSERT, core 공개 view SELECT). 감독자는 확장의 DB URL을 자식 프로세스의 환경 변수로 넘기고 argv에는 넣지 않는다(AD-33).
-  - core가 요청→`work_items` 인계를 단독 소유한다. 미인계 요청을 다시 발견하고 요청 ID 대상의 멱등 일감 생성·인계 표식을 같은 트랜잭션에 확정한다. 요청 INSERT 뒤 crash해도 복구하며 legacy 채널 이력은 인계하지 않는다. `file_requests` 계약은 epic 14가 최초 사용 전에 소유한다: 출처+안정된 요청 키, 내구성 인계 경로, 예상 해시·크기·미디어 타입, 공개 결과 view의 `request_id → file_id/실패`와 상태·재개 규칙. core가 해시 검증·파일 관계 확정을 완료할 때까지 생산자는 바이트를 보존하며 확인 뒤 core가 정리한다.
+  - role은 셋이다: 마이그레이션 소유자(setup), `brain_app`(TS 런타임), `brain_ext_<name>`(자기 schema 전부, core 요청 표 INSERT, core 공개 view SELECT). 감독자는 확장의 DB URL을 자식 프로세스의 환경 변수로 넘기고 argv에는 넣지 않는다(AD-33).
+  - core가 요청→`work_items` 인계를 단독 소유한다. 미인계 요청을 다시 발견하고 요청 ID 대상의 멱등 일감 생성·인계 표식을 같은 트랜잭션에 확정한다. 요청 INSERT 뒤 crash해도 복구한다. `file_requests`: 출처+안정된 요청 키, 내구성 인계 경로, 예상 해시·크기·미디어 타입, 공개 결과 view의 `request_id → file_id/실패`와 상태·재개 규칙. core가 해시 검증·파일 관계 확정을 완료할 때까지 생산자는 바이트를 보존하며 확인 뒤 core가 정리한다.
+  - 확장 schema의 쓰기도 감독자 attempt를 운반하고, 확장은 자기 표에서 오래된 attempt의 확정(평가 저장·요청 INSERT)을 거부한다(AD-33).
 
 ### AD-31 — 마이그레이션 소유와 번호 [ADOPTED]
 
@@ -484,17 +491,17 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
   - 버전 표는 `brain.schema_migrations(owner, version, name, checksum, applied_at)`다. 소유자(core, 확장마다)는 자기 연속 번호 열을 갖는다. 같은 소유자 안의 번호 중복은 실행기가 거부한다.
   - 파일마다 자기 트랜잭션에서, 실행기의 advisory lock 아래 적용한다.
   - 확장 마이그레이션은 확장 패키지 안에 있고 설치·갱신 때 적용된다.
-  - core baseline은 PG 0001부터 다시 끊는다. SQLite 0001~0009와 같은 수준이다. 지금의 `packages/postgres/migrations/0001_initial.sql`은 초기 설계라 대체한다(운영 PG 데이터 없음).
+  - 적용된 마이그레이션 파일은 지우거나 번호를 바꾸지 않는다(실행기가 checksum·부재를 거부한다). 동결·제거는 같은 소유자의 새 번호 forward 마이그레이션으로만 한다. 별도 레포로 옮긴 확장도 같은 owner 이력을 잇는다. 확장은 자기 migration 실행기를 따로 두지 않는다(2026-11-05).
+  - (완료된 과거 결정) core baseline은 SQLite 0001~0009와 같은 수준의 PG 0001로 끊었다. 배포된 PG 0001과 그 뒤 이력은 보존하고 바꾸지 않는다. 새 설치에서 동결된 옛 DDL을 빼는 baseline 재편은 업그레이드 호환 정책을 따로 정하기 전에는 하지 않는다.
 
-### AD-32 — 정제 데이터는 버전별로 쌓는다 [ADOPTED]
+### AD-32 — core 건강 계약은 없앤다 [ADOPTED]
 
 - **Binds:** R5, R6, R7, R15, R16, C5, C6
-- **Prevents:** 이전·수집·조회가 다른 갱신 규칙을 쓰는 것, 기존 값을 덮어쓰는 것(R7), 빠진 metadata를 추정값으로 채우는 것
+- **Prevents:** 옛 core 건강 경로가 남아 새 경로와 헷갈리거나 다시 소비되는 것, 확장 데이터 의미를 core가 두 번 갖는 것, 기존 값을 덮어쓰는 것(R7)
 - **Rule:**
-  - core 건강 행은 불변이다. 논리 측정 키(출처·계정·지표·운동 identity·현지 날짜/순간·시간대)와 보관 키를 구분한다. 보관 키는 논리 키 + 데이터셋/이전 출처 + 정규화 버전 + 관측 revision(원천의 안정된 revision 또는 원문 해시)이다. 같은 입력 재처리는 멱등이고 수정된 관측은 같은 정규화 버전이어도 새 행이다.
-  - “현재” view는 권위 선택 기록(규칙 버전, dataset 순서, 적용 범위, 선택·미선택 provenance)의 dataset 순서 → 관측 revision → 지원 정규화 버전 순으로 고른다. 기록 시각으로 데이터셋 권위를 추정하지 않는다. 관측 revision은 원문 해시로 식별하고 같은 dataset 안에서 원천 수신 시각(`fetched_at`)으로 순서를 정한다. 정규화 버전은 정수로 비교한다. 규칙 순서로 고른 값이 현재이고, 고르지 않은 후보는 보관만 된다. 규칙으로 고를 수 없는 충돌(같은 순위 안의 다른 값, 같은 시각·다른 해시, 계정 미확인)만 ambiguity로 반환하고 기본 집계에서 제외한다. 같은 값의 동률은 하나로 보인다. epic 14가 이 계약을 고정하며(규칙 v1은 C6 선택지 A, AD-36) epic 16·17·18이 소비한다. 새 수집 출처를 앞에 둔 새 규칙 버전은 epic 16이 쓴다(2026-10-28).
-  - epic 14가 지표 식별자·정규 단위·값 타입·NULL 의미·계정 identity·날짜/순간 배타 조건·운동 identity·metric별 허용 집계를 정의하고 TS/Python이 같은 fixture를 통과한다. NULL 키는 DB에서 동등하게 처리해 재삽입 중복을 막는다. epic 17의 구조화 수치 조회 port는 기간·지표·운동·집계 조건을 받고 코드가 합계/평균을 계산하며 독립 계산 fixture로 검증한다(R15).
-  - legacy 출처·원래 값은 보존한다. `analyses`는 불변이고 재생성은 새 행이다. 빠진 metadata는 명시적 null/flag로 두고 추정하지 않는다(C5).
+  - 2026-11-05 사용자: core 건강 측정 표(`brain.health_observations`), catalog·지원 버전·권위 규칙, 판정 view(`health_resolution_v1`·`health_current_v1`), `health_aggregate_v1`은 정리 티켓(20.6)에서 코드·시험과 함께 제거한다. 운영 DB에 실제 Garmin 행이 들어간 적이 없다(14.8·16.9 blocked). 표·함수·권한은 새 번호의 forward 마이그레이션 하나로 drop하고(AD-31), 대화 수집 등 다른 표는 건드리지 않는다. 같은 migration 파일에 들어 있던 공용 부분(`file_requests`, 채널 원문 보존)은 남긴다.
+  - 덮어쓰지 않는다는 원칙(R7)은 Garmin에서 raw 응답과 평가에 적용한다. 파생 투영 표는 옛 프로그램처럼 다시 계산한다(AD-29의 저장 계약). 빠진 metadata는 null/flag로 두고 추정하지 않는다.
+  - legacy 출처·원래 값은 보존한다. 빠진 metadata는 명시적 null/flag로 두고 추정하지 않는다(C5).
 
 ### AD-33 — 확장 작업 감독
 
@@ -522,29 +529,83 @@ V1 데몬은 소켓을 열지 않는다. hook→소켓 경로·handshake·`VERSI
   - 확장은 `<home>/extensions/<name>/`에 설치한다(플러그인 캐시 밖) [ASSUMPTION].
   - epic 11은 재시작·컨테이너 재생성 뒤 기억과 DB 사용자 설정 보존을 검증한다. epic 13은 Garmin 유무 양쪽에서 같은 설치 경로를 검증한다. 개발·통합 검증은 운영과 다른 Brain 홈·DB·compose project/volume·LaunchAgent Label·확장 설치를 쓰며 자원 이름 파생은 epic 11 소유다. 외부 서비스는 fixture/fake가 기본이고 실계정 검증은 사람 확인 경로다. 운영은 이 Mac 기본 홈 하나이며 클라우드 provider는 범위 밖이다.
 
-### AD-35 — 분석은 core 일감이다 [ADOPTED]
+### AD-35 — 분석은 확장 일감이고 발신은 core 채널이다 [ADOPTED]
 
 - **Binds:** R10, R12, R13, R14, C5
-- **Prevents:** core가 확장의 계산을 불러 확장에 의존하는 것, 검증되지 않은 모델 출력이 저장되는 것, 평가 순서가 코드 곳곳에 흩어지는 것, 발신 실패가 성공한 평가를 지우는 것
+- **Prevents:** core가 확장의 분석 입력·프롬프트를 소유하는 것, 확장이 발송기를 따로 두는 것, 검증되지 않은 모델 출력이 저장되는 것, 발신 실패가 성공한 평가를 지우는 것
 - **Rule:**
-  - 예약된 core 일감이 분석 에이전트(모델 CLI)를 띄운다(AD-33). 에이전트는 core 데이터만 읽는다(계약 표, 필요할 때 raw view).
-  - 출력은 schema 검증을 거친 뒤 core가 `analyses`와 리포트 파일(FileStore, AD-23)로 넣는다.
-  - 평가 순서(day → 7d → 30d → all)는 일감 의존으로 표현한다.
-  - 발신은 채널 발신 요청을 거친다(epic 15).
-  - digest와 그래프는 확장이 만들고(AD-29), 정제 행과 파일 등록 요청으로 들어온다.
-  - `analyses` 최소 계약·DDL은 처음 쓰는 epic 14가 이전 전에 정한다. legacy 원래 키·dataset, nullable 모델/시각과 누락 flag, 파일 요청/파일 관계, 새 분석 revision을 포함하며 epic 18(core 건강 분석)은 호환 확장한다. 분석 그래프는 입력 snapshot/cutoff·건강 revision·소스 권위·시간대를 고정해 공유하고 선행 analysis ID를 남긴다. scope마다 검증·저장을 즉시 확정한 뒤 다음 일감을 풀며 후속 평가·그래프·발신 실패가 성공을 롤백하지 않는다. 재시작은 저장된 성공부터 잇는다.
-  - 분석 에이전트(모델 CLI adapter 이름)·모델·effort는 사용자 설정(DB 설정, AD-18)이다(2026-10-28 사용자, epic 18). 기본값은 옛 Garmin과 같다: Codex, 모델은 CLI 기본, effort high, 호출 timeout 20분. adapter는 Codex와 Claude Code 둘이고 각각 Core 실행 port 구현이며, Runtime이 설정에 맞는 것을 조립한다. 두 adapter는 같은 출력 schema 검증과 그룹 정리·reap(AD-33)을 지나고, 토큰을 프로세스 ABI v1의 `usage` 칸에 채운다. 실행은 그 CLI의 이 Mac 로그인 환경을 쓴다. 설정한 CLI가 없거나 로그인되지 않았으면 그 일감은 다시 하지 않는 오류로 `failures`에 남고 doctor가 보인다.
-  - 발신은 생산 결과의 안정된 식별자+채널 대화 식별자+목적/개정의 의미 키로 UNIQUE 중복 억제한다(요청 UUID와 별도). epic 15가 원자적인 최초 시도 gate를 발신 전에 저장하고 실제 결과·불명 상태를 분리한다. 일반 retry는 gate를 우회하지 않고 불명 결과를 성공으로 추정하지 않는다. 불명 결과는 같은 요청의 새 attempt로 지수 간격 재시도하고 10번 실패하면 `failures`에 남긴다(2026-10-28 사용자, epic 15. 중복 가능성을 받아들임). 사용자·스레드·선제 메시지를 같은 대화로 잇는 출처/외부 식별자·provenance를 core 채널이 소유한다. Telegram adapter는 Core 채널 port 구현이고 Runtime이 조립한다. 모델 입력·도구 응답·발신 텍스트는 출력 코덱 등록부·비밀 fixture를 통과하며 원본 파일 바이트 보존과 구분한다.
+  - 2026-11-05 사용자: 분석(모델 CLI 호출, 입력 조립, scope 순서 day → 7d → 30d → all, 저장·재개)은 확장 manifest의 감독되는 일감이고 결과는 확장 schema에 남는다. core는 분석 의미를 모른다. Garmin은 옛 report·report_input을 그대로 쓴다.
+  - 모델 호출은 일감 안에서만 한다(AD-33). 모델 프로세스와 그 자손은 감독자의 그룹 정리·reap 대상이다. 모델 호출 동안 DB 트랜잭션을 열어 두지 않는다. 분석 에이전트·모델·effort는 확장 설정(`<ext>.*`, AD-18)이다.
+  - 평가는 덮어쓰지 않는다. 재생성은 새 행이다. 후속 평가·그래프·발신 실패가 성공한 평가를 되돌리지 않는다.
+  - 리포트·그래프 파일은 `file_requests`로 core 파일이 된다(AD-23·30). 발신은 무조건 core 채널 발신 요청이다(manifest가 `channel.send`를 필요 기능으로 선언). 확장은 Telegram·Slack을 직접 부르지 않는다.
+  - 발신은 생산 결과의 안정된 식별자+채널 대화 식별자+목적/개정의 의미 키로 UNIQUE 중복 억제한다(요청 UUID와 별도). epic 15가 원자적인 최초 시도 gate를 발신 전에 저장하고 실제 결과·불명 상태를 분리한다. 일반 retry는 gate를 우회하지 않고 불명 결과를 성공으로 추정하지 않는다. 불명 결과는 같은 요청의 새 attempt로 지수 간격 재시도하고 10번 실패하면 `failures`에 남긴다(2026-10-28 사용자, epic 15). 사용자·스레드·선제 메시지를 같은 대화로 잇는 출처/외부 식별자·provenance를 core 채널이 소유한다. 채널 adapter(Telegram, 이후 Slack)는 Core 채널 port 구현이고 Runtime이 조립한다. 발신 텍스트는 출력 코덱을 지난다.
+  - 제거: core 분석 일감(18.1 day tracer, `health_analysis` worker, `$garmin-daily-analysis` 리소스)과 core 입력 snapshot(18.2, `analysis_snapshots`·reader, `garmin.*` 읽기 view)은 정리 티켓(20.6)에서 코드·시험과 함께 지우고 표는 forward migration으로 정리한다. 새 Garmin 일감이 켜지기 전에 core `health_analysis` 종류가 남아 있지 않아야 한다(20.6이 먼저다).
 
-### AD-36 — Garmin 이전은 검증한 출처와 배치로만 확정한다
+### AD-36 — Garmin 이전은 원본 SQLite를 같은 모양 표로 복사해 검증한 뒤 확정한다
 
 - **Binds:** R5, R6, R7, C5, C6
-- **Prevents:** source-local ID 충돌, 조용한 충돌 손실, 재개 중 중복, 기존 분석을 재생성으로 대체하는 것
+- **Prevents:** 조용한 손실·중복, 재개 중 중복, 기존 분석을 재생성으로 대체하는 것, 계정을 확인하지 않은 데이터를 사용자에게 귀속하는 것
 - **Rule:**
-  - epic 14 importer가 dataset/table/원래 key → 대상 UUID mapping, import batch/version·checkpoint를 영속 소유한다. 작은 트랜잭션마다 데이터·mapping·진행을 함께 확정하고 동일 batch 재개를 지원한다(AD-8).
-  - preflight는 대상 호환성·소스 지원 버전·예상 변경·충돌을 보고한다. schema10/15 원형 snapshot을 읽기 전용으로 보존한다. 관찰 DB 5개·파일 349개는 당시 수치이며 현재 목록의 대체가 아니다. 실제 반입은 옛 writer를 멈추지 않고, 반입 직전에 만든 새 일관 capture(DB는 읽기 전용 URI의 SQLite backup API, 파일은 복사 전후 해시 비교, private manifest 갱신)를 기준으로 한다. 옛 `LATEST` capture와의 목록·건수 차이는 보고서에 남긴다. capture 뒤 옛 writer의 변경과 옛 예약 중지는 epic 16의 전환이다(2026-10-28, epic 14). 원본 업그레이드·재분석으로 이전을 대신하지 않는다.
-  - C6 기준 소스·겹치는 자연키 충돌 정책은 2026-10-28 사용자 위임으로 정했다: epic 14의 선택지 A(운영 → 개발 → 보관본 순, dataset 역할은 private manifest의 source 분류)가 권위 기록 규칙 v1이다. 계정 identity는 raw 본문의 Garmin 사용자 profile id로 dataset마다 확인하고, 모이지 않으면 계정 미확인으로 보존한다. 미선택 후보도 원형/출처를 보존한다. 건수·자연키·NULL/단위·원문/파일 해시·FK mapping·분석 본문·artifact 관계를 전수 비교하고 재실행/실패 재개·비발신을 검증한 보고서 뒤 완료한다. Garmin 이전의 공개 명령 출력·보고서·plan에는 건수, 충돌·제외 사유 수, 단계별 상태와 값 없는 성공 여부만 둔다. 해시 값·원문·계정·개인 날짜·건강값·capture 경로·오류 상세·doctor/조회의 원시 출력은 Brain 홈의 확장 데이터 아래 private 보고서에만 두고, 공개 실패 원인은 개인 값을 뺀 분류만 쓴다.
-  - 최소 provenance는 `../prep-garmin-absorption/migration-contract.md`의 대상별 보존/검증 표다. epic 14·16은 raw scope/library_version·normalize 상태/오류/history_start/원본 연결은 확장 schema, 모델/평가 시각/입력 근거는 core 분석, body 필드 mtime/원본·artifact 연결은 측정·파일 메타에 보존하고 위치 대응표를 낸다. 공개 raw view 필드는 AD-30이며 내부 provenance를 모두 노출한다는 뜻은 아니다. 없는 metadata·소스에 없던 과거 이력은 만들지 않는다.
+  - 2026-11-05 사용자: 옛 데이터 반입은 원본 SQLite의 각 표를 같은 모양의 `garmin` native 표로 한 번 복사하는 확장 일감이다. core 건강 표·core `analyses`로 변환하지 않는다. 옛 평가는 평가 이력 표로 옮긴다.
+  - 반입은 옛 writer를 멈추지 않고, 반입 직전에 만든 새 일관 capture(DB는 읽기 전용 URI의 SQLite backup API, 파일은 복사 전후 해시 비교)를 기준으로 한다. 작은 트랜잭션마다 데이터와 진행을 함께 확정하고 같은 batch 재개를 지원한다(AD-8). 원본 업그레이드·재분석으로 이전을 대신하지 않는다.
+  - 여러 원본(운영·개발·보관본)과 겹치는 자연키는 epic 14 선택지 A(운영 → 개발 → 보관본, C6)로 고르고 미선택 후보는 원형으로 보존한다. 계정 identity는 raw 본문의 Garmin 사용자 profile id로 dataset마다 확인하고, 확인할 수 없으면 반입하지 않고 미확인으로 보존한다(14.8 strict gate 유지).
+  - 건수·자연키·NULL/단위·원문/파일 해시·분석 본문·파일 관계를 전수 비교한 보고서 뒤 완료한다. 공개 출력·plan에는 건수, 충돌·제외 사유 수, 단계별 상태만 둔다. 원문·계정·개인 날짜·건강값은 Brain 홈의 확장 데이터 아래 private 보고서에만 둔다.
+  - 반입은 두 단계다. 예비 반입은 옛 writer가 도는 동안의 online capture로 하고 경로·검증을 확인한다. 확정 반입은 전환 절차 안에서 한다: 옛 예약 중지 → 진행 중인 옛 writer 종료 확인 → 최종 일관 capture → 예비 반입 이후 차분(또는 새 batch) 반입 → 최종 capture 기준 전수 비교·파일 관계 확인 → 새 예약 활성화. 어느 단계든 실패하면 새 예약은 켜지 않고 옛 예약(plist)을 되살린다. "반입은 한 번"은 이 확정 반입 하나를 뜻한다. 원본 SQLite와 각 capture·확정 증거는 보존한다.
+  - 이미 만든 epic 14의 capture·읽기 전용 reader·hash·checkpoint·`garmin.preserved_rows`는 이 복사 경로가 재사용한다.
+
+### AD-37 — 확장 명령은 manifest가 선언하고 core가 노출한다
+
+- **Binds:** R1, R2, R15, R16
+- **Prevents:** 확장마다 API 서버·MCP를 따로 띄우는 것, core가 확장별 명령을 하드코딩하는 것, CLI·SDK·MCP가 같은 명령을 다른 주소·입력으로 부르는 것, 확장 출력이 가리기·schema 검증 없이 나가거나 가린 뒤 schema를 어기는 것, 감독자 attempt 없이 확장이 쓰는 것, 확장이 없는데 명령이 남는 것
+- **Rule:**
+  - 확장 명령은 **읽기 전용**이다. 쓰기·모델 호출·파일/채널 요청은 manifest 일감이고 `brain ext run <name> <job>`(감독 일감, attempt fence)으로 한다. manifest에 쓰기 명령을 선언하면 설치가 거부한다.
+  - manifest `commands[]`는 이름(kebab-case), 실행 명령, 설명, 예시(선택), 입력 schema, 출력 schema, timeout을 선언한다. core는 설치·활성 때 등록하고 비활성·제거 때 없앤다.
+  - 등록 대응: 공통 명령 메타(AD-5)의 `ns`는 `ext.<name>`, `verb`는 명령 이름, `used_for`·`examples`는 manifest 설명·예시, `risk`는 `read`, `hook`은 `no`, `dryRun`은 없음이다. CLI는 `brain ext <name> <command>`, MCP 도구 이름은 `ext_<name>_<command>`(`-`→`_`, 확장 이름과 명령 이름에 `_`는 금지)다. `--help`·`guide schema`·MCP 스키마는 이 메타 하나에서 생성한다(AD-28). 최상위 이름(`brain health …`)은 쓰지 않는다.
+  - 실행: 큐 없이 확장 런타임으로 짧은 자식 프로세스를 띄운다(AD-33의 그룹 정리·reap). stdin은 런타임 봉투 `{abi, user_id, settings, input}`이고 확장 입력 schema는 `input`만 검증한다. timeout·출력 크기 상한 안에서 받은 JSON을 출력 schema로 검증 → 출력 코덱(AD-11)으로 가림 → 가린 결과를 출력 schema로 다시 검증한다. 다시 검증이 실패하면 값을 내지 않고 `EXTENSION_COMMAND_OUTPUT_REDACTED`로 실패한다. 그 밖의 실패는 확장 명령 오류 코드로 분류한다.
+  - 새 확장의 명령 추가에 core 변경이 필요 없어야 한다. 장치 자체(입력 타입·스트리밍·쓰기 명령 허용 등) 확장만 core 변경이다.
+
+### AD-38 — 확장은 같은 marketplace의 별도 플러그인으로 배포한다
+
+- **Binds:** R1, R2, R3, R17
+- **Prevents:** 확장이 core 앱 clone에 동봉돼야만 설치되는 것, 두 플러그인이 bootstrap을 이중 실행하거나 서로의 설치와 경합하는 것, 플러그인 version과 다른 바이트가 설치되는 것, 플러그인 갱신이 확장을 조용히 내리는 것
+- **Rule:**
+  - 같은 레포·같은 `.claude-plugin/marketplace.json`의 `plugins[]`에 core(`second-brain → ./plugin`)와 확장마다 플러그인(`second-brain-garmin → ./plugins/garmin` 등)을 둔다.
+  - 확장 패키지 바이트는 확장 플러그인 안(`package/`)에 들어 있고 그것이 설치 원본이다. digest는 manifest가 선언한 파일 목록의 내용 해시이며, 플러그인 빌드가 `package/digest`에 적고 시험이 동기화를 확인한다. core 앱 clone의 `extensions/<name>`은 개발·시험용 설치 원본일 뿐 플러그인 설치의 대체가 아니다.
+  - 확장 플러그인 진입점은 core 설치 확인(없으면 core 플러그인 설치 안내, 설치하지 않음) → `brain ext install --package <package 경로>`뿐이다. core bootstrap·`setup run`을 복제하지 않는다.
+  - core 설치기는 symlink·경로 탈출·digest·manifest의 호환 core 버전을 검사하고, registry에 패키지 신원(이름·version·digest·플러그인 version)을 기록한다.
+  - core bootstrap과 확장 설치는 같은 설치 잠금(`<home>/install.lock/`, AD-19)을 쓴다. 잠금 안의 순서: core 신원·호환 재확인 → 해당 확장의 예약 발화·청구·명령 정지(quiesce) → migration(AD-31) → 패키지 복사 → registry 활성 전환 → 재개. 설치본 version이 플러그인 것보다 앞서면 아무것도 하지 않고 doctor가 알린다(downgrade 없음).
+  - 플러그인마다 자기 ref·`version`을 갖고, ref를 바꾸면 같은 commit에서 그 플러그인의 version을 올린다(AGENTS 규칙을 플러그인마다 적용).
+  - 호스트의 `/plugin uninstall`은 선택한 scope(user·project·local)에서 플러그인을 제거하거나 개인 비활성화할 뿐이다. Brain 확장 registry·예약·DB 데이터의 수명은 별개이며 `brain ext disable|uninstall`의 명시적 단계로 관리한다. scope별 인수는 설치 티켓이 확인한다.
+
+### AD-39 — 예약은 cron식 또는 한 번 실행이고, 회계는 회차 단위다
+
+- **Binds:** R8, R9, R10, R16
+- **Prevents:** 요일·월 단위 예약을 표현하지 못하는 것, 일 단위 성공 회계가 주간 예약을 잘못 닫거나 합쳐진 일감에서 회차 성공이 사라지는 것, 같은 회차를 두 번 발화하는 것, 놓친 회차 정책이 구현마다 달라지는 것, core에 외부 의존성이 들어가는 것, 재설치가 사용자의 예약 변경을 덮는 것
+- **Rule:**
+  - 예약 trigger는 `cron`(5필드 cron식 + IANA 시간대) 또는 `once`(절대 시각 `run_at`)다. 기존 매일 현지 시각 예약은 같은 뜻의 cron식으로 옮긴다. `interval_seconds`는 core 내부 예약의 호환용으로만 남기고 manifest·CLI에는 열지 않는다.
+  - 다음 발화 시각 계산은 Core port 뒤 Runtime adapter가 한다(AD-1: core 외부 의존성 0). adapter는 croner(Stack)를 5필드 모드로 고정해 쓰고, 서머타임의 없는 시각은 전환 시각, 겹친 시각은 첫 instant다(현행 현지 시각 규칙과 같다).
+  - 회차 표 `schedule_occurrences(schedule_id, occurrence_at, status, work_id)`가 회계의 원본이다. 발화는 기대한 `next_run_at` CAS·회차 행 생성·일감 연결을 한 트랜잭션에 확정한다. 일감 하나에 회차 여럿이 붙을 수 있다(AD-21의 미완료 키 합치기 유지). attempt가 시작될 때 그 일감에 붙어 있던 회차 집합을 기록하고, 성공하면 그 집합만 완료로 확정한다. 실행 중 새로 붙은 회차는 다음 attempt로 넘어간다. 실패한 회차는 일감 재시도를 따른다.
+  - 놓친 회차: tick 시각이 회차 시각보다 유예(5분) 넘게 늦으면 놓친 회차다. 정책은 manifest 일감마다 선언하고 기본은 `latest`다.
+
+    | 정책 | 실행하는 회차 | 나머지 놓친 회차 | 일감 입력 |
+    | --- | --- | --- | --- |
+    | `latest` | 가장 최근 하나 | `skipped`로 기록 | 그 회차 시각 |
+    | `coalesce` | 전부를 일감 하나로 | — | 회차 시각 목록 |
+    | `skip` | 없음 | 전부 `skipped` | — |
+
+    `once`는 늦어도 한 번 실행하고 끝난다. trigger·시간대를 바꾸면 이미 만든 회차는 그대로 두고 다음 회차부터 새 식으로 계산한다. 수동 실행은 회차를 만들지 않고 회차를 완료 처리하지 않는다.
+  - 기존 `schedule_successes`의 날짜 성공은 그 날짜의 예약 시각 회차의 `done`으로 옮긴다.
+  - 예약 행은 `user_id`와 설치 단위의 안정된 `schedule_key`를 갖고(AD-40), 멱등 키는 `(extension, schedule_key, user_id)`다. 같은 일감을 다른 시각으로 여러 개 예약할 수 있다. 설치·업그레이드는 없는 `schedule_key`만 만들고 사용자가 바꾼 trigger·비활성은 보존한다. 사용자가 지운 기본 예약은 표식을 남겨 다시 만들지 않는다. manifest에서 빠진 예약은 비활성화하고 보고한다(삭제하지 않음).
+
+### AD-40 — 사용자 키는 지금 두고, 이번에는 "나" 하나로 채운다
+
+- **Binds:** R3, R16, C4
+- **Prevents:** 나중에 모든 표에 사용자 키를 소급하는 migration, 확장 계정 문자열을 사용자처럼 쓰는 것, 경로마다 임시 사용자 기본값을 만드는 것, 키가 생겼다는 이유로 다중 사용자 격리를 주장하는 것
+- **Rule:**
+  - 2026-11-05 사용자: 이번 재설계에서 새로 만들거나 바꾸는 표 — `schedules`·`schedule_occurrences`, `settings`, 채널 대화(`channel_conversations`), 확장 계정 연결(`garmin.account_connections`: user_id ↔ 외부 계정 identity·tokenstore 참조·시간대), 확장 native 표 — 는 `user_id`(→ `brain.users`)를 갖는다.
+  - 이번 단계의 사용자 해석: Runtime이 유일한 `is_self` 사용자를 읽어 설정·예약·일감·명령 봉투(AD-37)·확장 계정 연결에 넣는다. 없으면 `USER_MISSING`으로 멈추고, 사용자를 인자로 바꾸는 표면은 열지 않는다. 확장은 계정 연결로 자기 데이터 범위를 정하고, 외부 계정 문자열이 같아도 다른 사용자의 연결로 합치지 않는다.
+  - 이행 순서(신규·업그레이드 공통): `user_id` 칸을 nullable로 추가하는 migration → setup이 "나"를 보장(AD-12) → 기존 행을 "나"로 채움 → 기본 설정·예약 생성 → 공통 값이 허용되지 않는 표의 `NOT NULL` 확정.
+  - 외부 principal 인증, 여러 호출 사용자 선택, RLS 격리, 사용자별 채널 credential, 파일·검색 소유권은 이번에 하지 않는다(Deferred). 그 전에는 한 DB를 여러 사람이 쓰는 운영을 지원한다고 말하지 않는다.
 
 ## Table Contract
 
@@ -579,12 +640,13 @@ Table Contract는 컬럼 전체가 아니라 단위 사이에 걸리는 키, 작
 | `file_names` | `(file_id, name_source, text)` | drain | 파생, 다시 만들 수 있음. 가린 파일에는 쓰지 않음(0008) |
 | `file_metadata` | `(file_id, key)` | drain(추출) | 파생. 가린 파일에는 쓰지 않음(0008) |
 | `work_items` | 미완료 행의 `(kind, target_kind, target_id)`. 확장 종류는 `<ext>.<kind>` | 일감을 만드는 경로(수집·가리기·로그·예약 틱), drain, 데몬 감독자(확장 일감, AD-33) | 청구·시도·완료 컬럼만 drain·감독자가 바꿈. 완료 행은 정리할 수 있음 |
-| `schedules` | `id`(UUIDv7). `(kind, target_kind, target_id)` 중복은 막지 않는다 — 발화가 넣는 일감은 `work_items`의 미완료 키가 합친다 | 생성: epic 12의 사용자 스케줄러(0009 조각은 Store verb와 시험만). 발화: 데몬의 예약 틱(AD-27, epic 9 9.5) | `kind`·대상·`interval_seconds`·`created_at`는 틱이 바꾸지 않음. 틱은 `next_run_at`이 읽은 값 그대로일 때만(compare-and-set) 일감 넣기와 같은 트랜잭션에서 `last_run_at`=발화 시각, `next_run_at`=발화 시각 + 간격(한 번짜리는 null = 끝남)으로 바꿈. 반복 예약의 `next_run_at`은 null이 될 수 없음(0009, 2026-10-27) |
+| `schedules` | `id`(UUIDv7). 확장 예약은 `(extension, schedule_key, user_id)`(AD-39·40) | 생성: epic 12의 사용자 스케줄러, 확장 설치(manifest 기본 예약). 발화: 데몬의 예약 틱(AD-27) | trigger(`cron`+시간대 \| `once`)·활성 여부는 사용자가 바꿈. 발화 회계는 회차 단위(AD-39) |
+| `schedule_occurrences` | `(schedule_id, occurrence_at)` | 발화: 예약 틱. 완료·건너뜀: 감독자·drain이 attempt 결과로(AD-39) | `status`(`pending`→`claimed`→`done` \| `skipped`)·`work_id`만 바뀜 |
 | `schema_migrations` | `(owner, version)` | 마이그레이션 실행기 하나(setup, 플러그인 bootstrap 갱신, 확장 설치·갱신, AD-20·31). 모양은 epic 11 | 불변. 마이그레이션만 쓴다 |
-| `settings` | `key`(설정 코덱이 정의, 확장 키는 `<ext>.*`) | `brain config get/set`(설정 코덱, AD-18), setup(`timezone`). 모양은 epic 11 | `value`·`updated_at`만 바뀜 |
-| 건강 측정·요약 (core 계약 표) | 논리 키 + 관측 revision + 정규화 버전 + 데이터셋·이전 출처(AD-32) | 확장(`brain_ext_<name>`, INSERT만, 자기 출처 행만, AD-30). 모양은 epic 14 | 불변. 새 버전·새 이전은 새 행. 조회는 승인 dataset의 관측 revision·정규화 버전을 적용한 "현재" view(AD-32) |
-| `analyses` | epic 14가 최소 계약·DDL을 정하고 epic 18이 호환 확장한다(AD-35). legacy 키·dataset·revision 포함 | core 분석 일감(AD-35). legacy 이전은 확장(INSERT만, AD-30) | 불변. 다시 만들기는 새 행 |
-| 채널 발신 요청·이력 | epic 15가 정한다 | 발신 요청: core 일감, 확장(INSERT만, AD-30). 이력: core 채널. legacy Garmin 이력: 확장 이전(epic 14) | 이력 불변. legacy 행은 legacy로 표시하고 보내지 않는다 |
+| `settings` | `UNIQUE NULLS NOT DISTINCT (user_id, key)`(설정 코덱이 키별 scope 정의, 확장 키는 `<ext>.*`, 기계 공통 값은 `user_id` NULL, AD-18·40) | `brain config get/set`(설정 코덱, AD-18), setup(`timezone`), 확장 설치(manifest 기본값). 모양은 epic 11 | `value`·`updated_at`만 바뀜 |
+| 건강 측정·요약 (core 계약 표) | 제거(AD-32, 2026-11-05, 정리 티켓 20.6) | 없음 | — |
+| `analyses` | 제거(AD-35, 2026-11-05, 정리 티켓 20.6. 실데이터 없음) | 없음(분석 결과는 확장 schema) | — |
+| 채널 발신 요청·이력 | epic 15가 정한다. 채널 대화는 `user_id`를 갖는다(AD-40) | 발신 요청: core 일감, 확장(INSERT만, AD-30). 이력: core 채널 | 이력 불변. legacy 행은 legacy로 표시하고 보내지 않는다 |
 | `file_requests` | epic 14 소유: 출처+안정된 요청 키(AD-30) | 확장(INSERT만, 자기 출처 행만, AD-30). 처리는 core 일감이 FileStore로(AD-23) | 확장 쪽은 불변. 처리 기록은 core가 쓴다 |
 
 ```mermaid
@@ -669,7 +731,8 @@ erDiagram
 | Python (Garmin 확장) | `>=3.12` (기존 Garmin 배포 3.14.8은 관찰 기록. 새 배포 pin·doctor 보안 기준은 3.14.10, `.python-version`) |
 | uv (Garmin 확장) | 고정하지 않는다. 의존성은 확장의 `uv.lock`이 고정한다 |
 | psycopg (Garmin 확장) | 3.3.6, 신규 설치는 `psycopg[binary]`로 host libpq 선행 설치를 피한다. 실제 lock·macOS arm64/Python import·접속 검증은 14.1, 옛 수집 의존을 더한 lock의 arm64 설치는 epic 16(2026-10-28) |
-| garminconnect, curl-cffi, jsonschema, matplotlib, requests (Garmin 확장) | 확장의 `uv.lock`이 고정한다 |
+| garminconnect, curl-cffi, matplotlib (직접 의존), requests (전이) (Garmin 확장) | 확장의 `uv.lock`이 고정한다. jsonschema는 현재 lock에 없다. 옛 프로그램 이식에 필요하면 그 티켓이 더한다 |
+| croner (예약 cron 계산, Runtime adapter) | 11.0.0 (npm latest, 2026-10-26 공개, 2026-11-05 확인. 런타임 의존성 없음, node >=18). `mode: '5-part'`로 쓴다. core가 아니라 Runtime에 둔다(AD-1·39) |
 
 검색 질의(`lower(col) LIKE lower(pattern)`)는 Core가 정한 검색 함수 하나를 adapter가 Kysely의 `sql` 템플릿으로 쓴다(AD-15).
 
@@ -737,11 +800,11 @@ flowchart TB
 | SDK·도구·설정 (FR-23~25, R4) | second_brain, apps/cli, 설치기, 설정 코덱(`config.toml`·`brain.settings`·`.env`) | AD-1, AD-2, AD-3, AD-5, AD-18, AD-19, AD-20 |
 | 저장소·컨테이너 (R3, R18) | `packages/postgres`, `<home>/postgres/compose.yaml`, OrbStack. epic 11 | AD-7, AD-10, AD-20, AD-22, AD-31, AD-34 |
 | 표면: 플러그인·데몬 (FR-24, FR-25), MCP(V1 뒤) | `plugin/`, apps/cli `daemon`(epic 9), `mcp`(V1 뒤) | AD-5, AD-17, AD-19, AD-25, AD-27, AD-26·28(V1 뒤) |
-| 작업·스케줄러 (R8~R10) | `work_items`, `schedules`, 데몬의 예약 틱과 감독자. epic 12 | AD-7, AD-21, AD-27, AD-33 |
-| 확장 (R1, R2, R16, R17) | `extensions/<name>/`, manifest, `<home>/extensions/`, 확장 schema·role. epic 13 | AD-29, AD-30, AD-31, AD-33, AD-34 |
+| 작업·스케줄러 (R8~R10) | `work_items`, `schedules`(cron·once), 데몬의 예약 틱과 감독자. epic 12 | AD-7, AD-21, AD-27, AD-33, AD-39 |
+| 확장 (R1, R2, R16, R17) | `extensions/<name>/`, manifest(일감·예약·설정·명령), `<home>/extensions/`, 확장 schema·role, 확장별 플러그인 | AD-29, AD-30, AD-31, AD-33, AD-34, AD-37, AD-38 |
 | 채널 (R12, R13) | core 채널 발신 요청·이력, 채널 adapter(Telegram). epic 15 | AD-30, AD-35, Table Contract |
-| 건강 데이터·이전 (R5~R7, R11, R15) | Garmin 확장(raw·정규화·digest·그래프) → core 건강 계약 표, `<ext>.raw_records`. epic 14·16·17 | AD-29, AD-30, AD-32, AD-13 |
-| 분석 (R10, R12) | core 분석 일감(모델 CLI), `analyses`, 리포트 파일. epic 18 | AD-23, AD-32, AD-33, AD-35 |
+| 건강 데이터·이전 (R5~R7, R11, R15) | Garmin 확장의 `garmin` native 표(옛 표 모양), 원본 SQLite 복사 반입, 조회는 확장 명령. core 건강 표는 제거 | AD-29, AD-30, AD-32, AD-36, AD-37 |
+| 분석 (R10, R12) | Garmin 확장 일감(옛 report), 확장 schema 평가 이력, 리포트 파일(`file_requests`), core 채널 발신 | AD-23, AD-33, AD-35 |
 | 원문 불변·가리기 (NFR-1, FR-26) | plpgsql trigger, `brain.redacting` GUC, `messages.redact`, 테이블 정리 일감, Core 출력 코덱(엔벨로프·hook·미러·내보내기·임베딩·모델 입력·채널 발신) | AD-11 |
 | 조용한 실패 금지 (NFR-2) | `warnings[]`, `failures`, spool, `context_injections`, doctor | AD-7, AD-9, AD-15, AD-17, AD-20, Conventions |
 | Harness 비차단 (NFR-3) | async hook, exit 0, import 부작용 없음, hook·명령은 컨테이너를 띄우지 않음 | AD-3, AD-6, AD-34 |
@@ -778,12 +841,16 @@ flowchart TB
 | `pg_bigm`으로 검색 색인 바꾸기 | owner epic 17. SM-7 지연 미달 때 이미지·expression GIN 교체를 검증한다. LIKE 질의·정규화·collation 유지(AD-15) |
 | 임대 갱신 세부, 정체 판정, 놓친 예약 처리 | epic 12 인셉션. 불변식(감독자만 청구, 경과 시간만으로 죽이거나 중복 실행하지 않음)은 AD-21·33에 있다 |
 | 채널 정체성(사용자 답변·스레드·선제 메시지 연결)의 모양 | epic 15 인셉션(R13) |
-| 건강 계약 표의 정확한 모양 | 부분 해소(2026-10-28, epic 14 정제): 키·관측 revision·정규화 버전·현재 view·권위 기록·ambiguity는 AD-32와 epic 14 Decision. 컬럼 DDL과 지표 catalog의 실제 목록은 14.1·14.2 코드가 정한다 |
+| 건강 계약 표의 정확한 모양 | 대체(2026-11-05): core 건강 계약은 제거(AD-32). 여러 출처 건강 데이터를 합치는 공통 계약은 두 번째 건강 확장이 생길 때 확장 지점으로 다시 정한다 |
 | 분석 에이전트의 프롬프트와 출력 schema | 해소(2026-10-28, epic 18 Notes): 옛 Garmin `report`의 프롬프트·JSON schema를 v1로 그대로 쓴다. 바꾸는 일은 실사용 뒤 새 revision |
 | 백업 묶음의 세부(복원 순서·manifest 칸·위치)와 복구 | 해소(2026-10-28, epic 5 정제): AD-20에 묶음·위치·복구 대상·재바인딩을 적었다. 기존 DB에 합치는 가져오기(D0)와 가린 JSONL 되살리기는 V1 뒤 backlog |
 | PostgreSQL 19로 올리기 | 19 GA(2026-11-19 예정) 뒤 별도 결정. 그때까지 `postgres:18` |
 | 공개 plugin marketplace, 임의 서드파티 확장 코드 실행 | 범위 밖(이니셔티브 Boundaries, 2026-10-28) |
 | Keychain 등 키 저장소 | `.env`로 시작. 설정 코덱 한 곳만 바꾸면 된다(AD-18) |
+| 다중 사용자 격리 | owner: 재설계 뒤 별도 에픽(AD-40). 외부 principal 인증·여러 호출 사용자 선택·RLS·사용자별 채널 credential·파일/검색 소유권. 키와 "나" 해석은 2026-11-05부터 있다 |
+| 쓰기 확장 명령 | 실제 요구가 생길 때. 그때 동기 실행의 실행 신원·fence·취소 규약을 함께 정한다(AD-37). 지금 쓰기는 manifest 일감 |
+| cron 외 반복(초 단위 간격 공개 등) | 실제 요구가 생길 때. 지금은 cron·once만 공개(AD-39) |
+| 확장 레포 분리 | 확장 경계가 안정된 뒤. migration owner 이력·패키지 ref/digest 계약(AD-31·38)은 그대로 쓴다 |
 | 두 번째 기계 | `machine` 칸과 멱등 키로 수용. 연결 방식은 그때 |
 
 | 검색 locale·실행계획 실측 | owner epic 17. 공식 이미지 locale에서 한국어 2/3자·공백·기호를 EXPLAIN (ANALYZE, BUFFERS)·R14/SM-7 회귀로 검증할 때 |

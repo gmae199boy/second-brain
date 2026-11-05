@@ -1,4 +1,5 @@
 # epic 19 회귀 시험 시간. 표 순서가 build 순서다(예상 절감 큰 순).
+# 2026-11-05: 18.3 gate가 아니다. 19.5는 20.6 정리 뒤, 19.10은 21.3 normalize 이식 뒤. 19.7은 drop(검증 코드가 20.6에서 사라짐).
 # 2026-11-04 사용자 결정(A)과 runner 조사: 18.10 → 5 → 6 → 1 → 2 → 3 → 7 → 10 → 18.3, 그 뒤 8 → 9(18.3을 막지 않음).
 
 [[entry]]
@@ -8,9 +9,10 @@ title = "Python 통합 시험 병렬화: 확장 role 계약을 지킨 채 pnpm t
 description = "apps/cli/python-test/vitest.config.ts의 fileParallelism: false(4601a1e, 공유 확장 role 때문)로 Python 통합 시험 17~19파일이 직렬로 돌아, 성공한 16.6 회귀에서 Vitest 구간 665초 중 약 583초(88%)를 차지했다. 직렬 이유는 brain_ext_garmin 같은 확장 role이 PG cluster 전역이라 DB·home을 나눠도 충돌하기 때문이다(packages/postgres/src/extension-provision.ts의 역할 충돌). worker slot마다 독립 PG cluster와 고유 host port를 소유권 있는 시작·종료로 주고, 한 slot 안의 파일은 순차로 재사용하는 방식으로 병렬화한다. 생산 role 계약·advisory lock·cleanup 의미는 바꾸지 않는다. 실패·timeout으로 끝난 파일이 남긴 role·DB·container가 다음 파일과 다른 실행을 막지 않게 slot 단위로 정리한다. garmin-review-boundaries.test.ts는 저장소 extensions/garmin/.venv를 공유하므로 사전 준비를 global setup에서 한 번 한다. tooling/bootstrap/test/hook.test.ts는 자체 container·해시 포트를 쓰므로 별도 lane으로 두거나 포트 충돌을 막은 뒤에만 병렬로 둔다. uv 캐시는 실제 HOME 공유이며 각 venv는 private임을 유지한다. slot의 cluster URL과 소유권은 tooling/test-db와 apps/cli/test/pg-home.ts를 거쳐 각 시험 DB 준비에 넘기며, 19.1의 시험 DB 준비가 이 handoff를 소비한다. 18.10이 더한 것은 그대로 이어받는다: tooling/test-changed/rules.mjs의 tooling/health-perf 경로 규칙과 그 시험(tooling/test-db/test/test-changed.test.ts), tooling/health-perf/run.mjs가 BRAIN_TEST_DATABASE_URL로 전용 DB를 넘겨 garmin-normalize를 돌리는 측정 방식(slot 구성에서도 돌아야 한다), 18.10이 갱신한 schema 버전 assertion. 시험 case·assertion·timeout은 줄이지 않는다."
 verify = "독립 환경(공용 54329 미사용)에서 build를 한 번 끝낸 뒤, 성공 기록상 가장 긴 Python 시험 파일 묶음(normalize·import-verify·body-digest·hook·artifacts·batch-import)을 새 slot runner로 1·2·3·4 slot 각각 warm-up 뒤 3회 재고 slot 수를 고른다. 1 slot 비교군도 같은 runner·cluster 준비·venv 사전 준비·hook 배치로 고정하며, 파일 시간 재배치 모델과 명령 wall을 섞지 않는다. 고른 구성의 묶음 중앙값이 1 slot의 절반 이하이고 case 수·통과 결과가 같다. 실행 중 role·DB·container 소유가 slot 사이에 섞이지 않고, 한 파일을 강제로 실패·timeout시켜도 다음 파일과 다른 slot이 통과하며 실행 뒤 남는 role·DB·container·포트가 없음을 보인다. build를 먼저 끝낸 상태에서 기본 suite와 Python suite의 Vitest process를 동시에 한 번 돌려 서로의 cluster를 건드리지 않음을 보인다(pnpm test와 pnpm test:python 명령 자체는 build 충돌 때문에 동시에 돌리지 않는다). peak CPU·연결 수를 plan에 남긴다. 전체 suite는 반복 측정하지 않고, 커밋 직전 필수 pnpm test·pnpm test:python 1회의 시간을 16.6 회귀 기록(Python 약 583초)과 나란히 기록한다."
 covers = ["E19-5"]
-after = ["18.10"]
+after = ["20.6"]
 hitl = false
 risk = "high"
+refine = true
 references = ["_bmad-output/personal-brain/tickets/epic-garmin-import/tickets/story-reader-preflight-brain-ext-run-garmin-import-preflight-plan.md, 변경 파일과 역할(직렬화 이유)", "_bmad-output/personal-brain/research-performance-2026-11-04/research-performance-2026-11-04.md, 확정 결과 5"]
 notes = ["after 18.10은 실제 선행이다(2026-11-04 확인): 18.10이 바꾸는 rules.mjs·test-changed 시험과 BRAIN_TEST_DATABASE_URL에 기대는 tooling/health-perf 측정 도구를 19.5가 이어받아야 하고, slot 수는 18.10 뒤 정규화 시험 시간으로 정해진다.", "Risk: high — slot 격리가 새면 시험이 서로의 role·DB 상태로 통과·실패해 회귀를 숨긴다.", "절감 수치(3~4 slot 약 190초)는 성공 JSON의 파일 시간을 재배치한 상한 모델이다. 새 cluster 준비·CPU/DB 경쟁·18.10 뒤 critical path 변화가 빠져 있으니 착수 때 실측으로 정한다."]
 
@@ -37,6 +39,7 @@ covers = ["E19-1"]
 after = [5]
 hitl = false
 risk = "medium"
+refine = true
 references = ["_bmad-output/personal-brain/research-performance-2026-11-04/tests/report.md, 4개 파일의 실제 구간; 영향·18.10·티켓 판단"]
 notes = ["Risk: medium — 격리가 새면 시험이 서로의 상태로 통과·실패해 회귀를 숨긴다."]
 
@@ -50,6 +53,7 @@ covers = ["E19-2"]
 after = [1]
 hitl = false
 risk = "low"
+refine = true
 references = ["_bmad-output/personal-brain/research-performance-2026-11-04/garmin/report.md, 3. Python 시작·matplotlib·PNG 단계", "_bmad-output/personal-brain/tickets/epic-garmin-runtime/epic-garmin-runtime.md, E16-6"]
 notes = ["폰트 cold 비용은 이 Mac(macOS system_profiler) 기준이다. 다른 OS의 비용이 같다고 가정하지 않는다."]
 
@@ -63,6 +67,7 @@ covers = ["E19-3"]
 after = [2]
 hitl = false
 risk = "medium"
+refine = true
 references = ["_bmad-output/personal-brain/research-performance-2026-11-04/garmin/report.md, 2. 실제 PNG·독립 DB와 그래프 등록 대기", "_bmad-output/personal-brain/tickets/epic-garmin-runtime/epic-garmin-runtime.md, E16-6"]
 notes = ["조사의 3초는 합성 등록기 기준이며 core E2E가 아니다. 착수 시 실제 core 등록 E2E에서 기준을 다시 잰다."]
 
@@ -86,9 +91,10 @@ title = "normalize 취소·fence 순서: 감독자 취소와 attempt fence가 �
 description = "apps/cli/python-test/garmin-normalize.test.ts(:113-128)는 500행 chunk 뒤 멈춘 자식의 attempt를 취소하고 release한 뒤 COLLECT_INVALID_ATTEMPT만 기대한다. 그런데 감독자 취소 확인 주기(packages/core/src/domain/work-item.ts:179 기본 1000ms)에 따라 감독자가 먼저 SIGTERM을 보내면(packages/core/src/queue/supervisor.ts:254-261, process-cleanup.ts:27-28) 자식이 release에서 collect.py:25-31의 COLLECT_STOPPED를 먼저 내고, 자식이 먼저 쓰면 normalize_store.py:134-136 → collect_store.py:28-30의 fence가 COLLECT_INVALID_ATTEMPT를 낸다(16.9 run4 실패). 시험 fixture에 순서를 정하는 barrier를 두어 두 순서를 각각 강제하고 두 경로를 따로 검증한다. barrier는 시험 fixture(extensions/garmin/tests/collect_fixture.py:148-168)에만 둔다: SIGTERM 처리 진입은 원래 collect._stop handler를 반드시 부르는 시험 전용 wrapper로 관측하고, 취소 감시 지연은 시험 쪽 gate로만 만든다. 실제 감독자 SIGTERM, 원래 collect.boundary, 실제 DB attempt_valid fence를 모두 통과시키며 heartbeat·claim 갱신, cancel flag, 생산 polling 주기·cleanup grace를 바꾸거나 fence 결과·예외를 주입하지 않는다. barrier는 finally에서 풀고 SIGTERM 확인 뒤 곧바로 release해 기존 5초 cleanup grace 안에서 실제 SIGKILL·reap을 피하지 않는다. 제품의 취소·fence 의미와 재개 알고리즘은 바꾸지 않으며, 두 결과를 모두 허용하도록 assertion을 느슨하게 만들지 않는다."
 verify = "취소 뒤 release를 보류하고 자식의 SIGTERM 처리 진입을 확인한 다음 release하는 순서를 10회, 취소 감시를 막은 채 취소→release→fence 실패를 확인한 다음 감시를 푸는 순서를 10회 돌려 앞의 것은 매번 COLLECT_STOPPED, 뒤의 것은 매번 COLLECT_INVALID_ATTEMPT이고, 두 경우 모두 받은 500행 보존·오래된 attempt의 추가 쓰기 0·재개 뒤 최종 501행이 완성됨(앞 500행의 identity·값 보존, 특정 cursor·offset 구현을 요구하지 않음)을 보인다. 이 파일을 독립 환경에서 연속 20회 돌려 모두 통과한다. 커밋 직전 필수 pnpm test·pnpm test:python 1회가 통과한다."
 covers = ["E19-10"]
-after = [1]
+after = [1, "21.3"]
 hitl = false
 risk = "medium"
+refine = true
 references = ["_bmad-output/personal-brain/research-performance-2026-11-04/research-performance-2026-11-04.md, 확정 결과 7"]
 notes = ["Decision(2026-11-04, 추천으로 정함): 두 순서 각 10회·전체 파일 20회는 원천의 실측 성공 수가 아니라 새 수락 기준이다.", "19.7과는 다른 시험 파일이고 barrier 대상 fixture도 다르다. 19.7의 수정이 공통 fixture(extensions/garmin/tests/fixtures.py)·daemon·출력 경로로 넓어지면 그때 공유 파일을 다시 확인해 after나 범위를 정한다.", "18.10이 정규화 경로를 바꾸므로 18.10 뒤(19.5 → 19.1 경로)에 한다. 실패 원문은 gitignored .brain-automation/tickets/16.9/worktree-checkpoint-archive/verify/test-python-run4-dedicated-venv.log:50-65에 있다."]
 
