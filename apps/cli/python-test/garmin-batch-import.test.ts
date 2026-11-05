@@ -5,6 +5,17 @@ import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { extHome } from '../test/ext-fixture.js';
 
+// These tests exercise the fenced preservation API with intentionally non-native
+// SQLite data. The native end-to-end contract is covered by garmin-native.test.ts.
+const self = '01940000-0000-7000-8000-00000000000a';
+async function installPreservationAdapter(home: string, store: import('second_brain/postgres').PostgresStore) {
+  const { copyFile } = await import('node:fs/promises');
+  const source = fileURLToPath(new URL('../../../extensions/garmin/tests/preservation_entry.py', import.meta.url));
+  for (const name of ['import.py', 'import_verify.py']) await copyFile(source, join(home, 'extensions/garmin/src', name));
+  await store.setSetting({userId:self,key:'garmin.timezone',value:'Asia/Seoul',updatedAt:new Date()});
+}
+
+
 it('다섯 합성 snapshot의 원형과 키를 보존하고 재실행한다', async () => {
   const { realpath } = await import('node:fs/promises');
   const { postgresStore } = await import('second_brain/postgres');
@@ -15,6 +26,7 @@ it('다섯 합성 snapshot의 원형과 키를 보존하고 재실행한다', as
   try {
     const installed = await fixture.run(['ext','install','garmin','--json']);
     expect(installed.code, installed.stdout + installed.stderr).toBe(0);
+    await installPreservationAdapter(fixture.home, store);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python');
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     const code="import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import five_candidates,capture_manifest; d=pathlib.Path(sys.argv[2]); capture_manifest(d,five_candidates(d,rich=True))";
@@ -32,7 +44,7 @@ it('다섯 합성 snapshot의 원형과 키를 보존하고 재실행한다', as
       const id=ids.next(), token=ids.next(), now=new Date();
       await store.addWork({id,kind:'garmin.import',targetKind:'import',targetId:id,createdAt:now,nextAttemptAt:now});
       expect(await store.claimSupervisedWork({now,claimedBy:'test',kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true});
-      try { return execFileSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.capture_manifest':manifest,'garmin.legacy_conversation_id':conversation}})}}); } catch (e: any) { throw new Error(String(e.stdout) + String(e.stderr)); }
+      try { return execFileSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_USER_ID:self,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.timezone':'Asia/Seoul','garmin.capture_manifest':manifest,'garmin.legacy_conversation_id':conversation}})}}); } catch (e: any) { throw new Error(String(e.stdout) + String(e.stderr)); }
     };
     expect(await fixture.db.rows('select count(*)::int as n from garmin.preserved_rows')).toEqual([{n:0}]);
     expect(await run()).toContain('"type": "result"');
@@ -94,6 +106,7 @@ it('공용 명령과 실제 감독자가 capture를 반입하고 발신 없이 �
   try {
     const installed=await fixture.run(['ext','install','garmin','--json']);
     expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    await installPreservationAdapter(fixture.home, store);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), root=join(fixture.home,'capture');
     await mkdir(root);
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
@@ -164,6 +177,7 @@ it('checkpoint 중단·재개와 동시 반입 및 입력 변경 충돌을 검�
   let child: ReturnType<typeof spawn> | undefined, walProcess: ReturnType<typeof spawn> | undefined, timeoutChild: ReturnType<typeof spawn> | undefined;
   try {
     const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    await installPreservationAdapter(fixture.home, store);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     execFileSync(python,['-c',"import sys,pathlib,sqlite3; sys.path.insert(0,sys.argv[1]); from fixtures import five_candidates,capture_manifest; p=pathlib.Path(sys.argv[2]); paths=five_candidates(p); c=sqlite3.connect(paths['D2']); c.executemany('insert into meta values (?,?)', [('extra%03d'%i,'value') for i in range(80)]); c.commit(); c.execute('pragma journal_mode=wal'); c.close(); capture_manifest(p,paths)",fixtures,fixture.home]);
     const walOriginal=await readFile(join(fixture.home,'D2.db')); expect([...walOriginal.subarray(18,20)]).toEqual([2,2]);
@@ -175,7 +189,7 @@ it('checkpoint 중단·재개와 동시 반입 및 입력 변경 충돌을 검�
       expect(await store.claimSupervisedWork({now,claimedBy:'test',kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true,attemptToken:token});
       return {id,token};
     };
-    const env=(attempt:{id:string,token:string},conv?:string)=>({...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:attempt.id,BRAIN_ATTEMPT_TOKEN:attempt.token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.capture_manifest':manifest,...(conv?{'garmin.legacy_conversation_id':conv}:{})}})});
+    const env=(attempt:{id:string,token:string},conv?:string)=>({...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_USER_ID:self,BRAIN_WORK_ID:attempt.id,BRAIN_ATTEMPT_TOKEN:attempt.token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.timezone':'Asia/Seoul','garmin.capture_manifest':manifest,...(conv?{'garmin.legacy_conversation_id':conv}:{})}})});
     const run=(attempt:{id:string,token:string},conv?:string)=>spawnSync(python,[entry],{encoding:'utf8',env:env(attempt,conv),timeout:20000});
     await fixture.db.query("create function garmin.test_delay() returns trigger language plpgsql as $$ begin perform pg_sleep(0.8); return new; end $$; create trigger test_delay before insert on garmin.preserved_rows for each row execute function garmin.test_delay(); create trigger test_delay_mapping before insert on garmin.import_mapping for each row execute function garmin.test_delay(); create trigger test_delay_checkpoint before update on garmin.import_checkpoints for each row execute function garmin.test_delay()");
     const timeoutAttempt=await claim(), started=Date.now();
@@ -294,6 +308,7 @@ it.each([['UTF-16le','00d8','ANg='],['UTF-16be','d800','2AA=']])('NUL 계정과 
   const fixture = await extHome(), store = postgresStore({databaseUrl:fixture.db.appUrl});
   try {
     expect((await fixture.run(['ext','install','garmin','--json'])).code).toBe(0);
+    await installPreservationAdapter(fixture.home, store);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python');
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     const code=`import sys,pathlib,sqlite3,json
@@ -332,7 +347,7 @@ data=json.loads(manifest.read_text()); data['datasets'][0]['dataset']='synthetic
     await store.claimSupervisedWork({now,claimedBy:'test',kinds:['garmin.import'],attemptToken:token});
     const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl);
     const manifest=await realpath(join(fixture.home,'manifest.json'));
-    const runImport = () => execFileSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.capture_manifest':manifest,'garmin.legacy_conversation_id':conversation}})}});
+    const runImport = () => execFileSync(python,[join(fixture.home,'extensions/garmin/src/import.py')],{encoding:'utf8',env:{...process.env,BRAIN_EXTENSION_HOME:realpathSync(join(fixture.home,'extensions/garmin')),BRAIN_DATABASE_URL:url,BRAIN_USER_ID:self,BRAIN_WORK_ID:id,BRAIN_ATTEMPT_TOKEN:token,BRAIN_SETTINGS_SNAPSHOT:JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.timezone':'Asia/Seoul','garmin.capture_manifest':manifest,'garmin.legacy_conversation_id':conversation}})}});
     runImport(); runImport();
     const raw=await fixture.db.rows("select scope,original_key,body,encode(body_raw,'base64') as raw,body_encoding from garmin.raw_payloads where dataset like '~dataset1:%' and endpoint='extra'");
     expect(raw).toContainEqual(expect.objectContaining({scope:'scope/a',original_key:'b/c',body:'body�end',body_encoding:encoding.toLowerCase()}));

@@ -149,7 +149,7 @@ def conflict(conn, dataset, batch, table, key, reason):
     raise ValueError('IMPORT_CONFLICT')
 
 
-def ingest(conn, capture, entry, conversation):
+def ingest(conn, capture, entry, conversation, *, native_mode=False):
     dataset = entry['dataset']
     label = entry['dataset_label']
     label_display, label_raw, label_encoding = project(label)
@@ -249,7 +249,7 @@ def ingest(conn, capture, entry, conversation):
                                 parent=found[0]
                             cur.execute('insert into garmin.preserved_rows values (%s,%s,%s,%s,%s::jsonb,%s)',(ident,dataset,name,key,payload,parent))
                             cur.execute("insert into garmin.import_mapping values (%s,%s,%s,'preserved',%s,%s,%s)",(dataset,name,key,ident,hashed,batch))
-                        if not mismatch and name in ('notification', 'delivery'):
+                        if not mismatch and not native_mode and conversation is not None and name in ('notification', 'delivery'):
                             if conversation is None: raise ValueError('IMPORT_INVALID')
                             cur.execute('select conversation_id from garmin.legacy_conversations where dataset=%s and original_table=%s and original_key=%s',(dataset,name,key))
                             previous_conversation = cur.fetchone()
@@ -295,8 +295,8 @@ def run():
         for entry in capture['private']['datasets']:
             original = entry['dataset']; entry['dataset'] = dataset_ref(original)
             entry['dataset_label'] = original if original != entry['dataset'] else None
-        conversation = settings['values'].get('garmin.legacy_conversation_id')
-        if conversation: conversation = UUID(conversation)
+        # Native import preserves notification/delivery rows without legacy channel publication.
+        conversation = None
         entries = capture['private']['datasets']
         ordered = sorted(entries, key=lambda e: ORDER.index(ROLES[e['source']]))
         with psycopg.connect(os.environ['BRAIN_DATABASE_URL'], options='-c transaction_timeout=2000 -c statement_timeout=1900 -c lock_timeout=1500') as conn:
@@ -305,6 +305,7 @@ def run():
                 if not all(probe_role(conn).values()): raise ValueError('IMPORT_INVALID')
             capture['private']['fingerprint'] = contract_fingerprint(capture['private']['fingerprint'])
             # 권위 행보다 먼저 모든 기존 checkpoint의 입력을 확인한다.
+            prior_conversations = {}
             for entry in ordered:
                 dataset=entry['dataset']; path=capture['datasets'][ROLES[entry['source']]]
                 batch=hashlib.sha256(canonical([capture['private']['capture_id'],dataset]).encode()).hexdigest()
@@ -320,13 +321,27 @@ def run():
                 if path.with_name(path.name + '-wal').exists():
                     if old: conflict(conn,dataset,batch,None,None,'wal_present')
                     raise ValueError('IMPORT_INVALID')
-                if old and (old[0] != hashed or old[2:] != (VERSION,capture['private']['fingerprint'],entry['source'],conversation)):
+                if old: prior_conversations[dataset] = old[5]
+                if old and (old[0] != hashed or old[2:5] != (VERSION,capture['private']['fingerprint'],entry['source'])):
                     conflict(conn,dataset,batch,None,None,'checkpoint_mismatch')
                 schema=read_snapshot(path)['schema']
                 if old and old[1] != schema: conflict(conn,dataset,batch,None,None,'checkpoint_mismatch')
-            verified = {entry['dataset']: ingest(conn,capture,entry,conversation) for entry in ordered}
-            from artifact_publish import publish
-            publish(conn,capture,ordered,verified)
+            verified = {entry['dataset']: ingest(conn,capture,entry,prior_conversations.get(entry['dataset']),native_mode=True) for entry in ordered}
+            from native_import import copy as copy_native, account_locks
+            def recheck_native_sources():
+                for entry in ordered:
+                    path = capture['datasets'][ROLES[entry['source']]]
+                    if path.with_name(path.name + '-wal').exists():
+                        raise ValueError('IMPORT_INVALID')
+                    with path.open('rb') as source:
+                        if hashlib.file_digest(source, 'sha256').hexdigest() != verified[entry['dataset']]['sha256']:
+                            raise ValueError('IMPORT_INVALID')
+            with account_locks(conn, capture, ordered, verified, settings):
+                recheck_native_sources()
+                copy_native(conn, capture, ordered, verified, settings)
+                recheck_native_sources()
+                from native_artifacts import publish
+                publish(conn,capture,ordered,verified,settings)
             from reports import write_reports
             from metadata_codec import decode_metadata
             with conn.transaction():
@@ -343,8 +358,11 @@ def run():
             write_reports(os.environ['BRAIN_EXTENSION_HOME'],os.environ['BRAIN_WORK_ID'],private,public)
         print(json.dumps({'abi':1,'type':'result','summary':'이전 완료'}),flush=True)
     except Exception as exc:
-        code = 'IMPORT_CONFLICT' if str(exc) == 'IMPORT_CONFLICT' else 'IMPORT_INVALID'
+        from native_artifacts import FilesPending, FilesFailed
+        code = ('IMPORT_FILES_PENDING' if isinstance(exc, FilesPending) else
+                'IMPORT_FILES_FAILED' if isinstance(exc, FilesFailed) else
+                'IMPORT_CONFLICT' if str(exc) == 'IMPORT_CONFLICT' else 'IMPORT_INVALID')
         state = getattr(exc, 'sqlstate', None)
-        retryable = (state is None and isinstance(exc, psycopg.OperationalError)) or state in ('40001','40P01','55P03','57014','25P04','57P01','57P02','57P03') or bool(state and state.startswith('08'))
+        retryable = isinstance(exc, FilesPending) or (state is None and isinstance(exc, psycopg.OperationalError)) or state in ('40001','40P01','55P03','57014','25P04','57P01','57P02','57P03') or bool(state and state.startswith('08'))
         print(json.dumps({'abi':1,'type':'error','code':code,'retryable':retryable}),flush=True)
         sys.exit(1)

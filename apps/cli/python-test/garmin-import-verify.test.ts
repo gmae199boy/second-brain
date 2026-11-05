@@ -10,11 +10,19 @@ import { runDaemon } from '../src/daemon/run.js';
 import { systemClock } from '../src/runtime/clock.js';
 import { uuidV7IdGen } from '../src/runtime/id-gen.js';
 
+const self='01940000-0000-7000-8000-00000000000a';
+async function installPreservationAdapter(home:string,store:ReturnType<typeof postgresStore>) {
+  const adapter=fileURLToPath(new URL('../../../extensions/garmin/tests/preservation_entry.py',import.meta.url));
+  for(const entry of ['import.py','import_verify.py']) await copyFile(adapter,join(home,'extensions/garmin/src',entry));
+  await store.setSetting({userId:self,key:'garmin.timezone',value:'Asia/Seoul',updatedAt:new Date()});
+}
+
 it.each(['file','parent'] as const)('원본 SQLite의 첫 읽기 직전 %s symlink 교체를 거부한다', async boundary => {
   const fixture=await extHome(), store=postgresStore({databaseUrl:fixture.db.appUrl}), controller=new AbortController(), ids=uuidV7IdGen();
   let daemon: ReturnType<typeof runDaemon> | undefined;
   try {
     const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    await installPreservationAdapter(fixture.home,store);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), root=join(fixture.home,'capture'); await mkdir(root);
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     execFileSync(python,['-c',"import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import five_candidates,capture_manifest; p=pathlib.Path(sys.argv[2]); capture_manifest(p,five_candidates(p))",fixtures,root]);
@@ -60,7 +68,8 @@ def _os_open(path,flags,*a,**kw):
 pathlib.Path.open=_path_open
 os.open=_os_open
 `;
-    source=source.replace('\ntry:\n    main()',instrumentation+'\ntry:\n    main()'); await writeFile(script,source);
+    const seam='\ntry:\n    main()'; expect(source.split(seam)).toHaveLength(2);
+    source=source.replace(seam,instrumentation+seam); expect(source).toContain(instrumentation); await writeFile(script,source);
     const result=await fixture.run(['ext','run','garmin','import-verify','--json']);
     expect(result.code,result.stdout+result.stderr).not.toBe(0); expect(result.body.data.report.checks.source_unchanged).toBe(false);
     expect(await readFile(marker+'-attempt','utf8')).toBe('attempted');
@@ -85,6 +94,7 @@ it('원본·보존 행·mapping·raw·checkpoint·파일 결과 변조를 읽기
   let daemon: ReturnType<typeof runDaemon> | undefined;
   try {
     const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+    await installPreservationAdapter(fixture.home,store);
     const python=join(fixture.home,'extensions/garmin/.venv/bin/python'),root=join(fixture.home,'capture'); await mkdir(root);
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
     execFileSync(python,['-c',"import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; artifact_capture(pathlib.Path(sys.argv[2]))",fixtures,root]);
@@ -124,12 +134,14 @@ it('원본·보존 행·mapping·raw·checkpoint·파일 결과 변조를 읽기
       ['mappings',"delete from garmin.import_mapping where (dataset,original_table,original_key,target_kind)=(select dataset,original_table,original_key,target_kind from public.test_mapping)","insert into garmin.import_mapping select * from public.test_mapping"],
       ['files',"insert into garmin.import_mapping select (jsonb_populate_record(null::garmin.import_mapping,to_jsonb(m)||jsonb_build_object('original_key','unexpected-file'))).* from public.test_artifact_mapping m","delete from garmin.import_mapping where target_kind='artifact_file' and original_key='unexpected-file'"],
       ['files',"delete from garmin.import_mapping where (dataset,original_table,original_key,target_kind)=(select dataset,original_table,original_key,target_kind from public.test_artifact_mapping)","insert into garmin.import_mapping select * from public.test_artifact_mapping"],
+      ['files',"update garmin.import_mapping set content_hash='tampered' where (dataset,original_table,original_key,target_kind)=(select dataset,original_table,original_key,target_kind from public.test_artifact_mapping)","update garmin.import_mapping m set content_hash=b.content_hash from public.test_artifact_mapping b where (m.dataset,m.original_table,m.original_key,m.target_kind)=(b.dataset,b.original_table,b.original_key,b.target_kind)"],
       ['files',"update garmin.import_mapping set target_id=(select target_id from public.test_artifact_mapping) where (dataset,original_table,original_key,target_kind)=(select dataset,original_table,original_key,target_kind from public.test_second_artifact_mapping)","update garmin.import_mapping m set target_id=b.target_id from public.test_second_artifact_mapping b where (m.dataset,m.original_table,m.original_key,m.target_kind)=(b.dataset,b.original_table,b.original_key,b.target_kind)"],
       ['legacy',"update garmin.import_mapping set target_id=(select target_id from public.test_legacy_mapping) where (dataset,original_table,original_key,target_kind)=(select dataset,original_table,original_key,target_kind from public.test_second_legacy_mapping)","update garmin.import_mapping m set target_id=b.target_id from public.test_second_legacy_mapping b where (m.dataset,m.original_table,m.original_key,m.target_kind)=(b.dataset,b.original_table,b.original_key,b.target_kind)"],
       ['legacy',"insert into garmin.import_mapping select (jsonb_populate_record(null::garmin.import_mapping,to_jsonb(m)||jsonb_build_object('target_kind','legacy','target_id','00000000-0000-4000-8000-000000000098'))).* from public.test_extra_mapping m","delete from garmin.import_mapping where target_kind='legacy' and target_id='00000000-0000-4000-8000-000000000098'"],
       ['legacy',"delete from garmin.import_mapping where (dataset,original_table,original_key,target_kind)=(select dataset,original_table,original_key,target_kind from public.test_legacy_mapping)","insert into garmin.import_mapping select * from public.test_legacy_mapping"],
       ['legacy',"update garmin.legacy_conversations set conversation_id='00000000-0000-4000-8000-000000000099' where (dataset,original_table,original_key)=(select dataset,original_table,original_key from public.test_legacy_conversation)","update garmin.legacy_conversations c set conversation_id=b.conversation_id from public.test_legacy_conversation b where (c.dataset,c.original_table,c.original_key)=(b.dataset,b.original_table,b.original_key)"],
       ['inventory',"update garmin.artifact_inventory set unlinked_reason='changed' where (dataset,original_table,artifact_key)=(select dataset,original_table,artifact_key from public.test_inventory)","update garmin.artifact_inventory i set unlinked_reason=b.unlinked_reason from public.test_inventory b where (i.dataset,i.original_table,i.artifact_key)=(b.dataset,b.original_table,b.artifact_key)"],
+      ['inventory',"update garmin.artifact_inventory set metadata='{}'::jsonb where (dataset,original_table,artifact_key)=(select dataset,original_table,artifact_key from public.test_inventory)","update garmin.artifact_inventory i set metadata=b.metadata from public.test_inventory b where (i.dataset,i.original_table,i.artifact_key)=(b.dataset,b.original_table,b.artifact_key)"],
       ['inventory',"update garmin.input_inventory set metadata_raw=decode('00','hex') where (dataset,category)=(select dataset,category from public.test_input_inventory)","update garmin.input_inventory i set metadata_raw=b.metadata_raw from public.test_input_inventory b where (i.dataset,i.category)=(b.dataset,b.category)"],
       ['inventory',"update garmin.artifact_relations set reason='changed' where (dataset,artifact_key,analysis_key,role)=(select dataset,artifact_key,analysis_key,role from public.test_relation)","update garmin.artifact_relations r set reason=b.reason from public.test_relation b where (r.dataset,r.artifact_key,r.analysis_key,r.role)=(b.dataset,b.artifact_key,b.analysis_key,b.role)"],
       ['schemas',"insert into garmin.source_schemas select (jsonb_populate_record(null::garmin.source_schemas,to_jsonb(s)||jsonb_build_object('original_table','unexpected_table'))).* from public.test_schema s","delete from garmin.source_schemas where original_table='unexpected_table'"],
