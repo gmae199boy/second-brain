@@ -124,3 +124,19 @@ it('never overlaps two probes of one key', async () => {
     expect(new Date(attempts[1]!.started_at).getTime()).toBeGreaterThanOrEqual(new Date(attempts[0]!.finished_at).getTime());
   } finally { controller.abort(); await running; await fixture.close(); await rm(home, { recursive: true, force: true }); }
 });
+
+it('passes the database self ID to an actual supervised process probe', async () => {
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const home = await mkdtemp(join(tmpdir(), 'brain-supervisor-self-'));
+  const fixture = await supervisorFixture(home), controller = new AbortController();
+  const worker = join(home, 'probe.mjs'), output = join(home, 'user-id');
+  await writeFile(worker, `import {writeFileSync} from 'node:fs'; writeFileSync(process.env.PROBE_OUTPUT, process.env.BRAIN_USER_ID ?? 'missing'); console.log(JSON.stringify({abi:1,type:'result'}));\n`);
+  let running: ReturnType<typeof runDaemon> | undefined;
+  try {
+    const id = await fixture.enqueueProbe();
+    running = runDaemon({ home, env: { ...withoutHarnessFolders(process.env), ...fixture.env }, clock: systemClock, idGen: uuidV7IdGen(), signal: controller.signal, drainPauseMs: 25, heartbeatMs: 100, supervisor: { pollMs: 25, probeWorker: { command: process.execPath, args: [worker], env: { PROBE_OUTPUT: output } } } });
+    await expect.poll(async () => (await fixture.item(id))?.outcome, { timeout: 15000 }).toBe('succeeded');
+    const self = (await fixture.db.rows('select id from brain.users where is_self=1'))[0]!.id;
+    expect(await readFile(output, 'utf8')).toBe(self);
+  } finally { controller.abort(); await running; await fixture.close(); await rm(home, { recursive: true, force: true }); }
+});

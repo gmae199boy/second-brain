@@ -26,3 +26,5 @@ fixture 파일은 core 패키지의 fixtures/process-abi/v1에 있다.
 `fixtures/process-abi/v1/settings-snapshots.json`은 선언 키 `testext.limit`(number), `testext.token`(string)을 기준으로 판정한다.
 
 설정 snapshot은 `{ "version": 1, "extension": "testext", "user_id": "01940000-0000-7000-8000-00000000000a", "values": {} }` 형태이며 `user_id`는 필수 UUID 문자열이다. self 사용자가 없으면 Runtime은 `USER_MISSING`으로 실행을 중단하고 자식 프로세스를 시작하지 않는다.
+
+선택 환경 변수 `BRAIN_USER_ID`는 UUID 문자열이며 Runtime은 감독 자식의 self 사용자 ID를 채운다. 이 값이 없던 기존 ABI 입력도 유효하다.

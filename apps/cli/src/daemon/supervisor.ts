@@ -43,8 +43,8 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
             extension: manifest.name, declarations: Object.fromEntries(declarations.map(setting => [setting.key, setting.type])), errorCodes: manifest.error_codes ?? [],
             required: 'required_settings' in work && Array.isArray(work.required_settings) ? work.required_settings : declarations.filter(setting => setting.required.includes(manifest.auth?.kind === work.kind ? 'auth' : 'work')).map(setting => setting.key),
             secrets: declarations.filter(setting => setting.secret).map(setting => setting.key),
-            async prepare(item, token) {
-              const self = await resolveSelfUser(opened.store);
+            async prepare(item, token, userId) {
+              const self = userId === undefined ? await resolveSelfUser(opened.store) : { ok: true as const, userId };
               if (!self.ok) return { ok: false, code: self.code };
               const read = await readScopedSettings(opened.store, self.userId, declarations);
               if (!read.ok) return { ok: false, code: read.code };
@@ -84,7 +84,7 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
         await rename(temporary, readinessPath);
       };
       await runSupervisor({ loadProtectedLaunches, onReadiness, store: opened.store, schemaVersions: opened.expected,
-        prepareLaunch: async () => { const self = await resolveSelfUser(opened.store); return self.ok ? { ok: true } : { ok: false, code: self.code }; },
+        prepareLaunch: async () => { const self = await resolveSelfUser(opened.store); return self.ok ? { ok: true, userId: self.userId } : { ok: false, code: self.code }; },
         inspector: options.supervisor?.inspector ?? systemProcessInspector,
         ...(options.supervisor?.cancelGraceMs === undefined ? {} : { cancelGraceMs: options.supervisor.cancelGraceMs }),
         ...(options.supervisor?.cancelPollMs === undefined ? {} : { cancelPollMs: options.supervisor.cancelPollMs }),

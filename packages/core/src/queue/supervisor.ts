@@ -6,7 +6,7 @@ import type { IdGen } from '../ports/id-gen.js';
 import type { ProcessInspector, ProcessLauncher, ProcessSpec } from '../ports/process.js';
 import type { FinishSupervisedWorkInput, FinishWorkResult, OpenSupervisedAttempt, SchemaStore, WorkStore } from '../ports/store.js';
 import type { ChannelStore } from '../channels/store.js';
-import { createAbiRun, createAbiStderr, decodeAbiEnv, type AbiRunVerdict } from '../process-abi/codec.js';
+import { createAbiRun, createAbiStderr, decodeAbiEnv, isAbiUserId, type AbiRunVerdict } from '../process-abi/codec.js';
 import { checkSchema, type SchemaVersions } from '../schema.js';
 import { cleanProcessGroup, inspectGroup, type GroupIdentity } from './process-cleanup.js';
 // Persist only narrowly defined, non-health public Garmin result summaries.
@@ -48,11 +48,11 @@ export interface SupervisorOptions {
   launches: Readonly<Record<string, (item: WorkItem, token: string) => ProcessSpec | null>>;
   protectedLaunches?: Readonly<Record<string, {
     extension: string; declarations: Readonly<Record<string, 'string' | 'number' | 'boolean'>>; errorCodes: readonly string[]; required?: readonly string[]; secrets?: readonly string[];
-    prepare(item: WorkItem, token: string): Promise<{ ok: true; spec: ProcessSpec } | { ok: false; code: 'USER_MISSING' | 'EXTENSION_CONFIG_INVALID' | 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
+    prepare(item: WorkItem, token: string, userId?: string): Promise<{ ok: true; spec: ProcessSpec } | { ok: false; code: 'USER_MISSING' | 'EXTENSION_CONFIG_INVALID' | 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
   }>>;
   loadProtectedLaunches?: () => Promise<NonNullable<SupervisorOptions['protectedLaunches']>>;
   onReadiness?: (ready: boolean) => void | Promise<void>;
-  prepareLaunch?: () => Promise<{ ok: true } | { ok: false; code: 'USER_MISSING' | 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
+  prepareLaunch?: () => Promise<{ ok: true; userId?: string } | { ok: false; code: 'USER_MISSING' | 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
   signal: AbortSignal; log?: (message: string) => void | Promise<void>; schemaVersions: SchemaVersions;
   stallWindowMs?: (kind: string) => number;
   pollMs?: number; renewEveryMs?: number; cancelGraceMs?: number; cancelPollMs?: number; groupConfirmMs?: number;
@@ -199,11 +199,16 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
       const preflight = await options.prepareLaunch?.();
       if (preflight && !preflight.ok) preparationFailure = { code: preflight.code, retryable: preflight.code !== 'USER_MISSING' };
       else if (protection) {
-        const prepared = await protection.prepare(item, token);
+        const prepared = await protection.prepare(item, token, preflight?.ok ? preflight.userId : undefined);
         if (!prepared.ok) preparationFailure = { code: prepared.code, retryable: prepared.code !== 'EXTENSION_CONFIG_INVALID' && prepared.code !== 'USER_MISSING' };
-        else if (!Object.hasOwn(prepared.spec.env, 'BRAIN_SETTINGS_SNAPSHOT') || !decodeAbiEnv(prepared.spec.env).ok || !validateProtectedSnapshot(prepared.spec.env['BRAIN_SETTINGS_SNAPSHOT'], protection)) preparationFailure = { code: 'EXTENSION_CONFIG_INVALID', retryable: false };
         else spec = prepared.spec;
       } else spec = launches[item.kind]?.(item, token) ?? null;
+      if (spec && preflight?.ok && preflight.userId !== undefined) spec = { ...spec, env: { ...spec.env, BRAIN_USER_ID: preflight.userId } };
+      if (spec && protection && (!Object.hasOwn(spec.env, 'BRAIN_SETTINGS_SNAPSHOT') || !decodeAbiEnv(spec.env).ok || !validateProtectedSnapshot(spec.env['BRAIN_SETTINGS_SNAPSHOT'], protection))) {
+        preparationFailure = { code: 'EXTENSION_CONFIG_INVALID', retryable: false }; spec = null;
+      } else if (spec && !protection && preflight?.ok && preflight.userId !== undefined && !isAbiUserId(spec.env['BRAIN_USER_ID'])) {
+        preparationFailure = { code: 'ABI_ENV_INVALID', retryable: false }; spec = null;
+      }
       if (spec !== null && !signal.aborted) {
         const open = await store.listOpenSupervisedAttempts();
         if (!open.ok) { preparationFailure = { code: open.code, retryable: true }; spec = null; }

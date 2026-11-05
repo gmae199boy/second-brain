@@ -445,3 +445,43 @@ it.each([
     expect(k.store.snapshot().workAttempts[0]).toMatchObject({ errorCode: code, errorRetryable: code !== 'USER_MISSING' });
   } finally { k.controller.abort(); await k.running; }
 });
+
+it.each(['channel_send', 'process_probe'] as const)('passes self in the %s child environment', async kind => {
+  const store = memoryStore(), time = manualTime(now), launcher = fakeProcessLauncher(), idGen = sequenceIdGen({ timestampMs: now.getTime() }), controller = new AbortController();
+  const userId = '01940000-0000-7000-8000-00000000000a';
+  if (kind === 'channel_send') {
+    await store.ensureChannel({ id: 'c', kind: 'telegram', botRef: 'fixture' });
+    await store.ensureChannelConversation({ id: 'v', channelId: 'c', externalRef: 'chat', threadRef: null, userId });
+    await store.createChannelRequest({ id: 'r', conversationId: 'v', producer: 'test', producerResultId: 'result', purpose: 'notice', revision: null, text: 'text', createdAt: now });
+    await store.handoffChannelRequest({ requestId: 'r', workId: 'work', now });
+  } else await store.addWork({ id: 'work', kind, targetKind: 'probe', targetId: 'probe', createdAt: now, nextAttemptAt: now });
+  const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector: fakeProcessInspector(launcher), launcher, idGen, signal: controller.signal,
+    prepareLaunch: async () => ({ ok: true, userId }), launches: { [kind]: () => ({ command: 'probe', args: [], env: { BRAIN_USER_ID: 'untrusted' } }) } });
+  try {
+    await flush(); expect(launcher.specs[0]?.env.BRAIN_USER_ID).toBe(userId);
+    launcher.processes[0]?.push('{"abi":1,"type":"result"}'); launcher.processes[0]?.exit(); await flush();
+  } finally { controller.abort(); await running; }
+});
+
+it.each(['core', 'protected'] as const)('rejects malformed preflight user ID before starting %s child', async kind => {
+  const protectedLaunches = kind === 'protected' ? { process_probe: { extension: 'testext', declarations: {}, errorCodes: [], async prepare(item: import('../src/domain/work-item.js').WorkItem, token: string) {
+    return { ok: true as const, spec: { command: 'probe', args: [], env: { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_SETTINGS_SNAPSHOT: JSON.stringify({ version: 1, extension: 'testext', user_id: '01940000-0000-7000-8000-00000000000a', values: {} }) } } };
+  } } } : undefined;
+  const k = await kit({ prepareLaunch: async () => ({ ok: true, userId: 'invalid' }), ...(protectedLaunches ? { protectedLaunches } : {}) });
+  try { expect(k.launcher.specs).toEqual([]); expect(k.store.snapshot().workAttempts[0]).toMatchObject({ errorCode: kind === 'core' ? 'ABI_ENV_INVALID' : 'EXTENSION_CONFIG_INVALID', errorRetryable: false }); }
+  finally { k.controller.abort(); await k.running; }
+});
+
+it('passes preflight ID to protected preparation and validates its final overwritten environment', async () => {
+  const userId = '01940000-0000-7000-8000-00000000000a'; let received: string | undefined;
+  const k = await kit({ prepareLaunch: async () => ({ ok: true, userId }), protectedLaunches: { process_probe: { extension: 'testext', declarations: {}, errorCodes: [], async prepare(item, token, preparedUserId) {
+    received = preparedUserId;
+    return { ok: true, spec: { command: 'probe', args: [], env: { BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id, BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind, BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts), BRAIN_USER_ID: 'untrusted-invalid', BRAIN_SETTINGS_SNAPSHOT: JSON.stringify({ version: 1, extension: 'testext', user_id: preparedUserId, values: {} }) } } };
+  } } } });
+  try {
+    expect(received).toBe(userId); expect(k.launcher.specs).toHaveLength(1);
+    expect(k.launcher.specs[0]!.env.BRAIN_USER_ID).toBe(userId);
+    expect(JSON.parse(k.launcher.specs[0]!.env.BRAIN_SETTINGS_SNAPSHOT!).user_id).toBe(userId);
+    k.launcher.processes[0]!.push('{"abi":1,"type":"result"}'); k.launcher.processes[0]!.exit(); await flush();
+  } finally { k.controller.abort(); await k.running; }
+});

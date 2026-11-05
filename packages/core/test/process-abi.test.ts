@@ -245,3 +245,10 @@ it('exposes the final result summary only for a valid ABI stream', () => {
   run.feed('{"abi":1,"type":"result","summary":"duplicate"}\n');
   expect(run.resultSummary).toBeUndefined();
 });
+
+it('accepts an optional UUID BRAIN_USER_ID and rejects malformed values', async () => {
+  const valid = (await load(PROCESS_ABI_ENV_FIXTURES_URL)).find((f: any) => f.name === 'required').env;
+  expect(decodeAbiEnv(valid).ok).toBe(true);
+  expect(decodeAbiEnv({ ...valid, BRAIN_USER_ID: '01940000-0000-7000-8000-00000000000a' }).ok).toBe(true);
+  for (const value of ['', 'not-a-uuid', 123]) expect(decodeAbiEnv({ ...valid, BRAIN_USER_ID: value })).toMatchObject({ ok: false, code: 'ABI_ENV_INVALID' });
+});

@@ -22,6 +22,7 @@ deferred:
       core 감독 자식(channel_send, process_probe)의 실행 입력에는 self user_id가 들어가지 않고 시작 전 self 존재만 확인한다.
     evidence: |-
       review pass2 intent-alignment A. "모든 실행 입력"을 core 내부 자식까지 포함해 읽을지 정해야 결론이 난다. 현재 core 자식은 사용자 값을 쓰지 않고 channel_conversations 행이 user_id를 갖는다. 다중 사용자 에픽 또는 사용자 판단으로 정한다.
+      처분(2026-11-05 중앙 수락 보완 msg_9353a3bf31a4): 필수 범위로 판정, 해결. 감독자가 시작 직전 모든 감독 일감(core channel_send·process_probe 포함, 확장 포함) spec env에 Runtime이 해석한 self를 선택 ABI env BRAIN_USER_ID(UUID)로 넣고 최종 spec을 검증한다. 확장 snapshot.user_id도 같은 preflight 값을 쓴다. 시험 코드: core supervisor·process-abi, CLI daemon-supervisor·ext-install(시험 실행은 21.8).
     location: >-
       apps/cli/src/daemon/supervisor.ts
     severity: medium (unverified)
@@ -110,6 +111,7 @@ deferred:
 - `core-garmin-cleanup.test.ts`는 31까지의 migration 디렉터리로 고정해 0031 자체를 검증하도록 바꿨다.
 - 리뷰 pass1 수정(fix1) 뒤 실제 동작: `installPostgres`는 core 31까지 migrate → `ensureSelfUser` → 0032 이후 순서라 self 없는 기존 DB도 setup으로 회복한다. 0032를 setup 밖에서 단독 적용하면 self 없이 채울 행이 있을 때 여전히 `USER_MISSING`으로 rollback한다(I/O 표의 self 없는 업그레이드 행은 단독 migration 경로).
 - 읽기 규칙 최종: user scope 키는 사용자 행 → 공통 행 → 기본값, global scope 키는 공통 행 → 기본값(global 키의 사용자 쓰기는 거부되므로 사용자 행이 정상 경로로 생기지 않는다). config·설치 확인·명령·login·데몬이 같은 `readScopedSettings`를 쓴다.
+- 중앙 수락 보완(2026-11-05): deferred 1을 필수 범위로 받아 core 감독 자식 실행 입력에 self를 `BRAIN_USER_ID`로 전달(`implementation-20.2-accept{1,2}.md`). built 커밋 a830eee 뒤 계획을 in-progress로 되돌렸다가 완료 후 built로 복원.
 - 지휘자 확인: `pnpm build` 종료 0, `pnpm typecheck` 종료 0, `git diff --check` 종료 0. 시험 실행은 21.8로 이관, 미실행.
 
 ## Plan Change Log
@@ -185,6 +187,19 @@ deferred:
   - `[false]` `[reject]` (intent-E) scope 거부·대화 소유자의 강제 위치 — carried: pass1 intent-D/E 반증 그대로.
 - 처리: low 시험 보강 5건만 patch. 이 후속 pass는 high를 patch하지 않았으므로 후속 리뷰 권고 false(수렴).
 
+### 2026-11-05 — Review pass (follow-up pass 4, 중앙 수락 보완 증분 a830eee..)
+- verdicts: 7 findings — high 0, medium 0, low 5, false 2, maybe-false 0
+- 리뷰 원문: `.brain-automation/review-20.2-p4-{blind-hunter,edge-case-hunter,verification-gap,intent-alignment}.md` (edge-case-hunter·verification-gap 지적 0건)
+- findings:
+  - `[low]` `[patch]` (blind-1) `preflight.userId`가 ABI 검증 뒤 주입돼 공용 훅이 비 UUID를 주면 검증 없이 시작된다(G6) — 주입을 검증 앞으로 옮겨 최종 spec을 `decodeAbiEnv`로 검증하도록 지시.
+  - `[low]` `[patch]` (blind-2) 보호 spec에 기존 `BRAIN_USER_ID`가 있으면 덮어쓰기 전에 거부돼 비보호 경로와 계약이 다르다 — G6과 같은 원인·같은 수정, 보호 경로 덮어쓰기 시험.
+  - `[low]` `[reject]` (blind-3) snapshot.user_id와 `BRAIN_USER_ID` 불일치 검사 없음 — CLI prepare는 preflight ID로 snapshot을 만들어 불일치가 생기지 않고, 공용 훅의 임의 callback만 만들 수 있다. 가드 추가라 거부.
+  - `[low]` `[patch]` (blind-4) 보호 `prepare`의 세 번째 인자 전달을 직접 확인하는 core 시험 없음 — callback이 받은 인자 기록·단언 시험 지시.
+  - `[low]` `[patch]` (blind-5) 확장 자식 ID 증거 파일이 시도마다 덮여 첫 시도 입력을 확인하지 못한다 — generation별 기록·단언 지시.
+  - `[false]` `[reject]` (intent-1) `BRAIN_USER_ID`가 ABI상 선택이라 구조적 필수가 아니다 — 중앙 지시가 기존 ABI 호환 최소 변경을 요구했고, 실제 daemon은 필수 preflight로 self 없으면 시작하지 않으며 있으면 항상 주입한다.
+  - `[false]` `[reject]` (intent-2) 감독 밖 terminal login은 `BRAIN_USER_ID`를 쓰지 않는다 — login은 snapshot.user_id로 self를 전달하므로 self가 빠진 실행이 아니다.
+- 처리: low 4건 patch. 후속 pass에서 high patch 없음 → 후속 리뷰 권고 false.
+
 ## Design Notes
 
 - 이행 순서의 적용: 새 DB에는 0032 시점에 채울 행이 없고 `installPostgres`가 migration 직후 self를 만든다. 업그레이드 DB의 self는 이전 setup이 이미 보장했으므로 0032가 기존 self id를 복사해 채운다(DB가 값을 생성하지 않음). self 없는 비정상 DB는 조용히 NULL(=공통)로 바꾸지 않고 멈춘다 — 설정이 섞이는 위험(에픽 Risk 2)을 피하는 보수적 선택이다.
@@ -211,3 +226,4 @@ deferred:
 - 검증: 최종 `pnpm build` 종료 0, `pnpm typecheck` 종료 0, `git diff --check` 종료 0. **시험 실행은 21.8로 이관, 미실행**이다. 정적 리뷰를 실행 통과로 표현하지 않는다.
 - 21.8 인계: 전용 시험 DB·합성 자료에서 `pnpm test` → `pnpm test:python` 순차 실행. 이 티켓 대상 시험은 Verification 절 목록과 `packages/postgres/test/install-orbstack.test.ts`, `apps/cli/test/{ext-login,postgres-setup}.test.ts`, `packages/core/test/{settings,extension-snapshot}.test.ts`. DB 업그레이드(31→32, self 없는 회복·rollback), 권한(app role select/insert/update, delete·불변 trigger 거부), 대화 수집 표 건수·md5 보존 시험이 핵심이다. 준비: `tooling/test-db` 격리 PG와 임시 홈, 정리: fixture 소유 DB/홈.
 - 잔여 위험: 시험 미실행이라 새·갱신 시험 자체의 오류 가능성이 있다(21.8). user/global 혼합 조회는 두 statement라 동시 갱신 시 키 간 값이 섞일 수 있다(low, 기각). 공통 행만 있는 user 키에 기본값을 설치하면 유효 값이 바뀐다(직접 SQL로만 생기는 상태, 기각). 20.1의 알려진 경계(명령이 확장 잠금을 보유해 disable이 기다릴 수 있음)는 그대로다.
+- 중앙 수락 보완(2026-11-05, 중앙 msg_9353a3bf31a4): deferred 1(core 감독 자식 실행 입력의 self)을 필수 범위로 받아 해결했다. 선택 ABI env `BRAIN_USER_ID`(있으면 UUID)를 더하고, 감독자가 공통 preflight의 self를 시작 직전 모든 감독 일감 spec에 넣은 뒤 최종 spec을 검증한다(보호 경로는 같은 self로 snapshot 생성). 변경: `process-abi/codec.ts`, `queue/supervisor.ts`, CLI `daemon/supervisor.ts`, ABI README·env schema·fixture, 시험 core `supervisor`·`process-abi`, CLI `daemon-supervisor`·`ext-install`. 증분 후속 리뷰 pass4: 7건(low 5·false 2) → patch 4·reject 3, high/medium 0, 후속 리뷰 권고 false. 최종 `pnpm build`·`pnpm typecheck`·`git diff --check` 종료 0. 시험 실행은 21.8로 이관, 미실행. 21.8 추가 대상: `packages/core/test/{supervisor,process-abi}.test.ts`, `apps/cli/test/{daemon-supervisor,ext-install}.test.ts`.
