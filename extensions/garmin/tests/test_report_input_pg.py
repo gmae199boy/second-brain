@@ -142,3 +142,74 @@ class SQLiteCutoffArithmeticIntegrationTest(unittest.TestCase):
                     pg_result = pg.execute('select garmin.activity_ends_before_cutoff(%s::bigint,%s::bigint,%s::bigint)', (start,duration,cutoff)).fetchone()[0]
                     self.assertEqual(None if sqlite_result is None else bool(sqlite_result), expected)
                     self.assertEqual(pg_result, expected)
+
+class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
+    """Pinned SQLite child and account-scoped PG consume the same fixed fixture."""
+    def test_report_input_matches_independent_sqlite_and_model_contract(self):
+        import os
+        import subprocess
+        import sys
+        from datetime import timedelta
+        from uuid import uuid4
+        import psycopg
+        from garmin_pipeline import body, config, digest, report, store
+
+        root = Path(__file__).resolve().parents[1]
+        fixture_path = root / 'fixtures/legacy/analysis-input-fixture.json'
+        fixture = json.loads(fixture_path.read_text(encoding='utf-8'))
+        with tempfile.TemporaryDirectory(prefix='report-input-comparison-') as tmp:
+            base = Path(tmp)
+            env = {'HOME':tmp,'PATH':os.defpath,'PYTHONPATH':str(root / 'tests/oracle/src'),'PYTHONDONTWRITEBYTECODE':'1'}
+            child = subprocess.run([sys.executable,str(root / 'tests/report_input_oracle_child.py'),str(fixture_path)],cwd=tmp,env=env,text=True,capture_output=True,check=True,timeout=60)
+            expected = json.loads(child.stdout)
+            cfgfile = base / 'config.toml'
+            cfgfile.write_text('environment = "dev"\ntimezone = ' + json.dumps(fixture['timezone']) + '\ntokenstore = ' + json.dumps(str(base / 'tokens')) + '\n', encoding='utf-8')
+            cfg = config.load(cfgfile)
+            user, account, work, token = None, uuid4(), uuid4(), uuid4()
+            with psycopg.connect(os.environ['GARMIN_TEST_OWNER_DSN'],autocommit=True) as owner:
+                user = owner.execute('select id from brain.users where is_self=1').fetchone()[0]
+                owner.execute('insert into garmin.account_connections(user_id,connection_id,external_identity,timezone) values (%s,%s,%s,%s)',(user,account,'report-oracle-'+str(account),fixture['timezone']))
+                owner.execute("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values (%s,'garmin.import','synthetic',%s,now(),now(),'supervised',now(),now()+interval '1 hour','fixture')",(work,str(work)))
+                owner.execute('insert into brain.work_attempts(token,work_item_id,started_at) values (%s,%s,now())',(token,work))
+                owner.execute('update brain.work_items set current_attempt_token=%s where id=%s',(token,work))
+                yesterday = str(date.fromisoformat(fixture['date']) - timedelta(days=1))
+                for day, start, finish in ((fixture['date'],fixture['cutoff'],fixture['cutoff']),(yesterday,fixture['previous_cutoff'],None)):
+                    owner.execute("insert into garmin.run(user_id,connection_id,local_date,started_at,finished_at,status,detail) values (%s,%s,%s,%s,%s,'success','')",(user,account,day,start,finish))
+                for row in fixture['raw']:
+                    owner.execute('insert into garmin.raw_response(user_id,connection_id,scope,key,endpoint,raw,fetched_at,checked_at,library_version) values (%s,%s,%s,%s,%s,%s,%s,%s,%s)',(user,account,row['scope'],row['key'],row['endpoint'],row['body'],fixture['cutoff'],fixture['cutoff'],'test'))
+                for table, rows in [('activity',fixture['activities']),('day_summary',fixture['day_summary']),('workout',fixture['workout']),('exercise_log',fixture['exercise_log'])]:
+                    for row in rows:
+                        columns = ['user_id','connection_id',*row]
+                        owner.execute('insert into garmin.'+table+'('+','.join(columns)+') values ('+','.join(['%s']*len(columns))+')',(user,account,*row.values()))
+                for row in fixture['evaluations']:
+                    owner.execute('insert into garmin.evaluation_revisions(user_id,connection_id,report_date,scope,summary,judgments,evidence,next_checks,report_md,model,created_at,revision) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1)',(user,account,row['report_date'],row['scope'],row['summary'],json.dumps(row['judgments']),json.dumps(row['evidence']),json.dumps(row['next_checks']),row['report_md'],'fixture',fixture['cutoff']))
+            (cfg.data_dir / 'body').mkdir(parents=True,exist_ok=True)
+            for row in fixture['body']:
+                (cfg.data_dir / 'body' / (row['measured_on']+'.json')).write_text(json.dumps(row['sidecar']),encoding='utf-8')
+            cfg.profile_path.parent.mkdir(parents=True,exist_ok=True)
+            cfg.profile_path.write_text(fixture['profile'],encoding='utf-8')
+            previous = next((r for r in fixture['evaluations'] if r['report_date']==yesterday and r['scope']=='day'),None)
+            if previous:
+                cfg.reports_dir.mkdir(parents=True,exist_ok=True)
+                (cfg.reports_dir / (yesterday+'.md')).write_text(previous['report_md'],encoding='utf-8')
+            account_context = store.AccountContext(user,account,work,token)
+            with patch.dict(os.environ,{'BRAIN_DATABASE_URL':os.environ['GARMIN_TEST_EXTENSION_DSN'],'BRAIN_USER_ID':str(user),'BRAIN_WORK_ID':str(work),'BRAIN_ATTEMPT_TOKEN':str(token)}), store.supervised_account(account_context):
+                result = report_input.build(cfg,date.fromisoformat(fixture['date']),started_at=fixture['cutoff'])
+                report_input.write_json(result.path / 'digest.json', digest.build(result.manifest,result.days,result.activities,result.labels,result.body))
+                for scope in ('7d','30d','all'):
+                    report_input.build_period(cfg,result.path,date.fromisoformat(fixture['date']),scope)
+            actual = {str(p.relative_to(result.path)):p.read_text(encoding='utf-8') for p in result.path.rglob('*') if p.is_file()}
+            self.assertEqual(set(actual),set(expected['files']))
+            for name, value in actual.items():
+                with self.subTest(path=name):
+                    if name.endswith('.json'):
+                        self.assertEqual(json.loads(value),json.loads(expected['files'][name]))
+                    else:
+                        self.assertEqual(value,expected['files'][name])
+            schemas = Path(report.__file__).parent / 'schemas'
+            contracts = {'prompts':[report.codex_prompt(['report-input/day']), *(report.codex_prompt(['report-input/period','profile.md'],scope=s) for s in ('7d','30d','all')),report.codex_prompt(['body/a.png'],intake=True)], 'schemas':{name:json.loads((schemas / name).read_text()) for name in ('body.schema.json','body_intake_output.schema.json','daily_analysis_output.schema.json','period_review_output.schema.json')}}
+            measurement = json.loads((fixture_path.parent / 'report_v8/measurement.json').read_text(encoding='utf-8'))
+            self.assertIsNone(expected['measurement_error'])
+            self.assertEqual(body._first_error(body._measurement_schema(body.load_schema()),measurement),expected['measurement_error'])
+            self.assertEqual(contracts,expected['contracts'])
+            self.assertEqual(digest.build(result.manifest,result.days,result.activities,result.labels,result.body),expected['digest'])

@@ -95,3 +95,49 @@ NULL·배열·동률·시간대·중단 뒤 pending 복구를 비교한다. DB/r
 확인이다. 정상 토큰 갱신은 잠금 아래 보호된 작업 사본과 복구 장부로 처리하며,
 중단된 갱신은 다음 동일 계정 실행에서 검증 후 이어간다. 수동 토큰 교체·다른
 계정·불일치 증거는 자동 귀속하지 않으므로 운영자가 원인을 확인해야 한다.
+
+## 감독 분석과 21.8 시험 인계
+
+21.4의 시험 실행은 **21.8로 이관, 미실행**이다. 앞의 전용 compose·시험
+DB/role·격리 home 준비와 소유권 확인 후 `pnpm test` 다음 `pnpm test:python`을
+순차 실행한다. 실패 수정 후 관련 재검증은 다음과 같다.
+
+```sh
+pnpm exec vitest run --config apps/cli/python-test/vitest.config.ts apps/cli/python-test/garmin-report.test.ts apps/cli/python-test/garmin-native.test.ts apps/cli/python-test/garmin-unit.test.ts
+```
+
+Python discovery의 `test_report_input_pg.py`는 고정 합성 입력을 각각 별도
+SQLite 원본 child와 소유 PG에 넣고 day·7d·30d·all의 파일/JSON, NULL·배열,
+cutoff, digest 계산, 모델 프롬프트·schema, 원본 체성분 측정 검증을 비교한다.
+`garmin-report.test.ts`는 실제 설치 manifest와 감독 entry부터 fake 모델과
+PG 저장까지 중단/재개, 재생성, 경쟁, 취소 및 body 경계를 관찰한다. 분류
+시험은 새 child·fixture·감독 관찰자 경로가 Python 실행 대상으로 선택되는지
+확인한다. 원본 SQLite child는 제품 PG에서 기대값을 만들지 않는다.
+
+기준 SHA, 명령·종료 코드·로그, 격리 자원 소유권, 실패별 처분과 재검증을
+기록한다. 위의 정리 명령으로 이 실행이 직접 만든 자원만 정리한다. 새·기존
+시험이 빠지거나 실패가 남으면 21.8 built 및 21.7 시작은 금지한다.
+
+21.4의 body 명령은 모델 호출별 runtime 파일 요청/응답으로 호스트에 전달된다.
+모델 프로세스는 PG에 접속하지 않으며 호스트가 선택 계정과 현재 attempt를
+검사하고 짧은 fence 안에서 원본 body 검증·확정을 수행한다. 호출이 끝나면
+미처리 요청은 다음 scope로 넘기지 않는다. 감독 그룹 소유권이 확인된 경우에만
+모델과 후손을 정리하고 다음 scope 전에 종료를 확인한다.
+
+21.8에서 `test_body_runtime.py`의 실제 CLI subprocess→호스트 요청 성공·invalid·
+pending·stale·미처리 요청 취소와 sidecar replace 직후/복수 source 첫 이동 뒤
+취소 및 재시도를 확인한다. 앞서 확정된 sidecar와 이동된 입력, 남은 pending,
+mtime 병합 및 source 목록을 관찰한다. `test_report_supervised.py`의 최초
+pending 잔존 성공보고 거부, `test_report_process.py`의 그룹 소유권·정리와
+`garmin-report.test.ts`의 timeout 이후 후손 종료 및 daemon 복구 시험도 포함한다.
+이 시험 코드는 **21.8로 이관, 미실행**이다.
+
+Execution 12의 추가 관찰도 같은 소유 PG와 격리 home에서 실행한다. 실제 감독
+fake가 계정별 합성 steps가 든 digest 파일, pending 사진 순서와 `-i`/프롬프트,
+배포 body 명령 문법 및 선택 모델/effort argv를 확인한다. TERM을 무시하는
+손자는 다음 scope 전에 종료돼야 한다. `test_store_contract_integration.py`는
+실제 fence 안 원본 파일 게시 중 회수 잠금 경합, 취소 후 stale 거부 및 새
+attempt 재시도를 관찰하고 `test_body_runtime.py`는 날짜와 source 거부 때 기존
+파일 보존을 확인한다. 독립 SQLite oracle도 계산 digest를 파일에 게시해 PG와
+비교한다. 이 코드와 fixture 생성·checker·모든 시험 실행은 **21.8로 이관,
+미실행**이다. 경로 분류는 기존 Garmin 전체 규칙과 분류 assertion을 사용한다.

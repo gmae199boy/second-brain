@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Synthetic Codex CLI for owned integration databases, never invokes a model."""
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+args = sys.argv[1:]
+extension = Path(os.environ['BRAIN_EXTENSION_HOME'])
+target = os.environ['BRAIN_TARGET_ID']
+work = os.environ['BRAIN_WORK_ID']
+attempt = os.environ['BRAIN_ATTEMPT_TOKEN']
+prompt = next((arg for arg in args if arg.startswith('$garmin-')), '')
+lines = prompt.splitlines()
+first = lines[0] if lines else ''
+scopes = {'$garmin-body-intake': 'intake', '$garmin-daily-analysis': 'day',
+          **{'$garmin-period-review ' + scope: scope for scope in ('7d', '30d', 'all')}}
+if first not in scopes:
+    sys.exit(18)
+scope = scopes[first]
+runtime = extension / 'reports/accounts' / os.environ['BRAIN_USER_ID'] / target
+if Path.cwd().resolve() != runtime.resolve() or Path(args[args.index('-C') + 1]).resolve() != runtime.resolve():
+    sys.exit(19)
+skill = {'intake': 'garmin-body-intake', 'day': 'garmin-daily-analysis'}.get(scope, 'garmin-period-review')
+skill_text = (runtime / '.agents/skills' / skill / 'SKILL.md').read_text(encoding='utf-8')
+if 'name: ' + skill not in skill_text:
+    sys.exit(20)
+if scope == 'intake':
+    for command in ('"$BRAIN_EXTENSION_HOME/.venv/bin/python" "$BRAIN_EXTENSION_HOME/src/body_runtime.py" pending',
+                    '"$BRAIN_EXTENSION_HOME/.venv/bin/python" "$BRAIN_EXTENSION_HOME/src/body_runtime.py" write <YYYY-MM-DD> --source',
+                    '"$BRAIN_EXTENSION_HOME/.venv/bin/python" "$BRAIN_EXTENSION_HOME/src/body_runtime.py" reject',
+                    '성공하면 stdout에 JSON 한 줄', 'body write`가 거부되면(0이 아닌 종료)',
+                    'body reject`가 0이 아닌 값으로 끝나면'):
+        if command not in skill_text: sys.exit(26)
+observed = {}
+if scope == 'intake':
+    command = [str(extension / '.venv/bin/python'), str(extension / 'src/body_runtime.py'), 'pending']
+    body_env = dict(os.environ)
+    body_env.pop('BRAIN_DATABASE_URL', None)
+    listed = subprocess.run(command, capture_output=True, text=True, check=True, env=body_env).stdout.splitlines()
+    observed['pending'] = listed
+if scope != 'intake':
+    if len(lines) < 4 or lines[2] != '입력 폴더(운영 루트 기준 경로):': sys.exit(21)
+    folder = (runtime / lines[3]).resolve()
+    if not folder.is_relative_to(runtime.resolve()) or not folder.is_dir(): sys.exit(22)
+    if scope == 'day':
+        observed['manifest'] = json.loads((folder / 'manifest.json').read_text())
+        observed['digest'] = json.loads((folder / 'digest.json').read_text())
+        observed['raw'] = {str(path.relative_to(folder)): json.loads(path.read_text())
+                           for path in sorted((folder / 'days').rglob('*.json'))}
+        observed['body'] = {str(path.relative_to(folder)): json.loads(path.read_text())
+                            for path in sorted((folder / 'body').glob('*.json'))}
+        observed['evaluations'] = {str(path.relative_to(folder)): json.loads(path.read_text())
+                                   for path in sorted((folder / 'previous_evaluations').glob('*.json'))}
+    else:
+        if len(lines) != 5: sys.exit(23)
+        profile = (runtime / lines[4]).resolve()
+        if not profile.is_relative_to(runtime.resolve()): sys.exit(24)
+        observed['profile'] = profile.read_text(encoding='utf-8')
+        observed['scope'] = json.loads((folder / 'scope.json').read_text())
+        if observed['scope']['scope'] != scope: sys.exit(25)
+        for name in ('day_values', 'evaluations', 'previous'):
+            observed[name] = json.loads((folder / (name + '.json')).read_text())
+control = extension / 'report-fixture'
+control.mkdir(exist_ok=True)
+with (control / 'calls.jsonl').open('a') as stream:
+    stream.write(json.dumps({'scope': scope, 'target': target, 'work': work, 'attempt': attempt, 'pid': os.getpid(), 'pgid': os.getpgrp(), 'argv': args, 'cwd': str(Path.cwd()), 'skill': skill, 'observed': observed}, ensure_ascii=False) + '\n')
+    stream.flush()
+(control / ('started-' + target + '-' + scope)).write_text(str(os.getpid()))
+if (control / ('grandchild-' + scope)).exists():
+    child = subprocess.Popen([sys.executable, '-c', 'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print("ready", flush=True); time.sleep(600)'], stdout=subprocess.PIPE, text=True)
+    assert child.stdout and child.stdout.readline().strip() == 'ready'
+    (control / ('child-' + target + '-' + scope)).write_text(str(child.pid))
+while (control / ('hold-' + target + '-' + scope)).exists() or (control / ('hold-' + scope)).exists():
+    time.sleep(.05)
+if (control / ('fail-' + scope)).exists():
+    sys.exit(17)
+if scope == 'intake':
+    mode = (control / 'body-mode').read_text().strip() if (control / 'body-mode').exists() else 'valid'
+    if mode in ('valid', 'invalid'):
+        for path in listed:
+            (control / ('before-body-write-' + target)).write_text('ready')
+            while (control / 'hold-body-write').exists():
+                time.sleep(.05)
+            command = [str(extension / '.venv/bin/python'), str(extension / 'src/body_runtime.py'), 'write', '2020-01-02', '--source', path]
+            payload = '{"weight_kg":70}' if mode == 'valid' else '{"weight_kg":NaN}'
+            result = subprocess.run(command, input=payload, text=True, capture_output=True, env=body_env)
+            if result.returncode:
+                mode = 'failed'
+    result = {'status': 'ok' if mode == 'valid' else 'failed', 'detail': 'synthetic'}
+else:
+    status = 'failed' if (control / ('status-failed-' + scope)).exists() else 'ok'
+    marker = json.dumps({'scope': scope, 'work': work, 'observed': observed}, ensure_ascii=False, sort_keys=True)
+    result = {'status': status, 'summary': 'synthetic ' + scope, 'report_md': marker,
+              'judgments': [], 'evidence': [], 'next_checks': []}
+output = Path(args[args.index('-o') + 1])
+output.write_text('{invalid-json' if (control / ('invalid-' + scope)).exists() else json.dumps(result))
+print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'cached_input_tokens': 0, 'output_tokens': 1}}), flush=True)

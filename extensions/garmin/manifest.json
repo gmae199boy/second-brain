@@ -183,6 +183,28 @@
         "garmin.timezone",
         "garmin.tokenstore"
       ]
+    },
+    {
+      "kind": "garmin.report",
+      "execution": "supervised",
+      "runtime": "python",
+      "entry": "src/report.py",
+      "manual": "report",
+      "required_settings": [
+        "garmin.timezone",
+        "garmin.analysis_model"
+      ]
+    },
+    {
+      "kind": "garmin.report_regenerate",
+      "execution": "supervised",
+      "runtime": "python",
+      "entry": "src/report.py",
+      "manual": "report-regenerate",
+      "required_settings": [
+        "garmin.timezone",
+        "garmin.analysis_model"
+      ]
     }
   ],
   "settings": [
@@ -207,6 +229,29 @@
       "type": "string",
       "machine": "tokenstore",
       "required": []
+    },
+    {
+      "key": "garmin.analysis_agent",
+      "type": "string",
+      "required": [],
+      "default": "codex"
+    },
+    {
+      "key": "garmin.analysis_model",
+      "type": "string",
+      "required": []
+    },
+    {
+      "key": "garmin.analysis_reasoning_effort",
+      "type": "string",
+      "required": [],
+      "default": "high"
+    },
+    {
+      "key": "garmin.analysis_timeout_minutes",
+      "type": "number",
+      "required": [],
+      "default": "20"
     }
   ],
   "error_codes": [
@@ -220,6 +265,11 @@
     "IMPORT_FILES_FAILED",
     "COLLECT_INVALID",
     "COLLECT_LOCKED",
-    "COLLECT_UNAVAILABLE"
+    "COLLECT_UNAVAILABLE",
+    "REPORT_INVALID",
+    "REPORT_STALE",
+    "REPORT_LOCKED",
+    "REPORT_FAILED",
+    "REPORT_UNAVAILABLE"
   ]
 }

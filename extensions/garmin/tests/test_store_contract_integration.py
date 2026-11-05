@@ -21,6 +21,10 @@ from uuid import uuid4
 import psycopg
 from garmin_pipeline import charts, coverage, report_input, store, normalize
 from collect_credentials import CredentialEvidenceError, verify_credentials
+import body_runtime
+import report_runtime
+from garmin_pipeline import body
+from test_report_runtime import report_env
 
 DAY = '2026-01-01'
 REPORT_DAY = date(2026, 1, 2)
@@ -59,6 +63,58 @@ class RealStoreContractTest(unittest.TestCase):
     def append(self, conn, report_date, scope, text):
         return store.append_evaluation(conn,report_date=report_date,scope=scope,summary=text,
             judgments='[]',evidence='[]',next_checks='[]',report_md='report '+text,model='synthetic',created_at=1)
+
+    def test_body_publication_holds_real_attempt_fence_cancel_and_retry(self):
+        user, account, _ = self.accounts[0]
+        with tempfile.TemporaryDirectory(prefix='body-fence-') as tmp:
+            env = report_env()
+            env.update(BRAIN_EXTENSION_HOME=tmp, BRAIN_DATABASE_URL=self.ext_dsn,
+                       BRAIN_USER_ID=str(user), BRAIN_TARGET_ID=str(account),
+                       BRAIN_WORK_ID=str(self.work), BRAIN_ATTEMPT_TOKEN=str(self.token))
+            snapshot = json.loads(env['BRAIN_SETTINGS_SNAPSHOT']); snapshot['user_id'] = str(user)
+            env['BRAIN_SETTINGS_SNAPSHOT'] = json.dumps(snapshot)
+            _, cfg = report_runtime.envelope(env)
+            root = cfg.path.parent
+            inbox = cfg.inbox_dir / 'inbody'; inbox.mkdir(parents=True)
+            source = inbox / 'synthetic.txt'; source.write_text('synthetic')
+            relative = source.relative_to(root).as_posix()
+            entered, release = threading.Event(), threading.Event()
+            atomic = body._atomic_write
+            def interrupt_after_publish(path, text):
+                atomic(path, text)
+                entered.set()
+                if not release.wait(15): raise TimeoutError('barrier')
+                raise InterruptedError('synthetic cancellation')
+            def publish():
+                return body_runtime.execute(env, 'write', measured_on=REPORT_DAY,
+                                            sources=[relative], text='{"weight_kg":70}')
+            with patch.dict(os.environ, env), patch.object(body, '_atomic_write', interrupt_after_publish):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(publish)
+                    try:
+                        self.assertTrue(entered.wait(15))
+                        with psycopg.connect(self.owner_dsn, autocommit=True) as owner:
+                            owner.execute("set lock_timeout = '300ms'")
+                            with self.assertRaises(psycopg.errors.LockNotAvailable):
+                                owner.execute('update brain.work_items set current_attempt_token=null where id=%s', (self.work,))
+                    finally:
+                        release.set()
+                    with self.assertRaises(InterruptedError): future.result(timeout=15)
+            self.assertTrue(source.is_file())
+            sidecar = cfg.data_dir / 'body/2026-01-02.json'
+            self.assertEqual(json.loads(sidecar.read_text())['values'], {'weight_kg':70})
+            new_token = uuid4()
+            with psycopg.connect(self.owner_dsn, autocommit=True) as owner:
+                owner.execute('update brain.work_items set current_attempt_token=null where id=%s', (self.work,))
+                owner.execute('insert into brain.work_attempts(token,work_item_id,started_at) values (%s,%s,now())', (new_token,self.work))
+                owner.execute('update brain.work_items set current_attempt_token=%s where id=%s', (new_token,self.work))
+            with patch.dict(os.environ, env):
+                with self.assertRaises(store.StaleAttempt): publish()
+                env['BRAIN_ATTEMPT_TOKEN'] = str(new_token)
+                os.environ['BRAIN_ATTEMPT_TOKEN'] = str(new_token)
+                publish()
+            self.assertFalse(source.exists())
+            self.assertEqual(json.loads(sidecar.read_text())['values'], {'weight_kg':70})
 
     def test_credential_binding_fence_and_competing_accounts(self):
         with tempfile.TemporaryDirectory(prefix='garmin-binding-') as tmp:
