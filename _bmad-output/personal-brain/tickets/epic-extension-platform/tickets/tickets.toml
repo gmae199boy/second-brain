@@ -70,4 +70,3 @@ covers = []
 after = [6, 1, 2, 3, 4]
 hitl = false
 risk = "low"
-

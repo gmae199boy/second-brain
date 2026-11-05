@@ -133,3 +133,18 @@
 | 시험 환경 | 오라클 jsonschema4.26.0 캐시·Garmin venv·전용 PG | 전역 role 잔존은 소유 PG 재생성으로 해소, 다른 작업 자원 변경 없음 |
 
 전체 JS3985통과·1skip, 입력 단위12·비교/계약15 통과. `operator_actions: []`. 원문·영수증·리뷰는 보존한 워크트리와 중앙 로컬 체크포인트에 보관한다. 다음 실행은 사용자 지정18.10이며18.3보다 앞선다.
+
+## 18.10 — dropped / Garmin 확장 재설계로 대체
+
+2026-11-05 사용자 결정. 근거: [처분표](../architecture-brain-v1-slice-1/garmin-extension-redesign-disposition.md), [재설계 연구](../research-garmin-extension-redesign-2026-11-05/research-garmin-extension-redesign-2026-11-05.md), [18.10 계획](../tickets/epic-health-analysis/tickets/story-snapshot-plan.md). 성능 구현은 미채택 WIP이며 main에 병합하지 않는다. 성능 조건·마무리 전체 회귀·독립 구현 리뷰 완료로 집계하지 않는다.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 사용자 결정 |18.3~18.10·14.8·16.9·19.7 dropped | 미완료를 built로 바꾼 것이 아니라 새 epic20·21로 대체. 옛 완료·차단 증거는 이력 보존 |
+| 후속 이행 |20.6에서 옛 core 건강·분석·epic16 경로 정리 | 새 forward migration만 사용. 대화 수집·FileStore·file_requests·채널 기록·공통 확장/예약 기반 보존 |
+| 보존 / 미채택 |18.10 perf-wip와 baseline Orca 워크트리 | 자동 병합·제거 금지. 기존 성능 측정은 진단 증거이며 새 인수 근거 아님 |
+| 운영 환경 |brain-1810-perf·brain-1810-test 전용 컨테이너 잔존 보고 | 이번 문서 반영에서는 삭제하지 않음. 후속 시험은 소유가 명확한 별도 자원 사용 |
+| 운영 이행 |이 Mac 설치본 schema27 보고 |20.6에서 합성 업그레이드·신규 설치 보존 검증, 실제 운영 전환은21.7의 계정 확인 gate 준수 |
+| 명세 보강 |epic19 일부 entry는 refine=true | 폐기 경로 전제는 착수 전 새 생산 경로 기준 재정제. 옛 문구만으로 시작하지 않음 |
+
+이전14.8·16.9 차단 및18.1·18.2 잔여 위험 기록은 과거 계약의 증거다. 새 설계의 수락조건 충족·실계정 gate 해제로 해석하지 않는다.
