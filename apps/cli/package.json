@@ -15,16 +15,17 @@
   },
   "dependencies": {
     "@clack/prompts": "1.8.1",
+    "ajv": "^8.20.0",
     "commander": "15.0.0",
     "second_brain": "workspace:*",
     "smol-toml": "1.9.0",
     "uuid": "14.0.2"
   },
   "devDependencies": {
-    "@types/node": "24.19.1",
-    "typescript": "7.0.2",
     "@second-brain/test-db": "workspace:*",
+    "@types/node": "24.19.1",
+    "@types/pg": "8.23.1",
     "pg": "8.23.1",
-    "@types/pg": "8.23.1"
+    "typescript": "7.0.2"
   }
 }

@@ -43,12 +43,15 @@ async function compareDistributedFixtures(directory: string) {
     const manifest = await import(pathToFileURL(join(core, 'dist/extensions/manifest.js')).href);
     const read = async (path: string) => JSON.parse(await readFile(join(core, path), 'utf8'));
     const manifests = await read('fixtures/extensions/v1/manifests.json');
+    const deepRecipe = await read('fixtures/extensions/v1/deep-schema.json');
     const env = await read('fixtures/process-abi/v1/env.json');
     const events = await read('fixtures/process-abi/v1/events.json');
     const runs = await read('fixtures/process-abi/v1/runs.json');
     const snapshots = await read('fixtures/process-abi/v1/settings-snapshots.json');
+    const { validateSchema } = await import('../src/runtime/json-schema.js');
     const typescript = {
-      manifests: manifests.map((c: any) => ({ name: c.name, verdict: manifest.decodeExtensionManifest(JSON.stringify(c.manifest)).ok })),
+      manifests: manifests.map((c: any) => ({ name: c.name, verdict: manifest.decodeExtensionManifest(JSON.stringify(c.manifest), validateSchema).ok })),
+      'deep-manifest': [{ name: deepRecipe.name, verdict: manifest.decodeExtensionManifest(JSON.stringify(manifests[0].manifest).replace(/}$/, `,\"commands\":[{\"name\":\"echo\",\"runtime\":\"node\",\"entry\":\"echo.mjs\",\"description\":\"조회\",\"input_schema\":${'{\"type\":\"object\",\"properties\":{\"x\":'.repeat(deepRecipe.depth)}{}${'}}'.repeat(deepRecipe.depth)},\"output_schema\":{\"type\":\"object\"},\"timeout_ms\":100,\"risk\":\"read\"}]}`), validateSchema).ok }],
       env: env.map((c: any) => ({ name: c.name, verdict: codec.decodeAbiEnv(c.env).ok })),
       events: events.map((c: any) => { const result = codec.decodeAbiLine(c.line); return { name: c.name, verdict: result.ok ? true : result.code }; }),
       runs: runs.map((c: any) => {
@@ -59,12 +62,13 @@ async function compareDistributedFixtures(directory: string) {
       }),
       'settings-snapshots': snapshots.map((c: any) => ({ name: c.name, verdict: codec.decodeSettingsSnapshot(c.snapshot, 'testext', { 'testext.limit': 'number', 'testext.token': 'string' }).ok })),
     };
+    expect(typescript['deep-manifest'][0]!.verdict).toBe(deepRecipe.expect === 'valid');
     for (const [fixtures, verdicts] of [[manifests, typescript.manifests], [env, typescript.env], [snapshots, typescript['settings-snapshots']]] as const) {
       fixtures.forEach((fixture: any, i: number) => expect(verdicts[i]!.verdict, fixture.name).toBe(fixture.expect === 'valid'));
     }
     events.forEach((fixture: any, i: number) => expect(typescript.events[i]!.verdict, fixture.name).toBe(fixture.expect === 'valid' ? true : fixture.code));
     runs.forEach((fixture: any, i: number) => expect(typescript.runs[i]!.verdict, fixture.name).toEqual(fixture.expect));
-    const python = JSON.parse(execFileSync(join(directory, '.venv/bin/python'), [join(directory, 'judge.py'), core], { encoding: 'utf8' }));
+    const python = JSON.parse(execFileSync(join(directory, '.venv/bin/python'), [join(directory, 'judge.py'), core, fileURLToPath(new URL('../dist/runtime/json-schema.js', import.meta.url))], { encoding: 'utf8' }));
     for (const [file, cases] of Object.entries(typescript)) {
       expect(python[file], `${file}: 이름, 개수, 판정`).toEqual(cases);
     }

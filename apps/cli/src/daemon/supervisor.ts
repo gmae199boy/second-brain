@@ -1,3 +1,4 @@
+import { validateSchema } from '../runtime/json-schema.js';
 import { fileURLToPath } from 'node:url';
 import { readFile, writeFile, rename, rm, readdir, realpath, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -34,7 +35,7 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
           const directoryInfo = await lstat(directory);
           const manifestInfo = await lstat(join(directory, 'manifest.json'));
           if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink() || !manifestInfo.isFile() || manifestInfo.isSymbolicLink()) continue;
-          const decoded = decodeExtensionManifest(await readFile(join(directory, 'manifest.json'), 'utf8'));
+          const decoded = decodeExtensionManifest(await readFile(join(directory, 'manifest.json'), 'utf8'), validateSchema);
           if (!decoded.ok || decoded.manifest.name !== extension.name || decoded.manifest.version !== extension.version) continue;
           const manifest = decoded.manifest;
           const declarations = manifest.settings ?? [];

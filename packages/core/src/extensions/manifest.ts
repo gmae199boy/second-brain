@@ -1,3 +1,4 @@
+import { maskOutputValue } from '../output/mask.js';
 import { extensionSettingDefinitions, type ExtensionSettingDeclaration } from './snapshot.js';
 export const EXTENSION_CORE_VERSION = 1;
 export function isExtensionName(value: string): boolean {
@@ -12,16 +13,49 @@ export interface ExtensionManifest {
   auth?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string };
   default_schedules?: { kind: string; target_kind: string; target_id: string; local_time: string }[];
   raw_views?: string[];
+  commands?: ExtensionCommandDeclaration[];
+}
+export interface ExtensionCommandDeclaration {
+  name: string; runtime: 'node' | 'python'; entry: string; description: string;
+  examples?: string[]; input_schema: Record<string, unknown>; output_schema: Record<string, unknown>;
+  timeout_ms: number; risk: 'read';
 }
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+function hasAsyncSchema(value: unknown): boolean {
+  if (!object(value)) return false;
+  if (value['$async'] === true) return true;
+  for (const key of ['$defs', 'definitions', 'properties', 'patternProperties', 'dependentSchemas']) {
+    const map = value[key]; if (object(map) && Object.values(map).some(hasAsyncSchema)) return true;
+  }
+  for (const key of ['allOf', 'anyOf', 'oneOf', 'prefixItems']) {
+    const schemas = value[key]; if (Array.isArray(schemas) && schemas.some(hasAsyncSchema)) return true;
+  }
+  return ['items', 'additionalItems', 'additionalProperties', 'unevaluatedProperties', 'unevaluatedItems', 'contains', 'propertyNames', 'not', 'if', 'then', 'else', 'contentSchema'].some(key => hasAsyncSchema(value[key]));
+}
 const keys = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).length === allowed.length && Object.keys(value).every(k => allowed.includes(k));
 const inside = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && !value.includes('\\') && !value.includes('\0') && !value.startsWith('/') && !/^[A-Za-z]:/.test(value) && value.split('/').every(part => part !== '..' && part !== '.' && part !== '');
-export function decodeExtensionManifest(text: string): { ok: true; manifest: ExtensionManifest } | { ok: false; code: 'EXTENSION_INVALID'; message: string } {
+function decodeManifestUnchecked(text: string, validateSchema?: (schema: Record<string, unknown>) => boolean): { ok: true; manifest: ExtensionManifest } | { ok: false; code: 'EXTENSION_INVALID'; message: string } {
   const invalid = { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장 manifest의 필드나 패키지 상대 경로가 올바르지 않습니다' };
   let v: unknown; try { v = JSON.parse(text); } catch { return invalid; }
-  if (!object(v) || !['name', 'version', 'core', 'abi', 'migrations', 'connection_check'].every(k => Object.hasOwn(v, k)) || !Object.keys(v).every(k => ['name', 'version', 'core', 'abi', 'migrations', 'connection_check', 'settings', 'error_codes', 'work', 'auth', 'default_schedules', 'raw_views'].includes(k))) return invalid;
+  if (!object(v) || !['name', 'version', 'core', 'abi', 'migrations', 'connection_check'].every(k => Object.hasOwn(v, k)) || !Object.keys(v).every(k => ['name', 'version', 'core', 'abi', 'migrations', 'connection_check', 'settings', 'error_codes', 'work', 'auth', 'default_schedules', 'raw_views', 'commands'].includes(k))) return invalid;
   const check = v['connection_check'];
   if (typeof v['name'] !== 'string' || !isExtensionName(v['name']) || typeof v['version'] !== 'string' || !v['version'].trim() || /[\u0000-\u001f\u007f-\u009f]/.test(v['version']) || v['core'] !== EXTENSION_CORE_VERSION || v['abi'] !== 1 || !inside(v['migrations']) || !object(check) || !keys(check, ['runtime', 'entry']) || !['node', 'python'].includes(check['runtime'] as string) || !inside(check['entry'])) return invalid;
+  if (v['commands'] !== undefined) {
+    if (!Array.isArray(v['commands']) || (v['commands'].length > 0 && (v['name'].includes('_') || ['install', 'run', 'login', 'list', 'status', 'enable', 'disable'].includes(v['name'])))) return invalid;
+    const seen = new Set<string>();
+    for (const command of v['commands']) {
+      if (!object(command) || !['name', 'runtime', 'entry', 'description', 'input_schema', 'output_schema', 'timeout_ms', 'risk'].every(k => Object.hasOwn(command, k)) ||
+          !Object.keys(command).every(k => ['name', 'runtime', 'entry', 'description', 'examples', 'input_schema', 'output_schema', 'timeout_ms', 'risk'].includes(k)) ||
+          typeof command['name'] !== 'string' || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(command['name']) || seen.has(command['name']) ||
+          !['node', 'python'].includes(command['runtime'] as string) || !inside(command['entry']) ||
+          typeof command['description'] !== 'string' || !command['description'].trim() ||
+          (command['examples'] !== undefined && (!Array.isArray(command['examples']) || command['examples'].some((x: unknown) => typeof x !== 'string' || !x.trim()))) ||
+          !object(command['input_schema']) || command['input_schema']['type'] !== 'object' || JSON.stringify(maskOutputValue(command['input_schema'])) !== JSON.stringify(command['input_schema']) || !object(command['output_schema']) || hasAsyncSchema(command['input_schema']) || hasAsyncSchema(command['output_schema']) ||
+          !Number.isSafeInteger(command['timeout_ms']) || ((command['timeout_ms'] as number) < 1 || (command['timeout_ms'] as number) > 2147483647) || command['risk'] !== 'read') return invalid;
+      try { if (!validateSchema || validateSchema(command['input_schema']) !== true || validateSchema(command['output_schema']) !== true) return invalid; } catch { return invalid; }
+      seen.add(command['name']);
+    }
+  }
   if (v['settings'] !== undefined) {
     if (!Array.isArray(v['settings'])) return invalid;
     const seen = new Set<string>();
@@ -79,4 +113,8 @@ export function decodeExtensionManifest(text: string): { ok: true; manifest: Ext
   }
   if (v['error_codes'] !== undefined && (!Array.isArray(v['error_codes']) || v['error_codes'].some((code: unknown) => typeof code !== 'string' || !/^[A-Z][A-Z0-9_]{0,63}$/.test(code)) || new Set(v['error_codes']).size !== v['error_codes'].length)) return invalid;
   return { ok: true, manifest: v as unknown as ExtensionManifest };
+}
+
+export function decodeExtensionManifest(text: string, validateSchema?: (schema: Record<string, unknown>) => boolean): ReturnType<typeof decodeManifestUnchecked> {
+  try { return decodeManifestUnchecked(text, validateSchema); } catch { return { ok: false, code: 'EXTENSION_INVALID', message: '확장 manifest의 필드나 패키지 상대 경로가 올바르지 않습니다' }; }
 }

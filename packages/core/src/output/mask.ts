@@ -53,7 +53,7 @@ function maskUnknown(value: unknown): unknown {
     }
   }
   const masked: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) masked[key] = maskUnknown(item);
+  for (const [key, item] of Object.entries(value)) Object.defineProperty(masked, key, { value: maskUnknown(item), enumerable: true, configurable: true, writable: true });
   return masked;
 }
 

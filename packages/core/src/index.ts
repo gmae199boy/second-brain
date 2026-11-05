@@ -305,3 +305,7 @@ export * from './files/import-work.js';
 
 
 export { runExtension } from './extensions/run.js';
+
+export * from './extensions/commands.js';
+
+export { hasOnlyFiniteNumbers } from './extensions/json-values.js';

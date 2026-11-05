@@ -1,3 +1,4 @@
+import { validateSchema, validateValue } from './json-schema.js';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, rename, rm, lstat, readdir, chmod, realpath, open } from 'node:fs/promises';
@@ -65,7 +66,7 @@ export async function installedExtensionMigrations(home: string, names: readonly
     const manifestPath = join(directory, 'manifest.json');
     const manifestStat = await lstat(manifestPath);
     if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) throw new Error(`확장 manifest가 일반 파일이 아닙니다: ${name}`);
-    const decoded = decodeExtensionManifest(await readFile(manifestPath, 'utf8'));
+    const decoded = decodeExtensionManifest(await readFile(manifestPath, 'utf8'), validateSchema);
     if (!decoded.ok || decoded.manifest.name !== name) throw new Error(`확장 manifest가 올바르지 않습니다: ${name}`);
     let path = directory;
     for (const part of decoded.manifest.migrations.split('/')) {
@@ -101,6 +102,7 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
     finally { await file.close(); }
   }
   return {
+    validateSchema, validateValue, installedDirectory: name => join(home, 'extensions', name),
     async installedManifest(name) { if (!isExtensionName(name)) throw new Error('invalid extension'); return safeFile(['extensions', name, 'manifest.json']); },
     // [ASSUMPTION] 공개 보고 파일의 고정 이름은 public.json이다.
     async readPublicReport(name, workId) { if (!isExtensionName(name) || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(workId)) throw new Error('invalid report'); return JSON.parse(await safeFile(['extensions', name, 'reports', workId, 'public.json'])); },
@@ -113,6 +115,10 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
         const age = clock.now().getTime() - Date.parse(ready.at ?? '');
         return ready.pid === owner.pid && ready.startedAt === owner.startedAt.toISOString() && Number.isFinite(age) && age >= 0 && age <= 20_000;
       } catch { return false; }
+    },
+    async withCommandLock(name, run, signal) {
+      const { withExtensionInstallLock } = await import('second_brain/postgres');
+      return withExtensionInstallLock(await databaseUrl(), name, run, signal, { queryTimeoutMs: 1000 });
     },
     async withInstallLock(name, run, signal) {
       const { withExtensionInstallLock } = await import('second_brain/postgres');

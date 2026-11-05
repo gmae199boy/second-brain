@@ -4,8 +4,10 @@ import { PROCESS_ABI_MAX_LINE_BYTES, type ProcessLauncher } from 'second_brain';
 export const systemProcessLauncher: ProcessLauncher = {
   async start(spec) {
     return new Promise((resolve) => {
-      const child = spawn(spec.command, [...spec.args], { env: { ...spec.env }, ...(spec.cwd ? { cwd: spec.cwd } : {}), detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
-      function buffer(stream: typeof child.stdout) {
+      const child = spawn(spec.command, [...spec.args], { env: { ...spec.env }, ...(spec.cwd ? { cwd: spec.cwd } : {}), detached: true, stdio: [spec.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
+      child.stdin?.on('error', () => { /* A child can close its input before reading it. */ });
+      child.stdin?.end(spec.stdin);
+      function buffer(stream: NonNullable<typeof child.stdout>) {
         stream.setEncoding('utf8');
         const queue: string[] = [];
         let queuedBytes = 0;
@@ -35,7 +37,8 @@ export const systemProcessLauncher: ProcessLauncher = {
         } };
         return { output, close };
       }
-      const stdout = buffer(child.stdout), stderr = buffer(child.stderr);
+      const stdoutStream = child.stdout!, stderrStream = child.stderr!;
+      const stdout = buffer(stdoutStream), stderr = buffer(stderrStream);
       const exited = new Promise<{ code: number | null; signal: string | null }>((done) => {
         child.once('exit', (code, signal) => done({ code, signal }));
       });
@@ -43,7 +46,7 @@ export const systemProcessLauncher: ProcessLauncher = {
       child.once('spawn', () => resolve({ ok: true, handle: {
         pid: child.pid!, stdout: stdout.output, stderr: stderr.output, exited,
         get leaderExited() { return child.exitCode !== null || child.signalCode !== null; },
-        closeOutput() { stdout.close(); stderr.close(); child.stdout.destroy(); child.stderr.destroy(); },
+        closeOutput() { stdout.close(); stderr.close(); stdoutStream.destroy(); stderrStream.destroy(); },
         signalGroup(signal) {
           try { process.kill(-child.pid!, signal); }
           catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }

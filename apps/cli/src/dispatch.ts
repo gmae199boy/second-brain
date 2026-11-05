@@ -1,3 +1,4 @@
+import { validateSchema } from './runtime/json-schema.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SettingsStore } from 'second_brain';
@@ -79,6 +80,8 @@ export interface CommandOption {
 
 /** What every command gets, whether or not it has a brain to talk to. */
 export interface CommandContextBase {
+  signal?: AbortSignal;
+  rawExtensionInput?: { value: unknown };
   /** The one clock. A command that needs a time asks this (AD-13). */
   clock: Clock;
   /** The parsed flags of this invocation, including `json`. */
@@ -258,6 +261,8 @@ export interface CommandMeta {
 
 /** What every command declares, standalone or not. */
 export interface CommandSpecBase extends CommandMeta {
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
   /** The namespace, as in `brain <ns> <verb>` (AD-5). */
   ns: string;
   verb: string;
@@ -354,6 +359,8 @@ export type CommandSpec<T = unknown> = DatabaseCommandSpec<T> | StandaloneComman
 export type CreateConnectionStore = NonNullable<import('./runtime/brain-store.js').OpenBrainStoreOptions['createStore']>;
 
 export interface DispatchRuntime {
+  signal?: AbortSignal;
+  rawExtensionInput?: { value: unknown };
   runner?: CommandRunner;
   clock: Clock;
   env?: NodeJS.ProcessEnv;
@@ -443,6 +450,8 @@ export async function dispatch(
   try {
     outcome = await execute(registry, argv, { clock, json, positional: [] }, env, {
       runner: runtime.runner,
+      signal: runtime.signal,
+      rawExtensionInput: runtime.rawExtensionInput,
       createStore: runtime.createStore,
       stdin: runtime.stdin ?? (() => readStdin()),
       recordHookArrival: (harness) => recordHookArrival(configHome(env), harness, env['SECOND_BRAIN_PLUGIN_ROOT']),
@@ -530,6 +539,8 @@ export async function dispatch(
 
 /** The parts of the runtime `execute` passes on to a command or to the SDK. */
 interface Wiring {
+  signal?: AbortSignal;
+  rawExtensionInput?: { value: unknown };
   runner?: CommandRunner;
   createStore: CreateConnectionStore | undefined;
   stdin: () => Promise<string>;
@@ -611,7 +622,7 @@ async function execute(
           if (!installed.ok) return failed(rendering, { code: installed.code, message: installed.message }, warningCodes, warningLines);
           if (installed.extension) {
             try {
-              const decoded = decodeExtensionManifest(await readFile(join(home, 'extensions', name, 'manifest.json'), 'utf8'));
+              const decoded = decodeExtensionManifest(await readFile(join(home, 'extensions', name, 'manifest.json'), 'utf8'), validateSchema);
               if (decoded.ok && decoded.manifest.name === name) definitions = extensionSettingDefinitions(decoded.manifest.settings ?? []);
             } catch { /* Missing or unreadable declarations leave the key unregistered. */ }
           }
@@ -689,6 +700,8 @@ async function execute(
       args,
       stdin,
       recordHookArrival,
+      signal: wiring.signal,
+      rawExtensionInput: wiring.rawExtensionInput,
     });
     const result = finish(rendering, outcome, warningCodes, warningLines);
 
@@ -946,9 +959,11 @@ function buildProgram(
   for (const spec of registry) {
     let namespace = namespaces.get(spec.ns);
     if (namespace === undefined) {
-      namespace = quiet(
-        program.command(spec.ns).description(spec.nsDescription ?? `${spec.ns} 명령`),
-      );
+      if (spec.ns.startsWith('ext.')) {
+        let ext = namespaces.get('ext');
+        if (!ext) { ext = quiet(program.command('ext').description('확장 명령')); namespaces.set('ext', ext); }
+        namespace = quiet(ext.command(spec.ns.slice(4)).description(spec.nsDescription ?? `${spec.ns} 명령`));
+      } else namespace = quiet(program.command(spec.ns).description(spec.nsDescription ?? `${spec.ns} 명령`));
       namespaces.set(spec.ns, namespace);
     }
 

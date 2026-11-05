@@ -398,5 +398,1059 @@
       ]
     },
     "expect": "invalid"
+  },
+  {
+    "name": "read-command",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo-stats",
+          "runtime": "node",
+          "entry": "bin/echo.mjs",
+          "description": "통계 조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "timeout_ms": 1000,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "write-command",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo-stats",
+          "runtime": "node",
+          "entry": "bin/echo.mjs",
+          "description": "통계 조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "timeout_ms": 1000,
+          "risk": "write"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "duplicate-command",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo-stats",
+          "runtime": "node",
+          "entry": "bin/echo.mjs",
+          "description": "통계 조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "timeout_ms": 1000,
+          "risk": "read"
+        },
+        {
+          "name": "echo-stats",
+          "runtime": "node",
+          "entry": "bin/echo.mjs",
+          "description": "통계 조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "timeout_ms": 1000,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "bad-command-schema",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo-stats",
+          "runtime": "node",
+          "entry": "bin/echo.mjs",
+          "description": "통계 조회",
+          "input_schema": {
+            "type": "incorrect"
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "timeout_ms": 1000,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "command-underscore-extension",
+    "manifest": {
+      "name": "test_ext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo-stats",
+          "runtime": "node",
+          "entry": "bin/echo.mjs",
+          "description": "통계 조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "timeout_ms": 1000,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "scalar-input-schema",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "string"
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "async-output-schema",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "$async": true,
+            "type": "object"
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "async-literal-data",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object",
+            "const": {
+              "$async": true
+            }
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "nested-async-schema",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "$async": true,
+                "type": "string"
+              }
+            }
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "masked-input-schema",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "enum": [
+                  "password=hunter2x"
+                ]
+              }
+            }
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "unresolved-local-ref",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object",
+            "$ref": "#/$defs/missing"
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "unresolved-external-ref",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "$ref": "https://example.invalid/unavailable"
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "resolved-local-ref",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object",
+            "$defs": {
+              "item": {
+                "type": "object"
+              }
+            },
+            "$ref": "#/$defs/item"
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "proto-property-schema",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "__proto__": {
+                "type": "string"
+              }
+            }
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "proto-literal-data",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object",
+            "const": {
+              "__proto__": 123
+            }
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "proto-pattern-schema",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object",
+            "patternProperties": {
+              "__proto__": {
+                "type": "string"
+              }
+            }
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "absolute-self-ref-proto",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "$id": "https://example.invalid/schema",
+            "type": "object",
+            "hidden": {
+              "properties": {
+                "__proto__": {
+                  "type": "string"
+                }
+              }
+            },
+            "$ref": "https://example.invalid/schema#/hidden"
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "scoped-id-ref-proto",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "$id": "https://example.invalid/root",
+            "type": "object",
+            "$defs": {
+              "scope": {
+                "$id": "https://example.invalid/inner",
+                "hidden": {
+                  "properties": {
+                    "__proto__": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "$ref": "https://example.invalid/inner#/hidden"
+              }
+            },
+            "$ref": "https://example.invalid/inner"
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "legacy-dependency-proto",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object",
+            "dependencies": {
+              "trigger": {
+                "properties": {
+                  "__proto__": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "unused-def-missing-local",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object",
+            "$defs": {
+              "unused": {
+                "$ref": "#/$defs/missing"
+              }
+            }
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "unused-def-missing-external",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object",
+            "$defs": {
+              "unused": {
+                "$ref": "https://example.invalid/missing"
+              }
+            }
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "absolute-self-ref-safe",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "$id": "https://example.invalid/safe",
+            "type": "object",
+            "hidden": {
+              "properties": {
+                "name": {
+                  "type": "string"
+                }
+              }
+            },
+            "$ref": "https://example.invalid/safe#/hidden"
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "scoped-id-ref-safe",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "$id": "https://example.invalid/root",
+            "type": "object",
+            "$defs": {
+              "scope": {
+                "$id": "https://example.invalid/inner",
+                "hidden": {
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "$ref": "https://example.invalid/inner#/hidden"
+              }
+            },
+            "$ref": "https://example.invalid/inner"
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "legacy-dependency-safe",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object",
+            "dependencies": {
+              "trigger": {
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "legacy-property-dependency",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object",
+            "dependencies": {
+              "trigger": [
+                "__proto__"
+              ]
+            }
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "proto-in-literal-keywords",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object",
+            "const": {
+              "properties": {
+                "__proto__": 42
+              }
+            },
+            "enum": [
+              {
+                "properties": {
+                  "__proto__": 42
+                }
+              }
+            ],
+            "default": {
+              "properties": {
+                "__proto__": 42
+              }
+            },
+            "examples": [
+              {
+                "properties": {
+                  "__proto__": 42
+                }
+              }
+            ]
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "relative-scoped-ref-proto",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "$id": "https://example.invalid/root",
+            "type": "object",
+            "$defs": {
+              "scope": {
+                "$id": "inner",
+                "hidden": {
+                  "properties": {
+                    "__proto__": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "$ref": "#/hidden"
+              }
+            },
+            "$ref": "inner"
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "relative-scoped-ref-safe",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo",
+          "runtime": "node",
+          "entry": "echo.mjs",
+          "description": "조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "$id": "https://example.invalid/root",
+            "type": "object",
+            "$defs": {
+              "scope": {
+                "$id": "inner",
+                "hidden": {
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "$ref": "#/hidden"
+              }
+            },
+            "$ref": "inner"
+          },
+          "timeout_ms": 100,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "valid"
   }
 ]
