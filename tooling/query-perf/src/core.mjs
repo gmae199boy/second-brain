@@ -1,3 +1,4 @@
+import { compareFileLocations } from './file-location-compare.mjs';
 import { makeAttachments, message } from './attachment-fixture.mjs';
 export const sanitize = value => String(value).replace(/postgres(?:ql)?:\/\/[^\s]+/gi,'[database-url]').replace(/(?:\/Users\/|\/home\/)[^\s]+/g,'[home-path]');
 import { createHash } from 'node:crypto';
@@ -6,7 +7,7 @@ export function hash(value) { return createHash('sha256').update(JSON.stringify(
 export function parseArgs(args) {
   const [command,...rest] = args;
   if (command === 'compare') { if (rest.length !== 2 || rest.some(x=>x.startsWith('--'))) throw Error('compare requires two JSON files'); return {command, base:rest[0], change:rest[1]}; }
-  if (command === 'session-snapshot' || command === 'write-attachments') {
+  if (command === 'session-snapshot' || command === 'write-attachments' || command === 'file-locations') {
     const opts={command}; const keys={'--checkout':'checkout','--database-url':'databaseUrl','--out':'out'}; const seen=new Set();
     for(let i=0;i<rest.length;i+=2) { const key=keys[rest[i]]; if(!key||seen.has(key)||!rest[i+1]||rest[i+1].startsWith('--')) throw Error('invalid option'); seen.add(key); opts[key]=rest[i+1]; }
     if(!opts.checkout||!opts.databaseUrl||!opts.out) throw Error('checkout, database-url and out are required');
@@ -24,6 +25,7 @@ export function parseArgs(args) {
   return opts;
 }
 export function compare(base, change) {
+  if (base?.scenario === 'file-locations' || change?.scenario === 'file-locations') return compareFileLocations(base, change);
   if (base?.scenario === 'write-attachments' || change?.scenario === 'write-attachments') return compareAttachments(base, change);
   if (base?.scenario === 'session-snapshot' || change?.scenario === 'session-snapshot') return compareSnapshot(base, change);
   if(base?.scenario!=='import-cleanup' || change?.scenario!=='import-cleanup' || base.candidate!==change.candidate || base.queryVariant!==change.queryVariant || !['none','locator','open','both'].includes(base.candidate) || !['original','rewritten'].includes(base.queryVariant)) throw Error('incompatible result provenance');

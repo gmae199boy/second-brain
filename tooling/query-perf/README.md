@@ -93,3 +93,23 @@ node tooling/query-perf/run.mjs compare "$perf_root/base-result.json" "$perf_roo
 러너는 각 checkout의 실제 `packages/postgres/dist/attachments.js`에서 기존에도 export된 `writeAttachments`를 불러온다. 독립 database에 합성 세션과 메시지를 준비하고 세션 advisory lock을 가진 transaction에서 호출한다. 1·10·100·1000개 각각에 새 파일과 brain/external 두 위치, 기존 첨부, 파일 없음의 12조건을 실행한다. 조건별 warmup 1회 후 3회의 함수 벽시계 시간과 함수 내부 SQL 횟수를 기록한다. 설정·잠금 획득·commit·재반입은 시간과 SQL 수에 포함하지 않는다. 표본마다 전체 파일·위치·첨부 행을 보존하고 재반입 전후 전체 행의 불변성을 검사한다. 각 조건의 첫 실제 SELECT는 시간 표본 밖의 별도 반복에서 측정 전과 같은 빈 슬롯 또는 기존 첨부 seed 상태를 복원한 뒤 `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`으로 실행한다. 사전 단계와 세 테이블 행수를 함께 기록한다. 초기화에만 fixture 연결을 replica로 전환하고 finally에서 origin으로 복원하며, 관리·fixture 연결은 관리자 자격을 유지하고 측정 연결은 준비된 `brain_app` 자격과 origin을 확인해 기록한다. 양쪽 측정 Pool에는 10초 연결 제한과 서버 `statement_timeout` 120초와 클라이언트 `query_timeout` 121초를 동일하게 적용한다. fixture 연결에도 10초 연결 제한을 적용한다. 이 제한은 정상 호출의 측정값에 별도 계측을 삽입하지 않는다. 서버 기한 초과 시 명령을 취소하고, 응답이 사라진 경우 클라이언트 기한으로 실패·정리하며 해당 표본을 채택하지 않는다.
 
 비교기는 12조건, fixture와 입력 지문, 실제 빌드·함수·러너 지문과 기준 SHA, 환경, 정리, 행 전체와 해시, 재반입, 세 표본·중앙값·SQL 수를 검증한다. 1000개는 시간과 SQL 수 모두 기준의 50% 이하, 1·10개는 시간 110% 이하여야 한다. SQL 비교는 세 변경 표본의 최대값과 기준 표본의 최소값을 사용한다. 결과 JSON에는 합성 행 전체가 들어가지만 연결 URL은 들어가지 않는다. 시스템 부하와 동시 프로세스는 별도 기록도 확인한다. 러너는 자신이 만든 임의 이름 DB만 삭제하고 실패 시 DB 이름과 삭제 여부를 오류로 보고한다. 컨테이너는 실행자가 확인한 정확한 ID만 제거하고 부재를 기록한다. 실패한 측정과 원시 로그를 지우지 않는다.
+
+## 파일 위치 UUID 조회
+
+개발·리뷰 수정 뒤 중앙에서 승인한 성능 측정 창에만 실행한다. 작업 전용 PostgreSQL 클러스터가 필요하다. `prepareDatabase`가 클러스터 role 암호를 변경하므로 다른 작업이나 운영 서버를 사용하지 않는다. 독립 baseline archive를 만들고 같은 러너와 전용 서버에서 순차 실행한다.
+
+```sh
+perf_root=$(mktemp -d "${TMPDIR:-/tmp}/brain-225-perf.XXXXXXXX")
+mkdir "$perf_root/base"
+git archive eaff4ccd4de4932f8a899dd9c8d69277380f44f7 | tar -x -C "$perf_root/base"
+printf '%s\n' eaff4ccd4de4932f8a899dd9c8d69277380f44f7 > "$perf_root/base/.query-perf-revision"
+(cd "$perf_root/base" && pnpm install --offline --frozen-lockfile && pnpm --filter @second-brain/postgres... build)
+pnpm build
+node tooling/query-perf/run.mjs file-locations --checkout "$perf_root/base" --database-url postgres://postgres:query-perf-only@127.0.0.1:54225/postgres --out "$perf_root/base.json"
+node tooling/query-perf/run.mjs file-locations --checkout . --database-url postgres://postgres:query-perf-only@127.0.0.1:54225/postgres --out "$perf_root/change.json"
+node tooling/query-perf/run.mjs compare "$perf_root/base.json" "$perf_root/change.json"
+```
+
+러너는 소유한 임의 이름 DB에 합성 파일·위치 각 10만 행을 만든다. 실제 store의 read/list/mark마다 warmup 1회와 표본 3회를 실행하고, mark는 서로 다른 미삭제 행을 사용한다. 각 호출의 반환, 호출 전후 행, 전체 변경 행과 SQL 수를 독립 fixture oracle에 대조한다. 별도 트랜잭션에서 수집한 EXPLAIN은 rollback한다. 비교기는 기준 SHA, fixture, 빌드·migration·lockfile·러너 지문, 환경 및 정리, 세 표본과 oracle을 확인하고 변경 실행 계획의 UUID 인덱스 조회와 read/mark 중앙값 50% 이하를 요구한다. 결과 JSON과 실패 로그, 종료 코드, 서버·컨테이너 소유권과 정리 증거를 보존한다.
+
+각 측정 대상 파일에는 brain/external 소유권과 서로 다른 경로를 가진 세 위치가 있으며 반환 순서와 개수를 독립 oracle로 확인한다. 시간 표본 밖에서 canonical·부재·대소문자·괄호·무하이픈·공백·비UUID·빈 문자열·null·undefined의 read/list/첫·반복 mark 및 잘못된 시각 결과를 검증한다. 전체 files와 위치 행의 개수 및 `deleted_at`을 제외한 내용 지문을 호출 전후와 양쪽 checkout 사이에 비교하고, 허용된 삭제 시각 변경 행은 별도로 대조한다. migration 파일별 SHA-256 manifest와 실제 적용 checksum도 양쪽에서 대조한다. 각 호출의 SQL trace는 read/list 각 1문, mark BEGIN·UPDATE·SELECT·COMMIT 4문을 요구한다. read/list 및 mark 두 문의 EXPLAIN은 동일한 brain_app/origin 세션 설정의 별도 rollback 트랜잭션에서 수행한다.

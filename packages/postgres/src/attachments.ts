@@ -147,6 +147,16 @@ function fileWhere(ref: FileRef, alias: string): ReturnType<typeof sql> {
   return sql`${column} = ${'fileId' in ref ? ref.fileId : ref.contentHash}`;
 }
 
+// Only PostgreSQL's canonical output spelling can equal uuid::text. Keep the
+// original predicate for all other values, including runtime values outside
+// the string port, so parameter conversion and database errors stay intact.
+function locationIdWhere(column: string, value: string): ReturnType<typeof sql> {
+  const ref = sql.ref(column);
+  return typeof value === 'string' && value.length === 36 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)
+    ? sql`${ref} = ${value}::uuid`
+    : sql`${ref}::text = ${value}`;
+}
+
 export function postgresAttachmentStore(connect: PgConnect): AttachmentStore {
   return {
     async redactFile(input) {
@@ -228,7 +238,7 @@ export function postgresAttachmentStore(connect: PgConnect): AttachmentStore {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
-        const result = await sql<FileLocationColumns>`select id, file_id as "fileId", store_kind as "storeKind", locator, ownership, deleted_at as "deletedAt" from brain.file_locations where id::text = ${id}`.execute(opened.connection.db);
+        const result = await sql<FileLocationColumns>`select id, file_id as "fileId", store_kind as "storeKind", locator, ownership, deleted_at as "deletedAt" from brain.file_locations where ${locationIdWhere('id', id)}`.execute(opened.connection.db);
         const row = result.rows[0];
         if (row === undefined) return { ok: false, code: 'FILE_LOCATION_NOT_FOUND', message: '파일 위치가 없습니다' };
         return { ok: true, location: fileLocationRow(row) };
@@ -238,7 +248,7 @@ export function postgresAttachmentStore(connect: PgConnect): AttachmentStore {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       try {
-        const result = await sql<FileLocationColumns>`select id, file_id as "fileId", store_kind as "storeKind", locator, ownership, deleted_at as "deletedAt" from brain.file_locations where file_id::text = ${fileId} order by ownership collate "C", locator collate "C"`.execute(opened.connection.db);
+        const result = await sql<FileLocationColumns>`select id, file_id as "fileId", store_kind as "storeKind", locator, ownership, deleted_at as "deletedAt" from brain.file_locations where ${locationIdWhere('file_id', fileId)} order by ownership collate "C", locator collate "C"`.execute(opened.connection.db);
         return { ok: true, locations: result.rows.map(fileLocationRow) };
       } catch (error) { return { ...databaseFailure(error), message: `파일 위치를 읽을 수 없습니다: ${describe(error)}` }; }
     },
@@ -253,8 +263,8 @@ export function postgresAttachmentStore(connect: PgConnect): AttachmentStore {
           // The `and deleted_at is null` is the one-way fill of 0002 said in SQL
           // rather than left to the trigger: the trigger aborts the statement, and
           // a second piece of work about the same place is an ordinary answer.
-          const filled = await sql`update brain.file_locations set deleted_at = ${checked} where id::text = ${id} and deleted_at is null returning id`.execute(db);
-          const read = (await sql<{ deletedAt: string | null }>`select deleted_at as "deletedAt" from brain.file_locations where id::text = ${id}`.execute(db)).rows[0];
+          const filled = await sql`update brain.file_locations set deleted_at = ${checked} where ${locationIdWhere('id', id)} and deleted_at is null returning id`.execute(db);
+          const read = (await sql<{ deletedAt: string | null }>`select deleted_at as "deletedAt" from brain.file_locations where ${locationIdWhere('id', id)}`.execute(db)).rows[0];
           if (read === undefined) return { ok: false as const, code: 'FILE_LOCATION_NOT_FOUND' as const, message: '파일 위치가 없습니다' };
           // Read back and not assumed: the stored instant is what the row says,
           // and on the second call that is the first call's value.
