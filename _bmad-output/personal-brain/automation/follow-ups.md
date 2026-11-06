@@ -423,3 +423,16 @@ core0.1.17/Garmin0.1.4 ref는이전구현472caa7,확장1.2.1/package85파일정�
 - 잔여한계: T12 과거Compose ID유실은현재프로젝트/볼륨부재만확인하며정확과거생성/삭제ID복구를주장하지않는다. T14성공은이를복구하지않는다. CREATE응답유실시created미확정가능성,3표본·순간프로세스·공통oracle객체/GC·러너생애RSS한계를보존한다.별도측정진단은transaction내직접분해가아니다.
 
 unresolved0/deferred0, T17추가후속불필요.소유PG/fixture정리·실패/측정/리뷰원문·워크트리/로컬branch/세션은보존한다.제품운영조치나이번pluginref/version변경은없다.
+
+
+## 21.11 — detached 설치본의 대화형 ref 갱신 수락 (2026-11-06)
+
+근거: [bootstrap 갱신 계획](../tickets/epic-garmin-extension/tickets/bug-interactive-bootstrap-upgrade-plan.md)의 Review Triage Log r1~r7·Verification·Auto Run Result/operator_actions. 구현 `b80b053`, 릴리스 `c995e2a`의 plugin0.1.22/app-ref는 이전 구현commit. 중앙이 r6/r7원문·최종changed로그·원격tip·ref조상을 대조했다.
+
+- 지원명령은 명시 interactive-ref와40자리ref로 detached 옛app부터target준비·PTY현재challenge·같은DB갱신/승격을 연결한다. 일반hook무질문/A1/ref·clone·clean·선조·owner·offline fence를 보존한다. journal승격owner/previousHead·검증backup snapshot으로 중단/부분삭제 지원재시도를 검증했다.
+- 최초순차전체TS9실패/Python69통과 및 이후실패이력은 보존. 최소교정/독립후속 뒤 최종original-baseline changed exit0: TS199파일4454시험·기존skip1 → PG42파일681시험 → Python16파일69시험/내부244시험OK. 실제PTY6/6과22.2통합지문관련25시험통과. 최초전체exit1을소급통과로바꾸지않는다.
+- EPERM의이전단일원인은미확정. 실제PGID목록소멸·소유UID·살아있는대상EPERM/불명실패보존을유지하고 signed시스템UID-2 파서결함만최소수정했다. 독립r7확인 뒤PTY/전체영향회귀로실패를닫았다.
+- 제약: 새snapshot없는이미손상된신원불명backup은변경자료와구별할증거가없어보존·안전거부한다. 미배포중간버전상태를자동삭제하는계약을추가하지않는다. 현재프로토콜의snapshot부분삭제는지원재시도시험으로확인했다.
+- 운영인계21.7: 새릴리스plugin/ref와README지원명령을사용한다. 실제옛daemon/직접명령/쓰기자손종료·새진입차단·현재challenge 응답, 계정귀속/MFA/tokenstore/설정/최종capture는운영자와21.7소유다. 불명lock/fence/backup을임의삭제하거나내부환경변수/자동응답으로우회하지않는다.
+
+unresolved0/deferred0/추가후속권고false. fixture671의rawremoved665+보존guard뒤별도정리6을구분해정확ID전부부재,주PG부재확인. 워크트리/로컬branch/세션/실패·리뷰·검증원문은보존한다.
