@@ -8,11 +8,11 @@ import { composeArgs, fakeCommandRunner, systemCommandRunner } from '../src/runt
 import { installPostgres, renderPostgresCompose } from '../src/install/postgres.js';
 const pg = vi.hoisted(() => ({
   prepareDatabase: vi.fn(), runMigrations: vi.fn(), ensureSelfUser: vi.fn(), close: vi.fn(),
-  inspectExtensionFence: vi.fn(),
+  inspectExtensionFence: vi.fn(), inspectLegacyExtensionPrerequisites: vi.fn(),
 }));
 vi.mock('second_brain/postgres', () => ({
   prepareDatabase: pg.prepareDatabase, runMigrations: pg.runMigrations,
-  inspectExtensionFence: pg.inspectExtensionFence,
+  inspectExtensionFence: pg.inspectExtensionFence, inspectLegacyExtensionPrerequisites: pg.inspectLegacyExtensionPrerequisites,
   withExtensionInstallLock: async (_url: string, _name: string, run: () => Promise<unknown>) => run(),
   postgresStore: () => ({ listExtensions: async () => ({ ok: true, extensions: [] }), ensureSelfUser: pg.ensureSelfUser, close: pg.close }),
 }));

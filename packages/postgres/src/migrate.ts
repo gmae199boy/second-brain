@@ -11,6 +11,8 @@ export interface RunMigrationsOptions extends ConnectionOptions {
   clock: Clock;
   owners?: readonly MigrationOwner[];
   coreMaxVersion?: number;
+  /** Validate files and applied history without running SQL migrations. */
+  validateOnly?: boolean;
 }
 /** Read legacy schema state before any core migration changes it. */
 export async function inspectExtensionFence(databaseUrl: string): Promise<{ names: string[]; gateNames: string[]; fenceReady: boolean }> {
@@ -27,6 +29,20 @@ export async function inspectExtensionFence(databaseUrl: string): Promise<{ name
   } catch (error) {
     if ((error as { code?: string }).code === '3D000') return { names: [], gateNames: [], fenceReady: false };
     throw error;
+  } finally { await pool.end(); }
+}
+/** Read only schema-27 tables; a held group may be any existing user hold. */
+export async function inspectLegacyExtensionPrerequisites(databaseUrl: string): Promise<{ name: string; enabled: boolean; held: boolean; unheld_schedules: number; unheld_work: number; running: number; open_attempts: number }[]> {
+  const pool = createPool({ databaseUrl });
+  try {
+    const result = await pool.query<{ name: string; enabled: boolean; held: boolean; unheld_schedules: number; unheld_work: number; running: number; open_attempts: number }>(`select e.name, e.enabled,
+      exists(select 1 from brain.work_hold_groups h where h.name = 'extension:' || e.name) as held,
+      (select count(*)::int from brain.schedules s where split_part(s.kind,'.',1)=e.name and position('.' in s.kind)>0 and not exists(select 1 from brain.work_hold_groups h where h.name=s.hold_group)) as unheld_schedules,
+      (select count(*)::int from brain.work_items w where split_part(w.kind,'.',1)=e.name and position('.' in w.kind)>0 and w.completed_at is null and not exists(select 1 from brain.work_hold_groups h where h.name=w.hold_group)) as unheld_work,
+      (select count(*)::int from brain.work_items w where split_part(w.kind,'.',1)=e.name and position('.' in w.kind)>0 and w.completed_at is null and (w.claimed_by is not null or w.current_attempt_token is not null)) as running,
+      (select count(*)::int from brain.work_attempts a join brain.work_items w on w.id=a.work_item_id where split_part(w.kind,'.',1)=e.name and position('.' in w.kind)>0 and a.finished_at is null) as open_attempts
+      from brain.extensions e order by e.name collate "C"`);
+    return result.rows;
   } finally { await pool.end(); }
 }
 export type MigrationResult = { ok: true; from: number; to: number; applied: string[] }
@@ -75,7 +91,11 @@ export async function runMigrations(options: RunMigrationsOptions): Promise<Migr
       }
       return rows;
     };
-    await validate();
+    const initial = await validate();
+    if (options.validateOnly) {
+      const version = Math.max(0, ...initial.filter(row => row.owner === 'core').map(row => row.version));
+      return { ok: true, from: version, to: version, applied: [] };
+    }
     for (const file of files) {
       if (file.owner === 'core' && options.coreMaxVersion !== undefined && file.version > options.coreMaxVersion) continue;
       attempting = file.name;

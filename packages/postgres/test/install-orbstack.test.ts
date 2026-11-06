@@ -117,7 +117,7 @@ it.each(['journal', 'gate', 'incompatible', 'identity', 'legacy'] as const)('ins
     if (kind === 'identity') await rm(join(kit.home, 'installed.json'));
     if (kind === 'legacy') await kit.db.query("drop table brain.extension_quiesce; delete from brain.schema_migrations where owner='core' and version>=35");
     const gates = kind === 'legacy' ? [] : await kit.db.rows('select * from brain.extension_quiesce');
-    const result = await kit.install(); expect(result).toMatchObject({ ok: false, code: 'DB_LOCKED', message: expect.stringContaining(kind === 'legacy' ? '옛 schema' : '복구') });
+    const result = await kit.install(); expect(result).toMatchObject({ ok: false, code: 'DB_LOCKED', message: expect.stringContaining(kind === 'legacy' ? '신원' : '복구') });
     expect(await kit.db.rows("select * from brain.schema_migrations where owner='testext'")).toEqual(ledger);
     expect(await kit.db.rows("select to_regclass('testext.marker') as marker")).toEqual([{ marker: null }]);
     if (kind !== 'legacy') expect(await kit.db.rows('select * from brain.extension_quiesce')).toEqual(gates);
