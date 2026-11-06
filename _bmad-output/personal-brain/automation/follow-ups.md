@@ -335,3 +335,12 @@ core0.1.17/Garmin0.1.4 ref는이전구현472caa7,확장1.2.1/package85파일정�
 | 지휘 소유권 |21.7지휘자는안전한준비만지속 |예비capture·계정근거조사·private복구runbook.제품코드중복구현/새writer/새예약활성/옛예약중지금지.부분최종보고뒤중앙이21.9구현배정 |
 
 새버그는구현시험유예대상이아니다. 반복test:changed·마무리pnpm test→pnpm test:python순차와독립리뷰/필요후속필수.운영계정/입력확인과실전환은21.7소관이다.
+
+
+## 21.9 — legacy 등록 확장 지원 갱신 수락 (2026-11-06)
+
+- 원문: `tickets/epic-garmin-extension/tickets/bug-legacy-extension-core-upgrade-plan.md`의 Review Triage Log r1~r5, deferred 및 Auto Run Result. 최종 `48c073c`, 구현 `118df47`, core plugin release `5e7d5f8`(0.1.18, app-ref는 이전 구현 commit). Garmin 패키지는 무변경이다.
+- 수락 증거: final4 전체 `pnpm test` 4282 passed·기존 skip1 → `pnpm test:python` 66 passed, 순차 각 exit0. 중앙이 원문·최종 시험 diff 일치·제품 바이트 동등성·원격 SHA를 확인했다. final3 시험 관측의 전역 role 간섭 실패는 DB 범위 관측으로 수정됐으며 실패 이력은 보존한다.
+- 보류 medium: 기존 0033 migration의 DST 변환 규칙을 독립 oracle로 검증하는 시험. 기존 migration 고유 검증 범위로 분리했으며 신규 legacy 제품 결함으로 판정하지 않았다. 향후 migration 시험 보강 시 재검토한다.
+- 보류 low: 대화형 offline 확인 중 Ctrl-C 종료 경로 시험. 기존 확인 동작 및 A1 잔존 잠금 명시 복구 계약을 유지하며 향후 대화형 취소 시험 보강 시 재검토한다.
+- 운영 인계21.7: 실제 옛 확장 manifest의 대상 core 호환을 확인한다. 비활성·보류, 이전 데몬·직접 명령·모든 쓰기 자식 종료, 새 진입 차단 및 TTY 운영자 확인은 그대로 필요하다. 이 제품 수정의 수락이 운영자 확인이나 계정 귀속 확인을 대신하지 않는다. 21.7의 기존 legacy 경로 부재 차단은 제품 반영으로 해소됐으며 나머지 실제 입력 gate는 재개 시 확인한다.
