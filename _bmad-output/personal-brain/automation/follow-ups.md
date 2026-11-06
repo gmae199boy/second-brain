@@ -449,3 +449,17 @@ unresolved0/deferred0/추가후속권고false. fixture671의rawremoved665+보존
 - 운영인계: 실제Mac설치본/운영10문항은17.7이다. 현재ref는최신21.11설치와22.2제품을포함하지만합성시험통과가실제운영전환완료를뜻하지않는다.
 
 deferred[]/필수미해결0/추가후속권고false.소유214컨테이너부재·모든원문실패/평가/리뷰·워크트리/로컬branch/세션은보존한다.
+
+
+## 22.4 — 대량 첨부 반입 수락 (2026-11-06)
+
+근거: [첨부 반입 계획](../tickets/epic-query-performance/tickets/story-1-sql-plan.md)의 Review Triage Log·Verification·Auto Run Result, 최종 `98ed8f8`, 구현bba54fd/통합8418f76. 중앙은 confirm11/통합독립원문·원시12조건compare·회귀실패처분·원격tip를대조했다.
+
+- 200개단위일괄조회/삽입과단일기존slot즉시반환을채택했다. UUID동치·첫slot승자·기존fileID·위치ownership·최초brain home·원문pgText·transaction/sessionlock/rollback·실제linked수 의미를보존한다. schema39·과거migration·lockfile불변.
+- 확정T10 12조건 행동등성/재반입/임계모두pass.1000/new 1018.094625→78.390667ms,SQL9000→35;기존/파일없는조건도시간·SQL각50%이하.1/10첨부여섯조건110%이하. BEGIN/lock/COMMIT제외함수경계라조사9002와직접비교하지않는다.
+- T6의1/existing117.2%와T8의150.575%실패를보존한다. T6는승인전측정이며소급승인아님. 단일경로교정/privatehelper분리뒤통과했지만최초실패의정확원인은미확정이고sub-ms3표본잡음을운영성능으로일반화하지않는다.
+- 최초순차전체TS11/Python8실패를보존. 합성요청UUID의전화번호마스킹충돌은fixtureID만교정하고제품마스킹/단언유지,실제OrbStacksocket환경복구를독립확인했다. 관련changed TS2127/Python69·일반hook7/Pythonhook8 각exit0. 최신main통합뒤독립확인·TS105+기존skip1/Pythonhook8 exit0. 최초전체exit1을소급통과로표기하지않는다.
+- 잔여위험: 비교기밖동일cluster/순차실행은수동증거대조,비정상준비advisory잠금시외부종료필요가능성,측정12조건밖분포/전체ingest지연으로일반화금지.
+- 배포후속: 현재plugin0.1.23/app-ref598497c에는22.4성능구현이아직없다. 제품배포가필요할때이전구현commit ref+같은releaseversion증가로조율한다. main병합이설치본반영을뜻하지않는다.
+
+deferred[]/필수미해결0/필요후속완료.소유PG·동적fixture정확ID정리/부재와최초실패·성능원시·리뷰·워크트리/로컬branch/세션은보존한다.
