@@ -20,30 +20,95 @@ import { pgText, originalText } from './text.js';
 import type { PgSchema } from './connect.js';
 import { databaseFailure, describe, type PgConnect } from './connect.js';
 
+// PostgreSQL accepts uppercase, braces, missing hyphens and hyphens after
+// groups of four hex digits. Its uuid output is always canonical lowercase.
+// Compare the same UUID value without changing the value sent to PostgreSQL.
+function slotKey(messageId: string, ordinal: number): string {
+  return JSON.stringify([messageId.replace(/[{}-]/g, '').toLowerCase(), ordinal]);
+}
+
 /** Shared by ingest and replay; every statement uses the held transaction. */
 export async function writeAttachments(db: Kysely<PgSchema>, attachments: readonly IngestAttachment[], messages: ReadonlyMap<string, string>, at: string): Promise<number> {
-  let linked = 0;
-  for (const a of attachments) {
+  if (attachments.length === 1) {
+    const a = attachments[0]!;
     const messageId = messages.get(a.harnessMessageId);
     if (messageId === undefined) throw new Error('첨부 메시지가 없습니다');
     const existing = await sql`select id from brain.message_attachments where message_id = ${messageId} and ordinal = ${a.ordinal}`.execute(db);
-    if (existing.rows.length > 0) continue;
-    let fileId: string | null = null;
-    if (a.file !== null) {
-      await sql`insert into brain.files (id, content_hash, size_bytes, first_seen_at) values (${a.file.id}, ${a.file.contentHash}, ${a.file.sizeBytes}, ${at}) on conflict (content_hash) do nothing`.execute(db);
-      const file = (await sql<{id: string}>`select id from brain.files where content_hash = ${a.file.contentHash}`.execute(db)).rows[0];
-      if (file === undefined) throw new Error('첨부 파일이 없습니다');
-      fileId = file.id;
-      for (const l of [a.file.location, a.file.external]) {
-        if (l === null) continue;
-        await sql`insert into brain.file_locations (id, file_id, store_kind, locator, ownership, first_seen_at) values (${l.id}, ${file.id}, ${l.storeKind}, ${l.locator}, ${l.ownership}, ${at}) on conflict (file_id, store_kind, locator) do nothing`.execute(db);
-        const location = (await sql<{id: string; ownership: string}>`select id, ownership from brain.file_locations where file_id = ${file.id} and store_kind = ${l.storeKind} and locator = ${l.locator}`.execute(db)).rows[0];
-        if (location?.ownership === 'brain') await sql`update brain.files set home_location_id = ${location.id} where id = ${file.id} and home_location_id is null`.execute(db);
+    if (existing.rows.length > 0) return 0;
+    return writeAttachmentBatch(db, attachments, messages, at, { a, messageId });
+  }
+  return writeAttachmentBatch(db, attachments, messages, at);
+}
+
+async function writeAttachmentBatch(db: Kysely<PgSchema>, attachments: readonly IngestAttachment[], messages: ReadonlyMap<string, string>, at: string, singleton?: { a: IngestAttachment; messageId: string }): Promise<number> {
+  // Bound parameter counts and keep each chunk in input order. The session lock
+  // held by both callers makes the slot check and later inserts one operation.
+  let linked = 0;
+  for (let offset = 0; offset < attachments.length; offset += 200) {
+    const chunk = singleton === undefined ? attachments.slice(offset, offset + 200).map(a => {
+      const messageId = messages.get(a.harnessMessageId);
+      if (messageId === undefined) throw new Error('첨부 메시지가 없습니다');
+      return { a, messageId };
+    }) : [singleton];
+    let winners = chunk;
+    if (singleton === undefined) {
+      const slots = await sql<{ message_id: string; ordinal: number }>`select a.message_id, a.ordinal
+      from brain.message_attachments a join (values ${sql.join(chunk.map(({ messageId, a }) => sql`(${messageId}::uuid, ${a.ordinal}::integer)`))})
+      as requested(message_id, ordinal) on a.message_id = requested.message_id and a.ordinal = requested.ordinal`.execute(db);
+      const seen = new Set(slots.rows.map(row => slotKey(row.message_id, row.ordinal)));
+      winners = chunk.filter(({ messageId, a }) => {
+        const key = slotKey(messageId, a.ordinal);
+        if (seen.has(key)) return false;
+        seen.add(key); return true;
+      });
+    }
+    if (winners.length === 0) continue;
+    const files = new Map<string, NonNullable<IngestAttachment['file']>>();
+    for (const { a } of winners) if (a.file !== null && !files.has(a.file.contentHash)) files.set(a.file.contentHash, a.file);
+    const fileIds = new Map<string, string>();
+    if (files.size > 0) {
+      await sql`insert into brain.files (id, content_hash, size_bytes, first_seen_at) values
+        ${sql.join([...files.values()].map(f => sql`(${f.id}::uuid, ${f.contentHash}, ${f.sizeBytes}, ${at}::timestamptz)`))}
+        on conflict (content_hash) do nothing`.execute(db);
+      const rows = await sql<{ id: string; content_hash: string }>`select id, content_hash from brain.files
+        where content_hash in (${sql.join([...files.keys()].map(hash => sql`${hash}`))})`.execute(db);
+      for (const row of rows.rows) fileIds.set(row.content_hash, row.id);
+      if (fileIds.size !== files.size) throw new Error('첨부 파일이 없습니다');
+    }
+    const locations = new Map<string, { fileId: string; location: NonNullable<NonNullable<IngestAttachment['file']>['location']> }>();
+    for (const { a } of winners) if (a.file !== null) {
+      const fileId = fileIds.get(a.file.contentHash)!;
+      for (const location of [a.file.location, a.file.external]) if (location !== null) {
+        const key = JSON.stringify([fileId, location.storeKind, location.locator]);
+        if (!locations.has(key)) locations.set(key, { fileId, location });
       }
     }
-    const status = fileId === null ? 'missing_at_ingest' : 'stored';
-    const result = await sql`insert into brain.message_attachments (id, message_id, ordinal, source_kind, source_ref, source_ref_raw, display_name, display_name_raw, file_id, status) values (${a.id}, ${messageId}, ${a.ordinal}, ${a.sourceKind}, ${pgText(a.sourceRef).text}, ${pgText(a.sourceRef).raw}, ${pgText(a.displayName).text}, ${pgText(a.displayName).raw}, ${fileId}, ${status}) on conflict (message_id, ordinal) do nothing returning id`.execute(db);
-    linked += result.rows.length;
+    if (locations.size > 0) {
+      const values = [...locations.values()];
+      await sql`insert into brain.file_locations (id, file_id, store_kind, locator, ownership, first_seen_at) values
+        ${sql.join(values.map(({ fileId, location: l }) => sql`(${l.id}::uuid, ${fileId}::uuid, ${l.storeKind}, ${l.locator}, ${l.ownership}, ${at}::timestamptz)`))}
+        on conflict (file_id, store_kind, locator) do nothing`.execute(db);
+      const rows = await sql<{ id: string; file_id: string; store_kind: string; locator: string; ownership: string }>`select l.id, l.file_id, l.store_kind, l.locator, l.ownership
+        from brain.file_locations l join (values ${sql.join(values.map(({ fileId, location: l }) => sql`(${fileId}::uuid, ${l.storeKind}, ${l.locator})`))})
+        as requested(file_id, store_kind, locator) on l.file_id = requested.file_id and l.store_kind = requested.store_kind and l.locator = requested.locator`.execute(db);
+      const found = new Map(rows.rows.map(row => [JSON.stringify([row.file_id, row.store_kind, row.locator]), row]));
+      const homes = new Map<string, string>();
+      for (const [key, { fileId }] of locations) {
+        const row = found.get(key);
+        if (row?.ownership === 'brain' && !homes.has(fileId)) homes.set(fileId, row.id);
+      }
+      if (homes.size > 0) await sql`update brain.files f set home_location_id = candidates.location_id
+        from (values ${sql.join([...homes].map(([fileId, locationId]) => sql`(${fileId}::uuid, ${locationId}::uuid)`))})
+        as candidates(file_id, location_id) where f.id = candidates.file_id and f.home_location_id is null`.execute(db);
+    }
+    const inserted = await sql`insert into brain.message_attachments
+      (id, message_id, ordinal, source_kind, source_ref, source_ref_raw, display_name, display_name_raw, file_id, status) values
+      ${sql.join(winners.map(({ a, messageId }) => {
+        const source = pgText(a.sourceRef); const name = pgText(a.displayName);
+        const fileId = a.file === null ? null : fileIds.get(a.file.contentHash)!;
+        return sql`(${a.id}::uuid, ${messageId}::uuid, ${a.ordinal}, ${a.sourceKind}, ${source.text}, ${source.raw}, ${name.text}, ${name.raw}, ${fileId}::uuid, ${fileId === null ? 'missing_at_ingest' : 'stored'})`;
+      }))} on conflict (message_id, ordinal) do nothing returning id`.execute(db);
+    linked += inserted.rows.length;
   }
   return linked;
 }

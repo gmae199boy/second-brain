@@ -203,6 +203,29 @@ it('links distinct NUL and literal U+FFFD message identities to their own messag
   }
   expect(await db.rows('select id, message_id from brain.message_attachments order by id')).toEqual(attachments.map((attachment, index) => ({ id: attachment.id, message_id: messages[index]!.id })));
 });
+it('handles single new and existing slots without writing a losing payload', async () => {
+  const db = await database(); cleanup.push(() => db.drop());
+  const store = postgresStore({ databaseUrl: db.appUrl }); cleanup.push(() => store.close());
+  await store.ensureSelfUser(sampleSelfUserInput()); await store.ensureSession(sampleEnsureSessionInput());
+  const batch = sampleIngestBatch(); expect(await store.ingest(batch)).toMatchObject({ ok: true });
+  const key = sampleEnsureSessionInput().key;
+  const attachment = { id: id(50), harnessMessageId: batch.messages[0]!.harnessMessageId, ordinal: 0,
+    sourceKind: 'file', sourceRef: 'winner', displayName: 'winner',
+    file: { id: id(60), contentHash: `sha256:${'1'.repeat(64)}`, sizeBytes: 10,
+      location: { id: id(70), storeKind: 'local' as const, ownership: 'brain' as const, locator: '~/winner' }, external: null } };
+  expect(await store.linkAttachments({ key, linkedAt: now, attachments: [attachment] })).toEqual({ ok: true, linked: 1 });
+  const loser = { ...attachment, id: id(51), sourceRef: 'loser', file: { ...attachment.file, id: id(61),
+    contentHash: `sha256:${'2'.repeat(64)}`, location: { ...attachment.file.location, id: id(71), locator: '~/loser' } } };
+  expect(await store.linkAttachments({ key, linkedAt: now, attachments: [loser] })).toEqual({ ok: true, linked: 0 });
+  const missing = { ...attachment, id: id(52), ordinal: 1, file: null };
+  expect(await store.linkAttachments({ key, linkedAt: now, attachments: [missing] })).toEqual({ ok: true, linked: 1 });
+  expect(await db.rows('select id, file_id, status from brain.message_attachments order by ordinal')).toEqual([
+    { id: attachment.id, file_id: attachment.file.id, status: 'stored' },
+    { id: missing.id, file_id: null, status: 'missing_at_ingest' },
+  ]);
+  expect(await db.rows('select id, home_location_id from brain.files')).toEqual([{ id: attachment.file.id, home_location_id: attachment.file.location.id }]);
+  expect(await db.rows('select id, file_id from brain.file_locations')).toEqual([{ id: attachment.file.location.id, file_id: attachment.file.id }]);
+});
 it('serializes concurrent links into an empty slot without keeping the losing file or locations', async () => {
   const db = await database(); cleanup.push(() => db.drop());
   const stores = ['link-race-a', 'link-race-b'].map(applicationName => postgresStore({ databaseUrl: db.appUrl, applicationName }));
@@ -377,4 +400,144 @@ it('rolls back closing stale generations and deleting pieces when begin insert v
   // after begin has closed the open generation and deleted its pieces.
   expect(await store.beginExtraction(begin(3))).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE', message: expect.stringContaining('duplicate key') });
   expect(await extractionSnapshot(db)).toEqual(before);
+});
+
+it('batches large attachment sets while preserving first slots, shared files, ownership and raw text on replay', async () => {
+  const db = await database(); cleanup.push(() => db.drop());
+  const store = postgresStore({ databaseUrl: db.appUrl }); cleanup.push(() => store.close());
+  await store.ensureSelfUser(sampleSelfUserInput()); await store.ensureSession(sampleEnsureSessionInput());
+  const batch = sampleIngestBatch(); expect(await store.ingest(batch)).toMatchObject({ ok: true });
+  const hash = 'sha256:' + 'a'.repeat(64);
+  const make = (n: number) => ({ id: id(10000 + n), harnessMessageId: batch.messages[n % 2]!.harnessMessageId,
+    ordinal: Math.floor(n / 2), sourceKind: 'file', sourceRef: n === 0 ? 'ref\u0000x' : 'ref\ufffdx', displayName: n === 0 ? 'name\u0000x' : 'name\ufffdx',
+    file: n === 2 ? null : { id: id(20000 + n), contentHash: hash, sizeBytes: 10,
+      location: { id: id(30000 + n), storeKind: 'local' as const, ownership: 'external' as const, locator: '~/shared' },
+      external: { id: id(40000 + n), storeKind: 'drive' as const, ownership: 'brain' as const, locator: 'drive://shared' } } });
+  const attachments = Array.from({ length: 1001 }, (_, n) => make(n));
+  const loser = { ...make(1100), harnessMessageId: attachments[0]!.harnessMessageId, ordinal: 0,
+    file: { ...make(1100).file!, contentHash: 'sha256:' + 'b'.repeat(64) } };
+  const input = { key: batch.key, linkedAt: now, attachments: [attachments[0]!, loser, ...attachments.slice(1)] };
+  expect(await store.linkAttachments(input)).toEqual({ ok: true, linked: 1001 });
+  const snapshot = async () => ({ attachments: await db.rows('select * from brain.message_attachments order by id'),
+    files: await db.rows('select * from brain.files order by id'), locations: await db.rows('select * from brain.file_locations order by id') });
+  const before = await snapshot();
+  expect(before.attachments).toHaveLength(1001); expect(before.files).toHaveLength(1); expect(before.locations).toHaveLength(2);
+  expect(before.files[0]).toMatchObject({ id: id(20000), home_location_id: id(40000) });
+  expect(before.locations).toEqual(expect.arrayContaining([expect.objectContaining({ id: id(30000), ownership: 'external' })]));
+  expect(await store.linkAttachments(input)).toEqual({ ok: true, linked: 0 });
+  expect(await snapshot()).toEqual(before);
+  const read = await store.listMessageAttachments(batch.messages[0]!.id);
+  expect(read).toMatchObject({ ok: true, attachments: expect.arrayContaining([expect.objectContaining({ id: id(10000), sourceRef: 'ref\u0000x', displayName: 'name\u0000x' })]) });
+  if (!read.ok) throw new Error(read.message);
+  expect(read.attachments.find(a => a.id === id(10002))).toMatchObject({ status: 'missing_at_ingest', file: null });
+});
+
+it('rolls back an entire attachment batch when a later row violates a constraint', async () => {
+  const db = await database(); cleanup.push(() => db.drop());
+  const store = postgresStore({ databaseUrl: db.appUrl }); cleanup.push(() => store.close());
+  await store.ensureSelfUser(sampleSelfUserInput()); await store.ensureSession(sampleEnsureSessionInput());
+  const batch = sampleIngestBatch(); expect(await store.ingest(batch)).toMatchObject({ ok: true });
+  const snapshot = async () => ({ attachments: await db.rows('select * from brain.message_attachments order by id'),
+    files: await db.rows('select * from brain.files order by id'), locations: await db.rows('select * from brain.file_locations order by id') });
+  const before = await snapshot();
+  const base = { harnessMessageId: batch.messages[0]!.harnessMessageId, sourceKind: 'file', sourceRef: null, displayName: null };
+  const attachments = Array.from({ length: 201 }, (_, ordinal) => ({ ...base, id: id(50000 + (ordinal === 200 ? 0 : ordinal)), ordinal,
+    file: { id: id(60000 + ordinal), contentHash: 'sha256:' + ordinal.toString(16).padStart(64, '0'), sizeBytes: 10,
+      location: { id: id(61000 + ordinal), storeKind: 'local' as const, ownership: 'brain' as const, locator: `~/rollback-${ordinal}` }, external: null } }));
+  expect(await store.linkAttachments({ key: batch.key, linkedAt: now, attachments })).toMatchObject({ ok: false });
+  expect(await snapshot()).toEqual(before);
+});
+
+it.each([
+  'ABCDEF01-2345-7789-ABCD-EF0123456789',
+  '{ABCDEF0123457789ABCDEF0123456789}',
+  'abcd-ef01-2345-7789-abcd-ef01-2345-6789',
+])('keeps the first ingest slot across chunks for PostgreSQL UUID spelling %s', async messageId => {
+  const db = await database(); cleanup.push(() => db.drop());
+  const store = postgresStore({ databaseUrl: db.appUrl }); cleanup.push(() => store.close());
+  await store.ensureSelfUser(sampleSelfUserInput()); await store.ensureSession(sampleEnsureSessionInput());
+  const batch = sampleIngestBatch(), message = { ...batch.messages[0]!, id: messageId };
+  const common = { harnessMessageId: message.harnessMessageId, sourceKind: 'file', sourceRef: null, displayName: null };
+  const location = (n: number) => ({ id: id(70000 + n), storeKind: 'local' as const, ownership: 'brain' as const, locator: `~/uuid-${n}` });
+  const file = (n: number) => ({ id: id(71000 + n), contentHash: 'sha256:' + String(n).repeat(64), sizeBytes: 10, location: location(n), external: null });
+  const first = { ...common, id: id(72000), ordinal: 0, displayName: 'winner', file: file(1) };
+  const filler = Array.from({ length: 199 }, (_, n) => ({ ...common, id: id(72001 + n), ordinal: n + 1, file: null }));
+  const loser = { ...common, id: id(73000), ordinal: 0, displayName: 'loser', file: file(2) };
+  const attachments = [first, ...filler, loser];
+  expect(await store.ingest({ ...batch, messages: [message, ...batch.messages.slice(1)], attachments })).toMatchObject({ ok: true });
+  expect(await db.rows('select id, ordinal, display_name, file_id from brain.message_attachments where ordinal=0')).toEqual([{ id: first.id, ordinal: 0, display_name: 'winner', file_id: first.file.id }]);
+  expect(await db.rows('select id, content_hash from brain.files')).toEqual([{ id: first.file.id, content_hash: first.file.contentHash }]);
+  expect(await db.rows('select id from brain.file_locations')).toEqual([{ id: first.file.location.id }]);
+  expect(await store.linkAttachments({ key: batch.key, linkedAt: now, attachments })).toEqual({ ok: true, linked: 0 });
+  expect(await db.rows('select count(*)::int as count from brain.message_attachments')).toEqual([{ count: 200 }]);
+});
+
+it('uses stored location ownership, selects the first brain candidate and keeps an existing home', async () => {
+  const db = await database(); cleanup.push(() => db.drop());
+  const store = postgresStore({ databaseUrl: db.appUrl }); cleanup.push(() => store.close());
+  await store.ensureSelfUser(sampleSelfUserInput()); await store.ensureSession(sampleEnsureSessionInput());
+  const batch = sampleIngestBatch(); expect(await store.ingest(batch)).toMatchObject({ ok: true });
+  const hash = 'sha256:' + 'c'.repeat(64);
+  const loc = (n: number, ownership: 'brain' | 'external', locator: string) => ({ id: id(81000 + n), storeKind: 'local' as const, ownership, locator });
+  const external = loc(0, 'external', '~/external'), brain = loc(1, 'brain', '~/brain');
+  const attachment = (n: number, location: ReturnType<typeof loc>, other: ReturnType<typeof loc> | null = null) => ({ id: id(82000 + n), harnessMessageId: batch.messages[0]!.harnessMessageId, ordinal: n, sourceKind: 'file', sourceRef: null, displayName: null,
+    file: { id: id(83000 + n), contentHash: hash, sizeBytes: 10, location, external: other } });
+  // Establish external-only location so the next slot's claimed brain ownership
+  // must not promote it, then introduce two genuine brain locations in order.
+  expect(await store.linkAttachments({ key: batch.key, linkedAt: now, attachments: [attachment(0, external)] })).toEqual({ ok: true, linked: 1 });
+  expect(await db.rows('select home_location_id from brain.files')).toEqual([{ home_location_id: null }]);
+  const claimedBrain = loc(2, 'brain', external.locator), secondBrain = loc(3, 'brain', '~/brain-second');
+  expect(await store.linkAttachments({ key: batch.key, linkedAt: now, attachments: [attachment(1, claimedBrain, brain), attachment(2, secondBrain)] })).toEqual({ ok: true, linked: 2 });
+  expect(await db.rows('select id, home_location_id from brain.files')).toEqual([{ id: id(83000), home_location_id: brain.id }]);
+  expect(await db.rows('select id, ownership from brain.file_locations order by id')).toEqual([{ id: external.id, ownership: 'external' }, { id: brain.id, ownership: 'brain' }, { id: secondBrain.id, ownership: 'brain' }]);
+  // A stored brain location remains brain when the input claims external; a
+  // newly inserted brain candidate also cannot replace the existing home.
+  const claimedExternal = loc(4, 'external', brain.locator), laterBrain = loc(5, 'brain', '~/later');
+  expect(await store.linkAttachments({ key: batch.key, linkedAt: now, attachments: [attachment(3, claimedExternal, laterBrain)] })).toEqual({ ok: true, linked: 1 });
+  expect(await db.rows('select id, home_location_id from brain.files')).toEqual([{ id: id(83000), home_location_id: brain.id }]);
+  expect(await db.rows("select id, ownership from brain.file_locations where locator='~/brain'")).toEqual([{ id: brain.id, ownership: 'brain' }]);
+  expect(await db.rows("select id, ownership from brain.file_locations where locator='~/later'")).toEqual([{ id: laterBrain.id, ownership: 'brain' }]);
+  const savedHash = 'sha256:' + 'd'.repeat(64), savedFile = id(84000), savedLocation = id(84001);
+  await db.query(`insert into brain.files (id, content_hash, size_bytes, first_seen_at) values ('${savedFile}', '${savedHash}', 10, '${now.toISOString()}')`);
+  await db.query(`insert into brain.file_locations (id, file_id, store_kind, locator, ownership, first_seen_at) values ('${savedLocation}', '${savedFile}', 'local', '~/stored-brain', 'brain', '${now.toISOString()}')`);
+  const reusing = attachment(4, loc(6, 'external', '~/stored-brain'));
+  reusing.file.contentHash = savedHash;
+  expect(await store.linkAttachments({ key: batch.key, linkedAt: now, attachments: [reusing] })).toEqual({ ok: true, linked: 1 });
+  expect(await db.rows(`select home_location_id from brain.files where id='${savedFile}'`)).toEqual([{ home_location_id: savedLocation }]);
+  expect(await db.rows(`select id, ownership from brain.file_locations where file_id='${savedFile}'`)).toEqual([{ id: savedLocation, ownership: 'brain' }]);
+});
+
+it.each([['external','brain'],['brain','external']] as const)('keeps the first same-chunk location ownership: %s then %s', async (firstOwner, secondOwner) => {
+  const db = await database(); cleanup.push(() => db.drop());
+  const store = postgresStore({ databaseUrl: db.appUrl }); cleanup.push(() => store.close());
+  await store.ensureSelfUser(sampleSelfUserInput()); await store.ensureSession(sampleEnsureSessionInput());
+  const batch = sampleIngestBatch(); expect(await store.ingest(batch)).toMatchObject({ ok: true });
+  const location = (n: number, ownership: 'brain' | 'external') => ({ id: id(85000+n), storeKind: 'local' as const, locator: '~/same-slot-location', ownership });
+  const attachments = [firstOwner,secondOwner].map((owner,n)=>({ id: id(85100+n), harnessMessageId: batch.messages[0]!.harnessMessageId, ordinal:n, sourceKind:'file', sourceRef:null, displayName:null,
+    file:{id:id(85200+n),contentHash:'sha256:'+'e'.repeat(64),sizeBytes:10,location:location(n,owner),external:null} }));
+  expect(await store.linkAttachments({key:batch.key,linkedAt:now,attachments})).toEqual({ok:true,linked:2});
+  expect(await db.rows('select id, ownership from brain.file_locations')).toEqual([{id:id(85000),ownership:firstOwner}]);
+  expect(await db.rows('select id, home_location_id from brain.files')).toEqual([{id:id(85200),home_location_id:firstOwner==='brain'?id(85000):null}]);
+});
+
+it('stores distinct files and two locations across a chunk boundary and replays unchanged', async () => {
+  const db = await database(); cleanup.push(() => db.drop());
+  const store = postgresStore({ databaseUrl: db.appUrl }); cleanup.push(() => store.close());
+  await store.ensureSelfUser(sampleSelfUserInput()); await store.ensureSession(sampleEnsureSessionInput());
+  const batch = sampleIngestBatch(); expect(await store.ingest(batch)).toMatchObject({ ok: true });
+  const attachments = Array.from({length:201},(_,n)=>({id:id(86000+n),harnessMessageId:batch.messages[0]!.harnessMessageId,ordinal:n,sourceKind:'file',sourceRef:null,displayName:null,
+    file:{id:id(87000+n),contentHash:'sha256:'+n.toString(16).padStart(64,'0'),sizeBytes:n+1,
+      location:{id:id(88000+n),storeKind:'local' as const,locator:`~/home-${n}`,ownership:'brain' as const},
+      external:{id:id(89000+n),storeKind:'local' as const,locator:`~/external-${n}`,ownership:'external' as const}}}));
+  const input={key:batch.key,linkedAt:now,attachments};
+  expect(await store.linkAttachments(input)).toEqual({ok:true,linked:201});
+  const snapshot=async()=>({attachments:await db.rows('select * from brain.message_attachments order by id'),files:await db.rows('select * from brain.files order by id'),locations:await db.rows('select * from brain.file_locations order by id')});
+  const before=await snapshot(); expect(before.attachments).toHaveLength(201); expect(before.files).toHaveLength(201); expect(before.locations).toHaveLength(402);
+  for(const a of attachments) {
+    expect(before.attachments).toContainEqual(expect.objectContaining({id:a.id,file_id:a.file.id}));
+    expect(before.files).toContainEqual(expect.objectContaining({id:a.file.id,home_location_id:a.file.location.id,content_hash:a.file.contentHash}));
+    expect(before.locations).toContainEqual(expect.objectContaining({id:a.file.location.id,file_id:a.file.id,ownership:'brain'}));
+    expect(before.locations).toContainEqual(expect.objectContaining({id:a.file.external.id,file_id:a.file.id,ownership:'external'}));
+  }
+  expect(await store.linkAttachments(input)).toEqual({ok:true,linked:0}); expect(await snapshot()).toEqual(before);
 });

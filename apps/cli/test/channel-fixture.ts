@@ -59,7 +59,8 @@ export async function channelFixture(initialMode: 'hold' | 'success' | 'null-id'
   await db.query(`insert into brain.messages (id,session_id,harness_message_id,role,body,occurred_at) values ('${producerId}','${sessionId}','test-result','assistant','생산자 결과',now())`);
   await store.ensureChannel({ id: channelId, kind: 'telegram', botRef: 'test-bot' });
   await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: conversationId, channelId, externalRef: 'test-chat', threadRef: '12' });
-  const input = { id: ids.next(), conversationId, producer: 'test-producer', producerResultId: producerId, purpose: 'notice', revision: null, text: 'password: secret123456', createdAt: now };
+  // Each fixture owns its database; keep this synthetic UUID free of phone-like digit runs in doctor output.
+  const input = { id: 'abcdefab-cdef-7abc-abcd-efabcdefabcd', conversationId, producer: 'test-producer', producerResultId: producerId, purpose: 'notice', revision: null, text: 'password: secret123456', createdAt: now };
   return {
     db, store, files, home, input, requests, ids, barriers, endpoint: `http://127.0.0.1:${address.port}`, now: () => new Date(currentTime()),
     disconnectOnRequest(number: number) { disconnectAt = number; },

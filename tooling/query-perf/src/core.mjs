@@ -1,3 +1,4 @@
+import { makeAttachments, message } from './attachment-fixture.mjs';
 export const sanitize = value => String(value).replace(/postgres(?:ql)?:\/\/[^\s]+/gi,'[database-url]').replace(/(?:\/Users\/|\/home\/)[^\s]+/g,'[home-path]');
 import { createHash } from 'node:crypto';
 export function median(values) { if (!values.length) throw Error('empty samples'); const a = [...values].sort((x,y)=>x-y); const i = Math.floor(a.length/2); return a.length%2 ? a[i] : (a[i-1]+a[i])/2; }
@@ -5,7 +6,7 @@ export function hash(value) { return createHash('sha256').update(JSON.stringify(
 export function parseArgs(args) {
   const [command,...rest] = args;
   if (command === 'compare') { if (rest.length !== 2 || rest.some(x=>x.startsWith('--'))) throw Error('compare requires two JSON files'); return {command, base:rest[0], change:rest[1]}; }
-  if (command === 'session-snapshot') {
+  if (command === 'session-snapshot' || command === 'write-attachments') {
     const opts={command}; const keys={'--checkout':'checkout','--database-url':'databaseUrl','--out':'out'}; const seen=new Set();
     for(let i=0;i<rest.length;i+=2) { const key=keys[rest[i]]; if(!key||seen.has(key)||!rest[i+1]||rest[i+1].startsWith('--')) throw Error('invalid option'); seen.add(key); opts[key]=rest[i+1]; }
     if(!opts.checkout||!opts.databaseUrl||!opts.out) throw Error('checkout, database-url and out are required');
@@ -23,6 +24,7 @@ export function parseArgs(args) {
   return opts;
 }
 export function compare(base, change) {
+  if (base?.scenario === 'write-attachments' || change?.scenario === 'write-attachments') return compareAttachments(base, change);
   if (base?.scenario === 'session-snapshot' || change?.scenario === 'session-snapshot') return compareSnapshot(base, change);
   if(base?.scenario!=='import-cleanup' || change?.scenario!=='import-cleanup' || base.candidate!==change.candidate || base.queryVariant!==change.queryVariant || !['none','locator','open','both'].includes(base.candidate) || !['original','rewritten'].includes(base.queryVariant)) throw Error('incompatible result provenance');
   const measurement=(v)=>{ if(!v || !Array.isArray(v.samplesMs) || v.samplesMs.length!==3 || v.samplesMs.some(n=>!Number.isFinite(n)||n<0) || !Number.isFinite(v.medianMs) || v.medianMs<0) throw Error('invalid measurement'); const m=median(v.samplesMs); if(Math.abs(m-v.medianMs)>1e-9) throw Error('median mismatch'); return m; };
@@ -71,4 +73,59 @@ export function candidateConflict(candidate, indexes) {
     (candidate === 'locator' || candidate === 'both') && i.table_name === 'file_requests' && JSON.stringify(i.columns) === JSON.stringify(['source','locator']) && i.predicate === null ||
     (candidate === 'open' || candidate === 'both') && i.table_name === 'file_import_cleanup' && JSON.stringify(i.columns) === JSON.stringify(['request_id']) && i.predicate?.replace(/[()\s]/g,'').toLowerCase() === 'cleaned_atisnull'
   );
+}
+
+export function compareAttachments(base, change) {
+ const fixture={version:1,sizes:[1,10,100,1000],conditions:['new','existing','missing'],warmups:1,samples:3};
+ const digest=x=>typeof x==='string' && /^[a-f0-9]{64}$/.test(x);
+ const expectedKeys=fixture.sizes.flatMap(n=>fixture.conditions.map(c=>`${n}/${c}`));
+ const validate=v=>{
+  const rev=v?.checkoutRevision, a=v?.artifacts, env=v?.environment;
+  if(v?.scenario!=='write-attachments'||JSON.stringify(v.fixture)!==JSON.stringify(fixture)||v.fixtureHash!==hash(fixture)||
+   !/^[a-f0-9]{40}$/.test(rev?.sha??'')||!((rev.dirty===null&&rev.diffSha256===null)||(typeof rev.dirty==='boolean'&&digest(rev.diffSha256)))||
+   !digest(a?.sha256)||!digest(a?.lockSha256)||!digest(a?.functionSha256)||!digest(a?.runner?.sha256)||
+   env?.measurementRole!=='brain_app'||env?.replicationRole!=='origin'||!env?.node||!env?.postgres||!env?.platform||!env?.arch||!Number.isSafeInteger(env?.cpus)||env.cpus<1||!Number.isSafeInteger(env?.pid)||env.pid<1||
+   typeof env.processesStart!=='string'||!env.processesStart||typeof env.processesEnd!=='string'||!env.processesEnd||!Array.isArray(env.loadAverageStart)||env.loadAverageStart.length!==3||!Array.isArray(env.loadAverageEnd)||env.loadAverageEnd.length!==3||
+   [...env.loadAverageStart,...env.loadAverageEnd].some(n=>!Number.isFinite(n)||n<0)||!Number.isFinite(Date.parse(v.startedAt))||!Number.isFinite(Date.parse(v.finishedAt))||Date.parse(v.startedAt)>Date.parse(v.finishedAt)||
+   v.resources?.created!==true||v.resources?.deleted!==true||!/^qp_[a-f0-9]{20}$/.test(v.resources?.database??'')||!Array.isArray(v.runs)) throw Error('invalid attachment provenance');
+  const map=new Map();
+  for(const r of v.runs) {
+   const key=`${r.size}/${r.condition}`;
+   if(!expectedKeys.includes(key)||map.has(key)||r.inputHash!==hash(makeAttachments(r.size,r.condition))||!digest(r.rowsHash)||!r.rows||hash(r.rows)!==r.rowsHash||r.replayUnchanged!==true||
+    !Array.isArray(r.rows.files)||!Array.isArray(r.rows.file_locations)||!Array.isArray(r.rows.message_attachments)||
+    r.rows.message_attachments.length!==r.size||r.rows.files.length!==(r.condition==='missing'?0:r.size)||r.rows.file_locations.length!==(r.condition==='missing'?0:2*r.size)||
+    r.linked!==(r.condition==='existing'?0:r.size)||!Array.isArray(r.samplesMs)||r.samplesMs.length!==3||r.samplesMs.some(n=>!Number.isFinite(n)||n<=0)||
+    !Number.isFinite(r.medianMs)||Math.abs(median(r.samplesMs)-r.medianMs)>1e-9||!Array.isArray(r.sqlCounts)||r.sqlCounts.length!==3||r.sqlCounts.some(n=>!Number.isSafeInteger(n)||n<=0)||
+    !Array.isArray(r.explain)||!r.explain.length||!r.explain[0]?.Plan||!Number.isFinite(r.explain[0].Plan['Actual Total Time'])||r.explain[0].Plan['Actual Total Time']<0||!Number.isFinite(r.explain[0].Plan['Shared Hit Blocks'])||r.explain[0].Plan['Shared Hit Blocks']<0) throw Error(`invalid attachment run: ${key}`);
+   const expected=makeAttachments(r.size,r.condition), files=new Map(r.rows.files.map(row=>[row.id,row])), locations=new Map(r.rows.file_locations.map(row=>[row.id,row])), attachments=new Map(r.rows.message_attachments.map(row=>[row.id,row]));
+   const has=(row,keys)=>row && keys.every(k=>Object.hasOwn(row,k));
+   const fileKeys=['id','content_hash','size_bytes','first_seen_at','home_location_id','current_extraction_id','redacted_at','source_unreachable_at'];
+   const locKeys=['id','file_id','store_kind','locator','ownership','first_seen_at','source_modified_at','uploaded_at','remote_checksum','verified_at','deleted_at'];
+   const attachmentKeys=['id','message_id','ordinal','source_kind','source_ref','source_ref_raw','display_name','display_name_raw','file_id','status'];
+   if(files.size!==r.rows.files.length||locations.size!==r.rows.file_locations.length||attachments.size!==r.rows.message_attachments.length) throw Error(`duplicate attachment evidence: ${key}`);
+   for(const a of expected) {
+    const row=attachments.get(a.id), f=a.file && files.get(a.file.id);
+    const raw=text=>text.includes('\u0000')?Buffer.from(text,'utf8').toJSON():null;
+    if(!has(row,attachmentKeys)||row.message_id!==message||row.ordinal!==a.ordinal||row.source_kind!==a.sourceKind||row.source_ref!==a.sourceRef.replaceAll('\u0000','\ufffd')||row.display_name!==a.displayName.replaceAll('\u0000','\ufffd')||JSON.stringify(row.source_ref_raw)!==JSON.stringify(raw(a.sourceRef))||JSON.stringify(row.display_name_raw)!==JSON.stringify(raw(a.displayName))||row.file_id!==(a.file?.id??null)||row.status!==(a.file?'stored':'missing_at_ingest')) throw Error(`invalid attachment row: ${key}`);
+    if(a.file) {
+     if(!has(f,fileKeys)||f.content_hash!==a.file.contentHash||f.size_bytes!==a.file.sizeBytes||f.home_location_id!==a.file.location.id) throw Error(`invalid file row: ${key}`);
+     for(const l of [a.file.location,a.file.external]) {const stored=locations.get(l.id); if(!has(stored,locKeys)||stored.file_id!==f.id||stored.store_kind!==l.storeKind||stored.locator!==l.locator||stored.ownership!==l.ownership) throw Error(`invalid location row: ${key}`);}
+    }
+   }
+   const count=r.condition==='existing'?r.size:0;
+   if(r.explainState?.stage!=='before-write'||r.explainState?.rowCounts?.message_attachments!==count||r.explainState?.rowCounts?.files!==count||r.explainState?.rowCounts?.file_locations!==count*2) throw Error(`invalid diagnostic state: ${key}`);
+   map.set(key,r);
+  }
+  if(map.size!==expectedKeys.length) throw Error('missing attachment run');
+  return map;
+ };
+ const b=validate(base),c=validate(change);
+ if(base.checkoutRevision.sha!=='9a9c8d60bc8052851220b9869a737b11aa257f1b'||base.checkoutRevision.dirty===true||base.artifacts.runner.sha256!==change.artifacts.runner.sha256||base.artifacts.lockSha256!==change.artifacts.lockSha256||['node','postgres','platform','arch','cpus'].some(k=>base.environment[k]!==change.environment[k])) throw Error('incompatible attachment provenance');
+ const rows=expectedKeys.map(key=>{
+  const x=b.get(key),y=c.get(key),ratio=y.medianMs/x.medianMs,sqlRatio=Math.max(...y.sqlCounts)/Math.min(...x.sqlCounts);
+  const equal=x.inputHash===y.inputHash&&x.rowsHash===y.rowsHash&&JSON.stringify(x.rows)===JSON.stringify(y.rows);
+  const limit=x.size===1000?0.5:x.size<=10?1.1:null;
+  return {condition:key,equal,ratio,sqlRatio,limit,pass:equal&&(limit===null||ratio<=limit)&&(x.size!==1000||sqlRatio<=0.5)};
+ });
+ return {scenario:'write-attachments',pass:rows.every(r=>r.pass),rows,provenance:{base:{checkoutRevision:base.checkoutRevision,artifacts:base.artifacts},change:{checkoutRevision:change.checkoutRevision,artifacts:change.artifacts}}};
 }
