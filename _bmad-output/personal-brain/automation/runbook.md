@@ -113,7 +113,7 @@ python3.14 _bmad/method/scripts/tickets.py find <ticket-ref>
 
 범위 밖 지적은 근거를 남겨 후속 작업으로 분리할 수 있지만 현 티켓의 미충족 수락 기준을 defer로 숨기지 않는다. 작은 판단은 근거를 기록해 자율 해결한다. 실제 비밀·로그인·외부 승인처럼 에이전트가 충족할 수 없는 조건은 정확히 기록한다. 사람만 할 수 있다고 추측해 구현 실패를 넘기지 않으며 미완료를 built로 꾸미지 않는다.
 
-기본 시험 범위(다른 에픽): 구현·리뷰 수정·재검증 반복은 `pnpm test:changed`, 티켓 마무리 직전 전체 `pnpm test`·`pnpm test:python` 순차 각 한 번이다(AGENTS.md "시험 실행 범위"). 아래 Garmin 구현 시험 실행 유예가 지정 티켓에는 우선한다.
+기본 시험 범위(모든 에픽, 2026-11-06 사용자 지시): 구현·리뷰 반영 수정 중에는 `test:changed`를 포함해 시험을 실행하지 않고 `pnpm build`·`pnpm typecheck`·`git diff --check`만 한다. 개발이 끝난 뒤 커밋·push 전에 전체 `pnpm test` → `pnpm test:python`을 순차로 한 번씩 돌리고, 거기서 난 실패의 수정 재검증은 `test:changed`로 한다(AGENTS.md "시험 실행 범위"). 티켓 명세·계획의 반복 `test:changed` 요구보다 이 규칙이 우선하며, 지휘자는 구현·수정 Task 명세에 "시험 실행 금지, 컴파일 확인만"을 적는다. 아래 Garmin 구현 시험 실행 유예가 지정 티켓에는 우선한다(개발 뒤 전체 회귀도 21.8로 이관).
 
 ### Garmin 구현 시험 실행 유예 — 2026-11-05 최신 사용자 지시
 
