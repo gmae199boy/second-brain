@@ -7,10 +7,10 @@ import sys
 from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from preflight import analyze, readiness, public_report, classify_files, unit_risks, estimate_candidates
+from preflight import analyze, readiness, public_report, classify_files, estimate_candidates
 from reports import write_reports
 from reader import read_snapshot
-from fixtures import five_candidates, capture_manifest
+from fixtures import five_candidates, capture_manifest, artifact_capture
 from capture_manifest import load_capture
 
 
@@ -20,15 +20,16 @@ def sha(path):
 
 def main():
     with TemporaryDirectory() as tmp:
-        paths = five_candidates(Path(tmp))
-        manifest, contents = capture_manifest(Path(tmp), paths)
+        root = Path(tmp).resolve()
+        paths = five_candidates(root)
+        manifest, contents = capture_manifest(root, paths)
         capture = load_capture(str(manifest.resolve()))
         assert capture['datasets'] == {role: path.resolve() for role, path in paths.items()}
         for change in ('duplicate', 'traversal', 'version', 'size'):
             broken = json.loads(json.dumps(contents))
             if change == 'duplicate': broken['datasets'][0]['source'] = broken['datasets'][1]['source']
             if change == 'traversal': broken['datasets'][0]['snapshot'] = '../outside'
-            if change == 'version': broken['version'] = 2
+            if change == 'version': broken['version'] = 3
             if change == 'size': broken['files'][0]['bytes'] += 1
             manifest.write_text(json.dumps(broken))
             try:
@@ -73,8 +74,9 @@ def main():
         estimates = estimate_candidates(report, categories, 2)
         assert {key: estimates[key] for key in ('preservation_candidates', 'dataset_candidates', 'mapping_candidates', 'file_request_candidates', 'existing_mapping_count', 'total_insert_known')} == {'preservation_candidates': 21, 'dataset_candidates': 5, 'mapping_candidates': 21, 'file_request_candidates': 4, 'existing_mapping_count': 2, 'total_insert_known': False}
         assert categories['expected_requests'] == 4 and all(categories['groups'][group] == 1 for group in categories['groups'])
-        catalog = [{'metric': 'steps', 'unit': 'count', 'mappings': [{'table': 'daily_metric', 'column': 'steps', 'factor': 1}]}]
-        assert any(item['column'] == 'steps' and item['catalog'][0]['unit'] == 'count' for item in unit_risks(report, catalog))
+        # 20.6 removed the core health catalog and unit_risks helper; retain
+        # the source NULL observation, and check the actual warning in the P wrapper.
+        assert report['datasets']['D1']['tables']['daily_metric']['null_counts']['steps'] == 0
         assert report['datasets']['D1']['tables']['day_summary']['null_counts']['body'] == 1
         assert any(item['table'] == 'day_summary' and 'extra' in item.get('columns', []) for item in report['unsupported'])
         assert public['counts']['datasets'] == 5 and public['counts']['raw_conflict_keys'] == 1
@@ -102,7 +104,13 @@ def main():
                     conn.execute('insert into raw_response values (?,?,?,?,?,?,?)', ('day', key, 'test', body, 1, checked, 'test'))
         comparison = analyze(paths)['tables']['raw_response']['pairs']['D2:D1']
         assert comparison['raw_conflicts'] == 2 and comparison['metadata_conflicts'] == 2 and comparison['conflicts'] == 3
-        for version in (9, 16):
+        with sqlite3.connect(paths['D3']) as conn:
+            conn.execute('pragma user_version=16')
+        assert read_snapshot(paths['D3'])['schema'] == 16
+        v2root = root / 'valid-v2'
+        v2root.mkdir()
+        assert load_capture(artifact_capture(v2root))['private']['version'] == 2
+        for version in (9, 17):
             with sqlite3.connect(paths['D3']) as conn:
                 conn.execute('pragma user_version=' + str(version))
             try:

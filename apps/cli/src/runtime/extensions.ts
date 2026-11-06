@@ -13,7 +13,7 @@ import { envFilePath } from '../config/paths.js';
 import { fileURLToPath } from 'node:url';
 import { decodeExtensionManifest, isExtensionName, validateMigrationNames, type Clock, type ExtensionRuntime } from 'second_brain';
 import { extensionAdminUrl, resolveStoreUrl, ensureExtensionPassword, extensionDatabaseUrl, type ReadConfigResult } from '../config/codec.js';
-import { prepareExtensionPython, validatePythonInputs } from './extension-python.js';
+import { prepareExtensionPython, validatePreparedPython, validatePythonInputs } from './extension-python.js';
 import { readBuildIdentity } from '../install/installed.js';
 import { daemonLiveness } from '../daemon/liveness.js';
 import { readDaemonLock } from '../daemon/lock.js';
@@ -38,12 +38,13 @@ export async function testExtensionsFolder(home: string, env: NodeJS.ProcessEnv,
 }
 // A package is copied as data. Refuse symbolic links so a declared path can
 // never escape the package through a link during copying or later execution.
-async function checkTree(folder: string): Promise<void> {
+async function checkTree(folder: string, ownedStage = false): Promise<void> {
   const root = await lstat(folder);
   if (!root.isDirectory() || root.isSymbolicLink()) throw new Error('확장 패키지는 실제 폴더여야 합니다');
   for (const entry of await readdir(folder)) {
     const path = join(folder, entry), stat = await lstat(path);
     if (stat.isSymbolicLink()) throw new Error('확장 패키지에 심볼릭 링크를 둘 수 없습니다');
+    if (ownedStage && entry === '.venv') { if (!stat.isDirectory()) throw new Error('invalid environment'); continue; }
     if (stat.isDirectory()) await checkTree(path);
   }
 }
@@ -152,7 +153,7 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
       catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}; throw error; }
     },
     machineValues: name => ({ tokenstore: join(home, 'extensions', name, 'tokenstore') }),
-    databaseUrl: async name => { await chmod(envFilePath(home), 0o600); return extensionDatabaseUrl(home, name, await databaseUrl()); }, preparePython: (directory, signal) => prepareExtensionPython(directory, env, signal), timer: systemTimer, launcher: { start: spec => systemProcessLauncher.start({ ...spec, command: spec.command === 'node' ? process.execPath : spec.command }) }, inspector: systemProcessInspector,
+    databaseUrl: async name => { await chmod(envFilePath(home), 0o600); return extensionDatabaseUrl(home, name, await databaseUrl()); }, preparePython: (directory, signal, resetOwnedStage) => prepareExtensionPython(directory, env, signal, resetOwnedStage), validatePreparedPython: (directory, signal) => validatePreparedPython(directory, env, signal), timer: systemTimer, launcher: { start: spec => systemProcessLauncher.start({ ...spec, command: spec.command === 'node' ? process.execPath : spec.command }) }, inspector: systemProcessInspector,
     packages: {
       prepareExternal: prepareExtensionPackage,
       captureRunningCore: async () => { await runningBuildIdentity; },
@@ -174,8 +175,9 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
       },
       observe: observation => observePackage(home, observation),
       readObservation: name => readPackageObservation(home, name),
-      async inspect(name, dir, migrations, files) {
-        await checkTree(dir);
+      async inspect(name, dir, migrations, files, stageOwner) {
+        if (stageOwner && dir !== await transition.stagedDirectory(name, stageOwner)) throw new Error('invalid owned stage');
+        await checkTree(dir, !!stageOwner);
         const listedDigest = async (root: string) => {
           const bytes = new Map<string, Buffer>();
           for (const path of files!) { const full = join(root, path); const stat = await lstat(full); if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('invalid package file'); bytes.set(path, await readFile(full)); }
@@ -224,6 +226,7 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
         return { ok: false };
       },
       async place(name, dir) {
+        await checkTree(dir);
         const existing = await transition.read(name);
         if (existing) throw new Error('미완료 확장 전환을 먼저 복구해야 합니다');
         const owner = randomUUID(), digest = await packageDigest(dir, '');

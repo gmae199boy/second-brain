@@ -6,8 +6,8 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /** One isolated database and home, shared by CLI integration fixtures. */
-export async function pgHome(home: string, self = true): Promise<TestDatabase & { env: NodeJS.ProcessEnv }> {
-  const db = await createTestDatabase();
+export async function pgHome(home: string, self = true, createDatabase = createTestDatabase): Promise<TestDatabase & { env: NodeJS.ProcessEnv }> {
+  const db = await createDatabase();
   try {
     const prepared = await prepareDatabase({ databaseUrl: db.url, databaseName: new URL(db.url).pathname.slice(1), appPassword: 'brain-test-app', maintenancePassword: 'brain-test-maintenance' });
     if (!prepared.ok) throw new Error(prepared.message);
@@ -24,7 +24,7 @@ export async function pgHome(home: string, self = true): Promise<TestDatabase & 
     const written = await writeConfig(home, {});
     if (!written.ok) throw new Error(written.message);
     await writeFile(join(home, '.env'), `BRAIN_DATABASE_URL=${db.appUrl}\n`, { mode: 0o600 });
-    return { ...db, env: { BRAIN_DATABASE_URL: db.appUrl } };
+    return { ...db, get fixtureContainerRemoved() { return db.fixtureContainerRemoved; }, get fixtureDatabaseDropped() { return db.fixtureDatabaseDropped; }, env: { BRAIN_DATABASE_URL: db.appUrl } };
   } catch (error) { await db.drop(); throw error; }
 }
 

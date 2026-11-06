@@ -155,16 +155,17 @@ describe('the marketplace', () => {
 
   const marketplace = json(join(repoRoot, '.claude-plugin', 'marketplace.json')) as Marketplace;
 
-  it('offers the core plugin and the testext fixture from local folders', () => {
+  it('offers the core, testext and Garmin plugins from local folders', () => {
     expect(marketplace.name).toBe('second-brain');
     expect(marketplace.owner?.name).toBe('gmae199boy');
-    expect(marketplace.plugins).toHaveLength(2);
+    expect(marketplace.plugins).toHaveLength(3);
     expect(marketplace.plugins?.[0]?.name).toBe('second-brain');
     // A relative source has to start with `./`, and anything reaching outside
     // the marketplace root is refused (epic-capture-research 2).
     expect(marketplace.plugins?.[0]?.source).toBe('./plugin');
     expect(marketplace.plugins?.[0]?.description ?? '').toMatch(/[가-힣]/);
     expect(marketplace.plugins?.[1]).toMatchObject({ name: 'second-brain-testext', source: './plugins/testext' });
+    expect(marketplace.plugins?.[2]).toMatchObject({ name: 'second-brain-garmin', source: './plugins/garmin' });
   });
 });
 

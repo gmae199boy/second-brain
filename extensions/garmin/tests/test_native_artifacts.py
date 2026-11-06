@@ -15,7 +15,7 @@ CONN=UUID('00000000-0000-4000-8000-000000000002')
 FILE=UUID('00000000-0000-4000-8000-000000000003')
 
 class Cursor:
-    def __init__(self): self.mapping=None; self.status='pending'; self.link=None; self.result=None; self.inserted=[]; self.unassigned=None; self.conflicts=[]; self.selected=True
+    def __init__(self): self.mapping=None; self.status='pending'; self.link=None; self.result=None; self.inserted=[]; self.unassigned=None; self.conflicts=[]; self.selected=True; self.attempt_valid=True; self.fence_calls=[]
     @contextlib.contextmanager
     def transaction(self): yield self
     def cursor(self, **kwargs): return self
@@ -23,7 +23,9 @@ class Cursor:
     def __exit__(self,*args): return False
     def execute(self, sql, args=()):
         self.result=None
-        if sql.startswith('select request_id,content_hash,request_batch,created_at'):
+        if sql.startswith('select garmin.attempt_valid'):
+            self.fence_calls.append(args); self.result=(self.attempt_valid,)
+        elif sql.startswith('select request_id,content_hash,request_batch,created_at'):
             self.result=self.unassigned
         elif sql.startswith('insert into garmin.unassigned_file_requests'):
             self.unassigned=(args[3],args[4],args[5],'2026-01-01')
@@ -240,17 +242,19 @@ class NativeArtifactsTest(unittest.TestCase):
             {'dataset':'d','artifact_key':'graph','category':'image','source':'graph.png','snapshot':'g','bytes':1,'report_date':'2026-01-01','scope':'day','relations':[{'analysis_key':'report','role':'image'}]}]
         conn.mapping=(USER,'old-fingerprint','original-batch')
         with patch.object(native,'_account_map',return_value=(USER,{'d':CONN})), \
-             patch.object(native,'check') as check, patch.object(native,'read_relative',return_value=(b'x','hash')):
+             patch.object(native,'check') as check, patch.object(native,'read_relative',return_value=(b'x','hash')), \
+             patch.dict(os.environ,{'BRAIN_WORK_ID':str(USER),'BRAIN_ATTEMPT_TOKEN':str(CONN)}):
             with self.assertRaisesRegex(ValueError,'IMPORT_CONFLICT'):
                 native.publish(conn,capture,entries,verified,{})
             self.assertEqual(conn.mapping,(USER,'old-fingerprint','original-batch'))
             self.assertEqual(len(conn.conflicts),1)
             self.assertEqual(conn.conflicts[0][1:6],('d','original-batch','artifact','graph','native_file_conflict'))
-            self.assertGreaterEqual(check.call_count,3)
+            self.assertGreaterEqual(check.call_count,2); self.assertEqual(conn.fence_calls,[(str(USER),str(CONN))])
         conn.conflicts.clear()
+        conn.attempt_valid=False
         with patch.object(native,'_account_map',return_value=(USER,{'d':CONN})), \
-             patch.object(native,'check',side_effect=[None,None,ValueError('IMPORT_INVALID')]), \
-             patch.object(native,'read_relative',return_value=(b'x','hash')):
+             patch.object(native,'check'), patch.object(native,'read_relative',return_value=(b'x','hash')), \
+             patch.dict(os.environ,{'BRAIN_WORK_ID':str(USER),'BRAIN_ATTEMPT_TOKEN':str(CONN)}):
             with self.assertRaisesRegex(ValueError,'IMPORT_INVALID'):
                 native.publish(conn,capture,entries,verified,{})
         self.assertEqual(conn.conflicts,[])

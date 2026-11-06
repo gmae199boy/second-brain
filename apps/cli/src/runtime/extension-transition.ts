@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { chmod, cp, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { isExtensionName } from 'second_brain';
+import { join, resolve } from 'node:path';
+import { isExtensionName, validateMigrationNames } from 'second_brain';
 
 /** Call under the home install lock and the extension advisory lock. The caller
  * owns the quiesce gate and must not release it while registry and files differ. */
@@ -14,7 +14,7 @@ type Rename = typeof rename;
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
 
 export function extensionTransitions(home: string, move: Rename = rename) {
-  const folder = join(home, 'extensions');
+  const folder = resolve(home, 'extensions');
   const validName = (name: string) => { if (!isExtensionName(name)) throw new Error('invalid extension name'); };
   const journalPath = (name: string) => join(folder, `.transition-${name}.json`);
   const stagePath = (j: ExtensionTransitionJournal) => join(folder, `.transition-${j.name}-${j.owner}`);
@@ -116,5 +116,35 @@ export function extensionTransitions(home: string, move: Rename = rename) {
     if (j.phase !== 'prepared') throw new Error('transition stage not prepared');
     return join(stagePath(j), 'new');
   }
-  return { read, prepare, stagedDirectory, activate, commit, rollback };
+  async function refreshPreparedMigrations(input: { name: string; owner: string; source: string; migrations: string; digest: string; verify(stage: string): Promise<boolean> }): Promise<void> {
+    const j = await owned(input.name, input.owner);
+    if (j.phase !== 'prepared' || !/^[a-f0-9]{64}$/.test(input.digest)) throw new Error('transition not prepared');
+    const parts = input.migrations.split('/');
+    if (parts.some(part => !part || part === '.' || part === '..')) throw new Error('invalid migrations path');
+    const stage = stagePath(j), root = join(stage, 'new');
+    async function directory(base: string) {
+      let path = base;
+      for (const part of parts) { path = join(path, part); const st = await lstat(path); if (!st.isDirectory() || st.isSymbolicLink()) throw new Error('invalid migrations directory'); }
+      return path;
+    }
+    const source = await directory(input.source), target = await directory(root);
+    const sourceNames = await readdir(source), targetNames = await readdir(target);
+    validateMigrationNames(sourceNames);
+    for (const [dir, names] of [[source, sourceNames], [target, targetNames]] as const) for (const name of names) {
+      const st = await lstat(join(dir, name)); if (!st.isFile() || st.isSymbolicLink()) throw new Error('invalid migration file');
+    }
+    // Temps live outside the package tree, so an interrupted copy never appears
+    // in a package digest or reaches the migration runner.
+    const temp = join(stage, 'migration-copy');
+    await rm(temp, { recursive: true, force: true }); await mkdir(temp, { mode: 0o700 });
+    try {
+      for (const name of sourceNames.sort()) {
+        const file = join(temp, name); await cp(join(source, name), file, { errorOnExist: true, force: false }); await move(file, join(target, name));
+      }
+      for (const name of targetNames) if (!sourceNames.includes(name)) await rm(join(target, name));
+      if (!await input.verify(root)) throw new Error('corrected stage digest mismatch');
+      await save({ ...j, digest: input.digest });
+    } finally { await rm(temp, { recursive: true, force: true }); }
+  }
+  return { read, prepare, stagedDirectory, refreshPreparedMigrations, activate, commit, rollback };
 }

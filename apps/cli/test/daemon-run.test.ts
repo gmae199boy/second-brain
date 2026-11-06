@@ -751,21 +751,27 @@ describe('brain daemon run, as a process', () => {
     const path = join(home, 'brain.db');
     const db = new PgTestClient(path);
     const due = new Date(Date.now() - 185000).toISOString();
-    (await db.prepare('insert into schedules values ($1,$2,$3,$4,$5,$6,$7,$8)')
-      .run('01940000-0000-7000-8000-000000000005', 'schedule_probe', 'probe', '01940000-0000-7000-8000-000000000005', 60, due, null, due));
-    const daemon = spawned(['daemon', 'run'], environment(home, configDir));
+    let daemon: Daemon | undefined;
     try {
+      await db.prepare(`insert into schedules
+        (id, kind, target_kind, target_id, interval_seconds, next_run_at, last_run_at, created_at, trigger_kind, user_id)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,'interval',$9)`)
+        .run('01940000-0000-7000-8000-000000000005', 'schedule_probe', 'probe', '01940000-0000-7000-8000-000000000005', 60, due, null, due, '01940000-0000-7000-8000-00000000000a');
+      daemon = spawned(['daemon', 'run'], environment(home, configDir));
       await waitFor('설치본 예약 처리', async () => !!(await db.prepare("select id from work_items where kind='schedule_probe' and completed_at is not null").get()));
       expect((await db.prepare("select * from work_items where kind='schedule_probe'").all())).toHaveLength(1);
       const schedule = (await db.prepare('select next_run_at,last_run_at from schedules').get()) as { next_run_at: string; last_run_at: string };
-      expect(new Date(schedule.next_run_at).getTime() - new Date(schedule.last_run_at).getTime()).toBe(60000);
+      const firedAt = new Date(schedule.last_run_at).getTime();
+      const dueAt = new Date(due).getTime();
+      const nextAt = dueAt + (Math.floor((firedAt - dueAt) / 60000) + 1) * 60000;
+      expect(new Date(schedule.next_run_at).getTime()).toBe(nextAt);
       const doctor = await ran(['doctor', 'run', '--json'], environment(home, configDir));
       const report = JSON.parse(doctor.stdout);
       expect(JSON.stringify(report)).toContain('schema-version');
       const schema = report.data.checks.find((check: { id: string }) => check.id === 'schema-version');
       expect(schema).toMatchObject({ status: 'ok' });
       expect(JSON.stringify(schema)).toContain(String(CORE_SCHEMA_VERSION));
-    } finally { (await db.close()); daemon.child.kill('SIGTERM'); await daemon.ended; }
+    } finally { if (daemon) { daemon.child.kill('SIGTERM'); await daemon.ended; } await db.close(); }
   });
 
   it('collects five writes in one watch batch while the idle pause is long, then closes watchers', async () => {

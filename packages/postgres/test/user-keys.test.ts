@@ -6,7 +6,7 @@ import pg from 'pg';
 import { expect, it } from 'vitest';
 import { clock, database } from './fixture.js';
 import { createSettingsBrain } from '@second-brain/core';
-import { postgresStore, runMigrations } from '../src/index.js';
+import { CORE_SCHEMA_VERSION, postgresStore, runMigrations } from '../src/index.js';
 
 async function v31() {
   const db = await database(false);
@@ -40,6 +40,8 @@ it('v31 사용자 설정과 대화만 self로 채우고 수집 행을 보존한�
       for (const table of ['sessions', 'messages', 'tool_notes', 'chunks', 'transcript_files', 'message_attachments', 'context_injections', 'files', 'file_locations', 'file_names', 'document_extractions', 'document_chunks', 'projects', 'worktrees', 'workspaces', 'failures', 'redactions', 'log_entries', 'log_entry_edits']) results.push((await client.query(`select count(*)::int as n, md5(coalesce(string_agg(row_to_json(t)::text, ',' order by row_to_json(t)::text),'')) as hash from brain.${table} t`)).rows[0]);
       return results;
     };
+    const privilegesFor = async (table: string) => (await client.query("select has_table_privilege('brain_app',$1,'select') as read, has_table_privilege('brain_app',$1,'insert') as insert, has_table_privilege('brain_app',$1,'update') as update, has_table_privilege('brain_app',$1,'delete') as delete", [`brain.${table}`])).rows[0];
+    const privilegesBefore = { settings: await privilegesFor('settings'), channel_conversations: await privilegesFor('channel_conversations') };
     const conversationBefore = (await client.query('select id,channel_id,external_ref,thread_ref from brain.channel_conversations order by id')).rows;
     const before = await snapshot();
     // These five tables were seeded above; the remaining related tables are intentionally empty.
@@ -65,14 +67,18 @@ it('v31 사용자 설정과 대화만 self로 채우고 수집 행을 보존한�
       if (resolved.ok) expect(resolved.settings.map(({ key, value }) => ({ key, value })).sort((a, b) => a.key.localeCompare(b.key))).toEqual(settings.map(({ key, value }) => ({ key, value })).sort((a, b) => a.key.localeCompare(b.key)));
     } finally { await store.close(); }
     for (const table of ['settings', 'channel_conversations']) {
-      const privileges = (await client.query("select has_table_privilege('brain_app',$1,'select') as read, has_table_privilege('brain_app',$1,'insert') as insert, has_table_privilege('brain_app',$1,'update') as update, has_table_privilege('brain_app',$1,'delete') as delete", [`brain.${table}`])).rows[0];
-      expect(privileges).toMatchObject({ read: true, insert: true, update: true });
-      if (table === 'channel_conversations') expect(privileges.delete).toBe(false);
+      const privileges = await privilegesFor(table);
+      expect(privileges).toMatchObject({ read: true, insert: true, update: true, delete: true });
+      expect(privileges).toEqual(privilegesBefore[table as keyof typeof privilegesBefore]);
     }
     const app = new pg.Client({ connectionString: db.appUrl }); await app.connect();
     try {
       await expect(app.query("delete from brain.settings where key='timezone'")).rejects.toThrow();
-      await expect(app.query('delete from brain.channel_conversations where id=$1', [conversation])).rejects.toThrow();
+      await app.query('begin');
+      const deleted = await app.query('delete from brain.channel_conversations where id=$1 returning id', [conversation]);
+      expect(deleted.rows).toEqual([{id:conversation}]);
+      await app.query('rollback');
+      expect((await app.query('select id from brain.channel_conversations where id=$1', [conversation])).rows).toEqual([{id:conversation}]);
     } finally { await app.end(); }
     const otherUser = randomUUID();
     await client.query("insert into brain.users(id,name,is_self,created_at) values ($1,'other',0,now())", [otherUser]);
@@ -110,7 +116,7 @@ it('빈 DB는 self 생성 전 0032를 적용할 수 있고 새 설정과 대화�
     const store = postgresStore({ databaseUrl: db.appUrl });
     try {
       expect(await store.ensureSelfUser({ id: user, name: 'synthetic', createdAt: clock.now() })).toMatchObject({ ok: true });
-      const brain = createSettingsBrain({ store, clock, schemaVersions: { core: 32 } });
+      const brain = createSettingsBrain({ store, clock, schemaVersions: { core: CORE_SCHEMA_VERSION } });
       expect(await brain.config.set({ key: 'timezone', value: 'UTC' })).toMatchObject({ ok: true });
       expect(await store.ensureChannel({ id: channel, kind: 'telegram', botRef: 'synthetic' })).toMatchObject({ ok: true });
       expect(await store.ensureChannelConversation({ id: conversation, channelId: channel, externalRef: 'chat', threadRef: null, userId: user })).toMatchObject({ ok: true });

@@ -66,7 +66,7 @@ async function seed() {
 }
 
 it('installs the complete catalog, five named unique indexes, five search indexes and explicit seed values', async () => {
-  const tables = ['file_import_cleanup','file_request_handoffs','file_request_results','file_requests','channel_item_results','channel_legacy_notifications','channel_legacy_deliveries','channels','channel_conversations','channel_requests','channel_gates','channel_attempt_results','extension_install_progress','extension_python_environment','extension_work_kinds','extensions','schema_migrations','workspaces','users','projects','worktrees','sessions','messages','tool_notes','transcript_files','failures','work_items','work_hold_groups','work_dependencies','work_attempts','files','file_locations','message_attachments','redactions','log_entries','log_entry_edits','index_configs','chunks','context_injections','document_extractions','document_chunks','file_names','file_metadata','schedules','schedule_occurrences','settings'];
+  const tables = ['file_import_cleanup','file_request_handoffs','file_request_results','file_requests','channel_item_results','channel_legacy_notifications','channel_legacy_deliveries','channels','channel_conversations','channel_requests','channel_gates','channel_attempt_results','extension_install_progress','extension_python_environment','extension_quiesce','extension_work_kinds','extensions','schema_migrations','workspaces','users','projects','worktrees','sessions','messages','tool_notes','transcript_files','failures','work_items','work_hold_groups','work_dependencies','work_attempts','files','file_locations','message_attachments','redactions','log_entries','log_entry_edits','index_configs','chunks','context_injections','document_extractions','document_chunks','file_names','file_metadata','schedules','schedule_occurrences','settings'];
   expect((await query("select relname from pg_class where relnamespace='brain'::regnamespace and relkind='r' order by relname")).rows.map(r => r.relname)).toEqual(tables.sort());
   const indexes = (await query("select indexname,indexdef from pg_indexes where schemaname='brain'")).rows;
   expect(indexes.filter(r => r.indexdef.includes('UNIQUE') && r.indexname.endsWith('_idx')).map(r => r.indexname).sort()).toEqual(['users_self_idx','tool_notes_call_id_idx','work_items_open_key_idx','document_extractions_running_idx','index_configs_key_idx'].sort());
@@ -91,8 +91,10 @@ it('installs the complete catalog, five named unique indexes, five search indexe
     {table_name:'channel_legacy_notifications',column_name:'resend_eligible',column_default:'false',is_identity:'NO',is_generated:'NEVER'},
     {table_name:'channel_requests',column_name:'status',column_default:"'pending'::text",is_identity:'NO',is_generated:'NEVER'},
     {table_name:'chunks',column_name:'part',column_default:'0',is_identity:'NO',is_generated:'NEVER'},
+    {table_name:'extension_work_kinds',column_name:'missed_policy',column_default:"'latest'::text",is_identity:'NO',is_generated:'NEVER'},
     {table_name:'file_requests',column_name:'metadata',column_default:"'{}'::jsonb",is_identity:'NO',is_generated:'NEVER'},
     {table_name:'messages',column_name:'is_subagent_report',column_default:'0',is_identity:'NO',is_generated:'NEVER'},
+    {table_name:'schedules',column_name:'enabled',column_default:'true',is_identity:'NO',is_generated:'NEVER'},
     {table_name:'work_items',column_name:'attempts',column_default:'0',is_identity:'NO',is_generated:'NEVER'},
   ]);
   expect((await query("select relname from pg_class where relnamespace='brain'::regnamespace and relkind='S'")).rows).toEqual([{ relname: 'channel_attempt_results_sequence_seq' }]);
@@ -175,8 +177,10 @@ it('enforces same-file extraction pointers, running uniqueness, recurring schedu
   await refused(`update brain.files set current_extraction_id='${id('current')}' where id='${id('g')}'`,'files_extraction_check');
   await refused(`insert into brain.files(id,content_hash,size_bytes,first_seen_at,current_extraction_id) values ('${id('new-file')}','sha256:${'4'.repeat(64)}',1,'${AT}','${id('current')}')`,'files_extraction_check_insert');
   await refused(`insert into brain.document_extractions(id,file_id,extractor_version,attempt,started_at) values ('${id('second-open')}','${id('f')}','v2',5,'${AT}')`,{code:'23505'});
-  for (const [interval,next] of [[10,'null'],[0,`'${AT}'`],[-1,`'${AT}'`]]) await refused(`insert into brain.schedules values ('${id('schedule')}','demo','file','f',${interval},${next},null,'${AT}')`,{code:'23514'});
-  await query(`insert into brain.schedules values ('${id('schedule')}','demo','file','f',null,null,null,'${AT}')`);
+  for (const [interval,next] of [[10,'null'],[0,`'${AT}'`],[-1,`'${AT}'`]]) await refused(`insert into brain.schedules(id,kind,target_kind,target_id,interval_seconds,next_run_at,created_at,trigger_kind,user_id) values ('${id('schedule')}','demo','file','f',${interval},${next},'${AT}','interval','${id('u')}')`,{code:'23514'});
+  await query(`insert into brain.schedules(id,kind,target_kind,target_id,interval_seconds,next_run_at,created_at,trigger_kind,user_id) values ('${id('schedule')}','demo','file','f',10,'${AT}','${AT}','interval','${id('u')}')`);
+  await query(`insert into brain.schedules(id,kind,target_kind,target_id,run_at,created_at,trigger_kind,user_id) values ('${id('one-shot')}','demo','file','f','${AT}','${AT}','once','${id('u')}')`);
+  expect((await query('select trigger_kind,interval_seconds from brain.schedules order by trigger_kind')).rows).toEqual([{trigger_kind:'interval',interval_seconds:10},{trigger_kind:'once',interval_seconds:null}]);
   for (const params of ['[]','{}','{"targetChars":1,"overlapChars":null}','{"targetChars":1,"overlapChars":"2"}','{"targetChars":1,"overlapChars":2,"extra":3}']) await refused(`insert into brain.index_configs values ('${id('bad-config')}','document_chunk',null,null,'${params}')`,{code:'23514'});
   await refused(`insert into brain.index_configs values ('${id('duplicate-config')}','document_chunk',null,null,'{"overlapChars":120,"targetChars":1200}')`,{code:'23505'});
   for (const kind of ['chunk','embedding']) {

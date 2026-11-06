@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -23,6 +23,22 @@ async function packageFixture() {
     await writeFile(join(dir, 'digest'), `${hash.digest('hex')}\n`);
   }
   await seal(); return { dir, manifest, seal };
+}
+// Doctor probes the machine before inspecting the isolated database. Supply
+// synthetic machine responses while still exercising the real CLI process.
+async function doctorFixture(world: Awaited<ReturnType<typeof extHome>>) {
+  const bin = join(world.home, 'doctor-bin'); await mkdir(bin);
+  await writeFile(join(bin, 'orb'), '#!/bin/sh\necho Running\n');
+  await writeFile(join(bin, 'docker'), `#!/bin/sh
+case "$1" in
+  context) echo orbstack;;
+  version) echo 29;;
+  ps) echo '{"Labels":"com.docker.compose.service=postgres","State":"running","Status":"Up (healthy)"}';;
+esac
+exit 0
+`);
+  await chmod(join(bin, 'orb'), 0o755); await chmod(join(bin, 'docker'), 0o755);
+  (world.env as NodeJS.ProcessEnv).PATH = `${bin}:/usr/bin:/bin`;
 }
 it('고정된 패키지 바이트와 release 범위를 검증한다', async () => {
   const fixture = await packageFixture(), prepared = await prepareExtensionPackage(fixture.dir);
@@ -62,7 +78,7 @@ it('실제 CLI --package가 합성 core 신원에서 설치하고 불일치는 �
 });
 
 it('상위 package 신원과 재설치 충돌 및 낮은 버전의 무변경을 관찰한다', async () => {
-  const f = await packageFixture(), world = await extHome(); cleanup.push(world.cleanup);
+  const f = await packageFixture(), world = await extHome(); cleanup.push(world.cleanup); await doctorFixture(world);
   const build = JSON.parse(await readFile(new URL('../dist/build.json', import.meta.url), 'utf8'));
   await writeFile(join(world.home, 'installed.json'), JSON.stringify({ commit: build.commit, schema_version: build.schema_version, node: process.execPath, plugin_root: null, installed_at: new Date().toISOString() }));
   const first = await world.run(['ext', 'install', '--package', f.dir, '--json']);
@@ -97,6 +113,7 @@ it('상위 package 신원과 재설치 충돌 및 낮은 버전의 무변경을 
   expect((await world.run(['ext', 'install', '--package', f.dir, '--json'])).code).toBe(0);
   expect(await readPackageObservation(world.home, 'testext')).toMatchObject({ version: '0.2.0', pluginVersion: '1.1.0' });
   expect((await world.run(['doctor', 'run', '--json'])).body.data.checks).toContainEqual(expect.objectContaining({ id: 'extensions', status: 'ok' }));
+  const beforeConflictProgress = await world.db.rows("select * from brain.extension_install_progress where name='testext'");
   f.manifest.version = '0.2.0'; f.manifest.plugin_version = '1.2.0'; await f.seal();
   expect((await world.run(['ext', 'install', '--package', f.dir, '--json'])).body.error.code).toBe('EXTENSION_INVALID');
   expect(await world.db.rows("select * from brain.extensions where name='testext'")).toEqual(registry);
@@ -105,15 +122,32 @@ it('상위 package 신원과 재설치 충돌 및 낮은 버전의 무변경을 
   expect(conflictDoctor.body.data.checks).toContainEqual(expect.objectContaining({ id: 'extensions', status: 'warn', code: 'EXTENSION_PACKAGE_CONFLICT' }));
   expect(await readPackageObservation(world.home, 'testext')).toEqual(observation);
   expect(await world.db.rows("select * from brain.extensions where name='testext'")).toEqual(registry);
-  expect(await world.db.rows("select * from brain.extension_install_progress where name='testext'")).toEqual(progress);
+  expect(await world.db.rows("select * from brain.extension_install_progress where name='testext'")).toEqual(beforeConflictProgress);
   expect(await readFile(join(world.home, 'extensions/testext/manifest.json'), 'utf8')).toBe(installed);
   f.manifest.plugin_version = '1.1.0'; await f.seal();
   expect((await world.run(['ext', 'install', '--package', f.dir, '--json'])).code).toBe(0);
   expect((await world.run(['doctor', 'run', '--json'])).body.data.checks).toContainEqual(expect.objectContaining({ id: 'extensions', status: 'ok' }));
 });
 
+it('비교할 수 없는 설치 version은 package 갱신을 거부하고 doctor가 경고한다', async () => {
+  const f=await packageFixture(), world=await extHome(); cleanup.push(world.cleanup); await doctorFixture(world);
+  const installed=await world.run(['ext','install','--package',f.dir,'--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+  const schedule=await world.run(['schedules','add','--kind','schedule_probe','--target-kind','probe','--target-id','synthetic','--cron','0 9 * * 5','--tz','UTC','--json']); expect(schedule.code,schedule.stdout+schedule.stderr).toBe(0);
+  await world.db.query("insert into testext.checks values (7,'2026-01-01T00:00:00Z'); update brain.extensions set version='legacy-version' where name='testext'");
+  const dir=join(world.home,'extensions/testext');
+  const tree=async()=>{const hash=createHash('sha256'); const walk=async(relative:string):Promise<void>=>{for(const entry of (await readdir(join(dir,relative),{withFileTypes:true})).sort((a,b)=>a.name.localeCompare(b.name))){const path=join(relative,entry.name); hash.update(JSON.stringify([path,entry.isDirectory()])); if(entry.isDirectory()) await walk(path); else {expect(entry.isFile()).toBe(true); const bytes=await readFile(join(dir,path)); hash.update(String(bytes.length)+':'); hash.update(bytes);}}}; await walk(''); return hash.digest('hex');};
+  const snapshot=async()=>({tree:await tree(),registry:await world.db.rows("select * from brain.extensions where name='testext'"),progress:await world.db.rows("select * from brain.extension_install_progress where name='testext'"),ledger:await world.ledger('testext'),data:await world.db.rows('select * from testext.checks'),settings:await world.db.rows("select * from brain.settings where key like 'testext.%' order by key"),gate:await world.db.rows("select * from brain.extension_quiesce where name='testext'"),schedules:await world.db.rows('select * from brain.schedules order by id'),occurrences:await world.db.rows('select * from brain.schedule_occurrences order by schedule_id,occurrence_at')});
+  const before=await snapshot(); f.manifest.version='0.2.0'; f.manifest.plugin_version='1.1.0'; await f.seal();
+  const rejected=await world.run(['ext','install','--package',f.dir,'--json']);
+  expect(rejected.code).not.toBe(0); expect(rejected.body.error).toMatchObject({code:'EXTENSION_INVALID',message:expect.stringContaining('비교')});
+  expect(await snapshot()).toEqual(before);
+  const doctor=await world.run(['doctor','run','--json']); expect(doctor.code).toBe(0);
+  expect(doctor.body.data.checks).toContainEqual(expect.objectContaining({id:'extensions',status:'warn',detail:expect.stringContaining('legacy-version')}));
+  expect(await snapshot()).toEqual(before);
+});
+
 it('실제 CLI 상태와 doctor는 소유자를 숨기고 정지와 복구를 읽기 전용으로 알린다', async () => {
-  const f = await packageFixture(), world = await extHome(); cleanup.push(world.cleanup);
+  const f = await packageFixture(), world = await extHome(); cleanup.push(world.cleanup); await doctorFixture(world);
   expect((await world.run(['ext', 'install', '--package', f.dir, '--json'])).code).toBe(0);
   const owner = '00000000-0000-7000-8000-000000000090';
   await world.db.query(`insert into brain.extension_quiesce(name,owner,started_at) values ('testext','${owner}',now())`);
@@ -230,11 +264,12 @@ it('유효한 Python 외부 패키지는 정적 검사를 통과해 격리 환�
 case "$1" in
   --version) exit 0;;
   python) echo /synthetic/python; exit 0;;
-  sync) /bin/mkdir -p .venv/bin; /bin/cat > .venv/bin/python <<'PYTHON'
+  venv) /bin/mkdir -p .venv/bin; exit 0;;
+  sync) /bin/mkdir -p "$UV_PROJECT_ENVIRONMENT/bin"; /bin/cat > "$UV_PROJECT_ENVIRONMENT/bin/python" <<'PYTHON'
 #!/bin/sh
 if [ "$1" = "-c" ]; then echo 3.12.13; else echo '{"abi":1,"type":"result","summary":"synthetic"}'; fi
 PYTHON
-  /bin/chmod +x .venv/bin/python; exit 0;;
+  /bin/chmod +x "$UV_PROJECT_ENVIRONMENT/bin/python"; exit 0;;
 esac
 exit 1
 `;

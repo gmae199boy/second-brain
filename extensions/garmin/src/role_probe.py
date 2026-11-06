@@ -24,7 +24,7 @@ def probe_role(conn):
     checks = {'identity': False, 'role_safe': False, 'membership_absent': False, 'schema_ready': False,
               'required_inserts': False, 'required_views': False, 'no_excess_tables': False,
               'no_excess_functions': False, 'no_excess_schemas': False, 'attempt_execute': False,
-              'original_codec_execute': False, 'predecessor_execute': False,
+              'original_codec_execute': False, 'predecessor_execute': False, 'conversation_execute': False,
               'mapping_select': False, 'batch_select': False}
     roles = safely(conn, """select current_user, rolcanlogin, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolreplication,
         shobj_description(oid,'pg_authid') = 'second-brain extension:' || current_database(),
@@ -47,6 +47,8 @@ def probe_role(conn):
     checks['attempt_execute'] = bool(attempt and attempt[0][0])
     predecessor = safely(conn, "select coalesce(has_function_privilege(current_user,to_regprocedure('brain.extension_predecessor_results(uuid,uuid)'),'EXECUTE'),false)")
     checks['predecessor_execute'] = bool(predecessor and predecessor[0][0])
+    conversation = safely(conn, "select coalesce(has_function_privilege(current_user,to_regprocedure('brain.extension_channel_conversation_valid(uuid,uuid,uuid)'),'EXECUTE'),false)")
+    checks['conversation_execute'] = bool(conversation and conversation[0][0])
     helpers = safely(conn, """select coalesce(has_function_privilege(current_user,to_regprocedure('brain.original_utf8(text)'),'EXECUTE'),false)""")
     if helpers:
         checks['original_codec_execute'] = helpers[0][0]
@@ -64,7 +66,7 @@ def probe_role(conn):
         checks['no_excess_tables'] = all(not write and not modify and (name in VIEWS or not select and not select_col) and set(insert_cols) <= REQUIRED_INSERTS.get(name, frozenset()) for name, select, write, select_col, modify, insert_cols in objects)
     functions = safely(conn, """select exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
        where n.nspname='brain' and p.prorettype <> 'pg_catalog.trigger'::regtype
-       and p.oid is distinct from to_regprocedure('brain.attempt_is_current(uuid,uuid)') and p.oid is distinct from to_regprocedure('brain.original_utf8(text)') and p.oid is distinct from to_regprocedure('brain.extension_predecessor_results(uuid,uuid)') and p.oid is distinct from to_regprocedure('brain.extension_channel_publish(uuid,uuid,uuid,text,text,text,text,uuid,jsonb)')
+       and p.oid is distinct from to_regprocedure('brain.attempt_is_current(uuid,uuid)') and p.oid is distinct from to_regprocedure('brain.original_utf8(text)') and p.oid is distinct from to_regprocedure('brain.extension_predecessor_results(uuid,uuid)') and p.oid is distinct from to_regprocedure('brain.extension_channel_publish(uuid,uuid,uuid,text,text,text,text,uuid,jsonb)') and p.oid is distinct from to_regprocedure('brain.extension_channel_conversation_valid(uuid,uuid,uuid)')
        and has_function_privilege(current_user,p.oid,'EXECUTE'))""")
     checks['no_excess_functions'] = bool(functions is not None and not functions[0][0])
     own = safely(conn, """select coalesce(has_table_privilege(current_user,to_regclass('garmin.import_mapping'),'SELECT'),false),

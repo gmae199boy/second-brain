@@ -73,8 +73,9 @@ def main():
         result=normalize.run(conn,rebuild=rebuild,timezone=fixture['timezone'])
         return {'processed':result.processed,'failed':result.failed,'snapshot':snapshot()}
     result={'initial':run(),'rerun':run(),'rebuild':run(rebuild=True)}
+    valid_summary=json.loads(next(item['raw'] for item in fixture['items'] if item['endpoint']=='user_summary' and item['key']=='2026-10-15'))
     store.upsert_raw(conn,scope='day',key='2026-10-17',endpoint='user_summary',
-                     payload={'totalSteps':321},library_version='synthetic',now_ms=FIXED_NOW)
+                     payload={**valid_summary,'calendarDate':'2026-10-17','totalSteps':321},library_version='synthetic',now_ms=FIXED_NOW)
     result['post_update']=run()
     print(json.dumps(result,ensure_ascii=False,sort_keys=True,allow_nan=False))
     conn.close()

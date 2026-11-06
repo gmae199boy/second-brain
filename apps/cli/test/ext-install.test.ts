@@ -129,7 +129,8 @@ it('restores the previous package and registry facts when a reinstall migration 
   expect(await readFile(join(target, 'tokenstore', 'credentials'), 'utf8')).toBe('existing-token');
   expect(await readFile(join(target, 'staging', 'pending'), 'utf8')).toBe('pending-bytes');
   await writeFile(join(source, 'manifest.json'), originalManifest.replace('0.1.0', '0.2.0'));
-  await writeFile(join(source, 'bin/check.mjs'), 'throw new Error("replacement must not remain");\n');
+  const replacementCheck = originalCheck + '\n// replacement package\n';
+  await writeFile(join(source, 'bin/check.mjs'), replacementCheck);
   await writeFile(join(source, 'migrations/0002_refused.sql'), 'select extension_missing_column;\n');
   const failed = await fixture.run(['ext', 'install', 'testext', '--json']);
   expect(failed.code, failed.stdout + failed.stderr).toBe(1);
@@ -143,13 +144,18 @@ it('restores the previous package and registry facts when a reinstall migration 
   expect(failedStatus).toMatchObject({ installed: true, version: reinstalled.body.data.version, connection: reinstalled.body.data.connection, install: { result: 'failed', failed_stage: 'migration' } });
   expect(failed.body.data).toEqual(failedStatus);
   expect(await fixture.ledger('testext')).toEqual([{ owner: 'testext', version: 1 }]);
-  expect(await readdir(join(fixture.home, 'extensions'))).toEqual(['testext']);
   const failedProgress = (await fixture.db.rows("select progress from brain.extension_install_progress where name='testext'"))[0]!.progress as import('second_brain').ExtensionInstallProgress;
-  await writeFile(join(source, 'bin/check.mjs'), originalCheck);
+  const owner = failedProgress.transition!.owner;
+  expect((await fixture.db.rows("select owner from brain.extension_quiesce where name='testext'"))[0]!.owner).toBe(owner);
+  expect(JSON.parse(await readFile(join(fixture.home, 'extensions/.transition-testext.json'), 'utf8'))).toMatchObject({owner, phase:'prepared'});
+  expect(await readFile(join(fixture.home, `extensions/.transition-testext-${owner}/new/bin/check.mjs`), 'utf8')).toBe(replacementCheck);
   await writeFile(join(source, 'migrations/0002_refused.sql'), 'select 1;\n');
   const resumed = await fixture.run(['ext', 'install', 'testext', '--json']);
   expect(resumed.code, resumed.stdout + resumed.stderr).toBe(0);
   expect(await readFile(join(target, 'manifest.json'), 'utf8')).toContain('0.2.0');
+  expect(await readFile(join(target, 'bin/check.mjs'), 'utf8')).toBe(replacementCheck);
+  expect(await fixture.db.rows("select owner from brain.extension_quiesce where name='testext'")).toEqual([]);
+  expect(await readdir(join(fixture.home, 'extensions'))).toEqual(['testext']);
   expect(await readFile(join(target, 'tokenstore', 'credentials'), 'utf8')).toBe('existing-token');
   expect(await readFile(join(target, 'staging', 'pending'), 'utf8')).toBe('pending-bytes');
   const resumedProgress = (await fixture.db.rows("select progress from brain.extension_install_progress where name='testext'"))[0]!.progress as import('second_brain').ExtensionInstallProgress;
@@ -158,10 +164,10 @@ it('restores the previous package and registry facts when a reinstall migration 
 });
 it.each([
   ['invalid', 'EXTENSION_PYTHON_PIN_INVALID'], ['uv', 'EXTENSION_UV_NOT_FOUND'],
-  ['python', 'EXTENSION_PYTHON_NOT_FOUND'], ['sync', 'EXTENSION_PYTHON_SYNC_FAILED'],
+  ['python', 'EXTENSION_PYTHON_NOT_FOUND'], ['venv', 'EXTENSION_PYTHON_SYNC_FAILED'], ['sync', 'EXTENSION_PYTHON_SYNC_FAILED'],
   ['version', 'EXTENSION_PYTHON_VERSION_MISMATCH'],
 ])('Python %s 실패의 변경 경계와 복구 재개를 보존한다', async (mode, code) => {
-  const { cp, mkdir, readFile, writeFile, readdir } = await import('node:fs/promises');
+  const { cp, mkdir, readFile, writeFile, readdir, stat } = await import('node:fs/promises');
   const { fileURLToPath } = await import('node:url');
   const fixture = await extHome(); cleanup.push(fixture.cleanup);
   const sources = join(fixture.home, 'packages'); await mkdir(sources);
@@ -172,6 +178,7 @@ it.each([
   expect(installed.code, installed.stderr).toBe(0);
   const target = join(fixture.home, 'extensions/testext');
   const original = await readFile(join(target, 'manifest.json'), 'utf8');
+  await mkdir(join(target, '.venv')); await writeFile(join(target, '.venv/marker'), 'previous-environment'); const oldEnvironmentInode = (await stat(join(target, '.venv/marker'))).ino;
   await mkdir(join(target, 'tokenstore')); await writeFile(join(target, 'tokenstore/credentials'), 'existing-token');
   const previousState = mode === 'invalid' ? {
     registry: await fixture.db.rows("select * from brain.extensions where name='testext'"),
@@ -187,12 +194,13 @@ it.each([
   await writeFile(join(source, '.python-version'), mode === 'invalid' ? '3.12' : '3.12.13');
   await writeFile(join(source, 'pyproject.toml'), ''); await writeFile(join(source, 'uv.lock'), '');
   const bin = join(fixture.home, 'fake-bin'); await mkdir(bin);
-  if (mode !== 'uv') await writeFile(join(bin, 'uv'), `#!/bin/sh\ncase "$1" in\n--version) exit 0;;\npython) ${mode === 'python' ? 'echo secret-output >&2; exit 1' : 'echo /local/python; exit 0'};;\nsync) ${mode === 'sync' ? 'echo secret-output >&2; exit 1' : '/bin/mkdir -p .venv/bin; /bin/echo "#!/bin/sh\\necho 3.12.14" > .venv/bin/python; /bin/chmod +x .venv/bin/python; exit 0'};;\nesac\n`, { mode: 0o755 });
+  if (mode !== 'uv') await writeFile(join(bin, 'uv'), `#!/bin/sh\ncase "$1" in\n--version) exit 0;;\npython) ${mode === 'python' ? 'echo secret-output >&2; exit 1' : 'echo /local/python; exit 0'};;\nvenv) ${mode === 'venv' ? 'echo secret-output >&2; exit 1' : 'exit 0'};;\nsync) ${mode === 'sync' ? 'echo secret-output >&2; exit 1' : '/bin/mkdir -p "$UV_PROJECT_ENVIRONMENT/bin"; /bin/echo "#!/bin/sh\\necho 3.12.14" > "$UV_PROJECT_ENVIRONMENT/bin/python"; /bin/chmod +x "$UV_PROJECT_ENVIRONMENT/bin/python"; exit 0'};;\nesac\n`, { mode: 0o755 });
   const environment: NodeJS.ProcessEnv = fixture.env;
   environment.PATH = bin; environment.SECRET_TEST_VALUE = 'secret-output';
   const failed = await fixture.run(['ext', 'install', 'testext', '--json']);
   expect(failed.body.error.code).toBe(code);
   expect(await readFile(join(target, 'tokenstore/credentials'), 'utf8')).toBe('existing-token');
+  expect((await stat(join(target, '.venv/marker'))).ino).toBe(oldEnvironmentInode); expect(await readFile(join(target, '.venv/marker'), 'utf8')).toBe('previous-environment');
   if (mode === 'invalid') {
     expect(await readFile(join(target, 'manifest.json'), 'utf8')).toBe(original);
     expect(await readdir(join(fixture.home, 'extensions'))).toEqual(['testext']);
@@ -200,15 +208,15 @@ it.each([
     expect(failed.body).toMatchObject({ ok: false, error: { code: 'EXTENSION_PYTHON_PIN_INVALID' } });
     return;
   }
-  expect(await readFile(join(target, 'manifest.json'), 'utf8')).toBe(JSON.stringify(replacement));
-  expect(await fixture.ledger('testext')).toEqual([{ owner: 'testext', version: 1 }, { owner: 'testext', version: 2 }]);
+  expect(await readFile(join(target, 'manifest.json'), 'utf8')).toBe(original);
+  expect(await fixture.ledger('testext')).toEqual([{ owner: 'testext', version: 1 }]);
   expect(await fixture.db.rows("select version from brain.extensions where name='testext'")).toEqual([{ version: '0.1.0' }]);
   const journal = JSON.parse(await readFile(join(fixture.home, 'extensions/.transition-testext.json'), 'utf8'));
   const gates = await fixture.db.rows("select owner from brain.extension_quiesce where name='testext'");
-  expect(journal).toMatchObject({ phase: 'active', owner: gates[0]?.owner }); expect(gates).toHaveLength(1);
+  expect(journal).toMatchObject({ phase: 'prepared', owner: gates[0]?.owner }); expect(gates).toHaveLength(1);
   const progress = (await fixture.db.rows("select progress from brain.extension_install_progress where name='testext'"))[0]!.progress as import('second_brain').ExtensionInstallProgress;
   expect(progress.transition).toEqual({ owner: journal.owner, registered: false });
-  expect(progress.stages.migration?.status).toBe('succeeded'); expect(progress.stages.environment).toMatchObject({ status: 'failed', code });
+  expect(progress.stages.migration).toBeUndefined(); expect(progress.stages.environment).toMatchObject({ status: 'failed', code });
   const status = await fixture.run(['ext', 'status', 'testext', '--json']);
   expect(status.body.data).toMatchObject({ installed: true, connection: { status: 'connected' }, python_environment: { status: 'failed', code } });
   expect(JSON.stringify({ failed, status })).not.toContain('secret-output');
@@ -217,11 +225,12 @@ it.each([
 case "$1" in
 --version) exit 0;;
 python) echo /synthetic/python; exit 0;;
-sync) /usr/bin/touch "${join(fixture.home, 'recovery-marker')}"; while [ ! -f "${join(fixture.home, 'recovery-release')}" ]; do /bin/sleep 0.05; done; /bin/mkdir -p .venv/bin; /bin/cat > .venv/bin/python <<'PYTHON'
+venv) exit 0;;
+sync) /usr/bin/touch "${join(fixture.home, 'recovery-marker')}"; while [ ! -f "${join(fixture.home, 'recovery-release')}" ]; do /bin/sleep 0.05; done; /bin/mkdir -p "$UV_PROJECT_ENVIRONMENT/bin"; /bin/cat > "$UV_PROJECT_ENVIRONMENT/bin/python" <<'PYTHON'
 #!/bin/sh
 if [ "$1" = "-c" ]; then echo 3.12.13; else echo '{"abi":1,"type":"result","summary":"synthetic"}'; fi
 PYTHON
-/bin/chmod +x .venv/bin/python; exit 0;;
+/bin/chmod +x "$UV_PROJECT_ENVIRONMENT/bin/python"; exit 0;;
 esac
 exit 1
 `, { mode: 0o755 });
@@ -346,8 +355,8 @@ it('reruns the connection check on reinstall and preserves the original installa
   expect(status.body.data).toMatchObject({ installed: true, enabled: true, installed_at: installed.body.data.installed_at,
     connection: { status: 'failed', code: 'EXTENSION_WORKER_ERROR' } });
 });
-it('preserves the initial package and cleans staging when the first migration fails', async () => {
-  const { cp, mkdir, readdir, writeFile } = await import('node:fs/promises');
+it('preserves the initial package in the owned stage when the first migration fails', async () => {
+  const { cp, mkdir, readFile, writeFile } = await import('node:fs/promises');
   const { fileURLToPath } = await import('node:url');
   const fixture = await extHome(); cleanup.push(fixture.cleanup);
   const sources = join(fixture.home, 'packages');
@@ -362,8 +371,12 @@ it('preserves the initial package and cleans staging when the first migration fa
   expect(failed.body).toMatchObject({ ok: false, error: { code: 'MIGRATION_FAILED' } });
   expect(await fixture.db.rows('select count(*)::integer as count from brain.extensions')).toEqual([{ count: 0 }]);
   expect(await fixture.ledger('testext')).toEqual([]);
-  await expect(access(join(fixture.home, 'extensions/testext/migrations/0001_testext.sql'))).resolves.toBeUndefined();
-  expect(await readdir(join(fixture.home, 'extensions'))).toEqual(['testext']);
+  await expect(access(join(fixture.home, 'extensions/testext'))).rejects.toThrow();
+  const progress = (await fixture.db.rows("select progress from brain.extension_install_progress where name='testext'"))[0]!.progress as import('second_brain').ExtensionInstallProgress;
+  const owner = progress.transition!.owner;
+  expect((await fixture.db.rows("select owner from brain.extension_quiesce where name='testext'"))[0]!.owner).toBe(owner);
+  expect(JSON.parse(await readFile(join(fixture.home, 'extensions/.transition-testext.json'), 'utf8'))).toMatchObject({owner,phase:'prepared'});
+  await expect(access(join(fixture.home, `extensions/.transition-testext-${owner}/new/migrations/0001_testext.sql`))).resolves.toBeUndefined();
 });
 
 it('registers manifest work and auth kinds in PostgreSQL for subsequent enqueue', async () => {
@@ -421,7 +434,7 @@ it('discovers a newly installed manifest and runs its registered work with a fre
   const sources = join(fixture.home, 'packages'); await mkdir(sources);
   const source = join(sources, 'testext'); await cp(fileURLToPath(new URL('./fixtures/extensions/testext/', import.meta.url)), source, { recursive: true });
   const manifest = JSON.parse(await readFile(join(source, 'manifest.json'), 'utf8'));
-  manifest.work = [{ kind: 'testext.sync', execution: 'supervised', runtime: 'node', entry: 'bin/sync.mjs' }];
+  manifest.work = [{ kind: 'testext.sync', execution: 'supervised', runtime: 'node', entry: 'bin/sync.mjs', missed: 'coalesce' }];
   manifest.error_codes = ['TEMPORARY'];
   manifest.auth = { kind: 'testext.login', execution: 'supervised', runtime: 'node', entry: 'bin/login.mjs' };
   manifest.settings = [{ key: 'testext.token', type: 'string', secret: true, required: ['work'] }, { key: 'testext.tokenstore', type: 'string', machine: 'tokenstore', required: ['auth', 'work'] }];

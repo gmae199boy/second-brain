@@ -95,8 +95,9 @@ class NormalizeOracleIntegrationTest(unittest.TestCase):
                 self.assertEqual(owner.execute('select * from garmin.evaluation_revisions where user_id=%s and connection_id=%s',(user,account)).fetchall(),evaluation_before)
                 # A real PG projection write fails after a new item commits.
                 # Removing only this test-owned trigger allows a zero-work retry.
+                valid_summary = json.loads(next(item['raw'] for item in fixture['items'] if item['endpoint']=='user_summary' and item['key']=='2026-10-15'))
                 store.upsert_raw(conn,scope='day',key='2026-10-17',endpoint='user_summary',
-                    payload={'totalSteps':321},library_version='synthetic',now_ms=FIXED_NOW)
+                    payload={**valid_summary,'calendarDate':'2026-10-17','totalSteps':321},library_version='synthetic',now_ms=FIXED_NOW)
                 self.assertEqual(reference['post_update']['processed'],1)
                 raw_before=owner.execute('select scope,key,endpoint,raw,fetched_at,checked_at,library_version from garmin.raw_response where user_id=%s and connection_id=%s order by scope,key,endpoint',(user,account)).fetchall()
                 owner.execute("create function garmin.test_oracle_projection_failure() returns trigger language plpgsql as $$ begin raise exception 'synthetic projection failure'; end $$")

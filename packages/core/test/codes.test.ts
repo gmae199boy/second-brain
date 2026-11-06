@@ -41,6 +41,7 @@ describe('the warning codes', () => {
       'DAEMON_NOT_RESTARTED',
       'PLUGIN_NOT_INSTALLED',
       'PLUGIN_BEHIND',
+      'EXTENSION_PACKAGE_CONFLICT',
       'PLUGIN_DUPLICATE',
       'UPDATE_AVAILABLE',
     ]);

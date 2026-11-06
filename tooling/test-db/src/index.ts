@@ -1,5 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { appendFileSync } from 'node:fs';
 import { DEFAULT_TEST_DATABASE_URL, TEST_DATABASE_URL_ENV } from './global-setup.js';
 
 // The package boundary is this one entry point (`exports: "."`), so the
@@ -22,6 +25,10 @@ export {
  * it is tooling, not part of the shipped surface.
  */
 export interface TestDatabase {
+  /** Present only for a fixture-owned disposable PostgreSQL cluster. */
+  fixtureContainer?: { id: string; name: string; port: number };
+  readonly fixtureContainerRemoved?: boolean;
+  readonly fixtureDatabaseDropped?: boolean;
   /** Connection URL of the freshly created, isolated database. */
   url: string;
   /** Runtime role URL; call setup preparation before using it. */
@@ -74,7 +81,10 @@ export function requireAdminDatabaseUrl(): string {
  * Create a throwaway `brain_test_<random>` database,  and hand back its URL plus the way to drop it.
  */
 export async function createTestDatabase(): Promise<TestDatabase> {
-  const adminUrl = requireAdminDatabaseUrl();
+  return createDatabaseAt(requireAdminDatabaseUrl());
+}
+
+async function createDatabaseAt(adminUrl: string): Promise<TestDatabase> {
   const name = `brain_test_${randomBytes(6).toString('hex')}`;
 
   await withAdminClient(adminUrl, async (client) => {
@@ -116,6 +126,86 @@ export async function createTestDatabase(): Promise<TestDatabase> {
       dropped = true;
     },
   };
+}
+
+const docker = promisify(execFile);
+const dockerCommand = (args: string[]) => docker('docker', args, { timeout: 15_000 });
+
+/** A private cluster for fixtures whose extension roles have fixed names. */
+export async function createIsolatedTestDatabase(): Promise<TestDatabase> {
+  requireAdminDatabaseUrl();
+  const nonce = randomBytes(12).toString('hex');
+  const name = `brain-fixture-${nonce}`;
+  let id: string | undefined;
+  const record = (event: string, port?: number) => {
+    const line = JSON.stringify({ fixturePostgres: event, name, id, ...(port ? { port } : {}) });
+    if (process.env.BRAIN_TEST_PG_RESOURCE_LOG) appendFileSync(process.env.BRAIN_TEST_PG_RESOURCE_LOG, `${line}\n`);
+    else process.stdout.write(`${line}\n`);
+  };
+  const remove = async () => {
+    if (!id) return;
+    try { await dockerCommand(['rm', '-f', id]); }
+    catch (error) {
+      try { await dockerCommand(['inspect', '--format', '{{.Id}}', id]); }
+      catch (inspectionError) {
+        const inspected = inspectionError as { code?: number; stderr?: string };
+        const absent = inspected.code === 1 && [`error: no such object: ${id}`, `error: no such container: ${id}`].includes((inspected.stderr ?? '').trim().toLowerCase());
+        if (absent) { record('removed'); id = undefined; return; }
+      }
+      record('remove-failed'); throw error;
+    }
+    record('removed');
+    id = undefined;
+  };
+  try {
+    const created = await dockerCommand(['create', '--name', name, '--label', `brain.fixture=${nonce}`, '-e', 'POSTGRES_PASSWORD=brain-fixture-test', '--tmpfs', '/var/lib/postgresql', '-p', '127.0.0.1::5432', 'postgres:18']);
+    id = created.stdout.trim();
+    if (!/^[a-f0-9]{64}$/.test(id)) throw new Error('docker did not return a container ID');
+    record('created');
+    await dockerCommand(['start', id]);
+    const info = await dockerCommand(['inspect', '--format', '{{json .NetworkSettings.Ports}}', id]);
+    const ports = JSON.parse(info.stdout) as Record<string, { HostIp: string; HostPort: string }[]>;
+    const binding = ports['5432/tcp']?.[0];
+    if (!binding || binding.HostIp !== '127.0.0.1' || !/^\d+$/.test(binding.HostPort)) throw new Error('invalid fixture port binding');
+    const port = Number(binding.HostPort);
+    record('started', port);
+    const adminUrl = `postgres://postgres:brain-fixture-test@127.0.0.1:${port}/postgres`;
+    const deadline = Date.now() + 30_000;
+    let ready = false;
+    while (Date.now() < deadline) {
+      const client = new pg.Client({ connectionString: adminUrl, connectionTimeoutMillis: 1000, query_timeout: 1000 });
+      try { await client.connect(); await client.query('select 1'); ready = true; break; }
+      catch { await new Promise(resolve => setTimeout(resolve, 250)); }
+      finally { await client.end().catch(() => {}); }
+    }
+    if (!ready) throw new Error('isolated PostgreSQL TCP authentication did not become ready');
+    const db = await createDatabaseAt(adminUrl);
+    let removed = false, databaseDropped = false;
+    return { ...db, fixtureContainer: { id, name, port }, get fixtureContainerRemoved() { return removed; }, get fixtureDatabaseDropped() { return databaseDropped; }, async drop() {
+      if (removed) return;
+      let databaseError: unknown;
+      try { await db.drop(); databaseDropped = true; } catch (error) { databaseError = error; }
+      try { await remove(); removed = true; }
+      catch (error) { if (databaseError !== undefined) throw new AggregateError([databaseError, error], 'fixture database and container cleanup failed'); throw error; }
+      if (databaseError !== undefined) throw databaseError;
+    } };
+  } catch (error) {
+    if (!id) {
+      // A timed-out create may still have created the uniquely named container.
+      try {
+        const found = await dockerCommand(['inspect', '--format', '{{.Id}}', name]);
+        const candidate = found.stdout.trim();
+        if (/^[a-f0-9]{64}$/.test(candidate)) { id = candidate; record('created'); }
+      } catch (inspectionError) {
+        const stderr = (inspectionError as { stderr?: string }).stderr ?? '';
+        if (!/no such (object|container)/i.test(stderr)) {
+          throw new AggregateError([error, inspectionError], `could not establish whether fixture ${name} was created`);
+        }
+      }
+    }
+    await remove();
+    throw error;
+  }
 }
 
 async function withAdminClient(

@@ -61,16 +61,16 @@ it.each(['latest','coalesce','skip'] as const)('대량 회차를 빠짐없이 �
  await k.tick();expect(recorded).toBe(count+6);expect(batchSizes.slice(10)).toEqual([1000,1000,6]);
  const rows=await k.rows(s);expect(rows).toHaveLength(count+6);expect(rows.map(r=>r.occurrenceAt.getTime())).toEqual(Array.from({length:count+6},(_,i)=>first.getTime()+i*60000));
  expect((await k.store.readSchedule({id:s.id}))).toMatchObject({schedule:{nextRunAt:new Date(first.getTime()+(count+6)*60000)}});
- expect(rows.filter(r=>r.status==='skipped')).toHaveLength(policy==='latest'?count-1:policy==='skip'?count:0);
+ expect(rows.filter(r=>r.status==='skipped')).toHaveLength(policy==='latest'?count+5:policy==='skip'?count:0);
  expect(k.store.snapshot().workItems).toHaveLength(1);
  const seen:number[]=[];let token=100;
- while(policy!=='skip' && seen.length<(policy==='latest'?7:count+6)){
+ while(policy!=='skip' && seen.length<(policy==='latest'?1:count+6)){
   const attemptToken=`00000000-0000-7000-8000-${String(token++).padStart(12,'0')}`;
   const claim=await k.store.claimSupervisedWork({now:k.now(),claimedBy:'worker',kinds:['testext.sync'],attemptToken});if(!claim.ok||!claim.item)throw Error('claim');
   const batch=claim.item.scheduledOccurrences!.flatMap(g=>g.occurrences.map(d=>d.getTime()));expect(batch.length).toBeLessThanOrEqual(1000);seen.push(...batch);
   await k.store.finishSupervisedWork({id:claim.item.id,attemptToken,now:k.now(),outcome:'succeeded'});
  }
- if(policy!=='skip'){expect(seen).toEqual(rows.filter(r=>r.status==='pending').map(r=>r.occurrenceAt.getTime()));expect((await k.rows(s)).filter(r=>r.status==='done')).toHaveLength(seen.length);}
+ if(policy!=='skip'){expect(seen).toEqual(rows.filter(r=>r.status==='pending').map(r=>r.occurrenceAt.getTime()));if(policy==='latest')expect(seen).toEqual([first.getTime()+(count+5)*60000]);expect((await k.rows(s)).filter(r=>r.status==='done')).toHaveLength(seen.length);expect(await k.store.claimSupervisedWork({now:k.now(),claimedBy:'worker',kinds:['testext.sync'],attemptToken:'00000000-0000-7000-8000-999999999999'})).toMatchObject({ok:true,item:null});}
 });
 it('그룹별 현지 날짜와 중복 제거된 전체 instant를 ABI로 전달한다',async()=>{
  const {scheduleEnvironment}=await import('../src/daemon/supervisor.js');const a=new Date('2026-01-01T16:00:00.000Z'),b=new Date('2026-01-02T01:00:00.000Z');

@@ -847,8 +847,8 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `DB_UNAVAILABLE` | 2 | 데이터베이스에 닿지 못했습니다 |
 | `WORK_GRAPH_INVALID` | 1 | 일감 의존 그래프가 올바르지 않습니다 |
 | `SCHEDULE_NOT_FOUND` | 1 | 지정한 예약이 없습니다 |
-| `SCHEDULE_INVALID` | 1 | 예약 시각이 잘못되었습니다 |
-| `SCHEDULE_CONFLICT` | 1 | 같은 대상의 매일 예약이 있습니다 |
+| `SCHEDULE_INVALID` | 1 | 예약 식 또는 시각이 잘못되었습니다 |
+| `SCHEDULE_CONFLICT` | 1 | 예약이 충돌했습니다 |
 | `WORK_NOT_FOUND` | 1 | 지정한 일감이 없습니다 |
 | `MESSAGE_NOT_FOUND` | 1 | 지정한 메시지가 없습니다 |
 | `REDACT_TEXT_NOT_FOUND` | 1 | 가릴 글자를 찾지 못했습니다 |
@@ -897,6 +897,7 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `DAEMON_NOT_RESTARTED` | 데몬을 새 빌드로 다시 띄우지 못해 옛 빌드가 계속 돌 수 있습니다 |
 | `PLUGIN_NOT_INSTALLED` | 이 brain이 기대하는 하네스 플러그인이 설치되어 있지 않습니다 |
 | `PLUGIN_BEHIND` | 설치된 플러그인이 이 명령에 답하는 빌드보다 오래되었습니다 |
+| `EXTENSION_PACKAGE_CONFLICT` | 같은 버전의 확장 패키지 신원이 설치된 내용과 다릅니다 |
 | `PLUGIN_DUPLICATE` | 플러그인이 두 벌 이상 설치되어 hook이 두 번 돌 수 있습니다 |
 | `UPDATE_AVAILABLE` | 플러그인이 더 새 앱을 담고 있는데 자동 업데이트가 꺼져 있습니다 |
 

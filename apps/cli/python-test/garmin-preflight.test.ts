@@ -19,6 +19,8 @@ it('합성 capture를 공용 명령과 실제 감독자로 읽고 계약 자료�
     expect(installed.code, installed.stdout + installed.stderr).toBe(0);
     const python = join(fixture.home, 'extensions/garmin/.venv/bin/python');
     const fixtureModule = fileURLToPath(new URL('../../../extensions/garmin/tests', import.meta.url));
+    const checker = execFileSync(python, [join(fixtureModule, 'check_preflight.py')], {encoding:'utf8'}).trim();
+    expect(checker).toBe('합성 reader와 충돌 집계 성공'); console.log(`check_preflight.py: ${checker}`);
     const capture = join(fixture.home, 'capture'); await mkdir(capture);
     execFileSync(python, ['-c', "import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from fixtures import five_candidates,capture_manifest; root=Path(sys.argv[2]); capture_manifest(root,five_candidates(root))", fixtureModule, capture]);
     const snapshots = ['D1','D2','D3','D4','D5'].map(role => join(capture, `${role}.db`));
@@ -31,12 +33,31 @@ it('합성 capture를 공용 명령과 실제 감독자로 읽고 계약 자료�
     daemon = runDaemon({ home: fixture.home, env: fixture.env, clock: systemClock, idGen: uuidV7IdGen(), signal: controller.signal, drainPauseMs: 25, heartbeatMs: 100, supervisor: { pollMs: 25 } });
     const run = await fixture.run(['ext', 'run', 'garmin', 'import-preflight', '--json']);
     const errors = await fixture.db.rows("select error_code,stderr from brain.work_attempts order by started_at");
-    expect(run.code, run.stdout + run.stderr + JSON.stringify(errors)).toBe(0);
+    const readiness = run.body.data?.work_id ? JSON.parse(await readFile(join(fixture.home, 'extensions/garmin/reports', run.body.data.work_id, 'private.json'), 'utf8')).readiness?.catalog : undefined;
+    expect(run.code, run.stdout + run.stderr + JSON.stringify(errors) + JSON.stringify(readiness)).toBe(0);
     expect(run.body.data).toMatchObject({ status: 'completed', report: { counts: { datasets: 5, raw_response_conflicts: 1, raw_conflict_keys: 1, raw_metadata_conflict_keys: 1, unselected_keys: 0, unconfirmed_accounts: 2, expected_preservation_candidates: 21, expected_dataset_candidates: 5, expected_mapping_candidates: 21, expected_file_requests: 0 }, checks: { total_insert_known: false, source_unchanged: true, core_ready: true, extension_ready: true, role_ready: true, attempt_current: true } } });
     const id = run.body.data.work_id as string;
     const report = join(fixture.home, 'extensions/garmin/reports', id);
     const privateText = await readFile(join(report, 'private.json'), 'utf8');
     expect(privateText).toContain('12345');
+    const detail = JSON.parse(privateText);
+    expect(detail.unit_risks).toEqual([]);
+    expect(detail.risks).toEqual(['원래 NULL의 결측 원인은 복원할 수 없음', '원본 단위와 정규화 버전을 별도로 검증해야 함']);
+    expect(detail.datasets.D1.tables.daily_metric.null_counts.steps).toBe(0);
+    expect(detail.authority_order).toEqual(['D2','D1','D4','D5','D3']);
+    expect(detail.tables.raw_response).toMatchObject({ union:2, conflicts:1, raw_conflicts:1, metadata_conflicts:1, only:{D5:1}, pairs:{
+      'D2:D4':{overlap:1,conflicts:1,left_only:0,right_only:0,raw_conflicts:1,metadata_conflicts:1},
+      'D2:D5':{raw_conflicts:0,metadata_conflicts:1} } });
+    expect(detail.tables.raw_response.authority_v1[0].selected).toBe('D2');
+    expect(detail.tables.daily_metric.conflicts).toBe(1);
+    expect(detail.tables.day_summary.pairs['D2:D1']).toBeNull();
+    expect(detail.tables.auth_event).toMatchObject({dataset_local:true,only:{D3:1}});
+    expect(detail.datasets.D1.tables.raw_response).toMatchObject({count:1,range:{min:'2026-01-01'}});
+    expect(detail.datasets.D3.tables.raw_response.count).toBe(0);
+    expect(detail.datasets.D5.tables.raw_response.count).toBe(2);
+    expect([detail.datasets.D1.account.confirmed,detail.datasets.D3.account.confirmed,detail.datasets.D5.account.confirmed]).toEqual([true,false,false]);
+    expect(detail.datasets.D1.tables.day_summary.null_counts.body).toBe(1);
+    expect(detail.unsupported).toEqual(expect.arrayContaining([expect.objectContaining({table:'day_summary',columns:expect.arrayContaining(['extra'])})]));
     expect((await stat(report)).mode & 0o777).toBe(0o700);
     expect((await stat(join(report, 'private.json'))).mode & 0o777).toBe(0o600);
     for (const secret of ['12345', '2026-01-01', fixture.home, '한글']) expect(run.stdout).not.toContain(secret);
@@ -44,6 +65,26 @@ it('합성 capture를 공용 명령과 실제 감독자로 읽고 계약 자료�
     for (const secret of ['12345', '2026-01-01', fixture.home, '한글']) expect(JSON.stringify(attempts)).not.toContain(secret);
     expect(await Promise.all(snapshots.map(hash))).toEqual(before);
     expect(await contract()).toEqual(prior);
+    // Exercise the three distinct conflict kinds through the installed supervisor,
+    // as well as through the independent direct checker.
+    const conflictCapture = join(fixture.home, 'capture-conflicts'); await mkdir(conflictCapture);
+    const conflictSetup = `import sqlite3,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from fixtures import five_candidates,capture_manifest
+root=Path(sys.argv[2]); paths=five_candidates(root)
+for role in ('D1','D2'):
+ with sqlite3.connect(paths[role]) as conn:
+  for key,body,checked in [('body','a' if role=='D1' else 'b',1),('metadata','a',1 if role=='D1' else 2),('both','a' if role=='D1' else 'b',1 if role=='D1' else 2)]:
+   conn.execute('insert into raw_response values (?,?,?,?,?,?,?)',('day',key,'test',body,1,checked,'test'))
+capture_manifest(root,paths)`;
+    execFileSync(python, ['-c', conflictSetup, fixtureModule, conflictCapture]);
+    await store.setSetting({ userId:'01940000-0000-7000-8000-00000000000a', key:'garmin.capture_manifest', value:await realpath(join(conflictCapture,'manifest.json')), updatedAt:new Date() });
+    const conflictRun = await fixture.run(['ext','run','garmin','import-preflight','--json']);
+    expect(conflictRun.code, conflictRun.stdout + conflictRun.stderr).toBe(0);
+    const conflictDetail = JSON.parse(await readFile(join(fixture.home,'extensions/garmin/reports',conflictRun.body.data.work_id,'private.json'),'utf8'));
+    expect(conflictDetail.tables.raw_response.pairs['D2:D1']).toMatchObject({raw_conflicts:2,metadata_conflicts:2,conflicts:3});
+    await store.setSetting({ userId:'01940000-0000-7000-8000-00000000000a', key:'garmin.capture_manifest', value:await realpath(join(capture,'manifest.json')), updatedAt:new Date() });
     const textResult = await fixture.run(['ext','run','garmin','import-preflight']);
     expect(textResult.code, textResult.stdout + textResult.stderr).toBe(0);
     expect(textResult.stdout).toContain('raw_response_conflicts: 1');
@@ -64,6 +105,8 @@ it('합성 capture를 공용 명령과 실제 감독자로 읽고 계약 자료�
     } finally { await fixture.db.query(`update brain.schema_migrations set version=${latestVersion} where owner='garmin' and version=${futureVersion}`); }
     const roleCases = [
       { alter: 'revoke execute on function brain.extension_predecessor_results(uuid,uuid) from brain_ext_garmin', restore: 'grant execute on function brain.extension_predecessor_results(uuid,uuid) to brain_ext_garmin', key: 'predecessor_execute', publicKey: 'role_ready' },
+      { alter: 'revoke execute on function brain.extension_channel_conversation_valid(uuid,uuid,uuid) from brain_ext_garmin', restore: 'grant execute on function brain.extension_channel_conversation_valid(uuid,uuid,uuid) to brain_ext_garmin', key: 'conversation_execute', publicKey: 'role_ready' },
+      { alter: 'grant execute on function brain.redacted_text(text,jsonb) to brain_ext_garmin', restore: 'revoke execute on function brain.redacted_text(text,jsonb) from brain_ext_garmin', key: 'no_excess_functions', publicKey: 'role_ready' },
       { alter: 'revoke insert(metadata) on brain.file_requests from brain_ext_garmin', restore: 'grant insert(metadata) on brain.file_requests to brain_ext_garmin', key: 'required_inserts', publicKey: 'role_ready' },
       { alter: 'grant select on brain.file_requests to brain_ext_garmin', restore: 'revoke select on brain.file_requests from brain_ext_garmin', key: 'no_excess_tables', publicKey: 'role_ready' },
       { alter: 'grant brain_app to brain_ext_garmin', restore: 'revoke brain_app from brain_ext_garmin', key: 'membership_absent', publicKey: 'role_ready' },

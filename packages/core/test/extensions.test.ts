@@ -303,8 +303,10 @@ it('사전 검사 실패는 기존 완료 단계와 인증·예약 식별자를 
   const progress = { name: 'testext', packageDigest: 'a'.repeat(64), result: 'login_required' as const, failedStage: null, lastFailure: null,
     stages: { package: { status: 'succeeded' as const, code: null, at: now.toISOString() } }, authWorkId: id, scheduleIds: [id] };
   expect(await deps.store.writeExtensionInstallProgress({ expectedRevision: null, progress })).toMatchObject({ ok: true, written: true });
+  const before = await deps.store.getExtensionInstallProgress('testext');
+  expect(before).toMatchObject({ ok: true, journal: { progress } });
   expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_NOT_FOUND' });
-  expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { ...progress, result: 'failed', failedStage: 'package', lastFailure: { stage: 'package', code: 'EXTENSION_NOT_FOUND' } } } });
+  expect(await deps.store.getExtensionInstallProgress('testext')).toEqual(before);
 });
 
 it.each(['manifest', 'tree'] as const)('사전 %s 검사 실패도 기존 journal을 보존한다', async kind => {
@@ -313,10 +315,12 @@ it.each(['manifest', 'tree'] as const)('사전 %s 검사 실패도 기존 journa
   const progress = { name: 'testext', packageDigest: 'a'.repeat(64), result: 'login_required' as const, failedStage: null, lastFailure: null,
     stages: { package: { status: 'succeeded' as const, code: null, at: now.toISOString() } }, authWorkId: id, scheduleIds: [id] };
   await deps.store.writeExtensionInstallProgress({ expectedRevision: null, progress });
+  const before = await deps.store.getExtensionInstallProgress('testext');
+  expect(before).toMatchObject({ ok: true, journal: { progress } });
   if (kind === 'tree') deps.extensions.packages.inspect = async () => { throw new Error('원문 진단'); };
   expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_INVALID' });
   const read = await deps.store.getExtensionInstallProgress('testext');
-  expect(read).toMatchObject({ ok: true, journal: { progress: { ...progress, result: 'failed', failedStage: 'package', lastFailure: { stage: 'package', code: 'EXTENSION_INVALID' } } } });
+  expect(read).toEqual(before);
   expect(JSON.stringify(read)).not.toContain('원문 진단');
 });
 
@@ -694,6 +698,84 @@ it.each(['digest', 'migration', 'activate', 'registry', 'commit', 'release'] as 
   } finally { await rm(home, { recursive: true, force: true }); }
 });
 
+it('does not modify a prepared stage when correction intent CAS fails', async () => {
+  const { mkdtemp, mkdir, writeFile, readFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+  const { extensionRuntime } = await import('../../../apps/cli/src/runtime/extensions.js');
+  const home = await mkdtemp(join(tmpdir(), 'brain-correction-cas-'));
+  try {
+    const source = join(home, 'packages/testext'); await mkdir(join(source, 'migrations'), { recursive: true });
+    await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest)); await writeFile(join(source, 'migrations/0001_first.sql'), 'old');
+    const { deps } = setup(); const actual = extensionRuntime({ home, env: {}, config: { ok: false, code: 'CONFIG_MISSING', message: 'synthetic' }, clock: fixedClock(now) }).packages;
+    deps.extensions.packages = { ...actual, checkCore: undefined, checkInstalledCore: undefined, async resolve() { return { ok: true, dir: source, manifestText: JSON.stringify(manifest) }; } };
+    let calls = 0; deps.extensions.migrator = { async apply() { calls++; return { ok: false, code: 'MIGRATION_FAILED', message: 'synthetic' }; } };
+    expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'MIGRATION_FAILED' });
+    const previous = await deps.store.getExtensionInstallProgress('testext'); if (!previous.ok || !previous.journal?.progress.transition) throw new Error('missing progress');
+    const progress = previous.journal.progress, owner = progress.transition!.owner;
+    const stage = await actual.transition!.stagedDirectory('testext', owner);
+    await writeFile(join(source, 'migrations/0001_first.sql'), 'new');
+    const write = deps.store.writeExtensionInstallProgress.bind(deps.store);
+    deps.store.writeExtensionInstallProgress = async input => input.progress.packageDigest !== progress.packageDigest ? { ok: false, code: 'DB_UNAVAILABLE', message: 'injected' } : write(input);
+    expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
+    expect(await readFile(join(stage, 'migrations/0001_first.sql'), 'utf8')).toBe('old');
+    expect((await actual.transition!.read('testext'))?.digest).toBe(progress.packageDigest); expect(calls).toBe(1);
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+it.each(['fact', 'progress', 'cancel', 'abort-after-save'] as const)('environment %s 중단은 DDL 전에 멈추고 같은 owner로 재개한다', async boundary => {
+  const { mkdtemp, mkdir, writeFile, readFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+  const { extensionRuntime } = await import('../../../apps/cli/src/runtime/extensions.js');
+  const home = await mkdtemp(join(tmpdir(), 'brain-environment-cas-'));
+  try {
+    const source = join(home, 'packages/testext'), target = join(home, 'extensions/testext');
+    await mkdir(join(source, 'migrations'), { recursive: true }); await mkdir(target, { recursive: true }); await writeFile(join(target, 'old'), 'safe');
+    const text = JSON.stringify({ ...manifest, connection_check: { runtime: 'python', entry: 'check.py' } });
+    await writeFile(join(source, 'manifest.json'), text); await writeFile(join(source, 'migrations/0001_first.sql'), 'select 1;');
+    const { deps } = setup(); const actual = extensionRuntime({ home, env: {}, config: { ok: false, code: 'CONFIG_MISSING', message: 'synthetic' }, clock: fixedClock(now) }).packages;
+    deps.extensions.packages = { ...actual, checkCore: undefined, checkInstalledCore: undefined, preflight: undefined, async resolve() { return { ok: true, dir: source, manifestText: text }; } };
+    const events: string[] = []; const controller = new AbortController(); let cancelledOnce = false;
+    deps.extensions.preparePython = async (directory, _signal, owned) => { expect(owned).toBe(true); events.push('environment'); await mkdir(join(directory, '.venv'), { recursive: true }); await writeFile(join(directory, '.venv/marker'), 'ready'); if (boundary === 'cancel' && !cancelledOnce) { cancelledOnce = true; controller.abort(); return { ok: false, code: 'EXTENSION_INSTALL_CANCELLED', message: 'cancelled' }; } return { ok: true }; };
+    deps.extensions.provision = async () => { events.push('role'); return { ok: true }; };
+    deps.extensions.migrator = { async apply() { events.push('migration'); return { ok: true, from: 0, to: 1, applied: [] }; } };
+    const record = deps.store.recordExtensionPythonEnvironment.bind(deps.store), save = deps.store.writeExtensionInstallProgress.bind(deps.store); let injected = false;
+    deps.store.recordExtensionPythonEnvironment = async input => { if (boundary === 'fact' && !injected) { injected = true; return { ok: false, code: 'DB_UNAVAILABLE', message: 'injected' }; } return record(input); };
+    deps.store.writeExtensionInstallProgress = async input => { if (boundary === 'progress' && !injected && input.progress.stages.environment?.status === 'succeeded') { injected = true; return { ok: false, code: 'DB_UNAVAILABLE', message: 'injected' }; } const result = await save(input); if (boundary === 'abort-after-save' && input.progress.stages.environment?.status === 'succeeded' && !injected) { injected = true; controller.abort(); } return result; };
+    deps.extensions.validatePreparedPython = async () => ({ ok: true });
+    expect(await installExtension(deps, { name: 'testext', signal: controller.signal })).toMatchObject({ ok: false, code: boundary === 'cancel' || boundary === 'abort-after-save' ? 'EXTENSION_INSTALL_CANCELLED' : 'DB_UNAVAILABLE' });
+    expect(events).toEqual(['environment']); expect(await readFile(join(target, 'old'), 'utf8')).toBe('safe');
+    const before = await deps.store.getExtensionInstallProgress('testext'); if (!before.ok || !before.journal?.progress.transition) throw new Error('missing owner');
+    if (boundary === 'cancel' || boundary === 'abort-after-save') expect(before.journal.progress.result).toBe('cancelled');
+    const owner = before.journal.progress.transition.owner; expect((await actual.transition!.read('testext'))?.owner).toBe(owner);
+    expect(await deps.store.readExtensionQuiesce('testext')).toMatchObject({ ok: true, owner });
+    expect((await installExtension(deps, { name: 'testext' })).ok).toBe(true);
+    expect(events).toEqual(boundary === 'abort-after-save' ? ['environment', 'role', 'migration'] : ['environment', 'environment', 'role', 'migration']); expect((await actual.transition!.read('testext'))).toBeNull();
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+it('preparing stage 재복사 전에 이전 환경 성공을 무효화하고 다시 준비한다', async () => {
+  const { mkdtemp, mkdir, writeFile, readFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+  const { extensionRuntime } = await import('../../../apps/cli/src/runtime/extensions.js');
+  const home = await mkdtemp(join(tmpdir(), 'brain-environment-recopy-'));
+  try {
+    const source = join(home, 'packages/testext'); await mkdir(join(source, 'migrations'), { recursive: true });
+    const text = JSON.stringify({ ...manifest, connection_check: { runtime: 'python', entry: 'check.py' } });
+    await writeFile(join(source, 'manifest.json'), text); await writeFile(join(source, 'migrations/0001_first.sql'), 'select 1;');
+    const { deps } = setup(); const actual = extensionRuntime({ home, env: {}, config: { ok: false, code: 'CONFIG_MISSING', message: 'synthetic' }, clock: fixedClock(now) }).packages;
+    deps.extensions.packages = { ...actual, checkCore: undefined, checkInstalledCore: undefined, preflight: undefined, async resolve() { return { ok: true, dir: source, manifestText: text }; } };
+    let environments = 0, migrations = 0;
+    deps.extensions.preparePython = async directory => { environments++; await mkdir(join(directory, '.venv'), { recursive: true }); await writeFile(join(directory, '.venv/marker'), String(environments)); return { ok: true }; };
+    deps.extensions.migrator = { async apply() { migrations++; return migrations === 1 ? { ok: false, code: 'MIGRATION_FAILED', message: 'injected' } : { ok: true, from: 0, to: 1, applied: [] }; } };
+    expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'MIGRATION_FAILED' });
+    const path = join(home, 'extensions/.transition-testext.json'), journal = JSON.parse(await readFile(path, 'utf8'));
+    await writeFile(path, JSON.stringify({ ...journal, phase: 'preparing' }));
+    expect((await installExtension(deps, { name: 'testext' })).ok).toBe(true);
+    expect(environments).toBe(2); expect(migrations).toBe(2);
+    expect(await readFile(join(home, 'extensions/testext/.venv/marker'), 'utf8')).toBe('2');
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
 it.each(['before', 'during', 'after-result'] as const)('외부 snapshot %s 취소는 구조화된 취소와 정리를 반환한다', async phase => {
   const { deps, writes } = setup(); const controller = new AbortController(); let calls = 0, cleaned = 0, locks = 0;
   deps.extensions.packages.checkCore = async () => {};
@@ -774,10 +856,17 @@ it('installs target-setting schedules without overwriting a previously installed
   const text=JSON.stringify({...manifest,work:[work],settings:[{key:'testext.account',type:'string',scope:'user',required:[]}],requires:['channel.send'],default_schedules:[{key:'daily',kind:work.kind,target_kind:'account',target_id:'unselected',target_setting:'testext.account',cron:'0 11 * * *',time_zone:'Asia/Seoul'}]});
   const {deps}=setup({text});
   deps.extensions.schedulerReady=async()=>true;
-  const installed=await installExtension({...deps,readTimeZone:async()=>({ok:true as const,value:'Asia/Seoul'})},{name:'testext'});
-  expect(installed.ok).toBe(true);
+  deps.extensions.readSecrets=async()=>({});
   const user='019a0000-0000-7000-8000-000000000001';
-  expect(await deps.store.findScheduleByKey({extension:'testext',scheduleKey:'daily',userId:user})).toMatchObject({ok:true,schedule:{targetSetting:'testext.account'}});
+  await deps.store.setSetting({userId:user,key:'testext.account',value:'synthetic-account',updatedAt:now});
+  const options={...deps,readTimeZone:async()=>({ok:true as const,value:'Asia/Seoul'})};
+  const installed=await installExtension(options,{name:'testext'});
+  expect(installed.ok, JSON.stringify(installed)).toBe(true);
+  const before=await deps.store.findScheduleByKey({extension:'testext',scheduleKey:'daily',userId:user});
+  expect(before).toMatchObject({ok:true,schedule:{targetSetting:'testext.account'}});
+  expect(await installExtension(options,{name:'testext'})).toMatchObject({ok:true});
+  expect(await deps.store.findScheduleByKey({extension:'testext',scheduleKey:'daily',userId:user})).toEqual(before);
+  expect(await deps.store.getSettings({userId:user,keys:['testext.account']})).toMatchObject({ok:true,settings:[{key:'testext.account',value:'synthetic-account'}]});
 });
 
 it('requires a valid same-target same-zone predecessor schedule key', () => {

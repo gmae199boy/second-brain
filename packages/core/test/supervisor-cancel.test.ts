@@ -372,8 +372,9 @@ it.each(['identity', 'record', 'poll', 'renew'] as const)('cleans a child after 
     if (phase === 'identity') inspector.startedAt = async () => { throw new Error('identity'); };
     if (phase === 'record') store.recordSupervisedProcess = async () => { throw new Error('record'); };
     if (phase === 'poll') {
-      const list = store.listOpenSupervisedAttempts.bind(store); let reads = 0;
-      store.listOpenSupervisedAttempts = async () => { if (++reads === 2) throw new Error('poll'); return list(); };
+      const list = store.listOpenSupervisedAttempts.bind(store); const record = store.recordSupervisedProcess.bind(store); let recorded = false; let thrown = false;
+      store.recordSupervisedProcess = async input => { const result = await record(input); recorded = result.ok; return result; };
+      store.listOpenSupervisedAttempts = async () => { if (recorded && !thrown) { thrown = true; throw new Error('poll'); } return list(); };
     }
     if (phase === 'renew') store.renewSupervisedLease = async () => { throw new Error('renew'); };
   });
@@ -405,8 +406,9 @@ it('retains the token as unknown when exception cleanup itself throws', async ()
 
 it('waits for exception cleanup during shutdown', async () => {
   const k = await kit(store => {
-    const list = store.listOpenSupervisedAttempts.bind(store); let reads = 0;
-    store.listOpenSupervisedAttempts = async () => { if (++reads === 2) throw new Error('poll'); return list(); };
+    const list = store.listOpenSupervisedAttempts.bind(store); const record = store.recordSupervisedProcess.bind(store); let recorded = false; let thrown = false;
+    store.recordSupervisedProcess = async input => { const result = await record(input); recorded = result.ok; return result; };
+    store.listOpenSupervisedAttempts = async () => { if (recorded && !thrown) { thrown = true; throw new Error('poll'); } return list(); };
   });
   const child = k.launcher.processes[0]!; child.ignoreTerm = true;
   let finished = false;

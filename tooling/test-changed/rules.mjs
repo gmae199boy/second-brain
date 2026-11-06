@@ -6,6 +6,7 @@ const rules = [
   { prefix:'plugins/testext/', reason:'extension plugin package and launcher' },
   { prefix:'plugins/garmin/', reason:'Garmin extension plugin package and launcher' },
   { prefix:'tooling/package-garmin/', reason:'Garmin extension packaging source' },
+  { prefix:'tooling/garmin-import/', reason:'Garmin capture Python implementation and tests' },
   { prefix:'packages/postgres/', reason:'Python integration uses the real PostgreSQL store' },
   { prefix:'packages/core/src/queue/', reason:'daemon work scheduling and supervision' },
   { prefix:'packages/core/src/process-abi/', reason:'supervised extension process protocol' },
