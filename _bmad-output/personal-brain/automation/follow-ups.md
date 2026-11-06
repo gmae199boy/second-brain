@@ -384,3 +384,16 @@ core0.1.17/Garmin0.1.4 ref는이전구현472caa7,확장1.2.1/package85파일정�
 - 운영/UX 인계: 교체 대기의 전용 recall 복구 안내는 없고 비활성 안내 후 중단한다. 공통gate가 옛코드 실행을 차단하며 MCP 미등록 상태의 진단코드는 CLI와 다를 수 있다. 실제 설치본 스킬 발견·운영 인수는17.7, 텍스트 검색 확장은17.5다.
 
 `deferred: []`, 필요한 독립 후속 완료·추가 권고false. 소유fixture/PG 정리 증거·최초실패·평가원문·워크트리는 보존한다.
+
+
+## 22.1 — 반입 정리 조회 성능 수락 (2026-11-06)
+
+근거: [성능 계획](../tickets/epic-query-performance/tickets/story-tracer-10-plan.md)의 Design Notes·Review Triage Log·Auto Run Result. 최종 `fee152a`, 실제 검증source `fa97231` 이후 plan만 변경. 새0039의 비고유인덱스2개·core schema39·재사용러너를 추가하고 제품 imports SQL은 유지했다.
+
+- 확정 비교는 중앙 확보04:33~04:36UTC 슬롯의 동일전용환경9조건이다. 정리id/순서/hash·공유삭제차단·미인계hash 일치,10만pending17.177916→0.778916ms(0.045344배),idle세크기모두개선. 최초idle1.572634배 실패와 부하급증 역순측정 제외는 원문 보존한다.1천pending/1만shared 증가 등 비임계조건도 계획표에 공개했고 모든조건 성능개선을 주장하지 않는다.
+- 최초전체TS exit1(취소2건)/순차Python66 exit0 후 제한worker changed의 TS1990/PG649/Python66 exit0으로 처분했다. 동일소스·300ms단언의 통과이며 최초원인 정밀계측은 없고 부하민감성은 남는다.
+- 중앙요청 T6독립후속에서 채택14행 static resolved·새결함0,21.10/schema39 독립8행확인0결함. 실제통합 changed는 TS2042/PG680/Python66 exit0,17.4최소관련계약19/recall-health3 exit0을 원시로그로 대조했다. 기존성능/전체회귀를 새source 실행증거로 대체하지 않았다.
+- 러너제약: 출처병기/호환성검사는 하되 baseline·동일서버·출처필수성 전체를 자동인증하지 않는다. 사람의 실험배정/지문대조가 필요하다.3표본 sub-ms잡음,긴locator B-tree키한도,강제종료시러너DB잔존 가능성과 주입remove콜백/상태단언의범위를 원문대로 보존한다.
+- 후속권고: 취소시험이 고정300ms 대신 readiness근거를 기다리도록 안정화할지 별도판단한다(이번티켓미실행). 실제운영성능보장은 합성측정으로 대체하지 않는다.21.11/17.1은 최신schema39와명시버전기대를 통합시대조한다.
+
+`deferred: []`, 독립필요후속완료·추가권고false. fixture172/193/194/3개는각created/removed일치,전용PG/기존잔존정리·부재증거와전체로그/워크트리는보존한다.
