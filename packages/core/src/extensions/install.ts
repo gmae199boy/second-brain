@@ -1,5 +1,5 @@
 import { resolveSelfUser } from '../users/self.js';
-import type { ExtensionInstallProgress, InstallStage } from './install-progress.js';
+import { validInstallProgress, type ExtensionInstallProgress, type InstallStage } from './install-progress.js';
 import { failureText } from '../domain/failure.js';
 import type { Clock, Timer } from '../ports/clock.js';
 import type { IdGen } from '../ports/id-gen.js';
@@ -13,6 +13,7 @@ import type { SettingsStore } from '../ports/store.js';
 import { runExtensionCheck } from './check.js';
 import { extensionStatus } from './status.js';
 import { quiesceExtension } from './quiesce.js';
+import { replacementRequired } from './replacement.js';
 export function comparePackageVersion(a: string, b: string): number | null {
   const valid = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
   if (!valid.test(a) || !valid.test(b)) return null;
@@ -47,6 +48,7 @@ export interface ExtensionPackages {
   sameBase?(first: string, second: string, migrations: string): Promise<boolean>;
 }
 export interface ExtensionMigrator {
+  validate?(owner: string, directory: string): Promise<{ ok: true } | { ok: false; code: 'MIGRATION_FAILED' | 'DB_UNAVAILABLE'; message: string }>;
   apply(owner: string, directory: string): Promise<{ ok: true; from: number; to: number; applied: string[] } | { ok: false; code: 'MIGRATION_FAILED' | 'DB_UNAVAILABLE'; message: string; file?: string }>;
 }
 export interface ExtensionRuntime {
@@ -93,8 +95,13 @@ export async function installExtension(deps: ExtensionDependencies, input: { nam
         if (!decoded.ok) return decoded;
         try { await runtime.packages.checkCore!(decoded.manifest); }
         catch { return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '설치된 core 신원 또는 호환 버전이 올바르지 않습니다' }; }
-        try { await runtime.packages.observe?.({ name, version: decoded.manifest.version, pluginVersion: decoded.manifest.plugin_version!, digest: prepared.digest }); }
-        catch { return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '패키지 관측 기록을 쓸 수 없습니다' }; }
+        if (!decoded.manifest.files || !decoded.manifest.core_compat || !decoded.manifest.plugin_version || decoded.manifest.name !== name) return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '검증된 패키지의 신원이 올바르지 않습니다' };
+        const current = await deps.store.getExtensionInstallProgress(name); if (!current.ok) return current;
+        if (current.journal && (!validInstallProgress(current.journal.progress) || current.journal.progress.name !== name)) return { ok: false as const, code: 'DB_LOCKED' as const, message: '확장 설치 기록의 소유권을 확인할 수 없습니다' };
+        if (!current.journal?.progress.replacement) {
+          try { await runtime.packages.observe?.({ name, version: decoded.manifest.version, pluginVersion: decoded.manifest.plugin_version, digest: prepared.digest }); }
+          catch { return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '패키지 관측 기록을 쓸 수 없습니다' }; }
+        }
       }
       const outcome = await installExtensionUnlocked(deps, name, runtime, input.signal, prepared);
       const status = await extensionStatus(deps, { name });
@@ -120,6 +127,17 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
     }
     return { ok: false as const, code, message };
   };
+  const initial = await deps.store.getExtensionInstallProgress(name); if (!initial.ok) return initial;
+  if (initial.journal && (!validInstallProgress(initial.journal.progress) || initial.journal.progress.name !== name)) return { ok: false as const, code: 'DB_LOCKED' as const, message: '확장 설치 기록의 소유권을 확인할 수 없습니다' };
+  const replacement = initial.journal?.progress.replacement;
+  let replacementGate: string | null = null;
+  if (replacement) {
+    if (!prepared) return replacementRequired();
+    if (!runtime.packages.inspect || !runtime.packages.transition) return { ok: false as const, code: 'DB_LOCKED' as const, message: '확장 전환의 소유권을 확인할 수 없습니다' };
+    const gate = await deps.store.readExtensionQuiesce(name); if (!gate.ok) return gate;
+    replacementGate = gate.owner;
+    if ((gate.owner !== replacement.owner && !(gate.owner === null && initial.journal?.progress.transition?.registered)) || (initial.journal?.progress.transition && initial.journal.progress.transition.owner !== replacement.owner)) return { ok: false as const, code: 'DB_LOCKED' as const, message: '확장 전환의 소유권을 확인할 수 없습니다' };
+  }
   let source: Awaited<ReturnType<ExtensionPackages['resolve']>>;
   try { source = prepared ? { ok: true, dir: prepared.dir, manifestText: prepared.manifestText } : await runtime.packages.resolve(name); }
   catch { return preflightFailure('EXTENSION_INVALID', '확장 패키지의 manifest를 읽지 못했습니다'); }
@@ -135,7 +153,7 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
   if (installed.extension && (prepared || installed.extension.packageDigest !== null)) {
     const comparison = comparePackageVersion(installed.extension.version, manifest.version);
     if (comparison === null) return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '설치 버전을 안전하게 비교할 수 없습니다' };
-    if (comparison > 0) return { ok: true as const };
+    if (comparison > 0) return replacement ? { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '설치된 확장보다 이전 버전의 패키지입니다' } : { ok: true as const };
     if (comparison === 0 && (prepared === undefined || installed.extension.packageDigest !== prepared.digest)) return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '같은 버전의 패키지 내용이 다릅니다' };
   }
   const folderName = source.dir.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1);
@@ -151,10 +169,14 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
     if (!existing.ok) return existing;
     revision = existing.journal?.revision ?? null;
     const previous = existing.journal?.progress;
+    if (existing.journal?.revision !== initial.journal?.revision) return { ok: false as const, code: 'DB_LOCKED' as const, message: '확장 설치 기록이 동시에 변경되었습니다' };
     const sameInstalled = previous && inspected.installedDigest === previous.packageDigest;
     const correction = !runtime.packages.transition && sameInstalled && previous.stages.migration?.status === 'failed' && inspected.sameBase && runtime.packages.refreshMigrations;
     if (previous?.transition && previous.packageDigest !== inspected.digest && (prepared || previous.stages.migration?.status !== 'failed' || !runtime.packages.sameBase || !runtime.packages.transition)) return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '중단된 설치와 패키지 내용이 다릅니다. 기존 패키지로 복구하세요' };
-    if (previous && ((previous.transition && (previous.packageDigest === inspected.digest || (!prepared && previous.stages.migration?.status === 'failed'))) || (sameInstalled && (previous.packageDigest === inspected.digest || correction)))) {
+    if (replacement && replacementGate === null && (!previous?.transition?.registered || await runtime.packages.transition!.read(name) !== null || installed.extension?.version !== manifest.version || installed.extension.packageDigest !== inspected.digest || inspected.installedDigest !== inspected.digest)) return { ok: false as const, code: 'DB_LOCKED' as const, message: '완료된 확장 전환의 소유권을 확인할 수 없습니다' };
+    if (previous?.replacement && !previous.transition) {
+      progress = { name, packageDigest: inspected.digest, result: null, failedStage: null, lastFailure: previous.lastFailure, stages: {}, authWorkId: null, scheduleIds: previous.scheduleIds.slice(), ...(previous.disabledScheduleKeys ? { disabledScheduleKeys: previous.disabledScheduleKeys.slice() } : {}), replacement: previous.replacement, transition: { owner: previous.replacement.owner, registered: false } };
+    } else if (previous && ((previous.transition && (previous.packageDigest === inspected.digest || (!prepared && previous.stages.migration?.status === 'failed'))) || (sameInstalled && (previous.packageDigest === inspected.digest || correction)))) {
       progress = structuredClone(previous);
       if (previous.packageDigest !== inspected.digest && !previous.transition) {
         try { await runtime.packages.refreshMigrations!(name, source.dir, manifest.migrations); }
@@ -206,6 +228,16 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
     return { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' };
   };
   const completed = (stage: InstallStage) => progress?.stages[stage]?.status === 'succeeded' || progress?.stages[stage]?.status === 'skipped';
+  if (replacement) {
+    if (!runtime.migrator.validate) return { ok: false as const, code: 'DB_LOCKED' as const, message: '확장 migration 이력을 확인할 수 없습니다' };
+    const history = await runtime.migrator.validate(name, `${source.dir}/${manifest.migrations}`);
+    if (!history.ok) return history;
+  }
+  if (prepared && replacement) {
+    try { await runtime.packages.observe?.({ name, version: manifest.version, pluginVersion: manifest.plugin_version!, digest: prepared.digest }); }
+    catch { return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '패키지 관측 기록을 쓸 수 없습니다' }; }
+  }
+  if (replacement && !initial.journal?.progress.transition) { const saved = await save(); if (!saved.ok) return saved; }
   const beforePackage = await cancelled(); if (beforePackage) return beforePackage;
   let installedDir: string;
   const transition = runtime.packages.transition;
@@ -307,7 +339,7 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
       if (journal) await transition.commit(name, owner);
       const released = await deps.store.endExtensionQuiesce({ name, owner }); if (!released.ok) return released;
       if (!released.released) return fail('확장 정지 소유권을 해제하지 못했습니다');
-      delete progress.transition; const saved = await save(); if (!saved.ok) return saved;
+      delete progress.transition; delete progress.replacement; const saved = await save(); if (!saved.ok) return saved;
     } catch { return fail('설치 전환을 완료하지 못했습니다. 같은 패키지로 다시 실행하세요'); }
   } else {
   if (inspected && completed('package')) installedDir = inspected.installedDir;

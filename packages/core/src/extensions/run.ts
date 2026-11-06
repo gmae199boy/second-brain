@@ -1,3 +1,4 @@
+import { checkExtensionExecution } from './replacement.js';
 import { decodeExtensionManifest, isExtensionName } from './manifest.js';
 import type { ExtensionDependencies } from './install.js';
 
@@ -8,6 +9,7 @@ export async function runExtension(deps: ExtensionDependencies, input: { name: s
   const runtime = deps.extensions;
   if (!runtime?.installedManifest || !deps.store.enqueueExtensionWork) return invalid();
   const enqueue = async () => {
+    const allowed = await checkExtensionExecution(deps.store, input.name); if (!allowed.ok) return allowed;
     const installed = await deps.store.getExtension(input.name);
     if (!installed.ok) return installed;
     if (!installed.extension) return { ok: false as const, code: 'EXTENSION_NOT_FOUND' as const, message: '설치된 확장이 없습니다' };

@@ -1,3 +1,4 @@
+import { checkExtensionExecution } from './replacement.js';
 import type { ExtensionStore } from '../ports/store.js';
 export async function extensionStatus({ store }: { store: ExtensionStore }, { name }: { name: string }) {
   const result = await store.getExtension(name);
@@ -21,6 +22,7 @@ export async function publicExtensionStatus({ store }: { store: ExtensionStore }
 }
 export async function setExtensionEnabled({ store, clock, extensions }: { store: ExtensionStore; clock: { now(): Date }; extensions?: import('./install.js').ExtensionRuntime }, input: { name: string; enabled: boolean }) {
   const update = async () => {
+    if (input.enabled) { const allowed = await checkExtensionExecution(store, input.name); if (!allowed.ok) return allowed; }
     const result = await store.setExtensionEnabled({ ...input, now: clock.now() });
     if (!result.ok) return result;
     if (!result.found) return { ok: false as const, code: 'EXTENSION_NOT_FOUND' as const, message: '설치된 확장이 없습니다' };

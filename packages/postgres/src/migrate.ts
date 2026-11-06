@@ -15,19 +15,19 @@ export interface RunMigrationsOptions extends ConnectionOptions {
   validateOnly?: boolean;
 }
 /** Read legacy schema state before any core migration changes it. */
-export async function inspectExtensionFence(databaseUrl: string): Promise<{ names: string[]; gateNames: string[]; fenceReady: boolean }> {
+export async function inspectExtensionFence(databaseUrl: string): Promise<{ names: string[]; gateNames: string[]; fenceReady: boolean; progressReady: boolean }> {
   const pool = createPool({ databaseUrl });
   try {
-    const tables = await pool.query<{ registry: string | null; gate: string | null; ledger: string | null }>("select to_regclass('brain.extensions')::text as registry, to_regclass('brain.extension_quiesce')::text as gate, to_regclass('brain.schema_migrations')::text as ledger");
-    const { registry, gate, ledger } = tables.rows[0]!;
+    const tables = await pool.query<{ registry: string | null; gate: string | null; ledger: string | null; progress: string | null }>("select to_regclass('brain.extensions')::text as registry, to_regclass('brain.extension_quiesce')::text as gate, to_regclass('brain.schema_migrations')::text as ledger, to_regclass('brain.extension_install_progress')::text as progress");
+    const { registry, gate, ledger, progress } = tables.rows[0]!;
     const gateRows = gate ? (await pool.query<{ name: string }>('select name from brain.extension_quiesce')).rows.map(row => row.name) : [];
-    if (!registry) return { names: [], gateNames: gateRows, fenceReady: false };
+    if (!registry) return { names: [], gateNames: gateRows, fenceReady: false, progressReady: !!progress };
     const rows = await pool.query<{ name: string }>('select name from brain.extensions order by name collate "C"');
-    if (!gate || !ledger) return { names: rows.rows.map(row => row.name), gateNames: gateRows, fenceReady: false };
+    if (!gate || !ledger) return { names: rows.rows.map(row => row.name), gateNames: gateRows, fenceReady: false, progressReady: !!progress };
     const version = await pool.query<{ ready: boolean }>("select exists(select 1 from brain.schema_migrations where owner='core' and version=35) as ready");
-    return { names: rows.rows.map(row => row.name), gateNames: gateRows, fenceReady: version.rows[0]!.ready };
+    return { names: rows.rows.map(row => row.name), gateNames: gateRows, fenceReady: version.rows[0]!.ready, progressReady: !!progress };
   } catch (error) {
-    if ((error as { code?: string }).code === '3D000') return { names: [], gateNames: [], fenceReady: false };
+    if ((error as { code?: string }).code === '3D000') return { names: [], gateNames: [], fenceReady: false, progressReady: false };
     throw error;
   } finally { await pool.end(); }
 }

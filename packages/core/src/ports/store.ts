@@ -1491,6 +1491,7 @@ export interface ExtensionPublicStatus {
   disabledScheduleKeys: string[];
   enabled: boolean | null;
   quiesced: boolean;
+  replacementRequired: boolean;
   journalPresent: boolean;
   login: import('../extensions/install-progress.js').InstallStageProgress | null;
   connection: { status: 'connected' | 'failed' | null; code: string | null; checkedAt: Date | null };
