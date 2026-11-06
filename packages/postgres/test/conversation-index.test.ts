@@ -1,10 +1,86 @@
 import pg from 'pg';
+import { createHash } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { expect, it } from 'vitest';
 import { chunkConversation, conversationChunkHandler, conversationFingerprint, literalLikePattern, planRedaction, redactMessage } from '@second-brain/core';
 import { postgresStore } from '../src/index.js';
 import { conversationFixture } from './conversation-fixture.js';
 import { clock } from './fixture.js';
+
+// 전체 JSON 방식의 독립 oracle. 제품 지문 함수와 chunker를 사용하지 않는다.
+function expectedFingerprint(config: unknown, messages: readonly { id: string; occurredAt: Date; body: string }[]) {
+  const stable = (v: unknown): unknown => Array.isArray(v) ? v.map(stable) : v !== null && typeof v === 'object'
+    ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, value]) => [k, stable(value)])) : v;
+  const sorted = [...messages].sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const json = JSON.stringify([stable(config), sorted.map(m => [m.id, m.occurredAt.toISOString(), m.body])]);
+  return 'sha256:' + createHash('sha256').update(json, 'utf8').digest('hex');
+}
+
+it.each(['동시 반입', '가리기'] as const)('snapshot barrier 뒤 %s의 최종 행과 지문 및 조각은 독립 기대값과 같다', async operation => {
+  const f = await conversationFixture('비밀 보존');
+  const other = postgresStore({ databaseUrl: f.db.appUrl });
+  const third = postgresStore({ databaseUrl: f.db.appUrl });
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  let signal!: () => void; const ready = new Promise<void>(resolve => { signal = resolve; });
+  let running: ReturnType<ReturnType<typeof conversationChunkHandler>> | undefined;
+  try {
+    const initial = f.batch.messages[0]!;
+    const expected = [{ id: initial.id, occurredAt: initial.occurredAt, body: operation === '가리기' ? '[REDACTED:manual] 보존' : initial.body }];
+    const claim = await f.store.claimWork({ now: clock.now(), claimedBy: 'oracle-reader', kinds: ['conversation_chunk'] });
+    if (!claim.ok || !claim.item) throw new Error('청구 실패');
+    const instrumented = { ...f.store, async readConversationSnapshot(sessionId: string) {
+      const result = await f.store.readConversationSnapshot(sessionId);
+      signal(); await gate; return result;
+    } };
+    running = conversationChunkHandler({ store: instrumented, clock, idGen: f.ids })(claim.item);
+    await ready; // 첫 snapshot 완료, handler의 확정은 gate에서 대기한다.
+    if (operation === '동시 반입') {
+      const batch = structuredClone(f.batch); batch.toolNotes = [];
+      batch.messages[0]!.id = f.ids.next(); batch.messages[0]!.harnessMessageId = 'concurrent-oracle'; batch.messages[0]!.body = '새 본문';
+      expected.push({ id: batch.messages[0]!.id, occurredAt: batch.messages[0]!.occurredAt, body: batch.messages[0]!.body });
+      // 두 실제 연결이 같은 새 batch를 경쟁 반입한다.
+      const results = await Promise.all([other.ingest(batch), third.ingest(batch)]);
+      for (const result of results) expect(result.ok).toBe(true);
+      expect(results.reduce((n, result) => n + (result.ok ? result.inserted.messages : 0), 0)).toBe(1);
+    } else {
+      expect(await other.redactMessage({ messageId: initial.id, plan: current => planRedaction(current, { mode: 'text', text: '비밀', kind: 'manual' }, { now: clock.now, newId: () => f.ids.next() }) })).toMatchObject({ ok: true });
+    }
+    release();
+    expect(await running).toMatchObject({ ok: false, code: 'CONVERSATION_STALE' });
+    expect(await f.db.rows('select id from brain.chunks')).toEqual([]);
+    expect(await f.drain()).toMatchObject({ completed: 1 });
+    const snapshot = await f.store.readConversationSnapshot(f.sessionId);
+    if (!snapshot.ok || !snapshot.snapshot) throw new Error('최종 snapshot 실패');
+    const ordered = [...expected].sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    expect(snapshot.snapshot.messages).toEqual(ordered);
+    expect(snapshot.snapshot.fingerprint).toBe(expectedFingerprint(snapshot.snapshot.config, expected));
+    expect(await f.db.rows<{ n: number }>('select count(*)::int as n from brain.messages')).toEqual([{ n: expected.length }]);
+    const chunks = await f.db.rows<{ body: string; part: number; from_at: Date; to_at: Date }>('select body,part,from_at,to_at from brain.chunks');
+    // 짧고 같은 시각인 fixture는 독립적으로 단일 part 0 조각이다.
+    expect(chunks).toEqual([{ body: ordered.map(m => m.body).join('\n'), part: 0, from_at: ordered[0]!.occurredAt, to_at: ordered.at(-1)!.occurredAt }]);
+  } finally { release(); if (running) await running; await third.close(); await other.close(); await f.close(); }
+}, 30000);
+
+it('snapshot 이후 유효 설정 변경은 옛 지문 확정을 거부한다', async () => {
+  const f = await conversationFixture('설정 변경');
+  try {
+    const claim = await f.store.claimWork({ now: clock.now(), claimedBy: 'config-reader', kinds: ['conversation_chunk'] });
+    if (!claim.ok || !claim.item) throw new Error('청구 실패');
+    const before = await f.store.readConversationSnapshot(f.sessionId);
+    if (!before.ok || !before.snapshot) throw new Error('snapshot 실패');
+    await f.db.query("update brain.index_configs set chunk_params = jsonb_set(chunk_params, '{targetChars}', '1199') where id='019a0000-0000-7000-8000-000000000003'");
+    const message = f.batch.messages[0]!;
+    const chunk = { id: f.ids.next(), fromAt: message.occurredAt, toAt: message.occurredAt, body: message.body, part: 0 };
+    expect(await f.store.commitConversationChunks({ sessionId: f.sessionId, workId: claim.item.id, claimedBy: 'config-reader', now: clock.now(), fingerprint: before.snapshot.fingerprint, chunks: [chunk] })).toEqual({ ok: true, committed: false });
+    expect(await f.db.rows('select id from brain.chunks')).toEqual([]);
+    const after = await f.store.readConversationSnapshot(f.sessionId);
+    if (!after.ok || !after.snapshot) throw new Error('변경 snapshot 실패');
+    expect(after.snapshot.fingerprint).toBe(expectedFingerprint(after.snapshot.config, [{ id: message.id, occurredAt: message.occurredAt, body: message.body }]));
+    expect(after.snapshot.fingerprint).not.toBe(before.snapshot.fingerprint);
+    expect(await f.store.commitConversationChunks({ sessionId: f.sessionId, workId: claim.item.id, claimedBy: 'config-reader', now: clock.now(), fingerprint: after.snapshot.fingerprint, chunks: [chunk] })).toEqual({ ok: true, committed: true });
+    expect(await f.db.rows('select body,part from brain.chunks')).toEqual([{ body: message.body, part: 0 }]);
+  } finally { await f.close(); }
+}, 30000);
 
 it('긴 본문과 NUL을 보존하고 재처리와 literal 검색을 한다', async () => {
   const f = await conversationFixture('한글%_\\Ab\0' + 'x'.repeat(5000));

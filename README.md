@@ -44,7 +44,8 @@ node를 직접 찾습니다. shim에 박힌 node → `nvm`의 24.16.0 이상 중
 두 번째 세션부터는 `~/.second_brain/installed.json`의 commit과 플러그인의
 `app-ref`를 비교만 합니다. 같으면 git도 pnpm도 부르지 않고 조용히 끝납니다.
 플러그인이 더 새 commit을 담고 있으면 그것으로 fast-forward하고 설치기를 다시
-돌립니다 — 그것이 업그레이드입니다.
+돌립니다 — 그것이 업그레이드입니다. 등록 확장의 offline 확인이 필요한 갱신은
+hook이 대신 승인할 수 없으며 아래 대화형 절차로 진행합니다.
 
 세션마다 hook은 자기를 부른 플러그인 폴더를 `~/.second_brain/run/plugin.json`에
 적어 둡니다.
@@ -82,6 +83,114 @@ HEAD도 움직이지 않습니다. 실패해도 로그 한 줄로 끝입니다.
 때, 플러그인이 설치된 것보다 오래되었을 때, 이력이 갈라졌을 때, `[update] auto`가
 꺼져 있을 때입니다. 비동기 hook의 stdout은 다음 턴에 모델의 맥락으로 가므로, 매
 세션 같은 줄을 넣는 대신 `brain doctor run`의 `plugin` 점검이 말합니다.
+
+### 고정된 플러그인 설치본을 대화형으로 갱신하기
+
+등록된 확장이 있는 옛 설치본을 다른 core commit으로 갱신할 때는 운영자의 offline
+확인이 필요합니다. 플러그인의 `SessionStart` hook은 질문할 수 없으므로 이 확인을
+대신하지 않습니다. 다음 절차는 플러그인이 만든 detached app에도 사용할 수 있습니다.
+
+1. 갱신할 Brain의 설정 폴더와 대상 플러그인 버전을 확인합니다. 사용할 플러그인
+   폴더는 **대화형 ref 갱신을 지원하는 새 릴리스**여야 합니다. marketplace 캐시에
+   옛 버전이 남으므로 선택한 폴더의 `app-ref`가 원하는 릴리스의 commit인지 확인하세요.
+   아래 `<version>`과 marketplace 이름은 실제 선택한 폴더로 바꿉니다. 로컬
+   marketplace라면 그 저장소의 `plugin` 폴더를 지정합니다.
+2. 새 Claude Code 세션과 hook, 예약 실행 및 다른 직접 명령의 진입을 차단합니다.
+   설치·확장 명령이 실행 중이면 끝날 때까지 기다립니다. 등록 확장은 비활성화하고
+   관련 예약과 미완료 일감을 보류한 뒤 실행 중인 작업과 자식 프로세스의 종료를
+   확인합니다. `ext disable` 응답만으로 자식 종료가 확정되지는 않습니다. launchd가
+   관리하는 데몬은 아래처럼 멈추고 상태를 확인합니다. 직접 띄운 데몬도 해당
+   터미널에서 멈추고 이전 데몬·명령과 **모든 자식의 공유 상태 쓰기가 끝났는지**
+   직접 재확인하세요. 종료를 확인할 수 없으면 계속하지 마세요.
+
+   ```sh
+   BRAIN_HOME="${SECOND_BRAIN_HOME:-$HOME/.second_brain}"
+   "$BRAIN_HOME/bin/brain" daemon stop
+   "$BRAIN_HOME/bin/brain" daemon status
+   ```
+
+3. 실제 터미널에서 아래 명령을 실행합니다. `PLUGIN_DIR`은 1번에서 확인한 폴더로
+   바꾸세요. `app-ref`의 40자리 전체 commit을 대상과 비교한 뒤 같은 폴더의 새
+   bootstrap을 실행합니다. `SECOND_BRAIN_REPO`를 사용한다면 기존 app의 origin과
+   같은 저장소를 가리켜야 합니다. Node 24.16 이상과 git이 필요합니다.
+
+   ```sh
+   PLUGIN_DIR="$HOME/.claude/plugins/cache/second-brain/second-brain/<version>"
+   cat "$PLUGIN_DIR/app-ref"
+   IFS= read -r TARGET_REF < "$PLUGIN_DIR/app-ref"
+   node "$PLUGIN_DIR/bootstrap.mjs" --interactive-ref --ref "$TARGET_REF" --yes --plugin-root "$PLUGIN_DIR"
+   ```
+
+   설치기가 대상 ref를 별도로 준비하고 빌드한 후 현재 시도의 확인 문구를
+   표시합니다. 2번의 진입 차단과 종료 사실을 다시 직접 확인한 경우에만 화면의
+   `확인 …` 문구 전체를 그대로 입력하세요. 매 시도마다 문구가 다릅니다. `--yes`는
+   이 확인을 대신하지 않으며 비TTY·JSON·잘못된 응답이나 취소는 자동 승인되지
+   않습니다. 설치기는 확인 후에도 정지 상태와 신원을 다시 검사합니다. 갱신이
+   끝날 때까지 다른 쓰기 진입을 차단하고, 설치기가 데몬을 다시 등록하거나 시작할
+   수도 있으므로 끝난 뒤 상태를 확인하세요.
+
+4. 성공 후 `"$BRAIN_HOME/bin/brain" ext status garmin` 등으로 교체 대기 상태를
+   확인합니다. 옛 manifest의 확장은 현재 형식의 호환 패키지를 명시적으로
+   `"$BRAIN_HOME/bin/brain" ext install --package <패키지-경로>`로 설치하기 전에는 실행되지 않습니다.
+   기존 비활성 상태와 보류는 유지되며, 작업을 재개하려면 패키지 교체를 확인한
+   뒤 사용자가 명시적으로 `"$BRAIN_HOME/bin/brain" ext enable <이름>`을 실행합니다.
+
+**실패와 재시도.** 출력과 `log/bootstrap.log`의 hook 기록을 확인하고 원인을 해결한
+뒤 같은 플러그인 폴더와 ref로 터미널 명령을 다시 실행하세요. ref가 없거나 이력이
+갈라진 경우, 다른 저장소 또는 변경된 app, 확인되지 않은 정지 상태는 그대로 두고
+거부합니다. 강제로 브랜치를 바꾸거나 변경을 버리지 마세요. 재시도에 필요한 경우
+새 확인 문구가 다시 표시됩니다.
+
+승격 직후 중단됐더라도 이전 app과 새 app, 설치 기록, 승격 기록과 확장 전환
+journal의 ref·소유자가 서로 일치하고 이전 owner가 종료된 상태라면 아래 잠금
+복구가 필요한지 확인한 뒤 같은 명령으로 신원을 검증하고 새 확인을 받아 이어갑니다.
+승격 기록이 손상됐거나 owner·신원
+연결이 없거나 서로 다르면 자동 복구하지 않습니다. 특히 옛 journal에 owner 연결이
+없으면 해당 기록과 두 app을 보존하고 원인을 조사하세요. `.app-previous`,
+`.app-next`, `.app-promotion.json`, 확장 정지 기록 또는 journal을 임의로 지워
+거부를 우회하지 마세요.
+
+설치 잠금 대기 메시지가 계속되면 다른 설치가 진행 중일 수 있습니다. 잠금의
+`pid`·`owner`를 확인하고 새 설치를 차단한 상태에서 그 설치와 **모든 자식**이
+종료됐고 공유 상태 쓰기가 끝났다는 사실을 확인한 경우에만 해당 `install.lock`
+폴더를 제거한 뒤 재시도하세요. 소유자나 종료 여부가 불명확하면 잠금을 보존합니다.
+
+```sh
+cat "$BRAIN_HOME/install.lock/pid" "$BRAIN_HOME/install.lock/owner"
+# 위 조건을 모두 확인한 경우에만 실행합니다.
+rm -r "$BRAIN_HOME/install.lock"
+```
+
+설치기 강제 종료 뒤 `run/daemon.pid`가 남으면 설치기는 소유 PID가 죽었다는
+사실만으로 그 잠금을 회수하지 않습니다. 새 설치·데몬·확장 명령과 자동 시작을
+계속 차단하고, 중단된 시도의 프로세스 기록에서 bootstrap 및 설치기 PID와 그
+프로세스 그룹·모든 자식을 확인하세요. 그 그룹과 자식이 모두 종료되어 공유 상태에
+더 이상 쓰지 않는다는 사실을 확인해야 합니다. `kill -0` 한 번이나 PID 부재만으로
+자식 종료를 추정하지 마세요.
+
+아래 기록을 대조해 `daemon.pid`의 PID가 **바로 그 설치기**이고 대상 commit이
+같은지, `.app-promotion.json`의 owner가 그 bootstrap 소유자이며 journal의
+`promotionOwner` 및 대상 commit과 일치하는지 확인하세요. 설치 중 확보한 프로세스
+기록 등으로 설치기 PID와 소유 관계를 입증할 수 없다면 잠금을 그대로 보존하고
+조사하세요. 다른 소유자, 읽을 수 없는 기록, 불일치 또는 종료 여부가 불확실한
+경우에도 제거하지 않습니다. 확장 정지 기록과 journal은 제거하지 않습니다.
+
+```sh
+cat "$BRAIN_HOME/run/daemon.pid" "$BRAIN_HOME/.app-promotion.json" "$BRAIN_HOME/run/bootstrap-extension-migrations.json"
+ps -axo pid,ppid,pgid,command
+```
+
+위 소유권과 모든 자식의 종료를 확인하고 새 진입 차단을 유지한 경우에만, 확인한
+잠금 내용을 저장한 뒤 바뀌지 않았는지 다시 대조하고 그 파일 하나를 제거합니다.
+명령 실행 전과 제거 전 내용이 같은지 직접 확인하세요.
+
+```sh
+FENCE_RECORD=$(cat "$BRAIN_HOME/run/daemon.pid")
+printf '%s\n' "$FENCE_RECORD"
+test "$(cat "$BRAIN_HOME/run/daemon.pid")" = "$FENCE_RECORD" && rm "$BRAIN_HOME/run/daemon.pid"
+```
+
+이후 같은 대화형 bootstrap 명령을 다시 실행하고 새 확인 문구에 응답합니다.
 
 ### npx로
 

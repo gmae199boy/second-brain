@@ -1,4 +1,5 @@
-import { CONVERSATION_CHUNK_INDEX_CONFIG_ID, conversationFingerprint, type ChunkParams, type ConversationIndexStore } from '@second-brain/core';
+import { createHash } from 'node:crypto';
+import { CONVERSATION_CHUNK_INDEX_CONFIG_ID, conversationFingerprintJson, type ChunkParams, type ConversationIndexStore } from '@second-brain/core';
 import { sql, type Kysely } from 'kysely';
 import { databaseFailure, type PgConnect, type PgSchema } from './connect.js';
 import { originalText, pgText } from './text.js';
@@ -11,7 +12,9 @@ async function snapshot(db: Kysely<PgSchema>, sessionId: string) {
   const rules = config.chunk_params.rules;
   if (!rules || rules.version !== 1 || rules.order !== 'occurred_at,id' || rules.units !== 'code_points' || rules.separator !== 'newline' || rules.boundary !== 'include_timestamp_group_at_target' || rules.split !== 'split_limit' || rules.parts !== 'range_0_or_1_to_n') throw new Error('지원하지 않는 대화 조각 규칙');
   const messages = (await sql<{ id: string; occurred_at: string; body: string; body_raw: Buffer | null }>`select id, occurred_at, body, body_raw from brain.messages where session_id=${sessionId}::uuid order by occurred_at,id`.execute(db)).rows.map(originalText).map(m => ({ id: m.id, occurredAt: new Date(m.occurred_at), body: m.body }));
-  return { config: config.chunk_params, messages, fingerprint: conversationFingerprint(config.chunk_params, messages) };
+  const hash = createHash('sha256');
+  for (const token of conversationFingerprintJson(config.chunk_params, messages)) hash.update(token, 'utf8');
+  return { config: config.chunk_params, messages, fingerprint: `sha256:${hash.digest('hex')}` };
 }
 export function postgresConversationIndexStore(connect: PgConnect): ConversationIndexStore {
   return {

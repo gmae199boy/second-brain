@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync, } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync, writeSync, } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -80,6 +80,54 @@ export const PNPM_INSTALL_COMMAND = 'npm install -g pnpm@latest';
 
  */
 export const LOCK_STALE_MS = 30 * 60 * 1000;
+// A snapshot records even ignored build artifacts and Git metadata. Never follow
+// symlinks, and refuse unusual files rather than deleting an unverified object.
+function backupEntry(root, path) {
+    const full = path ? join(root, path) : root;
+    const stat = lstatSync(full);
+    const directory = stat.isDirectory();
+    const content = directory ? 'dir' : stat.isFile()
+        ? createHash('sha256').update(readFileSync(full)).digest('hex')
+        : stat.isSymbolicLink() ? `link:${readlinkSync(full)}` : (() => { throw new Error('unsupported backup entry'); })();
+    return { path, directory, identity: `${stat.dev}:${stat.ino}:${stat.mode}:${content}` };
+}
+function snapshotBackup(root) {
+    const entries = [];
+    const walk = (path) => {
+        const entry = backupEntry(root, path);
+        entries.push(entry);
+        if (entry.directory)
+            for (const name of readdirSync(path ? join(root, path) : root).sort())
+                walk(path ? join(path, name) : name);
+    };
+    walk('');
+    return entries;
+}
+function removeVerifiedBackup(root, entries) {
+    try {
+        const expected = new Map(entries.map(entry => [entry.path, entry]));
+        if (expected.size !== entries.length || !expected.get('')?.directory)
+            return false;
+        const current = snapshotBackup(root);
+        if (current.some(entry => JSON.stringify(entry) !== JSON.stringify(expected.get(entry.path))))
+            return false;
+        for (const entry of current.reverse()) {
+            // Check again at deletion, and use rmdir for directories so a new child
+            // can never be swept away by a recursive removal.
+            if (JSON.stringify(backupEntry(root, entry.path)) !== JSON.stringify(entry))
+                return false;
+            const full = entry.path ? join(root, entry.path) : root;
+            if (entry.directory)
+                rmdirSync(full);
+            else
+                rmSync(full);
+        }
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
 /** The configuration folder for this run — the same rule as the CLI's. */
 export function resolveHome(env) {
     const override = env[HOME_ENV]?.trim();
@@ -109,8 +157,13 @@ export function parseArgs(argv) {
     const rest = [];
     let ref;
     let pluginRoot;
+    let interactiveRef = false;
     for (let index = 0; index < argv.length; index += 1) {
         const argument = argv[index];
+        if (argument === '--interactive-ref') {
+            interactiveRef = true;
+            continue;
+        }
         if (argument === '--ref') {
             const value = argv[index + 1];
             if (value !== undefined && !value.startsWith('-')) {
@@ -138,6 +191,7 @@ export function parseArgs(argv) {
     }
     return {
         ...(ref === undefined ? {} : { ref }),
+        ...(interactiveRef ? { interactiveRef: true } : {}),
         ...(pluginRoot === undefined ? {} : { pluginRoot }),
         rest,
     };
@@ -149,6 +203,13 @@ export function parseArgs(argv) {
  */
 export async function main(argv, env, deps) {
     const parsed = parseArgs(argv);
+    if (parsed.interactiveRef) {
+        if (!isCommit(parsed.ref)) {
+            deps.log('대화형 갱신에는 전체 커밋 식별자가 필요합니다.');
+            return 1;
+        }
+        return interactiveRefMode(parsed.ref, parsed.rest, env, deps);
+    }
     return parsed.ref === undefined
         ? npxMode(parsed.rest, env, deps)
         : hookMode(parsed.ref, parsed.pluginRoot, parsed.rest, env, deps);
@@ -218,13 +279,125 @@ async function npxMode(argv, env, deps) {
             env: { ...process.env, SECOND_BRAIN_INSTALL_LOCK_OWNER: lockOwner, SECOND_BRAIN_STAGED_APP: stage, SECOND_BRAIN_PREVIOUS_APP_HEAD: previous?.stdout.trim() ?? '' },
         });
         // The installer owns the outcome from here on, so hand its code straight on.
-        if (installer.code === 0 && (deps.readText(join(stage, 'apps/cli/dist/build.json')) !== deps.readText(join(app, 'apps/cli/dist/build.json')) || !finishAppPromotion(home, target, deps)))
+        if (installer.code === 0 && (deps.readText(join(stage, 'apps/cli/dist/build.json')) !== deps.readText(join(app, 'apps/cli/dist/build.json')) || !await finishAppPromotion(home, repo, target, lockOwner, deps)))
             return 1;
         return installer.code;
     }
     finally {
         deps.removeFolder(stage);
         releaseLock(home, deps, lockOwner);
+    }
+}
+/** Explicit ref upgrade with the same staged and lock fences as the hook,
+ * while retaining the terminal streams for the installer. */
+async function interactiveRefMode(ref, argv, env, deps) {
+    const home = resolve(resolveHome(env));
+    const app = join(home, APP_FOLDER);
+    const repo = resolveRepo(env);
+    const missing = await missingTools(deps);
+    if (missing.length) {
+        for (const line of missing)
+            deps.log(line);
+        return 1;
+    }
+    const lockOwner = await waitForLock(home, deps);
+    const stage = join(home, `.app-stage-${randomUUID()}`);
+    try {
+        const installed = readInstalled(home, deps);
+        if (installed.present && !installed.commit) {
+            deps.log('설치 기록의 commit을 확인할 수 없습니다.');
+            return 1;
+        }
+        if (deps.exists(join(home, '.app-promotion.json')) && installed.commit === ref) {
+            return await finishAppPromotion(home, repo, ref, lockOwner, deps) ? 0 : 1;
+        }
+        const interrupted = deps.exists(join(home, '.app-promotion.json'));
+        if (interrupted) {
+            if (!installed.commit || !await validateInterruptedPromotion(home, repo, ref, installed.commit, deps)) {
+                deps.log('중단된 app 전환의 신원 또는 소유권을 확인할 수 없습니다.');
+                return 1;
+            }
+        }
+        else if (deps.exists(join(home, '.app-next')) || deps.exists(join(home, '.app-previous'))) {
+            deps.log('중단된 app 전환을 먼저 복구하세요');
+            return 1;
+        }
+        if (installed.present && !deps.exists(app)) {
+            deps.log('설치 기록에 해당하는 app이 없습니다.');
+            return 1;
+        }
+        if (deps.exists(app)) {
+            const prepared = await prepareAppAt(app, repo, ref, installed.commit === ref ? undefined : installed.commit, deps, true);
+            if (prepared !== 0) {
+                if (prepared === 'quiet')
+                    deps.log('요청한 ref로 갱신할 수 없습니다.');
+                return 1;
+            }
+        }
+        const previous = deps.exists(app) ? await capture(['rev-parse', 'HEAD'], app, deps) : undefined;
+        if (previous && (previous.code !== 0 || !isCommit(previous.stdout.trim()))) {
+            deps.log('기존 app 신원을 확인할 수 없습니다.');
+            return 1;
+        }
+        if (installed.commit && previous && await isAncestor(installed.commit, previous.stdout.trim(), app, deps) !== true) {
+            deps.log('설치 기록과 기존 app 이력이 일치하지 않습니다.');
+            return 1;
+        }
+        const staged = await prepareAppAt(stage, repo, ref, undefined, deps);
+        if (staged !== 0)
+            return 1;
+        const pnpm = await ensurePnpm(stage, deps, true);
+        if (pnpm !== 0)
+            return pnpm;
+        const built = await installAndBuild(stage, deps);
+        if (built !== 0)
+            return built;
+        if (stagedTarget(stage, deps) !== ref) {
+            deps.log('대상 설치기의 app 승격 지원을 확인할 수 없습니다.');
+            return 1;
+        }
+        deps.log('설치기를 시작합니다');
+        const installer = await deps.run({ command: deps.nodePath, args: [installerPath(stage), ...argv], cwd: stage,
+            env: { ...process.env, SECOND_BRAIN_INSTALL_LOCK_OWNER: lockOwner, SECOND_BRAIN_STAGED_APP: stage, SECOND_BRAIN_PREVIOUS_APP_HEAD: previous?.stdout.trim() ?? '' } });
+        if (installer.code !== 0)
+            return installer.code;
+        if (readInstalled(home, deps).commit !== ref || deps.readText(join(stage, 'apps/cli/dist/build.json')) !== deps.readText(join(app, 'apps/cli/dist/build.json')) || !await finishAppPromotion(home, repo, ref, lockOwner, deps)) {
+            deps.log('설치 완료 기록 또는 app 승격을 확인할 수 없습니다.');
+            return 1;
+        }
+        return 0;
+    }
+    finally {
+        deps.removeFolder(stage);
+        releaseLock(home, deps, lockOwner);
+    }
+}
+/** Validate the incomplete promotion before allowing the installer to re-enter.
+ * Its journal is an audit record only: the installer must ask again and recheck
+ * its own database and daemon fences before doing any migration. */
+async function validateInterruptedPromotion(home, repo, ref, installed, deps) {
+    const app = join(home, APP_FOLDER), previous = join(home, '.app-previous');
+    if (!deps.exists(app) || !deps.exists(previous) || deps.exists(join(home, '.app-next')))
+        return false;
+    try {
+        const marker = JSON.parse(deps.readText(join(home, '.app-promotion.json')) ?? '');
+        const journal = JSON.parse(deps.readText(join(home, RUN_FOLDER, 'bootstrap-extension-migrations.json')) ?? '');
+        const owner = typeof marker.owner === 'string' ? /^(\d+) ([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\n$/.exec(marker.owner) : null;
+        const pid = Number(owner?.[1]);
+        const confirmation = journal.offlineConfirmation;
+        if (marker.target !== ref || marker.hadPrevious !== true || !owner || !Number.isSafeInteger(pid) || pid < 1 || deps.alive(pid) || journal.promotionOwner !== marker.owner || !isCommit(marker.previousHead) || marker.previousHead !== journal.previousHead || journal.commit !== ref || !Array.isArray(journal.names) || journal.names.length === 0 || journal.names.some(name => typeof name !== 'string' || !/^[a-z][a-z0-9_]{0,30}$/.test(name)) || typeof journal.owner !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(journal.owner) || confirmation?.home !== deps.realpath(home) || confirmation.previous_commit !== installed || confirmation.target_commit !== ref || confirmation.method !== 'operator')
+            return false;
+        if (stagedTarget(app, deps) !== ref || await checkClone(app, repo, deps) !== 0 || await checkClone(previous, repo, deps) !== 0)
+            return false;
+        const [activeHead, oldHead] = await Promise.all([capture(['rev-parse', 'HEAD'], app, deps), capture(['rev-parse', 'HEAD'], previous, deps)]);
+        if (activeHead.code !== 0 || activeHead.stdout.trim() !== ref || oldHead.code !== 0 || oldHead.stdout.trim() !== marker.previousHead)
+            return false;
+        if (await isAncestor(installed, marker.previousHead, app, deps) !== true || await isAncestor(marker.previousHead, ref, app, deps) !== true)
+            return false;
+        return true;
+    }
+    catch {
+        return false;
     }
 }
 /**
@@ -299,7 +472,7 @@ async function hookMode(ref, pluginRoot, installerArgs, env, deps) {
         if (taken.commit === ref) {
             if (!deps.exists(join(home, '.app-promotion.json')))
                 return deps.exists(join(home, '.app-previous')) || deps.exists(join(home, '.app-next')) ? failed('중단된 app 전환 복구') : 0;
-            return finishAppPromotion(home, ref, deps) ? 0 : failed('중단된 app 전환 복구');
+            return await finishAppPromotion(home, repo, ref, lockOwner, deps) ? 0 : failed('중단된 app 전환 복구');
         }
         if (deps.exists(join(home, '.app-next')))
             return failed('중단된 app 전환 복구');
@@ -342,7 +515,7 @@ async function hookMode(ref, pluginRoot, installerArgs, env, deps) {
             deps.log(`설치기가 끝났는데 ${join(home, INSTALLED_FILE)}이 ${ref}를 담고 있지 않습니다.`);
             return failed('완료 기록 확인');
         }
-        if (deps.readText(join(stage, 'apps/cli/dist/build.json')) !== deps.readText(join(app, 'apps/cli/dist/build.json')) || !finishAppPromotion(home, ref, deps))
+        if (deps.readText(join(stage, 'apps/cli/dist/build.json')) !== deps.readText(join(app, 'apps/cli/dist/build.json')) || !await finishAppPromotion(home, repo, ref, lockOwner, deps))
             return failed('이전 app 정리');
         noteBootstrap(home, seen.record, { result: 'installed', log: logPath }, deps);
         deps.message(`Brain을 ${shortRef(ref)}로 설치했습니다. 이것을 사용자에게 한 줄로 전해 주세요`);
@@ -367,22 +540,71 @@ function stagedTarget(stage, deps) {
         return undefined;
     }
 }
-function finishAppPromotion(home, target, deps) {
+async function finishAppPromotion(home, repo, target, lockOwner, deps) {
     const marker = join(home, '.app-promotion.json'), backup = join(home, '.app-previous');
+    const journalPath = join(home, RUN_FOLDER, 'bootstrap-extension-migrations.json');
     try {
-        const record = JSON.parse(deps.readText(marker) ?? '');
+        const markerText = deps.readText(marker);
+        const record = JSON.parse(markerText ?? '');
         const app = join(home, APP_FOLDER);
         const build = JSON.parse(deps.readText(join(app, 'apps/cli/dist/build.json')) ?? '');
         const bin = join(app, 'apps/cli/dist/bin.js');
         const quoted = `'${bin.replaceAll("'", `'\\''`)}'`;
         const shim = deps.readText(join(home, 'bin/brain'))?.split('\n') ?? [];
-        if (record.target !== target || typeof record.owner !== 'string' || !/^\d+ [0-9a-f-]{36}\n$/.test(record.owner) || typeof record.hadPrevious !== 'boolean' || (!record.hadPrevious && deps.exists(backup)) || deps.exists(join(home, '.app-next')) || build.commit !== target || build.staged_promotion !== 1 || readInstalled(home, deps).commit !== target || !deps.exists(bin) || !shim.includes(`BIN=${quoted}`) || !shim.includes('exec "$NODE" "$BIN" "$@"'))
+        const match = typeof record.owner === 'string' ? /^(\d+) ([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\n$/.exec(record.owner) : null;
+        const pid = Number(match?.[1]);
+        if (record.backupEntries !== undefined && (record.cleanup !== true || !Array.isArray(record.backupEntries)))
+            return false;
+        if (record.target !== target || !match || !Number.isSafeInteger(pid) || pid < 1 || (record.owner !== lockOwner && deps.alive(pid)) || deps.readText(join(home, LOCK_FOLDER, 'owner')) !== lockOwner || typeof record.hadPrevious !== 'boolean' || (!record.hadPrevious && deps.exists(backup)) || (record.hadPrevious && !deps.exists(backup) && record.cleanup !== true) || (record.hadPrevious ? !isCommit(record.previousHead) : record.previousHead !== null) || deps.exists(join(home, '.app-next')) || build.commit !== target || build.staged_promotion !== 1 || readInstalled(home, deps).commit !== target || !deps.exists(bin) || !shim.includes(`BIN=${quoted}`) || !shim.includes('exec "$NODE" "$BIN" "$@"'))
+            return false;
+        if (await checkClone(app, repo, deps) !== 0)
+            return false;
+        const head = await capture(['rev-parse', 'HEAD'], app, deps);
+        if (head.code !== 0 || head.stdout.trim() !== target)
+            return false;
+        if (record.hadPrevious && await isAncestor(record.previousHead, target, app, deps) !== true)
+            return false;
+        if (record.hadPrevious && deps.exists(backup) && !Array.isArray(record.backupEntries)) {
+            if (await checkClone(backup, repo, deps) !== 0)
+                return false;
+            const oldHead = await capture(['rev-parse', 'HEAD'], backup, deps);
+            if (oldHead.code !== 0 || oldHead.stdout.trim() !== record.previousHead)
+                return false;
+        }
+        if (deps.readText(join(home, LOCK_FOLDER, 'owner')) !== lockOwner || deps.readText(marker) !== markerText)
+            return false;
+        const journalText = deps.readText(journalPath);
+        if (journalText === undefined && deps.exists(journalPath))
+            return false;
+        if (journalText !== undefined) {
+            const journal = JSON.parse(journalText);
+            if (journal.commit !== target || journal.promotionOwner !== record.owner || journal.previousHead !== record.previousHead)
+                return false;
+            deps.removeFolder(journalPath);
+            if (deps.exists(journalPath))
+                return false;
+        }
+        if (record.cleanup !== true || (record.hadPrevious && deps.exists(backup) && !Array.isArray(record.backupEntries))) {
+            const temp = `${marker}.${String(deps.pid)}.tmp`;
+            const backupEntries = record.hadPrevious && deps.exists(backup) ? deps.snapshotBackup(backup) : undefined;
+            if (backupEntries && (await checkClone(backup, repo, deps) !== 0 || JSON.stringify(deps.snapshotBackup(backup)) !== JSON.stringify(backupEntries)))
+                return false;
+            if (deps.readText(join(home, LOCK_FOLDER, 'owner')) !== lockOwner || deps.readText(marker) !== markerText)
+                return false;
+            const content = JSON.stringify({ ...record, cleanup: true, backupEntries });
+            deps.writeText(temp, content);
+            if (deps.readText(temp) !== content || !deps.moveFile(temp, marker) || deps.readText(marker) !== content)
+                return false;
+            record.backupEntries = backupEntries;
+        }
+        if (deps.readText(join(home, LOCK_FOLDER, 'owner')) !== lockOwner)
+            return false;
+        if (deps.exists(backup) && (!record.backupEntries || !deps.removeVerifiedBackup(backup, record.backupEntries)))
             return false;
     }
     catch {
         return false;
     }
-    deps.removeFolder(backup);
     if (deps.exists(backup))
         return false;
     deps.removeFolder(marker);
@@ -1024,6 +1246,8 @@ export function systemDeps() {
                 // next, and says which one it was.
             }
         },
+        snapshotBackup,
+        removeVerifiedBackup,
         removeFolder: (path) => {
             try {
                 rmSync(path, { recursive: true, force: true });

@@ -410,3 +410,29 @@ core0.1.17/Garmin0.1.4 ref는이전구현472caa7,확장1.2.1/package85파일정�
 - 운영 인계: 실제 설치본 배포·질문 인수는17.7. 이번plugin ref/version은 불변이며 제품코드가 원격main에 있다는 사실을 설치본 반영으로 표현하지 않는다. 신규migration은 없고 문서검색Store capability/root export를 더했다.
 
 소유 parentPG1+fixture360 정확ID 잔존0. 워크트리/브랜치/세션/stash/전체실패·리뷰·검증원문은 보존한다.
+
+
+## 22.2 — 큰 세션 snapshot 지문 성능 수락 (2026-11-06)
+
+근거: [snapshot 계획](../tickets/epic-query-performance/tickets/story-snapshot-10-stale-plan.md)의 Review Triage Log·Verification·Auto Run Result, 최종 `a392248`, 원본baseline b581a90·17.1통합26159cf. 중앙은 T16 원시/3표본/측정창과 실패audit62·T17독립해결원문/17계약처분·원격tip를 대조했다.
+
+- 기존JSON지문 바이트를 공유하는 순수core 토큰 생성과 PG native SHA 증분 갱신을 채택했다. transaction/SQL/잠금/fence 의미는 유지한다.10만×1024byte/5000조각 합성fixture에서 독립지문/chunks/stale 동등성 일치, 읽기1679.976→321.717ms(0.191501), 확정1976.947→534.647ms(0.270441), 잠금1976.327→534.112ms(0.270255)다. SQL계획개선이나운영분포보장으로해석하지않는다.
+- 중앙확정07:38:56~07:58:56UTC창 안 실제baseline07:43:39~07:45:00/current07:45:00~07:45:47 순차실측. 표본3개·실측/별도진단·순간load/프로세스/RSS생애값의범위를구분한다. 초기쓰기0.811836배는판정3항목과별도다.
+- 최초전체TS54/Python8실패는 모두 원문보존. runner의immutableUPDATE를새INSERT/독립staleoracle로교정하고 격리HOME/TMPDIR/PG암호/Dockercontext·Compose실제연결을정정해 관련재검증47+hook15 전부passed. matrix140·17.1영향198+Python1 통과. 최초전체exit1을exit0으로바꾸지않는다.
+- 독립4렌즈2회·표적F1뒤 수정의 해결확인 공백을 중앙이 지적해T17로보완했다. F1 8행+T10 9행의17계약해결·새finding0. 처음보고18행/파일생성미완료는지휘자가즉시정정했고실제처분파일을중앙확인했다. 새source수정/시험·측정반복없음.
+- 잔여한계: T12 과거Compose ID유실은현재프로젝트/볼륨부재만확인하며정확과거생성/삭제ID복구를주장하지않는다. T14성공은이를복구하지않는다. CREATE응답유실시created미확정가능성,3표본·순간프로세스·공통oracle객체/GC·러너생애RSS한계를보존한다.별도측정진단은transaction내직접분해가아니다.
+
+unresolved0/deferred0, T17추가후속불필요.소유PG/fixture정리·실패/측정/리뷰원문·워크트리/로컬branch/세션은보존한다.제품운영조치나이번pluginref/version변경은없다.
+
+
+## 21.11 — detached 설치본의 대화형 ref 갱신 수락 (2026-11-06)
+
+근거: [bootstrap 갱신 계획](../tickets/epic-garmin-extension/tickets/bug-interactive-bootstrap-upgrade-plan.md)의 Review Triage Log r1~r7·Verification·Auto Run Result/operator_actions. 구현 `b80b053`, 릴리스 `c995e2a`의 plugin0.1.22/app-ref는 이전 구현commit. 중앙이 r6/r7원문·최종changed로그·원격tip·ref조상을 대조했다.
+
+- 지원명령은 명시 interactive-ref와40자리ref로 detached 옛app부터target준비·PTY현재challenge·같은DB갱신/승격을 연결한다. 일반hook무질문/A1/ref·clone·clean·선조·owner·offline fence를 보존한다. journal승격owner/previousHead·검증backup snapshot으로 중단/부분삭제 지원재시도를 검증했다.
+- 최초순차전체TS9실패/Python69통과 및 이후실패이력은 보존. 최소교정/독립후속 뒤 최종original-baseline changed exit0: TS199파일4454시험·기존skip1 → PG42파일681시험 → Python16파일69시험/내부244시험OK. 실제PTY6/6과22.2통합지문관련25시험통과. 최초전체exit1을소급통과로바꾸지않는다.
+- EPERM의이전단일원인은미확정. 실제PGID목록소멸·소유UID·살아있는대상EPERM/불명실패보존을유지하고 signed시스템UID-2 파서결함만최소수정했다. 독립r7확인 뒤PTY/전체영향회귀로실패를닫았다.
+- 제약: 새snapshot없는이미손상된신원불명backup은변경자료와구별할증거가없어보존·안전거부한다. 미배포중간버전상태를자동삭제하는계약을추가하지않는다. 현재프로토콜의snapshot부분삭제는지원재시도시험으로확인했다.
+- 운영인계21.7: 새릴리스plugin/ref와README지원명령을사용한다. 실제옛daemon/직접명령/쓰기자손종료·새진입차단·현재challenge 응답, 계정귀속/MFA/tokenstore/설정/최종capture는운영자와21.7소유다. 불명lock/fence/backup을임의삭제하거나내부환경변수/자동응답으로우회하지않는다.
+
+unresolved0/deferred0/추가후속권고false. fixture671의rawremoved665+보존guard뒤별도정리6을구분해정확ID전부부재,주PG부재확인. 워크트리/로컬branch/세션/실패·리뷰·검증원문은보존한다.
