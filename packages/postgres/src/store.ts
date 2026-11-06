@@ -17,7 +17,7 @@ import { postgresWorkStore } from './work.js';
 import { postgresScheduleStore } from './schedules.js';
 export type PostgresStoreOptions = CreatePoolOptions;
 export type PostgresIngestStore = SessionIngestStore & UserStore & HealthStore & SchemaStore;
-export type PostgresStore = { imports: import('@second-brain/core').ImportStore } & import('@second-brain/core').ChannelStore & import('@second-brain/core').RecallStore & import('@second-brain/core').ConversationIndexStore & ExtensionStore & PostgresIngestStore & SettingsStore & SessionStore & TranscriptFileStore & WorkStore & ScheduleStore & AttachmentStore & ExtractionStore;
+export type PostgresStore = { imports: import('@second-brain/core').ImportStore } & import('@second-brain/core').ChannelStore & import('@second-brain/core').RecallStore & import('@second-brain/core').DocumentRecallStore & import('@second-brain/core').ConversationIndexStore & ExtensionStore & PostgresIngestStore & SettingsStore & SessionStore & TranscriptFileStore & WorkStore & ScheduleStore & AttachmentStore & ExtractionStore;
 /** Ordered adapter probes shared by health checks and doctor assembly. */
 export const POSTGRES_DOCTOR_PROBE_IDS = ['writable', 'pg_trgm', 'redaction_cleanup'] as const;
 const [writableProbeId, trgmProbeId, cleanupProbeId] = POSTGRES_DOCTOR_PROBE_IDS;

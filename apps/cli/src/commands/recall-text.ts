@@ -10,7 +10,10 @@ export function recallText(lines: readonly string[], meta: EnvelopeMeta): string
   if (meta.next) {
     const args = { ...meta.next.args };
     if ('from_at' in args) { args.fromAt = args.from_at; delete args.from_at; }
-    const argv = retryArgv({ ...meta.next, args }, ['<session>']);
+    if (meta.next.ns === 'files' && meta.next.verb === 'show') {
+      for (const [from, to] of [['file_id','fileId'], ['chunk_locator','chunkLocator'], ['extraction_id','extractionId']] as const) { if (from in args) { args[to] = args[from]; delete args[from]; } }
+    }
+    const argv = retryArgv({ ...meta.next, args }, meta.next.ns === 'files' && meta.next.verb === 'show' ? ['<file-id>'] : ['<session>']);
     const quoted = argv.map(arg => /^[a-zA-Z0-9_./:=@-]+$/u.test(arg) ? arg : "'" + arg.replaceAll("'", "'\\''") + "'").join(' ');
     result.push(`다음: ${quoted}`);
   }

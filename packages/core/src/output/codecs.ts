@@ -42,6 +42,7 @@ export interface OutputCodec {
 export interface OutputProbe {
   texts: readonly string[];
   toolNotes: readonly { tool: string; target: string }[];
+  documents: readonly { body: string; display_name: string; chunk_locator: string }[];
 }
 
 /** A fixed instant, so a codec's output is a function of the probe alone. */
@@ -90,7 +91,7 @@ export const OUTPUT_CODECS: readonly OutputCodec[] = [
       const read = sessionForOutput(probe);
       const ok = okEnvelope(
         probeClock,
-        { texts: [...read.texts], toolNotes: [...read.toolNotes] },
+        { texts: [...read.texts], toolNotes: [...read.toolNotes], documents: [...read.documents] },
         [],
         { hint: allTexts(read) },
       );
@@ -115,9 +116,10 @@ export const OUTPUT_CODECS: readonly OutputCodec[] = [
     render: (probe) => {
       const read = sessionForOutput(probe);
       return [
-        encodeHookOutput({ systemMessage: allTexts(read), toolNotes: [...read.toolNotes] }),
+        encodeHookOutput({ systemMessage: allTexts(read), toolNotes: [...read.toolNotes], documents: [...read.documents] }),
         ...read.texts.map((text) => encodeHookLine(text)),
         ...read.toolNotes.map((note) => encodeHookLine(`${note.tool} ${note.target}`)),
+        ...read.documents.flatMap(doc => [doc.body, doc.display_name, doc.chunk_locator].map(encodeHookLine)),
       ].join('\n');
     },
   },
@@ -128,6 +130,7 @@ export const OUTPUT_CODECS: readonly OutputCodec[] = [
       return [
         ...read.texts.map((text) => encodeTextLine(text)),
         ...read.toolNotes.map((note) => encodeTextLine(`${note.tool} ${note.target}`)),
+        ...read.documents.flatMap(doc => [doc.body, doc.display_name, doc.chunk_locator].map(encodeTextLine)),
       ].join('\n');
     },
   },
@@ -135,7 +138,7 @@ export const OUTPUT_CODECS: readonly OutputCodec[] = [
 
 /** Every text of a read, as one string, for the places that take only one. */
 function allTexts(read: OutputProbe): string {
-  return [...read.texts, ...read.toolNotes.map((note) => `${note.tool} ${note.target}`)].join(
+  return [...read.texts, ...read.toolNotes.map((note) => `${note.tool} ${note.target}`), ...read.documents.flatMap(doc => [doc.body, doc.display_name, doc.chunk_locator])].join(
     '\n',
   );
 }

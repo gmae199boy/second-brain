@@ -90,6 +90,8 @@ const DEFAULT_HEALTH: StoreHealth = {
 export interface MemoryStoreOptions {
   /** What `checkHealth` answers. Defaults to a healthy store. */
   health?: StoreHealth;
+  /** Synthetic successful report requests for document recall contracts. */
+  reportRequests?: readonly { fileId: string; source: string; reportDate: string | null; createdAt: string; id: string }[];
 }
 
 /** What the store holds, for the owning test. Contract cases never use it. */
@@ -662,6 +664,34 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       for (let i = conversationChunks.length - 1; i >= 0; i--) if (conversationChunks[i]!.sessionId === input.sessionId) conversationChunks.splice(i, 1);
       conversationChunks.push(...next);
       return { ok: true, committed: true };
+    },
+    async searchDocuments(input) {
+      const rows: import('../../ports/document-recall-store.js').DocumentSearchRow[] = [];
+      const binary = (a: string, b: string) => { const x = Array.from(a), y = Array.from(b); for (let i=0; i<Math.min(x.length,y.length); i++) { const delta = x[i]!.codePointAt(0)! - y[i]!.codePointAt(0)!; if (delta) return delta; } return x.length-y.length; };
+      for (const file of fileRows.values()) {
+        if (fileRedacted(file.id)) continue;
+        const request = (options.reportRequests ?? []).filter(r => r.fileId === file.id).sort((a,b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))[0];
+        const extraction = currentExtractions.get(file.id);
+        if (!request || !extraction || extractionById(extraction)?.status !== 'ok') continue;
+        for (const piece of chunksOf(extraction)) {
+          if (!piece.chunkLocator || !piece.body.toLowerCase().includes(input.query.toLowerCase())) continue;
+          const name = fileNames.filter(n => n.fileId === file.id).sort((a,b) => binary(a.nameSource,b.nameSource) || binary(a.text,b.text))[0]?.text ?? `report:${file.id}`;
+          const rawDate = request.reportDate; const date = rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? new Date(`${rawDate}T00:00:00Z`) : null;
+          rows.push({ kind:'document', file_id:file.id, display_name:name, extraction_id:extraction, chunk_locator:JSON.stringify(piece.chunkLocator), report_date:date && Number.isFinite(date.getTime()) && date.toISOString().slice(0,10) === rawDate ? rawDate : null, source:request.source, source_unreachable:sourceUnreachableAt.has(file.id), body:piece.body, ordinal:piece.ordinal });
+        }
+      }
+      const count = (body: string) => body.toLowerCase().split(input.query.toLowerCase()).length - 1;
+      rows.sort((a,b) => count(b.body)-count(a.body) || (b.report_date ?? '').localeCompare(a.report_date ?? '') || binary(a.file_id,b.file_id) || a.ordinal-b.ordinal);
+      const selected = rows.slice(0,input.limit);
+      const contexts = [...new Set(selected.map(r => r.extraction_id))].map(extraction_id => ({ extraction_id, pieces: chunksOf(extraction_id).filter(p => p.chunkLocator !== null).map(p => ({ ordinal:p.ordinal, chunk_locator:JSON.stringify(p.chunkLocator), body:p.body })) }));
+      return { ok:true, rows: selected, contexts };
+    },
+    async readDocument(fileId) {
+      const file = fileById(fileId); if (!file) return { ok:true, snapshot:null };
+      const extraction = currentExtractions.get(fileId) ?? null;
+      const latest = extractions.filter(e => e.fileId === fileId).sort((a,b) => b.attempt-a.attempt)[0];
+      return { ok:true, snapshot: { redacted:fileRedacted(fileId), source_unreachable:sourceUnreachableAt.has(fileId), extraction_id:extraction, status: extraction ? extractionById(extraction)?.status ?? null : latest ? latest.status ?? 'pending' : null,
+        pieces: fileRedacted(fileId) || !extraction ? [] : chunksOf(extraction).filter(p => p.chunkLocator !== null).map(p => ({ ordinal:p.ordinal, chunk_locator:JSON.stringify(p.chunkLocator), body:p.body })) } };
     },
     async searchRecall(input) {
       const needle = input.query.replaceAll('\0', '�').toLowerCase();

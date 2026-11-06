@@ -43,6 +43,8 @@ export function failedConfigStore(message: string): Store & SchemaStore & Settin
     async finishChannelAttempt() { return unavailable; },
     async recoverChannelAttempt() { return unavailable; },
     async searchRecall() { return unavailable; },
+    async searchDocuments() { return unavailable; },
+    async readDocument() { return unavailable; },
     async readConversationSnapshot() { return unavailable; },
     async commitConversationChunks() { return unavailable; },
     async searchConversationChunks() { return unavailable; },

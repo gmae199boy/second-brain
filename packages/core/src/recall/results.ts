@@ -74,9 +74,10 @@ export function boundedResults<T, M>(rows: readonly T[], body: { get(row: T): st
     if (metadata.next) {
       const { ns, verb, args } = metadata.next;
       const argv = ['brain', ns, verb];
-      if (args.session !== undefined) argv.push(String(args.session));
+      const positional = ns === 'files' && verb === 'show' ? 'file_id' : 'session';
+      if (args[positional] !== undefined) argv.push(String(args[positional]));
       for (const [key, value] of Object.entries(args)) {
-        if (key === 'session' || value === undefined || value === null || value === false) continue;
+        if (key === positional || value === undefined || value === null || value === false) continue;
         const flag = key.replaceAll('_', '-').replace(/[A-Z]/gu, letter => `-${letter.toLowerCase()}`);
         argv.push(`--${flag}`);
         if (value !== true) for (const item of Array.isArray(value) ? value : [value]) argv.push(String(item));
