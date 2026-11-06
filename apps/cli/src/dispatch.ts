@@ -468,7 +468,7 @@ export async function dispatch(
 
   // 설정 경고까지 합친 최종 출력은 읽기 네 명령의 상한 안에 있어야 한다.
   const bounded = selectedCommand(registry, argv);
-  if (outcome.envelope && bounded && ((bounded.ns === 'recall' && ['chunks', 'tools', 'expand'].includes(bounded.verb)) || (bounded.ns === 'sessions' && bounded.verb === 'read'))) {
+  if (outcome.envelope && bounded && ((bounded.ns === 'recall' && ['chunks', 'tools', 'docs', 'expand'].includes(bounded.verb)) || (bounded.ns === 'sessions' && bounded.verb === 'read') || (bounded.ns === 'files' && bounded.verb === 'show'))) {
     const error = outcome.envelope.error;
     const textLines = [...outcome.text.map(line => `${encodeTextLine(line)}\n`)];
     if (error) {

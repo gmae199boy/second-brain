@@ -1,3 +1,4 @@
+import { searchDocuments, showDocument, type DocumentSearchInput, type ShowDocumentInput } from './recall/documents.js';
 import { executeExtensionCommand } from './extensions/commands.js';
 import { FILE_IMPORT_KIND, importFileHandler } from './files/import-work.js';
 import type { ImportStaging } from './ports/import-store.js';
@@ -228,6 +229,7 @@ export interface BrainMessages {
 }
 
 export interface BrainFiles {
+  show(input: ShowDocumentInput): ReturnType<typeof showDocument>;
   /**
    * Take one stored file's content out of the brain: Brain's copy of the bytes,
    * the text read out of it, the searchable name index and the metadata read
@@ -268,7 +270,7 @@ export interface BrainChannels {
 }
 export interface Brain {
   channels: BrainChannels;
-  recall: { chunks(input: SearchInput): ReturnType<typeof searchRecall>; tools(input: SearchInput): ReturnType<typeof searchRecall>; expand(input: ExpandInput): ReturnType<typeof expandRecall> };
+  recall: { docs(input: DocumentSearchInput): ReturnType<typeof searchDocuments>; chunks(input: SearchInput): ReturnType<typeof searchRecall>; tools(input: SearchInput): ReturnType<typeof searchRecall>; expand(input: ExpandInput): ReturnType<typeof expandRecall> };
   ext: BrainExt;
   messages: BrainMessages;
   files: BrainFiles;
@@ -435,10 +437,10 @@ export function createBrain(dependencies: BrainDependencies): Brain {
         ? ((result) => result.ok ? result : { ...result, message: maskOutputText(result.message) })(await store.resendChannelRequest({ requestId: id, workId: idGen.next(), now: clock.now() }))
         : { ok: false, code: 'INVALID_ARGUMENT', message: '요청 ID가 UUID 형식이 아닙니다' },
     },
-    recall: { chunks: input => searchRecall(store, 'chunks', input), tools: input => searchRecall(store, 'tools', input), expand: input => expandRecall(store, input) },
+    recall: { docs: input => searchDocuments(store, input), chunks: input => searchRecall(store, 'chunks', input), tools: input => searchRecall(store, 'tools', input), expand: input => expandRecall(store, input) },
     ext: { command: input => executeExtensionCommand(dependencies, input), run: input => runExtension(dependencies, input), publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, cron, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
-    files: { redact: (input) => redactFile({ store, clock, idGen }, input) },
+    files: { show: input => showDocument(store, input), redact: (input) => redactFile({ store, clock, idGen }, input) },
     doctor: {
       run: () =>
         runDoctor(store, {

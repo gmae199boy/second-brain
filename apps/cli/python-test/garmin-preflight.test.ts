@@ -4,6 +4,7 @@ import { readFile, stat, mkdir, symlink, realpath, writeFile } from 'node:fs/pro
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
+import { maskOutputText } from 'second_brain';
 import { extHome } from '../test/ext-fixture.js';
 
 it('합성 capture를 공용 명령과 실제 감독자로 읽고 계약 자료를 보존한다', async () => {
@@ -14,6 +15,14 @@ it('합성 capture를 공용 명령과 실제 감독자로 읽고 계약 자료�
   const { uuidV7IdGen } = await import('../src/runtime/id-gen.js');
   const store = postgresStore({ databaseUrl: fixture.db.appUrl });
   let daemon: ReturnType<typeof runDaemon> | undefined;
+  const rawWorkId = async (publicId: unknown): Promise<string> => {
+    expect(typeof publicId).toBe('string');
+    const rows = await fixture.db.rows('select id::text as id from brain.work_items');
+    const matches = rows.map(row => row.id as string).filter(id => maskOutputText(id) === publicId);
+    expect(matches).toHaveLength(1);
+    expect(maskOutputText(matches[0]!)).toBe(publicId);
+    return matches[0]!;
+  };
   try {
     const installed = await fixture.run(['ext', 'install', 'garmin', '--json']);
     expect(installed.code, installed.stdout + installed.stderr).toBe(0);
@@ -33,11 +42,12 @@ it('합성 capture를 공용 명령과 실제 감독자로 읽고 계약 자료�
     daemon = runDaemon({ home: fixture.home, env: fixture.env, clock: systemClock, idGen: uuidV7IdGen(), signal: controller.signal, drainPauseMs: 25, heartbeatMs: 100, supervisor: { pollMs: 25 } });
     const run = await fixture.run(['ext', 'run', 'garmin', 'import-preflight', '--json']);
     const errors = await fixture.db.rows("select error_code,stderr from brain.work_attempts order by started_at");
-    const readiness = run.body.data?.work_id ? JSON.parse(await readFile(join(fixture.home, 'extensions/garmin/reports', run.body.data.work_id, 'private.json'), 'utf8')).readiness?.catalog : undefined;
+    const id = run.body.data?.work_id ? await rawWorkId(run.body.data.work_id) : undefined;
+    const readiness = id ? JSON.parse(await readFile(join(fixture.home, 'extensions/garmin/reports', id, 'private.json'), 'utf8')).readiness?.catalog : undefined;
     expect(run.code, run.stdout + run.stderr + JSON.stringify(errors) + JSON.stringify(readiness)).toBe(0);
     expect(run.body.data).toMatchObject({ status: 'completed', report: { counts: { datasets: 5, raw_response_conflicts: 1, raw_conflict_keys: 1, raw_metadata_conflict_keys: 1, unselected_keys: 0, unconfirmed_accounts: 2, expected_preservation_candidates: 21, expected_dataset_candidates: 5, expected_mapping_candidates: 21, expected_file_requests: 0 }, checks: { total_insert_known: false, source_unchanged: true, core_ready: true, extension_ready: true, role_ready: true, attempt_current: true } } });
-    const id = run.body.data.work_id as string;
-    const report = join(fixture.home, 'extensions/garmin/reports', id);
+    expect(id).toBeDefined();
+    const report = join(fixture.home, 'extensions/garmin/reports', id!);
     const privateText = await readFile(join(report, 'private.json'), 'utf8');
     expect(privateText).toContain('12345');
     const detail = JSON.parse(privateText);
@@ -82,7 +92,8 @@ capture_manifest(root,paths)`;
     await store.setSetting({ userId:'01940000-0000-7000-8000-00000000000a', key:'garmin.capture_manifest', value:await realpath(join(conflictCapture,'manifest.json')), updatedAt:new Date() });
     const conflictRun = await fixture.run(['ext','run','garmin','import-preflight','--json']);
     expect(conflictRun.code, conflictRun.stdout + conflictRun.stderr).toBe(0);
-    const conflictDetail = JSON.parse(await readFile(join(fixture.home,'extensions/garmin/reports',conflictRun.body.data.work_id,'private.json'),'utf8'));
+    const conflictId = await rawWorkId(conflictRun.body.data.work_id);
+    const conflictDetail = JSON.parse(await readFile(join(fixture.home,'extensions/garmin/reports',conflictId,'private.json'),'utf8'));
     expect(conflictDetail.tables.raw_response.pairs['D2:D1']).toMatchObject({raw_conflicts:2,metadata_conflicts:2,conflicts:3});
     await store.setSetting({ userId:'01940000-0000-7000-8000-00000000000a', key:'garmin.capture_manifest', value:await realpath(join(capture,'manifest.json')), updatedAt:new Date() });
     const textResult = await fixture.run(['ext','run','garmin','import-preflight']);
@@ -118,7 +129,7 @@ capture_manifest(root,paths)`;
         const failed = await fixture.run(['ext','run','garmin','import-preflight','--json']);
         expect(failed.code, scenario.key + failed.stdout + failed.stderr).not.toBe(0);
         expect(failed.body.data?.report?.checks?.[scenario.publicKey], scenario.key + failed.stdout).toBe(false);
-        const failureId = failed.body.data.work_id as string;
+        const failureId = await rawWorkId(failed.body.data.work_id);
         const detail = JSON.parse(await readFile(join(fixture.home, 'extensions/garmin/reports', failureId, 'private.json'), 'utf8'));
         expect(detail.readiness.catalog[scenario.key], scenario.key).toBe(false);
         expect(await fixture.db.rows(`select error_code from brain.work_attempts where work_item_id='${failureId}'`)).toEqual([{error_code:'EXTENSION_REPORT_NOT_READY'}]);

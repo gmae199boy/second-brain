@@ -1,3 +1,5 @@
+import { recallDocsCommand } from './recall-docs.js';
+import { filesShowCommand } from './files-show.js';
 import { mcpServeCommand } from './mcp-serve.js';
 import { channelsListCommand, channelsStatusCommand, channelsResendCommand } from './channels-status.js';
 import { extEnableCommand, extDisableCommand } from './ext-activation.js';
@@ -57,7 +59,7 @@ import { setupRun } from './setup-run.js';
 export const commands: readonly CommandSpec[] = [
   mcpServeCommand,
   channelsListCommand, channelsStatusCommand, channelsResendCommand,
-  recallChunksCommand, recallToolsCommand, recallExpandCommand, sessionsReadCommand,
+  recallChunksCommand, recallToolsCommand, recallDocsCommand, recallExpandCommand, sessionsReadCommand,
   extInstallCommand,
   extRunCommand,
   extLoginCommand,
@@ -69,7 +71,7 @@ export const commands: readonly CommandSpec[] = [
   configGetCommand,
   configSetCommand,
   messagesRedactCommand,
-  filesRedactCommand,
+  filesRedactCommand, filesShowCommand,
   failuresListCommand,
   failuresRetryCommand,
   // A function, not the list: `guide schema` describes the registry it is in,

@@ -317,3 +317,6 @@ export { resolveSelfUser } from './users/self.js';
 export type { CronCalculator } from './ports/cron.js';
 
 export { checkExtensionExecution } from './extensions/replacement.js';
+
+export type * from './ports/document-recall-store.js';
+export * from './recall/documents.js';
