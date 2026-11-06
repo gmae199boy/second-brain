@@ -15,6 +15,25 @@ async function owner(names: string[]) {
   for (const name of names) await writeFile(join(directory,name), 'select 1;');
   return { owner: 'example', directory };
 }
+it('validateOnly checks core and extension histories without applying pending files', async () => {
+  const db = await fresh(), options = { databaseUrl: db.url, clock };
+  expect(await runMigrations({ ...options, coreMaxVersion: 31 })).toMatchObject({ ok: true, to: 31 });
+  const source = await owner(['0001_a.sql']);
+  expect((await runMigrations({ ...options, owners: [source] })).ok).toBe(true);
+  await writeFile(join(source.directory, '0002_b.sql'), 'create table brain.validate_probe(id int);');
+  const before = await db.rows('select * from brain.schema_migrations order by owner,version');
+  const tables = await db.rows("select table_schema,table_name from information_schema.tables where table_schema='brain' order by table_name");
+  expect(await runMigrations({ ...options, validateOnly: true })).toMatchObject({ ok: true, from: 31, to: 31, applied: [] });
+  expect(await runMigrations({ ...options, owners: [source], validateOnly: true })).toMatchObject({ ok: true, from: 31, to: 31, applied: [] });
+  expect(await db.rows('select * from brain.schema_migrations order by owner,version')).toEqual(before);
+  expect(await db.rows("select table_schema,table_name from information_schema.tables where table_schema='brain' order by table_name")).toEqual(tables);
+  await writeFile(join(source.directory, '0001_a.sql'), 'select 2;');
+  expect(await runMigrations({ ...options, owners: [source], validateOnly: true })).toMatchObject({ ok: false, code: 'MIGRATION_FAILED' });
+  await writeFile(join(source.directory, '0001_a.sql'), 'select 1;');
+  expect(await runMigrations({ ...options, coreMaxVersion: 32 })).toMatchObject({ ok: true, to: 32, applied: ['0032_user_keys.sql'] });
+  expect(await runMigrations({ ...options, owners: [source] })).toMatchObject({ ok: true, applied: ['0002_b.sql'] });
+  expect(await db.rows("select to_regclass('brain.validate_probe') as name")).toEqual([{ name: 'brain.validate_probe' }]);
+});
 it('records checksums and the injected clock and applies nothing on repeat', async () => {
   const db = await fresh(); const options = { databaseUrl: db.url, clock };
   expect(await runMigrations(options)).toMatchObject({ ok: true, from: 0, to: 38, applied: ['0001_initial.sql', '0002_supervised_attempts.sql', '0003_supervised_cancel.sql', '0004_attempt_fence.sql', '0005_attempt_outcome_detail.sql', '0006_work_outcome_closed.sql', '0007_work_dependencies.sql', '0008_work_serialization_key.sql', '0009_local_schedules.sql', '0010_work_hold_groups.sql', '0011_extension_registry.sql', '0012_extension_work_kinds.sql', '0013_extension_python_environment.sql', '0014_conversation_chunks.sql', '0015_extension_status_public.sql', '0016_extension_install_progress.sql', '0017_channels.sql', '0018_channel_attempt_results.sql', '0019_channel_legacy.sql', '0020_channel_bundle.sql', '0021_channel_attempt_order.sql', '0022_import_contracts.sql', '0023_health_contract.sql', '0024_health_authority_import.sql', '0025_original_text.sql', '0026_health_json_comparison.sql', '0027_analysis_artifacts.sql', '0028_file_request_metadata.sql', '0029_core_analyses.sql', '0030_analysis_snapshot_inputs.sql', '0031_remove_core_garmin.sql', '0032_user_keys.sql', '0033_schedule_occurrences.sql', '0034_extension_package_identity.sql', '0035_extension_quiesce.sql', '0036_schedule_target_setting.sql', '0037_schedule_dependency.sql', '0038_extension_channel_publish.sql'] });
