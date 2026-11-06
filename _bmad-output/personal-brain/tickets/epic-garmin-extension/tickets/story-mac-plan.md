@@ -17,7 +17,7 @@ context: [AGENTS.md, _bmad-output/personal-brain/automation/runbook.md, extensio
 warnings: [oversized]
 deferred: []
 blocked_at: "2026-11-06"
-blocked_reason: "21.9 legacy 전환이 설치된 옛 Garmin manifest(1.0.0)를 EXTENSION_INVALID로 거부(work·settings·default_schedules, core_compat 없음; postgres.ts:146-147). 제품 수정 반영·release 뒤 재개"
+blocked_reason: "plugin 설치본(detached clone)에서 운영자 TTY offline 확인을 입력할 지원 진입점 없음(npx는 detached 거부 bootstrap.ts:318, hook은 stdin 닫음). 제품 수정 반영·release 뒤 재개"
 ---
 
 <intent-contract>
@@ -84,6 +84,15 @@ blocked_reason: "21.9 legacy 전환이 설치된 옛 Garmin manifest(1.0.0)를 E
   - 그다음 gate: 실행 중인 옛 데몬(launchd `io.github.gmae199boy.second-brain.daemon`)이 daemon 잠금을 쥐고 있어 `acquireOfflineDaemonFence`(`apps/cli/src/daemon/lock.ts`)가 거부한다. 설치 전에 데몬을 내리고 종료를 확인해야 한다. 그다음은 대화형 TTY offline 확인(사람)이다.
 - 판정: 제품 결함(legacy 전환이 실제 옛 Garmin manifest를 읽지 못함). 21.7에서 안전 guard를 우회하거나 같은 코드를 편집하지 않는다. 중앙에 별도 판단으로 보고한다.
 
+- 2026-11-06 재개 2(중앙 `msg_6b9a01dd0b42`): 21.10이 main `bfcb3e3ff359ff5f4ec10e16cd5cc13c55ba8664`에 반영됐다(core plugin 0.1.20, app-ref `8513bf9c46960658e63c26ec6f89f27457e88bf8`, Garmin plugin 0.1.4 그대로). 티켓 브랜치에 원격 main을 정상 병합했다.
+- 재진단 2(읽기 전용, 운영 무변경): 2026-11-06T05:22Z 세션 hook 갱신(8513bf9)은 manifest 검사를 통과하고, 예상한 다음 gate인 daemon 잠금에서 `DB_LOCKED`로 exit 1. 옛 데몬은 계속 동작하고 활성 app은 e33a787/core 27 그대로다.
+- 새 차단(제품 결함): 운영자가 TTY offline 확인을 입력할 지원 진입점이 이 Mac에 없다.
+  - 플러그인 설치가 만든 app clone은 detached HEAD다(현재 e33a787). 대화형 npx 경로는 detached clone을 `고정된 클론은 플러그인의 ref로 갱신하세요`로 거부한다(`tooling/bootstrap/src/bootstrap.ts:318`, 시험 `tooling/bootstrap/test/bootstrap.test.ts:409-422`).
+  - ref를 받는 hook 경로는 설치기 stdin을 닫는다(`childStdio`, 같은 파일 1299행 부근). 따라서 설치기의 `confirmOffline`(`apps/cli/src/install.ts:171`, stdin/stdout TTY 필요)이 제공되지 않고 cross-commit 갱신은 항상 거부된다.
+  - 활성 shim의 `brain setup run`은 옛 app(e33a787)의 설치기다. staged app을 쓰는 새 설치기를 운영자가 직접 띄우는 문서화된 방법이 없다. 21.9·21.10 시험은 bootstrap을 거치지 않는다. staged 승격 시험은 내부 환경 변수와 직접 호출을 쓰고(`packages/postgres/test/install-legacy.test.ts:224-252`), 실제 PTY `setup run` 시험은 합성 app을 새 코드에 미리 연결한다(같은 파일 640-700). 따라서 설치기 확인 기능은 검증됐지만, plugin 설치본을 새 ref로 갱신하는 진입점은 검증되지 않았다.
+  - 내부 환경 변수로 staged 설치기를 손으로 실행하는 것은 지원 절차가 아니므로 하지 않는다.
+- 다른 준비 상태: legacy 기계 전제는 2026-11-06T03:3x 읽기 진단에서 충족됐다. 설치 직전 다시 확인한다. 데몬 중지·종료 확인은 설치 진입점이 생긴 뒤 같은 세션에서 한다(먼저 내리면 대화 수집만 멈춘다).
+
 ## Review Triage Log
 
 ### 2026-11-06 — blocked 계획 문서 quick 리뷰(Sol, `ctx_0039d58cb064`)
@@ -96,6 +105,10 @@ blocked_reason: "21.9 legacy 전환이 설치된 옛 Garmin manifest(1.0.0)를 E
 - verdicts: 확정 결함 0. 결함 판정은 코드와 맞고, 패키지를 먼저 교체하는 지원 경로도 없다(현재 패키지 설치는 설치 core와 실행 core의 일치를 요구하고, 옛 core decoder는 새 패키지 키를 받지 않는다).
 - `[low]` `[patch]` 교체 실험을 세 필드의 독립 문법 비호환으로 읽힐 수 있었다 → 직접 원인(`work.verification_snapshot`)과 상호 참조 거부를 구별해 고쳐 썼다.
 
+### 2026-11-06 — 운영자 TTY 진입점 판정 quick 리뷰 3(Sol, `ctx_84292225f084`)
+- verdicts: 주장 타당. 반증 경로 없음(npx는 detached 거부, `--ref`는 TTY와 관계없이 hook 모드, hook은 stdin·stdout을 로그로, 옛 shim의 `setup run`은 새 ref를 준비하지 않음, `--json`·`--yes`는 offline 확인을 대신하지 않음). 범위는 "detached plugin 설치본을 잠금·staged 승격 계약을 지키며 새 ref로 갱신하면서 TTY 확인을 받는 진입점"이다.
+- `[low]` `[patch]` E2E 구성 설명이 PTY `setup run` 시험까지 일반화했다 → 두 시험 구성을 구별해 고쳐 썼다.
+
 ## Verification
 
 **Manual checks:**
@@ -104,10 +117,10 @@ blocked_reason: "21.9 legacy 전환이 설치된 옛 Garmin manifest(1.0.0)를 E
 
 ## Auto Run Result
 
-**상태: blocked** — 1차 원인(legacy schema 지원 경로 부재)은 21.9로 해소됐다. 2차 원인: 21.9 경로가 설치된 옛 Garmin manifest(1.0.0)를 `EXTENSION_INVALID`로 거부한다(`work`·`settings`·`default_schedules`, `core_compat` 없음). 제품 결함으로 중앙에 보고했다.
+**상태: blocked** — 1·2차 원인(legacy schema 경로, 옛 Garmin manifest)은 21.9·21.10으로 해소됐다. 3차 원인: plugin 설치본(detached clone)에서 운영자가 TTY offline 확인을 입력할 지원 진입점이 없다(npx는 detached 거부, hook은 stdin 닫음). 제품 결함으로 중앙에 보고했다.
 
 - 완료: 읽기 전용 준비(Execution 0). 운영 설치·DB·설정·예약·반입은 무변경이다.
 - 미완료: Execution 1~4 전부와 모든 수락조건. 운영 검증은 하나도 수행하지 않았다.
 - 리뷰: 이 blocked 계획 문서에 독립 Sol quick 리뷰 1회(`ctx_0039d58cb064`) — 발견 3건(공개 경로 비식별화, 설치 전 예약 보류 조건, 모델 실행기 로그인 항목)을 모두 이 문서에 반영했다. 제품 코드 diff는 0이다.
-- 재개 조건: 옛 Garmin manifest를 legacy 전환에서 안전하게 다루는 제품 수정이 main에 반영되고 core plugin에 release될 것. 그다음 설치 직전에 옛 데몬을 내리고 종료를 확인한다. 이어서 사람 입력: 설치기의 대화형 offline 확인, D3를 포함한 계정 귀속 확인, 전용 tokenstore 로그인/MFA와 0600 binding, `garmin.*` 설정값(connection·timezone·model·agent·effort·timeout·수신 conversation), 선택한 모델 실행기(Codex 등)의 로그인 상태 확인과 필요하면 사람이 직접 로그인, 최종 capture 전 원본 파일 목록 확인.
+- 재개 조건: plugin 설치본에서 같은 설치 잠금·staged app·대상 ref로 설치기에 TTY를 넘기는 지원 대화형 진입점이 main에 반영되고 core plugin에 release될 것. 그다음 설치 직전에 legacy 전제를 다시 확인하고, 옛 데몬을 내린 뒤 종료를 확인한다. 이어서 사람 입력: 설치기의 대화형 offline 확인, D3를 포함한 계정 귀속 확인, 전용 tokenstore 로그인/MFA와 0600 binding, `garmin.*` 설정값(connection·timezone·model·agent·effort·timeout·수신 conversation), 선택한 모델 실행기(Codex 등)의 로그인 상태 확인과 필요하면 사람이 직접 로그인, 최종 capture 전 원본 파일 목록 확인.
 - 재개 지점: `.brain-automation/private/runbook-21.7.md` 단계 1.
