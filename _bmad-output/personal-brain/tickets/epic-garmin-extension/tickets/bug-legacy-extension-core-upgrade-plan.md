@@ -81,7 +81,7 @@ deferred:
 - [x] `apps/cli/src/install.ts` -- legacy 확인 문구(기계 사실/운영자 확인 구별), 비TTY 미제공 유지 -- AC3
 - [x] `packages/postgres/test/install-legacy.test.ts` -- L1~L6 실제 PG 시험(합성 core27 확장·대화·파일·채널·설정·예약 변경·schedule_successes 회계, 전후 해시 대조), 중단 주입(31/35/gate 직후, 확장 migration 실패, app 승격 후) 재시도, 경합(확인 대기 중 daemon/advisory/설치 잠금 실패), 비대화 표면(`setup run --json` dispatch 또는 `runInstaller` non-TTY) 거부 -- AC1~6
 - [x] `packages/postgres/test/install-orbstack.test.ts` -- 기존 legacy 사례 메시지 정합, 기존 N1 회귀 유지 -- AC5
-- [ ] release: 구현 commit 뒤 별도 release commit에서 `plugin/app-ref`를 그 이전 구현 commit으로, core plugin version 증가, Garmin plugin app-ref/version/package digest·manifest를 `dbcd369` 패턴과 시험이 요구하는 대로 동기화 -- 21.7 설치 경로
+- [x] release: 구현 commit `118df4718cb44ec99a12f6e24048f5131b2df923` 뒤의 별도 release commit `5e7d5f85b2783600cfb8a171d90fa68f736e653b`에서 `plugin/app-ref`를 그 구현 commit으로 바꾸고 core plugin version을 0.1.17에서 0.1.18로 올렸다 -- 21.7 설치 경로. Garmin plugin(app-ref·version·package digest·manifest)은 이번 변경이 `extensions/garmin`·`plugins/garmin` 바이트와 Garmin 계약을 바꾸지 않아 동기화 대상이 아니므로 그대로 두었다. release 후 `tooling/bootstrap/test/{plugin,garmin-plugin,extension-plugin}.test.ts` 30건 통과(`.brain-automation/logs/20261106T023504Z-release-66c5b04b/`)
 
 **Acceptance Criteria:**
 - Given 소유 전용 PG·격리 home의 합성 core27 설치본이 L1 전제를 갖췄을 때, when 지원 대화형 설치 경로로 갱신하고 운영자가 새 challenge를 입력하면, then 같은 DB가 core 38·확장 최신으로 이행되고 기억·설치 이력·enabled/hold·예약 변경·회계가 forward migration 허용 정리 외 보존되며 확장 활성·예약 재개·수집은 일어나지 않는다.
@@ -171,6 +171,17 @@ deferred:
   - `[medium]` `[patch]` E4-1(edge) SIGKILL 자식 대기 exit 기준 출력 경합 — R4-2와 동일 원인(Task 9)
 - 후속 리뷰 판단: 이번 후속 패스에서 high patch 0 → step-04 규칙상 수렴. 추가 독립 리뷰 대신 최종 바이트 전체 회귀로 확인.
 
+### 2026-11-06 — Review pass (r5 중앙 요청 증분 확인, Sol 단일 렌즈)
+- 범위: R4 지적 처분과 Task 9 증분(diff-of-diff). 정적 독립 검사이며 시험 실행 결과와 별개다. 보고 `.brain-automation/review-r5-task9.md`.
+- verdicts: R4 11건 재판정 — 해결 9, reject 타당 1(R4-3, 합성 비밀번호 한정), 부분 해결 1(R4-1). 새 제품 결함 0.
+- findings:
+  - `[medium]` `[patch]` R5-1 R4-1 거부 시험이 app 승격·prepare 미진입과 확인 중 callback 실행을 직접 관측하지 않음 — staged app 구성·prepare 부작용 부재·callback 호출 단언, 확인 후 빈 이력 변형 추가(Task 10)
+
+- 처분(r5 후속): Task 10이 R5-1 시험을 추가했다(staged app·callback·prepare 관측, 정상 대조군 포함).
+  - 최종 전체 회귀 `20261106T024343Z-final3-260ff249`에서 `pnpm test`가 종료 1(5 failed)로 끝났다. 원인은 시험 설계다. 클러스터 전역 role `brain_app`의 비밀번호로 prepare를 관측했고, 대조군이 그 비밀번호를 실제로 바꿔 병렬 시험(`install-orbstack` transcripts)과 서로 간섭했다. 제품 결함은 아니었다.
+  - Task 11이 관측 방식을 고쳤다. 대상 DB 범위 `public` 스키마 CREATE 권한이 회수됐는지로 prepare 진입을 관측하고, 공유 app 비밀번호를 쓴다. 두 파일을 함께 돌린 병렬 실행 115건이 통과했다.
+  - 이어 `20261106T030510Z-final4-8f379450`에서 `pnpm test`(4282 passed, 1 skipped)와 `pnpm test:python`(66 passed)이 순차로 종료 0이었다. R5-1은 해결됐다. 시험 전용 변경이고 대조군이 관측 장치의 작동을 입증하므로 추가 독립 리뷰는 열지 않았다(지휘자 판단).
+
 ## Design Notes
 
 legacy 판정 기준을 DB 상태가 아니라 `installed.json`의 옛 core 신원으로 두는 이유: DB는 중단 재시도에서 27·31·35·38 어디에나 있을 수 있지만, 옛 core가 실행 주체였다는 사실과 그 실행기가 새 fence를 모른다는 위험은 설치 기록이 새 core로 바뀔 때까지 그대로다. 따라서 legacy 설치 기록이 남아 있는 한 매 시도 전제 재확인과 새 운영자 확인을 요구하고, 정지 표가 생긴 뒤에는 새 계약의 gate로 이어 간다.
@@ -204,3 +215,8 @@ legacy 판정 기준을 DB 상태가 아니라 `installed.json`의 옛 core 신�
   - 0033 DST oracle과 Ctrl-C 경로는 `deferred`에 남겼다.
   - 합성 testext 기반 시험이며, 실제 옛 Garmin 패키지의 manifest 호환은 21.7 운영 진단에서 확인해야 한다.
 - Release: 구현 commit `118df4718cb44ec99a12f6e24048f5131b2df923` 다음의 별도 release commit에서 `plugin/app-ref`를 `118df4718cb44ec99a12f6e24048f5131b2df923`로 올리고 `plugin/.claude-plugin/plugin.json` version을 0.1.17에서 0.1.18로 올렸다. Garmin 플러그인은 바꾸지 않았다.
+- 수락 보완(중앙 msg_b5ecfec9e65f):
+  - r5 Sol 독립 확인 결과는 R4 해결 9, reject 타당 1, 부분 해결 1(R4-1 시험 관측)이고 새 제품 결함은 0이다.
+  - Task 10·11로 순서 관측 시험을 보강했다.
+  - 최종 바이트에서 `pnpm test`가 종료 0(187 files, 4282 passed, 1 skipped), 이어 `pnpm test:python`이 종료 0(66 passed)이었다. 로그는 `.brain-automation/logs/20261106T030510Z-final4-8f379450/`이다.
+  - 직전 final3 실패 로그도 보존했다.

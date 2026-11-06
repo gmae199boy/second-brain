@@ -221,6 +221,54 @@ it.each(['tail','empty'] as const)('L3 core %s 이력 누락은 확인과 변경
   await expect(readFile(join(k.home, 'run/bootstrap-extension-migrations.json'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
+it.each(['before-tail','before-empty','after-tail','after-empty','control'] as const)('core 이력 %s에서 승격과 prepare 순서를 관측한다', async mode => {
+  const { execFile } = await import('node:child_process'); const { promisify } = await import('node:util');
+  const run = promisify(execFile), k = await legacyWorld();
+  const repo = fileURLToPath(new URL('../../../', import.meta.url)), app = join(k.home, 'app'), stage = join(k.home, `.app-stage-${randomUUID()}`);
+  await run('git', ['clone','--quiet','--no-hardlinks',repo,app]);
+  await run('git', ['clone','--quiet','--no-hardlinks',repo,stage]);
+  const head = (await run('git',['-C',app,'rev-parse','HEAD'])).stdout.trim();
+  const appFile = await readFile(join(app, 'README.md'));
+  await mkdir(join(stage,'apps/cli/dist'),{recursive:true});
+  await cp(fileURLToPath(new URL('../../../apps/cli/dist/build.json',import.meta.url)),join(stage,'apps/cli/dist/build.json'));
+  await mkdir(join(k.home,'install.lock')); const lockOwner = `${process.pid} ${randomUUID()}\n`;
+  await writeFile(join(k.home,'install.lock/owner'),lockOwner);
+  const deleteSql = `delete from brain.schema_migrations where owner='core' ${mode.endsWith('tail') ? 'and version=27' : ''}`;
+  if (mode.startsWith('before')) await k.db.query(deleteSql);
+  const before = await snapshot(k.db);
+  await k.db.query('grant create on schema public to public');
+  const publicCreate = async () => (await k.db.rows("select exists(select 1 from pg_namespace n cross join lateral aclexplode(n.nspacl) a where n.nspname='public' and a.grantee=0 and a.privilege_type='CREATE') as granted"))[0];
+  expect(await publicCreate()).toEqual({granted:true});
+  const challenge = join(k.home,'challenge.txt');
+  const moduleUrl = new URL('../../../apps/cli/dist/install/postgres.js',import.meta.url).href;
+  const pgRequire = new URL('../package.json',import.meta.url).href;
+  const script = `import { writeFile } from 'node:fs/promises'; import { createRequire } from 'node:module';
+    import { installPostgres } from ${JSON.stringify(moduleUrl)};
+    const pg=createRequire(${JSON.stringify(pgRequire)})('pg'), env=process.env;
+    const runner=async r=>r.args[0]==='volume'?{ok:false,stdout:'',stderr:'no such volume',message:'missing'}:{ok:true,stdout:'',stderr:''};
+    const result=await installPostgres({home:env.CASE_HOME,urlEnv:'BRAIN_DATABASE_URL',env,clock:{now:()=>new Date('2026-10-28T01:02:03.456Z')},runner,secrets:{adminUrl:env.CASE_DB,appPassword:'brain-test-app'},databaseName:env.CASE_NAME,confirmOffline:async r=>{await writeFile(env.CASE_CHALLENGE,r.challenge); if(env.CASE_DELETE){const client=new pg.Client({connectionString:env.CASE_DB});await client.connect();try{await client.query(env.CASE_DELETE)}finally{await client.end()}} return r.challenge;}});
+    process.stdout.write(JSON.stringify(result));`;
+  const env = { ...process.env, CASE_HOME:k.home, CASE_DB:k.db.url, CASE_NAME:k.options.databaseName, CASE_CHALLENGE:challenge, CASE_DELETE:mode.startsWith('after') ? deleteSql : '', SECOND_BRAIN_STAGED_APP:stage, SECOND_BRAIN_PREVIOUS_APP_HEAD:head, SECOND_BRAIN_INSTALL_LOCK_OWNER:lockOwner };
+  const result = JSON.parse((await run(process.execPath,['--input-type=module','-e',script],{env,timeout:30_000})).stdout);
+  if (mode === 'control') {
+    expect(result).toMatchObject({ok:true}); expect(await readFile(challenge,'utf8')).toContain('확인 ');
+    expect(await publicCreate()).toEqual({granted:false});
+    expect(JSON.parse(await readFile(join(k.home,'.app-promotion.json'),'utf8'))).toMatchObject({target:k.build.commit,hadPrevious:true});
+    expect(await readFile(join(app,'apps/cli/dist/build.json'),'utf8')).toEqual(await readFile(join(stage,'apps/cli/dist/build.json'),'utf8'));
+  } else {
+    expect(result).toMatchObject({ok:false,code:'DB_LOCKED'});
+    if (mode.startsWith('after')) expect(await readFile(challenge,'utf8')).toContain('확인 ');
+    else await expect(readFile(challenge)).rejects.toMatchObject({code:'ENOENT'});
+    expect(await publicCreate()).toEqual({granted:true});
+    expect(await readFile(join(app,'README.md'))).toEqual(appFile);
+    expect((await run('git',['-C',app,'rev-parse','HEAD'])).stdout.trim()).toBe(head);
+    expect((await run('git',['-C',app,'status','--porcelain'])).stdout).toBe('');
+    for (const path of ['.app-promotion.json','.app-next','.app-previous','run/bootstrap-extension-migrations.json']) await expect(readFile(join(k.home,path))).rejects.toMatchObject({code:'ENOENT'});
+    const expected = mode === 'after-tail' ? before.ledger.filter(row=>!(row.owner==='core' && row.version===27)) : mode === 'after-empty' ? before.ledger.filter(row=>row.owner!=='core') : before.ledger;
+    const after = await snapshot(k.db); expect(after.ledger).toEqual(expected); expect(after.registry).toEqual(before.registry);
+  }
+}, 60_000);
+
 it.each(['missing','wrong','home','old','enabled','hold','schedule','work','claim','attempt','completed-attempt','core-tail','checksum','core-checksum','symlink','manifest','daemon','installed','build','home-lock','registry','gate','journal'] as const)('L4 %s 확인은 변경 전에 거부한다', async mode => {
   const k = await legacyWorld();
   if (mode === 'gate') {
