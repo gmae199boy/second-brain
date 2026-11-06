@@ -323,3 +323,15 @@
 | 운영 전제21.7 |credential/profile/self연결·모델설정·실제배포/옛예약전환·A1/legacy/offline 제약 |합성/fake시험통과가실계정귀속/실모델/OCR/운영인수완료는아님.이전운영조치와BH04상대링크한계유지 |
 
 core0.1.17/Garmin0.1.4 ref는이전구현472caa7,확장1.2.1/package85파일정합.실제운영변경없음.상세로그/소유자원/실패장부/독립감사는워크트리와보호된중앙로컬archive에보존한다.21.7 gate는21.8원격main반영을확인한뒤충족한다.
+
+## 21.7 운영 준비 — legacy 설치 전환 결함으로 차단,21.9 분리
+
+근거:21.7 지휘자의 읽기전용 진단과 [21.9 버그](../tickets/epic-garmin-extension/tickets/bug-legacy-extension-core-upgrade.md),에픽Notes의2026-11-06 중앙판단. core27·비활성 등록확장이 새정지표 부재로offline확인 전 무조건DB_LOCKED를 받아 지원 이행이 없다. 활성app·운영DB·옛예약은보존하며새writer없음.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 필수 차단 / 제품결함 |legacy 등록확장의 지원 오프라인 전환 경로 |21.9에서합성구버전설치로정상/거부/중단복구·공용기억보존·일반회귀를실행검증하고main반영후21.7재개.21.8기존gate는유효하지만새수정검증을대체하지않음 |
+| 승인된 범위 |비활성/보류·work/attempt0·이전쓰기실행종료·새진입차단·운영자offline확인 조건부지원 |조건불명은변경전거부. 기존self/backfill/migration순서·A1잠금/owner보호유지. guard삭제/registry SQL삭제/빈DB/강제종료우회금지 |
+| 지휘 소유권 |21.7지휘자는안전한준비만지속 |예비capture·계정근거조사·private복구runbook.제품코드중복구현/새writer/새예약활성/옛예약중지금지.부분최종보고뒤중앙이21.9구현배정 |
+
+새버그는구현시험유예대상이아니다. 반복test:changed·마무리pnpm test→pnpm test:python순차와독립리뷰/필요후속필수.운영계정/입력확인과실전환은21.7소관이다.
