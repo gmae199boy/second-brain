@@ -3,7 +3,7 @@ title: 'Tracer: 반입 정리 조회가 완료 이력 10만 건에서도 같은 
 type: 'feature'
 ticket: '1'
 created: '2026-11-06'
-status: 'in-review'
+status: 'built'
 baseline_revision: '6ad59955f6fc93a275441c16ee7116ae3f961460'
 route: 'full'
 route_source: 'pinned'
@@ -181,7 +181,7 @@ deferred: []
 | IA3 | 수락 | 실store unhanded warm-up+3회·hash/행수·전체EXPLAIN과 compare 동등성 필수. 시간 비율은 참고. |
 | IA5 | 채택범위 수락·한계 보존 | BH8와 같은 원인. 호환성/표시를 확인하되 올바른baseline/동일서버·부하 자동 인증으로 확대하지 않음. |
 
-BH8/IA5의 넓은 출처 자동 인증, 실제 파일 unlink, 모든 endpoint/SQL 제한까지 해결됐다는 주장은 하지 않는다. 행별 현재 파일·행 근거는 독립 원문에 있다. 이 보완은 T6 코드에 새 수정을 요구하지 않는다. 별도로 중앙 `msg_727760111f9c`가 새 main의21.10과 schema39 실제 통합을 지시했으므로, 해당 소스 통합·독립 확인·영향검증은 아래에 이어 기록한다. 현재 in-review는 이 통합 검증 대기 상태다.
+BH8/IA5의 넓은 출처 자동 인증, 실제 파일 unlink, 모든 endpoint/SQL 제한까지 해결됐다는 주장은 하지 않는다. 행별 현재 파일·행 근거는 독립 원문에 있다. 이 보완은 T6 코드에 새 수정을 요구하지 않는다. 별도로 중앙 `msg_727760111f9c`가 새 main의21.10과 schema39 실제 통합을 지시했으므로, 해당 소스 통합·독립 확인·영향검증은 아래에 이어 기록한다. 이때 in-review로 관리했으며 아래 실제 통합 영향 검증으로 해소했다.
 
 ### 2026-11-06 — main21.10/schema39 통합 독립 확인
 
@@ -202,7 +202,7 @@ BH8/IA5의 넓은 출처 자동 인증, 실제 파일 unlink, 모든 endpoint/SQ
 
 migrate.ts는main대비CORE_SCHEMA_VERSION38→39한줄이며 main의progressReady계약·분기·3D000외오류재전파를 그대로 보존한다. 반대부모대비는progress관측 변경만 추가됐다. 과거27/11/15/16fixture 보존,38전용이행사례를별도증명했다고주장하지않는다. migration0001~0039 tree `b2fea89c10a3f11b6802a4a18eff92c7f6ad659d` 및 legacy SQLfixture는해당부모대비바이트동일. main의plugin app-ref `8513bf9c46960658e63c26ec6f89f27457e88bf8`/version0.1.20을 그대로 받고 수동수정하지 않았다.
 
-imports.ts·0039·tooling/query-perf의바이트는제품커밋과동일하므로당시슬롯의성능증거는그범위에서재사용한다. 이정적확인이나기존회귀가새설치/교체와schema39의동시실행증거는아니므로, 개발/독립확인이끝난뒤새전용tmpfsPG에서maxworkers2 test:changed를실행한다. 현재in-review는그실제영향검증이남은상태이며기존시험만으로통합완료처리하지않았다.
+imports.ts·0039·tooling/query-perf의바이트는제품커밋과동일하므로당시슬롯의성능증거는그범위에서재사용한다. 이정적확인이나기존회귀가새설치/교체와schema39의동시실행증거는아니므로, 개발/독립확인이끝난뒤새전용tmpfsPG에서maxworkers2 test:changed를실행한다. 해당보완은실제영향검증이끝날때까지in-review로관리했고결과는아래에기록했다. 기존시험만으로통합완료처리하지않았다.
 
 ## Design Notes
 
@@ -255,13 +255,13 @@ imports.ts·0039·tooling/query-perf의바이트는제품커밋과동일하므�
 - 최초 두 취소 실패의 처분: 동일 `vitest list --changed origin/main --filesOnly --json`의 `selected-files.json`으로 ext-install-resume.test.ts가 97파일에 포함됨을 확인했다. 제품/시험 코드·단언·300ms를 바꾸지 않고 제한 worker에서 모두 통과했다. `bin.ts`의 import/dynamic discovery 뒤 `ext-install.ts:7-12`에서 신호 처리기를 등록하지만 시험은 준비 이벤트 없이300ms에 SIGINT를 보낸다. 최초 null종료는 준비 전 신호와 일치하나 정밀 계측하지 않아 정확한 원인을 확정하지 않는다. 실행 병렬 수를 낮춘 환경에서 비재현/검증 통과로 처분하고 최초 실패와 부하 민감성은 잔여 위험으로 유지한다. 남은 재현 기능 결함이나 미실행 필수 시험은 없다.
 - T6 추가 경로 스모크: 기준 export `--sizes 1000 --candidate both --query-variant rewritten`, 종료0. 세 조건 동일 Client 원문/재작성 목록 hash 동일, shared pending 존재 여부 동일, cleaned:false/removeCalled:false. `.brain-automation/logs/20261106-t6-rewritten-smoke/`. 이 시간은 기능 확인이며 확정 성능 표에 넣지 않았다.
 - 자원: 전체 회귀 fixture172개·재검증193개가 각각 모두 removed 이벤트로 끝났고 미삭제0. 일시 remove-failed 각5건도 후속 removed를 대조했다. T1 중단 fixture3개도 원래 생성 로그/label/활성client0의 새 근거 뒤 정확ID 삭제·부재 확인했다. 전용 perf/test tmpfs 두 컨테이너는 모든 검증 뒤 ticket22.1 label·활성client0을 확인하고 삭제·부재 확인했다. qp_ DB0, 과거 중단의 시험 DB5개는 전용 test클러스터와 함께 제거했다. `.brain-automation/logs/{t1-owned-fixture-*,final-owned-pg-*}` 및 각 suite의 pg-resources.jsonl/resource-summary.json.
-- 시험 전에 깨끗했던 tracked `extensions/garmin/tests/__pycache__/fixtures.cpython-314.pyc` 생성 산출물만 원복했다. 제품·시험 소스는 T6 이후 변경하지 않았다. 최종 YAML 파싱·diff 검사·경로 정책 검사를 수행했다.
+- 시험 전에 깨끗했던 tracked `extensions/garmin/tests/__pycache__/fixtures.cpython-314.pyc` 생성 산출물만 원복했다. 통합 전 회귀/재검증 단계까지 제품·시험 소스는 T6 이후 변경하지 않았다. 이후 main 통합과 schema 기대 수정은 별도 증거로 아래에 기록했다. 최종 YAML 파싱·diff 검사·경로 정책 검사를 수행했다.
 
 ## Auto Run Result
 
-- 통합 전 결과(제품 커밋 `a1242bd3fc77233593ef886b4c2e8de8db5e177e`): **built**. 최신 main21.10과의 통합 검증은 추가 작업으로 진행 중이다. 새 forward migration0039의 두 인덱스와 재사용 가능한 성능 러너를 구현했다. 실제 제품 조회 SQL은 유지했고, 확정 슬롯에서10만 pending100은17.177916→0.778916ms(0.045344배), idle은 세 크기 모두 개선됐다. 모든 수락조건의 결과·공유 차단·크기/쓰기 비용·시험 증거는 위에 있다.
-- 변경 파일: migration0039(인덱스2개), migrate.ts(schema39), 버전 기대 시험11파일, 새 import-cleanup-indexes.test.ts(인덱스/정렬/500제한/공유 차단과 해제), tooling/query-perf의 CLI·core/revision/시나리오·순수 시험·README, 이 plan. 과거 migration·imports.ts·기존 import-safety.test.ts·lockfile·플러그인 ref/version은 변경하지 않았다.
-- 리뷰: 독립 Sol/medium4명×2pass. r1 26건(high0/medium14/low11/false1), r2후속23건(high0/medium7/low15/false1). 각 finding의 patch/기각과 근거는 Review Triage Log에 모두 보존했다. T4/T5/T6으로 채택 patch를 반영했고, r2는 후속pass high0으로 수렴했다. 후속 독립 리뷰 권고false; deferred는 빈 단일 목록이다. r1의 패치10묶음, r2의 patch행14건(중간7·낮음7, 중복 근거 포함)을 반영했다.
+- 최종 결과: **built**. 제품 커밋 `a1242bd3fc77233593ef886b4c2e8de8db5e177e`의 구현·성능 증거를 보존하고 최신 main21.10 및17.4 정상 통합·독립 확인·실제 영향/관련 검증을 완료했다. 새 forward migration0039의 두 인덱스와 재사용 가능한 성능 러너를 구현했다. 실제 제품 조회 SQL은 유지했고, 확정 슬롯에서10만 pending100은17.177916→0.778916ms(0.045344배), idle은 세 크기 모두 개선됐다. 모든 수락조건의 결과·공유 차단·크기/쓰기 비용·시험 증거는 위에 있다.
+- 변경 파일: migration0039(인덱스2개), migrate.ts(schema39), 버전 기대 시험11파일, 새 import-cleanup-indexes.test.ts(인덱스/정렬/500제한/공유 차단과 해제), tooling/query-perf의 CLI·core/revision/시나리오·순수 시험·README, 이 plan. 과거 migration·imports.ts·기존 import-safety.test.ts·lockfile은 수정하지 않았다. 플러그인 ref/version은 자체 수정하지 않고 수락 main의 릴리스를 정상 병합으로 보존했다.
+- 리뷰: 독립 Sol/medium4명×2pass. r1 26건(high0/medium14/low11/false1), r2후속23건(high0/medium7/low15/false1). 각 finding의 patch/기각과 근거는 Review Triage Log에 모두 보존했다. T4/T5/T6으로 채택 patch를 반영했고, r2는 후속pass high0으로 수렴했다. 후속 독립 리뷰 권고false; deferred는 빈 단일 목록이다. 추가로 T6후14행과21.10/schema39통합8행을각Sol/medium이독립확인했고새결함0·수정요구0이었다. r1의 패치10묶음, r2의 patch행14건(중간7·낮음7, 중복 근거 포함)을 반영했다.
 - 기각 근거: 긴 locator B-tree 키/강제 종료 신호 처리의 드문 개발 경로, 이미 정한 idle10% 허용의 반복 관찰, 측정 checkout의 pg를 쓰려고 package.json을 제거한 설계, 중복·기술 관찰은 원문 행별 사유에 따랐다. 쓰기 배치의 부분 인덱스 비용 누락은 trigger가 같은 배치에 정리 행을 INSERT하므로 false다. 어떤 필수 수락조건도 defer로 숨기지 않았다.
 - 잔여 위험: 300ms 고정 대기의 기존 취소 시험은 높은 부하에서 신호 처리기 준비 경합에 민감할 수 있다. 이번 제한 worker 검증은 통과했으나 최초 실패의 정확한 시간 원인은 계측하지 않았다. sub-ms wall3표본의 실행 간 잡음도 최초 실패와 함께 보존했다. 긴 locator 인덱스 키와 강제 SIGKILL 시 러너 DB 정리 누락의 리뷰 기각 위험은 그대로다.
 - 운영 조치/권고: 현재 티켓의 필수 작업과 소유 합성 자원 정리는 완료했다. 향후 별도 시험 안정화에서 두 취소 시험이 readiness 근거를 기다리도록 개선할지 판단하는 권고를 남긴다(이번 티켓에서는 미실행, 제품/단언 변경 없음). 중앙은 브랜치 결과 수락·main 통합/push·후속 항목 모음 반영을 수행한다. 워크트리·로컬 브랜치·원문 실행 증거는 보존한다.
@@ -272,4 +272,16 @@ imports.ts·0039·tooling/query-perf의바이트는제품커밋과동일하므�
 - `VITEST_MAX_WORKERS=2 BRAIN_TEST_DATABASE_URL=<전용54222> pnpm test:changed -- origin/main`, ref `bfcb3e3ff359ff5f4ec10e16cd5cc13c55ba8664`,05:31:15~05:46:17 UTC, 시작load2.59/종료7.35, 전체종료0.
 - 기본98파일·2042시험통과(기존조건부skip1),394.35초; PG전체41파일·680시험통과,137.46초; Python전체15파일·66시험통과,364.74초. 새legacy-manifest·인덱스·기존공유locator·최초취소시험을포함한선정JSON을보존했다.
 - fixture194개생성/194개삭제,미삭제0. 로그 `.brain-automation/logs/20261106-main-integration-verify/`의명령·시각·부하·tested-head/source diff·선정·종료코드·resource-summary.json을보존한다. 전용tmpfs `brain-221-integration-test`(21d7a128c4c1,54222)는뒤의관련시험까지사용후정리한다.
-- 중앙 `msg_237712735cc5`가이실행중수락한17.4 main `3a263cccf2ef6c921d90cdc6f467ebdca0ce011e`와21.11문서를추가정상merge하도록지시했다. 현재suite를중단/ref변경없이끝낸뒤fetch했다. 추가18파일은recall skill/합성fixture·CLI/MCP시험·eval·coreSQL경계시험·선정규칙/README/문서와plugin0.1.21이며제품SQL/migration변경은없다. 이최신통합뒤실제관련recall-health/정적계약시험만수행하고성능측정·이미통과한전체회귀는반복하지않는다. 그보완동안상태in-review를유지한다.
+- 중앙 `msg_237712735cc5`가이실행중수락한17.4 main `3a263cccf2ef6c921d90cdc6f467ebdca0ce011e`와21.11문서를추가정상merge하도록지시했다. 현재suite를중단/ref변경없이끝낸뒤fetch했다. 추가18파일은recall skill/합성fixture·CLI/MCP시험·eval·coreSQL경계시험·선정규칙/README/문서와plugin0.1.21이며제품SQL/migration변경은없다. 이최신통합뒤실제관련recall-health/정적계약시험만수행하고성능측정·이미통과한전체회귀는반복하지않는다. 그보완동안상태in-review로관리했고최종결과는아래에기록했다.
+
+### 최신 main17.4 통합과 최소 관련 검증 — 최종 완료
+
+- 중앙 `msg_237712735cc5`에 따라 정상merge `fa97231659820c58f71df16021d908256f6a1251`로 main `3a263cccf2ef6c921d90cdc6f467ebdca0ce011e`를받았다. 부모 `e013717fb1ab71216d03a64db68397b82c103bbf`, `3a263cccf2ef6c921d90cdc6f467ebdca0ce011e`,충돌0/수동수정0. 원래baseline·제품commit·21.10통합이력을보존했다.
+- 같은Terra의Task2 T8(`task_8b8ea98c9bf6`/`ctx_3fb0d01083dd`) 원문 `.brain-automation/reports/t8-recall-main-integration.md`. 추가18파일은 수락main과동일,21.11문서도그대로보존했다. plugin version0.1.21,app-ref `8513bf9c46960658e63c26ec6f89f27457e88bf8`을받았고자체변경하지않았다.
+- T8와지휘자가 premerge대비 core/postgres/CLI 제품src·0001~0039migration·Garmin제품src/migrations·query-perf·app-ref를Gitdiff/블롭목록으로대조해바이트불변을확인했다. CORE39/progressReady와legacy-manifest고정39기대8행도유지됐다. build/typecheck/diff-check각0. `.brain-automation/logs/t8-recall-integration/`의source.diff/source.exit/pre-source.tree/post-source.tree/main-files.diff및종료코드가근거다. 추가수동source수정이없어앞선통합독립확인의제품계약범위도보존된다.
+- 중앙의최소영향지시에따라 `VITEST_MAX_WORKERS=2`로아래두명령만전용합성환경에서순차실행했다(05:51:34~05:52:00UTC,부하3.66→3.28). `.brain-automation/logs/20261106-recall-related-verify/`에명령·시각·tested-head·원문·종료코드·자원정리를보존한다.
+  - `pnpm exec vitest run packages/core/test/extension-sql-boundary.test.ts tooling/bootstrap/test/recall-skill.test.ts tooling/bootstrap/test/recall-eval.test.ts tooling/test-db/test/test-changed.test.ts`:4파일·19시험통과,6.10초,종료0.
+  - `pnpm exec vitest run --config apps/cli/python-test/vitest.config.ts apps/cli/python-test/recall-health.test.ts`:1파일·3시험통과,18.68초,종료0. 실제schema39/Garmin설치·합성건강CLI/MCP·미설치/비활성·시간대거부를확인했다.
+- recall-eval시험은합성판정기자기시험이며실제에이전트평가반복이아니다. 제품성능코드가같으므로성능측정·이미통과한전체회귀는추가반복하지않았다. 기존성능수치는원래측정대상/슬롯증거로보존하고새통합실행은위영향/관련시험으로구분한다.
+- 관련fixture3/3정리. 통합용PG `21d7a128c4c16bbaacc48ad54e5e824d146ec2125377f36c9dd7cf3f2eb8c215`의ticket/phase label·tmpfs·활성client0·시험DB0을확인한뒤정확ID삭제/부재0행을확인했다. owned-pg-*로그보존. 앞선fixture172/172·193/193·194/194와T1잔존3/전용PG2의정리증거도그대로남았다. 알려진소유실행자원잔존0,워크트리/로컬브랜치/원문증거보존.
+- 최종source검증대상은 `fa97231659820c58f71df16021d908256f6a1251`이며이후이plan최종화는문서만바꾼다. 필요한독립확인·실제영향/관련검증·정리완료후상태built로복원했다. 원래baseline/최초실패와잔여위험을보존하며중앙상태·main push·에픽전이는여전히중앙소관이다.
