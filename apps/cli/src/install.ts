@@ -172,7 +172,10 @@ export function systemInstallDeps(options: { runner?: CommandRunner; secrets?: {
         const { createInterface } = await import('node:readline/promises');
         const terminal = createInterface({ input: process.stdin, output: process.stdout });
         try {
-          return await terminal.question(`\n${request.home}의 이전 core ${request.previousCommit}에서 대상 ${request.targetCommit}로 갱신합니다. 새 데몬과 확장 명령 진입을 차단했습니다. 이전 데몬·직접 명령과 모든 자식의 공유 상태 쓰기가 끝났음을 직접 확인한 경우에만 아래 문구를 입력하세요. 이 확인은 운영자의 확인이며 기계가 종료를 증명한 것이 아닙니다.\n${request.challenge}\n> `);
+          return await terminal.question(`\n${request.legacySchema !== undefined ? `기계 확인: 옛 schema ${request.legacySchema} 설치이며 등록 확장은 비활성이고 보류되어 있고 관련 예약·미완료 일감도 보류되어 있으며 claim과 열린 attempt가 없습니다.\n` : ''}${request.home}의 이전 core ${request.previousCommit}에서 대상 ${request.targetCommit}로 갱신합니다. 새 데몬과 확장 명령 진입을 차단했습니다. 이전 데몬·직접 명령과 모든 자식의 공유 상태 쓰기가 끝났음을 직접 확인한 경우에만 아래 문구를 입력하세요. 이 확인은 운영자의 확인이며 기계가 종료를 증명한 것이 아닙니다.\n${request.challenge}\n> `);
+        } catch (error) {
+          if ((error as { code?: string }).code === 'ABORT_ERR') return '';
+          throw error;
         } finally { terminal.close(); }
       } } : {}) }),
     prompts: clackPrompts(),

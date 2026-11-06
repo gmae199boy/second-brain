@@ -18,7 +18,7 @@ import { acquireOfflineDaemonFence } from '../daemon/lock.js';
 import { STAGED_PROMOTION_PROTOCOL } from './promotion-protocol.js';
 const runningBuild = readBuildIdentity();
 export interface PostgresInstallReport { project: string; volume: string; port: number; schema_version: number; applied: readonly string[]; owner_created: boolean; owner_name: string; compose_started: boolean; offline_confirmation?: { home: string; previous_commit: string; target_commit: string; method: 'operator' }; legacy_sqlite_path?: string | null; import?: import('second_brain').BrainDrainReport | null }
-export interface OfflineConfirmationRequest { home: string; previousCommit: string; targetCommit: string; challenge: string }
+export interface OfflineConfirmationRequest { home: string; previousCommit: string; targetCommit: string; challenge: string; legacySchema?: number }
 type InstallOptions = { home: string; urlEnv: string; env: NodeJS.ProcessEnv; clock: Clock; runner?: CommandRunner; secrets?: { adminUrl: string; appPassword: string }; databaseName?: string; confirmOffline?: (request: OfflineConfirmationRequest) => Promise<string> };
 
 /** Called only after the installer has validated and fenced its transition. */
@@ -122,12 +122,11 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
         ? `PostgreSQL 포트 ${resources.port}를 이미 사용 중입니다. 사용하는 프로그램을 확인하세요`
         : `PostgreSQL 컨테이너를 시작하지 못했습니다. OrbStack 상태를 확인하세요\n${(started.stderr || started.stdout || started.message).slice(-2000)}` };
     }
-    const { prepareDatabase, runMigrations, postgresStore, inspectExtensionFence, withExtensionInstallLock } = await import('second_brain/postgres');
+    const { prepareDatabase, runMigrations, postgresStore, inspectExtensionFence, inspectLegacyExtensionPrerequisites, withExtensionInstallLock } = await import('second_brain/postgres');
     const targetName = options.databaseName ?? 'brain';
     if (!/^[a-z][a-z0-9_]*$/.test(targetName)) return { ok: false, code: 'DB_UNAVAILABLE', message: '잘못된 데이터베이스 이름입니다' };
     const targetUrl = new URL(secrets.adminUrl); targetUrl.pathname = `/${targetName}`;
     const existing = await inspectExtensionFence(targetUrl.toString());
-    if (existing.names.length && !existing.fenceReady) return { ok: false, code: 'DB_LOCKED', message: '기존 확장의 실행을 안전하게 정지할 수 없는 옛 schema입니다. 새 실행을 차단하고 데몬과 모든 확장 명령·일감을 종료한 뒤 호환되는 core로 복구하세요.' };
     const store = postgresStore({ databaseUrl: targetUrl.toString() });
     try {
       const recover = '새 실행을 차단하고 이전 설치·데몬·확장 명령과 모든 자식이 종료됐는지 확인하세요. 기존 설치 core와 호환 패키지를 복원하고 중단된 확장 설치를 복구한 뒤 같은 core로 다시 실행하세요. 다른 소유자의 정지 기록은 지우지 마세요.';
@@ -136,11 +135,12 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
       if (transitionFiles.some(file => /^\.transition-[a-z][a-z0-9_]*\.json$/.test(file))) return locked('중단된 확장 전환이 있습니다.');
       const build = await runningBuild;
       const installed = existing.names.length ? await readInstalled(home) : undefined;
+      const legacy = !!installed && installed.schema_version >= 11 && installed.schema_version < 35 && !!installed.commit && !!build?.commit && installed.commit !== build.commit;
       if (existing.names.length) {
         const disk = await readBuildIdentity();
         // A different installed build may still be executing code that does not
         // honor this fence. Do not infer its safety from the new schema alone.
-        if (!build?.commit || !build.version || !disk?.commit || disk.commit !== build.commit || disk.version !== build.version || disk.schema_version !== build.schema_version || !installed?.commit || installed.schema_version < 35) return locked('기존 실행 core의 신원 또는 정지 지원을 확인할 수 없습니다.');
+        if (!build?.commit || !build.version || !disk?.commit || disk.commit !== build.commit || disk.version !== build.version || disk.schema_version !== build.schema_version || !installed?.commit || (installed.schema_version < 35 && !legacy) || (!existing.fenceReady && !legacy)) return locked('기존 실행 core의 신원 또는 정지 지원을 확인할 수 없습니다.');
       }
       let owners: Awaited<ReturnType<typeof installedExtensionMigrations>>;
       try { owners = await installedExtensionMigrations(home, existing.names, build?.version); }
@@ -151,14 +151,36 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
       try { journal = JSON.parse(await readFile(journalPath, 'utf8')) as Journal; }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return locked('core 확장 정지 기록을 읽을 수 없습니다.'); }
       if (journal && (!build?.commit || journal.commit !== build.commit || !Array.isArray(journal.names) || JSON.stringify(journal.names) !== JSON.stringify(existing.names) || typeof journal.owner !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(journal.owner))) return locked('core 확장 정지 기록의 신원이 다릅니다.');
+      if (!existing.fenceReady && existing.gateNames.length) return locked('정지 표와 migration 기록이 일치하지 않습니다.');
       if (existing.gateNames.some(name => !journal?.names.includes(name))) return locked('다른 설치의 확장 정지가 있습니다.');
       const migrate = async (): Promise<PostgresInstallResult> => {
         if (existing.names.length) {
           const disk = await readBuildIdentity();
           if (!disk || disk.commit !== build?.commit || disk.version !== build.version || disk.schema_version !== build.schema_version) return locked('대기 중 대상 core 신원이 바뀌었습니다.');
         }
+        const checkLegacy = async (): Promise<string | null> => {
+          let facts: Awaited<ReturnType<typeof inspectLegacyExtensionPrerequisites>>;
+          try { facts = await inspectLegacyExtensionPrerequisites(targetUrl.toString()); }
+          catch { return '옛 schema의 확장 전제를 읽을 수 없습니다.'; }
+          if (JSON.stringify(facts.map(f => f.name)) !== JSON.stringify(existing.names)) return '등록 확장 목록이 바뀌었습니다.';
+          for (const f of facts) {
+            if (f.enabled) return `확장 ${f.name}이 활성 상태입니다. 비활성화하세요.`;
+            if (!f.held) return `확장 ${f.name}의 보류 그룹이 없습니다. 보류하세요.`;
+            if (f.unheld_schedules || f.unheld_work) return `확장 ${f.name}에 보류되지 않은 예약 또는 미완료 일감이 있습니다. 보류하세요.`;
+            if (f.running || f.open_attempts) return `확장 ${f.name}에 실행 중인 일감 또는 열린 attempt가 있습니다. 종료를 확인하세요.`;
+          }
+          return null;
+        };
+        if (legacy) {
+          const problem = await checkLegacy(); if (problem) return locked(problem);
+          const coreHistory = await runMigrations({ databaseUrl: targetUrl.toString(), clock, validateOnly: true });
+          if (!coreHistory.ok) return coreHistory;
+          if (coreHistory.to < installed!.schema_version) return locked('core migration 이력이 설치 기록보다 뒤에 있습니다.');
+          const history = await runMigrations({ databaseUrl: targetUrl.toString(), clock, owners, validateOnly: true });
+          if (!history.ok) return history;
+        }
         const gateOwners: (string | null)[] = [];
-        for (const name of existing.names) {
+        for (const name of existing.fenceReady ? existing.names : []) {
           const state = await store.readExtensionQuiesce(name); if (!state.ok) return state;
           if (state.owner && state.owner !== journal?.owner) return locked('다른 설치의 확장 정지가 있습니다.');
           gateOwners.push(state.owner);
@@ -171,9 +193,19 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
           const journalBefore = await readFile(journalPath, 'utf8').catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; });
           const manifests = await Promise.all(existing.names.map(name => readFile(join(home, 'extensions', name, 'manifest.json'), 'utf8')));
           const challenge = `확인 ${canonicalHome} ${installed.commit} ${build.commit} ${randomUUID()}`;
-          if (!options.confirmOffline || await options.confirmOffline({ home: canonicalHome, previousCommit: installed.commit, targetCommit: build.commit, challenge }) !== challenge) return locked('서로 다른 core 갱신에는 새 진입을 차단한 상태의 운영자 offline 확인이 필요합니다. 자동 갱신은 이 확인을 대신할 수 없습니다.');
-          const [again, disk, current, homeLock, daemonLock, currentManifests, gateStates, files, journalAfter] = await Promise.all([readInstalled(home), readBuildIdentity(), inspectExtensionFence(targetUrl.toString()), readFile(join(home, 'install.lock/owner'), 'utf8').catch(() => ''), readFile(join(home, 'run/daemon.pid'), 'utf8').catch(() => ''), Promise.all(existing.names.map(name => readFile(join(home, 'extensions', name, 'manifest.json'), 'utf8'))), Promise.all(existing.names.map(name => store.readExtensionQuiesce(name))), readdir(join(home, 'extensions')), readFile(journalPath, 'utf8').catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; })]);
-          if (JSON.stringify(again) !== JSON.stringify(installed) || !disk || disk.commit !== build.commit || disk.version !== build.version || disk.schema_version !== build.schema_version || !current.fenceReady || JSON.stringify(current.names) !== JSON.stringify(existing.names) || JSON.stringify([...current.gateNames].sort()) !== JSON.stringify([...existing.gateNames].sort()) || homeLock !== homeOwner || daemonLock !== daemonOwner || journalAfter !== journalBefore || JSON.stringify(currentManifests) !== JSON.stringify(manifests) || gateStates.some((state, index) => !state.ok || state.owner !== gateOwners[index]) || files.some(file => /^\.transition-[a-z][a-z0-9_]*\.json$/.test(file))) return locked('확인 중 설치 신원 또는 정지 상태가 바뀌었습니다.');
+          if (!options.confirmOffline || await options.confirmOffline({ home: canonicalHome, previousCommit: installed.commit, targetCommit: build.commit, challenge, ...(legacy ? { legacySchema: installed.schema_version } : {}) }) !== challenge) return locked('서로 다른 core 갱신에는 새 진입을 차단한 상태의 운영자 offline 확인이 필요합니다. 자동 갱신은 이 확인을 대신할 수 없습니다.');
+          const [again, disk, current, homeLock, daemonLock, currentManifests, gateStates, files, journalAfter] = await Promise.all([readInstalled(home), readBuildIdentity(), inspectExtensionFence(targetUrl.toString()), readFile(join(home, 'install.lock/owner'), 'utf8').catch(() => ''), readFile(join(home, 'run/daemon.pid'), 'utf8').catch(() => ''), Promise.all(existing.names.map(name => readFile(join(home, 'extensions', name, 'manifest.json'), 'utf8'))), Promise.all((existing.fenceReady ? existing.names : []).map(name => store.readExtensionQuiesce(name))), readdir(join(home, 'extensions')), readFile(journalPath, 'utf8').catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; })]);
+          if (JSON.stringify(again) !== JSON.stringify(installed) || !disk || disk.commit !== build.commit || disk.version !== build.version || disk.schema_version !== build.schema_version || current.fenceReady !== existing.fenceReady || JSON.stringify(current.names) !== JSON.stringify(existing.names) || JSON.stringify([...current.gateNames].sort()) !== JSON.stringify([...existing.gateNames].sort()) || homeLock !== homeOwner || daemonLock !== daemonOwner || journalAfter !== journalBefore || JSON.stringify(currentManifests) !== JSON.stringify(manifests) || gateStates.some((state, index) => !state.ok || state.owner !== gateOwners[index]) || files.some(file => /^\.transition-[a-z][a-z0-9_]*\.json$/.test(file))) return locked('확인 중 설치 신원 또는 정지 상태가 바뀌었습니다.');
+          try { owners = await installedExtensionMigrations(home, existing.names, build.version); }
+          catch { return locked('확인 중 확장 패키지 또는 대상 core 호환성이 바뀌었습니다.'); }
+          if (legacy) {
+            const problem = await checkLegacy(); if (problem) return locked(`확인 중 전제가 바뀌었습니다. ${problem}`);
+            const coreHistory = await runMigrations({ databaseUrl: targetUrl.toString(), clock, validateOnly: true });
+            if (!coreHistory.ok) return coreHistory;
+            if (coreHistory.to < installed!.schema_version) return locked('core migration 이력이 설치 기록보다 뒤에 있습니다.');
+            const history = await runMigrations({ databaseUrl: targetUrl.toString(), clock, owners, validateOnly: true });
+            if (!history.ok) return history;
+          }
           offlineConfirmation = { home: canonicalHome, previous_commit: installed.commit, target_commit: build.commit, method: 'operator' };
         }
         if (existing.names.length && !journal) {
@@ -187,7 +219,7 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
           const temp = `${journalPath}.${randomUUID()}`;
           try { await writeFile(temp, JSON.stringify(journal), { flag: 'wx', mode: 0o600 }); await rename(temp, journalPath); } finally { await rm(temp, { force: true }); }
         }
-        for (const name of existing.names) {
+        for (const name of legacy ? [] : existing.names) {
           const stopped = await quiesceExtension(store, systemTimer, { name, owner: journal!.owner, now: clock.now(), refuseRunning: true });
           if (!stopped.ok) return stopped;
         }
@@ -198,9 +230,19 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
         if (!migrated.ok) return migrated;
         const owner = await store.ensureSelfUser({ id: v7(), name: userInfo().username, createdAt: clock.now() });
         if (!owner.ok) return owner;
+        let bridgeApplied: string[] = [];
+        if (legacy) {
+          const bridge = await runMigrations({ databaseUrl: prepared.databaseUrl, clock, coreMaxVersion: 35 });
+          if (!bridge.ok) return bridge;
+          bridgeApplied = bridge.applied;
+          for (const name of existing.names) {
+            const stopped = await quiesceExtension(store, systemTimer, { name, owner: journal!.owner, now: clock.now(), refuseRunning: true });
+            if (!stopped.ok) return stopped;
+          }
+        }
         const completed = await runMigrations({ databaseUrl: prepared.databaseUrl, clock });
         if (!completed.ok) return completed;
-        const applied = [...migrated.applied, ...completed.applied];
+        const applied = [...migrated.applied, ...bridgeApplied, ...completed.applied];
         if (owners.length) {
           const extensions = await runMigrations({ databaseUrl: prepared.databaseUrl, clock, owners });
           if (!extensions.ok) return extensions;

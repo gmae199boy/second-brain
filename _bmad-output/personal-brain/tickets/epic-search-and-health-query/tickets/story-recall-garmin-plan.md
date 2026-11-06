@@ -3,7 +3,7 @@ title: '17.4 recall 스킬의 Garmin 건강 수치 조회'
 type: 'feature'
 ticket: 4
 created: '2026-11-06'
-status: 'built'
+status: 'in-review'
 baseline_revision: 'cd0b50e5ef23ad6a756c076583cb5a7ad543fbcd'
 route: 'full'
 route_source: 'pinned'
@@ -189,3 +189,12 @@ R4는 H의 일별 순서 정규화·중복 거부, I의 schema 추가 읽기 허
 - 검증: 위 최종 전체 회귀(순차 각1회)와 실패 후 제한 worker changed 재검증 종료 0, 실제 행동 평가의 11사례 기록 및 변경 영향 3사례 새 평가 통과. 판정기 자기시험을 실제 행동 평가로 계산하지 않았다.
 - 격리·정리: 최종 전체 회귀 및 복구 재검증 로그의 fixture 생성 ID 469개를 실제 Docker와 대조해 잔존 0개를 확인했다. 자기 전용 PG `brain-t174-pg-3263ed`도 정확한 ID로 정리했다. Python 실행이 만든 기존 추적 cache 변경은 로컬에 보존 후 원래 바이트로 되돌려 커밋에서 제외했다. 다른 티켓 자원은 수정하지 않았다.
 - 잔여 한계: 최초 시간 조건 실패의 근본 원인은 확정하지 않았다. 제한 worker 재검증으로 회복된 실행 증거를 남겼으며 고부하 안정성 개선은 이번 수정으로 주장하지 않는다. SQL 경계는 R4의 드문 주석 조합 누락/오탐이 있는 정적 검사다. 실제 명령 fixture 통합시험과 fake CLI 행동 평가의 값 사슬을 사용하며, 실제 설치 CLI를 에이전트가 직접 사용하는 운영 확인은 17.7 범위다.
+
+## 중앙 수락 전 main 통합 보완
+
+- 중앙 지시 `msg_bccc18b13383`에 따라 원래 baseline과 기존 결과를 보존한 채 main `6f22d9708df2ecaaa0db938b08f3e0cdf16b8067`을 이전 티켓 tip `1091369653720528fc6e3057845d5f3dfafeff58`에 정상 merge한다. 충돌은 없었고 검증 전 merge commit은 만들지 않았다.
+- main의 21.9 릴리스가 이미 version 0.1.18을 사용하므로 recall 배포 version은 0.1.19로 올린다. app-ref는 main의 `118df4718cb44ec99a12f6e24048f5131b2df923`을 그대로 보존한다. 앞선 0.1.18·app-ref 미변경 기록은 통합 전 이력이다.
+- R5 독립 Sol 리뷰는 installer/store의 legacy 전환·validateOnly와 recall fixture의 최신 schema 초기화·Garmin owner migration·installed.json·CLI/MCP fence·core SQL 경계를 추적해 구체 통합 결함과 병합 누락이 없음을 확인했다. main 변경 파일은 main과 동일하고 티켓 제품·시험 파일은 기존 tip과 동일하다. 새 제품/시험 수정은 없다.
+- R5 발견 0건, patch 0건, deferred 없음. 보고서 `.brain-automation/reviews/r5-main-integration.md`. 리뷰의 전체 회귀 제안보다 중앙의 이번 통합 전용 `VITEST_MAX_WORKERS=2 test:changed` 지시를 적용한다. 원래 baseline 대비 staged/unstaged main 통합 변경과 recall 시험을 함께 선정해 핵심 시험 선택·실행 증거를 남긴다. version/docs만의 변경으로 행동 평가나 전체 명령을 별도로 반복하지 않는다.
+- 검증 완료 전 상태는 in-review로 유지한다. 최종 stage에서 0.1.19·app-ref를 다시 확인하고 정상 merge commit·티켓 브랜치 재push 후 원격 SHA를 보고한다.
+- 통합 재검증 1회차: 기본 190파일 중 189파일 통과, 4294 passed·1 failed·1 skipped. 실패는 `extension-plugin.test.ts:86`의 app-ref→HEAD 조상 검사 한 건이며, `--no-commit` merge에서 HEAD는 아직 이전 티켓 tip이어서 main에서 가져온 app-ref가 그 조상이 아니다. Python 단계는 도달하지 않았다. 로그 `.brain-automation/logs/main-integration-test-changed.log`를 보존한다. 제품·시험 소스를 바꾸거나 검사를 우회하지 않고 정상 merge commit으로 필요한 Git 이력을 만든 뒤 재검증한다. 이 이력 의존 검사는 merge commit 전 통과할 수 없으므로 먼저 로컬 merge를 확정하되, 모든 재검증이 끝나기 전 원격 push는 하지 않는다. 최초 baseline과 부모 두 개를 보존한다.
