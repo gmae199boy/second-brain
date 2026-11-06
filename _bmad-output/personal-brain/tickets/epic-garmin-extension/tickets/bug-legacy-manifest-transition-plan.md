@@ -3,7 +3,7 @@ title: '옛 확장 manifest가 등록된 설치본의 지원 core 갱신과 검�
 type: 'bugfix'
 ticket: 10
 created: '2026-11-06'
-status: 'in-review'
+status: 'built'
 baseline_revision: '133437602777e4771417a6b8a349fe930a786b3e'
 route: 'full'
 route_source: 'pinned'
@@ -69,7 +69,7 @@ deferred: []
 - [x] `packages/core/src/extensions/{install,status,run,commands}.ts`, `apps/cli/src/commands/ext-login.ts` -- 실행 진입 거부와 검증된 패키지의 owner 승계·완료 -- AC2
 - [x] `packages/postgres/test/install-legacy-manifest.test.ts`(신규) -- 실제 PG·CLI 표면: M1~M8을 `garmin`(09947d2 manifest·0001~0008 → 현행 패키지 0001~0016) 및 다른 이름 합성 확장으로, 보존 해시 전후 대조, daemon 재시작 뒤 거부 유지, SIGKILL 경계 -- AC1~AC5
 - [x] 기존 시험(`install-legacy.test.ts`, `install-orbstack.test.ts`, `ext-*.test.ts`) -- 메시지·동작 정합, N1/M7 회귀 유지 -- AC5
-- [ ] release commit -- 구현 commit 뒤 별도 commit에서 `plugin/app-ref`를 그 구현 commit으로, core plugin version은 릴리스 직전 실제 원격 main과 17.4의 예정 0.1.19를 대조해 중복 없는 다음 버전(예상 0.1.20), release 시험(`tooling/bootstrap/test/{plugin,garmin-plugin,extension-plugin}.test.ts`) -- 21.7 설치 경로
+- [x] release commit -- 구현 commit 뒤 별도 commit에서 `plugin/app-ref`를 그 구현 commit으로, core plugin version은 릴리스 직전 실제 원격 main과 17.4의 예정 0.1.19를 대조해 중복 없는 다음 버전(예상 0.1.20), release 시험(`tooling/bootstrap/test/{plugin,garmin-plugin,extension-plugin}.test.ts`) -- 21.7 설치 경로
 
 **Acceptance Criteria:**
 - Given 소유 전용 PG·격리 home의 합성 core27 설치본(09947d2 Garmin manifest와 0001~0008, 또는 다른 이름 합성 확장)이 21.9 전제를 갖췄을 때, when 대화형 `setup run`으로 core를 갱신하고 이어 `ext install --package`로 현행 패키지를 설치하면, then 같은 DB에서 두 단계가 끝나고 0001~0008은 재적용·변조 없이 접두 checksum이 확인된 뒤 0009 이후만 적용되며, 기억·이력·사용자 상태가 보존되고 core 갱신 직후부터 교체 완료까지 옛 확장의 코드·명령·예약·청구가 0건이다.
@@ -154,3 +154,5 @@ deferred: []
 - 검증: 최초 전체 `pnpm test`는 실패했고 모든 실패의 처분은 위 이력에 보존했다. 최종 test:changed TS153파일/3,591시험·Python전체15파일/66시험 및 내부244시험 통과, 종료0. 기존 skip1 이외 skip 추가나 단언 축소 없음. build/typecheck/diff 검사 종료0.
 - 릴리스: 중앙의17.4 예정0.1.19와 원격main0.1.18을 대조해0.1.20을 사용한다. 구현 commit 다음 별도 commit에서 app-ref를 그 구현 SHA로 갱신한다.
 - 남은 경계: 실제 운영 전환·계정/TTY 운영자 확인은21.7 소관이다. 중앙 안내의22.1 schema39는 현재 원격main49c23630dc9f520d805a15d830d41cc81f7dfdb6에 아직 없으며, 이후 직렬 main 통합 시 이 시험의 명시 core38 기대를 최신 core와 재대조하고 필요한 검증을 수행한다. 현재 티켓 자체의 미해결 기능 실패는 없다.
+
+- 구현 SHA: `8513bf9c46960658e63c26ec6f89f27457e88bf8`. 릴리스는 app-ref를 이 SHA로 지정하고 core plugin을0.1.20으로 올렸다. 참조 commit의 제품·시험·옛 fixture 존재와 이전 commit 참조·동시 version 증가를 정적으로 확인했다.
