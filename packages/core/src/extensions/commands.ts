@@ -1,3 +1,4 @@
+import { checkExtensionExecution } from './replacement.js';
 import { resolveSelfUser } from '../users/self.js';
 import { hasOnlyFiniteNumbers } from './json-values.js';
 import { decodeExtensionManifest } from './manifest.js';
@@ -30,9 +31,7 @@ export async function executeExtensionCommand(deps: ExtensionDependencies & { st
   if (input.signal?.aborted) return failure('EXTENSION_COMMAND_TIMEOUT');
   const run = async () => {
     if (input.signal?.aborted) return failure('EXTENSION_COMMAND_TIMEOUT');
-    const quiesce = await deps.store.readExtensionQuiesce(input.name);
-    if (!quiesce.ok) return quiesce;
-    if (quiesce.owner !== null) return failure('EXTENSION_COMMAND_UNAVAILABLE');
+    const allowed = await checkExtensionExecution(deps.store, input.name, 'command'); if (!allowed.ok) return allowed;
     const installed = await deps.store.getExtension(input.name);
     if (!installed.ok) return installed;
     if (!installed.extension?.enabled) return failure('EXTENSION_COMMAND_UNAVAILABLE');

@@ -11,7 +11,7 @@ import { join, resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { envFilePath } from '../config/paths.js';
 import { fileURLToPath } from 'node:url';
-import { decodeExtensionManifest, isExtensionName, validateMigrationNames, type Clock, type ExtensionRuntime } from 'second_brain';
+import { decodeExtensionManifest, decodeRetiredExtensionManifest, isExtensionName, validateMigrationNames, type Clock, type ExtensionRuntime } from 'second_brain';
 import { extensionAdminUrl, resolveStoreUrl, ensureExtensionPassword, extensionDatabaseUrl, type ReadConfigResult } from '../config/codec.js';
 import { prepareExtensionPython, validatePreparedPython, validatePythonInputs } from './extension-python.js';
 import { readBuildIdentity } from '../install/installed.js';
@@ -49,7 +49,7 @@ async function checkTree(folder: string, ownedStage = false): Promise<void> {
   }
 }
 // 생성된 환경과 확장의 영속 상태는 패키지 내용이 아니다.
-async function packageDigest(folder: string, migrations: string, omitMigrations = false): Promise<string> {
+export async function packageDigest(folder: string, migrations: string, omitMigrations = false): Promise<string> {
   const hash = createHash('sha256');
   async function visit(dir: string, relative: string): Promise<void> {
     for (const name of (await readdir(dir)).sort()) {
@@ -65,9 +65,9 @@ async function packageDigest(folder: string, migrations: string, omitMigrations 
   await visit(folder, ''); return hash.digest('hex');
 }
 /** 등록된 확장의 manifest만 읽고 런타임을 준비하지 않는다. */
-export async function installedExtensionMigrations(home: string, names: readonly string[], targetVersion?: string): Promise<{ owner: string; directory: string }[]> {
+export async function installedExtensionMigrations(home: string, names: readonly string[], targetVersion?: string, retiredAllowed: ReadonlySet<string> = new Set()): Promise<{ owner: string; directory: string; replacement?: true; version?: string }[]> {
   const folder = join(home, 'extensions');
-  const owners: { owner: string; directory: string }[] = [];
+  const owners: { owner: string; directory: string; replacement?: true; version?: string }[] = [];
   for (const name of [...names].sort()) {
     if (!isExtensionName(name)) throw new Error(`잘못된 확장 폴더: ${name}`);
     const directory = join(folder, name);
@@ -76,12 +76,16 @@ export async function installedExtensionMigrations(home: string, names: readonly
     const manifestPath = join(directory, 'manifest.json');
     const manifestStat = await lstat(manifestPath);
     if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) throw new Error(`확장 manifest가 일반 파일이 아닙니다: ${name}`);
-    const decoded = decodeExtensionManifest(await readFile(manifestPath, 'utf8'), validateSchema);
-    if (!decoded.ok || decoded.manifest.name !== name) throw new Error(`확장 manifest가 올바르지 않습니다: ${name}`);
-    if (targetVersion) {
-      if (!decoded.manifest.core_compat) throw new Error(`대상 core 호환 범위가 없습니다: ${name}`);
+    const text = await readFile(manifestPath, 'utf8');
+    const current = decodeExtensionManifest(text, validateSchema);
+    const retired = !current.ok && retiredAllowed.has(name) ? decodeRetiredExtensionManifest(text, validateSchema) : null;
+    const decoded = current.ok ? current : retired;
+    if (!decoded?.ok || decoded.manifest.name !== name) throw new Error(`확장 manifest가 올바르지 않습니다: ${name}`);
+    const replacement = !current.ok || (retiredAllowed.has(name) && !current.manifest.core_compat);
+    if (targetVersion && current.ok && !replacement) {
+      if (!current.manifest.core_compat) throw new Error(`대상 core 호환 범위가 없습니다: ${name}`);
       const { compareRelease } = await import('./extension-package.js');
-      if (compareRelease(targetVersion, decoded.manifest.core_compat.min) < 0 || compareRelease(targetVersion, decoded.manifest.core_compat.max_exclusive) >= 0) throw new Error(`대상 core와 확장이 호환되지 않습니다: ${name}`);
+      if (compareRelease(targetVersion, current.manifest.core_compat.min) < 0 || compareRelease(targetVersion, current.manifest.core_compat.max_exclusive) >= 0) throw new Error(`대상 core와 확장이 호환되지 않습니다: ${name}`);
     }
     let path = directory;
     for (const part of decoded.manifest.migrations.split('/')) {
@@ -94,7 +98,7 @@ export async function installedExtensionMigrations(home: string, names: readonly
       const item = await lstat(join(path, file));
       if (!item.isFile() || item.isSymbolicLink()) throw new Error(`확장 마이그레이션이 일반 파일이 아닙니다: ${name}/${file}`);
     }
-    owners.push({ owner: name, directory: path });
+    owners.push({ owner: name, directory: path, ...(replacement ? { replacement: true as const, version: decoded.manifest.version } : {}) });
   }
   return owners;
 }
@@ -237,6 +241,13 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
       },
     },
     migrator: {
+      async validate(owner, directory) {
+        try {
+          const { runMigrations } = await import('second_brain/postgres');
+          const adminUrl = await extensionAdminUrl(home, await databaseUrl(), env);
+          return await runMigrations({ databaseUrl: adminUrl, clock, owners: [{ owner, directory }], validateOnly: true });
+        } catch { return { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: '확장 마이그레이션의 관리 연결을 열지 못했습니다' }; }
+      },
       async apply(owner, directory) {
         let result: Awaited<ReturnType<ExtensionRuntime['migrator']['apply']>>;
         try {

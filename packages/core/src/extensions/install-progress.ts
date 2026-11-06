@@ -15,6 +15,7 @@ export interface ExtensionInstallProgress {
   scheduleIds: string[];
   disabledScheduleKeys?: string[];
   transition?: { owner: string; registered: boolean };
+  replacement?: { owner: string; fromVersion: string; at: string };
 }
 export interface StoredExtensionInstallProgress { revision: number; progress: ExtensionInstallProgress }
 
@@ -30,7 +31,9 @@ export function validInstallProgress(value: unknown): value is ExtensionInstallP
   const expected = ['name', 'packageDigest', 'result', 'failedStage', 'lastFailure', 'stages', 'authWorkId', 'scheduleIds'];
   if (Object.hasOwn(value, 'disabledScheduleKeys')) expected.push('disabledScheduleKeys');
   if (Object.hasOwn(value, 'transition')) expected.push('transition');
+  if (Object.hasOwn(value, 'replacement')) expected.push('replacement');
   if (!keys(value, expected)) return false;
+  if (Object.hasOwn(value, 'replacement') && (!object(value.replacement) || !keys(value.replacement, ['owner', 'fromVersion', 'at']) || !uuid(value.replacement.owner) || typeof value.replacement.fromVersion !== 'string' || !value.replacement.fromVersion.trim() || /[\u0000-\u001f\u007f-\u009f]/.test(value.replacement.fromVersion) || !timestamp(value.replacement.at))) return false;
   if (value.transition !== undefined && (!object(value.transition) || !keys(value.transition, ['owner', 'registered']) || !uuid(value.transition.owner) || typeof value.transition.registered !== 'boolean')) return false;
   if (value.disabledScheduleKeys !== undefined && (!Array.isArray(value.disabledScheduleKeys) || value.disabledScheduleKeys.some(key => typeof key !== 'string' || !key.trim() || key.includes('\u0000')) || new Set(value.disabledScheduleKeys).size !== value.disabledScheduleKeys.length)) return false;
   if (typeof value.name !== 'string' || (!/^[a-z][a-z0-9_]{0,30}$/.test(value.name) || /^(core|brain|public|pg_)/.test(value.name)) || typeof value.packageDigest !== 'string' || !/^[0-9a-f]{64}$/.test(value.packageDigest)) return false;
