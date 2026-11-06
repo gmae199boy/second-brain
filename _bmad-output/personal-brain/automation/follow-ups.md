@@ -364,3 +364,10 @@ core0.1.17/Garmin0.1.4 ref는이전구현472caa7,확장1.2.1/package85파일정�
 - 운영 인계21.7: 지원 core 갱신·검증된 패키지 교체의 제품 차단을 해소했다. 실제 Mac의 옛 writer 종료·새 진입 차단·현재 시도 TTY 확인·계정 귀속/credential·운영 설정은 기존 21.7 소유다. 합성 시험 통과가 운영 전환 인수를 대신하지 않는다.
 
 `deferred: []`, 후속 리뷰 권고 false. 소유 시험 PG와 최종174 fixture는 정확 ID 정리/부재를 확인했으며 로그·리뷰·워크트리는 보존한다.
+
+
+## 21.7 — 대화형 bootstrap 진입점 부재와21.11 (2026-11-06)
+
+- 원문21.7 계획의 재진단2·quick리뷰3. 부분commit `aa7377f`는 공개 계획뿐이며 blocked와 운영 AC 미완료를 유지한다.
+- 옛 manifest 검사는21.10으로 통과했지만 detached app의 ref 없는 npx는 거부되고 ref 지정은 hook 모드로 stdin을 닫아 실제 offline 확인을 전달할 지원 경로가 없다. 기존 새 CLI PTY 시험은 bootstrap 진입을 입증하지 않는다.
+- 별도21.11에서 합성 detached 옛 app의 bootstrap부터 실제 PTY·갱신/승격·보존·hook 무질문·실패복구를 검증한다.21.7은21.11 수락·원격main/release 뒤 기존 operator gate를 유지해 재개한다. 운영자 확인·계정귀속/MFA는 대신하지 않는다.
