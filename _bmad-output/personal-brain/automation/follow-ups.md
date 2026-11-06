@@ -344,3 +344,10 @@ core0.1.17/Garmin0.1.4 ref는이전구현472caa7,확장1.2.1/package85파일정�
 - 보류 medium: 기존 0033 migration의 DST 변환 규칙을 독립 oracle로 검증하는 시험. 기존 migration 고유 검증 범위로 분리했으며 신규 legacy 제품 결함으로 판정하지 않았다. 향후 migration 시험 보강 시 재검토한다.
 - 보류 low: 대화형 offline 확인 중 Ctrl-C 종료 경로 시험. 기존 확인 동작 및 A1 잔존 잠금 명시 복구 계약을 유지하며 향후 대화형 취소 시험 보강 시 재검토한다.
 - 운영 인계21.7: 실제 옛 확장 manifest의 대상 core 호환을 확인한다. 비활성·보류, 이전 데몬·직접 명령·모든 쓰기 자식 종료, 새 진입 차단 및 TTY 운영자 확인은 그대로 필요하다. 이 제품 수정의 수락이 운영자 확인이나 계정 귀속 확인을 대신하지 않는다. 21.7의 기존 legacy 경로 부재 차단은 제품 반영으로 해소됐으며 나머지 실제 입력 gate는 재개 시 확인한다.
+
+
+## 21.7 — 재진단의 옛 manifest 차단과21.10 (2026-11-06)
+
+- 원문 `tickets/epic-garmin-extension/tickets/story-mac-plan.md` 재진단·q2. 부분commit `e5385a7`은 공개 계획뿐이며 운영무변경·새writer0·모든운영AC미완료를 유지한다.
+- 21.9의 schema bridge 뒤에도 실제 옛 Garmin1.0.0 manifest가 현재 decoder의 work 키 및 core_compat 요구에 걸리고 지원 선교체 경로도 없다. settings/default_schedules 각각이 독립적인 문법 오류라는 주장은 아니다.
+- 별도21.10 `bug-legacy-manifest-transition.md`로 지원 core 갱신→옛 실행 금지→검증된 새 패키지 교체를 분리했다.21.7은21.10 수락·원격main/release 반영 뒤 재개한다. 옛daemon 종료·새TTY확인·계정귀속/tokenstore/MFA·설정 등 기존 gate는 보존한다.
