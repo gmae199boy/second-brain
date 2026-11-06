@@ -477,3 +477,18 @@ deferred[]/필수미해결0/필요후속완료.소유PG·동적fixture정확ID�
 - 배포후속: plugin0.1.23/app-ref598497c에는22.4와22.5 구현이 포함되지 않는다. 실제배포 시 이전구현commit ref와 같은release version증가로 조율한다. main병합을 설치본반영으로 계산하지 않는다.
 
 deferred[]/필수미해결0/필요후속완료. 최초실패·원시·built/runner archive·워크트리/로컬·원격branch/세션은 보존한다.
+
+
+## 8.1 — 검증된 Drive 원본 이전 tracer 수락 (2026-11-06)
+
+근거: [Drive 이전 계획](../tickets/epic-drive/tickets/story-tracer-drive-home-plan.md)의 Review Triage Log R1~R4·최종 재검증·후속 인계/Auto Run Result, 최종 `f197887`. 중앙은 R3 safety/coverage·R4 원문과 환경 증거 보완·실제 검증 로그/체크포인트·0040/이전39개 migration·원격tip를 대조했다.
+
+- backend중립 FileStore와 root/hash 단일매핑 Drive adapter, 업로드 검증·CAS home/verified/보관예약의 원자확정, 0/기본30일 및 삭제 전 원격재확인, 실제 Drive bytes를 읽는 files show·가림/세대 계약을 합성 tracer로 검증했다. 0040은 철회된22.3 식통계와 다른8.1 Drive migration이며 schema40이다. 0001~0039 바이트불변.
+- 최초 전체TS9/Python8실패·첫changed실패는 보존한다. dispatch 미주입key 생략/신규state default 제거·writer명시/격리hook 도구 및Node경로 교정 뒤 관련TS159/Pythonhook8, 최종changed 기본3444·PG711·Python69 모두exit0. 최초전체exit1을 소급통과로 바꾸지 않는다.
+- 마지막소스교정 R4 새코드결함0. 환경증거 R4-E1은 실제도구호출의 wrapper 생성본문/환경을 복원해 보완했다. wrapper는status만실제CLI로exec위임·나머지exit2이며 제품probe는불변이다. 원래확장PATH전체/각위임개별영수증은 미보존이라는 증거한계를 유지한다. 새환경 실행으로 과거증거를 대체하지 않았다.
+- 8.5 인계: 결과불명submitting(POST직전중단/응답유실/ACK뒤DB저장전) 자동복구는 미완료이며 실패/미완료로 보존한다. 확정업로드뒤CAS전중단복구와 구별한다. keep_local_days변경의 기존due재계산/깨우기/실행시현재값재확인도8.5범위다.
+- 잔여위험: 마지막원격/DB재조회와local삭제사이 분산I/O경합은 남는다. 후속복원writer/연동해제는 공유전이fence를 재검토한다. 로컬/가짜서버tracer가 실제Drive·OAuth·운영전환을 대신하지 않는다. 실계정/로그인은8.3/8.8이다.
+- 자원: 최초215·교정393 fixture ID의removed/실Docker잔존0 및전용parent정리를 대조했다. 로그의Compose3개는정확ID부재확인,나머지passing Compose는fixture cleanup성공이근거이며전ID inspect를주장하지않는다. 모든원시/리뷰/체크포인트·워크트리/브랜치/세션보존.
+- 배포: plugin0.1.23/app-ref598497c는불변이며22.4/22.5와8.1은현설치ref에없다. 실제배포필요시이전구현commit ref+같은release version증가를조율한다.
+
+deferred[]/필수미해결0/필요독립후속완료. 8.5 명시후속과운영후속은 위범위로계속추적한다.
