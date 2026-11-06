@@ -3,7 +3,7 @@ title: '17.5 확장 metadata와 recall 검색 회귀'
 type: 'feature'
 ticket: '5'
 created: '2026-11-06'
-status: 'in-review'
+status: 'built'
 baseline_revision: '4d0ec474627b9ca3e6b440b6b565757ddd72a9d8'
 route: 'full'
 route_source: 'pinned'
@@ -284,4 +284,22 @@ CREATE INDEX tool_notes_target_idx ON brain.tool_notes USING gin (lower(target) 
 - 실제행동 최초9사례7통과+2실패, 새round2의실패2사례모두통과. 기존나머지7사례는바뀐분기를사용하지않고원문읽기·코드/안내가대조돼불필요반복하지않았다. 지휘자는11회실제수행의calls/outputs/report/transcript를전문대조했다. 판정기22자기시험과구별한다.
 - 시험·수집 소유PG/fixture 186개ID를정확ID Docker inspect로대조해잔존0. `resource-audit.json`에ID·확인결과보존. 자기워크트리·로컬브랜치·세션·gitignored원본증거는보존하며운영/다른티켓자원은변경하지않았다.
 - 잔여한계: 큰source/inventory metadata는기존8000자봉투상한으로INVALID_ARGUMENT가될수있다(R1 BH3 low reject). transcript 자동파싱대신실제호출로그와원문수동대조를사용한다(BH10). EXPLAIN은단일표predicate이며제품전체SQL/reader8MiB비용을입증하지않는다. 17.1 reader비용deferred는원래계획에별도보존했다. 이번deferred는없고필수미실행을defer로숨기지않는다.
-- 실제Mac설치본확인·운영사용은17.7범위이며이번에는합성검증만했다. 중앙main/state·운영변경없음. 최신main통합·릴리스ref/버전검증·branch push를위해상태는아직in-review다.
+- 실제Mac설치본확인·운영사용은17.7범위이며이번에는합성검증만했다. 중앙main/state·운영변경없음. 최신 main 통합·릴리스 ref/버전과 관련 검증을 아래에서 수락했다.
+
+## 중앙 최신 main 통합·릴리스 검증
+
+- 구현커밋 `692b72a9b13a85c8af174fb88e43a287c9172787` 후 중앙지시 msg_c5c730506e83에따라 latest main `395a49a8eb70d8784c263b710e0842d63defd56f`를티켓브랜치에정상merge했다. 충돌없음. 중앙main/state는변경하지않았다.
+- 통합커밋 `598497c4db6f0a6bea827f4dac5f483276fedf61`는metadata구현과21.11 bootstrap/22.2 snapshot을함께포함한다. plugin app-ref는이앞선통합커밋으로, version은0.1.22→0.1.23으로같은release변경에지정한다. bootstrap/snapshot소스는main과동일하며17.5가수정하지않았다.
+- 통합후선정검증은 bootstrap/interactive-ref/recall스킬·판정기/extension-plugin, core fingerprint/metadata, PG conversation-index, CLI recall-metadata/extension-commands와Python recall-health이다. 기존전체회귀를무의미하게반복하지않고새bootstrap·snapshot과검색/확장명령연결표면을관찰한다. 결과전에는built로올리지않는다.
+
+
+## Auto Run Result
+
+- **결과: built.** 공개 SDK projection의 확장 상태를 검색·수치 응답 meta로 제공하고 기존 data 계약과 검색·원문·건강 절차를 보존했다. 구현 파일별 역할은 Code Map 및 E1~E11 구현 기록을 따른다. 핵심 변경은 core metadata/helper·봉투/검색/명령 연결, CLI/MCP source·봉투 연결, recall 스킬, 합성 행동 판정기·PG 회귀·EXPLAIN 도구와 시험, README·실측 JSON·이 계획이다. 릴리스 두 파일은 version 0.1.23과 앞선 통합 commit ref를 함께 고정한다.
+- **독립 리뷰:** R1 네 렌즈 20행(중간13·낮음6·false1)을 전부 triage했다. 17행 patch(중복 포함), reject3은 BH3(큰 metadata 상한과 페이지화 복잡성), BH5(false: 다섯 색인 정의와 세 검색 대상 실측 구분), BH10(실제 호출 원문 수동 대조로 충분, 자동 transcript parser 추가 복잡성)이며 자세한 근거는 Review Triage Log에 남겼다. deferred는 단일 빈 목록이다.
+- R2 중간1·낮음1 patch, R3 중간1 patch, R4 새 finding0. 이후 실제 회귀가 드러낸 한국어 어미/평가 출처/PG18 설정·불변 자료 정리를 E9~E11에서 정정했다. R5·R6·R7 모두 새 finding0이며 원본 실패를 보존했다. 최신 R7의 patch high0/medium0/low0, followup_review_recommended=false다. 전체 원문은 `.brain-automation/tickets/17.5/r1-{blind-hunter,edge-case-hunter,verification-gap,intent-alignment}.md`, `r2-followup.md`~`r6-followup.md`, `r7-integration.md`이다.
+- **최종 검증:** 앞 절의 전체 TS→Python 순차 실행과 실패 처분을 수락했다. 통합 뒤 `pnpm build`·`pnpm typecheck` 종료0, 선정 TS 10파일241시험 종료0 → Python recall-health 1파일3시험 종료0. 모두 worker2이며 명령 전문·시각·로그는 `.brain-automation/tickets/17.5/integration-result.json`에 있다. 실제 행동 최초7/9 및 실패2개 새 평가 통과, 합성 EXPLAIN 최종36개 성공을 수락했다.
+- R7은 merge 부모·구현 전용26파일/main 전용24파일의 실제 바이트, README 양쪽 보존, ref 안의 제품·시험과 작업 트리 일치, bootstrap 설치·Garmin 객체·fingerprint·source·가림·metadata 호환을 독립 확인했다. 최신 통합 선정 시험의 성공은 지휘자가 별도로 확인했다.
+- **소유 자원:** 전체 회귀·실측·통합 fixture와 부모 PG의 정확한 214개 ID를 Docker inspect로 확인해 잔존0이다. 운영/다른 티켓 자원을 정리하지 않았다. 워크트리·로컬 브랜치·세션·원본 증거는 보존한다. 최초 Terra ready 영수증은 investigation-start.json, 전체 worker-show는 investigation-show-full.json의 depth1/succeeded/released다.
+- **잔여 위험:** 큰 inventory metadata의 8000자 상한, 판정기의 언어 휴리스틱 및 transcript 수동 대조, 단일표 predicate EXPLAIN의 전체 제품 SQL 비용 대표성 한계는 위 수락 기록과 같다. 등록되지 않은 확장 명령의 기존 USAGE/UNAVAILABLE gate를 모든 경우 자기설명 metadata 계약으로 확대하지 않았다. 미해결 필수 조건은 없다.
+- **operator_actions:** 실제 Mac 설치본 확인·10문항 운영 검증은 17.7 소유자 범위다. 중앙의 결과 수락·main 병합/push는 중앙이 수행한다. 이 티켓의 branch push와 원격 SHA/clean 확인 결과는 로컬 ticket-result.md에 기록한다. 중앙 main/state와 운영은 변경하지 않았다.
