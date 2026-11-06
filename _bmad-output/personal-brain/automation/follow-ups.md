@@ -436,3 +436,16 @@ unresolved0/deferred0, T17추가후속불필요.소유PG/fixture정리·실패/�
 - 운영인계21.7: 새릴리스plugin/ref와README지원명령을사용한다. 실제옛daemon/직접명령/쓰기자손종료·새진입차단·현재challenge 응답, 계정귀속/MFA/tokenstore/설정/최종capture는운영자와21.7소유다. 불명lock/fence/backup을임의삭제하거나내부환경변수/자동응답으로우회하지않는다.
 
 unresolved0/deferred0/추가후속권고false. fixture671의rawremoved665+보존guard뒤별도정리6을구분해정확ID전부부재,주PG부재확인. 워크트리/로컬branch/세션/실패·리뷰·검증원문은보존한다.
+
+
+## 17.5 — 확장 상태·recall 스킬·회귀 수락 (2026-11-06)
+
+근거: [상태·스킬 계획](../tickets/epic-search-and-health-query/tickets/story-0-recall-fixture-plan.md)의 Review Triage Log R1~R7·Verification·Auto Run Result/operator_actions. 최종 `6ae9da3`, 구현/통합ref `598497c`, plugin0.1.23. 중앙은 R7원문·회귀/평가/EXPLAIN원시·원격tip·이전ref를 대조했다.
+
+-13.6 공개SDK projection을재사용해 meta.extensions를재투영한다. 검색배열/수치객체schema유지, 명시source+공개inventory+결과출처 합집합, coreGarmin특수분기없음.비활성보존검색·0건·미설치·조회실패를구분한다.원래SQLview문구와현행projection충돌은중앙Decision으로정정했다.
+- 최초순차전체TS2실패/Python69(내부244)통과를보존하고 어미오독정정뒤관련22시험통과. 실제행동최초7/9와실패2새폴더평가통과를구별한다. 판정기자기시험은실제행동으로계산하지않는다. R5/R6교정독립확인·R7통합확인뒤TS241/Pythonrecall3통과. 최초전체TSexit1을소급통과로바꾸지않는다.
+- EXPLAIN최초PG18카탈로그/불변tool_notes DELETE실패를교정하고 규모별transaction rollback으로36시나리오성공/errors[].공식PG18.6digest/locale/UTF8/pg_trgm1.6/5expressionGIN을기록했다. 단일표predicate측정은제품전체join/ranking/문맥비용을대표하지않는다.
+- 잔여한계: 큰source/inventory meta는기존8000자봉투한도로INVALID_ARGUMENT가능(low기각).언어판정휴리스틱은실제calls/outputs/report/transcript수동대조로보완한다. 미등록명령의기존USAGE/UNAVAILABLE를모든경우자기설명meta계약으로확대하지않았다.17.1의8MiB reader비용실측은기존후속으로보존한다.
+- 운영인계: 실제Mac설치본/운영10문항은17.7이다. 현재ref는최신21.11설치와22.2제품을포함하지만합성시험통과가실제운영전환완료를뜻하지않는다.
+
+deferred[]/필수미해결0/추가후속권고false.소유214컨테이너부재·모든원문실패/평가/리뷰·워크트리/로컬branch/세션은보존한다.
