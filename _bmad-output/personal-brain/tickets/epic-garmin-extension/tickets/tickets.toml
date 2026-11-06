@@ -1,7 +1,7 @@
 # epic 21 Garmin 확장 — 표 순서 = 만드는 순서. id는 영구. (2026-11-05)
 # 한 레인: extensions/garmin·Garmin migration·시험을 모든 스토리가 함께 고친다. 옛 21.1(정리)은 2026-11-05 공유 편집 충돌을 피하려고 20.6으로 옮겼다(id 1은 다시 쓰지 않음).
 
-next_id = 11
+next_id = 12
 
 [[entry]]
 id = 2
@@ -106,13 +106,27 @@ refine = true
 references = ["_bmad-output/personal-brain/tickets/epic-garmin-extension/tickets/story-mac-plan.md, 재진단·q2", "_bmad-output/personal-brain/tickets/epic-garmin-extension/tickets/bug-legacy-extension-core-upgrade-plan.md, 잔여 위험"]
 
 [[entry]]
+id = 11
+type = "bug"
+file = "bug-interactive-bootstrap-upgrade.md"
+title = "플러그인의 detached 설치본에서 새 ref 갱신에 필요한 대화형 offline 확인을 입력할 수 없다"
+description = "21.7의 새 제품 차단이다. detached app에서 새 ref를 준비하면서 설치기 TTY offline 확인을 받는 지원 bootstrap 진입점이 없다. 옛 설치본부터 안전 대화형 갱신과 hook 무질문 계약·보존·중단복구를 입증한다. 실제 운영은21.7 소유다."
+verify = "합성 detached 옛 app의 bootstrap부터 실제 PTY 정상·거부·중단재개와 일반 회귀를 검증하고 독립 리뷰/필요후속·최종 전체 순차회귀·배포 증거에 미해결 실패가 없다."
+covers = []
+after = [10]
+hitl = false
+risk = "high"
+severity = "P1"
+refine = true
+
+[[entry]]
 id = 7
 type = "story"
 title = "이 Mac에서 전환: 옛 데이터를 확정 반입하고 옛 예약을 새 예약으로 바꿔 실수집·실평가가 한 번 돈다"
-description = "21.8의 실행·수정 증거와21.9의 legacy 등록확장 지원 전환 및21.10의 옛manifest 교체 경로가 중앙에서 수락되고 원격 main에 반영된 뒤 E21-6과 epic 20 설치본 확인을 한다. 플러그인 배포로 core·Garmin 플러그인을 설치하고, 예비 반입(online capture, 계정 raw profile id 확인 gate)으로 경로와 전수 비교를 확인한다. 전환: 옛 예약 중지 → 옛 writer 종료 확인 → 최종 capture → 차분 확정 반입 → 전수 비교·파일 관계 확인 → 새 예약 활성화 → 실수집·실평가 한 번. 어느 단계든 실패하면 새 예약을 켜지 않고 옛 plist를 되살린다. 설치본에서 확장 명령·cron 예약·확장 플러그인 설치가 동작하는지 확인한다. 공개 plan에는 건수·상태만 둔다."
+description = "21.8의 실행·수정 증거와21.9의 legacy 등록확장 지원 전환 및21.10의 옛manifest 교체 경로와21.11의 대화형 bootstrap 진입점이 중앙에서 수락되고 원격 main에 반영된 뒤 E21-6과 epic 20 설치본 확인을 한다. 플러그인 배포로 core·Garmin 플러그인을 설치하고, 예비 반입(online capture, 계정 raw profile id 확인 gate)으로 경로와 전수 비교를 확인한다. 전환: 옛 예약 중지 → 옛 writer 종료 확인 → 최종 capture → 차분 확정 반입 → 전수 비교·파일 관계 확인 → 새 예약 활성화 → 실수집·실평가 한 번. 어느 단계든 실패하면 새 예약을 켜지 않고 옛 plist를 되살린다. 설치본에서 확장 명령·cron 예약·확장 플러그인 설치가 동작하는지 확인한다. 공개 plan에는 건수·상태만 둔다."
 verify = "설치본에서 확정 반입 보고서의 표별 건수·자연키·해시·평가·파일 관계 비교가 모두 일치하고, 옛 LaunchAgent가 내려가 있으며, 새 예약으로 실수집 한 번과 실평가 한 번이 형식·순서·저장·발신 상태 기준으로 성공하고, brain ext garmin 명령이 실제 수치를 돌려주며, 공개 plan·로그에 계정·건강값·평가 본문이 없다(모델 품질은 사람이 판단)."
 covers = ["E21-6"]
-after = [8, 9, 10, "20.5"]
+after = [8, 9, 10, 11, "20.5"]
 hitl = true
 risk = "high"
 references = ["_bmad-output/personal-brain/architecture-brain-v1-slice-1/architecture-brain-v1-slice-1.md, AD-36", "_bmad-output/personal-brain/tickets/epic-garmin-import/tickets/story-mac-garmin-capture-a-plan.md, 계정 확인 gate(14.8)"]

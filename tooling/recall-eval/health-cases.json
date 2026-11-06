@@ -1,0 +1,382 @@
+{
+  "connections": [
+    {
+      "id": "01940000-0000-7000-8000-000000001741",
+      "timezone": "Asia/Seoul"
+    },
+    {
+      "id": "01940000-0000-7000-8000-000000001742",
+      "timezone": "America/New_York"
+    }
+  ],
+  "rows": [
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001741",
+      "date": "2026-01-01",
+      "steps": 10
+    },
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001741",
+      "date": "2026-01-02",
+      "steps": null
+    },
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001741",
+      "date": "2026-01-03",
+      "steps": 30
+    },
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001741",
+      "date": "2026-01-31",
+      "steps": 50
+    },
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001741",
+      "date": "2026-02-01",
+      "steps": 70
+    },
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001742",
+      "date": "2026-03-08",
+      "steps": 12
+    },
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001742",
+      "date": "2026-03-09",
+      "steps": 18
+    },
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001742",
+      "date": "2026-11-01",
+      "steps": 30
+    },
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001742",
+      "date": "2026-11-02",
+      "steps": null
+    },
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001741",
+      "date": "2026-05-01",
+      "steps": 0
+    }
+  ],
+  "cases": [
+    {
+      "id": "sum",
+      "command": "period-summary",
+      "input": {
+        "connection_id": "01940000-0000-7000-8000-000000001741",
+        "timezone": "Asia/Seoul",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-03",
+        "metric": "steps",
+        "aggregation": "sum"
+      },
+      "expected": {
+        "value": 40,
+        "unit": "count",
+        "observed_count": 2,
+        "null_count": 1,
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-03"
+      }
+    },
+    {
+      "id": "mean",
+      "command": "period-summary",
+      "input": {
+        "connection_id": "01940000-0000-7000-8000-000000001741",
+        "timezone": "Asia/Seoul",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-03",
+        "metric": "steps",
+        "aggregation": "mean"
+      },
+      "expected": {
+        "value": 20,
+        "unit": "count",
+        "observed_count": 2,
+        "null_count": 1,
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-03"
+      }
+    },
+    {
+      "id": "all-null",
+      "command": "period-summary",
+      "input": {
+        "connection_id": "01940000-0000-7000-8000-000000001741",
+        "timezone": "Asia/Seoul",
+        "start_date": "2026-01-02",
+        "end_date": "2026-01-02",
+        "metric": "steps",
+        "aggregation": "sum"
+      },
+      "expected": {
+        "value": null,
+        "unit": "count",
+        "observed_count": 0,
+        "null_count": 1,
+        "start_date": "2026-01-02",
+        "end_date": "2026-01-02"
+      }
+    },
+    {
+      "id": "zero",
+      "command": "period-summary",
+      "input": {
+        "connection_id": "01940000-0000-7000-8000-000000001741",
+        "timezone": "Asia/Seoul",
+        "start_date": "2026-04-01",
+        "end_date": "2026-04-02",
+        "metric": "steps",
+        "aggregation": "sum"
+      },
+      "expected": {
+        "value": null,
+        "unit": "count",
+        "observed_count": 0,
+        "null_count": 0,
+        "start_date": "2026-04-01",
+        "end_date": "2026-04-02"
+      }
+    },
+    {
+      "id": "month-boundary",
+      "command": "period-summary",
+      "input": {
+        "connection_id": "01940000-0000-7000-8000-000000001741",
+        "timezone": "Asia/Seoul",
+        "start_date": "2026-02-01",
+        "end_date": "2026-02-28",
+        "metric": "steps",
+        "aggregation": "sum"
+      },
+      "expected": {
+        "value": 70,
+        "unit": "count",
+        "observed_count": 1,
+        "null_count": 0,
+        "start_date": "2026-02-01",
+        "end_date": "2026-02-28"
+      }
+    },
+    {
+      "id": "dst-sum",
+      "command": "period-summary",
+      "input": {
+        "connection_id": "01940000-0000-7000-8000-000000001742",
+        "timezone": "America/New_York",
+        "start_date": "2026-03-08",
+        "end_date": "2026-11-02",
+        "metric": "steps",
+        "aggregation": "sum"
+      },
+      "expected": {
+        "value": 60,
+        "unit": "count",
+        "observed_count": 3,
+        "null_count": 1,
+        "start_date": "2026-03-08",
+        "end_date": "2026-11-02"
+      }
+    },
+    {
+      "id": "dst-mean",
+      "command": "period-summary",
+      "input": {
+        "connection_id": "01940000-0000-7000-8000-000000001742",
+        "timezone": "America/New_York",
+        "start_date": "2026-03-08",
+        "end_date": "2026-11-02",
+        "metric": "steps",
+        "aggregation": "mean"
+      },
+      "expected": {
+        "value": 20,
+        "unit": "count",
+        "observed_count": 3,
+        "null_count": 1,
+        "start_date": "2026-03-08",
+        "end_date": "2026-11-02"
+      }
+    },
+    {
+      "id": "multi-month",
+      "command": "period-summary",
+      "input": {
+        "connection_id": "01940000-0000-7000-8000-000000001741",
+        "timezone": "Asia/Seoul",
+        "start_date": "2026-01-01",
+        "end_date": "2026-02-28",
+        "metric": "steps",
+        "aggregation": "mean"
+      },
+      "expected": {
+        "value": 40,
+        "unit": "count",
+        "observed_count": 4,
+        "null_count": 1,
+        "start_date": "2026-01-01",
+        "end_date": "2026-02-28"
+      }
+    },
+    {
+      "id": "dst-yesterday",
+      "command": "period-summary",
+      "input": {
+        "connection_id": "01940000-0000-7000-8000-000000001742",
+        "timezone": "America/New_York",
+        "start_date": "2026-03-08",
+        "end_date": "2026-03-08",
+        "metric": "steps",
+        "aggregation": "sum"
+      },
+      "expected": {
+        "value": 12,
+        "unit": "count",
+        "observed_count": 1,
+        "null_count": 0,
+        "start_date": "2026-03-08",
+        "end_date": "2026-03-08"
+      }
+    },
+    {
+      "id": "daily",
+      "command": "daily-values",
+      "input": {
+        "connection_id": "01940000-0000-7000-8000-000000001741",
+        "timezone": "Asia/Seoul",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-03",
+        "metric": "steps"
+      },
+      "expected": {
+        "rows": [
+          {
+            "date": "2026-01-01",
+            "value": 10,
+            "unit": "count"
+          },
+          {
+            "date": "2026-01-02",
+            "value": null,
+            "unit": "count"
+          },
+          {
+            "date": "2026-01-03",
+            "value": 30,
+            "unit": "count"
+          }
+        ]
+      }
+    },
+    {
+      "id": "workout",
+      "command": "period-summary",
+      "input": {
+        "connection_id": "01940000-0000-7000-8000-000000001741",
+        "timezone": "Asia/Seoul",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-03",
+        "metric": "workout.duration_s",
+        "aggregation": "sum",
+        "activity_type": "strength"
+      },
+      "expected": {
+        "value": 150,
+        "unit": "s",
+        "observed_count": 2,
+        "null_count": 1,
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-03"
+      }
+    },
+    {
+      "id": "observed-zero",
+      "command": "period-summary",
+      "input": {
+        "connection_id": "01940000-0000-7000-8000-000000001741",
+        "timezone": "Asia/Seoul",
+        "start_date": "2026-05-01",
+        "end_date": "2026-05-01",
+        "metric": "steps",
+        "aggregation": "sum"
+      },
+      "expected": {
+        "value": 0,
+        "unit": "count",
+        "observed_count": 1,
+        "null_count": 0,
+        "start_date": "2026-05-01",
+        "end_date": "2026-05-01"
+      }
+    },
+    {
+      "id": "exercise",
+      "command": "period-summary",
+      "input": {
+        "connection_id": "01940000-0000-7000-8000-000000001741",
+        "timezone": "Asia/Seoul",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-03",
+        "metric": "exercise.reps",
+        "aggregation": "sum",
+        "exercise": "squat"
+      },
+      "expected": {
+        "value": 12,
+        "unit": "count",
+        "observed_count": 1,
+        "null_count": 0,
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-03"
+      }
+    }
+  ],
+  "workouts": [
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001741",
+      "activity_id": 101,
+      "date": "2026-01-01",
+      "type": "strength",
+      "duration_s": 60
+    },
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001741",
+      "activity_id": 102,
+      "date": "2026-01-02",
+      "type": "run",
+      "duration_s": 300
+    },
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001741",
+      "activity_id": 103,
+      "date": "2026-01-03",
+      "type": "strength",
+      "duration_s": 90
+    },
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001741",
+      "activity_id": 104,
+      "date": "2026-01-03",
+      "type": "strength",
+      "duration_s": null
+    }
+  ],
+  "exercise_logs": [
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001741",
+      "activity_id": 101,
+      "exercise": "squat",
+      "reps": 12
+    },
+    {
+      "connection_id": "01940000-0000-7000-8000-000000001741",
+      "activity_id": 101,
+      "exercise": "bench press",
+      "reps": 8
+    }
+  ]
+}
