@@ -279,11 +279,12 @@ describe('the registry of the ways out', () => {
     const probe = {
       texts: [`키는 ${SECRET} 이고 비밀번호 Tiger2024`, 'password: Pa!ss2024'],
       toolNotes: [{ tool: 'Bash', target: 'OPENAI_API_KEY=xyz123 node run.js' }],
+      documents: [{ body: 'password=docsecret', display_name: 'password=namesecret', chunk_locator: 'password=locsecret' }],
     };
 
     for (const codec of OUTPUT_CODECS) {
       const rendered = codec.render(probe);
-      for (const secret of [SECRET, 'Tiger2024', 'Pa!ss2024', 'xyz123']) {
+      for (const secret of [SECRET, 'Tiger2024', 'Pa!ss2024', 'xyz123', 'docsecret', 'namesecret', 'locsecret']) {
         expect(rendered, `${secret} came out of the ${codec.name} codec`).not.toContain(secret);
       }
     }
@@ -295,7 +296,7 @@ describe('the registry of the ways out', () => {
     // codec that called `sessionForOutput` ran that rule.
     const probe = {
       texts: [],
-      toolNotes: [{ tool: 'Bash', target: 'MY_CREDENTIAL=abc123 node run.js' }],
+      toolNotes: [{ tool: 'Bash', target: 'MY_CREDENTIAL=abc123 node run.js' }], documents: [],
     };
 
     for (const codec of OUTPUT_CODECS) {
@@ -308,7 +309,7 @@ describe('the registry of the ways out', () => {
 
   it('leaves ordinary code and prose in every codec', () => {
     const kept = ['let token = parse(input);', 'secret: see the README'];
-    const probe = { texts: kept, toolNotes: [{ tool: 'Bash', target: 'node run.js --model=demo' }] };
+    const probe = { texts: kept, toolNotes: [{ tool: 'Bash', target: 'node run.js --model=demo' }], documents: [] };
 
     for (const codec of OUTPUT_CODECS) {
       const rendered = codec.render(probe);

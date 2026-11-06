@@ -120,6 +120,8 @@ const calls = {
   listChannelItemResults: s => s.listChannelItemResults(id),
   recordChannelItemResult: s => s.recordChannelItemResult({requestId:id,workItemId:id,attemptToken:id,index:0,now,result:{outcome:'sent',externalMessageId:null}}),
   finishChannelAttempt: s => s.finishChannelAttempt({requestId:id,workItemId:id,attemptToken:id,now,externalMessageId:'1'}),
+  searchDocuments: s => s.searchDocuments({query:'test',pattern:'%test%',limit:6}),
+  readDocument: s => s.readDocument(id),
   insertSetting: (s) => s.insertSetting({ userId: null, key: 'timezone', value: 'UTC', updatedAt: now }),
   beginExtensionQuiesce: s => s.beginExtensionQuiesce({ name: 'testext', owner: '00000000-0000-4000-8000-000000000000', now }),
   readExtensionQuiesce: s => s.readExtensionQuiesce('testext'),
@@ -159,7 +161,7 @@ it.each(['refused', 'terminated', 'missing-schema', 'missing-database', 'missing
         }
         expect(terminated, `a pending database operation for ${name}`).toBe(true);
       }
-      expect(await pending, name).toMatchObject({ ok: false, code: name === 'searchRecall' && kind === 'missing-schema' ? 'SEARCH_FAILED' : 'DB_UNAVAILABLE', message: expect.any(String) });
+      expect(await pending, name).toMatchObject({ ok: false, code: ['searchRecall','searchDocuments','readDocument'].includes(name) && kind === 'missing-schema' ? 'SEARCH_FAILED' : 'DB_UNAVAILABLE', message: expect.any(String) });
       await store.close();
     }
   } finally {

@@ -1,9 +1,18 @@
-import { CONVERSATION_CHUNK_INDEX_CONFIG_ID, formatSessionToken, type RecallStore } from '@second-brain/core';
+import { CONVERSATION_CHUNK_INDEX_CONFIG_ID, formatSessionToken, type RecallStore, type DocumentRecallStore } from '@second-brain/core';
 import { sql } from 'kysely';
 import { describe, type PgConnect } from './connect.js';
 import { originalText, pgText } from './text.js';
 
-export function postgresRecallStore(connect: PgConnect): RecallStore {
+function documentError(error: unknown) {
+  const code = (error as { code?: string }).code;
+  return { ok: false as const, code: (code?.startsWith('08') || code?.startsWith('28') || ['3D000','57P01','57P02','57P03','ECONNREFUSED','ECONNRESET','EPIPE','ENOTFOUND','EAI_AGAIN','ENETUNREACH','EHOSTUNREACH','ETIMEDOUT'].includes(code ?? '') || (code === undefined && error instanceof Error && ['timeout exceeded when trying to connect','Connection terminated due to connection timeout','Connection terminated unexpectedly','Connection terminated'].includes(error.message))) ? 'DB_UNAVAILABLE' as const : 'SEARCH_FAILED' as const, message: describe(error) };
+}
+function reportDate(value: unknown): string | null {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0,10) === value ? value : null;
+}
+export function postgresRecallStore(connect: PgConnect): RecallStore & DocumentRecallStore {
   return { async searchRecall(input) {
     const opened = connect();
     if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
@@ -18,5 +27,53 @@ export function postgresRecallStore(connect: PgConnect): RecallStore {
       const code = (error as { code?: string }).code;
       return { ok: false, code: code?.startsWith('08') || code?.startsWith('28') || ['3D000', '57P01', '57P02', '57P03', 'ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'ETIMEDOUT'].includes(code ?? '') || (code === undefined && error instanceof Error && ['timeout exceeded when trying to connect', 'Connection terminated due to connection timeout', 'Connection terminated unexpectedly', 'Connection terminated'].includes(error.message)) ? 'DB_UNAVAILABLE' : 'SEARCH_FAILED', message: describe(error) };
     }
+  },
+  async searchDocuments(input) {
+    const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+    try {
+      const result = await sql<{rows: {file_id: string; display_name: string; display_name_raw: string | null; chunk_locator: string; ordinal: number; extraction_id: string; report_date: string | null; source: string; source_unreachable: boolean; body: string}[]; contexts: {extraction_id: string; pieces: import('@second-brain/core').DocumentPiece[]}[]}>`
+        with candidates as materialized (
+        select f.id as file_id, coalesce(n.text, 'report:' || f.id::text) as display_name, n.text_raw as display_name_raw,
+          c.chunk_locator, c.ordinal, e.id as extraction_id, q.report_date,
+          q.source, f.source_unreachable_at is not null as source_unreachable, c.body,
+          row_number() over (order by (length(lower(c.body))-length(replace(lower(c.body),lower(${pgText(input.query).text}),''))) desc,
+            q.report_date collate "C" desc nulls last, f.id, c.ordinal, c.id) as rank
+        from brain.files f
+        join lateral (select r.file_id, req.source, case when req.metadata->>'report_date' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' and pg_input_is_valid(req.metadata->>'report_date','date') then req.metadata->>'report_date' else null end as report_date from brain.file_request_results r
+          join brain.file_requests req on req.id=r.request_id
+          where r.file_id=f.id and r.error_code is null and req.metadata->>'kind'='report'
+          order by req.created_at desc, req.id desc limit 1) q on true
+        join brain.document_extractions e on e.id=f.current_extraction_id and e.file_id=f.id and e.status='ok'
+        join brain.document_chunks c on c.extraction_id=e.id
+        left join lateral (select text,text_raw from brain.file_names where file_id=f.id order by name_source collate "C", coalesce(text_raw,convert_to(text,'UTF8')) limit 1) n on true
+        where f.redacted_at is null and lower(c.body) like lower(${pgText(input.pattern).text}) escape '\\'
+        order by rank limit ${input.limit}
+        ), contexts as (
+          select ids.extraction_id, jsonb_agg(jsonb_build_object('ordinal', x.ordinal, 'chunk_locator', x.chunk_locator, 'body', x.body) order by x.ordinal) as pieces
+          from (select distinct extraction_id from candidates) ids
+          join brain.document_chunks x on x.extraction_id=ids.extraction_id
+          group by ids.extraction_id
+        )
+        select coalesce((select jsonb_agg((to_jsonb(candidates) - 'rank') || jsonb_build_object('display_name_raw', encode(display_name_raw, 'base64')) order by rank) from candidates), '[]'::jsonb) as rows,
+          coalesce((select jsonb_agg(to_jsonb(contexts)) from contexts), '[]'::jsonb) as contexts`.execute(opened.connection.db);
+      const data = result.rows[0]!;
+      return { ok: true, rows: data.rows.map(r => originalText({ ...r, display_name_raw: r.display_name_raw === null ? null : Buffer.from(r.display_name_raw, 'base64') })).map(({display_name_raw: _raw, ...r}) => ({ ...r, kind: 'document' as const, report_date: reportDate(r.report_date) })), contexts: data.contexts };
+    } catch (error) { return documentError(error); }
+  },
+  async readDocument(fileId) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(fileId)) return { ok: true, snapshot: null };
+    const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+    try {
+      const result = await sql<{redacted: boolean; source_unreachable: boolean; extraction_id: string | null; status: import('@second-brain/core').DocumentExtractionStatus | 'pending' | null; pieces: {ordinal: number; chunk_locator: string; body: string}[]}>`
+        select f.redacted_at is not null as redacted, f.source_unreachable_at is not null as source_unreachable,
+          f.current_extraction_id as extraction_id,
+          coalesce(cur.status, latest.status, case when latest.id is not null then 'pending' end) as status,
+          case when f.redacted_at is not null then '[]'::jsonb else coalesce((select jsonb_agg(jsonb_build_object('ordinal', c.ordinal, 'chunk_locator', c.chunk_locator, 'body', c.body) order by c.ordinal)
+            from brain.document_chunks c where c.extraction_id=cur.id and cur.status='ok'), '[]'::jsonb) end as pieces
+        from brain.files f left join brain.document_extractions cur on cur.id=f.current_extraction_id and cur.file_id=f.id
+        left join lateral (select id,status from brain.document_extractions where file_id=f.id order by attempt desc limit 1) latest on true
+        where f.id=${fileId}::uuid`.execute(opened.connection.db);
+      return { ok: true, snapshot: result.rows[0] ?? null };
+    } catch (error) { return documentError(error); }
   } };
 }

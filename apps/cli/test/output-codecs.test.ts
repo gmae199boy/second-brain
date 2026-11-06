@@ -182,7 +182,7 @@ async function probeFrom(home: string): Promise<OutputProbe> {
     const toolNotes = (await database
       .prepare('select tool, target from tool_notes order by ordinal')
       .all()) as { tool: string; target: string }[];
-    return { texts: bodies, toolNotes };
+    return { texts: bodies, toolNotes, documents: [{ body: 'password=docsecret', display_name: 'password=namesecret', chunk_locator: 'password=locsecret' }] };
   } finally {
     (await database.close());
   }
@@ -209,7 +209,7 @@ describe('every registered output codec, on a session that was stored whole', ()
 
     for (const codec of OUTPUT_CODECS) {
       const rendered = codec.render(probe);
-      for (const secret of SECRETS) {
+      for (const secret of [...SECRETS, 'docsecret', 'namesecret', 'locsecret']) {
         expect(holds(rendered, secret), `${secret} came out of the ${codec.name} codec`).toBe(
           false,
         );
@@ -245,7 +245,7 @@ describe('every registered output codec, on a session that was stored whole', ()
     // column's shell rule takes the value (follow-up review).
     const probe: OutputProbe = {
       texts: [],
-      toolNotes: [{ tool: 'Bash', target: 'MY_CREDENTIAL=abc123 node run.js' }],
+      toolNotes: [{ tool: 'Bash', target: 'MY_CREDENTIAL=abc123 node run.js' }], documents: [],
     };
 
     for (const codec of OUTPUT_CODECS) {
