@@ -463,3 +463,17 @@ deferred[]/필수미해결0/추가후속권고false.소유214컨테이너부재�
 - 배포후속: 현재plugin0.1.23/app-ref598497c에는22.4성능구현이아직없다. 제품배포가필요할때이전구현commit ref+같은releaseversion증가로조율한다. main병합이설치본반영을뜻하지않는다.
 
 deferred[]/필수미해결0/필요후속완료.소유PG·동적fixture정확ID정리/부재와최초실패·성능원시·리뷰·워크트리/로컬branch/세션은보존한다.
+
+
+## 22.5 — canonical UUID 위치 조회 수락 (2026-11-06)
+
+근거: [위치 조회 계획](../tickets/epic-query-performance/tickets/story-uuid-uuid-plan.md)의 Review Triage Log·실행 검증·Auto Run Result, 최종 `0efce079`. 중앙은 제품 diff·마지막 followup2 원문·원시 비교 JSON·회귀 종료코드·원격 tip·정리 증거를 대조했다.
+
+- read/list/mark의 소문자 canonical 입력만 UUID 조건으로 조회한다. 다른 표기와 포트 밖 런타임 입력은 기존 text predicate로 매개변수 변환·오류·connect/시각검증/쓰기 순서를 보존한다. accepted22.4 batchwrite·schema39·과거 migration·공개 API는 불변이다.
+- 승인창의 baseline/current 한쌍·compare 모두 exit0. 10만행 read5.257542→0.240375ms(0.045720배), mark10.493333→1.551333ms(0.147840배), list도 개선. 입력12종·전체행 지문·허용된 삭제시각5행·migration manifest 동등, 실제4SQL 인덱스 계획 확인. 표본3개의 합성결과이며 운영분포/p95 보장이 아니다. mark 표본 변동도 원시 보존한다.
+- 최초 전체TS4555통과/4실패/기존skip1·순차Python69통과를 보존했다. 기존 legacy fixture 고정암호 전제를 자기 PG에 맞춘 관련파일31시험 통과로 해소했고 제품/시험 추가수정은 없다. 최초 PgSleep대기 실패의 인증 원인은 직접계측 사실과 구분해 추정으로 남긴다. 최초전체exit1을 소급통과로 표기하지 않는다.
+- 독립4렌즈의 채택수정 및 마지막F1 Bitmap계획 판정/F2 실패raw 거부를 followup2가 각각 해결확인했다. E2 CREATE DATABASE 응답 유실은 생성불명 가능성이 남으므로 시도/정확DB명을 실패raw에 보존하고 전용cluster의 정확ID 최종정리·부재확인을 유지한다. 이번197fixture/parent/성능PG는 부재확인했다.
+- 비정규 입력 fallback은 기존스캔 비용을 유지한다. 향후22.3 schema40이 채택되면 최신main 통합에서 현행기대/manifest 의미만 대조한다. 현재성능 기준을 소급변경하지 않는다.
+- 배포후속: plugin0.1.23/app-ref598497c에는22.4와22.5 구현이 포함되지 않는다. 실제배포 시 이전구현commit ref와 같은release version증가로 조율한다. main병합을 설치본반영으로 계산하지 않는다.
+
+deferred[]/필수미해결0/필요후속완료. 최초실패·원시·built/runner archive·워크트리/로컬·원격branch/세션은 보존한다.
