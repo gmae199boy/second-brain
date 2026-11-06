@@ -39,6 +39,7 @@ export interface VerbCall {
  * exited 1 keeps doing so under a code the table puts at 2.
  */
 export interface Failure {
+  meta?: EnvelopeMeta;
   /** 실패 후 재조회한 구조화 결과. 다른 출력과 같이 마스킹한다. */
   data?: unknown;
   /**
@@ -68,7 +69,13 @@ export interface EnvelopeError {
 }
 
 /** `meta` of the envelope: what the result is, beside the result itself. */
+export interface ExtensionMetadata {
+  source: string; installed: boolean; enabled: boolean | null; searchable: boolean | null;
+  work_state: 'replacement_required' | 'quiesced' | 'interrupted' | 'held' | 'failed' | 'pending' | 'unknown';
+}
+
 export interface EnvelopeMeta {
+  extensions?: ExtensionMetadata[];
   hint?: string;
   count?: number;
   has_more?: boolean;
@@ -153,6 +160,7 @@ export function errorEnvelope(
     warnings: maskOutputValue([...warnings]),
     error: maskOutputValue(error),
     ...(failure.data === undefined ? {} : { data: maskOutputValue(failure.data) }),
+    ...(failure.meta === undefined ? {} : { meta: maskOutputValue(failure.meta) }),
   };
 }
 

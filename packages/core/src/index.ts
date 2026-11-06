@@ -42,6 +42,7 @@ export {
   type Envelope,
   type EnvelopeError,
   type EnvelopeMeta,
+  type ExtensionMetadata,
   type Failure,
   type VerbCall,
 } from './envelope.js';

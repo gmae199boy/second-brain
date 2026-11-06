@@ -21,7 +21,7 @@ it('exposes an installed read command through CLI, guide and MCP and follows act
     expect(call.body.data).toMatchObject({ abi: 1, settings: { 'testext.label': 'user-value' }, input: { value: 'hello' } });
     expect(call.body.data.user_id).toBe(selfId);
     const invalid = await fixture.run(['ext', 'testext', 'echo-stats', '--input', '{"value":7}', '--json']);
-    expect(invalid.body?.error?.code).toBe('EXTENSION_COMMAND_INPUT_INVALID');
+    expect(invalid.body).toMatchObject({ok:false,error:{code:'EXTENSION_COMMAND_INPUT_INVALID'},meta:{extensions:[{source:'testext',installed:true,enabled:true,searchable:true}]}});
     const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/bin.js', import.meta.url)), 'mcp', 'serve'], { env: fixture.env, stdio: ['pipe', 'pipe', 'pipe'] });
     const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
     async function request(id: number, method: string, params: unknown = {}) { child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n'); return JSON.parse((await lines.next()).value!); }
@@ -33,25 +33,40 @@ it('exposes an installed read command through CLI, guide and MCP and follows act
       expect(JSON.parse((await lines.next()).value!).id).toBe(id);
       expect((await request(1, 'initialize')).result.capabilities.tools).toBeTruthy();
       const list = await request(2, 'tools/list');
-      expect(list.result.tools[0].inputSchema).toEqual(schema);
+      expect(list.result.tools.find((tool:{name:string}) => tool.name === 'ext_testext_echo_stats').inputSchema).toEqual(schema);
+      expect(list.result.tools.find((tool:{name:string}) => tool.name === 'recall_docs').inputSchema.properties.source.type).toBe('string');
+      const cliSearch = await fixture.run(['recall','docs','없음','--source','testext,missing','--json']);
+      expect(cliSearch.body).toMatchObject({ok:true,data:[],meta:{extensions:[{source:'missing',installed:false},{source:'testext',installed:true}]}});
+      const search = await request(20, 'tools/call', { name:'recall_docs', arguments:{ query:'없음', source:'testext,missing' } });
+      expect(JSON.parse(search.result.content[0].text).meta.extensions).toEqual(cliSearch.body.meta.extensions);
+      expect(JSON.parse(search.result.content[0].text)).toMatchObject({ok:true,data:[],meta:{extensions:[{source:'missing',installed:false},{source:'testext',installed:true}]}});
+      expect(call.body.meta.extensions).toEqual(expect.arrayContaining([expect.objectContaining({source:'testext',installed:true})]));
+      expect(JSON.parse((await request(21, 'tools/call', {name:'ext_testext_echo_stats',arguments:{value:'hello'}})).result.content[0].text).meta.extensions).toEqual(call.body.meta.extensions);
+      const invalidMcp = await request(22, 'tools/call', {name:'ext_testext_echo_stats',arguments:{value:7}});
+      expect(invalidMcp.result.isError).toBe(true);
+      const invalidBody = JSON.parse(invalidMcp.result.content[0].text);
+      expect(invalidBody).toMatchObject({ok:false,error:{code:'EXTENSION_COMMAND_INPUT_INVALID'}});
+      expect(invalidBody.meta.extensions).toEqual(invalid.body.meta.extensions);
       const result = await request(3, 'tools/call', { name: 'ext_testext_echo_stats', arguments: { value: 'hello' } });
       const mcpData = JSON.parse(result.result.content[0].text).data;
       expect(mcpData).toEqual(call.body.data);
       expect(mcpData).toMatchObject({ user_id: selfId, settings: { 'testext.label': 'user-value' } });
       expect((await fixture.run(['ext', 'disable', 'testext', '--json'])).body.ok).toBe(true);
-      expect((await request(4, 'tools/list')).result.tools).toEqual([]);
+      const disabledSearch = await fixture.run(['recall','docs','없음','--source','testext','--json']);
+      expect(disabledSearch.body).toMatchObject({ok:true,data:[],meta:{extensions:[{source:'testext',installed:true,enabled:false,searchable:true}]}});
+      expect((await request(4, 'tools/list')).result.tools.filter((tool:{name:string}) => tool.name.startsWith('ext_'))).toEqual([]);
       expect((await fixture.run(['ext', '--help'])).stdout).not.toContain('testext');
       expect((await fixture.run(['guide', 'schema', 'ext.testext', '--json'])).body.ok).toBe(false);
       expect((await request(5, 'tools/call', { name: 'ext_testext_echo_stats' })).result.isError).toBe(true);
       expect((await fixture.run(['ext', 'enable', 'testext', '--json'])).body.ok).toBe(true);
-      expect((await request(6, 'tools/list')).result.tools).toHaveLength(1);
+      expect((await request(6, 'tools/list')).result.tools.filter((tool:{name:string}) => tool.name.startsWith('ext_'))).toHaveLength(1);
       const { rename } = await import('node:fs/promises'); const { join } = await import('node:path');
       const manifest = join(fixture.home, 'extensions/testext/manifest.json'); await rename(manifest, manifest + '.hidden');
-      expect((await request(7, 'tools/list')).result.tools).toEqual([]);
+      expect((await request(7, 'tools/list')).result.tools.filter((tool:{name:string}) => tool.name.startsWith('ext_'))).toEqual([]);
       expect((await request(8, 'tools/call', { name: 'ext_testext_echo_stats' })).result.isError).toBe(true);
       await rename(manifest + '.hidden', manifest);
       await fixture.db.query("delete from brain.extensions where name='testext'");
-      expect((await request(9, 'tools/list')).result.tools).toEqual([]);
+      expect((await request(9, 'tools/list')).result.tools.filter((tool:{name:string}) => tool.name.startsWith('ext_'))).toEqual([]);
       expect((await request(10, 'tools/call', { name: 'ext_testext_echo_stats' })).result.isError).toBe(true);
     } finally { child.stdin.end(); await new Promise(resolve => child.once('close', resolve)); }
   } finally { await fixture.cleanup(); }
