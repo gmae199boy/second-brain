@@ -1,3 +1,4 @@
+import { sourcesSyncCommand } from './sources-sync.js';
 import { recallDocsCommand } from './recall-docs.js';
 import { filesShowCommand } from './files-show.js';
 import { mcpServeCommand } from './mcp-serve.js';
@@ -71,7 +72,7 @@ export const commands: readonly CommandSpec[] = [
   configGetCommand,
   configSetCommand,
   messagesRedactCommand,
-  filesRedactCommand, filesShowCommand,
+  filesRedactCommand, filesShowCommand, sourcesSyncCommand,
   failuresListCommand,
   failuresRetryCommand,
   // A function, not the list: `guide schema` describes the registry it is in,

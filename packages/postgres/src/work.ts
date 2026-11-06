@@ -109,7 +109,7 @@ function scheduleWorkReady(): RawBuilder<boolean> {
 }
 
 /** Shared due predicate and order; only the claiming caller adds row locking. */
-export function claimCandidateQuery(query: DueWorkQuery): RawBuilder<WorkItemRow> {
+export function claimCandidateQuery(query: DueWorkQuery, scope?:{sourceId:string;syncWorkId:string}): RawBuilder<WorkItemRow> {
   const now = instant(query.now, 'work_items.next_attempt_at');
   return sql<WorkItemRow>`
     select id, kind, execution_class, current_attempt_token, serialization_key, hold_group, target_kind, target_id, created_at, attempts, next_attempt_at,
@@ -127,9 +127,33 @@ export function claimCandidateQuery(query: DueWorkQuery): RawBuilder<WorkItemRow
        and next_attempt_at <= ${now}
        and (claim_expires_at is null or claim_expires_at <= ${now})
        and kind = any(${[...query.kinds]}::text[])
-  order by attempts asc, id asc
+       and ${scope ? sql<boolean>`((kind='source_sync' and id::text=${scope.syncWorkId} and target_kind='source' and target_id=${scope.sourceId}) or (kind='document_extract' and target_kind='file' and exists (select 1 from brain.source_handoffs h join brain.source_files sf on sf.id=h.source_file_id join brain.sources s on s.id=sf.source_id join brain.files f on f.id=h.file_id where f.redacted_at is null and sf.source_id::text=${scope.sourceId} and h.work_id=brain.work_items.id and h.file_id::text=brain.work_items.target_id and h.source_generation=s.generation and h.remote_version=sf.remote_version and not sf.unreachable)))` : sql<boolean>`true`}
+  order by ${scope ? sql`case when kind='source_sync' then 0 else 1 end,` : sql``} attempts asc, id asc
      limit 1
   `;
+}
+
+/** The source command reuses the queue's eligibility and claiming rules with a private scope. */
+export function postgresSourceQueue(connect:PgConnect) {
+  const kinds=['source_sync','document_extract'];
+  return {
+    async hasDueSourceWork(input:{sourceId:string;syncWorkId:string;now:Date}):Promise<HasDueWorkResult>{
+      const c=connect();if(!c.ok)return {ok:false,code:'DB_UNAVAILABLE',message:c.message};
+      try {const rows=await claimCandidateQuery({now:input.now,kinds},input).execute(c.connection.db);return {ok:true,due:rows.rows.length>0};} catch(e){return databaseFailure(e);}
+    },
+    async claimSourceWork(input:{sourceId:string;syncWorkId:string;now:Date;claimedBy:string}):Promise<ClaimWorkResult>{
+      const c=connect();if(!c.ok)return {ok:false,code:'DB_UNAVAILABLE',message:c.message};
+      const r=await withWrite(c.connection,async db=>{
+        await sql`lock table brain.extension_quiesce in share mode`.execute(db);
+        const now=instant(input.now,'work_items.claimed_at');
+        for(;;){const candidate=(await sql<WorkItemRow>`${claimCandidateQuery({now:input.now,kinds},input)} for update skip locked`.execute(db)).rows[0];if(!candidate)return null;
+          if(!await lockAvailableKey(db,candidate,now))continue;
+          const expires=instant(new Date(input.now.getTime()+workKindPolicy(candidate.kind).claimForMs),'work_items.claim_expires_at');
+          await sql`update brain.work_items set attempts=attempts+1,claimed_at=${now},claim_expires_at=${expires},claimed_by=${input.claimedBy} where id=${candidate.id}`.execute(db);
+          const scheduled=await claimOccurrences(db,candidate.id);return toWorkItem({...candidate,scheduled,attempts:candidate.attempts+1,claimed_at:now,claim_expires_at:expires,claimed_by:input.claimedBy});}
+      });return r.ok?{ok:true,item:r.value}:r;
+    },
+  };
 }
 
 /** Find-or-create also used inside session creation and schedule firing. */

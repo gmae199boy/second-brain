@@ -363,6 +363,7 @@ export type CreateConnectionStore = NonNullable<import('./runtime/brain-store.js
 export interface DispatchRuntime {
   /** Explicit Drive integration; the default CLI never opens an external account. */
   driveFactory?: (store: Store & SchemaStore & SettingsStore) => BrainDependencies['drive'];
+  sourceSyncFactory?: (store: Store & SchemaStore & SettingsStore) => BrainDependencies['sourceSync'];
   signal?: AbortSignal;
   rawExtensionInput?: { value: unknown };
   runner?: CommandRunner;
@@ -458,6 +459,7 @@ export async function dispatch(
       rawExtensionInput: runtime.rawExtensionInput,
       createStore: runtime.createStore,
       driveFactory: runtime.driveFactory,
+      sourceSyncFactory: runtime.sourceSyncFactory,
       stdin: runtime.stdin ?? (() => readStdin()),
       recordHookArrival: (harness) => recordHookArrival(configHome(env), harness, env['SECOND_BRAIN_PLUGIN_ROOT']),
       idGen: runtime.idGen ?? uuidV7IdGen(),
@@ -545,6 +547,7 @@ export async function dispatch(
 /** The parts of the runtime `execute` passes on to a command or to the SDK. */
 interface Wiring {
   driveFactory?: DispatchRuntime['driveFactory'];
+  sourceSyncFactory?: DispatchRuntime['sourceSyncFactory'];
   signal?: AbortSignal;
   rawExtensionInput?: { value: unknown };
   runner?: CommandRunner;
@@ -654,6 +657,7 @@ async function execute(
     adapterProbeIds: opened.adapterProbeIds,
     runner: wiring.runner,
     driveFactory: wiring.driveFactory,
+    sourceSyncFactory: wiring.sourceSyncFactory,
   });
   // One spool per invocation, taken off the assembly rather than built again:
   // the spool branch below writes a mark with no brain in its hands (AD-9), and

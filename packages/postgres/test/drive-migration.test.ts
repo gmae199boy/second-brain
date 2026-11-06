@@ -92,7 +92,7 @@ it('SIGKILL after upload and redaction before CAS resumes durable cleanup',async
     const intent=await store.readDriveIntent(f); if (!intent.ok || !intent.intent) throw Error('intent missing');
     const drive=driveFileStore({rootFolderId:'root',baseUrl:server.baseUrl,uploads:store.driveUploads,clock});
     const localStore={get:async()=>({ok:false as const,code:'FILE_NOT_FOUND' as const,message:'already removed'}),delete:async()=>({ok:true as const,deleted:true})};
-    const deps={store,uploads:store.driveUploads,local:localStore as unknown as import('@second-brain/core').FileStore,drive,settings:{store,schemaVersions:{core:40},clock},rootFolderId:'root',clock,idGen:ids};
+    const deps={store,uploads:store.driveUploads,local:localStore as unknown as import('@second-brain/core').FileStore,drive,settings:{store,schemaVersions:{core:41},clock},rootFolderId:'root',clock,idGen:ids};
     const work={targetId:f} as import('@second-brain/core').WorkItem;
     expect(await driveMigrationHandler(deps)(work)).toEqual({ok:true});
     const cleanupDrive=blobDeleteHandler({store,files:localStore,driveFiles:drive,driveRoot:{store,rootFolderId:'root'},clock});
@@ -129,7 +129,7 @@ it('lost upload response after redaction stays durably uncertain without marking
   const blob={targetId:remote} as import('@second-brain/core').WorkItem;
   expect(await deletion(blob)).toMatchObject({ok:false,code:'FILES_UNAVAILABLE',retryable:true});
   expect(await store.readFileLocation(remote)).toMatchObject({ok:true,location:{deletedAt:null}});
-  const deps={store,uploads:store.driveUploads,local:{} as import('@second-brain/core').FileStore,drive,settings:{store,schemaVersions:{core:40},clock},rootFolderId:'root',clock,idGen:ids};
+  const deps={store,uploads:store.driveUploads,local:{} as import('@second-brain/core').FileStore,drive,settings:{store,schemaVersions:{core:41},clock},rootFolderId:'root',clock,idGen:ids};
   expect(await driveMigrationHandler(deps)({targetId:f} as import('@second-brain/core').WorkItem)).toMatchObject({ok:false,retryable:true});
   expect(await deletion(blob)).toMatchObject({ok:false,code:'FILES_UNAVAILABLE',retryable:true});
   expect(server.files.size).toBe(1);

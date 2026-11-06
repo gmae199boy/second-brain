@@ -29,36 +29,40 @@ export function postgresRecallStore(connect: PgConnect): RecallStore & DocumentR
     }
   },
   async searchDocuments(input) {
-    const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+    const opened=connect();if(!opened.ok)return {ok:false,code:'DB_UNAVAILABLE',message:opened.message};
     try {
-      const result = await sql<{rows: {file_id: string; display_name: string; display_name_raw: string | null; chunk_locator: string; ordinal: number; extraction_id: string; report_date: string | null; source: string; source_unreachable: boolean; body: string}[]; contexts: {extraction_id: string; pieces: import('@second-brain/core').DocumentPiece[]}[]}>`
-        with candidates as materialized (
-        select f.id as file_id, coalesce(n.text, 'report:' || f.id::text) as display_name, n.text_raw as display_name_raw,
-          c.chunk_locator, c.ordinal, e.id as extraction_id, q.report_date,
-          q.source, f.source_unreachable_at is not null as source_unreachable, c.body,
-          row_number() over (order by (length(lower(c.body))-length(replace(lower(c.body),lower(${pgText(input.query).text}),''))) desc,
-            q.report_date collate "C" desc nulls last, f.id, c.ordinal, c.id) as rank
-        from brain.files f
-        join lateral (select r.file_id, req.source, case when req.metadata->>'report_date' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' and pg_input_is_valid(req.metadata->>'report_date','date') then req.metadata->>'report_date' else null end as report_date from brain.file_request_results r
-          join brain.file_requests req on req.id=r.request_id
-          where r.file_id=f.id and r.error_code is null and req.metadata->>'kind'='report'
-          order by req.created_at desc, req.id desc limit 1) q on true
-        join brain.document_extractions e on e.id=f.current_extraction_id and e.file_id=f.id and e.status='ok'
-        join brain.document_chunks c on c.extraction_id=e.id
-        left join lateral (select text,text_raw from brain.file_names where file_id=f.id order by name_source collate "C", coalesce(text_raw,convert_to(text,'UTF8')) limit 1) n on true
-        where f.redacted_at is null and lower(c.body) like lower(${pgText(input.pattern).text}) escape '\\'
-        order by rank limit ${input.limit}
+      const result=await sql<{rows: Array<{file_id:string|null;display_name:string;display_name_raw:string|null;chunk_locator:string|null;ordinal:number|null;extraction_id:string|null;report_date:string|null;source:string;source_unreachable:boolean;body:string;source_file_id:string|null;source_path:string|null;source_remote_id:string|null;index_status:import('@second-brain/core').SourceIndexStatus|null;current_version:string|null;completed_version:string|null;stale:boolean|null}>;contexts:import('@second-brain/core').DocumentSearchContext[]}>`
+        with all_rows as (
+          select f.id as file_id,coalesce(n.text,'report:'||f.id::text) as display_name,n.text_raw as display_name_raw,c.chunk_locator,c.ordinal,e.id as extraction_id,q.report_date,q.source,f.source_unreachable_at is not null as source_unreachable,c.body,null::uuid as source_file_id,null::text as source_path,null::text as source_remote_id,null::text as index_status,null::text as current_version,null::text as completed_version,null::boolean as stale,c.id as tie_id
+          from brain.files f
+          join lateral (select req.source,case when req.metadata->>'report_date' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' and pg_input_is_valid(req.metadata->>'report_date','date') then req.metadata->>'report_date' else null end as report_date from brain.file_request_results r join brain.file_requests req on req.id=r.request_id where r.file_id=f.id and r.error_code is null and req.metadata->>'kind'='report' order by req.created_at desc,req.id desc limit 1) q on true
+          join brain.document_extractions e on e.id=f.current_extraction_id and e.file_id=f.id and e.status='ok'
+          join brain.document_chunks c on c.extraction_id=e.id
+          left join lateral (select text,text_raw from brain.file_names where file_id=f.id order by name_source collate "C",coalesce(text_raw,convert_to(text,'UTF8')) limit 1) n on true
+          where f.redacted_at is null and lower(c.body) like lower(${pgText(input.pattern).text}) escape '\\'
+          union all
+          select f.id,sf.name,null::bytea,c.chunk_locator,c.ordinal,e.id,null::text,s.kind,sf.unreachable,c.body,sf.id,sf.path,sf.remote_id,sf.index_status,sf.remote_version,sf.completed_version,(sf.file_id is not null and sf.completed_version is distinct from sf.remote_version),c.id
+          from brain.source_files sf join brain.sources s on s.id=sf.source_id join brain.files f on f.id=sf.file_id and f.redacted_at is null join brain.document_extractions e on e.id=f.current_extraction_id and e.file_id=f.id and e.status='ok' join brain.document_chunks c on c.extraction_id=e.id
+          where s.kind='drive' and lower(c.body) like lower(${pgText(input.pattern).text}) escape '\\'
+          union all
+          select sf.file_id,sf.name,null::bytea,null::text,null::integer,null::uuid,null::text,s.kind,sf.unreachable,''::text,sf.id,sf.path,sf.remote_id,sf.index_status,sf.remote_version,sf.completed_version,(sf.file_id is not null and sf.completed_version is distinct from sf.remote_version),sf.id
+          from brain.source_files sf join brain.sources s on s.id=sf.source_id left join brain.files f on f.id=sf.file_id
+          where s.kind='drive' and (sf.file_id is null or f.redacted_at is null) and (lower(sf.name) like lower(${pgText(input.pattern).text}) escape '\\' or lower(sf.path) like lower(${pgText(input.pattern).text}) escape '\\')
+        ), candidates as materialized (
+          select *,row_number() over(order by (length(lower(body))-length(replace(lower(body),lower(${pgText(input.query).text}),''))) desc,report_date collate "C" desc nulls last,file_id nulls last,source_file_id nulls last,ordinal nulls last,tie_id) as rank from all_rows
+          order by rank limit ${input.limit}
         ), contexts as (
-          select ids.extraction_id, jsonb_agg(jsonb_build_object('ordinal', x.ordinal, 'chunk_locator', x.chunk_locator, 'body', x.body) order by x.ordinal) as pieces
-          from (select distinct extraction_id from candidates) ids
-          join brain.document_chunks x on x.extraction_id=ids.extraction_id
-          group by ids.extraction_id
+          select ids.extraction_id,jsonb_agg(jsonb_build_object('ordinal',x.ordinal,'chunk_locator',x.chunk_locator,'body',x.body) order by x.ordinal) as pieces from (select distinct extraction_id from candidates where extraction_id is not null) ids join brain.document_chunks x on x.extraction_id=ids.extraction_id group by ids.extraction_id
         )
-        select coalesce((select jsonb_agg((to_jsonb(candidates) - 'rank') || jsonb_build_object('display_name_raw', encode(display_name_raw, 'base64')) order by rank) from candidates), '[]'::jsonb) as rows,
-          coalesce((select jsonb_agg(to_jsonb(contexts)) from contexts), '[]'::jsonb) as contexts`.execute(opened.connection.db);
-      const data = result.rows[0]!;
-      return { ok: true, rows: data.rows.map(r => originalText({ ...r, display_name_raw: r.display_name_raw === null ? null : Buffer.from(r.display_name_raw, 'base64') })).map(({display_name_raw: _raw, ...r}) => ({ ...r, kind: 'document' as const, report_date: reportDate(r.report_date) })), contexts: data.contexts };
-    } catch (error) { return documentError(error); }
+        select coalesce((select jsonb_agg((to_jsonb(candidates)-'rank'-'tie_id') || jsonb_build_object('display_name_raw',encode(display_name_raw,'base64')) order by rank) from candidates),'[]'::jsonb) as rows,coalesce((select jsonb_agg(to_jsonb(contexts)) from contexts),'[]'::jsonb) as contexts`.execute(opened.connection.db);
+      const data=result.rows[0]!;
+      return {ok:true,rows:data.rows.map(r=>{const decoded=originalText({...r,display_name_raw:r.display_name_raw===null?null:Buffer.from(r.display_name_raw,'base64')});const {display_name_raw:_raw,source_file_id,source_path,source_remote_id,index_status,current_version,completed_version,stale,...rest}=decoded;return {...rest,kind:'document' as const,report_date:reportDate(rest.report_date),...(source_file_id!==null&&source_path!==null&&source_remote_id!==null&&index_status!==null?{source_file_id,source_path,source_remote_id,index_status,current_version:current_version!,completed_version,stale:stale!}:{})};}),contexts:data.contexts};
+    }catch(error){return documentError(error);}
+  },
+  async readSourceDocument(sourceFileId) {
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sourceFileId))return {ok:true,source:null};
+    const opened=connect();if(!opened.ok)return {ok:false,code:'DB_UNAVAILABLE',message:opened.message};
+    try {const result=await sql<import('@second-brain/core').SourceDocument>`select sf.id as source_file_id,sf.file_id,sf.name as display_name,sf.path as source_path,sf.remote_id as source_remote_id,s.kind as source,sf.index_status,sf.unreachable as source_unreachable,sf.remote_version as current_version,sf.completed_version,(sf.file_id is not null and sf.completed_version is distinct from sf.remote_version) as stale from brain.source_files sf join brain.sources s on s.id=sf.source_id left join brain.files f on f.id=sf.file_id where sf.id=${sourceFileId}::uuid and s.kind='drive' and (sf.file_id is null or f.redacted_at is null)`.execute(opened.connection.db);return {ok:true,source:result.rows[0]??null};}catch(error){if(['42P01','3F000'].includes((error as {code?:string}).code??''))return {ok:false,code:'DB_UNAVAILABLE',message:describe(error)};return documentError(error);}
   },
   async readDocument(fileId) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(fileId)) return { ok: true, snapshot: null };

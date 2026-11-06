@@ -259,6 +259,7 @@ export * from './queue/supervisor.js';
 export type { BrainQueueCancelResult } from './brain.js';
 
 export { SUPERVISOR_CAPACITY, dependencyFailedText } from './domain/work-item.js';
+export { SOURCE_SYNC_LEASE_MS } from './ports/source-store.js';
 export * from './queue/work-graph.js';
 
 export * from './local-time.js';
@@ -322,3 +323,7 @@ export { checkExtensionExecution } from './extensions/replacement.js';
 export type * from './ports/document-recall-store.js';
 export * from './recall/documents.js';
 export * from './files/drive-migrate-work.js';
+
+export type * from './ports/source-store.js';
+export type * from './ports/source-remote.js';
+export * from './sources/sync.js';

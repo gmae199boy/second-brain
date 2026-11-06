@@ -65,16 +65,18 @@ async function seed() {
   await redacting(async () => { await query(`update brain.files set redacted_at='${AT}' where id='${id('r')}'`); });
 }
 
-it('installs the complete catalog, five named unique indexes, five search indexes and explicit seed values', async () => {
-  const tables = ['drive_location_roots','drive_migration_intents','drive_retention','drive_uploads','file_import_cleanup','file_request_handoffs','file_request_results','file_requests','channel_item_results','channel_legacy_notifications','channel_legacy_deliveries','channels','channel_conversations','channel_requests','channel_gates','channel_attempt_results','extension_install_progress','extension_python_environment','extension_quiesce','extension_work_kinds','extensions','schema_migrations','workspaces','users','projects','worktrees','sessions','messages','tool_notes','transcript_files','failures','work_items','work_hold_groups','work_dependencies','work_attempts','files','file_locations','message_attachments','redactions','log_entries','log_entry_edits','index_configs','chunks','context_injections','document_extractions','document_chunks','file_names','file_metadata','schedules','schedule_occurrences','settings'];
+it('installs the complete catalog, five named unique indexes, seven search indexes and explicit seed values', async () => {
+  const tables = ['sources','source_files','source_handoffs','source_attempts','source_work_publications','source_staged_bytes','drive_location_roots','drive_migration_intents','drive_retention','drive_uploads','file_import_cleanup','file_request_handoffs','file_request_results','file_requests','channel_item_results','channel_legacy_notifications','channel_legacy_deliveries','channels','channel_conversations','channel_requests','channel_gates','channel_attempt_results','extension_install_progress','extension_python_environment','extension_quiesce','extension_work_kinds','extensions','schema_migrations','workspaces','users','projects','worktrees','sessions','messages','tool_notes','transcript_files','failures','work_items','work_hold_groups','work_dependencies','work_attempts','files','file_locations','message_attachments','redactions','log_entries','log_entry_edits','index_configs','chunks','context_injections','document_extractions','document_chunks','file_names','file_metadata','schedules','schedule_occurrences','settings'];
   expect((await query("select relname from pg_class where relnamespace='brain'::regnamespace and relkind='r' order by relname")).rows.map(r => r.relname)).toEqual(tables.sort());
   const indexes = (await query("select indexname,indexdef from pg_indexes where schemaname='brain'")).rows;
   expect(indexes.filter(r => r.indexdef.includes('UNIQUE') && r.indexname.endsWith('_idx')).map(r => r.indexname).sort()).toEqual(['users_self_idx','tool_notes_call_id_idx','work_items_open_key_idx','document_extractions_running_idx','index_configs_key_idx'].sort());
   const gin = indexes.filter(r => r.indexdef.includes('USING gin'));
-  expect(gin).toHaveLength(5);
+  expect(gin).toHaveLength(7);
   for (const [table, col] of [['chunks','body'],['log_entries','text'],['tool_notes','target'],['document_chunks','body'],['file_names','text']]) {
     expect(gin.find(r => r.indexdef.includes(`brain.${table} `))?.indexdef).toContain(`lower(${col}) gin_trgm_ops`);
   }
+  expect(indexes.find(r => r.indexname === 'source_files_name_trgm_idx')?.indexdef).toContain('lower(name) gin_trgm_ops');
+  expect(indexes.find(r => r.indexname === 'source_files_path_trgm_idx')?.indexdef).toContain('lower(path) gin_trgm_ops');
   expect(indexes.find(r => r.indexname === 'index_configs_key_idx')?.indexdef).toContain('NULLS NOT DISTINCT');
   expect(indexes.find(r => r.indexname === 'schedules_due_idx')?.indexdef).toContain('WHERE (next_run_at IS NOT NULL)');
   expect((await query('select * from brain.index_configs order by id')).rows).toEqual([

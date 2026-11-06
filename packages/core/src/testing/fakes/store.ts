@@ -90,6 +90,8 @@ const DEFAULT_HEALTH: StoreHealth = {
 export interface MemoryStoreOptions {
   /** What `checkHealth` answers. Defaults to a healthy store. */
   health?: StoreHealth;
+  /** Synthetic external source records; array may be updated by the fixture. */
+  sourceEntries?: readonly import('../../ports/source-store.js').SourceEntry[];
   /** Synthetic successful report requests for document recall contracts. */
   reportRequests?: readonly { fileId: string; source: string; reportDate: string | null; createdAt: string; id: string }[];
 }
@@ -680,11 +682,23 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
           rows.push({ kind:'document', file_id:file.id, display_name:name, extraction_id:extraction, chunk_locator:JSON.stringify(piece.chunkLocator), report_date:date && Number.isFinite(date.getTime()) && date.toISOString().slice(0,10) === rawDate ? rawDate : null, source:request.source, source_unreachable:sourceUnreachableAt.has(file.id), body:piece.body, ordinal:piece.ordinal });
         }
       }
+      for(const entry of options.sourceEntries ?? []) {
+        if(entry.fileId && fileRedacted(entry.fileId))continue;
+        const base={kind:'document' as const,file_id:entry.fileId,display_name:entry.name,report_date:null,source:'drive',source_unreachable:entry.unreachable,source_file_id:entry.id,source_path:entry.path,source_remote_id:entry.remoteId,index_status:entry.indexStatus,current_version:entry.remoteVersion,completed_version:entry.completedVersion,stale:entry.fileId!==null&&entry.completedVersion!==entry.remoteVersion};
+        const extraction=entry.fileId?currentExtractions.get(entry.fileId):undefined;
+        if(extraction && extractionById(extraction)?.status==='ok')for(const piece of chunksOf(extraction))if(piece.chunkLocator&&piece.body.toLowerCase().includes(input.query.toLowerCase()))rows.push({...base,extraction_id:extraction,chunk_locator:JSON.stringify(piece.chunkLocator),ordinal:piece.ordinal,body:piece.body});
+        if(entry.name.toLowerCase().includes(input.query.toLowerCase())||entry.path.toLowerCase().includes(input.query.toLowerCase()))rows.push({...base,extraction_id:null,chunk_locator:null,ordinal:null,body:''});
+      }
       const count = (body: string) => body.toLowerCase().split(input.query.toLowerCase()).length - 1;
-      rows.sort((a,b) => count(b.body)-count(a.body) || (b.report_date ?? '').localeCompare(a.report_date ?? '') || binary(a.file_id,b.file_id) || a.ordinal-b.ordinal);
+      rows.sort((a,b) => count(b.body)-count(a.body) || (b.report_date ?? '').localeCompare(a.report_date ?? '') || binary(a.file_id ?? '￿',b.file_id ?? '￿') || binary(a.source_file_id ?? '',b.source_file_id ?? '') || (a.ordinal ?? 999999)-(b.ordinal ?? 999999));
       const selected = rows.slice(0,input.limit);
-      const contexts = [...new Set(selected.map(r => r.extraction_id))].map(extraction_id => ({ extraction_id, pieces: chunksOf(extraction_id).filter(p => p.chunkLocator !== null).map(p => ({ ordinal:p.ordinal, chunk_locator:JSON.stringify(p.chunkLocator), body:p.body })) }));
+      const contexts = [...new Set(selected.flatMap(r => r.extraction_id === null ? [] : [r.extraction_id]))].map(extraction_id => ({ extraction_id, pieces: chunksOf(extraction_id).filter(p => p.chunkLocator !== null).map(p => ({ ordinal:p.ordinal, chunk_locator:JSON.stringify(p.chunkLocator), body:p.body })) }));
       return { ok:true, rows: selected, contexts };
+    },
+    async readSourceDocument(id) {
+      const e=(options.sourceEntries ?? []).find(row=>row.id===id);
+      if(!e || (e.fileId!==null && fileRedacted(e.fileId)))return {ok:true,source:null};
+      return {ok:true,source:{source_file_id:e.id,file_id:e.fileId,display_name:e.name,source_path:e.path,source_remote_id:e.remoteId,source:'drive',index_status:e.indexStatus,source_unreachable:e.unreachable,current_version:e.remoteVersion,completed_version:e.completedVersion,stale:e.fileId!==null&&e.completedVersion!==e.remoteVersion}};
     },
     async readDocument(fileId) {
       const file = fileById(fileId); if (!file) return { ok:true, snapshot:null };

@@ -87,3 +87,21 @@ it('리포트 요청의 최신 provenance와 현재 추출만 검색한다', asy
 
   } finally { await store.close(); await admin.end(); await db.drop(); }
 }, 30000);
+
+it('external source names and text retain source identity, links and redaction',async()=>{
+  const db=await database(true,createIsolatedTestDatabase),admin=new pg.Client({connectionString:db.url}),store=postgresStore({databaseUrl:db.appUrl});
+  const source=randomUUID(),first=randomUUID(),second=randomUUID(),photo=randomUUID(),file=randomUUID(),extraction=randomUUID();
+  const body='공유 본문 두글자',loc=JSON.stringify({type:'text',start:0,end:Array.from(body).length});
+  try {await admin.connect();
+    await admin.query("insert into brain.sources(id,kind,account,root_id,generation) values ($1,'drive','synthetic','root',1)",[source]);
+    await admin.query('insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ($1,$2,1,now())',[file,'sha256:'+'b'.repeat(64)]);
+    await admin.query("insert into brain.document_extractions(id,file_id,extractor_version,attempt,status,started_at,finished_at) values ($1,$2,'test',1,'ok',now(),now())",[extraction,file]);
+    await admin.query('insert into brain.document_chunks(id,extraction_id,ordinal,body,chunk_locator) values ($1,$2,0,$3,$4)',[randomUUID(),extraction,body,loc]);await admin.query('update brain.files set current_extraction_id=$1 where id=$2',[extraction,file]);
+    await admin.query("insert into brain.source_files(id,source_id,remote_id,name,path,mime_type,remote_version,file_id,index_status,unreachable,unreachable_at) values ($1,$4,'remote-a','문서.txt','폴더','text/plain','1',$5,'indexed',true,now()),($2,$4,'remote-b','다른문서.txt','폴더','text/plain','1',$5,'indexed',false,null),($3,$4,'remote-photo','사진.jpg','여행','image/jpeg','1',null,'photo',false,null)",[first,second,photo,source,file]);
+    const found=await searchDocuments(store,{query:'두글자'});expect(found).toMatchObject({ok:true,data:expect.arrayContaining([expect.objectContaining({source_file_id:first,file_id:file,source_unreachable:true,source_url:'https://drive.google.com/file/d/remote-a/view'}),expect.objectContaining({source_file_id:second,file_id:file,source_unreachable:false})])});
+    expect(await showDocument(store,{source_file_id:first,file_id:file,chunk_locator:loc})).toMatchObject({ok:true,data:[{body}],meta:{source_unreachable:true,source_file:{source_file_id:first}}});
+    const names=await searchDocuments(store,{query:'사진'});expect(names).toMatchObject({ok:true,data:[{file_id:null,chunk_locator:null,source_file_id:photo,index_status:'photo'}]});expect(await showDocument(store,{source_file_id:photo})).toMatchObject({ok:true,meta:{source_file:{file_id:null,index_status:'photo'}}});
+    await admin.query('begin');await admin.query("set local brain.redacting='on'");await admin.query('update brain.files set redacted_at=now() where id=$1',[file]);await admin.query('commit');
+    expect(await searchDocuments(store,{query:'두글자'})).toMatchObject({ok:true,data:[]});expect(await searchDocuments(store,{query:'문서.txt'})).toMatchObject({ok:true,data:[]});expect(await showDocument(store,{source_file_id:first})).toMatchObject({ok:false,status:'not_found'});
+  }finally{await store.close();await admin.end();await db.drop();}
+});
