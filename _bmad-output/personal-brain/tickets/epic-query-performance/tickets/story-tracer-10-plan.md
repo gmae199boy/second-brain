@@ -3,7 +3,7 @@ title: 'Tracer: 반입 정리 조회가 완료 이력 10만 건에서도 같은 
 type: 'feature'
 ticket: '1'
 created: '2026-11-06'
-status: 'built'
+status: 'in-review'
 baseline_revision: '6ad59955f6fc93a275441c16ee7116ae3f961460'
 route: 'full'
 route_source: 'pinned'
@@ -157,6 +157,32 @@ deferred: []
     - `[low]` `[reject]` 2~5 재사용은 안내 수준 — 기술 관찰. 원문은 이 티켓이 틀을 만들고 2~5가 다시 쓴다고 정한다.
     - `[low]` `[reject]` carried — plan·측정 증거가 diff에 없음.
 
+### 2026-11-06 — T6 후 독립 해결 확인 (중앙 수락 전 보완)
+
+중앙 `msg_4cde3776026b` 지적에 따라 기존 r2 high0 수렴 판단과 실제 T6 patch의 독립 확인을 구분해 보완했다. 같은 티켓 Run `run_eaf6c1c50d7e`의 Sol/medium1명, Task `task_7c6d244ab201`/Dispatch `ctx_50abfdee0142`, 대상제품커밋 `a1242bd3fc77233593ef886b4c2e8de8db5e177e`. 원문 `.brain-automation/reports/review-t6-confirmation.md`, T6-only diff `review-t6-followup.diff`, worker_done `msg_7e342079cd2b`를 보존했다.
+
+- 독립 결과: 채택patch14행 모두 static resolved, 새결함0, 추가수정 요구0. 실행검증은 이번 리뷰에서 수행하지 않았으며 소스/계획 수정·build/시험/eval·DB접근도 하지 않았다.
+- 지휘자 처분: 14행을 아래처럼 수락한다. 새로운 finding을 기존 patch14건으로 다시 집계하거나 원문보다 넓은 인증을 완료했다고 쓰지 않는다. 기존 측정/시험/최초실패 증거를 재사용하며 이 확인만을 위해 시험·성능 재측정을 반복하지 않았다.
+
+| R2 행 | 처분 | 확인 근거와 한계 |
+|---|---|---|
+| BH1 | 수락 | README의 기준/변경 none·별도 후보·정확9조건 예제와 compare 완전성 일치. |
+| BH2 | 수락 | 3표본 중앙값 재계산·저장값 불일치 거부, 재계산값으로 비율 판정. |
+| BH3 | 수락 | shared cleanup 표본·중앙값·cleaned:false/removeCalled:false 필수. pending EXPLAIN은 러너 기록이며 compare 구조 인증까지 주장하지 않음. |
+| BH5 | 수락 | rewritten 실행에 같은 Client 원문 목록/pending 대조군과 결과 동등성 추가. 최상위 original/store 대 rewritten/direct 시간의 의미 차이는 README에 명시. |
+| BH6 | 수락 | postgres/core dist·lockfile·실행runner 지정 파일 집합 지문 확인. 설치 의존 패키지 전체 바이트 인증은 아님. |
+| BH8 | 채택범위 수락·한계 보존 | scenario/candidate/queryVariant 호환성 검사와 양쪽 출처 병기 해결. 누락 provenance 필수성·baseline SHA/동일서버 자동 인증은 채택범위 밖이며 해결했다고 쓰지 않음. |
+| BH9 | 수락·시험범위 명시 | 결과 행 부재 차단, 다른 source 목록 비차단, 완료 뒤 실제 store의 remove mock 호출/상태 전환 확인. 물리 unlink·동시성 전체 증거는 아님. |
+| VG1 | 수락 | 완전9조건에서 pending0.51 및 크기별idle1.11의 행/전체 false를 독립 단언. |
+| VG2 | 수락·단언범위 명시 | 임시Git HEAD고정·미추적 src/migrations 내용 변경 지문 단언. 최초추가 전후 hash/수정후SHA를 각각 별도 단언한 시험으로 확대 해석하지 않음. |
+| VG3 | 수락 | 다른 생성순서의 동일 파일집합 결정성·정렬 목록·JS/SQL 바이트 변경 감지 단언. lockfile/runner 전용 변이 시험까지 주장하지 않음. |
+| ECH2 | 수락 | 관리자/조건별Client 연결·인증 제한10000ms 설정. 모든SQL 실행 제한 또는 무응답endpoint 실행 검증은 아님. |
+| IA1 | 수락 | BH5와 같은 원인. rewritten 내부 동일Client 대조 확인. |
+| IA3 | 수락 | 실store unhanded warm-up+3회·hash/행수·전체EXPLAIN과 compare 동등성 필수. 시간 비율은 참고. |
+| IA5 | 채택범위 수락·한계 보존 | BH8와 같은 원인. 호환성/표시를 확인하되 올바른baseline/동일서버·부하 자동 인증으로 확대하지 않음. |
+
+BH8/IA5의 넓은 출처 자동 인증, 실제 파일 unlink, 모든 endpoint/SQL 제한까지 해결됐다는 주장은 하지 않는다. 행별 현재 파일·행 근거는 독립 원문에 있다. 이 보완은 T6 코드에 새 수정을 요구하지 않는다. 별도로 중앙 `msg_727760111f9c`가 새 main의21.10과 schema39 실제 통합을 지시했으므로, 해당 소스 통합·독립 확인·영향검증은 아래에 이어 기록한다. 현재 in-review는 이 통합 검증 대기 상태다.
+
 ## Design Notes
 
 ### 확정 슬롯 측정 — 2026-11-06
@@ -212,7 +238,7 @@ deferred: []
 
 ## Auto Run Result
 
-- 결과: **built**. 새 forward migration0039의 두 인덱스와 재사용 가능한 성능 러너를 구현했다. 실제 제품 조회 SQL은 유지했고, 확정 슬롯에서10만 pending100은17.177916→0.778916ms(0.045344배), idle은 세 크기 모두 개선됐다. 모든 수락조건의 결과·공유 차단·크기/쓰기 비용·시험 증거는 위에 있다.
+- 통합 전 결과(제품 커밋 `a1242bd3fc77233593ef886b4c2e8de8db5e177e`): **built**. 최신 main21.10과의 통합 검증은 추가 작업으로 진행 중이다. 새 forward migration0039의 두 인덱스와 재사용 가능한 성능 러너를 구현했다. 실제 제품 조회 SQL은 유지했고, 확정 슬롯에서10만 pending100은17.177916→0.778916ms(0.045344배), idle은 세 크기 모두 개선됐다. 모든 수락조건의 결과·공유 차단·크기/쓰기 비용·시험 증거는 위에 있다.
 - 변경 파일: migration0039(인덱스2개), migrate.ts(schema39), 버전 기대 시험11파일, 새 import-cleanup-indexes.test.ts(인덱스/정렬/500제한/공유 차단과 해제), tooling/query-perf의 CLI·core/revision/시나리오·순수 시험·README, 이 plan. 과거 migration·imports.ts·기존 import-safety.test.ts·lockfile·플러그인 ref/version은 변경하지 않았다.
 - 리뷰: 독립 Sol/medium4명×2pass. r1 26건(high0/medium14/low11/false1), r2후속23건(high0/medium7/low15/false1). 각 finding의 patch/기각과 근거는 Review Triage Log에 모두 보존했다. T4/T5/T6으로 채택 patch를 반영했고, r2는 후속pass high0으로 수렴했다. 후속 독립 리뷰 권고false; deferred는 빈 단일 목록이다. r1의 패치10묶음, r2의 patch행14건(중간7·낮음7, 중복 근거 포함)을 반영했다.
 - 기각 근거: 긴 locator B-tree 키/강제 종료 신호 처리의 드문 개발 경로, 이미 정한 idle10% 허용의 반복 관찰, 측정 checkout의 pg를 쓰려고 package.json을 제거한 설계, 중복·기술 관찰은 원문 행별 사유에 따랐다. 쓰기 배치의 부분 인덱스 비용 누락은 trigger가 같은 배치에 정리 행을 INSERT하므로 false다. 어떤 필수 수락조건도 defer로 숨기지 않았다.
