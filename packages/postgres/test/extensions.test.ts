@@ -12,7 +12,7 @@ it('기존 registry를 34로 이행하고 패키지 신원을 저장·조회한�
     expect(await runMigrations({ databaseUrl: db.url, clock, coreMaxVersion: 33 })).toMatchObject({ ok: true, to: 33 });
     await db.query("insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ('testext','0.1.0',now(),false,now())");
     const before = await db.rows("select name,version,enabled,installed_at from brain.extensions where name='testext'");
-    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 33, to: 38 });
+    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 33, to: 39 });
     expect(await db.rows("select name,version,enabled,installed_at from brain.extensions where name='testext'")).toEqual(before);
     const store = postgresStore({ databaseUrl: db.appUrl });
     try {
