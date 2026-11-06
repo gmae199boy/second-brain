@@ -371,3 +371,16 @@ core0.1.17/Garmin0.1.4 ref는이전구현472caa7,확장1.2.1/package85파일정�
 - 원문21.7 계획의 재진단2·quick리뷰3. 부분commit `aa7377f`는 공개 계획뿐이며 blocked와 운영 AC 미완료를 유지한다.
 - 옛 manifest 검사는21.10으로 통과했지만 detached app의 ref 없는 npx는 거부되고 ref 지정은 hook 모드로 stdin을 닫아 실제 offline 확인을 전달할 지원 경로가 없다. 기존 새 CLI PTY 시험은 bootstrap 진입을 입증하지 않는다.
 - 별도21.11에서 합성 detached 옛 app의 bootstrap부터 실제 PTY·갱신/승격·보존·hook 무질문·실패복구를 검증한다.21.7은21.11 수락·원격main/release 뒤 기존 operator gate를 유지해 재개한다. 운영자 확인·계정귀속/MFA는 대신하지 않는다.
+
+
+## 17.4 — recall Garmin 건강 조회 수락 (2026-11-06)
+
+근거: [recall 계획](../tickets/epic-search-and-health-query/tickets/story-recall-garmin-plan.md)의 Review Triage Log R1~R6, 복구 후 검증과 Auto Run Result. 최종 `4330125`, 릴리스/통합 `48076c1`, plugin0.1.21/app-ref8513bf9. 중앙이 원문 리뷰·로그·원격 SHA를 대조했다.
+
+- 손계산 합성 fixture를 실제 CLI/MCP와 fake CLI 행동 평가가 공유하며 NULL/0건/기록된0/기간·DST/일별·운동 조건을 검증한다. 행동 평가 최초 실패와 수정 후 영향3사례 통과를 구분해 보존했다.
+- 순차 전체 TS4217·Python69 통과 이후 수정의 제한 worker changed 재검증도 TS4217·Python69 통과. main21.9 통합에서는 TS189파일 통과 후 merge이력 조상검사1건 실패를 정상 mergecommit으로 확정해 관련6시험 통과·Python69 통과로 닫았다. 전체 changed 명령 통과로 합치지 않는다.
+- main21.10 추가 통합 R6 결함0. 영향TS14파일 중13통과, legacy manifest4실패는 자기PG 관리자 인증 전제 불일치로 확인해 자기PG만 맞춘 뒤 같은파일31시험 통과. 이어 recall-health3시험 통과. 제품/시험 코드나 단언은 바꾸지 않았다. 현재 main의 이후 변경은 문서뿐이다.
+- 잔여 한계: SQL 정적 경계 검사는 문자열/주석 조합 누락과 설명 주석 오탐(low2 기각)이 있어 완전한 SQL 파서를 주장하지 않는다. 실제 core Garmin SQL 의존은 없다. 최초 auth/SIGINT 부하 관련 실패의 정확 원인은 미확정이며 시험 readiness 안정화는 별도 검토한다.
+- 운영/UX 인계: 교체 대기의 전용 recall 복구 안내는 없고 비활성 안내 후 중단한다. 공통gate가 옛코드 실행을 차단하며 MCP 미등록 상태의 진단코드는 CLI와 다를 수 있다. 실제 설치본 스킬 발견·운영 인수는17.7, 텍스트 검색 확장은17.5다.
+
+`deferred: []`, 필요한 독립 후속 완료·추가 권고false. 소유fixture/PG 정리 증거·최초실패·평가원문·워크트리는 보존한다.
