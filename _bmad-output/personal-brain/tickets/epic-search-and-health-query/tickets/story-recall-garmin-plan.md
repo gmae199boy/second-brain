@@ -3,7 +3,7 @@ title: '17.4 recall 스킬의 Garmin 건강 수치 조회'
 type: 'feature'
 ticket: 4
 created: '2026-11-06'
-status: 'in-review'
+status: 'built'
 baseline_revision: 'cd0b50e5ef23ad6a756c076583cb5a7ad543fbcd'
 route: 'full'
 route_source: 'pinned'
@@ -202,3 +202,7 @@ R4는 H의 일별 순서 정규화·중복 거부, I의 schema 추가 읽기 허
 - 이어 중앙 최신 지시 `msg_144c095ef46e`로 main21.10 `bfcb3e3ff359ff5f4ec10e16cd5cc13c55ba8664`를 추가 통합한다. 위 0.1.19 시점 검증과 이력을 보존한다. 유일 충돌은 plugin version0.1.19/0.1.20이며 새 recall 배포0.1.21로 해결했다. app-ref는 main의 `8513bf9c46960658e63c26ec6f89f27457e88bf8`을 보존한다. 제품·시험 소스 충돌이나 직접 추가 수정은 없다. R6에서 새 replacementRequired/실행 gate·legacy manifest 처리와 recall fresh fixture·CLI/MCP 상호작용을 정적으로 확인한 뒤 실제 영향에 필요한 검증을 수행한다.
 - R6 독립 Sol 리뷰 결과 구체 통합 findings0건, patch0건, deferred없음. main 전용 소스/시험은 main과 동일하며 plugin0.1.21은 index에도 있고 app-ref8513bf9가 보존됐다. 보고 `.brain-automation/reviews/r6-main2110-integration.md`. replacement_required 전용 recall 복구 안내는 없지만 비활성 상태에서 중단하며, 비정상 활성 상태도 공통 gate가 차단한다. MCP 미등록 도구의 오류 코드는 CLI 교체 진단과 다를 수 있으나 성공값/옛 코드 실행으로 우회하지 않는다. 이 설명 한계를 결과에 보존한다.
 - 최신 중앙의 불필요 전체 회귀 반복 금지에 따라 새 통합 영향의 R6 TS14파일(installer·migration·manifest·실행 gate·recall 계약·SQL 경계·릴리스 이력)과 Python `recall-health.test.ts` 전체를 지정해 재검증한다. 이는 새 실행 gate 아래 실제 fresh Garmin 설치와 CLI/MCP 합성값·미설치/비활성 명령 부재를 확인하는 범위다. 빌드·typecheck 후 제한 worker2로 TS→Python을 순차 실행하며, 앞선 전체 검증 이력을 이번 트리의 pass로 옮겨 쓰지 않는다. 릴리스 시험에 필요한 정상 mergecommit을 먼저 로컬 확정하고 통과 전 push하지 않는다.
+- 정상 merge `48076c1b82c36f55c6eb856d2a8791f6c66a8d18`의 두 부모는 `bf7536e5664a667114736448060de145eb55d00f`, `bfcb3e3ff359ff5f4ec10e16cd5cc13c55ba8664`다. version0.1.21/app-ref8513bf9를 보존하며 제품·시험 소스 추가 수정은 없다.
+- R6 검증: `pnpm build`·`pnpm typecheck` 종료0. `VITEST_MAX_WORKERS=2` 지정 TS14파일의 첫 실행은 13파일 통과·1파일 실패(661 passed,4 failed). 새 `install-legacy-manifest.test.ts`의 CLI fixture가 관리자 인증값을 고정하는데 자기 시험 PG는 임의 인증값을 사용한 환경 불일치였다. 원문 `.brain-automation/logs/r6-integration-ts.log`를 보존한다. 자기 전용 PG만 해당 합성 fixture 전제에 맞췄으며 제품·시험 소스는 수정하지 않았다.
+- 실패한 legacy-manifest1파일만 재검증해31개 통과·종료0, 이어 이전 실패로 미실행된 Python `recall-health.test.ts` 전체3개 통과·종료0. 정상 Garmin 설치 후 손계산 fixture 전 사례의 CLI/MCP 값과 미설치/비활성 명령 부재를 실제 확인했다. TS13파일은 환경 수정만으로 반복하지 않았다. 로그 `.brain-automation/logs/r6-integration-legacy-retry.log`, `r6-integration-python.log`; 단계별 정확한 명령·종료코드 `.brain-automation/r6-verification-steps.json`, `r6-verification-retry-steps.json`. 첫 TS14파일 명령이 전체 통과했다고 표기하지 않는다.
+- R6 자기 fixture 생성 ID41개를 실제 Docker와 대조해 잔존0개를 확인했고 자기 전용 PG도 정확한 ID로 정리했다. 이전 검증 이력·최초 시간 조건 실패3건·SQL 정적 검사 한계는 그대로 보존한다. 새 통합 findings와 미해결 검증 실패는 없다. 최종 상태 built, 후속 리뷰 권고 false, 인수 전 done 아님. 이번 최종 릴리스는0.1.21이고 앞선0.1.18/0.1.19 기록은 당시 이력이다.
