@@ -178,6 +178,7 @@ export interface CommandSuccess<T> {
  * code the table does not know by exiting 1 and adding no hint.
  */
 export interface CommandFailure {
+  meta?: EnvelopeMeta;
   data?: unknown;
   text?: readonly string[];
   ok: false;

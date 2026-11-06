@@ -1,7 +1,16 @@
 ---
 name: recall
-description: Garmin 건강 수치를 지정한 기간과 조건으로 조회하고 응답 근거를 보고합니다.
+description: 기억과 리포트를 검색해 출처 원문을 읽고 Garmin 건강 수치를 조회합니다.
 ---
+
+# 기억 검색과 원문
+
+질문이 대화·도구 사용·리포트의 내용을 찾는 것이면 먼저 핵심 표현을 뽑아 검색한다. 검색어는 짧고 구체적으로 정하며 적중이 없으면 같은 뜻으로 표현을 바꿔 다시 검색한다. 질의는 근거를 찾기 위한 것이며 원문 없이 답을 지어내지 않는다.
+
+- 대화는 `brain recall chunks <query> --json`, 도구 메모는 `brain recall tools <query> --json`, 리포트는 `brain recall docs <query> --source <source> --json`을 사용한다. 특정 확장 출처를 아는 경우 `--source`에 그 이름을 지정한다. 확장 이름을 모르면 임의로 정하지 않는다.
+- 각 응답의 `ok`를 먼저 확인한다. 검색 실패·DB 연결 실패는 오류 코드를 보고하고 기록 없음으로 말하지 않는다. 빈 `data`는 해당 검색어의 0건이며 표현을 바꾸어도 없으면 찾지 못했다고 말한다. `meta.extensions`의 미설치·비활성은 0건과 구별하고, 알려진 출처의 미설치면 설치를 안내한다. 비활성이라도 보존된 리포트는 검색하고 원문을 읽는다.
+- 적중이 있으면 검색 결과의 출처만으로 원문을 읽고 답의 근거로 삼는다. 대화 조각의 session·from_at·to_at은 `brain recall expand <session> --from <from_at> --to <to_at> --json`에, 도구 메모의 session·tool_note_id는 `brain sessions read <session> --note <tool_note_id> --json`에 전달한다. 고아 도구 메모도 이 명령으로 읽고 메시지 원문 확장으로 대신하지 않는다. 문서의 file_id·chunk_locator·extraction_id는 `brain files show <file_id> --chunk-locator <locator> --extraction-id <extraction_id> --json`에 전달한다. 원문 조회 실패나 접근 불가는 그 상태를 보고하고 본문을 추정하지 않는다. 출처와 실제 읽은 내용을 함께 보고한다.
+- 질문에 수치 계산이 포함되면 다음 건강 절차를 사용한다. 텍스트 검색의 표현 바꾸기와 건강 조회 조건을 바꿔 값을 맞추는 행위는 다르다.
 
 # 건강 수치 조회
 

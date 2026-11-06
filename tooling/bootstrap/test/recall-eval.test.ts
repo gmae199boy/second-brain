@@ -113,3 +113,132 @@ it.each(names)('%s 판정기 양성 및 음성 자기시험', name => {
     }
   } finally { rmSync(parent,{recursive:true,force:true}); }
 },30000);
+
+// 고정 호출 재생은 판정기 자기시험이며 실제 에이전트 행동 평가가 아니다.
+it.each(['search-two','search-rephrase','search-empty','search-disabled'])('%s 검색 판정기 양성 및 음성 자기시험', name => {
+  const parent = mkdtempSync(join(tmpdir(),'recall-search-eval-')), dir = join(parent,'case');
+  try {
+    execFileSync(process.execPath,[script,'prepare',name,dir]);
+    const run = (args:string[]) => spawnSync(join(dir,'bin/brain'),args,{encoding:'utf8'});
+    const query = (verb:string,value:string) => run(['recall',verb,value,'--source','garmin','--json']);
+    if (name === 'search-rephrase') expect(query('docs','숙면').status).toBe(0);
+    if (name === 'search-empty') {
+      expect(query('docs','무지개').status).toBe(0); expect(query('docs','오로라').status).toBe(0);
+    } else {
+      const result = query(name === 'search-two' ? 'chunks' : 'docs','수면'); expect(result.status).toBe(0);
+      const found = JSON.parse(result.stdout).data[0];
+      const read = name === 'search-two' ? run(['recall','expand',found.session,'--from',found.from_at,'--to',found.to_at,'--json']) : run(['files','show',found.file_id,'--chunk-locator',found.chunk_locator,'--extraction-id',found.extraction_id,'--json']);
+      expect(read.status).toBe(0);
+      writeFileSync(join(dir,'report.txt'),`${name === 'search-disabled' ? '상태: Garmin 비활성\n' : ''}출처 ${found.chunk_id ?? found.file_id}\n${JSON.parse(read.stdout).data[0].body}\n`);
+    }
+    if (name === 'search-empty') writeFileSync(join(dir,'report.txt'),'검색 결과가 없습니다.');
+    writeFileSync(join(dir,'transcript.txt'),'명령: brain 검색 및 원문 조회\n');
+    const verify = () => spawnSync(process.execPath,[script,'verify',dir],{encoding:'utf8'});
+    expect(verify().status).toBe(0);
+    const report = readFileSync(join(dir,'report.txt'),'utf8');
+    writeFileSync(join(dir,'report.txt'), name === 'search-empty' ? '원문을 발견했습니다.' : '출처와 원문을 확인했습니다.');
+    expect(verify().status).toBe(1); writeFileSync(join(dir,'report.txt'),report);
+    const callsPath=join(dir,'calls.jsonl'), outputsPath=join(dir,'outputs.jsonl');
+    const calls=readFileSync(callsPath,'utf8'), outputs=readFileSync(outputsPath,'utf8');
+    if (name !== 'search-empty') {
+      writeFileSync(callsPath,calls.trim().split('\n').slice(0,-1).join('\n')+'\n'); writeFileSync(outputsPath,outputs.trim().split('\n').slice(0,-1).join('\n')+'\n');
+      expect(verify().status).toBe(1); writeFileSync(callsPath,calls); writeFileSync(outputsPath,outputs);
+    }
+    writeFileSync(outputsPath,outputs.replace('"ok":true','"ok":false')); expect(verify().status).toBe(1); writeFileSync(outputsPath,outputs);
+    writeFileSync(join(dir,'transcript.txt'),'명령: psql -c select\n'); expect(verify().status).toBe(1);
+    writeFileSync(join(dir,'transcript.txt'),'명령: brain 검색 및 원문 조회\n');
+    if (name === 'search-disabled') { writeFileSync(join(dir,'report.txt'),report.replace('상태: Garmin 비활성','상태: Garmin 활성입니다')); expect(verify().status).toBe(1); writeFileSync(join(dir,'report.txt'),report.replace('상태: Garmin 비활성\n','')); expect(verify().status).toBe(1); }
+    if (name === 'search-rephrase' || name === 'search-disabled') {
+      const read=JSON.parse(calls.trim().split('\n').at(-1)!) as string[];
+      const index=read.indexOf('--extraction-id');
+      expect(index).toBeGreaterThan(0);
+      expect(run([...read.slice(0,index),...read.slice(index+2)]).status).toBe(2); expect(verify().status).toBe(1);
+      writeFileSync(callsPath,calls); writeFileSync(outputsPath,outputs);
+      const forged=[...read]; forged[index+1]='33333333-3333-4333-8333-333333333333';
+      expect(run(forged).status).toBe(2); expect(verify().status).toBe(1);
+      writeFileSync(callsPath,calls); writeFileSync(outputsPath,outputs);
+    }
+    if (name === 'search-two') {
+      const expanded = JSON.parse(outputs.trim().split('\n').at(-1)!).data[0];
+      const sourceReport = `출처 claude:synthetic ${expanded.id} ${expanded.occurred_at}\n${expanded.body}`;
+      writeFileSync(join(dir,'report.txt'),sourceReport); expect(verify().status).toBe(0);
+      for (const [actual, forged] of [[expanded.id,'message-forged'],['claude:synthetic','claude:forged'],[expanded.occurred_at,'2025-01-01T00:00:00.000Z']]) {
+        writeFileSync(join(dir,'report.txt'),sourceReport.replace(actual,forged)); expect(verify().status).toBe(1);
+      }
+      writeFileSync(join(dir,'report.txt'),report);
+    }
+    if (name === 'search-two') { run(['recall','expand','claude:forged','--from','2026-01-01T00:00:00.000Z','--to','2026-01-01T00:00:00.000Z','--json']); expect(verify().status).toBe(1); }
+    if (name === 'search-rephrase') { const entries=calls.trim().split('\n'); const results=outputs.trim().split('\n'); writeFileSync(callsPath,[entries[1],entries[0],entries[2]].join('\n')+'\n'); writeFileSync(outputsPath,[results[1],results[0],results[2]].join('\n')+'\n'); expect(verify().status).toBe(1); }
+  } finally { rmSync(parent,{recursive:true,force:true}); }
+},30000);
+
+
+it.each(['search-orphan','search-failed','search-db-failed','search-not-installed','search-read-failed'])('%s 검색 예외 행동 판정기 양성 및 음성 자기시험', name => {
+  const parent=mkdtempSync(join(tmpdir(),'recall-exception-')), dir=join(parent,'case');
+  try {
+    execFileSync(process.execPath,[script,'prepare',name,dir]);
+    const run=(args:string[])=>spawnSync(join(dir,'bin/brain'),args,{encoding:'utf8'});
+    const params:Record<string,{verb:string;query:string}>={ 'search-orphan':{verb:'tools',query:'고아메모'}, 'search-failed':{verb:'docs',query:'실패검색'}, 'search-db-failed':{verb:'docs',query:'연결검색'}, 'search-not-installed':{verb:'docs',query:'미설치자료'}, 'search-read-failed':{verb:'docs',query:'원문실패'} };
+    const item=params[name]!; const found=run(['recall',item.verb,item.query,'--source','garmin','--json']);
+    const body=JSON.parse(found.stdout); let report:string;
+    if (name==='search-orphan') {
+      expect(body.data[0]).toMatchObject({tool_note_id:'33333333-3333-4333-8333-333333333333',message_id:null,from_at:null});
+      const source=body.data[0]; const read=run(['sessions','read',source.session,'--note',source.tool_note_id,'--json']);
+      expect(read.status).toBe(0); report=`출처 ${source.tool_note_id}\n${JSON.parse(read.stdout).data[0].body}`;
+    } else if (name==='search-read-failed') {
+      const source=body.data[0]; const read=run(['files','show',source.file_id,'--chunk-locator',source.chunk_locator,'--extraction-id',source.extraction_id,'--json']);
+      expect(read.status).toBe(1); report=`출처 ${source.file_id}\n원문 조회 실패: INVALID_ARGUMENT`;
+    } else if (name==='search-not-installed') {
+      expect(body.data).toEqual([]); expect(body.meta.extensions[0].installed).toBe(false);
+      const retry=run(['recall','docs','미설치 자료','--source','garmin','--json']);
+      expect(retry.status).toBe(0); expect(JSON.parse(retry.stdout).data).toEqual([]); expect(JSON.parse(retry.stdout).meta.extensions[0].installed).toBe(false);
+      report='검색 결과가 없습니다. Garmin 미설치이므로 설치가 필요합니다.';
+    }
+    else { expect(found.status).toBe(1); report=`검색 오류 ${body.error.code}: 검색에 실패하여 결과를 확인할 수 없습니다.`; }
+    writeFileSync(join(dir,'report.txt'),report); writeFileSync(join(dir,'transcript.txt'),'명령: brain 조회\n');
+    const verify=()=>spawnSync(process.execPath,[script,'verify',dir],{encoding:'utf8'});
+    expect(verify().status).toBe(0);
+    const bad=name==='search-not-installed'?'검색 결과가 없습니다.':name==='search-orphan'?'도구 메모가 없습니다.':name==='search-read-failed'?`출처 ${body.data[0].file_id}\n원문을 확인했습니다.`:'기록 0건';
+    writeFileSync(join(dir,'report.txt'),bad); expect(verify().status).toBe(1); writeFileSync(join(dir,'report.txt'),report);
+    if (name==='search-failed' || name==='search-db-failed') {
+      for (const explanation of ['검색 결과가 없다는 뜻은 아닙니다.', '검색 결과가 없다고 단정할 수 없습니다.']) {
+        const qualified = `검색 오류 ${body.error.code}: ${explanation} 오류로 결과를 확인할 수 없습니다.`;
+        writeFileSync(join(dir,'report.txt'),qualified); expect(verify().status).toBe(0);
+        writeFileSync(join(dir,'report.txt'),`${qualified} 검색 결과가 없습니다.`); expect(verify().status).toBe(1);
+        writeFileSync(join(dir,'report.txt'),`검색 오류 ${body.error.code}: 검색 결과가 없습니다. ${explanation}`); expect(verify().status).toBe(1);
+      }
+      writeFileSync(join(dir,'report.txt'),`검색 오류 ${body.error.code}\n검색 결과가 없습니다.`); expect(verify().status).toBe(1);
+      writeFileSync(join(dir,'report.txt'),report); expect(verify().status).toBe(0);
+    }
+    if (name==='search-not-installed') {
+      const callsPath=join(dir,'calls.jsonl'), outputsPath=join(dir,'outputs.jsonl');
+      const calls=readFileSync(callsPath,'utf8'), outputs=readFileSync(outputsPath,'utf8');
+      expect(run(['recall','docs','허용밖','--source','garmin','--json']).status).toBe(2); expect(verify().status).toBe(1);
+      writeFileSync(callsPath,calls); writeFileSync(outputsPath,outputs);
+      writeFileSync(outputsPath,outputs.replace('"ok":true','"ok":false')); expect(verify().status).toBe(1);
+      writeFileSync(outputsPath,outputs);
+    }
+    if (name==='search-orphan') {
+      const callsPath=join(dir,'calls.jsonl'), outputsPath=join(dir,'outputs.jsonl');
+      const calls=readFileSync(callsPath,'utf8'), outputs=readFileSync(outputsPath,'utf8');
+      expect(run(['sessions','read','claude:synthetic','--note','wrong-id','--json']).status).toBe(2); expect(verify().status).toBe(1);
+      writeFileSync(callsPath,calls); writeFileSync(outputsPath,outputs);
+      expect(run(['recall','expand','claude:synthetic','--from','2026-01-01T00:00:00.000Z','--to','2026-01-01T00:00:00.000Z','--json']).status).toBe(2); expect(verify().status).toBe(1);
+    }
+  } finally { rmSync(parent,{recursive:true,force:true}); }
+},30000);
+
+
+it('EXPLAIN 정리 복합 오류의 원인과 cause를 가려 보존한다', async () => {
+  const helper = new URL('../../recall-eval/explain-error.mjs', import.meta.url).href;
+  const { serializeError } = await import(helper);
+  const db = new Error('DB 삭제 실패 postgres://secret@localhost/db', { cause: new Error('연결 실패 /Users/example/private') });
+  const container = new Error('컨테이너 삭제 실패 /Users/example/docker');
+  const error = new AggregateError([db, container], '정리 실패', { cause: new Error('상위 원인 postgres://token@host/db') });
+  const record = serializeError(error);
+  expect(record).toEqual({ message:'정리 실패', errors:[
+    { message:'DB 삭제 실패 [REDACTED-URL]', cause:{ message:'연결 실패 ~/private' } },
+    { message:'컨테이너 삭제 실패 ~/docker' },
+  ], cause:{ message:'상위 원인 [REDACTED-URL]' } });
+  expect(JSON.stringify(record)).not.toMatch(/secret|token|\/Users\/example/);
+});

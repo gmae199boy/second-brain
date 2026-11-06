@@ -1,3 +1,4 @@
+import { withExtensionMetadata } from './recall/extension-metadata.js';
 import { searchDocuments, showDocument, type DocumentSearchInput, type ShowDocumentInput } from './recall/documents.js';
 import { executeExtensionCommand } from './extensions/commands.js';
 import { FILE_IMPORT_KIND, importFileHandler } from './files/import-work.js';
@@ -253,7 +254,7 @@ export interface BrainSchedules {
   run(input: { scheduleId: string }): Promise<RunScheduleResult>;
 }
 export interface BrainExt {
-  command(input: { name: string; command: string; input: unknown; signal?: AbortSignal }): ReturnType<typeof executeExtensionCommand>;
+  command(input: { name: string; command: string; input: unknown; signal?: AbortSignal }): Promise<Awaited<ReturnType<typeof executeExtensionCommand>> & { meta?: import('./envelope.js').EnvelopeMeta } | { ok: false; code: string; message: string; meta?: import('./envelope.js').EnvelopeMeta }>;
   run(input: { name: string; job: string; target?: string; waitMs?: number }): ReturnType<typeof runExtension>;
   install(input: { name?: string; packagePath?: string; signal?: AbortSignal }): ReturnType<typeof installExtension>;
   status(input: { name: string }): ReturnType<typeof publicExtensionStatus>;
@@ -270,7 +271,7 @@ export interface BrainChannels {
 }
 export interface Brain {
   channels: BrainChannels;
-  recall: { docs(input: DocumentSearchInput): ReturnType<typeof searchDocuments>; chunks(input: SearchInput): ReturnType<typeof searchRecall>; tools(input: SearchInput): ReturnType<typeof searchRecall>; expand(input: ExpandInput): ReturnType<typeof expandRecall> };
+  recall: { docs(input: DocumentSearchInput): Promise<Awaited<ReturnType<typeof searchDocuments>> | { ok: false; code: string; message: string; meta?: import('./envelope.js').EnvelopeMeta }>; chunks(input: SearchInput): Promise<Awaited<ReturnType<typeof searchRecall>> | { ok: false; code: string; message: string; meta?: import('./envelope.js').EnvelopeMeta }>; tools(input: SearchInput): Promise<Awaited<ReturnType<typeof searchRecall>> | { ok: false; code: string; message: string; meta?: import('./envelope.js').EnvelopeMeta }>; expand(input: ExpandInput): ReturnType<typeof expandRecall> };
   ext: BrainExt;
   messages: BrainMessages;
   files: BrainFiles;
@@ -437,8 +438,8 @@ export function createBrain(dependencies: BrainDependencies): Brain {
         ? ((result) => result.ok ? result : { ...result, message: maskOutputText(result.message) })(await store.resendChannelRequest({ requestId: id, workId: idGen.next(), now: clock.now() }))
         : { ok: false, code: 'INVALID_ARGUMENT', message: '요청 ID가 UUID 형식이 아닙니다' },
     },
-    recall: { docs: input => searchDocuments(store, input), chunks: input => searchRecall(store, 'chunks', input), tools: input => searchRecall(store, 'tools', input), expand: input => expandRecall(store, input) },
-    ext: { command: input => executeExtensionCommand(dependencies, input), run: input => runExtension(dependencies, input), publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, cron, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
+    recall: { docs: async input => { const result = await searchDocuments(store, input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, chunks: async input => { const result = await searchRecall(store, 'chunks', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, tools: async input => { const result = await searchRecall(store, 'tools', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, expand: input => expandRecall(store, input) },
+    ext: { command: async input => withExtensionMetadata(store, await executeExtensionCommand(dependencies, input), [input.name]), run: input => runExtension(dependencies, input), publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, cron, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
     files: { show: input => showDocument(store, input), redact: (input) => redactFile({ store, clock, idGen }, input) },
     doctor: {
