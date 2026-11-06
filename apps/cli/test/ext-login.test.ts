@@ -48,6 +48,16 @@ it('terminal login requires self and passes scope-aware snapshot to the child', 
     const context = { args: ['testext'], env: fixture.env, options: {}, clock: {} as never, stdin: async () => '', recordHookArrival: async () => {} };
     expect(await extLoginCommand.run(context)).toMatchObject({ ok: false, code: 'USER_MISSING' });
     expect(await access(join(directory, 'login-snapshot')).then(() => true, () => false)).toBe(false);
+    const gateOwner = '12345678-1234-1234-1234-123456789abc';
+    await fixture.db.query(`insert into brain.extension_quiesce(name,owner,started_at) values ('testext','${gateOwner}',now())`);
+    expect(await extLoginCommand.run(context)).toMatchObject({ok:false,code:'DB_LOCKED',message:expect.stringContaining('중단된 확장 설치')});
+    expect(await access(join(directory, 'login-snapshot')).then(() => true, () => false)).toBe(false);
+    await fixture.db.query("delete from brain.extension_quiesce where name='testext'");
+    const progress = {name:'testext',packageDigest:'a'.repeat(64),result:null,failedStage:null,lastFailure:null,stages:{},authWorkId:null,scheduleIds:[],replacement:{owner:gateOwner,fromVersion:'1',at:'2026-10-29T00:00:00.000Z'}};
+    await fixture.db.query(`insert into brain.extension_install_progress(name,revision,progress) values ('testext',1,'${JSON.stringify(progress)}'::jsonb)`);
+    expect(await extLoginCommand.run(context)).toMatchObject({ok:false,code:'EXTENSION_REPLACEMENT_REQUIRED'});
+    await fixture.db.query("update brain.extension_install_progress set progress=jsonb_set(progress - 'replacement', '{unknown}', 'true'::jsonb) where name='testext'");
+    expect(await extLoginCommand.run(context)).toMatchObject({ok:false,code:'USER_MISSING'});
     await fixture.db.query(`update brain.users set is_self=1 where id='${selfId}'`);
     expect(await extLoginCommand.run(context)).toMatchObject({ ok: true });
     expect(JSON.parse(await readFile(join(directory, 'login-snapshot'), 'utf8'))).toMatchObject({ user_id: selfId, values: { 'testext.global': 'global' } });

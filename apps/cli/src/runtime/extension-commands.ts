@@ -1,4 +1,4 @@
-import { extensionCommands, encodeTextLine } from 'second_brain';
+import { extensionCommands, encodeTextLine, checkExtensionExecution, isExtensionName } from 'second_brain';
 import type { CommandSpec } from '../dispatch.js';
 import { configHome } from '../config/paths.js';
 import { readConfig } from '../config/codec.js';
@@ -38,4 +38,14 @@ export async function dynamicExtensionCommands(env: NodeJS.ProcessEnv): Promise<
       },
     })) };
   } catch { return { ok: false, code: 'DB_UNAVAILABLE', message: '확장 명령 목록을 읽을 수 없습니다' }; } finally { await store.close().catch(() => undefined); }
+}
+
+/** Return the persistent fence diagnostic even when the old manifest cannot register commands. */
+export async function blockedExtensionCommand(env: NodeJS.ProcessEnv, name: string) {
+  if (!isExtensionName(name)) return null;
+  const home = configHome(env), config = await readConfig(home);
+  if (!config.ok) return null;
+  const { store } = await openBrainStore({ home, env, config, path: 'command' });
+  try { const result = await checkExtensionExecution(store, name, 'command'); return result.ok ? null : result; }
+  finally { await store.close(); }
 }

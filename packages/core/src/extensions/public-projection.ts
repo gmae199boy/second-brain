@@ -9,7 +9,7 @@ export function extensionPublicProjection(name: string, extension: ExtensionReco
     name, installed: extension !== null, version: extension?.version ?? null, packageDigest: extension?.packageDigest ?? null, pluginVersion: extension?.pluginVersion ?? null, installedAt: extension?.installedAt ?? null, pythonEnvironment: python ? { ...python, code: fixedCode(python.code) } : null, authWorkId: progress?.authWorkId ?? null, scheduleIds: progress?.scheduleIds ?? [], disabledScheduleKeys: progress?.disabledScheduleKeys ?? [], enabled: extension?.enabled ?? null,
     journalPresent: progress !== null, login: stages.login ?? null,
     connection: { status: extension?.connectionStatus ?? null, code: fixedCode(extension?.connectionCode ?? null), checkedAt: extension?.connectionCheckedAt ?? null },
-    schedule: stages.schedule ?? null, heldScheduleCount, interruptedWorkCount, quiesced,
+    schedule: stages.schedule ?? null, heldScheduleCount, interruptedWorkCount, quiesced, replacementRequired: !!progress?.replacement,
     installResult: progress?.result ?? null, failedStage: progress?.failedStage ?? null,
     lastFailure: progress?.lastFailure ?? null, stages,
   };

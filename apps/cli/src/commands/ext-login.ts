@@ -3,9 +3,9 @@ import { spawn } from 'node:child_process';
 import { lstat, open, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseEnv } from 'node:util';
-import { createExtensionSnapshot, readScopedSettings, resolveSelfUser, decodeExtensionManifest, isExtensionName } from 'second_brain';
+import { createExtensionSnapshot, readScopedSettings, resolveSelfUser, decodeExtensionManifest, isExtensionName, checkExtensionExecution } from 'second_brain';
 import type { CommandSpec, StandaloneCommandContext } from '../dispatch.js';
-import { readConfig } from '../config/codec.js';
+import { readConfig, resolveStoreUrl } from '../config/codec.js';
 import { configHome, envFilePath } from '../config/paths.js';
 import { openBrainStore } from '../runtime/brain-store.js';
 
@@ -23,6 +23,12 @@ export const extLoginCommand: CommandSpec = {
     const config = await readConfig(home);
     const { store } = await openBrainStore({ home, env: context.env, config, path: 'command' });
     try {
+      if (!config.ok) return { ok: false, code: 'CONFIG_INVALID', message: '설정을 읽을 수 없습니다' };
+      const url = await resolveStoreUrl(home, config.config.storeUrlEnv, context.env);
+      if (!url) return { ok: false, code: 'DB_UNAVAILABLE', message: '데이터베이스를 확인할 수 없습니다' };
+      const { withExtensionInstallLock } = await import('second_brain/postgres');
+      return await withExtensionInstallLock(url, name, async () => {
+      const allowed = await checkExtensionExecution(store, name); if (!allowed.ok) return allowed;
       const installed = await store.listExtensions();
       if (!installed.ok) return installed;
       const extension = installed.extensions.find(item => item.name === name);
@@ -50,6 +56,7 @@ export const extLoginCommand: CommandSpec = {
       const { status, code } = await launchTerminal(entry.runtime === 'python' ? join(directory, '.venv', 'bin', 'python') : process.execPath, join(directory, entry.entry), { ...context.env, BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized, BRAIN_EXTENSION_HOME: directory }, manifest.error_codes ?? []);
       if (status !== 0) return { ok: false, code, message: '확장 로그인을 완료하지 못했습니다' };
       return { ok: true, data: { status: 'succeeded' }, text: ['확장 로그인 완료'] };
+      });
     } catch {
       return { ok: false, code: 'EXTENSION_INVALID', message: '확장 인증을 실행할 수 없습니다' };
     } finally { await store.close(); }
