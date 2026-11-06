@@ -397,3 +397,16 @@ core0.1.17/Garmin0.1.4 ref는이전구현472caa7,확장1.2.1/package85파일정�
 - 후속권고: 취소시험이 고정300ms 대신 readiness근거를 기다리도록 안정화할지 별도판단한다(이번티켓미실행). 실제운영성능보장은 합성측정으로 대체하지 않는다.21.11/17.1은 최신schema39와명시버전기대를 통합시대조한다.
 
 `deferred: []`, 독립필요후속완료·추가권고false. fixture172/193/194/3개는각created/removed일치,전용PG/기존잔존정리·부재증거와전체로그/워크트리는보존한다.
+
+
+## 17.1 — 리포트 문서 검색·현재 원문 읽기 수락 (2026-11-06)
+
+근거: [리포트 검색 계획](../tickets/epic-search-and-health-query/tickets/story-untitled-plan.md)의 단일 deferred·Review Triage Log·Auto Run Result. 최종 `58119ca`, 기준3a263cc·통합main b581a90/schema39. 중앙은 최종교정 독립리뷰원문·재검증로그·원격tip·현재main조상을 대조했다.
+
+- 확장 report 요청의 성공 core파일/현재추출만 검색하고 document 출처로 원문을 읽는다. SDK/CLI/메타·코덱probe·가림후8000자/다음창·합성요청→import→extract tracer를 연결했다. Garmin schema/설치/성능snapshot은 변경하지 않았다.
+- 최초 순차 전체회귀 TS5실패/Python1실패는 이력 보존. guide 위치인자 이름 교정과 preflight 합성 private UUID 대응을 독립확인했고 자기PG 인증전제만 맞췄다. 제한worker changed exit0: TS/PG157파일3308시험·기존skip1 및 Python전체16파일69시험 통과. 최초전체명령을 소급통과로 기록하지 않는다.
+- 독립 R1/R1b·R2·R3 및 최종교정 집중리뷰를 완료했다. R1 edge 절차실패는 새R1b로 보완했고 원문 실패도 보존. 문맥밖 비밀·출처구간·오류가림·검색H배문맥증폭은 수정/후속확인했다. 추가후속권고false.
+- 보류 medium 미검증: 최대8MiB 추출세대의 전체 문맥 조회/메모리 비용 실측. 단일reader 한도위반은 미확정이며 비밀가림을 위해 전체문맥 유지. H배 반복전송/복원 결함은 이미 제거했다. 별도최대크기 실측 뒤 최적화 필요성을 판단한다.
+- 운영 인계: 실제 설치본 배포·질문 인수는17.7. 이번plugin ref/version은 불변이며 제품코드가 원격main에 있다는 사실을 설치본 반영으로 표현하지 않는다. 신규migration은 없고 문서검색Store capability/root export를 더했다.
+
+소유 parentPG1+fixture360 정확ID 잔존0. 워크트리/브랜치/세션/stash/전체실패·리뷰·검증원문은 보존한다.
