@@ -154,7 +154,7 @@ describe('redactFile', () => {
 });
 
 describe('planFileRedaction', () => {
-  it('records the whole file with no range and queues only Brain local places', () => {
+  it('records the whole file with no range and queues Brain local and Drive places', () => {
     const ids = sequenceIdGen({ start: 500, timestampMs: 1770000000000 });
     const brain = location({ id: 'loc-brain' });
     const plan = planFileRedaction(
@@ -163,14 +163,14 @@ describe('planFileRedaction', () => {
         // Somebody else's file: a record of where the bytes came from, never
         // Brain's to delete.
         location({ id: 'loc-external', ownership: 'external', locator: '~/project/note.txt' }),
-        // Brain's copy in Drive: epic 8's to remove, and the handler refuses it.
+        // Brain's copy in Drive is also queued for the Drive adapter.
         location({ id: 'loc-drive', storeKind: 'drive', locator: 'drive-file-id' }),
         // A Brain copy that is already empty: nothing left to ask for.
         location({ id: 'loc-gone', deletedAt: new Date('2026-02-01T00:00:00.000Z') }),
       ]),
       { clock: fixedClock(NOW), idGen: ids },
     );
-    expect(plan.work.map((work) => work.targetId)).toEqual(['loc-brain']);
+    expect(plan.work.map((work) => work.targetId)).toEqual(['loc-brain', 'loc-drive']);
     expect(plan.work[0]).toMatchObject({
       kind: BLOB_DELETE_KIND, targetKind: FILE_LOCATION_TARGET_KIND,
       createdAt: NOW, nextAttemptAt: NOW,

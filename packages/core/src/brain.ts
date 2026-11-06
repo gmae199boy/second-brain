@@ -24,6 +24,9 @@ import type { AttachmentLinkSpoolPayload } from './domain/spool-record.js';
 import type { IngestAttachment } from './domain/ingest-batch.js';
 import type { SourceFileReader } from './ports/source-file.js';
 import { fillFileNames } from './files/file-names.js';
+import { DRIVE_LOCAL_DELETE_KIND, DRIVE_MIGRATE_KIND, driveLocalDeleteHandler, driveMigrationHandler } from './files/drive-migrate-work.js';
+import { contentHashOfBytes } from './domain/file.js';
+import type { DriveMigrationStore, DriveUploadStore } from './ports/drive-store.js';
 import { BLOB_DELETE_KIND, blobDeleteHandler } from './files/blob-delete-work.js';
 import {
   DOCUMENT_EXTRACT_KIND,
@@ -89,6 +92,8 @@ export interface BrainDependencies {
    * decided rather than at the call (AD-10).
    */
   store: Store & SchemaStore & SettingsStore;
+  /** Explicitly injected Drive connection; credentials and OAuth are runtime concerns. */
+  drive?: { store:DriveMigrationStore; uploads:DriveUploadStore; files:FileStore; rootFolderId:string };
   /** Original attachment bytes, written before the database transaction. */
   files: FileStore;
   /**
@@ -324,6 +329,21 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     machine,
   };
 
+  const drive = dependencies.drive;
+  const sourceFiles: FileStore = {
+    put: bytes => files.put(bytes),
+    get: async location => {
+      if (location.storeKind !== 'drive' || !drive) return files.get(location);
+      const binding=await drive.store.readDriveLocatorRoot(location.locator);
+      if (!binding.ok) return {ok:false,code:'FILES_UNAVAILABLE',message:'Drive 위치의 루트를 확인할 수 없습니다'};
+      if (binding.rootFolderId !== drive.rootFolderId) return {ok:false,code:'LOCATION_REFUSED',message:'Drive 위치의 루트가 다릅니다'};
+      return drive.files.get(location);
+    },
+    exists: location => location.storeKind === 'drive' && drive ? drive.files.exists(location) : files.exists(location),
+    url: location => location.storeKind === 'drive' && drive ? drive.files.url(location) : files.url(location),
+    delete: location => location.storeKind === 'drive' && drive ? drive.files.delete(location) : files.delete(location),
+  };
+  const driveDeps = drive ? {store:drive.store,uploads:drive.uploads,local:files,drive:drive.files,settings:{store,schemaVersions,clock},rootFolderId:drive.rootFolderId,clock,idGen} : undefined;
   // The kinds Core owns, and then the caller's. `session_ingest` is Core's own
   // because what it does is a use case and the ports it needs are the ones this
   // brain was assembled from (`capture/session-ingest-work.ts`).
@@ -340,11 +360,15 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     // Core's own for the same reason: reading a stored attachment is a use case,
     // and the ports it needs — the store, the file store, the clock, the ids —
     // are exactly the ones this brain was assembled from (`files/extract-work.ts`).
-    [DOCUMENT_EXTRACT_KIND]: documentExtractHandler({ store, files, clock, idGen }),
+    [DOCUMENT_EXTRACT_KIND]: documentExtractHandler({ store, files:sourceFiles, clock, idGen }),
     // And the same again for deleting one of them: the ports it needs are the
     // store, the file store and the clock, and what it does — empty one place
     // and record that it is empty — is a use case (`files/blob-delete-work.ts`).
-    [BLOB_DELETE_KIND]: blobDeleteHandler({ store, files, clock }),
+    [BLOB_DELETE_KIND]: blobDeleteHandler({ store, files, clock, ...(drive ? {driveFiles:drive.files,driveRoot:{store:drive.store,rootFolderId:drive.rootFolderId}} : {}) }),
+    ...(driveDeps ? {
+      [DRIVE_MIGRATE_KIND]: driveMigrationHandler(driveDeps),
+      [DRIVE_LOCAL_DELETE_KIND]: driveLocalDeleteHandler({store:{readDriveRetention:id=>driveDeps.store.readDriveRetention(id),markFileLocationDeleted:input=>store.markFileLocationDeleted(input),resolveFailures:input=>store.resolveFailures(input)},local:files,drive:driveDeps.drive,rootFolderId:driveDeps.rootFolderId,clock}),
+    } : {}),
   };
   const handlers: WorkHandlers = { ...coreHandlers, ...workHandlers };
 
@@ -441,7 +465,25 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     recall: { docs: async input => { const result = await searchDocuments(store, input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, chunks: async input => { const result = await searchRecall(store, 'chunks', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, tools: async input => { const result = await searchRecall(store, 'tools', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, expand: input => expandRecall(store, input) },
     ext: { command: async input => withExtensionMetadata(store, await executeExtensionCommand(dependencies, input), [input.name]), run: input => runExtension(dependencies, input), publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, cron, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
-    files: { show: input => showDocument(store, input), redact: (input) => redactFile({ store, clock, idGen }, input) },
+    files: { show: input => showDocument(store, input, async (fileId, extractionId) => {
+      const state=await store.readFileExtractionState(fileId);
+      if (!state.ok) return {ok:false,code:state.code === 'DB_LOCKED' ? 'DB_LOCKED' : 'DB_UNAVAILABLE',message:state.message};
+      if (state.redactedAt !== null) return {ok:false,code:'FILES_UNAVAILABLE',message:'가린 파일입니다'};
+      if (state.home?.storeKind !== 'drive') return {ok:true,bytes:null};
+      if (!drive || state.home.ownership !== 'brain') return {ok:false,code:'FILES_UNAVAILABLE',message:'Drive 원본에 접근할 수 없습니다'};
+      const candidate=await drive.store.readDriveCandidate(fileId);
+      if (!candidate.ok || !candidate.candidate || candidate.candidate.home.locator !== state.home.locator) return {ok:false,code:'FILES_UNAVAILABLE',message:'Drive 위치를 확인할 수 없습니다'};
+      const binding=await drive.store.readDriveLocationRoot(candidate.candidate.homeId);
+      if (!binding.ok || binding.rootFolderId !== drive.rootFolderId) return {ok:false,code:'FILES_UNAVAILABLE',message:'Drive 위치의 루트가 다릅니다'};
+      const read=await drive.files.get(state.home);
+      if (!read.ok || read.bytes.length !== state.sizeBytes || contentHashOfBytes(read.bytes) !== state.contentHash) return {ok:false,code:'FILES_UNAVAILABLE',message:'Drive 원본을 확인할 수 없습니다'};
+      const after=await store.readFileExtractionState(fileId);
+      if (!after.ok) return {ok:false,code:after.code === 'DB_LOCKED' ? 'DB_LOCKED' : 'DB_UNAVAILABLE',message:after.message};
+      if (after.redactedAt !== null || after.currentExtractionId !== extractionId || after.contentHash !== state.contentHash || after.home?.storeKind !== 'drive' || after.home.locator !== state.home.locator || after.home.ownership !== 'brain') return {ok:false,code:'FILES_UNAVAILABLE',message:'파일 상태가 변경되어 다시 읽어야 합니다'};
+      const current=await drive.store.readDriveCandidate(fileId);
+      if (!current.ok || !current.candidate || current.candidate.homeId !== candidate.candidate.homeId) return {ok:false,code:'FILES_UNAVAILABLE',message:'Drive 위치가 변경되어 다시 읽어야 합니다'};
+      return {ok:true,bytes:read.bytes};
+    }), redact: (input) => redactFile({ store, clock, idGen }, input) },
     doctor: {
       run: () =>
         runDoctor(store, {

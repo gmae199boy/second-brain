@@ -74,12 +74,15 @@ beforeAll(() => {
   mkdirSync(home, { recursive: true });
   const allowed = join(root, 'allowed-tools');
   mkdirSync(allowed);
-  for (const name of ['git', 'docker', 'sh', 'dirname', 'grep', 'head', 'tr', 'sed', 'cat', 'uname', 'which', 'mkdir', 'touch', 'rm', 'sleep', 'mv', 'cp', 'chmod']) {
+  for (const name of ['git', 'docker', 'orb', 'sh', 'dirname', 'grep', 'head', 'tr', 'sed', 'cat', 'uname', 'which', 'mkdir', 'touch', 'rm', 'sleep', 'mv', 'cp', 'chmod']) {
     const found = spawnSync('/usr/bin/which', [name], { encoding: 'utf8' });
     if (found.status !== 0) throw new Error(`시험 명령을 찾을 수 없습니다: ${name}`);
     symlinkSync(found.stdout.trim(), join(allowed, name));
   }
-  symlinkSync(process.execPath, join(allowed, 'node'));
+  // Keep the pinned Node executable in this fixture's restricted tool directory,
+  // so subsequent hooks retain the same tool precedence as the first install.
+  copyFileSync(process.execPath, join(allowed, 'node'));
+  chmodSync(join(allowed, 'node'), 0o755);
   const pnpm = spawnSync('/usr/bin/which', ['pnpm'], { encoding: 'utf8' }).stdout.trim();
   const wrapper = join(allowed, 'pnpm');
   writeFileSync(wrapper, `#!/bin/sh\nprintf '%s %s\\n' "$PWD" "$*" >> '${join(root,'pnpm-calls')}'\nPATH='${process.env.PATH}'\nexport PATH\nunset NODE_OPTIONS BRAIN_PROCESS_SPY BRAIN_RESTRICTED_PATH\nexec '${pnpm}' "$@"\n`);

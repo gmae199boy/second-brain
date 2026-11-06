@@ -32,6 +32,7 @@ const rules = [
   { prefix:'apps/cli/src/doctor/', reason:'daemon assembly uses runtime checks' },
   { prefix:'apps/cli/src/commands/ext', reason:'extension commands' },
   { prefix:'apps/cli/test/fixtures/extensions/', reason:'extension test fixtures' },
+  { prefix:'apps/cli/test/fixtures/fake-drive.ts', reason:'shared Drive HTTP fixture and child-process integration' },
   { prefix:'tooling/test-db/', reason:'Python global setup and pg-home use test-db' },
   { prefix:'tooling/test-changed/', reason:'changed-test configuration and rules' },
 ];

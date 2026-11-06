@@ -1,3 +1,4 @@
+import { decodeUtf8Text } from '../files/text-extractor.js';
 import { withExtensionMetadata } from './extension-metadata.js';
 import type { ExtensionStore } from '../ports/store.js';
 import { contentHash } from '../domain/sha256.js';
@@ -48,7 +49,8 @@ function overlaps(a: ChunkLocator, b: ChunkLocator): boolean {
   if (a.type === 'pdf' && b.type === 'pdf') return a.page === b.page && (!a.bbox || !b.bbox || (a.bbox[0] <= b.bbox[2] && b.bbox[0] <= a.bbox[2] && a.bbox[1] <= b.bbox[3] && b.bbox[1] <= a.bbox[3]));
   return a.type === 'docx' && b.type === 'docx' && a.block === b.block;
 }
-export async function showDocument(store: DocumentRecallStore, input: ShowDocumentInput) {
+export type DocumentOriginalReader = (fileId:string, extractionId:string) => Promise<{ok:true; bytes:Uint8Array|null} | {ok:false; code:'FILES_UNAVAILABLE'|'DB_UNAVAILABLE'|'DB_LOCKED'; message:string}>;
+export async function showDocument(store: DocumentRecallStore, input: ShowDocumentInput, original?:DocumentOriginalReader) {
   const before = input.before ?? 2, after = input.after ?? 2, offset = input.offset ?? 0;
   if (typeof input.file_id !== 'string' || !input.file_id || !safe(input.file_id) || typeof input.chunk_locator !== 'string' || !safe(input.chunk_locator) || (input.extraction_id !== undefined && (typeof input.extraction_id !== 'string' || !safe(input.extraction_id))) || ![before, after].every(n => Number.isInteger(n) && n >= 0 && n <= 100) || !Number.isSafeInteger(offset) || offset < 0 || (offset > 0 && (!input.extraction_id || typeof input.fingerprint !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(input.fingerprint)))) return invalid('파일 출처 또는 문맥 개수가 올바르지 않습니다');
   const locator = decodeChunkLocator(input.chunk_locator); if (!locator.ok) return invalid('조각 위치가 올바르지 않습니다');
@@ -58,7 +60,22 @@ export async function showDocument(store: DocumentRecallStore, input: ShowDocume
   if (s.redacted) return { ...invalid('가린 파일입니다'), status: 'redacted' as const };
   if (!s.extraction_id) return { ...invalid('읽을 수 있는 추출 세대가 없습니다'), status: s.status ?? 'pending', source_unreachable: s.source_unreachable };
   if (!safe(s.extraction_id)) return invalid('가려진 추출 세대는 사용할 수 없습니다');
-  const context = documentContext(s.pieces);
+  let sourcePieces = s.pieces;
+  if (original) {
+    const readOriginal = await original(input.file_id, s.extraction_id);
+    if (!readOriginal.ok) return {...readOriginal, message:maskOutputText(readOriginal.message)};
+    if (readOriginal.bytes !== null && s.pieces.every(piece => { const loc=decodeChunkLocator(piece.chunk_locator); return loc.ok && loc.locator.type === 'text'; })) {
+      const decoded = decodeUtf8Text(readOriginal.bytes); if (!decoded.ok) return corrupt();
+      const chars=Array.from(decoded.text);
+      sourcePieces = [];
+      for (const piece of s.pieces) {
+        const loc=decodeChunkLocator(piece.chunk_locator);
+        if (!loc.ok || loc.locator.type !== 'text' || loc.locator.end > chars.length) return corrupt();
+        sourcePieces.push({...piece,body:chars.slice(loc.locator.start,loc.locator.end).join('')});
+      }
+    }
+  }
+  const context = documentContext(sourcePieces);
   if (!context) return corrupt();
   const pieces = context.positioned;
   const matching = pieces.flatMap((p,i) => overlaps(locator.locator, p.locator) ? [i] : []);

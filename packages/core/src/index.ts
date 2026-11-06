@@ -321,3 +321,4 @@ export { checkExtensionExecution } from './extensions/replacement.js';
 
 export type * from './ports/document-recall-store.js';
 export * from './recall/documents.js';
+export * from './files/drive-migrate-work.js';

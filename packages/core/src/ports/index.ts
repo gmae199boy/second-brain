@@ -143,3 +143,5 @@ export type { WorkCancelState, RequestWorkCancelResult, RecordSupervisedProcessI
 export type { WorkAttemptHealthEntry, WorkAttemptHealthKind, ReadWorkAttemptHealthResult } from './store.js';
 
 export type { CronCalculator } from './cron.js';
+
+export * from './drive-store.js';

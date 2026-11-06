@@ -1,0 +1,14 @@
+import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
+const config=JSON.parse(process.env.BRAIN_TEST_DRIVE_CRASH);
+const core=await import('@second-brain/core');
+const pg=await import('../../dist/index.js');
+const runtime=await import(pathToFileURL(config.driveModule).href);
+const store=pg.postgresStore({databaseUrl:config.url});
+const clock={now:()=>new Date(config.now)}, ids={next:()=>randomUUID()};
+const real=runtime.driveFileStore({rootFolderId:'root',baseUrl:config.baseUrl,uploads:store.driveUploads,clock});
+const drive={...real,put:async bytes=>{const result=await real.put(bytes); if (!result.ok) throw Error('synthetic upload failed'); process.send('uploaded-before-cas'); await new Promise(()=>{}); return result;}};
+const bytes=Uint8Array.from(config.bytes);
+const local={get:async()=>({ok:true,bytes})};
+await core.migrateFileToDrive({store,uploads:store.driveUploads,local,drive,settings:{store,schemaVersions:{core:40},clock},rootFolderId:'root',clock,idGen:ids},config.fileId);
+throw Error('barrier unexpectedly passed');

@@ -127,7 +127,15 @@ const calls = {
   readExtensionQuiesce: s => s.readExtensionQuiesce('testext'),
   endExtensionQuiesce: s => s.endExtensionQuiesce({ name: 'testext', owner: '00000000-0000-4000-8000-000000000000' }),
   setSetting: (s) => s.setSetting({ userId: null, key: 'timezone', value: 'UTC', updatedAt: now }),
-} satisfies Record<Exclude<keyof PostgresStore, 'close' | 'imports'>, (store: PostgresStore) => Promise<unknown>>;
+  readDriveCandidate: s => s.readDriveCandidate(id),
+  readDriveIntent: s => s.readDriveIntent(id),
+  readDriveLocationRoot: s => s.readDriveLocationRoot(id),
+  readDriveLocatorRoot: s => s.readDriveLocatorRoot('a'.repeat(64)),
+  ensureDriveRedaction: s => s.ensureDriveRedaction({fileId:id,rootFolderId:'root',workId:id,at:now}),
+  beginDriveMigration: s => s.beginDriveMigration({fileId:id,expectedHomeId:id,contentHash:'sha256:'+'a'.repeat(64),rootFolderId:'root',locationId:id,locator:'a'.repeat(64),workId:id,at:now}),
+  readDriveRetention: s => s.readDriveRetention(id),
+  commitDriveMigration: s => s.commitDriveMigration({fileId:id,expectedHomeId:id,contentHash:'sha256:'+'a'.repeat(64),rootFolderId:'root',remoteId:'remote',locationId:id,locator:'a'.repeat(64),workId:id,verifiedAt:now,dueAt:now}),
+} satisfies Record<Exclude<keyof PostgresStore, 'close' | 'imports' | 'driveUploads'>, (store: PostgresStore) => Promise<unknown>>;
 
 it.each(['refused', 'terminated', 'missing-schema', 'missing-database', 'missing-role', 'authentication'] as const)('every store verb answers DB_UNAVAILABLE when %s', async kind => {
   const db = kind === 'refused' ? undefined : await database();
@@ -149,7 +157,7 @@ it.each(['refused', 'terminated', 'missing-schema', 'missing-database', 'missing
       const applicationName = `unavailable-${name}`;
       const store = postgresStore({ databaseUrl: url.toString(), applicationName, connectTimeoutMs: 200, lockTimeoutMs: 5000 });
       stores.push(store);
-      expect(Object.keys(store).filter(key => key !== 'close' && key !== 'imports').sort()).toEqual(Object.keys(calls).sort());
+      expect(Object.keys(store).filter(key => key !== 'close' && key !== 'imports' && key !== 'driveUploads').sort()).toEqual(Object.keys(calls).sort());
       const pending = invoke(store);
       if (blocker) {
         const deadline = Date.now() + 3000;

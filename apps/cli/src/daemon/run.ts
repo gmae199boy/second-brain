@@ -29,7 +29,7 @@ import { watchFolders } from '../harnesses.js';
 import { startTranscriptWatch, type TranscriptWatchFunction } from './watch.js';
 import { openBrainStore } from '../runtime/brain-store.js';
 import { composeArgs, commandEnv, systemCommandRunner, type CommandRunner } from '../runtime/command-runner.js';
-import type { CreateConnectionStore } from '../dispatch.js';
+import type { CreateConnectionStore, DispatchRuntime } from '../dispatch.js';
 
 /**
  * The resident loop behind `brain daemon run`: take the lock, keep a heartbeat,
@@ -100,6 +100,7 @@ export interface RunDaemonOptions {
   watch?: TranscriptWatchFunction;
   /** PostgreSQL 연결 생성 시험 seam. */
   createStore?: CreateConnectionStore;
+  driveFactory?: DispatchRuntime['driveFactory'];
   runner?: CommandRunner;
   reconnectBackoffMs?: { initial: number; max: number };
   /** Kinds beyond Core's own. Empty for every real invocation (AD-21). */
@@ -190,6 +191,7 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
             signal,
             config,
             createStore: options.createStore,
+            driveFactory: options.driveFactory,
             workHandlers: options.workHandlers ?? {},
             budgetMs: options.drainBudgetMs ?? DAEMON_DRAIN_BUDGET_MS,
           })
@@ -291,6 +293,7 @@ interface RoundOptions {
   idGen: IdGen;
   config: ReadConfigResult;
   createStore: CreateConnectionStore | undefined;
+  driveFactory?: DispatchRuntime['driveFactory'];
   workHandlers: WorkHandlers;
   budgetMs: number;
   signal: AbortSignal;
@@ -344,7 +347,7 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
     };
     if (signal.aborted) return { ...reached, pause: false };
     const brain = createBrain(
-      brainDependencies({ home, env, config, schemaVersions: opened.expected, store, clock, idGen, workHandlers }),
+      brainDependencies({ home, env, config, schemaVersions: opened.expected, store, clock, idGen, workHandlers, driveFactory:options.driveFactory }),
     );
     const tick = await brain.schedules.tick();
     tickState = {

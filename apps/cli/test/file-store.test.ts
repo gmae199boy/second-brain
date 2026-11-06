@@ -16,6 +16,18 @@ describe('로컬 FileStore', () => {
     expect(externalPath('~/a', '/h/u')).toBe('/h/u/a');
   });
   for (const c of fileStoreContract()) it(c.name, () => c.run(async () => localFileStore({root: join(await scratch(), 'files')})));
+  it('로컬 locator는 shard와 바이트별 확장자를 유지한다', async () => {
+    const store = localFileStore({root: join(await scratch(), 'files')});
+    for (const [head, ext] of [
+      [[137,80,78,71,13,10,26,10], '.png'], [[255,216,255], '.jpg'],
+      [[71,73,70,56,57,97], '.gif'], [[82,73,70,70,0,0,0,0,87,69,66,80], '.webp'], [[1,2,3], ''],
+    ] as const) {
+      const bytes = Uint8Array.from(head), put = await store.put(bytes);
+      if (!put.ok) throw new Error('저장 실패');
+      const hash = contentHashOfBytes(bytes).slice(7);
+      expect(put.location).toEqual({storeKind:'local',ownership:'brain',locator:`${hash.slice(0,2)}/${hash.slice(2,4)}/${hash}${ext}`});
+    }
+  });
   it('생성자는 디스크를 건드리지 않고 폴더 0700과 파일 0600으로 쓴다', async () => {
     const root = join(await scratch(), 'files');
     const store = localFileStore({root});

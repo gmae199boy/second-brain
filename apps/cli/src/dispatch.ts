@@ -146,6 +146,7 @@ export interface SpoolCommandContext extends CommandContextBase {
  * writes a harness file and never touches the database.
  */
 export interface StandaloneCommandContext extends CommandContextBase {
+  driveFactory?: DispatchRuntime['driveFactory'];
   runner?: CommandRunner;
   env: NodeJS.ProcessEnv;
 }
@@ -360,6 +361,8 @@ export type CommandSpec<T = unknown> = DatabaseCommandSpec<T> | StandaloneComman
 export type CreateConnectionStore = NonNullable<import('./runtime/brain-store.js').OpenBrainStoreOptions['createStore']>;
 
 export interface DispatchRuntime {
+  /** Explicit Drive integration; the default CLI never opens an external account. */
+  driveFactory?: (store: Store & SchemaStore & SettingsStore) => BrainDependencies['drive'];
   signal?: AbortSignal;
   rawExtensionInput?: { value: unknown };
   runner?: CommandRunner;
@@ -454,6 +457,7 @@ export async function dispatch(
       signal: runtime.signal,
       rawExtensionInput: runtime.rawExtensionInput,
       createStore: runtime.createStore,
+      driveFactory: runtime.driveFactory,
       stdin: runtime.stdin ?? (() => readStdin()),
       recordHookArrival: (harness) => recordHookArrival(configHome(env), harness, env['SECOND_BRAIN_PLUGIN_ROOT']),
       idGen: runtime.idGen ?? uuidV7IdGen(),
@@ -540,6 +544,7 @@ export async function dispatch(
 
 /** The parts of the runtime `execute` passes on to a command or to the SDK. */
 interface Wiring {
+  driveFactory?: DispatchRuntime['driveFactory'];
   signal?: AbortSignal;
   rawExtensionInput?: { value: unknown };
   runner?: CommandRunner;
@@ -590,7 +595,7 @@ async function execute(
   // Before the configuration, because this command may be the one that writes
   // it, and before the store, because it has no database to reach.
   if (spec.standalone === true) {
-    return finish(rendering, await spec.run({ env, clock, options, args, stdin, recordHookArrival, ...(wiring.runner === undefined ? {} : { runner: wiring.runner }) }), [], []);
+    return finish(rendering, await spec.run({ env, clock, options, args, stdin, recordHookArrival, ...(wiring.driveFactory === undefined ? {} : { driveFactory: wiring.driveFactory }), ...(wiring.runner === undefined ? {} : { runner: wiring.runner }) }), [], []);
   }
 
   const preflight = spec.preflight?.({ clock, options, args, stdin, recordHookArrival });
@@ -648,6 +653,7 @@ async function execute(
     schemaVersions: expected,
     adapterProbeIds: opened.adapterProbeIds,
     runner: wiring.runner,
+    driveFactory: wiring.driveFactory,
   });
   // One spool per invocation, taken off the assembly rather than built again:
   // the spool branch below writes a mark with no brain in its hands (AD-9), and
