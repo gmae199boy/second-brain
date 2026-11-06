@@ -17,7 +17,7 @@ context: [AGENTS.md, _bmad-output/personal-brain/automation/runbook.md, extensio
 warnings: [oversized]
 deferred: []
 blocked_at: "2026-11-06"
-blocked_reason: "설치본 legacy schema(core 27 + 등록 garmin)에서 새 core로 가는 지원 전환 경로 부재(postgres.ts:130). 중앙이 별도 버그로 분리(msg_07ce4c7fb36b). 버그 반영·release 뒤 재개"
+blocked_reason: "21.9 legacy 전환이 설치된 옛 Garmin manifest(1.0.0)를 EXTENSION_INVALID로 거부(work·settings·default_schedules, core_compat 없음; postgres.ts:146-147). 제품 수정 반영·release 뒤 재개"
 ---
 
 <intent-contract>
@@ -76,6 +76,14 @@ blocked_reason: "설치본 legacy schema(core 27 + 등록 garmin)에서 새 core
 - 21.3 binding·tokenstore는 Brain 홈 주변에서 발견되지 않았다(위치 미확인). 21.5 설정값은 DB를 읽지 않아 미확인이다.
 - 사고: 옛 프로그램 원본 저장소에 `git status`를 1회 실행해 그 저장소의 `.git/index` stat 캐시가 갱신됐을 수 있다. 작업 트리와 데이터는 무변경이다. 이후 원본 저장소에 git 명령을 쓰지 않았다(정확한 위치는 private 기록).
 
+- 2026-11-06 재개(중앙 `msg_0a1dd68e8d79`): 21.9(legacy 지원 전환)가 main `6ad59955f6fc93a275441c16ee7116ae3f961460`에 반영됐다(core plugin 0.1.18, app-ref `118df4718cb44ec99a12f6e24048f5131b2df923`). 티켓 브랜치에 원격 main을 정상 병합했다(fast-forward).
+- 재진단(읽기 전용, 운영 무변경): 세션 hook의 자동 갱신(118df47)이 2026-11-06T03:23Z에 이번에는 `DB_LOCKED: 확장 manifest 또는 대상 core 호환성을 확인할 수 없습니다`로 exit 1. 활성 app·DB는 무변경이다.
+  - 원인: 설치된 옛 Garmin 패키지 manifest(1.0.0, epic 16 시절)를 새 core의 `decodeExtensionManifest`가 `EXTENSION_INVALID`로 거부한다(`apps/cli/src/runtime/extensions.ts` `installedExtensionMigrations` → `apps/cli/src/install/postgres.ts:146-147`). 사본 manifest에 같은 함수를 실행해 재현했다. 새 manifest의 필드를 하나씩 옛 값으로 바꾸는 교체 실험에서는 `work`·`settings`·`default_schedules`가 각각 거부를 일으켰다. 직접 원인은 옛 `work`의 `verification_snapshot` 키가 현재 허용 키에 없다는 것이다. `settings`·`default_schedules`는 교체 시 work와의 상호 참조가 깨져 거부된 것이고, 그 자체가 문법 비호환이라는 증명은 아니다(독립 리뷰 q2). `core_compat`도 없어 대상 version 검사도 통과할 수 없다. 21.9는 합성 testext manifest로만 시험했다(그 계획의 잔여 위험 "실제 옛 Garmin manifest 호환은 21.7에서 확인").
+  - 옛 설치본 migration 0001~0008은 새 패키지의 같은 파일과 sha256이 같다(새 패키지 0009~0016 추가).
+  - legacy 기계 전제(`inspectLegacyExtensionPrerequisites`, 읽기 전용): garmin 비활성, `extension:garmin` 보류, 보류 안 된 예약·미완료 일감 0, running 0, 열린 attempt 0 — 모두 충족.
+  - 그다음 gate: 실행 중인 옛 데몬(launchd `io.github.gmae199boy.second-brain.daemon`)이 daemon 잠금을 쥐고 있어 `acquireOfflineDaemonFence`(`apps/cli/src/daemon/lock.ts`)가 거부한다. 설치 전에 데몬을 내리고 종료를 확인해야 한다. 그다음은 대화형 TTY offline 확인(사람)이다.
+- 판정: 제품 결함(legacy 전환이 실제 옛 Garmin manifest를 읽지 못함). 21.7에서 안전 guard를 우회하거나 같은 코드를 편집하지 않는다. 중앙에 별도 판단으로 보고한다.
+
 ## Review Triage Log
 
 ### 2026-11-06 — blocked 계획 문서 quick 리뷰(Sol, `ctx_0039d58cb064`)
@@ -83,6 +91,10 @@ blocked_reason: "설치본 legacy schema(core 27 + 등록 garmin)에서 새 core
 - `[medium]` `[patch]` 공개 계획의 사고 기록에 원본 저장소 위치가 남아 있었다 → 비식별 표현으로 바꾸고 정확한 위치는 private에만 둔다.
 - `[medium]` `[patch]` 설치가 새 예약을 만들 수 있는데 설치 전 보류 확인 조건이 없었다 → Execution 1에 설치 전 보류 보장 확인, 보장되지 않으면 중지, 설치 뒤 비활성 확인을 넣었다.
 - `[low]` `[patch]` 사람 입력에 모델 실행기 로그인 확인이 빠졌다 → 재개 조건에 넣었다.
+
+### 2026-11-06 — 재진단 기록 quick 리뷰 2(Sol, `ctx_d72c986a2dfd`)
+- verdicts: 확정 결함 0. 결함 판정은 코드와 맞고, 패키지를 먼저 교체하는 지원 경로도 없다(현재 패키지 설치는 설치 core와 실행 core의 일치를 요구하고, 옛 core decoder는 새 패키지 키를 받지 않는다).
+- `[low]` `[patch]` 교체 실험을 세 필드의 독립 문법 비호환으로 읽힐 수 있었다 → 직접 원인(`work.verification_snapshot`)과 상호 참조 거부를 구별해 고쳐 썼다.
 
 ## Verification
 
@@ -92,10 +104,10 @@ blocked_reason: "설치본 legacy schema(core 27 + 등록 garmin)에서 새 core
 
 ## Auto Run Result
 
-**상태: blocked** — 설치본 legacy schema(core 27 + 등록 확장)에서 새 core로 가는 지원 경로가 없다. 중앙이 별도 버그로 분리했다.
+**상태: blocked** — 1차 원인(legacy schema 지원 경로 부재)은 21.9로 해소됐다. 2차 원인: 21.9 경로가 설치된 옛 Garmin manifest(1.0.0)를 `EXTENSION_INVALID`로 거부한다(`work`·`settings`·`default_schedules`, `core_compat` 없음). 제품 결함으로 중앙에 보고했다.
 
 - 완료: 읽기 전용 준비(Execution 0). 운영 설치·DB·설정·예약·반입은 무변경이다.
 - 미완료: Execution 1~4 전부와 모든 수락조건. 운영 검증은 하나도 수행하지 않았다.
 - 리뷰: 이 blocked 계획 문서에 독립 Sol quick 리뷰 1회(`ctx_0039d58cb064`) — 발견 3건(공개 경로 비식별화, 설치 전 예약 보류 조건, 모델 실행기 로그인 항목)을 모두 이 문서에 반영했다. 제품 코드 diff는 0이다.
-- 재개 조건: 별도 버그(legacy 지원 전환)가 main에 반영되고 core·Garmin 플러그인에 release될 것. 이어서 사람 입력: 설치기의 대화형 offline 확인, D3를 포함한 계정 귀속 확인, 전용 tokenstore 로그인/MFA와 0600 binding, `garmin.*` 설정값(connection·timezone·model·agent·effort·timeout·수신 conversation), 선택한 모델 실행기(Codex 등)의 로그인 상태 확인과 필요하면 사람이 직접 로그인, 최종 capture 전 원본 파일 목록 확인.
+- 재개 조건: 옛 Garmin manifest를 legacy 전환에서 안전하게 다루는 제품 수정이 main에 반영되고 core plugin에 release될 것. 그다음 설치 직전에 옛 데몬을 내리고 종료를 확인한다. 이어서 사람 입력: 설치기의 대화형 offline 확인, D3를 포함한 계정 귀속 확인, 전용 tokenstore 로그인/MFA와 0600 binding, `garmin.*` 설정값(connection·timezone·model·agent·effort·timeout·수신 conversation), 선택한 모델 실행기(Codex 등)의 로그인 상태 확인과 필요하면 사람이 직접 로그인, 최종 capture 전 원본 파일 목록 확인.
 - 재개 지점: `.brain-automation/private/runbook-21.7.md` 단계 1.
