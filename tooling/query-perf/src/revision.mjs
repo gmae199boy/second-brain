@@ -17,7 +17,7 @@ export function checkoutRevision(dir) {
   const sha=parseRevisionFile(git(['rev-parse','HEAD']).toString());
   const dirty=git(['status','--porcelain']).length>0;
   const digest=createHash('sha256').update(git(['diff','HEAD']));
-  const untracked=git(['ls-files','--others','--exclude-standard','-z','--','packages/postgres/src','packages/postgres/migrations']).toString().split('\0').filter(Boolean).sort();
+  const untracked=git(['ls-files','--others','--exclude-standard','-z','--','packages/core/src','packages/postgres/src','packages/postgres/migrations']).toString().split('\0').filter(Boolean).sort();
   for(const file of untracked) { const content=readFileSync(resolve(checkout,file)); digest.update(`\0${file}\0${content.length}\0`).update(content); }
   const diffSha256=digest.digest('hex');
   return {sha,dirty,diffSha256};
