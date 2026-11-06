@@ -22,7 +22,7 @@ export interface OfflineConfirmationRequest { home: string; previousCommit: stri
 type InstallOptions = { home: string; urlEnv: string; env: NodeJS.ProcessEnv; clock: Clock; runner?: CommandRunner; secrets?: { adminUrl: string; appPassword: string }; databaseName?: string; confirmOffline?: (request: OfflineConfirmationRequest) => Promise<string> };
 
 /** Called only after the installer has validated and fenced its transition. */
-async function promoteStagedApp(home: string, env: NodeJS.ProcessEnv): Promise<void> {
+async function promoteStagedApp(home: string, env: NodeJS.ProcessEnv, promotionOwner?: string): Promise<void> {
   const requested = env.SECOND_BRAIN_STAGED_APP; if (!requested) return;
   const root = resolve(home), stage = resolve(requested), app = join(root, 'app'), next = join(root, '.app-next'), previous = join(root, '.app-previous'), marker = join(root, '.app-promotion.json');
   if (dirname(stage) !== root || !/^\.app-stage-[0-9a-f-]{36}$/.test(stage.slice(root.length + 1))) throw new Error('대상 app 경로가 올바르지 않습니다');
@@ -45,8 +45,8 @@ async function promoteStagedApp(home: string, env: NodeJS.ProcessEnv): Promise<v
   const markerExists = await exists(marker), previousExists = await exists(previous);
   if (previousExists && !markerExists) throw new Error('소유자를 확인할 수 없는 이전 app을 보존하고 복구하세요');
   if (markerExists) {
-    const record = JSON.parse(await readFile(marker, 'utf8')) as { target?: unknown; hadPrevious?: unknown; owner?: unknown };
-    if (typeof record.owner !== 'string' || !/^\d+ [0-9a-f-]{36}\n$/.test(record.owner)) throw new Error('중단된 app 전환의 소유자가 불명확합니다');
+    const record = JSON.parse(await readFile(marker, 'utf8')) as { target?: unknown; hadPrevious?: unknown; owner?: unknown; previousHead?: unknown };
+    if (typeof record.owner !== 'string' || !/^\d+ [0-9a-f-]{36}\n$/.test(record.owner) || (promotionOwner !== undefined && record.owner !== promotionOwner)) throw new Error('중단된 app 전환의 소유자가 불명확합니다');
     if (record.target !== target.commit || typeof record.hadPrevious !== 'boolean' || record.hadPrevious !== previousExists) throw new Error('중단된 app 전환의 신원이 다릅니다');
     // A failed attempt may have promoted this same build already. Its journal
     // remains authoritative; never replace the only previous app on retry.
@@ -55,7 +55,7 @@ async function promoteStagedApp(home: string, env: NodeJS.ProcessEnv): Promise<v
     return;
   }
   await cp(stage, next, { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
-  await writeFile(marker, JSON.stringify({ target: target.commit, hadPrevious: await exists(app), owner }), { flag: 'wx', mode: 0o600 });
+  await writeFile(marker, JSON.stringify({ target: target.commit, hadPrevious: await exists(app), owner, previousHead: expectedHead || null }), { flag: 'wx', mode: 0o600 });
   let hadApp = false;
   try { await rename(app, previous); hadApp = true; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   try { await rename(next, app); }
@@ -179,7 +179,7 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
         return true;
       };
       const journalPath = join(home, 'run', 'bootstrap-extension-migrations.json');
-      type Journal = { commit: string; names: string[]; owner: string; offlineConfirmation?: NonNullable<PostgresInstallReport['offline_confirmation']> & { at: string } };
+      type Journal = { commit: string; names: string[]; owner: string; promotionOwner?: string; previousHead?: string; offlineConfirmation?: NonNullable<PostgresInstallReport['offline_confirmation']> & { at: string } };
       let journal: Journal | null = null;
       try { journal = JSON.parse(await readFile(journalPath, 'utf8')) as Journal; }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return locked('core 확장 정지 기록을 읽을 수 없습니다.'); }
@@ -271,6 +271,14 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
         }
         // This is an audit fact, never a reusable authorization. Every retry
         // asks again while the entry locks are held.
+        if (journal && env.SECOND_BRAIN_STAGED_APP) {
+          const marker = await readFile(join(home, '.app-promotion.json'), 'utf8').catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; });
+          if (marker === null) { journal.promotionOwner = env.SECOND_BRAIN_INSTALL_LOCK_OWNER; journal.previousHead = env.SECOND_BRAIN_PREVIOUS_APP_HEAD; }
+          else {
+            let record: { owner?: unknown; previousHead?: unknown }; try { record = JSON.parse(marker) as typeof record; } catch { return locked('중단된 app 전환 기록을 읽을 수 없습니다.'); }
+            if (typeof record.owner !== 'string' || record.owner !== journal.promotionOwner || record.previousHead !== journal.previousHead) return locked('중단된 app 전환 소유권 또는 신원이 다릅니다.');
+          }
+        }
         if (journal && offlineConfirmation) journal.offlineConfirmation = { ...offlineConfirmation, at: clock.now().toISOString() };
         if (journal && (offlineConfirmation || !existing.gateNames.length)) {
           await mkdir(join(home, 'run'), { recursive: true, mode: 0o700 });
@@ -281,7 +289,7 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
           const stopped = await quiesceExtension(store, systemTimer, { name, owner: journal!.owner, now: clock.now(), refuseRunning: true });
           if (!stopped.ok) return stopped;
         }
-        await promoteStagedApp(home, env);
+        await promoteStagedApp(home, env, journal?.promotionOwner);
         const prepared = await prepareDatabase({ databaseUrl: secrets.adminUrl, appPassword: secrets.appPassword, ...(options.databaseName === undefined ? {} : { databaseName: options.databaseName }) });
         if (!prepared.ok) return { ...prepared, message: `${prepared.message}\n기존 볼륨의 비밀번호를 확인하세요` };
         const migrated = await runMigrations({ databaseUrl: prepared.databaseUrl, clock, coreMaxVersion: 31 });
@@ -322,7 +330,7 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
           if (!released.ok) return released;
           if (!released.released) return locked('확장 정지 소유권이 바뀌었습니다.');
         }
-        if (journal) await rm(journalPath, { force: true });
+        if (journal && !env.SECOND_BRAIN_STAGED_APP) await rm(journalPath, { force: true });
         return { ok: true, report: { ...resources, schema_version: completed.to, applied, owner_created: owner.created, owner_name: owner.user.name, compose_started: composeStarted, ...(offlineConfirmation ? { offline_confirmation: offlineConfirmation } : {}) } };
       };
       const lockAll = (index: number): Promise<PostgresInstallResult> => index === existing.names.length ? migrate() : withExtensionInstallLock(targetUrl.toString(), existing.names[index]!, () => lockAll(index + 1));
