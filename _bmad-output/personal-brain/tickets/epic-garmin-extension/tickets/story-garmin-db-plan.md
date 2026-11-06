@@ -3,7 +3,7 @@ title: '통합 시험 실행·수정'
 type: 'chore'
 ticket: 8
 created: '2026-11-06'
-status: 'in-review'
+status: 'built'
 baseline_revision: '505188d3a2259f058988c2dd4f68f8dbce4a7b57'
 route: 'full'
 route_source: 'pinned'
@@ -59,9 +59,9 @@ deferred: []
 - [x] 1. `apps/cli/python-test/garmin-unit.test.ts`, 새 capture 래퍼 및 필요 `tooling/test-changed/rules.mjs` — 개별 Python 실행 로그와 기존 capture 시험의 전체 선택을 보장한다. 선언된 조건부 skip은 사유/영향을 기록하며 임의 제거하지 않는다.
 - [x] 2. `.brain-automation/environment.md`, `resources.json`, `logs/` — 버전/lock/기준과 기존 자원을 읽기 확인한 뒤 고유 PG18 tmpfs 컨테이너 및 소유 시험 환경을 준비한다. 의존은 frozen lock으로 설치한다. 기존 54329는 점유돼 있으므로 사용하지 않는다.
 - [x] 3. `.brain-automation/logs/`, `failure-ledger.md` — 동일 checkout에서 `pnpm test`→`pnpm test:python`을 실제 순차 실행한다. 비영 종료는 원인 수집의 산출물이며 Task 자체 실패로 취급하지 않는다. 원시 로그와 실행 manifest를 보존한다.
-- [ ] 4. 실패한 소스/fixture/시험 파일 — 실패 장부의 계약 경계별 최소 수정과 관련 시험 재검증. 제품 바이트 변경은 Garmin package 재생성, app-ref 변경은 이전 commit 참조와 version 동반 증가. 새 Python/SQL/자식 전용 경로는 changed 규칙도 보완한다.
-- [ ] 5. `.brain-automation/coverage.md`, 계획 및 리뷰 파일 — AC→파일/메서드→실제 로그를 대조하고 선언 skip 영향을 판정한다. 독립 full/thorough 리뷰와 필요한 후속 수정/리뷰를 수행한다.
-- [ ] 6. `.brain-automation/logs/`, `ticket-21.8-report.md` 및 본 계획 — 최종 코드의 두 전체 회귀를 순차 완료하고 소유 자원만 정리한다. 미해결 0일 때 built·정상 hook commit·티켓 branch push·remote SHA 확인 후 실제 보고서 전체를 읽고 중앙 Run에 전송한다.
+- [x] 4. 실패한 소스/fixture/시험 파일 — 실패 장부의 계약 경계별 최소 수정과 관련 시험 재검증. 제품 바이트 변경은 Garmin package 재생성, app-ref 변경은 이전 commit 참조와 version 동반 증가. 새 Python/SQL/자식 전용 경로는 changed 규칙도 보완한다.
+- [x] 5. `.brain-automation/coverage.md`, 계획 및 리뷰 파일 — AC→파일/메서드→실제 로그를 대조하고 선언 skip 영향을 판정한다. 독립 full/thorough 리뷰와 필요한 후속 수정/리뷰를 수행한다.
+- [x] 6. `.brain-automation/logs/`, `ticket-21.8-report.md` 및 본 계획 — 최종 코드의 두 전체 회귀를 순차 완료하고 소유 자원만 정리한다. 미해결 0일 때 built·정상 hook commit·티켓 branch push·remote SHA 확인 후 실제 보고서 전체를 읽고 중앙 Run에 전송한다.
 
 **Acceptance Criteria:**
 - Given 선행 계획의 모든 수락조건, when 실제 전체 시험과 수집 로그를 대조하면, then 기존 공용 및 Garmin 새·기존 시험에 실행 누락이 없고 선언 skip의 정확한 범위/영향이 설명된다.
@@ -157,3 +157,35 @@ EC2-1/BH2-1 정리패치의고정438행과실제코드/시험/5d로그를독립S
 후보실행20261105T225201Z-f9711333에서T186파일/4204통과·기존hook조건부skip1/exit0, P15파일/65통과·core1실패/exit1이었다. 실패는합성clock전진으로채널재시도가미완료관찰보다앞설수있는실행가능경쟁을6a제어재현으로입증했고clock전진을최초500정산뒤로고정했다. 원래실패당시상태는진단부재로소급확정하지않는다. 수정뒤core2/hookP8통과·START/PASSmarker, 독립Sol검토추가결함0을확인했다. 후보실행에서변경된tracked생성pyc는실행전hash=HEAD임을확인하고변경사본보존후정확기준바이트로복원했다.
 
 검토된구현commit과그이전commit을참조하는release를분리한다. 이구현commit은built판정이아니며, 최종release상태의전체T→P와coverage/누락0/실패별최종처분을완료한뒤상태를built로기록한다. 전체raw/해시/시각은고유실행ID로보존한다.
+
+
+## 최종 Verification — 2026-11-06
+
+최종 실행 `20261105T234612Z-40b825f99136`에서 각 명령 직전 전용 DB 새 TCP 인증을 확인하고 `pnpm test` → `pnpm test:python`을 실제 순차 완료했다. 실행 release는 `dbcd3694e4eed16f58a1e2cfdb5da6cb0d55ac07`, 그 위의 7a 시험 수정 한 파일은 최종 commit에 같은 바이트로 포함한다. 이후 제품/시험 변경은 없다.
+
+| 명령 | UTC 시작–종료 | exit | 실제 결과 |
+|---|---|---:|---|
+| `pnpm test` | 2026-11-05 23:46:14.343–23:48:08.046 | 0 | 186파일·4204통과·기존조건부skip1·실패0 |
+| `pnpm test:python` | 2026-11-05 23:48:08.093–2026-11-06 00:00:07.586 | 0 | 15파일·66통과·skip0·실패0 |
+
+별도 미처리 오류 보고0. T skip은 hook Python 보존 사례의 기존 환경조건이며 P에서 START/PASS marker와 함께 실제 실행했다. Garmin unit은 244호출 모두ok(240고유이름·import 노출4중복), capture13개별ok다. 세 보완 source checker 및 reader-byte checker는 wrapper의 무조건 호출/정확문구 단언과 P 전체통과로 연결했다. 최종 기본 reporter의 checker stdout 직접 관찰이라고 확대하지 않는다. 목록2317T/59P 선언과 실제 동적 실행4205T/66P는 다른 집계다.
+
+선행11계획 원문702행은 assertion447·비시험정적66·역사189로 유지했다. 기존185T/15P 파일 대비 새격리시험1개 추가 외 누락0, 필수runtime공백0. 최초121실패 및 내부unit7/capture하위14는 식별자별 관련재검증과 최종전체결과로 처분했다. 최종실패0은 과거실패 삭제/소급통과가 아니다. 독립감사 `coverage-final`, `failure-disposition-final`, `final-execution-audit` MD/JSON에 모든 연결을 보존했다.
+
+독립 Sol은 원시/분석 해시147항목 일치, 전후 source manifest 동일, 현재7a파일 동일, fixture173ID의 생성/제거/정확부재를 확인했다. 최종전용공용컨테이너도 2026-11-06 00:13:09 UTC에 정확소유ID로 제거하고 부재를 확인했다(`.brain-automation/cleanup-final/`). 기존컨테이너/운영DB는 정리대상이 아니다.
+
+### 추가 실패 이력과 독립 확인
+
+release 첫 전체시도 `20261105T232554Z-8d851250f711`은 잘못 추정한 합성DSN으로 T791실패+suite실패/추가skip2, P현재plugin버전기대 불일치1실패였다. 7a는 현재 package/source/plugin 신원을 엄격 대조하며 고정 이전배포 신원과 보존단언을 유지했다. 정확DSN TCP인증 뒤 관련upgrade3·command-lock2·work-hold2 및 build/typecheck 통과, 독립Sol `review-7a.md` 확정결함0을 확인했다. 최종정확환경전체성공으로 후속해결하며 791개 제품결함을 각각 수정했다고 주장하지 않는다. 잘못된 실행의 전체inspect에 노출된 합성컨테이너 환경값은 로컬 제한권한으로 보관하고 공개증거에는 포함하지 않는다.
+
+## Auto Run Result
+
+**상태: built.** full/thorough 수행, 미해결실패0·필수미실행0·필요독립후속완료. 사용자 인수 전 done으로 올리지 않는다. 원격main반영/21.7 시작판단은 중앙에 남긴다.
+
+- 구현: 소유 PG fixture 격리/실제 TCP 준비/실패 정리, Python prepared 환경선행·same-stage SQL 수정복구·재개검증·relocation·빌드부산물격리·취소정산, scoped JSON Schema ref 처리, Garmin 역할/미지원schema 오류전파, 배포버전/digest/ref 갱신, 현재계약 fixture 복구 및 누락capture/checker/외부실패표면 시험을 완료했다. 파일별 설명은 [공개 증거 요약](story-garmin-db-evidence.md)에 있다.
+- 리뷰: thorough 네렌즈 2회 및 Python/cleanup/6a/7a 집중후속. 최초14 medium 발견은 계획경계 보완13건·직접patch1건으로 처리했고 후속새2 medium은 patch하여 독립재검토로 해소했다. 중복원인은 묶되16개 개별판정행은 유지했다. rejected0·deferred0·high0. 마지막후속의 patched high0, 남은구체적 미검증위험0으로 followup_review_recommended=false다. IA 여섯 관찰표면 구분은 결함수로 세지 않는다.
+- 검증: 최종 두전체명령 각exit0, 수집/skip/단언/실패처분/원시해시/소유자원 독립대조완료. 적용migration·고정oracle 등117파일 불변, 배포85선언/원본바이트/digest 일치, 두app-ref는 구현472caa7을 가리키고 각각pluginversion을 같은release에서 증가했다.
+- 증거제한: 최초T raw바이트·원래start·최초collection raw/정확시각은 손실됐다. 중앙은 보존T텍스트85397byte·P원시사본·121실패ID/원래행·출처있는시각·최초파일집합의 제한적 역사사용만 수용했다. 원래raw보존충족이나 사고무발생으로 판정하지 않는다. 새최종증거는 고유ID/배타생성으로 보호하고 퇴역runner는 source/직접실행 모두거부한다.
+- 잔여범위: 검증은 합성건강자료/fake 외부경계 및 소유DB에서 이루어졌다. 실계정/실모델/운영전환은 수행하지 않았다. credential 운영자확인, 원본스킬/재생성가정, 불명잠금·legacy안전거부·offline, attempts정책 및 기존문서상대링크 소비한계는 선행계약대로 보존한다. 로그의 ResourceWarning/기타경고도 보존하며 오류0을 경고0으로 쓰지 않는다.
+
+커밋·티켓브랜치push·원격SHA와 실제최종보고 전체확인은 `.brain-automation/ticket-21.8-report.md`에 확정값을 기록한다. 중앙state/main/에픽상태/공용follow-ups는 수정하지 않는다.

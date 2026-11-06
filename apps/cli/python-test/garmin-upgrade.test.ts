@@ -68,6 +68,18 @@ it('이전 배포 package에서 현재 package로 갱신하며 기존 데이터�
   execFileSync('tar',['-xf',archive,'-C',temp]);
   const old=join(temp,'plugins/garmin/package'), current=fileURLToPath(new URL('../../../plugins/garmin/package',import.meta.url));
   const oldDigest=(await readFile(join(old,'digest'),'utf8')).trim(), currentDigest=(await readFile(join(current,'digest'),'utf8')).trim();
+  const currentManifest=JSON.parse(await readFile(join(current,'manifest.json'),'utf8'));
+  const sourceManifest=JSON.parse(await readFile(new URL('../../../extensions/garmin/manifest.json',import.meta.url),'utf8'));
+  const pluginManifest=JSON.parse(await readFile(new URL('../../../plugins/garmin/.claude-plugin/plugin.json',import.meta.url),'utf8'));
+  const newer=(value:string,previous:string)=>{
+   expect(value).toMatch(/^\d+\.\d+\.\d+$/);
+   const parts=value.split('.').map(Number), prior=previous.split('.').map(Number);
+   return parts.some((part,index)=>part>prior[index] && parts.slice(0,index).every((v,i)=>v===prior[i]));
+  };
+  expect(currentManifest.version).toBe(sourceManifest.version);
+  expect(currentManifest.plugin_version).toBe(pluginManifest.version);
+  expect(newer(currentManifest.version,'1.2.0')).toBe(true);
+  expect(newer(currentManifest.plugin_version,'0.1.2')).toBe(true);
   expect(oldDigest).not.toBe(currentDigest);
   const first=await fixture.run(['ext','install','--package',old,'--json']);
   const oldRegistry=await fixture.db.rows("select version,package_digest,plugin_version from brain.extensions where name='garmin'");
@@ -86,7 +98,7 @@ it('이전 배포 package에서 현재 package로 갱신하며 기존 데이터�
   const before=await saved(); expect(before.rows).toHaveLength(1);expect(before.settings).toHaveLength(1);expect(before.schedule.length).toBeGreaterThanOrEqual(3);expect(before.ledger).toHaveLength(16);
   const upgraded=await fixture.run(['ext','install','--package',current,'--json']);
   expect(upgraded.code,upgraded.stdout+upgraded.stderr).toBe(0);
-  expect(await fixture.db.rows("select version,package_digest,plugin_version from brain.extensions where name='garmin'")).toEqual([{version:'1.2.1',package_digest:currentDigest,plugin_version:'0.1.3'}]);
+  expect(await fixture.db.rows("select version,package_digest,plugin_version from brain.extensions where name='garmin'")).toEqual([{version:currentManifest.version,package_digest:currentDigest,plugin_version:currentManifest.plugin_version}]);
   expect(await saved()).toEqual(before);
   expect(probe()).toMatchObject({no_excess_functions:true,conversation_execute:true});
   for(const path of ['src/role_probe.py','src/batch_import.py','manifest.json','digest']) expect(await readFile(join(fixture.home,'extensions/garmin',path))).toEqual(await readFile(join(current,path)));
