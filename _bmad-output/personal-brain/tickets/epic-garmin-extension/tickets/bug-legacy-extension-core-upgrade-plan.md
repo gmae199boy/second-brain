@@ -3,7 +3,7 @@ title: '등록 확장이 있는 옛 core 설치본의 안전한 오프라인 갱
 type: 'bugfix'
 ticket: 9
 created: '2026-11-06'
-status: 'in-review'
+status: 'built'
 baseline_revision: 'ae67108593b0b9407b116c3777c129bfc0f29575'
 route: 'full'
 route_source: 'pinned'
@@ -203,3 +203,4 @@ legacy 판정 기준을 DB 상태가 아니라 `installed.json`의 옛 core 신�
   - 실제 운영 전환(21.7)에서는 운영자가 직접 확인해야 하는 사실이 있다. 이전 데몬·직접 명령·쓰기 자식이 모두 종료됐는지와, 확장이 비활성·보류 상태인지다(옛 CLI의 `ext disable`).
   - 0033 DST oracle과 Ctrl-C 경로는 `deferred`에 남겼다.
   - 합성 testext 기반 시험이며, 실제 옛 Garmin 패키지의 manifest 호환은 21.7 운영 진단에서 확인해야 한다.
+- Release: 구현 commit `118df4718cb44ec99a12f6e24048f5131b2df923` 다음의 별도 release commit에서 `plugin/app-ref`를 `118df4718cb44ec99a12f6e24048f5131b2df923`로 올리고 `plugin/.claude-plugin/plugin.json` version을 0.1.17에서 0.1.18로 올렸다. Garmin 플러그인은 바꾸지 않았다.
