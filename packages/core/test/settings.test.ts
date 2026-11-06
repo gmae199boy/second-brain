@@ -104,3 +104,11 @@ it.each(['DB_LOCKED', 'DB_UNAVAILABLE'] as const)('propagates self lookup %s wit
   expect(await brain.config.set({ key: 'timezone', value: 'UTC' })).toEqual({ ok: false, code, message: 'self lookup failed' });
   expect(set).not.toHaveBeenCalled();
 });
+
+it('validates and persists drive retention days with a 30-day default', async () => {
+  const {brain}=kit();
+  expect(await brain.config.get({key:'drive.keep_local_days'})).toMatchObject({ok:true,value:'30',source:'default'});
+  for (const value of ['-1','1.5','', '1e2', '9007199254740992', '100000001', '0\n']) expect(await brain.config.set({key:'drive.keep_local_days',value})).toMatchObject({ok:false,code:'CONFIG_INVALID'});
+  expect(await brain.config.set({key:'drive.keep_local_days',value:'0'})).toMatchObject({ok:true,value:'0',source:'db'});
+  expect(await brain.config.get({key:'drive.keep_local_days'})).toMatchObject({ok:true,value:'0',source:'db'});
+});

@@ -36,6 +36,8 @@ export const FAILURE_RETRY_STAGES: Readonly<Record<string, string>> = {
   session_identity: 'session_identity',
   document_extract: DOCUMENT_EXTRACT_KIND,
   blob_delete: BLOB_DELETE_KIND,
+  drive_migrate: 'drive_migrate',
+  drive_local_delete: 'drive_local_delete',
   table_cleanup: TABLE_CLEANUP_KIND,
 };
 export const FAILURE_RETRY_KINDS: Readonly<Record<string, string>> = {

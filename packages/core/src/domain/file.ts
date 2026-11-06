@@ -19,6 +19,16 @@ export function brainLocator(hex: string, bytes: Uint8Array): string {
   return `${hex.slice(0,2)}/${hex.slice(2,4)}/${hex}${ext}`;
 }
 
+/** Drive names have the same content-derived suffix as local blobs, without shards. */
+export function driveBrainLocator(hex: string, bytes: Uint8Array): string {
+  return brainLocator(hex, bytes).slice(6);
+}
+
+export function isDriveBrainLocator(locator: string): boolean {
+  const match = /^[0-9a-f]{64}(?:\.(?:png|jpg|gif|webp))?$/.exec(locator);
+  return match !== null && match[0] === locator;
+}
+
 export function isBrainLocator(locator: string): boolean {
   const match = /^([0-9a-f]{2})\/([0-9a-f]{2})\/([0-9a-f]{64})(?:\.(?:png|jpg|gif|webp))?$/.exec(locator);
   return match !== null && match[0] === locator && match[1] === match[3]?.slice(0,2) && match[2] === match[3]?.slice(2,4);

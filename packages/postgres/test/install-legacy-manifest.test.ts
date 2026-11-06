@@ -81,10 +81,10 @@ it.each(['garmin','oldext'] as const)('legacy %s preserves its applied history a
   expect(await k.db.rows(`select * from brain.schema_migrations where owner='${name}' order by version`)).toEqual(before);
   const gate = await k.db.rows('select * from brain.extension_quiesce'); const progress = await k.db.rows('select * from brain.extension_install_progress');
   expect(gate).toHaveLength(1); expect(progress[0]?.progress).toMatchObject({replacement:{owner:gate[0]?.owner,fromVersion:'1.0.0'}});
-  await writeFile(join(k.home,'installed.json'),JSON.stringify({...k.installed,commit:k.build.commit,schema_version:39}));
+  await writeFile(join(k.home,'installed.json'),JSON.stringify({...k.installed,commit:k.build.commit,schema_version:40}));
   expect(await k.install()).toMatchObject({ok:true});
   expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual(gate); expect(await k.db.rows('select * from brain.extension_install_progress')).toEqual(progress);
-  await writeFile(join(k.home,'installed.json'),JSON.stringify({...k.installed,schema_version:39}));
+  await writeFile(join(k.home,'installed.json'),JSON.stringify({...k.installed,schema_version:40}));
   expect(await k.install()).toMatchObject({ok:true});
   expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual(gate); expect(await k.db.rows('select * from brain.extension_install_progress')).toEqual(progress);
 });
@@ -135,7 +135,7 @@ it('resumes after replacement progress was saved before journal removal', async 
 
 it('rejects a replacement owner that differs from its gate', async () => {
   const k = await world('oldext'); expect(await k.install()).toMatchObject({ok:true});
-  await writeFile(join(k.home,'installed.json'),JSON.stringify({...k.installed,commit:k.build.commit,schema_version:39}));
+  await writeFile(join(k.home,'installed.json'),JSON.stringify({...k.installed,commit:k.build.commit,schema_version:40}));
   await k.db.query(`update brain.extension_install_progress set progress=jsonb_set(progress,'{replacement,owner}','"12345678-1234-1234-1234-123456789abc"')`);
   expect(await k.install()).toMatchObject({ok:false,code:'DB_LOCKED'});
 });
@@ -144,7 +144,7 @@ it('rejects a replacement owner that differs from its gate', async () => {
 async function cliWorld() {
   const k = await world('oldext');
   expect(await k.install()).toMatchObject({ok:true});
-  await writeFile(join(k.home,'installed.json'), JSON.stringify({...k.installed,commit:k.build.commit,schema_version:39}));
+  await writeFile(join(k.home,'installed.json'), JSON.stringify({...k.installed,commit:k.build.commit,schema_version:40}));
   return cliForWorld(k);
 }
 async function cliForWorld(k: Awaited<ReturnType<typeof world>>) {
@@ -383,7 +383,7 @@ os.close(master); print(json.dumps({'code':p.returncode,'answered':answered,'out
     }
     const first = await ttyRun(); expect(first.answered,first.output).toBe(true); expect(first.code,first.output).toBe(0);
     const again = await ttyRun(); expect(again.code,again.output).toBe(0);
-    expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8'))).toMatchObject({commit:k.build.commit,schema_version:39});
+    expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8'))).toMatchObject({commit:k.build.commit,schema_version:40});
   } finally {
     for (const child of localChildren) if (child.exitCode===null && child.signalCode===null) child.kill('SIGTERM');
     const killTimer = setTimeout(()=>{for(const child of localChildren)if(child.exitCode===null && child.signalCode===null)child.kill('SIGKILL');},2000);
@@ -460,7 +460,7 @@ it.each(['garmin','oldext'] as const)('실제 CLI setup 이후 %s 패키지를 �
   expect(history).toHaveLength(8);
   await setupViaCli(k);
   expect(await preserved(k,name)).toBe(before);
-  expect(await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'")).toEqual([{version:39}]);
+  expect(await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'")).toEqual([{version:40}]);
   const gates = await k.db.rows('select name,owner from brain.extension_quiesce'); expect(gates).toHaveLength(1);
   expect(await k.db.rows(`select owner,version,name,checksum from brain.schema_migrations where owner='${name}' order by version`)).toEqual(history);
   const cli = await cliForWorld(k);
@@ -511,7 +511,7 @@ it('옛 manifest와 registry의 버전이 다르면 확인 전 거부한다', as
 
 it.each(['registry','checksum'] as const)('교체 대기 cross-commit 확인 중 %s 변경은 첫 변경 전에 거부한다', async change => {
   const k = await world('oldext'); expect(await k.install()).toMatchObject({ok:true});
-  await writeFile(join(k.home,'installed.json'),JSON.stringify({...k.installed,schema_version:39}));
+  await writeFile(join(k.home,'installed.json'),JSON.stringify({...k.installed,schema_version:40}));
   const gate = await k.db.rows('select * from brain.extension_quiesce'), progress = await k.db.rows('select * from brain.extension_install_progress');
   const ledger = await k.db.rows('select * from brain.schema_migrations order by owner,version');
   const outcome = await installPostgres({...k.options,confirmOffline:async r=>{

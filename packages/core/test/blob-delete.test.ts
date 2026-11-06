@@ -176,6 +176,8 @@ async function kit(options: KitOptions = {}): Promise<Kit> {
 
   const put = await inner.put(bytes);
   if (!put.ok) throw new Error(put.message);
+  if (put.location.storeKind !== 'local') throw new Error('memory FileStore는 로컬 위치여야 합니다');
+  const localHome = { ...put.location, storeKind: 'local' as const };
   const hash = put.contentHash;
   const batch = sampleIngestBatch();
   const message = batch.messages[0];
@@ -258,7 +260,7 @@ async function kit(options: KitOptions = {}): Promise<Kit> {
     expect(removed).toEqual({ ok: true, deleted: true });
   }
 
-  return { brain, store, files, gate, clock, idGen, places, home: put.location, fileId };
+  return { brain, store, files, gate, clock, idGen, places, home: localHome, fileId };
 }
 
 /** One drain run with the command budget, which is every case's drain. */
@@ -433,6 +435,17 @@ describe('blob_delete handler의 나머지 답', () => {
 
     expect(subject.gate.deletes).toBe(0);
     expect((await place(subject, subject.places.drive)).deletedAt).toBe(null);
+  });
+
+  it('가리기 일감의 Drive Brain 위치는 주입한 Drive 저장소만 사용한다', async () => {
+    const subject = await kit();
+    const asked: FileLocation[] = [];
+    const driveFiles = { async delete(location: FileLocation) { asked.push(location); return {ok:true as const,deleted:true}; } };
+    const remove = blobDeleteHandler({store:subject.store,files:subject.files,driveFiles,driveRoot:{store:{async readDriveLocationRoot(){return {ok:true,rootFolderId:'root'};}},rootFolderId:'root'},clock:subject.clock});
+    expect(await remove(item('item-drive-redact',subject.places.drive))).toEqual({ok:true});
+    expect(asked).toEqual([{storeKind:'drive',ownership:'brain',locator:'drive-file-0001'}]);
+    expect(subject.gate.deletes).toBe(0);
+    expect((await place(subject,subject.places.drive)).deletedAt).toEqual(NOW);
   });
 
   it('루트 밖 locator는 port의 거부를 그대로 기록하고 표시하지 않는다', async () => {

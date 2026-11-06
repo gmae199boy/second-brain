@@ -1,3 +1,4 @@
+import type { DriveMigrationStore } from '../ports/drive-store.js';
 import type { Clock } from '../ports/clock.js';
 import type { FileStore } from '../ports/file-store.js';
 import type { AddWorkInput, AttachmentStore, WorkStore } from '../ports/store.js';
@@ -81,6 +82,9 @@ export interface BlobDeleteWorkDependencies {
   /** Brain's copy of the bytes. Deleted outside every transaction (AD-7). */
   files: Pick<FileStore, 'delete'>;
   clock: Clock;
+  /** Optional Drive adapter for redaction of Brain-owned remote copies. */
+  driveFiles?: Pick<FileStore, 'delete'>;
+  driveRoot?: {store:Pick<DriveMigrationStore,'readDriveLocationRoot'>; rootFolderId:string};
 }
 
 /**
@@ -113,7 +117,7 @@ export interface BlobDeleteWorkDependencies {
  * is recorded on the spot, and a database that would not take the mark hands its
  * own code back so the item is released with its attempt returned (AD-21).
  */
-export function blobDeleteHandler({ store, files, clock }: BlobDeleteWorkDependencies): WorkHandler {
+export function blobDeleteHandler({ store, files, clock, driveFiles, driveRoot }: BlobDeleteWorkDependencies): WorkHandler {
   return async (item) => {
     const id = item.targetId;
 
@@ -128,6 +132,13 @@ export function blobDeleteHandler({ store, files, clock }: BlobDeleteWorkDepende
     }
     const location = read.location;
 
+    if (location.storeKind === 'drive') {
+      if (!driveRoot || !driveFiles) return {ok:false,code:LOCATION_REFUSED,message:'Drive 루트 확인 경계가 없습니다',retryable:false};
+      const root=await driveRoot.store.readDriveLocationRoot(id);
+      if (!root.ok) return root;
+      if (root.rootFolderId !== driveRoot.rootFolderId) return {ok:false,code:LOCATION_REFUSED,message:'Drive 위치가 현재 루트에 속하지 않습니다',retryable:false};
+    }
+
     // `resolveFailures` here too, and not only on the path that deletes: the
     // closing of the records is dropped when it fails, so the attempt that
     // emptied this place may have left an open row behind. This is the only
@@ -138,7 +149,7 @@ export function blobDeleteHandler({ store, files, clock }: BlobDeleteWorkDepende
       return { ok: true };
     }
 
-    if (location.storeKind !== 'local' || location.ownership !== 'brain') {
+    if (location.ownership !== 'brain' || (location.storeKind === 'drive' && !driveFiles)) {
       return {
         ok: false,
         code: LOCATION_REFUSED,
@@ -147,7 +158,8 @@ export function blobDeleteHandler({ store, files, clock }: BlobDeleteWorkDepende
       };
     }
 
-    const deleted = await files.delete({
+    const target = location.storeKind === 'drive' ? driveFiles! : files;
+    const deleted = await target.delete({
       storeKind: location.storeKind,
       locator: location.locator,
       ownership: location.ownership,

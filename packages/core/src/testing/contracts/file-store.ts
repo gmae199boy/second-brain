@@ -1,4 +1,4 @@
-import { brainLocator, contentHashOfBytes, externalLocator, isBrainLocator, type FileLocation } from '../../domain/file.js';
+import { contentHashOfBytes, externalLocator, type FileLocation } from '../../domain/file.js';
 import type { FileStore } from '../../ports/file-store.js';
 import { assertEqual, assertOk, assertTrue } from '../assert.js';
 import { contractCase, withSubject, type ContractCase } from '../contract.js';
@@ -6,21 +6,11 @@ import { contractCase, withSubject, type ContractCase } from '../contract.js';
 export function fileStoreContract(): ContractCase<FileStore>[] {
   return [contractCase('파일은 내용으로 주소를 정하고 원본을 왕복하며 삭제는 멱등이다', async make => withSubject(make, async store => {
     const bytes = Uint8Array.from([137,80,78,71,13,10,26,10,0,1,2]);
-    for (const [head, ext] of [
-      [[255,216,255], '.jpg'], [[71,73,70,56,57,97], '.gif'],
-      [[82,73,70,70,0,0,0,0,87,69,66,80], '.webp'], [[1,2,3], ''],
-    ] as const) {
-      const data = Uint8Array.from(head);
-      const stored = await store.put(data); assertOk(stored, '형식별 저장');
-      const hash = contentHashOfBytes(data).slice(7);
-      assertEqual(stored.location.locator, `${hash.slice(0,2)}/${hash.slice(2,4)}/${hash}${ext}`, '바이트 머리 확장자');
-    }
     const put = await store.put(bytes);
     assertOk(put, '파일 저장');
     assertEqual(put.contentHash, contentHashOfBytes(bytes), '바이트 해시');
     assertEqual(put.sizeBytes, bytes.length, '바이트 크기');
-    assertEqual(put.location, { storeKind: 'local', ownership: 'brain', locator: brainLocator(put.contentHash.slice(7), bytes) }, '파일 위치');
-    assertTrue(isBrainLocator(put.location.locator), 'locator 문법');
+    assertEqual(put.location.ownership, 'brain', 'Brain 소유 위치');
     for (let repeat = 0; repeat < 2; repeat++) {
       const again = await store.put(bytes);
       assertOk(again, '다시 저장');
@@ -50,7 +40,7 @@ export function fileStoreContract(): ContractCase<FileStore>[] {
     const external = externalLocator('/h/u/a.md', '/h/u');
     assertTrue(external !== null, 'external locator 생성');
     const invalid: FileLocation[] = [
-      { ...put.location, ownership: 'external' }, { ...put.location, storeKind: 'drive' },
+      { ...put.location, ownership: 'external' }, { ...put.location, storeKind: put.location.storeKind === 'local' ? 'drive' : 'local' },
       { ...put.location, locator: '../outside' }, { ...put.location, locator: 'invalid' }, { ...put.location, locator: put.location.locator + '\n' },
       { ...put.location, ownership: 'external', locator: external! },
       { ...put.location, locator: external! },

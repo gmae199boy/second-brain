@@ -19,7 +19,15 @@ export function normalizeTimeZone(value: string): SettingValidation {
 }
 export function isTimeZone(value: string): boolean { return normalizeTimeZone(value).ok; }
 export const TIMEZONE_SETTING: SettingDefinition & { defaultValue: string } = { key: 'timezone', scope: 'user', defaultValue: 'Asia/Seoul', normalize: normalizeTimeZone };
-export const CORE_SETTING_DEFINITIONS: readonly SettingDefinition[] = [TIMEZONE_SETTING];
+export function normalizeKeepLocalDays(raw: string): SettingValidation {
+  const match = /^(?:0|[1-9][0-9]*)$/.exec(raw);
+  if (match === null || match[0] !== raw) return {ok:false, message:'drive.keep_local_days는 0 이상의 정수여야 합니다'};
+  const days = Number(raw);
+  if (!Number.isSafeInteger(days) || days > 100_000_000) return {ok:false, message:'drive.keep_local_days가 허용 범위를 넘습니다'};
+  return {ok:true,value:String(days)};
+}
+export const DRIVE_KEEP_LOCAL_DAYS: SettingDefinition = {key:'drive.keep_local_days', scope:'user', defaultValue:'30', normalize:normalizeKeepLocalDays};
+export const CORE_SETTING_DEFINITIONS: readonly SettingDefinition[] = [TIMEZONE_SETTING, DRIVE_KEEP_LOCAL_DAYS];
 /** Extensions register complete definitions; unknown namespaces stay unknown. */
 export function settingDefinitions(extensions: readonly SettingDefinition[] = []): ReadonlyMap<string, SettingDefinition> {
   const definitions = new Map(CORE_SETTING_DEFINITIONS.map(def => [def.key, def]));

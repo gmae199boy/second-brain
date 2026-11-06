@@ -427,3 +427,9 @@ describe('failures.retry', () => {
     });
   });
 });
+
+it('retries a failed Drive recovery as Drive recovery even for a redacted file', async () => {
+  const store=await holding(failure({targetKind:'file',targetId:'redacted-file',stage:'drive_migrate',code:'FILES_UNAVAILABLE',fingerprint:'drive-recovery'}));
+  expect(await retryFailures(retryDependencies(store),{targetKind:'file'})).toMatchObject({ok:true,added:1,redacted:0});
+  expect(store.snapshot().workItems).toEqual(expect.arrayContaining([expect.objectContaining({kind:'drive_migrate',targetKind:'file',targetId:'redacted-file'})]));
+});

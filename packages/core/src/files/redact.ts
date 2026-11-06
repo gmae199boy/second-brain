@@ -30,7 +30,7 @@ import { DOCUMENT_EXTRACT_KIND } from './extract-work.js';
  *
  * What it never touches is the user's own file. `external` locations are
  * records of where the bytes came from, and this verb neither reads nor deletes
- * nor rewrites them: only Brain's own local copies are queued for deletion.
+ * nor rewrites them: Brain-owned local and Drive copies are queued for deletion.
  */
 
 /** The kind a whole-file masking is recorded under. A person asked for it. */
@@ -187,7 +187,7 @@ export async function redactFile(
  *
  * Only `local`·`brain` places whose bytes have not already gone are queued. A
  * user's own file is not Brain's to delete, and a Brain copy in Drive is epic
- * 8's: the handler refuses both, so queueing them would be work that fails
+ * 8's: the handler uses the injected Drive adapter for Brain-owned Drive copies
  * (`files/blob-delete-work.ts`).
  */
 export function planFileRedaction(
@@ -200,7 +200,6 @@ export function planFileRedaction(
     .filter(
       (location) =>
         location.ownership === 'brain' &&
-        location.storeKind === 'local' &&
         location.deletedAt === null,
     )
     .map((location) => blobDeleteWork({ id: idGen.next(), locationId: location.id, at: now }));
