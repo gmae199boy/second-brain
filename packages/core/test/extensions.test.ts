@@ -880,3 +880,141 @@ it('requires a valid same-target same-zone predecessor schedule key', () => {
   for(const bad of [{...child,after_schedule:'missing'},{...child,after_schedule:'report'},{...child,time_zone:'UTC'},{...child,target_kind:'other'}, {...child,target_setting:undefined}])
     expect(decodeExtensionManifest(JSON.stringify({...valid,default_schedules:[parent,bad]})).ok).toBe(false);
 });
+
+async function replacementWorld() {
+  const { deps, fake } = setup();
+  const owner = '12345678-1234-1234-1234-123456789abc';
+  const oldDigest = 'a'.repeat(64), newDigest = 'b'.repeat(64);
+  const next = { ...manifest, version: '1.1.0', files: ['bin/check.mjs', 'manifest.json'], core_compat: { min: '0.0.0', max_exclusive: '2.0.0' }, plugin_version: '1.1.0' };
+  await deps.store.recordExtensionInstall({ name: 'testext', version: '1.0.0', now });
+  await deps.store.setExtensionEnabled({ name: 'testext', enabled: false, now });
+  await deps.store.beginExtensionQuiesce({ name: 'testext', owner, now });
+  await deps.store.writeExtensionInstallProgress({ expectedRevision: null, progress: { name: 'testext', packageDigest: oldDigest, result: null, failedStage: null, lastFailure: null, stages: {}, authWorkId: null, scheduleIds: [], replacement: { owner, fromVersion: '1.0.0', at: now.toISOString() } } });
+  let sourceDigest = newDigest, installedDigest = oldDigest;
+  let journal: Awaited<ReturnType<NonNullable<ExtensionRuntime['packages']['transition']>['read']>> = null;
+  let failPoint = '', failed = false; const events: string[] = [];
+  const inject = (point: string) => { events.push(point); if (failPoint === point && !failed) { failed = true; throw new Error('injected'); } };
+  const record = deps.store.recordExtensionInstall.bind(deps.store);
+  deps.store.recordExtensionInstall = async input => { inject('registry'); const result = await record(input); inject('after-registry'); return result; };
+  const writeProgress = deps.store.writeExtensionInstallProgress.bind(deps.store);
+  deps.store.writeExtensionInstallProgress = async input => { if (input.progress.transition?.registered) inject('progress-write'); return writeProgress(input); };
+  const release = deps.store.endExtensionQuiesce.bind(deps.store);
+  deps.store.endExtensionQuiesce = async input => { const result = await release(input); inject('release'); return result; };
+  deps.extensions.packages = {
+    async resolve() { throw new Error('must not resolve replacement'); },
+    async prepareExternal() { return { name: 'testext', dir: '/source', manifestText: JSON.stringify(next), digest: sourceDigest, async cleanup() {} }; },
+    async checkCore() {}, async place() { throw new Error('must use transition'); },
+    async inspect() { return { digest: sourceDigest, installedDigest, sameBase: false, installedDir: '/installed/testext' }; },
+    transition: {
+      async read() { return journal; },
+      async prepare(input) { inject('prepare'); journal = { name: input.name, owner: input.owner, digest: input.digest, phase: 'prepared', hadPrevious: true }; },
+      async stagedDirectory() { return '/stage'; }, async refreshPreparedMigrations() { throw Error('unexpected'); },
+      async activate() { inject('activate'); installedDigest = sourceDigest; journal = { ...journal!, phase: 'active' }; inject('after-activate'); return '/installed/testext'; },
+      async commit() { inject('commit'); journal = null; inject('after-commit'); }, async rollback() { throw Error('unexpected'); },
+    },
+  };
+  deps.extensions.migrator = { async validate() { return {ok:true}; }, async apply() { inject('migration'); return { ok: true, from: 1, to: 2, applied: ['0002.sql'] }; } };
+  return { deps, fake, owner, events, setFailure(value: string) { failPoint = value; failed = false; }, setDigest(value: string) { sourceDigest = value; }, setVersion(value: string) { next.version = value; } };
+}
+
+it('교체 대기 및 gate에서 enable·run·command를 거부하고 disable은 허용한다', async () => {
+  const { deps, fake } = await replacementWorld();
+  const { setExtensionEnabled, runExtension } = await import('../src/index.js');
+  const { executeExtensionCommand } = await import('../src/extensions/commands.js');
+  deps.extensions.installedManifest = async () => { throw Error('must not read legacy manifest'); };
+  deps.extensions.installedDirectory = () => '/installed/testext'; deps.extensions.validateValue = () => true;
+  const expected = { ok: false, code: 'EXTENSION_REPLACEMENT_REQUIRED' };
+  expect(await setExtensionEnabled(deps, { name: 'testext', enabled: true })).toMatchObject(expected);
+  expect(await runExtension(deps, { name: 'testext', job: 'sync' })).toMatchObject(expected);
+  expect(await executeExtensionCommand(deps, { name: 'testext', command: 'sync', input: {} })).toMatchObject(expected);
+  expect(await setExtensionEnabled(deps, { name: 'testext', enabled: false })).toMatchObject({ok:true});
+  expect(fake.specs).toEqual([]);
+});
+
+it.each(['prepare', 'migration', 'activate', 'registry', 'commit', 'release', 'after-registry', 'after-activate', 'after-commit', 'progress-write'])('교체 %s 중단 뒤 같은 패키지와 소유자로 재개한다', async boundary => {
+  const { deps, owner, setFailure, setDigest } = await replacementWorld(); setFailure(boundary);
+  expect((await installExtension(deps, { packagePath: '/package' })).ok).toBe(false);
+  const stored = await deps.store.getExtensionInstallProgress('testext');
+  expect(stored).toMatchObject({ok:true,journal:{progress:{replacement:{owner},transition:{owner},packageDigest:'b'.repeat(64)}}});
+  const { setExtensionEnabled: checkEnabled } = await import('../src/index.js');
+  expect(await checkEnabled(deps, {name:'testext',enabled:true})).toMatchObject({ok:false});
+  setDigest('c'.repeat(64));
+  expect(await installExtension(deps, { packagePath: '/other' })).toMatchObject({ok:false,code:'EXTENSION_INVALID'});
+  setDigest('b'.repeat(64));
+  expect((await installExtension(deps, { packagePath: '/package' })).ok).toBe(true);
+  expect(await deps.store.readExtensionQuiesce('testext')).toMatchObject({ok:true,owner:null});
+  const result = await deps.store.getExtensionInstallProgress('testext');
+  if (!result.ok || !result.journal) throw Error('missing progress');
+  expect(result.journal.progress.replacement).toBeUndefined(); expect(result.journal.progress.transition).toBeUndefined();
+  expect(await deps.store.getExtension('testext')).toMatchObject({ok:true,extension:{enabled:false,version:'1.1.0'}});
+  expect(await deps.store.holdWorkGroup({group:'extension:testext',now})).toMatchObject({ok:true,held:false});
+  const { setExtensionEnabled } = await import('../src/index.js');
+  expect(await setExtensionEnabled(deps, {name:'testext',enabled:true})).toMatchObject({ok:true,changed:true});
+  expect(await deps.store.holdWorkGroup({group:'extension:testext',now})).toMatchObject({ok:true,held:true});
+});
+
+it('이름 설치와 다른 소유자는 교체를 시작하지 않는다', async () => {
+  const { deps, owner, events } = await replacementWorld();
+  expect(await installExtension(deps, {name:'testext'})).toMatchObject({ok:false,code:'EXTENSION_REPLACEMENT_REQUIRED'});
+  await deps.store.endExtensionQuiesce({name:'testext',owner});
+  await deps.store.beginExtensionQuiesce({name:'testext',owner:'abcdefab-cdef-abcd-efab-cdefabcdefab',now});
+  events.length = 0;
+  expect(await installExtension(deps, {packagePath:'/package'})).toMatchObject({ok:false,code:'DB_LOCKED'});
+  expect(events).toEqual([]);
+});
+
+it('gate가 없어도 교체 대기 기록은 실행을 막는다', async () => {
+  const { deps, owner } = await replacementWorld();
+  await deps.store.endExtensionQuiesce({name:'testext',owner});
+  const { setExtensionEnabled, runExtension } = await import('../src/index.js');
+  deps.extensions.installedManifest = async () => { throw Error('must not read'); };
+  expect(await setExtensionEnabled(deps, {name:'testext',enabled:true})).toMatchObject({ok:false,code:'EXTENSION_REPLACEMENT_REQUIRED'});
+  expect(await runExtension(deps, {name:'testext',job:'sync'})).toMatchObject({ok:false,code:'EXTENSION_REPLACEMENT_REQUIRED'});
+});
+
+
+it.each(['0.9.0', '1.0.0'])('이전 또는 같은 버전 %s는 변경 전에 거부한다', async version => {
+  const { deps, setVersion, events } = await replacementWorld(); setVersion(version);
+  const before = await deps.store.getExtensionInstallProgress('testext');
+  expect(await installExtension(deps, {packagePath:'/package'})).toMatchObject({ok:false,code:'EXTENSION_INVALID'});
+  expect(await deps.store.getExtensionInstallProgress('testext')).toEqual(before); expect(events).toEqual([]);
+});
+
+it('일반 gate는 기존 명령 오류와 설치 복구 안내를 사용한다', async () => {
+  const {deps} = setup(); const owner='12345678-1234-1234-1234-123456789abc';
+  await deps.store.recordExtensionInstall({name:'testext',version:'0.1.0',now});
+  await deps.store.beginExtensionQuiesce({name:'testext',owner,now});
+  deps.extensions.installedManifest = async () => JSON.stringify(manifest);
+  deps.extensions.installedDirectory = () => '/installed/testext'; deps.extensions.validateValue = () => true;
+  const {runExtension,setExtensionEnabled} = await import('../src/index.js');
+  const {executeExtensionCommand} = await import('../src/extensions/commands.js');
+  expect(await runExtension(deps,{name:'testext',job:'sync'})).toMatchObject({ok:false,code:'DB_LOCKED'});
+  expect(await setExtensionEnabled(deps,{name:'testext',enabled:true})).toMatchObject({ok:false,code:'DB_LOCKED'});
+  expect(await executeExtensionCommand(deps,{name:'testext',command:'sync',input:{}})).toMatchObject({ok:false,code:'EXTENSION_COMMAND_UNAVAILABLE'});
+});
+
+it('공개 상태에 교체 필요 여부를 표시하되 소유자는 숨긴다', async () => {
+  const {deps,owner} = await replacementWorld();
+  const {publicExtensionData,publicExtensionText} = await import('../../../apps/cli/src/commands/ext-status.js');
+  const state = await deps.store.getExtensionPublicStatus('testext'); if(!state.ok) throw Error('missing status');
+  expect(publicExtensionData(state.status)).toMatchObject({replacement_required:true});
+  expect(publicExtensionText(state.status).join('\n')).toContain('ext install --package');
+  expect(JSON.stringify(publicExtensionData(state.status))).not.toContain(owner);
+});
+
+
+it.each(['unknown-property','wrong-name'] as const)('gate 없는 무효 진행 기록 %s는 일반 실행을 막지 않는다', async mode => {
+  const {deps} = setup();
+  const work = {kind:'testext.sync',execution:'supervised',runtime:'node',entry:'job.mjs',manual:'sync'};
+  deps.extensions.installedManifest = async () => JSON.stringify({...manifest,work:[work]});
+  await deps.store.recordExtensionInstall({name:'testext',version:manifest.version,now,workKinds:[work.kind]});
+  const progress = {name:mode === 'wrong-name' ? 'other' : 'testext',packageDigest:'a'.repeat(64),result:null,failedStage:null,lastFailure:null,stages:{},authWorkId:null,scheduleIds:[],...(mode === 'unknown-property' ? {unknown:true} : {})};
+  deps.store.getExtensionInstallProgress = async () => ({ok:true,journal:{revision:1,progress}});
+  const {checkExtensionExecution} = await import('../src/extensions/replacement.js');
+  expect(await checkExtensionExecution(deps.store,'testext')).toEqual({ok:true});
+  const {setExtensionEnabled,runExtension} = await import('../src/index.js');
+  expect(await setExtensionEnabled(deps,{name:'testext',enabled:true})).toMatchObject({ok:true});
+  expect(await runExtension(deps,{name:'testext',job:'sync'})).toMatchObject({ok:true,status:'queued'});
+  await deps.store.beginExtensionQuiesce({name:'testext',owner:'12345678-1234-1234-1234-123456789abc',now});
+  expect(await checkExtensionExecution(deps.store,'testext')).toMatchObject({ok:false,code:'DB_LOCKED'});
+});

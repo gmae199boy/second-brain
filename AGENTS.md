@@ -14,9 +14,10 @@ Personal Brain (`second-brain`): a local-first memory of agent sessions whose so
 
 ## 시험 실행 범위
 
-- 구현·리뷰 수정·재검증을 반복하는 동안에는 `pnpm test:changed`만 돌린다(기본 `origin/main` 대비, `pnpm test:changed -- <ref>`로 기준 변경). 바뀐 파일의 TS 의존 시험은 Vitest `--changed`로, Python 통합 시험은 `tooling/test-changed/rules.mjs`의 경로 규칙으로 고른다. 규칙에 걸리지 않으면 Python 시험은 생략된다.
-- 작업(티켓)을 마무리하기 직전, 커밋·push 전에만 전체 `pnpm test`와 `pnpm test:python`을 한 번씩 순차로 돌린다. 이 마지막 전체 회귀를 생략하지 않는다 — 경로 규칙과 `--changed`가 못 따라가는 의존을 여기서 잡는다.
-- `pnpm test`와 `pnpm test:python`은 둘 다 build하므로 동시에 돌리지 않는다. Python·SQL·자식 프로세스로만 쓰이는 새 경로를 만들면 `rules.mjs`에 규칙을 더한다.
+- **개발 중에는 시험을 실행하지 않는다 — 2026-11-06 사용자 지시.** 구현·리뷰 반영 수정을 반복하는 동안 `pnpm test:changed`·`pnpm test`·`pnpm test:python`·개별 vitest·eval을 돌리지 않는다. 시험이 오래 걸려 개발 반복을 막기 때문이다. 이 기간에는 `pnpm build`·`pnpm typecheck`·`git diff --check`로 컴파일만 확인한다. 수락조건을 덮는 시험 코드는 계속 작성한다.
+- 개발이 끝난 뒤(마지막 구현·리뷰 수정이 들어간 뒤, 커밋·push 전) 전체 `pnpm test` → `pnpm test:python`을 순차로 한 번씩 돌린다. 이 마지막 전체 회귀를 생략하지 않는다. 여기서 난 실패를 고친 뒤의 재검증은 `pnpm test:changed`(기본 `origin/main` 대비, `pnpm test:changed -- <ref>`로 기준 변경)와 관련 시험으로 한다.
+- 이 규칙은 티켓 명세·계획·Dispatch·Task 명세·스킬에 적힌 "반복 `test:changed`" 요구보다 우선한다. 지휘자는 구현자·수정 Task 명세에 "시험 실행 금지, 컴파일 확인만"을 적는다. 명세의 "시험 실행 유예 대상이 아니다"는 그 티켓이 21.8로 시험을 넘기지 않고 개발 뒤 스스로 전체 회귀를 돌린다는 뜻이며, 개발 중 반복 실행을 요구하지 않는다.
+- `pnpm test`와 `pnpm test:python`은 둘 다 build하므로 동시에 돌리지 않는다. `test:changed`는 TS 의존 시험을 Vitest `--changed`로, Python 통합 시험을 `tooling/test-changed/rules.mjs`의 경로 규칙으로 고른다. Python·SQL·자식 프로세스로만 쓰이는 새 경로를 만들면 `rules.mjs`에 규칙을 더한다.
 
 ### Garmin 구현 시험 실행 유예 — 2026-11-05 최신 사용자 지시
 

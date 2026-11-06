@@ -184,6 +184,7 @@ const CODES = {
   SESSION_NOT_FOUND: { exit: 1, retryable: false, meaning: '지정한 세션이 없습니다', hint: '세션 토큰을 확인하세요' },
   EXTENSION_NOT_FOUND: { exit: 2, retryable: false, meaning: '지정한 확장 패키지가 없습니다', hint: '확장 이름과 제공되는 패키지를 확인하세요' },
   EXTENSION_INVALID: { exit: 2, retryable: false, meaning: '확장 패키지의 선언이 올바르지 않습니다', hint: '확장 manifest와 패키지 경로를 확인하세요' },
+  EXTENSION_REPLACEMENT_REQUIRED: { exit: 2, retryable: false, meaning: '확장 패키지 교체가 필요합니다', hint: '현재 형식의 호환 패키지를 `brain ext install --package`로 설치하세요' },
   EXTENSION_COMMAND_UNAVAILABLE: { exit: 2, retryable: false, meaning: '등록된 확장 명령이 없습니다', hint: '확장 설치와 활성 상태를 확인하세요' },
   EXTENSION_COMMAND_INPUT_INVALID: { exit: 2, retryable: false, meaning: '확장 명령 입력이 올바르지 않습니다', hint: '명령의 입력 schema를 확인하세요' },
   EXTENSION_COMMAND_FAILED: { exit: 1, meaning: '확장 명령 실행이 실패했습니다', hint: '확장 명령을 확인하세요' },

@@ -153,3 +153,26 @@ function decodeManifestUnchecked(text: string, validateSchema?: (schema: Record<
 export function decodeExtensionManifest(text: string, validateSchema?: (schema: Record<string, unknown>) => boolean): ReturnType<typeof decodeManifestUnchecked> {
   try { return decodeManifestUnchecked(text, validateSchema); } catch { return { ok: false, code: 'EXTENSION_INVALID', message: '확장 manifest의 필드나 패키지 상대 경로가 올바르지 않습니다' }; }
 }
+
+/** Read historical manifests without making their retired fields executable. */
+export function decodeRetiredExtensionManifest(text: string, validateSchema?: (schema: Record<string, unknown>) => boolean):
+  | { ok: true; manifest: Pick<ExtensionManifest, 'name' | 'version' | 'migrations'>; retiredFieldsUsed: boolean }
+  | { ok: false; code: 'EXTENSION_INVALID'; message: string } {
+  const invalid = { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장 manifest의 필드나 패키지 상대 경로가 올바르지 않습니다' };
+  try {
+    const value: unknown = JSON.parse(text);
+    let retiredFieldsUsed = false;
+    if (object(value) && Array.isArray(value.work)) {
+      for (const work of value.work) {
+        if (!object(work) || !Object.hasOwn(work, 'verification_snapshot')) continue;
+        if (work.verification_snapshot !== true || work.runtime !== 'python') return invalid;
+        delete work.verification_snapshot;
+        retiredFieldsUsed = true;
+      }
+    }
+    const decoded = decodeExtensionManifest(JSON.stringify(value), validateSchema);
+    if (!decoded.ok) return decoded;
+    const { name, version, migrations } = decoded.manifest;
+    return { ok: true, manifest: { name, version, migrations }, retiredFieldsUsed };
+  } catch { return invalid; }
+}

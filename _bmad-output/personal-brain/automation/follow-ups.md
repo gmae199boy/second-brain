@@ -344,3 +344,23 @@ core0.1.17/Garmin0.1.4 ref는이전구현472caa7,확장1.2.1/package85파일정�
 - 보류 medium: 기존 0033 migration의 DST 변환 규칙을 독립 oracle로 검증하는 시험. 기존 migration 고유 검증 범위로 분리했으며 신규 legacy 제품 결함으로 판정하지 않았다. 향후 migration 시험 보강 시 재검토한다.
 - 보류 low: 대화형 offline 확인 중 Ctrl-C 종료 경로 시험. 기존 확인 동작 및 A1 잔존 잠금 명시 복구 계약을 유지하며 향후 대화형 취소 시험 보강 시 재검토한다.
 - 운영 인계21.7: 실제 옛 확장 manifest의 대상 core 호환을 확인한다. 비활성·보류, 이전 데몬·직접 명령·모든 쓰기 자식 종료, 새 진입 차단 및 TTY 운영자 확인은 그대로 필요하다. 이 제품 수정의 수락이 운영자 확인이나 계정 귀속 확인을 대신하지 않는다. 21.7의 기존 legacy 경로 부재 차단은 제품 반영으로 해소됐으며 나머지 실제 입력 gate는 재개 시 확인한다.
+
+
+## 21.7 — 재진단의 옛 manifest 차단과21.10 (2026-11-06)
+
+- 원문 `tickets/epic-garmin-extension/tickets/story-mac-plan.md` 재진단·q2. 부분commit `e5385a7`은 공개 계획뿐이며 운영무변경·새writer0·모든운영AC미완료를 유지한다.
+- 21.9의 schema bridge 뒤에도 실제 옛 Garmin1.0.0 manifest가 현재 decoder의 work 키 및 core_compat 요구에 걸리고 지원 선교체 경로도 없다. settings/default_schedules 각각이 독립적인 문법 오류라는 주장은 아니다.
+- 별도21.10 `bug-legacy-manifest-transition.md`로 지원 core 갱신→옛 실행 금지→검증된 새 패키지 교체를 분리했다.21.7은21.10 수락·원격main/release 반영 뒤 재개한다. 옛daemon 종료·새TTY확인·계정귀속/tokenstore/MFA·설정 등 기존 gate는 보존한다.
+
+
+## 21.10 — 옛 manifest 지원 전환 수락 (2026-11-06)
+
+근거: [전환 계획](../tickets/epic-garmin-extension/tickets/bug-legacy-manifest-transition-plan.md)의 Review Triage Log r1~r6 및 Auto Run Result. 구현 `8513bf9`, 릴리스 `048e21c`(core plugin 0.1.20, app-ref는 이전 구현 commit). 중앙은 r5 보존 경계·r6 EOF 후속 원문, 최종 worker2 changed 로그와 원격 SHA를 대조했다.
+
+- 검증: 최초 전체 TS 실패 및 재검증 실패는 이력으로 보존. 최종 제한 worker changed는 TS153파일/3591시험·기존skip1, 경로 규칙 Python전체15파일/66시험(내부244시험) 통과, 전체 exit0. 별도 Python 명령은 같은 전체 config 완료로 중복하지 않았다.
+- 보존 해석: core 전환은 기존 확장9표 전체 보존. Garmin 패키지 교체는 영속6표·원본 bytes/hash·기억·사용자·예약·회계·이력 접두 보존과 기존0013 제거3표의 예상 부재를 검사한다. oldext와 migration 확정 전 거부는 전체 보존한다. 과거 migration 변조나 새 손실을 허용한 결정이 아니다.
+- 기존 시험 불안정: unrestricted 실행의 auth id/SIGINT/timeout/DB_UNAVAILABLE는 같은 소스·단언의 제한worker 재검증에서 통과했다. 고부하가 정확한 원인이라고 확정하지 않으며, 취소 시험 readiness 안정화는 별도 검토한다.
+- 통합 후속: 22.1의 schema39 반영 시 새 legacy 시험의 명시 schema38 기대를 대조해야 한다. 현재 수락 기준에는 schema39가 없으며 후속 통합의 필요 검증으로 남긴다.
+- 운영 인계21.7: 지원 core 갱신·검증된 패키지 교체의 제품 차단을 해소했다. 실제 Mac의 옛 writer 종료·새 진입 차단·현재 시도 TTY 확인·계정 귀속/credential·운영 설정은 기존 21.7 소유다. 합성 시험 통과가 운영 전환 인수를 대신하지 않는다.
+
+`deferred: []`, 후속 리뷰 권고 false. 소유 시험 PG와 최종174 fixture는 정확 ID 정리/부재를 확인했으며 로그·리뷰·워크트리는 보존한다.

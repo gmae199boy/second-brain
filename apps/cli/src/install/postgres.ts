@@ -5,10 +5,10 @@ import { promisify } from 'node:util';
 import { dirname, join, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { v7 } from 'uuid';
-import { quiesceExtension, type Clock } from 'second_brain';
+import { quiesceExtension, validInstallProgress, type ExtensionInstallProgress, type StoredExtensionInstallProgress, type Clock } from 'second_brain';
 import { homeResources } from '../config/resources.js';
 import { postgresSecrets } from '../config/codec.js';
-import { installedExtensionMigrations } from '../runtime/extensions.js';
+import { installedExtensionMigrations, packageDigest } from '../runtime/extensions.js';
 import { containerState, volumeOwner } from '../runtime/orbstack.js';
 import { commandEnv, composeArgs, systemCommandRunner, type CommandRunner } from '../runtime/command-runner.js';
 import { withInstallerHomeLock } from '../runtime/install-lock.js';
@@ -142,9 +142,42 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
         // honor this fence. Do not infer its safety from the new schema alone.
         if (!build?.commit || !build.version || !disk?.commit || disk.commit !== build.commit || disk.version !== build.version || disk.schema_version !== build.schema_version || !installed?.commit || (installed.schema_version < 35 && !legacy) || (!existing.fenceReady && !legacy)) return locked('기존 실행 core의 신원 또는 정지 지원을 확인할 수 없습니다.');
       }
+      if (existing.names.length && installed && installed.schema_version >= 16 && !existing.progressReady) return locked('확장 진행 기록 표를 확인할 수 없습니다.');
+      const readProgress = async () => {
+        const records = new Map<string, StoredExtensionInstallProgress | null>();
+        for (const name of existing.names) {
+          const item = existing.progressReady ? await store.getExtensionInstallProgress(name) : { ok: true as const, journal: null };
+          if (!item.ok || (item.journal && (!validInstallProgress(item.journal.progress) || item.journal.progress.name !== name || !Number.isSafeInteger(item.journal.revision) || item.journal.revision < 1))) throw new Error('invalid progress');
+          records.set(name, item.journal);
+        }
+        return records;
+      };
+      let records: Map<string, StoredExtensionInstallProgress | null>;
+      const allowed = new Set<string>();
+      try {
+        records = await readProgress();
+        for (const name of existing.names) {
+          const progress = records.get(name)?.progress;
+          if (progress?.replacement) {
+            if (!existing.fenceReady) throw new Error('missing gate');
+            const gate = await store.readExtensionQuiesce(name);
+            if (!gate.ok || gate.owner !== progress.replacement.owner) throw new Error('gate mismatch');
+            allowed.add(name);
+          }
+          if (legacy) allowed.add(name);
+        }
+      } catch { return locked('확장 진행 기록 또는 정지 소유권을 확인할 수 없습니다.'); }
       let owners: Awaited<ReturnType<typeof installedExtensionMigrations>>;
-      try { owners = await installedExtensionMigrations(home, existing.names, build?.version); }
+      try { owners = await installedExtensionMigrations(home, existing.names, build?.version, allowed); }
       catch { return locked('확장 manifest 또는 대상 core 호환성을 확인할 수 없습니다.'); }
+      if (owners.some(o => o.replacement && records.get(o.owner)?.progress.transition)) return locked('중단된 확장 전환이 있습니다.');
+      const validReplacementIdentity = async () => {
+        for (const item of owners.filter(o => o.replacement)) {
+          const registry = await store.getExtension(item.owner);
+          if (!registry.ok || !registry.extension || registry.extension.version !== item.version) return false;
+        }
+        return true;
+      };
       const journalPath = join(home, 'run', 'bootstrap-extension-migrations.json');
       type Journal = { commit: string; names: string[]; owner: string; offlineConfirmation?: NonNullable<PostgresInstallReport['offline_confirmation']> & { at: string } };
       let journal: Journal | null = null;
@@ -152,12 +185,17 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return locked('core 확장 정지 기록을 읽을 수 없습니다.'); }
       if (journal && (!build?.commit || journal.commit !== build.commit || !Array.isArray(journal.names) || JSON.stringify(journal.names) !== JSON.stringify(existing.names) || typeof journal.owner !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(journal.owner))) return locked('core 확장 정지 기록의 신원이 다릅니다.');
       if (!existing.fenceReady && existing.gateNames.length) return locked('정지 표와 migration 기록이 일치하지 않습니다.');
-      if (existing.gateNames.some(name => !journal?.names.includes(name))) return locked('다른 설치의 확장 정지가 있습니다.');
+      if (existing.gateNames.some(name => !journal?.names.includes(name) && !records.get(name)?.progress.replacement)) return locked('다른 설치의 확장 정지가 있습니다.');
       const migrate = async (): Promise<PostgresInstallResult> => {
         if (existing.names.length) {
           const disk = await readBuildIdentity();
           if (!disk || disk.commit !== build?.commit || disk.version !== build.version || disk.schema_version !== build.schema_version) return locked('대기 중 대상 core 신원이 바뀌었습니다.');
         }
+        if (!await validReplacementIdentity()) return locked('확장 설치 신원을 확인할 수 없습니다.');
+        try {
+          const currentRecords = await readProgress();
+          if (JSON.stringify([...currentRecords]) !== JSON.stringify([...records])) return locked('확장 진행 기록이 바뀌었습니다.');
+        } catch { return locked('확장 진행 기록을 확인할 수 없습니다.'); }
         const checkLegacy = async (): Promise<string | null> => {
           let facts: Awaited<ReturnType<typeof inspectLegacyExtensionPrerequisites>>;
           try { facts = await inspectLegacyExtensionPrerequisites(targetUrl.toString()); }
@@ -177,12 +215,19 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
           if (!coreHistory.ok) return coreHistory;
           if (coreHistory.to < installed!.schema_version) return locked('core migration 이력이 설치 기록보다 뒤에 있습니다.');
           const history = await runMigrations({ databaseUrl: targetUrl.toString(), clock, owners, validateOnly: true });
-          if (!history.ok) return history;
+          if (!history.ok) return owners.some(o => o.replacement) ? locked('확장 migration 이력을 확인할 수 없습니다.') : history;
+        }
+        if (!legacy) {
+          const replacements = owners.filter(o => o.replacement);
+          if (replacements.length) {
+            const history = await runMigrations({ databaseUrl: targetUrl.toString(), clock, owners: replacements, validateOnly: true });
+            if (!history.ok) return owners.some(o => o.replacement) ? locked('확장 migration 이력을 확인할 수 없습니다.') : history;
+          }
         }
         const gateOwners: (string | null)[] = [];
         for (const name of existing.fenceReady ? existing.names : []) {
           const state = await store.readExtensionQuiesce(name); if (!state.ok) return state;
-          if (state.owner && state.owner !== journal?.owner) return locked('다른 설치의 확장 정지가 있습니다.');
+          if (state.owner && state.owner !== journal?.owner && state.owner !== records.get(name)?.progress.replacement?.owner) return locked('다른 설치의 확장 정지가 있습니다.');
           gateOwners.push(state.owner);
         }
         let offlineConfirmation: PostgresInstallReport['offline_confirmation'];
@@ -195,16 +240,29 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
           const challenge = `확인 ${canonicalHome} ${installed.commit} ${build.commit} ${randomUUID()}`;
           if (!options.confirmOffline || await options.confirmOffline({ home: canonicalHome, previousCommit: installed.commit, targetCommit: build.commit, challenge, ...(legacy ? { legacySchema: installed.schema_version } : {}) }) !== challenge) return locked('서로 다른 core 갱신에는 새 진입을 차단한 상태의 운영자 offline 확인이 필요합니다. 자동 갱신은 이 확인을 대신할 수 없습니다.');
           const [again, disk, current, homeLock, daemonLock, currentManifests, gateStates, files, journalAfter] = await Promise.all([readInstalled(home), readBuildIdentity(), inspectExtensionFence(targetUrl.toString()), readFile(join(home, 'install.lock/owner'), 'utf8').catch(() => ''), readFile(join(home, 'run/daemon.pid'), 'utf8').catch(() => ''), Promise.all(existing.names.map(name => readFile(join(home, 'extensions', name, 'manifest.json'), 'utf8'))), Promise.all((existing.fenceReady ? existing.names : []).map(name => store.readExtensionQuiesce(name))), readdir(join(home, 'extensions')), readFile(journalPath, 'utf8').catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; })]);
-          if (JSON.stringify(again) !== JSON.stringify(installed) || !disk || disk.commit !== build.commit || disk.version !== build.version || disk.schema_version !== build.schema_version || current.fenceReady !== existing.fenceReady || JSON.stringify(current.names) !== JSON.stringify(existing.names) || JSON.stringify([...current.gateNames].sort()) !== JSON.stringify([...existing.gateNames].sort()) || homeLock !== homeOwner || daemonLock !== daemonOwner || journalAfter !== journalBefore || JSON.stringify(currentManifests) !== JSON.stringify(manifests) || gateStates.some((state, index) => !state.ok || state.owner !== gateOwners[index]) || files.some(file => /^\.transition-[a-z][a-z0-9_]*\.json$/.test(file))) return locked('확인 중 설치 신원 또는 정지 상태가 바뀌었습니다.');
-          try { owners = await installedExtensionMigrations(home, existing.names, build.version); }
+          if (JSON.stringify(again) !== JSON.stringify(installed) || !disk || disk.commit !== build.commit || disk.version !== build.version || disk.schema_version !== build.schema_version || current.fenceReady !== existing.fenceReady || current.progressReady !== existing.progressReady || JSON.stringify(current.names) !== JSON.stringify(existing.names) || JSON.stringify([...current.gateNames].sort()) !== JSON.stringify([...existing.gateNames].sort()) || homeLock !== homeOwner || daemonLock !== daemonOwner || journalAfter !== journalBefore || JSON.stringify(currentManifests) !== JSON.stringify(manifests) || gateStates.some((state, index) => !state.ok || state.owner !== gateOwners[index]) || files.some(file => /^\.transition-[a-z][a-z0-9_]*\.json$/.test(file))) return locked('확인 중 설치 신원 또는 정지 상태가 바뀌었습니다.');
+          try {
+            const currentRecords = await readProgress();
+            if (JSON.stringify([...currentRecords]) !== JSON.stringify([...records])) throw new Error('progress changed');
+            owners = await installedExtensionMigrations(home, existing.names, build.version, allowed);
+            if (owners.some(o => o.replacement && currentRecords.get(o.owner)?.progress.transition)) throw new Error('transition');
+          }
           catch { return locked('확인 중 확장 패키지 또는 대상 core 호환성이 바뀌었습니다.'); }
+          if (!await validReplacementIdentity()) return locked('확인 중 확장 설치 신원이 바뀌었습니다.');
           if (legacy) {
             const problem = await checkLegacy(); if (problem) return locked(`확인 중 전제가 바뀌었습니다. ${problem}`);
             const coreHistory = await runMigrations({ databaseUrl: targetUrl.toString(), clock, validateOnly: true });
             if (!coreHistory.ok) return coreHistory;
             if (coreHistory.to < installed!.schema_version) return locked('core migration 이력이 설치 기록보다 뒤에 있습니다.');
             const history = await runMigrations({ databaseUrl: targetUrl.toString(), clock, owners, validateOnly: true });
-            if (!history.ok) return history;
+            if (!history.ok) return owners.some(o => o.replacement) ? locked('확장 migration 이력을 확인할 수 없습니다.') : history;
+          }
+          if (!legacy) {
+            const replacements = owners.filter(o => o.replacement);
+            if (replacements.length) {
+              const history = await runMigrations({ databaseUrl: targetUrl.toString(), clock, owners: replacements, validateOnly: true });
+              if (!history.ok) return locked('확인 중 확장 migration 이력을 확인할 수 없습니다.');
+            }
           }
           offlineConfirmation = { home: canonicalHome, previous_commit: installed.commit, target_commit: build.commit, method: 'operator' };
         }
@@ -219,7 +277,7 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
           const temp = `${journalPath}.${randomUUID()}`;
           try { await writeFile(temp, JSON.stringify(journal), { flag: 'wx', mode: 0o600 }); await rename(temp, journalPath); } finally { await rm(temp, { force: true }); }
         }
-        for (const name of legacy ? [] : existing.names) {
+        for (const name of legacy ? [] : existing.names.filter(name => !records.get(name)?.progress.replacement)) {
           const stopped = await quiesceExtension(store, systemTimer, { name, owner: journal!.owner, now: clock.now(), refuseRunning: true });
           if (!stopped.ok) return stopped;
         }
@@ -235,7 +293,7 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
           const bridge = await runMigrations({ databaseUrl: prepared.databaseUrl, clock, coreMaxVersion: 35 });
           if (!bridge.ok) return bridge;
           bridgeApplied = bridge.applied;
-          for (const name of existing.names) {
+          for (const name of existing.names.filter(name => !records.get(name)?.progress.replacement)) {
             const stopped = await quiesceExtension(store, systemTimer, { name, owner: journal!.owner, now: clock.now(), refuseRunning: true });
             if (!stopped.ok) return stopped;
           }
@@ -243,12 +301,23 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
         const completed = await runMigrations({ databaseUrl: prepared.databaseUrl, clock });
         if (!completed.ok) return completed;
         const applied = [...migrated.applied, ...bridgeApplied, ...completed.applied];
-        if (owners.length) {
-          const extensions = await runMigrations({ databaseUrl: prepared.databaseUrl, clock, owners });
+        const applicableOwners = owners.filter(o => !o.replacement);
+        if (applicableOwners.length) {
+          const extensions = await runMigrations({ databaseUrl: prepared.databaseUrl, clock, owners: applicableOwners });
           if (!extensions.ok) return extensions;
           applied.push(...extensions.applied);
         }
-        for (const name of existing.names) {
+        for (const replacement of owners.filter(o => o.replacement)) {
+          const previous = records.get(replacement.owner);
+          if (previous?.progress.replacement) continue;
+          const registry = await store.getExtension(replacement.owner);
+          if (!registry.ok || !registry.extension) return locked('확장 등록 정보를 확인할 수 없습니다.');
+          const progress: ExtensionInstallProgress = previous?.progress ?? { name: replacement.owner, packageDigest: await packageDigest(join(home, 'extensions', replacement.owner), ''), result: null, failedStage: null, lastFailure: null, stages: {}, authWorkId: null, scheduleIds: [] };
+          const saved = await store.writeExtensionInstallProgress({ expectedRevision: previous?.revision ?? null, progress: { ...progress, replacement: { owner: journal!.owner, fromVersion: registry.extension.version, at: clock.now().toISOString() } } });
+          if (!saved.ok) return saved;
+          if (!saved.written) return locked('확장 진행 기록이 바뀌었습니다.');
+        }
+        for (const name of existing.names.filter(name => !owners.some(o => o.owner === name && o.replacement))) {
           const released = await store.endExtensionQuiesce({ name, owner: journal!.owner });
           if (!released.ok) return released;
           if (!released.released) return locked('확장 정지 소유권이 바뀌었습니다.');

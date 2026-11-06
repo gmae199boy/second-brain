@@ -50,7 +50,7 @@ it('runs Compose through shared argv, prepares and migrates before seeding the o
   const home=await fresh();const fake=fakeCommandRunner([{ok:false,stdout:'',stderr:'no such volume',message:'missing'}, {ok:true,stdout:'',stderr:''}, {ok:true,stdout:'healthy',stderr:''}]);
   pg.prepareDatabase.mockResolvedValue({ok:true,databaseUrl:'postgresql://postgres:private@localhost/brain'});
   pg.runMigrations.mockResolvedValue({ok:true,to:1,applied:['0001_initial.sql']});pg.ensureSelfUser.mockResolvedValue({ok:true,created:true,user:{name:'주인'}});
-  pg.inspectExtensionFence.mockResolvedValue({names:[],gateNames:[],fenceReady:false});
+  pg.inspectExtensionFence.mockResolvedValue({names:[],gateNames:[],fenceReady:false,progressReady:false});
   const result=await installPostgres({home,urlEnv:'BRAIN_DATABASE_URL',env:{COMPOSE_PROJECT_NAME:'another-home'},clock,runner:fake.runner});
   expect(result).toMatchObject({ok:true,report:{...homeResources(home),schema_version:1,owner_created:true}});
   const expected=['compose','-p',homeResources(home).project,'--env-file',join(home,'.env'),'-f',join(home,'postgres','compose.yaml'),'up','-d','--wait'];
@@ -68,7 +68,7 @@ it('reports Compose tail and OrbStack guidance without preparing the database',a
 });
 it('guides lost-secret recovery without removing the existing volume',async()=>{
   const home=await fresh();const fake=fakeCommandRunner([{ok:false,stdout:'',stderr:'no such volume',message:'missing'}, {ok:true,stdout:'',stderr:''}, {ok:true,stdout:'healthy',stderr:''}]);pg.prepareDatabase.mockResolvedValue({ok:false,code:'DB_UNAVAILABLE',message:'password authentication failed'});
-  pg.inspectExtensionFence.mockResolvedValue({names:[],gateNames:[],fenceReady:false});
+  pg.inspectExtensionFence.mockResolvedValue({names:[],gateNames:[],fenceReady:false,progressReady:false});
   const result=await installPostgres({home,urlEnv:'BRAIN_DATABASE_URL',env:{},clock,runner:fake.runner});
   expect(result).toMatchObject({ok:false});if(result.ok)return;expect(result.message).toContain('password authentication failed');expect(result.message).toContain('기존 볼륨의 비밀번호를 확인하세요');expect(fake.calls).toHaveLength(3);expect(fake.calls.some(call=>call.args.includes('down') || call.args.includes('-v'))).toBe(false);expect(pg.runMigrations).not.toHaveBeenCalled();
 });

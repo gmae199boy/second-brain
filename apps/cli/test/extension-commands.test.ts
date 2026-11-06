@@ -404,3 +404,19 @@ it('지속 quiesce 중 명령은 시작하지 않고 소유한 정지 해제 후
     expect((await fixture.run(['ext','testext','echo-stats','--json'])).body.ok).toBe(true);
   } finally { await store.close(); await fixture.cleanup(); }
 },60000);
+
+
+it('미등록 명령 fallback은 일반 gate와 교체 대기를 구분한다', async () => {
+  const fixture = await extHome();
+  const {postgresStore} = await import('second_brain/postgres');
+  const store = postgresStore({databaseUrl:fixture.db.appUrl});
+  const owner = '12345678-1234-1234-1234-123456789abc';
+  try {
+    expect((await fixture.run(['ext','install','testext','--json'])).body.ok).toBe(true);
+    expect(await store.beginExtensionQuiesce({name:'testext',owner,now:new Date()})).toMatchObject({ok:true,acquired:true});
+    const args = ['ext','testext','missing-command','--json'];
+    expect((await fixture.run(args)).body.error.code).toBe('EXTENSION_COMMAND_UNAVAILABLE');
+    await fixture.db.query(`update brain.extension_install_progress set progress=jsonb_set(progress,'{replacement}','${JSON.stringify({owner,fromVersion:'0.1.0',at:'2026-10-29T00:00:00.000Z'})}'::jsonb) where name='testext'`);
+    expect((await fixture.run(args)).body.error.code).toBe('EXTENSION_REPLACEMENT_REQUIRED');
+  } finally { await store.close(); await fixture.cleanup(); }
+},60000);
