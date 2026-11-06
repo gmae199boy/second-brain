@@ -3,7 +3,7 @@ title: 'detached 옛 설치본의 안전한 대화형 bootstrap 갱신'
 type: 'bugfix'
 ticket: 11
 created: '2026-11-06'
-status: 'in-review'
+status: 'built'
 baseline_revision: '1570abe3275585ca0a0e968482b8ca3d8dc8157d'
 route: 'full'
 route_source: 'pinned'
@@ -182,7 +182,7 @@ ref 선택과 실행 모드만 명시적으로 분리하고 core 설치기 안�
 
 ## Auto Run Result
 
-구현·독립 리뷰·실패 수정 후 검증과 소유 자원 정리를 완료했다. 현재 커밋은 검증한 구현을 기록하며, 바로 다음 release commit에서 이 구현 SHA를 app-ref로 지정하고 version을 함께 올린 뒤 built를 확정한다. 아래 구현/리뷰 중 미확정 문장은 각 시점의 이력이며 이 결과와 최종 검증표가 최종 판정이다.
+구현·독립 리뷰·실패 수정 후 검증과 소유 자원 정리를 완료했다. 검증한 구현을 이전 커밋으로 기록하고 이 release commit에서 그 SHA를 app-ref로 지정하며 version을 함께 올려 built를 확정한다. 아래 구현/리뷰 중 미확정 문장은 각 시점의 이력이며 이 결과와 최종 검증표가 최종 판정이다.
 
 ### 변경 파일과 결과
 
@@ -234,8 +234,12 @@ macOS EPERM의 최초 순간 PGID/state가 기록되지 않아 정확 원인은 
 
 수락된 최신 main `9a9c8d60bc8052851220b9869a737b11aa257f1b`을 scoped stash/fast-forward/apply로 통합했고 티켓8파일 hash 동일·충돌 없음.22.2의 제품 변경2파일은 동일 JSON 토큰의 native SHA 계산이며 Store/root export가 연결되고 SQL/transaction/잠금/fence·schema39/migration/plugin 불변이다. 진행 중 시험은 중단/기준변경 없이 마쳤으며 통합 뒤 필요한 컴파일·지문 회귀2파일을 추가했다. 성능 실측/다른 티켓의 전체 검증을 중복하지 않았다. 원래 baseline은 그대로다.
 
-AC1~4는 최종 PTY6/6와 bootstrap 포함 TS199파일, 기존hook/npx 및 Python 회귀로 확인했다. AC5의 운영 안내·동기화·순차전체/실패재검증은 완료했으며 이전 구현ref/동시version증가는 다음 release commit에서 확정한다. AC6 변경불필요 분기는 미사용이다.
+AC1~4는 최종 PTY6/6와 bootstrap 포함 TS199파일, 기존hook/npx 및 Python 회귀로 확인했다. AC5의 운영 안내·동기화·순차전체/실패재검증을 완료했고 이전 구현 commit `b80b05309d6a7f14a47c7db05a017c54b5bdd2c6`을 app-ref로 지정하며 같은 release commit에서 version을 `0.1.22`로 증가시켰다. AC6 변경불필요 분기는 미사용이다.
 
 전체 실행에서 만든 fixture671개는 raw removed665개와 보존 guard 뒤 별도 정리6개를 구분해 정확ID별 부재를 확인했다(`.brain-automation/final-fixture-absence.json`). 전용 주 PG `brain-2111-final-d973af5cc708`, ID `a3d7f68603e9e9e587f6ffea6541330381f6362e863999fd60a8ebb11afa55a0`은 ticket/run 라벨과 정확 이름을 대조한 뒤 제거하고 부재 확인했다(`.brain-automation/final-main-cleanup.json`). 보존됐던 home6·공유target/bare1은 별도 소유/프로세스/열린파일 증명 뒤 정리했다. 운영/타티켓 자원·워크트리/세션·원시 로그/리뷰/영수증은 보존했다.
 
 22.2 측정창 조율은 중앙의 조기 해제 통지 뒤 즉시 재개했다. 제품 의존 대기나 시험 유예로 전환하지 않았다. 후속 보류 결함은 없고 실제 Mac 운영 인계만 위 operator_actions에 남긴다.
+
+### 릴리스 완료
+
+`plugin/app-ref`는 이전 구현 commit `b80b05309d6a7f14a47c7db05a017c54b5bdd2c6`을 가리키며 수정 bootstrap/설치연결/실제PTY시험을 포함한다. 같은 release commit의 plugin version은 `0.1.22`다. 릴리스 직전 fetch한 원격 main version `0.1.21`보다 크고 ref의40자리형식·기존구현선조·소스/배포일치·동시메타데이터변경을 확인했다. 티켓은 built(운영 인수 done 아님)다. 원격 브랜치 push·최종SHA 확인과 중앙보고 영수증은 로컬 final report/worker 체크포인트에 보존하며 중앙 main 병합/push는 수행하지 않는다.
