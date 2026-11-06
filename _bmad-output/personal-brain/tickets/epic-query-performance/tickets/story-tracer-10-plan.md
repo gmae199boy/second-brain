@@ -183,6 +183,27 @@ deferred: []
 
 BH8/IA5의 넓은 출처 자동 인증, 실제 파일 unlink, 모든 endpoint/SQL 제한까지 해결됐다는 주장은 하지 않는다. 행별 현재 파일·행 근거는 독립 원문에 있다. 이 보완은 T6 코드에 새 수정을 요구하지 않는다. 별도로 중앙 `msg_727760111f9c`가 새 main의21.10과 schema39 실제 통합을 지시했으므로, 해당 소스 통합·독립 확인·영향검증은 아래에 이어 기록한다. 현재 in-review는 이 통합 검증 대기 상태다.
 
+### 2026-11-06 — main21.10/schema39 통합 독립 확인
+
+중앙 `msg_727760111f9c` 지시로 main `bfcb3e3ff359ff5f4ec10e16cd5cc13c55ba8664`를 정상 merge `290c3951d0158b63197f82120d9235e7178a5b35`로 받았다. 부모는 `22de1b50077e062aea5757c6bd21aff28dd28c33`, `bfcb3e3ff359ff5f4ec10e16cd5cc13c55ba8664`, 충돌0. 원래baseline·제품커밋은 보존했다. 새Terra/medium T7(`task_a2e9f75ba431`/`ctx_5c5e3640f146`)가 현행schema기대8곳을39로 맞추고 build/typecheck/diff-check 각0, 실제시험은미실행으로 보고했다. 원문 `.brain-automation/reports/t7-main-integration.md`와 로그를 보존했다.
+
+독립Sol/medium Task `task_fc16f0e63e55`/Dispatch `ctx_ab693a5d50d0`가 두부모·현재소스·8행·계약을 읽기전용 대조했다. 원문 `.brain-automation/reports/review-main-schema39-integration.md`, worker_done `msg_3bd3558c3047`: 새결함0, 추가수정요구0. 지휘자는 아래8행 처분을 수락했다. 이번 리뷰는 실행검증이 아니며 실제영향시험은 별도 수행한다.
+
+| legacy-manifest.test.ts 행 | 독립 확인과 지휘자 처분 |
+|---|---|
+| 84 | 첫 이행 뒤 같은commit 완료기록이므로39로 수락, gate/progress 동등성 유지. |
+| 87 | 첫 이행 뒤 다른commit 재실행의 현행기록이므로39로 수락. |
+| 93 | current installation인 fixture의DB/설치기록 모두39로 수락, 승인없는retired manifest 거부 단언 유지. |
+| 138 | 이행후 owner불일치 거부 사례의현행기록39로 수락, gate검사 유지. |
+| 147 | 첫설치 완료뒤 CLI공통fixture기록39로 수락. |
+| 386 | 실제 setup완료/재실행 결과 installed.json.schema_version39 단언으로 수락. |
+| 463 | 실제 setup후 core ledger 최대버전39 단언으로 수락, 확장8개이력/데이터hash보존 유지. |
+| 514 | 이행후 cross-commit확인 상태39로 수락, 확인중변조 거부/ledger보존 유지. |
+
+migrate.ts는main대비CORE_SCHEMA_VERSION38→39한줄이며 main의progressReady계약·분기·3D000외오류재전파를 그대로 보존한다. 반대부모대비는progress관측 변경만 추가됐다. 과거27/11/15/16fixture 보존,38전용이행사례를별도증명했다고주장하지않는다. migration0001~0039 tree `b2fea89c10a3f11b6802a4a18eff92c7f6ad659d` 및 legacy SQLfixture는해당부모대비바이트동일. main의plugin app-ref `8513bf9c46960658e63c26ec6f89f27457e88bf8`/version0.1.20을 그대로 받고 수동수정하지 않았다.
+
+imports.ts·0039·tooling/query-perf의바이트는제품커밋과동일하므로당시슬롯의성능증거는그범위에서재사용한다. 이정적확인이나기존회귀가새설치/교체와schema39의동시실행증거는아니므로, 개발/독립확인이끝난뒤새전용tmpfsPG에서maxworkers2 test:changed를실행한다. 현재in-review는그실제영향검증이남은상태이며기존시험만으로통합완료처리하지않았다.
+
 ## Design Notes
 
 ### 확정 슬롯 측정 — 2026-11-06
@@ -244,3 +265,11 @@ BH8/IA5의 넓은 출처 자동 인증, 실제 파일 unlink, 모든 endpoint/SQ
 - 기각 근거: 긴 locator B-tree 키/강제 종료 신호 처리의 드문 개발 경로, 이미 정한 idle10% 허용의 반복 관찰, 측정 checkout의 pg를 쓰려고 package.json을 제거한 설계, 중복·기술 관찰은 원문 행별 사유에 따랐다. 쓰기 배치의 부분 인덱스 비용 누락은 trigger가 같은 배치에 정리 행을 INSERT하므로 false다. 어떤 필수 수락조건도 defer로 숨기지 않았다.
 - 잔여 위험: 300ms 고정 대기의 기존 취소 시험은 높은 부하에서 신호 처리기 준비 경합에 민감할 수 있다. 이번 제한 worker 검증은 통과했으나 최초 실패의 정확한 시간 원인은 계측하지 않았다. sub-ms wall3표본의 실행 간 잡음도 최초 실패와 함께 보존했다. 긴 locator 인덱스 키와 강제 SIGKILL 시 러너 DB 정리 누락의 리뷰 기각 위험은 그대로다.
 - 운영 조치/권고: 현재 티켓의 필수 작업과 소유 합성 자원 정리는 완료했다. 향후 별도 시험 안정화에서 두 취소 시험이 readiness 근거를 기다리도록 개선할지 판단하는 권고를 남긴다(이번 티켓에서는 미실행, 제품/단언 변경 없음). 중앙은 브랜치 결과 수락·main 통합/push·후속 항목 모음 반영을 수행한다. 워크트리·로컬 브랜치·원문 실행 증거는 보존한다.
+
+### 21.10/schema39 실제 통합 영향 검증 완료
+
+- 대상 정상merge `290c3951d0158b63197f82120d9235e7178a5b35`와 legacy-manifest시험8곳의미커밋schema39수정. T7build/typecheck각0 및 독립Sol 새결함0 이후 실제실행했다.
+- `VITEST_MAX_WORKERS=2 BRAIN_TEST_DATABASE_URL=<전용54222> pnpm test:changed -- origin/main`, ref `bfcb3e3ff359ff5f4ec10e16cd5cc13c55ba8664`,05:31:15~05:46:17 UTC, 시작load2.59/종료7.35, 전체종료0.
+- 기본98파일·2042시험통과(기존조건부skip1),394.35초; PG전체41파일·680시험통과,137.46초; Python전체15파일·66시험통과,364.74초. 새legacy-manifest·인덱스·기존공유locator·최초취소시험을포함한선정JSON을보존했다.
+- fixture194개생성/194개삭제,미삭제0. 로그 `.brain-automation/logs/20261106-main-integration-verify/`의명령·시각·부하·tested-head/source diff·선정·종료코드·resource-summary.json을보존한다. 전용tmpfs `brain-221-integration-test`(21d7a128c4c1,54222)는뒤의관련시험까지사용후정리한다.
+- 중앙 `msg_237712735cc5`가이실행중수락한17.4 main `3a263cccf2ef6c921d90cdc6f467ebdca0ce011e`와21.11문서를추가정상merge하도록지시했다. 현재suite를중단/ref변경없이끝낸뒤fetch했다. 추가18파일은recall skill/합성fixture·CLI/MCP시험·eval·coreSQL경계시험·선정규칙/README/문서와plugin0.1.21이며제품SQL/migration변경은없다. 이최신통합뒤실제관련recall-health/정적계약시험만수행하고성능측정·이미통과한전체회귀는반복하지않는다. 그보완동안상태in-review를유지한다.
