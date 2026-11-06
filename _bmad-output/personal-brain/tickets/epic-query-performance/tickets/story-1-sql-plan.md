@@ -3,7 +3,7 @@ title: '대량 첨부 반입: 일괄 SQL로 같은 행과 멱등성을 유지한
 type: 'feature'
 ticket: '4'
 created: '2026-11-06'
-status: 'in-review'
+status: 'built'
 baseline_revision: '9a9c8d60bc8052851220b9869a737b11aa257f1b'
 route: 'full'
 route_source: 'pinned'
@@ -169,3 +169,13 @@ T10의 승인된 세 번째 성능창에서 동일 전용 PG·brain_app/origin·
 최종 전체 회귀는 T10에서 worker2로 TS→Python 순차 각1회 실행했고 각각11/8건 실패했다. T11의 시험 fixture 및 격리HOME 서비스socket 교정은 Sol 독립확인에서 새 결함0이다(`confirm-11.md`). T12는 같은 worker2로 `pnpm test:changed -- 9a9c8d60bc8052851220b9869a737b11aa257f1b`(기본104파일2127통과1skip,Python16파일69통과), 일반hook(7통과1skip),Pythonhook(8통과)을 순차 실행해 모두 exit0이다. 최초19건은 관련 파일 전체 통과로 해결했다. 전체 명령의 최초 실패를 전체 통과로 덮어쓰지 않는다.
 
 원시/EXPLAIN/행·함수·러너·artifact/lock 지문·load/process/정리는 `.brain-automation/logs/{verify-6,verify-8,verify-10,recheck-12}/`, 한국어 판정은 `.brain-automation/reports/{verify-6,verify-8,verify-10,fix-11,confirm-11,recheck-12}.md`에 보존한다. 성능 함수 SHA256 `b5fd48edd3928f5e132147a722b55160f7e67b040da80e7d2436040c3589e3b2`, runner `dde8916fafe8ee4e086eff1f59fdd2974485fef2602ab769a5011431a9b5cd99`는 T12와 동일하므로 중복 측정하지 않았다. 소유 전용 PG와 동적187개 fixture는 정확ID/label·활성0·잔여DB0 확인 뒤 제거하고 부재를 확인했다. 운영/타티켓 자원은 변경하지 않았다.
+
+
+## Auto Run Result
+
+- 최종 상태: built. 사용자 인수 done 및 중앙 main 수락은 별도다. 미해결 필수 조건0, deferred0, 후속 독립리뷰 권고false.
+- 구현 `bba54fdd3a1fda8d42958ba98c9e58c659f6c481` 뒤 최신 main `d6a0b4b614daa1c321c735a2ca09aab27d78e193`를 티켓 브랜치에 통합한 HEAD `8418f766dbc69f1003fa2e8c11e96398b1859301`에서 최종 관련 검증을 수행했다. 충돌0, schema39/39 migration/lockfile/첨부함수/query-perf/채널fixture 동일. Sol 독립 통합 확인 새결함0(`integration-review-13.md`).
+- T14 통합 build/typecheck/diff 각 exit0. worker2 순차 관련 시험은 첨부·러너·채널retry·recall metadata·일반hook 5파일105통과1skip,Python설정hook 8통과로 두 명령 exit0. 원문 `.brain-automation/logs/integration-14/`, 판정 `.brain-automation/reports/integration-verify-14.md`. 함수/runner지문 유지로 성능중복측정 없음. 전용PG와동적6개fixture 정확ID정리/부재확인.
+- 독립4렌즈2회 총21행: high1/medium16/low4, patch19/reject2/defer0. 행별 근거는 Review Triage Log. T5/T7/T9/T11/통합의 필요한 독립확인은 모두 신규 구체 결함0으로 수렴했다. 최초 회귀/성능 실패는 위 Verification과 원문에 보존했다.
+- 잔여 위험: sub-ms3표본 변동과 두 최초 성능 실패의 원인은 미확정이다. 성능 수치는 실제 함수 내부12조건의 결과로 전체반입/혼합상태에 일반화하지 않는다. cluster·순차실행은 정확ID/시각의 수동증거로 확인하며 비교기 단독보장은 아니다. 비정상 환경의 준비API 전역 advisory lock 대기는 기존 공용정책을 유지하여 외부종료 정리가 필요할 수 있다(r2 reject E1).
+- 운영 조치: 운영Mac/계정/중앙state 변경 없음. 중앙이 이 브랜치 수락·main병합/push를 처리한다. 현재plugin0.1.23/app-ref는22.4를포함하지않으므로 제품배포가필요하면중앙이후속release에서이전구현commit ref와version동시증가를조율한다. 이티켓에서별도배포를실행하지않았다.
