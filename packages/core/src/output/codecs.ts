@@ -93,7 +93,7 @@ export const OUTPUT_CODECS: readonly OutputCodec[] = [
         probeClock,
         { texts: [...read.texts], toolNotes: [...read.toolNotes], documents: [...read.documents] },
         [],
-        { hint: allTexts(read) },
+        { hint: allTexts(read), extensions: [{ source: allTexts(read), installed: true, enabled: false, searchable: true, work_state: 'held' }] },
       );
       // The failure half too: that is where a caller's own input comes back
       // out, and it is the one part of an envelope made of what somebody
@@ -103,6 +103,7 @@ export const OUTPUT_CODECS: readonly OutputCodec[] = [
       // stop happening.
       const failed = errorEnvelope(probeClock, {
         code: 'INVALID_ARGUMENT',
+        meta: { extensions: [{ source: allTexts(read), installed: true, enabled: false, searchable: true, work_state: 'held' }] },
         data: { texts: read.texts },
         message: allTexts(read),
         hint: allTexts(read),

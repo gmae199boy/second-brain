@@ -1,3 +1,5 @@
+import { withExtensionMetadata } from './extension-metadata.js';
+import type { ExtensionStore } from '../ports/store.js';
 import { contentHash } from '../domain/sha256.js';
 import { decodeChunkLocator, type ChunkLocator } from '../domain/chunk-locator.js';
 import { maskOutputText } from '../output/mask.js';
@@ -6,7 +8,7 @@ import { documentContext } from './document-context.js';
 import { literalLikePattern } from './text-query.js';
 import { boundedResults } from './results.js';
 
-export interface DocumentSearchInput { query: string; limit?: number }
+export interface DocumentSearchInput { sources?: string[]; query: string; limit?: number }
 export interface ShowDocumentInput { file_id: string; chunk_locator: string; extraction_id?: string; before?: number; after?: number; offset?: number; fingerprint?: string }
 export function documentSearchText(rows: readonly DocumentRow[]): string[] {
   return rows.length ? rows.flatMap(({ body, ...source }) => [`출처 ${JSON.stringify(source)}`, `본문 ${body}`]) : ['일치하는 결과가 없습니다'];
@@ -14,7 +16,7 @@ export function documentSearchText(rows: readonly DocumentRow[]): string[] {
 const corrupt = () => ({ ok: false as const, code: 'SEARCH_FAILED' as const, message: '저장된 문서 문맥을 읽을 수 없습니다' });
 const invalid = (message: string) => ({ ok: false as const, code: 'INVALID_ARGUMENT' as const, message });
 const safe = (value: string) => maskOutputText(value) === value && !value.includes('\0');
-export async function searchDocuments(store: DocumentRecallStore, input: DocumentSearchInput) {
+export async function searchDocuments(store: DocumentRecallStore, input: DocumentSearchInput, statusStore?: Pick<ExtensionStore, 'listExtensionInventory' | 'getExtensionPublicStatus'>) {
   const limit = input.limit ?? 5;
   if (typeof input.query !== 'string' || !input.query || !Number.isInteger(limit) || limit < 1 || limit > 200) return invalid('검색어와 1~200 사이의 개수가 필요합니다');
   const found = await store.searchDocuments({ query: input.query.replaceAll('\0', '�'), pattern: literalLikePattern(input.query), limit: limit + 1 });
@@ -32,9 +34,11 @@ export async function searchDocuments(store: DocumentRecallStore, input: Documen
     rows.push({ ...row, body: whole.project(position.start, position.end) });
   }
   if (rows.some(r => !safe(r.file_id) || !safe(r.chunk_locator) || !safe(r.extraction_id) || !decodeChunkLocator(r.chunk_locator).ok)) return invalid('가려지거나 잘못된 문서 출처는 사용할 수 없습니다');
+  const metadata = statusStore ? await withExtensionMetadata(statusStore, { ok:true as const }, [...(input.sources ?? []), ...rows.map(row => row.source)]) : undefined;
+  if (metadata && !metadata.ok) return metadata;
   return boundedResults(rows, { get: r => r.body, set: (r, body) => ({ ...r, body }) }, budget => {
     const next = budget.nextIndex === null ? undefined : rows[budget.nextIndex];
-    return { warnings: budget.truncated ? ['RESULT_TRUNCATED' as const] : [], meta: { count: budget.data.length, has_more: found.rows.length > limit,
+    return { warnings: budget.truncated ? ['RESULT_TRUNCATED' as const] : [], meta: { ...(metadata?.meta ?? {}), count: budget.data.length, has_more: found.rows.length > limit,
       ...(rows.length ? {} : { hint: '일치하는 결과가 없습니다' }),
       ...(next ? { omitted: { count: budget.omitted, reason: '결과 크기 한도' }, next: { ns: 'files', verb: 'show', args: { file_id: next.file_id, chunk_locator: next.chunk_locator, extraction_id: next.extraction_id } } } : {}) } };
   }, documentSearchText);

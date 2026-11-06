@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { searchCases, searchFake, searchPrompt, verifySearch } from './search.mjs';
 import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +26,7 @@ function parseCall(args) {
 }
 export function fake(dir, args) {
   const name = readFileSync(join(dir,'case'),'utf8').trim();
+  if (searchCases.includes(name)) return searchFake(dir,name,args);
   if (!cases.includes(name)) throw Error('알 수 없는 사례');
   const item = sample(name); let result;
   if (equal(args,status)) result = envelope({name:'garmin',installed:name !== 'not-installed',enabled:!['not-installed','disabled'].includes(name)});
@@ -44,7 +46,7 @@ export function fake(dir, args) {
   return result.ok ? 0 : result.error.exit_code;
 }
 export function prepare(name, dir) {
-  if (!cases.includes(name)) throw Error('알 수 없는 사례');
+  if (!cases.includes(name) && !searchCases.includes(name)) throw Error('알 수 없는 사례');
   dir = resolve(dir); if (existsSync(dir)) throw Error('새 디렉터리를 지정해야 합니다');
   mkdirSync(join(dir,'bin'),{recursive:true});
   writeFileSync(join(dir,'case'),name+'\n');
@@ -52,6 +54,7 @@ export function prepare(name, dir) {
   copyFileSync(join(root,'plugin/skills/recall/SKILL.md'),join(dir,'SKILL.md'));
   writeFileSync(join(dir,'package.json'),'{"type":"module"}\n');
   writeFileSync(join(dir,'bin/brain'),`#!/usr/bin/env node\nimport { fake } from ${JSON.stringify(import.meta.url)};\nimport { dirname, resolve } from 'node:path';\nprocess.exitCode = fake(resolve(dirname(process.argv[1]), '..'), process.argv.slice(2));\n`); chmodSync(join(dir,'bin/brain'),0o755);
+  if (searchCases.includes(name)) { writeFileSync(join(dir,'prompt.md'),searchPrompt(name)); return dir; }
   const item = sample(name);
   const question = name === 'exercise' ? `${item.input.start_date}부터 ${item.input.end_date}까지 ${item.input.exercise} 반복 횟수 합계를 알려 주세요.` : name === 'daily' ? `${item.input.start_date}부터 ${item.input.end_date}까지 날짜별 걸음 수를 알려 주세요.` : name === 'workout' ? `${item.input.start_date}부터 ${item.input.end_date}까지 ${item.input.activity_type} 운동 시간 합계를 알려 주세요.` : name === 'dst-yesterday' ? '현재 시각은 2026-03-09T04:30:00Z입니다. 어제 걸음 수 합계를 알려 주세요.' : `${item.input.start_date}부터 ${item.input.end_date}까지 걸음 수 ${item.input.aggregation === 'mean' ? '평균' : '합계'}를 알려 주세요.`;
   const outputInstructions = name === 'daily' ? '마지막 daily-values 응답의 data를 result-report.json에 그대로 쓰고 실패하면 null을 쓰세요. report.txt에 각 행을 YYYY-MM-DD: <value 또는 null> <unit> 형식의 줄로 쓰세요.' : '마지막 period-summary 응답의 data를 result-report.json에 그대로 쓰고 응답이 없거나 실패하면 null을 쓰세요. 값이 있거나 null 결과인 경우 보고에 value:, unit:, observed_count:, null_count:, start_date:, end_date:, timezone: 줄을 각각 쓰세요.';
@@ -59,7 +62,9 @@ export function prepare(name, dir) {
   return dir;
 }
 export function verify(dir) {
-  dir = resolve(dir); const errors = []; let name, calls = [], outputs = [], report = '', transcript = '', structured;
+  dir = resolve(dir);
+  try { const name = readFileSync(join(dir,'case'),'utf8').trim(); if (searchCases.includes(name)) return verifySearch(dir,name); } catch { /* normal verifier reports missing input */ }
+  const errors = []; let name, calls = [], outputs = [], report = '', transcript = '', structured;
   try {
     name = readFileSync(join(dir,'case'),'utf8').trim(); if (!cases.includes(name)) throw Error('알 수 없는 사례');
     calls = readFileSync(join(dir,'calls.jsonl'),'utf8').split('\n').filter(Boolean).map(JSON.parse);

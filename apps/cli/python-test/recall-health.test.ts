@@ -63,15 +63,25 @@ it('matches hand-calculated health cases through CLI and MCP', async () => {
         const cli = await fixture.run(['ext','garmin',item.command,'--input',JSON.stringify(item.input),'--json']);
         expect(cli.body?.ok, `${item.id}: ${cli.stdout} ${cli.stderr}`).toBe(true);
         expect(cli.body.data, item.id).toEqual(item.expected);
+        expect(cli.body.meta?.extensions, item.id).toEqual(expect.arrayContaining([expect.objectContaining({source:'garmin',installed:true,enabled:true,searchable:true})]));
         const response = await request('tools/call',{name:`ext_garmin_${item.command.replaceAll('-','_')}`, arguments:item.input});
         const body = JSON.parse(response.result.content[0].text);
         expect(body.ok, item.id).toBe(true);
         expect(body.data, item.id).toEqual(item.expected);
+        expect(body.meta?.extensions, item.id).toEqual(cli.body.meta.extensions);
       }
     });
     const mismatch = {...cases.cases.find(item => item.id === 'dst-yesterday')!.input, timezone:'Asia/Seoul'};
     const denied = await fixture.run(['ext','garmin','period-summary','--input',JSON.stringify(mismatch),'--json']);
     expect(denied.body?.ok, denied.stdout + denied.stderr).toBe(false);
+    expect(denied.body.meta?.extensions).toEqual(expect.arrayContaining([expect.objectContaining({source:'garmin',installed:true,enabled:true,searchable:true})]));
+    await withMcp(fixture, async request => {
+      const response = await request('tools/call',{name:'ext_garmin_period_summary',arguments:mismatch});
+      expect(response.result.isError).toBe(true);
+      const body = JSON.parse(response.result.content[0].text);
+      expect(body.ok).toBe(false); expect(body.error.code).toBe(denied.body.error.code);
+      expect(body.meta.extensions).toEqual(denied.body.meta.extensions);
+    });
     for (const [key,value] of [['garmin.connection_id',cases.connections[0]!.id],['garmin.timezone','Asia/Seoul']]) {
       const set = await fixture.run(['config','set',key!,value!,'--json']);
       expect(set.body?.ok, set.stdout + set.stderr).toBe(true);
