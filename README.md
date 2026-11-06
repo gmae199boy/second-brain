@@ -1167,3 +1167,5 @@ https://orbstack.dev 에서 설치하고, 꺼져 있으면 `orb start`로 켜세
 Python 확장 통합 시험은 uv, fixture의 `.python-version`에 지정된 로컬 Python, 격리 PostgreSQL과 잠긴 의존성을 필요로 합니다. `pnpm test:python`으로 별도 실행합니다. 시험은 임시 홈과 데이터베이스를 정리하며, 자동으로 시작한 시험 컨테이너도 종료합니다.
 
 채널 스킬의 격리 평가 사례는 `pnpm eval:channels prepare failed <새-임시-폴더>`로 준비한다. `failed`, `sent`, `legacy`, `unsupported` 각각에 대해 별도 에이전트가 폴더의 안내와 스킬을 읽고 fake CLI를 호출한 다음 `pnpm eval:channels verify <폴더>`로 기록을 판정한다. 판정기 시험이나 고정 호출 재생은 실제 에이전트 행동 평가와 구분한다.
+
+recall 건강 조회의 합성 사례는 `pnpm eval:recall prepare sum <새-임시-폴더>`로 준비한다. `sum`, `mean`, `all-null`, `zero`, `dst-yesterday`, `daily`, `workout`, `exercise`, `not-installed`, `disabled`, `command-error`마다 별도 에이전트가 폴더의 안내와 스킬을 따라 fake CLI를 호출한 뒤 `pnpm eval:recall verify <폴더>`로 판정한다. 고정 호출을 재생하는 판정기 자기시험은 실제 에이전트 행동 평가가 아니다. 확인을 마친 임시 폴더는 삭제한다.

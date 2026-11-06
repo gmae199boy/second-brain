@@ -21,7 +21,8 @@
     "test:python": "pnpm build && vitest run --config apps/cli/python-test/vitest.config.ts",
     "eval:install": "node tooling/install-eval/eval.mjs",
     "eval:channels": "node tooling/channels-eval/eval.mjs",
-    "test:changed": "node tooling/test-changed/run.mjs"
+    "test:changed": "node tooling/test-changed/run.mjs",
+    "eval:recall": "node tooling/recall-eval/eval.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

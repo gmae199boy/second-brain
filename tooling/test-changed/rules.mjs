@@ -5,6 +5,7 @@ const rules = [
   { prefix:'extensions/', reason:'extension runtime, Garmin native SQL, Python oracle and subprocess fixtures' },
   { prefix:'plugins/testext/', reason:'extension plugin package and launcher' },
   { prefix:'plugins/garmin/', reason:'Garmin extension plugin package and launcher' },
+  { prefix:'tooling/recall-eval/', reason:'shared recall health integration fixtures' },
   { prefix:'tooling/package-garmin/', reason:'Garmin extension packaging source' },
   { prefix:'tooling/garmin-import/', reason:'Garmin capture Python implementation and tests' },
   { prefix:'packages/postgres/', reason:'Python integration uses the real PostgreSQL store' },
