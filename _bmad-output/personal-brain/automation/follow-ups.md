@@ -308,3 +308,18 @@
 | 기존 제약 보존 |21.5 BH04상대링크·credential운영확인·KST/reject/pending·A1/legacy/offline·attempts정책 |새기능/보안/소비UX추가없음. 21.7운영조치그대로유지 |
 
 신규운영조치/실계정/모델/운영변경없음. 원문·로그·ready/depth1은보존워크트리와중앙로컬archive에있다. PG권한/동시성·oracle·crash/fsync·프로세스/sandbox·파일/채널·전체시험실제결과는21.8확정이며인수완료주장없음.
+
+## 21.8 — built / 통합 시험 실행·수정 완료
+
+근거: [통합 시험 계획](../tickets/epic-garmin-extension/tickets/story-garmin-db-plan.md),[공개 실행 증거](../tickets/epic-garmin-extension/tickets/story-garmin-db-evidence.md) 및최종원시/독립runtime감사.최종62f3687의제품·시험바이트에서정확전용환경실행20261105T234612Z-40b825f99136의 pnpm test→pnpm test:python 순차각exit0을중앙이원시로그로대조했다. T186파일/4204통과·기존skip1, P15파일/66통과·skip0. 조건부hook사례는P START/PASS로실행확인.필수runtime공백0·미해결실패0·후속권고false·deferred0.중앙재계산원시/분석해시147개불일치0.
+
+| 종류 | 항목 | 상태 / 다음 판단 |
+| --- | --- | --- |
+| 해결 / 실행 gate |20.6·20.1~5·21.2~6 새·기존시험실행·실패처분 |최초121실패및이후후보/오인증실패원인·관련재검증·최종전체연결보존.244 unittest호출(240고유)/capture13개각ok,원래185T/15P대비누락0(격리시험T1추가) |
+| 증거 사고 / 제한수용 |최초T raw/start·최초collection raw/정확조회시각미복구 |기존85,397byte텍스트/121실패ID·원래행/출처시각/P원시동일사본을역사추적에만수용. 원시동일성복구나소급통과아님.사고/정정색인·중앙사본보존.최종실행증거는고유ID/충돌거부로보호 |
+| 환경/자원 |고유PG fixture·실TCP인증·정확ID정리 |최종173fixture생성/제거일치·정확ID모두부재.전용공용PG도정확ID제거/부재확인.기존공유/운영자원변경없음 |
+| 잔여 경고 |sourcemap/jsonschema deprecation·mock SQLite Connection ResourceWarning |원시보존.종료0/미처리오류0은경고0의미아님 |
+| 제품 수정 |scoped $id/$ref·Python준비순서/재개·relocatable설치·환경격리·정리오류/재시도 |thorough4렌즈2회·필요후속·최종전체회귀확인.적용migration/고정oracle불변.불필요timeout증가/skip/단언축소로통과처리없음 |
+| 운영 전제21.7 |credential/profile/self연결·모델설정·실제배포/옛예약전환·A1/legacy/offline 제약 |합성/fake시험통과가실계정귀속/실모델/OCR/운영인수완료는아님.이전운영조치와BH04상대링크한계유지 |
+
+core0.1.17/Garmin0.1.4 ref는이전구현472caa7,확장1.2.1/package85파일정합.실제운영변경없음.상세로그/소유자원/실패장부/독립감사는워크트리와보호된중앙로컬archive에보존한다.21.7 gate는21.8원격main반영을확인한뒤충족한다.
