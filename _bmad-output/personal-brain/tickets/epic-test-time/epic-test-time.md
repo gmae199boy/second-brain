@@ -38,7 +38,7 @@ risk: medium
 - 시험 assertion 축소, 시험 생략, 전역 timeout 증가, 결과 캐시, mock 대체로 성능 개선을 대신하지 않는다.
 - 무조건 인덱스 일괄 추가, Python 전체 이식, 광범위 재작성은 하지 않는다. 인덱스는 특정 분포에서 악화할 수 있다(source "확정 결과 4" 채널 최신 결과 인덱스).
 - 측정은 전용 독립 DB·home에서 직렬 잠금 아래 한다. 공용 시험 DB(54329)·운영 계정·실제 transcript·건강값을 쓰지 않으며 공개 plan에 개인 값이나 홈 절대 경로를 쓰지 않는다.
-- 구현 반복은 `pnpm test:changed`, 커밋 직전 `pnpm test`와 `pnpm test:python`을 순차로 한 번씩(AGENTS.md). 성능 비교의 warm-up·3회 반복은 대상 시험 파일·조회에만 하고, 전체 suite 시간은 커밋 직전 필수 1회 실행에서 기록한다. 전체 suite를 반복 측정하지 않는다.
+- 개발 및 리뷰 수정 중에는 시험을 실행하지 않고 컴파일만 확인한다. 마지막 수정 뒤 커밋 전에 `pnpm test` → `pnpm test:python`을 순차로 한 번씩 실행하고 실패 수정 뒤 관련 시험과 `pnpm test:changed`로 재검증한다(AGENTS.md). 성능 비교의 warm-up·3회 반복은 대상 시험 파일·조회에만 하고, 전체 suite 시간은 커밋 직전 필수 1회 실행에서 기록한다. 전체 suite를 반복 측정하지 않는다.
 
 ## Done when
 
@@ -88,3 +88,7 @@ risk: medium
 - Decision(2026-11-08, 중앙): E19-5는 독립성이 확인된 긴 파일만 case 단위로 배정할 수 있다. 파일·case·단언·timeout과 검증 집합은 그대로이며, 모든 slot 수에 같은 사전 고정 case 분해 정책을 적용한다. 선택 case는 정확히 1회 실행하고 필터 제외는 기존 조건부 skip과 구별한다. 성능 임계는 절반 이하로 유지한다.
 
 - Decision(2026-11-08, 중앙): W9 같은 artifacts case 재발을 별도 19.12로 분리한다. 19.5 runner와 소유를 분리하고 성능 gate를 유지한다. 원인은 미확정이며 4 slot 제외 수락은 없다.
+
+- Decision(2026-11-09, 중앙): 19.5에서 발견한 기존 Drive 회귀는 19.13의 별도 소유로 분리한다. 19.5 착수 의존은 추가하지 않으며 19.13 수락 뒤 관련 영향을 통합·대조한다.
+
+- Decision(2026-11-09, 중앙): 19.13은 tracer 9개 timeout과 parser 1개 실패 수 단언 불일치를 각각 조사한다. 8.4 source `73c44191af88fe8ede445513fb02c84e83badf06`는 baseline `2f23d30b7a894a9979567311544c7f28e3f25a5a`의 조상이며 migration 0001~0043 바이트가 동일한 중앙 수락 역사적 전제로, 새 착수 gate가 아니다.
