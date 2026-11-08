@@ -64,6 +64,7 @@ export interface BrainAssembly<S = Store & SchemaStore & SettingsStore> {
   idGen: IdGen;
   /** Optional explicit Drive injection for a configured runtime or isolated fixture. */
   driveFactory?: (store:S) => BrainDependencies['drive'];
+  sourceSyncFactory?: (store:S) => BrainDependencies['sourceSync'];
   /** Kinds beyond Core's own. Empty for every real invocation (AD-21). */
   workHandlers: WorkHandlers;
 }
@@ -81,6 +82,7 @@ export function brainDependencies<S extends SessionIngestStore>(assembly: BrainA
   return {
     store,
     ...(assembly.driveFactory ? {drive:assembly.driveFactory(store)} : {}),
+    ...(assembly.sourceSyncFactory ? {sourceSync:assembly.sourceSyncFactory(store)} : {}),
     cron: cronCalculator,
     extensions: extensionRuntime({ home, env, config, clock }),
     prerequisites: postgresPrerequisites({ home, env, runner: assembly.runner }),

@@ -37,7 +37,7 @@ it('32→33은 성공과 미완료 날짜를 회차로 옮기고 수집 데이�
       return rows;
     };
     const before = await snapshot();
-    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 32, to: 40 });
+    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 32, to: 41 });
     expect(await snapshot()).toEqual(before);
     expect((await client.query('select trigger_kind,cron_expr,time_zone,time_zone_source,extension,schedule_key,user_id,enabled from brain.schedules where id=$1', [schedule])).rows[0]).toEqual({ trigger_kind: 'cron', cron_expr: '5 9 * * *', time_zone: 'Asia/Seoul', time_zone_source: 'user', extension: 'testext', schedule_key: 'testext.sync:account:a', user_id: user, enabled: true });
     const rows = (await client.query("select to_char(occurrence_at at time zone 'UTC','YYYY-MM-DD HH24:MI') as at,status,work_id,user_id,time_zone from brain.schedule_occurrences order by occurrence_at")).rows;
@@ -81,7 +81,7 @@ it('DST gap은 전환 순간, fold는 첫 instant로 이행한다', async () => 
       await kit.client.query("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class) values ($1,'testext.sync','account',$2,now(),now(),'core')", [id, target]);
       await kit.client.query("insert into brain.schedule_successes values ($1,$2,'America/New_York',$3,now())", [schedule, date, id]);
     }
-    expect(await runMigrations({ databaseUrl: kit.db.url, clock })).toMatchObject({ ok: true, from: 32, to: 40 });
+    expect(await runMigrations({ databaseUrl: kit.db.url, clock })).toMatchObject({ ok: true, from: 32, to: 41 });
     const rows = (await kit.client.query('select schedule_id,occurrence_at,status from brain.schedule_occurrences order by occurrence_at')).rows;
     expect(rows).toEqual([{ schedule_id: gap, occurrence_at: new Date('2026-03-08T07:00:00Z'), status: 'done' }, { schedule_id: fold, occurrence_at: new Date('2026-11-01T05:30:00Z'), status: 'done' }]);
   } finally { await kit.close(); }
@@ -146,7 +146,7 @@ it('같은 확장 대상의 daily·interval·once와 완료 once fallback을 이
   const user=randomUUID(),daily=randomUUID(),interval=randomUUID(),onceLast=randomUUID(),onceCreated=randomUUID();
   await kit.client.query("insert into brain.users(id,name,is_self,created_at) values ($1,'synthetic',1,now())",[user]);
   await kit.client.query("insert into brain.schedules(id,kind,target_kind,target_id,local_time,time_zone,interval_seconds,next_run_at,last_run_at,created_at) values ($1,'testext.sync','account','same','09:00','UTC',null,'2026-01-02T09:00Z',null,'2026-01-01T00:00Z'),($2,'testext.sync','account','same',null,null,60,'2026-01-02T09:00Z',null,'2026-01-01T00:00Z'),($3,'testext.sync','account','same',null,null,null,null,'2026-01-02T08:00Z','2026-01-01T00:00Z'),($4,'testext.sync','account','same',null,null,null,null,null,'2026-01-01T00:00Z')",[daily,interval,onceLast,onceCreated]);
-  expect(await runMigrations({databaseUrl:kit.db.url,clock})).toMatchObject({ok:true,from:32,to:40});
+  expect(await runMigrations({databaseUrl:kit.db.url,clock})).toMatchObject({ok:true,from:32,to:41});
   const rows=(await kit.client.query('select id,trigger_kind,schedule_key,run_at,next_run_at from brain.schedules')).rows;
   expect(rows.find(r=>r.id===daily)).toMatchObject({trigger_kind:'cron',schedule_key:'testext.sync:account:same'});
   expect(rows.find(r=>r.id===interval)).toMatchObject({trigger_kind:'interval',schedule_key:`testext.sync:account:same:${interval}`});

@@ -30,7 +30,7 @@ it('확장 요청에서 리포트 추출, 출처 검색, SDK와 CLI 원문·다�
     expect(imported.completed).toBe(2); expect(extracted.completed).toBe(2);
     const registered=(await admin.query('select file_id from brain.file_request_results where request_id=$1',[requestId])).rows[0]; expect(registered?.file_id).toBeTruthy();
     const sdkFound=await sdk.recall.docs({query:'검색'}); expect(sdkFound.ok).toBe(true); if (!sdkFound.ok) throw Error('SDK 검색 실패');
-    expect(sdkFound.data).toHaveLength(1); const source=sdkFound.data[0]!;
+    expect(sdkFound.data).toHaveLength(1); const candidate=sdkFound.data[0]!; if(!candidate.file_id||!candidate.chunk_locator||!candidate.extraction_id)throw Error('문서 본문 출처 누락'); const source={...candidate,file_id:candidate.file_id,chunk_locator:candidate.chunk_locator,extraction_id:candidate.extraction_id};
     expect(source).toMatchObject({kind:'document',file_id:registered.file_id,source:name,report_date:'2026-01-02'});
     const output=await f.runDirect(['recall','docs','검색','--json']); expect(output.code).toBe(0);
     expect(output.body.data).toEqual(sdkFound.data); expect(output.stdout).not.toContain('privatefixture');

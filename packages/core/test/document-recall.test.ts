@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { searchDocuments, showDocument, type DocumentRecallStore, type DocumentRow, type DocumentSnapshot } from '../src/index.js';
 
 const locator = (start: number, end: number) => JSON.stringify({ type: 'text', start, end });
-const row: DocumentRow = { kind: 'document', file_id: 'file-1', display_name: 'report', chunk_locator: locator(0, 5), extraction_id: 'old', report_date: '2026-01-01', source: 'fixture', source_unreachable: false, body: '검색 내용' };
+const row = { kind: 'document', file_id: 'file-1', display_name: 'report', chunk_locator: locator(0, 5), extraction_id: 'old', report_date: '2026-01-01', source: 'fixture', source_unreachable: false, body: '검색 내용' } satisfies DocumentRow;
 const snapshot: DocumentSnapshot = { redacted: false, source_unreachable: false, extraction_id: 'new', status: 'ok', pieces: [
   { ordinal: 0, chunk_locator: locator(0, 6), body: '가나다라마바' },
   { ordinal: 1, chunk_locator: locator(4, 10), body: '마바사아자차' },

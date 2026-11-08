@@ -1,3 +1,6 @@
+import { SOURCE_SYNC_KIND, sourceSyncHandler, cleanupSourceTemps } from './sources/sync.js';
+import type { SourceStore } from './ports/source-store.js';
+import type { SourceRemote, SourceTemp } from './ports/source-remote.js';
 import { withExtensionMetadata } from './recall/extension-metadata.js';
 import { searchDocuments, showDocument, type DocumentSearchInput, type ShowDocumentInput } from './recall/documents.js';
 import { executeExtensionCommand } from './extensions/commands.js';
@@ -83,6 +86,8 @@ export interface BrainDependencies {
   importStaging?: ImportStaging;
   extensions?: ExtensionRuntime;
   sources?: SourceFileReader;
+  /** External source runtime, separate from local attachment readers and Drive home. */
+  sourceSync?: {store:SourceStore;remote:SourceRemote;temp:SourceTemp};
   userHome?: string | null;
   /**
    * The persistence port, plus the schema-version capability `doctor.run`
@@ -276,6 +281,7 @@ export interface BrainChannels {
 }
 export interface Brain {
   channels: BrainChannels;
+  sources: {sync(input:{sourceId:string}):Promise<{ok:true;sourceId:string;workId:string;created:boolean}|{ok:false;code:string;message:string}>};
   recall: { docs(input: DocumentSearchInput): Promise<Awaited<ReturnType<typeof searchDocuments>> | { ok: false; code: string; message: string; meta?: import('./envelope.js').EnvelopeMeta }>; chunks(input: SearchInput): Promise<Awaited<ReturnType<typeof searchRecall>> | { ok: false; code: string; message: string; meta?: import('./envelope.js').EnvelopeMeta }>; tools(input: SearchInput): Promise<Awaited<ReturnType<typeof searchRecall>> | { ok: false; code: string; message: string; meta?: import('./envelope.js').EnvelopeMeta }>; expand(input: ExpandInput): ReturnType<typeof expandRecall> };
   ext: BrainExt;
   messages: BrainMessages;
@@ -360,7 +366,8 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     // Core's own for the same reason: reading a stored attachment is a use case,
     // and the ports it needs — the store, the file store, the clock, the ids —
     // are exactly the ones this brain was assembled from (`files/extract-work.ts`).
-    [DOCUMENT_EXTRACT_KIND]: documentExtractHandler({ store, files:sourceFiles, clock, idGen }),
+    [DOCUMENT_EXTRACT_KIND]: documentExtractHandler({ store, files:sourceFiles, clock, idGen, ...(dependencies.sourceSync ? {source:dependencies.sourceSync} : {}) }),
+    ...(dependencies.sourceSync ? {[SOURCE_SYNC_KIND]:sourceSyncHandler({...dependencies.sourceSync,clock,idGen})} : {}),
     // And the same again for deleting one of them: the ports it needs are the
     // store, the file store and the clock, and what it does — empty one place
     // and record that it is empty — is a use case (`files/blob-delete-work.ts`).
@@ -462,6 +469,20 @@ export function createBrain(dependencies: BrainDependencies): Brain {
         ? ((result) => result.ok ? result : { ...result, message: maskOutputText(result.message) })(await store.resendChannelRequest({ requestId: id, workId: idGen.next(), now: clock.now() }))
         : { ok: false, code: 'INVALID_ARGUMENT', message: '요청 ID가 UUID 형식이 아닙니다' },
     },
+    sources: {async sync({sourceId}) {
+      if(!dependencies.sourceSync)return {ok:false,code:'SOURCE_UNAVAILABLE',message:'연결된 source가 없습니다'};
+      if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sourceId))return {ok:false,code:'INVALID_ARGUMENT',message:'source ID가 올바르지 않습니다'};
+      const source=await dependencies.sourceSync.store.readSource(sourceId);if(!source.ok)return source;if(!source.source)return {ok:false,code:'INVALID_ARGUMENT',message:'source가 없습니다'};
+      const now=clock.now(),added=await store.addWork({id:idGen.next(),kind:SOURCE_SYNC_KIND,targetKind:'source',targetId:sourceId,createdAt:now,nextAttemptAt:now});if(!added.ok)return added;
+      const sourceStore=dependencies.sourceSync.store;
+      const scopedStore={...store,hasDueWork:({now}:{now:Date})=>sourceStore.hasDueSourceWork({sourceId,syncWorkId:added.item.id,now}),claimWork:({now,claimedBy}:{now:Date;claimedBy:string})=>sourceStore.claimSourceWork({sourceId,syncWorkId:added.item.id,now,claimedBy})};
+      const report=await drainQueue({store:scopedStore,spool,clock,idGen},{budgetMs:60_000,handlers:{[SOURCE_SYNC_KIND]:handlers[SOURCE_SYNC_KIND]!,[DOCUMENT_EXTRACT_KIND]:handlers[DOCUMENT_EXTRACT_KIND]!}});
+      await cleanupSourceTemps(dependencies.sourceSync.temp,sourceStore,clock);
+      if(report.stopped==='unwritable')return {ok:false,code:report.code??'DB_UNAVAILABLE',message:'source 동기화 중 저장할 수 없습니다'};
+      const result=await sourceStore.readSourceWorkStatus({sourceId,syncWorkId:added.item.id});if(!result.ok)return result;
+      if(!result.complete)return {ok:false,code:'SOURCE_SYNC_INCOMPLETE',message:'source 동기화 또는 추출 작업이 완료되지 않았습니다'};
+      return {ok:true,sourceId,workId:added.item.id,created:added.created};
+    }},
     recall: { docs: async input => { const result = await searchDocuments(store, input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, chunks: async input => { const result = await searchRecall(store, 'chunks', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, tools: async input => { const result = await searchRecall(store, 'tools', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, expand: input => expandRecall(store, input) },
     ext: { command: async input => withExtensionMetadata(store, await executeExtensionCommand(dependencies, input), [input.name]), run: input => runExtension(dependencies, input), publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, cron, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
@@ -542,7 +563,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
       },
       drain: (input) =>
         drain(
-          { store, spool, clock, idGen, folders: transcriptFolders, parsers, spoolHandlers },
+          { store, spool, clock, idGen, folders: transcriptFolders, parsers, spoolHandlers, ...(dependencies.sourceSync?{sourceCleanup:dependencies.sourceSync}:{}) },
           {
             budgetMs: input.budgetMs,
             handlers: Object.fromEntries(Object.entries({ ...handlers, ...input.handlers }).filter(([kind]) => workExecutionClass(kind) === 'core')),
@@ -562,6 +583,7 @@ interface DrainDependencies {
   folders: readonly TranscriptFolder[];
   parsers: readonly Parser[];
   spoolHandlers: SpoolReplayHandlers;
+  sourceCleanup?:{store:SourceStore;temp:SourceTemp};
 }
 
 /**
@@ -642,6 +664,7 @@ async function drain(
       handlers: input.handlers,
     },
   );
+  if(dependencies.sourceCleanup)await cleanupSourceTemps(dependencies.sourceCleanup.temp,dependencies.sourceCleanup.store,clock);
 
   return {
     ...queue,

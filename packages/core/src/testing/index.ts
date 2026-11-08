@@ -156,3 +156,5 @@ export { fakeProcessLauncher, fakeProcessInspector, type FakeProcess } from './f
 export { extensionStoreContract } from './contracts/extension-store.js';
 export { channelStoreContract } from './contracts/channel-store.js';
 export { fakeCron } from './fakes/cron.js';
+export { memorySourceStore } from './fakes/source-store.js';
+export { sourceStoreContract, type SourceContractSubject } from './contracts/source-store.js';

@@ -28,7 +28,7 @@ export function memoryDriveUploads(): DriveUploadStore {
     },
   };
 }
-export interface FakeDriveFile { id:string; name:string; parents:string[]; bytes:Buffer }
+export interface FakeDriveFile { id:string; name:string; parents:string[]; bytes:Buffer; mimeType?:string; version?:string; size?:number; shortcutDetails?:{targetId:string;targetMimeType:string} }
 export interface FakeDrive {
   baseUrl:string; files:Map<string,FakeDriveFile>; requests:{method:string; path:string}[];
   checksum: 'sha256' | 'md5' | 'none' | 'wrong'; loseNextUploadResponse:boolean;
@@ -61,6 +61,14 @@ export async function fakeDrive(): Promise<FakeDrive> {
   const server: Server = createServer(async (req,res) => {
     const url = new URL(req.url ?? '/', 'http://localhost'); const method = req.method ?? 'GET'; requests.push({method,path:url.pathname + url.search});
     const json = (status:number, value:unknown) => {res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value));};
+    if (method === 'GET' && url.pathname === '/drive/v3/changes/startPageToken') return json(200,{startPageToken:'synthetic-token'});
+    if (method === 'GET' && url.pathname === '/drive/v3/files') {
+      const parent=/^'([^']+)' in parents/.exec(url.searchParams.get('q') ?? '')?.[1];const page=Number(url.searchParams.get('pageToken') ?? '0');
+      const entries=[...files.values()].filter(f=>f.parents.includes(parent ?? ''));const selected=entries.slice(page*2,page*2+2);
+      return json(200,{files:selected.map(f=>({id:f.id,name:f.name,mimeType:f.mimeType ?? 'text/plain',version:f.version ?? '1',size:String(f.size ?? f.bytes.length),...(f.shortcutDetails?{shortcutDetails:f.shortcutDetails}:{})})),...(entries.length>(page+1)*2?{nextPageToken:String(page+1)}:{})});
+    }
+    const exportMatch=/^\/drive\/v3\/files\/([^/]+)\/export$/.exec(url.pathname);
+    if(method==='GET'&&exportMatch){const file=files.get(decodeURIComponent(exportMatch[1]!));if(!file)return json(404,{});res.writeHead(200,{'content-type':'text/plain'});res.end(file.bytes);return;}
     if (method === 'GET' && url.pathname === '/drive/v3/files/generateIds') return json(200,{ids:[`fake-${++seq}`]});
     if (method === 'POST' && url.pathname === '/upload/drive/v3/files') {
       const chunks:Buffer[]=[]; for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -81,7 +89,7 @@ export async function fakeDrive(): Promise<FakeDrive> {
     if (method !== 'GET') return json(405,{});
     if (url.searchParams.get('alt') === 'media') {if (downloadBarrier) {const held=downloadBarrier; downloadBarrier=undefined; held.entered(); await held.wait;} res.writeHead(200,{'content-type':'application/octet-stream'});res.end(state.downloadBytes ?? file.bytes);return;}
     const checksum = state.checksum === 'none' ? {} : state.checksum === 'md5' ? {md5Checksum:createHash('md5').update(file.bytes).digest('hex')} : {sha256Checksum:state.checksum === 'wrong' ? '0'.repeat(64) : createHash('sha256').update(file.bytes).digest('hex')};
-    return json(200,{id:file.id,name:file.name,parents:file.parents,...(state.checksums ?? checksum)});
+    return json(200,{id:file.id,name:file.name,parents:file.parents,mimeType:file.mimeType ?? 'text/plain',version:file.version ?? '1',size:String(file.size ?? file.bytes.length),...(file.shortcutDetails?{shortcutDetails:file.shortcutDetails}:{}),...(state.checksums ?? checksum)});
   });
   await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
   const address=server.address(); if (!address || typeof address === 'string') throw new Error('fake Drive 주소 없음');

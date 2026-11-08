@@ -46,7 +46,7 @@ it('CLI와 MCP는 비활성 확장의 보존 리포트를 찾고 출처 원문 �
         const expectedId=verb==='chunks'?chunkId:verb==='tools'?noteId:file;
         const sdkResult=await sdk.recall[verb]({query,sources:[name]});
         expect(sdkResult.ok).toBe(true); if (!sdkResult.ok) throw Error(sdkResult.message);
-        const resultId=(row:{chunk_id?:string;tool_note_id?:string;file_id?:string})=>row.chunk_id ?? row.tool_note_id ?? row.file_id;
+        const resultId=(row:{chunk_id?:string;tool_note_id?:string;file_id?:string|null})=>row.chunk_id ?? row.tool_note_id ?? row.file_id ?? undefined;
         expect(sdkResult.data.map(resultId)).toEqual([expectedId]);
         const cli=await f.runDirect(['recall',verb,'--source',name,'--json','--',query]);
         expect(cli.body.ok).toBe(true); expect(cli.body.data.map(resultId)).toEqual([expectedId]);

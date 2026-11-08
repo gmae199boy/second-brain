@@ -3,7 +3,7 @@ import { okEnvelope, type DocumentRecallStore, searchDocuments, showDocument } f
 import { recallDocsCommand } from '../src/commands/recall-docs.js';
 import { filesShowCommand } from '../src/commands/files-show.js';
 import { recallText } from '../src/commands/recall-text.js';
-import { validateCommandMeta, type CommandContext, type DatabaseCommandSpec } from '../src/dispatch.js';
+import { validateCommandMeta, selectedCommand, type CommandContext, type DatabaseCommandSpec } from '../src/dispatch.js';
 
 const body = '검색 문서 😀'.repeat(3000);
 const locator = JSON.stringify({type:'text',start:0,end:Array.from(body).length});
@@ -58,3 +58,13 @@ it('여러 문서 위치를 JSON과 텍스트에서 각각 보존한다', async 
   const envelope=okEnvelope(clock,result.data,result.warnings,result.meta);
   expect(envelope.data).toEqual(result.data);
 });
+
+it('source-only files show exposes status and a safe Drive link without a locator',async()=>{
+  const source:DocumentRecallStore={...store,async readSourceDocument(){return {ok:true,source:{source_file_id:'source-1',file_id:null,display_name:'사진.jpg',source_path:'합성',source_remote_id:'remote-id',source:'drive',index_status:'photo',source_unreachable:false,current_version:'1',completed_version:null,stale:false}};}};
+  const custom={...brain,files:{show:(input:Parameters<typeof showDocument>[1])=>showDocument(source,input)}};
+  const result=await show.run({...context([],{sourceFileId:'source-1'}),brain:custom as unknown as CommandContext['brain']});
+  expect(result).toMatchObject({ok:true,meta:{source_file:{file_id:null,index_status:'photo',source_url:'https://drive.google.com/file/d/remote-id/view'}}});expect(result.ok&&result.text?.join('\n')).toContain('remote-id');expect(result.ok&&result.text?.join('\n')).not.toContain('chunk_locator');
+  expect(recallText([],{next:{ns:'files',verb:'show',args:{source_file_id:'source-1'}}}).join('\n')).toContain('brain files show --source-file-id source-1');
+});
+
+it('guide probe sees the optional positional file and source-specific option',()=>{expect(filesShowCommand.arguments).toEqual(['[fileId]']);expect(filesShowCommand.options?.map(option=>option.flags)).toContain('--source-file-id <id>');expect(selectedCommand([filesShowCommand],['files','show','--source-file-id','synthetic'])).toBe(filesShowCommand);});

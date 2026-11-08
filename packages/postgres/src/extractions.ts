@@ -107,6 +107,106 @@ const STALE_EXTRACTION_ERROR = '새 begin이 열려 있던 이 세대를 닫았�
 
 /** Writes lock files, then claims, then generations. Replacement closes the
  * generation, moves the pointer, deletes old chunks, then old generations. */
+/** Shared transaction body for source publication and ordinary extraction. */
+export async function finishExtractionInTransaction(db:Kysely<PgSchema>, input:FinishExtractionInput, finishedAt:string) {
+        const owner = (await sql<{ file_id: string }>`
+          select file_id from brain.document_extractions where id = ${input.extractionId}
+        `.execute(db)).rows[0];
+        if (owner !== undefined) await sql`
+          select id from brain.files where id = ${owner.file_id} for no key update
+        `.execute(db);
+        const row = (
+          await sql<{
+            id: string;
+            file_id: string;
+            attempt: number;
+            finished_at: string | null;
+            redacted_at: string | null;
+            current_extraction_id: string | null;
+          }>`
+            select e.id, e.file_id, e.attempt, e.finished_at,
+                   f.redacted_at, f.current_extraction_id
+              from brain.document_extractions e join brain.files f on f.id = e.file_id
+             where e.id = ${input.extractionId}
+          `.execute(db)
+        ).rows[0];
+        if (row === undefined) {
+          return {
+            ok: false as const,
+            code: 'EXTRACTION_NOT_FOUND' as const,
+            message: '추출 세대가 없습니다',
+          };
+        }
+        if (row.finished_at !== null) {
+          // An attempt whose claim is long gone, answering late. Nothing moves.
+          return {
+            ok: false as const,
+            code: 'EXTRACTION_CLOSED' as const,
+            message: '추출 세대가 이미 닫혔습니다',
+          };
+        }
+
+        const { outcome } = input;
+        const redacted = row.redacted_at !== null;
+        const currentAttempt =
+          row.current_extraction_id === null
+            ? 0
+            : ((
+                await sql<{ attempt: number }>`
+                  select attempt from brain.document_extractions where id = ${row.current_extraction_id}
+                `.execute(db)
+              ).rows[0]?.attempt ?? 0);
+        // The pointer moves only forward, and never onto a reading of a file
+        // somebody has redacted (AD-24).
+        const replaces = outcome.status === 'ok' && !redacted && row.attempt > currentAttempt;
+        // A successful reading of a file that was redacted while it ran is a
+        // reading whose text may not be kept, and `redacted` is the status that
+        // says so (migration 0002's check).
+        const status: DocumentExtractionStatus =
+          outcome.status === 'ok' && redacted ? 'redacted' : outcome.status;
+
+        await sql`
+          update brain.document_extractions
+             set status = ${status}, finished_at = ${finishedAt},
+                 media_type = ${outcome.mediaType},
+                 error = ${outcome.status === 'ok' ? null : pgText(outcome.error).text},
+                 failed_stage = ${outcome.status === 'failed' ? outcome.failedStage : null},
+                 index_config_id = ${outcome.status === 'ok' && replaces ? outcome.indexConfigId : null}
+           where id = ${row.id} and finished_at is null
+        `.execute(db);
+
+        if (replaces) {
+          await sql`
+            update brain.files set current_extraction_id = ${row.id} where id = ${row.file_id}
+          `.execute(db);
+          // Now that this generation is the current one, every other closed
+          // generation of the file is neither open nor current, which is exactly
+          // what `document_chunks_delete_rule` asks for. The rows follow their
+          // pieces, because the foreign key points that way.
+          await sql`
+            delete from brain.document_chunks
+             where extraction_id in (select id from brain.document_extractions
+                                      where file_id = ${row.file_id}
+                                        and id <> ${row.id}
+                                        and finished_at is not null)
+          `.execute(db);
+          await sql`
+            delete from brain.document_extractions
+             where file_id = ${row.file_id} and id <> ${row.id} and finished_at is not null
+          `.execute(db);
+        } else {
+          // A reading that did not take over leaves no text behind, whatever it
+          // had written before it stopped.
+          await sql`delete from brain.document_chunks where extraction_id = ${row.id}`.execute(db);
+        }
+
+        return {
+          ok: true as const,
+          extraction: toExtraction(await readExtraction(db, row.id, '닫은 세대')),
+          current: replaces,
+        };
+}
+
 export function postgresExtractionStore(connect: PgConnect): ExtractionStore {
   return {
     async beginExtraction(input: BeginExtractionInput): Promise<BeginExtractionResult> {
@@ -290,104 +390,7 @@ export function postgresExtractionStore(connect: PgConnect): ExtractionStore {
       try { finishedAt = instant(input.finishedAt, 'document_extractions.finished_at'); }
       catch (error) { return databaseFailure(error); }
 
-      const written = await withWrite(opened.connection, async (db) => {
-        const owner = (await sql<{ file_id: string }>`
-          select file_id from brain.document_extractions where id = ${input.extractionId}
-        `.execute(db)).rows[0];
-        if (owner !== undefined) await sql`
-          select id from brain.files where id = ${owner.file_id} for no key update
-        `.execute(db);
-        const row = (
-          await sql<{
-            id: string;
-            file_id: string;
-            attempt: number;
-            finished_at: string | null;
-            redacted_at: string | null;
-            current_extraction_id: string | null;
-          }>`
-            select e.id, e.file_id, e.attempt, e.finished_at,
-                   f.redacted_at, f.current_extraction_id
-              from brain.document_extractions e join brain.files f on f.id = e.file_id
-             where e.id = ${input.extractionId}
-          `.execute(db)
-        ).rows[0];
-        if (row === undefined) {
-          return {
-            ok: false as const,
-            code: 'EXTRACTION_NOT_FOUND' as const,
-            message: '추출 세대가 없습니다',
-          };
-        }
-        if (row.finished_at !== null) {
-          // An attempt whose claim is long gone, answering late. Nothing moves.
-          return {
-            ok: false as const,
-            code: 'EXTRACTION_CLOSED' as const,
-            message: '추출 세대가 이미 닫혔습니다',
-          };
-        }
-
-        const { outcome } = input;
-        const redacted = row.redacted_at !== null;
-        const currentAttempt =
-          row.current_extraction_id === null
-            ? 0
-            : ((
-                await sql<{ attempt: number }>`
-                  select attempt from brain.document_extractions where id = ${row.current_extraction_id}
-                `.execute(db)
-              ).rows[0]?.attempt ?? 0);
-        // The pointer moves only forward, and never onto a reading of a file
-        // somebody has redacted (AD-24).
-        const replaces = outcome.status === 'ok' && !redacted && row.attempt > currentAttempt;
-        // A successful reading of a file that was redacted while it ran is a
-        // reading whose text may not be kept, and `redacted` is the status that
-        // says so (migration 0002's check).
-        const status: DocumentExtractionStatus =
-          outcome.status === 'ok' && redacted ? 'redacted' : outcome.status;
-
-        await sql`
-          update brain.document_extractions
-             set status = ${status}, finished_at = ${finishedAt},
-                 media_type = ${outcome.mediaType},
-                 error = ${outcome.status === 'ok' ? null : pgText(outcome.error).text},
-                 failed_stage = ${outcome.status === 'failed' ? outcome.failedStage : null},
-                 index_config_id = ${outcome.status === 'ok' && replaces ? outcome.indexConfigId : null}
-           where id = ${row.id} and finished_at is null
-        `.execute(db);
-
-        if (replaces) {
-          await sql`
-            update brain.files set current_extraction_id = ${row.id} where id = ${row.file_id}
-          `.execute(db);
-          // Now that this generation is the current one, every other closed
-          // generation of the file is neither open nor current, which is exactly
-          // what `document_chunks_delete_rule` asks for. The rows follow their
-          // pieces, because the foreign key points that way.
-          await sql`
-            delete from brain.document_chunks
-             where extraction_id in (select id from brain.document_extractions
-                                      where file_id = ${row.file_id}
-                                        and id <> ${row.id}
-                                        and finished_at is not null)
-          `.execute(db);
-          await sql`
-            delete from brain.document_extractions
-             where file_id = ${row.file_id} and id <> ${row.id} and finished_at is not null
-          `.execute(db);
-        } else {
-          // A reading that did not take over leaves no text behind, whatever it
-          // had written before it stopped.
-          await sql`delete from brain.document_chunks where extraction_id = ${row.id}`.execute(db);
-        }
-
-        return {
-          ok: true as const,
-          extraction: toExtraction(await readExtraction(db, row.id, '닫은 세대')),
-          current: replaces,
-        };
-      });
+      const written = await withWrite(opened.connection, db => finishExtractionInTransaction(db, input, finishedAt));
       return written.ok ? written.value : written;
     },
 
