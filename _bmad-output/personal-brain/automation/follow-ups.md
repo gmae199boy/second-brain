@@ -613,3 +613,16 @@ built/deferred[]이며 사용자 인수 done은 아니다. 중앙의 19.5 공식
 독립 Sol은 세 경계의 코드 수준 해결과 기존 단언·제한·양성 대조 보존을 확인했다. 자기 합성 원래 HOME의 유효한 실제 Docker context, DOCKER_CONFIG/HOST/CONTEXT 환경 변수 부재에서 두 파일 관련 실행 1회가 45/45통과·skip0·exit0이었다. 세 peer 실패의 정확한 사례도 실제 통과했다. 관리 PG와 fixture46개의 정확 ID 및 기록 포트·전용 root 부재를 확인했다. 새 전체·성능·추가 진단은 없으며 과거 원인 한계는 유지한다. 실행 바이트·원시·독립 리뷰와 환경 부재 증거는 계획의 후속 절과 중앙 비공개 archive에 보존했다.
 
 이 후속도 hook snapshot 입력을 바꾸므로 19.5는 수락된 정확 후속 source를 통합해 관련 재검증·새 동결을 재개한다. 기존 3실패83통과를 지우지 않고 별도 처분한다. 8.5는 이 교정의 원래 단언을 보존해 후속 작업에 통합한다.
+
+## 19.5 — Python slot runner 중앙 수락 (2026-11-09)
+
+근거: [계획](../tickets/epic-test-time/tickets/story-python-role-pnpm-test-python-slot-plan.md)의 Review Triage Log·AC6 처분·Auto Run Result, 최종 source `5b2fff1d8cf4023d52df20ea2c1021cf6eb1fdde`. 측정 source는 `8f553a31da3bc19defbddea575c896a15d26572a`이며 이후 변경은 계획 문서뿐이다. 중앙은 원격 SHA·clean, 독립 round 7/F10b/driver r5/통합 영향 r4, 원시 63개 SHA-256과 16호출을 대조했다.
+
+- 독립 PG slot·lease·정확 소유 자원 장부·죽은 run 복구·hook lane 직렬화·독립 case shard와 Python 진입점 연결을 수락했다. test-db 13파일 82시험, 새 통합 source의 Drive 45/45 및 test:changed 기본 86/Python 76 통과를 확인했다. 제품·migration·plugin 변경은 없다.
+- v4의 동일 7파일/21job/54case에서 16호출 전부 exit0, 정책/환경 일치, 자원·quarantine·정리·metrics 오류 0이다. 1/2/3/4 slot 중앙값 650.1/347.1/256.0/209.1초, 비율 1/0.5339085/0.3937997/0.3216633으로 4 slot을 선택했고 기본 4를 유지한다. 고정 source/workload의 결과이며 미래 schema44·다른 workload 전체의 실측 결과가 아니다.
+- 최초 필수 전체 순차 회귀 source87f7b3e는 TS exit1(Drive10/redaction1), Python exit0였다. 19.13/19.14 수락 수정과 HOME 후속을 통합한 뒤 관련 검증·test:changed로 실패를 처분했다. AGENTS의 최초 전체 각1회 뒤 관련 재검증 규칙과 중앙 AC6 해석을 적용했다. 결합 source 전체 회귀를 추가 실행하거나 최초 결과를 소급 통과로 쓰지 않는다.
+- W9의 과거 4 slot 실패 원인은 미확정이다. hook lane은 같은 kernel lock·다른 PID·waitMs 68303·owner 표본 동시0으로 직렬화를 확인했지만 해제 타임스탬프와 표본 사이 짧은 프로세스 관측 한계는 남긴다. 4 slot은 Node 자손 CPU 약640~670%, Docker 약120~133%를 사용하므로 확정 측정은 별도 유한 창에서 조율한다.
+- 추적 pyc 재생성은 매번 원래 blob으로 복원했으며 저장소 위생 문제는 범위 밖 후속이다. runner 장부와 정확 ID 정리 근거를 보존했고 타 소유 자원은 건드리지 않았다.
+- 19.6(hook 중복 제거)·19.1(DB template)은 runner/lease/lane 계약을 유지한다. 8.5는 실행 명령이 끝난 안정 경계에서 수락 main을 통합하고 incoming 영향·필요 관련 검증을 수행한다. 진행 중 suite의 source를 바꾸지 않는다.
+
+built/deferred[]이며 사용자 인수 done은 아니다. 원시·리뷰·최종 보고 438개 파일을 원 워크트리와 중앙 비공개 archive에 보존했다.
