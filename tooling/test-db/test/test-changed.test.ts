@@ -28,7 +28,7 @@ describe('changed test path rules', () => {
       'apps/cli/src/assembly.ts','apps/cli/scripts/write-build-info.mjs','apps/cli/src/envelope.ts','apps/cli/src/commands/index.ts',
       'apps/cli/src/commands/daemon-status.ts','apps/cli/test/ext-fixture.ts','apps/cli/test/global-setup.ts',
       'apps/cli/test/pg-home.ts','apps/cli/test/extension-commands.test.ts','packages/core/src/testing/contracts/extension-quiesce.ts','apps/cli/test/install-lock.test.ts','apps/cli/test/ext-package.test.ts','apps/cli/test/ext-install-resume.test.ts','tooling/test-db/src/index.ts','tooling/bootstrap/src/bootstrap.ts',
-      'tooling/recall-eval/health-cases.json', 'apps/cli/python-test/vitest.config.ts','tooling/test-changed/rules.mjs','package.json','pnpm-lock.yaml',
+      'tooling/recall-eval/health-cases.json', 'apps/cli/python-test/vitest.config.ts','apps/cli/python-test/global-setup.ts','tooling/test-changed/rules.mjs','package.json','pnpm-lock.yaml',
       'apps/cli/src/mcp/serve.ts', 'apps/cli/src/commands/mcp-serve.ts', 'packages/core/src/ports/process.ts', 'packages/core/fixtures/extensions/v1/check-manifests.py',
     ]) expect(classifyChanges([file]).pythonAll, file).toBe(true);
   });
