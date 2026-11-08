@@ -112,3 +112,29 @@ it('validates and persists drive retention days with a 30-day default', async ()
   expect(await brain.config.set({key:'drive.keep_local_days',value:'0'})).toMatchObject({ok:true,value:'0',source:'db'});
   expect(await brain.config.get({key:'drive.keep_local_days'})).toMatchObject({ok:true,value:'0',source:'db'});
 });
+
+it('validates the Drive root setting and keeps it in the self user scope',async()=>{
+  const {brain}=kit();expect(await brain.config.get({key:'drive.root_folder_id'})).toMatchObject({ok:true,value:'',source:'default'});
+  expect(await brain.config.set({key:'drive.root_folder_id',value:'synthetic-root_1'})).toMatchObject({ok:true,value:'synthetic-root_1',scope:'user'});
+  for(const value of ['root/other','root\n','has space'])expect(await brain.config.set({key:'drive.root_folder_id',value})).toMatchObject({ok:false,code:'CONFIG_INVALID'});
+});
+
+it('normalizes watched Drive folders and validates the interval',async()=>{
+ const {brain}=kit();expect(await brain.config.get({key:'drive.watch_folders'})).toMatchObject({ok:true,value:'[]'});expect(await brain.config.get({key:'drive.sync_interval_minutes'})).toMatchObject({ok:true,value:'30'});
+ expect(await brain.config.set({key:'drive.watch_folders',value:'["z","a","z"]'})).toMatchObject({ok:true,value:'["a","z"]'});
+ for(const value of ['{}','["a/b"]','[3]','not-json'])expect(await brain.config.set({key:'drive.watch_folders',value})).toMatchObject({ok:false,code:'CONFIG_INVALID'});
+ for(const value of ['0','-1','1.5','1\n','525601'])expect(await brain.config.set({key:'drive.sync_interval_minutes',value})).toMatchObject({ok:false,code:'CONFIG_INVALID'});
+ expect(await brain.config.set({key:'drive.sync_interval_minutes',value:'2'})).toMatchObject({ok:true,value:'2'});
+});
+
+it('writes explicit self overrides even when the inherited or default value is identical',async()=>{
+ const store={...memorySettingsStore(),...self,...memorySchemaStore({version:1})};const def:SettingDefinition={key:'probe.label',scope:'user',defaultValue:'same',normalize:value=>({ok:true,value:value.trim()})};const deps={store,clock:{now:()=>at},schemaVersions:{core:1},settingDefinitions:[def]};const {setSetting}=await import('../src/settings/index.js');
+ expect(await setSetting(deps,{key:'timezone',value:'Asia/Seoul'})).toMatchObject({ok:true,source:'db',updatedAt:at});expect(await store.getExactSetting({userId,key:'timezone'})).toMatchObject({value:'Asia/Seoul'});
+ await store.setSetting({userId:null,key:def.key,value:'same',updatedAt:new Date(0)});expect(await setSetting(deps,{key:def.key,value:' same '})).toMatchObject({ok:true,source:'db',updatedAt:at});expect(await store.getExactSetting({userId,key:def.key})).toMatchObject({value:'same'});
+ await store.setSetting({userId:null,key:def.key,value:'different',updatedAt:new Date(1)});expect(await store.getSetting({userId,key:def.key})).toMatchObject({ok:true,setting:{value:'same'}});
+});
+
+it('retries interval reconciliation for the same persisted value after a callback failure',async()=>{
+ const store={...memorySettingsStore(),...self,...memorySchemaStore({version:1})};let calls=0;const deps={store,clock:{now:()=>at},schemaVersions:{core:1},onSettingChanged:async()=>{calls++;if(calls===1)throw Error('synthetic failure');}};const {setSetting}=await import('../src/settings/index.js');
+ expect(await setSetting(deps,{key:'drive.sync_interval_minutes',value:'2'})).toMatchObject({ok:false,code:'DB_UNAVAILABLE'});expect(await setSetting(deps,{key:'drive.sync_interval_minutes',value:'2'})).toMatchObject({ok:true,source:'db',value:'2',updatedAt:at});expect(calls).toBe(2);
+});

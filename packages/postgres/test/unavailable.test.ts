@@ -121,7 +121,13 @@ const calls = {
   recordChannelItemResult: s => s.recordChannelItemResult({requestId:id,workItemId:id,attemptToken:id,index:0,now,result:{outcome:'sent',externalMessageId:null}}),
   finishChannelAttempt: s => s.finishChannelAttempt({requestId:id,workItemId:id,attemptToken:id,now,externalMessageId:'1'}),
   ensureSource: s => s.ensureSource({id,kind:'drive',account:'test',rootId:'root'}),
+  invalidateSource: s => s.invalidateSource({id,now}),
+  updateSourceFolders: s => s.updateSourceFolders({id,userId:id,folderId:'synthetic',add:true,now}),
+  listSources: s => s.listSources(),
   readSource: s => s.readSource(id),
+  connectSource: s => s.connectSource({id}),
+  disconnectSource: s => s.disconnectSource({id,now}),
+  removeSource: s => s.removeSource({id,now}),
   listSourceEntries: s => s.listSourceEntries(id),
   hasDueSourceWork: s => s.hasDueSourceWork({sourceId:id,syncWorkId:id,now}),
   claimSourceWork: s => s.claimSourceWork({sourceId:id,syncWorkId:id,now,claimedBy:'worker'}),
@@ -157,6 +163,7 @@ const calls = {
   ensureDriveRedaction: s => s.ensureDriveRedaction({fileId:id,rootFolderId:'root',workId:id,at:now}),
   beginDriveMigration: s => s.beginDriveMigration({fileId:id,expectedHomeId:id,contentHash:'sha256:'+'a'.repeat(64),rootFolderId:'root',locationId:id,locator:'a'.repeat(64),workId:id,at:now}),
   readDriveRetention: s => s.readDriveRetention(id),
+  withDriveLocalDelete: s => s.withDriveLocalDelete({workId:id,localLocationId:id,claimedBy:id,claimedAt:now,attempts:1,now},async()=>null),
   commitDriveMigration: s => s.commitDriveMigration({fileId:id,expectedHomeId:id,contentHash:'sha256:'+'a'.repeat(64),rootFolderId:'root',remoteId:'remote',locationId:id,locator:'a'.repeat(64),workId:id,verifiedAt:now,dueAt:now}),
 } satisfies Record<Exclude<keyof PostgresStore, 'close' | 'imports' | 'driveUploads'>, (store: PostgresStore) => Promise<unknown>>;
 

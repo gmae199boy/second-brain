@@ -93,6 +93,7 @@ describe('runtimeChecks', () => {
       'plugin',
       'last-hook',
       'spool',
+      'drive-refresh-lock',
       'daemon',
     ]);
   });

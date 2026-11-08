@@ -1,3 +1,4 @@
+import { createDriveRuntime, type DriveRuntimeNetwork } from './runtime/drive-runtime.js';
 import { validateSchema } from './runtime/json-schema.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -100,6 +101,7 @@ export interface CommandContextBase {
 
 /** What a command gets. No file, no environment, no connection of its own. */
 export interface CommandContext extends CommandContextBase {
+  emitAuthorization?: (url:string)=>void;
   /** The SDK surface. The only thing a command is allowed to call (AD-5). */
   brain: Brain;
   /**
@@ -146,6 +148,8 @@ export interface SpoolCommandContext extends CommandContextBase {
  * writes a harness file and never touches the database.
  */
 export interface StandaloneCommandContext extends CommandContextBase {
+  sourceSyncFactory?: DispatchRuntime['sourceSyncFactory'];
+  driveNetwork?: DriveRuntimeNetwork;
   driveFactory?: DispatchRuntime['driveFactory'];
   runner?: CommandRunner;
   env: NodeJS.ProcessEnv;
@@ -364,6 +368,7 @@ export interface DispatchRuntime {
   /** Explicit Drive integration; the default CLI never opens an external account. */
   driveFactory?: (store: Store & SchemaStore & SettingsStore) => BrainDependencies['drive'];
   sourceSyncFactory?: (store: Store & SchemaStore & SettingsStore) => BrainDependencies['sourceSync'];
+  driveNetwork?: DriveRuntimeNetwork;
   signal?: AbortSignal;
   rawExtensionInput?: { value: unknown };
   runner?: CommandRunner;
@@ -460,6 +465,7 @@ export async function dispatch(
       createStore: runtime.createStore,
       driveFactory: runtime.driveFactory,
       sourceSyncFactory: runtime.sourceSyncFactory,
+      driveNetwork: runtime.driveNetwork,
       stdin: runtime.stdin ?? (() => readStdin()),
       recordHookArrival: (harness) => recordHookArrival(configHome(env), harness, env['SECOND_BRAIN_PLUGIN_ROOT']),
       idGen: runtime.idGen ?? uuidV7IdGen(),
@@ -548,6 +554,7 @@ export async function dispatch(
 interface Wiring {
   driveFactory?: DispatchRuntime['driveFactory'];
   sourceSyncFactory?: DispatchRuntime['sourceSyncFactory'];
+  driveNetwork?: DriveRuntimeNetwork;
   signal?: AbortSignal;
   rawExtensionInput?: { value: unknown };
   runner?: CommandRunner;
@@ -598,7 +605,7 @@ async function execute(
   // Before the configuration, because this command may be the one that writes
   // it, and before the store, because it has no database to reach.
   if (spec.standalone === true) {
-    return finish(rendering, await spec.run({ env, clock, options, args, stdin, recordHookArrival, ...(wiring.driveFactory === undefined ? {} : { driveFactory: wiring.driveFactory }), ...(wiring.runner === undefined ? {} : { runner: wiring.runner }) }), [], []);
+    return finish(rendering, await spec.run({ env, clock, options, args, stdin, recordHookArrival, sourceSyncFactory:wiring.sourceSyncFactory, driveNetwork:wiring.driveNetwork, ...(wiring.driveFactory === undefined ? {} : { driveFactory: wiring.driveFactory }), ...(wiring.runner === undefined ? {} : { runner: wiring.runner }) }), [], []);
   }
 
   const preflight = spec.preflight?.({ clock, options, args, stdin, recordHookArrival });
@@ -637,33 +644,18 @@ async function execute(
           }
         }
       }
-      return finish(rendering, await spec.runSettings({ brain: createSettingsBrain({ store: opened.store, clock, schemaVersions: expected, settingDefinitions: definitions }), config: config.config, clock, options, args, stdin, recordHookArrival }), warningCodes, warningLines);
+      const driveRuntime=await createDriveRuntime({home,store:opened.store,clock,idGen,schemaVersions:expected,network:wiring.driveNetwork});
+      return finish(rendering, await spec.runSettings({ brain: createSettingsBrain({ store: opened.store, clock, schemaVersions: expected, settingDefinitions: definitions, onSettingChanged:driveRuntime?.onSettingChanged }), config: config.config, clock, options, args, stdin, recordHookArrival }), warningCodes, warningLines);
     } finally { await store.close(); }
   }
 
-  // Held as a value rather than spelled inline, because the opportunistic drain
-  // below builds a second brain from the same ports over a store of its own —
-  // and because the daemon assembles its own rounds from the same function
-  // (`assembly.ts`), which is what keeps the two from drifting apart.
-  const dependencies = brainDependencies({
-    home,
-    env,
-    config,
-    store,
-    clock,
-    idGen,
-    workHandlers,
-    schemaVersions: expected,
-    adapterProbeIds: opened.adapterProbeIds,
-    runner: wiring.runner,
-    driveFactory: wiring.driveFactory,
-    sourceSyncFactory: wiring.sourceSyncFactory,
+  // Assemble the spool without Drive I/O: a failed write guard must be able
+  // to hand off a hook after its single schema probe.
+  const baseDependencies = brainDependencies({
+    home, env, config, store, clock, idGen, workHandlers, schemaVersions: expected,
+    adapterProbeIds: opened.adapterProbeIds, runner: wiring.runner,
   });
-  // One spool per invocation, taken off the assembly rather than built again:
-  // the spool branch below writes a mark with no brain in its hands (AD-9), and
-  // two `fileSpool` values over one folder would mint the same file name twice.
-  const spool = dependencies.spool;
-  const brain = createBrain(dependencies);
+  const spool = baseDependencies.spool;
   try {
     if (spec.writes === true) {
       // The write guard of AD-20, in the one place that cannot be skipped by
@@ -703,6 +695,16 @@ async function execute(
       }
     }
 
+    const driveRuntime = await createDriveRuntime({home,store,clock,idGen,schemaVersions:expected,network:wiring.driveNetwork});
+    const drive = wiring.driveFactory ? wiring.driveFactory(store) : driveRuntime?.drive;
+    const sourceSync = wiring.sourceSyncFactory ? wiring.sourceSyncFactory(store) : driveRuntime?.sourceSync;
+    const dependencies = {
+      ...baseDependencies,
+      ...(drive ? {drive} : {}),
+      ...(sourceSync ? {sourceSync} : {}),
+      ...(driveRuntime ? {sourceControl:driveRuntime.control} : {}),
+    };
+    const brain = createBrain(dependencies);
     const outcome = await spec.run({
       brain,
       config: config.ok ? config.config : undefined,
@@ -713,6 +715,7 @@ async function execute(
       recordHookArrival,
       signal: wiring.signal,
       rawExtensionInput: wiring.rawExtensionInput,
+      emitAuthorization:url=>stderr(`${encodeTextLine(`Drive 동의 URL: ${url}`)}\n`),
     });
     const result = finish(rendering, outcome, warningCodes, warningLines);
 
@@ -725,13 +728,13 @@ async function execute(
     if (shouldDrain(spec, config.ok, outcome) && config.ok &&
       !(await daemonLiveness({ home, clock })).alive) {
       await drainOpportunistically(
-        { ...dependencies, createStore, home, env, config },
+        { ...dependencies, createStore, home, env, config, driveNetwork:wiring.driveNetwork, driveFactory:wiring.driveFactory, sourceSyncFactory:wiring.sourceSyncFactory },
         stderr,
       );
     }
     return result;
   } finally {
-    await brain.close();
+    await store.close();
   }
 }
 
@@ -777,6 +780,9 @@ type OpportunisticDrain = BrainDependencies & {
   home: string;
   env: NodeJS.ProcessEnv;
   config: import('./config/codec.js').ReadConfigResult;
+  driveNetwork?:DriveRuntimeNetwork;
+  driveFactory?:DispatchRuntime['driveFactory'];
+  sourceSyncFactory?:DispatchRuntime['sourceSyncFactory'];
 };
 
 /**
@@ -806,7 +812,7 @@ async function drainOpportunistically(
   options: OpportunisticDrain,
   stderr: (text: string) => void,
 ): Promise<void> {
-  const { createStore, home, env, config, ...dependencies } = options;
+  const { createStore, home, env, config, driveNetwork, driveFactory, sourceSyncFactory, ...dependencies } = options;
   let store: (Store & SchemaStore & SettingsStore) | undefined;
   try {
     const opened = await openBrainStore({ home, env, config, path: 'drain', lockTimeoutMs: DRAIN_BUDGET_MS.opportunistic, createStore });
@@ -814,7 +820,8 @@ async function drainOpportunistically(
     const expected = opened.expected;
     const schema = await checkSchema(store, expected);
     if (!schema.ok) return;
-    const brain = createBrain({ ...dependencies, store, schemaVersions: expected });
+    const runtime=await createDriveRuntime({home,store,clock:dependencies.clock,idGen:dependencies.idGen,schemaVersions:expected,network:driveNetwork});
+    const brain = createBrain({ ...dependencies, store, schemaVersions: expected, ...(driveFactory?{drive:driveFactory(store)}:runtime?{drive:runtime.drive}:{}), ...(sourceSyncFactory?{sourceSync:sourceSyncFactory(store)}:runtime?{sourceSync:runtime.sourceSync,sourceControl:runtime.control}:{}) });
     await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.opportunistic });
   } catch (error) {
     stderr(`${encodeTextLine(`brain: 밀린 일 처리 중 오류: ${errorLine(error)}`)}\n`);

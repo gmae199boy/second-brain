@@ -1,4 +1,4 @@
-export type RemoteError = {ok:false;code:'UNREACHABLE'|'TEMPORARY'|'TOO_LARGE'|'CHANGED';message:string};
+export type RemoteError = {ok:false;code:'UNREACHABLE'|'TEMPORARY'|'TOO_LARGE'|'CHANGED'|'AUTH_REQUIRED'|'AUTH_LOGIN_REQUIRED'|'DB_UNAVAILABLE'|'DB_LOCKED'|'AUTH_SESSION_CHANGED';message:string;retryAfter?:Date};
 export const SOURCE_DOCS_MAX_BYTES=10_000_000;
 export type RemoteResult<T> = ({ok:true}&T)|RemoteError;
 export interface RemoteSourceItem { id:string;name:string;mimeType:string;version:string;sizeBytes:number|null; shortcutTargetId?:string;shortcutTargetMimeType?:string }

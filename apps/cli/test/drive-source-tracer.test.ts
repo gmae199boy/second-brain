@@ -140,3 +140,39 @@ it('preserved body identifies its completed version after newer metadata fails',
  const show=await f.cli(['files','show',row.file_id,'--source-file-id',row.source_file_id,'--chunk-locator',row.chunk_locator,'--json']);expect(show.body).toMatchObject({ok:true,meta:{source_file:{current_version:'2',completed_version:'1',stale:true}},data:[{body:expect.stringContaining('이전 본문')}]});
  const name=await f.cli(['recall','docs','새이름','--json']);expect(name.body.data[0]).toMatchObject({current_version:'2',completed_version:'1',stale:true});
 });
+
+it('disconnect during an actual HTTP download cancels the claim and refuses the late handoff',async()=>{
+ const f=await fixture();f.server.files.set('held',{id:'held',name:'대기문서.txt',mimeType:'text/plain',version:'1',parents:['root'],bytes:Buffer.from('합성 대기 본문')});
+ const gate=f.server.holdNextDownload(),pending=f.brain.sources.sync({sourceId:f.sourceId});
+ try {
+  await gate.entered;const claimed=(await f.db.rows<{id:string;claimed_by:string}>(`select id::text,claimed_by from brain.work_items where kind='source_sync' and target_id='${f.sourceId}' and completed_at is null`))[0]!;expect(claimed.claimed_by).toBeTruthy();
+  expect(await f.store.disconnectSource({id:f.sourceId,now:f.clock.now()})).toMatchObject({ok:true,source:{connected:false}});gate.release();expect(await pending).toMatchObject({ok:false});
+  expect(await f.db.rows('select * from brain.source_handoffs')).toEqual([]);expect(await f.store.retryWork({id:claimed.id,claimedBy:claimed.claimed_by,nextAttemptAt:f.clock.now(),lastError:'synthetic'})).toMatchObject({ok:true,outcome:'lost'});
+  expect(await f.db.rows(`select outcome,completed_at from brain.work_items where id='${claimed.id}'`)).toMatchObject([{outcome:'cancelled',completed_at:expect.anything()}]);expect(f.server.requests.some(r=>r.method==='DELETE')).toBe(false);
+ } finally {gate.release();await pending;}
+},120000);
+
+it('disconnect warns only its source while a shared source and search survive, then redaction hides both',async()=>{
+ const f=await fixture();f.server.files.set('shared',{id:'shared',name:'공유합성.txt',mimeType:'text/plain',version:'1',parents:['root'],bytes:Buffer.from('공유본문검색 합성자료')});
+ const second=f.ids.next();await f.store.ensureSource({id:second,kind:'drive',account:'other-synthetic',rootId:'root'});
+ expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});expect(await f.brain.sources.sync({sourceId:second})).toMatchObject({ok:true});
+ const entries=await f.db.rows<{id:string;source_id:string;file_id:string}>(`select id::text,source_id::text,file_id::text from brain.source_files where remote_id='shared' order by source_id`);expect(entries).toHaveLength(2);expect(entries[0]!.file_id).toBe(entries[1]!.file_id);
+ const gone=entries.find(e=>e.source_id===f.sourceId)!,live=entries.find(e=>e.source_id===second)!,file=gone.file_id;const before=await f.db.rows(`select current_extraction_id from brain.files where id='${file}'`);const chunks=await f.db.rows(`select id,body from brain.document_chunks where extraction_id=(select current_extraction_id from brain.files where id='${file}') order by ordinal`);
+ expect(await f.store.disconnectSource({id:f.sourceId,now:f.clock.now()})).toMatchObject({ok:true});expect(await f.db.rows(`select source_unreachable_at,current_extraction_id from brain.files where id='${file}'`)).toMatchObject([{source_unreachable_at:null,current_extraction_id:before[0]!.current_extraction_id}]);expect(await f.db.rows(`select id,body from brain.document_chunks where extraction_id=(select current_extraction_id from brain.files where id='${file}') order by ordinal`)).toEqual(chunks);
+ const recall=await f.cli(['recall','docs','본문검색','--limit','30','--json']);expect(recall.body.data).toEqual(expect.arrayContaining([expect.objectContaining({source_file_id:gone.id,source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'}),expect.objectContaining({source_file_id:live.id,source_unreachable:false})]));
+ const goneShow=await f.cli(['files','show','--source-file-id',gone.id,'--json']);const liveShow=await f.cli(['files','show','--source-file-id',live.id,'--json']);expect(goneShow.body.meta.source_file).toMatchObject({source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'});expect(liveShow.body.meta.source_file).toMatchObject({source_unreachable:false});
+ expect((await f.cli(['files','redact',file,'--yes','--json'])).code).toBe(0);expect(JSON.stringify((await f.cli(['recall','docs','공유합성','--json'])).body)).not.toContain('공유합성');expect((await f.cli(['files','show','--source-file-id',live.id,'--json'])).body.ok).toBe(false);expect(f.server.requests.some(r=>r.method==='DELETE')).toBe(false);
+},120000);
+
+it.each(['DB_UNAVAILABLE','DB_LOCKED'] as const)('returns an extraction attempt on guarded %s and preserves the current extraction',async code=>{
+ const f=await fixture();f.server.files.set('guarded',{id:'guarded',name:'guarded.txt',mimeType:'text/plain',version:'1',bytes:Buffer.from('기존 합성 본문'),parents:['root']});
+ expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});
+ const rows=await f.db.rows<{id:string;file_id:string;current_extraction_id:string}>("select sf.id, sf.file_id, f.current_extraction_id from brain.source_files sf join brain.files f on f.id=sf.file_id where sf.remote_id='guarded'");const target=rows[0]!;expect(target.current_extraction_id).toBeTruthy();
+ await f.db.query("insert into brain.settings(user_id,key,value,updated_at) select id,'drive.account_id','synthetic','2026-01-01Z' from brain.users where is_self=1");
+ const {createDriveRuntime}=await import('../src/runtime/drive-runtime.js');let fail=false,calls=0,guardFailures=0;const original=f.store.listSources.bind(f.store);const wrapped=new Proxy(f.store,{get(target,key,receiver){if(key==='listSources')return async()=>fail?{ok:false as const,code,message:'synthetic database failure'}:original();return Reflect.get(target,key,receiver);}});
+ const runtime=await createDriveRuntime({home:f.home,store:wrapped,clock:f.clock,idGen:f.ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,network:{fetch:async()=>{calls++;return new Response('{}');}}});if(!runtime)throw Error('runtime missing');expect(await runtime.sourceSync.validateSource!(f.sourceId)).toEqual({ok:true});const metadata=runtime.sourceSync.remote.metadata.bind(runtime.sourceSync.remote);runtime.sourceSync.remote.metadata=async id=>{const result=await metadata(id);if(!result.ok&&result.code===code)guardFailures++;return result;};
+ const work=f.ids.next(),now=f.clock.now();expect(await f.store.addWork({id:work,kind:'document_extract',targetKind:'file',targetId:target.file_id,createdAt:now,nextAttemptAt:now})).toMatchObject({ok:true});
+ await f.db.query(`update brain.source_handoffs set work_id='${work}' where source_file_id='${target.id}'`);const handoffs=await f.store.listSourceHandoffs(target.file_id);expect(handoffs).toMatchObject({ok:true,handoffs:expect.arrayContaining([expect.objectContaining({sourceFileId:target.id,remoteId:'guarded',workId:work})])});
+ const config=await readConfig(f.home),env={HOME:f.home,SECOND_BRAIN_HOME:f.home,BRAIN_DATABASE_URL:f.db.appUrl};const brain=createBrain(brainDependencies({home:f.home,env,config,store:wrapped,clock:f.clock,idGen:f.ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{},sourceSyncFactory:()=>runtime.sourceSync}));fail=true;
+ expect(await brain.queue.drain({budgetMs:1000})).toMatchObject({stopped:'unwritable',code,released:1});expect(guardFailures).toBe(1);expect(calls).toBe(0);expect(await f.db.rows(`select attempts,completed_at from brain.work_items where id='${work}'`)).toEqual([{attempts:0,completed_at:null}]);expect(await f.db.rows(`select current_extraction_id from brain.files where id='${target.file_id}'`)).toEqual([{current_extraction_id:target.current_extraction_id}]);
+});
