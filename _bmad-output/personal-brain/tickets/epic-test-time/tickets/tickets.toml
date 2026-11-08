@@ -2,7 +2,7 @@
 # 2026-11-05: 18.3 gate가 아니다. 19.5는 20.6 정리 뒤, 19.10은 21.3 normalize 이식 뒤. 19.7은 drop(검증 코드가 20.6에서 사라짐).
 # 2026-11-04 사용자 결정(A)과 runner 조사: 18.10 → 5 → 6 → 1 → 2 → 3 → 7 → 10 → 18.3, 그 뒤 8 → 9(18.3을 막지 않음).
 
-next_id = 12
+next_id = 13
 
 [[entry]]
 id = 11
@@ -21,7 +21,7 @@ references = ["_bmad-output/personal-brain/tickets/epic-test-time/tickets/bug-ga
 id = 5
 type = "story"
 title = "Python 통합 시험 병렬화: 확장 role 계약을 지킨 채 pnpm test:python이 여러 slot에서 동시에 돈다"
-description = "20.6 정리 뒤 현행 Python 통합 시험을 독립 PostgreSQL slot에서 병렬 실행한다. slot은 실행별 cluster·동적 loopback port·자식 프로세스·자원 장부를 소유하며 파일은 slot 안에서 순차 실행한다. 현재 fixture별 독립 cluster 경로와 같은 파일 안 복수 extHome 격리를 보존하고, 정상 종료·실패·timeout·중단 뒤 소유 자원만 정리한다. 생산 role·advisory lock·권한·case·단언·timeout은 유지한다. hook은 두 suite에 그대로 남기고 직렬 전용 lane과 충돌 거부로 격리한다. private 설치 venv와 파일별 pinned Python을 보존하며 없어진 공유 venv·health-perf·normalize/body-digest 경로를 부활시키지 않는다. 19.1에는 slot URL·lease·격리 fixture override·정리 책임을, 19.6에는 hook lane을 인계한다. 19.11의 수락된 수정 또는 수정 불필요 근거를 최종 회귀 전에 인계받고 관련 재검증한다."
+description = "20.6 정리 뒤 현행 Python 통합 시험을 독립 PostgreSQL slot에서 병렬 실행한다. slot은 실행별 cluster·동적 loopback port·자식 프로세스·자원 장부를 소유하며 파일은 slot 안에서 순차 실행한다. 현재 fixture별 독립 cluster 경로와 같은 파일 안 복수 extHome 격리를 보존하고, 정상 종료·실패·timeout·중단 뒤 소유 자원만 정리한다. 생산 role·advisory lock·권한·case·단언·timeout은 유지한다. hook은 두 suite에 그대로 남기고 직렬 전용 lane과 충돌 거부로 격리한다. private 설치 venv와 파일별 pinned Python을 보존하며 없어진 공유 venv·health-perf·normalize/body-digest 경로를 부활시키지 않는다. 19.1에는 slot URL·lease·격리 fixture override·정리 책임을, 19.6에는 hook lane을 인계한다. 19.11의 수락된 수정 또는 수정 불필요 근거를 최종 회귀 전에 인계받고 관련 재검증한다. 19.12의 수락 source와 fixture/시험/workload/measurement 의미 변경 범위를 인계받고 성능 gate는 유지한다."
 verify = "정제 leaf와 story-python-role-pnpm-test-python-slot-refinement.md의 수락조건·정적 근거·검증 순서를 따른다. 구현 종료 뒤 독립 환경에서 같은 새 runner의 1·2·3·4 slot 각각 warm-up 1회와 유효 3표본을 고정한 최장 파일 묶음으로 비교한다. 선택 구성 wall 중앙값/1 slot wall 중앙값 <=0.5, case·결과 동등, 실패/timeout 후 다음 파일·다른 slot·다음 실행 정상과 소유 자원 잔존0을 증명한다. build 선행 후 기본/Python Vitest process 병행 1회, 마지막 pnpm test → pnpm test:python 순차 각1회를 별도로 기록한다. 이번 정제에서는 build/typecheck/test/eval/측정/PG생성을 실행하지 않는다."
 covers = ["E19-5"]
 after = ["20.6"]
@@ -137,3 +137,16 @@ hitl = false
 risk = "medium"
 references = ["_bmad-output/personal-brain/research-performance-2026-11-04/research-performance-2026-11-04.md, 확정 결과 6"]
 notes = ["Risk: medium — 좁힌 규칙이 실제 의존을 놓치면 회귀가 반복 검증에서 빠진다. 마무리 전체 회귀가 마지막 안전망이다."]
+
+[[entry]]
+id = 12
+type = "bug"
+title = "Garmin 회귀: 재발행 직렬화 시험의 세 번째 반입이 간헐적으로 실패한다"
+description = "locator 재발행과 core 정리의 세 번째 반입 nonzero를 조사하고 정확한 잠금·작업 소유·staging 계약의 결정적 회귀를 복구한다. 원인은 미확정이며 19.5 runner와 별도 소유로 진행한다."
+verify = "정제 bug leaf의 재현/수락조건에 따라 원인·실제 잠금/자식 경계를 검증하고 독립 리뷰와 필요한 후속 리뷰 뒤 전체TS→Python순차각1회와 관련 처분 증거를 남긴다. 원인미확정 단일성공은 수정불필요 증명이 아니다."
+covers = []
+after = ["21.8"]
+hitl = false
+risk = "medium"
+refine = true
+references = ["_bmad-output/personal-brain/tickets/epic-test-time/tickets/bug-artifacts-locator-cleanup-race.md"]
