@@ -37,14 +37,15 @@ deferred:
 
 **Always:** 개발·리뷰 수정 중 시험 실행 금지, 컴파일 확인만. 마지막 독립 후속 리뷰 뒤 전체 TS → Python 순차 각1회. 전용 DB·role·home·venv·가짜 HTTP·시계만 사용. 오류·증거는 durable `.brain-automation/`에 보존. 한국어 보고, 홈 절대 경로 금지.
 
-**Never:** 생산 코드 변경은 구체 원인·최소 범위를 중앙에 먼저 질문한다. 19.5 runner/slot/config, tooling/test-db, tooling/test-changed, Python config, garmin-report 파일 수정 금지. migration1..41·core41·plugin0.1.23/ref598497c 불변. 전송 메서드 느슨한 허용·timeout 증가·실제 그래프 mock·중앙 state/main 변경 금지.
+**Never:** 생산 코드 변경은 구체 원인·최소 범위를 중앙에 먼저 질문한다. 19.5 runner/slot/config, tooling/test-db, tooling/test-changed, Python config, garmin-report 파일 수정 금지. 과거 migration1..41 및 승인 main의0042/core42·plugin0.1.23/ref598497c 불변. 전송 메서드 느슨한 허용·timeout 증가·실제 그래프 mock·중앙 state/main 변경 금지.
 
 ## I/O & Edge-Case Matrix
 
 | Scenario | Input / State | Expected Output / Behavior | Error Handling |
 |---|---|---|---|
 | 보고 당시 | 수집 중단 database/exit, 보고일 2026-11-10, 직전 일·월 수면값 | 30일·전체 수면 그래프의 정확한 목록, 묶음 전송과 실제 bytes | 문서 500→200, 성공 항목 재전송 없음 |
-| 인접 주간 경계 | 보고일 2026-11-09·11, 직전 두 날짜 수면값 | 같은 주의 값에서 30일 수면 그래프만 생성, 단일 사진과 bytes | 같은 문서 재시도 계약 |
+| 월요일 경계 | 보고일 2026-11-09, 직전 두 날짜 수면값·당일 정규화 행의 운동/근력0 관측 | 50/57/58 정확한 그래프 목록, 3장 묶음과 실제 bytes | 같은 문서 재시도 계약 |
+| 같은 주 경계 | 보고일 2026-11-11, 직전 두 날짜 수면값·당일 정규화 행 | 50 정확한 그래프 목록, 단일 사진과 실제 bytes | 같은 문서 재시도 계약 |
 | 기존 채널 경계 | 단일·묶음 입력 | channels-bundle 기존 시험의 정확한 메서드·바이트·재개 단언 유지 | 연결 단절 뒤 성공 항목 생략 |
 
 </intent-contract>
@@ -144,3 +145,8 @@ deferred:
 - 증거: .brain-automation/tickets/19.11/ 아래spec/evidence/manifest/로그/리뷰/영수증을보존한다. 자원정리와원격SHA최종확인은최종보고에기록한다. 워크트리·브랜치·세션을보존한다.
 
 - 최종 소유 자원 정리: `.brain-automation/tickets/19.11/owned-resource-cleanup.json`에서 254개 소유 container ID의 부재와 전용 임시 home/archive 제거를 확인했다. durable baseline tar·입력 patch·원문·리뷰·영수증은 보존했다.
+
+
+### 중앙 수락 문서 정합 교정 (2026-11-08)
+
+최초 계획의 core41 고정 문구와 11-09/11 묶음 행은 뒤의 실제 main42 통합 및 R3 관측0 교정과 모순돼 현재 계약에 맞춰 정리했다. 11-09는50/57/58, 11-10은50/54/57/58, 11-11은50이다. 제품/시험/검증 산출물 변경 없이 문서만 교정했으며 최초 원문과 반증·후속 리뷰·실행 이력은 로컬 archive와 위 기록에 보존한다.

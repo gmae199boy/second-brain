@@ -523,3 +523,17 @@ deferred[]/필수미해결0/필요독립후속완료. 사용자최종인수done�
 - 배포: plugin0.1.23/app-ref598497c는 유지돼 이번8.3은 현재 설치 ref에 포함되지 않는다. 실제 배포는 이전 구현commit ref와 같은 release의 version 증가 규칙에 따른 별도 후속이다.
 
 deferred[]와 별개로 위 필수 회귀3건은 미완료 차단이다. 부분 main 반영은 built·사용자 인수done·실제 운영 연결 완료가 아니다.
+
+
+## 19.11 — Garmin 달력 경계·표시 ID 회귀 수락 (2026-11-08)
+
+근거: [회귀 복구 계획](../tickets/epic-test-time/tickets/bug-garmin-core-channel-date-plan.md)의 Review Triage Log·Plan Change Log·deferred·Auto Run Result, 최종 source `7718086`. 중앙은 마지막 독립 R3 교정·R4 main42 영향 원문, 최종 파일 지문과 실제 통합 검증 로그/명령/exit, 원격 tip과 clean을 대조했다.
+
+- core는 보고일11-09/10/11 × database/exit의6사례로 실제 그래프 목록을 정확히 검증한다. null endpoint라도 당일 day_summary가 생성돼 운동·근력의0이 관측값이고 월요일 버킷 경계에서57/58이 추가된다. 최종 기대는9일50/57/58,10일50/54/57/58,11일50이다. 단일/묶음·multipart참조/순서/전체 bytes·수신자/요약·네scope report와bundle·문서500→200·재전송0·실제lifecycle을 유지한다. 초기 수면 중심 가설과 리뷰가 놓친0 관측은 최초 전체 실행에서 반증됐고 독립 후속으로 교정 확인했다.
+- native는 실제 dispatcher의 기존 idGen 주입점으로 카드가림에 적중하는 합성 UUID를 만들고, 자기DB의kind/target·요청전후 차이와 정확한 요청ID가1개 일치함을 확인한다. SQL/재개는 원본 ID, CLI/queue 표시는 가림값을 사용한다. 네 기존case·실제PG/Python/중단재개·SQLiteoracle 유지, 제품가림/그래프/runner 변경0이다.
+- 최초 전체 TS7실패/Python5실패를 보존한다. TS hook7은 실제 runtime 연결 후 순차 전체 Python의 hook7+전용보존1 통과로 대조했다. core 최초4실패는 정확 기대교정 후 관련10case 통과, main42통합 독립확인 뒤 core/native10case와dispatcher88case 각각통과했다. 원본 d594aeb archive는 날짜만11-10 주입해 기존사진단언2실패를 확인했으며 완전 무변경 baseline 재현으로 주장하지 않는다.
+- deferred1/원인미확정 관찰위험: artifacts locator 직렬화의 최초third import 실패는stderr가최초reporter에서유실됐다. 동일시험지문·실제동작/단언/timeout의허용1회진단은pass였고중앙이후속실행gate로채택했다. NODE_OPTIONS관측기는원함수위임이나전후동기로그가타이밍을바꿀수있고성공stderr는API미반환이다. 원인해결/최초전체통과/비계측반복안정성을주장하지않는다. 재발시같은case의실패stdout/stderr/exit를안전보존하는후속권고,추가자동반복없음이다.
+- 소유254container정확ID부재와임시home/venv정리증거보존. baseline tar·날짜patch·환경/source지문·리뷰·원시·체크포인트/워크트리/브랜치/세션유지. migration/plugin/제품불변,운영자즉시조치없음이다.
+- 인계: 8.3은자기branch에수락source통합후관련Garmin재검증으로blocked해제를판단한다.22.3도Garmin과main42실제영향검증만하며검색제품/runner불변이면성능/전체회귀반복없음.19.5는core2→6case와native가림case의실제수정영향시간을반영해전체manifest순위/최장6CLI+hook동결후동일case분해정책의1/2/3/4slot성능검증을진행한다.
+
+built/자체필수미해결0이며 사용자최종인수done과는구별한다. artifacts 관찰위험은후속모음에보존하며다른티켓의통합실행결과를대체하지않는다.
