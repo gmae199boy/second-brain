@@ -53,13 +53,17 @@ try {
   if (selected.postgresAll) run(['--project','postgres'],false,'Postgres migration 전체');
   else console.log('Postgres 전체: migration 변경 없음');
   const python = ['--config','apps/cli/python-test/vitest.config.ts'];
-  if (selected.pythonAll) run(python,false,'Python 전체 (경로 규칙)');
+  if (selected.pythonAll) {
+    const count = list(python, false);
+    if (!count) console.log('Python 전체: 선택된 시험 파일 없음');
+    else { console.log(`Python 전체 (경로 규칙): 시험 파일 ${count}개 실행`); command('node', ['tooling/test-db/dist/python-slots.js']); }
+  }
   else if (selected.pythonFiles.length) {
     const existing = selected.pythonFiles.filter(path => existsSync(resolve(root,path)));
     if (!existing.length) console.log('Python 선택: 존재하는 시험 파일 없음');
     else {
       console.log(`Python 선택: 변경된 시험 파일 ${existing.length}개 실행`);
-      command('pnpm',['exec','vitest','run',...python,...existing,'--passWithNoTests']);
+      command('node',['tooling/test-db/dist/python-slots.js','--files',...existing]);
     }
   } else console.log('Python 생략: 경로 규칙에 해당 없음(마무리 전 전체 test:python 필요)');
 } catch (error) {

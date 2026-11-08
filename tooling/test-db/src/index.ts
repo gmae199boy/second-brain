@@ -3,6 +3,10 @@ import pg from 'pg';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { appendFileSync } from 'node:fs';
+import { acquireSlotDatabase } from './slots/lease.js';
+import { checkClusterBoundary } from './slots/cluster.js';
+export { validateSlotLease, acquireSlotDatabase, type SlotLease, type LeaseDependencies } from './slots/lease.js';
+
 import { DEFAULT_TEST_DATABASE_URL, TEST_DATABASE_URL_ENV } from './global-setup.js';
 
 // The package boundary is this one entry point (`exports: "."`), so the
@@ -131,6 +135,19 @@ async function createDatabaseAt(adminUrl: string): Promise<TestDatabase> {
 const docker = promisify(execFile);
 const dockerCommand = (args: string[]) => docker('docker', args, { timeout: 15_000 });
 
+/** Acquire the process-local slot lease or create a fixture-owned cluster. */
+export async function acquireTestDatabase(): Promise<TestDatabase> {
+  return acquireSlotDatabase(process.env.BRAIN_TEST_SLOT_LEASE, { boundary: checkClusterBoundary, create: createDatabaseAt, isolated: createIsolatedTestDatabase });
+}
+
+export function fixtureRunLabels(env: NodeJS.ProcessEnv = process.env): string[] {
+  const labels: string[] = [];
+  for (const [key, name] of [['BRAIN_TEST_RUN_ID', 'brain.test-run'], ['BRAIN_TEST_SLOT_ID', 'brain.test-slot'], ['BRAIN_TEST_FILE_ID', 'brain.test-file']] as const) {
+    if (env[key]) labels.push('--label', `${name}=${env[key]}`);
+  }
+  return labels;
+}
+
 /** A private cluster for fixtures whose extension roles have fixed names. */
 export async function createIsolatedTestDatabase(): Promise<TestDatabase> {
   requireAdminDatabaseUrl();
@@ -158,7 +175,8 @@ export async function createIsolatedTestDatabase(): Promise<TestDatabase> {
     id = undefined;
   };
   try {
-    const created = await dockerCommand(['create', '--name', name, '--label', `brain.fixture=${nonce}`, '-e', 'POSTGRES_PASSWORD=brain-fixture-test', '--tmpfs', '/var/lib/postgresql', '-p', '127.0.0.1::5432', 'postgres:18']);
+    record('creating');
+    const created = await dockerCommand(['create', '--name', name, '--label', `brain.fixture=${nonce}`, ...fixtureRunLabels(), '-e', 'POSTGRES_PASSWORD=brain-fixture-test', '--tmpfs', '/var/lib/postgresql', '-p', '127.0.0.1::5432', 'postgres:18']);
     id = created.stdout.trim();
     if (!/^[a-f0-9]{64}$/.test(id)) throw new Error('docker did not return a container ID');
     record('created');

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
@@ -24,6 +24,9 @@ import { tmpdir, uptime } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { hookResourcesAvailable, recordHookResources, selectHookRoot } from './hook-resources.js';
+import { acquireLock, type Lock } from '../../test-db/src/slots/lock.js';
+import { lookupProcess } from '../../test-db/src/slots/ledger.js';
 import { withoutHarnessFolders } from '../../../apps/cli/test/environment.js';
 import {
   BOOTSTRAP_LOG_FILE,
@@ -62,14 +65,36 @@ let plugin: string;
 let snapshotCommit: string;
 let configDir: string;
 
+let hookLane: Lock | undefined;
+beforeAll(async () => {
+  const started = await lookupProcess(process.pid);
+  if (!started) throw new Error('hook lane 소유자 신원을 확인하지 못했습니다');
+  const runId = process.env.BRAIN_TEST_RUN_ID || randomBytes(12).toString('hex');
+  hookLane = await acquireLock('hook-lane', { pid: process.pid, started }, runId);
+  console.log(JSON.stringify({ hookLane: 'acquired', waitMs: hookLane.waitMs, runId }));
+}, SLOW);
+
+afterAll(async () => {
+  if (hookLane) {
+    await hookLane.release();
+    console.log(JSON.stringify({ hookLane: 'released', runId: hookLane.owner.runId }));
+    hookLane = undefined;
+  }
+}, SLOW);
+
 function git(args: readonly string[]): string {
   return execFileSync('git', [...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 beforeAll(() => {
-  root = mkdtempSync(join(tmpdir(), 'brain-hook-'));
+  ({ root, home } = selectHookRoot(
+    () => mkdtempSync(join(tmpdir(), 'brain-hook-')),
+    hookResourcesAvailable,
+    candidate => rmSync(candidate, { recursive: true, force: true }),
+    candidate => join(candidate, 'home'),
+  ));
+  recordHookResources(home);
   bare = join(root, 'second-brain.git');
-  home = join(root, 'home');
   plugin = join(root, 'plugin');
   mkdirSync(home, { recursive: true });
   const allowed = join(root, 'allowed-tools');

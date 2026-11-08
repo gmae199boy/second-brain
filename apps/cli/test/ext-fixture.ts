@@ -5,11 +5,11 @@ import { fileURLToPath } from 'node:url';
 import { tempHomes } from './temp-home.js';
 import { pgHome } from './pg-home.js';
 import { withoutHarnessFolders } from './environment.js';
-import { createIsolatedTestDatabase } from '@second-brain/test-db';
+import { acquireTestDatabase } from '@second-brain/test-db';
 export async function extHome(options: { realGarminAuth?: boolean; self?: boolean } = {}) {
   const homes = tempHomes(), home = await homes.create('brain-ext-');
   let db: Awaited<ReturnType<typeof pgHome>>;
-  try { db = await pgHome(home, options.self ?? true, createIsolatedTestDatabase); }
+  try { db = await pgHome(home, options.self ?? true, acquireTestDatabase); }
   catch (error) { await homes.cleanup(); throw error; }
   try {
   const { readBuildIdentity } = await import('../src/install/installed.js');
