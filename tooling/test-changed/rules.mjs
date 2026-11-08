@@ -55,7 +55,7 @@ const exact = [
   'apps/cli/test/ext-fixture.ts','apps/cli/test/extension-commands.test.ts','apps/cli/test/install-lock.test.ts','apps/cli/test/ext-package.test.ts','apps/cli/test/ext-install-resume.test.ts','apps/cli/test/global-setup.ts','apps/cli/test/pg-home.ts',
   'apps/cli/test/temp-home.ts','apps/cli/test/environment.ts','.claude-plugin/marketplace.json',
   'apps/cli/python-test/garmin-report-observer.ts',
-  'apps/cli/python-test/vitest.config.ts','package.json','pnpm-lock.yaml',
+  'apps/cli/python-test/vitest.config.ts','apps/cli/python-test/global-setup.ts','package.json','pnpm-lock.yaml',
 ];
 const hook = 'tooling/bootstrap/test/hook.test.ts';
 

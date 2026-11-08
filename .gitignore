@@ -111,3 +111,6 @@ apps/cli/extensions/
 
 # 새 티켓 자동화의 로컬 실행 상태·영수증·보고서
 .brain-automation/
+
+# Python slot coordinator ownership ledger
+.brain-test-runs/
