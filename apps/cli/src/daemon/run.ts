@@ -1,3 +1,5 @@
+import { driveAuth } from '../runtime/drive-oauth.js';
+import { createDriveRuntime } from '../runtime/drive-runtime.js';
 import type { SettingsStore } from 'second_brain';
 import { startDaemonSupervisor, type DaemonSupervisorOptions } from './supervisor.js';
 import { access } from 'node:fs/promises';
@@ -20,7 +22,7 @@ import {
 } from 'second_brain';
 import { brainDependencies } from '../assembly.js';
 import { importStaging } from '../runtime/import-staging.js';
-import { readConfig, resolveStoreUrl, type ReadConfigResult } from '../config/codec.js';
+import { readConfig, readDriveCredentials, resolveStoreUrl, type DriveCredentials, type ReadConfigResult } from '../config/codec.js';
 import { readBuildIdentity } from '../install/installed.js';
 import { acquireDaemonLock } from './lock.js';
 import { daemonLog } from './log.js';
@@ -101,6 +103,10 @@ export interface RunDaemonOptions {
   /** PostgreSQL 연결 생성 시험 seam. */
   createStore?: CreateConnectionStore;
   driveFactory?: DispatchRuntime['driveFactory'];
+  sourceSyncFactory?: DispatchRuntime['sourceSyncFactory'];
+  driveNetwork?: DispatchRuntime['driveNetwork'];
+  /** Test seam after credential sampling and before the round claims work. */
+  afterDriveAuthSample?: () => Promise<void>;
   runner?: CommandRunner;
   reconnectBackoffMs?: { initial: number; max: number };
   /** Kinds beyond Core's own. Empty for every real invocation (AD-21). */
@@ -159,6 +165,16 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
   // rather than every ten seconds. A round that worked clears it, which is what
   // makes the next occurrence worth a line again.
   const supervisor = startDaemonSupervisor(options, config, log);
+  let persistentDriveAuth=driveAuth({home,clock,...options.driveNetwork});
+  let authIdentity:DriveCredentials|null|undefined;
+  const authForRound=async()=>{
+    const current=await readDriveCredentials(home).catch(()=>null);
+    if(authIdentity===undefined||!current||!authIdentity||current.session!==authIdentity.session||current.clientId!==authIdentity.clientId||current.clientSecret!==authIdentity.clientSecret){
+      persistentDriveAuth=driveAuth({home,clock,...options.driveNetwork,expectedCredentials:current});
+    }
+    authIdentity=current;
+    return persistentDriveAuth;
+  };
   let said: string | undefined;
   let tickSaid: string | undefined;
   let recovery: { attempt: number; nextAt: number; failureCode?: string; missing?: boolean } | undefined;
@@ -182,6 +198,8 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
     while (!signal.aborted) {
       const config = await readConfig(home);
       if (signal.aborted) break;
+      const roundAuth = config.ok ? await authForRound() : undefined;
+      if (config.ok) await options.afterDriveAuthSample?.();
       const round: Round = config.ok
         ? await drainOnce({
             home,
@@ -192,6 +210,9 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
             config,
             createStore: options.createStore,
             driveFactory: options.driveFactory,
+            sourceSyncFactory: options.sourceSyncFactory,
+            driveNetwork: options.driveNetwork,
+            driveAuth:roundAuth,
             workHandlers: options.workHandlers ?? {},
             budgetMs: options.drainBudgetMs ?? DAEMON_DRAIN_BUDGET_MS,
           })
@@ -294,6 +315,9 @@ interface RoundOptions {
   config: ReadConfigResult;
   createStore: CreateConnectionStore | undefined;
   driveFactory?: DispatchRuntime['driveFactory'];
+  sourceSyncFactory?: DispatchRuntime['sourceSyncFactory'];
+  driveNetwork?: DispatchRuntime['driveNetwork'];
+  driveAuth?:ReturnType<typeof driveAuth>;
   workHandlers: WorkHandlers;
   budgetMs: number;
   signal: AbortSignal;
@@ -346,8 +370,10 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
       problem: { key: handoff.code, message: `채널 인계 실패 (${handoff.code})` },
     };
     if (signal.aborted) return { ...reached, pause: false };
+    const driveRuntime=await createDriveRuntime({home,store,clock,idGen,schemaVersions:opened.expected,network:options.driveNetwork,auth:options.driveAuth});
+    const driveReconcile = driveRuntime ? await driveRuntime.reconcile() : null;
     const brain = createBrain(
-      brainDependencies({ home, env, config, schemaVersions: opened.expected, store, clock, idGen, workHandlers, driveFactory:options.driveFactory }),
+      brainDependencies({ home, env, config, schemaVersions: opened.expected, store, clock, idGen, workHandlers, driveFactory:options.driveFactory??(driveRuntime?.drive?()=>driveRuntime.drive:undefined),sourceSyncFactory:options.sourceSyncFactory??(driveRuntime?()=>driveRuntime.sourceSync:undefined),sourceControl:driveRuntime?.control }),
     );
     const tick = await brain.schedules.tick();
     tickState = {
@@ -372,6 +398,7 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
     return {
       ...tickState,
       ...reached,
+      ...(driveReconcile && !driveReconcile.ok ? {problem:{key:driveReconcile.code,message:'Drive 예약을 갱신하지 못했습니다'}} : {}),
       pause: report.stopped !== 'budget',
       ...(worked(report) ? { counts: counts(report) } : {}),
     };

@@ -21,6 +21,7 @@ async function fixture(days?:string) {
   };
   const commit=vi.fn<DriveMigrationStore['commitDriveMigration']>(async()=>({ok:true,state:'committed',locationId:'drive-id'}));
   const store:DriveMigrationStore={
+    async withDriveLocalDelete(_input,run) { return {ok:true,value:await run()}; },
     async readDriveCandidate() {return {ok:true,candidate:{fileId:'file',contentHash:hash,sizeBytes:bytes.length,homeId:'local-id',home:initial.location,redacted:false}};},
     async beginDriveMigration() {return {ok:true,state:'ready',locationId:'drive-id'};},
     async readDriveIntent() {return {ok:true,intent:null};},
@@ -46,7 +47,7 @@ it('does not publish a mismatched remote copy',async()=>{
 });
 it('retention deletion rechecks remote hash and preserves local bytes on mismatch or loss',async()=>{
   const f=await fixture(), handler=driveLocalDeleteHandler({store:{...f.deps.store,...f.marker},local:f.local,drive:f.deps.drive,rootFolderId:'root',clock:{now:()=>now}});
-  const item={targetId:'local-id'} as WorkItem;
+  const item={id:'work',targetId:'local-id',claimedBy:'worker',claimedAt:now,attempts:1} as WorkItem;
   f.setRemote(Uint8Array.of(99)); expect(await handler(item)).toMatchObject({ok:false,retryable:true});
   expect(await f.local.exists(f.initial.location)).toEqual({ok:true,exists:true});
   f.setRemote(bytes); expect(await handler(item)).toEqual({ok:true}); expect(await f.local.exists(f.initial.location)).toEqual({ok:true,exists:false});
@@ -86,8 +87,24 @@ it('keeps an uncertain redacted upload retryable when Drive is unavailable or th
 it('resolves retention failures after deletion and on already deleted retry',async()=>{
   const f=await fixture(), resolveFailures=vi.fn(async()=>({ok:true as const,resolved:1}));
   const handler=driveLocalDeleteHandler({store:{...f.deps.store,...f.marker,resolveFailures},local:f.local,drive:f.deps.drive,rootFolderId:'root',clock:{now:()=>now}});
-  const item={targetId:'local-id'} as WorkItem;
+  const item={id:'work',targetId:'local-id',claimedBy:'worker',claimedAt:now,attempts:1} as WorkItem;
   expect(await handler(item)).toEqual({ok:true}); expect(await handler(item)).toEqual({ok:true});
   expect(resolveFailures).toHaveBeenCalledTimes(2);
   expect(resolveFailures).toHaveBeenCalledWith({targetKind:'file_location',targetId:'local-id',stage:'drive_local_delete',now});
+});
+
+it('does not delete after the cross-process barrier rejects a stale claim',async()=>{
+  const f=await fixture();let deleted=false;
+  const handler=driveLocalDeleteHandler({store:{...f.deps.store,...f.marker,async withDriveLocalDelete(){return {ok:false as const,code:'DB_LOCKED' as const,message:'연결이 끊겼습니다'};}},local:{async delete(){deleted=true;return {ok:true as const,deleted:true};}},drive:f.deps.drive,rootFolderId:'root',clock:{now:()=>now}});
+  expect(await handler({id:'work',targetId:'local-id',claimedBy:'worker',claimedAt:now,attempts:1} as WorkItem)).toMatchObject({ok:false,code:'DB_LOCKED'});
+  expect(deleted).toBe(false);
+});
+
+it('propagates Drive auth and Retry-After into migration and retention work',async()=>{
+  const f=await fixture(),due=new Date(now.getTime()+120_000);
+  const auth={...f.deps.drive,async put(){return {ok:false as const,code:'FILES_UNAVAILABLE' as const,driveCode:'AUTH_REQUIRED' as const,message:'재동의 필요'};}};
+  expect(await migrateFileToDrive({...f.deps,drive:auth},'file')).toMatchObject({ok:false,code:'AUTH_REQUIRED',retryable:false});
+  const limited={...f.deps.drive,async get(){return {ok:false as const,code:'FILES_UNAVAILABLE' as const,driveCode:'TEMPORARY' as const,message:'잠시 후 재시도',retryAfter:due};}};
+  const handler=driveLocalDeleteHandler({store:{...f.deps.store,...f.marker},local:f.local,drive:limited,rootFolderId:'root',clock:{now:()=>now}});
+  expect(await handler({id:'work',targetId:'local-id',claimedBy:'worker',claimedAt:now,attempts:1} as WorkItem)).toMatchObject({ok:false,code:'TEMPORARY',retryable:true,retryAfter:due});
 });

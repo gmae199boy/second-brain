@@ -301,3 +301,130 @@ it('source publication late update failure rolls back old and new generations, c
  await s.db.query(`create function brain.test_reject_replacement() returns trigger language plpgsql as $$ begin raise exception 'reject source publication'; end $$; create trigger test_reject_replacement before update on brain.source_files for each row when (new.id='${sf}'::uuid and new.index_status='indexed') execute function brain.test_reject_replacement()`);
  try{expect(await s.publishSourceFile({...base,extractionId:next,outcome:{status:'ok',mediaType:'text/plain',indexConfigId:null},claim:newClaim})).toMatchObject({ok:false});expect(await snapshot()).toEqual(before);expect(await s.db.rows(`select * from brain.source_work_publications where work_id='${newWork}'`)).toEqual([]);}finally{await s.db.query('drop trigger test_reject_replacement on brain.source_files; drop function brain.test_reject_replacement()');}
 });
+
+it('disconnect persists, cancels queued sync and prevents new or late claims',async()=>{
+  const {expect}=await import('vitest');const s=await subject();cleanup.push(()=>s.close());
+  await s.ensureSource({id:sourceId,kind:'drive',account:'disconnect',rootId:'root'});
+  expect(await s.addWork({id:workId,kind:'source_sync',targetKind:'source',targetId:sourceId,createdAt:claim.now,nextAttemptAt:claim.now})).toMatchObject({ok:true});
+  expect(await s.disconnectSource({id:sourceId,now:claim.now})).toMatchObject({ok:true,source:{connected:false,generation:2}});
+  expect(await s.readWorkItem(workId)).toMatchObject({outcome:'cancelled'});
+  expect(await s.claimWork({kinds:['source_sync'],now:claim.now,claimedBy:'other'})).toMatchObject({ok:true,item:null});
+  expect(await s.addWork({id:'019a0000-0000-7000-8000-000000000006',kind:'source_sync',targetKind:'source',targetId:sourceId,createdAt:claim.now,nextAttemptAt:claim.now})).toMatchObject({ok:false});
+  expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{connected:false,generation:2}});
+  expect(await s.connectSource({id:sourceId})).toMatchObject({ok:true,source:{connected:true,generation:3}});
+});
+
+it('disconnect fences staged bytes and handoff and preserves a shared accessible source',async()=>{
+  const {expect}=await import('vitest');const s=await subject();cleanup.push(()=>s.close());
+  const second='019a0000-0000-7000-8000-000000000081',file='019a0000-0000-7000-8000-000000000082',one='019a0000-0000-7000-8000-000000000083',two='019a0000-0000-7000-8000-000000000084',scan='019a0000-0000-7000-8000-000000000085',extractWork='019a0000-0000-7000-8000-000000000086';const hash='sha256:'+'e'.repeat(64);
+  await s.ensureSource({id:sourceId,kind:'drive',account:'first',rootId:'watch-a'});await s.ensureSource({id:second,kind:'drive',account:'second',rootId:'watch-b'});
+  await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z'); insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${file}','${hash}',3,'2026-01-01Z'); insert into brain.source_files(id,source_id,remote_id,name,path,mime_type,remote_version,file_id,index_status,unreachable) values ('${one}','${sourceId}','a','a','','text/plain','v','${file}','indexed',false),('${two}','${second}','b','b','','text/plain','v','${file}','indexed',false)`);
+  expect(await s.beginSourceScan({sourceId,generation:1,scanId:scan,startToken:'t',claim})).toMatchObject({ok:true});
+  expect(await s.disconnectSource({id:sourceId,now:claim.now})).toMatchObject({ok:true});
+  expect(await s.prepareSourceBytes({sourceId,generation:1,sourceFileId:one,remoteVersion:'v',contentHash:hash,tempKey:'late',claim})).toMatchObject({ok:false});
+  expect(await s.handoffSourceFile({sourceId,generation:1,sourceFileId:one,remoteVersion:'v',contentHash:hash,fileId:file,sizeBytes:3,workId:extractWork,claim})).toMatchObject({ok:false});
+  expect(await s.db.rows(`select source_unreachable_at from brain.files where id='${file}'`)).toEqual([{source_unreachable_at:null}]);
+  expect(await s.listSourceEntries(second)).toMatchObject({ok:true,entries:[{unreachable:false}]});
+});
+
+it('rejects a late extraction publish after disconnect without changing the current document',async()=>{
+  const {expect}=await import('vitest');const s=await subject();cleanup.push(()=>s.close());
+  const file='019a0000-0000-7000-8000-000000000091',sourceFile='019a0000-0000-7000-8000-000000000092',scan='019a0000-0000-7000-8000-000000000093',extractWork='019a0000-0000-7000-8000-000000000094',extraction='019a0000-0000-7000-8000-000000000095',hash='sha256:'+'d'.repeat(64);
+  await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z')`);
+  await s.ensureSource({id:sourceId,kind:'drive',account:'publish-disconnect',rootId:'root'});await s.beginSourceScan({sourceId,generation:1,scanId:scan,startToken:'t',claim});
+  await s.observeSourceEntry({sourceId,generation:1,scanId:scan,claim,entry:{id:sourceFile,remoteId:'r',name:'n',path:'',mimeType:'text/plain',remoteVersion:'v1',sizeBytes:3}});
+  await s.handoffSourceFile({sourceId,generation:1,sourceFileId:sourceFile,remoteVersion:'v1',fileId:file,contentHash:hash,sizeBytes:3,workId:extractWork,claim});
+  await s.db.query(`update brain.work_items set claimed_by='extractor',claimed_at='2026-01-01Z',claim_expires_at='2026-01-02Z' where id='${extractWork}'`);
+  const ec={workId:extractWork,claimedBy:'extractor',claimedAt:claim.now,attempts:0,now:claim.now};
+  expect(await s.bindSourceAttempt({sourceFileId:sourceFile,fileId:file,remoteVersion:'v1',tempKey:'late',extractionId:extraction,claim:ec})).toMatchObject({ok:true});
+  expect(await s.beginExtraction({id:extraction,fileId:file,extractorVersion:'test',startedAt:claim.now,claim:{workItemId:extractWork,claimedBy:'extractor'}})).toMatchObject({ok:true});
+  expect(await s.disconnectSource({id:sourceId,now:claim.now})).toMatchObject({ok:true});
+  expect(await s.publishSourceFile({sourceId,generation:1,sourceFileId:sourceFile,fileId:file,remoteVersion:'v1',contentHash:hash,extractionId:extraction,outcome:{status:'ok',mediaType:'text/plain',indexConfigId:null},claim:ec})).toMatchObject({ok:false,code:'SOURCE_CHANGED'});
+  expect(await s.db.rows(`select current_extraction_id from brain.files where id='${file}'`)).toEqual([{current_extraction_id:null}]);
+});
+
+it('atomically changes watched folders, fences a running scan and keeps the account connected',async()=>{
+ const {expect}=await import('vitest');const {sampleSelfUserInput}=await import('@second-brain/core/testing');const s=await subject();cleanup.push(()=>s.close());const self=sampleSelfUserInput();await s.ensureSelfUser(self);
+ await s.ensureSource({id:sourceId,kind:'drive',account:'synthetic',rootId:'brain-root'});
+ await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z')`);
+ expect(await s.updateSourceFolders({id:sourceId,userId:self.id,folderId:'folder-a',add:true,now:claim.now})).toMatchObject({ok:true,folders:['folder-a']});expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{connected:true,generation:2,rootId:'brain-root'}});expect(await s.readWorkItem(workId)).toMatchObject({outcome:'cancelled'});
+ expect(await s.beginSourceScan({sourceId,generation:1,scanId:'019a0000-0000-7000-8000-000000000099',startToken:'late',claim})).toMatchObject({ok:false});
+ expect(await s.updateSourceFolders({id:sourceId,userId:self.id,folderId:'folder-a',add:false,now:claim.now})).toMatchObject({ok:true,folders:[]});expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{connected:true,generation:3}});
+});
+
+it('disconnect during extraction chunk writing rejects late publication and retains prior current state',async()=>{
+ const {expect}=await import('vitest');const {contentHashOfBytes,documentExtractHandler}=await import('@second-brain/core');const {sequenceIdGen}=await import('@second-brain/core/testing');const s=await subject();cleanup.push(()=>s.close());
+ const ids=sequenceIdGen({timestampMs:claim.now.getTime(),start:7500}),scan=ids.next(),sf=ids.next(),file=ids.next(),extractWork=ids.next();const bytes=new TextEncoder().encode('합성 본문 중단 경계'),hash=contentHashOfBytes(bytes);
+ await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z')`);
+ await s.ensureSource({id:sourceId,kind:'drive',account:'extract-barrier',rootId:'root'});await s.beginSourceScan({sourceId,generation:1,scanId:scan,startToken:'t',claim});await s.observeSourceEntry({sourceId,generation:1,scanId:scan,claim,entry:{id:sf,remoteId:'remote',name:'a.txt',path:'',mimeType:'text/plain',remoteVersion:'v1',sizeBytes:bytes.length}});
+ expect(await s.handoffSourceFile({sourceId,generation:1,sourceFileId:sf,remoteVersion:'v1',fileId:file,contentHash:hash,sizeBytes:bytes.length,workId:extractWork,claim})).toMatchObject({ok:true});
+ const picked=await s.claimWork({now:claim.now,claimedBy:'extractor',kinds:['document_extract']});if(!picked.ok||!picked.item)throw Error('synthetic claim unavailable');
+ let entered!:()=>void,release!:()=>void;const ready=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{release=r;});
+ const wrapped={...s,async appendExtractionChunks(input:Parameters<typeof s.appendExtractionChunks>[0]){const result=await s.appendExtractionChunks(input);entered();await hold;return result;}};
+ const remote:import('@second-brain/core').SourceRemote={async startToken(){return {ok:true,token:'t'};},async list(){return {ok:true,items:[],nextPageToken:null,incomplete:false};},async metadata(){return {ok:true,item:{id:'remote',name:'a.txt',mimeType:'text/plain',version:'v1',sizeBytes:bytes.length}};},async download(){return {ok:true,bytes};}};
+ const temp:import('@second-brain/core').SourceTemp={async write(){return {ok:true};},async read(){return {ok:false,message:'not staged'};},async remove(){},async cleanup(){}};
+ const handler=documentExtractHandler({store:wrapped,files:{async get(){throw Error('external source must not read local');}},source:{store:s,remote,temp},clock:{now:()=>claim.now},idGen:ids});const running=handler(picked.item);
+ try {await ready;expect(await s.disconnectSource({id:sourceId,now:claim.now})).toMatchObject({ok:true});release();expect(await running).toMatchObject({ok:false,code:'SOURCE_CHANGED'});expect(await s.db.rows(`select current_extraction_id from brain.files where id='${file}'`)).toEqual([{current_extraction_id:null}]);expect(await s.db.rows(`select * from brain.source_work_publications where work_id='${extractWork}'`)).toEqual([]);}
+ finally {release();await running;}
+},120000);
+
+it('rolls back watch configuration and the generation fence together on failure, and ignores equivalent values',async()=>{
+ const {expect}=await import('vitest');const {sampleSelfUserInput}=await import('@second-brain/core/testing');const s=await subject();cleanup.push(()=>s.close());const self=sampleSelfUserInput();await s.ensureSelfUser(self);
+ await s.ensureSource({id:sourceId,kind:'drive',account:'config-atomic',rootId:'root'});
+ await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z')`);
+ await s.db.query("create function brain.test_watch_failure() returns trigger language plpgsql as $$ begin raise exception 'synthetic failure'; end $$; create trigger test_watch_failure before update on brain.sources for each row execute function brain.test_watch_failure()");
+ const input={userId:self.id,key:'drive.watch_folders',value:'[\"a\"]',updatedAt:claim.now};
+ expect(await s.setSetting(input)).toMatchObject({ok:false});
+ expect(await s.getSetting({userId:self.id,key:input.key})).toMatchObject({ok:true,setting:null});
+ expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{generation:1}});expect(await s.readWorkItem(workId)).toMatchObject({completedAt:null});
+ await s.db.query('drop trigger test_watch_failure on brain.sources; drop function brain.test_watch_failure()');
+ expect(await s.setSetting(input)).toMatchObject({ok:true});expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{generation:2}});expect(await s.readWorkItem(workId)).toMatchObject({outcome:'cancelled'});
+ const before=await s.db.rows<{id:string;kind:string;target_kind:string;target_id:string;next_attempt_at:Date}>("select id::text,kind,target_kind,target_id,next_attempt_at from brain.work_items where completed_at is null");expect(before).toHaveLength(1);expect(before[0]).toMatchObject({kind:'source_sync',target_kind:'source',target_id:sourceId,next_attempt_at:claim.now});expect(before[0]!.id).not.toBe(workId);
+ expect(await s.setSetting({...input,updatedAt:new Date(claim.now.getTime()+1000)})).toMatchObject({ok:true});expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{generation:2}});expect(await s.db.rows('select id::text,kind,target_kind,target_id,next_attempt_at from brain.work_items where completed_at is null')).toEqual(before);
+ expect(await s.claimWork({now:claim.now,claimedBy:'replacement',kinds:['source_sync']})).toMatchObject({ok:true,item:{id:before[0]!.id,targetKind:'source',targetId:sourceId}});
+});
+
+it('locks the source before the schedule when firing races a disconnect transaction',async()=>{
+ const {expect}=await import('vitest');const {sampleSelfUserInput}=await import('@second-brain/core/testing');const pg=(await import('pg')).default;const s=await subject();cleanup.push(()=>s.close());const self=sampleSelfUserInput();await s.ensureSelfUser(self);await s.ensureSource({id:sourceId,kind:'drive',account:'lock-order',rootId:'root'});
+ const scheduleId='019a0000-0000-7000-8000-000000000071';const at=claim.now;
+ expect(await s.addSchedule({id:scheduleId,kind:'source_sync',holdGroup:null,targetKind:'source',targetId:sourceId,triggerKind:'interval',cronExpr:null,runAt:null,timeZone:null,timeZoneSource:null,intervalSeconds:60,extension:null,scheduleKey:'drive-lock-order',userId:self.id,enabled:true,removedAt:null,nextRunAt:at,lastRunAt:null,createdAt:at})).toMatchObject({ok:true});
+ const {postgresStore}=await import('../src/index.js');const firingStore=postgresStore({databaseUrl:s.db.appUrl,applicationName:'source-lock-order-test'});
+ const client=new pg.Client({connectionString:s.db.url});const observer=new pg.Client({connectionString:s.db.url});await client.connect();await observer.connect();
+ try{
+ const expected=await s.readSchedule({id:scheduleId});expect(expected).toMatchObject({ok:true,schedule:{kind:'source_sync',targetKind:'source',targetId:sourceId,triggerKind:'interval',timeZone:null,cronExpr:null,nextRunAt:at,enabled:true}});
+ const privileges=await client.query("select has_table_privilege('brain_app','brain.extension_quiesce','DELETE') as gate, has_table_privilege('brain_app','brain.sources','UPDATE') as source");expect(privileges.rows[0]).toEqual({gate:true,source:true});
+  await client.query('begin');await client.query("set local lock_timeout='2s'");await client.query('select id from brain.sources where id=$1 for update',[sourceId]);const blocker=(await client.query('select pg_backend_pid() as pid')).rows[0].pid as number;
+  const observe=async()=>Boolean((await observer.query("select exists(select 1 from pg_stat_activity a where a.datname=current_database() and a.application_name='source-lock-order-test' and a.wait_event_type='Lock' and $1=any(pg_blocking_pids(a.pid))) as waiting",[blocker])).rows[0].waiting);
+  expect(await observe()).toBe(false);
+  let early:unknown;const firing=firingStore.fireSchedule({scheduleId,expectedTriggerKind:'interval',expectedTimeZone:null,expectedCronExpr:null,expectedNextRunAt:at,nextRunAt:new Date(at.getTime()+60000),now:at,occurrences:[{occurrenceAt:at,status:'pending'}],work:{id:workId,kind:'source_sync',targetKind:'source',targetId:sourceId,createdAt:at,nextAttemptAt:at}}).then(result=>{early=result;return result;});
+  // Observe the other backend actually waiting on the source before taking schedule.
+  let waiting=false;for(let n=0;n<100&&!waiting&&early===undefined;n++){waiting=await observe();if(!waiting)await new Promise(r=>setTimeout(r,10));}expect(waiting,`fireSchedule ended before source lock barrier: ${JSON.stringify(early)}`).toBe(true);
+  await client.query('update brain.schedules set enabled=false where id=$1',[scheduleId]);await client.query('update brain.sources set connected=false,generation=generation+1 where id=$1',[sourceId]);await client.query('commit');
+  expect(await firing).toMatchObject({ok:true,fired:false});expect(await s.readWorkItem(workId)).toBeNull();
+ }finally{await client.query('rollback').catch(()=>{});await firingStore.close();await observer.end();await client.end();}
+});
+
+it('uses inherited watch folders, commits explicit empty overrides and rolls back enqueue failure',async()=>{
+ const {expect}=await import('vitest');const {sampleSelfUserInput}=await import('@second-brain/core/testing');const {setSetting}=await import('@second-brain/core');const {CORE_SCHEMA_VERSION}=await import('../src/index.js');const s=await subject();cleanup.push(()=>s.close());const self=sampleSelfUserInput();await s.ensureSelfUser(self);await s.ensureSource({id:sourceId,kind:'drive',account:'inherited',rootId:'root'});
+ await s.db.query(`insert into brain.settings(user_id,key,value,updated_at) values (null,'drive.watch_folders','["a"]','2025-01-01Z'); insert into brain.work_items(id,kind,execution_class,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at) values ('${workId}','source_sync','core','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z')`);
+ await s.db.query("create function brain.test_reject_enqueue() returns trigger language plpgsql as $$ begin if new.kind='source_sync' then raise exception 'synthetic enqueue failure'; end if; return new; end $$; create trigger test_reject_enqueue before insert on brain.work_items for each row execute function brain.test_reject_enqueue()");
+ const deps={store:s,clock:{now:()=>claim.now},schemaVersions:{core:CORE_SCHEMA_VERSION}};
+ expect(await setSetting(deps,{key:'drive.watch_folders',value:'[]'})).toMatchObject({ok:false});expect(await s.db.rows("select user_id,value from brain.settings where key='drive.watch_folders'")).toEqual([{user_id:null,value:'["a"]'}]);expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{generation:1}});expect(await s.readWorkItem(workId)).toMatchObject({completedAt:null});
+ expect(await s.updateSourceFolders({id:sourceId,userId:self.id,folderId:'a',add:false,now:claim.now})).toMatchObject({ok:false});expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{generation:1}});expect(await s.readWorkItem(workId)).toMatchObject({completedAt:null});
+ await s.db.query('drop trigger test_reject_enqueue on brain.work_items; drop function brain.test_reject_enqueue()');
+ expect(await setSetting(deps,{key:'drive.watch_folders',value:'[]'})).toMatchObject({ok:true,source:'db',value:'[]',updatedAt:claim.now});expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{generation:2}});expect(await s.readWorkItem(workId)).toMatchObject({outcome:'cancelled'});
+ const own=await s.db.rows("select value from brain.settings where user_id is not null and key='drive.watch_folders'");expect(own).toEqual([{value:'[]'}]);
+ const open=await s.db.rows<{id:string;target_kind:string;target_id:string;next_attempt_at:Date}>("select id::text,target_kind,target_id,next_attempt_at from brain.work_items where kind='source_sync' and completed_at is null");expect(open).toHaveLength(1);expect(open[0]).toMatchObject({target_kind:'source',target_id:sourceId,next_attempt_at:claim.now});expect(open[0]!.id).not.toBe(workId);
+ expect(await setSetting({...deps,clock:{now:()=>new Date(claim.now.getTime()+1000)}},{key:'drive.watch_folders',value:'[ ]'})).toMatchObject({ok:true,source:'db',value:'[]',updatedAt:claim.now});expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{generation:2}});expect(await s.claimWork({now:claim.now,claimedBy:'next',kinds:['source_sync']})).toMatchObject({ok:true,item:{id:open[0]!.id}});
+});
+
+it('folder mutations start from global fallback and enqueue the replacement atomically',async()=>{
+ const {expect}=await import('vitest');const {sampleSelfUserInput}=await import('@second-brain/core/testing');const s=await subject();cleanup.push(()=>s.close());const self=sampleSelfUserInput();await s.ensureSelfUser(self);await s.ensureSource({id:sourceId,kind:'drive',account:'folder-inherited',rootId:'root'});await s.db.query("insert into brain.settings(user_id,key,value,updated_at) values (null,'drive.watch_folders','[\"a\",\"b\"]','2025-01-01Z')");
+ expect(await s.updateSourceFolders({id:sourceId,userId:self.id,folderId:'a',add:false,now:claim.now})).toMatchObject({ok:true,changed:true,folders:['b']});expect(await s.db.rows("select value from brain.settings where user_id is not null and key='drive.watch_folders'")).toEqual([{value:'[\"b\"]'}]);
+ const open=await s.db.rows<{id:string}>("select id::text from brain.work_items where kind='source_sync' and completed_at is null");expect(open).toHaveLength(1);expect(await s.updateSourceFolders({id:sourceId,userId:self.id,folderId:'a',add:false,now:claim.now})).toMatchObject({ok:true,changed:false,folders:['b']});expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{generation:2}});expect(await s.claimWork({now:claim.now,kinds:['source_sync'],claimedBy:'next'})).toMatchObject({ok:true,item:{id:open[0]!.id}});
+});
+
+it('persists a self override equal to normalized global watch values without changing generation or work',async()=>{
+ const {expect}=await import('vitest');const {sampleSelfUserInput}=await import('@second-brain/core/testing');const {setSetting}=await import('@second-brain/core');const {CORE_SCHEMA_VERSION}=await import('../src/index.js');const s=await subject();cleanup.push(()=>s.close());const self=sampleSelfUserInput();await s.ensureSelfUser(self);await s.ensureSource({id:sourceId,kind:'drive',account:'same-fallback',rootId:'root'});await s.db.query("insert into brain.settings(user_id,key,value,updated_at) values (null,'drive.watch_folders','[\"b\",\"a\",\"a\"]','2025-01-01Z')");
+ const deps={store:s,clock:{now:()=>claim.now},schemaVersions:{core:CORE_SCHEMA_VERSION}};expect(await setSetting(deps,{key:'drive.watch_folders',value:'[\"a\",\"b\"]'})).toMatchObject({ok:true,source:'db',updatedAt:claim.now,value:'[\"a\",\"b\"]'});expect(await s.db.rows("select value from brain.settings where user_id is not null and key='drive.watch_folders'")).toEqual([{value:'[\"a\",\"b\"]'}]);expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{generation:1}});expect(await s.db.rows("select id from brain.work_items where kind='source_sync'")).toEqual([]);
+});

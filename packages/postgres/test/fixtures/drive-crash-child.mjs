@@ -10,5 +10,5 @@ const real=runtime.driveFileStore({rootFolderId:'root',baseUrl:config.baseUrl,up
 const drive={...real,put:async bytes=>{const result=await real.put(bytes); if (!result.ok) throw Error('synthetic upload failed'); process.send('uploaded-before-cas'); await new Promise(()=>{}); return result;}};
 const bytes=Uint8Array.from(config.bytes);
 const local={get:async()=>({ok:true,bytes})};
-await core.migrateFileToDrive({store,uploads:store.driveUploads,local,drive,settings:{store,schemaVersions:{core:41},clock},rootFolderId:'root',clock,idGen:ids},config.fileId);
+await core.migrateFileToDrive({store,uploads:store.driveUploads,local,drive,settings:{store,schemaVersions:{core:pg.CORE_SCHEMA_VERSION},clock},rootFolderId:'root',clock,idGen:ids},config.fileId);
 throw Error('barrier unexpectedly passed');

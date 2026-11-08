@@ -1,0 +1,51 @@
+import { getSetting, setSetting, resolveSelfUser, type BrainDependencies, type Clock, type DriveMigrationStore, type DriveUploadStore, type IdGen, type SchemaStore, type SchemaVersions, type SettingsStore, type SourceControl, type SourceStore, type Store } from 'second_brain';
+import { join } from 'node:path';
+import { readDriveCredentials,withDriveConnectionLock } from '../config/codec.js';
+import { connectDriveUnderLock,disconnectDrive,driveAuth,driveRootSettings } from './drive-oauth.js';
+import { sourceDrive } from './source-drive.js';
+import { sourceTemp } from './source-temp.js';
+import { driveFileStore } from './drive-file-store.js';
+
+type DriveStore=Store & SchemaStore & SettingsStore & SourceStore & DriveMigrationStore & {driveUploads:DriveUploadStore};
+export type DriveRuntimeNetwork={authorizationEndpoint?:string;tokenEndpoint?:string;driveBaseUrl?:string;fetch?:typeof fetch};
+const failure=(code:string,message:string)=>({ok:false as const,code,message});
+const valid=(id:string)=>/^[A-Za-z0-9_-]+$/.exec(id)?.[0]===id;
+function isDriveStore(s:Store & SchemaStore & SettingsStore):s is DriveStore {const x=s as Partial<DriveStore>;return typeof x.listSources==='function'&&typeof x.updateSourceFolders==='function'&&typeof x.withDriveLocalDelete==='function'&&!!x.driveUploads;}
+/** Both one-shot commands and daemon rounds assemble the same adapters. */
+export async function createDriveRuntime(input:{home:string;store:Store & SchemaStore & SettingsStore;clock:Clock;idGen:IdGen;schemaVersions:SchemaVersions;network?:DriveRuntimeNetwork;auth?:ReturnType<typeof driveAuth>}) {
+ const {home,store,clock,idGen,schemaVersions,network}=input;if(!isDriveStore(store))return null;
+ const deps={store,clock,schemaVersions},roots=driveRootSettings(deps),auth=input.auth??driveAuth({home,clock,...network});
+ const root=await roots.readRoot();const credentials=await readDriveCredentials(home).catch(()=>null);
+ const current=async()=>{const r=await store.listSources();if(!r.ok)return r;const account=await getSetting(deps,{key:'drive.account_id'});if(!account.ok)return account;const drives=r.sources.filter(x=>x.kind==='drive');if(drives.length>1)return failure('SOURCE_CHANGED','여러 Drive 계정의 연결 상태를 확인해야 합니다');const source=drives[0]??null;if(source&&account.value&&source.account!==account.value)return failure('SOURCE_CHANGED','Drive 계정이 기존 source와 다릅니다');return {ok:true as const,source};};
+ const validateSource=async(id?:string)=>{const c=await current();if(!c.ok)return c;const account=await getSetting(deps,{key:'drive.account_id'});if(!account.ok)return account;if(!c.source?.connected||!account.value||c.source.account!==account.value||(id!==undefined&&c.source.id!==id))return failure('SOURCE_CHANGED','Drive 계정과 source 연결을 확인해야 합니다');return {ok:true as const};};
+ const rawRemote=sourceDrive({baseUrl:network?.driveBaseUrl??'https://www.googleapis.com',auth,clock,...(network?.fetch?{fetch:network.fetch}:{})});
+ const guarded=async<T>(run:()=>Promise<import('second_brain').RemoteResult<T>>):Promise<import('second_brain').RemoteResult<T>>=>{const allowed=await validateSource();return allowed.ok?run():allowed.code==='DB_UNAVAILABLE'||allowed.code==='DB_LOCKED'?{ok:false,code:allowed.code,message:allowed.message}:{ok:false,code:'TEMPORARY',message:'Drive 계정과 source 연결을 확인해야 합니다'};};
+ const remote:import('second_brain').SourceRemote={startToken:()=>guarded(()=>rawRemote.startToken()),list:i=>guarded(()=>rawRemote.list(i)),metadata:id=>guarded(()=>rawRemote.metadata(id)),download:i=>guarded(()=>rawRemote.download(i))};
+ const sourceSync:NonNullable<BrainDependencies['sourceSync']>={store,remote,temp:sourceTemp(join(home,'run','source-temp')),validateSource,roots:async()=>{const result=await getSetting(deps,{key:'drive.watch_folders'});return result.ok?{ok:true,roots:JSON.parse(result.value) as string[]}:result;}};
+ const sourceState=await store.listSources();const accountState=await getSetting(deps,{key:'drive.account_id'});
+ const drives=sourceState.ok?sourceState.sources.filter(s=>s.kind==='drive'):[];
+ const connected=accountState.ok&&!!accountState.value&&root.ok&&drives.length===1&&drives[0]!.connected&&drives[0]!.account===accountState.value;
+ const drive:BrainDependencies['drive']=connected&&root.ok&&root.rootId&&credentials?{store,uploads:store.driveUploads,rootFolderId:root.rootId,files:driveFileStore({rootFolderId:root.rootId,baseUrl:network?.driveBaseUrl??'https://www.googleapis.com',uploads:store.driveUploads,clock,auth,...(network?.fetch?{fetch:network.fetch}:{})})}:undefined;
+ // A source is the durable account commitment. Settings alone can be left by
+ // an interrupted first consent and are provisional until a source exists.
+ const bindAccount=async(accountId:string)=>{const existing=await store.listSources();if(!existing.ok)return false;const drives=existing.sources.filter(s=>s.kind==='drive');if(drives.length>1||drives.some(s=>s.account!==accountId))return false;const old=await getSetting(deps,{key:'drive.account_id'});if(!old.ok)return false;if(drives.length&&old.value&&old.value!==accountId)return false;return true;};
+ const commitAccount=async(accountId:string)=>(await setSetting(deps,{key:'drive.account_id',value:accountId})).ok;
+ const connectionRoots={...roots,async readRoot(){const existing=await store.listSources();if(!existing.ok)return {ok:false as const};if(!existing.sources.some(s=>s.kind==='drive'))return {ok:true as const,rootId:null};return roots.readRoot();}};
+ const schedule=async(sourceId:string,enable:boolean,preserveDisabled=false)=>{
+  const user=await resolveSelfUser(store);if(!user.ok)return user;const interval=await getSetting(deps,{key:'drive.sync_interval_minutes'});if(!interval.ok)return interval;
+  const key=`drive:sync:${sourceId}`,old=await store.findScheduleByKey({extension:null,scheduleKey:key,userId:user.userId});if(!old.ok)return old;
+  const now=clock.now(),seconds=Number(interval.value)*60;
+  if(old.schedule){const s=old.schedule;if(preserveDisabled&&!s.enabled)enable=false;if(s.removedAt)return preserveDisabled?{ok:true as const}:failure('SCHEDULE_CONFLICT','제거된 Drive 예약을 복구할 수 없습니다');if(s.enabled===enable&&s.intervalSeconds===seconds)return {ok:true as const};const next={...s,enabled:enable,intervalSeconds:seconds,nextRunAt:enable?new Date(now.getTime()+seconds*1000):s.nextRunAt,triggerUpdatedAt:now};const written=await store.updateSchedule({id:s.id,expected:s,schedule:next});return written.ok&&written.updated?{ok:true as const}:written.ok?failure('SCHEDULE_CONFLICT','Drive 예약이 변경되었습니다'):written;}
+  if(!enable)return {ok:true as const};const added=await store.addSchedule({id:idGen.next(),kind:'source_sync',holdGroup:null,targetKind:'source',targetId:sourceId,triggerKind:'interval',cronExpr:null,runAt:null,timeZone:null,timeZoneSource:null,intervalSeconds:seconds,extension:null,scheduleKey:key,userId:user.userId,enabled:true,removedAt:null,triggerUpdatedAt:null,nextRunAt:new Date(now.getTime()+seconds*1000),lastRunAt:null,createdAt:now});return added.ok?{ok:true as const}:added;
+ };
+ const reconcile=async()=>{const c=await current();if(!c.ok)return c;if(!c.source?.connected)return {ok:true as const};return schedule(c.source.id,true,true);};
+ const change=async(folderId:string,add:boolean)=>{if(!valid(folderId))return failure('INVALID_ARGUMENT','Drive 폴더 ID가 올바르지 않습니다');const c=await current();if(!c.ok)return c;if(!c.source?.connected)return failure('SOURCE_UNAVAILABLE','Drive 연결이 없습니다');const self=await resolveSelfUser(store);if(!self.ok)return self;const changed=await store.updateSourceFolders({id:c.source.id,userId:self.userId,folderId,add,now:clock.now()});if(!changed.ok)return changed;const scheduled=await schedule(c.source.id,true,true);return scheduled.ok?{ok:true as const,folders:changed.folders}:scheduled;};
+ const control:SourceControl={
+  async connect(i){if(i.kind!=='drive')return failure('INVALID_ARGUMENT','Drive만 연결할 수 있습니다');try{return await withDriveConnectionLock(home,async()=>{const result=await connectDriveUnderLock({home,roots:connectionRoots,clock,...network,bindAccount,commitAccount,openAuthorization:i.onAuthorization,signal:i.signal});if(!result.ok)return result;const existing=await current();if(!existing.ok)return existing;let source=existing.source;if(!source){const account=await getSetting(deps,{key:'drive.account_id'});if(!account.ok||!account.value)return failure('SOURCE_CHANGED','Drive 계정 식별이 필요합니다');const created=await store.ensureSource({id:idGen.next(),kind:'drive',account:account.value,rootId:result.rootId});if(!created.ok)return created;source=created.source;}if(!source.connected){const reconnected=await store.connectSource({id:source.id});if(!reconnected.ok)return reconnected;source=reconnected.source;}const watched=await getSetting(deps,{key:'drive.watch_folders'});if(!watched.ok)return watched;if(watched.source==='default'&&source.rootId!==result.rootId){const self=await resolveSelfUser(store);if(!self.ok)return self;const preserved=await store.updateSourceFolders({id:source.id,userId:self.userId,folderId:source.rootId,add:true,now:clock.now()});if(!preserved.ok)return preserved;}const scheduled=await schedule(source.id,true);return scheduled.ok?{ok:true as const,sourceId:source.id,rootId:result.rootId}:scheduled;});}catch{return failure('AUTH_STORAGE','Drive 연결 정보를 저장하지 못했습니다');}},
+  async add(i){return change(i.folderId,true);},async remove(i){return change(i.folderId,false);},
+  async list(){const found=await store.listSources();if(!found.ok)return found;const folders=await getSetting(deps,{key:'drive.watch_folders'});return folders.ok?{ok:true,sources:found.sources,folders:JSON.parse(folders.value) as string[]}:folders;},
+  async disconnect(i){if(i.kind!=='drive')return failure('INVALID_ARGUMENT','Drive만 연결 해제할 수 있습니다');return disconnectDrive(home,async()=>{const c=await current();if(!c.ok)return c;return c.source?store.disconnectSource({id:c.source.id,now:clock.now()}):{ok:true};});},
+ };
+ const onSettingChanged=async(change:{key:string;value:string})=>{if(!['drive.watch_folders','drive.sync_interval_minutes'].includes(change.key))return;const c=await current();if(!c.ok)throw Error('source');if(!c.source?.connected)return;const result=await reconcile();if(!result.ok)throw Error('schedule');};
+ return {control,drive,sourceSync,reconcile,onSettingChanged};
+}

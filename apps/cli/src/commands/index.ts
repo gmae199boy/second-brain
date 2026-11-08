@@ -1,3 +1,4 @@
+import { sourcesConnectCommand,sourcesAddCommand,sourcesListCommand,sourcesRemoveCommand,sourcesDisconnectCommand } from './sources-control.js';
 import { sourcesSyncCommand } from './sources-sync.js';
 import { recallDocsCommand } from './recall-docs.js';
 import { filesShowCommand } from './files-show.js';
@@ -72,7 +73,7 @@ export const commands: readonly CommandSpec[] = [
   configGetCommand,
   configSetCommand,
   messagesRedactCommand,
-  filesRedactCommand, filesShowCommand, sourcesSyncCommand,
+  filesRedactCommand, filesShowCommand, sourcesConnectCommand,sourcesAddCommand,sourcesListCommand,sourcesRemoveCommand,sourcesSyncCommand,sourcesDisconnectCommand,
   failuresListCommand,
   failuresRetryCommand,
   // A function, not the list: `guide schema` describes the registry it is in,

@@ -761,3 +761,9 @@ describe('추출기 버전이 오르면 drain이 한 번 더 읽는다', () => {
     expect(extractItems(subject)).toHaveLength(1);
   });
 });
+
+it('records Drive reconsent without retrying the failed extraction',async()=>{
+  const subject=await kit();const files={...subject.files,async get(){return {ok:false as const,code:'FILES_UNAVAILABLE' as const,driveCode:'AUTH_REQUIRED' as const,message:'Drive 재동의가 필요합니다'};}};
+  const report=await drain(subject,{[DOCUMENT_EXTRACT_KIND]:documentExtractHandler({store:subject.store,files,clock:subject.clock,idGen:subject.idGen})});
+  expect(report).toMatchObject({failed:1,retried:0});expect(fileFailures(subject)[0]).toMatchObject({code:'AUTH_REQUIRED'});
+});

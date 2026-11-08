@@ -65,6 +65,7 @@ export interface BrainAssembly<S = Store & SchemaStore & SettingsStore> {
   /** Optional explicit Drive injection for a configured runtime or isolated fixture. */
   driveFactory?: (store:S) => BrainDependencies['drive'];
   sourceSyncFactory?: (store:S) => BrainDependencies['sourceSync'];
+  sourceControl?: BrainDependencies['sourceControl'];
   /** Kinds beyond Core's own. Empty for every real invocation (AD-21). */
   workHandlers: WorkHandlers;
 }
@@ -77,10 +78,11 @@ export interface BrainAssembly<S = Store & SchemaStore & SettingsStore> {
  * (AD-9): it is one spool per invocation, so two `fileSpool` calls over the
  * same folder would be two serial counters minting the same file name.
  */
-export function brainDependencies<S extends SessionIngestStore>(assembly: BrainAssembly<S>) {
+export function brainDependencies<S extends SessionIngestStore>(assembly: BrainAssembly<S>): Omit<BrainDependencies,'store'> & {store:S} {
   const { home, env, config, store, clock, idGen, workHandlers } = assembly;
   return {
     store,
+    ...(assembly.sourceControl ? {sourceControl:assembly.sourceControl} : {}),
     ...(assembly.driveFactory ? {drive:assembly.driveFactory(store)} : {}),
     ...(assembly.sourceSyncFactory ? {sourceSync:assembly.sourceSyncFactory(store)} : {}),
     cron: cronCalculator,
