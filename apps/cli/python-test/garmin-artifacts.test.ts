@@ -1,15 +1,123 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
-import { copyFile, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { expect, it } from 'vitest';
+import { expect, it, onTestFinished } from 'vitest';
 import { extHome } from '../test/ext-fixture.js';
 import { postgresStore } from 'second_brain/postgres';
+import { createAbiRun, decodeAbiLine, maskOutputText } from 'second_brain';
+import pg from 'pg';
 import { runDaemon } from '../src/daemon/run.js';
 import { systemClock } from '../src/runtime/clock.js';
 import { uuidV7IdGen } from '../src/runtime/id-gen.js';
+import {createLifecycle, maskedError, onceCleanup, settleCleanup} from './fixtures/artifacts-lifecycle.js';
+
+// Child results settle immediately on both spawn errors and close, and retain
+// the full masked streams rather than just the parsed final ABI message.
+function observedChild(command:string, args:string[], env:NodeJS.ProcessEnv, mask:(s:string)=>string) {
+  const child=spawn(command,args,{env,stdio:['pipe','pipe','pipe']});
+  let stdout='',stderr='', code:string|null=null, stdinCode:string|null=null, closed=false;
+  let finalResult:{status:number|null;signal:NodeJS.Signals|null;code:string|null;stdinCode:string|null;stdout:string;stderr:string;output:[null,string,string]} | undefined;
+  const recordStdin=(error:NodeJS.ErrnoException)=>{stdinCode=mask(error.code ?? 'ERROR'); if(finalResult) finalResult.stdinCode=stdinCode;};
+  child.stdin!.on('error',recordStdin);
+  const waiters=new Set<()=>void>();
+  child.stdout!.setEncoding('utf8').on('data',chunk=>{stdout+=chunk; for(const wake of waiters) wake();});
+  child.stderr!.setEncoding('utf8').on('data',chunk=>{stderr+=chunk;});
+  child.on('error',error=>{code=(error as NodeJS.ErrnoException).code ?? 'ERROR';});
+  const result=new Promise<{status:number|null;signal:NodeJS.Signals|null;code:string|null;stdinCode:string|null;stdout:string;stderr:string;output:[null,string,string]}>(resolve=>{
+    child.on('close',(status,signal)=>{closed=true; for(const wake of waiters) wake(); const out=mask(stdout),err=mask(stderr); finalResult={status,signal,code:code===null?null:mask(code),stdinCode,stdout:out,stderr:err,output:[null,out,err]}; resolve(finalResult);});
+  });
+  async function barrier(marker:string) {
+    while(!stdout.includes(marker) && !closed) await new Promise<void>(resolve=>{const wake=()=>{waiters.delete(wake); resolve();}; waiters.add(wake);});
+    if(!stdout.includes(marker)) throw Error(JSON.stringify({phase:'barrier',...(await result)}));
+  }
+  const write=(data:string)=>new Promise<string|null>(resolve=>{try {child.stdin!.write(data,(error)=>{if(error) recordStdin(error); resolve(stdinCode);});} catch(error) {recordStdin(error as NodeJS.ErrnoException); resolve(stdinCode);}});
+  return {child,result,barrier,write};
+}
+function maskChild(secrets:string[]) {
+  const values=[...new Set(secrets.filter(Boolean).flatMap(value=>[value,JSON.stringify(value).slice(1,-1),encodeURIComponent(value)]))].sort((a,b)=>b.length-a.length);
+  const apply=(text:string)=>maskOutputText(values.reduce((value,secret)=>value.split(secret).join('[REDACTED:fixture]'),text));
+  // Only the adapter's fixed diagnostic shape and public phase may bypass
+  // substring masking. Other stderr and all stdout follow normal masking.
+  const phases=new Set(['settings','connect','initial_check','capture','checkpoint','ingest','publish','locator_acquire','locator_body','locator_unlock','reports','verify_connect','verify_database','verify_compare','verify_reports','unknown']);
+  const fields=['kind','phase','sqlstate','body_sqlstate'];
+  return (input:string)=>input.split(/(?<=\n)/).map(line=>{
+    try {
+      const value=JSON.parse(line); const phase=value?.phase;
+      if(value?.kind==='preservation_diagnostic' && typeof phase==='string' && phases.has(phase) && Object.keys(value).length===fields.length && fields.every(key=>Object.hasOwn(value,key)) && [value.sqlstate,value.body_sqlstate].every(state=>state===null || typeof state==='string' && /^[A-Za-z0-9]{5}$/.test(state))) {
+        const match=/"phase"\s*:\s*"([a-z_]+)"/.exec(line);
+        if(match && match[1]===phase) {const start=match.index+match[0].lastIndexOf(phase); return apply(line.slice(0,start))+phase+apply(line.slice(start+phase.length));}
+      }
+    } catch { /* non-ABI output follows the normal masking path */ }
+    return apply(line);
+  }).join('');
+}
+function deferred() { let release!:()=>void; const promise=new Promise<void>(resolve=>{release=resolve;}); return {promise,release}; }
+
+it('자식 관측은 조기 종료와 spawn 오류를 정착하고 출력 문맥을 가린다', async()=>{
+  const secret='fixture-secret-opaque'; const mask=maskChild([secret]);
+  const text=`line  one ${secret}\n{"extra":"${secret}"}\nTraceback: ${secret}\n`;
+  expect(mask(text)).toBe('line  one [REDACTED:fixture]\n{"extra":"[REDACTED:fixture]"}\nTraceback: [REDACTED:fixture]\n');
+  const noisy=observedChild(process.execPath,['-e',`process.stdout.write(${JSON.stringify(text)}); process.stderr.write(${JSON.stringify('trace '+secret+'\n')})`],process.env,mask);
+  expect(()=>JSON.parse('{\"abi\":1,\"type\":\"result\"} trailing')).toThrow(); expect(JSON.parse('{\"abi\":1,\"type\":\"result\",\"extra\":true}')).not.toEqual({abi:1,type:'result'});
+  const noisyResult=await noisy.result; expect(noisyResult.stdout).toBe(mask(text)); expect(noisyResult.stderr).toBe('trace [REDACTED:fixture]\n'); expect(noisyResult.output).toEqual([null,noisyResult.stdout,noisyResult.stderr]);
+  const empty=observedChild(process.execPath,['-e',''],process.env,mask);
+  await expect(empty.barrier('missing')).rejects.toThrow('barrier'); expect((await empty.result).status).toBe(0);
+  const missing=observedChild('/definitely-missing-19-12',[],process.env,mask);
+  await expect(missing.barrier('missing')).rejects.toThrow('barrier'); expect((await missing.result).code).toBe('ENOENT');
+  const closed=observedChild(process.execPath,['-e',"process.stdout.write('MARKER\\n')"],process.env,mask); await closed.barrier('MARKER\n'); const closedResult=await closed.result; expect(await closed.write('x')).toBeTruthy(); expect(closedResult.stdinCode).toBeTruthy();
+  const order:string[]=[]; const primary=new Error('first');
+  const combined=await settleCleanup([()=>{order.push('gate'); throw Error('cleanup');},()=>{order.push('child'); throw Error('second cleanup');},()=>{order.push('fixture');}],primary).catch(error=>error);
+  expect(combined).toBeInstanceOf(AggregateError); expect(combined.message).toContain('first'); expect(combined.message).toContain('cleanup'); expect(combined.errors).toHaveLength(3);
+  expect(order).toEqual(['gate','child','fixture']);
+  const details=await settleCleanup([()=>{throw Error('cleanup fixture-secret-opaque');}],new Error('primary fixture-secret-opaque'),mask,()=>noisyResult).catch(error=>error);
+  expect(details.message).not.toContain(secret); expect(details.message).toContain('primary'); expect(JSON.parse(details.message).child).toEqual(noisyResult);
+  const nested=new AggregateError([new Error('role '+secret),new AggregateError([new Error('home '+secret)],'database '+secret)],'fixture '+secret,{cause:new Error('cause '+secret)});
+  (nested.cause as Error & {cause?:unknown}).cause=nested; const preserved=maskedError(nested,mask); const serialized=JSON.stringify(preserved);
+  expect(serialized).not.toContain(secret); expect(serialized).toContain('role '); expect(serialized).toContain('database '); expect(serialized).toContain('home '); expect(serialized).toContain('cause '); expect(serialized).toContain('[circular]');
+  const nestedCleanup=await settleCleanup([()=>{throw nested;}],undefined,mask).catch(error=>error); const nestedReport=JSON.stringify({message:nestedCleanup.message,errors:nestedCleanup.errors});
+  expect(nestedReport).not.toContain(secret); for(const fragment of ['role ','database ','home ','cause ','[circular]']) expect(nestedReport).toContain(fragment);
+  expect(JSON.stringify(maskedError(new Error('outer',{cause:{reason:'detail '+secret}}),mask))).toContain('detail [REDACTED:fixture]');
+  let calls=0; const simulatedTimeout=onceCleanup(async()=>{calls++;}); await Promise.all([simulatedTimeout(),simulatedTimeout()]); expect(calls).toBe(1);
+  const cleanupError=new Error('gate failure'); const after:string[]=[];
+  await expect(settleCleanup([()=>{throw cleanupError;},()=>{after.push('store');},()=>{after.push('fixture');}])).rejects.toThrow('gate failure'); expect(after).toEqual(['store','fixture']);
+  const url='postgresql://fixture:opaque-pass@example.invalid/db', snapshot='{\"capture\":\"fixture-private\"}', home='/synthetic/home';
+  const hide=maskChild([url,'opaque-pass',snapshot,'fixture-private',home]);
+  const raw=`diagnostic  ${url}\n{\"snapshot\":${JSON.stringify(snapshot)}}\nTraceback ${home}/input fixture-private\n`;
+  const phaseMask=maskChild(['report']); for(const phase of ['reports','verify_reports']) {const diagnostic=JSON.stringify({kind:'preservation_diagnostic',phase,sqlstate:'55P03',body_sqlstate:null}); expect(phaseMask(diagnostic)).toBe(diagnostic);}
+  expect(phaseMask('raw report and {\"phase\":\"report-private\"}')).not.toContain('report-private');
+  for(const malformed of [
+    {kind:'other',phase:'reports',sqlstate:null,body_sqlstate:null},
+    {kind:'preservation_diagnostic',phase:'reports',sqlstate:null,body_sqlstate:null,extra:'report'},
+    {kind:'preservation_diagnostic',phase:'reports',sqlstate:'report',body_sqlstate:null},
+    {abi:1,type:'error',phase:'reports'},
+  ]) expect(phaseMask(JSON.stringify(malformed))).not.toContain('reports');
+  const sanitized=hide(raw); expect(sanitized).toContain('diagnostic  '); expect(sanitized).toContain('Traceback '); for(const secret of [url,'opaque-pass',snapshot,'fixture-private',home]) expect(sanitized).not.toContain(secret);
+});
+
+it('격리 Vitest timeout이 같은 lifecycle 정리와 재개 fence를 실행한다',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'brain-lifecycle-timeout-'));
+  let child:ReturnType<typeof observedChild>|undefined;
+  try {
+    const marker=join(dir,'result.json');
+    const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('VITEST')));
+    const cli=fileURLToPath(new URL('../../../node_modules/vitest/vitest.mjs',import.meta.url));
+    const config=fileURLToPath(new URL('./fixtures/lifecycle-vitest.config.mjs',import.meta.url));
+    child=observedChild(process.execPath,[cli,'run','--config',config],{...env,LIFECYCLE_MARKER:marker},maskChild([dir,process.env.HOME ?? '']));
+    const result=await child.result;
+    expect(result,JSON.stringify(result)).toMatchObject({status:1,signal:null,code:null});
+    expect(result.stdout+result.stderr).toMatch(/timed out/i);
+    const outcome=JSON.parse(await readFile(marker,'utf8'));
+    expect(outcome).toMatchObject({spawned:1,lateSpawns:0,lateOverrides:0,resumed:true,bodySettled:true,childClosed:true,disposed:true,restored:true});
+    expect(outcome.cleanupError).toContain('test finished before body settled');
+  } finally {
+    if(child && child.child.exitCode===null && child.child.signalCode===null){child.child.kill('SIGKILL'); await child.result;}
+    await rm(dir,{recursive:true,force:true});
+  }
+},30000);
 
 // Exercise the historical preservation and artifact primitives inside an isolated installation.
 const self='01940000-0000-7000-8000-00000000000a';
@@ -344,36 +452,132 @@ it('상한 초과 파일의 동일 크기 변경을 원문 해시로 충돌 처�
 it('재발행 staging과 core 정리는 같은 locator 잠금으로 직렬화된다', async () => {
   const { extensionDatabaseUrl }=await import('../src/config/codec.js');
   const fixture=await extHome(), store=postgresStore({databaseUrl:fixture.db.appUrl}), ids=uuidV7IdGen(), controller=new AbortController();
-  let daemon: ReturnType<typeof runDaemon> | undefined, child: ChildProcess | undefined;
-  try {
+  let daemon: ReturnType<typeof runDaemon> | undefined, active: ReturnType<typeof observedChild> | undefined;
+  const allowUnlock=deferred(), unlockCalled=deferred(), unlockFinished=deferred();
+  const originalQuery=pg.Client.prototype.query;
+  let called=false, sent=false, completed=false, unlocked=false, unlockError:string|null=null;
+  let maskFailure=(value:string)=>maskOutputText(value), lastChild:unknown;
+  const lifecycle=createLifecycle({
+    interrupt:[()=>allowUnlock.release(), async()=>{if(active){if(active.child.exitCode===null && active.child.signalCode===null) active.child.kill('SIGKILL'); lastChild=await active.result;}}, ()=>controller.abort()],
+    dispose:[async()=>{if(daemon) await daemon;},()=>{pg.Client.prototype.query=originalQuery;},()=>store.close(),()=>fixture.cleanup()],
+    mask:value=>maskFailure(value), diagnostic:()=>lastChild,
+  });
+  onTestFinished(lifecycle.finish);
+  const guarded=<T extends object>(target:T):T=>new Proxy(target,{get(object,key,receiver){const value=Reflect.get(object,key,receiver); return typeof value==='function' ? (...args:unknown[])=>{lifecycle.check(); return value.apply(object,args);} : value;}});
+  const db=guarded(fixture.db), checkedStore=guarded(store);
+  await lifecycle.run(async()=>{
     const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
-    await installPreservationAdapter(fixture.home,store);
-    const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), home=await realpath(join(fixture.home,'extensions/garmin')), root=join(fixture.home,'capture'); await mkdir(root);
+    lifecycle.check(); await installPreservationAdapter(fixture.home,checkedStore);
+    const python=join(fixture.home,'extensions/garmin/.venv/bin/python'), home=await realpath(join(fixture.home,'extensions/garmin')), root=join(fixture.home,'capture'); lifecycle.check(); await mkdir(root);
     const fixtures=fileURLToPath(new URL('../../../extensions/garmin/tests',import.meta.url));
-    execFileSync(python,['-c','import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; artifact_capture(pathlib.Path(sys.argv[2]))',fixtures,root]);
-    const path=join(root,'manifest.json'), manifest=JSON.parse(await readFile(path,'utf8')); manifest.files=manifest.files.filter((x:any)=>x.artifact_key==='report'); manifest.inventory=[]; await writeFile(path,JSON.stringify(manifest));
-    const channel=ids.next(),conversation=ids.next(); await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
-    const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), settings=JSON.stringify({version:1,extension:'garmin',user_id:'01940000-0000-7000-8000-00000000000a',values:{'garmin.timezone':'Asia/Seoul','garmin.capture_manifest':await realpath(path),'garmin.legacy_conversation_id':conversation}});
-    const claim=async(target:string)=>{const id=ids.next(),token=ids.next(),now=new Date(); expect(await store.addWork({id,kind:'garmin.import',targetKind:'import',targetId:target,createdAt:now,nextAttemptAt:now})).toMatchObject({ok:true}); expect(await store.claimSupervisedWork({now,claimedBy:target,kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true,item:{id},attemptToken:token}); return {id,token};};
-    const first=await claim('lock-first'), base={...process.env,BRAIN_DATABASE_URL:url,BRAIN_USER_ID:self,BRAIN_EXTENSION_HOME:home,BRAIN_SETTINGS_SNAPSHOT:settings};
-    const env=(attempt:{id:string;token:string})=>({...base,BRAIN_WORK_ID:attempt.id,BRAIN_ATTEMPT_TOKEN:attempt.token});
-    expect(JSON.parse(execFileSync(python,[join(home,'src/import.py')],{encoding:'utf8',env:env(first)}))).toMatchObject({type:'result'});
-    expect(await store.finishSupervisedWork({id:first.id,attemptToken:first.token,now:new Date(),outcome:'succeeded'})).toMatchObject({ok:true});
-    const request=(await fixture.db.rows("select id,locator from brain.file_requests where request_key::jsonb->>2='report'"))[0]!;
+    lifecycle.check(); execFileSync(python,['-c','import sys,pathlib; sys.path.insert(0,sys.argv[1]); from fixtures import artifact_capture; artifact_capture(pathlib.Path(sys.argv[2]))',fixtures,root]);
+    const path=join(root,'manifest.json'), manifest=JSON.parse(await readFile(path,'utf8')); manifest.files=manifest.files.filter((x:any)=>x.artifact_key==='report'); manifest.inventory=[]; lifecycle.check(); await writeFile(path,JSON.stringify(manifest));
+    const channel=ids.next(),conversation=ids.next(); await db.query(`insert into brain.channels values ('${channel}','telegram','bot'); insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ('${conversation}','${channel}','chat',null,(select id from brain.users where is_self=1))`);
+    const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), settings=JSON.stringify({version:1,extension:'garmin',user_id:self,values:{'garmin.timezone':'Asia/Seoul','garmin.capture_manifest':await realpath(path),'garmin.legacy_conversation_id':conversation}});
+    const privateStrings=(value:unknown):string[]=>typeof value==='string' ? (value.length>=4?[value]:[]) : Array.isArray(value) ? value.flatMap(privateStrings) : value && typeof value==='object' ? Object.values(value).flatMap(privateStrings) : [];
+    const mask=maskChild([url,fixture.db.appUrl,fixture.db.url,decodeURIComponent(new URL(url).password),settings,JSON.stringify(manifest),...privateStrings(manifest),...privateStrings(JSON.parse(settings)),fixture.home,home,root,'# synthetic report\n',process.env.HOME ?? '']);
+    maskFailure=mask;
+    const claim=async(target:string)=>{const id=ids.next(),token=ids.next(),now=new Date(); expect(await checkedStore.addWork({id,kind:'garmin.import',targetKind:'import',targetId:target,createdAt:now,nextAttemptAt:now})).toMatchObject({ok:true}); expect(await checkedStore.claimSupervisedWork({now,claimedBy:target,kinds:['garmin.import'],attemptToken:token})).toMatchObject({ok:true,item:{id},attemptToken:token}); return {id,token};};
+    const base={...process.env,BRAIN_DATABASE_URL:url,BRAIN_USER_ID:self,BRAIN_EXTENSION_HOME:home,BRAIN_SETTINGS_SNAPSHOT:settings};
+    const env=(attempt:{id:string;token:string}, name='')=>{const u=new URL(url); if(name) u.searchParams.set('application_name',name); return {...base,BRAIN_DATABASE_URL:u.toString(),BRAIN_WORK_ID:attempt.id,BRAIN_ATTEMPT_TOKEN:attempt.token};};
+    const run=async(attempt:{id:string;token:string},script?:string)=>{lifecycle.check(); const proc=observedChild(python,script?['-c',script,join(home,'src')]:[join(home,'src/import.py')],env(attempt),mask); active=proc; const result=await proc.result; active=undefined; return result;};
+    const assertAdapterError=(result:Awaited<ReturnType<typeof observedChild>['result']>,code:string,retryable:boolean,phase:string,sqlstate:string|null,bodySqlstate:string|null=null)=>{
+      expect(result,JSON.stringify(result)).toMatchObject({status:1,signal:null,code:null,stdinCode:null});
+      expect(result.output).toEqual([null,result.stdout,result.stderr]);
+      expect(result.stdout.split('\n')).toHaveLength(2); expect(result.stderr.split('\n')).toHaveLength(2);
+      const event={abi:1,type:'error',code,retryable};
+      expect(JSON.parse(result.stdout)).toEqual(event);
+      expect(decodeAbiLine(result.stdout.trimEnd())).toEqual({ok:true,event});
+      const consumer=createAbiRun(); consumer.feed(result.stdout); consumer.end();
+      expect(consumer.violation).toBeUndefined(); expect(consumer.workerError).toBe(true);
+      expect(consumer.verdict({code:result.status,signal:result.signal})).toEqual({outcome:'failed',code,retryable,usage:null});
+      expect(JSON.parse(result.stderr)).toEqual({kind:'preservation_diagnostic',phase,sqlstate,body_sqlstate:bodySqlstate});
+    };
+    const first=await claim('lock-first'), firstResult=await run(first); expect(firstResult,JSON.stringify(firstResult)).toMatchObject({status:0,signal:null,code:null}); expect(JSON.parse(firstResult.stdout)).toEqual({abi:1,type:'result'});
+    expect(await checkedStore.finishSupervisedWork({id:first.id,attemptToken:first.token,now:new Date(),outcome:'succeeded'})).toMatchObject({ok:true});
+    const request=(await db.rows("select id,locator from brain.file_requests where request_key::jsonb->>2='report'"))[0]!;
     const second=await claim('lock-second');
-    const script=`import sys\nsys.path.insert(0,sys.argv[1])\nimport artifact_publish,batch_import\noriginal=artifact_publish.stage\ndef stage(*args):\n if args[2]=='artifact':\n  print('STAGING_BARRIER',flush=True)\n  sys.stdin.read(1)\n return original(*args)\nartifact_publish.stage=stage\nimport runpy\nrunpy.run_path(sys.argv[1]+'/import.py',run_name='__main__')`;
-    child=spawn(python,['-c',script,join(home,'src')],{env:env(second),stdio:['pipe','pipe','pipe']});
-    expect(String((await once(child.stdout!,'data'))[0])).toContain('STAGING_BARRIER');
-    daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{disabled:true}});
-    await expect.poll(async()=> (await fixture.db.rows(`select count(*)::int as n from brain.file_import_cleanup where request_id='${request.id}' and cleaned_at is null`))[0]?.n,{timeout:20000}).toBe(1);
-    await expect.poll(async()=> (await fixture.db.rows("select count(*)::int as n from pg_locks where locktype='advisory' and not granted"))[0]?.n,{timeout:20000}).toBeGreaterThan(0);
-    child.stdin!.write('x'); const closed=await once(child,'close'); expect(closed[0]).toBe(0); child=undefined;
-    expect(await store.finishSupervisedWork({id:second.id,attemptToken:second.token,now:new Date(),outcome:'succeeded'})).toMatchObject({ok:true});
-    await expect.poll(async()=> (await fixture.db.rows(`select cleaned_at from brain.file_import_cleanup where request_id='${request.id}'`))[0]?.cleaned_at,{timeout:20000}).toBeTruthy();
+    const secondScript=`import sys\nsys.path.insert(0,sys.argv[1])\nimport artifact_publish\noriginal=artifact_publish.stage\ndef stage(*args):\n if args[2]=='artifact':\n  print('STAGING_BARRIER',flush=True)\n  if sys.stdin.read(1) != 'x': raise RuntimeError('barrier not released')\n return original(*args)\nartifact_publish.stage=stage\nimport runpy\nrunpy.run_path(sys.argv[1]+'/import.py',run_name='__main__')`;
+    lifecycle.check(); const secondChild=observedChild(python,['-c',secondScript,join(home,'src')],env(second,'artifact-second'),mask); active=secondChild; await secondChild.barrier('STAGING_BARRIER\n');
+    const dbName=new URL(fixture.db.appUrl).pathname.slice(1);
+    // Restrict interception to the fixture database, dedicated application name,
+    // and this exact unlock query. The original query has not been called yet.
+    lifecycle.check(); (pg.Client.prototype as any).query=function(this:any,...args:any[]) {
+      if(this.connectionParameters.database===dbName && this.connectionParameters.application_name==='artifact-cleanup' && typeof args[0]==='string' && args[0].includes('pg_advisory_unlock(hashtextextended') && Array.isArray(args[1]) && args[1].includes(request.locator) && args[1].includes('garmin')) {
+        called=true; unlockCalled.release();
+        return allowUnlock.promise.then(()=>{sent=true; return (originalQuery as any).apply(this,args);}).then((result:any)=>{completed=true; unlocked=result.rows?.[0]?.pg_advisory_unlock===true; unlockFinished.release(); return result;},(error:unknown)=>{const code=(error as NodeJS.ErrnoException)?.code; unlockError=typeof code==='string' && /^[A-Z0-9]{5}$/.test(code)?code:'UNKNOWN'; unlockFinished.release(); throw error;});
+      }
+      return (originalQuery as any).apply(this,args);
+    };
+    lifecycle.check(); daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{disabled:true},createStore:options=>{lifecycle.check(); return postgresStore({...options,applicationName:'artifact-cleanup'});}});
+    await expect.poll(async()=> (await db.rows(`select count(*)::int as n from brain.file_import_cleanup where request_id='${request.id}' and cleaned_at is null`))[0]?.n,{timeout:20000}).toBe(1);
+    await expect.poll(async()=> (await db.rows(`select count(*)::int as n from pg_stat_activity a join pg_stat_activity b on b.pid=any(pg_blocking_pids(a.pid)) where a.application_name='artifact-cleanup' and b.application_name='artifact-second'`))[0]?.n,{timeout:20000}).toBe(1);
+    expect(await readFile(join(home,'staging',String(request.locator)))).toEqual(Buffer.from('# synthetic report\n'));
+    lifecycle.check(); const stdinError=await secondChild.write('x'); if(stdinError) throw Error(JSON.stringify({phase:'stdin',...(await secondChild.result)}));
+    const secondResult=await secondChild.result; active=undefined; expect(secondResult,JSON.stringify(secondResult)).toMatchObject({status:0,signal:null,code:null,stdinCode:null}); expect(JSON.parse(secondResult.stdout.replace(/^STAGING_BARRIER\r?\n/,''))).toEqual({abi:1,type:'result'});
+    expect(await checkedStore.finishSupervisedWork({id:second.id,attemptToken:second.token,now:new Date(),outcome:'succeeded'})).toMatchObject({ok:true});
+    await expect.poll(()=>called,{timeout:20000}).toBe(true); await unlockCalled.promise;
+    expect({sent,completed}).toEqual({sent:false,completed:false});
+    expect((await db.rows(`select cleaned_at from brain.file_import_cleanup where request_id='${request.id}'`))[0]?.cleaned_at).toBeTruthy();
+    const lockSql=`with target as (select hashtextextended(jsonb_build_array(source::text,locator::text)::text,10) as k from brain.file_requests where id='${request.id}') select count(*)::int as n from pg_locks l join pg_stat_activity a on a.pid=l.pid cross join target t where a.application_name='artifact-cleanup' and l.locktype='advisory' and l.granted and l.classid=((t.k >> 32) & 4294967295)::oid and l.objid=(t.k & 4294967295)::oid and l.objsubid=1`;
+    expect(await db.rows(lockSql)).toEqual([{n:1}]);
     await expect(readFile(join(home,'staging',String(request.locator)))).rejects.toMatchObject({code:'ENOENT'});
-    const third=await claim('lock-third'); expect(JSON.parse(execFileSync(python,[join(home,'src/import.py')],{encoding:'utf8',env:env(third)}))).toMatchObject({type:'result'});
+    const fingerprint=(rows:unknown)=>createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+    const requests=async()=>fingerprint(await db.rows("select * from brain.file_requests where request_key::jsonb->>2='report'"));
+    const mappings=async()=>fingerprint(await db.rows('select * from garmin.import_mapping order by dataset,original_table,original_key,target_kind'));
+    const beforeRequests=await requests(), beforeMappings=await mappings();
+    const third=await claim('lock-third');
+    expect({sent,completed}).toEqual({sent:false,completed:false}); expect(await db.rows(lockSql)).toEqual([{n:1}]);
+    // The real entry starts while unlock is queued in this event loop. A sync
+    // child blocks the microtask and hits the existing PostgreSQL lock timeout.
+    lifecycle.check(); queueMicrotask(allowUnlock.release);
+    lifecycle.check(); const thirdChild=observedChild(python,[join(home,'src/import.py')],env(third,'artifact-third'),mask); active=thirdChild;
+    const thirdResult=await thirdChild.result; active=undefined;
+    await unlockFinished.promise; expect({sent,completed,unlocked,unlockError}).toEqual({sent:true,completed:true,unlocked:true,unlockError:null}); expect(await db.rows(lockSql)).toEqual([{n:0}]);
+    expect(thirdResult,JSON.stringify(thirdResult)).toMatchObject({status:0,signal:null,code:null,stdinCode:null}); expect(JSON.parse(thirdResult.stdout)).toEqual({abi:1,type:'result'});
+    expect(await checkedStore.finishSupervisedWork({id:third.id,attemptToken:third.token,now:new Date(),outcome:'succeeded'})).toMatchObject({ok:true});
+    const stale=await run(third); expect(stale.status,JSON.stringify(stale)).not.toBe(0); expect(stale.stdout).toContain('"type": "error"');
+    expect(await requests()).toBe(beforeRequests);
+    expect(await mappings()).toBe(beforeMappings);
     await expect(readFile(join(home,'staging',String(request.locator)))).rejects.toMatchObject({code:'ENOENT'});
-  } finally {if(child && child.exitCode===null && child.signalCode===null){const closed=once(child,'close'); child.kill('SIGKILL'); await closed;} controller.abort(); if(daemon) await daemon; await store.close(); await fixture.cleanup();}
+    // Inject only at the test adapter's locator boundary; the real work claim,
+    // importer and existing locator context still run.
+    for(const mode of ['acquire','body','unlock','both'] as const) {
+      const attempt=await claim(`fault-${mode}`);
+      const faultScript=`import sys,runpy,psycopg\nfrom contextlib import contextmanager\nsys.path.insert(0,sys.argv[1])\nimport artifact_publish,batch_import\nmode=${JSON.stringify(mode)}\noriginal=artifact_publish.locator_lock\ncheck=batch_import.check\ninside=False\ndef checked(cur):\n if inside and mode in ('body','both'): raise psycopg.errors.LockNotAvailable('secret fixture body')\n return check(cur)\nbatch_import.check=checked\n@contextmanager\ndef faulty(conn,locator):\n global inside\n if mode=='acquire': raise psycopg.errors.LockNotAvailable('secret fixture acquire')\n with original(conn,locator):\n  inside=True\n  try: yield\n  finally:\n   inside=False\n   if mode in ('unlock','both'): raise psycopg.errors.QueryCanceled('secret fixture unlock')\nartifact_publish.locator_lock=faulty\nrunpy.run_path(sys.argv[1]+'/import.py',run_name='__main__')`;
+      const fault=await run(attempt,faultScript); expect(fault.status,JSON.stringify(fault)).toBe(1);
+      assertAdapterError(fault,'IMPORT_INVALID',true,mode==='acquire'?'locator_acquire':mode==='body'?'locator_body':'locator_unlock',mode==='unlock'||mode==='both'?'57014':'55P03',mode==='both'?'55P03':null);
+      expect(fault.stdout+fault.stderr).not.toContain('secret fixture');
+      expect(await checkedStore.finishSupervisedWork({id:attempt.id,attemptToken:attempt.token,now:new Date(),outcome:'failed'})).toMatchObject({ok:true});
+    }
+    lifecycle.check(); const verifyFile=join(home,'src/import_verify.py'); await copyFile(fileURLToPath(new URL('../../../extensions/garmin/tests/preservation_entry.py',import.meta.url)),verifyFile);
+    for(const mode of ['connect','database','compare','reports'] as const) {
+      const attempt=await claim(`verify-${mode}`);
+      const verifyScript=`import sys,runpy,psycopg\nsys.path.insert(0,sys.argv[1])\nimport batch_import,verify_compare,reports\nmode=${JSON.stringify(mode)}\ndef fail(*args,**kwargs): raise psycopg.errors.LockNotAvailable('private verify')\nif mode=='connect': psycopg.connect=fail\nif mode=='database': batch_import.check=fail\nif mode=='compare': verify_compare.compare=fail\nif mode=='reports': reports.write_reports=fail\nrunpy.run_path(sys.argv[1]+'/import_verify.py',run_name='__main__')`;
+      const verify=await run(attempt,verifyScript); expect(verify.status,JSON.stringify(verify)).toBe(1);
+      assertAdapterError(verify,'IMPORT_INVALID',true,`verify_${mode}`,'55P03'); expect(verify.stdout+verify.stderr).not.toContain('private verify');
+      expect(await checkedStore.finishSupervisedWork({id:attempt.id,attemptToken:attempt.token,now:new Date(),outcome:'failed'})).toMatchObject({ok:true});
+    }
+    const reportAttempt=await claim('import-reports');
+    const reportScript=`import sys,runpy,psycopg\nsys.path.insert(0,sys.argv[1])\nimport reports\ndef fail(*args,**kwargs): raise psycopg.errors.LockNotAvailable('private report')\nreports.write_reports=fail\nrunpy.run_path(sys.argv[1]+'/import.py',run_name='__main__')`;
+    const reportFailure=await run(reportAttempt,reportScript); expect(reportFailure.status,JSON.stringify(reportFailure)).toBe(1);
+    assertAdapterError(reportFailure,'IMPORT_INVALID',true,'reports','55P03'); expect(reportFailure.stdout+reportFailure.stderr).not.toContain('private report');
+    expect(await checkedStore.finishSupervisedWork({id:reportAttempt.id,attemptToken:reportAttempt.token,now:new Date(),outcome:'failed'})).toMatchObject({ok:true});
+    const conflictAttempt=await claim('import-conflict-abi');
+    const conflictScript=`import sys,runpy\nsys.path.insert(0,sys.argv[1])\nimport reports\ndef fail(*args,**kwargs): raise ValueError('IMPORT_CONFLICT')\nreports.write_reports=fail\nrunpy.run_path(sys.argv[1]+'/import.py',run_name='__main__')`;
+    const conflict=await run(conflictAttempt,conflictScript);
+    assertAdapterError(conflict,'IMPORT_CONFLICT',false,'reports',null);
+    expect(await checkedStore.finishSupervisedWork({id:conflictAttempt.id,attemptToken:conflictAttempt.token,now:new Date(),outcome:'failed'})).toMatchObject({ok:true});
+    // A real verifier run writes its report and raises the report-not-ready
+    // error; the process ABI consumer must retain that specific verdict.
+    const notReadyAttempt=await claim('verify-report-not-ready');
+    const notReadyScript=`import sys,runpy\nsys.path.insert(0,sys.argv[1])\nimport verify_compare\noriginal=verify_compare.public_projection\ndef projection(details):\n public=original(details)\n public['checks']['preserved']=False\n return public\nverify_compare.public_projection=projection\nrunpy.run_path(sys.argv[1]+'/import_verify.py',run_name='__main__')`;
+    const notReady=await run(notReadyAttempt,notReadyScript);
+    assertAdapterError(notReady,'EXTENSION_REPORT_NOT_READY',false,'verify_reports',null);
+    expect(JSON.parse(await readFile(join(home,'reports',notReadyAttempt.id,'public.json'),'utf8')).checks.preserved).toBe(false);
+    expect(await checkedStore.finishSupervisedWork({id:notReadyAttempt.id,attemptToken:notReadyAttempt.token,now:new Date(),outcome:'failed'})).toMatchObject({ok:true});
+  });
+  await lifecycle.finish();
 },90000);
 
 it('같은 inventory 키의 artifact와 대형 evaluation을 원본 표별로 보존하고 재개한다', async () => {
