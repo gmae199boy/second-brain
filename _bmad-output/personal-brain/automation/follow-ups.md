@@ -492,3 +492,18 @@ deferred[]/필수미해결0/필요후속완료. 최초실패·원시·built/runn
 - 배포: plugin0.1.23/app-ref598497c는불변이며22.4/22.5와8.1은현설치ref에없다. 실제배포필요시이전구현commit ref+같은release version증가를조율한다.
 
 deferred[]/필수미해결0/필요독립후속완료. 8.5 명시후속과운영후속은 위범위로계속추적한다.
+
+
+## 8.2 — 외부 Drive 폴더 색인 수락 (2026-11-08)
+
+근거: [외부 색인 계획](../tickets/epic-drive/tickets/story-drive-txtmdgoogle-docs-mac-plan.md)의 Review Triage Log R1~R5·최종 변경영향 검증·Auto Run Result, 최종 `70c18e2`. 중앙은 누락된 최종 보고를 워크트리에서 직접 회수하고 원격tip·마지막독립원문·실제검증로그/시각·정리증거를 대조했다.
+
+- source_sync와 source전용 추출reader/publication을 연결해 txt/md/Docs본문·사진/큰파일이름 검색과 nullable출처/files show를 검증했다. 임시0700/0600 bytes의열린attempt/불명보존·terminal회수,공유정상원본fallback·claim/version/가림·현재세대fence를 포함한다. 새0041/core41이며과거0001~0040불변.22.3 chunk/tool검색/점수는불변이다.
+- 최초전체TS29실패/Python69통과·관련첫planner실패를보존한다. writer execution_class/새표DELETE revoke/현행schema41/source전용missing-schema오류교정뒤관련303시험은파일별최종통과이며한실행의합산통과아니다.최종changed exit0:기본3429·PG738·Python69.최초전체exit1을소급통과로쓰지않는다.
+- R3/R4는독립연결장벽/살아있는publisher·제3NOWAIT probe를확인했고R5는마지막회귀교정을원시대조했다.권한검증은여섯표effective DELETE카탈로그+sources한표실제DELETE거부로한정한다. planner통과는행폭이큰합성부하/기본설정의실제query접근경로이며모든실분포성능보장아니다.
+- 8.5 인계: starttoken이후changes소비/스캔중변화정합·전체재시작,8.1결과불명submitting/보관설정변경.8.3/8.8은실계정OAuth·나머지명령/설정·일반설치CLI연결,8.4는PDF/docx다. 이번가짜서버/주입tracer를실제연결완료로세지않는다.
+- 제약: 동일target shortcut은첫이름/경로로dedup하며모든별칭보존은미지원. Docs제목딥링크/새locator·문서집계/별도점수/폴더API는미채택이다. 준비중/열린/DB불명임시자료는소유/작성자종료확인전보수적으로보존한다.
+- 전달사고: 원보고는중앙Run coordinator연결부재/run_not_found로전달실패했고대체세션전송은자동승인검토가거부해실행되지않았다.중앙이자기Run을정식run-use로재연결하고기존최종보고를직접회수했다.보고실패를제품/검증실패로혼동하거나새시험으로과거증거를대체하지않았다.
+- 소유전용PG/최초226·changed240fixture정확ID부재·임시환경/자식정리증거보존.원시/리뷰/워크트리/로컬·원격branch/세션유지.기존pluginref/version불변이므로8.1/8.2및22.4/22.5의설치본배포는별도후속이다.
+
+deferred[]/필수미해결0/필요독립후속완료. 사용자최종인수done·실운영전환완료와는구별한다.
