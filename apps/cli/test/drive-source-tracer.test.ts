@@ -42,11 +42,13 @@ it('fixture drain은 process HOME의 합성 transcript를 수집하지 않는다
   const session='4f1e7a90-1c2b-4d3e-8f55-000000000000';
   await writeFile(join(projects,`${session}.jsonl`),JSON.stringify({type:'user',sessionId:session,uuid:'00000000-0000-4000-8000-000000000003',timestamp:'2026-01-02T03:04:05.000Z',message:{role:'user',content:'synthetic input'}})+'\n');
   const previousHome=process.env.HOME;
+  const f=await fixture();
+  expect(process.env.HOME).toBe(previousHome);
   process.env.HOME=ambient;
   try {
     expect(homedir()).toBe(ambient);
-    const f=await fixture();
-    const isolated=await f.brain.queue.drain({budgetMs:60000});
+    const isolatedBrain=createBrain(f.assemble(f.env));
+    const isolated=await isolatedBrain.queue.drain({budgetMs:60000});
     expect(isolated).toMatchObject({stopped:'empty',failed:0,spoolFailed:0,enqueued:0});
     expect(isolated.scanStopped).toBeUndefined();
     expect(await f.db.rows("select kind from brain.work_items where kind='session_ingest'")).toEqual([]);
@@ -286,11 +288,11 @@ it('새 parser child 비정상 종료는 PG의 이전 current와 chunks를 보�
  const ambient=await mkdtemp(join(tmpdir(),'brain-parser-ambient-'));cleanup.push(()=>rm(ambient,{recursive:true,force:true}));
  const projects=join(ambient,'.claude','projects','synthetic');await mkdir(projects,{recursive:true});
  const session='4f1e7a90-1c2b-4d3e-8f55-000000000000';await writeFile(join(projects,`${session}.jsonl`),JSON.stringify({type:'user',sessionId:session,uuid:'00000000-0000-4000-8000-000000000003',timestamp:'2026-01-02T03:04:05.000Z',message:{role:'user',content:'synthetic input'}})+'\n');
- const previousHome=process.env.HOME;process.env.HOME=ambient;
+ const previousHome=process.env.HOME;const f=await fixture();expect(process.env.HOME).toBe(previousHome);process.env.HOME=ambient;
  try {expect(homedir()).toBe(ambient);
- const f=await fixture(),config=await readConfig(f.home),{localFileStore}=await import('../src/runtime/file-store.js'),{createDocumentExtractor,runDocumentParser}=await import('../src/runtime/document-extractors.js'),files=localFileStore({root:config.ok?config.config.filesPath:join(f.home,'files')}),bytes=carryPdf(),put=await files.put(bytes);if(!put.ok)throw Error('put');const file=f.ids.next(),location=f.ids.next();
+ const initialBrain=createBrain(f.assemble(f.env));const config=await readConfig(f.home),{localFileStore}=await import('../src/runtime/file-store.js'),{createDocumentExtractor,runDocumentParser}=await import('../src/runtime/document-extractors.js'),files=localFileStore({root:config.ok?config.config.filesPath:join(f.home,'files')}),bytes=carryPdf(),put=await files.put(bytes);if(!put.ok)throw Error('put');const file=f.ids.next(),location=f.ids.next();
  await f.db.query(`insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${file}','${put.contentHash}',${put.sizeBytes},'2026-01-01Z');insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ('${location}','${file}','local','${put.location.locator}','brain','2026-01-01Z');update brain.files set home_location_id='${location}' where id='${file}'`);
- expect(await f.brain.queue.drain({budgetMs:60000})).toMatchObject({failed:0});const before=await f.db.rows(`select current_extraction_id::text from brain.files where id='${file}'`),chunks=await f.db.rows(`select id::text,body from brain.document_chunks where extraction_id=(select current_extraction_id from brain.files where id='${file}') order by ordinal`);expect(chunks).toHaveLength(1);
+ expect(await initialBrain.queue.drain({budgetMs:60000})).toMatchObject({failed:0});const before=await f.db.rows(`select current_extraction_id::text from brain.files where id='${file}'`),chunks=await f.db.rows(`select id::text,body from brain.document_chunks where extraction_id=(select current_extraction_id from brain.files where id='${file}') order by ordinal`);expect(chunks).toHaveLength(1);
  const work=f.ids.next(),now=f.clock.now();expect(await f.store.addWork({id:work,kind:'document_extract',targetKind:'file',targetId:file,createdAt:now,nextAttemptAt:now})).toMatchObject({ok:true});
  let observed:Awaited<ReturnType<typeof runDocumentParser>>|undefined;const crashing=createDocumentExtractor(async(input,mode)=>{const result=await runDocumentParser(input,mode,60000,child=>child.once('spawn',()=>child.kill('SIGKILL')));observed=result;return result;});
  const extracted=await crashing.extract(bytes,'application/pdf',{targetChars:1200,overlapChars:120});expect(observed).toMatchObject({kind:'failed',message:'문서 추출 프로세스가 종료되었습니다'});expect(extracted).toMatchObject({ok:false,message:'문서 추출 프로세스가 종료되었습니다'});observed=undefined;
