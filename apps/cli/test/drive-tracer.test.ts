@@ -67,11 +67,13 @@ it('fixture drain은 process HOME의 합성 transcript를 수집하지 않는다
   const session='4f1e7a90-1c2b-4d3e-8f55-000000000000';
   await writeFile(join(projects,`${session}.jsonl`),JSON.stringify({type:'user',sessionId:session,uuid:'00000000-0000-4000-8000-000000000003',timestamp:'2026-01-02T03:04:05.000Z',message:{role:'user',content:'synthetic input'}})+'\n');
   const previousHome=process.env.HOME;
+  const f=await fixture();
+  expect(process.env.HOME).toBe(previousHome);
   process.env.HOME=ambient;
   try {
     expect(homedir()).toBe(ambient);
-    const f=await fixture();
-    const isolated=await f.brain.queue.drain({budgetMs:5000});
+    const isolatedBrain=createBrain(f.assemble(f.env));
+    const isolated=await isolatedBrain.queue.drain({budgetMs:5000});
     expect(isolated).toMatchObject({stopped:'empty',failed:0,spoolFailed:0,enqueued:0});
     expect(isolated.scanStopped).toBeUndefined();
     expect(await f.db.rows("select kind from brain.work_items where kind='session_ingest'")).toEqual([]);
