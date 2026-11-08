@@ -572,3 +572,8 @@ built/deferred[]/자체필수미해결0이며사용자인수done아니다. 성�
 - CREATE응답유실·긴locator·취소readiness·22.3raw6손실·운영배포는해결로바꾸지않는다.제품계약변경/새후속은이번sweep범위밖이며plugin0.1.23/ref598497c불변으로현재설치본배포는별도다.워크트리/브랜치/세션·원시/리뷰/영수증보존.
 
 built/deferred[]/필수unresolved0이며 에픽closure와사용자인수done은별도판단이다.
+
+
+## 에픽22 종료 검증 (2026-11-08)
+
+[종료 검증](../tickets/epic-query-performance/epic-query-performance-closure.md)에 E22-1~5의 실제 성능·동등성·인덱스 크기/쓰기 비용,22.6scope 감사와6개수락source의원격조상을연결했다. 독립PO Closure 검사 fix0/ask0으로 에픽은built이며사용자인수done아니다. 옛raw6손실/원인미확정,역사schema41성과와현재42전승범위,최초실패/후속처분,CREATE/locator/취소readiness·운영배포등기존후속은해결로바꾸지않는다. 새시험/성능실행없음,현재plugin설치ref미포함은부모Done when의main수락과구별한별도릴리스후속이다.
