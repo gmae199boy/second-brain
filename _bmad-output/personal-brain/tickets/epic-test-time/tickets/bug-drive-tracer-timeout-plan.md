@@ -69,6 +69,8 @@ deferred: []
 
 ## Plan Change Log
 
+- 2026-11-09 중앙 msg_44b8277165f5 후속 재개: 19.5 source `1a338d3ba53e10a31398d3001951ff1067754d59` 관련 실행에서 새 HOME 격리 2case와 parser 1case가 Docker 기본 socket 부재로 실패했다(3파일86 중3실패83통과, redaction 통과). 기존 built·중앙 수락·`9124f8e2e44926ec7b15d432bc4f1553dc22cb55`·45pass와 원시는 이력으로 보존하되 현행 후속은 미완료다. HOME 변경 안에서 fixture의 Docker 자원 준비가 실행된 경계를 최소 교정하며 공통 test-db나 명시 DOCKER_CONFIG 추가로 가리지 않는다. 개발 중 시험 금지·compile만, 실질 수정 독립 Sol 확인 뒤 두 Drive 파일 관련 재검증만 수행한다. 전체·성능·추가 진단 반복은 배정하지 않는다.
+
 - 2026-11-09 최종 tree 검사: plan frontmatter ticket은 epic 내부 id를 요구하므로 19.13에서 13으로 직접 교정했다. leaf/entry/after/번호 소유나 구현·시험 바이트는 변경하지 않았다.
 
 - 2026-11-09 중앙 msg_21d84c8bcbbc 명세 보완: 원래 AC1의 역사적 9 timeout/parser failed 4 개별 귀속은 원시 root/kind 누락 때문에 필수 built 조건에서 제외하고 미확정 한계로 보존한다. 필수 근거를 고정 합성 session의 실제 기존/교정 fixture scan·queue 유입 대조, 기존 10개 case 대응·제한·단언·보존 계약 및 두 파일 45case 통과, 최초 전체 20실패 원형·환경 관련 재검증 처분·실제 소유 정리로 명시했다. 입력 격리 결함 교정만 수락하고 과거 10개 공통 원인 해결을 주장하지 않는다. 다른 AC·안전 계약과 제품/공통 fixture/runner/config 불변을 KEEP한다. leaf AC1/Notes·부모 Decision에 같은 경계를 반영하고 독립 PO 표적 확인 뒤 제출한다. 추가 진단·전체·성능 실행은 없다.
@@ -180,3 +182,23 @@ operator_actions: 중앙은 정확 최종 SHA와 바이트 영향 보고를 감�
 중앙 msg_e87928434fd1/msg_7358bd66ee8d에 따라 최초 최종 commit `e0c9a9d0611b70ac1159b9ff78b49fe3ac4198fe`와 첫 최종 보고 이력을 보존하고, `origin/main`의 `1897c866d1084b7a4bf871db8abb87701229cbac`를 자기 티켓 브랜치에 정상 merge한다. 부모 epic의 추가 Decision 문서 충돌은 19.13 AC1 보완과 19.14 분리/인계/AC3 보완을 모두 보존해 해결했다. entry14·next_id15 및 중앙의 follow-ups 기록은 incoming 그대로 수용하며 그 소유 내용을 임의 수정하지 않는다.
 
 incoming 실행 변경은 `packages/postgres/test/redaction.test.ts` 한 파일이며 중앙 수락 main blob과 동일하다(SHA-256 `600e9c02a5fad5d9c39fb32ed0972c7b904bec0860930eb869833b3f402a12b8`). 두 tracer는 실행·최초 최종 commit 해시와 동일하고 제품·공통 fixture·test-db·runner/config·lock 변경은 없다. 통합 후 build·typecheck·diff 컴파일 확인과 독립 통합 영향 검토를 수행하며, 중앙 지시대로 불필요한 전체·성능·추가 진단은 실행하지 않는다. 원래 19.13 전체 회귀는 통합 전 source의 증거이고 별도 19.14 회귀가 이를 대체하지 않는다. 최종 merge commit·독립 검토·원격 SHA는 로컬 갱신 보고에 보존한다. hook snapshot 간접 바이트 영향은 통합 후에도 유지되며 중앙/19.5가 공식 인계·새 동결/gate 처리를 판단한다.
+
+## 수락 후 HOME/Docker context 후속 교정
+
+현행 상태는 후속 built다. 위 built/수락/원격 반영 기록은 최초 결과 이력으로 보존하며, 새 3실패는 아래 후속 교정·실제 관련 재검증으로 별도 처분했다. 원래 baseline은 보존하고 후속 시작 source는 `9124f8e2e44926ec7b15d432bc4f1553dc22cb55`, 외부 실패 source는 `1a338d3ba53e10a31398d3001951ff1067754d59`로 구별한다. 원문은 자기 로컬 `home-context-followup/peer-related-failure.md`, `peer-related.log`에 복사했다.
+
+**후속 Execution:**
+
+- [x] 두 tracer 시험 파일 — fixture PG·서버·store 등 외부 자원을 원래 process HOME에서 준비하고, 실제 검증할 assembly·fallback scan·parser 동작만 합성 ambient HOME 범위에서 실행한다. 격리군도 실제 조립 경로를 거치며 config만 생략한 양성 대조와 원래 parser의 별도 env 보호·단언·제한을 유지한다. finally에서 HOME을 원래 값/미설정 상태로 복구한 뒤 afterEach의 Docker cleanup이 원래 HOME을 사용하도록 한다. 공통 fixture/test-db·제품·runner/config는 변경하지 않는다.
+- [x] 결정적 회귀/독립 후속 — 원래 자기 합성 HOME의 `.docker`에 유효한 실제 endpoint context가 있고 명시 `DOCKER_CONFIG`가 없는 전제에서도 fixture 준비 성공과 실제 합성 scan0/1·parser 보호를 검증한다. 실제 사용자 HOME/transcript는 읽지 않으며 ambient HOME에 context를 복사하거나 DOCKER_CONFIG를 추가해 실패를 가리지 않는다. 개발 중 시험·진단 실행은 금지하고 compile만 확인한다. 실질 수정의 독립 Sol 해결 확인을 받는다.
+- [x] 관련 재검증·마감 — 위 전제의 자기 전용 PG/home/TMP와 실제 context에서 두 Drive 파일만 관련 재검증한다. 이미 전체 회귀 실패 후 수정이므로 전체·성능·추가 진단은 실행하지 않는다. 최초3실패·정확 source/명령/환경·새 회귀·복구/소유 자원 부재·변경 hash를 보존하고 범위 commit/일반 branch push·정확 원격 SHA 및 중앙 후속 보고를 수행한다. 19.5 측정/testchanged 재개와 새 동결은 중앙/19.5 소유다.
+
+**후속 수락:** Given 자기 합성 원래 HOME의 유효한 실제 Docker context와 명시 DOCKER_CONFIG 부재, when 외부 자원 준비와 ambient HOME 검증을 분리한 두 tracer를 실행하면, then Docker 준비/cleanup이 원래 HOME에서 성공하고 기존 scan 양성1/격리0 및 별도 parser failed1·current/chunks 보존을 모두 유지한다. 신규3실패 처분은 실제 관련 시험 통과로 확인하고 과거 개별 귀속 미확정은 그대로 보존한다.
+
+**후속 결과와 triage:** peer source의 3실패는 실제 `docker create`/실패 뒤 `inspect`가 기본 `unix:///var/run/docker.sock`를 선택한 fixture 준비 실패였다. 이번 최소 수정은 두 파일 11줄 추가·7줄 삭제로 자원 준비를 HOME 변경 앞으로 옮기고 격리군의 실제 조립을 ambient 범위 안에서 다시 수행한다. 기존 scan 양성/음성·parser 별도 env·SIGKILL·failed1·current/chunks·실패 이력·모든 제한을 보존했다. 공통 test-db나 명시 DOCKER_CONFIG 추가·ambient context 복사는 없다. build/typecheck/diff 확인 뒤 Sol 독립 후속이 세 실패 경계의 코드 수준 해결과 finally 후 cleanup을 확인했고 추가 finding은 0건이었다(`home-context-followup/review-report.md`).
+
+관련 명령은 `pnpm exec vitest run --project cli test/drive-tracer.test.ts test/drive-source-tracer.test.ts --reporter=verbose` 1회다. 자기 원래 합성 HOME의 `.docker/config.json` currentContext와 실제 endpoint context를 준비하고 `DOCKER_CONFIG`, `DOCKER_HOST`, `DOCKER_CONTEXT`를 모두 env에서 제외해 실행했다. 실제 사용자 HOME/transcript는 읽지 않았고 ambient에는 합성 transcript만 있다. 2026-11-08 UTC 21:25:02.943909→21:25:40.895593, 단조시계37.951630417초, exit0, 2파일45case 전부 통과·skip0이다. 새 격리 사례는 tracer1201ms/source1179ms, 보강 parser1246ms에 통과했고 정상 scan·enqueue0/1·별도 parser보호 단언을 실제 수행했다. 기존 원시45pass 및 peer3fail은 별도 source 이력으로 보존한다.
+
+관리 postgres:18 ID `10dc115738925f95008b9739672bafc0aaf532f5100e4149a57d935842912a8d`/동적 loopback36082와 생성 fixture46개의 정확 ID에 대해 생성·제거 집합 일치 및 개별 inspect 부재, 기록된 포트 lsof 부재를 확인했다. 새 volume0, 자기 전용 HOME/TMP/config 루트 부재를 확인했고 다른 실행 자원은 변경하지 않았다. 원문·환경/preflight·명령/exit·정리·source diff/hash는 `home-context-followup/run/`에 보존했다. `DOCKER_CONFIG` 고정으로 context 실패를 가리지 않은 회귀 전제도 원문에 있다.
+
+실행 전후 새 tracer SHA-256은 `7e4f9dfbb96065a2b628c22613b9d000e360ff6a3beefbbff4e746ca83549d70`, source tracer는 `c4c7cee8e0591deb97f1a9f018387203e95a5f371c7db9a174e92544e74234f9`로 동일하다. 최초 baseline·수락 commit의 이전 hash는 이력이며 현재 hash와 혼동하지 않는다. 추가 전체·성능·진단은 실행하지 않았고 historical root/kind와 최초 null 원인의 미확정 한계는 그대로다. hook snapshot의 추가 시험/계획 바이트 영향은 계속 있어 정확 후속 SHA를 중앙에 인계하고 19.5가 통합/새 동결·측정을 재개한다. 필수 후속 미해결은 없고 deferred는 빈 단일 목록이다. 중앙 수락/통합은 별도다.
