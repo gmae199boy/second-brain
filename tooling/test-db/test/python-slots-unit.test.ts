@@ -92,3 +92,55 @@ it('preserves completed shard cases, elapsed wall time and the worst job details
   const missingResult = summarizeShard('f', names.slice(0, 2), [{ ...base, id: 'f#a', selectedCase: 'a', caseStatus: 'passed' }, { ...base, id: 'f#b', selectedCase: 'b' }]);
   expect(missingResult.cases).toEqual({ pass: 1, fail: 0, skip: 0 }); expect(missingResult.missingCases).toEqual(['b']); expect(missingResult.reason).toBe('fail');
 });
+
+it('recovers Docker CPU sampling only from exact inspected absences', async () => {
+  const { sampleDockerCpu } = await import('../src/python-slots.js');
+  const a = 'a'.repeat(64), b = 'b'.repeat(64), c = 'c'.repeat(64);
+  const eof = { code: 1, stderr: 'EOF' };
+  const missing = (id: string) => ({ code: 1, stderr: `Error: No such object: ${id}` });
+  const runCase = async (states: Record<string, string | object>, retry: string | object = '12.5%\n', ids = [a, b]) => {
+    const calls: string[][] = [];
+    const result = await sampleDockerCpu(ids, async args => {
+      calls.push(args);
+      if (args[0] === 'stats') {
+        if (calls.filter(call => call[0] === 'stats').length === 1) throw eof;
+        if (typeof retry !== 'string') throw retry;
+        return { stdout: retry };
+      }
+      const state = states[args[3]!]!;
+      if (typeof state !== 'string') throw state;
+      return { stdout: state };
+    });
+    return { result, calls };
+  };
+  const present = await runCase({ [a]: a, [b]: b });
+  expect(present.result.disposition).toBe('error'); expect(present.result.error).toContain('EOF');
+  const gone = await runCase({ [a]: missing(a), [b]: missing(b) });
+  expect(gone.result.disposition).toBe('vanished'); expect(gone.result.cpu).toBeUndefined();
+  expect(gone.result.record?.missingIds).toEqual([a, b]);
+  const recovered = await runCase({ [a]: missing(a), [b]: b });
+  expect(recovered.result.disposition).toBe('recovered'); expect(recovered.result.cpu).toBe(12.5);
+  expect(recovered.result.record?.recoveryCollection).toBe('succeeded');
+  expect(recovered.calls.filter(call => call[0] === 'stats')).toEqual([
+    ['stats', '--no-stream', '--format', '{{.CPUPerc}}', a, b],
+    ['stats', '--no-stream', '--format', '{{.CPUPerc}}', b],
+  ]);
+  const failed = await runCase({ [a]: missing(a), [b]: b }, { stderr: 'retry failed' });
+  expect(failed.result.disposition).toBe('error'); expect(failed.result.error).toContain('EOF'); expect(failed.result.error).toContain('retry failed');
+  expect(failed.result.record?.recoveryCollection).toBe('failed'); expect(failed.calls.filter(call => call[0] === 'stats')).toHaveLength(2);
+  for (const output of ['', '  \n ', '12.5%\n']) {
+    const malformed = await runCase({ [a]: missing(a), [b]: b, [c]: c }, output, [a, b, c]);
+    expect(malformed.result.disposition).toBe('error'); expect(malformed.result.cpu).toBeUndefined();
+    expect(malformed.result.error).toContain('EOF'); expect(malformed.result.error).toContain('invalid docker CPU');
+    expect(malformed.result.record?.recoveryCollection).toBe('failed');
+  }
+  for (const code of ['ECONNREFUSED', 'ECONNRESET']) {
+    const connection = await runCase({ [a]: missing(a), [b]: Object.assign(new Error(code), { code }) });
+    expect(connection.result.disposition).toBe('error'); expect(connection.result.cpu).toBeUndefined();
+    expect(connection.result.error).toContain('EOF'); expect(connection.result.error).toContain(code);
+  }
+  const denied = await runCase({ [a]: missing(a), [b]: { stderr: 'permission denied' } });
+  expect(denied.result.disposition).toBe('error'); expect(denied.result.error).toContain('permission denied');
+  const mismatch = await runCase({ [a]: missing(a), [b]: a });
+  expect(mismatch.result.disposition).toBe('error'); expect(mismatch.result.error).toContain('ID mismatch');
+});

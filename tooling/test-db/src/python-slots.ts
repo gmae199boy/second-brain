@@ -86,6 +86,58 @@ export function metricVanished(error: unknown): boolean {
   const e = error as { code?: unknown; stderr?: unknown; message?: unknown } | null;
   return e?.code === 'ECONNREFUSED' || e?.code === 'ECONNRESET' || (typeof e?.message === 'string' && /connection terminated/i.test(e.message)) || (typeof e?.stderr === 'string' && /\bno such (container|object)\b/i.test(e.stderr));
 }
+export interface DockerStatsRecovery {
+  time: string; targetIds: string[]; missingIds: string[]; survivingIds: string[];
+  originalError: string; recoveryCollection: 'not-attempted' | 'succeeded' | 'failed';
+  elapsedMs: number; disposition: 'vanished' | 'recovered' | 'error';
+  detail?: string;
+}
+function metricErrorSummary(error: unknown): string {
+  const stderr = (error as { stderr?: unknown } | null)?.stderr;
+  return `${String(error)}${typeof stderr === 'string' && stderr ? `; stderr: ${stderr.slice(0, 1000)}` : ''}`;
+}
+// This recovery is internal to metrics collection, never a workload retry.
+export async function sampleDockerCpu(ids: string[], run: Docker): Promise<{ cpu?: number; disposition: 'sampled' | DockerStatsRecovery['disposition']; record?: DockerStatsRecovery; error?: string }> {
+  const started = performance.now(), time = new Date().toISOString();
+  const collect = async (targets: string[], recovery = false) => {
+    const output = (await run(['stats', '--no-stream', '--format', '{{.CPUPerc}}', ...targets])).stdout;
+    const values = output.trim().split(/\s+/).filter(Boolean).map(v => Number(v.replace('%', '')));
+    if ((recovery && values.length !== targets.length) || values.some(v => !Number.isFinite(v))) throw new Error('invalid docker CPU');
+    return values.reduce((a, b) => a + b, 0);
+  };
+  try { return { cpu: await collect(ids), disposition: 'sampled' }; }
+  catch (original) {
+    const record: DockerStatsRecovery = { time, targetIds: [...ids], missingIds: [], survivingIds: [], originalError: metricErrorSummary(original), recoveryCollection: 'not-attempted', elapsedMs: 0, disposition: 'error' };
+    const finish = (disposition: DockerStatsRecovery['disposition'], cpu?: number, detail?: string) => {
+      record.disposition = disposition; record.elapsedMs = performance.now() - started;
+      if (detail) record.detail = detail;
+      return { disposition, record, ...(cpu === undefined ? {} : { cpu }), ...(disposition === 'error' ? { error: [record.originalError, detail].filter(Boolean).join('; ') } : {}) };
+    };
+    if (metricVanished(original)) return finish('vanished');
+    const errors: string[] = [];
+    for (const id of ids) {
+      try {
+        const actual = (await run(['inspect', '--format', '{{.Id}}', id])).stdout.trim();
+        if (actual !== id) throw new Error(`docker inspect ID mismatch for ${id}: ${actual}`);
+        record.survivingIds.push(id);
+      } catch (error) {
+        if (isNoSuchObject(error, id)) record.missingIds.push(id);
+        else errors.push(`inspect ${id}: ${metricErrorSummary(error)}`);
+      }
+    }
+    if (errors.length) return finish('error', undefined, errors.join('; '));
+    if (!record.missingIds.length) return finish('error');
+    if (!record.survivingIds.length) return finish('vanished');
+    try {
+      const cpu = await collect(record.survivingIds, true);
+      record.recoveryCollection = 'succeeded';
+      return finish('recovered', cpu);
+    } catch (error) {
+      record.recoveryCollection = 'failed';
+      return finish('error', undefined, `recovery stats: ${metricErrorSummary(error)}`);
+    }
+  }
+}
 export interface FileResult { file: string; id?: string; selectedCase?: string; filterName?: string; caseStatus?: CaseStatus; port?: number; slot: string; generation: number; start: string; end: string; wallMs: number; exit: number | null; signal: string | null; reason: 'pass' | 'fail' | 'timeout' | 'signal' | 'setup-error'; cases?: { pass: number; fail: number; skip: number }; log: string; cleanup: unknown[]; expectedCases?: number; completedCases?: number; missingCases?: string[]; jobWallSumMs?: number; jobIds?: string[]; logs?: { jobId: string; log: string }[] }
 interface RunReport { runId: string; sha: string; start: string; end?: string; wallMs?: number; slots: number; files: FileResult[]; jobs: FileResult[]; quarantine: string[]; recovery: unknown[]; cleanupErrors: string[]; hookCleanup?: unknown[]; policy?: unknown; metrics?: unknown; environment?: unknown; signal?: string }
 const reasonSeverity: FileResult['reason'][] = ['pass', 'fail', 'setup-error', 'signal', 'timeout'];
@@ -253,18 +305,18 @@ async function runCoordinator(options: Options): Promise<number> {
   let metricsTimer: ReturnType<typeof setInterval> | undefined;
   let metricsPending: Promise<void> | undefined;
   let metricBusy = false, boundaryInProgress = 0, dockerCpuPeak = 0, pgConnectionsPeak = 0, metricVanishedCount = 0, metricErrors: string[] = [];
+  const dockerStatsRecoveries: DockerStatsRecovery[] = [];
   const metricsSample = async () => {
     if (metricBusy || boundaryInProgress) return;
     metricBusy = true;
     try {
       const ids = await listIds(runId);
       if (ids.length) {
-        try {
-          const output = (await docker(['stats', '--no-stream', '--format', '{{.CPUPerc}}', ...ids])).stdout;
-          const values = output.trim().split(/\s+/).filter(Boolean).map(v => Number(v.replace('%', '')));
-          if (values.some(v => !Number.isFinite(v))) throw new Error('invalid docker CPU');
-          dockerCpuPeak = Math.max(dockerCpuPeak, values.reduce((a, b) => a + b, 0));
-        } catch (e) { if (metricVanished(e)) metricVanishedCount++; else metricErrors.push(String(e)); }
+        const sample = await sampleDockerCpu(ids, docker);
+        if (sample.record) dockerStatsRecoveries.push(sample.record);
+        if (sample.cpu !== undefined) dockerCpuPeak = Math.max(dockerCpuPeak, sample.cpu);
+        if (sample.disposition === 'vanished' || sample.disposition === 'recovered') metricVanishedCount++;
+        if (sample.error) metricErrors.push(sample.error);
       }
       let connections = 0;
       const urls = slots.flatMap(slot => slot.cluster ? [slot.cluster.url] : []);
@@ -487,7 +539,7 @@ async function runCoordinator(options: Options): Promise<number> {
     process.off('SIGINT', onInt); process.off('SIGTERM', onTerm);
     report.end = new Date().toISOString(); report.wallMs = performance.now() - begin;
     if (signal) report.signal = signal;
-    if (options.metrics) { report.metrics = { intervalMs: 1000, nodeCpuPeak, nodeCpuScope: 'sum of root and observed descendants percent', dockerCpuPeak, dockerCpuScope: 'sum of run-labeled container percent', pgConnectionsPeak, pgConnectionsScope: 'slot + run-label fixture cluster client backends, hook Compose 제외', vanished: metricVanishedCount, errors: metricErrors }; if (metricErrors.length) failed = true; }
+    if (options.metrics) { report.metrics = { intervalMs: 1000, nodeCpuPeak, nodeCpuScope: 'sum of root and observed descendants percent', dockerCpuPeak, dockerCpuScope: 'sum of run-labeled container percent', pgConnectionsPeak, pgConnectionsScope: 'slot + run-label fixture cluster client backends, hook Compose 제외', vanished: metricVanishedCount, errors: metricErrors, dockerStatsRecoveries }; if (metricErrors.length) failed = true; }
     try { if (claimed || options.recover || options.report) { await mkdir(resolve(reportPath, '..'), { recursive: true }); await writeFile(reportPath, JSON.stringify(report, null, 2).split(homedir()).join('~') + '\n'); } } catch (e) { failed = true; process.stderr.write(`report: ${display(String(e))}\n`); }
     const totals = report.files.reduce((sum, row) => ({ pass: sum.pass + (row.cases?.pass ?? 0), fail: sum.fail + (row.cases?.fail ?? 0), skip: sum.skip + (row.cases?.skip ?? 0) }), { pass: 0, fail: 0, skip: 0 });
     process.stderr.write(`Python run ${runId}: ${failed || signal ? 'failed' : 'passed'}; files ${report.files.length}; pass/fail/skip ${totals.pass}/${totals.fail}/${totals.skip}; ${report.wallMs.toFixed(0)}ms\n`);
