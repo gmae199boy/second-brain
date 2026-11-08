@@ -7,13 +7,14 @@ import type { SourceClaim, SourceStore } from '../ports/source-store.js';
 import type { SourceRemote, SourceTemp, RemoteSourceItem, RemoteError } from '../ports/source-remote.js';
 import { SOURCE_DOCS_MAX_BYTES } from '../ports/source-remote.js';
 import type { WorkHandlerResult } from '../queue/drain.js';
+import type { WorkStore } from '../ports/store.js';
 export const SOURCE_SYNC_KIND='source_sync';
 const folder='application/vnd.google-apps.folder', shortcut='application/vnd.google-apps.shortcut', docs='application/vnd.google-apps.document';
-const fail=(x:{code:string;message:string},retryable=true):WorkHandlerResult=>({ok:false,code:x.code,message:x.message,retryable});
+const fail=(x:{code:string;message:string;retryAfter?:Date},retryable=true):WorkHandlerResult=>({ok:false,code:x.code,message:x.message,retryable:x.code==='AUTH_REQUIRED'||x.code==='AUTH_LOGIN_REQUIRED'?false:retryable,...(x.retryAfter?{retryAfter:x.retryAfter}:{})});
 export function sourceClaim(item:WorkItem,clock:Clock):SourceClaim|null {return item.claimedBy&&item.claimedAt?{workId:item.id,claimedBy:item.claimedBy,claimedAt:item.claimedAt,attempts:item.attempts,now:clock.now()}:null;}
-export function sourceSyncHandler(deps:{store:SourceStore;remote:SourceRemote;temp?:SourceTemp;clock:Clock;idGen:IdGen}) {
+export function sourceSyncHandler(deps:{store:SourceStore & Partial<Pick<WorkStore,'resolveFailures'>>;remote:SourceRemote;temp?:SourceTemp;clock:Clock;idGen:IdGen;roots?:()=>Promise<{ok:true;roots:string[]}|{ok:false;code:string;message:string}>;validateSource?:(id:string)=>Promise<{ok:true}|{ok:false;code:string;message:string}>}) {
   return async (work:WorkItem):Promise<WorkHandlerResult>=>{
-    const {store,remote,clock,idGen}=deps;if(deps.temp)await cleanupSourceTemps(deps.temp,store,clock);const claim=()=>sourceClaim(work,clock);const initial=claim();if(!initial)return fail({code:'CLAIM_LOST',message:'source 청구가 없습니다'},false);
+    const {store,remote,clock,idGen}=deps;const permitted=await deps.validateSource?.(work.targetId);if(permitted&&!permitted.ok)return fail(permitted);if(deps.temp)await cleanupSourceTemps(deps.temp,store,clock);const claim=()=>sourceClaim(work,clock);const initial=claim();if(!initial)return fail({code:'CLAIM_LOST',message:'source 청구가 없습니다'},false);
     const renew=async()=>store.renewSourceClaim({sourceId:work.targetId,claim:claim()!});
     const firstRenewal=await renew();if(!firstRenewal.ok)return fail(firstRenewal);
     const read=await store.readSource(work.targetId);if(!read.ok)return fail(read);if(!read.source)return {ok:true};const source=read.source;
@@ -21,7 +22,8 @@ export function sourceSyncHandler(deps:{store:SourceStore;remote:SourceRemote;te
     const afterToken=await renew();if(!afterToken.ok)return fail(afterToken);
     const scanId=idGen.next();const begun=await store.beginSourceScan({sourceId:source.id,generation:source.generation,scanId,startToken:token.token,claim:claim()!});if(!begun.ok)return fail(begun);
     const prior=await store.listSourceEntries(source.id);if(!prior.ok)return fail(prior);const known=new Map(prior.entries.map(e=>[e.remoteId,e]));
-    const queue=[{id:source.rootId,path:''}], visitedFolders=new Set<string>(),seenFiles=new Set<string>();
+    const roots=deps.roots?await deps.roots():{ok:true as const,roots:[source.rootId]};if(!roots.ok)return fail(roots);
+    const queue=roots.roots.map(id=>({id,path:''})), visitedFolders=new Set<string>(),seenFiles=new Set<string>();
     while(queue.length){const current=queue.shift()!;if(visitedFolders.has(current.id))continue;visitedFolders.add(current.id);let page:string|undefined;const pages=new Set<string>();
       do {const pageLease=await renew();if(!pageLease.ok)return fail(pageLease);if(page){if(pages.has(page))return fail({code:'SOURCE_PAGE_LOOP',message:'목록 페이지가 반복됩니다'});pages.add(page);}const list=await remote.list({parentId:current.id,...(page?{pageToken:page}:{})});if(!list.ok)return fail(list,list.code!=='UNREACHABLE');if(list.incomplete)return fail({code:'SOURCE_INCOMPLETE',message:'목록이 완전하지 않습니다'});
         for(const raw of list.items){const fileLease=await renew();if(!fileLease.ok)return fail(fileLease);let item:RemoteSourceItem=raw;if(raw.mimeType===shortcut){if(!raw.shortcutTargetId)continue;const target=await remote.metadata(raw.shortcutTargetId);if(!target.ok){if(target.code==='UNREACHABLE')continue;return fail(target);}item=target.item;const shortcutLease=await renew();if(!shortcutLease.ok)return fail(shortcutLease);}
@@ -42,7 +44,7 @@ export function sourceSyncHandler(deps:{store:SourceStore;remote:SourceRemote;te
       }while(page);
     }
     const finalLease=await renew();if(!finalLease.ok)return fail(finalLease);
-    const finished=await store.finishSourceScan({sourceId:source.id,generation:source.generation,scanId,claim:claim()!});return finished.ok?{ok:true}:fail(finished);
+    const finished=await store.finishSourceScan({sourceId:source.id,generation:source.generation,scanId,claim:claim()!});if(!finished.ok)return fail(finished);if(store.resolveFailures){const resolved=await store.resolveFailures({targetKind:'source',targetId:source.id,stage:SOURCE_SYNC_KIND,now:clock.now()});if(!resolved.ok)return fail(resolved);}return {ok:true};
   };
 }
 export type { RemoteError };

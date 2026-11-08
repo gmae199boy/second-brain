@@ -507,3 +507,19 @@ deferred[]/필수미해결0/필요독립후속완료. 8.5 명시후속과운영�
 - 소유전용PG/최초226·changed240fixture정확ID부재·임시환경/자식정리증거보존.원시/리뷰/워크트리/로컬·원격branch/세션유지.기존pluginref/version불변이므로8.1/8.2및22.4/22.5의설치본배포는별도후속이다.
 
 deferred[]/필수미해결0/필요독립후속완료. 사용자최종인수done·실운영전환완료와는구별한다.
+
+
+## 8.3 — Drive 연결 구현 부분 반영, 회귀 차단 유지 (2026-11-08)
+
+근거: [OAuth·설정·해제 계획](../tickets/epic-drive/tickets/story-oauth-brain-sources-connect-drive-disconnect-drive-plan.md)의 R1~R3·E13~E16 독립 후속·최초 전체와 관련 재검증·Auto Run Result, source `b984716`. 중앙은 최종 결과 전문과 원격 tip, 마지막 독립 원문, 실제 종료 영수증과 관련 로그를 대조했다. 런북의 blocked 결과 중 독립 검증·리뷰 완료 부분 반영 규칙으로 main에 병합하며 티켓 상태는 blocked다. 후속 티켓의 8.3 선행 gate를 해제하지 않는다.
+
+- 구현: desktop OAuth·PKCE/state·loopback·0600 refresh 비밀 저장, 공통 예약·sources 명령·실행 회차 인증, source generation fence와 프로세스 간 삭제/해제 I/O 장벽. 실제 계정·Drive·운영 데이터는 사용하지 않았다. 새0042/core42이며 이전0001~0041 bytes는 불변이다. 검색 점수/성능 runner·Garmin 시험·19.5 runner·plugin ref/version은 불변이다.
+- 검증: 최초 전체 TS exit1(62실패)/Python exit1(11실패)을 보존한다. E15 관련313개 중3실패 후 E16 관련154개·Python hook8개·정상 Drive 경로32개가 각각 통과했다. 전체 명령이 통과한 것으로 합산하거나 소급하지 않는다. 마지막 dispatch 제품 수정과 source 장벽 관찰은 독립 E16 edge/verification 원문과 실제 관련 실행으로 확인했다.
+- 필수 미해결: Garmin core 사진 전송2건과 native 가림 표시ID SQL 재사용1건은19.11 소유다. 수락된 정확 source를 정상 통합하고 관련 재검증하기 전8.3을 built로 바꾸지 않는다. 최초 문서 재시도 실패 추정은 중간 snapshot 오독으로 정정했으며 실제500→200 단언은 통과했다.
+- 리뷰: R1/R2 독립4렌즈와 후속을 수행했다. R3 blind는 근거 있는2건으로 floor10 미충족 failed 이력을 유지한다. 두 제품 위험은 E13 독립 안전/edge/verification 및 E14 시험 교정 확인으로 닫았으며 E15/E16도 집중 후속을 마쳤다. 발견 수 미충족을 성공으로 바꾸거나 결함을 만들어 채우지 않았다.
+- 한계: 다운로드/handoff와 late publish·프로세스 삭제 장벽은 분리된 경계 시험의 조합이다. daemon은 실제 함수 회차이며 OS daemon 전체 수명주기 전칭 검증은 아니다. 합성 비밀 표식·선택 경로/home snapshot이 모든 운영 시점의 비밀 안전을 보장하지 않는다.
+- 운영: 실제 client 발급·동의화면/게시·로그인/MFA·계정/root 확인은8.8 운영자 몫이다. 단일 Drive 계정/source 정책, 여러 source/계정 모호성의 원격 차단, 해제 뒤 미실행 local-delete 보수 취소·재연결 시 부활 금지를 유지한다. secrets/refresh lock·삭제 불명 표식은 시간만으로 제거하지 않으며 실제 소유/자식/I/O 종료와 결과 확인 뒤 개별 복구한다.
+- 자원·증거: fixture271container/1volume 정확ID 부재, 관리자PG와 소유 격리 root 정리 확인을 보존했다. bootstrap 자체 Compose는 시험 finally의 정확ID 부재 단언 근거이며 별도 목록을 발명하지 않았다. 워크트리/브랜치/세션/원시·리뷰·체크포인트는 보존한다.
+- 배포: plugin0.1.23/app-ref598497c는 유지돼 이번8.3은 현재 설치 ref에 포함되지 않는다. 실제 배포는 이전 구현commit ref와 같은 release의 version 증가 규칙에 따른 별도 후속이다.
+
+deferred[]와 별개로 위 필수 회귀3건은 미완료 차단이다. 부분 main 반영은 built·사용자 인수done·실제 운영 연결 완료가 아니다.

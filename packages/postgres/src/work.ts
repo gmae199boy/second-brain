@@ -122,6 +122,7 @@ export function claimCandidateQuery(query: DueWorkQuery, scope?:{sourceId:string
             and (p.completed_at is null or p.outcome is distinct from 'succeeded')
        )
        and ${keyAvailable(now)} and ${groupAvailable('brain.work_items')} and ${quiesceAvailable('brain.work_items')}
+       and (kind <> 'source_sync' or (target_kind='source' and exists (select 1 from brain.sources s where s.id::text=brain.work_items.target_id and s.connected)))
        and ${scheduleWorkReady()}
        and execution_class = 'core'
        and next_attempt_at <= ${now}
@@ -158,6 +159,10 @@ export function postgresSourceQueue(connect:PgConnect) {
 
 /** Find-or-create also used inside session creation and schedule firing. */
 export async function ensureWork(held: Kysely<PgSchema>, input: AddWorkInput) {
+  if (input.kind === 'source_sync') {
+    const active = await sql`select id from brain.sources where id::text=${input.targetId} and ${input.targetKind}='source' and connected for share`.execute(held);
+    if (!active.rows.length) throw new Error('source is disconnected or missing');
+  }
   const createdAt = instant(input.createdAt, 'work_items.created_at');
   const nextAttemptAt = instant(input.nextAttemptAt, 'work_items.next_attempt_at');
   for (;;) {
@@ -407,7 +412,8 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
                      and (p.completed_at is null or p.outcome is distinct from 'succeeded')
                 )
                 and ${keyAvailable(now)} and ${groupAvailable('brain.work_items')} and ${quiesceAvailable('brain.work_items')}
-                and ${scheduleWorkReady()}
+                and (kind <> 'source_sync' or (target_kind='source' and exists (select 1 from brain.sources s where s.id::text=brain.work_items.target_id and s.connected)))
+       and ${scheduleWorkReady()}
                 and current_attempt_token is null and cancel_requested_at is null
                 and next_attempt_at <= ${now} and (claim_expires_at is null or claim_expires_at <= ${now})
                 and kind = any(${[...input.kinds]}::text[])

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, unlink, writeFile, rm } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { errorLine, isTimeZone, TIMEZONE_SETTING, type WarningCode } from 'second_brain';
@@ -507,7 +507,7 @@ export type WriteConfigResult =
  * created or already existed — there is no key to write into it yet, and the
  * mode rule has to hold before there is one rather than after.
  */
-export async function writeConfig(
+async function writeConfigUnlocked(
   home: string,
   input: WriteConfigInput,
 ): Promise<WriteConfigResult> {
@@ -539,6 +539,7 @@ export async function writeConfig(
     await mkdir(home, { recursive: true, mode: 0o700 });
 
     const existing = await readTextFile(envPath);
+    if(existing.state==='unreadable') throw new Error('비밀 파일을 읽을 수 없습니다');
     const values: Record<string, string | undefined> =
       existing.state === 'read' ? { ...parseEnv(existing.text) } : {};
 
@@ -744,7 +745,7 @@ export async function resolveStoreUrl(home: string, name: string, env: NodeJS.Pr
   try { return parseEnv(await readFile(envFilePath(home), 'utf8'))[name]?.trim() || undefined; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
 }
-export async function postgresSecrets(home: string, port: number, urlEnv: string): Promise<{ adminUrl: string; appPassword: string }> {
+async function postgresSecretsUnlocked(home: string, port: number, urlEnv: string): Promise<{ adminUrl: string; appPassword: string }> {
   const selectorError = storeUrlEnvError(urlEnv);
   if (selectorError !== undefined) throw new Error(selectorError);
   const { randomBytes } = await import('node:crypto');
@@ -792,7 +793,7 @@ function extensionPasswordKey(name: string): string {
   return `BRAIN_EXT_${name.toUpperCase()}_PASSWORD`;
 }
 /** 클러스터 잠금 안에서 확장 비밀번호를 생성하거나 기존 값을 보존한다. */
-export async function ensureExtensionPassword(home: string, name: string): Promise<string> {
+async function ensureExtensionPasswordUnlocked(home: string, name: string): Promise<string> {
   const key = extensionPasswordKey(name);
   let values: Record<string, string> = {};
   try { values = Object.fromEntries(Object.entries(parseEnv(await readFile(envFilePath(home), 'utf8'))).filter((entry): entry is [string, string] => entry[1] !== undefined)); }
@@ -824,4 +825,86 @@ export async function resolveTelegramConfig(home: string, env: NodeJS.ProcessEnv
     resolveStoreUrl(home, 'BRAIN_TELEGRAM_CHAT_ID', env),
   ]);
   return token && chatId ? { token, chatId } : null;
+}
+
+/** Serializes every codec .env read-modify-write across processes. An abandoned
+ * lock is never guessed stale: the operator must confirm the owner is gone. */
+class DirectoryLockUnavailable extends Error { constructor(readonly lockName:string){super('비밀 파일 잠금을 확보할 수 없습니다');} }
+export class DriveRefreshLockUnavailable extends Error {}
+async function withDirectoryLock<T>(home:string, name:string, run:()=>Promise<T>):Promise<T> {
+  await mkdir(home,{recursive:true,mode:0o700});
+  const lock=join(home,name), owner=`${process.pid}:${randomUUID()}`;
+  let acquired=false;
+  for(let attempt=0;attempt<100;attempt++) {
+    try {await mkdir(lock,{mode:0o700});acquired=true;break;}
+    catch(error) {if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;await new Promise(resolve=>setTimeout(resolve,50));}
+  }
+  if(!acquired)throw new DirectoryLockUnavailable(name);
+  try {
+    // A failed owner write leaves the lock for explicit recovery.
+    await writeFile(join(lock,'owner'),owner,{encoding:'utf8',mode:0o600,flag:'wx'});
+    try {return await run();}
+    finally {if(await readFile(join(lock,'owner'),'utf8').catch(()=>null)===owner)await rm(lock,{recursive:true,force:true});}
+  } catch(error) {throw error;}
+}
+async function withEnvMutation<T>(home:string,run:()=>Promise<T>):Promise<T>{return withDirectoryLock(home,'secrets.lock',run);}
+export async function withDriveConnectionLock<T>(home:string,run:()=>Promise<T>):Promise<T>{return withDirectoryLock(home,'.drive-connection.lock',run);}
+/** Refresh is serialized across processes, but never holds the disconnect lock. */
+export async function withDriveRefreshLock<T>(home:string,run:()=>Promise<T>):Promise<T>{try{return await withDirectoryLock(home,'.drive-refresh.lock',run);}catch(error){if(error instanceof DirectoryLockUnavailable&&error.lockName==='.drive-refresh.lock')throw new DriveRefreshLockUnavailable();throw error;}}
+export async function writeConfig(home:string,input:WriteConfigInput):Promise<WriteConfigResult> {
+  try{return await withEnvMutation(home,()=>writeConfigUnlocked(home,input));}
+  catch{return {ok:false,code:'CONFIG_INVALID',message:'비밀 파일을 안전하게 갱신할 수 없습니다'};}
+}
+export async function postgresSecrets(home:string,port:number,urlEnv:string) {return withEnvMutation(home,()=>postgresSecretsUnlocked(home,port,urlEnv));}
+export async function ensureExtensionPassword(home:string,name:string) {return withEnvMutation(home,()=>ensureExtensionPasswordUnlocked(home,name));}
+export interface DriveCredentials {clientId:string;clientSecret:string;refreshToken:string;session?:string}
+const driveKeys=['BRAIN_DRIVE_CLIENT_ID','BRAIN_DRIVE_CLIENT_SECRET','BRAIN_DRIVE_REFRESH_TOKEN'] as const;
+/** File-only: inherited environment variables cannot resurrect a deleted token. */
+export async function readDriveCredentials(home:string):Promise<DriveCredentials|null> {
+  let values:Record<string,string|undefined>;
+  try {values=parseEnv(await readFile(envFilePath(home),'utf8'));}
+  catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return null;throw new Error('Drive 비밀 파일을 읽을 수 없습니다');}
+  const [clientId,clientSecret,refreshToken]=driveKeys.map(k=>values[k]);
+  return clientId&&clientSecret&&refreshToken?{clientId,clientSecret,refreshToken,...(values.BRAIN_DRIVE_SESSION?{session:values.BRAIN_DRIVE_SESSION}:{})}:null;
+}
+/** Read client registration before first consent; never consult process.env. */
+export async function readDriveClient(home:string):Promise<{clientId:string;clientSecret:string}|null> {
+  try {const values=parseEnv(await readFile(envFilePath(home),'utf8'));const clientId=values.BRAIN_DRIVE_CLIENT_ID,clientSecret=values.BRAIN_DRIVE_CLIENT_SECRET;return clientId&&clientSecret?{clientId,clientSecret}:null;}
+  catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return null;throw new Error('Drive 비밀 파일을 읽을 수 없습니다');}
+}
+async function mutateDriveSecrets(home:string, update:(values:Record<string,string>)=>void):Promise<void> {
+  await withEnvMutation(home,async()=>{
+    let values:Record<string,string>={};
+    try {values=Object.fromEntries(Object.entries(parseEnv(await readFile(envFilePath(home),'utf8'))).filter((entry):entry is [string,string]=>entry[1]!==undefined));}
+    catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+    update(values);
+    const lines=Object.entries(values).map(([key,value])=>{const q=quote(value);if(q===undefined||/[\r\n]/.test(value))throw new Error('비밀 파일을 안전하게 쓸 수 없습니다');return `${key}=${q}`;});
+    await writeEnv(envFilePath(home),lines.join('\n')+'\n');
+  });
+}
+export async function saveDriveCredentials(home:string,credentials:DriveCredentials):Promise<void> {
+  if(!credentials.clientId||!credentials.clientSecret||!credentials.refreshToken)throw new Error('Drive 자격 증명이 올바르지 않습니다');
+  await mutateDriveSecrets(home,values=>{values.BRAIN_DRIVE_CLIENT_ID=credentials.clientId;values.BRAIN_DRIVE_CLIENT_SECRET=credentials.clientSecret;values.BRAIN_DRIVE_REFRESH_TOKEN=credentials.refreshToken;values.BRAIN_DRIVE_SESSION=randomUUID();});
+}
+/** Caller must already hold the connection lock across the DB transition. */
+export async function deleteDriveRefreshTokenUnderLock(home:string):Promise<void> {await mutateDriveSecrets(home,values=>{delete values.BRAIN_DRIVE_REFRESH_TOKEN;delete values.BRAIN_DRIVE_SESSION;});}
+export async function deleteDriveRefreshToken(home:string):Promise<void> {await withDriveConnectionLock(home,()=>deleteDriveRefreshTokenUnderLock(home));}
+/** A refresh response may never restore credentials removed by disconnect. */
+export async function rotateDriveRefreshToken(home:string, previous:DriveCredentials, next:string):Promise<boolean> {
+  let updated=false;
+  await mutateDriveSecrets(home,values=>{
+    if(values.BRAIN_DRIVE_CLIENT_ID!==previous.clientId||values.BRAIN_DRIVE_CLIENT_SECRET!==previous.clientSecret||values.BRAIN_DRIVE_REFRESH_TOKEN!==previous.refreshToken||values.BRAIN_DRIVE_SESSION!==previous.session)return;
+    values.BRAIN_DRIVE_REFRESH_TOKEN=next;updated=true;
+  });
+  return updated;
+}
+/** Publish a consent result only if the client registration is unchanged. */
+export async function saveDriveRefreshForClient(home:string,client:{clientId:string;clientSecret:string},refreshToken:string):Promise<boolean> {
+  if(!refreshToken)throw new Error('Drive 자격 증명이 올바르지 않습니다');
+  let saved=false;
+  await mutateDriveSecrets(home,values=>{
+    if(values.BRAIN_DRIVE_CLIENT_ID!==client.clientId||values.BRAIN_DRIVE_CLIENT_SECRET!==client.clientSecret)return;
+    values.BRAIN_DRIVE_REFRESH_TOKEN=refreshToken;values.BRAIN_DRIVE_SESSION=randomUUID();saved=true;
+  });
+  return saved;
 }

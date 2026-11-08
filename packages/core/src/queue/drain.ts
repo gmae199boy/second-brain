@@ -106,7 +106,7 @@ export type WorkVerdict =
    * The database itself could not be written to, which is not a failure of the
    * item: hand it back, undo the attempt, and stop the run (AD-9, AD-21).
    */
-  | { decision: 'release'; code: SpoolCause };
+  | { decision: 'release'; code: SpoolCause | 'AUTH_SESSION_CHANGED' };
 
 /**
  * What one outcome means, given which attempt it was.
@@ -139,7 +139,7 @@ export function classifyWorkFailure(
 ): WorkVerdict {
   if (outcome.ok) return { decision: 'complete' };
 
-  if (isSpoolCause(outcome.code)) {
+  if (isSpoolCause(outcome.code) || outcome.code === 'AUTH_SESSION_CHANGED') {
     return { decision: 'release', code: outcome.code };
   }
 
@@ -299,6 +299,8 @@ export async function drainQueue(
         // state of a brain that cannot be written to at all.
         const back = await store.releaseWork({ id: item.id, claimedBy });
         if (back.ok) count(tally, back.outcome, 'released');
+        if (!back.ok) return { ...tally, stopped: 'unwritable', code: back.code };
+        if (verdict.code === 'AUTH_SESSION_CHANGED') return { ...tally, stopped: 'budget' };
         return { ...tally, stopped: 'unwritable', code: verdict.code };
       }
     }

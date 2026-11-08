@@ -27,7 +27,11 @@ export function normalizeKeepLocalDays(raw: string): SettingValidation {
   return {ok:true,value:String(days)};
 }
 export const DRIVE_KEEP_LOCAL_DAYS: SettingDefinition = {key:'drive.keep_local_days', scope:'user', defaultValue:'30', normalize:normalizeKeepLocalDays};
-export const CORE_SETTING_DEFINITIONS: readonly SettingDefinition[] = [TIMEZONE_SETTING, DRIVE_KEEP_LOCAL_DAYS];
+export const DRIVE_ROOT_FOLDER_ID: SettingDefinition = {key:'drive.root_folder_id',scope:'user',defaultValue:'',normalize(raw) {return raw===''||/^[A-Za-z0-9_-]+$/.exec(raw)?.[0]===raw?{ok:true,value:raw}:{ok:false,message:'Drive 루트 ID가 올바르지 않습니다'};}};
+export const DRIVE_WATCH_FOLDERS:SettingDefinition={key:'drive.watch_folders',scope:'user',defaultValue:'[]',normalize(raw){try{const value:unknown=JSON.parse(raw);if(!Array.isArray(value)||value.length>1000||value.some(v=>typeof v!=='string'||!/^[A-Za-z0-9_-]+$/.test(v)||/[^A-Za-z0-9_-]/.test(v)))throw Error();return {ok:true,value:JSON.stringify([...new Set(value)].sort())};}catch{return {ok:false,message:'Drive 감시 폴더는 ID 문자열 배열이어야 합니다'};}}};
+export const DRIVE_SYNC_INTERVAL:SettingDefinition={key:'drive.sync_interval_minutes',scope:'user',defaultValue:'30',normalize(raw){if(!/^[1-9][0-9]*$/.test(raw)||/[^0-9]/.test(raw)||!Number.isSafeInteger(Number(raw))||Number(raw)>525600)return {ok:false,message:'Drive 동기화 간격은 1~525600분 정수여야 합니다'};return {ok:true,value:String(Number(raw))};}};
+export const DRIVE_ACCOUNT_ID:SettingDefinition={key:'drive.account_id',scope:'user',defaultValue:'',normalize(raw){return raw===''||/^[A-Za-z0-9_-]{1,256}$/.exec(raw)?.[0]===raw?{ok:true,value:raw}:{ok:false,message:'Drive 계정 식별자가 올바르지 않습니다'};}};
+export const CORE_SETTING_DEFINITIONS: readonly SettingDefinition[] = [TIMEZONE_SETTING, DRIVE_KEEP_LOCAL_DAYS, DRIVE_ROOT_FOLDER_ID, DRIVE_WATCH_FOLDERS, DRIVE_SYNC_INTERVAL, DRIVE_ACCOUNT_ID];
 /** Extensions register complete definitions; unknown namespaces stay unknown. */
 export function settingDefinitions(extensions: readonly SettingDefinition[] = []): ReadonlyMap<string, SettingDefinition> {
   const definitions = new Map(CORE_SETTING_DEFINITIONS.map(def => [def.key, def]));
@@ -60,6 +64,7 @@ export interface SettingsDependencies {
   schemaVersions: SchemaVersions;
   clock: Clock;
   settingDefinitions?: readonly SettingDefinition[];
+  onSettingChanged?: (change:{key:string;value:string})=>Promise<void>;
 }
 function invalid(message: string): SettingResult { return { ok: false, code: 'CONFIG_INVALID', message }; }
 export async function getSetting(deps: SettingsDependencies, input: { key: string }): Promise<SettingResult> {
@@ -89,7 +94,12 @@ export async function setSetting(deps: SettingsDependencies, input: { key: strin
   if (!schema.ok) return schema;
   const self = scope === 'user' ? await resolveSelfUser(deps.store) : null;
   if (self && !self.ok) return self;
+  const prior = await readScopedSettings(deps.store, self?.userId ?? null, [definition]);
+  if (!prior.ok) return prior;
+  const priorValue = definition.normalize(prior.settings[0]?.value ?? definition.defaultValue ?? '');
   const updatedAt = deps.clock.now();
   const written = await deps.store.setSetting({ userId: self?.userId ?? null, key: input.key, value: parsed.value, updatedAt });
-  return written.ok ? { ok: true, scope, key: input.key, value: parsed.value, source: 'db', updatedAt } : written;
+  if(!written.ok)return written;
+  try {if(input.key==='drive.sync_interval_minutes'||!priorValue.ok||priorValue.value!==parsed.value)await deps.onSettingChanged?.({key:input.key,value:parsed.value});}catch{return {ok:false,code:'DB_UNAVAILABLE',message:'설정 변경 후 Drive 동기화를 갱신하지 못했습니다'};}
+  return getSetting(deps,{key:input.key});
 }

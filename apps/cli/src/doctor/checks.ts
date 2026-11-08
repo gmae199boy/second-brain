@@ -3,6 +3,7 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, readFile, stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
+import { join } from 'node:path';
 import {
   isoWithOffset,
   prereqFailed,
@@ -145,6 +146,10 @@ export function runtimeChecks(options: RuntimeChecksOptions): readonly DoctorChe
     { id: 'plugin', run: async () => pluginCheck(home, await config(), runGit) },
     { id: 'last-hook', run: async () => lastHookCheck(home, options.harnessNames ?? harnesses.map((h) => h.parser.harness)) },
     { id: 'spool', run: async () => spoolCheck(spool) },
+    { id: 'drive-refresh-lock', run: async () => {
+      try {await stat(join(home,'.drive-refresh.lock'));return {id:'drive-refresh-lock',status:'warn',code:'DRIVE_REFRESH_LOCK_PRESENT',detail:'Drive 토큰 갱신 잠금이 있습니다. 소유자와 자식, 진행 중 I/O 종료를 확인한 뒤 복구하세요'};}
+      catch(error){return (error as NodeJS.ErrnoException).code==='ENOENT'?{id:'drive-refresh-lock',status:'ok',detail:'Drive 토큰 갱신 잠금이 없습니다'}:{id:'drive-refresh-lock',status:'warn',code:'DRIVE_REFRESH_LOCK_UNKNOWN',detail:'Drive 토큰 갱신 잠금 상태를 확인할 수 없습니다'};}
+    } },
     { id: 'daemon', run: async () => {
       const state = await daemonLiveness({ home, clock: options.clock ?? systemClock });
       const heartbeat = state.heartbeatAt === null ? '' : `, 마지막 heartbeat ${isoWithOffset(state.heartbeatAt)}`;

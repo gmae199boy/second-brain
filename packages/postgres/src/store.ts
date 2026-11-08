@@ -1,3 +1,4 @@
+import { driveBarrier } from './drive-barrier.js';
 import { postgresSourceStore } from './sources.js';
 import { postgresDriveStore } from './drive.js';
 import { postgresImportStore } from './imports.js';
@@ -26,11 +27,12 @@ const [writableProbeId, trgmProbeId, cleanupProbeId] = POSTGRES_DOCTOR_PROBE_IDS
 export function postgresStore(options: PostgresStoreOptions): PostgresStore {
   const pool = createPool(options);
   const db = new Kysely<PgSchema>({ dialect: new PostgresDialect({ pool }) });
+  const barrier = driveBarrier(options);
   const connect: PgConnect = () => ({ ok: true, connection: { db } });
   return {
-    ...postgresSourceStore(connect),
+    ...postgresSourceStore(connect, barrier),
     imports: postgresImportStore(connect),
-    ...postgresDriveStore(connect),
+    ...postgresDriveStore(connect, barrier),
     ...postgresChannelStore(connect), ...postgresRecallStore(connect), ...postgresConversationIndexStore(connect), ...postgresExtensionStore(connect), ...postgresSettingsStore(connect), ...postgresExtractionStore(connect), ...postgresWorkStore(connect), ...postgresScheduleStore(connect), ...postgresSessionStore(connect), ...postgresUserStore(connect),
     ...postgresTranscriptFileStore(connect), ...postgresAttachmentStore(connect),
     async checkHealth() {

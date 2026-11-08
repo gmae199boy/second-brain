@@ -1,3 +1,4 @@
+import type { DriveBarrier } from './drive-barrier.js';
 import { sql } from 'kysely';
 import { type DriveMigrationStore, type DriveUpload, type DriveUploadStore, isDriveBrainLocator } from '@second-brain/core';
 import { databaseFailure, type PgConnect } from './connect.js';
@@ -7,7 +8,7 @@ import { ensureWork } from './work.js';
 type UploadRow = {root_folder_id:string; content_hash:string; remote_id:string; state:'reserved'|'submitting'|'uploaded'|'cancelled'; submission_id:string|null; created_at:string};
 const upload = (r:UploadRow):DriveUpload => ({rootFolderId:r.root_folder_id,contentHash:r.content_hash,remoteId:r.remote_id,state:r.state,createdAt:new Date(r.created_at)});
 const bad = (message:string) => ({ok:false as const,code:'DB_UNAVAILABLE' as const,message});
-export function postgresDriveStore(connect:PgConnect): DriveMigrationStore & {driveUploads:DriveUploadStore} {
+export function postgresDriveStore(connect:PgConnect, barrier:DriveBarrier): DriveMigrationStore & {driveUploads:DriveUploadStore} {
   const driveUploads:DriveUploadStore = {
     async read({rootFolderId,contentHash}) {
       const c=connect(); if (!c.ok) return {ok:false,message:c.message};
@@ -56,6 +57,19 @@ export function postgresDriveStore(connect:PgConnect): DriveMigrationStore & {dr
     },
   };
   return {driveUploads,
+    async withDriveLocalDelete(input,run) {
+      const result=await barrier(async client=>{
+        const pending=await client.query('select work_id from brain.drive_delete_barriers limit 1');
+        if(pending.rowCount) return {ok:false as const,code:'DB_LOCKED' as const,message:'이전 로컬 삭제 결과를 확인해야 합니다'};
+        const valid=await client.query(`select 1 from brain.work_items where id::text=$1 and kind='drive_local_delete' and target_kind='file_location' and target_id=$6 and completed_at is null and claimed_by=$2 and claimed_at=$3::timestamptz and attempts=$4 and claim_expires_at>$5::timestamptz and not exists(select 1 from brain.sources where kind='drive' and not connected)`,[input.workId,input.claimedBy,input.claimedAt.toISOString(),input.attempts,input.now.toISOString(),input.localLocationId]);
+        if(!valid.rowCount)return {ok:false as const,code:'DB_LOCKED' as const,message:'삭제 청구 또는 Drive 연결이 유효하지 않습니다'};
+        await client.query('insert into brain.drive_delete_barriers(work_id,created_at) values ($1::uuid,$2::timestamptz)',[input.workId,input.now.toISOString()]);
+        const value=await run();
+        await client.query('delete from brain.drive_delete_barriers where work_id=$1::uuid',[input.workId]);
+        return {ok:true as const,value};
+      });
+      return result.ok?result.value:result;
+    },
     async readDriveCandidate(fileId) {
       const c=connect(); if (!c.ok) return bad(c.message);
       try {
