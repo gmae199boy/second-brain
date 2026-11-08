@@ -2,13 +2,15 @@
 
 ## 목적과 현재 승인 범위
 
-남아 있는 Personal Brain 티켓을 의존관계에 따라 구현하고, 독립적으로 실행할 수 있는 티켓은 병렬로 진행한다. 티켓마다 Orca 워크트리에 Claude 지휘자(Orca의 현재 Claude 기본 모델·설정)를 배정하고 `$bmad-build-auto`로 구현·검증·리뷰·필요한 후속 리뷰를 마친다. 워커는 티켓 브랜치를 푸시하고, 중앙 감독자는 main 병합·푸시가 실제 원격에 반영됐는지 확인한 뒤 다음 티켓으로 간다. 사용자의 최종 인수 전에는 티켓과 에픽을 `built`로 남긴다.
+남아 있는 Personal Brain 티켓을 의존관계에 따라 구현하고, 독립적으로 실행할 수 있는 티켓은 병렬로 진행한다. 티켓마다 Orca 워크트리에 Codex 지휘자 `gpt-6.1-sol / medium`을 배정하고 `$bmad-build-auto`로 구현·검증·리뷰·필요한 후속 리뷰를 마친다. 워커는 티켓 브랜치를 푸시하고, 중앙 감독자는 main 병합·푸시가 실제 원격에 반영됐는지 확인한 뒤 다음 티켓으로 간다. 사용자의 최종 인수 전에는 티켓과 에픽을 `built`로 남긴다.
 
 초기 준비 상태는 `mode: prepared`, `execution_authorized: false`였다. 2026-11-03 사용자가 실행을 승인해 preflight와 준비 커밋·원격 main push를 수행했다. 현재 실행 여부와 재개 지점은 중앙 체크포인트 및 실제 Git·Orca 상태로 판단한다. 이후 사용자는 티켓 워크트리를 main의 자식이 아닌 저장소의 최상위 워크트리로 만들고 그 안에서 독립 지휘자를 실행하도록 승인했다.
 
 2026-11-06 사용자 변경 이력(아래 2026-11-08 지시로 대체됨): **앞으로 새로 시작하는 지휘자는 Codex `gpt-6.1-sol / medium`**을 사용한다. 직전 Claude 유지 지시를 대체한다. 이미 시작한17.4·22.1·21.10의 Claude 지휘자와 기존21.7 소유 세션은 유지하며 교체·재시작·중단하거나 중복 실행하지 않는다. 구현자 Terra/medium·독립 리뷰어 Sol/medium 규칙은 유지한다.
 
-2026-11-08 사용자 최신 변경: **다음부터 새로 시작하는 지휘자는 Claude(`--agent claude`)로 띄운다.** 기존 Codex 지휘자 지정은 이후 신규 실행에 적용하지 않는다. 모델·effort를 새로 지정하지 않았으므로 Orca의 현재 Claude 기본 설정을 사용한다. 이미 시작한22.3·8.3·19.5 정제 및 기존 소유 세션은 교체·재시작·중단하지 않는다. 하위 구현자 Terra/medium·독립 리뷰어 Sol/medium 규칙, 병렬 실행·검증·수락 절차는 유지한다. 중앙 감독자 세션 자체를 바꾸라는 요청은 아니다.
+2026-11-08 사용자 변경 이력(아래 재변경 지시로 대체됨): **다음부터 새로 시작하는 지휘자는 Claude(`--agent claude`)로 띄운다.** 기존 Codex 지휘자 지정은 이후 신규 실행에 적용하지 않는다. 모델·effort를 새로 지정하지 않았으므로 Orca의 현재 Claude 기본 설정을 사용한다. 이미 시작한22.3·8.3·19.5 정제 및 기존 소유 세션은 교체·재시작·중단하지 않는다. 하위 구현자 Terra/medium·독립 리뷰어 Sol/medium 규칙, 병렬 실행·검증·수락 절차는 유지한다. 중앙 감독자 세션 자체를 바꾸라는 요청은 아니다.
+
+2026-11-08 사용자 최신 재변경: **다음부터 새로 시작하는 지휘자는 다시 Codex `gpt-6.1-sol / medium`으로 띄운다.** 직전 신규 Claude 지정은 이후 신규 실행에 적용하지 않는다. 이미 실행 중인22.3·8.3 Codex 지휘자와19.5 Claude 지휘자 및 기존 소유 세션은 교체·재시작·중단하지 않는다. 하위 구현자 Terra/medium·독립 리뷰어 Sol/medium, 병렬 실행·검증·수락 절차는 유지한다.
 
 2026-11-06 사용자 재확인: **무인 구현을 계속한다.** 21.7을 막은 legacy 지원 전환 결함은 별도21.9로 main에 반영하고 당시 Claude 지휘자로 구현·검증·리뷰·브랜치 push·중앙 main 병합/push까지 이어 간다. 승인된 목표를 달성하는 데 필요한 버그 분리·의존 조정·통상 구현 판단은 중앙이 처리하며 단계마다 사용자에게 재승인을 묻지 않는다. 제품의 실제 운영자 확인·로그인·계정 귀속처럼 에이전트가 대신 제공할 수 없는 입력은 준비 가능한 작업을 마친 뒤 정확히 구별한다.
 
@@ -17,7 +19,7 @@
 ## 소유권과 기준 문서
 
 - 중앙 감독자는 이 채팅이다. 티켓 선택·워크트리 배정·결과 수락·main 병합·푸시·에픽 전이를 맡는다.
-- 앞으로 새로 시작하는 티켓 지휘자는 Claude(Orca의 현재 기본 모델·설정)를 사용하는 전용 최상위 Orca 워크트리의 독립 세션이다. 계획·구현 배정·검증·리뷰·수정·후속 리뷰·티켓 built·커밋·티켓 브랜치 푸시를 맡는다. main을 병합하거나 푸시하지 않는다.
+- 앞으로 새로 시작하는 티켓 지휘자는 Codex `gpt-6.1-sol / medium`을 사용하는 전용 최상위 Orca 워크트리의 독립 세션이다. 계획·구현 배정·검증·리뷰·수정·후속 리뷰·티켓 built·커밋·티켓 브랜치 푸시를 맡는다. main을 병합하거나 푸시하지 않는다.
 - 구현·리뷰 위임은 현재 설치된 `$orchestration` 절차를 따른다. 지휘자의 하위 구현자는 `gpt-6.1-terra / medium`, 리뷰어는 `gpt-6.1-sol / medium`을 사용한다. 하나의 checkout에서 동시에 소스를 편집하는 구현자는 하나다.
 - 티켓의 실제 상태는 계획 파일의 `status`, 에픽 상태는 에픽 문서의 `status`가 원천이다. 실행 JSON은 Git·Orca와 진행 단계를 잇는 체크포인트이며 티켓 상태를 대체하지 않는다.
 - 전역 스킬 원본은 수정하지 않는다. 기존 bmad-loop 정책·런북·감독 스크립트·제어 도구는 이번 자동화에서 사용하지 않는다. 과거 완료 증거·미완료 코드는 보존한다.
@@ -77,7 +79,7 @@ python3.14 _bmad/method/scripts/tickets.py find <ticket-ref>
 
 `tickets.py status`의 `order_conflict` 중 `{epic: epic-test-time, after: epic-health-analysis}`는 2026-11-04 사용자 승인 예외였고, 2026-11-05 Garmin 확장 재설계로 원인(18.3의 epic 19 gate, 19.5의 18.10 대기)이 사라져 끝났다. 남은 order_conflict는 평소대로 다룬다. 근거는 epic-test-time·epic-health-analysis Notes.
 
-새 티켓은 방금 확인한 원격 main SHA에서 분기한다. `$orca-cli`의 `worktree create --no-parent --base-branch <확인한 main ref> --agent claude --prompt <명세 파일을 읽는 지시>`로 저장소의 최상위 워크트리와 독립 지휘자를 함께 시작한다. `worktree show`의 `parentWorktreeId: null`을 확인해 main과 같은 레벨인지 검증한다. `--no-parent`는 Orca 계층을 정하고 `--base-branch`는 Git 기준을 정하므로 둘을 구별한다. 이 경로에서 지휘자 자체를 `worker-start`로 다시 Dispatch하지 않는다. 구현·리뷰 워커만 독립 지휘자 자신의 Run에서 `worker-start --worktree current`로 시작해 depth 1을 유지한다. 정확한 flag와 반환 receipt는 현재 CLI help를 따른다.
+새 티켓은 방금 확인한 원격 main SHA에서 분기한다. `$orca-cli`의 `worktree create --no-parent --base-branch <확인한 main ref> --agent codex --model gpt-6.1-sol --effort medium --prompt <명세 파일을 읽는 지시>`로 저장소의 최상위 워크트리와 독립 지휘자를 함께 시작한다. `worktree show`의 `parentWorktreeId: null`을 확인해 main과 같은 레벨인지 검증한다. `--no-parent`는 Orca 계층을 정하고 `--base-branch`는 Git 기준을 정하므로 둘을 구별한다. 이 경로에서 지휘자 자체를 `worker-start`로 다시 Dispatch하지 않는다. 구현·리뷰 워커만 독립 지휘자 자신의 Run에서 `worker-start --worktree current`로 시작해 depth 1을 유지한다. 정확한 flag와 반환 receipt는 현재 CLI help를 따른다.
 
 긴 명세는 중앙의 티켓별 로컬 파일에 먼저 만들고 생성 prompt에서 읽을 실제 위치를 명시한다. 첫 세션은 이를 자기 checkout의 `.brain-automation/`에 복사해 복구에 사용한다. `worktree create --agent`가 이미 시작한 지휘자를 중복 launch하지 않는다. 이미 작업 중인 checkout을 복구할 때는 아래 전환 절차를 따른다.
 
@@ -102,7 +104,7 @@ python3.14 _bmad/method/scripts/tickets.py find <ticket-ref>
 
 1. 중앙·워커 체크포인트, 계획·baseline·미커밋 변경, 기존 Run/Dispatch·실패 영수증을 보존한다. 모호한 생존 상태를 종료로 추정하지 않는다.
 2. 사용자가 승인한 교체 대상 Dispatch만 최신 recovery 절차로 정리한다. `stopped` 등 확정 증거가 없으면 같은 checkout에 새 편집자를 띄우지 않는다. 워크트리나 부분 작업을 삭제하지 않는다.
-3. 이미 Orca가 만든 checkout이면 `worktree set --worktree <selector> --no-parent`로 최상위에 두고 `agent launch --worktree <selector> --agent claude --prompt <복구 명세>`로 독립 지휘자를 시작한다. 새 티켓은 앞 절의 `worktree create --no-parent` 경로를 사용한다.
+3. 이미 Orca가 만든 checkout이면 `worktree set --worktree <selector> --no-parent`로 최상위에 두고 `agent launch --worktree <selector> --agent codex --model gpt-6.1-sol --effort medium --prompt <복구 명세>`로 독립 지휘자를 시작한다. 새 티켓은 앞 절의 `worktree create --no-parent` 경로를 사용한다.
 4. launch operation ID·정확한 handle·prompt delivery와 부모 없음 확인 결과를 중앙에 저장한다. 독립 지휘자는 종료된 이전 Task/Dispatch를 자기 것으로 재사용하지 않고 새 소유 Run에서 구현·리뷰를 감독한다. 실제 depth 1 시작 성공을 자기 체크포인트에 저장하고 최종 보고에 포함한다.
 5. 독립 지휘자는 중앙 Run에 `orchestration send --to run:<중앙 Run ID> --type status --subject ticket-result:<ticket> --report-path <실제 보고 파일> --body <성공/실패와 근거>`로 보고한다. 자신의 parent Dispatch가 없으므로 worker_done을 위조하지 않는다. 하위 dispatched 워커는 정상 worker_done을 보낸다. 질문과 차단도 중앙 Run으로 send하고 중앙은 그 메시지 ID에 reply한다.
 6. 중앙은 독립 세션 handle·Run·하위 Dispatch 및 보고 원문·계획·원격 브랜치 SHA를 대조한다. 단순 status 전달 성공으로 완료하지 않는다. 이후 main 병합·push와 에픽 전이 기준은 동일하다.
