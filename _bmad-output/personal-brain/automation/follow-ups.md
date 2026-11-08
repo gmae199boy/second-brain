@@ -558,3 +558,17 @@ built/자체필수미해결0이며 사용자최종인수done과는구별한다. 
 - 배포: plugin0.1.23/app-ref598497c불변으로이번검색개선은현재설치ref미포함이다. 실제배포는별도릴리스의이전구현ref+같은commit version증가규칙을따른다.
 
 built/deferred[]/자체필수미해결0이며사용자인수done아니다. 성능·실패처분·증거한계·운영배포후속은계속추적한다.
+
+
+## 22.6 — 성능 에픽 정리 sweep 수락 (2026-11-08)
+
+근거: [scope 감사](../tickets/epic-query-performance/tickets/story-refactor-sweep-audit.md), [계획](../tickets/epic-query-performance/tickets/story-refactor-sweep-plan.md)의 B1/B2/B3 개별 해결·Auto Run Result, source `4b758e7`. 중앙은 공개2문서만의diff·원격tip/clean,독립최종원문과실제전체/관련명령시각·exit/총계,선행성과전승범위를대조했다.
+
+- 선행5계획·실제리뷰85개를범위ledger로정리했다. 추가작은코드정리대상0이며이미해결/계약확장/비소유/운영후속을구별했다. 제품/SQL/runner/시험/fixture/lock/migration/plugin변경0,현재schema42이며미수락8.4schema43을끼워넣지않았다.
+- 선행19개blob과공통5diff/helper지문을시나리오별로대조해timed/판정본문보존범위의역사성과를전승한다. 전체runner·새import/시작/실패출력·실행환경이동일하다는주장이아니며현재42에서새대규모실측0이다.22.3당시41/현재42/cleanup차이·옛raw6손실원인미확정과22.4최초승인전실행·두성능실패를보존한다.
+- 최초전체TS4851pass/7fail/1skip→Python65pass/8fail 순차각1회exit1이다. 실패는모두hook이며제한PATH의로컬wrapper도구탐색실패exit127을재현·절대도구경로로교정후관련TS7pass1skip→Python8pass각exit0. 실제status한인자47호출Running/exit0,거부3호출exit2를확인하고모든자식HOME접근부재나최초호출인과확정으로확대하지않았다. 전체중복실행0이다.
+- 최초TS의query-perf7개와지정제품시험선정통과를실제원시행으로확인했다. 독립4렌즈/후속B1/B2/B3actualresolved·마지막회귀/환경/정리증거finalresolved,추가필수공백0이다.
+- 자원: 소유PG2개정확ID제거/부재,fixture255생성/255제거/잔존0과중간remove-failed5의최종제거,별도Compose/volume/network/임시root부재증거보존. 전체컨테이너조회전문은임시root제거로미보존이며durable이벤트/집계·조회exit·잔존교집합범위만주장한다.개별role목록미수집,cluster제거근거와구별한다.
+- CREATE응답유실·긴locator·취소readiness·22.3raw6손실·운영배포는해결로바꾸지않는다.제품계약변경/새후속은이번sweep범위밖이며plugin0.1.23/ref598497c불변으로현재설치본배포는별도다.워크트리/브랜치/세션·원시/리뷰/영수증보존.
+
+built/deferred[]/필수unresolved0이며 에픽closure와사용자인수done은별도판단이다.
