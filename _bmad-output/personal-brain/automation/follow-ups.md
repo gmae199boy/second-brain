@@ -542,3 +542,19 @@ built/자체필수미해결0이며 사용자최종인수done과는구별한다. 
 ### 8.3 차단 해제·최종 수락 (2026-11-08)
 
 후속 source `94ff026`은 수락main7c72cbf 위의8.3계획1파일 문서변경이다. 중앙은 두Garmin시험지문이19.11수락과같고,자기격리환경의2파일10case(worker2,06:21:02~06:23:48UTC)실제exit0및fixture10+관리자1정확ID부재를대조했다. 제품/실행코드추가수정없이core2/native1차단을해제해8.3을built로수락한다. 최초전체TS/Python실패와R3floorfailed·집중후속/관찰한계는보존하고전체·성능을반복하지않았다. 위부분반영당시의blocked/미해결기록은역사이며현재필수미해결0,8.3의존gate는최종원격main반영뒤충족된다. 실제OAuth계정연결·운영자조치·배포후속및19.11artifacts원인미확정위험은유지한다.
+
+
+## 22.3 — 흔한 검색어 성능 수락 (2026-11-08)
+
+근거: [검색 개선 계획](../tickets/epic-query-performance/tickets/story-10-plan.md)의 개별 triage·T57 성능·T58 최초 전체·T67/T73/T79/T82 독립 후속·Auto Run Result, source `7edfc9a`. 중앙은 최종13파일과원격tip/clean,마지막실질수정해결/실제staged감사원문,성능raw3개SHA및비교결과,관련실행영수증을대조했다.
+
+- 검색: 정확LIKE음성probe는MATERIALIZED후외부LIMIT1,양성은다음전체조회snapshot으로순위를정한다. UTF8/locale/ASCII검증조건에서C lower와동등byte제거점수,그외기존lowerfallback을쓴다. 도구1~2codepoint는원형join,그외실제후보256경계에서메시지batchjoin을고른다. 전체순위·원문/가림·고정ID동률·orphan·잘림/metadata계약을유지한다. 제품변경은PG recall소스,공통runner추가는전용query-perf이며19.5slot/runtime/config는불변이다.
+- T57 확정창의baseline39/current41,10만×1024byte·warmup1+3·동일VACUUM준비/brain_app/전수oracle·보조응답동등에서6조건통과. chunkscommon1416.194→641.735ms(.45314),toolscommon1596.124→704.916ms(.44164),a .46320/.46678,missing .88510/.81751. 양성추가probe왕복도측정비용에포함한다. 별도쓰기57.444→57.936ms/ANALYZE395.470→399.903ms는판정밖진단이다.
+- 현재schema42와runner지문은당시41과다르다. T67은검색SQL·fixture/oracle·timed의미보존과새0042엄격manifest를, T73은측정뒤실제client종료gate교정을, T82는마지막공백1byte만의차이와최종index를독립대조했다. 역사성능은이불변범위에서전승하며현재42성능재측정/새cleanup소급통과로쓰지않는다. 분포일반화·CLI초기화지연·호스트간섭부재보장아니다.
+- 최초전체TS12실패/Python10실패는순차각1회결과그대로보존한다. 검색5건은T60설정교정후T61관련73/T68관련88pass,hook7/8건은진짜status한정위임/allowedPATH증거후각관련pass,Garmin2건은수락19.11통합관련10pass로처분했다. T71changed119파일통과/1실패·PythonAll미도달뒤실제client종료대기/T73회귀를보강했고T74관련TS15/Python16파일73전부pass다. 최초명령전체를소급통과로바꾸지않았다.
+- 실패·한계: T49/T53/T55및이전누적실패보존,옛T10/T12/T17/T20/T29/T34 raw6경로손실·원인미확정은새자료로대체하지않는다. 미출하식통계0040철회는현재Drive0040과구별한다. T62status디렉터리전체링크변경은자동승인거절로미실행/미재시도,실제CLI status만위임한wrapper는모든자식의사용자영역접근부재를증명하지않는다. T71당시socket순서와과거artifacts실패원인도미확정이다.
+- 자원: T74fixture78/compose1정확ID부재·다른PGclient0,최종소유PG2개label/mount/client0확인뒤정상stop/rm/개별부재증거를보존했다. CREATE DATABASE응답유실시created/deleted장부만으로부재를보장할수없는위험은이번전용cluster제거증거범위로제한한다. HOME/context/URL/venv/TMPDIR와원시·백업·워크트리/branch/세션은로컬보존,외부symlink대상삭제없음이다.
+- 중앙archive는baseline안의깨진skill링크4개때문에첫복사가실패했으나링크를역참조하지않고그대로보존하고성능raw바이트동일을확인했다. 옛손실raw복구를주장하지않는다.
+- 배포: plugin0.1.23/app-ref598497c불변으로이번검색개선은현재설치ref미포함이다. 실제배포는별도릴리스의이전구현ref+같은commit version증가규칙을따른다.
+
+built/deferred[]/자체필수미해결0이며사용자인수done아니다. 성능·실패처분·증거한계·운영배포후속은계속추적한다.
