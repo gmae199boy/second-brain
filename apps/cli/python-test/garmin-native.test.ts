@@ -5,6 +5,10 @@ import { delimiter, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { postgresStore } from 'second_brain/postgres';
+import { maskOutputValue } from 'second_brain';
+import { dispatch } from '../src/dispatch.js';
+import { commands } from '../src/commands/index.js';
+import { dynamicExtensionCommands } from '../src/runtime/extension-commands.js';
 import { extHome } from '../test/ext-fixture.js';
 import { extensionDatabaseUrl } from '../src/config/codec.js';
 import { runDaemon } from '../src/daemon/run.js';
@@ -14,6 +18,34 @@ import { uuidV7IdGen } from '../src/runtime/id-gen.js';
 const root=fileURLToPath(new URL('../../../extensions/garmin',import.meta.url));
 const synthetic=join(root,'fixtures/native');
 const self='01940000-0000-7000-8000-00000000000a';
+
+// Exercise the actual dispatcher and output codec while retaining the DB identity.
+// The first 16 digits form a Luhn-valid synthetic card number across UUID groups.
+let syntheticSequence=0;
+async function requestNative(fixture: Awaited<ReturnType<typeof extHome>>, job: 'import' | 'import-verify') {
+  const id=`41111111-1111-7118-8abc-${(++syntheticSequence).toString(16).padStart(12,'0')}`;
+  expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  const card='4111111111117118';
+  const luhn=[...card].map(Number).reduce((sum,digit,index)=>{const doubled=index%2===0 ? digit*2 : digit; return sum+(doubled>9 ? doubled-9 : doubled);},0);
+  expect(luhn%10).toBe(0);
+  expect(maskOutputValue(id)).toBe(`[REDACTED:card_number]-8abc-${id.slice(-12)}`);
+  const kind=job === 'import' ? 'garmin.import' : 'garmin.import_verify';
+  const candidates=()=>fixture.db.rows(`select id from brain.work_items where kind='${kind}' and target_kind='extension' and target_id='default'`);
+  const before=new Set((await candidates()).map(row=>String(row.id)));
+  const dynamic=await dynamicExtensionCommands(fixture.env);
+  expect(dynamic.ok).toBe(true);
+  if (!dynamic.ok) throw Error('extension registry unavailable');
+  let stdout='', stderr='';
+  const code=await dispatch([...commands,...dynamic.commands],['ext','run','garmin',job,'--json'],{
+    env:fixture.env,clock:systemClock,idGen:{next:()=>id},stdout:text=>{stdout+=text;},stderr:text=>{stderr+=text;},
+  });
+  const body=JSON.parse(stdout);
+  const added=(await candidates()).map(row=>String(row.id)).filter(value=>!before.has(value));
+  expect(added).toEqual([id]);
+  expect(body.data.work_id).toBe(maskOutputValue(id));
+  expect(body.data.work_id).not.toBe(id);
+  return {code,stdout,stderr,body,id:added[0]!};
+}
 
 // Advance only a settled synthetic retry after its prerequisite is complete.
 // The production retry policy and the supervisor still own the next attempt.
@@ -57,13 +89,13 @@ it('installed native import rejects unsupported schema 17 without changing sourc
     await store.setSetting({userId:self,key:'garmin.capture_manifest',value:await realpath(join(capture,'manifest.json')),updatedAt:new Date()});
     await store.setSetting({userId:self,key:'garmin.timezone',value:'Asia/Seoul',updatedAt:new Date()});
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
-    const request=await fixture.run(['ext','run','garmin','import','--json']); expect(request.code,request.stdout+request.stderr).toBe(0);
-    const id=String(request.body.data.work_id);
+    const request=await requestNative(fixture,'import'); expect(request.code,request.stdout+request.stderr).toBe(0);
+    const id=request.id;
     await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome,{timeout:90000}).toBe('failed');
     const attempts=await fixture.db.rows(`select error_code,error_retryable,stderr from brain.work_attempts where work_item_id='${id}'`);
     expect(attempts,JSON.stringify(attempts)).toMatchObject([{error_code:'PREFLIGHT_SCHEMA_UNSUPPORTED',error_retryable:false}]);
     const queue=await fixture.run(['queue','list','--all','--kind','garmin.import','--json']); expect(queue.code,queue.stdout+queue.stderr).toBe(0);
-    expect(queue.body.data.items).toContainEqual(expect.objectContaining({id,state:'failed',last_error:expect.stringContaining('PREFLIGHT_SCHEMA_UNSUPPORTED')}));
+    expect(queue.body.data.items).toContainEqual(expect.objectContaining({id:maskOutputValue(id),state:'failed',last_error:expect.stringContaining('PREFLIGHT_SCHEMA_UNSUPPORTED')}));
     expect(await hashes()).toEqual(beforeHashes); expect(await ledger()).toEqual(before);
     expect(await fixture.db.rows('select count(*)::int n from garmin.native_import_checkpoints where completed')).toEqual([{n:0}]);
   } finally {controller.abort(); if(daemon) await daemon; await store.close(); await fixture.cleanup();}
@@ -90,9 +122,9 @@ it('copies schema 16 under supervision, resumes after a crash and matches the pi
     await appendFile(join(fixture.home,'extensions/garmin/src/native_import.py'), `\n_original_copy_for_test = copy\ndef copy(conn,capture,entries,verified,settings,seam=None):\n    from pathlib import Path\n    marker=Path(os.environ['BRAIN_EXTENSION_HOME'])/'synthetic-crash-once'\n    def stop(stage,*args):\n        if stage=='after' and not marker.exists():\n            marker.write_text('crashed')\n            os._exit(23)\n    return _original_copy_for_test(conn,capture,entries,verified,settings,seam=stop)\n`);
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
     const run=async (kind:string, crashed=false) => {
-      const request=await fixture.run(['ext','run','garmin',kind,'--json']);
+      const request=await requestNative(fixture,kind as 'import' | 'import-verify');
       expect(request.code,request.stdout+request.stderr).toBe(0);
-      const id=String(request.body.data.work_id);
+      const id=request.id;
       await expect.poll(()=>resumeImport(fixture,id,crashed),{timeout:90000,interval:100}).toBe('succeeded');
       return id;
     };
@@ -183,10 +215,10 @@ it('copies schema 16 under supervision, resumes after a crash and matches the pi
       const tampered=await fixture.db.rows(`select user_id,connection_id,day_key,steps from garmin.daily_metric where ${metricWhere}`);
       expect(tampered).not.toEqual(selectedMetric);
       // Keep the production import-verify entry; do not reimport or repair here.
-      const bad=await fixture.run(['ext','run','garmin','import-verify','--json']);
+      const bad=await requestNative(fixture,'import-verify');
       expect(bad.code).not.toBe(0);
       expect(bad.body.error.code).toBe('EXTENSION_INVALID');
-      expect(await fixture.db.rows(`select error_code from brain.work_attempts where work_item_id='${String(bad.body.data.work_id)}' order by started_at desc limit 1`)).toEqual([{error_code:'EXTENSION_REPORT_NOT_READY'}]);
+      expect(await fixture.db.rows(`select error_code from brain.work_attempts where work_item_id='${bad.id}' order by started_at desc limit 1`)).toEqual([{error_code:'EXTENSION_REPORT_NOT_READY'}]);
       expect(bad.body.data.report.checks.checkpoints).toBe(false);
       expect(bad.body.data.report.counts.mismatches).toBeGreaterThan(0);
       expect(await fixture.db.rows(`select user_id,connection_id,day_key,steps from garmin.daily_metric where ${metricWhere}`)).toEqual(tampered);
@@ -218,9 +250,9 @@ it('preserves the source but blocks native attribution when a capture has no pro
     await store.setSetting({userId:self,key:'garmin.capture_manifest',value:await realpath(join(capture,'manifest.json')),updatedAt:new Date()});
     await store.setSetting({userId:self,key:'garmin.timezone',value:'Asia/Seoul',updatedAt:new Date()});
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:uuidV7IdGen(),signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
-    const run=await fixture.run(['ext','run','garmin','import','--json']);
+    const run=await requestNative(fixture,'import');
     expect(run.code,run.stdout+run.stderr).toBe(0);
-    const work=String(run.body.data.work_id);
+    const work=run.id;
     await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${work}'`))[0]?.outcome,{timeout:60000}).toBe('failed');
     expect(await fixture.db.rows(`select account_confirmed from garmin.datasets where dataset='synthetic-D5'`)).toEqual([{account_confirmed:false}]);
     const storedKeys=(await fixture.db.rows(`select original_key from garmin.preserved_rows where dataset='synthetic-D5' and original_table='raw_response'`)).map(row=>String(row.original_key)).sort();
@@ -241,9 +273,9 @@ it('registers v1 capture files without inventing account provenance and records 
     await store.setSetting({userId:self,key:'garmin.timezone',value:'Asia/Seoul',updatedAt:new Date()});
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
     const run=async (kind:string, outcome:string) => {
-      const result=await fixture.run(['ext','run','garmin',kind,'--json']);
+      const result=await requestNative(fixture,kind as 'import' | 'import-verify');
       expect(result.code,result.stdout+result.stderr).toBe(0);
-      await expect.poll(()=>resumeImport(fixture,String(result.body.data.work_id)),{timeout:90000,interval:100}).toBe(outcome);
+      await expect.poll(()=>resumeImport(fixture,result.id),{timeout:90000,interval:100}).toBe(outcome);
     };
     await run('import','succeeded');
     const rows=await fixture.db.rows(`select u.path_hash,u.request_id,u.request_batch,q.dataset,q.import_batch,q.sha256,q.metadata,r.file_id,f.content_hash from garmin.unassigned_file_requests u join brain.file_requests q on q.id=u.request_id join brain.file_request_results r on r.request_id=q.id join brain.files f on f.id=r.file_id order by u.path_hash`);
