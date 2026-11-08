@@ -53,7 +53,7 @@ risk: medium
 - 제품 조회·반입 성능(반입 정리 anti-join, 큰 세션, 흔한 검색어 점수, 로그 scanner)은 시험 시간 목표 밖이라 이 에픽에 없다. 조사 문서 TODO에 남는다.
 - 두 번째 `pnpm build` 제거(약 1초), 실제 ref upgrade E2E 측정, typecheck 단독 시간은 이 에픽에 없다. 이득이 작거나 증거가 없다(source "확정 결과 5").
 - 기능 의미(반입·정리·그래프·비밀 판정)는 바꾸지 않는다. 바꿔야만 빨라지는 개선은 별도 결정으로 올린다.
-- batch-import 첫 case의 120초 timeout과 redaction 행 수 불일치(원인 미확정, 재현 방법은 source "확정 결과 7"), 기본 changed와 Postgres 전체·tracer 추가 실행의 중복(양 미측정), 넓은 규칙의 일괄 축소(의존 누락 위험)는 이 에픽에 없다. 조사 문서 TODO에 남는다(source "확정 결과 6").
+- batch-import 첫 case의 120초 timeout과 redaction 행 수 불일치(원인 미확정, 재현 방법은 source "확정 결과 7"), 기본 changed와 Postgres 전체·tracer 추가 실행의 중복(양 미측정), 넓은 규칙의 일괄 축소(의존 누락 위험)는 이 에픽에 없다. 조사 문서 TODO에 남는다(source "확정 결과 6"). 다만19.5 최종 회귀에서 새로 관측한 redaction 불일치는2026-11-09 중앙 승인으로19.14가 별도 소유한다.
 - 생산 daemon 기본 polling 주기, 시험용 25ms polling, no-op migration 왕복(약 22ms), 패키지 digest·uv 준비는 근거가 약해 범위 밖이다(source "확정 결과 2·3").
 - Touch point: Garmin 그래프·digest 발행(이식된 옛 프로그램의 차트·파일 발행 경로, 21.3·21.5) — 대기·캐시 방식만 바꾼다; owner: epic-garmin-extension (2026-11-05. 옛 owner epic-garmin-runtime)
 
@@ -92,3 +92,6 @@ risk: medium
 - Decision(2026-11-09, 중앙): 19.5에서 발견한 기존 Drive 회귀는 19.13의 별도 소유로 분리한다. 19.5 착수 의존은 추가하지 않으며 19.13 수락 뒤 관련 영향을 통합·대조한다.
 
 - Decision(2026-11-09, 중앙): 19.13은 tracer 9개 timeout과 parser 1개 실패 수 단언 불일치를 각각 조사한다. 8.4 source `73c44191af88fe8ede445513fb02c84e83badf06`는 baseline `2f23d30b7a894a9979567311544c7f28e3f25a5a`의 조상이며 migration 0001~0043 바이트가 동일한 중앙 수락 역사적 전제로, 새 착수 gate가 아니다.
+
+- Decision(2026-11-09, 중앙 독립 명세): 19.5 최종 전체 회귀에서 관측한 redaction 실패수1기대/2실제를19.14 독립 버그로 조사·정제·구현한다. 과거 redaction TODO 제외는 보존하며 이번 관측을 예외로 둔다. 원인과 기존 관찰 동일성은 미확정이며 단독39pass로 해결을 선언하지 않는다. 성능 개선의 warm-up/3표본 요구는 이 버그에 적용하지 않고 개발중시험금지·마지막 전체 TS→Python 순차 각1회와 결정적 회귀를 따른다.
+- Handoff(2026-11-09, 중앙): 19.14는19.5에 최종 수락 source와 시험/fixture/제품/측정 실행 바이트 영향을 인계한다. 19.5 완료와 상호대기하거나 전역gate를 추가하지 않는다. 19.1은 이후 redaction DB 준비 비용·workload 변경을 포함해 같은 조건의 새 기준을 잡는다.
