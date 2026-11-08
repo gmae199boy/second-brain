@@ -1,5 +1,5 @@
 import {mkdtemp,mkdir,readdir,rm,writeFile} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
+import {homedir,tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach,expect,it} from 'vitest';
 import {createIsolatedTestDatabase} from '@second-brain/test-db';
@@ -23,15 +23,45 @@ async function fixture(){
   const sourceId=ids.next();expect(await store.ensureSource({id:sourceId,kind:'drive',account:'synthetic',rootId:'root'})).toMatchObject({ok:true});
   const temp=sourceTemp(tempRoot),remote=sourceDrive({baseUrl:server.baseUrl});
   const sourceSyncFactory:NonNullable<DispatchRuntime['sourceSyncFactory']>=s=>({store:s as PostgresStore,remote,temp});
-  const env={HOME:home,SECOND_BRAIN_HOME:home,BRAIN_DATABASE_URL:db.appUrl,PATH:process.env.PATH,TMPDIR:root};const config=await readConfig(home);
-  const brain=createBrain(brainDependencies({home,env,config,store,clock,idGen:ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{},sourceSyncFactory}));
+  const env={HOME:home,SECOND_BRAIN_HOME:home,BRAIN_DATABASE_URL:db.appUrl,CLAUDE_CONFIG_DIR:join(home,'claude-config'),PATH:process.env.PATH,TMPDIR:root};const config=await readConfig(home);
+  const assemble=(inputEnv:NodeJS.ProcessEnv)=>brainDependencies({home,env:inputEnv,config,store,clock,idGen:ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{},sourceSyncFactory});
+  const dependencies=assemble(env);
+  const brain=createBrain(dependencies);
   async function cli(args:string[]){let stdout='',stderr='';const code=await dispatch(commands,args,{env,clock,idGen:ids,runner:pgRunner,sourceSyncFactory,stdout:s=>{stdout+=s;},stderr:s=>{stderr+=s;}});return {code,stdout,stderr,body:stdout?JSON.parse(stdout):null};}
-  return {root,home,tempRoot,db,server,clock,ids,store,sourceId,brain,cli,temp};
+  return {root,home,tempRoot,db,server,clock,ids,store,sourceId,brain,cli,temp,dependencies,env,assemble};
 }
 function seed(server:Awaited<ReturnType<typeof fakeDrive>>){
   const add=(id:string,name:string,mimeType:string,body:string,parents=['root'],size?:number)=>server.files.set(id,{id,name,mimeType,version:'1',bytes:Buffer.from(body),parents,...(size===undefined?{}:{size})});
   add('text','합성문서.txt','text/plain','공통검색 텍스트');add('markdown','합성기록.md','text/markdown','공통검색 마크다운');add('docs','합성문서','application/vnd.google-apps.document','공통검색 문서');add('photo','합성사진.jpg','image/jpeg','image');add('large','합성대형.txt','text/plain','x',['root'],60_000_000);add('folder','하위','application/vnd.google-apps.folder','');add('nested','하위문서.txt','text/plain','공통검색 하위',['folder']);
 }
+it('fixture drain은 process HOME의 합성 transcript를 수집하지 않는다', async()=>{
+  const ambient=await mkdtemp(join(tmpdir(),'brain-drive-ambient-'));
+  cleanup.push(()=>rm(ambient,{recursive:true,force:true}));
+  const projects=join(ambient,'.claude','projects','synthetic');
+  await mkdir(projects,{recursive:true});
+  const session='4f1e7a90-1c2b-4d3e-8f55-000000000000';
+  await writeFile(join(projects,`${session}.jsonl`),JSON.stringify({type:'user',sessionId:session,uuid:'00000000-0000-4000-8000-000000000003',timestamp:'2026-01-02T03:04:05.000Z',message:{role:'user',content:'synthetic input'}})+'\n');
+  const previousHome=process.env.HOME;
+  process.env.HOME=ambient;
+  try {
+    expect(homedir()).toBe(ambient);
+    const f=await fixture();
+    const isolated=await f.brain.queue.drain({budgetMs:60000});
+    expect(isolated).toMatchObject({stopped:'empty',failed:0,spoolFailed:0,enqueued:0});
+    expect(isolated.scanStopped).toBeUndefined();
+    expect(await f.db.rows("select kind from brain.work_items where kind='session_ingest'")).toEqual([]);
+    // Reassemble with the same environment except the fixture's config override.
+    const {CLAUDE_CONFIG_DIR: _fixtureConfig,...fallbackEnv}=f.env;
+    const control=createBrain(f.assemble(fallbackEnv));
+    const scanned=await control.queue.drain({budgetMs:60000});
+    expect(scanned).toMatchObject({stopped:'empty',failed:0,spoolFailed:0,enqueued:1});
+    expect(scanned.scanStopped).toBeUndefined();
+    expect(await f.db.rows("select kind from brain.work_items where kind='session_ingest'")).toEqual([{kind:'session_ingest'}]);
+  } finally {
+    if(previousHome===undefined) delete process.env.HOME; else process.env.HOME=previousHome;
+  }
+});
+
 it('CLI/SDK sync to two-character docs and show across pages with zero photo and large downloads',async()=>{
  const f=await fixture();seed(f.server);const guide=await f.cli(['guide','schema','sources','sync','--json']);expect(guide.body).toMatchObject({ok:true,data:{commands:[{ns:'sources',verb:'sync',required:['sourceId']}]}});const sync=await f.cli(['sources','sync',f.sourceId,'--json']);expect(sync.code,sync.stderr).toBe(0);expect(sync.body).toMatchObject({ok:true,data:{source_id:f.sourceId}});
  const calls=f.server.requests.map(r=>r.path);expect(calls[0]).toContain('startPageToken');expect(calls.filter(x=>x.startsWith('/drive/v3/files?')).length).toBeGreaterThanOrEqual(4);expect(calls.some(x=>x.includes('/photo?alt=media')||x.includes('/large?alt=media'))).toBe(false);expect(calls.some(x=>x.includes('/docs/export'))).toBe(true);
@@ -66,7 +96,7 @@ it('killed temporary writer preserves an open extraction and removes only owned 
 },120000);
 it('temporary remote failure leaves existing source records reachable and reports incomplete sync',async()=>{
  const f=await fixture();seed(f.server);expect((await f.cli(['sources','sync',f.sourceId,'--json'])).code).toBe(0);const before=await f.db.rows('select id,unreachable,completed_version,completed_hash from brain.source_files order by id');
- const config=await readConfig(f.home),env={HOME:f.home,SECOND_BRAIN_HOME:f.home,BRAIN_DATABASE_URL:f.db.appUrl,PATH:process.env.PATH,TMPDIR:f.root};const remote=sourceDrive({baseUrl:f.server.baseUrl});const failed={...remote,async list(){return {ok:false as const,code:'TEMPORARY' as const,message:'synthetic outage'};}};
+ const config=await readConfig(f.home),env={HOME:f.home,SECOND_BRAIN_HOME:f.home,BRAIN_DATABASE_URL:f.db.appUrl,CLAUDE_CONFIG_DIR:join(f.home,'claude-config'),PATH:process.env.PATH,TMPDIR:f.root};const remote=sourceDrive({baseUrl:f.server.baseUrl});const failed={...remote,async list(){return {ok:false as const,code:'TEMPORARY' as const,message:'synthetic outage'};}};
  const brain=createBrain(brainDependencies({home:f.home,env,config,store:f.store,clock:f.clock,idGen:f.ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{},sourceSyncFactory:s=>({store:s as PostgresStore,remote:failed,temp:f.temp})}));
  expect(await brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:false,code:'SOURCE_SYNC_INCOMPLETE'});expect(await f.db.rows('select id,unreachable,completed_version,completed_hash from brain.source_files order by id')).toEqual(before);
 });
@@ -117,7 +147,7 @@ for (const boundary of ['sync-write','extract-read'] as const) it(`SIGKILL at ac
  const [home,url,base,root,sourceId,boundary]=process.argv.slice(1);const store=postgresStore({databaseUrl:url});const raw=sourceTemp(root);
  const barrier=async key=>{process.stdout.write('BARRIER '+key+'\\n');await new Promise(()=>{});};
  const temp={...raw,async write(key,bytes){const result=await raw.write(key,bytes);if(result.ok&&boundary==='sync-write')await barrier(key);return result;},async read(key,max){if(boundary==='extract-read')await barrier(key);return raw.read(key,max);}};
- const env={HOME:home,SECOND_BRAIN_HOME:home,BRAIN_DATABASE_URL:url,PATH:process.env.PATH};const clock={now:()=>new Date('2026-01-01T00:00:00Z')};
+ const env={HOME:home,SECOND_BRAIN_HOME:home,BRAIN_DATABASE_URL:url,CLAUDE_CONFIG_DIR:home+'/claude-config',PATH:process.env.PATH};const clock={now:()=>new Date('2026-01-01T00:00:00Z')};
  const brain=createBrain(brainDependencies({home,env,config:await readConfig(home),store,clock,idGen:{next:()=>v7()},schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{},sourceSyncFactory:s=>({store:s,remote:sourceDrive({baseUrl:base}),temp})}));
  await brain.sources.sync({sourceId});process.exit(3);`;
  const child=spawn(process.execPath,['--input-type=module','-e',script,f.home,f.db.appUrl,f.server.baseUrl,f.tempRoot,f.sourceId,boundary],{cwd:fileURLToPath(new URL('..',import.meta.url)),stdio:['ignore','pipe','pipe']});
@@ -173,7 +203,7 @@ it.each(['DB_UNAVAILABLE','DB_LOCKED'] as const)('returns an extraction attempt 
  const runtime=await createDriveRuntime({home:f.home,store:wrapped,clock:f.clock,idGen:f.ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,network:{fetch:async()=>{calls++;return new Response('{}');}}});if(!runtime)throw Error('runtime missing');expect(await runtime.sourceSync.validateSource!(f.sourceId)).toEqual({ok:true});const metadata=runtime.sourceSync.remote.metadata.bind(runtime.sourceSync.remote);runtime.sourceSync.remote.metadata=async id=>{const result=await metadata(id);if(!result.ok&&result.code===code)guardFailures++;return result;};
  const work=f.ids.next(),now=f.clock.now();expect(await f.store.addWork({id:work,kind:'document_extract',targetKind:'file',targetId:target.file_id,createdAt:now,nextAttemptAt:now})).toMatchObject({ok:true});
  await f.db.query(`update brain.source_handoffs set work_id='${work}' where source_file_id='${target.id}'`);const handoffs=await f.store.listSourceHandoffs(target.file_id);expect(handoffs).toMatchObject({ok:true,handoffs:expect.arrayContaining([expect.objectContaining({sourceFileId:target.id,remoteId:'guarded',workId:work})])});
- const config=await readConfig(f.home),env={HOME:f.home,SECOND_BRAIN_HOME:f.home,BRAIN_DATABASE_URL:f.db.appUrl};const brain=createBrain(brainDependencies({home:f.home,env,config,store:wrapped,clock:f.clock,idGen:f.ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{},sourceSyncFactory:()=>runtime.sourceSync}));fail=true;
+ const config=await readConfig(f.home),env={HOME:f.home,SECOND_BRAIN_HOME:f.home,BRAIN_DATABASE_URL:f.db.appUrl,CLAUDE_CONFIG_DIR:join(f.home,'claude-config')};const brain=createBrain(brainDependencies({home:f.home,env,config,store:wrapped,clock:f.clock,idGen:f.ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{},sourceSyncFactory:()=>runtime.sourceSync}));fail=true;
  expect(await brain.queue.drain({budgetMs:1000})).toMatchObject({stopped:'unwritable',code,released:1});expect(guardFailures).toBe(1);expect(calls).toBe(0);expect(await f.db.rows(`select attempts,completed_at from brain.work_items where id='${work}'`)).toEqual([{attempts:0,completed_at:null}]);expect(await f.db.rows(`select current_extraction_id from brain.files where id='${target.file_id}'`)).toEqual([{current_extraction_id:target.current_extraction_id}]);
 });
 
@@ -233,7 +263,7 @@ it('foreground sync는 scan 시작 뒤 예약된 Carry 후속 work까지 직접 
  const f=await fixture(),sf=f.ids.next();f.server.files.set('late-carry',{id:'late-carry',name:'late.bin',mimeType:'application/octet-stream',version:'1',parents:['root'],bytes:carryPdf()});
  let entered!:()=>void,release!:()=>void;const waiting=new Promise<void>(r=>{entered=r;}),gate=new Promise<void>(r=>{release=r;});let held=false;
  const remote=sourceDrive({baseUrl:f.server.baseUrl}),wrapped={...remote,async list(input:Parameters<typeof remote.list>[0]){if(!held){held=true;entered();await gate;}return remote.list(input);}};
- const config=await readConfig(f.home),env={HOME:f.home,SECOND_BRAIN_HOME:f.home,BRAIN_DATABASE_URL:f.db.appUrl,PATH:process.env.PATH,TMPDIR:f.root};
+ const config=await readConfig(f.home),env={HOME:f.home,SECOND_BRAIN_HOME:f.home,BRAIN_DATABASE_URL:f.db.appUrl,CLAUDE_CONFIG_DIR:join(f.home,'claude-config'),PATH:process.env.PATH,TMPDIR:f.root};
  const brain=createBrain(brainDependencies({home:f.home,env,config,store:f.store,clock:f.clock,idGen:f.ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{},sourceSyncFactory:s=>({store:s as PostgresStore,remote:wrapped,temp:f.temp})}));
  const pending=brain.sources.sync({sourceId:f.sourceId});await waiting;
  await f.db.query(`insert into brain.source_files(id,source_id,remote_id,name,path,mime_type,remote_version,index_status,unreachable) values ('${sf}','${f.sourceId}','late-carry','late.bin','','application/octet-stream','1','unsupported',false)`);
@@ -253,14 +283,20 @@ it('실제 OOXML 폭탄은 source handler too_large, 일반 ZIP은 새 세대 �
 },180000);
 
 it('새 parser child 비정상 종료는 PG의 이전 current와 chunks를 보존한다',async()=>{
+ const ambient=await mkdtemp(join(tmpdir(),'brain-parser-ambient-'));cleanup.push(()=>rm(ambient,{recursive:true,force:true}));
+ const projects=join(ambient,'.claude','projects','synthetic');await mkdir(projects,{recursive:true});
+ const session='4f1e7a90-1c2b-4d3e-8f55-000000000000';await writeFile(join(projects,`${session}.jsonl`),JSON.stringify({type:'user',sessionId:session,uuid:'00000000-0000-4000-8000-000000000003',timestamp:'2026-01-02T03:04:05.000Z',message:{role:'user',content:'synthetic input'}})+'\n');
+ const previousHome=process.env.HOME;process.env.HOME=ambient;
+ try {expect(homedir()).toBe(ambient);
  const f=await fixture(),config=await readConfig(f.home),{localFileStore}=await import('../src/runtime/file-store.js'),{createDocumentExtractor,runDocumentParser}=await import('../src/runtime/document-extractors.js'),files=localFileStore({root:config.ok?config.config.filesPath:join(f.home,'files')}),bytes=carryPdf(),put=await files.put(bytes);if(!put.ok)throw Error('put');const file=f.ids.next(),location=f.ids.next();
  await f.db.query(`insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${file}','${put.contentHash}',${put.sizeBytes},'2026-01-01Z');insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ('${location}','${file}','local','${put.location.locator}','brain','2026-01-01Z');update brain.files set home_location_id='${location}' where id='${file}'`);
  expect(await f.brain.queue.drain({budgetMs:60000})).toMatchObject({failed:0});const before=await f.db.rows(`select current_extraction_id::text from brain.files where id='${file}'`),chunks=await f.db.rows(`select id::text,body from brain.document_chunks where extraction_id=(select current_extraction_id from brain.files where id='${file}') order by ordinal`);expect(chunks).toHaveLength(1);
  const work=f.ids.next(),now=f.clock.now();expect(await f.store.addWork({id:work,kind:'document_extract',targetKind:'file',targetId:file,createdAt:now,nextAttemptAt:now})).toMatchObject({ok:true});
  let observed:Awaited<ReturnType<typeof runDocumentParser>>|undefined;const crashing=createDocumentExtractor(async(input,mode)=>{const result=await runDocumentParser(input,mode,60000,child=>child.once('spawn',()=>child.kill('SIGKILL')));observed=result;return result;});
  const extracted=await crashing.extract(bytes,'application/pdf',{targetChars:1200,overlapChars:120});expect(observed).toMatchObject({kind:'failed',message:'문서 추출 프로세스가 종료되었습니다'});expect(extracted).toMatchObject({ok:false,message:'문서 추출 프로세스가 종료되었습니다'});observed=undefined;
- const env={HOME:f.home,SECOND_BRAIN_HOME:f.home,BRAIN_DATABASE_URL:f.db.appUrl,PATH:process.env.PATH,TMPDIR:f.root},base=brainDependencies({home:f.home,env,config,store:f.store,clock:f.clock,idGen:f.ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{}}),brain=createBrain({...base,documentExtractors:[crashing]});
- expect(await brain.queue.drain({budgetMs:60000})).toMatchObject({failed:1});expect(observed).toMatchObject({kind:'failed',message:'문서 추출 프로세스가 종료되었습니다'});expect(await f.db.rows(`select current_extraction_id::text from brain.files where id='${file}'`)).toEqual(before);expect(await f.db.rows(`select id::text,body from brain.document_chunks where extraction_id=(select current_extraction_id from brain.files where id='${file}') order by ordinal`)).toEqual(chunks);expect(await f.db.rows(`select status,failed_stage from brain.document_extractions where file_id='${file}' order by attempt`)).toEqual([{status:'ok',failed_stage:null},{status:'failed',failed_stage:'extract'}]);expect(await f.db.rows(`select code from brain.failures where target_id='${file}' and resolved_at is null`)).toEqual([{code:'EXTRACTION_FAILED'}]);
+ const env={HOME:f.home,SECOND_BRAIN_HOME:f.home,BRAIN_DATABASE_URL:f.db.appUrl,CLAUDE_CONFIG_DIR:join(f.home,'claude-config'),PATH:process.env.PATH,TMPDIR:f.root},base=brainDependencies({home:f.home,env,config,store:f.store,clock:f.clock,idGen:f.ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{}}),brain=createBrain({...base,documentExtractors:[crashing]});
+ const result=await brain.queue.drain({budgetMs:60000});expect(result).toMatchObject({failed:1,enqueued:0,stopped:'empty',spoolFailed:0});expect(result.scanStopped).toBeUndefined();expect(await f.db.rows("select kind from brain.work_items where kind='session_ingest'")).toEqual([]);expect(observed).toMatchObject({kind:'failed',message:'문서 추출 프로세스가 종료되었습니다'});expect(await f.db.rows(`select current_extraction_id::text from brain.files where id='${file}'`)).toEqual(before);expect(await f.db.rows(`select id::text,body from brain.document_chunks where extraction_id=(select current_extraction_id from brain.files where id='${file}') order by ordinal`)).toEqual(chunks);expect(await f.db.rows(`select status,failed_stage from brain.document_extractions where file_id='${file}' order by attempt`)).toEqual([{status:'ok',failed_stage:null},{status:'failed',failed_stage:'extract'}]);expect(await f.db.rows(`select code from brain.failures where target_id='${file}' and resolved_at is null`)).toEqual([{code:'EXTRACTION_FAILED'}]);
+ } finally {if(previousHome===undefined)delete process.env.HOME;else process.env.HOME=previousHome;}
 },120000);
 
 it('Google Sheets만 남은 source는 반복 drain에서 전체 scan을 예약하지 않는다',async()=>{
@@ -278,7 +314,7 @@ it('A Carry 예약 뒤 새 store와 B drain이 같은 work를 승계해 실제 P
  const f=await fixture(),config=await readConfig(f.home),{localFileStore}=await import('../src/runtime/file-store.js'),files=localFileStore({root:config.ok?config.config.filesPath:join(f.home,'files')}),bytes=carryPdf(),put=await files.put(bytes);if(!put.ok)throw Error('put');const file=f.ids.next(),loc=f.ids.next(),old=f.ids.next(),work=f.ids.next();
  await f.db.query(`insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${file}','${put.contentHash}',${put.sizeBytes},'2026-01-01Z');insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ('${loc}','${file}','local','${put.location.locator}','brain','2026-01-01Z');update brain.files set home_location_id='${loc}' where id='${file}';insert into brain.document_extractions(id,file_id,extractor_version,attempt,started_at,finished_at,status) values ('${old}','${file}','doc/old',1,'2026-01-01Z','2026-01-01Z','unsupported')`);
  expect(await f.store.commitUnsupportedCarry({fileId:file,extractorVersion:'doc/A',contentHash:put.contentHash,home:put.location,supported:true,workId:work,now:f.clock.now()})).toMatchObject({ok:true,created:true});
- const restarted=postgresStore({databaseUrl:f.db.appUrl});cleanup.push(()=>restarted.close());const env={HOME:f.home,SECOND_BRAIN_HOME:f.home,BRAIN_DATABASE_URL:f.db.appUrl,PATH:process.env.PATH,TMPDIR:f.root},brain=createBrain(brainDependencies({home:f.home,env,config,store:restarted,clock:f.clock,idGen:f.ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{}}));
+ const restarted=postgresStore({databaseUrl:f.db.appUrl});cleanup.push(()=>restarted.close());const env={HOME:f.home,SECOND_BRAIN_HOME:f.home,BRAIN_DATABASE_URL:f.db.appUrl,CLAUDE_CONFIG_DIR:join(f.home,'claude-config'),PATH:process.env.PATH,TMPDIR:f.root},brain=createBrain(brainDependencies({home:f.home,env,config,store:restarted,clock:f.clock,idGen:f.ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{}}));
  expect(await brain.queue.drain({budgetMs:60000})).toMatchObject({failed:0});expect(await f.db.rows(`select w.id::text,w.outcome,v.extractor_version from brain.work_items w join brain.document_carry_work_versions v on v.work_id=w.id where w.id='${work}'`)).toMatchObject([{id:work,outcome:'succeeded',extractor_version:expect.not.stringMatching(/^doc\/A$/)}]);expect(await f.db.rows(`select status from brain.document_extractions where file_id='${file}'`)).toEqual([{status:'ok'}]);expect(await f.db.rows(`select c.body from brain.files f join brain.document_chunks c on c.extraction_id=f.current_extraction_id where f.id='${file}'`)).toEqual([expect.objectContaining({body:expect.stringContaining('Drivecarry')})]);expect(await f.db.rows(`select extractor_version from brain.document_carry_checks where file_id='${file}'`)).toEqual([{extractor_version:'doc/A'}]);
 },120000);
 
