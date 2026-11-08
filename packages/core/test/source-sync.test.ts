@@ -88,3 +88,50 @@ it('clears recorded source authentication failures only after a successful scan'
   expect(await sourceSyncHandler({store,remote:failed,clock,idGen:f.ids})(item)).toMatchObject({ok:false,retryable:false});expect(calls).toEqual([]);
   expect(await sourceSyncHandler({store,remote:f.remote,clock,idGen:f.ids})(item)).toEqual({ok:true});expect(calls).toEqual([`source:${item.targetId}:source_sync`]);
 });
+
+it('원격 version이 바이트 판정 중 바뀌면 marker와 handoff를 만들지 않는다',async()=>{
+ const f=fixture(),id='binary',entry={id,name:'elsewhere.bin',mimeType:'application/octet-stream',version:'1',sizeBytes:5};await f.store.ensureSource({id:item.targetId,kind:'drive',account:'carry-version',rootId:'root'});let version='1';
+ const remote:SourceRemote={async startToken(){return {ok:true,token:'t'};},async list(){return {ok:true,items:[entry],nextPageToken:null,incomplete:false};},async metadata(){return {ok:true,item:{...entry,version}};},async download(){return {ok:true,bytes:Uint8Array.of(37,80,68,70,45)};}};
+ const probe:import('../src/files/extractors.js').DocumentExtractor={name:'synthetic',detect:()=>null,detectCarry:async()=>{version='2';return true;},extract:async()=>({ok:true,pieces:[]})};
+ expect(await sourceSyncHandler({store:f.store,remote,clock,idGen:f.ids,extractors:[probe]})(item)).toMatchObject({ok:false,code:'SOURCE_CHANGED'});expect(f.handoffs).toHaveLength(0);const rows=await f.store.listSourceEntries(item.targetId);if(!rows.ok)throw Error('source rows');const checked=await f.store.readSourceCarryCheck({sourceFileId:rows.entries[0]!.id,remoteVersion:'1',extractorVersion:(await import('../src/files/extractors.js')).DOCUMENT_EXTRACTOR_VERSION});expect(checked).toMatchObject({ok:true,checked:false});
+});
+
+it('disconnect가 바이트 판정 중 발생하면 source generation fence가 marker와 handoff를 거부한다',async()=>{
+ const f=fixture(),entry={id:'binary',name:'one.bin',mimeType:'application/octet-stream',version:'1',sizeBytes:5};await f.store.ensureSource({id:item.targetId,kind:'drive',account:'carry-disconnect',rootId:'root'});
+ const remote:SourceRemote={async startToken(){return {ok:true,token:'t'};},async list(){return {ok:true,items:[entry],nextPageToken:null,incomplete:false};},async metadata(){return {ok:true,item:entry};},async download(){return {ok:true,bytes:Uint8Array.of(37,80,68,70,45)};}};
+ const probe:import('../src/files/extractors.js').DocumentExtractor={name:'synthetic',detect:()=>null,detectCarry:async()=>{await f.store.disconnectSource({id:item.targetId,now});return true;},extract:async()=>({ok:true,pieces:[]})};
+ expect(await sourceSyncHandler({store:f.store,remote,clock,idGen:f.ids,extractors:[probe]})(item)).toMatchObject({ok:false});expect(f.handoffs).toHaveLength(0);const rows=await f.store.listSourceEntries(item.targetId);if(!rows.ok)throw Error('source rows');expect(await f.store.readSourceCarryCheck({sourceFileId:rows.entries[0]!.id,remoteVersion:'1',extractorVersion:(await import('../src/files/extractors.js')).DOCUMENT_EXTRACTOR_VERSION})).toMatchObject({ok:true,checked:false});
+});
+
+it('fake source Carry는 이미 시작된 scan 완료 뒤 새 work를 예약한다',async()=>{
+ let completed:((workId:string,at:Date)=>void)|undefined;let active=item.id;const queued:string[]=[];
+ const store=memorySourceStore({claim:()=>true,renew:()=>true,file:(_h,_s,id)=>({id,redacted:false}),extraction:()=>true,workOpen:()=>false,isRedacted:()=>false,handoff:()=>{},carryEnqueue:(_source,requested)=>{const id=active||requested;queued.push(id);return {workId:id};},onCarryCompletion:fn=>{completed=fn;}});
+ await store.ensureSource({id:item.targetId,kind:'drive',account:'carry-fake-queue',rootId:'root'});const claim={workId:item.id,claimedBy:'worker',claimedAt:now,attempts:1,now},scan='019a0000-0000-7000-8000-000000000081',sf='019a0000-0000-7000-8000-000000000082';await store.beginSourceScan({sourceId:item.targetId,generation:1,scanId:scan,startToken:'t',claim});await store.observeSourceEntry({sourceId:item.targetId,generation:1,scanId:scan,claim,entry:{id:sf,remoteId:'binary',name:'x',path:'',mimeType:'application/octet-stream',remoteVersion:'1',sizeBytes:3}});await store.markSourceEntry({sourceId:item.targetId,generation:1,sourceFileId:sf,remoteVersion:'1',status:'unsupported',claim});expect(await store.reserveSourceCarry({sourceId:item.targetId,generation:1,extractorVersion:'new',workId:'019a0000-0000-7000-8000-000000000083',now})).toMatchObject({ok:true,reserved:true});await store.finishSourceScan({sourceId:item.targetId,generation:1,scanId:scan,claim});active='';completed?.(item.id,now);expect(queued).toHaveLength(2);expect(queued[1]).not.toBe(item.id);
+});
+
+it('형식을 확인하지 못한 ZIP 상한은 unsupported로 기록하고 재다운로드하지 않는다',async()=>{
+ const f=fixture(),entry={id:'zip',name:'z.bin',mimeType:'application/octet-stream',version:'1',sizeBytes:4};await f.store.ensureSource({id:item.targetId,kind:'drive',account:'carry-limit',rootId:'root'});let downloads=0;
+ const remote:SourceRemote={async startToken(){return {ok:true,token:'t'};},async list(){return {ok:true,items:[entry],nextPageToken:null,incomplete:false};},async metadata(){return {ok:true,item:entry};},async download(){downloads++;return {ok:true,bytes:Uint8Array.of(80,75,3,4)};}};
+ const probe:import('../src/files/extractors.js').DocumentExtractor={name:'synthetic',detect:()=>null,detectCarry:async()=> 'too_large',extract:async()=>({ok:true,pieces:[]})};const sync=sourceSyncHandler({store:f.store,remote,clock,idGen:f.ids,extractors:[probe]});expect(await sync(item)).toEqual({ok:true});expect(await sync(item)).toEqual({ok:true});expect(downloads).toBe(1);const rows=await f.store.listSourceEntries(item.targetId);expect(rows.ok&&rows.entries[0]?.indexStatus).toBe('unsupported');expect(f.handoffs).toHaveLength(0);
+});
+
+
+it('크기를 모르는 원격 전송 초과는 버전 재검증 후 marker를 남긴다',async()=>{
+ const f=fixture(),entry={id:'oversize',name:'large.bin',mimeType:'application/octet-stream',version:'1',sizeBytes:null};await f.store.ensureSource({id:item.targetId,kind:'drive',account:'carry-transfer-limit',rootId:'root'});let downloads=0,version='1';
+ const remote:SourceRemote={async startToken(){return {ok:true,token:'t'};},async list(){return {ok:true,items:[entry],nextPageToken:null,incomplete:false};},async metadata(){return {ok:true,item:{...entry,version}};},async download(){downloads++;return {ok:false,code:'TOO_LARGE',message:'limit'};}};
+ const probe:import('../src/files/extractors.js').DocumentExtractor={name:'probe',detect:()=>null,detectCarry:async()=>true,extract:async()=>({ok:true,pieces:[]})};const sync=sourceSyncHandler({store:f.store,remote,clock,idGen:f.ids,extractors:[probe]});
+ expect(await sync(item)).toEqual({ok:true});expect(await sync(item)).toEqual({ok:true});expect(downloads).toBe(1);
+ version='2';const changed={...remote,async list(){return {ok:true as const,items:[{...entry,version:'2'}],nextPageToken:null,incomplete:false};}};expect(await sourceSyncHandler({store:f.store,remote:changed,clock,idGen:f.ids,extractors:[probe]})(item)).toEqual({ok:true});expect(downloads).toBe(2);
+});
+
+it('fake Carry는 terminal 실패 뒤 새 work로 이어지고 foreground 범위에 포함한다',async()=>{
+ const old='019a0000-0000-7000-8000-000000000091',next='019a0000-0000-7000-8000-000000000092',root='019a0000-0000-7000-8000-000000000093',scan='019a0000-0000-7000-8000-000000000094',sf='019a0000-0000-7000-8000-000000000095';
+ const work=new Map<string,WorkItem>([[old,{...item,id:old}],[root,{...item,id:root,completedAt:now,outcome:'succeeded'}]]);let selected:string[]=[];
+ const queue={async work(id:string){return work.get(id)??null;},async hasDue(ids:string[]){selected=ids;return {ok:true as const,due:ids.includes(next)};},async claim(ids:string[]){selected=ids;return {ok:true as const,item:work.get(next)??null};}};
+ const store=memorySourceStore({claim:()=>true,renew:()=>true,file:(_h,_s,id)=>({id,redacted:false}),extraction:()=>true,workOpen:()=>false,isRedacted:()=>false,handoff:()=>{},queue,carryEnqueue:(_source,id)=>({workId:id})});
+ await store.ensureSource({id:item.targetId,kind:'drive',account:'fake-carry-failure',rootId:'root'});const sourceClaim={workId:old,claimedBy:'worker',claimedAt:now,attempts:1,now};
+ await store.beginSourceScan({sourceId:item.targetId,generation:1,scanId:scan,startToken:'t',claim:sourceClaim});await store.observeSourceEntry({sourceId:item.targetId,generation:1,scanId:scan,claim:sourceClaim,entry:{id:sf,remoteId:'x',name:'x',path:'',mimeType:'application/octet-stream',remoteVersion:'1',sizeBytes:3}});await store.markSourceEntry({sourceId:item.targetId,generation:1,sourceFileId:sf,remoteVersion:'1',status:'unsupported',claim:sourceClaim});
+ expect(await store.reserveSourceCarry({sourceId:item.targetId,generation:1,extractorVersion:'A',workId:old,now})).toMatchObject({ok:true,reserved:true});work.set(old,{...item,id:old,completedAt:now,outcome:'failed'});work.set(next,{...item,id:next});
+ expect(await store.reserveSourceCarry({sourceId:item.targetId,generation:1,extractorVersion:'B',workId:next,now})).toMatchObject({ok:true,reserved:true});expect(await store.hasDueSourceWork({sourceId:item.targetId,syncWorkId:root,now})).toMatchObject({ok:true,due:true});expect(selected).toContain(next);
+ const nextClaim={...sourceClaim,workId:next};await store.beginSourceScan({sourceId:item.targetId,generation:1,scanId:scan,startToken:'t2',claim:nextClaim});await store.finishSourceScan({sourceId:item.targetId,generation:1,scanId:scan,claim:nextClaim});expect(await store.readSourceWorkStatus({sourceId:item.targetId,syncWorkId:root})).toMatchObject({ok:true,complete:true});
+});

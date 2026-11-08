@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createBrain, type Brain, type BrainDependencies } from '../src/brain.js';
 import {
   DOCUMENT_CHUNK_PARAMS,
-  DOCUMENT_EXTRACT_MAX_BYTES,
+  DOCUMENT_BINARY_EXTRACT_MAX_BYTES,
 } from '../src/domain/document.js';
 import { contentHashOfBytes, type FileLocation } from '../src/domain/file.js';
 import { DOCUMENT_CHUNK_INDEX_CONFIG_ID } from '../src/domain/index-config.js';
@@ -17,6 +17,7 @@ import {
   FILE_SOURCE_UNREACHABLE,
   documentExtractHandler,
   enqueueDocumentExtractions,
+  enqueueUnsupportedCarry,
 } from '../src/files/extract-work.js';
 import { DOCUMENT_EXTRACTOR_VERSION, type DocumentExtractor } from '../src/files/extractors.js';
 import { TEXT_MEDIA_TYPE } from '../src/files/text-extractor.js';
@@ -101,6 +102,16 @@ function gatedFiles(inner: FileStore, gate: FilesGate): FileStore {
       }
       return inner.get(location);
     },
+    async getBounded(location, maxBytes) {
+      gate.gets += 1;
+      if (gate.fail !== undefined && gate.fail !== null) {
+        return { ok: false, code: gate.fail, message: `${gate.fail} 라고 답하도록 했습니다` };
+      }
+      if (gate.substitute !== undefined && gate.substitute !== null) {
+        return gate.substitute.length > maxBytes ? {ok:false,code:'TOO_LARGE',message:'상한 초과'} : { ok: true, bytes: gate.substitute };
+      }
+      return inner.getBounded(location,maxBytes);
+    },
   };
 }
 
@@ -117,6 +128,8 @@ interface Kit {
 }
 
 interface KitOptions {
+  getOnly?: boolean;
+  documentExtractors?: readonly DocumentExtractor[];
   /** The attachment's bytes. */
   bytes?: Uint8Array;
   /** The size the ingest records, when a case wants it to differ (too_large). */
@@ -184,13 +197,14 @@ async function kit(options: KitOptions = {}): Promise<Kit> {
   const dependencies: BrainDependencies = {
     store: options.wrap === undefined ? withSchema : options.wrap(withSchema),
     spool: memorySpool(),
-    files,
+    files: options.getOnly ? (({getBounded: _bounded,...legacy})=>legacy)(files) as FileStore : files,
     schemaVersions: { core: 8 },
     clock,
     idGen,
     parsers: [memoryParser()],
     transcripts: memoryTranscriptReader({ files: {} }),
     repositories: memoryRepositories(),
+    ...(options.documentExtractors ? {documentExtractors:options.documentExtractors} : {}),
     machine: 'demo-machine',
   };
   return {
@@ -240,6 +254,7 @@ function extractItems(kit: Kit) {
 }
 
 describe('drain이 붙인 텍스트 문서를 조각으로 만든다', () => {
+  it('get-only legacy adapter는 조립 시 즉시 거부한다',async()=>{await expect(kit({getOnly:true})).rejects.toThrow('FileStore.getBounded가 필요합니다');});
   it('txt·md를 ok 세대와 text 위치의 조각과 포인터로 남긴다', async () => {
     const subject = await kit();
 
@@ -331,7 +346,7 @@ describe('drain이 붙인 텍스트 문서를 조각으로 만든다', () => {
   });
 
   it('상한을 넘는 크기는 바이트를 읽지도 않고 too_large로 닫는다', async () => {
-    const subject = await kit({ sizeBytes: DOCUMENT_EXTRACT_MAX_BYTES + 1 });
+    const subject = await kit({ sizeBytes: DOCUMENT_BINARY_EXTRACT_MAX_BYTES + 1 });
 
     expect(await drain(subject)).toMatchObject({ claimed: 2, completed: 2, failed: 0 });
 
@@ -339,8 +354,7 @@ describe('drain이 붙인 텍스트 문서를 조각으로 만든다', () => {
       status: 'too_large',
       mediaType: null,
     });
-    // The point of checking the recorded size: eight mebibytes are never read
-    // into memory to find out that they are eight mebibytes.
+    // 50MiB를 초과한 기록은 읽기 전에 거부한다.
     expect(subject.gate.gets).toBe(0);
     expect(fileFailures(subject)).toEqual([]);
   });
@@ -611,6 +625,63 @@ describe('추출기 버전이 오르면 drain이 한 번 더 읽는다', () => {
     });
   }
 
+  it('8MiB 초과 텍스트는 handler에서 too_large이고 이전 current와 chunks를 유지한다',async()=>{
+    const bytes=utf8Bytes('a'.repeat(8*1024*1024+1)),subject=await kit({bytes});
+    const prior:DocumentExtractor={name:'prior',detect:()=> 'application/synthetic',extract:async()=>({ok:true,pieces:[{body:'old',page:null,chunkLocator:{type:'docx',block:1}}]})};
+    await readAt(subject,'doc/old',[prior]);const before=await subject.store.readFileExtractionState(subject.fileId),chunks=await currentChunks(subject);
+    expect(await readAt(subject,DOCUMENT_EXTRACTOR_VERSION)).toMatchObject({failed:0});expect((await generations(subject)).map(x=>x.status)).toEqual(['ok','too_large']);
+    expect(await subject.store.readFileExtractionState(subject.fileId)).toMatchObject({ok:true,currentExtractionId:before.ok?before.currentExtractionId:null});expect(await currentChunks(subject)).toEqual(chunks);expect(fileFailures(subject)).toEqual([]);
+  });
+  it('추출기 tooLarge 결과는 실패행 없이 이전 current를 보존한다',async()=>{
+    const subject=await kit();await readAt(subject,'doc/old');const before=await subject.store.readFileExtractionState(subject.fileId),chunks=await currentChunks(subject);
+    const limited:DocumentExtractor={name:'limit',detect:()=> 'application/synthetic',extract:async()=>({ok:false,tooLarge:true,message:'synthetic limit'})};
+    expect(await readAt(subject,DOCUMENT_EXTRACTOR_VERSION,[limited])).toMatchObject({failed:0});expect((await generations(subject)).map(x=>x.status)).toEqual(['ok','too_large']);
+    expect(await subject.store.readFileExtractionState(subject.fileId)).toMatchObject({ok:true,currentExtractionId:before.ok?before.currentExtractionId:null});expect(await currentChunks(subject)).toEqual(chunks);expect(fileFailures(subject)).toEqual([]);
+  });
+
+  it.each([['PDF', Uint8Array.of(37,80,68,70,45)], ['DOCX', Uint8Array.of(80,75,3,4,0)]])('unsupported %s bytes는 버전별 한 번 Carry', async (_name, bytes) => {
+    const subject=await kit({bytes});await readAt(subject,'doc/old',[]);
+    const probe:DocumentExtractor={name:'new',detectCarry:async b=>b[0]===bytes[0],detect:()=> 'application/synthetic',extract:async()=>({ok:true,pieces:[{body:'synthetic',page:null,chunkLocator:{type:'docx',block:1}}]})};
+    const args={store:subject.store,files:subject.files,clock:subject.clock,idGen:subject.idGen,extractors:[probe]};
+    await enqueueUnsupportedCarry(args,{deadline:subject.clock.now().getTime()+10000});
+    await readAt(subject,DOCUMENT_EXTRACTOR_VERSION,[probe]);
+    const state=await subject.store.readFileExtractionState(subject.fileId);expect(state).toMatchObject({ok:true,currentExtractionId:expect.any(String)});
+    expect((await currentChunks(subject))[0]?.body).toBe('synthetic');
+    const count=extractItems(subject).length, rows=await generations(subject);await enqueueUnsupportedCarry(args,{deadline:subject.clock.now().getTime()+10000});await drain(subject);await enqueueUnsupportedCarry(args,{deadline:subject.clock.now().getTime()+10000});expect(extractItems(subject)).toHaveLength(count);expect(await generations(subject)).toEqual(rows);expect(rows.filter(row=>row.status==='ok')).toHaveLength(1);
+  });
+
+  it('비대상 bytes는 같은 버전에서 다시 읽지 않고 판정 실패는 재시도',async()=>{
+    const subject=await kit({bytes:Uint8Array.of(0,1,2)});await readAt(subject,'doc/old',[]);
+    let result:boolean|null=null;const probe:DocumentExtractor={name:'probe',detectCarry:async()=>result,detect:()=>null,extract:async()=>({ok:true,pieces:[]})};
+    const args={store:subject.store,files:subject.files,clock:subject.clock,idGen:subject.idGen,extractors:[probe]};const opts={deadline:subject.clock.now().getTime()+10000};
+    const before=subject.gate.gets;await enqueueUnsupportedCarry(args,opts);result=false;await enqueueUnsupportedCarry(args,opts);expect(subject.gate.gets-before).toBe(2);await enqueueUnsupportedCarry(args,opts);expect(subject.gate.gets-before).toBe(2);
+  });
+
+  it('일반 work는 느린 Carry probe보다 먼저 처리된다', async()=>{
+    let enabled=false, subject!:Kit, ordinary=false, probes=0;
+    const probe:DocumentExtractor={name:'slow',detect:()=>null,detectCarry:async()=>{if(!enabled)return null;probes++;subject.clock.advance(60_000);return false;},extract:async()=>({ok:true,pieces:[]})};
+    subject=await kit({bytes:Uint8Array.of(0,1,2),documentExtractors:[probe]});await readAt(subject,'doc/old',[]);enabled=true;
+    const now=subject.clock.now();await subject.store.addWork({id:subject.idGen.next(),kind:'synthetic',targetKind:'file',targetId:'ordinary',createdAt:now,nextAttemptAt:now});
+    await drain(subject,{synthetic:async()=>{ordinary=true;return {ok:true};}});
+    expect(ordinary).toBe(true);expect(probes).toBe(1);
+  });
+
+  it('느린 판정이 deadline을 넘어도 결과를 확정하고 일반 ZIP은 work를 만들지 않는다', async()=>{
+    const subject=await kit({bytes:Uint8Array.of(80,75,3,4)});await readAt(subject,'doc/old',[]);
+    let calls=0;const probe:DocumentExtractor={name:'zip',detectCarry:async()=>{calls++;subject.clock.advance(200);return 'too_large';},detect:()=>null,extract:async()=>({ok:true,pieces:[]})};
+    const args={store:subject.store,files:subject.files,clock:subject.clock,idGen:subject.idGen,extractors:[probe]};
+    const before=extractItems(subject).length;await enqueueUnsupportedCarry(args,{deadline:subject.clock.now().getTime()+100});
+    await enqueueUnsupportedCarry(args,{deadline:subject.clock.now().getTime()+100});
+    expect(calls).toBe(1);expect(extractItems(subject)).toHaveLength(before);
+  });
+
+  it('unreachable 후보는 Carry를 읽지 않고 복구 뒤 다시 후보가 된다',async()=>{
+    const subject=await kit({bytes:Uint8Array.of(0,1,2)});await readAt(subject,'doc/old',[]);
+    await subject.store.setFileSourceUnreachable({fileId:subject.fileId,unreachableAt:subject.clock.now()});
+    const found=await subject.store.listUnsupportedCarry({extractorVersion:DOCUMENT_EXTRACTOR_VERSION,limit:10});expect(found).toMatchObject({ok:true,fileIds:[]});
+    await subject.store.setFileSourceUnreachable({fileId:subject.fileId,unreachableAt:null});expect(await subject.store.listUnsupportedCarry({extractorVersion:DOCUMENT_EXTRACTOR_VERSION,limit:10})).toMatchObject({ok:true,fileIds:[subject.fileId]});
+  });
+
   it('옛 버전으로 성공한 파일을 다시 넣고 그 다음 drain은 가만히 둔다', async () => {
     const subject = await kit();
     expect(await readAt(subject, 'doc/0')).toMatchObject({ claimed: 2, completed: 2 });
@@ -763,7 +834,7 @@ describe('추출기 버전이 오르면 drain이 한 번 더 읽는다', () => {
 });
 
 it('records Drive reconsent without retrying the failed extraction',async()=>{
-  const subject=await kit();const files={...subject.files,async get(){return {ok:false as const,code:'FILES_UNAVAILABLE' as const,driveCode:'AUTH_REQUIRED' as const,message:'Drive 재동의가 필요합니다'};}};
+  const subject=await kit();const files={...subject.files,async getBounded(){return {ok:false as const,code:'FILES_UNAVAILABLE' as const,driveCode:'AUTH_REQUIRED' as const,message:'Drive 재동의가 필요합니다'};}};
   const report=await drain(subject,{[DOCUMENT_EXTRACT_KIND]:documentExtractHandler({store:subject.store,files,clock:subject.clock,idGen:subject.idGen})});
   expect(report).toMatchObject({failed:1,retried:0});expect(fileFailures(subject)[0]).toMatchObject({code:'AUTH_REQUIRED'});
 });

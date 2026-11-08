@@ -336,6 +336,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
    * about is the file, so a map keyed on either would lose the other.
    */
   const extractions: DocumentExtraction[] = [];
+  const carryChecks = new Set<string>();
+  const carryWorkVersions = new Map<string, {version:string;pinned:boolean}>();
   const documentChunks = new Map<string, DocumentChunk[]>();
   const currentExtractions = new Map<string, string>();
   const sourceUnreachableAt = new Map<string, Date>();
@@ -379,9 +381,12 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     return (
       item !== undefined &&
       item.completedAt === null &&
+      item.kind === 'document_extract' &&
       item.targetKind === 'file' &&
       item.targetId === input.fileId &&
       item.claimedBy === input.claim.claimedBy &&
+      (input.claim.claimedAt === undefined || item.claimedAt?.getTime() === input.claim.claimedAt.getTime()) &&
+      (input.claim.attempts === undefined || item.attempts === input.claim.attempts) &&
       item.claimExpiresAt !== null &&
       item.claimExpiresAt.getTime() > input.startedAt.getTime()
     );
@@ -1347,6 +1352,10 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
         return { ok: false, code: 'CLAIM_LOST', message: '추출 청구가 더 이상 이 호출자의 것이 아닙니다' };
       }
 
+      const version = carryWorkVersions.get(input.claim.workItemId);
+      if(version?.pinned && (input.claim.claimedAt===undefined || input.claim.attempts===undefined))return {ok:false,code:'CLAIM_LOST',message:'Carry 청구에는 완전한 청구 식별자가 필요합니다'};
+      carryWorkVersions.set(input.claim.workItemId, {version:input.extractorVersion,pinned:version?.pinned ?? false});
+
       // A file has one open generation at a time, so any generation still open
       // here is closed before the new one opens (AD-24). Usually it belongs to a
       // claim that expired; a caller beginning twice under its own live claim
@@ -1517,6 +1526,17 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
             .map((extraction) => extraction.attempt),
         ),
       };
+    },
+
+    async listUnsupportedCarry({extractorVersion,limit,after}) {
+      const ids=[...fileRows.values()].filter(f=>f.home!==null&&!fileRedacted(f.id)&&!sourceUnreachableAt.has(f.id)&&!currentExtractions.has(f.id)&&(!after||f.id>after)&&!carryChecks.has(`${f.id}:${extractorVersion}`)&&extractions.some(e=>e.fileId===f.id&&e.status==='unsupported'&&e.extractorVersion!==extractorVersion)&&!extractions.some(e=>e.fileId===f.id&&e.extractorVersion===extractorVersion)).map(f=>f.id).sort().slice(0,limit);
+      return {ok:true,fileIds:ids};
+    },
+    async commitUnsupportedCarry(input) {
+      const f=fileById(input.fileId),key=`${input.fileId}:${input.extractorVersion}`;
+      if(!f||!f.home||fileRedacted(f.id)||sourceUnreachableAt.has(f.id)||currentExtractions.has(f.id)||f.contentHash!==input.contentHash||f.home.storeKind!==input.home.storeKind||f.home.locator!==input.home.locator||f.home.ownership!==input.home.ownership||carryChecks.has(key)||!extractions.some(e=>e.fileId===f.id&&e.status==='unsupported'&&e.extractorVersion!==input.extractorVersion)||extractions.some(e=>e.fileId===f.id&&e.extractorVersion===input.extractorVersion))return {ok:true,committed:false,created:false};
+      let created=false;if(input.supported){const result=addWork({id:input.workId,kind:'document_extract',targetKind:'file',targetId:input.fileId,createdAt:input.now,nextAttemptAt:input.now});if(!result.ok)return {ok:false,code:'DB_UNAVAILABLE',message:'일감 생성 실패'};if(!result.created){if(carryWorkVersions.get(result.item.id)?.version!==input.extractorVersion)return {ok:true,committed:false,created:false};carryWorkVersions.set(result.item.id,{version:input.extractorVersion,pinned:true});}else{carryWorkVersions.set(result.item.id,{version:input.extractorVersion,pinned:true});created=true;}}
+      carryChecks.add(key);return {ok:true,committed:true,created};
     },
 
     async listFilesAwaitingExtraction({

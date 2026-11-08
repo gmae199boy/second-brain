@@ -2,3 +2,5 @@ packages:
   - packages/*
   - apps/*
   - tooling/*
+ignoredOptionalDependencies:
+  - '@napi-rs/canvas'

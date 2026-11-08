@@ -136,6 +136,8 @@ export function failedConfigStore(message: string): Store & SchemaStore & Settin
     async finishExtraction() { return unavailable; },
     async setFileSourceUnreachable() { return unavailable; },
     async readFileExtractionState() { return unavailable; },
+    async listUnsupportedCarry() { return unavailable; },
+    async commitUnsupportedCarry() { return unavailable; },
     async listFilesAwaitingExtraction() { return unavailable; },
     async listFilesWithStaleExtraction() { return unavailable; },
     async listExtractions() { return unavailable; },

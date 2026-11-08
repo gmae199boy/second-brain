@@ -32,6 +32,7 @@ const rules = [
   { prefix:'packages/core/src/spool/', reason:'daemon queue spool replay' },
   { prefix:'apps/cli/src/mcp/', reason:'extension MCP runtime' },
   { prefix:'apps/cli/src/daemon/', reason:'daemon supervisor and drain' },
+  { prefix:'apps/cli/src/runtime/document-parser-child.ts', reason:'document extraction child process' },
   { prefix:'apps/cli/src/runtime/', reason:'extension and file runtime' },
   { prefix:'apps/cli/src/install/', reason:'installed runtime and extension setup' },
   { prefix:'apps/cli/src/config/', reason:'Python tests and daemon use config codec and paths' },

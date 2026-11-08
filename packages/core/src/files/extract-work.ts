@@ -4,6 +4,7 @@ import { sourceClaim } from '../sources/sync.js';
 import {
   DOCUMENT_CHUNK_PARAMS,
   DOCUMENT_EXTRACT_MAX_BYTES,
+  DOCUMENT_BINARY_EXTRACT_MAX_BYTES,
 } from '../domain/document.js';
 import { contentHashOfBytes } from '../domain/file.js';
 import { DOCUMENT_CHUNK_INDEX_CONFIG_ID } from '../domain/index-config.js';
@@ -67,8 +68,10 @@ export interface EnqueueDocumentExtractionsDependencies {
   store: Pick<
     ExtractionStore,
     'listFilesAwaitingExtraction' | 'listFilesWithStaleExtraction'
-  > &
+  > & Partial<Pick<ExtractionStore, 'listUnsupportedCarry' | 'commitUnsupportedCarry' | 'readFileExtractionState'>> &
     Pick<WorkStore, 'listOpenWorkTargets' | 'addWork'>;
+  files?: Pick<FileStore,'getBounded'>;
+  extractors?: readonly DocumentExtractor[];
   clock: Clock;
   idGen: IdGen;
 }
@@ -149,7 +152,7 @@ const ENQUEUE_LIMIT = 500;
  * files that are waiting or behind, so the next drain's own reads find them.
  */
 export async function enqueueDocumentExtractions(
-  { store, clock, idGen }: EnqueueDocumentExtractionsDependencies,
+  { store, clock, idGen, files, extractors = DOCUMENT_EXTRACTORS }: EnqueueDocumentExtractionsDependencies,
   {
     deadline,
     extractorVersion = DOCUMENT_EXTRACTOR_VERSION,
@@ -208,6 +211,40 @@ export async function enqueueDocumentExtractions(
   return skipped;
 }
 
+/** Probe after ordinary queue work so a slow detector cannot starve it. */
+export async function enqueueUnsupportedCarry(
+  { store, clock, idGen, files, extractors = DOCUMENT_EXTRACTORS }: EnqueueDocumentExtractionsDependencies,
+  { deadline, extractorVersion = DOCUMENT_EXTRACTOR_VERSION }: EnqueueDocumentExtractionsOptions,
+): Promise<number> {
+  let created = 0;
+  // Probe bytes outside the write transaction. A failed read or detector is not
+  // a classification and must remain eligible for a later drain.
+  if (files && store.listUnsupportedCarry && store.readFileExtractionState && store.commitUnsupportedCarry) {
+    const probes=extractors.filter(e=>e.detectCarry);
+    if(probes.length) {
+      let after:string|undefined;
+      while(clock.now().getTime()<deadline) {
+        const batch=await store.listUnsupportedCarry({extractorVersion,limit:ENQUEUE_LIMIT,...(after?{after}:{})});
+        if(!batch.ok||batch.fileIds.length===0)break;
+        for(const fileId of batch.fileIds){
+          after=fileId;if(clock.now().getTime()>=deadline)break;
+          const state=await store.readFileExtractionState(fileId);if(!state.ok||!state.home||state.redactedAt||state.sourceUnreachableAt||state.sizeBytes>DOCUMENT_BINARY_EXTRACT_MAX_BYTES)continue;
+          const bytes=await files.getBounded(state.home,DOCUMENT_BINARY_EXTRACT_MAX_BYTES);
+          if(!bytes.ok||contentHashOfBytes(bytes.bytes)!==state.contentHash)continue;
+          let supported=false,inconclusive=false;
+          try {for(const probe of probes){const result=await probe.detectCarry!(bytes.bytes);if(result===null){inconclusive=true;break;}if(result === 'too_large')break;if(result === true){supported=true;break;}}} catch {inconclusive=true;}
+          if(inconclusive)continue;
+          const result=await store.commitUnsupportedCarry({fileId,extractorVersion,contentHash:state.contentHash,home:state.home,supported,workId:idGen.next(),now:clock.now()});
+          if(!result.ok)break;
+          if(result.created)created++;
+        }
+        if(batch.fileIds.length<ENQUEUE_LIMIT)break;
+      }
+    }
+  }
+  return created;
+}
+
 export interface DocumentExtractWorkDependencies {
   store: Pick<
     ExtractionStore,
@@ -219,7 +256,7 @@ export interface DocumentExtractWorkDependencies {
   > &
     Pick<WorkStore, 'resolveFailures'>;
   /** Brain's copy of the bytes. Read outside every transaction (AD-7). */
-  files: Pick<FileStore, 'get'>;
+  files: Pick<FileStore, 'get' | 'getBounded'>;
   source?: {store:SourceStore; remote:SourceRemote; temp:SourceTemp};
   clock: Clock;
   /** The generation's id and every piece's. Minted here, never by the database. */
@@ -295,7 +332,7 @@ export function documentExtractHandler(
     // not happen is no reason to call it resolved.
     if (state.redactedAt !== null || state.sourceUnreachableAt !== null) return { ok: true };
 
-    if (item.claimedBy === null) {
+    if (item.claimedBy === null || item.claimedAt === null) {
       // Unreachable from the drain, which only hands over items it claimed. The
       // claim is what `beginExtraction` is measured against, so an item without
       // one is treated as an item whose claim is already somebody else's.
@@ -314,7 +351,7 @@ export function documentExtractHandler(
       fileId,
       extractorVersion,
       startedAt: clock.now(),
-      claim: { workItemId: item.id, claimedBy: item.claimedBy },
+      claim: { workItemId: item.id, claimedBy: item.claimedBy, claimedAt: item.claimedAt, attempts: item.attempts },
     });
     if (!begun.ok) {
       // The two states that take the file out of the queue's input are answered
@@ -364,7 +401,7 @@ export function documentExtractHandler(
       return refused ?? { ok: false, ...failure };
     };
 
-    const maxBytes=candidates.some(c=>c.mimeType==='application/vnd.google-apps.document')?SOURCE_DOCS_MAX_BYTES:DOCUMENT_EXTRACT_MAX_BYTES;
+    const maxBytes=candidates.some(c=>c.mimeType==='application/vnd.google-apps.document')?SOURCE_DOCS_MAX_BYTES:DOCUMENT_BINARY_EXTRACT_MAX_BYTES;
     if (state.sizeBytes > maxBytes) {
       return await settled({
         status: 'too_large',
@@ -393,17 +430,17 @@ export function documentExtractHandler(
         const metadata=await source.remote.metadata(candidate.remoteId);
         if(!metadata.ok){if(['DB_UNAVAILABLE','DB_LOCKED','AUTH_SESSION_CHANGED'].includes(metadata.code))return remoteFailure(metadata);lastMessage=metadata.message;if(metadata.code==='UNREACHABLE'){const marked=await source.store.markSourceFileUnreachable({sourceFileId:candidate.sourceFileId,fileId,remoteVersion:candidate.remoteVersion,claim:sourceClaim(item,clock)!});if(!marked.ok&&marked.code!=='SOURCE_CHANGED')return {ok:false,code:marked.code,message:marked.message};}else {transient=true;remoteError=combineRemote(remoteError,metadata);}continue;}
         if(metadata.item.version!==candidate.remoteVersion){lastMessage='원격 버전이 변경되었습니다';transient=true;remoteError=combineRemote(remoteError,{ok:false,code:'TEMPORARY',message:lastMessage});continue;}
-        const limit=candidate.mimeType==='application/vnd.google-apps.document'?SOURCE_DOCS_MAX_BYTES:DOCUMENT_EXTRACT_MAX_BYTES;
+        const limit=candidate.mimeType==='application/vnd.google-apps.document'?SOURCE_DOCS_MAX_BYTES:DOCUMENT_BINARY_EXTRACT_MAX_BYTES;
         if(state.sizeBytes>limit)continue;
         let bytes:Uint8Array|undefined;
-        if(candidate.tempKey){const read=await source.temp.read(key,limit);if(read.ok)bytes=read.bytes;else lastMessage=read.message;}
-        if(!bytes){const read=await source.remote.download({id:candidate.remoteId,docs:candidate.mimeType==='application/vnd.google-apps.document',maxBytes:limit});if(!read.ok){if(['DB_UNAVAILABLE','DB_LOCKED','AUTH_SESSION_CHANGED'].includes(read.code))return remoteFailure(read);lastMessage=read.message;if(read.code==='UNREACHABLE'){const marked=await source.store.markSourceFileUnreachable({sourceFileId:candidate.sourceFileId,fileId,remoteVersion:candidate.remoteVersion,claim:sourceClaim(item,clock)!});if(!marked.ok&&marked.code!=='SOURCE_CHANGED')return {ok:false,code:marked.code,message:marked.message};}else {transient=true;remoteError=combineRemote(remoteError,read);}continue;}bytes=read.bytes;}
+        if(candidate.tempKey){const read=await source.temp.read(key,limit);if(read.ok)bytes=read.bytes;else if(read.code==='TOO_LARGE')return await settled({status:'too_large',error:read.message,mediaType:null});else lastMessage=read.message;}
+        if(!bytes){const read=await source.remote.download({id:candidate.remoteId,docs:candidate.mimeType==='application/vnd.google-apps.document',maxBytes:limit});if(!read.ok){if(read.code==='TOO_LARGE')return await settled({status:'too_large',error:read.message,mediaType:null});if(['DB_UNAVAILABLE','DB_LOCKED','AUTH_SESSION_CHANGED'].includes(read.code))return remoteFailure(read);lastMessage=read.message;if(read.code==='UNREACHABLE'){const marked=await source.store.markSourceFileUnreachable({sourceFileId:candidate.sourceFileId,fileId,remoteVersion:candidate.remoteVersion,claim:sourceClaim(item,clock)!});if(!marked.ok&&marked.code!=='SOURCE_CHANGED')return {ok:false,code:marked.code,message:marked.message};}else {transient=true;remoteError=combineRemote(remoteError,read);}continue;}bytes=read.bytes;}
         if(contentHashOfBytes(bytes)!==state.contentHash){lastMessage='원본의 해시가 일치하지 않습니다';transient=true;remoteError=combineRemote(remoteError,{ok:false,code:'TEMPORARY',message:lastMessage});continue;}
         external=candidate;got={ok:true,bytes};break;
       }
-      if(!got.ok && state.home!==null && state.sizeBytes<=DOCUMENT_EXTRACT_MAX_BYTES){const local=await files.get(state.home);if(local.ok&&contentHashOfBytes(local.bytes)===state.contentHash){got=local;external=undefined;}else if(!local.ok){lastMessage=local.message;if(local.code==='FILES_UNAVAILABLE'){transient=true;remoteError=combineRemote(remoteError,{ok:false,code:local.driveCode??'TEMPORARY',message:local.message,...(local.retryAfter?{retryAfter:local.retryAfter}:{})});}}else lastMessage='Brain 원본의 해시가 일치하지 않습니다';}
+      if(!got.ok && state.home!==null && state.sizeBytes<=maxBytes){const local=await files.getBounded(state.home,maxBytes);if(!local.ok && local.code==='TOO_LARGE')return await settled({status:'too_large',error:local.message,mediaType:null});if(local.ok&&contentHashOfBytes(local.bytes)===state.contentHash){got=local;external=undefined;}else if(!local.ok){lastMessage=local.message;if(local.code==='FILES_UNAVAILABLE'){transient=true;remoteError=combineRemote(remoteError,{ok:false,code:local.driveCode??'TEMPORARY',message:local.message,...(local.retryAfter?{retryAfter:local.retryAfter}:{})});}}else lastMessage='Brain 원본의 해시가 일치하지 않습니다';}
       if(!got.ok){return await stopped({failedStage:'read',mediaType:null},remoteError??{code:transient?'FILES_UNAVAILABLE':FILE_SOURCE_UNREACHABLE,message:lastMessage,retryable:transient});}
-    }else if(state.home!==null)got=await files.get(state.home);
+    }else if(state.home!==null){const bounded=await files.getBounded(state.home,maxBytes); if(!bounded.ok && bounded.code==='TOO_LARGE') return await settled({status:'too_large',error:bounded.message,mediaType:null}); got=bounded;}
     if (!got.ok) {
       // A store that is there but cannot answer right now is somebody else's
       // hiccup: the item waits and tries again, and the record appears only if
@@ -441,8 +478,10 @@ export function documentExtractHandler(
       );
     }
 
-    const detected = detect(extractors, bytes);
+    const textLimit = external?.mimeType === 'application/vnd.google-apps.document' ? SOURCE_DOCS_MAX_BYTES : DOCUMENT_EXTRACT_MAX_BYTES;
+    const detected = await detect(extractors, bytes, textLimit);
     if (detected === null) {
+      if (bytes.length > textLimit) return await settled({status:'too_large',error:'텍스트 크기 상한 초과',mediaType:null});
       // No failure row: most of what gets attached in this build is an image,
       // and a record per image would leave doctor's `failures` check at `warn`
       // for ever. The generation says `unsupported`, which is the honest answer
@@ -454,12 +493,15 @@ export function documentExtractHandler(
       });
     }
 
+    if (detected.mediaType === 'text/plain' && bytes.length > (external?.mimeType === 'application/vnd.google-apps.document' ? SOURCE_DOCS_MAX_BYTES : DOCUMENT_EXTRACT_MAX_BYTES)) return await settled({status:'too_large',error:'텍스트 크기 상한 초과',mediaType:detected.mediaType});
+
     const extracted = await detected.extractor.extract(
       bytes,
       detected.mediaType,
       DOCUMENT_CHUNK_PARAMS,
     );
     if (!extracted.ok) {
+      if (extracted.tooLarge) return await settled({ status: 'too_large', error: extracted.message, mediaType: detected.mediaType });
       return await stopped(
         { failedStage: 'extract', mediaType: detected.mediaType },
         {
@@ -521,12 +563,14 @@ export function documentExtractHandler(
 }
 
 /** The first extractor that recognises these bytes, and what it called them. */
-function detect(
+async function detect(
   extractors: readonly DocumentExtractor[],
   bytes: Uint8Array,
-): { extractor: DocumentExtractor; mediaType: string } | null {
+  textLimit: number,
+): Promise<{ extractor: DocumentExtractor; mediaType: string } | null> {
   for (const extractor of extractors) {
-    const mediaType = extractor.detect(bytes);
+    if (extractor.name === 'text' && bytes.length > textLimit) continue;
+    const mediaType = await extractor.detect(bytes);
     if (mediaType !== null) return { extractor, mediaType };
   }
   return null;

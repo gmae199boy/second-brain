@@ -10,6 +10,11 @@ export interface SourceClaim { workId:string; claimedBy:string; claimedAt:Date; 
 export type SourceError = {ok:false; code:'DB_UNAVAILABLE'|'DB_LOCKED'|'CLAIM_LOST'|'SOURCE_CHANGED'|'FILE_REDACTED'; message:string};
 export type SourceResult<T> = ({ok:true} & T) | SourceError;
 export interface SourceStore {
+  /** Reserve a versioned scan; existing in-flight scans cannot satisfy a later request. */
+  reserveSourceCarry(input:{sourceId:string;generation:number;extractorVersion:string;workId:string;now:Date}):Promise<SourceResult<{reserved:boolean}>>;
+  readSourceCarryCheck(input:{sourceFileId:string;remoteVersion:string;extractorVersion:string}):Promise<SourceResult<{checked:boolean}>>;
+  markSourceCarryCheck(input:{sourceId:string;generation:number;sourceFileId:string;remoteVersion:string;extractorVersion:string;status?:'unsupported'|'too_large';claim:SourceClaim}):Promise<SourceResult<object>>;
+
   hasDueSourceWork(input:{sourceId:string;syncWorkId:string;now:Date}):Promise<HasDueWorkResult>;
   claimSourceWork(input:{sourceId:string;syncWorkId:string;now:Date;claimedBy:string}):Promise<ClaimWorkResult>;
   readSourceWorkStatus(input:{sourceId:string;syncWorkId:string}):Promise<SourceResult<{complete:boolean}>>;
@@ -38,7 +43,7 @@ export interface SourceStore {
   /** Reserve ownership before writing a temp file; a preparing key is never assumed orphaned. */
   prepareSourceBytes(input:{sourceId:string;generation:number;sourceFileId:string;remoteVersion:string;contentHash:string;tempKey:string;claim:SourceClaim}):Promise<SourceResult<object>>;
   /** Stage bytes identity and queue a real file-target extraction, never a home location. */
-  handoffSourceFile(input:{sourceId:string;generation:number;sourceFileId:string;remoteVersion:string;fileId:string;contentHash:string;sizeBytes:number;workId:string;tempKey?:string;claim:SourceClaim}):Promise<SourceResult<{fileId:string;workId:string}>>;
+  handoffSourceFile(input:{sourceId:string;generation:number;sourceFileId:string;remoteVersion:string;fileId:string;contentHash:string;sizeBytes:number;workId:string;tempKey?:string;carryExtractorVersion?:string;claim:SourceClaim}):Promise<SourceResult<{fileId:string;workId:string}>>;
   listSourceHandoffs(fileId:string):Promise<SourceResult<{handoffs:{sourceFileId:string;sourceId:string;generation:number;remoteId:string;mimeType:string;remoteVersion:string;workId:string;tempKey?:string}[]}>>;
   bindSourceAttempt(input:{sourceFileId:string;fileId:string;remoteVersion:string;tempKey:string;extractionId:string;claim:SourceClaim}):Promise<SourceResult<object>>;
   finishSourceAttempt(input:{fileId:string;extractionId:string;claim:SourceClaim;outcome:ExtractionOutcome}):Promise<SourceResult<object>>;

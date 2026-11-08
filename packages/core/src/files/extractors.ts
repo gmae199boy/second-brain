@@ -30,16 +30,18 @@ export interface DocumentExtractorPiece {
 
 export type DocumentExtractResult =
   | { ok: true; pieces: readonly DocumentExtractorPiece[] }
-  | { ok: false; message: string };
+  | { ok: false; message: string; tooLarge?: boolean };
 
 export interface DocumentExtractor {
   /** What this extractor is, for the sentence of a reading that failed. */
   name: string;
+  /** Null means classification was inconclusive and must be retried. */
+  detectCarry?(bytes: Uint8Array): Promise<boolean | 'too_large' | null>;
   /**
    * The media type of these bytes, or `null` for "not mine". Content only: no
    * extension, no display name, nothing a person typed (Boundaries).
    */
-  detect(bytes: Uint8Array): string | null;
+  detect(bytes: Uint8Array): string | null | Promise<string | null>;
   /**
    * The pieces of these bytes, or why there are none.
    *
@@ -96,4 +98,4 @@ export const DOCUMENT_EXTRACTORS: readonly DocumentExtractor[] = [textExtractor]
  * and puts each one back on the queue, once
  * (`files/extract-work.ts`, `listFilesWithStaleExtraction`).
  */
-export const DOCUMENT_EXTRACTOR_VERSION = 'doc/1';
+export const DOCUMENT_EXTRACTOR_VERSION = 'doc/2+pdfjs-6.4.299+mammoth-1.13.0';

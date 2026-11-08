@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateMigrationNames, type Clock } from '@second-brain/core';
 import { createPool, describe, type ConnectionOptions } from './connect.js';
-export const CORE_SCHEMA_VERSION = 42;
+export const CORE_SCHEMA_VERSION = 43;
 export const SCHEMA_VERSION = CORE_SCHEMA_VERSION;
 export interface MigrationOwner { owner: string; directory: string }
 export interface RunMigrationsOptions extends ConnectionOptions {

@@ -15,17 +15,23 @@
   },
   "dependencies": {
     "@clack/prompts": "1.8.1",
+    "@xmldom/xmldom": "0.8.15",
     "ajv": "^8.20.0",
     "commander": "15.0.0",
     "croner": "11.0.0",
+    "jszip": "3.10.2",
+    "mammoth": "1.13.0",
+    "pdfjs-dist": "6.4.299",
     "second_brain": "workspace:*",
     "smol-toml": "1.9.0",
-    "uuid": "14.0.2"
+    "uuid": "14.0.2",
+    "yauzl": "3.4.0"
   },
   "devDependencies": {
     "@second-brain/test-db": "workspace:*",
     "@types/node": "24.19.1",
     "@types/pg": "8.23.1",
+    "@types/yauzl": "2.10.3",
     "pg": "8.23.1",
     "typescript": "7.0.2"
   }

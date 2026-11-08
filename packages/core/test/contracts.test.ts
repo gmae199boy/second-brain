@@ -9,6 +9,7 @@ import {
 } from '../src/domain/session-token.js';
 import type { Session, SessionStartSource } from '../src/domain/session.js';
 import { BRAIN_MARKER, type ConnectResult, type Connector } from '../src/ports/connector.js';
+import type { FileStore } from '../src/ports/file-store.js';
 import type { Clock } from '../src/ports/clock.js';
 import type { IdGen } from '../src/ports/id-gen.js';
 import type { Embedder } from '../src/ports/embedder.js';
@@ -81,6 +82,12 @@ async function failedCases<T>(
 }
 
 // --- the frame itself: the memory fakes pass every contract ------------------
+
+// The old get-only shape must stop at compile time rather than retry at runtime.
+const {getBounded: _bounded, ...getOnlyStore}=memoryFileStore();
+// @ts-expect-error getBounded is an obligatory FileStore capability
+const invalidGetOnlyStore:FileStore=getOnlyStore;
+void _bounded;void invalidGetOnlyStore;
 
 describe('the health contract against the memory store', () => {
   for (const testCase of storeContract()) {
