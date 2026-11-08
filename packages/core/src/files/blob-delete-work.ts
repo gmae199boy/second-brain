@@ -170,7 +170,7 @@ export function blobDeleteHandler({ store, files, clock, driveFiles, driveRoot }
       // not accept — outside the root, through a link, or past its syntax — is
       // recorded at once, and the bytes it was pointing at are left untouched.
       return deleted.code === 'FILES_UNAVAILABLE'
-        ? { ok: false, code: deleted.code, message: deleted.message, retryable: true }
+        ? { ok: false, code: deleted.driveCode??deleted.code, message: deleted.message, retryable: deleted.driveCode!=='AUTH_REQUIRED'&&deleted.driveCode!=='AUTH_LOGIN_REQUIRED', ...(deleted.retryAfter?{retryAfter:deleted.retryAfter}:{}) }
         : { ok: false, code: deleted.code, message: deleted.message, retryable: false };
     }
 

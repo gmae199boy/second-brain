@@ -71,3 +71,20 @@ it('fake closes only the bound extraction claim and settles every shared handoff
  expect(await store.finishSourceAttempt({fileId:file,extractionId:extraction,claim:{...extractClaim,attempts:2},outcome:{status:'unsupported',error:'x',mediaType:null}})).toMatchObject({ok:false,code:'CLAIM_LOST'});
  expect(await store.finishSourceAttempt({fileId:file,extractionId:extraction,claim:extractClaim,outcome:{status:'unsupported',error:'x',mediaType:null}})).toMatchObject({ok:true});expect(closed).toBe(1);const rows=await store.listSourceEntries(item.targetId);expect(rows.ok&&rows.entries.map(e=>e.indexStatus)).toEqual(['unsupported','unsupported']);expect(await store.recoverSourceAttempt('owned',now)).toMatchObject({ok:true,binding:{open:true}});active=false;expect(await store.recoverSourceAttempt('owned',now)).toMatchObject({ok:true,binding:{open:false}});void f;
 });
+
+it('disconnect during a remote download refuses the late handoff',async()=>{
+  const f=fixture();await f.store.ensureSource({id:item.targetId,kind:'drive',account:'download-fence',rootId:'root'});
+  let entered!:()=>void,release!:()=>void;const started=new Promise<void>(r=>{entered=r;});const hold=new Promise<void>(r=>{release=r;});
+  const remote:SourceRemote={...f.remote,async download(){entered();await hold;return {ok:true,bytes:new Uint8Array([97,98,99])};}};
+  const sync=sourceSyncHandler({store:f.store,remote,clock,idGen:f.ids})(item);await started;
+  expect(await f.store.disconnectSource({id:item.targetId,now})).toMatchObject({ok:true,source:{connected:false}});release();
+  expect(await sync).toMatchObject({ok:false});expect(f.handoffs).toEqual([]);
+});
+
+it('clears recorded source authentication failures only after a successful scan',async()=>{
+  const f=fixture();await f.store.ensureSource({id:item.targetId,kind:'drive',account:'resolved',rootId:'root'});const calls:string[]=[];
+  const store={...f.store,async resolveFailures(input:{targetKind:string;targetId:string;stage:string;now:Date}){calls.push(`${input.targetKind}:${input.targetId}:${input.stage}`);return {ok:true as const,resolved:1};}};
+  const failed={...f.remote,async startToken(){return {ok:false as const,code:'AUTH_REQUIRED' as const,message:'Drive 재동의가 필요합니다'};}};
+  expect(await sourceSyncHandler({store,remote:failed,clock,idGen:f.ids})(item)).toMatchObject({ok:false,retryable:false});expect(calls).toEqual([]);
+  expect(await sourceSyncHandler({store,remote:f.remote,clock,idGen:f.ids})(item)).toEqual({ok:true});expect(calls).toEqual([`source:${item.targetId}:source_sync`]);
+});

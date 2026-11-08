@@ -19,6 +19,11 @@ export interface DriveMigrationDependencies {
   clock: Clock;
   idGen: IdGen;
 }
+/** Preserve the transport classification through the generic FileStore port. */
+function driveFailure(error:{code:string;message:string;driveCode?:'AUTH_REQUIRED'|'AUTH_LOGIN_REQUIRED'|'AUTH_SESSION_CHANGED'|'TEMPORARY';retryAfter?:Date}) {
+  const code=error.driveCode??error.code;
+  return {ok:false as const,code,message:error.message,retryable:code!=='AUTH_REQUIRED'&&code!=='AUTH_LOGIN_REQUIRED',...(error.retryAfter?{retryAfter:error.retryAfter}:{})};
+}
 /** Upload and verify outside DB writes, then commit one CAS transaction. */
 export async function migrateFileToDrive(deps: DriveMigrationDependencies, fileId: string) {
   const current=await deps.store.readDriveCandidate(fileId); if (!current.ok) return current;
@@ -53,7 +58,8 @@ export async function migrateFileToDrive(deps: DriveMigrationDependencies, fileI
     const mapping=await deps.uploads.read({rootFolderId:deps.rootFolderId,contentHash:c.contentHash});
     if (!mapping.ok || !mapping.upload || mapping.upload.state !== 'uploaded') return {ok:false as const,code:'FILES_UNAVAILABLE',message:'Drive home의 매핑이 없습니다'};
     const read=await deps.drive.get(c.home);
-    if (!read.ok || read.bytes.length !== c.sizeBytes || contentHashOfBytes(read.bytes) !== c.contentHash) return {ok:false as const,code:'FILES_UNAVAILABLE',message:'Drive home을 확인할 수 없습니다'};
+    if (!read.ok) return driveFailure(read);
+    if (read.bytes.length !== c.sizeBytes || contentHashOfBytes(read.bytes) !== c.contentHash) return {ok:false as const,code:'FILES_UNAVAILABLE',message:'Drive home을 확인할 수 없습니다'};
     return {ok:true as const,state:'already' as const};
   }
   if (c.home.storeKind !== 'local' || c.home.ownership !== 'brain') return {ok:false as const,code:'LOCATION_REFUSED',message:'이전할 로컬 Brain 원본이 아닙니다'};
@@ -65,12 +71,13 @@ export async function migrateFileToDrive(deps: DriveMigrationDependencies, fileI
   if (!intent.ok) return intent;
   if (intent.state === 'redacted') return {ok:true as const,state:'redacted' as const};
   if (intent.state !== 'ready' || !intent.locationId) return {ok:false as const,code:'FILES_UNAVAILABLE',message:'이전 home이 바뀌어 다시 확인해야 합니다',retryable:true};
-  const put=await deps.drive.put(source.bytes); if (!put.ok) return put;
+  const put=await deps.drive.put(source.bytes); if (!put.ok) return driveFailure(put);
   if (put.location.storeKind !== 'drive' || put.location.ownership !== 'brain' || put.contentHash !== c.contentHash || put.sizeBytes !== c.sizeBytes || put.location.locator !== locator) return {ok:false as const,code:'FILES_UNAVAILABLE',message:'Drive 업로드 결과가 다릅니다'};
   // Adapter validates checksum priority; the independent read also binds bytes to
   // the content hash before the database publishes the location.
   const read=await deps.drive.get(put.location);
-  if (!read.ok || contentHashOfBytes(read.bytes) !== c.contentHash || read.bytes.length !== c.sizeBytes) return {ok:false as const,code:'FILES_UNAVAILABLE',message:'Drive 원본 검증에 실패했습니다'};
+  if (!read.ok) return driveFailure(read);
+  if (contentHashOfBytes(read.bytes) !== c.contentHash || read.bytes.length !== c.sizeBytes) return {ok:false as const,code:'FILES_UNAVAILABLE',message:'Drive 원본 검증에 실패했습니다'};
   const mapping=await deps.uploads.read({rootFolderId:deps.rootFolderId,contentHash:c.contentHash});
   if (!mapping.ok || !mapping.upload || mapping.upload.state !== 'uploaded') return {ok:false as const,code:'FILES_UNAVAILABLE',message:'Drive 매핑이 없습니다'};
   const at=deps.clock.now(), due=new Date(at.getTime()+Number(retention.value)*86_400_000);
@@ -84,7 +91,7 @@ export async function migrateFileToDrive(deps: DriveMigrationDependencies, fileI
 export function driveMigrationHandler(deps: DriveMigrationDependencies):WorkHandler {
   return async item => {
     const result=await migrateFileToDrive(deps,item.targetId);
-    if (!result.ok) return {...result,retryable:true};
+    if (!result.ok) return {...result,retryable:'retryable' in result ? result.retryable : result.code!=='AUTH_REQUIRED'&&result.code!=='AUTH_LOGIN_REQUIRED'};
     if (deps.store.resolveFailures) {
       const resolved=await deps.store.resolveFailures({targetKind:'file',targetId:item.targetId,stage:DRIVE_MIGRATE_KIND,now:deps.clock.now()});
       if (!resolved.ok) return resolved;
@@ -94,7 +101,7 @@ export function driveMigrationHandler(deps: DriveMigrationDependencies):WorkHand
 }
 
 /** Retention jobs never delete the last usable copy, including after retries. */
-export function driveLocalDeleteHandler(deps: {store: Pick<DriveMigrationStore,'readDriveRetention'> & Pick<AttachmentStore,'markFileLocationDeleted'> & Partial<Pick<WorkStore,'resolveFailures'>>; local:Pick<FileStore,'delete'>; drive:Pick<FileStore,'get'>; rootFolderId:string; clock:Clock}):WorkHandler {
+export function driveLocalDeleteHandler(deps: {store: Pick<DriveMigrationStore,'readDriveRetention'|'withDriveLocalDelete'> & Pick<AttachmentStore,'markFileLocationDeleted'> & Partial<Pick<WorkStore,'resolveFailures'>>; local:Pick<FileStore,'delete'>; drive:Pick<FileStore,'get'>; rootFolderId:string; clock:Clock}):WorkHandler {
   return async item=>{
     const success = async () => {
       if (!deps.store.resolveFailures) return {ok:true as const};
@@ -110,8 +117,11 @@ export function driveLocalDeleteHandler(deps: {store: Pick<DriveMigrationStore,'
     if (now.getTime() < r.dueAt.getTime()) return {ok:false,code:'FILES_UNAVAILABLE',message:'보관 기간이 아직 끝나지 않았습니다',retryable:true,retryAfter:r.dueAt};
     if (!r.eligible || r.rootFolderId !== deps.rootFolderId) return {ok:false,code:'FILES_UNAVAILABLE',message:'검증된 Drive home이 아니어서 로컬 사본을 보존합니다',retryable:true};
     const got=await deps.drive.get(r.remote);
-    if (!got.ok || contentHashOfBytes(got.bytes) !== r.contentHash) return {ok:false,code:'FILES_UNAVAILABLE',message:'Drive 사본을 검증할 수 없어 로컬 사본을 보존합니다',retryable:true};
-    // Re-read after external I/O: a concurrent home switch invalidates this job.
+    if (!got.ok) return driveFailure(got);
+    if (contentHashOfBytes(got.bytes) !== r.contentHash) return {ok:false,code:'FILES_UNAVAILABLE',message:'Drive 사본을 검증할 수 없어 로컬 사본을 보존합니다',retryable:true};
+    if (!item.claimedBy || !item.claimedAt) return {ok:false,code:'CLAIM_LOST',message:'삭제 청구가 없습니다',retryable:false};
+    const guarded=await deps.store.withDriveLocalDelete({workId:item.id,localLocationId:item.targetId,claimedBy:item.claimedBy,claimedAt:item.claimedAt,attempts:item.attempts,now:deps.clock.now()},async()=>{
+    // Re-read after external I/O and after acquiring the cross-process barrier.
     const latest=await deps.store.readDriveRetention(item.targetId); if (!latest.ok) return latest;
     const live=latest.retention;
     if (!live || live.redacted || live.deleted) return live?.redacted || live?.deleted ? success() : {ok:false,code:'FILES_UNAVAILABLE',message:'보관 대상이 사라졌습니다',retryable:true};
@@ -119,5 +129,7 @@ export function driveLocalDeleteHandler(deps: {store: Pick<DriveMigrationStore,'
     const deleted=await deps.local.delete(r.local); if (!deleted.ok) return {...deleted,retryable:deleted.code === 'FILES_UNAVAILABLE'};
     const marked=await deps.store.markFileLocationDeleted({id:r.localId,deletedAt:deps.clock.now()});
     return marked.ok ? success() : marked;
+    });
+    return guarded.ok ? guarded.value : {...guarded,retryable:true};
   };
 }

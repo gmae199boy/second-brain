@@ -278,7 +278,8 @@ async function failuresCheck(store: DoctorReadStore): Promise<DoctorCheck> {
     .map(([kind, count]) => `${kind} ${String(count)}건`)
     .join(', ') + read.failures.filter(failure => failure.targetKind === 'channel_request')
       .map(failure => `, 요청 ${failure.targetId}`).join('');
-  return { id: 'failures', status: 'warn', detail };
+  const needsDriveConsent=read.failures.some(f=>['AUTH_REQUIRED','AUTH_LOGIN_REQUIRED'].includes(f.code)&&['source_sync','document_extract','drive_migrate','drive_local_delete','blob_delete'].includes(f.stage));
+  return { id: 'failures', status: 'warn', detail:detail+(needsDriveConsent?', Drive 재동의 또는 로그인이 필요합니다':'') };
 }
 
 async function workAttemptChecks(store: DoctorReadStore): Promise<DoctorCheck[]> {

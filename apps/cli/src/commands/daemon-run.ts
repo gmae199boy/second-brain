@@ -66,6 +66,8 @@ export const daemonRunCommand: CommandSpec<DaemonRunData> = {
         idGen: uuidV7IdGen(),
         signal: controller.signal,
         driveFactory: context.driveFactory,
+        sourceSyncFactory:context.sourceSyncFactory,
+        driveNetwork:context.driveNetwork,
         ...(context.runner === undefined ? {} : { runner: context.runner }),
       });
 

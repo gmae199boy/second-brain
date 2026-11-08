@@ -9,6 +9,14 @@ const fileId='019a0000-0000-7000-8000-000000000101', localId='019a0000-0000-7000
 const submissionId='019a0000-0000-7000-8000-000000000106';
 const hash='sha256:'+'a'.repeat(64), at=new Date('2026-01-02T03:04:05Z');
 const cleanup:(()=>Promise<unknown>)[]=[];
+async function waitForAdvisoryWaiter(db: import('@second-brain/test-db').TestDatabase) {
+  for (let i=0;i<100;i++) {
+    const rows=await db.rows<{count:number}>("select count(*)::int as count from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and wait_event='advisory'");
+    if (rows[0]?.count) return;
+    await new Promise(resolve=>setTimeout(resolve,20));
+  }
+  throw new Error('disconnect did not reach the advisory lock');
+}
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse()) await close();});
 async function fixture() {
   const db=await database(); cleanup.push(()=>db.drop());
@@ -81,9 +89,10 @@ it('SIGKILL after upload and redaction before CAS resumes durable cleanup',async
   const child=fork(fileURLToPath(new URL('./fixtures/drive-crash-child.mjs',import.meta.url)),[],{
     env:{...process.env,BRAIN_TEST_DRIVE_CRASH:JSON.stringify({url:db.appUrl,baseUrl:server.baseUrl,driveModule:fileURLToPath(new URL('../../../apps/cli/dist/runtime/drive-file-store.js',import.meta.url)),fileId:f,bytes:[...bytes],now:at.toISOString()})},stdio:['ignore','ignore','inherit','ipc'],
   });
+  const closed=new Promise<{code:number|null;signal:NodeJS.Signals|null}>((resolve,reject)=>{child.once('error',reject);child.once('close',(code,signal)=>resolve({code,signal}));});
   try {
-    expect((await once(child,'message'))[0]).toBe('uploaded-before-cas');
-    const closed=once(child,'close'); child.kill('SIGKILL'); await closed;
+    expect(await Promise.race([once(child,'message').then(([message])=>message),closed.then(result=>{throw Error(`drive crash child exited before barrier: ${JSON.stringify(result)}`);})])).toBe('uploaded-before-cas');
+    expect(child.kill('SIGKILL')).toBe(true); expect(await closed).toMatchObject({signal:'SIGKILL'});
     expect(server.files.size).toBe(1);
     expect(await db.rows(`select kind,target_id from brain.work_items where kind='drive_migrate' and target_id='${f}'`)).toHaveLength(1);
     const ids=sequenceIdGen({timestampMs:at.getTime(),start:200}), clock={now:()=>at};
@@ -92,7 +101,7 @@ it('SIGKILL after upload and redaction before CAS resumes durable cleanup',async
     const intent=await store.readDriveIntent(f); if (!intent.ok || !intent.intent) throw Error('intent missing');
     const drive=driveFileStore({rootFolderId:'root',baseUrl:server.baseUrl,uploads:store.driveUploads,clock});
     const localStore={get:async()=>({ok:false as const,code:'FILE_NOT_FOUND' as const,message:'already removed'}),delete:async()=>({ok:true as const,deleted:true})};
-    const deps={store,uploads:store.driveUploads,local:localStore as unknown as import('@second-brain/core').FileStore,drive,settings:{store,schemaVersions:{core:41},clock},rootFolderId:'root',clock,idGen:ids};
+    const deps={store,uploads:store.driveUploads,local:localStore as unknown as import('@second-brain/core').FileStore,drive,settings:{store,schemaVersions:{core:42},clock},rootFolderId:'root',clock,idGen:ids};
     const work={targetId:f} as import('@second-brain/core').WorkItem;
     expect(await driveMigrationHandler(deps)(work)).toEqual({ok:true});
     const cleanupDrive=blobDeleteHandler({store,files:localStore,driveFiles:drive,driveRoot:{store,rootFolderId:'root'},clock});
@@ -103,7 +112,7 @@ it('SIGKILL after upload and redaction before CAS resumes durable cleanup',async
     expect(await db.rows(`select home_location_id,redacted_at from brain.files where id='${f}'`)).toMatchObject([{home_location_id:local,redacted_at:at}]);
     expect(await db.rows('select verified_at from brain.file_locations where id=\''+intent.intent.locationId+'\'')).toEqual([{verified_at:null}]);
     expect(await db.rows('select * from brain.drive_retention')).toEqual([]);
-  } finally {if (child.exitCode===null && child.signalCode===null) {const closed=once(child,'close'); child.kill('SIGKILL'); await closed;}}
+  } finally {if (child.exitCode===null && child.signalCode===null) child.kill('SIGKILL'); await closed;}
 },30000);
 
 it('lost upload response after redaction stays durably uncertain without marking deletion',async()=>{
@@ -129,7 +138,7 @@ it('lost upload response after redaction stays durably uncertain without marking
   const blob={targetId:remote} as import('@second-brain/core').WorkItem;
   expect(await deletion(blob)).toMatchObject({ok:false,code:'FILES_UNAVAILABLE',retryable:true});
   expect(await store.readFileLocation(remote)).toMatchObject({ok:true,location:{deletedAt:null}});
-  const deps={store,uploads:store.driveUploads,local:{} as import('@second-brain/core').FileStore,drive,settings:{store,schemaVersions:{core:41},clock},rootFolderId:'root',clock,idGen:ids};
+  const deps={store,uploads:store.driveUploads,local:{} as import('@second-brain/core').FileStore,drive,settings:{store,schemaVersions:{core:42},clock},rootFolderId:'root',clock,idGen:ids};
   expect(await driveMigrationHandler(deps)({targetId:f} as import('@second-brain/core').WorkItem)).toMatchObject({ok:false,retryable:true});
   expect(await deletion(blob)).toMatchObject({ok:false,code:'FILES_UNAVAILABLE',retryable:true});
   expect(server.files.size).toBe(1);
@@ -193,3 +202,85 @@ it('제출을 소유하지 않은 토큰은 업로드 완료를 확정하지 못
   expect(await store.driveUploads.save({rootFolderId:'root',contentHash:hash,remoteId:'remote-id',state:'uploaded',at,submissionId:'019a0000-0000-7000-8000-000000000199'})).toMatchObject({ok:true,upload:{state:'submitting'}});
   expect(await store.driveUploads.save({rootFolderId:'root',contentHash:hash,remoteId:'remote-id',state:'uploaded',at,submissionId})).toMatchObject({ok:true,upload:{state:'uploaded'}});
 });
+
+it('serializes disconnect with an in-flight local-delete barrier and refuses a cancelled late worker',async()=>{
+  const {subject}=await import('./fixture.js');const {postgresStore}=await import('../src/index.js');
+  const s=await subject();const other=postgresStore({databaseUrl:s.db.appUrl});
+  const sourceId='019a0000-0000-7000-8000-000000000071', workId='019a0000-0000-7000-8000-000000000072';
+  const at=new Date('2026-01-01T00:00:00Z');
+  try {
+    await s.ensureSource({id:sourceId,kind:'drive',account:'synthetic-barrier',rootId:'watch-root'});
+    await s.db.query(`insert into brain.work_items(id,kind,execution_class,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at,attempts) values ('${workId}','drive_local_delete','core','file_location','local','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z',1)`);
+    let entered!:()=>void, release!:()=>void;const started=new Promise<void>(r=>{entered=r;});const hold=new Promise<void>(r=>{release=r;});const order:string[]=[];
+    const deleting=s.withDriveLocalDelete({workId,localLocationId:'local',claimedBy:'worker',claimedAt:at,attempts:1,now:at},async()=>{entered();await hold;order.push('delete-finished');return true;});
+    await started;const disconnect=other.disconnectSource({id:sourceId,now:at}).then(x=>{order.push('disconnect-finished');return x;});
+    await waitForAdvisoryWaiter(s.db);release();expect(await deleting).toMatchObject({ok:true,value:true});expect(await disconnect).toMatchObject({ok:true,source:{connected:false}});expect(order).toEqual(['delete-finished','disconnect-finished']);
+    expect(await s.withDriveLocalDelete({workId,localLocationId:'local',claimedBy:'worker',claimedAt:at,attempts:1,now:at},async()=>{throw Error('must not delete');})).toMatchObject({ok:false});
+    expect(await s.db.rows(`select outcome from brain.work_items where id='${workId}'`)).toEqual([{outcome:'cancelled'}]);
+    expect(await s.db.rows('select * from brain.drive_delete_barriers')).toEqual([]);
+  } finally {await other.close();await s.close();}
+});
+
+it('retains uncertain deletion marker and refuses disconnect',async()=>{
+  const {subject}=await import('./fixture.js');const s=await subject();const sourceId='019a0000-0000-7000-8000-000000000073',workId='019a0000-0000-7000-8000-000000000074';const at=new Date('2026-01-01T00:00:00Z');
+  try {
+    await s.ensureSource({id:sourceId,kind:'drive',account:'synthetic-uncertain',rootId:'watch-root'});
+    await s.db.query(`insert into brain.work_items(id,kind,execution_class,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at,attempts) values ('${workId}','drive_local_delete','core','file_location','local','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z',1)`);
+    expect(await s.withDriveLocalDelete({workId,localLocationId:'local',claimedBy:'worker',claimedAt:at,attempts:1,now:at},async()=>{throw Error('synthetic interrupted I/O');})).toMatchObject({ok:false});
+    expect(await s.disconnectSource({id:sourceId,now:at})).toMatchObject({ok:false,code:'DB_LOCKED'});
+    expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{connected:true}});
+    expect(await s.db.rows('select work_id::text from brain.drive_delete_barriers')).toEqual([{work_id:workId}]);
+  } finally {await s.close();}
+});
+
+it('disconnect completes while remote verification is held and the actual handler preserves the local file',async()=>{
+  const {subject}=await import('./fixture.js');const {driveLocalDeleteHandler,contentHashOfBytes}=await import('@second-brain/core');
+  const {mkdtemp,writeFile,readFile,rm}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+  const s=await subject(),other=postgresStore({databaseUrl:s.db.appUrl}),dir=await mkdtemp(join(tmpdir(),'drive-late-delete-')),file=join(dir,'copy');
+  const sourceId='019a0000-0000-7000-8000-000000000077',workId='019a0000-0000-7000-8000-000000000078',at=new Date('2026-01-01T00:00:00Z'),bytes=Uint8Array.of(1,2,3);
+  let enter!:()=>void,release!:()=>void;const entered=new Promise<void>(r=>{enter=r;}),hold=new Promise<void>(r=>{release=r;});let deletes=0;
+  try {
+    await writeFile(file,bytes);await s.ensureSource({id:sourceId,kind:'drive',account:'late-delete',rootId:'watch-root'});
+    await s.db.query(`insert into brain.work_items(id,kind,execution_class,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at,attempts) values ('${workId}','drive_local_delete','core','file_location','local','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z',1)`);
+    const local={storeKind:'local' as const,ownership:'brain' as const,locator:'copy'},remote={storeKind:'drive' as const,ownership:'brain' as const,locator:'remote'};
+    const handler=driveLocalDeleteHandler({store:{withDriveLocalDelete:s.withDriveLocalDelete,async readDriveRetention(){return {ok:true,retention:{local,localId:'local',remote,rootFolderId:'root',contentHash:contentHashOfBytes(bytes),dueAt:at,redacted:false,eligible:true,deleted:false}};},async markFileLocationDeleted(){throw Error('must not mark');}},local:{async delete(){deletes++;await rm(file);return {ok:true,deleted:true};}},drive:{async get(){enter();await hold;return {ok:true,bytes};}},rootFolderId:'root',clock:{now:()=>at}});
+    const running=handler({id:workId,targetId:'local',claimedBy:'worker',claimedAt:at,attempts:1} as import('@second-brain/core').WorkItem);
+    await entered;expect(await other.disconnectSource({id:sourceId,now:at})).toMatchObject({ok:true,source:{connected:false}});release();expect(await running).toMatchObject({ok:false});expect(deletes).toBe(0);expect(await readFile(file)).toEqual(Buffer.from(bytes));
+    expect(await s.db.rows(`select outcome from brain.work_items where id='${workId}'`)).toEqual([{outcome:'cancelled'}]);
+  } finally {release();await other.close();await s.close();await rm(dir,{recursive:true,force:true});}
+});
+
+it('a separate process holds the deletion barrier through actual file I/O',async()=>{
+  const {subject}=await import('./fixture.js');const {fork}=await import('node:child_process');const {mkdtemp,writeFile,access,rm}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const {fileURLToPath}=await import('node:url');
+  const s=await subject(),dir=await mkdtemp(join(tmpdir(),'drive-barrier-')),file=join(dir,'owned-copy');const sourceId='019a0000-0000-7000-8000-000000000075',workId='019a0000-0000-7000-8000-000000000076',at=new Date('2026-01-01T00:00:00Z');
+  const child=fork(fileURLToPath(new URL('./fixtures/drive-delete-barrier-child.mjs',import.meta.url)),[],{stdio:['ignore','ignore','pipe','ipc']});
+  try {
+    await writeFile(file,'synthetic');await s.ensureSource({id:sourceId,kind:'drive',account:'process-test',rootId:'watch-root'});
+    await s.db.query(`insert into brain.work_items(id,kind,execution_class,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at,attempts) values ('${workId}','drive_local_delete','core','file_location','local','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z',1)`);
+    const entered=once(child,'message');child.send({url:s.db.appUrl,workId,at:at.toISOString(),file});expect((await entered)[0]).toBe('entered');
+    const disconnect=s.disconnectSource({id:sourceId,now:at});const result=once(child,'message');await waitForAdvisoryWaiter(s.db);child.send('release');
+    expect((await result)[0]).toMatchObject({result:{ok:true,value:'deleted'}});expect(await disconnect).toMatchObject({ok:true,source:{connected:false}});await expect(access(file)).rejects.toMatchObject({code:'ENOENT'});
+  } finally {if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');await rm(dir,{recursive:true,force:true});await s.close();}
+});
+
+it.each(['killed-worker','lost-session'] as const)('keeps an uncertain deletion marker after %s and preserves unrelated files',async mode=>{
+  const {subject}=await import('./fixture.js');const {fork}=await import('node:child_process');const {mkdtemp,writeFile,readFile,rm}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const {fileURLToPath}=await import('node:url');
+  const s=await subject(),dir=await mkdtemp(join(tmpdir(),'drive-marker-loss-')),file=join(dir,'owned'),other=join(dir,'other');const sourceId='019a0000-0000-7000-8000-000000000175',work='019a0000-0000-7000-8000-000000000176',time=new Date('2026-01-01T00:00:00Z');
+  const child=fork(fileURLToPath(new URL('./fixtures/drive-delete-barrier-child.mjs',import.meta.url)),[],{stdio:['ignore','ignore','pipe','ipc']});
+  try {
+    await writeFile(file,'synthetic-owned');await writeFile(other,'synthetic-other');await s.ensureSource({id:sourceId,kind:'drive',account:'loss-test',rootId:'root'});
+    await s.db.query(`insert into brain.work_items(id,kind,execution_class,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at,attempts) values ('${work}','drive_local_delete','core','file_location','local','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z',1)`);
+    const entered=once(child,'message');child.send({url:s.db.appUrl,workId:work,at:time.toISOString(),file});expect((await entered)[0]).toBe('entered');expect(await s.db.rows('select work_id::text from brain.drive_delete_barriers')).toEqual([{work_id:work}]);
+    if(mode==='killed-worker') {const closed=once(child,'close');child.kill('SIGKILL');await closed;}
+    else {
+      const sessions=await s.db.rows<{pid:number}>("select pid from pg_stat_activity where datname=current_database() and usename='brain_app' and query like 'insert into brain.drive_delete_barriers%' and state='idle'");expect(sessions).toHaveLength(1);
+      await s.db.query(`select pg_terminate_backend(${sessions[0]!.pid})`);expect(child.exitCode).toBeNull();
+    }
+    expect(await s.disconnectSource({id:sourceId,now:time})).toMatchObject({ok:false,code:'DB_LOCKED'});
+    if(mode==='lost-session'){const result=once(child,'message'),closed=once(child,'close');child.send('release');expect((await result)[0]).toMatchObject({result:{ok:false}});await closed;await expect(readFile(file,'utf8')).rejects.toMatchObject({code:'ENOENT'});}
+    expect(await s.db.rows('select work_id::text from brain.drive_delete_barriers')).toEqual([{work_id:work}]);expect(await readFile(other,'utf8')).toBe('synthetic-other');
+    if(mode==='killed-worker')expect(await readFile(file,'utf8')).toBe('synthetic-owned');
+    // Only an operator who has checked the local result may clear this owned marker.
+    const pg=(await import('pg')).default,admin=new pg.Client({connectionString:s.db.url});await admin.connect();try{await admin.query("select pg_advisory_lock(hashtextextended('brain:drive-delete-disconnect',0))");await admin.query('delete from brain.drive_delete_barriers where work_id=$1::uuid',[work]);await admin.query("select pg_advisory_unlock(hashtextextended('brain:drive-delete-disconnect',0))");}finally{await admin.end();}expect(await s.disconnectSource({id:sourceId,now:time})).toMatchObject({ok:true});
+  } finally {if(child.exitCode===null&&child.signalCode===null){const closed=once(child,'close');child.kill('SIGKILL');await closed;}await rm(dir,{recursive:true,force:true});await s.close();}
+},120000);

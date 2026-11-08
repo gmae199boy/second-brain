@@ -1,10 +1,11 @@
+import { driveRequest, DriveRequestError, type DriveAuthProvider } from './drive-http.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { contentHashOfBytes, driveBrainLocator, isDriveBrainLocator, type Clock, type DriveUploadStore, type FileLocation, type FileStore } from 'second_brain';
 
 export interface DriveMetadata { id: string; parents: string[]; name: string; trashed?: boolean; sha256Checksum?: string; md5Checksum?: string }
 export interface DriveFileStore extends FileStore {
   /** Metadata is checked against the same mapping and root as every other operation. */
-  metadata(location: FileLocation): Promise<{ok: true; metadata: DriveMetadata} | {ok: false; code: 'LOCATION_REFUSED'; message: string} | {ok: false; code: 'FILES_UNAVAILABLE'; message: string} | {ok: false; code: 'FILE_NOT_FOUND'; message: string}>;
+  metadata(location: FileLocation): Promise<{ok: true; metadata: DriveMetadata} | import('second_brain').FileStoreFailure | {ok: false; code: 'FILE_NOT_FOUND'; message: string}>;
 }
 export interface DriveFileStoreOptions {
   rootFolderId: string;
@@ -13,13 +14,14 @@ export interface DriveFileStoreOptions {
   clock: Clock;
   /** Inject transport authentication without storing or logging credentials. */
   headers?: () => Promise<Record<string, string>>;
+  auth?: DriveAuthProvider;
   fetch?: typeof fetch;
   /** Per-request deadline, including authentication headers and body consumption. */
   timeoutMs?: number;
   signal?: AbortSignal;
 }
 const validId = (value: string) => { const match = /^[A-Za-z0-9_-]+$/.exec(value); return match !== null && match[0] === value; };
-const unavailable = () => ({ok:false as const, code:'FILES_UNAVAILABLE' as const, message:'Drive 저장소에 접근할 수 없습니다'});
+const unavailable = (error?:unknown) => ({ok:false as const, code:'FILES_UNAVAILABLE' as const, message:error instanceof DriveRequestError?error.message:'Drive 저장소에 접근할 수 없습니다',...(error instanceof DriveRequestError && ['AUTH_REQUIRED','AUTH_LOGIN_REQUIRED','AUTH_SESSION_CHANGED','TEMPORARY'].includes(error.code)?{driveCode:error.code as 'AUTH_REQUIRED'|'AUTH_LOGIN_REQUIRED'|'AUTH_SESSION_CHANGED'|'TEMPORARY'}:{}),...(error instanceof DriveRequestError&&error.retryAfter?{retryAfter:error.retryAfter}:{})});
 const refused = () => ({ok:false as const, code:'LOCATION_REFUSED' as const, message:'허용되지 않는 파일 위치입니다'});
 const missing = () => ({ok:false as const, code:'FILE_NOT_FOUND' as const, message:'파일이 없습니다'});
 
@@ -46,9 +48,7 @@ export function driveFileStore(options: DriveFileStoreOptions): DriveFileStore {
         timer = setTimeout(() => controller.abort(), timeoutMs);
       });
       return await Promise.race([cancelled, (async () => {
-        const headers = await options.headers?.();
-        if (controller.signal.aborted) throw new Error('Drive request cancelled');
-        const response = await fetcher(base + path, {...init, signal:controller.signal, headers:{...headers,...init.headers}});
+        const response = await driveRequest({url:base+path,init:{...init,signal:controller.signal},fetch:fetcher,headers:options.headers,auth:options.auth,clock:options.clock});
         const readBody = async (): Promise<Uint8Array> => {
           if (!response.body) return new Uint8Array();
           const reader = response.body.getReader();
@@ -106,7 +106,7 @@ export function driveFileStore(options: DriveFileStoreOptions): DriveFileStore {
       if (!m) return unavailable();
       if (m.id !== found.upload.remoteId || !Array.isArray(m.parents) || m.parents.length !== 1 || m.parents[0] !== options.rootFolderId || m.name !== l.locator || m.trashed === true) return refused();
       return {ok:true, metadata:m};
-    } catch { return unavailable(); }
+    } catch (error) { return unavailable(error); }
   }
   const api: DriveFileStore = {
     metadata,
@@ -151,21 +151,22 @@ export function driveFileStore(options: DriveFileStoreOptions): DriveFileStore {
           if (!saved.ok || saved.upload?.remoteId !== id || saved.upload.state !== 'uploaded') return unavailable();
           m = await metadata(location);
         }
-        if (!m.ok) return unavailable();
+        if (!m.ok) return m.code==='FILES_UNAVAILABLE'?m:unavailable();
         const sha = createHash('sha256').update(bytes).digest('hex');
         const md5 = createHash('md5').update(bytes).digest('hex');
         if (m.metadata.sha256Checksum !== undefined ? m.metadata.sha256Checksum !== sha : m.metadata.md5Checksum !== undefined ? m.metadata.md5Checksum !== md5 : false) return unavailable();
         if (m.metadata.sha256Checksum === undefined && m.metadata.md5Checksum === undefined) {
           const got = await api.get(location);
-          if (!got.ok || contentHashOfBytes(got.bytes) !== contentHash) return unavailable();
+          if (!got.ok) return got.code==='FILES_UNAVAILABLE'?got:unavailable();
+          if (contentHashOfBytes(got.bytes) !== contentHash) return unavailable();
         }
         if (!submitted && authorized.upload.state !== 'uploaded') return unavailable();
         return {ok:true, contentHash, sizeBytes:bytes.length, location};
-      } catch { return unavailable(); }
+      } catch (error) { return unavailable(error); }
     },
     async get(l) {
       const m = await metadata(l); if (!m.ok) return m;
-      try { return await request(`/drive/v3/files/${encodeURIComponent(m.metadata.id)}?alt=media`, {}, async (response, readBody) => { if (response.status === 404) return missing(); if (!response.ok) return unavailable(); return {ok:true as const,bytes:await readBody()}; }); } catch { return unavailable(); }
+      try { return await request(`/drive/v3/files/${encodeURIComponent(m.metadata.id)}?alt=media`, {}, async (response, readBody) => { if (response.status === 404) return missing(); if (!response.ok) return unavailable(); return {ok:true as const,bytes:await readBody()}; }); } catch (error) { return unavailable(error); }
     },
     async exists(l) { const m = await metadata(l); return m.ok ? {ok:true,exists:true} : m.code === 'FILE_NOT_FOUND' ? {ok:true,exists:false} : m; },
     async url(l) { const m = await metadata(l); return m.ok ? {ok:true,url:`https://drive.google.com/file/d/${encodeURIComponent(m.metadata.id)}/view`} : m.code === 'FILE_NOT_FOUND' ? unavailable() : m; },
@@ -182,7 +183,7 @@ export function driveFileStore(options: DriveFileStoreOptions): DriveFileStore {
       if (mapping.upload.state === 'cancelled') return {ok:true,deleted:false};
       if (mapping.upload.state === 'submitting') return unavailable();
       const m = await metadata(l); if (!m.ok) return m.code === 'FILE_NOT_FOUND' ? {ok:true,deleted:false} : m;
-      try { const response = await request(`/drive/v3/files/${encodeURIComponent(m.metadata.id)}`,{method:'DELETE'}, async response => response); return response.ok ? {ok:true,deleted:true} : response.status === 404 ? {ok:true,deleted:false} : unavailable(); } catch { return unavailable(); }
+      try { const response = await request(`/drive/v3/files/${encodeURIComponent(m.metadata.id)}`,{method:'DELETE'}, async response => response); return response.ok ? {ok:true,deleted:true} : response.status === 404 ? {ok:true,deleted:false} : unavailable(); } catch (error) { return unavailable(error); }
     },
   };
   return api;

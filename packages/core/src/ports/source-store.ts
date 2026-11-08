@@ -3,7 +3,7 @@ import type { ClaimWorkResult, HasDueWorkResult } from './store.js';
 import { workKindPolicy } from '../domain/work-item.js';
 export const SOURCE_SYNC_LEASE_MS = workKindPolicy('source_sync').claimForMs;
 /** External source state. A source is distinct from a Brain-owned file location. */
-export interface Source { id:string; kind:string; account:string; rootId:string; generation:number; cursor:string|null }
+export interface Source { id:string; kind:string; account:string; rootId:string; generation:number; cursor:string|null; connected:boolean }
 export type SourceIndexStatus = 'pending'|'indexed'|'photo'|'too_large'|'unsupported'|'failed';
 export interface SourceEntry { id:string; sourceId:string; remoteId:string; name:string; path:string; mimeType:string; remoteVersion:string; sizeBytes:number|null; fileId:string|null; indexStatus:SourceIndexStatus; unreachable:boolean; unreachableAt:Date|null; completedVersion:string|null; completedHash:string|null; seenScan:string|null }
 export interface SourceClaim { workId:string; claimedBy:string; claimedAt:Date; attempts:number; now:Date }
@@ -15,6 +15,14 @@ export interface SourceStore {
   readSourceWorkStatus(input:{sourceId:string;syncWorkId:string}):Promise<SourceResult<{complete:boolean}>>;
   /** One source and cursor per kind/account; a conflicting root is refused. Multiple roots need a separate future mapping. */
   ensureSource(input:{id:string;kind:string;account:string;rootId:string}):Promise<SourceResult<{source:Source}>>;
+  /** Explicit reactivation never changes source identity or resets its cursor. */
+  connectSource(input:{id:string}):Promise<SourceResult<{source:Source}>>;
+  /** Fence the source and atomically stop its queued work and schedules. */
+  disconnectSource(input:{id:string;now:Date}):Promise<SourceResult<{source:Source}>>;
+  removeSource(input:{id:string;now:Date}):Promise<SourceResult<{source:Source}>>;
+  invalidateSource(input:{id:string;now:Date}):Promise<SourceResult<object>>;
+  updateSourceFolders(input:{id:string;userId:string;folderId:string;add:boolean;now:Date}):Promise<SourceResult<{folders:string[];changed:boolean}>>;
+  listSources():Promise<SourceResult<{sources:Source[]}>>;
   readSource(id:string):Promise<SourceResult<{source:Source|null}>>;
   listSourceEntries(sourceId:string):Promise<SourceResult<{entries:SourceEntry[]}>>;
   /** Extend only the original, still-live source_sync claim; never revive an expired claim. */

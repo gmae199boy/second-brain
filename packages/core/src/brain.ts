@@ -87,7 +87,8 @@ export interface BrainDependencies {
   extensions?: ExtensionRuntime;
   sources?: SourceFileReader;
   /** External source runtime, separate from local attachment readers and Drive home. */
-  sourceSync?: {store:SourceStore;remote:SourceRemote;temp:SourceTemp};
+  sourceSync?: {store:SourceStore;remote:SourceRemote;temp:SourceTemp;roots?:()=>Promise<{ok:true;roots:string[]}|{ok:false;code:string;message:string}>;validateSource?:(id:string)=>Promise<{ok:true}|{ok:false;code:string;message:string}>};
+  sourceControl?: SourceControl;
   userHome?: string | null;
   /**
    * The persistence port, plus the schema-version capability `doctor.run`
@@ -279,9 +280,17 @@ export interface BrainChannels {
   status(input: { id: string }): Promise<{ ok: true; request: ChannelPublicStatus } | ChannelSdkError>;
   resend(input: { id: string }): Promise<{ ok: true; workItemId: string } | ChannelSdkError>;
 }
+export type SourceControlFailure={ok:false;code:string;message:string};
+export interface SourceControl {
+  connect(input:{kind:string;onAuthorization:(url:string)=>void|Promise<void>;signal?:AbortSignal}):Promise<{ok:true;sourceId:string;rootId:string}|SourceControlFailure>;
+  add(input:{folderId:string}):Promise<{ok:true;folders:string[]}|SourceControlFailure>;
+  list():Promise<{ok:true;sources:import('./ports/source-store.js').Source[];folders:string[]}|SourceControlFailure>;
+  remove(input:{folderId:string}):Promise<{ok:true;folders:string[]}|SourceControlFailure>;
+  disconnect(input:{kind:string}):Promise<{ok:true}|SourceControlFailure>;
+}
 export interface Brain {
   channels: BrainChannels;
-  sources: {sync(input:{sourceId:string}):Promise<{ok:true;sourceId:string;workId:string;created:boolean}|{ok:false;code:string;message:string}>};
+  sources: SourceControl & {sync(input:{sourceId:string}):Promise<{ok:true;sourceId:string;workId:string;created:boolean}|{ok:false;code:string;message:string}>};
   recall: { docs(input: DocumentSearchInput): Promise<Awaited<ReturnType<typeof searchDocuments>> | { ok: false; code: string; message: string; meta?: import('./envelope.js').EnvelopeMeta }>; chunks(input: SearchInput): Promise<Awaited<ReturnType<typeof searchRecall>> | { ok: false; code: string; message: string; meta?: import('./envelope.js').EnvelopeMeta }>; tools(input: SearchInput): Promise<Awaited<ReturnType<typeof searchRecall>> | { ok: false; code: string; message: string; meta?: import('./envelope.js').EnvelopeMeta }>; expand(input: ExpandInput): ReturnType<typeof expandRecall> };
   ext: BrainExt;
   messages: BrainMessages;
@@ -374,7 +383,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     [BLOB_DELETE_KIND]: blobDeleteHandler({ store, files, clock, ...(drive ? {driveFiles:drive.files,driveRoot:{store:drive.store,rootFolderId:drive.rootFolderId}} : {}) }),
     ...(driveDeps ? {
       [DRIVE_MIGRATE_KIND]: driveMigrationHandler(driveDeps),
-      [DRIVE_LOCAL_DELETE_KIND]: driveLocalDeleteHandler({store:{readDriveRetention:id=>driveDeps.store.readDriveRetention(id),markFileLocationDeleted:input=>store.markFileLocationDeleted(input),resolveFailures:input=>store.resolveFailures(input)},local:files,drive:driveDeps.drive,rootFolderId:driveDeps.rootFolderId,clock}),
+      [DRIVE_LOCAL_DELETE_KIND]: driveLocalDeleteHandler({store:{readDriveRetention:id=>driveDeps.store.readDriveRetention(id),withDriveLocalDelete:(input,run)=>driveDeps.store.withDriveLocalDelete(input,run),markFileLocationDeleted:input=>store.markFileLocationDeleted(input),resolveFailures:input=>store.resolveFailures(input)},local:files,drive:driveDeps.drive,rootFolderId:driveDeps.rootFolderId,clock}),
     } : {}),
   };
   const handlers: WorkHandlers = { ...coreHandlers, ...workHandlers };
@@ -469,18 +478,27 @@ export function createBrain(dependencies: BrainDependencies): Brain {
         ? ((result) => result.ok ? result : { ...result, message: maskOutputText(result.message) })(await store.resendChannelRequest({ requestId: id, workId: idGen.next(), now: clock.now() }))
         : { ok: false, code: 'INVALID_ARGUMENT', message: '요청 ID가 UUID 형식이 아닙니다' },
     },
-    sources: {async sync({sourceId}) {
+    sources: {
+      connect:input=>dependencies.sourceControl?.connect(input)??Promise.resolve({ok:false,code:'SOURCE_UNAVAILABLE',message:'Drive 연결을 사용할 수 없습니다'}),
+      add:input=>dependencies.sourceControl?.add(input)??Promise.resolve({ok:false,code:'SOURCE_UNAVAILABLE',message:'Drive 연결을 사용할 수 없습니다'}),
+      list:()=>dependencies.sourceControl?.list()??Promise.resolve({ok:false,code:'SOURCE_UNAVAILABLE',message:'Drive 연결을 사용할 수 없습니다'}),
+      remove:input=>dependencies.sourceControl?.remove(input)??Promise.resolve({ok:false,code:'SOURCE_UNAVAILABLE',message:'Drive 연결을 사용할 수 없습니다'}),
+      disconnect:input=>dependencies.sourceControl?.disconnect(input)??Promise.resolve({ok:false,code:'SOURCE_UNAVAILABLE',message:'Drive 연결을 사용할 수 없습니다'}),
+      async sync({sourceId}) {
       if(!dependencies.sourceSync)return {ok:false,code:'SOURCE_UNAVAILABLE',message:'연결된 source가 없습니다'};
       if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sourceId))return {ok:false,code:'INVALID_ARGUMENT',message:'source ID가 올바르지 않습니다'};
-      const source=await dependencies.sourceSync.store.readSource(sourceId);if(!source.ok)return source;if(!source.source)return {ok:false,code:'INVALID_ARGUMENT',message:'source가 없습니다'};
+      const source=await dependencies.sourceSync.store.readSource(sourceId);if(!source.ok)return source;if(!source.source||!source.source.connected)return {ok:false,code:'SOURCE_UNAVAILABLE',message:'연결된 source가 없습니다'};
+      const allowed=await dependencies.sourceSync.validateSource?.(sourceId);if(allowed&&!allowed.ok)return allowed;
       const now=clock.now(),added=await store.addWork({id:idGen.next(),kind:SOURCE_SYNC_KIND,targetKind:'source',targetId:sourceId,createdAt:now,nextAttemptAt:now});if(!added.ok)return added;
       const sourceStore=dependencies.sourceSync.store;
       const scopedStore={...store,hasDueWork:({now}:{now:Date})=>sourceStore.hasDueSourceWork({sourceId,syncWorkId:added.item.id,now}),claimWork:({now,claimedBy}:{now:Date;claimedBy:string})=>sourceStore.claimSourceWork({sourceId,syncWorkId:added.item.id,now,claimedBy})};
-      const report=await drainQueue({store:scopedStore,spool,clock,idGen},{budgetMs:60_000,handlers:{[SOURCE_SYNC_KIND]:handlers[SOURCE_SYNC_KIND]!,[DOCUMENT_EXTRACT_KIND]:handlers[DOCUMENT_EXTRACT_KIND]!}});
+      let authFailure:{ok:false;code:string;message:string}|undefined;
+      const capture=(handler:import('./queue/drain.js').WorkHandler):import('./queue/drain.js').WorkHandler=>async item=>{const outcome=await handler(item);if(!outcome.ok&&['AUTH_REQUIRED','AUTH_LOGIN_REQUIRED'].includes(outcome.code))authFailure={ok:false,code:outcome.code,message:outcome.message};return outcome;};
+      const report=await drainQueue({store:scopedStore,spool,clock,idGen},{budgetMs:60_000,handlers:{[SOURCE_SYNC_KIND]:capture(handlers[SOURCE_SYNC_KIND]!),[DOCUMENT_EXTRACT_KIND]:capture(handlers[DOCUMENT_EXTRACT_KIND]!)}});
       await cleanupSourceTemps(dependencies.sourceSync.temp,sourceStore,clock);
       if(report.stopped==='unwritable')return {ok:false,code:report.code??'DB_UNAVAILABLE',message:'source 동기화 중 저장할 수 없습니다'};
       const result=await sourceStore.readSourceWorkStatus({sourceId,syncWorkId:added.item.id});if(!result.ok)return result;
-      if(!result.complete)return {ok:false,code:'SOURCE_SYNC_INCOMPLETE',message:'source 동기화 또는 추출 작업이 완료되지 않았습니다'};
+      if(!result.complete)return authFailure??{ok:false,code:'SOURCE_SYNC_INCOMPLETE',message:'source 동기화 또는 추출 작업이 완료되지 않았습니다'};
       return {ok:true,sourceId,workId:added.item.id,created:added.created};
     }},
     recall: { docs: async input => { const result = await searchDocuments(store, input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, chunks: async input => { const result = await searchRecall(store, 'chunks', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, tools: async input => { const result = await searchRecall(store, 'tools', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, expand: input => expandRecall(store, input) },

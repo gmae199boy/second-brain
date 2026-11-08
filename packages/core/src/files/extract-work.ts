@@ -1,5 +1,5 @@
 import type { SourceStore } from '../ports/source-store.js';
-import { SOURCE_DOCS_MAX_BYTES, type SourceRemote, type SourceTemp } from '../ports/source-remote.js';
+import { SOURCE_DOCS_MAX_BYTES, type SourceRemote, type SourceTemp, type RemoteError } from '../ports/source-remote.js';
 import { sourceClaim } from '../sources/sync.js';
 import {
   DOCUMENT_CHUNK_PARAMS,
@@ -255,6 +255,17 @@ export interface DocumentExtractWorkDependencies {
  * write hands its own code back so the item is released with its attempt
  * returned (AD-21).
  */
+function remoteFailure(error:RemoteError):WorkHandlerFailure {
+  return {ok:false,code:error.code,message:error.message,retryable:error.code!=='AUTH_REQUIRED'&&error.code!=='AUTH_LOGIN_REQUIRED',...(error.retryAfter?{retryAfter:error.retryAfter}:{})};
+}
+function combineRemote(previous:WorkHandlerFailure|undefined,error:RemoteError):WorkHandlerFailure {
+  const next=remoteFailure(error);if(!previous)return next;
+  // A still-retryable shared source can succeed even if another needs consent.
+  if(previous.retryable!==next.retryable)return previous.retryable?previous:next;
+  if(previous.retryAfter&&next.retryAfter)return previous.retryAfter>next.retryAfter?previous:next;
+  return next.retryAfter?next:previous;
+}
+
 export function documentExtractHandler(
   dependencies: DocumentExtractWorkDependencies,
 ): WorkHandler {
@@ -316,15 +327,16 @@ export function documentExtractHandler(
     /** Close the generation, and say so only when the close itself failed. */
     const close = async (outcome: ExtractionOutcome): Promise<WorkHandlerFailure | null> => {
       if (external && source && outcome.status==='ok') {
+        let remoteError:WorkHandlerFailure|undefined;
         for(const candidate of [external,...candidates.filter(c=>c.sourceFileId!==external!.sourceFileId)]){
-          const latest=await source.remote.metadata(candidate.remoteId);if(!latest.ok){if(latest.code==='UNREACHABLE'){const owner=sourceClaim(item,clock);if(!owner)return {ok:false,code:'CLAIM_LOST',message:'추출 청구가 없습니다'};const marked=await source.store.markSourceFileUnreachable({sourceFileId:candidate.sourceFileId,fileId,remoteVersion:candidate.remoteVersion,claim:owner});if(!marked.ok&&marked.code!=='SOURCE_CHANGED')return {ok:false,code:marked.code,message:marked.message};}continue;}if(latest.item.version!==candidate.remoteVersion)continue;
+          const latest=await source.remote.metadata(candidate.remoteId);if(!latest.ok){if(['DB_UNAVAILABLE','DB_LOCKED','AUTH_SESSION_CHANGED'].includes(latest.code))return remoteFailure(latest);if(latest.code==='UNREACHABLE'){const owner=sourceClaim(item,clock);if(!owner)return {ok:false,code:'CLAIM_LOST',message:'추출 청구가 없습니다'};const marked=await source.store.markSourceFileUnreachable({sourceFileId:candidate.sourceFileId,fileId,remoteVersion:candidate.remoteVersion,claim:owner});if(!marked.ok&&marked.code!=='SOURCE_CHANGED')return {ok:false,code:marked.code,message:marked.message};}else remoteError=combineRemote(remoteError,latest);continue;}if(latest.item.version!==candidate.remoteVersion)continue;
           const claim=sourceClaim(item,clock);if(!claim)return {ok:false,code:'CLAIM_LOST',message:'추출 청구가 없습니다'};
           const key=attemptKeys.get(candidate.sourceFileId)??candidate.tempKey??idGen.next();const bound=await source.store.bindSourceAttempt({sourceFileId:candidate.sourceFileId,fileId,remoteVersion:candidate.remoteVersion,tempKey:key,extractionId,claim});if(!bound.ok){if(bound.code==='SOURCE_CHANGED')continue;return {ok:false,code:bound.code,message:bound.message};}attemptKeys.set(candidate.sourceFileId,key);
           const published=await source.store.publishSourceFile({sourceId:candidate.sourceId,generation:candidate.generation,sourceFileId:candidate.sourceFileId,fileId,remoteVersion:candidate.remoteVersion,contentHash:state.contentHash,extractionId,outcome,claim});
           if(published.ok){finished=true;return null;}if(published.code==='SOURCE_CHANGED')continue;
           if(published.code==='FILE_REDACTED'){const closed=await source.store.finishSourceAttempt({fileId,extractionId,claim:sourceClaim(item,clock)!,outcome});if(closed.ok)finished=true;return closed.ok?null:{ok:false,code:closed.code,message:closed.message};}return {ok:false,code:published.code,message:published.message};
         }
-        return {ok:false,code:'SOURCE_CHANGED',message:'게시할 유효 source가 없습니다',retryable:true};
+        return remoteError??{ok:false,code:'SOURCE_CHANGED',message:'게시할 유효 source가 없습니다',retryable:true};
       }
       const owner=sourceClaim(item,clock);if(source&&candidates.length){if(!owner)return {ok:false,code:'CLAIM_LOST',message:'추출 청구가 없습니다'};const closed=await source.store.finishSourceAttempt({fileId,extractionId,claim:owner,outcome});if(closed.ok)finished=true;return closed.ok?null:{ok:false,code:closed.code,message:closed.message};}
       const closed = await store.finishExtraction({ extractionId, finishedAt: clock.now(), outcome });if(closed.ok)finished=true;return closed.ok ? null : { ok: false, code: closed.code, message: closed.message };
@@ -373,24 +385,24 @@ export function documentExtractHandler(
 
     let got: Awaited<ReturnType<typeof files.get>> = {ok:false,code:'FILES_UNAVAILABLE',message:'source 원본을 읽지 못했습니다'};
     if(source && candidates.length){
-      let transient=false;let lastMessage='접근 가능한 source 원본이 없습니다';external=undefined;
+      let transient=false;let remoteError:WorkHandlerFailure|undefined;let lastMessage='접근 가능한 source 원본이 없습니다';external=undefined;
       for(const candidate of candidates){
         const claim=sourceClaim(item,clock);if(!claim)return {ok:false,code:'CLAIM_LOST',message:'추출 청구가 없습니다'};
         const key=attemptKeys.get(candidate.sourceFileId)??candidate.tempKey??idGen.next();const bound=await source.store.bindSourceAttempt({sourceFileId:candidate.sourceFileId,fileId,remoteVersion:candidate.remoteVersion,tempKey:key,extractionId,claim});attemptKeys.set(candidate.sourceFileId,key);
         if(!bound.ok){if(bound.code==='SOURCE_CHANGED')continue;return {ok:false,code:bound.code,message:bound.message};}
         const metadata=await source.remote.metadata(candidate.remoteId);
-        if(!metadata.ok){lastMessage=metadata.message;if(metadata.code==='UNREACHABLE'){const marked=await source.store.markSourceFileUnreachable({sourceFileId:candidate.sourceFileId,fileId,remoteVersion:candidate.remoteVersion,claim:sourceClaim(item,clock)!});if(!marked.ok&&marked.code!=='SOURCE_CHANGED')return {ok:false,code:marked.code,message:marked.message};}else transient=true;continue;}
-        if(metadata.item.version!==candidate.remoteVersion){lastMessage='원격 버전이 변경되었습니다';transient=true;continue;}
+        if(!metadata.ok){if(['DB_UNAVAILABLE','DB_LOCKED','AUTH_SESSION_CHANGED'].includes(metadata.code))return remoteFailure(metadata);lastMessage=metadata.message;if(metadata.code==='UNREACHABLE'){const marked=await source.store.markSourceFileUnreachable({sourceFileId:candidate.sourceFileId,fileId,remoteVersion:candidate.remoteVersion,claim:sourceClaim(item,clock)!});if(!marked.ok&&marked.code!=='SOURCE_CHANGED')return {ok:false,code:marked.code,message:marked.message};}else {transient=true;remoteError=combineRemote(remoteError,metadata);}continue;}
+        if(metadata.item.version!==candidate.remoteVersion){lastMessage='원격 버전이 변경되었습니다';transient=true;remoteError=combineRemote(remoteError,{ok:false,code:'TEMPORARY',message:lastMessage});continue;}
         const limit=candidate.mimeType==='application/vnd.google-apps.document'?SOURCE_DOCS_MAX_BYTES:DOCUMENT_EXTRACT_MAX_BYTES;
         if(state.sizeBytes>limit)continue;
         let bytes:Uint8Array|undefined;
         if(candidate.tempKey){const read=await source.temp.read(key,limit);if(read.ok)bytes=read.bytes;else lastMessage=read.message;}
-        if(!bytes){const read=await source.remote.download({id:candidate.remoteId,docs:candidate.mimeType==='application/vnd.google-apps.document',maxBytes:limit});if(!read.ok){lastMessage=read.message;if(read.code==='UNREACHABLE'){const marked=await source.store.markSourceFileUnreachable({sourceFileId:candidate.sourceFileId,fileId,remoteVersion:candidate.remoteVersion,claim:sourceClaim(item,clock)!});if(!marked.ok&&marked.code!=='SOURCE_CHANGED')return {ok:false,code:marked.code,message:marked.message};}else transient=true;continue;}bytes=read.bytes;}
-        if(contentHashOfBytes(bytes)!==state.contentHash){lastMessage='원본의 해시가 일치하지 않습니다';transient=true;continue;}
+        if(!bytes){const read=await source.remote.download({id:candidate.remoteId,docs:candidate.mimeType==='application/vnd.google-apps.document',maxBytes:limit});if(!read.ok){if(['DB_UNAVAILABLE','DB_LOCKED','AUTH_SESSION_CHANGED'].includes(read.code))return remoteFailure(read);lastMessage=read.message;if(read.code==='UNREACHABLE'){const marked=await source.store.markSourceFileUnreachable({sourceFileId:candidate.sourceFileId,fileId,remoteVersion:candidate.remoteVersion,claim:sourceClaim(item,clock)!});if(!marked.ok&&marked.code!=='SOURCE_CHANGED')return {ok:false,code:marked.code,message:marked.message};}else {transient=true;remoteError=combineRemote(remoteError,read);}continue;}bytes=read.bytes;}
+        if(contentHashOfBytes(bytes)!==state.contentHash){lastMessage='원본의 해시가 일치하지 않습니다';transient=true;remoteError=combineRemote(remoteError,{ok:false,code:'TEMPORARY',message:lastMessage});continue;}
         external=candidate;got={ok:true,bytes};break;
       }
-      if(!got.ok && state.home!==null && state.sizeBytes<=DOCUMENT_EXTRACT_MAX_BYTES){const local=await files.get(state.home);if(local.ok&&contentHashOfBytes(local.bytes)===state.contentHash){got=local;external=undefined;}else if(!local.ok)lastMessage=local.message;else lastMessage='Brain 원본의 해시가 일치하지 않습니다';}
-      if(!got.ok){return await stopped({failedStage:'read',mediaType:null},{code:transient?'FILES_UNAVAILABLE':FILE_SOURCE_UNREACHABLE,message:lastMessage,retryable:transient});}
+      if(!got.ok && state.home!==null && state.sizeBytes<=DOCUMENT_EXTRACT_MAX_BYTES){const local=await files.get(state.home);if(local.ok&&contentHashOfBytes(local.bytes)===state.contentHash){got=local;external=undefined;}else if(!local.ok){lastMessage=local.message;if(local.code==='FILES_UNAVAILABLE'){transient=true;remoteError=combineRemote(remoteError,{ok:false,code:local.driveCode??'TEMPORARY',message:local.message,...(local.retryAfter?{retryAfter:local.retryAfter}:{})});}}else lastMessage='Brain 원본의 해시가 일치하지 않습니다';}
+      if(!got.ok){return await stopped({failedStage:'read',mediaType:null},remoteError??{code:transient?'FILES_UNAVAILABLE':FILE_SOURCE_UNREACHABLE,message:lastMessage,retryable:transient});}
     }else if(state.home!==null)got=await files.get(state.home);
     if (!got.ok) {
       // A store that is there but cannot answer right now is somebody else's
@@ -399,7 +411,7 @@ export function documentExtractHandler(
       if (got.code === 'FILES_UNAVAILABLE') {
         return await stopped(
           { failedStage: 'read', mediaType: null },
-          { code: got.code, message: got.message, retryable: true },
+          { code: got.driveCode??got.code, message: got.message, retryable: got.driveCode!=='AUTH_REQUIRED'&&got.driveCode!=='AUTH_LOGIN_REQUIRED', ...(got.retryAfter?{retryAfter:got.retryAfter}:{}) },
         );
       }
       // Bytes that are not there and a location this build may not read are the

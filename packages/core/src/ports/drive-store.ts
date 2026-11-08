@@ -24,6 +24,8 @@ import type { FileLocation } from '../domain/file.js';
 export interface DriveCandidate { fileId: string; contentHash: string; sizeBytes: number; homeId: string; home: FileLocation; redacted: boolean }
 export type DriveStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface DriveMigrationStore {
+  /** Serializes external local deletion against disconnect across processes. */
+  withDriveLocalDelete<T>(input:{workId:string;localLocationId:string;claimedBy:string;claimedAt:Date;attempts:number;now:Date}, run:()=>Promise<T>):Promise<{ok:true;value:T}|DriveStoreFailure>;
   readDriveCandidate(fileId: string): Promise<{ok: true; candidate: DriveCandidate | null} | DriveStoreFailure>;
   beginDriveMigration(input: {fileId:string; expectedHomeId:string; contentHash:string; rootFolderId:string; locationId:string; locator:string; workId:string; at:Date}): Promise<{ok:true; state:'ready'|'changed'|'redacted'; locationId?:string} | DriveStoreFailure>;
   ensureDriveRedaction(input:{fileId:string; rootFolderId:string; workId:string; at:Date}): Promise<{ok:true; queued:boolean} | DriveStoreFailure>;

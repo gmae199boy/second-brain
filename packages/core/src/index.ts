@@ -91,6 +91,8 @@ export {
   type Brain,
   type BrainDoctor,
   type BrainDependencies,
+  type SourceControl,
+  type SourceControlFailure,
   type BrainDrainReport,
   type BrainFailures,
   type BrainFiles,

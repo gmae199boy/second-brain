@@ -674,7 +674,7 @@ describe('the dispatcher and a standalone command', () => {
       // No brain and no config, and `stdin` is a function it never called:
       // a standalone command that does not read a hook payload must not wait
       // on a pipe nobody is writing to.
-      keys: ['args', 'clock', 'env', 'options', 'recordHookArrival', 'runner', 'stdin'],
+      keys: ['args', 'clock', 'driveNetwork', 'env', 'options', 'recordHookArrival', 'runner', 'sourceSyncFactory', 'stdin'],
     });
   });
 
@@ -1610,6 +1610,35 @@ describe('the dispatcher and the lock budget', () => {
     });
     return { exit, calls };
   }
+
+  it('spools an unavailable write after one schema probe without assembling Drive', async () => {
+    const home = await homeFor(await missingDatabase());
+    const { createStore: makeStore } = recorder();
+    let schemas = 0, driveReads = 0, closed = 0, ran = false, cause = '';
+    const unavailable = {ok:false as const,code:'DB_UNAVAILABLE' as const,message:'synthetic unavailable'};
+    const createStore: CreateConnectionStore = options => {
+      const store = makeStore(options);
+      return Object.assign(store, {
+        async readSchemaVersions() { schemas++; return unavailable; },
+        async listSources() { driveReads++; return unavailable; },
+        async getSetting() { driveReads++; return unavailable; },
+        async updateSourceFolders() { return unavailable; },
+        async withDriveLocalDelete() { return unavailable; },
+        driveUploads: {},
+        async close() { closed++; },
+      });
+    };
+    const hook: CommandSpec = {
+      ns:'fake',verb:'guarded-hook',...meta('fake','guarded-hook','a deferred hook'),hook:true,writes:true,
+      async run() { ran=true; return {ok:true,data:{}}; },
+      async spool(context) { cause=context.cause; return {ok:true,data:{spooled:true},warnings:['SPOOLED','DB_UNAVAILABLE']}; },
+    };
+    const exit=await dispatch([hook],['fake','guarded-hook','--json'],{
+      clock:systemClock,env:withoutHarnessFolders({[HOME_ENV]:home}),stdout:()=>{},stderr:()=>{},createStore,
+    });
+    expect(exit).toBe(0);expect(cause).toBe('DB_UNAVAILABLE');expect(ran).toBe(false);
+    expect(schemas).toBe(1);expect(driveReads).toBe(0);expect(closed).toBe(1);
+  });
 
   it('gives a hook command the shorter turn budget', async () => {
     const path = await missingDatabase();

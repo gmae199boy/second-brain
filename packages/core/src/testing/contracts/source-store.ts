@@ -40,6 +40,7 @@ export function sourceStoreContract():ContractCase<SourceContractSubject>[] {ret
   assertOk(await store.finishSourceScan({sourceId,generation:1,scanId:fifth,claim:at(9)}));
   const lostAgain=await store.listSourceEntries(sourceId);assertOk(lostAgain);assertEqual(lostAgain.entries[0]?.unreachableAt?.toISOString(),at(9).now.toISOString());
 })),contractCase('source lease renewal preserves claim identity and cannot revive expiration',factory=>withSubject(factory,async ({store,claim})=>{
+  assertOk(await store.ensureSource({id:sourceId,kind:'drive',account:'lease',rootId:'root'}));
   const at=(seconds:number)=>({...claim,now:new Date(claim.now.getTime()+seconds*1000)});
   for(const bad of [{...claim,workId:'019a0000-0000-7000-8000-000000000099'},{...claim,claimedBy:'other'},{...claim,claimedAt:new Date(claim.claimedAt.getTime()+1)},{...claim,attempts:claim.attempts+1}]) assertNotOk(await store.renewSourceClaim({sourceId,claim:bad}));
   assertNotOk(await store.renewSourceClaim({sourceId:'019a0000-0000-7000-8000-000000000099',claim}));
@@ -56,4 +57,12 @@ export function sourceStoreContract():ContractCase<SourceContractSubject>[] {ret
   assertNotOk(await store.handoffSourceFile({...stage,fileId,sizeBytes:3,workId,claim:{...claim,attempts:claim.attempts+1}}));
   assertOk(await store.handoffSourceFile({...stage,fileId,sizeBytes:3,workId}));const rows=await store.listSourceHandoffs(fileId);assertOk(rows);assertEqual(rows.handoffs[0]?.tempKey,tempKey);
   const ready=await store.readSourceAttempt(tempKey);assertOk(ready);assertEqual(ready.binding?.open,true);assertEqual(ready.binding?.fileId,fileId);
+})),contractCase('disconnect and reconnect fence generations without replacing identity',factory=>withSubject(factory,async ({store,claim})=>{
+  assertOk(await store.ensureSource({id:sourceId,kind:'drive',account:'transition',rootId:'root'}));
+  const disconnected=await store.disconnectSource({id:sourceId,now:claim.now});assertOk(disconnected);assertEqual(disconnected.source.connected,false);assertEqual(disconnected.source.generation,2);
+  const again=await store.disconnectSource({id:sourceId,now:claim.now});assertOk(again);assertEqual(again.source.generation,2);
+  assertNotOk(await store.beginSourceScan({sourceId,generation:1,scanId,startToken:'t',claim}));
+  const existing=await store.ensureSource({id:sourceId,kind:'drive',account:'transition',rootId:'root'});assertOk(existing);assertEqual(existing.source.connected,false);
+  const connected=await store.connectSource({id:sourceId});assertOk(connected);assertEqual(connected.source.connected,true);assertEqual(connected.source.generation,3);
+  assertNotOk(await store.beginSourceScan({sourceId,generation:1,scanId,startToken:'t',claim}));
 })),];}

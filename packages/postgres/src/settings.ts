@@ -2,6 +2,8 @@ import { formatInstant, type SettingsStore } from '@second-brain/core';
 import { sql } from 'kysely';
 import { databaseFailure, type PgConnect } from './connect.js';
 import { withWrite } from './write.js';
+import { ensureWork } from './work.js';
+import { randomUUID } from 'node:crypto';
 
 export function postgresSettingsStore(connect: PgConnect): SettingsStore {
   const write = async (input: Parameters<SettingsStore['setSetting']>[0], insertOnly: boolean) => {
@@ -11,6 +13,24 @@ export function postgresSettingsStore(connect: PgConnect): SettingsStore {
       const instant = formatInstant(input.updatedAt);
       if (!instant.ok) throw new TypeError(instant.message);
       const result = await withWrite(opened.connection, async held => {
+        if (!insertOnly && input.key === 'drive.watch_folders' && input.userId !== null) {
+          // All Drive mutations lock source rows before settings, schedules and work.
+          const sources = await sql<{id:string}>`select id from brain.sources where kind='drive' and connected order by id for update`.execute(held);
+          const previous = await sql<{value:string;user_id:string|null}>`select user_id::text,value from brain.settings where key=${input.key} and (user_id=${input.userId}::uuid or user_id is null) order by user_id nulls last for update`.execute(held);
+          const own=previous.rows.find(row=>row.user_id===input.userId);
+          const normalize=(raw:string)=>{try{const parsed:unknown=JSON.parse(raw);return Array.isArray(parsed)&&parsed.every(x=>typeof x==='string')?JSON.stringify([...new Set(parsed)].sort()):raw;}catch{return raw;}};
+          const old=normalize(previous.rows[0]?.value ?? '[]');
+          if (own && normalize(own.value) === input.value) return;
+          // Persist explicit user override even when its effective value matches.
+          await sql`insert into brain.settings (user_id,key,value,updated_at) values (${input.userId},${input.key},${input.value},${instant.value}) on conflict (user_id,key) do update set value=excluded.value,updated_at=excluded.updated_at`.execute(held);
+          if(old===input.value)return;
+          for (const source of sources.rows) {
+            await sql`update brain.sources set generation=generation+1,scan_id=null,scan_token=null where id=${source.id}::uuid`.execute(held);
+            await sql`update brain.work_items set completed_at=${instant.value}::timestamptz,outcome='cancelled',cancel_requested_at=${instant.value}::timestamptz,claimed_at=null,claim_expires_at=null,claimed_by=null where completed_at is null and kind='source_sync' and target_kind='source' and target_id=${source.id}`.execute(held);
+            await ensureWork(held,{id:randomUUID(),kind:'source_sync',targetKind:'source',targetId:source.id,createdAt:input.updatedAt,nextAttemptAt:input.updatedAt});
+          }
+          return;
+        }
         if (insertOnly) await sql`insert into brain.settings (user_id,key,value,updated_at) values (${input.userId},${input.key},${input.value},${instant.value}) on conflict (user_id,key) do nothing`.execute(held);
         else await sql`insert into brain.settings (user_id,key,value,updated_at) values (${input.userId},${input.key},${input.value},${instant.value}) on conflict (user_id,key) do update set value=excluded.value, updated_at=excluded.updated_at`.execute(held);
       });
