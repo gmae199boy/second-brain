@@ -1,5 +1,5 @@
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pg from 'pg';
 import { afterEach, expect, it } from 'vitest';
@@ -39,10 +39,11 @@ async function fixture(days?:string, bodyOverride?:string) {
   await admin.query('insert into brain.document_chunks(id,extraction_id,ordinal,body,chunk_locator) values ($1,$2,0,$3,$4)',[chunkId,extractionId,'x'.repeat(Array.from(body).length),locator]);
   await admin.query('update brain.files set current_extraction_id=$1 where id=$2',[extractionId,fileId]);
   if(days!==undefined) {const self=await store.readSelfUser(); if(!self.ok || !self.user) throw Error('self missing'); await store.setSetting({userId:self.user.id,key:'drive.keep_local_days',value:days,updatedAt:clock.now()});}
-  const env={SECOND_BRAIN_HOME:home,BRAIN_DATABASE_URL:db.appUrl,HOME:home,PATH:process.env.PATH};
+  const env={SECOND_BRAIN_HOME:home,BRAIN_DATABASE_URL:db.appUrl,HOME:home,CLAUDE_CONFIG_DIR:join(home,'claude-config'),PATH:process.env.PATH};
   const config=await readConfig(home);
   const integration={store,uploads:store.driveUploads,files:drive,rootFolderId:'brain-root'};
-  const dependencies=brainDependencies({home,env,config,store,clock,idGen,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{},driveFactory:()=>integration});
+  const assemble=(inputEnv:NodeJS.ProcessEnv)=>brainDependencies({home,env:inputEnv,config,store,clock,idGen,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{},driveFactory:()=>integration});
+  const dependencies=assemble(env);
   const brain=createBrain(dependencies);
   const settings={store,schemaVersions:EXPECTED_SCHEMA_VERSIONS,clock};
   const migrate=()=>migrateFileToDrive({store,uploads:store.driveUploads,local,drive,settings,rootFolderId:'brain-root',clock,idGen},fileId);
@@ -55,8 +56,36 @@ async function fixture(days?:string, bodyOverride?:string) {
     const code=await dispatch(commands,['files','show',fileId,'--chunk-locator',locator,'--json'],{env,clock,runner:pgRunner,driveFactory,stdout:text=>{stdout+=text;},stderr:text=>{stderr+=text;}});
     return {code,stdout,stderr};
   }
-  return {home,db,server,store,clock,idGen,local,drive,put,body,bytes,fileId,localId,extractionId,locator,brain,migrate,cliShow,settings,dependencies,integration};
+  return {home,db,server,store,clock,idGen,local,drive,put,body,bytes,fileId,localId,extractionId,locator,brain,migrate,cliShow,settings,dependencies,integration,env,assemble};
 }
+
+it('fixture drain은 process HOME의 합성 transcript를 수집하지 않는다', async()=>{
+  const ambient=await mkdtemp(join(tmpdir(),'brain-drive-ambient-'));
+  cleanups.push(()=>rm(ambient,{recursive:true,force:true}));
+  const projects=join(ambient,'.claude','projects','synthetic');
+  await mkdir(projects,{recursive:true});
+  const session='4f1e7a90-1c2b-4d3e-8f55-000000000000';
+  await writeFile(join(projects,`${session}.jsonl`),JSON.stringify({type:'user',sessionId:session,uuid:'00000000-0000-4000-8000-000000000003',timestamp:'2026-01-02T03:04:05.000Z',message:{role:'user',content:'synthetic input'}})+'\n');
+  const previousHome=process.env.HOME;
+  process.env.HOME=ambient;
+  try {
+    expect(homedir()).toBe(ambient);
+    const f=await fixture();
+    const isolated=await f.brain.queue.drain({budgetMs:5000});
+    expect(isolated).toMatchObject({stopped:'empty',failed:0,spoolFailed:0,enqueued:0});
+    expect(isolated.scanStopped).toBeUndefined();
+    expect(await f.db.rows("select kind from brain.work_items where kind='session_ingest'")).toEqual([]);
+    // Reassemble with the same environment except the fixture's config override.
+    const {CLAUDE_CONFIG_DIR: _fixtureConfig,...fallbackEnv}=f.env;
+    const control=createBrain(f.assemble(fallbackEnv));
+    const scanned=await control.queue.drain({budgetMs:5000});
+    expect(scanned).toMatchObject({stopped:'empty',failed:0,spoolFailed:0,enqueued:1});
+    expect(scanned.scanStopped).toBeUndefined();
+    expect(await f.db.rows("select kind from brain.work_items where kind='session_ingest'")).toEqual([{kind:'session_ingest'}]);
+  } finally {
+    if(previousHome===undefined) delete process.env.HOME; else process.env.HOME=previousHome;
+  }
+});
 
 it('0일 보관: 이전·동일 내용 재이전·실제 drain·Drive 원문 show',async()=>{
   const f=await fixture('0');

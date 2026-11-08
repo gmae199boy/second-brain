@@ -92,3 +92,4 @@ risk: medium
 - Decision(2026-11-09, 중앙): 19.5에서 발견한 기존 Drive 회귀는 19.13의 별도 소유로 분리한다. 19.5 착수 의존은 추가하지 않으며 19.13 수락 뒤 관련 영향을 통합·대조한다.
 
 - Decision(2026-11-09, 중앙): 19.13은 tracer 9개 timeout과 parser 1개 실패 수 단언 불일치를 각각 조사한다. 8.4 source `73c44191af88fe8ede445513fb02c84e83badf06`는 baseline `2f23d30b7a894a9979567311544c7f28e3f25a5a`의 조상이며 migration 0001~0043 바이트가 동일한 중앙 수락 역사적 전제로, 새 착수 gate가 아니다.
+- Decision(2026-11-09, 중앙 msg_21d84c8bcbbc): 19.13 AC1을 입력 격리 결함 교정 수락으로 보완한다. 원시 root/kind가 없는 역사적 9 timeout/parser failed 4의 개별 원인은 미확정 한계로 보존하고 built 필수 조건으로 요구하지 않는다. 동일 고정 합성 session의 기존 fixture ambient scan/queue 유입과 교정 fixture 차단을 실제 경로로 대조하고, 기존 대상 case별 제한·단언·보존 계약과 두 파일 45case 통과, 최초 전체 20실패 원형 및 관련 환경 재검증 처분·자원 정리를 필수로 한다. 과거 10개 모두 동일 원인 해결이라고 쓰지 않으며 다른 AC·안전 계약·제품/공통 fixture/runner/config 불변은 유지한다. leaf·계획의 보완 기록과 독립 PO 표적 확인 뒤 제출한다. 추가 진단·전체·성능 실행은 배정하지 않는다.
