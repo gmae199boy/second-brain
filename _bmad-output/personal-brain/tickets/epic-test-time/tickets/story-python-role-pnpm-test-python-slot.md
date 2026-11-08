@@ -77,3 +77,7 @@ risk: high
 - Waits on 20.6 because: 정리된 계약·시험 집합이 비교 기준이며 baseline에 해당 산출물이 포함되어 있다. built/done 전이는 하지 않는다.
 
 - Handoff(2026-11-08, 중앙): 19.12의 수락 source와 fixture/시험/workload/measurement 의미 변경 범위를 인계받고 성능 gate는 유지한다.
+
+- 19.13 tracer timeout과 parser 단언 실패의 수락 source 및 시험/fixture/제품/측정 실행 바이트 영향을 대조하고 관련 재검증한다.
+
+- Handoff(2026-11-09, 중앙): 19.14 redaction 회귀의 수락 source와 시험/fixture/제품/측정 실행 바이트 영향을 대조하고 관련 재검증한다. 원관측87f7b3e의 실패 및 성능 표본은 보존하며 새 source의 실행 결과로 재사용하지 않는다. 19.5↔19.14 완료 상호대기는 추가하지 않는다.

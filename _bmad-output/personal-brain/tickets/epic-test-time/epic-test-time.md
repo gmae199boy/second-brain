@@ -38,7 +38,7 @@ risk: medium
 - 시험 assertion 축소, 시험 생략, 전역 timeout 증가, 결과 캐시, mock 대체로 성능 개선을 대신하지 않는다.
 - 무조건 인덱스 일괄 추가, Python 전체 이식, 광범위 재작성은 하지 않는다. 인덱스는 특정 분포에서 악화할 수 있다(source "확정 결과 4" 채널 최신 결과 인덱스).
 - 측정은 전용 독립 DB·home에서 직렬 잠금 아래 한다. 공용 시험 DB(54329)·운영 계정·실제 transcript·건강값을 쓰지 않으며 공개 plan에 개인 값이나 홈 절대 경로를 쓰지 않는다.
-- 구현 반복은 `pnpm test:changed`, 커밋 직전 `pnpm test`와 `pnpm test:python`을 순차로 한 번씩(AGENTS.md). 성능 비교의 warm-up·3회 반복은 대상 시험 파일·조회에만 하고, 전체 suite 시간은 커밋 직전 필수 1회 실행에서 기록한다. 전체 suite를 반복 측정하지 않는다.
+- 개발 및 리뷰 수정 중에는 시험을 실행하지 않고 컴파일만 확인한다. 마지막 수정 뒤 커밋 전에 `pnpm test` → `pnpm test:python`을 순차로 한 번씩 실행하고 실패 수정 뒤 관련 시험과 `pnpm test:changed`로 재검증한다(AGENTS.md). 성능 비교의 warm-up·3회 반복은 대상 시험 파일·조회에만 하고, 전체 suite 시간은 커밋 직전 필수 1회 실행에서 기록한다. 전체 suite를 반복 측정하지 않는다.
 
 ## Done when
 
@@ -53,7 +53,7 @@ risk: medium
 - 제품 조회·반입 성능(반입 정리 anti-join, 큰 세션, 흔한 검색어 점수, 로그 scanner)은 시험 시간 목표 밖이라 이 에픽에 없다. 조사 문서 TODO에 남는다.
 - 두 번째 `pnpm build` 제거(약 1초), 실제 ref upgrade E2E 측정, typecheck 단독 시간은 이 에픽에 없다. 이득이 작거나 증거가 없다(source "확정 결과 5").
 - 기능 의미(반입·정리·그래프·비밀 판정)는 바꾸지 않는다. 바꿔야만 빨라지는 개선은 별도 결정으로 올린다.
-- batch-import 첫 case의 120초 timeout과 redaction 행 수 불일치(원인 미확정, 재현 방법은 source "확정 결과 7"), 기본 changed와 Postgres 전체·tracer 추가 실행의 중복(양 미측정), 넓은 규칙의 일괄 축소(의존 누락 위험)는 이 에픽에 없다. 조사 문서 TODO에 남는다(source "확정 결과 6").
+- batch-import 첫 case의 120초 timeout과 redaction 행 수 불일치(원인 미확정, 재현 방법은 source "확정 결과 7"), 기본 changed와 Postgres 전체·tracer 추가 실행의 중복(양 미측정), 넓은 규칙의 일괄 축소(의존 누락 위험)는 이 에픽에 없다. 조사 문서 TODO에 남는다(source "확정 결과 6"). 다만19.5 최종 회귀에서 새로 관측한 redaction 불일치는2026-11-09 중앙 승인으로19.14가 별도 소유한다.
 - 생산 daemon 기본 polling 주기, 시험용 25ms polling, no-op migration 왕복(약 22ms), 패키지 digest·uv 준비는 근거가 약해 범위 밖이다(source "확정 결과 2·3").
 - Touch point: Garmin 그래프·digest 발행(이식된 옛 프로그램의 차트·파일 발행 경로, 21.3·21.5) — 대기·캐시 방식만 바꾼다; owner: epic-garmin-extension (2026-11-05. 옛 owner epic-garmin-runtime)
 
@@ -88,3 +88,13 @@ risk: medium
 - Decision(2026-11-08, 중앙): E19-5는 독립성이 확인된 긴 파일만 case 단위로 배정할 수 있다. 파일·case·단언·timeout과 검증 집합은 그대로이며, 모든 slot 수에 같은 사전 고정 case 분해 정책을 적용한다. 선택 case는 정확히 1회 실행하고 필터 제외는 기존 조건부 skip과 구별한다. 성능 임계는 절반 이하로 유지한다.
 
 - Decision(2026-11-08, 중앙): W9 같은 artifacts case 재발을 별도 19.12로 분리한다. 19.5 runner와 소유를 분리하고 성능 gate를 유지한다. 원인은 미확정이며 4 slot 제외 수락은 없다.
+
+- Decision(2026-11-09, 중앙): 19.5에서 발견한 기존 Drive 회귀는 19.13의 별도 소유로 분리한다. 19.5 착수 의존은 추가하지 않으며 19.13 수락 뒤 관련 영향을 통합·대조한다.
+
+- Decision(2026-11-09, 중앙): 19.13은 tracer 9개 timeout과 parser 1개 실패 수 단언 불일치를 각각 조사한다. 8.4 source `73c44191af88fe8ede445513fb02c84e83badf06`는 baseline `2f23d30b7a894a9979567311544c7f28e3f25a5a`의 조상이며 migration 0001~0043 바이트가 동일한 중앙 수락 역사적 전제로, 새 착수 gate가 아니다.
+- Decision(2026-11-09, 중앙 msg_21d84c8bcbbc): 19.13 AC1을 입력 격리 결함 교정 수락으로 보완한다. 원시 root/kind가 없는 역사적 9 timeout/parser failed 4의 개별 원인은 미확정 한계로 보존하고 built 필수 조건으로 요구하지 않는다. 동일 고정 합성 session의 기존 fixture ambient scan/queue 유입과 교정 fixture 차단을 실제 경로로 대조하고, 기존 대상 case별 제한·단언·보존 계약과 두 파일 45case 통과, 최초 전체 20실패 원형 및 관련 환경 재검증 처분·자원 정리를 필수로 한다. 과거 10개 모두 동일 원인 해결이라고 쓰지 않으며 다른 AC·안전 계약·제품/공통 fixture/runner/config 불변은 유지한다. leaf·계획의 보완 기록과 독립 PO 표적 확인 뒤 제출한다. 추가 진단·전체·성능 실행은 배정하지 않는다.
+
+- Decision(2026-11-09, 중앙 독립 명세): 19.5 최종 전체 회귀에서 관측한 redaction 실패수1기대/2실제를19.14 독립 버그로 조사·정제·구현한다. 과거 redaction TODO 제외는 보존하며 이번 관측을 예외로 둔다. 원인과 기존 관찰 동일성은 미확정이며 단독39pass로 해결을 선언하지 않는다. 성능 개선의 warm-up/3표본 요구는 이 버그에 적용하지 않고 개발중시험금지·마지막 전체 TS→Python 순차 각1회와 결정적 회귀를 따른다.
+- Handoff(2026-11-09, 중앙): 19.14는19.5에 최종 수락 source와 시험/fixture/제품/측정 실행 바이트 영향을 인계한다. 19.5 완료와 상호대기하거나 전역gate를 추가하지 않는다. 19.1은 이후 redaction DB 준비 비용·workload 변경을 포함해 같은 조건의 새 기준을 잡는다.
+
+- Decision(2026-11-09, 중앙 msg_262f3e0c3fe7): 19.14 AC3의 이전 “수정 전 시험 전제 또는 제품 결함과 수정 후 동작을 구별하는 결정적 회귀”는 원행 식별 유실에도 동일cleanup 구source실패/신source통과를 요구하는 것으로 넓게 읽혔다. 이를 시험 전제 격리 교정으로 명시 보완한다. 구공유/신전용factory 정적원문diff, 실제권한PG의 정확소유ID·연결매핑으로 공유경로복귀를 검출하는 결정적실행증거, 정확3대상/권한실패1/물리bytes·복구 및 같은DBsnapshot음성·해제복구의 실제통과를 모두 요구한다. 역사원인·제품결함 재현으로 주장하지 않고 추가crossDB/구source실행도 배정하지 않는다. 다른AC·물리안전·최종전체회귀는 완화없다.

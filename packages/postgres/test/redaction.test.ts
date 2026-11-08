@@ -1,5 +1,8 @@
 import { randomBytes } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import pg from 'pg';
+import { createIsolatedTestDatabase } from '@second-brain/test-db';
 import { afterEach, expect, it } from 'vitest';
 import { drainQueue, planRedaction, planFileRedaction, runDoctor, tableCleanupHandler,
   TABLE_CLEANUP_KIND, retryFailures, type RedactionCurrent, type CleanupTable, type WorkItem } from '@second-brain/core';
@@ -11,12 +14,18 @@ import { database, clock } from './fixture.js';
 
 const id = (n: number) => `01980000-0000-7000-8000-${String(n).padStart(12, '0')}`;
 const closes: (() => Promise<unknown>)[] = [];
-afterEach(async () => { for (const close of closes.splice(0).reverse()) await close(); });
+afterEach(async () => {
+  const errors: unknown[]=[];
+  for (const close of closes.splice(0).reverse()) {
+    try { await close(); } catch (error) { errors.push(error); }
+  }
+  if (errors.length) throw new AggregateError(errors, 'fixture cleanup failed');
+});
 const secret = 'hunter2-x';
 const control = 'retained-control-text';
 async function fixture(body = `${control} ${secret} next`, options = {}, externalStorage = false,
-  { maintenanceLockTimeoutMs = 5000, noteTarget = `a\u0000 ${secret} ${control}` } = {}) {
-  const db = await database(); closes.push(() => db.drop());
+  { maintenanceLockTimeoutMs = 5000, noteTarget = `a\u0000 ${secret} ${control}`, isolated = false } = {}) {
+  const db = await database(true, isolated ? createIsolatedTestDatabase : undefined); closes.push(() => db.drop());
   const store = postgresStore({ databaseUrl: db.appUrl, ...options }); closes.push(() => store.close());
   const ids = sequenceIdGen({ timestampMs: clock.now().getTime(), start: 100 });
   await store.ensureSelfUser(sampleSelfUserInput()); await store.ensureSession(sampleEnsureSessionInput());
@@ -42,7 +51,12 @@ async function fixture(body = `${control} ${secret} next`, options = {}, externa
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 async function client(url: string) {
   const c = new pg.Client({ connectionString: url }); await c.connect();
-  closes.push(async () => { await c.query('rollback'); await c.end(); }); return c;
+  closes.push(async () => {
+    const errors: unknown[]=[];
+    try { await c.query('rollback'); } catch (error) { errors.push(error); }
+    try { await c.end(); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, 'client cleanup failed');
+  }); return c;
 }
 async function chunks(f: Fixture, text = secret) {
   for (const [n, offset] of [[1, 0], [2, 1000]] as const) {
@@ -79,6 +93,43 @@ async function heaps(f: Fixture, tables: string[]) {
            pg_read_binary_file(pg_relation_filepath(c.oid)) as bytes
       from pg_class p join pg_class c on c.oid=p.oid or c.oid=p.reltoastrelid
      where p.oid in (${tables.map(t => `'brain.${t}'::regclass`).join(',')})`);
+}
+
+async function assertOwnedCluster(f: Fixture) {
+  const owned=f.db.fixtureContainer;
+  if (!owned || !/^[a-f0-9]{64}$/.test(owned.id) || !Number.isInteger(owned.port) || owned.port<1 || owned.port>65535)
+    throw new Error('permission cleanup requires an owned isolated cluster');
+  for (const value of [f.db.url,f.db.appUrl,f.db.maintenanceUrl]) {
+    const endpoint=new URL(value);
+    expect(endpoint.hostname).toBe('127.0.0.1');
+    expect(Number(endpoint.port)).toBe(owned.port);
+  }
+  // Query the exact fixture container locally, then the actual fixture SQL
+  // connection. Matching PostgreSQL system identifiers ties the connection
+  // to the owned cluster rather than merely trusting a URL or a receipt.
+  const {stdout}=await promisify(execFile)('docker',[
+    'exec',owned.id,'psql','-U','postgres','-d','postgres','-At','-c',
+    'select system_identifier::text from pg_control_system()',
+  ],{timeout:15000});
+  const containerSystemId=stdout.trim();
+  expect(containerSystemId).toMatch(/^\d+$/);
+  const rows=await f.db.rows<{system_id:string}>('select system_identifier::text as system_id from pg_control_system()');
+  expect(rows).toEqual([{system_id:containerSystemId}]);
+  console.info(JSON.stringify({fixtureMapping:'verified',containerId:owned.id,port:owned.port,systemId:containerSystemId}));
+}
+
+async function cleanupDiagnostic(f: Fixture, observation: {stage:string; round:number|null; now:string}) {
+  // Keep either successful projection even if the other query fails.
+  const [work,failures]=await Promise.allSettled([
+    f.db.rows(`select id,target_kind,target_id,attempts,outcome,completed_at,claimed_at,claim_expires_at,claimed_by,
+      case when last_error is null then null else '[present, redacted]' end as last_error
+      from brain.work_items where kind='table_cleanup' order by target_kind,target_id,id`),
+    f.db.rows(`select id,target_kind,target_id,stage,code,fingerprint,occurrences,resolved_at
+      from brain.failures order by target_kind,target_id,stage,fingerprint`),
+  ]);
+  const safe=(result: PromiseSettledResult<unknown>) => result.status==='fulfilled'
+    ? {status:'ok',rows:result.value} : {status:'unavailable'};
+  console.error(JSON.stringify({observation,work:safe(work),failures:safe(failures)}));
 }
 
 async function recoverAndDrainCleanup(f: Fixture) {
@@ -261,23 +312,72 @@ it('keeps warning while cleanup waits on a lock, then finishes', async () => {
 },40000);
 
 it('keeps warning when cleanup lacks MAINTAIN, even after the failure is recorded', async () => {
-  const f=await fixture(); await f.redact();
-  await f.db.query('revoke maintain on brain.messages from brain_maintenance');
-  const before=await nodes(f);
-  await expect.poll(async()=>{
-    await f.drain(); f.advance();
-    return (await f.db.rows("select id from brain.work_items where kind='table_cleanup' and completed_at is null")).length;
-  },{timeout:15000,interval:25}).toBe(0);
-  expect((await f.db.rows("select attempts from brain.work_items where kind='table_cleanup' and target_id='messages'"))[0]!.attempts).toBe(10);
-  expect((await nodes(f)).find(r=>r.relname==='messages')).toEqual(before.find(r=>r.relname==='messages'));
-  expect(await f.db.rows("select * from brain.work_items where kind='table_cleanup' and completed_at is null")).toEqual([]);
-  expect(await f.db.rows("select * from brain.failures where stage='table_cleanup' and resolved_at is null")).toHaveLength(1);
-  expect(await f.doctor()).toMatchObject({status:'warn',detail:expect.stringContaining('messages')});
-  await f.db.query('grant maintain on brain.messages to brain_maintenance');
-  expect(await retryFailures({store:f.store,clock:f.moving,idGen:f.ids})).toMatchObject({ok:true,added:1,skipped:[]});
-  await expect.poll(()=>recoverAndDrainCleanup(f),{timeout:30000,interval:25}).toBe('ok');
-  expect(await f.db.rows("select * from brain.failures where stage='table_cleanup' and resolved_at is null")).toEqual([]);
-  expect(await f.db.rows("select resolved_at from brain.failures where stage='table_cleanup'")).toEqual([{resolved_at:expect.any(Date)}]);
+  const f=await fixture(undefined, {}, false, {isolated:true});
+  let observation={stage:'setup',round:null as number|null,now:f.moving.now().toISOString()};
+  try {
+    await assertOwnedCluster(f);
+    await chunks(f);
+    expect(await f.redact()).toMatchObject({ok:true,bodySpans:1,toolNoteSpans:1,chunksRemoved:2});
+    await f.db.query('checkpoint');
+    const before=await nodes(f);
+    const beforeBytes=await heaps(f,['chunks','messages','tool_notes']);
+    for (const table of ['chunks','messages','tool_notes'])
+      expect(beforeBytes.some(r=>r.table_name===table && r.bytes.includes(secret))).toBe(true);
+    await f.db.query('revoke maintain on brain.messages from brain_maintenance');
+    // The moving clock advances the existing retry schedule without wall-clock retries.
+    for (let attempt=0; attempt<10; attempt++) {
+      observation={stage:'permission drain',round:attempt+1,now:f.moving.now().toISOString()};
+      await f.drain(); f.advance();
+    }
+    observation={stage:'permission exhausted',round:10,now:f.moving.now().toISOString()};
+    const work=await f.db.rows(`select target_kind,target_id,attempts,outcome,completed_at,claimed_at,claim_expires_at,claimed_by
+      from brain.work_items where kind='table_cleanup' order by target_id`);
+    expect(work).toEqual([
+      {target_kind:'table',target_id:'chunks',attempts:1,outcome:'succeeded',completed_at:expect.any(Date),claimed_at:null,claim_expires_at:null,claimed_by:null},
+      {target_kind:'table',target_id:'messages',attempts:10,outcome:'failed',completed_at:expect.any(Date),claimed_at:null,claim_expires_at:null,claimed_by:null},
+      {target_kind:'table',target_id:'tool_notes',attempts:1,outcome:'succeeded',completed_at:expect.any(Date),claimed_at:null,claim_expires_at:null,claimed_by:null},
+    ]);
+    const failures=await f.db.rows(`select id,target_kind,target_id,stage,code,fingerprint,occurrences,resolved_at
+      from brain.failures order by target_kind,target_id,stage,fingerprint`);
+    expect(failures).toEqual([{id:expect.any(String),target_kind:'table',target_id:'messages',stage:'table_cleanup',
+      code:'TABLE_CLEANUP_FAILED',fingerprint:expect.any(String),occurrences:1,resolved_at:null}]);
+    const after=await nodes(f);
+    expect(after.find(r=>r.relname==='messages')).toEqual(before.find(r=>r.relname==='messages'));
+    for (const table of ['chunks','tool_notes'])
+      expect(after.find(r=>r.relname===table)!.relfilenode).not.toBe(before.find(r=>r.relname===table)!.relfilenode);
+    const partialBytes=await heaps(f,['chunks','messages','tool_notes']);
+    expect(partialBytes.some(r=>r.table_name==='messages' && r.bytes.includes(secret))).toBe(true);
+    for (const table of ['chunks','tool_notes'])
+      expect(partialBytes.some(r=>r.table_name===table && r.bytes.includes(secret))).toBe(false);
+    expect(await f.doctor()).toMatchObject({status:'warn',detail:expect.stringContaining('messages')});
+
+    observation={stage:'permission restored',round:null,now:f.moving.now().toISOString()};
+    await f.db.query('grant maintain on brain.messages to brain_maintenance');
+    expect(await retryFailures({store:f.store,clock:f.moving,idGen:f.ids})).toMatchObject({ok:true,added:1,skipped:[]});
+    observation={stage:'permission recovery drain',round:1,now:f.moving.now().toISOString()};
+    await f.drain();
+    observation={stage:'permission recovery drained',round:1,now:f.moving.now().toISOString()};
+    const retried=await f.db.rows(`select target_kind,target_id,attempts,outcome,completed_at,claimed_at,claim_expires_at,claimed_by
+      from brain.work_items where kind='table_cleanup' order by target_id,created_at,id`);
+    expect(retried).toHaveLength(4);
+    expect(retried.filter(r=>r.target_id==='messages').map(r=>({attempts:r.attempts,outcome:r.outcome})))
+      .toEqual([{attempts:10,outcome:'failed'},{attempts:1,outcome:'succeeded'}]);
+    expect(retried.every(r=>r.completed_at instanceof Date && r.claimed_at===null && r.claim_expires_at===null && r.claimed_by===null)).toBe(true);
+    expect((await nodes(f)).find(r=>r.relname==='messages')!.relfilenode).not.toBe(before.find(r=>r.relname==='messages')!.relfilenode);
+    const finalBytes=await heaps(f,['chunks','messages','tool_notes']);
+    expect(finalBytes.some(r=>r.bytes.includes(secret))).toBe(false);
+    expect(finalBytes.some(r=>r.bytes.includes(control))).toBe(true);
+    const read=await f.store.readSession(sampleSessionToken);
+    expect(read.ok && read.messages.find(m=>m.id===f.messageId)?.body).toBe(`${control} [REDACTED:manual] next`);
+    expect(read.ok && read.toolNotes.find(n=>n.id===f.batch.toolNotes[0]!.id)?.target).toBe(`a\u0000 [REDACTED:manual] ${control}`);
+    expect(await f.db.rows(`select id,target_kind,target_id,stage,code,fingerprint,occurrences,resolved_at
+      from brain.failures order by target_kind,target_id,stage,fingerprint`))
+      .toEqual([{...failures[0],resolved_at:expect.any(Date)}]);
+    expect(await f.doctor()).toMatchObject({status:'ok'});
+  } catch (error) {
+    await cleanupDiagnostic(f,observation);
+    throw error;
+  }
 },40000);
 
 it('does not close a cleanup that was running when a new redaction committed', async () => {
@@ -341,6 +441,139 @@ it('keeps cleanup open while an older snapshot retains dead rows, then removes t
   await expect.poll(()=>recoverAndDrainCleanup(f),{timeout:30000,interval:25}).toBe('ok');
   expect((await heaps(f,['messages','tool_notes','chunks'])).filter(r=>r.bytes.includes(secret)).map(r=>r.relname)).toEqual([]);
 },40000);
+
+// A same-database snapshot pins the dead versions deterministically. This is
+// a physical negative control; it does not identify the historical second row.
+it('records snapshot-blocked cleanup and recovers only after releasing the snapshot', async () => {
+  const f=await fixture(undefined, {}, false, {isolated:true});
+  const snapshot=await client(f.db.url);
+  let observation={stage:'snapshot setup',round:null as number|null,now:f.moving.now().toISOString()};
+  let primaryError: unknown;
+  try {
+    await chunks(f);
+    await snapshot.query('begin isolation level repeatable read');
+    await snapshot.query('select pg_current_snapshot()');
+    expect(await f.redact()).toMatchObject({ok:true,bodySpans:1,toolNoteSpans:1,chunksRemoved:2});
+    await f.db.query('checkpoint');
+    const tables=['chunks','messages','tool_notes'];
+    const before=await nodes(f,tables);
+    for (const table of tables)
+      expect((await heaps(f,[table])).some(row=>row.bytes.includes(secret))).toBe(true);
+    for (let attempt=0;attempt<10;attempt++) {
+      observation={stage:'snapshot held drain',round:attempt+1,now:f.moving.now().toISOString()};
+      await f.drain(); f.advance();
+    }
+    observation={stage:'snapshot exhausted',round:10,now:f.moving.now().toISOString()};
+    const heldWork=await f.db.rows(`select target_kind,target_id,attempts,outcome,completed_at,claimed_by
+      from brain.work_items where kind='table_cleanup' order by target_id`);
+    expect(heldWork).toEqual(tables.map(target_id=>({target_kind:'table',target_id,attempts:10,
+      outcome:'failed',completed_at:expect.any(Date),claimed_by:null})));
+    const failures=await f.db.rows(`select id,target_kind,target_id,stage,code,fingerprint,occurrences,resolved_at
+      from brain.failures order by target_id,fingerprint`);
+    expect(failures).toEqual(tables.map(target_id=>({id:expect.any(String),target_kind:'table',target_id,
+      stage:'table_cleanup',code:'TABLE_CLEANUP_WAITING',fingerprint:expect.any(String),occurrences:1,resolved_at:null})));
+    for (const row of await nodes(f,tables))
+      expect(row.relfilenode).not.toBe(before.find(r=>r.relname===row.relname)!.relfilenode);
+    for (const table of tables)
+      expect((await heaps(f,[table])).some(row=>row.bytes.includes(secret))).toBe(true);
+    expect(await f.doctor()).toMatchObject({status:'warn'});
+
+    observation={stage:'snapshot held retry',round:null,now:f.moving.now().toISOString()};
+    expect(await retryFailures({store:f.store,clock:f.moving,idGen:f.ids})).toMatchObject({ok:true,added:3,skipped:[]});
+    observation={stage:'snapshot held retry drain',round:1,now:f.moving.now().toISOString()};
+    await f.drain();
+    observation={stage:'snapshot held retry drained',round:1,now:f.moving.now().toISOString()};
+    expect(await f.db.rows(`select target_id,attempts,outcome,completed_at,claimed_by
+      from brain.work_items where kind='table_cleanup' order by target_id,created_at,id`))
+      .toEqual(tables.flatMap(target_id=>[
+        {target_id,attempts:10,outcome:'failed',completed_at:expect.any(Date),claimed_by:null},
+        {target_id,attempts:1,outcome:null,completed_at:null,claimed_by:null},
+      ]));
+    expect(await f.db.rows(`select id,target_kind,target_id,stage,code,fingerprint,occurrences,resolved_at
+      from brain.failures order by target_id,fingerprint`)).toEqual(failures);
+    for (const table of tables)
+      expect((await heaps(f,[table])).some(row=>row.bytes.includes(secret))).toBe(true);
+    expect(await f.doctor()).toMatchObject({status:'warn'});
+
+    observation={stage:'snapshot released',round:null,now:f.moving.now().toISOString()};
+    await snapshot.query('rollback');
+    f.advance();
+    const heldNodes=await nodes(f,tables);
+    expect(await retryFailures({store:f.store,clock:f.moving,idGen:f.ids})).toMatchObject({ok:true,added:0,alreadyOpen:3,skipped:[]});
+    observation={stage:'snapshot recovery drain',round:1,now:f.moving.now().toISOString()};
+    await f.drain();
+    observation={stage:'snapshot recovery drained',round:1,now:f.moving.now().toISOString()};
+    const completed=await f.db.rows(`select target_id,attempts,outcome,completed_at,claimed_by
+      from brain.work_items where kind='table_cleanup' order by target_id,created_at,id`);
+    expect(completed).toEqual(tables.flatMap(target_id=>[
+      {target_id,attempts:10,outcome:'failed',completed_at:expect.any(Date),claimed_by:null},
+      {target_id,attempts:2,outcome:'succeeded',completed_at:expect.any(Date),claimed_by:null},
+    ]));
+    expect(await f.db.rows(`select id,target_kind,target_id,stage,code,fingerprint,occurrences,resolved_at
+      from brain.failures order by target_id,fingerprint`))
+      .toEqual(failures.map(row=>({...row,resolved_at:expect.any(Date)})));
+    for (const row of await nodes(f,tables))
+      expect(row.relfilenode).not.toBe(heldNodes.find(r=>r.relname===row.relname)!.relfilenode);
+    const finalBytes=await heaps(f,tables);
+    expect(finalBytes.some(row=>row.bytes.includes(secret))).toBe(false);
+    for (const table of ['messages','tool_notes'])
+      expect(finalBytes.some(row=>row.table_name===table && row.bytes.includes(control))).toBe(true);
+    const read=await f.store.readSession(sampleSessionToken);
+    expect(read.ok && read.messages.find(m=>m.id===f.messageId)?.body).toBe(`${control} [REDACTED:manual] next`);
+    expect(read.ok && read.toolNotes.find(n=>n.id===f.batch.toolNotes[0]!.id)?.target).toBe(`a\u0000 [REDACTED:manual] ${control}`);
+    expect(await f.doctor()).toMatchObject({status:'ok'});
+  } catch (error) {
+    primaryError=error;
+    await cleanupDiagnostic(f,observation);
+  } finally {
+    try { await snapshot.query('rollback'); }
+    catch (cleanupError) {
+      if (primaryError !== undefined) throw new AggregateError([primaryError,cleanupError], 'snapshot assertion and rollback failed');
+      throw cleanupError;
+    }
+  }
+  if (primaryError !== undefined) throw primaryError;
+},40000);
+
+// Real store upserts and a winning claim must distinguish causes and targets.
+it('aggregates identical cleanup failures and resolves only the winning target', async () => {
+  const f=await fixture();
+  const first=clock.now();
+  const second=new Date(first.getTime()+1000);
+  const recovered=new Date(first.getTime()+2000);
+  const recurrence=new Date(first.getTime()+3000);
+  const record=async (n:number,targetId:string,fingerprint:string,code:string,occurredAt=first) => f.store.recordFailure({
+    id:id(n),targetKind:'table',targetId,stage:TABLE_CLEANUP_KIND,fingerprint,harness:null,sessionId:null,
+    code,message:'synthetic cleanup failure',occurredAt});
+  expect(await record(700,'messages','same-cause','TABLE_CLEANUP_FAILED'))
+    .toMatchObject({ok:true,outcome:'recorded',created:true,failureId:id(700)});
+  expect(await record(701,'messages','same-cause','TABLE_CLEANUP_FAILED',second))
+    .toMatchObject({ok:true,outcome:'recorded',created:false,failureId:id(700)});
+  expect(await record(702,'messages','other-cause','TABLE_CLEANUP_WAITING')).toMatchObject({ok:true,created:true});
+  expect(await record(703,'tool_notes','same-cause','TABLE_CLEANUP_FAILED')).toMatchObject({ok:true,created:true});
+  const selectFailures=`select id,target_kind,target_id,stage,code,fingerprint,occurrences,first_occurred_at,occurred_at,resolved_at
+    from brain.failures order by id`;
+  const before=await f.db.rows(selectFailures);
+  expect(before).toEqual([
+    {id:id(700),target_kind:'table',target_id:'messages',stage:TABLE_CLEANUP_KIND,code:'TABLE_CLEANUP_FAILED',fingerprint:'same-cause',occurrences:2,first_occurred_at:first,occurred_at:second,resolved_at:null},
+    {id:id(702),target_kind:'table',target_id:'messages',stage:TABLE_CLEANUP_KIND,code:'TABLE_CLEANUP_WAITING',fingerprint:'other-cause',occurrences:1,first_occurred_at:first,occurred_at:first,resolved_at:null},
+    {id:id(703),target_kind:'table',target_id:'tool_notes',stage:TABLE_CLEANUP_KIND,code:'TABLE_CLEANUP_FAILED',fingerprint:'same-cause',occurrences:1,first_occurred_at:first,occurred_at:first,resolved_at:null},
+  ]);
+  await cleanupItems(f,['messages']);
+  const claim=await f.store.claimWork({now:clock.now(),kinds:[TABLE_CLEANUP_KIND],claimedBy:'winner'});
+  if (!claim.ok || claim.item===null) throw new Error('missing cleanup claim');
+  expect(claim.item.targetId).toBe('messages');
+  expect(await f.store.completeWork({id:claim.item.id,claimedBy:'stale',now:clock.now()})).toEqual({ok:true,outcome:'lost'});
+  expect(await f.db.rows(selectFailures)).toEqual(before);
+  expect(await f.store.completeWork({id:claim.item.id,claimedBy:'winner',now:recovered})).toEqual({ok:true,outcome:'done'});
+  const resolved=before.map(row=>row.target_id==='messages' ? {...row,resolved_at:recovered} : row);
+  expect(await f.db.rows(selectFailures)).toEqual(resolved);
+  expect(await record(704,'messages','same-cause','TABLE_CLEANUP_FAILED',recurrence))
+    .toMatchObject({ok:true,outcome:'recorded',created:false,failureId:id(700)});
+  expect(await f.db.rows(selectFailures)).toEqual(resolved.map(row=>row.id===id(700)
+    ? {...row,occurrences:3,occurred_at:recurrence,resolved_at:null} : row));
+  expect(await f.doctor()).toMatchObject({status:'warn'});
+});
 
 it.each(['message','file'] as const)('refuses a valid direct brain_app %s redaction without cleanup items', async verb => {
   const f=await fixture(); await chunks(f); await file(f);

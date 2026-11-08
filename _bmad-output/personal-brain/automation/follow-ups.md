@@ -577,3 +577,30 @@ built/deferred[]/필수unresolved0이며 에픽closure와사용자인수done은�
 ## 에픽22 종료 검증 (2026-11-08)
 
 [종료 검증](../tickets/epic-query-performance/epic-query-performance-closure.md)에 E22-1~5의 실제 성능·동등성·인덱스 크기/쓰기 비용,22.6scope 감사와6개수락source의원격조상을연결했다. 독립PO Closure 검사 fix0/ask0으로 에픽은built이며사용자인수done아니다. 옛raw6손실/원인미확정,역사schema41성과와현재42전승범위,최초실패/후속처분,CREATE/locator/취소readiness·운영배포등기존후속은해결로바꾸지않는다. 새시험/성능실행없음,현재plugin설치ref미포함은부모Done when의main수락과구별한별도릴리스후속이다.
+
+
+## 19.14 — redaction 권한 시험 격리·물리 복구 회귀 수락 (2026-11-09)
+
+근거: [티켓](../tickets/epic-test-time/tickets/bug-redaction-cleanup-failure-count.md), [계획](../tickets/epic-test-time/tickets/bug-redaction-cleanup-failure-count-plan.md)의 AC3 보완 이력·Review Triage Log·Verification Results·Auto Run Result, source `86a0ac7ba265e5c242844f45bca0e3a97aedaee2`. 중앙은 독립 PO 및 Sol 4렌즈 후속 원문, 실제 소스·검증 지문과 원시 결과를 대조했다.
+
+- 시험 한 파일의 전용 cluster 선택·정확 세 대상/권한 실패1·물리 비밀 제거/정상값 보존·명시적 복구·같은 DB snapshot 음성/해제 복구·실패 집약/재개방을 보강했다. redaction 41/41 통과, 정확 소유 container의 PostgreSQL 시스템 식별자와 실제 fixture SQL 연결 매핑을 확인했다. 제품·공통 fixture/test-db·runner/config·migration/plugin/lock/API는 불변이다.
+- 최초 전체 TS 12실패와 Python 8실패를 보존했다. 격리 HOME의 실제 OrbStack 상태 위임 및 저장소 내부 TMP 전제 오류를 구별했고, 후속 제한 PATH의 env127 실패도 보존했다. 외부 TMP와 실제 CLI의 status 한정 위임을 교정한 뒤 sessions/runtime 94통과, root hook 7통과/기존 조건부 skip1, Python hook 8통과로 관련 실패를 처분했다. 최초 전체 두 명령을 exit0으로 고쳐 쓰지 않는다.
+- 역사 source `87f7b3e`의 두 실패행은 식별 정보 유실로 target/code/원인이 미확정이다. 같은 DB snapshot 합성 입력은 그 방해·복구 계약만 검증하며 별도 DB 영향이나 역사 원인 해결을 증명하지 않는다. 구 source 실행과 추가 cross-DB 관측은 수행하지 않았다. 중앙 AC3 보완의 이전 문구·이유와 독립 확인을 계획/티켓에 보존했다.
+- 19.5/19.1 인계: 기존 39사례를 보존·강화하고 2사례 및 전용 cluster 2개, 실제 서버 식별 조회·정리 비용을 추가했다. hook 저장소 snapshot에도 새 시험/문서 바이트가 들어가므로 과거 측정 표본을 새 source의 성능으로 자동 재사용하지 않는다. 19.5는 19.13 최종 수락까지 합친 source의 실제 의존/빌드 입력을 대조해 새 동결과 필요한 측정을 준비한다. 19.1은 새 DB 준비 비용을 기준에 포함한다.
+- 최초 fixture 269개와 관리자 PG·관련 검증 PG의 정확 ID 부재 증거를 확인했다. 원시·리뷰·영수증은 원 워크트리와 중앙 비공개 archive에 보존하며 중첩 HOME/TMP/venv는 원 워크트리에 보존한다. 다른 티켓/운영 자원 정리는 없다.
+
+built/deferred[]/operator_actions[]이며 사용자 인수 done은 아니다. 역사 원인 한계와 통합 후 성능·DB 준비 비용 인계는 계속 추적한다.
+
+
+## 19.13 — Drive 시험 transcript 입력 격리 수락 (2026-11-09)
+
+근거: [티켓](../tickets/epic-test-time/tickets/bug-drive-tracer-timeout.md), [계획](../tickets/epic-test-time/tickets/bug-drive-tracer-timeout-plan.md)의 Change Log·Review Triage Log·사례 대응표·측정 바이트 인계·최신 main 통합 경계, 최종 source `9124f8e2e44926ec7b15d432bc4f1553dc22cb55`. 최초 제출 `e0c9a9d`와 등록 전용 `ac2ea1e`는 이력으로 구별한다.
+
+- 두 tracer 시험의 fixture·별도 parser/child 조립에 전용 CLAUDE_CONFIG_DIR을 지정했다. 고정 합성 process HOME의 transcript가 실제 assembly/scan/queue에 유입되는 양성 대조와 교정 fixture의 차단을 확인한다. 기존 9개 사례 본문·단언·제한은 보존했고 parser의 SIGKILL/failed1/current·chunks 보존 계약을 강화했다. 대상 18+27=45사례가 통과했다. 제품·공통 fixture/test-db·runner/config·migration/plugin/lock은 원본 기준 불변이다.
+- 최초 전체 TS 12실패와 Python 8실패의 원시를 보존했다. private Compose 검색 경로와 checkout 내부 TMP 전제를 교정한 뒤 관련 TS 3파일 108통과/기존 Python 전용 skip1, Python hook 8통과로 처분했다. 최초 두 null status의 signal/error는 미기록이라 정확 원인을 확정하지 않는다. 최초 전체를 exit0으로 바꾸어 쓰지 않는다.
+- 과거 tracer 9timeout과 parser failed4의 개별 원인은 root/kind 기록 누락으로 미확정이다. 중앙 AC1 보완의 이전 요구·이유·대체 필수 근거와 독립 PO 확인을 보존했다. 입력 격리 결함 교정은 입증했지만 과거 10개 모두 같은 원인이었다는 주장은 하지 않는다. 승인된 제한 진단과 합성 A/B 외 추가 진단·전체·성능 반복은 없었다.
+- incoming 19.14/main `1897c86` 정상 통합에서 부모 Decision 한 곳의 양쪽 내용을 보존했다. redaction 시험은 이미 수락한 blob 그대로이고 두 tracer는 실행 해시 그대로다. 통합 컴파일·독립 영향 확인은 통과했으며 결합 source 전체 suite 실행으로 확대하지 않는다.
+- 19.5 인계: frozen 7파일/21job/54case에 두 tracer의 직접 선택은 없으나 hook의 포괄 git-ls-files/copy/snapshot/commit/clone/install/build에 변경 바이트가 들어간다. 간접 측정 입력 변화가 있으며 영향량은 미측정이다. `87f7b3e`의 기존 성과는 그 source의 이력으로 보존하고, 수락된 19.13+19.14를 통합한 뒤 관련 검증·새 동결 및 1/2/3/4 구성 측정을 준비한다. 원본 gate 내부 자기 해시는 현재 파일 전체 무결성의 근거로 사용하지 않으며 실제 raw/외부 지문과 구별한다.
+- 전체 fixture269와 관리 PG, 관련 관리 PG·Compose2 및 정확 volume/port의 종료 시점 부재 증거를 확인했다. 전역 모든 OS 프로세스 무잔존을 증명한 것은 아니다. 워크트리/브랜치/세션과 비공개 원시는 보존하며 중앙 archive에도 보고·검토·원시를 보관했다.
+
+built/deferred[]이며 사용자 인수 done은 아니다. 중앙의 19.5 공식 source 인계와 새 source의 측정 gate는 별도 진행한다.
