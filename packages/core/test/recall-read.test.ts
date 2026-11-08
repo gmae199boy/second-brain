@@ -54,3 +54,27 @@ it('반환하지 않는 여섯 번째의 가려질 토큰은 안전한 다섯 �
   const result = await searchRecall(store, 'chunks', { query: '검색' });
   expect(result).toMatchObject({ ok: true, meta: { count: 5, has_more: true } });
 });
+
+it('chunk와 tool은 가림 후 예산·생략·다음 출처와 extension 메타를 함께 보존한다', async () => {
+  const { extensionPublicProjection } = await import('../src/extensions/public-projection.js');
+  const status = {
+    listExtensionInventory: async () => ({ok:true as const,names:['fixture']}),
+    getExtensionPublicStatus: async (name:string) => ({ok:true as const,status:extensionPublicProjection(name,null,null,0,0)}),
+  };
+  const row = { kind:'conversation' as const, session:'demo:id', harness:'demo', started_at:'2026-01-01T00:00:00.000Z', workspace_id:null, tag_source:null, project_id:null, worktree_id:null, from_at:'2026-01-02T00:00:00.000Z', to_at:'2026-01-02T00:00:00.000Z', chunk_id:'one', body:'😀"'.repeat(2200) + ' password=secret' };
+  for (const kind of ['chunks','tools'] as const) {
+    const rows = Array.from({length:6},(_,i)=>({...row,chunk_id:kind==='chunks'?String(i):undefined,tool_note_id:kind==='tools'?String(i):undefined}));
+    const store:RecallStore={searchRecall:async()=>({ok:true,rows})};
+    const result=await searchRecall(store,kind,{query:'😀'},status);
+    expect(result.ok).toBe(true); if(!result.ok) throw Error(result.message);
+    expect(result.meta).toMatchObject({has_more:true,extensions:[{source:'fixture',installed:false,enabled:null,searchable:null}],omitted:{reason:'결과 크기 한도'},next:{ns:'sessions',verb:'read'}});
+    expect(result.warnings).toContain('RESULT_TRUNCATED'); expect(Array.from(JSON.stringify(result)).length).toBeLessThanOrEqual(8000);
+    expect(JSON.stringify(result)).not.toContain('password=secret');
+  }
+  const empty:RecallStore={searchRecall:async()=>({ok:true,rows:[]})};
+  expect(await searchRecall(empty,'chunks',{query:'none'},status)).toMatchObject({ok:true,data:[],meta:{has_more:false,hint:expect.any(String),extensions:[{source:'fixture',installed:false}]}});
+  const failed={...status,getExtensionPublicStatus:async()=>({ok:false as const,code:'DB_UNAVAILABLE' as const,message:'status failed'})};
+  expect(await searchRecall(empty,'chunks',{query:'none'},failed)).toMatchObject({ok:false,code:'DB_UNAVAILABLE'});
+  const unsafe:RecallStore={searchRecall:async()=>({ok:true,rows:[{...row,session:'demo:token=a;'}]})};
+  expect(await searchRecall(unsafe,'chunks',{query:'x'},status)).toMatchObject({ok:false,code:'INVALID_ARGUMENT'});
+});

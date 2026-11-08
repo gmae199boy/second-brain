@@ -17,11 +17,68 @@ export function postgresRecallStore(connect: PgConnect): RecallStore & DocumentR
     const opened = connect();
     if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
     try {
-      const source = input.kind === 'chunks'
-        ? sql`select c.id as chunk_id, null::uuid as tool_note_id, null::uuid as message_id, null::text as tool, null::bytea as tool_raw, c.body, c.body_raw, c.from_at, c.to_at, c.session_id from brain.chunks c where c.index_config_id=${CONVERSATION_CHUNK_INDEX_CONFIG_ID}::uuid and lower(c.body) like lower(${pgText(input.pattern).text}) escape '\\'`
-        : sql`select null::uuid as chunk_id, n.id as tool_note_id, m.id as message_id, n.tool, n.tool_raw, n.target as body, n.target_raw as body_raw, m.occurred_at as from_at, m.occurred_at as to_at, n.session_id from brain.tool_notes n left join brain.messages m on m.session_id=n.session_id and m.harness_message_id=n.harness_message_id and m.harness_message_id_raw is not distinct from n.harness_message_id_raw where lower(n.target) like lower(${pgText(input.pattern).text}) escape '\\'`;
+      // A negative probe linearizes at this SELECT; a positive probe uses only
+      // the later full SELECT's snapshot for ranking and returned rows.
+      // Leave invalid or zero limits to the original query and its error semantics.
+      if (Number.isSafeInteger(input.limit) && input.limit > 0) {
+        const pattern = pgText(input.pattern).text;
+        // Plan candidate retrieval independently of the outer LIMIT while letting
+        // the executor stop once the parent has consumed a matching row.
+        const found = input.kind === 'chunks'
+          ? await sql`with candidates as materialized (select 1 as present from brain.chunks where index_config_id=${CONVERSATION_CHUNK_INDEX_CONFIG_ID}::uuid and lower(body) like lower(${pattern}) escape '\\') select present from candidates limit 1`.execute(opened.connection.db)
+          : await sql`with candidates as materialized (select 1 as present from brain.tool_notes where lower(target) like lower(${pattern}) escape '\\') select present from candidates limit 1`.execute(opened.connection.db);
+        if (found.rows.length === 0) return { ok: true, rows: [] };
+      }
+      const query = pgText(input.query).text!;
+      let shortToolQuery = false;
+      if (input.kind === 'tools') {
+        let count = 0;
+        for (const _point of query) { if (++count === 3) break; }
+        shortToolQuery = count > 0 && count < 3;
+      }
+      const source = input.kind === 'chunks' ? sql`select c.id as chunk_id, null::uuid as tool_note_id, null::uuid as message_id, null::text as tool, null::bytea as tool_raw, c.body, c.body_raw, c.from_at, c.to_at, c.session_id from brain.chunks c where c.index_config_id=${CONVERSATION_CHUNK_INDEX_CONFIG_ID}::uuid and lower(c.body) like lower(${pgText(input.pattern).text}) escape '\\'` : null;
       // [ASSUMPTION] 근접 단계 다음 리터럴 일치 횟수, 시각 내림차순, id 순이다.
-      const rows = await sql<{ chunk_id: string | null; tool_note_id: string | null; message_id: string | null; tool: string | null; tool_raw: Buffer | null; body: string; body_raw: Buffer | null; from_at: string | null; to_at: string | null; harness: string; harness_session_id: string; started_at: string; workspace_id: string | null; tag_source: string | null; project_id: string | null; worktree_id: string | null }>`select x.*, s.harness, s.harness_session_id, s.started_at, s.workspace_id, s.tag_source, s.project_id, s.worktree_id from (${source}) x join brain.sessions s on s.id=x.session_id order by case when ${input.worktree ?? null}::text is not null and s.worktree_id::text=${input.worktree ?? null} then 0 when ${input.project ?? null}::text is not null and s.project_id::text=${input.project ?? null} then 1 else 2 end, (length(lower(x.body))-length(replace(lower(x.body),lower(${pgText(input.query).text}),''))) desc, x.from_at desc nulls last, coalesce(x.chunk_id,x.tool_note_id) asc limit ${input.limit}`.execute(opened.connection.db);
+      // 검증된 ASCII 분기에서만 C lower가 원문 바이트 길이를 보존한다.
+      // 도구 후보가 많을 때만 좁은 메시지 관계를 일괄 결합한다. 경계는 실제 후보 수다.
+      const rows = input.kind === 'chunks' ? await sql<{ chunk_id: string | null; tool_note_id: string | null; message_id: string | null; tool: string | null; tool_raw: Buffer | null; body: string; body_raw: Buffer | null; from_at: string | null; to_at: string | null; harness: string; harness_session_id: string; started_at: string; workspace_id: string | null; tag_source: string | null; project_id: string | null; worktree_id: string | null }>`select x.*, s.harness, s.harness_session_id, s.started_at, s.workspace_id, s.tag_source, s.project_id, s.worktree_id from (${source}) x join brain.sessions s on s.id=x.session_id order by case when ${input.worktree ?? null}::text is not null and s.worktree_id::text=${input.worktree ?? null} then 0 when ${input.project ?? null}::text is not null and s.project_id::text=${input.project ?? null} then 1 else 2 end, (case when (select current_setting('server_encoding') = 'UTF8' and lower('ABCDEFGHIJKLMNOPQRSTUVWXYZ') collate "C" = 'abcdefghijklmnopqrstuvwxyz') and octet_length(x.body) = length(x.body) then octet_length(x.body)-octet_length(replace(lower(x.body collate "C"),lower(${query}),'')) else octet_length(lower(x.body))-octet_length(replace(lower(x.body),lower(${query}),'')) end) desc, x.from_at desc nulls last, coalesce(x.chunk_id,x.tool_note_id) asc limit ${input.limit}`.execute(opened.connection.db) : shortToolQuery ? await sql<{ chunk_id: string | null; tool_note_id: string | null; message_id: string | null; tool: string | null; tool_raw: Buffer | null; body: string; body_raw: Buffer | null; from_at: string | null; to_at: string | null; harness: string; harness_session_id: string; started_at: string; workspace_id: string | null; tag_source: string | null; project_id: string | null; worktree_id: string | null }>`
+        select null::uuid as chunk_id, n.id as tool_note_id, m.id as message_id, n.tool, n.tool_raw, n.target as body, n.target_raw as body_raw,
+          m.occurred_at as from_at, m.occurred_at as to_at, n.session_id, s.harness, s.harness_session_id, s.started_at, s.workspace_id, s.tag_source, s.project_id, s.worktree_id
+        from brain.tool_notes n
+        left join brain.messages m on m.session_id=n.session_id and m.harness_message_id=n.harness_message_id and m.harness_message_id_raw is not distinct from n.harness_message_id_raw
+        join brain.sessions s on s.id=n.session_id
+        where lower(n.target) like lower(${pgText(input.pattern).text}) escape '\\'
+        order by case when ${input.worktree ?? null}::text is not null and s.worktree_id::text=${input.worktree ?? null} then 0 when ${input.project ?? null}::text is not null and s.project_id::text=${input.project ?? null} then 1 else 2 end,
+          (case when (select current_setting('server_encoding') = 'UTF8' and lower('ABCDEFGHIJKLMNOPQRSTUVWXYZ') collate "C" = 'abcdefghijklmnopqrstuvwxyz') and octet_length(n.target) = length(n.target)
+            then octet_length(n.target)-octet_length(replace(lower(n.target collate "C"),lower(${query}),''))
+            else octet_length(lower(n.target))-octet_length(replace(lower(n.target),lower(${query}),'')) end) desc,
+          m.occurred_at desc nulls last, n.id asc limit ${input.limit}`.execute(opened.connection.db) : await sql<{ chunk_id: string | null; tool_note_id: string | null; message_id: string | null; tool: string | null; tool_raw: Buffer | null; body: string; body_raw: Buffer | null; from_at: string | null; to_at: string | null; harness: string; harness_session_id: string; started_at: string; workspace_id: string | null; tag_source: string | null; project_id: string | null; worktree_id: string | null }>`
+        with matched as materialized (
+          select n.id, n.session_id, n.harness_message_id, n.harness_message_id_raw,
+            (case when (select current_setting('server_encoding') = 'UTF8' and lower('ABCDEFGHIJKLMNOPQRSTUVWXYZ') collate "C" = 'abcdefghijklmnopqrstuvwxyz') and octet_length(n.target) = length(n.target)
+              then octet_length(n.target)-octet_length(replace(lower(n.target collate "C"),lower(${query}),''))
+              else octet_length(lower(n.target))-octet_length(replace(lower(n.target),lower(${query}),'')) end) as score
+          from brain.tool_notes n where lower(n.target) like lower(${pgText(input.pattern).text}) escape '\\'
+        ), mode as materialized (select count(*) > 256 as use_batch from matched),
+        batch_messages as materialized (
+          select m.id, m.session_id, m.harness_message_id, m.harness_message_id_raw, m.occurred_at
+          from brain.messages m where (select use_batch from mode)
+        ), joined as (
+          select n.id, n.session_id, n.score, m.id as message_id, m.occurred_at
+          from matched n left join brain.messages m on m.session_id=n.session_id and m.harness_message_id=n.harness_message_id and m.harness_message_id_raw is not distinct from n.harness_message_id_raw
+          where not (select use_batch from mode)
+          union all
+          select n.id, n.session_id, n.score, m.id as message_id, m.occurred_at
+          from matched n left join batch_messages m on m.session_id=n.session_id and m.harness_message_id=n.harness_message_id and m.harness_message_id_raw is not distinct from n.harness_message_id_raw
+          where (select use_batch from mode)
+        ), ranked as materialized (
+          select j.*, case when ${input.worktree ?? null}::text is not null and s.worktree_id::text=${input.worktree ?? null} then 0 when ${input.project ?? null}::text is not null and s.project_id::text=${input.project ?? null} then 1 else 2 end as proximity
+          from joined j join brain.sessions s on s.id=j.session_id
+          order by proximity, j.score desc, j.occurred_at desc nulls last, j.id asc limit ${input.limit}
+        )
+        select null::uuid as chunk_id, n.id as tool_note_id, r.message_id, n.tool, n.tool_raw, n.target as body, n.target_raw as body_raw,
+          r.occurred_at as from_at, r.occurred_at as to_at, n.session_id, s.harness, s.harness_session_id, s.started_at, s.workspace_id, s.tag_source, s.project_id, s.worktree_id
+        from ranked r join brain.tool_notes n on n.id=r.id join brain.sessions s on s.id=r.session_id
+        order by r.proximity, r.score desc, r.occurred_at desc nulls last, r.id asc`.execute(opened.connection.db);
       return { ok: true, rows: rows.rows.map(originalText).map(r => ({ kind: 'conversation' as const, session: formatSessionToken({ harness: r.harness, harnessSessionId: r.harness_session_id }), harness: r.harness, started_at: new Date(r.started_at).toISOString(), workspace_id: r.workspace_id, tag_source: r.tag_source, project_id: r.project_id, worktree_id: r.worktree_id, from_at: r.from_at === null ? null : new Date(r.from_at).toISOString(), to_at: r.to_at === null ? null : new Date(r.to_at).toISOString(), ...(r.chunk_id ? { chunk_id: r.chunk_id } : { tool_note_id: r.tool_note_id!, message_id: r.message_id, tool: r.tool ?? '' }), body: r.body })) };
     } catch (error) {
       const code = (error as { code?: string }).code;

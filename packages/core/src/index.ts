@@ -218,6 +218,7 @@ export {
   FILE_SOURCE_UNREACHABLE,
   documentExtractHandler,
   enqueueDocumentExtractions,
+  enqueueUnsupportedCarry,
   type DocumentExtractWorkDependencies,
   type EnqueueDocumentExtractionsDependencies,
   type EnqueueDocumentExtractionsOptions,

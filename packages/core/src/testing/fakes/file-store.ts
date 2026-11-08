@@ -16,6 +16,12 @@ export function memoryFileStore(): FileStore {
       const bytes = blobs.get(l.locator);
       return bytes === undefined ? { ok: false, code: 'FILE_NOT_FOUND', message: '파일이 없습니다' } : { ok: true, bytes: bytes.slice() };
     },
+    async getBounded(l, maxBytes) {
+      if (!accepts(l)) return refused;
+      const bytes = blobs.get(l.locator);
+      if (!bytes) return {ok:false,code:'FILE_NOT_FOUND',message:'파일이 없습니다'};
+      return bytes.length > maxBytes ? {ok:false,code:'TOO_LARGE',message:'파일 크기 상한 초과'} : {ok:true,bytes:bytes.slice()};
+    },
     async exists(l) { return accepts(l) ? { ok: true, exists: blobs.has(l.locator) } : refused; },
     async url(l) { return accepts(l) ? { ok: true, url: `memory:///${l.locator}` } : refused; },
     async delete(l) { return accepts(l) ? { ok: true, deleted: blobs.delete(l.locator) } : refused; },

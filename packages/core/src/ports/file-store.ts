@@ -4,6 +4,8 @@ export type PutFileResult = { ok: true; contentHash: string; sizeBytes: number; 
 export interface FileStore {
   put(bytes: Uint8Array): Promise<PutFileResult>;
   get(location: FileLocation): Promise<{ ok: true; bytes: Uint8Array } | FileStoreFailure | { ok: false; code: 'FILE_NOT_FOUND'; message: string }>;
+  /** Read at most maxBytes; return TOO_LARGE without returning a partial buffer. */
+  getBounded(location: FileLocation, maxBytes: number): Promise<{ok:true;bytes:Uint8Array} | FileStoreFailure | {ok:false;code:'FILE_NOT_FOUND';message:string} | {ok:false;code:'TOO_LARGE';message:string}>;
   exists(location: FileLocation): Promise<{ ok: true; exists: boolean } | FileStoreFailure>;
   url(location: FileLocation): Promise<{ ok: true; url: string } | FileStoreFailure>;
   delete(location: FileLocation): Promise<{ ok: true; deleted: boolean } | FileStoreFailure>;

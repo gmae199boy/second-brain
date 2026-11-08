@@ -113,3 +113,35 @@ node tooling/query-perf/run.mjs compare "$perf_root/base.json" "$perf_root/chang
 러너는 소유한 임의 이름 DB에 합성 파일·위치 각 10만 행을 만든다. 실제 store의 read/list/mark마다 warmup 1회와 표본 3회를 실행하고, mark는 서로 다른 미삭제 행을 사용한다. 각 호출의 반환, 호출 전후 행, 전체 변경 행과 SQL 수를 독립 fixture oracle에 대조한다. 별도 트랜잭션에서 수집한 EXPLAIN은 rollback한다. 비교기는 기준 SHA, fixture, 빌드·migration·lockfile·러너 지문, 환경 및 정리, 세 표본과 oracle을 확인하고 변경 실행 계획의 UUID 인덱스 조회와 read/mark 중앙값 50% 이하를 요구한다. 결과 JSON과 실패 로그, 종료 코드, 서버·컨테이너 소유권과 정리 증거를 보존한다.
 
 각 측정 대상 파일에는 brain/external 소유권과 서로 다른 경로를 가진 세 위치가 있으며 반환 순서와 개수를 독립 oracle로 확인한다. 시간 표본 밖에서 canonical·부재·대소문자·괄호·무하이픈·공백·비UUID·빈 문자열·null·undefined의 read/list/첫·반복 mark 및 잘못된 시각 결과를 검증한다. 전체 files와 위치 행의 개수 및 `deleted_at`을 제외한 내용 지문을 호출 전후와 양쪽 checkout 사이에 비교하고, 허용된 삭제 시각 변경 행은 별도로 대조한다. migration 파일별 SHA-256 manifest와 실제 적용 checksum도 양쪽에서 대조한다. 각 호출의 SQL trace는 read/list 각 1문, mark BEGIN·UPDATE·SELECT·COMMIT 4문을 요구한다. read/list 및 mark 두 문의 EXPLAIN은 동일한 brain_app/origin 세션 설정의 별도 rollback 트랜잭션에서 수행한다.
+
+## 흔한 검색어 common-search
+
+최종 구현·필요한 리뷰 수정이 끝난 뒤, 중앙과 명시적 만료 시각이 있는 측정 창을 조율한다. 운영·공유 시험·다른 티켓의 PostgreSQL이 아닌 자신이 소유한 독립 클러스터를 사용한다. `prepareDatabase`가 클러스터 공통 role 암호를 바꾸므로 DB만 분리하는 것으로는 부족하다. 기존 컨테이너와 포트를 건드리지 말고 자기 이름·포트·정확한 컨테이너 ID를 기록한다. 기준 checkout은 `d6a0b4b614daa1c321c735a2ca09aab27d78e193`의 독립 export를 위의 archive 절차로 준비하고 양 checkout을 빌드한다.
+
+```sh
+node tooling/query-perf/run.mjs common-search --checkout <baseline-checkout> --database-url <owned-admin-url> --out <owned-path>/base.json
+node tooling/query-perf/run.mjs common-search --checkout <current-checkout> --database-url <owned-admin-url> --out <owned-path>/change.json
+node tooling/query-perf/run.mjs compare <owned-path>/base.json <owned-path>/change.json
+```
+
+같은 현재 러너·전용 클러스터·설정으로 순차 실행한다. 각 대상에 10만 개의 1024 ASCII 바이트 본문을 생성하며 chunk는 20개 세션, tool은 연결 메시지가 있는 단일 세션이다. 각 대상에서 `common`, `a`, 긴 불일치를 기본 limit 5와 NULL 근접 문맥으로 실행한다. fixture와 독립 전수 SQL/oracle 검사는 측정 밖이다. 조건별 무계측 warmup 1회 후 제품 core API wall 3표본을 수집하고 별도 SQL 추적 3회, store wall 3표본, EXPLAIN ANALYZE BUFFERS를 기록한다. 독립 고정 상위 6개 ID, 전수 SQL 순위, 전체 결과와 metadata hash를 확인한다. 결과 JSON에 fixture/빌드/러너 지문과 환경, UTC 시각, 부하, 프로세스, SQL 시간 및 DB 생성·삭제 증거가 남는다.
+
+비교기는 양쪽 모두 6조건과 유효한 표본·중앙값·지문·결과 동등성을 요구한다. common chunk/tool 각각 변경/기준 중앙값 ≤0.5, a/불일치 각각 ≤1.0이어야 한다. 작은 DB fixture 시험의 결과는 이 판정에 사용할 수 없다. 자동 비교는 측정 창의 실제 부하나 병렬 작업이 없었음을 증명하지 않으므로 원시 로그·환경·프로세스와 중앙 창을 함께 확인한다. 실패 결과는 `status: failed`와 정리 상태를 남기고 비교에 통과하지 않는다. DB 삭제 실패 시 남은 정확한 소유 이름과 원인을 확인하고 다른 DB는 건드리지 않는다. 측정 종료 뒤 기록한 정확한 컨테이너 ID의 소유권을 확인하여 정리하고 부재 증거를 남긴다. 연결 URL·원시 비밀은 보고서나 Git에 기록하지 않는다.
+
+기본 여섯 조건의 결과와 표본을 모두 수집한 뒤 별도의 긴 합성 chunk/tool 여섯 행을 추가한다. 각 대상의 worktree/project 근접 순위를 독립 전수 SQL과 고정 순서로 검증하고 실제 core 응답의 가림 후 8000자 한도, 잘림·omitted·next·has_more·extension metadata를 확인한다. 보조 fixture는 성능 표본에 포함하지 않으며 양쪽 전체 응답 hash가 같고 실제 가림·잘림 증거가 있어야 비교기가 통과한다.
+
+Common-search 진단과 fixture 및 EXPLAIN은 생성 DB에서 제품 검색 Pool과 같은 UTC·lock/statement timeout 0 설정을 사용하며 유효 설정을 기록한다. 비교기는 각 실행 안의 warmup, wall, diagnostic, store, EXPLAIN 및 여섯 조건의 시간 순서와 baseline 종료 후 change 시작을 요구한다.
+
+Common-search의 `startedAt`은 준비 전 실행 시작이고 `finishedAt`은 DB와 연결 정리 후다. `snapshots`는 setup 및 측정의 시작·끝에 UTC 시각, 부하, 프로세스를 별도로 기록한다. SQL 진단의 `spans`에는 정규화 SQL SHA-256, 검색 여부와 시간이 들어가며 `searchMs`는 검색 SQL 합계, 기존 `totalMs`와 `spansMs`는 전체 DB 호출이다. 생성 DB의 locale provider·locale·collation version·datcollate·datctype과 순위/응답/조인 관련 실제 합성 행의 필드 목록·recipe 버전·지문을 비교한다. 결과 불일치 시 실패 증거에 합성 ID 순서와 지문, 응답의 첫 차이 경로만 기록한다. 이러한 증거는 실제 측정 환경과 실행 로그의 독립 감사를 대체하지 않는다.
+
+### Common-search 준비 프로토콜 2
+
+각 실제 checkout의 migration을 적용하고 같은 10만 행 fixture를 만든다. baseline은 원본 schema 39, current는 수락된 실제 Drive 0040, sources 0041, Drive connection 0042를 포함한 schema 42을 사용한다. 각 checkout의 고정 migration 파일명·SHA manifest와 API 상수 및 main/cost 적용 버전을 엄격히 대조하며 철회된 식 통계 0040과 그 정의·분포는 허용하지 않는다. 소유 합성 DB의 UTC, lock_timeout=0, statement_timeout=0 연결에서 준비 전 상태를 기록한 뒤 트랜잭션 밖에서 `VACUUM (ANALYZE)`를 `brain.sessions → brain.messages → brain.chunks → brain.tool_notes` 순서로 실행한다. 준비 후 행수 유지, 각 명령 성공과 관찰 가능한 GIN pending 0/0을 확인한다. pgstattuple을 이 합성 DB에 설치할 수 없으면 사유와 미지원 상태를 기록하며 양쪽 지원 상태가 같아야 한다. 상태에는 관계 및 GIN 크기·옵션, 통계 시각·카운터, autovacuum 설정, DB 활동과 잠금 및 각 실행 시각을 남긴다. 통계 뷰 값은 지연되거나 null일 수 있다. 이 준비는 warmup과 세 판정 표본 밖이며 프로토콜 1 결과는 비교할 수 없다.
+
+6조건과 보조 계약 이후 별도 소유 DB에 같은 fixture와 준비를 적용해 rollback 쓰기 1000행씩과 동일 순서 ANALYZE를 각각 warmup 1회와 3회 측정한다. 비용 DB의 쓰기 전후와 ANALYZE 후 후보 식 통계가 없음을 검사하며 모든 DB의 생성·정리 결과를 기록한다. 이 비용 진단에는 별도 성능 임계를 적용하지 않는다.
+
+PostgreSQL 16부터 lc_collate/lc_ctype 서버 변수가 제거되므로 앱 연결에서 pg_database의 datcollate/datctype을 수집해 양 실행에 필수로 대조한다. 프로토콜 2의 검색 store와 캡처한 제품 SQL의 EXPLAIN은 격리 합성 `brain_app` 계정으로 실제 로그인해 수행한다. 같은 checkout의 `createPool`과 제품 store에 동일한 시간 제한 옵션을 적용하고 앱 세션의 현재/로그인 역할과 유효 설정·locale를 기록한다. fixture·독립 oracle·통계 준비는 관리 연결이며 migration은 runner의 `brain_owner` 경로다. 프로토콜 1에서 관리자 역할로 수집한 결과는 이 앱 역할 실측과 별도다.
+
+미출하 식 통계 후보는 T29에서 전후 추정 32행·실제 100,000행이 같고 MCV가 없으며 ANALYZE 중앙값이 약 2.34배로 증가해 철회했다. 기존 protocol 2 준비와 후보 SQL·철회 코드 백업 및 보고서·영수증은 남아 있다. T10/T12/T17/T20/T29/T34의 과거 원시 데이터 여섯 경로는 손실됐고 삭제 원인은 확인되지 않았다. 새 baseline과 환경 복원은 옛 원시 데이터의 복구가 아니므로 보고된 과거 수치를 원시 표본으로 독립 재감사할 수 없다.
+
+준비 완료와 비교에는 `chunks_body_idx` 및 `tool_notes_target_idx`의 대상 테이블과 중복 없는 pre/post 목록이 필요하다. 관측 가능한 pending은 준비 후 0이어야 하며, 크기와 통계 시각은 전후 동일할 필요가 없다. autovacuum 설정·테이블 및 GIN reloptions와 앱 연결의 계획 관련 설정은 준비 및 양쪽 실행에서 대조한다. 별도 진단의 각 DB 생성·정리, 준비, 쓰기/분석 표본은 시간 순서 및 본 측정 이후 경계를 확인한다. 후보 식 통계의 정의와 분포는 양쪽에서 없어야 한다.

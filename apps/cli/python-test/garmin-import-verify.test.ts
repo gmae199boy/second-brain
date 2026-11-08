@@ -6,9 +6,39 @@ import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { extHome } from '../test/ext-fixture.js';
 import { postgresStore } from 'second_brain/postgres';
+import { maskOutputText } from 'second_brain';
 import { runDaemon } from '../src/daemon/run.js';
 import { systemClock } from '../src/runtime/clock.js';
 import { uuidV7IdGen } from '../src/runtime/id-gen.js';
+
+// 공개 응답은 그대로 보존하고, 실제 보고서 경로에만 원본 ID를 사용한다.
+function newVerifyWorkId(before: readonly string[], after: readonly string[], publicId: string): string {
+  const previous=new Set(before), created=after.filter(id=>!previous.has(id));
+  if(created.length!==1) throw new Error(`expected one new garmin.import_verify work item, got ${created.length}`);
+  const rawId=created[0]!;
+  if(publicId!==maskOutputText(rawId)) throw new Error('public work_id does not match the masked work item ID');
+  return rawId;
+}
+async function runVerify(fixture: Awaited<ReturnType<typeof extHome>>) {
+  const ids=async()=> (await fixture.db.rows<{id:string}>("select id::text as id from brain.work_items where kind='garmin.import_verify'")).map(row=>row.id);
+  const before=await ids();
+  const result=await fixture.run(['ext','run','garmin','import-verify','--json']);
+  const rawId=newVerifyWorkId(before,await ids(),result.body.data.work_id);
+  return {...result,rawId};
+}
+
+it('공개 가림 ID와 실제 보고서 ID를 구별하고 새 작업이 없거나 여럿이면 거부한다', () => {
+  const existing='01940000-0000-7000-8000-000000000001';
+  const rawId='01940000-4111-7111-8111-1113aaaaaaaa';
+  const publicId=maskOutputText(rawId);
+  expect(publicId).toContain('[REDACTED:card_number]');
+  expect(publicId).not.toBe(rawId);
+  expect(newVerifyWorkId([existing],[existing,rawId],publicId)).toBe(rawId);
+  expect(join('reports',newVerifyWorkId([existing],[existing,rawId],publicId),'public.json')).toBe(join('reports',rawId,'public.json'));
+  expect(()=>newVerifyWorkId([existing],[existing],publicId)).toThrow('got 0');
+  expect(()=>newVerifyWorkId([existing],[existing,rawId,'01940000-0000-7000-8000-000000000002'],publicId)).toThrow('got 2');
+  expect(()=>newVerifyWorkId([existing],[existing,rawId],rawId)).toThrow('public work_id');
+});
 
 const self='01940000-0000-7000-8000-00000000000a';
 async function installPreservationAdapter(home:string,store:ReturnType<typeof postgresStore>) {
@@ -70,20 +100,20 @@ os.open=_os_open
 `;
     const seam='\ntry:\n    main()'; expect(source.split(seam)).toHaveLength(2);
     source=source.replace(seam,instrumentation+seam); expect(source).toContain(instrumentation); await writeFile(script,source);
-    const result=await fixture.run(['ext','run','garmin','import-verify','--json']);
+    const result=await runVerify(fixture);
     expect(result.code,result.stdout+result.stderr).not.toBe(0); expect(result.body.data,result.stdout+result.stderr+JSON.stringify(await fixture.db.rows('select error_code,stderr from brain.work_attempts order by started_at desc limit 1'))).toBeDefined(); expect(result.body.data.report.checks.source_unchanged).toBe(false);
     expect(await readFile(marker+'-attempt','utf8')).toBe('attempted');
     await expect(readFile(marker,'utf8')).rejects.toMatchObject({code:'ENOENT'});
-    const publicReport=await readFile(join(fixture.home,'extensions/garmin/reports',result.body.data.work_id,'public.json'),'utf8');
+    const publicReport=await readFile(join(fixture.home,'extensions/garmin/reports',result.rawId,'public.json'),'utf8');
     for (const secret of [target,external,'synthetic-D1','2026-01-01','12345']) expect(result.stdout+result.stderr+publicReport).not.toContain(secret);
     expect(JSON.parse(publicReport)).toEqual(result.body.data.report);
     const sourceBytes=await readFile(target); expect(await readFile(external)).toEqual(sourceBytes);
     await writeFile(script,source.replace(instrumentation,''));
     try {
       await writeFile(target,Buffer.alloc(sourceBytes.length));
-      const corrupt=await fixture.run(['ext','run','garmin','import-verify','--json']);
+      const corrupt=await runVerify(fixture);
       expect(corrupt.code).not.toBe(0); expect(corrupt.body.data.report.checks.source_unchanged).toBe(false);
-      const report=await readFile(join(fixture.home,'extensions/garmin/reports',corrupt.body.data.work_id,'public.json'),'utf8');
+      const report=await readFile(join(fixture.home,'extensions/garmin/reports',corrupt.rawId,'public.json'),'utf8');
       for (const secret of [target,external,'synthetic-D1']) expect(corrupt.stdout+corrupt.stderr+report).not.toContain(secret);
     } finally {await writeFile(target,sourceBytes);}
   } finally {controller.abort(); if(daemon) await daemon; await store.close(); await fixture.cleanup();}
@@ -103,12 +133,12 @@ it('원본·보존 행·mapping·raw·checkpoint·파일 결과 변조를 읽기
     await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.capture_manifest',value:await realpath(join(root,'manifest.json')),updatedAt:new Date()});
     await store.setSetting({userId:'01940000-0000-7000-8000-00000000000a',key:'garmin.legacy_conversation_id',value:conversation,updatedAt:new Date()});
     daemon=runDaemon({home:fixture.home,env:fixture.env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25}});
-    const unfinished=await fixture.run(['ext','run','garmin','import-verify','--json']);
+    const unfinished=await runVerify(fixture);
     expect(unfinished.code).not.toBe(0); expect(unfinished.body.data,unfinished.stdout+unfinished.stderr+JSON.stringify(await fixture.db.rows('select error_code,stderr from brain.work_attempts order by started_at desc limit 1'))).toBeDefined(); expect(unfinished.body.data.report.checks.files).toBe(false);
     const imported=await fixture.run(['ext','run','garmin','import','--json']); expect(imported.code,imported.stdout+imported.stderr).toBe(0);
     await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${imported.body.data.work_id}'`))[0]?.outcome,{timeout:30000}).toBe('succeeded');
     await expect.poll(async()=> (await fixture.db.rows('select count(*)::int as n from brain.file_requests q left join brain.file_request_results r on r.request_id=q.id where r.file_id is null'))[0]?.n,{timeout:20000}).toBe(0);
-    const verify=()=>fixture.run(['ext','run','garmin','import-verify','--json']);
+    const verify=()=>runVerify(fixture);
     const good=await verify(); expect(good.code,good.stdout+good.stderr).toBe(0); expect(Object.values(good.body.data.report.checks).every(Boolean)).toBe(true);
     await fixture.db.query(`create table public.test_preserved as select * from garmin.preserved_rows limit 1;
       create table public.test_mapping as select * from garmin.import_mapping where target_kind='preserved' limit 1;
@@ -156,7 +186,7 @@ it('원본·보존 행·mapping·raw·checkpoint·파일 결과 변조를 읽기
       await fixture.db.query(change);
       try {
         const result=await verify(); expect(result.code,check).not.toBe(0); expect(result.body.data.report.checks[check],check).toBe(false);
-        const publicText=await readFile(join(fixture.home,'extensions/garmin/reports',result.body.data.work_id,'public.json'),'utf8');
+        const publicText=await readFile(join(fixture.home,'extensions/garmin/reports',result.rawId,'public.json'),'utf8');
         expect(JSON.parse(publicText)).toEqual(result.body.data.report);
         for(const secret of ['synthetic-D1','2026-01-01','12345',fixture.home]) expect(result.stdout+result.stderr+publicText).not.toContain(secret);
       } finally {await fixture.db.query(restore);}

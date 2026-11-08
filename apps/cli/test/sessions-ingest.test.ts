@@ -2635,10 +2635,10 @@ describe('brain sessions ingest claude-code when the database will not take the 
     const after = (await read(databaseIn(home)));
     expect(after.failures).toEqual([]);
     expect(after.generations).toEqual([
-      { name: 'note.md', status: 'ok', media_type: 'text/plain', extractor_version: 'doc/1', index_config_id: '019a0000-0000-7000-8000-000000000002', attempt: 1, current: 1 },
-      { name: 'plain.txt', status: 'ok', media_type: 'text/plain', extractor_version: 'doc/1', index_config_id: '019a0000-0000-7000-8000-000000000002', attempt: 1, current: 1 },
+      { name: 'note.md', status: 'ok', media_type: 'text/plain', extractor_version: 'doc/2+pdfjs-6.4.299+mammoth-1.13.0', index_config_id: '019a0000-0000-7000-8000-000000000002', attempt: 1, current: 1 },
+      { name: 'plain.txt', status: 'ok', media_type: 'text/plain', extractor_version: 'doc/2+pdfjs-6.4.299+mammoth-1.13.0', index_config_id: '019a0000-0000-7000-8000-000000000002', attempt: 1, current: 1 },
       // The trap: read, answered, and no failure row for it (Design Notes).
-      { name: 'trap.txt', status: 'unsupported', media_type: null, extractor_version: 'doc/1', index_config_id: null, attempt: 1, current: 0 },
+      { name: 'trap.txt', status: 'unsupported', media_type: null, extractor_version: 'doc/2+pdfjs-6.4.299+mammoth-1.13.0', index_config_id: null, attempt: 1, current: 0 },
     ]);
     expect(after.chunks.map(chunk => chunk.body).sort()).toEqual([noteText, plainText].sort());
     for (const chunk of after.chunks) {
@@ -2681,7 +2681,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
     expect((await runBrain(['sessions', 'ingest', 'claude-code', '--json'], home, stopPayload(transcript), { HOME: sourceHome })).code).toBe(0);
     await drain();
     expect((await generationsOf(db))).toEqual([
-      { attempt: 1, status: 'ok', extractor_version: 'doc/1', current: 1 },
+      { attempt: 1, status: 'ok', extractor_version: 'doc/2+pdfjs-6.4.299+mammoth-1.13.0', current: 1 },
     ]);
     expect((await chunkMatches(db, 'reextractneedle'))).toBe(1);
 
@@ -2700,7 +2700,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
     // One attempt higher, this build's version, and the pointer naming it: the
     // older generation went with the replacement that earned the pointer.
     expect((await generationsOf(db))).toEqual([
-      { attempt: 3, status: 'ok', extractor_version: 'doc/1', current: 1 },
+      { attempt: 3, status: 'ok', extractor_version: 'doc/2+pdfjs-6.4.299+mammoth-1.13.0', current: 1 },
     ]);
     expect((await chunkMatches(db, 'reextractneedle'))).toBe(1);
 
@@ -2709,7 +2709,7 @@ describe('brain sessions ingest claude-code when the database will not take the 
     const second = await drain();
     expect(second.data).toMatchObject({ reextract_redacted: 0, reextract_unreachable: 0 });
     expect((await generationsOf(db))).toEqual([
-      { attempt: 3, status: 'ok', extractor_version: 'doc/1', current: 1 },
+      { attempt: 3, status: 'ok', extractor_version: 'doc/2+pdfjs-6.4.299+mammoth-1.13.0', current: 1 },
     ]);
 
     // Behind again, and this time the original cannot be reached: nothing is

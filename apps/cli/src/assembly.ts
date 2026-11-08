@@ -1,3 +1,4 @@
+import { runtimeDocumentExtractors } from './runtime/document-extractors.js';
 import { cronCalculator } from './runtime/cron.js';
 import { importStaging } from './runtime/import-staging.js';
 import { extensionRuntime } from './runtime/extensions.js';
@@ -82,6 +83,7 @@ export function brainDependencies<S extends SessionIngestStore>(assembly: BrainA
   const { home, env, config, store, clock, idGen, workHandlers } = assembly;
   return {
     store,
+    documentExtractors: runtimeDocumentExtractors,
     ...(assembly.sourceControl ? {sourceControl:assembly.sourceControl} : {}),
     ...(assembly.driveFactory ? {drive:assembly.driveFactory(store)} : {}),
     ...(assembly.sourceSyncFactory ? {sourceSync:assembly.sourceSyncFactory(store)} : {}),

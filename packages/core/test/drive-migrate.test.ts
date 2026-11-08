@@ -10,6 +10,7 @@ async function fixture(days?:string) {
   const drive:FileStore={
     async put() {return {ok:true,contentHash:hash,sizeBytes:bytes.length,location};},
     async get() {return {ok:true,bytes:remote};},
+    async getBounded(_location,maxBytes) {return remote.length>maxBytes?{ok:false,code:'TOO_LARGE',message:'상한 초과'}:{ok:true,bytes:remote.slice()};},
     async exists() {return {ok:true,exists:true};}, async url() {return {ok:true,url:'https://example.invalid'};},
     async delete() {return {ok:true,deleted:true};},
   };

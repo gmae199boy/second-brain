@@ -1,5 +1,6 @@
 """Test-only supervised adapter for the preservation primitives; never installed in production."""
 import hashlib
+from contextlib import contextmanager
 from decimal import Decimal
 import json
 import os
@@ -23,7 +24,11 @@ def emit(kind, **values):
     print(json.dumps({'abi': 1, 'type': kind, **values}), flush=True)
 
 
+phase = 'settings'
+body_error = None
+
 def main():
+    global phase, body_error
     settings = json.loads(os.environ['BRAIN_SETTINGS_SNAPSHOT'])
     if settings.get('version') != 1 or settings.get('extension') != 'garmin':
         raise ValueError('IMPORT_INVALID')
@@ -40,7 +45,9 @@ def main():
         names = ('datasets', 'import_batches', 'import_mapping', 'import_conflicts', 'import_checkpoints',
                  'source_schemas', 'preserved_rows', 'raw_payloads', 'legacy_conversations',
                  'artifact_inventory', 'artifact_relations', 'input_inventory')
+        phase = 'verify_connect'
         with psycopg.connect(os.environ['BRAIN_DATABASE_URL'], options=options, row_factory=dict_row) as conn:
+            phase = 'verify_database'
             with conn.transaction():
                 check(conn.cursor(row_factory=tuple_row))
             with conn.transaction():
@@ -50,6 +57,7 @@ def main():
                     stored = {name: cursor.execute('select * from garmin.' + name).fetchall() for name in names}
                     results = cursor.execute('select * from brain.file_request_results_public_v1').fetchall()
             try:
+                phase = 'verify_compare'
                 capture = load_capture(settings['values']['garmin.capture_manifest'], secure=True)
                 details = compare(capture, stored, results, conversation, preserve_artifacts=True)
                 final = load_capture(settings['values']['garmin.capture_manifest'], secure=True)['private']
@@ -60,22 +68,47 @@ def main():
                 from verify_compare import CHECKS, COUNTS
                 details = {'counts': {name: 0 for name in COUNTS}, 'differences': {name: ['input_invalid'] for name in CHECKS}, 'history': {}}
                 details['counts']['mismatches'] = len(CHECKS)
+            phase = 'verify_database'
             with conn.transaction(): check(conn.cursor(row_factory=tuple_row))
+        phase = 'verify_reports'
         public = public_projection(details)
         write_reports(os.environ['BRAIN_EXTENSION_HOME'], os.environ['BRAIN_WORK_ID'], details, public)
         if not all(public['checks'].values()): raise ValueError('EXTENSION_REPORT_NOT_READY')
     else:
+        phase = 'capture'
         capture = load_capture(settings['values']['garmin.capture_manifest'])
         entries = sorted(capture['private']['datasets'], key=lambda e: ORDER.index(ROLES[e['source']]))
         entries = [{**entry, 'dataset': dataset_ref(entry['dataset']),
                     'dataset_label': entry['dataset'] if dataset_ref(entry['dataset']) != entry['dataset'] else None}
                    for entry in entries]
-        from artifact_publish import publish
+        import artifact_publish
+        original_lock = artifact_publish.locator_lock
+        @contextmanager
+        def observed_lock(conn, locator):
+            global phase, body_error
+            phase, body_error = 'locator_acquire', None
+            try:
+                with original_lock(conn, locator):
+                    phase = 'locator_body'
+                    try:
+                        yield
+                    except BaseException as exc:
+                        body_error = exc
+                        raise
+            except BaseException as exc:
+                if phase != 'locator_acquire':
+                    phase = 'locator_body' if exc is body_error else 'locator_unlock'
+                raise
+            phase = 'publish'
+        artifact_publish.locator_lock = observed_lock
         capture['private']['fingerprint'] = contract_fingerprint(capture['private']['fingerprint'])
+        phase = 'connect'
         with psycopg.connect(os.environ['BRAIN_DATABASE_URL'], options=options) as conn:
+            phase = 'initial_check'
             with conn.transaction():
                 check(conn.cursor())
                 if not all(probe_role(conn).values()): raise ValueError('IMPORT_INVALID')
+            phase = 'checkpoint'
             # Check every prior source before ingest can change any preservation row.
             for entry in entries:
                 dataset = entry['dataset']
@@ -90,8 +123,11 @@ def main():
                 with path.open('rb') as source: digest = hashlib.file_digest(source, 'sha256').hexdigest()
                 if old and (old[:4] != (digest, VERSION, capture['private']['fingerprint'], entry['source']) or (str(old[4]) if old[4] else None) != conversation):
                     conflict(conn, dataset, batch, None, None, 'checkpoint_mismatch')
+            phase = 'ingest'
             verified = {e['dataset']: ingest(conn, capture, e, UUID(conversation) if conversation else None, native_mode=False) for e in entries}
-            publish(conn, capture, entries, verified)
+            phase = 'publish'
+            artifact_publish.publish(conn, capture, entries, verified)
+            phase = 'reports'
             from reports import write_reports
             from metadata_codec import decode_metadata
             from artifacts import decode_identity
@@ -115,5 +151,13 @@ except Exception as exc:
     code = str(exc) if str(exc) in ('IMPORT_CONFLICT', 'EXTENSION_REPORT_NOT_READY') else 'IMPORT_INVALID'
     state = getattr(exc, 'sqlstate', None)
     retryable = (state is None and isinstance(exc, psycopg.OperationalError)) or state in ('40001', '40P01', '55P03', '57014', '25P04', '57P01', '57P02', '57P03') or bool(state and state.startswith('08'))
+    cause_state = getattr(body_error, 'sqlstate', None) if phase == 'locator_unlock' else None
+    safe_state = lambda value: value if isinstance(value, str) and len(value) == 5 and value.isascii() and value.isalnum() else None
+    phases = {'settings', 'connect', 'initial_check', 'capture', 'checkpoint', 'ingest', 'publish',
+              'locator_acquire', 'locator_body', 'locator_unlock', 'reports', 'verify_connect',
+              'verify_database', 'verify_compare', 'verify_reports', 'unknown'}
+    diagnostic = {'kind': 'preservation_diagnostic', 'phase': phase if phase in phases else 'unknown',
+                  'sqlstate': safe_state(state), 'body_sqlstate': safe_state(cause_state)}
+    print(json.dumps(diagnostic), file=sys.stderr, flush=True)
     emit('error', code=code, retryable=retryable)
     sys.exit(1)

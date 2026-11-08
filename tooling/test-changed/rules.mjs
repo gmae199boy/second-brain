@@ -32,6 +32,7 @@ const rules = [
   { prefix:'packages/core/src/spool/', reason:'daemon queue spool replay' },
   { prefix:'apps/cli/src/mcp/', reason:'extension MCP runtime' },
   { prefix:'apps/cli/src/daemon/', reason:'daemon supervisor and drain' },
+  { prefix:'apps/cli/src/runtime/document-parser-child.ts', reason:'document extraction child process' },
   { prefix:'apps/cli/src/runtime/', reason:'extension and file runtime' },
   { prefix:'apps/cli/src/install/', reason:'installed runtime and extension setup' },
   { prefix:'apps/cli/src/config/', reason:'Python tests and daemon use config codec and paths' },
@@ -58,6 +59,9 @@ const exact = [
   'apps/cli/test/ext-fixture.ts','apps/cli/test/extension-commands.test.ts','apps/cli/test/install-lock.test.ts','apps/cli/test/ext-package.test.ts','apps/cli/test/ext-install-resume.test.ts','apps/cli/test/global-setup.ts','apps/cli/test/pg-home.ts',
   'apps/cli/test/temp-home.ts','apps/cli/test/environment.ts','.claude-plugin/marketplace.json',
   'apps/cli/python-test/garmin-report-observer.ts',
+  'apps/cli/python-test/fixtures/artifacts-lifecycle.ts',
+  'apps/cli/python-test/fixtures/lifecycle-timeout.fixture.ts',
+  'apps/cli/python-test/fixtures/lifecycle-vitest.config.mjs',
   'apps/cli/python-test/vitest.config.ts','apps/cli/python-test/global-setup.ts','package.json','pnpm-lock.yaml',
 ];
 const hook = 'tooling/bootstrap/test/hook.test.ts';

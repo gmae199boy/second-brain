@@ -1,5 +1,6 @@
 ---
 type: epic
+status: built
 title: "제품 조회 성능: 데이터가 쌓여도 반입 정리·큰 세션·검색·첨부 반입이 느려지지 않는다"
 parent: personal-brain
 covers: [R3, R14, R18]
@@ -57,3 +58,5 @@ risk: medium
 - Decision(2026-11-05, 사용자 규칙): Refactor sweep(6)을 둔다.
 - Decision(2026-11-05): tracer는 1(반입 정리)이다. 측정 러너·fixture·결과 동등성 비교 틀을 처음 만들고 2~5가 다시 쓴다. 각 plan은 측정 명령·준비/측정 구간·실행 계획·행수·정리 절차를 적는다.
 - Risk(2026-11-05): 1 medium — 정리 대상 판정이 틀리면 파일 원본을 너무 일찍 지운다. 2 high — 지문·stale 판정이 틀리면 대화 기억이 빠지거나 겹친다(추가 확인: 동시 반입 경쟁 fixture로 행 수·지문을 독립 계산과 대조). 3 medium — 순위가 바뀌면 찾던 근거가 빠진다. 4 medium — 일괄화가 멱등성을 깨면 첨부가 중복된다. 5 low — 입력 형식이 다르면 위치를 못 찾는다. 6 low — 정리다.
+
+- Decision(2026-11-08, 중앙 수락): 22.1~22.6의 원격 main 반영과 요구사항별 성능·동등성·인덱스/쓰기 근거를 대조하고 fresh-context Closure 검사 fix0/ask0으로 built 전이한다. 상세는 [종료 검증](epic-query-performance-closure.md)이며 최초 실패·22.3 옛 raw 손실/성과 전승 한계·운영 배포 후속은 보존한다. 사용자 인수 done은 아니다.

@@ -1,3 +1,4 @@
+import { DOCUMENT_EXTRACTOR_VERSION } from './files/extractors.js';
 import { SOURCE_SYNC_KIND, sourceSyncHandler, cleanupSourceTemps } from './sources/sync.js';
 import type { SourceStore } from './ports/source-store.js';
 import type { SourceRemote, SourceTemp } from './ports/source-remote.js';
@@ -34,7 +35,7 @@ import { BLOB_DELETE_KIND, blobDeleteHandler } from './files/blob-delete-work.js
 import {
   DOCUMENT_EXTRACT_KIND,
   documentExtractHandler,
-  enqueueDocumentExtractions,
+  enqueueDocumentExtractions, enqueueUnsupportedCarry,
 } from './files/extract-work.js';
 import type { FileStore } from './ports/file-store.js';
 import { formatSessionToken, parseSessionToken } from './domain/session-token.js';
@@ -82,6 +83,7 @@ import {
 import { replaySpool, type SpoolReplayHandlers } from './spool/replay.js';
 
 export interface BrainDependencies {
+  documentExtractors?: readonly import('./files/extractors.js').DocumentExtractor[];
   cron?: import('./ports/cron.js').CronCalculator;
   importStaging?: ImportStaging;
   extensions?: ExtensionRuntime;
@@ -329,6 +331,10 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     workHandlers,
   } = dependencies;
 
+  // Fail at assembly for JavaScript or unsafe casts that bypass FileStore's type.
+  if (typeof files.getBounded !== 'function') throw new TypeError('FileStore.getBounded가 필요합니다');
+  if (dependencies.drive && typeof dependencies.drive.files.getBounded !== 'function') throw new TypeError('Drive FileStore.getBounded가 필요합니다');
+
   const ingestDependencies = {
     store,
     files,
@@ -354,6 +360,13 @@ export function createBrain(dependencies: BrainDependencies): Brain {
       if (binding.rootFolderId !== drive.rootFolderId) return {ok:false,code:'LOCATION_REFUSED',message:'Drive 위치의 루트가 다릅니다'};
       return drive.files.get(location);
     },
+    getBounded: async (location, maxBytes) => {
+      if (location.storeKind !== 'drive' || !drive) return files.getBounded(location,maxBytes);
+      const binding=await drive.store.readDriveLocatorRoot(location.locator);
+      if (!binding.ok) return {ok:false,code:'FILES_UNAVAILABLE',message:'Drive 위치의 루트를 확인할 수 없습니다'};
+      if (binding.rootFolderId !== drive.rootFolderId) return {ok:false,code:'LOCATION_REFUSED',message:'Drive 위치의 루트가 다릅니다'};
+      return drive.files.getBounded(location,maxBytes);
+    },
     exists: location => location.storeKind === 'drive' && drive ? drive.files.exists(location) : files.exists(location),
     url: location => location.storeKind === 'drive' && drive ? drive.files.url(location) : files.url(location),
     delete: location => location.storeKind === 'drive' && drive ? drive.files.delete(location) : files.delete(location),
@@ -375,8 +388,8 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     // Core's own for the same reason: reading a stored attachment is a use case,
     // and the ports it needs — the store, the file store, the clock, the ids —
     // are exactly the ones this brain was assembled from (`files/extract-work.ts`).
-    [DOCUMENT_EXTRACT_KIND]: documentExtractHandler({ store, files:sourceFiles, clock, idGen, ...(dependencies.sourceSync ? {source:dependencies.sourceSync} : {}) }),
-    ...(dependencies.sourceSync ? {[SOURCE_SYNC_KIND]:sourceSyncHandler({...dependencies.sourceSync,clock,idGen})} : {}),
+    [DOCUMENT_EXTRACT_KIND]: documentExtractHandler({ store, files:sourceFiles, clock, idGen, ...(dependencies.documentExtractors ? {extractors:dependencies.documentExtractors} : {}), ...(dependencies.sourceSync ? {source:dependencies.sourceSync} : {}) }),
+    ...(dependencies.sourceSync ? {[SOURCE_SYNC_KIND]:sourceSyncHandler({...dependencies.sourceSync,clock,idGen,extractors:dependencies.documentExtractors})} : {}),
     // And the same again for deleting one of them: the ports it needs are the
     // store, the file store and the clock, and what it does — empty one place
     // and record that it is empty — is a use case (`files/blob-delete-work.ts`).
@@ -491,6 +504,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
       const allowed=await dependencies.sourceSync.validateSource?.(sourceId);if(allowed&&!allowed.ok)return allowed;
       const now=clock.now(),added=await store.addWork({id:idGen.next(),kind:SOURCE_SYNC_KIND,targetKind:'source',targetId:sourceId,createdAt:now,nextAttemptAt:now});if(!added.ok)return added;
       const sourceStore=dependencies.sourceSync.store;
+      if (dependencies.documentExtractors?.some(e => e.detectCarry)) { const reserved=await sourceStore.reserveSourceCarry({sourceId,generation:source.source.generation,extractorVersion:DOCUMENT_EXTRACTOR_VERSION,workId:idGen.next(),now:clock.now()});if(!reserved.ok)return reserved; }
       const scopedStore={...store,hasDueWork:({now}:{now:Date})=>sourceStore.hasDueSourceWork({sourceId,syncWorkId:added.item.id,now}),claimWork:({now,claimedBy}:{now:Date;claimedBy:string})=>sourceStore.claimSourceWork({sourceId,syncWorkId:added.item.id,now,claimedBy})};
       let authFailure:{ok:false;code:string;message:string}|undefined;
       const capture=(handler:import('./queue/drain.js').WorkHandler):import('./queue/drain.js').WorkHandler=>async item=>{const outcome=await handler(item);if(!outcome.ok&&['AUTH_REQUIRED','AUTH_LOGIN_REQUIRED'].includes(outcome.code))authFailure={ok:false,code:outcome.code,message:outcome.message};return outcome;};
@@ -581,7 +595,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
       },
       drain: (input) =>
         drain(
-          { store, spool, clock, idGen, folders: transcriptFolders, parsers, spoolHandlers, ...(dependencies.sourceSync?{sourceCleanup:dependencies.sourceSync}:{}) },
+          { store, spool, clock, idGen, folders: transcriptFolders, parsers, spoolHandlers, carryFiles:sourceFiles, carryExtractors:dependencies.documentExtractors, ...(dependencies.sourceSync?{sourceCleanup:dependencies.sourceSync}:{}) },
           {
             budgetMs: input.budgetMs,
             handlers: Object.fromEntries(Object.entries({ ...handlers, ...input.handlers }).filter(([kind]) => workExecutionClass(kind) === 'core')),
@@ -601,6 +615,8 @@ interface DrainDependencies {
   folders: readonly TranscriptFolder[];
   parsers: readonly Parser[];
   spoolHandlers: SpoolReplayHandlers;
+  carryFiles?: FileStore;
+  carryExtractors?: readonly import('./files/extractors.js').DocumentExtractor[];
   sourceCleanup?:{store:SourceStore;temp:SourceTemp};
 }
 
@@ -671,17 +687,29 @@ async function drain(
   // counters say whether anything happened; the two numbers it does report are
   // the files it met and could not queue at all (`files/extract-work.ts`).
   let reextract = { redacted: 0, sourceUnreachable: 0 };
+  if(dependencies.sourceCleanup && dependencies.carryExtractors?.some(e=>e.detectCarry) && clock.now().getTime()<deadline){
+    const list=await dependencies.sourceCleanup.store.listSources();
+    if(list.ok)for(const source of list.sources){if(!source.connected||clock.now().getTime()>=deadline)continue;const reserved=await dependencies.sourceCleanup.store.reserveSourceCarry({sourceId:source.id,generation:source.generation,extractorVersion:DOCUMENT_EXTRACTOR_VERSION,workId:idGen.next(),now:clock.now()});if(!reserved.ok)break;}
+  }
   if (clock.now().getTime() < deadline) {
-    reextract = await enqueueDocumentExtractions({ store, clock, idGen }, { deadline });
+    reextract = await enqueueDocumentExtractions({ store, clock, idGen, files:dependencies.carryFiles, extractors:dependencies.carryExtractors }, { deadline });
   }
 
-  const queue = await drainQueue(
+  let queue = await drainQueue(
     { store, spool, clock, idGen },
     {
       budgetMs: Math.max(0, deadline - clock.now().getTime()),
       handlers: input.handlers,
     },
   );
+  if (queue.stopped === 'empty' && clock.now().getTime() < deadline) {
+    const created = await enqueueUnsupportedCarry({ store, clock, idGen, files: dependencies.carryFiles, extractors: dependencies.carryExtractors }, { deadline });
+    if (clock.now().getTime() >= deadline) queue = { ...queue, stopped: 'budget' };
+    else if (created > 0) {
+      const carry = await drainQueue({ store, spool, clock, idGen }, { budgetMs: deadline - clock.now().getTime(), handlers: input.handlers });
+      queue = { ...carry, claimed: queue.claimed + carry.claimed, completed: queue.completed + carry.completed, retried: queue.retried + carry.retried, failed: queue.failed + carry.failed, released: queue.released + carry.released, lost: queue.lost + carry.lost, spooled: queue.spooled + carry.spooled };
+    }
+  }
   if(dependencies.sourceCleanup)await cleanupSourceTemps(dependencies.sourceCleanup.temp,dependencies.sourceCleanup.store,clock);
 
   return {

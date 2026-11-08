@@ -34,21 +34,10 @@ export type DocumentExtractionFailedStage = 'read' | 'extract' | 'chunk' | 'inde
  */
 export const DOCUMENT_CHUNK_BATCH_MAX = 200;
 
-/**
- * The largest file this build reads, in bytes: eight mebibytes.
- *
- * It is a bound on the work and not on the storage. Extracting a text document
- * spreads it out as an array of code points to cut it on character boundaries,
- * which costs several times the file's own size in memory, and the whole of it
- * happens inside one claim. A file over this is closed `too_large` without its
- * bytes ever being read, which is why the bound is checked against the size the
- * ingest recorded rather than against what came back.
- *
- * One number for every format, because this build has one extractor. A limit
- * per format is what a PDF will want — its cost is pages and not bytes — and
- * that is the day to split this (Design Notes).
- */
+/** Text's UTF-8 decoding bound; binary formats have a separate input bound. */
 export const DOCUMENT_EXTRACT_MAX_BYTES = 8 * 1024 * 1024;
+/** Absolute bounded read for PDF and DOCX before content detection. */
+export const DOCUMENT_BINARY_EXTRACT_MAX_BYTES = 50 * 1024 * 1024;
 
 /**
  * The document chunking rules this build cuts with, the same pair migration

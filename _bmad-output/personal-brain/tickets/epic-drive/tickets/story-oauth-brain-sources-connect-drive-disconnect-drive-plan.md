@@ -3,7 +3,7 @@ title: 'Drive OAuth·설정·연동 해제'
 type: 'feature'
 ticket: '3'
 created: '2026-11-08'
-status: 'blocked'
+status: 'built'
 baseline_revision: '9004c35b20c1b38b66af795668056ecdcdbaa1a9'
 route: 'full'
 route_source: 'pinned'
@@ -16,8 +16,6 @@ followup_review_recommended: false
 context: ['_bmad-output/personal-brain/automation/runbook.md']
 warnings: ['oversized']
 deferred: []
-blocking_condition: >-
-  최초 전체 Python 회귀의 Garmin core 2건 및 native 1건이 미해결이다. 중앙이 19.11에 수정 소유를 배정했으며 정확한 수락 source SHA 인계 뒤 해당 파일만 통합 대조·관련 재검증한다.
 ---
 
 <intent-contract>
@@ -234,11 +232,11 @@ R3의 두 제품 결함은 세 독립 집중 검사에서 수정 경로를 확�
 | source-before-schedule | 관리자 transaction의 통계 관찰을 별도 autocommit observer로 분리, 실제 blocker PID/실대기·fired=false 유지 | source-store 전부 통과 |
 | DB 무응답 hook 시간창 | schema guard 전 Drive 조회가 여러 연결 timeout을 소비. schema 실패 시 Drive조회0·원래 spool 보존 | postgres CLI 전부 통과, 시간 기대 불변 |
 | bootstrap 7건(TS)/8건(Python) | 격리 HOME에서 실제 OrbStack 상태 조회 실패. 자기 PATH의 조회 전용 `orb status` 중계로 실제 서비스 상태를 확인하고 나머지 제품 HOME/DB/설정은 격리 유지. 서비스 시작/전역 변경 없음 | Python 보존 case 포함 hook8건 통과 |
-| Garmin core2/native1 | core는 sendPhoto 기대1/실제0(:161), document500→200 단언은 통과. native는 표시 work_id의 card_number 가림 결과를 SQL UUID로 재사용(:96/:197). 서로 다른 실패이며 중앙19.11 소유 | 미해결. 이 브랜치에서 해당 파일·공통 가림/runner 수정하지 않음 |
+| Garmin core2/native1 | core는 sendPhoto 기대1/실제0(:161), document500→200 단언은 통과. native는 표시 work_id의 card_number 가림 결과를 SQL UUID로 재사용(:96/:197). 서로 다른 실패이며 중앙19.11 소유 | 최초 blocked 이력. 중앙 수락19.11의 두 시험만 정상 통합 후10사례 통과, 공통 가림/runner 불변 |
 
 ## Auto Run Result
 
-현재 상태는 **blocked**다. 8.3 제품 구현·독립 리뷰·자체 회귀 교정은 완료했으나 최초 전체 Python에서 남은 다른 소유의 세 실패가 아직 재검증되지 않아 built로 표시하지 않는다. 중앙의 정확한 수락 source SHA가 오면 해당 Garmin 파일만 대조·통합하고 관련 시험으로 확인한다. 전체 suite를 다시 돌리거나 이 실패를 deferred로 숨기지 않는다.
+현재 상태는 **built**다. 아래 최초 보고 시점에는 Garmin core2/native1 때문에 blocked였으며 해당 실패 이력은 보존한다. 이후 중앙 수락 19.11 source를 정상 통합하고 두 파일10사례를 관련 재검증해 필수 미해결3건을 해소했다. 마지막 절에 정확한 source·명령·결과·정리 증거를 기록한다. 전체 suite는 반복하지 않았다. built는 사용자 인수나 실제 운영 연결 완료를 뜻하지 않는다.
 
 ### 구현 결과와 파일
 
@@ -256,7 +254,7 @@ R3의 두 제품 결함은 세 독립 집중 검사에서 수정 경로를 확�
 - E16 관련 `dispatch`, PG `schema/source-store/cli`4파일: exit0,154시험 전부통과.
 - 환경 교정 후 Python config의 bootstrap hook 단독: exit0,8시험 전부통과(`HOOK_PYTHON_PRESERVATION_PASS`).
 - 마지막 dispatcher 정상 Drive 경로 `sources-commands/drive-source-tracer/drive-tracer`3파일: exit0,32시험 전부통과.
-- 이 선별 재검증과 최초 전체 통과 파일을 합쳐 8.3 자체 실패는 해소됐다. Garmin 세 실패가 남으므로 전체가 녹색이라고 주장하지 않는다. raw 로그·명령/종료코드/파일별SHA256·정확 자원 영수증은 gitignored `.brain-automation/tickets/8.3/`에 보존한다.
+- 이 선별 재검증과 최초 전체 통과 파일을 합쳐 8.3 자체 실패는 해소됐다. 이 시점에는 Garmin 세 실패가 남았고 이후 마지막 절의 관련 재검증으로 해소했다. 최초 전체 실행이 녹색이었다고 주장하지 않는다. raw 로그·명령/종료코드/파일별SHA256·정확 자원 영수증은 gitignored `.brain-automation/tickets/8.3/`에 보존한다.
 
 ### 리뷰 처분과 한계
 
@@ -272,3 +270,21 @@ R1 네 Sol medium lens:25개별판정(high2/medium20/false3). R2 네 lens:14개�
 - secrets/connection/refresh 잠금과 삭제 불명 표식은 시간 경과로 제거하지 않는다. 소유자·자식·진행 I/O 종료와 정확한 파일/원격 결과를 확인한 운영자만 fixture 지침의 개별 복구 절차를 따른다.
 - source watch root와 Brainroot는 별도이며, 연결·보관 due 재계산의8.5 역의존은 없다. 검색 점수/순위/성능 runner·19.5 runner·Garmin 소유 파일·plugin release는 변경하지 않았다.
 - 자체 시험 자원 로그의271개 container ID와1개 volume 부재를 최종 확인했다. 관리자 container도 소유 label 확인 후 제거·부재 확인했고 checkout 밖 자기 home/tmp/Docker/uv 경로를 제거했다. bootstrap의 자기 Compose 자원은 시험 finally의 정확 ID 제거/부재 단언을 통과했다. 워크트리·브랜치·세션·로컬 실행 증거는 보존한다.
+
+
+## 19.11 수락 source 통합 및 blocked 해제 — 2026-11-08
+
+중앙 `msg_ee19c302e964`의 재개 지시에 따라 수락 source `77180866dbdad7f37b93f70a7267a8ce6f6b7aba`를 포함한 원격 main `7c72cbfaf8860d0703595d134b760e87fa563817`을 자기 브랜치에 정상 fast-forward merge했다. 실제 incoming11파일 중 실행 입력 변경은 Garmin core/native 두 시험뿐이고 나머지는 문서 및 자동화 모델 이력이다. 제품·migration·runner/config·plugin 트리는 기존8.3 `b984716`과 같으며 두 시험의 SHA256은 수락 source와 정확히 일치한다. 자체 소스 추가 교정은 없다.
+
+- 통합 source: `7c72cbfaf8860d0703595d134b760e87fa563817`, 현재 core42/0042 유지. `pnpm build` exit0 및 `git diff --check` exit0.
+- 관련 명령: `VITEST_MAX_WORKERS=2 pnpm exec vitest run --config apps/cli/python-test/vitest.config.ts apps/cli/python-test/garmin-core.test.ts apps/cli/python-test/garmin-native.test.ts`.
+- 자기 격리 환경 실행: 2026-11-08 06:21:02~06:23:48 UTC, exit0, **2파일10시험 전부 통과**, 165.17초. 전체 TS/Python·성능·이미 통과한 다른 파일은 반복하지 않았다.
+- core6사례는11-09/10/11×database/exit의 정확 graph manifest(3장/4장 묶음·1장 사진), 실제 등록/파일/HTTP bytes, 네 scope 문서·bundle, 500→200 재시도와 완료 뒤 중복0을 유지한다. 최초 core2실패는 실행일에 따라 달라지는 graph 개수와 고정 sendPhoto1 기대의 충돌이었으며 결정적 달력 기대에서 해결됐다.
+- native4사례는 실제 dispatcher의 가림 적중 합성ID 출력과 자기DB의 단일 생성ID를 구별한다. SQL/재개는 권위DBID, 출력은 가림값을 검사하며 실제 중단재개·SQLite oracle·timeout은 유지한다. 최초 native1 UUID 실패는 표시ID를 SQL에 재사용한 시험 결함으로 처분한다.
+- 중앙 수락 독립 `19.11/review-3-followup.md` 및 `review-4-integration.md`의 개별 해결·Drive 조립/schema42 통합 확인을 읽고 수락 시험 바이트·기존8.3 경계를 대조했다. 새 제품 수정이나 추가 미해결 finding은 없다. 기존 R3 blind floor failed와 집중 후속, 경계별 관찰 한계는 그대로 유지한다.
+- 이번 원문/명령/종료코드/지문: 자기 `.brain-automation/tickets/8.3/accepted-19-11-integration.json`, `related-19-11-result.json`, `related-19-11-raw.log`. 최초 전체 raw·source manifest·이전 결과는 불변이다.
+- 이번 소유 자원: fixture10개와 별도 관리자1개의 정확 container ID/소유 label을 대조하고 모두 부재를 확인했다. 격리 home/tmp/Docker/uv root 제거·부재도 확인했다. `resume-resource-absence.json`, `resume-pg-resource-events.jsonl`, `resume-test-resources.json`에 보존했다. 운영·타티켓 자원은 변경하지 않았다.
+
+최초 전체 실패의 자체 묶음은 앞선 관련 재검증에서, 남은 Garmin3건은 이번 관련10사례에서 해결되어 필수 미해결0으로 판정하고 blocking_condition을 제거했다. 사용자 인수 전 상태는 built이며 중앙의 결과 수락·의존 gate 전이는 별도다. 추가 사용자 질문은 없다.
+
+19.11 자체 최초 전체의 artifacts locator 실패는 그 티켓 계획의 deferred 위험으로 보존된다. 중앙이 허용한 관측 재검증1회는 통과했으나 원인은 미확정이고 비계측 반복 안정성이나 원인 해결을 주장하지 않는다. 이8.3의 최초 artifacts는 통과했고 이번에는 인계 지시대로 core/native만 실행했다. 그 외부 처분으로 이번 실패를 면제하지 않았으며 이번10사례는 실제로 통과했다. 재발 시 안전한 stdout/stderr/exit 보존 권고와 기존 운영자 조치는 유지한다.

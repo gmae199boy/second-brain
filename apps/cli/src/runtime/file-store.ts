@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, writeFile, rename, stat, readFile, unlink, realpath } from 'node:fs/promises';
+import { mkdir, writeFile, rename, stat, readFile, unlink, realpath, open } from 'node:fs/promises';
 import { resolve, dirname, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { brainLocator, isBrainLocator, type FileLocation, type FileStore } from 'second_brain';
@@ -63,6 +63,23 @@ export function localFileStore({ root }: { root: string }): FileStore {
       } catch (error) {
         return (error as NodeJS.ErrnoException).code === 'ENOENT' ? { ok: false, code: 'FILE_NOT_FOUND', message: '파일이 없습니다' } : unavailable();
       }
+    },
+    async getBounded(l, maxBytes) {
+      try {
+        const path = await pathOf(l); if (path === null) return refused;
+        const h = await open(path, 'r');
+        try {
+          const chunks: Uint8Array[] = []; let total = 0;
+          for (;;) {
+            const part = Buffer.allocUnsafe(Math.min(65536, maxBytes + 1 - total));
+            const {bytesRead} = await h.read(part, 0, part.length, null);
+            if (!bytesRead) break;
+            if (bytesRead > maxBytes - total) return {ok:false,code:'TOO_LARGE',message:'파일 크기 상한 초과'};
+            chunks.push(part.subarray(0, bytesRead)); total += bytesRead;
+          }
+          return {ok:true,bytes:Buffer.concat(chunks,total)};
+        } finally { await h.close(); }
+      } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? {ok:false,code:'FILE_NOT_FOUND',message:'파일이 없습니다'} : unavailable(); }
     },
     async exists(l) {
       try {

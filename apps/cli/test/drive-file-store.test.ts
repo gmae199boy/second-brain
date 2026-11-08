@@ -123,3 +123,18 @@ it('cancels unused POST, DELETE and error bodies including late responses',async
   deliver(new Response(stream('late'),{status:200}));
   await vi.waitFor(()=>expect(cancelled).toContain('late'));
 });
+
+it('getBounded는 누적 정확 경계를 허용하고 초과 스트림을 취소한다',async()=>{
+  const {server,uploads,clock,store}=await fixture(),put=await store.put(Uint8Array.of(1,2,3,4));if(!put.ok)throw Error('put');
+  let cancelled=0;const bounded=driveFileStore({rootFolderId:'brain-root',baseUrl:server.baseUrl,uploads,clock,fetch:async(input,init)=>{
+    if(!String(input).includes('alt=media'))return fetch(input,init);
+    let index=0;return new Response(new ReadableStream<Uint8Array>({pull(controller){if(index++===0)controller.enqueue(Uint8Array.of(1,2));else if(index===2)controller.enqueue(Uint8Array.of(3,4));else if(index===3)controller.close();},cancel(){cancelled++;}},{highWaterMark:0}),{status:200});
+  }});
+  expect(await bounded.getBounded(put.location,4)).toEqual({ok:true,bytes:Uint8Array.of(1,2,3,4)});expect(cancelled).toBe(0);
+  expect(await bounded.getBounded(put.location,3)).toMatchObject({ok:false,code:'TOO_LARGE'});expect(cancelled).toBe(1);
+  let closedCancels=0;const closed=driveFileStore({rootFolderId:'brain-root',baseUrl:server.baseUrl,uploads,clock,fetch:async(input,init)=>{
+    if(!String(input).includes('alt=media'))return fetch(input,init);
+    return new Response(new ReadableStream<Uint8Array>({start(controller){controller.enqueue(Uint8Array.of(1,2,3,4));controller.close();},cancel(){closedCancels++;}}),{status:200});
+  }});
+  expect(await closed.getBounded(put.location,3)).toMatchObject({ok:false,code:'TOO_LARGE'});expect(closedCancels).toBe(0);
+});
