@@ -604,3 +604,12 @@ built/deferred[]/operator_actions[]이며 사용자 인수 done은 아니다. �
 - 전체 fixture269와 관리 PG, 관련 관리 PG·Compose2 및 정확 volume/port의 종료 시점 부재 증거를 확인했다. 전역 모든 OS 프로세스 무잔존을 증명한 것은 아니다. 워크트리/브랜치/세션과 비공개 원시는 보존하며 중앙 archive에도 보고·검토·원시를 보관했다.
 
 built/deferred[]이며 사용자 인수 done은 아니다. 중앙의 19.5 공식 source 인계와 새 source의 측정 gate는 별도 진행한다.
+
+
+### 19.13 — 수락 후 HOME/Docker context 교정 (2026-11-09)
+
+19.5의 통합 source `1a338d3`에서 새 HOME 격리 2사례와 parser 1사례가 Docker 기본 socket 부재로 실패했다. 기존 45통과와 중앙 수락 이력은 보존하고 후속 source `94fa0e76bcd3f3527cd4acb28cf5953fcecd474b`로 이 세 준비 경계를 교정했다. 두 시험에서 fixture PG/서버/store 준비를 원래 HOME에서 마친 뒤 합성 ambient로 전환하고, 실제 검사할 assembly/scan/parser는 그 안에서 재조립한다. finally HOME 복원 뒤 Docker cleanup을 수행하며 공통 test-db·제품·runner/config는 바꾸지 않았다.
+
+독립 Sol은 세 경계의 코드 수준 해결과 기존 단언·제한·양성 대조 보존을 확인했다. 자기 합성 원래 HOME의 유효한 실제 Docker context, DOCKER_CONFIG/HOST/CONTEXT 환경 변수 부재에서 두 파일 관련 실행 1회가 45/45통과·skip0·exit0이었다. 세 peer 실패의 정확한 사례도 실제 통과했다. 관리 PG와 fixture46개의 정확 ID 및 기록 포트·전용 root 부재를 확인했다. 새 전체·성능·추가 진단은 없으며 과거 원인 한계는 유지한다. 실행 바이트·원시·독립 리뷰와 환경 부재 증거는 계획의 후속 절과 중앙 비공개 archive에 보존했다.
+
+이 후속도 hook snapshot 입력을 바꾸므로 19.5는 수락된 정확 후속 source를 통합해 관련 재검증·새 동결을 재개한다. 기존 3실패83통과를 지우지 않고 별도 처분한다. 8.5는 이 교정의 원래 단언을 보존해 후속 작업에 통합한다.
